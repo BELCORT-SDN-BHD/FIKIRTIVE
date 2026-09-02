@@ -48,16 +48,23 @@ vi.mock("@/lib/canvas-actions", () => ({
 }));
 vi.mock("@/lib/otto-canvas-bridge", () => ({ syncOttoCanvasNodes: mocks.boardRead }));
 vi.mock("@/lib/actions", () => ({ uploadReference: mocks.uploadReference }));
-vi.mock("sonner", () => ({
+vi.mock("@/components/ui/toast", () => ({
   toast: { error: mocks.toastError, success: mocks.toastSuccess, message: mocks.toastMessage },
 }));
 vi.mock("@/components/asset/DetailPanel", () => ({ default: () => null }));
 vi.mock("@/components/otto/OttoTrace", () => ({ OttoCanvasStatus: () => null }));
 // 真输入框换成一个受控的小替身：composer 的提交路径需要一段真 prompt 才走得下去。
 vi.mock("@/components/MentionInput", () => ({
-  MentionInput: ({ onChange }: { onChange?: (t: string, ids: string[], vsel: Record<string, string>) => void }) =>
+  MentionInput: ({
+    onChange,
+    disabled,
+  }: {
+    onChange?: (t: string, ids: string[], vsel: Record<string, string>) => void;
+    disabled?: boolean;
+  }) =>
     createElement("textarea", {
       "data-testid": "mention",
+      disabled,
       onChange: (e: { target: { value: string } }) => onChange?.(e.target.value, [], {}),
     }),
 }));
@@ -296,6 +303,38 @@ describe("画布 t2i：形状在花钱之前就看得见、改得动", () => {
     expect(options.aspectRatio).toBe("1:1");
   });
 
+  it("请求还在接受时，按钮立即说明正在启动，并锁住这次付费内容", async () => {
+    let finish: ((accepted: boolean) => void) | undefined;
+    mocks.generateImage.mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    await renderBoard();
+
+    const twoImages = container!.querySelector<HTMLButtonElement>('button[aria-label="Make 2 images"]');
+    expect(twoImages).not.toBeNull();
+    await act(async () => { twoImages!.click(); });
+    await typePrompt("a two-image weekend campaign");
+
+    const form = container!.querySelector<HTMLFormElement>("form.al-promptbar")!;
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    const pendingButton = [...form.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => (button.textContent ?? "").includes("Starting…"));
+    expect(pendingButton).toBeDefined();
+    expect(pendingButton!.disabled).toBe(true);
+    expect(pendingButton!.querySelector('[aria-label="Loading"]')).not.toBeNull();
+    expect(form.querySelector<HTMLTextAreaElement>('[data-testid="mention"]')!.disabled).toBe(true);
+    expect(form.querySelector<HTMLSelectElement>('select[aria-label="Shape of the image"]')!.disabled).toBe(true);
+    expect(form.querySelector<HTMLInputElement>('#canvas-coherent-set')!.disabled).toBe(true);
+    expect([...form.querySelectorAll<HTMLButtonElement>('button[aria-label^="Make "]')]
+      .every((button) => button.disabled)).toBe(true);
+
+    await act(async () => {
+      finish?.(true);
+      await Promise.resolve();
+    });
+  });
+
   it("菜单读不到（服务端没答上来）⇒ 不渲染选择器，也不发一个界面自己编的形状", async () => {
     mocks.imageShapes.mockRejectedValue(new Error("nope"));
     await renderBoard();
@@ -359,6 +398,33 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
     expect(options.sourceGenerationId).toBe("gen-n1");
   });
 
+  it("「再来一张」还在接受时，只在这个按钮显示进度，并锁住同一张卡的付费内容", async () => {
+    let finish: ((accepted: boolean) => void) | undefined;
+    mocks.generateImage.mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape("9:16") })]);
+    await renderBoard();
+    select(["n1"]);
+    await act(async () => { await Promise.resolve(); });
+
+    const variant = buttonsLabelled("More like this")[0]!;
+    await act(async () => { variant.click(); });
+
+    expect(variant.disabled).toBe(true);
+    expect(variant.textContent).toContain("Starting…");
+    expect(variant.querySelector('[aria-label="Loading"]')).not.toBeNull();
+    expect(cardShapePicker("n1").disabled).toBe(true);
+    const remakeInput = container!.querySelector<HTMLInputElement>(
+      '[data-node="n1"] input[aria-label="Edit this image\'s prompt and make a new image"]',
+    )!;
+    expect(remakeInput.disabled).toBe(true);
+    expect(remakeInput.closest("form")!.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+
+    await act(async () => {
+      finish?.(true);
+      await Promise.resolve();
+    });
+  });
+
   it("商家在卡上换了形状 ⇒ 换的那一格才是交付的形状", async () => {
     mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape("9:16") })]);
     await renderBoard();
@@ -389,6 +455,38 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
 
     const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string };
     expect(options.aspectRatio).toBe("4:3");
+  });
+
+  it("编辑后重做只让送出箭头显示进度，不把旁边的「再来一张」冒充成发起者", async () => {
+    let finish: ((accepted: boolean) => void) | undefined;
+    mocks.generateImage.mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape("4:3") })]);
+    await renderBoard();
+    select(["n1"]);
+    await act(async () => { await Promise.resolve(); });
+
+    const bar = container!.querySelector<HTMLInputElement>(
+      '[data-node="n1"] input[aria-label="Edit this image\'s prompt and make a new image"]',
+    )!;
+    await act(async () => { typeInto(bar, "same cup, warmer light"); });
+    await act(async () => {
+      bar.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    const submit = bar.closest("form")!.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    expect(submit.getAttribute("aria-label")).toBe("Starting a new image");
+    expect(submit.disabled).toBe(true);
+    expect(submit.querySelector('[aria-label="Loading"]')).not.toBeNull();
+    const variant = [...container!.querySelectorAll<HTMLButtonElement>('[data-node="n1"] button')]
+      .find((button) => (button.textContent ?? "").includes("More like this"))!;
+    expect(variant.disabled).toBe(true);
+    expect(variant.textContent).toContain("More like this");
+    expect(variant.textContent).not.toContain("Starting…");
+
+    await act(async () => {
+      finish?.(true);
+      await Promise.resolve();
+    });
   });
 
   it("老图（没有形状记录）⇒ 显示并交付默认方图 —— 那正是它们当年真的形状", async () => {

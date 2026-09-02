@@ -13,14 +13,14 @@
  *  ② `MerchantShellContent` —— 商家表面画壳、非商家表面原样透出内容,不多管导轨怎么画。
  *  ③ 印证横幅(`ImpersonationBanner`)仍然叠在壳之上。
  *
- * 「导轨里的 Ask Otto 拨的是同一个开关」这条 W2-11 新增的接线,钉在
+ * 「utility bar 的 Ask Otto 拨的是同一个开关」这条 Application shell 接线,钉在
  * `otto-panel-mount.test.ts`(它已经有完整的面板挂载测试台,不在这里重复搭一遍)。
  */
 import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { SHELL_ROUTES, merchantNavLinks } from "@fikirtive/core/navigation";
+import { APPLICATION_SHELL_CARVE_OUTS, SHELL_ROUTES, everyNavDestination, merchantNavLinks } from "@fikirtive/core/navigation";
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
 import { MerchantShellContent, isMerchantSurface } from "@/components/global-navigation";
 
@@ -50,8 +50,9 @@ function renderShell(pathname: string) {
 }
 
 describe("isMerchantSurface —— 从权威源推出来,不是手抄的名单 (W2-11)", () => {
-  it("权威源里的每一条目的地都是商家表面", () => {
-    for (const link of merchantNavLinks()) {
+  it("权威源里的每一条非 carve-out 目的地都是商家表面", () => {
+    for (const link of everyNavDestination()) {
+      if (APPLICATION_SHELL_CARVE_OUTS.includes(link.href as (typeof APPLICATION_SHELL_CARVE_OUTS)[number])) continue;
       expect(isMerchantSurface(link.href), link.href).toBe(true);
     }
   });
@@ -61,11 +62,16 @@ describe("isMerchantSurface —— 从权威源推出来,不是手抄的名单 (
     expect(merchantNavLinks().some((link) => link.href === SHELL_ROUTES.profile)).toBe(false);
   });
 
-  it("子路径跟着自己的顶层走", () => {
-    expect(isMerchantSurface(`${SHELL_ROUTES.campaign}/workbench`)).toBe(true);
+  it("approved child surface 跟着 owner,Canvas 与 public share 保持 standalone", () => {
+    expect(isMerchantSurface(SHELL_ROUTES.homeAnalysis)).toBe(true);
+    expect(isMerchantSurface(SHELL_ROUTES.connections)).toBe(true);
+    expect(isMerchantSurface(SHELL_ROUTES.billing)).toBe(true);
+    expect(isMerchantSurface(SHELL_ROUTES.canvas)).toBe(false);
+    expect(isMerchantSurface(SHELL_ROUTES.publicSharePreview)).toBe(false);
+    expect(isMerchantSurface(SHELL_ROUTES.edit)).toBe(false);
   });
 
-  it.each(["/login", "/admin", "/admin/tenants", "/crm", "/crm/reports/report-1"])(
+  it.each(["/login", "/admin", "/admin/tenants", "/crm", "/crm/reports/report-1", "/campaign", "/campaign/workbench", "/schedule"])(
     "%s 不是商家表面",
     (pathname) => {
       expect(isMerchantSurface(pathname)).toBe(false);
@@ -75,11 +81,13 @@ describe("isMerchantSurface —— 从权威源推出来,不是手抄的名单 (
 
 describe("MerchantShellContent —— 只管这一面要不要壳", () => {
   it("在商家表面画出导轨,商家自己的内容原样透出", () => {
-    const markup = renderShell(SHELL_ROUTES.campaign);
+    const markup = renderShell(SHELL_ROUTES.home);
 
     expect(markup).toContain('aria-label="Global navigation"');
-    expect(markup).toContain(`href="${SHELL_ROUTES.campaign}"`);
+    expect(markup).toContain(`href="${SHELL_ROUTES.home}"`);
     expect(markup).toContain(`href="${SHELL_ROUTES.billing}"`);
+    expect(markup).toContain("data-merchant-shell-frame");
+    expect(markup).toContain("data-merchant-topbar");
     expect(markup).toContain("Page content");
   });
 

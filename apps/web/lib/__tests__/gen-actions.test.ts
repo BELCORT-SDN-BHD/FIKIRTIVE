@@ -1399,7 +1399,7 @@ describe("startGen", () => {
     });
 
     expect(result).toEqual({
-      error: "Paused by your spend cap — this needs 3 credits and your cap is 5 credits per action. Raise the cap in Settings to run it.",
+      error: "Paused by your spend cap — this needs 3 credits and your cap is 5 credits per action. Raise the cap in Billing & credits to run it.",
     });
     expect(mockBossSend).not.toHaveBeenCalled();
     expect(db.genJobUpdate).not.toHaveBeenCalled();

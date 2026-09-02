@@ -2,60 +2,58 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { LoaderCircle } from "lucide-react";
 
-/**
- * #940 — the verification email links HERE instead of straight at Better Auth's raw
- * `/api/better-auth/verify-email` route, which has no page behind it. Clicking the old link
- * left the browser blank — no title, no spinner, nothing — for however long verification +
- * auto sign-in + workspace provisioning took server-side (measured ~11s). This component's
- * only job is to paint something readable on the very first frame, then hand off to the real
- * endpoint via a normal top-level navigation (so its Set-Cookie and redirect chain behave
- * exactly as before).
- *
- * Token validation itself is untouched: `token` and `callbackURL` are forwarded verbatim, never
- * inspected or re-encoded here.
- */
-export function VerifyEmailLanding({ token, callbackURL }: { token?: string; callbackURL?: string }) {
+import { AuthPageShell } from "@/components/auth/AuthPageShell";
+import { AuthStepCard } from "@/components/auth/AuthStepCard";
+import { buttonVariants } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { authDestination, authRouteHref } from "@/lib/auth-journey";
+
+/** Paints an immediate state before forwarding to Better Auth's real verification endpoint. */
+export function VerifyEmailLanding({
+  token,
+  callbackURL,
+}: {
+  token?: string;
+  callbackURL?: string;
+}) {
+  const destination = authDestination(callbackURL);
+
   useEffect(() => {
-    if (!token) return; // nothing to forward — the missing-token view below stays up
+    if (!token) return;
     const params = new URLSearchParams({ token });
-    if (callbackURL) params.set("callbackURL", callbackURL);
+    params.set("callbackURL", destination);
     window.location.replace(`/api/better-auth/verify-email?${params.toString()}`);
-  }, [token, callbackURL]);
+  }, [token, destination]);
 
   if (!token) {
     return (
-      <main className="gb flex min-h-[100dvh] w-full items-center justify-center bg-card p-8 sm:p-10">
-        <div className="w-full max-w-[380px] text-center">
-          <h1 className="mb-1.5 text-[25px] font-bold tracking-[-0.02em] text-foreground">
-            This link no longer works
-          </h1>
-          <p className="mb-6 text-[14.5px] leading-[1.55] text-muted-foreground">
-            It may have expired or already been used. Sign in and we can send you a fresh one.
-          </p>
+      <AuthPageShell>
+        <AuthStepCard
+          title="This link no longer works"
+          description="It may have expired or already been used."
+        >
           <Link
-            href="/login"
-            className="inline-flex h-10 w-full items-center justify-center rounded-[var(--radius-card)] border border-border text-[14px] font-semibold text-foreground hover:bg-muted"
+            href={authRouteHref("/login", destination)}
+            className={buttonVariants({ variant: "secondary", className: "w-full" })}
           >
-            Back to sign in
+            Back to login
           </Link>
-        </div>
-      </main>
+        </AuthStepCard>
+      </AuthPageShell>
     );
   }
 
   return (
-    <main
-      className="gb flex min-h-[100dvh] w-full flex-col items-center justify-center gap-3 bg-card p-8 text-center sm:p-10"
-      role="status"
-      aria-live="polite"
-    >
-      <LoaderCircle className="size-7 animate-spin text-muted-foreground" aria-hidden />
-      <p className="text-[15px] font-semibold text-foreground">Signing you in…</p>
-      <p className="max-w-[280px] text-[13.5px] leading-[1.5] text-muted-foreground">
-        Confirming your email and setting up your workspace.
-      </p>
-    </main>
+    <AuthPageShell>
+      <AuthStepCard
+        title="Signing you in…"
+        description="Confirming your email and setting up your workspace."
+      >
+        <div className="flex justify-center" aria-live="polite">
+          <Spinner />
+        </div>
+      </AuthStepCard>
+    </AuthPageShell>
   );
 }

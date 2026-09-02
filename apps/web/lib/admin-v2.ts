@@ -347,9 +347,18 @@ function countsByStatus(rows: { status: string; _count: { _all: number } }[], st
   return out;
 }
 
+/**
+ * #736 —— 名字位与人名位只放**读得懂的名字**。
+ *
+ * 旧写法查不到就把内部 org id 原样填进这两个位置,于是后台的行会写着
+ * `org_01ARZ… · org_01ARZ…` —— 一串机器码站在「这是哪家商家 / 这是谁」的位置上,
+ * 而看的人分不出这是「商家就叫这个」还是「我们不知道」。查不到就如实说查不到:
+ * 空邮箱由界面渲染成 “No owner email on file”,名字位说明这条账目的 workspace
+ * 已经不在租户表里了。id 本身仍在 `row.id` 上,需要追的人查得到,只是不再冒充名字。
+ */
 function ownerName(ownerByOrg: Map<string, { name: string; email: string }>, ownerId: string) {
   if (ownerId === FOUNDER_OWNER_ID) return { name: "Founder workspace", email: "founder" };
-  return ownerByOrg.get(ownerId) ?? { name: ownerId, email: ownerId };
+  return ownerByOrg.get(ownerId) ?? { name: "Workspace no longer on the tenant list", email: "" };
 }
 
 function tenantRisk(status: string, balance: number, lastActiveAt: string | null): TenantHealthRow["risk"] {
@@ -611,10 +620,13 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       }),
     ]);
 
+    // #736 —— 同上:名字缺了就说「没起名字」,没有 owner 就把邮箱留空(界面写
+    // “No owner email on file”),都不拿 org id 顶替。`listTenants` 本来就用空串表示
+    // 「这家没有 owner 成员」(`tenant-admin.test.ts`),这里不许把那句实话改写成机器码。
     const ownerByOrg = new Map(
       tenantResult.tenants.map((tenant) => [
         tenant.orgId,
-        { name: tenant.name || tenant.orgId, email: tenant.ownerEmail || tenant.orgId },
+        { name: tenant.name || "Unnamed workspace", email: tenant.ownerEmail },
       ]),
     );
 

@@ -48,12 +48,30 @@ export async function waitUntilInteractive(locator: Locator): Promise<void> {
     .toBe(true);
 }
 
-/** The spend history list on /billing — one row per thing that happened to the credits. */
+/** The spend history list on /billing — one row per thing that happened to the credits.
+ *
+ *  Anchored on the card's own title text, not on a heading role: the shell draws a card title as
+ *  a styled <div>, so `getByRole("heading")` matches nothing here and this helper would hand back
+ *  an EMPTY locator — which reads downstream as "the product does not show this", not as "the
+ *  journey is looking in the wrong place". */
 export function spendHistory(page: Page): Locator {
-  return page.locator("section").filter({ has: page.getByRole("heading", { name: "Spend history" }) });
+  return page
+    .locator('[data-slot="card"]')
+    .filter({ has: page.getByText("Spend history", { exact: true }) });
 }
 
 /** The persistent left rail: identity, the credits figure, and the way out. */
 export function globalNav(page: Page): Locator {
   return page.getByRole("navigation", { name: "Global navigation" });
+}
+
+/** The rail's credits row — the ONE balance the merchant carries with them on every screen.
+ *
+ *  Journey 7 needs it by name: after the shell swap it is the second place (besides
+ *  /billing) that prints a balance, so it is the other half of "the two wallet surfaces
+ *  agree". Anchored on the row's own data attribute rather than on the number, because a
+ *  journey that matched the number anywhere would pass on the page's own balance card and
+ *  prove nothing. */
+export function railCredits(page: Page): Locator {
+  return page.locator("[data-nav-rail-credits]");
 }

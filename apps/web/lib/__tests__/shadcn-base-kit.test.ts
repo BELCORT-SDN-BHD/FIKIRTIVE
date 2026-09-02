@@ -69,11 +69,17 @@ describe("#840 底座包 — 9 件新组件都真的能渲染", () => {
     expect(host.querySelector('[data-slot="alert-description"]')!.textContent).toContain("No credits were taken.");
   });
 
-  it("Checkbox:是 checkbox 角色,勾选状态出现在 data-state 上", () => {
+  it("Checkbox:是 checkbox 角色,勾选状态读得出来", () => {
     render(h(Checkbox, { checked: true, "aria-label": "Exclude opted-out contacts" }));
     const box = host.querySelector('[data-slot="checkbox"]')!;
     expect(box.getAttribute("role")).toBe("checkbox");
-    expect(box.getAttribute("data-state")).toBe("checked");
+    // Base UI 换基座:勾选态不再是 Radix 的 `data-state="checked"`,而是布尔存在型的
+    // `data-checked` / `data-unchecked`(见 `@base-ui/react/checkbox` 的
+    // CheckboxRootDataAttributes)。钉的东西没变 —— 而且这里改成先钉**读屏听到的**
+    // `aria-checked`,样式钩子只作补充,基座再换一次也不会把这条冒烟钉死。
+    expect(box.getAttribute("aria-checked")).toBe("true");
+    expect(box.hasAttribute("data-checked")).toBe(true);
+    expect(box.hasAttribute("data-unchecked")).toBe(false);
     expect(box.getAttribute("aria-label")).toBe("Exclude opted-out contacts");
   });
 
@@ -98,7 +104,7 @@ describe("#840 底座包 — 9 件新组件都真的能渲染", () => {
     expect(block.className).toContain("w-32");
   });
 
-  it("Tabs:tablist / tab 语义齐,选中的那一格 data-state=active", () => {
+  it("Tabs:tablist / tab 语义齐,选中的那一格宣告自己被选中", () => {
     render(
       h(Tabs, { defaultValue: "chat" },
         h(TabsList, null,
@@ -111,7 +117,11 @@ describe("#840 底座包 — 9 件新组件都真的能渲染", () => {
     expect(host.querySelector('[role="tablist"]')).toBeTruthy();
     const tabs = [...host.querySelectorAll('[role="tab"]')];
     expect(tabs.map((tab) => tab.textContent)).toEqual(["Chat", "Projects"]);
-    expect(tabs[0].getAttribute("data-state")).toBe("active");
+    // 同上:Radix 的 `data-state="active"` 在 Base UI 是存在型的 `data-active`
+    // (TabsTabDataAttributes)。选中态先钉 `aria-selected` —— 那是读屏与键盘真正读的位。
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+    expect(tabs[0].hasAttribute("data-active")).toBe(true);
+    expect(tabs[1].getAttribute("aria-selected")).toBe("false");
     expect(host.querySelector('[role="tabpanel"]')!.textContent).toBe("Chat panel");
   });
 

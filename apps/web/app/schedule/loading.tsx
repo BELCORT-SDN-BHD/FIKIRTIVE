@@ -8,17 +8,18 @@ import { Skeleton } from "@/components/ui/skeleton";
  */
 export default function ScheduleLoading() {
   return (
-    <div className="mx-auto w-full max-w-[920px] px-7 py-6" aria-busy="true">
-      <Skeleton className="h-9 w-40" />
-      <div className="mt-4 flex gap-2">
-        <Skeleton className="h-7 w-28 rounded-full" />
-        <Skeleton className="h-7 w-28 rounded-full" />
+    <div className="mx-auto w-full max-w-[1280px] px-5 py-6 md:px-8 lg:py-8" aria-busy="true">
+      <div className="flex items-start gap-4 border-b border-border pb-5">
+        <div className="flex flex-1 flex-col gap-2">
+          <Skeleton className="h-8 w-40" />
+          <Skeleton className="h-4 w-full max-w-md" />
+        </div>
+        <Skeleton className="h-8 w-28" />
       </div>
-      <Skeleton className="mt-6 h-[72px] w-full rounded-[16px]" />
-      <div className="mt-4 flex flex-col gap-2">
-        <Skeleton className="h-16 w-full rounded-[14px]" />
-        <Skeleton className="h-16 w-full rounded-[14px]" />
-        <Skeleton className="h-16 w-full rounded-[14px]" />
+      <Skeleton className="mt-5 h-24 w-full rounded-[var(--radius-card)]" />
+      <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.75fr)]">
+        <Skeleton className="h-[360px] w-full rounded-[var(--radius-card)]" />
+        <Skeleton className="h-[280px] w-full rounded-[var(--radius-card)]" />
       </div>
       <span className="sr-only">Loading your schedule</span>
     </div>

@@ -2,8 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { merchantNavLinks } from "@fikirtive/core/navigation";
+import {
+  APPLICATION_SHELL_CARVE_OUTS,
+  MERCHANT_NAV_REDIRECTS,
+  NAVIGATION_OWNED_SURFACES,
+  everyNavDestination,
+} from "@fikirtive/core/navigation";
 import { NavigationRail, type RailAccount } from "@/components/navigation/rail/NavigationRail";
+import { MerchantTopBar } from "@/components/navigation/MerchantTopBar";
 import { navMatchesLocation, splitLocation } from "@/components/navigation/rail/rail-tree";
 import { OttoPanelMount } from "@/components/otto/panel/OttoPanelMount";
 import { useOttoPanelControls } from "@/components/otto/panel/OttoPanelShell";
@@ -27,7 +33,10 @@ import { createLatestReadGate, subscribeBalanceRefresh } from "@/lib/balance-ref
  *  destination can never land on a page with no rail around it. `/profile` is a shell
  *  surface reachable from the identity menu rather than a nav destination of its own. */
 const MERCHANT_SURFACE_PATHS: readonly string[] = [
-  ...new Set([...merchantNavLinks().map((item) => splitLocation(item.href).path), "/profile"]),
+  ...new Set([
+    ...everyNavDestination().map((item) => splitLocation(item.href).path),
+    ...NAVIGATION_OWNED_SURFACES.map((surface) => splitLocation(surface.href).path),
+  ]),
 ];
 
 /**
@@ -43,15 +52,21 @@ const MERCHANT_SURFACE_PATHS: readonly string[] = [
  * (`schedule/share-preview`, `exact`) — the two ledgers answer different questions (who needs a
  * session vs. who gets the shell drawn around them) so they are not merged, but they agree here.
  */
-const SHARE_PREVIEW_PATH = "/schedule/share-preview";
-
 export function isMerchantSurface(pathname: string): boolean {
-  if (navMatchesLocation(pathname, SHARE_PREVIEW_PATH)) return false;
+  const path = splitLocation(pathname).path;
+  const isAtOrBelow = (href: string) => {
+    const base = splitLocation(href).path.replace(/\/$/, "");
+    return path === base || path.startsWith(`${base}/`);
+  };
+  if (MERCHANT_NAV_REDIRECTS.some((route) => isAtOrBelow(route.from))) return false;
+  if (
+    APPLICATION_SHELL_CARVE_OUTS.some((href) => isAtOrBelow(href))
+  ) return false;
   return MERCHANT_SURFACE_PATHS.some((href) => navMatchesLocation(pathname, href));
 }
 
 /**
- * 导轨里那颗 Ask Otto —— 必须挂在 `OttoPanelMount` 之内才够得着
+ * Utility bar 里的 Ask Otto 必须挂在 `OttoPanelMount` 之内才够得着
  * `useOttoPanelControls()`(那个 context 由 `OttoPanelShell` 往下发,只喂给它的后代)。
  *
  * 面板没有挂在这一面时(今天只有画布,见 `panel-surface.ts`)`controls` 是 `null` ——
@@ -61,23 +76,58 @@ export function isMerchantSurface(pathname: string): boolean {
  * 那次 `OttoPanelMount` 内部形状切换(fragment ↔ `OttoPanelShell`)会让这一层重挂,状态
  * 留在父层就不会跟着闪一下。
  */
-function NavigationRailContainer({
+export function MerchantShellFrame({
+  children,
   pathname,
   signOutAction,
   account,
+  navigationHrefOverrides,
+  visibleTopLevelNavigationKeys,
+  flattenedNavigationGroupKeys,
+  topBarLabel,
+  profileHref,
+  creditsHref,
+  showSignOutAction,
 }: {
+  children: React.ReactNode;
   pathname: string;
   signOutAction: () => Promise<void>;
   account: RailAccount | null;
+  navigationHrefOverrides?: Readonly<Record<string, string>>;
+  visibleTopLevelNavigationKeys?: readonly string[];
+  flattenedNavigationGroupKeys?: readonly string[];
+  topBarLabel?: string;
+  profileHref?: string;
+  creditsHref?: string;
+  showSignOutAction?: boolean;
 }) {
   const controls = useOttoPanelControls();
+
   return (
-    <NavigationRail
-      pathname={pathname}
-      onAskOtto={() => controls?.togglePanel()}
-      signOutAction={signOutAction}
-      account={account}
-    />
+    <div data-merchant-shell-frame className="flex h-dvh min-w-0 overflow-hidden bg-background text-foreground">
+      <NavigationRail
+        pathname={pathname}
+        account={account}
+        hrefOverrides={navigationHrefOverrides}
+        visibleTopLevelKeys={visibleTopLevelNavigationKeys}
+        flattenedGroupKeys={flattenedNavigationGroupKeys}
+        creditsHref={creditsHref}
+      />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <MerchantTopBar
+          pathname={pathname}
+          account={account}
+          signOutAction={signOutAction}
+          onAskOtto={() => controls?.togglePanel()}
+          activeLabelOverride={topBarLabel}
+          profileHref={profileHref}
+          showSignOutAction={showSignOutAction}
+        />
+        <div data-merchant-shell-content className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+          {children}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -134,12 +184,11 @@ export function MerchantShellContent({
       {/* #994(W2-7)/W2-11 —— 面板停在内容列右侧。导轨、主内容、面板是同一行里的兄弟:
           导轨宽度不随面板开合而变,主内容让给面板;没有遮罩,没有 `pointer-events: none`
           (spec §3.5 ①)。导轨必须挂在 `OttoPanelMount` 内部(而不是它旁边),才能读到
-          面板的开合状态机去驱动 Ask Otto 按钮。 */}
+          面板的开合状态机去驱动 utility bar 的 Ask Otto 按钮。 */}
       <OttoPanelMount location={pathname}>
-        <div className="flex min-h-dvh min-w-0">
-          <NavigationRailContainer pathname={pathname} signOutAction={signOutAction} account={account} />
-          <div className="min-h-dvh min-w-0 flex-1">{children}</div>
-        </div>
+        <MerchantShellFrame pathname={pathname} signOutAction={signOutAction} account={account}>
+          {children}
+        </MerchantShellFrame>
       </OttoPanelMount>
     </div>
   );

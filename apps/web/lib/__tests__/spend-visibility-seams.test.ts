@@ -217,20 +217,20 @@ describe("Card prompt-bar price tag seam (#550 ② · #547 A4)", () => {
 
   it("an image card's bar says image, and never video", () => {
     const src = read(IMAGE_NODE);
-    const ariaLabels = [...src.matchAll(/aria-label="([^"]*)"/g)].map((m) => m[1]!);
-    const barLabel = ariaLabels.find((label) => /prompt/i.test(label) && /make/i.test(label));
+    const controlLabels = [...src.matchAll(/(?:aria-label|inputLabel)="([^"]*)"/g)].map((m) => m[1]!);
+    const barLabel = controlLabels.find((label) => /prompt/i.test(label) && /make/i.test(label));
 
     expect(barLabel).toBeDefined();
     expect(barLabel).toMatch(/image/i);
     // The old contradiction, in both of its spellings.
-    expect(ariaLabels).not.toContain("Evolve this image");
-    expect(ariaLabels.filter((label) => /video/i.test(label))).toEqual([]);
+    expect(controlLabels).not.toContain("Evolve this image");
+    expect(controlLabels.filter((label) => /video/i.test(label))).toEqual([]);
   });
 
   it("a video card's bar says video and keeps the no-charge-until-you-confirm promise", () => {
     const src = read(VIDEO_NODE);
-    const ariaLabels = [...src.matchAll(/aria-label="([^"]*)"/g)].map((m) => m[1]!);
-    const barLabel = ariaLabels.find((label) => /prompt/i.test(label) && /make/i.test(label));
+    const controlLabels = [...src.matchAll(/(?:aria-label|inputLabel)="([^"]*)"/g)].map((m) => m[1]!);
+    const barLabel = controlLabels.find((label) => /prompt/i.test(label) && /make/i.test(label));
 
     expect(barLabel).toBeDefined();
     expect(barLabel).toMatch(/video/i);

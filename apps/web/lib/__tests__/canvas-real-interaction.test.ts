@@ -51,7 +51,7 @@ vi.mock("@/lib/canvas-actions", () => ({
 }));
 vi.mock("@/lib/otto-canvas-bridge", () => ({ syncOttoCanvasNodes: mocks.boardRead }));
 vi.mock("@/lib/actions", () => ({ uploadReference: mocks.uploadReference }));
-vi.mock("sonner", () => ({
+vi.mock("@/components/ui/toast", () => ({
   toast: { error: mocks.toastError, success: mocks.toastSuccess, message: mocks.toastMessage },
 }));
 vi.mock("@/components/asset/DetailPanel", () => ({ default: () => null }));
@@ -184,6 +184,13 @@ async function pressWithPointer(el: Element): Promise<void> {
   });
 }
 
+async function click(el: Element): Promise<void> {
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    await Promise.resolve();
+  });
+}
+
 async function pressKey(el: Element, key: string): Promise<void> {
   await act(async () => {
     el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
@@ -276,6 +283,42 @@ async function tabUntil(
 }
 
 const SEND_TO_OTTO = "Send to Otto";
+
+describe("Canvas board feedback", () => {
+  it("shows an honest loading status until the first board read lands", async () => {
+    let finishRead!: (rows: unknown[]) => void;
+    mocks.boardRead.mockReturnValue(new Promise((resolve) => { finishRead = resolve; }));
+
+    await renderBoard();
+
+    expect(container!.querySelector('[role="status"]')?.textContent).toContain("Loading canvas…");
+
+    await act(async () => {
+      finishRead([]);
+      await Promise.resolve();
+    });
+
+    expect(container!.textContent).not.toContain("Loading canvas…");
+  });
+
+  it("explains a failed read and lets Retry clear the notice", async () => {
+    mocks.boardRead
+      .mockResolvedValueOnce({ error: "Canvas unavailable." })
+      .mockResolvedValueOnce([]);
+
+    await renderBoard();
+
+    const notice = container!.querySelector<HTMLElement>('[role="alert"]');
+    expect(notice?.textContent).toContain("Couldn't refresh Canvas");
+    expect(notice?.textContent).toContain("Nothing on your board was changed.");
+
+    const retry = buttonsLabelled("Retry");
+    expect(retry).toHaveLength(1);
+    await click(retry[0]!);
+
+    expect(container!.querySelector('[role="alert"]')).toBeNull();
+  });
+});
 
 describe("a real click on a card (real React Flow, real pointer events) — #604 r2 P3", () => {
   it("picks the card up, and hands Otto nothing", async () => {

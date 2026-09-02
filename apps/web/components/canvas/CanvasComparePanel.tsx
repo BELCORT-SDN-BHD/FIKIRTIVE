@@ -9,9 +9,11 @@
  * 只认落盘事实:真的一次生成出来的两张,别的都不开门。
  */
 
-import { useEffect, useRef } from "react";
 import type { CanvasComparePair } from "@/lib/canvas-batch-identity";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 
 export type CanvasCompareCard = {
   id: string;
@@ -23,23 +25,31 @@ export type CanvasCompareCard = {
 function CompareSide({ card, label }: { card: CanvasCompareCard; label: string }) {
   const said = (card.prompt ?? "").trim();
   return (
-    <div data-compare-side={card.id} className="cv-compare-side">
-      <div className="cv-compare-side-head">
-        <span className="cv-compare-label">{label}</span>
-        <span className="cv-compare-said">{said || "No description kept"}</span>
-      </div>
-      <div className="cv-compare-media">
+    <Card size="sm" data-compare-side={card.id} className="cv-compare-side">
+      <CardHeader className="cv-compare-side-head">
+        <Badge variant="outline" className="cv-compare-label">{label}</Badge>
+        <div className="min-w-0">
+          <CardTitle className="sr-only">Option {label}</CardTitle>
+          <CardDescription className="cv-compare-said">{said || "No description kept"}</CardDescription>
+        </div>
+      </CardHeader>
+      <CardContent className="cv-compare-media">
         {card.url === null ? (
           // A card with no media has nothing to compare — say so instead of showing a blank box.
-          <span className="cv-compare-nomedia">Nothing to show for this card yet.</span>
+          <Empty className="cv-compare-empty">
+            <EmptyHeader>
+              <EmptyTitle>Preview unavailable</EmptyTitle>
+              <EmptyDescription>Nothing to show for this card yet.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : card.type === "video" ? (
           <video src={card.url} controls playsInline preload="metadata" aria-label={said || "Video"} />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={card.url} alt={said || "Image"} />
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -54,46 +64,19 @@ export function CanvasComparePanel({
   right: CanvasCompareCard;
   onClose: () => void;
 }) {
-  const frameRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    frameRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
   return (
-    <div
-      ref={frameRef}
-      role="dialog"
-      aria-modal="true"
-      aria-label={pair.title}
-      tabIndex={-1}
-      className="cv-compare"
-    >
-      <header className="cv-compare-head">
-        <span className="cv-compare-title">{pair.title}</span>
-        {/* #840 车4:`al-btn al-btn-sm` = 透明底/透明边/继承色的小键 → ghost + 显式压回
-            al-btn-sm 的高度、内距与字号(圆角天生同值)。 */}
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-auto px-[13px] py-1.5 text-[12.5px]"
-          aria-label="Close compare"
-          onClick={onClose}
-        >
-          Close
-        </Button>
-      </header>
-      <div className="cv-compare-grid">
-        <CompareSide card={left} label={pair.left.label} />
-        <CompareSide card={right} label={pair.right.label} />
-      </div>
-    </div>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="cv-compare max-h-[calc(100dvh-2rem)] max-w-[min(1120px,calc(100vw-2rem))] overflow-hidden p-4 sm:p-5">
+        <DialogHeader className="pr-10">
+          <DialogTitle>{pair.title}</DialogTitle>
+          <DialogDescription>Review both outputs at the same scale before choosing.</DialogDescription>
+        </DialogHeader>
+        <div className="cv-compare-grid">
+          <CompareSide card={left} label={pair.left.label} />
+          <CompareSide card={right} label={pair.right.label} />
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

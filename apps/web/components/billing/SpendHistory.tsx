@@ -1,6 +1,18 @@
 import { formatCredits } from "@/lib/credit-format";
 import { countCharges, type SpendEntry } from "@/lib/spend-history";
 import type { SpendWindow } from "@/lib/spend-history-data";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ReceiptText } from "lucide-react";
 
 /** Say what this list covers, and how much of it is money going OUT.
  *
@@ -41,64 +53,67 @@ export function windowSummary(window: SpendWindow, entries: readonly SpendEntry[
  */
 export function SpendHistory({ entries, window }: { entries: SpendEntry[]; window: SpendWindow }) {
   return (
-    <section style={{ marginTop: 28 }}>
-      <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>Spend history</h2>
-      <p className="text-muted-foreground" style={{ fontSize: 14, margin: "0 0 12px" }}>
-        {entries.length === 0
-          ? "Chat and Review are Otto’s conversation turns; they show up here as soon as you use them."
-          : `${windowSummary(window, entries)} Chat and Review are Otto’s conversation turns.`}
-      </p>
-
-      {entries.length === 0 ? (
-        <div className="text-muted-foreground" style={{ fontSize: 14 }}>
-          No credit activity yet.
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <ReceiptText className="size-4 text-muted-foreground" aria-hidden />
+            <CardTitle>Spend history</CardTitle>
+          </div>
+          {entries.length > 0 ? <Badge variant="outline">{entries.length} entries</Badge> : null}
         </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {entries.map((entry) => (
-            <div
-              key={entry.id}
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                justifyContent: "space-between",
-                gap: 12,
-                padding: "10px 14px",
-                borderRadius: "var(--radius-card)",
-                border: "1px solid var(--border)",
-                background: "var(--card)",
-                flexWrap: "wrap",
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 15, fontWeight: 500 }}>{entry.label}</div>
-                {entry.detail ? (
-                  <div className="text-muted-foreground" style={{ fontSize: 13, marginTop: 2 }}>
-                    {entry.detail}
-                  </div>
-                ) : null}
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div
-                  style={{
-                    fontSize: 15,
-                    fontFamily: "var(--font-mono)",
-                    fontVariantNumeric: "tabular-nums",
-                    color: entry.delta > 0 ? "var(--success-soft-foreground)" : "var(--foreground)",
-                  }}
-                >
-                  {entry.delta > 0 ? "+" : ""}
-                  {formatCredits(entry.delta)}
-                </div>
-                <div className="text-muted-foreground" style={{ fontSize: 13, marginTop: 2 }}>
-                  {entry.atLabel}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
+        <CardDescription>
+          {entries.length === 0
+            ? "Charges, top-ups, refunds, and held credits will appear here."
+            : `${windowSummary(window, entries)} Chat and Review are Otto’s conversation turns.`}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {entries.length === 0 ? (
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><ReceiptText aria-hidden /></EmptyMedia>
+              <EmptyTitle>No credit activity yet</EmptyTitle>
+              <EmptyDescription>Your first charge or top-up will appear here with its final amount.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Activity</TableHead>
+                <TableHead className="hidden sm:table-cell">Details</TableHead>
+                <TableHead className="hidden md:table-cell">Date</TableHead>
+                <TableHead className="text-right">Credits</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {entries.map((entry) => (
+                <TableRow key={entry.id}>
+                  <TableCell>
+                    <div className="flex items-center gap-2 font-medium">
+                      {entry.label}
+                      {entry.pending ? <Badge variant="warning">Held</Badge> : null}
+                    </div>
+                  </TableCell>
+                  <TableCell className="hidden max-w-md whitespace-normal text-muted-foreground sm:table-cell">
+                    {entry.detail ?? "—"}
+                  </TableCell>
+                  <TableCell className="hidden text-muted-foreground md:table-cell">{entry.atLabel}</TableCell>
+                  <TableCell className="text-right font-mono font-medium tabular-nums">
+                    {entry.delta > 0 ? (
+                      <Badge variant="success">+{formatCredits(entry.delta)}</Badge>
+                    ) : (
+                      formatCredits(entry.delta)
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

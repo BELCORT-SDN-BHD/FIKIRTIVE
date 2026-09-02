@@ -9,8 +9,9 @@ import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { getMyAccount } from "@/lib/account-actions";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
-import { getCoworkThreads, getEntities, getProjects } from "@/lib/data";
-import { toEntityDTO } from "@/lib/dto";
+import { getCoworkThreadPage, getCoworkThreads, getEntities, getProjects, resolveCoworkResultUrls } from "@/lib/data";
+import { toChatThreadDTO, toEntityDTO } from "@/lib/dto";
+import { getCanvasConversationHandoff } from "@/lib/canvas-entry-actions";
 
 export type ImmersiveCanvasSearchParams = Record<
   string,
@@ -120,6 +121,37 @@ export async function ImmersiveCanvasEntry({
     );
   }
 
+  const activeThreadRow = threadSelection.activeThreadId
+    ? await getCoworkThreadPage(owner.ownerId, threadSelection.activeThreadId)
+    : null;
+  const resultUrls = activeThreadRow
+    ? await resolveCoworkResultUrls(owner.ownerId, [activeThreadRow])
+    : new Map();
+  const activeThread = activeThreadRow
+    ? { ...toChatThreadDTO(activeThreadRow, resultUrls), hasOlderMessages: activeThreadRow.hasOlderMessages }
+    : null;
+  const handoffId = firstSearchParam(sp.handoff);
+  const handoff = handoffId && activeThread && activeThread.messages.length === 0
+    ? await getCanvasConversationHandoff({
+        ownerId: owner.ownerId,
+        handoffId,
+        projectId: projectSelection.activeProjectId,
+        threadId: activeThread.id,
+      })
+    : null;
+
+  if (handoffId && !handoff) {
+    const clean = { ...sp };
+    delete clean.handoff;
+    redirect(
+      buildImmersiveCanvasCanonicalUrl(clean, {
+        activeProjectId: projectSelection.activeProjectId,
+        activeThreadId: threadSelection.activeThreadId,
+        canonicalizeThread: true,
+      }),
+    );
+  }
+
   const runtimeContext: ImmersiveCanvasRuntimeContext = {
     projects: projects.map((project) => ({ id: project.id, name: project.name })),
     threads: threadRows.map((thread) => ({
@@ -132,6 +164,9 @@ export async function ImmersiveCanvasEntry({
     activeProjectId: projectSelection.activeProjectId,
     activeThreadId: threadSelection.activeThreadId,
     initialBalance: "error" in accountResult ? 0 : accountResult.balance,
+    initialBalanceUsd: "error" in accountResult ? 0 : accountResult.balanceUsd,
+    activeThread,
+    pendingFirst: handoffId && handoff ? { handoffId, text: handoff.prompt } : null,
   };
 
   // #600 (spec #599 D1/D2): this page mounts the mature canvas kernel (FlowCanvas / @xyflow)

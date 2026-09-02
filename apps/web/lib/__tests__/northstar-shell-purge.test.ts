@@ -193,8 +193,36 @@ const BANNED_COPY = ["This will spend real credits", "upgrade ticket", "1,240"] 
  *
  * 只豁免短语这一条:「碰不到样板数据」(FIXTURE_MODULES)仍然全图有效 —— 那一条挡的是
  * 假数据本身,而假数据在哪里都不该被壳碰到。
+ *
+ * FRONT(前端基线合并,`docs/specs/frontend-baseline.md`):这一对**回来了**,而且这一次不是
+ * 搭便车。新壳的画布页把 Otto 真的接进了工作面,可达链是一条真的业务链,不是一个无关的
+ * import 顺手捎带:
+ *
+ *   app/create/canvas/page.tsx
+ *     → components/canvas/ImmersiveCanvasEntry.tsx
+ *     → components/canvas/NorthstarCanvasWorkspace.tsx
+ *     → components/canvas/CanvasOttoOverlay.tsx
+ *     → components/otto/OttoChatStream.tsx
+ *     → components/otto/StoryboardCard.tsx
+ *
+ * 那张卡上的「This will spend real credits」是**真话** —— 按下去真的扣钱,由钱路的 ledger
+ * 与幂等键证明。这条围栏挡的是北极星那些**假**的经营承诺(一个不会扣钱却说自己会扣钱的
+ * 假 Otto 小窗),不是审真产品的文案。仍然只豁免这一条短语:「upgrade ticket」与「1,240」
+ * 在这条可达链上一处都没有(下面那条「没变成通行证」的断言逐条核这件事)。
+ *
+ * 判官 2026-09-02(h):范围从整棵 `components/otto/` 收到**那一张卡自己**。那句话今天只印在
+ * `StoryboardCard.tsx` 上(实查:全 apps/web 只有它的四处)。豁免整棵树等于替这棵树里
+ * **将来**任何一份文件先签了字 —— 明天有人在 Otto 树里另写一句一模一样的承诺,而它背后
+ * 并没有一次真的扣钱,这条围栏会一声不响地放行。豁免只有它需要的那么大,这一条从「一棵树 ×
+ * 一条短语」收成「一个文件 × 一条短语」。
  */
-const BANNED_COPY_EXEMPTIONS: ReadonlyArray<{ tree: string; phrase: (typeof BANNED_COPY)[number]; why: string }> = [];
+const BANNED_COPY_EXEMPTIONS: ReadonlyArray<{ tree: string; phrase: (typeof BANNED_COPY)[number]; why: string }> = [
+  {
+    tree: "components/otto/StoryboardCard.tsx",
+    phrase: "This will spend real credits",
+    why: "新壳的画布把真 Otto 会话树接进工作面(canvas → CanvasOttoOverlay → OttoChatStream → StoryboardCard);那句话印在这张真审批卡上,按下去真的扣钱。",
+  },
+];
 
 function exempt(relativePath: string, phrase: string): boolean {
   return BANNED_COPY_EXEMPTIONS.some((row) => relativePath.startsWith(row.tree) && row.phrase === phrase);
@@ -231,6 +259,14 @@ describe("六扇门合流", () => {
     // 一条单层导轨(任何宽度下都在,不再需要一个抽屉入口来够到它)。
     expect(shell).not.toContain("useOpenGlobalNavigation");
     expect(shell).not.toContain("useGlobalNavigationOpen");
+  });
+
+  it("高频切页不让整个工作面重复做进场动画", () => {
+    const shell = readFileSync(resolve(WEB_ROOT, "components/northstar/immersive/immersive-shell.tsx"), "utf8");
+
+    expect(shell).not.toContain("usePathname");
+    expect(shell).not.toContain("@keyframes");
+    expect(shell).not.toMatch(/style=\{[^}]*animation/);
   });
 });
 

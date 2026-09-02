@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { formatElapsed, QUEUE_WAIT_NOTE } from "@/lib/progress-format";
 import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate, coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
@@ -497,9 +498,11 @@ export function OttoPlanCard({
           // 商家在批准按钮上撞到它、已经决定要付钱了,还得自己去找 Billing 在哪(beta 录像
           // 10:32,原地停了 40 秒)。`ErrorWithTopUp` 只认服务端那一份 CTA 字面量,别的错误
           // 原样渲染,不会凭空长出充值链接。
-          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
-            <ErrorWithTopUp text={error} />
-          </div>
+          <Alert role="alert" variant="destructive" density="compact" className="mt-2">
+            <AlertDescription>
+              <ErrorWithTopUp text={error} />
+            </AlertDescription>
+          </Alert>
         ) : (
           <div className="mt-3 flex items-center gap-[6px] text-[0.75rem] text-muted-foreground/70">
             <ShieldCheck size={15} /> Otto only makes this after you approve. {CHAT_SPEND_NOTE}

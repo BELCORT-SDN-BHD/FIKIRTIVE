@@ -8,6 +8,16 @@ import { orgRolesAllow } from "@fikirtive/core/org-roles";
 import { createBroadcastRun } from "@/lib/customer-broadcast-ui-actions";
 import type { getBroadcastComposerOptions, getMemberDirectory } from "@/lib/customer-broadcast-gateway";
 import { Button } from "@/components/ui/button";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   channelConnectionFromAccounts,
   channelConnectionHeadline,
@@ -20,9 +30,6 @@ type OptionsResult = Awaited<ReturnType<typeof getBroadcastComposerOptions>>;
 type OptionsSuccess = Extract<OptionsResult, { ok: true }>;
 type Options = OptionsSuccess["resource"];
 type DirectoryResult = Awaited<ReturnType<typeof getMemberDirectory>>;
-
-const selectClass =
-  "min-h-11 w-full rounded-[var(--radius-input)] border border-border bg-background px-3 text-sm text-foreground shadow-[var(--shadow-xs)] focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50";
 
 function Notice({ title, message }: { title: string; message: string }) {
   return (
@@ -121,14 +128,15 @@ export default function BroadcastComposerPage({
           <ArrowLeft className="size-4" />Back to broadcasts
         </Link>
         <div className="mt-4 flex items-center gap-3">
-          <span className="grid size-11 place-items-center rounded-xl bg-brand-soft text-brand"><Megaphone className="size-5" /></span>
+          <span className="grid size-11 place-items-center rounded-xl bg-accent text-foreground"><Megaphone className="size-5" /></span>
           <div>
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">New broadcast</h1>
             <p className="text-sm text-muted-foreground">Choose the channel, template, and audience. Nothing is sent — the next step is a simulated run.</p>
           </div>
         </div>
 
-        <form className="mt-8 grid gap-6" onSubmit={onSubmit}>
+        <form className="mt-8 flex flex-col gap-6" onSubmit={onSubmit}>
+          <FieldGroup className="gap-6">
           {/* 判官 r2 P1-1: the dropdown exists when an ACCOUNT exists. A lapsed connection still
               leaves an identity this form can name, and the banner above already says the
               connection is not live — the form does not get to invent a second refusal. */}
@@ -137,8 +145,8 @@ export default function BroadcastComposerPage({
             // empty dropdown. No CTA into Connections: Messaging has no connect button there
             // yet, so that button was a dead end. Create stays disabled until a channel
             // account exists.
-            <div className="grid gap-2">
-              <span className="text-sm font-semibold">Channel account</span>
+            <Field>
+              <FieldLabel>Channel account</FieldLabel>
               <div className="rounded-xl border border-dashed border-border bg-card px-4 py-8 text-center">
                 <Unplug className="mx-auto size-6 text-muted-foreground" />
                 {/* #727 — same words as every other CRM surface, from the one authority. */}
@@ -147,55 +155,75 @@ export default function BroadcastComposerPage({
                   {channelUnavailableCopy("A broadcast goes out through a connected channel account.")}
                 </p>
               </div>
-            </div>
+            </Field>
           ) : (
-            <label className="grid gap-2">
-              <span className="text-sm font-semibold">Channel account</span>
-              <select className={selectClass} value={channelScopeId} onChange={(e) => { setChannelScopeId(e.target.value); setTemplateVersionId(""); }} disabled={submitting}>
-                <option value="">Select a channel account…</option>
-                {options.channelScopes.map((scope) => (
-                  <option key={scope.id} value={scope.id}>{channelAccountLabel(scope)}</option>
-                ))}
-              </select>
-            </label>
+            <Field>
+              <FieldLabel htmlFor="broadcast-channel-account">Channel account</FieldLabel>
+              <Select value={channelScopeId} onValueChange={(value) => { setChannelScopeId(value); setTemplateVersionId(""); }} disabled={submitting}>
+                <SelectTrigger id="broadcast-channel-account" className="w-full" aria-label="Channel account">
+                  <SelectValue placeholder="Select a channel account…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {options.channelScopes.map((scope) => (
+                      <SelectItem key={scope.id} value={scope.id}>{channelAccountLabel(scope)}</SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
           )}
 
-          <label className="grid gap-2">
-            <span className="text-sm font-semibold">Template version</span>
-            <select className={selectClass} value={templateVersionId} onChange={(e) => setTemplateVersionId(e.target.value)} disabled={submitting}>
-              <option value="">Select a template…</option>
-              {templatesForScope.map((v) => (
-                <option key={v.id} value={v.id} disabled={!v.broadcastPurpose}>
-                  {v.template.name} · v{v.revision} ({v.broadcastPurpose ? purposeLabel(v.broadcastPurpose) : "Unavailable"})
-                </option>
-              ))}
-            </select>
-          </label>
+          <Field>
+            <FieldLabel htmlFor="broadcast-template-version">Template version</FieldLabel>
+            <Select value={templateVersionId} onValueChange={setTemplateVersionId} disabled={submitting}>
+              <SelectTrigger id="broadcast-template-version" className="w-full" aria-label="Template version">
+                <SelectValue placeholder="Select a template…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {templatesForScope.map((version) => (
+                    <SelectItem key={version.id} value={version.id} disabled={!version.broadcastPurpose}>
+                      {version.template.name} · v{version.revision} ({version.broadcastPurpose ? purposeLabel(version.broadcastPurpose) : "Unavailable"})
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
 
-          <div className="grid gap-2">
-            <span className="text-sm font-semibold">Purpose</span>
-            <div className={`${selectClass} flex items-center`} aria-live="polite">
-              {selectedPurpose ? purposeLabel(selectedPurpose) : "Select a template to see its purpose"}
-            </div>
-            <span className="text-xs text-muted-foreground">Purpose comes from the template&apos;s stored classification and cannot be changed here.</span>
-          </div>
+          <Field>
+            <FieldLabel htmlFor="broadcast-purpose">Purpose</FieldLabel>
+            <Input id="broadcast-purpose" readOnly aria-live="polite" value={selectedPurpose ? purposeLabel(selectedPurpose) : "Select a template to see its purpose"} />
+            <FieldDescription>Purpose comes from the template&apos;s stored classification and cannot be changed here.</FieldDescription>
+          </Field>
 
-          <label className="grid gap-2">
-            <span className="text-sm font-semibold">Campaign <span className="font-normal text-muted-foreground">(optional grouping)</span></span>
-            <select className={selectClass} value={campaignId} onChange={(e) => setCampaignId(e.target.value)} disabled={submitting}>
-              <option value="">No campaign</option>
-              {options.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </label>
+          <Field>
+            <FieldLabel htmlFor="broadcast-campaign">Campaign <span className="font-normal text-muted-foreground">(optional grouping)</span></FieldLabel>
+            <Select value={campaignId || "__no_campaign__"} onValueChange={(value) => setCampaignId(value === "__no_campaign__" ? "" : value)} disabled={submitting}>
+              <SelectTrigger id="broadcast-campaign" className="w-full" aria-label="Campaign"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="__no_campaign__">No campaign</SelectItem>
+                  {options.campaigns.map((campaign) => <SelectItem key={campaign.id} value={campaign.id}>{campaign.name}</SelectItem>)}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
 
-          <label className="grid gap-2">
-            <span className="text-sm font-semibold">Audience segment</span>
-            <select className={selectClass} value={segmentId} onChange={(e) => setSegmentId(e.target.value)} disabled={submitting}>
-              <option value="">Select a segment…</option>
-              {options.segments.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-            <span className="text-xs text-muted-foreground">Contacts with unknown permission stay in the audience — they are flagged, never dropped.</span>
-          </label>
+          <Field>
+            <FieldLabel htmlFor="broadcast-audience-segment">Audience segment</FieldLabel>
+            <Select value={segmentId} onValueChange={setSegmentId} disabled={submitting}>
+              <SelectTrigger id="broadcast-audience-segment" className="w-full" aria-label="Audience segment"><SelectValue placeholder="Select a segment…" /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {options.segments.map((segment) => <SelectItem key={segment.id} value={segment.id}>{segment.name}</SelectItem>)}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <FieldDescription>Contacts with unknown permission stay in the audience — they are flagged, never dropped.</FieldDescription>
+          </Field>
+          </FieldGroup>
 
           {errorCode ? <p className="text-sm text-destructive">{errorMessage(errorCode)}</p> : null}
 

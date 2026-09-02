@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { AlertTriangle, Archive, LoaderCircle, Power, Unplug } from "lucide-react";
+import { useRef, useState } from "react";
+import { AlertTriangle, Archive, Power, Unplug } from "lucide-react";
 import {
   archiveWorkflowDefinition,
   getWorkflowDefinition,
@@ -10,14 +10,18 @@ import {
 } from "@/lib/customer-workflow-ui-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Spinner } from "@/components/ui/spinner";
 import { workflowErrorMessage } from "./workflow-format";
 
 type DefinitionResult = Awaited<ReturnType<typeof getWorkflowDefinition>>;
@@ -42,11 +46,15 @@ export default function ArchiveWorkflowDialog({
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [references, setReferences] = useState<ArchiveRoutineReference[] | null>(null);
   const [confirmed, setConfirmed] = useState<string[]>([]);
+  const readingRef = useRef(false);
+  const mutatingRef = useRef(false);
   const active = references?.filter((routine) => routine.active) ?? null;
   const allReviewed = active !== null && active.every((routine) => confirmed.includes(routine.id));
   const exactMessage = active ? `Archiving does not stop these ${active.length} active Routines` : null;
 
   async function openDialog() {
+    if (readingRef.current) return;
+    readingRef.current = true;
     setOpen(true);
     setReferences(null);
     setConfirmed([]);
@@ -85,12 +93,15 @@ export default function ArchiveWorkflowDialog({
     } catch {
       setErrorCode("NETWORK");
     } finally {
+      readingRef.current = false;
       setBusy(null);
     }
   }
 
   async function archive() {
     if (active === null) return;
+    if (mutatingRef.current) return;
+    mutatingRef.current = true;
     setBusy("archive");
     setErrorCode(null);
     try {
@@ -114,11 +125,14 @@ export default function ArchiveWorkflowDialog({
     } catch {
       setErrorCode("NETWORK");
     } finally {
+      mutatingRef.current = false;
       setBusy(null);
     }
   }
 
   async function kill(reference: ArchiveRoutineReference) {
+    if (mutatingRef.current) return;
+    mutatingRef.current = true;
     setBusy(reference.id);
     setErrorCode(null);
     try {
@@ -137,6 +151,7 @@ export default function ArchiveWorkflowDialog({
     } catch {
       setErrorCode("NETWORK");
     } finally {
+      mutatingRef.current = false;
       setBusy(null);
     }
   }
@@ -144,23 +159,32 @@ export default function ArchiveWorkflowDialog({
   return (
     <>
       <Button type="button" variant="ghost" disabled={definition.status === "archived"} onClick={() => void openDialog()}>
-        <Archive />Archive
+        <Archive data-icon="inline-start" />Archive
       </Button>
-      <Dialog open={open} onOpenChange={(next) => { if (!next && busy === null) setOpen(false); }}>
-        <DialogContent className="max-w-[680px]">
-          <DialogHeader>
-            <DialogTitle>Archive this workflow?</DialogTitle>
-            <DialogDescription>Archiving hides the definition from active work. It keeps every revision, run, step, and journey record.</DialogDescription>
-          </DialogHeader>
+      <AlertDialog open={open} onOpenChange={(next) => { if (!next && busy === null) setOpen(false); }}>
+        <AlertDialogContent className="max-w-[680px] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive this workflow?</AlertDialogTitle>
+            <AlertDialogDescription>Archiving hides the definition from active work. It keeps every revision, run, step, and journey record.</AlertDialogDescription>
+          </AlertDialogHeader>
 
-          <div className="rounded-xl border border-warning/25 bg-warning-soft p-4 text-sm leading-6 text-warning-soft-foreground">
-            <div className="flex gap-3"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p><strong>Archive is not OFF.</strong> Archiving never kills or pauses a Routine.</p></div>
-          </div>
+          <Alert variant="warning">
+            <AlertTriangle />
+            <AlertTitle>Archive is not off</AlertTitle>
+            <AlertDescription>Archiving never kills or pauses a Routine.</AlertDescription>
+          </Alert>
 
           {active === null ? (
-            <div className="rounded-xl border border-border bg-secondary/25 p-4">
-              <div className="flex items-start gap-3"><Unplug className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><div><div className="flex items-center gap-2"><p className="text-sm font-semibold">{busy === "read" ? "Loading every active Routine" : "Active Routine list unavailable"}</p><Badge variant="outline">Archive blocked</Badge></div><p className="mt-2 text-sm leading-6 text-muted-foreground">{busy === "read" ? "Archive stays disabled until every page of active Routine references has loaded." : "The exact active Routine keys and IDs could not be verified. Archive remains disabled and nothing changes."}</p></div></div>
-            </div>
+            <Alert variant={busy === "read" ? "info" : "warning"}>
+              <Unplug />
+              <AlertTitle className="flex items-center gap-2">
+                {busy === "read" ? "Loading every active Routine" : "Active Routine list unavailable"}
+                <Badge variant="outline">Archive blocked</Badge>
+              </AlertTitle>
+              <AlertDescription>
+                {busy === "read" ? "Archive stays disabled until every page of active Routine references has loaded." : "The exact active Routine keys and IDs could not be verified. Archive remains disabled and nothing changes."}
+              </AlertDescription>
+            </Alert>
           ) : active.length > 0 ? (
             <div>
               <p className="text-sm font-semibold text-warning-soft-foreground">{exactMessage}</p>
@@ -168,30 +192,35 @@ export default function ArchiveWorkflowDialog({
               <div className="mt-3 grid gap-3">
                 {active.map((routine) => (
                   <div key={routine.id} className="rounded-xl border border-border p-4">
-                    <div className="flex items-start justify-between gap-4"><div><p className="font-mono text-xs font-semibold">{routine.routineKey}</p><p className="mt-1 font-mono text-[11px] text-muted-foreground">{routine.id}</p></div><Button type="button" size="sm" variant="destructive" disabled={busy !== null} onClick={() => void kill(routine)}>{busy === routine.id ? <LoaderCircle className="animate-spin" /> : <Power />}Kill Routine</Button></div>
-                    <label className="mt-3 flex cursor-pointer gap-3 border-t border-border pt-3"><input className="mt-1 size-4 accent-[var(--brand)]" type="checkbox" checked={confirmed.includes(routine.id)} onChange={(event) => setConfirmed((current) => event.target.checked ? [...current, routine.id] : current.filter((id) => id !== routine.id))} /><span><span className="block text-sm font-semibold">Continue running after archive</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">I understand that archiving this workflow does not stop Routine {routine.routineKey}.</span></span></label>
+                    <div className="flex items-start justify-between gap-4"><div><p className="font-mono text-xs font-semibold">{routine.routineKey}</p><p className="mt-1 font-mono text-[11px] text-muted-foreground">{routine.id}</p></div><Button type="button" size="sm" variant="destructive" disabled={busy !== null} onClick={() => void kill(routine)}>{busy === routine.id ? <Spinner data-icon="inline-start" /> : <Power data-icon="inline-start" />}Kill Routine</Button></div>
+                    <label className="mt-3 flex cursor-pointer gap-3 border-t border-border pt-3"><Checkbox className="mt-1" checked={confirmed.includes(routine.id)} disabled={busy !== null} onCheckedChange={(checked) => setConfirmed((current) => checked === true ? [...current, routine.id] : current.filter((id) => id !== routine.id))} /><span><span className="block text-sm font-semibold">Continue running after archive</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">I understand that archiving this workflow does not stop Routine {routine.routineKey}.</span></span></label>
                   </div>
                 ))}
               </div>
             </div>
           ) : (
-            <p className="rounded-xl border border-border bg-secondary/25 px-4 py-3 text-sm text-muted-foreground">No active Routines reference this workflow. It can be archived without an acknowledgment.</p>
+            <Alert variant="info" density="compact">
+              <AlertTitle>No active Routines</AlertTitle>
+              <AlertDescription>This workflow can be archived without an acknowledgment.</AlertDescription>
+            </Alert>
           )}
 
           {errorCode ? (
-            <div className="rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive" data-error-code={errorCode}>
-              <p className="font-semibold">The workflow was not archived</p>
-              <p className="mt-1">{workflowErrorMessage(errorCode)}</p>
+            <Alert variant="destructive" role="alert" data-error-code={errorCode}>
+              <AlertTitle>The workflow was not archived</AlertTitle>
+              <AlertDescription>
+                <p>{workflowErrorMessage(errorCode)}</p>
               {errorCode === "ACTIVE_ROUTINE_ACKNOWLEDGEMENT_REQUIRED" && active === null ? <p className="mt-2">The exact active Routine list is required before you can continue. No Routine was stopped.</p> : null}
-            </div>
+              </AlertDescription>
+            </Alert>
           ) : null}
 
-          <DialogFooter>
-            <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="button" variant="destructive" disabled={busy !== null || active === null || (active.length > 0 && !allReviewed)} onClick={() => void archive()}>{busy === "archive" ? <LoaderCircle className="animate-spin" /> : <Archive />}Archive workflow</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button" disabled={busy !== null}>Cancel</AlertDialogCancel>
+            <Button type="button" variant="destructive-secondary" disabled={busy !== null || active === null || (active.length > 0 && !allReviewed)} onClick={() => void archive()}>{busy === "archive" ? <Spinner data-icon="inline-start" /> : <Archive data-icon="inline-start" />}{busy === "archive" ? "Archiving…" : "Archive workflow"}</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

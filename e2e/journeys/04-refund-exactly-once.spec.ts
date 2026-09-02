@@ -29,7 +29,10 @@ test("A failed video gives the whole hold back, and a repeated refund cannot pay
 
   // Whole again: nothing spendable was lost and nothing is still held.
   await expect(page.getByText("200").first()).toBeVisible();
-  await expect(page.getByText("held for work in progress")).toHaveCount(0);
+  // Positive first, so the negative below cannot become a permanently-green assertion the day
+  // the hold badge is reworded again (see journey 3).
+  await expect(page.getByText("Nothing on hold")).toBeVisible();
+  await expect(page.getByText("credits held")).toHaveCount(0);
   await expect(page.getByText("Held, then refunded in full")).toBeVisible();
 
   // Now ask the ledger to refund the same reservation again — a resume, a duplicate finalizer, a

@@ -1,4 +1,11 @@
 import Link from "next/link";
+import { ArrowLeftIcon } from "lucide-react";
+
+import { AuthPageShell } from "@/components/auth/AuthPageShell";
+import { AuthStepCard } from "@/components/auth/AuthStepCard";
+import { buttonVariants } from "@/components/ui/button";
+import { authDestination, authRouteHref } from "@/lib/auth-journey";
+
 import { ResetPasswordForm } from "./ResetPasswordForm";
 
 export const dynamic = "force-dynamic";
@@ -8,46 +15,38 @@ export const metadata = { title: "Set a new password · Fikirtive" };
 export default async function ResetPasswordPage({
   searchParams,
 }: {
-  searchParams: Promise<{ token?: string; error?: string }>;
+  searchParams: Promise<{ token?: string; error?: string; from?: string }>;
 }) {
-  const { token, error } = await searchParams;
+  const { token, error, from } = await searchParams;
+  const destination = authDestination(from);
   const usable = !!token && !error;
 
   return (
-    <main className="gb flex min-h-[100dvh] w-full items-center justify-center bg-card p-8 sm:p-10">
-      <div className="w-full max-w-[380px]">
-        <h1 className="mb-1.5 text-[25px] font-bold tracking-[-0.02em] text-foreground">
-          {usable ? "Set a new password" : "This link no longer works"}
-        </h1>
-
-        {usable ? (
-          <>
-            <p className="mb-6 text-[14.5px] leading-[1.55] text-muted-foreground">
-              Choose a new password for your account. You&apos;ll be signed out everywhere else.
-            </p>
-            <ResetPasswordForm token={token} />
-          </>
-        ) : (
-          <>
-            <p className="mb-6 text-[14.5px] leading-[1.55] text-muted-foreground">
-              Reset links work once and expire after an hour. Request a fresh one and we&apos;ll
-              send it straight away.
-            </p>
+    <AuthPageShell>
+      {usable ? (
+        <ResetPasswordForm token={token} from={destination} />
+      ) : (
+        <AuthStepCard
+          title="This link no longer works"
+          description="Reset links work once and expire after an hour."
+          footer={
             <Link
-              href="/forgot-password"
-              className="inline-flex h-10 w-full items-center justify-center rounded-[var(--radius-card)] border border-border text-[14px] font-semibold text-foreground hover:bg-muted"
+              href={authRouteHref("/login", destination)}
+              className={buttonVariants({ variant: "ghost", size: "sm" })}
             >
-              Request a new link
+              <ArrowLeftIcon aria-hidden />
+              Back to login
             </Link>
-          </>
-        )}
-
-        <p className="mt-6 text-center text-[13px] text-muted-foreground">
-          <Link href="/login" className="font-semibold text-foreground underline underline-offset-4">
-            Back to sign in
+          }
+        >
+          <Link
+            href={authRouteHref("/forgot-password", destination)}
+            className={buttonVariants({ variant: "secondary", className: "w-full" })}
+          >
+            Request a new link
           </Link>
-        </p>
-      </div>
-    </main>
+        </AuthStepCard>
+      )}
+    </AuthPageShell>
   );
 }

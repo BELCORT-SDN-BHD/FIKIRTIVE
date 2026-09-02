@@ -24,7 +24,7 @@ vi.mock("@/lib/cowork-actions", () => ({
 }));
 vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: vi.fn() }));
 vi.mock("@/lib/memory-actions", () => ({
-  addMemory: vi.fn(), updateMemory: vi.fn(), deleteMemory: vi.fn(), listMyMemory: vi.fn(),
+  addMemory: vi.fn(), updateMemory: vi.fn(), deleteMemory: vi.fn(), restoreMemory: vi.fn(), listMyMemory: vi.fn(),
 }));
 vi.mock("@/lib/brand-record-actions", () => ({
   saveBrandRecord: vi.fn(), deleteBrandRecord: vi.fn(), restoreBrandRecord: vi.fn(),

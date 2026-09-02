@@ -2,6 +2,8 @@
 import { useState, useTransition } from "react";
 import { createTopupCheckout } from "@/lib/billing-actions";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Spinner } from "@/components/ui/spinner";
 import { SupportExit } from "@/components/exits/Exits";
 
 export function BuyPackButton({ priceId, label }: { priceId: string; label: string }) {
@@ -11,8 +13,9 @@ export function BuyPackButton({ priceId, label }: { priceId: string; label: stri
   const [err, setErr] = useState<{ message: string; contactSupport: boolean } | null>(null);
 
   return (
-    <span className="gb" style={{ display: "inline-flex", flexDirection: "column", gap: 4 }}>
+    <div className="gb flex w-full flex-col gap-2">
       <Button
+        className="w-full"
         disabled={pending}
         onClick={() =>
           start(async () => {
@@ -26,14 +29,17 @@ export function BuyPackButton({ priceId, label }: { priceId: string; label: stri
           })
         }
       >
-        {pending ? "Starting…" : label}
+        {pending ? <Spinner data-icon="inline-start" /> : null}
+        {pending ? "Starting checkout…" : label}
       </Button>
       {err && (
-        <span role="alert" style={{ fontSize: "0.8125rem", color: "var(--error)" }}>
-          {err.message}
-          {err.contactSupport && <> <SupportExit subject="Checkout is unavailable" /></>}
-        </span>
+        <Alert role="alert" variant="destructive">
+          <AlertDescription>
+            {err.message}
+            {err.contactSupport && <> <SupportExit subject="Checkout is unavailable" /></>}
+          </AlertDescription>
+        </Alert>
       )}
-    </span>
+    </div>
   );
 }

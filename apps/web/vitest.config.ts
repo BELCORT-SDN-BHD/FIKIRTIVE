@@ -31,10 +31,11 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["lib/**/*.test.ts", "lib/**/__tests__/**/*.test.ts", "app/**/__tests__/**/*.test.ts"],
+    include: ["lib/**/*.test.{ts,tsx}", "lib/**/__tests__/**/*.test.{ts,tsx}", "app/**/__tests__/**/*.test.{ts,tsx}"],
     // F35: refuse to run against a real (non-*_test) DATABASE_URL — the integration tests hit
     // the real Prisma client, so a stray prod DATABASE_URL would mutate that database.
-    setupFiles: ["./lib/__tests__/setup-db-guard.ts"],
+    // `setup-node-runtime.ts` 必须排在最前:它补的是 Next 模块在**加载那一刻**要读的全局。
+    setupFiles: ["./lib/__tests__/setup-node-runtime.ts", "./lib/__tests__/setup-db-guard.ts"],
     pool: "threads",
     poolOptions: { threads: { singleThread: true } },
     testTimeout: 20000,

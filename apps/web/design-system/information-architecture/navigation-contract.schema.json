@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Fikirtive Founder-facing navigation adoption contract",
+  "type": "object",
+  "required": [
+    "version",
+    "activeMainNavigationKeys",
+    "parkedMainNavigationKeys",
+    "knownRuntimeExtraMainNavigationKeys",
+    "knownRouteConvergence"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "type": "integer", "minimum": 1 },
+    "activeMainNavigationKeys": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "parkedMainNavigationKeys": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "knownRuntimeExtraMainNavigationKeys": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "knownRouteConvergence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["surface", "state", "destinationSurface"],
+        "properties": {
+          "surface": { "type": "string" },
+          "state": { "enum": ["parked", "re-owned", "disabled"] },
+          "destinationSurface": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

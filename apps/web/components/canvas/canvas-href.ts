@@ -13,6 +13,12 @@
  */
 import { CANVAS_HREF } from "@fikirtive/core/navigation";
 
-export function canvasHref(projectId: string): string {
-  return `${CANVAS_HREF}?project=${encodeURIComponent(projectId)}`;
+export function canvasHref(
+  projectId: string,
+  options: { threadId?: string; handoffId?: string } = {},
+): string {
+  const query = new URLSearchParams({ project: projectId });
+  if (options.threadId) query.set("thread", options.threadId);
+  if (options.handoffId) query.set("handoff", options.handoffId);
+  return `${CANVAS_HREF}?${query.toString()}`;
 }

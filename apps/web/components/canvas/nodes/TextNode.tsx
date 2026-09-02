@@ -1,10 +1,12 @@
 // apps/web/components/canvas/nodes/TextNode.tsx
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NodeToolbar, Position, type NodeProps } from "@xyflow/react";
+import { Trash2Icon } from "lucide-react";
 import { NodeResize } from "./NodeResize";
-import { Button } from "@/components/ui/button";
+import { CanvasNodeLabel } from "./CanvasNodeLabel";
+import { NodeToolbarIconButton } from "./NodeToolbarIconButton";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { Textarea } from "@/components/ui/textarea";
-import { NODE_TOOL_BUTTON_CLASS } from "./node-tool-button";
 
 export function TextNode({ data, selected }: NodeProps) {
   const d = data as {
@@ -66,48 +68,38 @@ export function TextNode({ data, selected }: NodeProps) {
         position={Position.Top}
         align="start"
         offset={22}
-        style={{ pointerEvents: "all", zIndex: 50 }}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          aria-label="Delete text node"
-          className={NODE_TOOL_BUTTON_CLASS}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
-          title="Delete text node"
-        >
-          ✕
-        </Button>
+        <ButtonGroup aria-label="Text actions" className="cv-node-action-group">
+          <NodeToolbarIconButton
+            type="button"
+            label="Delete text node"
+            visibleLabel="Delete"
+            variant="destructive-secondary"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
+          >
+            <Trash2Icon aria-hidden />
+          </NodeToolbarIconButton>
+        </ButtonGroup>
       </NodeToolbar>
-      <span className="cv-nodelabel">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M4 7V5h16v2" /><path d="M9 19h6" /><path d="M12 5v14" /></svg>
-        Text
-      </span>
-    {/* Card body is draggable; only the textarea + delete button opt out of drag/pan. */}
-    <div className="al-panel" style={{ width: "100%", height: "100%", padding: "11px 12px", borderRadius: 14 }}>
-      {/* #840 车4:迁到 ui/Textarea。四条覆盖都是为了不动原样子 —— `field-sizing-fixed`
-          压回组件默认的 `field-sizing-content`(否则这个 height:100% 的定高框会随内容
-          自己长高,顶开卡片,同 #920 对四处 composer 的处置)、`min-h-0` 压回 `min-h-16`、
-          `p-0` 压回 `px-3 py-2`(preflight 已把原生 textarea 的内距清零,原来就是 0)、
-          `shadow-none` 压回 `shadow-xs`。其余(边框/背景/字号/行高/resize/outline)都在
-          下面那份 inline style 里,inline 天然赢过任何表里的规则,一字未动。 */}
-      <Textarea
-        className="nodrag nopan field-sizing-fixed min-h-0 p-0 shadow-none"
-        // #739 — the node's visible "Text" label is not associated with this box, and the
-        // placeholder disappears as soon as the merchant types.
-        aria-label="Text note"
-        onPointerDown={(e) => e.stopPropagation()}
-        value={val}
-        onChange={(e) => update(e.target.value)}
-        onBlur={flush}
-        placeholder="Type here…"
-        style={{ width: "100%", height: "100%", border: "none", background: "transparent", resize: "none", outline: "none", fontSize: 13, fontWeight: 500, lineHeight: 1.45 }}
-      />
-    </div>
+      <CanvasNodeLabel kind="text" />
+      {/* Card body is draggable; only the textarea + delete button opt out of drag/pan. */}
+      <div className="al-panel cv-node-frame cv-node-frame-text">
+        {/* Fixed-size canvas note: keep Textarea semantics while letting the node own its geometry. */}
+        <Textarea
+          className="nodrag nopan field-sizing-fixed h-full min-h-0 resize-none rounded-none border-0 bg-transparent p-0 text-[13px] font-medium leading-[1.45] shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+          // #739 — the node's visible "Text" label is not associated with this box, and the
+          // placeholder disappears as soon as the merchant types.
+          aria-label="Text note"
+          onPointerDown={(e) => e.stopPropagation()}
+          value={val}
+          onChange={(e) => update(e.target.value)}
+          onBlur={flush}
+          placeholder="Type here…"
+        />
+      </div>
     </>
   );
 }

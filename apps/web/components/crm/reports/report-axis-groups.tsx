@@ -67,12 +67,12 @@ export default function ReportAxisGroups({
   return (
     <div>
       <div className="grid gap-3 lg:grid-cols-3">
-        <section className="rounded-[var(--radius-card)] border border-border border-l-4 border-l-brand bg-card p-4" aria-labelledby={`sending-${report.broadcastRunId}`}>
+        <section className="rounded-[var(--radius-card)] border border-border border-l-4 border-l-info bg-card p-4" aria-labelledby={`sending-${report.broadcastRunId}`}>
           <div className="flex items-start justify-between gap-3">
             <div>
               <h3 id={`sending-${report.broadcastRunId}`} className="font-semibold">Sending attempts</h3>
             </div>
-            <Badge variant="soft">Known</Badge>
+            <Badge variant="info">Known</Badge>
           </div>
           <p className="mt-2 text-xs leading-5 text-muted-foreground">What happened before provider receipts.</p>
           <dl className={METRIC_GRID}>

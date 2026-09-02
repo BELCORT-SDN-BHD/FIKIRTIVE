@@ -80,6 +80,18 @@ function buttonWithText(root: ParentNode, text: string): HTMLButtonElement | und
   return Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.trim() === text);
 }
 
+async function openRemoveAction(root: ParentNode): Promise<void> {
+  const trigger = root.querySelector<HTMLButtonElement>('button[aria-label^="Actions for "]');
+  expect(trigger, "the item action menu is gone").toBeTruthy();
+  await act(async () => {
+    trigger!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+  const action = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+    .find((item) => item.textContent?.trim() === "Remove from Library");
+  expect(action, "the Remove from Library action is gone").toBeTruthy();
+  await act(async () => { action!.click(); });
+}
+
 const ENTITY_ITEM: StuffItem[] = [
   {
     id: "entity:e1",
@@ -102,11 +114,7 @@ describe("#934 Library delete goes through a confirmation, not straight to onDel
       createElement(StuffLibrary, { items: ENTITY_ITEM, mode: "library" as const, onDelete }),
     );
 
-    const deleteTrigger = buttonWithText(dom, "Delete");
-    expect(deleteTrigger, "the Delete action is gone from the tile").toBeTruthy();
-    await act(async () => {
-      deleteTrigger!.click();
-    });
+    await openRemoveAction(dom);
 
     expect(onDelete, "the item was deleted before any confirmation").not.toHaveBeenCalled();
     const dialog = document.querySelector('[role="alertdialog"]');
@@ -122,7 +130,7 @@ describe("#934 Library delete goes through a confirmation, not straight to onDel
     const dom = await mount(
       createElement(StuffLibrary, { items: ENTITY_ITEM, mode: "library" as const, onDelete }),
     );
-    await act(async () => { buttonWithText(dom, "Delete")!.click(); });
+    await openRemoveAction(dom);
 
     const cancel = buttonWithText(document.body, "Cancel");
     expect(cancel, "no Cancel control in the confirm dialog").toBeTruthy();
@@ -137,7 +145,7 @@ describe("#934 Library delete goes through a confirmation, not straight to onDel
     const dom = await mount(
       createElement(StuffLibrary, { items: ENTITY_ITEM, mode: "library" as const, onDelete }),
     );
-    await act(async () => { buttonWithText(dom, "Delete")!.click(); });
+    await openRemoveAction(dom);
 
     const confirm = buttonWithText(document.body, "Remove");
     expect(confirm, "no confirm/Remove control in the dialog").toBeTruthy();

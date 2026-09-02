@@ -1,8 +1,31 @@
 "use client";
 import React, { useMemo, useState } from "react";
-import { Plus, Search } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { ImagePlus, MoreHorizontal, Pencil, Plus, Search, Tags, Trash2 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,6 +36,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Spinner } from "@/components/ui/spinner";
 import { OttoRenameDialog } from "@/components/otto/OttoPromptDialog";
 import { ChangeEntityTypeDialog } from "./ChangeEntityTypeDialog";
 import { ExitLink } from "@/components/exits/Exits";
@@ -75,28 +99,22 @@ function Thumb({ item }: { item: StuffItem }) {
   return <img src={item.url} alt={item.label} className="h-full w-full object-cover" />;
 }
 
-function TileChrome({ item }: { item: StuffItem }) {
-  const tag = tagFor(item);
-  return (
-    <>
-      {item.productName && (
-        <span className="absolute left-1.5 top-1.5 rounded-[8px] bg-card/90 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-brand-strong">
-          Used by product: {item.productName}
-        </span>
-      )}
-      {tag && (
-        <span className="absolute bottom-1.5 right-1.5 rounded-[8px] bg-card/90 px-1.5 py-0.5 text-[0.6875rem] font-medium text-muted-foreground">
-          {tag}
-        </span>
-      )}
-    </>
-  );
+function itemTypeLabel(item: StuffItem): string {
+  return tagFor(item) ?? (item.mediaKind === "image" ? "Image" : "Asset");
+}
+
+function itemOriginLabel(item: StuffItem): string {
+  if (item.productName) return `Used by ${item.productName}`;
+  if (item.source === "entity") return "Reusable asset";
+  if (item.source === "ad") return "Ad creative";
+  return "Made with Otto";
 }
 
 export function StuffLibrary({
   items,
   mode,
   onPick,
+  pickPending = false,
   onRename,
   onChangeType,
   onDelete,
@@ -108,12 +126,16 @@ export function StuffLibrary({
   items: StuffItem[];
   mode: "library" | "picker";
   onPick?: (assetId: string) => void;
-  onRename?: (entityId: string, name: string) => void;
+  pickPending?: boolean;
+  onRename?: (
+    entityId: string,
+    name: string,
+  ) => void | string | null | Promise<void | string | null>;
   /** beta bug 4 — correct a saved element's kind (a bottle saved as a person). Resolves to an
    *  error message for the dialog to show, or null on success: the action refuses the change while
    *  a generation using this element is still running, and that refusal has to be readable. */
   onChangeType?: (entityId: string, type: EntityTypeDTO) => Promise<string | null>;
-  onDelete?: (entityId: string) => void;
+  onDelete?: (entityId: string) => void | string | null | Promise<void | string | null>;
   onSetProductImage?: (assetId: string) => void;
   onOpenGeneration?: (generationId: string, projectId: string) => void;
   /** #781 — open a saved element (cast/product/location/brand mark) so its base look and
@@ -132,6 +154,29 @@ export function StuffLibrary({
   // #934 — a click here used to delete immediately. Route it through a confirmation
   // instead, so an accidental click can't take an item out of Library unnoticed.
   const [deleteTarget, setDeleteTarget] = useState<StuffItem | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteSubmittingRef = React.useRef(false);
+
+  async function removeTarget() {
+    if (!deleteTarget?.entityId || deleteSubmittingRef.current) return;
+    deleteSubmittingRef.current = true;
+    setDeletePending(true);
+    setDeleteError(null);
+    try {
+      const failure = await onDelete?.(deleteTarget.entityId);
+      if (typeof failure === "string" && failure) {
+        setDeleteError(failure);
+        return;
+      }
+      setDeleteTarget(null);
+    } catch {
+      setDeleteError("The item couldn't be removed. Check your connection and try again.");
+    } finally {
+      deleteSubmittingRef.current = false;
+      setDeletePending(false);
+    }
+  }
 
   // Picker: only image items that carry an assetId are selectable.
   const pickable = useMemo(
@@ -150,25 +195,23 @@ export function StuffLibrary({
     return map;
   }, [items, search]);
 
-  const grid = "grid grid-cols-3 md:grid-cols-5 gap-3";
+  const grid = "grid grid-cols-[repeat(auto-fill,minmax(min(100%,13.5rem),1fr))] gap-4";
   const searching = search.trim() !== "";
 
   if (mode === "picker") {
     return (
       <div className="flex flex-col gap-3">
-        <div className="relative max-w-[320px]">
-          <Search
-            size={15}
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70"
-          />
-          <Input
+        <InputGroup className="min-h-9 max-w-[320px] shadow-none">
+          <InputGroupAddon className="pl-2.5">
+            <Search aria-hidden />
+          </InputGroupAddon>
+          <InputGroupInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search images…"
             aria-label="Search images"
-            className="pl-10"
           />
-        </div>
+        </InputGroup>
         {pickable.length === 0 ? (
           <div className="py-4 text-[0.875rem] text-muted-foreground">
             {searching ? noMatchesMessage(search) : "No images to pick from."}
@@ -180,12 +223,19 @@ export function StuffLibrary({
                 key={item.id}
                 type="button"
                 variant="ghost"
+                aria-label={`Choose ${item.label}`}
+                disabled={pickPending}
                 onClick={() => item.assetId && onPick?.(item.assetId)}
-                className="group relative h-auto w-full flex-col items-stretch justify-start gap-0 overflow-hidden rounded-[16px] border border-border bg-card p-0 text-left transition hover:border-foreground/30 hover:bg-card hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand"
+                className="group relative h-auto w-full flex-col items-stretch justify-start gap-0 overflow-hidden rounded-[var(--radius-card)] border border-border bg-card p-0 text-left shadow-none hover:border-foreground/25 hover:bg-card hover:text-foreground"
               >
                 <div className="relative aspect-square bg-muted">
                   <Thumb item={item} />
-                  <TileChrome item={item} />
+                  <Badge
+                    variant="outline"
+                    className="absolute left-2.5 top-2.5 bg-card/90 font-medium text-muted-foreground backdrop-blur-sm"
+                  >
+                    {itemTypeLabel(item)}
+                  </Badge>
                 </div>
                 <div className="truncate px-2 py-1.5 text-[0.8125rem] font-medium text-foreground">
                   {item.label}
@@ -200,198 +250,277 @@ export function StuffLibrary({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Filter pills */}
-      <div className="flex flex-wrap gap-1 rounded-[14px] bg-muted p-1">
-        {FILTERS.map((f) => (
-          <Button
-            key={f.value}
-            type="button"
-            variant="ghost"
-            onClick={() => setFilter(f.value)}
-            className={`h-auto rounded-[10px] px-3 py-1.5 text-[0.8125rem] font-semibold ${
-              filter === f.value
-                ? "bg-card text-foreground shadow-xs hover:bg-card"
-                : "bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground"
-            }`}
+      <div className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-card p-2 shadow-[var(--shadow-xs)] lg:flex-row lg:items-center lg:justify-between">
+        <div className="w-full overflow-x-auto pb-0.5 lg:w-auto">
+          <ToggleGroup
+            type="single"
+            value={filter}
+            onValueChange={(value) => {
+              if (value) setFilter(value as StuffFilter);
+            }}
+            variant="default"
+            size="sm"
+            spacing={1}
+            aria-label="Filter library"
           >
-            {f.label}
-            <span className="ml-1 text-muted-foreground/70">{counts[f.value]}</span>
-          </Button>
-        ))}
-      </div>
-
-      {/* Search */}
-      <div className="relative max-w-[320px]">
-        <Search
-          size={15}
-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70"
-        />
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search…"
-          aria-label="Search library"
-          className="pl-10"
-        />
+            {FILTERS.map((f) => (
+              <ToggleGroupItem
+                key={f.value}
+                value={f.value}
+                aria-label={`${f.label}, ${counts[f.value]} items`}
+              >
+                {f.label}
+                <span className="font-mono text-[0.6875rem] font-normal tabular-nums text-muted-foreground/80">
+                  {counts[f.value]}
+                </span>
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </div>
+        <InputGroup className="min-h-9 w-full shadow-none lg:max-w-[280px]">
+          <InputGroupAddon className="pl-2.5">
+            <Search aria-hidden />
+          </InputGroupAddon>
+          <InputGroupInput
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search library…"
+            aria-label="Search library"
+          />
+        </InputGroup>
       </div>
 
       {filtered.length === 0 ? (
         // #701 — three different facts, three different sentences. A search that found
         // nothing is not an empty library, and "go to Brand memory" is a link, not directions.
         searching ? (
-          <div className="py-4 text-[0.875rem] text-muted-foreground">{noMatchesMessage(search)}</div>
+          <Empty className="min-h-56 border border-dashed border-border">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Search aria-hidden />
+              </EmptyMedia>
+              <EmptyTitle>No results</EmptyTitle>
+              <EmptyDescription>{noMatchesMessage(search)}</EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSearch("")}
+              >
+                Clear search
+              </Button>
+            </EmptyContent>
+          </Empty>
         ) : filter === "products" ? (
-          <div className="py-4 text-[0.875rem] text-muted-foreground">
-            No product assets yet. Add product knowledge in{" "}
-            <ExitLink href={BRAND_MEMORY_HREF}>Brand memory</ExitLink>, then link images here.
-          </div>
+          <Empty className="min-h-56 border border-dashed border-border">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <ImagePlus aria-hidden />
+              </EmptyMedia>
+              <EmptyTitle>No product assets yet</EmptyTitle>
+              <EmptyDescription>
+                Add product knowledge in{" "}
+                <ExitLink href={BRAND_MEMORY_HREF}>Brand memory</ExitLink>, then link images here.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : items.length === 0 && onAdd ? (
           // #942 — the onboarding tile's "Add a character or product" lands here when the shop
           // has nothing saved yet. It used to say "Nothing here yet." and stop there, a dead
           // end with no next step. Point straight at the same upload dialog the header's Add
           // button opens, instead of building a second upload path.
-          <div className="flex flex-col items-center gap-3 rounded-[16px] border border-dashed border-border px-6 py-10 text-center">
-            <p className="max-w-[360px] text-[0.875rem] text-muted-foreground">
-              Add your first character or product photo. Otto keeps it consistent across every
-              project.
-            </p>
-            <Button type="button" size="sm" onClick={onAdd}>
-              <Plus size={16} />
-              Add to Library
-            </Button>
-          </div>
+          <Empty className="min-h-64 border border-dashed border-border">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <ImagePlus aria-hidden />
+              </EmptyMedia>
+              <EmptyTitle>Build your reusable asset library</EmptyTitle>
+              <EmptyDescription>
+                Add your first character or product photo. Otto keeps it consistent across every
+                project.
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button type="button" size="sm" onClick={onAdd}>
+                <Plus aria-hidden />
+                Add to Library
+              </Button>
+            </EmptyContent>
+          </Empty>
         ) : (
-          <div className="py-4 text-[0.875rem] text-muted-foreground">Nothing here yet.</div>
+          <Empty className="min-h-56 border border-dashed border-border">
+            <EmptyHeader>
+              <EmptyTitle>Nothing here yet.</EmptyTitle>
+              <EmptyDescription>Items in this category will appear here.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )
       ) : (
-        <div className={grid}>
-          {filtered.map((item) => {
-            const isEntity = item.source === "entity" && !!item.entityId;
-            const canSetProduct = !!item.assetId && item.mediaKind === "image";
-            const canOpenGeneration = !!item.generationId && !!item.projectId;
-            // #781 — an element tile opens the element (base look + styling variants); a
-            // generation tile opens the generation. One control, two destinations, so the
-            // merchant's "click the thing to see it" habit works on both.
-            const canOpenEntityTile = isEntity && !!onOpenEntity;
-            const canOpen = canOpenGeneration || canOpenEntityTile;
-            const openItem = () => {
-              if (canOpenGeneration) onOpenGeneration?.(item.generationId!, item.projectId!);
-              else if (canOpenEntityTile) onOpenEntity?.(item.entityId!);
-            };
-            return (
-              <div
-                key={item.id}
-                className="group relative overflow-hidden rounded-[16px] border border-border bg-card"
-              >
-                <div className="relative aspect-square bg-muted">
-                  {canOpen ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      aria-label={`Open ${item.label}`}
-                      onClick={openItem}
-                      className="absolute inset-0 h-full w-full rounded-none border-0 bg-transparent p-0 text-left hover:bg-transparent focus-visible:outline-2 focus-visible:outline-brand"
-                    >
+        <>
+          <div className={grid}>
+            {filtered.map((item) => {
+              const isEntity = item.source === "entity" && !!item.entityId;
+              const canSetProduct = !!item.assetId && item.mediaKind === "image";
+              const canOpenGeneration = !!item.generationId && !!item.projectId;
+              // #781 — an element tile opens the element (base look + styling variants); a
+              // generation tile opens the generation. One control, two destinations, so the
+              // merchant's "click the thing to see it" habit works on both.
+              const canOpenEntityTile = isEntity && !!onOpenEntity;
+              const canOpen = canOpenGeneration || canOpenEntityTile;
+              const hasPrimaryActions =
+                (canSetProduct && !!onSetProductImage) ||
+                (isEntity &&
+                  (!!onRename || (!!item.entityType && !!onChangeType)));
+              const hasActions = hasPrimaryActions || (isEntity && !!onDelete);
+              const openItem = () => {
+                if (canOpenGeneration) {
+                  onOpenGeneration?.(item.generationId!, item.projectId!);
+                } else if (canOpenEntityTile) {
+                  onOpenEntity?.(item.entityId!);
+                }
+              };
+              return (
+                <div
+                  key={item.id}
+                  className="group relative min-w-0 overflow-hidden rounded-[var(--radius-card)] border border-border bg-card p-1 shadow-[var(--shadow-xs)] transition-[border-color,box-shadow,transform] duration-[var(--dur-1)] ease-[var(--ease-out)] hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-[var(--shadow-md)] focus-within:border-foreground/30"
+                >
+                  <div className="relative aspect-[4/3] overflow-hidden rounded-[calc(var(--radius-card)-0.25rem)] bg-muted">
+                    {canOpen ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        aria-label={`Open ${item.label}`}
+                        onClick={openItem}
+                        className="absolute inset-0 h-full w-full rounded-none border-0 bg-transparent p-0 text-left hover:bg-transparent"
+                      >
+                        <Thumb item={item} />
+                      </Button>
+                    ) : (
                       <Thumb item={item} />
-                      <TileChrome item={item} />
-                    </Button>
-                  ) : (
-                    <>
-                      <Thumb item={item} />
-                      <TileChrome item={item} />
-                    </>
-                  )}
+                    )}
 
-                  {/* Hover overlay actions */}
-                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/50 p-2 opacity-0 transition group-hover:opacity-100">
-                    {canSetProduct && onSetProductImage && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="pointer-events-auto w-full"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (item.assetId) onSetProductImage(item.assetId);
-                        }}
-                      >
-                        Set as product image
-                      </Button>
+                    <Badge
+                      variant="outline"
+                      className="pointer-events-none absolute left-2.5 top-2.5 bg-card/90 font-medium text-muted-foreground backdrop-blur-sm"
+                    >
+                      {itemTypeLabel(item)}
+                    </Badge>
+
+                    {hasActions && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            size="icon-xs"
+                            variant="secondary"
+                            className="absolute right-2.5 top-2.5 bg-card/90 backdrop-blur-sm"
+                            aria-label={`Actions for ${item.label}`}
+                          >
+                            <MoreHorizontal aria-hidden />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-52">
+                          {hasPrimaryActions && (
+                            <DropdownMenuGroup>
+                              {canSetProduct && onSetProductImage && (
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    if (item.assetId) onSetProductImage(item.assetId);
+                                  }}
+                                >
+                                  <ImagePlus aria-hidden />
+                                  Set as product image
+                                </DropdownMenuItem>
+                              )}
+                              {isEntity && onRename && (
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    setRenameTarget(item);
+                                  }}
+                                >
+                                  <Pencil aria-hidden />
+                                  Rename
+                                </DropdownMenuItem>
+                              )}
+                              {isEntity && item.entityType && onChangeType && (
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    setTypeTarget(item);
+                                  }}
+                                >
+                                  <Tags aria-hidden />
+                                  Change type
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuGroup>
+                          )}
+                          {isEntity && onDelete && (
+                            <>
+                              {hasPrimaryActions && <DropdownMenuSeparator />}
+                              <DropdownMenuGroup>
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  onSelect={() => {
+                                    setDeleteError(null);
+                                    setDeleteTarget(item);
+                                  }}
+                                >
+                                  <Trash2 aria-hidden />
+                                  Remove from Library
+                                </DropdownMenuItem>
+                              </DropdownMenuGroup>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     )}
-                    {isEntity && onRename && (
+                  </div>
+                  <div className="min-w-0 px-2.5 pb-2 pt-2.5">
+                    {canOpen ? (
                       <Button
-                        size="sm"
-                        variant="secondary"
-                        className="pointer-events-auto w-full"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRenameTarget(item);
-                        }}
+                        type="button"
+                        variant="ghost"
+                        onClick={openItem}
+                        className="h-auto w-full min-w-0 justify-start truncate rounded-none bg-transparent p-0 text-left text-[0.875rem] font-semibold text-foreground hover:bg-transparent"
                       >
-                        Rename
+                        {item.label}
                       </Button>
+                    ) : (
+                      <div className="truncate text-[0.875rem] font-semibold text-foreground">
+                        {item.label}
+                      </div>
                     )}
-                    {isEntity && item.entityType && onChangeType && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="pointer-events-auto w-full"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setTypeTarget(item);
-                        }}
-                      >
-                        Change type
-                      </Button>
-                    )}
-                    {isEntity && onDelete && (
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        className="pointer-events-auto w-full"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteTarget(item);
-                        }}
-                      >
-                        Delete
-                      </Button>
-                    )}
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      {itemOriginLabel(item)}
+                    </p>
                   </div>
                 </div>
-                {canOpen ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={openItem}
-                    className="h-auto w-full min-w-0 justify-start truncate rounded-none bg-transparent px-2 py-1.5 text-left text-[0.8125rem] font-medium text-foreground hover:bg-transparent hover:text-brand-strong focus-visible:outline-2 focus-visible:outline-brand"
-                  >
-                    {item.label}
-                  </Button>
-                ) : (
-                  <div className="truncate px-2 py-1.5 text-[0.8125rem] font-medium text-foreground">
-                    {item.label}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </>
       )}
       <OttoRenameDialog
         open={!!renameTarget}
-        onOpenChange={(open) => { if (!open) setRenameTarget(null); }}
+        onOpenChange={(open) => {
+          if (!open) setRenameTarget(null);
+        }}
         title="Rename item"
         description="This changes the label you see in Library. It does not edit the original media."
         label="Item name"
         initialValue={renameTarget?.label ?? ""}
         onSubmit={async (name) => {
-          if (!renameTarget?.entityId) return;
-          await onRename?.(renameTarget.entityId, name);
+          if (!renameTarget?.entityId) return null;
+          return (await onRename?.(renameTarget.entityId, name)) ?? null;
         }}
       />
       <ChangeEntityTypeDialog
         open={!!typeTarget}
-        onOpenChange={(open) => { if (!open) setTypeTarget(null); }}
+        onOpenChange={(open) => {
+          if (!open) setTypeTarget(null);
+        }}
         itemLabel={typeTarget?.label ?? ""}
         currentType={typeTarget?.entityType ?? "PRODUCT"}
         onSubmit={async (type) => {
@@ -399,7 +528,15 @@ export function StuffLibrary({
           return (await onChangeType?.(typeTarget.entityId, type)) ?? null;
         }}
       />
-      <AlertDialog open={!!deleteTarget} onOpenChange={(next) => { if (!next) setDeleteTarget(null); }}>
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(next) => {
+          if (!next && !deletePending) {
+            setDeleteError(null);
+            setDeleteTarget(null);
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove from library?</AlertDialogTitle>
@@ -409,16 +546,24 @@ export function StuffLibrary({
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deleteError && (
+            <Alert role="alert" variant="destructive" density="compact">
+              <AlertTitle>Item wasn&apos;t removed</AlertTitle>
+              <AlertDescription>{deleteError}</AlertDescription>
+            </Alert>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deletePending}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90"
-              onClick={() => {
-                if (deleteTarget?.entityId) onDelete?.(deleteTarget.entityId);
-                setDeleteTarget(null);
+              variant="destructive"
+              disabled={deletePending || !deleteTarget?.entityId}
+              onClick={(event) => {
+                event.preventDefault();
+                void removeTarget();
               }}
             >
-              Remove
+              {deletePending && <Spinner data-icon="inline-start" aria-label="Removing item" />}
+              {deletePending ? "Removing…" : "Remove"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

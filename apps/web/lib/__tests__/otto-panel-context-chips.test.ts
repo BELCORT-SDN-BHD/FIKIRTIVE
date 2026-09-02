@@ -26,7 +26,7 @@ import { GOAL_PRESETS } from "@fikirtive/core/goals";
 import { SHELL_ROUTES, navLinkByKey } from "@fikirtive/core/navigation";
 
 vi.mock("next/navigation", () => ({
-  usePathname: vi.fn(() => "/campaign"),
+  usePathname: vi.fn(() => "/billing"),
   useSearchParams: vi.fn(() => new URLSearchParams()),
   useRouter: vi.fn(() => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() })),
 }));
@@ -104,7 +104,7 @@ let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
 beforeEach(() => {
-  // 点一颗 chip 会把会话流画出来,而它挂了 use-stick-to-bottom(jsdom 没有 ResizeObserver)。
+  // 点一颗 chip 会把 MessageScroller 画出来;jsdom 没有它用来跟随新消息的 ResizeObserver。
   vi.stubGlobal("ResizeObserver", class {
     observe() {}
     unobserve() {}
@@ -139,6 +139,17 @@ async function mount(element: ReactElement): Promise<HTMLDivElement> {
   });
   return container;
 }
+
+/**
+ * 这一份用来当样本的**商家面**。
+ *
+ * FRONT(前端基线合并,`docs/specs/frontend-baseline.md`):Campaigns 在 beta 里收起来了
+ * (`MERCHANT_NAV_REDIRECTS` 把 `/campaign` 整段重定向回 Home,维持 #850 裁决),商家壳在
+ * 那条地址上根本不画,面板也就不在 —— 拿它当样本会让下面「面板上没有 chip」这一族断言
+ * 变成空转的假绿。样本换成一条今天真的在导航里的门;下面每一条挂载型断言都先钉住
+ * 「面板真的在」,再钉「chip 不在」。
+ */
+const MERCHANT_SURFACE = SHELL_ROUTES.billing;
 
 function shell(pathname: string) {
   return createElement(
@@ -176,7 +187,11 @@ describe("面板知道商家在看哪一页 (§3.4)", () => {
       routeKey: "home",
       label: navLinkByKey("home").label,
     });
-    expect(panelContextSubject(SHELL_ROUTES.campaign)).toMatchObject({ routeKey: "campaign" });
+    // FRONT:campaign 在 beta 里被收起来了,导航树里没有它的名字,所以它这一页说不出名字
+    // (与 canvas / profile 同一档,`panel-page.ts` 的 `navLabelForRoute` 返回 null)。
+    // 这一条真正要钉的是「`/` 不会被当成前缀把别的地址吃掉」—— 用它底下那个仍然解得出来的
+    // 对象页来钉,判据一点没松:被 `/` 吃掉的话 routeKey 就会是 home。
+    expect(panelContextSubject(`${SHELL_ROUTES.campaign}/abc`)).toMatchObject({ routeKey: "campaign" });
   });
 
   it("长的先命中 —— 画布不是 Create 的一个对象,剪辑台也不是 Library 的一个对象", () => {
@@ -212,8 +227,10 @@ describe("上下文 chip 这一票不画 —— 因为它今天说不出真话",
    * 接上真读者的那一天,接回两个 prop 就够,不必重做一遍。
    */
   it("任何一面上都不画 chip", async () => {
-    for (const location of [SHELL_ROUTES.campaign, `${SHELL_ROUTES.campaign}/01J0000000000000000000000A`]) {
+    for (const location of [MERCHANT_SURFACE, SHELL_ROUTES.library]) {
       const el = await mount(shell(location));
+      // 先钉住「面板真的在」—— 否则「没有 chip」会因为整块面板都没画而空转成假绿。
+      expect(el.querySelector("[data-otto-panel]"), location).not.toBeNull();
       expect(el.querySelector("[data-otto-panel-context]"), location).toBeNull();
       expect(el.querySelector("[data-otto-panel][data-otto-panel-context-attached]"), location).toBeNull();
       if (root) await act(async () => root?.unmount());
@@ -224,15 +241,25 @@ describe("上下文 chip 这一票不画 —— 因为它今天说不出真话",
   });
 
   it("对象页上也没有 —— 名字读得到与否都不改变这一条", async () => {
-    const el = await mount(shell(`${SHELL_ROUTES.campaign}/01J0000000000000000000000A`));
+    // beta 期唯一有对象页的那扇门(campaign)被收起来了,商家壳在它底下不画,所以这一条
+    // 拆成两半照钉:解析器那一侧确实解出了一个**对象**(名字要读库,这里读不到),
+    // 而真正挂起来的面板上一颗 chip 都没有 —— 「名字读得到与否」不改变这一条。
+    expect(panelContextSubject(`${SHELL_ROUTES.campaign}/01J0000000000000000000000A`)).toMatchObject({
+      kind: "object",
+      objectId: "01J0000000000000000000000A",
+    });
+    const el = await mount(shell(MERCHANT_SURFACE));
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
     expect(el.querySelector("[data-otto-panel-context]")).toBeNull();
   });
 
   it("解析器仍然认得这一页与这个对象(#879 step 2 接得上)", () => {
-    expect(panelContextSubject(SHELL_ROUTES.campaign)).toEqual({
+    // 「一页」这一半改用 library —— campaign 在 beta 里被收起来了,导航树里没有它的名字
+    // (FRONT;`navLinkByKey("campaign")` 会直接抛,这正是那条 fail-closed 纪律在起作用)。
+    expect(panelContextSubject(SHELL_ROUTES.library)).toEqual({
       kind: "page",
-      routeKey: "campaign",
-      label: navLinkByKey("campaign").label,
+      routeKey: "library",
+      label: navLinkByKey("library").label,
     });
     expect(panelContextSubject(`${SHELL_ROUTES.campaign}/abc`)).toMatchObject({ kind: "object", objectId: "abc" });
   });
@@ -240,8 +267,15 @@ describe("上下文 chip 这一票不画 —— 因为它今天说不出真话",
   it("战役底下的固定子段不是对象 —— 不许拿它的名字当 id 去查库", () => {
     for (const segment of ["calendar", "trends", "workbench"]) {
       const subject = panelContextSubject(`${SHELL_ROUTES.campaign}/${segment}`);
-      expect(subject, segment).toMatchObject({ kind: "page", routeKey: "campaign" });
-      expect(subject && "objectId" in subject, segment).toBe(false);
+      // 这一段被读成对象的话,这里就会是 `{ kind: "object", objectId: "calendar" }` —— 面板
+      // 会拿 "calendar" 当 id 白跑一次查询。campaign 今天在导航树里没有名字(FRONT,beta
+      // 收起),所以「一页」这一档说不出话来,返回 null;要钉的那件事没变:它不是对象。
+      expect(subject, segment).toBeNull();
+      // 而且它确实**落在 campaign 这条路由上**,不是根本没匹配上掉进默认档 ——
+      // 快捷 chips 这一面看得见:落对了给的是 campaign 那一组,落错了给的是默认那一组。
+      expect(panelQuickChips(`${SHELL_ROUTES.campaign}/${segment}`).map((c) => c.goalKey), segment).toEqual(
+        panelQuickChips(SHELL_ROUTES.campaign).map((c) => c.goalKey),
+      );
     }
   });
 });
@@ -291,22 +325,22 @@ describe("页面快捷 chips", () => {
   });
 
   it("面板底部真的画出来了,顺序与页面表一致", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mount(shell(MERCHANT_SURFACE));
     const rendered = [...el.querySelectorAll<HTMLElement>("[data-otto-quick-chip]")];
 
     expect(rendered.map((n) => n.getAttribute("data-otto-quick-chip"))).toEqual(
-      panelQuickChips(SHELL_ROUTES.campaign).map((c) => c.goalKey),
+      panelQuickChips(MERCHANT_SURFACE).map((c) => c.goalKey),
     );
     expect(rendered.map((n) => n.textContent)).toEqual(
-      panelQuickChips(SHELL_ROUTES.campaign).map((c) => c.label),
+      panelQuickChips(MERCHANT_SURFACE).map((c) => c.label),
     );
   });
 
   it("点一颗 = 开一条新会话,把那句话交给会话流(与前门同一条路)", async () => {
     createEmptyCoworkThread.mockResolvedValue({ id: "t_new" });
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
-    const first = panelQuickChips(SHELL_ROUTES.campaign)[0]!;
+    const el = await mount(shell(MERCHANT_SURFACE));
+    const first = panelQuickChips(MERCHANT_SURFACE)[0]!;
 
     await act(async () => {
       el.querySelector<HTMLButtonElement>(`[data-otto-quick-chip="${first.goalKey}"]`)!.click();
@@ -321,7 +355,7 @@ describe("页面快捷 chips", () => {
 // ---------------------------------------------------------------------------
 describe("头部的 ☰ 历史", () => {
   it("点开就是列表,再点回到会话", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mount(shell(MERCHANT_SURFACE));
     const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
 
     expect(el.querySelector("[data-otto-thread-list]")).toBeNull();
@@ -335,7 +369,7 @@ describe("头部的 ☰ 历史", () => {
   });
 
   it("选一条会话 / 开新对话都会把列表关掉", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mount(shell(MERCHANT_SURFACE));
     const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
 
     await act(async () => history.click());
@@ -357,7 +391,7 @@ describe("头部的 ☰ 历史", () => {
 // ---------------------------------------------------------------------------
 describe("选一条历史会话,消息真的出来 (P1-1)", () => {
   it("meta 会话被选中时把真正的消息取回来,并画出来", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
     });
@@ -380,7 +414,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
       threads: [{ ...META_THREAD, messages: [{ id: "m1", role: "USER", kind: "TEXT", text: "already here", seq: 1 }] }],
     });
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
     });
@@ -396,7 +430,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
     let release: (value: unknown) => void = () => {};
     getCoworkThreadClient.mockReturnValue(new Promise((resolve) => { release = resolve; }));
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
     });
@@ -412,7 +446,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
     // 商家改主意:开新对话(走头部那颗以外的第二条路也一样 —— 这里直接调列表里那颗之外的
     // 意图源,模拟「禁用挡不住的那些路」,例如底部 chip)。
     await act(async () => {
-      el.querySelector<HTMLButtonElement>(`[data-otto-quick-chip="${panelQuickChips(SHELL_ROUTES.campaign)[0]!.goalKey}"]`)!.click();
+      el.querySelector<HTMLButtonElement>(`[data-otto-quick-chip="${panelQuickChips(MERCHANT_SURFACE)[0]!.goalKey}"]`)!.click();
     });
 
     // 现在那份取数才回来。
@@ -430,7 +464,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
   it("取不到就留在列表上说实话,不切过去让商家盯着一片空白", async () => {
     getCoworkThreadClient.mockResolvedValue(null);
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
     });
@@ -446,7 +480,7 @@ describe("选一条历史会话,消息真的出来 (P1-1)", () => {
   it("那句「打不开」不许跨开合残留 —— 关掉再打开是新的一眼", async () => {
     getCoworkThreadClient.mockResolvedValue(null);
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mount(shell(MERCHANT_SURFACE));
     const history = el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!;
     await act(async () => history.click());
     await act(async () => {
@@ -474,7 +508,7 @@ describe("开关历史不丢草稿 (P1-2)", () => {
   }
 
   it("打了一半的字在开关历史之后还在,而且还是同一个输入框(没被卸载重建)", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mount(shell(MERCHANT_SURFACE));
     const composer = el.querySelector<HTMLTextAreaElement>("[data-otto-panel-body] textarea")!;
     await act(async () => typeInto(composer, "Raya promo, 3 posts"));
     expect(composer.value).toBe("Raya promo, 3 posts");
@@ -491,7 +525,7 @@ describe("开关历史不丢草稿 (P1-2)", () => {
   });
 
   it("历史开着的时候会话只是被藏起来,没有被卸掉", async () => {
-    const el = await mount(shell(SHELL_ROUTES.campaign));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
     });
@@ -510,8 +544,8 @@ describe("chip 点失败照前门的形状说话 (P2-2)", () => {
   it("建会话失败时画出那句话,chips 仍可再点", async () => {
     createEmptyCoworkThread.mockResolvedValue({ error: "You're out of credits." });
 
-    const el = await mount(shell(SHELL_ROUTES.campaign));
-    const first = panelQuickChips(SHELL_ROUTES.campaign)[0]!;
+    const el = await mount(shell(MERCHANT_SURFACE));
+    const first = panelQuickChips(MERCHANT_SURFACE)[0]!;
     await act(async () => {
       el.querySelector<HTMLButtonElement>(`[data-otto-quick-chip="${first.goalKey}"]`)!.click();
     });

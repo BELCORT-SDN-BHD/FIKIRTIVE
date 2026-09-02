@@ -151,14 +151,17 @@ describe("#701 Brand memory is pointed at with a link, not with directions", () 
       }),
     );
 
-    // Open the "Set as product image" dialog from the tile's hover overlay.
-    const setAsProduct = Array.from(dom.querySelectorAll("button")).find(
-      (b) => b.textContent?.trim() === "Set as product image",
+    // Open the item's action menu, then choose the product-image action.
+    const actionMenu = dom.querySelector<HTMLButtonElement>('button[aria-label^="Actions for "]');
+    expect(actionMenu, "the item action menu is gone").toBeTruthy();
+    await act(async () => {
+      actionMenu!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    const setAsProduct = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (item) => item.textContent?.trim() === "Set as product image",
     );
     expect(setAsProduct, "the Set as product image action is gone").toBeTruthy();
-    await act(async () => {
-      setAsProduct!.click();
-    });
+    await act(async () => { setAsProduct!.click(); });
 
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog, "the product picker dialog did not open").toBeTruthy();

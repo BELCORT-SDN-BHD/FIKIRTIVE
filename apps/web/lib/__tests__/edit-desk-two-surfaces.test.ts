@@ -47,28 +47,33 @@ const DESK_ACTIONS = [
   "clearCutCaptions",
 ] as const;
 
-describe("① 人工一面:剪辑台真的有一扇门", () => {
+describe("① Manual editor 在 Beta parked", () => {
   /**
    * W2-11(切换总票)之后,「edit」不再是导轨里的一格 —— 新 `MERCHANT_NAV` 是规格书 §2.3①
    * 拍板的七格骨架,`Workspace` 分组连同它下面那颗「Video editor」一起撤了(规格书 Q6 早已
-   * 说明理由:要剪的东西就在 Library 里,不该在导轨上另占一格)。但 Q6 说的是「挪进
-   * Library 的界面里」,不是「不留任何门」—— 今天 Library 自己的界面(`OttoStuff.tsx`)
-   * 还没有一处链接指向 `/library/editor`,这是一个真实的、W2-11 暴露出来的可发现性缺口,
-   * 已经在收尾报告里向协调者点名,不在这一票的动手范围内(建一个新的「点进剪辑台」UI 是
-   * 一次新功能,不是切换总票列出的活)。这里只钉今天为真的两件事:①真路由还在、还接的是
-   * 同一个组件;②旧书签 `/otto?view=edit` 一样 307 到它,不会 404。
+   * 说明理由:要剪的东西就在 Library 里,不该在导轨上另占一格)。Q6 说的是「挪进
+   * Library 的界面里」,不是「不留任何门」—— 所以 Library 页头必须保留一颗明确入口,
+   * 与真路由和旧书签一起围住:商家不需要知道地址也能找到剪辑台。
    */
   it("真路由还在,不是被切换总票误删掉的一部分", () => {
     expect(existsSync(path.join(WEB_ROOT, "app/library/editor/page.tsx"))).toBe(true);
     expect(SHELL_ROUTES.edit).toBe("/library/editor");
   });
 
-  it("旧书签 ?view=edit 一样 307 到它,不会 404(§2.5「旧地址一律不撞墙」)", () => {
-    expect(OTTO_VIEW_REDIRECTS.edit).toBe(SHELL_ROUTES.edit);
+  it("旧书签 ?view=edit 进入 Create,不会 404", () => {
+    expect(OTTO_VIEW_REDIRECTS.edit).toBe(SHELL_ROUTES.create);
   });
 
-  it("门后面画的是剪辑台本身", () => {
-    expect(codeOf("app/library/editor/page.tsx")).toContain("<EditDesk");
+  it("legacy editor route 只从权威源 redirect 到 Create", () => {
+    const route = codeOf("app/library/editor/page.tsx");
+    expect(route).toContain("redirect(SHELL_ROUTES.create)");
+    expect(route).not.toContain("<EditDesk");
+  });
+
+  it("Library 页头改为 active Create 入口", () => {
+    const library = codeOf("components/otto/OttoStuff.tsx");
+    expect(library).toContain("href={SHELL_ROUTES.create}");
+    expect(library).not.toContain("href={SHELL_ROUTES.edit}");
   });
 });
 
@@ -130,5 +135,15 @@ describe("④ 钱路:开门没有开出一条新的扣费路径", () => {
         expect(source, `${file} 碰了 ${spend}`).not.toContain(spend);
       }
     }
+  });
+});
+
+describe("⑤ 视觉语言:人工动作不借 Otto 的橙色", () => {
+  it("导出、素材选择与音乐选择都使用中性的 shadcn 状态", () => {
+    const desk = codeOf("components/otto/edit/EditDesk.tsx");
+    expect(desk).not.toContain('variant="otto"');
+    expect(desk).not.toContain('variant="otto-soft"');
+    expect(desk).toContain("<Card");
+    expect(desk).toContain("<Progress");
   });
 });

@@ -9,22 +9,24 @@ import { Skeleton } from "@/components/ui/skeleton";
  */
 export default function SettingsLoading() {
   return (
-    <main className="gb flex h-dvh flex-col bg-background" role="status" aria-live="polite">
-      <div className="flex flex-1 gap-6 overflow-hidden p-[64px_28px_30px]">
-        {/* 左边那条分区导航 */}
-        <div className="hidden w-[190px] flex-none flex-col gap-2 sm:flex">
+    <main className="gb min-h-dvh bg-background px-5 py-8 sm:px-8 sm:py-10" role="status" aria-live="polite">
+      <div className="mx-auto grid w-full max-w-7xl gap-10 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <div className="hidden flex-col gap-3 lg:flex">
           <Skeleton className="h-7 w-28" />
-          <Skeleton className="mt-2 h-8 w-full rounded-[9px]" />
-          <Skeleton className="h-8 w-full rounded-[9px]" />
-          <Skeleton className="h-8 w-full rounded-[9px]" />
-          <Skeleton className="h-8 w-full rounded-[9px]" />
+          <Skeleton className="h-4 w-44" />
+          <Skeleton className="mt-2 h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
         </div>
-        {/* 右边的分区卡片 */}
-        <div className="min-w-0 flex-1">
-          <Skeleton className="h-6 w-44" />
-          <Skeleton className="mt-3 h-[168px] w-full max-w-[760px] rounded-[14px]" />
-          <Skeleton className="mt-7 h-6 w-40" />
-          <Skeleton className="mt-3 h-[120px] w-full max-w-[760px] rounded-[14px]" />
+        <div className="flex min-w-0 max-w-4xl flex-col gap-8">
+          <div className="flex flex-col gap-3">
+            <Skeleton className="h-5 w-36" />
+            <Skeleton className="h-9 w-52" />
+            <Skeleton className="h-5 w-full max-w-xl" />
+          </div>
+          <Skeleton className="h-72 w-full" />
+          <Skeleton className="h-40 w-full" />
         </div>
       </div>
       <span className="sr-only">Loading your settings</span>

@@ -32,15 +32,20 @@ test("A merchant signs in with the emailed code and lands where they were headed
   // page into the code step and says which address it went to, and the code they were mailed
   // finishes the sign-in without ever leaving the tab they started in.
   const code = await requestSignInCode(page, ws.email, "/billing");
-  await expect(page.getByText("Check your email")).toBeVisible();
+  // Scoped to the HEADING, not to the text. Next's route announcer (`#__next-route-announcer__`,
+  // an aria-live div the framework fills with the new page's title after a client-side
+  // navigation) carries the SAME words, so a bare text match resolves to two nodes and
+  // Playwright's strict mode fails the assertion — on a page that is in fact correct. Asking for
+  // the heading asks about the product's own DOM instead of the framework's accessibility relay.
+  await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
   await expect(page.getByText(ws.email)).toBeVisible();
 
-  await page.getByLabel("Sign-in code").fill(code);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("Login code").fill(code);
+  await page.getByRole("button", { name: "Continue with login code" }).click();
 
   await expect(page).toHaveURL(/\/billing/);
   await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
-  await expect(page.getByText("Your balance")).toBeVisible();
+  await expect(page.getByText("Available balance")).toBeVisible();
 });
 
 test("A code that was never minted signs nobody in, and says so on the page", async ({ page }) => {
@@ -55,8 +60,8 @@ test("A code that was never minted signs nobody in, and says so on the page", as
   const real = await requestSignInCode(page, ws.email, "/billing");
   const wrong = real === "000000" ? "111111" : "000000";
 
-  await page.getByLabel("Sign-in code").fill(wrong);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("Login code").fill(wrong);
+  await page.getByRole("button", { name: "Continue with login code" }).click();
 
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(page).toHaveURL(/\/login/);

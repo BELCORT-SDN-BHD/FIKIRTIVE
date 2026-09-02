@@ -31,6 +31,7 @@ import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { SECTIONS } from "@fikirtive/core/memory-sections";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { StuffItem } from "@/lib/stuff-items";
+import { expectFocusInside } from "./focus-trap-wait";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(HERE, "../..");
@@ -166,7 +167,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/otto-client-actions", () => ({ ottoTurn: vi.fn() }));
 vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: vi.fn(async () => null) }));
 vi.mock("@/lib/memory-actions", () => ({
-  addMemory: vi.fn(), updateMemory: vi.fn(), deleteMemory: vi.fn(),
+  addMemory: vi.fn(), updateMemory: vi.fn(), deleteMemory: vi.fn(), restoreMemory: vi.fn(),
   listMyMemory: vi.fn(async () => []),
   listMemory: vi.fn(async () => []),
 }));
@@ -263,9 +264,7 @@ function buttonWithText(scope: ParentNode, text: string): HTMLButtonElement | un
 /**
  * 等**那件事真的发生**,而不是等一段时间(#1030)。
  *
- * Radix 的 roving focus 不在按键那一刻搬焦点:`RovingFocusGroupItem` 的 `onKeyDown` 把
- * `focusFirst(candidateNodes)` 塞进一个 `setTimeout(…)` 里
- * (`@radix-ui/react-roving-focus`,1.1.13 的 dist 第 180 行)。而 `await act(...)` 保证的
+ * Roving focus 可能在按键后的调度阶段才搬焦点，而 `await act(...)` 保证的
  * 是「React 的活干完了、微任务排空了」——**它不保证 Node 的定时器队列轮到过**。于是
  * 「焦点走没走到下一个页签」变成一场和 1ms 定时器的赛跑:文件顺序一换、机器负载一变,
  * 同一份代码就一半绿一半红。#1030 记的三次独立观察,失败字节永远是同一句
@@ -386,15 +385,39 @@ describe("W2-2 ② 手搓 tablist 退场,换成 ui/tabs(规格书 §5.6 ②)", (
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
   });
 
+
+  /**
+   * FRONT(前端基线合并):`ui/tabs` 的底座从 Radix 换成 Base UI(已冻结的
+   * `docs/specs/base-ui-switch.md`,FRONT §3「Base UI 切换随本规格上主干」)。
+   * 「整条页签栏只占一个 Tab 停靠点」这条**承诺没变**,两家的落法不同:
+   *   · Radix:停靠点放在容器上(tablist `tabindex="0"`,六个页签全 `-1`);
+   *   · Base UI:停靠点放在选中的那一个页签上(选中 `0`,其余 `-1`,容器不带 tabindex)。
+   * 所以这里不再钉某一家的落法,改成钉那条承诺本身:整条页签栏加起来**只有一个**
+   * 能用 Tab 停下来的地方。手搓那版是六个,这一条照样红。
+   */
   it("整条页签栏只占一个 Tab 停靠点(roving tabindex)—— 手搓那版是六个", async () => {
     const dom = await mountBrand();
-    expect(dom.querySelector('[role="tablist"]')?.getAttribute("tabindex")).toBe("0");
-    const tabs = Array.from(dom.querySelectorAll('[role="tab"]'));
+    const list = dom.querySelector<HTMLElement>('[role="tablist"]')!;
+    const tabs = Array.from(dom.querySelectorAll<HTMLElement>('[role="tab"]'));
     expect(tabs).toHaveLength(SECTIONS.length);
-    expect(tabs.filter((t) => t.getAttribute("tabindex") !== "-1")).toEqual([]);
+
+    const stops = [list, ...tabs].filter((el) => {
+      const value = el.getAttribute("tabindex");
+      return value !== null && Number(value) >= 0;
+    });
+    expect(stops).toHaveLength(1);
+    // 那唯一一个停靠点必须是**选中**的那一格 —— 商家 Tab 进来时落在他正在看的那一段上。
+    expect(stops[0].getAttribute("aria-selected") ?? "n/a").not.toBe("false");
   });
 
-  it("方向键在页签之间走 —— 手搓那版按了什么都不会发生", async () => {
+  /**
+   * 手动激活(Base UI `activateOnFocus` 默认关):方向键只挪焦点,Enter / Space 才换页签。
+   * 这一面换页签会发一次导航(`router.replace('/brand?tab=…')`),自动激活会让商家用方向键
+   * 扫一遍目录就连发五次导航 —— 排期页那条页签栏为同一个理由写着同一句
+   * (`components/schedule/schedule-tabs.tsx:19`)。所以这一条钉两段:方向键真的走得动,
+   * 按下去才真的换。手搓那版两段都做不到。
+   */
+  it("上下方向键在垂直资料目录之间走 —— 手搓那版按了什么都不会发生", async () => {
     const dom = await mountBrand();
     const tabs = Array.from(dom.querySelectorAll<HTMLElement>('[role="tab"]'));
     const [first, second] = tabs;
@@ -405,30 +428,42 @@ describe("W2-2 ② 手搓 tablist 退场,换成 ui/tabs(规格书 §5.6 ②)", (
     expect(document.activeElement, "方向键还没按,焦点就不在第一个页签上").toBe(first);
 
     await act(async () => {
-      first.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      first.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     });
-    // 焦点推进是 Radix 推迟到宏任务里干的 —— 等它真的发生,而不是赌它已经发生(见 actUntil)。
+    // 焦点推进被推迟到宏任务里干 —— 等它真的发生,而不是赌它已经发生(见 actUntil)。
     await actUntil(() => document.activeElement === second);
 
     expect(document.activeElement?.textContent?.trim()).toBe(SECTIONS[1].label);
+    // 只挪焦点的那一段:还没按下去,地址一次都不许换。
+    expect(routerReplace).not.toHaveBeenCalled();
+
     // 页签是 URL 的一部分(?tab=),所以「换页签」这件事在这一面就是换地址。
+    await act(async () => { second.click(); });
+    await actUntil(() => routerReplace.mock.calls.length > 0);
     expect(routerReplace).toHaveBeenCalledWith(`/brand?tab=${SECTIONS[1].key}`, { scroll: false });
   });
 
+  /**
+   * 「只有选中的那一块画得出来」——**承诺没变**,Base UI 把没选中的那几块直接不挂进 DOM
+   * (`keepMounted` 默认 false),Radix 是挂着再 `hidden`。所以这里钉的是商家看得到的那一条:
+   * 画面上有且只有一块内容,而且就是选中那一段的内容。
+   */
   it("每个页签都有自己的一块内容,而且只有选中的那一块画得出来", async () => {
     const dom = await mountBrand({ tab: "products", records: A_PRODUCT });
     const panels = Array.from(dom.querySelectorAll('[role="tabpanel"]'));
-    expect(panels).toHaveLength(SECTIONS.length);
     const shown = panels.filter((p) => !p.hasAttribute("hidden"));
     expect(shown).toHaveLength(1);
     expect(shown[0].textContent).toContain("Sambal bottle");
+    // 别的段的内容一个字都不许同时画出来(否则「只有选中那一块」就成了空话)。
+    expect(dom.querySelectorAll('[role="tabpanel"]')).toHaveLength(shown.length);
   });
 });
 
 describe("W2-2 ② 手搓图片弹窗退场,换成 ui/dialog(规格书 §5.6 ①)", () => {
   it("源码里没有那个自制的整屏遮罩 —— 剥掉注释之后一处都不剩", () => {
     expect(code("components/otto/OttoMemory.tsx"), "手搓弹窗又回来了").not.toContain("fixed inset-0");
-    expect(source("components/otto/OttoMemory.tsx")).toContain('from "@/components/ui/dialog"');
+    expect(source("components/otto/OttoMemory.tsx")).toContain("<ProductImagePickerDialog");
+    expect(source("components/otto/memory/ProductImagePickerDialog.tsx")).toContain('from "@/components/ui/dialog"');
   });
 
   async function openPicker(): Promise<HTMLElement> {
@@ -452,7 +487,7 @@ describe("W2-2 ② 手搓图片弹窗退场,换成 ui/dialog(规格书 §5.6 ①
 
   it("焦点被关进弹窗里 —— 打开之后键盘走不到背后那一页", async () => {
     const dialog = await openPicker();
-    expect(dialog.contains(document.activeElement), "焦点还留在弹窗外面").toBe(true);
+    await expectFocusInside(dialog);
   });
 
   it("Escape 关掉它(手搓那版只认点遮罩,键盘用户没有出路)", async () => {
@@ -469,8 +504,9 @@ describe("W2-2 ② 手搓图片弹窗退场,换成 ui/dialog(规格书 §5.6 ①
 
   it("选一张图就把它设成产品图,并且把弹窗收起来", async () => {
     const { saveBrandRecord } = await import("@/lib/brand-record-actions");
+    vi.mocked(saveBrandRecord).mockResolvedValue({ ok: true, id: "rec_1" });
     const dialog = await openPicker();
-    const tile = buttonWithText(dialog, "Nasi lemak plate");
+    const tile = dialog.querySelector<HTMLButtonElement>('button[aria-label="Choose Nasi lemak plate"]');
     expect(tile, "弹窗里没有可点的图").toBeTruthy();
     await act(async () => { tile!.click(); });
     expect(saveBrandRecord).toHaveBeenCalledWith(expect.objectContaining({

@@ -11,7 +11,15 @@
  * save can't quietly replace direction the merchant (or Otto) wrote earlier.
  */
 import { useState } from "react";
+import { Check, ChevronDown, NotebookPen } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import { getCoworkBrief, setCoworkBrief } from "@/lib/cowork-actions";
+import { cn } from "@/lib/utils";
 
 const MAX_FIELD = 200;
 
@@ -87,134 +95,132 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
 
   return (
     /* leading-[1.5] — design-baseline body line-height (Analytics standard) */
-    <div className="gb leading-[1.5] w-full">
-      <button
+    <div className="gb w-full leading-[1.5]">
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         onClick={toggleOpen}
-        className="flex items-center justify-center gap-2 text-[0.65625rem] font-semibold text-muted-foreground/70 uppercase tracking-[0.07em] bg-transparent border-0 cursor-pointer p-0 w-full"
+        className="w-full justify-start px-2 text-muted-foreground"
         aria-expanded={open}
       >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-        </svg>
+        <NotebookPen data-icon="inline-start" aria-hidden="true" />
         Project brief
-        <svg
-          width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden
-          style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
-        >
-          <path d="M6 9l6 6 6-6" />
-        </svg>
-      </button>
+        <ChevronDown
+          data-icon="inline-end"
+          aria-hidden="true"
+          className={cn("ml-auto transition-transform duration-[var(--dur-2)]", open && "rotate-180")}
+        />
+      </Button>
 
       {open && (
-        <form
-          onSubmit={handleSave}
-          className="mt-4 p-4 bg-card border border-border rounded-[14px] flex flex-col gap-3"
-          style={{ borderWidth: "1.5px" }}
-        >
-          <p className="m-0 text-[0.75rem] text-muted-foreground/70">
-            Use this for the offer, audience, channel, and budget in this project. Shop-wide identity and catalog facts live in Brand memory.
-          </p>
-          {/* The brief already stored for this project. Saving replaces it, so it is shown
-              before the fields, never after — and a failed read says so instead of reading
-              like an empty brief. */}
-          {current.state === "loading" ? (
-            <p className="m-0 text-[0.75rem] text-muted-foreground/70">Checking this project&apos;s brief…</p>
-          ) : current.state === "unreadable" ? (
-            <p role="alert" className="m-0 text-[0.75rem] text-[var(--error-soft-foreground)]">
-              {current.message}
-            </p>
-          ) : current.brief ? (
-            <div className="rounded-[10px] bg-muted/45 p-3">
-              <p className="m-0 mb-1 text-[0.6875rem] font-semibold uppercase tracking-[0.07em] text-muted-foreground/70">
-                Brief saved now
-              </p>
-              <p className="m-0 text-[0.75rem] leading-[1.5] text-foreground">{current.brief}</p>
-              <p className="m-0 mt-2 text-[0.6875rem] text-muted-foreground/70">
-                Saving below will replace this text.
-              </p>
-            </div>
-          ) : (
-            <p className="m-0 text-[0.75rem] text-muted-foreground/70">No brief yet for this project.</p>
-          )}
-          <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-offer">Offer for this project</label>
-            <input
-              id="qb-offer"
-              type="text"
-              value={offer}
-              onChange={(e) => setOffer(e.target.value.slice(0, MAX_FIELD))}
-              placeholder="e.g. the summer mug collection"
-              className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
-              disabled={saving}
-            />
-          </div>
-          <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-audience">Audience for this project</label>
-            <input
-              id="qb-audience"
-              type="text"
-              value={audience}
-              onChange={(e) => setAudience(e.target.value.slice(0, MAX_FIELD))}
-              placeholder="e.g. first-time home buyers"
-              className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
-              disabled={saving}
-            />
-          </div>
-          <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-platform">Where this project will run</label>
-            <input
-              id="qb-platform"
-              type="text"
-              value={platform}
-              onChange={(e) => setPlatform(e.target.value.slice(0, MAX_FIELD))}
-              placeholder="e.g. Instagram, TikTok, LinkedIn"
-              className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
-              disabled={saving}
-            />
-          </div>
-          <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-budget">Budget for this project <span className="font-normal normal-case">(optional)</span></label>
-            <input
-              id="qb-budget"
-              type="text"
-              value={budget}
-              onChange={(e) => setBudget(e.target.value.slice(0, MAX_FIELD))}
-              placeholder="e.g. low-cost DIY, or $500/month"
-              className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
-              disabled={saving}
-            />
-          </div>
-          {error && (
-            <p role="alert" className="text-[0.75rem] text-[var(--error-soft-foreground)] m-0">
-              {error}
-            </p>
-          )}
+        <Card size="sm" className="mt-3 shadow-none">
+          <CardHeader>
+            <CardTitle>Project direction</CardTitle>
+            <CardDescription>
+              Add the offer, audience, channel, and budget for this project. Shop-wide facts stay in Brand memory.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSave} className="flex flex-col gap-4">
+              {/* The brief already stored for this project. Saving replaces it, so it is shown
+                  before the fields, never after — and a failed read says so instead of reading
+                  like an empty brief. */}
+              {current.state === "loading" ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Spinner aria-label="Checking project brief" />
+                  Checking this project&apos;s brief…
+                </div>
+              ) : current.state === "unreadable" ? (
+                <Alert role="alert" variant="destructive">
+                  <AlertDescription>{current.message}</AlertDescription>
+                </Alert>
+              ) : current.brief ? (
+                <Alert>
+                  <AlertDescription>
+                    <span className="font-medium text-foreground">Current brief</span>
+                    <span className="mt-1 block">{current.brief}</span>
+                    <span className="mt-1 block text-xs">Saving below will replace this text.</span>
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <p className="text-xs text-muted-foreground">No brief yet for this project.</p>
+              )}
 
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              disabled={saving}
-              className="py-2 px-4 text-[0.875rem] text-muted-foreground bg-transparent border border-border rounded-[14px] cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving || !composeBrief({ offer, audience, platform, budget })}
-              className="py-2 px-4 text-[0.875rem] font-semibold text-primary-foreground rounded-[14px] border-0 transition-colors duration-150"
-              style={{
-                background: saved ? "var(--success, #22c55e)" : "var(--primary)",
-                cursor: saving || !composeBrief({ offer, audience, platform, budget }) ? "not-allowed" : "pointer",
-                opacity: saving ? 0.7 : 1,
-              }}
-            >
-              {saved ? "Saved!" : saving ? "Saving…" : "Save brief"}
-            </button>
-          </div>
-        </form>
+              <FieldGroup className="gap-4">
+                <Field className="gap-1.5">
+                  <FieldLabel htmlFor="qb-offer">Offer for this project</FieldLabel>
+                  <Input
+                    id="qb-offer"
+                    type="text"
+                    value={offer}
+                    onChange={(e) => setOffer(e.target.value.slice(0, MAX_FIELD))}
+                    placeholder="e.g. the summer mug collection"
+                    disabled={saving}
+                  />
+                </Field>
+                <Field className="gap-1.5">
+                  <FieldLabel htmlFor="qb-audience">Audience for this project</FieldLabel>
+                  <Input
+                    id="qb-audience"
+                    type="text"
+                    value={audience}
+                    onChange={(e) => setAudience(e.target.value.slice(0, MAX_FIELD))}
+                    placeholder="e.g. first-time home buyers"
+                    disabled={saving}
+                  />
+                </Field>
+                <Field className="gap-1.5">
+                  <FieldLabel htmlFor="qb-platform">Where this project will run</FieldLabel>
+                  <Input
+                    id="qb-platform"
+                    type="text"
+                    value={platform}
+                    onChange={(e) => setPlatform(e.target.value.slice(0, MAX_FIELD))}
+                    placeholder="e.g. Instagram, TikTok, LinkedIn"
+                    disabled={saving}
+                  />
+                </Field>
+                <Field className="gap-1.5">
+                  <FieldLabel htmlFor="qb-budget">Budget for this project</FieldLabel>
+                  <Input
+                    id="qb-budget"
+                    type="text"
+                    value={budget}
+                    onChange={(e) => setBudget(e.target.value.slice(0, MAX_FIELD))}
+                    placeholder="e.g. low-cost DIY, or $500/month"
+                    disabled={saving}
+                  />
+                  <FieldDescription>Optional</FieldDescription>
+                </Field>
+              </FieldGroup>
+
+              {error && (
+                <Alert role="alert" variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="secondary" size="sm" onClick={() => setOpen(false)} disabled={saving}>
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={saving || !composeBrief({ offer, audience, platform, budget })}
+                >
+                  {saved ? (
+                    <Check data-icon="inline-start" aria-hidden="true" />
+                  ) : saving ? (
+                    <Spinner data-icon="inline-start" aria-label="Saving project brief" />
+                  ) : null}
+                  {saved ? "Saved" : saving ? "Saving…" : "Save brief"}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

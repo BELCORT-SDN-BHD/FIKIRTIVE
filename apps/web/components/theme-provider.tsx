@@ -6,7 +6,7 @@ import { ThemeProvider as NextThemesProvider } from "next-themes";
  * Wire ① of the §K3 activation contract (#804) — the thing that makes the `.gb.dark`
  * token block, which has existed and been contrast-audited for months, stop being dead
  * code. Nothing set `class="dark"` before this; next-themes was already a dependency,
- * mounted nowhere, and only components/ui/sonner.tsx ever read `useTheme()` (getting the
+ * mounted nowhere, and the previous Sonner wrapper was the only code reading `useTheme()` (getting the
  * hard-coded "system" fallback every time).
  *
  * Settings, and why each one:

@@ -15,6 +15,7 @@ import { refundCreditsAction, completeManualRefund, abandonManualRefund } from "
 import { FINANCE_ADJUST_LIMITS, FINANCE_PER_ACTION_LIMIT_MESSAGE } from "@fikirtive/core/finance-limits";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { AdminActionConfirmDialog } from "./AdminActionConfirmDialog";
 import {
   Dialog,
   DialogContent,
@@ -80,6 +81,8 @@ export function TenantDetail({ detail }: { detail: Detail }) {
   const { orgId, name, ownerEmail, status, balance, reserved, spentUsd, projectCount, genCount, ledger, audit, adjustRolling30dDisplay, adjustRolling30dLimitDisplay, openManualRefunds, openManualRefundsHasMore } = detail;
   const router = useRouter();
   const grantBusyRef = useRef(false);
+  const statusBusyRef = useRef(false);
+  const cutBusyRef = useRef(false);
 
   const [grantAmount, setGrantAmount] = useState("");
   const [grantReason, setGrantReason] = useState("");
@@ -91,6 +94,7 @@ export function TenantDetail({ detail }: { detail: Detail }) {
 
   const [cutBusy, setCutBusy] = useState(false);
   const [cutMsg, setCutMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"suspend" | "cut-sessions" | null>(null);
 
   // MONEY-A14 人工退款。**退款单号在表单里生成一次就不再变**:它同时是账本 refId 和 Stripe 的
   // idempotency key,每点一次就换一个新号,等于把幂等保护自己关掉。重试要用同一个号。
@@ -239,34 +243,47 @@ export function TenantDetail({ detail }: { detail: Detail }) {
     }
   }
 
-  async function toggleStatus() {
-    const isSuspended = status === "suspended";
-    const nextStatus = isSuspended ? "active" : "suspended";
-    if (!isSuspended && !confirm("Suspend this tenant? They will be locked out immediately.")) return;
+  async function changeStatus(nextStatus: "active" | "suspended"): Promise<string | null> {
+    if (statusBusyRef.current) return null;
+    statusBusyRef.current = true;
     setStatusBusy(true);
     setStatusMsg(null);
-    const result = await setMembershipStatus(orgId, nextStatus);
-    setStatusBusy(false);
-    if ("error" in result) {
-      setStatusMsg({ ok: false, text: result.error });
-      return;
+    try {
+      const result = await setMembershipStatus(orgId, nextStatus);
+      if ("error" in result) return result.error;
+      setStatusMsg({ ok: true, text: `Status set to ${nextStatus}.` });
+      router.refresh();
+      return null;
+    } catch {
+      return "The status change could not finish. Check your connection and try again.";
+    } finally {
+      statusBusyRef.current = false;
+      setStatusBusy(false);
     }
-    setStatusMsg({ ok: true, text: `Status set to ${nextStatus}.` });
-    router.refresh();
   }
 
-  async function cutSessions() {
-    if (!confirm("Sign this merchant out now? All active sessions will be deleted.")) return;
+  async function resumeTenant() {
+    const failure = await changeStatus("active");
+    if (failure) setStatusMsg({ ok: false, text: failure });
+  }
+
+  async function cutSessions(): Promise<string | null> {
+    if (cutBusyRef.current) return null;
+    cutBusyRef.current = true;
     setCutBusy(true);
     setCutMsg(null);
-    const result = await cutTenantSessions(orgId);
-    setCutBusy(false);
-    if ("error" in result) {
-      setCutMsg({ ok: false, text: result.error });
-      return;
+    try {
+      const result = await cutTenantSessions(orgId);
+      if ("error" in result) return result.error;
+      setCutMsg({ ok: true, text: `Signed out ${result.cut} session${result.cut === 1 ? "" : "s"}.` });
+      router.refresh();
+      return null;
+    } catch {
+      return "The sign-out request could not finish. Check your connection and try again.";
+    } finally {
+      cutBusyRef.current = false;
+      setCutBusy(false);
     }
-    setCutMsg({ ok: true, text: `Signed out ${result.cut} session${result.cut === 1 ? "" : "s"}.` });
-    router.refresh();
   }
 
   async function startImpersonating() {
@@ -342,21 +359,42 @@ export function TenantDetail({ detail }: { detail: Detail }) {
 
         <Panel title="Access controls" subtitle="Lifecycle controls stay super-admin-only via existing tenant actions.">
           <div className="grid gap-3 md:grid-cols-3">
-            <button type="button" onClick={toggleStatus} disabled={statusBusy} className="rounded-xl border border-border bg-background p-4 text-left transition-colors hover:bg-secondary disabled:opacity-50">
-              <ShieldAlert className="size-5 text-muted-foreground" />
+            <Button
+              type="button"
+              variant="outline"
+              aria-label={status === "suspended" ? "Resume tenant" : "Suspend tenant"}
+              onClick={() => status === "suspended" ? void resumeTenant() : setConfirmAction("suspend")}
+              disabled={statusBusy}
+              className="h-auto flex-col items-start justify-start whitespace-normal p-4 text-left"
+            >
+              <ShieldAlert data-icon="inline-start" />
               <p className="mt-3 text-sm font-semibold text-foreground">{status === "suspended" ? "Resume tenant" : "Suspend tenant"}</p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">Flip membership status and mirror the Better Auth ban state.</p>
-            </button>
-            <button type="button" onClick={cutSessions} disabled={cutBusy} className="rounded-xl border border-border bg-background p-4 text-left transition-colors hover:bg-secondary disabled:opacity-50">
-              <DoorOpen className="size-5 text-muted-foreground" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              aria-label="End tenant sessions"
+              onClick={() => setConfirmAction("cut-sessions")}
+              disabled={cutBusy}
+              className="h-auto flex-col items-start justify-start whitespace-normal p-4 text-left"
+            >
+              <DoorOpen data-icon="inline-start" />
               <p className="mt-3 text-sm font-semibold text-foreground">Cut sessions</p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">Delete active Better Auth sessions for this tenant.</p>
-            </button>
-            <button type="button" onClick={() => setImpersonateOpen(true)} disabled={impersonateBusy} className="rounded-xl border border-border bg-background p-4 text-left transition-colors hover:bg-secondary disabled:opacity-50">
-              <UserRoundSearch className="size-5 text-muted-foreground" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              aria-label="Impersonate tenant"
+              onClick={() => setImpersonateOpen(true)}
+              disabled={impersonateBusy}
+              className="h-auto flex-col items-start justify-start whitespace-normal p-4 text-left"
+            >
+              <UserRoundSearch data-icon="inline-start" />
               <p className="mt-3 text-sm font-semibold text-foreground">Impersonate</p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">Requires a reason before starting the audited session.</p>
-            </button>
+            </Button>
           </div>
           <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
             {statusMsg ? <span className={statusMsg.ok ? "text-success" : "text-destructive"}>{statusMsg.text}</span> : null}
@@ -495,6 +533,38 @@ export function TenantDetail({ detail }: { detail: Detail }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AdminActionConfirmDialog
+        open={confirmAction === "suspend"}
+        onOpenChange={(open) => { if (!open) setConfirmAction(null); }}
+        title="Suspend tenant?"
+        description={`${ownerEmail || name || orgId} will lose access to this workspace immediately.`}
+        impactTitle="Access stops immediately"
+        impacts={[
+          "Every active membership in this tenant changes to suspended.",
+          "Active sessions end and sign-in stays blocked until the tenant is resumed.",
+          "Projects, assets, credits, and billing history stay unchanged.",
+        ]}
+        confirmLabel="Suspend tenant"
+        confirmingLabel="Suspending…"
+        onConfirm={() => changeStatus("suspended")}
+      />
+
+      <AdminActionConfirmDialog
+        open={confirmAction === "cut-sessions"}
+        onOpenChange={(open) => { if (!open) setConfirmAction(null); }}
+        title="End all tenant sessions?"
+        description={`${ownerEmail || name || orgId} and every other tenant member will be signed out.`}
+        impactTitle="This ends current sessions only"
+        impacts={[
+          "Every active session for this tenant is deleted.",
+          "The tenant stays active, so members can sign in again.",
+          "Projects, assets, credits, and account settings stay unchanged.",
+        ]}
+        confirmLabel="End sessions"
+        confirmingLabel="Ending sessions…"
+        onConfirm={cutSessions}
+      />
     </div>
   );
 }

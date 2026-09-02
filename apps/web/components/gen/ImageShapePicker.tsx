@@ -17,6 +17,13 @@
  * 不打断高频操作。
  */
 
+import { useId } from "react";
+import { CircleHelp } from "lucide-react";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { TooltipButton } from "@/components/ui/tooltip-button";
+import { TooltipProvider } from "@/components/ui/tooltip";
+
 /**
  * #914 r2(orchestrator 裁定,判官同一条原则贯彻到底):只许主张可证明的**回报行为**
  * （官方契约：图片响应结构没有 revised_prompt），不许主张引擎内部「原样执行 / 不改写」——
@@ -45,38 +52,40 @@ export function ImageShapePicker({
   compact?: boolean;
   title?: string;
 }) {
+  const selectId = useId();
   if (options.length === 0) return null;
   const select = (
-    <select
+    <NativeSelect
+      id={selectId}
+      size="sm"
       value={value}
       disabled={disabled}
       aria-label={`${label} of the image`}
       title={title ?? "The shape this image will be made in"}
       onChange={(event) => onChange(event.target.value)}
-      className="rounded-[8px] border border-border bg-card px-2 py-1 text-[0.8125rem] text-foreground disabled:opacity-40"
-      style={{ flex: "none" }}
     >
       {options.map((aspect) => (
-        <option key={aspect} value={aspect}>{aspect}</option>
+        <NativeSelectOption key={aspect} value={aspect}>{aspect}</NativeSelectOption>
       ))}
-    </select>
+    </NativeSelect>
   );
   // #914：一个小图标，悬浮才说话——高频控件旁边不铺一整句常驻文案。
   const promptCapabilityNote = (
-    <span
-      aria-label="How this engine handles your prompt"
-      title={IMAGE_ENGINE_PROMPT_CAPABILITY_NOTE}
-      style={{ fontSize: 12, lineHeight: 1, color: "var(--muted-foreground)", cursor: "help", flex: "none" }}
+    <TooltipButton
+      label="How this engine handles your prompt"
+      tooltip={IMAGE_ENGINE_PROMPT_CAPABILITY_NOTE}
+      variant="ghost"
+      size="icon-xs"
     >
-      ⓘ
-    </span>
+      <CircleHelp aria-hidden="true" />
+    </TooltipButton>
   );
-  if (compact) return <>{select}{promptCapabilityNote}</>;
-  return (
-    <label className="flex items-center gap-2 text-[0.75rem] text-muted-foreground">
-      <span className="font-semibold text-foreground">{label}</span>
+  const content = compact ? <>{select}{promptCapabilityNote}</> : (
+    <Field orientation="horizontal" className="w-auto gap-2">
+      <FieldLabel htmlFor={selectId}>{label}</FieldLabel>
       {select}
       {promptCapabilityNote}
-    </label>
+    </Field>
   );
+  return <TooltipProvider>{content}</TooltipProvider>;
 }

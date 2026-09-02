@@ -18,27 +18,12 @@ const readCopy = (rel: string) =>
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^[ \t]*\/\/.*$/gm, "");
 
-describe("#791-5 登录页不再低估自己的发布器", () => {
+describe("#791-5 登录页是 Auth journey，不再承担产品发布卖点", () => {
   const login = readCopy("app/login/page.tsx");
 
-  it("不再说「direct publish is coming soon」—— 发布器早就写好了", () => {
+  it("不在登入决定前插入发布产品文案", () => {
     expect(login).not.toMatch(/coming soon/i);
-  });
-
-  it("改说真正的卡点:Meta 的审核", () => {
-    expect(login).toMatch(/Instagram and Facebook/);
-    expect(login).toMatch(/Meta approves/);
-  });
-
-  // #851:上面那句「once Meta approves」现在只属于**通电**那一支。发布整条通道没通电,商家
-  // 也连不上任何账号,所以没登录就能读到的那一屏不能再无条件地卖它。这一条钉的正是这件事 ——
-  // 本文件读的是源码,两支都在源码里,所以上面两条照常绿,却不再说明屏幕上写着什么。
-  // 屏幕上那一支由 publish-honest-preview.test.ts ⑥ 钉;通电那天两处一起回来。
-  it("#851 那句只活在开关的通电支里,不是无条件写在屏幕上", () => {
-    expect(login).toMatch(/PUBLISHING_AVAILABLE/);
-    const idx = login.indexOf("Schedules and publishes to Instagram and Facebook");
-    expect(idx).toBeGreaterThan(-1);
-    expect(login.slice(Math.max(0, idx - 200), idx)).toMatch(/PUBLISHING_AVAILABLE/);
+    expect(login).not.toMatch(/Instagram|Facebook|Meta approves|PUBLISHING_AVAILABLE/i);
   });
 });
 
@@ -73,40 +58,18 @@ describe("#791-8 对外文案不再称 beta", () => {
 // 话** —— 页面上多写一件、或者把数字打死成 "25 free credits",价目表那侧一无所知。
 // 这里补上另一半:页面的数字必须是算出来的,承诺的必须正好是被算过价的那三件。
 describe("#810 P3-2 注册页承诺不许自己长出数字或第四件东西", () => {
-  const signup = readCopy("app/signup/page.tsx");
-
-  /** 把「enough for a full run: …」后面那句承诺拆成一件一件东西。
-   *
-   *  JSX 里这句被折行、夹着 {" "} 与 {starterCredits},所以先还原成一行纯文本:去掉表达式与
-   *  标签、压平空白,再按句号截断、按逗号 / and 拆项。拆出来的是**商家眼睛看到的东西**,
-   *  不是源码形状 —— 只有这样,「承诺了几件」才是断言得了的。 */
-  function promisedItems(): string[] {
-    const flat = signup
-      .replace(/\{[^{}]*\}/g, " ")
-      .replace(/<[^>]*>/g, " ")
-      .replace(/&apos;/g, "'")
-      .replace(/\s+/g, " ")
-      .trim();
-    const after = flat.split(/enough for a full run:/i)[1];
-    if (!after) return [];
-    return (after.split(".")[0] ?? "")
-      .split(/,|\band\b/i)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
+  const signupPage = readCopy("app/signup/page.tsx");
+  const signupForm = readCopy("app/signup/SignupForm.tsx");
 
   it("数字是从赠额常量算出来的,不是打上去的", () => {
-    expect(signup).toContain("displayCredits(SIGNUP_GRANT_CREDITS)");
-    expect(signup).toMatch(/\{starterCredits\}\s*free credits/);
-    // 正文里不许出现「<数字> free credits」这种写死的说法(改赠额时它会静静变成谎话)。
-    expect(signup).not.toMatch(/\d+\s*free credits/);
+    expect(signupPage).toContain("displayCredits(SIGNUP_GRANT_CREDITS)");
+    expect(signupPage).toContain("starterCredits={starterCredits}");
+    expect(signupForm).toContain("{starterCredits} starter credits");
+    expect(`${signupPage}\n${signupForm}`).not.toMatch(/\d+\s*(?:free|starter) credits/i);
   });
 
-  // #810 r3 P3:r2 这条只数「, a/an 出现几次」并要求 ≤2 —— 追加 "and analytics" 照样过,
-  // 因为那一项不带冠词。改成真正把承诺**枚举出来**,断言这个集合恰好等于被算过价的三件:
-  // 多一件、少一件、换一件,都在这里先红。
-  it("承诺的正好是被算过价的那三件:一场对话、一张图、一条短视频", () => {
-    expect(promisedItems()).toEqual(["a conversation with Otto", "an image", "a short video"]);
+  it("minimal Auth 不再把赠额扩写成额外能力承诺", () => {
+    expect(signupForm).not.toMatch(/enough for a full run|conversation with Otto|short video/i);
   });
 });
 
@@ -122,48 +85,19 @@ describe("#805 对外主话术:先说把活干完", () => {
   /** 商家看得到、且承载主话术的三面。Otto 提示词那一面由
    *  packages/otto/src/instructions.test.ts 钉(它在另一个包,读不到这里)。 */
   const SURFACES: ReadonlyArray<[string, string]> = [
-    ["登录页", "app/login/page.tsx"],
-    ["注册页", "app/signup/page.tsx"],
     ["Otto 进门", "components/otto/OttoFrontDoor.tsx"],
   ];
 
-  describe("登录页", () => {
+  describe("Auth surfaces", () => {
     const login = readCopy("app/login/page.tsx");
+    const signup = readCopy("app/signup/page.tsx");
 
-    it("主标题说的是活干完了,不是「不用变成 marketer」", () => {
-      expect(login).toMatch(/Otto gets the/);
-      expect(login).toMatch(/work done/);
-      expect(login).not.toMatch(/without becoming a/i);
-    });
-
-    it("四件事一件不少:建活动、调分群、看钱、换素材", () => {
-      for (const outcome of [/campaign/i, /segment/i, /where the money went/i, /creative/i]) {
-        expect(login).toMatch(outcome);
+    it("登录与注册不再兼任 marketing landing page", () => {
+      for (const authCopy of [login, signup]) {
+        expect(authCopy).not.toMatch(/Otto gets the|work done|campaign|where the money went/i);
+        expect(authCopy).not.toMatch(/\btrusted by\b|without becoming a/i);
       }
     });
-
-    it("不拿证明不了的社会证明当卖点(没有可指名的公开商家)", () => {
-      expect(login).not.toMatch(/\btrusted by\b/i);
-    });
-
-    // r2 · 判官 P1(PR #831 评论 5232023830):第一版写的是「brings every paid step back for
-    // you to approve first」。**这句话是假的** —— 和 Otto 聊天本身就按消息预扣结算,那条路
-    // (OttoFrontDoor 的 ottoTurn 调用)上根本没有审批卡。审批卡真实覆盖的是付费生成与发布。
-    // 未登录的人读到的第一句钱路承诺,只能说得比事实小,不许说得比事实大。
-    it("不承诺「凡花钱都先经你点头」—— 审批卡覆盖的是做东西与发布,不是每一次计费", () => {
-      expect(login).not.toMatch(/every paid step/i);
-      expect(login).not.toMatch(/every step that (?:spends|costs)/i);
-    });
-
-    it("说的是审批卡真正管得住的那一半", () => {
-      expect(login).toMatch(/nothing gets made or published until you approve/i);
-    });
-  });
-
-  it("注册页把 Otto 派去干活,不只是介绍认识", () => {
-    const signup = readCopy("app/signup/page.tsx");
-    expect(signup).toMatch(/put Otto to work/);
-    expect(signup).not.toMatch(/meet Otto/i);
   });
 
   it("Otto 进门那句说的是做完的活,不是「我陪你走一遍」", () => {

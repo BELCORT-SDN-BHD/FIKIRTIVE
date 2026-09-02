@@ -36,28 +36,29 @@ describe("TemplateModal spend safety", () => {
     const unknown = templateRunReducer(generating, { type: "unknown" });
 
     expect(unknown.phase).toBe("unknown");
-    expect(unknown.message).toBe("This didn't finish. Check your Library in a minute.");
+    expect(unknown.message).toBe("We couldn't confirm whether this finished. Check your Library in a minute.");
     expect(isTemplatePaidConfirmAvailable(unknown)).toBe(false);
   });
 
-  it("uses the safe alert treatment and a neutral Close action for an unknown outcome", () => {
+  it("uses the warning Alert treatment and a neutral Close action for an unknown outcome", () => {
     const src = fs.readFileSync(TEMPLATE_MODAL, "utf8");
     // #896 collapsed the two-step confirm, so the branch after "unknown" is now the ONE
     // priced Generate button rather than a `confirming ?` fork.
     const unknownBranch = src.match(/phase === "unknown" \? \(([\s\S]*?)\) : \(/)?.[1] ?? "";
 
     expect(unknownBranch).toContain('variant="secondary"');
-    expect(unknownBranch).not.toContain('variant="brand"');
+    expect(unknownBranch).not.toContain('variant="otto"');
     // …and the paid press that follows it is ONE button carrying the price (#896).
     expect(src).toContain("Generate · {costLabel}");
     expect(src).not.toContain("Review cost");
     expect(src).not.toContain("Confirm generate");
+    expect(src).toContain("AlertTitle");
+    expect(src).toContain("AlertDescription");
     expect(src).toContain('role="alert"');
-    expect(src).toContain("bg-error-soft");
-    expect(src).toContain("text-[13px]");
-    expect(src).toContain("leading-[18px]");
-    expect(src).toContain("font-medium");
-    expect(src).toContain("text-[var(--error-soft-foreground)]");
+    expect(src).toContain('phase === "unknown" ? "warning" : "destructive"');
+    expect(src).toContain("Status not confirmed");
+    expect(src).not.toContain("This didn't finish");
+    expect(src).not.toContain("bg-error-soft");
     expect(src).not.toContain('color: "var(--destructive)"');
   });
 
@@ -122,7 +123,7 @@ describe("TemplateModal spend safety", () => {
     for (const outcome of outcomes.slice(1)) {
       expect(outcome.kind).toBe("unknown");
       const state = templateRunReducer(initialTemplateRunState(), { type: "unknown" });
-      expect(state.message).toBe("This didn't finish. Check your Library in a minute.");
+      expect(state.message).toBe("We couldn't confirm whether this finished. Check your Library in a minute.");
       expect(isTemplatePaidConfirmAvailable(state)).toBe(false);
     }
   });

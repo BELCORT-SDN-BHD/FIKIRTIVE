@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import {
@@ -11,12 +11,12 @@ import {
   FolderKanban,
   Image as ImageIcon,
   Link2,
-  LoaderCircle,
   Megaphone,
   Pencil,
   Plus,
   Save,
   Send,
+  ShieldCheck,
   Sparkles,
   Trash2,
   Undo2,
@@ -56,17 +56,22 @@ import { scheduledPostStatusLabel, socialPlatformLabel } from "@/lib/social-labe
 import { MY_DATE_FORMAT } from "@/lib/my-date-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { CampaignNav } from "./campaign-nav";
 
@@ -105,11 +110,11 @@ export default function CampaignDetailPage({ initialState }: { initialState: Det
       <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
         <div className="mx-auto max-w-4xl">
           <CampaignNav current="detail" />
-          <section className="mt-7 rounded-[var(--radius-card)] border border-error-soft bg-card p-6 shadow-sm">
-            <AlertCircle className="size-6 text-destructive" />
-            <h1 className="mt-4 text-2xl font-semibold">Campaign is not available</h1>
-            <p className="mt-2 text-sm text-muted-foreground">{initialState.error}</p>
-          </section>
+          <Alert variant="destructive" className="mt-7" role="alert">
+            <AlertCircle />
+            <AlertTitle>Campaign is not available</AlertTitle>
+            <AlertDescription>{initialState.error}</AlertDescription>
+          </Alert>
         </div>
       </main>
     );
@@ -137,6 +142,8 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
     end: localDate(initialState.campaign.endAt),
   });
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteSubmittingRef = useRef(false);
 
   const status: CampaignStatus | null = isCampaignStatus(campaign.status) ? campaign.status : null;
   const statusMoves = status ? nextCampaignStatuses(status) : [];
@@ -193,25 +200,26 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
   }
 
   async function removeCampaign() {
+    if (deleteSubmittingRef.current) return;
+    deleteSubmittingRef.current = true;
     setBusy("campaign:delete");
-    setError(null);
+    setDeleteError(null);
+    let navigating = false;
     try {
       const result = await deleteCampaign({ campaignId: campaign.id });
       if (!("ok" in result)) {
-        setConfirmingDelete(false);
-        setError(result.error);
-        // A refusal leaves the page exactly as it was, so it must leave the BUTTONS as they were
-        // too. Returning here without clearing `busy` froze every control on a page the merchant
-        // was still allowed to use (#744 判官 r1 P2).
-        setBusy(null);
+        setDeleteError(result.error);
         return;
       }
       // Deleted campaigns are not readable any more, so stay off this page entirely. `busy` stays
       // set on purpose: the navigation is already under way and nothing here is actionable again.
+      navigating = true;
       window.location.assign("/campaign");
     } catch {
-      setError("The delete request could not finish. Please retry.");
-      setBusy(null);
+      setDeleteError("The delete request could not finish. Please retry.");
+    } finally {
+      deleteSubmittingRef.current = false;
+      if (!navigating) setBusy(null);
     }
   }
 
@@ -361,16 +369,28 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
         <header className="mt-7 grid gap-5 border-b border-border pb-7 lg:grid-cols-[1fr_auto] lg:items-end">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Campaign detail</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Campaign workspace</p>
               <Badge variant={status ? CAMPAIGN_STATUS_BADGE[status] : "warning"}>{campaign.status.toLowerCase()}</Badge>
             </div>
             {editingCampaign ? (
-              <div className="mt-3 grid max-w-3xl gap-3">
-                <Input value={campaignDraft.name} maxLength={120} onChange={(event) => setCampaignDraft((current) => ({ ...current, name: event.target.value }))} aria-label="Campaign name" placeholder="Campaign name" />
-                <Textarea value={campaignDraft.goal} maxLength={500} onChange={(event) => setCampaignDraft((current) => ({ ...current, goal: event.target.value }))} aria-label="Campaign goal" placeholder="What this campaign is for" />
+              <FieldGroup className="mt-4 max-w-3xl gap-4">
+                <Field>
+                  <FieldLabel htmlFor="campaign-name">Campaign name</FieldLabel>
+                  <Input id="campaign-name" value={campaignDraft.name} maxLength={120} onChange={(event) => setCampaignDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Campaign name" />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="campaign-goal">Campaign goal</FieldLabel>
+                  <Textarea id="campaign-goal" value={campaignDraft.goal} maxLength={500} onChange={(event) => setCampaignDraft((current) => ({ ...current, goal: event.target.value }))} placeholder="What this campaign is for" />
+                </Field>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <Input type="date" value={campaignDraft.start} onChange={(event) => setCampaignDraft((current) => ({ ...current, start: event.target.value }))} aria-label="Campaign start date" />
-                  <Input type="date" value={campaignDraft.end} onChange={(event) => setCampaignDraft((current) => ({ ...current, end: event.target.value }))} aria-label="Campaign end date" />
+                  <Field>
+                    <FieldLabel htmlFor="campaign-start">Start date</FieldLabel>
+                    <Input id="campaign-start" type="date" value={campaignDraft.start} onChange={(event) => setCampaignDraft((current) => ({ ...current, start: event.target.value }))} />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="campaign-end">End date</FieldLabel>
+                    <Input id="campaign-end" type="date" value={campaignDraft.end} onChange={(event) => setCampaignDraft((current) => ({ ...current, end: event.target.value }))} />
+                  </Field>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -379,14 +399,14 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
                     onClick={saveCampaignDetails}
                     disabled={busy !== null || !campaignDraft.name.trim() || !campaignDraft.goal.trim() || !campaignDraft.start || !campaignDraft.end}
                   >
-                    {busy === "campaign:save" ? <LoaderCircle className="animate-spin" /> : <Save />}
+                    {busy === "campaign:save" ? <Spinner /> : <Save data-icon="inline-start" />}
                     Save campaign
                   </Button>
                   <Button size="sm" type="button" variant="ghost" disabled={busy !== null} onClick={() => setEditingCampaign(false)}>
                     Cancel
                   </Button>
                 </div>
-              </div>
+              </FieldGroup>
             ) : (
               <>
                 <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{campaign.name}</h1>
@@ -395,16 +415,16 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
             )}
           </div>
           <div className="grid content-start gap-3">
-            <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm shadow-xs">
+            <Badge variant="outline" className="h-9 rounded-md bg-card px-3 shadow-xs">
               <span className="flex items-center gap-2 font-semibold">
-                <CalendarDays className="size-4 text-muted-foreground" />
+                <CalendarDays />
                 {dateLabel(campaign.startAt)} – {dateLabel(campaign.endAt)}
               </span>
-            </div>
+            </Badge>
             <div className="flex flex-wrap gap-2">
               {editingCampaign ? null : (
                 <Button size="sm" type="button" variant="secondary" disabled={busy !== null || !detailsEditable} onClick={openCampaignEditor}>
-                  <Pencil />
+                  <Pencil data-icon="inline-start" />
                   Edit campaign
                 </Button>
               )}
@@ -412,12 +432,21 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
                   offer a step the server refuses — or hide one it allows (#710). */}
               {statusMoves.map((next) => (
                 <Button key={next} size="sm" type="button" variant="secondary" disabled={busy !== null} onClick={() => moveStatus(next)}>
-                  {busy === `campaign:status:${next}` ? <LoaderCircle className="animate-spin" /> : null}
+                  {busy === `campaign:status:${next}` ? <Spinner /> : null}
                   Mark {CAMPAIGN_STATUS_LABELS[next].toLowerCase()}
                 </Button>
               ))}
-              <Button size="sm" type="button" variant="ghost" disabled={busy !== null} onClick={() => setConfirmingDelete(true)}>
-                <Trash2 />
+              <Button
+                size="sm"
+                type="button"
+                variant="ghost"
+                disabled={busy !== null}
+                onClick={() => {
+                  setDeleteError(null);
+                  setConfirmingDelete(true);
+                }}
+              >
+                <Trash2 data-icon="inline-start" />
                 Delete
               </Button>
             </div>
@@ -429,21 +458,35 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
           </div>
         </header>
 
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm leading-6 text-info-soft-foreground">
-          <span>This is a zero-cost planning surface. Estimated credits are display-only. Marking an entry approved does not generate, schedule, send, or publish anything.</span>
+        <Alert variant="info" className="mt-6">
+          <ShieldCheck />
+          <AlertTitle>Planning is always free</AlertTitle>
+          <AlertDescription className="sm:grid-cols-[1fr_auto] sm:items-center sm:gap-3">
+            <span>Estimated credits are display-only. Marking an entry approved does not generate, schedule, send, or publish anything.</span>
           {approvedCount > 0 ? (
             <Button asChild size="sm" className="shrink-0">
               <Link href={`/campaign/${campaign.id}/confirm`}>
-                <Sparkles />
+                <Sparkles data-icon="inline-start" />
                 Generate approved · {approvedCount}
               </Link>
             </Button>
           ) : null}
-        </div>
-        {error ? <div className="mt-4 rounded-xl border border-error-soft bg-error-soft p-4 text-sm text-destructive">{error}</div> : null}
-        {notice ? <div className="mt-4 rounded-xl border border-success/25 bg-success-soft p-4 text-sm text-success-soft-foreground">{notice}</div> : null}
+          </AlertDescription>
+        </Alert>
+        {error ? (
+          <Alert variant="destructive" className="mt-4" role="alert">
+            <AlertCircle />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+        {notice ? (
+          <Alert variant="success" className="mt-4" role="status">
+            <Check />
+            <AlertDescription>{notice}</AlertDescription>
+          </Alert>
+        ) : null}
 
-        <div className="mt-6 grid gap-5 xl:grid-cols-[1.3fr_0.7fr]">
+        <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(20rem,0.6fr)] lg:items-start">
           <section className="grid min-w-0 gap-5">
             <Card>
               <CardHeader>
@@ -452,11 +495,13 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
               </CardHeader>
               <CardContent className="grid gap-4">
                 {entries.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-border px-5 py-9 text-center">
-                    <Send className="mx-auto size-6 text-muted-foreground" />
-                    <h2 className="mt-3 text-sm font-semibold">No plan entries yet</h2>
-                    <p className="mt-2 text-sm text-muted-foreground">Add the first structured draft below.</p>
-                  </div>
+                  <Empty className="border py-9">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon"><Send /></EmptyMedia>
+                      <EmptyTitle>No plan entries yet</EmptyTitle>
+                      <EmptyDescription>Add the first structured draft below.</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
                 ) : entries.map((entry) => {
                   const draft = drafts[entry.id] ?? entry;
                   // Already generated = already paid for. The server refuses to take such an
@@ -464,50 +509,75 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
                   // possible outcome is that refusal (#744 判官 r1 P1-1).
                   const generated = dispatchedEntryIds.has(entry.id);
                   return (
-                    <article key={entry.id} className="rounded-xl border border-border bg-muted/25 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <Badge variant={entry.status === "approved" ? "success" : "outline"}>{entry.status}</Badge>
-                        <span className="text-xs text-muted-foreground">Entry {entry.id.slice(-6)}</span>
-                      </div>
-                      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                        <Input type="date" value={draft.date} min={localDate(campaign.startAt)} max={localDate(campaign.endAt)} onChange={(event) => setDraft(entry, { date: event.target.value })} aria-label="Entry date" />
-                        <Input value={draft.platform} onChange={(event) => setDraft(entry, { platform: event.target.value })} aria-label="Platform" placeholder="instagram" />
-                        <Input value={draft.format} onChange={(event) => setDraft(entry, { format: event.target.value })} aria-label="Format" placeholder="image" />
-                      </div>
-                      <Input className="mt-3" value={draft.hook} onChange={(event) => setDraft(entry, { hook: event.target.value })} aria-label="Hook" placeholder="Opening hook" />
-                      <Textarea className="mt-3" value={draft.brief} onChange={(event) => setDraft(entry, { brief: event.target.value })} aria-label="Creative brief" placeholder="English creative brief" />
-                      <label className="mt-3 grid max-w-xs gap-2 text-xs font-semibold text-muted-foreground">
-                        Estimated credits (display only)
-                        <Input type="number" min={0} step={1} value={draft.estCredits} onChange={(event) => setDraft(entry, { estCredits: Number(event.target.value) })} />
-                      </label>
-                      <div className="mt-4 flex flex-wrap gap-2">
+                    <Card key={entry.id} size="sm" className="bg-muted/20 shadow-none">
+                      <CardHeader className="flex-row items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Badge variant={entry.status === "approved" ? "success" : "outline"}>{entry.status}</Badge>
+                          <span className="truncate text-sm font-semibold">{draft.hook || "Untitled entry"}</span>
+                        </div>
+                        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{entry.id.slice(-6)}</span>
+                      </CardHeader>
+                      <CardContent>
+                        <FieldGroup className="gap-4">
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            <Field>
+                              <FieldLabel htmlFor={`entry-date-${entry.id}`}>Date</FieldLabel>
+                              <Input id={`entry-date-${entry.id}`} type="date" value={draft.date} min={localDate(campaign.startAt)} max={localDate(campaign.endAt)} onChange={(event) => setDraft(entry, { date: event.target.value })} />
+                            </Field>
+                            <Field>
+                              <FieldLabel htmlFor={`entry-platform-${entry.id}`}>Platform</FieldLabel>
+                              <Input id={`entry-platform-${entry.id}`} value={draft.platform} onChange={(event) => setDraft(entry, { platform: event.target.value })} placeholder="instagram" />
+                            </Field>
+                            <Field>
+                              <FieldLabel htmlFor={`entry-format-${entry.id}`}>Format</FieldLabel>
+                              <Input id={`entry-format-${entry.id}`} value={draft.format} onChange={(event) => setDraft(entry, { format: event.target.value })} placeholder="image" />
+                            </Field>
+                          </div>
+                          <Field>
+                            <FieldLabel htmlFor={`entry-hook-${entry.id}`}>Opening hook</FieldLabel>
+                            <Input id={`entry-hook-${entry.id}`} value={draft.hook} onChange={(event) => setDraft(entry, { hook: event.target.value })} placeholder="Opening hook" />
+                          </Field>
+                          <Field>
+                            <FieldLabel htmlFor={`entry-brief-${entry.id}`}>Creative brief</FieldLabel>
+                            <Textarea id={`entry-brief-${entry.id}`} value={draft.brief} onChange={(event) => setDraft(entry, { brief: event.target.value })} placeholder="English creative brief" />
+                          </Field>
+                          <Field className="max-w-xs">
+                            <FieldLabel htmlFor={`entry-credits-${entry.id}`}>Estimated credits</FieldLabel>
+                            <Input id={`entry-credits-${entry.id}`} type="number" min={0} step={1} value={draft.estCredits} onChange={(event) => setDraft(entry, { estCredits: Number(event.target.value) })} />
+                            <FieldDescription>Display only. This value never charges your balance.</FieldDescription>
+                          </Field>
+                        </FieldGroup>
+                      </CardContent>
+                      <CardFooter className="flex-wrap">
                         <Button size="sm" type="button" onClick={() => saveEntry(entry)} disabled={busy !== null}>
-                          {busy === `save:${entry.id}` ? <LoaderCircle className="animate-spin" /> : <Save />}
+                          {busy === `save:${entry.id}` ? <Spinner /> : <Save data-icon="inline-start" />}
                           Save entry
                         </Button>
                         {entry.status === "approved" ? (
                           <Button size="sm" type="button" variant="secondary" onClick={() => unapproveEntry(entry)} disabled={busy !== null || generated}>
-                            {busy === `unapprove:${entry.id}` ? <LoaderCircle className="animate-spin" /> : <Undo2 />}
+                            {busy === `unapprove:${entry.id}` ? <Spinner /> : <Undo2 data-icon="inline-start" />}
                             Undo approval
                           </Button>
                         ) : (
                           <Button size="sm" type="button" variant="secondary" onClick={() => approveEntry(entry)} disabled={busy !== null}>
-                            {busy === `approve:${entry.id}` ? <LoaderCircle className="animate-spin" /> : <Check />}
+                            {busy === `approve:${entry.id}` ? <Spinner /> : <Check data-icon="inline-start" />}
                             Mark approved
                           </Button>
                         )}
                         <Button size="sm" type="button" variant="ghost" onClick={() => removeEntry(entry)} disabled={busy !== null || generated}>
-                          <Trash2 />
+                          <Trash2 data-icon="inline-start" />
                           Remove
                         </Button>
-                      </div>
+                      </CardFooter>
                       {generated ? (
-                        <p className="mt-3 text-xs leading-5 text-muted-foreground">
-                          Already generated, so it stays in this plan — its generation and the credits
-                          it used are part of your history.
-                        </p>
+                        <Alert variant="info">
+                          <ShieldCheck />
+                          <AlertDescription>
+                            Already generated, so it stays in this plan — its generation and the credits it used are part of your history.
+                          </AlertDescription>
+                        </Alert>
                       ) : null}
-                    </article>
+                    </Card>
                   );
                 })}
               </CardContent>
@@ -520,27 +590,45 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
                     merchant nothing about what these five boxes are for. */}
                 <CardDescription>One scheduled draft: date, platform, format, opening hook, and what the content should show. Nothing is written for you here, and nothing is sent.</CardDescription>
               </CardHeader>
-              <CardContent className="grid gap-3">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <Input type="date" value={proposal.date} min={localDate(campaign.startAt)} max={localDate(campaign.endAt)} onChange={(event) => setProposal((current) => ({ ...current, date: event.target.value }))} aria-label="Proposal date" />
-                  <Input value={proposal.platform} onChange={(event) => setProposal((current) => ({ ...current, platform: event.target.value }))} aria-label="Proposal platform" placeholder="instagram" />
-                  <Input value={proposal.format} onChange={(event) => setProposal((current) => ({ ...current, format: event.target.value }))} aria-label="Proposal format" placeholder="image" />
-                </div>
-                <Input value={proposal.hook} onChange={(event) => setProposal((current) => ({ ...current, hook: event.target.value }))} aria-label="Proposal opening hook" placeholder="Opening hook" />
-                <Textarea value={proposal.brief} onChange={(event) => setProposal((current) => ({ ...current, brief: event.target.value }))} aria-label="Proposal brief" placeholder="Describe the content in English" />
-                <label className="grid max-w-xs gap-2 text-xs font-semibold text-muted-foreground">
-                  Estimated credits (display only)
-                  <Input type="number" min={0} step={1} value={proposal.estCredits} onChange={(event) => setProposal((current) => ({ ...current, estCredits: Number(event.target.value) }))} />
-                </label>
+              <CardContent>
+                <FieldGroup className="gap-4">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <Field>
+                      <FieldLabel htmlFor="proposal-date">Date</FieldLabel>
+                      <Input id="proposal-date" type="date" value={proposal.date} min={localDate(campaign.startAt)} max={localDate(campaign.endAt)} onChange={(event) => setProposal((current) => ({ ...current, date: event.target.value }))} />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="proposal-platform">Platform</FieldLabel>
+                      <Input id="proposal-platform" value={proposal.platform} onChange={(event) => setProposal((current) => ({ ...current, platform: event.target.value }))} placeholder="instagram" />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="proposal-format">Format</FieldLabel>
+                      <Input id="proposal-format" value={proposal.format} onChange={(event) => setProposal((current) => ({ ...current, format: event.target.value }))} placeholder="image" />
+                    </Field>
+                  </div>
+                  <Field>
+                    <FieldLabel htmlFor="proposal-hook">Opening hook</FieldLabel>
+                    <Input id="proposal-hook" aria-label="Proposal opening hook" value={proposal.hook} onChange={(event) => setProposal((current) => ({ ...current, hook: event.target.value }))} placeholder="Opening hook" />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="proposal-brief">Creative brief</FieldLabel>
+                    <Textarea id="proposal-brief" value={proposal.brief} onChange={(event) => setProposal((current) => ({ ...current, brief: event.target.value }))} placeholder="Describe the content in English" />
+                  </Field>
+                  <Field className="max-w-xs">
+                    <FieldLabel htmlFor="proposal-credits">Estimated credits</FieldLabel>
+                    <Input id="proposal-credits" type="number" min={0} step={1} value={proposal.estCredits} onChange={(event) => setProposal((current) => ({ ...current, estCredits: Number(event.target.value) }))} />
+                    <FieldDescription>Display only. This value never charges your balance.</FieldDescription>
+                  </Field>
                 <Button type="button" className="w-full sm:w-fit" onClick={proposeEntry} disabled={!proposalReady || busy !== null}>
-                  {busy === "propose" ? <LoaderCircle className="animate-spin" /> : <Plus />}
+                  {busy === "propose" ? <Spinner /> : <Plus data-icon="inline-start" />}
                   Add draft entry
                 </Button>
+                </FieldGroup>
               </CardContent>
             </Card>
           </section>
 
-          <aside className="grid content-start gap-5">
+          <aside className="grid content-start gap-5 lg:sticky lg:top-6">
             <CampaignTrendsCard trendSnapshots={campaign.trendSnapshots} />
             <CampaignBroadcastsCard broadcasts={campaign.grouped.broadcasts} />
             <GroupingCard
@@ -577,29 +665,47 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
         </div>
       </div>
 
-      <Dialog open={confirmingDelete} onOpenChange={(next) => { if (!next && busy === null) setConfirmingDelete(false); }}>
-        <DialogContent className="max-w-[560px]">
-          <DialogHeader>
-            <DialogTitle>Delete “{campaign.name}”?</DialogTitle>
-            <DialogDescription>
+      <AlertDialog
+        open={confirmingDelete}
+        onOpenChange={(next) => {
+          if (!next && busy !== "campaign:delete") {
+            setConfirmingDelete(false);
+            setDeleteError(null);
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-[560px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{campaign.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
               This campaign leaves your list along with its plan entries.
-            </DialogDescription>
-          </DialogHeader>
-          <p className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm leading-6 text-info-soft-foreground">
-            Generations, scheduled posts, and broadcasts created under it are kept — they stay in
-            your library and in your billing history, exactly as they are.
-          </p>
-          <DialogFooter>
-            <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => setConfirmingDelete(false)}>
-              Cancel
-            </Button>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Alert variant="warning" density="compact">
+            <ShieldCheck />
+            <AlertTitle>Your published work stays</AlertTitle>
+            <AlertDescription>
+              Generations, scheduled posts, and broadcasts created under it are kept — they stay
+              in your library and in your billing history, exactly as they are.
+            </AlertDescription>
+          </Alert>
+          {deleteError ? (
+            <Alert variant="destructive" density="compact" role="alert">
+              <AlertTitle>Campaign wasn&apos;t deleted</AlertTitle>
+              <AlertDescription>{deleteError}</AlertDescription>
+            </Alert>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button" disabled={busy === "campaign:delete"}>
+              Keep campaign
+            </AlertDialogCancel>
             <Button type="button" variant="destructive" disabled={busy !== null} onClick={() => void removeCampaign()}>
-              {busy === "campaign:delete" ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
-              Delete campaign
+              {busy === "campaign:delete" ? <Spinner data-icon="inline-start" /> : <Trash2 data-icon="inline-start" />}
+              {busy === "campaign:delete" ? "Deleting…" : "Delete campaign"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   );
 }
@@ -621,9 +727,12 @@ export function CampaignTrendsCard({
       </CardHeader>
       <CardContent className="grid gap-3">
         {trendSnapshots.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-            No conclusions are filed under this campaign yet.
-          </p>
+          <Empty className="border p-5">
+            <EmptyHeader>
+              <EmptyTitle className="text-sm">No conclusions filed</EmptyTitle>
+              <EmptyDescription>No conclusions are filed under this campaign yet.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : trendSnapshots.map((snapshot) => (
           <article key={snapshot.id} className="rounded-xl border border-border p-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -632,16 +741,16 @@ export function CampaignTrendsCard({
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {trendSourceLabels(snapshot.sources).map((label, index) => (
-                <span key={`${snapshot.id}:${index}`} className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
+                <Badge key={`${snapshot.id}:${index}`} variant="outline" className="font-normal text-muted-foreground">
                   {label}
-                </span>
+                </Badge>
               ))}
             </div>
           </article>
         ))}
         <Link
           href="/campaign/trends"
-          className="text-sm font-semibold text-brand-strong underline-offset-4 hover:underline"
+          className="text-sm font-semibold text-foreground underline-offset-4 hover:underline"
         >
           Open trend archive
         </Link>
@@ -666,7 +775,12 @@ export function CampaignBroadcastsCard({
       </CardHeader>
       <CardContent className="grid gap-3">
         {broadcasts.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nothing grouped yet.</p>
+          <Empty className="border p-5">
+            <EmptyHeader>
+              <EmptyTitle className="text-sm">Nothing grouped yet</EmptyTitle>
+              <EmptyDescription>Broadcasts grouped into this campaign will appear here.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : broadcasts.map((broadcast) => {
           const status = runStatusPresentation(broadcast.status);
           // W2-13(#993):这一行原来点得开(`/crm/broadcasts/{id}`)。CRM 整段收起来之后
@@ -726,13 +840,18 @@ function GroupingCard({
       </CardHeader>
       <CardContent className="grid gap-3">
         {grouped.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nothing grouped yet.</p>
+          <Empty className="border p-5">
+            <EmptyHeader>
+              <EmptyTitle className="text-sm">Nothing grouped yet</EmptyTitle>
+              <EmptyDescription>Choose existing work below to connect it to this campaign.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : grouped.map((item) => (
           <div key={item.id} className="rounded-xl border border-border p-3">
             <p className="truncate text-sm font-semibold">{item.label}</p>
             <p className="mt-1 text-xs text-muted-foreground">{item.meta}</p>
             <Button type="button" size="sm" variant="ghost" className="mt-2" disabled={busy !== null} onClick={() => onChange(targetType, item.id, null)}>
-              <Trash2 />
+              <Trash2 data-icon="inline-start" />
               Clear grouping
             </Button>
           </div>
@@ -742,14 +861,16 @@ function GroupingCard({
             <Select value={selected} onValueChange={setSelected}>
               <SelectTrigger><SelectValue placeholder={`Choose ${title.toLowerCase()}`} /></SelectTrigger>
               <SelectContent>
-                {available.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
+                <SelectGroup>
+                  {available.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
+                </SelectGroup>
               </SelectContent>
             </Select>
             <Button type="button" variant="secondary" disabled={!selected || busy !== null} onClick={async () => {
               await onChange(targetType, selected, campaignId);
               setSelected("");
             }}>
-              <Link2 />
+              <Link2 data-icon="inline-start" />
               Group selected
             </Button>
           </div>

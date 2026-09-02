@@ -29,12 +29,18 @@ test("An element deleted from the Library is gone, and is still gone after a rel
   await expect(doomed).toBeVisible();
   await expect(survivor).toBeVisible();
 
-  // The delete control lives on the tile's hover overlay — reach it the way a merchant does.
+  // The switched shell moved this control. On the old tile a hover overlay exposed a bare
+  // "Delete"; the Library tile a merchant now touches (components/otto/stuff/StuffLibrary.tsx)
+  // puts every per-item action behind one always-rendered menu button labelled
+  // `Actions for <name>`, and removal is the destructive item "Remove from Library" inside it.
+  // Same destination, one more click — so this drives the menu rather than a control that no
+  // longer exists. (The trigger is not hover-gated any more, so no hover step is needed; the
+  // tile is still scoped so the menu belongs to the doomed item and not to its neighbour.)
   const tile = page.locator("div.group", { has: doomed });
-  await tile.hover();
-  await tile.getByRole("button", { name: "Delete" }).click();
+  await tile.getByRole("button", { name: "Actions for Kopi tumbler" }).click();
+  await page.getByRole("menuitem", { name: "Remove from Library" }).click();
 
-  // #934 — Delete now opens a confirmation instead of removing the tile straight away.
+  // #934 — removal opens a confirmation instead of taking the tile away straight away.
   //
   // #359 / 2026-08-15 — the tile disappears optimistically the instant Remove is clicked
   // (OttoStuff.handleDelete), before softDeleteEntity's server action has actually landed.

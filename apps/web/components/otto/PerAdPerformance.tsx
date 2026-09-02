@@ -1,97 +1,137 @@
 "use client";
+
 import React, { useEffect, useState, useTransition } from "react";
+import { CirclePlay, Megaphone } from "lucide-react";
 import { getAdPerformance } from "@/lib/meta-performance-actions";
 import { buildPerAdView, type PerAdView } from "@/lib/per-ad-view";
 import { RANGES, type RangeKey } from "@/lib/analytics-view";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-/** Additive per-ad performance panel (宪法7 read parity). $0 read-only: self-fetches
- *  getAdPerformance (same fetchOwnerAdPerformance the Otto skill uses). Renders each ad's
- *  real creative + metrics with a source stamp; ROAS "—" when Meta has none; honest truncation.
- *  Winner/loser judgment = P2 (expert card); recreate = P3. */
 export function PerAdPerformance({ range }: { range: RangeKey }) {
   const [view, setView] = useState<PerAdView | null>(null);
-  const [gone, setGone] = useState(false); // notConnected/needsReconnect/transientError → render nothing (Analytics body already shows the wall)
+  const [gone, setGone] = useState(false);
   const [pending, start] = useTransition();
 
   useEffect(() => {
-    // Analytics range key ("30d") → Meta preset ("last_30d") that getAdPerformance expects.
-    const preset = RANGES.find((r) => r.key === range)?.preset ?? "last_30d";
+    const preset = RANGES.find((item) => item.key === range)?.preset ?? "last_30d";
     start(async () => {
-      const res = await getAdPerformance(preset);
-      if (!res || "error" in res || "notConnected" in res || "needsReconnect" in res || "transientError" in res) { setGone(true); return; }
+      const result = await getAdPerformance(preset);
+      if (!result || "error" in result || "notConnected" in result || "needsReconnect" in result || "transientError" in result) {
+        setGone(true);
+        return;
+      }
       setGone(false);
-      setView(buildPerAdView(res));
+      setView(buildPerAdView(result));
     });
   }, [range]);
 
   if (gone) return null;
 
+  const notes = [view?.currencyNote, view?.unreportedNote, view?.truncatedNote].filter(Boolean);
+
   return (
-    <div className="rounded-[16px] border border-border bg-card p-[18px] mt-[14px]">
-      <div className="flex items-center gap-3">
-        <div className="flex-1">
-          <div className="text-[14px] font-semibold">Per-ad performance</div>
-          <div className="text-[12px] text-[#86867F]">Which specific ads &amp; creatives are winning</div>
+    <Card className="mt-4">
+      <CardHeader className="flex-row items-start justify-between gap-4">
+        <div>
+          <CardTitle>Per-ad performance</CardTitle>
+          <CardDescription>Compare specific ads and creatives using Meta&apos;s reported results.</CardDescription>
         </div>
-        {view && (
-          <span className="text-[11.5px] text-[#86867F] bg-muted rounded-[7px] px-2 py-[3px] font-medium whitespace-nowrap">
-            {view.stamp}
-          </span>
+        {view && <Badge variant="outline">{view.stamp}</Badge>}
+      </CardHeader>
+      <CardContent>
+        {notes.length > 0 && (
+          <div className="mb-4 space-y-1 text-xs leading-relaxed text-muted-foreground">
+            {notes.map((note) => <p key={note}>{note}</p>)}
+          </div>
         )}
-      </div>
 
-      {/* #692: separate runs, never one ranking. The two sentences are earned separately —
-          runs split by CURRENCY and runs split because Meta reported none are different facts. */}
-      {view?.currencyNote && <div className="text-[12px] text-muted-foreground mt-2">{view.currencyNote}</div>}
-      {view?.unreportedNote && <div className="text-[12px] text-muted-foreground mt-2">{view.unreportedNote}</div>}
+        {pending && !view && <PerformanceSkeleton />}
 
-      {view?.truncatedNote && <div className="text-[12px] text-muted-foreground mt-2">{view.truncatedNote}</div>}
+        {view && view.rows.length === 0 && (
+          <Empty className="min-h-52">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><Megaphone aria-hidden /></EmptyMedia>
+              <EmptyTitle>No ads ran in this period</EmptyTitle>
+              <EmptyDescription>Ads will appear here after Meta reports their first results.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
 
-      {pending && !view && <div className="text-[13px] text-muted-foreground mt-3">Loading your ads…</div>}
-
-      {view && view.rows.length === 0 && (
-        <div className="text-[13px] text-muted-foreground mt-3">No ads ran in this period yet.</div>
-      )}
-
-      <div className={pending ? "opacity-60 transition-opacity" : "transition-opacity"}>
-        {view?.rows.map((r) => (
-          <React.Fragment key={r.adId}>
-            {/* Heading for each money-bucket run (#692) — the rows under it are ranked only
-                against each other, never against another bucket's. No `uppercase` (#692 r3):
-                the heading carries sentence-case copy and a real ad-account name, and shouting
-                them would mangle both. */}
-            {r.groupLabel && (
-              <div className="text-[11.5px] text-[#86867F] font-semibold tracking-[0.01em] pt-[14px] border-t border-border">
-                {r.groupLabel}
-              </div>
-            )}
-            <div className={"flex gap-[14px] items-center py-[14px] mt-0 " + (r.groupLabel ? "" : "border-t border-border first:border-t-[1px]")}>
-              {/* creative thumbnail (video shows a play glyph) */}
-              <div className="w-[56px] h-[56px] rounded-[10px] shrink-0 relative overflow-hidden border border-border bg-muted">
-                {r.creative.imageUrl && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={r.creative.imageUrl} alt="" className="w-full h-full object-cover" />
-                )}
-                {r.creative.isVideo && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.5))" }}><path d="M8 5v14l11-7z" /></svg>
-                  </div>
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[14px] font-semibold truncate">{r.name}</div>
-                <div className="flex gap-[22px] mt-[9px]">
-                  {r.metrics.map((m) => (
-                    <div key={m.label}>
-                      <div className="text-[10.5px] text-[#86867F] font-medium uppercase tracking-[0.03em]">{m.label}</div>
-                      <div className={"text-[14px] mt-[2px] " + (m.value === "—" ? "text-[#86867F] font-medium" : "font-semibold")}>{m.value}</div>
-                    </div>
+        {view && view.rows.length > 0 && (
+          <div className={pending ? "opacity-60 transition-opacity" : "transition-opacity"}>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="min-w-56">Ad</TableHead>
+                  {view.rows[0]?.metrics.map((metric) => (
+                    <TableHead key={metric.label} className="text-right text-muted-foreground">{metric.label}</TableHead>
                   ))}
-                </div>
-              </div>
-            </div>
-          </React.Fragment>
-        ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {view.rows.map((row) => (
+                  <React.Fragment key={row.adId}>
+                    {row.groupLabel && (
+                      <TableRow className="bg-muted/35 hover:bg-muted/35">
+                        <TableCell colSpan={6} className="py-2 text-xs font-semibold text-muted-foreground">
+                          {row.groupLabel}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    <TableRow>
+                      <TableCell>
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="relative size-11 shrink-0 overflow-hidden rounded-lg border border-border bg-muted">
+                            {row.creative.imageUrl && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={row.creative.imageUrl} alt="" className="size-full object-cover" />
+                            )}
+                            {row.creative.isVideo && (
+                              <div className="absolute inset-0 grid place-items-center bg-foreground/20 text-white">
+                                <CirclePlay className="size-5 drop-shadow-sm" aria-hidden />
+                              </div>
+                            )}
+                          </div>
+                          <span className="max-w-64 truncate font-medium">{row.name}</span>
+                        </div>
+                      </TableCell>
+                      {row.metrics.map((metric) => (
+                        <TableCell key={metric.label} className={metric.value === "—" ? "text-right font-medium text-muted-foreground" : "text-right font-semibold tabular-nums"}>
+                          {metric.value}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  </React.Fragment>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PerformanceSkeleton() {
+  return (
+    <div className="space-y-3" aria-label="Loading ad performance">
+      <div className="flex gap-3">
+        <Skeleton className="size-11 rounded-lg" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-4 w-48" />
+          <Skeleton className="h-3 w-full" />
+        </div>
+      </div>
+      <div className="flex gap-3">
+        <Skeleton className="size-11 rounded-lg" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-4 w-36" />
+          <Skeleton className="h-3 w-full" />
+        </div>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 
 /**
  * CRM 整段收起来了(W2-13 / #993,Founder 裁决 2026-08-18 裁决2)。
@@ -16,5 +17,5 @@ import { redirect } from "next/navigation";
  * 取回(它们随本票删掉了 —— 重定向页不取数)。
  */
 export default async function CrmRoute() {
-  redirect("/");
+  redirect(SHELL_ROUTES.home);
 }

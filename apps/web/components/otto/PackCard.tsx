@@ -1,7 +1,12 @@
 "use client";
 import { useState } from "react";
 import { ClipboardList, Film, Image as ImageIcon } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
@@ -15,6 +20,8 @@ import { packTotalCredits, canAffordPack } from "./pack-credit-math";
 // price from the record-only USD estimate, so a pack could offer "Make all" on a total
 // the server never quoted.
 import { planCardGate } from "./plan-card-contract";
+import { SpendConfirmation, SpendProgress } from "./spend-state";
+import { cn } from "@/lib/utils";
 // #996 (W2-9): 面板最窄 320px。清单行在窄版折成两行(尾段整行下沉),
 // 每一个 credits 数字走 CardMoney —— 句子可以换行,数字不行。
 import {
@@ -115,6 +122,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
   // F11: "failed" cards are non-idle too, so allSubmitted alone would show a green success footer
   // even when every card failed. Count only the non-failed (actually started) ones.
   const startedCount = parsedCards.filter((c) => c.cardState !== "failed").length;
+  const showFooter = !allSubmitted || startedCount > 0 || Boolean(chainedReceipt) || Boolean(error);
 
   /** Fire `targets` through the pack loop. ONE body for both ways in — "Make all" hands it
    *  every idle card, a per-item approve hands it exactly one (#786) — so the two cannot
@@ -189,22 +197,23 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
   }
 
   return (
-    // leading-[1.5] — design-baseline body line-height (Analytics standard)
-    <div className={CARD_ROOT_CLASS} style={{ maxWidth: 520 }}>
-      {/* Pack card: bg-accent = --brand-tint (#F4F4F3 neutral tint) in .fk.gb-skin context */}
-      <div className={`rounded-[var(--radius-card)] border border-border bg-secondary ${CARD_PAD_CLASS}`}>
-        {/* Pack header */}
-        <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1">
-          <ClipboardList size={20} className="text-primary" />
-          <span className="text-[1rem] font-bold text-foreground">
-            {packTitle}
-          </span>
-          <span className="ml-auto rounded-full bg-card px-2 py-0.5 text-[0.75rem] text-muted-foreground">
-            {cards.length} {cards.length === 1 ? "item" : "items"}
-          </span>
+    <Card className={cn(CARD_ROOT_CLASS, CARD_PAD_CLASS, "w-full max-w-[520px] p-0")}>
+      <CardHeader className="flex-row items-start gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <CardTitle className="flex items-center gap-2">
+            <ClipboardList size={18} aria-hidden="true" />
+            <span className="truncate">{packTitle}</span>
+          </CardTitle>
+          <CardDescription>
+            Review the items Otto prepared, then start the ones you want.
+          </CardDescription>
         </div>
+        <Badge variant="outline">
+          {cards.length} {cards.length === 1 ? "item" : "items"}
+        </Badge>
+      </CardHeader>
 
-        {/* Per-card compact rows */}
+      <CardContent>
         <div className="flex flex-col gap-2">
           {parsedCards.map((c, idx) => {
             const isVideo = c.p.kind === "video";
@@ -226,33 +235,38 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
             return (
               <div
                 key={c.cardId}
-                className={`${CARD_LIST_ROW_CLASS} rounded-[14px] bg-card px-3 py-2.5`}
-                style={{ opacity: isFailed || isCancelled ? 0.6 : 1 }}
+                className={cn(
+                  CARD_LIST_ROW_CLASS,
+                  "rounded-lg bg-muted px-3 py-2.5",
+                  (isFailed || isCancelled) && "opacity-60",
+                )}
               >
-                {/* Icon bubble: --brand-soft in .fk.gb-skin = neutral gray #ECECEA = .gb --accent */}
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-accent text-foreground">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-background text-foreground">
                   {isVideo ? <Film size={17} /> : <ImageIcon size={17} />}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.75rem] font-semibold text-foreground">
+                  <div className="truncate text-sm font-medium text-foreground">
                     {desc}
                   </div>
-                  <div className="text-[0.75rem] text-muted-foreground">
+                  <div className="text-xs text-muted-foreground">
                     {c.credits === null ? PACK_UNPRICED_ROW : <CardMoney>{creditsLabel(c.credits)}</CardMoney>}
                   </div>
                 </div>
                 {/* #996: 窄版这一段整条下沉到第二行(`w-full`),所以 320px 下这一行是
                     「图标 + 名字/价签」一行、「状态/按钮 + 序号」一行 —— 双列改单列。 */}
                 <div className={CARD_LIST_ROW_TRAIL_CLASS}>
-                  <div className="shrink-0 text-[0.75rem]">
+                  <div className="shrink-0">
                     {isCancelled ? (
-                      <span className="text-muted-foreground">canceled</span>
+                      <Badge variant="default">Canceled</Badge>
                     ) : isFailed ? (
-                      <span className="text-[var(--error-soft-foreground)]">failed</span>
+                      <Badge variant="destructive">Failed</Badge>
                     ) : isDone ? (
-                      <span className="text-[var(--success)]">✓</span>
+                      <Badge variant="success">Started</Badge>
                     ) : isGenerating ? (
-                      <span className="text-muted-foreground">starting…</span>
+                      <Badge variant="info">
+                        <Spinner aria-hidden="true" />
+                        Starting
+                      </Badge>
                     ) : canMakeThis && c.credits !== null ? (
                       // #896: one press, price on it. `c.credits !== null` is what
                       // `affordableIdleCards` already guarantees — spelled out so the label
@@ -260,17 +274,17 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                       <Button
                         variant="secondary"
                         size="sm"
-                        className="rounded-[11px]"
                         disabled={running}
                         onClick={() => void runCards([c])}
                       >
+                        {running && <Spinner data-icon="inline-start" aria-label="Starting item" />}
                         {running ? "Starting…" : `Make this · ${creditsLabel(c.credits)}`}
                       </Button>
                     ) : (
-                      <span className="text-muted-foreground/70">queued</span>
+                      <Badge variant="default">Queued</Badge>
                     )}
                   </div>
-                  <div className="shrink-0 text-[0.75rem] text-muted-foreground">
+                  <div className="shrink-0 text-xs text-muted-foreground">
                     #{idx + 1}
                   </div>
                 </div>
@@ -278,71 +292,87 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
             );
           })}
         </div>
+      </CardContent>
 
-        {/* Pack footer */}
-        <div className="mt-4 border-t border-border pt-4">
+      {showFooter && (
+        <CardFooter className="flex-col items-stretch">
+          <Separator />
           {!allSubmitted && totalCredits === null && (
-            <div role="alert" className="text-[0.875rem] text-[var(--warning-soft-foreground)]">
-              {PACK_UNPRICED_NOTE}
-            </div>
+            <Alert role="alert" variant="warning" density="compact">
+              <AlertTitle>Pack price unavailable</AlertTitle>
+              <AlertDescription>{PACK_UNPRICED_NOTE}</AlertDescription>
+            </Alert>
           )}
 
           {!allSubmitted && totalCredits !== null && (
             <>
-              <div className="mb-3 font-bold text-foreground @max-[420px]:text-[1.125rem] @min-[420px]:text-[1.375rem]">
-                Total <CardMoney>{creditsLabel(totalCredits)}</CardMoney>
-              </div>
-
               {!canAfford && (
                 // #707 gave the top-up half a real link. #786 makes the other half true: the
                 // pack renders as ONE card, so "approve them individually" pointed at controls
                 // that did not exist. The alternative is now named only when `offerIndividual`
                 // says the rows above really carry it — TopUpNotice's own rule is "no
                 // alternative unless there really is one", and this is that rule being kept.
-                <div className="mb-3">
-                  <TopUpNotice
-                    need={`make all ${idleCards.length}`}
-                    alternative={offerIndividual ? "approve them individually" : undefined}
-                  />
-                </div>
+                <TopUpNotice
+                  need={`make all ${idleCards.length}`}
+                  alternative={offerIndividual ? "approve them individually" : undefined}
+                />
               )}
 
-              {/* #896: the batch button already carried the count and the total, so the
-                  second screen only re-read them back. One press. */}
-              <Button
-                variant="default"
-                size="default"
-                disabled={!canAfford || running}
-                onClick={() => void makeAll()}
-              >
-                {running ? "Starting…" : `Make all (${idleCards.length} · ${creditsLabel(totalCredits)})`}
-              </Button>
+              {running ? (
+                <SpendProgress
+                  title="Starting your pack"
+                  description={`Starting ${idleCards.length} ${idleCards.length === 1 ? "item" : "items"} one at a time.`}
+                />
+              ) : (
+                <SpendConfirmation
+                  title={
+                    <span className="font-bold @max-[420px]:text-[1.125rem] @min-[420px]:text-[1.375rem]">
+                      Total <CardMoney>{creditsLabel(totalCredits)}</CardMoney>
+                    </span>
+                  }
+                  description={`${idleCards.length} ${idleCards.length === 1 ? "item" : "items"}. Each item starts after the previous one is accepted.`}
+                >
+                  {/* #896: the batch button already carried the count and the total, so the
+                      second screen only re-read them back. One press. */}
+                  <Button
+                    variant="default"
+                    size="sm"
+                    disabled={!canAfford}
+                    onClick={() => void makeAll()}
+                  >
+                    Make all ({idleCards.length} · {creditsLabel(totalCredits)})
+                  </Button>
+                </SpendConfirmation>
+              )}
             </>
           )}
 
           {allSubmitted && !running && startedCount > 0 && (
-            <div className="text-[0.875rem] font-semibold text-[var(--success)]">
-              ✓ {startedCount === cards.length ? `All ${cards.length}` : `${startedCount} of ${cards.length}`} {cards.length === 1 ? "item" : "items"} started
-            </div>
+            <Alert variant="success" density="compact">
+              <AlertTitle>
+                {startedCount === cards.length ? `All ${cards.length}` : `${startedCount} of ${cards.length}`} {cards.length === 1 ? "item" : "items"} started
+              </AlertTitle>
+            </Alert>
           )}
 
           {/* #498 round-4: chained needs_approval observed in this loop — the SERVER's
               localized receipt verbatim (the still-pending cards keep their own
               approve gates; no spend logic here). */}
           {chainedReceipt && (
-            <div className="mt-2 text-[0.75rem] text-muted-foreground">
-              {chainedReceipt}
-            </div>
+            <Alert density="compact">
+              <AlertDescription>{chainedReceipt}</AlertDescription>
+            </Alert>
           )}
-        </div>
 
-        {error && (
-          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
-            {error}
-          </div>
-        )}
-      </div>
-    </div>
+          {error && (
+            <Alert role="alert" variant="destructive" density="compact">
+              <AlertTitle>Pack wasn&apos;t completed</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+        </CardFooter>
+      )}
+    </Card>
   );
 }
 

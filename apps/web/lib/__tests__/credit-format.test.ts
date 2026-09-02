@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { formatCredits, creditsLabel, spendCapBlockedMessage } from "../credit-format";
+import { SETTINGS_SECTIONS } from "@fikirtive/core/navigation";
+import {
+  formatCredits,
+  creditsLabel,
+  spendCapBlockedMessage,
+  SPEND_CAP_RAISE_CTA,
+  TOP_UP_CTA,
+} from "../credit-format";
 
 describe("formatCredits", () => {
   it("keeps up to 1 decimal for sub-1000 balances (fractional credits are real signal)", () => {
@@ -61,13 +68,42 @@ describe("creditsLabel", () => {
 describe("spendCapBlockedMessage", () => {
   it("names what the action needed, what the cap is, and where the cap lives", () => {
     expect(spendCapBlockedMessage(11, 5)).toBe(
-      "Paused by your spend cap — this needs 11 credits and your cap is 5 credits per action. Raise the cap in Settings to run it.",
+      "Paused by your spend cap — this needs 11 credits and your cap is 5 credits per action. Raise the cap in Billing & credits to run it.",
     );
   });
 
-  it("never sends a capped merchant to Billing — they are not short of credits", () => {
+  // 前端基线合并 FRONT-A1(结构性改写,不是行为性):这一条原本写成
+  // `not.toMatch(/top up|billing/i)`。换壳把 Settings 拆成四面之后,花费上限跟着余额搬到
+  // 了那一面,而它**被批准的名字**就叫「Billing & credits」——出路句要指到一个商家真找得到
+  // 的地方,就绕不开这个词。围栏钉的行为一个字没松,而且钉得更紧了:仍然不许说「top up」,
+  // 另外新增两条——不许共用那句真正的充值 CTA(TOP_UP_CTA),不许说商家没钱了。
+  it("never tells a capped merchant to buy credits — they are not short of credits", () => {
     const message = spendCapBlockedMessage(11, 5);
-    expect(message).not.toMatch(/top up|billing/i);
+    expect(message).not.toMatch(/top up|out of credits|not enough credits/i);
+    expect(message).not.toContain(TOP_UP_CTA);
+  });
+
+  it("points at the page the cap actually lives on, not at the retired Settings surface", () => {
+    // 上限的控件在 app/billing/SpendCapCard.tsx,挂在 Billing & credits 那一面。
+    // 旧句子写的是「Settings」,而新壳的 Settings/General 一个跟钱有关的控件都没有。
+    expect(spendCapBlockedMessage(11, 5)).toContain("Billing & credits");
+    expect(spendCapBlockedMessage(11, 5)).not.toMatch(/in Settings/);
+  });
+
+  /**
+   * 判官 P2-c —— 出路句念的那个名字,与导航权威源里那一格的名字是**同一份**。
+   *
+   * 抄一份在 `credit-format.ts` 里,改名那天商家读到的出路句会指着一个屏幕上已经不存在的
+   * 名字,而两处都写着同样的字,没有任何一次红会告诉你。所以这里断言的是「相等」,
+   * 而且期望值从 `SETTINGS_SECTIONS` 现取 —— 本文件不再手抄第二份名字。
+   */
+  it("names the cap's page with the navigation registry's own label, not a hand-copied one", () => {
+    const billing = SETTINGS_SECTIONS.find((section) => section.key === "billing");
+    expect(billing, "导航权威源里没有 billing 那一格了 —— 出路句无处可指").toBeTruthy();
+    expect(SPEND_CAP_RAISE_CTA).toBe(`Raise the cap in ${billing!.label} to run it.`);
+    expect(spendCapBlockedMessage(11, 5)).toContain(billing!.label);
+    // 出路句去的那一页,就是上限控件所在的那一页。
+    expect(billing!.href).toBe("/billing");
   });
 
   it("singularizes a 1-credit cap like every other credit amount", () => {

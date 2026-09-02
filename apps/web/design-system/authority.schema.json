@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Fikirtive design authority map",
+  "type": "object",
+  "required": ["version", "canonicalRoot", "current", "compatibilityAliases", "references"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "canonicalRoot": { "const": "apps/web/design-system" },
+    "current": { "type": "object", "additionalProperties": { "type": "string" } },
+    "compatibilityAliases": { "type": "object", "additionalProperties": { "type": "string" } },
+    "deliveryAliases": { "type": "object", "additionalProperties": { "type": "string" } },
+    "references": { "type": "object", "additionalProperties": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

@@ -12,7 +12,16 @@ import type { listChannelScopes } from "@/lib/customer-inbox-gateway";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   channelConnectionFromAccounts,
@@ -29,9 +38,6 @@ type VersionRow = TemplateRow["versions"][number];
 type ScopesResult = Awaited<ReturnType<typeof listChannelScopes>>;
 type ScopesSuccess = Extract<ScopesResult, { ok: true }>;
 type ChannelScopeRow = ScopesSuccess["resource"][number];
-
-const selectClass =
-  "min-h-11 w-full rounded-[var(--radius-input)] border border-border bg-background px-3 text-sm text-foreground shadow-[var(--shadow-xs)] focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50";
 
 // #728 — the explanation lines were already plain English; only the badges printed the stored
 // column. Both now come from the one label map, so they cannot drift apart again.
@@ -187,7 +193,7 @@ function TemplatesWorkspace({
         </Link>
 
         <header className="mt-4 border-b border-border pb-7">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Message templates</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
             A logical template groups immutable versions. Every state shown here is a local Fikirtive record — not Meta or
@@ -229,18 +235,33 @@ function TemplatesWorkspace({
           <Card className="mt-6">
             <CardHeader><CardTitle>New template</CardTitle><CardDescription>Pick the channel account the template belongs to — the selected account is exactly what is submitted.</CardDescription></CardHeader>
             <CardContent>
-              <form className="grid gap-3 sm:grid-cols-2" onSubmit={submitTemplate}>
-                <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">Channel account
-                  <select className={selectClass} value={channelScopeId} onChange={(event) => setChannelScopeId(event.target.value)} disabled={creating} aria-label="Channel account">
-                    <option value="">Select a channel account…</option>
-                    {scopes.map((scope) => (
-                      <option key={scope.id} value={scope.id}>{channelAccountLabel(scope)}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">Template name<Input value={name} onChange={(event) => setName(event.target.value)} maxLength={128} aria-label="Template name" /></label>
-                <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">Locale<Input value={locale} onChange={(event) => setLocale(event.target.value)} maxLength={32} aria-label="Locale" /></label>
-                <div className="sm:col-span-2">
+              <form className="flex flex-col gap-3" onSubmit={submitTemplate}>
+                <FieldGroup className="grid gap-3 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel htmlFor="template-channel-account">Channel account</FieldLabel>
+                    <Select value={channelScopeId} onValueChange={setChannelScopeId} disabled={creating}>
+                      <SelectTrigger id="template-channel-account" className="w-full" aria-label="Channel account">
+                        <SelectValue placeholder="Select a channel account…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {scopes.map((scope) => (
+                            <SelectItem key={scope.id} value={scope.id}>{channelAccountLabel(scope)}</SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="template-name">Template name</FieldLabel>
+                    <Input id="template-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={128} />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="template-locale">Locale</FieldLabel>
+                    <Input id="template-locale" value={locale} onChange={(event) => setLocale(event.target.value)} maxLength={32} />
+                  </Field>
+                </FieldGroup>
+                <div>
                   <Button type="submit" disabled={creating || !selectedScope || !name.trim() || !locale.trim()}>
                     {creating ? <LoaderCircle className="animate-spin" /> : <Plus />}Create template
                   </Button>

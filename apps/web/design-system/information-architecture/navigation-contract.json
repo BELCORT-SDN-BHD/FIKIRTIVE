@@ -1,0 +1,43 @@
+{
+  "$schema": "./navigation-contract.schema.json",
+  "version": 1,
+  "activeMainNavigationKeys": [
+    "home",
+    "create",
+    "library",
+    "brand",
+    "settings"
+  ],
+  "parkedMainNavigationKeys": [
+    "campaign",
+    "schedule"
+  ],
+  "knownRuntimeExtraMainNavigationKeys": [],
+  "knownRouteConvergence": [
+    {
+      "surface": "campaigns",
+      "state": "parked",
+      "destinationSurface": "home"
+    },
+    {
+      "surface": "schedule",
+      "state": "parked",
+      "destinationSurface": "home"
+    },
+    {
+      "surface": "library.video-editor",
+      "state": "parked",
+      "destinationSurface": "create"
+    },
+    {
+      "surface": "schedule.analytics",
+      "state": "re-owned",
+      "destinationSurface": "home.analysis"
+    },
+    {
+      "surface": "crm",
+      "state": "disabled",
+      "destinationSurface": "home"
+    }
+  ]
+}

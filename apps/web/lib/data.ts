@@ -392,6 +392,36 @@ export async function getCoworkThread(ownerId: string, threadId: string) {
   });
 }
 
+/** One bounded transcript page, newest-first in storage and restored to chronological order.
+ * Canvas and Otto use this for long conversations so opening one does not load an unbounded
+ * history. `beforeSeq` is server-owned message order, never a timestamp guessed by the client. */
+export async function getCoworkThreadPage(
+  ownerId: string,
+  threadId: string,
+  beforeSeq?: number,
+  take = 60,
+) {
+  const thread = await prisma.chatThread.findFirst({
+    where: { id: threadId, ownerId, ...notDeleted },
+    select: { id: true, projectId: true, title: true, updatedAt: true, pinnedAt: true },
+  });
+  if (!thread) return null;
+
+  const rows = await prisma.chatMessage.findMany({
+    where: {
+      threadId,
+      ownerId,
+      ...notDeleted,
+      ...(typeof beforeSeq === "number" ? { seq: { lt: beforeSeq } } : {}),
+    },
+    orderBy: { seq: "desc" },
+    take: take + 1,
+  });
+  const hasOlderMessages = rows.length > take;
+  const messages = rows.slice(0, take).reverse();
+  return { ...thread, messages, hasOlderMessages };
+}
+
 export type ChatThreadWithMessages = NonNullable<Awaited<ReturnType<typeof getCoworkThread>>>;
 
 /** Map of genJobId → { ordered image urls, generationIds } for the GEN_RESULT messages

@@ -1,17 +1,17 @@
 /**
- * Design-token compile assertions — design-rules v3 (the law) vs globals.css (token truth).
+ * Design-token compile assertions — brand/design v4 vs globals.css (token truth).
  *
  * Compiles app/globals.css through the real Tailwind v4 pipeline (@tailwindcss/node, the
  * same compiler @tailwindcss/postcss drives in `next build`) and asserts the token-level
  * quick wins hold in the CSS the product actually ships:
  *
- *  1. Control radius (§5, polish-delta #1): `rounded-lg` renders the 14px control radius
+ *  1. Control radius (v4 workspace system): `rounded-lg` renders the 10px control radius
  *     (var(--radius)), not the legacy Vapor 20px hijack.
  *  2. State colours (§T5 three-place rule, code-gaps #11): text-success / bg-error /
  *     text-info utilities actually generate (they were silently missing).
  *  3. Focus ring (§A2): the global two-layer .gb :focus-visible rule (1px keyline +
  *     40% halo) exists in the output.
- *  4. Motion tokens (§6): --dur-* / --ease-spring land in .gb and the button's arbitrary
+ *  4. Motion tokens (v4 §11–12): --dur-* / --ease-out land in .gb and the button's arbitrary
  *     duration/easing utilities generate against them.
  */
 import { describe, expect, it } from "vitest";
@@ -103,8 +103,9 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
     "text-data-label",
     "text-brand-strong",
     "bg-brand-strong",
-    "duration-[var(--dur-2)]",
-    "ease-[var(--ease-spring)]",
+    "duration-[var(--dur-1)]",
+    "ease-[var(--ease-out)]",
+    "ease-[var(--ease-standard)]",
   ];
   let out: string;
 
@@ -113,14 +114,14 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
     return out;
   }
 
-  it("rounded-lg renders the 14px control radius, not the Vapor 20px hijack", async () => {
+  it("rounded-lg renders the 10px control radius, not the Vapor 20px hijack", async () => {
     const css = await compiled();
     const rule = css.match(/\.rounded-lg\s*\{[^}]*\}/)?.[0];
     expect(rule).toBeDefined();
     expect(rule).toContain("border-radius: var(--radius)");
     expect(rule).not.toContain("20px");
-    // …and the .gb control radius the utility now points at is 14px.
-    expect(css).toMatch(/\.gb\s*\{[^}]*--radius:\s*0\.875rem/);
+    // …and the .gb control radius the utility now points at is 10px.
+    expect(css).toMatch(/\.gb\s*\{[^}]*--radius:\s*0\.625rem/);
   });
 
   it("state colour utilities generate (three-place rule — were silently missing)", async () => {
@@ -274,7 +275,7 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
     }
   });
 
-  it("global two-layer coral focus ring (§A2) is present", async () => {
+  it("global two-layer ink focus ring (§A2) is present", async () => {
     const css = await compiled();
     const rule = css.match(/\.gb\s+:focus-visible\s*\{[^}]*\}/)?.[0];
     expect(rule).toBeDefined();
@@ -282,11 +283,56 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
     expect(rule).toContain("0 0 0 4px color-mix(in oklab, var(--ring) 40%, transparent)");
   });
 
+  it("keeps generic data emphasis and link actions out of Otto coral", async () => {
+    const source = await fs.readFile(path.join(webRoot, "app/globals.css"), "utf8");
+    const button = await fs.readFile(path.join(webRoot, "components/ui/button.tsx"), "utf8");
+
+    expect(source).toMatch(/--chart-peak:\s*var\(--chart-ink\)/);
+    expect(source).not.toMatch(/--chart-peak:\s*var\(--brand\)/);
+    expect(button).toContain('link: "text-foreground underline-offset-4 hover:underline"');
+    expect(button).not.toContain('link: "text-brand');
+  });
+
   it("motion tokens land in .gb and the button transition utilities generate", async () => {
     const css = await compiled();
-    expect(css).toMatch(/\.gb\s*\{[^}]*--dur-2:\s*150ms/);
-    expect(css).toMatch(/\.gb\s*\{[^}]*--ease-spring:\s*cubic-bezier\(0\.34,\s*1\.56,\s*0\.64,\s*1\)/);
-    expect(css).toContain("transition-duration: var(--dur-2)");
-    expect(css).toContain("transition-timing-function: var(--ease-spring)");
+    expect(css).toMatch(/\.gb\s*\{[^}]*--dur-1:\s*120ms/);
+    expect(css).toMatch(/\.gb\s*\{[^}]*--ease-standard:\s*cubic-bezier\(0\.25,\s*0\.1,\s*0\.25,\s*1\)/);
+    expect(css).toMatch(/\.gb\s*\{[^}]*--ease-out:\s*cubic-bezier\(0\.23,\s*1,\s*0\.32,\s*1\)/);
+    expect(css).toMatch(/\.gb\s*\{[^}]*--ease-in-out:\s*cubic-bezier\(0\.77,\s*0,\s*0\.175,\s*1\)/);
+    expect(css).toMatch(/\.gb\s*\{[^}]*--ease-drawer:\s*cubic-bezier\(0\.32,\s*0\.72,\s*0,\s*1\)/);
+    expect(css).toMatch(/\.gb\s*\{[^}]*--ease-spring:\s*var\(--ease-out\)/);
+    expect(css).toContain("transition-duration: var(--dur-1)");
+    expect(css).toContain("transition-timing-function: var(--ease-standard)");
+  });
+
+  it("keeps every text-entry control on the same FIKIRTIVE foundation", async () => {
+    const controls = await Promise.all(
+      ["input.tsx", "textarea.tsx", "select.tsx", "native-select.tsx"].map(async (file) => [
+        file,
+        await fs.readFile(path.join(webRoot, "components/ui", file), "utf8"),
+      ] as const),
+    );
+
+    for (const [file, control] of controls) {
+      expect(control, file).toContain("rounded-lg");
+      expect(control, file).toContain("bg-card");
+      expect(control, file).toContain("text-base");
+      expect(control, file).toContain("duration-[var(--dur-1)]");
+      expect(control, file).toContain("ease-[var(--ease-standard)]");
+      expect(control, file).toContain("focus-visible:ring-ring/30");
+      expect(control, file).toContain("opacity-40");
+      expect(control, file).not.toContain("dark:");
+    }
+
+    for (const file of ["input.tsx", "select.tsx", "native-select.tsx"]) {
+      expect(controls.find(([name]) => name === file)?.[1], file).toContain("h-11");
+    }
+    expect(controls.find(([name]) => name === "textarea.tsx")?.[1]).toContain("min-h-20");
+  });
+
+  it("the Founder-named Create composer prism is the 120° four-stop token", async () => {
+    const css = await compiled();
+    expect(css).toMatch(/--composer-prism:\s*linear-gradient\(120deg,[^;]+\)/);
+    expect(css).toContain("var(--composer-prism) border-box");
   });
 });

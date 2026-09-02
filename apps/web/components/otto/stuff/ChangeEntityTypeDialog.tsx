@@ -11,6 +11,7 @@
  * it (a character with no reference photo is refused before a generation spends anything).
  */
 import React from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,13 +21,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Field, FieldGroup, FieldTitle } from "@/components/ui/field";
+import { Spinner } from "@/components/ui/spinner";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { EntityTypeDTO } from "@/lib/types";
 
 /** Merchant-facing name for each kind. "Cast" matches the Library filter pill and the tile tag —
@@ -53,15 +50,33 @@ export function ChangeEntityTypeDialog({
    *  the action, so its refusal has to reach this dialog rather than disappearing. */
   onSubmit: (type: EntityTypeDTO) => Promise<string | null>;
 }) {
+  const [pending, setPending] = React.useState(false);
+
+  function handleOpenChange(next: boolean) {
+    if (!next && pending) return;
+    onOpenChange(next);
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-5">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent
+        className="gap-5 sm:max-w-[520px]"
+        closeDisabled={pending}
+        onEscapeKeyDown={(event) => {
+          if (pending) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (pending) event.preventDefault();
+        }}
+      >
         <ChangeEntityTypeForm
           key={open ? `${itemLabel}:${currentType}` : "closed"}
           itemLabel={itemLabel}
           currentType={currentType}
           onOpenChange={onOpenChange}
           onSubmit={onSubmit}
+          pending={pending}
+          setPending={setPending}
         />
       </DialogContent>
     </Dialog>
@@ -73,21 +88,26 @@ function ChangeEntityTypeForm({
   currentType,
   onOpenChange,
   onSubmit,
+  pending,
+  setPending,
 }: {
   itemLabel: string;
   currentType: EntityTypeDTO;
   onOpenChange: (open: boolean) => void;
   onSubmit: (type: EntityTypeDTO) => Promise<string | null>;
+  pending: boolean;
+  setPending: (pending: boolean) => void;
 }) {
   const [value, setValue] = React.useState<EntityTypeDTO>(currentType);
-  const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const submittingRef = React.useRef(false);
 
   const changed = value !== currentType;
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!changed || pending) return;
+    if (!changed || submittingRef.current) return;
+    submittingRef.current = true;
     setPending(true);
     setError(null);
     try {
@@ -97,7 +117,10 @@ function ChangeEntityTypeForm({
         return;
       }
       onOpenChange(false);
+    } catch {
+      setError("The type couldn't be changed. Check your connection and try again.");
     } finally {
+      submittingRef.current = false;
       setPending(false);
     }
   }
@@ -112,48 +135,78 @@ function ChangeEntityTypeForm({
         </DialogDescription>
       </DialogHeader>
 
-      <label className="flex flex-col gap-2">
-        <span className="text-sm font-medium text-foreground">Type</span>
-        <Select value={value} onValueChange={(next) => { setValue(next as EntityTypeDTO); setError(null); }}>
-          <SelectTrigger className="w-full" aria-label="Type">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {TYPE_LABELS.map((t) => (
-              <SelectItem key={t.value} value={t.value}>
-                {t.label} — {t.hint}
-              </SelectItem>
+      <FieldGroup className="gap-4">
+        <Field data-disabled={pending}>
+          <FieldTitle id="entity-type-label">Type</FieldTitle>
+          <ToggleGroup
+            type="single"
+            value={value}
+            variant="outline"
+            spacing={2}
+            disabled={pending}
+            aria-labelledby="entity-type-label"
+            onValueChange={(next) => {
+              if (!next) return;
+              setValue(next as EntityTypeDTO);
+              setError(null);
+            }}
+            className="grid w-full grid-cols-2"
+          >
+            {TYPE_LABELS.map((type) => (
+              <ToggleGroupItem
+                key={type.value}
+                value={type.value}
+                className="h-auto min-h-16 w-full flex-col items-start justify-start whitespace-normal px-3 py-2.5 text-left"
+              >
+                <span className="font-semibold">{type.label}</span>
+                <span className="text-xs font-normal leading-snug text-muted-foreground">
+                  {type.hint}
+                </span>
+              </ToggleGroupItem>
             ))}
-          </SelectContent>
-        </Select>
-      </label>
+          </ToggleGroup>
+        </Field>
 
-      {value === "CHARACTER" && currentType !== "CHARACTER" && (
-        <p className="m-0 text-[0.8125rem] text-muted-foreground">
-          Cast needs a reference photo — a character without one is refused before a generation
-          starts, so add a photo to this item if it has none.
-        </p>
-      )}
+        {value === "CHARACTER" && currentType !== "CHARACTER" && (
+          <Alert variant="warning" density="compact">
+            <AlertTitle>Cast needs a reference photo</AlertTitle>
+            <AlertDescription>
+              A cast member without one is refused before generation starts. Add a photo to this
+              item if it has none.
+            </AlertDescription>
+          </Alert>
+        )}
 
-      <p className="m-0 text-[0.8125rem] text-muted-foreground">
-        Anything you already made keeps the wording it was made with. This changes the next
-        generation.
-      </p>
+        <Alert variant="info" density="compact">
+          <AlertTitle>Applies to future generations</AlertTitle>
+          <AlertDescription>
+            Anything you already made keeps the wording it was made with.
+          </AlertDescription>
+        </Alert>
 
-      {error && (
-        <div role="alert" className="rounded-[14px] bg-error-soft px-3 py-2 text-[0.8125rem] text-[var(--error-soft-foreground)]">
-          {error}
-        </div>
-      )}
+        {error && (
+          <Alert role="alert" variant="destructive" density="compact">
+            <AlertTitle>Type wasn&apos;t changed</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-      <DialogFooter>
-        <Button type="button" variant="secondary" onClick={() => onOpenChange(false)} disabled={pending}>
-          Cancel
-        </Button>
-        <Button type="submit" disabled={!changed || pending}>
-          {pending ? "Saving..." : "Save"}
-        </Button>
-      </DialogFooter>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={pending}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={!changed || pending}>
+            {pending && <Spinner data-icon="inline-start" aria-label="Saving type" />}
+            {pending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </FieldGroup>
     </form>
   );
 }

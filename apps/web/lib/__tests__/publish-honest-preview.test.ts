@@ -624,16 +624,8 @@ describe("#851 ⑤ Otto 的批准卡与按钮说同一句话", () => {
 describe("#851 ⑥ 登录页不卖一个此刻做不到的结果", () => {
   const LOGIN_SRC = readFileSync(path.resolve(__dirname, "../../app/login/page.tsx"), "utf8");
 
-  it("那条卖点跟着同一个开关走,不是手写死的", () => {
-    // 与设置页那条同一个做法:屏幕上的话必须能被开关改掉,否则通电那天又要满仓找措辞。
-    expect(LOGIN_SRC).toContain("PUBLISHING_AVAILABLE");
-  });
-
-  it("发不出去这段时期,登录页不留一句「会发到 Instagram / Facebook」", () => {
-    // 原句逐字钉住:它只允许活在 PUBLISHING_AVAILABLE 为真的那一支里,不能再是无条件的。
-    const old = "Schedules and publishes to Instagram and Facebook once Meta approves your connection";
-    const idx = LOGIN_SRC.indexOf(old);
-    expect(idx, "登录页的旧承诺必须还在,但只作为通电那一支").toBeGreaterThan(-1);
-    expect(LOGIN_SRC.slice(Math.max(0, idx - 200), idx)).toContain("PUBLISHING_AVAILABLE");
+  it("minimal Auth 完全不承载发布能力或开关文案", () => {
+    expect(LOGIN_SRC).not.toContain("PUBLISHING_AVAILABLE");
+    expect(LOGIN_SRC).not.toMatch(/Instagram|Facebook|publishes|scheduled/i);
   });
 });

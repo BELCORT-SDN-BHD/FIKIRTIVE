@@ -6,6 +6,10 @@ import type { EntityWithRefs, ChatThreadWithMessages } from "./data";
 import type { EntityDTO, ChatMessageDTO, ChatThreadDTO } from "./types";
 
 type EntityWithOttoUsage = EntityWithRefs & { _ottoUsageCount?: number };
+type ChatThreadDTOInput = Pick<
+  ChatThreadWithMessages,
+  "id" | "projectId" | "title" | "updatedAt" | "pinnedAt" | "messages"
+>;
 
 export function assetUrl(ownerId: string, contentHash: string, ext: string) {
   return storage.url(storageKey(ownerId, contentHash, ext));
@@ -189,7 +193,7 @@ export function toChatMessageDTO(
   };
 }
 
-export function toChatThreadDTO(t: ChatThreadWithMessages, urlsByJob: Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>): ChatThreadDTO {
+export function toChatThreadDTO(t: ChatThreadDTOInput, urlsByJob: Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>): ChatThreadDTO {
   return {
     id: t.id,
     projectId: t.projectId,

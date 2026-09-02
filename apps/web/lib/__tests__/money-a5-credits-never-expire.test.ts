@@ -34,11 +34,18 @@ async function renderBilling(account: { balance: number; reserved: number } | { 
   vi.doMock("@/lib/spend-history-data", () => ({
     getSpendOverview: async () => ({ error: "unavailable" }),
   }));
+  // 前端基线合并(FRONT-A1):花费上限搬到了这一页,所以页面多读一个数据源。这一票不测上限,
+  // 只测文案 —— 但不 mock 它,页面会去打真的 auth,整条断言就变成一次假红。
+  vi.doMock("@/lib/owner-settings-actions", () => ({
+    getOwnerSettings: async () => ({ spendCapCredits: 0 }),
+    setOwnerSetting: async () => ({ ok: true as const }),
+  }));
   const { default: BillingPage } = await import("@/app/billing/page");
   const html = renderToStaticMarkup(await BillingPage({ searchParams: Promise.resolve({}) }));
   vi.doUnmock("@/lib/account-actions");
   vi.doUnmock("@/lib/billing-actions");
   vi.doUnmock("@/lib/spend-history-data");
+  vi.doUnmock("@/lib/owner-settings-actions");
   return asReadText(html);
 }
 
@@ -61,7 +68,10 @@ describe("MONEY-A5:credits 永不过期 —— billing 面读得到的那句话"
   it("MONEY-A5:这句话紧挨着余额,不是埋在页尾", async () => {
     // 「永不过期」讲的是屏幕上那个数字。离开那个数字,它就只是一句条款。
     const text = await renderBilling({ balance: 1890, reserved: 220 });
-    const balanceIndex = text.indexOf("held for work in progress");
+    // 前端基线合并(FRONT-A1):余额卡的 hold 行由 main 的一行小字改成分支的 Badge —— 长相以分支
+    // 为准,所以定位锚点跟着改成 Badge 的文案。钉的东西一个字没松:这句话仍然必须紧挨着余额卡的
+    // hold 行,离得远了照样红。
+    const balanceIndex = text.indexOf("credits held");
     const sentenceIndex = text.indexOf(A5_SENTENCE);
     expect(balanceIndex, "余额卡的 hold 行不见了 —— 定位锚点变了,这条断言要重写").toBeGreaterThan(-1);
     expect(sentenceIndex, A5_SENTENCE + " 不在页面上").toBeGreaterThan(-1);

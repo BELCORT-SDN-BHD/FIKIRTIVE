@@ -63,6 +63,7 @@ export function buildStuffItems(args: {
   records: BrandRecordRow[];
 }): StuffItem[] {
   const pidx = productImageIndex(args.records);
+  const adGenerationIds = new Set(args.ads.map((ad) => ad.id));
   const items: StuffItem[] = [];
   for (const e of args.entities) {
     const base = e.refs.find((r) => r.assetId === e.baseAssetId) ?? e.refs[0];
@@ -79,6 +80,10 @@ export function buildStuffItems(args: {
     });
   }
   for (const h of args.history) {
+    // Ads are Generation rows too, so the cross-project history can contain the same id as
+    // getMyAds. Keep the richer ad-shaped item below: one piece of media should occupy one tile,
+    // and it must still remain discoverable through the Ads filter.
+    if (adGenerationIds.has(h.id)) continue;
     items.push({
       id: `gen:${h.id}`,
       source: "gen",

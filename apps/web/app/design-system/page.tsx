@@ -8,8 +8,11 @@
 
 import { DesignSystemReference } from "./DesignSystemReference";
 
+import { assertReviewFixtureRoute } from "@/lib/review-fixture-guard";
+
 export const metadata = { title: "Design system · Fikirtive" };
 
 export default function Page() {
+  assertReviewFixtureRoute();
   return <DesignSystemReference />;
 }

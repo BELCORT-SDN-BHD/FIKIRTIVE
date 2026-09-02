@@ -2,16 +2,20 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Archive, LoaderCircle, Save } from "lucide-react";
+import { AlertCircle, Archive, Check, Save } from "lucide-react";
 import type { listCampaigns } from "@/lib/campaign-view-data";
 import { listTrendSnapshots, saveTrendSnapshot } from "@/lib/trend-actions";
 import { trendSourceLabels } from "@/lib/trend-source-labels";
 import { MY_DATE_FORMAT } from "@/lib/my-date-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { CampaignNav } from "./campaign-nav";
 
@@ -86,70 +90,110 @@ export default function CampaignTrendsPage({
 
   return (
     <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
-      <div className="mx-auto max-w-6xl">
+      <div className="mx-auto max-w-7xl">
         <CampaignNav current="trends" />
         <header className="mt-7 border-b border-border pb-7">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Research conclusions</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Campaign intelligence</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Trend archive</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
             Save thin, source-labeled conclusions for campaign planning. This archive does not call a provider.
           </p>
         </header>
-        {error ? <div className="mt-4 rounded-xl border border-error-soft bg-error-soft p-4 text-sm text-destructive">{error}</div> : null}
-        {notice ? <div className="mt-4 rounded-xl border border-success/25 bg-success-soft p-4 text-sm text-success-soft-foreground">{notice}</div> : null}
+        {error ? (
+          <Alert variant="destructive" className="mt-4" role="alert">
+            <AlertCircle />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+        {notice ? (
+          <Alert variant="success" className="mt-4" role="status">
+            <Check />
+            <AlertDescription>{notice}</AlertDescription>
+          </Alert>
+        ) : null}
 
-        <div className="mt-6 grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
-          <Card>
+        <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(20rem,0.72fr)_minmax(0,1.28fr)] lg:items-start">
+          <Card className="lg:sticky lg:top-6">
             <CardHeader>
               <CardTitle>Save a trend conclusion</CardTitle>
               <CardDescription>Use a structured conclusion and at least one visible source label.</CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-4">
-              <label className="grid gap-2 text-sm font-semibold">Conclusion<Textarea value={summary} onChange={(event) => setSummary(event.target.value)} maxLength={1000} placeholder="Locally rooted gift stories are gaining attention before Merdeka." /></label>
-              <label className="grid gap-2 text-sm font-semibold">Source title<Input value={sourceTitle} onChange={(event) => setSourceTitle(event.target.value)} maxLength={200} placeholder="Malaysia seasonal commerce brief" /></label>
-              <label className="grid gap-2 text-sm font-semibold">Source domain<Input value={sourceDomain} onChange={(event) => setSourceDomain(event.target.value)} maxLength={253} placeholder="example.com" /></label>
-              <label className="grid gap-2 text-sm font-semibold">Captured date <span className="font-normal text-muted-foreground">Optional</span><Input type="date" value={capturedAt} onChange={(event) => setCapturedAt(event.target.value)} /></label>
-              <label className="grid gap-2 text-sm font-semibold">Campaign <span className="font-normal text-muted-foreground">Optional</span>
+            <CardContent>
+              <FieldGroup className="gap-4">
+                <Field>
+                  <FieldLabel htmlFor="trend-conclusion">Conclusion</FieldLabel>
+                  <Textarea id="trend-conclusion" value={summary} onChange={(event) => setSummary(event.target.value)} maxLength={1000} placeholder="Locally rooted gift stories are gaining attention before Merdeka." />
+                  <FieldDescription>Record the conclusion, not the raw article or research notes.</FieldDescription>
+                </Field>
+                <div className="grid gap-4">
+                  <Field>
+                    <FieldLabel htmlFor="trend-source-title">Source title</FieldLabel>
+                    <Input id="trend-source-title" value={sourceTitle} onChange={(event) => setSourceTitle(event.target.value)} maxLength={200} placeholder="Seasonal commerce brief" />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="trend-source-domain">Source domain</FieldLabel>
+                    <Input id="trend-source-domain" value={sourceDomain} onChange={(event) => setSourceDomain(event.target.value)} maxLength={253} placeholder="example.com" />
+                  </Field>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel htmlFor="trend-captured-date">Captured date <span className="font-normal text-muted-foreground">Optional</span></FieldLabel>
+                    <Input id="trend-captured-date" type="date" value={capturedAt} onChange={(event) => setCapturedAt(event.target.value)} />
+                  </Field>
+                  <Field>
+                    <FieldLabel>Campaign <span className="font-normal text-muted-foreground">Optional</span></FieldLabel>
                 <Select value={campaignId} onValueChange={setCampaignId}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full" aria-label="Campaign"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No campaign</SelectItem>
-                    {campaigns.map((campaign) => <SelectItem key={campaign.id} value={campaign.id}>{campaign.name}</SelectItem>)}
+                    <SelectGroup>
+                      <SelectItem value="none">No campaign</SelectItem>
+                      {campaigns.map((campaign) => <SelectItem key={campaign.id} value={campaign.id}>{campaign.name}</SelectItem>)}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
-              </label>
-              <Button type="button" onClick={save} disabled={!ready || saving}>
-                {saving ? <LoaderCircle className="animate-spin" /> : <Save />}
+                  </Field>
+                </div>
+              </FieldGroup>
+            </CardContent>
+            <CardFooter>
+              <Button type="button" className="w-full" onClick={save} disabled={!ready || saving}>
+                {saving ? <Spinner /> : <Save data-icon="inline-start" />}
                 {saving ? "Saving conclusion" : "Save conclusion"}
               </Button>
-            </CardContent>
+            </CardFooter>
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle>Saved conclusions</CardTitle>
-              <CardDescription>Newest evidence first. Missing evidence is never guessed.</CardDescription>
+            <CardHeader className="flex-row items-start justify-between gap-4">
+              <div className="min-w-0">
+                <CardTitle>Saved conclusions</CardTitle>
+                <CardDescription>Newest evidence first. Missing evidence is never guessed.</CardDescription>
+              </div>
+              <Badge variant="outline">{trends.length} saved</Badge>
             </CardHeader>
             <CardContent className="grid gap-3">
               {trends.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-border px-5 py-10 text-center">
-                  <Archive className="mx-auto size-7 text-muted-foreground" />
-                  <h2 className="mt-3 text-sm font-semibold">No trend conclusions yet</h2>
-                  <p className="mt-2 text-sm text-muted-foreground">Save the first source-labeled conclusion.</p>
-                </div>
+                <Empty className="border py-10">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon"><Archive /></EmptyMedia>
+                    <EmptyTitle>No trend conclusions yet</EmptyTitle>
+                    <EmptyDescription>Save the first source-labeled conclusion.</EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
               ) : trends.map((trend) => {
                 const campaign = trend.campaignId ? campaignNames.get(trend.campaignId) : undefined;
                 return (
-                  <article key={trend.id} className="rounded-xl border border-border p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <p className="text-sm font-semibold leading-6">{trend.summary}</p>
+                  <Card key={trend.id} size="sm" className="shadow-none">
+                    <CardHeader className="flex-row items-start justify-between gap-3">
+                      <CardTitle className="max-w-2xl leading-6">{trend.summary}</CardTitle>
                       <Badge variant="outline">{dateLabel(trend.capturedAt)}</Badge>
-                    </div>
+                    </CardHeader>
+                    <CardContent className="grid gap-3">
                     {trend.campaignId ? (
-                      <p className="mt-3 text-xs text-muted-foreground">
+                      <p className="text-xs text-muted-foreground">
                         Filed under{" "}
                         {campaign ? (
-                          <Link href={`/campaign/${trend.campaignId}`} className="font-semibold text-brand-strong underline-offset-4 hover:underline">
+                          <Link href={`/campaign/${trend.campaignId}`} className="font-semibold text-foreground underline-offset-4 hover:underline">
                             {campaign}
                           </Link>
                         ) : (
@@ -157,12 +201,13 @@ export default function CampaignTrendsPage({
                         )}
                       </p>
                     ) : null}
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2">
                       {trendSourceLabels(trend.sources).map((label, index) => (
-                        <span key={`${trend.id}:${index}`} className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">{label}</span>
+                        <Badge key={`${trend.id}:${index}`} variant="outline" className="font-normal text-muted-foreground">{label}</Badge>
                       ))}
                     </div>
-                  </article>
+                    </CardContent>
+                  </Card>
                 );
               })}
             </CardContent>
@@ -172,4 +217,3 @@ export default function CampaignTrendsPage({
     </main>
   );
 }
-

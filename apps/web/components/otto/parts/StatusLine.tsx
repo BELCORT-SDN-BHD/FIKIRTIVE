@@ -1,6 +1,13 @@
 "use client";
 import React from "react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import {
+  Message,
+  MessageAvatar,
+  MessageContent,
+  MessageHeader,
+} from "@/components/ui/message";
 import type { OttoStatusData } from "@/lib/otto-stream-bridge";
 import { turnNarrationText } from "@/lib/otto-turn-narration";
 
@@ -28,12 +35,17 @@ export function StatusLine({ isBusy, liveStatus, hasAssistantText }: StatusLineP
   if (text === null) return null;
 
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: "0.75rem" }}>
-      <OttoAvatar size={32} state="thinking" />
-      {/* key={text} triggers a React remount (→ CSS animation restart) when the phase
-          changes, so each new sentence fades in instead of swapping in place. */}
-      <StatusText key={text} text={text} />
-    </div>
+    <Message align="start">
+      <MessageAvatar aria-hidden>
+        <OttoAvatar size={32} state="thinking" />
+      </MessageAvatar>
+      <MessageContent>
+        <MessageHeader>Otto</MessageHeader>
+        {/* key={text} triggers a React remount (→ CSS animation restart) when the phase
+            changes, so each new sentence fades in instead of swapping in place. */}
+        <StatusText key={text} text={text} />
+      </MessageContent>
+    </Message>
   );
 }
 
@@ -44,22 +56,17 @@ export function StatusLine({ isBusy, liveStatus, hasAssistantText }: StatusLineP
  */
 function StatusText({ text }: { text: string }) {
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      style={{
-        padding: "0.75rem 1rem",
-        background: "var(--card)",
-        borderRadius: "0 20px 20px 20px",
-        border: "1px solid var(--border)",
-        fontSize: "0.875rem",
-        color: "var(--muted-foreground)",
-        fontStyle: "italic",
-        animation: "otto-status-fadein var(--dur-base, 220ms) var(--ease-out, cubic-bezier(0.22,1,0.36,1)) both",
-      }}
-    >
-      {text}
-    </div>
+    <Bubble variant="status">
+      <BubbleContent
+        role="status"
+        aria-live="polite"
+        style={{
+          animation: "otto-status-fadein var(--dur-base, 220ms) var(--ease-out, cubic-bezier(0.22,1,0.36,1)) both",
+        }}
+      >
+        {text}
+      </BubbleContent>
+    </Bubble>
   );
 }
 

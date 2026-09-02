@@ -9,7 +9,7 @@ import type { AdminV2Data } from "@/lib/admin-v2";
 // could be let in from inside the product. These tests pin the wiring, not the backend:
 //   1. submitting the form reaches inviteTenant with the typed address;
 //   2. a malformed address never reaches the server action;
-//   3. Revoke is confirmed first — one stray click must not lock an address out.
+//   3. Revoke opens an AlertDialog first — one stray click must not lock an address out.
 
 const mocks = vi.hoisted(() => ({
   inviteTenant: vi.fn(),
@@ -116,6 +116,14 @@ function revokeButton(dom: HTMLElement): HTMLButtonElement {
   return button!;
 }
 
+function dialogButton(label: string): HTMLButtonElement {
+  const button = [...document.body.querySelectorAll("button")].find(
+    (node) => node.textContent?.trim() === label,
+  );
+  expect(button, `the confirmation must expose a ${label} button`).toBeTruthy();
+  return button as HTMLButtonElement;
+}
+
 describe("admin tenants invite UI (#538)", () => {
   it("shows the invite entry point and the pending invite it can revoke", async () => {
     const dom = await renderTenants();
@@ -212,51 +220,75 @@ describe("admin tenants invite UI (#538)", () => {
     mocks.revokeTenantInvite.mockResolvedValue({
       error: "That address already belongs to a merchant workspace. Manage their access from that tenant instead.",
     });
-    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
     const dom = await renderTenants();
 
     await click(revokeButton(dom));
+    await click(dialogButton("Revoke invite"));
 
-    expect(dom.textContent).toContain("already belongs to a merchant workspace");
-    expect(dom.textContent).not.toContain(`Revoked ${PENDING_EMAIL}`);
+    expect(document.body.textContent).toContain("already belongs to a merchant workspace");
+    expect(document.body.textContent).not.toContain(`Revoked ${PENDING_EMAIL}`);
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
   });
 
   // #538 round 2 (P2) — the old wording promised the address could not sign in at all, but
   // FOUNDER_ADMIN_EMAILS / AUTH_ALLOWED_EMAILS outrank the DB row (allowlist.ts).
   it("scopes the confirmation wording to what revoking actually blocks", async () => {
-    const confirmSpy = vi.fn().mockReturnValue(false);
-    vi.stubGlobal("confirm", confirmSpy);
     const dom = await renderTenants();
 
     await click(revokeButton(dom));
 
-    const prompt = confirmSpy.mock.calls[0][0] as string;
-    expect(prompt).toContain("blocks future self-signup");
-    expect(prompt).not.toContain("sign in");
+    const prompt = document.querySelector('[role="alertdialog"]')?.textContent ?? "";
+    expect(prompt).toContain("Future self-signup with this email is blocked.");
+    expect(prompt).not.toContain("cannot sign in");
   });
 
   it("does not revoke when the confirmation is declined", async () => {
-    const confirmSpy = vi.fn().mockReturnValue(false);
-    vi.stubGlobal("confirm", confirmSpy);
     const dom = await renderTenants();
 
     await click(revokeButton(dom));
+    await click(dialogButton("Cancel"));
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(confirmSpy.mock.calls[0][0]).toContain(PENDING_EMAIL);
     expect(mocks.revokeTenantInvite).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
   it("revokes only after the confirmation is accepted", async () => {
-    const confirmSpy = vi.fn().mockReturnValue(true);
-    vi.stubGlobal("confirm", confirmSpy);
     const dom = await renderTenants();
 
     await click(revokeButton(dom));
+    await click(dialogButton("Revoke invite"));
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
     expect(mocks.revokeTenantInvite).toHaveBeenCalledTimes(1);
     expect(mocks.revokeTenantInvite).toHaveBeenCalledWith(PENDING_EMAIL);
     expect(mocks.refresh).toHaveBeenCalled();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("locks a same-tick double confirmation and leaves a failed request in place", async () => {
+    let release!: (result: { error: string }) => void;
+    mocks.revokeTenantInvite.mockImplementationOnce(
+      () => new Promise((resolve) => { release = resolve; }),
+    );
+    const dom = await renderTenants();
+    await click(revokeButton(dom));
+
+    const confirm = dialogButton("Revoke invite");
+    await act(async () => {
+      confirm.click();
+      confirm.click();
+    });
+
+    expect(mocks.revokeTenantInvite).toHaveBeenCalledTimes(1);
+    expect(dialogButton("Revoking…").disabled).toBe(true);
+    expect(dialogButton("Cancel").disabled).toBe(true);
+
+    await act(async () => {
+      release({ error: "No pending invite for that address." });
+    });
+
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "No pending invite for that address.",
+    );
   });
 });

@@ -15,15 +15,29 @@
  *
  * 不在本票范围(走查已判合格,勿回退):失效密钥不会把 Stripe 的内部报错抛到界面上。
  *
+ * 前端基线①(判官 2026-09-02 P2-f)——**第二臂换成了真东西**。
+ * 这份围栏原来的「Settings 那一臂」渲染的是 `buildSettingsSections` + `SettingsPage`,
+ * 而新壳把 Settings 拆成四面之后,那一面**没有任何路由渲染**(`OttoAccount` 是死代码,
+ * 它自己的文件头就写着这件事)。钉在死代码上的围栏保护不了任何商家:那句话在屏幕上早已
+ * 不存在,它却一直是绿的。新壳上「Billing & credits」就是 `/billing`,所以第二臂改成两半,
+ * 两半钉的都是活的东西:
+ *   上半 · **真渲染**那一面上的两块真钱表面 —— 余额卡与花费上限卡
+ *          (`app/billing/SpendCapCard.tsx`),含「读不到上限就如实报错」那条分支;
+ *   下半 · **唯一来源**普查 —— 屏幕上那两句话在产品源码里一个字面量都不许有,只能来自
+ *          `lib/exits.ts`;全仓只有一处产品代码读得到货架;退役的那一面一旦被重新接上
+ *          路由,这里立刻红(那天第二臂要多长一只手,把它也渲染进来)。
+ * 「一个状态两句话」是 #687 真正要挡的事,下半挡的就是它。
+ *
  * #786 追加第三条钉板:**「拿不到货架」不是「没有货」**。价格目录调用抛错时,产品并不知道
  * 货架是空是满 —— 所以不许说「没有」,也不许因此把商家引去写邮件(#771 自己立的围栏:
  * 可重试的错误不挂人工出口)。下面这一组的货架状态由**真的 `listCreditPacks`** 对着一次
  * 真的 Stripe 抛错产出,不是手写的常量 —— 页面读的就是那一层真实给出的判词。
  */
-import { createElement } from "react";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
+import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import type { AccountInfo } from "@/lib/account-actions";
 import type { CreditPackShelf } from "@/lib/billing-actions";
 
@@ -43,6 +57,12 @@ const mocks = vi.hoisted(() => ({
   listCreditPacks: vi.fn(),
   getSpendOverview: vi.fn(),
   setOwnerSetting: vi.fn(),
+  // 前端基线合并(FRONT-A1):花费上限搬到了 /billing,所以这一页多读一个数据源。
+  // 不 mock 就会打真 auth 假红。它的返回形状与真 action 一样有两种(读到 / 读不到),
+  // 第二臂要两种都渲染一遍,所以这里就照真形状标注类型。
+  getOwnerSettings: vi.fn<() => Promise<{ spendCapCredits: number } | { error: string }>>(
+    async () => ({ spendCapCredits: 0 }),
+  ),
   setAdsAutonomy: vi.fn(),
   requireOwner: vi.fn(),
   isImpersonating: vi.fn(),
@@ -52,7 +72,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/account-actions", () => ({ getMyAccount: mocks.getMyAccount }));
 vi.mock("@/lib/billing-actions", () => ({ listCreditPacks: mocks.listCreditPacks }));
 vi.mock("@/lib/spend-history-data", () => ({ getSpendOverview: mocks.getSpendOverview }));
-vi.mock("@/lib/owner-settings-actions", () => ({ setOwnerSetting: mocks.setOwnerSetting }));
+vi.mock("@/lib/owner-settings-actions", () => ({
+  setOwnerSetting: mocks.setOwnerSetting,
+  getOwnerSettings: mocks.getOwnerSettings,
+}));
 vi.mock("@/lib/otto-client-actions", () => ({ setAdsAutonomy: mocks.setAdsAutonomy }));
 // The REAL listCreditPacks runs against these two below (importActual), so the shelf
 // verdict the pages read is the one the action really produces (#786).
@@ -61,8 +84,6 @@ vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mocks.isImpersonat
 vi.mock("@/lib/stripe", () => ({ stripe: { prices: { list: mocks.pricesList } } }));
 
 const { default: BillingPage } = await import("@/app/billing/page");
-const { buildSettingsSections } = await import("@/components/otto/settings/sections");
-const { SettingsPage } = await import("@/components/otto/settings/SettingsPage");
 const realBilling = await vi.importActual<typeof import("@/lib/billing-actions")>("@/lib/billing-actions");
 
 /** The shelf verdict the REAL action reports when the price catalogue cannot be read —
@@ -79,39 +100,24 @@ async function unreadableShelf(): Promise<CreditPackShelf> {
   }
 }
 
+/** 这一页读到的上限:一个真的数,或者一次读不到。 */
+type SettingsVerdict = { spendCapCredits: number } | { error: string };
+
 /** The /billing page rendered against a given shelf verdict (default: nothing on sale). */
-async function renderBillingPage(shelf: CreditPackShelf = { packs: [] }): Promise<HTMLDivElement> {
+async function renderBillingPage(
+  shelf: CreditPackShelf = { packs: [] },
+  settings: SettingsVerdict = { spendCapCredits: 0 },
+): Promise<HTMLDivElement> {
   mocks.getMyAccount.mockResolvedValue(account);
   mocks.listCreditPacks.mockResolvedValue(shelf);
   mocks.getSpendOverview.mockResolvedValue({
     entries: [],
     window: { taskLimit: 20, returned: 0, hasMore: false },
   });
+  mocks.getOwnerSettings.mockResolvedValue(settings);
   const element = await BillingPage({ searchParams: Promise.resolve({}) });
   const host = document.createElement("div");
   host.innerHTML = renderToStaticMarkup(element);
-  return host;
-}
-
-/** The Billing and credits block inside Settings, against a given shelf verdict. */
-function renderSettingsBilling(shelf: CreditPackShelf = { packs: [] }): HTMLDivElement {
-  const sections = buildSettingsSections({
-    account,
-    settings: DEFAULT_SETTINGS,
-    channels: [],
-    shelf,
-    adsAutonomy: "ASK",
-    canPublish: false,
-    onDeleteAccountRequest: vi.fn(),
-  });
-  const billing = sections.find((s) => s.id === "billing");
-  if (!billing) throw new Error("the Billing and credits section disappeared");
-  const balance = billing.fields.find((f) => f.id === "balance");
-  if (!balance) throw new Error("the balance field disappeared");
-  const host = document.createElement("div");
-  host.innerHTML = renderToStaticMarkup(
-    createElement(SettingsPage, { sections: [{ id: "billing", title: "Billing", fields: [balance] }] }),
-  );
   return host;
 }
 
@@ -122,78 +128,201 @@ function emptyShelfSentence(host: HTMLElement): string {
   return match![0];
 }
 
-describe("#687 an empty credit shelf reads the same on both money pages", () => {
-  it("says it in exactly the same words on /billing and in Settings", async () => {
-    const billingSentence = emptyShelfSentence(await renderBillingPage());
-    const settingsSentence = emptyShelfSentence(renderSettingsBilling());
+/**
+ * 空货架那一块**本身**(不是整页)。
+ *
+ * 判官 P2-a:原来那条断言是「货架区里没有一颗**文案含 Top up** 的 /billing 链接」——
+ * 文案一改(「Add credits」「Buy more」)围栏就失明,而它要挡的从来不是那三个字母,是
+ * 「没有东西可卖时还给一颗看起来能买的按钮」。所以查询收紧到区块内、且不认文案:
+ * 这一块里**一条指向充值页的链接都不许有**。
+ */
+function emptyShelfBlock(host: HTMLElement): HTMLElement {
+  const carrier = Array.from(host.querySelectorAll("*")).find(
+    (el) => el.children.length === 0 && (el.textContent ?? "").includes(NO_CREDIT_PACKS_MESSAGE),
+  );
+  expect(carrier, "页面上找不到那句空货架的话").toBeTruthy();
+  // 空态那一块本身(`<Empty>` 的根),不是它外面那个还装着余额卡的 `<section>` ——
+  // 范围放宽就等于替别的区块作答,范围就是断言的一部分。
+  const block = carrier!.closest('[data-slot="empty"]');
+  expect(block, "空货架那句话不在一个空态块里 —— 无法判定「区块内」").toBeTruthy();
+  return block as HTMLElement;
+}
 
-    expect(
-      settingsSentence,
-      "the two money pages describe one state with two different sentences",
-    ).toBe(billingSentence);
+describe("#687 an empty credit shelf is one sentence and not a dead end", () => {
+  it("念的是共享常量本人,不是自己写的第二句", async () => {
+    expect(emptyShelfSentence(await renderBillingPage())).toBe(NO_CREDIT_PACKS_MESSAGE);
   });
 
-  it.each([
-    ["/billing", async () => renderBillingPage()],
-    ["Settings", async () => renderSettingsBilling()],
-  ])("%s gives the merchant somewhere to go, not a dead end", async (_where, render) => {
-    const host = await render();
+  it("/billing gives the merchant somewhere to go, not a dead end", async () => {
+    const host = await renderBillingPage();
+    const block = emptyShelfBlock(host);
 
-    // No "Top up" button can exist — there is nothing to sell.
-    expect(host.querySelector('a[href="/billing"]')).toBeNull();
+    // 没有东西可卖 ⇒ 这一块里不许出现任何指向充值页的链接(不看文案,只看去处)。
+    expect(
+      Array.from(block.querySelectorAll('a[href="/billing"]')).map((a) => a.textContent?.trim()),
+      "货架空着,却还在这一块里挂了一条通往充值页的链接",
+    ).toEqual([]);
 
-    const exit = host.querySelector<HTMLAnchorElement>('a[href^="mailto:"]');
+    const exit = block.querySelector<HTMLAnchorElement>('a[href^="mailto:"]');
     expect(exit, "a merchant who wants to pay is shown a full stop and nothing else").toBeTruthy();
     expect(exit!.getAttribute("href")).toMatch(/^mailto:[^@\s]+@[^@\s]+/);
     expect(exit!.textContent?.trim()).not.toBe("");
   });
 
   it("promises nothing about when packs come back", async () => {
-    for (const host of [await renderBillingPage(), renderSettingsBilling()]) {
-      const sentence = emptyShelfSentence(host);
-      expect(sentence, "the product does not know when the shelf refills — it must not say").not.toMatch(
-        /soon|shortly|back|later|tomorrow|hours?|days?/i,
-      );
-    }
+    const sentence = emptyShelfSentence(await renderBillingPage());
+    expect(sentence, "the product does not know when the shelf refills — it must not say").not.toMatch(
+      /soon|shortly|back|later|tomorrow|hours?|days?/i,
+    );
+  });
+});
+
+/**
+ * #687 的第二臂(判官 P2-f)第一半 —— **换成真渲染**。
+ *
+ * 原来那一臂渲染 `buildSettingsSections` + `SettingsPage`,而新壳里那一面没有任何路由挂它
+ * (`OttoAccount` 的文件头自己写着这件事)。钉在死代码上的围栏保护不了任何商家。
+ * 新壳上「Billing & credits」这一面就是 `/billing`,它上面有两块真的钱表面:**余额卡**
+ * 与**花费上限卡**(`app/billing/SpendCapCard.tsx`)。第二臂改成钉这两块 —— 它们和上面
+ * 那条空货架的臂一样,渲染的是真页面,不是一个没人看得见的组件。
+ */
+describe("#687 第二臂:Billing & credits 上的两块真钱表面", () => {
+  it("余额卡与花费上限卡都真的画在这一页上", async () => {
+    const host = await renderBillingPage();
+    const text = host.textContent ?? "";
+    expect(text, "余额卡不在这一页上").toContain("Available balance");
+    expect(text, "余额那个数字不见了").toContain("100");
+    // 上限控件本体:0 ⇒ 「No cap set」+ 「Set a cap」,不是一个可编辑的裸 0。
+    expect(text, "花费上限卡不在这一页上 —— 服务端照旧按它拒绝,商家却看不见").toContain("Spend cap");
+    expect(text, "0 被画成了一个裸 0,而不是「没设上限」").toContain("No cap set");
+    expect(text).toContain("Set a cap");
+  });
+
+  it("上限是几就说几 —— 不把商家自己设的数字吞掉", async () => {
+    const host = await renderBillingPage({ packs: [] }, { spendCapCredits: 25 });
+    const cap = host.querySelector<HTMLInputElement>('input[type="number"]');
+    expect(cap, "上限有值的时候没有可编辑的输入框").toBeTruthy();
+    expect(cap!.getAttribute("value")).toBe("25");
+    expect(host.textContent, "有上限却还说「没设上限」").not.toContain("No cap set");
+  });
+
+  /**
+   * 判官 P2-g —— `app/billing/page.tsx` 里「读不到上限就如实报错」那条分支从来没被渲染过。
+   *
+   * 这条分支挡的是一句会骗人的话:读取失败时渲染一个 0,屏幕上就会写「No cap set」,
+   * 而商家的动作此刻可能正被一个我们读不出来的上限拦着 —— 那是一句我们没有证据的话。
+   */
+  it("读不到上限就说读不到,绝不改口成「没设上限」", async () => {
+    const host = await renderBillingPage({ packs: [] }, { error: "Sign in first." });
+    const text = host.textContent ?? "";
+    expect(text, "读取失败却什么都没说").toContain("Spend cap unavailable");
+    expect(text, "读不到上限,却对商家宣称他没设过上限").not.toContain("No cap set");
+    // 报错也要说清楚「上限本身没变,仍然生效」——否则商家会以为自己的保护没了。
+    expect(text).toContain("the cap itself is unchanged and still applies");
+    // 而且这条分支不许把这一页别的东西一起吞掉:余额与货架照常。
+    expect(text).toContain("Available balance");
+    expect(text).toContain(NO_CREDIT_PACKS_MESSAGE);
+  });
+});
+
+/**
+ * #687 的第二臂(判官 P2-f)第二半 —— 那句话的**唯一来源**。
+ *
+ * 真渲染证明得了「这一面在」,证明不了「全仓没有第二份同义的句子」。#687 的病正是后者
+ * (一个状态两句话),所以这一半普查产品源码:句子只能从 `lib/exits.ts` 取,货架只有一个
+ * 读者,退役的那一面一旦被重新接上路由就当场红。
+ */
+const WEB = path.resolve(__dirname, "../..");
+const PRODUCT_ROOTS = ["app", "components"];
+const SKIP_DIRS = new Set(["__tests__", "node_modules", ".next", "dist", "generated"]);
+
+function productFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    if (SKIP_DIRS.has(entry)) continue;
+    const full = path.join(dir, entry);
+    if (statSync(full).isDirectory()) productFiles(full, out);
+    else if (/\.tsx?$/.test(entry)) out.push(full);
+  }
+  return out;
+}
+
+/** 注释里的名字是历史,不是事实 —— 判定前先剥掉(与 library-real-route-986 同一个做法)。 */
+const stripComments = (text: string) =>
+  text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+
+const PRODUCT_SOURCES = PRODUCT_ROOTS.flatMap((root) => productFiles(path.join(WEB, root))).map(
+  (file) => {
+    const raw = readFileSync(file, "utf8");
+    return {
+      file: path.relative(WEB, file).split(path.sep).join("/"),
+      /** 文案普查看原文(屏幕上的字可能就写在 JSX 里),依赖普查看剥了注释的代码。 */
+      text: raw,
+      code: stripComments(raw),
+    };
+  },
+);
+
+describe("#687 第二臂(下半):一个状态一句话,那句话只有一个来源", () => {
+  it("普查面本身不是空集", () => {
+    expect(PRODUCT_SOURCES.length).toBeGreaterThan(100);
+  });
+
+  it.each([
+    ["空货架", NO_CREDIT_PACKS_MESSAGE],
+    ["读不到货架", CREDIT_PACKS_UNREADABLE_MESSAGE],
+  ])("%s 那句话在产品源码里一个字面量都没有 —— 只能从 lib/exits.ts 取", (_what, sentence) => {
+    const literals = PRODUCT_SOURCES.filter(({ text }) => text.includes(sentence)).map(({ file }) => file);
+    expect(
+      literals,
+      "有人把这句话又抄了一遍 —— #687 的病(一个状态两句话)就是这样开始的",
+    ).toEqual([]);
+  });
+
+  it("全仓只有一处产品代码读得到货架", () => {
+    const readers = PRODUCT_SOURCES.filter(({ code }) => /\blistCreditPacks\b/.test(code)).map(({ file }) => file);
+    expect(readers.sort(), "多了一处钱面 —— 第二臂要把它的真渲染加回这份围栏").toEqual([
+      "app/billing/page.tsx",
+    ]);
+  });
+
+  it("退役的那一面仍然没有路由 —— 它一旦复活,这条围栏就要长回第二只手", () => {
+    const routed = PRODUCT_SOURCES.filter(
+      ({ file, code }) =>
+        file.startsWith("app/") && /\b(?:buildSettingsSections|OttoAccount)\b/.test(code),
+    ).map(({ file }) => file);
+    expect(
+      routed,
+      "旧 Settings 账务面被重新接上了路由 —— 现在它是真表面,请恢复第二臂的真渲染",
+    ).toEqual([]);
   });
 });
 
 describe("#786 a shelf we could not read is not an empty shelf", () => {
-  it("says neither page could read the catalogue, in the same words", async () => {
-    const shelf = await unreadableShelf();
-    const hosts = [await renderBillingPage(shelf), renderSettingsBilling(shelf)];
-
-    const sentences = hosts.map((host) => {
-      const match = (host.textContent ?? "").match(/Could not load[^.]*\.[^.]*\./);
-      expect(match, "the page says nothing about failing to read the catalogue").toBeTruthy();
-      return match![0];
-    });
-    expect(sentences[1], "the two money pages describe one state with two different sentences").toBe(
-      sentences[0],
+  it("念的是共享常量本人,不是自己写的第二句", async () => {
+    const host = await renderBillingPage(await unreadableShelf());
+    expect(host.textContent, "the page says nothing about failing to read the catalogue").toContain(
+      CREDIT_PACKS_UNREADABLE_MESSAGE,
     );
   });
 
-  it.each([
-    ["/billing", async (shelf: CreditPackShelf) => renderBillingPage(shelf)],
-    ["Settings", async (shelf: CreditPackShelf) => renderSettingsBilling(shelf)],
-  ])("%s hangs no human exit on an error the merchant can simply retry", async (where, render) => {
-    const host = await render(await unreadableShelf());
+  it("/billing hangs no human exit on an error the merchant can simply retry", async () => {
+    const host = await renderBillingPage(await unreadableShelf());
 
     expect(
       host.querySelector('a[href^="mailto:"]'),
-      `${where}: a retryable catalogue error must not send the merchant to a human (#771's own fence)`,
+      "a retryable catalogue error must not send the merchant to a human (#771's own fence)",
     ).toBeNull();
   });
 
-  it.each([
-    ["/billing", async (shelf: CreditPackShelf) => renderBillingPage(shelf)],
-    ["Settings", async (shelf: CreditPackShelf) => renderSettingsBilling(shelf)],
-  ])("%s never claims the shelf is empty when it never saw the shelf", async (where, render) => {
-    const host = await render(await unreadableShelf());
+  it("/billing never claims the shelf is empty when it never saw the shelf", async () => {
+    const host = await renderBillingPage(await unreadableShelf());
 
     expect(
       host.textContent,
-      `${where}: asserts there is nothing on sale on the strength of a failed read`,
+      "asserts there is nothing on sale on the strength of a failed read",
     ).not.toMatch(/No credit packs/);
   });
 });

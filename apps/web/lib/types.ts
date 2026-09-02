@@ -88,4 +88,6 @@ export interface ChatThreadDTO {
   pinnedAt?: string | null;
   messages: ChatMessageDTO[];
   status?: "working" | "failed" | "done" | null;
+  /** True when the server returned the newest page rather than the complete transcript. */
+  hasOlderMessages?: boolean;
 }

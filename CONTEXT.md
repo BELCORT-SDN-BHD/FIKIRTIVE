@@ -28,28 +28,39 @@ Reading the table below:
   paying **Orgs** (not Brands, not Users). _Avoid:_ Brand (a merchant may have many), User (a login),
   customer (overloaded — see below).
 
-- **Customer** (买家 — the merchant's buyer) — A buyer of a *merchant's* products; the entity the
-  Brand Brain / CRM will track (G5). This is **NOT** Fikirtive's customer — Fikirtive's customer is
+- **Customer** (买家 — the merchant's buyer) — A buyer of a *merchant's* products; the entity that
+  Otto IQ may understand through linked CRM facts (G5). This is **NOT** Fikirtive's customer — Fikirtive's customer is
   the **Merchant**. Always disambiguate: "merchant" pays Fikirtive; "customer" pays the merchant.
   _Avoid:_ using "customer" to mean the merchant; user; lead (a lead is a pre-customer).
 
-- **Brand** (品牌 / 租户中间层) — A merchant's brand/business under an Org (Org → **Brand** → Project).
-  Holds that brand's Brand Brain and projects. An SMB has one auto-created Brand; a multi-brand
+- **Brand** (品牌 / 租户中间层) — A merchant's brand/business under an Org. It holds that brand's
+  Otto IQ context and Founder-facing Canvases. An SMB has one auto-created Brand; a multi-brand
   operator has many. **This is the tenancy "Brand" — NOT a creative reference.** _Avoid:_ Brandmark
   (the creative-reference EntityType), workspace, account, merchant (a merchant is the *person/org*).
 
-- **Brand Brain** (品牌大脑) — The living context for one Brand: its voice, **Brand Kit** (visual
-  identity), product catalog, and (later) customers / conversions / what-converts. Otto reads it so
-  every output is on-brand, and writes back to it. _Avoid:_ profile, memory, knowledge base, context (overloaded).
+- **Otto IQ** (营销知识真源) — The canonical marketing knowledge layer for one Brand: its voice,
+  audiences, **Brand Kit** (visual identity), product catalog, approved knowledge and rules. It may
+  link to CRM, commerce and Library records by stable identity, but does not copy their raw contacts,
+  consent, inventory, orders or media. Otto reads Otto IQ so every surface uses the same marketing
+  facts. _Avoid:_ Brand Brain, profile, memory, knowledge base (one subsection), universal database.
 
-- **Brand Kit** (品牌套件) — A Brand's *always-on* visual identity inside its Brand Brain: logo,
+- **Otto IQ engine** (营销知识生命周期引擎 / internal) — The future internal capability that manages
+  Otto IQ context ingestion, extraction, review state, provenance, versioning, retrieval and links to
+  canonical CRM, commerce and Library records. The Brand screen is its Founder-facing management
+  surface; Otto is a consumer of its approved context. It is not a Founder-facing navigation label and
+  does not become the owner of raw contacts, consent, inventory, orders or media. _Avoid:_ Brand page,
+  knowledge database, Otto memory, universal data store.
+
+- **Brand Kit** (品牌套件) — A Brand's *always-on* visual identity inside Otto IQ: logo,
   colour palette, typography, tone of voice, and style rules that Otto applies to *every* output by
   default — so content is on-brand without being @mentioned. Distinct from a Brandmark (a specific
   @mentionable reference asset). _Avoid:_ **design system** (that names Fikirtive's own app UI
   library, not a merchant's identity), brand guidelines (informal), theme, style guide.
 
-- **Project** (项目) — A unit of creative work under a Brand; contains many Chats and one shared
-  Canvas. _Avoid:_ workspace, folder, brand, Campaign (an independent marketing object).
+- **Project** (项目 / legacy internal label) — Not a Founder-facing product object. The approved UI
+  work unit is **Canvas**, opened directly without a Project screen or Project Brief. Any remaining
+  Project record in current code is an implementation detail until separately migrated. _Avoid in UI:_
+  project, workspace, folder.
 
 - **Campaign** (营销活动) — An independent marketing object with a goal, start/end period,
   UTM/attribution, and grouped creative work and sends; it groups work but never produces it.
@@ -196,9 +207,11 @@ Reading the table below:
 - **Variant** (变体 / EntityVariant) — A named look/outfit/angle of an Entity (e.g. "red dress"),
   generated from the base by image-to-image. Has its own name + handle. _Avoid:_ version, alt, option, style.
 
-- **@mention** (@提及) — Putting an Entity into a prompt by name ("@Anna"). At spend time it
-  resolves server-side to that Entity's reference images — the client never sends image URLs.
-  _Avoid:_ tag, chip (a chip is the *UI widget* for a mention), link, attach.
+- **@mention** (@提及) — Putting a typed reference into an Otto prompt by name ("@Anna",
+  "@Raya gift box"). Approved targets include Products, Characters, Official avatars, Locations,
+  Clothes, Generations and Uploads. At spend time it resolves server-side from the canonical typed
+  ID; the client never sends copied facts or image URLs. _Avoid:_ tag, chip (a chip is the *UI widget*
+  for a mention), link, attach.
 
 - **variantSel** (变体选择) — The map saying which Variant each @mention uses this generation
   ({ entityId: variantId }). Absent → all mentions use the Entity's base. _Avoid:_ selection, overrides.
@@ -214,7 +227,7 @@ Reading the table below:
 - **Ad-pack** (广告包) — The wedge deliverable: a named, persisted grouping of on-brand,
   ready-to-publish ad creatives produced from one product in one Otto request. v1 = up to 4 short-form
   video variants (different hooks/angles), Brand Kit applied; later adds aspect ratios (9:16 / 1:1 /
-  16:9), images, captions. Lives under a Project (one Project → many ad-packs); it **groups** the
+  16:9), images, captions. Lives under a Canvas; it **groups** the
   Generations it contains, it does not re-produce them. _Avoid:_ campaign (broader/external), ad set
   (a paid-platform term), pack (bare), batch (batch is the gen primitive, not the deliverable).
 
@@ -276,13 +289,10 @@ Reading the table below:
   estimated price the user can edit and then Generate. Display-only until clicked. _Avoid:_ proposal
   (informal), gen card, suggestion.
 
-- **Project Brief** (项目纲要 / coworkBrief→projectBrief) — The creative brief for ONE Project:
-  what to make and why, *this time*. The **project-level** context layer. It sits
-  UNDER the Brand Brain — brand-constant things (voice, Brand Kit, catalog) live in the Brand Brain,
-  NOT here, so the Project Brief stays light. **Otto's full context = Brand Brain + Project Brief +
-  the conversation.** Human-authored; Otto may self-update it. Renamed from "coworkBrief". _Avoid:_
-  Brand Brain (brand-level, not project-level), Brand brief (sounds brand-level), description,
-  notes, prompt, summary.
+- **Project Brief** (项目纲要 / retired product concept) — Not present in the approved Founder flow.
+  A Founder opens a Canvas and states any desired outcome directly in Otto Chat. One-off intent,
+  approved directions and references remain visible in Canvas conversation / generation provenance;
+  persistent brand facts stay in Otto IQ. _Avoid in UI:_ Project Brief, brief setup gate.
 
 - **Planner** (规划器) — The LLM call inside an Otto turn that produces the structured plan/proposal
   JSON. Otto is the persona/loop; the Planner is the model call it makes — two layers, never merged.
@@ -297,16 +307,16 @@ Reading the table below:
 
 - **Studio** (工作台) — The overall app shell that hosts the surfaces below. _Avoid:_ editor, workspace, dashboard.
 
-- **Canvas** (画布) — The Project-level visual board where the merchant arranges generated media,
-  uploads, text notes, and Otto results. All Chats in a Project share the same Canvas. _Avoid:_
-  per-chat canvas, generation library.
+- **Canvas** (画布) — The Founder-facing unit of creative work, opened directly from Create. It holds
+  Otto conversation history, uploads, Generations, text notes, layout and selection state. It does
+  not require a Project or Project Brief. _Avoid:_ project, workspace, generation library.
 
 - **Canvas card** (画布卡片) — A placement on the Canvas that points at text or media. Removing a
   Canvas card removes the placement only; the saved media remains in the Library. _Avoid:_ asset,
   generation, library item.
 
-- **Chat** (对话) — One Otto conversation inside a Project. A Project can have many Chats, and all
-  of them share the Project Canvas. _Avoid:_ project, campaign.
+- **Chat** (对话) — One Otto conversation thread inside a Canvas. Generation history may be browsed
+  by Canvas and Chat, but a Chat does not own or duplicate Library media. _Avoid:_ project, campaign.
 
 - **GenSpace** (生成空间) — The free-form surface where the user directly generates images/clips from
   a prompt (a direct spend path). _Avoid:_ generator, canvas, playground.
@@ -342,6 +352,7 @@ Reading the table below:
   deduplicated by content hash. The *file*; a Generation/ReferenceImage *points at* an Asset.
   _Avoid:_ file, media, generation, image (those are roles an Asset plays, not the Asset itself).
 
-- **Library** (资产库) — The owner-global saved collection of reusable Elements, products, and
-  generated media across all Projects. Deleting from the Library explicitly removes the saved item
+- **Library** (资产库) — The owner-global truth for Generation history, Uploads, Favorites,
+  Collections and reusable Elements across all Canvases. Favorites and Collections are links, not
+  copies. Deleting from the Library explicitly removes the saved item
   from Library views; deleting a Canvas card does not. _Avoid:_ My Stuff, project library.

@@ -50,7 +50,7 @@ vi.mock("@/lib/canvas-actions", () => ({
 }));
 vi.mock("@/lib/otto-canvas-bridge", () => ({ syncOttoCanvasNodes: mocks.boardRead }));
 vi.mock("@/lib/actions", () => ({ uploadReference: mocks.uploadReference }));
-vi.mock("sonner", () => ({
+vi.mock("@/components/ui/toast", () => ({
   toast: { error: mocks.toastError, success: mocks.toastSuccess, message: mocks.toastMessage },
 }));
 vi.mock("@/components/asset/DetailPanel", () => ({ default: () => null }));
@@ -59,9 +59,16 @@ vi.mock("@/components/otto/OttoTrace", () => ({ OttoCanvasStatus: () => null }))
 // #785：替身也认 `@id` —— 真的 MentionInput 把 @ 出来的元素当第二个回调参数交出去，
 // 出片框里那一组元素是要真的进引擎的，所以替身必须能表达它，否则那条路测不到。
 vi.mock("@/components/MentionInput", () => ({
-  MentionInput: ({ onChange }: { onChange?: (t: string, ids: string[], vsel: Record<string, string>) => void }) =>
+  MentionInput: ({
+    onChange,
+    disabled,
+  }: {
+    onChange?: (t: string, ids: string[], vsel: Record<string, string>) => void;
+    disabled?: boolean;
+  }) =>
     createElement("textarea", {
       "data-testid": "mention",
+      disabled,
       onChange: (e: { target: { value: string } }) =>
         onChange?.(e.target.value, [...e.target.value.matchAll(/@([\w-]+)/g)].map((m) => m[1]!), {}),
     }),
@@ -315,6 +322,35 @@ describe("#645 T4 画布出片：规格从界面一路到付费请求", () => {
     expect(options.spec).toEqual({ seconds: 12, resolution: "480p", aspectRatio: "9:16" });
   });
 
+  it("t2v 请求还在接受时，确认键立即显示进度，并锁住提示词与规格", async () => {
+    let finish: ((accepted: boolean) => void) | undefined;
+    mocks.generateVideoFromText.mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    await renderBoard();
+    await openT2v();
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea[data-testid="mention"]')!;
+    typeInto(textarea, "a cup steaming in morning light");
+    await act(async () => { await Promise.resolve(); });
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => (button.textContent ?? "").trim() === "Make video")!;
+
+    await act(async () => { confirm.click(); });
+
+    expect(confirm.disabled).toBe(true);
+    expect(confirm.textContent).toContain("Starting video…");
+    expect(confirm.querySelector('[aria-label="Loading"]')).not.toBeNull();
+    expect(textarea.disabled).toBe(true);
+    expect([specSelect("Length"), specSelect("Quality"), specSelect("Shape")]
+      .every((select) => select.disabled)).toBe(true);
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => (button.textContent ?? "").trim() === "Cancel")!;
+    expect(cancel.disabled).toBe(true);
+
+    await act(async () => {
+      finish?.(true);
+      await Promise.resolve();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // #785 —— 出片框现在也能 @ 元素,而 @ 到的元素**真的进引擎**(worker 把它们的参考照
   // 发成 reference_image 部件)。所以这里守两件事:
@@ -452,6 +488,33 @@ describe("#645 T4 画布 Animate(带首帧):形状默认跟着首帧走", () => 
     expect(mocks.animate).toHaveBeenCalledTimes(1);
     const options = mocks.animate.mock.calls[0]![6] as { spec?: unknown };
     expect(options.spec).toEqual({ seconds: 8, resolution: "480p", aspectRatio: "adaptive" });
+  });
+
+  it("i2v 请求还在接受时，确认键显示进度，并锁住动作与规格", async () => {
+    let finish: ((accepted: boolean) => void) | undefined;
+    mocks.animate.mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
+    await renderBoard();
+    select(["n1"]);
+    await openAnimate("n1");
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => (button.textContent ?? "").trim() === "Make video" && !button.closest("[data-node]"))!;
+
+    await act(async () => { confirm.click(); });
+
+    expect(confirm.disabled).toBe(true);
+    expect(confirm.textContent).toContain("Starting video…");
+    expect(confirm.querySelector('[aria-label="Loading"]')).not.toBeNull();
+    expect([specSelect("Length"), specSelect("Quality"), specSelect("Shape")]
+      .every((select) => select.disabled)).toBe(true);
+    const motionButtons = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Camera motion"] button')];
+    expect(motionButtons).toHaveLength(3);
+    expect(motionButtons.every((button) => button.disabled)).toBe(true);
+
+    await act(async () => {
+      finish?.(true);
+      await Promise.resolve();
+    });
   });
 });
 

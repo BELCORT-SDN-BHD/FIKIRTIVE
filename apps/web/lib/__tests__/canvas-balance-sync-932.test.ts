@@ -34,6 +34,7 @@ vi.mock("@/components/canvas/FlowCanvas", () => ({
     return null;
   },
 }));
+vi.mock("@/components/canvas/CanvasOttoOverlay", () => ({ CanvasOttoOverlay: () => null }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,13 +47,16 @@ const RUNTIME_CONTEXT = {
   activeProjectId: "p1",
   activeThreadId: "t1",
   initialBalance: 1240,
+  initialBalanceUsd: 124,
+  activeThread: null,
+  pendingFirst: null,
 };
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
 beforeEach(() => {
-  mocks.getMyAccount.mockResolvedValue({ balance: 1180 });
+  mocks.getMyAccount.mockResolvedValue({ balance: 1180, balanceUsd: 118 });
 });
 
 afterEach(async () => {
@@ -108,7 +112,7 @@ describe("canvas header balance refresh also reaches the global-navigation sideb
 
   it("announces even if its own local read is still in flight (no fragile read can swallow the signal)", async () => {
     await renderWorkspace();
-    let resolveAccount: (value: { balance: number }) => void = () => {};
+    let resolveAccount: (value: { balance: number; balanceUsd: number }) => void = () => {};
     mocks.getMyAccount.mockReturnValueOnce(new Promise((resolve) => { resolveAccount = resolve; }));
 
     const sidebarListener = vi.fn();
@@ -124,7 +128,7 @@ describe("canvas header balance refresh also reaches the global-navigation sideb
       expect(sidebarListener).toHaveBeenCalledTimes(1);
       expect(settled).toBe(false);
 
-      resolveAccount({ balance: 1180 });
+      resolveAccount({ balance: 1180, balanceUsd: 118 });
       await pending;
     } finally {
       unsubscribe();

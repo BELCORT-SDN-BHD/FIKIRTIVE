@@ -1,9 +1,31 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { SettingsSection, SettingsField } from "./types";
 import { Switch } from "./Switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldTitle,
+} from "@/components/ui/field";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 
 type NumberFieldData = Extract<SettingsField, { kind: "number" }>;
 
@@ -24,8 +46,13 @@ export function parseWholeCredits(draft: string): number | null {
  *  - 0 always means "no cap" and always renders as "No cap set", never a bare 0 —
  *    and setting it requires its own two-step confirmation ("Remove cap" → "Confirm"),
  *    never a side-effect of clearing the box.
- *  - A save always echoes back the server-confirmed final value once it resolves. */
-function NumberField({ field }: { field: NumberFieldData }) {
+ *  - A save always echoes back the server-confirmed final value once it resolves.
+ *
+ *  Exported (前端基线合并 FRONT-A1) because the spend cap moved onto Billing & credits: the
+ *  new shell renders the control from `app/billing/SpendCapCard.tsx`, and it must be THIS
+ *  field, not a second hand-written input — every rule above is a merchant-facing promise
+ *  with its own test in lib/__tests__/account-settings.test.ts. */
+export function NumberField({ field }: { field: NumberFieldData }) {
   const [status, setStatus] = useState<"saving" | "saved" | "error" | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [savedValue, setSavedValue] = useState(field.value);
@@ -33,6 +60,8 @@ function NumberField({ field }: { field: NumberFieldData }) {
   const [draft, setDraft] = useState(String(field.value));
   const [confirmRemove, setConfirmRemove] = useState(false);
   const clearStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savingRef = useRef(false);
+  const removingRef = useRef(false);
   const [lastPropValue, setLastPropValue] = useState(field.value);
 
   // Re-sync from the server-confirmed value the moment the prop actually changes (e.g.
@@ -52,7 +81,9 @@ function NumberField({ field }: { field: NumberFieldData }) {
     if (clearStatusTimer.current) clearTimeout(clearStatusTimer.current);
   }, []);
 
-  async function commit(value: number) {
+  async function commit(value: number): Promise<string | null> {
+    if (savingRef.current) return null;
+    savingRef.current = true;
     if (clearStatusTimer.current) clearTimeout(clearStatusTimer.current);
     setStatus("saving");
     setErrorMsg(null);
@@ -60,52 +91,56 @@ function NumberField({ field }: { field: NumberFieldData }) {
       const result = await field.onSave(value);
       if (result && typeof result === "object" && "error" in result) {
         setStatus("error");
-        setErrorMsg(typeof result.error === "string" ? result.error : null);
-        return;
+        const message = typeof result.error === "string" ? result.error : "Could not save";
+        setErrorMsg(message);
+        return message;
       }
       setSavedValue(value);
       setDraft(String(value));
       setEditing(value !== 0);
-      setConfirmRemove(false);
       setStatus("saved");
       clearStatusTimer.current = setTimeout(() => setStatus(null), 2000);
+      return null;
     } catch {
       setStatus("error");
+      setErrorMsg("Could not save. Check your connection and try again.");
+      return "Could not save. Check your connection and try again.";
+    } finally {
+      savingRef.current = false;
+    }
+  }
+
+  async function removeCap() {
+    if (removingRef.current) return;
+    removingRef.current = true;
+    try {
+      const failure = await commit(0);
+      if (!failure) setConfirmRemove(false);
+    } finally {
+      removingRef.current = false;
     }
   }
 
   // Saved state IS "no cap" — echo "No cap set", never a bare 0 input.
   if (!editing && savedValue === 0) {
     return (
-      <span className="cv-set-num">
-        <strong>No cap set</strong>
-        <Button
-          type="button"
-          variant="ghost"
-          className="cv-set-btn"
-          onClick={() => { setDraft(""); setEditing(true); setStatus(null); }}
-        >
-          Set a cap
-        </Button>
-      </span>
-    );
-  }
-
-  // "Remove cap" is its own action with its own confirmation — never a silent side
-  // effect of typing 0 and blurring.
-  if (confirmRemove) {
-    return (
-      <span className="cv-set-num cv-set-num-confirm">
-        {/* #524 — removing the cap now removes a real refusal, so the confirmation says so.
-            It read "there will be no budget target set" while the setting did nothing. */}
-        <span className="text-error">Remove the spend cap? Otto will no longer stop an action for costing too much.</span>
-        <Button type="button" variant="ghost" className="cv-set-btn danger" disabled={status === "saving"} onClick={() => void commit(0)}>
-          {status === "saving" ? "Removing…" : "Remove cap"}
-        </Button>
-        <Button type="button" variant="ghost" className="cv-set-btn" disabled={status === "saving"} onClick={() => setConfirmRemove(false)}>
-          Cancel
-        </Button>
-      </span>
+      <Field orientation="responsive">
+        <FieldContent>
+          <FieldTitle>{field.label}</FieldTitle>
+          {field.hint ? <FieldDescription>{field.hint}</FieldDescription> : null}
+        </FieldContent>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline">No cap set</Badge>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => { setDraft(""); setEditing(true); setStatus(null); }}
+          >
+            Set a cap
+          </Button>
+        </div>
+      </Field>
     );
   }
 
@@ -113,73 +148,185 @@ function NumberField({ field }: { field: NumberFieldData }) {
   const isValid = parsed !== null;
   const dirty = draft.trim() !== String(savedValue);
   const removesCap = isValid && parsed === 0;
+  const invalid = dirty && !isValid;
 
   return (
-    <span className="cv-set-num">
-      <Input
-        className="cv-set-input cv-set-input-num h-auto"
-        type="number"
-        min={0}
-        step={1}
-        value={draft}
-        aria-label={field.label}
-        onChange={(event) => setDraft(event.target.value)}
-      />
-      {field.unit ? <em>{field.unit}</em> : null}
-      <Button
-        type="button"
-        variant="ghost"
-        className="cv-set-btn"
-        disabled={!dirty || !isValid || status === "saving"}
-        onClick={() => {
-          if (removesCap) { setConfirmRemove(true); return; }
-          void commit(parsed as number);
+    <>
+      <Field orientation="responsive" data-invalid={invalid || undefined}>
+      <FieldContent>
+        <FieldTitle>{field.label}</FieldTitle>
+        {field.hint ? <FieldDescription>{field.hint}</FieldDescription> : null}
+      </FieldContent>
+      <div className="flex w-full max-w-md flex-col gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Input
+            className="w-28 font-mono tabular-nums"
+            type="number"
+            min={0}
+            step={1}
+            value={draft}
+            aria-label={field.label}
+            aria-invalid={invalid || undefined}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              if (status === "error") {
+                setStatus(null);
+                setErrorMsg(null);
+              }
+            }}
+          />
+          {field.unit ? <span className="text-sm text-muted-foreground">{field.unit}</span> : null}
+          <Button
+            type="button"
+            size="sm"
+            disabled={!dirty || !isValid || status === "saving"}
+            variant={removesCap ? "destructive-secondary" : "default"}
+            onClick={() => {
+              if (removesCap) {
+                setStatus(null);
+                setErrorMsg(null);
+                setConfirmRemove(true);
+                return;
+              }
+              void commit(parsed as number);
+            }}
+          >
+            {status === "saving" ? <Spinner data-icon="inline-start" /> : null}
+            {status === "saving" ? "Saving…" : removesCap ? "Remove cap" : "Save"}
+          </Button>
+        </div>
+        {invalid ? (
+          <FieldError>Whole numbers only, 0 or more.</FieldError>
+        ) : status === "saved" ? (
+          <Badge role="status" aria-live="polite" variant="success">Saved</Badge>
+        ) : status === "error" ? (
+          <FieldError role="status" aria-live="polite">{errorMsg ?? "Could not save"}</FieldError>
+        ) : null}
+      </div>
+      </Field>
+
+      <AlertDialog
+        open={confirmRemove}
+        onOpenChange={(open) => {
+          if (!open && status !== "saving") {
+            setConfirmRemove(false);
+            setStatus(null);
+            setErrorMsg(null);
+          }
         }}
       >
-        {status === "saving" ? "Saving…" : removesCap ? "Remove cap" : "Save"}
-      </Button>
-      {dirty && !isValid ? (
-        <span className="text-error">Whole numbers only, 0 or more.</span>
-      ) : status === "saved" ? (
-        <span role="status" aria-live="polite" className="text-success">Saved</span>
-      ) : status === "error" ? (
-        <span role="status" aria-live="polite" className="text-error">{errorMsg ?? "Could not save"}</span>
-      ) : null}
-    </span>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Otto&apos;s spend cap?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Actions above {savedValue.toLocaleString()} credits are currently refused before charging.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Alert variant="warning">
+            <AlertTitle>This removes a spending guard</AlertTitle>
+            <AlertDescription>
+              Otto will no longer refuse an action just because it costs more than this cap. Your credit balance and each action&apos;s price still apply.
+            </AlertDescription>
+          </Alert>
+          {status === "error" ? (
+            <Alert variant="destructive" density="compact" role="alert">
+              <AlertTitle>Cap wasn&apos;t removed</AlertTitle>
+              <AlertDescription>{errorMsg ?? "Could not save"}</AlertDescription>
+            </Alert>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button" disabled={status === "saving"}>Keep cap</AlertDialogCancel>
+            <Button type="button" variant="destructive-secondary" disabled={status === "saving"} onClick={() => void removeCap()}>
+              {status === "saving" ? <Spinner data-icon="inline-start" /> : null}
+              {status === "saving" ? "Removing…" : "Remove cap"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
 function FieldRow({ f }: { f: SettingsField }) {
-  if (f.kind === "custom") return <div className="cv-set-row">{f.render()}</div>;
+  if (f.kind === "custom") return <Field orientation="responsive">{f.render()}</Field>;
+  if (f.kind === "number") return <NumberField field={f} />;
   return (
-    <div className="cv-set-row">
-      <div className="cv-set-lbl"><span>{f.label}</span>{"hint" in f && f.hint ? <span className="cv-set-hint">{f.hint}</span> : null}</div>
-      {f.kind === "text" && <Input className="cv-set-input h-auto" aria-label={f.label} defaultValue={f.value} readOnly={f.readOnly} />}
+    <Field orientation="responsive" data-disabled={(f.kind === "toggle" && f.disabled) || undefined}>
+      <FieldContent>
+        <FieldTitle>{f.label}</FieldTitle>
+        {"hint" in f && f.hint ? <FieldDescription>{f.hint}</FieldDescription> : null}
+      </FieldContent>
+      {f.kind === "text" && <Input className="w-full md:max-w-xs" aria-label={f.label} defaultValue={f.value} readOnly={f.readOnly} />}
       {f.kind === "toggle" && <Switch checked={f.value} onChange={f.onToggle} disabled={f.disabled} aria-label={f.label} />}
-      {f.kind === "number" && <NumberField field={f} />}
-      {f.kind === "action" && <Button type="button" variant="ghost" className={f.tone === "danger" ? "cv-set-btn danger" : "cv-set-btn"} onClick={f.onClick}>{f.button}</Button>}
-    </div>
+      {f.kind === "action" && (
+        <Button type="button" size="sm" variant={f.tone === "danger" ? "destructive" : "outline"} onClick={f.onClick}>
+          {f.button}
+        </Button>
+      )}
+    </Field>
   );
 }
 
 export function SettingsPage({ sections }: { sections: SettingsSection[] }) {
   const [active, setActive] = useState(sections[0]?.id);
   return (
-    <div className="cv-settings">
-      <nav className="cv-settings-nav">
-        <h1>Settings</h1>
-        {sections.map((s) => (
-          <a key={s.id} href={`#sec-${s.id}`} className={s.id === active ? "on" + (s.danger ? " danger" : "") : (s.danger ? "danger" : "")}
-            onClick={() => setActive(s.id)}>{s.title}</a>
-        ))}
-      </nav>
-      <div className="cv-settings-body">
-        {sections.map((s) => (
-          <section key={s.id} id={`sec-${s.id}`} className="cv-set-sec">
-            <h2>{s.title}</h2>{s.subtitle ? <p className="cv-set-sub">{s.subtitle}</p> : null}
-            <div className={s.danger ? "cv-set-card danger" : "cv-set-card"}>{s.fields.map((f) => <FieldRow key={f.id} f={f} />)}</div>
-          </section>
-        ))}
+    <div className="min-h-dvh w-full overflow-auto px-5 py-8 sm:px-8 sm:py-10">
+      <div className="mx-auto grid w-full max-w-7xl gap-10 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <aside>
+          <div className="flex flex-col gap-5 lg:sticky lg:top-8">
+            <div className="flex flex-col gap-1">
+              <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+              <p className="text-sm text-muted-foreground">Workspace controls and defaults.</p>
+            </div>
+            <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0">
+              {sections.map((section) => (
+                <Button
+                  key={section.id}
+                  asChild
+                  size="sm"
+                  variant={section.id === active ? "secondary" : "ghost"}
+                  className="shrink-0 justify-start lg:w-full"
+                >
+                  <a href={`#sec-${section.id}`} onClick={() => setActive(section.id)}>{section.title}</a>
+                </Button>
+              ))}
+            </nav>
+          </div>
+        </aside>
+
+        <div className="flex min-w-0 max-w-4xl flex-col gap-8">
+          <header className="flex max-w-2xl flex-col gap-2">
+            <Badge variant="outline">Workspace controls</Badge>
+            <h2 className="text-3xl font-semibold tracking-tight">Preferences</h2>
+            <p className="text-base text-muted-foreground">
+              Decide how Otto acts, where content connects, and what requires your approval.
+            </p>
+          </header>
+
+          {sections.map((section) => (
+            <section key={section.id} id={`sec-${section.id}`} className="scroll-mt-8">
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle><h3>{section.title}</h3></CardTitle>
+                    {section.danger ? <Badge variant="destructive">Sensitive</Badge> : null}
+                  </div>
+                  {section.subtitle ? <CardDescription>{section.subtitle}</CardDescription> : null}
+                </CardHeader>
+                <CardContent>
+                  <FieldGroup className="gap-0">
+                    {section.fields.map((field, index) => (
+                      <Fragment key={field.id}>
+                        {index > 0 ? <Separator className="my-5" /> : null}
+                        <FieldRow f={field} />
+                      </Fragment>
+                    ))}
+                  </FieldGroup>
+                </CardContent>
+              </Card>
+            </section>
+          ))}
+        </div>
       </div>
     </div>
   );

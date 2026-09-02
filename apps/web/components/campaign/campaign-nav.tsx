@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // #801 两个日历择一为准:Calendar 这一格没了。它指的那一页只是把计划条目的日期与 hook
@@ -25,27 +24,14 @@ const items = [
 export function CampaignNav({ current }: { current: (typeof items)[number]["key"] | "detail" }) {
   const active = current === "detail" ? "list" : current;
   return (
-    <>
-      <Link
-        href="/otto"
-        className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" />
-        Return to Otto
-      </Link>
-      <Tabs value={active} activationMode="manual">
-        <TabsList
-          aria-label="Campaign sections"
-          className="mt-5 max-w-full gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1 shadow-xs"
-        >
-          {items.map((item) => (
-            <TabsTrigger key={item.key} value={item.key} asChild>
-              <Link href={item.href}>{item.label}</Link>
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-    </>
+    <Tabs value={active} activationMode="manual">
+      <TabsList aria-label="Campaign sections" className="max-w-full overflow-x-auto">
+        {items.map((item) => (
+          <TabsTrigger key={item.key} value={item.key} asChild>
+            <Link href={item.href}>{item.label}</Link>
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
   );
 }
-

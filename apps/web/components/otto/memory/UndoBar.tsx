@@ -1,17 +1,58 @@
 "use client";
 import React from "react";
+import { RotateCcw, Sparkles, X } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Spinner } from "@/components/ui/spinner";
+import { useAsyncActionFeedback } from "./useAsyncActionFeedback";
 
-export function UndoBar({ summary, busy, onUndo, onDismiss }: {
-  summary: string; busy: boolean; onUndo: () => void; onDismiss: () => void;
+export function UndoBar({ summary, onUndo, onDismiss }: {
+  summary: string;
+  onUndo: () => Promise<string | null>;
+  onDismiss: () => void;
 }) {
+  const feedback = useAsyncActionFeedback("Brand memory couldn't be restored. Check your connection and try again.");
+
   return (
-    <div role="status" className="flex items-center gap-3 rounded-[14px] border border-brand/25 bg-brand/5 px-[15px] py-[10px] mb-4">
-      <span className="text-[0.875rem] leading-[1.45] text-foreground flex-1">
-        <span className="text-brand-strong font-semibold">✦ Otto</span> updated your brand memory — {summary}.
-      </span>
-      <Button variant="outline" size="sm" disabled={busy} onClick={onUndo}>{busy ? "Undoing…" : "Undo"}</Button>
-      <Button type="button" variant="ghost" aria-label="Dismiss" className="h-auto w-auto p-0 text-[0.875rem] text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={onDismiss}>✕</Button>
-    </div>
+    <Card role="status" size="sm" tone="otto" className="mb-4">
+      <CardHeader className="flex-row items-start gap-3">
+        <Sparkles className="size-4 shrink-0 text-brand" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <CardTitle>Otto updated your brand memory</CardTitle>
+          <CardDescription>{summary}.</CardDescription>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={feedback.pending}
+            onClick={() => void feedback.run(onUndo)}
+          >
+            {feedback.pending ? <Spinner data-icon="inline-start" /> : <RotateCcw data-icon="inline-start" />}
+            {feedback.pending ? "Undoing…" : feedback.error ? "Try again" : "Undo"}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Dismiss"
+            disabled={feedback.pending}
+            onClick={onDismiss}
+          >
+            <X data-icon="inline-start" aria-hidden />
+          </Button>
+        </div>
+      </CardHeader>
+      {feedback.error && (
+        <CardContent>
+          <Alert variant="destructive" role="alert">
+            <AlertTitle>Brand memory wasn&apos;t restored</AlertTitle>
+            <AlertDescription>{feedback.error}</AlertDescription>
+          </Alert>
+        </CardContent>
+      )}
+    </Card>
   );
 }

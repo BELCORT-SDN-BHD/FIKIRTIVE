@@ -14,17 +14,19 @@ import {
   Users,
 } from "lucide-react";
 import { buildSegment, deleteSegment, listSegments, previewSegment } from "@/lib/segment-actions";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -34,6 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Spinner } from "@/components/ui/spinner";
 
 type ListResult = Awaited<ReturnType<typeof listSegments>>;
 type ListSuccess = Extract<ListResult, { ok: true }>;
@@ -239,6 +242,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
   const [pendingDelete, setPendingDelete] = useState<SegmentItem | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteSubmittingRef = useRef(false);
 
   const selected = segments.find((segment) => segment.id === selectedId) ?? null;
   const selectedRulesKey = selected?.rules ? JSON.stringify(selected.rules) : null;
@@ -437,7 +441,8 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
   /** #718 — the delete the page never had. Soft delete on the server; the list here is only
    *  re-rendered after the server confirms, so a failure never shows a segment as gone. */
   async function confirmDelete() {
-    if (!pendingDelete) return;
+    if (!pendingDelete || deleteSubmittingRef.current) return;
+    deleteSubmittingRef.current = true;
     const target = pendingDelete;
     setDeleting(true);
     setDeleteError(null);
@@ -458,6 +463,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
     } catch {
       setDeleteError("The delete request could not finish. Please retry.");
     } finally {
+      deleteSubmittingRef.current = false;
       setDeleting(false);
     }
   }
@@ -517,7 +523,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
               <ArrowLeft className="size-4" />
               Return to Otto
             </Link>
-            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM</p>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Customer segments</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
               Build one-level, deterministic rules and see exactly who matches before you save.
@@ -570,17 +576,17 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                   {segments.map((segment) => {
                     const active = segment.id === selectedId;
                     return (
-                      <button
+                      <Button
                         key={segment.id}
                         type="button"
+                        variant={active ? "secondary" : "ghost"}
+                        aria-pressed={active}
                         onClick={() => setSelectedId(segment.id)}
                         // #717 — the width constraint is load-bearing: without it the button
                         // grows to whatever the name is, the inner `truncate` never bites, and
                         // one long name pushes the whole 375px page into a permanent sideways
                         // scroll. Keeps old over-long rows harmless too.
-                        className={`min-h-16 w-full min-w-0 max-w-full rounded-xl border px-4 py-3 text-left transition-colors ${
-                          active ? "border-brand bg-brand-soft" : "border-transparent hover:border-border hover:bg-muted/50"
-                        }`}
+                        className="h-auto min-h-16 w-full min-w-0 max-w-full justify-start whitespace-normal rounded-xl px-4 py-3 text-left shadow-none active:scale-[0.99]"
                       >
                         <span className="flex items-start justify-between gap-3">
                           <span className="min-w-0">
@@ -594,7 +600,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                             <span className="text-[11px] text-muted-foreground">matched</span>
                           </span>
                         </span>
-                      </button>
+                      </Button>
                     );
                   })}
                 </div>
@@ -629,7 +635,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                       disabled={draftLocked || deleting}
                       onClick={() => { setDeleteError(null); setPendingDelete(selected); }}
                     >
-                      <Trash2 />
+                      <Trash2 data-icon="inline-start" />
                       Delete
                     </Button>
                   </div>
@@ -676,7 +682,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
           <CardHeader className="border-b border-border pb-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                   {editingId ? "Edit segment" : "New segment"}
                 </p>
                 <CardTitle className="mt-2">{editingId ? "Update this rule group" : "Build a rule group"}</CardTitle>
@@ -881,38 +887,42 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
         </Card>
       </div>
 
-      <Dialog
+      <AlertDialog
         open={pendingDelete !== null}
         onOpenChange={(next) => { if (!next && !deleting) { setPendingDelete(null); setDeleteError(null); } }}
       >
-        <DialogContent className="max-w-[520px]">
-          <DialogHeader>
-            <DialogTitle>Delete “{pendingDelete?.name}”?</DialogTitle>
-            <DialogDescription>
+        <AlertDialogContent className="max-w-[520px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{pendingDelete?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
               This segment leaves your list. Contacts are never deleted, and broadcasts you already
               sent keep the audience they were sent to.
-            </DialogDescription>
-          </DialogHeader>
-          <p className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
-            Any automation still targeting this segment stops sending and records why, until you
-            point it at another one. Nothing goes out to an audience you removed.
-          </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Alert variant="warning" density="compact">
+            <AlertTitle>Automations stop using this segment</AlertTitle>
+            <AlertDescription>
+              Any automation still targeting this segment stops sending and records why, until you
+              point it at another one. Nothing goes out to an audience you removed.
+            </AlertDescription>
+          </Alert>
           {deleteError ? (
-            <p className="rounded-xl bg-error-soft px-4 py-3 text-sm text-error-soft-foreground" role="alert">
-              {deleteError}
-            </p>
+            <Alert variant="destructive" density="compact" role="alert">
+              <AlertTitle>Segment wasn&apos;t deleted</AlertTitle>
+              <AlertDescription>{deleteError}</AlertDescription>
+            </Alert>
           ) : null}
-          <DialogFooter>
-            <Button type="button" variant="secondary" disabled={deleting} onClick={() => setPendingDelete(null)}>
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button" disabled={deleting}>
               Cancel
-            </Button>
+            </AlertDialogCancel>
             <Button type="button" variant="destructive" disabled={deleting} onClick={() => void confirmDelete()}>
-              {deleting ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
-              Delete segment
+              {deleting ? <Spinner data-icon="inline-start" /> : <Trash2 data-icon="inline-start" />}
+              {deleting ? "Deleting…" : "Delete segment"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   );
 }

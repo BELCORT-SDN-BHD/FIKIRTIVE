@@ -7,6 +7,7 @@ import { Laptop, Moon, Sun } from "lucide-react";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -49,21 +50,23 @@ export function ThemeToggle() {
 
   return (
     <>
-      <div className="cv-set-lbl">
-        <span id="appearance-label">Appearance</span>
-        <span className="cv-set-hint">Light, dark, or follow your device.</span>
+      <div className="flex flex-1 flex-col gap-1">
+        <span id="appearance-label" className="text-sm font-medium">Appearance</span>
+        <span className="text-sm text-muted-foreground">Light, dark, or follow your device.</span>
       </div>
       <Select value={mounted ? (theme ?? "system") : undefined} onValueChange={setTheme}>
         <SelectTrigger aria-labelledby="appearance-label" className="w-[150px]">
           <SelectValue placeholder="System" />
         </SelectTrigger>
         <SelectContent>
-          {THEMES.map(({ value, label, Icon }) => (
-            <SelectItem key={value} value={value}>
-              <Icon aria-hidden />
-              {label}
-            </SelectItem>
-          ))}
+          <SelectGroup>
+            {THEMES.map(({ value, label, Icon }) => (
+              <SelectItem key={value} value={value}>
+                <Icon aria-hidden />
+                {label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
         </SelectContent>
       </Select>
     </>

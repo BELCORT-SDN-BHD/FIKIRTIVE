@@ -36,6 +36,10 @@
 6. 验收只认冻结版验收表；表外不满登记后走下一循环。S5 打回一条验收时，在功能 issue 评论独立成行写「S5 打回 <编号>」（自毁开关据此计数）。阶段性 commit + push，任何时刻 GitHub 上都有副本。
 7. 其余机器闸的可操作口径：验收编号必须逐字出现在测试里（M3，`it.todo` 可占位）；新引入 `BETA_*`／`*_ENABLED` 开关必须在 PR 描述带「保留理由: + 失效日期: YYYY-MM-DD」（M4）；`docs/specs/` 平铺、prisma 迁移守形状、`docs/superpowers/` 冻结（M5）；改闸门文件本身要在 PR 描述自报一行「闸门改动: <理由>」。开场自动打出的规格状态清单来自 SessionStart hook（`scripts/tools/spec-status.sh`，只读注入，不是被禁的 orchestration overlay）。
 
+## 前端接线与设计变更
+
+涉及后端接入 UI、新增／修改前端组件、页面／流程变更或将验收版本接入正式路由时，必须先完整阅读 `apps/web/design-system/governance/frontend-integration-handoff.md`，再按其中指针核对本次设计来源与批准。它规定接线方法，不授予新功能、重设计或发布权限。
+
 ## 代码地图（CodeGraph）
 
 - 唯一持图树是主检出 `/Users/winnin/Desktop/FIKIRTIVE`。orchestrator 做全局调查时在主检出上 CodeGraph-first。

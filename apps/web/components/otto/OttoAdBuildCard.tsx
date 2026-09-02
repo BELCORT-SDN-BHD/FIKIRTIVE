@@ -1,6 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { Hammer, ShieldCheck, CheckCircle2, Loader2, ExternalLink } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { approveAdBuild, launchAdDraft } from "@/lib/otto-client-actions";
 import type { MetaAdBuildCardPayload } from "@/lib/meta-build-spec";
@@ -259,9 +260,9 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
           </div>
         ) : needsReview ? (
           /* Interrupted prior build — refused to re-create. Honest reason, no one-click rebuild. */
-          <div role="alert" className="text-[0.875rem] text-[var(--warning-soft-foreground)]">
-            {needsReviewReason}
-          </div>
+          <Alert role="alert" variant="warning" density="compact">
+            <AlertDescription>{needsReviewReason}</AlertDescription>
+          </Alert>
         ) : buildOutcome && buildOutcome.built === false && buildOutcome.reason ? (
           /* Auto-build was attempted but refused/failed — show why, offer manual approve */
           <div className="flex flex-col gap-3">
@@ -312,14 +313,14 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
 
         {/* Errors */}
         {approveErr && (
-          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
-            {approveErr}
-          </div>
+          <Alert role="alert" variant="destructive" density="compact" className="mt-2">
+            <AlertDescription>{approveErr}</AlertDescription>
+          </Alert>
         )}
         {launchErr && (
-          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
-            {launchErr}
-          </div>
+          <Alert role="alert" variant="destructive" density="compact" className="mt-2">
+            <AlertDescription>{launchErr}</AlertDescription>
+          </Alert>
         )}
 
         {/* Trust footer */}

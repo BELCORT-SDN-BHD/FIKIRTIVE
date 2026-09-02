@@ -1,8 +1,12 @@
 "use client";
 import React, { useMemo, useState } from "react";
+import { ArrowUpRight, Search, SearchX } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { EntityDTO } from "@/lib/types";
 import { TEMPLATES, filterTemplates, templateCategories, type Template } from "@/lib/templates";
 import TemplateModal from "./TemplateModal";
@@ -17,67 +21,101 @@ export default function OttoTemplates({ projectId, entities = [] }: { projectId:
   const categories = useMemo(() => [ALL, ...templateCategories(TEMPLATES)], []);
   const shown = useMemo(() => filterTemplates(TEMPLATES, { category, search }), [category, search]);
 
-  // leading-[1.5] — design-baseline body line-height (Analytics standard)
-  // pt-16 (not p-5's 20px on every side) — the floating "show sidebar" toggle in
-  // OttoApp.tsx is `absolute left-3 top-3 size-[34px]` over this pane, so its footprint
-  // reaches down to 46px; anything short of that clips under it (#949 A1 — this pane's
-  // "Te" was eaten). Matching Library/Schedule's accidental horizontal dodge would also
-  // shrink this pane's card grid, so we clear the button vertically instead.
   return (
-    <div className="gb leading-[1.5] flex flex-1 flex-col overflow-auto pt-16 px-5 pb-5">
-      <div className="mb-4">
-        <h2 className="m-0 text-lg text-foreground">Templates</h2>
-        <p className="mt-1 mb-0 text-sm text-muted-foreground">
-          Pick a scene, add your product photo, get a polished image. Every one is written for Malaysian shops.
-        </p>
+    <div className="gb mx-auto flex w-full max-w-[1120px] flex-col px-6 py-12 leading-[1.5]">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="max-w-2xl">
+          <h2 className="text-lg font-semibold tracking-[-0.012em] text-foreground">Templates</h2>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Start with a proven scene, add your product photo, and adapt it to your shop.
+          </p>
+        </div>
+        <Badge variant="outline" className="font-mono tabular-nums">
+          {shown.length} shown
+        </Badge>
       </div>
 
-      <div className="mb-3 max-w-sm">
-        <Input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search — Raya, delivery, Shopee, before and after…"
-          aria-label="Search templates"
-        />
+      <div className="mt-5 max-w-md">
+        <InputGroup>
+          <InputGroupAddon>
+            <Search aria-hidden="true" />
+          </InputGroupAddon>
+          <InputGroupInput
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search — Raya, delivery, Shopee, before and after…"
+            aria-label="Search templates"
+          />
+        </InputGroup>
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-2">
+      <ToggleGroup
+        type="single"
+        value={category}
+        onValueChange={(value) => value && setCategory(value)}
+        variant="outline"
+        size="sm"
+        spacing={1}
+        className="mt-3 max-w-full flex-wrap"
+        aria-label="Template category"
+      >
         {categories.map((c) => (
-          <Button
+          <ToggleGroupItem
             key={c}
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-pressed={category === c}
-            onClick={() => setCategory(c)}
-            className={category === c ? "bg-card" : ""}
+            value={c}
+            className="rounded-lg px-3"
           >
             {c}
-          </Button>
+          </ToggleGroupItem>
         ))}
-      </div>
+      </ToggleGroup>
 
       {shown.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Nothing matches that. Try a shorter word, or clear the search.
-        </p>
+        <Empty className="mt-5 min-h-48 border border-dashed bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SearchX aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle className="text-base">No matching templates</EmptyTitle>
+            <EmptyDescription>Try a shorter search or choose another category.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : (
-        <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
+        <div className="mt-5 grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(230px,1fr))]">
           {shown.map((t) => (
-            <button
+            <Card
               key={t.id}
-              type="button"
-              onClick={() => setActive(t)}
-              className="min-w-0 cursor-pointer rounded-[var(--radius-card)] border border-border bg-card p-4 text-left text-foreground transition-colors hover:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30"
+              size="sm"
+              className="relative h-full gap-3 shadow-none transition-[border-color,box-shadow] duration-[var(--dur-1)] hover:border-line-strong hover:shadow-[var(--shadow-sm)]"
             >
-              <div className="text-[0.9375rem] font-semibold">{t.name}</div>
-              <div className="mt-1 text-[0.8125rem] text-muted-foreground">{t.description}</div>
-              <div className="mt-3 flex flex-wrap gap-1.5">
+              <CardHeader>
                 <Badge variant="outline">{t.category}</Badge>
-                {t.rendersHeadline && <Badge variant="soft">Your headline on it</Badge>}
-              </div>
-            </button>
+                <CardTitle className="mt-1">{t.name}</CardTitle>
+                <CardDescription className="line-clamp-2 leading-5">{t.description}</CardDescription>
+              </CardHeader>
+              <CardContent className="mt-auto flex items-center gap-2 text-xs text-muted-foreground">
+                <span>{t.needsImage ? "Product photo" : "No photo needed"}</span>
+                <span aria-hidden="true">·</span>
+                <span>{t.aspectRatio ?? "Source ratio"}</span>
+              </CardContent>
+              <CardFooter className="justify-between">
+                {t.rendersHeadline ? <Badge>Adds your headline</Badge> : <span />}
+                <span className="flex items-center gap-1 text-xs font-medium text-foreground">
+                  Open
+                  <ArrowUpRight aria-hidden="true" />
+                </span>
+              </CardFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setActive(t)}
+                className="absolute inset-0 h-full w-full rounded-[var(--radius-card)] bg-transparent p-0 hover:bg-transparent active:scale-[0.99]"
+                aria-label={`Open ${t.name} template`}
+              >
+                <span className="sr-only">Open {t.name} template</span>
+              </Button>
+            </Card>
           ))}
         </div>
       )}

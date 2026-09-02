@@ -1,0 +1,234 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  CalendarRange,
+  Database,
+  MessageCircle,
+  RefreshCw,
+  ShieldCheck,
+  Target,
+} from "lucide-react";
+
+import { SHELL_ROUTES } from "@fikirtive/core/navigation";
+import { Alert, AlertDescription, AlertTitle } from "@/design-system/primitives/alert";
+import { Badge } from "@/design-system/primitives/badge";
+import { buttonVariants } from "@/design-system/primitives/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/design-system/primitives/empty";
+import { DesktopHomeRequired, useDesktopHome } from "@/design-system/patterns/founder-home/DesktopHomeBoundary";
+import {
+  HOME_COMPARISONS,
+  HOME_GOALS,
+  HOME_RANGES,
+  type HomeComparison,
+  type HomeRange,
+} from "@/design-system/patterns/founder-home/model";
+import {
+  homeAnalysisHref,
+  homeHrefFromAnalysis,
+  type HomeAnalysisContext,
+} from "@/lib/home-analysis-context";
+import type { MarketingHealthReadModel } from "@/lib/home-marketing-health";
+import { HomeFilterPicker } from "./HomeFilterPicker";
+import { ReadyHomeAnalysis } from "./ReadyHomeAnalysis";
+import { MARKETING_HOME_COPY } from "./marketing-home-copy";
+
+function BlockedAnalysis({
+  health,
+  context,
+}: {
+  health: Exclude<MarketingHealthReadModel, { state: "partial" | "ready" }>;
+  context: HomeAnalysisContext;
+}) {
+  const homeHref = homeHrefFromAnalysis(context);
+  const content = health.state === "not-configured"
+    ? {
+        icon: <Database />,
+        title: health.action === "reconnect" ? MARKETING_HOME_COPY.analysis.reconnectTitle : MARKETING_HOME_COPY.analysis.connectTitle,
+        description: MARKETING_HOME_COPY.analysis.setupDescription,
+        action: health.action === "reconnect" ? "Reconnect Meta ads" : "Manage connections",
+        href: SHELL_ROUTES.connections,
+      }
+    : health.state === "insufficient"
+      ? {
+          icon: <Database />,
+          title: MARKETING_HOME_COPY.analysis.insufficientTitle,
+          description: MARKETING_HOME_COPY.analysis.insufficientDescription,
+          action: context.range === "90-days" ? "Manage connections" : "Use last 90 days",
+          href: context.range === "90-days"
+            ? SHELL_ROUTES.connections
+            : homeAnalysisHref(context, { range: "90-days" }),
+        }
+      : {
+          icon: <RefreshCw />,
+          title: MARKETING_HOME_COPY.analysis.unavailableTitle,
+          description: MARKETING_HOME_COPY.analysis.unavailableDescription,
+          action: "Retry analysis",
+          href: homeAnalysisHref(context),
+        };
+
+  return (
+    <main className="grid min-h-[calc(100dvh-2.75rem)] place-items-center px-8">
+      <Empty className="max-w-xl border-0">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">{content.icon}</EmptyMedia>
+          <EmptyTitle>{content.title}</EmptyTitle>
+          <EmptyDescription>{content.description}</EmptyDescription>
+        </EmptyHeader>
+        <div className="mt-5 flex items-center justify-center gap-2">
+          <Link href={content.href} className={buttonVariants({ size: "sm" })}>{content.action}</Link>
+          <Link href={homeHref} className={buttonVariants({ variant: "ghost", size: "sm" })}>Back to Home</Link>
+        </div>
+      </Empty>
+    </main>
+  );
+}
+
+function PartialAnalysis({
+  health,
+  context,
+}: {
+  health: Extract<MarketingHealthReadModel, { state: "partial" }>;
+  context: HomeAnalysisContext;
+}) {
+  const title = context.type === "data-health"
+    ? MARKETING_HOME_COPY.analysis.partialDataHealthTitle
+    : MARKETING_HOME_COPY.analysis.partialPerformanceTitle;
+  const primary = health.metrics[0];
+  const chartSummary = health.chart?.points.length
+    ? `${health.chart.points.length} Meta ads data points are available for this period.`
+    : "Meta ads did not return a daily trend for this period.";
+
+  return (
+    <>
+      <Alert variant="warning" className="mt-5">
+        <Database aria-hidden />
+        <AlertTitle>{MARKETING_HOME_COPY.analysis.limitedCoverageTitle}</AlertTitle>
+        <AlertDescription>
+          {MARKETING_HOME_COPY.analysis.limitedCoverageDescription(health.period, health.freshness.label)}
+        </AlertDescription>
+      </Alert>
+
+      <section className="grid grid-cols-[minmax(0,1.1fr)_minmax(240px,0.9fr)] items-center gap-8 border-b border-border py-7" aria-labelledby="analysis-conclusion-heading">
+        <h2 id="analysis-conclusion-heading" className="max-w-[620px] text-[27px] font-semibold leading-[1.18] tracking-[-0.035em]">
+          {title}
+        </h2>
+        <div className="border-l border-border pl-8">
+          <p className="text-xs text-muted-foreground">{primary?.label ?? "Meta ads activity"}</p>
+          <p className="mt-2 text-3xl font-semibold tracking-[-0.04em] tabular-nums">
+            {primary?.values[0]?.text ?? "Available"}
+          </p>
+          {primary?.delta ? <p className="mt-2 text-xs text-muted-foreground">{primary.delta.text} within this selected period</p> : null}
+        </div>
+      </section>
+
+      <section className="border-b border-border py-7" aria-labelledby="analysis-chart-heading">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 id="analysis-chart-heading" className="text-sm font-semibold">Meta ads trend</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Observable source activity only</p>
+          </div>
+          <Badge variant="outline">Limited evidence</Badge>
+        </div>
+        {health.chart ? (
+          <svg viewBox="0 0 820 180" className="mt-6 h-[260px] w-full overflow-visible" role="img" aria-labelledby="analysis-chart-title analysis-chart-description">
+            <title id="analysis-chart-title">Meta ads trend</title>
+            <desc id="analysis-chart-description">{chartSummary}</desc>
+            <path d={health.chart.areaPath} fill="var(--info)" fillOpacity="0.08" />
+            <path d={health.chart.linePath} fill="none" stroke="var(--info)" strokeWidth="2" />
+          </svg>
+        ) : (
+          <p className="mt-8 text-sm text-muted-foreground">No daily trend is available for this period.</p>
+        )}
+      </section>
+
+      <section className="grid grid-cols-[minmax(0,1fr)_320px] gap-10 py-7">
+        <div>
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="size-4 text-muted-foreground" aria-hidden />
+            <h2 className="text-sm font-semibold">Evidence</h2>
+          </div>
+          <ol className="mt-4 divide-y divide-border">
+            {health.metrics.slice(0, 3).map((metric, index) => (
+              <li key={metric.label} className="grid grid-cols-[24px_minmax(0,1fr)_auto] items-start gap-3 py-3 first:pt-0">
+                <span className="flex size-6 items-center justify-center rounded-full bg-secondary text-xs font-semibold">{index + 1}</span>
+                <div>
+                  <p className="text-sm font-semibold">{metric.label}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Reported by {health.source.label}</p>
+                </div>
+                <p className="text-sm font-semibold tabular-nums">{metric.values[0]?.text ?? "Available"}</p>
+              </li>
+            ))}
+          </ol>
+        </div>
+        <div className="border-l border-border pl-8">
+          <h2 className="text-sm font-semibold">What this means</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            {health.insight?.text ?? MARKETING_HOME_COPY.analysis.partialMeaningFallback}
+          </p>
+          <p className="mt-3 text-xs leading-5 text-muted-foreground">
+            {MARKETING_HOME_COPY.analysis.partialMeaningBoundary}
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link href={SHELL_ROUTES.connections} className={buttonVariants({ variant: "secondary", size: "sm" })}>
+              Manage connections
+            </Link>
+            <Link href={homeAnalysisHref(context, {}, { openOtto: true })} className={buttonVariants({ variant: "ghost", size: "sm" })}>
+              <MessageCircle aria-hidden /> Ask Otto
+            </Link>
+          </div>
+        </div>
+      </section>
+    </>
+  );
+}
+
+export function HomeAnalysisView({
+  context,
+  health,
+}: {
+  context: HomeAnalysisContext;
+  health: MarketingHealthReadModel;
+}) {
+  const router = useRouter();
+  const isDesktop = useDesktopHome();
+  const goalLabel = HOME_GOALS.find((item) => item.value === context.goal)?.label ?? "Online sales";
+
+  if (!isDesktop) return <DesktopHomeRequired />;
+
+  if (context.type === "top-performer" && health.state === "partial") {
+    return (
+      <BlockedAnalysis
+        context={context}
+        health={{ state: "insufficient", goal: context.goal, source: health.source }}
+      />
+    );
+  }
+
+  if (health.state !== "partial" && health.state !== "ready") {
+    return <BlockedAnalysis health={health} context={context} />;
+  }
+
+  return (
+    <main className="mx-auto w-full max-w-[1220px] px-8 py-6">
+      <Link href={homeHrefFromAnalysis(context)} className="inline-flex h-8 items-center gap-2 rounded-lg px-2 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/40">
+        <ArrowLeft className="size-4" aria-hidden /> Back to Home
+      </Link>
+      <h1 className="mt-4 text-3xl font-semibold tracking-[-0.04em]">Home analysis</h1>
+      <div className="mt-3 flex flex-wrap items-center gap-1 border-b border-border pb-4">
+        <span className="inline-flex h-8 items-center gap-2 px-2 text-sm font-medium">
+          <Target className="size-4 text-muted-foreground" aria-hidden /> {goalLabel}
+        </span>
+        <HomeFilterPicker label="Date range" icon={CalendarRange} value={context.range} options={HOME_RANGES} onValueChange={(value) => router.push(homeAnalysisHref(context, { range: value as HomeRange }), { scroll: false })} />
+        <HomeFilterPicker label="Comparison" icon={ArrowUpRight} value={context.comparison} options={HOME_COMPARISONS} onValueChange={(value) => router.push(homeAnalysisHref(context, { comparison: value as HomeComparison }), { scroll: false })} />
+        <span className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground"><Database className="size-3.5" aria-hidden /> Live source data</span>
+      </div>
+      {health.state === "partial"
+        ? <PartialAnalysis health={health} context={context} />
+        : <ReadyHomeAnalysis health={health} context={context} />}
+    </main>
+  );
+}

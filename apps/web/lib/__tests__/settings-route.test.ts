@@ -30,8 +30,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SHELL_ROUTES } from "@fikirtive/core/navigation";
-import { publishSurfaceCopy } from "@fikirtive/core/schedule-draft";
+import { SETTINGS_SECTIONS, SHELL_ROUTES } from "@fikirtive/core/navigation";
 import {
   CHANNEL_META,
   channelCapabilityBlurb,
@@ -73,6 +72,7 @@ const CONNECTIONS_DIR = routeDir(SHELL_ROUTES.connections);
 const mocks = vi.hoisted(() => ({
   requireOwner: vi.fn(),
   getMyAccount: vi.fn(),
+  getMyProfileNames: vi.fn(),
   redirect: vi.fn((href: string) => {
     // 真的 `redirect()` 靠抛出中断渲染。这里照做,否则「回登录页」的分支会继续往下跑,
     // 测出来的就不是产品的行为。
@@ -89,6 +89,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mocks.requireOwner }));
 vi.mock("@/lib/account-actions", () => ({ getMyAccount: mocks.getMyAccount }));
+vi.mock("@/lib/profile-names", () => ({ getMyProfileNames: mocks.getMyProfileNames }));
 vi.mock("@/lib/account-view-data", () => ({ getAccountViewData: mocks.getAccountViewData }));
 vi.mock("@/lib/meta-actions", () => ({
   getMetaConnection: mocks.getMetaConnection,
@@ -149,14 +150,16 @@ describe("W2-4 ① `/settings` 与 `/settings/connections` 是真路由", () => 
     expect(SHELL_ROUTES.connections.startsWith(`${SHELL_ROUTES.preferences}/`)).toBe(true);
   });
 
-  it("两页渲染的都是搬过来的那一份实现,没有第二套设置面", () => {
+  it("两页共用同一个 Settings shell,General 只接 workspace name", () => {
     const prefs = source(join(PREFERENCES_DIR, "page.tsx"));
-    expect(prefs).toContain('from "@/components/otto/OttoAccount"');
-    expect(prefs).toContain("<OttoAccount");
+    expect(prefs).toContain('from "@/components/settings/SettingsShell"');
+    expect(prefs).toContain("<WorkspaceNameField");
+    expect(prefs).not.toContain("OttoAccount");
 
     const connections = source(join(CONNECTIONS_DIR, "page.tsx"));
+    expect(connections).toContain('from "@/components/settings/SettingsShell"');
     expect(connections).toContain('from "@/components/otto/OttoConnections"');
-    expect(connections).toContain("<OttoConnections");
+    expect(connections).toContain("<OttoConnections embedded");
   });
 
   it("等待画面走 ui/skeleton,不手搓那一份 pulse 配方(规格书 §5.6 ③)", () => {
@@ -168,19 +171,13 @@ describe("W2-4 ① `/settings` 与 `/settings/connections` 是真路由", () => 
     }
   });
 
-  it("换壳落地后:MERCHANT_NAV 的 Settings 分组指的正是这两条真路由(W2-11 收口)", async () => {
-    // 这条曾经是这一票的边界(规格书 §6.3):新旧路由并存,导航指过来是切换总票 W2-11 的
-    // 活,写成断言当时是为了防「顺手把导航也改了」这种越界。W2-11 已经落地,边界完成了
-    // 它的使命 —— 现在反过来钉「指对了」:Settings 分组里的 Connections/Preferences
-    // 必须就是这一票建的这两条真路由,旧壳的 `?view=account`/`?view=connections` 不该
-    // 再是权威指的地方。
-    const { MERCHANT_NAV } = await import("@fikirtive/core/navigation");
-    const tree = JSON.stringify(MERCHANT_NAV);
-    expect(tree, "MERCHANT_NAV 的 Preferences 没有指向这一票建的真路由").toContain('"/settings"');
-    expect(tree, "MERCHANT_NAV 的 Connections 没有指向这一票建的真路由").toContain('"/settings/connections"');
-    // 旧壳收口:两个旧视图地址不该再是导航权威指的地方。
-    expect(tree).not.toContain("view=account");
-    expect(tree).not.toContain("view=connections");
+  it("四个 Settings destinations 都来自同一份导航权威", () => {
+    expect(SETTINGS_SECTIONS.map((item) => item.href)).toEqual([
+      SHELL_ROUTES.profile,
+      SHELL_ROUTES.preferences,
+      SHELL_ROUTES.connections,
+      SHELL_ROUTES.billing,
+    ]);
   });
 });
 
@@ -199,20 +196,21 @@ describe("W2-4 ② 两页的入口闸", () => {
     expect(mocks.redirect).toHaveBeenCalledWith("/login");
     // 关门要在读数据**之前** —— 先读后关等于没关。
     expect(mocks.getMyAccount).not.toHaveBeenCalled();
+    expect(mocks.getMyProfileNames).not.toHaveBeenCalled();
     expect(mocks.getAccountViewData).not.toHaveBeenCalled();
   });
 
-  it("/settings:登录了就读账户,而且读的是 session 那个身份 —— 页面不传 ownerId", async () => {
+  it("/settings:登录了就读 workspace identity,而且页面不传 ownerId", async () => {
     mocks.requireOwner.mockResolvedValue({ ownerId: "org_acme", email: ACCOUNT.email });
-    mocks.getMyAccount.mockResolvedValue(ACCOUNT);
+    mocks.getMyProfileNames.mockResolvedValue({ displayName: "Amina", workspaceName: "Acme Studio", email: ACCOUNT.email });
 
     const element = await PreferencesPage();
 
     expect(mocks.redirect).not.toHaveBeenCalled();
-    expect(mocks.getMyAccount).toHaveBeenCalledTimes(1);
-    // 一个参数都没有:租户身份只能是 getMyAccount 自己 requireOwner() 出来的那一个,
+    expect(mocks.getMyProfileNames).toHaveBeenCalledTimes(1);
+    // 一个参数都没有:租户身份只能是 action 自己 requireOwner() 出来的那一个,
     // 页面没有任何机会把别人的 ownerId 递进去。
-    expect(mocks.getMyAccount).toHaveBeenCalledWith();
+    expect(mocks.getMyProfileNames).toHaveBeenCalledWith();
     expect(element).toBeTruthy();
   });
 
@@ -224,14 +222,11 @@ describe("W2-4 ② 两页的入口闸", () => {
     }
   });
 
-  it("账户读不出来时传 null,让组件说实话 —— 不编一个空账户出来", async () => {
+  it("workspace identity 读不出来时回登录入口,不编一个空 workspace", async () => {
     mocks.requireOwner.mockResolvedValue({ ownerId: "org_acme", email: ACCOUNT.email });
-    mocks.getMyAccount.mockResolvedValue({ error: "Could not load your organization." });
+    mocks.getMyProfileNames.mockResolvedValue({ error: "Could not load your organization." });
 
-    const element = await PreferencesPage();
-    // OttoAccount 收到 null 时渲染 "Could not load your account."(组件既有行为)。
-    const props = (element as unknown as { props: { children: { props: { account: unknown } } } }).props;
-    expect(props.children.props.account).toBeNull();
+    await expect(PreferencesPage()).rejects.toThrow("NEXT_REDIRECT:/login");
   });
 });
 
@@ -284,24 +279,14 @@ describe("W2-4 ③ Publishing 逐行渲染 CHANNEL_META", () => {
     expect(rendered.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("每一个可连渠道各有自己的开关 —— 没有一颗全局开关替三个渠道回答", async () => {
+  it("每一个 provider row 都是可键盘选择的 detail 入口", async () => {
     const dom = await mountConnections();
     const rows = publishingRows(dom);
-
-    const controlsPerRow = rows.map((row) => Array.from(row.querySelectorAll("a, button")));
-    const connectable = CHANNEL_META.filter((c) => isConnectableChannel(c.id));
-
-    // 可连渠道的控件总数 = 可连渠道数。一颗管全部的开关只会数出 1。
-    expect(controlsPerRow.flat().length).toBe(connectable.length);
-
-    for (const meta of connectable) {
+    for (const meta of CHANNEL_META) {
       const row = rows.find((r) => r.dataset.channel === meta.id);
       expect(row, `${meta.label} 那一行不见了`).toBeTruthy();
-      const controls = Array.from(row!.querySelectorAll("a, button"));
-      expect(controls, `${meta.label} 这一行没有自己的开关`).toHaveLength(1);
-      // 开关自报家门:读屏听到的是「Connect Instagram」,不是三声一样的「Connect」。
-      const name = controls[0].getAttribute("aria-label") ?? controls[0].textContent ?? "";
-      expect(name, `${meta.label} 的开关没说自己管哪个渠道`).toContain(meta.label);
+      expect(row!.tagName).toBe("BUTTON");
+      expect(row!.getAttribute("aria-label")).toBe(`View ${meta.label} connection`);
     }
   });
 
@@ -313,25 +298,23 @@ describe("W2-4 ③ Publishing 逐行渲染 CHANNEL_META", () => {
       { id: "x", label: "X", status: "not_connected", targets: [], connectUrl: "/api/x/authorize" },
     ]);
     const rows = publishingRows(dom);
-    const control = (id: string) => rows.find((r) => r.dataset.channel === id)!.querySelector("a, button");
+    const instagram = rows.find((r) => r.dataset.channel === "instagram")!;
+    const facebook = rows.find((r) => r.dataset.channel === "facebook")!;
+    expect(instagram.textContent).toContain("Needs attention");
+    expect(facebook.textContent).toContain("Connected");
 
-    expect(control("instagram")!.textContent).toBe("Reconnect");
-    expect(control("instagram")!.getAttribute("aria-label")).toBe("Reconnect Instagram");
-    expect(control("facebook")!.textContent).toBe("Manage");
-    expect(control("facebook")!.getAttribute("aria-label")).toBe("Manage Facebook");
-    // 同一时刻两个渠道两种状态:这就是「按渠道」的判据。
-    expect(control("instagram")!.textContent).not.toBe(control("facebook")!.textContent);
+    await act(async () => facebook.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(dom.textContent).toContain("Acme Page");
+    expect(Array.from(dom.querySelectorAll("a")).some((link) => link.textContent === "Manage")).toBe(true);
   });
 
-  it("X 那一行说 “Not available yet”,而且一个按钮都不画(围栏)", async () => {
+  it("不可连接的 provider 可查看状态,但没有假 OAuth action", async () => {
     const dom = await mountConnections();
     for (const meta of CHANNEL_META.filter((c) => !isConnectableChannel(c.id))) {
       const row = publishingRows(dom).find((r) => r.dataset.channel === meta.id);
       expect(row, `${meta.label} 那一行不见了`).toBeTruthy();
       expect(row!.textContent).toContain(meta.label);
-      expect(row!.textContent).toContain("Not available yet");
-      // 画一颗按不出结果的 Connect,就是这一票要挡的那件事。
-      expect(row!.querySelector("a, button"), `${meta.label} 画了一颗假按钮`).toBeNull();
+      expect(row!.textContent).toContain("Unavailable");
       // 连去那条不存在的 OAuth 路由的链接更不许有。
       expect(dom.querySelector('a[href="/api/x/authorize"]')).toBeNull();
     }
@@ -355,12 +338,12 @@ describe("W2-4 ③ Publishing 逐行渲染 CHANNEL_META", () => {
     const facebook = rows.find((r) => r.dataset.channel === "facebook")!;
     expect(facebook.textContent).toContain("Facebook");
     expect(facebook.textContent, "读不到却报了一个状态").not.toMatch(/Not connected|Connected(?!\w)/);
-    expect(facebook.textContent).toContain("couldn’t read this connection");
+    expect(facebook.textContent).toContain("Status unavailable");
 
-    // ③ 而且给得出下一步:Retry 走的就是本页那一次 load()。
-    const retry = facebook.querySelector("button");
+    // ③ 选中后给得出下一步:Retry 走的就是本页那一次 load()。
+    await act(async () => facebook.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const retry = Array.from(dom.querySelectorAll("button")).find((button) => button.textContent?.includes("Retry status"));
     expect(retry, "读不到又没有下一步 —— 那是死路").toBeTruthy();
-    expect(retry!.getAttribute("aria-label")).toBe("Retry Facebook");
 
     // 纯函数那一层同样钉住(屏幕上少一行的病根就在这一层被读错的时候)。
     const pure = publishingChannelRows([{ id: "instagram" }]);
@@ -398,21 +381,12 @@ describe("W2-4 ③b registry 与 CHANNEL_META 是同一份名单", () => {
   });
 });
 
-describe("W2-4 ③ 顶部那句实话", () => {
-  it("说出来了,而且是**引用**权威,不是抄一份", async () => {
+describe("Phase 4 Connections scope", () => {
+  it("uses a service list and detail inspector without reviving Schedule or Messaging", async () => {
     const dom = await mountConnections();
-    const text = dom.textContent ?? "";
-    const copy = publishSurfaceCopy();
-
-    // ①「今天连不上 Instagram / Facebook」②「排期本身仍然是真的」—— 规格书 §4.7 要的两件事。
-    expect(text, "连接页仍然没说今天连不上").toContain(copy.why);
-    expect(text, "连接页没说排期本身仍然是真的").toContain(copy.real);
-
-    // 抄一份的代价就是漂移:PUBLISHING_AVAILABLE 翻面那天,抄的那份不会跟着变。
-    const src = source("components/otto/OttoConnections.tsx");
-    expect(src, "那句话被抄进组件里了 —— 引用它,别复制它").not.toContain(copy.why);
-    expect(src).not.toContain(copy.real);
-    expect(src).toContain("publishSurfaceCopy()");
+    expect(dom.textContent).toContain("Services");
+    expect(dom.textContent).toContain("Workspace access");
+    expect(dom.textContent).not.toMatch(/Schedule|Publishing|Messaging/);
   });
 });
 

@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   FolderKanban,
   Image as ImageIcon,
-  LoaderCircle,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -38,7 +37,12 @@ import { CAMPAIGN_DISPATCH_IN_FLIGHT } from "@/lib/campaign-approval-lock";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 import { CampaignNav } from "./campaign-nav";
 
 type DetailResult = Awaited<ReturnType<typeof getCampaign>>;
@@ -87,14 +91,16 @@ export default function CampaignConfirmPage({
   if ("error" in detail) {
     return (
       <Shell>
-        <section className="mt-7 rounded-[var(--radius-card)] border border-error-soft bg-card p-6 shadow-sm">
-          <AlertCircle className="size-6 text-destructive" />
-          <h1 className="mt-4 text-2xl font-semibold">This campaign is not available</h1>
-          <p className="mt-2 text-sm text-muted-foreground">{detail.error}</p>
-          <Button asChild variant="secondary" className="mt-5">
-            <Link href="/campaign"><ArrowLeft />Back to campaigns</Link>
-          </Button>
-        </section>
+        <Alert variant="destructive" className="mt-7" role="alert">
+          <AlertCircle />
+          <AlertTitle>This campaign is not available</AlertTitle>
+          <AlertDescription>
+            <p>{detail.error}</p>
+            <Button asChild variant="secondary" size="sm" className="mt-2">
+              <Link href="/campaign"><ArrowLeft data-icon="inline-start" />Back to campaigns</Link>
+            </Button>
+          </AlertDescription>
+        </Alert>
       </Shell>
     );
   }
@@ -303,20 +309,25 @@ function ConfirmWorkspace({
           </CardHeader>
           <CardContent className="grid gap-3">
             {handover ? (
-              <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground">
-                <strong>
+              <Alert variant="warning">
+                <AlertCircle />
+                <AlertDescription>
+                  <strong>
                   Another confirmation took over this campaign, so this run stopped partway.
-                </strong>{" "}
-                {handover.started} {handover.started === 1 ? "item" : "items"}{" "}
-                {handover.started === 1 ? "was" : "were"} already started and charged.{" "}
-                {handover.notStarted} {handover.notStarted === 1 ? "item" : "items"}{" "}
-                {handover.notStarted === 1 ? "was" : "were"} not started and{" "}
-                {handover.notStarted === 1 ? "was" : "were"} not charged. Review the updated plan
-                and confirm the rest again.
-              </div>
+                  </strong>{" "}
+                  {handover.started} {handover.started === 1 ? "item" : "items"}{" "}
+                  {handover.started === 1 ? "was" : "were"} already started and charged.{" "}
+                  {handover.notStarted} {handover.notStarted === 1 ? "item" : "items"}{" "}
+                  {handover.notStarted === 1 ? "was" : "were"} not started and{" "}
+                  {handover.notStarted === 1 ? "was" : "were"} not charged. Review the updated plan
+                  and confirm the rest again.
+                </AlertDescription>
+              </Alert>
             ) : null}
             {zeroDispatchConfirmed ? (
-              <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
+              <Alert variant="info">
+                <ShieldCheck />
+                <AlertDescription>
                 {/* #708 同源症状 ①：什么都没派发，可能是「一件也没做成」，也可能是
                     「早就做完了」。两句话必须分开说，否则一份完成的工作会被读成失败。 */}
                 {result.failed === 0 && result.reused > 0 ? (
@@ -329,19 +340,26 @@ function ConfirmWorkspace({
                     <strong>Nothing was charged.</strong> The server confirmed that no new generation job was dispatched.
                   </>
                 )}
-              </div>
+                </AlertDescription>
+              </Alert>
             ) : interruption ? (
-              <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground">
-                Confirmed reserved before the interruption: <strong>{creditsLabel(reservedThisRun)}</strong>.
-                {currentUnknown
-                  ? " One item's start status could not be confirmed and may also have reserved credits. A retry will reuse it if it exists."
-                  : " The remaining items did not start."}
-              </div>
+              <Alert variant="warning">
+                <AlertCircle />
+                <AlertDescription>
+                  Confirmed reserved before the interruption: <strong>{creditsLabel(reservedThisRun)}</strong>.
+                  {currentUnknown
+                    ? " One item's start status could not be confirmed and may also have reserved credits. A retry will reuse it if it exists."
+                    : " The remaining items did not start."}
+                </AlertDescription>
+              </Alert>
             ) : (
-              <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
-                Reserved this run: <strong>{creditsLabel(reservedThisRun)}</strong>. Reused and failed items charged nothing.
-                Any item that fails is refunded automatically.
-              </div>
+              <Alert variant="info">
+                <ShieldCheck />
+                <AlertDescription>
+                  Reserved this run: <strong>{creditsLabel(reservedThisRun)}</strong>. Reused and failed items charged nothing.
+                  Any item that fails is refunded automatically.
+                </AlertDescription>
+              </Alert>
             )}
             {result.cells.map((cell) => {
               const line = approvedLines[cell.index];
@@ -375,21 +393,26 @@ function ConfirmWorkspace({
                   }}
                   disabled={busy || quoting}
                 >
-                  {quoting ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                  {quoting ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
                   Review the updated plan
                 </Button>
               ) : null}
               {!handover && (result.failed > 0 || interruption) ? (
                 <Button type="button" onClick={() => confirm()} disabled={busy}>
-                  {busy ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                  {busy ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
                   {interruption ? "Retry remaining items" : "Retry failed items"}
                 </Button>
               ) : null}
               <Button asChild variant="secondary">
-                <Link href={`/campaign/${campaignId}`}><ArrowLeft />Back to campaign</Link>
+                <Link href={`/campaign/${campaignId}`}><ArrowLeft data-icon="inline-start" />Back to campaign</Link>
               </Button>
             </div>
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {error ? (
+              <Alert variant="destructive" role="alert">
+                <AlertCircle />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
           </CardContent>
         </Card>
       </Shell>
@@ -401,14 +424,23 @@ function ConfirmWorkspace({
     <Shell>
       <ConfirmHeader campaign={campaign} />
 
-      <div className="mt-6 rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm leading-6 text-info-soft-foreground">
-        <ShieldCheck className="mb-1 inline size-4" /> The server checks the approved content, models, and prices again
-        when you confirm. If anything changed, nothing starts until you review the updated plan. You only pay when a
-        generation finishes, never on errors, and each item generates at most once.
-      </div>
-      {error ? <div className="mt-4 rounded-xl border border-error-soft bg-error-soft p-4 text-sm text-destructive">{error}</div> : null}
+      <Alert variant="info" className="mt-6">
+        <ShieldCheck />
+        <AlertTitle>Server-verified before anything starts</AlertTitle>
+        <AlertDescription>
+          The server checks the approved content, models, and prices again when you confirm. If anything changed,
+          nothing starts until you review the updated plan. You only pay when a generation finishes, never on errors,
+          and each item generates at most once.
+        </AlertDescription>
+      </Alert>
+      {error ? (
+        <Alert variant="destructive" className="mt-4" role="alert">
+          <AlertCircle />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      <div className="mt-6 grid gap-5 xl:grid-cols-[1.4fr_0.6fr]">
+      <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)] lg:items-start">
         <Card className="min-w-0">
           <CardHeader>
             <CardTitle>Approved entries to generate</CardTitle>
@@ -418,10 +450,10 @@ function ConfirmWorkspace({
             {approvedLines.map((line) => {
               const entry = entriesById[line.entryId];
               return (
-                <div key={line.entryId} className="rounded-xl border border-border bg-muted/25 p-4">
+                <Card key={line.entryId} size="sm" className="bg-muted/20 shadow-none">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="flex items-center gap-2">
-                      <Badge variant="outline">{line.kind === "video" ? <VideoIcon className="size-3" /> : <ImageIcon className="size-3" />}{line.kind}</Badge>
+                      <Badge variant="outline">{line.kind === "video" ? <VideoIcon /> : <ImageIcon />}{line.kind}</Badge>
                       {/* #643 T2: the format the merchant planned and the shape it will actually
                           be delivered in, side by side — one server-derived value, shown before
                           anything is charged. Video lines carry the full spec in their chips
@@ -441,12 +473,13 @@ function ConfirmWorkspace({
                   {line.specChips.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {line.specChips.map((chip) => (
-                        <span
+                        <Badge
                           key={chip}
-                          className="rounded-[7px] border border-border bg-card px-[7px] py-[2px] font-mono text-[11px] text-muted-foreground"
+                          variant="outline"
+                          className="bg-card font-mono text-[11px] font-medium text-muted-foreground"
                         >
                           {chip}
-                        </span>
+                        </Badge>
                       ))}
                     </div>
                   ) : null}
@@ -454,70 +487,81 @@ function ConfirmWorkspace({
                     Capability: {line.kind === "video" ? "Video" : "Image"}
                   </p>
                   {line.charge === "blocked" ? (
-                    <p className="mt-2 text-xs text-destructive">
-                      This entry changed since it was last generated, so it will not start. Undo the edit, or generate
-                      it into a different project.
-                    </p>
+                    <Alert variant="destructive" className="mt-3">
+                      <AlertCircle />
+                      <AlertDescription>
+                        This entry changed since it was last generated, so it will not start. Undo the edit, or
+                        generate it into a different project.
+                      </AlertDescription>
+                    </Alert>
                   ) : null}
-                </div>
+                </Card>
               );
             })}
           </CardContent>
         </Card>
 
-        <aside className="grid content-start gap-5">
+        <aside className="grid content-start gap-5 lg:sticky lg:top-6">
           <Card>
             <CardHeader>
               <CardTitle>Confirm generation</CardTitle>
               <CardDescription>Charged to your credit balance. Finished generations land in the chosen project.</CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-4">
-              <label className="grid gap-2 text-xs font-semibold text-muted-foreground">
-                Destination project
+            <CardContent>
+              <FieldGroup className="gap-5">
+                <Field>
+                  <FieldLabel>Destination project</FieldLabel>
                 <Select value={projectId} disabled={busy || quoting} onValueChange={chooseProject}>
-                  <SelectTrigger><SelectValue placeholder="Choose a project" /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue placeholder="Choose a project" /></SelectTrigger>
                   <SelectContent>
-                    {projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}
+                    <SelectGroup>
+                      {projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
-              </label>
+                </Field>
               {/* #709: the video tier is a choice again, not a hidden default. Both menus come
                   from the live model config, and picking one re-asks the server for the price. */}
               {hasVideoLines && videoMenu && videoMenu.resolutions.length > 0 ? (
-                <label className="grid gap-2 text-xs font-semibold text-muted-foreground">
-                  Video resolution
+                <Field>
+                  <FieldLabel>Video resolution</FieldLabel>
                   <Select
                     value={videoMenu.selected.resolution}
                     disabled={busy || quoting}
                     onValueChange={(resolution) => chooseVideoSpec({ resolution })}
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {videoMenu.resolutions.map((resolution) => (
-                        <SelectItem key={resolution} value={resolution}>{resolution}</SelectItem>
-                      ))}
+                      <SelectGroup>
+                        {videoMenu.resolutions.map((resolution) => (
+                          <SelectItem key={resolution} value={resolution}>{resolution}</SelectItem>
+                        ))}
+                      </SelectGroup>
                     </SelectContent>
                   </Select>
-                </label>
+                </Field>
               ) : null}
               {hasVideoLines && videoMenu && videoMenu.durations.length > 0 ? (
-                <label className="grid gap-2 text-xs font-semibold text-muted-foreground">
-                  Video length
+                <Field>
+                  <FieldLabel>Video length</FieldLabel>
                   <Select
                     value={String(videoMenu.selected.durationSeconds)}
                     disabled={busy || quoting}
                     onValueChange={(seconds) => chooseVideoSpec({ durationSeconds: Number(seconds) })}
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {videoMenu.durations.map((seconds) => (
-                        <SelectItem key={seconds} value={String(seconds)}>{seconds}s</SelectItem>
-                      ))}
+                      <SelectGroup>
+                        {videoMenu.durations.map((seconds) => (
+                          <SelectItem key={seconds} value={String(seconds)}>{seconds}s</SelectItem>
+                        ))}
+                      </SelectGroup>
                     </SelectContent>
                   </Select>
-                </label>
+                </Field>
               ) : null}
-              <div className="flex items-baseline justify-between border-t border-border pt-3">
+              <Separator />
+              <div className="flex items-baseline justify-between">
                 <span className="text-sm text-muted-foreground">Total</span>
                 <span className="text-2xl font-semibold tracking-tight">
                   {creditsLabel(totalDisplayCredits)}
@@ -532,9 +576,12 @@ function ConfirmWorkspace({
               {/* #708: say where the difference went. A total that is smaller than the sum of the
                   lines is only honest if the merchant can see why. */}
               {nothingLeftToGenerate ? (
-                <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
-                  Everything in this plan is {reusedSummaryPhrase(approvedLines)}. Confirming again will not charge you.
-                </div>
+                <Alert variant="info">
+                  <ShieldCheck />
+                  <AlertDescription>
+                    Everything in this plan is {reusedSummaryPhrase(approvedLines)}. Confirming again will not charge you.
+                  </AlertDescription>
+                </Alert>
               ) : reusedCount > 0 ? (
                 <p className="text-xs text-muted-foreground">
                   {reusedCount} {reusedCount === 1 ? "item is" : "items are"} {reusedSummaryPhrase(approvedLines)}, so
@@ -542,20 +589,25 @@ function ConfirmWorkspace({
                 </p>
               ) : null}
               {blockedCount > 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  {blockedCount} {blockedCount === 1 ? "item" : "items"} changed since it was generated and will not
-                  start, so nothing is charged for {blockedCount === 1 ? "it" : "them"}.
-                </p>
+                <Alert variant="warning">
+                  <AlertCircle />
+                  <AlertDescription>
+                    {blockedCount} {blockedCount === 1 ? "item" : "items"} changed since it was generated and will not
+                    start, so nothing is charged for {blockedCount === 1 ? "it" : "them"}.
+                  </AlertDescription>
+                </Alert>
               ) : null}
               {insufficientCredits ? (
-                <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground">
-                  <p>
+                <Alert variant="warning" role="alert">
+                  <AlertCircle />
+                  <AlertTitle>Not enough credits</AlertTitle>
+                  <AlertDescription>
+                    <p>
                     <strong>Not enough credits</strong> — you have {creditsLabel(balanceDisplayCredits)}, this needs {creditsLabel(totalDisplayCredits)}.
-                  </p>
-                  <Link href="/billing" className="mt-2 inline-flex font-semibold underline underline-offset-4">
-                    Top up credits
-                  </Link>
-                </div>
+                    </p>
+                    <Link href="/billing" className="font-semibold underline underline-offset-4">Top up credits</Link>
+                  </AlertDescription>
+                </Alert>
               ) : null}
               <Button
                 type="button"
@@ -563,14 +615,15 @@ function ConfirmWorkspace({
                 disabled={busy || quoting || quoteStale || !projectId || insufficientCredits}
                 onClick={() => confirm()}
               >
-                {busy || quoting ? <LoaderCircle className="animate-spin" /> : <Sparkles />}
+                {busy || quoting ? <Spinner /> : <Sparkles data-icon="inline-start" />}
                 {totalDisplayCredits === 0
                   ? "Confirm · no charge"
                   : `Confirm · ${creditsLabel(totalDisplayCredits)}`}
               </Button>
               <Button asChild variant="ghost" className="w-full">
-                <Link href={`/campaign/${campaignId}`}><ArrowLeft />Back without generating</Link>
+                <Link href={`/campaign/${campaignId}`}><ArrowLeft data-icon="inline-start" />Back without generating</Link>
               </Button>
+              </FieldGroup>
             </CardContent>
           </Card>
         </aside>
@@ -593,7 +646,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 function ConfirmHeader({ campaign }: { campaign: Extract<DetailResult, { ok: true }>["campaign"] }) {
   return (
     <header className="mt-7 border-b border-border pb-6">
-      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Confirm generation</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Generation review</p>
       <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{campaign.name}</h1>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
         Turn this campaign&apos;s approved plan entries into real generations.
@@ -605,13 +658,19 @@ function ConfirmHeader({ campaign }: { campaign: Extract<DetailResult, { ok: tru
 function EmptyState({ icon, title, body, campaignId }: { icon: React.ReactNode; title: string; body: string; campaignId: string }) {
   return (
     <Card className="mt-6">
-      <CardContent className="px-5 py-10 text-center">
-        {icon}
-        <h2 className="mt-3 text-sm font-semibold">{title}</h2>
-        <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{body}</p>
-        <Button asChild variant="secondary" className="mt-5">
-          <Link href={`/campaign/${campaignId}`}><ArrowLeft />Back to campaign detail</Link>
-        </Button>
+      <CardContent>
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">{icon}</EmptyMedia>
+            <EmptyTitle>{title}</EmptyTitle>
+            <EmptyDescription>{body}</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button asChild variant="secondary">
+              <Link href={`/campaign/${campaignId}`}><ArrowLeft data-icon="inline-start" />Back to campaign detail</Link>
+            </Button>
+          </EmptyContent>
+        </Empty>
       </CardContent>
     </Card>
   );
@@ -732,7 +791,7 @@ function CellStatus({
   if (status === "queued") {
     return (
       <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-info-soft-foreground">
-        <LoaderCircle className="size-4 animate-spin" /> Generating · {credits} cr
+        <Spinner /> Generating · {credits} cr
       </span>
     );
   }
@@ -741,7 +800,7 @@ function CellStatus({
     if (reuseState !== "done") {
       return (
         <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-info-soft-foreground">
-          <LoaderCircle className="size-4 animate-spin" /> {reusedLabel(reuseState)} · 0 cr
+          <Spinner /> {reusedLabel(reuseState)} · 0 cr
         </span>
       );
     }

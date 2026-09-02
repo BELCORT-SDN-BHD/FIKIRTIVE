@@ -1,7 +1,19 @@
 // apps/web/components/canvas/nodes/VideoNode.tsx
 import { useRef, useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
+import {
+  CloudIcon,
+  CopyPlusIcon,
+  GitBranchIcon,
+  InfoIcon,
+  PlayIcon,
+  SlidersHorizontalIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
+import { CanvasNodeLabel } from "./CanvasNodeLabel";
+import { NodeRemakeComposer } from "./NodeRemakeComposer";
+import { NodeToolbarIconButton } from "./NodeToolbarIconButton";
 import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
 import { isGenFailureReason } from "@fikirtive/core/gen-failure";
 import { NodeResize } from "./NodeResize";
@@ -9,8 +21,7 @@ import { NodeLineagePanel } from "./NodeLineagePanel";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { NODE_TOOL_BUTTON_CLASS } from "./node-tool-button";
+import { ButtonGroup } from "@/components/ui/button-group";
 
 export function VideoNode({ data, id, selected }: NodeProps) {
   const d = data as {
@@ -102,181 +113,137 @@ export function VideoNode({ data, id, selected }: NodeProps) {
         position={Position.Top}
         align="start"
         offset={22}
-        style={{ display: "flex", gap: 6, pointerEvents: "all", zIndex: 50 }}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        <ButtonGroup aria-label="Video actions" className="cv-node-action-group">
         {actionable && (
-          <Button
+          <NodeToolbarIconButton
             type="button"
-            aria-label="Show how this video was made"
+            label="Show how this video was made"
+            visibleLabel="Info"
+            tooltip="When it was made, the settings, and what it cost"
             aria-pressed={infoOpen}
-            variant="secondary"
-            size="sm"
-            className={NODE_TOOL_BUTTON_CLASS}
-            title="When it was made, the settings, and what it cost"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
           >
-            Info
-          </Button>
+            <InfoIcon aria-hidden />
+          </NodeToolbarIconButton>
         )}
         {/* T6: the card's whole story — what made it, what it made, who came out of the same
             press. Offered on a card that failed too: where it came from is exactly what a
             merchant wants to know about a card that did not work (#605). */}
         {d.onOpenLineage && (
-          <Button
+          <NodeToolbarIconButton
             type="button"
-            aria-label="Show what this card came from"
-            variant="secondary"
-            size="sm"
-            className={NODE_TOOL_BUTTON_CLASS}
-            title="What made this card, and what it made"
+            label="Show what this card came from"
+            visibleLabel="Lineage"
+            tooltip="What made this card, and what it made"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onOpenLineage?.(); }}
           >
-            Lineage
-          </Button>
+            <GitBranchIcon aria-hidden />
+          </NodeToolbarIconButton>
         )}
         {/* D6: the one and only way a card reaches Otto. Clicking the video used to do it
             silently; now the merchant asks for it, and the whole picked set goes at once (#604). */}
         {canSendToOtto && (
-          <Button
+          <NodeToolbarIconButton
             type="button"
-            aria-label="Send the picked cards to Otto"
-            variant="secondary"
-            size="sm"
-            className={NODE_TOOL_BUTTON_CLASS}
+            label="Send the picked cards to Otto"
+            visibleLabel="Send to Otto"
+            tooltip={d.sendToOttoTitle ?? "Hand this to Otto as a reference"}
             title={d.sendToOttoTitle ?? "Hand this to Otto as a reference"}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onSendToOtto?.(); }}
           >
-            Send to Otto
-          </Button>
+            <CloudIcon aria-hidden />
+          </NodeToolbarIconButton>
         )}
         {canRemake && !!originalPrompt && (
           <Button
             type="button"
             aria-label="Make another version of this video"
             variant="secondary"
-            size="sm"
-            className={NODE_TOOL_BUTTON_CLASS}
+            size="xs"
+            className="nodrag nopan"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onRemake?.(id, originalPrompt); }}
             title={`Make another one from the same description${d.remakeCostHint ? ` · ${d.remakeCostHint}` : ""} · you confirm before anything is charged`}
           >
+            <CopyPlusIcon data-icon="inline-start" aria-hidden />
             More like this
           </Button>
         )}
         {actionable && d.onOpenDetail && (
-          <Button
+          <NodeToolbarIconButton
             type="button"
-            variant="secondary"
-            size="sm"
-            className={NODE_TOOL_BUTTON_CLASS}
+            label="Open video details"
+            visibleLabel="Detail"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onOpenDetail?.(); }}
           >
-            Detail
-          </Button>
+            <SlidersHorizontalIcon aria-hidden />
+          </NodeToolbarIconButton>
         )}
-        <Button
+        <NodeToolbarIconButton
           type="button"
-          aria-label="Delete video node"
-          variant="secondary"
-          size="sm"
-          className={NODE_TOOL_BUTTON_CLASS}
+          label="Delete video node"
+          visibleLabel="Delete"
+          variant="destructive-secondary"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
-          title="Delete video node"
         >
-          ✕
-        </Button>
+          <Trash2Icon aria-hidden />
+        </NodeToolbarIconButton>
+        </ButtonGroup>
       </NodeToolbar>
       {infoOpen && (
         <NodeToolbar
-          className="nodrag nopan"
+          className="cv-node-info-toolbar nodrag nopan"
           isVisible={soloSelected}
           position={Position.Right}
           align="start"
           offset={12}
-          style={{ pointerEvents: "all", zIndex: 51 }}
           onPointerDown={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <NodeLineagePanel lineage={d.lineage} prompt={d.prompt} hasSource={canvasNodeHasSource(d)} />
+          <NodeLineagePanel
+            lineage={d.lineage}
+            prompt={d.prompt}
+            hasSource={canvasNodeHasSource(d)}
+            onClose={() => setInfoOpen(false)}
+          />
         </NodeToolbar>
       )}
       {canRemake && (
         <NodeToolbar
-          className="nodrag nopan"
+          className="cv-node-remake-toolbar nodrag nopan"
           isVisible={soloSelected}
           position={Position.Bottom}
           align="center"
           offset={12}
-          style={{ pointerEvents: "all", zIndex: 50 }}
           onPointerDown={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, width: 320 }}>
-            <form
-              className="al-promptbar"
-              style={{ width: "100%", display: "flex", flexDirection: "row", gap: 6, alignItems: "center", padding: "6px 10px" }}
-              onSubmit={(e) => {
-                e.preventDefault();
-                const text = remakePrompt.trim();
-                if (!text) return;
-                d.onRemake?.(id, text);
-              }}
-            >
-              {/* #840 车4:迁到 ui/Input,四条覆盖与图片卡那条 bar 同因同解(见 ImageNode)。 */}
-              <Input
-                value={remakePrompt}
-                onChange={(e) => setRemakePrompt(e.target.value)}
-                placeholder="Change the wording, then send to make a new video…"
-                aria-label="Edit this video's prompt and make a new video"
-                className="nodrag nopan h-auto w-auto rounded-none p-0 shadow-none"
-                onPointerDown={(e) => e.stopPropagation()}
-                style={{ flex: 1, minWidth: 0, border: "none", background: "none", outline: "none", font: "inherit" }}
-              />
-              <Button
-                type="submit"
-                aria-label="Make a new video from this edited prompt"
-                variant="default"
-                size="sm"
-                className="nodrag nopan h-auto px-[13px] py-1.5 text-[12.5px] shadow-none"
-                disabled={!remakePrompt.trim()}
-              >
-                →
-              </Button>
-            </form>
-            {d.remakeCostHint && (
-              <span
-                style={{
-                  fontSize: 11,
-                  lineHeight: 1.4,
-                  textAlign: "center",
-                  color: "var(--muted-foreground)",
-                }}
-              >
-                New video · {d.remakeCostHint} · No charge until you confirm.
-              </span>
-            )}
-          </div>
+          <NodeRemakeComposer
+            value={remakePrompt}
+            onChange={setRemakePrompt}
+            onSubmit={() => d.onRemake?.(id, remakePrompt.trim())}
+            placeholder="Change the wording for a new video…"
+            inputLabel="Edit this video's prompt and make a new video"
+            submitLabel="Make a new video from this edited prompt"
+            costHint={d.remakeCostHint}
+            costLabel="New video"
+            confirmation="No charge until you confirm."
+          />
         </NodeToolbar>
       )}
-      <span className="cv-nodelabel">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
-        Video
-        {/* The recorded A/B letter — position in the press, never position on the board
-            (#603 T4 · #605 T6). */}
-        {letter && <span className="cv-nodeletter">{letter}</span>}
-      </span>
+      <CanvasNodeLabel kind="video" letter={letter} />
     {/* The video is a video, not a button: clicking it picks the card up (and the play control
         still just plays it). Everything the card can DO lives on its toolbar above (#604 · D6). */}
     <div
-      className="al-panel"
-      style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}
+      className="al-panel cv-node-frame"
     >
       {/* NO MEDIA IS NOT "BEING MADE" (#602 r2, judge P1-3). The old fallback here was
           `in-flight || !url → spinner`, so any card that reached this renderer without a picture
@@ -305,7 +272,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
             onLoadedMetadata={(e) => reportMediaSize(e.currentTarget)}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
-            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "#000" }}
+            className="cv-node-media"
           />
           {!playing && (
             <Button
@@ -322,7 +289,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); void videoRef.current?.play(); }}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M8 5v14l11-7z" /></svg>
+              <PlayIcon aria-hidden fill="currentColor" />
             </Button>
           )}
         </div>
@@ -333,7 +300,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
           playsInline
           preload="metadata"
           onLoadedMetadata={(e) => reportMediaSize(e.currentTarget)}
-          style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "#000" }}
+          className="cv-node-media"
         />
       )}
       {/* Left end receives the line from the image this video was made from (#547 B4). */}

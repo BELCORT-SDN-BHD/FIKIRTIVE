@@ -50,6 +50,15 @@ const MULTI_EMAIL = `${TAG}-multi@fikirtive.test`;
 
 const ORG_A = `org_${TAG}_a`;
 const ORG_B = `org_${TAG}_b`;
+/**
+ * #736 的两条真路径。这张表的行由**人工钱账**派生,而人工钱账写得进这两种 org:
+ *   · `ORG_NO_OWNER` —— org 行在,但没有 owner 成员,`listTenants` 如实返回空邮箱;
+ *   · `ORG_CLOSED`   —— org 已软删,`listTenants` 不再列它(`deletedAt: null` 过滤),
+ *     但它的账本行按只增不减留着,所以这张表上还有它的行,而人名查不到。
+ * 这两种正是「查不到人名」的两种查不到。没有它们,那条断言在一张空表上永远绿。
+ */
+const ORG_NO_OWNER = `org_${TAG}_noowner`;
+const ORG_CLOSED = `org_${TAG}_closed`;
 
 const ids: { users: string[]; events: string[] } = { users: [], events: [] };
 
@@ -69,10 +78,41 @@ async function makeEvent(ownerId: string, type: string, payload: unknown): Promi
   return id;
 }
 
+/** One hand-written credit movement — exactly what `adjustWindowTotals()` counts. */
+async function manualGrant(orgId: string, seq: number) {
+  await prisma.creditLedger.create({
+    data: {
+      id: `cl_${TAG}_${seq}`,
+      orgId,
+      balanceDelta: 1_000,
+      reservedDelta: 0,
+      kind: "GRANT",
+      source: "ADMIN",
+      reason: `${TAG} fixture`,
+      idempotencyKey: `grant:${TAG}:${seq}`,
+      createdBy: FOUNDER_EMAIL,
+    },
+  });
+}
+
+async function wipeGrantFixtures() {
+  await prisma.creditLedger.deleteMany({ where: { id: { startsWith: `cl_${TAG}_` } } });
+  await prisma.organization.deleteMany({ where: { id: { in: [ORG_NO_OWNER, ORG_CLOSED] } } });
+}
+
 beforeAll(async () => {
+  await wipeGrantFixtures();
   for (const [id, name] of [["founder", "Fikirtive"], [ORG_A, "Merchant A shop"], [ORG_B, "Merchant B shop"]]) {
     await prisma.organization.upsert({ where: { id }, update: {}, create: { id, name } });
   }
+  // 有 org 行、没有 owner 成员。
+  await prisma.organization.create({ data: { id: ORG_NO_OWNER, name: "Shop with no owner on record" } });
+  await manualGrant(ORG_NO_OWNER, 0);
+  // 软删的租户 —— 账目还在,租户表上已经没有它了。
+  await prisma.organization.create({
+    data: { id: ORG_CLOSED, name: "Closed shop", deletedAt: new Date() },
+  });
+  await manualGrant(ORG_CLOSED, 1);
   await makeUser(FOUNDER_EMAIL, "super-admin", ["super-admin"]);
   // "wizard" is not in ROLES — it grants nothing, so it must not be displayed as though it did.
   await makeUser(STAFF_EMAIL, "ops", ["ops", "wizard"]);
@@ -83,6 +123,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await wipeGrantFixtures();
   await prisma.actionEvent.deleteMany({ where: { id: { in: ids.events } } });
   await prisma.userRole.deleteMany({ where: { userId: { in: ids.users } } });
   await prisma.user.deleteMany({ where: { id: { in: ids.users } } });
@@ -271,9 +312,47 @@ describe("#736 — the overview stops warning about approvals that do not exist"
 
   it("never shows an internal org id where a person's name belongs", async () => {
     const data = await getAdminV2Data();
+    // 前置条件:两种「查不到人名」的行都真的在表上。少了它,这条断言在空表上永远绿 ——
+    // 它此前正是这样过的,只有在别的用例先留下一行时才红,所以它抓不住自己要抓的病。
+    const noOwner = data.largeGrants.find((row) => row.id === ORG_NO_OWNER);
+    const gone = data.largeGrants.find((row) => row.id === ORG_CLOSED);
+    expect(noOwner, "fixture precondition: the ownerless workspace has a manual movement").toBeTruthy();
+    expect(gone, "fixture precondition: the closed workspace still has its ledger row").toBeTruthy();
+    // 名字位说的是这家店的名字,人名位空着(界面渲染成 “No owner email on file”)。
+    expect(noOwner!.tenant).toBe("Shop with no owner on record");
+    expect(noOwner!.ownerEmail).toBe("");
+    // 租户表上没有这一家了,就这么说,不拿它的内部 id 冒充名字。
+    expect(gone!.tenant).toBe("Workspace no longer on the tenant list");
+    expect(gone!.ownerEmail).toBe("");
+
     for (const row of data.largeGrants) {
       expect(row.ownerEmail, `row ${row.id}`).not.toMatch(/^org_/);
       expect(row.tenant, `row ${row.id}`).not.toMatch(/^org_/);
+    }
+  });
+
+  /**
+   * 判官 2026-09-02(l)—— 同一条规矩要覆盖**租户表**。
+   *
+   * 上面那条只核了人工钱账那张表。租户表(Tenant watchlist / Tenant operations)走的是另一
+   * 条读路径(`listTenants`),而界面在那两处曾经写着 `row.ownerEmail || row.orgId` ——
+   * 同一个病的第二、第三处发作:没有 owner 成员的工作区,人名位上会印出一串 `org_…`。
+   * 读模型这一侧的实话是**空串**,这条钉的就是它:租户表不许自己造一个人名出来。
+   * (屏幕那一侧由 `lib/__tests__/admin-identity-ui.test.ts` 钉,两侧都要。)
+   */
+  it("never shows an internal org id where a person's name belongs — on the tenant table too", async () => {
+    const data = await getAdminV2Data();
+    // 前置条件:那家没有 owner 成员的工作区真的在租户表上(它没有软删,所以列得出来)。
+    const noOwner = data.tenants.find((row) => row.orgId === ORG_NO_OWNER);
+    expect(noOwner, "fixture precondition: the ownerless workspace is on the tenant list").toBeTruthy();
+    expect(noOwner!.ownerEmail, "读模型自己造了一个人名出来").toBe("");
+    expect(noOwner!.name).toBe("Shop with no owner on record");
+    // 软删的那一家不在租户表上 —— 租户表的口径是「还在的店」。
+    expect(data.tenants.find((row) => row.orgId === ORG_CLOSED)).toBeUndefined();
+
+    for (const row of data.tenants) {
+      expect(row.ownerEmail, `tenant ${row.orgId}`).not.toMatch(/^org_/);
+      expect(row.name, `tenant ${row.orgId}`).not.toMatch(/^org_/);
     }
   });
 });

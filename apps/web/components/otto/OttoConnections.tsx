@@ -1,29 +1,69 @@
 "use client";
-import React, { useEffect, useState } from "react";
+
+import { useEffect, useState } from "react";
+import type { LucideIcon } from "lucide-react";
+import {
+  AtSign,
+  Bot,
+  Camera,
+  ChevronRight,
+  CircleAlert,
+  Megaphone,
+  Plug,
+  RefreshCw,
+  ShieldCheck,
+  Unplug,
+} from "lucide-react";
 import { disconnectMeta, getMetaInsights, type MetaAdAccount } from "@/lib/meta-actions";
 import { setAdsAutonomy, setAdsWritesPaused } from "@/lib/otto-client-actions";
 import type { AccountInsights } from "@/lib/meta-insights";
 import { getAccountViewData } from "@/lib/account-view-data";
 import { channelCapabilityBlurb, channelMeta, publishingChannelRows } from "@/lib/channels/channel-meta";
-import { CONNECTION_BLOCKER_COPY, publishSurfaceCopy } from "@fikirtive/core/schedule-draft";
+import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core/schedule-draft";
 import { describeMetaAdAccountStatus } from "@/lib/meta-ad-account-status";
 import { supportMailto } from "@/lib/exits";
 import type { ChannelState } from "./settings/sections";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-
-// The single Connections page (#513 三、2 / #518): every "Connect a channel" entry
-// point in the product — Otto's sidebar, Settings, CRM's zero-channel empty state —
-// lands here. Channels are grouped by merchant task, not by which team built them:
-// Publishing (schedule/post) vs Messaging (CRM inbound/outbound). Each channel has
-// exactly one status source, one button, one connection record.
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { cn } from "@/lib/utils";
 
 type MetaState =
   | { phase: "loading" }
   | { phase: "disconnected" }
-  | { phase: "connected"; status?: string; accounts: MetaAdAccount[]; canWrite: boolean; adsAutonomy: string; adsWritesPaused: boolean }
+  | {
+      phase: "connected";
+      status?: string;
+      accounts: MetaAdAccount[];
+      canWrite: boolean;
+      adsAutonomy: string;
+      adsWritesPaused: boolean;
+    }
   | { phase: "reconnect" }
-  // F37: Meta couldn't be reached right now (network / 5xx / rate limit) — the
-  // connection itself is fine, so offer a retry instead of a false reconnect scare.
   | { phase: "unreachable" };
 
 type ChannelsState =
@@ -31,241 +71,102 @@ type ChannelsState =
   | { phase: "error" }
   | { phase: "loaded"; channels: ChannelState[] };
 
-// Messaging channels never come from lib/channels/registry.ts — none has an adapter yet.
-// Listed here, statically, with no fake Connect button — just an accurate label. This row is
-// the product fact that #792's Customers preview is written against: while it reads
-// "Not available yet", the Customers door carries its `preview` sentence
-// (packages/core/src/navigation.ts). Connect one for real and both change together.
-const MESSAGING_CHANNELS: { id: string; label: string }[] = [
-  { id: "whatsapp", label: "WhatsApp" },
-];
-
-// X has no OAuth route yet — lib/channels/x.ts's connectUrl points at an unbuilt
-// /api/x/authorize, and its insight reads are still stubbed. Until that adapter is
-// real, X gets the same "soon" honesty as Messaging: no fake Connect/Reconnect/Manage
-// button (#518 finding 1). That list now lives in lib/channels/channel-meta.ts, where
-// Schedule and the account page read it too — this page was the only honest one (#694).
-
-// #511 — a failed Meta connect comes back here as /otto?view=connections&error=<code>:
-// "missing" or "state" from app/api/meta/callback/route.ts, "not_configured" from
-// app/api/meta/authorize/route.ts, and whatever completeMetaConnect returned otherwise
-// ("not_configured"/"exchange" from lib/meta-graph.ts, "incomplete" from lib/meta-actions.ts's
-// #573 fail-closed guard). Nothing in the app read that param before, so a merchant whose
-// connect failed landed on an unchanged Connections page with no idea why. New codes will
-// appear, so the unknown branch must still say something true rather than guess a cause.
-// `contactSupport` marks the branches where the merchant is not the blocker and retrying
-// cannot help — the only open exit is a person, so the page has to hand them one (#686).
-type ConnectErrorCopy = { message: string; retry: boolean; rawCode?: string; contactSupport?: boolean };
+type ConnectErrorCopy = {
+  message: string;
+  retry: boolean;
+  rawCode?: string;
+  contactSupport?: boolean;
+};
 
 function describeConnectError(code: string): ConnectErrorCopy {
-  // completeMetaConnect can hand back a whole sentence instead of a code — the
-  // impersonation guard does (lib/meta-actions.ts:21). Show it verbatim; retrying cannot
-  // clear it. Matched on the EXACT sentence, not a substring: a code like
-  // `impersonation_failed` is not this guard, and treating it as one would both print a
-  // bare code as if it were prose and wrongly refuse the merchant a retry. That sentence
-  // isn't exported, so if it ever changes over there this stops matching and the code
-  // falls through to the generic branch below — which still tells the truth (says only
-  // that Meta couldn't be connected, shows the raw text, offers a retry). That is the
-  // intended failure mode, chosen deliberately over a fuzzy match that can misfire.
-  if (code === "Paused while impersonating a customer — exit impersonation to connect Meta.")
+  if (code === "Paused while impersonating a customer — exit impersonation to connect Meta.") {
     return { message: code, retry: false };
+  }
+
   switch (code) {
     case "missing":
       return { message: "Meta sent you back before the connection finished.", retry: true };
     case "state":
-      // Exactly three things make the callback reject the state (lib/meta-oauth.ts
-      // verifyState + app/api/meta/callback/route.ts:24): a signature that doesn't verify,
-      // the 10-minute TTL, or a state minted for a different ownerId than the one now
-      // signed in. Nothing binds it to a browser, so the copy must not claim that. A fresh
-      // connect clears all three.
-      return { message: "This connect link couldn’t be verified — these links expire, and they only work for the account that started them.", retry: true };
-    case "not_configured":
-      // Nothing the merchant can retry their way out of — the server is missing its Meta keys.
-      // #686: this is the hardest dead end in the product (the merchant came here BECAUSE
-      // they wanted to connect Instagram), so the one open exit ships as a real link below.
       return {
-        message: "Meta connections aren’t switched on for this server yet — we can switch them on for you.",
+        message:
+          "This connect link couldn’t be verified — these links expire, and they only work for the account that started them.",
+        retry: true,
+      };
+    case "not_configured":
+      return {
+        message:
+          "Meta connections aren’t switched on for this server yet — we can switch them on for you.",
         retry: false,
         contactSupport: true,
       };
     case "exchange":
       return { message: "Meta didn’t finish the sign-in handshake.", retry: true };
     case "incomplete":
-      // #573 — Meta's token check came back without the account id, so lib/meta-actions.ts
-      // refused to save a half-built connection rather than keep one we could never delete
-      // on request. Nothing is stored; a fresh connect normally succeeds.
-      return { message: "Meta didn’t confirm which account you connected, so nothing was saved. Try connecting again.", retry: true };
+      return {
+        message:
+          "Meta didn’t confirm which account you connected, so nothing was saved. Try connecting again.",
+        retry: true,
+      };
     default:
-      // Don't invent a cause — say only what's true, and show the code we were actually
-      // given so the merchant can quote it to support.
       return { message: "Meta couldn’t be connected.", retry: true, rawCode: code };
   }
 }
 
-function ChannelGlyph({ id, size = 18 }: { id: string; size?: number }) {
-  // currentColor-driven inline glyphs — same brand marks as OttoSchedule's ChannelIcon,
-  // kept local here since that one isn't exported for reuse outside the Schedule view.
-  switch (id) {
-    case "instagram":
-      return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <rect x="2" y="2" width="20" height="20" rx="5" />
-          <circle cx="12" cy="12" r="4" />
-          <circle cx="17.5" cy="6.5" r="0.6" fill="currentColor" />
-        </svg>
-      );
-    case "facebook":
-      return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-          <path d="M14 8.5V7c0-.83.67-1 1-1h1.5V3.5H14C12.07 3.5 11 4.9 11 6.8V8.5H9V11h2v9.5h3V11h2.1l.4-2.5H14Z" />
-        </svg>
-      );
-    case "x":
-      return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-        </svg>
-      );
-    case "whatsapp":
-      return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-          <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.39 1.26 4.81L2 22l5.44-1.34a9.9 9.9 0 0 0 4.6 1.13h.01c5.46 0 9.9-4.45 9.9-9.91C21.96 6.45 17.51 2 12.04 2Zm0 17.89h-.01a8 8 0 0 1-4.06-1.11l-.29-.17-3.02.79.81-2.94-.19-.3a7.9 7.9 0 0 1-1.22-4.25c0-4.39 3.58-7.97 7.98-7.97 2.13 0 4.13.83 5.64 2.34a7.9 7.9 0 0 1 2.33 5.64c0 4.4-3.58 7.97-7.97 7.97Zm4.38-5.97c-.24-.12-1.42-.7-1.64-.78-.22-.08-.38-.12-.54.12-.16.24-.62.78-.76.94-.14.16-.28.18-.52.06-.24-.12-1.01-.37-1.92-1.18-.71-.63-1.19-1.42-1.33-1.66-.14-.24-.01-.37.11-.49.11-.11.24-.28.36-.42.12-.14.16-.24.24-.4.08-.16.04-.3-.02-.42-.06-.12-.54-1.3-.74-1.78-.19-.47-.39-.4-.54-.41-.14-.01-.3-.01-.46-.01-.16 0-.42.06-.64.3-.22.24-.84.82-.84 2s.86 2.32.98 2.48c.12.16 1.7 2.6 4.12 3.64.58.25 1.03.4 1.38.51.58.18 1.11.16 1.53.1.47-.07 1.42-.58 1.62-1.14.2-.56.2-1.04.14-1.14-.06-.1-.22-.16-.46-.28Z" />
-        </svg>
-      );
-    default:
-      return null;
+const CHANNEL_ICONS: Record<string, LucideIcon> = {
+  instagram: Camera,
+  facebook: Megaphone,
+  x: AtSign,
+};
+
+function ChannelIcon({ id }: { id: string }) {
+  const Icon = CHANNEL_ICONS[id] ?? Plug;
+  return (
+    <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground">
+      <Icon aria-hidden />
+    </span>
+  );
+}
+
+function ChannelRowsLoading() {
+  return (
+    <div className="flex flex-col gap-4 py-4" aria-label="Checking channel connections">
+      {["one", "two", "three"].map((key) => (
+        <div key={key} className="flex items-center gap-3">
+          <Skeleton className="size-10 rounded-lg" />
+          <div className="flex flex-1 flex-col gap-2">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-3 w-48 max-w-full" />
+          </div>
+          <Skeleton className="h-9 w-20" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function connectionStatus(row: {
+  connectable: boolean;
+  state: ChannelState | null;
+}): { label: string; variant: "outline" | "success" | "warning" } {
+  if (!row.connectable) return { label: "Unavailable", variant: "outline" };
+  if (!row.state) return { label: "Status unavailable", variant: "warning" };
+  if (row.state.blocker || row.state.status === "needs_reconnect") {
+    return { label: "Needs attention", variant: "warning" };
   }
+  if (row.state.status === "connected") return { label: "Connected", variant: "success" };
+  return { label: "Not connected", variant: "outline" };
 }
 
-function ChannelRow({ channel }: { channel: ChannelState }) {
-  // A connection that exists but can't publish outranks the bare "Connected" — in the SAME words
-  // the Schedule screen uses for the same fact, so the merchant never gets two stories about one
-  // connection (#741 r5 P1/P2). The button has to follow the same fact: `needs_page_permission`
-  // usually arrives with status "connected", so keying the CTA off status alone put "Manage" next
-  // to "Page access needed" while Schedule was saying "Reconnect" about the very same connection.
-  const blocked = channel.blocker ?? (channel.status === "needs_reconnect" ? "needs_reconnect" : null);
-  const label = blocked ? "Reconnect" : channel.status === "connected" ? "Manage" : "Connect";
-  const variant = blocked ? "brand" : channel.status === "connected" ? "ghost" : "brand";
-  // Every one of these sentences comes from the shared table — the "Reconnect needed" branch used
-  // to be a hand-written copy of it, and it is genuinely reachable (status needs_reconnect with no
-  // blocker attached), so "one wording, one source" was not actually true.
-  const hint = blocked
-    ? CONNECTION_BLOCKER_COPY[blocked].status
-    : channel.status === "connected"
-      ? channel.targets.join(", ") || "Connected"
-      : "Not connected";
-  // W2-4 —— 这颗按钮是**这一个渠道自己的**开关,所以它的 accessible name 里带自己的渠道名。
-  // 之前三行渲染出来的按钮读屏听起来是「Connect、Connect、Connect」,分不出哪颗管哪个渠道;
-  // 更要紧的是,那时候「有哪几行、哪一行能按」是整段 Publishing 一起决定的。现在每一行各带
-  // 各的名字,一个全局开关冒充不了三个(围栏 settings-route.test.ts 就钉这一条)。
-  // 看得见的字保持 Connect / Manage / Reconnect 不变 —— 语音控制点的是它。
-  const caps = channelMeta(channel.id)?.capabilities;
-  return (
-    <div
-      data-channel={channel.id}
-      className="border-b border-border last:border-b-0"
-      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.75rem 0", flexWrap: "wrap" }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-        <span className="text-muted-foreground" style={{ flexShrink: 0 }} aria-hidden>
-          <ChannelGlyph id={channel.id} />
-        </span>
-        <div style={{ minWidth: 0 }}>
-          <div className="text-foreground text-[0.875rem] font-medium">{channel.label}</div>
-          <div className="text-muted-foreground text-[0.75rem]">{hint}</div>
-          {caps && (
-            <div className="text-muted-foreground text-[0.75rem]">{channelCapabilityBlurb(caps)}</div>
-          )}
-        </div>
-      </div>
-      <Button asChild size="sm" variant={variant}>
-        <a href={channel.connectUrl} aria-label={`${label} ${channel.label}`} style={{ textDecoration: "none" }}>
-          {label}
-        </a>
-      </Button>
-    </div>
-  );
-}
-
-/**
- * 一条**读不到状态**的可连渠道(W2-4 判官 P2-1)。
- *
- * 它与「连不上」是两件事:那一次读回来的名单里没有这个渠道,所以我们既不能说它连着,也不能
- * 说它没连 —— 唯一诚实的说法就是「这一行刚才没读到」。
- *
- * 为什么必须画出来、而不是不画:版式的立论是「有哪几行来自 CHANNEL_META,少回一个渠道也不
- * 少一行」(见 lib/channels/channel-meta.ts 的 publishingChannelRows)。整行渲染成 null 会让
- * 那句话当场变成假话 —— 商家看到的是一个渠道**凭空消失**,而消失恰恰是最不像故障的故障。
- * 与 Home 那边刚立的同一条纪律:降级态不等于真空态。
- *
- * Retry 走的就是本页那一次 load()(与分区整体读失败时那颗 Retry 同一个动作),所以这颗按钮
- * 真的做得到它说的事。今天 registry 是静态的三个渠道,这一行到不了;它存在是为了让「说的」
- * 与「做的」在这条路径上也对得上。
- */
-function UnreadableChannelRow({ id, label, onRetry }: { id: string; label: string; onRetry: () => void }) {
-  return (
-    <div
-      data-channel={id}
-      className="border-b border-border last:border-b-0"
-      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.75rem 0", flexWrap: "wrap" }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-        <span className="text-muted-foreground" style={{ flexShrink: 0 }} aria-hidden>
-          <ChannelGlyph id={id} />
-        </span>
-        <div style={{ minWidth: 0 }}>
-          <div className="text-foreground text-[0.875rem] font-medium">{label}</div>
-          <div className="text-muted-foreground text-[0.75rem]">We couldn&rsquo;t read this connection just now.</div>
-        </div>
-      </div>
-      <Button type="button" size="sm" variant="ghost" aria-label={`Retry ${label}`} onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
-  );
-}
-
-/** 一条今天连不上的渠道:说得出的实话,零按钮。X(没有 OAuth 路由)与 WhatsApp(没有适配器)
- *  用的是同一行 —— 「不能连」是同一件事,不该有两种画法。
- *
- *  W2-4 只给它加了一个 `id`:图标原本靠 `label.toLowerCase()` 反查,渠道名与图标 id 一样纯属
- *  巧合(“X” → “x”),多渠道版式下第一个带空格或大小写不同的渠道名就会静默丢图标。名字维持
- *  `MessagingRow` 不动 —— 改名会牵动一条不属于这一票的既有围栏(crm-honest-preview.test.ts
- *  按函数名切这段源码),那是没必要的连带改动。 */
-function MessagingRow({ id, label }: { id: string; label: string }) {
-  return (
-    <div
-      data-channel={id}
-      className="border-b border-border last:border-b-0"
-      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.75rem 0", flexWrap: "wrap" }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-        <span className="text-muted-foreground" style={{ flexShrink: 0 }} aria-hidden>
-          <ChannelGlyph id={id} />
-        </span>
-        <div className="text-foreground text-[0.875rem] font-medium">{label}</div>
-      </div>
-      <span className="text-muted-foreground text-[0.75rem]">Not available yet</span>
-    </div>
-  );
-}
-
-export default function OttoConnections() {
+export default function OttoConnections({ embedded = false }: { embedded?: boolean }) {
   const [meta, setMeta] = useState<MetaState>({ phase: "loading" });
   const [insights, setInsights] = useState<AccountInsights[] | null>(null);
-  const [saving, setSaving] = useState<null | "autonomy" | "paused">(null);
+  const [saving, setSaving] = useState<null | "autonomy" | "paused" | "disconnect">(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [channelsState, setChannelsState] = useState<ChannelsState>({ phase: "loading" });
-  // #511 — the ?error=<code> the OAuth routes redirect back with. Read in an effect, not
-  // during render: this is a client component but Next still renders it on the server,
-  // where `window` doesn't exist.
   const [connectErrorCode, setConnectErrorCode] = useState<string | null>(null);
+  const [selectedChannelId, setSelectedChannelId] = useState("instagram");
+  const [addConnectionOpen, setAddConnectionOpen] = useState(false);
 
-  // Single load for the whole page, single Meta read behind it (#518 rework finding 2):
-  // getAccountViewData() is the ONE call this page makes — it already did the ONE
-  // getMetaConnection() read server-side and used it both to compute the Instagram/
-  // Facebook row status below and to fill `meta` here. There is no second, independently-
-  // timed Meta read at this level to disagree with it.
   async function load() {
     setMeta({ phase: "loading" });
     setChannelsState({ phase: "loading" });
@@ -281,7 +182,7 @@ export default function OttoConnections() {
     if ("error" in res || !res.connected) setMeta({ phase: "disconnected" });
     else if (res.transientError) setMeta({ phase: "unreachable" });
     else if (res.needsReconnect) setMeta({ phase: "reconnect" });
-    else
+    else {
       setMeta({
         phase: "connected",
         status: res.status,
@@ -290,326 +191,421 @@ export default function OttoConnections() {
         adsAutonomy: res.adsAutonomy ?? "ASK",
         adsWritesPaused: res.adsWritesPaused ?? false,
       });
+    }
 
     setChannelsState({ phase: "loaded", channels: result.channels });
   }
 
   async function handleAutonomy(mode: "ASK" | "AUTO") {
     if (meta.phase !== "connected") return;
-    const prevMode = meta.adsAutonomy;
+    const previous = meta.adsAutonomy;
     setSaving("autonomy");
     setSaveError(null);
-    setMeta((s) => (s.phase === "connected" ? { ...s, adsAutonomy: mode } : s));
-    const res = await setAdsAutonomy(mode);
+    setMeta((state) => (state.phase === "connected" ? { ...state, adsAutonomy: mode } : state));
+    const result = await setAdsAutonomy(mode);
     setSaving(null);
-    if ("error" in res) {
-      // Server rejected — roll back the optimistic update so UI matches DB state
-      setMeta((s) => (s.phase === "connected" ? { ...s, adsAutonomy: prevMode } : s));
-      setSaveError(res.error);
+    if ("error" in result) {
+      setMeta((state) => (state.phase === "connected" ? { ...state, adsAutonomy: previous } : state));
+      setSaveError(result.error);
     }
   }
 
   async function handlePaused(paused: boolean) {
     if (meta.phase !== "connected") return;
-    const prevPaused = meta.adsWritesPaused;
+    const previous = meta.adsWritesPaused;
     setSaving("paused");
     setSaveError(null);
-    setMeta((s) => (s.phase === "connected" ? { ...s, adsWritesPaused: paused } : s));
-    const res = await setAdsWritesPaused(paused);
+    setMeta((state) => (state.phase === "connected" ? { ...state, adsWritesPaused: paused } : state));
+    const result = await setAdsWritesPaused(paused);
     setSaving(null);
-    if ("error" in res) {
-      // Server rejected — roll back the optimistic update so UI matches DB state
-      setMeta((s) => (s.phase === "connected" ? { ...s, adsWritesPaused: prevPaused } : s));
-      setSaveError(res.error);
+    if ("error" in result) {
+      setMeta((state) => (state.phase === "connected" ? { ...state, adsWritesPaused: previous } : state));
+      setSaveError(result.error);
     }
+  }
+
+  async function handleDisconnect() {
+    setSaving("disconnect");
+    setSaveError(null);
+    const result = await disconnectMeta();
+    setSaving(null);
+    if ("error" in result) {
+      setSaveError(result.error);
+      return;
+    }
+    setInsights(null);
+    void load();
   }
 
   useEffect(() => {
     queueMicrotask(() => void load());
   }, []);
 
-  // #511 — take the failure code off the URL once, then strip just that one param with
-  // replaceState (no popstate, so OttoApp's syncFromLocation stays out of this) so a
-  // refresh doesn't resurrect a stale error. `connected` and every other param survive.
   useEffect(() => {
-    // Deferred with queueMicrotask for the same reason load() above is: setting state
-    // synchronously in an effect body trips react-hooks/set-state-in-effect.
     queueMicrotask(() => {
       const rawSearch = window.location.search;
-      // Decoding is fine for the value we're about to display; it's re-encoding the OTHERS
-      // that isn't.
       const code = new URLSearchParams(rawSearch).get("error");
       if (!code) return;
       setConnectErrorCode(code);
-      // Surgery on the raw query string rather than serializing URLSearchParams back out:
-      // a round-trip rewrites every other param's encoding (`a%20b` becomes `a+b`), which
-      // silently changes params we were only ever asked to leave alone. Drop just the
-      // error entries; the rest survive byte-for-byte, in their original order. pathname
-      // and hash are never touched.
       const kept = rawSearch
         .replace(/^\?/, "")
         .split("&")
         .filter((part) => part !== "error" && !part.startsWith("error="));
       const nextSearch = kept.length > 0 ? `?${kept.join("&")}` : "";
-      window.history.replaceState(window.history.state, "", `${window.location.pathname}${nextSearch}${window.location.hash}`);
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${nextSearch}${window.location.hash}`,
+      );
     });
   }, []);
 
   useEffect(() => {
     if (meta.phase !== "connected") return;
-    void getMetaInsights("last_30d").then((res) => {
-      if ("accounts" in res) setInsights(res.accounts);
+    void getMetaInsights("last_30d").then((result) => {
+      if ("accounts" in result) setInsights(result.accounts);
     });
   }, [meta.phase]);
 
-  // The Meta ad-account panel is supplementary detail on the SAME Meta connection that
-  // backs the Instagram/Facebook Publishing rows above — `meta` (loaded once by load(),
-  // above) is the single source both read, so the panel and the rows can never disagree.
-  // It only makes sense to show once that connection is live (or briefly unreachable,
-  // since the token itself is still fine).
-  const showAdsPanel = meta.phase === "connected" || meta.phase === "unreachable";
   const publishingLoading = channelsState.phase === "loading" || meta.phase === "loading";
   const connectError = connectErrorCode ? describeConnectError(connectErrorCode) : null;
-  // 发布这件事今天是什么样,由共享权威说 —— 这一页只是引用它(见下面那块的说明)。
-  const publishTruth = publishSurfaceCopy();
+  const loadedChannels = channelsState.phase === "loaded" ? channelsState.channels : [];
+  const connectionRows = publishingChannelRows(loadedChannels);
+  const selectedRow = connectionRows.find((row) => row.id === selectedChannelId) ?? connectionRows[0];
+  const selectedState = selectedRow?.state ?? null;
+  const selectedBlocked = selectedState?.blocker
+    ?? (selectedState?.status === "needs_reconnect" ? "needs_reconnect" : null);
+  const selectedMetaBacked = selectedRow?.id === "instagram" || selectedRow?.id === "facebook";
+  const connectedCount = connectionRows.filter(
+    (row) => row.connectable && row.state?.status === "connected" && !row.state.blocker,
+  ).length;
+  const needsAttention = connectionRows.some(
+    (row) => row.connectable && (row.state?.blocker || row.state?.status === "needs_reconnect"),
+  );
 
   return (
-    // leading-[1.5] — design-baseline body line-height (Analytics standard)
-    <div className="gb leading-[1.5]" style={{ flex: 1, overflow: "auto", padding: "1.25rem" }}>
-      <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", flexDirection: "column", gap: "1.75rem" }}>
-        <div>
-          <h1 className="text-foreground" style={{ margin: 0, fontSize: "1.125rem" }}>Connections</h1>
-          {/* #851 — found by the repo-wide sweep, same class as the login bullet: "channels Otto
-              can post to" is a capability claim, and no post leaves the workspace while publishing
-              is off. What this page actually is — the inventory of what you have connected — is
-              true either way. */}
-          <p className="text-muted-foreground text-[0.875rem]" style={{ margin: "0.25rem 0 0" }}>
-            Every channel you connect, and everywhere your customers reach you, in one place.
-          </p>
-        </div>
-
-        {/* #511 — the connect attempt that just failed, explained before anything else on
-            the page: it's the reason the merchant is looking at this view. */}
-        {connectError && (
-          <div
-            role="alert"
-            className="bg-error-soft rounded-[14px]"
-            style={{ padding: "0.875rem 1rem", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.5rem" }}
-          >
-            <p className="text-[var(--error-soft-foreground)] text-[0.8125rem]" style={{ margin: 0 }}>
-              {connectError.message}
-            </p>
-            {connectError.rawCode && (
-              <p className="text-muted-foreground text-[0.75rem]" style={{ margin: 0 }}>
-                Details: {connectError.rawCode}
+    <div className={embedded ? "min-w-0" : "flex-1 overflow-auto"}>
+      <div className={embedded ? "flex min-w-0 flex-col gap-6" : "mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8"}>
+        {!embedded ? (
+          <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex max-w-2xl flex-col gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">Connections</h1>
+              <p className="text-sm leading-6 text-muted-foreground">
+                Connect the services Fikirtive can use across this workspace.
               </p>
-            )}
-            {connectError.retry && (
-              <Button asChild size="sm" variant="brand">
-                <a href="/api/meta/authorize" style={{ textDecoration: "none" }}>Try again</a>
-              </Button>
-            )}
-            {connectError.contactSupport && (
-              <Button asChild size="sm" variant="brand">
-                <a href={supportMailto("Switch on Meta connections")} style={{ textDecoration: "none" }}>
-                  Email support
-                </a>
-              </Button>
-            )}
-          </div>
-        )}
+            </div>
+          </header>
+        ) : null}
 
-        {/* W2-4(规格书 §4.7)—— 这一页今天缺的那句实话。
-            不在这里手写:它已经有权威(`PUBLISH_PREVIEW_COPY` 的第②③句),Schedule、审批卡和
-            Otto 说的是同一份。这一页曾经是全产品唯一没说这件事的发布面 —— 商家站在一排
-            Connect 按钮前面,没人告诉他今天按下去也连不上。抄一遍就是第二份会漂移的措辞;
-            引用它,PUBLISHING_AVAILABLE 翻面那天这里跟着一起变。 */}
-        <div className="bg-secondary rounded-[14px]" style={{ padding: "0.875rem 1rem", display: "flex", flexDirection: "column", gap: "0.375rem" }}>
-          <p className="text-foreground text-[0.8125rem]" style={{ margin: 0 }}>{publishTruth.why}</p>
-          <p className="text-muted-foreground text-[0.75rem]" style={{ margin: 0 }}>{publishTruth.real}</p>
+        {connectError ? (
+          <Alert role="alert" variant="destructive">
+            <CircleAlert aria-hidden />
+            <AlertTitle>Meta connection failed</AlertTitle>
+            <AlertDescription>
+              <p>{connectError.message}</p>
+              {connectError.rawCode ? <p>Details: {connectError.rawCode}</p> : null}
+              {connectError.retry ? (
+                <Button asChild size="sm"><a href="/api/meta/authorize">Try again</a></Button>
+              ) : null}
+              {connectError.contactSupport ? (
+                <Button asChild size="sm"><a href={supportMailto("Switch on Meta connections")}>Email support</a></Button>
+              ) : null}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {publishingLoading ? (
+            <Badge><Spinner aria-hidden />Checking connections</Badge>
+          ) : channelsState.phase === "error" ? (
+            <Badge variant="warning">Status unavailable</Badge>
+          ) : needsAttention ? (
+            <Badge variant="warning">Needs attention</Badge>
+          ) : connectedCount > 0 ? (
+            <Badge variant="success">{connectedCount} connected</Badge>
+          ) : (
+            <Badge variant="outline">Nothing connected</Badge>
+          )}
+          <Button type="button" size="sm" variant="secondary" onClick={() => setAddConnectionOpen(true)}>
+            <Plug data-icon="inline-start" aria-hidden />
+            Add connection
+          </Button>
         </div>
 
-        {/* Publishing — where Otto posts on your behalf. */}
-        <div>
-          <h2 className="text-foreground font-semibold" style={{ fontSize: 15, margin: "0 0 0.25rem" }}>Publishing</h2>
-          {/* W2-4:这句原本把「谁能连、谁不能」写死成一句话("Instagram and Facebook … X is
-              listed below but not available yet"),于是渠道名单有两份 —— 一份在 CHANNEL_META,
-              一份在这段文案里。下面每一行现在各自说自己的实情,这句就只留分区本身的意思。 */}
-          <p className="text-muted-foreground text-[0.75rem]" style={{ margin: "0 0 0.5rem" }}>
-            Where Otto posts on your behalf. Connecting one channel does not connect the others.
-          </p>
-          <div data-section="publishing" className="bg-card border border-border rounded-[14px]" style={{ padding: "0 1rem" }}>
-            {publishingLoading && (
-              <p className="text-muted-foreground text-[0.75rem]" style={{ padding: "0.75rem 0" }}>Checking…</p>
-            )}
-            {!publishingLoading && channelsState.phase === "error" && (
-              <div style={{ padding: "0.75rem 0", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.5rem" }}>
-                <p className="text-muted-foreground text-[0.75rem]" style={{ margin: 0 }}>Could not load channels.</p>
-                <Button type="button" size="sm" variant="ghost" onClick={() => void load()}>Retry</Button>
-              </div>
-            )}
-            {/* W2-4 多渠道版式:**有哪几行**来自 CHANNEL_META(渠道权威),**每一行的状态**才来自
-                那一次读。所以每一个渠道各带各的开关 —— 一行连着、一行要重连、一行今天根本连不上,
-                三行各说各的,没有一颗全局开关替它们回答。X 那一行按 isConnectableChannel() 落到
-                MessagingRow:说实话、不画 Connect 按钮(今天已经这样,这里连同围栏一起保住)。
-                X OAuth 落地那天删 channel-meta.ts 里那一个 id,这一行自己就变成可连的。 */}
-            {!publishingLoading && channelsState.phase === "loaded" && publishingChannelRows(channelsState.channels).map((row) =>
-              !row.connectable ? (
-                <MessagingRow key={row.id} id={row.id} label={row.label} />
-              ) : row.state ? (
-                // Status already comes from getAccountViewData()'s single Meta read for
-                // instagram/facebook (#518 rework finding 2) — no client-side override needed.
-                <ChannelRow key={row.id} channel={row.state} />
-              ) : (
-                // 那一次读没带回这个渠道:说不知道,不让它凭空消失(判官 P2-1)。
-                <UnreadableChannelRow key={row.id} id={row.id} label={row.label} onRetry={() => void load()} />
-              ),
-            )}
-          </div>
-
-          {/* Meta ad accounts — detail on the connection above, once it's live. */}
-          {showAdsPanel && (
-            <div className="bg-card border border-border rounded-[14px]" style={{ padding: "1rem", marginTop: "0.75rem" }}>
-              <div className="text-foreground font-semibold" style={{ fontSize: 15 }}>Meta ad accounts</div>
-
-              {meta.phase === "unreachable" && (
-                <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.5rem" }}>
-                  <p className="text-muted-foreground text-[0.75rem]" style={{ margin: 0 }}>
-                    Couldn&rsquo;t reach Meta just now — this is usually temporary. Your connection is fine.
-                  </p>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => void load()}>
+        <div className="grid min-h-[520px] overflow-hidden rounded-[var(--radius-card)] border border-border bg-card lg:grid-cols-[320px_minmax(0,1fr)]">
+          <section data-section="publishing" className="border-b border-border p-4 lg:border-b-0 lg:border-r" aria-label="Connected services">
+            <p className="mb-3 px-2 text-xs font-semibold text-muted-foreground">Services</p>
+            {publishingLoading ? (
+              <ChannelRowsLoading />
+            ) : channelsState.phase === "error" ? (
+              <Alert variant="warning">
+                <CircleAlert aria-hidden />
+                <AlertTitle>Could not load connections</AlertTitle>
+                <AlertDescription>
+                  <p>Your saved connections were not changed.</p>
+                  <Button type="button" size="sm" variant="outline" onClick={() => void load()}>
+                    <RefreshCw data-icon="inline-start" aria-hidden />
                     Retry
                   </Button>
-                </div>
-              )}
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <div className="space-y-1">
+                {connectionRows.map((row) => {
+                  const status = connectionStatus(row);
+                  const selected = row.id === selectedRow?.id;
+                  return (
+                    <Button
+                      key={row.id}
+                      data-channel={row.id}
+                      type="button"
+                      variant="ghost"
+                      motion="instant"
+                      aria-pressed={selected}
+                      aria-label={`View ${row.label} connection`}
+                      className={cn(
+                        "h-auto w-full justify-start rounded-lg border border-transparent px-3 py-3 text-left font-normal",
+                        selected && "border-foreground/60 bg-background shadow-xs",
+                      )}
+                      onClick={() => setSelectedChannelId(row.id)}
+                    >
+                      <ChannelIcon id={row.id} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold">{row.label}</span>
+                        <span className="mt-1 block"><Badge variant={status.variant}>{status.label}</Badge></span>
+                      </span>
+                      <ChevronRight className="size-4 text-muted-foreground" aria-hidden />
+                    </Button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
 
-              {meta.phase === "connected" && (
-                <div style={{ marginTop: "0.5rem" }}>
-                  <div className="text-muted-foreground text-[0.75rem]" style={{ marginBottom: "0.5rem" }}>{meta.accounts.length} ad account{meta.accounts.length === 1 ? "" : "s"}</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                    {meta.accounts.map((a) => {
-                      const ins = insights?.find((i) => i.accountId === a.id);
-                      const m = ins?.metrics;
-                      // #693 — a.status is Meta's numeric account_status. It never reaches the
-                      // merchant as-is; the shared mapping turns it into words (or admits it
-                      // doesn't recognise the code), and says what it means for their ads.
-                      const statusView = describeMetaAdAccountStatus(a.status);
-                      return (
-                        <div key={a.id} className="border-b border-border" style={{ padding: "4px 0" }}>
-                          <div className="text-foreground text-[0.8125rem]" style={{ display: "flex", justifyContent: "space-between" }}>
-                            <span>{a.name || a.id}</span>
-                            <span className="text-muted-foreground">{a.currency}{statusView ? ` · ${statusView.label}` : ""}</span>
-                          </div>
-                          {statusView?.detail && (
-                            <div
-                              className={statusView.tone === "attention" ? "text-[var(--error-soft-foreground)]" : "text-muted-foreground"}
-                              style={{ fontSize: "0.75rem", paddingLeft: 2, marginTop: 2 }}
-                            >
-                              {statusView.detail}
-                            </div>
-                          )}
-                          {m && (
-                            <div className="text-muted-foreground text-[0.75rem]" style={{ paddingLeft: 2, marginTop: 2 }}>
-                              {m.spend ? `Spent ${m.spend}` : "—"} · {m.impressions ?? "—"} impr · CTR {m.ctr ?? "—"}% · CPC {m.cpc ?? "—"} · {m.purchaseRoas ? `ROAS ${m.purchaseRoas}` : "no conversion tracking"}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {/* ── Autonomy + Kill-switch controls (only when write permission granted) ── */}
-                  {meta.canWrite ? (
-                    <div className="border-t border-border" style={{ marginTop: "1rem", paddingTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                      {/* Autonomy selector */}
-                      <div>
-                        <div className="text-foreground font-semibold text-[0.8125rem]" style={{ marginBottom: "0.25rem" }}>Otto autonomy</div>
-                        <div style={{ display: "flex", gap: "0.5rem" }}>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={meta.adsAutonomy === "ASK" ? "brand" : "ghost"}
-                            disabled={saving === "autonomy"}
-                            onClick={() => void handleAutonomy("ASK")}
-                          >
-                            Ask
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={meta.adsAutonomy === "AUTO" ? "brand" : "ghost"}
-                            disabled={saving === "autonomy"}
-                            onClick={() => void handleAutonomy("AUTO")}
-                          >
-                            Auto
-                          </Button>
-                        </div>
-                        {/* #556/#541 — the Auto disclosure must be readable BEFORE switching,
-                            so it renders in both modes, not only after Auto is on. */}
-                        <p className="text-muted-foreground text-[0.75rem]" style={{ margin: "0.25rem 0 0" }}>
-                          Ask (default) — Otto always asks before making changes. Auto lets Otto
-                          pause ads, lower budgets, and create paused draft campaigns in your ad
-                          account without asking you — anything that spends or goes live still asks
-                          you first.
-                        </p>
-                      </div>
-
-                      {/* Kill-switch */}
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <div>
-                          <div className="text-foreground font-semibold text-[0.8125rem]">Pause all ad changes</div>
-                          <div className="text-muted-foreground text-[0.75rem]">Otto cannot change any ad until you unpause.</div>
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={meta.adsWritesPaused ? "destructive" : "ghost"}
-                          disabled={saving === "paused"}
-                          onClick={() => void handlePaused(!meta.adsWritesPaused)}
-                        >
-                          {meta.adsWritesPaused ? "Paused — resume?" : "Pause"}
-                        </Button>
-                      </div>
-
-                      {saveError && <p className="text-[var(--error-soft-foreground)] text-[0.75rem]" style={{ margin: 0 }}>{saveError}</p>}
-                    </div>
-                  ) : (
-                    <div style={{ marginTop: "0.75rem", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.5rem" }}>
-                      <p className="text-muted-foreground text-[0.8125rem]" style={{ margin: 0 }}>
-                        Reconnect to let Otto manage your ads.
+          <section className="min-w-0 px-5 py-6 sm:px-7" aria-live="polite">
+            {selectedRow ? (
+              <div className="mx-auto flex max-w-3xl flex-col gap-7">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex items-start gap-4">
+                    <ChannelIcon id={selectedRow.id} />
+                    <div>
+                      <h2 className="text-xl font-semibold tracking-[-0.025em]">{selectedRow.label}</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {selectedState?.targets.join(", ") || (selectedRow.connectable ? "No account linked" : "This service is not available to connect.")}
                       </p>
-                      <Button asChild size="sm" variant="brand">
-                        <a href="/api/meta/authorize" style={{ textDecoration: "none" }}>Reconnect Meta</a>
-                      </Button>
+                      <div className="mt-2"><Badge variant={connectionStatus(selectedRow).variant}>{connectionStatus(selectedRow).label}</Badge></div>
                     </div>
-                  )}
-
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="mt-3"
-                    onClick={async () => { await disconnectMeta(); void load(); }}
-                  >
-                    Disconnect
-                  </Button>
+                  </div>
+                  {selectedRow.connectable && selectedState ? (
+                    <Button asChild size="sm" variant={selectedState.status === "connected" && !selectedBlocked ? "secondary" : "default"}>
+                      <a href={selectedState.connectUrl}>
+                        {selectedBlocked ? "Reconnect" : selectedState.status === "connected" ? "Manage" : "Connect"}
+                      </a>
+                    </Button>
+                  ) : selectedRow.connectable ? (
+                    <Button type="button" size="sm" variant="outline" onClick={() => void load()}>
+                      <RefreshCw data-icon="inline-start" aria-hidden />Retry status
+                    </Button>
+                  ) : null}
                 </div>
-              )}
-            </div>
-          )}
+
+                <div className="border-y border-border">
+                  <div className="grid gap-2 border-b border-border py-5 sm:grid-cols-[180px_minmax(0,1fr)]">
+                    <h3 className="text-sm font-semibold">Workspace access</h3>
+                    <p className="text-sm text-muted-foreground">Available to everyone in this workspace.</p>
+                  </div>
+                  <div className="grid gap-2 border-b border-border py-5 sm:grid-cols-[180px_minmax(0,1fr)]">
+                    <h3 className="text-sm font-semibold">Connection health</h3>
+                    <div className="text-sm text-muted-foreground">
+                      {selectedBlocked ? CONNECTION_BLOCKER_COPY[selectedBlocked].status : connectionStatus(selectedRow).label}
+                    </div>
+                  </div>
+                  <div className="grid gap-2 py-5 sm:grid-cols-[180px_minmax(0,1fr)]">
+                    <h3 className="text-sm font-semibold">Data available</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {channelMeta(selectedRow.id)?.capabilities
+                        ? channelCapabilityBlurb(channelMeta(selectedRow.id)!.capabilities)
+                        : "No data available"}
+                    </p>
+                  </div>
+                </div>
+
+                {selectedMetaBacked && (meta.phase === "connected" || meta.phase === "unreachable") ? (
+                  <Card size="sm">
+                    <CardHeader>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <Badge variant="otto-soft"><Bot aria-hidden />Otto control</Badge>
+                        {meta.phase === "connected" ? (
+                          <Badge variant={meta.adsWritesPaused ? "destructive" : "success"}>
+                            {meta.adsWritesPaused ? "Changes paused" : "Ready"}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <CardTitle>Meta ad accounts</CardTitle>
+                      <CardDescription>Accounts visible through the same Meta connection.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-5">
+                      {meta.phase === "unreachable" ? (
+                        <Alert variant="warning">
+                          <CircleAlert aria-hidden />
+                          <AlertTitle>Meta is temporarily unavailable</AlertTitle>
+                          <AlertDescription>
+                            <p>Your saved connection is still intact.</p>
+                            <Button type="button" size="sm" variant="outline" onClick={() => void load()}>
+                              <RefreshCw data-icon="inline-start" aria-hidden />Retry
+                            </Button>
+                          </AlertDescription>
+                        </Alert>
+                      ) : null}
+
+                      {meta.phase === "connected" ? (
+                        <>
+                          <Table aria-label="Meta ad accounts">
+                            <TableBody>
+                              {meta.accounts.map((account) => {
+                                const insight = insights?.find((item) => item.accountId === account.id);
+                                const metrics = insight?.metrics;
+                                const statusView = describeMetaAdAccountStatus(account.status);
+                                const badgeVariant = statusView?.tone === "attention" ? "destructive" : statusView?.label === "Active" ? "success" : "outline";
+                                return (
+                                  <TableRow key={account.id}>
+                                    <TableCell className="whitespace-normal">
+                                      <div className="grid min-w-0 gap-2 py-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                                        <span className="truncate font-medium text-foreground">{account.name || account.id}</span>
+                                        <Badge variant={badgeVariant}>{account.currency}{statusView ? ` · ${statusView.label}` : ""}</Badge>
+                                        {statusView?.detail ? <span className="text-xs leading-5 text-destructive sm:col-span-2">{statusView.detail}</span> : null}
+                                        {metrics ? (
+                                          <span className="text-xs leading-5 text-muted-foreground sm:col-span-2">
+                                            {metrics.spend ? `Spent ${metrics.spend}` : "—"} · {metrics.impressions ?? "—"} impressions · CTR {metrics.ctr ?? "—"}% · CPC {metrics.cpc ?? "—"} · {metrics.purchaseRoas ? `ROAS ${metrics.purchaseRoas}` : "no conversion tracking"}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
+                          <Separator />
+                          {meta.canWrite ? (
+                            <div className="flex flex-col gap-5">
+                              <div className="flex flex-col gap-3">
+                                <div>
+                                  <span className="font-medium text-foreground">Otto autonomy</span>
+                                  <p className="mt-1 text-sm leading-6 text-muted-foreground">Ask (default) — Otto always asks before making changes. Auto lets Otto pause ads, lower budgets, and create paused draft campaigns in your ad account without asking you — anything that spends or goes live still asks you first.</p>
+                                </div>
+                                <ToggleGroup
+                                  type="single"
+                                  variant="outline"
+                                  value={meta.adsAutonomy}
+                                  disabled={saving === "autonomy"}
+                                  aria-label="Otto autonomy"
+                                  onValueChange={(value) => {
+                                    if (value === "ASK" || value === "AUTO") void handleAutonomy(value);
+                                  }}
+                                >
+                                  <ToggleGroupItem value="ASK">Ask</ToggleGroupItem>
+                                  <ToggleGroupItem value="AUTO">Auto</ToggleGroupItem>
+                                </ToggleGroup>
+                              </div>
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                  <span className="font-medium text-foreground">Pause all ad changes</span>
+                                  <p className="mt-1 text-sm text-muted-foreground">Otto cannot change any ad until you resume.</p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={meta.adsWritesPaused ? "default" : "destructive-secondary"}
+                                  disabled={saving === "paused"}
+                                  onClick={() => void handlePaused(!meta.adsWritesPaused)}
+                                >
+                                  {saving === "paused" ? <Spinner data-icon="inline-start" aria-hidden /> : null}
+                                  {meta.adsWritesPaused ? "Resume" : "Pause"}
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <Alert variant="warning">
+                              <ShieldCheck aria-hidden />
+                              <AlertTitle>Ad management permission is missing</AlertTitle>
+                              <AlertDescription><p>Reconnect Meta to let Otto manage ads.</p></AlertDescription>
+                            </Alert>
+                          )}
+                          {saveError ? (
+                            <Alert role="alert" variant="destructive">
+                              <CircleAlert aria-hidden />
+                              <AlertTitle>Could not update Meta access</AlertTitle>
+                              <AlertDescription>{saveError}</AlertDescription>
+                            </Alert>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </CardContent>
+                    {meta.phase === "connected" ? (
+                      <CardFooter>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button type="button" size="sm" variant="destructive-secondary"><Unplug aria-hidden />Disconnect Meta</Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Disconnect Meta?</AlertDialogTitle>
+                              <AlertDialogDescription>Instagram, Facebook, ad-account insights, and Otto ad controls will stop working until you reconnect. Existing creative work stays saved.</AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel disabled={saving === "disconnect"}>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                disabled={saving === "disconnect"}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() => void handleDisconnect()}
+                              >
+                                {saving === "disconnect" ? <Spinner data-icon="inline-start" aria-hidden /> : null}
+                                Disconnect Meta
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </CardFooter>
+                    ) : null}
+                  </Card>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
         </div>
 
-        {/* Messaging — where customers reach you (CRM). */}
-        <div>
-          <h2 className="text-foreground font-semibold" style={{ fontSize: 15, margin: "0 0 0.25rem" }}>Messaging</h2>
-          <p className="text-muted-foreground text-[0.75rem]" style={{ margin: "0 0 0.5rem" }}>
-            CRM channels your customers message you on.
-          </p>
-          <div data-section="messaging" className="bg-card border border-border rounded-[14px]" style={{ padding: "0 1rem" }}>
-            {MESSAGING_CHANNELS.map((m) => (
-              <MessagingRow key={m.id} id={m.id} label={m.label} />
-            ))}
-          </div>
-        </div>
+        <Dialog open={addConnectionOpen} onOpenChange={setAddConnectionOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add connection</DialogTitle>
+              <DialogDescription>Choose a service to make its approved data available across this workspace.</DialogDescription>
+            </DialogHeader>
+            <div className="divide-y divide-border overflow-hidden rounded-[var(--radius-card)] border border-border">
+              {connectionRows.map((row) => {
+                const status = connectionStatus(row);
+                return (
+                  <div key={row.id} className="flex items-center gap-3 px-4 py-3.5">
+                    <ChannelIcon id={row.id} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold">{row.label}</p>
+                      <p className="text-xs text-muted-foreground">{status.label}</p>
+                    </div>
+                    {!row.connectable ? (
+                      <Badge variant="outline">Unavailable</Badge>
+                    ) : !row.state ? (
+                      <Button type="button" size="sm" variant="outline" onClick={() => void load()}>Retry</Button>
+                    ) : row.state.status === "connected" && !row.state.blocker ? (
+                      <Badge variant="success">Connected</Badge>
+                    ) : (
+                      <Button asChild size="sm"><a href={row.state.connectUrl}>Connect</a></Button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

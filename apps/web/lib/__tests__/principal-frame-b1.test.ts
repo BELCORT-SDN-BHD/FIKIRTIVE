@@ -51,7 +51,7 @@ const h = vi.hoisted(() => ({
   fetchOwnerInsights: vi.fn(),
   fetchOwnerInsightsSeries: vi.fn(),
   // site 5 — getCoworkThreadClient
-  getCoworkThread: vi.fn(),
+  getCoworkThreadPage: vi.fn(),
   resolveCoworkResultUrls: vi.fn(),
   // site 7 — getAdPerformance
   fetchOwnerAdPerformance: vi.fn(),
@@ -99,7 +99,7 @@ vi.mock("@/lib/meta-insights", () => ({
 }));
 vi.mock("@/lib/meta-performance", () => ({ fetchOwnerAdPerformance: h.fetchOwnerAdPerformance }));
 vi.mock("@/lib/data", () => ({
-  getCoworkThread: h.getCoworkThread,
+  getCoworkThreadPage: h.getCoworkThreadPage,
   resolveCoworkResultUrls: h.resolveCoworkResultUrls,
 }));
 
@@ -150,7 +150,7 @@ beforeEach(() => {
   h.projectFindFirst.mockImplementation(async () => record(null));
   h.fetchOwnerInsights.mockImplementation(async () => record({ notConnected: true }));
   h.fetchOwnerInsightsSeries.mockImplementation(async () => record({ notConnected: true }));
-  h.getCoworkThread.mockImplementation(async () => record(null));
+  h.getCoworkThreadPage.mockImplementation(async () => record(null));
   h.fetchOwnerAdPerformance.mockImplementation(async () => record({ ads: [] }));
 });
 
@@ -205,7 +205,7 @@ describe("#464 B1 — the ambient user frame is live at each seamed site", () =>
     const result = await getCoworkThreadClient("thread_1");
 
     expect(result).toBeNull();
-    expect(h.getCoworkThread).toHaveBeenCalledTimes(1);
+    expect(h.getCoworkThreadPage).toHaveBeenCalledTimes(1);
     expectUserFrame(probe.seen[0], GATE.ownerId, GATE.email);
   });
 
@@ -261,7 +261,7 @@ describe("#464 B1 — sequential requests get SEPARATE frames", () => {
     // provably alive at the same time rather than merely one-after-another.
     let releaseA: () => void = () => {};
     const aReached = new Promise<void>((resolve) => {
-      h.getCoworkThread.mockImplementationOnce(async () => {
+      h.getCoworkThreadPage.mockImplementationOnce(async () => {
         const seen = record(null);
         resolve();
         await new Promise<void>((r) => (releaseA = r));

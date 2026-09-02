@@ -1,12 +1,19 @@
 "use client";
 import React, { useState, useEffect, useMemo, useCallback, useRef, useTransition } from "react";
-import { Plus, X, Check, Pencil } from "lucide-react";
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Pencil, Plus, Rows3, X } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
+import { Spinner } from "@/components/ui/spinner";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +23,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import type { OttoViewKey } from "./otto-view-param";
+import { OttoAvatar } from "./OttoAvatar";
 import { isGenerationBackedItem, type StuffItem } from "@/lib/stuff-items";
 import {
   listScheduledPosts,
@@ -34,6 +42,7 @@ import { autoPublishHint } from "@/lib/auto-publish-gate";
 // answer itself rather than hoping the merchant infers it from a greyed-out switch.
 import { publishPreviewBadge, publishSurfaceCopy, publishSurfaceLines } from "@fikirtive/core/schedule-draft";
 import { CONNECTABLE_CHANNEL_META, channelCapabilityBlurb, channelMeta, isConnectableChannel } from "@/lib/channels/channel-meta";
+import { cn } from "@/lib/utils";
 // The single source of "which accounts is this merchant connected to right now" and the ONE
 // derived judgement built on it (#741 r2). This screen never touches the raw list — the type
 // makes that impossible — so Plan, the composer and "Approve all" cannot drift apart again.
@@ -107,15 +116,15 @@ type MediaLookup = Map<string, { url: string | null; kind: StuffItem["mediaKind"
 // be scheduled. Narrowing here makes the key non-optional at every use site below.
 type MediaChoice = StuffItem & { generationId: string };
 
-function tonePill(tone: StatusTone): string {
+function statusVariant(tone: StatusTone): "outline" | "success" | "info" | "warning" | "destructive" {
   switch (tone) {
-    case "draft": return "bg-secondary text-muted-foreground";
-    case "scheduled": return "bg-[#EAF3EC] text-[#15803D]";
-    case "publishing": return "bg-[#FFF6F2] text-[#9A3A1A]";
-    case "published": return "bg-[#EAF3EC] text-[#15803D]";
-    case "warn": return "bg-[#FEF6E7] text-[#9A6B00]";
-    case "error": return "bg-[#FDEDEC] text-[#B42318]";
-    case "muted": return "bg-secondary text-muted-foreground/70";
+    case "draft": return "outline";
+    case "scheduled": return "success";
+    case "publishing": return "info";
+    case "published": return "success";
+    case "warn": return "warning";
+    case "error": return "destructive";
+    case "muted": return "outline";
   }
 }
 
@@ -147,22 +156,6 @@ function ChannelIcon({ channel, size = 15 }: { channel: string; size?: number })
 
 // W2-4:能力那句话搬去 lib/channels/channel-meta.ts —— 它说的是渠道能力,权威就在那里
 // (顺带把 “media coming soon” 这半句没人排期的承诺删了,理由写在那个函数的注释里)。
-
-/** OTTO coral cloud mark (matches OttoAnalytics). Coral = OTTO only. */
-function CoralCloud({ size = 26 }: { size?: number }) {
-  return (
-    <svg width={size} height={Math.round((size * 110) / 120)} viewBox="0 0 120 110" role="img" aria-label="Otto" className="shrink-0">
-      <g fill="var(--brand)">
-        <ellipse cx="60" cy="64" rx="43" ry="22" />
-        <circle cx="37" cy="52" r="18" />
-        <circle cx="61" cy="40" r="24" />
-        <circle cx="85" cy="53" r="17" />
-      </g>
-      <rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308" />
-      <rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308" />
-    </svg>
-  );
-}
 
 function Thumb({ item, size = 40 }: { item: { url: string | null; kind: StuffItem["mediaKind"] } | undefined; size?: number }) {
   const style = { width: size, height: size } as const;
@@ -375,6 +368,7 @@ export function OttoSchedule({
   // about this merchant's workspace — so it needs no read, no state and no loading branch (#851).
   const publishCopy = publishSurfaceCopy();
   const previewBadge = publishPreviewBadge();
+  const [publishHeadline, ...publishDetails] = publishSurfaceLines();
 
   function openNew() {
     setComposer({
@@ -410,41 +404,53 @@ export function OttoSchedule({
 
   return (
     <div className="gb leading-[1.5] flex-1 overflow-auto">
-      <div className="mx-auto max-w-[920px] px-7 py-6">
+      <div className="mx-auto max-w-[1280px] px-5 py-6 md:px-8 lg:py-8">
         {/* ── Shared header ── */}
-        <div className="flex items-center gap-3 flex-wrap mb-3">
-          <h1 className="text-[1.5rem] font-bold tracking-[-0.02em]">Schedule</h1>
-          {/* #851 — the merchant must know BEFORE they write anything that the sending half is not
-              on. The word and the sentence behind it both come from the publish authority, so the
-              day it is switched on the badge disappears with nothing else to edit. */}
-          {previewBadge && (
-            <Badge variant="warning" title={publishCopy.fact}>
-              {previewBadge}
-            </Badge>
-          )}
-          <div className="flex items-center gap-1.5">
+        <div className="mb-5 flex flex-col gap-5 border-b border-border pb-5">
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="text-2xl font-semibold tracking-[-0.025em]">Schedule</h1>
+                {/* #851 — the merchant must know BEFORE they write anything that the sending half is not
+                    on. The word and the sentence behind it both come from the publish authority, so the
+                    day it is switched on the badge disappears with nothing else to edit. */}
+                {previewBadge && (
+                  <Badge variant="warning" title={publishCopy.fact}>
+                    {previewBadge}
+                  </Badge>
+                )}
+              </div>
+              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                Review Otto&rsquo;s plan, arrange upcoming posts, and keep every channel on one calendar.
+              </p>
+            </div>
+            <Button type="button" size="sm" onClick={openNew}>
+              <Plus data-icon /> New post
+            </Button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             {/* Chips and the status notice are NOT alternatives (#741 r5 P1). When one channel
                 read fine and another did not, the old if/else took the "connected" branch and
                 swallowed the "couldn't check" line with its Retry — the partial truncation went
                 silent again, which is the exact failure this ticket keeps re-finding. */}
             {isConnected &&
               connectedChannels.map((c) => (
-                <span
-                  key={c.id}
-                  className="inline-flex items-center gap-1.5 h-[28px] rounded-full border border-border bg-card px-3 text-[12px] font-semibold text-foreground"
-                >
+                <Badge key={c.id} variant="outline" className="h-7 gap-1.5 bg-card px-3">
                   <ChannelIcon channel={c.id} size={13} />
                   {c.label}
-                </span>
+                </Badge>
               ))}
             {!isConnected && canOfferConnect(accounts) ? (
               <Button
                 type="button"
                 variant="outline"
+                size="xs"
                 onClick={() => onNavigate("connections")}
-                className="h-[28px] gap-1.5 rounded-full border-dashed border-border bg-card px-3 text-[12px] font-semibold text-muted-foreground hover:bg-card hover:text-foreground"
+                className="h-7 rounded-full border-dashed text-muted-foreground"
               >
-                <Plus size={13} />
+                <Plus data-icon />
                 Connect a channel
               </Button>
             ) : accountsUnreadable(accounts) ? (
@@ -455,8 +461,9 @@ export function OttoSchedule({
                 <Button
                   type="button"
                   variant="outline"
+                  size="xs"
                   onClick={() => void refresh()}
-                  className="h-[28px] rounded-full border-border bg-card px-3 font-semibold text-foreground hover:bg-card"
+                  className="h-7 rounded-full"
                 >
                   Retry
                 </Button>
@@ -469,15 +476,16 @@ export function OttoSchedule({
                 <Button
                   type="button"
                   variant="outline"
+                  size="xs"
                   onClick={() => onNavigate("connections")}
-                  className="h-[28px] rounded-full border-border bg-card px-3 font-semibold text-foreground hover:bg-card"
+                  className="h-7 rounded-full"
                 >
                   Reconnect
                 </Button>
               </span>
             ) : null}
-          </div>
-          <div className="flex-1" />
+            </div>
+            <div className="flex-1" />
           {/* OTTO auto-publish toggle. #791-2: this is now the switch the publish scheduler
               actually reads (apps/worker scanDuePublishPosts) — off means approved posts wait.
 
@@ -486,27 +494,32 @@ export function OttoSchedule({
               first one is how the enabled branch came to promise a working send on the very same
               screen whose banner says nothing goes out. */}
           <label
-            className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground select-none"
+            className="flex items-center gap-2 text-xs font-semibold text-muted-foreground select-none"
             title={autoPublishHint(autoPublishAvailable)}
           >
             <Switch checked={autoPublish} onCheckedChange={toggleAutoPublish} disabled={savingAuto || !autoPublishAvailable} aria-label="Otto auto-publish" />
             Auto-publish
           </label>
           {/* View switcher */}
-          <div className="inline-flex rounded-[10px] border border-border bg-card p-0.5">
+          <ToggleGroup
+            type="single"
+            value={view}
+            onValueChange={(next) => { if (next) setView(next as ViewKey); }}
+            variant="outline"
+            size="sm"
+            aria-label="Schedule view"
+          >
             {(["plan", "calendar", "queue"] as ViewKey[]).map((v) => (
-              <Button
+              <ToggleGroupItem
                 key={v}
-                type="button"
-                variant="ghost"
-                onClick={() => setView(v)}
-                className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold ${
-                  view === v ? "bg-secondary text-foreground hover:bg-secondary" : "bg-transparent text-muted-foreground hover:bg-transparent"
-                }`}
+                value={v}
+                className="gap-1.5"
               >
+                {v === "plan" ? <Rows3 data-icon /> : v === "calendar" ? <CalendarDays data-icon /> : null}
                 {v === "plan" ? "Plan" : v === "calendar" ? "Calendar" : "Queue"}
-              </Button>
+              </ToggleGroupItem>
             ))}
+          </ToggleGroup>
           </div>
         </div>
 
@@ -515,17 +528,24 @@ export function OttoSchedule({
             bigger fact ("nothing here reaches a social account at all") to be guessed. Every
             sentence now comes from the publish authority, in its reading order: the fact, why,
             what is still real, and what comes next — with no date attached to that last one. */}
-        <div className="flex items-start gap-[11px] bg-[#FFF6F2] border border-[#FBD9C9] rounded-[14px] px-[15px] py-[12px] mb-4">
-          <CoralCloud size={22} />
-          <span className="flex-1 text-[13px] leading-[1.5] text-[#9A3A1A] flex flex-col gap-1">
-            {publishSurfaceLines().map((line) => (
-              <span key={line}>{line}</span>
+        <Alert variant="warning" className="mb-5 grid-cols-[22px_1fr] gap-x-3">
+          <OttoAvatar size={22} mood="warning" />
+          <AlertTitle>{publishHeadline}</AlertTitle>
+          <AlertDescription className="mt-0.5 gap-0.5 md:grid-cols-3 md:gap-x-6">
+            {publishDetails.map((line) => (
+              <p key={line}>{line}</p>
             ))}
-          </span>
-        </div>
+          </AlertDescription>
+        </Alert>
 
         {loading ? (
-          <div className="text-[13px] text-muted-foreground py-10 text-center">Loading your schedule…</div>
+          <Empty className="min-h-72 border border-border bg-card">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><Spinner /></EmptyMedia>
+              <EmptyTitle>Loading your schedule…</EmptyTitle>
+              <EmptyDescription>Checking posts, channels, and publishing status.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : view === "plan" ? (
           <PlanView
             posts={posts}
@@ -591,21 +611,23 @@ function ChannelFilterBar({
     ...CONNECTABLE_CHANNEL_META.map((c) => ({ key: c.id, label: c.label })),
   ];
   return (
-    <div className="inline-flex gap-1.5">
+    <ToggleGroup
+      type="single"
+      value={value}
+      onValueChange={(next) => { if (next) onChange(next as ChannelFilter); }}
+      variant="outline"
+      size="sm"
+      aria-label="Filter by channel"
+    >
       {opts.map((o) => (
-        <Button
+        <ToggleGroupItem
           key={o.key}
-          type="button"
-          variant="outline"
-          onClick={() => onChange(o.key)}
-          className={`h-[28px] rounded-full px-3 text-[12px] font-semibold ${
-            value === o.key ? "border-foreground bg-secondary text-foreground hover:bg-secondary" : "border-border bg-card text-muted-foreground hover:bg-card"
-          }`}
+          value={o.key}
         >
           {o.label}
-        </Button>
+        </ToggleGroupItem>
       ))}
-    </div>
+    </ToggleGroup>
   );
 }
 
@@ -614,15 +636,25 @@ function QueueList({
   mediaLookup,
   onEdit,
   emptyText,
+  embedded = false,
 }: {
   posts: ScheduledPostRow[];
   mediaLookup: MediaLookup;
   onEdit: (p: ScheduledPostRow) => void;
   emptyText: string;
+  embedded?: boolean;
 }) {
   const groups = useMemo(() => groupByDay(posts), [posts]);
   if (posts.length === 0) {
-    return <div className="text-[13px] text-muted-foreground py-8 text-center">{emptyText}</div>;
+    return (
+      <Empty className={embedded ? "min-h-56" : "min-h-56 border border-border bg-card"}>
+        <EmptyHeader>
+          <EmptyMedia variant="icon"><CalendarDays /></EmptyMedia>
+          <EmptyTitle>No scheduled posts</EmptyTitle>
+          <EmptyDescription>{emptyText}</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
   }
   return (
     <div className="flex flex-col gap-4">
@@ -640,17 +672,36 @@ function QueueList({
                   type="button"
                   variant="outline"
                   onClick={() => onEdit(post)}
-                  className="h-auto w-full justify-start gap-3 rounded-[12px] border-border bg-card px-3 py-2.5 text-left font-normal hover:bg-secondary/60"
+                  className={cn(
+                    "h-auto w-full border-border bg-card text-left font-normal hover:bg-secondary/60",
+                    embedded
+                      ? "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2.5"
+                      : "justify-start gap-3 rounded-[12px] px-3 py-2.5",
+                  )}
                 >
-                  <Thumb item={firstMedia} />
-                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-[7px] bg-accent text-foreground shrink-0">
-                    <ChannelIcon channel={post.channel} size={14} />
-                  </span>
-                  <span className="text-[12px] font-semibold text-muted-foreground shrink-0 w-[64px]">{formatTime(p)}</span>
-                  <span className="flex-1 min-w-0 text-[13px] text-foreground truncate">
-                    {post.caption || <span className="text-muted-foreground/70">No caption yet</span>}
-                  </span>
-                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${tonePill(pill.tone)}`}>{pill.label}</span>
+                  <Thumb item={firstMedia} size={embedded ? 36 : 40} />
+                  {embedded ? (
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm text-foreground">
+                        {post.caption || <span className="text-muted-foreground/70">No caption yet</span>}
+                      </span>
+                      <span className="mt-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                        <ChannelIcon channel={post.channel} size={12} />
+                        {formatTime(p)}
+                      </span>
+                    </span>
+                  ) : (
+                    <>
+                      <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-accent text-foreground">
+                        <ChannelIcon channel={post.channel} size={14} />
+                      </span>
+                      <span className="w-16 shrink-0 text-xs font-semibold text-muted-foreground">{formatTime(p)}</span>
+                      <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+                        {post.caption || <span className="text-muted-foreground/70">No caption yet</span>}
+                      </span>
+                    </>
+                  )}
+                  <Badge variant={statusVariant(pill.tone)} className="shrink-0">{pill.label}</Badge>
                 </Button>
               );
             })}
@@ -700,37 +751,47 @@ function PlanView({
   );
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Top: OTTO's proposed-week plan card */}
-      {proposed.length > 0 ? (
-        <PlanCard posts={proposed} mediaLookup={mediaLookup} onEdit={onEdit} onReload={onReload} accounts={accounts} />
-      ) : (
-        /* Same shape as the Analytics banner (#697): the button keeps its own width, so
-           without flex-wrap and a minimum for the copy the empty-state sentence collapsed
-           into a narrow ribbon on a phone. */
-        <div className="rounded-[16px] border border-border bg-card p-[18px] flex flex-wrap items-center gap-3">
-          <CoralCloud size={28} />
-          <div className="min-w-[220px] flex-1">
-            <div className="text-[14px] font-semibold text-foreground">No plan from Otto yet</div>
-            <div className="text-[13px] text-muted-foreground">
-              Ask Otto to plan your week — say something like &ldquo;post 3 times this week&rdquo; and Otto will draft a schedule for you to approve.
-            </div>
-          </div>
-          <Button variant="secondary" size="sm" onClick={onNew}>
-            <Plus size={15} /> New post
-          </Button>
-        </div>
-      )}
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.75fr)] lg:items-start">
+      <section aria-label="Otto plan">
+        {proposed.length > 0 ? (
+          <PlanCard posts={proposed} mediaLookup={mediaLookup} onEdit={onEdit} onReload={onReload} accounts={accounts} />
+        ) : (
+          /* Same shape as the Analytics banner (#697): the button keeps its own width, so
+             without flex-wrap and a minimum for the copy the empty-state sentence collapsed
+             into a narrow ribbon on a phone. */
+          <Empty className="min-h-56 border border-border bg-card">
+            <EmptyHeader>
+              <EmptyMedia><OttoAvatar size={34} mood="helpful" /></EmptyMedia>
+              <EmptyTitle>No plan from Otto yet</EmptyTitle>
+              <EmptyDescription>
+                Ask Otto to plan your week — say something like &ldquo;post 3 times this week&rdquo; and Otto will draft a schedule for you to approve.
+              </EmptyDescription>
+            </EmptyHeader>
+            <Button variant="secondary" size="sm" onClick={onNew}>
+              <Plus data-icon /> New post
+            </Button>
+          </Empty>
+        )}
+      </section>
 
-      {/* Bottom: upcoming queue */}
-      <div>
-        <div className="flex items-center gap-3 mb-3">
-          <div className="text-[15px] font-bold text-foreground">Up next</div>
-          <div className="flex-1" />
+      <Card size="sm" className="gap-4 lg:sticky lg:top-6">
+        <CardHeader className="flex-row flex-wrap items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <CardTitle>Up next</CardTitle>
+            <p className="text-xs text-muted-foreground">Approved and owner-created posts in chronological order.</p>
+          </div>
           <ChannelFilterBar value={channelFilter} onChange={onChannelFilter} />
-        </div>
-        <QueueList posts={queue} mediaLookup={mediaLookup} onEdit={onEdit} emptyText="Nothing queued yet. Approve Otto's plan or add a post." />
-      </div>
+        </CardHeader>
+        <CardContent>
+          <QueueList
+            posts={queue}
+            mediaLookup={mediaLookup}
+            onEdit={onEdit}
+            emptyText="Nothing queued yet. Approve Otto's plan or add a post."
+            embedded
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -786,16 +847,17 @@ function PlanCard({
   }
 
   return (
-    <div className="rounded-[16px] border border-[#FBD9C9] bg-[#FFFBF9] overflow-hidden">
-      <div className="flex items-center gap-[11px] px-[18px] py-[14px] border-b border-[#FBD9C9]">
-        <CoralCloud size={24} />
+    <Card className="gap-0 overflow-hidden border-brand/25 bg-brand-soft/35 p-0">
+      <CardHeader className="flex-row items-center gap-3 border-b border-brand/20 bg-card/55 px-5 py-4">
+        <OttoAvatar size={24} mood="helpful" />
         <div className="flex-1">
-          <div className="text-[14px] font-bold text-foreground">Otto planned {posts.length} post{posts.length === 1 ? "" : "s"} this week</div>
-          <div className="text-[12px] text-muted-foreground">Nothing sends until you say go — review, tweak, then approve.</div>
+          <CardTitle className="text-sm">Otto planned {posts.length} post{posts.length === 1 ? "" : "s"} this week</CardTitle>
+          <p className="text-xs text-muted-foreground">Nothing sends until you say go — review, tweak, then approve.</p>
         </div>
-      </div>
+        <Badge variant="otto-soft">Otto draft</Badge>
+      </CardHeader>
 
-      <div className="px-[18px] py-3 flex flex-col gap-4">
+      <CardContent className="flex flex-col gap-4 px-5 py-4">
         {groups.map((g) => (
           <div key={g.key}>
             <div className="text-[12px] font-semibold text-muted-foreground uppercase tracking-[0.05em] mb-2">{g.heading}</div>
@@ -814,7 +876,7 @@ function PlanCard({
                       {post.caption || <span className="text-muted-foreground/70">No caption yet</span>}
                     </span>
                     <Button variant="ghost" size="sm" className="shrink-0" onClick={() => onEdit(post)}>
-                      <Pencil size={14} /> Tweak
+                      <Pencil data-icon /> Tweak
                     </Button>
                   </div>
                 );
@@ -822,10 +884,10 @@ function PlanCard({
             </div>
           </div>
         ))}
-      </div>
+      </CardContent>
 
       {/* Sticky approve-all bar */}
-      <div className="sticky bottom-0 flex items-center gap-3 px-[18px] py-3 bg-[#FFFBF9] border-t border-[#FBD9C9]">
+      <CardFooter className="sticky bottom-0 border-t border-brand/20 bg-card/80 px-5 py-3 backdrop-blur-sm">
         {error && <span className="text-[12px] text-[var(--error-soft-foreground)] flex-1">{error}</span>}
         {!error && (
           <span className="text-[12px] text-muted-foreground flex-1">
@@ -838,11 +900,11 @@ function PlanCard({
               : `Say go once you're happy. ${publishSurfaceCopy().fact}`}
           </span>
         )}
-        <Button variant="brand" size="sm" disabled={pending || approvable.length === 0} onClick={approveAll}>
-          <Check size={15} /> {pending ? "Approving…" : `Approve all ${approvable.length}`}
+        <Button size="sm" disabled={pending || approvable.length === 0} onClick={approveAll}>
+          {pending ? <Spinner data-icon /> : <Check data-icon />} {pending ? "Approving…" : `Approve all ${approvable.length}`}
         </Button>
-      </div>
-    </div>
+      </CardFooter>
+    </Card>
   );
 }
 
@@ -904,34 +966,36 @@ function CalendarView({
 
   return (
     <div>
-      <div className="flex items-center gap-3 flex-wrap mb-4">
-        <div className="inline-flex rounded-[10px] border border-border bg-card p-0.5">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <ToggleGroup
+          type="single"
+          value={gran}
+          onValueChange={(next) => { if (next) setGran(next as Granularity); }}
+          variant="outline"
+          size="sm"
+          aria-label="Calendar range"
+        >
           {GRANULARITIES.map(({ id, label }) => (
-            <Button
+            <ToggleGroupItem
               key={id}
-              type="button"
-              variant="ghost"
-              onClick={() => setGran(id)}
-              className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold ${
-                gran === id ? "bg-secondary text-foreground hover:bg-secondary" : "bg-transparent text-muted-foreground hover:bg-transparent"
-              }`}
+              value={id}
             >
               {label}
-            </Button>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
         <div className="inline-flex items-center gap-1">
-          <Button variant="secondary" size="icon" className="size-9" aria-label="Previous" onClick={() => step(-1)}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m15 18-6-6 6-6" /></svg>
+          <Button variant="secondary" size="icon-sm" aria-label="Previous" onClick={() => step(-1)}>
+            <ChevronLeft data-icon />
           </Button>
           <Button variant="secondary" size="sm" onClick={goToday}>Today</Button>
-          <Button variant="secondary" size="icon" className="size-9" aria-label="Next" onClick={() => step(1)}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
+          <Button variant="secondary" size="icon-sm" aria-label="Next" onClick={() => step(1)}>
+            <ChevronRight data-icon />
           </Button>
         </div>
-        <div className="text-[15px] font-bold text-foreground">{headerLabel}</div>
+        <div className="text-sm font-semibold text-foreground">{headerLabel}</div>
         <div className="flex-1" />
-        <Button variant="secondary" size="sm" onClick={onNew}><Plus size={15} /> New post</Button>
+        <Button variant="secondary" size="sm" onClick={onNew}><Plus data-icon /> New post</Button>
       </div>
 
       {gran === "month" && (
@@ -973,7 +1037,7 @@ function MonthGrid({
   const { weeks } = useMemo(() => buildMonthGrid(year, month, posts), [year, month, posts]);
   const todayKey = `${today.year}-${String(today.month + 1).padStart(2, "0")}-${String(today.day).padStart(2, "0")}`;
   return (
-    <div className="rounded-[16px] border border-border bg-card overflow-hidden">
+    <div className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-sm)]">
       <div className="grid grid-cols-7 border-b border-border">
         {DAYS_SHORT.map((d) => (
           <div key={d} className="px-2 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-[0.05em] text-center">{d}</div>
@@ -988,27 +1052,27 @@ function MonthGrid({
               key={cell.key}
               className={`min-h-[92px] border-b border-r border-border p-1.5 flex flex-col gap-1 ${cell.inMonth ? "" : "bg-secondary/40"}`}
             >
-              <div className={`text-[11px] font-semibold ${cell.key === todayKey ? "text-brand-strong" : cell.inMonth ? "text-foreground" : "text-muted-foreground/60"}`}>
-                {cell.day}
+              <div className={`text-[11px] font-semibold ${cell.inMonth ? "text-foreground" : "text-muted-foreground/60"}`}>
+                <span className={cell.key === todayKey ? "inline-flex size-5 items-center justify-center rounded-full bg-foreground text-background" : "inline-flex size-5 items-center justify-center"}>
+                  {cell.day}
+                </span>
               </div>
               {shown.map((post) => {
                 const pill = statusPill(post.status);
                 return (
-                  // variant="link" — the only primitive with no hover:bg-* of its own,
-                  // so the status tint (tonePill) is never covered on hover. Tailwind's
-                  // JIT scanner needs each class as a literal token, so the hover cancel
-                  // is spelled out (hover:no-underline) rather than built from a variable.
-                  <Button
-                    key={post.id}
-                    type="button"
-                    variant="link"
-                    onClick={() => onEdit(post)}
-                    title={post.caption}
-                    className={`h-auto w-full justify-start gap-1 truncate rounded-[6px] px-1.5 py-1 text-[10.5px] font-medium no-underline hover:no-underline ${tonePill(pill.tone)}`}
-                  >
-                    <ChannelIcon channel={post.channel} size={11} />
-                    <span className="truncate">{post.caption || "Post"}</span>
-                  </Button>
+                  <Badge key={post.id} asChild variant={statusVariant(pill.tone)}>
+                    <Button
+                      type="button"
+                      onClick={() => onEdit(post)}
+                      title={post.caption}
+                      variant="ghost"
+                      size="xs"
+                      className="h-auto w-full justify-start truncate rounded-md px-1.5 py-1 text-[10.5px] font-medium"
+                    >
+                      <ChannelIcon channel={post.channel} size={11} />
+                      <span className="truncate">{post.caption || "Post"}</span>
+                    </Button>
+                  </Badge>
                 );
               })}
               {overflow > 0 && <div className="text-[10.5px] font-semibold text-muted-foreground pl-1">+{overflow} more</div>}
@@ -1075,7 +1139,7 @@ function WeekColumns({
                     <ChannelIcon channel={post.channel} size={11} /> {formatTime(p)}
                   </div>
                   <div className="text-[11px] text-foreground line-clamp-2">{post.caption || "Post"}</div>
-                  <span className={`self-start rounded-full px-1.5 py-0.5 text-[9.5px] font-semibold ${tonePill(pill.tone)}`}>{pill.label}</span>
+                  <Badge variant={statusVariant(pill.tone)} className="self-start px-1.5 py-0 text-[9.5px]">{pill.label}</Badge>
                 </Button>
               );
             })}
@@ -1118,7 +1182,7 @@ function DayTimeline({
   }, [dayPosts]);
 
   return (
-    <div className="rounded-[16px] border border-border bg-card overflow-hidden">
+    <div className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-sm)]">
       {Array.from({ length: 24 }, (_, h) => {
         const items = byHour.get(h) ?? [];
         const ampm = h < 12 ? "AM" : "PM";
@@ -1148,7 +1212,7 @@ function DayTimeline({
                     </span>
                     <span className="text-[11px] font-semibold text-muted-foreground shrink-0">{formatTime(p)}</span>
                     <span className="text-[12px] text-foreground truncate max-w-[220px]">{post.caption || "Post"}</span>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${tonePill(pill.tone)}`}>{pill.label}</span>
+                    <Badge variant={statusVariant(pill.tone)} className="shrink-0 px-2 py-0 text-[10px]">{pill.label}</Badge>
                   </Button>
                 );
               })}
@@ -1186,7 +1250,7 @@ function QueueView({
       <div className="flex items-center gap-3 mb-3">
         <ChannelFilterBar value={channelFilter} onChange={onChannelFilter} />
         <div className="flex-1" />
-        <Button variant="secondary" size="sm" onClick={onNew}><Plus size={15} /> New post</Button>
+        <Button variant="secondary" size="sm" onClick={onNew}><Plus data-icon /> New post</Button>
       </div>
       <QueueList posts={filtered} mediaLookup={mediaLookup} onEdit={onEdit} emptyText="No posts yet. Add one or ask Otto to plan your week." />
     </div>
@@ -1404,7 +1468,7 @@ function Composer({
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-[min(560px,calc(100vw-2rem))]">
+      <DialogContent className="max-w-[min(680px,calc(100vw-2rem))]">
         <DialogHeader>
           <DialogTitle>{seed.mode === "create" ? "New post" : "Edit post"}</DialogTitle>
           <DialogDescription>
@@ -1416,35 +1480,39 @@ function Composer({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4 max-h-[62vh] overflow-auto pr-1">
+        <FieldGroup className="scroll-fade-b min-h-0 max-h-[calc(100dvh-20rem)] gap-5 overflow-y-auto pr-2 pb-4">
+          <div className="grid gap-5 sm:grid-cols-2">
           {/* Channel */}
-          <Field label="Channel">
-            <div className="flex gap-1.5">
+          <Field className={cn(picker.phase === "unavailable" && "sm:col-span-2")}>
+            <FieldLabel id="schedule-channel-label">Channel</FieldLabel>
+            <ToggleGroup
+              type="single"
+              value={channel}
+              onValueChange={(next) => { if (next) changeChannel(next as ChannelId); }}
+              variant="outline"
+              aria-labelledby="schedule-channel-label"
+            >
               {shownChannels.map((c) => (
-                <Button
+                <ToggleGroupItem
                   key={c}
-                  type="button"
-                  variant="outline"
+                  value={c}
                   disabled={!editable || !isConnectableChannel(c)}
-                  onClick={() => changeChannel(c)}
-                  className={`h-9 gap-1.5 rounded-[10px] px-3 text-[13px] font-semibold disabled:opacity-50 ${
-                    channel === c ? "border-foreground bg-secondary text-foreground hover:bg-secondary" : "border-border bg-card text-muted-foreground hover:bg-card"
-                  }`}
+                  className="gap-1.5"
                 >
                   <ChannelIcon channel={c} size={14} /> {channelMeta(c)?.label ?? c}
-                </Button>
+                </ToggleGroupItem>
               ))}
-            </div>
+            </ToggleGroup>
             {channelNote && (
-              <div role="status" className="text-[11.5px] text-muted-foreground mt-1">
+              <FieldDescription role="status">
                 {channelNote}
-              </div>
+              </FieldDescription>
             )}
             {cap && (
-              <div className="text-[11.5px] text-muted-foreground mt-1">
+              <FieldDescription>
                 {channelCapabilityBlurb(cap)}
                 {cap.rateLimitPer24h ? ` · ${cap.rateLimitPer24h}/day limit` : ""}
-              </div>
+              </FieldDescription>
             )}
           </Field>
 
@@ -1454,15 +1522,16 @@ function Composer({
               no connect flow at all shows no picker and no button (the Channel note above is the
               real next step); only a COMPLETED read that found nothing offers Connect. */}
           {picker.phase !== "unavailable" && (
-            <Field label="Account">
+            <Field>
+              <FieldLabel htmlFor="schedule-account">Account</FieldLabel>
               {picker.phase === "checking" ? (
-                <div role="status" className="rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
+                <div role="status" className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
                   {CHECKING_ACCOUNTS_BLOCKER}
                 </div>
               ) : picker.phase === "unreadable" ? (
                 // We looked and came back empty-handed. Never the Connect prompt below — we have
                 // no idea whether they are connected, so inviting them to connect is a guess.
-                <div role="status" className="flex items-center gap-2 rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
+                <div role="status" className="flex items-center gap-2 rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
                   <span className="flex-1">{ACCOUNTS_CHECK_FAILED}</span>
                   <Button variant="secondary" size="sm" type="button" onClick={onRetry}>
                     Retry
@@ -1471,17 +1540,17 @@ function Composer({
               ) : picker.phase === "blocked" ? (
                 // Connected, but not usable right now. The label is the one the Connections page
                 // shows for the same fact, and the action is the one that actually fixes it.
-                <div role="status" className="flex items-center gap-2 rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
+                <div role="status" className="flex items-center gap-2 rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
                   <span className="flex-1">{connectionBlockerStatus(picker.blocker)}</span>
                   <Button variant="secondary" size="sm" type="button" onClick={onConnect}>
                     Reconnect
                   </Button>
                 </div>
               ) : picker.phase === "none" ? (
-                <div className="flex items-center gap-2 rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
+                <div className="flex items-center gap-2 rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
                   <span className="flex-1">Connect an account first — you can save a draft now, but approving needs a page to post to.</span>
                   <Button variant="secondary" size="sm" type="button" onClick={onConnect}>
-                    <Plus size={14} /> Connect
+                    <Plus data-icon /> Connect
                   </Button>
                 </div>
               ) : (
@@ -1495,26 +1564,29 @@ function Composer({
                 // SelectTrigger out entirely, which would have cost those three suites their
                 // real coverage of the schedule approval gate. Left on the fence's exempt
                 // board with that reasoning; not a case of "forgot to migrate it".
-                <select
+                <NativeSelect
+                  id="schedule-account"
                   value={metaTargetId ?? ""}
                   disabled={!editable}
                   onChange={(e) => setMetaTargetId(e.target.value || null)}
-                  className="w-full h-9 rounded-[10px] border border-border bg-card px-2.5 text-[13px] font-semibold disabled:opacity-60"
+                  className="w-full"
                 >
-                  <option value="">Choose an account…</option>
+                  <NativeSelectOption value="">Choose an account…</NativeSelectOption>
                   {picker.options.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
+                    <NativeSelectOption key={o.value} value={o.value}>{o.label}</NativeSelectOption>
                   ))}
-                </select>
+                </NativeSelect>
               )}
             </Field>
           )}
+          </div>
 
           {/* Media picker (already-generated only) — hidden for text-only channels (maxMedia 0) */}
           {maxMedia > 0 && (
-          <Field label={`Media ${media.length ? `· ${media.length}/${maxMedia}` : ""}`}>
+          <Field>
+            <FieldLabel>Media {media.length ? `· ${media.length}/${maxMedia}` : ""}</FieldLabel>
             {mediaChoices.length === 0 ? (
-              <div className="text-[12px] text-muted-foreground rounded-[10px] border border-dashed border-border p-3">
+              <div className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
                 No media yet. Make something on the canvas first — Schedule reuses your existing images and videos (it never generates new ones here).
               </div>
             ) : (
@@ -1533,7 +1605,7 @@ function Composer({
                       variant="outline"
                       disabled={!editable}
                       onClick={() => toggleMedia(m.generationId)}
-                      className={`relative aspect-square h-auto w-full overflow-hidden rounded-[9px] border-2 p-0 disabled:opacity-50 ${selected ? "border-brand" : "border-border"}`}
+                      className={`relative aspect-square h-auto w-full overflow-hidden rounded-[9px] border-2 p-0 disabled:opacity-50 ${selected ? "border-foreground ring-2 ring-foreground/15" : "border-border"}`}
                     >
                       {m.mediaKind === "video" ? (
                         <video src={m.url ?? undefined} muted preload="metadata" className="w-full h-full object-cover" />
@@ -1542,7 +1614,7 @@ function Composer({
                         <img src={m.url ?? undefined} alt="" loading="lazy" className="w-full h-full object-cover" />
                       )}
                       {selected && (
-                        <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-brand-strong text-brand-foreground text-[9px] font-bold">{idx + 1}</span>
+                        <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-foreground text-background text-[9px] font-bold">{idx + 1}</span>
                       )}
                     </Button>
                   );
@@ -1553,17 +1625,19 @@ function Composer({
           )}
 
           {/* Caption */}
-          <Field label="Caption">
+          <Field>
+            <FieldLabel htmlFor="schedule-caption">Caption</FieldLabel>
             <Textarea
+              id="schedule-caption"
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
               disabled={!editable}
-              rows={4}
+              rows={3}
               placeholder="Write your caption…"
               // #920 判官 r1 P2 — the caption box has a fixed row count; field-sizing-fixed
               // stops ui/textarea's default field-sizing-content from growing it as the
               // merchant types.
-              className="field-sizing-fixed min-h-0 w-full resize-none rounded-[10px] border-border bg-card px-3 py-2 text-[13px] shadow-none"
+              className="field-sizing-fixed min-h-0 resize-none"
             />
             {/* 这里曾经有一颗永久 disabled 的按钮,title 里替 Otto 许诺它以后会照品牌记忆
                 代写文案(规格书 §4.6 点名删除)。一颗永远按不下去的按钮许的是一个没人排期
@@ -1574,37 +1648,43 @@ function Composer({
 
           {/* First comment (channel-gated) */}
           {supportsFirstComment && (
-            <Field label="First comment (optional)">
+            <Field>
+              <FieldLabel htmlFor="schedule-first-comment">First comment (optional)</FieldLabel>
               <Input
+                id="schedule-first-comment"
                 value={firstComment}
                 onChange={(e) => setFirstComment(e.target.value)}
                 disabled={!editable}
                 placeholder="Hashtags or a link…"
-                className="h-9 w-full rounded-[10px] border-border bg-card px-3 text-[13px]"
               />
             </Field>
           )}
 
           {/* Date / time / tz */}
-          <div className="grid grid-cols-3 gap-2">
-            <Field label="Date">
-              <Input type="date" value={dateKey} disabled={!editable} onChange={(e) => setDateKey(e.target.value)} className="h-9 w-full rounded-[10px] border-border bg-card px-2.5 text-[13px]" />
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.6fr]">
+            <Field>
+              <FieldLabel htmlFor="schedule-date">Date</FieldLabel>
+              <Input id="schedule-date" type="date" value={dateKey} disabled={!editable} onChange={(e) => setDateKey(e.target.value)} />
             </Field>
-            <Field label="Time">
-              <Input type="time" value={time} disabled={!editable} onChange={(e) => setTime(e.target.value)} className="h-9 w-full rounded-[10px] border-border bg-card px-2.5 text-[13px]" />
+            <Field>
+              <FieldLabel htmlFor="schedule-time">Time</FieldLabel>
+              <Input id="schedule-time" type="time" value={time} disabled={!editable} onChange={(e) => setTime(e.target.value)} />
             </Field>
-            <Field label="Time zone">
+            <Field className="sm:col-span-2 lg:col-span-1">
+              <FieldLabel htmlFor="schedule-time-zone">Time zone</FieldLabel>
               <Select value={tz} disabled={!editable} onValueChange={setTz}>
-                <SelectTrigger className="h-9 w-full rounded-[10px] border-border bg-card px-2 text-[13px] font-semibold">
+                <SelectTrigger id="schedule-time-zone" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {SCHEDULE_TZS.map((z) => <SelectItem key={z} value={z}>{z}</SelectItem>)}
+                  <SelectGroup>
+                    {SCHEDULE_TZS.map((z) => <SelectItem key={z} value={z}>{z}</SelectItem>)}
+                  </SelectGroup>
                 </SelectContent>
               </Select>
             </Field>
           </div>
-        </div>
+        </FieldGroup>
 
         {/* Why this post is stuck (publish worker's lastError). Read-only disclosure so a
             NEEDS_ATTENTION post — whose fields + Approve are disabled below — isn't a silent
@@ -1615,7 +1695,11 @@ function Composer({
           </div>
         )}
 
-        {error && <div role="alert" className="text-[12.5px] text-[var(--error-soft-foreground)]">{error}</div>}
+        {error && (
+          <Alert role="alert" variant="destructive" density="compact">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
         {/* #695 — what "Approve & schedule" is still waiting for, on screen for as long as it is
             greyed out. A title attribute alone was invisible to anyone not hovering (and to screen
@@ -1649,15 +1733,6 @@ function Composer({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-[12px] font-semibold text-foreground">{label}</span>
-      {children}
-    </label>
   );
 }
 

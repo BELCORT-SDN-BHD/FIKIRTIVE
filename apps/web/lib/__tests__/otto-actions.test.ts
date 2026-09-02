@@ -4284,7 +4284,11 @@ describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
 
   // #524 —— 同一条口子上的第二种拒绝:不是没钱,是商家自己设的上限拦住了。
   // 把它说成「余额不足」会把人送去 Billing 充值,而挡住他的那个数在 Settings 里。
-  it("spend cap:说的是上限而不是余额,出口是 Settings 不是 Billing", async () => {
+  // 前端基线合并 FRONT-A1(结构性改写,不是行为性):这条断言原本还禁掉「Billing」这个词。
+  // 换壳把 Settings 拆成四面之后,花费上限跟着余额搬到了 Billing & credits —— 出路句要指到
+  // 一个商家真找得到的地方,就绕不开那一面的名字。行为那一半一个字没松,而且钉得更紧:
+  // 仍然不许说 Top up、不许退化成「联系不上 Otto」,另外新增不许把它说成余额不够。
+  it("spend cap:说的是上限而不是余额,出口是上限真正住的那一面", async () => {
     mockRequireOwner.mockResolvedValue(GATE);
     mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
     mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID, ownerId: OWNER_ID });
@@ -4300,9 +4304,10 @@ describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
     };
 
     expect(res.error).toBe(
-      "Paused by your spend cap — this needs 4 credits and your cap is 2 credits per action. Raise the cap in Settings to run it.",
+      "Paused by your spend cap — this needs 4 credits and your cap is 2 credits per action. Raise the cap in Billing & credits to run it.",
     );
-    expect(res.error).not.toMatch(/Top up|Billing|Couldn't reach Otto/);
+    expect(res.error).not.toMatch(/Top up|Couldn't reach Otto/);
+    expect(res.error).not.toMatch(/out of credits|not enough credits/i);
   });
 
   it("别的故障仍然照实说是哪个动作失败了(这不是把所有错误都改成钱不够)", async () => {

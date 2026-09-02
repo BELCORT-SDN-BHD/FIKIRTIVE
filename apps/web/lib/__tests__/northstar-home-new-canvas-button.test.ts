@@ -1,24 +1,21 @@
 // @vitest-environment jsdom
-import { act, createElement, type ReactElement } from "react";
+import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// #933 — pressing Enter created a canvas named after whatever the merchant typed; the
-// "New canvas" button hardcoded `startCanvas("")` and silently dropped it, opening an
-// "Untitled Project" instead. Both controls must drive the exact same creation path
-// (`startCanvas` → `createProject`), not a second one that forgets the draft.
-const { routerPush } = vi.hoisted(() => ({ routerPush: vi.fn() }));
-vi.mock("@/lib/actions", () => ({ createProject: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: routerPush }) }));
+const mocks = vi.hoisted(() => ({
+  createCanvasConversation: vi.fn(),
+  routerPush: vi.fn(),
+}));
 
-import { NorthstarHome } from "@/components/canvas/NorthstarHome";
-import { createProject } from "@/lib/actions";
+vi.mock("@/lib/canvas-entry-actions", () => ({
+  createCanvasConversation: mocks.createCanvasConversation,
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.routerPush }) }));
 
-// React refuses act() outside a configured act environment.
+import { StartSomething } from "@/components/start-something/StartSomething";
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-// --- interactive harness (jsdom + react-dom/client; the real client event path,
-// mirrored from apps/web/lib/__tests__/crm-zero-channel-entry.test.ts) ---
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -31,67 +28,51 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function render(element: ReactElement): Promise<HTMLDivElement> {
+async function renderComposer() {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  await act(async () => root!.render(element));
+  await act(async () => root!.render(createElement(StartSomething)));
   return container;
 }
 
-// React tracks the last value it set on a controlled element and drops events whose value
-// "didn't change" — write through the NATIVE prototype setter so the event is respected.
-function setNativeValue(el: HTMLInputElement, value: string) {
-  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
+function typeInto(textarea: HTMLTextAreaElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, value);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-async function typeInto(input: HTMLInputElement, value: string) {
-  await act(async () => {
-    setNativeValue(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+describe("Create first prompt handoff", () => {
+  it("keeps the typed prompt and routes to its exact Canvas and Conversation", async () => {
+    mocks.createCanvasConversation.mockResolvedValue({
+      projectId: "canvas-1",
+      threadId: "thread-1",
+      handoffId: "handoff-1",
+    });
+    const dom = await renderComposer();
+    const textarea = dom.querySelector<HTMLTextAreaElement>('textarea[aria-label="Describe what you want to create"]')!;
 
-async function clickButton(button: HTMLButtonElement) {
-  await act(async () => {
-    button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-  });
-}
+    await act(async () => typeInto(textarea, "Raya promo for the croffle set"));
+    await act(async () => {
+      dom.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+      await Promise.resolve();
+    });
 
-function findNewCanvasButton(dom: HTMLDivElement): HTMLButtonElement {
-  // The submit (ArrowUp) control is type="submit"; "New canvas" is the only type="button".
-  const button = dom.querySelector<HTMLButtonElement>('button[type="button"]');
-  if (!button || !button.textContent?.includes("New canvas")) {
-    throw new Error("New canvas button not found");
-  }
-  return button;
-}
-
-describe('home "New canvas" button carries the merchant\'s typed idea (#933)', () => {
-  it("non-empty input: clicking the button creates a canvas named after the idea — same as pressing Enter", async () => {
-    vi.mocked(createProject).mockResolvedValue({ id: "proj-1" });
-
-    const dom = await render(createElement(NorthstarHome, { projects: [] }));
-    const input = dom.querySelector<HTMLInputElement>('input[aria-label="What are we making?"]');
-    expect(input).toBeTruthy();
-    await typeInto(input!, "Raya promo for the croffle set");
-
-    await clickButton(findNewCanvasButton(dom));
-
-    // The exact typed text reaches createProject — nothing hardcoded, nothing dropped.
-    expect(createProject).toHaveBeenCalledTimes(1);
-    expect(createProject).toHaveBeenCalledWith("Raya promo for the croffle set");
-    expect(routerPush).toHaveBeenCalledWith(expect.stringContaining("proj-1"));
+    expect(mocks.createCanvasConversation).toHaveBeenCalledWith({
+      prompt: "Raya promo for the croffle set",
+      requestId: expect.any(String),
+    });
+    expect(mocks.routerPush).toHaveBeenCalledWith(
+      "/create/canvas?project=canvas-1&thread=thread-1&handoff=handoff-1",
+    );
   });
 
-  it("empty input: clicking the button still opens a blank canvas, unchanged", async () => {
-    vi.mocked(createProject).mockResolvedValue({ id: "proj-2" });
+  it("does not create a blank Canvas", async () => {
+    const dom = await renderComposer();
+    await act(async () => {
+      dom.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
 
-    const dom = await render(createElement(NorthstarHome, { projects: [] }));
-    await clickButton(findNewCanvasButton(dom));
-
-    expect(createProject).toHaveBeenCalledTimes(1);
-    expect(createProject).toHaveBeenCalledWith("");
-    expect(routerPush).toHaveBeenCalledWith(expect.stringContaining("proj-2"));
+    expect(mocks.createCanvasConversation).not.toHaveBeenCalled();
+    expect(dom.textContent).toContain("Describe what you want to create.");
   });
 });

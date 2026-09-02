@@ -97,67 +97,33 @@ const EXEMPT: Family[] = [
   // stay in FROZEN_2026_08_11 below — that table is the 2026-08-11 historical snapshot and never
   // shrinks — but the live board only lists what is still owed, same as auth/navigation's
   // departure above. otto-schedule shrank from 19 to 1 (see its own row below) rather than
-  // leaving the board entirely.
-  {
-    family: "otto-schedule",
-    why: "日历:18 of 19 迁完(月/周/日切换、日期与时间输入、条目编辑、时区 Select)。The one holdout is " +
-      "the account/target picker — three money-adjacent suites (schedule-connect-honesty, " +
-      "schedule-media-key, publish-honest-preview) drive it by dispatching a native \"change\" " +
-      "event on a real <select>; Radix's Select has no such element (trigger button + " +
-      "Portal-rendered listbox), and this repo's own precedent for that gap " +
-      "(campaign-confirm-requote-race.test.ts mocking SelectTrigger to null) would have cost " +
-      "those suites their real coverage of the schedule approval gate. Left native on purpose, " +
-      "not a miss.",
-    files: { "components/otto/OttoSchedule.tsx": 1 },
-  },
-  {
-    family: "otto-creation",
-    why: "创作入口(快速简报/模板/发现):#774-#785 创作波正在重做这些面,按 #840 第 3 条,这一族不单开打磨 PR —— 在各自功能票里直接用 shadcn 做,围栏在那时收账。" +
-      "StoryboardCard.tsx 已于第四车清零(与画布族同车):四枚裸图标键、两个编辑框、时长下拉全部迁到 @/components/ui;时长那一格从原生下拉迁到 Radix Select,屏幕上的 Auto 与各时长档一样不少,只把「未设」的内部值从空串换成哨兵(Radix 禁止空串 value),no-op 判据跟着改,可访问名字用 aria-label 补回(按钮型触发器不走 label 关联)。",
-    files: {
-      "components/otto/QuickBrief.tsx": 7,
-      "components/otto/TemplateModal.tsx": 1,
-      "components/otto/OttoTemplates.tsx": 1,
-      "components/otto/OttoDiscover.tsx": 1,
-    },
-  },
+  // leaving the board entirely. otto-creation is gone from the live board too: Templates and
+  // Ideas use the shared catalog controls, QuickBrief uses Button/Input/Field/Card/Alert, and
+  // TemplateModal's file picker now wraps @/components/ui/input. Their frozen rows below stay
+  // untouched as the historical 2026-08-11 snapshot.
+  // otto-schedule is gone from this board — its account/target picker now uses the
+  // NativeSelect wrapper, preserving the real select element its behavior tests depend on.
   // otto-stuff is gone from this board — #840 第 3 步第三车 migrated all three files to
   // @/components/ui in full: components/otto/stuff/StuffLibrary.tsx (picker tiles, filter
-  // pills, open-item overlay, label row), components/otto/stuff/AddAssetDialog.tsx (close key,
-  // Upload/Generate segment toggle, the file <input> now wraps @/components/ui/input with its
-  // file: classes preserved, format-picker cards), components/otto/OttoStuff.tsx (product-pick
+  // pills, open-item overlay, label row), components/otto/stuff/AddAssetDialog.tsx (Dialog,
+  // Tabs, Field, Alert, the file Input with its file: classes preserved, format-picker Buttons),
+  // components/otto/OttoStuff.tsx (product-pick
   // list rows). The hand-rolled `<div role="dialog">` overlay in both files is untouched — it
   // is not a native <dialog> element, so it was never on this board. Sweeps to 0 now. Their
   // rows stay in FROZEN_2026_08_11 below — that table is the 2026-08-11 historical snapshot
   // and never shrinks — but the live board only lists what is still owed, same as
   // auth/navigation's departure above.
-  {
-    family: "analytics",
-    why: "Analytics:#792 已裁定收敛到只留 Meta,四个 soon 空格收起 —— 等那票落地后再迁,免得迁掉马上要拆的格子。",
-    files: { "components/otto/OttoAnalytics.tsx": 5 },
-  },
-  {
-    family: "crm",
-    why: "CRM 各页:#792 要把七入口折叠成一个「Customer(预览版)」入口,折叠后留下来的面才值得打磨,迁移排在那票之后。",
-    files: {
-      "components/crm/broadcasts/broadcast-composer-page.tsx": 4,
-      "components/crm/broadcasts/broadcast-detail-page.tsx": 1,
-      "components/crm/inbox/inbox-conversation-page.tsx": 1,
-      "components/crm/inbox/inbox-templates-page.tsx": 1,
-      "components/crm/segments-page.tsx": 1,
-      "components/crm/workflows/routine-authorization-panel.tsx": 4,
-      "components/crm/workflows/workflow-list-page.tsx": 1,
-      "components/crm/workflows/workflow-detail-page.tsx": 1,
-      "components/crm/workflows/archive-workflow-dialog.tsx": 1,
-    },
-  },
+  // analytics is gone from this board — its range selector and all actions now use
+  // @/components/ui, while the frozen row below remains the historical 2026-08-11 snapshot.
+  // crm is gone from this board — all remaining selects now compose the Radix-backed shadcn
+  // Select, the segments picker uses Button with aria-pressed, and the authorization checkboxes
+  // use Checkbox. The frozen rows below remain the historical 2026-08-11 snapshot.
   {
     family: "admin",
     why: "内部后台:不是商家面,优先级最低,但同样要迁 —— 手搓 checkbox 与筛选框的无障碍缺陷在哪一侧都是缺陷。",
     files: {
       "components/admin/AdminDashboardV2.tsx": 5,
       "components/admin/SettingsAdmin.tsx": 3,
-      "components/admin/TenantDetail.tsx": 3,
       "components/admin/ImpersonationBanner.tsx": 1,
     },
   },
@@ -168,26 +134,17 @@ const EXEMPT: Family[] = [
   // FROZEN_2026_08_11 below — that table is the 2026-08-11 historical snapshot and never shrinks —
   // but the live board only lists what is still owed, same as immersive-nav.tsx's departure above.
   // asset is gone from this board — #840 第 3 步第三车 migrated it in full:
-  // components/asset/DetailPanel.tsx's close button (al-iconbtn al-iconbtn-md) and variant
-  // thumbnail switcher both now wrap @/components/ui/button. Sweeps to 0 now. Its row stays in
+  // components/asset/DetailPanel.tsx now uses @/components/ui/sheet for the inspector shell and
+  // @/components/ui/button for the action rail and variant thumbnail switcher. Sweeps to 0 now.
+  // Its row stays in
   // FROZEN_2026_08_11 below — that table is the 2026-08-11 historical snapshot and never
   // shrinks — but the live board only lists what is still owed, same as auth/navigation's
   // departure above.
-  {
-    family: "gen-pickers",
-    why: "生成参数选择器(视频规格/图片形状):#840 第三车核实过 —— 这 4 处裸 <select> 全部由" +
-      "money-adjacent 测试套件(canvas-video-spec-ui.test.ts、asset-detail-image-shape.test.ts)" +
-      "直接派发原生 change 事件驱动,且有断言读 HTMLSelectElement 专属的 .options / 拼接后的 " +
-      ".textContent —— 与 otto-schedule 那一处刻意保留的账号选择器同一个坑:Radix Select 没有" +
-      "对应的原生 <select> 元素(trigger 按钮 + Portal 渲染的 listbox)。本仓库唯一已知的绕法" +
-      "(campaign-confirm-requote-race.test.ts 把 SelectTrigger 整个 mock 掉)会让这两个套件" +
-      "失去对出片报价从界面到付费请求这条路的真实覆盖 —— 那正是 #645 T4 刚补上的钱路断言。" +
-      "第三车因此原样保留,不是漏迁。",
-    files: {
-      "components/gen/VideoSpecPicker.tsx": 3,
-      "components/gen/ImageShapePicker.tsx": 1,
-    },
-  },
+  // gen-pickers is gone from this board — the image/video spec controls now use
+  // @/components/ui/native-select. NativeSelect deliberately wraps a real <select>, so the
+  // money-adjacent suites keep their HTMLSelectElement .options, .textContent and native
+  // change-event coverage while the visible control follows the shadcn design language.
+  // The four historical rows stay in FROZEN_2026_08_11 below; that snapshot never shrinks.
 ];
 
 /** 2026-08-11 实测总数,棘轮的刻度。只许调小。 */
@@ -350,7 +307,8 @@ function diffAgainstGit(current: Readonly<Record<string, number>>): string[] {
 function walk(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) return entry.name === "node_modules" ? [] : walk(full);
+    const isDirectory = entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(full).isDirectory());
+    if (isDirectory) return entry.name === "node_modules" ? [] : walk(full);
     return full.endsWith(".tsx") ? [full] : [];
   });
 }

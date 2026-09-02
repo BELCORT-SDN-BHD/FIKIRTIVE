@@ -86,11 +86,28 @@ export async function deleteMemory(raw: unknown): Promise<{ ok: true } | { error
   const gate = await requireOwner(); if ("error" in gate) return gate;
   try {
     const { count } = await prisma.memory.updateMany({
-      where: { id: r.id, ownerId: gate.ownerId, deletedAt: null },
+      // Match an already-deleted row too: retrying an uncertain request must stay successful.
+      where: { id: r.id, ownerId: gate.ownerId },
       data: { deletedAt: new Date() },
     });
     if (!count) return { error: "Memory not found." };
   } catch { return { error: "Couldn't delete — please try again." }; }
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Undo a soft delete without minting a second memory row. Repeating this is safe. */
+export async function restoreMemory(raw: unknown): Promise<{ ok: true } | { error: string }> {
+  const r = raw as { id?: unknown };
+  if (typeof r?.id !== "string") return { error: "Invalid request." };
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  try {
+    const { count } = await prisma.memory.updateMany({
+      where: { id: r.id, ownerId: gate.ownerId },
+      data: { deletedAt: null },
+    });
+    if (!count) return { error: "Memory not found." };
+  } catch { return { error: "Couldn't restore — please try again." }; }
   revalidatePath("/", "layout");
   return { ok: true };
 }

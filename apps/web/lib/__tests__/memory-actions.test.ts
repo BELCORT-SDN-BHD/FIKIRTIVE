@@ -25,7 +25,7 @@ vi.mock("@fikirtive/core", async () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { addMemory, updateMemory, deleteMemory, getBrandContextText, listMemory, listMyMemory } from "../memory-actions";
+import { addMemory, updateMemory, deleteMemory, restoreMemory, getBrandContextText, listMemory, listMyMemory } from "../memory-actions";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -102,9 +102,17 @@ describe("deleteMemory", () => {
     const res = await deleteMemory({ id: "m_1" });
     expect(res).toEqual({ ok: true });
     expect(mockMemoryUpdateMany).toHaveBeenCalledWith({
-      where: expect.objectContaining({ id: "m_1", ownerId: "o1" }),
+      where: { id: "m_1", ownerId: "o1" },
       data: expect.objectContaining({ deletedAt: expect.any(Date) }),
     });
+  });
+
+  it("is retry-safe because an already-deleted row still matches", async () => {
+    mockMemoryUpdateMany.mockResolvedValue({ count: 1 });
+    expect(await deleteMemory({ id: "m_1" })).toEqual({ ok: true });
+    expect(mockMemoryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "m_1", ownerId: "o1" },
+    }));
   });
 
   it("returns error when memory not found (count 0)", async () => {
@@ -117,6 +125,23 @@ describe("deleteMemory", () => {
     const res = await deleteMemory({});
     expect(res).toEqual({ error: expect.any(String) });
     expect(mockMemoryUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("restoreMemory", () => {
+  it("restores the original owner-scoped row and is safe to repeat", async () => {
+    mockMemoryUpdateMany.mockResolvedValue({ count: 1 });
+    expect(await restoreMemory({ id: "m_1" })).toEqual({ ok: true });
+    expect(await restoreMemory({ id: "m_1" })).toEqual({ ok: true });
+    expect(mockMemoryUpdateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: "m_1", ownerId: "o1" },
+      data: { deletedAt: null },
+    });
+  });
+
+  it("returns a refusal when the row does not belong to this owner", async () => {
+    mockMemoryUpdateMany.mockResolvedValue({ count: 0 });
+    expect(await restoreMemory({ id: "missing" })).toEqual({ error: "Memory not found." });
   });
 });
 

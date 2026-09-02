@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth-guard";
 import OttoConnections from "@/components/otto/OttoConnections";
+import { SettingsShell } from "@/components/settings/SettingsShell";
 
 /**
  * Connections —— 换壳(Wave 2)的 W2-4,规格书 `docs/specs/wave2-shell.md` §4.7。
@@ -24,9 +25,13 @@ export default async function ConnectionsRoutePage() {
   if ("error" in owner) redirect("/login");
 
   return (
-    // 与 /settings 同一层壳:`gb` 是唯一皮肤,高度交给这一层,滚动留在组件里。
-    <main className="gb flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-      <OttoConnections />
-    </main>
+    <SettingsShell
+      active="connections"
+      title="Connections"
+      description="Connect the services Fikirtive can use across this workspace."
+      scopeNote="Connections are shared by everyone in this workspace."
+    >
+      <OttoConnections embedded />
+    </SettingsShell>
   );
 }
