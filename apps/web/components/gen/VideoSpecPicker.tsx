@@ -20,6 +20,8 @@
  * 回执里。悬浮态发现,不占位、不打断高频操作。
  */
 
+import { Switch } from "@/components/ui/switch";
+
 /**
  * #914 r2(orchestrator 裁定,判官同一条原则贯彻到底):只许主张可证明的**回报行为**
  * （官方契约:视频响应结构可能带 revised_prompt),不许主张「引擎改了才回报」这类内部
@@ -51,10 +53,23 @@ export function videoResolutionLabel(resolution: string): string {
   return resolution;
 }
 
+/**
+ * 声音那一格的说明句(CREATE-A3「界面明示声音开关不影响报价」)。
+ *
+ * 这句话是**可实证**的:报价只查服务端那张按档价目表(`videoCreditsBySpec`,键=清晰度:秒数),
+ * 声音不在键里 —— 所以开关怎么拨,屏幕上那个数字都不动。规格明写不许让商家以为关掉能省钱。
+ */
+export const VIDEO_AUDIO_PRICE_NOTE = "Sound doesn't change the price";
+
 export type VideoSpec = {
   seconds: number;
   resolution: string;
   aspectRatio: string;
+  /**
+   * 商家要不要 AI 配音配乐。未设(`undefined`)⇒ 按服务端默认档交付(今天=开),这样
+   * 一个没碰过开关的规格与本字段出现之前**一模一样**;拨掉才发 `generate_audio=false`。
+   */
+  audio?: boolean;
 };
 
 /**
@@ -161,6 +176,23 @@ export function VideoSpecPicker({
           ))}
         </select>,
       )}
+      {/* CREATE-A3 —— 声音开关。落点就在这里(规格选择器),因为「要不要配音配乐」和
+          时长、清晰度一样,是花钱之前定下来的一格。默认开:未设 ⇒ 按服务端默认档交付,
+          所以一个没碰过开关的规格与本格出现之前**一模一样**。
+          说明句常驻(不退到悬浮态):它要挡的正是「关掉是不是能便宜点」这个误会,
+          而报价确实一格不动 —— 价目表的键里根本没有声音。窄条里只省掉「Sound」这个
+          标题词(读屏器仍从 aria-label 拿到),那句话本身一直在。 */}
+      <span className="flex items-center gap-2 text-[0.75rem] text-muted-foreground" style={{ flex: "none" }}>
+        {!compact && <span className="font-semibold text-foreground">Sound</span>}
+        <Switch
+          checked={value.audio ?? true}
+          disabled={disabled}
+          aria-label="Sound"
+          title={VIDEO_AUDIO_PRICE_NOTE}
+          onCheckedChange={(checked) => onChange({ ...value, audio: checked })}
+        />
+        <span>{VIDEO_AUDIO_PRICE_NOTE}</span>
+      </span>
       {/* #914:一个小图标,悬浮才说话——高频控件旁边不铺一整句常驻文案。 */}
       <span
         aria-label="How this engine handles your prompt"
