@@ -3,6 +3,7 @@ import { auth } from "@/lib/better-auth/compat";
 import { allowed, isFounderAdmin } from "@/lib/allowlist";
 import { prisma, grantCreditsTx } from "@fikirtive/db";
 import { runAsSystem, type UserPrincipal } from "@fikirtive/db/principal";
+import { seedActorLibrary } from "./actor-library-seed";
 import {
   newId,
   FOUNDER_OWNER_ID,
@@ -295,6 +296,13 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
         idempotencyKey: `signup:${orgId}`,
       });
     }));
+    // 演员库五人(CREATE-A10,规格 docs/specs/creation-engine.md §8.1③;Founder 2026-09-02
+    // 拍板「每租户播种」)。刻意在事务**外**、提交之后:它写的是这个 org 自己的
+    // Asset/Entity/ReferenceImage,一个字都不碰钱与租户边界,而它要读磁盘上的定妆原件 ——
+    // 把文件 IO 塞进那笔含开户赠额的事务里,只会让一张读不到的图连带回滚商家的 credits。
+    // `seedActorLibrary` 幂等且永不抛(见该模块头),所以这一句既不会重复播种,
+    // 也不会把一次注册变成失败;播不成的那几位下次引导或 ops 脚本补。
+    await seedActorLibrary(orgId);
     return orgId;
   } catch (e) {
     // #538 — a deliberate fail-closed abort must NOT be laundered into success by the
