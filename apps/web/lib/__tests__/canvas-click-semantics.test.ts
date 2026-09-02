@@ -16,6 +16,7 @@
 import { act, createElement, useEffect, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CANVAS_OTTO_DOCK_VAR, canvasOttoDockPx } from "@/lib/canvas-otto-dock";
 
 type FlowProps = {
   nodes: Array<{ id: string; type?: string; selected?: boolean; data: Record<string, unknown> }>;
@@ -392,11 +393,42 @@ describe("the bars along the bottom stay out of each other's way (#604 r2 P2①)
     // `import.meta.url` is not a file URL under the jsdom environment.
     const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
     const stackRule = css.slice(css.indexOf(".gb .cv-bottom-stack {"));
-    expect(stackRule).toContain("max-height: calc(100% - 40px)");
+    expect(stackRule).toContain(`max-height: calc(100% - 40px - var(${CANVAS_OTTO_DOCK_VAR}, 0px))`);
     expect(css).toContain(".gb .cv-bottom-stack > .cv-toolbar { flex: 0 0 auto; }");
     expect(css).toMatch(
       /\.gb \.cv-bottom-stack > \.cv-composer-pop,\s*\.gb \.cv-bottom-stack > \.cv-batchbar \{[^}]*flex: 0 1 auto;[^}]*overflow-y: auto;/,
     );
+  });
+
+  /**
+   * FRONT-A14 · 2026-09-03 走查 D1:第四样东西也在抢那个角落 —— Otto 覆盖层的输入框
+   * (`absolute inset-0` 的兄弟层,z-index 30,`bottom-4`)。它那条 block-end 附加栏自己可点,
+   * 于是八颗工具按钮中心的 `elementFromPoint()` 全部返回那条附加栏(1280×800 / 1440×900 /
+   * 1440×1024 / 1920×1080 四个视口实测)。
+   *
+   * 同上一条:jsdom 量不出矩形,这里只守规则还在。真几何读数由 e2e 旅程
+   * `e2e/journeys/14-canvas-toolbar-reachable.spec.ts` 在真浏览器里逐颗按钮断言。
+   */
+  it("lifts the column above the Otto composer by a measured height, not a guessed offset", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
+    const stackRule = css.slice(css.indexOf(".gb .cv-bottom-stack {"));
+    // 让位高度是量出来的那一个变量;没人写它时回落 0px,没有 Otto 覆盖层的画布版式不变。
+    expect(stackRule).toContain(`bottom: calc(20px + var(${CANVAS_OTTO_DOCK_VAR}, 0px))`);
+    // 靠右 —— 已批准的画布 pattern 把画布自己的控件放在右下角,而居中的行抬到这个高度会撞上
+    // Otto 给自己留的左栏(对话面板 `bottom-16 left-4 w-[380px]`)。
+    expect(stackRule.slice(0, stackRule.indexOf("}"))).toContain("align-items: flex-end;");
+  });
+
+  /**
+   * 让位高度的算术只有这一份(`lib/canvas-otto-dock.ts`):画布底边到 Otto 输入框顶边,
+   * 所以 `bottom-4` 那 16px 内缩和输入框自己的高度一起算进去。
+   */
+  it("measures from the board's bottom edge to the composer's top edge, and never goes negative", () => {
+    expect(canvasOttoDockPx({ bottom: 900 }, { top: 676 })).toBe(224);
+    // 输入框被推到画布底边以下:该让的高度是 0,不是把工具条推出画布(推出去=又点不到)。
+    expect(canvasOttoDockPx({ bottom: 400 }, { top: 460 })).toBe(0);
   });
 });
 

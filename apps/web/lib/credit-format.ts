@@ -99,13 +99,25 @@ export function spendCapBlockedMessage(quotedCredits: number, capCredits: number
  * 改名那天商家读到的出路句会指着一个屏幕上已经不存在的名字 —— 而两处都写着同样的字,
  * 没有任何一次红会告诉你。所以从单一来源取。
  */
-const CAP_SECTION_LABEL = (() => {
+const CAP_SECTION = (() => {
   const billing = SETTINGS_SECTIONS.find((section) => section.key === "billing");
   if (!billing) throw new Error("SETTINGS_SECTIONS 里没有 billing 那一格 —— 上限出路句无处可指");
-  return billing.label;
+  return billing;
 })();
 
+const CAP_SECTION_LABEL = CAP_SECTION.label;
+
 export const SPEND_CAP_RAISE_CTA = `Raise the cap in ${CAP_SECTION_LABEL} to run it.`;
+
+/** 那句话真正通向哪儿(2026-09-03 走查 D2)。
+ *
+ *  句子说「Raise the cap in Billing & credits to run it.」,可在拒绝提示里它一直只是一段
+ *  死文字:商家已经决定要改上限了,产品却让他自己去找那一页。渲染层
+ *  (`components/exits/Exits.tsx` 的 `ErrorWithTopUp`)拿这一份地址把它接成真能点的一条路。
+ *
+ *  地址与上面那个名字取自**同一格** `SETTINGS_SECTIONS`,所以「句子念的名字」与「链接去的
+ *  地方」不可能各说各话 —— 与 `OttoStreamErrorNotice` 的上限按钮同源同理。 */
+export const SPEND_CAP_RAISE_HREF: string = CAP_SECTION.href;
 
 /** 花费上限那个控件自己的解释句 —— 也是**只有这一份**。
  *

@@ -816,16 +816,35 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
  * cover another — before #604 r2 the selection bar shared `bottom: 20px` with the
  * tool row and simply sat on top of it, and the tools underneath stopped being
  * clickable. Transparent between the rows so the board itself stays reachable. */
+/* THE FOURTH THING IN THAT CORNER (2026-09-03 Founder 六面走查 D1). The rule above holds
+ * inside this column, but the Otto overlay is not in it: it is a sibling of the whole
+ * board (`absolute inset-0`, z-index 30) whose composer sits at `bottom-4`, and that
+ * composer's block-end addon is itself clickable. Measured on the production build at
+ * 1280×800, 1440×900, 1440×1024 and 1920×1080: `elementFromPoint()` at the centre of all
+ * eight tools returned that addon — Generate image, Video and Add text included. So the
+ * column now starts ABOVE the Otto composer instead of under it, and the height it gives
+ * way is measured rather than guessed (`lib/canvas-otto-dock.ts`,
+ * NorthstarCanvasWorkspace writes `--cv-otto-dock`): the composer grows with attachments,
+ * references and errors, and any fixed offset would be covering the tools again the first
+ * day it grew. Fallback 0px — a canvas rendered without the Otto overlay lays out exactly
+ * as before.
+ *
+ * The rows also hug the RIGHT edge now, which is where the approved canvas pattern puts
+ * canvas chrome (`design-system/patterns/canvas/CanvasReference.tsx`: zoom cluster at
+ * `bottom-4 right-4`, tool rail at `right-4`, the composer band explicitly reserving
+ * `right-[160px]`). Centred rows lifted this high would have run into the left column
+ * Otto reserves for itself — its conversation panel is `bottom-16 left-4 w-[380px]` — at
+ * any board narrower than ~1082px. `.cv-batchbar` already ended at that edge. */
 .gb .cv-bottom-stack {
   position: absolute;
   left: 50%;
-  bottom: 20px;
+  bottom: calc(20px + var(--cv-otto-dock, 0px));
   transform: translateX(-50%);
   z-index: 5;
   width: calc(100% - 24px);
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   pointer-events: none;
   /* The column may never grow taller than the board it sits in. The board hides its
@@ -833,8 +852,10 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
    * short laptop lid) let the column's top — the prompt composer — run off the top of
    * the board and get cut, with no way to scroll it back. Measured at 844×390: the
    * column wanted 347px inside a 338px board and the composer lost 29px off its top.
-   * 40px = the 20px it is inset from the bottom, mirrored at the top. */
-  max-height: calc(100% - 40px);
+   * 40px = the 20px it is inset from the bottom, mirrored at the top; the Otto composer's
+   * own band comes off the same budget, or the column would simply be cut at the top
+   * instead of at the bottom. */
+  max-height: calc(100% - 40px - var(--cv-otto-dock, 0px));
   min-height: 0;
 }
 .gb .cv-bottom-stack > * { pointer-events: auto; }

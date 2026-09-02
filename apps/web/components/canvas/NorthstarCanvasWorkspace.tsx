@@ -5,12 +5,17 @@
  * joins it to the real Otto conversation and the small amount of route/account state around it.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Coins } from "lucide-react";
 import { CREATE_NAV_HREF } from "@fikirtive/core/navigation";
 import { getMyAccount } from "@/lib/account-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
+import {
+  CANVAS_OTTO_DOCK_ATTR,
+  CANVAS_OTTO_DOCK_VAR,
+  canvasOttoDockPx,
+} from "@/lib/canvas-otto-dock";
 import type { ChatThreadDTO, EntityDTO } from "@/lib/types";
 import {
   upsertComposerReferences,
@@ -57,6 +62,41 @@ export function NorthstarCanvasWorkspace({
   const [pendingFirst, setPendingFirst] = useState<CanvasPendingFirst | null>(runtimeContext.pendingFirst);
   const [composerReferences, setComposerReferences] = useState<OttoComposerReference[]>([]);
   const activeCanvas = runtimeContext.projects.find((project) => project.id === runtimeContext.activeProjectId);
+
+  /**
+   * 把「Otto 输入框占掉了底边多少」量出来交给画布(2026-09-03 走查 D1,`lib/canvas-otto-dock.ts`
+   * 有病根全文)。这里是唯一同时挂着 FlowCanvas 与 Otto 覆盖层的地方,所以也是唯一知道这两样
+   * 东西在同一个角落里排队的地方。
+   *
+   * 量、而不是写死一个偏移:输入框会随附引用、贴图与报错长高,写死的偏移在它长高的第一天就
+   * 又把工具条盖回去。ResizeObserver 同时盯着画布面和输入框,所以窗口变化与输入框变高都会
+   * 立刻重算。前厅(未开对话)与对话流是两个不同的元素,`activeThread` 一换就重新找一次。
+   */
+  const surfaceRef = useRef<HTMLElement | null>(null);
+  const dockThreadKey = activeThread?.id ?? null;
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const dock = surface.querySelector<HTMLElement>(`[${CANVAS_OTTO_DOCK_ATTR}]`);
+    if (!dock) {
+      surface.style.removeProperty(CANVAS_OTTO_DOCK_VAR);
+      return;
+    }
+    const write = () => {
+      surface.style.setProperty(
+        CANVAS_OTTO_DOCK_VAR,
+        `${canvasOttoDockPx(surface.getBoundingClientRect(), dock.getBoundingClientRect())}px`,
+      );
+    };
+    write();
+    const observer = new ResizeObserver(write);
+    observer.observe(surface);
+    observer.observe(dock);
+    return () => {
+      observer.disconnect();
+      surface.style.removeProperty(CANVAS_OTTO_DOCK_VAR);
+    };
+  }, [dockThreadKey]);
 
   const replaceCanvasUrl = useCallback((threadId?: string) => {
     window.history.replaceState(
@@ -120,7 +160,7 @@ export function NorthstarCanvasWorkspace({
         </Badge>
       </header>
 
-      <main className="relative flex min-h-0 flex-1 flex-col">
+      <main ref={surfaceRef} className="relative flex min-h-0 flex-1 flex-col">
         <FlowCanvas
           projectId={runtimeContext.activeProjectId}
           entities={entities}

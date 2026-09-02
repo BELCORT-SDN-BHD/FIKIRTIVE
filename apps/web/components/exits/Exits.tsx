@@ -7,7 +7,7 @@
 import type { ReactNode } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { BILLING_HREF, supportMailto } from "@/lib/exits";
-import { TOP_UP_CTA } from "@/lib/credit-format";
+import { SPEND_CAP_RAISE_CTA, SPEND_CAP_RAISE_HREF, TOP_UP_CTA } from "@/lib/credit-format";
 
 /** 行内出口链接 —— 长得像句子的一部分,但是真的能点。 */
 export function ExitLink({
@@ -42,24 +42,44 @@ export function SupportExit({ subject, label = "Email support" }: { subject: str
  * 充值之外真的还有的另一条路 —— 没有就别写,产品不发明不存在的选项。
  */
 /**
- * 服务端拼好的那句拒绝 —— 照原样说出来,但把结尾那句「Top up in Billing.」换成一条真的
- * 能点的路(#979)。
+ * 认得出来的两句收尾,各自的去处(2026-09-03 走查 D2 补上第二句)。
+ *
+ * 走查在画布的拒绝提示里读到「Paused by your spend cap — … Raise the cap in Billing &
+ * credits to run it.」,整句是死文字:商家已经决定要把上限调上去了,产品还是让他自己去找
+ * 那一页 —— 和 #979 那次「Top up in Billing.」不能点是同一个病,只是换了一句话。
+ *
+ * 两句都不是模糊匹配:各钉一份服务端拼句子时用的同一个常量。上限那一句的地址来自
+ * `SPEND_CAP_RAISE_HREF`(与句子里念的那个名字取自同一格 `SETTINGS_SECTIONS`),所以
+ * 「句子念的名字」和「链接去的地方」不可能分头改。
+ *
+ * 刻意**不**给它们同一条路的两种说法:钱不够去买,上限拦住去改上限。给被上限拦住的商家一条
+ * 充值链接是假话 —— 他不缺钱,买了也照样跑不了。
+ */
+const EXIT_TAILS: readonly { readonly cta: string; readonly href: string }[] = [
+  { cta: TOP_UP_CTA, href: BILLING_HREF },
+  { cta: SPEND_CAP_RAISE_CTA, href: SPEND_CAP_RAISE_HREF },
+];
+
+/**
+ * 服务端拼好的那句拒绝 —— 照原样说出来,但把结尾那句出路换成一条真的能点的路(#979)。
  *
  * 为什么不是 `TopUpNotice`:那个组件自己写句子,而这几句拒绝的**数字**只有服务端知道
- * (这一次报价是多少、余额还剩多少)。丢掉数字就退回 #699 之前那种「不说它是拿什么判的」
- * 的拒绝。所以句子不动,只把最后那一句接上路。
+ * (这一次报价是多少、余额还剩多少、上限定在几)。丢掉数字就退回 #699 之前那种「不说它是
+ * 拿什么判的」的拒绝。所以句子不动,只把最后那一句接上路。
  *
- * 认的是 `TOP_UP_CTA` 这一份字面量(与拼句子的那一处同一个常量),不是模糊匹配:
- * 不以它收尾的错误(队列不可用、找不到项目、租户拒绝……)原样渲染,一个凭空的充值链接
- * 都不会长出来。
+ * 认的是常量字面量(与拼句子的那一处同一份),不是模糊匹配:不以它们收尾的错误(队列不可用、
+ * 找不到项目、租户拒绝……)原样渲染,一条凭空的链接都不会长出来。名字留作 `ErrorWithTopUp`
+ * 是刻意的 —— 三个卡面出口的反向围栏(`lib/__tests__/refgen-topup-exit.test.ts`)逐字钉着
+ * 这个标签,改名只会让围栏认不出自己要守的东西。
  */
 export function ErrorWithTopUp({ text }: { text: string }) {
-  if (!text.endsWith(TOP_UP_CTA)) return <>{text}</>;
-  const head = text.slice(0, text.length - TOP_UP_CTA.length);
+  const tail = EXIT_TAILS.find((candidate) => text.endsWith(candidate.cta));
+  if (!tail) return <>{text}</>;
+  const head = text.slice(0, text.length - tail.cta.length);
   return (
     <>
       {head}
-      <ExitLink href={BILLING_HREF}>{TOP_UP_CTA.replace(/\.$/, "")}</ExitLink>.
+      <ExitLink href={tail.href}>{tail.cta.replace(/\.$/, "")}</ExitLink>.
     </>
   );
 }

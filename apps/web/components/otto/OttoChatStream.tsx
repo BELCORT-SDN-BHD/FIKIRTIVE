@@ -91,6 +91,7 @@ import type { OttoErrorData, OttoStatusData, OttoStepData } from "@/lib/otto-str
 import type { ReasoningUIPart } from "ai";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import { composerReferencePayload, composerReferencesPlaceholder, removeComposerReference, upsertComposerReference, upsertComposerReferences, type OttoComposerReference } from "@/lib/canvas-chat-reference";
+import { CANVAS_OTTO_DOCK_ATTR } from "@/lib/canvas-otto-dock";
 
 // Re-export the mapping seam so callers/tests can import it from the component too.
 export { threadToUiMessages } from "@/lib/otto-ui-messages";
@@ -824,8 +825,16 @@ export function OttoChatStream({
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
     <div
+      // 画布形态下这一层是**定位框**,不是一张纸,所以它不带 `gb`(2026-09-03 走查 D1 的另一半)。
+      // `.gb` 是 token 根,而 token 根在 globals.css 里自己 `background-color: var(--background)`:
+      // 一个 `inset-0` 的 `.gb` 就是一张铺满整块画板的不透明纸,盖在 z-index 5 的画布之上。它
+      // `pointer-events: none`,所以 `elementFromPoint` 照样穿得过去 —— 只有商家的眼睛穿不过去。
+      // 实测(1440×900 生产构建):点阵底纹、工具条、板上的卡全被它遮掉;设成透明,画板立刻回来。
+      // 画布路由永远渲染在 `.gb.ns-immersive` 壳根里,token 本来就继承得到;这一份嵌套的 `gb`
+      // 只多做了两件坏事:铺纸,以及把沉浸壳的 scoped 覆盖重置回全局值。
+      // 面板形态那一支不动:那里它真的是一面纸,自己该有底色。
       className={canvasLayout
-        ? "gb pointer-events-none absolute inset-0 z-30 leading-[1.5]"
+        ? "pointer-events-none absolute inset-0 z-30 leading-[1.5]"
         : "gb flex min-h-0 flex-1 flex-col overflow-hidden leading-[1.5]"}
     >
       <style>{`
@@ -1495,8 +1504,11 @@ export function OttoChatStream({
         </MessageScroller>
       </MessageScrollerProvider>
 
-      {/* Composer */}
+      {/* Composer —— 画布形态下,这一块占掉画布底边多少高度由 NorthstarCanvasWorkspace 量出来,
+          交给画布工具条让位(2026-09-03 走查 D1,病根全文在 `lib/canvas-otto-dock.ts`)。
+          记号只在画布形态挂:面板形态里它是正常流里的一行,没有谁需要为它让位。 */}
       <div
+        {...(canvasLayout ? { [CANVAS_OTTO_DOCK_ATTR]: "" } : {})}
         className={canvasLayout
           ? "otto-chat-composer pointer-events-auto absolute bottom-4 left-[calc(50%_+_140px)] w-[min(620px,calc(100%_-_340px))] -translate-x-1/2 rounded-[var(--radius-card)] border border-border bg-card p-2 shadow-[var(--shadow-md)]"
           : "otto-chat-composer border-t border-border bg-card p-3"}
