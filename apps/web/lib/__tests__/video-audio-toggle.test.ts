@@ -127,9 +127,23 @@ async function renderPanel(): Promise<void> {
   await act(async () => { await Promise.resolve(); });
 }
 
+/**
+ * 资产详情面板的**渲染根**。
+ *
+ * 前端基线①(纯合并段):新壳把资产详情换成了标准 Sheet 外壳(`components/ui/sheet`),
+ * 它走 Portal 挂在 `document.body` 上,**不在**挂载点那一支里 —— 所以主干这份测试原来的
+ * `container!.querySelector(...)` 在新壳上永远是空的(同一份文件里 asset-detail-receipt
+ * 的其余用例早就改用了这个取法)。断言一条没动,只是查询的根跟着面板搬了家。
+ */
+function detailSurface(): HTMLElement {
+  const found = document.body.querySelector<HTMLElement>('[data-slot="sheet-content"]');
+  expect(found, "资产详情 Sheet 应该已经打开").not.toBeNull();
+  return found!;
+}
+
 /** 声音开关本身。找的是可访问名字,不是某个 class —— 换皮不该让这条断言失明。 */
 function soundToggle(): HTMLElement {
-  const found = container!.querySelector<HTMLElement>('[role="switch"][aria-label="Sound"]');
+  const found = detailSurface().querySelector<HTMLElement>('[role="switch"][aria-label="Sound"]');
   expect(found, "视频规格选择器上应该有一个声音开关").not.toBeNull();
   return found!;
 }
@@ -141,7 +155,7 @@ async function toggleSound(): Promise<void> {
 
 /** 行动栏上那颗按钮 —— 它把要收的价写在自己脸上,所以它就是「屏幕上那个价」。 */
 function animateButton(): HTMLButtonElement {
-  const found = [...container!.querySelectorAll("button")]
+  const found = [...detailSurface().querySelectorAll("button")]
     .find((b) => b.textContent?.trim().startsWith("Animate"));
   expect(found, "行动栏上应该有「Animate」").toBeDefined();
   return found!;
@@ -164,7 +178,7 @@ describe("CREATE-A3:视频声音开关", () => {
     expect(soundToggle().getAttribute("aria-checked")).toBe("true");
     expect(VIDEO_AUDIO_PRICE_NOTE).toBe("Sound doesn't change the price");
     // 「界面明示」= 屏幕上真的有这句话,不是只藏在悬浮态里。
-    expect(container!.textContent).toContain(VIDEO_AUDIO_PRICE_NOTE);
+    expect(detailSurface().textContent).toContain(VIDEO_AUDIO_PRICE_NOTE);
   });
 
   it("CREATE-A3:商家关掉声音后生成 ⇒ 付费请求带 audio:false", async () => {
@@ -206,7 +220,7 @@ describe("CREATE-A3:视频声音开关", () => {
   it("CREATE-A3:声音与会改价的那三格互不干扰 —— 改时长照样改价,声音仍是关的", async () => {
     await renderPanel();
     await toggleSound();
-    const length = container!.querySelector('[aria-label="Length of the video"]') as HTMLSelectElement;
+    const length = detailSurface().querySelector('[aria-label="Length of the video"]') as HTMLSelectElement;
     await act(async () => {
       length.value = "12";
       length.dispatchEvent(new Event("change", { bubbles: true }));

@@ -294,7 +294,8 @@ describe("#776 r2 → #914:视频回执行为不变", () => {
  */
 /** 面板上「Why this tier」这一块底下那句话 —— 屏幕上真正写着的字。 */
 function whyThisTierRow(): HTMLElement | null {
-  return [...container!.querySelectorAll("span")]
+  // 前端基线①:面板是 Sheet(Portal 挂 body),不在挂载点里 —— 与本文件其余用例同一个取法。
+  return [...detailSurface().querySelectorAll("span")]
     .find((el) => el.textContent?.trim() === "Why this tier") ?? null;
 }
 
@@ -318,7 +319,7 @@ describe("CREATE-A12 资产回执:这一趟为什么落到这一档", () => {
     const reason = "You asked for 1080p, so this went to the HD tier.";
     await renderPanelWith({ routeReason: reason });
     expect(whyThisTierRow(), "面板上应该有「Why this tier」这一块").not.toBeNull();
-    const text = container!.textContent ?? "";
+    const text = detailSurface().textContent ?? "";
     expect(text).toContain("Why this tier");
     expect(text).toContain(reason);
     for (const secret of ["seedance", "seedream", "dreamina", "byteplus", "mini"]) {
