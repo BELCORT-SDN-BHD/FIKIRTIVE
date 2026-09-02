@@ -301,7 +301,17 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
     // Asset/Entity/ReferenceImage,一个字都不碰钱与租户边界,而它要读磁盘上的定妆原件 ——
     // 把文件 IO 塞进那笔含开户赠额的事务里,只会让一张读不到的图连带回滚商家的 credits。
     // `seedActorLibrary` 幂等且永不抛(见该模块头),所以这一句既不会重复播种,
-    // 也不会把一次注册变成失败;播不成的那几位下次引导或 ops 脚本补。
+    // 也不会把一次注册变成失败。
+    //
+    // 播不成的那几位**下次登录**补 —— 这条恢复路径要点名是哪一条,不然就是句空话
+    // (2026-09-02 判官 P1)。**不是** `requireOwner`:它一旦查到活的 membership 就在
+    // 上面直接返回,一辈子只会引导一次。真正每次登录都重跑的是
+    // `convergeIdentity`(`apps/web/lib/better-auth/converge.ts`)—— Better Auth 的
+    // user-create 与 session-create 两个钩子都调它(`better-auth/server.ts`),它在
+    // 非 founder 分支**无条件**再调一次 `bootstrapPersonalOrg`,所以下一次登录就会把
+    // 上次失败的那几位补齐(库里已有的那几位在 `seedOneActor` 第一句就跳过,不重读文件)。
+    // 存量 org 或需要立刻补的场合,走 `scripts/ops/seed-actor-library.ts`。
+    // 失败本身不再只落一行 console —— 见 `reportFailedSeeding`。
     await seedActorLibrary(orgId);
     return orgId;
   } catch (e) {

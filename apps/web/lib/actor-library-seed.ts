@@ -3,7 +3,9 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
+import * as Sentry from "@sentry/node";
 import { prisma } from "@fikirtive/db";
+import { runAsTenant } from "@fikirtive/db/principal";
 import {
   ACTOR_LIBRARY,
   ACTOR_LIBRARY_ASSET_DIR,
@@ -31,6 +33,18 @@ import { storage } from "./storage";
  * 查询按它跨 org 读,两个 org 的同一位演员是两行互不可见的数据(CREATE-A10 逐条钉)。
  * `ownerId` 只能来自服务端已解析的 principal —— 本模块不接受任何客户端字段。
  *
+ * **每一位都在自己的 `runAsTenant(ownerId, …)` 帧里写**,这一句是必需的、不是装饰:
+ * 唯一的自动调用点 `bootstrapPersonalOrg` 本身跑在 `runAsSystem("auth:bootstrap-personal-org")`
+ * 里,而它又被 `convergeIdentity` 整个包在 `runAsSystem("auth:converge-identity")` 里
+ * (better-auth 的 user/session create 钩子;`apps/web/lib/better-auth/converge.ts`)。
+ * 系统帧的 `ownerId` 是 null,租户闸(`packages/db/src/tenant-guard.ts`)对系统帧只放行
+ * `SYSTEM_SCAN_OPS` 那几个读操作,`create`/`upsert` 一律拒:
+ *   `[tenant-guard] Asset.upsert requires runAsTenant before system writes`
+ * 没有这一句,生产上五位**全部**落进 `failed`、商家的 Library 永远是空的
+ * (2026-09-02 判官在真库上跑 `convergeIdentity` 实测 = 0 行;修后同一路径 = 5 行,
+ * 由 `actor-library-seed.test.ts` 的「真 convergeIdentity」用例钉住)。
+ * 这正是闸自己的 docblock 写的两段式:系统身份扫描 → 逐行进该行的租户帧再写。
+ *
  * ── 像素完整性铁律(Founder 2026-08-30)────────────────────────────────────────
  * 血统信任的标记在**像素**里:视频端认的是 Seedream 原始产物的字节,同一张图裁剪之后
  * 就会被拒「may contain real person」。所以这条入库路径上**没有任何图像处理**:
@@ -49,8 +63,15 @@ import { storage } from "./storage";
  * 引导一个 workspace 的关键路径上(org、membership、开户赠额)不能因为一张图读不到就整体
  * 失败 —— 那会让商家连注册都完不成。所以本函数吞掉自己的异常、回报一份清单,由调用方
  * 记日志。方向是刻意的:这里既不碰钱也不碰租户边界,fail closed 的代价是拒绝一次注册,
- * 而 fail open 的代价只是这个 org 的库暂时空着(存量 org 由
- * `scripts/ops/seed-actor-library.ts` 补播)。
+ * 而 fail open 的代价只是这个 org 的库**暂时**空着。
+ *
+ * 「暂时」要点名是靠什么变回来的,不然它就是句空话(2026-09-02 判官 P1):
+ * `convergeIdentity` 在**每次登录**的 session-create 钩子上无条件再跑一遍
+ * `bootstrapPersonalOrg`,所以下一次登录就会补齐上次失败的那几位;库里已有的在
+ * `seedOneActor` 第一句就跳过,不会重读文件。(**不是** `requireOwner` —— 它查到活的
+ * membership 就直接返回,一辈子只引导一次。)存量 org 或要立刻补:
+ * `scripts/ops/seed-actor-library.ts`。而失败不再只落一行 console —— 见
+ * {@link reportFailedSeeding},那是 CREATE-A9「绝不静默失败」对这条路径的要求。
  */
 
 /**
@@ -85,7 +106,7 @@ export interface ActorLibrarySeedResult {
   seeded: string[];
   /** 已经在库里、这次跳过的 catalogKey。 */
   skipped: string[];
-  /** 出了问题、这次没入库的 catalogKey(下次引导或 ops 脚本会再试)。 */
+  /** 出了问题、这次没入库的 catalogKey(下次**登录**的 convergeIdentity 或 ops 脚本会再试)。 */
   failed: string[];
 }
 
@@ -220,7 +241,10 @@ export async function seedActorLibrary(ownerId: string): Promise<ActorLibrarySee
   const result: ActorLibrarySeedResult = { seeded: [], skipped: [], failed: [] };
   for (const actor of ACTOR_LIBRARY) {
     try {
-      result[await seedOneActor(ownerId, actor)].push(actor.catalogKey);
+      // 租户帧在 try **里面**:`runAsTenant` 在进回调之前就可能抛(用户帧换租户),
+      // 而本函数对调用方的承诺是「永不抛」—— 帧的错误也必须落进 `failed`,不能穿出去
+      // 把一次注册变成失败。
+      result[await runAsTenant(ownerId, () => seedOneActor(ownerId, actor))].push(actor.catalogKey);
     } catch (e) {
       // 固定类别日志,不带商家内容(#575 日志纪律)。
       console.error(
@@ -230,5 +254,28 @@ export async function seedActorLibrary(ownerId: string): Promise<ActorLibrarySee
       result.failed.push(actor.catalogKey);
     }
   }
+  reportFailedSeeding(result.failed);
   return result;
+}
+
+/**
+ * 播不成的那几位,报到有人看得见的地方(CREATE-A9「绝不静默失败」)。
+ *
+ * `console.error` 不算「有人看得见」:生产的 Sentry 只 `Sentry.init({dsn,…})`
+ * (`apps/web/instrumentation.ts`),没有 captureConsole 集成,所以那几行日志谁也不会
+ * 收到告警。而这条路径的失败形状恰恰是**批量且安静**的 —— 一个缺失的目录、一次租户帧
+ * 漏掉,五位一起进 `failed`,商家注册成功、Library 全空,没有任何一处会红。
+ *
+ * 载荷只有 catalogKey 与条数:那是产品目录里的常量,不是商家内容(#575 日志纪律;
+ * 与 `upload-actions.ts` 的 `reportUndispatchedIngest` 同一口径 —— 说清楚什么卡住了,
+ * 绝不说是谁的)。**不导出**:这是模块内部的上报细节,不是端点。
+ */
+function reportFailedSeeding(failed: string[]): void {
+  if (failed.length === 0) return;
+  if (!process.env.SENTRY_DSN) return;
+  Sentry.captureMessage(`actor-library: ${failed.length} of ${ACTOR_LIBRARY.length} cast members did not reach a merchant's Library`, {
+    level: "error",
+    tags: { probe: "actor-library-seed" },
+    extra: { catalogKeys: failed.join(" "), count: failed.length },
+  });
 }

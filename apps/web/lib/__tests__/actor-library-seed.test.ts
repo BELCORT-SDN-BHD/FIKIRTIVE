@@ -62,6 +62,8 @@ const EMAIL_A = `actor-a-${randomUUID()}@fikirtive.test`;
 const EMAIL_B = `actor-b-${randomUUID()}@fikirtive.test`;
 let ownerA: string;
 let ownerB: string;
+/** 走真 `convergeIdentity` 建出来的 org —— 收尾时和上面两个一起清存储。 */
+const convergedOwners: string[] = [];
 
 /** 让下一次 `requireOwner()` 以这个人的身份跑。真守卫、真引导、真播种。 */
 async function signInAs(email: string): Promise<string> {
@@ -87,7 +89,7 @@ beforeAll(async () => {
 afterAll(async () => {
   // 这两个 org 的定妆图字节各占几 MB,跑完就清掉自己那两个命名空间(内容寻址,
   // 键在 u/<ownerId>/ 底下,所以清得干净且不会碰到别人的)。
-  for (const ownerId of [ownerA, ownerB]) {
+  for (const ownerId of [ownerA, ownerB, ...convergedOwners]) {
     if (!ownerId) continue;
     rmSync(path.join(REPO_ROOT, ".data", "storage", "u", ownerId), { recursive: true, force: true });
   }
@@ -167,6 +169,82 @@ describe("CREATE-A10 —— 演员库五人在每个商家自己的 Library 里"
     expect(again.failed).toEqual([]);
     expect(again.skipped).toHaveLength(5);
     expect(await libraryOf(ownerA)).toHaveLength(5);
+  });
+});
+
+/**
+ * **生产上真正会跑的那条路**(2026-09-02 判官 P0)。
+ *
+ * 上面每一条都从 `requireOwner()` 进,而那是生产上**引导不会走**的门:Better Auth 的
+ * user/session create 钩子先调 `convergeIdentity`,它把整个函数体(含 `bootstrapPersonalOrg`)
+ * 包在 `runAsSystem("auth:converge-identity")` 里;等任何 server action 再调 `requireOwner`
+ * 时,membership 已经建好,守卫在 auth-guard.ts:94 直接返回,播种在那里根本不发生。
+ *
+ * 差别不是学术的:系统帧的 `ownerId` 是 null,租户闸对系统帧只放行读操作,
+ * 于是五位**全部**被拒进 `failed` —— 而 `requireOwner` 那条没有帧的路照样绿。
+ * 实测(判官与本次修复各跑一遍,同一个库):修复前 convergeIdentity → 0 行,修复后 → 5 行。
+ * 所以这一条从**真的 `convergeIdentity`** 进,它是 Better Auth 真正调的那个函数。
+ */
+describe("CREATE-A10 —— 真的登录路径(convergeIdentity)也播得出来", () => {
+  it("CREATE-A10: 真 convergeIdentity 走完,这个商家的 Library 里站着五个人", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    const email = `actor-converge-${randomUUID()}@fikirtive.test`;
+    process.env.AUTH_ALLOWED_EMAILS = `${process.env.AUTH_ALLOWED_EMAILS},${email}`;
+
+    // Better Auth 的 user-create 钩子传的就是这些格(server.ts:165)。
+    await convergeIdentity({ email, emailVerified: true });
+
+    const user = await prisma.user.findUniqueOrThrow({ where: { email }, select: { id: true } });
+    const ownerC = `org_${user.id}`;
+    convergedOwners.push(ownerC);
+
+    const library = await libraryOf(ownerC);
+    expect(library, "真登录路径播不出来 —— 租户帧丢了(见 actor-library-seed.ts「租户边界」)").toHaveLength(5);
+    expect(library.map((e) => e.name).sort()).toEqual([...ACTOR_LIBRARY].map((a) => a.name).sort());
+    // 每一行都是这个 org 自己的 —— 系统帧下写出来的行不会带对 ownerId。
+    for (const entity of library) {
+      expect(entity.referenceImages[0]!.asset.ownerId).toBe(ownerC);
+    }
+  }, 120_000);
+
+  it("CREATE-A10: 第二次登录不会再播一遍 —— 幂等对真路径同样成立", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    const ownerC = convergedOwners[0]!;
+    const email = (await prisma.user.findFirstOrThrow({
+      where: { id: ownerC.replace(/^org_/, "") },
+      select: { email: true },
+    })).email!;
+
+    await convergeIdentity({ email, emailVerified: true });
+    expect(await libraryOf(ownerC)).toHaveLength(5);
+  }, 120_000);
+});
+
+/**
+ * **原件得在生产镜像里**(2026-09-02 判官 P0)。
+ *
+ * 上面所有测试都跑在完整的仓库检出上,所以它们永远看不到镜像的样子 —— 而 web 服务是
+ * `apps/web/Dockerfile` 构建的,那个 Dockerfile 是**白名单式**的:没有 COPY 进去的目录
+ * 就不存在。少一行 `COPY assets assets`,生产上五位全部落进 `failed`,商家注册成功、
+ * Library 全空,而 A9 的出路指向一个空库。这一条把「镜像布局」也变成一个会红的断言。
+ */
+describe("CREATE-A10 —— 定妆原件随镜像出厂", () => {
+  it("CREATE-A10: apps/web/Dockerfile 把 assets/ 带进镜像,运行时 cwd 找得到", () => {
+    const dockerfile = readFileSync(path.join(REPO_ROOT, "apps/web/Dockerfile"), "utf8");
+    const copiedDirs = [...dockerfile.matchAll(/^COPY\s+(?!--from)(.+)$/gm)]
+      .flatMap((m) => m[1]!.trim().split(/\s+/).slice(0, -1));
+    // ① 原件所在的顶层目录必须被 COPY —— `assets/actor-library/v1` 的第一段。
+    const topLevel = ACTOR_LIBRARY_ASSET_DIR.split("/")[0]!;
+    expect(copiedDirs, `apps/web/Dockerfile 没有 COPY ${topLevel}/ —— 生产镜像里没有定妆原件`)
+      .toContain(topLevel);
+    // ② .dockerignore 不能反手把它排掉(白名单 COPY 之上还有这一层)。
+    const ignored = readFileSync(path.join(REPO_ROOT, ".dockerignore"), "utf8")
+      .split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+    expect(ignored.some((p) => p === topLevel || p === `${topLevel}/` || p === `**/${topLevel}`)).toBe(false);
+    // ③ 运行时 cwd = /repo/apps/web(boot.mjs 起 `pnpm --filter @fikirtive/web start`),
+    //    resolveAssetDir 的第二条候选 `../../assets/…` 因此落在 /repo/assets/… —— 就是 ① COPY 的位置。
+    expect(readFileSync(path.join(REPO_ROOT, "apps/web/scripts/boot.mjs"), "utf8"))
+      .toContain('"--filter", "@fikirtive/web", "start"');
   });
 });
 
@@ -338,7 +416,19 @@ describe("CREATE-A9 —— 真人脸:诚实拦截、出路指向演员库、余�
     expect(await libraryOf(ownerB)).toHaveLength(5);
   });
 
-  it("CREATE-A9: 被拒的那一单账本上 reserve/refund 成对、无 SETTLE,余额净变化为 0", async () => {
+  /**
+   * 诚实标注(2026-09-02 判官 P1):**这一条不证明 worker 的终局路径**。
+   *
+   * 它自己调 `refundReservation` 造出那行 REFUND,再断言 REFUND 在 —— worker 若丢掉退款
+   * 或多记一笔 SETTLE,它照样绿。它证明的是更窄的一件事:**这条路上的一次预留能被
+   * 一次退款干净地抵消**(两行成对、幂等键成形、余额与预扣都归零),也就是 A9 那句
+   * 「你没有被扣钱」在账本层面有对应的形状。
+   *
+   * A9「余额净变化为 0」的**行为**证据在 `apps/worker/src/jobs/gen-reference-person.test.ts`
+   * 的 `CREATE-A9: refunds the hold and records NO spend`:那一条驱动真的 `handleGen`
+   * 撞上实测拒收,会因为终局路径丢退款/多记 SETTLE 而红。两条一起才是这行验收。
+   */
+  it("CREATE-A9(账本形状,非终局路径): 一次预留被一次退款抵消 —— 两行成对、无 SETTLE、净变化为 0", async () => {
     mockAuth.mockResolvedValue({ user: { email: EMAIL_B } });
     const projectId = `prj_${randomUUID()}`;
     await prisma.project.create({ data: { id: projectId, ownerId: ownerB, name: "Face refusal" } });
