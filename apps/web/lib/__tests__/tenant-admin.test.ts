@@ -21,8 +21,13 @@ const genJobAggregate = vi.fn();
 const refGenJobAggregate = vi.fn();
 const projectCount = vi.fn();
 const actionEventFindMany = vi.fn();
+/** 未收口退款清单现在是一句原生 SQL(复审四 P2);这里只让它安静返回空,行为钉在真库测试里。 */
+const queryRaw = vi.fn();
+/** MONEY-A14:人工调账 30 天累计 —— 报表与闸读同一条谓词,所以这里也是钱服务的函数。 */
+const adjustWindowTotals = vi.fn();
 
 vi.mock("@fikirtive/db", () => ({
+  adjustWindowTotals,
   prisma: {
     organization: { findMany: organizationFindMany, findFirst: organizationFindFirst },
     membership: { findMany: membershipFindMany, findFirst: membershipFindFirst },
@@ -34,6 +39,7 @@ vi.mock("@fikirtive/db", () => ({
     refGenJob: { aggregate: refGenJobAggregate },
     project: { count: projectCount },
     actionEvent: { findMany: actionEventFindMany },
+    $queryRaw: queryRaw,
   },
 }));
 
@@ -57,6 +63,10 @@ beforeEach(() => {
   refGenJobAggregate.mockReset();
   projectCount.mockReset();
   actionEventFindMany.mockReset();
+  adjustWindowTotals.mockReset();
+  adjustWindowTotals.mockResolvedValue(new Map());
+  queryRaw.mockReset();
+  queryRaw.mockResolvedValue([]);
 });
 
 describe("listTenants", () => {
@@ -221,3 +231,33 @@ describe("getTenantDetail", () => {
     expect(detail!.status).toBe("unknown");
   });
 });
+
+// ── MONEY-A14:租户页读的「30 天人工调账累计」与闸同源 ───────────────────────────
+describe("getTenantDetail — 人工调账累计(MONEY-A14)", () => {
+  it("累计与上限一起给出来,数字来自钱服务的同一条谓词", async () => {
+    organizationFindFirst.mockResolvedValue({ id: "org_1", name: "Shop" });
+    membershipFindFirst.mockResolvedValue({ status: "active", user: { email: "a@b.test" } });
+    creditAccountFindUnique.mockResolvedValue({ balance: 100, reserved: 0 });
+    creditLedgerFindMany.mockResolvedValue([]);
+    genJobAggregate.mockResolvedValue({ _sum: { spentUsd: null } });
+    refGenJobAggregate.mockResolvedValue({ _sum: { spentUsd: null } });
+    projectCount.mockResolvedValue(0);
+    generationCount.mockResolvedValue(0);
+    actionEventFindMany.mockResolvedValue([]);
+    // 18000 内部 = 1800 显示。
+    adjustWindowTotals.mockResolvedValue(new Map([["org_1", { internalTotal: 18_000, movements: 4, lastAt: new Date("2026-09-01T00:00:00Z") }]]));
+
+    const detail = await getTenantDetail("org_1");
+
+    expect(adjustWindowTotals).toHaveBeenCalledWith(["org_1"]);
+    expect(detail!.adjustRolling30dDisplay).toBe(1800);
+    expect(detail!.adjustRolling30dLimitDisplay).toBe(2000);
+    // 复审二 P1-2d:未收口的退款单由账本列出(这个 org 一张都没有)。
+    expect(detail!.openManualRefunds).toEqual([]);
+  });
+});
+
+// ── MONEY-A14:未收口的退款单只能从账本读,而且只读这个租户的(复审二 P1-2d) ──────
+// 未收口清单的行为(租户约束、先减后截、hasMore)钉在真库里:它现在是一句 `NOT EXISTS` 反连接
+// 的原生 SQL(复审四 P2),mock 出来的 prisma 只会把那句 SQL 当字符串,证明不了任何事。
+// 见 `open-refund-holds-db.test.ts`。

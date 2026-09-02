@@ -60,6 +60,7 @@ import { cn } from "@/lib/utils";
 // rule. A money divisor kept beside the money it converts is the copy that costs the most.
 import { FOUNDER_OWNER_ID } from "@fikirtive/core/storage-key";
 import { displayCredits } from "@fikirtive/core/spend";
+import { FINANCE_ADJUST_LIMITS, FINANCE_PER_ACTION_LIMIT_MESSAGE } from "@fikirtive/core/finance-limits";
 import { humanizeToken as humanizeCode } from "@/lib/machine-token";
 
 function modelLabel(model: { id: string; kind: "image" | "video" }): string {
@@ -317,7 +318,7 @@ function LargeGrantList({ rows }: { rows: LargeGrantRow[] }) {
   return (
     <Panel
       title="Large grants and adjustments"
-      subtitle="Already recorded in the append-only ledger, newest first. Nothing here is waiting on a decision."
+      subtitle="One row per workspace: everything moved by hand (grants, adjustments, refunds) in the rolling 30-day window, against the limit that would refuse the next one. Over-limit workspaces sort first. Settled ledger history — nothing here is waiting on a decision."
     >
       <div className="grid gap-2">
         {rows.length === 0 ? <EmptyState label="No recent grant or adjustment rows." /> : null}
@@ -329,12 +330,12 @@ function LargeGrantList({ rows }: { rows: LargeGrantRow[] }) {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="truncate text-sm font-medium text-foreground">{row.tenant}</span>
-                <Badge variant={row.state === "adjustment" ? "destructive" : "outline"}>{row.state}</Badge>
+                <Badge variant={row.state === "over limit" ? "destructive" : "outline"}>{row.state}</Badge>
               </div>
-              <p className="mt-1 truncate text-xs text-muted-foreground">{row.reason || row.createdBy || "No reason captured"}</p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{row.ownerEmail || "No owner email on file"} · {row.movements} manual movement{row.movements === 1 ? "" : "s"}</p>
             </div>
-            <div className="text-sm font-semibold text-foreground">{row.amount > 0 ? "+" : ""}{row.amount.toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground md:text-right">{fmtDate(row.createdAt)}</div>
+            <div className="text-sm font-semibold text-foreground">{row.rollingTotal.toLocaleString()} / {row.limit.toLocaleString()}</div>
+            <div className="text-xs text-muted-foreground md:text-right">{fmtDate(row.lastAt)}</div>
           </div>
         ))}
       </div>
@@ -459,7 +460,7 @@ function CreditActionPanel() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const parsedAmount = Number(amount);
-  const overLimit = Number.isFinite(parsedAmount) && Math.abs(parsedAmount) > 1000;
+  const overLimit = Number.isFinite(parsedAmount) && Math.abs(parsedAmount) > FINANCE_ADJUST_LIMITS.perActionDisplay;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -468,8 +469,8 @@ function CreditActionPanel() {
       setMessage({ ok: false, text: "Enter a non-zero whole number of displayed credits." });
       return;
     }
-    if (Math.abs(displayedAmount) > 1000) {
-      setMessage({ ok: false, text: "Credit actions are capped at 1,000 displayed credits each." });
+    if (Math.abs(displayedAmount) > FINANCE_ADJUST_LIMITS.perActionDisplay) {
+      setMessage({ ok: false, text: FINANCE_PER_ACTION_LIMIT_MESSAGE });
       return;
     }
     setSaving(true);
@@ -510,7 +511,7 @@ function CreditActionPanel() {
       </form>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <Badge variant={overLimit ? "warning" : "outline"}>{overLimit ? "Over finance limit" : "Within finance limit"}</Badge>
-        <span>Each credit action is capped at 1,000 displayed credits. Anything larger is refused outright — there is no queue to submit it to.</span>
+        <span>Each credit action is capped at {FINANCE_ADJUST_LIMITS.perActionDisplay.toLocaleString()} displayed credits, and one workspace may move at most {FINANCE_ADJUST_LIMITS.rolling30dTotalDisplay.toLocaleString()} in {FINANCE_ADJUST_LIMITS.windowDays} days. Anything larger is refused outright — there is no queue to submit it to.</span>
         {message ? <span className={message.ok ? "text-success" : "text-destructive"}>{message.text}</span> : null}
       </div>
     </Panel>
@@ -529,7 +530,7 @@ function MoneySection({ data }: { data: AdminV2Data }) {
         <MetricCard label="Founder balance" value={displayCredits(data.money.balance).toLocaleString()} detail="Displayed credits available to the founder workspace." tone="info" />
         <MetricCard label="Held credits" value={displayCredits(data.money.reserved).toLocaleString()} detail="Reserved by in-flight jobs." tone={data.money.reserved > 0 ? "warning" : "success"} />
         <MetricCard label="30-day spend" value={usd(data.money.totalUsd)} detail={`${data.money.jobCount} paid jobs with frozen spend snapshots.`} tone="neutral" />
-        <MetricCard label="Large grants" value={String(data.largeGrants.filter((row) => row.state === "over limit").length)} detail="Recorded above the 1,000 displayed credit single-action limit." tone="neutral" />
+        <MetricCard label="Large grants" value={String(data.largeGrants.filter((row) => row.state === "over limit").length)} detail={`Rows in workspaces past the ${FINANCE_ADJUST_LIMITS.rolling30dTotalDisplay.toLocaleString()} credit / ${FINANCE_ADJUST_LIMITS.windowDays} day manual limit.`} tone="neutral" />
       </div>
 
       <CreditActionPanel />

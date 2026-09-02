@@ -39,16 +39,15 @@ const DATA = {
   riskSignals: [],
   largeGrants: [
     {
-      id: "led_1",
+      // 复审二 P2-4:一行一个 workspace(不再是明细行),判定来自窗口累计。
+      id: "founder",
       tenant: "Founder workspace",
       ownerEmail: "founder",
-      kind: "GRANT",
-      amount: 10_000_000,
-      limit: 1000,
+      limit: 2000,
+      rollingTotal: 10_000_000,
+      movements: 3,
       state: "over limit" as const,
-      reason: "founder beta seed",
-      createdBy: "seed",
-      createdAt: "2026-08-07T09:54:00.000Z",
+      lastAt: "2026-08-07T09:54:00.000Z",
     },
   ],
   tenants: [],
