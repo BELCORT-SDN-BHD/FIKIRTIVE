@@ -1,4 +1,4 @@
-import { GEN_IMAGE_DEFAULT_VARIANT, GEN_MODELS, GEN_VIDEO_MODELS, videoDefaults, type GenVideoModel } from "./gen.js";
+import { DEFAULT_VIDEO_MODEL, GEN_IMAGE_DEFAULT_VARIANT, GEN_MODELS, GEN_VIDEO_MODELS, videoDefaults, type GenVideoModel } from "./gen.js";
 import { isKnownModelId } from "./model-registry.js";
 import { isSellableImageSku, isSellableVideoSku } from "./spend.js";
 
@@ -15,25 +15,43 @@ function defaultSkuIsSellable(model: string): boolean {
   return isSellableVideoSku(model, d.resolution, d.seconds);
 }
 
+/**
+ * 默认视频槽位。env 说了不算的三种情况都**降级回白名单 + 留日志**(CREATE-A5 前半条)。
+ *
+ * 宪法 5 margin floor: a model with no ruled price list has no margin-floored price, so an
+ * env override to one must NOT take effect — degrade to the priced default instead of
+ * letting the UI advertise a model the spend gate would reject on every attempt
+ * (split-brain). Selling more models = give them flat floored prices first
+ * (FLAT_PRICED_VIDEO_MODELS + costing), not an env flip.
+ *
+ * 「留日志」不是装饰,是这条验收的一半:**静默降级 = 没人知道 env 配错了**。
+ * r1 判官 P1 落修 —— 此前只有「在菜单上但默认档没有价」这一条打日志,而那一条今天
+ * 两个在产槽位都不成立(mini 默认 720p、高清槽位默认 1080p 都在白名单上)=
+ * 打不出来的日志;真正会发生的配错(env 指着一个下架的 / 拼错的 id)反而一声不吭。
+ * 现在两条路都打,判据分开写清楚:
+ *   ① 不在菜单上(下架 id / 拼错 / 垃圾值)—— 今天唯一构造得出来的配错;
+ *   ② 在菜单上,但它自己声明的默认档不在 SKU 白名单上 —— 两个槽位之后才可能出现的形状
+ *      (一台引擎可以有定额价,却把默认档设在一个没有价的分辨率上),前置守卫。
+ */
 export function activeVideoModel(env?: Env): string {
-  const want = getEnv(env).OTTO_DEFAULT_VIDEO_MODEL;
-  if (want && (GEN_VIDEO_MODELS as readonly string[]).includes(want)) {
-    if (defaultSkuIsSellable(want)) return want;
-    // 宪法 5 margin floor: a model with no ruled price list has no margin-floored price, so an
-    // env override to one must NOT take effect — degrade to the priced default instead of
-    // letting the UI advertise a model the spend gate would reject on every attempt
-    // (split-brain). Selling more models = give them flat floored prices first
-    // (FLAT_PRICED_VIDEO_MODELS + costing), not an env flip.
-    // Creation S2 §8.1①(CREATE-A5):判据从「有定额价」下沉到「**它的默认档在 SKU 白名单上**」
-    // —— 两个槽位之后,一台引擎可以在菜单上、有定额价,却把默认档设在一个没有价的分辨率上。
-    // 那样的默认同样卖不出去,同样必须降级 + 留日志,而不是让商家撞一次墙。
-    console.warn(`[model-config] OTTO_DEFAULT_VIDEO_MODEL=${want} has no margin-floored price for its default tier — using seedance-2-mini instead`);
-  }
   // Default to seedance-2-mini: the standard-tier video engine, and the one whose whole tier
   // table has ruled, margin-floored prices (宪法 5 margin floor). A pre-#644 default charged
   // ~raw cost, so an unset env var silently sold video at cost. Founder overrides via
   // OTTO_DEFAULT_VIDEO_MODEL.
-  return (GEN_VIDEO_MODELS as readonly string[]).includes("seedance-2-mini") ? "seedance-2-mini" : GEN_VIDEO_MODELS[0];
+  const fallback = (GEN_VIDEO_MODELS as readonly string[]).includes(DEFAULT_VIDEO_MODEL)
+    ? DEFAULT_VIDEO_MODEL
+    : GEN_VIDEO_MODELS[0];
+  const want = getEnv(env).OTTO_DEFAULT_VIDEO_MODEL;
+  if (!want) return fallback;
+  if (!(GEN_VIDEO_MODELS as readonly string[]).includes(want)) {
+    console.warn(`[model-config] OTTO_DEFAULT_VIDEO_MODEL=${want} is not an enabled video capability — using ${fallback} instead`);
+    return fallback;
+  }
+  if (!defaultSkuIsSellable(want)) {
+    console.warn(`[model-config] OTTO_DEFAULT_VIDEO_MODEL=${want} has no margin-floored price for its default tier — using ${fallback} instead`);
+    return fallback;
+  }
+  return want;
 }
 
 /**

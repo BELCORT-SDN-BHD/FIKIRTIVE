@@ -103,7 +103,11 @@ export const IMAGE_MODEL_MAP: Record<string, string> = {
   seedream: "seedream-5-0-260128",
   // Creation S2 §8.1①(2026-09-02):pro 图槽位。供应商 id 只住在这张表里 —— 商家可见的
   // 任何字符串都不许出现型号名(S1 九问4;`provider-secrecy` 是兜底,不是许可证)。
-  "seedream-pro": "dola-seedream-5-0-pro",
+  // 版本尾只读核实(r1 判官 P1 落修,2026-09-02):`arkcli models get dola-seedream-5-0-pro`
+  // → `id` = `dola-seedream-5-0-pro-260628`、`version` = `primary_version` = `260628`;
+  // `arkcli models versions dola-seedream-5-0-pro` 只回这一个版本。与视频侧同理:
+  // 这一格的价(2cr/张、毛利 77.5%)钉在一个**版本相关**的牌价上,基名会跟着平台换版本走。
+  "seedream-pro": "dola-seedream-5-0-pro-260628",
 };
 /** #769(Founder 已裁 2026-08-08):战役视频引擎从 2.0 Fast 换 2.0 mini。
  *  版本化 id 取自 ModelArk 模型档案(只读核实):`arkcli models get dreamina-seedance-2-0-mini`
@@ -114,13 +118,16 @@ export const VIDEO_MODEL_MAP: Record<string, string> = {
   // Creation S2 §8.1①(2026-09-02):高清槽位。与 mini 一样,这里是**唯一**允许出现供应商
   // id 的地方;`@fikirtive/core` 的菜单只认内部槽位名 `seedance-2-0`。
   //
-  // ⚠️ **版本尾未实查**:mini 那一行写的是版本化 id(`…-260615`,由 `arkcli models get`
-  // 只读核实过)。本行只有基名 —— 本场 `arkcli` SSO 已过期(规格 §8.5「环境前置(Founder
-  // 钥匙)」),没有第一方回执就不许在这里编一个版本尾出来(本仓规矩:没核过的数字不许写)。
-  // 风险是有界的:id 错 = task-create 被 4xx 拒,而 4xx 是本文件 `paidPost` 里唯一
-  // **可证明没花钱**的失败(退款 + 记零花费)。Founder 重新登录后跑一次
-  // `arkcli models versions dreamina-seedance-2-0`,把版本尾补上。
-  "seedance-2-0": "dreamina-seedance-2-0",
+  // 版本尾同样只读核实过(r1 判官 P1 落修,2026-09-02):
+  //   `arkcli models get dreamina-seedance-2-0`
+  //     → `id` = `dreamina-seedance-2-0-260128`、`version` = `primary_version` = `260128`;
+  //   `arkcli models versions dreamina-seedance-2-0` 只回这一个版本 260128。
+  // 为什么非写版本尾不可:基名会跟着平台换版本走,而 1080p 全 12 档的毛利地基是一次
+  // **版本相关**的实测(cost-pins `video:seedance-2.0:1080p-tokens-per-5s = 245,025`,
+  // 2026-08-29 实测账单)。基名成功且计费,只是按我们从未量过的那一版计费 ——
+  // 那不是「id 错就 4xx、可证明没花钱」的那条路,而是一笔按未知成本收的钱。
+  // 换版本 = 重跑一次实测再改这一行,不许只改 id。
+  "seedance-2-0": "dreamina-seedance-2-0-260128",
 };
 
 /**

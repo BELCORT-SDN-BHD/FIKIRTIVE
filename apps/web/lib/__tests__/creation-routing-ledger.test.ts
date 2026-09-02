@@ -131,14 +131,17 @@ describe("CREATE-A4 商家要 1080p:路由到高清档,报价 == reserve == sett
     expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
   });
 
-  it("CREATE-A4 路由理由:落 Generation 的那一句可查,而且只写能力名词", async () => {
+  it("CREATE-A4 路由理由:这一列真的存得下、读得出,而且只写能力名词", async () => {
     const world = await seedWorld(500);
     const started = await startCanvasGen(canvasRequest(world));
     const jobId = (started as { id: string }).id;
     const job = await prisma.genJob.findFirstOrThrow({ where: { id: jobId, ownerId: world.ownerId } });
 
-    // worker 建 Generation 行时写的就是这一句(输入只有已冻结的 job 行)。这里用同一个
-    // 纯函数算出它,再原样落一行 Generation —— 证的是「这一列真的存得下、读得出」。
+    // 分工写清楚(r1 判官 P1):**产品会不会写**这一列,证据在
+    // apps/worker/src/jobs/gen-receipt.test.ts 的「CREATE-A4 / CREATE-A12 路由理由」一节
+    // —— 那里跑真的 `handleGen`,直接看它交给 `generation.create` 的那份 data。
+    // 这里只证 schema 这一层:同一个纯函数算出的那句话真的**存得下、读得出**,
+    // 且落在一行有租户约束的 Generation 上。
     const routeReason = routeReasonFor({
       kind: "video",
       model: job.model,
@@ -175,11 +178,12 @@ describe("CREATE-A5 直接请求未定价的档:拒绝、ledger 零新增行、�
    * 一个没有价的档会发生什么」,而不是哪一道闸先开口。
    *   ① 契约闸(`genRequest` 的 superRefine):档位不在路由到的那个槽位的能力表上;
    *   ② 付费闸(`assertSpendableModel` 的 SKU 白名单):档位在能力表上却没有价。
-   * ② 的**直接**演示(高清槽位的 720p)在 `packages/core/src/creation-routing.test.ts`
-   * ——它不经这条请求路,因为路由器按分辨率把槽位定死了(720p 永远落默认档),
-   * 于是从这条路根本构造不出「槽位×档位」不匹配的请求。那是**设计意图**:
-   * 商家面上不存在挑引擎这件事,能挑的只有能力。
-   * 两条测试合起来才是 A5 的全部:请求路拒得掉,闸本身也拒得掉。
+   * 两道闸都站在 `pricedGenCredits` 与 `reserveCredits` 之前,所以拒绝这一路 ledger 零新增行。
+   *
+   * r1 判官 P1 落修:此前路由器**无条件**按分辨率覆写槽位,于是 ② 在整条请求路上永不
+   * 触发(死防线),而「点名高清槽位 × 720p」这一格被静默换成默认槽位并照常扣款 ——
+   * 正是 A5 括号里「(不是降级)」禁的那件事。改成「只有没点名槽位的请求才按能力归位」
+   * 之后,② 在这条路上有了自己的用例(下面第二条)。
    */
   it("CREATE-A5 请求一个没有价的画质 ⇒ 拒绝、零账本行、零任务、**不降级到别的档**", async () => {
     const world = await seedWorld(500);
@@ -204,11 +208,53 @@ describe("CREATE-A5 直接请求未定价的档:拒绝、ledger 零新增行、�
     expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
   });
 
+  it("CREATE-A5 点名了高清槽位却要一个没有价的画质 ⇒ **拒绝**,不是静默换成默认槽位", async () => {
+    const world = await seedWorld(500);
+    // 高清槽位能做 720p(它的能力表上有),但那一档没有属于它的成本钉点与已裁价。
+    // 服务端交给浏览器的别名永远只有默认槽位那一格,所以点名第二格 = 一次带外的明确指定
+    // —— 对一次明确指定的正确回答是如实拒绝,而不是把它归位到另一台照常收费。
+    const refused = await startCanvasGen(canvasRequest(world, {
+      model: "capability-video-2", // 高清槽位
+      resolution: "720p",
+      expectedCredits: 11,         // 就算报价「看着对」也拦得住:闸站在计价之前
+    }));
+    expect(refused, JSON.stringify(refused)).toHaveProperty("error");
+    // 开口的必须是**付费闸**(SKU 白名单),不是契约闸 —— 720p 在这台引擎的能力表上,
+    // 它只是没有价。这句话逐字钉住,免得哪天路由又把请求换成别的槽位、由别的闸拒,
+    // 测试却照样绿(那正是这条 P1 的形状)。
+    expect((refused as { error: string }).error)
+      .toBe("That video quality isn't on sale yet — pick another quality or length.");
+    // 拒绝语不带型号名(商家只见能力)。
+    expect(String((refused as { error: string }).error).toLowerCase()).not.toContain("seedance");
+
+    // 零账本行、零任务;尤其是**没有**一条落在默认槽位上的任务(那才叫降级)。
+    expect(await ledgerRows(world.ownerId)).toHaveLength(0);
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId, model: "seedance-2-mini" } })).toBe(0);
+    const acct = await prisma.creditAccount.findUniqueOrThrow({ where: { orgId: world.ownerId } });
+    expect(acct.balance).toBe(500 * INTERNAL_PER_DISPLAY);
+    expect(acct.reserved).toBe(0);
+  });
+
+  it("CREATE-A5 同一格换成它**有价**的那一档 ⇒ 照常放行(拒的是没有价,不是这台引擎)", async () => {
+    const world = await seedWorld(500);
+    const ok = await startCanvasGen(canvasRequest(world, {
+      model: "capability-video-2",
+      resolution: "1080p",
+      expectedCredits: HD_5S_DISPLAY,
+    }));
+    expect(ok, JSON.stringify(ok)).toHaveProperty("id");
+    const job = await prisma.genJob.findFirstOrThrow({ where: { ownerId: world.ownerId } });
+    expect(job.model).toBe("seedance-2-0");
+  });
+
   it("CREATE-A5 默认档 env 配错走的是**另一条**出路:降级 + 留日志,不是拒绝", async () => {
     // 这半条验收是纯函数判据(env → 用哪个槽位),证据在
-    // packages/core/src/creation-routing.test.ts 的同名用例:配错 ⇒ 回落白名单内的默认档
-    // 并 console.warn。放在这里的只有一句口径:**降级只发生在我们自己配错的时候**,
-    // 商家直接请求一个没有价的档,永远只能被如实拒绝(上面两条)。
+    // packages/core/src/creation-routing.test.ts(菜单外的 env 值)与
+    // packages/core/src/creation-routing-degrade.test.ts(在菜单上但默认档没有价)
+    // 两处的同编号用例:配错 ⇒ 回落白名单内的默认档 **并 console.warn**(正面断言)。
+    // 放在这里的只有一句账本侧口径:**降级只发生在我们自己配错的时候**,
+    // 商家直接请求一个没有价的档,永远只能被如实拒绝(上面三条)。
     const world = await seedWorld(500);
     const ok = await startCanvasGen(canvasRequest(world));
     expect(ok).toHaveProperty("id");

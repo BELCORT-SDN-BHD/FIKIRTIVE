@@ -17,8 +17,17 @@ describe("BytePlusProvider — wiring", () => {
     //   arkcli models versions dreamina-seedance-2-0-mini → 只有 260615 一个版本
     expect(VIDEO_MODEL_MAP["seedance-2-mini"]).toBe("dreamina-seedance-2-0-mini-260615");
     // Creation S2 §8.1①(2026-09-02):pro 图槽位与高清视频槽位上架,供应商 id 只住在这张表里。
-    expect(IMAGE_MODEL_MAP["seedream-pro"]).toBe("dola-seedream-5-0-pro");
-    expect(VIDEO_MODEL_MAP["seedance-2-0"]).toBe("dreamina-seedance-2-0");
+    // 两条同样是**版本化** id(r1 判官 P1 落修,2026-09-02 `arkcli models get` 只读核实):
+    //   dola-seedream-5-0-pro     → id / primary_version = …-260628(versions 只回这一个)
+    //   dreamina-seedance-2-0     → id / primary_version = …-260128(versions 只回这一个)
+    // 基名会跟着平台换版本走,而这两格的成本钉点是版本相关的实测 —— 换版本要重跑实测。
+    expect(IMAGE_MODEL_MAP["seedream-pro"]).toBe("dola-seedream-5-0-pro-260628");
+    expect(VIDEO_MODEL_MAP["seedance-2-0"]).toBe("dreamina-seedance-2-0-260128");
+    // 在产的四条接线全部带版本尾 —— 没有版本尾的 id 会悄悄跟着平台换版本,
+    // 而每一格的价都钉在一次版本相关的实测上。
+    for (const arkId of [...Object.values(IMAGE_MODEL_MAP), ...Object.values(VIDEO_MODEL_MAP)]) {
+      expect(arkId, `${arkId} 没有版本尾`).toMatch(/-\d{6}$/u);
+    }
     // 下架的那一台不许还留着一条能把钱花出去的路(与 GEN_VIDEO_MODELS 同进同退)。
     expect(VIDEO_MODEL_MAP["seedance-2-fast"]).toBeUndefined();
     expect(Object.keys(VIDEO_MODEL_MAP)).toEqual(["seedance-2-mini", "seedance-2-0"]);

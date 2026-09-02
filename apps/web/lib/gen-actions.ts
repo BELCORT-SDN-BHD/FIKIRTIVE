@@ -156,28 +156,35 @@ function resolvePublicModelAlias(raw: unknown): unknown {
  * 默认槽位,那一格根本不在默认槽位的能力表上 —— 先路由再校验,商家要的档才走得到
  * 它自己那一台引擎上;先校验再路由则永远拒。
  *
- * 路由是**总的**:分辨率完全决定槽位,菜单内的任何 model 都会被按分辨率归位,
- * 哪怕调用方点名了另一台。这是刻意的,不是偷懒 —— 商家面上根本不存在「挑引擎」这件事
- * (浏览器只拿得到 `capability-<kind>-N` 这种不透明别名,而且只会拿到默认那一格),
- * 所以一个「点名了 A 引擎、却要 B 引擎那一档」的请求只可能来自带外调用。把它归位到
- * 那一档真正的槽位,得到的是**商家要的那一档 + 那一档的价**;放着不归位,得到的才是
- * 一个卖不出去或算错价的组合。副作用是从这条路构造不出「槽位 × 档位」不匹配的请求,
- * 于是付费闸(`assertSpendableModel`)在这条路上是**第二道**防线 —— 它的直接演示
- * 落在 packages/core/src/creation-routing.test.ts,不在请求路的测试上。
+ * 路由**只对「没点名槽位」的请求生效**(r1 判官 P1 落修)。判据是现成的:服务端交给
+ * 浏览器的别名永远只有当前默认槽位那一格(`getActiveGenModels` → `publicModelAlias`),
+ * 所以「请求上挂着默认槽位」= 商家什么都没挑 = 由能力(分辨率)决定去哪一台;
+ * 「请求上挂着**非默认**槽位」= 一次明确的点名,只可能来自带外调用,而对一次点名的
+ * 正确回答是**如实回答**,不是把它归位到另一台。
+ *
+ * 这一格就是 CREATE-A5 的「拒绝(不是降级)」落在请求路上的地方:
+ * `{高清槽位 × 720p}` 原样放行 ⇒ 契约闸认(720p 在它能力表上)⇒ 付费闸
+ * (`assertSpendableModel`)按 SKU 白名单答「这一格没有价」⇒ 拒绝、$0、ledger 零新增行。
+ * 旧版在这里无条件按分辨率覆写 model,于是同一份请求被**静默换成默认槽位并照常扣款** ——
+ * 商家点名 A 引擎、跑的是 B 引擎,正是规格 §1 九问4「商家请求的路由结果一律拒绝、不降级」
+ * 禁的那件事,也让付费闸在整条请求路上变成永不触发的死防线。
  * 菜单外的 id(历史行 / 垃圾值)原样透传,由契约闸拒。
  *
  * 幂等键安全:键在这一步**之前**由服务端从商家意图算出(`assetActionKey` 等),
- * 而同一个意图(同一个分辨率)永远路由到同一个槽位,所以路由不会让同一次意图
- * 产生两个键,也不会让两个不同意图共用一个键。
+ * 而同一个意图(同一个槽位 + 同一个分辨率)永远得到同一个结果,所以路由不会让同一次
+ * 意图产生两个键,也不会让两个不同意图共用一个键。
  */
 function routeCapabilitySlot(raw: unknown): unknown {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return raw;
   const record = raw as Record<string, unknown>;
   if (record.kind !== "video") return raw; // 图片侧的升档能力位归批 II（增强稿）带进来
-  if (typeof record.model !== "string" || !modelMenu("video").includes(record.model)) return raw;
+  const named = typeof record.model === "string" ? record.model : null;
+  if (!named || !modelMenu("video").includes(named)) return raw;
+  // 点名了非默认槽位 ⇒ 不改写。让它带着自己的槽位去撞 SKU 白名单闸。
+  if (named !== activeVideoModel()) return raw;
   const resolution = typeof record.resolution === "string" ? record.resolution : null;
   const routed = routeVideoModel(resolution).model;
-  return routed === record.model ? raw : { ...record, model: routed };
+  return routed === named ? raw : { ...record, model: routed };
 }
 
 /** 别名解析 → 能力路由。两条入口(`startGen` 与 `startCoworkGen`)走**同一个**helper,

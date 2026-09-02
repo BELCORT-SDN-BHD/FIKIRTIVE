@@ -103,18 +103,29 @@ describe("CREATE-A4 能力路由:请求 1080p → 路由到高清档,报价 55cr
 describe("CREATE-A5 白名单外:默认档配错=降级留日志;直接请求=拒绝、不降级", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("CREATE-A5 前者:默认视频模型环境变量指向未定价槽位 → 降级回白名单并留日志", () => {
+  it("CREATE-A5 前者:默认视频模型环境变量指向未定价槽位 → 降级回白名单**并留日志**", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    // 未定价/已下架的槽位(菜单外)与「在菜单上但默认档没有价」两种配错,结论一致。
+
+    // ① 降级到白名单内的默认槽位。
     expect(activeVideoModel({ OTTO_DEFAULT_VIDEO_MODEL: "seedance-2-fast" })).toBe("seedance-2-mini");
-    expect(activeVideoModel({ OTTO_DEFAULT_VIDEO_MODEL: "not-a-model" })).toBe("seedance-2-mini");
-    // 白名单内的槽位照旧生效(降级只发生在配错的时候)。
-    expect(activeVideoModel({ OTTO_DEFAULT_VIDEO_MODEL: "seedance-2-0" })).toBe("seedance-2-0");
-    // 「留日志」是这条验收的一半:静默降级 = 没人知道 env 配错了。
+    // ② 「留日志」是这条验收的另一半,必须**正面**断言打出来了 —— r1 判官 P1:
+    //    此前这里只断言了「好值不打日志」,于是一条静默降级也能全绿。
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain("OTTO_DEFAULT_VIDEO_MODEL=seedance-2-fast");
+
     warn.mockClear();
-    const priced = { OTTO_DEFAULT_VIDEO_MODEL: "seedance-2-mini" } as const;
-    expect(activeVideoModel(priced)).toBe("seedance-2-mini");
+    expect(activeVideoModel({ OTTO_DEFAULT_VIDEO_MODEL: "not-a-model" })).toBe("seedance-2-mini");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain("OTTO_DEFAULT_VIDEO_MODEL=not-a-model");
+
+    // ③ 白名单内的槽位照旧生效、且**不**打日志(降级只发生在配错的时候)。
+    warn.mockClear();
+    expect(activeVideoModel({ OTTO_DEFAULT_VIDEO_MODEL: "seedance-2-0" })).toBe("seedance-2-0");
+    expect(activeVideoModel({ OTTO_DEFAULT_VIDEO_MODEL: "seedance-2-mini" })).toBe("seedance-2-mini");
+    expect(activeVideoModel({})).toBe("seedance-2-mini"); // env 没设 = 不是配错
     expect(warn).not.toHaveBeenCalled();
+    // 今天两个在产槽位的默认档都在白名单上,所以「在菜单上但默认档没有价」那条分支
+    // 从这里构造不出来 —— 它的覆盖在 creation-routing-degrade.test.ts(注入白名单)。
   });
 
   it("CREATE-A5 后者:直接请求一个未定价的档 → 拒绝,而且**不是**降级", () => {

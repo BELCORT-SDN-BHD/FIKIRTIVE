@@ -18,8 +18,8 @@ import { describe, it } from "vitest";
 
 describe("Creation 验收表 ↔ 测试映射(S2 §8.0 三批)", () => {
   // ── 批 I(本段交付,真身在这两个文件里)────────────────────────────────────
-  it.todo("CREATE-A4 见 packages/core/src/creation-routing.test.ts + apps/web/lib/__tests__/creation-routing-ledger.test.ts(本段已交付)");
-  it.todo("CREATE-A5 见 packages/core/src/creation-routing.test.ts + apps/web/lib/__tests__/creation-routing-ledger.test.ts(本段已交付)");
+  it.todo("CREATE-A4 见 packages/core/src/creation-routing.test.ts + apps/web/lib/__tests__/creation-routing-ledger.test.ts + apps/worker/src/jobs/gen-receipt.test.ts(路由理由由 worker 写)(本段已交付)");
+  it.todo("CREATE-A5 见 packages/core/src/creation-routing.test.ts + packages/core/src/creation-routing-degrade.test.ts(默认档不可售分支)+ apps/web/lib/__tests__/creation-routing-ledger.test.ts(本段已交付)");
   it.todo("CREATE-A6 见 packages/core/src/creation-routing.test.ts + apps/web/lib/__tests__/creation-routing-ledger.test.ts(本段已交付)");
 
   // ── 批 I 的其余段(声音开关 / 演员库 / 真人脸口径),不在本段写集 ──────────
