@@ -45,11 +45,30 @@ export const UNDERSTANDING_COST_HINT =
   `${priceOf("video-qa")} a video, and ${priceOf("doc-extract")} more when an image ` +
   `turns out to be a menu or price list.`;
 
-/** The hover explanation. Says WHEN the charge lands and WHICH price applies, because
- *  understanding is charged at the price snapshotted at upload time, not at the price on
- *  the day the scan actually runs (计费四则①). */
+/** The hover explanation. Says WHEN the charge lands and WHICH price applies.
+ *
+ *  计费四则① calls this "上传时刻价", and the first version of this sentence repeated that
+ *  word for word — "at the price shown when you upload". The 顾问复审 2026-09-02 showed it is
+ *  not what the code does: the snapshot is written by the SCANNER when it creates the
+ *  AssetUnderstanding row (25 rows a minute — a 2000-image drop finishes about 80 minutes
+ *  later), so a price change inside that window lands on files already uploaded. Founder
+ *  2026-09-02 accepted the deviation and ruled the WORDING must tell the truth instead
+ *  (变更登记「上传时刻价」实为「扫描器建行时刻价」; the trigger for actually moving the snapshot
+ *  to upload time is repricing more often than weekly).
+ *
+ *  跨厂复审 2026-09-02 打回了本句的第一版("… (normally the moment you upload)"):把建行时刻
+ *  写成「通常就是上传那一刻」,读起来仍然是**上传即锁价**,而那正是被打回的那句假话。真实形状
+ *  是**排队**——队伍空的时候几乎就是上传那一刻,队伍深的时候要等,而等的期间调价就按新价
+ *  (扫描器每分钟至多建 25 行,`understand.ts` 的 UNDERSTAND_SCAN_BATCH)。所以这句话必须
+ *  自己说出积压那一半:不说,商家读到的就只有前一半。
+ *
+ *  It must never again promise that the price is locked at the instant of upload — that is a
+ *  promise the charging path does not keep.
+ *
+ *  没有撇号是**故意**的:这句话进 `title` 属性,React 把 `'` 转义成 `&#x27;`,而围栏拿这个
+ *  常量去比渲染后的 markup —— 一个 `there's` 就会让围栏假红。 */
 export const UNDERSTANDING_COST_HINT_TITLE =
-  "Charged when the file is understood, at the price shown when you upload";
+  "Charged when the file is understood, at the price in effect when it is queued for understanding — usually right after upload, but later if there is a backlog";
 
 /**
  * The shared line. Styling is the repo's existing cost hint (`FlowCanvas.tsx:1727`) —

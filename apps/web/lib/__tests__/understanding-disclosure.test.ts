@@ -49,6 +49,7 @@ import {
 } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
 import {
+  UNDERSTANDING_COST_HINT,
   UNDERSTANDING_COST_HINT_TITLE,
   UnderstandingCostHint,
 } from "@/components/otto/UnderstandingCostHint";
@@ -63,6 +64,50 @@ const priceOf = (kind: keyof typeof UNDERSTANDING_PRICED_INTERNAL) =>
 /** 「12 credits」「0.1 credit」这类**手抄的钱数**。className 里的 `text-[0.75rem]` 不会命中
  *  (它后面跟的是 rem,不是 credit),命中的只有真的把价钱写死在文案里的那种写法。 */
 const HAND_TYPED_CREDITS = /\d[\d,.]*\s*credits?\b/i;
+
+/**
+ * 「上传那一刻就锁价」这一族**假话**。
+ *
+ * 产品做不到:快照是**扫描器建 AssetUnderstanding 行**那一刻写的(`apps/worker/src/jobs/
+ * understand.ts` —— `priceInternalSnapshot: pricedUnderstandingCredits(kind)` 就在 create 里,
+ * 而扫描器每轮至多捡 `UNDERSTAND_SCAN_BATCH = 25` 行、每分钟一轮)。所以 2000 张的批量上传要
+ * 八十分钟才建完行,**排队期间调价,后面那些文件按新价建行**。
+ *
+ * 跨厂复审 2026-09-02 的唯一 P1 就是打这一条:第一版把它写成「(normally the moment you
+ * upload)」,句子形式上说了「排队时」,读起来还是「上传即锁价」—— 括号里那半句把前半句抵消掉了。
+ * 所以这里不再钉「必须出现某句好话」,改成**禁止整整一族说法**,五处商家/Otto 能读到的报价句
+ * 逐处扫。列表是穷举的:每一条都是曾经真的写在产品里、或者最容易被下一个人重新写出来的那句。
+ */
+const FALSE_LOCK_PHRASES = [
+  "moment you upload",
+  "locked in on upload",
+  "the moment it lands",
+  "at upload time",
+  "price shown when you upload",
+  "locked in the moment",
+] as const;
+
+/** 新口径必须自己说全两半:**哪一刻的价**(排队去理解时)+ **它可能不是上传那一刻**(积压)。
+ *  只说前一半,商家默认会把它读成上传那一刻 —— 这正是被打回的那次。 */
+const QUEUED_PHRASE = "queued for understanding";
+const BACKLOG_PHRASE = "backlog";
+
+/** 一句报价文案的完整判定:禁语族一条不许中,两个必须词一个不许少。 */
+function assertQueuedNotUploadWording(label: string, sentence: string): void {
+  const text = sentence.toLowerCase();
+  for (const phrase of FALSE_LOCK_PHRASES) {
+    expect(
+      text,
+      `${label} 又出现了「${phrase}」—— 那是「上传即锁价」的说法,而快照是扫描器建行时才写的`,
+    ).not.toContain(phrase);
+  }
+  expect(text, `${label} 没说清是**哪一刻**的价(缺「${QUEUED_PHRASE}」)`).toContain(QUEUED_PHRASE);
+  expect(
+    text,
+    `${label} 只说了「排队时」却没说排队**可能要等**(缺「${BACKLOG_PHRASE}」)—— 少了这一半,`
+      + "商家仍然会把它读成上传那一刻",
+  ).toContain(BACKLOG_PHRASE);
+}
 
 /** 只扫**会被商家读到的那部分**:注释里举例说明「0.1 credits 是怎么来的」是文档,不是文案,
  *  而且它正是我们希望留在源码里的解释。手抄的价钱如果藏在注释里,一个商家也看不见。 */
@@ -511,8 +556,11 @@ function parseFile(rel: string): ts.SourceFile {
  *  而它的 UI 入口还没有人问过「商家看得见价目吗」。 */
 const WRITE_POINT_FILES: Record<string, { note: string; writePointFunctions: number }> = {
   "lib/actions.ts": {
-    note: "ingestFile / uploadCandidates / uploadReference 三处直接落行,再经 createEntity、addReferenceImages 转出去",
-    writePointFunctions: 3,
+    // 钱引擎⑤A 2026-09-02:uploadCandidates 与 addReferenceImages 两个零调用方的导出动作已删
+    // (变更登记「A9 披露入口补挂」的待清理项),写点从三支降到两支 —— 这两个数字是普查算出来的,
+    // 不是手抄的:改这里之前先看测试打出来的实际值。
+    note: "ingestFile / uploadReference 两处直接落行,再经 createEntity 转出去",
+    writePointFunctions: 2,
   },
   "lib/asset-actions.ts": {
     note: "saveCroppedGeneration —— 裁剪保存落一条全新的 UPLOAD 素材",
@@ -856,9 +904,7 @@ function uploadEntryFiles(): string[] {
 
 /** 登记的动作集合(`模块#导出名`)。跨文件包装也在里面 —— 集合变了就红。 */
 const EXPECTED_ACTION_KEYS = [
-  "lib/actions#addReferenceImages",
   "lib/actions#createEntity",
-  "lib/actions#uploadCandidates",
   "lib/actions#uploadReference",
   "lib/asset-actions#saveCroppedGeneration",
   "lib/upload-actions#finalizeCandidateUploads",
@@ -906,33 +952,207 @@ function must<T extends ts.Node>(
   return node as T;
 }
 
-/** 一个模块级 `const` 的**初始化表达式节点**(不是文本)。 */
-function initializerOf(file: string, name: string): { node: ts.Expression; text: string } | null {
-  const sf = parseFile(file);
-  let found: ts.Expression | null = null;
+/**
+ * 整份文件里叫这个名字的变量声明**有几支** —— 函数体里、块里、嵌套里的全算。
+ *
+ * (Codex #1118 第十轮 P2)上一版的 `initializerOf` 递归扫整棵树、取**第一个**同名变量就收工。
+ * 那是可以被排版顺序骗过去的:把真名单改成手抄的六个扩展名 + mp4,再在**它前面**放一个函数,
+ * 函数里留一支同名的、写法完全正确的诱饵 —— DFS 先撞上诱饵,整套结构检查照样全绿,而
+ * `clip.mp4` 被放行、服务端落 `video/mp4`、建 video-qa 收费行,这个入口却不挂披露。
+ * 所以名字得是**唯一**的:多一支(哪怕是函数内的局部变量)就红,由人来判哪一支才是白名单。
+ */
+function declarationCountOf(sf: ts.SourceFile, name: string): number {
+  let count = 0;
   const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name && node.initializer) {
-      found = node.initializer;
-      return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) count++;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return count;
+}
+
+/**
+ * **模块顶层** `const <name> = …` 的初始化表达式节点(不是文本)。
+ *
+ * 顶层与 const 两件都是硬条件:函数体里的同名变量不是模块白名单(它只在那一次调用里存在),
+ * 而 `let` / `var` 声明的名单意味着这个集合可以被整支换掉 —— 结构检查看的是初始化那一刻的写法,
+ * 换掉之后它一个字都不知道。
+ */
+function moduleConstInitializerOf(
+  sf: ts.SourceFile,
+  name: string,
+): { node: ts.Expression; text: string } | null {
+  for (const st of sf.statements) {
+    if (!ts.isVariableStatement(st)) continue;
+    if (!(st.declarationList.flags & ts.NodeFlags.Const)) continue;
+    for (const decl of st.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || decl.name.text !== name || !decl.initializer) continue;
+      const node = decl.initializer;
+      return { node, text: sf.text.slice(node.getStart(sf), node.end) };
+    }
+  }
+  return null;
+}
+
+/**
+ * 对这个集合的**变异调用**(`X.add(…)` / `X.delete(…)`),原样返回源码片段。
+ *
+ * 结构检查钉的是「这个 Set 是怎么算出来的」。算得再对,初始化之后补一句
+ * `AUDIO_UPLOAD_EXTENSIONS.add("mp4")`,白名单照样多一个 video 扩展名 —— 而上一版的检查
+ * 到 `new Set(...)` 那一层就结束了,一个字都看不见。
+ */
+function mutationCallsOf(sf: ts.SourceFile, name: string): string[] {
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === name &&
+      (node.expression.name.text === "add" || node.expression.name.text === "delete")
+    ) {
+      found.push(sf.text.slice(node.getStart(sf), node.end));
     }
     ts.forEachChild(node, visit);
   };
   ts.forEachChild(sf, visit);
-  return found === null ? null : { node: found, text: sf.text.slice((found as ts.Expression).getStart(sf), (found as ts.Expression).end) };
+  return found;
 }
 
-/** `import { X } from "…"` 里 X 的来源说明符,**原样**返回(不解析成模块 id)。 */
-function importSpecifierOf(file: string, local: string): string | null {
-  for (const st of parseFile(file).statements) {
+/**
+ * `import { … } from "…"` 里一个**本地名**的来源:说明符**原样**返回(不解析成模块 id),
+ * 外加它在来源模块里**真正叫什么**(`propertyName ?? name`)。
+ *
+ * (Codex #1118 第十轮 P2)上一版只比本地名与模块路径,忽略 `propertyName` —— 于是
+ * `import { SOME_OTHER as UPLOAD_EXTS } from "@fikirtive/core/upload"` 全绿:模块对、本地名对,
+ * 而真正被过滤的是 core 里另一个完全不相干的导出。改名进来的名单不是 core 的上传扩展名权威,
+ * 所以调用方要逐字核 `imported`。
+ */
+function importOriginOf(
+  sf: ts.SourceFile,
+  local: string,
+): { module: string; imported: string } | null {
+  for (const st of sf.statements) {
     if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
     const bindings = st.importClause?.namedBindings;
     if (!bindings || !ts.isNamedImports(bindings)) continue;
     for (const el of bindings.elements) {
-      if (el.name.text === local) return st.moduleSpecifier.text;
+      if (el.name.text !== local) continue;
+      return { module: st.moduleSpecifier.text, imported: (el.propertyName ?? el.name).text };
     }
   }
   return null;
+}
+
+/** 一个名字在这个文件里被**声明成值**的次数:变量、函数、类都算。
+ *  `declarationCountOf` 只数变量 —— 而「自己重写一份同名函数」正是要挡的那种写法。 */
+function valueDeclarationCountOf(sf: ts.SourceFile, name: string): number {
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    const named =
+      (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) ||
+      (ts.isFunctionDeclaration(node) && node.name?.text === name) ||
+      (ts.isClassDeclaration(node) && node.name?.text === name);
+    if (named) count++;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return count;
+}
+
+/**
+ * 这个文件**依赖**的模块说明符:静态 import、`export … from` 再导出、以及说明符是静态字符串的
+ * 动态 `import()`。
+ *
+ * **已知边界(非恶意代码限制)**:说明符由字符串拼接或变量给出的动态 import
+ * (`import("next/" + x)`、`import(mod)`)这里认不到。这道围栏挡的是「有人顺手 import 了一个
+ * 服务端模块」,不是「有人存心藏一条依赖」——后者靠复审,不靠语法树。
+ */
+function moduleSpecifiersOf(sf: ts.SourceFile): string[] {
+  const out: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      out.push(node.moduleSpecifier.text);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      out.push((node.arguments[0] as ts.StringLiteral).text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return out;
+}
+
+/** 仓库内说明符 → 真实源码文件(相对 WEB_ROOT);第三方包返回 null。 */
+function sourceFileOf(fromFile: string, spec: string): string | null {
+  const moduleId = resolveSpecifier(fromFile, spec);
+  if (moduleId === null) return null;
+  for (const candidate of [`${moduleId}.ts`, `${moduleId}.tsx`, `${moduleId}/index.ts`, `${moduleId}/index.tsx`]) {
+    try {
+      readFileSync(path.join(WEB_ROOT, candidate));
+      return candidate;
+    } catch {
+      /* next candidate */
+    }
+  }
+  return null;
+}
+
+/** 服务端专属依赖:碰上任何一个,这个文件就不能再在没有请求上下文的测试里被 import。 */
+const FORBIDDEN_LEAF_DEP = /^(next\/|next$|server-only|@fikirtive\/db|@prisma|\.prisma)/;
+
+/**
+ * 叶子体检:这个文件、以及它**本地相对/别名导入**的那一层,有没有碰服务端专属依赖。
+ * 返回 `文件 → 说明符` 的命中清单(空数组 = 干净),外加走到过的本地文件,好证明递归真的走了。
+ */
+function leafDepScan(rel: string): { offenders: string[]; visited: string[] } {
+  const offenders: string[] = [];
+  const visited: string[] = [];
+  const check = (file: string, depth: number): void => {
+    for (const spec of moduleSpecifiersOf(parseFile(file))) {
+      if (FORBIDDEN_LEAF_DEP.test(spec)) offenders.push(`${file} → ${spec}`);
+      if (depth === 0) continue;
+      const local = sourceFileOf(file, spec);
+      if (local && !visited.includes(local)) {
+        visited.push(local);
+        check(local, depth - 1);
+      }
+    }
+  };
+  check(rel, 1);
+  return { offenders, visited };
+}
+
+/**
+ * port **真的把那句报价委托给了叶子模块**,而不是只借个 CT_EXT、自己再重写一份同名函数。
+ *
+ * 两半都要:①具名绑定 `importUnderstandingQuote` 逐字来自叶子模块(`propertyName ?? name`,
+ * 所以 `somethingElse as importUnderstandingQuote` 不算);②这个文件里**没有**第二个同名的
+ * 值声明 —— 有的话,那句话就有两份真相,而围栏读的是叶子那一份。
+ */
+function assertPortDelegatesQuote(sf: ts.SourceFile): void {
+  const origin = importOriginOf(sf, "importUnderstandingQuote");
+  expect(
+    origin?.module ?? null,
+    "otto-media-port 没有从 @/lib/understanding-quote-copy 导入 importUnderstandingQuote",
+  ).toBe("@/lib/understanding-quote-copy");
+  expect(
+    origin?.imported ?? null,
+    "importUnderstandingQuote 是叶子模块里**另一个导出**改名来的 —— 那不是围栏读的那一句",
+  ).toBe("importUnderstandingQuote");
+  expect(
+    valueDeclarationCountOf(sf, "importUnderstandingQuote"),
+    "otto-media-port 自己又声明了一个 importUnderstandingQuote —— 报价句于是有了两份真相",
+  ).toBe(0);
 }
 
 /**
@@ -945,16 +1165,35 @@ function importSpecifierOf(file: string, local: string): string | null {
  * 所以这里逐层拆 `new Set(UPLOAD_EXTS.filter((p) => mimeOf(p).startsWith("audio/")))`,
  * 任何一层不对就红,并把实际写法打在失败信息里。
  */
-function assertAudioWhitelistIsDerived(file: string): void {
+function assertAudioWhitelistIsDerived(sf: ts.SourceFile): void {
+  const NAME = "AUDIO_UPLOAD_EXTENSIONS";
+
   for (const local of ["UPLOAD_EXTS", "mimeOf"]) {
+    const origin = importOriginOf(sf, local);
     expect(
-      importSpecifierOf(file, local),
+      origin?.module ?? null,
       `${local} 不是从 @fikirtive/core/upload 导入的 —— 白名单必须来自 core 的单一权威`,
     ).toBe("@fikirtive/core/upload");
+    // 模块对、本地名对,还不够:`import { SOME_OTHER as UPLOAD_EXTS }` 两样都对得上,
+    // 过滤的却是另一个导出。来源模块里那个名字必须逐字就是它自己。
+    expect(
+      origin?.imported ?? null,
+      `${local} 是同一个模块里**另一个导出**改名来的(${origin?.imported ?? "?"} as ${local})—— `
+        + "改了名的东西不是 core 的上传扩展名权威",
+    ).toBe(local);
   }
 
-  const found = initializerOf(file, "AUDIO_UPLOAD_EXTENSIONS");
-  expect(found, "找不到 AUDIO_UPLOAD_EXTENSIONS 的定义 —— 白名单被删或改名了").not.toBeNull();
+  // 名字必须唯一:函数里留一支写法正确的同名诱饵,就能把「取第一个同名变量」的检查骗到。
+  expect(
+    declarationCountOf(sf, NAME),
+    `${NAME} 在这个文件里不是恰好声明一次 —— 多一支(哪怕是函数内的局部变量)就分不清哪一支是白名单`,
+  ).toBe(1);
+
+  const found = moduleConstInitializerOf(sf, NAME);
+  expect(
+    found,
+    `找不到模块顶层的 \`const ${NAME} = …\` —— 白名单被删、改名,或者挪进了函数体 / 改成了 let`,
+  ).not.toBeNull();
   const actual = found!.text;
 
   const created = must(
@@ -1038,6 +1277,13 @@ function assertAudioWhitelistIsDerived(file: string): void {
     mimeArgument.text,
     `mimeOf 判的不是被过滤的那个扩展名(参数对不上):${actual}`,
   ).toBe(parameter.text);
+
+  // 算得再对,初始化之后补一句 `.add("mp4")` / `.delete("m4a")`,名单照样被改 ——
+  // 而上面的结构拆解到 `new Set(...)` 就结束了,一个字都看不见。
+  expect(
+    mutationCallsOf(sf, NAME),
+    `${NAME} 在初始化之后被改过 —— 白名单必须是算出来就定死的那一份`,
+  ).toEqual([]);
 }
 
 /** 仓库根(WEB_ROOT 是 apps/web)。豁免要引规格,规格得真的读得到。 */
@@ -1100,7 +1346,7 @@ const EXEMPTIONS: Exemption[] = [
       ).toContain('startsWith("audio/")');
       // 白名单本身必须**是从 core 算出来的**,按语法树逐层拆,不是文本 toContain ——
       // 文本断言钉不住「这个集合是怎么来的」,别处留一段死表达式当诱饵就能骗过去。
-      assertAudioWhitelistIsDerived("components/otto/edit/EditDesk.tsx");
+      assertAudioWhitelistIsDerived(parseFile("components/otto/edit/EditDesk.tsx"));
       // ③ 守卫要真的拦在 finalize 之前,不是拦完还继续走。
       const guardIndex = handler!.indexOf("looksLikeAudio");
       const finalizeIndex = handler!.indexOf("finalizeCandidateUploads");
@@ -1134,9 +1380,9 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     expect(markup).toContain(priceOf("doc-extract"));
   });
 
-  it("title 说清了什么时候扣、按哪一天的价(四则①:按上传时刻的快照价)", () => {
+  it("title 说清了什么时候扣、按哪一刻的价(四则①,措辞按 2026-09-02 裁决改实话)", () => {
     expect(markup).toContain(UNDERSTANDING_COST_HINT_TITLE);
-    expect(UNDERSTANDING_COST_HINT_TITLE.toLowerCase()).toContain("when you upload");
+    assertQueuedNotUploadWording("UnderstandingCostHint 的 title", UNDERSTANDING_COST_HINT_TITLE);
   });
 
   it("组件源码里没有手抄的价钱 —— 数值只能来自推导", () => {
@@ -1188,9 +1434,12 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     // 非导出的 persistUpload() 再由新动作转调,名单不更新就全绿。现在由调用闭包保证。
     const actions = uploadActionKeys();
     expect(actions, "createEntity 只通过 helper 落盘,闭包必须认出它").toContain("lib/actions#createEntity");
-    expect(actions, "addReferenceImages 同样只通过 helper 落盘").toContain("lib/actions#addReferenceImages");
     // 而 helper 自己不导出,不会被当成「UI 该去调的动作」漏进入口侧
     expect(actions, "ingestFile 是非导出 helper,不该出现在动作表里").not.toContain("lib/actions#ingestFile");
+    // 删掉的两支不许悄悄回来:零 UI 调用方的导出上传动作正是这套围栏要盯的形状。
+    for (const gone of ["lib/actions#uploadCandidates", "lib/actions#addReferenceImages"]) {
+      expect(actions, `${gone} 又出现了 —— 它 2026-09-02 被当死导出删掉,回来就得重新问披露`).not.toContain(gone);
+    }
   });
 
   /** 用一段合成源码跑一遍模块闭包 —— 夹具比探针值钱:探针跑完就没了,夹具会一直在。 */
@@ -1643,6 +1892,52 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       ).toBe(exemption.callSites);
     }
   });
+
+  // ── 豁免 guard 自己的反向夹具(Codex #1118 第十轮两条非阻塞 P2 的落点)────────────
+  // guard 也会腐坏,而它腐坏的方式恰好是「看起来全绿」。下面三条喂的是**合成源码**,走的是
+  // guard 真正跑的那条链路(不是另写一套判定),逐条证明它对三种能放行 video 扩展名的写法当场红。
+  // 放行一个 video 扩展名的代价是具体的:`clip.mp4` 过了 EditDesk 的守卫,服务端落 video/mp4,
+  // 建一条 video-qa 收费行 —— 而这个入口是按「只收音频、不计费」豁免掉披露的。
+  const FIXTURE_IMPORT = 'import { UPLOAD_EXTS, mimeOf } from "@fikirtive/core/upload";';
+  const FIXTURE_DERIVED =
+    'const AUDIO_UPLOAD_EXTENSIONS = new Set(UPLOAD_EXTS.filter((p) => mimeOf(p).startsWith("audio/")));';
+  const fixtureOf = (source: string): ts.SourceFile =>
+    ts.createSourceFile("fixture.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+
+  it("豁免 guard 夹具:算出来的名单过,函数内的同名诱饵红(不再是「取第一个同名变量」)", () => {
+    expect(() => assertAudioWhitelistIsDerived(fixtureOf(`${FIXTURE_IMPORT}\n${FIXTURE_DERIVED}\n`))).not.toThrow();
+
+    // 诱饵排在**前面**:递归扫整棵树取第一个同名变量的旧写法先撞上它,整套结构检查照样全绿,
+    // 而真正生效的那份名单是手抄的,里面躺着 mp4。
+    expect(() =>
+      assertAudioWhitelistIsDerived(
+        fixtureOf(
+          `${FIXTURE_IMPORT}\n` +
+            `function decoy() {\n  ${FIXTURE_DERIVED}\n  return AUDIO_UPLOAD_EXTENSIONS;\n}\n` +
+            'const AUDIO_UPLOAD_EXTENSIONS = new Set(["mp3", "mp4"]);\n',
+        ),
+      ),
+    ).toThrow(/恰好声明一次/);
+  });
+
+  it("豁免 guard 夹具:名单算对了、初始化之后又 .add() 的红", () => {
+    expect(() =>
+      assertAudioWhitelistIsDerived(
+        fixtureOf(`${FIXTURE_IMPORT}\n${FIXTURE_DERIVED}\nAUDIO_UPLOAD_EXTENSIONS.add("mp4");\n`),
+      ),
+    ).toThrow(/初始化之后被改过/);
+  });
+
+  it("豁免 guard 夹具:`SOME_OTHER as UPLOAD_EXTS` 红(模块与本地名都对得上,来源不对)", () => {
+    expect(() =>
+      assertAudioWhitelistIsDerived(
+        fixtureOf(
+          'import { SOME_OTHER as UPLOAD_EXTS, mimeOf } from "@fikirtive/core/upload";\n' +
+            `${FIXTURE_DERIVED}\n`,
+        ),
+      ),
+    ).toThrow(/另一个导出/);
+  });
 });
 
 describe("MONEY-A9 披露先于扣费:billing 页价目区", () => {
@@ -1664,8 +1959,13 @@ describe("MONEY-A9 披露先于扣费:billing 页价目区", () => {
       expect(html, `${kind} 的价没有出现在 billing 价目区`).toContain(priceOf(kind));
     }
     expect(html).toContain("menu or a price list");
-    // 四则①:结算按上传时刻的快照价,所以价目区不能只报价、不说这笔价什么时候锁。
-    expect(html.toLowerCase()).toContain("price shown when you upload");
+    // 四则①:结算按快照价,所以价目区不能只报价、不说这笔价什么时候锁 —— 而那一刻是
+    // **扫描器建理解行**的时刻(Founder 2026-09-02 接受偏差、裁决措辞改实话;跨厂复审同日
+    // 打回第一版的「(normally the moment you upload)」)。整页扫:禁语族一条都不许出现。
+    assertQueuedNotUploadWording("billing 价目区", html);
+    // 免费祖父条款:A9 之前落的老行快照为 null,整条钱路跳过,永不补收
+    // (packages/db/prisma/schema.prisma priceInternalSnapshot / understand.ts 的免费祖父分支)。
+    expect(html.toLowerCase()).toContain("before automatic understanding was priced stay free");
     vi.doUnmock("@/lib/account-actions");
     vi.doUnmock("@/lib/billing-actions");
     vi.doUnmock("@/lib/spend-history-data");
@@ -1683,6 +1983,8 @@ describe("MONEY-A9 披露先于扣费:billing 页价目区", () => {
 
 describe("MONEY-A9 披露先于扣费:Otto 的 URL 导入走动作前报价", () => {
   const port = codeOf("lib/otto-media-port.ts");
+  /** 报价那句话住在叶子模块里(见「Otto 侧三处」那条的判词);port 只负责把它挂到结果上。 */
+  const quote = codeOf("lib/understanding-quote-copy.ts");
 
   it("「$0 by construction」的旧说法已废止 —— 导入落的是会被理解计费的 UPLOAD 素材", () => {
     expect(port).not.toContain("$0 by construction");
@@ -1690,15 +1992,87 @@ describe("MONEY-A9 披露先于扣费:Otto 的 URL 导入走动作前报价", ()
   });
 
   it("成功结果带一句报价,而且是现算的(无 UI 面,披露只能走动作层)", () => {
-    expect(port).toContain("pricedUnderstandingCredits");
-    expect(port).toContain("creditsLabel");
-    expect(port).toContain("note: importUnderstandingQuote(");
-    const offenders = copyLines(port).filter((line) => HAND_TYPED_CREDITS.test(line));
-    expect(offenders, "导入报价里出现了手抄的钱数").toEqual([]);
+    expect(quote).toContain("pricedUnderstandingCredits");
+    expect(quote).toContain("creditsLabel");
+    expect(port, "port 不再把那句报价挂到结果上").toContain("note: importUnderstandingQuote(");
+    for (const [who, src] of [["导入报价", quote], ["otto-media-port", port]] as const) {
+      const offenders = copyLines(src).filter((line) => HAND_TYPED_CREDITS.test(line));
+      expect(offenders, `${who}里出现了手抄的钱数`).toEqual([]);
+    }
+  });
+
+  it("报价句住在**叶子模块**里 —— 它不许把 Next 的请求作用域运行时拖进测试进程", () => {
+    // 这条是那次「24 个不相干文件一起红」的碑。围栏要在运行时读这句话,而读它的唯一安全办法
+    // 就是让它住在一个不碰 next/、不碰 server-only、不碰 prisma 的文件里。
+    //
+    // 按**语法树**扫,不按文本行:上一版用 copyLines 扫文本,两头都不准 —— 行尾注释或字符串里
+    // 提一句 `server-only` 会误报(这个文件的判词里就有),而 `"server" + "-only"` 拼出来的
+    // 说明符、或者经一个本地 helper 间接引入的 next,一个都报不出来。这里改成遍历真实的
+    // import / export…from / 静态说明符的动态 import(),并把**本地导入**再往下走一层。
+    const { offenders, visited } = leafDepScan("lib/understanding-quote-copy.ts");
+    expect(offenders, "报价叶子模块(或它本地依赖的那一层)碰了服务端专属依赖 —— 它就不再是叶子了").toEqual([]);
+    // 递归不是摆设:它必须真的走到了叶子的那个本地依赖(credit-format),否则「一层」等于零层。
+    expect(visited, "叶子的本地依赖一个都没解析到 —— 这条递归是空转的").toContain("lib/credit-format.ts");
+  });
+
+  it("port 真的把报价**委托**给叶子模块(不是借个常量、自己重写一份同名函数)", () => {
+    assertPortDelegatesQuote(parseFile("lib/otto-media-port.ts"));
+  });
+
+  // ── 两条围栏各配一条反向夹具:围栏自己也会腐坏,而它腐坏时的样子就是「全绿」──────────
+  const srcOf = (source: string): ts.SourceFile =>
+    ts.createSourceFile("fixture.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+
+  it("委托断言的反向夹具:只借常量、自己重写一份同名函数 ⇒ 红", () => {
+    // 正向:真实写法过。
+    expect(() =>
+      assertPortDelegatesQuote(
+        srcOf('import { CT_EXT, importUnderstandingQuote } from "@/lib/understanding-quote-copy";\n'),
+      ),
+    ).not.toThrow();
+
+    // ① 只借 CT_EXT,报价句自己再写一份 —— 上一版那句 `toContain('from "@/lib/…"')` 照样全绿。
+    expect(() =>
+      assertPortDelegatesQuote(
+        srcOf(
+          'import { CT_EXT } from "@/lib/understanding-quote-copy";\n' +
+            "function importUnderstandingQuote() { return 'charged at the price locked in on upload.'; }\n",
+        ),
+      ),
+    ).toThrow(/没有从 @\/lib\/understanding-quote-copy 导入/);
+
+    // ② 导入了、却又在本文件里重写一个同名的 —— 那句话就有了两份真相。
+    expect(() =>
+      assertPortDelegatesQuote(
+        srcOf(
+          'import { importUnderstandingQuote } from "@/lib/understanding-quote-copy";\n' +
+            "const importUnderstandingQuote2 = 1; function importUnderstandingQuote() { return ''; }\n",
+        ),
+      ),
+    ).toThrow(/又声明了一个/);
+
+    // ③ 改名进来的不算:模块与本地名都对得上,来源却是另一个导出。
+    expect(() =>
+      assertPortDelegatesQuote(
+        srcOf('import { somethingElse as importUnderstandingQuote } from "@/lib/understanding-quote-copy";\n'),
+      ),
+    ).toThrow(/另一个导出/);
+  });
+
+  it("禁依赖扫描的反向夹具:三种写法都认得出(文本行扫不出其中两种)", () => {
+    const specs = (source: string) => moduleSpecifiersOf(srcOf(source)).filter((x) => FORBIDDEN_LEAF_DEP.test(x));
+    // 静态 import —— 文本扫也认得。
+    expect(specs('import "server-only";\n')).toEqual(["server-only"]);
+    // `export … from` 再导出 —— 文本扫看不出这是一条依赖。
+    expect(specs('export { cookies } from "next/headers";\n')).toEqual(["next/headers"]);
+    // 静态说明符的动态 import —— 同上。
+    expect(specs('const m = await import("@fikirtive/db");\n')).toEqual(["@fikirtive/db"]);
+    // 反向:注释与字符串里提到这些名字**不是**依赖(上一版文本扫在这里误报)。
+    expect(specs('// 这个文件不许 import "server-only"\nconst s = "next/headers";\n')).toEqual([]);
   });
 
   it("级联那一句只给图片 —— 视频不会触发 doc-extract,承诺它就是另一句假话", () => {
-    expect(port).toContain('kind === "image-caption"');
+    expect(quote).toContain('kind === "image-caption"');
   });
 
   it("**动作前**那一半真的在动作层:Otto 的说明书与 importMedia 工具描述都带着现算的价", async () => {
@@ -1717,5 +2091,58 @@ describe("MONEY-A9 披露先于扣费:Otto 的 URL 导入走动作前报价", ()
     // 先报价、再导入 —— 顺序本身就是这条验收
     expect(ottoInstructions).toContain("Say that price BEFORE you import, never after");
     expect(importMedia!.description).toContain("BEFORE CALLING THIS");
+  });
+});
+
+/**
+ * 快照价口径的**总闸**(跨厂复审 2026-09-02 唯一 P1 的落点)。
+ *
+ * 上面几组各自钉自己那一处;这一组把五处**能被商家或 Otto 读到的报价句**放在同一张表上扫,
+ * 因为这次犯错的方式就是「改了两处、漏了三处」—— 商家在输入框读到的是排队口径,Otto 在
+ * 同一次导入里说的却还是「上传即锁价」,两句话都出自我们,而商家只会记住更肯定的那一句。
+ *
+ * 表是**穷举**的:五处就是全部会说出这句价的地方(三处上传入口共用一个组件,所以组件算一处)。
+ * 再多一处报价句而不进这张表,只能靠复审 —— 但那正是这次被抓到的东西,所以宁可把表写死在这里。
+ */
+describe("MONEY-A9 快照价口径:五处报价句一律说「排队去理解时」,不许说「上传即锁价」", () => {
+  it("商家侧两处(上传入口的小字 + billing 价目区源码)", () => {
+    assertQueuedNotUploadWording(
+      "UnderstandingCostHint",
+      UNDERSTANDING_COST_HINT + " " + UNDERSTANDING_COST_HINT_TITLE,
+    );
+    // billing 页的渲染结果在上一组扫过;这里扫**源码文案行**,连注释以外的写法一起钉住。
+    assertQueuedNotUploadWording("billing 页文案行", copyLines(codeOf("app/billing/page.tsx")).join(" "));
+  });
+
+  it("Otto 侧三处(URL 导入的事后报价 + 说明书 + importMedia 工具描述)", async () => {
+    // URL 导入那一句改成**调函数、读返回值**(复审二 P2)。
+    //
+    // 上一版扫的是 `copyLines(codeOf(...))` —— 整份文件、只删掉整行注释。那有两个洞,而且
+    // 两个都能让围栏在文案已经变回假话时照样全绿:
+    //   ① **行尾注释**满足要求词:`const s = "...(假话)"; // queued for understanding backlog`
+    //      —— copyLines 只丢弃**整行**注释,行尾的留在原地,扫描器把它当文案读。
+    //   ② **插值拼错**看不出来:这句话是模板串,`${price(kind)}` 之类拼出来才是完整句子;
+    //      源码文本永远是模板,不是商家读到的那一句。
+    // 所以这里直接调那个纯函数,对**它返回的字符串**做判定 —— 商家读到什么,就判什么。
+    //
+    // 但**不能**为此去 import `otto-media-port`(复审三的第二次落修):那个文件头一行是
+    // `import "server-only"`,并牵出整片服务端动作图(`./actions`、`./cowork-actions`、prisma)。
+    // apps/web 的 vitest 把所有文件跑在**同一个 worker**(`pool: "threads"` +
+    // `singleThread: true`),于是一个没有请求上下文的测试把 Next 的请求作用域运行时载进来之后,
+    // 后面 24 个毫不相干的文件一起红:`Invariant: AsyncLocalStorage accessed in runtime where
+    // it is not available`(E504)。钱的披露必须能在运行时断言,所以那句话被抽进叶子模块
+    // `lib/understanding-quote-copy.ts`(纯函数,零 next/、零 server-only、零 prisma),
+    // 由 otto-media-port 从那里 import 使用 —— 行为不变,而围栏够得到它。
+    const { importUnderstandingQuote } = await import("../understanding-quote-copy");
+    // 图片(会级联)与视频(不会)两条路各判一次:级联那半句是拼在图片分支上的。
+    assertQueuedNotUploadWording("URL 导入报价(图片)", importUnderstandingQuote("png", "image/png"));
+    assertQueuedNotUploadWording("URL 导入报价(视频)", importUnderstandingQuote("mp4", "video/mp4"));
+
+    const { ottoInstructions, skillCatalog } = await import("@fikirtive/otto");
+    const importMedia = skillCatalog.find((s) => s.name === "importMedia");
+    expect(importMedia, "importMedia 不在 Otto 的动作表里").toBeDefined();
+    // 这两条扫的是**运行时字符串**,不是源码:插值拼错了在源码上看不出来。
+    assertQueuedNotUploadWording("Otto 说明书的理解报价句", ottoInstructions);
+    assertQueuedNotUploadWording("importMedia 工具描述", importMedia!.description);
   });
 });

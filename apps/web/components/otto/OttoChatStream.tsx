@@ -29,6 +29,7 @@ import {
 } from "@/lib/otto-inject-helpers";
 import { mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
 import { UnderstandingCostHint } from "./UnderstandingCostHint";
+import { SearchCostHint } from "./SearchCostHint";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
 import { OttoApprovalCard } from "./OttoApprovalCard";
@@ -1474,8 +1475,14 @@ export function OttoChatStream({
 
           {/* MONEY-A9 §7.3 — mounted directly above the composer box, which is where the
               attach button lives: the price is on screen while the file picker is still
-              closed (披露先于扣费), and it does not squeeze the composer's bottom toolbar. */}
-          <div className="mb-2"><UnderstandingCostHint /></div>
+              closed (披露先于扣费), and it does not squeeze the composer's bottom toolbar.
+              MONEY-A10 §7.4 sits beside it: the chat turn's OTHER non-obvious charge is the
+              web search the merchant's own question triggers, and until now its only
+              disclosure lived inside Otto's system prompt. */}
+          <div className="mb-2 flex flex-col gap-0.5">
+            <UnderstandingCostHint />
+            <SearchCostHint />
+          </div>
 
           <div className="overflow-hidden rounded-[14px] border-[1.5px] border-border bg-background shadow-sm">
             <Textarea

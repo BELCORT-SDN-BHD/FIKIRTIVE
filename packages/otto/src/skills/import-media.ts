@@ -17,8 +17,10 @@
  * ── What it costs (MONEY-A9, spec docs/specs/money-engine.md §7.3) ──────────────────────────
  * The IMPORT is still $0 by construction: it stores bytes — no GenJob, no reserve, no provider.
  * What it LEAVES BEHIND is not. It lands a `source:"UPLOAD"` image/video Asset, and since
- * 2026-09-01 every such asset is read automatically and BILLED to the merchant at the price
- * locked in the moment the row is created (worker `jobs/understand.ts`). The old header line
+ * 2026-09-01 every such asset is read automatically and BILLED to the merchant at the price in
+ * effect when the SCANNER creates the understanding row (worker `jobs/understand.ts`, at most
+ * UNDERSTAND_SCAN_BATCH rows a minute) — which can be well after the import when there is a
+ * backlog, so no copy here may say the price is fixed at import time. The old header line
  * here — "$0 by construction … no reserve" — was true of this call and misleading about its
  * consequence, so it is gone.
  *
@@ -97,7 +99,8 @@ export const importMediaSkill = defineOttoSkill({
     "Supported: png/jpg/webp/gif/avif images and mp4/mov/webm video, up to 64 MiB. " +
     "The import call itself costs nothing to run, but what it leaves behind is billed: every imported " +
     `image or video is read automatically so Otto knows what is in it, charging the user ${IMAGE_PRICE} credits ` +
-    `for an image or ${VIDEO_PRICE} credits for a video at the price locked in the moment it lands, plus ` +
+    `for an image or ${VIDEO_PRICE} credits for a video, at the price in effect when it is queued for ` +
+    `understanding — which can be later than the import if there is a backlog — plus ` +
     `${DOC_PRICE} credits again if that image turns out to be a menu or price list. ` +
     "TELL THE USER THAT PRICE AND GET THEIR GO-AHEAD BEFORE CALLING THIS — there is no upload dialog here, " +
     "so this is the only place the charge can be disclosed. " +

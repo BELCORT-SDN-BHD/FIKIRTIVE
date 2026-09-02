@@ -38,17 +38,30 @@ const STRIPE_REFUND_ID = /^re_[A-Za-z0-9]{6,}$/;
 /** `other` 处置的最短说明。二十个字大约是「一句说得清为什么可以关」的下限。 */
 const OTHER_NOTE_MIN = 20;
 
+/** 正则元字符转义。sessionId 是**外部数据**(Stripe 给的、操作员贴的),原样拼进正则等于让它
+ *  自己改写匹配语义 —— 一个 `.` 就能把「逐字等于」变成「任意一个字符」。 */
+function escapeForRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * 这条 reason 里**指名**了这一笔 session 吗?
  *
  * 子串匹配不够:`cs_test_123` 会命中一条写着 `cs_test_1234` 的补发 —— 那是**另一笔**付款,
- * 而两笔的金额、商家、形态可以完全一样。所以按 token 边界比:Stripe 的 id 用 `[A-Za-z0-9_]`,
- * 于是按「非 id 字符」切开,要求其中**某一个 token 逐字等于**这个 session id。
- * 前缀(`cs_test_1234`)、后缀(`xcs_test_123`)、紧邻字符(`cs_test_123abc`)因此全部落空,
- * 而空格、标点、行首行尾包住的那一个才算数。
+ * 而两笔的金额、商家、形态可以完全一样。所以要按**边界**比:id 的左右两侧都不能再接一个
+ * id 字符。前缀(`cs_test_1234`)、后缀(`xcs_test_123`)、紧邻字符(`cs_test_123abc`)
+ * 因此全部落空,而空格、标点、行首行尾包住的那一个才算数。
+ *
+ * ④a P2:上一版用 `reason.split(/[^A-Za-z0-9_]+/)` 切 token,再要求某个 token 逐字相等 ——
+ * 那等于**假设 Stripe 的 id 只由 `[A-Za-z0-9_]` 组成**,而 Stripe 从未正式承诺过 id 的字符集。
+ * 真出现一个带 `-` 的 session id,切法会把 id 自己也切开,于是**任何** reason 都配不上它:
+ * 一条如实写了单号的人工补发被判成「没指名这一笔」,操作员被逼去走 “Something else”,
+ * 而那一支是三支里最弱的凭据。方向反了 —— 所以改成整串转义后查两侧边界,
+ * id 里有什么字符都不再影响判定。
  */
 function reasonNamesSession(reason: string, sessionId: string): boolean {
-  return reason.split(/[^A-Za-z0-9_]+/).some((token) => token === sessionId);
+  if (!sessionId) return false;
+  return new RegExp(`(^|[^A-Za-z0-9_])${escapeForRegExp(sessionId)}(?![A-Za-z0-9_])`).test(reason);
 }
 
 /** 一行未了结的观察行(admin 页面读的就是这个)。 */

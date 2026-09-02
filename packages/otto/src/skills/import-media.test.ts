@@ -50,8 +50,13 @@ describe("importMedia gate", () => {
     expect(d).toContain(`${displayCredits(pricedUnderstandingCredits("image-caption"))} credits`);
     expect(d).toContain(`${displayCredits(pricedUnderstandingCredits("video-qa"))} credits`);
     expect(d).toContain(`${displayCredits(pricedUnderstandingCredits("doc-extract"))} credits`);
-    // 四则①:报的是上传时刻锁的价,不是跑的时候现算的
-    expect(d).toContain("at the price locked in the moment it lands");
+    // 四则①:报的是**扫描器建理解行**那一刻锁的价,不是跑的时候现算的 —— 也不是「落地那一刻」。
+    // 跨厂复审 2026-09-02 唯一 P1:旧措辞把排队说成瞬时,而排队期间调价,后面的文件按新价建行。
+    expect(d).toContain("at the price in effect when it is queued for");
+    expect(d, "只说「排队时」不说排队可能要等,读起来还是「落地即锁价」").toContain("backlog");
+    for (const lie of ["locked in the moment", "the moment it lands", "moment you upload"]) {
+      expect(d, `又出现了「${lie}」—— 那是产品做不到的承诺`).not.toContain(lie);
+    }
   });
 
   it("旧的「$0 —— 永不消耗 credits」已从描述里清掉(2026-09-01 起那是假话)", () => {
