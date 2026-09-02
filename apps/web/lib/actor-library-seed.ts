@@ -54,26 +54,30 @@ import { storage } from "./storage";
  */
 
 /**
- * 定妆原件目录的绝对路径。
+ * 定妆原件目录的绝对路径 —— **两个静态候选**,不是往上爬。
  *
- * 从 `process.cwd()` 往上找,而不是像 `./storage` 那样写死 `../..`:这个模块有**两个**
- * 调用方,cwd 不同 —— Next 的 server 跑在 `apps/web/`,ops 补播脚本
- * (`scripts/ops/seed-actor-library.ts`)跑在仓库根。写死层数的那一版在 ops 那条路上
- * 会去 `.claude/assets/…` 找文件,五位演员全部落进 `failed`(2026-09-02 实跑撞到)。
+ * 这个模块有两个调用方,cwd 不同:Next 的 server 跑在 `apps/web/`,ops 补播脚本
+ * (`scripts/ops/seed-actor-library.ts`)跑在仓库根。所以两条路径都写死列出来:
+ *   · 仓库根出发 → `assets/actor-library/v1`
+ *   · apps/web 出发 → `../../assets/actor-library/v1`(与 `./storage` 的 LOCAL_ROOT 同一跳)
+ *
+ * **为什么不是「从 cwd 往上找」**:那一版 `next build` 会报「the whole project was traced
+ * unintentionally」——Turbopack 的文件追踪看到一个完全动态拼出来的根,就把整个工程拖进
+ * 产物清单(2026-09-02 实跑撞到)。官方给的解法就是把路径静态钉在某个子目录上,
+ * 所以这里每一段前缀都是字面量,只有末尾的文件名是变量。
+ *
+ * 写死层数曾经也踩过另一个坑:只有 `../..` 那一条时,ops 脚本会去 `.claude/assets/…`
+ * 找文件,五位演员全部落进 `failed`。两条候选同时列出来,两条路都对。
  *
  * 找不到就返回 null —— 调用方据此把这一位记进 `failed` 并留一条日志,而不是抛出去
  * 把一次注册变成失败(见文件头「绝不抛」)。
  */
 function resolveAssetDir(): string | null {
-  let dir = process.cwd();
-  for (let up = 0; up < 6; up++) {
-    const candidate = path.join(dir, ACTOR_LIBRARY_ASSET_DIR);
-    if (existsSync(candidate)) return candidate;
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return null;
+  const candidates = [
+    path.join(process.cwd(), "assets", "actor-library", "v1"),
+    path.join(process.cwd(), "..", "..", "assets", "actor-library", "v1"),
+  ];
+  return candidates.find((dir) => existsSync(dir)) ?? null;
 }
 
 export interface ActorLibrarySeedResult {

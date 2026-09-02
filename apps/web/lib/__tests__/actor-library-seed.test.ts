@@ -216,6 +216,16 @@ describe("CREATE-A10 —— 像素完整性:入库的就是仓库里那串字节
     ).toContain("storage.presignedGet(storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext)");
   });
 
+  it("CREATE-A10: 播种模块里那两条静态候选路径,与 core 的目录常量说的是同一个目录", () => {
+    // `actor-library-seed.ts` 必须把目录**字面**写出来(Turbopack 的文件追踪见到完全动态
+    // 拼出来的根,就会把整个工程拖进产物清单 —— 2026-09-02 `next build` 实跑撞到)。
+    // 字面量因此是刻意的第二份抄写,这一条就是它的双证人:常量改了、字面量没跟上,当场红。
+    expect(ACTOR_LIBRARY_ASSET_DIR).toBe("assets/actor-library/v1");
+    const seedSource = readFileSync(path.join(REPO_ROOT, "apps/web/lib/actor-library-seed.ts"), "utf8");
+    expect(seedSource).toContain('path.join(process.cwd(), "assets", "actor-library", "v1")');
+    expect(seedSource).toContain('path.join(process.cwd(), "..", "..", "assets", "actor-library", "v1")');
+  });
+
   it("CREATE-A10: 生成路径上一个图像处理库都没有 —— 缩放/裁剪/转格式未验先禁", () => {
     // 像素完整性铁律的机械形态。裁剪过的图 2026-08-30 实测被拒「may contain real person」,
     // 所以这条链上不许出现任何能改像素的东西:引入 sharp/jimp/canvas 就是把那条路重新打开。
