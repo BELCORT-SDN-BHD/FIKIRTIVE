@@ -47,10 +47,10 @@ const HUGE = 1_500_000_000;
 /** 这一趟用例自己造的 org(每个用例一批,跑完自己收 —— 库是跨套件共用的)。 */
 let mine: string[] = [];
 
-async function seedOrg(balance: number): Promise<string> {
+async function seedOrg(balance: number, reserved = 0): Promise<string> {
   const orgId = `org_${randomUUID()}`;
   await prisma.organization.create({ data: { id: orgId } });
-  await prisma.creditAccount.create({ data: { orgId, balance, reserved: 0 } });
+  await prisma.creditAccount.create({ data: { orgId, balance, reserved } });
   mine.push(orgId);
   return orgId;
 }
@@ -86,6 +86,9 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   mine = [];
+  // hold-shortfall 那条 info 是**平台级**的一条,节流行挂在 founder 上并且按 UTC 日期 —— 所以
+  // 它跨用例(甚至跨套件)共享。逐个用例清掉,断言才钉得住「今天第一次 vs 之后的 repeat」。
+  await prisma.actionEvent.deleteMany({ where: { type: "credits.shortfall.alerted" } });
 }, DB_CASE_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -106,8 +109,9 @@ describe("守恒:余额对不上流水就必须有人被叫到", () => {
   it(
     "余额 = Σ balanceDelta ⇒ 一声不吭(否则每一个正常商家都会报警,告警第一天就被无视)",
     async () => {
-      const orgId = await seedOrg(100);
+      const orgId = await seedOrg(100, 7);
       await ledgerRow(orgId, { balanceDelta: 100, kind: "GRANT" });
+      await ledgerRow(orgId, { reservedDelta: 7, kind: "RESERVE" }); // 两半都对得上
       try {
         const drift = await findLedgerDrift();
         expect(drift.map((d) => d.orgId)).not.toContain(orgId);
@@ -135,7 +139,8 @@ describe("守恒:余额对不上流水就必须有人被叫到", () => {
           orgId,
           balanceInternal: HUGE,
           ledgerSumInternal: 0,
-          driftInternal: HUGE,
+          balanceDriftInternal: HUGE,
+          reservedDriftInternal: 0, // 锁定额那一半是干净的,报警要如实说
         });
         // **只报不补**:余额没被"修好",流水也没被补上一行。
         expect((await prisma.creditAccount.findUniqueOrThrow({ where: { orgId } })).balance).toBe(HUGE);
@@ -156,10 +161,10 @@ describe("守恒:余额对不上流水就必须有人被叫到", () => {
       await ledgerRow(orgId, { balanceDelta: HUGE, kind: "GRANT" }); // 有流水,没有 CreditAccount 行
       try {
         const drift = (await findLedgerDrift()).filter((d) => d.orgId === orgId);
-        expect(drift).toEqual([{ orgId, balance: 0, ledgerSum: HUGE }]);
+        expect(drift).toEqual([{ orgId, balance: 0, ledgerSum: HUGE, reserved: 0, reservedSum: 0 }]);
 
         await checkLedgerConservation(NOW);
-        expect(driftAlertsForMine()[0]!.context).toMatchObject({ orgId, driftInternal: -HUGE });
+        expect(driftAlertsForMine()[0]!.context).toMatchObject({ orgId, balanceDriftInternal: -HUGE });
       } finally {
         await cleanup();
       }
@@ -180,6 +185,75 @@ describe("守恒:余额对不上流水就必须有人被叫到", () => {
 
         await checkLedgerConservation(NOW);
         expect(driftAlertsForMine()).toHaveLength(2);
+      } finally {
+        await cleanup();
+      }
+    },
+    DB_CASE_TIMEOUT_MS,
+  );
+
+  /**
+   * **不变量有两条**(packages/db/src/credits.ts:14-15):`balance == Σ balanceDelta`
+   * **且** `reserved == Σ reservedDelta`。只查前一条会漏掉一整族真实故障 —— 一笔 settle
+   * 只更新了 balance 没更新 reserved、一次并发把同一个 hold 释放了两遍:商家的余额看起来
+   * 完全正常,而 `reserved` 里挂着一笔永远不会回来的锁定,他能花的钱从此少一截。
+   */
+  it(
+    "**只有 reserved 漂了**(余额分毫不差)⇒ 照样抓得到、照样报警",
+    async () => {
+      // 余额那一半完美守恒;锁定额那一半凭空多出 HUGE —— 一笔没有账本行的冻结。
+      const orgId = await seedOrg(100, HUGE);
+      await ledgerRow(orgId, { balanceDelta: 100, kind: "GRANT" });
+      try {
+        const drift = (await findLedgerDrift()).filter((d) => d.orgId === orgId);
+        expect(drift).toEqual([{ orgId, balance: 100, ledgerSum: 100, reserved: HUGE, reservedSum: 0 }]);
+
+        await checkLedgerConservation(NOW);
+        const alerts = driftAlertsForMine();
+        expect(alerts).toHaveLength(1);
+        expect(alerts[0]!.context).toMatchObject({
+          orgId,
+          balanceDriftInternal: 0, // 余额没问题 —— 只看这一半的实现在这里完全沉默
+          reservedInternal: HUGE,
+          reservedSumInternal: 0,
+          reservedDriftInternal: HUGE,
+        });
+      } finally {
+        await cleanup();
+      }
+    },
+    DB_CASE_TIMEOUT_MS,
+  );
+
+  it(
+    "reserved 反方向(流水锁了、账户没锁)也抓得到 —— 两个方向都要看",
+    async () => {
+      const orgId = await seedOrg(0, 0);
+      await ledgerRow(orgId, { reservedDelta: HUGE, kind: "RESERVE" });
+      try {
+        const drift = (await findLedgerDrift()).filter((d) => d.orgId === orgId);
+        expect(drift[0]).toMatchObject({ orgId, reserved: 0, reservedSum: HUGE });
+        await checkLedgerConservation(NOW);
+        expect(driftAlertsForMine()[0]!.context).toMatchObject({ reservedDriftInternal: -HUGE });
+      } finally {
+        await cleanup();
+      }
+    },
+    DB_CASE_TIMEOUT_MS,
+  );
+
+  it(
+    "两半同时漂 ⇒ 一条报警把两半都带上(不是两条,也不是只报一半)",
+    async () => {
+      const orgId = await seedOrg(HUGE, HUGE);
+      try {
+        await checkLedgerConservation(NOW);
+        const alerts = driftAlertsForMine();
+        expect(alerts).toHaveLength(1);
+        expect(alerts[0]!.context).toMatchObject({
+          balanceDriftInternal: HUGE,
+          reservedDriftInternal: HUGE,
+        });
       } finally {
         await cleanup();
       }
@@ -245,6 +319,34 @@ describe("hold-shortfall:平台昨天吃掉了多少,必须有人看得见", () 
           .find((a) => a.key === "credits.hold_shortfall.daily");
         expect(info).toBeDefined();
         expect(Number(info!.context.absorbedInternal)).toBeGreaterThanOrEqual(4021);
+      } finally {
+        await cleanup();
+      }
+    },
+    DB_CASE_TIMEOUT_MS,
+  );
+
+  it(
+    "这条 info 也一天只发一次,而且节流在库里 —— 巡检开机也跑一轮,重启不该重喊",
+    async () => {
+      const orgId = await seedOrg(0);
+      try {
+        await ledgerRow(orgId, { kind: "SETTLE", reason: `${HOLD_SHORTFALL_REASON_PREFIX}13` });
+        const day = new Date();
+        await checkLedgerConservation(day);
+        await checkLedgerConservation(day); // 同一天再跑(部署重启就是这个形状)
+
+        const infos = m.founderAlert.mock.calls.filter(
+          (c) => (c[0] as { key: string }).key === "credits.hold_shortfall.daily",
+        );
+        expect(infos.length).toBeGreaterThanOrEqual(2);
+        // 第一条三通道,之后的都走 repeat —— 节流不是静音,Sentry 照收。
+        expect(infos[0]![1]).toEqual({ repeat: false });
+        expect(infos.slice(1).every((c) => (c[1] as { repeat: boolean }).repeat === true)).toBe(true);
+        // 节流行真的写在库里(主键带 UTC 日期,没有 org —— 这是平台级的一条)。
+        const key = `credits.shortfall.alerted:founder:${day.toISOString().slice(0, 10)}`;
+        expect(await prisma.actionEvent.findUnique({ where: { id: key } })).not.toBeNull();
+        await prisma.actionEvent.deleteMany({ where: { id: key } });
       } finally {
         await cleanup();
       }

@@ -287,8 +287,9 @@ export function assetUnderstandingEnabled(env?: Env): boolean {
 export const UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT = 50;
 export const UNDERSTANDING_DAILY_BUDGET_ENV = "ASSET_UNDERSTANDING_DAILY_BUDGET_USD";
 export function understandingDailyBudgetUsd(env?: Env): number {
-  // 空串/全空白算「没设」—— `Number("")` 是 0,而 0 在这里是「全停」这个合法意图。
-  // 不先挑出来,一个空环境变量就会被读成 Founder 亲自把理解关了。
+  // 空串/全空白算「没设」—— `Number("")` 是 0,而 0 是一个合法值(自 2026-09-02 起它的
+  // 意思是「每天都越线、每天报警一次」,**不是**暂停;暂停走 ASSET_UNDERSTANDING=off)。
+  // 不先挑出来,一个空环境变量就会被读成 Founder 亲自把线调到了 0。
   const raw = (getEnv(env)[UNDERSTANDING_DAILY_BUDGET_ENV] ?? "").trim();
   if (raw === "") return UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT;
   const n = Number(raw);

@@ -12,8 +12,9 @@
  * 现在这条链路是一条真正的钱路,它的**计费不变量**是下面五条 —— 每一条都由
  * understand.test.ts 的 `MONEY-A9` 那一组钉着,不是靠这段注释声明:
  *
- *   ① **reserve-first,按快照价**。先按行上的 `priceInternalSnapshot`(上传那一刻锁的价,
- *      四则①)预扣,再打供应商。绝不许先出片后收钱 —— 那等于把余额不足变成一笔坏账。
+ *   ① **reserve-first,按快照价**。先按行上的 `priceInternalSnapshot`(扫描器**建行那一刻**
+ *      锁的价,四则①;口径见第 ④ 条与建行处的注释)预扣,再打供应商。绝不许先出片后收钱 ——
+ *      那等于把余额不足变成一笔坏账。
  *   ② **settle 与结果落盘同一个事务**。结算和 DONE 一起提交:分成两步写就有一个窗口,
  *      商家的文件读完了而钱没结(或反过来),而这条链路重投是常态。同一笔提交里还核两件事,
  *      任何一件不成立就整笔回滚(fail closed):台账上这个回合**没有** REFUND(否则等于
@@ -24,9 +25,13 @@
  *      换一个新 refId 重开一回合;有 RESERVE 没 finalizer = **复用那个 hold**,不重复预扣。
  *      恢复靠的是**问台账**,不是靠记住上次做到哪 —— 崩溃不会让台账失忆。
  *   ④ **快照在建行那一刻就写死**。扫描器建 QUEUED 行时把本段价(和 image 的级联第二段价)
- *      一起锁上 —— 那一刻正是商家看过价目披露、按下上传的那一刻。快照为 null 因此**只可能**
- *      是 A9 迁移之前就已经落在库里的老行(迁移零回填),它们商家上传时没见过任何披露,
- *      永不补收:整条钱路跳过,一格都不碰。新上传的素材没有一件走得进这条免费路。
+ *      一起锁上。规格 §7.3 把这一刻称作「上传时刻」,而**代码里它是建行时刻** —— 通常同刻
+ *      (上传后下一轮扫描就建行),但每轮只建 UNDERSTAND_SCAN_BATCH 行,两千张的批量导入
+ *      要 ~80 分钟才建完,期间调价会让后半批按新价锁。Founder 2026-09-02 接受这个偏差
+ *      (规格 §5 变更登记);触发条件=调价频率高于每周一次时改为上传落库同事务写价。
+ *      快照为 null 因此**只可能**是 A9 迁移之前就已经落在库里的老行(迁移零回填),它们
+ *      商家上传时没见过任何披露,永不补收:整条钱路跳过,一格都不碰。新上传的素材没有
+ *      一件走得进这条免费路。
  *   ⑤ **PAUSED_BALANCE 期间零供应商调用**。余额不够就停在那里等充值(充值事件唤醒 +
  *      扫描器按「余额 ≥ 快照价、且这个 workspace 没被暂停」捞回),不无限重扫、不打供应商。
  *      **被暂停的 workspace 走同一条路**(MONEY-A13):以前它是原样抛出去的,那条路是
@@ -89,6 +94,7 @@ import {
   UNDERSTANDING_PROVIDER_PAUSED,
   UNDERSTANDING_UNREADABLE,
   UNDERSTANDING_WAITING_FOR_CREDITS,
+  FOUNDER_OWNER_ID,
   assetUnderstandingEnabled,
   newId,
   normalizeNameKey,
@@ -232,41 +238,66 @@ export async function recordUnderstandingBudget(
   return { day, spentUsd, budgetUsd, overBudget: spentUsd > budgetUsd };
 }
 
+/** 越线报警的节流行 type(主键带 UTC 日期,同对账哨兵与守恒巡检的形状)。 */
+const BUDGET_ALERTED_TYPE = "understanding.budget.alerted";
+
 /**
  * 越线报警,**每天最多一条**(Founder 2026-09-02 裁决的「报警」那一半)。
  *
- * 节流键含 UTC 日期,所以次日自然复位。它是**进程内**的记忆 —— 重启会让同一天再喊一次,
- * 而那是刻意选的那一边:少喊一声(线烧穿了没人知道)比多喊一声贵得多,何况一天重启十次
- * 也就十条,离「一分钟一条」的轰炸差着两个数量级。
+ * ── 节流状态为什么在库里而不在进程里(复审 P2)──────────────────────────────
+ * 上一版是一个模块变量 + 「回到线以下重新上膛」的边沿触发。两个问题:worker 一重启就
+ * 忘了今天喊过(而这个 worker 每次部署都重启);更麻烦的是那个「上膛」—— 计量桶会因为
+ * 校正(把预记的最坏情况换成实际用量)在同一天里回落到线下,于是同一天可以来回喊很多次。
+ * 「每天最多一条」写在注释里,行为却是「每次穿越都喊一次」。
+ *
+ * 现在状态写在 ActionEvent 的**主键** `<type>:<UTC 日期>` 上,与
+ * `stripe-reconcile` 的缺口节流、`ledger-conservation` 的漂移节流同一套机械:撞主键
+ * (P2002)= 今天喊过了 ⇒ 走 `repeat`(Sentry 照收,只压掉会响的两条通道);次日是一把
+ * 新键,自然复位。跨重启成立。
+ *
+ * 写不进节流行(**不是**撞主键的那种失败)⇒ 分不清今天喊没喊过 ⇒ **照常全渠道喊**:
+ * 一次数据库抖动可以让人多收一封邮件,不可以让一条烧钱信号变哑。`founderAlert` 自己永不抛。
+ *
+ * 挂在 founder org 上:这是一条**平台级**信号(「我们今天一共被账单多少」),没有哪个商家
+ * 收得了它;而 ActionEvent.ownerId 有外键,所以必须是一个真实存在的 org —— `founder` 那一行
+ * 由 credits 迁移种下,全新库上也在(已在 fikirtive_seg5b_test 上实查)。
  *
  * 为什么是 founderAlert 而不是 console:这条线烧穿意味着供应商那边可能在异常计费,
  * 而没有人读 worker 的 stdout —— 2026-08-18 那次事故的静默就是这么来的。
  */
-let budgetAlertDay: string | null = null;
-
-/** 回到线以下 ⇒ 重新上膛(边沿触发,同 {@link noticePause})。线被调高、或者次日复位之后,
- *  下一次真的越线仍然要喊得出来 —— 一个只响一次的警报器不是警报器。
- *  测试用它在用例之间显式复位,免得报警计数取决于用例的执行顺序。 */
-export function rearmUnderstandingBudgetAlert(): void {
-  budgetAlertDay = null;
-}
-
 async function alertUnderstandingOverBudget(day: string, spentUsd: number, budgetUsd: number): Promise<void> {
-  if (budgetAlertDay === day) return;
-  budgetAlertDay = day;
   console.warn(
     `[understand] platform understanding spend $${spentUsd.toFixed(4)} crossed the $${budgetUsd.toFixed(2)}/day ` +
       `alert line — files are STILL being read (alert-only since 2026-09-02)`,
   );
-  await founderAlert({
-    key: "understanding.daily_spend_over_threshold",
-    title: "Asset understanding crossed its daily spend alert line",
-    action:
-      "Check the provider bill for an anomaly. Reading is NOT blocked — merchants pay per file, so this is a burn " +
-      "signal, not a cap. Raise ASSET_UNDERSTANDING_DAILY_BUDGET_USD if the line is simply too low, or set " +
-      "ASSET_UNDERSTANDING=off to pause reading.",
-    context: { day, spentUsd: spentUsd.toFixed(4), thresholdUsd: budgetUsd.toFixed(2) },
-  });
+  let repeat = false;
+  try {
+    await prisma.actionEvent.create({
+      data: {
+        id: `${BUDGET_ALERTED_TYPE}:${day}`,
+        ownerId: FOUNDER_OWNER_ID,
+        type: BUDGET_ALERTED_TYPE,
+        payload: { day, spentUsd: spentUsd.toFixed(4), thresholdUsd: budgetUsd.toFixed(2) },
+      },
+    });
+  } catch (e) {
+    repeat = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
+    if (!repeat) {
+      console.error(`[understand] could not record the budget alert-throttle row for ${day}; alerting in full anyway:`, e);
+    }
+  }
+  await founderAlert(
+    {
+      key: "understanding.daily_spend_over_threshold",
+      title: "Asset understanding crossed its daily spend alert line",
+      action:
+        "Check the provider bill for an anomaly. Reading is NOT blocked — merchants pay per file, so this is a burn " +
+        "signal, not a cap. Raise ASSET_UNDERSTANDING_DAILY_BUDGET_USD if the line is simply too low, or set " +
+        "ASSET_UNDERSTANDING=off to pause reading.",
+      context: { day, spentUsd: spentUsd.toFixed(4), thresholdUsd: budgetUsd.toFixed(2) },
+    },
+    { repeat },
+  );
 }
 
 /**
@@ -419,11 +450,10 @@ export async function scanAssetsNeedingUnderstanding(now: Date = new Date()): Pr
   // 平台日花费**报警线**(Founder 2026-09-02:只报警不拦)。上一版这里是 `return []` ——
   // 超线就整轮不派新活,商家的素材被标成「明天再读」。A9 之后理解是商家付费的 SKU,那道闸
   // 拦掉的是收入,而不是我们的钱;真正的花费上限是商家自己的余额(reserve-first)。
-  // 所以这里只喊一声就往下走,喊声由 alertUnderstandingOverBudget 收敛成每天一条。
+  // 所以这里只喊一声就往下走,喊声由 alertUnderstandingOverBudget 按 UTC 日收敛成每天一条。
   const budgetUsd = understandingDailyBudgetUsd();
   const spentUsd = await understandingSpentTodayUsd(now);
   if (spentUsd > budgetUsd) await alertUnderstandingOverBudget(spendDayKey(now), spentUsd, budgetUsd);
-  else rearmUnderstandingBudgetAlert();
 
   return runAsSystem("understanding-scan", async () => {
     const ids: string[] = [];
@@ -594,8 +624,8 @@ type Row = {
   kind: string;
   /** 本行当前计费回合的 refId(`understanding:<id>[:r<n>]`)。null = 还没进过钱路。 */
   moneyRefId?: string | null;
-  /** 上传(建行)时刻锁的价(internal credits)。扫描器建行时必写 ——
-   *  null **只可能**是 A9 迁移之前就在库里的老行 ⇒ 免费祖父,整条钱路跳过。 */
+  /** 扫描器**建行那一刻**锁的价(internal credits)。建行时必写 —— null **只可能**是
+   *  A9 迁移之前就在库里的老行 ⇒ 免费祖父,整条钱路跳过。 */
   priceInternalSnapshot?: number | null;
 };
 
@@ -1212,11 +1242,15 @@ export async function handleUnderstand(
         // 台账说这一行已经结清 —— 结算和 DONE 是同一个事务,所以正常路径上这一行早就是
         // DONE、CAS 在函数开头就输了。走到这里只可能是一个撕裂的状态,把行收口到 DONE
         // (**不碰 summary/data**:那是上一趟真的读出来的产物,这里没有更好的版本)。
-        await prisma.assetUnderstanding.updateMany({
+        const { count: closed } = await prisma.assetUnderstanding.updateMany({
           where: { id: row.id, ownerId: row.ownerId, status: "RUNNING" },
           data: { status: "DONE" },
         });
-        console.log(`[understand] ${row.id}: already settled (${money.refId}) — no second charge, no provider call`);
+        // 条件写落 0 行 ⇒ 这一行已经不归我们了(同其它终态写)。上一版无论写没写成都打
+        // 「already settled」,于是一条「我把它收口成 DONE 了」的日志会出现在一次**什么都
+        // 没写**的调用上 —— 排查撕裂状态时那正好是最误导人的一句话。
+        if (closed === 0) noticeRowNotOurs(row, "DONE (already-settled recovery)");
+        else console.log(`[understand] ${row.id}: already settled (${money.refId}) — no second charge, no provider call`);
         return null;
       }
       if (money.verdict === "no-credits") {
@@ -1351,9 +1385,10 @@ export async function handleUnderstand(
               assetId: row.assetId,
               kind: "doc-extract" satisfies UnderstandingKind,
               status: "QUEUED",
-              // 计费四则②:级联出来的第二段**继承上传时刻的那一格报价**,不按它建行的这一刻
+              // 计费四则②:级联出来的第二段**继承父行那一格报价**,不按它自己建行的这一刻
               // 重新报价。两段价在上传界面是一次性披露、一并锁价的,所以它们必须一起冻在
-              // 上传那一刻。父行没有快照(免费祖父)⇒ 子行也没有 ⇒ 同样免费。
+              // 父行建行的那一刻(口径同文件头第 ④ 条)。父行没有快照(免费祖父)⇒ 子行也
+              // 没有 ⇒ 同样免费。
               priceInternalSnapshot: row.cascadePriceInternal ?? null,
             },
           ],

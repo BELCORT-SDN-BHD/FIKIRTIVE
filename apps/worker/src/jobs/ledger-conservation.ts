@@ -30,6 +30,7 @@
 import { prisma } from "@fikirtive/db";
 import { HOLD_SHORTFALL_REASON_PREFIX } from "@fikirtive/db";
 import { runAsSystem } from "@fikirtive/db/principal";
+import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 import type { FounderAlert } from "@fikirtive/core/founder-alert";
 import { founderAlert } from "../alerting.js";
 
@@ -40,8 +41,10 @@ export const CONSERVATION_ALERT_LIMIT = 25;
 /** hold-shortfall 统计的回看窗口。和巡检间隔同一个数:一天一轮,数昨天那一天。 */
 export const SHORTFALL_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** 节流行的 ActionEvent type(和对账哨兵的观察行同一套形状:主键带日期,重启不重置)。 */
+/** 漂移报警的节流行 type(和对账哨兵的观察行同一套形状:主键带日期,重启不重置)。 */
 const CONSERVATION_ALERTED_TYPE = "credits.conservation.alerted";
+/** hold-shortfall 日报的节流行 type。它是**平台级**的一条,所以主键里没有 org。 */
+const SHORTFALL_ALERTED_TYPE = "credits.shortfall.alerted";
 
 export type LedgerDrift = {
   orgId: string;
@@ -49,6 +52,10 @@ export type LedgerDrift = {
   balance: number;
   /** `Σ CreditLedger.balanceDelta` —— 流水算出来的那个数。 */
   ledgerSum: number;
+  /** `CreditAccount.reserved` —— 现在锁着多少。 */
+  reserved: number;
+  /** `Σ CreditLedger.reservedDelta` —— 流水算出来的锁定额。 */
+  reservedSum: number;
 };
 
 export type LedgerConservationResult = {
@@ -74,53 +81,83 @@ export type LedgerConservationResult = {
  * 写不进节流行(不是撞主键的那种失败)⇒ 分不清今天喊没喊过 ⇒ **照常全渠道喊**:一次数据库
  * 抖动可以让人多收一封邮件,不可以让一笔资损变哑。`founderAlert` 自己永不抛。
  */
-async function alertThrottledDaily(alert: FounderAlert, orgId: string, now: Date): Promise<void> {
+async function alertThrottledDaily(
+  alert: FounderAlert,
+  orgId: string,
+  now: Date,
+  type: string = CONSERVATION_ALERTED_TYPE,
+): Promise<void> {
   const day = now.toISOString().slice(0, 10);
   let repeat = false;
   try {
     await prisma.actionEvent.create({
       data: {
-        id: `${CONSERVATION_ALERTED_TYPE}:${orgId}:${day}`,
-        // ownerId 跟着这个 org 自己走(ActionEvent.ownerId 有外键):挂一个不存在的
-        // 「founder」组织会让节流行永远写不进去,于是每一轮都全渠道喊 —— 恰好是这段
-        // 代码要防的那件事。
+        id: `${type}:${orgId}:${day}`,
+        // ownerId 跟着这条报警自己的 org 走(ActionEvent.ownerId 有外键):挂一个不存在的
+        // 组织会让节流行永远写不进去,于是每一轮都全渠道喊 —— 恰好是这段代码要防的那件事。
+        // 平台级的那条(hold-shortfall 日报)挂 founder,那一行由 credits 迁移种下,
+        // 全新库上也在。
         ownerId: orgId,
-        type: CONSERVATION_ALERTED_TYPE,
+        type,
         payload: { key: alert.key, day, sentAt: now.toISOString() },
       },
     });
   } catch (e) {
     repeat = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
     if (!repeat) {
-      console.error(`[ledger-conservation] could not record the alert-throttle row for ${orgId}; alerting in full anyway:`, e);
+      console.error(`[ledger-conservation] could not record the ${type} throttle row for ${orgId}; alerting in full anyway:`, e);
     }
   }
   await founderAlert(alert, { repeat });
 }
 
 /**
- * **按 org 重算余额,和账户上那个数比一遍。**
+ * **按 org 重算余额与锁定额,和账户上那两个数比一遍。**
+ *
+ * ── 两半都要查(复审 P2)──────────────────────────────────────────────────
+ * `credits.ts` 写的不变量是**两条**:`balance == Σ balanceDelta` **且**
+ * `reserved == Σ reservedDelta`(packages/db/src/credits.ts:14-15)。只查前一条会漏掉
+ * 一整族真实故障:一笔 settle 只更新了 balance 没更新 reserved、一次并发把同一个 hold
+ * 释放了两遍 —— 商家的余额看起来完全正常,而 `reserved` 里挂着一笔永远不会回来的锁定,
+ * 他能花的钱从此少一截,而且没有任何一条路径会说这件事。两半在同一句 SQL 里,零额外成本。
  *
  * `FULL OUTER JOIN` 而不是 `LEFT JOIN`:两种漂移方向都要抓得到 —— 有账户没流水(余额凭空
  * 长出来),和有流水没账户(流水写下去了、账户行不见了)。只查一边等于对另一半漂移装瞎。
  *
  * 一句聚合 SQL 而不是逐 org 循环:守恒是全表性质,而 `GROUP BY` 是数据库最擅长的事;
  * 逐 org 查会在有一千个 org 时变成一千趟往返,然后这个巡检自己就成了要报的那种事故。
+ *
+ * 排序按**两半差额的绝对值之和**:一个只有 reserved 漂了的 org 不该排在所有 balance
+ * 漂移之后被 CONSERVATION_ALERT_LIMIT 挤掉 —— 它同样是一笔卡住的钱。
  */
 export async function findLedgerDrift(): Promise<LedgerDrift[]> {
-  const rows = await prisma.$queryRaw<{ orgId: string; balance: number; ledgerSum: bigint }[]>`
-    SELECT COALESCE(a."orgId", l."orgId") AS "orgId",
-           COALESCE(a."balance", 0)       AS "balance",
-           COALESCE(l."sum", 0)           AS "ledgerSum"
+  const rows = await prisma.$queryRaw<
+    { orgId: string; balance: number; ledgerSum: bigint; reserved: number; reservedSum: bigint }[]
+  >`
+    SELECT COALESCE(a."orgId", l."orgId")   AS "orgId",
+           COALESCE(a."balance", 0)         AS "balance",
+           COALESCE(l."balanceSum", 0)      AS "ledgerSum",
+           COALESCE(a."reserved", 0)        AS "reserved",
+           COALESCE(l."reservedSum", 0)     AS "reservedSum"
     FROM "CreditAccount" a
     FULL OUTER JOIN (
-      SELECT "orgId", SUM("balanceDelta")::bigint AS "sum"
+      SELECT "orgId",
+             SUM("balanceDelta")::bigint  AS "balanceSum",
+             SUM("reservedDelta")::bigint AS "reservedSum"
       FROM "CreditLedger"
       GROUP BY "orgId"
     ) l ON l."orgId" = a."orgId"
-    WHERE COALESCE(a."balance", 0) <> COALESCE(l."sum", 0)
-    ORDER BY ABS(COALESCE(a."balance", 0) - COALESCE(l."sum", 0)) DESC`;
-  return rows.map((r) => ({ orgId: r.orgId, balance: Number(r.balance), ledgerSum: Number(r.ledgerSum) }));
+    WHERE COALESCE(a."balance", 0)  <> COALESCE(l."balanceSum", 0)
+       OR COALESCE(a."reserved", 0) <> COALESCE(l."reservedSum", 0)
+    ORDER BY ABS(COALESCE(a."balance", 0)  - COALESCE(l."balanceSum", 0))
+           + ABS(COALESCE(a."reserved", 0) - COALESCE(l."reservedSum", 0)) DESC`;
+  return rows.map((r) => ({
+    orgId: r.orgId,
+    balance: Number(r.balance),
+    ledgerSum: Number(r.ledgerSum),
+    reserved: Number(r.reserved),
+    reservedSum: Number(r.reservedSum),
+  }));
 }
 
 /**
@@ -172,22 +209,30 @@ export async function checkLedgerConservation(now: Date = new Date()): Promise<L
 
     let alerted = 0;
     for (const row of drift.slice(0, CONSERVATION_ALERT_LIMIT)) {
-      const delta = row.balance - row.ledgerSum;
+      const balanceDrift = row.balance - row.ledgerSum;
+      const reservedDrift = row.reserved - row.reservedSum;
       console.error(
-        `[ledger-conservation] DRIFT org=${row.orgId} balance=${row.balance} ledgerSum=${row.ledgerSum} delta=${delta}`,
+        `[ledger-conservation] DRIFT org=${row.orgId} ` +
+          `balance=${row.balance} ledgerSum=${row.ledgerSum} balanceDrift=${balanceDrift} ` +
+          `reserved=${row.reserved} reservedSum=${row.reservedSum} reservedDrift=${reservedDrift}`,
       );
       await alertThrottledDaily(
         {
           key: "credits.conservation.drift",
-          title: "A merchant's credit balance no longer matches their ledger",
+          title: "A merchant's credit account no longer matches their ledger",
           action:
-            "Do NOT patch the balance by hand. Read that org's CreditLedger end to end, find the write that " +
-            "bypassed grantCredits/reserveCredits/settleCredits, and decide with the founder which side is true.",
+            "Do NOT patch the account by hand. Read that org's CreditLedger end to end, find the write that " +
+            "bypassed grantCredits/reserveCredits/settleCredits, and decide with the founder which side is true. " +
+            "A reserved-only drift means a hold was released (or taken) without a matching ledger row — the " +
+            "merchant's spendable balance is quietly short by that much.",
           context: {
             orgId: row.orgId,
             balanceInternal: row.balance,
             ledgerSumInternal: row.ledgerSum,
-            driftInternal: delta,
+            balanceDriftInternal: balanceDrift,
+            reservedInternal: row.reserved,
+            reservedSumInternal: row.reservedSum,
+            reservedDriftInternal: reservedDrift,
             driftedOrgsThisSweep: drift.length,
           },
         },
@@ -206,18 +251,28 @@ export async function checkLedgerConservation(now: Date = new Date()): Promise<L
     }
     if (shortfall.rows > 0) {
       // info 级:这**不是**故障。它是「昨天我们替商家吃掉了多少」,一个该被人看见的数字。
-      await founderAlert({
-        key: "credits.hold_shortfall.daily",
-        title: "The platform absorbed some usage above what was held yesterday",
-        action:
-          "No action needed unless the number is growing. It is the elastic-hold clamp (#898) doing its job; " +
-          "a rising trend means the holds are being sized too small.",
-        context: {
-          windowHours: SHORTFALL_WINDOW_MS / 3_600_000,
-          settleRows: shortfall.rows,
-          absorbedInternal: shortfall.internal,
+      //
+      // 节流和漂移那半边同一套机械(复审 P2):这个巡检**开机也跑一轮**,所以一天里部署
+      // 三次就是三封同样的信,而它报的还是同一个 24 小时窗口的同一批行。主键带 UTC 日期,
+      // 重启不重喊;撞主键 ⇒ repeat ⇒ Sentry 照收、两条推送通道压掉。
+      // 挂 founder org:这是平台级数字,没有哪个商家收得了它(ownerId 有外键,必须真实存在)。
+      await alertThrottledDaily(
+        {
+          key: "credits.hold_shortfall.daily",
+          title: "The platform absorbed some usage above what was held yesterday",
+          action:
+            "No action needed unless the number is growing. It is the elastic-hold clamp (#898) doing its job; " +
+            "a rising trend means the holds are being sized too small.",
+          context: {
+            windowHours: SHORTFALL_WINDOW_MS / 3_600_000,
+            settleRows: shortfall.rows,
+            absorbedInternal: shortfall.internal,
+          },
         },
-      });
+        FOUNDER_OWNER_ID,
+        now,
+        SHORTFALL_ALERTED_TYPE,
+      );
     }
 
     return {

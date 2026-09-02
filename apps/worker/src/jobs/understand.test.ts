@@ -40,6 +40,9 @@ const mocks = vi.hoisted(() => {
   const memory = { findFirst: vi.fn(), create: vi.fn() };
   /** 台账。恢复协议问的就是它:这一行的这一个回合,已经 SETTLE / REFUND / 还挂着? */
   const creditLedger = { findFirst: vi.fn() };
+  /** 日花费报警的**节流行**。主键 `understanding.budget.alerted:<UTC 日期>`;撞主键
+   *  (P2002)= 今天已经喊过了 ⇒ 走 repeat。节流状态在库里,不在进程里(复审 P2)。 */
+  const actionEvent = { create: vi.fn() };
 
   // MONEY-A9:这三个现在是**真会被调用**的钱路入口(规格 §7.3 废止了旧的「一分钱不付」)。
   // 仍然逐调用断言参数与次序 —— 钱路的正确性从来不在「被不被调用」,而在扣的是哪一笔。
@@ -76,6 +79,7 @@ const mocks = vi.hoisted(() => {
     memory,
     understandingSpendDay,
     creditLedger,
+    actionEvent,
     // 交互式事务:把同一组 mock 当 tx 交回去。**不是**装饰 —— caption 落 DONE、doc-extract
     // 建行、以及 settle 必须在同一个事务里(见 understand.ts),而「它们真的都走了 tx」
     // 是下面那组崩溃形状用例断言的东西。
@@ -88,7 +92,7 @@ const mocks = vi.hoisted(() => {
 
   return {
     prisma,
-    assetUnderstanding, asset, brandRecord, memory, understandingSpendDay, creditLedger,
+    assetUnderstanding, asset, brandRecord, memory, understandingSpendDay, creditLedger, actionEvent,
     reserveCredits, settleCredits, refundReservation, InsufficientCredits, OrgSuspended,
     presignedGet, understand, captureException, founderAlert, captureMoneyPathError,
   };
@@ -133,7 +137,6 @@ import {
   UNDERSTAND_SCAN_BATCH,
   handleUnderstand,
   scanAssetsNeedingUnderstanding,
-  rearmUnderstandingBudgetAlert,
   understandingSpentTodayUsd,
   reapStaleUnderstanding,
   reapStaleUnderstandingReservations,
@@ -141,6 +144,18 @@ import {
 
 const OWNER = "owner-1";
 const ASSET = "asset-1";
+
+/**
+ * 真的**吵到人**的那几条报警(`repeat !== true`)。
+ *
+ * 节流不是静音:超过当天第一次的仍然调用 founderAlert,只是带上 `repeat` —— Sentry 照收,
+ * 邮件与 Telegram 被压掉。所以「人被吵了几次」要数的是这个,不是 founderAlert 的调用次数。
+ */
+function alertsThatRang(key?: string) {
+  return mocks.founderAlert.mock.calls.filter(
+    (c: any[]) => c[1]?.repeat !== true && (key === undefined || c[0]?.key === key),
+  );
+}
 
 const port = { name: "mock", understand: mocks.understand };
 
@@ -152,9 +167,21 @@ beforeEach(() => {
   vi.clearAllMocks();
   delete process.env.ASSET_UNDERSTANDING;
   delete process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD;
-  // 日花费报警是**边沿触发**的模块状态(线以下自动重新上膛)。用例之间显式复位,
-  // 免得「人被吵了几次」的断言取决于用例的执行顺序。
-  rearmUnderstandingBudgetAlert();
+  // 日花费报警的节流状态**在库里**(ActionEvent 主键带 UTC 日期),不在进程里 —— 所以
+  // 用例之间不需要复位任何模块变量,只要给节流行一个干净的假件。
+  //
+  // 假件必须**真的模拟唯一主键**:同一把 id 第二次写就 P2002。给一个「永远写得进去」的
+  // 假件等于把节流关掉,于是每一条断言「人只被吵一次」的用例都会假红 —— 而真库里那把
+  // 主键正是节流的全部机械。
+  {
+    const throttleRows = new Set<string>();
+    mocks.actionEvent.create.mockImplementation(async (args: { data: { id: string } }) => {
+      const id = String(args.data.id);
+      if (throttleRows.has(id)) throw Object.assign(new Error("Unique constraint"), { code: "P2002" });
+      throttleRows.add(id);
+      return {};
+    });
+  }
   delete process.env.SENTRY_DSN;
   mocks.prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => fn(mocks.prisma));
   mocks.assetUnderstanding.updateMany.mockResolvedValue({ count: 1 }); // CAS 默认赢
@@ -396,6 +423,28 @@ describe("MONEY-A9 理解计费:reserve-first / settle 同事务 / 三崩溃窗�
     // **不碰 summary/data**:那是上一趟真的读出来的产物,这里没有更好的版本
     expect(last.data).toEqual({ status: "DONE" });
     expectBudgetReleased();
+  });
+
+  it("② 已结算恢复:落 DONE 落了 0 行(别人先接管)⇒ 不许打印「已收口」那句话", async () => {
+    // 复审 P2:上一版无论条件写成没成都打 `already settled … no second charge`。于是一次
+    // **什么都没写**的调用会在日志里留下「我把它收口成 DONE 了」—— 而排查撕裂状态时,
+    // 那正好是最误导人的一句话(下一个人会以为这一行已经好了,不再去看它)。
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      mocks.assetUnderstanding.findUnique.mockResolvedValue(paidRow("image-caption", { moneyRefId: REF }));
+      ledger({ finalizer: "SETTLE" });
+      mocks.assetUnderstanding.updateMany.mockImplementation(async (args: any) => ({
+        count: args.data?.status === "DONE" ? 0 : 1, // CAS 赢了,收口那一笔输了
+      }));
+      await expect(handleUnderstand({ understandingId: "u-1" }, 1, port)).resolves.toBeNull();
+
+      const lines = log.mock.calls.map((c) => String(c[0]));
+      expect(lines.some((l) => l.includes("already settled"))).toBe(false);
+      // 说的是实话,而且带着行 id(排查时要认得出是哪一行)
+      expect(lines.some((l) => l.includes("u-1") && l.includes("not RUNNING any more"))).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("③ 崩溃窗三之一(reserve 之后崩):有 RESERVE 没 finalizer ⇒ **复用**那个 hold", async () => {
@@ -1032,6 +1081,12 @@ describe("平台日花费线:越线只报警,不拦(次日复位)", () => {
   /** 计量器里已经躺着这么多钱(累加桶,不是行上那两列的快照 SUM)。 */
   const spend = (usd: number) => meterBucket(Math.round(usd / 1e-7));
 
+  /** 这一轮报警走的是三通道还是只进 Sentry(founderAlert 的 `repeat` 开关)。 */
+  const repeatFlags = () =>
+    mocks.founderAlert.mock.calls
+      .filter((c: any[]) => c[0]?.key === "understanding.daily_spend_over_threshold")
+      .map((c: any[]) => c[1]?.repeat === true);
+
   it("今天已经花超线 ⇒ **照样派新活**,并且发一条三通道报警", async () => {
     process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = "1";
     mocks.understandingSpendDay.findUnique.mockResolvedValue(spend(1.5));
@@ -1043,18 +1098,83 @@ describe("平台日花费线:越线只报警,不拦(次日复位)", () => {
       key: "understanding.daily_spend_over_threshold",
       context: { thresholdUsd: "1.00" },
     });
+    expect(repeatFlags()).toEqual([false]); // 今天第一次 ⇒ 三通道
   });
 
-  it("同一天越线一百轮,人只被吵一次(节流键含日期)", async () => {
+  /**
+   * **节流状态在库里,不在进程里**(复审 P2)。
+   *
+   * 上一版是模块变量 + 「回到线以下重新上膛」的边沿触发,两个洞:worker 一重启就忘了今天
+   * 喊过(而它每次部署都重启);更糟的是那个「上膛」—— 计量桶会因为校正(把预记的最坏情况
+   * 换回实际用量)在同一天里落回线下,于是同一天可以来回喊很多次。「每天最多一条」写在
+   * 注释里,行为却是「每次穿越都喊一次」。
+   *
+   * 现在判据是 ActionEvent 主键 `understanding.budget.alerted:<UTC 日期>`:撞主键 = 今天
+   * 喊过了 ⇒ repeat(Sentry 照收,压掉两条推送通道)。所以这里断言的是**写了哪把键**,
+   * 而不是某个模块变量的状态 —— 前者跨重启仍然成立。
+   */
+  it("同一天越线很多轮,只有第一轮吵人:节流键是 ActionEvent 主键 + UTC 日期", async () => {
     process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = "1";
     mocks.understandingSpendDay.findUnique.mockResolvedValue(spend(1.5));
     mocks.asset.findMany.mockResolvedValue([]);
+    // 真库的行为:第一次写得进去,之后同一把主键一律 P2002。
+    const seen = new Set<string>();
+    mocks.actionEvent.create.mockImplementation(async (args: any) => {
+      const id = String(args.data.id);
+      if (seen.has(id)) throw Object.assign(new Error("Unique constraint"), { code: "P2002" });
+      seen.add(id);
+      return {};
+    });
+
     const sameDay = new Date("2026-08-13T09:00:00.000Z");
     for (let i = 0; i < 5; i++) await scanAssetsNeedingUnderstanding(sameDay);
-    expect(mocks.founderAlert).toHaveBeenCalledTimes(1);
-    // 次日重新算一天 —— 线烧穿两天要喊两次,而不是一次之后永远安静。
+    // 五轮都发了 —— 节流**不是静音**:Sentry 每一轮照收(它本来就是按 key 聚类计数的那层),
+    // 被压掉的只有会响的两条通道。
+    expect(repeatFlags()).toEqual([false, true, true, true, true]);
+    expect(mocks.actionEvent.create.mock.calls[0]![0].data).toMatchObject({
+      id: "understanding.budget.alerted:2026-08-13",
+      type: "understanding.budget.alerted",
+      ownerId: "founder", // 平台级信号,没有哪个商家收得了它(ownerId 有外键)
+    });
+
+    // 次日是一把新键 —— 线烧穿两天要吵两次,而不是一次之后永远安静。
     await scanAssetsNeedingUnderstanding(new Date("2026-08-14T09:00:00.000Z"));
-    expect(mocks.founderAlert).toHaveBeenCalledTimes(2);
+    expect(repeatFlags().at(-1)).toBe(false);
+    expect(mocks.actionEvent.create.mock.calls.at(-1)![0].data.id).toBe("understanding.budget.alerted:2026-08-14");
+  });
+
+  it("**没有**边沿复位:桶回落到线下再越回去,同一天仍然只吵一次", async () => {
+    // 这条钉的正是被推翻的那个行为。校正会让读数在一天之内上下走,而上一版的
+    // 「回到线以下重新上膛」把每一次穿越都变成一封新邮件。
+    process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = "1";
+    mocks.asset.findMany.mockResolvedValue([]);
+    const seen = new Set<string>();
+    mocks.actionEvent.create.mockImplementation(async (args: any) => {
+      const id = String(args.data.id);
+      if (seen.has(id)) throw Object.assign(new Error("Unique constraint"), { code: "P2002" });
+      seen.add(id);
+      return {};
+    });
+    const sameDay = new Date("2026-08-13T09:00:00.000Z");
+
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(spend(1.5)); // 越线
+    await scanAssetsNeedingUnderstanding(sameDay);
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(spend(0.4)); // 校正之后落回线下
+    await scanAssetsNeedingUnderstanding(sameDay);
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(spend(1.6)); // 又越回去
+    await scanAssetsNeedingUnderstanding(sameDay);
+
+    expect(repeatFlags()).toEqual([false, true]); // 第二次穿越只进 Sentry,不再发邮件
+  });
+
+  it("节流行写不进去(不是撞主键的那种失败)⇒ **照常全渠道喊**,不许让一条烧钱信号变哑", async () => {
+    process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = "1";
+    mocks.understandingSpendDay.findUnique.mockResolvedValue(spend(1.5));
+    mocks.asset.findMany.mockResolvedValue([]);
+    mocks.actionEvent.create.mockRejectedValue(new Error("connection lost"));
+    await scanAssetsNeedingUnderstanding(new Date("2026-08-13T09:00:00.000Z"));
+    // 一次数据库抖动可以让人多收一封邮件,不可以让它变哑。
+    expect(repeatFlags()).toEqual([false]);
   });
 
   it("线以内照跑,而且一声不吭", async () => {
@@ -1207,7 +1327,7 @@ describe("handler 里的日花费:越线照读,只喊一声", () => {
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
     expect(mocks.understand).toHaveBeenCalledTimes(1);
     expect(budgetHolds()).toHaveLength(1); // 记账照记
-    expect(mocks.founderAlert).toHaveBeenCalledTimes(1);
+    expect(alertsThatRang()).toHaveLength(1);
   });
 
   /**
@@ -1228,7 +1348,7 @@ describe("handler 里的日花费:越线照读,只喊一声", () => {
     });
     for (let i = 0; i < 6; i++) await handleUnderstand({ understandingId: "u-1" }, 0, port);
     expect(mocks.understand).toHaveBeenCalledTimes(6); // 一件都没有被「明天再读」
-    expect(mocks.founderAlert).toHaveBeenCalledTimes(1); // 节流:一天一条
+    expect(alertsThatRang()).toHaveLength(1); // 节流:一天只吵人一次(其余走 repeat,只进 Sentry)
   });
 });
 
@@ -2096,7 +2216,7 @@ describe("一次导入两千张,最终一张都不会漏", () => {
     expect(store.rows.every((r) => r.status === "DONE")).toBe(true);
     expect(store.rows.some((r) => r.status === "SKIPPED")).toBe(false);
     // 而人被吵到了 —— 一次,不是每一轮一次。
-    expect(mocks.founderAlert).toHaveBeenCalledTimes(1);
+    expect(alertsThatRang()).toHaveLength(1);
   });
 
   it("线在**一轮的半路**烧穿 ⇒ 25 件照样全部读完,计量器一笔不丢", async () => {
@@ -2124,7 +2244,7 @@ describe("一次导入两千张,最终一张都不会漏", () => {
     expect(store.rows.filter((r) => r.status === "DONE")).toHaveLength(25);
     expect(store.rows.some((r) => r.status === "QUEUED" || r.status === "SKIPPED")).toBe(false);
     expect(await understandingSpentTodayUsd()).toBeCloseTo(25 * 0.5, 6);
-    expect(mocks.founderAlert).toHaveBeenCalledTimes(1); // 节流:一天一条
+    expect(alertsThatRang()).toHaveLength(1); // 节流:一天只吵人一次
   });
 
   it("存储签不出 URL 那一轮不丢东西 —— **下一轮扫描器自己**就补回来", async () => {

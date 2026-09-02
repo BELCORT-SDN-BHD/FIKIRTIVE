@@ -220,24 +220,34 @@ describe("reaper prefix coverage — every prefixed refId in the codebase is rea
     for (const known of ["otto-stream", "otto-turn", "research"]) {
       expect([...inSource.keys()], `expected the scanner to find "${known}:"`).toContain(known);
     }
-    expect(inReaper.size).toBeGreaterThanOrEqual(5);
+    expect(inReaper.size).toBeGreaterThanOrEqual(8);
   });
 
   /**
-   * **死前缀已经删掉**(钱引擎⑤B,2026-09-02)。
+   * **历史前缀刻意保留**(编排者裁定 2026-09-02,保守侧;钱引擎⑤B 复审落修)。
    *
    * `brand-research` 随 2026-07-04 的死 pre-Otto 模块下架,`draft`/`enhance` 随 2026-07-07
-   * 的死付费 cowork 端点下架 —— 从那以后仓库里没有任何一处再用它们 reserve 过。一条永远
-   * 匹配不到的 LIKE 不是安全网,它是三行扫描成本 + 一句「这里有清道夫在看着」的错觉。
+   * 的死付费 cowork 端点下架 —— 从那以后仓库里没有任何一处再用它们 reserve 过。⑤B 一度把
+   * 这三条 LIKE 删掉(「匹配不到的子句不是安全网」),复审时改回来了,理由是那条推理漏了
+   * 一件事:**日账本守恒检测器看不见漏掉的 hold**。一条没有 finalizer 的 RESERVE 仍然让
+   * `balance == Σ balanceDelta` 与 `reserved == Σ reservedDelta` 两条不变量完全成立 ——
+   * 那正是一笔**合法的、还挂着的**冻结长的样子。所以删掉这三行换来的不是「省下三次扫描」,
+   * 是「万一真有遗留行,再也没有任何一条路径会退它」,而那是商家的钱被永久冻住。
    *
-   * 这条用例钉的是**双向**的:名单里没有它们,而且源码里也确实没人再写它们 —— 哪天有人
-   * 重新启用其中一个前缀去 reserve,上面那条「every source prefix is swept」会当场红,
-   * 逼他要么进名单要么登记。历史遗留行由日账本守恒检测器暴露(ledger-conservation.ts)。
+   * 删除的条件因此是**证据**不是推理:生产上跑一次只读查询,证实这三个前缀下没有未终结的
+   * RESERVE 行。在那之前它们留着。
+   *
+   * 这条用例钉的是**双向**的:名单里仍然有它们(别再手滑删掉),而且源码里确实没人再写
+   * (真有人重新启用,上面那条「every source prefix is swept」会照常把他拦下)。
    */
-  it("死前缀(brand-research / draft / enhance)已从名单删除,而且源码里确实没人再写", () => {
+  it("历史前缀(brand-research / draft / enhance)仍在名单里扫着,而源码确实没人再写", () => {
     for (const dead of ["brand-research", "draft", "enhance"]) {
-      expect(inReaper.has(dead), `"${dead}:" 还在清道夫的 LIKE 名单里 —— 没人写它,扫它是白扫`).toBe(false);
-      expect([...inSource.keys()], `源码又开始写 "${dead}:" 了 —— 那它必须重新进某个清道夫`).not.toContain(dead);
+      expect(
+        inReaper.has(dead),
+        `"${dead}:" 不在清道夫的 LIKE 名单里了。遗留 hold 是合法冻结 —— 守恒检测器看不到它,` +
+          `没有第二条路径会退它。删除的前提是生产只读查询证实无未终结 RESERVE 行,不是推理。`,
+      ).toBe(true);
+      expect([...inSource.keys()], `源码又开始写 "${dead}:" 了 —— 那它就不再是「历史前缀」`).not.toContain(dead);
     }
   });
 

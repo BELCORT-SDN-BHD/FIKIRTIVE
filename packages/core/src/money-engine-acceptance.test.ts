@@ -24,8 +24,12 @@ describe("money-engine 验收落点索引(M3)", () => {
   //
   // MONEY-A5 已转正:apps/web/lib/__tests__/money-a5-credits-never-expire.test.ts
   //   (仓库不存在过期/清零代码路径 + billing 面「Credits don't expire」文案存在)。
-  // MONEY-A6 已转正:packages/core/src/money-a6-actor-pricing.test.ts
-  //   (同参数两次报价逐字相等 + 报价输入里没有演员那一维);真库那一侧的同一件事在
+  // MONEY-A6 已转正,两半各有落点:报价那一半在
+  //   packages/core/src/money-a6-actor-pricing.test.ts(同参数两次报价逐字相等 +
+  //   报价输入里没有演员那一维);**消费历史那一半**在
+  //   packages/db/src/money-a6-actor-ledger-db.test.ts(带演员与裸单的账本足迹逐格相等、
+  //   恰好一对 RESERVE/SETTLE、reason 里不许夹带演员词)——「不存在演员费行」是账本的性质,
+  //   纯函数证不了「下单那条路会不会在旁边另外记一笔」。另有
   //   apps/web/lib/__tests__/gen-ledger.test.ts 的 #785 用例(带 @元素与不带,报价/预扣/结算三数相同)。
   // MONEY-A7 已转正:packages/db/src/money-a7-a8-db.test.ts(结算读 RESERVE 行、
   //   调价只改其后动作、已写的账逐行不变)。
