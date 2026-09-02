@@ -7,6 +7,8 @@ import { Card } from "@/components/ui/card";
 import { Wallet } from "lucide-react";
 import { creditsLabel, formatCredits } from "@/lib/credit-format";
 import { displayCredits, pricedUnderstandingCredits } from "@fikirtive/core/spend";
+import { OTTO_CHAT_MAX_SEARCHES_PER_TURN } from "@fikirtive/core/pricing-config";
+import { SEARCH_TURN_MAX_LABEL, SEARCH_UNIT_LABEL } from "@/components/otto/SearchCostHint";
 import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import { SupportExit } from "@/components/exits/Exits";
 
@@ -108,6 +110,16 @@ export default async function BillingPage({
               Could not load balance. Please refresh.
             </div>
           )}
+          {/* MONEY-A5 §2 验收表 — the one term a merchant can only learn by being told.
+              九问 1 lists "credits 永不过期" among the things a merchant never sees, and the
+              acceptance row is explicit that the ABSENCE of an expiry code path does not pass
+              this line: without the sentence on a merchant-visible surface, the row fails.
+              It sits under the balance because that is the number the promise is about, and
+              it renders in both states — a merchant whose balance failed to load has MORE
+              reason to wonder whether the credits are still there, not less. */}
+          <div className="text-muted-foreground" style={{ fontSize: 13, marginTop: 10 }}>
+            Credits don&apos;t expire — what you buy stays yours until you spend it.
+          </div>
         </Card>
 
         <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 12px" }}>Top up</h2>
@@ -165,8 +177,30 @@ export default async function BillingPage({
             Every image and video you upload is read automatically so Otto knows what is in it:{" "}
             {understandingPrice("image-caption")} an image and {understandingPrice("video-qa")} a
             video. An image that turns out to be a menu or a price list is also read as a
-            document, for {understandingPrice("doc-extract")} more. You are charged the price
-            shown when you upload, even if the reading finishes later.
+            document, for {understandingPrice("doc-extract")} more. You are charged the price in
+            effect when the file is queued for understanding — normally the moment you upload —
+            even if the reading finishes later. Files added before automatic understanding was
+            priced stay free.
+          </div>
+        </section>
+
+        {/* MONEY-A10 §7.4 — the chat turn's second money leg. Founder 2026-09-02 (变更登记
+            「A10 聊天搜索的商家侧披露」): a price that lives only inside Otto's system prompt is
+            not disclosed to anyone who can read it. The composer carries the one-line version
+            (components/otto/SearchCostHint.tsx); this is the fuller one, and it is where the
+            spend-cap exemption that ruling ACCEPTED gets written down — an accepted gap in a
+            control the merchant themselves set has to be visible to the merchant, not only to
+            us. Every number is the same constant the turn reserves and settles against. */}
+        <section style={{ marginTop: 28 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>Web search in chat</h2>
+          <div className="text-muted-foreground" style={{ fontSize: 14, lineHeight: 1.5 }}>
+            When a question needs current information, Otto searches the web: {SEARCH_UNIT_LABEL}{" "}
+            per search, and one message can make at most{" "}
+            {String(OTTO_CHAT_MAX_SEARCHES_PER_TURN)} searches. You are charged only for searches
+            that complete — including one that comes back empty-handed — and never for a search
+            that fails, or for reading a page whose address you gave Otto. These searches ride
+            inside that message&apos;s own charge, so your per-action spend cap does not stop
+            them; at most {SEARCH_TURN_MAX_LABEL} of search can be added to one message.
           </div>
         </section>
 

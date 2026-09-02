@@ -59,6 +59,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation(REFUNDED);
 
     expect(res).toEqual({ error: "You don't have access to this." });
+    expect(res).not.toHaveProperty("ok");
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
@@ -66,6 +67,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION });
 
     expect(res).toEqual({ error: "Pick how this payment was settled." });
+    expect(res).not.toHaveProperty("ok");
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
@@ -73,6 +75,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "refunded_in_stripe", refundId: "已退款" });
 
     expect(res).toEqual({ error: "Enter the Stripe refund id (re_…) for this refund." });
+    expect(res).not.toHaveProperty("ok");
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
@@ -94,6 +97,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:nope" });
 
     expect(res).toEqual({ error: "No credits-ledger row for THIS merchant carries that refId or idempotency key — check it before closing this gap." });
+    expect(res).not.toHaveProperty("ok");
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
@@ -109,6 +113,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
       }),
     );
     expect("error" in res).toBe(true);
+    expect(res).not.toHaveProperty("ok");
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
@@ -118,6 +123,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "reserve:gen_1" });
 
     expect("error" in res && res.error).toContain("not a manual grant");
+    expect(res).not.toHaveProperty("ok");
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
@@ -127,6 +133,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:small" });
 
     expect("error" in res && res.error).toContain("50 credits but this payment was for 220");
+    expect(res).not.toHaveProperty("ok");
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
@@ -136,6 +143,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
 
     expect("error" in res && res.error).toContain("Something else");
+    expect(res).not.toHaveProperty("ok");
     expect(creditLedgerFindFirst).not.toHaveBeenCalled();
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
@@ -166,6 +174,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:other" });
 
     expect("error" in res && res.error).toContain("does not name this payment");
+    expect(res).not.toHaveProperty("ok");
     expect($transaction).not.toHaveBeenCalled();
   });
 
@@ -180,6 +189,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
 
     expect("error" in res && res.error).toContain("does not name this payment");
+    expect(res).not.toHaveProperty("ok");
     expect($transaction).not.toHaveBeenCalled();
   });
 
@@ -193,6 +203,42 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
 
     expect(res).toEqual({ ok: true });
+  });
+
+  it("④a P2:id 里带 `-` 的假想 session ⇒ 照样认得出(Stripe 从未承诺过 id 的字符集)", async () => {
+    // 上一版把 reason 按 `[^A-Za-z0-9_]+` 切 token,再要求某个 token 逐字等于 sessionId ——
+    // 那等于假设 id 只由 `[A-Za-z0-9_]` 组成。真出现一个带 `-` 的 id,切法会把 id **自己**
+    // 也切开,于是**任何** reason 都配不上它:一条如实写了单号的人工补发被判成「没指名」,
+    // 操作员被逼去走三支凭据里最弱的那一支。这条钉的是那个方向。
+    const HYPHEN_SESSION = "cs_test-abc-123";
+    creditLedgerFindFirst.mockResolvedValue(
+      grantRow({ reason: `manual re-grant for ${HYPHEN_SESSION}`, idempotencyKey: "grant:hy" }),
+    );
+
+    const res = await closeReconcileObservation({
+      sessionId: HYPHEN_SESSION,
+      disposition: "credited_manually",
+      ledgerRef: "grant:hy",
+    });
+
+    expect(res).toEqual({ ok: true });
+  });
+
+  it("④a P2:带 `-` 的 id 也照样挡得住**更长**的近似 id(边界判定没有因此松掉)", async () => {
+    const HYPHEN_SESSION = "cs_test-abc-123";
+    creditLedgerFindFirst.mockResolvedValue(
+      grantRow({ reason: `manual re-grant for ${HYPHEN_SESSION}4`, idempotencyKey: "grant:hy" }),
+    );
+
+    const res = await closeReconcileObservation({
+      sessionId: HYPHEN_SESSION,
+      disposition: "credited_manually",
+      ledgerRef: "grant:hy",
+    });
+
+    expect("error" in res && res.error).toContain("does not name this payment");
+    expect(res).not.toHaveProperty("ok");
+    expect($transaction).not.toHaveBeenCalled();
   });
 
   it("复审三 P1(a):幂等键就是 stripe:<sessionId> 的自动入账形态 ⇒ 算指名,通过", async () => {
@@ -213,6 +259,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
 
     expect("error" in res && res.error).toContain("already used to close another gap (cs_other_gap)");
+    expect(res).not.toHaveProperty("ok");
   });
 
   it("复审三 P1(b):撞的是关闭行(这一笔早就关过了)⇒ 仍然是 alreadyClosed,不误报占用", async () => {
@@ -239,6 +286,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "credited_manually", ledgerRef: "grant:abc" });
 
     expect("error" in res).toBe(true);
+    expect(res).not.toHaveProperty("ok");
     expect("error" in res && res.error).toContain("unexpected state");
     expect("error" in res && res.error).toContain("NOT closed");
     expect(founderAlert).toHaveBeenCalledTimes(1);
@@ -257,6 +305,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation({ sessionId: SESSION, disposition: "other", note: "已处理", confirmed: true });
 
     expect("error" in res && res.error).toContain("at least 20 characters");
+    expect(res).not.toHaveProperty("ok");
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
@@ -268,6 +317,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     });
 
     expect(res).toEqual({ error: "Tick the confirmation box: closing this stops all further alerts for this payment." });
+    expect(res).not.toHaveProperty("ok");
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
@@ -289,6 +339,7 @@ describe("MONEY-A12:关闭一条对账观察行(哨兵「追踪至人工关闭�
     const res = await closeReconcileObservation(REFUNDED);
 
     expect(res).toEqual({ error: "No reconciliation observation exists for that session id." });
+    expect(res).not.toHaveProperty("ok");
     expect(actionEventFindUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: reconcileObservationId(SESSION) } }));
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
@@ -366,6 +417,7 @@ describe("MONEY-A12:未了结清单(admin 页面读的那一份)", () => {
     const res = await listReconcileObservations();
 
     expect(res).toEqual({ error: "You don't have access to this." });
+    expect(res).not.toHaveProperty("rows");
     expect(actionEventFindMany).not.toHaveBeenCalled();
   });
 });

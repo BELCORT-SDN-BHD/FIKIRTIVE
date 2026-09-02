@@ -511,8 +511,11 @@ function parseFile(rel: string): ts.SourceFile {
  *  而它的 UI 入口还没有人问过「商家看得见价目吗」。 */
 const WRITE_POINT_FILES: Record<string, { note: string; writePointFunctions: number }> = {
   "lib/actions.ts": {
-    note: "ingestFile / uploadCandidates / uploadReference 三处直接落行,再经 createEntity、addReferenceImages 转出去",
-    writePointFunctions: 3,
+    // 钱引擎⑤A 2026-09-02:uploadCandidates 与 addReferenceImages 两个零调用方的导出动作已删
+    // (变更登记「A9 披露入口补挂」的待清理项),写点从三支降到两支 —— 这两个数字是普查算出来的,
+    // 不是手抄的:改这里之前先看测试打出来的实际值。
+    note: "ingestFile / uploadReference 两处直接落行,再经 createEntity 转出去",
+    writePointFunctions: 2,
   },
   "lib/asset-actions.ts": {
     note: "saveCroppedGeneration —— 裁剪保存落一条全新的 UPLOAD 素材",
@@ -856,9 +859,7 @@ function uploadEntryFiles(): string[] {
 
 /** 登记的动作集合(`模块#导出名`)。跨文件包装也在里面 —— 集合变了就红。 */
 const EXPECTED_ACTION_KEYS = [
-  "lib/actions#addReferenceImages",
   "lib/actions#createEntity",
-  "lib/actions#uploadCandidates",
   "lib/actions#uploadReference",
   "lib/asset-actions#saveCroppedGeneration",
   "lib/upload-actions#finalizeCandidateUploads",
@@ -906,30 +907,93 @@ function must<T extends ts.Node>(
   return node as T;
 }
 
-/** 一个模块级 `const` 的**初始化表达式节点**(不是文本)。 */
-function initializerOf(file: string, name: string): { node: ts.Expression; text: string } | null {
-  const sf = parseFile(file);
-  let found: ts.Expression | null = null;
+/**
+ * 整份文件里叫这个名字的变量声明**有几支** —— 函数体里、块里、嵌套里的全算。
+ *
+ * (Codex #1118 第十轮 P2)上一版的 `initializerOf` 递归扫整棵树、取**第一个**同名变量就收工。
+ * 那是可以被排版顺序骗过去的:把真名单改成手抄的六个扩展名 + mp4,再在**它前面**放一个函数,
+ * 函数里留一支同名的、写法完全正确的诱饵 —— DFS 先撞上诱饵,整套结构检查照样全绿,而
+ * `clip.mp4` 被放行、服务端落 `video/mp4`、建 video-qa 收费行,这个入口却不挂披露。
+ * 所以名字得是**唯一**的:多一支(哪怕是函数内的局部变量)就红,由人来判哪一支才是白名单。
+ */
+function declarationCountOf(sf: ts.SourceFile, name: string): number {
+  let count = 0;
   const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name && node.initializer) {
-      found = node.initializer;
-      return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) count++;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return count;
+}
+
+/**
+ * **模块顶层** `const <name> = …` 的初始化表达式节点(不是文本)。
+ *
+ * 顶层与 const 两件都是硬条件:函数体里的同名变量不是模块白名单(它只在那一次调用里存在),
+ * 而 `let` / `var` 声明的名单意味着这个集合可以被整支换掉 —— 结构检查看的是初始化那一刻的写法,
+ * 换掉之后它一个字都不知道。
+ */
+function moduleConstInitializerOf(
+  sf: ts.SourceFile,
+  name: string,
+): { node: ts.Expression; text: string } | null {
+  for (const st of sf.statements) {
+    if (!ts.isVariableStatement(st)) continue;
+    if (!(st.declarationList.flags & ts.NodeFlags.Const)) continue;
+    for (const decl of st.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || decl.name.text !== name || !decl.initializer) continue;
+      const node = decl.initializer;
+      return { node, text: sf.text.slice(node.getStart(sf), node.end) };
+    }
+  }
+  return null;
+}
+
+/**
+ * 对这个集合的**变异调用**(`X.add(…)` / `X.delete(…)`),原样返回源码片段。
+ *
+ * 结构检查钉的是「这个 Set 是怎么算出来的」。算得再对,初始化之后补一句
+ * `AUDIO_UPLOAD_EXTENSIONS.add("mp4")`,白名单照样多一个 video 扩展名 —— 而上一版的检查
+ * 到 `new Set(...)` 那一层就结束了,一个字都看不见。
+ */
+function mutationCallsOf(sf: ts.SourceFile, name: string): string[] {
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === name &&
+      (node.expression.name.text === "add" || node.expression.name.text === "delete")
+    ) {
+      found.push(sf.text.slice(node.getStart(sf), node.end));
     }
     ts.forEachChild(node, visit);
   };
   ts.forEachChild(sf, visit);
-  return found === null ? null : { node: found, text: sf.text.slice((found as ts.Expression).getStart(sf), (found as ts.Expression).end) };
+  return found;
 }
 
-/** `import { X } from "…"` 里 X 的来源说明符,**原样**返回(不解析成模块 id)。 */
-function importSpecifierOf(file: string, local: string): string | null {
-  for (const st of parseFile(file).statements) {
+/**
+ * `import { … } from "…"` 里一个**本地名**的来源:说明符**原样**返回(不解析成模块 id),
+ * 外加它在来源模块里**真正叫什么**(`propertyName ?? name`)。
+ *
+ * (Codex #1118 第十轮 P2)上一版只比本地名与模块路径,忽略 `propertyName` —— 于是
+ * `import { SOME_OTHER as UPLOAD_EXTS } from "@fikirtive/core/upload"` 全绿:模块对、本地名对,
+ * 而真正被过滤的是 core 里另一个完全不相干的导出。改名进来的名单不是 core 的上传扩展名权威,
+ * 所以调用方要逐字核 `imported`。
+ */
+function importOriginOf(
+  sf: ts.SourceFile,
+  local: string,
+): { module: string; imported: string } | null {
+  for (const st of sf.statements) {
     if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
     const bindings = st.importClause?.namedBindings;
     if (!bindings || !ts.isNamedImports(bindings)) continue;
     for (const el of bindings.elements) {
-      if (el.name.text === local) return st.moduleSpecifier.text;
+      if (el.name.text !== local) continue;
+      return { module: st.moduleSpecifier.text, imported: (el.propertyName ?? el.name).text };
     }
   }
   return null;
@@ -945,16 +1009,35 @@ function importSpecifierOf(file: string, local: string): string | null {
  * 所以这里逐层拆 `new Set(UPLOAD_EXTS.filter((p) => mimeOf(p).startsWith("audio/")))`,
  * 任何一层不对就红,并把实际写法打在失败信息里。
  */
-function assertAudioWhitelistIsDerived(file: string): void {
+function assertAudioWhitelistIsDerived(sf: ts.SourceFile): void {
+  const NAME = "AUDIO_UPLOAD_EXTENSIONS";
+
   for (const local of ["UPLOAD_EXTS", "mimeOf"]) {
+    const origin = importOriginOf(sf, local);
     expect(
-      importSpecifierOf(file, local),
+      origin?.module ?? null,
       `${local} 不是从 @fikirtive/core/upload 导入的 —— 白名单必须来自 core 的单一权威`,
     ).toBe("@fikirtive/core/upload");
+    // 模块对、本地名对,还不够:`import { SOME_OTHER as UPLOAD_EXTS }` 两样都对得上,
+    // 过滤的却是另一个导出。来源模块里那个名字必须逐字就是它自己。
+    expect(
+      origin?.imported ?? null,
+      `${local} 是同一个模块里**另一个导出**改名来的(${origin?.imported ?? "?"} as ${local})—— `
+        + "改了名的东西不是 core 的上传扩展名权威",
+    ).toBe(local);
   }
 
-  const found = initializerOf(file, "AUDIO_UPLOAD_EXTENSIONS");
-  expect(found, "找不到 AUDIO_UPLOAD_EXTENSIONS 的定义 —— 白名单被删或改名了").not.toBeNull();
+  // 名字必须唯一:函数里留一支写法正确的同名诱饵,就能把「取第一个同名变量」的检查骗到。
+  expect(
+    declarationCountOf(sf, NAME),
+    `${NAME} 在这个文件里不是恰好声明一次 —— 多一支(哪怕是函数内的局部变量)就分不清哪一支是白名单`,
+  ).toBe(1);
+
+  const found = moduleConstInitializerOf(sf, NAME);
+  expect(
+    found,
+    `找不到模块顶层的 \`const ${NAME} = …\` —— 白名单被删、改名,或者挪进了函数体 / 改成了 let`,
+  ).not.toBeNull();
   const actual = found!.text;
 
   const created = must(
@@ -1038,6 +1121,13 @@ function assertAudioWhitelistIsDerived(file: string): void {
     mimeArgument.text,
     `mimeOf 判的不是被过滤的那个扩展名(参数对不上):${actual}`,
   ).toBe(parameter.text);
+
+  // 算得再对,初始化之后补一句 `.add("mp4")` / `.delete("m4a")`,名单照样被改 ——
+  // 而上面的结构拆解到 `new Set(...)` 就结束了,一个字都看不见。
+  expect(
+    mutationCallsOf(sf, NAME),
+    `${NAME} 在初始化之后被改过 —— 白名单必须是算出来就定死的那一份`,
+  ).toEqual([]);
 }
 
 /** 仓库根(WEB_ROOT 是 apps/web)。豁免要引规格,规格得真的读得到。 */
@@ -1100,7 +1190,7 @@ const EXEMPTIONS: Exemption[] = [
       ).toContain('startsWith("audio/")');
       // 白名单本身必须**是从 core 算出来的**,按语法树逐层拆,不是文本 toContain ——
       // 文本断言钉不住「这个集合是怎么来的」,别处留一段死表达式当诱饵就能骗过去。
-      assertAudioWhitelistIsDerived("components/otto/edit/EditDesk.tsx");
+      assertAudioWhitelistIsDerived(parseFile("components/otto/edit/EditDesk.tsx"));
       // ③ 守卫要真的拦在 finalize 之前,不是拦完还继续走。
       const guardIndex = handler!.indexOf("looksLikeAudio");
       const finalizeIndex = handler!.indexOf("finalizeCandidateUploads");
@@ -1134,9 +1224,18 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     expect(markup).toContain(priceOf("doc-extract"));
   });
 
-  it("title 说清了什么时候扣、按哪一天的价(四则①:按上传时刻的快照价)", () => {
+  it("title 说清了什么时候扣、按哪一天的价(四则①,措辞按 2026-09-02 裁决改实话)", () => {
     expect(markup).toContain(UNDERSTANDING_COST_HINT_TITLE);
-    expect(UNDERSTANDING_COST_HINT_TITLE.toLowerCase()).toContain("when you upload");
+    const title = UNDERSTANDING_COST_HINT_TITLE.toLowerCase();
+    // 快照是**扫描器建行**那一刻写的(每分钟 25 行,2000 张要 80 分钟),不是上传那一刻。
+    // Founder 2026-09-02 接受这个偏差,并裁决文案要说实话 —— 所以这句必须点明「排队去理解时」
+    // 的价,而「上传」只能作为通常情形出现在括号里。
+    expect(title, "title 不再说清按哪一刻的价").toContain("in effect when the file is queued");
+    expect(title, "通常情形还是要讲给商家听").toContain("normally the moment you upload");
+    // 反向:旧那句「按上传时刻锁价」是产品做不到的承诺,不许回来。
+    expect(title, "「at the price shown when you upload」= 承诺上传那一刻锁价,代码不这么做").not.toContain(
+      "price shown when you upload",
+    );
   });
 
   it("组件源码里没有手抄的价钱 —— 数值只能来自推导", () => {
@@ -1188,9 +1287,12 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     // 非导出的 persistUpload() 再由新动作转调,名单不更新就全绿。现在由调用闭包保证。
     const actions = uploadActionKeys();
     expect(actions, "createEntity 只通过 helper 落盘,闭包必须认出它").toContain("lib/actions#createEntity");
-    expect(actions, "addReferenceImages 同样只通过 helper 落盘").toContain("lib/actions#addReferenceImages");
     // 而 helper 自己不导出,不会被当成「UI 该去调的动作」漏进入口侧
     expect(actions, "ingestFile 是非导出 helper,不该出现在动作表里").not.toContain("lib/actions#ingestFile");
+    // 删掉的两支不许悄悄回来:零 UI 调用方的导出上传动作正是这套围栏要盯的形状。
+    for (const gone of ["lib/actions#uploadCandidates", "lib/actions#addReferenceImages"]) {
+      expect(actions, `${gone} 又出现了 —— 它 2026-09-02 被当死导出删掉,回来就得重新问披露`).not.toContain(gone);
+    }
   });
 
   /** 用一段合成源码跑一遍模块闭包 —— 夹具比探针值钱:探针跑完就没了,夹具会一直在。 */
@@ -1643,6 +1745,52 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
       ).toBe(exemption.callSites);
     }
   });
+
+  // ── 豁免 guard 自己的反向夹具(Codex #1118 第十轮两条非阻塞 P2 的落点)────────────
+  // guard 也会腐坏,而它腐坏的方式恰好是「看起来全绿」。下面三条喂的是**合成源码**,走的是
+  // guard 真正跑的那条链路(不是另写一套判定),逐条证明它对三种能放行 video 扩展名的写法当场红。
+  // 放行一个 video 扩展名的代价是具体的:`clip.mp4` 过了 EditDesk 的守卫,服务端落 video/mp4,
+  // 建一条 video-qa 收费行 —— 而这个入口是按「只收音频、不计费」豁免掉披露的。
+  const FIXTURE_IMPORT = 'import { UPLOAD_EXTS, mimeOf } from "@fikirtive/core/upload";';
+  const FIXTURE_DERIVED =
+    'const AUDIO_UPLOAD_EXTENSIONS = new Set(UPLOAD_EXTS.filter((p) => mimeOf(p).startsWith("audio/")));';
+  const fixtureOf = (source: string): ts.SourceFile =>
+    ts.createSourceFile("fixture.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+
+  it("豁免 guard 夹具:算出来的名单过,函数内的同名诱饵红(不再是「取第一个同名变量」)", () => {
+    expect(() => assertAudioWhitelistIsDerived(fixtureOf(`${FIXTURE_IMPORT}\n${FIXTURE_DERIVED}\n`))).not.toThrow();
+
+    // 诱饵排在**前面**:递归扫整棵树取第一个同名变量的旧写法先撞上它,整套结构检查照样全绿,
+    // 而真正生效的那份名单是手抄的,里面躺着 mp4。
+    expect(() =>
+      assertAudioWhitelistIsDerived(
+        fixtureOf(
+          `${FIXTURE_IMPORT}\n` +
+            `function decoy() {\n  ${FIXTURE_DERIVED}\n  return AUDIO_UPLOAD_EXTENSIONS;\n}\n` +
+            'const AUDIO_UPLOAD_EXTENSIONS = new Set(["mp3", "mp4"]);\n',
+        ),
+      ),
+    ).toThrow(/恰好声明一次/);
+  });
+
+  it("豁免 guard 夹具:名单算对了、初始化之后又 .add() 的红", () => {
+    expect(() =>
+      assertAudioWhitelistIsDerived(
+        fixtureOf(`${FIXTURE_IMPORT}\n${FIXTURE_DERIVED}\nAUDIO_UPLOAD_EXTENSIONS.add("mp4");\n`),
+      ),
+    ).toThrow(/初始化之后被改过/);
+  });
+
+  it("豁免 guard 夹具:`SOME_OTHER as UPLOAD_EXTS` 红(模块与本地名都对得上,来源不对)", () => {
+    expect(() =>
+      assertAudioWhitelistIsDerived(
+        fixtureOf(
+          'import { SOME_OTHER as UPLOAD_EXTS, mimeOf } from "@fikirtive/core/upload";\n' +
+            `${FIXTURE_DERIVED}\n`,
+        ),
+      ),
+    ).toThrow(/另一个导出/);
+  });
 });
 
 describe("MONEY-A9 披露先于扣费:billing 页价目区", () => {
@@ -1664,8 +1812,15 @@ describe("MONEY-A9 披露先于扣费:billing 页价目区", () => {
       expect(html, `${kind} 的价没有出现在 billing 价目区`).toContain(priceOf(kind));
     }
     expect(html).toContain("menu or a price list");
-    // 四则①:结算按上传时刻的快照价,所以价目区不能只报价、不说这笔价什么时候锁。
-    expect(html.toLowerCase()).toContain("price shown when you upload");
+    // 四则①:结算按快照价,所以价目区不能只报价、不说这笔价什么时候锁 —— 而那一刻是
+    // **扫描器建理解行**的时刻(Founder 2026-09-02 接受偏差、裁决措辞改实话)。
+    expect(html.toLowerCase()).toContain("price in effect when the file is queued");
+    expect(html.toLowerCase(), "旧那句承诺上传即锁价,代码做不到").not.toContain(
+      "price shown when you upload",
+    );
+    // 免费祖父条款:A9 之前落的老行快照为 null,整条钱路跳过,永不补收
+    // (packages/db/prisma/schema.prisma priceInternalSnapshot / understand.ts 的免费祖父分支)。
+    expect(html.toLowerCase()).toContain("before automatic understanding was priced stay free");
     vi.doUnmock("@/lib/account-actions");
     vi.doUnmock("@/lib/billing-actions");
     vi.doUnmock("@/lib/spend-history-data");

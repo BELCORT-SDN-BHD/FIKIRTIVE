@@ -45,11 +45,22 @@ export const UNDERSTANDING_COST_HINT =
   `${priceOf("video-qa")} a video, and ${priceOf("doc-extract")} more when an image ` +
   `turns out to be a menu or price list.`;
 
-/** The hover explanation. Says WHEN the charge lands and WHICH price applies, because
- *  understanding is charged at the price snapshotted at upload time, not at the price on
- *  the day the scan actually runs (计费四则①). */
+/** The hover explanation. Says WHEN the charge lands and WHICH price applies.
+ *
+ *  计费四则① calls this "上传时刻价", and the first version of this sentence repeated that
+ *  word for word — "at the price shown when you upload". The 顾问复审 2026-09-02 showed it is
+ *  not what the code does: the snapshot is written by the SCANNER when it creates the
+ *  AssetUnderstanding row (25 rows a minute — a 2000-image drop finishes about 80 minutes
+ *  later), so a price change inside that window lands on files already uploaded. Founder
+ *  2026-09-02 accepted the deviation and ruled the WORDING must tell the truth instead
+ *  (变更登记「上传时刻价」实为「扫描器建行时刻价」; the trigger for actually moving the snapshot
+ *  to upload time is repricing more often than weekly).
+ *
+ *  So this says "in effect when the file is queued", with the ordinary case in parentheses.
+ *  It must never again promise that the price is locked at the instant of upload — that is a
+ *  promise the charging path does not keep. */
 export const UNDERSTANDING_COST_HINT_TITLE =
-  "Charged when the file is understood, at the price shown when you upload";
+  "Charged when the file is understood, at the price in effect when the file is queued for understanding (normally the moment you upload)";
 
 /**
  * The shared line. Styling is the repo's existing cost hint (`FlowCanvas.tsx:1727`) —
