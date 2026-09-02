@@ -1044,6 +1044,117 @@ function importOriginOf(
   return null;
 }
 
+/** 一个名字在这个文件里被**声明成值**的次数:变量、函数、类都算。
+ *  `declarationCountOf` 只数变量 —— 而「自己重写一份同名函数」正是要挡的那种写法。 */
+function valueDeclarationCountOf(sf: ts.SourceFile, name: string): number {
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    const named =
+      (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) ||
+      (ts.isFunctionDeclaration(node) && node.name?.text === name) ||
+      (ts.isClassDeclaration(node) && node.name?.text === name);
+    if (named) count++;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return count;
+}
+
+/**
+ * 这个文件**依赖**的模块说明符:静态 import、`export … from` 再导出、以及说明符是静态字符串的
+ * 动态 `import()`。
+ *
+ * **已知边界(非恶意代码限制)**:说明符由字符串拼接或变量给出的动态 import
+ * (`import("next/" + x)`、`import(mod)`)这里认不到。这道围栏挡的是「有人顺手 import 了一个
+ * 服务端模块」,不是「有人存心藏一条依赖」——后者靠复审,不靠语法树。
+ */
+function moduleSpecifiersOf(sf: ts.SourceFile): string[] {
+  const out: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      out.push(node.moduleSpecifier.text);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      out.push((node.arguments[0] as ts.StringLiteral).text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return out;
+}
+
+/** 仓库内说明符 → 真实源码文件(相对 WEB_ROOT);第三方包返回 null。 */
+function sourceFileOf(fromFile: string, spec: string): string | null {
+  const moduleId = resolveSpecifier(fromFile, spec);
+  if (moduleId === null) return null;
+  for (const candidate of [`${moduleId}.ts`, `${moduleId}.tsx`, `${moduleId}/index.ts`, `${moduleId}/index.tsx`]) {
+    try {
+      readFileSync(path.join(WEB_ROOT, candidate));
+      return candidate;
+    } catch {
+      /* next candidate */
+    }
+  }
+  return null;
+}
+
+/** 服务端专属依赖:碰上任何一个,这个文件就不能再在没有请求上下文的测试里被 import。 */
+const FORBIDDEN_LEAF_DEP = /^(next\/|next$|server-only|@fikirtive\/db|@prisma|\.prisma)/;
+
+/**
+ * 叶子体检:这个文件、以及它**本地相对/别名导入**的那一层,有没有碰服务端专属依赖。
+ * 返回 `文件 → 说明符` 的命中清单(空数组 = 干净),外加走到过的本地文件,好证明递归真的走了。
+ */
+function leafDepScan(rel: string): { offenders: string[]; visited: string[] } {
+  const offenders: string[] = [];
+  const visited: string[] = [];
+  const check = (file: string, depth: number): void => {
+    for (const spec of moduleSpecifiersOf(parseFile(file))) {
+      if (FORBIDDEN_LEAF_DEP.test(spec)) offenders.push(`${file} → ${spec}`);
+      if (depth === 0) continue;
+      const local = sourceFileOf(file, spec);
+      if (local && !visited.includes(local)) {
+        visited.push(local);
+        check(local, depth - 1);
+      }
+    }
+  };
+  check(rel, 1);
+  return { offenders, visited };
+}
+
+/**
+ * port **真的把那句报价委托给了叶子模块**,而不是只借个 CT_EXT、自己再重写一份同名函数。
+ *
+ * 两半都要:①具名绑定 `importUnderstandingQuote` 逐字来自叶子模块(`propertyName ?? name`,
+ * 所以 `somethingElse as importUnderstandingQuote` 不算);②这个文件里**没有**第二个同名的
+ * 值声明 —— 有的话,那句话就有两份真相,而围栏读的是叶子那一份。
+ */
+function assertPortDelegatesQuote(sf: ts.SourceFile): void {
+  const origin = importOriginOf(sf, "importUnderstandingQuote");
+  expect(
+    origin?.module ?? null,
+    "otto-media-port 没有从 @/lib/understanding-quote-copy 导入 importUnderstandingQuote",
+  ).toBe("@/lib/understanding-quote-copy");
+  expect(
+    origin?.imported ?? null,
+    "importUnderstandingQuote 是叶子模块里**另一个导出**改名来的 —— 那不是围栏读的那一句",
+  ).toBe("importUnderstandingQuote");
+  expect(
+    valueDeclarationCountOf(sf, "importUnderstandingQuote"),
+    "otto-media-port 自己又声明了一个 importUnderstandingQuote —— 报价句于是有了两份真相",
+  ).toBe(0);
+}
+
 /**
  * 钉住音频扩展名白名单**确实是从 core 算出来的**,而且是按语法树钉,不是按文本。
  *
@@ -1893,14 +2004,71 @@ describe("MONEY-A9 披露先于扣费:Otto 的 URL 导入走动作前报价", ()
   it("报价句住在**叶子模块**里 —— 它不许把 Next 的请求作用域运行时拖进测试进程", () => {
     // 这条是那次「24 个不相干文件一起红」的碑。围栏要在运行时读这句话,而读它的唯一安全办法
     // 就是让它住在一个不碰 next/、不碰 server-only、不碰 prisma 的文件里。
-    // 只看**代码行**:这个文件的注释里逐字引用了那几个禁用写法(它解释的正是这条规矩),
-    // 扫整份文件会被自己的判词绊倒。
-    const code = copyLines(quote).join("\n");
-    for (const forbidden of ['from "next/', 'server-only', "@fikirtive/db", "prisma"]) {
-      expect(code, `报价叶子模块引入了 ${forbidden} —— 它就不再是叶子了`).not.toContain(forbidden);
-    }
-    // 而 port 必须真的从那里拿,不许自己再抄一份回来。
-    expect(port).toContain('from "@/lib/understanding-quote-copy"');
+    //
+    // 按**语法树**扫,不按文本行:上一版用 copyLines 扫文本,两头都不准 —— 行尾注释或字符串里
+    // 提一句 `server-only` 会误报(这个文件的判词里就有),而 `"server" + "-only"` 拼出来的
+    // 说明符、或者经一个本地 helper 间接引入的 next,一个都报不出来。这里改成遍历真实的
+    // import / export…from / 静态说明符的动态 import(),并把**本地导入**再往下走一层。
+    const { offenders, visited } = leafDepScan("lib/understanding-quote-copy.ts");
+    expect(offenders, "报价叶子模块(或它本地依赖的那一层)碰了服务端专属依赖 —— 它就不再是叶子了").toEqual([]);
+    // 递归不是摆设:它必须真的走到了叶子的那个本地依赖(credit-format),否则「一层」等于零层。
+    expect(visited, "叶子的本地依赖一个都没解析到 —— 这条递归是空转的").toContain("lib/credit-format.ts");
+  });
+
+  it("port 真的把报价**委托**给叶子模块(不是借个常量、自己重写一份同名函数)", () => {
+    assertPortDelegatesQuote(parseFile("lib/otto-media-port.ts"));
+  });
+
+  // ── 两条围栏各配一条反向夹具:围栏自己也会腐坏,而它腐坏时的样子就是「全绿」──────────
+  const srcOf = (source: string): ts.SourceFile =>
+    ts.createSourceFile("fixture.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+
+  it("委托断言的反向夹具:只借常量、自己重写一份同名函数 ⇒ 红", () => {
+    // 正向:真实写法过。
+    expect(() =>
+      assertPortDelegatesQuote(
+        srcOf('import { CT_EXT, importUnderstandingQuote } from "@/lib/understanding-quote-copy";\n'),
+      ),
+    ).not.toThrow();
+
+    // ① 只借 CT_EXT,报价句自己再写一份 —— 上一版那句 `toContain('from "@/lib/…"')` 照样全绿。
+    expect(() =>
+      assertPortDelegatesQuote(
+        srcOf(
+          'import { CT_EXT } from "@/lib/understanding-quote-copy";\n' +
+            "function importUnderstandingQuote() { return 'charged at the price locked in on upload.'; }\n",
+        ),
+      ),
+    ).toThrow(/没有从 @\/lib\/understanding-quote-copy 导入/);
+
+    // ② 导入了、却又在本文件里重写一个同名的 —— 那句话就有了两份真相。
+    expect(() =>
+      assertPortDelegatesQuote(
+        srcOf(
+          'import { importUnderstandingQuote } from "@/lib/understanding-quote-copy";\n' +
+            "const importUnderstandingQuote2 = 1; function importUnderstandingQuote() { return ''; }\n",
+        ),
+      ),
+    ).toThrow(/又声明了一个/);
+
+    // ③ 改名进来的不算:模块与本地名都对得上,来源却是另一个导出。
+    expect(() =>
+      assertPortDelegatesQuote(
+        srcOf('import { somethingElse as importUnderstandingQuote } from "@/lib/understanding-quote-copy";\n'),
+      ),
+    ).toThrow(/另一个导出/);
+  });
+
+  it("禁依赖扫描的反向夹具:三种写法都认得出(文本行扫不出其中两种)", () => {
+    const specs = (source: string) => moduleSpecifiersOf(srcOf(source)).filter((x) => FORBIDDEN_LEAF_DEP.test(x));
+    // 静态 import —— 文本扫也认得。
+    expect(specs('import "server-only";\n')).toEqual(["server-only"]);
+    // `export … from` 再导出 —— 文本扫看不出这是一条依赖。
+    expect(specs('export { cookies } from "next/headers";\n')).toEqual(["next/headers"]);
+    // 静态说明符的动态 import —— 同上。
+    expect(specs('const m = await import("@fikirtive/db");\n')).toEqual(["@fikirtive/db"]);
+    // 反向:注释与字符串里提到这些名字**不是**依赖(上一版文本扫在这里误报)。
+    expect(specs('// 这个文件不许 import "server-only"\nconst s = "next/headers";\n')).toEqual([]);
   });
 
   it("级联那一句只给图片 —— 视频不会触发 doc-extract,承诺它就是另一句假话", () => {
