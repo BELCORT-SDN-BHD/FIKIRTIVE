@@ -26,11 +26,16 @@ describe("Schedule is parked in the Beta", () => {
   it("re-owns legacy analytics under Home analysis", () => {
     const legacy = source("app/schedule/analytics/page.tsx");
     const canonical = source("app/analysis/page.tsx");
+    // Home Phase 2 换掉了 `/analysis` 的实现:页面本身不再直接挂 `<AnalyticsSurface>`,
+    // 而是渲染 `HomeAnalysisEntry`,登录闸 `requireOwner()` 跟着搬进那个组件。
+    // 这一条钉的两件事没变 —— 旧地址转到 `/analysis`,而 `/analysis` 是**登录后才看得到的
+    // 真分析页** —— 只是跟着多了一层间接。所以断言跟着走一层,不是放松。
+    const entry = source("components/home/HomeAnalysisEntry.tsx");
 
     expect(SHELL_ROUTES.homeAnalysis).toBe("/analysis");
     expect(legacy).toContain("redirect(SHELL_ROUTES.homeAnalysis)");
-    expect(canonical).toContain("<AnalyticsSurface");
-    expect(canonical).toContain("requireOwner()");
+    expect(canonical).toContain("<HomeAnalysisEntry");
+    expect(entry).toContain("requireOwner()");
   });
 
   it("does not wrap the public share page in the retired merchant tabs", () => {

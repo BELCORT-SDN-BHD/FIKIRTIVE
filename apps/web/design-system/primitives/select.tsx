@@ -75,7 +75,13 @@ function SelectTrigger({
       {...props}
     >
       {children}
-      <SelectPrimitive.Icon render={<ChevronDownIcon className="size-4 opacity-50" />} />
+      {/* `children={null}` 是承重的:Base UI 的 `Select.Icon` 默认 children 是字符 "▼",
+          而 `render` 只换外壳、不换 children —— 不显式清空,那个字形就会被塞进我们的
+          chevron SVG 里跟着每一个下拉框走。SVG 不画裸文本节点,所以肉眼看不见,但它在
+          DOM 里,任何按文本读页面的东西(诚实围栏、爬虫、复制粘贴)都会读到它。 */}
+      <SelectPrimitive.Icon render={<ChevronDownIcon className="size-4 opacity-50" />}>
+        {null}
+      </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   )
 }

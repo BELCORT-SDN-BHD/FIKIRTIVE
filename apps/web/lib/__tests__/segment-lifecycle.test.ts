@@ -375,7 +375,10 @@ describe("#717 the segment name is bounded on the server, not only in the browse
     expect(source).toContain("maxLength={200}");
     // The card button had no width constraint, so the inner `truncate` could never bite and
     // one long name pushed the whole 375px page into a permanent horizontal scroll.
-    expect(source).toMatch(/min-h-16 w-full min-w-0 max-w-full rounded-xl border/);
+    // 换基座后这张卡片改由 `<Button variant="ghost">` 画,边框来自 variant,类名串里
+    // 不再有 `border`,`rounded-xl` 也被排到别的工具类后面。承重的是**宽度约束**本身
+    // (注释里说的就是它),所以只钉那三个类,不钉它们后面跟着什么装饰。
+    expect(source).toMatch(/min-h-16 w-full min-w-0 max-w-full/);
   });
 });
 

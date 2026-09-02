@@ -680,9 +680,15 @@ async function waitForHost(
 }
 
 /**
- * Mount the broadcast page and actually freeze: pick the segment in the real `<select>`, click the
- * real button, wait for the action's own answer. Shared by the note board and the note drill so
- * both look at the same host in the same state.
+ * Mount the broadcast page and actually freeze: arrive with the segment already chosen (the same
+ * `preselectedSegmentId` the real deep link hands the page), click the real button, wait for the
+ * action's own answer. Shared by the note board and the note drill so both look at the same host
+ * in the same state.
+ *
+ * 换基座前这里驱动的是一个原生 `<select>`。新前端的 audience 选择器是设计系统的 `Select`
+ * 原语(Base UI:触发器是按钮,选项在 portal 的 popup 里),`HTMLSelectElement` 那套
+ * 赋值 + change 事件对它没有意义。这一段钉的行为是**冻结之后那句话**,不是选择器怎么点,
+ * 所以改用产品自己已有的入口把段位带进来,把控件的操作细节留给控件自己的测试。
  */
 async function mountFrozenBroadcast() {
   vi.mocked(broadcastUiActions.freezeAudience).mockResolvedValue({
@@ -694,19 +700,18 @@ async function mountFrozenBroadcast() {
     resource: { run: BROADCAST_RUN_FIXTURE, members: [BROADCAST_MEMBER_FIXTURE] },
   } as unknown as Awaited<ReturnType<typeof broadcastUiActions.getBroadcastRunLivePreflight>>);
 
-  const mounted = await mountForEffects(createElement(BroadcastDetailPage, BROADCAST_PAGE_FIXTURE));
-  const select = mounted.host.querySelector<HTMLSelectElement>(
-    'select[aria-label="Audience segment"]',
+  const mounted = await mountForEffects(
+    createElement(BroadcastDetailPage, {
+      ...BROADCAST_PAGE_FIXTURE,
+      preselectedSegmentId: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+    } as typeof BROADCAST_PAGE_FIXTURE),
   );
-  if (!select) throw new Error("the audience segment select is not on the page");
-  const setValue = Object.getOwnPropertyDescriptor(
-    window.HTMLSelectElement.prototype,
-    "value",
-  )?.set;
-  await act(async () => {
-    setValue?.call(select, "01ARZ3NDEKTSV4RRFFQ69G5FAW");
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  // 前置条件:选择器确实在页面上,而且带着这一段的名字 —— 不是靠一个空选择器蒙混过关。
+  const audience = mounted.host.querySelector('[aria-label="Audience segment"]');
+  if (!audience) throw new Error("the audience segment control is not on the page");
+  if (!(audience.textContent ?? "").includes("Reachable audience")) {
+    throw new Error(`the audience control does not show the chosen segment: ${audience.textContent}`);
+  }
   const freeze = Array.from(mounted.host.querySelectorAll("button")).find(
     (button) => (button.textContent ?? "").trim() === "Freeze audience",
   );
@@ -807,6 +812,23 @@ const FIXTURE_AUTHORED = ["Reachable audience", "Reachable audience, minus my ow
  *     reported-opt-out sentences ("This segment also leaves out opt-outs you recorded yourself…",
  *     "You chose to exclude the opt-outs you recorded yourself…") are byte-identical throughout.
  *
+ *  4. 前端基线① 换基座(Radix → Base UI,`docs/specs/frontend-baseline.md` §7.1 ①)。两处,
+ *     都不是文案改动 —— 一个词都没有被谁重新写过:
+ *       · segments 页多出「Match all rules / Consent selection / Not known opt-out」三段。
+ *         这三串是规则行里三个下拉框**当前选中项**的名字,在 `segments-page.tsx` 里一直
+ *         就是这么写着的(`SelectItem` 的 children)。Radix 的 `Select.Value` 在服务端
+ *         渲染时是空的,要等 hydration 才填;Base UI 直接在首帧就把选中项写出来。也就是
+ *         商家原本第一眼看到三个空框,现在第一眼就看到自己选的是什么 —— 多出来的是**真话**,
+ *         不是新承诺。
+ *       · broadcast 页少了「Reachable audience」。那不是页面说的话,是**没打开的下拉框**
+ *         把弹层里唯一那个选项的名字漏进了静态文本 —— 换基座前的 Radix 会,Base UI 不会。
+ *         框里没选东西时页面现在只说「Select a segment…」,这正是商家眼睛看到的。
+ *       · freeze 步骤少了「Select a segment…」。那是下拉框的 placeholder;这一版的
+ *         `mountFrozenBroadcast` 用产品自己的 `preselectedSegmentId`(深链入口)把段位带进
+ *         页面,而不是像换基座前那样对一个原生 `<select>` 赋值。已经选好了的框显示的是段位
+ *         名字,不是「请选择」—— placeholder 和名字同时出现才是当初那句多余的。
+ *     两处都没有动 #758 守的任何一句:reported-opt-out 的两句、以及每一处计数,逐字未变。
+ *
  * The two panels are pinned separately from the pages that host them because no INITIAL page
  * render can reach them: the live preview arrives from an effect, and the freeze note from a
  * completed action. Everything a first paint shows is inside the two page boards.
@@ -823,7 +845,8 @@ const APPROVED_SURFACES: Record<SurfaceName, string> = {
     "and VIP segments are not built yet. No placeholder rows are counted as real segments. " +
     "Reachable audience All of: Contact is not a known opt-out Edit segment Delete Calculating " +
     "segment contacts New segment Build a rule group Choose All or Any. Nested groups are " +
-    "intentionally not supported. Known opt-out means the customer opted out through their own " +
+    "intentionally not supported. Match all rules Consent selection Not known opt-out "
+    + "Known opt-out means the customer opted out through their own " +
     "channel. An opt-out you recorded yourself keeps the contact in the list, marked reported " +
     "opt-out — open the contact to see its consent history. Add rule Also exclude opt-outs I " +
     "recorded myself Off by default. An opt-out you or a CSV import recorded is not confirmed by " +
@@ -840,7 +863,7 @@ const APPROVED_SURFACES: Record<SurfaceName, string> = {
     "only — no message reaches a real customer and no quota is consumed. Precise approval — each " +
     "step is a manual, owner-only action 1 · Freeze the audience Snapshot the segment now. " +
     "Contacts with unknown permission stay in and are flagged — the estimate never drops them. " +
-    "Select a segment… Reachable audience Freeze audience Cancel broadcast Two-confirm override — " +
+    "Select a segment… Freeze audience Cancel broadcast Two-confirm override — " +
     "required for 1 consent-risk contact A contact whose consent is unknown or opted-out can only " +
     "be sent to after two independent human confirmations of this exact frozen action — and it " +
     "never changes their consent. The flow is shown for reference; the override cannot be minted " +
@@ -923,7 +946,7 @@ const APPROVED_HOSTS = {
     "Faiz Rahim No live identity Included · reported opt-out",
   freezeStep:
     "1 · Freeze the audience Snapshot the segment now. Contacts with unknown permission stay in " +
-    "and are flagged — the estimate never drops them. Select a segment… Reachable audience Freeze " +
+    "and are flagged — the estimate never drops them. Reachable audience Freeze " +
     "audience 2 contacts were excluded for opting out. 1 of them opted out before consent history " +
     "was kept, so they stay out until the customer opts in again. This count covers the contacts " +
     "with a confirmed identity on the channel this broadcast sends from, so it can be lower " +
@@ -1645,6 +1668,7 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
    * container; a page-wide snapshot has no outside. Fixtures are fixed, so no count moves the
    * board, and the saved segment's own phrase (finding ①) is inside the page it is printed on.
    */
+
   it("pins every guarded surface as one exact snapshot", () => {
     for (const name of SURFACE_NAMES) {
       expect(renderSurface(name), name).toBe(APPROVED_SURFACES[name]);
@@ -1825,11 +1849,21 @@ describe("#758 the merchant can reach the option himself, and the list says whic
     expect(
       unapprovedUniversalClaims(markup, initialState.segments.map((segment) => segment.name)),
     ).toEqual([]);
-    const control = markup.match(/<button[^>]*id="segment-exclude-reported-opt-out"[^>]*>/)?.[0];
+    // 换基座:Base UI 的 Switch 根节点是 `<span role="switch">`,不再是 `<button>`。
+    // 这一条钉的是「开关在页面上、默认关着、读屏听得出是个开关」,标签名不是承诺的一部分。
+    // 换基座:Base UI 的 Switch 根节点是 `<span role="switch">`(不再是 `<button>`),
+    // 而传进去的 `id` 落到它为 `<label for>` 关联而渲染的那个隐藏 checkbox 上。所以这里
+    // 改成按**读屏看到的那个角色**取控件,再单独确认 label 的关联 id 还在页面上 ——
+    // 钉的仍是「开关在、默认关着、宣告自己是个开关、和它的说明文字连着」。
+    const switches = markup.match(/<[a-z]+[^>]*role="switch"[^>]*>/g) ?? [];
+    expect(switches).toHaveLength(1);
+    const control = switches[0];
     // Off is the shipped default: the product does not decide for the merchant whom to drop.
     expect(control).toBeDefined();
     expect(control).toContain('aria-checked="false"');
-    expect(control).toContain('role="switch"');
+    expect(control).toContain(`aria-label="${APPROVED_SWITCH_LABEL}"`);
+    expect(markup).toContain('id="segment-exclude-reported-opt-out"');
+    expect(markup).toContain('for="segment-exclude-reported-opt-out"');
   });
 
   it("names the tightening in the saved segment's own sentence", async () => {

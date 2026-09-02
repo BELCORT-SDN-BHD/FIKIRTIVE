@@ -475,7 +475,10 @@ describe("#741 r1 打开一条历史 X 草稿", () => {
     expect(labels).toContain("X");
     const xButton = buttons.find((b) => (b.textContent ?? "").trim() === "X")!;
     // 选中态由 ToggleGroup 的标准状态承载,不再绑定某一套视觉 class。
-    expect(xButton.getAttribute("data-state")).toBe("on");
+    // Base UI 换基座:Radix 的 `data-state="on"` 变成 `aria-pressed` + 存在型
+    // `data-pressed`(ToggleDataAttributes)。这里先钉读屏真正读的 `aria-pressed`。
+    expect(xButton.getAttribute("aria-pressed")).toBe("true");
+    expect(xButton.hasAttribute("data-pressed")).toBe(true);
   });
 
   it("X 仍然不可选:按钮禁用,并说清这条帖子发不出去", async () => {
@@ -523,7 +526,8 @@ describe("#741 r1 打开一条历史 X 草稿", () => {
     const ig = Array.from(field("Channel").querySelectorAll<HTMLButtonElement>("button")).find(
       (b) => (b.textContent ?? "").trim() === "Instagram",
     )!;
-    expect(ig.getAttribute("data-state")).toBe("on");
+    expect(ig.getAttribute("aria-pressed")).toBe("true");
+    expect(ig.hasAttribute("data-pressed")).toBe(true);
     expect(ig.disabled).toBe(false);
     expect(field("Channel").textContent).not.toMatch(/not available yet/i);
   });
@@ -878,8 +882,12 @@ describe("#741 r3 两个连接读折成一条生命周期", () => {
     mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: true, needsReconnect: false });
     await renderSchedule();
 
-    const toggle = document.body.querySelector<HTMLButtonElement>('[aria-label="Otto auto-publish"]')!;
-    expect(toggle.disabled).toBe(false);
+    // Base UI 的 Switch 根节点是 `<span role="switch">`,不是 `<button>` —— 「不能操作」
+    // 从 DOM 的 `disabled` 属性搬到了 `aria-disabled` + 存在型 `data-disabled`
+    // (SwitchRootDataAttributes)。钉的还是同一件事:两个读没都答复前商家点不动它。
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label="Otto auto-publish"]')!;
+    expect(toggle.hasAttribute("data-disabled")).toBe(false);
+    expect(toggle.tabIndex).toBe(0);
   });
 
   it("Meta 读还没答复时 auto-publish 保持关着 —— 不确定不等于可以", async () => {
@@ -887,8 +895,10 @@ describe("#741 r3 两个连接读折成一条生命周期", () => {
     mocks.getMetaConnection.mockReturnValue(new Promise(() => {}));
     await renderSchedule();
 
-    const toggle = document.body.querySelector<HTMLButtonElement>('[aria-label="Otto auto-publish"]')!;
-    expect(toggle.disabled).toBe(true);
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label="Otto auto-publish"]')!;
+    expect(toggle.getAttribute("aria-disabled")).toBe("true");
+    expect(toggle.hasAttribute("data-disabled")).toBe(true);
+    expect(toggle.tabIndex).toBe(-1);
   });
 });
 

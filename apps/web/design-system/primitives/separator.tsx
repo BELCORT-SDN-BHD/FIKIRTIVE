@@ -18,6 +18,13 @@ function Separator({
     <SeparatorPrimitive
       data-slot="separator"
       orientation={orientation}
+      // Base UI's Separator always emits `role="separator"`, which a screen reader
+      // announces as a structural boundary. A hairline drawn purely to separate two
+      // cards carries no meaning, so it is marked presentational by default — the
+      // promise this component's own docstring makes. A caller that really means a
+      // semantic boundary passes `role="separator"` back in; `elementProps` wins over
+      // Base UI's own default, and over this one.
+      role="none"
       className={cn(
         "shrink-0 bg-border",
         "data-horizontal:h-px data-horizontal:w-full",
