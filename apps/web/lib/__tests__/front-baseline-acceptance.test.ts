@@ -1,0 +1,104 @@
+/**
+ * 前端基线(docs/specs/frontend-baseline.md §2 验收表)—— 验收↔测试的落点登记。
+ *
+ * 规格 §7.1 把施工切成八段;本文件属于第 ① 段(纯合并),所以这里只有 **FRONT-A12**
+ * 是真测试 —— 夹具路由的生产构建守卫是本段唯一的功能改动。其余编号先按机器闸 M3
+ * 允许的方式用 `it.todo` 占位:编号在测试树里有落点,但不假装已经验过。
+ * 每条占位都写清它归哪一段,S5 验收时逐条转正。
+ */
+import { describe, expect, it, vi } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+
+const APP = path.resolve(__dirname, "../../app");
+
+/** 递归收集一棵目录下的全部 `page.tsx`(路径相对 `app/`)。 */
+function pagesUnder(dir: string, rel = ""): string[] {
+  const here = path.join(dir, rel);
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = readdirSync(here, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const entry of entries) {
+    const next = rel ? path.join(rel, entry.name) : entry.name;
+    if (entry.isDirectory()) out.push(...pagesUnder(dir, next));
+    else if (entry.name === "page.tsx") out.push(next);
+  }
+  return out.sort();
+}
+
+/** 评审夹具的两棵路由树 —— 规格 §1 九问 2 把它们排除在商家入口之外。 */
+const FIXTURE_ROOTS = ["product-patterns", "design-system"] as const;
+
+describe("FRONT-A12:评审夹具路由在生产构建里不可达", () => {
+  it("FRONT-A12:守卫在生产构建下 notFound(),在别的环境下什么都不做", async () => {
+    const notFound = vi.fn(() => {
+      throw new Error("NEXT_NOT_FOUND");
+    });
+    vi.resetModules();
+    vi.doMock("next/navigation", () => ({ notFound }));
+    const { assertReviewFixtureRoute } = await import("@/lib/review-fixture-guard");
+
+    const original = process.env.NODE_ENV;
+    // `process.env` 的属性描述符必须保持 writable/enumerable —— 只给 value 会被 Node 拒。
+    const setNodeEnv = (value: string) =>
+      Object.defineProperty(process.env, "NODE_ENV", {
+        value,
+        configurable: true,
+        writable: true,
+        enumerable: true,
+      });
+    try {
+      // 生产:必须 404。夹具页渲染的是写死的数据,商家面上出现它就是「假数据冒充真相」。
+      setNodeEnv("production");
+      expect(() => assertReviewFixtureRoute(), "生产构建下夹具路由仍然可达").toThrow(/NEXT_NOT_FOUND/);
+      expect(notFound).toHaveBeenCalledTimes(1);
+
+      // 开发与评审构建:照常渲染,否则 Founder 的设计走查就没了。
+      notFound.mockClear();
+      setNodeEnv("development");
+      expect(() => assertReviewFixtureRoute()).not.toThrow();
+      setNodeEnv("test");
+      expect(() => assertReviewFixtureRoute()).not.toThrow();
+      expect(notFound).not.toHaveBeenCalled();
+    } finally {
+      setNodeEnv(original ?? "test");
+      vi.doUnmock("next/navigation");
+    }
+  });
+
+  // 普查而不是手抄清单:新开一个夹具页却忘了挂守卫,这条当场红。手抄的清单只在抄它
+  // 的那一天是对的,而漏掉一页的代价是生产上多一个渲染夹具数据的商家可达页面。
+  it.each(FIXTURE_ROOTS)("FRONT-A12:app/%s 下的每一个 page.tsx 都调了同一个守卫", (root) => {
+    const pages = pagesUnder(APP, root);
+    expect(pages.length, `app/${root} 下一个 page.tsx 都没扫到 —— 普查塌了,这条会空转通过`).toBeGreaterThan(0);
+    for (const page of pages) {
+      const src = readFileSync(path.join(APP, page), "utf8");
+      expect(src, `app/${page} 没有 import 守卫`).toContain(
+        'from "@/lib/review-fixture-guard"',
+      );
+      expect(src, `app/${page} import 了守卫却没调用它`).toContain("assertReviewFixtureRoute()");
+    }
+  });
+});
+
+describe("前端基线:后续各段的验收落点(§7.1;S5 前逐条转正)", () => {
+  // ① 纯合并段自身:钱引擎 14 条在新壳上重跑。本 PR 已跑的是四道钱围栏与全量单测;
+  //    A1 的完整判定要等 e2e 能在新登录旅程上签进去(见本段 PR 的「未做项」)。
+  it.todo("FRONT-A1 §7.1① — 新壳上重跑钱引擎验收表 14 条,/admin/reconcile 与四处披露仍在");
+  it.todo("FRONT-A2 §7.1⑥ — 注册/验证码/回跳/重置旅程走真实邮件,错误提示不泄露邮箱是否存在");
+  it.todo("FRONT-A3 §7.1⑤ — 两个租户各自的 Home 只看得到自己店的连接状态与画布");
+  it.todo("FRONT-A4 §7.1⑤ — Home 布局服务器持久化,Manage home capability 决定入口可见");
+  it.todo("FRONT-A5 §7.1② — Library 历史与上传、搜索、收藏筛选全部来自服务器");
+  it.todo("FRONT-A6 §7.1② — collection 增删改跨刷新成立,跨租户不可见");
+  it.todo("FRONT-A7 §7.1② — Library 的 Use in canvas 落节点到当前项目与租户");
+  it.todo("FRONT-A8 §7.1④ — Brand 五分区记录增改删恢复,每条显示谁改的、何时改的");
+  it.todo("FRONT-A9 §7.1④ — Brand 记录进 Otto 上下文,该轮可查到");
+  it.todo("FRONT-A10 §7.1③ — @ 引用选择器来自服务器,消息保存真实引用 ID");
+  it.todo("FRONT-A11 §7.1⑦ — Settings/Billing 改名与余额充值走现有真能力,无契约控件不出现");
+  it.todo("FRONT-A13 §7.1① — 分支自带四处 server 改动的行为测试(会话分页、软删除恢复、去重、导航指令)");
+  it.todo("FRONT-A14 §7.1⑧ — Founder 登录态六面走查,差异登记规格 §5");
+});
