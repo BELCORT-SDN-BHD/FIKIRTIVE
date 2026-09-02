@@ -11,8 +11,8 @@ import {
   type HomeComponentId,
   type HomeGoal,
   type HomeRange,
-import { assertReviewFixtureRoute } from "@/lib/review-fixture-guard";
 } from "@/design-system/patterns/founder-home/model";
+import { assertReviewFixtureRoute } from "@/lib/review-fixture-guard";
 
 export const metadata: Metadata = {
   title: "Home analysis · Fikirtive",
