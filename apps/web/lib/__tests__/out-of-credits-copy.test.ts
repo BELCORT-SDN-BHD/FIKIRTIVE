@@ -28,7 +28,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
@@ -223,13 +223,34 @@ describe("#699 nothing in apps/ or packages/ calls them beta credits", () => {
       .toBeGreaterThan(500);
     expect(tracked, "the guard's own path no longer resolves — the exemption is stale").toContain(GUARD_ITSELF);
 
+    /* What git stores for a tracked path is not always a file's bytes.
+     *
+     *  · A tracked SYMLINK's blob IS its target path — that string is the whole of what the
+     *    repository carries, so that string is what gets scanned. Following the link instead is
+     *    wrong twice over: pointed at a directory it throws EISDIR and kills the entire scan
+     *    (which is exactly what happened — five directory symlinks under apps/web/ stopped this
+     *    guard after 244 of 2069 files, so it asserted nothing at all), and pointed at a file it
+     *    merely re-reads bytes git already lists under that file's own real path.
+     *  · A path git still names while it is being deleted in the worktree has no bytes at all.
+     *    It cannot ship copy, and must not make the guard throw before it inspects what does. */
+    const scanned: string[] = [];
     const offenders = tracked
       .filter((relative) => relative !== GUARD_ITSELF)
-      // `git ls-files` still names a tracked file while it is being deleted in the worktree.
-      // A file that no longer exists cannot ship copy, and must not make the guard throw before
-      // it can inspect the files that do ship.
-      .filter((relative) => existsSync(path.join(REPO_ROOT, relative)))
-      .filter((relative) => /beta[\s_-]*credit/i.test(readFileSync(path.join(REPO_ROOT, relative), "utf8")));
+      .filter((relative) => {
+        const absolute = path.join(REPO_ROOT, relative);
+        const stat = lstatSync(absolute, { throwIfNoEntry: false });
+        if (!stat) return false;
+        const content = stat.isSymbolicLink() ? readlinkSync(absolute) : readFileSync(absolute, "utf8");
+        scanned.push(relative);
+        return /beta[\s_-]*credit/i.test(content);
+      });
+
+    // The scan has to reach the end of the list. Reading nothing is as green as reading
+    // everything, and that silence is what let a dead guard sit here looking healthy.
+    expect(
+      scanned.length / tracked.length,
+      `the scan covered only ${scanned.length} of ${tracked.length} tracked paths`,
+    ).toBeGreaterThan(0.95);
 
     expect(offenders, `these still say "beta credits":\n${offenders.join("\n")}`).toEqual([]);
   });
