@@ -107,8 +107,9 @@ type SettingsVerdict = { spendCapCredits: number } | { error: string };
 async function renderBillingPage(
   shelf: CreditPackShelf = { packs: [] },
   settings: SettingsVerdict = { spendCapCredits: 0 },
+  accountVerdict: AccountInfo | { error: string } = account,
 ): Promise<HTMLDivElement> {
-  mocks.getMyAccount.mockResolvedValue(account);
+  mocks.getMyAccount.mockResolvedValue(accountVerdict);
   mocks.listCreditPacks.mockResolvedValue(shelf);
   mocks.getSpendOverview.mockResolvedValue({
     entries: [],
@@ -324,5 +325,34 @@ describe("#786 a shelf we could not read is not an empty shelf", () => {
       host.textContent,
       "asserts there is nothing on sale on the strength of a failed read",
     ).not.toMatch(/No credit packs/);
+  });
+});
+
+
+/* ── 前端基线①(#1139 钱面判官登记):e2e 旅程 05 负向断言钉的那几个字,产品里真的有 ──── */
+
+/**
+ * `e2e/journeys/05-topup-shelf-honesty.spec.ts` 有一条负向断言:充值货架空着的时候,
+ * **余额读失败那张卡不许在屏幕上**。判官发现它钉的是旧壳的 "Could not load balance.
+ * Please refresh." —— 换壳后那句话在仓里一个字都不剩,于是那条断言永远绿:余额真的读
+ * 失败它也不会红。
+ *
+ * 负向断言天生有这个病:钉的字一旦从产品里消失,它就静静地什么都不管了,而且**永远不会
+ * 因此变红**。所以这一条从正面把那张卡钉住 —— 它长什么样、写哪几个字、挂不挂 `role="alert"`。
+ * 改文案、去掉 role、把标题并进描述,这里先红,e2e 那条不会再悄悄失效。
+ */
+describe("余额读不到时那张卡:e2e 05 钉的就是这几个字", () => {
+  it("是一张 role=alert 的卡,标题与描述逐字如 e2e 所钉", async () => {
+    const host = await renderBillingPage({ packs: [] }, { spendCapCredits: 0 }, { error: "load-failed" });
+
+    const alerts = Array.from(host.querySelectorAll('[role="alert"]')).filter((el) =>
+      (el.textContent ?? "").includes("Balance unavailable"),
+    );
+    expect(alerts.length, "余额读失败时没有一张写着 Balance unavailable 的 role=alert 卡").toBe(1);
+    expect(alerts[0]!.textContent).toContain("Refresh to try reading it again.");
+
+    // 而余额真的读得到时,这张卡不许在 —— 否则上面那条只是「页面上总有这张卡」。
+    const ok = await renderBillingPage();
+    expect(ok.textContent).not.toContain("Balance unavailable");
   });
 });
