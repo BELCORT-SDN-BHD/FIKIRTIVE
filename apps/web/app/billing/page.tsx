@@ -206,7 +206,7 @@ export default async function BillingPage({
           <p className="text-sm leading-relaxed text-muted-foreground">
             When a question needs current information, Otto searches the web: {SEARCH_UNIT_LABEL}{" "}
             per search, and one message can make at most{" "}
-            {String(OTTO_CHAT_MAX_SEARCHES_PER_TURN)} searches. You are charged only for searches
+            {String(OTTO_CHAT_MAX_SEARCHES_PER_TURN)}{" "}searches. You are charged only for searches
             that complete — including one that comes back empty-handed — and never for a search
             that fails, or for reading a page whose address you gave Otto. These searches ride
             inside that message&apos;s own charge, so your per-action spend cap does not stop
