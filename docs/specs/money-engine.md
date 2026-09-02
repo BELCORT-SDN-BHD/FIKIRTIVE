@@ -1,6 +1,6 @@
 # 钱引擎 规格书(S1)
 
-> 状态: 已交付 · 归档(S5 验收 2026-09-02 全 14 条通过;原「已冻结 · v2」内容一字未动)
+> 状态: 已交付 · 归档(S5 验收 2026-09-02 全 14 条通过;冻结版 v2 正文一字未动)
 > 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1109#issuecomment-5481523165 Founder 评论「S1 批准 money-engine.md」(2026-09-01)
 > 规格前缀: MONEY(验收编号 = MONEY-A1、A2…,全仓不得与其他规格撞前缀)
 
