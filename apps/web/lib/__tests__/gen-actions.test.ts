@@ -1277,11 +1277,19 @@ describe("startGen", () => {
     }
   });
 
-  it("#645 T4:界外的档位在花钱之前就被拒(3 秒 / 16 秒 / 1080p)", async () => {
+  /**
+   * #645 T4 的原意:**没有已裁价的档位,在花钱之前就被拒**。
+   *
+   * Creation S2 §8.1①(2026-09-02)改了其中一格的事实,没有改这条规矩:1080p 从
+   * 「没有价的档」变成「有价、而且有一台自己的引擎」的档(11cr/秒,Founder 追认),
+   * 于是它不再属于这张「界外」清单 —— 它现在走能力路由,落到高清槽位,报价 55cr。
+   * 那一条正面事实钉在下面那个用例与 creation-routing-ledger.test.ts 上;
+   * 这里只留仍然界外的两格(3 秒 / 16 秒:正整数,但不在任何已裁的档位表上)。
+   */
+  it("#645 T4:界外的档位在花钱之前就被拒(3 秒 / 16 秒)", async () => {
     for (const bad of [
       { durationSeconds: 3, resolution: "720p" },
       { durationSeconds: 16, resolution: "720p" },
-      { durationSeconds: 5, resolution: "1080p" },
     ]) {
       db.reserveCredits.mockClear();
       db.genJobCreate.mockClear();
@@ -1299,6 +1307,36 @@ describe("startGen", () => {
       expect(db.reserveCredits, JSON.stringify(bad)).not.toHaveBeenCalled();
       expect(db.genJobCreate, JSON.stringify(bad)).not.toHaveBeenCalled();
     }
+  });
+
+  // Creation S2 §8.1①(CREATE-A4)—— 1080p 现在**有价**了,所以它走的是路由那条路:
+  // 请求上写的是默认槽位,能力路由按分辨率把它换到高清槽位,报价 55cr(11cr/秒 × 5)。
+  // 这条钉的是「请求路真的会换槽位」;账本三处一致由
+  // apps/web/lib/__tests__/creation-routing-ledger.test.ts 用真 ledger 证。
+  it("CREATE-A4:请求 1080p ⇒ 路由到高清槽位,reserve 55 显示 credits", async () => {
+    db.reserveCredits.mockClear();
+    db.genJobCreate.mockClear();
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "a product spin",
+      entityIds: [],
+      count: 1,
+      kind: "video",
+      model: "seedance-2-mini",
+      durationSeconds: 5,
+      resolution: "1080p",
+      idempotencyKey: "video-hd-5s",
+    });
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, {
+      orgId: "org_ref",
+      refId: "job_ref",
+      cost: 55 * INTERNAL_PER_DISPLAY,
+    });
+    // 落库的那一行是高清槽位 —— 路由不是只改了价,是真的换了引擎。
+    expect(db.genJobCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ model: "seedance-2-0" }) }),
+    );
   });
 
   it("reserves the 22-displayed-credit 720p/10s video tier (margin-parity pin)", async () => {

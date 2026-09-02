@@ -382,8 +382,12 @@ for (const field of ["reason", "rulingRef", "reviewBy"]) {
   for (const model of GEN_MODELS) assert.ok(COGS_INPUTS[`image:${model}`], `image:${model} 必须在 COGS_INPUTS 里`);
   for (const model of REFGEN_MODELS) assert.ok(COGS_INPUTS[`refgen:${model}`], `refgen:${model} 必须在 COGS_INPUTS 里`);
   // 缺钉点的形状是可判的:模拟一个只上了菜单没配钉点的 model。
+  // (Creation S2 §8.1① 之前这一行用的是 `seedream-pro` —— 那时它还没上架。它上架之后
+  //  这条断言当场变红,而这正是这个夹具该有的行为:它钉的是「菜单外的 id 没有钉点」,
+  //  不是「pro 永远不上架」。换成一个真正虚构的 id,夹具的语义回到它本来的样子。)
   const pinMap = { ...marginTruth.IMAGE_MODEL_COST_PIN };
-  assert.equal(pinMap["seedream-pro"], undefined, "未上架的 model 本来就没有钉点 —— 这正是闸要红的那一刻");
+  assert.equal(pinMap["seedream-not-shipped"], undefined, "未上架的 model 本来就没有钉点 —— 这正是闸要红的那一刻");
+  assert.ok(pinMap["seedream-pro"], "已上架的 pro 图槽位必须有钉点(Creation S2 §8.1①)");
 }
 
 // ── MONEY-A4:成本钉点闸的红/黄/绿自测(判词样式与 FX 钉点一致) ────────────────────
