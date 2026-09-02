@@ -152,11 +152,21 @@ test("FRONT-A14 — a merchant can press every canvas tool while Otto's composer
 
     // ① Nothing is on top of any tool — neither for the pointer nor for the eye. Named one by one
     //    so a failure says WHICH tool and WHAT is over it.
+    //
+    //    POLLED, NOT READ ONCE. The height the column gives way to the Otto composer is measured by
+    //    a ResizeObserver, so a viewport change settles a frame after the resize returns. A single
+    //    instantaneous read here would be a race — and this suite runs with `retries: 0` on purpose,
+    //    so the one flake it grew would be this one. Polling costs nothing when the layout is
+    //    already right and keeps the failure message.
     for (const name of TOOL_NAMES) {
       const control = tools.getByRole("button", { name, exact: true }).first();
       await expect(control, `${name} is missing from the tool row at ${where}`).toBeVisible();
-      expect(await whatCovers(control), `at ${where}, a click on "${name}" lands somewhere else`).toBeNull();
-      expect(await whatPaintsOver(control), `at ${where}, "${name}" is painted over`).toBeNull();
+      await expect
+        .poll(() => whatCovers(control), { message: `at ${where}, a click on "${name}" lands somewhere else` })
+        .toBeNull();
+      await expect
+        .poll(() => whatPaintsOver(control), { message: `at ${where}, "${name}" is painted over` })
+        .toBeNull();
     }
 
     // ② The two tools a merchant loses the most by not reaching, pressed for real.
