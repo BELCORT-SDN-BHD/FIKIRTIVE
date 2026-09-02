@@ -10,7 +10,13 @@
  * `upload-actions.ts`),面板把那一列原样当请求的 `prompt` 送出去
  * (`components/asset/DetailPanel.tsx` 的 `prompt: gen.prompt`),而 `genRequest` 要求
  * `prompt` 非空(`packages/core/src/gen.ts`)—— 整单在 schema 那一步被拒。裁剪那条路早有
- * 同族兜底(`source.promptText || "cropped"`),Animate / Regenerate 两条没补。
+ * 同族兜底(`source.promptText || "cropped"`),Animate 没补。
+ *
+ * 兜底**只给 Animate**(2026-09-03 裁决,规格变更登记有案):`handleAnimate` 送
+ * `sourceGenerationId`,引擎真看得见那张照片,所以「Animate this image」是句成立的指令。
+ * `handleRegen` 不送(`DetailPanel.tsx`),那条路今天是纯文生图 —— 兜一句「Recreate this
+ * image」只会让商家花钱拿到一张无关的图,比 $0 拒收更糟。所以下面第四条钉的是反面:
+ * 上传素材按 Regenerate **必须原地被拒**,$0、连 GenJob 都不建。
  *
  * 这个文件跑在真 Postgres(*_test)、真 Prisma、真积分台账上,与
  * `asset-idempotency-ledger.test.ts` 同一套周边假件(auth guard、impersonation、队列、
@@ -40,7 +46,6 @@ vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => (
 const { startAssetGen, getActiveGenModels } = await import("../gen-actions");
 const { prisma } = await import("@fikirtive/db");
 
-const IMG = INTERNAL_PER_DISPLAY; // 一张图 = 1 显示 credit = 10 内部
 const VIDEO_5S_720P = 11 * INTERNAL_PER_DISPLAY; // seedance-2-mini 720p/5s(#644 裁决)
 
 // 引擎名从来不出浏览器:四个付费入口送的都是 `getActiveGenModels()` 回的公开别名。
@@ -263,27 +268,26 @@ describe("D5:上传素材按 Animate", () => {
   });
 });
 
-describe("D5:Regenerate 同型", () => {
-  it("CREATE-A3 —— 上传的图按 Regenerate(同样空提示词)⇒ 建得出单、恰好一行 RESERVE", async () => {
+describe("D5:Regenerate 没有源图,维持拒收", () => {
+  it("CREATE-A3 —— 上传的图按 Regenerate ⇒ 原地拒收、$0、连 GenJob 都不建(兜底句只给 Animate)", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
     const uploaded = await seedUploadedGeneration(ownerId, projectId);
 
-    const started = idOf(await startAssetGen(
+    // `regenIntent` 与面板 `handleRegen` 逐字同形 —— **没有 `sourceGenerationId`**。
+    // 引擎手上没有这张照片,兜一句话过去只会出一张无关的图,而商家已经付了钱。
+    // 所以这条路上「拒收」才是正确结果,直到 i2i 请求形状接上。
+    const result = await startAssetGen(
       regenIntent(projectId, uploaded, await panelPrompt(ownerId, uploaded)),
-    ));
-    expect(started.disposition).toBe("fresh");
+    );
 
-    const all = await jobs(ownerId, projectId);
-    expect(all).toHaveLength(1);
-    expect(all[0]!.kind).toBe("IMAGE");
-    expect(all[0]!.prompt).toBe(ASSET_ACTION_FALLBACK_PROMPTS.regen);
-    expect(all[0]!.requestedPrompt).toBeNull();
-
-    const rows = await reserveRows(ownerId);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.reservedDelta).toBe(IMG);
+    expect(result).toEqual({ error: "That generation request is out of bounds." });
+    expect(await jobs(ownerId, projectId), "拒收就必须一单都不建").toHaveLength(0);
+    expect(await reserveRows(ownerId), "$0:账本一行都不许动").toHaveLength(0);
+    expect((await account(ownerId)).balance).toBe(1000);
+    // 兜底表本身是这条断言的单一来源:regen 一旦被加回去,上面四行立刻红。
+    expect(Object.keys(ASSET_ACTION_FALLBACK_PROMPTS), "兜底只留 Animate 一条").toEqual(["animate"]);
   });
 });
 
