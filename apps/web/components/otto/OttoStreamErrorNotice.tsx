@@ -31,10 +31,16 @@ export function OttoStreamErrorNotice({
           </Button>
         )}
       {/* #524 — the merchant's own spend cap stopped this turn. The only thing that moves is
-          the cap, so the exit is Settings; a Top-up link here would buy them nothing. */}
+          the cap, so the exit is wherever the cap control lives; a Top-up link here would buy
+          them nothing (they already have the credits).
+          FRONT-A1 判官 2026-09-02 P1:新壳把上限控件搬到了 Billing & credits
+          (app/billing/page.tsx 挂 <SpendCapCard>,Settings 侧由
+          settings-production-convergence.test.ts 反向围栏保证「一个钱控件都没有」),
+          所以这颗按钮原来指的 /settings 是一条死路 —— 上面那句 SPEND_CAP_RAISE_CTA 说
+          「Raise the cap in Billing & credits」,按钮却把商家送去别处。目的地跟着控件走。 */}
         {error.kind === "spend_cap" && (
           <Button type="button" size="xs" variant="outline" asChild>
-            <a href={SHELL_ROUTES.preferences}>Open settings</a>
+            <a href={SHELL_ROUTES.billing}>Raise your cap</a>
           </Button>
         )}
         {error.kind === "error" && retryDraft && onRetry && (

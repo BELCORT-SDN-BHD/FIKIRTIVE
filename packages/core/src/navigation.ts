@@ -108,7 +108,8 @@ export const SHELL_ROUTES = {
   billing: "/billing",
   /** 连接要发布的账号。今天是 `/otto?view=connections`。 */
   connections: "/settings/connections",
-  /** 花费上限与发布默认值。今天是 `/otto?view=account`。 */
+  /** 工作区偏好(工作区名等)。花费上限**不在**这里 —— 新壳把它搬到了 `billing`
+   *  (`app/billing/page.tsx` 的 `<SpendCapCard>`),指路的地方别再指错。 */
   preferences: "/settings",
   /** 身份菜单进得去的那一页 —— 不是导航格,但它是商家表面之一。 */
   profile: "/profile",

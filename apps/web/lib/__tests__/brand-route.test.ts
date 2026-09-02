@@ -31,6 +31,7 @@ import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { SECTIONS } from "@fikirtive/core/memory-sections";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { StuffItem } from "@/lib/stuff-items";
+import { expectFocusInside } from "./focus-trap-wait";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(HERE, "../..");
@@ -486,7 +487,7 @@ describe("W2-2 ② 手搓图片弹窗退场,换成 ui/dialog(规格书 §5.6 ①
 
   it("焦点被关进弹窗里 —— 打开之后键盘走不到背后那一页", async () => {
     const dialog = await openPicker();
-    expect(dialog.contains(document.activeElement), "焦点还留在弹窗外面").toBe(true);
+    await expectFocusInside(dialog);
   });
 
   it("Escape 关掉它(手搓那版只认点遮罩,键盘用户没有出路)", async () => {

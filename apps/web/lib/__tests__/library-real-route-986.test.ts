@@ -34,6 +34,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MERCHANT_NAV_REDIRECTS, SHELL_ROUTES } from "@fikirtive/core/navigation";
 import type { AdJobItem } from "@/lib/data";
+import { expectFocusInside } from "./focus-trap-wait";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 const read = (relative: string) => fs.readFileSync(path.join(WEB_ROOT, relative), "utf8");
@@ -311,7 +312,7 @@ describe("两处手搓弹窗换成 ui/dialog(规格书 §4.3)", () => {
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog).toBeTruthy();
     // 焦点在弹窗里 —— 这是「陷阱建起来了」最直接的一条证据。
-    expect(dialog!.contains(document.activeElement), "焦点还留在弹窗外面").toBe(true);
+    await expectFocusInside(dialog!);
     // 弹窗以外的一切对辅助技术隐藏,所以读屏与 Tab 都出不去。
     const outside = Array.from(document.body.children).filter((el) => !el.contains(dialog!));
     expect(outside.length).toBeGreaterThan(0);
@@ -346,7 +347,7 @@ describe("两处手搓弹窗换成 ui/dialog(规格书 §4.3)", () => {
     expect(dialog, "弹窗没开").toBeTruthy();
     expect(dialog!.textContent).toContain("Set as product image");
     expect(dialog!.textContent).toContain("Pick which product this image belongs to.");
-    expect(dialog!.contains(document.activeElement)).toBe(true);
+    await expectFocusInside(dialog!);
 
     await act(async () => {
       // 同上(判官 P2-1):少了 cancelable,这条 Escape 断言压制不倒。

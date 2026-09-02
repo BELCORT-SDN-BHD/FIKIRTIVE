@@ -90,9 +90,14 @@ describe("FRONT-A12:评审夹具路由在生产构建里不可达", () => {
 describe("前端基线:后续各段的验收落点(§7.1;S5 前逐条转正)", () => {
   // ① 纯合并段自身:钱引擎 14 条在新壳上重跑。本 PR 已跑的是四道钱围栏与全量单测;
   //    A1 的完整判定要等 e2e 能在新登录旅程上签进去(见本段 PR 的「未做项」)。
-  // FRONT-A1 已转正:占位改成真围栏,落在
-  // lib/__tests__/front-a1-money-rows.test.ts(14 条编号在测试树里各有落点 + 六条钱旅程
-  // 还在),浏览器那一侧由 e2e/journeys/07-money-surfaces-agree.spec.ts 认领。
+  // FRONT-A1 已转正:占位改成真围栏,落在 lib/__tests__/front-a1-money-rows.test.ts。
+  // 判官 2026-09-02 P1 之后它有三层(第一版只有第一层,而且被一份注释索引一个人喂饱了):
+  //   ① 14 条编号各有真落点(M3 注释索引与围栏自身都不算数);
+  //   ② 每条编号点名的行为测试文件在、带编号、有会跑的用例、没有 .skip;
+  //   ③ 验收行点名的四处钱交付面(/admin/reconcile、账单页「Credits don't expire」、
+  //      上传入口价目小字、聊天搜索成本提示)在新壳上还在**并且还挂着**。
+  // 六条钱旅程的存在由同一份文件看着;浏览器那一侧由
+  // e2e/journeys/07-money-surfaces-agree.spec.ts 认领。
   it.todo("FRONT-A2 §7.1⑥ — 注册/验证码/回跳/重置旅程走真实邮件,错误提示不泄露邮箱是否存在");
   it.todo("FRONT-A3 §7.1⑤ — 两个租户各自的 Home 只看得到自己店的连接状态与画布");
   it.todo("FRONT-A4 §7.1⑤ — Home 布局服务器持久化,Manage home capability 决定入口可见");

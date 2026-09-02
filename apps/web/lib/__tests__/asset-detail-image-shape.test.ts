@@ -11,6 +11,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { expectFocusInside } from "./focus-trap-wait";
 
 const mocks = vi.hoisted(() => ({
   getGeneration: vi.fn(),
@@ -181,7 +182,7 @@ describe("资产详情使用标准 Sheet 外壳", () => {
     const sheet = detailSurface();
     expect(sheet.getAttribute("role")).toBe("dialog");
     expect(sheet.textContent).toContain("Asset details");
-    expect(sheet.contains(document.activeElement), "打开后焦点没有进入 inspector").toBe(true);
+    await expectFocusInside(sheet, "打开后焦点没有进入 inspector");
     expect(container!.getAttribute("aria-hidden"), "背景仍暴露给读屏").toBe("true");
   });
 
