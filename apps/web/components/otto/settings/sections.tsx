@@ -4,7 +4,7 @@ import type { AccountInfo } from "@/lib/account-actions";
 import type { OwnerSettings } from "@/lib/owner-settings";
 import { setOwnerSetting } from "@/lib/owner-settings-actions";
 import { setAdsAutonomy } from "@/lib/otto-client-actions";
-import { creditsLabel, formatCredits } from "@/lib/credit-format";
+import { creditsLabel, formatCredits, SPEND_CAP_HINT } from "@/lib/credit-format";
 import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import { SupportExit } from "@/components/exits/Exits";
 import type { CreditPackShelf } from "@/lib/billing-actions";
@@ -211,7 +211,9 @@ export function buildSettingsSections(args: {
           // because nothing read the setting. The cap is now enforced inside reserveCredits,
           // so this says what the charging path actually does — per single action, because
           // that is what is enforced; it is not a monthly budget.
-          hint: "Otto stops any single action that would cost more credits than this — nothing is charged (0 = no cap)",
+          // 前端基线合并 FRONT-A1:这句话现在只有一份(lib/credit-format.ts 的 SPEND_CAP_HINT),
+          // 商家真正看得到的那一份渲染在 app/billing/SpendCapCard.tsx。
+          hint: SPEND_CAP_HINT,
           value: settings.spendCapCredits,
           unit: "credits",
           onSave: num("spendCapCredits"),

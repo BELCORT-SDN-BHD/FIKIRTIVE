@@ -98,7 +98,7 @@ describe("OttoStreamErrorNotice", () => {
   it("points a spend-cap refusal at Settings, never at Billing", () => {
     const markup = renderNotice({
       kind: "spend_cap",
-      text: "Paused by your spend cap — this needs 11 credits and your cap is 5 credits per action. Raise the cap in Settings to run it.",
+      text: "Paused by your spend cap — this needs 11 credits and your cap is 5 credits per action. Raise the cap in Billing & credits to run it.",
     });
 
     expect(markup).toContain('role="alert"');

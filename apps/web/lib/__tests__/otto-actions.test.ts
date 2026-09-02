@@ -4300,7 +4300,7 @@ describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
     };
 
     expect(res.error).toBe(
-      "Paused by your spend cap — this needs 4 credits and your cap is 2 credits per action. Raise the cap in Settings to run it.",
+      "Paused by your spend cap — this needs 4 credits and your cap is 2 credits per action. Raise the cap in Billing & credits to run it.",
     );
     expect(res.error).not.toMatch(/Top up|Billing|Couldn't reach Otto/);
   });

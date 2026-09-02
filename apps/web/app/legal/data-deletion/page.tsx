@@ -35,7 +35,7 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *
  *  2026-07-28 第三轮(写入点规则):本页逐句过尺,无未支撑主张。删除机制
  *  route.ts:38-39 验签、:47-50 按 metaUserId 查、:54 删连接行、:75-77 才随 200 发码;
- *  整账户删除的按钮只打开邮件(components/otto/OttoAccount.tsx:51,标题
+ *  整账户删除的按钮只打开邮件(app/profile/DeleteAccountCard.tsx,标题
  *  "Request account deletion" :40)。
  *
  *  2026-07-28 第五轮(跨族复审返工):
@@ -106,7 +106,11 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *  同时修掉一处已过期的导航指路:整账户删除入口不再是「Account →」—— #513 A 组把 Account 从
  *  工具栏撤了(OttoNav.tsx:81-85),现入口是 components/global-navigation.tsx:71 的
  *  「Preferences」→ settings/sections.tsx:242-253 的 Danger zone → Delete account,
- *  按钮仍只开 mailto(OttoAccount.tsx:51),该句不变。(r1 写 :70,是注释行;r2 改正为 :71。)
+ *  按钮仍只开 mailto,该句不变。(r1 写 :70,是注释行;r2 改正为 :71。)
+ *  ⚠️ 前端基线合并 FRONT-A1:换壳后旧的整屏 Otto 设置面没有任何路由渲染,按钮搬到
+ *  Personal 的 Profile 页(app/profile/DeleteAccountCard.tsx),所以下方指路由
+ *  「Preferences → Danger zone → Delete account」改成「Settings → Profile → Delete account」。
+ *  行为一字未改:仍然输入登录邮箱二次确认、仍然只开一封邮件。
  *
  *  2026-07-31 r2(跨族判官对 PR #570 判 FAIL 后的返工;判定书在 #570 评论区):
  *  失实全部出在「承诺 vs 真实行为」,逐条就地重核后改文案,一行产品代码未动。
@@ -174,7 +178,7 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *     所以写「shots 仍留着它的链接直到你去改」。
  *   · 【新·P2】Disconnect 并非无条件即时:meta-actions.ts:106 冒充模式直接返回 error,
  *     而 OttoConnections.tsx:462 忽略返回值(错误被 UI 吞掉)。措辞限定为「for your own login」。
- *   · 【新·P2】整账户删除漏了真实存在的确认步骤:OttoAccount.tsx:47 confirmText={account.email}
+ *   · 【新·P2】整账户删除漏了真实存在的确认步骤:DeleteAccountCard.tsx confirmText={email}
  *     —— 要打自己的登录邮箱才能继续,已补进正文。
  *   · 【新·P3】指针更正:DetailPanel 的「无 confirmText」要看 :407-413 整段(:409 只是 title、
  *     :411 是 confirmLabel);零匹配仍返回码的证据范围应从 route.ts:65 起(:74-78 只能证明
@@ -359,7 +363,7 @@ export default async function DataDeletionPage({
             To request deletion of your whole account, contact us: email{" "}
             <a href={supportMailto("Account deletion request")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a> from the
             address you sign in with, or use{" "}
-            <span className="text-foreground">Preferences → Danger zone → Delete account</span> inside Fikirtive, where
+            <span className="text-foreground">Settings → Profile → Delete account</span> inside Fikirtive, where
             you type your sign-in email to confirm and Fikirtive then opens the same email for you. There is no
             automated deletion flow, and the button does not delete anything by itself.
           </p>

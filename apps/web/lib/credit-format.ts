@@ -79,8 +79,26 @@ export function spendCapBlockedMessage(quotedCredits: number, capCredits: number
   if (capCredits === null) {
     return "Paused — your spend cap couldn't be read, so nothing was charged. Try again in a moment.";
   }
-  return `Paused by your spend cap — this needs ${creditsLabel(quotedCredits)} and your cap is ${creditsLabel(capCredits)} per action. Raise the cap in Settings to run it.`;
+  return `Paused by your spend cap — this needs ${creditsLabel(quotedCredits)} and your cap is ${creditsLabel(capCredits)} per action. ${SPEND_CAP_RAISE_CTA}`;
 }
+
+/** 出路句里那个「去哪儿改」——**只有这一份**(前端基线合并 FRONT-A1)。
+ *
+ *  换壳之前这句写的是「Raise the cap in Settings to run it.」。换壳之后 Settings 拆成四面
+ *  (Profile / General / Connections / Billing & credits),而花费上限跟着它所限制的那个数字
+ *  搬到了 Billing & credits —— 商家照着「Settings」找过去,落在 General 那一页,那里一个
+ *  跟钱有关的控件都没有。一句指错路的出路句比没有出路句更糟:商家已经决定要改了,产品却
+ *  让他自己去找。 */
+export const SPEND_CAP_RAISE_CTA = "Raise the cap in Billing & credits to run it.";
+
+/** 花费上限那个控件自己的解释句 —— 也是**只有这一份**。
+ *
+ *  这句话描述的是 reserveCredits 真的会做的事(#524):超过上限的单次动作被**拒绝**,
+ *  不是被排队,也不是被扣钱。控件渲染在 `app/billing/SpendCapCard.tsx`,而退役未挂载的
+ *  旧 Otto 设置面(`components/otto/settings/sections.tsx`)读同一个常量,所以两处不可能
+ *  各说各话。 */
+export const SPEND_CAP_HINT =
+  "Otto stops any single action that would cost more credits than this — nothing is charged (0 = no cap)";
 
 /** What a merchant is told when a CONVERSATION turn can't start for lack of CREDITS (#791-7,
  *  #898). A turn stopped by the merchant's own spend cap is a different sentence and a different

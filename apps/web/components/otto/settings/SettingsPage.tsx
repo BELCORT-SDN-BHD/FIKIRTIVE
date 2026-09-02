@@ -46,8 +46,13 @@ export function parseWholeCredits(draft: string): number | null {
  *  - 0 always means "no cap" and always renders as "No cap set", never a bare 0 —
  *    and setting it requires its own two-step confirmation ("Remove cap" → "Confirm"),
  *    never a side-effect of clearing the box.
- *  - A save always echoes back the server-confirmed final value once it resolves. */
-function NumberField({ field }: { field: NumberFieldData }) {
+ *  - A save always echoes back the server-confirmed final value once it resolves.
+ *
+ *  Exported (前端基线合并 FRONT-A1) because the spend cap moved onto Billing & credits: the
+ *  new shell renders the control from `app/billing/SpendCapCard.tsx`, and it must be THIS
+ *  field, not a second hand-written input — every rule above is a merchant-facing promise
+ *  with its own test in lib/__tests__/account-settings.test.ts. */
+export function NumberField({ field }: { field: NumberFieldData }) {
   const [status, setStatus] = useState<"saving" | "saved" | "error" | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [savedValue, setSavedValue] = useState(field.value);

@@ -27,7 +27,8 @@ export const metadata = { title: "Terms · Fikirtive" };
  *   上一版写「仅 email 与价目」,漏了 :68-69 两项,勿回退);
  *   审核通过前拒发 channels/meta-publish-adapter.ts:40-43(canPublish 由 Meta 实授权导出,
  *   meta-actions.ts:29-31);暂停广告写入 meta-write-actions.ts:25 + 按钮 OttoConnections.tsx:347-357;
- *   账号删除按钮只开邮件 components/otto/OttoAccount.tsx:51。
+ *   账号删除按钮只开邮件 app/profile/DeleteAccountCard.tsx(前端基线合并 FRONT-A1:换壳后
+ *   旧的整屏 Otto 设置面没有路由渲染,按钮搬到 Personal 的 Profile 页,行为一字未改)。
  *  提醒:本页仍**没有**任何「暂停自然发布」措辞 —— 那一列至今零写入者(B1 已剪,勿回填)。
  *
  *  2026-07-28 第四轮:剪掉 reels/stories「我们会在排期时间提醒你」那一条。
@@ -180,8 +181,8 @@ export default function TermsPage() {
           <p>
             Support, data requests and account deletion all go to{" "}
             <a href={supportMailto("Support request")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a> — contact us
-            there to make a request. There is no automated deletion flow: the button in Account opens that email and
-            does not delete anything by itself. See the{" "}
+            there to make a request. There is no automated deletion flow: the button in Settings &rarr; Profile opens
+            that email and does not delete anything by itself. See the{" "}
             <Link href="/privacy" className="underline underline-offset-4">Privacy policy</Link> and{" "}
             <Link href="/legal/data-deletion" className="underline underline-offset-4">data deletion</Link>.
           </p>

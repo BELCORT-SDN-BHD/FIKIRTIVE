@@ -354,7 +354,7 @@ export default function PrivacyPage() {
             </li>
             <li>
               <span className="text-foreground">Your whole account and workspace.</span> Contact us to make the
-              request. The button in Account opens that email; it does not delete anything by itself.
+              request. The button in Settings &rarr; Profile opens that email; it does not delete anything by itself.
             </li>
             <li>
               <span className="text-foreground">Individual contacts.</span> Contact records cannot be deleted from the

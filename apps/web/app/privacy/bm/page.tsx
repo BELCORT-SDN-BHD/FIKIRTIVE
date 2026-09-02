@@ -295,7 +295,7 @@ export default function PrivacyPageBm() {
             </li>
             <li>
               <span className="text-foreground">Keseluruhan akaun dan ruang kerja anda.</span> Hubungi kami untuk
-              membuat permintaan. Butang dalam Account membuka e-mel itu; ia tidak memadamkan apa-apa dengan
+              membuat permintaan. Butang dalam Settings &rarr; Profile membuka e-mel itu; ia tidak memadamkan apa-apa dengan
               sendirinya.
             </li>
             <li>

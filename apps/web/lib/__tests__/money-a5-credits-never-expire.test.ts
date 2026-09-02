@@ -34,11 +34,18 @@ async function renderBilling(account: { balance: number; reserved: number } | { 
   vi.doMock("@/lib/spend-history-data", () => ({
     getSpendOverview: async () => ({ error: "unavailable" }),
   }));
+  // 前端基线合并(FRONT-A1):花费上限搬到了这一页,所以页面多读一个数据源。这一票不测上限,
+  // 只测文案 —— 但不 mock 它,页面会去打真的 auth,整条断言就变成一次假红。
+  vi.doMock("@/lib/owner-settings-actions", () => ({
+    getOwnerSettings: async () => ({ spendCapCredits: 0 }),
+    setOwnerSetting: async () => ({ ok: true as const }),
+  }));
   const { default: BillingPage } = await import("@/app/billing/page");
   const html = renderToStaticMarkup(await BillingPage({ searchParams: Promise.resolve({}) }));
   vi.doUnmock("@/lib/account-actions");
   vi.doUnmock("@/lib/billing-actions");
   vi.doUnmock("@/lib/spend-history-data");
+  vi.doUnmock("@/lib/owner-settings-actions");
   return asReadText(html);
 }
 

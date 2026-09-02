@@ -64,3 +64,14 @@ export function spendHistory(page: Page): Locator {
 export function globalNav(page: Page): Locator {
   return page.getByRole("navigation", { name: "Global navigation" });
 }
+
+/** The rail's credits row — the ONE balance the merchant carries with them on every screen.
+ *
+ *  Journey 7 needs it by name: after the shell swap it is the second place (besides
+ *  /billing) that prints a balance, so it is the other half of "the two wallet surfaces
+ *  agree". Anchored on the row's own data attribute rather than on the number, because a
+ *  journey that matched the number anywhere would pass on the page's own balance card and
+ *  prove nothing. */
+export function railCredits(page: Page): Locator {
+  return page.locator("[data-nav-rail-credits]");
+}

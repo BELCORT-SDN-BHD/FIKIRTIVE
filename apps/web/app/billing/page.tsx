@@ -1,4 +1,5 @@
 import { getMyAccount } from "@/lib/account-actions";
+import { getOwnerSettings } from "@/lib/owner-settings-actions";
 import { getSpendOverview } from "@/lib/spend-history-data";
 import { listCreditPacks } from "@/lib/billing-actions";
 import { BuyPackButton } from "@/components/billing/BuyPackButton";
@@ -29,6 +30,7 @@ import { SEARCH_TURN_MAX_LABEL, SEARCH_UNIT_LABEL } from "@/components/otto/Sear
 import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import { SupportExit } from "@/components/exits/Exits";
 import { SettingsShell } from "@/components/settings/SettingsShell";
+import { SpendCapCard } from "./SpendCapCard";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Billing & credits · Fikirtive" };
@@ -55,19 +57,23 @@ export default async function BillingPage({
   searchParams: Promise<{ status?: string }>;
 }) {
   const { status } = await searchParams;
-  const [accountResult, shelf, spendResult] = await Promise.all([
+  const [accountResult, shelf, spendResult, settingsResult] = await Promise.all([
     getMyAccount(),
     listCreditPacks(),
     getSpendOverview(),
+    getOwnerSettings(),
   ]);
   const account = "error" in accountResult ? null : accountResult;
   const spend = "error" in spendResult ? null : spendResult;
+  // 读不到就说读不到。渲染一个 0 会变成「No cap set」——那是一句我们没有证据的话,
+  // 而商家的动作可能正被一个我们此刻读不出来的上限拦着。
+  const settings = settingsResult && !("error" in settingsResult) ? settingsResult : null;
 
   return (
     <SettingsShell
       active="billing"
       title="Billing & credits"
-      description="See what is available, top up this workspace, and track every credit movement."
+      description="See what is available, set your own spend cap, top up this workspace, and track every credit movement."
       scopeNote="Credits and purchases belong to this workspace."
     >
       <div className="flex w-full flex-col gap-8">
@@ -175,6 +181,22 @@ export default async function BillingPage({
               </div>
             )}
           </div>
+        </section>
+
+        {/* 花费上限(前端基线合并 FRONT-A1)。换壳之后它没有任何路由渲染过 —— 服务端照旧
+            按它拒绝动作,商家却看不见也改不了。它属于余额这一页:被限制的数字就在上面。 */}
+        <section className="max-w-3xl">
+          {settings ? (
+            <SpendCapCard spendCapCredits={settings.spendCapCredits} />
+          ) : (
+            <Alert role="alert" variant="warning">
+              <AlertTitle>Spend cap unavailable</AlertTitle>
+              <AlertDescription>
+                We couldn&apos;t read your spend cap, so it isn&apos;t shown here. Refresh to try again — the
+                cap itself is unchanged and still applies.
+              </AlertDescription>
+            </Alert>
+          )}
         </section>
 
         {/* MONEY-A9 §7.3 — the price list for the one charge a merchant never asked for:
