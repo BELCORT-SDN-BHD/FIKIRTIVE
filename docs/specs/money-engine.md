@@ -1,6 +1,6 @@
 # 钱引擎 规格书(S1)
 
-> 状态: 已冻结 · v2
+> 状态: 已交付 · 归档(S5 验收 2026-09-02 全 14 条通过;原「已冻结 · v2」内容一字未动)
 > 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1109#issuecomment-5481523165 Founder 评论「S1 批准 money-engine.md」(2026-09-01)
 > 规格前缀: MONEY(验收编号 = MONEY-A1、A2…,全仓不得与其他规格撞前缀)
 
@@ -121,6 +121,7 @@
 ## 6. 改签记录
 
 - **2026-09-01 v1→v2:A14 措辞修订**。原文三要求物理冲突(账本 append-only × 先负 ADJUST 扣减 × reason 载只在退款后才存在的 Stripe 单号)——跨厂判官 P0 坐实,S2 场呈 Founder 二选一,Founder 裁决:退款改走钱路现成 RESERVE→SETTLE 通道(预扣锁定→Stripe 退款→结算落账,失败 REFUND 释放),账本保持只追加。顺序铁律(先锁 credits 后退钱)与全部其余语义不变。批准载体=Founder 在 S2 docs-only PR 评论「S2 批准 money-engine.md」(该评论同时批准本改签与 §7)。
+- **2026-09-02 · S5 验收通过**:Founder 于验收单逐条勾选 MONEY-A1–A14 全部通过(现场原话「都勾好了」;验收单 artifact https://claude.ai/code/artifact/6ad56613-740d-45f9-bc20-64d828025497;证据基线 main 02a7bd5d:core 1534/otto 1355/generation 211/db 605/worker 752/web 6191 测试全绿,e2e 18 过 1 有意跳,逐条验收测试 14/14)。施工 PR:#1113 ① / #1114 ② / #1115 ③ / #1118 A9 补挂 / #1119 ④a / #1120 ④b / #1124 ⑤B / #1125 ⑤A;变更登记 #1116 / #1121 / #1123。迁移:仅 20260901150000_understanding_billing_snapshot_and_paused_balance(三列可空,零回填)。待裁项见 §5 2026-09-02 各「待决」行与顾问复审结构性风险①–⑧。
 
 ---
 
