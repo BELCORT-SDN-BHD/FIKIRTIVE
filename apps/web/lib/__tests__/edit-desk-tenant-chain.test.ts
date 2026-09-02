@@ -142,6 +142,10 @@ afterAll(async () => {
     await prisma.renderJob.deleteMany({ where: { ownerId } });
     await prisma.actionEvent.deleteMany({ where: { ownerId } });
     await prisma.generation.deleteMany({ where: { ownerId } });
+    // 演员库(CREATE-A10):org 引导时会给这个租户播五名演员,连带十张 ReferenceImage。
+    // 它们指着下面这些 Asset,所以要先摘引用再删资产 —— 否则收尾会撞 FK。
+    await prisma.referenceImage.deleteMany({ where: { ownerId } });
+    await prisma.entity.deleteMany({ where: { ownerId } });
     await prisma.asset.deleteMany({ where: { ownerId } });
     await prisma.project.deleteMany({ where: { ownerId } });
   }

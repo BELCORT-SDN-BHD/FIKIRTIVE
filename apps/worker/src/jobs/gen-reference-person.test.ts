@@ -115,7 +115,11 @@ describe("#765 the engine refuses a reference image showing a real person", () =
     expect(m.generateVideo).toHaveBeenCalledTimes(1);
   });
 
-  it("refunds the hold and records NO spend — the engine never ran", async () => {
+  // CREATE-A9(规格 docs/specs/creation-engine.md)——「被拒的那一单余额净变化为 0」的
+  // 行为证据就在这里,而不是在 apps/web 那个自己造 REFUND 行的账本形状用例里:这一条驱动的是
+  // worker 真正的终局路径(handleGen 撞上供应商拒收),所以它会因为「终局路径丢了退款」或
+  // 「多记了一笔 SETTLE」而红。编号写在这里,是为了让读验收的人找到真正的那处证据。
+  it("CREATE-A9: refunds the hold and records NO spend — the engine never ran", async () => {
     m.genJobFindUnique.mockResolvedValue({ ...ottoJob });
 
     await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
