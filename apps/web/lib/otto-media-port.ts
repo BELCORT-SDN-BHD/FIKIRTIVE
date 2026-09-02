@@ -201,8 +201,15 @@ const VIDEO_EXTS = new Set(
  * The cascade clause (计费四则②) is added for images only: the second, doc-extract charge is
  * triggered by the caption's `isDocument`, so a video genuinely cannot incur it and promising
  * otherwise would be its own small lie.
+ *
+ * **Exported for the disclosure fence** (`lib/__tests__/understanding-disclosure.test.ts`), not
+ * for callers — this file's only consumer is the port below. A source-text scan cannot prove what
+ * this sentence actually SAYS: a trailing `// queued for understanding backlog` comment satisfies
+ * a grep while the returned string says something else entirely, and an interpolation that
+ * assembles the wrong words is invisible in the template. So the fence calls this and reads the
+ * string a merchant would actually get. Pure by construction — no I/O, no clock, no randomness.
  */
-function importUnderstandingQuote(ext: string, contentType: string | null): string {
+export function importUnderstandingQuote(ext: string, contentType: string | null): string {
   const kind =
     understandingKindForMime(contentType ?? "") ?? (VIDEO_EXTS.has(ext) ? "video-qa" : "image-caption");
   const price = (k: typeof kind | "doc-extract") =>

@@ -1930,12 +1930,19 @@ describe("MONEY-A9 快照价口径:五处报价句一律说「排队去理解时
   });
 
   it("Otto 侧三处(URL 导入的事后报价 + 说明书 + importMedia 工具描述)", async () => {
-    // otto-media-port 的那一句是模板串,拼出来才是完整句子 —— 扫源码的**文案行**即可,
-    // 注释行(那里有一句讲授权继承的 "the moment it lands")按 copyLines 的老规矩排除在外。
-    assertQueuedNotUploadWording(
-      "otto-media-port 的导入报价",
-      copyLines(codeOf("lib/otto-media-port.ts")).join(" "),
-    );
+    // URL 导入那一句改成**调函数、读返回值**(复审二 P2)。
+    //
+    // 上一版扫的是 `copyLines(codeOf(...))` —— 整份文件、只删掉整行注释。那有两个洞,而且
+    // 两个都能让围栏在文案已经变回假话时照样全绿:
+    //   ① **行尾注释**满足要求词:`const s = "...(假话)"; // queued for understanding backlog`
+    //      —— copyLines 只丢弃**整行**注释,行尾的留在原地,扫描器把它当文案读。
+    //   ② **插值拼错**看不出来:这句话是模板串,`${price(kind)}` 之类拼出来才是完整句子;
+    //      源码文本永远是模板,不是商家读到的那一句。
+    // 所以这里直接调那个纯函数,对**它返回的字符串**做判定 —— 商家读到什么,就判什么。
+    const { importUnderstandingQuote } = await import("../otto-media-port");
+    // 图片(会级联)与视频(不会)两条路各判一次:级联那半句是拼在图片分支上的。
+    assertQueuedNotUploadWording("URL 导入报价(图片)", importUnderstandingQuote("png", "image/png"));
+    assertQueuedNotUploadWording("URL 导入报价(视频)", importUnderstandingQuote("mp4", "video/mp4"));
 
     const { ottoInstructions, skillCatalog } = await import("@fikirtive/otto");
     const importMedia = skillCatalog.find((s) => s.name === "importMedia");

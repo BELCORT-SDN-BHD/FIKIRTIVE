@@ -38,7 +38,10 @@ vi.mock("../queue", () => ({
     send: vi.fn(async (_name: string, _data: unknown, options: { id?: string }) => options.id ?? null),
   })),
 }));
-vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
+// MONEY-A6 需要能**换掉**这个假货:它默认放行(其余用例不测 guardian),但演员那条用例要让
+// **真的** checkCast 跑起来 —— 只有真 guardian 会去查 Entity 行,而「查得到」正是那条用例的证据。
+const mockCheckCast = vi.hoisted(() => vi.fn(async (_req: unknown): Promise<unknown> => null));
+vi.mock("../cowork-guardian", () => ({ checkCast: mockCheckCast }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
 
 const { startGen } = await import("../gen-actions");
@@ -88,6 +91,9 @@ function idOf(res: Awaited<ReturnType<typeof startGen>>): { id: string; disposit
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks 只清调用记录,**不清实现** —— MONEY-A6 那条会换上真 guardian,
+  // 不在这里放回默认,它就会漏给后面每一个用例。
+  mockCheckCast.mockImplementation(async () => null);
 });
 
 describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain image batch (count 1-4)", () => {
@@ -233,11 +239,36 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
     };
     const quote = pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, referenceVideoGenerationId: null, videoOptions: { seconds: 5, resolution: "720p" } });
 
+    /**
+     * 一个**真的**演员:CHARACTER 类型的 Entity,名下挂一张 base 参考图。
+     *
+     * 两样都必须真:①真 Entity 行 —— 真 guardian 查不到就报 `missing-entity`,startGen 当场
+     * 返回 error,这条用例直接炸(所以「查得到」是被证明的,不是被假设的);②真 base 参考图 ——
+     * 一个没有参考图的 CHARACTER 会踩 `character-no-refs` 那道闸,同样炸。合起来:这一单走的
+     * 是商家用演员库角色出片时,服务端真正会走的那条路。
+     */
+    async function seedActor(ownerId: string): Promise<string> {
+      const entityId = `ent_${randomUUID()}`;
+      const assetId = `ast_${randomUUID()}`;
+      await prisma.entity.create({ data: { id: entityId, ownerId, type: "CHARACTER", name: "Nadia" } });
+      await prisma.asset.create({
+        data: {
+          id: assetId, ownerId, contentHash: randomUUID().replace(/-/g, ""),
+          ext: "png", mime: "image/png", sizeBytes: BigInt(1024), originalFilename: "nadia.png",
+        },
+      });
+      await prisma.referenceImage.create({
+        data: { id: `ref_${randomUUID()}`, ownerId, entityId, assetId, position: 0 },
+      });
+      return entityId;
+    }
+
     /** 下一单、结算、把这个 org 的账本折成商家看到的那几条。 */
-    async function orderAndRead(entityIds: string[], tag: string) {
+    async function orderAndRead(tag: string, withActor: boolean) {
       const ownerId = await seedOrg(1000);
       asOwner(ownerId);
       const projectId = await seedProject(ownerId);
+      const entityIds = withActor ? [await seedActor(ownerId)] : [];
       const job = idOf(await startGen({
         ...base, projectId, entityIds,
         idempotencyKey: `a6-${tag}-${randomUUID().slice(0, 8)}`,
@@ -254,17 +285,37 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
         new Map([[job.id, "VIDEO" as const]]),
         TZ,
       );
-      return { ownerId, jobId: job.id, rows, entries, balance: (await account(ownerId)).balance };
+      return { ownerId, jobId: job.id, entityIds, rows, entries, balance: (await account(ownerId)).balance };
     }
 
-    const bare = await orderAndRead([], "bare");
-    const actor = await orderAndRead(["ent_face_nadia"], "actor");
+    // 这条用例让**真的** checkCast 跑 —— 它会真的去查 Entity 行。传一个不存在的 id 进去,
+    // 真 guardian 报 missing-entity ⇒ startGen 返回 error ⇒ idOf 抛 ⇒ 用例红。
+    // 也就是说:下面「演员被解析到了」不是一句断言,是这条用例能跑完的前提。
+    const { checkCast: realCheckCast } =
+      await vi.importActual<typeof import("../cowork-guardian")>("../cowork-guardian");
+    mockCheckCast.mockImplementation((req) => realCheckCast(req as Parameters<typeof realCheckCast>[0]));
+
+    const bare = await orderAndRead("bare", false);
+    const actor = await orderAndRead("actor", true);
+    const actorEntityId = actor.entityIds[0]!;
 
     // 演员真的挂在那一单上 —— 否则下面所有「相同」都是拿两个空单在比。
     const actorJob = await prisma.genJob.findFirstOrThrow({
       where: { id: actor.jobId, ownerId: actor.ownerId }, select: { entityIds: true },
     });
-    expect(actorJob.entityIds, "带演员那一单没真的带上演员").toEqual(["ent_face_nadia"]);
+    expect(actorJob.entityIds, "带演员那一单没真的带上演员").toEqual([actorEntityId]);
+
+    // 真 guardian 确实拿着这个 id 被调过(而且它内部真的查了 Entity —— 查不到就不会走到这里)。
+    expect(mockCheckCast, "guardian 没被以这一单的演员 id 调用").toHaveBeenCalledWith(
+      expect.objectContaining({ ownerId: actor.ownerId, entityIds: [actorEntityId] }),
+    );
+    // 那一行确实是个带参考图的 CHARACTER —— 「演员」这个词在这条用例里有实体含义。
+    const actorRow = await prisma.entity.findFirstOrThrow({
+      where: { id: actorEntityId, ownerId: actor.ownerId },
+      select: { type: true, _count: { select: { referenceImages: { where: { deletedAt: null, variantId: null } } } } },
+    });
+    expect(actorRow.type).toBe("CHARACTER");
+    expect(actorRow._count.referenceImages, "演员没有 base 参考图,真 guardian 本该拦下它").toBe(1);
 
     // ① 账本侧:行数、kind 序列、金额,逐格相等。
     const kindsOf = (rows: typeof bare.rows) => rows.map((r) => r.kind);
@@ -285,13 +336,19 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
     expect(bare.entries[0]!.category).toBe("video");
 
     // ③ 反向:一个「演员费」味道的字都不许出现在商家读到的东西里。
+    //    三个字段扫的是**同一个**正则:上一版 category 少了「演员」、label/detail 只认完整
+    //    "talent fee",于是一条中文的「演员费」类目、或者一句 "talent surcharge",三格里
+    //    有两格是漏的。禁词表只有一份,三格各扫一次。
+    const ACTOR_WORDS = /actor|talent|演员|model[- ]?fee/i;
     for (const [who, entries] of [["裸单", bare.entries], ["带演员", actor.entries]] as const) {
       for (const entry of entries) {
-        expect(entry.category, `${who}的消费历史出现了 actor 类目`).not.toMatch(/actor|talent|model-fee/i);
-        expect(
-          `${entry.label} ${entry.detail ?? ""}`,
-          `${who}的消费历史文案里出现了「演员费」`,
-        ).not.toMatch(/actor|演员|talent fee/i);
+        for (const [field, value] of [
+          ["category", entry.category],
+          ["label", entry.label],
+          ["detail", entry.detail ?? ""],
+        ] as const) {
+          expect(value, `${who}的消费历史 ${field} 里出现了「演员费」味道的字`).not.toMatch(ACTOR_WORDS);
+        }
       }
     }
   });
