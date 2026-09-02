@@ -78,6 +78,7 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 | 2026-09-03 | Connections 页的 **WhatsApp 行随新壳消失**。旧壳 Messaging 分区里有一行 WhatsApp，写着 "Not available yet"、零按钮（`MessagingRow`，PR #1139 前的 `components/otto/OttoConnections.tsx`）；新壳按已批准的 Settings pattern 重画成「先管已连服务，Add connection 才进 discovery」，整个 Messaging 分区连同那一行退场。产品事实没变（今天仍然没有任何一条连接消息渠道的路），变的是商家还看不看得到「WhatsApp 暂时连不上」这句话。待 Founder FRONT-A14 过目：要不要在 Add connection 弹层里把它作为一条 Unavailable 服务列回来。 |  |
 | 2026-09-03 | **前门不再承诺「做东西与发布都要你先点头」**。换壳前登录页写着 "nothing gets made or published until you approve"，围栏 `public-copy-honesty-791.test.ts` 正向钉着它；新的登录/注册页只剩身份表单，全仓这句承诺只剩审批卡自己（`components/otto/OttoApprovalCard.tsx`）与 `packages/core/src/schedule-draft.ts`。反向禁令（不许说成「凡花钱都先经你点头」）本 PR 已补回并覆盖登录/注册两面；**正向那一句要不要回到前门是产品决定**，等 Founder 拍板。 |  |
 | 2026-09-03 | **Otto 仍然告诉商家 `/create#templates` 有一个 Templates 区段**（`packages/otto/src/skills/recommend-templates.ts:67` 的 `TEMPLATES_SELF_SERVE`）。新壳的 `/create` 只挂 Otto 入口与画布历史，那个区段已经不渲染 —— 这句话今天是假的。本 PR 只把重定向表里的死锚点撤了（零可见变化），改 Otto 的说法是一次商家可见的文案改动，留给 Founder 定：改成「让 Otto 直接帮你做」，还是把 Templates 区段接回 `/create`。 |  |
+| 2026-09-03 | **Founder 令：生产界面严格按 UIUX 设计（design-system/patterns 各面 Reference 组件与夹具）走**；非逼不得已（例如设计里没有、必须新增的东西）不得偏离；任何新增或改动都须遵守前端规则（PR #1117 交接的 SSOT 与接线规范）。触发＝2026-09-03 Founder 在主干 d24079b5 走 `/create` 与 `/create/canvas`，发现生产路由仍渲染旧组件（`ImmersiveCanvasEntry` / Ask Otto 侧栏），与设计夹具（`CanvasReference` / `CreateWorkspaceReference`）不一致。处置＝先做逐面对照审计（设计夹具 vs 生产路由，并排截图＋差异分级＋工程量），再按面接线；Canvas/Create 接线不在 §7.1 现有八段内，作为新段「⑨ Canvas/Create 按设计接线」待审计后估算与 Founder 批准；接线顺序 Canvas 优先。 |  |
 
 ## 6. 改签记录
 

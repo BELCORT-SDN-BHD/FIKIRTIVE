@@ -10,6 +10,7 @@ import { fromPrisma } from "pg-boss";
 import { prisma, reserveCredits, InsufficientCredits, SpendCapBlocked } from "@fikirtive/db";
 import {
   genRequest,
+  assetActionPrompt,
   newId,
   GEN_QUEUE,
   storageKey,
@@ -429,9 +430,25 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
   // 今天成立是因为 `GEN_MODELS` / `GEN_VIDEO_MODELS` 是静态常量:别名按下标一一对应引擎,
   // 同一个别名永远是同一台引擎。哪天模型菜单动态化(顺序会变),同一个别名就可能先后指向
   // 两台引擎 —— 那时必须把解析后的引擎名纳入摘要,否则两个不同的意图会共用一个键。
+
+  // D5(2026-09-03 真供应商走查)—— **源资产没有提示词时的兜底句,只在这里落一次。**
+  //
+  // 上传进来的素材,`Generation.promptText` 是空串,而面板把那一列原样当 `prompt` 送来;
+  // `genRequest.prompt` 要求非空,于是「对上传的图按 Animate」整单被拒、连 GenJob 都不建。
+  // 兜底句由 `@fikirtive/core` 的 `assetActionPrompt` 给(那里也写着它为什么不是商家原话、
+  // 为什么不动钱、为什么 edit / template 没有兜底)。
+  //
+  // 位置是**在算键之前**:键是从请求体摘出来的,所以替换必须先发生 —— 同一个意图
+  // (同一张上传图 + 同一个动作 + 同一档规格)两次提交才会摘出同一个键,落回既有的
+  // 「活跃键复用」那一支。商家真写了字的请求这里**原样穿过**(`request` 对象都不重建),
+  // 所以既有那三条路的键逐字不变,零回归。
+  const fallbackPrompt = assetActionPrompt(assetOp, record.prompt);
+  const promptedRequest = fallbackPrompt !== null && fallbackPrompt !== record.prompt
+    ? { ...request, prompt: fallbackPrompt }
+    : request;
   const trustedRequest = {
-    ...request,
-    idempotencyKey: assetActionKey(assetOp as AssetActionOp, assetAnchorGenerationId, request).key,
+    ...promptedRequest,
+    idempotencyKey: assetActionKey(assetOp as AssetActionOp, assetAnchorGenerationId, promptedRequest).key,
   };
   TRUSTED_ASSET_REQUESTS.set(trustedRequest, { expectedCredits });
   return startGen(trustedRequest);

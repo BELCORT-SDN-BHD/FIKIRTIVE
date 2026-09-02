@@ -817,6 +817,42 @@ export function videoPriceUsd(model: GenVideoModel, opts: { seconds: number; res
   return opts.count * opts.seconds * videoRateUsdPerSec(model, opts.resolution);
 }
 
+/**
+ * 「源资产没有提示词」时,资产详情面板那两个动作各自发出去的那一句 —— **只在这里定义一次**。
+ *
+ * 补的是哪个洞(D5,2026-09-03 真供应商走查实证):上传进来的素材,`Generation.promptText`
+ * 是空串(`apps/web/lib/actions.ts` 与 `upload-actions.ts` 的上传路一律写 ""),而面板把
+ * 那一列原样当作请求的 `prompt` 送出去。下面 `genRequest.prompt` 要求非空,于是「对上传的
+ * 图按 Animate」整单在服务端被拒(`That generation request is out of bounds.`),连 GenJob
+ * 都不建 —— 商家自己拍的产品照因此根本动不了,而同一张图打了字的 Generate edit 能建单。
+ * 裁剪那条路早就有同族兜底(`source.promptText || "cropped"`),Animate / Regenerate 没补。
+ *
+ * 三条纪律写在这里,所以调用方不必各记一遍:
+ *   · **它是我们替这次动作写的一句话,不是商家原话。** 所以它只会落进 `GenJob.prompt`
+ *     与回执的「实发」那一栏;「你写的」那一栏(`GenJob.requestedPrompt`)只由
+ *     `merchant-prompt-provenance` 那条进程内通道写,兜底句一个字都进不去。
+ *   · **它不动一分钱。** 计价只看型号 / 张数 / 秒数 / 分辨率(`pricedGenCredits`),
+ *     提示词不是入参 —— 兜底前后报价逐字相同。
+ *   · **只有这两个动作有兜底。** `edit` 的那句话就是商家自己敲的字(空 = 没输入,该拒);
+ *     `template` 的句子由模板自己拼。给它们兜底等于替商家发明意图。
+ */
+export const ASSET_ACTION_FALLBACK_PROMPTS = {
+  animate: "Animate this image",
+  regen: "Recreate this image",
+} as const satisfies Record<string, string>;
+
+/**
+ * 上面那张表的**唯一**读法:这个动作 + 这一句提示词,真正该发出去的是哪一句。
+ *
+ * 空串 / 只有空白 / 缺席 ⇒ 该动作的兜底句(没有兜底的动作回 null,由 `genRequest` 照旧拒)。
+ * 商家真写了字 ⇒ 原样返回,一个字节都不动(所以既有的生成图 Animate 零行为变化)。
+ * PURE。
+ */
+export function assetActionPrompt(op: string, prompt: unknown): string | null {
+  if (typeof prompt === "string" && prompt.trim().length > 0) return prompt;
+  return (ASSET_ACTION_FALLBACK_PROMPTS as Record<string, string | undefined>)[op] ?? null;
+}
+
 export const genRequest = z
   .object({
     projectId: z.string().min(1).max(64),
