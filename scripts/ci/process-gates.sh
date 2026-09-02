@@ -94,16 +94,31 @@ spec_ref_paths() {
 
 # 验证一条规格引用:在 merge-base(= 主干)上存在且已冻结——铁律 3「规格只在主干上有效」,
 # 同一个 PR 里新加的规格不能自我引用(盲审抓的自引漏洞)。
+# 「已交付 · 归档」的规格只能作轻改引用(PR 须同时带「轻改:」勾选句):Founder 2026-09-02 裁决,
+# 触发 #1127——引用的规格刚被归档、改动文件又踩钱路地板,交付后的零行为维护两条路同时堵死。
 # 刻意在主 shell 里跑,不进子壳——命令替换里的 exit 只杀子壳,fail-closed 会被 if 吞掉。
+# 走通时把这次引用走的是哪条路写进全局 SPEC_REF_ROUTE(frozen / archived-light),供 m1 报绿用。
 validate_spec_ref() {
   local spec="$1" content
+  SPEC_REF_ROUTE=""
   if ! content="$(git show "$BASE_SHA:$spec" 2>/dev/null)"; then
     fail "M 闸:PR 描述引用了 $spec,但主干(merge-base)上没有这个文件。" \
       "规格只在主干上有效(铁律 3):先把它以 docs-only PR 合进主干,再开产品 PR——" \
       "规格-only PR 走 docs 快路,几分钟的事,不是官僚主义。"
   fi
-  printf '%s' "$content" | grep -qE '^>?[[:space:]]*状态(:|：).*已冻结' || fail \
-    "M 闸:主干上的 $spec 状态不是「已冻结」——引用只认冻结版。" \
+  if printf '%s' "$content" | grep -qE '^>?[[:space:]]*状态(:|：).*已冻结'; then
+    SPEC_REF_ROUTE="frozen"
+    return 0
+  fi
+  if printf '%s' "$content" | grep -qE '^>?[[:space:]]*状态(:|：).*已交付.*归档'; then
+    body_lines | grep -qE "$LIGHT_LINE_RE" || fail \
+      "M 闸:主干上的 $spec 状态是「已交付 · 归档」——归档规格只能作轻改引用" \
+      "(PR 描述须同时独立成行写  轻改: <勾选句>,自报零商家可见行为变化)。" \
+      "要改交付后的行为,须新冻结规格(把这份升新版本重签,或另立一份新规格)。"
+    SPEC_REF_ROUTE="archived-light"
+    return 0
+  fi
+  fail "M 闸:主干上的 $spec 状态既不是「已冻结」也不是「已交付 · 归档」——引用只认这两种。" \
     "冻结三步:Founder 本人在功能 issue 评论「S1 批准 $(basename "$spec")」→ 状态行改" \
     "「已冻结 · v1」→「批准:」行填该 issue 完整链接;然后经 docs-only PR 上主干。"
 }
@@ -111,7 +126,7 @@ validate_spec_ref() {
 m1() {
   need_env PR_BODY_FILE
   resolve_base
-  local product floor routes refs spec
+  local product floor routes refs spec report
   product="$(changed_files | grep -E "$PRODUCT_CODE_RE" || true)"
   if [[ -z "$product" ]]; then
     echo "M1 绿:本 PR 不碰产品代码(apps/、packages/),不需要规格引用。"
@@ -120,9 +135,18 @@ m1() {
 
   refs="$(spec_ref_paths || true)"
   if [[ -n "$refs" ]]; then
-    while IFS= read -r spec; do validate_spec_ref "$spec"; done <<< "$refs"
-    echo "M1 绿:已冻结规格引用有效——"
-    printf '  %s\n' $refs
+    # 逐条验完再报绿:中途有一条不合格,fail 直接红,不会先印出半句「绿」。
+    report=""
+    while IFS= read -r spec; do
+      validate_spec_ref "$spec"
+      if [[ "$SPEC_REF_ROUTE" == "archived-light" ]]; then
+        report="$report  $spec(已交付 · 归档 → 轻改引用一路:PR 同带轻改勾选句,自报零商家可见行为变化)"$'\n'
+      else
+        report="$report  $spec(已冻结)"$'\n'
+      fi
+    done <<< "$refs"
+    echo "M1 绿:规格引用有效——"
+    printf '%s' "$report"
     return 0
   fi
 
