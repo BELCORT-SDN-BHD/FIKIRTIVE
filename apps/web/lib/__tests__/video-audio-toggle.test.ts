@@ -18,6 +18,8 @@
  * 真组件 + 真 React;只有服务端动作是假件,所以一个积分都花不出去(与
  * asset-detail-image-shape.test.ts 同一套做法)。
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -214,5 +216,54 @@ describe("CREATE-A3:视频声音开关", () => {
     expect(arg.audio).toBe(false);
     expect(arg.durationSeconds).toBe(12);
     expect(arg.expectedCredits).toBe(27);
+  });
+});
+
+/**
+ * CREATE-A3 的**围栏**:声音开关只许出现在「拨了真的算数」的面上。
+ *
+ * 判官 r1 P0(2026-09-02)抓到的正是反面:这一格一开始无条件渲染在每一个
+ * `VideoSpecPicker` 上,而画布那两条视频路(`FlowCanvas.tsx` 的 Animate 弹窗与 t2v 弹窗)
+ * 提交时把 `audio` 整个丢掉 —— `clampVideoSpec` 只重建 seconds/resolution/aspectRatio,
+ * `useCanvasGen.ts` 的请求体也只展开那三格。后果不是「开关无效」这么轻:
+ * 拨动它会改掉 `FlowCanvas` 的 material JSON ⇒ actionId 换身份 ⇒ 服务端判 fresh ⇒
+ * 「关掉声音重做一次」再付一次全价,拿回一条一样的、仍带 AI 配音的片子,全程零提示。
+ *
+ * 所以这里钉两条:
+ *   ① 没自报 `audioToggle` 的调用点,屏幕上根本没有这一格(默认关,新入口不会误开);
+ *   ② 画布那两处 picker 至今没有自报 —— 等 §8.2 批 II 把 clamp 与两处请求体收口后,
+ *      改这条断言与那两处渲染是同一次改动,漏一边就红。
+ */
+describe("CREATE-A3 围栏:没接线的面上不许出现声音开关", () => {
+  it("CREATE-A3:调用点不自报 audioToggle ⇒ 规格选择器上没有声音这一格", async () => {
+    const { VideoSpecPicker } = await import("@/components/gen/VideoSpecPicker");
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const r = createRoot(host);
+    await act(async () => {
+      r.render(createElement(VideoSpecPicker, {
+        value: { seconds: 5, resolution: "720p", aspectRatio: "16:9" },
+        menu: { durations: [5, 12], resolutions: ["720p", "480p"], aspectRatios: ["16:9"] },
+        onChange: () => {},
+      }));
+    });
+    // 三格会改价的照常在 —— 拿掉的只有声音那一格,不是整个选择器。
+    expect(host.querySelector('[aria-label="Length of the video"]')).not.toBeNull();
+    expect(host.querySelector('[role="switch"][aria-label="Sound"]'), "没接线的面上不该有声音开关").toBeNull();
+    expect(host.textContent).not.toContain(VIDEO_AUDIO_PRICE_NOTE);
+    await act(async () => r.unmount());
+    host.remove();
+  });
+
+  it("CREATE-A3:画布两条视频路在把 audio 发出去之前,不许自报 audioToggle", () => {
+    // jsdom 下 import.meta.url 是 http: —— 只能走 cwd(vitest 的根就是 apps/web,
+    // 与 canvas-click-semantics.test.ts 读 globals.css 同一套)。
+    const read = (rel: string) => readFileSync(join(process.cwd(), "components", "canvas", rel), "utf8");
+    const canvasUi = read("FlowCanvas.tsx");
+    const canvasSubmit = read("useCanvasGen.ts");
+    // 前提:画布的提交路今天确实不带 audio。这一条一旦不成立(批 II 收口了),
+    // 下面那条断言就该跟着改成「必须自报」—— 两条一起改,才不会一边接线一边忘了开开关。
+    expect(/\baudio\b/.test(canvasSubmit), "useCanvasGen 开始发 audio 了 ⇒ 该把画布两处 audioToggle 打开并改这条围栏").toBe(false);
+    expect(canvasUi.includes("audioToggle"), "画布提交路还没带 audio,不许在画布上渲染声音开关").toBe(false);
   });
 });

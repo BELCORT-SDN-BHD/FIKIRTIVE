@@ -104,6 +104,7 @@ export function VideoSpecPicker({
   disabled = false,
   compact = false,
   hasSourceImage = false,
+  audioToggle = false,
 }: {
   /** 当前会交付的规格。每一格都必须在 `menu` 的对应列表里 —— 显示的就是会发出去的。 */
   value: VideoSpec;
@@ -115,6 +116,23 @@ export function VideoSpecPicker({
   compact?: boolean;
   /** 这一次出片有没有源图。只影响**说法**(Adaptive 的含义两条路不同),不影响菜单。 */
   hasSourceImage?: boolean;
+  /**
+   * CREATE-A3 —— **这条提交路把 `value.audio` 真的发出去了吗**。默认 `false`:不渲染声音那一格。
+   *
+   * 为什么默认关、为什么由调用方逐处自报,而不是这里一律渲染:这一格背后没有本地效果,
+   * 它唯一的意义是让提交时的付费请求带上 `audio`。哪条路没把它带出去,开关就是个**能拨、
+   * 收钱、无效**的假控件 —— 商家关掉声音、照原价付费、拿回带 AI 配音的片子,界面全程不报错。
+   * 更贵的是:拨动它会改掉画布那两条路的 material JSON(`FlowCanvas.tsx` runAnimate/runT2v),
+   * 于是 actionId 换身份、服务端判 fresh,「关掉声音重做一次」= 再付一次全价拿同一条片子。
+   *
+   * 所以这一格的准入条件只有一条,加新调用点时逐字核对:
+   *   从这个 picker 的 `onChange` 到那条路的付费请求体之间,`audio` 一路不掉
+   *   (当心 `clampVideoSpec` —— 它只重建 seconds/resolution/aspectRatio,会静默抹掉 audio)。
+   * 今天只有资产详情 Animate 一条路满足(`DetailPanel.tsx` 第 402 行直读未夹的 `videoSpec?.audio`)。
+   * 画布两条路归 §8.2 批 II 收口:届时 clamp 保留 audio ＋ `useCanvasGen.ts` 两处请求体带上 audio,
+   * 才把 `audioToggle` 打开。围栏在 `apps/web/lib/__tests__/video-audio-toggle.test.ts`。
+   */
+  audioToggle?: boolean;
 }) {
   const field = (label: string, control: React.ReactNode) => {
     if (compact) return control;
@@ -179,20 +197,24 @@ export function VideoSpecPicker({
       {/* CREATE-A3 —— 声音开关。落点就在这里(规格选择器),因为「要不要配音配乐」和
           时长、清晰度一样,是花钱之前定下来的一格。默认开:未设 ⇒ 按服务端默认档交付,
           所以一个没碰过开关的规格与本格出现之前**一模一样**。
+          `audioToggle` 才渲染:见上面那条 prop 的说明 —— 提交路没把 audio 带出去的面上,
+          一个能拨的声音开关是收了钱的假控件,宁可这一格不存在。
           说明句常驻(不退到悬浮态):它要挡的正是「关掉是不是能便宜点」这个误会,
           而报价确实一格不动 —— 价目表的键里根本没有声音。窄条里只省掉「Sound」这个
           标题词(读屏器仍从 aria-label 拿到),那句话本身一直在。 */}
-      <span className="flex items-center gap-2 text-[0.75rem] text-muted-foreground" style={{ flex: "none" }}>
-        {!compact && <span className="font-semibold text-foreground">Sound</span>}
-        <Switch
-          checked={value.audio ?? true}
-          disabled={disabled}
-          aria-label="Sound"
-          title={VIDEO_AUDIO_PRICE_NOTE}
-          onCheckedChange={(checked) => onChange({ ...value, audio: checked })}
-        />
-        <span>{VIDEO_AUDIO_PRICE_NOTE}</span>
-      </span>
+      {audioToggle && (
+        <span className="flex items-center gap-2 text-[0.75rem] text-muted-foreground" style={{ flex: "none" }}>
+          {!compact && <span className="font-semibold text-foreground">Sound</span>}
+          <Switch
+            checked={value.audio ?? true}
+            disabled={disabled}
+            aria-label="Sound"
+            title={VIDEO_AUDIO_PRICE_NOTE}
+            onCheckedChange={(checked) => onChange({ ...value, audio: checked })}
+          />
+          <span>{VIDEO_AUDIO_PRICE_NOTE}</span>
+        </span>
+      )}
       {/* #914:一个小图标,悬浮才说话——高频控件旁边不铺一整句常驻文案。 */}
       <span
         aria-label="How this engine handles your prompt"

@@ -784,6 +784,7 @@ export default function DetailPanel({
                   onChange={setVideoSpec}
                   disabled={readOnly}
                   hasSourceImage
+                  audioToggle
                 />
               </div>
             )}
