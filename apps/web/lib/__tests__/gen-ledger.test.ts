@@ -27,7 +27,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { INTERNAL_PER_DISPLAY, pricedGenCredits } from "@fikirtive/core";
+import { INTERNAL_PER_DISPLAY, displayCredits, pricedGenCredits } from "@fikirtive/core";
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mockRequireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
@@ -44,7 +44,7 @@ const mockCheckCast = vi.hoisted(() => vi.fn(async (_req: unknown): Promise<unkn
 vi.mock("../cowork-guardian", () => ({ checkCast: mockCheckCast }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
 
-const { startGen } = await import("../gen-actions");
+const { startGen, startCoworkGen } = await import("../gen-actions");
 const { cancelGenJob } = await import("../cowork-actions");
 const { prisma, settleCredits, refundReservation } = await import("@fikirtive/db");
 
@@ -220,7 +220,7 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
    * 折成两条),商家照样会打开账单问「这个演员费是什么」。一条他要为之付钱的行,和一条
    * 他以为要为之付钱的行,对信任的伤害是一样的。
    *
-   * 所以这一条走**真实 startGen** 下两单(一单带 entityIds、一单裸),然后:
+   * 所以这一条走**真实卡片入口** `startCoworkGen` 下两单(一单带演员、一单裸),然后:
    *   ① 账本侧逐格对:行数、kind 序列、金额,各恰好 RESERVE + SETTLE 两行;
    *   ② 把两单的账本行分别交给**商家消费历史真正用的那个函数** `buildSpendHistory`,
    *      对条目数、类目、金额、pending、detail 逐格比 —— 相同参数下两屏必须一模一样;
@@ -228,6 +228,14 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
    *
    * 两个 org 是**故意**的:一单一个账本,「恰好两行」「历史恰好一条」才是干净的判定,
    * 不用在混着两单的行里挑。
+   *
+   * **为什么必须走 `startCoworkGen` 而不是直接调 `startGen`**(复审三 P1):演员的**审批身份**
+   * (`approvedEntities`)只有一条合法来源 —— 服务端读出来的那张 GEN_CARD。直接调 `startGen`
+   * 并自带一份快照会被 `gen-actions.ts` 的可信来源闸当场拒掉(「out of bounds」),而**不带**
+   * 快照则整个 `frozenEntities` 分支不执行、`GenJob.approvedEntities` 落空。也就是说:上一版
+   * 那两单其实都没走过演员真正会走的那段代码,将来谁把「演员费」挂在 `frozenEntities` 那条路
+   * 上,这条验收照样全绿。所以两单都从卡片入口进,裸单的卡上是空快照 —— 比较条件对称,
+   * 而带演员那一单是真的把审批身份冻进了任务行。
    */
   it("MONEY-A6: an actor-backed video reads in spend history exactly like a bare one — no actor line, anywhere", async () => {
     const { buildSpendHistory } = await import("../spend-history");
@@ -237,6 +245,8 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
       prompt: "our product on a beach", count: 1,
       kind: "video" as const, model: "seedance-2-mini", durationSeconds: 5, resolution: "720p",
     };
+    /** 活行的名字与卡上快照的名字是同一个常量 —— startGen 的漂移闸比的就是这两者。 */
+    const ACTOR_NAME = "Nadia";
     const quote = pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, referenceVideoGenerationId: null, videoOptions: { seconds: 5, resolution: "720p" } });
 
     /**
@@ -250,7 +260,7 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
     async function seedActor(ownerId: string): Promise<string> {
       const entityId = `ent_${randomUUID()}`;
       const assetId = `ast_${randomUUID()}`;
-      await prisma.entity.create({ data: { id: entityId, ownerId, type: "CHARACTER", name: "Nadia" } });
+      await prisma.entity.create({ data: { id: entityId, ownerId, type: "CHARACTER", name: ACTOR_NAME } });
       await prisma.asset.create({
         data: {
           id: assetId, ownerId, contentHash: randomUUID().replace(/-/g, ""),
@@ -263,16 +273,55 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
       return entityId;
     }
 
+    /**
+     * 一张**真的** GEN_CARD:商家批准演员出镜时,服务端持久化下来的那张卡。
+     *
+     * `startCoworkGen` 只认这一份 —— 它按 `cowork:<cardId>` 从库里读卡,拿卡上的
+     * `approvedEntities` **覆盖**掉调用方提交的同名字段,再把那个进程内对象交给 `startGen`。
+     * 审批身份能进任务行的路径只有这一条,伪造不了(#774 那条判词的执行形态)。
+     */
+    async function seedGenCard(input: {
+      ownerId: string; projectId: string;
+      approvedEntities: { id: string; type: string; name: string }[];
+    }): Promise<{ threadId: string; cardId: string }> {
+      const threadId = `thr_${randomUUID()}`;
+      const cardId = `msg_${randomUUID()}`;
+      await prisma.chatThread.create({
+        data: { id: threadId, ownerId: input.ownerId, projectId: input.projectId, title: "Otto" },
+      });
+      await prisma.chatMessage.create({
+        data: {
+          id: cardId, threadId, ownerId: input.ownerId, role: "AGENT", kind: "GEN_CARD", seq: 1,
+          text: "",
+          payload: {
+            kind: "video", model: "seedance-2-mini",
+            // 卡面冻结价:`startGen` 拿它跟现算价逐格核对(卡面价≠现算价一律拒,MONEY-A11)。
+            // **现算**,不手抄 —— 这一格是显示 credits,报价函数给的是 internal。
+            estimatedCredits: displayCredits(quote),
+            approvedEntities: input.approvedEntities,
+          },
+        },
+      });
+      return { threadId, cardId };
+    }
+
     /** 下一单、结算、把这个 org 的账本折成商家看到的那几条。 */
     async function orderAndRead(tag: string, withActor: boolean) {
       const ownerId = await seedOrg(1000);
       asOwner(ownerId);
       const projectId = await seedProject(ownerId);
       const entityIds = withActor ? [await seedActor(ownerId)] : [];
-      const job = idOf(await startGen({
-        ...base, projectId, entityIds,
-        idempotencyKey: `a6-${tag}-${randomUUID().slice(0, 8)}`,
+      // 卡上的审批快照:名字与类型必须与活行**逐字**相同,否则 startGen 的漂移闸会拒
+      // (「renamed or changed type since this plan」)—— 这条用例顺带正向证明了那道闸。
+      const approvedEntities = entityIds.map((id) => ({ id, type: "CHARACTER", name: ACTOR_NAME }));
+      const { threadId, cardId } = await seedGenCard({ ownerId, projectId, approvedEntities });
+      const job = idOf(await startCoworkGen({
+        ...base, projectId, entityIds, threadId,
+        // `cowork:<cardId>` 是卡片入口的口令;换个前缀 startCoworkGen 当场拒。
+        // tag 只用来读日志,不进键 —— 键必须逐字是这张卡的 id。
+        idempotencyKey: `cowork:${cardId}`,
       }));
+      void tag;
       await workerSettle(ownerId, job.id);
 
       const rows = await ledger(ownerId);
@@ -301,14 +350,30 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
 
     // 演员真的挂在那一单上 —— 否则下面所有「相同」都是拿两个空单在比。
     const actorJob = await prisma.genJob.findFirstOrThrow({
-      where: { id: actor.jobId, ownerId: actor.ownerId }, select: { entityIds: true },
+      where: { id: actor.jobId, ownerId: actor.ownerId },
+      select: { entityIds: true, approvedEntities: true },
+    });
+    const bareJob = await prisma.genJob.findFirstOrThrow({
+      where: { id: bare.jobId, ownerId: bare.ownerId },
+      select: { entityIds: true, approvedEntities: true },
     });
     expect(actorJob.entityIds, "带演员那一单没真的带上演员").toEqual([actorEntityId]);
+    expect(bareJob.entityIds, "裸单不该带元素").toEqual([]);
 
     // 真 guardian 确实拿着这个 id 被调过(而且它内部真的查了 Entity —— 查不到就不会走到这里)。
     expect(mockCheckCast, "guardian 没被以这一单的演员 id 调用").toHaveBeenCalledWith(
       expect.objectContaining({ ownerId: actor.ownerId, entityIds: [actorEntityId] }),
     );
+
+    // **审批身份真的冻进了任务行**(复审三 P1)。这一格是 `gen-actions.ts` 里
+    // `frozenEntities` 那条分支唯一的持久化痕迹:它非空,就说明这一单确实穿过了
+    // 「卡片读出 → 漂移核对 → 冻结」那整段代码,而不是绕过它下的单。
+    // 将来谁把「演员费」挂在那条路上,这条验收才拦得住。
+    expect(actorJob.approvedEntities, "演员的审批身份没冻进任务行 —— 这一单没走卡片分支").toEqual([
+      { id: actorEntityId, type: "CHARACTER", name: ACTOR_NAME },
+    ]);
+    // 裸单是同一个入口、同一张卡的形状,只是快照为空 —— 比较条件对称。
+    expect(bareJob.approvedEntities, "裸单不该带任何审批身份").toBeNull();
     // 那一行确实是个带参考图的 CHARACTER —— 「演员」这个词在这条用例里有实体含义。
     const actorRow = await prisma.entity.findFirstOrThrow({
       where: { id: actorEntityId, ownerId: actor.ownerId },
