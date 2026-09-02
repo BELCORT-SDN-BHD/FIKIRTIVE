@@ -402,7 +402,7 @@ export default function DetailPanel({
         sourceGenerationId: selectedGenId,
         durationSeconds: spec.seconds,
         resolution: spec.resolution,
-        audio: vd.audio,
+        audio: videoSpec?.audio ?? vd.audio,
         ...(spec.aspectRatio ? { aspectRatio: spec.aspectRatio } : {}),
         // 键由服务端算 —— 见 handleRegen 那一处的注释。
         assetOp: "animate",
@@ -804,6 +804,7 @@ export default function DetailPanel({
                   onChange={setVideoSpec}
                   disabled={readOnly}
                   hasSourceImage
+                  audioToggle
                 />
               </div>
             )}
