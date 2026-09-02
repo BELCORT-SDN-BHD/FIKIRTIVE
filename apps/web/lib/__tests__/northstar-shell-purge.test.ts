@@ -193,8 +193,30 @@ const BANNED_COPY = ["This will spend real credits", "upgrade ticket", "1,240"] 
  *
  * 只豁免短语这一条:「碰不到样板数据」(FIXTURE_MODULES)仍然全图有效 —— 那一条挡的是
  * 假数据本身,而假数据在哪里都不该被壳碰到。
+ *
+ * FRONT(前端基线合并,`docs/specs/frontend-baseline.md`):这一对**回来了**,而且这一次不是
+ * 搭便车。新壳的画布页把 Otto 真的接进了工作面,可达链是一条真的业务链,不是一个无关的
+ * import 顺手捎带:
+ *
+ *   app/create/canvas/page.tsx
+ *     → components/canvas/ImmersiveCanvasEntry.tsx
+ *     → components/canvas/NorthstarCanvasWorkspace.tsx
+ *     → components/canvas/CanvasOttoOverlay.tsx
+ *     → components/otto/OttoChatStream.tsx
+ *     → components/otto/StoryboardCard.tsx
+ *
+ * 那张卡上的「This will spend real credits」是**真话** —— 按下去真的扣钱,由钱路的 ledger
+ * 与幂等键证明。这条围栏挡的是北极星那些**假**的经营承诺(一个不会扣钱却说自己会扣钱的
+ * 假 Otto 小窗),不是审真产品的文案。仍然只豁免这一条短语:「upgrade ticket」与「1,240」
+ * 在这条可达链上一处都没有(下面那条「没变成通行证」的断言逐条核这件事)。
  */
-const BANNED_COPY_EXEMPTIONS: ReadonlyArray<{ tree: string; phrase: (typeof BANNED_COPY)[number]; why: string }> = [];
+const BANNED_COPY_EXEMPTIONS: ReadonlyArray<{ tree: string; phrase: (typeof BANNED_COPY)[number]; why: string }> = [
+  {
+    tree: "components/otto/",
+    phrase: "This will spend real credits",
+    why: "新壳的画布把真 Otto 会话树接进工作面(canvas → CanvasOttoOverlay → OttoChatStream → StoryboardCard);那句话印在真审批卡上,按下去真的扣钱。",
+  },
+];
 
 function exempt(relativePath: string, phrase: string): boolean {
   return BANNED_COPY_EXEMPTIONS.some((row) => relativePath.startsWith(row.tree) && row.phrase === phrase);

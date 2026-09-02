@@ -213,4 +213,24 @@ function OttoEyes({ mood }: { mood: OttoMood }) {
   }
 }
 
+/**
+ * Otto 的头像 + 它自己那块珊瑚底 —— 一个整体,住在 Otto 标记自己的文件里。
+ *
+ * 为什么不在调用页上直接写 `bg-brand-soft`:珊瑚是 Fikirtive 与 Otto 的身份色,
+ * 生产页面不许直接用原色工具类(`coral-ownership.test.ts` 逐文件扫)。Home 的
+ * 「Recommended next action」要的正是这块底(已批准的 `FounderHomeReference.tsx:339`),
+ * 所以把这一块搬进 Otto 的标记文件里 —— 像素一个不变,珊瑚仍然只由 Otto 自己写。
+ */
+export function OttoAvatarChip({ size = 32, className }: { size?: number; className?: string }) {
+  return (
+    <span
+      className={["flex shrink-0 items-center justify-center rounded-xl bg-brand-soft", className]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <OttoAvatar mood="helpful" size={size} />
+    </span>
+  );
+}
+
 export default OttoAvatar;

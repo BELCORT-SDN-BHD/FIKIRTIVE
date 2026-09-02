@@ -218,7 +218,12 @@ describe("campaign Broadcasts panel", () => {
   it("mirrors the sibling panels' visible empty state", () => {
     const markup = renderToStaticMarkup(createElement(CampaignBroadcastsCard, { broadcasts: [] }));
 
-    expect(markup).toContain("Nothing grouped yet.");
+    // FRONT(前端基线合并):空态改由设计系统的 `Empty` 组件画 —— 标题一行、说明一行,
+    // 标题不带句号。兄弟面板同一天一起改成同一个形状(`campaign-detail-page.tsx:780/845`
+    // 的 `<EmptyTitle className="text-sm">Nothing grouped yet</EmptyTitle>`),所以这一条
+    // 「与兄弟面板长一样」的判据没变,变的只是那个句号。
+    expect(markup).toContain("Nothing grouped yet");
+    expect(markup).toContain("Broadcasts grouped into this campaign will appear here.");
   });
 });
 

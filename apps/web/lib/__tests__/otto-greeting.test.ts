@@ -212,24 +212,36 @@ describe("#542 greeting wiring — the sentence and the chain are pinned to prod
     expect(renderFrontDoor(userName)).toContain(GENERIC_SENTENCE);
   });
 
-  // W2-11 (切换总票): `/otto` 缩成了一张纯重定向表(不再取数、不再渲染), so the page-level
-  // seam this test used to pin moved. There are now TWO real production surfaces that wire the
-  // resolver, not one: `lib/otto-panel-seed.ts` (the panel's own seed loader — direct successor
-  // of what `/otto/page.tsx` used to do for the same OttoFrontDoor) AND `components/home/
-  // HomeEntry.tsx` (Home is now the FIRST thing a merchant sees, and it greets by name too).
-  // Both are pinned so the invariant ("no path may greet with an email") still covers every
-  // real path, not just the one that happened to exist before this ticket.
-  it.each([
-    ["lib/otto-panel-seed.ts", ["lib", "otto-panel-seed.ts"]],
-    ["components/home/HomeEntry.tsx", ["components", "home", "HomeEntry.tsx"]],
-  ] as const)("%s wires the resolver, and the email fallback is gone for good", (_label, parts) => {
-    // Page/seed-level seam. Neither file can be invoked here (server action / async server
-    // component with several awaited data sources), so this pins their source instead of
-    // leaving the seam unguarded — same convention as before, just two files now.
-    const source = readFileSync(path.join(__dirname, "..", "..", ...parts), "utf8");
+  // W2-11 (切换总票): `/otto` 缩成了一张纯重定向表(不再取数、不再渲染),所以这一条原来钉的
+  // 页面级接缝搬了家 —— 今天真正把名字读出来、喂给 OttoFrontDoor 的是面板的种子加载器
+  // `lib/otto-panel-seed.ts`(面板在每一个商家面上默认展开,商家看到的那句问候就是它给的)。
+  //
+  // 前端基线合并(FRONT,规格 docs/specs/frontend-baseline.md)之后 Home 不再自己说问候语:
+  // Founder 已批准的 Home 设计把首屏标题定成 "Home"
+  // (`design-system/patterns/founder-home/FounderHomeReference.tsx:637`,§7.0「页面长相以分支
+  // 为准」),`components/home/HomeEntry.tsx` 因此不再是问候链条上的一环。所以这里把它从
+  // 「必须接上解析器」的名单里拿掉,但**不放它走**:下面那一组反向断言照旧盯着它 ——
+  // Home 哪天又开口打招呼,也绝不许拿邮箱地址打。
+  it("lib/otto-panel-seed.ts wires the resolver, and the email fallback is gone for good", () => {
+    // Seed 级接缝。这个文件在这里跑不起来(server action),所以钉它的源码而不是把接缝空着 ——
+    // 与这一条原来的做法一样,只是今天只剩这一个真正说问候语的面。
+    const source = readFileSync(path.join(__dirname, "..", "..", "lib", "otto-panel-seed.ts"), "utf8");
     expect(source).toContain("ottoGreetingNameFromProfile(getMyProfileNames)");
     // The exact regression this ticket is about: reviving ANY email-derived greeting fails here.
     expect(source).not.toContain('split("@")');
     expect(source).not.toMatch(/userName\s*=\s*[^;]*email/);
+  });
+
+  // 不变量本身(「没有任何一条路可以拿邮箱地址问候商家」)不随版式走。Home 这一族今天不
+  // 打招呼,但它就在商家眼前的第一屏 —— 有人在这里加回一句问候的那一天,它必须从
+  // `ottoGreeting` 那一条链上来,不许自己就地从邮箱里切一个名字出来。
+  it.each([
+    ["components/home/HomeEntry.tsx", ["components", "home", "HomeEntry.tsx"]],
+    ["components/home/MarketingHomeView.tsx", ["components", "home", "MarketingHomeView.tsx"]],
+  ] as const)("%s never greets from an email address", (_label, parts) => {
+    const source = readFileSync(path.join(__dirname, "..", "..", ...parts), "utf8");
+    expect(source).not.toContain('split("@")');
+    expect(source).not.toMatch(/userName\s*=\s*[^;]*email/);
+    expect(source).not.toMatch(/greeting[^\n]*email/i);
   });
 });

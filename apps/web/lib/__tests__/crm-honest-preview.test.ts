@@ -1104,16 +1104,35 @@ describe("「What works today」不是自称:真组件跑一遍", () => {
 /* ── 产品事实核对:「连不上渠道」不是页面自称 ───────────────────────────────── */
 
 describe("「连不上渠道」是产品事实,不只是页面上的一句话", () => {
-  it("Connections 里 Messaging 那一行没有任何可点的东西", () => {
-    const connections = source("components/otto/OttoConnections.tsx");
-    const row = connections.slice(
-      connections.indexOf("function MessagingRow"),
-      connections.indexOf("export default function OttoConnections"),
-    );
+  /**
+   * 这一条原来读的是 Connections 页里那个 `MessagingRow` 函数:它印着 "Not available yet",
+   * 零按钮 —— 用来证明「消息渠道连不上」是产品事实,不是页面上一句自说自话。
+   *
+   * FRONT(前端基线合并,`docs/specs/frontend-baseline.md`):Connections 页按 Founder 已批准
+   * 并冻结的 Settings 规格重画(`design-system/patterns/settings/README.md` §4.3,
+   * 「Founder approved and frozen — 2026-08-31」:先管理已连接的服务,`Add connection` 才进
+   * discovery),整个 Messaging 分区连同 `MessagingRow` 一起退场。**事实一个字没变**:产品里
+   * 依然没有任何一条连接消息渠道的路。所以这条围栏改钉那个事实本身,而不是钉那一个函数名 ——
+   * 判据比原来更宽:页面上、渠道权威表里,任何一处冒出一条消息渠道都会红。
+   *
+   * 它能连的那一天这条会红 —— 那正是该回来把整段 CRM 接通的时刻(台账 issue #359)。
+   */
+  it("产品里没有任何一条连接消息渠道的路", () => {
+    const connections = source("components/otto/OttoConnections.tsx").toLowerCase();
+    const channelMeta = source("lib/channels/channel-meta.ts").toLowerCase();
 
-    expect(row).toContain("Not available yet");
-    // 它能连的那一天这条会红 —— 那正是该回来把整段 CRM 接通的时刻(台账 issue #359)。
-    expect(row).not.toMatch(/href=|onClick=/);
+    for (const [label, text] of [
+      ["Connections 页", connections],
+      ["渠道权威表", channelMeta],
+    ] as const) {
+      // 消息渠道一条都不在可连清单里 —— 没有条目,自然也就没有一颗能按的连接按钮。
+      expect(text, label).not.toContain("whatsapp");
+      expect(text, label).not.toContain("messenger");
+      expect(text, label).not.toContain("telegram");
+    }
+
+    // 而且这一句实话仍然只有一个出处(与本文件 ④ 层的 MESSAGING_STATUS_* 断言同一份权威)。
+    expect(MESSAGING_STATUS_CANNOT_CONNECT).toContain("not available to connect");
   });
 });
 

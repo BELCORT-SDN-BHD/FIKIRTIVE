@@ -6,7 +6,7 @@ import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "r
 import { CheckCircle2, ChevronRight, Database, Sparkles } from "lucide-react";
 
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
-import { OttoAvatar } from "@/components/otto/OttoAvatar";
+import { OttoAvatarChip } from "@/components/otto/OttoAvatar";
 import { buttonVariants } from "@/design-system/primitives/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/design-system/primitives/chart";
 import { Progress } from "@/design-system/primitives/progress";
@@ -174,7 +174,7 @@ export function ReadyMarketingHealth({
           <h2 id="recommended-action-heading" className="text-sm font-semibold">Recommended next action</h2>
           <p className="mt-1 text-xs text-muted-foreground">Otto can help you take the next best step.</p>
           <div className="mt-4 flex items-center rounded-[var(--radius-card)] border border-border p-3">
-            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand-soft"><OttoAvatar mood="helpful" size={32} /></span>
+            <OttoAvatarChip size={32} className="size-11" />
             <span className="ml-3 min-w-0 flex-1"><span className="block text-sm font-semibold">{dashboard.recommendation.title}</span><span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{dashboard.recommendation.detail}</span></span>
             <Link href={homeAnalysisHref({ type: "performance-change", subject: "marketing-health-overview", ...filters, originRange: filters.range, originComparison: filters.comparison, returnFocus: "marketing-health-heading" }, {}, { openOtto: true })} className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "ml-3 shrink-0")}>
               <Sparkles aria-hidden /> Ask Otto

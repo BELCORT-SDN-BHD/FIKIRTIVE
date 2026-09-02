@@ -112,8 +112,17 @@ describe("AddAssetDialog feedback and input locking", () => {
     expect(dialog().querySelector<HTMLInputElement>("#add-asset-name")?.disabled).toBe(true);
     expect(dialog().querySelector<HTMLInputElement>("#add-asset-images")?.disabled).toBe(true);
     expect(dialog().querySelector<HTMLElement>('[data-slot="select-trigger"]')?.getAttribute("data-disabled")).not.toBeNull();
-    expect(button("Upload").disabled).toBe(true);
-    expect(button("Generate reference").disabled).toBe(true);
+    // FRONT(前端基线合并):Upload / Generate reference 这两颗是 `ui/tabs` 的页签,底座换成
+    // Base UI 之后「锁住」不再落成原生 `disabled`,而是 `aria-disabled` + `data-disabled`
+    // (页签保持可聚焦、不可激活,WAI-ARIA 对 tab 的通行做法)。所以这里钉的是**锁真的锁住了**
+    // 而不是某一个属性名:两颗都自称禁用,而且按下去真的换不了模式(上传那半张表还在原地)。
+    for (const label of ["Upload", "Generate reference"]) {
+      expect(button(label).getAttribute("aria-disabled"), label).toBe("true");
+      expect(button(label).hasAttribute("data-disabled"), label).toBe(true);
+    }
+    await act(async () => { button("Generate reference").click(); });
+    expect(dialog().querySelector("#add-asset-images"), "锁住时还是能切走模式").not.toBeNull();
+    expect(dialog().querySelector("#add-asset-subject")).toBeNull();
     expect(button("Close").disabled).toBe(true);
 
     await act(async () => { finish({ error: "Those images could not be uploaded." }); });
@@ -153,7 +162,10 @@ describe("AddAssetDialog feedback and input locking", () => {
     await openDialog();
     await prepareGeneration();
 
-    expect(formatButton("Avatar / Cast").getAttribute("data-state")).toBe("on");
+    // FRONT:ToggleGroup 底座换成 Base UI —— 「这一颗选中了」由标准的 `aria-pressed` 说
+    // (Radix 说的是 `data-state="on"`)。钉可访问性属性而不是私有 data 属性:辅助技术读到的
+    // 就是这一个。
+    expect(formatButton("Avatar / Cast").getAttribute("aria-pressed")).toBe("true");
     expect(button("Generate · 1 credit").disabled).toBe(false);
     const generate = button("Generate · 1 credit");
     await act(async () => {

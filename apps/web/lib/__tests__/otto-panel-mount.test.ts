@@ -31,11 +31,11 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CANVAS_HREF, CREATE_NAV_HREF } from "@fikirtive/core/navigation";
+import { CANVAS_HREF, CREATE_NAV_HREF, SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { expectDockedStaysInFlow } from "./otto-panel-dock-contract";
 
 vi.mock("next/navigation", () => ({
-  usePathname: vi.fn(() => "/campaign"),
+  usePathname: vi.fn(() => "/billing"),
   useSearchParams: vi.fn(() => new URLSearchParams()),
   useRouter: vi.fn(() => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() })),
 }));
@@ -167,6 +167,18 @@ function writeClosedState() {
   writeOttoPanelState(setPanelOpen(defaultOttoPanelState(VIEWPORT), false));
 }
 
+/**
+ * 这一份用来当样本的**商家面**。
+ *
+ * FRONT(前端基线合并,`docs/specs/frontend-baseline.md`):Campaigns 在 beta 里被收起来了
+ * (`MERCHANT_NAV_REDIRECTS` 把 `/campaign` 整段重定向回 Home,维持 #850 裁决),所以
+ * `isMerchantSurface("/campaign")` 今天是 false —— 商家壳在那条地址上根本不画,面板自然
+ * 也不在。这个文件钉的从来不是「campaign 这一面」,而是「**商家面**上面板挂对了地方」,
+ * 所以样本换成一条今天真的在导航里的门。任何一条别的商家面都同样成立
+ * (`/library`、`/brand`……),这里取 `/billing`。
+ */
+const MERCHANT_SURFACE = SHELL_ROUTES.billing;
+
 /** 真的商家壳,只把签退动作换成一个不做事的函数。 */
 function shell(pathname: string, page?: ReactElement) {
   return createElement(
@@ -200,7 +212,7 @@ describe("哪些面挂面板 (§3.2 末段)", () => {
 
 describe("挤而不盖,在真的商家壳里 (G2,§3.5 ①)", () => {
   it("面板是主内容的兄弟,不是压在它上面的一层", async () => {
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     const panel = el.querySelector<HTMLElement>("[data-otto-panel]")!;
     const main = el.querySelector<HTMLElement>("[data-otto-panel-main]")!;
 
@@ -214,7 +226,7 @@ describe("挤而不盖,在真的商家壳里 (G2,§3.5 ①)", () => {
   });
 
   it("没有遮罩,主内容也没有被关掉", async () => {
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     const shellRow = el.querySelector<HTMLElement>("[data-otto-panel-shell]")!;
     const main = el.querySelector<HTMLElement>("[data-otto-panel-main]")!;
 
@@ -228,7 +240,7 @@ describe("挤而不盖,在真的商家壳里 (G2,§3.5 ①)", () => {
   it("面板开着的时候,底下那一页照样点得到", async () => {
     const onClick = vi.fn();
     const el = await mount(
-      shell("/campaign", createElement("button", { type: "button", "data-page": "", onClick }, "Approve")),
+      shell(MERCHANT_SURFACE, createElement("button", { type: "button", "data-page": "", onClick }, "Approve")),
     );
 
     expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
@@ -268,7 +280,7 @@ describe("没有商家的面,一点 Otto 都不挂", () => {
       projectId: "prj_1", entities: [], threads: [], activeThreadId: null, balanceUsd: 0, userName: "Aisyah",
     });
 
-    await mount(shell("/campaign"));
+    await mount(shell(MERCHANT_SURFACE));
 
     expect(loadOttoPanelSeed).toHaveBeenCalled();
   });
@@ -285,7 +297,7 @@ describe("一屏只有一个 Otto", () => {
 
 describe("入口:从「跳转」变成「开面板」(§3.2)", () => {
   it("收起后是一颗 launcher —— 一颗按钮,不是一条链接", async () => {
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
 
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Close Otto"]')!.click();
@@ -302,7 +314,7 @@ describe("入口:从「跳转」变成「开面板」(§3.2)", () => {
   });
 
   it("点它开的是面板,商家留在原地", async () => {
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
 
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Close Otto"]')!.click();
@@ -323,7 +335,7 @@ describe("入口:从「跳转」变成「开面板」(§3.2)", () => {
   // 验面板本身怎么开合(上面两条已经钉过),只验这颗按钮拨的和 launcher/Close 拨的是**同一个**
   // 开关,而不是它自己另开一路。
   it("utility bar 的 Ask Otto 拨的是同一个开关,不是另一路", async () => {
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     const askOtto = () => el.querySelector<HTMLButtonElement>("[data-shell-ask-otto]")!;
 
     expect(askOtto().tagName).toBe("BUTTON");
@@ -353,7 +365,7 @@ describe("快捷键与存档,在壳里 (§3.1、§3.3)", () => {
   }
 
   it("Cmd/Ctrl + J 开合", async () => {
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
 
     await press(el, { metaKey: true });
     expect(el.querySelector("[data-otto-panel]")).toBeNull();
@@ -363,7 +375,7 @@ describe("快捷键与存档,在壳里 (§3.1、§3.3)", () => {
   });
 
   it("Cmd/Ctrl + Shift + J 让给开发者工具", async () => {
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
 
     await press(el, { metaKey: true, shiftKey: true });
 
@@ -373,7 +385,7 @@ describe("快捷键与存档,在壳里 (§3.1、§3.3)", () => {
   it("存档坏了退回默认值,不是把整个商家壳炸掉", async () => {
     window.localStorage.setItem(OTTO_PANEL_STORAGE_KEY, "{ not json at all");
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
 
     expect(el.querySelector<HTMLElement>("[data-otto-panel]")!.style.width).toBe(`${DEFAULT_WIDTH}px`);
     expect(el.querySelector("[data-page]")).not.toBeNull();
@@ -589,7 +601,7 @@ describe("窄屏过渡守卫(判官 P2-2,W2-11 删移动层时一并清)", () =>
   async function mountAt(width: number, height: number) {
     Object.defineProperty(window, "innerWidth", { value: width, writable: true, configurable: true });
     Object.defineProperty(window, "innerHeight", { value: height, writable: true, configurable: true });
-    return mount(shell("/campaign"));
+    return mount(shell(MERCHANT_SURFACE));
   }
 
   it("375px 的手机上默认不开 —— 320px 的面板会把整屏吃掉", async () => {
@@ -643,7 +655,7 @@ describe("层级表:模态框永远在最上面", () => {
   ] as const;
 
   it("导轨 < 面板/launcher < 模态框(现走 ui/dialog)—— 面板不许盖住一个模态框", async () => {
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     const panelZ = zOf(el.querySelector("[data-otto-panel]")!.className);
 
     await act(async () => {
@@ -722,7 +734,7 @@ describe("面板体里是真的那套 Otto,不是第二套聊天 (§3.4)", () =>
       userName: "Aisyah",
     });
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
 
     // 问候语从 `lib/otto-greeting.ts` 取,不在测试里重抄一遍 —— 抄一遍就变成在核对自己。
     expect(el.querySelector("[data-otto-panel-body]")!.textContent).toContain(ottoGreeting("Aisyah"));
@@ -749,7 +761,7 @@ describe("面板体里是真的那套 Otto,不是第二套聊天 (§3.4)", () =>
       projectId: "prj_1", entities: [], threads: [], activeThreadId: null, balanceUsd: 12, userName: "Aisyah",
     });
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -770,7 +782,7 @@ describe("面板体里是真的那套 Otto,不是第二套聊天 (§3.4)", () =>
   it("取数失败就说实话,不摆一个按了没反应的输入框", async () => {
     loadOttoPanelSeed.mockResolvedValue({ error: "Sign in to chat with Otto." });
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     const body = el.querySelector<HTMLElement>("[data-otto-panel-body]")!;
 
     expect(body.querySelector('[data-otto-panel-conversation="error"]')).not.toBeNull();
@@ -813,7 +825,7 @@ describe("整理会话在面板里接得到(W2-11 收编导轨)", () => {
     loadOttoPanelSeed.mockResolvedValue(SEED_WITH_THREAD);
     setCoworkThreadPinned.mockResolvedValue({ ok: true, pinnedAt: new Date().toISOString() });
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
 
     const pin = el.querySelector<HTMLButtonElement>('[aria-label="Pin Raya promo"]')!;
@@ -828,7 +840,7 @@ describe("整理会话在面板里接得到(W2-11 收编导轨)", () => {
     loadOttoPanelSeed.mockResolvedValue(SEED_WITH_THREAD);
     renameCoworkThread.mockResolvedValue({ ok: true });
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
 
     await act(async () => {
@@ -850,7 +862,7 @@ describe("整理会话在面板里接得到(W2-11 收编导轨)", () => {
     loadOttoPanelSeed.mockResolvedValue(SEED_WITH_THREAD);
     deleteCoworkThread.mockResolvedValue({ ok: true });
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
 
     await act(async () => {
@@ -877,7 +889,7 @@ describe("整理会话在面板里接得到(W2-11 收编导轨)", () => {
     loadOttoPanelSeed.mockResolvedValue(SEED_WITH_THREAD);
     deleteCoworkThread.mockResolvedValue({ error: "This conversation is still in use." });
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Delete Raya promo"]')!.click();
@@ -950,7 +962,7 @@ describe("整理项目也在面板里接得到(W2-11)", () => {
     loadOttoPanelSeed.mockResolvedValue(SEED_WITH_PROJECT);
     setProjectPinned.mockResolvedValue({ ok: true, pinnedAt: new Date().toISOString() });
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
     await openProjectMenu(el, "Raya campaign");
     await act(async () => menuItem("Pin project").click());
@@ -962,7 +974,7 @@ describe("整理项目也在面板里接得到(W2-11)", () => {
     loadOttoPanelSeed.mockResolvedValue(SEED_WITH_PROJECT);
     renameProject.mockResolvedValue({ ok: true, name: "Raya launch" });
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
     await openProjectMenu(el, "Raya campaign");
     await act(async () => menuItem("Rename project").click());
@@ -990,7 +1002,7 @@ describe("整理项目也在面板里接得到(W2-11)", () => {
     });
     deleteProject.mockResolvedValue({ ok: true });
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
     await openProjectMenu(el, "Raya campaign");
     await act(async () => menuItem("Delete project").click());
@@ -1015,7 +1027,7 @@ describe("整理项目也在面板里接得到(W2-11)", () => {
     loadOttoPanelSeed.mockResolvedValue(SEED_WITH_PROJECT);
     deleteProject.mockResolvedValue({ error: "This project cannot be deleted yet." });
 
-    const el = await mount(shell("/campaign"));
+    const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
     await openProjectMenu(el, "Raya campaign");
     await act(async () => menuItem("Delete project").click());

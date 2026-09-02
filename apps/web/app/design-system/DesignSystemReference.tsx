@@ -213,7 +213,10 @@ export function DesignSystemReference() {
       >
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           <Principle title="Neutral product canvas">Cold neutrals carry the interface. Product imagery supplies visual richness.</Principle>
-          <Principle title="Coral has ownership">Coral identifies Fikirtive and Otto. It never means a generic human action.</Principle>
+          {/* #682:Otto 只按名字称呼,不许有代词替它开头。上一版是「…and Otto. It never means…」
+              —— 那个 It 指的是 coral,但代词围栏只看形状,读者也一样会读岔。合成一句之后就没有
+              代词可以指错人了(otto-pronoun-consistency.test.ts 钉这一条)。 */}
+          <Principle title="Coral has ownership">Coral identifies Fikirtive and Otto, never a generic human action.</Principle>
           <Principle title="State has meaning">Green, amber, red, and blue appear only when a real state needs to be understood.</Principle>
           <Principle title="Structure comes first">Type, spacing, and lines establish hierarchy before shadow, color, or decoration.</Principle>
         </div>

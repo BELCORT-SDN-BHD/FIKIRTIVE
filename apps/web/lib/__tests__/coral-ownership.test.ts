@@ -44,9 +44,16 @@ describe("coral ownership", () => {
   });
 
   it("keeps raw coral utilities inside Fikirtive, Otto, and design-system ownership surfaces", () => {
+    // `components/brand` 与 `components/ui` 都是指向 `design-system/` 的符号链接(前端基线
+    // 合并带进来的基座形状):`components/brand` → `design-system/brand/components`,
+    // 装的正是 Fikirtive 与 Otto 的标记本体(FikirtiveMark / OttoMark / OttoAvatar)——
+    // 也就是这条围栏标题里说的「design-system ownership surfaces」。这里放行的是那一棵树,
+    // 不是任何一张商家页面;商家页面要用 Otto 的珊瑚底,得从这棵树里取现成的组件
+    // (例:`OttoAvatarChip`),不许自己写原色工具类。
     const allowed = [
       "app/design-system/DesignSystemReference.tsx",
       "components/auth/AuthPageShell.tsx",
+      "components/brand/",
       "components/admin/AdminDashboardV2.tsx",
       "components/admin/AdminV2Nav.tsx",
       "components/otto/",
