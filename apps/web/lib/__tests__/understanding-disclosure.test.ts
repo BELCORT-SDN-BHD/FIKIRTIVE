@@ -1872,6 +1872,8 @@ describe("MONEY-A9 披露先于扣费:billing 页价目区", () => {
 
 describe("MONEY-A9 披露先于扣费:Otto 的 URL 导入走动作前报价", () => {
   const port = codeOf("lib/otto-media-port.ts");
+  /** 报价那句话住在叶子模块里(见「Otto 侧三处」那条的判词);port 只负责把它挂到结果上。 */
+  const quote = codeOf("lib/understanding-quote-copy.ts");
 
   it("「$0 by construction」的旧说法已废止 —— 导入落的是会被理解计费的 UPLOAD 素材", () => {
     expect(port).not.toContain("$0 by construction");
@@ -1879,15 +1881,30 @@ describe("MONEY-A9 披露先于扣费:Otto 的 URL 导入走动作前报价", ()
   });
 
   it("成功结果带一句报价,而且是现算的(无 UI 面,披露只能走动作层)", () => {
-    expect(port).toContain("pricedUnderstandingCredits");
-    expect(port).toContain("creditsLabel");
-    expect(port).toContain("note: importUnderstandingQuote(");
-    const offenders = copyLines(port).filter((line) => HAND_TYPED_CREDITS.test(line));
-    expect(offenders, "导入报价里出现了手抄的钱数").toEqual([]);
+    expect(quote).toContain("pricedUnderstandingCredits");
+    expect(quote).toContain("creditsLabel");
+    expect(port, "port 不再把那句报价挂到结果上").toContain("note: importUnderstandingQuote(");
+    for (const [who, src] of [["导入报价", quote], ["otto-media-port", port]] as const) {
+      const offenders = copyLines(src).filter((line) => HAND_TYPED_CREDITS.test(line));
+      expect(offenders, `${who}里出现了手抄的钱数`).toEqual([]);
+    }
+  });
+
+  it("报价句住在**叶子模块**里 —— 它不许把 Next 的请求作用域运行时拖进测试进程", () => {
+    // 这条是那次「24 个不相干文件一起红」的碑。围栏要在运行时读这句话,而读它的唯一安全办法
+    // 就是让它住在一个不碰 next/、不碰 server-only、不碰 prisma 的文件里。
+    // 只看**代码行**:这个文件的注释里逐字引用了那几个禁用写法(它解释的正是这条规矩),
+    // 扫整份文件会被自己的判词绊倒。
+    const code = copyLines(quote).join("\n");
+    for (const forbidden of ['from "next/', 'server-only', "@fikirtive/db", "prisma"]) {
+      expect(code, `报价叶子模块引入了 ${forbidden} —— 它就不再是叶子了`).not.toContain(forbidden);
+    }
+    // 而 port 必须真的从那里拿,不许自己再抄一份回来。
+    expect(port).toContain('from "@/lib/understanding-quote-copy"');
   });
 
   it("级联那一句只给图片 —— 视频不会触发 doc-extract,承诺它就是另一句假话", () => {
-    expect(port).toContain('kind === "image-caption"');
+    expect(quote).toContain('kind === "image-caption"');
   });
 
   it("**动作前**那一半真的在动作层:Otto 的说明书与 importMedia 工具描述都带着现算的价", async () => {
@@ -1939,7 +1956,16 @@ describe("MONEY-A9 快照价口径:五处报价句一律说「排队去理解时
     //   ② **插值拼错**看不出来:这句话是模板串,`${price(kind)}` 之类拼出来才是完整句子;
     //      源码文本永远是模板,不是商家读到的那一句。
     // 所以这里直接调那个纯函数,对**它返回的字符串**做判定 —— 商家读到什么,就判什么。
-    const { importUnderstandingQuote } = await import("../otto-media-port");
+    //
+    // 但**不能**为此去 import `otto-media-port`(复审三的第二次落修):那个文件头一行是
+    // `import "server-only"`,并牵出整片服务端动作图(`./actions`、`./cowork-actions`、prisma)。
+    // apps/web 的 vitest 把所有文件跑在**同一个 worker**(`pool: "threads"` +
+    // `singleThread: true`),于是一个没有请求上下文的测试把 Next 的请求作用域运行时载进来之后,
+    // 后面 24 个毫不相干的文件一起红:`Invariant: AsyncLocalStorage accessed in runtime where
+    // it is not available`(E504)。钱的披露必须能在运行时断言,所以那句话被抽进叶子模块
+    // `lib/understanding-quote-copy.ts`(纯函数,零 next/、零 server-only、零 prisma),
+    // 由 otto-media-port 从那里 import 使用 —— 行为不变,而围栏够得到它。
+    const { importUnderstandingQuote } = await import("../understanding-quote-copy");
     // 图片(会级联)与视频(不会)两条路各判一次:级联那半句是拼在图片分支上的。
     assertQueuedNotUploadWording("URL 导入报价(图片)", importUnderstandingQuote("png", "image/png"));
     assertQueuedNotUploadWording("URL 导入报价(视频)", importUnderstandingQuote("mp4", "video/mp4"));
