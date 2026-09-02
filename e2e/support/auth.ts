@@ -90,8 +90,13 @@ export async function codeFromInbox(email: string): Promise<string> {
 export async function requestSignInCode(page: Page, email: string, callbackURL: string): Promise<string> {
   await clearAuthRateLimitCounters();
   await page.goto(`/login?from=${encodeURIComponent(callbackURL)}`);
+  // /login opens on a hub that only offers the ways in ("Continue with email", "Continue with
+  // Google"); the address field lives one step further. Asking for the field on the first screen
+  // is how every journey in this suite timed out the day the shell changed.
+  await page.getByRole("button", { name: "Continue with email" }).click();
   await page.getByLabel("Email").fill(email);
-  await page.getByRole("button", { name: "Email me a sign-in code" }).click();
+  // The hub is unmounted by now, so this name belongs to the email step's submit button.
+  await page.getByRole("button", { name: "Continue with email" }).click();
   return codeFromInbox(email);
 }
 
@@ -129,8 +134,8 @@ export async function requestSignInCode(page: Page, email: string, callbackURL: 
  */
 export async function signIn(page: Page, ws: Workspace, callbackURL = "/"): Promise<void> {
   const code = await requestSignInCode(page, ws.email, callbackURL);
-  await page.getByLabel("Sign-in code").fill(code);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("Login code").fill(code);
+  await page.getByRole("button", { name: "Continue with login code" }).click();
   await expect(page).toHaveURL(new URL(callbackURL, E2E_BASE_URL).toString());
   await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
 }

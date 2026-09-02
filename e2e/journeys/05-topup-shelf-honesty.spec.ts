@@ -31,7 +31,7 @@ test("An empty shelf says so and still offers a way through", async ({ page }) =
   await expect(exit).toHaveAttribute("href", /^mailto:.*subject=I%20want%20to%20buy%20credits$/);
 
   // The balance is still readable — one empty read must not take the rest of the page with it.
-  await expect(page.getByText("Your balance")).toBeVisible();
+  await expect(page.getByText("Available balance")).toBeVisible();
   await expect(page.getByText("60").first()).toBeVisible();
   await expect(page.getByText("Could not load balance. Please refresh.")).toHaveCount(0);
 });

@@ -27,8 +27,12 @@ test("A delivered image is one charge for exactly what it cost", async ({ page }
   await signIn(page, ws, "/billing");
 
   await expect(page.getByText("189").first()).toBeVisible();
-  // Nothing is held any more, so the hold line must be gone entirely.
-  await expect(page.getByText("held for work in progress")).toHaveCount(0);
+  // Nothing is held any more, so the hold badge must be gone entirely — and the page has to SAY
+  // so rather than merely omit it. Asserting the positive ("Nothing on hold") next to the
+  // negative is what keeps this pair honest: a copy change that retires "credits held" would
+  // otherwise turn the negative into an assertion that can never fail again.
+  await expect(page.getByText("Nothing on hold")).toBeVisible();
+  await expect(page.getByText("credits held")).toHaveCount(0);
   await expect(page.getByText("On hold — the final cost is charged when this finishes")).toHaveCount(0);
 
   // exact: billing 页自 A9 起有「Auto-understanding」价目散文(含小写 "image"),

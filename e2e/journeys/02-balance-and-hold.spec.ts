@@ -28,15 +28,20 @@ test("An open hold leaves the balance smaller and says so, instead of just going
   await signIn(page, ws, "/billing");
 
   await expect(page.getByText("178").first()).toBeVisible();
-  await expect(page.getByText("22 held for work in progress")).toBeVisible();
+  await expect(page.getByText("22 credits held")).toBeVisible();
 
   // The same in-flight job, in the history, labelled as a hold rather than as a final charge.
   const history = spendHistory(page);
-  // exact: getByText 字符串匹配是大小写不敏感子串,防止散文里的小写 "video" 撞词;钉的是类目标签。
-  await expect(history.getByText("Video", { exact: true })).toBeVisible();
-  await expect(
-    history.getByText("On hold — the final cost is charged when this finishes"),
-  ).toBeVisible();
+  // Scoped to the ONE row that says the credits are held: the activity cell now carries a "Held"
+  // badge beside the category, so no element holds the bare word "Video" any more. Asserting the
+  // row — category AND the sentence that says it is a hold — is the same judgement as before,
+  // and it still fails if the entry is ever labelled a finished charge.
+  const holdRow = history
+    .getByRole("row")
+    .filter({ hasText: "On hold — the final cost is charged when this finishes" });
+  await expect(holdRow).toHaveCount(1);
+  await expect(holdRow).toContainText("Video");
+  await expect(holdRow).toContainText("Held");
 });
 
 test("The balance in the navigation rail is the same number Billing shows", async ({ page }) => {
@@ -53,5 +58,5 @@ test("The balance in the navigation rail is the same number Billing shows", asyn
   await signIn(page, ws, "/billing");
 
   await expect(globalNav(page).getByText("125 credits")).toBeVisible();
-  await expect(page.getByText("12 held for work in progress")).toBeVisible();
+  await expect(page.getByText("12 credits held")).toBeVisible();
 });

@@ -22,10 +22,10 @@ test("Billing and Otto's settings report the same balance and the same hold", as
 
   await signIn(page, ws, "/billing");
   await expect(page.getByText("267").first()).toBeVisible();
-  await expect(page.getByText("22 held for work in progress")).toBeVisible();
+  await expect(page.getByText("22 credits held")).toBeVisible();
 
   await page.goto("/otto?view=account");
   await expect(page.getByText("Credit balance")).toBeVisible();
   await expect(page.getByText("267 credits").first()).toBeVisible();
-  await expect(page.getByText("22 credits on hold")).toBeVisible();
+  await expect(page.getByText("22 credits held")).toBeVisible();
 });

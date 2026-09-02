@@ -48,9 +48,16 @@ export async function waitUntilInteractive(locator: Locator): Promise<void> {
     .toBe(true);
 }
 
-/** The spend history list on /billing — one row per thing that happened to the credits. */
+/** The spend history list on /billing — one row per thing that happened to the credits.
+ *
+ *  Anchored on the card's own title text, not on a heading role: the shell draws a card title as
+ *  a styled <div>, so `getByRole("heading")` matches nothing here and this helper would hand back
+ *  an EMPTY locator — which reads downstream as "the product does not show this", not as "the
+ *  journey is looking in the wrong place". */
 export function spendHistory(page: Page): Locator {
-  return page.locator("section").filter({ has: page.getByRole("heading", { name: "Spend history" }) });
+  return page
+    .locator('[data-slot="card"]')
+    .filter({ has: page.getByText("Spend history", { exact: true }) });
 }
 
 /** The persistent left rail: identity, the credits figure, and the way out. */

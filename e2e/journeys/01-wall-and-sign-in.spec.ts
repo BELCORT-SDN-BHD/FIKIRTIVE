@@ -35,12 +35,12 @@ test("A merchant signs in with the emailed code and lands where they were headed
   await expect(page.getByText("Check your email")).toBeVisible();
   await expect(page.getByText(ws.email)).toBeVisible();
 
-  await page.getByLabel("Sign-in code").fill(code);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("Login code").fill(code);
+  await page.getByRole("button", { name: "Continue with login code" }).click();
 
   await expect(page).toHaveURL(/\/billing/);
   await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
-  await expect(page.getByText("Your balance")).toBeVisible();
+  await expect(page.getByText("Available balance")).toBeVisible();
 });
 
 test("A code that was never minted signs nobody in, and says so on the page", async ({ page }) => {
@@ -55,8 +55,8 @@ test("A code that was never minted signs nobody in, and says so on the page", as
   const real = await requestSignInCode(page, ws.email, "/billing");
   const wrong = real === "000000" ? "111111" : "000000";
 
-  await page.getByLabel("Sign-in code").fill(wrong);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("Login code").fill(wrong);
+  await page.getByRole("button", { name: "Continue with login code" }).click();
 
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(page).toHaveURL(/\/login/);

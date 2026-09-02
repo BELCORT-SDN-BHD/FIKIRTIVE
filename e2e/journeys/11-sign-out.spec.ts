@@ -7,7 +7,6 @@
 import { test, expect } from "@playwright/test";
 import { seedWorkspace } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
-import { globalNav } from "../support/ui.js";
 
 test("After signing out, the money surface is walled again", async ({ page }) => {
   const ws = await seedWorkspace({
@@ -27,9 +26,13 @@ test("After signing out, the money surface is walled again", async ({ page }) =>
   // name (seeded here as personName), falling back to email only when no display name is set.
   // Its accessible name is the fixed "Account menu" label, so the name check is a separate
   // assertion rather than a locator filter — dropping it would have quietly retired #592.
-  const identity = globalNav(page).getByRole("button", { name: "Account menu" });
-  await expect(identity).toContainText(ws.personName);
+  const identity = page.getByRole("banner").getByRole("button", { name: "Account menu" });
+  // The trigger is an avatar initial now, so the merchant's own name is on its tooltip and inside
+  // the menu it opens — assert BOTH, because an initial alone is not "this product knows who you
+  // are" and dropping the check would have quietly retired #592.
+  await expect(identity).toHaveAttribute("title", ws.personName);
   await identity.click();
+  await expect(page.getByText(ws.personName, { exact: true })).toBeVisible();
   // The menu is portalled to the end of <body>, so it is NOT inside the navigation element.
   await page.getByRole("menuitem", { name: "Sign out" }).click();
 
@@ -38,5 +41,5 @@ test("After signing out, the money surface is walled again", async ({ page }) =>
   // Not just this tab's view of it: the cookie is dead.
   await page.goto("/billing");
   await expect(page).toHaveURL(/\/login/);
-  await expect(page.getByText("Your balance")).toHaveCount(0);
+  await expect(page.getByText("Available balance")).toHaveCount(0);
 });
