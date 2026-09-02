@@ -201,6 +201,100 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
     expect(acct.reserved).toBe(0);
     expect(acct.balance).toBe(1000 - quote * 2); // 两单各扣一格价钱,一分不多
   });
+
+  /**
+   * MONEY-A6(规格 docs/specs/money-engine.md §2 验收表)—— **读侧**那一半。
+   *
+   *   > 商家用演员库角色出一条视频,再用同参数(同时长同分辨率)出一条不带演员的
+   *   > ⇒ 两次报价逐字相等;消费历史**不存在**「演员费」行
+   *
+   * 上一条(#785)钉的是**写侧**:报价、预扣、结算三个数相同。那证明了我们没多收钱,
+   * 但没证明商家**看不到**一笔演员费 —— 验收行的后半句问的是消费历史那一屏。这两件事
+   * 可以分开坏:账本一格没多扣,而消费历史多折出一条「Actor」类目行(或者把带演员那一单
+   * 折成两条),商家照样会打开账单问「这个演员费是什么」。一条他要为之付钱的行,和一条
+   * 他以为要为之付钱的行,对信任的伤害是一样的。
+   *
+   * 所以这一条走**真实 startGen** 下两单(一单带 entityIds、一单裸),然后:
+   *   ① 账本侧逐格对:行数、kind 序列、金额,各恰好 RESERVE + SETTLE 两行;
+   *   ② 把两单的账本行分别交给**商家消费历史真正用的那个函数** `buildSpendHistory`,
+   *      对条目数、类目、金额、pending、detail 逐格比 —— 相同参数下两屏必须一模一样;
+   *   ③ 反向:两边都不许出现任何「演员 / actor」味道的类目或文案。
+   *
+   * 两个 org 是**故意**的:一单一个账本,「恰好两行」「历史恰好一条」才是干净的判定,
+   * 不用在混着两单的行里挑。
+   */
+  it("MONEY-A6: an actor-backed video reads in spend history exactly like a bare one — no actor line, anywhere", async () => {
+    const { buildSpendHistory } = await import("../spend-history");
+    const TZ = "Asia/Kuala_Lumpur";
+
+    const base = {
+      prompt: "our product on a beach", count: 1,
+      kind: "video" as const, model: "seedance-2-mini", durationSeconds: 5, resolution: "720p",
+    };
+    const quote = pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, referenceVideoGenerationId: null, videoOptions: { seconds: 5, resolution: "720p" } });
+
+    /** 下一单、结算、把这个 org 的账本折成商家看到的那几条。 */
+    async function orderAndRead(entityIds: string[], tag: string) {
+      const ownerId = await seedOrg(1000);
+      asOwner(ownerId);
+      const projectId = await seedProject(ownerId);
+      const job = idOf(await startGen({
+        ...base, projectId, entityIds,
+        idempotencyKey: `a6-${tag}-${randomUUID().slice(0, 8)}`,
+      }));
+      await workerSettle(ownerId, job.id);
+
+      const rows = await ledger(ownerId);
+      // buildSpendHistory 吃的是**新在前**(它靠顺序决定条目顺序);`ledger()` 给的是旧在前。
+      const entries = buildSpendHistory(
+        [...rows].reverse().map((r) => ({
+          id: r.id, kind: r.kind, source: r.source, refId: r.refId,
+          balanceDelta: r.balanceDelta, reservedDelta: r.reservedDelta, createdAt: r.createdAt,
+        })),
+        new Map([[job.id, "VIDEO" as const]]),
+        TZ,
+      );
+      return { ownerId, jobId: job.id, rows, entries, balance: (await account(ownerId)).balance };
+    }
+
+    const bare = await orderAndRead([], "bare");
+    const actor = await orderAndRead(["ent_face_nadia"], "actor");
+
+    // 演员真的挂在那一单上 —— 否则下面所有「相同」都是拿两个空单在比。
+    const actorJob = await prisma.genJob.findFirstOrThrow({
+      where: { id: actor.jobId, ownerId: actor.ownerId }, select: { entityIds: true },
+    });
+    expect(actorJob.entityIds, "带演员那一单没真的带上演员").toEqual(["ent_face_nadia"]);
+
+    // ① 账本侧:行数、kind 序列、金额,逐格相等。
+    const kindsOf = (rows: typeof bare.rows) => rows.map((r) => r.kind);
+    expect(kindsOf(bare.rows), "裸单的账本行不是恰好 RESERVE + SETTLE").toEqual(["RESERVE", "SETTLE"]);
+    expect(kindsOf(actor.rows), "带演员的单多/少了账本行 —— 演员不该产生第三条腿").toEqual(kindsOf(bare.rows));
+    const moneyOf = (rows: typeof bare.rows) =>
+      rows.map((r) => ({ kind: r.kind, balanceDelta: r.balanceDelta, reservedDelta: r.reservedDelta }));
+    expect(moneyOf(actor.rows), "带演员的单在账本上被多扣/少扣了").toEqual(moneyOf(bare.rows));
+    expect(actor.balance).toBe(bare.balance);
+    expect(actor.balance).toBe(1000 - quote);
+
+    // ② 读侧:商家那一屏逐格相等(id / 时间戳天然不同,比的是他读到的意思)。
+    const readAs = (entries: typeof bare.entries) =>
+      entries.map((e) => ({ category: e.category, label: e.label, delta: e.delta, pending: e.pending, detail: e.detail }));
+    expect(bare.entries, "裸单的消费历史不是恰好一条").toHaveLength(1);
+    expect(actor.entries, "带演员的单在消费历史里被折成了不止一条").toHaveLength(bare.entries.length);
+    expect(readAs(actor.entries), "同参数下两单的消费历史读起来不一样").toEqual(readAs(bare.entries));
+    expect(bare.entries[0]!.category).toBe("video");
+
+    // ③ 反向:一个「演员费」味道的字都不许出现在商家读到的东西里。
+    for (const [who, entries] of [["裸单", bare.entries], ["带演员", actor.entries]] as const) {
+      for (const entry of entries) {
+        expect(entry.category, `${who}的消费历史出现了 actor 类目`).not.toMatch(/actor|talent|model-fee/i);
+        expect(
+          `${entry.label} ${entry.detail ?? ""}`,
+          `${who}的消费历史文案里出现了「演员费」`,
+        ).not.toMatch(/actor|演员|talent fee/i);
+      }
+    }
+  });
 });
 
 describe("W-B3-E-P ledger — EP-A5(在途面): same-key replay while the first job is ACTIVE never double-charges", () => {
