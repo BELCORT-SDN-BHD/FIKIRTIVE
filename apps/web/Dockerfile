@@ -31,6 +31,20 @@ RUN pnpm --filter @fikirtive/core build \
   && pnpm --filter @fikirtive/otto build \
   && pnpm --filter @fikirtive/web build
 
+# 演员库定妆原件(3.1 MB;CREATE-A10,规格 docs/specs/creation-engine.md §8.1③)。
+#
+# 这个 COPY 是**运行时**依赖,不是构建产物:每个商家第一次登录时 `bootstrapPersonalOrg`
+# 会把这五位读进他自己的 Library(apps/web/lib/actor-library-seed.ts)。这个 Dockerfile
+# 是白名单式的 —— 没有列进来的目录就不在镜像里 —— 所以少了这一行,五位在生产上全部落进
+# `failed`,商家注册成功而 Library 永远是空的,连带 A9 那句「Pick a cast member from your
+# Library instead.」指向一个空库。CI 的 build/e2e 看不到这个差异:它们跑在完整检出上。
+#
+# 位置在 `RUN … build` **之后**是有意的:原件几乎不变,但一改就会让上面那层 Next 构建
+# 缓存整块失效。runtime 阶段的 `COPY --from=build /repo ./` 照样把它带过去。
+# 运行时 cwd = /repo/apps/web(boot.mjs 起 `pnpm --filter @fikirtive/web start`),
+# 命中 resolveAssetDir 的第二条候选 `../../assets/actor-library/v1` = /repo/assets/…。
+COPY assets assets
+
 FROM base AS runtime
 ENV NODE_ENV=production
 WORKDIR /repo

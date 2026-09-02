@@ -124,9 +124,16 @@ describe("REFERENCE_IMAGE_PERSON_REJECTED — what the merchant actually reads",
     expect(REFERENCE_IMAGE_PERSON_REJECTED.length).toBeLessThanOrEqual(300);
   });
 
-  it("says what is wrong, what to do about it, and that no money moved", () => {
-    expect(REFERENCE_IMAGE_PERSON_REJECTED).toContain("face");
-    expect(REFERENCE_IMAGE_PERSON_REJECTED).toContain("Try one where the face isn't visible");
+  it("CREATE-A9: says what is wrong, points at the cast library, and that no money moved", () => {
+    // 规格 docs/specs/creation-engine.md 验收表 CREATE-A9 —— 「人话提示 + 出路指向演员库」。
+    // 逐字钉住,因为这两句是**出路本身**:商家的 Library 在注册时就已经播好了五位演员
+    // (apps/web/lib/actor-library-seed.ts),这句话指的是他屏幕上已经有的东西。
+    expect(REFERENCE_IMAGE_PERSON_REJECTED).toContain(
+      "Real human faces aren't supported yet. Pick a cast member from your Library instead.",
+    );
+    // 旧口径(「把脸拍到看不见再试一次」)必须消失:2026-08-29/30 实测 13 拒零过,
+    // 拒的是**这是谁的脸**,不是脸怎么取景 —— 教商家换个角度重拍等于教他重试一件做不到的事。
+    expect(REFERENCE_IMAGE_PERSON_REJECTED).not.toContain("Try one where the face isn't visible");
     expect(REFERENCE_IMAGE_PERSON_REJECTED).toContain("You weren't charged.");
   });
 });
