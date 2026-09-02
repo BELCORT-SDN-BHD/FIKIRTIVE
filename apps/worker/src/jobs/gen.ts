@@ -35,7 +35,9 @@ import {
   displayCredits,
   genJobEndedWithoutDelivering,
   merchantGenFailureMessage,
+  routeReasonFor,
   type GenJobData,
+  type GenerationRequest,
   type GenModel,
   type GenVideoModel,
   type GenerationReceipt,
@@ -1311,7 +1313,14 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // #914 r4:编号句在这一行才长出来 —— 所以「实际送出的那一整句」也只有在这一行
         // 之后才存在。落库落的就是这个变量本身(见 sentPromptText 的写入)。
         sentPrompt = withReferenceMap(job.prompt, refSlots);
-        outputs = await provider.generate({ prompt: sentPrompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio, coherentSet });
+        // ⚠️ 写集边界(Creation S2 §8.4):`GenerationRequest.model` 今天的类型是 `RefGenModel`
+        // (参考图菜单),而图片菜单从本片起**比它宽一格**(`seedream-pro`)。诚实的修法是把
+        // 那一格放宽成 `RefGenModel | GenModel`(`packages/core/src/refgen.ts` 一行,纯类型、
+        // 零行为变化),但该文件不在本段写集里,所以这里沿用这一格**本来就有的**强转
+        // (`job.model` 是一个无约束的 DB 字符串,从来就要转成菜单类型才交得出去),
+        // 只是把目标写成契约自己的类型而不是另一个菜单的类型。放宽那一行写进交接报告。
+        // 运行期不受影响:适配器按 `IMAGE_MODEL_MAP[req.model]` 查表,查不到 = 付费前抛错。
+        outputs = await provider.generate({ prompt: sentPrompt, inputImageUrls, count: job.count, model: job.model as GenerationRequest["model"], aspectRatio, coherentSet });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
       // #782 r13 (judge r12 P1-F1) — THE WRITE-POINT INVARIANT: a DONE job can always point at
@@ -1388,6 +1397,16 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
                   // it predates the column, or it came from an ingest path that never calls one
                   // (upload-actions, asset-actions.saveCroppedGeneration).
                   sentPromptText: sentPrompt,
+                  // Creation S2 §8.1①(CREATE-A4 / A12)—— **能力路由的理由**,现算而不是
+                  // 从请求那一侧搬运:输入只有这一行已冻结的 job(kind + model + 分辨率),
+                  // 函数与请求侧报价说的那一句是同一个(`routeReasonFor`),所以「商家看到的
+                  // 理由」与「库里存的理由」不可能分家。走默认槽位 ⇒ null(没有升档,
+                  // 没什么可解释的),而不是编一句话出来。
+                  routeReason: routeReasonFor({
+                    kind: job.kind === "VIDEO" ? "video" : "image",
+                    model: job.model,
+                    resolution: (job.videoOptions as { resolution?: string } | null)?.resolution ?? null,
+                  }),
                   entitySnapshot, version: 1, attachedAt: null,
                 },
               });

@@ -16,9 +16,22 @@ describe("BytePlusProvider — wiring", () => {
     //   arkcli models get dreamina-seedance-2-0-mini      → id / primary_version = …-260615
     //   arkcli models versions dreamina-seedance-2-0-mini → 只有 260615 一个版本
     expect(VIDEO_MODEL_MAP["seedance-2-mini"]).toBe("dreamina-seedance-2-0-mini-260615");
+    // Creation S2 §8.1①(2026-09-02):pro 图槽位与高清视频槽位上架,供应商 id 只住在这张表里。
+    expect(IMAGE_MODEL_MAP["seedream-pro"]).toBe("dola-seedream-5-0-pro");
+    expect(VIDEO_MODEL_MAP["seedance-2-0"]).toBe("dreamina-seedance-2-0");
     // 下架的那一台不许还留着一条能把钱花出去的路(与 GEN_VIDEO_MODELS 同进同退)。
     expect(VIDEO_MODEL_MAP["seedance-2-fast"]).toBeUndefined();
-    expect(Object.keys(VIDEO_MODEL_MAP)).toEqual(["seedance-2-mini"]);
+    expect(Object.keys(VIDEO_MODEL_MAP)).toEqual(["seedance-2-mini", "seedance-2-0"]);
+    expect(Object.keys(IMAGE_MODEL_MAP)).toEqual(["seedream", "seedream-pro"]);
+  });
+
+  // 双声明纪律的机器化:菜单(@fikirtive/core)与接线表(这里)必须**逐字同集**。
+  // T6 之前那 12 台假引擎正是靠「某一张表上有、另一张没有」活下来的;两台在产引擎之后
+  // 这条纪律更容易破,所以把它写成断言而不是注释。
+  it("接线表与 core 的菜单逐字同集(双声明纪律)", async () => {
+    const { GEN_MODELS, GEN_VIDEO_MODELS } = await import("@fikirtive/core");
+    expect(Object.keys(IMAGE_MODEL_MAP).sort()).toEqual([...GEN_MODELS].sort());
+    expect(Object.keys(VIDEO_MODEL_MAP).sort()).toEqual([...GEN_VIDEO_MODELS].sort());
   });
   it("has a stable provider name", () => {
     expect(new BytePlusProvider("ark-test").name).toBe("byteplus");

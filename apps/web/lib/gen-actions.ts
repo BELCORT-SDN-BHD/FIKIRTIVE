@@ -26,6 +26,7 @@ import {
   GEN_VIDEO_MODEL_OPTIONS,
   videoDefaults,
   imageDefaults,
+  routeVideoModel,
   merchantGenFailureMessage,
   videoElementReferencesHonoured,
   approvedEntityDrift,
@@ -145,6 +146,38 @@ function resolvePublicModelAlias(raw: unknown): unknown {
   if (!match) return raw;
   const model = modelMenu(kind)[Number(match[1]) - 1];
   return model ? { ...record, model } : raw;
+}
+
+/**
+ * **能力路由**(Creation S2 §8.1①,CREATE-A4)—— 商家说的是能力,我们挑的是槽位。
+ *
+ * 为什么必须发生在 `genRequest.safeParse` **之前**:契约闸按 `model` 的能力表校验
+ * 分辨率(`GEN_VIDEO_MODEL_OPTIONS[model].resolutions`)。商家要 1080p 而请求上挂着
+ * 默认槽位,那一格根本不在默认槽位的能力表上 —— 先路由再校验,商家要的档才走得到
+ * 它自己那一台引擎上;先校验再路由则永远拒。
+ *
+ * 只在**菜单内的槽位**上改写:调用方明确挑了一台在册引擎,就照它自己的能力表判 ——
+ * 路由是替「只说了能力」的商家挑,不是替所有人做主。菜单外的 id(历史行/垃圾值)
+ * 原样透传,由契约闸拒。
+ *
+ * 幂等键安全:键在这一步**之前**由服务端从商家意图算出(`assetActionKey` 等),
+ * 而同一个意图(同一个分辨率)永远路由到同一个槽位,所以路由不会让同一次意图
+ * 产生两个键,也不会让两个不同意图共用一个键。
+ */
+function routeCapabilitySlot(raw: unknown): unknown {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const record = raw as Record<string, unknown>;
+  if (record.kind !== "video") return raw; // 图片侧的升档能力位归批 II（增强稿）带进来
+  if (typeof record.model !== "string" || !modelMenu("video").includes(record.model)) return raw;
+  const resolution = typeof record.resolution === "string" ? record.resolution : null;
+  const routed = routeVideoModel(resolution).model;
+  return routed === record.model ? raw : { ...record, model: routed };
+}
+
+/** 别名解析 → 能力路由。两条入口(`startGen` 与 `startCoworkGen`)走**同一个**helper,
+ *  免得两处对同一份请求得出两个槽位。 */
+function resolveRequestModel(raw: unknown): unknown {
+  return routeCapabilitySlot(resolvePublicModelAlias(raw));
 }
 
 /** 继承快照**读失败**。这不是一个答案,是「不知道」——`startGen` 把它翻译成一个可重试的
@@ -370,7 +403,7 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
 /** Otto/GEN_CARD's paid entrypoint. The durable card — not the browser or model — supplies
  * the approved displayed-credit quote and binds it to this owner, thread, project, and key. */
 export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
-  const parsed = genRequest.safeParse(resolvePublicModelAlias(raw));
+  const parsed = genRequest.safeParse(resolveRequestModel(raw));
   if (!parsed.success) return { error: "That generation request is out of bounds." };
   const { idempotencyKey, projectId, threadId } = parsed.data;
   if (!idempotencyKey?.startsWith("cowork:") || idempotencyKey.length <= "cowork:".length || !threadId) {
@@ -484,7 +517,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<StartGenResult> => {
     const OWNED = { ownerId, deletedAt: null } as const;
-    const parsed = genRequest.safeParse(resolvePublicModelAlias(raw));
+    const parsed = genRequest.safeParse(resolveRequestModel(raw));
     if (!parsed.success) return { error: "That generation request is out of bounds." };
     const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId, approvedEntities, coherentSet } = parsed.data;
     // #914 r6(判官 r5 P2)—— 「商家原话」**只**从可信记录取,永远不从 `parsed.data` 取:
@@ -743,7 +776,14 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     }
 
     const kindForModel = kind === "image" ? "image" : "video";
-    const spendable = assertSpendableModel(model, kindForModel);
+    // Creation S2 §8.1①(CREATE-A4/A5/A6)—— 闸判到 **SKU 级**,不是槽位级:同一台引擎
+    // 里有价的档与没价的档必须分开判。两根轴都从**这一份请求**上取(缺省 ⇒ 该槽位自己
+    // 声明的默认档),所以商家选了什么就按什么判。白名单外 = 拒绝、不降级,而且这一步
+    // 仍然在 `pricedGenCredits` 与 `reserveCredits` **之前** ⇒ 拒绝这一路 ledger 零新增行。
+    const spendable = assertSpendableModel(model, kindForModel, undefined, {
+      resolution: resolution ?? null,
+      seconds: durationSeconds ?? null,
+    });
     if (!spendable.ok) return { error: sanitizeUserError(spendable.error) };
 
     // P2: the deterministic CHARGE in internal credits — reserved atomically with the

@@ -11,11 +11,40 @@
  * Video (i2v) lands as a follow-up slice on this same skeleton.
  */
 import { z } from "zod";
-import { costPinValue } from "./cost-pins.js";
+import { costPinValue, type CostPinKey } from "./cost-pins.js";
 import { anchoredVideoAction, anchoredActionUnavailableReason } from "./video-actions.js";
 
-export const GEN_MODELS = ["seedream"] as const;
+/**
+ * 图片引擎菜单 —— **两个槽位**(Creation S2 §8.1①,2026-09-02)。
+ *
+ * `seedream` 是 lite 档(默认;组图),`seedream-pro` 是 pro 档(透明底 / 人物精修)。
+ * 两个键都是**内部槽位名**,不是商家可见字符串:商家那一侧只看得到能力名词
+ * (画布只发 `capability-image-N` 别名,`provider-secrecy` 再兜一层),供应商真 id
+ * 只住在 `packages/generation/src/byteplus.ts` 的映射表里。
+ *
+ * 上架一个图片槽位要同时落三处,缺一处「卖什么」与「做什么」当场分家:
+ * ①本菜单 ②`GEN_IMAGE_MODEL_OPTIONS` ③`GEN_IMAGE_COST_PIN`(编译期强制)。
+ * 而**能不能卖**是另一回事:见 `spend.ts` 的 `SELLABLE_IMAGE_VARIANTS` ——
+ * 菜单是能力,白名单是价目,pro 的大图与图层分离今天没有价,所以不可售。
+ */
+export const GEN_MODELS = ["seedream", "seedream-pro"] as const;
 export type GenModel = (typeof GEN_MODELS)[number];
+
+/**
+ * 图片**图种**(SKU 的第二根轴,Creation S2 §8.1①)。
+ *
+ * 为什么需要它:图片的 SKU 不只是「哪个槽位」——pro 槽位下面有三种图,而
+ * 规格只给了其中一种价(标准图 2cr/张)。大图的计价单位从未实证(`cost-pins.ts`
+ * 规矩 ②:大图不入表 = 不可售),图层分离在 S1「不做」节里被明令排除。
+ * 少了这根轴,`assertSpendableModel` 就只能判到槽位级,pro 一上架等于把三种图
+ * 一起放行 —— 其中两种根本没有价。
+ *
+ * 默认是 `standard`:今天没有任何入口能请求另外两种,它们只可能来自程序内调用,
+ * 而那正是 CREATE-A6 要挡的那一下。
+ */
+export const GEN_IMAGE_VARIANTS = ["standard", "large", "layered"] as const;
+export type GenImageVariant = (typeof GEN_IMAGE_VARIANTS)[number];
+export const GEN_IMAGE_DEFAULT_VARIANT: GenImageVariant = "standard";
 /**
  * 视频引擎菜单 —— **在产的只有这一台**。
  *
@@ -43,8 +72,13 @@ export type GenModel = (typeof GEN_MODELS)[number];
  * $10.70/M 是 mini 的 3.06 倍,现行价目表卖它会跌破地板;账户侧的计费项开通也没到位。
  * 先把 mini 的能力面做尽。要重启这件事:先裁价,再实测参数面(元数据不给比例与像素表,
  * 照抄 2.0 的就是本文件明令禁止的「给没核过的档位编数字」)。
+ *
+ * Creation S2 §8.1①(2026-09-02):第二格 `seedance-2-0` 上架,走的正是上面那条纪律 ——
+ * 它有自己的成本钉点(`video:seedance-2.0:1080p-*`)、自己的已裁价(1080p 11cr/秒,
+ * Founder 2026-09-02 追认)、自己的映射表条目,而**不是**在 mini 的 key 底下换后端 id。
+ * 它只为一件事存在:1080p 高清档,mini 给不出这一档。
  */
-export const GEN_VIDEO_MODELS = ["seedance-2-mini"] as const;
+export const GEN_VIDEO_MODELS = ["seedance-2-mini", "seedance-2-0"] as const;
 export type GenVideoModel = (typeof GEN_VIDEO_MODELS)[number];
 
 export const GEN_KINDS = ["image", "video"] as const;
@@ -227,7 +261,30 @@ export type ImageModelOptions = {
 };
 export const GEN_IMAGE_MODEL_OPTIONS: Record<GenModel, ImageModelOptions> = {
   "seedream": { aspectRatios: [...GEN_IMAGE_ASPECTS], maxCount: MAX_GEN_COUNT, coherentSet: true },
+  // Creation S2 §8.1①:pro 槽位。画幅与批量与 lite 同(按张计价、不分尺寸比例),
+  // `coherentSet` 保守取 **false** —— 组图是**逐槽实测**才敢开的能力位(见上面那段注释:
+  // 「参数面没有在本仓库的账户上实测过」),pro 的组图行为尚未实测,未验先禁。
+  "seedream-pro": { aspectRatios: [...GEN_IMAGE_ASPECTS], maxCount: MAX_GEN_COUNT, coherentSet: false },
 };
+
+/**
+ * **图片槽位 → 成本钉点**(成本的单一权威在 `cost-pins.ts`,这里只做映射)。
+ *
+ * 类型 `Record<GenModel, CostPinKey>` 就是这条围栏的全部内容:图片菜单加一格而不给它
+ * 配成本钉点,**编译期就红**。`margin-truth.ts` 的 `IMAGE_MODEL_COST_PIN` 现在是本表的
+ * 别名(CI 闸读的是那个名字),不是第二份手抄 —— 成本只有一处说了算。
+ */
+export const GEN_IMAGE_COST_PIN: Record<GenModel, CostPinKey> = {
+  "seedream": "image:seedream-lite:per-image",
+  "seedream-pro": "image:seedream-pro:per-image",
+};
+
+/** 一张图的记账成本(USD)。菜单外的历史 id 回落 lite 档 —— 与 `GEN_PRICE_USD_PER_IMAGE`
+ *  的既有行为逐字一致(本函数上线前所有图片行都按这个数记账),纯函数,永不抛。 */
+export function genImageCostUsd(model: string): number {
+  const pin = GEN_IMAGE_COST_PIN[model as GenModel];
+  return pin ? costPinValue(pin) : GEN_PRICE_USD_PER_IMAGE;
+}
 
 /** 这台引擎能不能一次出一整组连贯图(#777)。菜单外的 id 一律 false —— 「不知道」
  *  按「不能」处理,绝不让一个没在册的模型走上组图那条路。PURE,永不抛。 */
@@ -292,6 +349,9 @@ export function normalizeImageAspect(raw?: string | null): GenImageAspect | null
  *  Controls + price live in the two helpers below. */
 export const GEN_VIDEO_MODEL_INFO: Record<GenVideoModel, { label: string; sound: boolean; tail: boolean }> = {
   "seedance-2-mini": { label: "Seedance 2.0 mini", sound: true, tail: true }, // #646 T5: first+last frames ARE supported (two role-tagged frames in one task)
+  // Creation S2 §8.1①. `label` is INTERNAL/audit copy only — it never reaches a merchant
+  // surface (that is what provider-secrecy + the capability aliases are for).
+  "seedance-2-0": { label: "Seedance 2.0", sound: true, tail: true },
 };
 
 /** Per-model controls — each exposes exactly what its engine accepts. Empty array =
@@ -335,7 +395,77 @@ export const GEN_VIDEO_MODEL_OPTIONS: Record<GenVideoModel, VideoModelOptions> =
     defaults: { seconds: 5, resolution: "720p", aspectRatio: "16:9" },
     i2vAspectRatio: VIDEO_ASPECT_ADAPTIVE,
   },
+  // Creation S2 §8.1① —— 高清槽位。这张表是**能力**表(引擎能给什么),不是价目表:
+  //   · 分辨率开 1080p/720p/480p 三档,**4k 不卖**(S2 拍板,规格 §8.1①);
+  //   · 时长与 mini 同(4–15 整秒);
+  //   · `audioToggle` true —— 声音是 2.0 全系能力,且**不影响报价**(CREATE-A3);
+  //   · 参考音频同样是 2.0 全系能力,所以它**不是**升档到本槽位的理由(S1 九问4)。
+  // 能力 ≠ 可售:本槽位今天只有 1080p 有自己的成本钉点与已裁价,720p/480p 在
+  // `SELLABLE_VIDEO_RESOLUTIONS`(spend.ts)之外 = 不可售,fail closed。默认档写 1080p,
+  // 正是因为这是它唯一卖得出去的那一档 —— 默认值落在白名单外就是一个卖不掉的默认。
+  "seedance-2-0": {
+    durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    resolutions: ["1080p", "720p", "480p"],
+    aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", VIDEO_ASPECT_ADAPTIVE],
+    fps: [], audioToggle: true, maxCount: 4,
+    defaults: { seconds: 5, resolution: "1080p", aspectRatio: "16:9" },
+    i2vAspectRatio: VIDEO_ASPECT_ADAPTIVE,
+  },
 };
+
+/* ---------------- 能力路由(Creation S2 §8.1①,CREATE-A4)---------------- */
+
+/** 高清档的分辨率名 —— 路由判据写一次,别处引用。 */
+export const HD_VIDEO_RESOLUTION = "1080p";
+/** 高清档落在哪个槽位;其余分辨率一律走默认槽位。 */
+export const HD_VIDEO_MODEL: GenVideoModel = "seedance-2-0";
+export const DEFAULT_VIDEO_MODEL: GenVideoModel = "seedance-2-mini";
+/** 透明底 / 人物精修落在哪个图片槽位;其余走默认槽位。 */
+export const PRO_IMAGE_MODEL: GenModel = "seedream-pro";
+export const DEFAULT_IMAGE_MODEL: GenModel = "seedream";
+
+/** 图片侧的**升档能力**(哪几件事非 pro 不可)。缺省全 false ⇒ 走 lite。 */
+export type ImageRouteCapabilities = { transparent?: boolean | null; portraitRefine?: boolean | null };
+
+/**
+ * **路由理由 —— 商家看得见的那句话**(S1 九问4「商家永远只见能力,不见型号」)。
+ *
+ * 一个函数两个调用点:请求侧路由的时候说这句话,worker 落 `Generation.routeReason`
+ * 的时候**重算**同一句话(纯函数,输入是已冻结的 job 行:kind + model + resolution)。
+ * 两边同源,所以商家看到的理由与库里存的理由不可能分家。
+ *
+ * 句子里只允许出现**能力名词**(1080p / HD tier / transparent background / …),
+ * 一个型号名都不许有 —— `provider-secrecy` 是兜底,不是许可证。
+ * 返回 null = 这一趟没有发生升档(走的是默认槽位),没什么可解释的。
+ */
+export function routeReasonFor(input: { kind: GenKind; model: string; resolution?: string | null }): string | null {
+  if (input.kind === "video") {
+    if (input.model !== HD_VIDEO_MODEL) return null;
+    return input.resolution === HD_VIDEO_RESOLUTION
+      ? `You asked for ${HD_VIDEO_RESOLUTION}, so this went to the HD tier.`
+      : "This went to the HD tier.";
+  }
+  if (input.model !== PRO_IMAGE_MODEL) return null;
+  return "You asked for a capability only the fine-detail tier can do, so this went there.";
+}
+
+/**
+ * 视频能力路由:**按商家请求的分辨率挑槽位**,不按型号名。
+ * 1080p → 高清槽位;其余(含未指定)→ 默认槽位。纯函数,永不抛。
+ */
+export function routeVideoModel(resolution?: string | null): { model: GenVideoModel; reason: string | null } {
+  const model = resolution === HD_VIDEO_RESOLUTION ? HD_VIDEO_MODEL : DEFAULT_VIDEO_MODEL;
+  return { model, reason: routeReasonFor({ kind: "video", model, resolution }) };
+}
+
+/**
+ * 图片能力路由:**按能力挑槽位**。透明底或人物精修 → pro;其余 → lite。
+ * 参考 S1 九问4:「图片＝5.0-lite(默认;组图)／5.0-pro(透明底、人物精修路由)」。
+ */
+export function routeImageModel(caps?: ImageRouteCapabilities): { model: GenModel; reason: string | null } {
+  const model = caps?.transparent || caps?.portraitRefine ? PRO_IMAGE_MODEL : DEFAULT_IMAGE_MODEL;
+  return { model, reason: routeReasonFor({ kind: "image", model }) };
+}
 
 /**
  * A model's default selections — explicit `defaults` where the model declares them,
@@ -491,6 +621,30 @@ export const SEEDANCE_COGS_USD_PER_SECOND: Record<"480p" | "720p", number> = {
 };
 
 /**
+ * **1080p 档的每秒成本 = $0.3773385/s**,由 `cost-pins.ts` 的**两条钉点**推导:
+ * $0.0077/K token × 245,025 token ÷ 5 秒。
+ *
+ * 为什么不走上面那条「像素表 × 牌价」的公式:官方像素表(docs/1520757)只给了 480p 与
+ * 720p 两档,1080p 的成本我们手上是一份**实测账单**(245,025 token/5s,比官方公式推的
+ * 243,000 高 0.83%,差异未解释 —— 取实测,记高不记低)。拿 720p 的回退值当 1080p 的成本
+ * 会便宜五倍,那就是卖一单亏一单。
+ *
+ * 本常量此前住在 `spend.ts`(定价侧),但成本的命名出口一律在本文件与其它成本基准同住,
+ * 而且**成本函数**(`videoRateUsdPerSec`)也要用它 —— 放两份就会漂移。spend.ts 现在
+ * 从这里取,并按原名再导出一次,消费方一行都不用改。
+ */
+export const SEEDANCE_1080P_COGS_USD_PER_SECOND =
+  (costPinValue("video:seedance-2.0:1080p-per-ktoken") *
+    costPinValue("video:seedance-2.0:1080p-tokens-per-5s")) /
+  1000 /
+  5;
+
+/** 高清槽位的每秒成本表。今天只有 1080p 一档有钉点(它也是这个槽位唯一可售的那一档)。 */
+export const SEEDANCE_2_0_COGS_USD_PER_SECOND: Record<string, number> = {
+  "1080p": SEEDANCE_1080P_COGS_USD_PER_SECOND,
+};
+
+/**
  * 整段参考视频的记账成本 = **$0.49896**,按我们参考片窗口的**上限**保守记
  * (6s 参考输入 + 5s 出片,mini 含视频输入档 $2.10/M)。真实区间 $0.40824(≤4s 参考,
  * 吃地板)… $0.49896(6s 参考);记上限,永不低估成本。
@@ -519,6 +673,12 @@ export const REFERENCE_VIDEO_COGS_USD = byteplusVideoCogsUsd({
 function videoRateUsdPerSec(model: GenVideoModel, resolution: string): number {
   if (model === "seedance-2-mini") {
     return SEEDANCE_COGS_USD_PER_SECOND[resolution as "480p" | "720p"] ?? SEEDANCE_COGS_USD_PER_SECOND["720p"];
+  }
+  if (model === HD_VIDEO_MODEL) {
+    // Creation S2 §8.1①:高清槽位的成本**只有 1080p 有钉点**(实测账单,见 cost-pins.ts)。
+    // 它的 720p/480p 是**能力**而不是可售 SKU,所以这里不给它们编一个数字 —— 未知分辨率
+    // 一律回落到本槽位最贵的那一档(记账宁可高估,与 mini 回落 720p 同一条规矩)。
+    return SEEDANCE_2_0_COGS_USD_PER_SECOND[resolution] ?? SEEDANCE_2_0_COGS_USD_PER_SECOND[HD_VIDEO_RESOLUTION]!;
   }
   return 0;
 }

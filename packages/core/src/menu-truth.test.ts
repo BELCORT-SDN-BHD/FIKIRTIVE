@@ -53,10 +53,17 @@ const RETIRED_VIDEO_MODELS = [
 /** 被那 12 格带进来的七个家族。真家族只剩 seedream(图)与 seedance(片)。 */
 const RETIRED_FAMILIES = ["kling", "veo", "ltx", "wan", "pixverse", "grok", "hailuo"] as const;
 
-// ── 1. 菜单:只剩一格,而且是真的那一格 ──────────────────────────────────────
-describe("#647 T6 视频菜单(真的只有一格)", () => {
-  it("GEN_VIDEO_MODELS 只剩 seedance-2-mini", () => {
-    expect([...GEN_VIDEO_MODELS]).toEqual(["seedance-2-mini"]);
+// ── 1. 菜单:每一格都是真的那一格 ────────────────────────────────────────────
+//
+// Creation S2 §8.1①(2026-09-02)把菜单从一格开到两格。T6 钉的从来不是「只有一格」——
+// 是「**没有一格是假的**」(父 spec #641 的收官句)。新那一格不是假菜单,因为它把 T6
+// 立的五处声明一次走完:菜单 / 事实表 / 档位表 / 费率(自己的成本钉点) / 接线表,
+// 外加一条 T6 当年还没有的:**SKU 级已定价白名单**(它只卖 1080p)。
+// 下面的断言因此改成「集合逐字相等」而不是「长度为 1」——上架要动这一行,
+// 而动这一行的人必须同时对上另外四张表(下面两条测试守着)。
+describe("#647 T6 视频菜单(每一格都是真的)", () => {
+  it("GEN_VIDEO_MODELS = 在产两台(mini 默认档 + 2.0 高清档)", () => {
+    expect([...GEN_VIDEO_MODELS]).toEqual(["seedance-2-mini", "seedance-2-0"]);
   });
 
   it("下架的模型在**五处声明**里一处不剩", () => {
@@ -77,10 +84,11 @@ describe("#647 T6 视频菜单(真的只有一格)", () => {
     expect(Object.keys(GEN_VIDEO_MODEL_OPTIONS).sort()).toEqual([...GEN_VIDEO_MODELS].sort());
   });
 
-  it("后台开关表随之收缩:模型总数 = 图片菜单 ∪ 参考图菜单 ∪ 视频菜单,视频只贡献一格", () => {
+  it("后台开关表 = 图片菜单 ∪ 参考图菜单 ∪ 视频菜单,一个下架 id 都没有", () => {
     for (const id of RETIRED_VIDEO_MODELS) expect(ALL_MODEL_IDS).not.toContain(id);
-    // 只剩 seedream(图片=参考图同名)+ seedance-2-mini
-    expect([...ALL_MODEL_IDS].sort()).toEqual(["seedance-2-mini", "seedream"]);
+    // seedream(图片 lite = 参考图同名)+ seedream-pro(Creation S2 §8.1①)
+    // + seedance-2-mini(默认档)+ seedance-2-0(高清档)
+    expect([...ALL_MODEL_IDS].sort()).toEqual(["seedance-2-0", "seedance-2-mini", "seedream", "seedream-pro"]);
   });
 
   it("契约闸照旧拒收下架模型(付费请求进不来)", () => {

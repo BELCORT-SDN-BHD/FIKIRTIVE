@@ -11,8 +11,10 @@ describe("modelFamily", () => {
   // every shipping video model resolves to a known family (version-agnostic, by prefix)
   // #647 T6:菜单收到只剩在产那一台之后,这张表也跟着只剩一行 —— 表与菜单同集由
   // menu-truth.test.ts 钉着,这里钉的是映射本身。
+  // Creation S2 §8.1①:高清槽位上架,两台都归 seedance 家族(按前缀,知识库一格不用改)。
   const expected: Record<string, string> = {
     "seedance-2-mini": "seedance",
+    "seedance-2-0": "seedance",
   };
   it("maps every video model to a family", () => {
     for (const m of GEN_VIDEO_MODELS) {

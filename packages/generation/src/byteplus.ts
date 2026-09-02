@@ -99,12 +99,29 @@ export function readVideoReceipt(payload: unknown): GenerationReceipt | undefine
 
 export const ARK_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3";
 /** internal model id → Ark foundation-model id (verified active on the account). */
-export const IMAGE_MODEL_MAP: Record<string, string> = { seedream: "seedream-5-0-260128" };
+export const IMAGE_MODEL_MAP: Record<string, string> = {
+  seedream: "seedream-5-0-260128",
+  // Creation S2 §8.1①(2026-09-02):pro 图槽位。供应商 id 只住在这张表里 —— 商家可见的
+  // 任何字符串都不许出现型号名(S1 九问4;`provider-secrecy` 是兜底,不是许可证)。
+  "seedream-pro": "dola-seedream-5-0-pro",
+};
 /** #769(Founder 已裁 2026-08-08):战役视频引擎从 2.0 Fast 换 2.0 mini。
  *  版本化 id 取自 ModelArk 模型档案(只读核实):`arkcli models get dreamina-seedance-2-0-mini`
  *  → `id` / `primary_version` = `dreamina-seedance-2-0-mini-260615`;
  *  `arkcli models versions dreamina-seedance-2-0-mini` 只回这一个版本 260615。 */
-export const VIDEO_MODEL_MAP: Record<string, string> = { "seedance-2-mini": "dreamina-seedance-2-0-mini-260615" };
+export const VIDEO_MODEL_MAP: Record<string, string> = {
+  "seedance-2-mini": "dreamina-seedance-2-0-mini-260615",
+  // Creation S2 §8.1①(2026-09-02):高清槽位。与 mini 一样,这里是**唯一**允许出现供应商
+  // id 的地方;`@fikirtive/core` 的菜单只认内部槽位名 `seedance-2-0`。
+  //
+  // ⚠️ **版本尾未实查**:mini 那一行写的是版本化 id(`…-260615`,由 `arkcli models get`
+  // 只读核实过)。本行只有基名 —— 本场 `arkcli` SSO 已过期(规格 §8.5「环境前置(Founder
+  // 钥匙)」),没有第一方回执就不许在这里编一个版本尾出来(本仓规矩:没核过的数字不许写)。
+  // 风险是有界的:id 错 = task-create 被 4xx 拒,而 4xx 是本文件 `paidPost` 里唯一
+  // **可证明没花钱**的失败(退款 + 记零花费)。Founder 重新登录后跑一次
+  // `arkcli models versions dreamina-seedance-2-0`,把版本尾补上。
+  "seedance-2-0": "dreamina-seedance-2-0",
+};
 
 /**
  * #795 — every call out to the engine gets a deadline, because a socket that never answers is

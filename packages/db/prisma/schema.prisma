@@ -364,6 +364,15 @@ model Generation {
   /// null = 引擎没报(或迁移前的历史行)= **未知**,读取端必须如实说不知道,不得回落成
   /// promptText 冒充引擎的话。展示前过 redactProviderNames(白标)。
   finalPromptText String?
+  /// Creation S2 §8.1①（CREATE-A4 / A12）：**这一趟为什么落在这个档位**，用商家看得懂的
+  /// 能力名词写（"You asked for 1080p, so this went to the HD tier."）。
+  /// 能力路由替商家挑档 = 替商家花钱，所以理由必须**留得下痕迹**，而不是只在那一刻的界面上
+  /// 闪一下（S1 异议栏的对策之一）。
+  /// 由 worker 在建行时用纯函数 `routeReasonFor(kind, model, resolution)` 现算，与请求侧
+  /// 报价时说的那一句同源同函数 —— 存的与说的不可能分家。
+  /// null = **这一趟没有升档**（走的是默认槽位，没什么可解释的），或这一行早于本列存在。
+  /// 里面永远只有能力名词，**绝无型号名**（S1 九问4：商家永远只见能力，不见型号）。
+  routeReason    String?
   // 模板/模型标识（阶段一=模板 slug@version；阶段二=模型注册表条目）
   modelRef       String      @default("")
   params         Json?
