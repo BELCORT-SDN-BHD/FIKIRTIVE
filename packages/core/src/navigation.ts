@@ -339,8 +339,11 @@ export const MERCHANT_NAV_REDIRECTS: readonly { readonly from: string; readonly 
  * (见 `apps/web/lib/__tests__/route-redirects.test.ts`)。
  *
  * 值里的路径部分全部来自 SHELL_ROUTES —— 同一条围栏会核对这一点,所以这张表不可能长出
- * 一个 SHELL_ROUTES 里没有的地址。`?otto=1` 是「落地后自动把 Otto 面板打开」,
- * `#templates` / `#ideas` 是 `/create` 页面下方的两个区段(Q6),它们都不是新路由。
+ * 一个 SHELL_ROUTES 里没有的地址。`?otto=1` 是「落地后自动把 Otto 面板打开」,不是新路由。
+ *
+ * 锚点(`#…`)今天一条都没有,而且这不是省略:落点上真的有那个 id,才准往这里写锚点。
+ * 围栏 `route-redirects.test.ts`「重定向表里的锚点,落点页面上真的到得了」逐条核这件事,
+ * 从落点的 page.tsx 沿 import 图走一遍,找不到 `id="<锚点>"` 就红。
  */
 export const OTTO_VIEW_REDIRECTS: Readonly<Record<string, string>> = {
   otto: `${SHELL_ROUTES.home}?otto=1`,
@@ -348,8 +351,12 @@ export const OTTO_VIEW_REDIRECTS: Readonly<Record<string, string>> = {
   stuff: SHELL_ROUTES.library,
   edit: SHELL_ROUTES.create,
   memory: SHELL_ROUTES.brand,
-  templates: `${SHELL_ROUTES.create}#templates`,
-  discover: `${SHELL_ROUTES.create}#ideas`,
+  // 前端基线①(判官 P2-3):这两条原本是 `/create#templates` 与 `/create#ideas`。新壳的
+  // `/create` 只挂 Otto 入口与画布历史,`CreateBrowseSections`(那两个 id 的唯一出处)已经
+  // 不在它的 import 图里 —— 带着锚点跳过去,浏览器找不到那个 id,商家落在页顶,却以为自己
+  // 点错了。落到 `/create` 本身:同一扇门,少一个到不了的承诺。
+  templates: SHELL_ROUTES.create,
+  discover: SHELL_ROUTES.create,
   schedule: SHELL_ROUTES.home,
   analytics: SHELL_ROUTES.homeAnalysis,
   connections: SHELL_ROUTES.connections,

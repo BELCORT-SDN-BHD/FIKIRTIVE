@@ -33,5 +33,12 @@ test("An empty shelf says so and still offers a way through", async ({ page }) =
   // The balance is still readable — one empty read must not take the rest of the page with it.
   await expect(page.getByText("Available balance")).toBeVisible();
   await expect(page.getByText("60").first()).toBeVisible();
-  await expect(page.getByText("Could not load balance. Please refresh.")).toHaveCount(0);
+  // 前端基线① 判官登记(#1139):这一行原本钉的是旧壳的 "Could not load balance. Please
+  // refresh." —— 换壳之后那句话在仓里一个字都不剩,于是这条负向断言**永远绿**,余额真的
+  // 读失败它也不会红。改钉新壳自己的失败文案。标题("Balance unavailable")是余额那张卡
+  // 独有的;描述("Refresh to try reading it again.")花费历史那张卡也在用,所以只在余额那
+  // 张 alert 的范围内断言 —— 不把另一块面板的状态混进这条旅程。
+  const balanceFailure = page.getByRole("alert").filter({ hasText: "Balance unavailable" });
+  await expect(balanceFailure).toHaveCount(0);
+  await expect(balanceFailure.getByText("Refresh to try reading it again.")).toHaveCount(0);
 });
