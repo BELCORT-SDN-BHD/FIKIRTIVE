@@ -262,9 +262,14 @@ export const UNDERSTANDING_PRICED_INTERNAL: Record<UnderstandingKind, number> = 
  * **商家真被扣的那一笔**,reserve 与 settle 用的是同一个值(理解没有可变用量档,
  * 所以 reserve == settle 恒成立,不存在差额)。
  *
- * 计费四则①:结算按**上传时刻**的价目 —— 那份快照由 `AssetUnderstanding.priceInternalSnapshot`
- * 落行时锁住,worker 结算读快照而不是重新调本函数。本函数是**报价**(上传那一刻、披露那一刻),
+ * 计费四则①:结算按**快照**的价目 —— 那份快照由 `AssetUnderstanding.priceInternalSnapshot`
+ * 落行时锁住,worker 结算读快照而不是重新调本函数。本函数是**报价**(披露那一刻、建行那一刻),
  * 不是结算;调价不追溯(MONEY-A7)靠的就是这个分工。
+ *
+ * 口径说准(Founder 2026-09-02 接受偏差,规格 §5 变更登记):快照落的是**扫描器建理解行那一
+ * 刻**的价,不是字面的「上传时刻」。两者通常同刻(上传后下一轮扫描就建行),但扫描器每分钟
+ * 只建 25 行 —— 两千张图的批量导入要 ~80 分钟,失投补投还可能更晚,期间调价就会让后半批按
+ * 新价锁。触发条件写在规格里:调价频率高于每周一次时,改为上传落库同事务写价、扫描器只读。
  */
 export function pricedUnderstandingCredits(kind: UnderstandingKind): number {
   return UNDERSTANDING_PRICED_INTERNAL[kind];

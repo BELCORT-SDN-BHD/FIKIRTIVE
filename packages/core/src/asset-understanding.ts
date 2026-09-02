@@ -267,16 +267,24 @@ export function assetUnderstandingEnabled(env?: Env): boolean {
 }
 
 /**
- * **平台**一天的理解预算(USD)。回答的是「我们一天最多被账单多少钱」——
+ * **平台**一天的理解花费**报警阈值**(USD)。回答的是「我们一天被账单多少钱之后要叫人」——
  * 那是一个 platform-wide 的问题,所以答案也必须是 platform-wide 的。
  *
  * 计量用的是**真实美元**,不是行数:`AssetUnderstanding` 上已经有 inputTokens /
  * outputTokens 两列,`understandingCostUsd()` 是现成的算式。数行数会在两头都错 ——
  * 一行失败但已经计费的读图数成 0,一行三次重试数成 1。
  *
- * 超线的动作是**暂缓**不是**丢弃**:那一轮不派新活,行留在 QUEUED,次日预算自然复位。
+ * ── 它不再是一道闸(Founder 2026-09-02 裁决,规格 §5 变更登记)────────────────────
+ * $5/天是**平台自付时代**的止损线。MONEY-A9 之后理解是商家付费的 SKU,同一个数字就变成了
+ * 一道**限制收入**的闸,而且是全平台先到先得:一个商家批量导入两千张图,当天所有商家的
+ * 素材都被标成「明天再读」。所以裁决是两件事一起做 —— 默认抬到 $50/天,并且**只报警不拦**:
+ * 超线时照记账、照读文件,发一条 founderAlert 三通道(每天最多一次),让人来看一眼是不是
+ * 供应商那边出了异常烧钱的事。真正的花费上限现在是**商家自己的余额**(reserve-first)。
+ *
+ * 随之作废的一句话:`0` 曾经是「全停」的合法意图。现在 `0` 只是「每天都报警」——
+ * 停掉理解的唯一开关是 {@link assetUnderstandingEnabled}(`ASSET_UNDERSTANDING=off`)。
  */
-export const UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT = 5;
+export const UNDERSTANDING_DAILY_BUDGET_USD_DEFAULT = 50;
 export const UNDERSTANDING_DAILY_BUDGET_ENV = "ASSET_UNDERSTANDING_DAILY_BUDGET_USD";
 export function understandingDailyBudgetUsd(env?: Env): number {
   // 空串/全空白算「没设」—— `Number("")` 是 0,而 0 在这里是「全停」这个合法意图。
@@ -570,7 +578,9 @@ export const UNDERSTANDING_IMAGE_TOO_LARGE =
 export const UNDERSTANDING_PAUSED = "Reading is paused right now.";
 export const UNDERSTANDING_NO_MEDIA_URL = "This environment can't hand the file to the reader yet.";
 export const UNDERSTANDING_METADATA_PENDING = "That file's dimensions aren't known yet — it will be read once they are.";
-export const UNDERSTANDING_BUDGET_REACHED = "Today's reading budget is used up — this file is read tomorrow.";
+// `UNDERSTANDING_BUDGET_REACHED`(「今天的预算用完了,明天再读这份文件」)随 Founder
+// 2026-09-02 的「只报警不拦」裁决一并删除:没有任何一条路径会再把一行退回队列说这句话,
+// 留着一句永不出现的商家文案只会让下一个人以为那道闸还在。
 /**
  * **PAUSED_BALANCE 的措辞**(MONEY-A9 计费四则④)。
  *

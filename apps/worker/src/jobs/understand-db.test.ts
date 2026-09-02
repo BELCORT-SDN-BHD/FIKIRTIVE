@@ -22,14 +22,14 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 const presignedGet = vi.hoisted(() => vi.fn(async () => "https://storage.example/obj?sig=x"));
 vi.mock("../storage.js", () => ({ storage: { presignedGet } }));
 
-import { prisma } from "@fikirtive/db";
+import { prisma, refundReservation } from "@fikirtive/db";
 import { UNDERSTANDING_CAPS, newId, pricedUnderstandingCredits, understandingCostUsd } from "@fikirtive/core";
 import type { UnderstandingProvider } from "@fikirtive/generation";
 import {
   handleUnderstand,
   reapStaleUnderstandingReservations,
   scanAssetsNeedingUnderstanding,
-  tryHoldUnderstandingBudget,
+  recordUnderstandingBudget,
   understandingSpentTodayUsd,
 } from "./understand.js";
 
@@ -447,13 +447,16 @@ describe("日预算计量器:同一行 N 次付费调用必须记 N 笔", () => 
 });
 
 /**
- * **预扣式预算的原子性**(#1056,MONEY-A9 随修)。
+ * **预扣式计量的原子性**(#1056;闸的那一半随 Founder 2026-09-02「只报警不拦」裁决拆掉)。
  *
- * 为什么只能打真库:要防的病就是「两个副本同时读到同一个『还没超』,于是双双越线」。
+ * 为什么只能打真库:要防的病是「两个副本同时给同一个日桶加一笔,其中一笔被丢更新吃掉」。
  * 假库里两次调用之间没有并发,我写的假件想让它原子它就原子 —— 那证明的是我的假件,不是
- * 那条 `INSERT … ON CONFLICT DO UPDATE … WHERE` 真的在同一行上把两路排成队。
+ * 那条 `INSERT … ON CONFLICT DO UPDATE` 真的在同一行上把两路排成队。
+ *
+ * 闸没了之后这条用例钉的东西**变了但没变弱**:以前钉「恰好一路挤得进去」,现在钉「两路
+ * 都放行、而且两笔都记上了」—— 越线不再拦人,但一笔都不许丢,否则那条报警线就是瞎的。
  */
-describe("平台日预算:预扣是一条原子语句(并发下不许双双越线)", () => {
+describe("平台日花费:记账是一条原子语句(并发下一笔都不丢,而且都放行)", () => {
   const CAPS = UNDERSTANDING_CAPS["image-caption"];
   const UNIT_USD = understandingCostUsd({
     inputTokens: CAPS.maxInputTokens,
@@ -461,21 +464,23 @@ describe("平台日预算:预扣是一条原子语句(并发下不许双双越�
   });
 
   it(
-    "预算只装得下一件时,两路并发预扣**恰好**一路挤得进去",
+    "报警线只装得下一件时,两路并发**都放行**,而且两笔都记在桶上",
     async () => {
       // 这个库跨套件共用,所以基线现读、断言看增量。
       const before = await understandingSpentTodayUsd();
       const previous = process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD;
       process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = String(before + UNIT_USD * 1.5);
       try {
-        const held = await Promise.all([
-          tryHoldUnderstandingBudget("image-caption"),
-          tryHoldUnderstandingBudget("image-caption"),
+        const recorded = await Promise.all([
+          recordUnderstandingBudget("image-caption"),
+          recordUnderstandingBudget("image-caption"),
         ]);
-        // check-then-act 的实现在这里会两路都拿到 —— 那正是 #1056。
-        expect(held.filter(Boolean)).toHaveLength(1);
-        // 挤进去的那一笔真的记在桶上,没挤进去的那一笔一格都没动。
-        expect(await understandingSpentTodayUsd()).toBeCloseTo(before + UNIT_USD, 10);
+        // 两路都拿到桶键 —— 越线只报警,不再有「挤不进去」这条出口。
+        expect(recorded.map((r) => r.day).filter(Boolean)).toHaveLength(2);
+        // 第二笔越了线,它自己看得见(报警的判据),但它照样被记上。
+        expect(recorded.some((r) => r.overBudget)).toBe(true);
+        // 丢更新的实现在这里只记一笔 —— 那正是 #1056 那条语句要防的。
+        expect(await understandingSpentTodayUsd()).toBeCloseTo(before + 2 * UNIT_USD, 10);
       } finally {
         if (previous === undefined) delete process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD;
         else process.env.ASSET_UNDERSTANDING_DAILY_BUDGET_USD = previous;
@@ -582,6 +587,135 @@ describe("钱清道夫:漏在半路的理解预扣(真库)", () => {
       // 第二遍:finalizer 已经在了,这一行再也不会被扫到(名单不会越滚越大,钱也不会退第二次)
       expect(await reapStaleUnderstandingReservations(later)).toBe(0);
       expect(await prisma.creditLedger.count({ where: { orgId: OWNER, refId, kind: "REFUND" } })).toBe(1);
+    },
+    30_000,
+  );
+});
+
+/**
+ * **交付前直读终态**(#1046-P1 在这条链路上的同一形状;钱引擎⑤B)。
+ *
+ * 只有真库钉得住:病根是 `settleCredits` 内部那条 `createMany(skipDuplicates)` 对
+ * 「REFUND 已经赢下 finalizer 唯一索引」是一次**静默空操作** —— 而「唯一索引真的会让它
+ * 空操作」正是假库证明不了的那一件事。少了交付前那一读,商家白拿一份读好的产物,
+ * 而权威账本记着 REFUND。
+ */
+describe("MONEY-A9:结算撞上既有 REFUND ⇒ 整笔回滚(不落 DONE、账本零新增)", () => {
+  it(
+    "跑到一半被清道夫退了款 ⇒ 结果不落盘、行不是 DONE、账本零新增,行退回 QUEUED 开新回合",
+    async () => {
+      const assetId = await seedAsset();
+      const id = newId();
+      const refId = `understanding:${id}`;
+      await setBalance(10_000, 0);
+      // 进门时的样子:有 RESERVE、**没有** finalizer ⇒ 恢复协议复用这个 hold 继续跑
+      // (它不会换回合,所以这一趟的 settle 打的就是这个 refId)。
+      await prisma.creditLedger.create({
+        data: {
+          id: newId(), orgId: OWNER, balanceDelta: -1, reservedDelta: 1,
+          kind: "RESERVE", source: "SYSTEM", refId, idempotencyKey: `reserve:${refId}`,
+        },
+      });
+      await prisma.assetUnderstanding.create({
+        data: {
+          id, ownerId: OWNER, assetId, kind: "image-caption",
+          status: "QUEUED", priceInternalSnapshot: 1, moneyRefId: refId,
+        },
+      });
+
+      // **清道夫在供应商往返的中途开火** —— 这就是那个窗口的真实形状(跑满 60 分钟的一趟,
+      // 钱清道夫把它退了,而模型随后才把结果送回来)。
+      const reaperMidFlight: UnderstandingProvider = {
+        name: "mock",
+        async understand(req) {
+          await prisma.$transaction((tx) =>
+            refundReservation(tx, { orgId: OWNER, refId, reason: "understanding-reservation-reaper" }),
+          );
+          return port.understand(req);
+        },
+      };
+
+      const ledgerBefore = await prisma.creditLedger.count({ where: { orgId: OWNER, refId } });
+      const balanceBefore = (await prisma.creditAccount.findUniqueOrThrow({ where: { orgId: OWNER } })).balance;
+
+      await expect(handleUnderstand({ understandingId: id }, 0, reaperMidFlight)).resolves.toBeNull();
+
+      const after = await myRow(id);
+      // 承重①:没有落 DONE —— 落了就是白送一份读好的产物,而权威账本记着 REFUND。
+      expect(after!.status).not.toBe("DONE");
+      expect(after!.status).toBe("QUEUED"); // 退回队列开新回合(恢复协议下一趟换 refId 重扣)
+      expect(after!.data).toBeNull(); // 产物一格没落
+      // 承重②:账本零新增(那笔 REFUND 是清道夫写的,不是这一趟写的),余额一分没再动。
+      expect(await prisma.creditLedger.count({ where: { orgId: OWNER, refId } })).toBe(ledgerBefore + 1);
+      expect(await prisma.creditLedger.count({ where: { orgId: OWNER, refId, kind: "SETTLE" } })).toBe(0);
+      expect((await prisma.creditAccount.findUniqueOrThrow({ where: { orgId: OWNER } })).balance).toBe(
+        balanceBefore + 1, // 清道夫把那 1 credit 还回去了 —— 这一趟自己一分没动
+      );
+    },
+    30_000,
+  );
+});
+
+/**
+ * **被暂停的 workspace**(MONEY-A13,规格 §7.5「不重投、不打供应商」;钱引擎⑤B)。
+ *
+ * 真库才证得了两件事:`reserveCredits` 里那道暂停咽喉真的会对「存在成员行且全部
+ * suspended」抛出来(判定读的是真的 Membership 行),以及扫描器第 ④ 段那句
+ * `NOT EXISTS … bool_and(...)` 真的把这些行挡在捞回之外 —— 少了它,余额充足的暂停商家
+ * 每一件停着的素材都会每分钟被捞起来空转一轮。
+ */
+describe("MONEY-A13:暂停的 workspace ⇒ 停在 PAUSED_BALANCE,零供应商调用、零捞回", () => {
+  async function suspendEveryone(): Promise<string> {
+    const user = await prisma.user.create({
+      data: { email: `${newId()}@a13-understand.test`, name: "a13" },
+      select: { id: true },
+    });
+    const membershipId = newId();
+    await prisma.membership.create({
+      data: { id: membershipId, userId: user.id, orgId: OWNER, status: "suspended" },
+    });
+    return membershipId;
+  }
+
+  it(
+    "全员 suspended ⇒ 行落 PAUSED_BALANCE、不抛(不抛 = 不重投)、供应商一次不调、扫描器不捞回",
+    async () => {
+      const assetId = await seedAsset();
+      const id = newId();
+      await setBalance(10_000); // 余额充足 —— 挡住它的是暂停,不是钱
+      await prisma.assetUnderstanding.create({
+        data: { id, ownerId: OWNER, assetId, kind: "image-caption", status: "QUEUED", priceInternalSnapshot: 1 },
+      });
+      const membershipId = await suspendEveryone();
+      const understandCalls: unknown[] = [];
+      const counting = {
+        name: "mock",
+        async understand(req: Parameters<UnderstandingProvider["understand"]>[0]) {
+          understandCalls.push(req);
+          return port.understand(req);
+        },
+      } satisfies UnderstandingProvider;
+
+      try {
+        // 承重的第一件事:**不抛**。抛 = pg-boss 重投 = 死信 = 30 分钟后清道夫退回 QUEUED = 死循环。
+        await expect(handleUnderstand({ understandingId: id }, 0, counting)).resolves.toBeNull();
+        expect(understandCalls).toHaveLength(0);
+        expect((await myRow(id))!.status).toBe("PAUSED_BALANCE");
+        // 账本零新增:拒绝是「什么都没发生」,不是「发生了再退一半」。
+        expect(await prisma.creditLedger.count({ where: { orgId: OWNER, refId: `understanding:${id}` } })).toBe(0);
+
+        // 扫描器第 ④ 段:余额够,但这个 workspace 停着 ⇒ 一轮都不捞。
+        expect(await scanAssetsNeedingUnderstanding()).not.toContain(id);
+        expect((await myRow(id))!.status).toBe("PAUSED_BALANCE");
+
+        // 解除暂停 ⇒ 下一轮自然回到队列,不需要任何补偿性回填。
+        await prisma.membership.update({ where: { id: membershipId }, data: { status: "active" } });
+        expect(await scanAssetsNeedingUnderstanding()).toContain(id);
+        expect((await myRow(id))!.status).toBe("QUEUED");
+      } finally {
+        await prisma.membership.deleteMany({ where: { orgId: OWNER } });
+        await prisma.user.deleteMany({ where: { email: { endsWith: "@a13-understand.test" } } });
+      }
     },
     30_000,
   );
