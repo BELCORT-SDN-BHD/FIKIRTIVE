@@ -26,7 +26,13 @@ import {
   GEN_VIDEO_MODEL_OPTIONS,
   videoDefaults,
   imageDefaults,
+  routeVideoModel,
+  routeImageModel,
+  isSellableVideoSku,
+  isSellableImageSku,
+  PRO_IMAGE_MODEL,
   merchantGenFailureMessage,
+  merchantRouteReason,
   videoElementReferencesHonoured,
   approvedEntityDrift,
   parseApprovedEntities,
@@ -117,6 +123,16 @@ export type ActiveGenModels = {
   imageAspectRatios: string[];
   /** 商家没选形状时会交付的那一格。UI 的初始选中值取这里，所以「显示的」= 「会交付的」。 */
   imageDefaultAspect: string;
+  /**
+   * Creation S2 §8.1①(CREATE-A6)—— 「精修 / 高细节」这一格能力,商家勾得到的那一格。
+   *
+   * `null` = 今天卖不了(没有已裁的价)⇒ 界面**整格不渲染**,一个字都不说。
+   * 有值时:`credits` 是勾上之后每张的价(界面必须在按下之前显示它,商家授权的
+   * 是那个数字),`aspectRatios` 是这一档自己那份形状菜单(它比默认档窄 ——
+   * 收不下的形状不许出现在菜单上,那是一个必然失败的付费请求)。
+   * **型号名一个都没有**:商家侧只见能力(S1 九问4)。
+   */
+  imageFineDetail: { credits: number; aspectRatios: string[] } | null;
 };
 
 class QueuePrepareFailed extends Error {}
@@ -145,6 +161,60 @@ function resolvePublicModelAlias(raw: unknown): unknown {
   if (!match) return raw;
   const model = modelMenu(kind)[Number(match[1]) - 1];
   return model ? { ...record, model } : raw;
+}
+
+/**
+ * **能力路由**(Creation S2 §8.1①,CREATE-A4 / A6)—— 商家说的是能力,我们挑的是槽位。
+ *
+ * 两条路同形:视频看**请求的分辨率**(1080p → 高清槽位),图片看**商家勾的能力位**
+ * (`fineDetail` → pro 槽位)。请求里从来没有槽位名,只有能力。
+ *
+ * 为什么必须发生在 `genRequest.safeParse` **之前**:契约闸按 `model` 的能力表校验
+ * 分辨率(`GEN_VIDEO_MODEL_OPTIONS[model].resolutions`)与画幅
+ * (`GEN_IMAGE_MODEL_OPTIONS[model].aspectRatios`)。商家要 1080p 而请求上挂着
+ * 默认槽位,那一格根本不在默认槽位的能力表上 —— 先路由再校验,商家要的档才走得到
+ * 它自己那一台引擎上;先校验再路由则永远拒。
+ *
+ * 路由**只对「没点名槽位」的请求生效**(r1 判官 P1 落修)。判据是现成的:服务端交给
+ * 浏览器的别名永远只有当前默认槽位那一格(`getActiveGenModels` → `publicModelAlias`),
+ * 所以「请求上挂着默认槽位」= 商家什么都没挑 = 由能力(分辨率)决定去哪一台;
+ * 「请求上挂着**非默认**槽位」= 一次明确的点名,只可能来自带外调用,而对一次点名的
+ * 正确回答是**如实回答**,不是把它归位到另一台。
+ *
+ * 这一格就是 CREATE-A5 的「拒绝(不是降级)」落在请求路上的地方:
+ * `{高清槽位 × 720p}` 原样放行 ⇒ 契约闸认(720p 在它能力表上)⇒ 付费闸
+ * (`assertSpendableModel`)按 SKU 白名单答「这一格没有价」⇒ 拒绝、$0、ledger 零新增行。
+ * 旧版在这里无条件按分辨率覆写 model,于是同一份请求被**静默换成默认槽位并照常扣款** ——
+ * 商家点名 A 引擎、跑的是 B 引擎,正是规格 §1 九问4「商家请求的路由结果一律拒绝、不降级」
+ * 禁的那件事,也让付费闸在整条请求路上变成永不触发的死防线。
+ * 菜单外的 id(历史行 / 垃圾值)原样透传,由契约闸拒。
+ *
+ * 幂等键安全:键在这一步**之前**由服务端从商家意图算出(`assetActionKey` 等),
+ * 而同一个意图(同一个槽位 + 同一个分辨率)永远得到同一个结果,所以路由不会让同一次
+ * 意图产生两个键,也不会让两个不同意图共用一个键。
+ */
+function routeCapabilitySlot(raw: unknown): unknown {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const record = raw as Record<string, unknown>;
+  const kind = record.kind === "video" ? "video" : "image";
+  const named = typeof record.model === "string" ? record.model : null;
+  if (!named || !modelMenu(kind).includes(named)) return raw;
+  // 点名了非默认槽位 ⇒ 不改写。让它带着自己的槽位去撞 SKU 白名单闸。
+  if (named !== (kind === "video" ? activeVideoModel() : activeImageModel())) return raw;
+  // 判官 r1 P1 落修 —— **图片侧也走能力路由**,判据与视频侧同形:请求上带的是
+  // 商家勾的那一格能力(`fineDetail`),不是槽位名;槽位由这里挑。此前这一整支
+  // 直接 `return raw`,于是 pro 槽位只能靠一个知道隐藏别名的调用方点名 ——
+  // 那不是「能力路由」,那是带外指定,而规格 §1 九问4 要的正是前者。
+  const routed = kind === "video"
+    ? routeVideoModel(typeof record.resolution === "string" ? record.resolution : null).model
+    : routeImageModel({ fineDetail: record.fineDetail === true }).model;
+  return routed === named ? raw : { ...record, model: routed };
+}
+
+/** 别名解析 → 能力路由。两条入口(`startGen` 与 `startCoworkGen`)走**同一个**helper,
+ *  免得两处对同一份请求得出两个槽位。 */
+function resolveRequestModel(raw: unknown): unknown {
+  return routeCapabilitySlot(resolvePublicModelAlias(raw));
 }
 
 /** 继承快照**读失败**。这不是一个答案,是「不知道」——`startGen` 把它翻译成一个可重试的
@@ -370,7 +440,7 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
 /** Otto/GEN_CARD's paid entrypoint. The durable card — not the browser or model — supplies
  * the approved displayed-credit quote and binds it to this owner, thread, project, and key. */
 export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
-  const parsed = genRequest.safeParse(resolvePublicModelAlias(raw));
+  const parsed = genRequest.safeParse(resolveRequestModel(raw));
   if (!parsed.success) return { error: "That generation request is out of bounds." };
   const { idempotencyKey, projectId, threadId } = parsed.data;
   if (!idempotencyKey?.startsWith("cowork:") || idempotencyKey.length <= "cowork:".length || !threadId) {
@@ -484,7 +554,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<StartGenResult> => {
     const OWNED = { ownerId, deletedAt: null } as const;
-    const parsed = genRequest.safeParse(resolvePublicModelAlias(raw));
+    const parsed = genRequest.safeParse(resolveRequestModel(raw));
     if (!parsed.success) return { error: "That generation request is out of bounds." };
     const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId, approvedEntities, coherentSet } = parsed.data;
     // #914 r6(判官 r5 P2)—— 「商家原话」**只**从可信记录取,永远不从 `parsed.data` 取:
@@ -743,7 +813,14 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     }
 
     const kindForModel = kind === "image" ? "image" : "video";
-    const spendable = assertSpendableModel(model, kindForModel);
+    // Creation S2 §8.1①(CREATE-A4/A5/A6)—— 闸判到 **SKU 级**,不是槽位级:同一台引擎
+    // 里有价的档与没价的档必须分开判。两根轴都从**这一份请求**上取(缺省 ⇒ 该槽位自己
+    // 声明的默认档),所以商家选了什么就按什么判。白名单外 = 拒绝、不降级,而且这一步
+    // 仍然在 `pricedGenCredits` 与 `reserveCredits` **之前** ⇒ 拒绝这一路 ledger 零新增行。
+    const spendable = assertSpendableModel(model, kindForModel, undefined, {
+      resolution: resolution ?? null,
+      seconds: durationSeconds ?? null,
+    });
     if (!spendable.ok) return { error: sanitizeUserError(spendable.error) };
 
     // P2: the deterministic CHARGE in internal credits — reserved atomically with the
@@ -1116,23 +1193,51 @@ export async function getActiveGenModels(): Promise<ActiveGenModels> {
   const imageModel = activeImageModel();
   const videoModel = activeVideoModel();
   const defaults = videoDefaults(videoModel as GenVideoModel);
-  const videoOpts = GEN_VIDEO_MODEL_OPTIONS[videoModel as GenVideoModel];
-  // #645 T4:整张按秒价目表,由**收费函数本人**逐档算出来 —— 选择器显示的每一个数字都
-  // 是 startGen 到时会预扣的那个数字,不是界面另算的一份。
+  /**
+   * #645 T4:整张按秒价目表,由**收费函数本人**逐档算出来 —— 选择器显示的每一个数字都
+   * 是 startGen 到时会预扣的那个数字,不是界面另算的一份。
+   *
+   * 判官 r1 P1 落修 —— 菜单从「默认槽位的能力表」改成「**全部槽位的可售 SKU 并集**」。
+   * 旧版只枚举默认槽位,于是 1080p 从来没有出现在商家的选择器上:菜单里没有它,
+   * `video-spec.ts` 的 clamp 又会把一个来自回放的 1080p 夹回默认档 —— CREATE-A4
+   * 的「商家要求 1080p」这一步在真实界面上根本执行不了,验收只能靠手工构造的请求假绿。
+   *
+   * 三条纪律:
+   *  ① 只放**可售**的格(`isSellableVideoSku`,与付费闸 `assertSpendableModel` 同一个判据)
+   *     —— 菜单上出现一个没有价的档,商家点了才被拒,那是把 fail closed 做成了陷阱;
+   *  ② 每一格的价按**它提交后真会落到的那个槽位**算(`routeVideoModel`),不是按默认槽位
+   *     —— 报价与预扣同源,一格不差;
+   *  ③ 路由把这一档挑到别的槽位去了(`routed !== slot`)⇒ 这一轮跳过,留给那个槽位自己
+   *     那一轮报价。宁可少一格,也不显示一个「显示的引擎」与「跑的引擎」不同的价。
+   */
   const videoCreditsBySpec: Record<string, number> = {};
-  for (const resolution of videoOpts.resolutions) {
-    for (const seconds of videoOpts.durations) {
-      videoCreditsBySpec[`${resolution}:${seconds}`] = displayCredits(pricedGenCredits({
-        kind: "VIDEO",
-        model: videoModel,
-        count: 1,
-        videoOptions: { seconds, resolution },
-      }));
+  const videoResolutions: string[] = [];
+  const videoDurationSet = new Set<number>();
+  // 默认槽位排在前面 —— 它的档位顺序就是今天选择器的顺序,并集只在后面补别的槽位独有的档。
+  const videoSlots = [videoModel, ...GEN_VIDEO_MODELS.filter((m) => m !== videoModel)];
+  for (const slot of videoSlots) {
+    const opts = GEN_VIDEO_MODEL_OPTIONS[slot as GenVideoModel];
+    if (!opts) continue;
+    for (const resolution of opts.resolutions) {
+      if (routeVideoModel(resolution).model !== slot) continue; // ③
+      for (const seconds of opts.durations) {
+        if (!isSellableVideoSku(slot, resolution, seconds)) continue; // ①
+        const key = `${resolution}:${seconds}`;
+        if (key in videoCreditsBySpec) continue;
+        videoCreditsBySpec[key] = displayCredits(pricedGenCredits({
+          kind: "VIDEO",
+          model: slot, // ②
+          count: 1,
+          videoOptions: { seconds, resolution },
+        }));
+        if (!videoResolutions.includes(resolution)) videoResolutions.push(resolution);
+        videoDurationSet.add(seconds);
+      }
     }
   }
   return {
-    videoDurations: [...videoOpts.durations],
-    videoResolutions: [...videoOpts.resolutions],
+    videoDurations: [...videoDurationSet].sort((a, b) => a - b),
+    videoResolutions,
     videoI2vDefaultAspect: videoDefaults(videoModel as GenVideoModel, { hasSourceImage: true }).aspectRatio,
     videoCreditsBySpec,
     image: publicModelAlias("image", imageModel),
@@ -1156,6 +1261,36 @@ export async function getActiveGenModels(): Promise<ActiveGenModels> {
     videoAspectRatios: [...GEN_VIDEO_MODEL_OPTIONS[videoModel as GenVideoModel].aspectRatios],
     imageAspectRatios: [...GEN_IMAGE_MODEL_OPTIONS[imageModel as GenModel].aspectRatios],
     imageDefaultAspect: imageDefaults(imageModel as GenModel).aspectRatio,
+    imageFineDetail: imageFineDetailCapability(),
+  };
+}
+
+/**
+ * 「精修 / 高细节」这一格能力,交给界面的那一份(Creation S2 §8.1①,CREATE-A6)。
+ *
+ * 判官 r1 P1 落修:pro 槽位过去没有**任何**生产入口 —— 界面拿不到它的价、也拿不到
+ * 它自己那份画幅菜单,于是只有一个知道隐藏别名的调用方点得到它。这里把它变成
+ * 一格**能力**交给界面:一个价、一份画幅菜单,**一个型号名都没有**。
+ *
+ * 三条纪律:
+ *  ① **没有价就不出现**(`isSellableImageSku`,与付费闸同一个判据)—— 菜单上出现一格
+ *     没有价的能力,商家点了才被拒,那是把 fail closed 做成了陷阱;
+ *  ② 画幅菜单取**pro 自己那一份**(它的像素上限比 lite 低,16:9 / 9:16 收不下)——
+ *     界面据此收窄形状那一格,商家勾了精修就不会看到一个必然生成失败的形状;
+ *  ③ 价由 `pricedGenCredits` 按 pro 槽位算,与 startGen 预扣同源。
+ */
+function imageFineDetailCapability(): ActiveGenModels["imageFineDetail"] {
+  if (!isSellableImageSku(PRO_IMAGE_MODEL)) return null;
+  const opts = GEN_IMAGE_MODEL_OPTIONS[PRO_IMAGE_MODEL];
+  if (!opts || opts.aspectRatios.length === 0) return null;
+  return {
+    credits: displayCredits(pricedGenCredits({
+      kind: "IMAGE",
+      model: PRO_IMAGE_MODEL,
+      count: 1,
+      videoOptions: null,
+    })),
+    aspectRatios: [...opts.aspectRatios],
   };
 }
 
@@ -1168,6 +1303,7 @@ export async function getGenJob(jobId: string, projectId?: string) {
   });
   if (!job) return null;
   let urls: string[] = [];
+  let routeReason: string | null = null;
   if (job.generationIds.length) {
     const gens = await prisma.generation.findMany({
       where: { id: { in: job.generationIds }, ownerId, ...(projectId ? { projectId } : {}) },
@@ -1176,10 +1312,24 @@ export async function getGenJob(jobId: string, projectId?: string) {
     // return urls in the order the worker produced them — findMany order is the
     // DB's, so a multi-image batch would otherwise come back shuffled
     const byId = new Map(gens.map((g) => [g.id, g]));
-    urls = job.generationIds
+    const ordered = job.generationIds
       .map((gid) => byId.get(gid))
-      .filter((g): g is NonNullable<typeof g> => !!g)
-      .map((g) => storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext)));
+      .filter((g): g is NonNullable<typeof g> => !!g);
+    urls = ordered.map((g) => storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext)));
+    // Creation S2 §8.1①(CREATE-A4 / A12,判官 r1 P1 落修)—— **理由「可查」的产品读路径**。
+    //
+    // worker 把这句话落在每一行产出上(`Generation.routeReason`);在这之前它只被写、
+    // 从来没有被任何产品接口读过,于是「可查」这条验收在生产代码上其实是空的。
+    // 一单里的每一行都是同一次路由的产物 ⇒ 同一句话,所以取第一条有值的那一行。
+    // null = 这一趟没有升档(走的是默认槽位),没什么可解释的 —— 界面据此不说话,
+    // 而不是编一句「用了默认档」出来。
+    //
+    // Codex r2 P1 落修:这一行以前把库里的字符串**原样**交给浏览器,而资产回执那条路
+    // 过了一层白标 —— 同一列数据、两条产品路、两种口径,那不是纵深防御,那是一个洞。
+    // `merchantRouteReason` 现在是两条路共用的**同一个**出口(@fikirtive/core,与写这
+    // 句话的 `routeReasonFor` 同住),所以任何一天有人往这一列写进带型号名的字符串
+    // (手工回填、一次迁移、别处的旧代码),两条路都拦得住,而不是只有一条。
+    routeReason = merchantRouteReason(ordered.find((g) => g.routeReason)?.routeReason ?? null);
   }
   return {
     id: job.id,
@@ -1196,6 +1346,8 @@ export async function getGenJob(jobId: string, projectId?: string) {
     urls,
     generationIds: job.generationIds,
     spent: job.spent,
+    /** 这一趟为什么落到这一档 —— 只有能力名词,没有型号名(S1 九问4)。null = 没升档。 */
+    routeReason,
   };
 }
 

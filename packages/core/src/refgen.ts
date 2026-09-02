@@ -21,6 +21,7 @@
  */
 import { z } from "zod";
 import { costPinValue } from "./cost-pins.js";
+import type { GenModel } from "./gen.js";
 
 /** v1 model menu — one workhorse. The port, not this list, is the extension
  *  point; adding a model is a provider concern, not a contract change. */
@@ -105,7 +106,18 @@ export interface GenerationRequest {
   prompt: string;
   inputImageUrls: string[];
   count: number;
-  model: RefGenModel;
+  /**
+   * 哪一个槽位。**两张菜单的并集**(判官 r1 P2 落修):这个端口同时服务参考图
+   * (`RefGenModel` —— 参考图菜单,一台 workhorse)和图片生成(`GenModel` ——
+   * Creation S2 §8.1① 起是 lite + pro 两格)。
+   *
+   * 为什么是并集而不是把 pro 塞进 `REFGEN_MODELS`:那是**参考图请求的菜单**,
+   * 写进去等于顺手给参考图开一台没有定价、没有验收的槽位(`refgenRequest` 的
+   * `z.enum(REFGEN_MODELS)` 与毛利表的 `sellableRefgenSkus()` 都读它)。这里要的
+   * 只是**端口契约**认得图片菜单那一格,好让编译器去检查 pro 的映射与适配器对不对得上
+   * —— 此前 worker 靠 `as` 强转绕过,pro 的契约一致性从来没有被编译器看过一眼。
+   */
+  model: RefGenModel | GenModel;
   /** 商家要的画幅(`GEN_IMAGE_ASPECTS` 之一)。缺省 ⇒ 适配器按默认画幅(方图)出图。
    *  参考图(refgen)不设画幅,始终走默认 —— 参考图是给引擎看的素材,不是交付物。 */
   aspectRatio?: string;

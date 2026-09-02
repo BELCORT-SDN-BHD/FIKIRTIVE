@@ -35,6 +35,8 @@ import {
   displayCredits,
   genJobEndedWithoutDelivering,
   merchantGenFailureMessage,
+  routeReasonFor,
+  genImageModel,
   type GenJobData,
   type GenModel,
   type GenVideoModel,
@@ -1311,7 +1313,13 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // #914 r4:编号句在这一行才长出来 —— 所以「实际送出的那一整句」也只有在这一行
         // 之后才存在。落库落的就是这个变量本身(见 sentPromptText 的写入)。
         sentPrompt = withReferenceMap(job.prompt, refSlots);
-        outputs = await provider.generate({ prompt: sentPrompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio, coherentSet });
+        // 判官 r1 P2 落修:`GenerationRequest.model` 已放宽成 `RefGenModel | GenModel`
+        // (`packages/core/src/refgen.ts`),所以 pro 槽位不再靠 `as` 强转过门 ——
+        // 编译器现在真的会检查这一格与适配器契约对不对得上。`job.model` 仍是一个无约束的
+        // DB 字符串,所以它经 `genImageModel()` 收窄到菜单上的一格,而**菜单外的 id 一律抛**
+        // (不回落默认槽位:回落 = 一条没在册的行照常跑、照常收钱)。抛点仍在付费调用之前,
+        // 与适配器过去那句「no image model mapping」落在同一个 try、同一条退款路上。
+        outputs = await provider.generate({ prompt: sentPrompt, inputImageUrls, count: job.count, model: genImageModel(job.model), aspectRatio, coherentSet });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
       // #782 r13 (judge r12 P1-F1) — THE WRITE-POINT INVARIANT: a DONE job can always point at
@@ -1388,6 +1396,16 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
                   // it predates the column, or it came from an ingest path that never calls one
                   // (upload-actions, asset-actions.saveCroppedGeneration).
                   sentPromptText: sentPrompt,
+                  // Creation S2 §8.1①(CREATE-A4 / A12)—— **能力路由的理由**,现算而不是
+                  // 从请求那一侧搬运:输入只有这一行已冻结的 job(kind + model + 分辨率),
+                  // 函数与请求侧报价说的那一句是同一个(`routeReasonFor`),所以「商家看到的
+                  // 理由」与「库里存的理由」不可能分家。走默认槽位 ⇒ null(没有升档,
+                  // 没什么可解释的),而不是编一句话出来。
+                  routeReason: routeReasonFor({
+                    kind: job.kind === "VIDEO" ? "video" : "image",
+                    model: job.model,
+                    resolution: (job.videoOptions as { resolution?: string } | null)?.resolution ?? null,
+                  }),
                   entitySnapshot, version: 1, attachedAt: null,
                 },
               });

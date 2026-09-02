@@ -40,9 +40,15 @@ describe("isModelDisabled / enabledVideoModels (additive narrowing only)", () =>
     // a garbage disabled id can't change the menu (it was never in it)
     expect(isModelDisabled("not-a-model", garbage)).toBe(true); // disable-set membership is literal
   });
-  it("the union dedup matters: GEN_MODELS===REFGEN_MODELS===['seedream']", () => {
-    expect([...GEN_MODELS]).toEqual(["seedream"]);
+  // Creation S2 §8.1①(2026-09-02):图片菜单开出第二格(`seedream-pro`),参考图菜单没有动
+  // —— 于是这两个 catalog 第一次**不再是同一个集合**,而这正是 dedup 那行代码存在的理由:
+  // 它必须把两边共有的 `seedream` 合成一格,同时不吞掉只属于图片菜单的那一格。
+  it("the union dedup matters: GEN_MODELS ⊋ REFGEN_MODELS (shared 'seedream' dedupes to one)", () => {
+    expect([...GEN_MODELS]).toEqual(["seedream", "seedream-pro"]);
     expect([...REFGEN_MODELS]).toEqual(["seedream"]);
+    // 共有的那一格只出现一次,独有的那一格没有被吞掉。
+    expect(ALL_MODEL_IDS.filter((id) => id === "seedream")).toHaveLength(1);
+    expect(ALL_MODEL_IDS).toContain("seedream-pro");
   });
 });
 

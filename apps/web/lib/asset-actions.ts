@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@fikirtive/db";
-import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES, GEN_IMAGE_ASPECTS } from "@fikirtive/core";
+import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES, GEN_IMAGE_ASPECTS, merchantRouteReason } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { storage, kindOf, extFromFilename } from "./storage";
 import { redactProviderNames } from "./provider-secrecy";
@@ -84,6 +84,18 @@ export type GenerationDTO = {
    * 面板据此如实说「和这张一样的形状」而不是编一个比例出来。
    */
   imageAspect: string | null;
+  /**
+   * Creation S2 §8.1①(CREATE-A4 / CREATE-A12)—— **这一张为什么落到这一档**。
+   *
+   * 与上面两句回执同族:都是「我们对这一张做了什么」的可查记录,由 worker 在建行时
+   * 用纯函数现算并落库(`Generation.routeReason`,与请求侧报价说的是同一个函数
+   * `routeReasonFor`,所以商家看到的理由与库里存的理由不可能分家)。
+   *
+   * `null` = **这一趟没有升档**(走的是默认槽位),没什么可解释的 ⇒ 面板整行不渲染,
+   * 不编一句「用了默认档」。句子里只有能力名词,一个型号名都没有(S1 九问4);
+   * 白标由 `merchantRouteReason` 在这道边界上兜一层。
+   */
+  routeReason: string | null;
 };
 
 export async function getGeneration(
@@ -101,6 +113,9 @@ export async function getGeneration(
       promptText: true,
       finalPromptText: true,
       sentPromptText: true,
+      // Creation S2 §8.1①(CREATE-A4 / A12,判官 r1 P1 落修)—— 「这一张为什么落到这一档」。
+      // worker 在建行时用纯函数现算并落库(`routeReasonFor`);这里是它的**产品读路径**。
+      routeReason: true,
       favorite: true,
       asset: { select: { ownerId: true, contentHash: true, ext: true } },
     },
@@ -166,6 +181,13 @@ export async function getGeneration(
     favorite: gen.favorite,
     sourceGenerationId: job?.sourceGenerationId ?? null,
     imageAspect: snapshotImageAspect(job?.imageOptions),
+    // Creation S2 §8.1①(CREATE-A4 / A12)—— 能力路由的理由,与上面那两句回执同族:
+    // 都是「我们对这一张做了什么」的可查记录。`merchantRouteReason`(@fikirtive/core,与
+    // 写这句话的 `routeReasonFor` 同一个文件)是它跨过商家边界的**唯一**出口
+    // (白标 + 「空即未知」)—— Codex r2 之前这里有一份本地实现,而出片轮询那条路没有,
+    // 同一列数据两种口径;现在两条路读的是同一个函数。
+    // null = 这一趟没有升档 ⇒ 面板整行不渲染,不编一句「用了默认档」。
+    routeReason: merchantRouteReason(gen.routeReason),
   };
 }
 

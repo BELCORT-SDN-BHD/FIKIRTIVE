@@ -56,6 +56,9 @@ type GenDTO = {
    * 或上传/裁剪这类没调过引擎的行）⇒ 整块不渲染，一个字不说。
    */
   sentPrompt: null | { verbatim: true } | { verbatim: false; text: string };
+  /** Creation S2 §8.1①(CREATE-A4 / A12)—— 这一趟为什么落到这一档(只写能力名词)。
+   *  null / 缺席 = 没升档,整块不渲染 —— 不编一句「用了默认档」。 */
+  routeReason?: string | null;
   favorite: boolean;
   sourceGenerationId: string | null;
   /** #643 T2：这张图当初交付时的形状（快照，非像素反推）。老图读不到 ⇒ null。 */
@@ -747,6 +750,23 @@ export default function DetailPanel({
                 </span>
                 <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
                   {gen.sentPrompt.verbatim ? "Sent exactly as you wrote it." : gen.sentPrompt.text}
+                </p>
+              </div>
+            )}
+
+            {/* Creation S2 §8.1①(CREATE-A4 / CREATE-A12,Codex r1 P1-3 落修)—— **为什么是这一档**。
+                与上面两块回执同族:都是「我们对这一张做了什么」的可查记录。服务端已经比完
+                (asset-actions 的 merchantRouteReason:白标 + 「空即未知」),这里只负责显示。
+                `!= null` 而不是 `!== null` —— 字段整个读不到(老的调用点 / 老的 DTO)与
+                「这一趟没升档」是同一件事:两种都往「什么都不说」那一边倒,整块不渲染,
+                绝不编一句「用了默认档」。句子里只有能力名词,一个型号名都没有。 */}
+            {gen.routeReason != null && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
+                  Why this tier
+                </span>
+                <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+                  {gen.routeReason}
                 </p>
               </div>
             )}

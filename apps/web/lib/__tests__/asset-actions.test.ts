@@ -32,15 +32,21 @@ vi.mock("@fikirtive/db", () => ({
   },
 }));
 // stub storageKey so tests don't need 64-char hex hashes in fixtures
-vi.mock("@fikirtive/core", () => ({
-  storageKey: (ownerId: string, contentHash: string, ext: string) =>
-    `u/${ownerId}/${contentHash}.${ext}`,
-  newId: () => "new-id-stub",
-  resolveUploadMime: (_bytes: Uint8Array, ext: string) => `image/${ext}`,
-  MEDIA_SNIFF_BYTES: 4096,
-  // #643 T2：面板要说出这张图当初是什么形状，靠的是这份菜单把快照里的值验一遍。
-  GEN_IMAGE_ASPECTS: ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"],
-}));
+vi.mock("@fikirtive/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@fikirtive/core")>();
+  return {
+    storageKey: (ownerId: string, contentHash: string, ext: string) =>
+      `u/${ownerId}/${contentHash}.${ext}`,
+    newId: () => "new-id-stub",
+    resolveUploadMime: (_bytes: Uint8Array, ext: string) => `image/${ext}`,
+    MEDIA_SNIFF_BYTES: 4096,
+    // #643 T2：面板要说出这张图当初是什么形状，靠的是这份菜单把快照里的值验一遍。
+    GEN_IMAGE_ASPECTS: ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"],
+    // Codex r2 P1：路由理由跨过商家边界的那道白标出口，用**真的**那一个。
+    // stub 成恒等函数等于在测试里把这道边界拆掉，然后测一个没有边界的世界。
+    merchantRouteReason: actual.merchantRouteReason,
+  };
+});
 // storage.url is called by getGeneration; stub it to return a predictable URL
 vi.mock("../storage", () => ({
   storage: {

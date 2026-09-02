@@ -16,12 +16,80 @@ describe("BytePlusProvider — wiring", () => {
     //   arkcli models get dreamina-seedance-2-0-mini      → id / primary_version = …-260615
     //   arkcli models versions dreamina-seedance-2-0-mini → 只有 260615 一个版本
     expect(VIDEO_MODEL_MAP["seedance-2-mini"]).toBe("dreamina-seedance-2-0-mini-260615");
+    // Creation S2 §8.1①(2026-09-02):pro 图槽位与高清视频槽位上架,供应商 id 只住在这张表里。
+    // 两条同样是**版本化** id(r1 判官 P1 落修,2026-09-02 `arkcli models get` 只读核实):
+    //   dola-seedream-5-0-pro     → id / primary_version = …-260628(versions 只回这一个)
+    //   dreamina-seedance-2-0     → id / primary_version = …-260128(versions 只回这一个)
+    // 基名会跟着平台换版本走,而这两格的成本钉点是版本相关的实测 —— 换版本要重跑实测。
+    expect(IMAGE_MODEL_MAP["seedream-pro"]).toBe("dola-seedream-5-0-pro-260628");
+    expect(VIDEO_MODEL_MAP["seedance-2-0"]).toBe("dreamina-seedance-2-0-260128");
+    // 在产的四条接线全部带版本尾 —— 没有版本尾的 id 会悄悄跟着平台换版本,
+    // 而每一格的价都钉在一次版本相关的实测上。
+    for (const arkId of [...Object.values(IMAGE_MODEL_MAP), ...Object.values(VIDEO_MODEL_MAP)]) {
+      expect(arkId, `${arkId} 没有版本尾`).toMatch(/-\d{6}$/u);
+    }
     // 下架的那一台不许还留着一条能把钱花出去的路(与 GEN_VIDEO_MODELS 同进同退)。
     expect(VIDEO_MODEL_MAP["seedance-2-fast"]).toBeUndefined();
-    expect(Object.keys(VIDEO_MODEL_MAP)).toEqual(["seedance-2-mini"]);
+    expect(Object.keys(VIDEO_MODEL_MAP)).toEqual(["seedance-2-mini", "seedance-2-0"]);
+    expect(Object.keys(IMAGE_MODEL_MAP)).toEqual(["seedream", "seedream-pro"]);
+  });
+
+  // 双声明纪律的机器化:菜单(@fikirtive/core)与接线表(这里)必须**逐字同集**。
+  // T6 之前那 12 台假引擎正是靠「某一张表上有、另一张没有」活下来的;两台在产引擎之后
+  // 这条纪律更容易破,所以把它写成断言而不是注释。
+  it("接线表与 core 的菜单逐字同集(双声明纪律)", async () => {
+    const { GEN_MODELS, GEN_VIDEO_MODELS } = await import("@fikirtive/core");
+    expect(Object.keys(IMAGE_MODEL_MAP).sort()).toEqual([...GEN_MODELS].sort());
+    expect(Object.keys(VIDEO_MODEL_MAP).sort()).toEqual([...GEN_VIDEO_MODELS].sort());
   });
   it("has a stable provider name", () => {
     expect(new BytePlusProvider("ark-test").name).toBe("byteplus");
+  });
+
+  /**
+   * Codex r2 P1 —— **过滤表 × 供应商 id 全集**。
+   *
+   * 这两张表是**生成侧**唯一允许出现供应商真 id 的地方(理解侧另有一张
+   * `UNDERSTANDING_MODEL_MAP`,不在这一条的射程内 —— 判官 r3 P3 点名,别把「派生」读成
+   * 「穷尽」),而 `provider-secrecy` 的过滤表是
+   * 一张人手维护的名单 —— 一张名单只和「最后一个有人记得加进去的名字」一样好。r2 抓到的
+   * 正是这个:`dola-seedream-5-0-pro-260628` 上架时没人把 `dola` 加进过滤表,于是
+   * `redactProviderNames("dola")` 原样返回 "dola",而它是我们今天真在送的 id 的第一段。
+   *
+   * 所以这一条不背名单,它**从这两张表算出**要检查什么:把每一个 id(和每一个内部槽位名)
+   * 里的每一段字母串拆出来,逐段问过滤表认不认得。以后再上一台引擎,只要它的品牌词没进
+   * 过滤表,这一条就红 —— 而不是等下一轮复审去发现。
+   */
+  it("过滤表认得这两张表里的每一个品牌词(供应商 id 全集派生,不背名单)", async () => {
+    const { redactProviderNames } = await import("@fikirtive/core");
+    /**
+     * 故意**不**要求过滤表认得的普通英文档位词。
+     *
+     * "pro" / "lite" / "mini" 是商家自己也会写的字(卖 "Pro" 套餐、"Mini" 装),过滤表认了
+     * 它们就会去改写商家自己的话。它们不靠兜底挡,靠的是「商家可见的句子由我们自己的纯函数
+     * 写、只含能力名词」那一层(钉在 packages/core/src/creation-routing.test.ts)。
+     * 这张豁免表刻意短:每加一个词,就是少一个词有兜底。
+     */
+    const GENERIC_TIER_WORDS = ["pro", "lite", "mini"];
+    const ids = [
+      ...Object.keys(IMAGE_MODEL_MAP), ...Object.values(IMAGE_MODEL_MAP),
+      ...Object.keys(VIDEO_MODEL_MAP), ...Object.values(VIDEO_MODEL_MAP),
+    ];
+    const brandTokens = [...new Set(ids.flatMap((id) => id.toLowerCase().match(/[a-z]{3,}/gu) ?? []))]
+      .filter((token) => !GENERIC_TIER_WORDS.includes(token));
+    // 拆出来是空的 = 这一条什么都没证明。
+    expect(brandTokens.length).toBeGreaterThan(0);
+    for (const token of brandTokens) {
+      expect(redactProviderNames(token), `过滤表不认得品牌词「${token}」—— 它出现在供应商 id 里`)
+        .not.toBe(token);
+    }
+    // 整串也要过:一条 id 完整地落进商家可见的字符串里,不许有任何一段活下来。
+    for (const id of ids) {
+      const cleaned = redactProviderNames(id).toLowerCase();
+      for (const token of brandTokens) {
+        expect(cleaned, `id「${id}」过完滤还剩「${token}」`).not.toContain(token);
+      }
+    }
   });
 });
 
@@ -1325,5 +1393,65 @@ describe("#795 出网截止时间", () => {
       .generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" } as never)
       .catch((e: unknown) => e);
     expect((err as { charged?: unknown }).charged).toBe(true);
+  });
+});
+
+/**
+ * Creation S2 §8.1①(CREATE-A4 / A6)—— **越限的 size 发不出去**,逐槽位判。
+ *
+ * Codex 跨厂复审 r1 P1-4:此前这条纪律只钉在 Zod 契约上(`gen.test.ts` 断言
+ * `genRequest.safeParse` 拒),而适配器自己拿一张全家族共用的尺寸表拼 `size` ——
+ * 契约闸挡不住 **worker 从数据库快照重放的那一路**(`job.imageOptions.aspectRatio`
+ * 是一个无约束字符串,历史行与畸形行原样送到适配器)。所以这里断言的是
+ * **适配器本人**:pro + 16:9 一个 POST 都不发。
+ */
+describe("CREATE-A4 图片适配器:pro 收不下的画幅**不 POST**", () => {
+  it("CREATE-A6 pro + 16:9 / 9:16 ⇒ 抛错拒绝,fetch 一次都没被调用", async () => {
+    for (const aspectRatio of ["16:9", "9:16"] as const) {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      await expect(new BytePlusProvider("ark-test").generate({
+        prompt: "the bottle", inputImageUrls: [], count: 1, model: "seedream-pro", aspectRatio,
+      })).rejects.toThrow();
+      // 这一句才是这条 P1 的全部内容:**没有任何请求出网** ⇒ 可证明零花费。
+      expect(fetchSpy, `${aspectRatio} 竟然 POST 出去了`).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("CREATE-A6 组图那条路同样挡在 POST 之前(它是另一个分支)", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(new BytePlusProvider("ark-test").generate({
+      prompt: "the bottle", inputImageUrls: [], count: 2, model: "seedream-pro",
+      aspectRatio: "16:9", coherentSet: true,
+    })).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("CREATE-A6 pro 自己菜单上的画幅照常 POST(拒的是收不下的,不是这台引擎)", async () => {
+    let body: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/images/generations")) { body = JSON.parse(init.body); return jsonRes({ data: [{ url: "https://tos/x.png" }] }); }
+      return bytesRes();
+    });
+    await new BytePlusProvider("ark-test").generate({
+      prompt: "the bottle", inputImageUrls: [], count: 1, model: "seedream-pro", aspectRatio: "21:9",
+    });
+    expect(body.model).toBe("dola-seedream-5-0-pro-260628");
+    expect(body.size).toBe("3136x1344"); // 4,214,784 px < pro 的 4,624,220 上限
+  });
+
+  it("CREATE-A4 默认槽位一格没动:16:9 照常 POST 2880x1620", async () => {
+    let body: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/images/generations")) { body = JSON.parse(init.body); return jsonRes({ data: [{ url: "https://tos/x.png" }] }); }
+      return bytesRes();
+    });
+    await new BytePlusProvider("ark-test").generate({
+      prompt: "an apple", inputImageUrls: [], count: 1, model: "seedream", aspectRatio: "16:9",
+    });
+    expect(body.size).toBe("2880x1620");
   });
 });

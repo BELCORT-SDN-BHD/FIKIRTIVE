@@ -10,13 +10,17 @@
  */
 import { costPinValue } from "./cost-pins.js";
 import {
-  GEN_PRICE_USD_PER_IMAGE,
+  GEN_IMAGE_DEFAULT_VARIANT,
   GEN_VIDEO_MODELS,
   GEN_VIDEO_MODEL_OPTIONS,
   REFERENCE_VIDEO_COGS_USD,
+  SEEDANCE_1080P_COGS_USD_PER_SECOND,
   SEEDANCE_COGS_USD_PER_SECOND,
+  genImageCostUsd,
   videoPriceUsd,
   videoDefaults,
+  type GenImageVariant,
+  type GenModel,
   type GenVideoModel,
 } from "./gen.js";
 import { REFGEN_PRICE_USD_PER_IMAGE } from "./refgen.js";
@@ -55,7 +59,9 @@ export function genSpentUsd(job: GenSpendInput): number {
       count: job.count,
     });
   }
-  return GEN_PRICE_USD_PER_IMAGE * job.count;
+  // Creation S2 §8.1①:图片成本**按槽位取钉点**(lite $0.035 / pro $0.045)。
+  // 此前这里是一个 lite 的常量,pro 上架后那就成了「一个槽位的成本冒充另一个槽位的」。
+  return genImageCostUsd(job.model) * job.count;
 }
 
 /** Exactly the RefGenJob fields the price needs. */
@@ -90,9 +96,59 @@ export const INTERNAL_PER_DISPLAY = 10;
  *
  *  #769:换 fast→mini 走的是**换 key**,正是为了让这条纪律真的执行一次 —— 在同一个
  *  key 底下换后端 id,新引擎就不必进这个集合也能卖,这道闸就只剩一句话。mini 是被
- *  Founder 单独裁过价(价目表一格不动、毛利闸重跑全绿)之后才写进来的。 */
-export const FLAT_PRICED_VIDEO_MODELS = new Set<string>(["seedance-2-mini"]);
+ *  Founder 单独裁过价(价目表一格不动、毛利闸重跑全绿)之后才写进来的。
+ *
+ *  Creation S2 §8.1①(2026-09-02):`seedance-2-0` 进这个集合,同样是「先有价再进集合」——
+ *  它的 1080p 档由 65% 公式从两条成本钉点推出 11cr/秒,Founder 2026-09-02 追认。
+ *  注意这个集合只判到**槽位**;哪一档卖得出去由下面的 SKU 白名单说了算。 */
+export const FLAT_PRICED_VIDEO_MODELS = new Set<string>(["seedance-2-mini", "seedance-2-0"]);
 export function isFlatPricedVideoModel(model: string): boolean { return FLAT_PRICED_VIDEO_MODELS.has(model); }
+
+/* ───────────────── SKU 级已定价白名单(Creation S2 §8.1①,CREATE-A4/A5/A6)─────────────────
+ *
+ * 在产槽位从一个变成两个之后,「这台引擎可售吗」这个问题**不够细**了:
+ * 高清槽位能做 480p/720p/1080p 三档,但只有 1080p 有自己的成本钉点与已裁价;
+ * pro 图槽位有标准图/大图/图层分离三种图种,只有标准图有价。判到槽位级就会把
+ * 那些**没有价**的格子跟着放行 —— 而没有价的格子只能落护栏或兜底,那正是
+ * 「替 Founder 发明价格」。
+ *
+ * 所以判据下沉一层:**槽位 × 档位**。菜单(`GEN_*_MODEL_OPTIONS`)说引擎能做什么,
+ * 这两张表说我们卖什么。两者不同即 fail closed —— 拒绝、$0、**不降级**
+ * (降级会把商家要的东西静默换成别的;拒绝至少说了实话)。
+ */
+
+/** 每个视频槽位**已定价**的分辨率。菜单里有、这里没有 = 能力有、价没有 = 不可售。
+ *  类型钉在 `GenVideoModel` 上:上架一个槽位而不说它卖哪几档,编译期就红。 */
+export const SELLABLE_VIDEO_RESOLUTIONS: Record<GenVideoModel, readonly string[]> = {
+  // Founder 2026-08-06 裁价(#645),由 65% 公式从像素表 × 牌价复算逐格相等。
+  "seedance-2-mini": ["720p", "480p"],
+  // Founder 2026-09-02 追认(Creation §5 2026-09-01 回填行):11cr/秒。720p/480p 没有
+  // 属于这个槽位的成本钉点,所以它们不在这里 —— 不给没核过的档位编数字。
+  "seedance-2-0": ["1080p"],
+};
+
+/** 每个图片槽位**已定价**的图种。大图(计价单位未实证,`cost-pins.ts` 规矩 ②)与
+ *  图层分离(S1「不做」节)都不在 —— 显式价目表里没有它们的条目,所以它们不可售。 */
+export const SELLABLE_IMAGE_VARIANTS: Record<GenModel, readonly GenImageVariant[]> = {
+  "seedream": [GEN_IMAGE_DEFAULT_VARIANT],
+  "seedream-pro": [GEN_IMAGE_DEFAULT_VARIANT],
+};
+
+/**
+ * 这一格视频**有已裁的价**吗?三条都要成立:槽位在定额价目集合里、分辨率在该槽位的
+ * 已定价档里、秒数属于该槽位菜单开出来的档位(`seedanceDisplayCredits` 的同一条判据)。
+ * 纯函数,永不抛 —— 未知槽位/未知档位一律 false(fail closed)。
+ */
+export function isSellableVideoSku(model: string, resolution: string, seconds: number): boolean {
+  if (!isFlatPricedVideoModel(model)) return false;
+  if (!SELLABLE_VIDEO_RESOLUTIONS[model as GenVideoModel]?.includes(resolution)) return false;
+  return GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel]?.durations.includes(seconds) === true;
+}
+
+/** 这一格图片有已裁的价吗?槽位 × 图种。未知一律 false。 */
+export function isSellableImageSku(model: string, variant: string = GEN_IMAGE_DEFAULT_VARIANT): boolean {
+  return SELLABLE_IMAGE_VARIANTS[model as GenModel]?.includes(variant as GenImageVariant) === true;
+}
 
 /* ─────────────────────── 定价推导区(S2 §7.2 / MONEY-A1)───────────────────────
  *
@@ -174,16 +230,14 @@ export function deriveUsageInternalCredits(costUsd: number): number {
 
 /**
  * 1080p 档的每秒成本 = **$0.3773385/s**,由**两条钉点**推导(单价 × 实测 token 数):
- * $0.0077/K × 245,025 tokens / 5 秒。今日的成本函数对 1080p 是回退 720p 档的
- * (`videoRateUsdPerSec`),那个回退值比真值便宜五倍,拿它定价就是卖一单亏一单 ——
- * 所以 1080p 的价必须走自己的钉点,不许借 720p 的。
- * 导出是给后续毛利闸(A2)复算用的:价与成本必须是同一个数说了算。
+ * $0.0077/K × 245,025 tokens / 5 秒。720p 的回退值比真值便宜五倍,拿它定价就是卖一单亏一单
+ * —— 所以 1080p 的价必须走自己的钉点,不许借 720p 的。
+ *
+ * Creation S2 §8.1①:推导本体搬去 `gen.ts` 与其它成本基准同住,因为**成本函数**
+ * (`videoRateUsdPerSec`,高清槽位上架后要用它)也要读同一个数;这里按原名再导出一次,
+ * 消费方(毛利闸 A2、`money-derivation.test.ts`)一行都不用改。
  */
-export const SEEDANCE_1080P_COGS_USD_PER_SECOND =
-  (costPinValue("video:seedance-2.0:1080p-per-ktoken") *
-    costPinValue("video:seedance-2.0:1080p-tokens-per-5s")) /
-  1000 /
-  5;
+export { SEEDANCE_1080P_COGS_USD_PER_SECOND };
 
 /** 每档的每秒成本(推导输入)。480p/720p 来自 gen.ts 的按档最差比例基准,1080p 来自上面两条钉点。 */
 const VIDEO_COGS_USD_PER_SECOND: Record<string, number> = {
@@ -226,12 +280,29 @@ export const IMAGE_DISPLAY_CREDITS_PER_IMAGE = deriveImageDisplayCredits(
   costPinValue("image:seedream-lite:per-image"),
 );
 
-/** pro 图档 = **2 显示 credits/张**(S1 已定死的两个回填数字之一)。
- *  数字随本稿落地,**上架**归 Creation 施工线 —— 今天 `GEN_MODELS` 的图片菜单只有 seedream(=lite),
- *  所以这个常量今天没有调用方,它先把价钉在推导上,免得上架那天又手抄一个数。 */
+/** pro 图档 = **2 显示 credits/张**(S1 已定死的两个回填数字之一;Founder 2026-09-02 追认)。
+ *  Creation S2 §8.1① 起它有了调用方:pro 槽位上架,`pricedGenCredits` 按槽位取这一格的价。 */
 export const PRO_IMAGE_DISPLAY_CREDITS_PER_IMAGE = deriveImageDisplayCredits(
   costPinValue("image:seedream-pro:per-image"),
 );
+
+/**
+ * **图片槽位 → 每张多少显示 credits**(Creation S2 §8.1①)。
+ *
+ * 类型 `Record<GenModel, number>` 是这条围栏的全部内容:图片菜单加一格而不给它定价,
+ * 编译期就红 —— 与 `GEN_IMAGE_COST_PIN` 那条成本围栏成对。两个值都从上面的推导来,
+ * 这里一个手抄的数字都没有。
+ */
+export const IMAGE_DISPLAY_CREDITS_BY_MODEL: Record<GenModel, number> = {
+  "seedream": IMAGE_DISPLAY_CREDITS_PER_IMAGE,
+  "seedream-pro": PRO_IMAGE_DISPLAY_CREDITS_PER_IMAGE,
+};
+
+/** 一张图的显示价。菜单外的历史 id 回落 lite 档 —— 与本函数上线前的既有行为逐字一致
+ *  (那时所有图片行都按 `IMAGE_DISPLAY_CREDITS_PER_IMAGE` 收)。纯函数,永不抛。 */
+export function imageDisplayCredits(model: string): number {
+  return IMAGE_DISPLAY_CREDITS_BY_MODEL[model as GenModel] ?? IMAGE_DISPLAY_CREDITS_PER_IMAGE;
+}
 
 /**
  * 整段参考视频的定额价 = **16 显示 credits/条**,是一个好记数上调:
@@ -375,9 +446,12 @@ assertDerivedPricing(derivedPriceRows());
 export function seedanceDisplayCredits(model: string, resolution: string, seconds: number): number | null {
   const per10s = SEEDANCE_DISPLAY_CREDITS_PER_10S[resolution];
   if (per10s === undefined) return null;
-  const ruledDurations = GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel]?.durations;
-  if (!ruledDurations?.includes(seconds)) return null;
-  return Math.floor((seconds * per10s + 9) / 10);
+  // Creation S2 §8.1① —— 判据从「秒数属于这个槽位的档位」收紧到「**这一格是可售 SKU**」。
+  // 两个槽位之后,「这个分辨率在价目表上」不再等于「这个槽位卖这一档」:1080p 在价目表上,
+  // 但它是高清槽位的档,mini 给不出;720p 在价目表上,但那个价是 mini 的成本推出来的,
+  // 高清槽位没有属于它自己的 720p 成本钉点。菜单价只定义在**已裁的那些格**上,
+  // 格外照旧只有护栏(`videoGuardrailInternal`),一格不外推。
+  return isSellableVideoSku(model, resolution, seconds) ? Math.floor((seconds * per10s + 9) / 10) : null;
 }
 
 /** 护栏用的「最贵可售档按秒价」= 价目表里最大的每 10 秒费率(今天 = 1080p 的 110)。
@@ -454,7 +528,9 @@ export function pricedGenCredits(job: GenSpendInput): number {
     // 所以这只是历史行读价时的兜底 —— A3 起兜底也按档走,长档不再被一个定额贱卖。
     return videoGuardrailInternal(job.videoOptions?.resolution ?? "", job.videoOptions?.seconds);
   }
-  return job.count * IMAGE_DISPLAY_CREDITS_PER_IMAGE * INTERNAL_PER_DISPLAY;
+  // Creation S2 §8.1①:图片按**槽位**取价(lite 1cr / pro 2cr)。前置报价、reserve、settle
+  // 三处走的都是这一个函数,所以两个槽位各自的 reserve == settle 是同一条既有保证。
+  return job.count * imageDisplayCredits(job.model) * INTERNAL_PER_DISPLAY;
 }
 
 /**

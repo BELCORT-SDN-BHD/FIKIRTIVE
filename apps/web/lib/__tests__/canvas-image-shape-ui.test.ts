@@ -426,3 +426,96 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
     expect(viaBar).toBe("2:3");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Creation S2 §8.1①(CREATE-A6,Codex 跨厂复审 r1 P1-2 落修)
+// 「精修 / 高细节」这一格能力 —— 从**界面**一路到付费请求。
+//
+// 判官说的是:pro 槽位没有任何生产入口,只能靠一个知道隐藏别名的调用方点名。
+// 所以这里断言的全部是**商家看得见/按得到的东西**:勾得到、价钱当场跟着变、
+// 形状菜单跟着收窄、按下去发出的是一格能力(不是型号名)。
+// ---------------------------------------------------------------------------
+
+/** pro 那一档自己的形状菜单:它的像素上限更低,16:9 / 9:16 收不下。 */
+const FINE_MENU = ["1:1", "4:3", "3:4", "3:2", "2:3", "21:9"];
+
+function fineDetailCheckbox(): HTMLElement | null {
+  return container!.querySelector<HTMLElement>("#canvas-fine-detail");
+}
+async function tickFineDetail(): Promise<void> {
+  const box = fineDetailCheckbox();
+  expect(box, "输入条上应该有「精修」那一格").not.toBeNull();
+  await act(async () => { box!.click(); });
+}
+function composerPriceText(): string {
+  const hint = [...container!.querySelectorAll("span")]
+    .find((s) => (s.textContent ?? "").startsWith("Cost: "));
+  return hint?.textContent ?? "";
+}
+
+describe("CREATE-A6 画布出图:「精修」这一格能力在花钱之前就看得见、勾得动", () => {
+  beforeEach(() => {
+    mocks.imageShapes.mockResolvedValue({
+      options: MENU,
+      defaultAspect: "1:1",
+      fineDetail: { credits: 2, options: FINE_MENU },
+    });
+    mocks.quoteCosts.mockResolvedValue({ imageCredits: 1, videoCredits: 80 });
+  });
+
+  it("CREATE-A6 标签写着能力与价钱,**一个型号名都没有**", async () => {
+    await renderBoard();
+    const label = container!.querySelector('label[for="canvas-fine-detail"]');
+    expect(label, "「精修」那一格应该有人话标签").not.toBeNull();
+    expect(label!.textContent).toBe("Fine detail (2 credits each)");
+    for (const secret of ["seedream", "dola", "byteplus", "pro", "lite"]) {
+      expect(label!.textContent!.toLowerCase()).not.toContain(secret);
+    }
+  });
+
+  it("CREATE-A6 勾上之后**同屏的价钱当场变成 2 credits**(授权的是他看见的数字)", async () => {
+    await renderBoard();
+    expect(composerPriceText()).toBe("Cost: 1 credit");
+    await tickFineDetail();
+    expect(composerPriceText()).toBe("Cost: 2 credits");
+  });
+
+  it("CREATE-A6 勾上之后形状菜单跟着收窄,而且当前形状被夹回这一档收得下的那一格", async () => {
+    await renderBoard();
+    // 商家先选了一个只有默认档收得下的形状。
+    await pick(shapePickers()[0]!, "16:9");
+    expect(shapePickers()[0]!.value).toBe("16:9");
+    await tickFineDetail();
+    // 菜单收窄 —— 收不下的两格不许留在菜单上(留着就是一次注定失败的付费请求)。
+    expect([...shapePickers()[0]!.options].map((o) => o.value)).toEqual(FINE_MENU);
+    expect(shapePickers()[0]!.value).toBe("1:1");
+  });
+
+  it("CREATE-A6 按下 Generate ⇒ 请求里带的是**一格能力**,不是型号名", async () => {
+    await renderBoard();
+    await tickFineDetail();
+    await typePrompt("the bottle on a marble counter");
+    await submitComposer();
+    expect(mocks.generateImage).toHaveBeenCalledTimes(1);
+    const options = mocks.generateImage.mock.calls[0]![5] as { fineDetail?: boolean; aspectRatio?: string };
+    expect(options.fineDetail).toBe(true);
+    expect(options.aspectRatio).toBe("1:1");
+    expect(JSON.stringify(options).toLowerCase()).not.toContain("seedream");
+  });
+
+  it("CREATE-A6 不勾 ⇒ 请求里一个字都不多(今日行为逐字不变)", async () => {
+    await renderBoard();
+    expect(composerPriceText()).toBe("Cost: 1 credit");
+    await typePrompt("the bottle on a marble counter");
+    await submitComposer();
+    const options = mocks.generateImage.mock.calls[0]![5] as { fineDetail?: boolean };
+    expect(options.fineDetail).toBeUndefined();
+  });
+
+  it("CREATE-A6 服务端说这一格今天卖不了(null)⇒ 整格不渲染,一个字都不说", async () => {
+    mocks.imageShapes.mockResolvedValue({ options: MENU, defaultAspect: "1:1", fineDetail: null });
+    await renderBoard();
+    expect(fineDetailCheckbox()).toBeNull();
+    expect(container!.textContent).not.toContain("Fine detail");
+  });
+});
