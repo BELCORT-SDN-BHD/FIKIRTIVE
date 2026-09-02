@@ -176,6 +176,9 @@ export * from "./gen-job-state.js";
 // 是因为读者有三个 —— 适配器(判断)、worker(落盘)、web 与 Otto(取回给商家看),文案抄成
 // 三份就一定会有一份先烂掉(#765)。
 export * from "./gen-failure.js";
+// 演员库 v1:人物卡与九套造型 preset 的单一来源。读者有三个 —— Otto 写提示词、UI 画角色卡、
+// 播种脚本建实体(Founder 2026-08-30「一卡三用」),抄成三份就一定有一份先烂掉。
+export * from "./actor-library.js";
 // What a canvas CARD may say, and which of those words mean it is still being made. Pure, and in
 // core so the web app and the Otto skill read ONE vocabulary rather than two copies (#602 r2).
 export * from "./canvas-card-status.js";

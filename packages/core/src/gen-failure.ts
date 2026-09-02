@@ -39,20 +39,34 @@
  * The sentence a merchant reads when the engine refused their reference image because it shows
  * a recognisable real person.
  *
+ * ── WHY THE WAY OUT CHANGED (CREATE-A9, docs/specs/creation-engine.md; Founder 2026-08-30) ──
+ *
+ * The first version of this sentence offered the way out that was MEASURED in 2026-08-08: hide
+ * the face — from behind, further away, cropped out — and the identical request is accepted.
+ * True, and useless to the merchant who wanted a PERSON in their ad. It read as "photograph
+ * your model from the back", which is not an ad anybody shoots.
+ *
+ * The 2026-08-29/30 probes closed that question for good. Real faces do not get in by any route
+ * we can reach: not the photo itself, not an AI portrait made FROM the photo, not an outside
+ * model's realistic face, not a crop of one that already passed (13 refusals, zero passes;
+ * evidence in preserved/creation-probe-2026-08-29/). The refusal is not about how the face is
+ * framed — it is about whose face it is. So an instruction to reframe was sending merchants to
+ * retry a thing that cannot work, which is the exact failure #765 exists to stop.
+ *
+ * What DOES work is the cast library: platform-made fictional characters, generated text-to-image
+ * by the same house that renders the video, accepted 3 of 3 across scenes on 2026-08-30. Every
+ * merchant's Library is seeded with them at signup (apps/web/lib/actor-library-seed.ts), so the
+ * way out this sentence points at is already sitting on their screen when they read it.
+ *
  * "You weren't charged" is safe to say here and only here: this refusal arrives as an HTTP 4xx
  * at task creation, before the engine runs, and the worker's terminal path refunds the hold and
  * records no spend. It is the same promise the card's generic failure face makes for the same
- * reason.
- *
- * The way out it offers is the one that was MEASURED to work (2026-08-08): with the face not
- * visible — from behind, far enough away, or cropped out of frame — the identical request is
- * accepted and produces a clip. It deliberately promises nothing else, because nothing else has
- * been proven.
+ * reason. CREATE-A9 pins that promise on the ledger: `reserve:` and `refund:` in a pair, no
+ * SETTLE, net zero.
  */
 export const REFERENCE_IMAGE_PERSON_REJECTED =
-  "That reference image shows a recognisable face, and video generation can't use it. "
-  + "Try one where the face isn't visible — from behind, further away, or cropped out — "
-  + "and generate again. You weren't charged.";
+  "Real human faces aren't supported yet. Pick a cast member from your Library instead. "
+  + "You weren't charged.";
 
 /**
  * The sentence a merchant reads when THIS DEPLOY HAS NO ENGINE WIRED UP.

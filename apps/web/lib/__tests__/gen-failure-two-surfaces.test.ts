@@ -38,6 +38,14 @@ describe("ENTRY creation surface — the card's poll passes the explanation on",
     await poll("j", onDone, cancelled, { intervalMs: 0, maxPolls: 5, onFailure });
 
     expect(onFailure).toHaveBeenCalledWith(REFERENCE_IMAGE_PERSON_REJECTED);
+    // CREATE-A9(规格 docs/specs/creation-engine.md 验收表)—— 创作面这一半读到的是**新口径**:
+    // 出路指向演员库,而不是旧那句「换个看不见脸的角度再拍一张」。字面比对,与常量比对并存:
+    // 只改常量、验收行没跟上,这里当场红。
+    expect(onFailure).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Real human faces aren't supported yet. Pick a cast member from your Library instead.",
+      ),
+    );
     // The card still reaches its ordinary terminal face — the explanation is in addition to
     // that ending, not instead of it.
     expect(onDone).toHaveBeenCalledWith([], "failed", []);
@@ -80,6 +88,11 @@ describe("ENTRY Otto — the assistant can answer the follow-up with the same se
 
     expect(line).toContain("Current generation status");
     expect(line).toContain(REFERENCE_IMAGE_PERSON_REJECTED);
+    // CREATE-A9 —— Otto 这一半必须说**同一句新口径**。两个面各自比字面,才叫「同一句话」
+    // 被证明,而不是「两个面都读了同一个常量」被证明(常量改错了两边会一起错)。
+    expect(line).toContain(
+      "Real human faces aren't supported yet. Pick a cast member from your Library instead.",
+    );
     // Still true, and still said: the refund is not replaced by the explanation.
     expect(line).toContain("NOT charged");
   });

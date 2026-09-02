@@ -136,6 +136,12 @@ describe("a refused card explains itself, on every mount", () => {
     // Byte-identical to the ONE whitelisted sentence — compared against the constant, never a
     // copy of the words, so the card cannot drift from the toast and Otto.
     expect(text).toContain(REFERENCE_IMAGE_PERSON_REJECTED);
+    // CREATE-A9(规格 docs/specs/creation-engine.md 验收表)—— 这一格是商家**读到出路**的那一屏。
+    // 上一句比的是常量,这一句比的是**字面**:常量与验收行一起改才算改口径,只改常量而
+    // 验收行没动,这里当场红。旧口径「把脸拍到看不见」同时被反向钉住(见 core 的 gen-failure.test.ts)。
+    expect(text).toContain(
+      "Real human faces aren't supported yet. Pick a cast member from your Library instead.",
+    );
     // The generic line it replaces is gone: "Try again" is the wrong advice for this ending.
     expect(text).not.toContain("You weren't charged. Try again.");
     // It is still a failed card, and it still says so.
