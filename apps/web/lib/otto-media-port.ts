@@ -24,8 +24,9 @@ import "server-only";
  *            **NOT $0 downstream, and this file used to claim it was** (MONEY-A9, 规格 §7.3).
  *            The import itself still spends nothing — but the row it lands is an
  *            `Generation(source:"UPLOAD")` image/video, and since Founder's 2026-08-31 ruling
- *            every one of those is auto-understood and CHARGED at the price snapshotted the
- *            moment it lands. Inheriting the human upload's authority means inheriting the
+ *            every one of those is auto-understood and CHARGED at the price snapshotted when
+ *            the scanner QUEUES it for understanding — which can be later than the import if
+ *            there is a backlog. Inheriting the human upload's authority means inheriting the
  *            human upload's bill. So this port quotes that price back to Otto (`note` on the
  *            success result) the way the three upload UIs show it before a merchant picks a
  *            file: 披露先于扣费, on the action layer because there is no UI here to put it on.
@@ -210,7 +211,7 @@ function importUnderstandingQuote(ext: string, contentType: string | null): stri
     kind === "image-caption"
       ? ` If it turns out to be a menu or price list, reading it as a document costs ${price("doc-extract")} more.`
       : "";
-  return `Imported. It is read automatically so Otto knows what is in it: ${price(kind)}, charged at the price locked in on upload.${cascade}`;
+  return `Imported. It is read automatically so Otto knows what is in it: ${price(kind)}, charged at the price in effect when it is queued for understanding — which can be later than the import if there is a backlog.${cascade}`;
 }
 
 /** SSRF-hardened media byte fetch — reuses the exact public-only resolver the research /

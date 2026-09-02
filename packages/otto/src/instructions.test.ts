@@ -125,8 +125,16 @@ describe("ottoInstructions — MONEY-A9:importMedia 段带动作前报价", () =
     expect(section).toMatch(/get their go-ahead in the same breath as offering to import/i);
   });
 
-  it("报的是**上传时刻锁的价**(四则①),不是「跑的时候现算」", () => {
-    expect(section).toContain("at the price locked in the moment it lands");
+  it("报的是**建行时刻锁的价**(四则①),不是「跑的时候现算」,也不是「落地那一刻」", () => {
+    // 快照写在扫描器建 AssetUnderstanding 行的那一刻(worker `jobs/understand.ts`,每分钟至多
+    // 25 行),**不是**素材落地那一刻。跨厂复审 2026-09-02 的唯一 P1 打的就是旧措辞
+    // 「at the price locked in the moment it lands」—— 它把排队说成了瞬时,而排队期间调价,
+    // 后面的文件按新价建行。Otto 当着商家的面说的这一句,必须和商家自己屏幕上那一行同一个口径。
+    expect(section).toContain("at the price in effect when it is queued for understanding");
+    expect(section, "只说「排队时」不说排队可能要等,读起来还是「落地即锁价」").toContain("backlog");
+    for (const lie of ["locked in the moment", "the moment it lands", "moment you upload"]) {
+      expect(section, `又出现了「${lie}」—— 那是产品做不到的承诺`).not.toContain(lie);
+    }
   });
 });
 

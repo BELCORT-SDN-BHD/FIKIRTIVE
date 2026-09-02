@@ -48,7 +48,7 @@ import {
  */
 const UNDERSTANDING_PRICE_SENTENCE =
   `Everything that lands is read automatically so you know what is in it, and the user is charged for that reading ` +
-  `at the price locked in the moment it lands: ` +
+  `at the price in effect when it is queued for understanding, which can be later than the import if there is a backlog: ` +
   `${displayCredits(pricedUnderstandingCredits("image-caption"))} credits for an image, ` +
   `${displayCredits(pricedUnderstandingCredits("video-qa"))} credits for a video, and ` +
   `${displayCredits(pricedUnderstandingCredits("doc-extract"))} credits again if that image turns out to be a menu ` +

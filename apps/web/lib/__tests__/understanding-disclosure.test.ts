@@ -49,6 +49,7 @@ import {
 } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
 import {
+  UNDERSTANDING_COST_HINT,
   UNDERSTANDING_COST_HINT_TITLE,
   UnderstandingCostHint,
 } from "@/components/otto/UnderstandingCostHint";
@@ -63,6 +64,50 @@ const priceOf = (kind: keyof typeof UNDERSTANDING_PRICED_INTERNAL) =>
 /** 「12 credits」「0.1 credit」这类**手抄的钱数**。className 里的 `text-[0.75rem]` 不会命中
  *  (它后面跟的是 rem,不是 credit),命中的只有真的把价钱写死在文案里的那种写法。 */
 const HAND_TYPED_CREDITS = /\d[\d,.]*\s*credits?\b/i;
+
+/**
+ * 「上传那一刻就锁价」这一族**假话**。
+ *
+ * 产品做不到:快照是**扫描器建 AssetUnderstanding 行**那一刻写的(`apps/worker/src/jobs/
+ * understand.ts` —— `priceInternalSnapshot: pricedUnderstandingCredits(kind)` 就在 create 里,
+ * 而扫描器每轮至多捡 `UNDERSTAND_SCAN_BATCH = 25` 行、每分钟一轮)。所以 2000 张的批量上传要
+ * 八十分钟才建完行,**排队期间调价,后面那些文件按新价建行**。
+ *
+ * 跨厂复审 2026-09-02 的唯一 P1 就是打这一条:第一版把它写成「(normally the moment you
+ * upload)」,句子形式上说了「排队时」,读起来还是「上传即锁价」—— 括号里那半句把前半句抵消掉了。
+ * 所以这里不再钉「必须出现某句好话」,改成**禁止整整一族说法**,五处商家/Otto 能读到的报价句
+ * 逐处扫。列表是穷举的:每一条都是曾经真的写在产品里、或者最容易被下一个人重新写出来的那句。
+ */
+const FALSE_LOCK_PHRASES = [
+  "moment you upload",
+  "locked in on upload",
+  "the moment it lands",
+  "at upload time",
+  "price shown when you upload",
+  "locked in the moment",
+] as const;
+
+/** 新口径必须自己说全两半:**哪一刻的价**(排队去理解时)+ **它可能不是上传那一刻**(积压)。
+ *  只说前一半,商家默认会把它读成上传那一刻 —— 这正是被打回的那次。 */
+const QUEUED_PHRASE = "queued for understanding";
+const BACKLOG_PHRASE = "backlog";
+
+/** 一句报价文案的完整判定:禁语族一条不许中,两个必须词一个不许少。 */
+function assertQueuedNotUploadWording(label: string, sentence: string): void {
+  const text = sentence.toLowerCase();
+  for (const phrase of FALSE_LOCK_PHRASES) {
+    expect(
+      text,
+      `${label} 又出现了「${phrase}」—— 那是「上传即锁价」的说法,而快照是扫描器建行时才写的`,
+    ).not.toContain(phrase);
+  }
+  expect(text, `${label} 没说清是**哪一刻**的价(缺「${QUEUED_PHRASE}」)`).toContain(QUEUED_PHRASE);
+  expect(
+    text,
+    `${label} 只说了「排队时」却没说排队**可能要等**(缺「${BACKLOG_PHRASE}」)—— 少了这一半,`
+      + "商家仍然会把它读成上传那一刻",
+  ).toContain(BACKLOG_PHRASE);
+}
 
 /** 只扫**会被商家读到的那部分**:注释里举例说明「0.1 credits 是怎么来的」是文档,不是文案,
  *  而且它正是我们希望留在源码里的解释。手抄的价钱如果藏在注释里,一个商家也看不见。 */
@@ -1224,18 +1269,9 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     expect(markup).toContain(priceOf("doc-extract"));
   });
 
-  it("title 说清了什么时候扣、按哪一天的价(四则①,措辞按 2026-09-02 裁决改实话)", () => {
+  it("title 说清了什么时候扣、按哪一刻的价(四则①,措辞按 2026-09-02 裁决改实话)", () => {
     expect(markup).toContain(UNDERSTANDING_COST_HINT_TITLE);
-    const title = UNDERSTANDING_COST_HINT_TITLE.toLowerCase();
-    // 快照是**扫描器建行**那一刻写的(每分钟 25 行,2000 张要 80 分钟),不是上传那一刻。
-    // Founder 2026-09-02 接受这个偏差,并裁决文案要说实话 —— 所以这句必须点明「排队去理解时」
-    // 的价,而「上传」只能作为通常情形出现在括号里。
-    expect(title, "title 不再说清按哪一刻的价").toContain("in effect when the file is queued");
-    expect(title, "通常情形还是要讲给商家听").toContain("normally the moment you upload");
-    // 反向:旧那句「按上传时刻锁价」是产品做不到的承诺,不许回来。
-    expect(title, "「at the price shown when you upload」= 承诺上传那一刻锁价,代码不这么做").not.toContain(
-      "price shown when you upload",
-    );
+    assertQueuedNotUploadWording("UnderstandingCostHint 的 title", UNDERSTANDING_COST_HINT_TITLE);
   });
 
   it("组件源码里没有手抄的价钱 —— 数值只能来自推导", () => {
@@ -1813,11 +1849,9 @@ describe("MONEY-A9 披露先于扣费:billing 页价目区", () => {
     }
     expect(html).toContain("menu or a price list");
     // 四则①:结算按快照价,所以价目区不能只报价、不说这笔价什么时候锁 —— 而那一刻是
-    // **扫描器建理解行**的时刻(Founder 2026-09-02 接受偏差、裁决措辞改实话)。
-    expect(html.toLowerCase()).toContain("price in effect when the file is queued");
-    expect(html.toLowerCase(), "旧那句承诺上传即锁价,代码做不到").not.toContain(
-      "price shown when you upload",
-    );
+    // **扫描器建理解行**的时刻(Founder 2026-09-02 接受偏差、裁决措辞改实话;跨厂复审同日
+    // 打回第一版的「(normally the moment you upload)」)。整页扫:禁语族一条都不许出现。
+    assertQueuedNotUploadWording("billing 价目区", html);
     // 免费祖父条款:A9 之前落的老行快照为 null,整条钱路跳过,永不补收
     // (packages/db/prisma/schema.prisma priceInternalSnapshot / understand.ts 的免费祖父分支)。
     expect(html.toLowerCase()).toContain("before automatic understanding was priced stay free");
@@ -1872,5 +1906,42 @@ describe("MONEY-A9 披露先于扣费:Otto 的 URL 导入走动作前报价", ()
     // 先报价、再导入 —— 顺序本身就是这条验收
     expect(ottoInstructions).toContain("Say that price BEFORE you import, never after");
     expect(importMedia!.description).toContain("BEFORE CALLING THIS");
+  });
+});
+
+/**
+ * 快照价口径的**总闸**(跨厂复审 2026-09-02 唯一 P1 的落点)。
+ *
+ * 上面几组各自钉自己那一处;这一组把五处**能被商家或 Otto 读到的报价句**放在同一张表上扫,
+ * 因为这次犯错的方式就是「改了两处、漏了三处」—— 商家在输入框读到的是排队口径,Otto 在
+ * 同一次导入里说的却还是「上传即锁价」,两句话都出自我们,而商家只会记住更肯定的那一句。
+ *
+ * 表是**穷举**的:五处就是全部会说出这句价的地方(三处上传入口共用一个组件,所以组件算一处)。
+ * 再多一处报价句而不进这张表,只能靠复审 —— 但那正是这次被抓到的东西,所以宁可把表写死在这里。
+ */
+describe("MONEY-A9 快照价口径:五处报价句一律说「排队去理解时」,不许说「上传即锁价」", () => {
+  it("商家侧两处(上传入口的小字 + billing 价目区源码)", () => {
+    assertQueuedNotUploadWording(
+      "UnderstandingCostHint",
+      UNDERSTANDING_COST_HINT + " " + UNDERSTANDING_COST_HINT_TITLE,
+    );
+    // billing 页的渲染结果在上一组扫过;这里扫**源码文案行**,连注释以外的写法一起钉住。
+    assertQueuedNotUploadWording("billing 页文案行", copyLines(codeOf("app/billing/page.tsx")).join(" "));
+  });
+
+  it("Otto 侧三处(URL 导入的事后报价 + 说明书 + importMedia 工具描述)", async () => {
+    // otto-media-port 的那一句是模板串,拼出来才是完整句子 —— 扫源码的**文案行**即可,
+    // 注释行(那里有一句讲授权继承的 "the moment it lands")按 copyLines 的老规矩排除在外。
+    assertQueuedNotUploadWording(
+      "otto-media-port 的导入报价",
+      copyLines(codeOf("lib/otto-media-port.ts")).join(" "),
+    );
+
+    const { ottoInstructions, skillCatalog } = await import("@fikirtive/otto");
+    const importMedia = skillCatalog.find((s) => s.name === "importMedia");
+    expect(importMedia, "importMedia 不在 Otto 的动作表里").toBeDefined();
+    // 这两条扫的是**运行时字符串**,不是源码:插值拼错了在源码上看不出来。
+    assertQueuedNotUploadWording("Otto 说明书的理解报价句", ottoInstructions);
+    assertQueuedNotUploadWording("importMedia 工具描述", importMedia!.description);
   });
 });

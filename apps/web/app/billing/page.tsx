@@ -178,9 +178,9 @@ export default async function BillingPage({
             {understandingPrice("image-caption")} an image and {understandingPrice("video-qa")} a
             video. An image that turns out to be a menu or a price list is also read as a
             document, for {understandingPrice("doc-extract")} more. You are charged the price in
-            effect when the file is queued for understanding — normally the moment you upload —
-            even if the reading finishes later. Files added before automatic understanding was
-            priced stay free.
+            effect when the file is queued for understanding — usually right after you upload it,
+            but later than that if there is a backlog. The reading itself can finish later still.
+            Files added before automatic understanding was priced stay free.
           </div>
         </section>
 
