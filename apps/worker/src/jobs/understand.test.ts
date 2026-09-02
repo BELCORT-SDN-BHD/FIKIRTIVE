@@ -1106,7 +1106,7 @@ describe("平台日花费线:越线只报警,不拦(次日复位)", () => {
     const caps = UNDERSTANDING_CAPS["image-caption"];
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("image-caption"));
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    // 预扣:判断和记账压成同一条语句(见 tryHoldUnderstandingBudget),加的是 token 上限
+    // 预记:一趟调用先按 token 上限记一笔最坏情况(见 recordUnderstandingBudget)
     expect(budgetHolds()).toEqual([{ addIn: caps.maxInputTokens, addOut: caps.maxOutputTokens }]);
     // 校正:一趟调用一笔。差额减回去 ⇒ 净效果 = 实际用量,和旧的「按实际记一笔」等价
     expect(budgetAdjustments()).toEqual([

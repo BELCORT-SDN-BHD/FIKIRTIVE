@@ -321,9 +321,9 @@ async function releaseUnderstandingBudget(kind: UnderstandingKind, day: string):
 /**
  * 今天全平台的理解已经花了多少美元。
  *
- * 预扣式之后这个读数**包含还在飞的那几笔最坏情况**(见 {@link tryHoldUnderstandingBudget}):
- * 窗口期间它偏高,调用一回来就被校正回实际用量。偏高是要的方向 —— 这个读数只被扫描器当
- * 「今天还值不值得派新活」的便宜早退用,而真正的闸是那条条件 upsert。
+ * 预记式之后这个读数**包含还在飞的那几笔最坏情况**(见 {@link recordUnderstandingBudget}):
+ * 窗口期间它偏高,调用一回来就被校正回实际用量。偏高是要的方向 —— 报警宁可早喊一声。
+ * 扫描器拿它判「今天越线了没有」,而越线之后**照样派活**(Founder 2026-09-02:只报警不拦)。
  *
  * 读的是累加计量器,不是行上那两列的快照 SUM。
  * 数的是**钱**不是行数:`understandingCostUsd()` 是现成的算式,而行数在两头都会错
