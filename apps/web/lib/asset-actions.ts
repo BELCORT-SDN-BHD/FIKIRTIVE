@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@fikirtive/db";
-import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES, GEN_IMAGE_ASPECTS } from "@fikirtive/core";
+import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES, GEN_IMAGE_ASPECTS, merchantRouteReason } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { storage, kindOf, extFromFilename } from "./storage";
 import { redactProviderNames } from "./provider-secrecy";
@@ -182,25 +182,13 @@ export async function getGeneration(
     sourceGenerationId: job?.sourceGenerationId ?? null,
     imageAspect: snapshotImageAspect(job?.imageOptions),
     // Creation S2 §8.1①(CREATE-A4 / A12)—— 能力路由的理由,与上面那两句回执同族:
-    // 都是「我们对这一张做了什么」的可查记录。`merchantRouteReason` 是它跨过商家边界的
-    // **唯一**出口(白标 + 「空即未知」),与 `merchantFinalPrompt` 同一条规矩。
+    // 都是「我们对这一张做了什么」的可查记录。`merchantRouteReason`(@fikirtive/core,与
+    // 写这句话的 `routeReasonFor` 同一个文件)是它跨过商家边界的**唯一**出口
+    // (白标 + 「空即未知」)—— Codex r2 之前这里有一份本地实现,而出片轮询那条路没有,
+    // 同一列数据两种口径;现在两条路读的是同一个函数。
     // null = 这一趟没有升档 ⇒ 面板整行不渲染,不编一句「用了默认档」。
     routeReason: merchantRouteReason(gen.routeReason),
   };
-}
-
-/**
- * #776 同族 —— 路由理由跨过商家边界时的**唯一**出口。
- *
- * ① 空即未知:null / 空串 / 只剩空白,一律 null(「没升档」与「有一句空话」不是一回事);
- * ② 白标:过 `redactProviderNames`。这句话由我们自己的纯函数写、只含能力名词,
- *    所以这一层是纵深防御而不是主要防线 —— 但主要防线是「兜底不是许可证」,
- *    所以出口上仍然过一遍。
- */
-function merchantRouteReason(stored: string | null): string | null {
-  if (!stored) return null;
-  const shown = redactProviderNames(stored).trim();
-  return shown.length > 0 ? shown : null;
 }
 
 /**

@@ -45,6 +45,50 @@ describe("BytePlusProvider — wiring", () => {
   it("has a stable provider name", () => {
     expect(new BytePlusProvider("ark-test").name).toBe("byteplus");
   });
+
+  /**
+   * Codex r2 P1 —— **过滤表 × 供应商 id 全集**。
+   *
+   * 这两张表是仓库里**唯一**允许出现供应商真 id 的地方,而 `provider-secrecy` 的过滤表是
+   * 一张人手维护的名单 —— 一张名单只和「最后一个有人记得加进去的名字」一样好。r2 抓到的
+   * 正是这个:`dola-seedream-5-0-pro-260628` 上架时没人把 `dola` 加进过滤表,于是
+   * `redactProviderNames("dola")` 原样返回 "dola",而它是我们今天真在送的 id 的第一段。
+   *
+   * 所以这一条不背名单,它**从这两张表算出**要检查什么:把每一个 id(和每一个内部槽位名)
+   * 里的每一段字母串拆出来,逐段问过滤表认不认得。以后再上一台引擎,只要它的品牌词没进
+   * 过滤表,这一条就红 —— 而不是等下一轮复审去发现。
+   */
+  it("过滤表认得这两张表里的每一个品牌词(供应商 id 全集派生,不背名单)", async () => {
+    const { redactProviderNames } = await import("@fikirtive/core");
+    /**
+     * 故意**不**要求过滤表认得的普通英文档位词。
+     *
+     * "pro" / "lite" / "mini" 是商家自己也会写的字(卖 "Pro" 套餐、"Mini" 装),过滤表认了
+     * 它们就会去改写商家自己的话。它们不靠兜底挡,靠的是「商家可见的句子由我们自己的纯函数
+     * 写、只含能力名词」那一层(钉在 packages/core/src/creation-routing.test.ts)。
+     * 这张豁免表刻意短:每加一个词,就是少一个词有兜底。
+     */
+    const GENERIC_TIER_WORDS = ["pro", "lite", "mini"];
+    const ids = [
+      ...Object.keys(IMAGE_MODEL_MAP), ...Object.values(IMAGE_MODEL_MAP),
+      ...Object.keys(VIDEO_MODEL_MAP), ...Object.values(VIDEO_MODEL_MAP),
+    ];
+    const brandTokens = [...new Set(ids.flatMap((id) => id.toLowerCase().match(/[a-z]{3,}/gu) ?? []))]
+      .filter((token) => !GENERIC_TIER_WORDS.includes(token));
+    // 拆出来是空的 = 这一条什么都没证明。
+    expect(brandTokens.length).toBeGreaterThan(0);
+    for (const token of brandTokens) {
+      expect(redactProviderNames(token), `过滤表不认得品牌词「${token}」—— 它出现在供应商 id 里`)
+        .not.toBe(token);
+    }
+    // 整串也要过:一条 id 完整地落进商家可见的字符串里,不许有任何一段活下来。
+    for (const id of ids) {
+      const cleaned = redactProviderNames(id).toLowerCase();
+      for (const token of brandTokens) {
+        expect(cleaned, `id「${id}」过完滤还剩「${token}」`).not.toContain(token);
+      }
+    }
+  });
 });
 
 afterEach(() => vi.unstubAllGlobals());

@@ -13,6 +13,7 @@
 import { z } from "zod";
 import { costPinValue, type CostPinKey } from "./cost-pins.js";
 import { anchoredVideoAction, anchoredActionUnavailableReason } from "./video-actions.js";
+import { redactProviderNames } from "./provider-secrecy.js";
 
 /**
  * 图片引擎菜单 —— **两个槽位**(Creation S2 §8.1①,2026-09-02)。
@@ -548,6 +549,29 @@ export function routeReasonFor(input: { kind: GenKind; model: string; resolution
   }
   if (input.model !== PRO_IMAGE_MODEL) return null;
   return "You asked for a capability only the fine-detail tier can do, so this went there.";
+}
+
+/**
+ * **路由理由跨过商家边界时的唯一出口**(Creation ① Codex r2 P1 落修)。
+ *
+ * 它与上面的 `routeReasonFor` 是同一个门的两扇:一扇写、一扇放行。放在同一个文件里,
+ * 是因为「谁能读这一列」这件事只该有一个答案 —— r2 之前有两个:资产回执
+ * (`getGeneration`)过了一层白标,出片轮询(`getGenJob`)把库里的字符串**原样**交给
+ * 浏览器。同一列数据、两条产品路、两种口径,那不是纵深防御,那是一个洞:任何一天有人
+ * 往这一列写进带型号名的字符串(手工回填、别处的旧代码、一次迁移),轮询这条路就把它
+ * 念给商家听了。所以两条路现在都只能从这一个函数出去。
+ *
+ * 两件事在这一处做完:
+ *   ① **空即未知** —— null / 空串 / 过滤后只剩空白,一律 null。「这一趟没升档」与
+ *      「有一句空话」不是一回事,界面据此整块不渲染,而不是编一句「用了默认档」;
+ *   ② **白标** —— 过 `redactProviderNames`。今天写进这一列的句子由我们自己的纯函数
+ *      (`routeReasonFor`)写、只含能力名词,所以这一层是纵深防御;但「兜底不是许可证」
+ *      的反面同样成立 —— 兜底必须真的在,否则那句话只是一句话。
+ */
+export function merchantRouteReason(stored: string | null | undefined): string | null {
+  if (!stored) return null;
+  const shown = redactProviderNames(stored).trim();
+  return shown.length > 0 ? shown : null;
 }
 
 /**

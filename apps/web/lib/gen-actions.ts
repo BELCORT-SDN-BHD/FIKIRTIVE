@@ -32,6 +32,7 @@ import {
   isSellableImageSku,
   PRO_IMAGE_MODEL,
   merchantGenFailureMessage,
+  merchantRouteReason,
   videoElementReferencesHonoured,
   approvedEntityDrift,
   parseApprovedEntities,
@@ -1322,7 +1323,13 @@ export async function getGenJob(jobId: string, projectId?: string) {
     // 一单里的每一行都是同一次路由的产物 ⇒ 同一句话,所以取第一条有值的那一行。
     // null = 这一趟没有升档(走的是默认槽位),没什么可解释的 —— 界面据此不说话,
     // 而不是编一句「用了默认档」出来。
-    routeReason = ordered.find((g) => g.routeReason)?.routeReason ?? null;
+    //
+    // Codex r2 P1 落修:这一行以前把库里的字符串**原样**交给浏览器,而资产回执那条路
+    // 过了一层白标 —— 同一列数据、两条产品路、两种口径,那不是纵深防御,那是一个洞。
+    // `merchantRouteReason` 现在是两条路共用的**同一个**出口(@fikirtive/core,与写这
+    // 句话的 `routeReasonFor` 同住),所以任何一天有人往这一列写进带型号名的字符串
+    // (手工回填、一次迁移、别处的旧代码),两条路都拦得住,而不是只有一条。
+    routeReason = merchantRouteReason(ordered.find((g) => g.routeReason)?.routeReason ?? null);
   }
   return {
     id: job.id,

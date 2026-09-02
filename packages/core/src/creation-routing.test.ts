@@ -11,6 +11,8 @@ import {
   GEN_IMAGE_MODEL_OPTIONS,
   GEN_IMAGE_MODEL_PIXEL_LIMITS,
   GEN_IMAGE_VARIANTS,
+  GEN_MODELS,
+  GEN_VIDEO_MODELS,
   GEN_VIDEO_MODEL_OPTIONS,
   HD_VIDEO_RESOLUTION,
   IMAGE_SIZE_OUT_OF_RANGE,
@@ -19,6 +21,7 @@ import {
   genRequest,
   imageOutputSize,
   imageOutputSizeForModel,
+  merchantRouteReason,
   routeImageModel,
   routeReasonFor,
   routeVideoModel,
@@ -106,6 +109,110 @@ describe("CREATE-A4 能力路由:请求 1080p → 路由到高清档,报价 55cr
     // 成本走这一档自己的钉点(实测账单),绝不借 720p 的回退值 —— 借了毛利就是假的。
     expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-0", count: 1, videoOptions: { seconds: 5, resolution: HD_VIDEO_RESOLUTION, audio: true } }))
       .toBeCloseTo(1.8866925, 9);
+  });
+});
+
+/**
+ * Codex r2 P1 —— **写入点全集 × 过滤表**的守形测试。
+ *
+ * r2 抓到的洞有两半,这一份钉的是两半的交叉:
+ *   ① 出口只有一个 —— `merchantRouteReason` 是 `Generation.routeReason` 跨过商家边界的
+ *      唯一函数(轮询回执与资产回执共用),所以「这一列干不干净」只有一个答案;
+ *   ② 过滤表真的认得供应商品牌词 —— r2 之前 `redactProviderNames("dola")` 原样返回
+ *      "dola",而 `dola-seedream-5-0-pro-260628` 是我们今天真在送的 id。
+ *
+ * 「写入点全集」是**算出来的**而不是手抄的:`routeReasonFor` 是这一列唯一的生产写入点
+ * (worker 建行时调它,apps/worker/src/jobs/gen.ts),这里把它的整个输入域跑一遍
+ * (两种 kind × 菜单上每一个槽位 × 每一档分辨率 + 空值 + 垃圾值),拿到它能写出的每一句话。
+ * 有人改了那句话的措辞,这一份跟着改;有人加了一句新的,这一份自动把它也扫进来。
+ */
+describe("CREATE-A4 / CREATE-A12 路由理由:写入点全集 × 过滤表 × 唯一出口", () => {
+  /** `routeReasonFor` 的整个输入域 —— 写入点能写出的每一种值都从这里长出来。 */
+  const WRITE_POINT_INPUTS: { kind: "video" | "image"; model: string; resolution: string | null }[] = [];
+  for (const model of [...GEN_MODELS, ...GEN_VIDEO_MODELS, "seedance-2-fast", "垃圾型号"]) {
+    const resolutions = [
+      ...new Set(Object.values(GEN_VIDEO_MODEL_OPTIONS).flatMap((o) => o.resolutions)),
+      HD_VIDEO_RESOLUTION,
+      null,
+      "垃圾分辨率",
+    ];
+    for (const resolution of resolutions) {
+      WRITE_POINT_INPUTS.push({ kind: "video", model, resolution });
+      WRITE_POINT_INPUTS.push({ kind: "image", model, resolution });
+    }
+  }
+  /** 写入点真的会写进库里的**每一种非空值**(去重后)。 */
+  const WRITTEN_VALUES = [
+    ...new Set(WRITE_POINT_INPUTS.map((i) => routeReasonFor(i)).filter((r): r is string => r !== null)),
+  ];
+
+  /**
+   * 供应商**品牌**词 —— 过滤表必须真的改写它们。
+   *
+   * 与上面的 `FORBIDDEN_IN_MERCHANT_COPY` 刻意不是同一张表:"pro" / "lite" / "mini" 是
+   * 普通英文档位词,过滤表**故意**不认(不然商家卖 "Pro" 套餐都要被改写),它们靠
+   * 「这句话由我们自己的纯函数写」那一层挡,不靠兜底。品牌词没有这个借口 —— 它们出现在
+   * 商家眼前只可能是一次泄露。这张表与供应商 id 表的同步由
+   * packages/generation/src/byteplus.test.ts 的「过滤表 × 供应商 id 全集」那一条守着。
+   */
+  const SUPPLIER_BRAND_TOKENS = ["seedance", "seedream", "dreamina", "dola", "byteplus", "modelark"];
+  /** 今天真在送的四条供应商 id(byteplus.ts 的两张表),整串过一遍出口。 */
+  const REAL_SUPPLIER_IDS = [
+    "seedream-5-0-260128",
+    "dola-seedream-5-0-pro-260628",
+    "dreamina-seedance-2-0-mini-260615",
+    "dreamina-seedance-2-0-260128",
+  ];
+
+  it("写入点全集非空,且每一句都只有能力名词 —— 出口一个字都不该动它", () => {
+    // 域扫出来是空的 = 这份测试什么都没证明,先把这一点钉死。
+    expect(WRITTEN_VALUES.length).toBeGreaterThan(0);
+    for (const written of WRITTEN_VALUES) {
+      assertNoModelName(written);
+      // 干净的句子经过出口应当**逐字不变**:兜底不许顺手改写我们自己的话。
+      expect(merchantRouteReason(written)).toBe(written);
+    }
+  });
+
+  it("过滤表认得每一个供应商品牌词,和今天在送的每一条 id", () => {
+    for (const token of SUPPLIER_BRAND_TOKENS) {
+      expect(redactProviderNames(token), `过滤表不认得品牌词「${token}」`).not.toBe(token);
+    }
+    for (const id of REAL_SUPPLIER_IDS) {
+      const cleaned = redactProviderNames(id).toLowerCase();
+      for (const token of SUPPLIER_BRAND_TOKENS) {
+        expect(cleaned, `供应商 id「${id}」过完滤还剩「${token}」`).not.toContain(token);
+      }
+    }
+  });
+
+  it("写入点全集 × 每一种脏值:出口交出来的话里一个供应商 token 都没有", () => {
+    // 「脏」的来路不必编:库里这一列有一天带上型号名,只可能是被人从供应商侧的字符串
+    // 灌进来的 —— 手工回填、一次迁移、别处的旧代码。所以脏值就用真 id 拼。
+    const dirty = [
+      ...REAL_SUPPLIER_IDS,
+      ...SUPPLIER_BRAND_TOKENS,
+      ...REAL_SUPPLIER_IDS.map((id) => `routed to ${id}`),
+    ];
+    for (const written of WRITTEN_VALUES) {
+      for (const poison of dirty) {
+        for (const shape of [`${written} (${poison})`, `${poison} — ${written}`, `${written}\n${poison}`]) {
+          const out = merchantRouteReason(shape);
+          expect(out).not.toBeNull();
+          const lowered = out!.toLowerCase();
+          for (const token of SUPPLIER_BRAND_TOKENS) {
+            expect(lowered, `出口把「${token}」交给了商家:${shape} ⇒ ${out}`).not.toContain(token);
+          }
+        }
+      }
+    }
+  });
+
+  it("空即未知:null / 空串 / 只剩空白 / 过滤后只剩空白,一律 null", () => {
+    expect(merchantRouteReason(null)).toBeNull();
+    expect(merchantRouteReason(undefined)).toBeNull();
+    expect(merchantRouteReason("")).toBeNull();
+    expect(merchantRouteReason("   \n\t ")).toBeNull();
   });
 });
 

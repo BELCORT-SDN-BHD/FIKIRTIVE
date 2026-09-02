@@ -50,7 +50,21 @@ const PROVIDER_NAME_RE = new RegExp(
     // consumer-facing name) join this group for the same reason `volcengine`/`prometheus` did
     // in #779: neither is a word in any language a merchant writes to us in, so both match bare
     // and both take the same optional version tail ("Dreamina 2.0", "modelark-v2").
-    `\\b(?:seedance|seedream|byteplus|bytedance|jimeng|volcengine|volc|vmp|prometheus|modelark|dreamina)(?:(?:provider|client|error)\\b|(?:[./:_-][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b(?:[ \\t]{1,${MAX_GAP}}\\d{1,4}(?:\\.\\d{1,4}){0,3}(?:[ \\t]{1,${MAX_GAP}}fast)?)?)`,
+    //
+    // Creation ① Codex r2 P1 — `dola` joins them, and it was the hole. It is the namespace
+    // prefix of a supplier model id we send TODAY (`dola-seedream-5-0-pro-260628`, in
+    // packages/generation/src/byteplus.ts `IMAGE_MODEL_MAP`), so a string carrying it is
+    // precisely what this module exists to stop — yet `redactProviderNames("dola")` returned
+    // "dola" untouched. Like `dreamina` it is not a word in any language a merchant writes to
+    // us in, which is what earns it a bare match; "dolar"/"dollar" keep a trailing word
+    // character so the `\b` leaves them alone. At 4 characters it is far shorter than
+    // `volcengine`, so the MAX_MATCH_SPAN arithmetic below is unchanged.
+    //
+    // A name is only ever missing from this line because a human forgot it, so the coverage is
+    // now DERIVED rather than remembered: packages/generation/src/byteplus.test.ts feeds every
+    // token of every id in the two model-id maps through `redactProviderNames` and fails if one
+    // survives. Adding a supplier id without adding its name here now turns that test red.
+    `\\b(?:seedance|seedream|byteplus|bytedance|jimeng|volcengine|volc|vmp|prometheus|modelark|dreamina|dola)(?:(?:provider|client|error)\\b|(?:[./:_-][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b(?:[ \\t]{1,${MAX_GAP}}\\d{1,4}(?:\\.\\d{1,4}){0,3}(?:[ \\t]{1,${MAX_GAP}}fast)?)?)`,
     `\\bfal(?:provider|client|error|[./:_-][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b`,
     `即梦`,
     // #779 judge r1, P2-1 — the OBSERVABILITY side of the same supplier. Its metrics workspace,
@@ -129,7 +143,8 @@ const REDACTED_LITERAL_RE = new RegExp(`\\b${REDACTED}\\b`, "giu");
  * 63 < 64 — the ceiling moved from 62 when #779 added "volcengine"/"prometheus" (10 chars,
  * one longer than "bytedance") to the names group. #905 added "modelark"/"dreamina" (≤10
  * chars, no change) to the same group and the "volcano engine" / "ark" context rows above
- * (all ≤ 46) — none of it moves the ceiling past 63. The streaming filter holds back this much,
+ * (all ≤ 46), and Creation ① added "dola" (4 chars, no change) — none of it moves the ceiling
+ * past 63. The streaming filter holds back this much,
  * so a match is never judged on text it
  * has not seen yet — the property tests in provider-secrecy.test.ts assert the consequence
  * (streamed output === whole-text output) rather than trusting the arithmetic alone.

@@ -440,10 +440,82 @@ describe("CREATE-A4 / CREATE-A12 路由理由的**产品读路径**:两个商家
     expect(receipt).not.toHaveProperty("error");
     expect((receipt as { routeReason: string | null }).routeReason).toBe(routeReason);
     // ③ 两条路交出来的都是**能力名词**,一个型号名都没有。
+    //
+    // 注意这一条上面种进去的是**干净**值(`routeReasonFor` 自己写的那句话),所以它证的是
+    // 「读得回来、且出口没把我们自己的话改花」—— 白标那一半在这里是假绿的:出口整个拆掉
+    // 也照样通过。真正证白标的是下面那条「库里这一列脏了」的测试,别把两件事混成一条。
     for (const secret of ["seedance", "seedream", "dreamina", "dola", "byteplus", "mini"]) {
       expect(String(polled!.routeReason).toLowerCase()).not.toContain(secret);
       expect(String((receipt as { routeReason: string | null }).routeReason).toLowerCase()).not.toContain(secret);
     }
+  });
+
+  /**
+   * Codex r2 P1 —— **库里这一列脏了**的时候,两条产品路都得拦住。
+   *
+   * 上面那一条种的是纯函数自己写的干净句子,所以它对白标是假绿的。这一条把供应商的真 id
+   * 直接种进 `Generation.routeReason`(手工回填、一次迁移、别处的旧代码都能造出这一行),
+   * 然后问两条商家接口:交出来的那句话里还有没有型号名。
+   *
+   * r2 之前:资产回执过 `merchantRouteReason`(干净),出片轮询**原样**交出去(泄露)。
+   * 这一条就是那次泄露的复现,也是它不会再回来的守形。
+   */
+  it("CREATE-A12 库里这一列被写进型号名 ⇒ 两条路交给浏览器的都已脱敏", async () => {
+    const world = await seedWorld(500);
+    const models = await getActiveGenModels();
+    const started = await startCanvasGen({
+      actionId: `act-${randomUUID()}`,
+      expectedCredits: HD_5S_DISPLAY,
+      projectId: world.projectId,
+      prompt: "a slow push-in on the product",
+      count: 1,
+      kind: "video",
+      model: models.video,
+      resolution: "1080p",
+      durationSeconds: 5,
+    });
+    const jobId = (started as { id: string }).id;
+    const job = await prisma.genJob.findFirstOrThrow({ where: { id: jobId, ownerId: world.ownerId } });
+
+    // 脏值不是编的:这四段是 packages/generation/src/byteplus.ts 两张接线表里今天真在送的 id。
+    const DIRTY = "Routed to dreamina-seedance-2-0-260128 (fallback dola-seedream-5-0-pro-260628) via BytePlus.";
+    const assetId = `ast_${randomUUID()}`;
+    await prisma.asset.create({
+      data: {
+        id: assetId, ownerId: world.ownerId, contentHash: freshContentHash(),
+        ext: "mp4", mime: "video/mp4", sizeBytes: BigInt(1), originalFilename: "clip.mp4", source: "GENERATED",
+      },
+    });
+    const genId = `gen_${randomUUID()}`;
+    await prisma.generation.create({
+      data: {
+        id: genId, ownerId: world.ownerId, projectId: world.projectId, assetId,
+        source: "GENERATED", promptText: job.prompt, modelRef: job.model,
+        routeReason: DIRTY, entitySnapshot: { entities: [] }, version: 1,
+      },
+    });
+    await prisma.genJob.update({
+      where: { id: jobId, ownerId: world.ownerId },
+      data: { status: "DONE", generationIds: [genId] },
+    });
+    // 先证明脏的确实进了库 —— 否则下面两条断言可能只是在测一个空字段。
+    const stored = await prisma.generation.findFirstOrThrow({ where: { id: genId, ownerId: world.ownerId } });
+    expect(stored.routeReason).toBe(DIRTY);
+
+    const polled = await getGenJob(jobId, world.projectId);
+    const receipt = await getGeneration(genId);
+    expect(receipt).not.toHaveProperty("error");
+    const shown = [polled!.routeReason, (receipt as { routeReason: string | null }).routeReason];
+    for (const value of shown) {
+      // 两条路都得**动过手**:原样交出去就是那次泄露。
+      expect(value, "商家接口把库里的原文原样交出去了").not.toBe(DIRTY);
+      expect(value).not.toBeNull();
+      for (const secret of ["seedance", "seedream", "dreamina", "dola", "byteplus", "modelark"]) {
+        expect(String(value).toLowerCase(), `商家接口交出了型号名「${secret}」:${value}`).not.toContain(secret);
+      }
+    }
+    // 两条路读的是**同一个**出口,所以两边逐字相同 —— 不是各自过了一遍各自的过滤。
+    expect(shown[0]).toBe(shown[1]);
   });
 
   it("CREATE-A12 没升档 ⇒ 两条路都交出 null(不编一句「用了默认档」)", async () => {
