@@ -207,10 +207,29 @@ export type GenImageAspect = (typeof GEN_IMAGE_ASPECTS)[number];
 /** 菜单第一项 = 未指定画幅时的默认（t2i 默认方图，与 2026-06-29 起的既有行为一致）。 */
 export const GEN_IMAGE_DEFAULT_ASPECT: GenImageAspect = GEN_IMAGE_ASPECTS[0];
 
-/** 引擎对「宽×高」写法的硬约束：总像素必须落在这个闭区间内，比例必须在 [1/16, 16]。
- *  下表每一档都由 `gen.test.ts` 逐档验过这三条 —— 加档位时测试会替你把关。 */
-export const GEN_IMAGE_MIN_PIXELS = 3_686_400;
-export const GEN_IMAGE_MAX_PIXELS = 16_777_216;
+/**
+ * 引擎对「宽×高」写法的硬约束：总像素必须落在闭区间内，比例必须在 [1/16, 16]。
+ *
+ * **区间是逐槽位的**，不是全家族一份 —— 规格 §1 明写「各槽位能力差异以逐槽
+ * `supported_params` 实查回执为准」。pro 的上限比 lite **低**（4,624,220 < 16,777,216），
+ * 所以画幅菜单不能整张照抄：照抄会让契约闸放行一个 pro 收不下的 `size`，商家在付费路上
+ * 撞一次必然的「生成失败」。`GEN_IMAGE_MODEL_OPTIONS` 因此逐槽取值，`gen.test.ts` 双向钉着
+ * （留下的每一格都在区间内，排除的每一格都真的超限）。
+ *
+ * 回执来源（零成本只读查询，2026-09-02）：
+ *  - lite `seedream-5-0` → `size` 说明「总像素 [3686400, 16777216]，宽高比 [1/16, 16]」
+ *    （`arkcli models get seedream-5-0 --transform supported_params --format json`）；
+ *  - pro `dola-seedream-5-0-pro` → `size` 说明「总像素 [921600, 4624220]，宽高比 [1/16, 16]」
+ *    （回执原件 `preserved/creation-probe-2026-09-02/experiment-3/supported_params-pro.json`）。
+ */
+export const GEN_IMAGE_MODEL_PIXEL_LIMITS: Record<GenModel, { min: number; max: number }> = {
+  "seedream":     { min: 3_686_400, max: 16_777_216 },
+  "seedream-pro": { min:   921_600, max:  4_624_220 },
+};
+
+/** 默认槽位（lite）的区间 —— 既有命名出口，现在从上表取，不再是第二份手抄。 */
+export const GEN_IMAGE_MIN_PIXELS = GEN_IMAGE_MODEL_PIXEL_LIMITS["seedream"].min;
+export const GEN_IMAGE_MAX_PIXELS = GEN_IMAGE_MODEL_PIXEL_LIMITS["seedream"].max;
 
 /**
  * 画幅 → 执行层真正发出去的**确切** WxH（2K 档）。
@@ -261,10 +280,20 @@ export type ImageModelOptions = {
 };
 export const GEN_IMAGE_MODEL_OPTIONS: Record<GenModel, ImageModelOptions> = {
   "seedream": { aspectRatios: [...GEN_IMAGE_ASPECTS], maxCount: MAX_GEN_COUNT, coherentSet: true },
-  // Creation S2 §8.1①:pro 槽位。画幅与批量与 lite 同(按张计价、不分尺寸比例),
+  // Creation S2 §8.1①:pro 槽位。批量与 lite 同(按张计价、不分尺寸比例),但**画幅表
+  // 不能照抄** —— 判据是 pro 自己那份 `supported_params` 回执(见
+  // `GEN_IMAGE_MODEL_PIXEL_LIMITS` 上面那段的出处):它的总像素上限只有 4,624,220,
+  // 而 `GEN_IMAGE_SIZES` 里 16:9 与 9:16 两格的 2K 格点都是 2880×1620 = 4,665,600 px,
+  // 超限 41,380 px。照抄整张表 = 契约闸放行两个 pro 必拒的 size,适配器照旧 POST,
+  // 商家在付费路上撞一次注定的「生成失败」。所以这里只留落在 pro 区间内的六格
+  // (不改 `GEN_IMAGE_SIZES` 的任何数字:那张表是 lite 与卡面共用的,pro 的格点没有回执)。
   // `coherentSet` 保守取 **false** —— 组图是**逐槽实测**才敢开的能力位(见上面那段注释:
   // 「参数面没有在本仓库的账户上实测过」),pro 的组图行为尚未实测,未验先禁。
-  "seedream-pro": { aspectRatios: [...GEN_IMAGE_ASPECTS], maxCount: MAX_GEN_COUNT, coherentSet: false },
+  "seedream-pro": {
+    aspectRatios: ["1:1", "4:3", "3:4", "3:2", "2:3", "21:9"],
+    maxCount: MAX_GEN_COUNT,
+    coherentSet: false,
+  },
 };
 
 /**

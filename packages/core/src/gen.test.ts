@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest,
   GEN_IMAGE_ASPECTS, GEN_IMAGE_DEFAULT_ASPECT, GEN_IMAGE_MAX_PIXELS, GEN_IMAGE_MIN_PIXELS,
+  GEN_MODELS, GEN_IMAGE_MODEL_PIXEL_LIMITS,
   GEN_IMAGE_MODEL_OPTIONS, GEN_IMAGE_SIZES, imageDefaults, imageOutputSize, normalizeImageAspect,
   supportsCoherentSet, COHERENT_SET_MIN_IMAGES,
   type GenImageAspect,
@@ -248,10 +249,88 @@ describe("GEN_IMAGE_MODEL_OPTIONS(图片画幅菜单)", () => {
     expect(GEN_IMAGE_DEFAULT_ASPECT).toBe("1:1");
   });
   it("每个菜单项都有确切的 WxH 映射(菜单上没有一格是假的)", () => {
-    for (const a of GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios) {
-      expect(GEN_IMAGE_SIZES[a as GenImageAspect]).toBeDefined();
+    // Creation S2 §8.1①:菜单从一格开到两格,所以这条 menu-truth 也逐槽走一遍 ——
+    // 「每一格都是真的」对 pro 与对 lite 是同一句话。
+    for (const model of GEN_MODELS) {
+      for (const a of GEN_IMAGE_MODEL_OPTIONS[model].aspectRatios) {
+        expect(GEN_IMAGE_SIZES[a as GenImageAspect], `${model} ${a}`).toBeDefined();
+      }
     }
     expect(Object.keys(GEN_IMAGE_SIZES).sort()).toEqual([...GEN_IMAGE_ASPECTS].sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 逐槽像素上限 —— 判官 r2 P1:pro 槽位不能照抄 lite 的画幅表
+// ---------------------------------------------------------------------------
+describe("图片槽位 × 逐槽像素区间(supported_params 实查回执)", () => {
+  const imageBase = {
+    projectId: "p1", prompt: "a poster", count: 1, kind: "image", idempotencyKey: "k1",
+  } as const;
+
+  it("回执数字逐字钉住(动这两行 = 有人改了回执,必须先拿新回执来)", () => {
+    // 零成本只读查询,2026-09-02:
+    //   lite `arkcli models get seedream-5-0 --transform supported_params --format json`
+    //     → size「总像素 [3686400, 16777216]」
+    //   pro  回执原件 preserved/creation-probe-2026-09-02/experiment-3/supported_params-pro.json
+    //     → size「总像素 [921600, 4624220]」
+    expect(GEN_IMAGE_MODEL_PIXEL_LIMITS.seedream).toEqual({ min: 3_686_400, max: 16_777_216 });
+    expect(GEN_IMAGE_MODEL_PIXEL_LIMITS["seedream-pro"]).toEqual({ min: 921_600, max: 4_624_220 });
+    // 既有命名出口就是 lite 那一行,不是第二份手抄
+    expect(GEN_IMAGE_MIN_PIXELS).toBe(GEN_IMAGE_MODEL_PIXEL_LIMITS.seedream.min);
+    expect(GEN_IMAGE_MAX_PIXELS).toBe(GEN_IMAGE_MODEL_PIXEL_LIMITS.seedream.max);
+  });
+
+  it("每个槽位菜单上的每一格,总像素都落在**该槽位**回执的区间内", () => {
+    for (const model of GEN_MODELS) {
+      const { min, max } = GEN_IMAGE_MODEL_PIXEL_LIMITS[model];
+      for (const a of GEN_IMAGE_MODEL_OPTIONS[model].aspectRatios) {
+        const { width, height } = GEN_IMAGE_SIZES[a as GenImageAspect];
+        const pixels = width * height;
+        expect(pixels, `${model} ${a} 总像素`).toBeGreaterThanOrEqual(min);
+        expect(pixels, `${model} ${a} 总像素`).toBeLessThanOrEqual(max);
+      }
+    }
+  });
+
+  it("菜单也没有无故短一格:被某个槽位排除的画幅,都是**真的**超出它的区间", () => {
+    for (const model of GEN_MODELS) {
+      const { min, max } = GEN_IMAGE_MODEL_PIXEL_LIMITS[model];
+      const menu = GEN_IMAGE_MODEL_OPTIONS[model].aspectRatios as readonly string[];
+      for (const a of GEN_IMAGE_ASPECTS) {
+        if (menu.includes(a)) continue;
+        const { width, height } = GEN_IMAGE_SIZES[a];
+        const pixels = width * height;
+        expect(pixels < min || pixels > max, `${model} 排除了 ${a},但它其实落在区间内`).toBe(true);
+      }
+    }
+  });
+
+  it("pro 少的正是 16:9 与 9:16(2880×1620 = 4,665,600 px > 4,624,220),且契约闸当场拒", () => {
+    expect([...GEN_IMAGE_MODEL_OPTIONS["seedream-pro"].aspectRatios])
+      .toEqual(["1:1", "4:3", "3:4", "3:2", "2:3", "21:9"]);
+    for (const a of ["16:9", "9:16"] as const) {
+      const { width, height } = GEN_IMAGE_SIZES[a];
+      expect(width * height, `${a} 总像素`).toBe(4_665_600);
+      expect(width * height).toBeGreaterThan(GEN_IMAGE_MODEL_PIXEL_LIMITS["seedream-pro"].max);
+      // 引擎收不下的 size 绝不能过闸走到适配器并花钱
+      expect(genRequest.safeParse({ ...imageBase, model: "seedream-pro", aspectRatio: a }).success, a)
+        .toBe(false);
+      // lite 那一格没有被动过 —— 同一个画幅在默认槽位照旧合法
+      expect(genRequest.safeParse({ ...imageBase, model: "seedream", aspectRatio: a }).success, a)
+        .toBe(true);
+    }
+  });
+
+  it("pro 菜单上的每一格都真的过得了契约闸,默认档 1:1 也在它自己的区间内", () => {
+    for (const a of GEN_IMAGE_MODEL_OPTIONS["seedream-pro"].aspectRatios) {
+      expect(genRequest.safeParse({ ...imageBase, model: "seedream-pro", aspectRatio: a }).success, a)
+        .toBe(true);
+    }
+    const def = imageDefaults("seedream-pro").aspectRatio;
+    expect(def).toBe("1:1");
+    const { width, height } = GEN_IMAGE_SIZES[def as GenImageAspect];
+    expect(width * height).toBeLessThanOrEqual(GEN_IMAGE_MODEL_PIXEL_LIMITS["seedream-pro"].max);
   });
 });
 
