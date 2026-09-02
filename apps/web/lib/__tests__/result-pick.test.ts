@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, afterAll, beforeEach, vi } from "vitest";
 import { readPick, writePick } from "@/lib/result-pick";
 
 // Use a simple in-memory localStorage mock for jsdom-less environments.
@@ -9,7 +9,23 @@ const localStorageMock = {
   removeItem: (k: string) => { delete store[k]; },
   clear: () => { for (const k in store) delete store[k]; },
 };
-Object.defineProperty(globalThis, "window", { value: { localStorage: localStorageMock }, writable: true });
+/**
+ * 这一整套 apps/web 的 vitest 是 `singleThread`(见 `vitest.config.ts` 里的说明):459 个
+ * 文件排队跑在**同一个 globalThis** 上。原写法是
+ * `Object.defineProperty(globalThis, "window", { value, writable: true })` —— 漏了
+ * `configurable`,它默认 false,于是这个只有 localStorage 的假 window 从这一刻起
+ * **永久钉死**在全局上,后面几百个文件都摘不掉。两类后果,全量里都真实发生过:
+ *   ① 后面任何 node 环境文件再 `vi.stubGlobal("window", …)`,当场
+ *      「Cannot redefine property: window」(`nav-rail-state` / `otto-panel-state`);
+ *   ② 后面任何按 `typeof window !== "undefined"` 分流的库(`next/image`、Prisma 客户端、
+ *      Next 的 server 模块)都会改走浏览器分支,再撞上这个没有 `location` 的空壳 ——
+ *      这就是「单跑绿、全量红」那一家子假红的来源。
+ * 改成仓库里其它同类用例的写法:`vi.stubGlobal` + 文件结束还原。
+ */
+vi.stubGlobal("window", { localStorage: localStorageMock });
+afterAll(() => {
+  vi.unstubAllGlobals();
+});
 
 beforeEach(() => localStorageMock.clear());
 
