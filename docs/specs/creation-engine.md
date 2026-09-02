@@ -133,8 +133,8 @@
 
 ## 8. S2 施工稿（设计阶段产出；S1 正文 §0–§7 一字未动，§5 只追加登记行）
 
-> S2 状态: 草稿呈批
-> S2 批准: （待）Founder 在 S2 PR 评论「S2 批准 creation-engine.md」；该评论同时追认 §5 2026-09-01 定价回填行（1080p 视频 11cr/秒、pro 图 2cr/张）与本节 §8.0 四项拍板建议
+> S2 状态: 已批准
+> S2 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1131 Founder 评论「S2 批准 creation-engine.md」(2026-09-02)；该评论同时追认 §5 2026-09-01 定价回填行（1080p 视频 11cr/秒、pro 图 2cr/张）与本节 §8.0 四项拍板建议
 
 ### 8.0 范围、量尺与本场拍板（Founder 2026-09-02）
 
