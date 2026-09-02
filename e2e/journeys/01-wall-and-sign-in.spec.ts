@@ -32,7 +32,12 @@ test("A merchant signs in with the emailed code and lands where they were headed
   // page into the code step and says which address it went to, and the code they were mailed
   // finishes the sign-in without ever leaving the tab they started in.
   const code = await requestSignInCode(page, ws.email, "/billing");
-  await expect(page.getByText("Check your email")).toBeVisible();
+  // Scoped to the HEADING, not to the text. Next's route announcer (`#__next-route-announcer__`,
+  // an aria-live div the framework fills with the new page's title after a client-side
+  // navigation) carries the SAME words, so a bare text match resolves to two nodes and
+  // Playwright's strict mode fails the assertion — on a page that is in fact correct. Asking for
+  // the heading asks about the product's own DOM instead of the framework's accessibility relay.
+  await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
   await expect(page.getByText(ws.email)).toBeVisible();
 
   await page.getByLabel("Login code").fill(code);
