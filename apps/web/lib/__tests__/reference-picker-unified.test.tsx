@@ -74,7 +74,8 @@ function composer() {
   return document.body.querySelector<HTMLTextAreaElement>('textarea[aria-label="Ask Otto"]')!;
 }
 
-async function type(value: string, caret = value.length) {
+/** One keystroke with NO time advanced — the state the composer is in WHILE a merchant types. */
+async function keystroke(value: string, caret = value.length) {
   const el = composer();
   await act(async () => {
     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
@@ -82,7 +83,16 @@ async function type(value: string, caret = value.length) {
     el.setSelectionRange(caret, caret);
     el.dispatchEvent(new Event("input", { bubbles: true }));
   });
+}
+
+/** Let the debounce fire and the server answer land. */
+async function settle() {
   await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+}
+
+async function type(value: string, caret = value.length) {
+  await keystroke(value, caret);
+  await settle();
 }
 
 async function press(key: string, options: { shiftKey?: boolean } = {}) {
@@ -147,6 +157,28 @@ describe("FRONT-A10 — 两套 @ 实现收口成一个选择器", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     expect(searchReferencesAction).toHaveBeenLastCalledWith(expect.objectContaining({ types: ["product"] }));
     expect(document.body.textContent).toContain("All types");
+  });
+
+  it("FRONT-A10 a search still in flight never claims No references found", async () => {
+    await render();
+    // No time advanced: the debounce has not fired, so no answer for "@j" can exist yet.
+    await keystroke("@j");
+    expect(document.body.textContent).not.toContain("No references found");
+    expect(document.body.textContent).toContain("Searching references");
+    await settle();
+    expect(document.body.textContent).toContain("Jasmine gift box");
+    expect(document.body.textContent).not.toContain("Searching references");
+  });
+
+  it("FRONT-A10 the next keystroke after an answered search does not flash the empty state", async () => {
+    await render();
+    await type("@j");
+    expect(document.body.textContent).toContain("Jasmine gift box");
+    // One more character. The previous answer no longer describes what is on screen, but the new
+    // one has not landed — the merchant must not be told their reference does not exist.
+    await keystroke("@ja");
+    expect(document.body.textContent).not.toContain("No references found");
+    expect(document.body.textContent).toContain("Searching references");
   });
 
   it("FRONT-A10 no matches says so and Enter selects nothing", async () => {

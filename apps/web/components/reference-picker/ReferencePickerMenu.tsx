@@ -21,6 +21,7 @@ import type { ReferenceType } from "@fikirtive/core/reference-ref";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 /**
@@ -69,6 +70,12 @@ export interface ReferencePickerMenuProps {
   open: boolean;
   listId: string;
   rows: readonly ReferencePickerRow[];
+  /**
+   * True while the rows for the query on screen are still being fetched. Surfaces that filter a
+   * local array (the canvas editor) never set it. It exists so the empty state can distinguish
+   * "the answer came back empty" from "the answer is not here yet" — see the `pending` branch.
+   */
+  pending?: boolean;
   highlightedIndex: number;
   /** Menu heading — `Recent`, a category name, or `References` while searching. */
   title: string;
@@ -107,6 +114,7 @@ export function ReferencePickerMenu({
   open,
   listId,
   rows,
+  pending = false,
   highlightedIndex,
   title,
   subtitle,
@@ -218,6 +226,16 @@ export function ReferencePickerMenu({
                 </Button>
               );
             })}
+          </div>
+        ) : categories.length === 0 && pending ? (
+          /* Not "nothing found" — "not answered yet". The fixture has no such state because it
+             filters an in-memory array; production crosses the network, so this is the
+             production-necessary state the design does not carry (Founder rule ②: draw it in the
+             design system's own styles). One quiet line, no skeleton rows: fake rows in a list
+             that is about to become the real list is worse than a still box. */
+          <div className="flex items-center justify-center gap-2 p-5 text-xs text-muted-foreground">
+            <Spinner className="size-3.5" aria-label="Searching references" />
+            <span>Searching references…</span>
           </div>
         ) : categories.length === 0 ? (
           /* Contract §7 — say there is nothing rather than showing an empty box, and leave one

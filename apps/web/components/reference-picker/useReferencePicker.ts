@@ -98,6 +98,15 @@ export function useReferencePicker({ text, setText, getTextarea }: UseReferenceP
   }, [requestKey, query, category]);
 
   const results = answer && answer.key === requestKey ? answer.items : null;
+  /**
+   * No answer for the query on screen yet — the debounce is still counting, or the round trip is
+   * still open. The menu MUST be told: "no rows" and "no rows YET" are indistinguishable from
+   * `rows.length`, and an empty state drawn on the second one tells the merchant `No references
+   * found` about a search that is still running. That fires on every keystroke (120ms debounce
+   * plus one server round trip each), so the whole time they are typing a name they are being told
+   * it does not exist — the exact opposite of what FRONT-A10 exists to prove.
+   */
+  const pending = open && results === null;
   const showCategories = query === "" && category === null;
 
   const rows = useMemo<ReferencePickerRow[]>(() => {
@@ -143,6 +152,18 @@ export function useReferencePicker({ text, setText, getTextarea }: UseReferenceP
   /**
    * Replace only the `@query` at the caret and keep everything after it — a reference inserted in
    * the middle of a sentence must not eat the rest of the line (Phase 5 spec §9).
+   *
+   * WHY A PLAIN `@Name`, NOT THE FIXTURE'S CHIP. The approved fixture
+   * (`design-system/patterns/reference-picker/ReferencePickerReference.tsx`, `selectItem`) DELETES
+   * the `@query` from the draft and carries the object as a removable chip above the composer.
+   * Production cannot do that yet, and the reason is not cosmetic: today the only thing that
+   * carries a reference to the model is the name in the text — `entityIdsForSend` below keeps an
+   * id only while `@Name` still appears in what was sent. Strip the name and BOTH halves vanish:
+   * the model reads a message that never mentions the object, and every entity id is filtered out.
+   * The chip becomes the honest representation once the message itself stores typed reference ids
+   * (spec §7.3③ slice ③); until then it is registered in the PR's "设计有、生产暂不显示" table,
+   * not faked. The removal action still exists in production form: deleting `@Name` from the draft
+   * drops the reference, which is the same rule stated in `resolveSentEntityIds`.
    */
   const insertReference = useCallback(
     (result: ReferenceResult) => {
@@ -261,6 +282,7 @@ export function useReferencePicker({ text, setText, getTextarea }: UseReferenceP
       open,
       listId,
       rows,
+      pending,
       highlightedIndex: highlight,
       title: categoryLabel ?? (query ? "References" : "Recent"),
       subtitle: categoryLabel
