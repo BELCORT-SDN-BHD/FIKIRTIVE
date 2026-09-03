@@ -214,3 +214,7 @@ export * from "./messaging-status.js";
 // 战役状态与它们之间的合法动作(#710 的那一张表,C7 从 apps/web 搬来)。读者现在有三个:
 // 服务端动作、商家那一页,以及 Otto —— 词汇不再各抄一份,转移表也第一次对助手可见。
 export * from "./campaign-lifecycle.js";
+
+// 引用选择器提交的「类型化 ID」词汇(前端基线规格 §7.3③)。放在 core 而不是 apps/web:
+// 服务端搜索、两处 `@` 菜单与将来落进消息的引用列读的必须是同一张类型表。
+export * from "./reference-ref.js";
