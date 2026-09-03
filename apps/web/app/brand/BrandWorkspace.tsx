@@ -350,16 +350,20 @@ function AddContextDialog({
 }
 
 function DetailAccordion({ entry }: { entry: BrandContextEntry }) {
-  const [history, setHistory] = React.useState<BrandRevisionRow[] | null>(null);
-
   // 换一条记录就重取它的改动史。挂在展开事件上更省一次查询,但那样这一层是否装得上
   // 就取决于 primitive 有没有把 onClick 透传下去 —— 一个「历史永远在读取中」的面板
   // 比一次便宜的查询贵得多。
+  //
+  // 结果连同它属于哪一条记录一起存,而不是在 effect 里先 setState(null) 清一次:
+  // 「这份历史是不是当前这条的」是**算得出来**的,不需要多一轮渲染去表达
+  // (react-hooks/set-state-in-effect 说的正是这件事)。
+  const [loaded, setLoaded] = React.useState<{ id: string; rows: BrandRevisionRow[] } | null>(null);
+  const history = loaded?.id === entry.id ? loaded.rows : null;
+
   React.useEffect(() => {
     let alive = true;
-    setHistory(null);
     listBrandRevisionsAction({ kind: entry.kind, id: entry.id }).then((rows) => {
-      if (alive) setHistory(rows);
+      if (alive) setLoaded({ id: entry.id, rows });
     });
     return () => { alive = false; };
   }, [entry.id, entry.kind]);
@@ -555,8 +559,11 @@ export function BrandWorkspace({
         {selected ? (
           <section className="min-w-0 flex-1 overflow-y-auto px-8 py-7" aria-labelledby="context-title">
             <div className="mx-auto max-w-3xl">
-              <div className="flex items-start justify-between gap-6">
-                <div className="flex min-w-0 items-start gap-3">
+              {/* 夹具是一行:标题在左、动作在右。但生产上右边还有 Otto 面板占着 360px,而草稿态
+                  比夹具多两个动作(Save / Discard)—— 宽度不够时让**动作整组换行**到下一行,
+                  而不是把标题压成两个字(实测 1440px 带面板时就已经压到「K…warmth」)。 */}
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex min-w-[240px] flex-1 items-start gap-3">
                   <Image aria-hidden alt="" src={STATUS_ART[selected.status]} width={44} height={40} className="mt-0.5 shrink-0" />
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -568,7 +575,9 @@ export function BrandWorkspace({
                     <ChangedByLine entry={selected} />
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                {/* 草稿态最多四个动作,而右侧还有 Otto 面板在占宽 —— 不给它 shrink-0 与
+                    flex-wrap,标题会被挤到按钮底下去(实测 1440px 带 Otto 面板时就已经撞上)。 */}
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                   {selected.status === "Draft" ? (
                     <>
                       <Button variant="secondary" size="sm" onClick={() => openPreview(selected)}>
