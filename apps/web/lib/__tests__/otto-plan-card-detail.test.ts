@@ -335,17 +335,19 @@ describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () 
     expect(markup).not.toMatch(/You asked for/);
   });
 
-  it("图片卡(#643 T2):引擎给不了的形状 —— 卡面照旧把降级说出口,而且规格里不出现那个比例", async () => {
-    const { buildProposeCard } = await import("@fikirtive/otto");
-    const { cardPayload } = buildProposeCard(
-      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "5:7", count: 3 },
-      { orgId: "o", userId: "u", projectId: "p", threadId: "t", disabledModels: [], sourceGenerationId: null } as never,
-      [],
-    );
-    const markup = renderCard(cardPayload);
-    expect(cardPayload.specChips).toEqual(["2048 × 2048", "1:1", "3 images"]);
-    expect(cardPayload.specChips).not.toContain("5:7");
-    expect(markup).toContain("You asked for 5:7 — this will be a square 2048 × 2048 image.");
+  // Codex QA-CRE-FE9-014(规格 §5 2026-09-04)—— 上一版这里渲染的是一张写着「1:1」的
+  // 付费卡外加一句「You asked for 5:7 — this will be a square…」。那张卡本身就是病:
+  // 商家的硬规格被改掉,却仍然请他批准。现在做不到的形状在铸卡前就被拒绝,所以这条
+  // 渲染用例改成钉「**没有卡可渲染**」—— 图片降级那句话从此没有生产者。
+  it("CREATE-A4 图片卡:引擎给不了的形状 —— 一张卡都不铸,没有可渲染的降级卡", async () => {
+    const { buildProposeCard, ProposeRefusal } = await import("@fikirtive/otto");
+    expect(() =>
+      buildProposeCard(
+        { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "5:7", count: 3 },
+        { orgId: "o", userId: "u", projectId: "p", threadId: "t", disabledModels: [], sourceGenerationId: null } as never,
+        [],
+      ),
+    ).toThrow(ProposeRefusal);
   });
 
   // ── #774 判官 r2 P1 —— 引擎认人的名字,商家在花钱之前就看得见 ──────────────

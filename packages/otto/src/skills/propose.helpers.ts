@@ -17,6 +17,7 @@ import {
   VIDEO_ASPECT_ADAPTIVE,
   GEN_VIDEO_MODEL_OPTIONS,
   GEN_VIDEO_MODEL_INFO,
+  GEN_IMAGE_MODEL_OPTIONS,
   GEN_PRICE_USD_PER_IMAGE,
   GEN_VIDEO_SECONDS,
   REFERENCE_VIDEO_MODEL,
@@ -28,6 +29,7 @@ import {
   imageAspectHonoured,
   normalizeImageAspect,
   EXECUTED_SPEC,
+  type GenModel,
   type GenVideoModel,
   type ReferenceBudget,
   type ApprovedEntity,
@@ -268,6 +270,82 @@ function mintableVideoTiers(slot: GenVideoModel, opts: { refPath: boolean }): st
   const sellable = SELLABLE_VIDEO_RESOLUTIONS[model] ?? [];
   const reachable = opts.refPath ? [videoDefaults(REFERENCE_VIDEO_MODEL).resolution] : sellable;
   return sellable.filter((r) => reachable.includes(r));
+}
+
+/**
+ * 「宽:高」→ 一个数,**读不懂就 null**(Codex QA-CRE-FE9-014)。
+ *
+ * 只用来给拒绝句里那几个建议**排序**,一步都不参与选型、报价或请求体 —— 所以它可以
+ * 收下菜单上没有的写法(`4:5`),而 `normalizeImageAspect`(决定卡上落哪一格的那个)
+ * 必须继续只认菜单,一个字都不放宽。
+ */
+function imageAspectValue(raw: string): number | null {
+  const m = /^(\d+(?:\.\d+)?)\s*[x×:：]\s*(\d+(?:\.\d+)?)$/u.exec(raw.trim().toLowerCase());
+  if (!m) return null;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  return Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? w / h : null;
+}
+
+/** 拒绝句里最多列几个建议(读得懂他要的比例时)。多了就不是人话,是一堵墙。 */
+const IMAGE_ASPECT_OFFER_LIMIT = 3;
+
+/**
+ * 这条路**真做得到**的画幅 —— `ImageAspectUnavailableError` 那句话里只许出现这些。
+ *
+ * 与 `mintableVideoTiers` 同一条判据:能力表里有(这台引擎收得下这一格),而且这一趟
+ * 真会跑的适配器兑现画幅(`imageAspectHonoured`)—— 不兑现就一个都给不了,空数组。
+ *
+ * 读得懂他要的比例时按**接近程度**排(对数距离:比例是乘法量,`2:1` 与 `1:2` 到 `1:1`
+ * 的距离必须一样),只取最近的几个;读不懂就原样交出整张菜单(那时「最接近」没有意义,
+ * 拒绝句会换一种说法,见下面的文案)。
+ */
+function mintableImageAspects(model: GenModel, wanted: string): { offered: string[]; nearest: boolean } {
+  if (!imageAspectHonoured()) return { offered: [], nearest: false };
+  const menu = [...GEN_IMAGE_MODEL_OPTIONS[model].aspectRatios];
+  const target = imageAspectValue(wanted);
+  if (target === null) return { offered: menu, nearest: false };
+  const ranked = menu
+    .map((a) => ({ a, d: Math.abs(Math.log((imageAspectValue(a) ?? target) / target)) }))
+    .sort((x, y) => x.d - y.d)
+    .map((e) => e.a);
+  return { offered: ranked.slice(0, IMAGE_ASPECT_OFFER_LIMIT), nearest: true };
+}
+
+/** 拒绝句本体。`super()` 必须是第一句,所以文案在这里拼好再交给它。 */
+function imageAspectRefusalCopy(wanted: string, offered: readonly string[], nearest: boolean): string {
+  if (offered.length === 0) {
+    return `${wanted} isn't a shape I can make here — tell me what else you'd like and I'll set it up.`;
+  }
+  return nearest
+    ? `${wanted} isn't a shape I can make here — the closest I can do are ${offered.join(", ")}. Tell me which, or name another shape and I'll check it.`
+    : `${wanted} isn't a shape I can make here — I can do ${offered.join(" or ")}. Tell me which and I'll set it up.`;
+}
+
+/**
+ * 商家点名的**画幅**在这条路上做不到(Codex QA-CRE-FE9-014,规格 §5 2026-09-04)。
+ *
+ * 为什么是拒绝而不是换一格:上一版在这里**悄悄换成方图 + 卡上一句说明**,而那张卡
+ * 仍然是一个点得下去的付费承诺 —— 商家两次说 4:5,拿到的是一张写着「1:1」的确认卡。
+ * 「说了」不等于「问了」:他的硬规格被改掉,却没有一个地方让他改回来或明确接受。
+ * 与画质档(`VideoTierUnavailableError`)同一条规矩、同一个位置:做不到就在铸卡前
+ * 停下来问,一分钱不花(抛在报价与预扣之前,GEN_CARD 一行都不落库)。
+ *
+ * 那句话里只有比例,一个引擎名都没有;能给的那几格从**这台引擎的能力表**现算 ——
+ * 菜单加一格,这句话跟着改口。
+ */
+export class ImageAspectUnavailableError extends ProposeRefusal {
+  constructor(
+    /** 商家点名的那个形状,原样回给他听(不润色、不猜)。 */
+    readonly wanted: string,
+    /** 这条路真做得到的那几格(`mintableImageAspects` 现算,已排好序)。 */
+    offered: readonly string[],
+    /** true = 我们读懂了他要的比例,所以 `offered` 真是「最接近的那几个」。 */
+    nearest: boolean,
+  ) {
+    super(imageAspectRefusalCopy(wanted, offered, nearest));
+    this.name = "ImageAspectUnavailableError";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -665,6 +743,32 @@ export function buildProposeCard(
     }
   }
 
+  /**
+   * Step 3.7(Codex QA-CRE-FE9-014,规格 §5 2026-09-04)—— **画幅与画质档同一条规矩**:
+   * 商家点名的形状要么原样上卡,要么一张卡都不铸。
+   *
+   * 判据只有一条,而且判的是**这张卡真会交付什么**:卡上这一格 ≠ 他点的那一格 ⇒ 拒绝。
+   * 两种落法都被它盖住:
+   *   ① 这一趟真会跑的适配器根本不采纳画幅(`imageAspectHonoured` 说了不算数);
+   *   ② 采纳,但他要的那格不在这台引擎的能力表上(`4:5` 就是这一种)。
+   * `normalizeImageAspect` 先归一写法(`9x16` / `portrait` 都是菜单上那一格),所以一次
+   * **已经兑现**的请求不会被误判成拒绝。
+   *
+   * 为什么不是「换成方图 + 卡上一句说明」(上一版的做法):那句说明写在一张**点得下去
+   * 的付费卡**上,商家两次说 4:5,系统主动改成 1:1 却仍然请他批准 —— 改的是他的硬规格,
+   * 而他没有任何地方可以改回来。说了不等于问了。拒绝的代价只有一句话,$0:抛在
+   * `pricedGenCredits` 之前,GEN_CARD 一行都不落库,ledger 自然零新增行。
+   *
+   * 两步计划(`forVideo`)的图片步走的就是这里 —— 它的 `kind` 也是 image,所以不必也
+   * 不该再补一支守卫(视频档位那边要补 Step 4.6a,是因为 Step 3.6 写的是 `kind === "video"`)。
+   */
+  if (kind === "image" && input.desiredAspect) {
+    if (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio) {
+      const { offered, nearest } = mintableImageAspects(sm.model as GenModel, input.desiredAspect);
+      throw new ImageAspectUnavailableError(input.desiredAspect, offered, nearest);
+    }
+  }
+
   // Step 3.5: ad-pack count — the user can ask for N image options to choose from.
   // Images only (video stays a single clip). The count lives on the FROZEN card
   // (params.count) and drives BOTH the displayed price (unit × count, Step 4) and
@@ -777,17 +881,12 @@ export function buildProposeCard(
     }
   }
 
-  // Step 4.7: 商家要的画幅没落到这张卡上,也是降级 —— 必须显式披露,不得静默。
-  // suggestModel 只知道「这个模型能不能」，不知道「执行层会不会真用」，所以这两项
-  // 在这里补齐。判据是**这张卡真会交付什么**,两种情况都算掉了:
-  //   ① 这一趟真正会跑的适配器根本不采纳画幅(imageAspectHonoured 说了不算数);
-  //   ② 采纳,但这条路没把商家的画幅放上卡(卡上的画幅 ≠ 他要的)。
+  // Step 4.7: 声音开关没落到这张卡上,是降级 —— 必须显式披露,不得静默。
+  // suggestModel 只知道「这个模型能不能」，不知道「执行层会不会真用」，所以在这里补齐。
   // 纯展示：不改 params、不改选型、不改报价。
-  // #643 T2：比对前先归一商家的写法。`portrait` 和 `9:16` 是同一个形状，逐字比对会把一次
-  // **已经兑现**的请求误报成降级 —— 那句披露会变成噪音，商家学会忽略它，真降级也就跟着被忽略。
-  const imageAspectDropped =
-    kind === "image" && !!input.desiredAspect &&
-    (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio);
+  //
+  // 画幅那一项**不再**走这条披露路:做不到就在 Step 3.7 拒绝、$0(Codex QA-CRE-FE9-014)。
+  // 走到这里的图片卡,画幅一定就是商家点的那一格 —— 没有可披露的落差。
   const audioNotHonoured =
     kind === "video" && typeof input.desiredAudio === "boolean" && !EXECUTED_SPEC.video.audioHonoured;
   // #775 —— 剪辑/续写把商家点的形状换成了 adaptive,这同样是降级,必须**说出来**。
@@ -796,10 +895,10 @@ export function buildProposeCard(
     anchoredToClip && !!input.desiredAspect && input.desiredAspect !== VIDEO_ASPECT_ADAPTIVE;
   const requested: RequestedSpec = {
     ...sm.requested,
-    ...(imageAspectDropped || clipAspectForced ? { aspect: input.desiredAspect } : {}),
+    ...(clipAspectForced ? { aspect: input.desiredAspect } : {}),
     ...(audioNotHonoured ? { audio: input.desiredAudio } : {}),
   };
-  const downgraded = sm.downgraded || imageAspectDropped || audioNotHonoured || clipAspectForced;
+  const downgraded = sm.downgraded || audioNotHonoured || clipAspectForced;
   /**
    * #775 —— 卡面/披露文案这一层,「商家给了一个引擎会照着定形状的东西」为真。
    *

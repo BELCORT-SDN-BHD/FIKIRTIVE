@@ -650,10 +650,10 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
   // #559-style conservative safety lint: these are auditable banned wording families,
   // not a general English classifier. An ambiguous new instruction should be reviewed.
   const SAY_TO_START_INVITATIONS = [
-    /\bjust\s+say\b[^.!?\n]{1,50}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
-    /\b(?:say|reply|respond|type|write|message|send|answer)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
-    /\b(?:tell(?:\s+me)?|give(?:\s+me)?)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
-    /\b(?:let\s+me\s+know|just\s+confirm)\b[^.!?\n]{0,50}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
+    /\bjust\s+say\b[^.!?\n]{1,50}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing)|submit(?:ting)?|send(?:ing)?|queu(?:e|ing)|put(?:ting)?\s+it\s+through|hand(?:ing)?\s+it\s+over)\b/i,
+    /\b(?:say|reply|respond|type|write|message|send|answer)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing)|submit(?:ting)?|send(?:ing)?|queu(?:e|ing)|put(?:ting)?\s+it\s+through|hand(?:ing)?\s+it\s+over)\b/i,
+    /\b(?:tell(?:\s+me)?|give(?:\s+me)?)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing)|submit(?:ting)?|send(?:ing)?|queu(?:e|ing)|put(?:ting)?\s+it\s+through|hand(?:ing)?\s+it\s+over)\b/i,
+    /\b(?:let\s+me\s+know|just\s+confirm)\b[^.!?\n]{0,50}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing)|submit(?:ting)?|send(?:ing)?|queu(?:e|ing)|put(?:ting)?\s+it\s+through|hand(?:ing)?\s+it\s+over)\b/i,
     /\b(?:say|reply|respond|type|write|message|send|answer|tell|give)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\bwe['’]re\s+off\b/i,
   ];
 
@@ -663,6 +663,23 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
         invitation,
       );
     }
+  });
+
+  // Codex QA-CRE-FE9-004(E2E fe9c70bd)—— 同一个画面上有**两条批准指令**:Otto 的叙述说
+  // 「Just say yes and I'll submit it — then you'll confirm on the card to start」,而卡上
+  // 已经摆着那一个按钮。商家于是不知道「yes」会不会花钱、卡是不是还要再确认一次。
+  // 病根就在这份提示词自己:上一版最后一句把「说 yes → 我送上去 → 你再在卡上确认」
+  // 写成了标准流程,模型只是忠实复述它。这里把裁决钉住:一张卡,一个批准点,在卡上。
+  it("CREATE-A1 一张卡只有一条批准指令 —— 话永远不提交、不送出、不排队", () => {
+    expect(ottoInstructions).toContain(
+      "there is exactly ONE approval for a card, and it happens on the card",
+    );
+    expect(ottoInstructions).toContain(
+      "Words also never submit, send, queue, put through or hand over a card",
+    );
+    // 「说 yes」是兴趣,不是批准 —— 上一版那句两步流程不许再回来。
+    expect(ottoInstructions).not.toMatch(/AND tell them to approve it on the card to start/);
+    expect(ottoInstructions).toContain("take it as interest and not as that approval");
   });
 
   // Positive control (same discipline as the completeness family below): a ban that
@@ -716,6 +733,14 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
       // r7 — Founder "just say X" wording may use any short phrase:
       "Just say ship it and I'll start the work.",
       "Just say do it then I will generate the image.",
+      // Codex QA-CRE-FE9-004(E2E fe9c70bd 生产原句)—— 「我替你送上去」是同一个
+      // 假承诺换了一个动词:话仍然什么都启动不了,而它还额外发明了第二个批准点。
+      // 上一版词表只挡「开跑」那一族动词,于是这句逐字穿了过去。
+      "Just say yes and I'll submit it — then you'll confirm on the card to start.",
+      "Reply yes and I will send it through.",
+      "Say the word and I'll queue it.",
+      "Tell me yes and I'll put it through.",
+      "Say yes and I will hand it over.",
     ];
     for (const escape of escapes) {
       expect(
