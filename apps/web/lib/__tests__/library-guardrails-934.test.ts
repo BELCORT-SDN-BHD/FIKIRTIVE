@@ -11,7 +11,7 @@
  *   ① 删除必经确认弹窗 —— 点击 Delete 不能直接调 onDelete;Cancel 不删,Remove 才删。
  *   ② 不选文件时 Add 不可提交,createEntity 从不会在零文件下被调用。
  */
-import { createElement, act, type ReactElement } from "react";
+import { createElement, act, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StuffItem } from "@/lib/stuff-items";
@@ -25,6 +25,34 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/actions", () => ({ createEntity: mocks.createEntity }));
 vi.mock("@/lib/refgen-actions", () => ({ startRefGen: mocks.startRefGen }));
 vi.mock("@/lib/balance-refresh", () => ({ notifyBalanceRefresh: mocks.notifyBalanceRefresh }));
+// P1-6 —— Radix 的下拉在 jsdom 里没有指针/布局引擎;换成原生 `<select>` 测的仍然是**页面自己
+// 传下去的 `value`/`disabled`/`onValueChange`**,与 campaign-confirm-requote-race.test.ts 同一条
+// 理由。
+vi.mock("@/components/ui/select", () => ({
+  Select: ({ value, disabled, onValueChange, children }: {
+    value?: string;
+    disabled?: boolean;
+    onValueChange?: (value: string) => void;
+    children?: ReactNode;
+  }) =>
+    createElement(
+      "select",
+      {
+        "data-slot": "select-trigger",
+        ...(disabled ? { "data-disabled": "" } : {}),
+        value: value ?? "",
+        disabled: Boolean(disabled),
+        onChange: (event: { target: { value: string } }) => onValueChange?.(event.target.value),
+      },
+      children,
+    ),
+  SelectTrigger: ({ children }: { children?: ReactNode }) => children,
+  SelectValue: () => null,
+  SelectContent: ({ children }: { children?: ReactNode }) => children,
+  SelectGroup: ({ children }: { children?: ReactNode }) => children,
+  SelectItem: ({ value, children }: { value: string; children?: ReactNode }) =>
+    createElement("option", { value }, children),
+}));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -187,6 +215,13 @@ describe("#934 Add to Library (Upload) can't produce an empty card", () => {
 
     const nameInput = dom.querySelector<HTMLInputElement>('input[placeholder="e.g. Rosa"]');
     await typeInto(nameInput!, "New reference");
+
+    // P1-6 —— Add now also needs an explicit type before it unlocks (no more silent CHARACTER).
+    const typeSelect = dom.querySelector<HTMLSelectElement>('[data-slot="select-trigger"]')!;
+    await act(async () => {
+      typeSelect.value = "PRODUCT";
+      typeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
 
     const fileInput = dom.querySelector<HTMLInputElement>('input[type="file"]');
     expect(fileInput, "the file input is gone").toBeTruthy();
