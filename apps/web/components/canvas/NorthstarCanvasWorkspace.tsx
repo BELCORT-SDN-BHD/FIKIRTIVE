@@ -61,6 +61,18 @@ export function NorthstarCanvasWorkspace({
   const [activeThread, setActiveThread] = useState<ChatThreadDTO | null>(runtimeContext.activeThread);
   const [pendingFirst, setPendingFirst] = useState<CanvasPendingFirst | null>(runtimeContext.pendingFirst);
   const [composerReferences, setComposerReferences] = useState<OttoComposerReference[]>([]);
+  /**
+   * 哪几条对话此刻有付费生成在跑(走查 P0-1)。
+   *
+   * 这个文件是唯一同时挂着 `FlowCanvas` 与 `CanvasOttoOverlay` 的地方,所以也是唯一能把
+   * 「Otto 那边批准了一张卡」这件事告诉画板的地方。从前它只接了余额那一条线:商家按下
+   * 「Generate · 1 credit」,余额掉了、卡片说 ✓ Done,而画板一片空白,按 F5 图才出现。
+   *
+   * 画板要的机制**早就写好了**:`FlowCanvas` 收到 `activity` 一翻 true 就重读画板,服务端的
+   * chat→canvas 桥(`syncOttoCanvasNodes`)把那张在飞的占位卡放上去;翻 false 再读一次,
+   * 产出把占位卡换掉。这里只是把那句话接上,没有第二套机制、没有任何钱路变化。
+   */
+  const [busyThreadIds, setBusyThreadIds] = useState<Set<string>>(() => new Set());
   const activeCanvas = runtimeContext.projects.find((project) => project.id === runtimeContext.activeProjectId);
 
   /**
@@ -131,6 +143,15 @@ export function NorthstarCanvasWorkspace({
     replaceCanvasUrl(thread.id);
   }, [replaceCanvasUrl]);
 
+  const setThreadGenerationActivity = useCallback((threadId: string, active: boolean) => {
+    setBusyThreadIds((current) => {
+      if (current.has(threadId) === active) return current;
+      const next = new Set(current);
+      if (active) next.add(threadId); else next.delete(threadId);
+      return next;
+    });
+  }, []);
+
   const addComposerReferences = useCallback((refs: Omit<OttoComposerReference, "requestId">[]) => {
     const requested = refs.map((ref) => ({ ...ref, requestId: crypto.randomUUID() }));
     setComposerReferences((current) => upsertComposerReferences(current, requested));
@@ -165,6 +186,7 @@ export function NorthstarCanvasWorkspace({
           projectId={runtimeContext.activeProjectId}
           entities={entities}
           activeThreadId={activeThread?.id ?? null}
+          activity={busyThreadIds}
           skin="gb"
           onBalanceRefresh={refreshBalance}
           onReferenceInChat={activeThread ? addComposerReferences : undefined}
@@ -193,6 +215,10 @@ export function NorthstarCanvasWorkspace({
             setComposerReferences((current) => current.filter((ref) => !ref.requestId || !requestIds.includes(ref.requestId)));
           }}
           onBalanceRefresh={refreshBalance}
+          onGenerationActivityChange={(active) => {
+            const threadId = activeThread?.id;
+            if (threadId) setThreadGenerationActivity(threadId, active);
+          }}
         />
       </main>
     </div>

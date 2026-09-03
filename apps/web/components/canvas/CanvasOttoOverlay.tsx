@@ -26,6 +26,7 @@ export function CanvasOttoOverlay({
   onPendingFirstSent,
   onComposerReferencesConsumed,
   onBalanceRefresh,
+  onGenerationActivityChange,
 }: {
   projectId: string;
   entities: EntityDTO[];
@@ -39,6 +40,8 @@ export function CanvasOttoOverlay({
   onPendingFirstSent: () => void;
   onComposerReferencesConsumed: (requestIds: string[]) => void;
   onBalanceRefresh: () => void | Promise<void>;
+  /** 这条对话此刻有没有付费生成在跑 —— 画板据此重读自己的板(走查 P0-1)。 */
+  onGenerationActivityChange: (active: boolean) => void;
 }) {
   if (!activeThread) {
     return (
@@ -73,6 +76,7 @@ export function CanvasOttoOverlay({
       onPendingFirstSent={onPendingFirstSent}
       composerReferences={composerReferences}
       onComposerReferencesConsumed={onComposerReferencesConsumed}
+      onGenerationActivityChange={onGenerationActivityChange}
     />
   );
 }

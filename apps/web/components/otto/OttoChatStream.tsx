@@ -70,6 +70,7 @@ import { ResearchCard } from "./ResearchCard";
 import { ResearchReport } from "./ResearchReport";
 import { PerformanceCard } from "./PerformanceCard";
 import { OttoResult } from "./OttoResult";
+import { OttoTurnCard, type CanvasConfirmCard } from "./OttoTurnCard";
 import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
 import { OttoTrace } from "./OttoTrace";
@@ -86,6 +87,13 @@ import {
   shouldShowTracePanel,
   turnCostOf,
 } from "@/lib/otto-status-helpers";
+// 画布那张始终可见的 Otto 卡片,此刻该说什么(走查 P0-3/P0-4/P1-1)。判据全在纯函数里,
+// 组件只渲染 —— 与 otto-status-helpers 同一条纪律。
+import {
+  activeStepLabel,
+  canvasTurnStatus,
+  latestAssistantSayable,
+} from "@/lib/otto-canvas-turn";
 import { creditsLabel } from "@/lib/credit-format";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import type { OttoErrorData, OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
@@ -121,6 +129,16 @@ export interface OttoChatStreamProps {
   onThreadUpdate: (thread: ChatThreadDTO) => void;
   /** Re-reads the account balance and updates the nav display after a spend event. */
   onBalanceRefresh?: () => void | Promise<void>;
+  /**
+   * 这条对话此刻**有没有付费生成在跑**(走查 P0-1)。
+   *
+   * 画板与这块对话是两个兄弟组件,同时挂在 `NorthstarCanvasWorkspace` 里。批准之后余额
+   * 会刷新、卡片会变成排队,唯独画板什么都不知道 —— 商家付了钱,板上一片空白,按 F5 图才
+   * 出现。画板本来就有一条现成的路(`FlowCanvas` 的 `activity` → 重读画板 → 服务端
+   * chat→canvas 桥放下在飞的占位卡),缺的只是有人告诉它。这个回调就是那一句话:
+   * 只报事实,不带画板状态,不新起第二套机制。
+   */
+  onGenerationActivityChange?: (active: boolean) => void;
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
    *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
    *  so the route's existing-thread branch handles it. */
@@ -168,6 +186,7 @@ export function OttoChatStream({
   onNewConversation,
   onThreadUpdate,
   onBalanceRefresh,
+  onGenerationActivityChange,
   pendingFirst,
   onPendingFirstSent,
   composerReferences,
@@ -824,6 +843,19 @@ export function OttoChatStream({
     }
   }
 
+  /** 「Change something」把这张卡的原话塞回输入框,让商家在它上面改。抽屉里那张卡与画布上
+   *  那张确认卡按的是同一个动作,所以它只能有一份实现。 */
+  function seedComposer(seed: string) {
+    const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
+    if (!ta) return;
+    // Prefill with the plan prompt so the user edits from it.
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+    nativeInputValueSetter?.call(ta, seed);
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    ta.focus();
+    setText(seed); // sync React state directly
+  }
+
   // The index of the message that holds the actively-streaming assistant text, so
   // only its last text part gets the blinking caret.
   const lastMessageIsStreamingAssistant =
@@ -831,12 +863,74 @@ export function OttoChatStream({
     messages.length > 0 &&
     messages[messages.length - 1].role === "assistant";
 
-  const latestAssistantText = [...messages].reverse().find((message) => message.role === "assistant")
-    ?.parts.filter((part): part is { type: "text"; text: string } => part.type === "text")
-    .map((part) => part.text)
-    .join(" ")
-    .trim();
+  // Otto 最近说的、**给商家读**的那段话。走查 P1-1:这里从前收下任何一条 assistant 消息的
+  // text 部件,而 `threadToUiMessages` 给每一条非 TEXT 的持久消息都塞了一个内部占位串,
+  // 于是一次成功生成之后画布卡上写着「🖼 result」。判据搬进纯函数,连同测试。
+  const latestAssistantText = latestAssistantSayable(messages);
   const canvasLayout = layout === "canvas";
+
+  // ── 画布卡这一刻的脸(走查 P0-3 / P0-4)────────────────────────────────────────
+  // 每一张 GEN_CARD 的运行态,与抽屉里那张卡读的是同一个 `deriveCardState`。
+  const genCardStates = messages
+    .filter((m) => m.metadata?.kind === "GEN_CARD" && m.metadata.durableId)
+    .map((m) => ({
+      message: m,
+      durableId: m.metadata!.durableId,
+      state: deriveCardState({
+        genJobId: m.metadata?.genJobId ?? null,
+        submitted: submittedCardIds.has(m.metadata!.durableId),
+        results: jobsWithResult,
+        errors: jobsWithError,
+        cancelled: jobsCancelled,
+      }),
+    }));
+  // 等商家按确认的卡。`idle` 就是「有卡、没开跑」—— 与卡自己的 approve 门同一个判据。
+  const confirmCards: CanvasConfirmCard[] = genCardStates
+    .filter((c) => c.state === "idle")
+    .map((c) => ({
+      cardId: c.durableId,
+      threadId: thread.id,
+      payload: c.message.metadata?.payload,
+      pendingApproval: pendingApprovalCardIds.has(c.durableId),
+    }));
+  const workingCardCount = genCardStates.filter((c) => c.state === "working").length;
+  // 「屏幕上多久没变了」的输入。变的定义 = 状态词 + 那句进度话 + 消息条数,任一变化就重新计时。
+  const canvasProgressKey = `${isBusy}|${liveStatus?.kind ?? ""}|${activeStepLabel(traceSteps) ?? ""}|${messages.length}|${workingCardCount}|${confirmCards.length}`;
+  const [progressSince, setProgressSince] = useState(() => Date.now());
+  const [progressKey, setProgressKey] = useState(canvasProgressKey);
+  const [secondsSinceProgress, setSecondsSinceProgress] = useState(0);
+  if (progressKey !== canvasProgressKey) {
+    // Render-phase "adjust state when an input changes" (React docs pattern) — not setState-in-effect.
+    setProgressKey(canvasProgressKey);
+    setProgressSince(Date.now());
+    setSecondsSinceProgress(0);
+  }
+  const canvasTurnBusy = isBusy || workingCardCount > 0;
+  useEffect(() => {
+    if (!canvasLayout || !canvasTurnBusy) return;
+    const t = setInterval(() => {
+      setSecondsSinceProgress(Math.floor((Date.now() - progressSince) / 1000));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [canvasLayout, canvasTurnBusy, progressSince]);
+  const canvasStatus = canvasTurnStatus({
+    isBusy,
+    hasAssistantText: !!hasAssistantText,
+    liveStatus,
+    steps: traceSteps,
+    workingCardCount,
+    pendingConfirmCount: confirmCards.length,
+    threadStatus: thread.status,
+    secondsSinceProgress,
+  });
+
+  // 画板要知道「这条对话此刻有没有付费任务在跑」——`activity` 一翻 true,FlowCanvas 就去
+  // 重读画板,服务端的 chat→canvas 桥把在飞的那张占位卡放上去;翻 false 再读一次,产出把
+  // 占位卡换掉(走查 P0-1)。这里只报事实,不碰画板的任何状态,也不新起第二套机制。
+  const generationActive = workingCardCount > 0;
+  useEffect(() => {
+    onGenerationActivityChange?.(generationActive);
+  }, [generationActive, onGenerationActivityChange]);
 
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
@@ -875,24 +969,27 @@ export function OttoChatStream({
         }
       `}</style>
       {canvasLayout ? (
-        <div
-          aria-label="Otto current turn"
-          className="pointer-events-auto absolute left-4 top-4 w-[280px] rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-sm)]"
-        >
-          <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
-            <span className="flex items-center gap-2 text-xs font-semibold">
-              <OttoAvatar size={22} state={isBusy ? "thinking" : "idle"} />
-              Otto
-            </span>
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className={`size-1.5 rounded-full ${isBusy ? "bg-brand" : thread.status === "failed" ? "bg-destructive" : "bg-success"}`} />
-              {isBusy ? "Working" : thread.status === "failed" ? "Failed" : "Ready"}
-            </span>
-          </div>
-          <p className="line-clamp-3 px-3 py-3 text-sm leading-5 text-foreground">
-            {isBusy ? "Working through your latest request…" : latestAssistantText || "Tell Otto what you want to create or change."}
-          </p>
-        </div>
+        <OttoTurnCard
+          status={canvasStatus}
+          text={latestAssistantText}
+          streaming={lastMessageIsStreamingAssistant}
+          confirmCards={confirmCards}
+          onApproved={({ cardId: approvedCardId, chained }) => {
+            // 与抽屉里那张卡按下去之后**逐字相同**的善后:同一份 pending 集合合并规矩、
+            // 同一次轮询重装、同一条注入路径。两个按钮,一套状态机。
+            if (!chained?.pendingCardIds.includes(approvedCardId)) {
+              setSubmittedCardIds((cur) => new Set(cur).add(approvedCardId));
+            }
+            setPendingApprovalCardIds((cur) =>
+              nextPendingApprovalCardIds(cur, [approvedCardId], chained?.pendingCardIds),
+            );
+            rearmGenerationPoll();
+            void pollAndInjectResults(
+              chained?.narrationMessageId ? [chained.narrationMessageId] : undefined,
+            );
+          }}
+          onChangeSomething={(seed) => seedComposer(seed)}
+        />
       ) : null}
       {/* Header — New conversation is always visible here, not only on a sidebar hover. */}
       {canvasLayout ? (
@@ -1168,17 +1265,7 @@ export function OttoChatStream({
                         chained?.narrationMessageId ? [chained.narrationMessageId] : undefined,
                       );
                     }}
-                    onChangeSomething={(seed) => {
-                      const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
-                      if (ta) {
-                        // Prefill with the plan prompt so the user edits from it.
-                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-                        nativeInputValueSetter?.call(ta, seed);
-                        ta.dispatchEvent(new Event("input", { bubbles: true }));
-                        ta.focus();
-                        setText(seed); // sync React state directly
-                      }
-                    }}
+                    onChangeSomething={(seed) => seedComposer(seed)}
                     onRetry={() => {
                       // A fresh card was spawned — re-arm poll and refetch so it appears.
                       // Reset the poll round too: the retried job gets the full two-round
@@ -1766,9 +1853,12 @@ export function OttoChatStream({
                   >
                     Enter to send
                   </span>
+                  {/* 走查 P0-4:这颗按钮从前整整 49 秒都写着「Sending…」,读起来是请求挂住了,
+                      而不是 Otto 在做事。发送与做事是两件事,`status` 本来就分得清:
+                      submitted = 请求还在路上,streaming = 回信已经在写了。 */}
                   <InputGroupButton variant="default" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
-                    {isBusy && <Spinner data-icon="inline-start" aria-label="Sending message" />}
-                    {isBusy ? "Sending…" : "Send"}
+                    {isBusy && <Spinner data-icon="inline-start" aria-label={isStreaming ? "Otto is working" : "Sending message"} />}
+                    {isBusy ? (isStreaming ? "Working…" : "Sending…") : "Send"}
                   </InputGroupButton>
                 </div>
               </InputGroupAddon>

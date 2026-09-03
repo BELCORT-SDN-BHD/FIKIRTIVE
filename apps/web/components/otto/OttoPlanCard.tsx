@@ -4,12 +4,12 @@ import { formatElapsed, QUEUE_WAIT_NOTE } from "@/lib/progress-format";
 import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { ottoApprove } from "@/lib/otto-client-actions";
-import { coworkGenerate, coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
+import { coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
 import { CHAT_SPEND_NOTE, creditsLabel } from "@/lib/credit-format";
 import { ErrorWithTopUp } from "@/components/exits/Exits";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
-import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
+import { type ChainedApproval } from "./approval-chain";
+import { runPlanApproval } from "./plan-approval";
 import { runStateOfCard } from "@/lib/otto-status-helpers";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -192,7 +192,12 @@ export function OttoPlanCard({
   /** The merchant's approval, in ONE press (#896). The button carries the price, so the
    *  press IS the approval — there is no second "are you sure" screen showing the same
    *  number a second time. Everything money-shaped below is untouched: same approval
-   *  chain, same idempotency, same server actions, same fail-closed gate. */
+   *  chain, same idempotency, same server actions, same fail-closed gate.
+   *
+   *  THE ACTION ITSELF lives in `plan-approval.ts` now, because the canvas's always-visible
+   *  Otto card carries a second Generate button for the same card (走查 P0-3) and two copies
+   *  of a spend path is exactly how one of them drifts (§7.3). This function keeps the gate,
+   *  the busy flag and the wording; the spend is that one shared call. */
   async function approve() {
     // Fail closed on the SAME gate the render used: a plan we couldn't read, couldn't
     // price, or couldn't read in full renders no approve button — and may not start a
@@ -200,46 +205,25 @@ export function OttoPlanCard({
     if (busy || cardState !== "idle" || !gate.approvable) return;
     setBusy(true);
     setError(null);
-    try {
-      // Two spend paths. If Otto PARKED a generate (the turn returned needs_approval),
-      // resume it via ottoApprove. Otherwise this is a freshly PROPOSED card — trigger
-      // generation directly with coworkGenerate. (ottoApprove on a proposed card fails
-      // with "That card isn't awaiting approval", which is why generation never started.)
-      const res = pendingApproval
-        ? await ottoApprove({ threadId, cardId })
-        : await coworkGenerate({
-            cardId,
-            prompt: p.structuredPrompt ?? "",
-            entityIds: Array.isArray(p.entityIds) ? p.entityIds : [],
-            variantSel: p.variantSel && typeof p.variantSel === "object" ? p.variantSel : {},
-          });
-      if (res && "error" in res) {
-        setError(res.error);
-        return;
-      }
-      // #498 P1b (round-4): an ottoApprove resume can park AGAIN on further
-      // approval(s). Surface the server's localized receipt here, and hand the
-      // chained card ids UP via onApproved so the parent marks them
-      // pendingApproval and renders them — their clicks must resume the RunState
-      // (ottoApprove), never coworkGenerate. (This card's own generation DID
-      // start; onApproved stays correct either way.)
-      //
-      // #591 / P1-4: the parked step-trace above also has to stop asking for a click
-      // that already happened — but it learns that from the parent's NEW pending set
-      // (derived from `chained` right here), not from a module-level broadcast that
-      // hid every waiting panel on the page.
-      const chained = chainedApprovalOf(res);
-      if (chained) setChainedReceipt(chained.fallbackReply);
-      onApproved({ cardId, chained });
-    } catch {
-      setError("Couldn't start that — please try again.");
-    } finally {
-      setBusy(false);
-      // The charge moment: both branches reserve credits (ottoApprove resumes a parked paid
-      // generation, coworkGenerate dispatches a fresh one). Announced in a finally because a
-      // failed response never proves zero spend (#550).
-      notifyBalanceRefresh();
+    const outcome = await runPlanApproval({ threadId, cardId, pendingApproval, payload: p });
+    setBusy(false);
+    if (!outcome.ok) {
+      setError(outcome.error);
+      return;
     }
+    // #498 P1b (round-4): an ottoApprove resume can park AGAIN on further
+    // approval(s). Surface the server's localized receipt here, and hand the
+    // chained card ids UP via onApproved so the parent marks them
+    // pendingApproval and renders them — their clicks must resume the RunState
+    // (ottoApprove), never coworkGenerate. (This card's own generation DID
+    // start; onApproved stays correct either way.)
+    //
+    // #591 / P1-4: the parked step-trace above also has to stop asking for a click
+    // that already happened — but it learns that from the parent's NEW pending set
+    // (derived from `chained` right here), not from a module-level broadcast that
+    // hid every waiting panel on the page.
+    if (outcome.chained) setChainedReceipt(outcome.chained.fallbackReply);
+    onApproved({ cardId, chained: outcome.chained });
   }
 
   function handleCopy() {
