@@ -7,7 +7,8 @@ import {
 } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import {
-  buildProposeCard, buildSpecChips, EXECUTED_SPEC, ProposeRefusal, VideoTierUnavailableError,
+  buildProposeCard, buildSpecChips, EXECUTED_SPEC, ImageAspectUnavailableError, ProposeRefusal,
+  VideoTierUnavailableError,
 } from "./propose.helpers.js";
 import { imageAspectHonoured, VIDEO_START_FRAME_CHIP } from "@fikirtive/core";
 // executePropose (DB-side) still imported from propose.ts
@@ -970,19 +971,18 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
     expect(cardPayload.downgradeNote).toBeUndefined();
   });
 
-  it("图片：商家要的画幅满足不了 —— 必须在付费前显式说出来(执行层翻真也不许把这句话弄丢)", () => {
+  it("图片：商家要的画幅满足不了 —— 在铸卡前拒绝,而**不是**悄悄换一格再补一句说明", () => {
     expect(EXECUTED_SPEC.image.aspectHonoured).toBe(true);
-    // 5:7 不在引擎菜单上（八格之外），所以这一趟真会交付的是默认方图 —— 这句必须说出口。
-    const { cardPayload } = buildProposeCard(
-      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "5:7" },
-      makeCtx(),
-      [],
-    );
-    expect(cardPayload.params.aspectRatio).toBe("1:1");
-    expect(cardPayload.downgraded).toBe(true);
-    expect(cardPayload.downgradeNote).toBe(
-      "You asked for 5:7 — this will be a square 2048 × 2048 image.",
-    );
+    // 5:7 不在引擎菜单上(八格之外)。上一版在这里铸出一张写着「1:1」的付费卡,外加一句
+    // 「You asked for 5:7 — this will be a square…」—— 那是把商家的硬规格改掉之后请他批准。
+    // 现在一张卡都不铸(Codex QA-CRE-FE9-014)。
+    expect(() =>
+      buildProposeCard(
+        { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "5:7" },
+        makeCtx(),
+        [],
+      ),
+    ).toThrow(ImageAspectUnavailableError);
   });
 
   it("图片(#643 T2)：商家的人话形状也一路落地(portrait ⇒ 9:16，卡面与请求体同口径)", () => {
@@ -1636,5 +1636,114 @@ describe("CREATE-A4 商家在对话里点名画质档", () => {
     expect(
       proposeInput.safeParse({ kind: "video", structuredPrompt: "A slow push-in" }).success,
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 画幅:做得到就原样上卡,做不到就在花钱前问 —— 不再有「悄悄换一格 + 一句说明」
+// (Codex QA-CRE-FE9-014;规格 docs/specs/creation-engine.md §5 2026-09-04)
+//
+// 商家两次说 4:5,拿到的是一张写着「2048 × 2048 · 1:1」的付费确认卡,外加一句
+// 「You asked for 4:5 — this will be a square…」。说了不等于问了:他的硬规格被改掉,
+// 而卡上没有任何地方能改回来或明确接受。这一族把两半都钉住:
+//   · 做得到的那几格 —— 原样进卡、进付费请求体(卡即事实);
+//   · 做不到的 —— 铸卡前拒绝、$0,而且那句话要真的把他能走的路说出来。
+// ---------------------------------------------------------------------------
+describe("CREATE-A4 商家点名的画幅", () => {
+  const imageInput = (desiredAspect?: string, extra?: Record<string, unknown>) => ({
+    kind: "image" as const,
+    structuredPrompt: "a pandan kaya jar on a marble counter",
+    entityIds: [],
+    variantSel: {},
+    ...(desiredAspect ? { desiredAspect } : {}),
+    ...extra,
+  });
+
+  it("CREATE-A4 做不到的画幅(4:5)⇒ 一张卡都不铸,拒绝而**不是**降级", () => {
+    expect(() => buildProposeCard(imageInput("4:5"), makeCtx(), [])).toThrow(
+      ImageAspectUnavailableError,
+    );
+  });
+
+  it("CREATE-A4 拒绝那句话列的是**这台引擎真做得到**的最接近几格,且一格不许是他刚点的那个", () => {
+    try {
+      buildProposeCard(imageInput("4:5"), makeCtx(), []);
+      throw new Error("4:5 必须被拒绝");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ImageAspectUnavailableError);
+      const message = (e as Error).message;
+      // 最接近 4:5(=0.8)的两格:3:4(0.75)与 2:3(0.667)—— Codex 报告点名的那两个。
+      expect(message).toContain("3:4");
+      expect(message).toContain("2:3");
+      // 他刚点的那个不许再出现在「我能做」那半句里(否则照它再说一次还是同一句,死循环)。
+      expect(message.split("—")[1] ?? "").not.toContain("4:5");
+      // 列出来的每一格都必须真在这台引擎的能力表上。
+      const menu = GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios;
+      for (const ratio of message.match(/\d+:\d+/gu) ?? []) {
+        if (ratio === "4:5") continue; // 开头那句「4:5 isn't a shape I can make here」
+        expect(menu, `拒绝句列了菜单外的 ${ratio}`).toContain(ratio);
+      }
+      // 商家可见字符串里一个型号名都不许有(S1 九问4)。
+      expect(message).toBe(redactProviderNames(message));
+    }
+  });
+
+  it("CREATE-A4 拒绝走的是 ProposeRefusal 家族 —— 入口接得住,GEN_CARD 一行都不落库", () => {
+    expect(() => buildProposeCard(imageInput("4:5"), makeCtx(), [])).toThrow(ProposeRefusal);
+  });
+
+  it("CREATE-A1 做得到的画幅(3:4)⇒ 卡照铸,卡上与付费请求体逐字都是 3:4", () => {
+    const { cardPayload } = buildProposeCard(imageInput("3:4"), makeCtx(), []);
+    expect(cardPayload.params.aspectRatio).toBe("3:4");
+    expect(cardPayload.downgraded).toBe(false);
+    expect(cardPayload.downgradeNote).toBeUndefined();
+    expect(cardPayload.specChips).toContain("3:4");
+    const built = buildGenRequestFromCard({
+      cardPayload,
+      projectId: "proj-test",
+      threadId: "thread-test",
+      cardId: "card_1",
+      entityIds: [],
+      variantSel: {},
+    });
+    expect(built.ok).toBe(true);
+    expect((built as { ok: true; req: Record<string, unknown> }).req.aspectRatio).toBe("3:4");
+  });
+
+  it("CREATE-A4 没点画幅 ⇒ 一格不动(默认方图,旧行为逐字保留)", () => {
+    const { cardPayload } = buildProposeCard(imageInput(), makeCtx(), []);
+    expect(cardPayload.params.aspectRatio).toBe(GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios[0]);
+    expect(cardPayload.downgraded).toBe(false);
+  });
+
+  it("CREATE-A4 人话形状照旧兑现(portrait ⇒ 9:16),不许被这道守卫误伤成拒绝", () => {
+    const { cardPayload } = buildProposeCard(imageInput("portrait"), makeCtx(), []);
+    expect(cardPayload.params.aspectRatio).toBe("9:16");
+    expect(cardPayload.downgraded).toBe(false);
+  });
+
+  it("CREATE-A4 两步计划(forVideo)的图片步同样守:要 4:5 ⇒ 整张卡不铸", () => {
+    expect(() =>
+      buildProposeCard(imageInput("4:5", { forVideo: true }), makeCtx(), []),
+    ).toThrow(ImageAspectUnavailableError);
+    expect(() =>
+      buildProposeCard(imageInput("3:4", { forVideo: true }), makeCtx(), []),
+    ).not.toThrow();
+  });
+
+  it("CREATE-A4 读不懂的形状(banner / 空写法)一律拒绝,绝不猜一格去花钱", () => {
+    for (const shape of ["banner", "5:0", "0:5"]) {
+      expect(() => buildProposeCard(imageInput(shape), makeCtx(), []), shape).toThrow(
+        ImageAspectUnavailableError,
+      );
+    }
+  });
+
+  it("CREATE-A1 菜单上每一格都还能铸卡 —— 这道守卫只挡做不到的,不许顺手关掉能做的", () => {
+    for (const aspect of GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios) {
+      const { cardPayload } = buildProposeCard(imageInput(aspect), makeCtx(), []);
+      expect(cardPayload.params.aspectRatio, aspect).toBe(aspect);
+      expect(cardPayload.downgraded, aspect).toBe(false);
+    }
   });
 });
