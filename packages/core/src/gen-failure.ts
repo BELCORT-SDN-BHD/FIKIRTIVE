@@ -95,6 +95,44 @@ export const GENERATION_ENGINE_UNAVAILABLE =
   + "You weren't charged, and trying again won't help until we've fixed it.";
 
 /**
+ * The sentence a merchant reads when a REFERENCE ASSET the job needed could not be fetched right
+ * before the paid call (Codex QA-CRE-007, docs/specs/creation-engine.md CREATE-A2).
+ *
+ * ── WHERE THIS COMES FROM ──
+ *
+ * A generation can name up to five kinds of reference asset — @mentioned entity/product refs,
+ * an i2v start frame, an end frame, a whole-clip reference video, an edit's base image, a cast
+ * variant's locked base — and every one of those is re-resolved from storage immediately before
+ * the paid engine call (`apps/worker/src/jobs/gen.ts`, `apps/worker/src/jobs/refgen.ts`). Before
+ * this file existed, a presign miss there threw the OPS diagnostic itself — e.g.
+ * "conditioning refs unreachable (0/2) — refusing to spend", "reference video unreachable —
+ * refusing to spend" — straight into `GenJob.error`/`RefGenJob.error`, and two surfaces read that
+ * column with nothing but a vendor-name scrub between it and the merchant: the Library "Needs
+ * attention" board (`apps/web/components/otto/OttoStuff.tsx`) and the cast library's variant
+ * problem line (`apps/web/components/otto/stuff/ElementVariantsDialog.tsx`). Both would show the
+ * sentence above, byte for byte, to a merchant who has never heard the word "conditioning" — an
+ * internal diagnostic standing in for advice, the exact failure #765 exists to stop.
+ *
+ * ONE SENTENCE for all of them, deliberately: from where a merchant stands, "the picture/video I
+ * gave you couldn't be reached" is the same problem and the same fix (swap the reference, try
+ * again) whether the asset in question was a product photo, a start frame, or a cast member's
+ * locked base. Splitting this into five near-identical sentences would multiply the whitelist for
+ * no question a merchant actually has.
+ *
+ * "so nothing was charged" is safe here for the same reason it is safe on the sibling sentences
+ * above: every throw site this maps sits BEFORE the paid provider call, so the worker's terminal
+ * branch refunds the hold (or never took it past a pre-charge retry) — never a spend.
+ *
+ * The raw diagnostic is not thrown away — it still reaches `console.error` at the throw site (and
+ * from there, wherever server logs go), which is what "for support/debugging" means here. What
+ * changes is what gets PERSISTED to the row a merchant's own screen reads back: the merchant
+ * sentence itself, not the ops string, mirroring `REFERENCE_IMAGE_PERSON_REJECTED` above.
+ */
+export const REFERENCE_ASSET_UNREACHABLE =
+  "We couldn't reach one of your references, so nothing was charged. "
+  + "Replace it and try again.";
+
+/**
  * WHY A GENERATION FAILED, as a CLOSED SET OF NAMES (#827).
  *
  * #765 gave the refusal a sentence. This gives it a NAME, and the difference is what survives a
@@ -115,7 +153,12 @@ export const GENERATION_ENGINE_UNAVAILABLE =
  * table `apps/web/lib/canvas-terminal-copy.ts` (the same trick). That is the closed algebra doing
  * its job: a reason nobody wrote copy for cannot ship as a blank card.
  */
-export const GEN_FAILURE_REASONS = ["unexplained", "referenceImagePerson", "engineUnavailable"] as const;
+export const GEN_FAILURE_REASONS = [
+  "unexplained",
+  "referenceImagePerson",
+  "engineUnavailable",
+  "referenceAssetUnreachable",
+] as const;
 
 export type GenFailureReason = (typeof GEN_FAILURE_REASONS)[number];
 
@@ -138,6 +181,7 @@ export type ExplainedGenFailureReason = Exclude<GenFailureReason, "unexplained">
 const MERCHANT_GEN_FAILURE_SENTENCES: Readonly<Record<ExplainedGenFailureReason, string>> = {
   referenceImagePerson: REFERENCE_IMAGE_PERSON_REJECTED,
   engineUnavailable: GENERATION_ENGINE_UNAVAILABLE,
+  referenceAssetUnreachable: REFERENCE_ASSET_UNREACHABLE,
 };
 
 /** Is this string one of the names above? For the untyped edges — a React node's data bag, a
@@ -263,4 +307,27 @@ export function referenceImagePersonRejected(detail: string | null | undefined):
  */
 export function merchantGenFailureMessage(persistedError: string | null | undefined): string | null {
   return merchantGenFailureExplanation(merchantGenFailureReason(persistedError));
+}
+
+/**
+ * The honest thing to say about a failed generation when NOTHING more specific is known
+ * (`unexplained` — a queue hiccup, a dropped download, a persisted row from before this file
+ * existed). Codex QA-CRE-007 — added because the Library "Needs attention" board had no fallback
+ * at all: it showed `GenJob.error` whenever the column was non-empty, so an unrecognised ops
+ * string reached the merchant exactly as often as a recognised one did. `merchantGenFailureCopy`
+ * below is that fallback, composed with the whitelist above, so a caller never has to remember to
+ * apply it.
+ */
+export const GENERATION_DID_NOT_GO_THROUGH = "This generation didn't go through and nothing was charged.";
+
+/**
+ * ALWAYS a sentence a merchant may read — the specific explanation when the persisted error is
+ * one of ours, the honest generic line otherwise. Never the raw string: unlike
+ * `merchantGenFailureMessage` (which answers `null` for "nothing to say" and leaves the fallback
+ * to the caller), this is the total function a card can call and render without a branch of its
+ * own — the same shape `terminalCardCopy` already gets for free by keying `TERMINAL_FACE_COPY`
+ * on status first.
+ */
+export function merchantGenFailureCopy(persistedError: string | null | undefined): string {
+  return merchantGenFailureMessage(persistedError) ?? GENERATION_DID_NOT_GO_THROUGH;
 }
