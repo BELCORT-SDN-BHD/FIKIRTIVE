@@ -109,4 +109,5 @@ describe("前端基线:后续各段的验收落点(§7.1;S5 前逐条转正)", (
   it.todo("FRONT-A10 §7.1③ — @ 引用选择器来自服务器,消息保存真实引用 ID");
   it.todo("FRONT-A11 §7.1⑦ — Settings/Billing 改名与余额充值走现有真能力,无契约控件不出现");
   it.todo("FRONT-A14 §7.1⑧ — Founder 登录态六面走查,差异登记规格 §5");
+  it.todo("FRONT-A15 §7.1⑨ — Canvas 与 Create 的控件集合与设计夹具逐控件一致(自动对照;2026-09-03 §7 修订新增)");
 });
