@@ -13,8 +13,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ runPlanApproval: vi.fn() }));
+const mocks = vi.hoisted(() => ({ runPlanApproval: vi.fn(), coworkVaryCard: vi.fn() }));
 vi.mock("@/components/otto/plan-approval", () => ({ runPlanApproval: mocks.runPlanApproval }));
+// OttoResult(判官二轮复核 P2-2)只挡住它那两个有副作用的依赖 —— 花钱的 "Make another"
+// 动作与全局余额播报,两样都够不着这个文件要证的东西(视频首帧片段)。
+vi.mock("@/lib/cowork-actions", () => ({ coworkVaryCard: mocks.coworkVaryCard }));
+vi.mock("@/lib/balance-refresh", () => ({ notifyBalanceRefresh: vi.fn() }));
 
 const {
   activeStepLabel,
@@ -28,6 +32,7 @@ const { STILL_WORKING_NOTE } = await import("@/lib/progress-format");
 const { TURN_NARRATION } = await import("@/lib/otto-turn-narration");
 const { videoFirstFrameSrc } = await import("@/lib/video-first-frame");
 const { OttoTurnCard, CANVAS_TURN_EMPTY_TEXT } = await import("@/components/otto/OttoTurnCard");
+const { OttoResult } = await import("@/components/otto/OttoResult");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -301,8 +306,9 @@ describe("CREATE-A1 · 一页只有一个 Otto 入口，素材库筛选行够得
   it("CREATE-A1 · 创作前厅与画布都不再挂第二个 Otto 面板", async () => {
     const { ottoPanelMountsOn } = await import("@/components/otto/panel/panel-surface");
     const { CREATE_NAV_HREF, CANVAS_HREF } = await import("@fikirtive/core/navigation");
-    // 这两面自己都带着一只 Otto 输入框。别的商家面一个都没动（面板默认开合＝Founder
-    // 2026-08-18 Q3-A，本票没碰）。
+    // 这两面自己都带着一只 Otto 输入框。别的商家面一个都没动（这条钉的是挂不挂，不是默认
+    // 开合本身——那条口径后来改过一次，Founder 2026-09-04 裁决收起为默认，取代 Q3-A，
+    // 见 `panel-state.ts` 的 `defaultOttoPanelState`，本票不重复）。
     expect(ottoPanelMountsOn(CREATE_NAV_HREF)).toBe(false);
     expect(ottoPanelMountsOn(CANVAS_HREF)).toBe(false);
     expect(ottoPanelMountsOn("/library")).toBe(true);
@@ -340,5 +346,18 @@ describe("CREATE-A1 · 新做好的视频显示首帧而不是黑砖（走查 P1
     expect(videoFirstFrameSrc("https://cdn.example/c.mp4#t=2")).toBe("https://cdn.example/c.mp4#t=2");
     expect(videoFirstFrameSrc(undefined)).toBeUndefined();
     expect(videoFirstFrameSrc("")).toBe("");
+  });
+
+  // P2-2(判官二轮复核 2026-09-04):画布节点已经修了(上面两条),但对话抽屉里同一条片子
+  // 用的是另一个组件 —— `OttoResult.tsx` 的 `preload="none"` 且没有片段,浏览器在按下播放
+  // 之前画的还是黑。同一个 `videoFirstFrameSrc` + `preload="metadata"` 补上去。
+  it("CREATE-A1 · 对话卡里刚做好的视频也显示首帧，不是黑砖（判官二轮复核 P2-2）", () => {
+    const el = render(
+      <OttoResult payload={{ kind: "video", urls: ["https://cdn.example/clip.mp4?sig=abc"] }} />,
+    );
+    const video = el.querySelector("video")!;
+    expect(video).not.toBeNull();
+    expect(video.getAttribute("src")).toBe("https://cdn.example/clip.mp4?sig=abc#t=0.001");
+    expect(video.getAttribute("preload")).toBe("metadata");
   });
 });

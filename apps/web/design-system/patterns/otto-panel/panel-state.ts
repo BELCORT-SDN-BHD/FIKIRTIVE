@@ -23,7 +23,6 @@ import {
   DEFAULT_LAUNCHER_ANCHOR,
   FALLBACK_VIEWPORT,
   LAUNCHER_SIZE,
-  PANEL_DEFAULT_OPEN_MIN_WIDTH,
   type FloatingRect,
   type LauncherAnchor,
   type Viewport,
@@ -53,18 +52,34 @@ export interface OttoPanelState {
 export const OTTO_PANEL_STORAGE_KEY = "fikirtive:otto-panel:v1";
 
 /**
- * 首开默认**开**(Q3-A,Founder 2026-08-18 拍板):我们的商家还不知道助手在哪,
- * 开一次是最便宜的教学;之后一律按存档。
+ * 首开默认**收起**(FRONT-A14,Founder 2026-09-04 裁决,取代 Q3-A「首开默认开,之后按
+ * 存档」——`docs/specs/wave2-shell.md` 已归档,原文原样保留,不改;新口径记在
+ * `docs/specs/frontend-baseline.md` §5)。
  *
- * 唯一的例外是窄屏,而且是**过渡性**的:见 `PANEL_DEFAULT_OPEN_MIN_WIDTH`,
- * W2-11 删移动层时一并清。它只压默认值,不压能力。
+ * 触发:Codex 只读走查 QA-CRE-006 —— 存档里记着上一页留下的「开」,换到另一页(哪怕这一页
+ * 商家从没跟 Otto 说过话)面板也跟着自动弹开,在这一面吃掉半屏。Q3-A 那句「开一次是最便宜的
+ * 教学」今天已经不成立:面板挂在每一面上,商家早就见过它,不需要再靠首开硬教一次。
+ *
+ * 这个函数只兜「没有可信来源」的那一刻(真的第一次访问,或存档本身坏了读不出 `open`)——
+ * 这两种情况都退**收起**。另外两条覆盖路径都不在这个函数里,各自已经是独立机制、这一票
+ * 不用再造一份:
+ *   · 商家上次留着开着 —— `parseOttoPanelState` 读到的存档 `open:true` 原样生效,这个
+ *     函数根本不会被问到(§3.3 的既有存档语义没动一个字)。
+ *   · 这一页有活动对话 —— `OttoPanelShell` 的 `forceOpenSignal`(深链 `?otto=1`)已经是
+ *     「盖过存档,这次访问强开」的独立效果,不看这里的默认值。**假设**:「活动对话」取的
+ *     就是这个既有的深链信号——面板体的会话数据(`activeThreadId`/消息)本来就要等面板真的
+ *     开了才取数(见 `OttoPanelHost.tsx` 顶部),开之前没有更早的信号可读,深链是这套代码
+ *     里唯一「这次到访确实带着一个 Otto 会话」的预取信号。
+ *
+ * 窄屏那条**过渡性**豁免(`PANEL_DEFAULT_OPEN_MIN_WIDTH`,W2-11 删移动层时一并清)因此
+ * 也不用留在这里了 —— 默认本来就是收起,不必再单独压一次。
  */
 export function defaultOttoPanelState(viewport: Viewport = FALLBACK_VIEWPORT): OttoPanelState {
   const vp = normalizeViewport(viewport);
   const width = defaultPanelWidth(vp.width);
   return {
     mode: "docked",
-    open: vp.width >= PANEL_DEFAULT_OPEN_MIN_WIDTH,
+    open: false,
     width,
     float: floatingRectFromDocked(width, vp),
     launcher: { ...DEFAULT_LAUNCHER_ANCHOR },

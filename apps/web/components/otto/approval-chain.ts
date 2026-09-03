@@ -210,7 +210,15 @@ export async function runPackApprovalLoop<C extends { cardId: string; pendingApp
  *  server action (no live stream), so without this they never render until a
  *  reload — and (#498 round-5 P2c) append the chained park's model narration
  *  TEXTs identified by `narrationMessageIds`. All helpers dedupe by durableId;
- *  no OTHER text is ever re-injected (streamed replies already rendered). */
+ *  no OTHER text is ever re-injected (streamed replies already rendered) —
+ *  deliberately NOT `backfillMissingAssistantText` (P2-1) here: this poll runs
+ *  repeatedly while a generation is in flight, mid-turn, well before the server
+ *  has necessarily persisted any narration for THIS turn — guessing at a TEXT
+ *  here would risk pulling in an unrelated durable line (`approval-chain.
+ *  test.ts`'s "un-named TEXT is never re-injected" pins exactly this). The
+ *  backfill instead runs once, at the live turn's own `onFinish`
+ *  (`OttoChatStream.tsx`) — the one moment "this turn's live text, or none" is
+ *  actually decided. */
 export function mergeDurableIntoLive(
   messages: OttoUiMessage[],
   fresh: ChatThreadDTO,
