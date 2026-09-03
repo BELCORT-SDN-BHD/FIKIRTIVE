@@ -54,7 +54,18 @@ export function videoSpecCredits(models: ActiveGenModels, spec: VideoSpec): numb
   return typeof credits === "number" && Number.isFinite(credits) ? credits : null;
 }
 
-/** 把一个(可能来自 sessionStorage 回放的)规格夹回菜单上;夹不住就用默认档。 */
+/**
+ * 把一个(可能来自 sessionStorage 回放的)规格夹回菜单上;夹不住就用默认档。
+ *
+ * CREATE-A3(§8.2 批 II):声音那一格**照原样带过去**,不夹 —— 它没有菜单可夹(不是从
+ * `videoDurations` 那种服务端列表里挑一个值),而且它是**布尔**,没有第三种取值。这里过去
+ * 只重建三格,于是 `audio` 在这一步被静默抹掉:商家拨掉的开关走到付费请求体之前就消失了,
+ * 界面照收原价、片子照带 AI 配音,全程零提示 —— 那正是这条 clamp 曾经是画布两条视频路
+ * 不许显示声音开关的原因(围栏见 `apps/web/lib/__tests__/video-audio-toggle.test.ts`)。
+ *
+ * 未设(`undefined`)仍然不落这一格:请求体里不出现 `audio` ⇒ 服务端按这台引擎的默认档
+ * 交付(今天=开)。所以一个没碰过开关的规格与本字段出现之前**逐字一样**。
+ */
 export function clampVideoSpec(
   models: ActiveGenModels,
   spec: Partial<VideoSpec> | undefined,
@@ -68,5 +79,6 @@ export function clampVideoSpec(
       ? spec.resolution : fallback.resolution,
     aspectRatio: typeof spec?.aspectRatio === "string" && list(models.videoAspectRatios).includes(spec.aspectRatio)
       ? spec.aspectRatio : fallback.aspectRatio,
+    ...(typeof spec?.audio === "boolean" ? { audio: spec.audio } : {}),
   };
 }

@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GEN_PRICE_USD_PER_IMAGE, GEN_IMAGE_MODEL_OPTIONS, buildGenRequestFromCard } from "@fikirtive/core";
+import {
+  GEN_PRICE_USD_PER_IMAGE, GEN_IMAGE_MODEL_OPTIONS, HD_VIDEO_RESOLUTION, SELLABLE_VIDEO_RESOLUTIONS,
+  REFERENCE_VIDEO_MODEL,
+  activeVideoModel, buildGenRequestFromCard, displayCredits, pricedGenCredits, redactProviderNames,
+  routeVideoModel, videoDefaults, type GenVideoModel,
+} from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
-import { buildProposeCard, buildSpecChips, EXECUTED_SPEC } from "./propose.helpers.js";
+import {
+  buildProposeCard, buildSpecChips, EXECUTED_SPEC, ProposeRefusal, VideoTierUnavailableError,
+} from "./propose.helpers.js";
 import { imageAspectHonoured, VIDEO_START_FRAME_CHIP } from "@fikirtive/core";
 // executePropose (DB-side) still imported from propose.ts
 import { executePropose, proposeSkill } from "./propose.js";
@@ -1316,4 +1323,318 @@ describe("#777 卡面:一组连贯的图 vs 几张散图", () => {
       .toEqual(["1620 × 2880", "9:16", "1 image"]);
   });
 
+});
+
+// ---------------------------------------------------------------------------
+// Creation §5 2026-09-04(Founder 裁决「Otto 改档＝要，现在做」)
+//
+// 走查 P1-2 的另一半:`propose` 以前没有画质这个字段,所以「帮我改成 1080p」在提案层
+// 就断了 —— 卡上照旧默认档,而 Otto 嘴上说改好了。这一组钉的是那条链的每一段:
+// 商家点名 → 卡上带这一档 → 卡按这一档报价(取自单一价目源)→ 批准送出去的请求带同一档;
+// 未定价/给不了的档 ⇒ 一张卡都不铸(拒绝、$0),绝不静默换一档。
+// ---------------------------------------------------------------------------
+describe("CREATE-A4 商家在对话里点名画质档", () => {
+  const videoInput = {
+    kind: "video" as const,
+    structuredPrompt: "A slow push-in on the pandan kaya jar on a marble counter",
+    entityIds: [] as string[],
+    variantSel: {} as Record<string, string>,
+  };
+
+  /** 卡面价的期望值**自己算**(单一价目源),绝不手抄一个数字 —— 手抄的那一份改价时不会跟着变。 */
+  function expectedCredits(model: string, resolution: string, seconds: number, audio: boolean): number {
+    return displayCredits(
+      pricedGenCredits({
+        kind: "VIDEO",
+        model,
+        count: 1,
+        referenceVideoGenerationId: null,
+        videoOptions: { seconds, resolution, audio },
+      }),
+    );
+  }
+
+  it("CREATE-A4 商家说 1080p ⇒ 卡落高清档,params.resolution 就是 1080p", () => {
+    const { cardPayload } = buildProposeCard(
+      { ...videoInput, desiredResolution: HD_VIDEO_RESOLUTION },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.params.resolution).toBe(HD_VIDEO_RESOLUTION);
+    expect(cardPayload.model).toBe(routeVideoModel(HD_VIDEO_RESOLUTION).model);
+    expect(cardPayload.downgraded).toBe(false);
+  });
+
+  it("CREATE-A4 商家说 480p ⇒ 卡落 480p,而且比 1080p 便宜(按档计价,不是同一个数)", () => {
+    const cheap = buildProposeCard({ ...videoInput, desiredResolution: "480p" }, makeCtx(), []);
+    const hd = buildProposeCard({ ...videoInput, desiredResolution: HD_VIDEO_RESOLUTION }, makeCtx(), []);
+    expect(cheap.cardPayload.params.resolution).toBe("480p");
+    expect(hd.cardPayload.params.resolution).toBe(HD_VIDEO_RESOLUTION);
+    expect(cheap.cardPayload.estimatedCredits).toBeLessThan(hd.cardPayload.estimatedCredits);
+  });
+
+  it("CREATE-A4 每一个可售档:卡上的报价 == 单一价目源按**这一档**算出来的数", () => {
+    for (const [slot, tiers] of Object.entries(SELLABLE_VIDEO_RESOLUTIONS)) {
+      for (const tier of tiers) {
+        const { cardPayload, shownPriceDisplay } = buildProposeCard(
+          { ...videoInput, desiredResolution: tier },
+          makeCtx(),
+          [],
+        );
+        expect(cardPayload.model, tier).toBe(slot);
+        expect(cardPayload.params.resolution, tier).toBe(tier);
+        const want = expectedCredits(slot, tier, cardPayload.params.durationSeconds ?? 0, !!cardPayload.params.audio);
+        expect(cardPayload.estimatedCredits, tier).toBe(want);
+        // Otto 在对话里能说的那个数,与卡面是同一个 —— 两处报价不许分家。
+        expect(shownPriceDisplay, tier).toBe(want);
+      }
+    }
+  });
+
+  it("CREATE-A1 确认卡的规格行**逐字**带着这一档(商家花钱前看得见)", () => {
+    const { cardPayload } = buildProposeCard(
+      { ...videoInput, desiredResolution: HD_VIDEO_RESOLUTION },
+      makeCtx(),
+      [],
+    );
+    // 确认位渲染的就是这个数组(OttoTurnCard 只 join,不二次推导)。
+    expect(cardPayload.specChips).toContain(HD_VIDEO_RESOLUTION);
+    expect(cardPayload.specChips.join(" · ")).not.toContain(cardPayload.model);
+  });
+
+  it("CREATE-A4 批准送出去的付费请求带的是**卡上那一档**(卡 → 请求同源)", () => {
+    const { cardPayload } = buildProposeCard(
+      { ...videoInput, desiredResolution: HD_VIDEO_RESOLUTION },
+      makeCtx(),
+      [],
+    );
+    const built = buildGenRequestFromCard({
+      cardPayload,
+      projectId: "proj-test",
+      threadId: "thread-test",
+      cardId: "card-hd",
+      entityIds: [],
+      variantSel: {},
+    });
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.req.resolution).toBe(HD_VIDEO_RESOLUTION);
+    expect(built.req.model).toBe(cardPayload.model);
+    expect(built.req.idempotencyKey).toBe("cowork:card-hd");
+  });
+
+  it("CREATE-A4 未定价的档(4k)⇒ 一张卡都不铸,拒绝而**不是**降级", () => {
+    expect(() =>
+      buildProposeCard({ ...videoInput, desiredResolution: "4k" }, makeCtx(), []),
+    ).toThrow(VideoTierUnavailableError);
+    // 拒绝的那句话里有他点的那一档、有能给的那几档,一个引擎名都没有。
+    try {
+      buildProposeCard({ ...videoInput, desiredResolution: "4k" }, makeCtx(), []);
+    } catch (e) {
+      const message = (e as Error).message;
+      expect(message).toContain("4k");
+      expect(message.toLowerCase()).not.toContain("seedance");
+      expect(redactProviderNames(message)).toBe(message);
+    }
+  });
+
+  it("CREATE-A4 看不懂的档(8k / 空串 / 大小写不同)一律拒绝,绝不猜一个档去花钱", () => {
+    for (const junk of ["8k", "1080P", "hd", "1080"]) {
+      expect(() =>
+        buildProposeCard({ ...videoInput, desiredResolution: junk }, makeCtx(), []),
+      ).toThrow(VideoTierUnavailableError);
+    }
+  });
+
+  it("CREATE-A4 拒绝走的是 ProposeRefusal 家族 —— 入口接得住,GEN_CARD 一行都不落库", () => {
+    try {
+      buildProposeCard({ ...videoInput, desiredResolution: "4k" }, makeCtx(), []);
+      expect.unreachable("应该抛");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ProposeRefusal);
+    }
+  });
+
+  it("CREATE-A4 没点名画质 ⇒ 一格不动(默认档、默认价,旧行为逐字保留)", () => {
+    const { cardPayload } = buildProposeCard(videoInput, makeCtx(), []);
+    expect(cardPayload.params.resolution).toBe(videoDefaults(activeVideoModel() as GenVideoModel).resolution);
+    expect(cardPayload.model).toBe(activeVideoModel());
+    expect(cardPayload.downgraded).toBe(false);
+  });
+
+  it("CREATE-A4 追加改档:第二张卡带新档新价,老卡还是老档老价、老幂等键", () => {
+    const first = buildProposeCard({ ...videoInput, desiredResolution: "720p" }, makeCtx(), []);
+    const second = buildProposeCard({ ...videoInput, desiredResolution: HD_VIDEO_RESOLUTION }, makeCtx(), []);
+
+    // 两张卡是两份不同的承诺 —— 档位与价格都不同。
+    expect(first.cardPayload.params.resolution).toBe("720p");
+    expect(second.cardPayload.params.resolution).toBe(HD_VIDEO_RESOLUTION);
+    expect(second.cardPayload.estimatedCredits).not.toBe(first.cardPayload.estimatedCredits);
+
+    // 身份跟着卡走:新卡 = 新 cardId = 新幂等键,所以改档不可能复用旧卡那一次授权。
+    const oldReq = buildGenRequestFromCard({
+      cardPayload: first.cardPayload, projectId: "proj-test", threadId: "thread-test",
+      cardId: "card-720", entityIds: [], variantSel: {},
+    });
+    const newReq = buildGenRequestFromCard({
+      cardPayload: second.cardPayload, projectId: "proj-test", threadId: "thread-test",
+      cardId: "card-1080", entityIds: [], variantSel: {},
+    });
+    expect(oldReq.ok && newReq.ok).toBe(true);
+    if (!oldReq.ok || !newReq.ok) return;
+    expect(newReq.req.idempotencyKey).not.toBe(oldReq.req.idempotencyKey);
+    // 老卡照旧只能被批成**它自己**那一档:它带不出新规格。
+    expect(oldReq.req.resolution).toBe("720p");
+    expect(newReq.req.resolution).toBe(HD_VIDEO_RESOLUTION);
+  });
+
+  it("CREATE-A4 高清槽位被后台关掉 ⇒ 说的是「这一档拿不到」,不是「视频全关」", () => {
+    const ctx = makeCtx({ disabledModels: [routeVideoModel(HD_VIDEO_RESOLUTION).model] });
+    expect(() =>
+      buildProposeCard({ ...videoInput, desiredResolution: HD_VIDEO_RESOLUTION }, ctx, []),
+    ).toThrow(VideoTierUnavailableError);
+    // 默认档那条路照旧铸得出卡 —— 关掉的是一档,不是整类创作。
+    expect(buildProposeCard(videoInput, ctx, []).cardPayload.model).toBe(activeVideoModel());
+  });
+
+  // -------------------------------------------------------------------------
+  // 判官 2026-09-04 P1-1 —— 参考视频那条路只铸得出**一档**,拒绝句就只许说那一档。
+  //
+  // 病灶:那句话以前从**槽位**的可售白名单现算,而这条路把分辨率硬写回该槽位的默认档。
+  // 于是商家点 480p 听到的是「480p isn't available — I can do 480p or 720p」,照着它
+  // 再说一次 480p 还是同一句 —— 一句自相矛盾的话,加一个走不出去的圈。
+  // -------------------------------------------------------------------------
+  /** 这条路真正铸得出的那一档 —— 从事实表取,不手抄。 */
+  const refVideoTier = videoDefaults(REFERENCE_VIDEO_MODEL).resolution;
+  const refVideoCtx = (overrides?: Partial<OttoContext>) =>
+    makeCtx({ referenceVideoGenerationId: "gen_vid", ...overrides });
+
+  it("CREATE-A4 参考视频路点名它铸得出的那一档 ⇒ 卡照铸,落的就是这一档", () => {
+    const { cardPayload } = buildProposeCard(
+      { ...videoInput, desiredResolution: refVideoTier },
+      refVideoCtx(),
+      [],
+    );
+    expect(cardPayload.params.resolution).toBe(refVideoTier);
+    expect(cardPayload.model).toBe(REFERENCE_VIDEO_MODEL);
+    expect((cardPayload as Record<string, unknown>)["referenceVideoGenerationId"]).toBe("gen_vid");
+  });
+
+  it("CREATE-A4 参考视频路点名它铸不出的档 ⇒ 拒绝,而且「我能做」那半句里**不许**再出现他刚点的那一档", () => {
+    // 这条路铸不出来的档有两种,都要试到:槽位白名单里的(另一档)与白名单外的(高清档)。
+    const unreachable = [
+      ...(SELLABLE_VIDEO_RESOLUTIONS[REFERENCE_VIDEO_MODEL] ?? []).filter((r) => r !== refVideoTier),
+      HD_VIDEO_RESOLUTION,
+    ];
+    expect(unreachable.length).toBeGreaterThan(0);
+    for (const tier of unreachable) {
+      let message = "";
+      try {
+        buildProposeCard({ ...videoInput, desiredResolution: tier }, refVideoCtx(), []);
+        expect.unreachable(`${tier} 在参考视频路上应该被拒`);
+      } catch (e) {
+        expect(e, tier).toBeInstanceOf(VideoTierUnavailableError);
+        message = (e as Error).message;
+      }
+      // 他点的那一档只能出现在「拿不到」那半句;一旦也出现在「我能做」那半句,商家照着
+      // 这句话再说一次,拿到的还是同一句拒绝 —— 那正是判官抓到的死循环。
+      const offerHalf = message.split("—")[1] ?? "";
+      expect(offerHalf, tier).toContain(refVideoTier);
+      expect(offerHalf, tier).not.toContain(tier);
+      expect(message, tier).toContain(tier); // 他点的那一档仍要原样回给他听
+      expect(redactProviderNames(message), tier).toBe(message);
+    }
+  });
+
+  it("CREATE-A4 参考视频路 + 高清槽位被关 ⇒ 也只说这条路真给得了的那一档", () => {
+    const ctx = refVideoCtx({ disabledModels: [routeVideoModel(HD_VIDEO_RESOLUTION).model] });
+    try {
+      buildProposeCard({ ...videoInput, desiredResolution: HD_VIDEO_RESOLUTION }, ctx, []);
+      expect.unreachable("应该抛");
+    } catch (e) {
+      expect(e).toBeInstanceOf(VideoTierUnavailableError);
+      const offerHalf = (e as Error).message.split("—")[1] ?? "";
+      // 只许列这条路真铸得出的那一档 —— 高清档给不了(槽位被关),槽位白名单里的
+      // 另一档同样给不了(参考视频路把分辨率硬写回默认档)。
+      expect(offerHalf).toContain(refVideoTier);
+      expect(offerHalf).not.toContain(HD_VIDEO_RESOLUTION);
+      for (const other of (SELLABLE_VIDEO_RESOLUTIONS[REFERENCE_VIDEO_MODEL] ?? []).filter((r) => r !== refVideoTier)) {
+        expect(offerHalf, other).not.toContain(other);
+      }
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 判官 2026-09-04 P1-2 —— 两步计划(先出图、再出片)那张卡上的**片段预估**。
+  //
+  // 那个数不是内部记录:确认卡把它渲染成商家正要批准的总价。Step 3.6 的守卫写的是
+  // `kind === "video"`,而这张卡的 kind 是 image,于是整条绕过去 —— 商家说「4k」,
+  // 卡上出现一个他没点过的档的价,第二步真铸卡时又会被拒。
+  // -------------------------------------------------------------------------
+  const twoStepInput = {
+    kind: "image" as const,
+    structuredPrompt: "A hero still of the pandan kaya jar, for the opening frame",
+    entityIds: [] as string[],
+    variantSel: {} as Record<string, string>,
+    forVideo: true,
+  };
+  /** 第二步**真正会铸**的那张卡 —— 预估要对得上的是它,不是一个手抄的数字。 */
+  function secondStepCard(desiredResolution?: string) {
+    return buildProposeCard(
+      { ...videoInput, ...(desiredResolution ? { desiredResolution } : {}) },
+      makeCtx({ sourceGenerationId: "gen_img" }),
+      [],
+    ).cardPayload;
+  }
+
+  it("CREATE-A1 两步计划点名 1080p ⇒ 片段预估就是**这一档**的价(与第二步真会铸的那张卡逐分相等)", () => {
+    const { cardPayload } = buildProposeCard(
+      { ...twoStepInput, desiredResolution: HD_VIDEO_RESOLUTION },
+      makeCtx(),
+      [],
+    );
+    const second = secondStepCard(HD_VIDEO_RESOLUTION);
+    expect(second.params.resolution).toBe(HD_VIDEO_RESOLUTION);
+    expect(cardPayload.videoStep?.estimatedCredits).toBe(second.estimatedCredits);
+    // 而且它确实不是默认档那个数 —— 否则这条断言等于什么都没钉。
+    expect(cardPayload.videoStep?.estimatedCredits).not.toBe(secondStepCard().estimatedCredits);
+  });
+
+  it("CREATE-A4 两步计划点名给不了的档(4k)⇒ 一张卡都不铸,而**不是**悄悄按默认档报一个价", () => {
+    expect(() =>
+      buildProposeCard({ ...twoStepInput, desiredResolution: "4k" }, makeCtx(), []),
+    ).toThrow(VideoTierUnavailableError);
+    // 与视频路同一句话:他点的那一档 + 能给的那几档,一个引擎名都没有。
+    try {
+      buildProposeCard({ ...twoStepInput, desiredResolution: "4k" }, makeCtx(), []);
+    } catch (e) {
+      expect(e).toBeInstanceOf(ProposeRefusal);
+      const message = (e as Error).message;
+      expect(message).toContain("4k");
+      expect(redactProviderNames(message)).toBe(message);
+    }
+  });
+
+  it("CREATE-A4 两步计划没点名画质 ⇒ 预估照旧是默认档(旧行为逐字保留)", () => {
+    const { cardPayload } = buildProposeCard(twoStepInput, makeCtx(), []);
+    expect(cardPayload.videoStep?.estimatedCredits).toBe(secondStepCard().estimatedCredits);
+  });
+
+  it("CREATE-A4 `proposeInput` 逐字收下 desiredResolution —— 这个字段唯一的运行时看守", async () => {
+    const { proposeInput } = await import("./propose.helpers.js");
+    const parsed = proposeInput.safeParse({
+      kind: "video",
+      structuredPrompt: "A slow push-in on the pandan kaya jar",
+      desiredResolution: HD_VIDEO_RESOLUTION,
+    });
+    expect(parsed.success).toBe(true);
+    // 普通 `z.object` 会**静默剥离**它不认识的键:字段一旦没了,模型照说明书传上来的画质
+    // 被悄悄扔掉、卡回到默认档 —— 正是这张票要修的那个 bug 悄悄复活,而 golden 快照
+    // (冻的是提示词文本)照样全绿。所以这里钉的是「解析完它还在」。
+    expect(parsed.success && parsed.data.desiredResolution).toBe(HD_VIDEO_RESOLUTION);
+    // 它照旧是可选的:没点名的老调用一个字都不用改。
+    expect(
+      proposeInput.safeParse({ kind: "video", structuredPrompt: "A slow push-in" }).success,
+    ).toBe(true);
+  });
 });
