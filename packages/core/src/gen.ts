@@ -848,6 +848,22 @@ export const ASSET_ACTION_FALLBACK_PROMPTS = {
 } as const satisfies Record<string, string>;
 
 /**
+ * 上传进来的素材按 **Regenerate** 时,商家看到的那一句 —— **只在这里定义一次**。
+ *
+ * 为什么还是拒收:上面那段已经写明,`handleRegen` 不送 `sourceGenerationId`,引擎手上根本
+ * 没有那张照片,兜一句「Recreate this image」只会让商家花了钱拿到一张无关的图。所以这条路
+ * 维持 $0、不建 GenJob —— 变的只是**说法**。
+ *
+ * 变的是什么(Founder 2026-09-03 裁决):原来商家看到的是 `genRequest` 那句通用出界话
+ * 「That generation request is out of bounds.」——它既没说是哪一步不行,也没给下一步。现在
+ * 这条路自己答:说清「上传的图还不能重做」,并把同一张图上真的能用的两个动作指给他。
+ *
+ * 它与钱无关:拒收发生在算幂等键、进 `startGen`、动账本**之前**,前后都是 $0。
+ */
+export const ASSET_REGEN_UPLOAD_REFUSAL =
+  "Uploads can’t be regenerated yet. Try Animate or Edit instead.";
+
+/**
  * 上面那张表的**唯一**读法:这个动作 + 这一句提示词,真正该发出去的是哪一句。
  *
  * 空串 / 只有空白 / 缺席 ⇒ 该动作的兜底句(没有兜底的动作回 null,由 `genRequest` 照旧拒 ——
