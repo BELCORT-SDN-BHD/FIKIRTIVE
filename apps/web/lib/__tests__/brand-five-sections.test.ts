@@ -106,7 +106,10 @@ describe("FRONT-A8 草稿流:确认之前不落正式记录", () => {
   it("FRONT-A8 加来源与抽取两步一个字节都不写库", async () => {
     const source = await addBrandSource({ sourceKind: "text", text: "  We are a family bakery.  " });
     expect(source).toEqual({ ok: true, origin: "text", originDetail: "Pasted text", text: "We are a family bakery." });
-    const draft = await extractBrandDraft({ name: "Family bakery voice", text: source.ok ? source.text : "" });
+    const draft = await extractBrandDraft({
+      name: "Family bakery voice",
+      text: "error" in source ? "" : source.text,
+    });
     expect(draft).toEqual({ ok: true, name: "Family bakery voice", content: "We are a family bakery." });
     expect(mockMemoryCreate).not.toHaveBeenCalled();
     expect(mockMemoryUpdateMany).not.toHaveBeenCalled();
