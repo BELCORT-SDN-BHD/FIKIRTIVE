@@ -107,10 +107,14 @@ describe("what the model is told", () => {
     expect(out.nextStep).toContain("Nothing has been made or charged");
   });
 
-  it("points the merchant at the panel they can use themselves", async () => {
-    // W2-11:Templates 不再单占一格,它是 Create 页面下方的一个区段。
+  it("不再宣称有一个 Templates 区段(Founder 2026-09-03 裁决)", async () => {
+    // W2-11 的新壳把 Templates 收编进 Create 之后那个区段就不渲染了,`/create` 今天只挂
+    // Otto 入口与画布历史 —— 旧那句「Create(/create#templates)有一个 Templates 区段」
+    // 因此是假话(登记在 docs/specs/frontend-baseline.md 的差异表)。裁决是删掉它。
+    // 这条反着钉:句子贴回来就红。
     const out = (await executeRecommendTemplates({}, ctx)) as Reply;
-    expect(out.nextStep).toContain("/create#templates");
+    expect(out.nextStep).not.toContain("Templates section");
+    expect(out.nextStep).not.toContain("#templates");
   });
 
   it("carries the ready captions by language", () => {
