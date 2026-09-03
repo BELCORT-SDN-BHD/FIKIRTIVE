@@ -4,11 +4,15 @@
  * 预览开关删除、假页清零之后,`/create`(W2-5 改名前叫 `/northstar-immersive`)底下只剩两条**真**路由:Home 与
  * Canvas。它们从此就是正式产品页,把人挡在外面的东西只有一件 —— 登录。
  *
+ * ⑨ 之后 `/create` 渲染的是 `CreateWorkspaceEntry`(app/create/page.tsx),所以下面第 ② 条的
+ * 「只读自己的项目」钉在它身上 —— 断言必须守活路由,守 `NorthstarHomeEntry` 那具已无人渲染的
+ * 旧入口等于没有租户证明(judge r1 P1)。
+ *
  * 这里钉三条商家可见的结果:
  *   ① 未登录进不去 —— 常驻壳、Home、Canvas 三个受控入口一律 redirect("/login"),一个
  *      字节的内容都不交出去。改前壳会以 **null 身份**继续把导航画出来(那条路是为已删的
  *      `/onboarding/login` 假登录页留的),所以第一条在改前是红的。
- *   ② 登录了照常 —— 认证商家拿到的是**自己的**东西:壳写自己的名字,Home 只读自己
+ *   ② 登录了照常 —— 认证商家拿到的是**自己的**东西:壳写自己的名字,Create 起步页只读自己
  *      ownerId 下的项目。
  *   ③ 生产环境不再需要任何开关 —— NODE_ENV=production 且不设任何预览变量时,认证商家
  *      照样看到内容。改前这三处都会 notFound(),所以这一组在改前也是红的。
@@ -48,11 +52,11 @@ vi.mock("@/lib/actions", () => ({ getOrCreateDefaultProject: mocks.getOrCreateDe
 vi.mock("@/lib/account-actions", () => ({ getMyAccount: mocks.getMyAccount }));
 vi.mock("@/lib/dto", () => ({ toEntityDTO: (entity: { id: string }) => entity }));
 vi.mock("@/components/northstar/immersive/immersive-shell", () => ({ ImmersiveShell: vi.fn() }));
-vi.mock("@/components/canvas/NorthstarHome", () => ({ NorthstarHome: vi.fn() }));
+vi.mock("@/components/start-something/CreateWorkspace", () => ({ CreateWorkspace: vi.fn() }));
 vi.mock("@/components/canvas/NorthstarCanvasWorkspace", () => ({ NorthstarCanvasWorkspace: vi.fn() }));
 
 const { NorthstarShellEntry } = await import("@/components/canvas/NorthstarShellEntry");
-const { NorthstarHomeEntry } = await import("@/components/canvas/NorthstarHomeEntry");
+const { CreateWorkspaceEntry } = await import("@/components/start-something/CreateWorkspaceEntry");
 const { ImmersiveCanvasEntry } = await import("@/components/canvas/ImmersiveCanvasEntry");
 
 const SIGNED_IN = { email: "nurul@warungnurul.my", ownerId: "org_nurul" };
@@ -81,7 +85,7 @@ function signedOut(): void {
 /** 三条入口的统一调用形状(Canvas 多一个 searchParams)。 */
 const ENTRIES = [
   { name: "shell", call: () => NorthstarShellEntry({ children: "content" }) },
-  { name: "home", call: () => NorthstarHomeEntry() },
+  { name: "create", call: () => CreateWorkspaceEntry() },
   {
     name: "canvas",
     call: () => ImmersiveCanvasEntry({ searchParams: Promise.resolve({}) }),
@@ -120,9 +124,9 @@ describe("未登录访问北极星路由", () => {
     await expect(NorthstarShellEntry({ children: "content" })).rejects.toThrow(REDIRECTED);
   });
 
-  it("Home 在身份没解析出来之前不读任何项目", async () => {
+  it("Create 起步页在身份没解析出来之前不读任何项目", async () => {
     signedOut();
-    await expect(NorthstarHomeEntry()).rejects.toThrow(REDIRECTED);
+    await expect(CreateWorkspaceEntry()).rejects.toThrow(REDIRECTED);
     expect(mocks.getProjects).not.toHaveBeenCalled();
   });
 });
@@ -140,11 +144,11 @@ describe("已登录商家照常进出", () => {
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
-  it("Home 只读认证身份自己的项目", async () => {
+  it("Create 起步页只读认证身份自己的项目", async () => {
     signedIn();
-    const element = await NorthstarHomeEntry();
+    const element = await CreateWorkspaceEntry();
     expect(mocks.getProjects).toHaveBeenCalledWith(SIGNED_IN.ownerId);
-    // #949 A5 — NorthstarHomeEntry now formats the date server-side (updatedLabel,
+    // #949 A5 — CreateWorkspaceEntry formats the date server-side (updatedLabel,
     // en-MY pinned to Asia/Kuala_Lumpur) instead of shipping a raw updatedAt ISO
     // string for the client to reformat. 2026-08-01T00:00:00.000Z is 01 Aug 08:00
     // in KL, so the label stays "1 Aug 2026".

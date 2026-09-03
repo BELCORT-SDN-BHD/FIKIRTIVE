@@ -139,10 +139,10 @@ test("FRONT-A14 — a merchant can press every canvas tool while Otto's composer
   // the two steps): Home → Create → describe → Start.
   await page.getByRole("link", { name: "Create something new" }).click();
   await expect(page).toHaveURL(/\/create$/);
-  const brief = page.getByRole("textbox", { name: "Describe what you want to create" });
+  const brief = page.getByRole("textbox", { name: "Otto creation prompt" });
   await waitUntilInteractive(brief);
   await brief.fill("A poster for our weekend kopi set");
-  const start = page.getByRole("button", { name: "Start a Canvas with Otto" });
+  const start = page.getByRole("button", { name: "Send prompt" });
   await expect(start).toBeEnabled();
   await start.click();
   await expect(page).toHaveURL(/\/create\/canvas\?project=/);

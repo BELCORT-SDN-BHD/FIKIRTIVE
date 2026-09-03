@@ -46,10 +46,10 @@ test("A merchant creates a project, lands in it, and is charged nothing for it",
   // waiting for a project that was never asked for (#981, support/ui.ts). The composer is a
   // CONTROLLED textarea, so this bites it twice: an un-hydrated fill leaves `draft` empty and the
   // Start button stays disabled forever — which is exactly what this journey then waits on.
-  const composer = page.getByRole("textbox", { name: "Describe what you want to create" });
+  const composer = page.getByRole("textbox", { name: "Otto creation prompt" });
   await waitUntilInteractive(composer);
   await composer.fill("A poster for our weekend kopi set");
-  const start = page.getByRole("button", { name: "Start a Canvas with Otto" });
+  const start = page.getByRole("button", { name: "Send prompt" });
   await expect(start).toBeEnabled();
   await start.click();
 
