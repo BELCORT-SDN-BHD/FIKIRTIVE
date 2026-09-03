@@ -56,7 +56,7 @@ export type LibraryDayZone = "utc" | "local";
  * 月份名写死一张表,不用 `Intl.DateTimeFormat`。
  *
  * 一个在模块加载时构造出来的 `Intl.DateTimeFormat` 会把当时的时区**焊死**在里面(Node 22
- * 实测:`process.env.TZ` 改了之后,`Date` 的本地取值器跟着变,预构造的 formatter 不跟),
+ * 实测:进程的时区设置改了之后,`Date` 的本地取值器跟着变,预构造的 formatter 不跟),
  * 于是「按本地时区算」这条规则在它身上就是假的。界面本来就只有英文一种写法
  * (原来的代码也是写死 `"en-US"`),所以一张表比一个会骗人的 formatter 诚实。
  */
