@@ -92,6 +92,7 @@ import {
 import {
   activeStepLabel,
   canvasTurnStatus,
+  currentTurnStartIndex,
   latestAssistantSayable,
 } from "@/lib/otto-canvas-turn";
 import { creditsLabel } from "@/lib/credit-format";
@@ -872,8 +873,10 @@ export function OttoChatStream({
   // ── 画布卡这一刻的脸(走查 P0-3 / P0-4)────────────────────────────────────────
   // 每一张 GEN_CARD 的运行态,与抽屉里那张卡读的是同一个 `deriveCardState`。
   const genCardStates = messages
-    .filter((m) => m.metadata?.kind === "GEN_CARD" && m.metadata.durableId)
-    .map((m) => ({
+    .map((m, index) => ({ m, index }))
+    .filter(({ m }) => m.metadata?.kind === "GEN_CARD" && m.metadata.durableId)
+    .map(({ m, index }) => ({
+      index,
       message: m,
       durableId: m.metadata!.durableId,
       state: deriveCardState({
@@ -885,8 +888,11 @@ export function OttoChatStream({
       }),
     }));
   // 等商家按确认的卡。`idle` 就是「有卡、没开跑」—— 与卡自己的 approve 门同一个判据。
+  // 只取**这一轮**的(最后一条商家发言之后):这张卡是「当前回合」卡,更早几轮没按的卡
+  // 仍在对话抽屉里、照旧可以批准,不该在这里堆成一叠让商家在里面挑一个付钱。
+  const turnStart = currentTurnStartIndex(messages);
   const confirmCards: CanvasConfirmCard[] = genCardStates
-    .filter((c) => c.state === "idle")
+    .filter((c) => c.state === "idle" && c.index >= turnStart)
     .map((c) => ({
       cardId: c.durableId,
       threadId: thread.id,

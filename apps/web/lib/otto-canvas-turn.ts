@@ -133,6 +133,26 @@ export function canvasTurnStatus(input: CanvasTurnInput): CanvasTurnStatus {
 }
 
 /**
+ * 「这一轮」从第几条消息开始 —— 也就是最后一条商家自己说的话之后。
+ *
+ * 那张始终可见的卡是**当前回合**卡（设计源 `CanvasReference.tsx` 的 `CurrentTurn`），
+ * 所以它上面的确认位只能是 Otto 这一轮提出来的东西。走查 P1-2 记到一件相关的事：Otto
+ * 重建方案时会**再生一对新卡**，旧的那一对没有任何东西标成过时 —— 抽屉里于是攒着四张
+ * 长得几乎一样的卡。要是把它们全堆进这张 280px 的卡，商家会在一叠里挑一个付钱。
+ *
+ * 早先几轮里没按的卡**没有消失**，也照旧可以批准：它们仍在对话抽屉里，那才是历史该待
+ * 的地方。这里只回答「此刻这一轮在等什么」。
+ */
+export function currentTurnStartIndex(
+  messages: readonly { role: string }[],
+): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") return i + 1;
+  }
+  return 0;
+}
+
+/**
  * 那张卡该显示哪一段正文。
  *
  * 走查 P1-1：从前它取「最后一条 assistant 消息的 text 部件」，而 `threadToUiMessages`

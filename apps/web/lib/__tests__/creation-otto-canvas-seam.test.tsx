@@ -20,6 +20,7 @@ const {
   activeStepLabel,
   canvasProgressDetail,
   canvasTurnStatus,
+  currentTurnStartIndex,
   latestAssistantSayable,
   STILL_WORKING_AFTER_SECONDS,
 } = await import("@/lib/otto-canvas-turn");
@@ -140,6 +141,36 @@ describe("CREATE-A1 · 确认卡在始终可见的 Otto 卡片里（走查 P0-3�
     );
     expect(el.querySelector('[aria-label="Generation confirmation"]')).toBeNull();
     expect([...el.querySelectorAll("button")].some((b) => b.textContent?.includes("Generate"))).toBe(false);
+  });
+});
+
+describe("CREATE-A1 · 可见卡只放这一轮的确认位（走查 P1-2 的堆叠面）", () => {
+  it("CREATE-A1 · 这一轮从最后一条商家发言之后算起", () => {
+    const messages = [
+      { role: "user" },      // 0 上一轮
+      { role: "assistant" }, // 1 上一轮的卡
+      { role: "user" },      // 2 这一轮
+      { role: "assistant" }, // 3
+    ];
+    expect(currentTurnStartIndex(messages)).toBe(3);
+    // 商家一句话都还没说（前门第一条自动发出之前）：整条对话就是这一轮。
+    expect(currentTurnStartIndex([{ role: "assistant" }])).toBe(0);
+    expect(currentTurnStartIndex([])).toBe(0);
+  });
+
+  it("CREATE-A1 · 更早几轮没按的卡不堆进这张 280px 的卡", () => {
+    // Otto 重建方案时会再生一对新卡，旧的那一对没人标成过时（走查 P1-2）。四张几乎一样的
+    // 卡堆在确认位上，商家会在一叠里挑一个付钱。旧的仍在对话抽屉里，照旧可以批准。
+    const messages = [
+      { role: "user" },
+      { role: "assistant" },
+      { role: "user" },
+      { role: "assistant" },
+      { role: "assistant" },
+    ];
+    const start = currentTurnStartIndex(messages);
+    const idleIndexes = [1, 3, 4];
+    expect(idleIndexes.filter((i) => i >= start)).toEqual([3, 4]);
   });
 });
 
