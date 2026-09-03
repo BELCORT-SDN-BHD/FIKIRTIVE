@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
-import { merchantGenFailureCopy } from "@fikirtive/core";
+import { merchantGenFailureCopy } from "@fikirtive/core/gen-failure";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
