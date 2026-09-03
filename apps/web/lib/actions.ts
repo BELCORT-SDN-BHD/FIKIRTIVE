@@ -32,6 +32,7 @@ import { buildBoardEdit, transitionFor } from "./edit";
 import { getShots, getLooseVideoClips, getMediaPage, type MediaPage } from "./data";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
+import { purgeOrphanedReferenceAssets, purgeAssetStorage } from "./asset-purge";
 
 /**
  * M0 server actions. Conventions:
@@ -609,7 +610,9 @@ export async function removeEntityAlias(entityId: string, alias: string): Promis
   });
 }
 
-/** Remove one reference image from an entity (soft — asset row is a tombstone). */
+/** Remove one reference image from an entity (soft — asset row is a tombstone, UNLESS this
+ *  was the asset's last live reference and it was never used by any Generation, in which case
+ *  the underlying storage object is purged for real — see ./asset-purge). */
 export async function softDeleteReferenceImage(refImageId: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
@@ -617,40 +620,65 @@ export async function softDeleteReferenceImage(refImageId: string): Promise<{ ok
     const { ownerId } = gate;
     const ref = await prisma.referenceImage.findFirst({ where: { id: refImageId, ownerId, deletedAt: null } });
     if (!ref) return { error: "Reference image not found." };
-    await prisma.referenceImage.update({
-      where: { id: refImageId },
-      data: { deletedAt: new Date() },
-    });
-    // if we just removed the entity's base ref, repoint baseAssetId to the next live
-    // base-level ref (or null) — otherwise it dangles at an orphaned asset and variant
-    // generation would still condition on a base the user no longer has.
-    const entity = await prisma.entity.findFirst({ where: { id: ref.entityId, ownerId, deletedAt: null }, select: { baseAssetId: true } });
-    if (entity?.baseAssetId === ref.assetId) {
-      const next = await prisma.referenceImage.findFirst({
-        where: { ownerId, entityId: ref.entityId, deletedAt: null, variantId: null },
-        orderBy: { position: "asc" },
-        select: { assetId: true },
+    const purged = await prisma.$transaction(async (tx) => {
+      await tx.referenceImage.update({
+        where: { id: refImageId },
+        data: { deletedAt: new Date() },
       });
-      await prisma.entity.updateMany({ where: { id: ref.entityId, ownerId, deletedAt: null }, data: { baseAssetId: next?.assetId ?? null } });
-    }
-    await logAction(ownerId, "entity.update", null, { entityId: ref.entityId, refImageId, action: "ref-delete" });
+      // if we just removed the entity's base ref, repoint baseAssetId to the next live
+      // base-level ref (or null) — otherwise it dangles at an orphaned asset and variant
+      // generation would still condition on a base the user no longer has.
+      const entity = await tx.entity.findFirst({ where: { id: ref.entityId, ownerId, deletedAt: null }, select: { baseAssetId: true } });
+      if (entity?.baseAssetId === ref.assetId) {
+        const next = await tx.referenceImage.findFirst({
+          where: { ownerId, entityId: ref.entityId, deletedAt: null, variantId: null },
+          orderBy: { position: "asc" },
+          select: { assetId: true },
+        });
+        await tx.entity.updateMany({ where: { id: ref.entityId, ownerId, deletedAt: null }, data: { baseAssetId: next?.assetId ?? null } });
+      }
+      // 2026-09-03 staging 走查 S4 —— 「商家的 data 商家的权利」:同一张照片可能被去重挂在
+      // 别的实体/变体上,或被某个 Generation 用过,判据见 asset-purge.ts;真删只发生在两者
+      // 都不成立时。
+      return purgeOrphanedReferenceAssets(tx, ownerId, [ref.assetId]);
+    });
+    await purgeAssetStorage(purged);
+    await logAction(ownerId, "entity.update", null, { entityId: ref.entityId, refImageId, action: "ref-delete", assetPurged: purged.length > 0 });
     revalidatePath("/", "layout");
     return { ok: true };
   });
 }
 
+/** Soft-delete the entity itself AND every reference image it still owns; any asset that
+ *  became exclusive to it as a result is purged for real (2026-09-03 staging 走查 S4,Founder
+ *  裁「现在就修」——「商家的 data 商家的权利」:删演员不能只藏一行数据库,底下的参考照
+ *  字节也要真的从存储里消失)。判据见 ./asset-purge:共享引用(别的实体/变体还在用,或被
+ *  任何 Generation 用过)只解引用、不删对象。 */
 export async function softDeleteEntity(entityId: string): Promise<{ ok: true; shotRefs: number } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async () => {
     const { ownerId } = gate;
     const refCount = await prisma.shotEntityRef.count({ where: { entityId } });
-    const { count } = await prisma.entity.updateMany({
-      where: { id: entityId, ownerId, deletedAt: null },
-      data: { deletedAt: new Date() },
+    const purged = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.entity.updateMany({
+        where: { id: entityId, ownerId, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      if (count === 0) return null; // not found — signal to the caller below
+      const liveRefs = await tx.referenceImage.findMany({
+        where: { entityId, ownerId, deletedAt: null },
+        select: { assetId: true },
+      });
+      await tx.referenceImage.updateMany({
+        where: { entityId, ownerId, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      return purgeOrphanedReferenceAssets(tx, ownerId, liveRefs.map((r) => r.assetId));
     });
-    if (count === 0) return { error: "Entity not found." };
-    await logAction(ownerId, "entity.update", null, { entityId, action: "soft-delete", shotRefsAtDelete: refCount });
+    if (purged === null) return { error: "Entity not found." };
+    await purgeAssetStorage(purged);
+    await logAction(ownerId, "entity.update", null, { entityId, action: "soft-delete", shotRefsAtDelete: refCount, assetsPurged: purged.length });
     revalidatePath("/", "layout");
     // History stays intact (snapshots); shots referencing it show a stale chip until edited.
     return { ok: true, shotRefs: refCount };
