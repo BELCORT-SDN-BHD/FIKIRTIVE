@@ -95,12 +95,14 @@ export async function proposeClipActionCard(
       });
       if (!clip) return { error: "That clip isn't available." };
 
-      // ② 再过一次 Otto 路验整段参考视频用的**同一个**校验器(owner + project + 视频
-      //    扩展名)。两条路对「这条片子能不能当参考」只许有一个答案。
+      // ② 再过一次 Otto 路验整段参考视频用的**同一个**校验器(owner + 视频扩展名)。
+      //    两条路对「这条片子能不能当参考」只许有一个答案。
+      //    (Codex QA-CRE-FE9-013 之后校验器不再按 projectId 过滤 —— 这里本来就是从这一行
+      //    **自己**读出 projectId 再传回去,所以行为一格未变;`clip.projectId` 仍然用在
+      //    下面第 ③ 步「卡落在哪条会话里」。)
       const validated = await validateOwnedGenerationExt(prisma, {
         id: clip.id,
         ownerId,
-        projectId: clip.projectId,
         exts: CLIP_VIDEO_EXTS,
       });
       if (!validated) return { error: "That clip isn't available." };
@@ -148,8 +150,8 @@ export async function proposeClipActionCard(
         disabledModels: [...registry.disabled],
         sourceGenerationId: undefined,
         // 这就是把整张卡钉在商家那条片子上的那一格 —— 与 Otto 路逐字同一个语义。
-        referenceVideoGenerationId: validated,
-        referenceVideoGenerationIds: [validated],
+        referenceVideoGenerationId: validated.id,
+        referenceVideoGenerationIds: [validated.id],
         // `turnText` 是 #775 的「第二个证人」:模型自选动作时才需要对表。这条路上动作
         // 是商家**自己按的那个键**,没有第二次转述可以对,所以不设 —— 设了反而是拿他打的
         // 那句话去推翻他按的那个键。

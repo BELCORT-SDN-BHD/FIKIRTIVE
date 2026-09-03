@@ -264,3 +264,74 @@ export function referenceImagePersonRejected(detail: string | null | undefined):
 export function merchantGenFailureMessage(persistedError: string | null | undefined): string | null {
   return merchantGenFailureExplanation(merchantGenFailureReason(persistedError));
 }
+
+// ---------------------------------------------------------------------------
+// 挂在这一轮消息上的参考,发送之前就取不到(Codex QA-CRE-FE9-013,2026-09-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * A REFERENCE THE MERCHANT ATTACHED IS NOT USABLE — and the send has to say so.
+ *
+ * This is not a generation failure: nothing has been queued, nothing reserved, no engine has
+ * seen anything. It is the moment BEFORE all of that, when the composer carries a reference
+ * (an `Image ref` chip, a clip) whose generation the server cannot resolve for this tenant.
+ *
+ * It lives in this file because it is the same discipline the rest of the file exists for: a
+ * closed set of NAMES, one table from name to the sentence a merchant reads, and no second
+ * mapping anywhere. What made QA-CRE-FE9-013 a P0 was precisely the absence of a sentence —
+ * the reference was dropped in silence, Otto planned without it, the confirmation card listed
+ * only the person, and the merchant approved and paid for a picture that never contained the
+ * product they had picked.
+ *
+ * These names are DELIBERATELY separate from `GenFailureReason` above: that union is the
+ * whitelist for `GenJob.error`, and every member of it needs terminal-card copy. A refusal that
+ * happens before a job exists must never be able to arrive as a card state.
+ */
+export const REFERENCE_UNAVAILABLE_REASONS = ["notFound", "fileMissing"] as const;
+
+export type ReferenceUnavailableReason = (typeof REFERENCE_UNAVAILABLE_REASONS)[number];
+
+/**
+ * THE ONE TABLE for the two ways an attached reference can be unusable.
+ *
+ * Both sentences say the same three things, because for the merchant both endings are the same:
+ * what happened, that nothing was sent, and the one move that fixes it. Neither names the tenant
+ * check, the storage layer, or an id — a merchant learns that this attachment can't be used, not
+ * how our lookup works.
+ *
+ * `notFound` deliberately covers "deleted since you attached it" AND "belongs to someone else"
+ * with ONE sentence: telling those two apart would answer whether a given id exists in another
+ * account.
+ */
+const REFERENCE_UNAVAILABLE_SENTENCES: Readonly<Record<ReferenceUnavailableReason, string>> = {
+  notFound:
+    "One of your references isn't available any more. Remove it and try again — nothing was sent.",
+  fileMissing:
+    "One of your references can't be opened right now. Remove it and try again — nothing was sent.",
+};
+
+/** The sentence a merchant reads for an unusable attachment. One table, no second mapping. */
+export function referenceUnavailableMessage(reason: ReferenceUnavailableReason): string {
+  return REFERENCE_UNAVAILABLE_SENTENCES[reason];
+}
+
+/**
+ * Is this transport text one of OUR two sentences? A WHITELIST, exactly like the `GenJob.error`
+ * reader above and for the same reason.
+ *
+ * The composer needs it because the refusal arrives as a plain 400 BEFORE the SSE opens, so what
+ * the client holds is the raw response body. Forwarding whatever came back would eventually put a
+ * stack trace, a proxy's HTML error page, or an internal string on a merchant's screen. Only a
+ * sentence written in this file may come back out of it; anything else keeps the surface's own
+ * honest generic copy.
+ *
+ * Exact match after trimming — not a prefix, not a substring.
+ */
+export function referenceUnavailableSentence(text: string | null | undefined): string | null {
+  const written = String(text ?? "").trim();
+  if (!written) return null;
+  for (const sentence of Object.values(REFERENCE_UNAVAILABLE_SENTENCES)) {
+    if (sentence.trim() === written) return sentence;
+  }
+  return null;
+}

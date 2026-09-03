@@ -37,6 +37,12 @@ import {
   merchantGenFailureMessage,
   routeReasonFor,
   genImageModel,
+  // Codex QA-CRE-FE9-013 —— 「这一件素材能不能当参考」只有一份判据(同一 owner、活着、
+  // 扩展名对得上)。这里的四处解析从前各写一份 where、四份都多写了一格 `projectId`,
+  // 于是跨画布引用哪怕过了前面所有的门,也会在这里 fail-closed 退款。
+  generationReferenceScope,
+  REFERENCE_IMAGE_EXTS,
+  REFERENCE_VIDEO_EXTS,
   type GenJobData,
   type GenModel,
   type GenVideoModel,
@@ -1174,11 +1180,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         let sourceAsset: { ownerId: string; contentHash: string; ext: string } | null = null;
         if (job.sourceGenerationId) {
           const src = await prisma.generation.findFirst({
-            where: { id: job.sourceGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+            where: { id: job.sourceGenerationId, ...generationReferenceScope(job.ownerId, REFERENCE_IMAGE_EXTS) },
             include: { asset: true },
           });
           if (!src) {
-            await failClosedWithRefund(job,"image-to-video source not found (or not an image) in this project");
+            await failClosedWithRefund(job,"image-to-video source not found (or not an image) for this account");
             return;
           }
           sourceAsset = src.asset;
@@ -1213,11 +1219,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         let tailImageUrl = "";
         if (job.tailGenerationId && sourceAsset) {
           const tail = await prisma.generation.findFirst({
-            where: { id: job.tailGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+            where: { id: job.tailGenerationId, ...generationReferenceScope(job.ownerId, REFERENCE_IMAGE_EXTS) },
             include: { asset: true },
           });
           if (!tail) {
-            await failClosedWithRefund(job,"last-frame image not found (or not an image) in this project");
+            await failClosedWithRefund(job,"last-frame image not found (or not an image) for this account");
             return;
           }
           tailImageUrl = (await storage.presignedGet(storageKey(tail.asset.ownerId, tail.asset.contentHash, tail.asset.ext), 3600)) ?? "";
@@ -1228,11 +1234,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         let refVideoUrl = "";
         if (job.referenceVideoGenerationId) {
           const rv = await prisma.generation.findFirst({
-            where: { id: job.referenceVideoGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["mp4", "mov", "webm"] } } },
+            where: { id: job.referenceVideoGenerationId, ...generationReferenceScope(job.ownerId, REFERENCE_VIDEO_EXTS) },
             include: { asset: true },
           });
           if (!rv) {
-            await failClosedWithRefund(job, "reference video not found (or not a video) in this project");
+            await failClosedWithRefund(job, "reference video not found (or not a video) for this account");
             return;
           }
           // Margin guard: BytePlus bills reference-video input by duration while our charge is
@@ -1284,10 +1290,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // multi-reference conditioning the @ref images ride along after it). Pre-spend.
         if (job.sourceGenerationId) {
           const src = await prisma.generation.findFirst({
-            where: { id: job.sourceGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+            where: { id: job.sourceGenerationId, ...generationReferenceScope(job.ownerId, REFERENCE_IMAGE_EXTS) },
             include: { asset: true },
           });
-          if (!src) { await failClosedWithRefund(job, "edit source image not found (or not an image) in this project"); return; }
+          if (!src) { await failClosedWithRefund(job, "edit source image not found (or not an image) for this account"); return; }
           const srcUrl = (await storage.presignedGet(storageKey(src.asset.ownerId, src.asset.contentHash, src.asset.ext), 3600)) ?? "";
           if (provider.name !== "mock" && !srcUrl) throw new Error("edit source image unreachable — refusing to spend");
           if (srcUrl) {

@@ -37,6 +37,13 @@ import {
   searchWithFallback,
   extractProductDraft,
   merchantGenFailureMessage,
+  // Codex QA-CRE-FE9-013:挂上来的引用取不到时,商家读到的那一句 —— 措辞的单一权威是
+  // `gen-failure.ts` 里的那张表,这里只按名字取,绝不在别处再写一份句子。
+  referenceUnavailableMessage,
+  // 「行在、文件在不在」那一问。取不到的引用要在 reserve 之前拦住,而不是等 worker 退款。
+  storageKey,
+  storageKeyToSrc,
+  type ReferenceUnavailableReason,
   type SegmentRuleGroup,
 } from "@fikirtive/core";
 import {
@@ -59,7 +66,7 @@ import {
   tryRestoreRunStateWithContext,
   approvalRefOf,
 } from "@fikirtive/otto";
-import type { OttoContext, AgentInputItem, ApprovalInterruption } from "@fikirtive/otto";
+import type { OttoContext, OttoMediaReference, AgentInputItem, ApprovalInterruption } from "@fikirtive/otto";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -99,7 +106,8 @@ import { fetchOwnerAdObjects } from "./meta-objects";
 import { fetchOwnerPages } from "./meta-pages";
 import { proposeMetaActionForOwner } from "./meta-propose";
 import { proposeAdBuildForOwner } from "./meta-build-propose";
-import { validateOwnedGenerationExt } from "./otto-generation-validate";
+import { validateOwnedGenerationExt, type OwnedGenerationRef } from "./otto-generation-validate";
+import { storage } from "./storage";
 import { makeOttoCanvasPort } from "./otto-canvas-port";
 import { makeOttoMediaPort, makeOttoRenderPort, makeOttoMediaImportPort } from "./otto-media-port";
 import { makeOttoProjectsPort } from "./otto-projects-port";
@@ -333,25 +341,63 @@ function orderedUniqueIds(ids: Array<string | null | undefined>): string[] {
   return out;
 }
 
-async function validateGenerationRefs(input: {
+/**
+ * 解析这一轮挂上来的一组引用 —— 每一个都必须有答案:**要么解出来,要么记成不可用**。
+ *
+ * Codex QA-CRE-FE9-013:上一版这里是 `if (resolved) valid.push(...)` —— 解不出来的那个
+ * id 就地蒸发,调用方拿到的只是一个短一点的数组,分不清「商家没挂」与「挂了但被丢了」。
+ * 现在两条路都留痕:`refs` 是能用的,`unavailable` 是不能用的**及其原因**。
+ */
+async function resolveGenerationRefs(input: {
   ownerId: string;
-  projectId: string;
   ids: string[];
   exts: string[];
-}): Promise<string[]> {
-  const valid: string[] = [];
+}): Promise<{ refs: OwnedGenerationRef[]; unavailable: UnavailableTurnReference[] }> {
+  const refs: OwnedGenerationRef[] = [];
+  const unavailable: UnavailableTurnReference[] = [];
   for (const id of input.ids) {
     const resolved = await validateOwnedGenerationExt(prisma, {
       id,
       ownerId: input.ownerId,
-      projectId: input.projectId,
       exts: input.exts,
     });
-    if (resolved) valid.push(resolved);
+    if (!resolved) {
+      unavailable.push({ id, reason: "notFound" });
+      continue;
+    }
+    // 行在、文件不在:这一条走到引擎那里也是 fail-closed 退款,所以在**发送之前**就说。
+    // `storage.exists` 只把「对象不存在」读成 false;鉴权/网络故障它照旧抛出去,由调用方的
+    // try/catch 翻成「等一下再试」—— 不知道文件在不在的时候,绝不当作它在。
+    const present = await storage.exists(
+      storageKey(resolved.asset.ownerId, resolved.asset.contentHash, resolved.asset.ext),
+    );
+    if (!present) {
+      unavailable.push({ id, reason: "fileMissing" });
+      continue;
+    }
+    if (!refs.some((r) => r.id === resolved.id)) refs.push(resolved);
   }
-  return orderedUniqueIds(valid);
+  return { refs, unavailable };
 }
 
+/** 这一轮挂上来、但服务端取不到的那一件引用。`reason` 决定商家读到哪一句(单一措辞源)。 */
+export type UnavailableTurnReference = { id: string; reason: ReferenceUnavailableReason };
+
+export type OttoTurnReferences = {
+  sourceGenerationIds: string[];
+  referenceVideoGenerationIds: string[];
+  /** 回执:每一件真会随这一轮上路的媒体参考,配上商家读得懂的名字与来源画布。 */
+  mediaReferences: OttoMediaReference[];
+  /** 空数组 = 商家挂的每一件都取得到。非空 = **这一轮不许发出去**(见调用方)。 */
+  unavailable: UnavailableTurnReference[];
+};
+
+/**
+ * 这一轮的引用,解析一次,解给所有人用。
+ *
+ * 判据只有一条(`generationReferenceScope`):同一 owner、活着、扩展名对得上。画布不再
+ * 是过滤条件 —— 它只是回执上那句「来自哪一块画布」。
+ */
 export async function validateOttoTurnReferences(input: {
   ownerId: string;
   projectId: string;
@@ -359,14 +405,69 @@ export async function validateOttoTurnReferences(input: {
   sourceGenerationIds?: string[] | null;
   referenceVideoGenerationId?: string | null;
   referenceVideoGenerationIds?: string[] | null;
-}): Promise<{ sourceGenerationIds: string[]; referenceVideoGenerationIds: string[] }> {
+}): Promise<OttoTurnReferences> {
   const sourceIds = orderedUniqueIds([...(input.sourceGenerationIds ?? []), input.sourceGenerationId]);
   const videoIds = orderedUniqueIds([...(input.referenceVideoGenerationIds ?? []), input.referenceVideoGenerationId]);
-  const [validSourceIds, validVideoIds] = await Promise.all([
-    validateGenerationRefs({ ownerId: input.ownerId, projectId: input.projectId, ids: sourceIds, exts: IMAGE_EXTS }),
-    validateGenerationRefs({ ownerId: input.ownerId, projectId: input.projectId, ids: videoIds, exts: VIDEO_EXTS }),
+  const [source, video] = await Promise.all([
+    resolveGenerationRefs({ ownerId: input.ownerId, ids: sourceIds, exts: IMAGE_EXTS }),
+    resolveGenerationRefs({ ownerId: input.ownerId, ids: videoIds, exts: VIDEO_EXTS }),
   ]);
-  return { sourceGenerationIds: validSourceIds, referenceVideoGenerationIds: validVideoIds };
+  const projectNames = await referenceProjectNames(
+    input.ownerId,
+    [...source.refs, ...video.refs].map((r) => r.projectId),
+  );
+  const receipt = (ref: OwnedGenerationRef, kind: "image" | "video"): OttoMediaReference => ({
+    generationId: ref.id,
+    kind,
+    label: referenceLabel(ref.prompt, kind),
+    sourceProjectId: ref.projectId,
+    sourceProjectName: projectNames.get(ref.projectId) ?? UNTITLED_CANVAS_NAME,
+    sameCanvas: ref.projectId === input.projectId,
+    previewUrl: storageKeyToSrc(
+      storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext.toLowerCase()),
+    ),
+  });
+  return {
+    sourceGenerationIds: source.refs.map((r) => r.id),
+    referenceVideoGenerationIds: video.refs.map((r) => r.id),
+    mediaReferences: [
+      ...source.refs.map((r) => receipt(r, "image")),
+      ...video.refs.map((r) => receipt(r, "video")),
+    ],
+    unavailable: [...source.unavailable, ...video.unavailable],
+  };
+}
+
+/** 画布的名字,一次读齐。读不到就退回「Untitled canvas」—— 回执可以少一个好名字,不能少一行。 */
+async function referenceProjectNames(ownerId: string, projectIds: string[]): Promise<Map<string, string>> {
+  const ids = [...new Set(projectIds)];
+  if (ids.length === 0) return new Map();
+  try {
+    const rows = await prisma.project.findMany({
+      where: { id: { in: ids }, ownerId },
+      select: { id: true, name: true },
+    });
+    return new Map(rows.map((p) => [p.id, p.name?.trim() || UNTITLED_CANVAS_NAME]));
+  } catch {
+    return new Map();
+  }
+}
+
+const UNTITLED_CANVAS_NAME = "Untitled canvas";
+
+/** 商家读得懂的一行名字。素材当初的提示词太长就截断,空的就退回类型词。 */
+function referenceLabel(prompt: string, kind: "image" | "video"): string {
+  const trimmed = prompt.trim().replace(/\s+/g, " ");
+  if (!trimmed) return kind === "video" ? "Video" : "Image";
+  return trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed;
+}
+
+/**
+ * 商家读到的那一句 —— 只从 `@fikirtive/core` 的那一张表取(第二份映射就是第二种说法)。
+ * 一轮里有多件取不到时只说第一件:接下来那一件在他移掉第一件之后照样会被拦。
+ */
+export function unavailableReferenceMessage(unavailable: UnavailableTurnReference[]): string {
+  return referenceUnavailableMessage(unavailable[0]?.reason ?? "notFound");
 }
 
 /**
@@ -534,6 +635,7 @@ export async function buildOttoContext({
   sourceGenerationIds,
   referenceVideoGenerationId,
   referenceVideoGenerationIds,
+  mediaReferences,
   turnText,
   simpleMode,
   approvalConsent,
@@ -546,6 +648,9 @@ export async function buildOttoContext({
   sourceGenerationIds?: string[] | null;
   referenceVideoGenerationId?: string | null;
   referenceVideoGenerationIds?: string[] | null;
+  /** Codex QA-CRE-FE9-013:解析器一次产出的引用回执(名字 + 来源画布),原样进 ctx。
+   *  缺席 = 这条入口没有回执可交(例如 worker 侧的批准续跑),卡面照旧只列 @元素。 */
+  mediaReferences?: OttoMediaReference[];
   /** #775 判官 r3 P1-2:商家这一轮自己打的那句话,服务端原样带进 ctx。只用于铸视频卡前
    *  与模型自选的动作对一次表(见 OttoContext.turnText)。绝不来自模型入参。 */
   turnText?: string;
@@ -594,7 +699,9 @@ export async function buildOttoContext({
       orderBy: { createdAt: "desc" },
       select: { status: true, kind: true, error: true },
     }).catch(() => null),
-    gatherReferenceImages(ownerId, projectId, imageRefIds),
+    // Codex QA-CRE-FE9-013:视觉这一路也曾按 projectId 过滤 —— 那正是「Otto 说它没看到
+    // 杯子」的直接原因。判据现在与校验器同一份(owner 作用域),两处不可能再给出不同答案。
+    gatherReferenceImages(ownerId, imageRefIds),
   ]);
   const context: OttoContext & {
     segments: ReturnType<typeof makeOttoSegmentsPort>;
@@ -614,6 +721,8 @@ export async function buildOttoContext({
     sourceGenerationIds: imageRefIds,
     referenceVideoGenerationId: videoRefIds[0] ?? null,
     referenceVideoGenerationIds: videoRefIds,
+    // 引用回执 —— 铸卡时冻进卡里,商家在按下 `Generate · N credits` 之前逐项读得到。
+    ...(mediaReferences?.length ? { mediaReferences } : {}),
     // #775 判官 r3 P1-2:商家这一轮的原话。铸视频卡前拿它跟模型自选的动作对一次表 ——
     // 这是「模型选错档」唯一可能被逮住的时刻,而且那一刻还没花一分钱。
     ...(turnText ? { turnText } : {}),
@@ -1592,6 +1701,12 @@ export async function ottoTurn(raw: unknown): Promise<
         referenceVideoGenerationId,
         referenceVideoGenerationIds,
       });
+      // Codex QA-CRE-FE9-013 —— **静默丢弃到此为止**。商家挂上来的引用只要有一件取不到,
+      // 这一轮就整轮不发:不建对话、不落 USER 消息、不进 Otto、不铸卡、不预扣。他读到的是
+      // 一句人话(措辞的单一权威在 `gen-failure.ts`),草稿留在输入框里,移掉那一件再试。
+      // 上一版在这里把它滤成空数组继续跑,于是 Otto 按「没有产品参考」的前提铸卡、商家批准
+      // 并为一张不含他指定产品的素材付了钱。
+      if (refs.unavailable.length > 0) return { error: unavailableReferenceMessage(refs.unavailable) };
 
       // Resolve thread: new vs existing-owned-and-in-project
       const isNew = !parsed.data.threadId;
@@ -1658,6 +1773,7 @@ export async function ottoTurn(raw: unknown): Promise<
         threadId,
         sourceGenerationIds: refs.sourceGenerationIds,
         referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
+        mediaReferences: refs.mediaReferences,
         turnText: text,
         simpleMode: parsed.data.simple,
       });
