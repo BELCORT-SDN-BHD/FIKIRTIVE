@@ -181,10 +181,13 @@ export function ReferencePickerMenu({
             {references.map(({ row, index }) => {
               const Icon = row.type ? TYPE_ICONS[row.type] : null;
               return (
-                <button
+                <Button
                   key={row.key}
                   id={`${listId}-option-${index}`}
                   type="button"
+                  variant="ghost"
+                  size="sm"
+                  motion="instant"
                   role="option"
                   aria-selected={index === highlightedIndex}
                   data-highlighted={index === highlightedIndex ? "" : undefined}
@@ -195,7 +198,7 @@ export function ReferencePickerMenu({
                     onSelect(index);
                   }}
                   className={cn(
-                    "flex w-full items-center gap-3 rounded-[var(--radius)] px-2.5 py-2 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                    "h-auto w-full justify-start gap-3 rounded-[var(--radius)] px-2.5 py-2 text-left font-normal [&_svg]:size-4",
                     index === highlightedIndex && "bg-accent text-accent-foreground",
                   )}
                 >
@@ -212,7 +215,7 @@ export function ReferencePickerMenu({
                     </span>
                   ) : null}
                   {Icon ? <Icon className="size-4 shrink-0 text-muted-foreground" /> : null}
-                </button>
+                </Button>
               );
             })}
           </div>
@@ -243,10 +246,13 @@ export function ReferencePickerMenu({
               {categories.map(({ row, index }) => {
                 const Icon = row.type ? TYPE_ICONS[row.type] : ImagesIcon;
                 return (
-                  <button
+                  <Button
                     key={row.key}
                     id={`${listId}-option-${index}`}
                     type="button"
+                    variant="ghost"
+                    size="sm"
+                    motion="instant"
                     role="option"
                     aria-selected={index === highlightedIndex}
                     onPointerMove={() => onHighlightChange(index)}
@@ -255,14 +261,14 @@ export function ReferencePickerMenu({
                       onSelect(index);
                     }}
                     className={cn(
-                      "flex items-center gap-2 rounded-[var(--radius)] px-2.5 py-2 text-left text-xs font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                      "w-full justify-start gap-2 rounded-[var(--radius)] px-2.5 py-2 text-left text-xs font-medium",
                       index === highlightedIndex && "bg-accent text-accent-foreground",
                     )}
                   >
                     <Icon className="size-4 text-muted-foreground" />
                     <span className="truncate">{row.name}</span>
                     <ChevronRightIcon className="ml-auto size-3.5 text-muted-foreground" />
-                  </button>
+                  </Button>
                 );
               })}
             </div>
