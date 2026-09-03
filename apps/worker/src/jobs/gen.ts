@@ -35,6 +35,7 @@ import {
   displayCredits,
   genJobEndedWithoutDelivering,
   merchantGenFailureMessage,
+  REFERENCE_ASSET_UNREACHABLE,
   routeReasonFor,
   genImageModel,
   // Codex QA-CRE-FE9-013 —— 「这一件素材能不能当参考」只有一份判据(同一 owner、活着、
@@ -1136,7 +1137,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       }
       const isMock = provider.name === "mock";
       if (!isMock && cappedRefs.length > 0 && inputImageUrls.length < cappedRefs.length) {
-        throw new Error(`conditioning refs unreachable (${inputImageUrls.length}/${cappedRefs.length}) — refusing to spend`);
+        // Codex QA-CRE-007 — the merchant sentence (REFERENCE_ASSET_UNREACHABLE) is what gets
+        // PERSISTED (GenJob.error → Library card, cast library problem line); the diagnostic
+        // counts stay in the worker log only, for support.
+        console.error(`[gen] ${job.id}: conditioning refs unreachable (${inputImageUrls.length}/${cappedRefs.length}) — refusing to spend`);
+        throw new Error(REFERENCE_ASSET_UNREACHABLE);
       }
 
       // frozen provenance snapshot (same shape as uploadCandidates)
@@ -1203,7 +1208,12 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         }
         if (sourceAsset) {
           imageUrl = (await storage.presignedGet(storageKey(sourceAsset.ownerId, sourceAsset.contentHash, sourceAsset.ext), 3600)) ?? "";
-          if (provider.name !== "mock" && !imageUrl) throw new Error("source image unreachable — refusing to spend on i2v");
+          if (provider.name !== "mock" && !imageUrl) {
+            // Codex QA-CRE-007 — see the conditioning-refs throw above for why the persisted
+            // message is the merchant sentence and the diagnostic stays in this log line.
+            console.error(`[gen] ${job.id}: source image unreachable — refusing to spend on i2v`);
+            throw new Error(REFERENCE_ASSET_UNREACHABLE);
+          }
         }
         // #646: an end frame with NO start frame used to fall through the `&& sourceAsset`
         // guard below — the tail silently vanished and the merchant was charged for an
@@ -1227,7 +1237,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             return;
           }
           tailImageUrl = (await storage.presignedGet(storageKey(tail.asset.ownerId, tail.asset.contentHash, tail.asset.ext), 3600)) ?? "";
-          if (provider.name !== "mock" && !tailImageUrl) throw new Error("last-frame image unreachable — refusing to spend on i2v");
+          if (provider.name !== "mock" && !tailImageUrl) {
+            console.error(`[gen] ${job.id}: last-frame image unreachable — refusing to spend on i2v`);
+            throw new Error(REFERENCE_ASSET_UNREACHABLE);
+          }
         }
         // Whole-clip reference video (整段视频参考). Resolved server-side from an owned,
         // in-project, video-ext Generation; fail-closed if set-but-missing (never spend).
@@ -1251,7 +1264,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             return;
           }
           refVideoUrl = (await storage.presignedGet(storageKey(rv.asset.ownerId, rv.asset.contentHash, rv.asset.ext), 3600)) ?? "";
-          if (provider.name !== "mock" && !refVideoUrl) throw new Error("reference video unreachable — refusing to spend");
+          if (provider.name !== "mock" && !refVideoUrl) {
+            console.error(`[gen] ${job.id}: reference video unreachable — refusing to spend`);
+            throw new Error(REFERENCE_ASSET_UNREACHABLE);
+          }
         }
         // per-model controls chosen in the composer (resolved + stored at enqueue);
         // fall back to the legacy fixed duration if an older job has none.
@@ -1295,7 +1311,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           });
           if (!src) { await failClosedWithRefund(job, "edit source image not found (or not an image) for this account"); return; }
           const srcUrl = (await storage.presignedGet(storageKey(src.asset.ownerId, src.asset.contentHash, src.asset.ext), 3600)) ?? "";
-          if (provider.name !== "mock" && !srcUrl) throw new Error("edit source image unreachable — refusing to spend");
+          if (provider.name !== "mock" && !srcUrl) {
+            console.error(`[gen] ${job.id}: edit source image unreachable — refusing to spend`);
+            throw new Error(REFERENCE_ASSET_UNREACHABLE);
+          }
           if (srcUrl) {
             inputImageUrls.unshift(srcUrl);
             refSlots.unshift({ kind: "baseImage" }); // 底图坐第 0 位 → 它就是 <Image_1>
