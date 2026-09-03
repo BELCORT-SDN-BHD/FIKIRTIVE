@@ -1,7 +1,8 @@
 /**
- * 2026-09-03 staging 走查 S4(Founder 裁「现在就修」)—— 真库集成测试,不 mock Prisma、不 mock
- * storage:mock 只能证明代码「摆对了形状」,证明不了字节真的从磁盘上消失。这份测试跑的是
- * 真实 Postgres + 真实 LocalDiskStorage(STORAGE_DRIVER 未设 → local,见 apps/web/.env.local)。
+ * 2026-09-03 staging 走查 S4(Founder 裁「现在就修」;登记 creation-engine.md §5 2026-09-03,
+ * 非新验收编号)—— 真库集成测试,不 mock Prisma、不 mock storage:mock 只能证明代码「摆对了
+ * 形状」,证明不了字节真的从磁盘上消失。这份测试跑的是真实 Postgres + 真实 LocalDiskStorage
+ * (STORAGE_DRIVER 未设 → local,见 apps/web/.env.local)。
  *
  * 覆盖 asset-purge.ts 的判据(独占才真删,共享只解引用),分别验:
  *   · 删演员 ⇒ 该演员独占的参考照 Asset.deletedAt 被标记、存储对象物理消失;
@@ -9,8 +10,10 @@
  *     引用者也被删掉;
  *   · 同一张照片被一个 Generation 引用过(哪怕那个 Generation 后来被软删)⇒ 永不真删——
  *     Generation 历史「不可变，永不物理删」的合同压在 Asset 这个墓碑上,不容打破;
- *   · 双租户:B 不能删 A 的演员,A 的 Entity/ReferenceImage/Asset/存储对象原样不动;
- *   · softDeleteReferenceImage(单张参考图删除,Otto 用的就是这一个)同样真删独占资产。
+ *   · 双租户(P2-3:判官第一轮复审——两个方向都验,原稿只验了一个方向):B 不能删 A 的演员,
+ *     A 不能删 B 的演员,softDeleteReferenceImage 跨租户同样被挡;
+ *   · softDeleteReferenceImage(单张参考图删除,Otto 用的就是这一个)同样真删独占资产;
+ *   · P1-1/P1-2(判官第一轮复审):锁 + 真删前二次核验的变异测试——用「复活场景」证明,见文末。
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -27,6 +30,7 @@ const { prisma } = await import("@fikirtive/db");
 const { storage } = await import("../storage");
 const { storageKey } = await import("@fikirtive/core");
 const { softDeleteEntity, softDeleteReferenceImage } = await import("../actions");
+const { purgeOrphanedReferenceAssets, purgeAssetStorage } = await import("../asset-purge");
 
 const OWNER_A = `org-castpurge-a-${randomUUID().slice(0, 8)}`;
 const OWNER_B = `org-castpurge-b-${randomUUID().slice(0, 8)}`;
@@ -84,7 +88,7 @@ afterAll(async () => {
   }
 });
 
-describe("softDeleteEntity purges the storage bytes of assets it made orphan", () => {
+describe("softDeleteEntity purges the storage bytes of assets it made orphan (2026-09-03 S4 变更登记, creation-engine.md §5 — 非新验收编号)", () => {
   it("an entity's EXCLUSIVE reference photo: Asset.deletedAt set AND the object is physically gone", async () => {
     mockOwner.mockResolvedValue({ ownerId: OWNER_A, email: "a@castpurge.test" });
     const entityId = await createEntityRow(OWNER_A, "Solo Cast");
@@ -174,6 +178,29 @@ describe("softDeleteEntity purges the storage bytes of assets it made orphan", (
     mockOwner.mockResolvedValue({ ownerId: OWNER_A, email: "a@castpurge.test" });
     await softDeleteEntity(entityId);
   });
+
+  it("P2-3(判官第一轮复审,补另一个方向): org A cannot delete org B's entity, and B's data (row + asset + storage) is untouched", async () => {
+    mockOwner.mockResolvedValue({ ownerId: OWNER_B, email: "b@castpurge.test" });
+    const entityId = await createEntityRow(OWNER_B, "B's Cast");
+    const { assetId, key } = await putAsset(OWNER_B, "tenant-b-only");
+    await attachRef(OWNER_B, entityId, assetId);
+
+    mockOwner.mockResolvedValue({ ownerId: OWNER_A, email: "a@castpurge.test" });
+    const res = await softDeleteEntity(entityId);
+    expect(res).toEqual({ error: "Entity not found." });
+
+    const [entity, asset] = await Promise.all([
+      prisma.entity.findFirst({ where: { id: entityId, ownerId: OWNER_B } }),
+      prisma.asset.findFirst({ where: { id: assetId, ownerId: OWNER_B } }),
+    ]);
+    expect(entity?.deletedAt).toBeNull();
+    expect(asset?.deletedAt).toBeNull();
+    expect(await storage.exists(key)).toBe(true);
+
+    // cleanup as B, since A's attempt correctly did nothing
+    mockOwner.mockResolvedValue({ ownerId: OWNER_B, email: "b@castpurge.test" });
+    await softDeleteEntity(entityId);
+  });
 });
 
 describe("softDeleteReferenceImage (the single-photo removal Otto's port calls) purges the same way", () => {
@@ -210,5 +237,70 @@ describe("softDeleteReferenceImage (the single-photo removal Otto's port calls) 
     expect(await storage.exists(first.key)).toBe(false);
     expect(assetSecond?.deletedAt).toBeNull(); // the entity is still live and still shows this photo
     expect(await storage.exists(second.key)).toBe(true);
+  });
+
+  it("P2-3(判官第一轮复审): softDeleteReferenceImage is tenant-scoped too — org B cannot remove org A's reference image", async () => {
+    mockOwner.mockResolvedValue({ ownerId: OWNER_A, email: "a@castpurge.test" });
+    const entityId = await createEntityRow(OWNER_A, "Cross-tenant ref-delete Cast");
+    const { assetId, key } = await putAsset(OWNER_A, "cross-tenant-ref");
+    const refId = await attachRef(OWNER_A, entityId, assetId);
+
+    mockOwner.mockResolvedValue({ ownerId: OWNER_B, email: "b@castpurge.test" });
+    const res = await softDeleteReferenceImage(refId);
+    expect(res).toEqual({ error: "Reference image not found." });
+
+    const [ref, asset] = await Promise.all([
+      prisma.referenceImage.findFirst({ where: { id: refId, ownerId: OWNER_A } }),
+      prisma.asset.findFirst({ where: { id: assetId, ownerId: OWNER_A } }),
+    ]);
+    expect(ref?.deletedAt).toBeNull();
+    expect(asset?.deletedAt).toBeNull();
+    expect(await storage.exists(key)).toBe(true);
+
+    // cleanup as A
+    mockOwner.mockResolvedValue({ ownerId: OWNER_A, email: "a@castpurge.test" });
+    await softDeleteReferenceImage(refId);
+  });
+});
+
+describe("P1-2(判官第一轮复审)变异测试 —— 真删存储对象前的二次核验", () => {
+  /**
+   * 「复活场景」:模拟并发窗口里真实会发生的事——purgeOrphanedReferenceAssets 判定独占、
+   * 打了墓碑之后,提交与真删存储对象之间,同一 owner/内容哈希的一次重新上传通过
+   * assetUpsert(actions.ts)把这一行的 deletedAt 改回 null(唯一能这么做的路径)。这里直接
+   * 手工把 deletedAt 拨回 null 来复现那个时间点——不需要真的起两个并发事务,结果完全等价:
+   * purgeAssetStorage 拿到的 `purged` 数组和事务提交时判定的一样(合法,那一刻确实独占),
+   * 但真删前重读一次这一行,应发现它已经被复活,从而跳过。
+   *
+   * 变异证据:把 asset-purge.ts 的 purgeAssetStorage 改回旧版(不重读 deletedAt,拿到 purged
+   * 数组就直接删)会让下面「字节仍在」的断言从 true 变成 false,直接转红。
+   */
+  it("an asset resurrected between commit and physical delete keeps its bytes — the re-check catches it", async () => {
+    mockOwner.mockResolvedValue({ ownerId: OWNER_A, email: "a@castpurge.test" });
+    const entityId = await createEntityRow(OWNER_A, "Resurrection Cast");
+    const { assetId, key } = await putAsset(OWNER_A, "resurrection");
+    await attachRef(OWNER_A, entityId, assetId);
+
+    const purged = await prisma.$transaction(async (tx) => {
+      await tx.referenceImage.updateMany({ where: { entityId, ownerId: OWNER_A, deletedAt: null }, data: { deletedAt: new Date() } });
+      return purgeOrphanedReferenceAssets(tx, OWNER_A, [assetId]);
+    });
+    expect(purged).toHaveLength(1); // legitimately exclusive at commit time — matches production
+
+    const tombstoned = await prisma.asset.findFirst({ where: { id: assetId, ownerId: OWNER_A } });
+    expect(tombstoned?.deletedAt).not.toBeNull();
+
+    // the race: a same-content re-upload's assetUpsert() resurrects the row before the
+    // storage delete runs — the ONLY path that can flip deletedAt back to null.
+    await prisma.asset.update({ where: { id_ownerId: { id: assetId, ownerId: OWNER_A } }, data: { deletedAt: null } });
+
+    await purgeAssetStorage(purged);
+
+    expect(await storage.exists(key)).toBe(true); // resurrected — the bytes must survive
+    const finalAsset = await prisma.asset.findFirst({ where: { id: assetId, ownerId: OWNER_A } });
+    expect(finalAsset?.deletedAt).toBeNull(); // still revived, untouched by the purge attempt
+
+    // cleanup
+    await softDeleteEntity(entityId).catch(() => {});
   });
 });

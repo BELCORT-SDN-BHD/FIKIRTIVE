@@ -39,6 +39,19 @@
  *     scripts/tools/purge-deleted-entity-assets.ts                 # dry run(默认)
  *   … 同上 … scripts/tools/purge-deleted-entity-assets.ts --apply   # 真删
  *   … 加 --owner <ownerId> 把范围收窄到一个租户(调试/staging 定点清理用)
+ *
+ * 2026-09-03 判官第一轮复审 P1-7 —— 不带 `--owner` 的默认模式(平台全量扫)之前会被
+ * `packages/db/src/tenant-guard.ts` 拒绝:列出「哪些已软删实体还漏着活参考照」这条查询没有
+ * 单一租户,租户闸看不到任何 ownerId 就 fail closed。修法:这一条跨租户列表读现在包在
+ * `runAsSystem("entity-asset-purge-sweep", …)` 里(见 `packages/db/src/principal.ts`)——
+ * 仅此一条读是系统帧,下游每一条按实体/资产处理的查询本来就自带显式 `ownerId` 过滤,不需要
+ * 也没有再套租户帧。
+ *
+ * 2026-09-03 判官第一轮复审 P1-3 / P1-5 —— 第二阶段「遗留字节重扫」:凡是 `Asset.deletedAt`
+ * 已经非空、但存储对象仍然在(不管这一行是这个脚本上一趟自己删失败留下的,还是
+ * `apps/web/lib/asset-purge.ts` 的 `softDeleteEntity`/`softDeleteReferenceImage` 那条动作
+ * 路径删失败留下的——两条路径的失败留痕判据完全一样,都是「deletedAt 非空 + 对象仍在」),
+ * 这里都会重新尝试删一次,幂等,可无限重跑。
  */
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -46,6 +59,7 @@ import { purgeOrphanedReferenceAssets } from "../../apps/web/lib/asset-purge";
 
 type PrismaClient = import("@prisma/client").PrismaClient;
 type Storage = import("@fikirtive/storage").Storage;
+type RunAsSystem = <T>(reason: "entity-asset-purge-sweep", fn: () => T) => T;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const distImport = (rel: string) => import(pathToFileURL(path.join(ROOT, rel)).href);
@@ -106,12 +120,15 @@ async function main(): Promise<void> {
   const { createStorage } = (await distImport("packages/storage/dist/index.js")) as {
     createStorage: (localRoot: string) => Storage;
   };
+  const { runAsSystem } = (await distImport("packages/db/dist/src/principal.js")) as {
+    runAsSystem: RunAsSystem;
+  };
   // Anchored to the repo root (not process.cwd()) so local-disk mode resolves correctly no
   // matter where this script is invoked from — STORAGE_DRIVER still picks r2 vs local disk.
   const storage = createStorage(path.join(ROOT, ".data", "storage"));
 
   try {
-    await run(prisma, storage, storageKey);
+    await run(prisma, storage, storageKey, runAsSystem);
   } finally {
     await prisma.$disconnect();
   }
@@ -121,16 +138,22 @@ async function run(
   prisma: PrismaClient,
   storage: Storage,
   storageKey: (ownerId: string, contentHash: string, ext: string) => string,
+  runAsSystem: RunAsSystem,
 ): Promise<void> {
-  const entities = await prisma.entity.findMany({
-    where: {
-      deletedAt: { not: null },
-      ...(ownerFilter ? { ownerId: ownerFilter } : {}),
-      referenceImages: { some: { deletedAt: null } },
-    },
-    select: { id: true, ownerId: true },
-    orderBy: { id: "asc" },
-  });
+  // P1-7: the ONLY cross-tenant query in this script (no ownerId filter when --owner is
+  // omitted) — wrapped in the read-only system frame; everything downstream already carries
+  // an explicit ownerId and needs no frame of its own.
+  const entities = await runAsSystem("entity-asset-purge-sweep", () =>
+    prisma.entity.findMany({
+      where: {
+        deletedAt: { not: null },
+        ...(ownerFilter ? { ownerId: ownerFilter } : {}),
+        referenceImages: { some: { deletedAt: null } },
+      },
+      select: { id: true, ownerId: true },
+      orderBy: { id: "asc" },
+    }),
+  );
 
   let entitiesWithLeftovers = 0;
   let refImagesTotal = 0;
@@ -147,7 +170,36 @@ async function run(
   console.log(`  soft-deleted entities scanned      : ${entities.length}`);
   console.log(`  entities with leftover live refs   : ${entitiesWithLeftovers}`);
   console.log(`  reference images ${apply ? "soft-deleted" : "that would be soft-deleted"}   : ${refImagesTotal}`);
-  console.log(`  assets ${apply ? "purged (deletedAt set + object removed)" : "that would be purged (exclusive — no other live reference, never used by a Generation)"} : ${exclusiveAssets.length}`);
+  // P2-1: this line only ever reports how many assets became exclusive (deletedAt set) — it
+  // must NOT claim the object is gone too; the real, post-deletion object count is its own
+  // line below ("storage objects deleted"), computed only after the delete loop runs.
+  console.log(`  assets ${apply ? "marked deletedAt (exclusive)" : "that would be purged (exclusive — no other live reference, never used by a Generation)"} : ${exclusiveAssets.length}`);
+
+  let objectFailuresThisRun = 0;
+  if (apply) {
+    let objectsDeleted = 0;
+    for (const asset of exclusiveAssets) {
+      try {
+        await storage.deleteObject(storageKey(asset.ownerId, asset.contentHash, asset.ext));
+        objectsDeleted += 1;
+      } catch (e) {
+        objectFailuresThisRun += 1;
+        console.error("  storage delete failed for one asset:", e instanceof Error ? e.message : e);
+      }
+    }
+    console.log(`  storage objects deleted            : ${objectsDeleted}${objectFailuresThisRun > 0 ? ` (${objectFailuresThisRun} failed — the leftover sweep below retries them; re-run --apply to retry sooner)` : ""}`);
+  }
+
+  // P1-3 / P1-5: retry pass for ANY Asset already tombstoned (deletedAt set) whose object is
+  // still physically present — whether that's this script's own earlier --apply failure, or
+  // apps/web/lib/asset-purge.ts's live softDeleteEntity/softDeleteReferenceImage action path
+  // swallowing a storage.deleteObject failure. Same predicate either way, so one sweep covers
+  // both. Runs every invocation (dry run only counts; --apply also deletes).
+  const leftover = await sweepLeftoverTombstonedAssets(prisma, storage, storageKey, runAsSystem);
+  console.log(`  tombstoned assets with bytes still present : ${leftover.checked}`);
+  if (apply) {
+    console.log(`  leftover objects purged this run           : ${leftover.purged}${leftover.failed > 0 ? ` (${leftover.failed} still failing — re-run to retry)` : ""}`);
+  }
 
   if (!apply) {
     console.log(`\nDRY RUN — nothing changed. Re-run with --apply to soft-delete those reference images,`);
@@ -155,19 +207,57 @@ async function run(
     return;
   }
 
-  let objectsDeleted = 0;
-  let objectFailures = 0;
-  for (const asset of exclusiveAssets) {
+  if (objectFailuresThisRun > 0 || leftover.failed > 0) process.exitCode = 1;
+}
+
+/**
+ * P1-3 / P1-5 —— second-phase retry. Lists every Asset row this owner scope has already
+ * tombstoned, and for any whose object is STILL on disk/R2, retries the delete (after a
+ * per-row re-check, same shape as asset-purge.ts's P1-2 fix, in case a re-upload resurrected
+ * it between the listing and now). Idempotent: an already-deleted object's `storage.exists`
+ * check alone excludes it, no delete attempt at all.
+ */
+async function sweepLeftoverTombstonedAssets(
+  prisma: PrismaClient,
+  storage: Storage,
+  storageKey: (ownerId: string, contentHash: string, ext: string) => string,
+  runAsSystem: RunAsSystem,
+): Promise<{ checked: number; purged: number; failed: number }> {
+  const tombstoned = await runAsSystem("entity-asset-purge-sweep", () =>
+    prisma.asset.findMany({
+      where: { deletedAt: { not: null }, ...(ownerFilter ? { ownerId: ownerFilter } : {}) },
+      select: { id: true, ownerId: true, contentHash: true, ext: true },
+      orderBy: { id: "asc" },
+    }),
+  );
+
+  let checked = 0;
+  let purged = 0;
+  let failed = 0;
+  for (const asset of tombstoned) {
+    const key = storageKey(asset.ownerId, asset.contentHash, asset.ext);
+    if (!(await storage.exists(key))) continue; // already gone — nothing to retry
+    checked += 1;
+    if (!apply) continue; // dry run: count only, touch nothing
+
+    // re-check right before deleting: a re-upload (assetUpsert) may have resurrected this row
+    // between the listing above and now — explicit ownerId in the where, so no principal
+    // frame is needed for this read (mirrors every other query in this script).
+    const fresh = await prisma.asset.findFirst({
+      where: { id: asset.id, ownerId: asset.ownerId },
+      select: { deletedAt: true },
+    });
+    if (!fresh || fresh.deletedAt === null) continue; // resurrected — do not touch the bytes
+
     try {
-      await storage.deleteObject(storageKey(asset.ownerId, asset.contentHash, asset.ext));
-      objectsDeleted += 1;
+      await storage.deleteObject(key);
+      purged += 1;
     } catch (e) {
-      objectFailures += 1;
-      console.error("  storage delete failed for one asset:", e instanceof Error ? e.message : e);
+      failed += 1;
+      console.error("  leftover-sweep storage delete failed for one asset:", e instanceof Error ? e.message : e);
     }
   }
-  console.log(`  storage objects deleted            : ${objectsDeleted}${objectFailures > 0 ? ` (${objectFailures} failed — re-run this script to retry; deleteObject is a no-op on an already-missing object)` : ""}`);
-  if (objectFailures > 0) process.exitCode = 1;
+  return { checked, purged, failed };
 }
 
 main().catch((e) => {
