@@ -15,6 +15,7 @@ import {
   isModelDisabled,
   displayCredits,
   pricedRefgenCredits,
+  merchantGenFailureCopy,
   type RefGenJobData,
 } from "@fikirtive/core";
 import { entityCapabilities, OFFICIAL_CATALOG_REFUSAL } from "@fikirtive/core/entity-policy";
@@ -23,7 +24,6 @@ import { getBoss } from "./queue";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
-import { sanitizeUserError } from "./provider-secrecy";
 import { outOfCreditsMessage, spendCapBlockedMessage } from "./credit-format";
 
 // a job stuck QUEUED/GENERATING past the queue's expiry is treated as abandoned
@@ -624,7 +624,12 @@ export async function getRefGenJobs(entityId: string, variantId?: string | null)
       // ids against the images already on screen answers it exactly (see lib/variant-progress).
       // Owner-scoped read, and the same ids the element's own reference images already carry.
       outputAssetIds: j.outputAssetIds,
-      error: sanitizeUserError(j.error),
+      // Codex QA-CRE-007 — same rule as apps/web/lib/data.ts's AdJobItem: never the raw
+      // RefGenJob.error ops string (it used to reach ElementVariantsDialog's "problem" line
+      // verbatim, e.g. "conditioning refs unreachable (0/2 signable) — refusing to spend on a
+      // degraded generation"). Honest mapped copy when the failure is one of ours, "" otherwise
+      // — the dialog's own fallback sentence covers the unmapped/not-failed case.
+      error: j.status === "FAILED" ? merchantGenFailureCopy(j.error) : "",
       createdAt: j.createdAt.toISOString(),
     }));
   });

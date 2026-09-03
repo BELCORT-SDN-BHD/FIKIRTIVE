@@ -10,8 +10,11 @@
 import { describe, it, expect } from "vitest";
 import {
   GEN_FAILURE_REASONS,
+  GENERATION_DID_NOT_GO_THROUGH,
+  REFERENCE_ASSET_UNREACHABLE,
   REFERENCE_IMAGE_PERSON_REJECTED,
   isGenFailureReason,
+  merchantGenFailureCopy,
   merchantGenFailureExplanation,
   merchantGenFailureMessage,
   merchantGenFailureReason,
@@ -248,5 +251,115 @@ describe("merchantGenFailureExplanation — ONE table, so two surfaces cannot dr
       // so a scrub would silently turn the merchant's own advice back into the generic apology.
       expect(redactProviderNames(String(sentence))).toBe(sentence);
     }
+  });
+});
+
+/**
+ * Codex QA-CRE-007 — the QA report's own finding: Library "Needs attention" and the cast
+ * library's variant problem line showed backend/provider sentences verbatim ("reference video
+ * unreachable — refusing to spend", "conditioning refs unreachable (0/2)" and siblings). This
+ * reason maps every one of those throw sites (apps/worker/src/jobs/gen.ts,
+ * apps/worker/src/jobs/refgen.ts) to ONE honest sentence, under the docs/specs/creation-engine.md
+ * CREATE-A2 principle — refuse before spend, tell the merchant why, in words they can act on.
+ */
+describe("REFERENCE_ASSET_UNREACHABLE — CREATE-A2: honest refusal before spend, Codex QA-CRE-007", () => {
+  it("names no engine, model or vendor", () => {
+    for (const secret of ["seedance", "seedream", "byteplus", "bytedance", "dreamina", "ark", "jimeng"]) {
+      expect(REFERENCE_ASSET_UNREACHABLE.toLowerCase()).not.toContain(secret);
+    }
+  });
+
+  it("survives the provider-name redactor byte for byte", () => {
+    expect(redactProviderNames(REFERENCE_ASSET_UNREACHABLE)).toBe(REFERENCE_ASSET_UNREACHABLE);
+  });
+
+  it("fits inside the 300-character cap every persisted job error is truncated to", () => {
+    expect(REFERENCE_ASSET_UNREACHABLE.length).toBeLessThanOrEqual(300);
+  });
+
+  it("CREATE-A2: says nothing was charged, and gives a recovery hint", () => {
+    expect(REFERENCE_ASSET_UNREACHABLE).toContain("so nothing was charged");
+    expect(REFERENCE_ASSET_UNREACHABLE).toContain("Replace it and try again.");
+  });
+
+  it("is not an internal diagnostic — no 'refusing to spend', no 'unreachable ('", () => {
+    // The exact two substrings the QA report caught reaching the merchant. If a future edit to
+    // this sentence reintroduces either, this is the first thing that goes red.
+    expect(REFERENCE_ASSET_UNREACHABLE).not.toContain("refusing to spend");
+    expect(REFERENCE_ASSET_UNREACHABLE).not.toContain("unreachable (");
+  });
+
+  it("is recognised as the reason 'referenceAssetUnreachable'", () => {
+    expect(merchantGenFailureReason(REFERENCE_ASSET_UNREACHABLE)).toBe("referenceAssetUnreachable");
+    expect(merchantGenFailureExplanation("referenceAssetUnreachable")).toBe(REFERENCE_ASSET_UNREACHABLE);
+  });
+});
+
+describe("the ops strings this reason replaces never reach a merchant — Codex QA-CRE-007 grep-guard", () => {
+  // Copied verbatim from the throw sites that used to persist these (before this fix): five in
+  // apps/worker/src/jobs/gen.ts (conditioning refs, i2v source, last-frame, reference video, edit
+  // source) and three in apps/worker/src/jobs/refgen.ts (variant base missing/unreachable,
+  // refgen conditioning refs). A row persisted before this fix shipped still carries one of these
+  // — the whitelist must keep refusing them, not just refuse the new sentence's opposite.
+  const RAW_OPS_STRINGS = [
+    "conditioning refs unreachable (0/2) — refusing to spend",
+    "source image unreachable — refusing to spend on i2v",
+    "last-frame image unreachable — refusing to spend on i2v",
+    "reference video unreachable — refusing to spend",
+    "edit source image unreachable — refusing to spend",
+    "variant base asset is missing — refusing to spend",
+    "variant base unreachable — refusing to spend on a degraded generation",
+    "conditioning refs unreachable (0/2 signable) — refusing to spend on a degraded generation",
+  ];
+
+  it.each(RAW_OPS_STRINGS)("refuses to present %j as merchant advice", (raw) => {
+    expect(merchantGenFailureMessage(raw)).toBeNull();
+    expect(merchantGenFailureReason(raw)).toBe("unexplained");
+  });
+
+  it("no whitelisted sentence itself contains either raw marker — a structural guard against a future reason copying the ops string in", () => {
+    for (const reason of GEN_FAILURE_REASONS) {
+      if (reason === "unexplained") continue;
+      const sentence = String(merchantGenFailureExplanation(reason));
+      expect(sentence, `reason "${reason}" reads like an ops string, not merchant copy`).not.toContain("refusing to spend");
+      expect(sentence, `reason "${reason}" reads like an ops string, not merchant copy`).not.toContain("unreachable (");
+    }
+  });
+});
+
+/**
+ * `merchantGenFailureCopy` — the total function `apps/web/lib/data.ts` (getMyAdJobs) and
+ * `apps/web/lib/refgen-actions.ts` (getRefGenJobs) now call so the Library "Needs attention"
+ * card and the cast library's variant problem line NEVER render the raw persisted string:
+ * a mapped explanation when there is one, `GENERATION_DID_NOT_GO_THROUGH` otherwise.
+ */
+describe("merchantGenFailureCopy — always a sentence, never the raw string (Codex QA-CRE-007)", () => {
+  it("gives the specific explanation for a known reason", () => {
+    expect(merchantGenFailureCopy(REFERENCE_ASSET_UNREACHABLE)).toBe(REFERENCE_ASSET_UNREACHABLE);
+    expect(merchantGenFailureCopy(REFERENCE_IMAGE_PERSON_REJECTED)).toBe(REFERENCE_IMAGE_PERSON_REJECTED);
+  });
+
+  it.each([
+    "conditioning refs unreachable (0/2) — refusing to spend",
+    "stale GENERATING reaped — worker hung or crashed; refunded",
+    "generation provider video submit failed (400)",
+    "",
+    "   ",
+  ])("falls back to the honest generic line for %j, never the raw string", (persisted) => {
+    const copy = merchantGenFailureCopy(persisted);
+    expect(copy).toBe(GENERATION_DID_NOT_GO_THROUGH);
+    if (persisted.trim()) expect(copy).not.toBe(persisted);
+  });
+
+  it("falls back to the honest generic line for an absent error", () => {
+    expect(merchantGenFailureCopy(null)).toBe(GENERATION_DID_NOT_GO_THROUGH);
+    expect(merchantGenFailureCopy(undefined)).toBe(GENERATION_DID_NOT_GO_THROUGH);
+  });
+
+  it("the fallback itself names no engine/model/vendor and promises no unproven charge claim", () => {
+    for (const secret of ["seedance", "seedream", "byteplus", "bytedance", "dreamina", "ark", "jimeng"]) {
+      expect(GENERATION_DID_NOT_GO_THROUGH.toLowerCase()).not.toContain(secret);
+    }
+    expect(redactProviderNames(GENERATION_DID_NOT_GO_THROUGH)).toBe(GENERATION_DID_NOT_GO_THROUGH);
   });
 });
