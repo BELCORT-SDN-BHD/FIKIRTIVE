@@ -266,6 +266,34 @@ describe("CREATE-A1 · 卡上的正文是人话（走查 P1-1）", () => {
   });
 });
 
+describe("CREATE-A1 · 一页只有一个 Otto 入口，素材库筛选行够得到（走查 P1-8）", () => {
+  it("CREATE-A1 · 创作前厅与画布都不再挂第二个 Otto 面板", async () => {
+    const { ottoPanelMountsOn } = await import("@/components/otto/panel/panel-surface");
+    const { CREATE_NAV_HREF, CANVAS_HREF } = await import("@fikirtive/core/navigation");
+    // 这两面自己都带着一只 Otto 输入框。别的商家面一个都没动（面板默认开合＝Founder
+    // 2026-08-18 Q3-A，本票没碰）。
+    expect(ottoPanelMountsOn(CREATE_NAV_HREF)).toBe(false);
+    expect(ottoPanelMountsOn(CANVAS_HREF)).toBe(false);
+    expect(ottoPanelMountsOn("/library")).toBe(true);
+    expect(ottoPanelMountsOn("/brand")).toBe(true);
+  });
+
+  it("CREATE-A1 · 素材库筛选行允许收缩，滚动条才接得上手", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../../components/otto/stuff/StuffLibrary.tsx"),
+      "utf8",
+    );
+    // `overflow-x-auto` 单独存在是没用的：flex 子项默认 `min-width: auto`，不许它缩到内容
+    // 以下，于是右边被压掉、滚动永远不触发，最后一颗筛选片被裁掉半个词（Otto 面板停靠时
+    // 少掉的正是那点宽度）。两个类必须在**同一只盒子**上。
+    const row = src.match(/className="[^"]*overflow-x-auto[^"]*"/)?.[0] ?? "";
+    expect(row, "the filter row must keep its overflow-x-auto").not.toBe("");
+    expect(row, "the filter row must also carry min-w-0, or overflow-x-auto never engages").toContain("min-w-0");
+  });
+});
+
 describe("CREATE-A1 · 新做好的视频显示首帧而不是黑砖（走查 P1-7）", () => {
   it("CREATE-A1 · 媒体地址带上首帧片段，且不碰服务器收得到的那一半", () => {
     expect(videoFirstFrameSrc("https://cdn.example/clip.mp4?sig=abc")).toBe(
