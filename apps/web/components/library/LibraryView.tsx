@@ -882,8 +882,12 @@ export function LibraryView({
           projectId={detail.projectId}
           onClose={() => {
             closeDetail();
-            // 详情面里的收藏/裁剪/重做都写库 —— 关闭时重取,列表不落后于权威。
+            // 详情面里的删除、收藏、裁剪、重做、动画都写库。关掉它之后网格必须重新问一次
+            // 服务器 —— 否则商家刚删掉的那张还留在格子里,点进去才发现没了(一次看得见的
+            // 假状态)。`router.refresh()` 只会刷新服务端那一份首屏 props,它管不到这个
+            // 客户端列表,所以两件都做:壳(余额等)走 refresh,列表走同一组条件的重取。
             router.refresh();
+            void reload(view, filters);
           }}
         />
       ) : null}
