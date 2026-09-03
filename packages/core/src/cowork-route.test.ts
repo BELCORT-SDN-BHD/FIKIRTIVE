@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { suggestModel as suggestModelRaw, type SuggestModelInput, type SuggestModelResult } from "./cowork-route.js";
 import {
   GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS, GEN_VIDEO_MODEL_INFO,
-  GEN_IMAGE_MODEL_OPTIONS, imageDefaults, type GenVideoModel,
+  GEN_IMAGE_MODEL_OPTIONS, HD_VIDEO_RESOLUTION, imageDefaults, routeVideoModel, videoDefaults,
+  type GenVideoModel,
 } from "./gen.js";
+import { SELLABLE_VIDEO_RESOLUTIONS } from "./spend.js";
 import { activeVideoModel } from "./model-config.js";
 
 /** #647 T6:`suggestModel` 现在会返回 null(唯一引擎被后台关掉)。下面这一大段测的都是
@@ -178,5 +180,52 @@ describe("#647 T6 suggestModel 尊重 disabled(关掉唯一引擎 ⇒ 铸不出�
   it("没传 disabled ⇒ 一切照旧(参数是可选的,缺省不等于全关)", () => {
     expect(suggestModelRaw({ kind: "video" })).not.toBeNull();
     expect(suggestModelRaw({ kind: "image" })).not.toBeNull();
+  });
+});
+
+// ── Creation §5 2026-09-04(CREATE-A4)—— 商家点名的画质档 ─────────────────────
+//
+// 走查 P1-2 的病根:`suggestModel` 把分辨率写死成默认槽位的默认档,商家说什么都改不了它。
+// 现在档位是**入参**,而且它挑槽位 —— 判据与人工路同一个 `routeVideoModel`,所以同一句
+// 「我要 1080p」在对话路与人工路上落到的是同一台引擎、同一个价。
+describe("CREATE-A4 suggestModel:商家点名的画质档挑槽位、原样落卡", () => {
+  it("CREATE-A4 没点名 ⇒ 一格不动:槽位与档位仍是默认那一份(旧行为逐字保留)", () => {
+    const r = suggestModel({ kind: "video" });
+    expect(r.model).toBe(activeVideoModel());
+    expect(r.params.resolution).toBe(videoDefaults(activeVideoModel() as GenVideoModel).resolution);
+    expect(r.downgraded).toBe(false);
+  });
+
+  it("CREATE-A4 点名 1080p ⇒ 落**高清槽位**,档位原样上卡,不是降级", () => {
+    const r = suggestModel({ kind: "video", desiredResolution: HD_VIDEO_RESOLUTION });
+    expect(r.model).toBe(routeVideoModel(HD_VIDEO_RESOLUTION).model);
+    expect(r.params.resolution).toBe(HD_VIDEO_RESOLUTION);
+    expect(r.downgraded).toBe(false);
+  });
+
+  it("CREATE-A4 每一个可售档都原样落地,且落在它自己那个槽位上(一格都不许被吞)", () => {
+    for (const [slot, tiers] of Object.entries(SELLABLE_VIDEO_RESOLUTIONS)) {
+      for (const tier of tiers) {
+        const r = suggestModel({ kind: "video", desiredResolution: tier });
+        expect(r.model, tier).toBe(routeVideoModel(tier).model);
+        // 白名单是按槽位写的 —— 路由挑到的那一格必须就是这一档所属的那个槽位。
+        expect(r.model, `${slot} × ${tier}`).toBe(slot);
+        expect(r.params.resolution, tier).toBe(tier);
+        expect(r.downgraded, tier).toBe(false);
+      }
+    }
+  });
+
+  it("CREATE-A4 点名一个这台引擎给不了的档(4k)⇒ **标成降级**,由铸卡侧据此拒绝", () => {
+    const r = suggestModel({ kind: "video", desiredResolution: "4k" });
+    expect(r.params.resolution).not.toBe("4k");
+    expect(r.downgraded).toBe(true);
+  });
+
+  it("CREATE-A4 图片这条路一个字都不受影响(画质是视频的概念)", () => {
+    const r = suggestModel({ kind: "image", desiredResolution: HD_VIDEO_RESOLUTION });
+    expect(r.model).toBe("seedream");
+    expect(r.params.resolution).toBeUndefined();
+    expect(r.downgraded).toBe(false);
   });
 });
