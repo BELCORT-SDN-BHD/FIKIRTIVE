@@ -58,7 +58,10 @@ test("FRONT-A8 / FRONT-A9 商家在五个分区写品牌事实,确认之前不�
   // FRONT-A8:刷新仍在,而且答得出「谁改的、何时改的」。
   await page.reload();
   await expect(page.getByRole("heading", { name: "Kampung warmth", level: 2 })).toBeVisible();
-  await expect(page.getByText(/Updated by Nadia/)).toBeVisible();
+  // 取 main 里的那一句,不是整页找。刷新之后有一小段时间,React 的流式占位
+  // (`<div id="S:0" hidden>`)里还留着同一段 HTML 的副本 —— 商家看不见它(hidden),
+  // 但 getByText 找得到,于是 strict mode 判两个。role 定位不看隐藏子树,天然只剩一个。
+  await expect(page.getByRole("main").getByText(/Updated by Nadia/)).toBeVisible();
 
   // 分区之间是 route-backed 的:换一节、刷新,还在那一节。
   await page.getByRole("tab", { name: "Knowledge base" }).click();
