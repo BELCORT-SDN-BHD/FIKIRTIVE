@@ -64,6 +64,7 @@ const mocks = vi.hoisted(() => ({
   startRefGen: vi.fn(),
   notifyBalanceRefresh: vi.fn(),
   getGenerationHistory: vi.fn(),
+  getLibraryElements: vi.fn(),
   getEditDesk: vi.fn(),
   redirect: vi.fn((url: string) => {
     // next/navigation 的 redirect() 靠抛异常中断渲染 —— 假件也必须抛,否则被测代码会
@@ -74,7 +75,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   redirect: mocks.redirect,
-  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mocks.requireOwner }));
 vi.mock("@/lib/data", () => ({
@@ -99,6 +101,8 @@ vi.mock("@/lib/actions", () => ({
   getRenderJobs: vi.fn(),
 }));
 vi.mock("@/lib/library-actions", () => ({ getGenerationHistory: mocks.getGenerationHistory }));
+// 前端基线段②:`/library` 改画已批准的 Library pattern,它的三个读之一是 Elements。
+vi.mock("@/lib/library-elements", () => ({ getLibraryElements: mocks.getLibraryElements }));
 vi.mock("@/lib/refgen-actions", () => ({ startRefGen: mocks.startRefGen }));
 vi.mock("@/lib/balance-refresh", () => ({ notifyBalanceRefresh: mocks.notifyBalanceRefresh }));
 vi.mock("@/lib/edit-desk-actions", () => ({
@@ -143,6 +147,7 @@ beforeEach(() => {
   mocks.getRecentGenerationThumbs.mockResolvedValue([]);
   mocks.listBrandRecords.mockResolvedValue([]);
   mocks.getGenerationHistory.mockResolvedValue({ items: [], nextCursor: null, hasMore: false });
+  mocks.getLibraryElements.mockResolvedValue([]);
   mocks.getOrCreateDefaultProject.mockResolvedValue({ id: "prj_default" });
   mocks.getProjects.mockResolvedValue([{ id: "prj_1", name: "Raya", pinnedAt: null }]);
   mocks.getEditDesk.mockResolvedValue({
@@ -234,25 +239,27 @@ describe("Library 是真路由,不是 redirect shim", () => {
 
 describe("两页真的画得出来(真 React,真组件)", () => {
   it("`/library` 画的是素材库本身,不是一个空壳", async () => {
-    const dom = await mount(await LibraryPage());
+    const dom = await mount(await LibraryPage({ searchParams: Promise.resolve({}) }));
 
     expect(dom.querySelector("h1")?.textContent).toBe("Library");
-    expect(dom.textContent).toContain("Everything you and Otto have made or saved across every project.");
-    // 数据是按 ownerId 取的,而且是 /otto 那一页本来就在用的同一批读取函数。
-    expect(mocks.getEntities).toHaveBeenCalledWith("own_1");
-    expect(mocks.listBrandRecords).toHaveBeenCalledWith("own_1");
-    expect(mocks.getRecentGenerationThumbs).toHaveBeenCalledWith("own_1");
+    // 前端基线段②:副标题改由已批准的 Library pattern 提供(旧壳那句
+    // 「Everything you and Otto have made or saved across every project.」随 OttoStuff 一起退场)。
+    expect(dom.textContent).toContain("Find, organize and reuse everything you create.");
+    // 三个读都在,而且身份只来自服务端 principal —— 页面不往下传 ownerId。
+    expect(mocks.getGenerationHistory).toHaveBeenCalled();
+    expect(mocks.getLibraryElements).toHaveBeenCalled();
+    expect(mocks.getProjects).toHaveBeenCalledWith("own_1");
   });
 
-  it("`/library` 不自己组装列表 —— 组装仍然只有 buildStuffItems 一处(行为围栏)", () => {
+  it("`/library` 不自己组装列表 —— 读取与展示仍然分家(行为围栏)", () => {
     const page = codeOf(routeFileFor(SHELL_ROUTES.library));
-    expect(page, "页面自己动手组装列表了 —— 这一票只搬位置,不搬逻辑").not.toContain("buildStuffItems");
-    expect(codeOf("components/otto/OttoStuff.tsx")).toContain("buildStuffItems({ entities: entityList");
+    expect(page, "页面自己动手组装列表了 —— 路由只负责取数与守卫").not.toContain("buildStuffItems");
+    expect(page, "页面自己开了一条 prisma 查询,绕过了 owner-gated 的读").not.toContain("prisma.");
   });
 
   it("没登录的人到不了 Library —— 守卫在,而且送去登录页", async () => {
     mocks.requireOwner.mockResolvedValue({ error: "Not authorized." });
-    await expect(LibraryPage()).rejects.toThrow("NEXT_REDIRECT:/login");
+    await expect(LibraryPage({ searchParams: Promise.resolve({}) })).rejects.toThrow("NEXT_REDIRECT:/login");
   });
 
   it("`/library/editor` 是旧书签入口,直接回到 Create", async () => {
@@ -265,9 +272,13 @@ describe("两页真的画得出来(真 React,真组件)", () => {
   // W2-11(换壳切换总票)删掉了这条原来所在的「Stack A:旧壳零行为变化」describe —— 那个
   // 名字本身描述的是「新旧路由并存」那段过渡期,旧壳(`OttoView.tsx`/`OttoApp.tsx`)随本票
   // 删除,过渡期结束。这条断言本身仍然成立,搬进这里(它测的是**这一页**,不是新旧对照)。
+  // 前端基线段②起,这条断言不再指向 `/library`(那一页改画已批准的 Library pattern,
+  // 上面没有聊天,也没有失败任务卡)。它测的一直是 `OttoStuff` 自己的行为——按 handler
+  // 在不在决定画不画那两颗「跳进聊天」的键——所以直接挂它,断言一字未改。
   it("聊天不在这一页上,「跳进聊天」的两颗键就不出现", async () => {
-    mocks.getMyAdJobs.mockResolvedValue([FAILED_JOB]);
-    const dom = await mount(await LibraryPage());
+    const dom = await mount(
+      createElement(OttoStuff, { entities: [], ads: [], adJobs: [FAILED_JOB], records: [], history: [] }),
+    );
 
     expect(dom.textContent, "失败的那一条仍然要说话").toContain("Didn't go through");
     expect(buttonWithText(dom, "Open conversation"), "一颗按下去什么都不发生的键").toBeFalsy();
