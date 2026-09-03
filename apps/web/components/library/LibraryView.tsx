@@ -326,8 +326,9 @@ function MediaTile({ item, selected, onOpen }: { item: LibraryItem; selected: bo
             className="aspect-[4/5] h-auto w-full object-cover"
           />
         ) : (
-          /* eslint-disable-next-line @next/next/no-img-element -- 商家素材来自自家 /files 路由,
-             尺寸由 Asset 行决定而不是由构建时已知的常量,所以不过 next/image 的优化管线。 */
+          // 商家素材走自家 `/files` 路由,尺寸由 Asset 行决定 —— 与 StuffLibrary、
+          // DetailPanel 同一种做法:裸 img/video,不过 next/image 的优化管线。
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={item.url}
             alt={title}
@@ -468,7 +469,8 @@ function ElementsView({
             >
               <span className="relative block aspect-[4/3] w-full overflow-hidden bg-muted">
                 {element.coverUrl ? (
-                  /* eslint-disable-next-line @next/next/no-img-element -- 同 MediaTile:商家自家 /files 素材。 */
+                  // 同 MediaTile:商家自家 /files 素材。
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img src={element.coverUrl} alt="" className="size-full object-cover" loading="lazy" />
                 ) : null}
               </span>
@@ -502,7 +504,8 @@ function ElementsView({
               </DialogHeader>
               <div className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-muted">
                 {selected.coverUrl ? (
-                  /* eslint-disable-next-line @next/next/no-img-element -- 同上。 */
+                  // 同上。
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img src={selected.coverUrl} alt={selected.name} className="aspect-[4/3] w-full object-cover" />
                 ) : (
                   <div className="grid aspect-[4/3] w-full place-items-center text-xs text-muted-foreground">
