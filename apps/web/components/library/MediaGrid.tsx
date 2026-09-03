@@ -71,7 +71,10 @@ export function MediaTile({
       ) : null}
       <Button
         variant="ghost"
-        aria-label={selectionMode ? `Select ${title}` : `Open ${title}`}
+        /* 名字与已批准设计一致(`LibraryReference.tsx` 的 MediaTile):这一块砖永远叫
+           「Open <名字>」,勾选那一颗才叫「Select <名字>」—— 两个控件两个名字,读屏
+           不会听到同一句话说两遍。 */
+        aria-label={`Open ${title}`}
         aria-selected={selected}
         onClick={selectionMode ? () => onCheckedChange?.(!checked) : onOpen}
         className={cn(

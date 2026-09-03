@@ -15,8 +15,12 @@
  * NOTHING HERE SPENDS. No provider is configured for the app under test (see support/env.ts), so
  * a generation fixture is a row describing a job that already happened, never a call to anybody.
  */
+import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { prisma, runAsTenant, INTERNAL_PER_DISPLAY } from "./db.js";
+import { freshPng } from "./upload-fixture.js";
 
 /** Displayed credits → the internal unit the ledger and the account column are kept in. */
 function internal(displayed: number): number {
@@ -285,6 +289,69 @@ export async function seedElement(ws: Workspace, name: string): Promise<{ entity
     }),
   );
   return { entityId };
+}
+
+/**
+ * One piece of media already sitting in this merchant's Library — the rows AND the bytes.
+ *
+ * Two things have to line up or the Library will honestly refuse to draw the tile: the
+ * `Asset` + `Generation` rows, and a real object under the local-disk storage key the read
+ * model checks with `storage.exists()`. So this writes both, using the product's own key
+ * scheme (`u/<ownerId>/<sha256>.<ext>`) and a genuinely fresh PNG per call.
+ *
+ * `source` is what splits the Library's two grids: `UPLOAD` is the merchant's own file
+ * (Uploads tab), anything else is something we made for them (Generation history).
+ * A journey that is ABOUT favouriting or collecting starts from media that already exists —
+ * making the media is journey 13's subject, not this one's.
+ */
+export async function seedLibraryMedia(
+  ws: Workspace,
+  opts: { prompt: string; source?: "GENERATED" | "UPLOAD"; filename?: string },
+): Promise<{ generationId: string; assetId: string }> {
+  const bytes = freshPng();
+  const contentHash = createHash("sha256").update(bytes).digest("hex");
+  // apps/web resolves its local storage root as <repo>/.data/storage (see apps/web/lib/storage.ts).
+  const file = path.resolve(
+    import.meta.dirname,
+    "../../.data/storage",
+    `u/${ws.orgId}/${contentHash}.png`,
+  );
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, bytes);
+
+  const assetId = id("asset");
+  const generationId = id("gen");
+  const source = opts.source ?? "GENERATED";
+  await runAsTenant(ws.orgId, async () => {
+    await prisma.asset.create({
+      data: {
+        id: assetId,
+        ownerId: ws.orgId,
+        contentHash,
+        ext: "png",
+        mime: "image/png",
+        sizeBytes: BigInt(bytes.byteLength),
+        originalFilename: opts.filename ?? "",
+        source: source as never,
+        width: 1,
+        height: 1,
+        createdAt: ws.next(),
+      },
+    });
+    await prisma.generation.create({
+      data: {
+        id: generationId,
+        ownerId: ws.orgId,
+        projectId: ws.projectId,
+        assetId,
+        source: source as never,
+        promptText: opts.prompt,
+        entitySnapshot: {},
+        createdAt: ws.next(),
+      },
+    });
+  });
+  return { generationId, assetId };
 }
 
 /** An empty conversation thread in the seeded project — landing on it is what puts the merchant

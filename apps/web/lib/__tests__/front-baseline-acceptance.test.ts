@@ -101,9 +101,14 @@ describe("前端基线:后续各段的验收落点(§7.1;S5 前逐条转正)", (
   it.todo("FRONT-A2 §7.1⑥ — 注册/验证码/回跳/重置旅程走真实邮件,错误提示不泄露邮箱是否存在");
   it.todo("FRONT-A3 §7.1⑤ — 两个租户各自的 Home 只看得到自己店的连接状态与画布");
   it.todo("FRONT-A4 §7.1⑤ — Home 布局服务器持久化,Manage home capability 决定入口可见");
-  it.todo("FRONT-A5 §7.1② — Library 历史与上传、搜索、收藏筛选全部来自服务器");
-  it.todo("FRONT-A6 §7.1② — collection 增删改跨刷新成立,跨租户不可见");
-  it.todo("FRONT-A7 §7.1② — Library 的 Use in canvas 落节点到当前项目与租户");
+  // FRONT-A5 / A6 / A7 已转正(段②,2026-09-03):
+  //   · 打真库的行为测试(收藏、合集、Use in canvas 各自的落库与**双向**租户隔离)住在
+  //     `library-favorites-collections.test.ts`;
+  //   · 表面那一层(五格页签、Select、收藏页没有筛选控件)住在 `library-baseline-seg2a.test.ts`
+  //     与 `library-view-model.test.ts`;
+  //   · 浏览器旅程(收藏与合集刷新之后仍然成立、删合集不删素材)住在
+  //     `e2e/journeys/15-library-favorites-and-collections.spec.ts`。
+  // 占位与真测试并存会让人以为还没做,所以这三行撤掉,而不是留着。
   it.todo("FRONT-A8 §7.1④ — Brand 五分区记录增改删恢复,每条显示谁改的、何时改的");
   it.todo("FRONT-A9 §7.1④ — Brand 记录进 Otto 上下文,该轮可查到");
   it.todo("FRONT-A10 §7.1③ — @ 引用选择器来自服务器,消息保存真实引用 ID");
