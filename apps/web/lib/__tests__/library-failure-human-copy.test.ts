@@ -13,8 +13,9 @@
  *      ops strings never come back out of the whitelist as merchant advice.
  *   2. THIS FILE — the actual card (`components/otto/OttoStuff.tsx`'s `AdJobCard`), mounted with
  *      real React: given an `AdJobItem` whose `error` field is what `apps/web/lib/data.ts`
- *      (`getMyAdJobs`) now computes (already the mapped copy — data.ts has its own coverage that
- *      it calls `merchantGenFailureCopy`; this file's job is only "does the CARD show what it is
+ *      (`getMyAdJobs`) now computes (already the mapped copy — real-row coverage that `data.ts`
+ *      actually calls `merchantGenFailureCopy` lives in `library-failure-copy-read-path.test.ts`,
+ *      added for PR #1171 判官 P1-2; this file's job is only "does the CARD show what it is
  *      given, and nothing more"), the screen shows the honest sentence and a bounded title, and
  *      never the raw diagnostic even if a stale/legacy row still carried one.
  *
@@ -26,6 +27,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdJobItem } from "@/lib/data";
+import { REFERENCE_ASSET_UNREACHABLE } from "@fikirtive/core";
 
 const mocks = vi.hoisted(() => ({
   getGenerationHistory: vi.fn(),
@@ -103,7 +105,7 @@ function failedJob(overrides: Partial<AdJobItem> = {}): AdJobItem {
     status: "failed",
     prompt: RAW_PROMPT,
     createdAt: new Date("2026-09-04T02:00:00.000Z").toISOString(),
-    error: "We couldn't reach one of your references, so nothing was charged. Replace it and try again.",
+    error: REFERENCE_ASSET_UNREACHABLE,
     ...overrides,
   };
 }
@@ -111,9 +113,7 @@ function failedJob(overrides: Partial<AdJobItem> = {}): AdJobItem {
 describe("Library \"Needs attention\" card — CREATE-A2: honest copy, never the raw backend string (Codex QA-CRE-007)", () => {
   it("shows the mapped copy handed to it — apps/web/lib/data.ts computes it, the card just renders it", async () => {
     const dom = await mountOttoStuff([failedJob()]);
-    expect(dom.textContent).toContain(
-      "We couldn't reach one of your references, so nothing was charged. Replace it and try again.",
-    );
+    expect(dom.textContent).toContain(REFERENCE_ASSET_UNREACHABLE);
   });
 
   it("never renders the raw ops strings the QA pass caught — even a stale/legacy row that still carries one", async () => {
