@@ -91,6 +91,11 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 | 2026-09-03 | **裁决九 · 通用原则**：生产界面严格按设计走；设计里没有、而生产必需的东西（空态、错误态、钱披露）按一条规矩处理——**无契约的控件不出现，有契约的内容按设计的样式呈现**。另：Otto 话术里「Create 页有 Templates 区段」这句删除（见本表同日 Templates 行） | 2026-09-03 |
 | 2026-09-03 | **裁决十 · 收藏存法**（回应 §7.3② 的报告项）：**新建一张统一的收藏表**——不分素材类型，记「谁收藏了哪个素材」，带租户约束；收藏页一次查询、按时间排。备选「给 `Asset` 补一列、两类各存各的」**否决**（那样 Favorites 视图要两次查询＋应用层合并排序，游标还要各算一套） | 2026-09-03 |
 | 2026-09-03 | **裁决十一 · Brand 六→五节映射全表**（回应 §7.3④ 的报告项）：Founder 同意四条建议对应——about→Brand voice、customers→Audiences、look→Visual guidelines、rules→Style guide；产品／优惠→Knowledge base 已由裁决三点名。六节映射至此**全表已裁**，施工照落，不再有待确认项 | 2026-09-03 |
+| 2026-09-03 | **⑨ 段下一刀「起步页参考契约」**：PR #1151（Create 起步页对齐，第⑨段）核实——Create 起步页 composer 的「+ Add context」（Upload image / Choose from Library / Add URL）本轮**不显示**，按已冻结的裁决九「无契约的控件不出现」处置。根因：起步页没有把参考带进画布的通道——`createCanvasConversation` 的 handoff 只落 `{prompt, threadId}`（`apps/web/lib/canvas-entry-actions.ts:87`）；夹具 `design-system/patterns/canvas/CreationComposer.tsx` 的上传回调只是 `onReferenceChange(file.name)`（:101 附近），不真上传（PR #1151 报告「设计有、生产暂不显示」表；证据已核）。登记为第⑨段下一刀，施工内容与工程量见 §7.3「⑨ 下一刀」小节 | |
+| 2026-09-03 | **Otto 前厅（`OttoFrontDoor`，画布 Otto 覆盖层入口，`apps/web/components/canvas/CanvasOttoOverlay.tsx`）没有上传能力**：PR #1150（Canvas 表面按 pattern 对齐，state OPEN，未合并）只给 `OttoChatStream` 的 composer 加了「Add context」——已核 `gh pr diff 1150 --name-only` 只改了 `apps/web/components/otto/OttoChatStream.tsx`；`apps/web/components/otto/OttoFrontDoor.tsx` 里没有任何上传 / Add context 相关代码（已核，main 现状）。登记为 Otto 引擎面的待接线项，触发＝`otto-engine.md` S2 排进去（本条不改 `otto-engine.md`） | |
+| 2026-09-03 | **⑤ 段租户列名措辞订正**：PR #1156（Home 仪表盘，已合入 main `9f966663`）落成 `ownerId` 而非 §7.3⑤ 原文字面写的 `orgId`——运行时租户守卫（`packages/db/src/tenant-guard.ts:71-74`）的 `scopeWhere`/`scopeCreateData` 注入的是字面列名 `ownerId`；`OrgHomeLayout` 模型实际字段是 `ownerId String @unique`（`packages/db/prisma/schema.prisma:1371`，`tenant-guard.ts:54-59` 已把它登记为 `TENANT_MODELS`）。已按此把 §7.3⑤ 与 §7.3② 中描述唯一约束的「orgId」措辞改成「租户列（本仓库为 `ownerId`）上有唯一约束」等对应表述，与本仓库既有约定一致——只有 `CreditAccount`／`CreditLedgerEntry`／`RefundJournal` 三张钱表按 `tenant-guard.ts:62-96` 例外用字面 `orgId`，其余租户表一律 `ownerId` | 2026-09-03：措辞已按此改，本行即落地记录 |
+| 2026-09-03 | **评审原型 per-goal 版面 vs 生产 org 级一行**（PR #1156 报告「与评审原型的一处已知分歧」，登记未裁）：评审原型 `FounderHomeReference` 给每个 business goal 各存一份版面顺序；规格 §1 九问 4 与 §7.3⑤ 把落库口径定成「org 级一行」，生产上一个工作区只有一份顺序、三个 goal 共用，goal 仍决定「没保存过时」的推荐模板。按规格施工，差异已由 PR #1156 登记；是否回到 per-goal，等 FRONT-A14 走查时 Founder 定夺 | |
+| 2026-09-03 | **画布卡片媒体井比例**：PR #1150（Canvas 表面按 pattern 对齐，state OPEN，未合并）报告「已登记的形状差异」——夹具的卡是「媒体井 + 42px 页脚」的竖长卡；生产沿用每张卡自己**持久化**的尺寸（默认 320×320）；`apps/web/lib/canvas-node-size.ts` 的 `canvasMediaNodeSize` 只在尺寸仍是默认值（`isDefaultCanvasMediaNodeSize`）时才按媒体比例重排，商家一旦拖动过尺寸即持久化、不再跟媒体比例走（已核代码），卡看上去偏方、图会略小。若 Founder 要求媒体井严格等于图片比例，需把页脚高度作为 chrome 纳入 `canvas-node-size.ts` 的尺寸计算。登记待 FRONT-A14 走查定夺 | |
 
 ## 6. 改签记录
 
@@ -144,8 +149,8 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 
 **后端对象与迁移**
 
-- `Collection` 与 `CollectionItem` 两表（§1 九问 4 已定）：都带 `orgId` 外键与「同一 collection 内同一对象只一行」的唯一约束；删 collection 只删 membership，成员对象留在 Library（A6 明写）。
-- **收藏是跨类型的——Founder 2026-09-03 已裁（裁决十）：新建一张统一收藏表**。设计的 Favorites 是把「生成结果」与「上传」混在一起的一个列表（`patterns/library/model.ts` 的 `LIBRARY_VIEWS`），而今天只有 `Generation.favorite` 一列（§1 九问 4 记的现状），上传（`Asset`）无处可存收藏。落法：新建 `Favorite(orgId, subjectType, subjectId, createdAt)` 一张表**不分素材类型**，记「谁收藏了哪个素材」，带 `orgId` 租户约束与 `(orgId, subjectType, subjectId)` 唯一约束；收藏页**一次查询、按时间排**。`Generation.favorite` 施工内一次性回灌进新表，之后只作读时回落。备选「给 `Asset` 补一列、两类各存各的」**已否决**（Favorites 视图会变成两次查询＋应用层合并排序，游标还要各算一套）。这一条原是 §1 九问 4 没覆盖的缺口，已由裁决十补齐。
+- `Collection` 与 `CollectionItem` 两表（§1 九问 4 已定）：都带租户列（本仓库为 `ownerId`）外键与「同一 collection 内同一对象只一行」的唯一约束；删 collection 只删 membership，成员对象留在 Library（A6 明写）。
+- **收藏是跨类型的——Founder 2026-09-03 已裁（裁决十）：新建一张统一收藏表**。设计的 Favorites 是把「生成结果」与「上传」混在一起的一个列表（`patterns/library/model.ts` 的 `LIBRARY_VIEWS`），而今天只有 `Generation.favorite` 一列（§1 九问 4 记的现状），上传（`Asset`）无处可存收藏。落法：新建 `Favorite(ownerId, subjectType, subjectId, createdAt)` 一张表**不分素材类型**，记「谁收藏了哪个素材」，带租户列（本仓库为 `ownerId`）约束与 `(ownerId, subjectType, subjectId)` 唯一约束；收藏页**一次查询、按时间排**。`Generation.favorite` 施工内一次性回灌进新表，之后只作读时回落。备选「给 `Asset` 补一列、两类各存各的」**已否决**（Favorites 视图会变成两次查询＋应用层合并排序，游标还要各算一套）。这一条原是 §1 九问 4 没覆盖的缺口，已由裁决十补齐。
 - **生成历史改游标分页读模型**：设计的 History 是按时间分组（Today／Yesterday／Earlier this month）的长列表；今天 `getGenerationHistory` 一次性取。改成 `(createdAt, id)` 复合游标的服务端分页，分组在读模型里算好（时区按 org 设置），前端不算日期。
 - **Uploads 独立身份**：Uploads 视图读 `Asset`，不混进生成历史；两条列表各自的游标互不影响。
 - **Elements 只读**：Products／Characters／Locations 读现有 `Entity`；Official avatars 由 Creation 引擎的 `Entity.catalogKey` 点亮（creation-engine.md §8.1③）；Clothes 在演员库造型 preset 交付前**整格不出现**，不摆空态占位（裁决九）。
@@ -206,7 +211,7 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 
 **后端对象与迁移**
 
-- **Customize home 落库**：`OrgHomeLayout`（`orgId` 唯一、有序的 `componentIds`、`updatedAt`、`updatedById`）——设计的可定制项是 8 个组件 id（`patterns/founder-home/model.ts` 的 `HOME_COMPONENTS`），落的是**顺序 ＋ 勾选**两件事，一行一 org（§1 九问 4 已定「org 级一行」）。入口由具体 capability `Manage home` 判定，不看角色名（A4）。
+- **Customize home 落库**：`OrgHomeLayout`（租户列（本仓库为 `ownerId`）上有唯一约束、有序的 `componentIds`、`updatedAt`、`updatedById`）——设计的可定制项是 8 个组件 id（`patterns/founder-home/model.ts` 的 `HOME_COMPONENTS`），落的是**顺序 ＋ 勾选**两件事，一行一 org（§1 九问 4 已定「org 级一行」）。入口由具体 capability `Manage home` 判定，不看角色名（A4）。
 - **ready 读模型要真实生产者**：`MarketingHealthReadModel`（`apps/web/lib/home-marketing-health.ts`）今天有 not-configured／insufficient／partial／ready 等状态；设计的 ready 版面要 8 个组件各自的数字。**没有真实生产者的组件不出现**（裁决九），不摆空卡、不摆占位数字。
 - **partial 单源版面先做**：多数商家开局只连一个渠道，partial 才是常态；先把 partial 单源版面做完整（`MarketingHomeView` 已有 partial 分支），ready 多源版面随生产者逐个点亮。
 
@@ -215,6 +220,23 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 **切片顺序**：① partial 单源版面按设计对齐（**属对齐轮**，不需新后端）→ ② `OrgHomeLayout` 迁移＋Customize home 落库＋capability → ③ ready 版面按真实生产者逐个点亮。
 
 **验收落点**：A3（①③）、A4（②）。
+
+#### ⑨ 下一刀 · 起步页参考契约（估 1–2 天；2026-09-03 §5 登记）
+
+**现状与证据**：Create 起步页 composer 已按设计对齐（PR #1151），但「+ Add context」（Upload image / Choose from Library / Add URL）本轮**不显示**，按裁决九「无契约的控件不出现」处置。根因：起步页没有把参考带进画布的通道——`createCanvasConversation` 的 handoff 只落 `{prompt, threadId}`（`apps/web/lib/canvas-entry-actions.ts:87`）；夹具 `design-system/patterns/canvas/CreationComposer.tsx` 的上传回调只是 `onReferenceChange(file.name)`（:101 附近），不真上传（PR #1151 报告「设计有、生产暂不显示」表）。
+
+**要建的接线**
+
+- **handoff payload 加引用字段**：`canvas-entry-actions.ts` 的 `createCanvasConversation` 写入的 `payload`（今天是 `{prompt, threadId}`）扩成带引用列表的形状，类型化 ID 沿用 ③ 引用选择器的 `{type, id}` 形状，不裸存字符串。
+- **画布侧消费**：新会话第一轮要把这些引用挂上去，不能只挂 prompt——落点在画布落地代码（PR #1150 合入后的节点/composer）。
+- **起步页 Upload image / Choose from Library 接线**：Upload image 走现有 `finalizeCandidateUploads`，但起步页此刻还没有 `projectId`（PR #1151 报告已指出）；Choose from Library 复用 Library 页自己的挑选动作（画布侧的 Otto composer 已经在用同一动作，见 PR #1150 报告）。
+- **Add URL 仍不接**：全仓唯一的按网址导入是 `ctx.mediaImport.fromUrl`（`apps/web/lib/otto-media-port.ts:207`），是 Otto 自己一轮里调的工具，没有 composer 能调的 server action；触发条件不变——出现客户端可调的按网址导入动作。
+
+**依赖**：PR #1150（Canvas 表面按 pattern 对齐）合入 main——画布侧的消费逻辑要挂在合入后的节点/composer 代码上。
+
+**工程量**：估 1–2 天（人日，含测试）。
+
+**验收落点**：A14；A12（起步页不出现假按钮的围栏，PR #1151 已落）不变。
 
 #### ⑦ Settings/Billing（估 2 天）
 
