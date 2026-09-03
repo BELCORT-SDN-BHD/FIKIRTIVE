@@ -42,6 +42,7 @@ const codeOnly = (source: string): string =>
 const imageNode = codeOf("components/canvas/nodes/ImageNode.tsx");
 const videoNode = codeOf("components/canvas/nodes/VideoNode.tsx");
 const flowCanvas = codeOf("components/canvas/FlowCanvas.tsx");
+const nodeResize = codeOf("components/canvas/nodes/NodeResize.tsx");
 const chatStream = codeOf("components/otto/OttoChatStream.tsx");
 const globalsCss = codeOf("design-system/foundations/globals.css");
 const pattern = codeOf("design-system/patterns/canvas/CanvasReference.tsx");
@@ -71,11 +72,25 @@ describe("FRONT-A14 画布节点卡片", () => {
     expect(renderToStaticMarkup(createElement(CanvasNodeFooter, {}))).toBe("");
   });
 
-  it("FRONT-A14: picked reads as the pattern's ink hairline + halo, not a second louder language", () => {
+  it("FRONT-A14: the picked card's own frame is the pattern's ink hairline + halo", () => {
+    // Scoped to the CARD'S OWN frame on purpose. It does NOT claim the picked card is a single
+    // visual language on screen — it is not, and the two things around it are registered in the
+    // PR's difference table (the coral resize handles below, and FlowCanvas's session-colour ring).
     expect(pattern).toContain("ring-2 ring-foreground/15");
     expect(globalsCss).toContain("border-color: var(--foreground);");
     expect(codeOnly(globalsCss), "选中态还是旧的 2px primary 边框")
       .not.toContain("border: 2px solid var(--primary)");
+  });
+
+  it("FRONT-A14: the coral resize handles are a registered divergence, not alignment", () => {
+    // The pattern's picked card carries ONE ink hairline and nothing else — no size handles.
+    expect(codeOnly(pattern), "夹具里出现了调整尺寸控件，这条断言的基准错了")
+      .not.toContain("NodeResizer");
+    // Production shows eight coral handles around it (NodeResize.tsx, untouched by this round).
+    // Pinned so the registration and the screen cannot drift apart in silence: change either side
+    // and this fails, which is the cue to update the PR's "已登记的形状差异" table.
+    expect(nodeResize, "调整尺寸框的颜色变了 —— 先更新差异登记表再改这条")
+      .toContain('color="#EC5828"');
   });
 
   it("FRONT-A14: the letterbox behind a picture is card chrome, not near-black", () => {
