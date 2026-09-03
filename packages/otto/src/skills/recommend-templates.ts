@@ -20,7 +20,6 @@ import {
   templateById,
   type Template,
 } from "@fikirtive/core/templates";
-import { SHELL_ROUTES, navPath } from "@fikirtive/core";
 import type { RunContext } from "@openai/agents";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
@@ -61,21 +60,25 @@ const params = z.object({
 
 type RecommendTemplatesInput = z.infer<typeof params>;
 
-// W2-11(规格书 Q6-A):Templates 不再单占一格,它是 Create 页面下方的一个区段
-// (`OTTO_VIEW_REDIRECTS.templates` 同一个地址),`navLinkByKey("templates")` 因此不再有
-// 结果可取。地址仍然只从权威源拼(`SHELL_ROUTES.create` + 区段锚点),不在这里写第二份。
-const TEMPLATES_SELF_SERVE_HREF = `${SHELL_ROUTES.create}#templates`;
-
-/** 商家自己走的那条路 —— 地址与地名都从导航唯一权威源取,不在这里抄第二份。
- *  不写成「the Create page」:那是「导航标签 + page」的形状,#802 的界面引用围栏
- *  (instructions-nav-map.test.ts ④)专挡这个 —— 改名必漂的正是这种手写引用。 */
-export const TEMPLATES_SELF_SERVE = `The merchant can also do this themselves: ${navPath("create")} (${TEMPLATES_SELF_SERVE_HREF}) has a Templates section for this.`;
+// Founder 2026-09-03 裁决 —— **这里曾经有一句话,现在没有了。**
+//
+// 那句话是 `TEMPLATES_SELF_SERVE`:「商家也可以自己来:Create(/create#templates)有一个
+// Templates 区段」。W2-11 的新壳把 Templates 收编进 Create 之后,那个区段根本不再渲染
+// (`/create` 今天只挂 Otto 入口与画布历史),所以这句话是**当着商家的面说的一句假话** ——
+// 他照着走过去,那里什么都没有。缺陷登记在 docs/specs/frontend-baseline.md 的差异表。
+//
+// 为什么是删掉而不是换个地址:换成不带锚点的 `/create` 也不成立 —— 那个页面就是 Otto 自己,
+// 「你也可以自己去 Create 做」等于把正在跟他说话的这条路指回给他。今天这条路上没有第二个
+// 自助入口可指,那就一个都不指;哪天 Templates 区段真的接回来,再把它写回这里。
+//
+// 围栏:下面那条 nextStep 的测试反着钉这一条(不许再出现 "Templates section" 与
+// "#templates"),把这句话贴回来就红。
 
 const NEXT_STEP =
   "Nothing has been made or charged. To make one: take the template's `prompt` (that is the finished English prompt — do not rewrite it), " +
   "pass it to propose as structuredPrompt with the merchant's product photo as the referenced entity, and pass the template's `aspect` as desiredAspect when it has one. " +
   "propose asks the merchant before anything is charged. " +
-  `Each template also carries ready social captions by language — offer them, do not invent your own translations. ${TEMPLATES_SELF_SERVE}`;
+  "Each template also carries ready social captions by language — offer them, do not invent your own translations.";
 
 /** 一条模板给模型看的样子。有问题且还没答案时给 `question` 而不是半成品 prompt。 */
 export function templateForModel(t: Template, answer?: string): Record<string, unknown> {
