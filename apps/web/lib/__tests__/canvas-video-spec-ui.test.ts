@@ -570,19 +570,19 @@ describe("#645 T4:Adaptive 的说明按场景说准", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CREATE-A3(判官 r1 P0,2026-09-02)—— 画布上不许出现声音开关
+// CREATE-A3(§8.2 批 II,2026-09-04,触发＝Codex QA-CRE-001)—— 画布两条视频路的声音开关
 // ---------------------------------------------------------------------------
 //
-// 声音那一格住在同一个 VideoSpecPicker 里,而画布这两条路的提交把 audio 整个丢掉:
-// `clampVideoSpec` 只重建 seconds/resolution/aspectRatio,`useCanvasGen.ts` 的请求体
-// 也只展开那三格。所以在这两个框里渲染一个能拨的开关,是个**收了钱的假控件**——
-// 商家关掉声音、照原价付费、拿回带 AI 配音的片子,界面全程零提示;更贵的是拨动它会改掉
-// material JSON ⇒ actionId 换身份 ⇒ 服务端判 fresh ⇒「关掉重做一次」再付一次全价。
+// 阶段一(PR #1133)只在资产详情 Animate 那条路开了这一格,画布两条路当时把 audio 整个
+// 丢掉(`clampVideoSpec` 只重建三格、`useCanvasGen.ts` 的请求体也只展开那三格),所以判官
+// 当时裁定「不展示死开关」—— 一个能拨、收钱、无效的假控件比没有开关更贵。
 //
-// 这两条钉的是**看得见的那一面**(围栏的另一半在 video-audio-toggle.test.ts:
-// 不自报 audioToggle 的调用点没有这一格 ＋ 画布源码至今没有自报)。
-// §8.2 批 II 把 clamp 与两处请求体收口后,这两条改成「必须有开关且发得出去」。
-describe("CREATE-A3:画布两条视频路在接线之前不显示声音开关", () => {
+// Codex 的只读走查(QA-CRE-001,真浏览器,job 01M1MBH5W162TQZ745K4PSN6VP)证实了后果:
+// 画布出片框只有时长/清晰度/形状三格,商家在提示词里写「完全静音」照样拿回一条带 AAC
+// 音轨的 MP4。批 II 把 clamp 与两处请求体收口之后,这个 describe 从「不许有」翻成
+// 「必须有,而且拨了真的算数」—— 围栏的另一半(源码级)在 video-audio-toggle.test.ts,
+// 提交路那一半在 canvas-video-audio-submit.test.ts。
+describe("CREATE-A3:画布两条视频路的声音开关", () => {
   function soundSwitch(): Element | null {
     return document.querySelector('[role="switch"][aria-label="Sound"]');
   }
@@ -595,20 +595,132 @@ describe("CREATE-A3:画布两条视频路在接线之前不显示声音开关", 
     await act(async () => { await Promise.resolve(); });
   }
 
-  it("CREATE-A3:t2v 弹窗上没有声音开关(会改价的三格照常在)", async () => {
+  function confirmButton(): HTMLButtonElement {
+    const found = [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => (b.textContent ?? "").trim() === "Make video" && !b.closest("[data-node]"));
+    expect(found, "弹窗上应该有「Make video」").toBeDefined();
+    return found!;
+  }
+
+  async function toggleSound(): Promise<void> {
+    const toggle = soundSwitch();
+    expect(toggle, "规格选择器上应该有声音开关").not.toBeNull();
+    await act(async () => { (toggle as HTMLElement).click(); });
+    await act(async () => { await Promise.resolve(); });
+  }
+
+  async function typePrompt(text: string): Promise<void> {
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea[data-testid="mention"]')!;
+    typeInto(textarea, text);
+    await act(async () => { await Promise.resolve(); });
+  }
+
+  it("CREATE-A3:t2v 弹窗有声音开关,默认开,并在屏幕上写明它不影响报价", async () => {
     await renderBoard();
     await openT2v();
-    expect(specSelect("Length"), "规格选择器本身要在 —— 拿掉的只有声音那一格").not.toBeNull();
-    expect(soundSwitch(), "画布 t2v 提交不带 audio,不许显示声音开关").toBeNull();
-    expect(dialogText()).not.toContain("Sound doesn't change the price");
+    expect(specSelect("Length"), "会改价的三格照常在").not.toBeNull();
+    expect(soundSwitch(), "画布 t2v 已接线,必须有声音开关").not.toBeNull();
+    expect(soundSwitch()!.getAttribute("aria-checked"), "默认开").toBe("true");
+    // 「界面明示」= 这句话真的在屏幕上,不是只藏在悬浮态里。
+    expect(dialogText()).toContain("Sound doesn't change the price");
   });
 
-  it("CREATE-A3:Animate 弹窗上没有声音开关", async () => {
+  it("CREATE-A3:Animate 弹窗有声音开关,默认开", async () => {
     mocks.boardRead.mockResolvedValue([boardRow("n1")]);
     await renderBoard();
     select(["n1"]);
     await openAnimateOn("n1");
     expect(specSelect("Shape")).not.toBeNull();
-    expect(soundSwitch(), "画布 Animate 提交不带 audio,不许显示声音开关").toBeNull();
+    expect(soundSwitch(), "画布 Animate 已接线,必须有声音开关").not.toBeNull();
+    expect(soundSwitch()!.getAttribute("aria-checked")).toBe("true");
+    expect(dialogText()).toContain("Sound doesn't change the price");
+  });
+
+  it("CREATE-A3:t2v 关掉声音 ⇒ 付费调用带 spec.audio=false(与另三格并存)", async () => {
+    await renderBoard();
+    await openT2v();
+    await pick(specSelect("Length"), "12");
+    await pick(specSelect("Quality"), "480p");
+    await toggleSound();
+    expect(soundSwitch()!.getAttribute("aria-checked")).toBe("false");
+    await typePrompt("a cup steaming");
+    await act(async () => { confirmButton().click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mocks.generateVideoFromText).toHaveBeenCalledTimes(1);
+    const options = mocks.generateVideoFromText.mock.calls[0]![4] as { spec?: Record<string, unknown> };
+    expect(options.spec).toEqual({ seconds: 12, resolution: "480p", aspectRatio: "16:9", audio: false });
+  });
+
+  it("CREATE-A3:Animate 关掉声音 ⇒ 付费调用带 spec.audio=false", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
+    await renderBoard();
+    select(["n1"]);
+    await openAnimateOn("n1");
+    await toggleSound();
+    await act(async () => { confirmButton().click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mocks.animate).toHaveBeenCalledTimes(1);
+    const options = mocks.animate.mock.calls[0]![6] as { spec?: Record<string, unknown> };
+    expect(options.spec).toEqual({ seconds: 5, resolution: "720p", aspectRatio: "adaptive", audio: false });
+  });
+
+  it("CREATE-A3:没碰过开关 ⇒ 规格里一格 audio 都不出现(与接线之前逐字一样)", async () => {
+    await renderBoard();
+    await openT2v();
+    await typePrompt("a cup steaming");
+    await act(async () => { confirmButton().click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const options = mocks.generateVideoFromText.mock.calls[0]![4] as { spec?: Record<string, unknown> };
+    expect(options.spec).toEqual({ seconds: 5, resolution: "720p", aspectRatio: "16:9" });
+    expect(Object.hasOwn(options.spec!, "audio"), "没拨过就不该出现这一格").toBe(false);
+  });
+
+  it("CREATE-A3:拨开关时卡面报价一格不动 —— 价目表的键里根本没有声音", async () => {
+    await renderBoard();
+    await openT2v();
+    expect(dialogText()).toContain("11 credits"); // 默认档 720p/5s
+    await toggleSound();
+    expect(dialogText(), "关掉声音不该改动屏幕上那个价").toContain("11 credits");
+    await toggleSound();
+    expect(dialogText()).toContain("11 credits");
+    // 会改价的那一格照常改价 —— 两件事互不干扰。
+    await pick(specSelect("Length"), "10");
+    expect(dialogText()).toContain("22 credits");
+  });
+
+  // 幂等键这一条:画布的动作身份由 material JSON 决定(`FlowCanvas.tsx` 的 videoActionRef),
+  // 而服务端的幂等键 = `canvasActionKey(actionId)`。所以「声音进材料」= 「开与关是两个意图、
+  // 两个键」。用**没被受理**的提交来断,是为了把「材料没变 ⇒ 同一个身份」也一并钉住:受理
+  // 之后身份本来就该换,那样断不出声音有没有进材料。
+  it("CREATE-A3:材料没变 ⇒ 同一个动作身份;只把声音拨掉 ⇒ 换身份、换幂等键", async () => {
+    const { canvasActionKey } = await import("../batch-idempotency");
+    // 没被受理(outcome 未知那一族)⇒ 身份保留,下一次点击是**同一个动作的重试**。
+    mocks.generateVideoFromText.mockResolvedValue(false);
+    await renderBoard();
+    await openT2v();
+    await typePrompt("a cup steaming");
+
+    await act(async () => { confirmButton().click(); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { confirmButton().click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const first = mocks.generateVideoFromText.mock.calls[0]![2] as string;
+    const retry = mocks.generateVideoFromText.mock.calls[1]![2] as string;
+    expect(retry, "什么都没改的第二次点击 = 同一个动作的重试").toBe(first);
+
+    // 只拨声音,别的一格不动。
+    await toggleSound();
+    await act(async () => { confirmButton().click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const soundOff = mocks.generateVideoFromText.mock.calls[2]![2] as string;
+    expect(soundOff, "只把声音拨掉 ⇒ 另一个意图 ⇒ 另一个动作身份").not.toBe(first);
+    expect(canvasActionKey(soundOff).key).not.toBe(canvasActionKey(first).key);
+    expect((mocks.generateVideoFromText.mock.calls[2]![4] as { spec?: Record<string, unknown> }).spec)
+      .toMatchObject({ audio: false });
   });
 });
