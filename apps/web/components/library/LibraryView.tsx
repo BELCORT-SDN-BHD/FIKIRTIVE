@@ -85,7 +85,9 @@ import {
   groupLibraryItems,
   libraryDurationLabel,
   libraryItemTitle,
+  librarySinceForDateFilter,
   parseLibraryView,
+  type LibraryDayZone,
   type LibraryView as LibraryViewName,
 } from "@/lib/library-view-model";
 import { cn } from "@/lib/utils";
@@ -120,6 +122,11 @@ const SORT_LABELS: Record<SortOrder, string> = {
 
 const PAGE_SIZE = 40;
 
+/** 一个永远不变的 store:服务端第一帧拿 "utc",hydration 之后拿 "local"(见 `MediaGrid`)。 */
+const NEVER_CHANGES = () => () => {};
+const LOCAL_ZONE = (): LibraryDayZone => "local";
+const UTC_ZONE = (): LibraryDayZone => "utc";
+
 type Filters = {
   query: string;
   media: MediaFilter;
@@ -147,16 +154,6 @@ function filtersAreDefault(filters: Filters): boolean {
     filters.sources.length === 2 &&
     filters.sort === "newest"
   );
-}
-
-/** 相对今天的起点 —— 与服务端同一个 UTC 口径。 */
-function sinceForDateFilter(date: DateFilter): string | undefined {
-  if (date === "all") return undefined;
-  const now = new Date();
-  if (date === "today") {
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
-  }
-  return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 }
 
 function FilterButton({ children, ...props }: React.ComponentProps<typeof Button>) {
@@ -391,7 +388,14 @@ function MediaGrid({
   selectedId?: string;
   onOpen: (item: LibraryItem) => void;
 }) {
-  const groups = React.useMemo(() => groupLibraryItems(items, new Date()), [items]);
+  /**
+   * 服务端渲染那一帧不知道浏览器在哪个时区,只能先按 UTC 画;挂载后换成商家自己的钟。
+   * 用 `useSyncExternalStore` 而不是 `useEffect`,是因为 React 就是用它来处理「服务端与
+   * 客户端第一帧本来就不同」这件事的(与 `components/theme-toggle.tsx` 同一个写法):
+   * 需要对上的那一帧两端都拿 "utc",hydration 之后立刻换 "local" 重画一次。
+   */
+  const zone = React.useSyncExternalStore(NEVER_CHANGES, LOCAL_ZONE, UTC_ZONE);
+  const groups = React.useMemo(() => groupLibraryItems(items, new Date(), zone), [items, zone]);
   return (
     <div className="space-y-7">
       {groups.map((group) => (
@@ -631,7 +635,9 @@ export function LibraryView({
         : nextFilters.sources,
       mediaKind: nextFilters.media === "all" ? undefined : nextFilters.media,
       projectId: nextFilters.projectId === "all" ? undefined : nextFilters.projectId,
-      since: sinceForDateFilter(nextFilters.date),
+      // 日界与网格分组同一份规则(`lib/library-view-model.ts`),而且按商家自己的钟 ——
+      // 这一段只在浏览器里跑(首屏那一页 date 是 "all"),所以 "local" 就是商家的钟。
+      since: librarySinceForDateFilter(nextFilters.date, new Date(), "local"),
       order: nextFilters.sort,
       cursor: nextCursor,
       take: PAGE_SIZE,
