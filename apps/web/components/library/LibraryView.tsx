@@ -23,7 +23,7 @@
  */
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import * as React from "react";
 import {
   ArrowDownUp,
@@ -76,6 +76,7 @@ import { softDeleteEntity } from "@/lib/actions";
 import { getGenerationHistory, type LibraryItem, type LibrarySourceKind } from "@/lib/library-actions";
 import {
   LIBRARY_ELEMENT_VIEWS,
+  parseLibraryElementView,
   type LibraryElement,
   type LibraryElementKind,
 } from "@/lib/library-elements-model";
@@ -84,6 +85,7 @@ import {
   groupLibraryItems,
   libraryDurationLabel,
   libraryItemTitle,
+  parseLibraryView,
   type LibraryView as LibraryViewName,
 } from "@/lib/library-view-model";
 import { cn } from "@/lib/utils";
@@ -570,7 +572,6 @@ export function LibraryView({
   initialAsset,
 }: LibraryViewProps) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [view, setView] = React.useState<LibraryViewName>(initialView);
   const [elementView, setElementView] = React.useState<LibraryElementKind>(initialElementView);
   const [filters, setFilters] = React.useState<Filters>(DEFAULT_FILTERS);
@@ -672,13 +673,21 @@ export function LibraryView({
     setCursor(result.nextCursor);
   }
 
-  /** 页签、详情与 Elements 分栏都留在地址里,刷新与后退回到同一格。 */
+  /**
+   * 页签、详情与 Elements 分栏都留在地址里 —— 刷新、深链与**后退**都回到同一格。
+   *
+   * 用的是浏览器自己的 `history.pushState`(与已批准的 `LibraryReference` 同一种做法),
+   * 不走 `router.push/replace`:这一页是 `force-dynamic` 的,每开一次详情面就让服务端把
+   * 整页重跑一遍,既慢又会把已经加载的那几页滚回去。地址变了,页面不用重来。
+   */
   const writeRoute = React.useCallback((next: {
     view?: LibraryViewName;
     element?: LibraryElementKind;
     asset?: { generationId: string; projectId: string } | null;
   }) => {
-    const params = new URLSearchParams(searchParams.toString());
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    const params = url.searchParams;
     if (next.view !== undefined) {
       if (next.view === "history") params.delete("view");
       else params.set("view", next.view);
@@ -696,9 +705,22 @@ export function LibraryView({
         params.delete("project");
       }
     }
-    const qs = params.toString();
-    router.replace(qs ? `${SHELL_ROUTES.library}?${qs}` : SHELL_ROUTES.library, { scroll: false });
-  }, [router, searchParams]);
+    window.history.pushState(window.history.state, "", url);
+  }, []);
+
+  /** 后退键要真的往回走一格:页签、Elements 分栏与详情面都跟着地址回到上一步。 */
+  React.useEffect(() => {
+    function syncFromRoute() {
+      const params = new URL(window.location.href).searchParams;
+      setView(parseLibraryView(params.get("view") ?? undefined));
+      setElementView(parseLibraryElementView(params.get("element") ?? undefined));
+      const asset = params.get("asset");
+      const project = params.get("project");
+      setDetail(asset && project ? { generationId: asset, projectId: project } : undefined);
+    }
+    window.addEventListener("popstate", syncFromRoute);
+    return () => window.removeEventListener("popstate", syncFromRoute);
+  }, []);
 
   function changeView(nextView: LibraryViewName) {
     setView(nextView);
