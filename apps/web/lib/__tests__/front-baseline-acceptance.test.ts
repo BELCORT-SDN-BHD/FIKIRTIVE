@@ -99,15 +99,25 @@ describe("前端基线:后续各段的验收落点(§7.1;S5 前逐条转正)", (
   // 六条钱旅程的存在由同一份文件看着;浏览器那一侧由
   // e2e/journeys/07-money-surfaces-agree.spec.ts 认领。
   it.todo("FRONT-A2 §7.1⑥ — 注册/验证码/回跳/重置旅程走真实邮件,错误提示不泄露邮箱是否存在");
-  it.todo("FRONT-A3 §7.1⑤ — 两个租户各自的 Home 只看得到自己店的连接状态与画布");
-  it.todo("FRONT-A4 §7.1⑤ — Home 布局服务器持久化,Manage home capability 决定入口可见");
+  // FRONT-A4 已转正,FRONT-A3 **部分**转正(§7.1⑤ 第①②刀):占位改成真测试,落在
+  //   lib/__tests__/home-layout.test.ts(版面定义层的规则,纯函数)
+  //   lib/__tests__/home-layout-persistence.test.ts(落库、能力闸、双向租户,打真库)
+  //   lib/__tests__/marketing-home-view.test.tsx(入口可见性与「客户端只渲染」)
+  //   e2e/journeys/15-home-layout-persists.spec.ts(浏览器那一侧:刷新与换浏览器)
+  // A3 已钉住的是它正文里的两条读路径:版面那一行,以及「Continue creating」的真实画布
+  // (双向租户,打真库,见 home-layout-persistence.test.ts 的 FRONT-A3 一组)。**没钉住**的
+  // 是另外半句 —— 两租户各自的连接状态五态按真实生产者逐个点亮;那属于 §7.3⑤ 的第③刀,
+  // 还没做(见本段 PR 的剩余切片),占位就是下面这一行,别当它已经验过。
+  it.todo(
+    "FRONT-A3 §7.1⑤ — 剩余:两租户各自的连接状态五态按真实生产者点亮,且互不可见(随第③刀转正)",
+  );
   // FRONT-A5 / A6 / A7 已转正(段②,2026-09-03):
   //   · 打真库的行为测试(收藏、合集、Use in canvas 各自的落库与**双向**租户隔离)住在
   //     `library-favorites-collections.test.ts`;
   //   · 表面那一层(五格页签、Select、收藏页没有筛选控件)住在 `library-baseline-seg2a.test.ts`
   //     与 `library-view-model.test.ts`;
   //   · 浏览器旅程(收藏与合集刷新之后仍然成立、删合集不删素材)住在
-  //     `e2e/journeys/15-library-favorites-and-collections.spec.ts`。
+  //     `e2e/journeys/16-library-favorites-and-collections.spec.ts`。
   // 占位与真测试并存会让人以为还没做,所以这三行撤掉,而不是留着。
   it.todo("FRONT-A8 §7.1④ — Brand 五分区记录增改删恢复,每条显示谁改的、何时改的");
   it.todo("FRONT-A9 §7.1④ — Brand 记录进 Otto 上下文,该轮可查到");

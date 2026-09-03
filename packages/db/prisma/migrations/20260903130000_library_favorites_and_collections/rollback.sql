@@ -28,6 +28,6 @@ DROP TABLE IF EXISTS "Collection";
 DROP TABLE IF EXISTS "Favorite";
 
 DELETE FROM "_prisma_migrations"
-WHERE migration_name = '20260903120000_library_favorites_and_collections';
+WHERE migration_name = '20260903130000_library_favorites_and_collections';
 
 COMMIT;

@@ -80,7 +80,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:product") });
   mocks.getActiveGenModels.mockResolvedValue({ image: "active-image-model" });
-  mocks.uploadFilesDirect.mockResolvedValue({ files: [] });
+  mocks.uploadFilesDirect.mockResolvedValue({ files: [], failures: [] });
   mocks.finalizeCandidateUploads.mockResolvedValue({ generationIds: ["source-1"] });
 });
 

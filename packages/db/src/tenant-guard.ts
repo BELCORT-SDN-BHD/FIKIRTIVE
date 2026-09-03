@@ -57,6 +57,12 @@ export const TENANT_MODELS = new Set([
   // 而不是外键(取消收藏不许删原对象),目标的租户归属由 lib/library-subjects.ts 在每次
   // 写入前重新校验 —— 守卫管的是这三张表自己的行,那道校验管的是它们指向的东西。
   "Favorite", "Collection", "CollectionItem",
+  // FRONT-A4 (2026-09-03,规格 docs/specs/frontend-baseline.md §7.3⑤):工作区 Home 版面。
+  // GUARDED,不 EXEMPT —— 它装的是「这个商家的 Home 长什么样」,越租户读一行就是把 A 家的
+  // 工作区偏好讲给 B 家看;而且它**没有**任何平台级读取需求(admin 不读版面),所以保守默认
+  // 就是进守卫。唯一的读写方 apps/web/lib/home-layout-store.ts 全程显式带 ownerId,
+  // 无帧(未进 runAsUser)时走的正是守卫的显式兜底那一支。
+  "OrgHomeLayout",
 ]);
 
 /** Tenant-scoped models whose tenant column is `orgId`, NOT `ownerId` (钱引擎⑤B, 规格 §7.7
