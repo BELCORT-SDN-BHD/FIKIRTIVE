@@ -91,7 +91,9 @@ import {
 import type { LibraryFavoriteItem, LibrarySubjectRef } from "@/lib/library-types";
 import {
   LIBRARY_VIEWS,
+  librarySinceForDateFilter,
   parseLibraryView,
+  type LibraryTimeZone,
   type LibraryView as LibraryViewName,
 } from "@/lib/library-view-model";
 import { cn } from "@/lib/utils";
@@ -100,6 +102,19 @@ type MediaFilter = "all" | "image" | "video";
 
 type DateFilter = "all" | "today" | "week";
 type SortOrder = "newest" | "oldest";
+
+/**
+ * 大写写在文案里,不是写在 `text-transform` 上(#739 围栏
+ * `__tests__/form-control-names-and-casing.test.ts`,它连注释里的那个类名都不放过)。
+ * 已批准的夹具把小写值交给 CSS 去改大小写;那在生产里会让读屏与自动化读到 "videos",
+ * 而屏幕上写着 "Videos" —— 同一句话两个版本。屏幕上的字与夹具逐字一致,
+ * 只是这一份是真的写下来的。
+ */
+const MEDIA_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "image", label: "Images" },
+  { value: "video", label: "Videos" },
+] as const satisfies readonly { value: MediaFilter; label: string }[];
 
 const DATE_LABELS: Record<DateFilter, string> = {
   all: "Any time",
@@ -113,6 +128,23 @@ const SORT_LABELS: Record<SortOrder, string> = {
 };
 
 const PAGE_SIZE = 40;
+
+/**
+ * 日界用哪个时区(见 `lib/library-view-model.ts` 的 `LibraryTimeZone`)。
+ *
+ * 一个永远不变的 store:服务端渲染那一帧拿 `"UTC"`(服务端不知道浏览器在哪),hydration
+ * 之后拿浏览者自己的时区。`useSyncExternalStore` 是 React 处理「服务端与客户端第一帧本来
+ * 就不同」的正规写法(与 `components/theme-toggle.tsx` 同一个套路):需要对上的那一帧两端
+ * 都拿 `"UTC"`,之后立刻换成真时区重画一次,不会 hydration mismatch。
+ */
+const NEVER_CHANGES = () => () => {};
+const SERVER_TIME_ZONE = (): LibraryTimeZone => "UTC";
+/**
+ * 浏览者自己的时区。每次现问,不缓存:同一个浏览器每次都答同一个字符串,`useSyncExternalStore`
+ * 要的快照稳定性照样成立(它按 Object.is 比),而模块级缓存会把**第一次**问到的时区焊死 ——
+ * 那正是围栏钉不住的那种写法。
+ */
+const VIEWER_TIME_ZONE = (): LibraryTimeZone => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 type Filters = {
   query: string;
@@ -141,16 +173,6 @@ function filtersAreDefault(filters: Filters): boolean {
     filters.sources.length === 2 &&
     filters.sort === "newest"
   );
-}
-
-/** 相对今天的起点 —— 与服务端同一个 UTC 口径。 */
-function sinceForDateFilter(date: DateFilter): string | undefined {
-  if (date === "all") return undefined;
-  const now = new Date();
-  if (date === "today") {
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
-  }
-  return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 }
 
 function FilterButton({ children, ...props }: React.ComponentProps<typeof Button>) {
@@ -210,16 +232,16 @@ function LibraryToolbar({
         size="sm"
         className="rounded-lg bg-muted p-0.5"
       >
-        {(["all", "image", "video"] as const).map((filter) => (
+        {MEDIA_FILTERS.map((filter) => (
           <ToggleGroupItem
-            key={filter}
-            value={filter}
+            key={filter.value}
+            value={filter.value}
             className={cn(
-              "h-8 rounded-[8px] px-3 text-xs capitalize text-muted-foreground shadow-none",
+              "h-8 rounded-[8px] px-3 text-xs text-muted-foreground shadow-none",
               "data-pressed:bg-card data-pressed:text-foreground data-pressed:shadow-xs",
             )}
           >
-            {filter === "all" ? "All" : `${filter}s`}
+            {filter.label}
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
@@ -553,6 +575,10 @@ export function LibraryView({
   const [organizeError, setOrganizeError] = React.useState<string | null>(null);
   const [organizing, setOrganizing] = React.useState(false);
 
+  // 日界只解析一次,分组与 `Date created` 筛选共用它 —— 两处各拿一个时区,就会出现
+  // 「分组说 Today、筛选说今天没有」这种自相矛盾的屏幕。
+  const timeZone = React.useSyncExternalStore(NEVER_CHANGES, VIEWER_TIME_ZONE, SERVER_TIME_ZONE);
+
   // 迟到的旧请求会覆盖新条件的结果 —— 每次发请求领一个号,回来时号对不上就丢弃
   // (backend-handoff-contract.md §8.3①)。
   const requestRef = React.useRef(0);
@@ -572,12 +598,14 @@ export function LibraryView({
         : nextFilters.sources,
       mediaKind: nextFilters.media === "all" ? undefined : nextFilters.media,
       projectId: nextFilters.projectId === "all" ? undefined : nextFilters.projectId,
-      since: sinceForDateFilter(nextFilters.date),
+      // 日界与网格分组同一份规则、同一个时区(`lib/library-view-model.ts`)。
+      // 首屏那一页 `date` 是 "all",走不到 `timeZone`,所以 hydration 前后签名一致。
+      since: librarySinceForDateFilter(nextFilters.date, new Date(), timeZone),
       order: nextFilters.sort,
       cursor: nextCursor,
       take: PAGE_SIZE,
     }),
-    [],
+    [timeZone],
   );
 
   const reload = React.useCallback(async (nextView: LibraryViewName, nextFilters: Filters) => {
@@ -897,6 +925,7 @@ export function LibraryView({
                     items={items}
                     selectedId={detail?.generationId}
                     onOpen={openItem}
+                    timeZone={timeZone}
                     selectionMode={selectionMode}
                     selectedIds={selectedIds}
                     onSelect={(item, checked) => updateSelection(item.id, checked)}
@@ -971,6 +1000,7 @@ export function LibraryView({
                     items={favorites}
                     selectedId={detail?.generationId}
                     onOpen={openItem}
+                    timeZone={timeZone}
                     selectionMode={selectionMode}
                     selectedIds={selectedIds}
                     onSelect={(item, checked) => updateSelection(item.id, checked)}

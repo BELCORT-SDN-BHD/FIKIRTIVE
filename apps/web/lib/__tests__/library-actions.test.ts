@@ -179,7 +179,7 @@ describe("FRONT-A5 Library toolbar 的每一条筛选都落到服务端查询上
   it("Uploads 与 Generated 由 Generation.source 区分,不是靠猜文件名", async () => {
     mockGenFindMany.mockResolvedValue([]);
     await getGenerationHistory({ sources: ["upload"] });
-    expect(mockGenFindMany.mock.calls[0][0].where.source).toBe("UPLOAD");
+    expect(mockGenFindMany.mock.calls[0][0].where.source).toEqual({ equals: "UPLOAD" });
 
     mockGenFindMany.mockClear();
     await getGenerationHistory({ sources: ["generated"] });

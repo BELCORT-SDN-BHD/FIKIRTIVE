@@ -18,7 +18,12 @@ import { Film } from "lucide-react";
 import { Button } from "@/design-system/primitives/button";
 import { Checkbox } from "@/design-system/primitives/checkbox";
 import { Skeleton } from "@/design-system/primitives/skeleton";
-import { groupLibraryItems, libraryDurationLabel, libraryItemTitle } from "@/lib/library-view-model";
+import {
+  groupLibraryItems,
+  libraryDurationLabel,
+  libraryItemTitle,
+  type LibraryTimeZone,
+} from "@/lib/library-view-model";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,6 +35,9 @@ export type MediaTileItem = {
   url: string;
   kind: "image" | "video";
   prompt: string;
+  /** 上传与生成在同一张表里,靠这一列分身份 —— 标题规则(上传写文件名、引擎产物写
+      提示词)认的就是它。`LibraryItem` 与 `LibrarySubjectItem` 都带着它。 */
+  source: "upload" | "generated";
   filename: string;
   width: number | null;
   height: number | null;
@@ -136,6 +144,7 @@ export function MediaGrid<T extends MediaTileItem>({
   items,
   selectedId,
   onOpen,
+  timeZone,
   selectionMode = false,
   selectedIds,
   onSelect,
@@ -143,11 +152,16 @@ export function MediaGrid<T extends MediaTileItem>({
   items: readonly T[];
   selectedId?: string;
   onOpen: (item: T) => void;
+  /** 分组的日界按这个时区算 —— 与 `Date created` 筛选是同一个值。 */
+  timeZone: LibraryTimeZone;
   selectionMode?: boolean;
   selectedIds?: ReadonlySet<string>;
   onSelect?: (item: T, checked: boolean) => void;
 }) {
-  const groups = React.useMemo(() => groupLibraryItems(items, new Date()), [items]);
+  const groups = React.useMemo(
+    () => groupLibraryItems(items, new Date(), timeZone),
+    [items, timeZone],
+  );
   return (
     <div className="space-y-7">
       {groups.map((group) => (

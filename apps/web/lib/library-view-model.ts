@@ -6,8 +6,10 @@
  * `title` 字段 —— 那是评审用的假数据,生产里两样都得从真列算出来:
  *   · 分组来自 `Generation.createdAt`,不是夹具的 `group` 字符串
  *     (backend-handoff-contract.md §8.3②「时间分组从真实 created time 计算」);
- *   · 名字来自真实存在的列 —— 上传有 `Asset.originalFilename`,引擎产物只有 `promptText`。
+ *   · 名字来自真实存在的列 —— 上传写 `Asset.originalFilename`,引擎产物写 `promptText`
+ *     (引擎产物**也有** originalFilename,但那是我们自己的存储键 `gen-<ulid>.mp4`,不是名字);
  *     两样都没有的行**不编名字**,写 "Untitled";夹具那种人写的标题在生产里根本不存在。
+ *   · 日界按浏览者自己的时区算,不按 UTC —— 见 `LibraryTimeZone`。
  *
  * 放在 `lib/` 而不是组件里,是为了让这两条规则能在没有 DOM 的情况下被直接钉住。
  */
@@ -50,28 +52,125 @@ export type LibraryGroup<T extends { createdAt: string } = LibraryItem> = {
   items: T[];
 };
 
-const MONTH_LABEL = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+/**
+ * 日界按哪个时区算 —— 一个 IANA 时区名(`"Asia/Kuala_Lumpur"`、`"UTC"`)。
+ *
+ * 权威是**浏览者自己的钟**。商家在马来西亚(UTC+8)凌晨 02:00 做的东西,在 UTC 那边还停在
+ * 前一天 18:00 —— 按 UTC 分组会把商家「今天早上刚做的」标成 Yesterday,并且被
+ * `Date created / Today` 筛选整组排除掉。那不是「时区口径不同」,那是屏幕上写了一句假话。
+ *
+ * 服务端渲染的第一帧不知道浏览器在哪个时区,只能先传 `"UTC"`;`LibraryView` 挂载后用
+ * React 自己的服务端/客户端快照机制(`useSyncExternalStore`)换成
+ * `Intl.DateTimeFormat().resolvedOptions().timeZone` 再算一次 —— 两端第一帧的文字因此
+ * 一致,不会 hydration mismatch。
+ *
+ * **为什么收一个时区名,而不是 `Date` 的本地取值器。** 本地取值器读的是进程时区,在浏览器
+ * 里正确,却让这条规则在测试里钉不住:跑测试的机器在 UTC+8 就永远绿,在 UTC(CI 就是)
+ * 则 "utc" 与 "local" 根本没有区别 —— 而运行中改进程时区在 vitest 里是空操作(本轮实测:
+ * 改了之后断言纹丝不动)。靠机器碰巧在哪个时区才绿的围栏等于没有围栏,所以时区是显式
+ * 传进来的一个值。
+ */
+export type LibraryTimeZone = string;
 
-/** 同一天?按 UTC 比 —— 服务端与浏览器算出同一个答案,刷新前后分组不跳。 */
-function sameUtcDay(left: Date, right: Date): boolean {
-  return (
-    left.getUTCFullYear() === right.getUTCFullYear() &&
-    left.getUTCMonth() === right.getUTCMonth() &&
-    left.getUTCDate() === right.getUTCDate()
+/** 界面只有英文一种写法(原来的代码也写死 `"en-US"`),一张表比一次 Intl 调用直接。 */
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+] as const;
+
+/**
+ * 带**显式 timeZone** 的 formatter 才是安全的:不带 timeZone 的那种会把构造那一刻的
+ * 进程时区焊死在里面(Node 22 实测),于是「按浏览者的钟算」在它身上就是假的。
+ * 按时区名缓存,因为一屏要按行调用几十上百次。
+ */
+const ZONE_FORMATS = new Map<string, { day: Intl.DateTimeFormat; clock: Intl.DateTimeFormat }>();
+function zoneFormats(timeZone: LibraryTimeZone) {
+  let formats = ZONE_FORMATS.get(timeZone);
+  if (!formats) {
+    formats = {
+      // en-CA 的日期就是 `YYYY-MM-DD`,可以直接当排序键与相等键用。
+      day: new Intl.DateTimeFormat("en-CA", {
+        timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+      }),
+      clock: new Intl.DateTimeFormat("en-CA", {
+        timeZone, hourCycle: "h23",
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+      }),
+    };
+    ZONE_FORMATS.set(timeZone, formats);
+  }
+  return formats;
+}
+
+/** 那一刻在 `timeZone` 的钟上是哪一天,`YYYY-MM-DD`。 */
+function dayKey(at: Date, timeZone: LibraryTimeZone): string {
+  return zoneFormats(timeZone).day.format(at);
+}
+
+/** `YYYY-MM-DD` 的前一天。按日历退一天,不减 24 小时 —— 夏令时那天只有 23 小时。 */
+function previousDay(key: string): string {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+}
+
+/** `timeZone` 在 `at` 这一刻的 UTC 偏移(毫秒)。 */
+function zoneOffsetMs(at: Date, timeZone: LibraryTimeZone): number {
+  const parts: Record<string, number> = {};
+  for (const part of zoneFormats(timeZone).clock.formatToParts(at)) {
+    if (part.type !== "literal") parts[part.type] = Number(part.value);
+  }
+  // 把「那一刻在 timeZone 的钟面读数」当成 UTC 读一次,与真实时刻的差就是偏移。
+  const asUtc = Date.UTC(
+    parts.year, parts.month - 1, parts.day,
+    parts.hour % 24, parts.minute, parts.second,
   );
+  return asUtc - Math.floor(at.getTime() / 1000) * 1000;
+}
+
+/** `now` 那一天在 `timeZone` 的 00:00,是**哪一个真实时刻**。 */
+function startOfDayInstant(now: Date, timeZone: LibraryTimeZone): Date {
+  const [year, month, day] = dayKey(now, timeZone).split("-").map(Number);
+  // 先把本地 00:00 的读数当成 UTC 猜一次,再把那一刻的偏移减掉。
+  const guess = Date.UTC(year, month - 1, day);
+  return new Date(guess - zoneOffsetMs(new Date(guess), timeZone));
 }
 
 /**
  * 一行属于哪个时间组。README §3.1 的原话是「例如 Today / Yesterday / August 2026」——
  * 前两组是相对今天的,再往前一律按月,所以库里放多久都不会撞上夹具那三个常量的天花板。
  */
-export function libraryTimeGroupLabel(createdAtIso: string, now: Date): string {
+export function libraryTimeGroupLabel(
+  createdAtIso: string,
+  now: Date,
+  timeZone: LibraryTimeZone,
+): string {
   const at = new Date(createdAtIso);
   if (Number.isNaN(at.getTime())) return "Earlier";
-  if (sameUtcDay(at, now)) return "Today";
-  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  if (sameUtcDay(at, yesterday)) return "Yesterday";
-  return MONTH_LABEL.format(at);
+  const day = dayKey(at, timeZone);
+  const today = dayKey(now, timeZone);
+  if (day === today) return "Today";
+  if (day === previousDay(today)) return "Yesterday";
+  const [year, month] = day.split("-").map(Number);
+  return `${MONTH_NAMES[month - 1]} ${year}`;
+}
+
+/**
+ * `Date created` 筛选的起点(`Today` / `Last 7 days`),ISO 或 `undefined`(= `Any time`)。
+ *
+ * 和分组共用同一个日界 —— 两处各写一份,就会出现「分组说 Today、筛选说今天没有」这种
+ * 自相矛盾的屏幕。之前这里按 UTC 取当天 00:00,UTC+8 的商家凌晨做的东西因此被整批筛掉。
+ *
+ * `Last 7 days` 是一个滚动的 168 小时窗口,与时区无关。
+ */
+export function librarySinceForDateFilter(
+  date: "all" | "today" | "week",
+  now: Date,
+  timeZone: LibraryTimeZone,
+): string | undefined {
+  if (date === "all") return undefined;
+  if (date === "today") return startOfDayInstant(now, timeZone).toISOString();
+  return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 }
 
 /**
@@ -81,11 +180,12 @@ export function libraryTimeGroupLabel(createdAtIso: string, now: Date): string {
 export function groupLibraryItems<T extends { createdAt: string }>(
   items: readonly T[],
   now: Date,
+  timeZone: LibraryTimeZone,
 ): LibraryGroup<T>[] {
   const groups: LibraryGroup<T>[] = [];
   const byLabel = new Map<string, LibraryGroup<T>>();
   for (const item of items) {
-    const label = libraryTimeGroupLabel(item.createdAt, now);
+    const label = libraryTimeGroupLabel(item.createdAt, now, timeZone);
     let group = byLabel.get(label);
     if (!group) {
       group = { key: label.toLowerCase().replaceAll(" ", "-"), label, items: [] };
@@ -98,11 +198,16 @@ export function groupLibraryItems<T extends { createdAt: string }>(
 }
 
 /**
- * 一格上写什么名字。上传写商家自己的文件名,引擎产物写它的提示词(截断),两样都没有就
- * 说 "Untitled" —— 绝不拿 id、URL 或来源当名字冒充。
+ * 一格上写什么名字。
+ *
+ * **只有商家自己上传的文件**才有名字可写(`Asset.originalFilename`)。引擎产物在真库里也带
+ * 一个 `originalFilename`,但那是我们自己生成的存储键 —— 实测(共享 dev 库):
+ * `GENERATED | gen-01M1HNK1FT8YQ9HF3ZY9YM917K.mp4 | Steam curling off a jar of pandan kaya…`。
+ * 把它写到格子上,商家看到的就是一串机器码,而不是自己当时说的那句话。所以引擎产物一律
+ * 写提示词(截断),两样都没有才说 "Untitled" —— 绝不拿 id、存储键、URL 或来源冒充名字。
  */
-export function libraryItemTitle(item: Pick<LibraryItem, "filename" | "prompt">): string {
-  const filename = item.filename.trim();
+export function libraryItemTitle(item: Pick<LibraryItem, "source" | "filename" | "prompt">): string {
+  const filename = item.source === "upload" ? item.filename.trim() : "";
   if (filename) return filename;
   const prompt = item.prompt.trim();
   if (!prompt) return "Untitled";
