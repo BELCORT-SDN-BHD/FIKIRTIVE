@@ -204,8 +204,8 @@ describe("balance freshness seam (#550 ①)", () => {
  * what the bar SAYS, what it MAKES, and which quote it is PRICED from must be the same thing
  * on each card type — that is the "说的与做的失同步" failure this repo keeps re-learning.
  */
-describe("Card prompt-bar price tag seam (#550 ② · #547 A4)", () => {
-  it("each card's bar renders a cost hint before the merchant can trigger it", () => {
+describe("Card paid-action price tag seam (#550 ② · #547 A4)", () => {
+  it("each card's paid action renders a cost hint before the merchant can trigger it", () => {
     const image = read(IMAGE_NODE);
     expect(image).toMatch(/evolveCostHint\?:\s*string/);
     expect(image).toMatch(/\{d\.evolveCostHint\}/);
@@ -215,26 +215,35 @@ describe("Card prompt-bar price tag seam (#550 ② · #547 A4)", () => {
     expect(video).toMatch(/\{d\.remakeCostHint\}/);
   });
 
-  it("an image card's bar says image, and never video", () => {
+  it("an image card's priced button says image, and never video", () => {
+    // Founder 2026-09-03 裁决①: the bar under the card is gone, so the price and the promise
+    // ride the priced button itself. The seam is unchanged — what the control SAYS, what it
+    // MAKES and which quote it is PRICED from still have to be the same thing.
     const src = read(IMAGE_NODE);
-    const controlLabels = [...src.matchAll(/(?:aria-label|inputLabel)="([^"]*)"/g)].map((m) => m[1]!);
-    const barLabel = controlLabels.find((label) => /prompt/i.test(label) && /make/i.test(label));
+    const pricedLines = src.split("\n").filter((line) => line.includes("d.evolveCostHint"));
 
-    expect(barLabel).toBeDefined();
-    expect(barLabel).toMatch(/image/i);
+    expect(pricedLines.length, "图片卡上没有任何带价的控件").toBeGreaterThanOrEqual(1);
+    for (const line of pricedLines) {
+      expect(line, "带价的文字不在这颗按钮自己的 tooltip/title 上").toMatch(/(?:tooltip|title)=/);
+      expect(line).toMatch(/like this/i);
+      expect(line, "图片卡的付费按钮说的是 video").not.toMatch(/video/i);
+    }
     // The old contradiction, in both of its spellings.
+    const controlLabels = [...src.matchAll(/(?:aria-label|label)="([^"]*)"/g)].map((m) => m[1]!);
     expect(controlLabels).not.toContain("Evolve this image");
-    expect(controlLabels.filter((label) => /video/i.test(label))).toEqual([]);
   });
 
-  it("a video card's bar says video and keeps the no-charge-until-you-confirm promise", () => {
+  it("a video card's priced button says video's own words and keeps the confirm promise", () => {
     const src = read(VIDEO_NODE);
-    const controlLabels = [...src.matchAll(/(?:aria-label|inputLabel)="([^"]*)"/g)].map((m) => m[1]!);
-    const barLabel = controlLabels.find((label) => /prompt/i.test(label) && /make/i.test(label));
+    const pricedLines = src.split("\n").filter((line) => line.includes("d.remakeCostHint"));
 
-    expect(barLabel).toBeDefined();
-    expect(barLabel).toMatch(/video/i);
-    expect(src).toMatch(/No charge until you confirm\./);
+    expect(pricedLines.length, "视频卡上没有任何带价的控件").toBeGreaterThanOrEqual(1);
+    for (const line of pricedLines) {
+      expect(line, "带价的文字不在这颗按钮自己的 tooltip/title 上").toMatch(/(?:tooltip|title)=/);
+      expect(line).toMatch(/same description/i);
+      // 视频永远先问再收钱 —— 这句承诺跟着价钱走。
+      expect(line).toMatch(/you confirm before anything is charged/);
+    }
   });
 
   it("FlowCanvas prices each bar from the quote that action actually charges", () => {
