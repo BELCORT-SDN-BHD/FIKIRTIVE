@@ -2160,7 +2160,10 @@ export default function FlowCanvas({
           </DialogHeader>
           <div className="flex flex-col gap-2.5">
             {/* #645 T4 — the spec this clip will be made in. Shape defaults to Adaptive here:
-                with a source image the engine follows that image instead of being told a ratio. */}
+                with a source image the engine follows that image instead of being told a ratio.
+                CREATE-A3(§8.2 批 II):声音那一格现在自报接线 —— 从这个 picker 的 onChange
+                到付费请求体之间 `audio` 一路不掉(`clampVideoSpec` 保留它,`useCanvasGen`
+                的 animate 请求体带上它),开关拨了真的算数,不是收了钱的假控件。 */}
             {videoSpecMenu && animateSpec && (
               <VideoSpecPicker
                 value={animateSpec}
@@ -2168,6 +2171,7 @@ export default function FlowCanvas({
                 onChange={setAnimateSpec}
                 disabled={videoSubmitting}
                 hasSourceImage
+                audioToggle
               />
             )}
             <ToggleGroup
@@ -2263,13 +2267,15 @@ export default function FlowCanvas({
             onChange={(t, ids, vsel) => { setT2vPrompt(t); setT2vIds(ids); setT2vVariantSel(vsel); }}
           />
           {/* #645 T4 — the spec this clip will be made in. No source image here, so the shape
-              default is the model's own t2v default (16:9), not Adaptive. */}
+              default is the model's own t2v default (16:9), not Adaptive.
+              CREATE-A3(§8.2 批 II):声音那一格与上面的 Animate 弹窗同一条接线口径。 */}
           {videoSpecMenu && t2vSpec && (
             <VideoSpecPicker
               value={t2vSpec}
               menu={videoSpecMenu.menu}
               onChange={setT2vSpec}
               disabled={videoSubmitting}
+              audioToggle
             />
           )}
           <DialogFooter>
