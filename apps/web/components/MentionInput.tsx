@@ -6,37 +6,61 @@
  * change it resolves the doc to { text, ids, doc } so callers can render with
  * real references and persist the doc. Self-contained (no old-Workbench chrome).
  */
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from "react";
 import { useEditor, EditorContent, ReactRenderer } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import { Placeholder } from "@tiptap/extensions";
 import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import type { ReferenceType } from "@fikirtive/core";
+import {
+  ReferencePickerMenu,
+  type ReferencePickerRow,
+} from "@/components/reference-picker/ReferencePickerMenu";
+import { referenceSourceLine } from "@/lib/reference-search-model";
 import type { EntityDTO } from "@/lib/types";
 
 // A suggestion row: either a bare entity (variantId undefined) or one of its named
 // variants (variantId set, variantLabel = the variant's display name). Both carry the
 // entity id; selecting a variant chips the entity AND binds the variant for conditioning.
-interface MentionItem { id: string; name: string; type: EntityDTO["type"]; aka?: string; variantId?: string; variantLabel?: string }
+interface MentionItem { id: string; name: string; type: EntityDTO["type"]; aka?: string; variantId?: string; variantLabel?: string; refs?: EntityDTO["refs"]; baseAssetId?: string | null }
 interface MentionListHandle { onKeyDown: (props: SuggestionKeyDownProps) => boolean }
 type MentionListProps = SuggestionProps<MentionItem> & { open: boolean };
 
-const HUES: Record<EntityDTO["type"], string> = {
-  CHARACTER: "var(--hue-character)", LOCATION: "var(--hue-location)", PRODUCT: "var(--hue-product)", BRANDMARK: "var(--hue-brand)",
-};
+/**
+ * The canvas editor's rows, in the ONE menu (spec §7.3③). Before this slice the Tiptap dropdown
+ * was a second implementation of the same picture — its own popover, its own row markup, a colour
+ * dot and a badge instead of the contract's thumbnail + source line. It now renders
+ * `ReferencePickerMenu`, so a change to the approved row anatomy lands on both surfaces at once.
+ *
+ * What is still local here, and why: the item source. A chip in a shot prompt IS an entity
+ * reference — `resolveDoc` hands its id straight to the generation as `entityIds` — so this editor
+ * may only offer entity-backed rows, and it also offers something the composers cannot: a named
+ * VARIANT of an entity. Moving it onto the server search waits for the slice that gives a shot
+ * prompt a contract for media references. Registered, not silently converged.
+ */
+function entityReferenceType(type: EntityDTO["type"]): ReferenceType {
+  switch (type) {
+    case "PRODUCT": return "product";
+    case "LOCATION": return "location";
+    case "BRANDMARK": return "brandmark";
+    default: return "character";
+  }
+}
 
-const ENTITY_TYPE_LABELS: Record<EntityDTO["type"], string> = {
-  CHARACTER: "Character",
-  LOCATION: "Location",
-  PRODUCT: "Product",
-  BRANDMARK: "Brand mark",
-};
+/** The locked base image when there is one, else the first image ref. A video is not a thumbnail. */
+function entityThumbUrl(item: MentionItem): string | null {
+  const images = (item.refs ?? []).filter((ref) => ref.kind === "image");
+  const base = images.find((ref) => ref.assetId === item.baseAssetId);
+  return base?.url ?? images[0]?.url ?? null;
+}
 
 const MentionList = forwardRef<MentionListHandle, MentionListProps>(function MentionList(props, ref) {
   const [selected, setSelected] = useState(0);
+  const listId = useId();
+  // A per-render anchor object, not a `useRef`: the popover asks it for the CARET rect every time
+  // it positions, and Tiptap hands a fresh `clientRect` on each suggestion update. (A real ref
+  // would have to be written during render to stay current, which React forbids.)
   const virtualRef = {
     current: {
       getBoundingClientRect: () => props.clientRect?.() ?? props.editor.view.dom.getBoundingClientRect(),
@@ -63,56 +87,35 @@ const MentionList = forwardRef<MentionListHandle, MentionListProps>(function Men
       return false;
     },
   }));
+  const rows: ReferencePickerRow[] = props.items.map((item) => {
+    const type = entityReferenceType(item.type);
+    return {
+      key: item.variantId ? `${item.id}:${item.variantId}` : item.id,
+      kind: "reference" as const,
+      name: item.name,
+      source: item.variantLabel
+        ? `Variant · ${item.variantLabel}`
+        : item.aka
+          ? `${referenceSourceLine(type)} · aka ${item.aka}`
+          : referenceSourceLine(type),
+      thumbUrl: entityThumbUrl(item),
+      type,
+      ...(item.variantId ? { badge: "Variant" } : {}),
+    };
+  });
   return (
-    <Popover open={props.open} modal={false}>
-      <PopoverAnchor virtualRef={virtualRef} />
-      <PopoverContent
-        role="listbox"
-        aria-label="Entity suggestions"
-        side="top"
-        align="start"
-        sideOffset={8}
-        collisionPadding={12}
-        sticky="always"
-        hideWhenDetached
-        motion="instant"
-        onOpenAutoFocus={(event) => event.preventDefault()}
-        onCloseAutoFocus={(event) => event.preventDefault()}
-        onFocusOutside={(event) => event.preventDefault()}
-        className="max-h-[min(20rem,var(--radix-popover-content-available-height))] w-[min(22rem,calc(100vw-1.5rem))] overflow-y-auto p-1"
-      >
-        {props.items.length === 0 ? (
-          <p className="px-3 py-2 text-sm text-muted-foreground">No matching elements — create one in Elements.</p>
-        ) : (
-          props.items.map((item, i) => (
-            <Button
-              key={item.variantId ? `${item.id}:${item.variantId}` : item.id}
-              type="button"
-              variant="ghost"
-              size="sm"
-              motion="instant"
-              role="option"
-              aria-selected={i === selected}
-              tabIndex={-1}
-              onMouseEnter={() => setSelected(i)}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                pick(i);
-              }}
-              className="h-auto min-h-9 w-full justify-start gap-2.5 px-2.5 py-2 text-left"
-            >
-              <span className="size-2 shrink-0 rounded-full" style={{ background: HUES[item.type] }} aria-hidden />
-              <span className="min-w-0 flex-1 truncate">
-                {item.name}
-                {item.variantLabel && <span className="text-muted-foreground"> · {item.variantLabel}</span>}
-                {item.aka && <span className="text-muted-foreground"> · aka {item.aka}</span>}
-              </span>
-              <Badge variant="outline">{item.variantId ? "Variant" : ENTITY_TYPE_LABELS[item.type]}</Badge>
-            </Button>
-          ))
-        )}
-      </PopoverContent>
-    </Popover>
+    <ReferencePickerMenu
+      open={props.open}
+      listId={listId}
+      rows={rows}
+      highlightedIndex={selected}
+      title="References"
+      subtitle={props.query ? `Results for "${props.query}"` : "Elements in this workspace"}
+      onHighlightChange={setSelected}
+      onSelect={pick}
+      onDismiss={() => {}}
+      virtualRef={virtualRef}
+    />
   );
 });
 
@@ -242,13 +245,13 @@ export function MentionInput({ entities, initialDoc, docKey, placeholder, disabl
               const liveVariants = e.variants.filter((v) => v.refs.length > 0);
               if (nameHit || alias) {
                 // entity matches → offer the base entity + all its image-bearing variants
-                out.push({ id: e.id, name: e.name, type: e.type, aka: alias });
-                for (const v of liveVariants) out.push({ id: e.id, name: e.name, type: e.type, variantId: v.id, variantLabel: v.name });
+                out.push({ id: e.id, name: e.name, type: e.type, aka: alias, refs: e.refs, baseAssetId: e.baseAssetId });
+                for (const v of liveVariants) out.push({ id: e.id, name: e.name, type: e.type, variantId: v.id, variantLabel: v.name, refs: v.refs });
               } else {
                 // entity name doesn't match, but a variant name/handle might
                 for (const v of liveVariants) {
                   if (v.name.toLowerCase().includes(q) || v.handle.toLowerCase().includes(q)) {
-                    out.push({ id: e.id, name: e.name, type: e.type, variantId: v.id, variantLabel: v.name });
+                    out.push({ id: e.id, name: e.name, type: e.type, variantId: v.id, variantLabel: v.name, refs: v.refs });
                   }
                 }
               }
