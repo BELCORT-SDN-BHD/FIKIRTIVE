@@ -9,10 +9,14 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
 
 const { prisma } = await import("@fikirtive/db");
+const { newId } = await import("@fikirtive/core");
 const { searchReferences, recentReferences } = await import("@/lib/reference-search");
 
-const orgA = `org_a_${randomUUID().replace(/-/g, "")}`;
-const orgB = `org_b_${randomUUID().replace(/-/g, "")}`;
+// Real `newId()` ids and real shop names. An org whose NAME is its own id is exactly what
+// `app/admin/__tests__/admin-identity-truth.test.ts` exists to catch, and rows a test leaves behind
+// are visible to every other test file on the same database.
+const orgA = newId();
+const orgB = newId();
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -24,13 +28,13 @@ let aUploadAssetId = "";
 let aGenerationId = "";
 let bProductId = "";
 
-async function makeOrg(id: string) {
-  await prisma.organization.create({ data: { id, name: id } });
+async function makeOrg(id: string, name: string) {
+  await prisma.organization.create({ data: { id, name } });
 }
 
 beforeAll(async () => {
-  await makeOrg(orgA);
-  await makeOrg(orgB);
+  await makeOrg(orgA, "Kaia Cafe (reference search A)");
+  await makeOrg(orgB, "Kaia Cafe (reference search B)");
 
   const projectA = await prisma.project.create({
     data: { id: `prj_${randomUUID()}`, ownerId: orgA, name: "Hari Raya gifting" },
