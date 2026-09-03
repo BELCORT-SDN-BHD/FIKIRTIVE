@@ -28,6 +28,7 @@ import type { EntityType, ShotStatus } from "@fikirtive/db";
 import { storage, extFromFilename } from "./storage";
 import { getBoss } from "./queue";
 import { isCannedStarter } from "./otto-canned-starters";
+import { DEFAULT_CANVAS_NAME, LEGACY_DEFAULT_CANVAS_NAMES } from "./canvas-title";
 import { buildBoardEdit, transitionFor } from "./edit";
 import { getShots, getLooseVideoClips, getMediaPage, type MediaPage } from "./data";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
@@ -105,10 +106,14 @@ function assetUpsert(
 // ---------- projects ----------
 
 /** Placeholder names a fresh project carries until its first conversation names it.
- *  "New project" is the current default (#546 — a Project is never called a campaign;
- *  the independent Campaign object lives in campaign-actions.ts). "New campaign" and
- *  "Untitled Project" stay listed so pre-#546 DB rows keep reusing/auto-titling. */
-const DEFAULT_PROJECT_NAMES = new Set(["New project", "New campaign", "Untitled Project"]);
+ *  "New project" (#546 — a Project is never called a campaign; the independent Campaign
+ *  object lives in campaign-actions.ts) is itself a legacy value now: the bootstrap
+ *  default has moved to canvas vocabulary (`DEFAULT_CANVAS_NAME`, Codex QA-CRE-006 —
+ *  "Canvas, not Project", `docs/specs/frontend-baseline.md` §5). "New project", "New
+ *  campaign" and "Untitled Project" stay listed — imported from the single source in
+ *  `canvas-title.ts` — so pre-existing DB rows keep reusing/auto-titling regardless of
+ *  which placeholder generation created them. */
+const DEFAULT_PROJECT_NAMES = new Set<string>([...LEGACY_DEFAULT_CANVAS_NAMES, DEFAULT_CANVAS_NAME]);
 
 /** Empty Chat title fallback. It is not a reusable Project placeholder, but auto-title
  *  must still refuse to copy it onto a default Project. */
@@ -161,11 +166,11 @@ async function findReusableEmptyDefaultProject(ownerId: string, name: string): P
 }
 
 /** Idempotent: returns the owner's oldest non-deleted project, or creates one with the
- *  standard "New project" placeholder name if none exist (used by /otto, the immersive
- *  canvas entry, and Otto's projects port). #546 F-18: no pre-seeded "My Videos" — the
- *  bootstrap project is
+ *  standard `DEFAULT_CANVAS_NAME` placeholder name if none exist (used by /otto, the
+ *  immersive canvas entry, and Otto's projects port). #546 F-18: no pre-seeded "My
+ *  Videos" — the bootstrap project is
  *  indistinguishable from one the merchant created themselves: it auto-titles from its
- *  first conversation and is reused by the rail's New-project entry while still empty.
+ *  first conversation and is reused by the rail's New-canvas entry while still empty.
  *  Never throws — the caller surfaces any auth failure via the {error} contract. */
 export async function getOrCreateDefaultProject(): Promise<{ id: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
@@ -179,7 +184,7 @@ export async function getOrCreateDefaultProject(): Promise<{ id: string } | { er
     });
     if (existing) return { id: existing.id };
     const project = await prisma.project.create({
-      data: { id: newId(), ownerId, name: "New project" },
+      data: { id: newId(), ownerId, name: DEFAULT_CANVAS_NAME },
     });
     await logAction(ownerId, "project.create", project.id, { name: project.name, via: "bootstrap" });
     return { id: project.id };

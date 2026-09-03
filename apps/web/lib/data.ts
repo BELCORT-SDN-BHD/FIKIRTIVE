@@ -47,10 +47,18 @@ export async function ensureDefaultProject(ownerId: string) {
   });
 }
 
+/** Pinned first, then most-recently-active first (Codex QA-CRE-006 —
+ *  `docs/specs/frontend-baseline.md` §5: the Create startup page's Canvas history was
+ *  oldest-first, the opposite of "recent activity first"). `updatedAt` is Prisma's
+ *  `@updatedAt` on `Project` (`packages/db/prisma/schema.prisma`) — it moves on rename,
+ *  pin/unpin and every `editJson` save (`actions.ts`'s `renameProject`,
+ *  `setProjectPinned`, and the edit-desk/cowork save paths), so it approximates recent
+ *  activity today; a canvas-node-only session (generate, chat — no rename/save) does not
+ *  yet touch it, which is the next-round gap this line registers. */
 export async function getProjects(ownerId: string) {
   return prisma.project.findMany({
     where: { ownerId, ...notDeleted },
-    orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { createdAt: "asc" }],
+    orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { updatedAt: "desc" }],
   });
 }
 
@@ -332,7 +340,7 @@ export type CandidateGen = Awaited<ReturnType<typeof getLooseVideoClips>>[number
 export async function getCoworkThreads(ownerId: string, projectId: string) {
   const threads = await prisma.chatThread.findMany({
     where: { projectId, ownerId, ...notDeleted },
-    orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { updatedAt: "desc" }],
+    orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { createdAt: "asc" }],
     select: { id: true, projectId: true, title: true, updatedAt: true, pinnedAt: true },
   });
 
@@ -362,7 +370,7 @@ export async function getCoworkThreads(ownerId: string, projectId: string) {
 export async function getAllCoworkThreadMetas(ownerId: string) {
   const threads = await prisma.chatThread.findMany({
     where: { ownerId, ...notDeleted },
-    orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { updatedAt: "desc" }],
+    orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { createdAt: "asc" }],
     select: { id: true, projectId: true, title: true, updatedAt: true, pinnedAt: true },
   });
   try {
