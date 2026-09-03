@@ -89,7 +89,7 @@ export default async function BillingPage({
 
         <section>
           <div className="flex items-start gap-3">
-            <Coins className="mt-0.5 size-5" aria-hidden />
+            <Coins className="mt-0.5 size-5 shrink-0" aria-hidden />
             <div>
               <h2 className="text-base font-semibold">Credits</h2>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -145,7 +145,7 @@ export default async function BillingPage({
 
         <section>
           <div className="flex items-start gap-3">
-            <WalletCards className="mt-0.5 size-5" aria-hidden />
+            <WalletCards className="mt-0.5 size-5 shrink-0" aria-hidden />
             <div>
               <h2 className="text-base font-semibold">Top up credits</h2>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -200,7 +200,7 @@ export default async function BillingPage({
             第⑦段只换外观:控件本体、写入路径、四条围栏行为一字未动。 */}
         <section>
           <div className="flex items-start gap-3">
-            <Gauge className="mt-0.5 size-5" aria-hidden />
+            <Gauge className="mt-0.5 size-5 shrink-0" aria-hidden />
             <div>
               <h2 className="text-base font-semibold">Spend cap</h2>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -229,7 +229,7 @@ export default async function BillingPage({
             this section is the fuller version, on the page where prices belong. */}
         <section>
           <div className="flex items-start gap-3">
-            <ScanEye className="mt-0.5 size-5" aria-hidden />
+            <ScanEye className="mt-0.5 size-5 shrink-0" aria-hidden />
             <div>
               <h2 className="text-base font-semibold">Auto-understanding</h2>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
@@ -254,7 +254,7 @@ export default async function BillingPage({
             us. Every number is the same constant the turn reserves and settles against. */}
         <section>
           <div className="flex items-start gap-3">
-            <Globe className="mt-0.5 size-5" aria-hidden />
+            <Globe className="mt-0.5 size-5 shrink-0" aria-hidden />
             <div>
               <h2 className="text-base font-semibold">Web search in chat</h2>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">

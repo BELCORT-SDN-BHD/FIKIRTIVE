@@ -6,7 +6,7 @@ import { OttoConfirmDialog } from "@/components/otto/OttoPromptDialog";
 import { SupportExit } from "@/components/exits/Exits";
 import { supportMailto } from "@/lib/exits";
 import { Button } from "@/components/ui/button";
-import { Field, FieldContent, FieldDescription, FieldTitle } from "@/components/ui/field";
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldTitle } from "@/components/ui/field";
 
 /**
  * 账号删除 —— 个人面(Personal)的唯一危险动作。
@@ -26,18 +26,20 @@ export function DeleteAccountCard({ email }: { email: string }) {
     <>
       {/* 已冻结的 Settings pattern §3.3:普通 setting row 是 plain row(标签 + 一句影响 +
           右侧动作),不是一张独立的 card。危险动作用 destructive 按钮表达,不靠一圈红边框。 */}
-      <Field orientation="responsive">
-        <FieldContent>
-          <FieldTitle>Delete account</FieldTitle>
-          <FieldDescription>
-            Ending your workspace is a request, not a switch. Hides your workspace.{" "}
-            <SupportExit subject="Erase my workspace" label="Contact us" /> to fully erase.
-          </FieldDescription>
-        </FieldContent>
-        <Button type="button" size="sm" variant="destructive" onClick={() => setOpen(true)}>
-          Delete
-        </Button>
-      </Field>
+      <FieldGroup>
+        <Field orientation="responsive">
+          <FieldContent>
+            <FieldTitle>Delete account</FieldTitle>
+            <FieldDescription>
+              Ending your workspace is a request, not a switch. Hides your workspace.{" "}
+              <SupportExit subject="Erase my workspace" label="Contact us" /> to fully erase.
+            </FieldDescription>
+          </FieldContent>
+          <Button type="button" size="sm" variant="destructive" onClick={() => setOpen(true)}>
+            Delete
+          </Button>
+        </Field>
+      </FieldGroup>
 
       <OttoConfirmDialog
         open={open}
