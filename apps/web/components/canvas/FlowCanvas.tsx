@@ -78,7 +78,21 @@ import {
 import { buildCanvasLineageTree } from "@/lib/canvas-lineage-tree";
 import { CanvasLineagePanel } from "./CanvasLineagePanel";
 import { CanvasComparePanel, type CanvasCompareCard } from "./CanvasComparePanel";
-import { canvasBatchDeleteCopy, canvasBatchSelection, canvasDownloadFileName, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
+import {
+  CANVAS_DIALOG_SELECTOR,
+  CANVAS_EDITABLE_SELECTOR,
+  canvasBatchDeleteCopy,
+  canvasBatchSelection,
+  canvasDeleteKeyIds,
+  canvasDownloadFileName,
+  mergeReloadedCanvasNodes,
+} from "@/lib/canvas-selection";
+import {
+  CANVAS_FIT_OVERLAY_SELECTORS,
+  canvasFitPadding,
+  type CanvasFitPadding,
+} from "@/lib/canvas-fit-padding";
+import { isTerminalCardStatus } from "@/lib/canvas-card-status";
 import { sameOriginDownloadUrl } from "@/lib/download-url";
 import {
   CANVAS_OTTO_CHAT_REQUIRED,
@@ -88,6 +102,7 @@ import {
 } from "@/lib/canvas-chat-reference";
 import {
   canvasMediaNodeSize,
+  canvasTerminalNodeSize,
   DEFAULT_CANVAS_MEDIA_NODE_SIDE,
   hasCanvasNodeSizeChanged,
   type CanvasMediaDimensions,
@@ -442,13 +457,36 @@ export default function FlowCanvas({
 
   // Build a stable per-node onAnimate that reads generationId at call time
   const onAnimateByNode = useRef<Record<string, () => void>>({});
+
+  /**
+   * 「摆好这块板」要给固定覆盖层让出的四边留白 —— 量出来的,不是写死的(FRONT-A15)。
+   *
+   * 从前这里传的是一个标量 `0.22`,而标量在 React Flow 里是「四边各留 22%」。画布上钉住的东西
+   * 一个都不对称(Otto 当前轮卡在左上、Otto 输入框在下方正中、工具条纵列在它上面、模式条与
+   * 缩放簇在右侧),所以对称留白摆出来的画有一部分就压在覆盖层底下:走查实测「Fit to screen」
+   * 之后一张视频卡 45% 被压住,点它落在 Otto 输入框上(QA-CRE-008)。算法与选择器清单都在
+   * `lib/canvas-fit-padding.ts` 一处。
+   */
+  const fitPadding = useCallback((): CanvasFitPadding | number => {
+    const board = canvasHostRef.current;
+    if (!board) return 0.22;
+    const overlays = CANVAS_FIT_OVERLAY_SELECTORS
+      .flatMap((selector) => Array.from(document.querySelectorAll<HTMLElement>(selector)))
+      .map((element) => element.getBoundingClientRect());
+    return canvasFitPadding(board.getBoundingClientRect(), overlays);
+  }, []);
+
+  const fitBoard = useCallback((duration: number) => {
+    void flowRef.current?.fitView({ padding: fitPadding(), duration });
+  }, [fitPadding]);
+
   const scheduleFitView = useCallback(() => {
     if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
     fitTimerRef.current = window.setTimeout(() => {
       fitTimerRef.current = null;
-      void flowRef.current?.fitView({ padding: 0.22, duration: 160 });
+      fitBoard(160);
     }, 80);
-  }, []);
+  }, [fitBoard]);
 
   useEffect(() => () => {
     if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
@@ -1248,8 +1286,13 @@ export default function FlowCanvas({
     if (!("rows" in read)) return;
     const mapped = read.rows.map((r) => {
       nodeDataRef.current[r.id] = { generationId: r.generationId ?? undefined, pos: { x: r.x, y: r.y } };
+      // 一张已经停下来的卡永远没有媒体可量,所以 `canvasMediaNodeSize` 对它是空转,它会一直
+      // 顶着 320×320 的默认正方形站在出好的卡(实测 320×180)旁边(走查 QA-CRE-008「失败卡
+      // 过大、盖住工作区」)。收成同一块板上正常卡的外形,规则在 `lib/canvas-node-size.ts`。
       const nodeSize = (r.type === "image" || r.type === "video")
-        ? canvasMediaNodeSize({ width: r.mediaWidth, height: r.mediaHeight }, { w: r.w, h: r.h })
+        ? (isTerminalCardStatus(r.status)
+            ? canvasTerminalNodeSize({ w: r.w, h: r.h })
+            : canvasMediaNodeSize({ width: r.mediaWidth, height: r.mediaHeight }, { w: r.w, h: r.h }))
         : { w: r.w, h: r.h };
       return {
         id: r.id,
@@ -1346,9 +1389,9 @@ export default function FlowCanvas({
     if (fittedScopeRef.current === scope) return;
     fittedScopeRef.current = scope;
     requestAnimationFrame(() => {
-      void flowRef.current?.fitView({ padding: 0.22, duration: 160 });
+      fitBoard(160);
     });
-  }, [flowReady, nodes.length, projectId]);
+  }, [flowReady, nodes.length, projectId, fitBoard]);
 
   // When the active thread's OTTO work starts, reload so the server bridge can
   // place a pending GenJob card on the canvas. When it finishes, reload again
@@ -1410,6 +1453,41 @@ export default function FlowCanvas({
     for (const move of persistMoves) void moveCanvasNode(projectId, move.id, { x: move.x, y: move.y, w: move.w, h: move.h });
     for (const id of deletes) void deleteCanvasNode(projectId, id);
   }, [projectId]);
+
+  /**
+   * Delete / Backspace takes the picked cards off the board (FRONT-A15).
+   *
+   * 走查 QA-CRE-002:选中一张卡按 Delete 与 Backspace,屏幕上什么都不发生。React Flow 自己的
+   * 删除键是**关着**的(`deleteKeyCode={null}`,下面那个 prop),因为它会不问一声就删,而在飞
+   * 的付费卡删掉不退款 —— 所以键盘这条路必须自己接,并且接到**已有的那两个确认框**上,不是
+   * 另开一条删除路:单张走 ✕/菜单同一个 `pendingDeleteId`(它带「还在生成、删了不退款」那句
+   * 警告),多张走批量确认框。已批准的设计夹具 `CanvasReference.tsx:470` 给的就是这个键。
+   *
+   * 选中状态只有一份 —— React Flow 记在卡上的 `selected`;这里读的是屏幕上那一份(会话过滤之后
+   * 的可见卡),看不见的卡不会被一次按键删掉。
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const ids = canvasDeleteKeyIds(
+        {
+          key: event.key,
+          editing: !!target?.closest?.(CANVAS_EDITABLE_SELECTOR),
+          dialogOpen: !!document.querySelector(CANVAS_DIALOG_SELECTOR),
+        },
+        filterNodesByConvo(nodesRef.current, activeThreadId, filterToConvo)
+          .filter((n) => n.selected === true)
+          .map((n) => n.id),
+      );
+      if (!ids) return;
+      // Backspace on a board is not the browser's "go back" — the press is ours now.
+      event.preventDefault();
+      if (ids.length === 1) setPendingDeleteId(ids[0]!);
+      else setPendingBatchDeleteIds(ids);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeThreadId, filterToConvo]);
 
   // Is the card awaiting delete a PAID generation still in flight? If so the confirm
   // must warn that removing won't refund and re-running charges again — this is what
@@ -2047,7 +2125,7 @@ export default function FlowCanvas({
               type="button"
               variant="ghost"
               size="icon-sm"
-              onClick={() => void flowRef.current?.fitView({ padding: 0.22, duration: 220 })}
+              onClick={() => fitBoard(220)}
             >
               <Maximize2 aria-hidden="true" strokeWidth={1.9} />
             </TooltipButton>
