@@ -129,13 +129,18 @@ export function VideoSpecPicker({
    * 收钱、无效**的假控件 —— 商家关掉声音、照原价付费、拿回带 AI 配音的片子,界面全程不报错。
    * 更贵的是:拨动它会改掉画布那两条路的 material JSON(`FlowCanvas.tsx` runAnimate/runT2v),
    * 于是 actionId 换身份、服务端判 fresh,「关掉声音重做一次」= 再付一次全价拿同一条片子。
+   * (接线之后这一点不是缺陷而是正解:开与关是**两个意图**,幂等键理应不同。)
    *
    * 所以这一格的准入条件只有一条,加新调用点时逐字核对:
    *   从这个 picker 的 `onChange` 到那条路的付费请求体之间,`audio` 一路不掉
-   *   (当心 `clampVideoSpec` —— 它只重建 seconds/resolution/aspectRatio,会静默抹掉 audio)。
-   * 今天只有资产详情 Animate 一条路满足(`DetailPanel.tsx` 第 402 行直读未夹的 `videoSpec?.audio`)。
-   * 画布两条路归 §8.2 批 II 收口:届时 clamp 保留 audio ＋ `useCanvasGen.ts` 两处请求体带上 audio,
-   * 才把 `audioToggle` 打开。围栏在 `apps/web/lib/__tests__/video-audio-toggle.test.ts`。
+   *   (当心 `clampVideoSpec` —— 它现在会保留 audio,但只保留布尔值;别再另写一个夹取)。
+   * 今天满足的三条路:
+   *   · 资产详情 Animate(`DetailPanel.tsx` 直读未夹的 `videoSpec?.audio`);
+   *   · 画布 Animate 与画布 t2v(`FlowCanvas.tsx` 两个弹窗 → `useCanvasGen.ts` 的
+   *     `animate` / `generateVideoFromText` 请求体带 `audio`,回执记 `videoAudio`)——
+   *     CREATE-A3 §8.2 批 II 收口,Codex QA-CRE-001 触发。
+   * 围栏在 `apps/web/lib/__tests__/video-audio-toggle.test.ts`(源码级)与
+   * `canvas-video-spec-ui.test.ts`／`canvas-video-audio-submit.test.ts`(行为级)。
    */
   audioToggle?: boolean;
 }) {
