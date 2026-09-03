@@ -70,6 +70,7 @@ describe("auth design system", () => {
       "Continue with email",
       "What's your email address?",
       "We'll send a temporary login code.",
+      "Email needed",
       "Use password instead",
       "Check your email",
       "We sent a temporary login code to",
@@ -86,6 +87,50 @@ describe("auth design system", () => {
       expect(reviewFixture).toContain(line);
       expect(loginForm).toContain(line);
     }
+  });
+
+  // FRONT-A14 —— 错误标题不再靠手挑。上一轮漏掉「Email needed」的病根就是「清单里写了
+  // 哪几句就查哪几句」:清单是人挑的,漏了不会红。这里改成**逐个枚举夹具**,例外必须
+  // 具名并写明理由 —— 夹具新增一句而生产没跟上,会当场变红。
+  it("FRONT-A14 carries every alert title the approved Auth pattern defines", () => {
+    // 夹具专有:这块牌子是给走查者看的,告诉他这一步不会真的打开 Google 窗口。
+    // 生产在这一步真的跳转,没有、也不该有它。
+    const FIXTURE_ONLY = new Set(["Provider handoff preview"]);
+
+    const fixtureTitles = [
+      ...new Set(
+        [...reviewFixture.matchAll(/<AlertTitle>([^<]+)<\/AlertTitle>/g)].map((match) => match[1]),
+      ),
+    ];
+    expect(fixtureTitles.length).toBeGreaterThan(0);
+
+    for (const title of fixtureTitles) {
+      if (FIXTURE_ONLY.has(title)) {
+        expect(loginForm).not.toContain(title);
+        continue;
+      }
+      expect(loginForm).toContain(title);
+    }
+  });
+
+  // FRONT-A14 —— 邮箱步两种错误态,两个标题,不许再合成一个。
+  it("FRONT-A14 titles the email step's empty-email refusal exactly as the fixture does", () => {
+    // 夹具那一态的触发器:空邮箱按「Use password instead」。
+    expect(reviewFixture).toContain("if (!email.trim()) {");
+    expect(reviewFixture).toContain('<AlertTitle>Email needed</AlertTitle>');
+
+    // 生产同一条路可达 —— 那颗按钮是 type="button",原生 required 拦不住它,
+    // 所以它命中 invalid_email 这条 reason,标题必须是夹具那一句。
+    expect(loginForm).toContain('reason: "invalid_email"');
+    expect(loginForm).toContain(
+      '{error.source === "sign_in_code" && error.reason === "invalid_email"\n'
+        + '                    ? "Email needed"\n'
+        + '                    : "Email could not be continued"}',
+    );
+
+    // 服务端故障(reason "unknown")夹具没有这一态,标题保留主干原句 —— 那时邮箱是好的。
+    expect(loginForm).toContain("SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE");
+    expect(reviewFixture).not.toContain("Email could not be continued");
   });
 
   it("FRONT-A14 leaves 'Sign-in failed' on the hub only — the password step follows the fixture", () => {
