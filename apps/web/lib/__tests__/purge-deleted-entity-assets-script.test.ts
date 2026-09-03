@@ -252,4 +252,13 @@ describe("scripts/tools/purge-deleted-entity-assets.ts (2026-09-03 S4 变更登�
     const purgedAsset = await prisma.asset.findFirst({ where: { id: assetId, ownerId: OWNER } });
     expect(purgedAsset?.deletedAt).not.toBeNull();
   }, 30_000);
+
+  it("P2-4(判官第二轮复审): a value that looks like another flag (--owner --apply, owner value omitted) is refused, not silently scanned as an empty tenant", async () => {
+    // owner's VALUE is missing here — the next token is another flag, not a real ownerId.
+    const result = await runScript(["--owner", "--apply"]);
+    expect(result.status).not.toBe(0); // must fail loudly, never a quiet 0-entity "success"
+    expect(result.stdout + result.stderr).toMatch(/--owner needs a value/);
+    // and nothing was touched — the earlier "--apply: cascades…" test's fixture (if any residue
+    // exists under a real OWNER) must be unaffected by this malformed invocation
+  }, 15_000);
 });

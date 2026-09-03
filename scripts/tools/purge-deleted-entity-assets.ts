@@ -69,7 +69,19 @@ const distImport = (rel: string) => import(pathToFileURL(path.join(ROOT, rel)).h
 
 const args = process.argv.slice(2);
 const apply = args.includes("--apply");
-const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : null; };
+// P2-4(判官第二轮复审):`--owner --apply`(漏写了 owner 的值,下一个 token 恰好是另一个
+// flag)之前会被静默当成 `ownerFilter = "--apply"` —— 不是真实 ownerId,查不到任何实体,
+// 脚本会"成功"跑完但什么都没扫到,像是数据库空空如也而不是命令行打错了字。value 若以
+// `--` 开头就当作缺值,直接报错退出,不静默空转。
+const flag = (name: string): string | null => {
+  const i = args.indexOf(name);
+  if (i < 0) return null;
+  const value = args[i + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`${name} needs a value (got ${value === undefined ? "nothing" : `"${value}"`} — looks like a missing/misplaced argument)`);
+  }
+  return value;
+};
 const ownerFilter = flag("--owner");
 
 type ExclusiveAsset = { id: string; ownerId: string; contentHash: string; ext: string };
@@ -118,6 +130,12 @@ class DryRunRollback extends Error {
  * 修法:dry-run 也让全部实体按 apply 会发生的**同一个顺序**在**同一个事务**里依次处理
  * (这样第 N 个实体的软删对第 N+1 个实体的检查可见,跟 apply 分开提交时的可见性完全一致),
  * 最后整个事务一次性回滚,不落一行、不删一个对象。
+ *
+ * 2026-09-03 判官第二轮复审(P2 顺手记录,登记 issue #359)——已知代价:全部候选实体挤进
+ * **一个**事务意味着这一次 dry-run 最长可能握住这份连带的行锁/事务连接长达 `timeout`
+ * (120s)。存量足够大的平台级扫(尤其不带 --owner)会比旧版「一实体一事务」更长时间占着一条
+ * 数据库连接。目前认为可接受(dry-run 是运维手动跑的一次性命令,不是常驻服务路径),但如果
+ * 平台数据量涨到让这个变成真实痛点,需要重新考虑(比如分批,每批一个大事务)。
  */
 async function runDryRunSimulation(
   prisma: PrismaClient,
@@ -260,6 +278,14 @@ async function run(
  * per-row re-check, same shape as asset-purge.ts's P1-2 fix, in case a re-upload resurrected
  * it between the listing and now). Idempotent: an already-deleted object's `storage.exists`
  * check alone excludes it, no delete attempt at all.
+ *
+ * 2026-09-03 判官第二轮复审(P2 顺手记录,登记 issue #359)——判据故意比 asset-purge.ts 的
+ * 单一权威(`purgeOrphanedReferenceAssets`:无活 ReferenceImage + 无 Generation)更宽:这里
+ * 只看 `Asset.deletedAt IS NOT NULL`,不重新核验「无引用/无 Generation」。这是刻意的,不是
+ * 疏漏——deletedAt 本身就是那条判据算完之后才会被打上的墓碑(唯一的写手是
+ * purgeOrphanedReferenceAssets 那次 updateMany),这条重扫信的是"这行已经被判过一次独占",
+ * 不是重新去判。前提仍然是 assetUpsert 是唯一的复活路径(见 asset-purge.ts 顶部注释的同一条
+ * 已知边界)——这条重扫和那条边界共享同一个假设,不是两条互相独立的信任来源。
  */
 async function sweepLeftoverTombstonedAssets(
   prisma: PrismaClient,

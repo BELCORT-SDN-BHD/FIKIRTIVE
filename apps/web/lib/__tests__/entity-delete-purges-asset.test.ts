@@ -304,3 +304,48 @@ describe("P1-2(判官第一轮复审)变异测试 —— 真删存储对象前�
     await softDeleteEntity(entityId).catch(() => {});
   });
 });
+
+describe("P2-5(判官第二轮复审) —— purgeAssetStorage 的真删前重读自己失败,不该把商家已经成功的删除动作变成一次失败", () => {
+  it("a transient DB error on the pre-delete re-check is caught: softDeleteEntity still returns ok, and the object is left for the leftover sweep to retry", async () => {
+    mockOwner.mockResolvedValue({ ownerId: OWNER_A, email: "a@castpurge.test" });
+    const entityId = await createEntityRow(OWNER_A, "Re-check DB blip Cast");
+    const { assetId, key } = await putAsset(OWNER_A, "recheck-db-blip");
+    await attachRef(OWNER_A, entityId, assetId);
+
+    // vi.spyOn on the tenant-guard-extended prisma client's model delegate does not survive
+    // mockRestore() cleanly (the extension wraps model accessors, and restoring the original
+    // descriptor leaves findFirst undefined — reproduced while writing this test) — so instead
+    // of spy+restore, temporarily replace the bound method and put the SAME reference back by
+    // hand, which is safe here because Object.getOwnPropertyDescriptor confirms `findFirst` is
+    // a plain own, writable property on `prisma.asset` (not a getter/proxy trap).
+    const originalFindFirst = prisma.asset.findFirst;
+    let calls = 0;
+    prisma.asset.findFirst = ((...args: Parameters<typeof originalFindFirst>) => {
+      calls += 1;
+      if (calls === 1) return Promise.reject(new Error("simulated: too many database connections"));
+      return originalFindFirst.apply(prisma.asset, args);
+    }) as typeof originalFindFirst;
+
+    const res = await softDeleteEntity(entityId);
+    expect(res).toEqual({ ok: true, shotRefs: 0 }); // the DB-side tombstone genuinely committed — this must still read as success
+
+    prisma.asset.findFirst = originalFindFirst;
+
+    const [entity, ref, asset] = await Promise.all([
+      prisma.entity.findFirst({ where: { id: entityId, ownerId: OWNER_A } }),
+      prisma.referenceImage.findFirst({ where: { entityId, ownerId: OWNER_A } }),
+      prisma.asset.findFirst({ where: { id: assetId, ownerId: OWNER_A } }),
+    ]);
+    expect(entity?.deletedAt).not.toBeNull();
+    expect(ref?.deletedAt).not.toBeNull();
+    expect(asset?.deletedAt).not.toBeNull(); // DB tombstone is real and unaffected by the re-check's own failure
+
+    // the re-check couldn't confirm it was safe, so the byte delete was skipped this round —
+    // the object is still there, left for scripts/tools/purge-deleted-entity-assets.ts's
+    // leftover sweep (same predicate: deletedAt set + object still present) to retry.
+    expect(await storage.exists(key)).toBe(true);
+
+    // cleanup: purge it for real now that the re-check can succeed
+    await purgeAssetStorage([{ id: assetId, ownerId: OWNER_A, contentHash: (await prisma.asset.findFirst({ where: { id: assetId, ownerId: OWNER_A } }))!.contentHash, ext: "png" }]);
+  });
+});

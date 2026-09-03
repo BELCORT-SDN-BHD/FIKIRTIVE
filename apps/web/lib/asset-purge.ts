@@ -18,6 +18,13 @@ import { storage } from "./storage";
  *     缺陷」)。在一个(哪怕已软删的)Generation 底下抽走字节等于替这条合同违约。
  *
  * 账本(CreditLedger)与 GenJob 记录不在这条判据里,这里也从不碰它们 —— 这不是一条钱路。
+ *
+ * 2026-09-03 判官第二轮复审(P2 顺手记录,不是本票要修的缺口,登记 issue #359)——
+ * 「复活」这条安全网(purgeAssetStorage 真删前重读 deletedAt)只在**唯一能把 deletedAt
+ * 改回 null 的路径就是 assetUpsert()**这个前提下成立;这个前提本身依赖上传/挂靠侧永远
+ * 守规矩(每一处新建 ReferenceImage 之前都先过 assetUpsert),这份文件没法替上传侧强制
+ * 这一点——未来若有新代码路径绕开 assetUpsert 直接 `referenceImage.create` 指向一个已经
+ * deletedAt 的 Asset,这个安全网就会失效而不自知。窗口没有完全关死,需要上传侧配合守住。
  */
 
 /**
@@ -50,6 +57,12 @@ export async function purgeOrphanedReferenceAssets(
   // 锁必须是判「独占」的第一步,不是先读再补锁——先锁住这些候选行(顺带把 ownerId/
   // deletedAt IS NULL 的过滤一起做了,不满足的行直接不在锁定结果里),后面所有的
   // 「还有没有人指着它」的判断都在锁已经拿到之后才做。
+  //
+  // $queryRaw 不经过 packages/db/src/tenant-guard.ts 的 Prisma 扩展(raw 操作在那层看到的
+  // model 是 undefined,守卫对它直接放行——见 tenant-guard.ts 顶部注释;2026-09-03 判官第
+  // 二轮复审确认过这不是新缺口,同一个绕过早就在 packages/db/src/credits.ts 的
+  // lockOrgForAdjust 用同一手法,`cross-tenant-write.test.ts` 已有覆盖 raw SQL 场景的双向
+  // 租户测试)——这里靠的是显式 `WHERE "ownerId" = ${ownerId}` 字面量,跟别处的做法一致。
   const locked = await tx.$queryRaw<{ id: string }[]>`
     SELECT "id" FROM "Asset"
     WHERE "id" = ANY(${unique}::text[]) AND "ownerId" = ${ownerId} AND "deletedAt" IS NULL
@@ -113,10 +126,20 @@ export async function purgeAssetStorage(
   assets: readonly { id: string; ownerId: string; contentHash: string; ext: string }[],
 ): Promise<void> {
   for (const asset of assets) {
-    const fresh = await prisma.asset.findFirst({
-      where: { id: asset.id, ownerId: asset.ownerId },
-      select: { deletedAt: true },
-    });
+    // P2-5(判官第二轮复审):这条重读本身也可能失败(一次瞬时的 DB 连接抖动——真实发生过,
+    // 不是假设)。DB 那一行的 deletedAt 墓碑在这之前已经提交,是权威判据;重读只是"删字节前
+    // 多问一句还在不在"的保险,它自己失败不该把已经成功的删除动作变成商家看到的一次失败。
+    // 失败就跳过这一条(不确定安全就不删,交给下面同一条留痕/重试路径),动作照常返回成功。
+    let fresh: { deletedAt: Date | null } | null;
+    try {
+      fresh = await prisma.asset.findFirst({
+        where: { id: asset.id, ownerId: asset.ownerId },
+        select: { deletedAt: true },
+      });
+    } catch (e) {
+      console.error("[asset-purge] pre-delete re-check failed (skipping this asset's byte delete — will be retried by the leftover sweep in scripts/tools/purge-deleted-entity-assets.ts):", e instanceof Error ? e.message : e);
+      continue;
+    }
     if (!fresh || fresh.deletedAt === null) continue; // resurrected by a re-upload — do not touch the bytes
     try {
       await storage.deleteObject(storageKey(asset.ownerId, asset.contentHash, asset.ext));
