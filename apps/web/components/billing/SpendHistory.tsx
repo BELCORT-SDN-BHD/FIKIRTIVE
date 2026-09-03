@@ -72,9 +72,12 @@ export function SpendHistory({ entries, window }: { entries: SpendEntry[]; windo
         </div>
         {entries.length > 0 ? <Badge variant="outline">{entries.length} entries</Badge> : null}
       </div>
-      {/* 同一条根因(判官 P1①):列的显隐原本按视口断点,在 280px 的内容列里 `sm:` 照样命中,
-          Details 整列被塞进去。改成按这个盒子自己的宽度判断。 */}
-      <div className="@container/history mt-4 overflow-hidden rounded-[var(--radius-card)] border border-border">
+      {/* 列的显隐留在**视口**断点上,不跟着上面那一节改成容器查询 —— 试过,是错的:
+          `Table` 自己就带 `overflow-x-auto`(components/ui/table.tsx:11),表格永远撑不破这个
+          盒子,所以这里根本没有 P1① 那个溢出问题;而按盒子宽度判断会在内容列窄于 448px 时
+          把 `Details` 整列藏起来,那一列写的正是「12 credits used · 28 refunded」——
+          退了多少钱。三条钱路 e2e(02/03/04)当场变红,是它们逮住的。 */}
+      <div className="mt-4 overflow-hidden rounded-[var(--radius-card)] border border-border">
         {entries.length === 0 ? (
           <Empty>
             <EmptyHeader>
@@ -88,8 +91,8 @@ export function SpendHistory({ entries, window }: { entries: SpendEntry[]; windo
             <TableHeader>
               <TableRow>
                 <TableHead>Activity</TableHead>
-                <TableHead className="hidden @md/history:table-cell">Details</TableHead>
-                <TableHead className="hidden @lg/history:table-cell">Date</TableHead>
+                <TableHead className="hidden sm:table-cell">Details</TableHead>
+                <TableHead className="hidden md:table-cell">Date</TableHead>
                 <TableHead className="text-right">Credits</TableHead>
               </TableRow>
             </TableHeader>
@@ -102,10 +105,10 @@ export function SpendHistory({ entries, window }: { entries: SpendEntry[]; windo
                       {entry.pending ? <Badge variant="warning">Held</Badge> : null}
                     </div>
                   </TableCell>
-                  <TableCell className="hidden max-w-md whitespace-normal text-muted-foreground @md/history:table-cell">
+                  <TableCell className="hidden max-w-md whitespace-normal text-muted-foreground sm:table-cell">
                     {entry.detail ?? "—"}
                   </TableCell>
-                  <TableCell className="hidden text-muted-foreground @lg/history:table-cell">{entry.atLabel}</TableCell>
+                  <TableCell className="hidden text-muted-foreground md:table-cell">{entry.atLabel}</TableCell>
                   <TableCell className="text-right font-mono font-medium tabular-nums">
                     {entry.delta > 0 ? (
                       <Badge variant="success">+{formatCredits(entry.delta)}</Badge>

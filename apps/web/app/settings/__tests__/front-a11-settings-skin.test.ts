@@ -78,6 +78,11 @@ describe("FRONT-A11 Settings 外壳与四面的换皮", () => {
     // 第 1 轮判官 P1①:`sm:`(640px 视口)与 Settings 内容列的实际宽度是两件不相干的事 ——
     // 1100×800 且 Otto 面板打开时内容列只有 280px,视口断点照样命中,`On hold` 的 Badge 与
     // 那段冻结额说明会画到边框外面。设计系统自己的做法是容器查询(components/ui/field.tsx)。
+    //
+    // 钉的是**横向分栏**(grid 劈几列 / flex 转不转行 / 分栏那条竖线),不是表格列的显隐:
+    // `Table` 自带 `overflow-x-auto`,撑不破盒子,而把列的显隐改成容器查询会在窄内容列里
+    // 藏掉「退了多少钱」那一列(见 components/billing/SpendHistory.tsx 里的说明)。
+    const SPLITTING = /(?:^|[\s"])(?:sm|md|lg|xl):(?:grid-cols|flex-row|flex-col|border-l|border-r|pl-|pr-|w-|justify-|items-)/
     for (const file of [
       "app/billing/page.tsx",
       "components/billing/SpendHistory.tsx",
@@ -89,12 +94,13 @@ describe("FRONT-A11 Settings 外壳与四面的换皮", () => {
       "app/profile/ProfileNames.tsx",
     ]) {
       const code = stripComments(source(file))
-      const viewportBreakpoints = code.match(/className="[^"]*(?:^|[\s"])(?:sm|md|lg|xl):[^"]*"/g) ?? []
-      expect(viewportBreakpoints, `${file} 还在用视口断点排 Settings 内容列里的东西`).toEqual([])
+      const offenders = (code.match(/className="[^"]*"/g) ?? []).filter((c) => SPLITTING.test(c))
+      expect(offenders, `${file} 还在用视口断点劈 Settings 内容列里的横向分栏`).toEqual([])
     }
     // 换上来的确实是容器查询,不是把断点删了了事。
     expect(source("app/billing/page.tsx")).toContain("@container/credits")
     expect(source("app/billing/page.tsx")).toContain("@sm/credits:grid-cols-2")
+    expect(source("app/billing/page.tsx")).toContain("@container/packs")
   })
 
   it("FRONT-A11:每一面都说清楚这次改动影响谁", () => {
