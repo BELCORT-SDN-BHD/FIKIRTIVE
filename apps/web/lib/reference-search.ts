@@ -232,10 +232,17 @@ async function mediaRows(ownerId: string, options: ReferenceSearchOptions): Prom
  */
 async function withThumbs(rows: Ranked[]): Promise<ReferenceResult[]> {
   return Promise.all(
-    rows.map(async ({ rank: _rank, recency: _recency, thumbKey, ...rest }) => {
-      if (!thumbKey) return rest;
-      const present = await storage.exists(thumbKey).catch(() => false);
-      return { ...rest, thumbUrl: present ? storageKeyToSrc(thumbKey) : null };
+    rows.map(async (row) => {
+      const item: ReferenceResult = {
+        type: row.type,
+        id: row.id,
+        name: row.name,
+        source: row.source,
+        thumbUrl: null,
+      };
+      if (!row.thumbKey) return item;
+      const present = await storage.exists(row.thumbKey).catch(() => false);
+      return present ? { ...item, thumbUrl: storageKeyToSrc(row.thumbKey) } : item;
     }),
   );
 }
