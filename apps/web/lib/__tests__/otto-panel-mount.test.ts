@@ -314,6 +314,32 @@ describe("一屏只有一个 Otto", () => {
     expect(el.querySelector("[data-otto-panel]")).toBeNull();
     expect(el.querySelector("[data-page]")).not.toBeNull();
   });
+
+  /**
+   * 判官裁定 P1-A(2026-09-04)—— `/create` 与画布不同:画布是 `APPLICATION_SHELL_CARVE_OUTS`
+   * 成员,整条壳(含顶栏)根本不画,顶栏那颗 Ask Otto 从来够不着;`/create` 是普通商家面,顶栏
+   * 照画,只是面板不挂在这一面(`panel-surface.ts`)。合并前 `ottoPanelMountsOn(CREATE_NAV_HREF)`
+   * 是 `true`,顶栏那颗按钮是活的;本票把 `/create` 收进「这一面自己已经有一个 Otto」名单之后,
+   * `MerchantTopBar` 若还是无条件渲染这颗按钮,点下去就是 `controls?.togglePanel()` 的空动作
+   * —— 一颗建了没用的死按钮。这里钉的是壳里那半:面板不挂的商家面,顶栏干脆不画这颗按钮。
+   */
+  it("CREATE-A1 · /create 顶栏不留一颗死的 Ask Otto(判官 P1-A)", async () => {
+    const el = await mount(shell(CREATE_NAV_HREF));
+
+    expect(ottoPanelMountsOn(CREATE_NAV_HREF)).toBe(false);
+    // 与画布不同:`/create` 是普通商家面,顶栏本身照画。
+    expect(el.querySelector("[data-merchant-topbar]")).not.toBeNull();
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    expect(el.querySelector("[data-shell-ask-otto]")).toBeNull();
+    expect(el.querySelector("[data-page]")).not.toBeNull();
+  });
+
+  it("CREATE-A1 · 面板挂着的商家面,顶栏那颗 Ask Otto 照旧在(不是整颗按钮被误删)", async () => {
+    const el = await mount(shell(MERCHANT_SURFACE));
+
+    expect(ottoPanelMountsOn(MERCHANT_SURFACE)).toBe(true);
+    expect(el.querySelector("[data-shell-ask-otto]")).not.toBeNull();
+  });
 });
 
 describe("入口:从「跳转」变成「开面板」(§3.2)", () => {
