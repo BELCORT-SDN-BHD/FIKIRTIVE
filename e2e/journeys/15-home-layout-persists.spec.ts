@@ -14,10 +14,23 @@
  * that merely lost a card. Components without a real production data source are not rendered at
  * all (Founder 2026-09-03 裁决九), which is why the panel offers exactly one checkbox here — see
  * `apps/web/lib/home-layout.ts`.
+ *
+ * EVERY CONTENT ASSERTION IS SCOPED TO `<main>`, and that is load-bearing rather than tidy.
+ * Home streams under its own `loading.tsx` boundary, and App Router leaves a SECOND, hidden copy
+ * of the streamed markup in the document (`<div hidden id="S:…">` — the very duplication
+ * `app/(home)/page.tsx` documents at the top of the file). A bare `getByText` matches hidden text
+ * too, so it resolves to two elements and dies of strict mode; `getByRole("main")` skips hidden
+ * subtrees, so scoping through it asks about the copy the merchant can actually read. Measured on
+ * CI, 2026-09-03 — the first version of this journey failed exactly there.
  */
 import { test, expect } from "@playwright/test";
 import { seedWorkspace } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
+
+/** The honest not-connected state of the one component that has a real producer. */
+const HEALTH_BLOCK = "Connect marketing data to see your health";
+/** What Home says when the merchant has turned everything off. */
+const EMPTY_HOME = "Choose what belongs on Home";
 
 test("FRONT-A4 — a customized Home survives a reload and a fresh browser", async ({ page, browser }) => {
   const merchant = await seedWorkspace({
@@ -28,48 +41,50 @@ test("FRONT-A4 — a customized Home survives a reload and a fresh browser", asy
   });
 
   await signIn(page, merchant, "/");
+  const home = page.getByRole("main");
 
   // Before customizing: the one component with a real producer is on the page, in its honest
   // not-connected state (this workspace has no ad account).
-  await expect(page.getByText("Connect marketing data to see your health")).toBeVisible();
-  const customize = page.getByRole("button", { name: "Customize home" });
+  await expect(home.getByText(HEALTH_BLOCK)).toBeVisible();
+  const customize = home.getByRole("button", { name: "Customize home" });
   await expect(customize).toBeVisible();
 
   await customize.click();
   const panel = page.getByRole("complementary", { name: "Customize home" });
   await expect(panel).toBeVisible();
   // The filters are locked while an unsaved draft is open — changing the goal would discard it.
-  await expect(page.locator('[aria-label="Business goal"]')).toBeDisabled();
+  await expect(home.locator('[aria-label="Business goal"]')).toBeDisabled();
 
   await panel.getByRole("checkbox", { name: "Marketing health" }).click();
   await panel.getByRole("button", { name: "Save" }).click();
 
   // The empty state is the design's invitation, not a blank page.
-  await expect(page.getByText("Choose what belongs on Home")).toBeVisible();
-  await expect(page.getByText("Connect marketing data to see your health")).toHaveCount(0);
+  await expect(home.getByText(EMPTY_HOME)).toBeVisible();
+  await expect(home.getByText(HEALTH_BLOCK)).toHaveCount(0);
 
   // ① Reload — a page that kept the choice in memory loses it here.
   await page.reload();
-  await expect(page.getByText("Choose what belongs on Home")).toBeVisible();
-  await expect(page.getByText("Connect marketing data to see your health")).toHaveCount(0);
+  await expect(page.getByRole("main").getByText(EMPTY_HOME)).toBeVisible();
+  await expect(page.getByRole("main").getByText(HEALTH_BLOCK)).toHaveCount(0);
 
   // ② A browser that has never seen this workspace: no cookies, no browser storage of any kind.
   const fresh = await browser.newContext();
   try {
     const secondScreen = await fresh.newPage();
     await signIn(secondScreen, merchant, "/");
-    await expect(secondScreen.getByText("Choose what belongs on Home")).toBeVisible();
-    await expect(secondScreen.getByText("Connect marketing data to see your health")).toHaveCount(0);
+    const secondHome = secondScreen.getByRole("main");
+    await expect(secondHome.getByText(EMPTY_HOME)).toBeVisible();
+    await expect(secondHome.getByText(HEALTH_BLOCK)).toHaveCount(0);
 
     // And it is a preference, not a one-way door: putting the component back sticks too.
-    await secondScreen.getByRole("button", { name: "Customize home" }).click();
+    await secondHome.getByRole("button", { name: "Customize home" }).click();
     const secondPanel = secondScreen.getByRole("complementary", { name: "Customize home" });
     await secondPanel.getByRole("checkbox", { name: "Marketing health" }).click();
     await secondPanel.getByRole("button", { name: "Save" }).click();
-    await expect(secondScreen.getByText("Connect marketing data to see your health")).toBeVisible();
+    await expect(secondHome.getByText(HEALTH_BLOCK)).toBeVisible();
 
     await page.reload();
-    await expect(page.getByText("Connect marketing data to see your health")).toBeVisible();
+    await expect(page.getByRole("main").getByText(HEALTH_BLOCK)).toBeVisible();
   } finally {
     await fresh.close();
   }
