@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import * as React from "react";
 import { CheckCircle2, Eye, FileText, History, Plus, Sparkles, Trash2, Undo2 } from "lucide-react";
 
+// 走 `@fikirtive/core/memory-sections` 这条子路径,不走总 barrel:总 barrel 拖得进
+// Node-only 的东西,而这一份是 "use client"(围栏 lib/__tests__/client-core-imports.test.ts)。
 import {
   BRAND_SECTIONS,
   brandOriginLabel,
@@ -14,7 +16,7 @@ import {
   isBrandSectionKey,
   type BrandSectionKey,
   type BrandContextStatus,
-} from "@fikirtive/core";
+} from "@fikirtive/core/memory-sections";
 import {
   Accordion,
   AccordionContent,
