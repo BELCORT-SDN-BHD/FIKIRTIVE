@@ -2,16 +2,20 @@
 import { useRef, useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import {
-  CloudIcon,
   CopyPlusIcon,
+  DownloadIcon,
   GitBranchIcon,
   InfoIcon,
   PlayIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
+  WandSparklesIcon,
 } from "lucide-react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
+import { CanvasNodeFooter } from "./CanvasNodeFooter";
 import { CanvasNodeLabel } from "./CanvasNodeLabel";
+import { CanvasNodeMoreMenu } from "./CanvasNodeMoreMenu";
+import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { NodeRemakeComposer } from "./NodeRemakeComposer";
 import { NodeToolbarIconButton } from "./NodeToolbarIconButton";
 import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
@@ -47,6 +51,9 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     onOpenLineage?: () => void;
     onDelete?: () => void;
     onOpenDetail?: () => void;
+    /** Save this one card's media to the merchant's computer. Supplied by FlowCanvas, which owns
+     *  the `<a download>` and the file name — the same path the "N selected" bar already uses. */
+    onDownload?: () => void;
     /** Hands the whole picked set to Otto as references — an explicit press, never a click on
      *  the video itself (#604 · spec #599 D6). */
     onSendToOtto?: () => void;
@@ -116,86 +123,82 @@ export function VideoNode({ data, id, selected }: NodeProps) {
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        {/* FIVE CONTROLS, IN THE APPROVED PATTERN'S OWN ORDER (Founder 2026-09-03: 生产界面严格按
+            UIUX 设计走) — the image card's note explains the convergence. A video card has no
+            Animate: it is already the animation. */}
         <ButtonGroup aria-label="Video actions" className="cv-node-action-group">
-        {actionable && (
-          <NodeToolbarIconButton
-            type="button"
-            label="Show how this video was made"
-            visibleLabel="Info"
-            tooltip="When it was made, the settings, and what it cost"
-            aria-pressed={infoOpen}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
-          >
-            <InfoIcon aria-hidden />
-          </NodeToolbarIconButton>
-        )}
-        {/* T6: the card's whole story — what made it, what it made, who came out of the same
-            press. Offered on a card that failed too: where it came from is exactly what a
-            merchant wants to know about a card that did not work (#605). */}
-        {d.onOpenLineage && (
-          <NodeToolbarIconButton
-            type="button"
-            label="Show what this card came from"
-            visibleLabel="Lineage"
-            tooltip="What made this card, and what it made"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); d.onOpenLineage?.(); }}
-          >
-            <GitBranchIcon aria-hidden />
-          </NodeToolbarIconButton>
-        )}
         {/* D6: the one and only way a card reaches Otto. Clicking the video used to do it
-            silently; now the merchant asks for it, and the whole picked set goes at once (#604). */}
+            silently; now the merchant asks for it, and the whole picked set goes at once (#604).
+            This is the pattern's "Edit with Otto": the card becomes the conversation's context. */}
         {canSendToOtto && (
           <NodeToolbarIconButton
             type="button"
-            label="Send the picked cards to Otto"
-            visibleLabel="Send to Otto"
+            label="Edit with Otto"
+            visibleLabel="Edit with Otto"
             tooltip={d.sendToOttoTitle ?? "Hand this to Otto as a reference"}
             title={d.sendToOttoTitle ?? "Hand this to Otto as a reference"}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onSendToOtto?.(); }}
           >
-            <CloudIcon aria-hidden />
+            <WandSparklesIcon aria-hidden />
           </NodeToolbarIconButton>
         )}
         {canRemake && !!originalPrompt && (
-          <Button
-            type="button"
-            aria-label="Make another version of this video"
-            variant="secondary"
-            size="xs"
-            className="nodrag nopan"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); d.onRemake?.(id, originalPrompt); }}
-            title={`Make another one from the same description${d.remakeCostHint ? ` · ${d.remakeCostHint}` : ""} · you confirm before anything is charged`}
-          >
-            <CopyPlusIcon data-icon="inline-start" aria-hidden />
-            More like this
-          </Button>
-        )}
-        {actionable && d.onOpenDetail && (
           <NodeToolbarIconButton
             type="button"
-            label="Open video details"
-            visibleLabel="Detail"
+            label="Create variations"
+            visibleLabel="Create variations"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); d.onOpenDetail?.(); }}
+            onClick={(e) => { e.stopPropagation(); d.onRemake?.(id, originalPrompt); }}
+            tooltip={`Make another one from the same description${d.remakeCostHint ? ` \u00b7 ${d.remakeCostHint}` : ""} \u00b7 you confirm before anything is charged`}
+            title={`Make another one from the same description${d.remakeCostHint ? ` \u00b7 ${d.remakeCostHint}` : ""} \u00b7 you confirm before anything is charged`}
           >
-            <SlidersHorizontalIcon aria-hidden />
+            <CopyPlusIcon aria-hidden />
           </NodeToolbarIconButton>
         )}
-        <NodeToolbarIconButton
-          type="button"
-          label="Delete video node"
-          visibleLabel="Delete"
-          variant="destructive-secondary"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
-        >
-          <Trash2Icon aria-hidden />
-        </NodeToolbarIconButton>
+        {/* Download — the same `<a download>` the board's own "N selected" bar and the Detail
+            panel already use, aimed at this one card. No new business layer. */}
+        {actionable && d.onDownload && (
+          <NodeToolbarIconButton
+            type="button"
+            label="Download"
+            visibleLabel="Download"
+            tooltip="Save this to your computer"
+            title="Save this to your computer"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onDownload?.(); }}
+          >
+            <DownloadIcon aria-hidden />
+          </NodeToolbarIconButton>
+        )}
+        <CanvasNodeMoreMenu label="More actions">
+          {actionable && (
+            <DropdownMenuItem onSelect={() => setInfoOpen((open) => !open)}>
+              <InfoIcon aria-hidden />
+              {infoOpen ? "Hide how this was made" : "Show how this video was made"}
+            </DropdownMenuItem>
+          )}
+          {/* T6: the card's whole story — what made it, what it made, who came out of the same
+              press. Offered on a card that failed too: where it came from is exactly what a
+              merchant wants to know about a card that did not work (#605). */}
+          {d.onOpenLineage && (
+            <DropdownMenuItem onSelect={() => d.onOpenLineage?.()}>
+              <GitBranchIcon aria-hidden />
+              Show what this card came from
+            </DropdownMenuItem>
+          )}
+          {actionable && d.onOpenDetail && (
+            <DropdownMenuItem onSelect={() => d.onOpenDetail?.()}>
+              <SlidersHorizontalIcon aria-hidden />
+              Open video details
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onSelect={() => d.onDelete?.()}>
+            <Trash2Icon aria-hidden />
+            Remove from canvas
+          </DropdownMenuItem>
+        </CanvasNodeMoreMenu>
         </ButtonGroup>
       </NodeToolbar>
       {infoOpen && (
@@ -243,8 +246,11 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     {/* The video is a video, not a button: clicking it picks the card up (and the play control
         still just plays it). Everything the card can DO lives on its toolbar above (#604 · D6). */}
     <div
-      className="al-panel cv-node-frame"
+      className="al-panel cv-node-frame cv-node-frame-media"
     >
+      {/* The pattern's card is a media well with a named strip under it, so the well is its own
+          box rather than the whole card (`CanvasReference.tsx`: `h-[calc(100%-42px)]`). */}
+      <div className="cv-node-body">
       {/* NO MEDIA IS NOT "BEING MADE" (#602 r2, judge P1-3). The old fallback here was
           `in-flight || !url → spinner`, so any card that reached this renderer without a picture
           — a done row whose media no longer resolves, a face this component did not know — span
@@ -303,6 +309,8 @@ export function VideoNode({ data, id, selected }: NodeProps) {
           className="cv-node-media"
         />
       )}
+      </div>
+      <CanvasNodeFooter name={originalPrompt} />
       {/* Left end receives the line from the image this video was made from (#547 B4). */}
       <Handle type="target" position={Position.Left} />
       <Handle type="source" position={Position.Right} />

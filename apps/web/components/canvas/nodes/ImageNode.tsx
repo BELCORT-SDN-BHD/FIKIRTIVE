@@ -2,16 +2,20 @@
 import { useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import {
-  CloudIcon,
   CopyPlusIcon,
+  DownloadIcon,
+  FilmIcon,
   GitBranchIcon,
   InfoIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
-  VideoIcon,
+  WandSparklesIcon,
 } from "lucide-react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
+import { CanvasNodeFooter } from "./CanvasNodeFooter";
 import { CanvasNodeLabel } from "./CanvasNodeLabel";
+import { CanvasNodeMoreMenu } from "./CanvasNodeMoreMenu";
+import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { NodeRemakeComposer } from "./NodeRemakeComposer";
 import { NodeToolbarIconButton } from "./NodeToolbarIconButton";
 import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
@@ -21,13 +25,13 @@ import { NodeLineagePanel } from "./NodeLineagePanel";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
 import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
-import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { InputGroupAddon } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
 
-/** Does this card offer its per-card actions (Info, More like this, Detail, Make video, and
- *  the attached prompt bar)? A card is actionable once it has resolved media AND a generation
+/** Does this card offer its per-card actions (the pattern's five: Edit with Otto, Create
+ *  variations, Animate, Download, and the ⋯ menu — plus the attached prompt bar)? A card is
+ *  actionable once it has resolved media AND a generation
  *  to act on. Exported so FlowCanvas can load the exact price while any of those are on screen
  *  from one definition — a price hint that can appear without its bar (or vice versa) is
  *  exactly the drift #550 is about. Used for video cards too: the fields it reads
@@ -73,6 +77,9 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     imageShapeOptions?: readonly string[];
     onDelete?: () => void;
     onOpenDetail?: () => void;
+    /** Save this one card's media to the merchant's computer. Supplied by FlowCanvas, which owns
+     *  the `<a download>` and the file name — the same path the "N selected" bar already uses. */
+    onDownload?: () => void;
     /** Hands the whole picked set to Otto as references — an explicit press, never a click on
      *  the picture itself (#604 · spec #599 D6). */
     onSendToOtto?: () => void;
@@ -144,113 +151,103 @@ export function ImageNode({ data, id, selected }: NodeProps) {
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        {/* FIVE CONTROLS, IN THE APPROVED PATTERN'S OWN ORDER (Founder 2026-09-03: 生产界面严格按
+            UIUX 设计走). `design-system/patterns/canvas/CanvasReference.tsx` gives a picked card
+            Edit with Otto · Create variations · Animate · Download · ⋯ — five icons, one language.
+            The trunk had grown eight, mixing icon buttons with text buttons ("More like this",
+            "Make video"), which is a row nobody designed. Nothing is lost: Info, Lineage and
+            Detail moved into the ⋯ menu the pattern already puts there. */}
         <ButtonGroup aria-label="Image actions" className="cv-node-action-group">
-        {actionable && (
-          <NodeToolbarIconButton
-            type="button"
-            label="Show how this image was made"
-            visibleLabel="Info"
-            tooltip="When it was made, the settings, and what it cost"
-            aria-pressed={infoOpen}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
-          >
-            <InfoIcon aria-hidden />
-          </NodeToolbarIconButton>
-        )}
-        {/* T6: the card's whole story — what made it, what it made, who came out of the same
-            press. Unlike Info it is offered on a card that FAILED too: what a merchant most
-            wants to know about a card that did not work is where it came from (#605). */}
-        {d.onOpenLineage && (
-          <NodeToolbarIconButton
-            type="button"
-            label="Show what this card came from"
-            visibleLabel="Lineage"
-            tooltip="What made this card, and what it made"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); d.onOpenLineage?.(); }}
-          >
-            <GitBranchIcon aria-hidden />
-          </NodeToolbarIconButton>
-        )}
         {/* D6: the one and only way a card reaches Otto. Clicking the picture used to do it
-            silently; now the merchant asks for it, and the whole picked set goes at once (#604). */}
+            silently; now the merchant asks for it, and the whole picked set goes at once (#604).
+            This is the pattern's "Edit with Otto": the card becomes the conversation's context. */}
         {canSendToOtto && (
           <NodeToolbarIconButton
             type="button"
-            label="Send the picked cards to Otto"
-            visibleLabel="Send to Otto"
+            label="Edit with Otto"
+            visibleLabel="Edit with Otto"
             tooltip={d.sendToOttoTitle ?? "Hand this to Otto as a reference"}
             title={d.sendToOttoTitle ?? "Hand this to Otto as a reference"}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onSendToOtto?.(); }}
           >
-            <CloudIcon aria-hidden />
+            <WandSparklesIcon aria-hidden />
           </NodeToolbarIconButton>
         )}
         {/* A3: one click makes another take of THIS image from its own prompt — the old path
-            was Detail → Regenerate (two clicks and a panel). Paid, and priced right here. */}
+            was Detail → Regenerate (two clicks and a panel). Paid, and priced in the title. */}
         {canVariant && (
-          <Button
+          <NodeToolbarIconButton
             type="button"
-            aria-label="Make another version of this image"
-            variant="secondary"
-            size="xs"
-            className="nodrag nopan"
+            label="Create variations"
+            visibleLabel="Create variations"
             disabled={d.imageActionPending}
             onPointerDown={(e) => e.stopPropagation()}
             // #643 T2：形状用这张卡上正显示的那一格 —— 同一张卡上的两个按钮不许交付两种形状。
             onClick={(e) => { e.stopPropagation(); d.onVariant?.(id, evolveShape); }}
+            tooltip={`Make another one like this${evolveShape ? ` · ${evolveShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
             title={`Make another one like this${evolveShape ? ` · ${evolveShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
           >
-            {d.imageVariantPending ? (
-              <>
-                <Spinner data-icon="inline-start" aria-hidden="true" />
-                Starting…
-              </>
-            ) : (
-              <>
-                <CopyPlusIcon data-icon="inline-start" aria-hidden />
-                More like this
-              </>
-            )}
-          </Button>
-        )}
-        {actionable && d.onOpenDetail && (
-          <NodeToolbarIconButton
-            type="button"
-            label="Open image details"
-            visibleLabel="Detail"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); d.onOpenDetail?.(); }}
-          >
-            <SlidersHorizontalIcon aria-hidden />
+            {d.imageVariantPending ? <Spinner aria-hidden="true" /> : <CopyPlusIcon aria-hidden />}
           </NodeToolbarIconButton>
         )}
         {actionable && d.onAnimate && (
-          <Button
+          <NodeToolbarIconButton
             type="button"
-            variant="secondary"
-            size="xs"
-            className="nodrag nopan"
+            label="Animate"
+            visibleLabel="Animate"
+            tooltip="Make a video from this image"
+            title="Make a video from this image"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); d.onAnimate?.(); }}
-            title="Make a video from this image"
           >
-            <VideoIcon data-icon="inline-start" aria-hidden />
-            Make video
-          </Button>
+            <FilmIcon aria-hidden />
+          </NodeToolbarIconButton>
         )}
-        <NodeToolbarIconButton
-          type="button"
-          label="Delete image node"
-          visibleLabel="Delete"
-          variant="destructive-secondary"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
-        >
-          <Trash2Icon aria-hidden />
-        </NodeToolbarIconButton>
+        {/* Download — the same `<a download>` the board's own "N selected" bar and the Detail
+            panel already use, aimed at this one card. No new business layer: FlowCanvas owns the
+            anchor and the file name (`canvasDownloadFileName`). */}
+        {actionable && d.onDownload && (
+          <NodeToolbarIconButton
+            type="button"
+            label="Download"
+            visibleLabel="Download"
+            tooltip="Save this to your computer"
+            title="Save this to your computer"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onDownload?.(); }}
+          >
+            <DownloadIcon aria-hidden />
+          </NodeToolbarIconButton>
+        )}
+        <CanvasNodeMoreMenu label="More actions">
+          {actionable && (
+            <DropdownMenuItem onSelect={() => setInfoOpen((open) => !open)}>
+              <InfoIcon aria-hidden />
+              {infoOpen ? "Hide how this was made" : "Show how this image was made"}
+            </DropdownMenuItem>
+          )}
+          {/* T6: the card's whole story — what made it, what it made, who came out of the same
+              press. Unlike Info it is offered on a card that FAILED too: what a merchant most
+              wants to know about a card that did not work is where it came from (#605). */}
+          {d.onOpenLineage && (
+            <DropdownMenuItem onSelect={() => d.onOpenLineage?.()}>
+              <GitBranchIcon aria-hidden />
+              Show what this card came from
+            </DropdownMenuItem>
+          )}
+          {actionable && d.onOpenDetail && (
+            <DropdownMenuItem onSelect={() => d.onOpenDetail?.()}>
+              <SlidersHorizontalIcon aria-hidden />
+              Open image details
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onSelect={() => d.onDelete?.()}>
+            <Trash2Icon aria-hidden />
+            Remove from canvas
+          </DropdownMenuItem>
+        </CanvasNodeMoreMenu>
         </ButtonGroup>
       </NodeToolbar>
       {infoOpen && (
@@ -314,8 +311,11 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     {/* The picture is a picture, not a button: clicking it picks the card up and nothing else
         (#604 · spec #599 D6). Everything the card can DO lives on its toolbar above. */}
     <div
-      className="al-panel cv-node-frame"
+      className="al-panel cv-node-frame cv-node-frame-media"
     >
+      {/* The pattern's card is a media well with a named strip under it, so the well is its own
+          box rather than the whole card (`CanvasReference.tsx`: `h-[calc(100%-42px)]`). */}
+      <div className="cv-node-body">
       {/* NO MEDIA IS NOT "BEING MADE" (#602 r2, judge P1-3). The old fallback here was
           `in-flight || !url → spinner`, so any card that reached this renderer without a picture
           — a done row whose media no longer resolves, a face this component did not know — span
@@ -338,6 +338,8 @@ export function ImageNode({ data, id, selected }: NodeProps) {
           className="cv-node-media"
         />
       )}
+      </div>
+      <CanvasNodeFooter name={originalPrompt} />
       {/* Lineage endpoints: an image can now be BOTH the parent of a video/new image and the
           child of the image it was evolved from, so it needs both ends of the line (#547 B4). */}
       <Handle type="target" position={Position.Left} />

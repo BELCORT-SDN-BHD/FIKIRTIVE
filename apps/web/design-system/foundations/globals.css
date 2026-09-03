@@ -1120,8 +1120,16 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   backdrop-filter: none;
   border-radius: var(--radius-card);
 }
+/* PICKED, THE WAY THE APPROVED PATTERN DRAWS IT (Founder 2026-09-03: 生产界面严格按 UIUX 设计走).
+ * `design-system/patterns/canvas/CanvasReference.tsx` gives a picked artifact card
+ * `border-foreground ring-2 ring-foreground/15` — an ink hairline plus a soft halo of the same
+ * ink. The old `2px solid var(--primary)` was a second, louder language for the same state, and
+ * it also changed the card's border WIDTH, so picking a card nudged its own contents by a pixel. */
 .gb .react-flow__node.selected .al-panel {
-  border: 2px solid var(--primary);
+  border-color: var(--foreground);
+  box-shadow:
+    var(--shadow-md),
+    0 0 0 2px color-mix(in oklab, var(--foreground) 15%, transparent);
 }
 .gb .cv-nodelabel {
   display: inline-flex;
@@ -1147,18 +1155,65 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   overflow: hidden;
 }
 .cv-node-frame-text { padding: 11px 12px; }
+/* THE CARD'S OWN FOOTER — the approved pattern's node card is a media box with a 42px strip
+ * under it carrying the card's name (`CanvasReference.tsx`: `h-[calc(100%-42px)]` media +
+ * `<footer className="flex h-[42px] …">`). Declared ONCE here and read by the media nodes'
+ * `.cv-node-body` / `.cv-node-footer`; a second copy of 42 is how the two halves drift apart.
+ *
+ * The strip comes out of the card's EXISTING box rather than growing it. The board sizes a
+ * media card from the picture's own aspect and then persists that size (`canvasMediaNodeSize`
+ * only refits a card still at the default 320×320), so adding chrome height at render time
+ * would be added again to the value a resize writes back. Inside the box, `object-fit: contain`
+ * simply draws the picture a little smaller — which is what it already does on every card the
+ * merchant has resized by hand.
+ *
+ * Only media cards get it: the text card is the same `.cv-node-frame` with its own padding and
+ * has no name to put in a footer, so the flex column is a separate modifier. */
+.cv-node-frame-media {
+  --cv-node-footer: 42px;
+  display: flex;
+  flex-direction: column;
+}
+.cv-node-body {
+  position: relative;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.gb .cv-node-footer {
+  display: flex;
+  height: var(--cv-node-footer);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+.gb .cv-node-footer-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  color: var(--foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .gb .cv-node-preview {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-md);
 }
+/* The letterbox behind a picture that does not fill its box. The approved pattern's media well is
+ * `bg-muted` (`CanvasReference.tsx`), i.e. card chrome; `var(--foreground)` painted near-black
+ * bars that read as part of the merchant's own picture. */
 .cv-node-media {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: var(--foreground);
+  background: var(--muted);
 }
 .gb .react-flow__node .al-btn-glass {
   background: color-mix(in oklab, var(--card) 92%, transparent);

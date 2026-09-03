@@ -78,7 +78,7 @@ import {
 import { buildCanvasLineageTree } from "@/lib/canvas-lineage-tree";
 import { CanvasLineagePanel } from "./CanvasLineagePanel";
 import { CanvasComparePanel, type CanvasCompareCard } from "./CanvasComparePanel";
-import { canvasBatchDeleteCopy, canvasBatchSelection, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
+import { canvasBatchDeleteCopy, canvasBatchSelection, canvasDownloadFileName, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
 import {
   CANVAS_OTTO_CHAT_REQUIRED,
   canvasComposerReferenceForNode,
@@ -725,6 +725,34 @@ export default function FlowCanvas({
     toast.success(downloads.length === 1 ? "Saving 1 file." : `Saving ${downloads.length} files.`);
   }, []);
 
+  /**
+   * Save ONE card — the Download icon the approved canvas pattern puts on a picked artifact
+   * (`design-system/patterns/canvas/CanvasReference.tsx`).
+   *
+   * No new business layer and no new transfer path: it hands the board's existing
+   * `downloadSelection` a one-item list, and the file name comes from the same
+   * `canvasDownloadFileName` the "N selected" bar uses, so one card saved alone and the same card
+   * saved in a batch are named by the same rule. The card's media URL is read at press time from
+   * the live board rather than captured when the handler was made — a card resolves its media
+   * after it is placed, and a captured URL would be the empty one it had while queueing.
+   */
+  const onDownloadByNode = useRef<Record<string, () => void>>({});
+  const getOnDownload = useCallback((id: string): (() => void) => {
+    if (!onDownloadByNode.current[id]) {
+      onDownloadByNode.current[id] = () => {
+        const node = nodesRef.current.find((n) => n.id === id);
+        const url = typeof node?.data?.url === "string" ? node.data.url : "";
+        if (!node || !url) return;
+        const prompt = typeof node.data?.prompt === "string" ? node.data.prompt : null;
+        downloadSelection([{
+          url,
+          fileName: canvasDownloadFileName({ id, type: node.type, url, prompt }, 0, url),
+        }]);
+      };
+    }
+    return onDownloadByNode.current[id]!;
+  }, [downloadSelection]);
+
   // stable text-change
   const onTextChange = useCallback((id: string, text: string) => {
     void updateTextNode(projectId, id, text);
@@ -747,6 +775,7 @@ export default function FlowCanvas({
             ...updated.data,
             ...(!updated.data.onOpenDetail ? { onOpenDetail: getOnOpenDetail(id) } : {}),
             ...(!updated.data.onSendToOtto ? { onSendToOtto: sendSelectionToOtto } : {}),
+            ...(!updated.data.onDownload ? { onDownload: getOnDownload(id) } : {}),
             ...(n.type === "image" && !updated.data.onAnimate ? { onAnimate: getOnAnimate(id) } : {}),
             ...(!updated.data.onMediaSize ? { onMediaSize: getOnMediaSize(id) } : {}),
           };
@@ -754,7 +783,7 @@ export default function FlowCanvas({
         return updated;
       }),
     );
-  }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto]);
+  }, [getOnAnimate, getOnDownload, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto]);
 
   /**
    * Put down the card a press has just been accepted for.
@@ -791,6 +820,7 @@ export default function FlowCanvas({
             onRefresh: requestReload,
             onMediaSize: getOnMediaSize(n.id),
             onSendToOtto: sendSelectionToOtto,
+            onDownload: getOnDownload(n.id),
             // onAnimate added after generationId arrives via onResolve
           },
           style: { width: n.pos.w, height: n.pos.h, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
@@ -1071,7 +1101,7 @@ export default function FlowCanvas({
             id: created.id,
             type: "image",
             position: { x, y },
-            data: { status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onSendToOtto: sendSelectionToOtto, onMediaSize: getOnMediaSize(created.id) },
+            data: { status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onSendToOtto: sendSelectionToOtto, onDownload: getOnDownload(created.id), onMediaSize: getOnMediaSize(created.id) },
             style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
             threadId: activeThreadId ?? null,
           },
@@ -1259,6 +1289,7 @@ export default function FlowCanvas({
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
           onOpenDetail: r.type === "image" || r.type === "video" ? getOnOpenDetail(r.id) : undefined,
           onSendToOtto: r.type === "image" || r.type === "video" ? sendSelectionToOtto : undefined,
+          onDownload: r.type === "image" || r.type === "video" ? getOnDownload(r.id) : undefined,
           onMediaSize: r.type === "image" || r.type === "video" ? getOnMediaSize(r.id) : undefined,
         },
         style: { width: nodeSize.w, height: nodeSize.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
@@ -1274,7 +1305,7 @@ export default function FlowCanvas({
     // merchant has selected — the board reloads on a timer, and a selection that vanishes
     // mid-action is the board undoing their work (review P2-1).
     setNodes((prev) => mergeReloadedCanvasNodes(prev, mapped, removedNodeIdsRef.current));
-  }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload]);
+  }, [skin, projectId, onTextChange, getOnAnimate, getOnDownload, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload]);
   // keep reloadRef current (in an effect — refs must not be written during render);
   // declared before the consumers below, so it runs first within any commit.
   useEffect(() => { reloadRef.current = reload; }, [reload]);
