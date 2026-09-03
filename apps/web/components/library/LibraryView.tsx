@@ -94,6 +94,19 @@ type MediaFilter = "all" | "image" | "video";
 type DateFilter = "all" | "today" | "week";
 type SortOrder = "newest" | "oldest";
 
+/**
+ * 大写写在文案里,不是写在 `text-transform` 上(#739 围栏
+ * `__tests__/form-control-names-and-casing.test.ts`,它连注释里的那个类名都不放过)。
+ * 已批准的夹具把小写值交给 CSS 去改大小写;那在生产里会让读屏与自动化读到 "videos",
+ * 而屏幕上写着 "Videos" —— 同一句话两个版本。屏幕上的字与夹具逐字一致,
+ * 只是这一份是真的写下来的。
+ */
+const MEDIA_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "image", label: "Images" },
+  { value: "video", label: "Videos" },
+] as const satisfies readonly { value: MediaFilter; label: string }[];
+
 const DATE_LABELS: Record<DateFilter, string> = {
   all: "Any time",
   today: "Today",
@@ -194,16 +207,16 @@ function LibraryToolbar({
         size="sm"
         className="rounded-lg bg-muted p-0.5"
       >
-        {(["all", "image", "video"] as const).map((filter) => (
+        {MEDIA_FILTERS.map((filter) => (
           <ToggleGroupItem
-            key={filter}
-            value={filter}
+            key={filter.value}
+            value={filter.value}
             className={cn(
-              "h-8 rounded-[8px] px-3 text-xs capitalize text-muted-foreground shadow-none",
+              "h-8 rounded-[8px] px-3 text-xs text-muted-foreground shadow-none",
               "data-pressed:bg-card data-pressed:text-foreground data-pressed:shadow-xs",
             )}
           >
-            {filter === "all" ? "All" : `${filter}s`}
+            {filter.label}
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
