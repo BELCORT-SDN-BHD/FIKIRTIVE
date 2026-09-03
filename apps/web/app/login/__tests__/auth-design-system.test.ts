@@ -59,6 +59,49 @@ describe("auth design system", () => {
     expect(inputOtp).not.toContain("dark:");
   });
 
+  // FRONT-A14 —— 逐句对照已批准的 Auth pattern。夹具是设计权威;这里钉住的是「同一步上
+  // 商家读到的字与设计稿一模一样」,包括错误态的标题(它在 happy path 的走查里看不见,
+  // 正是最容易各写各的那一类字)。
+  it("FRONT-A14 keeps every login step's copy identical to the approved Auth pattern", () => {
+    for (const line of [
+      "Log in to Fikirtive",
+      "Choose how you want to continue.",
+      "Create an account",
+      "Continue with email",
+      "What's your email address?",
+      "We'll send a temporary login code.",
+      "Use password instead",
+      "Check your email",
+      "We sent a temporary login code to",
+      "Code not accepted",
+      "Continue with login code",
+      "Send again",
+      "Use another email",
+      "Enter your password",
+      "Password not accepted",
+      "Forgot password?",
+      "Use a login code",
+      "Back to login",
+    ]) {
+      expect(reviewFixture).toContain(line);
+      expect(loginForm).toContain(line);
+    }
+  });
+
+  it("FRONT-A14 leaves 'Sign-in failed' on the hub only — the password step follows the fixture", () => {
+    // 密码步从前也写「Sign-in failed」,与夹具的「Password not accepted」不同。hub 上那一句
+    // 是对的(社交登录失败与密码无关),所以它只剩一处。
+    expect(loginForm.match(/<AlertTitle>Sign-in failed<\/AlertTitle>/g) ?? []).toHaveLength(1);
+    expect(loginForm).toContain("<AlertTitle>Password not accepted</AlertTitle>");
+    expect(reviewFixture).not.toContain("Sign-in failed");
+  });
+
+  it("FRONT-A2 keeps the password refusal existence-neutral", () => {
+    // 标题跟设计稿走,但那句中性拒绝不许被改成「该邮箱不存在 / 密码错误」两句话。
+    expect(loginForm).toContain('message: "Wrong email or password."');
+    expect(loginForm).not.toContain("signInError.message");
+  });
+
   it("keeps signup refusal copy existence-neutral", () => {
     expect(signupForm).toContain('setError("We couldn\'t create the account. Try again.")');
     expect(signupForm).not.toContain("signUpError.message");

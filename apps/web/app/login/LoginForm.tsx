@@ -362,7 +362,12 @@ export function LoginForm({
           <FieldGroup className="gap-5">
             {error ? (
               <Alert role="alert" variant="destructive">
-                <AlertTitle>Sign-in failed</AlertTitle>
+                {/* FRONT-A14:已批准的 Auth pattern 在密码这一步写的是「Password not accepted」
+                    (design-system/patterns/auth/AuthAccessJourneyReference.tsx 的 password 步)。
+                    主干这里写的是「Sign-in failed」—— 同一句在 hub 上是对的(社交登录失败与
+                    密码无关),在密码步上它比设计稿模糊。只改这一步的标题,不动下面那句
+                    「Wrong email or password.」:中性、不泄露邮箱是否存在,是 FRONT-A2 要的口径。 */}
+                <AlertTitle>Password not accepted</AlertTitle>
                 <AlertDescription>{error.message}</AlertDescription>
               </Alert>
             ) : null}
