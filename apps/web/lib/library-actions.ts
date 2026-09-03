@@ -49,23 +49,21 @@ function libraryItemSource(source: string): LibrarySourceKind {
 /**
  * The `where` fragment for a source filter; `null` means "this filter can match nothing".
  *
- * Written as `{ in: [...] }` / `{ notIn: [...] }` rather than `source: "UPLOAD"` on purpose.
+ * Written as `{ equals: … }` / `{ not: … }` rather than the bare `source: "UPLOAD"` on purpose.
  * MONEY-A9's AST fence (`__tests__/understanding-disclosure.test.ts`) reads a property
  * assignment `source: "UPLOAD"` as *a row being written as an upload* — that is exactly the
  * shape every real ingest path has. This function only ever READS, so spelling the filter as
- * a Prisma enum-list comparison keeps the upload census pointing at the paths that genuinely
+ * an explicit Prisma comparison keeps the upload census pointing at the paths that genuinely
  * create uploads (and keeps `/library` out of the "must show the understanding price" table
  * it has no business being in). Same query either way.
  */
-const UPLOAD_SOURCES = ["UPLOAD"] as const;
-
 function librarySourceWhere(sources: readonly LibrarySourceKind[] | undefined) {
   if (!sources) return {};
   const wantsUpload = sources.includes("upload");
   const wantsGenerated = sources.includes("generated");
   if (wantsUpload && wantsGenerated) return {};
-  if (wantsUpload) return { source: { in: UPLOAD_SOURCES } };
-  if (wantsGenerated) return { source: { notIn: UPLOAD_SOURCES } };
+  if (wantsUpload) return { source: { equals: "UPLOAD" as const } };
+  if (wantsGenerated) return { source: { not: "UPLOAD" as const } };
   return null;
 }
 
