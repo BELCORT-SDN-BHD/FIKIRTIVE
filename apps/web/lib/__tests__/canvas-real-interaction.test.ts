@@ -7,7 +7,7 @@
  *
  *   ① 真 pointer + click 打在卡片身体上 → 卡片被选中,Otto 什么也没收到;
  *   ② 键盘路径:发真 Tab 键走到卡片、Enter 选中、继续 Tab 走进这张卡自己的工具条、
- *      在「Send to Otto」上按 Enter 送出 —— 全程没有鼠标;
+ *      在「Edit with Otto」上按 Enter 送出 —— 全程没有鼠标;
  *   ③ 视频播起来之后点原生 <video>(不是外层面板)→ 依旧不产生任何引用。
  *
  * 键盘那一段的边界写在 `pressTab` / `pressEnterOnFocused` 上,不含糊:jsdom 会派发按键,
@@ -282,7 +282,8 @@ async function tabUntil(
   throw new Error(`Tab never reached the target in ${limit} presses; it went: ${path.join(" → ")}`);
 }
 
-const SEND_TO_OTTO = "Send to Otto";
+/** 卡上自己的那颗。已批准的 canvas pattern 把它叫 Edit with Otto(批量条上那颗仍叫 Send to Otto)。 */
+const EDIT_WITH_OTTO = "Edit with Otto";
 
 describe("Canvas board feedback", () => {
   it("shows an honest loading status until the first board read lands", async () => {
@@ -336,13 +337,13 @@ describe("a real click on a card (real React Flow, real pointer events) — #604
     expect(mocks.toastMessage).not.toHaveBeenCalled();
   });
 
-  it("opens that card's own toolbar, and pressing Send to Otto is what sends it", async () => {
+  it("opens that card's own toolbar, and pressing Edit with Otto is what sends it", async () => {
     const onReferenceInChat = vi.fn();
     mocks.boardRead.mockResolvedValue([boardRow("n1")]);
     await renderBoard({ onReferenceInChat });
 
     await pressWithPointer(cardBody("n1"));
-    const send = buttonsLabelled(SEND_TO_OTTO);
+    const send = buttonsLabelled(EDIT_WITH_OTTO);
     expect(send).toHaveLength(1);
 
     await pressWithPointer(send[0]!);
@@ -396,15 +397,16 @@ describe("the same job with the keyboard only — #604 r3", () => {
     // Where Tab goes next, step by step. The buttons the card just revealed have to be
     // the card's own next-door neighbours — a toolbar that renders somewhere else in the
     // document is reachable on paper and lost in practice.
-    const walk = await tabUntil((el) => el.textContent?.trim() === SEND_TO_OTTO, 8);
-    expect(walk.path).toEqual([
-      "Show how this image was made",
-      // The card's lineage tree — added when the tree moved into the kernel (#605 T6). It is
-      // one of the card's own buttons, so it belongs in this walk.
-      "Show what this card came from",
-      "Send the picked cards to Otto",
-    ]);
-    expect(document.activeElement).toBe(buttonsLabelled(SEND_TO_OTTO)[0]);
+    const walk = await tabUntil((el) => el.textContent?.trim() === EDIT_WITH_OTTO, 8);
+    expect(walk.path).toEqual(["Edit with Otto"]);
+    expect(document.activeElement).toBe(buttonsLabelled(EDIT_WITH_OTTO)[0]);
+    // ...and the rest of the card's controls are its own next-door neighbours in that same
+    // toolbar, in the approved pattern's order. Info / Lineage / Detail now live inside the
+    // ⋯ menu, so they are no longer stops on this walk.
+    expect(
+      [...container!.querySelectorAll<HTMLElement>(".cv-node-toolbar button")]
+        .map((b) => b.getAttribute("aria-label")),
+    ).toEqual(["Edit with Otto", "Create variations", "Animate", "Download", "More actions"]);
     // Tabbing onto the button is still not pressing it.
     expect(onReferenceInChat).not.toHaveBeenCalled();
 

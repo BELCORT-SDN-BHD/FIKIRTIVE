@@ -39,7 +39,7 @@ import { Marker, MarkerContent } from "@/components/ui/marker";
 import { Spinner } from "@/components/ui/spinner";
 import { getCoworkThreadClient, getOlderCoworkThreadMessagesClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
-import { ChevronDown, ImageIcon, MessageSquarePlus, XIcon } from "lucide-react";
+import { ChevronDown, ImagesIcon, MessageSquarePlus, PlusIcon, UploadIcon, XIcon } from "lucide-react";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { UPLOAD_FAILURE_COPY } from "@fikirtive/core/upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
@@ -93,6 +93,15 @@ import type { ReasoningUIPart } from "ai";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import { composerReferencePayload, composerReferencesPlaceholder, removeComposerReference, upsertComposerReference, upsertComposerReferences, type OttoComposerReference } from "@/lib/canvas-chat-reference";
 import { CANVAS_OTTO_DOCK_ATTR } from "@/lib/canvas-otto-dock";
+import { CanvasLibraryPicker } from "@/components/canvas/CanvasLibraryPicker";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // Re-export the mapping seam so callers/tests can import it from the component too.
 export { threadToUiMessages } from "@/lib/otto-ui-messages";
@@ -207,6 +216,8 @@ export function OttoChatStream({
   // frame" can't attach a blank JPEG before the first paint.
   const [frameReady, setFrameReady] = useState(false);
   const [canvasHistoryOpen, setCanvasHistoryOpen] = useState(false);
+  /** "Choose from Library" — the second of the pattern's Add-context ways in. */
+  const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(Boolean(thread.hasOlderMessages));
   const [oldestSeq, setOldestSeq] = useState<number | null>(thread.messages[0]?.seq ?? null);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
@@ -939,7 +950,17 @@ export function OttoChatStream({
       {/* Messages — shadcn owns follow, anchoring, and jump-to-latest behavior. */}
       <MessageScrollerProvider autoScroll>
         <MessageScroller className={canvasLayout
-          ? `${canvasHistoryOpen ? "flex" : "hidden"} pointer-events-auto absolute bottom-16 left-4 h-[min(58vh,560px)] w-[380px] overflow-hidden rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-md)]`
+          // THE PATTERN'S OWN CONVERSATION DOCK (Founder 2026-09-03: 生产界面严格按 UIUX 设计走).
+          // `design-system/patterns/canvas/CanvasReference.tsx` gives it `w-[280px]` and a
+          // `max-h-[260px]` scrolling list — the same 280 as the current-turn card above it and
+          // the toggle below it, so the whole left column is one width.
+          //
+          // 380px was not just wider, it OVERLAPPED. The board's creation band starts at
+          // `left: 300px` (globals.css `.cv-creation-band` / `.cv-bottom-stack`, the pattern's own
+          // number), and `left-4` + 380px reaches 396px — so on any window narrow enough for the
+          // band to matter, the open history sat across the canvas's own tool column. At 280px it
+          // ends at 296px and clears it by 4px at every width, which is why the pattern picks 280.
+          ? `${canvasHistoryOpen ? "flex" : "hidden"} pointer-events-auto absolute bottom-16 left-4 max-h-[min(46vh,260px)] w-[280px] overflow-hidden rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-md)]`
           : "min-h-0 flex-1"}
         >
           <MessageScrollerViewport>
@@ -1534,6 +1555,17 @@ export function OttoChatStream({
             onChange={handleFilePick}
           />
 
+          {/* Attaching a reference spends nothing — it is context the composer carries until the
+              merchant sends their own message. */}
+          <CanvasLibraryPicker
+            open={libraryPickerOpen}
+            onOpenChange={setLibraryPickerOpen}
+            onPick={(reference) => {
+              setAttachError(null);
+              setAttachedRefs((current) => upsertComposerReference(current, reference));
+            }}
+          />
+
           {/* Video frame picker: pick a frame to use as the image reference */}
           {videoPick && (
             <div className="mb-2 rounded-[14px] border border-border bg-muted p-2">
@@ -1682,18 +1714,51 @@ export function OttoChatStream({
                 className="field-sizing-fixed min-h-0 w-full px-4 text-[0.90625rem]"
               />
               <InputGroupAddon align="block-end" className="justify-between border-t border-border">
-                {/* Attach image button */}
-                <InputGroupButton
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Attach reference image"
-                  disabled={isBusy || uploading || !!videoPick}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={attachedRefs.length ? "text-primary" : "text-muted-foreground"}
-                >
-                  <ImageIcon aria-hidden="true" />
-                </InputGroupButton>
+                {/* ADD CONTEXT — the approved pattern's own menu, not a bare attach icon
+                    (`design-system/patterns/canvas/CreationComposer.tsx`: a `+` trigger labelled
+                    "Add a reference", the words "Add context" beside it, and three ways in).
+                    Two of the three are wired to capabilities that already exist; the third is
+                    not rendered, because it has no production contract (Founder 2026-09-03 rule ①):
+                    · Upload — the file picker this composer already owns.
+                    · Choose from Library — `getGenerationHistory`, the owner-gated action the
+                      Library page reads, mapped through the board's own reference mapping.
+                    · Add URL — the only URL import in the repo is `ctx.mediaImport.fromUrl`
+                      (`lib/otto-media-port.ts`), a tool Otto calls inside its own turn. There is
+                      no server action a composer can call, so the item is absent rather than a
+                      button that does nothing. */}
+                <div className="flex min-w-0 items-center gap-1">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <InputGroupButton
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Add a reference"
+                        disabled={isBusy || uploading || !!videoPick}
+                        className={attachedRefs.length ? "text-primary" : "text-muted-foreground"}
+                      >
+                        <PlusIcon aria-hidden="true" />
+                      </InputGroupButton>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" side="top">
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>Add a reference</DropdownMenuLabel>
+                        <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                          <UploadIcon aria-hidden="true" />
+                          {/* The pattern's item reads "Upload image"; this picker genuinely takes
+                              a video too (that is what the frame picker below is for), so the
+                              label says both rather than the pattern's shorter half-truth. */}
+                          Upload image or video
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => setLibraryPickerOpen(true)}>
+                          <ImagesIcon aria-hidden="true" />
+                          Choose from Library
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <span className="hidden text-[0.75rem] text-muted-foreground sm:inline">Add context</span>
+                </div>
                 <div className="flex items-center gap-2">
                   <span
                     className="otto-send-hint text-[0.75rem] text-muted-foreground"
