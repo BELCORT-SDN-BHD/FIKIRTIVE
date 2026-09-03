@@ -73,7 +73,7 @@ async function seedGeneration(
     where: { ownerId_contentHash: { ownerId, contentHash } },
     update: {},
     create: {
-      id: newId("ast"),
+      id: newId(),
       ownerId,
       contentHash,
       ext: "png",
@@ -87,7 +87,7 @@ async function seedGeneration(
   });
   const generation = await prisma.generation.create({
     data: {
-      id: newId("gen"),
+      id: newId(),
       ownerId,
       projectId,
       assetId: asset.id,
@@ -100,7 +100,7 @@ async function seedGeneration(
 }
 
 async function seedProject(ownerId: string, name: string): Promise<string> {
-  const project = await prisma.project.create({ data: { id: newId("prj"), ownerId, name } });
+  const project = await prisma.project.create({ data: { id: newId(), ownerId, name } });
   return project.id;
 }
 

@@ -585,14 +585,13 @@ export function LibraryView({
   );
   const [loading, setLoading] = React.useState(false);
   const [loadingMore, setLoadingMore] = React.useState(false);
+  const [loadMoreError, setLoadMoreError] = React.useState<string | null>(null);
   const [detail, setDetail] = React.useState(initialAsset);
   const [elementList, setElementList] = React.useState<LibraryElement[]>(elements);
 
   // 迟到的旧请求会覆盖新条件的结果 —— 每次发请求领一个号,回来时号对不上就丢弃
   // (backend-handoff-contract.md §8.3①)。
   const requestRef = React.useRef(0);
-  // 首屏那一页由服务端渲染时就取好了,别在挂载时再取一次同样的东西。
-  const firstRunRef = React.useRef(true);
 
   const gridView = view === "history" || view === "uploads";
 
@@ -617,6 +616,10 @@ export function LibraryView({
   const reload = React.useCallback(async (nextView: LibraryViewName, nextFilters: Filters) => {
     const ticket = ++requestRef.current;
     setLoading(true);
+    // 换了条件,上一页的「加载更多」连同它的失败一起作废 —— 不然那颗键会永远卡在
+    // 「Loading…」上,或者顶着上一组条件的错误。
+    setLoadingMore(false);
+    setLoadMoreError(null);
     const result = await getGenerationHistory(queryFor(nextView, nextFilters, null));
     if (ticket !== requestRef.current) return;
     setLoading(false);
@@ -631,24 +634,34 @@ export function LibraryView({
     setCursor(result.nextCursor);
   }, [queryFor]);
 
+  /**
+   * 已经在屏幕上的那一组条件长什么样。首屏那一页由服务端取好了,所以初值就是它 ——
+   * 条件没变就一次网络都不发(挂载时不重取、StrictMode 的第二次 effect 也不重取),
+   * 条件一变就整组重来(不是在浏览器里过滤已加载的那几条)。
+   */
+  const loadedQueryRef = React.useRef(JSON.stringify(queryFor(initialView, DEFAULT_FILTERS, null)));
+
   React.useEffect(() => {
-    if (firstRunRef.current) {
-      firstRunRef.current = false;
-      return;
-    }
     if (!gridView) return;
-    void reload(view, filters);
-  }, [gridView, view, filters, reload]);
+    const signature = JSON.stringify(queryFor(view, filters, null));
+    if (signature === loadedQueryRef.current) return;
+    loadedQueryRef.current = signature;
+    // 打字时每一个键都发一次请求,既费服务器也让结果跳个不停 —— 让它安静 300ms 再问。
+    const timer = setTimeout(() => { void reload(view, filters); }, 300);
+    return () => clearTimeout(timer);
+  }, [gridView, view, filters, initialView, queryFor, reload]);
 
   async function loadMore() {
     if (!cursor) return;
     const ticket = requestRef.current;
     setLoadingMore(true);
+    setLoadMoreError(null);
     const result = await getGenerationHistory(queryFor(view, filters, cursor));
     if (ticket !== requestRef.current) return;
     setLoadingMore(false);
     if ("error" in result) {
-      setError(result.error);
+      // 下一页取不到,不该把已经在屏幕上的那些也抹掉 —— 只在那颗键旁边说这一次没成。
+      setLoadMoreError(result.error);
       return;
     }
     // 同一组条件的下一页按 stable id 去重后**追加**(§8.3②)。
@@ -812,10 +825,15 @@ export function LibraryView({
                 )}
 
                 {cursor && !loading && !error ? (
-                  <div className="flex justify-center pt-6">
+                  <div className="flex flex-col items-center gap-2 pt-6">
                     <Button variant="secondary" size="sm" disabled={loadingMore} onClick={() => void loadMore()}>
                       {loadingMore ? "Loading…" : "Load older"}
                     </Button>
+                    {loadMoreError ? (
+                      <p className="text-xs text-destructive">
+                        Couldn&apos;t load older items. {loadMoreError}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
               </>
