@@ -16,12 +16,18 @@ describe("production Marketing Home", () => {
     comparison: "previous-period" as const,
   };
   const recents = { ok: true as const, value: [] };
+  // 版面由服务端算好传进来(lib/home-layout.ts)。今天唯一有真实生产者的一块。
+  const components = ["marketing-health"] as const;
 
   function renderHealth(health: unknown) {
     return renderToStaticMarkup(createElement(MarketingHomeView, {
       filters,
       recents,
       health,
+      components,
+      offeredComponents: components,
+      recommendedComponents: components,
+      canManageHome: true,
     } as never));
   }
 
@@ -60,6 +66,10 @@ describe("production Marketing Home", () => {
         },
         insight: { text: "Reach increased during this period.", prefill: "Explain the reach increase." },
       },
+      components,
+      offeredComponents: components,
+      recommendedComponents: components,
+      canManageHome: true,
     } as never));
 
     expect(markup).toContain("Meta ads is reporting");
@@ -120,5 +130,63 @@ describe("production Marketing Home", () => {
     expect(markup).toContain("Recommended next action");
     expect(markup).toContain("Channel contribution");
     expect(markup).not.toContain("Partial view");
+  });
+});
+
+/**
+ * Customize home 的入口与版面驱动(验收 FRONT-A4)。
+ *
+ * 这一层钉的是「客户端只渲染」那半句:页面上有哪几块由服务端传进来的 `components` 决定,
+ * 视图自己不再判断;入口出不出现由能力决定,不由角色名决定。
+ */
+describe("FRONT-A4:Customize home 入口与版面驱动", () => {
+  const filters = {
+    goal: "online-sales" as const,
+    range: "30-days" as const,
+    comparison: "previous-period" as const,
+  };
+  const recents = { ok: true as const, value: [] };
+  const partialHealth = {
+    state: "partial",
+    goal: "online-sales",
+    period: "30-days",
+    freshness: { status: "unknown", label: "Freshness unavailable" },
+    evidenceStrength: "limited",
+    source: { id: "meta-ads", label: "Meta ads" },
+    metrics: [],
+    chart: null,
+    insight: null,
+  };
+
+  function render(props: Record<string, unknown>) {
+    return renderToStaticMarkup(createElement(MarketingHomeView, {
+      filters,
+      recents,
+      health: partialHealth,
+      components: ["marketing-health"],
+      offeredComponents: ["marketing-health"],
+      recommendedComponents: ["marketing-health"],
+      canManageHome: true,
+      ...props,
+    } as never));
+  }
+
+  it("FRONT-A4:有 Manage home 能力时入口出现", () => {
+    expect(render({})).toContain("Customize home");
+  });
+
+  it("FRONT-A4:没有 Manage home 能力的成员看不到入口", () => {
+    expect(render({ canManageHome: false })).not.toContain("Customize home");
+  });
+
+  it("FRONT-A4:服务端说这一块不在版面里,页面上就没有它", () => {
+    const markup = render({ components: [] });
+    expect(markup).not.toContain("Meta ads is reporting");
+    // 空版面画的是设计里那句邀请,不是一片什么都没有的白。
+    expect(markup).toContain("Choose what belongs on Home");
+  });
+
+  it("FRONT-A4:每一块都带上自己的 id,版面顺序在 DOM 里看得见", () => {
+    expect(render({})).toContain('data-home-component="marketing-health"');
   });
 });
