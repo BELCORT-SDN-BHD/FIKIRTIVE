@@ -896,23 +896,21 @@ export function OttoChatStream({
   const workingCardCount = genCardStates.filter((c) => c.state === "working").length;
   // 「屏幕上多久没变了」的输入。变的定义 = 状态词 + 那句进度话 + 消息条数,任一变化就重新计时。
   const canvasProgressKey = `${isBusy}|${liveStatus?.kind ?? ""}|${activeStepLabel(traceSteps) ?? ""}|${messages.length}|${workingCardCount}|${confirmCards.length}`;
-  const [progressSince, setProgressSince] = useState(() => Date.now());
   const [progressKey, setProgressKey] = useState(canvasProgressKey);
   const [secondsSinceProgress, setSecondsSinceProgress] = useState(0);
   if (progressKey !== canvasProgressKey) {
     // Render-phase "adjust state when an input changes" (React docs pattern) — not setState-in-effect.
+    // 计秒本身不在这里读时钟(渲染必须是纯的):秒数只归零,由下面那个每秒 +1 的计时器数。
     setProgressKey(canvasProgressKey);
-    setProgressSince(Date.now());
     setSecondsSinceProgress(0);
   }
   const canvasTurnBusy = isBusy || workingCardCount > 0;
   useEffect(() => {
     if (!canvasLayout || !canvasTurnBusy) return;
-    const t = setInterval(() => {
-      setSecondsSinceProgress(Math.floor((Date.now() - progressSince) / 1000));
-    }, 1000);
+    const t = setInterval(() => setSecondsSinceProgress((n) => n + 1), 1000);
     return () => clearInterval(t);
-  }, [canvasLayout, canvasTurnBusy, progressSince]);
+    // progressKey 进依赖:屏幕上一变化,这只计时器就重开,从刚归零的那一秒重新数起。
+  }, [canvasLayout, canvasTurnBusy, progressKey]);
   const canvasStatus = canvasTurnStatus({
     isBusy,
     hasAssistantText: !!hasAssistantText,
