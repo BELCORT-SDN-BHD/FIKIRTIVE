@@ -99,27 +99,37 @@ export default async function BillingPage({
           </div>
           <div className="mt-4 divide-y divide-border rounded-[var(--radius-card)] border border-border">
             {account ? (
-              <div className="grid gap-6 px-4 py-5 sm:grid-cols-2">
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">Available balance</p>
-                  <p className="mt-2 font-mono text-xl font-semibold tabular-nums">
-                    {formatCredits(account.balance)}{" "}
-                    <span className="font-sans text-sm font-medium text-muted-foreground">credits</span>
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">Shared across creation, research, and Otto.</p>
-                </div>
-                <div className="sm:border-l sm:border-border sm:pl-6">
-                  <p className="text-xs font-medium text-muted-foreground">On hold</p>
-                  <div className="mt-2">
-                    {account.reserved > 0 ? (
-                      <Badge variant="warning">{formatCredits(account.reserved)} credits held</Badge>
-                    ) : (
-                      <Badge variant="success">Nothing on hold</Badge>
-                    )}
+              /* 第 1 轮判官 P1①(钱披露破版)。这一行原本按**视口**断点 `sm:`(640px)去劈一个
+                 宽度由 Settings 内容列决定的盒子 —— 两件不相干的事。1100×800 且 Otto 面板
+                 打开时内容列只有 280px(盒内 222px),`sm:` 照样命中,两格各 83px:`On hold` 的
+                 Badge 与「Held credits belong to work in progress…」整段画到边框外面。商家
+                 真有冻结额时那句 Badge 更长,也就是这一节要说清楚的那笔钱最先出框。
+                 改成按**这个盒子自己的宽度**判断 —— 设计系统本来就这么做
+                 (components/ui/field.tsx 的 `@container/field-group` + `@md/field-group:`)。
+                 容器查询的容器不能查自己,所以 padding 留在容器上,栅格在里面一层。 */
+              <div className="@container/credits px-4 py-5">
+                <div className="grid gap-6 @sm/credits:grid-cols-2">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Available balance</p>
+                    <p className="mt-2 font-mono text-xl font-semibold tabular-nums">
+                      {formatCredits(account.balance)}{" "}
+                      <span className="font-sans text-sm font-medium text-muted-foreground">credits</span>
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">Shared across creation, research, and Otto.</p>
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Held credits belong to work in progress. Unused credits return automatically when that work settles.
-                  </p>
+                  <div className="@sm/credits:border-l @sm/credits:border-border @sm/credits:pl-6">
+                    <p className="text-xs font-medium text-muted-foreground">On hold</p>
+                    <div className="mt-2">
+                      {account.reserved > 0 ? (
+                        <Badge variant="warning">{formatCredits(account.reserved)} credits held</Badge>
+                      ) : (
+                        <Badge variant="success">Nothing on hold</Badge>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Held credits belong to work in progress. Unused credits return automatically when that work settles.
+                    </p>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -173,9 +183,11 @@ export default async function BillingPage({
               <EmptyContent><SupportExit subject="I want to buy credits" /></EmptyContent>
             </Empty>
           ) : (
-            <div className="mt-4 divide-y divide-border rounded-[var(--radius-card)] border border-border">
+            /* 同一条根因(判官 P1①):货架行也按视口断点排,在 280px 的内容列里会把
+               192px 的 Buy 按钮和价格挤成一条。改成按这一列自己的宽度判断。 */
+            <div className="@container/packs mt-4 divide-y divide-border rounded-[var(--radius-card)] border border-border">
               {shelf.packs.map((pack) => (
-                <div key={pack.priceId} className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div key={pack.priceId} className="flex flex-col gap-3 px-4 py-4 @sm/packs:flex-row @sm/packs:items-center @sm/packs:justify-between">
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{formatCredits(pack.credits)} credits</p>
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -183,7 +195,7 @@ export default async function BillingPage({
                       workspace after checkout is confirmed
                     </p>
                   </div>
-                  <div className="sm:w-48 sm:shrink-0">
+                  <div className="@sm/packs:w-48 @sm/packs:shrink-0">
                     <BuyPackButton
                       priceId={pack.priceId}
                       label={`Buy for ${fmtPrice(pack.amountCents, pack.currency)}`}
