@@ -51,6 +51,7 @@ const { prisma } = await import("@fikirtive/db");
 const { canManageHome, readHomeLayout } = await import("@/lib/home-layout-store");
 const { saveHomeLayout } = await import("@/lib/home-layout-actions");
 const { resolveHomeComponents } = await import("@/lib/home-layout");
+const { getProjects } = await import("@/lib/data");
 
 function asUser(email: string) {
   mockAuth.mockResolvedValue({ user: { email } });
@@ -216,5 +217,30 @@ describe("FRONT-A3:两个租户的 Home 各看各的", () => {
     await expect(
       prisma.orgHomeLayout.findFirst({ where: {} } as never),
     ).rejects.toThrow(/tenant-guard/);
+  });
+
+  // 上面三条守的是版面那一行。验收 A3 的正文还点名了 Home 上的第二条读路径:
+  // 「Continue creating」的真实画布。HomeEntry 用的是 getProjects(owner.ownerId)
+  // (components/home/HomeEntry.tsx 的 readRecentCanvases),ownerId 只来自 requireOwner(),
+  // 客户端没有这个参数。这条按 A3 的编号把那条读路径也双向钉住。
+  // 剩下的半句(连接状态五态在真实生产者上逐个点亮)属于 §7.3⑤ 第③刀,占位仍在
+  // front-baseline-acceptance.test.ts。
+  it("FRONT-A3:「Continue creating」列的是自己店的画布 —— 对方的项目双向都不出现", async () => {
+    const aProjectId = `prj_${randomUUID()}`;
+    const bProjectId = `prj_${randomUUID()}`;
+    const aName = `A canvas ${aProjectId}`;
+    await prisma.project.create({ data: { id: aProjectId, ownerId: orgA, name: aName } });
+    await prisma.project.create({
+      data: { id: bProjectId, ownerId: orgB, name: `B canvas ${bProjectId}` },
+    });
+
+    const aList = await getProjects(orgA);
+    const bList = await getProjects(orgB);
+    expect(aList.map((p) => p.id)).toContain(aProjectId);
+    expect(aList.map((p) => p.id), "A 的 Home 上出现了 B 的画布").not.toContain(bProjectId);
+    expect(bList.map((p) => p.id)).toContain(bProjectId);
+    expect(bList.map((p) => p.id), "B 的 Home 上出现了 A 的画布").not.toContain(aProjectId);
+    // 验收原话是「对方的数据永不出现」——连名字都不许漏过去。
+    expect(JSON.stringify(bList)).not.toContain(aName);
   });
 });
