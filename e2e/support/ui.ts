@@ -50,14 +50,16 @@ export async function waitUntilInteractive(locator: Locator): Promise<void> {
 
 /** The spend history list on /billing — one row per thing that happened to the credits.
  *
- *  Anchored on the card's own title text, not on a heading role: the shell draws a card title as
- *  a styled <div>, so `getByRole("heading")` matches nothing here and this helper would hand back
- *  an EMPTY locator — which reads downstream as "the product does not show this", not as "the
- *  journey is looking in the wrong place". */
+ *  Anchored on the section that owns the "Spend history" heading. It used to be anchored on
+ *  `[data-slot="card"]`, because the shell drew the card title as a styled <div> and
+ *  `getByRole("heading")` matched nothing. 前端基线第⑦段(FRONT-A11)按已冻结的 Settings
+ *  screen pattern §3.3 把 /billing 去卡片化了 —— 这一节现在是一个 <section>,标题是真的
+ *  <h2>,页面上再没有 `[data-slot="card"]`。旧锚点会交回一个**空** locator,下游读起来是
+ *  「产品没显示这个」而不是「journey 找错地方」,所以锚点跟着结构一起搬。 */
 export function spendHistory(page: Page): Locator {
   return page
-    .locator('[data-slot="card"]')
-    .filter({ has: page.getByText("Spend history", { exact: true }) });
+    .locator("section")
+    .filter({ has: page.getByRole("heading", { name: "Spend history", exact: true }) });
 }
 
 /** The persistent left rail: identity, the credits figure, and the way out. */
