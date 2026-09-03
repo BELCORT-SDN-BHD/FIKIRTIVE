@@ -15,6 +15,7 @@ import {
   appendChainedNarrations,
   appendDurableResults,
   appendResearchReports,
+  backfillMissingAssistantText,
   syncCardJobIds,
   deriveCardState,
   deriveActionState,
@@ -325,6 +326,87 @@ describe("appendChainedNarrations [#498 round-5 P2c]", () => {
     const existing = threadToUiMessages(thread([msg({ id: "card_a", role: "AGENT", kind: "GEN_CARD" })]));
     const once = appendChainedNarrations(existing, freshWithNarration, ["msg_n1"]);
     expect(appendChainedNarrations(once, freshWithNarration, ["msg_n1"])).toBe(once);
+  });
+});
+
+/**
+ * CREATE-A1 · backfillMissingAssistantText [P2-1 判官二轮复核 2026-09-04]
+ *
+ * 走查录到:首轮直播里,按下 Generate 之后画布那张始终可见的卡正文变成空态引导句,一直到
+ * 刷新才回来 Otto 的原话 —— 病根是那一轮 live 列表里 assistant 消息最终没有 text 部件,
+ * 而 `appendMissingCards` 刻意从不补 TEXT。这里钉的是「只补缺、不重复」两半。
+ */
+describe("backfillMissingAssistantText [P2-1 判官二轮复核 2026-09-04]", () => {
+  // live 列表里那条正在流的 assistant 消息用的是 useChat 自己发的临时 id(不是任何
+  // durable id)—— 它最终没有 text 部件,只有 metadata 之外的空 parts。durable 那边另有
+  // 一条真的 TEXT,自己的 id 与之无关(与 `appendChainedNarrations` 已建立的模式一致:
+  // 补的是一条**新**消息,不是把这条临时消息原地换血)。
+  const liveNoText = { id: "live_stream_1", role: "assistant" as const, parts: [] };
+
+  it("live 列表读不出话时，从 durable 补上最后一条真的 TEXT", () => {
+    const existing = threadToUiMessages(
+      thread([msg({ id: "u1", role: "USER", kind: "TEXT", text: "make me an ad" })]),
+    );
+    const cur = [...existing, liveNoText];
+    const fresh = thread([
+      msg({ id: "u1", role: "USER", kind: "TEXT", text: "make me an ad" }),
+      msg({ id: "msg_narration", role: "AGENT", kind: "TEXT", text: "There's your idea card! ☀️" }),
+    ]);
+    const out = backfillMissingAssistantText(cur, fresh);
+    // 临时的直播占位消息原样留着(与 appendMissingCards/appendChainedNarrations 同一个
+    // 只增不改的模式),真的那条 TEXT 追加在末尾。
+    expect(out.map((m) => m.metadata?.durableId)).toEqual(["u1", undefined, "msg_narration"]);
+    expect(out[out.length - 1].parts).toEqual([{ type: "text", text: "There's your idea card! ☀️" }]);
+  });
+
+  it("live 列表已经有一句可读的话 —— 原样返回，不把已经画出来的那条 TEXT 再叠一遍", () => {
+    const fresh = thread([
+      msg({ id: "u1", role: "USER", kind: "TEXT", text: "hi" }),
+      msg({ id: "a1", role: "AGENT", kind: "TEXT", text: "Working through it." }),
+    ]);
+    const existing = threadToUiMessages(fresh);
+    expect(backfillMissingAssistantText(existing, fresh)).toBe(existing);
+  });
+
+  it("durable 那边也没有真的 TEXT 可补 —— 原样返回，不发明内容", () => {
+    const existing = threadToUiMessages(
+      thread([msg({ id: "u1", role: "USER", kind: "TEXT", text: "hi" })]),
+    );
+    const cur = [...existing, liveNoText];
+    // fresh 只有卡,没有任何 TEXT。
+    const fresh = thread([
+      msg({ id: "u1", role: "USER", kind: "TEXT", text: "hi" }),
+      msg({ id: "card_g", role: "AGENT", kind: "GEN_CARD", payload: { kind: "image" } }),
+    ]);
+    expect(backfillMissingAssistantText(cur, fresh)).toBe(cur);
+  });
+
+  it("durable 里最后一条 TEXT 是商家自己说的话 —— 不把商家的话当成 Otto 的话补上去", () => {
+    const existing = threadToUiMessages(
+      thread([msg({ id: "u1", role: "USER", kind: "TEXT", text: "make me an ad" })]),
+    );
+    const cur = [...existing, liveNoText];
+    // 卡已经提出来了，但服务端还没有持久化任何 Otto 的叙述文字 —— 只有商家自己那句话。
+    const fresh = thread([
+      msg({ id: "u1", role: "USER", kind: "TEXT", text: "make me an ad" }),
+      msg({ id: "card_g", role: "AGENT", kind: "GEN_CARD", payload: { kind: "image" } }),
+    ]);
+    expect(backfillMissingAssistantText(cur, fresh)).toBe(cur);
+  });
+
+  it("补过一次之后再跑一遍 —— 已经在场，不重复补第二条", () => {
+    const existing = threadToUiMessages(
+      thread([msg({ id: "u1", role: "USER", kind: "TEXT", text: "hi" })]),
+    );
+    const cur = [...existing, liveNoText];
+    const fresh = thread([
+      msg({ id: "u1", role: "USER", kind: "TEXT", text: "hi" }),
+      msg({ id: "msg_narration", role: "AGENT", kind: "TEXT", text: "Here you go." }),
+    ]);
+    const once = backfillMissingAssistantText(cur, fresh);
+    expect(once.map((m) => m.metadata?.durableId)).toEqual(["u1", undefined, "msg_narration"]);
+    // 第二遍:live 列表现在已经读得出话了(补过的那条就在里面),原样返回同一个引用。
+    expect(backfillMissingAssistantText(once, fresh)).toBe(once);
   });
 });
 

@@ -28,7 +28,7 @@ import {
   undockPanel,
   writeOttoPanelState,
 } from "@/components/otto/panel/panel-state";
-import { PANEL_DEFAULT_OPEN_MIN_WIDTH, defaultPanelWidth } from "@/components/otto/panel/panel-geometry";
+import { defaultPanelWidth } from "@/components/otto/panel/panel-geometry";
 
 const WIDE = { width: 1440, height: 900 };
 
@@ -56,9 +56,22 @@ afterEach(() => {
 });
 
 describe("defaultOttoPanelState", () => {
-  it("opens on the first visit and remembers afterwards (Q3-A)", () => {
-    // Founder 2026-08-18 拍板 Q3-A:首次登录默认开,让商家看见它、拖一次它;之后按上次状态。
-    expect(defaultOttoPanelState(WIDE).open).toBe(true);
+  /**
+   * FRONT-A14(Founder 2026-09-04 裁决,取代 Q3-A「首开默认开,之后按存档」——
+   * `docs/specs/frontend-baseline.md` §5 2026-09-04 行;`docs/specs/wave2-shell.md`
+   * 已归档,原文不动)。触发:Codex 只读走查 QA-CRE-006,存档里记着的旧「开」在别的
+   * 商家面上自动弹开,吃掉 Create 极简页半屏。
+   *
+   * 这个函数只兜「没有可信来源」的那一刻:真的第一次访问,或存档坏了读不出 `open`。
+   * 「商家上次留着开着」与「这一页有活动对话」两条覆盖路径不在这个函数里 ——
+   * 前者是 `parseOttoPanelState` 读到的存档 `open:true` 原样生效,后者是
+   * `OttoPanelShell` 的深链强开(`forceOpenSignal`,§3.3 之外的独立效果),两条都在
+   * `otto-panel-mount.test.ts` 的「默认开合(FRONT-A14)」一组里按真实到访路径钉。
+   */
+  it("FRONT-A14: 没有可信来源的默认收起(第一次访问,不管视窗多宽)", () => {
+    for (const viewport of [WIDE, { width: 375, height: 812 }, { width: 1024, height: 800 }]) {
+      expect(defaultOttoPanelState(viewport).open, JSON.stringify(viewport)).toBe(false);
+    }
     expect(defaultOttoPanelState(WIDE).mode).toBe("docked");
     expect(defaultOttoPanelState(WIDE).width).toBe(defaultPanelWidth(WIDE.width));
   });
@@ -67,18 +80,10 @@ describe("defaultOttoPanelState", () => {
     expect(defaultOttoPanelState(WIDE).launcher).toEqual({ edge: "right", y: 1 });
   });
 
-  /** #994 挂载轮 · 判官 P2-2 —— 过渡守卫,W2-11 删移动层时连这条测试一起清。 */
-  it("窄屏上默认不开:320px 的面板会把 375px 的手机屏吃掉", () => {
-    // 边界逐点钉住:1023 关,1024 开。这条线就是导轨从抽屉变常驻列的那条 Tailwind `lg`。
-    expect(defaultOttoPanelState({ width: 375, height: 812 }).open).toBe(false);
-    expect(defaultOttoPanelState({ width: PANEL_DEFAULT_OPEN_MIN_WIDTH - 1, height: 800 }).open).toBe(false);
-    expect(defaultOttoPanelState({ width: PANEL_DEFAULT_OPEN_MIN_WIDTH, height: 800 }).open).toBe(true);
-
-    // 只压默认,不压能力:窄屏上商家自己开得起来,而且开完照样存得住。
-    const narrow = { width: 375, height: 812 };
-    const opened = setPanelOpen(defaultOttoPanelState(narrow), true);
+  it("只压默认,不压能力:商家自己开得起来,而且开完照样存得住", () => {
+    const opened = setPanelOpen(defaultOttoPanelState(WIDE), true);
     expect(opened.open).toBe(true);
-    expect(parseOttoPanelState(serializeOttoPanelState(opened), narrow).open).toBe(true);
+    expect(parseOttoPanelState(serializeOttoPanelState(opened), WIDE).open).toBe(true);
   });
 });
 
@@ -238,7 +243,7 @@ describe("reconcileViewport (视窗缩小)", () => {
 
 describe("开合与 launcher", () => {
   it("toggles open without losing the mode", () => {
-    const floating = undockPanel(defaultOttoPanelState(WIDE), WIDE);
+    const floating = setPanelOpen(undockPanel(defaultOttoPanelState(WIDE), WIDE), true);
     const closed = togglePanelOpen(floating);
 
     expect(closed.open).toBe(false);
@@ -248,7 +253,7 @@ describe("开合与 launcher", () => {
 
   it("setPanelOpen returns the same object when nothing changes", () => {
     const state = defaultOttoPanelState(WIDE);
-    expect(setPanelOpen(state, true)).toBe(state);
+    expect(setPanelOpen(state, false)).toBe(state);
   });
 
   it("snaps a released launcher to an edge and keeps its height", () => {

@@ -1319,16 +1319,23 @@ export default function FlowCanvas({
     url: n.data?.url as string | null | undefined,
   }));
 
+  /** 这条对话此刻有没有 Otto 那边的付费生成在跑。 */
+  const ottoWorkActive = !!(activeThreadId && activity?.has(activeThreadId));
+
   // A direct canvas generation can finish after the original client poll was
   // interrupted. While a paid image/video card is still unresolved, keep asking
   // the server reload path to reconcile owned GenJobs into visible media.
+  //
+  // Otto 那条路也吃这条轮询(走查 P0-1):批准的那一瞬间画板会读一次,但那时任务刚建好,
+  // 服务端桥有可能还看不到它 —— 只读一次就赌上了那一次的时序,赌输就是商家看着空白画板
+  // 等到刷新。占位卡一旦放上去,`hasInFlightPaidNode` 会自己接手;在那之前由这一条兜着。
   useEffect(() => {
-    if (!hasInFlightPaidNode) return;
+    if (!hasInFlightPaidNode && !ottoWorkActive) return;
     const id = window.setInterval(() => {
       void reloadRef.current?.();
     }, 5000);
     return () => window.clearInterval(id);
-  }, [hasInFlightPaidNode]);
+  }, [hasInFlightPaidNode, ottoWorkActive]);
 
   // ReactFlow's `fitView` prop only runs on mount, before our async canvas nodes arrive.
   // Fit once per project after nodes load so left-edge node action buttons do not
@@ -1348,7 +1355,7 @@ export default function FlowCanvas({
   // so the produced media replaces that pending card.
   const prevActivityRef = useRef<{ threadId: string | null; pending: boolean }>({ threadId: null, pending: false });
   useEffect(() => {
-    const pending = !!(activeThreadId && activity?.has(activeThreadId));
+    const pending = ottoWorkActive;
     const prev = prevActivityRef.current;
     const threadChanged = prev.threadId !== activeThreadId;
     if (pending && (!prev.pending || threadChanged)) {
@@ -1357,7 +1364,7 @@ export default function FlowCanvas({
       void reload();
     }
     prevActivityRef.current = { threadId: activeThreadId, pending };
-  }, [activity, activeThreadId, reload]);
+  }, [ottoWorkActive, activeThreadId, reload]);
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)
   const onNodesChange = useCallback((changes: NodeChange[]) => {

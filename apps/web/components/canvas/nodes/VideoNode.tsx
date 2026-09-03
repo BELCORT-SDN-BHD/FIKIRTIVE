@@ -23,6 +23,7 @@ import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
+import { videoFirstFrameSrc } from "@/lib/video-first-frame";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 
@@ -242,7 +243,9 @@ export function VideoNode({ data, id, selected }: NodeProps) {
         <div className="cv-video-wrap">
           <video
             ref={videoRef}
-            src={d.url}
+            // 首帧,不是黑砖(走查 P1-7)。`#t=0.001` 让浏览器在元数据阶段就解出第一帧
+            // 画上去 —— 片段不发给服务器,签名 URL 与 query 都不受影响。
+            src={videoFirstFrameSrc(d.url)}
             preload="metadata"
             playsInline
             controls={playing}
@@ -272,7 +275,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
         </div>
       ) : (
         <video
-          src={d.url}
+          src={videoFirstFrameSrc(d.url)}
           controls
           playsInline
           preload="metadata"
