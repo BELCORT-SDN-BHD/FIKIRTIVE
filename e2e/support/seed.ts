@@ -15,7 +15,10 @@
  * NOTHING HERE SPENDS. No provider is configured for the app under test (see support/env.ts), so
  * a generation fixture is a row describing a job that already happened, never a call to anybody.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { storageKey } from "../../packages/core/dist/index.js";
 import { prisma, runAsTenant, INTERNAL_PER_DISPLAY } from "./db.js";
 
 /** Displayed credits → the internal unit the ledger and the account column are kept in. */
@@ -411,4 +414,121 @@ export async function readAccount(ws: Workspace): Promise<{ balance: number; res
 
 export async function countLedgerRows(ws: Workspace, refId: string): Promise<number> {
   return prisma.creditLedger.count({ where: { orgId: ws.orgId, refId } });
+}
+
+/**
+ * 板上已经在的卡 —— 一张文字便签、出好的图、出好的视频、一张停在失败上的卡(FRONT-A15)。
+ *
+ * 旅程要考的是**已有的卡上的动作**(键盘删、多选、视频卡的操作条、下载、刷新之后位置还在),
+ * 不是「怎么做出一张卡」——所以这些卡是种下去的,不是生成出来的。这套 e2e 手上一把供应商钥匙
+ * 都没有(`support/env.ts` 逐条挡),这里也一分钱都不动:写的是一张已经完成的作业的行,以及
+ * 它在本地磁盘上的那几个字节 —— 板子的读取路(`getGenerationThumbs`)会先 `storage.exists(key)`
+ * 才肯把 `url` 交出来,所以字节必须真的在。
+ */
+const MOCK_PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+/** 一段真的、能解码的 1 秒 mp4(与 `scripts/tools/seed-local-qa-data.mjs` 用的是同一段字节)。 */
+const MOCK_MP4 = Buffer.from(
+  "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAPjbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAABI8AAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAw10cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAABI8AAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAQAAAACgAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAASPAAAIAAABAAAAAAKFbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAwAAAAOABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAACMG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAfBzdGJsAAAAwHN0c2QAAAAAAAAAAQAAALBhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAQAAoABIAAAASAAAAAAAAAABFUxhdmM2Mi4yOC4xMDAgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAANmF2Y0MBZAAL/+EAGWdkAAus2UEBWwEQAAADABAAAAMBgPFCmWABAAZo6+PLIsD9+PgAAAAAEHBhc3AAAAABAAAAAQAAABRidHJ0AAAAAAAAGY0AAAAAAAAAGHN0dHMAAAAAAAAAAQAAAA4AAAQAAAAAFHN0c3MAAAAAAAAAAQAAAAEAAACAY3R0cwAAAAAAAAAOAAAAAQAACAAAAAABAAAUAAAAAAEAAAgAAAAAAQAAAAAAAAABAAAEAAAAAAEAABQAAAAAAQAACAAAAAABAAAAAAAAAAEAAAQAAAAAAQAAFAAAAAABAAAIAAAAAAEAAAAAAAAAAQAABAAAAAABAAAIAAAAABxzdHNjAAAAAAAAAAEAAAABAAAADgAAAAEAAABMc3RzegAAAAAAAAAAAAAADgAAAu8AAAAQAAAADQAAAA0AAAANAAAAFgAAAA8AAAANAAAADQAAABYAAAAPAAAADQAAAA0AAAAWAAAAFHN0Y28AAAAAAAAAAQAABBMAAABidWR0YQAAAFptZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAAC1pbHN0AAAAJal0b28AAAAdZGF0YQAAAAEAAAAATGF2ZjYyLjEyLjEwMAAAAAhmcmVlAAADwm1kYXQAAAKuBgX//6rcRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY1IHIzMjIyIGIzNTYwNWEgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDI1IC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgzOjB4MTEzIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0xIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9NSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodGI9MSBvcGVuX2dvcD0wIHdlaWdodHA9MiBrZXlpbnQ9MjUwIGtleWludF9taW49MTIgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYgbWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAA5ZYiEABD//ubA+ZZafwbc99R1oDqSugXdc8hvTiAZchoeXRuHJPHxZ4eKLPkYKAAABrAIdBw/PCh5AAAADEGaJGxBD/6qVQAEDAAAAAlBnkJ4hv8AC2kAAAAJAZ5hdEM/AA3oAAAACQGeY2pDPwAN6QAAABJBmmhJqEFomUwIf//+qZYAD7kAAAALQZ6GRREsN/8AC2kAAAAJAZ6ldEM/AA3pAAAACQGep2pDPwAN6AAAABJBmqxJqEFsmUwIb//+p4QAHzAAAAALQZ7KRRUsN/8AC2kAAAAJAZ7pdEM/AA3oAAAACQGe62pDPwAN6AAAABJBmu1JqEFsmUwIZ//+nhAAekE=",
+  "base64",
+);
+
+/** 本地盘上的那一份 —— 键的形状由 `@fikirtive/core` 的 `storageKey` 说了算,这里不另写一份。 */
+async function putLocalObject(ownerId: string, bytes: Buffer, ext: string): Promise<{ contentHash: string; key: string }> {
+  const contentHash = createHash("sha256").update(bytes).digest("hex");
+  const key = storageKey(ownerId, contentHash, ext);
+  const file = path.join(process.cwd(), "..", ".data", "storage", key);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, bytes);
+  return { contentHash, key };
+}
+
+export type CanvasCardSeed = {
+  kind: "text" | "image" | "video" | "failed";
+  x: number;
+  y: number;
+  text?: string;
+  prompt?: string;
+};
+
+/** 种一张卡,返回它在板上的 id。 */
+export async function seedCanvasCard(ws: Workspace, card: CanvasCardSeed): Promise<{ nodeId: string }> {
+  const nodeId = id(`node_${card.kind}`);
+  const base = {
+    id: nodeId,
+    ownerId: ws.orgId,
+    projectId: ws.projectId,
+    x: card.x,
+    y: card.y,
+    w: 320,
+    h: 320,
+    createdAt: at(1),
+    updatedAt: at(1),
+  };
+
+  if (card.kind === "text") {
+    await runAsTenant(ws.orgId, () =>
+      prisma.canvasNode.create({ data: { ...base, type: "text", w: 240, h: 120, text: card.text ?? "note", status: "done" } }),
+    );
+    return { nodeId };
+  }
+
+  if (card.kind === "failed") {
+    await runAsTenant(ws.orgId, () =>
+      prisma.canvasNode.create({ data: { ...base, type: "image", prompt: card.prompt ?? "a cup of kopi", status: "failed" } }),
+    );
+    return { nodeId };
+  }
+
+  const ext = card.kind === "video" ? "mp4" : "png";
+  const bytes = card.kind === "video" ? MOCK_MP4 : MOCK_PNG_1X1;
+  const stored = await putLocalObject(ws.orgId, bytes, ext);
+  const assetId = id(`asset_${card.kind}`);
+  const generationId = id(`gen_${card.kind}`);
+  await runAsTenant(ws.orgId, async () => {
+    await prisma.asset.create({
+      data: {
+        id: assetId,
+        ownerId: ws.orgId,
+        contentHash: stored.contentHash,
+        ext,
+        mime: ext === "mp4" ? "video/mp4" : "image/png",
+        sizeBytes: BigInt(bytes.length),
+        originalFilename: `${assetId}.${ext}`,
+        source: "GENERATED",
+        width: card.kind === "video" ? 256 : 320,
+        height: card.kind === "video" ? 160 : 180,
+        durationS: card.kind === "video" ? 1 : null,
+        createdAt: at(0),
+      },
+    });
+    await prisma.generation.create({
+      data: {
+        id: generationId,
+        ownerId: ws.orgId,
+        projectId: ws.projectId,
+        assetId,
+        kind: card.kind === "video" ? "VIDEO" : "IMAGE",
+        promptText: card.prompt ?? "a cup of kopi on a rattan table",
+        createdAt: at(0),
+      },
+    });
+    await prisma.canvasNode.create({
+      data: { ...base, type: card.kind, prompt: card.prompt ?? "a cup of kopi on a rattan table", generationId, status: "done" },
+    });
+  });
+  return { nodeId };
+}
+
+/** 板上这张卡此刻记在库里的位置 —— 刷新之后位置还在不在,问的是这一行。 */
+export async function readCanvasNodePosition(ws: Workspace, nodeId: string): Promise<{ x: number; y: number } | null> {
+  const row = await prisma.canvasNode.findFirst({ where: { id: nodeId, ownerId: ws.orgId }, select: { x: true, y: true } });
+  return row ? { x: row.x, y: row.y } : null;
+}
+
+/** 板上还剩几张卡。删除是不是真的落到库里,问的是这一个数。 */
+export async function countCanvasNodes(ws: Workspace): Promise<number> {
+  return prisma.canvasNode.count({ where: { ownerId: ws.orgId, projectId: ws.projectId } });
 }
