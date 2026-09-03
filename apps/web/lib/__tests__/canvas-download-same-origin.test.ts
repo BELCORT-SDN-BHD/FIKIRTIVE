@@ -192,10 +192,22 @@ function select(ids: string[]): void {
   act(() => mocks.flow.current!.onNodesChange(ids.map((id) => ({ id, type: "select" as const, selected: true }))));
 }
 
-function downloadButton(): HTMLButtonElement {
-  const found = [...container!.querySelectorAll("button")]
+/** 「N selected」那条批量工具条上的 Download —— 按名字取,不靠 DOM 顺序碰运气。 */
+function batchDownloadButton(): HTMLButtonElement {
+  const bar = container!.querySelector<HTMLElement>('[role="toolbar"][aria-label="Selected cards"]');
+  expect(bar, "选中多张时应该出现批量工具条").not.toBeNull();
+  const found = [...bar!.querySelectorAll("button")]
     .find((b) => b.textContent?.trim().startsWith("Download"));
-  expect(found, "选中工具条上应该有「Download」").toBeDefined();
+  expect(found, "批量工具条上应该有「Download」").toBeDefined();
+  return found!;
+}
+
+/** 卡片自己那颗 Download(前端基线⑨ 的卡片操作条)。 */
+function cardDownloadButton(nodeId: string): HTMLButtonElement {
+  const found = container!.querySelector<HTMLButtonElement>(
+    `[data-node="${nodeId}"] button[aria-label="Download"]`,
+  );
+  expect(found, "卡片上应该有「Download」").not.toBeNull();
   return found!;
 }
 
@@ -208,7 +220,7 @@ describe("登记 2026-09-04 P0-2:画布批量下载走同源附件地址", () =>
     await renderBoard();
     select(["n1", "v1"]);
 
-    await act(async () => { downloadButton().click(); });
+    await act(async () => { batchDownloadButton().click(); });
 
     expect(clicked).toHaveLength(2);
     for (const href of clicked) {
@@ -230,11 +242,23 @@ describe("登记 2026-09-04 P0-2:画布批量下载走同源附件地址", () =>
     await renderBoard();
     select(["n1", "n2"]);
 
-    await act(async () => { downloadButton().click(); });
+    await act(async () => { batchDownloadButton().click(); });
 
     expect(clicked).toEqual([
       `${mediaUrl("c", "png")}?download=1&name=red-sneakers-on-sand-1.png`,
       `${mediaUrl("e", "png")}?download=1&name=a-cup-steaming-2.png`,
     ]);
+  });
+
+  // 前端基线⑨ 给卡片加了自己那颗 Download,它走的是板子同一个 `downloadSelection` ——
+  // 这条守的就是「同一条路」这件事:单张存下来的地址与批量那条同形,一样是同源附件。
+  it("登记 2026-09-04 P0-2:卡片自己那颗 Download 走同一条同源路", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
+    await renderBoard();
+    select(["n1"]);
+
+    await act(async () => { cardDownloadButton("n1").click(); });
+
+    expect(clicked).toEqual([`${mediaUrl("c", "png")}?download=1&name=red-sneakers-on-sand-1.png`]);
   });
 });
