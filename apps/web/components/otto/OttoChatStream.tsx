@@ -39,7 +39,7 @@ import { Marker, MarkerContent } from "@/components/ui/marker";
 import { Spinner } from "@/components/ui/spinner";
 import { getCoworkThreadClient, getOlderCoworkThreadMessagesClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
-import { ChevronDown, ImagesIcon, LinkIcon, MessageSquarePlus, PlusIcon, UploadIcon, XIcon } from "lucide-react";
+import { ChevronDown, ImagesIcon, MessageSquarePlus, PlusIcon, UploadIcon, XIcon } from "lucide-react";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_SIDE, FRAME_JPEG_QUALITY, REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS, isRefVideoDurationOk } from "@/lib/video-frame";

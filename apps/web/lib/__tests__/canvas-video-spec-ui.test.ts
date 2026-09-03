@@ -451,11 +451,11 @@ describe("#645 T4 画布出片：规格从界面一路到付费请求", () => {
 });
 
 describe("#645 T4 画布 Animate(带首帧):形状默认跟着首帧走", () => {
-  /** 打开某张图片卡的「Make video」确认框。 */
+  /** 打开某张图片卡的「Animate」确认框。 */
   async function openAnimate(nodeId: string): Promise<void> {
     const button = [...container!.querySelectorAll<HTMLButtonElement>(`[data-node="${nodeId}"] button`)]
-      .find((b) => (b.textContent ?? "").trim() === "Make video") ?? null;
-    expect(button, "图片卡上应该有 Make video").not.toBeNull();
+      .find((b) => (b.textContent ?? "").trim() === "Animate") ?? null;
+    expect(button, "图片卡上应该有 Animate").not.toBeNull();
     await act(async () => { button!.click(); });
     await act(async () => { await Promise.resolve(); });
   }
@@ -534,8 +534,8 @@ describe("#645 T4:Adaptive 的说明按场景说准", () => {
 
   async function openAnimateOn(nodeId: string): Promise<void> {
     const button = [...container!.querySelectorAll<HTMLButtonElement>(`[data-node="${nodeId}"] button`)]
-      .find((b) => (b.textContent ?? "").trim() === "Make video") ?? null;
-    expect(button, "图片卡上应该有 Make video").not.toBeNull();
+      .find((b) => (b.textContent ?? "").trim() === "Animate") ?? null;
+    expect(button, "图片卡上应该有 Animate").not.toBeNull();
     await act(async () => { button!.click(); });
     await act(async () => { await Promise.resolve(); });
   }
@@ -589,8 +589,8 @@ describe("CREATE-A3:画布两条视频路在接线之前不显示声音开关", 
 
   async function openAnimateOn(nodeId: string): Promise<void> {
     const button = [...container!.querySelectorAll<HTMLButtonElement>(`[data-node="${nodeId}"] button`)]
-      .find((b) => (b.textContent ?? "").trim() === "Make video") ?? null;
-    expect(button, "图片卡上应该有 Make video").not.toBeNull();
+      .find((b) => (b.textContent ?? "").trim() === "Animate") ?? null;
+    expect(button, "图片卡上应该有 Animate").not.toBeNull();
     await act(async () => { button!.click(); });
     await act(async () => { await Promise.resolve(); });
   }

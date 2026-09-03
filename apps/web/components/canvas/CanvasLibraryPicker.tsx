@@ -50,10 +50,7 @@ export function CanvasLibraryPicker({
   const [items, setItems] = useState<LibraryItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setError(null);
-    setItems(null);
-    const page = await getGenerationHistory({ take: PICKER_PAGE_SIZE });
+  const applyPage = useCallback((page: Awaited<ReturnType<typeof getGenerationHistory>>) => {
     if ("error" in page) {
       setError(page.error);
       return;
@@ -61,13 +58,38 @@ export function CanvasLibraryPicker({
     setItems(page.items);
   }, []);
 
+  /**
+   * Opening the picker only READS — it never writes state on the way in. The reset lives on the
+   * way out (`handleOpenChange`) and in the merchant's own "Try again" press, both of which are
+   * event handlers. Resetting here instead would be a synchronous setState inside an effect,
+   * which re-renders the whole dialog twice for nothing.
+   */
   useEffect(() => {
     if (!open) return;
-    void load();
-  }, [open, load]);
+    let cancelled = false;
+    void getGenerationHistory({ take: PICKER_PAGE_SIZE }).then((page) => {
+      if (!cancelled) applyPage(page);
+    });
+    return () => { cancelled = true; };
+  }, [open, applyPage]);
+
+  const retry = useCallback(async () => {
+    setError(null);
+    setItems(null);
+    applyPage(await getGenerationHistory({ take: PICKER_PAGE_SIZE }));
+  }, [applyPage]);
+
+  /** Closing forgets the page, so the next open shows the loading state rather than a stale list. */
+  const handleOpenChange = useCallback((next: boolean) => {
+    if (!next) {
+      setItems(null);
+      setError(null);
+    }
+    onOpenChange(next);
+  }, [onOpenChange]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[80vh] max-w-[min(720px,calc(100vw-2rem))] overflow-auto">
         <DialogHeader className="pr-8">
           <DialogTitle>Choose from Library</DialogTitle>
@@ -82,7 +104,7 @@ export function CanvasLibraryPicker({
             <AlertTitle>Library couldn&apos;t be loaded</AlertTitle>
             <AlertDescription>
               <span>{error}</span>
-              <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
+              <Button type="button" variant="outline" size="sm" onClick={() => void retry()}>
                 Try again
               </Button>
             </AlertDescription>

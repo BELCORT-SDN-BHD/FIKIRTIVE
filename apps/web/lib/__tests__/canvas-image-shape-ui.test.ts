@@ -390,7 +390,7 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    await act(async () => { buttonsLabelled("More like this")[0]!.click(); });
+    await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
 
     expect(mocks.generateImage).toHaveBeenCalledTimes(1);
     const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string; sourceGenerationId?: string };
@@ -406,11 +406,11 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    const variant = buttonsLabelled("More like this")[0]!;
+    const variant = buttonsLabelled("Create variations")[0]!;
     await act(async () => { variant.click(); });
 
     expect(variant.disabled).toBe(true);
-    expect(variant.textContent).toContain("Starting…");
+    // 图标键:进度就是图标位上的转圈(设计基线把文字收进 sr-only),不再有「Starting…」字样。
     expect(variant.querySelector('[aria-label="Loading"]')).not.toBeNull();
     expect(cardShapePicker("n1").disabled).toBe(true);
     const remakeInput = container!.querySelector<HTMLInputElement>(
@@ -432,7 +432,7 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
     await act(async () => { await Promise.resolve(); });
 
     await pick(cardShapePicker("n1"), "16:9");
-    await act(async () => { buttonsLabelled("More like this")[0]!.click(); });
+    await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
 
     const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string };
     expect(options.aspectRatio).toBe("16:9");
@@ -478,10 +478,11 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
     expect(submit.disabled).toBe(true);
     expect(submit.querySelector('[aria-label="Loading"]')).not.toBeNull();
     const variant = [...container!.querySelectorAll<HTMLButtonElement>('[data-node="n1"] button')]
-      .find((button) => (button.textContent ?? "").includes("More like this"))!;
+      .find((button) => (button.textContent ?? "").includes("Create variations"))!;
     expect(variant.disabled).toBe(true);
-    expect(variant.textContent).toContain("More like this");
-    expect(variant.textContent).not.toContain("Starting…");
+    expect(variant.textContent).toContain("Create variations");
+    // 冒充发起者的痕迹现在是图标位上的转圈,不是文案 —— 这颗键上不许有。
+    expect(variant.querySelector('[aria-label="Loading"]')).toBeNull();
 
     await act(async () => {
       finish?.(true);
@@ -496,7 +497,7 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
     await act(async () => { await Promise.resolve(); });
 
     expect(cardShapePicker("n1").value).toBe("1:1");
-    await act(async () => { buttonsLabelled("More like this")[0]!.click(); });
+    await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
     const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string };
     expect(options.aspectRatio).toBe("1:1");
   });
@@ -508,7 +509,7 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
     await act(async () => { await Promise.resolve(); });
 
     await pick(cardShapePicker("n1"), "2:3");
-    await act(async () => { buttonsLabelled("More like this")[0]!.click(); });
+    await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
     const viaButton = (mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string }).aspectRatio;
 
     const bar = container!.querySelector<HTMLInputElement>(
