@@ -43,7 +43,8 @@ test("FRONT-A8 / FRONT-A9 商家在五个分区写品牌事实,确认之前不�
   await expect(page.getByRole("heading", { name: "Preview effect" })).toBeVisible();
   await expect(page.getByText("Without context")).toBeVisible();
   await expect(page.getByText("With context")).toBeVisible();
-  await page.getByRole("button", { name: "Close" }).click();
+  // 弹层右上角的图标按钮也叫 Close(design-system 的 Dialog 自带),所以要点的是页脚那一个。
+  await page.getByRole("button", { name: "Close" }).first().click();
 
   // ⑤ 确认保存 —— 到这一刻它才成为正式记录。
   await page.getByRole("button", { name: "Save context" }).click();
