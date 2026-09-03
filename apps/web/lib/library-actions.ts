@@ -4,6 +4,8 @@ import { prisma } from "@fikirtive/db";
 import { storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { storage } from "./storage";
+import { listLibraryFavorites } from "./library-favorites";
+import { favoriteGenerationIds } from "./library-subjects";
 
 /** Uploaded bytes vs. something an engine made. `Generation.source` is the canonical column. */
 export type LibrarySourceKind = "generated" | "upload";
@@ -65,6 +67,13 @@ function librarySourceWhere(sources: readonly LibrarySourceKind[] | undefined) {
 export async function getGenerationHistory(
   opts?: {
     search?: string;
+    /**
+     * 只要收藏的那些。**这一条走的是收藏自己的读模型**(`lib/library-favorites.ts`),
+     * 不是在这张表上加一个 `favorite: true` —— 收藏的权威从 2026-09-03 起是 `Favorite`
+     * 那张跨类型的表(Founder 裁决十),而这里没有指向它的关系可以 join。
+     * 后果对调用方只有一件事:这一路的游标是**收藏行**的游标(按收藏时间排),
+     * 与不带这个开关时的生成时间游标不通用 —— 两者都只是不透明字符串,原样传回即可。
+     */
     favoriteOnly?: boolean;
     cursor?: string | null;
     take?: number;
@@ -81,6 +90,8 @@ export async function getGenerationHistory(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
+
+  if (opts?.favoriteOnly) return favoritesAsLibraryPage(opts);
 
   const take = opts?.take ?? 60;
   const scanTake = Math.min(Math.max(take + LIBRARY_SCAN_BUFFER, take + 1), 100);
@@ -119,7 +130,6 @@ export async function getGenerationHistory(
     where: {
       ownerId,
       deletedAt: null,
-      ...(opts?.favoriteOnly ? { favorite: true } : {}),
       ...(search ? { promptText: { contains: search, mode: "insensitive" as const } } : {}),
       ...sourceWhere,
       ...mediaWhere,
@@ -135,6 +145,9 @@ export async function getGenerationHistory(
   });
 
   const scanned = rows.slice(0, scanTake);
+  // 收藏状态来自 `Favorite` 那张表,不是 `Generation.favorite` 那一列 —— 那一列自
+  // 2026-09-03 的回灌之后没有任何写入者,继续读它就是读一份过期的影子。
+  const favoriteIds = await favoriteGenerationIds(ownerId, scanned.map((g) => g.id));
   const resolved = await Promise.all(scanned.map(async (g) => {
     const ext = g.asset.ext.toLowerCase();
     const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
@@ -153,7 +166,7 @@ export async function getGenerationHistory(
         width: g.asset.width ?? null,
         height: g.asset.height ?? null,
         durationS: g.asset.durationS ?? null,
-        favorite: g.favorite,
+        favorite: favoriteIds.has(g.id),
         createdAt: g.createdAt.toISOString(),
       } satisfies LibraryItem,
     };
@@ -167,4 +180,43 @@ export async function getGenerationHistory(
       : null;
   const nextCursor = cursorRow ? `${cursorRow.createdAt.toISOString()}|${cursorRow.id}` : null;
   return { items, nextCursor, hasMore: nextCursor != null };
+}
+
+/**
+ * `favoriteOnly` 的实现:直接借收藏自己的读模型,再把行映射成 `LibraryItem`。
+ *
+ * 为什么不在生成表上加条件:收藏的权威是另一张表,而 Prisma 这边没有指向它的关系
+ * (那是**故意**的 —— 收藏是链接,加外键会把「取消收藏」和「删素材」焊死)。先取一把
+ * 收藏 id 再 `IN (…)` 也不行:那把 id 是无界的,游标语义还会跟着错。所以这一路整个
+ * 交给收藏读模型,连排序与游标都用它的 —— 一个收藏视图,一套分页,不是两套。
+ * 代价写在上面 `favoriteOnly` 的注释里:这一路不吃搜索与筛选(收藏读模型今天没有那个
+ * 契约),调用方要筛就不要开这个开关。
+ */
+async function favoritesAsLibraryPage(
+  opts: { cursor?: string | null; take?: number },
+): Promise<LibraryPage | { error: string }> {
+  const page = await listLibraryFavorites({
+    ...(opts.cursor !== undefined ? { cursor: opts.cursor } : {}),
+    ...(opts.take !== undefined ? { take: opts.take } : {}),
+  });
+  if ("error" in page) return page;
+  return {
+    items: page.items.map((item) => ({
+      id: item.id,
+      projectId: item.projectId,
+      assetId: item.assetId,
+      url: item.url,
+      kind: item.kind,
+      source: item.source,
+      prompt: item.prompt,
+      filename: item.filename,
+      width: item.width,
+      height: item.height,
+      durationS: item.durationS,
+      favorite: true,
+      createdAt: item.createdAt,
+    })),
+    nextCursor: page.nextCursor,
+    hasMore: page.hasMore,
+  };
 }

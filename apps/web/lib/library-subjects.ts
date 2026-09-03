@@ -56,7 +56,17 @@ export async function resolveLibrarySubjects(
       promptText: true,
       source: true,
       createdAt: true,
-      asset: { select: { ownerId: true, contentHash: true, ext: true } },
+      asset: {
+        select: {
+          ownerId: true,
+          contentHash: true,
+          ext: true,
+          originalFilename: true,
+          width: true,
+          height: true,
+          durationS: true,
+        },
+      },
     },
   });
 
@@ -75,6 +85,10 @@ export async function resolveLibrarySubjects(
         kind: LIBRARY_VIDEO_EXTS.has(ext) ? "video" : "image",
         prompt: row.promptText ?? "",
         source: row.source === "UPLOAD" ? "upload" : "generated",
+        filename: row.asset.originalFilename ?? "",
+        width: row.asset.width ?? null,
+        height: row.asset.height ?? null,
+        durationS: row.asset.durationS ?? null,
         createdAt: row.createdAt.toISOString(),
       } satisfies LibrarySubjectItem;
     }),
@@ -84,4 +98,23 @@ export async function resolveLibrarySubjects(
     if (item) out.set(subjectKey(item), item);
   }
   return out;
+}
+
+/**
+ * 这一批生成里,哪些被当前 org 收藏了(一次查询,不是逐行问)。
+ *
+ * 收藏的权威是 `Favorite` 表(前端基线 §7.3② / Founder 2026-09-03 裁决十);
+ * `Generation.favorite` 那一列自当天的一次性回灌之后没有任何写入者,读它就是读影子。
+ * 网格与详情面板共用这一个函数 —— 两处对同一件素材不可能给出两个答案。
+ */
+export async function favoriteGenerationIds(
+  ownerId: string,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const rows = await prisma.favorite.findMany({
+    where: { ownerId, subjectType: "generation", subjectId: { in: [...new Set(ids)] } },
+    select: { subjectId: true },
+  });
+  return new Set(rows.map((row) => row.subjectId));
 }

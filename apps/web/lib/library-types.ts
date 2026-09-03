@@ -37,6 +37,12 @@ export type LibrarySubjectItem = {
   prompt: string;
   /** 上传与生成在同一张表里,靠这一列分身份(设计里 Uploads 是自己的一个页签)。 */
   source: "upload" | "generated";
+  /** 商家自己文件的名字;引擎产物没有名字,是空串(与 `LibraryItem` 同一口径)。 */
+  filename: string;
+  /** 真实两条边与时长 —— 网格保持原始比例、视频显示真实时长,都靠它们(缺就不假造)。 */
+  width: number | null;
+  height: number | null;
+  durationS: number | null;
   /** 素材自己的创建时间(不是被收藏 / 被加进合集的时间)。 */
   createdAt: string;
 };

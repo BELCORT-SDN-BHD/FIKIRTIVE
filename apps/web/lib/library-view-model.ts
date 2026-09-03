@@ -14,16 +14,19 @@
 import type { LibraryItem } from "./library-actions";
 
 /**
- * 本轮 `/library` 画得出来的一级视图。
+ * `/library` 的一级视图 —— 与已批准设计的 `patterns/library/model.ts` 的 `LIBRARY_VIEWS`
+ * **逐格一致**(顺序也一致)。
  *
- * 已批准设计有五个(`patterns/library/model.ts` 的 `LIBRARY_VIEWS`);`Favorites` 与
- * `Collections` 两格今天在后端没有对象 —— cross-object favorite 与 Collection/membership
- * 都还没有 schema 与动作(backend-handoff-contract.md §7 的「未具备」两行)。前端规则第①条:
- * 没有真实能力的入口不出现,所以这张表是三格,而不是画五格再让两格点不动。
+ * seg2a 那一票只画得出三格:`Favorites` 与 `Collections` 当时在后端没有对象。段②的第②③刀
+ * 把它们建起来了(`Favorite` / `Collection` / `CollectionItem` 三张表与
+ * `lib/library-favorites.ts`、`lib/library-collections.ts` 的动作层),所以这两格按前端规则
+ * 第①条回到导航上 —— 有真实能力才出现,现在有了。
  */
 export const LIBRARY_VIEWS = [
   { value: "history", label: "Generation history" },
   { value: "uploads", label: "Uploads" },
+  { value: "favorites", label: "Favorites" },
+  { value: "collections", label: "Collections" },
   { value: "elements", label: "Elements" },
 ] as const;
 
@@ -34,8 +37,18 @@ export function parseLibraryView(raw: string | undefined): LibraryView {
   return LIBRARY_VIEWS.some((item) => item.value === raw) ? (raw as LibraryView) : "history";
 }
 
-/** 一个时间组:标题(Today / Yesterday / August 2026)加落在里面的行。 */
-export type LibraryGroup = { key: string; label: string; items: LibraryItem[] };
+/**
+ * 一个时间组:标题(Today / Yesterday / August 2026)加落在里面的行。
+ *
+ * 泛型是段②后加的:收藏与合集成员画的是同一张网格,而它们的行不是 `LibraryItem`
+ * 而是 `LibrarySubjectItem`。分组只用到 `createdAt` 一列,所以按「有创建时间的东西」
+ * 收口 —— 而不是复制第二份分组函数。
+ */
+export type LibraryGroup<T extends { createdAt: string } = LibraryItem> = {
+  key: string;
+  label: string;
+  items: T[];
+};
 
 const MONTH_LABEL = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 
@@ -65,9 +78,12 @@ export function libraryTimeGroupLabel(createdAtIso: string, now: Date): string {
  * 按时间组切开,**保持传进来的顺序** —— 排序权威是服务端的 `orderBy`,这里不再排第二次
  * (排两次就有两个真相,而分页只认服务端那一个)。
  */
-export function groupLibraryItems(items: readonly LibraryItem[], now: Date): LibraryGroup[] {
-  const groups: LibraryGroup[] = [];
-  const byLabel = new Map<string, LibraryGroup>();
+export function groupLibraryItems<T extends { createdAt: string }>(
+  items: readonly T[],
+  now: Date,
+): LibraryGroup<T>[] {
+  const groups: LibraryGroup<T>[] = [];
+  const byLabel = new Map<string, LibraryGroup<T>>();
   for (const item of items) {
     const label = libraryTimeGroupLabel(item.createdAt, now);
     let group = byLabel.get(label);

@@ -162,34 +162,45 @@ describe("FRONT-A5 Library 的表面与已批准的设计同源", () => {
 /* ── ② 页签集合 = 今天真有数据支撑的那几格 ────────────────────────────────── */
 
 describe("FRONT-A5 没有真实能力的入口一个都不出现", () => {
-  it("只画得出生成历史、上传与 Elements 三格", async () => {
+  // 2026-09-03(段② 第②③刀):Favorite / Collection / CollectionItem 三张表与它们的
+  // 动作层落地之后,那两格**有**真实能力了,所以它们回到导航上 —— 这条断言从
+  // 「三格」改成「设计的五格」,而规则一个字没变:有契约才出现。
+  it("FRONT-A5 五格与已批准设计逐格一致", async () => {
     const dom = await mount(await LibraryPage({ searchParams: Promise.resolve({}) }));
-    expect(tabLabels(dom)).toEqual(["Generation history", "Uploads", "Elements"]);
+    expect(tabLabels(dom)).toEqual(APPROVED_VIEWS.map((view) => view.label));
   });
 
-  it.each([
-    ["Favorites", "跨类型 favorite 还没有 typed preference"],
-    ["Collections", "Collection / membership 还没有 schema 与动作"],
-  ])("%s 页签不出现(%s)", async (label) => {
-    const dom = await mount(await LibraryPage({ searchParams: Promise.resolve({}) }));
-    expect(tabLabels(dom)).not.toContain(label);
-  });
-
-  it("选择模式、批量动作与 Upload files 三颗按不动的键都不画", async () => {
+  it("FRONT-A5 仍然没有契约的那几颗键一个都不画", async () => {
     const dom = await mount(await LibraryPage({ searchParams: Promise.resolve({}) }));
     const buttons = Array.from(dom.querySelectorAll("button")).map((b) => b.textContent?.trim());
-    expect(buttons).not.toContain("Select");
-    expect(buttons).not.toContain("Add to collection");
+    // Upload files:Library 自己今天仍然没有上传入口(上传走 Otto / 画布)。
     expect(buttons).not.toContain("Upload files");
+    // 批量下载:设计的 SelectionBar 第三颗键,今天没有真实的批量下载路径。
+    expect(buttons).not.toContain("Download");
   });
 
-  it("地址栏点名 Favorites 时落回生成历史,而不是画一格空白", async () => {
+  it("FRONT-A5 有批量动作的网格给 Select", async () => {
+    const dom = await mount(await LibraryPage({ searchParams: Promise.resolve({}) }));
+    expect(
+      Array.from(dom.querySelectorAll("button")).map((b) => b.textContent?.trim()),
+    ).toContain("Select");
+  });
+
+  it("FRONT-A5 Elements 那一格没有批量动作,所以也没有 Select", async () => {
+    const dom = await mount(await LibraryPage({ searchParams: Promise.resolve({ view: "elements" }) }));
+    expect(
+      Array.from(dom.querySelectorAll("button")).map((b) => b.textContent?.trim()),
+    ).not.toContain("Select");
+  });
+
+  it("FRONT-A5 地址栏点名 Favorites 时就开在 Favorites 那一格", async () => {
     const dom = await mount(await LibraryPage({ searchParams: Promise.resolve({ view: "favorites" }) }));
-    // 落回生成历史 = 查的是不带来源约束的那一次(Uploads 那一格才会带 sources)。
-    expect(mocks.getGenerationHistory).toHaveBeenCalledWith(
-      expect.objectContaining({ sources: undefined }),
-    );
-    expect(dom.querySelector('button[aria-label="Open Raya storefront at dusk"]')).toBeTruthy();
+    // 收藏有自己的读模型与游标(裁决十),服务端这一趟仍然只取生成历史首屏;
+    // 屏幕上开着的那一格由 `?view=` 决定。
+    expect(tabLabels(dom)).toContain("Favorites");
+    expect(
+      dom.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim(),
+    ).toBe("Favorites");
   });
 });
 
@@ -227,8 +238,9 @@ describe("FRONT-A5 列表与筛选来自服务器", () => {
 
 /* ── 段②后续切片:今天还证明不了的验收行,占位不冒充 ──────────────────────── */
 
+// FRONT-A5 / A6 / A7 三条占位在 2026-09-03(段② 第②③刀)转正:真测试打真库,
+// 住在 `library-favorites-collections.test.ts`(收藏、合集、Use in canvas 各自的
+// 落库与双向租户隔离)。这里不再留占位 —— 占位与真测试并存会让人以为还没做。
 describe("段②后续切片(本轮不交付,占位登记)", () => {
-  it.todo("FRONT-A5 按收藏筛选与点收藏:Favorites 视图随 cross-object preference 契约一起交付");
-  it.todo("FRONT-A6 新建 collection、加入/移除成员、删除 collection:Collection 表尚未存在");
-  it.todo("FRONT-A7 Library 的 Use in canvas:typed-object handoff 尚未统一,本轮只走现有详情面");
+  it.todo("FRONT-A5 Favorites 页的搜索与筛选:收藏读模型今天没有筛选契约,那几颗控件在那一格不渲染");
 });
