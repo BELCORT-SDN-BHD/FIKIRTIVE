@@ -275,7 +275,7 @@ describe("#548 — with no Otto conversation open, every paid canvas action stil
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    await act(async () => { buttonsLabelled("More like this")[0]!.click(); });
+    await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
 
     expect(mocks.generateImage).toHaveBeenCalledTimes(1);
     expect(mocks.toastError).not.toHaveBeenCalled();
@@ -287,7 +287,7 @@ describe("#548 — with no Otto conversation open, every paid canvas action stil
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    await act(async () => { buttonsLabelled("Make video")[0]!.click(); });
+    await act(async () => { buttonsLabelled("Animate")[0]!.click(); });
     await act(async () => { await Promise.resolve(); });
 
     expect(dialogText()).toContain("Make a video");
@@ -304,7 +304,7 @@ describe("#548 — the one action that does need a conversation says so before t
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    expect(buttonsLabelled("Send to Otto")[0]!.title).toBe(CANVAS_OTTO_CHAT_REQUIRED);
+    expect(buttonsLabelled("Edit with Otto")[0]!.title).toBe(CANVAS_OTTO_CHAT_REQUIRED);
   });
 
   it("says the same sentence if it is pressed anyway — a next step, never a red error", async () => {
@@ -313,7 +313,7 @@ describe("#548 — the one action that does need a conversation says so before t
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    await act(async () => { buttonsLabelled("Send to Otto")[0]!.click(); });
+    await act(async () => { buttonsLabelled("Edit with Otto")[0]!.click(); });
 
     expect(mocks.toastMessage).toHaveBeenCalledWith(CANVAS_OTTO_CHAT_REQUIRED);
     expect(mocks.toastError).not.toHaveBeenCalled();
@@ -326,7 +326,7 @@ describe("#548 — the one action that does need a conversation says so before t
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    const button = buttonsLabelled("Send to Otto")[0]!;
+    const button = buttonsLabelled("Edit with Otto")[0]!;
     expect(button.title).not.toBe(CANVAS_OTTO_CHAT_REQUIRED);
     expect(button.title).toContain("Otto");
 
