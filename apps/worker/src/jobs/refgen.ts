@@ -30,6 +30,7 @@ import {
   REFGEN_RETRY_LIMIT,
   MAX_CONDITIONING_IMAGES,
   refgenSpentUsd,
+  REFERENCE_ASSET_UNREACHABLE,
   type RefGenJobData,
   type RefGenModel,
 } from "@fikirtive/core";
@@ -405,11 +406,17 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
         const baseAsset = await prisma.asset.findFirst({
           where: { id: entity.baseAssetId, ownerId: job.ownerId, deletedAt: null },
         });
-        if (!baseAsset) throw new Error("variant base asset is missing — refusing to spend");
+        if (!baseAsset) {
+          // Codex QA-CRE-007 — merchant sentence persisted (RefGenJob.error → cast library
+          // problem line); raw diagnostic stays in this log line for support.
+          console.error(`[refgen] ${job.id}: variant base asset is missing — refusing to spend`);
+          throw new Error(REFERENCE_ASSET_UNREACHABLE);
+        }
         const signed = await storage.presignedGet(storageKey(baseAsset.ownerId, baseAsset.contentHash, baseAsset.ext), 3600);
         if (signed) inputImageUrls.push(signed);
         if (provider.name !== "mock" && !signed) {
-          throw new Error("variant base unreachable — refusing to spend on a degraded generation");
+          console.error(`[refgen] ${job.id}: variant base unreachable — refusing to spend on a degraded generation`);
+          throw new Error(REFERENCE_ASSET_UNREACHABLE);
         }
       } else if (job.mode !== "BASE") {
         const refs = await prisma.referenceImage.findMany({
@@ -428,9 +435,10 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
         // to text-to-image because the refs weren't reachable (codex P1)
         const isMock = provider.name === "mock";
         if (!isMock && refs.length > 0 && inputImageUrls.length < refs.length) {
-          throw new Error(
-            `conditioning refs unreachable (${inputImageUrls.length}/${refs.length} signable) — refusing to spend on a degraded generation`,
+          console.error(
+            `[refgen] ${job.id}: conditioning refs unreachable (${inputImageUrls.length}/${refs.length} signable) — refusing to spend on a degraded generation`,
           );
+          throw new Error(REFERENCE_ASSET_UNREACHABLE);
         }
       }
 
