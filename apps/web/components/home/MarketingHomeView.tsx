@@ -245,6 +245,9 @@ function PartialMarketingHealth({
  * 长得不一样,但从来不是一张编出来的卡。其余 7 块没有生产者,连进不进 `components` 都轮不到
  * 这里判(`lib/home-layout.ts` 在服务端就把它们过滤掉了),所以这里没有它们的分支。
  */
+/** 占满整行的那几块 —— 逐字照设计夹具的 `FULL_WIDTH_COMPONENTS`。 */
+const FULL_WIDTH_HOME_COMPONENTS = new Set<HomeComponentId>(["marketing-health", "efficiency"]);
+
 function HomeComponentBlock({
   id,
   health,
@@ -388,10 +391,20 @@ export function MarketingHomeView({
 
           {customizing ? null : <ContinueCreating recents={recents} />}
 
+          {/* 网格与整宽规则逐字照设计夹具(FounderHomeReference 的 data-founder-home-components):
+              今天只有一块、而且它是整宽的,所以看不出差别 —— 但等第二块点亮时,版式已经在位,
+              不必再回来改一次布局。 */}
           {(customizing ? draft : components).length ? (
-            <div data-founder-home-components>
+            <div
+              data-founder-home-components
+              className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,26rem),1fr))] gap-x-8"
+            >
               {(customizing ? draft : components).map((id) => (
-                <div key={id} data-home-component={id} className="min-w-0">
+                <div
+                  key={id}
+                  data-home-component={id}
+                  className={cn("min-w-0", FULL_WIDTH_HOME_COMPONENTS.has(id) && "col-span-full")}
+                >
                   <HomeComponentBlock id={id} health={health} filters={filters} />
                 </div>
               ))}
