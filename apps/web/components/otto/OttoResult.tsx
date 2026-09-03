@@ -9,6 +9,7 @@ import { readPick, writePick } from "@/lib/result-pick";
 import { coworkVaryCard } from "@/lib/cowork-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { creditsLabel } from "@/lib/credit-format";
+import { videoFirstFrameSrc } from "@/lib/video-first-frame";
 
 export interface OttoResultProps {
   payload: { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; prompt?: string; costUsd?: number; costCredits?: number } | null;
@@ -88,12 +89,15 @@ function Media({
       {video ? (
         <video
           key={src}
-          src={src}
+          // 首帧,不是黑砖(判官二轮复核 P2-2):与画布节点(VideoNode.tsx)同一个
+          // `#t=0.001` 片段 + `preload="metadata"`,让浏览器在元数据阶段就把第一帧
+          // 解出来画上 —— 片段不发给服务器,`bustUrl` 的重试查询参数不受影响。
+          src={videoFirstFrameSrc(src)}
           controls
           muted
           loop
           playsInline
-          preload="none"
+          preload="metadata"
           style={{ width: "100%", display: "block" }}
           onError={handleError}
         />

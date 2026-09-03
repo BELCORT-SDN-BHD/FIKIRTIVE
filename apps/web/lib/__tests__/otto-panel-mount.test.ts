@@ -190,7 +190,7 @@ function shell(pathname: string, page?: ReactElement) {
 
 describe("哪些面挂面板 (§3.2 末段)", () => {
   it("默认每一面都挂 —— Otto 就在商家正在看的那一页旁边", () => {
-    for (const surface of ["/campaign", "/billing", "/profile", CREATE_NAV_HREF, "/campaign/abc?tab=plan"]) {
+    for (const surface of ["/campaign", "/billing", "/profile", "/library", "/campaign/abc?tab=plan"]) {
       expect(ottoPanelMountsOn(surface), surface).toBe(true);
     }
   });
@@ -199,9 +199,13 @@ describe("哪些面挂面板 (§3.2 末段)", () => {
     // W2-11:`/otto` 那条例外撤了——旧的整屏 Otto 壳不再被任何路由渲染,`/otto` 缩成了
     // 一张纯重定向表,从不出现在浏览器里,不需要面板再对它让道。
     expect(ottoPanelMountsOn("/otto")).toBe(true);
-    // 画布页自带真输入框(#609 原来那条 hideOttoButton,判断搬了家,理由没变)——这是
-    // 今天唯一剩下的例外。
+    // 画布页自带真输入框(#609 原来那条 hideOttoButton,判断搬了家,理由没变)。
     expect(ottoPanelMountsOn(CANVAS_HREF)).toBe(false);
+    // 创作前厅同理(2026-09-04 走查 P1-8):`/create` 页面正中就是「Create with Otto」那只
+    // 输入框(`NorthstarHome.tsx`),而面板在清空存储的全新会话里也会自己弹开 —— 走查录到
+    // 两个 Otto 入口并排,面板里还装着上一场的旧对话。**同一条判据**,只是多了一个成员;
+    // 面板的默认开合(Founder 2026-08-18 Q3-A「首开默认开」)一个字没改。
+    expect(ottoPanelMountsOn(CREATE_NAV_HREF)).toBe(false);
   });
 
   it("只按整段路径比,不按前缀字符串比", () => {
@@ -292,6 +296,32 @@ describe("一屏只有一个 Otto", () => {
 
     expect(el.querySelector("[data-otto-panel]")).toBeNull();
     expect(el.querySelector("[data-page]")).not.toBeNull();
+  });
+
+  /**
+   * 判官裁定 P1-A(2026-09-04)—— `/create` 与画布不同:画布是 `APPLICATION_SHELL_CARVE_OUTS`
+   * 成员,整条壳(含顶栏)根本不画,顶栏那颗 Ask Otto 从来够不着;`/create` 是普通商家面,顶栏
+   * 照画,只是面板不挂在这一面(`panel-surface.ts`)。合并前 `ottoPanelMountsOn(CREATE_NAV_HREF)`
+   * 是 `true`,顶栏那颗按钮是活的;本票把 `/create` 收进「这一面自己已经有一个 Otto」名单之后,
+   * `MerchantTopBar` 若还是无条件渲染这颗按钮,点下去就是 `controls?.togglePanel()` 的空动作
+   * —— 一颗建了没用的死按钮。这里钉的是壳里那半:面板不挂的商家面,顶栏干脆不画这颗按钮。
+   */
+  it("CREATE-A1 · /create 顶栏不留一颗死的 Ask Otto(判官 P1-A)", async () => {
+    const el = await mount(shell(CREATE_NAV_HREF));
+
+    expect(ottoPanelMountsOn(CREATE_NAV_HREF)).toBe(false);
+    // 与画布不同:`/create` 是普通商家面,顶栏本身照画。
+    expect(el.querySelector("[data-merchant-topbar]")).not.toBeNull();
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    expect(el.querySelector("[data-shell-ask-otto]")).toBeNull();
+    expect(el.querySelector("[data-page]")).not.toBeNull();
+  });
+
+  it("CREATE-A1 · 面板挂着的商家面,顶栏那颗 Ask Otto 照旧在(不是整颗按钮被误删)", async () => {
+    const el = await mount(shell(MERCHANT_SURFACE));
+
+    expect(ottoPanelMountsOn(MERCHANT_SURFACE)).toBe(true);
+    expect(el.querySelector("[data-shell-ask-otto]")).not.toBeNull();
   });
 });
 

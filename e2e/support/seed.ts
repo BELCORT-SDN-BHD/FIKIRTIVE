@@ -300,6 +300,106 @@ export async function seedThread(ws: Workspace): Promise<{ threadId: string }> {
   return { threadId };
 }
 
+/**
+ * 一张 Otto 的方案卡，摆在商家眼前等他按确认。
+ *
+ * 2026-09-04 走查 P0-3：走查里这张卡藏在默认折起的 Conversation 抽屉里，而 Otto 在始终可见的
+ * 那张卡上写「你会在上面看到两张卡」—— 上面什么都没有。种一张真的 GEN_CARD（服务端写的那份
+ * payload 形状：报得出价 + 服务端建的 specChips），旅程再去看商家**不打开任何抽屉**时看得见什么。
+ *
+ * 没有 GenJob：这张卡还没被批准，所以一分钱都没花，ledger 上一行都没有。
+ */
+export async function seedPlanCard(
+  ws: Workspace,
+  threadId: string,
+  opts: { seq: number; credits: number; kind?: "image" | "video"; prompt?: string },
+): Promise<{ cardId: string }> {
+  const cardId = id("card");
+  const kind = opts.kind ?? "image";
+  await runAsTenant(ws.orgId, () =>
+    prisma.chatMessage.create({
+      data: {
+        id: cardId,
+        threadId,
+        ownerId: ws.orgId,
+        role: "AGENT" as never,
+        kind: "GEN_CARD" as never,
+        seq: opts.seq,
+        text: "",
+        payload: {
+          kind,
+          structuredPrompt: opts.prompt ?? "A cup of kopi on a rattan table, warm morning light",
+          estimatedCredits: opts.credits,
+          specChips: kind === "video" ? ["16:9", "5s", "720p"] : ["1:1", "Brand and product photo"],
+          params: { count: 1, aspectRatio: kind === "video" ? "16:9" : "1:1" },
+        },
+        createdAt: at(opts.seq),
+      },
+    }),
+  );
+  return { cardId };
+}
+
+/** 一句 Otto 说的话，带 markdown —— 走查 P1-1 里屏幕上出现的就是它的星号。 */
+export async function seedAgentText(
+  ws: Workspace,
+  threadId: string,
+  opts: { seq: number; text: string },
+): Promise<void> {
+  await runAsTenant(ws.orgId, () =>
+    prisma.chatMessage.create({
+      data: {
+        id: id("msg"),
+        threadId,
+        ownerId: ws.orgId,
+        role: "AGENT" as never,
+        kind: "TEXT" as never,
+        seq: opts.seq,
+        text: opts.text,
+        createdAt: at(opts.seq),
+      },
+    }),
+  );
+}
+
+/**
+ * 商家刚刚按下「Generate · N credits」之后的样子：卡还在，卡上挂着一个已经在排队的付费任务。
+ *
+ * 批准动作本身要有供应商才能跑，而这套 e2e 手上一把供应商钥匙都没有（`support/env.ts`），
+ * 所以旅程种的是**按下去之后**那一刻的库状态，再去看画布该不该有东西 —— 走查 P0-1 里它没有。
+ */
+export async function seedApprovedPlanCard(
+  ws: Workspace,
+  threadId: string,
+  opts: { seq: number; kind?: "image" | "video"; prompt?: string },
+): Promise<{ cardId: string; refId: string }> {
+  const { cardId } = await seedPlanCard(ws, threadId, { seq: opts.seq, credits: 1, kind: opts.kind, prompt: opts.prompt });
+  const refId = id("job");
+  await runAsTenant(ws.orgId, () =>
+    prisma.genJob.create({
+      data: {
+        id: refId,
+        ownerId: ws.orgId,
+        projectId: ws.projectId,
+        prompt: opts.prompt ?? "A cup of kopi on a rattan table, warm morning light",
+        kind: ((opts.kind ?? "image") === "video" ? "VIDEO" : "IMAGE") as never,
+        model: "e2e-mock-image",
+        status: "QUEUED" as never,
+        spent: false,
+        idempotencyKey: `cowork:${cardId}`,
+        createdAt: at(opts.seq),
+      },
+    }),
+  );
+  await runAsTenant(ws.orgId, () =>
+    prisma.chatMessage.updateMany({
+      where: { id: cardId, ownerId: ws.orgId },
+      data: { genJobId: refId },
+    }),
+  );
+  return { cardId, refId };
+}
+
 /** The wallet as the database holds it — internal units, straight from the account row. */
 export async function readAccount(ws: Workspace): Promise<{ balance: number; reserved: number }> {
   const account = await prisma.creditAccount.findUniqueOrThrow({

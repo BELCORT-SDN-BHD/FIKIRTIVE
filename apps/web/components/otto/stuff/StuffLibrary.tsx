@@ -251,7 +251,11 @@ export function StuffLibrary({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-card p-2 shadow-[var(--shadow-xs)] lg:flex-row lg:items-center lg:justify-between">
-        <div className="w-full overflow-x-auto pb-0.5 lg:w-auto">
+        {/* `min-w-0` 是这里的关键(走查 P1-8):`lg:w-auto` 之后这只盒子按内容量宽,而 flex
+            子项的默认 `min-width: auto` 不许它缩到内容以下 —— 于是右侧被压掉,`overflow-x-auto`
+            永远不生效,最后一颗筛选片("Ads")被裁掉半个词。Otto 面板停靠时少掉 360px 正是
+            这个宽度,商家因此点不到那一格。允许它缩,滚动条才接得上手。 */}
+        <div className="w-full min-w-0 overflow-x-auto pb-0.5 lg:w-auto">
           <ToggleGroup
             type="single"
             value={filter}
