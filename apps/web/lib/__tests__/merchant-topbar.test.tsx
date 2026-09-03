@@ -97,6 +97,24 @@ describe("MerchantTopBar", () => {
     await act(async () => trigger.click());
     expect(onAskOtto).toHaveBeenCalledTimes(1);
   });
+
+  // CREATE-A1 · 判官裁定 P1-A(2026-09-04):`onAskOtto` 从 `() => controls?.togglePanel()`
+  // 改成可选(`global-navigation.tsx` 只在 `controls` 非空时才传函数)——面板没挂在这一面时,
+  // 这颗按钮此前仍然画出来,按下去却是一次空动作。这里直接钉住 MerchantTopBar 自己的那一半:
+  // 没有 `onAskOtto` 时,它压根不画这颗按钮,而不是画一颗点了没反应的死按钮。账户菜单照常渲染,
+  // 证明这不是整条 utility bar 崩了。
+  it("CREATE-A1 · doesn't render Ask Otto when the panel isn't mounted on this surface (no onAskOtto)", async () => {
+    const el = await render(
+      createElement(MerchantTopBar, {
+        pathname: SHELL_ROUTES.home,
+        signOutAction: async () => {},
+      }),
+    );
+
+    expect(el.querySelector("[data-shell-ask-otto]")).toBeNull();
+    // 账户菜单是另一颗控件,没有一起消失。
+    expect(el.querySelector("[data-shell-identity]")).not.toBeNull();
+  });
 });
 
 describe("MerchantAccountMenu", () => {

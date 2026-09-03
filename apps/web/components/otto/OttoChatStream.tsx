@@ -55,6 +55,7 @@ import {
   injectCardMessage,
   appendMissingCards,
   appendResearchReports,
+  backfillMissingAssistantText,
   syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
 import { mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
@@ -384,11 +385,15 @@ export function OttoChatStream({
       // Sync the parent thread list + make reload authoritative. Non-blocking.
       // Safety net (F23): backfill any card-kind durable the live stream missed
       // (e.g. a dropped data-tool-propose part) so cards never need a reload.
+      // P2-1(判官二轮复核):也在这一刻补一句可读 TEXT——某些轮次直播结束时,live 列表里
+      // 这一轮最终没有任何 text 部件(叙述文字这次没有随流下来),画布卡在这个 turn-end
+      // 才会落回空态句;`backfillMissingAssistantText` 只在 live 列表读不出话时才动手,
+      // 天然不会把已经画出来的那条 TEXT 再叠一遍。
       void (async () => {
         const fresh = await getCoworkThreadClient(thread.id);
         if (fresh) {
           onThreadUpdate(fresh);
-          setMessages((cur) => appendMissingCards(cur, fresh));
+          setMessages((cur) => backfillMissingAssistantText(appendMissingCards(cur, fresh), fresh));
         }
       })();
       // A completed turn meters LLM credits — refresh the nav balance display.
