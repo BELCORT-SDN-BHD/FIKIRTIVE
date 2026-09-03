@@ -70,6 +70,18 @@ function libraryItemToHistoryThumb(item: LibraryItem): HistoryThumb {
   };
 }
 
+/** Codex QA-CRE-007 — a failed card's title used to be the WHOLE prompt: CSS line-clamp hid the
+ *  overflow visually, but the full string still sat in the DOM (a screen reader, "view source",
+ *  or a wide card before the clamp kicks in all showed it whole). A short title is enough to
+ *  recognise which generation this is; the merchant reads the honest reason below it, not the
+ *  prompt, to learn what went wrong. */
+const LIBRARY_CARD_TITLE_MAX = 60;
+
+function libraryCardTitle(prompt: string): string {
+  const trimmed = prompt.trim();
+  return trimmed.length > LIBRARY_CARD_TITLE_MAX ? `${trimmed.slice(0, LIBRARY_CARD_TITLE_MAX)}…` : trimmed;
+}
+
 function AdJobCard({
   job,
   onOpenThread,
@@ -96,7 +108,7 @@ function AdJobCard({
         </div>
         {job.prompt && (
           <CardTitle className="overflow-hidden text-[0.8125rem] leading-5 [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [display:-webkit-box]">
-            {job.prompt}
+            {libraryCardTitle(job.prompt)}
           </CardTitle>
         )}
         <div className="font-mono text-[0.6875rem] tabular-nums text-muted-foreground">
