@@ -18,7 +18,7 @@ import { act, createElement, useEffect, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { canvasDeleteKeyIds } from "@/lib/canvas-selection";
-import { canvasFitPadding, CANVAS_FIT_GAP } from "@/lib/canvas-fit-padding";
+import { canvasFitPadding, canvasFitPaddingPx, CANVAS_FIT_GAP } from "@/lib/canvas-fit-padding";
 import { canvasTerminalNodeSize, DEFAULT_CANVAS_MEDIA_NODE_SIDE } from "@/lib/canvas-node-size";
 
 type FlowProps = {
@@ -370,6 +370,14 @@ describe("FRONT-A15 摆板留白:量出来的安全区,不是对称的百分比"
   it("FRONT-A15: 画板之外的东西不算数", () => {
     expect(canvasFitPadding(board, [rect(2000, 0, 100, 100)])).toEqual({
       top: CANVAS_FIT_GAP, right: CANVAS_FIT_GAP, bottom: CANVAS_FIT_GAP, left: CANVAS_FIT_GAP,
+    });
+  });
+
+  it("FRONT-A15: 交给 React Flow 的留白带 px —— 光秃秃的数字在那边是比例,不是像素", () => {
+    // 施工中途实测过一次这条:不带 px,1440 宽的板一边就要留 718px,缩放被夹到 minZoom,
+    // 卡片从 282px 缩成 32px。
+    expect(canvasFitPaddingPx({ top: 24, right: 170, bottom: 319, left: 320 })).toEqual({
+      top: "24px", right: "170px", bottom: "319px", left: "320px",
     });
   });
 

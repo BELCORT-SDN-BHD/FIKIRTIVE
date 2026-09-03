@@ -90,7 +90,8 @@ import {
 import {
   CANVAS_FIT_OVERLAY_SELECTORS,
   canvasFitPadding,
-  type CanvasFitPadding,
+  canvasFitPaddingPx,
+  type CanvasFitPaddingPx,
 } from "@/lib/canvas-fit-padding";
 import { isTerminalCardStatus } from "@/lib/canvas-card-status";
 import { sameOriginDownloadUrl } from "@/lib/download-url";
@@ -467,13 +468,14 @@ export default function FlowCanvas({
    * 之后一张视频卡 45% 被压住,点它落在 Otto 输入框上(QA-CRE-008)。算法与选择器清单都在
    * `lib/canvas-fit-padding.ts` 一处。
    */
-  const fitPadding = useCallback((): CanvasFitPadding | number => {
+  const fitPadding = useCallback((): CanvasFitPaddingPx | number => {
     const board = canvasHostRef.current;
     if (!board) return 0.22;
     const overlays = CANVAS_FIT_OVERLAY_SELECTORS
       .flatMap((selector) => Array.from(document.querySelectorAll<HTMLElement>(selector)))
       .map((element) => element.getBoundingClientRect());
-    return canvasFitPadding(board.getBoundingClientRect(), overlays);
+    // 带 `px` 交出去:光秃秃的数字在 React Flow 里是比例,不是像素(见 canvasFitPaddingPx)。
+    return canvasFitPaddingPx(canvasFitPadding(board.getBoundingClientRect(), overlays));
   }, []);
 
   const fitBoard = useCallback((duration: number) => {

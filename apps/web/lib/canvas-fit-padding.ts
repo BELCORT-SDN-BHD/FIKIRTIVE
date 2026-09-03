@@ -134,3 +134,28 @@ function clampAxisY(top: number, bottom: number, height: number): { top: number;
   const { left: scaledTop, right: scaledBottom } = clampAxis(top, bottom, height);
   return { top: scaledTop, bottom: scaledBottom };
 }
+
+/**
+ * 交给 React Flow 的形状 —— **必须带 `px`**。
+ *
+ * `fitView` 的 padding 里,一个**光秃秃的数字是比例,不是像素**
+ * (`@xyflow/system` 的 `parsePadding`:`(viewport - viewport / (1 + padding)) * 0.5`)。
+ * 把 `left: 320` 直接递进去,它读成「320 倍视口」,算出来一边就要留 718px,两边加起来把 1440px
+ * 的画板吃干净,缩放被夹到 `minZoom`,整块板缩成一排小方块 —— 本次施工中途实测过一次,卡片从
+ * 282px 缩到 32px。所以像素单位在这里写死一次,调用方不必再记得。
+ */
+export type CanvasFitPaddingPx = {
+  top: `${number}px`;
+  right: `${number}px`;
+  bottom: `${number}px`;
+  left: `${number}px`;
+};
+
+export function canvasFitPaddingPx(padding: CanvasFitPadding): CanvasFitPaddingPx {
+  return {
+    top: `${padding.top}px`,
+    right: `${padding.right}px`,
+    bottom: `${padding.bottom}px`,
+    left: `${padding.left}px`,
+  };
+}
