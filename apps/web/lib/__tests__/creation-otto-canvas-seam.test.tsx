@@ -306,8 +306,9 @@ describe("CREATE-A1 · 一页只有一个 Otto 入口，素材库筛选行够得
   it("CREATE-A1 · 创作前厅与画布都不再挂第二个 Otto 面板", async () => {
     const { ottoPanelMountsOn } = await import("@/components/otto/panel/panel-surface");
     const { CREATE_NAV_HREF, CANVAS_HREF } = await import("@fikirtive/core/navigation");
-    // 这两面自己都带着一只 Otto 输入框。别的商家面一个都没动（面板默认开合＝Founder
-    // 2026-08-18 Q3-A，本票没碰）。
+    // 这两面自己都带着一只 Otto 输入框。别的商家面一个都没动（这条钉的是挂不挂，不是默认
+    // 开合本身——那条口径后来改过一次，Founder 2026-09-04 裁决收起为默认，取代 Q3-A，
+    // 见 `panel-state.ts` 的 `defaultOttoPanelState`，本票不重复）。
     expect(ottoPanelMountsOn(CREATE_NAV_HREF)).toBe(false);
     expect(ottoPanelMountsOn(CANVAS_HREF)).toBe(false);
     expect(ottoPanelMountsOn("/library")).toBe(true);

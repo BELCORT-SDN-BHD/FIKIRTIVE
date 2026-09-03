@@ -8,6 +8,7 @@ import {
   OttoPanelFlowReference,
   useOttoPanelReference,
 } from "@/components/otto/panel/OttoPanelFlowReference";
+import { OTTO_PANEL_STORAGE_KEY } from "@/components/otto/panel/panel-state";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,6 +45,10 @@ beforeEach(async () => {
   Object.defineProperty(window, "innerWidth", { value: 1440, writable: true, configurable: true });
   Object.defineProperty(window, "innerHeight", { value: 900, writable: true, configurable: true });
   window.localStorage.clear();
+  // 这条走查演示的是面板体全流程(seed → thinking → follow-up → fullscreen → reopen),
+  // 不是默认开合本身——默认从 2026-09-04 起改成收起(FRONT-A14,取代 Q3-A,见
+  // panel-state.ts),这里按「商家上次留着开着」起步,好让走查从面板已经打开的那一刻开始。
+  window.localStorage.setItem(OTTO_PANEL_STORAGE_KEY, JSON.stringify({ mode: "docked", open: true, width: 360 }));
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
