@@ -15,7 +15,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { CanvasNodeFooter } from "@/components/canvas/nodes/CanvasNodeFooter";
@@ -150,6 +150,26 @@ describe("FRONT-A14 节点操作条", () => {
       expect(codeOnly(source), `${name} 自己造了下载路径`).not.toContain("document.createElement");
       expect(source, `${name} 的 Download 没有接板子的现成动作`).toContain("d.onDownload?.()");
     }
+  });
+
+  it("FRONT-A14: no second input bar under a picked card (Founder 2026-09-03 裁决①)", () => {
+    // 裁决①: the composer that floated under a picked card ("Evolve" — rewrite the prompt and
+    // make another one) is removed; rewriting goes through "Edit with Otto" on the card's own
+    // bar. The approved pattern puts exactly one input on the board, and it is the creation
+    // band's — never a second one hanging off a card.
+    expect(existsSync(path.join(WEB_ROOT, "components/canvas/nodes/NodeRemakeComposer.tsx"))).toBe(false);
+    for (const [name, raw] of [["ImageNode", imageNode], ["VideoNode", videoNode]] as const) {
+      const source = codeOnly(raw);
+      expect(source, `${name} 还挂着卡下方那条改写输入条`).not.toContain("NodeRemakeComposer");
+      expect(source, `${name} 还留着那条输入条的容器`).not.toContain("cv-node-remake-toolbar");
+      expect(source, `${name} 还留着那条输入条的输入框`).not.toContain("prompt and make a new");
+    }
+    // 板子那一头也没有留给它的接线，样式表里也没有留给它的规则。
+    expect(codeOnly(flowCanvas), "板子还在给卡挂 onEvolve").not.toContain("onEvolve");
+    expect(globalsCss, "样式表里还留着那条输入条的规则").not.toContain("cv-node-remake");
+    // 能力没丢：改写走的是操作条上这颗键。
+    expect(imageNode).toContain('label="Edit with Otto"');
+    expect(videoNode).toContain('label="Edit with Otto"');
   });
 
   it("FRONT-A14: Share and Duplicate are NOT rendered — there is no contract behind them", () => {

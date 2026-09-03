@@ -91,6 +91,8 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 | 2026-09-03 | **裁决九 · 通用原则**：生产界面严格按设计走；设计里没有、而生产必需的东西（空态、错误态、钱披露）按一条规矩处理——**无契约的控件不出现，有契约的内容按设计的样式呈现**。另：Otto 话术里「Create 页有 Templates 区段」这句删除（见本表同日 Templates 行） | 2026-09-03 |
 | 2026-09-03 | **裁决十 · 收藏存法**（回应 §7.3② 的报告项）：**新建一张统一的收藏表**——不分素材类型，记「谁收藏了哪个素材」，带租户约束；收藏页一次查询、按时间排。备选「给 `Asset` 补一列、两类各存各的」**否决**（那样 Favorites 视图要两次查询＋应用层合并排序，游标还要各算一套） | 2026-09-03 |
 | 2026-09-03 | **裁决十一 · Brand 六→五节映射全表**（回应 §7.3④ 的报告项）：Founder 同意四条建议对应——about→Brand voice、customers→Audiences、look→Visual guidelines、rules→Style guide；产品／优惠→Knowledge base 已由裁决三点名。六节映射至此**全表已裁**，施工照落，不再有待确认项 | 2026-09-03 |
+| 2026-09-03 晚 | **裁决十二 · 画布卡下方那条改写输入条退场**：被选中的卡片下方浮出的 `NodeRemakeComposer`（Evolve —— 改写提示词再出一张）**去掉**；改写走卡上操作条的 **Edit with Otto**（把这张卡交给 Otto 接着改），能力不丢。触发＝第⑨段（Canvas 对齐）施工者把它列为「保留待裁」，Founder 当晚裁定去掉。**连带**：那条输入条里的**每卡形状选择器**一并消失（已批准的设计里卡上没有形状选择器）——「Create variations」从此交付**这张卡自己记着的那一格形状**，商家要换形状在创作输入条里选；价钱与「先确认再收钱」的承诺改挂在按钮自己的 tooltip/title 上，一格没缩水。**落地**：PR #1150（`ImageNode.tsx` / `VideoNode.tsx` / `FlowCanvas.tsx` / `globals.css`，`NodeRemakeComposer.tsx` 删除；围栏 `front-a14-canvas-alignment.test.ts`「FRONT-A14: no second input bar under a picked card」） | 2026-09-03 晚 Founder 裁决 |
+| 2026-09-03 晚 | **裁决十三 · Otto 输入框下两行计费说明维持常驻**：不改成「按需披露」。口径以钱引擎规格 MONEY-A10（Founder 2026-09-02 裁决）为准，第⑨段派工书里那句「按需披露」作废。**落地**：PR #1150 保持原样并加围栏（`money-a10-search-disclosure.test.ts`） | 2026-09-03 晚 Founder 裁决 |
 
 ## 6. 改签记录
 

@@ -16,7 +16,6 @@ import { CanvasNodeFooter } from "./CanvasNodeFooter";
 import { CanvasNodeLabel } from "./CanvasNodeLabel";
 import { CanvasNodeMoreMenu } from "./CanvasNodeMoreMenu";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { NodeRemakeComposer } from "./NodeRemakeComposer";
 import { NodeToolbarIconButton } from "./NodeToolbarIconButton";
 import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
 import { isGenFailureReason } from "@fikirtive/core/gen-failure";
@@ -89,19 +88,11 @@ export function VideoNode({ data, id, selected }: NodeProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
-  // Same in-place editing the image cards got (#547 A4): the card's own prompt is the
-  // starting text, not an empty box the merchant has to retype.
-  const [remakePrompt, setRemakePrompt] = useState(originalPrompt);
-  const [promptSeed, setPromptSeed] = useState(originalPrompt);
   // Same rule as the image card: a card's own bar is on screen only while that card is the
   // only one picked, so neighbouring cards' bars can never land on top of each other and the
   // merchant is never left guessing which card a button acts on (#604 r2 P2②).
   const soloSelected = selected && (d.selectedCount ?? 1) === 1;
   const [wasSolo, setWasSolo] = useState(soloSelected);
-  if (promptSeed !== originalPrompt) {
-    setPromptSeed(originalPrompt);
-    setRemakePrompt(originalPrompt);
-  }
   // The info panel belongs to the single picked card; anything else closes it. Render-phase
   // "adjust state when a prop changes" (React docs pattern) — not setState-in-effect.
   if (wasSolo !== soloSelected) {
@@ -219,29 +210,9 @@ export function VideoNode({ data, id, selected }: NodeProps) {
           />
         </NodeToolbar>
       )}
-      {canRemake && (
-        <NodeToolbar
-          className="cv-node-remake-toolbar nodrag nopan"
-          isVisible={soloSelected}
-          position={Position.Bottom}
-          align="center"
-          offset={12}
-          onPointerDown={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <NodeRemakeComposer
-            value={remakePrompt}
-            onChange={setRemakePrompt}
-            onSubmit={() => d.onRemake?.(id, remakePrompt.trim())}
-            placeholder="Change the wording for a new video…"
-            inputLabel="Edit this video's prompt and make a new video"
-            submitLabel="Make a new video from this edited prompt"
-            costHint={d.remakeCostHint}
-            costLabel="New video"
-            confirmation="No charge until you confirm."
-          />
-        </NodeToolbar>
-      )}
+      {/* Same as the image card: no second input bar under a picked card (Founder 2026-09-03
+          裁决①). "Create variations" still makes another take from this video's own words, and
+          rewriting goes through "Edit with Otto". */}
       <CanvasNodeLabel kind="video" letter={letter} />
     {/* The video is a video, not a button: clicking it picks the card up (and the play control
         still just plays it). Everything the card can DO lives on its toolbar above (#604 · D6). */}

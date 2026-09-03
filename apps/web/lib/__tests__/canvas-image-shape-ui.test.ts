@@ -223,15 +223,6 @@ function shapePickers(): HTMLSelectElement[] {
     .filter((s) => (s.getAttribute("aria-label") ?? "").includes("Shape"));
 }
 
-/** 卡上的形状选择器（卡自己的那一条 bar 里）。 */
-function cardShapePicker(nodeId: string): HTMLSelectElement {
-  const found = container!.querySelector<HTMLSelectElement>(
-    `[data-node="${nodeId}"] select[aria-label*="Shape"]`,
-  );
-  expect(found, "这张卡应该有一个形状选择器").not.toBeNull();
-  return found!;
-}
-
 async function pick(select: HTMLSelectElement, value: string): Promise<void> {
   await act(async () => {
     select.value = value;
@@ -374,17 +365,28 @@ describe("画布 t2i：形状在花钱之前就看得见、改得动", () => {
 // ---------------------------------------------------------------------------
 // 入口②：改这张图 / 再来一张（带底图）
 // ---------------------------------------------------------------------------
-describe("画布「改这张图 / 再来一张」：默认继承这张卡的形状", () => {
-  it("卡上显示的是它自己记着的形状（不是输入条的默认值）", async () => {
+describe("画布「再来一张」：默认继承这张卡的形状", () => {
+  it("卡上不再有第二个输入条、也不再有第二个形状选择器（Founder 2026-09-03 裁决①）", async () => {
     mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape("9:16") })]);
     await renderBoard();
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    expect(cardShapePicker("n1").value).toBe("9:16");
+    // 「改写提示词再出一张」这条路整条退场：改写走卡上的 Edit with Otto（Founder 2026-09-03
+    // 裁决①）。已批准的设计里，被选中的卡下方没有第二个输入条，卡上也没有形状选择器。
+    expect(
+      container!.querySelectorAll('[data-node="n1"] input'),
+      "卡上还留着一个输入条",
+    ).toHaveLength(0);
+    expect(
+      container!.querySelector('[data-node="n1"] select[aria-label*="Shape"]'),
+      "卡上还留着第二个形状选择器",
+    ).toBeNull();
+    // 能力没丢：改写从此走这颗键，卡交给 Otto 接着改。
+    expect(buttonsLabelled("Edit with Otto").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("「再来一张」交付的就是卡上显示的那一格 —— 形状不被悄悄改掉", async () => {
+  it("「再来一张」交付的就是这张卡自己记着的那一格 —— 形状不被悄悄改掉", async () => {
     mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape("9:16") })]);
     await renderBoard();
     select(["n1"]);
@@ -398,7 +400,7 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
     expect(options.sourceGenerationId).toBe("gen-n1");
   });
 
-  it("「再来一张」还在接受时，只在这个按钮显示进度，并锁住同一张卡的付费内容", async () => {
+  it("「再来一张」还在接受时，就在这颗按钮上显示进度，并锁住这张卡的付费动作", async () => {
     let finish: ((accepted: boolean) => void) | undefined;
     mocks.generateImage.mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
     mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape("9:16") })]);
@@ -412,12 +414,6 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
     expect(variant.disabled).toBe(true);
     // 图标键:进度就是图标位上的转圈(设计基线把文字收进 sr-only),不再有「Starting…」字样。
     expect(variant.querySelector('[aria-label="Loading"]')).not.toBeNull();
-    expect(cardShapePicker("n1").disabled).toBe(true);
-    const remakeInput = container!.querySelector<HTMLInputElement>(
-      '[data-node="n1"] input[aria-label="Edit this image\'s prompt and make a new image"]',
-    )!;
-    expect(remakeInput.disabled).toBe(true);
-    expect(remakeInput.closest("form")!.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
 
     await act(async () => {
       finish?.(true);
@@ -425,104 +421,15 @@ describe("画布「改这张图 / 再来一张」：默认继承这张卡的形�
     });
   });
 
-  it("商家在卡上换了形状 ⇒ 换的那一格才是交付的形状", async () => {
-    mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape("9:16") })]);
-    await renderBoard();
-    select(["n1"]);
-    await act(async () => { await Promise.resolve(); });
-
-    await pick(cardShapePicker("n1"), "16:9");
-    await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
-
-    const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string };
-    expect(options.aspectRatio).toBe("16:9");
-  });
-
-  it("改了词再送 ⇒ 同样带着卡上显示的那一格", async () => {
-    mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape("4:3") })]);
-    await renderBoard();
-    select(["n1"]);
-    await act(async () => { await Promise.resolve(); });
-
-    const bar = container!.querySelector<HTMLInputElement>(
-      `[data-node="n1"] input[aria-label="Edit this image's prompt and make a new image"]`,
-    );
-    expect(bar).not.toBeNull();
-    await act(async () => { typeInto(bar!, "same cup, warmer light"); });
-    await act(async () => {
-      bar!.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-
-    const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string };
-    expect(options.aspectRatio).toBe("4:3");
-  });
-
-  it("编辑后重做只让送出箭头显示进度，不把旁边的「再来一张」冒充成发起者", async () => {
-    let finish: ((accepted: boolean) => void) | undefined;
-    mocks.generateImage.mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
-    mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape("4:3") })]);
-    await renderBoard();
-    select(["n1"]);
-    await act(async () => { await Promise.resolve(); });
-
-    const bar = container!.querySelector<HTMLInputElement>(
-      '[data-node="n1"] input[aria-label="Edit this image\'s prompt and make a new image"]',
-    )!;
-    await act(async () => { typeInto(bar, "same cup, warmer light"); });
-    await act(async () => {
-      bar.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-
-    const submit = bar.closest("form")!.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-    expect(submit.getAttribute("aria-label")).toBe("Starting a new image");
-    expect(submit.disabled).toBe(true);
-    expect(submit.querySelector('[aria-label="Loading"]')).not.toBeNull();
-    const variant = [...container!.querySelectorAll<HTMLButtonElement>('[data-node="n1"] button')]
-      .find((button) => (button.textContent ?? "").includes("Create variations"))!;
-    expect(variant.disabled).toBe(true);
-    expect(variant.textContent).toContain("Create variations");
-    // 冒充发起者的痕迹现在是图标位上的转圈,不是文案 —— 这颗键上不许有。
-    expect(variant.querySelector('[aria-label="Loading"]')).toBeNull();
-
-    await act(async () => {
-      finish?.(true);
-      await Promise.resolve();
-    });
-  });
-
-  it("老图（没有形状记录）⇒ 显示并交付默认方图 —— 那正是它们当年真的形状", async () => {
+  it("老图（没有形状记录）⇒ 交付默认方图 —— 那正是它们当年真的形状", async () => {
     mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape(null) })]);
     await renderBoard();
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    expect(cardShapePicker("n1").value).toBe("1:1");
     await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
     const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string };
     expect(options.aspectRatio).toBe("1:1");
-  });
-
-  it("同一张卡上的两个按钮不许交付两种形状（「再来一张」与 bar 的送出同口径）", async () => {
-    mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape("1:1") })]);
-    await renderBoard();
-    select(["n1"]);
-    await act(async () => { await Promise.resolve(); });
-
-    await pick(cardShapePicker("n1"), "2:3");
-    await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
-    const viaButton = (mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string }).aspectRatio;
-
-    const bar = container!.querySelector<HTMLInputElement>(
-      `[data-node="n1"] input[aria-label="Edit this image's prompt and make a new image"]`,
-    )!;
-    await act(async () => { typeInto(bar, "another take"); });
-    await act(async () => {
-      bar.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-    const viaBar = (mocks.generateImage.mock.calls[1]![5] as { aspectRatio?: string }).aspectRatio;
-
-    expect(viaButton).toBe("2:3");
-    expect(viaBar).toBe("2:3");
   });
 });
 

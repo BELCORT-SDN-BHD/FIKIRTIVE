@@ -1239,7 +1239,6 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 /* ── Selected-node actions: one compact shadcn ButtonGroup, no movement animation. */
 .cv-node-toolbar { pointer-events: all; z-index: 50; }
 .cv-node-info-toolbar { pointer-events: all; z-index: 51; }
-.cv-node-remake-toolbar { pointer-events: all; z-index: 50; }
 .gb .cv-node-action-group {
   border-radius: var(--radius-control);
   box-shadow: var(--shadow-md);
@@ -1484,28 +1483,6 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   gap: 6px;
   font-size: 11.5px;
   color: var(--muted-foreground);
-}
-
-/* The same compact paid-action composer on image and video nodes. */
-.gb .cv-node-remake {
-  width: 320px;
-  gap: 8px;
-  padding: 8px;
-  border-radius: var(--radius-card);
-  background: var(--card);
-  border-color: var(--border);
-  box-shadow: var(--shadow-md);
-}
-.gb .cv-node-remake [data-slot="input-group"] { min-height: 36px; }
-.gb .cv-node-remake-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: var(--muted-foreground);
-  font-size: 11px;
-  line-height: 1.4;
 }
 
 /* ── Video node poster + centered play button (gb) — matches the mockup. */

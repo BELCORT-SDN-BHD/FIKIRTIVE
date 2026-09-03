@@ -452,9 +452,11 @@ describe("the kernel's behaviour came along with it", () => {
     openImageComposer();
     await act(async () => { await Promise.resolve(); });
 
+    // 「再来一张」是卡上唯一那条「从这张卡再生一张」的付费路（卡下方那条改写输入条按
+    // Founder 2026-09-03 裁决①退场，改写改走 Edit with Otto）。落点规则是同一条。
     const anchor = mocks.flow.current!.nodes.find((node) => node.id === "far")!;
     await act(async () => {
-      (anchor.data.onEvolve as (id: string, text: string) => void)("far", "same cup, warmer light");
+      (anchor.data.onVariant as (id: string, aspect?: string) => void)("far");
     });
 
     expect(mocks.generateImage).toHaveBeenCalledTimes(1);

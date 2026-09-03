@@ -325,10 +325,9 @@ export default function FlowCanvas({
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [videoSubmitting, setVideoSubmitting] = useState(false);
-  const [pendingImageAction, setPendingImageAction] = useState<{
-    nodeId: string;
-    origin: "variant" | "edit";
-  } | null>(null);
+  /** 哪张卡的付费图片动作正在被接受（「再来一张」是这条路上唯一的按键 —— 卡下方那条
+   *  改写输入条按 Founder 2026-09-03 裁决①已退场）。 */
+  const [pendingImageAction, setPendingImageAction] = useState<{ nodeId: string } | null>(null);
   const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
   // Creation S2 §8.1①(CREATE-A6)—— 精修那一格在**服务端说它卖得了**的时候才存在。
   // 菜单读不到 / 服务端说 null ⇒ 整格不渲染,而且这一趟一定按默认档走(见 `fineDetailOn`)。
@@ -956,7 +955,6 @@ export default function FlowCanvas({
     id: string,
     rawPrompt: string,
     aspect: string | undefined,
-    origin: "variant" | "edit",
   ): Promise<boolean> => {
     const text = rawPrompt.trim();
     if (!text) return false;
@@ -971,7 +969,7 @@ export default function FlowCanvas({
       return false;
     }
     evolveBusyRef.current = true;
-    setPendingImageAction({ nodeId: id, origin });
+    setPendingImageAction({ nodeId: id });
     // #643 T2：「改这张图 / 再来一张」默认交付**和这张一样的形状**（那张卡自己记着的形状；
     // 记录不到的老图就是默认方图，那也正是它们当年真的形状）。商家在卡上换了形状，就带
     // 他换的那一格 —— 换形状是另一个动作，所以它进材料。
@@ -1018,10 +1016,6 @@ export default function FlowCanvas({
     }
   }, [activeThreadId, costQuote, generateImage, projectId, spawnRect]);
 
-  const handleEvolve = useCallback((id: string, text: string, aspect?: string) => {
-    void runImageEvolve(id, text, aspect, "edit");
-  }, [runImageEvolve]);
-
   /** 事件处理里按 id 取同一件事（渲染期不许读 ref —— 那是 React 的规矩，也是本仓库的 lint 闸）。 */
   const nodeImageShape = useCallback((id: string): string | undefined => (
     recordedImageShape(nodesRef.current.find((n) => n.id === id), imageShape)
@@ -1034,7 +1028,7 @@ export default function FlowCanvas({
       toast.error("This image has no saved description to build on.");
       return;
     }
-    void runImageEvolve(id, prompt, aspect ?? nodeImageShape(id), "variant");
+    void runImageEvolve(id, prompt, aspect ?? nodeImageShape(id));
   }, [runImageEvolve, nodeImageShape]);
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
@@ -1208,9 +1202,9 @@ export default function FlowCanvas({
   // must be loaded while the composer is visible — its cost label sits next to the
   // Generate button. Video/t2v quotes still load when their confirm dialogs open.
   const composerVisible = skin === "gb" ? composerOpen : true;
-  // Same rule for a selected card's attached bar and its "More like this" button: both show
-  // the exact price before submit (#550 ②, #547 A3/A4), so the quote has to be loaded while
-  // a card is selected. ensureModels caches after the first call, so re-selecting cards
+  // Same rule for a picked card's own priced buttons ("Create variations", "Animate"): each
+  // shows the exact price before submit (#550 ②, #547 A3/A4), so the quote has to be loaded
+  // while a card is selected. ensureModels caches after the first call, so re-selecting cards
   // costs no round trips.
   const cardBarVisible = nodes.some(
     (n) => (n.type === "image" || n.type === "video")
@@ -1472,20 +1466,15 @@ export default function FlowCanvas({
           ...n.data,
           selectedCount,
           sendToOttoTitle,
-          onEvolve: handleEvolve,
           onVariant: handleVariant,
           imageActionPending: pendingImageAction !== null,
-          imageVariantPending:
-            pendingImageAction?.nodeId === n.id && pendingImageAction.origin === "variant",
-          imageEvolvePending:
-            pendingImageAction?.nodeId === n.id && pendingImageAction.origin === "edit",
+          imageVariantPending: pendingImageAction?.nodeId === n.id,
           evolveCostHint,
           onOpenLineage: openLineage,
           // #643 T2: the shape a new take of THIS card will be delivered in — this card's own
           // recorded shape, so "make another one like this" keeps the shape by default. The menu
           // comes from the server; the card writes down nothing itself.
           imageShape: recordedImageShape(n, imageShape),
-          imageShapeOptions: imageShapeMenu?.options,
         }
       : n.type === "video"
         ? { ...n.data, selectedCount, sendToOttoTitle, onRemake: handleVideoRemake, remakeCostHint, onOpenLineage: openLineage }
