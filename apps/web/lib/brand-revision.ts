@@ -30,9 +30,6 @@ export async function resolveActor(email: string): Promise<BrandActor> {
   return { userId: user?.id ?? null, label };
 }
 
-/** Otto 自己动手的那一笔。商家看到的是「Otto」,不是某个人的名字。 */
-export const OTTO_ACTOR: BrandActor = { userId: null, label: "Otto" };
-
 export type BrandRevisionAction = "created" | "updated" | "deleted" | "restored" | "confirmed";
 
 /**

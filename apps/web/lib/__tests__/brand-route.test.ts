@@ -68,10 +68,22 @@ describe("W2-2 ① `/brand` 是真路由", () => {
     expect(existsSync(join(WEB_ROOT, dir, "page.tsx")), `${dir}/page.tsx 不存在`).toBe(true);
   });
 
-  it("页面渲染的是 OttoMemory 那一份实现,没有第二套品牌视图", () => {
-    const page = source(join(dir, "page.tsx"));
+  // 【2026-09-03 改判 · FRONT-A8】`/brand` 的页面内容改由 `docs/specs/frontend-baseline.md`
+  // §7.3④ 说了算(Founder 2026-09-03 裁决三:Brand 按设计五节)。W2-2 立这条断言是为了钉
+  // 「搬家不是重写」—— 那件事仍然成立,只是 `OttoMemory` 这份实现搬去了 `/brand/records`:
+  // 产品 / 优惠 / 客群的结构化编辑器不在设计的五节里,而它今天是这三类记录唯一的入口,
+  // 悄悄删掉就是把一件商家在用的能力弄丢。所以断言跟着搬,不是取消。
+  it("那一份 OttoMemory 实现仍然挂着(搬去 /brand/records),没有被重写成第二套", () => {
+    const page = source(join(dir, "records", "page.tsx"));
     expect(page).toContain('from "@/components/otto/OttoMemory"');
     expect(page).toContain("<OttoMemory");
+  });
+
+  it("FRONT-A8 `/brand` 本身是设计的五节工作台,而且只有这一张 Brand home", () => {
+    const page = source(join(dir, "page.tsx"));
+    expect(page).toContain("BrandWorkspace");
+    // 五节页面自己不许再挂一份 OttoMemory —— 那才是「第二套品牌视图」。
+    expect(page).not.toContain("OttoMemory");
   });
 
   it("等待画面走 ui/skeleton,不手搓那一份 pulse 配方(规格书 §5.6 ③)", () => {

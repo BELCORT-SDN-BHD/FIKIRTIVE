@@ -315,17 +315,6 @@ async function compileBrandContext(
 // 生成的样例预览,等钱路给出价目再补(见 PR 的「设计有、生产暂不显示」表)。
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 草稿在库里长什么样(读回给界面用)。 */
-export type BrandDraftRow = {
-  id: string;
-  section: string;
-  name: string;
-  content: string;
-  origin: string;
-  originDetail: string | null;
-  updatedAt: Date;
-};
-
 /** ① 加来源。**不写库**:只判断这份来源我们收不收,以及它带来的是什么。
  *  今天只收 `text`(商家自己粘贴的材料)。URL 与文件要真去读一个网页/一份文件,
  *  那是花钱的动作,价目未定,所以入口在生产上根本不渲染(见 PR 的暂不显示表)。 */

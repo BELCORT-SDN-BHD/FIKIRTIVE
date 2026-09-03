@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 import { CheckCircle2, Eye, FileText, History, Plus, Sparkles, Trash2, Undo2 } from "lucide-react";
@@ -351,14 +352,17 @@ function AddContextDialog({
 function DetailAccordion({ entry }: { entry: BrandContextEntry }) {
   const [history, setHistory] = React.useState<BrandRevisionRow[] | null>(null);
 
+  // 换一条记录就重取它的改动史。挂在展开事件上更省一次查询,但那样这一层是否装得上
+  // 就取决于 primitive 有没有把 onClick 透传下去 —— 一个「历史永远在读取中」的面板
+  // 比一次便宜的查询贵得多。
   React.useEffect(() => {
+    let alive = true;
     setHistory(null);
-  }, [entry.id]);
-
-  async function loadHistory() {
-    if (history) return;
-    setHistory(await listBrandRevisionsAction({ kind: entry.kind, id: entry.id }));
-  }
+    listBrandRevisionsAction({ kind: entry.kind, id: entry.id }).then((rows) => {
+      if (alive) setHistory(rows);
+    });
+    return () => { alive = false; };
+  }, [entry.id, entry.kind]);
 
   return (
     <Accordion
@@ -397,7 +401,7 @@ function DetailAccordion({ entry }: { entry: BrandContextEntry }) {
       </AccordionItem>
 
       <AccordionItem value="history">
-        <AccordionTrigger className="rounded-none py-5" onClick={loadHistory}>
+        <AccordionTrigger className="rounded-none py-5">
           <span className="flex items-start gap-3">
             <span className="grid size-7 place-items-center">
               <History className="size-4" aria-hidden />
@@ -492,7 +496,7 @@ export function BrandWorkspace({
   }
 
   return (
-    <div className="flex h-[calc(100dvh-2.75rem)] min-w-0 flex-col overflow-hidden bg-background">
+    <main className="flex h-[calc(100dvh-2.75rem)] min-w-0 flex-col overflow-hidden bg-background">
       <header className="shrink-0 border-b border-border px-7 pt-6">
         <div className="flex items-start justify-between gap-6">
           <div>
@@ -518,6 +522,18 @@ export function BrandWorkspace({
           </TabsList>
         </Tabs>
       </header>
+
+      {/* 结构化记录(产品 / 优惠 / 客群)今天只有一个编辑器,而它不在设计的五节里。
+          把它悄悄删掉不行,所以这两节各留一行指路;等第②段 Library 接过产品管理,
+          这一行连同 /brand/records 一起删(理由写在那一页的注释里)。 */}
+      {section === "knowledge-base" || section === "audiences" ? (
+        <p className="shrink-0 border-b border-border bg-secondary/40 px-7 py-2.5 text-xs text-muted-foreground">
+          Products, offers and audiences are edited on their own page.{" "}
+          <Link href="/brand/records" className="font-medium text-foreground underline underline-offset-2">
+            Open the record editor
+          </Link>
+        </p>
+      ) : null}
 
       <div className="flex min-h-0 flex-1">
         <ContextList
@@ -659,6 +675,6 @@ export function BrandWorkspace({
         }}
       />
       <PreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} name={selected?.name ?? "this context"} result={preview} />
-    </div>
+    </main>
   );
 }
