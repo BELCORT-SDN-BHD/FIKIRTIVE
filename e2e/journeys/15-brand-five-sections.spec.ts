@@ -35,7 +35,12 @@ test("FRONT-A8 / FRONT-A9 商家在五个分区写品牌事实,确认之前不�
   await page.getByRole("button", { name: "Review draft" }).click();
 
   // 草稿就是草稿:它带着 Draft 的字样,而不是冒充成已保存。
-  await expect(page.getByRole("heading", { name: "Kampung warmth", level: 2 })).toBeVisible();
+  //
+  // 这一步给的时间比别处长:「Review draft」一下按出去的是**三个**服务端动作
+  // (加来源 → 抽取 → 生成草稿),再加一次服务端重取列表。三步分开是裁决四的要求
+  // (前两步一个字节都不写库),所以这里的四趟往返是设计的一部分,不是慢在实现上;
+  // CI runner 慢的那一趟实测跑到 17.9s,默认的 15s 会在链还没走完时判死。
+  await expect(page.getByRole("heading", { name: "Kampung warmth", level: 2 })).toBeVisible({ timeout: 60000 });
   await expect(page.getByText("Draft", { exact: true }).first()).toBeVisible();
 
   // ④ 预览效果 —— 摆的是保存前后 Otto 真读到的两段,免费、不调模型。
@@ -48,7 +53,7 @@ test("FRONT-A8 / FRONT-A9 商家在五个分区写品牌事实,确认之前不�
 
   // ⑤ 确认保存 —— 到这一刻它才成为正式记录。
   await page.getByRole("button", { name: "Save context" }).click();
-  await expect(page.getByText("Ready", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Ready", { exact: true }).first()).toBeVisible({ timeout: 60000 });
 
   // FRONT-A8:刷新仍在,而且答得出「谁改的、何时改的」。
   await page.reload();
@@ -68,6 +73,6 @@ test("FRONT-A8 / FRONT-A9 商家在五个分区写品牌事实,确认之前不�
   // 那个分区标题,所以 exact。
   await expect(page.getByText("Removed", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Restore" }).click();
-  await expect(page.getByRole("heading", { name: "Kampung warmth", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Kampung warmth", level: 2 })).toBeVisible({ timeout: 60000 });
   await expect(page.getByText("We speak like a neighbour, never like a brochure.")).toBeVisible();
 });
