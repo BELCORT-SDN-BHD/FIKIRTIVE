@@ -79,8 +79,9 @@ function Probe(): null {
     null,
     () => {},
   );
+  // 只在 effect 里落手柄 —— render 期间给外部变量赋值是副作用(eslint react-hooks 会拦),
+  // 而 `act()` 会把 effect 冲干净,所以挂载返回时手柄一定是最新的那一份。
   useEffect(() => { api = gen; });
-  api = gen;
   return null;
 }
 
