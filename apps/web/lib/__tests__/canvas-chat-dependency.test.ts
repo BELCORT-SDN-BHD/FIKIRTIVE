@@ -234,14 +234,6 @@ function dialogText(): string {
   return document.body.textContent ?? "";
 }
 
-function evolveBar(nodeId: string): HTMLInputElement {
-  const found = container!.querySelector<HTMLInputElement>(
-    `[data-node="${nodeId}"] input[aria-label="Edit this image's prompt and make a new image"]`,
-  );
-  expect(found, "a picked image should carry its own prompt bar").not.toBeNull();
-  return found!;
-}
-
 describe("#548 — with no Otto conversation open, every paid canvas action still works", () => {
   it("opens the video composer from the bottom Video tool — it is not a dead key", async () => {
     await renderBoard();
@@ -275,7 +267,7 @@ describe("#548 — with no Otto conversation open, every paid canvas action stil
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    await act(async () => { buttonsLabelled("More like this")[0]!.click(); });
+    await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
 
     expect(mocks.generateImage).toHaveBeenCalledTimes(1);
     expect(mocks.toastError).not.toHaveBeenCalled();
@@ -287,7 +279,7 @@ describe("#548 — with no Otto conversation open, every paid canvas action stil
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    await act(async () => { buttonsLabelled("Make video")[0]!.click(); });
+    await act(async () => { buttonsLabelled("Animate")[0]!.click(); });
     await act(async () => { await Promise.resolve(); });
 
     expect(dialogText()).toContain("Make a video");
@@ -304,7 +296,7 @@ describe("#548 — the one action that does need a conversation says so before t
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    expect(buttonsLabelled("Send to Otto")[0]!.title).toBe(CANVAS_OTTO_CHAT_REQUIRED);
+    expect(buttonsLabelled("Edit with Otto")[0]!.title).toBe(CANVAS_OTTO_CHAT_REQUIRED);
   });
 
   it("says the same sentence if it is pressed anyway — a next step, never a red error", async () => {
@@ -313,7 +305,7 @@ describe("#548 — the one action that does need a conversation says so before t
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    await act(async () => { buttonsLabelled("Send to Otto")[0]!.click(); });
+    await act(async () => { buttonsLabelled("Edit with Otto")[0]!.click(); });
 
     expect(mocks.toastMessage).toHaveBeenCalledWith(CANVAS_OTTO_CHAT_REQUIRED);
     expect(mocks.toastError).not.toHaveBeenCalled();
@@ -326,7 +318,7 @@ describe("#548 — the one action that does need a conversation says so before t
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    const button = buttonsLabelled("Send to Otto")[0]!;
+    const button = buttonsLabelled("Edit with Otto")[0]!;
     expect(button.title).not.toBe(CANVAS_OTTO_CHAT_REQUIRED);
     expect(button.title).toContain("Otto");
 
@@ -337,21 +329,31 @@ describe("#548 — the one action that does need a conversation says so before t
   });
 });
 
-describe("#548 — a refused take never throws away what the merchant typed", () => {
-  it("keeps the edited prompt in the bar when the generation is not accepted", async () => {
-    mocks.generateImage.mockResolvedValue(false);
+describe("Founder 2026-09-03 裁决① — 卡下方那条改写输入条退场，改写走 Edit with Otto", () => {
+  it("a picked card carries no second input bar of its own", async () => {
     mocks.boardRead.mockResolvedValue([boardRow("n1")]);
     await renderBoard();
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    const bar = evolveBar("n1");
-    await act(async () => { typeInto(bar, "same cup, warmer light"); });
-    await act(async () => {
-      bar.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
+    // 改前:选中一张卡,卡下方浮出一条「改写提示词再出一张」的输入条(NodeRemakeComposer)。
+    // 裁决①把这条路整条撤掉 —— 已批准的设计里,板子上只有一个输入的地方。
+    expect(container!.querySelectorAll('[data-node="n1"] input')).toHaveLength(0);
+    expect(container!.querySelector('input[aria-label*="prompt and make a new"]')).toBeNull();
+  });
+
+  it("rewriting is still reachable — Edit with Otto hands this card to the conversation", async () => {
+    const onReferenceInChat = vi.fn();
+    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
+    await renderBoard({ onReferenceInChat, activeThreadId: "t1" });
+    select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
-    expect(evolveBar("n1").value).toBe("same cup, warmer light");
+    await act(async () => { buttonsLabelled("Edit with Otto")[0]!.click(); });
+
+    expect(onReferenceInChat).toHaveBeenCalledTimes(1);
+    // 能力没丢,而且交卡这一步一分钱都不花。
+    expect(mocks.generateImage).not.toHaveBeenCalled();
+    expect(mocks.toastError).not.toHaveBeenCalled();
   });
 });
