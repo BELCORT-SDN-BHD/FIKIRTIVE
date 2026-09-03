@@ -772,7 +772,13 @@ export function LibraryView({
 
   React.useEffect(() => {
     if (!favoritesView) return;
-    void loadFavorites(null);
+    // 包一层 async IIFE 再 await:effect 体里直接 `void loadFavorites(null)`,
+    // react-hooks/set-state-in-effect 会顺着调用图看进那个 useCallback 的函数体,
+    // 把它里面的 setState 记在 effect 头上(即便它们全在 await 之后)。
+    // 与 `CollectionsView` 的取数是同一个写法。
+    void (async () => {
+      await loadFavorites(null);
+    })();
   }, [favoritesView, favoritesToken, loadFavorites]);
 
   /** Escape 退出选择模式(已批准设计 §5「Selection」)。 */
