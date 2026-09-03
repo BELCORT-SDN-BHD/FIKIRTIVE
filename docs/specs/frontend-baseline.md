@@ -77,7 +77,7 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 |---|---|---|
 | 2026-09-03 | Connections 页的 **WhatsApp 行随新壳消失**。旧壳 Messaging 分区里有一行 WhatsApp，写着 "Not available yet"、零按钮（`MessagingRow`，PR #1139 前的 `components/otto/OttoConnections.tsx`）；新壳按已批准的 Settings pattern 重画成「先管已连服务，Add connection 才进 discovery」，整个 Messaging 分区连同那一行退场。产品事实没变（今天仍然没有任何一条连接消息渠道的路），变的是商家还看不看得到「WhatsApp 暂时连不上」这句话。待 Founder FRONT-A14 过目：要不要在 Add connection 弹层里把它作为一条 Unavailable 服务列回来。 |  |
 | 2026-09-03 | **前门不再承诺「做东西与发布都要你先点头」**。换壳前登录页写着 "nothing gets made or published until you approve"，围栏 `public-copy-honesty-791.test.ts` 正向钉着它；新的登录/注册页只剩身份表单，全仓这句承诺只剩审批卡自己（`components/otto/OttoApprovalCard.tsx`）与 `packages/core/src/schedule-draft.ts`。反向禁令（不许说成「凡花钱都先经你点头」）本 PR 已补回并覆盖登录/注册两面；**正向那一句要不要回到前门是产品决定**，等 Founder 拍板。 |  |
-| 2026-09-03 | **Otto 仍然告诉商家 `/create#templates` 有一个 Templates 区段**（`packages/otto/src/skills/recommend-templates.ts:67` 的 `TEMPLATES_SELF_SERVE`）。新壳的 `/create` 只挂 Otto 入口与画布历史，那个区段已经不渲染 —— 这句话今天是假的。本 PR 只把重定向表里的死锚点撤了（零可见变化），改 Otto 的说法是一次商家可见的文案改动，留给 Founder 定：改成「让 Otto 直接帮你做」，还是把 Templates 区段接回 `/create`。 | 2026-09-03 Founder 裁决（裁决九）：**删掉那句话**——它是假话；Templates 区段不接回 `/create`，Otto 改说「让 Otto 直接帮你做」 |
+| 2026-09-03 | **Otto 仍然告诉商家 `/create#templates` 有一个 Templates 区段**（`packages/otto/src/skills/recommend-templates.ts:67` 的 `TEMPLATES_SELF_SERVE`）。新壳的 `/create` 只挂 Otto 入口与画布历史，那个区段已经不渲染 —— 这句话今天是假的。本 PR 只把重定向表里的死锚点撤了（零可见变化），改 Otto 的说法是一次商家可见的文案改动，留给 Founder 定：改成「让 Otto 直接帮你做」，还是把 Templates 区段接回 `/create`。 | 2026-09-03 Founder 裁决（裁决九）：**删掉那句话**——它是假话；Templates 区段不接回 `/create`，Otto 改说「让 Otto 直接帮你做」。**落地**：PR #1148 → main `93b72293` |
 | 2026-09-03 | **Founder 令：生产界面严格按 UIUX 设计（design-system/patterns 各面 Reference 组件与夹具）走**；非逼不得已（例如设计里没有、必须新增的东西）不得偏离；任何新增或改动都须遵守前端规则（PR #1117 交接的 SSOT 与接线规范）。触发＝2026-09-03 Founder 在主干 d24079b5 走 `/create` 与 `/create/canvas`，发现生产路由仍渲染旧组件（`ImmersiveCanvasEntry` / Ask Otto 侧栏），与设计夹具（`CanvasReference` / `CreateWorkspaceReference`）不一致。处置＝先做逐面对照审计（设计夹具 vs 生产路由，并排截图＋差异分级＋工程量），再按面接线；Canvas/Create 接线不在 §7.1 现有八段内，作为新段「⑨ Canvas/Create 按设计接线」待审计后估算与 Founder 批准；接线顺序 Canvas 优先。 | 2026-09-03：审计已结案（见下一行），Founder 同日出九项裁决，§7 据此修订（新增第⑨段与各段施工细则） |
 | 2026-09-03 | **逐面对照审计结案**（设计夹具 `apps/web/design-system/patterns/*` 的 Reference 组件对生产路由，逐面并排走查）。结论分三级：①**外壳一模一样**——应用外壳（导轨、顶栏、Otto 面板骨架）设计与生产一致；②**只差一处**——登录页品牌标破图（候选根因：`apps/web/next.config.ts` 没开 `images.dangerouslyAllowSVG`，而 `FikirtiveMark` 用 `next/image` 取 `/brand/f-app-icon-coral.svg`；施工时坐实，不当结论用）；③**结构不同**——Create 起步页与 Settings/Billing（页面在，但版面与组件不是设计那套）；④**没接线**——Home、Canvas、Library、Brand、@ 引用选择器（设计里的版面与控件在生产上不存在，或接的是旧组件） | 2026-09-03（审计结论采信，据此出九项裁决） |
 | 2026-09-03 | **裁决一 · 顺序**：「对齐轮」（不依赖新后端：画布对齐、Create/设置换皮、素材库接现有资产、@ 小片、登录破图、面包屑）与「四大块」（首页仪表盘、素材库全套含收藏与合集、品牌五节＋草稿流、@ 引用统一）**并行**开工，不排队 | 2026-09-03 |
@@ -89,6 +89,8 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 | 2026-09-03 | **裁决七 · 剪辑拼接不属阶段一**：阶段一只要「Edit this clip」改片入口可用；多片剪辑与拼接留到后续，不进本轮范围 | 2026-09-03 |
 | 2026-09-03 | **裁决八 · 上传照片 Regenerate**：维持拒收，但**先把拒绝提示改成人话**（如 "Uploads can't be regenerated yet. Try Animate or Edit instead."）；图生图（i2i）能力归 Creation 引擎增强层，排进 `creation-engine.md` §8.2 批 II，请求形状接上后再开放。同条已回写 creation-engine.md §5 的 2026-09-03 行 | 2026-09-03 |
 | 2026-09-03 | **裁决九 · 通用原则**：生产界面严格按设计走；设计里没有、而生产必需的东西（空态、错误态、钱披露）按一条规矩处理——**无契约的控件不出现，有契约的内容按设计的样式呈现**。另：Otto 话术里「Create 页有 Templates 区段」这句删除（见本表同日 Templates 行） | 2026-09-03 |
+| 2026-09-03 | **裁决十 · 收藏存法**（回应 §7.3② 的报告项）：**新建一张统一的收藏表**——不分素材类型，记「谁收藏了哪个素材」，带租户约束；收藏页一次查询、按时间排。备选「给 `Asset` 补一列、两类各存各的」**否决**（那样 Favorites 视图要两次查询＋应用层合并排序，游标还要各算一套） | 2026-09-03 |
+| 2026-09-03 | **裁决十一 · Brand 六→五节映射全表**（回应 §7.3④ 的报告项）：Founder 同意四条建议对应——about→Brand voice、customers→Audiences、look→Visual guidelines、rules→Style guide；产品／优惠→Knowledge base 已由裁决三点名。六节映射至此**全表已裁**，施工照落，不再有待确认项 | 2026-09-03 |
 
 ## 6. 改签记录
 
@@ -143,7 +145,7 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 **后端对象与迁移**
 
 - `Collection` 与 `CollectionItem` 两表（§1 九问 4 已定）：都带 `orgId` 外键与「同一 collection 内同一对象只一行」的唯一约束；删 collection 只删 membership，成员对象留在 Library（A6 明写）。
-- **收藏是跨类型的**：设计的 Favorites 是把「生成结果」与「上传」混在一起的一个列表（`patterns/library/model.ts` 的 `LIBRARY_VIEWS`），而今天只有 `Generation.favorite` 一列（§1 九问 4 记的现状），上传（`Asset`）无处可存收藏。二选一，**推荐 ①**：①新建 `Favorite(orgId, subjectType, subjectId, createdAt)` 一张表统一两类，`Generation.favorite` 施工内一次性回灌后只作读时回落；②给 `Asset` 补一列、两类各存各的——选 ② 会把 Favorites 视图变成两次查询＋应用层合并排序，游标也要各算一套。**这是 §1 九问 4 没覆盖的缺口，属报告项**，请 Founder 在 §7.5 一并定。
+- **收藏是跨类型的——Founder 2026-09-03 已裁（裁决十）：新建一张统一收藏表**。设计的 Favorites 是把「生成结果」与「上传」混在一起的一个列表（`patterns/library/model.ts` 的 `LIBRARY_VIEWS`），而今天只有 `Generation.favorite` 一列（§1 九问 4 记的现状），上传（`Asset`）无处可存收藏。落法：新建 `Favorite(orgId, subjectType, subjectId, createdAt)` 一张表**不分素材类型**，记「谁收藏了哪个素材」，带 `orgId` 租户约束与 `(orgId, subjectType, subjectId)` 唯一约束；收藏页**一次查询、按时间排**。`Generation.favorite` 施工内一次性回灌进新表，之后只作读时回落。备选「给 `Asset` 补一列、两类各存各的」**已否决**（Favorites 视图会变成两次查询＋应用层合并排序，游标还要各算一套）。这一条原是 §1 九问 4 没覆盖的缺口，已由裁决十补齐。
 - **生成历史改游标分页读模型**：设计的 History 是按时间分组（Today／Yesterday／Earlier this month）的长列表；今天 `getGenerationHistory` 一次性取。改成 `(createdAt, id)` 复合游标的服务端分页，分组在读模型里算好（时区按 org 设置），前端不算日期。
 - **Uploads 独立身份**：Uploads 视图读 `Asset`，不混进生成历史；两条列表各自的游标互不影响。
 - **Elements 只读**：Products／Characters／Locations 读现有 `Entity`；Official avatars 由 Creation 引擎的 `Entity.catalogKey` 点亮（creation-engine.md §8.1③）；Clothes 在演员库造型 preset 交付前**整格不出现**，不摆空态占位（裁决九）。
@@ -175,14 +177,14 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 
 | 生产旧节 | 设计新节 | 依据 |
 |---|---|---|
-| About the brand（about） | Brand voice | 施工建议，待 Founder 在 §7.5 确认 |
-| Your customers（customers） | Audiences | 施工建议，待确认 |
+| About the brand（about） | Brand voice | **Founder 2026-09-03 裁决十一** |
+| Your customers（customers） | Audiences | **Founder 2026-09-03 裁决十一** |
 | Your products（products） | Knowledge base | **Founder 2026-09-03 裁决三点名** |
 | Your offers（offers） | Knowledge base | **Founder 2026-09-03 裁决三点名** |
-| Look & feel（look） | Visual guidelines | 施工建议，待确认 |
-| Do & don't（rules） | Style guide | 施工建议，待确认 |
+| Look & feel（look） | Visual guidelines | **Founder 2026-09-03 裁决十一** |
+| Do & don't（rules） | Style guide | **Founder 2026-09-03 裁决十一** |
 
-迁移只改「这条记录归哪一节」，**不删任何行**；`sectionForCategory` 的 LEGACY 表同批扩写，旧 category 字符串继续解析得出新节。
+六条映射**全表已裁**（产品／优惠 → Knowledge base 出自裁决三，其余四条出自裁决十一），施工照落，没有待确认项。迁移只改「这条记录归哪一节」，**不删任何行**；`sectionForCategory` 的 LEGACY 表同批扩写，旧 category 字符串继续解析得出新节。
 
 **要建的字段与迁移**（设计的 `ContextRecord` 要 source／sourceDetail／status／usage／history，今天一个都没有）
 
@@ -243,5 +245,5 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 
 - 本次 §7 修订（第⑨段、FRONT-A15、§7.3、§7.4）**需 Founder 在本 PR 评论「S2 批准 frontend-baseline.md」再次批准**，各段方可开工。
 - **已放行的例外**：裁决一里的「对齐轮」中**不涉及新后端对象**的项目——⑨ Canvas/Create 接线、Create 与设置换皮（⑦ 的第①②刀）、素材库接现有资产（② 的第①刀）、@ 小片外观（③ 第②刀的对齐部分）、登录破图、面包屑——Founder 2026-09-03 裁决一已放行，不等本次批准。
-- **请 Founder 在批准时一并定的两件**（§7.3 的报告项，不自作主张）：①Favorites 跨类型收藏走「新建收藏表」（推荐）还是「给 `Asset` 补一列」；②Brand 六节→五节映射里，除 Founder 已点名的产品／优惠→Knowledge base 之外的四条建议映射（about→Brand voice、customers→Audiences、look→Visual guidelines、rules→Style guide）是否照此落。
+- **原先要回呈的两件，Founder 2026-09-03 已裁**（§5 裁决十、十一），施工照落，不再是待确认项：①Favorites 跨类型收藏 = **新建一张统一收藏表**（不分素材类型、租户约束、收藏页一次查询按时间排；「给 `Asset` 补一列」否决）；②Brand 六节→五节映射**全表落定**（about→Brand voice、customers→Audiences、look→Visual guidelines、rules→Style guide、产品／优惠→Knowledge base）。
 - **不在本次修订范围**：付费确认收回 Otto 状态卡的 needs-confirmation 状态机（触钱路，另立小规格）；剪辑拼接（裁决七，不属阶段一）。
