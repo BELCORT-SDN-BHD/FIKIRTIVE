@@ -345,6 +345,20 @@ export default function FlowCanvas({
   /** 哪张卡的付费图片动作正在被接受（「再来一张」是这条路上唯一的按键 —— 卡下方那条
    *  改写输入条按 Founder 2026-09-03 裁决①已退场）。 */
   const [pendingImageAction, setPendingImageAction] = useState<{ nodeId: string } | null>(null);
+  /**
+   * QA-CRE-FE9-001（Founder 2026-09-04 07:05 裁决）——「Create variations」按下去的**意图**，
+   * 还不是一次付费动作。这一格里没有 action id、没有预留、没有 job：它只是这张卡此刻要送去的
+   * 那份材料，等商家在确认卡上按 `Generate · N credits` 才交给 `runImageEvolve`。
+   *
+   * 这条路此前走的是宪法例外①「余额即闸」（图片直出、不弹确认，Founder 2026-07-06 拍板）。
+   * 变体这一条按 07:05 裁决回到设计权威的 variation journey
+   * （`design-system/patterns/canvas/stitch-image-video-parity-spec.md:149`
+   *   `Select image → Variations → count/range/aspects → confirmation → side-by-side variants`）；
+   * 创作输入条那条直出路不在本次裁决范围内，一格没动。
+   */
+  const [pendingVariant, setPendingVariant] = useState<
+    { nodeId: string; prompt: string; aspect?: string; sourceUrl?: string } | null
+  >(null);
   const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
   // Creation S2 §8.1①(CREATE-A6)—— 精修那一格在**服务端说它卖得了**的时候才存在。
   // 菜单读不到 / 服务端说 null ⇒ 整格不渲染,而且这一趟一定按默认档走(见 `fineDetailOn`)。
@@ -1064,6 +1078,14 @@ export default function FlowCanvas({
     recordedImageShape(nodesRef.current.find((n) => n.id === id), imageShape)
   ), [imageShape]);
 
+  /**
+   * 第一下只**开确认**（QA-CRE-FE9-001 / Founder 2026-09-04 07:05 裁决）。
+   *
+   * 这里一分钱都动不了：不建 action id、不 reserve、不建 job —— 只把这张卡此刻要送去的材料
+   * 记进 `pendingVariant`。真正的付费入口是确认卡上那颗 `Generate · N credits`，它调的仍是
+   * 同一个 `runImageEvolve`（同一条 `generateImage` 花钱路、同一份幂等边界），所以钱路语义
+   * 一格没变，变的只是**谁按了才算数**。
+   */
   const handleVariant = useCallback((id: string, aspect?: string) => {
     const node = nodesRef.current.find((n) => n.id === id);
     const prompt = typeof node?.data?.prompt === "string" ? node.data.prompt : "";
@@ -1071,8 +1093,16 @@ export default function FlowCanvas({
       toast.error("This image has no saved description to build on.");
       return;
     }
-    void runImageEvolve(id, prompt, aspect ?? nodeImageShape(id));
-  }, [runImageEvolve, nodeImageShape]);
+    const sourceUrl = typeof node?.data?.url === "string" ? node.data.url : undefined;
+    // 形状口径与裁决①后一模一样：卡自己记着的那一格（记录不到就是默认方图）。
+    const shape = aspect ?? nodeImageShape(id);
+    setPendingVariant({
+      nodeId: id,
+      prompt,
+      ...(shape ? { aspect: shape } : {}),
+      ...(sourceUrl ? { sourceUrl } : {}),
+    });
+  }, [nodeImageShape]);
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
   const addTextNode = useCallback(async () => {
@@ -1255,8 +1285,12 @@ export default function FlowCanvas({
       && imageNodeActionable(n.data as { status?: string; url?: string; generationId?: string }),
   );
   useEffect(() => {
-    if (composerVisible || cardBarVisible || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
-  }, [composerVisible, cardBarVisible, pendingAnimateId, t2vOpen, refreshCostQuote]);
+    // 变体确认卡把这个数渲染成商家正要批准的价（QA-CRE-FE9-001），所以它开着的时候也要有报价；
+    // 报不出来那颗 `Generate` 就不给按（与两个视频弹窗同一口径）。
+    if (composerVisible || cardBarVisible || pendingAnimateId !== null || t2vOpen || pendingVariant !== null) {
+      refreshCostQuote();
+    }
+  }, [composerVisible, cardBarVisible, pendingAnimateId, t2vOpen, pendingVariant, refreshCostQuote]);
 
   // Load (and, under the Grok-bright skin, bridge OTTO's chat results onto) the
   // canvas. The gb path resolves each node's media URL and ensures a node exists
@@ -1513,6 +1547,10 @@ export default function FlowCanvas({
   };
   const t2vCostLabel = specCostLabel(t2vSpec);
   const animateCostLabel = specCostLabel(animateSpec);
+  /** 变体确认卡上的那个数 —— 与卡上 tooltip 同一个服务端报价，界面一分钱都不自己算。 */
+  const variantCostLabel = typeof costQuote?.imageCredits === "number"
+    ? creditsLabel(costQuote.imageCredits)
+    : "checking exact cost";
   // #785 判官 r2 P1-a —— 出片框只在 @元素**真的会进引擎**时才提这件事。
   //
   // 承诺与执行必须同源:这个布尔值来自服务端解析的那一份(`getActiveGenModels`),而它读的
@@ -2230,6 +2268,84 @@ export default function FlowCanvas({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/* QA-CRE-FE9-001 —— 变体的付费确认卡（Founder 2026-09-04 07:05 裁决）。
+          承载它的就是 Animate／出片框那一家的 `Dialog`，不另发明第二套确认 UI；内容按设计权威
+          `stitch-image-video-parity-spec.md` §5「Paid generation confirmation」：要生成的东西、
+          数量、比例、用到的材料、准确 credits，primary CTA `Generate · N credits`。
+          这张卡开着的时候一分钱都还没动 —— 第一次点击不建 job、不进账本。 */}
+      <Dialog
+        open={pendingVariant !== null}
+        onOpenChange={(open) => { if (!open && pendingImageAction === null) setPendingVariant(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Make another one like this?</DialogTitle>
+            <DialogDescription>
+              Cost: {variantCostLabel}. No charge until you confirm.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3">
+            {pendingVariant?.sourceUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- 画布媒体一律签名 URL，与卡片同一条路
+              <img
+                src={pendingVariant.sourceUrl}
+                alt=""
+                className="size-20 shrink-0 rounded-[var(--radius-sm)] border border-border object-cover"
+              />
+            ) : null}
+            <dl className="min-w-0 flex-1 space-y-1 text-sm">
+              <div className="flex gap-2">
+                <dt className="text-muted-foreground">Images</dt>
+                <dd className="tabular-nums">{CANVAS_IMAGE_DEFAULT_COUNT}</dd>
+              </div>
+              {pendingVariant?.aspect ? (
+                <div className="flex gap-2">
+                  <dt className="text-muted-foreground">Shape</dt>
+                  <dd>{pendingVariant.aspect}</dd>
+                </div>
+              ) : null}
+              <div className="flex min-w-0 gap-2">
+                <dt className="shrink-0 text-muted-foreground">From</dt>
+                <dd className="min-w-0 line-clamp-3 text-muted-foreground">{pendingVariant?.prompt}</dd>
+              </div>
+            </dl>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              disabled={pendingImageAction !== null}
+              onClick={() => setPendingVariant(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={!costQuote || pendingImageAction !== null}
+              aria-live="polite"
+              onClick={async () => {
+                const intent = pendingVariant;
+                if (!intent) return;
+                // 这一按才是付费动作：稳定 action id → reserve → provider job，全在
+                // `runImageEvolve` 里，与改动前逐字一样（含 `evolveBusyRef` 那道防双击闸）。
+                if (await runImageEvolve(intent.nodeId, intent.prompt, intent.aspect)) {
+                  setPendingVariant(null);
+                }
+              }}
+            >
+              {!costQuote ? (
+                <>
+                  <Spinner data-icon="inline-start" aria-hidden="true" />
+                  Checking cost…
+                </>
+              ) : pendingImageAction !== null ? (
+                <>
+                  <Spinner data-icon="inline-start" aria-hidden="true" />
+                  Starting…
+                </>
+              ) : `Generate · ${creditsLabel(costQuote.imageCredits)}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={pendingAnimateId !== null} onOpenChange={(open) => { if (!open && !videoSubmitting) { setPendingAnimateId(null); setMotion("gentle"); setCustomMotion(""); } }}>
         <DialogContent>
           <DialogHeader>

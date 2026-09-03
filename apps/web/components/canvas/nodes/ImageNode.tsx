@@ -115,6 +115,9 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   // what it settled, so a card that is still queueing says nothing about its batch (#605 r1 P1-1).
   const letter = canvasBatchLetter(canvasRecordedFacts(d));
   const canVariant = actionable && !!d.onVariant && !!originalPrompt;
+  // One sentence for the "Create variations" key: what it delivers, in which shape, at what
+  // price — and, since QA-CRE-FE9-001, that pressing it only opens the confirmation.
+  const variantHint = `Make another one like this${d.imageShape ? ` · ${d.imageShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""} · No charge until you confirm`;
   const canSendToOtto = actionable && !!d.onSendToOtto;
   return (
     <>
@@ -151,8 +154,11 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             <WandSparklesIcon aria-hidden />
           </NodeToolbarIconButton>
         )}
-        {/* A3: one click makes another take of THIS image from its own prompt — the old path
-            was Detail → Regenerate (two clicks and a panel). Paid, and priced in the title. */}
+        {/* A3: another take of THIS image from its own prompt — the old path was
+            Detail → Regenerate (two clicks and a panel).
+            QA-CRE-FE9-001（Founder 2026-09-04 07:05 裁决）：这一press **只开确认卡**，钱在
+            那张卡上的 `Generate · N credits` 才动。价钱仍在这颗键自己的 title 上先说一遍，
+            后面再跟一句它此刻真正会做的事 —— 免得商家以为按下去就扣。 */}
         {canVariant && (
           <NodeToolbarIconButton
             type="button"
@@ -162,8 +168,8 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             onPointerDown={(e) => e.stopPropagation()}
             // #643 T2：交付的是这张卡自己记着的那一格形状 —— 「和这张一样」就是一样。
             onClick={(e) => { e.stopPropagation(); d.onVariant?.(id, d.imageShape); }}
-            tooltip={`Make another one like this${d.imageShape ? ` · ${d.imageShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
-            title={`Make another one like this${d.imageShape ? ` · ${d.imageShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
+            tooltip={variantHint}
+            title={variantHint}
           >
             {d.imageVariantPending ? <Spinner aria-hidden="true" /> : <CopyPlusIcon aria-hidden />}
           </NodeToolbarIconButton>

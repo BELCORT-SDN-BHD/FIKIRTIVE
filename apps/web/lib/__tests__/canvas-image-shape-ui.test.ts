@@ -254,6 +254,19 @@ async function submitComposer(): Promise<void> {
   await act(async () => { await Promise.resolve(); });
 }
 
+/**
+ * 「Create variations」第一下只开确认卡（QA-CRE-FE9-001 / Founder 2026-09-04 07:05 裁决），
+ * 所以形状这条链现在要按两下才走到付费请求：先开卡，再按卡上那颗 `Generate · N credits`。
+ * 这颗键是**唯一**的付费入口，本文件的每条形状断言都从它后面读。
+ */
+function confirmVariantButton(): HTMLButtonElement {
+  // 弹窗走 portal，落在 document.body 上，不在 container 里。
+  const found = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+    .find((b) => b.textContent?.startsWith("Generate · "));
+  expect(found, "变体确认卡上没有 `Generate · N credits`").not.toBeUndefined();
+  return found as HTMLButtonElement;
+}
+
 function buttonsLabelled(text: string): HTMLButtonElement[] {
   return [...container!.querySelectorAll("button")].filter((b) => b.textContent === text);
 }
@@ -393,6 +406,9 @@ describe("画布「再来一张」：默认继承这张卡的形状", () => {
     await act(async () => { await Promise.resolve(); });
 
     await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
+    // 第一下只开确认卡 —— 这里还没有任何付费请求。
+    expect(mocks.generateImage).not.toHaveBeenCalled();
+    await act(async () => { confirmVariantButton().click(); });
 
     expect(mocks.generateImage).toHaveBeenCalledTimes(1);
     const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string; sourceGenerationId?: string };
@@ -410,6 +426,9 @@ describe("画布「再来一张」：默认继承这张卡的形状", () => {
 
     const variant = buttonsLabelled("Create variations")[0]!;
     await act(async () => { variant.click(); });
+    // 确认卡开着的时候这颗键还没被锁 —— 它还没花钱。锁是「按了 Generate」之后的事。
+    expect(variant.disabled).toBe(false);
+    await act(async () => { confirmVariantButton().click(); });
 
     expect(variant.disabled).toBe(true);
     // 图标键:进度就是图标位上的转圈(设计基线把文字收进 sr-only),不再有「Starting…」字样。
@@ -428,6 +447,7 @@ describe("画布「再来一张」：默认继承这张卡的形状", () => {
     await act(async () => { await Promise.resolve(); });
 
     await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
+    await act(async () => { confirmVariantButton().click(); });
     const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string };
     expect(options.aspectRatio).toBe("1:1");
   });

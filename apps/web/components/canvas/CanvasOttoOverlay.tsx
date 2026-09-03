@@ -20,7 +20,6 @@ export function CanvasOttoOverlay({
   activeThread,
   pendingFirst,
   composerReferences,
-  onNewConversation,
   onThreadChange,
   onStreamStart,
   onPendingFirstSent,
@@ -34,7 +33,6 @@ export function CanvasOttoOverlay({
   activeThread: ChatThreadDTO | null;
   pendingFirst: CanvasPendingFirst | null;
   composerReferences: OttoComposerReference[];
-  onNewConversation: () => void;
   onThreadChange: (thread: ChatThreadDTO) => void;
   onStreamStart: (thread: ChatThreadDTO, pending: Omit<CanvasPendingFirst, "handoffId">) => void;
   onPendingFirstSent: () => void;
@@ -65,7 +63,6 @@ export function CanvasOttoOverlay({
       entities={entities}
       thread={activeThread}
       balanceUsd={balanceUsd}
-      onNewConversation={onNewConversation}
       onRefresh={async () => {
         const fresh = await getCoworkThreadClient(activeThread.id);
         if (fresh) onThreadChange(fresh);
