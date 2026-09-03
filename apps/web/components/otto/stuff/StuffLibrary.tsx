@@ -373,11 +373,18 @@ export function StuffLibrary({
               // merchant's "click the thing to see it" habit works on both.
               const canOpenEntityTile = isEntity && !!onOpenEntity;
               const canOpen = canOpenGeneration || canOpenEntityTile;
+              // 官方目录只读(Founder 2026-08-30)。能力表由 EntityDTO 经 buildStuffItems 带到
+              // 这里,这一层不重新判断来源。全关的那几格**不画**(不是画成禁用的假控件),
+              // 三格都关时连「⋯」触发器都不出现。「Set as product image」不在其中:那是把
+              // 一张图链给商家自己的产品记录,属于 Founder 裁决里的 use,不改这位演员的身份。
+              const entityCaps = item.entityCapabilities;
+              const canRenameEntity = isEntity && !!onRename && entityCaps?.editIdentity !== false;
+              const canChangeTypeEntity =
+                isEntity && !!item.entityType && !!onChangeType && entityCaps?.editIdentity !== false;
+              const canDeleteEntity = isEntity && !!onDelete && entityCaps?.deleteEntity !== false;
               const hasPrimaryActions =
-                (canSetProduct && !!onSetProductImage) ||
-                (isEntity &&
-                  (!!onRename || (!!item.entityType && !!onChangeType)));
-              const hasActions = hasPrimaryActions || (isEntity && !!onDelete);
+                (canSetProduct && !!onSetProductImage) || canRenameEntity || canChangeTypeEntity;
+              const hasActions = hasPrimaryActions || canDeleteEntity;
               const openItem = () => {
                 if (canOpenGeneration) {
                   onOpenGeneration?.(item.generationId!, item.projectId!);
@@ -438,7 +445,7 @@ export function StuffLibrary({
                                   Set as product image
                                 </DropdownMenuItem>
                               )}
-                              {isEntity && onRename && (
+                              {canRenameEntity && (
                                 <DropdownMenuItem
                                   onSelect={() => {
                                     setRenameTarget(item);
@@ -448,7 +455,7 @@ export function StuffLibrary({
                                   Rename
                                 </DropdownMenuItem>
                               )}
-                              {isEntity && item.entityType && onChangeType && (
+                              {canChangeTypeEntity && (
                                 <DropdownMenuItem
                                   onSelect={() => {
                                     setTypeTarget(item);
@@ -460,7 +467,7 @@ export function StuffLibrary({
                               )}
                             </DropdownMenuGroup>
                           )}
-                          {isEntity && onDelete && (
+                          {canDeleteEntity && (
                             <>
                               {hasPrimaryActions && <DropdownMenuSeparator />}
                               <DropdownMenuGroup>
