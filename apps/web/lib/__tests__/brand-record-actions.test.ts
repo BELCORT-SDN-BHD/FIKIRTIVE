@@ -10,7 +10,13 @@ const { mockRequireOwner, mockFindMany, mockFindFirst, mockCreate, mockUpdateMan
 
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("@fikirtive/db", () => ({
-  prisma: { brandRecord: { findMany: mockFindMany, findFirst: mockFindFirst, create: mockCreate, updateMany: mockUpdateMany } },
+  prisma: {
+    brandRecord: { findMany: mockFindMany, findFirst: mockFindFirst, create: mockCreate, updateMany: mockUpdateMany },
+    // FRONT-A8:写路径现在还会读 User(「谁改的」)与写 BrandContextRevision(改动史)。
+    brandContextRevision: { create: vi.fn().mockResolvedValue({}) },
+    memory: { findFirst: vi.fn().mockResolvedValue(null) },
+    user: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
+  },
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -18,7 +24,7 @@ import { listMyBrandRecords, saveBrandRecord, deleteBrandRecord, restoreBrandRec
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+  mockRequireOwner.mockResolvedValue({ ownerId: "o1", email: "merchant@fikirtive.test" });
 });
 
 describe("saveBrandRecord — create", () => {
@@ -71,7 +77,8 @@ describe("delete / restore", () => {
     expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenCalledWith({
       where: { id: "r1", ownerId: "o1" },
-      data: { deletedAt: expect.any(Date) },
+      // FRONT-A8:删除/恢复也是一次「谁动的」,所以同一笔写盖上作者。
+      data: { deletedAt: expect.any(Date), updatedById: null },
     });
   });
   it("soft-delete is safe to repeat after an uncertain response", async () => {
@@ -80,7 +87,8 @@ describe("delete / restore", () => {
     expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenNthCalledWith(2, {
       where: { id: "r1", ownerId: "o1" },
-      data: { deletedAt: expect.any(Date) },
+      // FRONT-A8:删除/恢复也是一次「谁动的」,所以同一笔写盖上作者。
+      data: { deletedAt: expect.any(Date), updatedById: null },
     });
   });
   it("restore clears deletedAt", async () => {
@@ -88,7 +96,7 @@ describe("delete / restore", () => {
     expect(await restoreBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenCalledWith({
       where: { id: "r1", ownerId: "o1" },
-      data: { deletedAt: null },
+      data: { deletedAt: null, updatedById: null },
     });
   });
 });
@@ -106,7 +114,8 @@ describe("listMyBrandRecords", () => {
     const rows = await listMyBrandRecords();
     expect(rows).toHaveLength(1);
     expect(mockFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { ownerId: "o1", brandId: null, deletedAt: null },
+      // FRONT-A8:与 Memory 同一条纪律 —— 只有 Ready 是正式记录。
+      where: { ownerId: "o1", brandId: null, deletedAt: null, contextStatus: "Ready" },
     }));
   });
 });

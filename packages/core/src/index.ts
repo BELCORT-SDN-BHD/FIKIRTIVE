@@ -115,6 +115,15 @@ export type {
 export { SECTIONS, FACT_SECTION_KEYS, sectionForCategory, diffRows } from "./memory-sections.js";
 export { sectionsTouched } from "./memory-sections.js";
 export type { SectionKey, RowDiff } from "./memory-sections.js";
+// 五节品牌分区(FRONT-A8;规格 §7.3④,Founder 2026-09-03 裁决三＋十一)
+export {
+  BRAND_SECTIONS, BRAND_CONTEXT_STATUSES, BRAND_CONTEXT_ORIGINS,
+  LEGACY_SECTION_TO_BRAND_SECTION, BRAND_SECTION_TO_LEGACY_SECTION,
+  isBrandSectionKey, brandSectionLabel, brandSectionAction,
+  brandSectionForCategory, brandSectionForRecordKind,
+  isBrandContextStatus, isBrandContextOrigin, brandOriginLabel,
+} from "./memory-sections.js";
+export type { BrandSectionKey, BrandContextStatus, BrandContextOrigin } from "./memory-sections.js";
 export { tavilySearch, braveSearch, searchWithFallback } from "./websearch.js";
 export type { WebSearchResult, WebSearchFn } from "./websearch.js";
 // url-safety (node:dns) + fetch-extract are SERVER-ONLY — import from

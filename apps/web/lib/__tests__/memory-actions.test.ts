@@ -13,10 +13,16 @@ const { mockRequireOwner, mockMemoryCreate, mockMemoryFindMany, mockMemoryUpdate
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
-    memory: { create: mockMemoryCreate, findMany: mockMemoryFindMany, updateMany: mockMemoryUpdateMany },
+    memory: {
+      create: mockMemoryCreate, findMany: mockMemoryFindMany, updateMany: mockMemoryUpdateMany,
+      findFirst: vi.fn().mockResolvedValue({ updatedAt: new Date("2026-09-03T00:00:00.000Z") }),
+    },
     brandKit: { findFirst: mockKitFindFirst },
     brandRule: { findMany: mockRuleFindMany },
-    brandRecord: { findMany: mockRecordFindMany },
+    brandRecord: { findMany: mockRecordFindMany, findFirst: vi.fn().mockResolvedValue(null) },
+    // FRONT-A8:memory-actions 现在还会读 User(「谁改的」)与写 BrandContextRevision(改动史)。
+    brandContextRevision: { create: vi.fn().mockResolvedValue({}) },
+    user: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 vi.mock("@fikirtive/core", async () => ({
@@ -29,7 +35,7 @@ import { addMemory, updateMemory, deleteMemory, restoreMemory, getBrandContextTe
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+  mockRequireOwner.mockResolvedValue({ ownerId: "o1", email: "merchant@fikirtive.test" });
   // Default: no kit, no rules, no records (so existing tests are unaffected)
   mockKitFindFirst.mockResolvedValue(null);
   mockRuleFindMany.mockResolvedValue([]);
@@ -38,12 +44,13 @@ beforeEach(() => {
 
 describe("addMemory", () => {
   it("persists owner-scoped with source 'user'", async () => {
-    mockMemoryCreate.mockResolvedValue({ id: "m_1" });
+    mockMemoryCreate.mockResolvedValue({ id: "m_1", updatedAt: new Date("2026-09-03T00:00:00.000Z") });
     const res = await addMemory({ category: "voice", content: "warm, family tone" });
     expect(res).toEqual({ ok: true, id: "m_1" });
-    expect(mockMemoryCreate).toHaveBeenCalledWith({
+    // FRONT-A8:同一次写现在还带 updatedById(「谁改的」),并把 updatedAt 读回来当改动史的幂等键。
+    expect(mockMemoryCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ ownerId: "o1", category: "voice", content: "warm, family tone", source: "user" }),
-    });
+    }));
   });
 
   it("returns error when category is missing", async () => {
@@ -135,7 +142,8 @@ describe("restoreMemory", () => {
     expect(await restoreMemory({ id: "m_1" })).toEqual({ ok: true });
     expect(mockMemoryUpdateMany).toHaveBeenNthCalledWith(1, {
       where: { id: "m_1", ownerId: "o1" },
-      data: { deletedAt: null },
+      // FRONT-A8:恢复也是一次「谁动的」,所以同一笔写也盖上作者。
+      data: { deletedAt: null, updatedById: null },
     });
   });
 
@@ -187,7 +195,7 @@ describe("getBrandContextText", () => {
 // passed in, so a regression to `_ownerId ?? gate.ownerId` would FAIL here.
 describe("tenant isolation — caller-supplied ownerId is ignored", () => {
   it("getBrandContextText queries the SESSION owner, never the forged arg", async () => {
-    mockRequireOwner.mockResolvedValue({ ownerId: "session-org" });
+    mockRequireOwner.mockResolvedValue({ ownerId: "session-org", email: "merchant@fikirtive.test" });
     mockMemoryFindMany.mockResolvedValue([]);
     await getBrandContextText("attacker-org", "brand_1");
     expect(mockMemoryFindMany).toHaveBeenCalledWith(
@@ -197,14 +205,14 @@ describe("tenant isolation — caller-supplied ownerId is ignored", () => {
   });
 
   it("listMemory queries the SESSION owner, never the forged arg", async () => {
-    mockRequireOwner.mockResolvedValue({ ownerId: "session-org" });
+    mockRequireOwner.mockResolvedValue({ ownerId: "session-org", email: "merchant@fikirtive.test" });
     mockMemoryFindMany.mockResolvedValue([]);
     await listMemory("attacker-org");
     expect(mockMemoryFindMany.mock.calls[0]![0].where.ownerId).toBe("session-org");
   });
 
   it("listMyMemory resolves the owner from the session and returns its rows", async () => {
-    mockRequireOwner.mockResolvedValue({ ownerId: "session-org" });
+    mockRequireOwner.mockResolvedValue({ ownerId: "session-org", email: "merchant@fikirtive.test" });
     mockMemoryFindMany.mockResolvedValue([{ id: "m1", category: "voice", content: "warm", source: "user", pinned: true, updatedAt: new Date() }]);
     const rows = await listMyMemory();
     expect(rows).toHaveLength(1);
