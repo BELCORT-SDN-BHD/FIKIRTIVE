@@ -41,6 +41,7 @@ import { getCoworkThreadClient, getOlderCoworkThreadMessagesClient } from "@/lib
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
 import { ChevronDown, ImagesIcon, MessageSquarePlus, PlusIcon, UploadIcon, XIcon } from "lucide-react";
 import { uploadFilesDirect } from "@/lib/direct-upload";
+import { UPLOAD_FAILURE_COPY } from "@fikirtive/core/upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_SIDE, FRAME_JPEG_QUALITY, REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS, isRefVideoDurationOk } from "@/lib/video-frame";
 import {
@@ -604,7 +605,7 @@ export function OttoChatStream({
     try {
       const outcome = await uploadFilesDirect([file], () => {});
       if (outcome.files.length === 0) {
-        setAttachError(outcome.failures[0]?.reason ?? "Upload failed.");
+        setAttachError(outcome.failures[0]?.reason ?? UPLOAD_FAILURE_COPY.blocked);
         return;
       }
       const res = await finalizeCandidateUploads(projectId, "", [], outcome.files);
@@ -613,8 +614,10 @@ export function OttoChatStream({
         return;
       }
       setAttachedRefs((current) => upsertComposerReference(current, { generationId: res.generationIds[0], src: URL.createObjectURL(file), kind: "image", previewKind: "image", label: "Image ref" }));
-    } catch (err) {
-      setAttachError(err instanceof Error ? err.message : "Upload failed.");
+    } catch {
+      // 2026-09-03 走查 S2 —— 这里曾把任何一层抛上来的 `err.message` 原样上屏,
+      // 商家读到的那句「Unknown error」就是这么来的。底层原文只进日志。
+      setAttachError(UPLOAD_FAILURE_COPY.blocked);
     } finally {
       setUploading(false);
     }
@@ -716,7 +719,7 @@ export function OttoChatStream({
       const preview = c.toDataURL("image/jpeg", FRAME_JPEG_QUALITY);
       const outcome = await uploadFilesDirect([file], () => {});
       if (outcome.files.length === 0) {
-        setAttachError(outcome.failures[0]?.reason ?? "Upload failed.");
+        setAttachError(outcome.failures[0]?.reason ?? UPLOAD_FAILURE_COPY.blocked);
         return;
       }
       const r = await finalizeCandidateUploads(projectId, "", [], outcome.files);
@@ -726,8 +729,10 @@ export function OttoChatStream({
       }
       setAttachedRefs((current) => upsertComposerReference(current, { generationId: r.generationIds[0], src: preview, kind: "image", previewKind: "image", label: "Image ref" }));
       closeVideoPick();
-    } catch (err) {
-      setAttachError(err instanceof Error ? err.message : "Upload failed.");
+    } catch {
+      // 2026-09-03 走查 S2 —— 这里曾把任何一层抛上来的 `err.message` 原样上屏,
+      // 商家读到的那句「Unknown error」就是这么来的。底层原文只进日志。
+      setAttachError(UPLOAD_FAILURE_COPY.blocked);
     } finally {
       setUploading(false);
     }
@@ -743,14 +748,14 @@ export function OttoChatStream({
     setUploading(true);
     try {
       const outcome = await uploadFilesDirect([wholeVideoFileRef.current], () => {});
-      if (outcome.files.length === 0) { setAttachError(outcome.failures[0]?.reason ?? "Upload failed."); return; }
+      if (outcome.files.length === 0) { setAttachError(outcome.failures[0]?.reason ?? UPLOAD_FAILURE_COPY.blocked); return; }
       const r = await finalizeCandidateUploads(projectId, "", [], outcome.files);
       if ("error" in r || !r.generationIds?.[0]) { setAttachError("error" in r ? r.error : "Could not attach video."); return; }
       const preview = canvasRef.current?.toDataURL("image/jpeg", FRAME_JPEG_QUALITY) ?? "";
       setAttachedRefs((current) => upsertComposerReference(current, { generationId: r.generationIds[0], src: preview, kind: "refVideo", previewKind: "image", label: "Video ref" }));
       closeVideoPick();
-    } catch (err) {
-      setAttachError(err instanceof Error ? err.message : "Upload failed.");
+    } catch {
+      setAttachError(UPLOAD_FAILURE_COPY.blocked);
     } finally { setUploading(false); }
   }
 
