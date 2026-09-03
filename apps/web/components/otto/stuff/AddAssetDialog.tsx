@@ -28,6 +28,7 @@ import {
   REFERENCE_FORMATS,
   type ReferenceFormat,
 } from "@/lib/reference-formats";
+import { NO_TYPE_SELECTED, canSubmitNewLibraryAsset } from "@/lib/add-asset-form";
 import { createEntity } from "@/lib/actions";
 import { startRefGen } from "@/lib/refgen-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
@@ -65,7 +66,9 @@ export function AddAssetDialog({
 }) {
   const [mode, setMode] = useState<Mode>("upload");
   const [name, setName] = useState("");
-  const [type, setType] = useState<string>(TYPE_OPTIONS[0]?.value ?? "");
+  // No default type (P1-6): a merchant who never opens this dropdown must not silently get a
+  // CHARACTER-typed element — see add-asset-form.ts.
+  const [type, setType] = useState<string>(NO_TYPE_SELECTED);
   const [files, setFiles] = useState<FileList | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +91,7 @@ export function AddAssetDialog({
 
   function reset() {
     setName("");
-    setType(TYPE_OPTIONS[0]?.value ?? "");
+    setType(NO_TYPE_SELECTED);
     setFiles(null);
     setSaving(false);
     setError(null);
@@ -174,6 +177,10 @@ export function AddAssetDialog({
     // that state unreachable from this form instead of leaving it to a later cleanup.
     if (!files || files.length === 0) {
       setError("Choose an image to upload.");
+      return;
+    }
+    if (!type) {
+      setError("Choose a type.");
       return;
     }
     if (submittingRef.current || uncertainMessage) return;
@@ -280,7 +287,7 @@ export function AddAssetDialog({
                   }}
                 >
                   <SelectTrigger id="add-asset-type" className="w-full">
-                    <SelectValue />
+                    <SelectValue placeholder="Choose a type…" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
@@ -351,7 +358,12 @@ export function AddAssetDialog({
                     size="sm"
                     onClick={() => void submit()}
                     disabled={
-                      formLocked || !name.trim() || !files || files.length === 0
+                      !canSubmitNewLibraryAsset({
+                        name,
+                        type,
+                        fileCount: files?.length ?? 0,
+                        locked: formLocked,
+                      })
                     }
                   >
                     {saving ? (
