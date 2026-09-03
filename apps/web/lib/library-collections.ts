@@ -152,7 +152,8 @@ export async function deleteCollection(
  *
  * 幂等:同一个合集里同一件素材只有一行,重复加入被 `(collectionId, subjectType, subjectId)`
  * 唯一约束挡下(`skipDuplicates`),不是靠「先查后建」。
- * 返回真正新加了几条 —— 界面据此说实话("2 added, 1 already there"),而不是一律弹成功。
+ * 返回真正新加了几条,以及**已经在里面**的有几条(`skipped` 只数重复,不把「目标不可用」
+ * 混进去 —— 那两件事的处置完全不同)。目标一件都不可用时整次回 `Not found.`。
  */
 export async function addToCollection(
   collectionId: string,
@@ -191,7 +192,7 @@ export async function addToCollection(
       data: { updatedAt: new Date() },
     });
   }
-  return { added: created.count, skipped: wanted.length - created.count };
+  return { added: created.count, skipped: visible.length - created.count };
 }
 
 /** 从合集里移除一件素材。移除的是**链接**;素材本身留在 Library(FRONT-A6)。 */
