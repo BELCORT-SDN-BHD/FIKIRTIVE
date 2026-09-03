@@ -79,6 +79,7 @@ import { buildCanvasLineageTree } from "@/lib/canvas-lineage-tree";
 import { CanvasLineagePanel } from "./CanvasLineagePanel";
 import { CanvasComparePanel, type CanvasCompareCard } from "./CanvasComparePanel";
 import { canvasBatchDeleteCopy, canvasBatchSelection, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
+import { sameOriginDownloadUrl } from "@/lib/download-url";
 import {
   CANVAS_OTTO_CHAT_REQUIRED,
   canvasComposerReferenceForNode,
@@ -715,7 +716,9 @@ export default function FlowCanvas({
     if (downloads.length === 0) return;
     for (const item of downloads) {
       const link = document.createElement("a");
-      link.href = item.url;
+      // 走查 P0-2:同源附件地址。`/files/…` 会 302 到 R2,`download` 跨源被忽略 ——
+      // 那样按「Download N」不是存下 N 个文件,而是把商家导航去最后一个文件的裸地址。
+      link.href = sameOriginDownloadUrl(item.url, item.fileName);
       link.download = item.fileName;
       link.rel = "noopener";
       document.body.appendChild(link);
