@@ -40,6 +40,13 @@
  *   · 正文（`canvasTurnText`）在「Otto 后来说过的话」与「那个终局自己」之间取**更新的那个**；
  *   · 状态词也由同一个终局给（不再由 `thread.status` 给 —— 见下）。
  *
+ * 判官复核（2026-09-04，PR #1173 P1-1）在真浏览器里录到这句话**换一条路又回来了**：这一轮
+ * 没有终局时，正文从前直接吐「整条对话最后一条 assistant TEXT」。于是商家失败一次、开口说
+ * 下一句、Otto 这一轮只铸了一张卡没说话，卡上照旧挂着上一轮那句「That generation didn't go
+ * through」，配着一张全新的确认位。所以**终局与正文两样都按轮切**（同一个
+ * `currentTurnStartIndex`）：这一轮既没有终局、Otto 也还没开口，就诚实地什么都不说，
+ * 卡面落回 `CANVAS_TURN_EMPTY_TEXT`。
+ *
  * 顺带修掉一件死掉的接线：`failed` 从前的唯一触发是 `ChatThreadDTO.status`，而画布这条路
  * 上的 thread 由 `toChatThreadDTO` 建（`lib/dto.ts:196`），**它根本不写 status**（只有线程
  * 列表那份 `toChatThreadMetaDTO` 写）。也就是说画布卡的 failed 态从来没有可能出现过。
@@ -249,6 +256,25 @@ type TurnMessage = {
 };
 
 /**
+ * 「从第 `start` 条起，Otto 说过的最后一句真话」，没有就是 null。
+ *
+ * 判据与 `latestAssistantSayable` 逐字同一条（只认真的 TEXT，`🖼 result` 那种内部占位串挡在
+ * 外面），只多一个参数：**从哪里起算**。`latestAssistantSayable` 本身一字不改 —— 它喂的是
+ * `backfillMissingAssistantText`，那条路要的就是整条对话（#1165 的不变量）。
+ */
+function sayableSince(messages: readonly TurnMessage[], start: number): string | null {
+  for (let i = messages.length - 1; i >= start; i--) {
+    const m = messages[i];
+    if (m.role !== "assistant") continue;
+    const kind = m.metadata?.kind;
+    if (kind !== undefined && kind !== "TEXT") continue;
+    const text = textOf(m.parts);
+    if (text) return text;
+  }
+  return null;
+}
+
+/**
  * 这一轮（`currentTurnStartIndex` 之后）最新的那个**终局任务事件**，没有就是 null。
  *
  * 只认 worker 真的落库的那两种终局消息（GEN_RESULT / TURN_ERROR）—— 卡片自己的运行态
@@ -308,30 +334,28 @@ function terminalSentence(terminal: TurnTerminal): string | null {
 }
 
 /**
- * 那张卡此刻该显示的正文 —— **一个来源，按时间排序**（Codex QA-CRE-004）。
+ * 那张卡此刻该显示的正文 —— **一个来源，按轮切，再按时间排序**（Codex QA-CRE-004；
+ * 判官复核 P1-1）。
  *
- * 在「Otto 最后说的那句话」与「这一轮的终局」之间取更新的那个：
+ * 先切轮：候选只在**这一轮**（最后一条商家发言之后）里找，与 `latestTurnTerminal` 同一个
+ * `currentTurnStartIndex`。再排序，在「Otto 这一轮说的那句话」与「这一轮的终局」之间取更新的：
  *
- *   · Otto 后来解释过了（TEXT 比终局新）→ 说他的原话；
- *   · 终局比 Otto 最后一句新 → 终局自己说话（成功 = 产物 + 收费；失败/取消 = 那条持久
- *     消息自己那句给商家读的话）。
+ *   · Otto 在终局之后解释过了 → 说他的原话；
+ *   · 终局比 Otto 那句话新 → 终局自己说话（成功 = 产物 + 收费；失败/取消 = 那条持久
+ *     消息自己那句给商家读的话）；
+ *   · 这一轮既没终局、Otto 也还没开口 → null，卡面落回 `CANVAS_TURN_EMPTY_TEXT`。
  *
- * 审计录到的那一幕正落在第二条上：失败之后 Otto 说了「didn't go through」，再成功一次，
- * 屏幕上还是那句 —— 因为从前只有第一条，而且没有比较。
+ * 审计录到的那一幕落在第二条上：失败之后 Otto 说了「didn't go through」，再成功一次，屏幕上
+ * 还是那句 —— 因为从前只有第一条，而且没有比较。判官在真浏览器里录到的那一幕落在第三条上：
+ * 商家失败之后开口说下一句，这一轮只有一张待确认的新卡，正文却仍挂着上一轮那句失败 ——
+ * 因为从前不切轮。空态句比一句过期的失败诚实。
  */
 export function canvasTurnText(messages: readonly TurnMessage[]): string | null {
   const terminal = latestTurnTerminal(messages);
-  const said = latestAssistantSayable(messages);
+  const said = sayableSince(messages, currentTurnStartIndex(messages));
   if (!terminal) return said;
-  if (said !== null) {
-    // Otto 那句话在不在终局之后？在，就说他的原话。
-    for (let i = messages.length - 1; i > terminal.index; i--) {
-      const m = messages[i];
-      if (m.role !== "assistant") continue;
-      const kind = m.metadata?.kind;
-      if (kind !== undefined && kind !== "TEXT") continue;
-      if (textOf(m.parts)) return said;
-    }
-  }
+  // Otto 那句话在不在终局之后？在，就说他的原话。
+  const afterTerminal = sayableSince(messages, terminal.index + 1);
+  if (afterTerminal !== null) return afterTerminal;
   return terminalSentence(terminal) ?? said;
 }

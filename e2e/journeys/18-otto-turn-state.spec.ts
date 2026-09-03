@@ -18,6 +18,7 @@
  * GEN_RESULT）。**这套 e2e 手上一把供应商钥匙都没有**（`support/env.ts` 逐条挡），所以
  * 「再成功一次」用库状态代替 —— 而审计第 ③ 步本来就是强制刷新，读的正是同一份库状态。
  */
+import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import {
   seedWorkspace,
@@ -26,11 +27,42 @@ import {
   seedAgentText,
   seedFailedGeneration,
   seedFinishedGeneration,
+  type Workspace,
 } from "../support/seed.js";
+import { prisma, runAsTenant } from "../support/db.js";
 import { signIn } from "../support/auth.js";
 
 /** 审计里赖在屏幕上不走的那句话。 */
 const STALE_FAILURE = "That generation didn't go through — you weren't charged for it.";
+
+/** 画布卡在「这一轮还没有话可说」时的那句引导（`OttoTurnCard.CANVAS_TURN_EMPTY_TEXT`，逐字）。 */
+const EMPTY_TURN = "Tell Otto what you want to create or change.";
+
+/**
+ * 商家自己开口说的那一句 —— 这一轮与上一轮的分界，`currentTurnStartIndex` 认的就是它。
+ *
+ * 种在旅程里而不是 `support/seed.ts`：这一轮要证的正是「商家开口之后」那一刻的库状态，
+ * 形状与 `seedAgentText` 逐字同一份，只是 role 是 USER。
+ */
+async function seedMerchantSays(
+  ws: Workspace,
+  threadId: string,
+  opts: { seq: number; text: string },
+): Promise<void> {
+  await runAsTenant(ws.orgId, () =>
+    prisma.chatMessage.create({
+      data: {
+        id: `e2e_ask_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+        threadId,
+        ownerId: ws.orgId,
+        role: "USER" as never,
+        kind: "TEXT" as never,
+        seq: opts.seq,
+        text: opts.text,
+      },
+    }),
+  );
+}
 
 test("CREATE-A1 — 失败之后再成功一次，当前轮说的是成功；刷新之后还是同一句", async ({ page }) => {
   const ws = await seedWorkspace({
@@ -101,4 +133,41 @@ test("CREATE-A1 — 两步计划里，商家还没决定的那一步一直摆在
   await expect(turnCard).toContainText("Needs confirmation");
   // 而已经做完的那一步也没有被吞掉：它说得出产物和收费。
   await expect(turnCard).toContainText("Made 1 image · 1 credit.");
+});
+
+/**
+ * 判官复核 P1-1（2026-09-04，PR #1173）：上面那句失败**换一条路又回来了**。
+ *
+ * 判官在真浏览器里录到的那一幕：同一画布失败一次 → Otto 说了那句道歉 → **商家开口说下一句**
+ * → Otto 这一轮只铸了一张卡、一个字没说 → 当前轮显示「Needs confirmation」配着上一轮那句
+ * 「That generation didn't go through」，旁边是一张全新的确认位。这一趟种的正是那一刻的库状态。
+ */
+test("CREATE-A1 — 失败之后商家开口说下一句，当前轮不再挂着上一轮那句失败", async ({ page }) => {
+  const ws = await seedWorkspace({
+    slug: "turnnext",
+    workspaceName: "Kedai Kopi Aman",
+    personName: "Aman",
+    openingGrant: 90,
+  });
+  const { threadId } = await seedThread(ws);
+  // ① 上一轮失败过，Otto 说了那句话（seq 1 卡 / 2 TURN_ERROR / 3 Otto 那句话）。
+  await seedFailedGeneration(ws, threadId, { seq: 1, ottoSays: STALE_FAILURE });
+  // ② 商家开口说下一句 —— 这一轮从这里开始。
+  await seedMerchantSays(ws, threadId, { seq: 4, text: "Let's do a pandan kaya jar photo instead" });
+  // ③ 这一轮 Otto 只铸了一张待确认的卡，一个字没说。
+  await seedPlanCard(ws, threadId, { seq: 5, credits: 1, kind: "image", prompt: "A pandan kaya jar on a kitchen counter" });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page, ws, "/");
+  await page.goto(`/create/canvas?project=${ws.projectId}&thread=${threadId}`);
+
+  const turnCard = page.getByLabel("Otto current turn");
+  await expect(turnCard).toBeVisible();
+  // 这一轮等着商家决定，卡就在可见处。
+  await expect(turnCard.getByLabel("Generation confirmation")).toHaveCount(1);
+  await expect(turnCard).toContainText("Needs confirmation");
+  // 上一轮那句失败不再挂在这一轮脸上 —— 全卡逐字搜。
+  await expect(turnCard).not.toContainText("didn't go through");
+  // 这一轮没话可说就诚实地说没有，而不是借上一轮的话充数。
+  await expect(turnCard).toContainText(EMPTY_TURN);
 });
