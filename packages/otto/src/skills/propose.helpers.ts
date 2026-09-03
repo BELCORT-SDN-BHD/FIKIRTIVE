@@ -214,18 +214,45 @@ export class VideoTierUnavailableError extends ProposeRefusal {
   constructor(
     /** 商家点名的那一档,原样回给他听(不润色、不猜)。 */
     readonly wanted: string,
-    /** 这条路真正会跑的那个槽位 —— 能给的档位从它的可售白名单取。 */
-    slot: string,
+    /**
+     * **这条路真正铸得出**的那几档,由调用现场算好传进来(`mintableVideoTiers`)。
+     *
+     * 判官 2026-09-04 P1-1 落修:这里以前收的是「槽位」,自己去查那台引擎的可售白名单。
+     * 参考视频那条路把分辨率硬写回该引擎的默认档(见 `buildProposeCard` 的 `isRefVideo`
+     * 分支),所以它其实只铸得出那一档 —— 而白名单里还有别的档,于是商家点 480p 会听到
+     * 「480p isn't available — I can do 480p or 720p」这种自相矛盾的话,照它再说一次
+     * 480p 还是同一句,死循环。能给什么只有调用现场知道,所以判断权归现场。
+     */
+    offered: readonly string[],
   ) {
-    const offered = [...(SELLABLE_VIDEO_RESOLUTIONS[slot as GenVideoModel] ?? [])]
-      .sort((a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10));
+    const tiers = [...offered].sort((a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10));
     super(
-      offered.length > 0
-        ? `${wanted} isn't available for this one — I can do ${offered.join(" or ")}. Tell me which and I'll set it up.`
+      tiers.length > 0
+        ? `${wanted} isn't available for this one — I can do ${tiers.join(" or ")}. Tell me which and I'll set it up.`
         : `${wanted} isn't available for this one — tell me what else you'd like and I'll set it up.`,
     );
     this.name = "VideoTierUnavailableError";
   }
+}
+
+/**
+ * 这条路**真正铸得出**的那几档 —— `VideoTierUnavailableError` 那句话里只许出现这些。
+ *
+ * 两层筛,缺一不可:
+ *   ① **有已裁的价**(`SELLABLE_VIDEO_RESOLUTIONS`,与付费闸 `assertSpendableModel` 同
+ *      一份)—— 没价的格子不能拿来许诺,那是替 Founder 发明价格;
+ *   ② **这条路够得到**——参考视频路把分辨率硬写回这台引擎的默认档,所以它只有那一档;
+ *      其余路走 `suggestModel` 的 `snap`,该槽位白名单里的每一档都到得了。
+ *
+ * 判官 2026-09-04 P1-1:少了 ② 那一层,拒绝句就会列出这条路根本铸不出来的档,商家照着
+ * 它再说一次仍然被拒 —— 一句假话加一个死循环,而这张票的全部理由正是「Otto 不许说卡
+ * 做不到的事」。
+ */
+function mintableVideoTiers(slot: GenVideoModel, opts: { refPath: boolean }): string[] {
+  const model = opts.refPath ? REFERENCE_VIDEO_MODEL : slot;
+  const sellable = SELLABLE_VIDEO_RESOLUTIONS[model] ?? [];
+  const reachable = opts.refPath ? [videoDefaults(REFERENCE_VIDEO_MODEL).resolution] : sellable;
+  return sellable.filter((r) => reachable.includes(r));
 }
 
 // ---------------------------------------------------------------------------
@@ -557,7 +584,10 @@ export function buildProposeCard(
     // 商家点了一档,而**那一档落到的那台**被后台关掉了 —— 这不是「视频全关」。
     // 默认那一台还开着就说实话:这一档现在拿不到,能拿到的是那几档。
     if (kind === "video" && input.desiredResolution && !ctx.disabledModels.includes(activeVideoModel())) {
-      throw new VideoTierUnavailableError(input.desiredResolution, activeVideoModel());
+      throw new VideoTierUnavailableError(
+        input.desiredResolution,
+        mintableVideoTiers(activeVideoModel() as GenVideoModel, { refPath: isRefVideo }),
+      );
     }
     throw new GenerationUnavailableError(kind);
   }
@@ -613,7 +643,10 @@ export function buildProposeCard(
     const got = sm.params.resolution ?? "";
     const seconds = sm.params.durationSeconds ?? 0;
     if (got !== input.desiredResolution || !isSellableVideoSku(sm.model, got, seconds)) {
-      throw new VideoTierUnavailableError(input.desiredResolution, sm.model);
+      throw new VideoTierUnavailableError(
+        input.desiredResolution,
+        mintableVideoTiers(sm.model as GenVideoModel, { refPath: isRefVideo }),
+      );
     }
   }
 
@@ -656,13 +689,18 @@ export function buildProposeCard(
   // Step 4.6: video-step estimate — DISPLAY ONLY.
   // When this image card is the first step of a two-step video plan (forVideo=true),
   // estimate the follow-on video cost so the card can show the full plan total.
-  // Errors are silently swallowed — videoStep is best-effort and must never break the card.
+  // 报价这一段的错误照旧静默吞掉 —— videoStep 是 best-effort,算不出就少一行,绝不因此
+  // 毁掉这张图片卡。**唯一例外**是下面的 Step 4.6a:商家点名的档位给不了时那是拒绝,
+  // 不是「少一行」,它必须抛出去(判官 2026-09-04 P1-2)。
   // #647 T6:视频引擎被关掉时 `vm` 是 null —— 这张图片卡照铸(图片引擎还开着),只是
   // 不再替一条现在做不了的片子报价。卡面上少一行,好过多一行做不到的承诺。
   let videoStep: { estimatedCredits: number } | undefined;
   if (kind === "image" && input.forVideo) {
+    // 选型单独跑一趟(不再和报价共用一个 try)—— 它的结果要先过下面那道**不是**
+    // best-effort 的档位闸,过了才轮到报价那一段继续「算不出就少一行」。
+    let vm: ReturnType<typeof suggestModel> = null;
     try {
-      const vm = suggestModel({
+      vm = suggestModel({
         kind: "video",
         desiredAspect: input.desiredAspect,
         desiredDuration: input.desiredDuration,
@@ -674,6 +712,38 @@ export function buildProposeCard(
         hasTail: false,
         disabled: new Set(ctx.disabledModels),
       });
+    } catch {
+      vm = null;
+    }
+
+    /**
+     * Step 4.6a(判官 2026-09-04 P1-2 落修)—— **两步计划的第二步同样归 Step 3.6 管**。
+     *
+     * Step 3.6 的守卫写的是 `kind === "video"`,而两步计划这张卡的 `kind` 是 image ——
+     * 于是整条绕过去:商家说「4k」,卡上那行片段预估按默认档报(`OttoPlanCard` 把它
+     * 渲染成商家**正要批准**的那张卡的总价),而第二步真去铸卡时又会被 Step 3.6 拒。
+     * 披露与将要发生的事不是一件事 —— 正是这张票要挡的那一类病,只是守卫少了一支。
+     *
+     * 所以这里用**同一条判据、同一句话**:点名的档没有原样落到这条片子上、或不是可售
+     * SKU ⇒ 一张卡都不铸。为什么不是「悄悄少一行 videoStep」:商家点了一档,他该得到的
+     * 是一句诚实的回答,而不是一张自己少了一行的卡 —— 少那一行他看不出来,于是仍然以为
+     * 第二步会按他点的档做。拒绝照旧 $0(抛在落库与预扣之前)。
+     *
+     * `vm === null`(视频引擎被后台关掉)不走这里:那是 #647 T6 早就裁过的另一件事 ——
+     * 图片卡照铸、只是不替一条现在做不了的片子报价,行为一格不动。
+     */
+    if (vm && input.desiredResolution) {
+      const got = vm.params.resolution ?? "";
+      const seconds = vm.params.durationSeconds ?? 0;
+      if (got !== input.desiredResolution || !isSellableVideoSku(vm.model, got, seconds)) {
+        throw new VideoTierUnavailableError(
+          input.desiredResolution,
+          mintableVideoTiers(vm.model as GenVideoModel, { refPath: isRefVideo }),
+        );
+      }
+    }
+
+    try {
       const videoEstCredits = vm === null ? null : displayCredits(
         pricedGenCredits({
           kind: "VIDEO",
