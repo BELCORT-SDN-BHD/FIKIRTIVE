@@ -16,8 +16,11 @@
  *      Choose from Library / Add URL) is fixture-only: it sets a display string and nothing is
  *      persisted. `createCanvasConversation` takes `{prompt, requestId}` and the handoff row stores
  *      `{prompt, threadId}`, so there is no contract to carry a reference from this page into the
- *      Canvas. The control stays out and is logged in the PR's 「设计有、生产暂不显示」 table. With
- *      the left group gone the control row is `justify-end`; the send key keeps its position.
+ *      Canvas. The control stays out; with the left group gone the control row is `justify-end` and
+ *      the send key keeps its position. The Founder ruling that asked for it to be wired up is not
+ *      met as written, so it is registered in the spec's change register — `docs/specs/frontend-
+ *      baseline.md` §5, row 2026-09-03「Create 起步页的「+ Add context」参考菜单本段不渲染」— which
+ *      is the record of record; the PR's 「设计有、生产暂不显示」 table only mirrors it.
  *   ② 生产必需而设计没有的用设计的样式呈现 — the error and pending states (Field / FieldError /
  *      Spinner) are production-necessary and use the design system's own primitives, no new copy.
  */
