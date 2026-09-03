@@ -89,6 +89,8 @@ const STATUS_STYLE: Record<BrandContextStatus, string> = {
 function updateSectionRoute(section: BrandSectionKey) {
   const url = new URL(window.location.href);
   url.searchParams.set("section", section);
+  // `focus` 只属于把它写进 URL 的那一节;换节就丢掉,免得刷新时跳回别节的那一条。
+  url.searchParams.delete("focus");
   window.history.pushState(window.history.state, "", url);
 }
 
@@ -297,6 +299,10 @@ function AddContextDialog({
       reset();
       onOpenChange(false);
       onCreated(saved.id);
+    } catch {
+      // 服务端动作抛出来的(不是它自己返回的 error)也要说出来 —— 否则商家按下去
+      // 之后屏幕上一点动静都没有,连「再试一次」都无从判断。
+      toast.error("Couldn't save that draft — please try again.");
     } finally {
       setBusy(false);
     }
@@ -445,13 +451,18 @@ function DetailAccordion({ entry }: { entry: BrandContextEntry }) {
 export function BrandWorkspace({
   sections,
   initialSection,
+  initialFocusId,
 }: {
   sections: BrandSectionView[];
   initialSection: BrandSectionKey;
+  /** `?focus=` 指名的那一条(刚建好的草稿、或别人分享过来的链接)。 */
+  initialFocusId?: string;
 }) {
   const router = useRouter();
   const [section, setSection] = React.useState<BrandSectionKey>(initialSection);
-  const [selectedIds, setSelectedIds] = React.useState<Partial<Record<BrandSectionKey, string>>>({});
+  const [selectedIds, setSelectedIds] = React.useState<Partial<Record<BrandSectionKey, string>>>(
+    initialFocusId ? { [initialSection]: initialFocusId } : {},
+  );
   const [addOpen, setAddOpen] = React.useState(false);
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<{ without: string; with: string } | null>(null);
@@ -682,7 +693,12 @@ export function BrandWorkspace({
         onOpenChange={setAddOpen}
         onCreated={(id) => {
           setSelectedIds((current) => ({ ...current, [section]: id }));
-          router.refresh();
+          // 新草稿必须**当场**出现在列表里,而这一步不靠 `router.refresh()`:
+          // 刷新与「关弹层」撞在同一拍时会被丢掉(CI 上同一份代码六趟丢了两趟,
+          // 商家那边的样子就是「按了 Review draft,什么都没发生」)。
+          // 带 `focus=<id>` 走一次真导航:URL 是新的,一定回服务端重取整页,
+          // 顺便让这条上下文自己有了一个可刷新、可分享的地址。
+          router.replace(`/brand?section=${section}&focus=${id}`);
         }}
       />
       <PreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} name={selected?.name ?? "this context"} result={preview} />

@@ -28,7 +28,7 @@ export const metadata = { title: "Brand · Fikirtive" };
 export default async function BrandPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string }>;
+  searchParams: Promise<{ section?: string; focus?: string }>;
 }) {
   const sp = await searchParams;
 
@@ -37,8 +37,11 @@ export default async function BrandPage({
 
   const sections = await loadBrandSections(owner.ownerId);
   const initialSection: BrandSectionKey = isBrandSectionKey(sp?.section) ? sp.section : "brand-voice";
+  // `?focus=` 指名要看哪一条上下文。刚建好的草稿走的就是这个地址,所以「按下 Review draft
+  // 之后它出现在列表里」不依赖客户端刷新有没有落地,而是一次真导航的结果。
+  const initialFocusId = typeof sp?.focus === "string" && sp.focus ? sp.focus : undefined;
 
   // 版面高度与夹具逐字一致(`h-[calc(100dvh-2.75rem)]` —— 2.75rem 是应用外壳顶栏),
   // 所以 <main> 由 BrandWorkspace 自己出,这里不再套第二层。
-  return <BrandWorkspace sections={sections} initialSection={initialSection} />;
+  return <BrandWorkspace sections={sections} initialSection={initialSection} initialFocusId={initialFocusId} />;
 }
