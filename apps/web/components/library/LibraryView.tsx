@@ -304,6 +304,10 @@ function LibraryToolbar({
 function MediaTile({ item, selected, onOpen }: { item: LibraryItem; selected: boolean; onOpen: () => void }) {
   const title = libraryItemTitle(item);
   const duration = libraryDurationLabel(item);
+  // 已批准的 Library 用「保持原始比例的紧凑 media grid」(README §3.1),瀑布流的高低差
+  // 就是从这来的。比例是 `Asset` 上的真实两条边,不是一个统一裁出来的框;两条边缺一条的
+  // 旧行退回 4:5 的占位比例(而不是让格子塌成零高)。
+  const ratio = item.width && item.height ? `${item.width} / ${item.height}` : null;
   return (
     <div className="relative mb-2 break-inside-avoid">
       <Button
@@ -323,7 +327,8 @@ function MediaTile({ item, selected, onOpen }: { item: LibraryItem; selected: bo
             muted
             playsInline
             preload="metadata"
-            className="aspect-[4/5] h-auto w-full object-cover"
+            style={ratio ? { aspectRatio: ratio } : undefined}
+            className={cn("h-auto w-full object-cover", !ratio && "aspect-[4/5]")}
           />
         ) : (
           // 商家素材走自家 `/files` 路由,尺寸由 Asset 行决定 —— 与 StuffLibrary、
@@ -333,7 +338,11 @@ function MediaTile({ item, selected, onOpen }: { item: LibraryItem; selected: bo
             src={item.url}
             alt={title}
             loading="lazy"
-            className="aspect-[4/5] h-auto w-full object-cover transition-transform duration-[var(--dur-3)] ease-[var(--ease-out)] group-hover:scale-[1.015] motion-reduce:transition-none"
+            style={ratio ? { aspectRatio: ratio } : undefined}
+            className={cn(
+              "h-auto w-full object-cover transition-transform duration-[var(--dur-3)] ease-[var(--ease-out)] group-hover:scale-[1.015] motion-reduce:transition-none",
+              !ratio && "aspect-[4/5]",
+            )}
           />
         )}
         {item.kind === "video" && duration ? (
