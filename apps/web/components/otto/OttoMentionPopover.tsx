@@ -11,7 +11,7 @@ import {
   UsersRoundIcon,
 } from "lucide-react";
 
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Popover,
   PopoverAnchor,
@@ -24,7 +24,6 @@ import {
   type MentionSuggestion,
 } from "@/lib/mention-presentation";
 import type { EntityTypeDTO } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
 interface OttoMentionPopoverProps {
   children: ReactElement;
@@ -132,22 +131,22 @@ export function OttoMentionPopover({
               const Icon = suggestion.type ? TYPE_ICONS[suggestion.type] : null;
               const source = mentionSourceLine(suggestion);
               return (
-                <button
+                <Button
                   key={suggestion.id}
                   id={`${listId}-option-${index}`}
                   type="button"
+                  variant="ghost"
+                  size="sm"
+                  motion="instant"
                   role="option"
                   aria-selected={index === highlightedIndex}
                   data-highlighted={index === highlightedIndex ? "" : undefined}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-[var(--radius)] px-2.5 py-2 text-left outline-none transition-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
-                    index === highlightedIndex && "bg-accent text-accent-foreground",
-                  )}
                   onPointerMove={() => onHighlightChange(index)}
                   onMouseDown={(event) => {
                     event.preventDefault();
                     onSelect(suggestion);
                   }}
+                  className="h-auto w-full justify-start gap-3 rounded-[var(--radius)] px-2.5 py-2 text-left font-normal [&_svg]:size-4"
                 >
                   <ReferenceThumb suggestion={suggestion} />
                   <span className="min-w-0 flex-1">
@@ -157,7 +156,7 @@ export function OttoMentionPopover({
                     ) : null}
                   </span>
                   {Icon ? <Icon className="size-4 shrink-0 text-muted-foreground" /> : null}
-                </button>
+                </Button>
               );
             })}
           </div>

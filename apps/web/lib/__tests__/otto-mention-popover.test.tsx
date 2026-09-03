@@ -115,6 +115,10 @@ describe("FRONT-A10 Otto reference picker menu", () => {
     expect(character.querySelector("svg")).not.toBeNull();
     expect(character.textContent).toContain("Character · Library");
     expect(character.getAttribute("aria-selected")).toBe("true");
-    expect(character.className).toContain("bg-accent");
+    expect(character.hasAttribute("data-highlighted")).toBe(true);
+    // The highlight is the design system's own `aria-selected` recipe on the ghost Button,
+    // not a second colour rule written at this call site.
+    expect(character.className).toContain("aria-selected:bg-accent");
+    expect(product.hasAttribute("data-highlighted")).toBe(false);
   });
 });
