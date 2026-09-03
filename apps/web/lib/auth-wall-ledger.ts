@@ -186,6 +186,52 @@ export const AUTH_WALL_EXEMPTIONS: readonly AuthWallExemption[] = [
     semantics: "exact",
     reason: "app/favicon.ico, served as a static asset before any session exists.",
   },
+  // FRONT-A2:public/brand/ 里的产品标识图。登录、注册、忘记/重置密码、验证邮件落地页
+  // 都由 AuthPageShell 画同一枚 FikirtiveMark(design-system/brand/components/
+  // FikirtiveMark.tsx:18 → `/brand/f-app-icon-coral.svg`),而 `next/image` 对 `.svg` 一律
+  // 自动 unoptimized —— 所以浏览器发的是对 `/brand/<file>.svg` 的**直接**请求,不走已豁免的
+  // `/_next/image`。墙于是把登录页自己的 logo 307 去了 /login,商家看到的是一张破图。
+  //
+  // 为什么是逐个文件而不是 `brand` 子树:`/brand` 是商家自己的 Brand 页面(app/brand/
+  // page.tsx),一条子树豁免会把它整个搬到墙外。exact 语义天生收口在这一条路径上,
+  // `/brand`、`/brand/anything` 全部留在墙内。
+  //
+  // 为什么六个都在:它们是同一类东西 —— Fikirtive 自己的标识美术,零商家数据,零判断。
+  // 逐个挑「今天哪一枚被无会话的页面用到」正是 #793 / #969 复发两次的那种判断;改成
+  // 「public/brand/ 的内容 == 这六条」之后,proxy.test.ts 的目录对账断言会在有人加了第七枚
+  // 却忘了登记时当场变红。
+  {
+    path: "brand/f-app-icon-coral.svg",
+    semantics: "exact",
+    reason: "Fikirtive's own app icon in public/brand/; AuthPageShell draws it on every "
+      + "session-less door (login / signup / forgot- and reset-password / verify-email). "
+      + "Static product art, no merchant data.",
+  },
+  {
+    path: "brand/otto.svg",
+    semantics: "exact",
+    reason: "Otto's product mark in public/brand/; same static-art class as the app icon.",
+  },
+  {
+    path: "brand/otto-helpful.svg",
+    semantics: "exact",
+    reason: "Otto's product mark in public/brand/; same static-art class as the app icon.",
+  },
+  {
+    path: "brand/otto-thinking.svg",
+    semantics: "exact",
+    reason: "Otto's product mark in public/brand/; same static-art class as the app icon.",
+  },
+  {
+    path: "brand/otto-approving.svg",
+    semantics: "exact",
+    reason: "Otto's product mark in public/brand/; same static-art class as the app icon.",
+  },
+  {
+    path: "brand/otto-success.svg",
+    semantics: "exact",
+    reason: "Otto's product mark in public/brand/; same static-art class as the app icon.",
+  },
 ];
 
 /**
