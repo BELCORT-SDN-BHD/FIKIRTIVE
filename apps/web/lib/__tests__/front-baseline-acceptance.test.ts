@@ -99,8 +99,12 @@ describe("前端基线:后续各段的验收落点(§7.1;S5 前逐条转正)", (
   // 六条钱旅程的存在由同一份文件看着;浏览器那一侧由
   // e2e/journeys/07-money-surfaces-agree.spec.ts 认领。
   it.todo("FRONT-A2 §7.1⑥ — 注册/验证码/回跳/重置旅程走真实邮件,错误提示不泄露邮箱是否存在");
-  it.todo("FRONT-A3 §7.1⑤ — 两个租户各自的 Home 只看得到自己店的连接状态与画布");
-  it.todo("FRONT-A4 §7.1⑤ — Home 布局服务器持久化,Manage home capability 决定入口可见");
+  // FRONT-A3 / FRONT-A4 已转正(§7.1⑤ 第①②刀):占位改成真测试,落在
+  //   lib/__tests__/home-layout.test.ts(版面定义层的规则,纯函数)
+  //   lib/__tests__/home-layout-persistence.test.ts(落库、能力闸、双向租户,打真库)
+  //   lib/__tests__/marketing-home-view.test.tsx(入口可见性与「客户端只渲染」)
+  //   e2e/journeys/15-home-layout-persists.spec.ts(浏览器那一侧:刷新与换浏览器)
+  // ⑤ 的第③刀(ready 多源版面按真实生产者逐个点亮)还没做,见规格 §7.3⑤ 与本段 PR 的剩余切片。
   it.todo("FRONT-A5 §7.1② — Library 历史与上传、搜索、收藏筛选全部来自服务器");
   it.todo("FRONT-A6 §7.1② — collection 增删改跨刷新成立,跨租户不可见");
   it.todo("FRONT-A7 §7.1② — Library 的 Use in canvas 落节点到当前项目与租户");

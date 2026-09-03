@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState, useTransition } from "react";
 import {
   ArrowUpRight,
   CalendarRange,
@@ -10,27 +10,32 @@ import {
   Database,
   PanelsTopLeft,
   RefreshCw,
+  Settings2,
   Target,
 } from "lucide-react";
 
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { canvasHref } from "@/components/canvas/canvas-href";
 import { Badge } from "@/design-system/primitives/badge";
-import { buttonVariants } from "@/design-system/primitives/button";
+import { Button, buttonVariants } from "@/design-system/primitives/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/design-system/primitives/empty";
+import { toast } from "@/design-system/primitives/toast";
 import { cn } from "@/lib/utils";
 import { homeHref, type MarketingHealthReadModel } from "@/lib/home-marketing-health";
 import { homeAnalysisHref } from "@/lib/home-analysis-context";
+import { saveHomeLayout } from "@/lib/home-layout-actions";
 import { DesktopHomeRequired, useDesktopHome } from "@/design-system/patterns/founder-home/DesktopHomeBoundary";
 import {
   HOME_COMPARISONS,
   HOME_GOALS,
   HOME_RANGES,
   type HomeComparison,
+  type HomeComponentId,
   type HomeGoal,
   type HomeRange,
 } from "@/design-system/patterns/founder-home/model";
 import type { HomeSearchState } from "@/lib/home-marketing-health";
+import { CustomizeHomePanel } from "./CustomizeHomePanel";
 import { HomeFilterPicker } from "./HomeFilterPicker";
 import { MARKETING_HOME_COPY } from "./marketing-home-copy";
 import { ReadyMarketingHealth } from "./ReadyMarketingHealth";
@@ -234,17 +239,61 @@ function PartialMarketingHealth({
   );
 }
 
+/**
+ * 一块 Home 组件的渲染。`marketing-health` 是今天唯一有真实生产者的一块,而它的五态
+ * (未连接/需重连/数据不足/partial/读不出来)全部来自服务器 —— 所以「这一块」在不同状态下
+ * 长得不一样,但从来不是一张编出来的卡。其余 7 块没有生产者,连进不进 `components` 都轮不到
+ * 这里判(`lib/home-layout.ts` 在服务端就把它们过滤掉了),所以这里没有它们的分支。
+ */
+function HomeComponentBlock({
+  id,
+  health,
+  filters,
+}: {
+  id: HomeComponentId;
+  health: MarketingHealthReadModel;
+  filters: HomeSearchState;
+}) {
+  if (id !== "marketing-health") return null;
+  return (
+    <>
+      <RecoveryState health={health} filters={filters} />
+      {health.state === "partial" ? <PartialMarketingHealth health={health} filters={filters} /> : null}
+      {health.state === "ready" ? <ReadyMarketingHealth health={health} filters={filters} /> : null}
+    </>
+  );
+}
+
 export function MarketingHomeView({
   filters,
   health,
   recents,
+  components,
+  offeredComponents,
+  recommendedComponents,
+  canManageHome,
 }: {
   filters: HomeSearchState;
   health: MarketingHealthReadModel;
   recents: HomeRecentCanvasRead;
+  /**
+   * 服务端算好的版面 —— 这一刻 Home 上有哪几块、按什么顺序(`lib/home-layout.ts` 的
+   * `resolveHomeComponents`)。客户端只渲染,不再自己判断哪块该出现:那份判断在服务端
+   * 只有一个产地,刷新、换浏览器、换设备读到的都是同一个答案(规格 §7.3⑤「一份版面定义单源」)。
+   */
+  components: readonly HomeComponentId[];
+  /** Customize 面板列得出来的全部组件 —— 有真实生产者的那些。 */
+  offeredComponents: readonly HomeComponentId[];
+  /** 当前 business goal 的推荐版面(已按生产者过滤)—— Reset 恢复的就是它。 */
+  recommendedComponents: readonly HomeComponentId[];
+  /** 有没有 `workspace.manage_home` 能力。没有就连入口都不出现(FRONT-A4)。 */
+  canManageHome: boolean;
 }) {
   const router = useRouter();
   const isDesktop = useDesktopHome();
+  const [customizing, setCustomizing] = useState(false);
+  const [draft, setDraft] = useState<HomeComponentId[]>([...components]);
+  const [saving, startSaving] = useTransition();
 
   useEffect(() => {
     const targetId = window.location.hash.slice(1);
@@ -257,21 +306,120 @@ export function MarketingHomeView({
     router.push(homeHref({ ...filters, ...patch }), { scroll: false });
   }
 
+  function startCustomizing() {
+    setDraft([...components]);
+    setCustomizing(true);
+  }
+
+  function cancelCustomizing() {
+    setDraft([...components]);
+    setCustomizing(false);
+  }
+
+  function toggleComponent(id: HomeComponentId, checked: boolean) {
+    setDraft((current) => (checked ? [...current, id] : current.filter((value) => value !== id)));
+  }
+
+  function moveComponent(id: HomeComponentId, direction: -1 | 1) {
+    setDraft((current) => {
+      const from = current.indexOf(id);
+      const to = from + direction;
+      if (from < 0 || to < 0 || to >= current.length) return current;
+      const next = [...current];
+      [next[from], next[to]] = [next[to]!, next[from]!];
+      return next;
+    });
+  }
+
+  function reorderComponent(fromId: HomeComponentId, toId: HomeComponentId) {
+    setDraft((current) => {
+      const from = current.indexOf(fromId);
+      const to = current.indexOf(toId);
+      if (from < 0 || to < 0 || from === to) return current;
+      const next = [...current];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved!);
+      return next;
+    });
+  }
+
+  /**
+   * Save 之后**不乐观更新**:服务端 `revalidatePath("/")` 会把新的 `components` 推回来。
+   * 界面上「版面已经变了」这句话,必须由那一行真的落库之后的服务端渲染来说 —— 先改本地
+   * state 再等结果,就是用浏览器状态冒充持久化(规格 §1 九问 3 明禁)。写失败就说写失败,
+   * 面板留在原地,商家的草稿不丢。
+   */
+  function saveDraft() {
+    startSaving(async () => {
+      const result = await saveHomeLayout([...draft]);
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+      setCustomizing(false);
+      toast.success("Home saved");
+      router.refresh();
+    });
+  }
+
   if (!isDesktop) return <DesktopHomeRequired />;
 
   return (
-    <main id="home-main" tabIndex={-1} className="mx-auto w-full max-w-[1220px] px-8 py-6 outline-none">
-      <h1 className="text-3xl font-semibold tracking-[-0.035em]">Home</h1>
-      <div className="mt-3 flex flex-wrap items-center gap-1 border-b border-border pb-4">
-        <HomeFilterPicker label="Business goal" icon={Target} value={filters.goal} options={HOME_GOALS} onValueChange={(value) => replaceFilter({ goal: value as HomeGoal })} />
-        <HomeFilterPicker label="Date range" icon={CalendarRange} value={filters.range} options={HOME_RANGES} onValueChange={(value) => replaceFilter({ range: value as HomeRange })} />
-        <HomeFilterPicker label="Comparison" icon={ArrowUpRight} value={filters.comparison} options={HOME_COMPARISONS} onValueChange={(value) => replaceFilter({ comparison: value as HomeComparison })} />
-      </div>
+    <div className="flex min-h-full">
+      <main id="home-main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
+        <div className="mx-auto w-full max-w-[1220px] px-8 py-6">
+          <div className="flex items-center justify-between gap-4">
+            <h1 className="text-3xl font-semibold tracking-[-0.035em]">Home</h1>
+            {canManageHome ? (
+              customizing ? (
+                <span className="text-xs font-medium text-muted-foreground">Previewing unsaved changes</span>
+              ) : (
+                <Button type="button" variant="secondary" size="sm" onClick={startCustomizing}>
+                  <Settings2 aria-hidden /> Customize home
+                </Button>
+              )
+            ) : null}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-1 border-b border-border pb-4">
+            <HomeFilterPicker label="Business goal" icon={Target} value={filters.goal} options={HOME_GOALS} disabled={customizing} onValueChange={(value) => replaceFilter({ goal: value as HomeGoal })} />
+            <HomeFilterPicker label="Date range" icon={CalendarRange} value={filters.range} options={HOME_RANGES} disabled={customizing} onValueChange={(value) => replaceFilter({ range: value as HomeRange })} />
+            <HomeFilterPicker label="Comparison" icon={ArrowUpRight} value={filters.comparison} options={HOME_COMPARISONS} disabled={customizing} onValueChange={(value) => replaceFilter({ comparison: value as HomeComparison })} />
+          </div>
 
-      <ContinueCreating recents={recents} />
-      <RecoveryState health={health} filters={filters} />
-      {health.state === "partial" ? <PartialMarketingHealth health={health} filters={filters} /> : null}
-      {health.state === "ready" ? <ReadyMarketingHealth health={health} filters={filters} /> : null}
-    </main>
+          {customizing ? null : <ContinueCreating recents={recents} />}
+
+          {(customizing ? draft : components).length ? (
+            <div data-founder-home-components>
+              {(customizing ? draft : components).map((id) => (
+                <div key={id} data-home-component={id} className="min-w-0">
+                  <HomeComponentBlock id={id} health={health} filters={filters} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Empty className="mt-8 min-h-80 border border-border">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><Settings2 /></EmptyMedia>
+                <EmptyTitle>Choose what belongs on Home</EmptyTitle>
+                <EmptyDescription>Add components from the library to build this workspace Home.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+        </div>
+      </main>
+      {customizing ? (
+        <CustomizeHomePanel
+          selected={draft}
+          offered={offeredComponents}
+          saving={saving}
+          onToggle={toggleComponent}
+          onMove={moveComponent}
+          onReorder={reorderComponent}
+          onCancel={cancelCustomizing}
+          onReset={() => setDraft([...recommendedComponents])}
+          onSave={saveDraft}
+        />
+      ) : null}
+    </div>
   );
 }
