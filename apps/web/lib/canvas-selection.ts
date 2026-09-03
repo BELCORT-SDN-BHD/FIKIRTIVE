@@ -201,3 +201,43 @@ export function canvasBatchDeleteCopy(selection: Pick<CanvasBatchSelection, "cou
     description: "This takes them off your board. Any generated image or video stays saved in your library.",
   };
 }
+
+/**
+ * Delete / Backspace on the board — which cards the press is asking to remove (FRONT-A15).
+ *
+ * 病根(Codex 真机走查 QA-CRE-002,2026-09-03,生产构建):画布把 React Flow 自己的删除键
+ * 关掉了(`deleteKeyCode={null}`,因为它会不问一声就删,而在飞的付费卡删掉不退款),然后
+ * **没有人接手**——选中一张文字卡按 Delete、按 Backspace,屏幕上什么都不发生。已批准的设计
+ * 夹具里这个键是通的:`design-system/patterns/canvas/CanvasReference.tsx:470` 在不是打字的
+ * 时候按 Backspace / Delete 就移走当前选中的全部卡。
+ *
+ * 这里只回答「要删哪几张」;真去删走的还是原来那两条确认路(单张 ✕ 的确认框、多张的批量
+ * 确认框),所以「还在生成、删了不退款」那句警告一个字都不会被键盘绕过去。选中状态只有一份,
+ * 就是 React Flow 记在卡上的 `selected`——调用方把它读出来传进来。
+ */
+export type CanvasDeleteKeyPress = {
+  key: string;
+  /** 光标正在输入框/文本域/可编辑区里 —— 那时 Backspace 是退格,不是删卡。 */
+  editing: boolean;
+  /** 屏幕上已经有一个对话框开着 —— 那一层自己处理按键,画板不插手。 */
+  dialogOpen: boolean;
+};
+
+/** 这一按要删的卡;不是删除键、正在打字、有对话框开着或什么都没选中时返回 `null`。 */
+export function canvasDeleteKeyIds(
+  press: CanvasDeleteKeyPress,
+  selectedIds: readonly string[],
+): string[] | null {
+  if (press.key !== "Delete" && press.key !== "Backspace") return null;
+  if (press.editing || press.dialogOpen) return null;
+  if (selectedIds.length === 0) return null;
+  return [...selectedIds];
+}
+
+/** 一次按键落在哪种元素上算「正在打字」。`closest` 而不是 `matches`:Otto 的输入框是
+ *  ProseMirror,按键的落点是它里面的某个子节点,不是那个 `contenteditable` 本身。 */
+export const CANVAS_EDITABLE_SELECTOR =
+  "input, textarea, select, [contenteditable='true'], [contenteditable='']";
+
+/** 屏幕上开着的对话框 —— 确认框自己要吃掉 Escape / Backspace。 */
+export const CANVAS_DIALOG_SELECTOR = "[role='dialog'], [role='alertdialog']";
