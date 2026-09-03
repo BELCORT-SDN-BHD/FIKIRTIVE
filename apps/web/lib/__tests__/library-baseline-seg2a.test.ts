@@ -234,28 +234,40 @@ describe("FRONT-A5 列表与筛选来自服务器", () => {
 
 /* ── ④ 屏幕上的日界是商家自己的钟 ───────────────────────────────────────── */
 
-describe("FRONT-A5 网格的时间分组按浏览者本地时区,不按 UTC", () => {
+describe("FRONT-A5 网格的时间分组按浏览者自己的时区,不按 UTC", () => {
   /**
    * 生产实测(2026-09-03 17:24 +08):库里最新一行 `createdAt = 2026-09-02 18:21:30 UTC`,
    * 那是商家**当天凌晨 02:21** 做的东西 —— 页面却整组只写了一个 `Yesterday 11`。
-   * 这一条钉的是屏幕上那行字本身:在 UTC+8 的浏览器里,它必须是 `Today`。
+   * 这一条钉的是屏幕上那行字本身。
+   *
+   * 假装浏览器在吉隆坡的办法是替掉 `Intl.DateTimeFormat().resolvedOptions()` —— 组件就是
+   * 用它问「我在哪个时区」的。**不**改进程时区:那在 vitest 里是空操作(本轮实测),会让
+   * 这条围栏在 UTC+8 的开发机上假绿、只有 CI(UTC)才露馅。
    */
-  it("UTC+8 的浏览器里,本地凌晨做的那一行落在 Today 组", async () => {
+  function pretendViewerIsInKualaLumpur() {
+    const real = Intl.DateTimeFormat.prototype.resolvedOptions;
+    return vi
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockImplementation(function (this: Intl.DateTimeFormat) {
+        return { ...real.call(this), timeZone: "Asia/Kuala_Lumpur" };
+      });
+  }
+
+  it("浏览器在 UTC+8 时,商家凌晨做的那一行落在 Today 组", async () => {
     mocks.getGenerationHistory.mockResolvedValue({
       items: [{ ...HISTORY_PAGE.items[0], createdAt: "2026-09-02T18:21:30.000Z" }],
       nextCursor: null,
       hasMore: false,
     });
     vi.setSystemTime(new Date("2026-09-03T09:24:00.000Z"));
-    const previousTz = process.env.TZ;
-    process.env.TZ = "Asia/Kuala_Lumpur";
+    const spy = pretendViewerIsInKualaLumpur();
     try {
       const dom = await mount(await LibraryPage({ searchParams: Promise.resolve({}) }));
       const headings = Array.from(dom.querySelectorAll("h2")).map((node) => node.textContent?.trim());
       expect(headings).toContain("Today");
       expect(headings, "按 UTC 算就会变成 Yesterday —— 商家今天早上做的东西被说成昨天").not.toContain("Yesterday");
     } finally {
-      process.env.TZ = previousTz;
+      spy.mockRestore();
       vi.useRealTimers();
     }
   });

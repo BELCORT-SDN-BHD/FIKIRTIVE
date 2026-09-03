@@ -27,18 +27,11 @@ import {
 const NOW = new Date("2026-09-03T09:00:00.000Z");
 
 /**
- * 在一个点名的时区里跑一段断言。`Date` 的本地取值器读的是进程的 `TZ`,而这份测试要证明的
- * 恰恰是「浏览者不在 UTC 时会怎样」—— 跑测试的机器碰巧在哪个时区,不能决定这条围栏成不成立。
+ * 商家的时区。写成一个显式的 IANA 名字,而不是改进程时区 —— 后者在 vitest 里是空操作
+ * (本轮实测:改了之后断言纹丝不动),于是这几条围栏在 UTC+8 的机器上假绿、在 CI(UTC)
+ * 上才露出来。时区是传进去的一个值,这份测试因此在任何机器上给同一个答案。
  */
-function withTimeZone<T>(zone: string, run: () => T): T {
-  const previous = process.env.TZ;
-  process.env.TZ = zone;
-  try {
-    return run();
-  } finally {
-    process.env.TZ = previous;
-  }
-}
+const KL = "Asia/Kuala_Lumpur";
 
 function item(overrides: Partial<LibraryItem> & { id: string; createdAt: string }): LibraryItem {
   return {
@@ -59,11 +52,11 @@ function item(overrides: Partial<LibraryItem> & { id: string; createdAt: string 
 
 describe("FRONT-A5 生成历史的时间分组来自真实 createdAt,不是夹具那三个常量", () => {
   it("今天与昨天按天算,再往前按月 —— 库里放多久都有一个真名字", () => {
-    expect(libraryTimeGroupLabel("2026-09-03T01:00:00.000Z", NOW, "utc")).toBe("Today");
-    expect(libraryTimeGroupLabel("2026-09-02T23:00:00.000Z", NOW, "utc")).toBe("Yesterday");
-    expect(libraryTimeGroupLabel("2026-08-30T10:00:00.000Z", NOW, "utc")).toBe("August 2026");
+    expect(libraryTimeGroupLabel("2026-09-03T01:00:00.000Z", NOW, "UTC")).toBe("Today");
+    expect(libraryTimeGroupLabel("2026-09-02T23:00:00.000Z", NOW, "UTC")).toBe("Yesterday");
+    expect(libraryTimeGroupLabel("2026-08-30T10:00:00.000Z", NOW, "UTC")).toBe("August 2026");
     // 夹具的天花板是「Earlier this month」；真库里去年的东西必须仍然说得出自己是哪个月。
-    expect(libraryTimeGroupLabel("2025-12-31T10:00:00.000Z", NOW, "utc")).toBe("December 2025");
+    expect(libraryTimeGroupLabel("2025-12-31T10:00:00.000Z", NOW, "UTC")).toBe("December 2025");
   });
 
   it("分组保持传进来的顺序 —— 排序权威是服务端的 orderBy,这里不排第二次", () => {
@@ -75,7 +68,7 @@ describe("FRONT-A5 生成历史的时间分组来自真实 createdAt,不是夹�
         item({ id: "g0", createdAt: "2026-08-01T08:00:00.000Z" }),
       ],
       NOW,
-      "utc",
+      "UTC",
     );
     expect(groups.map((group) => group.label)).toEqual(["Today", "Yesterday", "August 2026"]);
     expect(groups[2].items.map((row) => row.id)).toEqual(["g1", "g0"]);
@@ -111,7 +104,7 @@ describe("FRONT-A5 每一格的名字只来自真有的列", () => {
   });
 });
 
-describe("FRONT-A5 日界按浏览者本地时区算,不按 UTC", () => {
+describe("FRONT-A5 日界按浏览者自己的时区算,不按 UTC", () => {
   /**
    * 生产实测(2026-09-03 17:24 +08):库里最新一行 `createdAt = 2026-09-02 18:21:30 UTC`,
    * 那是商家**今天凌晨 02:21** 做的东西 —— 页面却整组只写了一个 `Yesterday 11`。
@@ -121,32 +114,36 @@ describe("FRONT-A5 日界按浏览者本地时区算,不按 UTC", () => {
   const MY_NOW = new Date("2026-09-03T09:24:00.000Z"); // = 2026-09-03 17:24 in UTC+8
 
   it("UTC+8 的商家凌晨做的东西属于 Today,而按 UTC 算会被误标成 Yesterday", () => {
-    const local = withTimeZone("Asia/Kuala_Lumpur", () =>
-      libraryTimeGroupLabel(MY_MORNING, MY_NOW, "local"));
-    expect(local).toBe("Today");
-    expect(libraryTimeGroupLabel(MY_MORNING, MY_NOW, "utc")).toBe("Yesterday");
+    expect(libraryTimeGroupLabel(MY_MORNING, MY_NOW, KL)).toBe("Today");
+    expect(libraryTimeGroupLabel(MY_MORNING, MY_NOW, "UTC")).toBe("Yesterday");
   });
 
-  it("往前一天同样按本地日界,月份标题也用本地钟", () => {
-    withTimeZone("Asia/Kuala_Lumpur", () => {
-      // 2026-09-01 18:00Z = 本地 09-02 02:00 = 相对本地今天(09-03)的昨天。
-      expect(libraryTimeGroupLabel("2026-09-01T18:00:00.000Z", MY_NOW, "local")).toBe("Yesterday");
-      // 2026-07-31 18:00Z = 本地 08-01 —— 按 UTC 会写成 July 2026。
-      expect(libraryTimeGroupLabel("2026-07-31T18:00:00.000Z", MY_NOW, "local")).toBe("August 2026");
-      expect(libraryTimeGroupLabel("2026-07-31T18:00:00.000Z", MY_NOW, "utc")).toBe("July 2026");
-    });
+  it("往前一天同样按商家的日界,月份标题也用商家的钟", () => {
+    // 2026-09-01 18:00Z = 商家的 09-02 02:00 = 相对商家今天(09-03)的昨天。
+    expect(libraryTimeGroupLabel("2026-09-01T18:00:00.000Z", MY_NOW, KL)).toBe("Yesterday");
+    // 2026-07-31 18:00Z = 商家的 08-01 —— 按 UTC 会写成 July 2026。
+    expect(libraryTimeGroupLabel("2026-07-31T18:00:00.000Z", MY_NOW, KL)).toBe("August 2026");
+    expect(libraryTimeGroupLabel("2026-07-31T18:00:00.000Z", MY_NOW, "UTC")).toBe("July 2026");
+  });
+
+  it("夏令时那天日界仍然对得上 —— 昨天是按日历退一天,不是减 24 小时", () => {
+    // 纽约 2026-03-08 是春季调时那天(只有 23 小时)。当地 03-09 10:00 往回看,
+    // 03-08 的东西必须是 Yesterday,03-07 的必须落到月份组。
+    const ny = "America/New_York";
+    const nyNow = new Date("2026-03-09T14:00:00.000Z"); // 当地 03-09 10:00
+    expect(libraryTimeGroupLabel("2026-03-08T16:00:00.000Z", nyNow, ny)).toBe("Yesterday");
+    expect(libraryTimeGroupLabel("2026-03-07T16:00:00.000Z", nyNow, ny)).toBe("March 2026");
   });
 
   it("分组沿用同一个日界 —— 商家凌晨那一批不会自己掉进 Yesterday 组", () => {
-    const groups = withTimeZone("Asia/Kuala_Lumpur", () =>
-      groupLibraryItems(
-        [
-          item({ id: "g1", createdAt: MY_MORNING }),
-          item({ id: "g0", createdAt: "2026-09-01T18:00:00.000Z" }),
-        ],
-        MY_NOW,
-        "local",
-      ));
+    const groups = groupLibraryItems(
+      [
+        item({ id: "g1", createdAt: MY_MORNING }),
+        item({ id: "g0", createdAt: "2026-09-01T18:00:00.000Z" }),
+      ],
+      MY_NOW,
+      KL,
+    );
     expect(groups.map((group) => group.label)).toEqual(["Today", "Yesterday"]);
   });
 });
@@ -154,19 +151,24 @@ describe("FRONT-A5 日界按浏览者本地时区算,不按 UTC", () => {
 describe("FRONT-A5 Date created 筛选与分组共用同一个日界", () => {
   const MY_NOW = new Date("2026-09-03T09:24:00.000Z"); // = 2026-09-03 17:24 in UTC+8
 
-  it("Today 的起点是商家本地的今天 00:00,所以本地凌晨那一批筛得出来", () => {
-    const since = withTimeZone("Asia/Kuala_Lumpur", () =>
-      librarySinceForDateFilter("today", MY_NOW, "local"));
-    // 本地 2026-09-03 00:00 (+08) = 2026-09-02 16:00Z;商家凌晨 02:21 做的那一行(18:21Z)
+  it("Today 的起点是商家那一天的 00:00,所以商家凌晨那一批筛得出来", () => {
+    // 商家的 2026-09-03 00:00 (+08) = 2026-09-02 16:00Z;凌晨 02:21 做的那一行(18:21Z)
     // 落在这个起点之后 —— 按 UTC 的起点(09-03 00:00Z)则会把它整个筛掉。
+    const since = librarySinceForDateFilter("today", MY_NOW, KL);
     expect(since).toBe("2026-09-02T16:00:00.000Z");
     expect(new Date("2026-09-02T18:21:30.000Z").getTime()).toBeGreaterThan(new Date(since!).getTime());
-    expect(librarySinceForDateFilter("today", MY_NOW, "utc")).toBe("2026-09-03T00:00:00.000Z");
+    expect(librarySinceForDateFilter("today", MY_NOW, "UTC")).toBe("2026-09-03T00:00:00.000Z");
+  });
+
+  it("负偏移的时区也对 —— 起点在 now 之后那一侧是错的", () => {
+    // 纽约 2026-09-03 00:00 EDT = 2026-09-03 04:00Z。
+    expect(librarySinceForDateFilter("today", MY_NOW, "America/New_York"))
+      .toBe("2026-09-03T04:00:00.000Z");
   });
 
   it("Any time 不带起点;Last 7 days 是与时区无关的滚动窗口", () => {
-    expect(librarySinceForDateFilter("all", MY_NOW, "local")).toBeUndefined();
-    expect(librarySinceForDateFilter("week", MY_NOW, "local")).toBe("2026-08-27T09:24:00.000Z");
+    expect(librarySinceForDateFilter("all", MY_NOW, KL)).toBeUndefined();
+    expect(librarySinceForDateFilter("week", MY_NOW, KL)).toBe("2026-08-27T09:24:00.000Z");
   });
 });
 

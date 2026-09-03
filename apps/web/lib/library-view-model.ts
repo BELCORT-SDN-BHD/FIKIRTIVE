@@ -9,7 +9,7 @@
  *   · 名字来自真实存在的列 —— 上传写 `Asset.originalFilename`,引擎产物写 `promptText`
  *     (引擎产物**也有** originalFilename,但那是我们自己的存储键 `gen-<ulid>.mp4`,不是名字);
  *     两样都没有的行**不编名字**,写 "Untitled";夹具那种人写的标题在生产里根本不存在。
- *   · 日界按浏览者本地时区算,不按 UTC —— 见 `LibraryDayZone`。
+ *   · 日界按浏览者自己的时区算,不按 UTC —— 见 `LibraryTimeZone`。
  *
  * 放在 `lib/` 而不是组件里,是为了让这两条规则能在没有 DOM 的情况下被直接钉住。
  */
@@ -40,78 +40,123 @@ export function parseLibraryView(raw: string | undefined): LibraryView {
 export type LibraryGroup = { key: string; label: string; items: LibraryItem[] };
 
 /**
- * 日界按谁的钟算。
+ * 日界按哪个时区算 —— 一个 IANA 时区名(`"Asia/Kuala_Lumpur"`、`"UTC"`)。
  *
- * 权威是**浏览者本地的钟**("local")。商家在马来西亚(UTC+8)凌晨 02:00 做的东西,在 UTC
- * 那边还停在前一天 18:00 —— 按 UTC 分组会把商家「今天早上刚做的」标成 Yesterday,并且被
+ * 权威是**浏览者自己的钟**。商家在马来西亚(UTC+8)凌晨 02:00 做的东西,在 UTC 那边还停在
+ * 前一天 18:00 —— 按 UTC 分组会把商家「今天早上刚做的」标成 Yesterday,并且被
  * `Date created / Today` 筛选整组排除掉。那不是「时区口径不同」,那是屏幕上写了一句假话。
  *
- * 服务端渲染的第一帧不知道浏览器在哪个时区,只能先按 "utc" 画;`LibraryView` 挂载后用
- * React 自己的服务端/客户端快照机制(`useSyncExternalStore`)换成 "local" 再算一次 ——
- * 两端第一帧的文字因此一致,不会 hydration mismatch。
- */
-export type LibraryDayZone = "utc" | "local";
-
-/**
- * 月份名写死一张表,不用 `Intl.DateTimeFormat`。
+ * 服务端渲染的第一帧不知道浏览器在哪个时区,只能先传 `"UTC"`;`LibraryView` 挂载后用
+ * React 自己的服务端/客户端快照机制(`useSyncExternalStore`)换成
+ * `Intl.DateTimeFormat().resolvedOptions().timeZone` 再算一次 —— 两端第一帧的文字因此
+ * 一致,不会 hydration mismatch。
  *
- * 一个在模块加载时构造出来的 `Intl.DateTimeFormat` 会把当时的时区**焊死**在里面(Node 22
- * 实测:进程的时区设置改了之后,`Date` 的本地取值器跟着变,预构造的 formatter 不跟),
- * 于是「按本地时区算」这条规则在它身上就是假的。界面本来就只有英文一种写法
- * (原来的代码也是写死 `"en-US"`),所以一张表比一个会骗人的 formatter 诚实。
+ * **为什么收一个时区名,而不是 `Date` 的本地取值器。** 本地取值器读的是进程时区,在浏览器
+ * 里正确,却让这条规则在测试里钉不住:跑测试的机器在 UTC+8 就永远绿,在 UTC(CI 就是)
+ * 则 "utc" 与 "local" 根本没有区别 —— 而运行中改进程时区在 vitest 里是空操作(本轮实测:
+ * 改了之后断言纹丝不动)。靠机器碰巧在哪个时区才绿的围栏等于没有围栏,所以时区是显式
+ * 传进来的一个值。
  */
+export type LibraryTimeZone = string;
+
+/** 界面只有英文一种写法(原来的代码也写死 `"en-US"`),一张表比一次 Intl 调用直接。 */
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ] as const;
 
-/** 这一刻所在那一天的 00:00(按 `zone` 的钟)。 */
-function startOfDay(at: Date, zone: LibraryDayZone): number {
-  return zone === "utc"
-    ? Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate())
-    : new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime();
+/**
+ * 带**显式 timeZone** 的 formatter 才是安全的:不带 timeZone 的那种会把构造那一刻的
+ * 进程时区焊死在里面(Node 22 实测),于是「按浏览者的钟算」在它身上就是假的。
+ * 按时区名缓存,因为一屏要按行调用几十上百次。
+ */
+const ZONE_FORMATS = new Map<string, { day: Intl.DateTimeFormat; clock: Intl.DateTimeFormat }>();
+function zoneFormats(timeZone: LibraryTimeZone) {
+  let formats = ZONE_FORMATS.get(timeZone);
+  if (!formats) {
+    formats = {
+      // en-CA 的日期就是 `YYYY-MM-DD`,可以直接当排序键与相等键用。
+      day: new Intl.DateTimeFormat("en-CA", {
+        timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+      }),
+      clock: new Intl.DateTimeFormat("en-CA", {
+        timeZone, hourCycle: "h23",
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+      }),
+    };
+    ZONE_FORMATS.set(timeZone, formats);
+  }
+  return formats;
 }
 
-/** `August 2026` —— 按 `zone` 的钟取月与年。 */
-function monthLabel(at: Date, zone: LibraryDayZone): string {
-  return zone === "utc"
-    ? `${MONTH_NAMES[at.getUTCMonth()]} ${at.getUTCFullYear()}`
-    : `${MONTH_NAMES[at.getMonth()]} ${at.getFullYear()}`;
+/** 那一刻在 `timeZone` 的钟上是哪一天,`YYYY-MM-DD`。 */
+function dayKey(at: Date, timeZone: LibraryTimeZone): string {
+  return zoneFormats(timeZone).day.format(at);
+}
+
+/** `YYYY-MM-DD` 的前一天。按日历退一天,不减 24 小时 —— 夏令时那天只有 23 小时。 */
+function previousDay(key: string): string {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+}
+
+/** `timeZone` 在 `at` 这一刻的 UTC 偏移(毫秒)。 */
+function zoneOffsetMs(at: Date, timeZone: LibraryTimeZone): number {
+  const parts: Record<string, number> = {};
+  for (const part of zoneFormats(timeZone).clock.formatToParts(at)) {
+    if (part.type !== "literal") parts[part.type] = Number(part.value);
+  }
+  // 把「那一刻在 timeZone 的钟面读数」当成 UTC 读一次,与真实时刻的差就是偏移。
+  const asUtc = Date.UTC(
+    parts.year, parts.month - 1, parts.day,
+    parts.hour % 24, parts.minute, parts.second,
+  );
+  return asUtc - Math.floor(at.getTime() / 1000) * 1000;
+}
+
+/** `now` 那一天在 `timeZone` 的 00:00,是**哪一个真实时刻**。 */
+function startOfDayInstant(now: Date, timeZone: LibraryTimeZone): Date {
+  const [year, month, day] = dayKey(now, timeZone).split("-").map(Number);
+  // 先把本地 00:00 的读数当成 UTC 猜一次,再把那一刻的偏移减掉。
+  const guess = Date.UTC(year, month - 1, day);
+  return new Date(guess - zoneOffsetMs(new Date(guess), timeZone));
 }
 
 /**
  * 一行属于哪个时间组。README §3.1 的原话是「例如 Today / Yesterday / August 2026」——
  * 前两组是相对今天的,再往前一律按月,所以库里放多久都不会撞上夹具那三个常量的天花板。
- *
- * 「昨天」从今天的 00:00 往回退 12 小时再取那一天的开头,而不是从 `now` 减 24 小时:
- * 夏令时那两天一天只有 23 小时,减 24 小时会退过头或退不到。
  */
-export function libraryTimeGroupLabel(createdAtIso: string, now: Date, zone: LibraryDayZone): string {
+export function libraryTimeGroupLabel(
+  createdAtIso: string,
+  now: Date,
+  timeZone: LibraryTimeZone,
+): string {
   const at = new Date(createdAtIso);
   if (Number.isNaN(at.getTime())) return "Earlier";
-  const today = startOfDay(now, zone);
-  const day = startOfDay(at, zone);
+  const day = dayKey(at, timeZone);
+  const today = dayKey(now, timeZone);
   if (day === today) return "Today";
-  if (day === startOfDay(new Date(today - 12 * 60 * 60 * 1000), zone)) return "Yesterday";
-  return monthLabel(at, zone);
+  if (day === previousDay(today)) return "Yesterday";
+  const [year, month] = day.split("-").map(Number);
+  return `${MONTH_NAMES[month - 1]} ${year}`;
 }
 
 /**
  * `Date created` 筛选的起点(`Today` / `Last 7 days`),ISO 或 `undefined`(= `Any time`)。
  *
- * 和分组共用上面那一个 `startOfDay` —— 两处各写一份日界,就会出现「分组说 Today、筛选说
- * 今天没有」这种自相矛盾的屏幕。之前这里按 UTC 取当天 00:00,UTC+8 的商家凌晨做的东西
- * 因此被 `Today` 整批筛掉。
+ * 和分组共用同一个日界 —— 两处各写一份,就会出现「分组说 Today、筛选说今天没有」这种
+ * 自相矛盾的屏幕。之前这里按 UTC 取当天 00:00,UTC+8 的商家凌晨做的东西因此被整批筛掉。
  *
  * `Last 7 days` 是一个滚动的 168 小时窗口,与时区无关。
  */
 export function librarySinceForDateFilter(
   date: "all" | "today" | "week",
   now: Date,
-  zone: LibraryDayZone,
+  timeZone: LibraryTimeZone,
 ): string | undefined {
   if (date === "all") return undefined;
-  if (date === "today") return new Date(startOfDay(now, zone)).toISOString();
+  if (date === "today") return startOfDayInstant(now, timeZone).toISOString();
   return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 }
 
@@ -122,12 +167,12 @@ export function librarySinceForDateFilter(
 export function groupLibraryItems(
   items: readonly LibraryItem[],
   now: Date,
-  zone: LibraryDayZone,
+  timeZone: LibraryTimeZone,
 ): LibraryGroup[] {
   const groups: LibraryGroup[] = [];
   const byLabel = new Map<string, LibraryGroup>();
   for (const item of items) {
-    const label = libraryTimeGroupLabel(item.createdAt, now, zone);
+    const label = libraryTimeGroupLabel(item.createdAt, now, timeZone);
     let group = byLabel.get(label);
     if (!group) {
       group = { key: label.toLowerCase().replaceAll(" ", "-"), label, items: [] };

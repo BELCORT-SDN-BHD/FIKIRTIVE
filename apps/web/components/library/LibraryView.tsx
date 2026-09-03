@@ -87,7 +87,7 @@ import {
   libraryItemTitle,
   librarySinceForDateFilter,
   parseLibraryView,
-  type LibraryDayZone,
+  type LibraryTimeZone,
   type LibraryView as LibraryViewName,
 } from "@/lib/library-view-model";
 import { cn } from "@/lib/utils";
@@ -122,10 +122,22 @@ const SORT_LABELS: Record<SortOrder, string> = {
 
 const PAGE_SIZE = 40;
 
-/** 一个永远不变的 store:服务端第一帧拿 "utc",hydration 之后拿 "local"(见 `MediaGrid`)。 */
+/**
+ * 日界用哪个时区(见 `lib/library-view-model.ts` 的 `LibraryTimeZone`)。
+ *
+ * 一个永远不变的 store:服务端渲染那一帧拿 `"UTC"`(服务端不知道浏览器在哪),hydration
+ * 之后拿浏览者自己的时区。`useSyncExternalStore` 是 React 处理「服务端与客户端第一帧本来
+ * 就不同」的正规写法(与 `components/theme-toggle.tsx` 同一个套路):需要对上的那一帧两端
+ * 都拿 `"UTC"`,之后立刻换成真时区重画一次,不会 hydration mismatch。
+ */
 const NEVER_CHANGES = () => () => {};
-const LOCAL_ZONE = (): LibraryDayZone => "local";
-const UTC_ZONE = (): LibraryDayZone => "utc";
+const SERVER_TIME_ZONE = (): LibraryTimeZone => "UTC";
+/**
+ * 浏览者自己的时区。每次现问,不缓存:同一个浏览器每次都答同一个字符串,`useSyncExternalStore`
+ * 要的快照稳定性照样成立(它按 Object.is 比),而模块级缓存会把**第一次**问到的时区焊死 ——
+ * 那正是围栏钉不住的那种写法。
+ */
+const VIEWER_TIME_ZONE = (): LibraryTimeZone => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 type Filters = {
   query: string;
@@ -383,19 +395,18 @@ function MediaGrid({
   items,
   selectedId,
   onOpen,
+  timeZone,
 }: {
   items: readonly LibraryItem[];
   selectedId?: string;
   onOpen: (item: LibraryItem) => void;
+  /** 分组的日界按这个时区算 —— 与 `Date created` 筛选是同一个值。 */
+  timeZone: LibraryTimeZone;
 }) {
-  /**
-   * 服务端渲染那一帧不知道浏览器在哪个时区,只能先按 UTC 画;挂载后换成商家自己的钟。
-   * 用 `useSyncExternalStore` 而不是 `useEffect`,是因为 React 就是用它来处理「服务端与
-   * 客户端第一帧本来就不同」这件事的(与 `components/theme-toggle.tsx` 同一个写法):
-   * 需要对上的那一帧两端都拿 "utc",hydration 之后立刻换 "local" 重画一次。
-   */
-  const zone = React.useSyncExternalStore(NEVER_CHANGES, LOCAL_ZONE, UTC_ZONE);
-  const groups = React.useMemo(() => groupLibraryItems(items, new Date(), zone), [items, zone]);
+  const groups = React.useMemo(
+    () => groupLibraryItems(items, new Date(), timeZone),
+    [items, timeZone],
+  );
   return (
     <div className="space-y-7">
       {groups.map((group) => (
@@ -619,6 +630,10 @@ export function LibraryView({
   const [detail, setDetail] = React.useState(initialAsset);
   const [elementList, setElementList] = React.useState<LibraryElement[]>(elements);
 
+  // 日界只解析一次,分组与 `Date created` 筛选共用它 —— 两处各拿一个时区,就会出现
+  // 「分组说 Today、筛选说今天没有」这种自相矛盾的屏幕。
+  const timeZone = React.useSyncExternalStore(NEVER_CHANGES, VIEWER_TIME_ZONE, SERVER_TIME_ZONE);
+
   // 迟到的旧请求会覆盖新条件的结果 —— 每次发请求领一个号,回来时号对不上就丢弃
   // (backend-handoff-contract.md §8.3①)。
   const requestRef = React.useRef(0);
@@ -635,14 +650,14 @@ export function LibraryView({
         : nextFilters.sources,
       mediaKind: nextFilters.media === "all" ? undefined : nextFilters.media,
       projectId: nextFilters.projectId === "all" ? undefined : nextFilters.projectId,
-      // 日界与网格分组同一份规则(`lib/library-view-model.ts`),而且按商家自己的钟 ——
-      // 这一段只在浏览器里跑(首屏那一页 date 是 "all"),所以 "local" 就是商家的钟。
-      since: librarySinceForDateFilter(nextFilters.date, new Date(), "local"),
+      // 日界与网格分组同一份规则、同一个时区(`lib/library-view-model.ts`)。
+      // 首屏那一页 `date` 是 "all",走不到 `timeZone`,所以 hydration 前后签名一致。
+      since: librarySinceForDateFilter(nextFilters.date, new Date(), timeZone),
       order: nextFilters.sort,
       cursor: nextCursor,
       take: PAGE_SIZE,
     }),
-    [],
+    [timeZone],
   );
 
   const reload = React.useCallback(async (nextView: LibraryViewName, nextFilters: Filters) => {
@@ -841,7 +856,12 @@ export function LibraryView({
                 ) : loading ? (
                   <GridSkeleton />
                 ) : items.length ? (
-                  <MediaGrid items={items} selectedId={detail?.generationId} onOpen={openItem} />
+                  <MediaGrid
+                    items={items}
+                    selectedId={detail?.generationId}
+                    onOpen={openItem}
+                    timeZone={timeZone}
+                  />
                 ) : filtersActive ? (
                   <div className="flex min-h-72 flex-col items-center justify-center text-center">
                     <Search className="size-6 text-muted-foreground" aria-hidden />
