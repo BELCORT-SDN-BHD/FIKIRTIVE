@@ -66,6 +66,14 @@ const {
 const {
   addEntityAlias, removeEntityAlias, softDeleteEntity, softDeleteReferenceImage, updateEntity,
 } = await import("@/lib/actions");
+const { getEntities } = await import("@/lib/data");
+const { toEntityDTO } = await import("@/lib/dto");
+
+/** 能力表的七格,一格不漏地过一遍。 */
+const CAPABILITY_KEYS = [
+  "mutateBase", "createVariant", "regenerateVariant",
+  "renameVariant", "deleteVariant", "editIdentity", "deleteEntity",
+] as const;
 
 async function asUser(email: string) { mockAuth.mockResolvedValue({ user: { email } }); }
 async function ensureUser(email: string) {
@@ -271,6 +279,51 @@ describe("CREATE-A10 官方演员只读 —— 商家自己的元素照旧全权
     expect(after.refJobs).toBe(before.refJobs + 1);
     expect(after.ledger).toBeGreaterThan(before.ledger);
     expect(after.balance!).toBeLessThan(before.balance!);
+  });
+});
+
+describe("CREATE-A10 官方演员只读 —— 只读按来源分,不是把 Cast 一刀切", () => {
+  /**
+   * Codex QA-CRE-FE9-008 点名的反向风险:一刀切会把商家自己建的 Character 也锁死。
+   *
+   * 所以这一条走的是**真路径**——`getEntities` 读库、`toEntityDTO` 组装,和 Library
+   * 与 Otto 拿到的是同一份 DTO;两位实体同为 CHARACTER、同名,只有 `catalogKey` 不同。
+   */
+  it("CREATE-A10: 同店同类型同名两位实体,官方七格全 false、商家自建七格全 true", async () => {
+    await asUser(A_EMAIL);
+    const dtos = (await getEntities(orgA)).map(toEntityDTO);
+
+    const officialDto = dtos.find((d) => d.id === official.entityId);
+    const mineDto = dtos.find((d) => d.id === mine.entityId);
+    expect(officialDto, "官方那位不在 DTO 里").toBeDefined();
+    expect(mineDto, "商家自建那位不在 DTO 里").toBeDefined();
+
+    // 同一个类型 —— 只读的判据不可能是「是不是 Cast」。
+    expect(officialDto!.type).toBe("CHARACTER");
+    expect(mineDto!.type).toBe("CHARACTER");
+    expect(officialDto!.origin).toBe("OFFICIAL_CATALOG");
+    expect(mineDto!.origin).toBe("USER");
+    for (const key of CAPABILITY_KEYS) {
+      expect(officialDto!.capabilities[key], `官方.${key}`).toBe(false);
+      expect(mineDto!.capabilities[key], `商家自建.${key}`).toBe(true);
+    }
+  });
+
+  it("CREATE-A10: 播进来的五位官方演员全部只读,同店其余实体一个都没被误伤", async () => {
+    await asUser(A_EMAIL);
+    const dtos = (await getEntities(orgA)).map(toEntityDTO);
+    const official5 = dtos.filter((d) => d.origin === "OFFICIAL_CATALOG");
+    const own = dtos.filter((d) => d.origin === "USER");
+
+    expect(official5.length, "演员库五人").toBe(ACTOR_LIBRARY.length);
+    expect(new Set(official5.map((d) => d.name))).toEqual(new Set(ACTOR_LIBRARY.map((a) => a.name)));
+    for (const d of official5) {
+      for (const key of CAPABILITY_KEYS) expect(d.capabilities[key], `${d.name}.${key}`).toBe(false);
+    }
+    expect(own.length, "商家自建至少一位").toBeGreaterThan(0);
+    for (const d of own) {
+      for (const key of CAPABILITY_KEYS) expect(d.capabilities[key], `${d.name}.${key}`).toBe(true);
+    }
   });
 });
 

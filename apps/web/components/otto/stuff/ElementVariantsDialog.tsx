@@ -381,7 +381,17 @@ export function ElementVariantsDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>{entity.name}</DialogTitle>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            {entity.name}
+            {/* 只读那一面要看得见,而不是靠「按钮怎么少了」去猜(Codex QA-CRE-FE9-008)。
+                标签只说事实,不是禁用态:只读动作(View details / Use in Canvas / @ 引用 /
+                favorite)一个不少。 */}
+            {readOnly && (
+              <Badge variant="outline" className="font-medium text-muted-foreground">
+                Official avatar · Read only
+              </Badge>
+            )}
+          </DialogTitle>
           <DialogDescription>
             {readOnly
               ? "This cast member is provided by Fikirtive. Its base look and saved variants stay as they are — use it in Canvas, or type @ in a prompt to put it in your work."

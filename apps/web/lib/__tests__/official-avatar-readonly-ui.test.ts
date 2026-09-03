@@ -138,6 +138,19 @@ describe("CREATE-A10 官方演员只读 —— 元素详情不出 mutation 控�
     expect(text.toLowerCase()).toContain("canvas");
   });
 
+  it("CREATE-A10: 官方 DTO —— 标题旁挂「Official avatar · Read only」标签,商家自己的不挂", async () => {
+    // 只读要看得见,而不是靠「按钮怎么少了」去猜(Codex QA-CRE-FE9-008)。
+    await open(entityOf("OFFICIAL_CATALOG"));
+    expect(dialog().textContent ?? "").toContain("Official avatar · Read only");
+    if (root) await act(async () => root!.unmount());
+    container?.remove();
+    root = null;
+    container = null;
+
+    await open(entityOf("USER"));
+    expect(dialog().textContent ?? "").not.toContain("Official avatar · Read only");
+  });
+
   it("CREATE-A10: 商家自己的 DTO —— 那几段文字全都在(围栏没误伤自己的元素)", async () => {
     await open(entityOf("USER"));
     const text = dialog().textContent ?? "";
