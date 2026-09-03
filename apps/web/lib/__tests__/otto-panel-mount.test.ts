@@ -116,6 +116,12 @@ beforeEach(() => {
   Object.defineProperty(window, "innerWidth", { value: VIEWPORT.width, writable: true, configurable: true });
   Object.defineProperty(window, "innerHeight", { value: VIEWPORT.height, writable: true, configurable: true });
   window.localStorage.clear();
+  // 这个文件里的大多数用例测的是面板挂进真壳之后的行为(开合、存档、懒加载、会话/项目
+  // 整理),不是默认开合本身——默认从 2026-09-04 起改成收起(FRONT-A14,取代 Q3-A,见
+  // panel-state.ts),所以这里统一按「商家上次留着开着」起步,省得每条用例各自造存档。
+  // 真正测默认值的那一组(见下面「默认开合(FRONT-A14)」)与窄屏守卫会显式清掉/改写这份
+  // 存档,回到它们各自要的场景。
+  writeOpenState();
   loadOttoPanelSeed.mockResolvedValue({ error: "seed not wired in this test" });
 });
 
@@ -168,6 +174,15 @@ function writeClosedState() {
 }
 
 /**
+ * 写一份「开着」的存档 —— 代表 FRONT-A14 (b) 「商家上次留着开着」。默认从 2026-09-04
+ * 起改成收起,这个文件里大多数用例的真正主题(拖动/存档/懒加载/整理)需要面板已经开着
+ * 才有得测,`beforeEach` 统一用这份起步,省得每条用例各自造一份存档。
+ */
+function writeOpenState() {
+  writeOttoPanelState(setPanelOpen(defaultOttoPanelState(VIEWPORT), true));
+}
+
+/**
  * 这一份用来当样本的**商家面**。
  *
  * FRONT(前端基线合并,`docs/specs/frontend-baseline.md`):Campaigns 在 beta 里被收起来了
@@ -202,9 +217,11 @@ describe("哪些面挂面板 (§3.2 末段)", () => {
     // 画布页自带真输入框(#609 原来那条 hideOttoButton,判断搬了家,理由没变)。
     expect(ottoPanelMountsOn(CANVAS_HREF)).toBe(false);
     // 创作前厅同理(2026-09-04 走查 P1-8):`/create` 页面正中就是「Create with Otto」那只
-    // 输入框(`NorthstarHome.tsx`),而面板在清空存储的全新会话里也会自己弹开 —— 走查录到
-    // 两个 Otto 入口并排,面板里还装着上一场的旧对话。**同一条判据**,只是多了一个成员;
-    // 面板的默认开合(Founder 2026-08-18 Q3-A「首开默认开」)一个字没改。
+    // 输入框(`NorthstarHome.tsx`),而面板在清空存储的全新会话里当时也会自己弹开 —— 走查
+    // 录到两个 Otto 入口并排,面板里还装着上一场的旧对话。**同一条判据**,只是多了一个成员;
+    // 这一条只管挂不挂,不管默认开合本身——那条口径同一天晚些时候又改过一次(Founder
+    // 2026-09-04 裁决收起为默认,取代 Q3-A「首开默认开」,见下面「默认开合(FRONT-A14)」
+    // 一组),这里不重复断言。
     expect(ottoPanelMountsOn(CREATE_NAV_HREF)).toBe(false);
   });
 
@@ -296,6 +313,32 @@ describe("一屏只有一个 Otto", () => {
 
     expect(el.querySelector("[data-otto-panel]")).toBeNull();
     expect(el.querySelector("[data-page]")).not.toBeNull();
+  });
+
+  /**
+   * 判官裁定 P1-A(2026-09-04)—— `/create` 与画布不同:画布是 `APPLICATION_SHELL_CARVE_OUTS`
+   * 成员,整条壳(含顶栏)根本不画,顶栏那颗 Ask Otto 从来够不着;`/create` 是普通商家面,顶栏
+   * 照画,只是面板不挂在这一面(`panel-surface.ts`)。合并前 `ottoPanelMountsOn(CREATE_NAV_HREF)`
+   * 是 `true`,顶栏那颗按钮是活的;本票把 `/create` 收进「这一面自己已经有一个 Otto」名单之后,
+   * `MerchantTopBar` 若还是无条件渲染这颗按钮,点下去就是 `controls?.togglePanel()` 的空动作
+   * —— 一颗建了没用的死按钮。这里钉的是壳里那半:面板不挂的商家面,顶栏干脆不画这颗按钮。
+   */
+  it("CREATE-A1 · /create 顶栏不留一颗死的 Ask Otto(判官 P1-A)", async () => {
+    const el = await mount(shell(CREATE_NAV_HREF));
+
+    expect(ottoPanelMountsOn(CREATE_NAV_HREF)).toBe(false);
+    // 与画布不同:`/create` 是普通商家面,顶栏本身照画。
+    expect(el.querySelector("[data-merchant-topbar]")).not.toBeNull();
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    expect(el.querySelector("[data-shell-ask-otto]")).toBeNull();
+    expect(el.querySelector("[data-page]")).not.toBeNull();
+  });
+
+  it("CREATE-A1 · 面板挂着的商家面,顶栏那颗 Ask Otto 照旧在(不是整颗按钮被误删)", async () => {
+    const el = await mount(shell(MERCHANT_SURFACE));
+
+    expect(ottoPanelMountsOn(MERCHANT_SURFACE)).toBe(true);
+    expect(el.querySelector("[data-shell-ask-otto]")).not.toBeNull();
   });
 });
 
@@ -391,8 +434,14 @@ describe("快捷键与存档,在壳里 (§3.1、§3.3)", () => {
 
     const el = await mount(shell(MERCHANT_SURFACE));
 
-    expect(el.querySelector<HTMLElement>("[data-otto-panel]")!.style.width).toBe(`${DEFAULT_WIDTH}px`);
+    // 损坏的存档退回默认值——默认收起(FRONT-A14),不是把商家壳炸没了,也不是硬开一个。
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
     expect(el.querySelector("[data-page]")).not.toBeNull();
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[data-otto-launcher]")!.click();
+    });
+    expect(el.querySelector<HTMLElement>("[data-otto-panel]")!.style.width).toBe(`${DEFAULT_WIDTH}px`);
   });
 });
 
@@ -523,30 +572,30 @@ describe("深链按「到达」消费:同一挂载根上的软导航/重访(判�
   });
 
   /**
-   * 硬着陆 + 存档为关(判官 r3 刀锋竞态,PR #1086 最新一条)。
+   * 硬着陆 + 存档为关(判官 r3 刀锋竞态,PR #1086 最新一条 —— 这道竞态的触发条件已被
+   * FRONT-A14 的默认收起顺带拆掉,见下方新注)。
    *
-   * 不是软导航,是**第一次挂载就落在深链地址上**,而且 localStorage 记着「关」:Shell 首帧
-   * 按默认值画(§3.3,桌面宽度默认开),hydration 随后才把它套成「关」——这一拍间,取数
-   * effect 会把 `pendingSelectRef` 排定的深链 select 用掉、发起第一次取数,随即被这次
-   * 「关」的 cleanup 取消;强开信号(otto=1)接着把面板重新打开,触发第二次、真正落地的
-   * 取数——判官纯内存复现的失败签名是两次取数依次收到 `[deep-thread, default]`:被取消的
-   * 那次带着深链 select,真正提交进状态的那次却收了 `undefined`,深链等于白读。
+   * 不是软导航,是**第一次挂载就落在深链地址上**,而且 localStorage 记着「关」。r3 那版
+   * 竞态的成因:Shell 首帧不看存档、按默认值画,**当时的默认值是开着的**(Q3-A,桌面宽度
+   * 默认开)——首帧「开」先触发一次取数,hydration 随后套回「关」把它取消;强开信号
+   * (otto=1)再把面板重新打开,触发第二次、真正落地的取数——判官纯内存复现的失败签名正是
+   * 两次取数依次收到 `[deep-thread, default]`,被取消的那次带深链 select,真正提交的那次
+   * 却收了 `undefined`。
    *
-   * 判别力:回退「pending 只被提交成功的取数消费」这处修法(把 `pendingSelectRef` 的清空
-   * 挪回取数一发起就清)会让这条恰红——最后一次真正落地的调用会收到 `undefined`。
+   * FRONT-A14(Founder 2026-09-04 裁决)把首帧默认值本身改成了收起——**首帧「关」、
+   * hydration 套回来仍然「关」**,两拍之间不再有「先开后被关掉」的落差,r3 那道竞态因此
+   * 没有触发条件了:强开信号是这条路径上唯一一次真的把面板打开的动作,取数只跑一次。这条
+   * 测试留着,改成钉化简后的不变式——硬着陆 + 关着的存档,深链 select 一次就送对。
    */
-  it("硬着陆 + 存档为关:中途被取消的取数不许吞掉深链 select——最终提交生效的那次必须带着它", async () => {
+  it("硬着陆 + 存档为关:深链 select 一次就送对(r3 那道竞态已被首帧默认收起顺带拆掉)", async () => {
     writeClosedState();
     await mount(shell("/?otto=1&thread=thr_edge"));
 
     const el = container!;
     expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
 
-    // 这条硬着陆路径真的会取两次数(第一次带着深链 select 被后来的关闭取消,第二次是强开
-    // 之后真正落地、提交进状态的那次)——两次都要带着深链的 select,一次都不许被吞成默认。
-    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(2);
+    expect(loadOttoPanelSeed).toHaveBeenCalledTimes(1);
     expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(1, { projectId: undefined, threadId: "thr_edge" });
-    expect(loadOttoPanelSeed).toHaveBeenNthCalledWith(2, { projectId: undefined, threadId: "thr_edge" });
   });
 
   /**
@@ -601,10 +650,15 @@ describe("深链按「到达」消费:同一挂载根上的软导航/重访(判�
 });
 
 describe("窄屏过渡守卫(判官 P2-2,W2-11 删移动层时一并清)", () => {
-  /** 视窗改小之后重挂 —— 面板读的是挂载那一刻的 `window.innerWidth`。 */
+  /**
+   * 视窗改小之后重挂 —— 面板读的是挂载那一刻的 `window.innerWidth`。这里额外清一次存档:
+   * `beforeEach` 为了别的用例统一按「商家上次留着开着」起步(见上方注释),这一组要的是
+   * 真的第一次访问(没有可信来源),得自己把那份种子存档盖掉。
+   */
   async function mountAt(width: number, height: number) {
     Object.defineProperty(window, "innerWidth", { value: width, writable: true, configurable: true });
     Object.defineProperty(window, "innerHeight", { value: height, writable: true, configurable: true });
+    window.localStorage.clear();
     return mount(shell(MERCHANT_SURFACE));
   }
 
@@ -627,8 +681,61 @@ describe("窄屏过渡守卫(判官 P2-2,W2-11 删移动层时一并清)", () =>
     expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
   });
 
-  it("桌面宽度不受影响 —— 默认仍然是开的(Q3-A)", async () => {
+  it("桌面宽度也一样:没有可信来源就收起(FRONT-A14,取代 Q3-A「默认仍然是开的」)", async () => {
     const el = await mountAt(VIEWPORT.width, VIEWPORT.height);
+
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    expect(document.querySelector("[data-otto-launcher]")).not.toBeNull();
+  });
+});
+
+/**
+ * 默认开合(FRONT-A14,Founder 2026-09-04 裁决,取代 wave2-shell.md Q3-A「首开默认开,
+ * 之后按存档」;`docs/specs/frontend-baseline.md` §5 2026-09-04 行)。
+ *
+ * 触发:Codex 只读走查 QA-CRE-006 —— 存档里记着的旧「开」在别的商家面上自动弹开,吃掉
+ * Create 极简页半屏(`/create` 本身已由 #1165 从挂载表移除,但那不解决「面板带着旧状态
+ * 到处弹开」这条根因)。
+ *
+ * 四条对应 Founder 原话的两个「或」分支,外加纯默认与纯存档两端:
+ *   ① 第一次访问,没有活动对话 → 收起。
+ *   ② 这一页有活动对话 → 展开,不管存档说什么。
+ *   ③ 存档说商家上次留着开着,没有活动对话 → 展开。
+ *   ④ 存档说关着,但这一页有活动对话 → 展开(「活动对话」覆盖「上次留着关着」,不是
+ *      反过来——Founder 原话是「或」,不是「仅当都满足」)。
+ *
+ * **假设**(状态层拿不到更干净的判据时,取代码里已经有的信号):「活动对话」取的就是
+ * 既有的深链强开信号(`?otto=1`,`OttoPanelHost` 的 `forceOpen`)——面板体的会话数据
+ * (`activeThreadId`/消息)本来就要等面板真的开了才取数(见 `OttoPanelHost.tsx` 顶部
+ * 「取数按面板开合来」),开之前没有更早、更干净的信号可读;`?otto=1` 已经是这套代码里
+ * 唯一「这次到访确实带着一个 Otto 会话」的预取信号。
+ */
+describe("默认开合(FRONT-A14,Founder 2026-09-04 裁决,取代 Q3-A)", () => {
+  it("FRONT-A14: 第一次访问,没有活动对话 → 收起", async () => {
+    window.localStorage.clear();
+    const el = await mount(shell(MERCHANT_SURFACE));
+
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    expect(document.querySelector("[data-otto-launcher]")).not.toBeNull();
+  });
+
+  it("FRONT-A14: 这一页有活动对话 → 展开(没有存档也一样)", async () => {
+    window.localStorage.clear();
+    const el = await mount(shell("/?otto=1"));
+
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+  });
+
+  it("FRONT-A14: 存档说商家上次留着开着,没有活动对话 → 展开", async () => {
+    writeOpenState();
+    const el = await mount(shell(MERCHANT_SURFACE));
+
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+  });
+
+  it("FRONT-A14: 存档说关着,但这一页有活动对话 → 展开(假设:活动对话覆盖『上次留着关着』)", async () => {
+    writeClosedState();
+    const el = await mount(shell("/?otto=1"));
 
     expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
   });
