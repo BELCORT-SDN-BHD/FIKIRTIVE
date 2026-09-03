@@ -53,8 +53,17 @@ test("FRONT-A15 — 键盘删得掉选中的卡,多选删得掉一组,视频卡�
   expect(await countCanvasNodes(ws)).toBe(4);
 
   // ① 选中一张文字卡,按 Delete —— 走查里这里什么都不发生。
-  await pick(page, note.nodeId);
-  expect(await selectedIds(page)).toEqual([note.nodeId]);
+  //
+  // 文字卡用**框选**圈中,不是点中间:它的输入框铺满整张卡的内里,点中间光标就进框,那时
+  // Backspace 该是退格而不是删卡(键盘删卡的护栏正是这么写的)。框选是商家真会用的手势,
+  // 而且不吃缩放 —— 点那圈 11px 的边在低缩放下只剩几像素,是个会飘的断言。
+  await page.getByRole("button", { name: "Select tool" }).click();
+  const noteBox = (await card(page, note.nodeId).boundingBox())!;
+  await page.mouse.move(noteBox.x - 24, noteBox.y - 24);
+  await page.mouse.down();
+  await page.mouse.move(noteBox.x + noteBox.width + 24, noteBox.y + noteBox.height + 24, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(() => selectedIds(page)).toEqual([note.nodeId]);
   await page.keyboard.press("Delete");
   // 键盘走的是**已有的那条确认路**,不是第二条删除路:同一句话,同一个按钮。
   const confirm = page.getByRole("alertdialog");
