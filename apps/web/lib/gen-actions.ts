@@ -11,6 +11,7 @@ import { prisma, reserveCredits, InsufficientCredits, SpendCapBlocked } from "@f
 import {
   genRequest,
   assetActionPrompt,
+  ASSET_REGEN_UPLOAD_REFUSAL,
   newId,
   GEN_QUEUE,
   storageKey,
@@ -444,6 +445,20 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
   // 「活跃键复用」那一支。商家真写了字的请求这里**原样穿过**(`request` 对象都不重建),
   // 所以既有那三条路的键逐字不变,零回归。
   const fallbackPrompt = assetActionPrompt(assetOp, record.prompt);
+
+  // D5 续(Founder 2026-09-03 裁决)—— **上传的图按 Regenerate:照旧拒收,但说人话。**
+  //
+  // 判据与兜底表同源:`regen` 表里没有兜底句,所以 `assetActionPrompt` 回 null 就恰好等于
+  // 「源资产没有提示词」= 这是一张上传进来的素材。修好之前这一支照样被拒,只是拒在
+  // `genRequest` 的 schema 那一步,商家看到的是那句谁也看不懂的通用出界话。
+  //
+  // 拒收本身不变(理由在 `ASSET_REGEN_UPLOAD_REFUSAL` 的注释里:这条路不送
+  // `sourceGenerationId`,引擎没有那张照片)。这里也在算幂等键、进 `startGen`、动账本
+  // **之前**返回 —— 仍然 $0、仍然一个 GenJob 都不建。
+  if (assetOp === "regen" && fallbackPrompt === null) {
+    return { error: ASSET_REGEN_UPLOAD_REFUSAL };
+  }
+
   const promptedRequest = fallbackPrompt !== null && fallbackPrompt !== record.prompt
     ? { ...request, prompt: fallbackPrompt }
     : request;

@@ -16,7 +16,9 @@
  * `sourceGenerationId`,引擎真看得见那张照片,所以「Animate this image」是句成立的指令。
  * `handleRegen` 不送(`DetailPanel.tsx`),那条路今天是纯文生图 —— 兜一句「Recreate this
  * image」只会让商家花钱拿到一张无关的图,比 $0 拒收更糟。所以下面第四条钉的是反面:
- * 上传素材按 Regenerate **必须原地被拒**,$0、连 GenJob 都不建。
+ * 上传素材按 Regenerate **必须原地被拒**,$0、连 GenJob 都不建 —— 只是那句拒绝话改说
+ * 人话了(Founder 2026-09-03 裁决,`ASSET_REGEN_UPLOAD_REFUSAL`),不再是谁也看不懂的
+ * 通用出界话。
  *
  * 这个文件跑在真 Postgres(*_test)、真 Prisma、真积分台账上,与
  * `asset-idempotency-ledger.test.ts` 同一套周边假件(auth guard、impersonation、队列、
@@ -269,7 +271,7 @@ describe("D5:上传素材按 Animate", () => {
 });
 
 describe("D5:Regenerate 没有源图,维持拒收", () => {
-  it("CREATE-A3 —— 上传的图按 Regenerate ⇒ 原地拒收、$0、连 GenJob 都不建(兜底句只给 Animate)", async () => {
+  it("CREATE-A3 —— 上传的图按 Regenerate ⇒ 原地拒收、$0、连 GenJob 都不建,且拒绝句是人话(兜底句只给 Animate)", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
@@ -282,7 +284,13 @@ describe("D5:Regenerate 没有源图,维持拒收", () => {
       regenIntent(projectId, uploaded, await panelPrompt(ownerId, uploaded)),
     );
 
-    expect(result).toEqual({ error: "That generation request is out of bounds." });
+    // Founder 2026-09-03 裁决:拒收不变,说法要人话。这一句**逐字写死在这里**(不引
+    // `ASSET_REGEN_UPLOAD_REFUSAL`)—— 引常量的话,把句子改回那句通用出界话时两边一起变,
+    // 这条断言就白钉了。面板把 `result.error` 原样放进错误横幅(`DetailPanel.tsx` 的
+    // paidActionError),所以服务端这一句就是商家读到的那一句。
+    expect(result).toEqual({
+      error: "Uploads can\u2019t be regenerated yet. Try Animate or Edit instead.",
+    });
     expect(await jobs(ownerId, projectId), "拒收就必须一单都不建").toHaveLength(0);
     expect(await reserveRows(ownerId), "$0:账本一行都不许动").toHaveLength(0);
     expect((await account(ownerId)).balance).toBe(1000);
