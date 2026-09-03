@@ -18,8 +18,11 @@
  * 两个驱动都把它定义成对已经不存在的对象的空操作)。
  *
  * 默认 DRY RUN:只打印计数(几个实体、几张参考照、几个资产可真删),不写任何一行、不删任何
- * 一个存储对象——包括「会被判定独占」这条计数,也是真的跑了一遍同样的事务再回滚算出来的,
- * 不是估算。真正执行要显式加 --apply。
+ * 一个存储对象——包括「会被判定独占」这条计数,也是真的把全部候选实体按 --apply 会发生的
+ * 同一个顺序在同一个事务里跑一遍再整体回滚算出来的(2026-09-03 判官第一轮复审 P1-6:旧版
+ * 每个实体各开各的事务、各自独立回滚,会在「两个已删实体共享同一张照片」这种输入下把
+ * dry-run 的数算少——见 runDryRunSimulation 的 doc 注释),不是估算,也不是分实体各自回滚
+ * 拼出来的近似值。真正执行要显式加 --apply。
  *
  * 输出只有计数,不打印 entity id、asset id、content hash 或 storage key 这类可能带租户/
  * 内容指纹的字符串。
@@ -71,45 +74,76 @@ const ownerFilter = flag("--owner");
 
 type ExclusiveAsset = { id: string; ownerId: string; contentHash: string; ext: string };
 type EntityStats = { refImagesFound: number; exclusiveAssets: ExclusiveAsset[] };
+type Tx = Parameters<typeof purgeOrphanedReferenceAssets>[0];
 
-/** Dry-run mode still RUNS the real cascade inside a transaction (so the "would purge N
- *  assets" count is exact, not an estimate) — it just throws this to roll the writes back
- *  instead of letting the transaction commit. */
+/** P1-6(判官第一轮复审)—— shared per-entity step, used by BOTH the apply loop and the dry-run
+ *  simulation below, so they run byte-for-byte the same logic; only the TRANSACTION SHAPE
+ *  wrapped around calls to this differs between them. */
+async function processEntityInTx(tx: Tx, entity: { id: string; ownerId: string }): Promise<EntityStats> {
+  const liveRefs = await tx.referenceImage.findMany({
+    where: { entityId: entity.id, ownerId: entity.ownerId, deletedAt: null },
+    select: { assetId: true },
+  });
+  if (liveRefs.length === 0) return { refImagesFound: 0, exclusiveAssets: [] };
+
+  await tx.referenceImage.updateMany({
+    where: { entityId: entity.id, ownerId: entity.ownerId, deletedAt: null },
+    data: { deletedAt: new Date() },
+  });
+  const exclusiveAssets = await purgeOrphanedReferenceAssets(tx, entity.ownerId, liveRefs.map((r) => r.assetId));
+  return { refImagesFound: liveRefs.length, exclusiveAssets };
+}
+
+/** APPLY mode: one COMMITTED transaction per entity — a later entity throwing must not undo
+ *  an earlier entity's already-durable soft-delete/purge. */
+async function processEntityApply(prisma: PrismaClient, entity: { id: string; ownerId: string }): Promise<EntityStats> {
+  return prisma.$transaction((tx) => processEntityInTx(tx as unknown as Tx, entity));
+}
+
+/** Always-thrown sentinel that rolls the dry-run simulation transaction back without treating
+ *  it as a real failure. */
 class DryRunRollback extends Error {
-  constructor(public stats: EntityStats) {
+  constructor() {
     super("dry-run rollback — not a real failure");
   }
 }
 
-async function processEntity(
+/**
+ * DRY RUN mode. P1-6(判官第一轮复审)—— 旧版每个实体各开各的事务、各自独立回滚:「两个已经
+ * deletedAt 的实体共享同一张还活着的照片」这种输入下,dry-run 会把它算成「不独占,不会被
+ * 真删」,因为每个实体单独看的时候,另一个实体的软删从未真正提交过,它永远还看得见对方那条
+ * 活引用;而 --apply 真跑起来,第一个实体的软删是真提交的,第二个实体处理时就会发现「没有
+ * 活引用了」从而真删——dry-run 报的数比真实会发生的少,数字不可信。
+ *
+ * 修法:dry-run 也让全部实体按 apply 会发生的**同一个顺序**在**同一个事务**里依次处理
+ * (这样第 N 个实体的软删对第 N+1 个实体的检查可见,跟 apply 分开提交时的可见性完全一致),
+ * 最后整个事务一次性回滚,不落一行、不删一个对象。
+ */
+async function runDryRunSimulation(
   prisma: PrismaClient,
-  entity: { id: string; ownerId: string },
-): Promise<EntityStats> {
+  entities: readonly { id: string; ownerId: string }[],
+): Promise<{ entitiesWithLeftovers: number; refImagesTotal: number; exclusiveAssets: ExclusiveAsset[] }> {
+  let entitiesWithLeftovers = 0;
+  let refImagesTotal = 0;
+  const exclusiveAssets: ExclusiveAsset[] = [];
   try {
-    return await prisma.$transaction(async (tx) => {
-      const liveRefs = await tx.referenceImage.findMany({
-        where: { entityId: entity.id, ownerId: entity.ownerId, deletedAt: null },
-        select: { assetId: true },
-      });
-      if (liveRefs.length === 0) return { refImagesFound: 0, exclusiveAssets: [] };
-
-      await tx.referenceImage.updateMany({
-        where: { entityId: entity.id, ownerId: entity.ownerId, deletedAt: null },
-        data: { deletedAt: new Date() },
-      });
-      const exclusiveAssets = await purgeOrphanedReferenceAssets(
-        tx as unknown as Parameters<typeof purgeOrphanedReferenceAssets>[0],
-        entity.ownerId,
-        liveRefs.map((r) => r.assetId),
-      );
-      const stats: EntityStats = { refImagesFound: liveRefs.length, exclusiveAssets };
-      if (!apply) throw new DryRunRollback(stats); // roll back — dry run writes nothing
-      return stats;
-    });
+    await prisma.$transaction(
+      async (tx) => {
+        for (const entity of entities) {
+          const stats = await processEntityInTx(tx as unknown as Tx, entity);
+          if (stats.refImagesFound === 0) continue;
+          entitiesWithLeftovers += 1;
+          refImagesTotal += stats.refImagesFound;
+          exclusiveAssets.push(...stats.exclusiveAssets);
+        }
+        throw new DryRunRollback(); // always roll back — dry run writes nothing, ever
+      },
+      { timeout: 120_000, maxWait: 10_000 }, // a platform-wide sweep may walk many entities in sequence
+    );
   } catch (e) {
-    if (e instanceof DryRunRollback) return e.stats;
-    throw e;
+    if (!(e instanceof DryRunRollback)) throw e;
   }
+  return { entitiesWithLeftovers, refImagesTotal, exclusiveAssets };
 }
 
 async function main(): Promise<void> {
@@ -155,15 +189,25 @@ async function run(
     }),
   );
 
-  let entitiesWithLeftovers = 0;
-  let refImagesTotal = 0;
-  const exclusiveAssets: ExclusiveAsset[] = [];
-  for (const entity of entities) {
-    const stats = await processEntity(prisma, entity);
-    if (stats.refImagesFound === 0) continue;
-    entitiesWithLeftovers += 1;
-    refImagesTotal += stats.refImagesFound;
-    exclusiveAssets.push(...stats.exclusiveAssets);
+  // P1-6: apply commits each entity's own transaction as it goes (so a later entity sees an
+  // earlier one's already-durable state); dry-run simulates that exact same visibility inside
+  // one big transaction it rolls back at the end — see runDryRunSimulation's doc comment.
+  let entitiesWithLeftovers: number;
+  let refImagesTotal: number;
+  let exclusiveAssets: ExclusiveAsset[];
+  if (apply) {
+    entitiesWithLeftovers = 0;
+    refImagesTotal = 0;
+    exclusiveAssets = [];
+    for (const entity of entities) {
+      const stats = await processEntityApply(prisma, entity);
+      if (stats.refImagesFound === 0) continue;
+      entitiesWithLeftovers += 1;
+      refImagesTotal += stats.refImagesFound;
+      exclusiveAssets.push(...stats.exclusiveAssets);
+    }
+  } else {
+    ({ entitiesWithLeftovers, refImagesTotal, exclusiveAssets } = await runDryRunSimulation(prisma, entities));
   }
 
   console.log(`purge-deleted-entity-assets: ${apply ? "APPLY" : "DRY RUN"}${ownerFilter ? " (scoped to one owner)" : ""}`);

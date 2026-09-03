@@ -90,6 +90,33 @@ async function seedLeftoverTombstonedBytes(): Promise<{ assetId: string; key: st
   return { assetId, key }; // … whose object delete failed, so the bytes are still here
 }
 
+/**
+ * P1-6(判官第一轮复审)fixture:两个都已经 deletedAt 的实体共享同一张仍然活着的照片
+ * (同一个 Asset,两条各自独立的活 ReferenceImage)。旧版 dry-run 每个实体各开各的事务、
+ * 各自独立回滚,处理第一个实体时看得见第二个实体那条活引用(还没提交过任何删除),处理
+ * 第二个实体时又看得见第一个实体那条(因为它的回滚从未真正提交)——两边都判定「还有活
+ * 引用,不独占」,dry-run 报 0。但 --apply 真跑,第一个实体的软删是真提交的,第二个实体
+ * 处理时就会发现「没有活引用了」从而真删——这份 fixture 就是用来揭穿这条差异的。
+ */
+async function seedTwoDeletedEntitiesSharingOneAsset(): Promise<{ entityAId: string; entityBId: string; assetId: string; key: string }> {
+  const bytes = new TextEncoder().encode(`purgescript-shared-${randomUUID()}`);
+  const { contentHash, key } = await storage.put(OWNER, bytes, "png");
+  const assetId = `ast-${randomUUID()}`;
+  await prisma.asset.create({
+    data: {
+      id: assetId, ownerId: OWNER, contentHash, ext: "png", mime: "image/png",
+      sizeBytes: BigInt(bytes.byteLength), originalFilename: "shared.png", source: "UPLOAD",
+    },
+  });
+  const entityAId = `ent-${randomUUID()}`;
+  const entityBId = `ent-${randomUUID()}`;
+  await prisma.entity.create({ data: { id: entityAId, ownerId: OWNER, type: "CHARACTER", name: "Shared Leftover A", deletedAt: new Date() } });
+  await prisma.entity.create({ data: { id: entityBId, ownerId: OWNER, type: "CHARACTER", name: "Shared Leftover B", deletedAt: new Date() } });
+  await prisma.referenceImage.create({ data: { id: `ri-${randomUUID()}`, ownerId: OWNER, entityId: entityAId, assetId, position: 0 } });
+  await prisma.referenceImage.create({ data: { id: `ri-${randomUUID()}`, ownerId: OWNER, entityId: entityBId, assetId, position: 0 } });
+  return { entityAId, entityBId, assetId, key };
+}
+
 /** Hard-deletes a seedLeftover() fixture and its bytes — used by tests that deliberately never
  *  --apply (dry runs), so their un-cascaded leftover entity doesn't leak into a LATER test's
  *  exact-count assertion (P2-2) via the shared OWNER scan. */
@@ -197,5 +224,32 @@ describe("scripts/tools/purge-deleted-entity-assets.ts (2026-09-03 S4 变更登�
     const again = await runScript(["--apply", "--owner", OWNER]);
     expect(again.status, again.stdout + again.stderr).toBe(0);
     expect(again.stdout).toMatch(/tombstoned assets with bytes still present\s*: 0/);
+  }, 30_000);
+
+  it("P1-6(判官第一轮复审): dry-run's count for a shared asset matches what --apply actually does", async () => {
+    const { assetId, key } = await seedTwoDeletedEntitiesSharingOneAsset();
+    expect(await storage.exists(key)).toBe(true);
+
+    // dry-run must report this asset as WOULD-BE-PURGED — by the time apply would reach the
+    // second entity, the first one's soft-delete is durable and the asset has no live ref left.
+    const dry = await runScript(["--owner", OWNER]);
+    expect(dry.status, dry.stdout + dry.stderr).toBe(0);
+    expect(dry.stdout).toMatch(/entities with leftover live refs\s*: 2\b/);
+    expect(dry.stdout).toMatch(/reference images that would be soft-deleted\s*: 2\b/);
+    expect(dry.stdout).toMatch(/assets that would be purged.*: 1\b/); // the SHARED asset counts once, not zero
+
+    // nothing actually touched by the dry run
+    const untouched = await prisma.asset.findFirst({ where: { id: assetId, ownerId: OWNER } });
+    expect(untouched?.deletedAt).toBeNull();
+    expect(await storage.exists(key)).toBe(true);
+
+    // --apply must agree with what dry-run predicted: the shared asset really does get purged
+    const applied = await runScript(["--apply", "--owner", OWNER]);
+    expect(applied.status, applied.stdout + applied.stderr).toBe(0);
+    expect(applied.stdout).toMatch(/reference images soft-deleted\s*: 2\b/);
+    expect(applied.stdout).toMatch(/storage objects deleted\s*: 1\b/);
+    expect(await storage.exists(key)).toBe(false);
+    const purgedAsset = await prisma.asset.findFirst({ where: { id: assetId, ownerId: OWNER } });
+    expect(purgedAsset?.deletedAt).not.toBeNull();
   }, 30_000);
 });
