@@ -457,12 +457,16 @@ export function OttoChatStream({
       releaseSubmitted();
       return;
     }
-    setAttachError(sentence);
     const draft = lastSubmittedRef.current;
     lastSubmittedRef.current = null;
-    if (!draft) return;
-    setText((current) => (current.trim() ? current : draft.text));
-    setAttachedRefs((current) => (current.length ? current : draft.refs));
+    // 与卡上那个计时器同一条写法(`OttoPlanCard` 的 `queueMicrotask(() => setElapsed(0))`):
+    // 在 effect 里同步 setState 会把这一帧再渲染一遍,而这里三个更新本来就属于同一次「放回去」。
+    queueMicrotask(() => {
+      setAttachError(sentence);
+      if (!draft) return;
+      setText((current) => (current.trim() ? current : draft.text));
+      setAttachedRefs((current) => (current.length ? current : draft.refs));
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [error]);
 
