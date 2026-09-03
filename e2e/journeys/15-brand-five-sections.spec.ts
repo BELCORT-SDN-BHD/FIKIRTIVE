@@ -64,7 +64,9 @@ test("FRONT-A8 / FRONT-A9 商家在五个分区写品牌事实,确认之前不�
   // FRONT-A8:删除可以恢复,恢复之后内容完整。
   await page.getByRole("tab", { name: "Brand voice" }).click();
   await page.getByRole("button", { name: "Remove this context" }).click();
-  await expect(page.getByText("Removed")).toBeVisible();
+  // 「Removed. You can restore it from the list.」那句 toast 也含 Removed —— 要的是列表底部
+  // 那个分区标题,所以 exact。
+  await expect(page.getByText("Removed", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Restore" }).click();
   await expect(page.getByRole("heading", { name: "Kampung warmth", level: 2 })).toBeVisible();
   await expect(page.getByText("We speak like a neighbour, never like a brochure.")).toBeVisible();
