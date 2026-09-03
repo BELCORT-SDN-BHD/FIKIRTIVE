@@ -6,9 +6,12 @@
  */
 import { z } from "zod";
 import {
+  activeVideoModel,
   buildSpecChips,
+  isSellableVideoSku,
   suggestModel,
   generationUnavailableMessage,
+  SELLABLE_VIDEO_RESOLUTIONS,
   videoPriceUsd,
   videoDefaults,
   VIDEO_ASPECT_ADAPTIVE,
@@ -43,6 +46,17 @@ export const proposeInput = z.object({
   variantSel: z.record(z.string(), z.string()).default({}),
   desiredAspect: z.string().optional(),
   desiredDuration: z.number().optional(),
+  /**
+   * 商家点名的**画质档**(视频专用;`480p` / `720p` / `1080p`)。
+   *
+   * Creation §5 2026-09-04 —— 这个字段以前不存在,所以「帮我改成 1080p」这句话在提案层
+   * 就断了:模型无处安放它,卡上照旧是默认档,而 Otto 嘴上说改好了。加它的同时钱路也跟着
+   * 走完整条:档位挑槽位(`routeVideoModel`)、卡上按档报价、批准按卡上那个数预扣。
+   *
+   * 没点名 ⇒ 一格不动(默认槽位的默认档)。点了名而这条路给不了 ⇒ **拒绝、$0**
+   * (`VideoTierUnavailableError`),绝不静默换一档。
+   */
+  desiredResolution: z.string().optional(),
   desiredAudio: z.boolean().optional(),
   // Ad pack: how many image options to offer the user to choose from (images only;
   // video is always one clip). Clamped server-side to [1, MAX_GEN_COUNT].
@@ -183,6 +197,34 @@ export class VideoActionUnavailableError extends ProposeRefusal {
   constructor(message: string) {
     super(message);
     this.name = "VideoActionUnavailableError";
+  }
+}
+
+/**
+ * 商家点名的**画质档**在这条路上给不了(Creation §5 2026-09-04,CREATE-A4/A5)。
+ *
+ * 为什么是拒绝而不是换一档:换档 = 他批的是 1080p、拿到的是 720p,而两档的价还不一样 ——
+ * 那不是「少给一点」,那是拿他的钱做了一件他没批准的事。拒绝一分钱都不花(抛在报价与
+ * 预扣之前),代价只有一句话。
+ *
+ * 那句话里**只有能力名词**(档位),一个引擎名都没有,而且能给的那几档是从可售白名单
+ * (`SELLABLE_VIDEO_RESOLUTIONS`,与付费闸同一份)现算的 —— 上架一档,这句话跟着改口。
+ */
+export class VideoTierUnavailableError extends ProposeRefusal {
+  constructor(
+    /** 商家点名的那一档,原样回给他听(不润色、不猜)。 */
+    readonly wanted: string,
+    /** 这条路真正会跑的那个槽位 —— 能给的档位从它的可售白名单取。 */
+    slot: string,
+  ) {
+    const offered = [...(SELLABLE_VIDEO_RESOLUTIONS[slot as GenVideoModel] ?? [])]
+      .sort((a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10));
+    super(
+      offered.length > 0
+        ? `${wanted} isn't available for this one — I can do ${offered.join(" or ")}. Tell me which and I'll set it up.`
+        : `${wanted} isn't available for this one — tell me what else you'd like and I'll set it up.`,
+    );
+    this.name = "VideoTierUnavailableError";
   }
 }
 
@@ -395,7 +437,7 @@ export function buildDowngradeNote(
  *                        breath as the ownership check, never later.
  */
 export function buildProposeCard(
-  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count" | "forVideo">,
+  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredResolution" | "desiredAudio" | "count" | "forVideo">,
   ctx: OttoContext,
   ownedEntities: ApprovedEntity[],
 ): ProposeCardResult {
@@ -505,12 +547,20 @@ export function buildProposeCard(
     kind,
     desiredAspect: input.desiredAspect,
     desiredDuration: input.desiredDuration,
+    desiredResolution: input.desiredResolution,
     desiredAudio: input.desiredAudio,
     hasSourceImage,
     hasTail: false,
     disabled: new Set(ctx.disabledModels),
   });
-  if (!sm) throw new GenerationUnavailableError(kind);
+  if (!sm) {
+    // 商家点了一档,而**那一档落到的那台**被后台关掉了 —— 这不是「视频全关」。
+    // 默认那一台还开着就说实话:这一档现在拿不到,能拿到的是那几档。
+    if (kind === "video" && input.desiredResolution && !ctx.disabledModels.includes(activeVideoModel())) {
+      throw new VideoTierUnavailableError(input.desiredResolution, activeVideoModel());
+    }
+    throw new GenerationUnavailableError(kind);
+  }
 
   /**
    * #775 —— 改这条片子 / 把这条片子接下去,形状**只能**跟着商家那条片子走。
@@ -543,6 +593,28 @@ export function buildProposeCard(
     // 于是内部/审计文案会继续说一台已经不在产的引擎 —— 与 cowork-route 的做法对齐。
     sm.reason = `${GEN_VIDEO_MODEL_INFO[REFERENCE_VIDEO_MODEL].label} — ${sm.params.aspectRatio}, ${GEN_VIDEO_SECONDS}s reference video`;
     sm.downgraded = sm.downgraded || (input.desiredDuration != null && input.desiredDuration !== GEN_VIDEO_SECONDS);
+  }
+
+  /**
+   * Step 3.6(Creation §5 2026-09-04,CREATE-A4/A5)—— **商家点名的档位,要么原样上卡,
+   * 要么一张卡都不铸**。
+   *
+   * 两条判据缺一不可,而且都在报价、预扣之前:
+   *   ① 卡上这一格 **等于** 他点的那一格 —— 不等于就是「批 A 做 B」,而降级正是这条规矩
+   *      要挡的东西(规格 §1 九问4:商家直接请求的档位一律拒绝、不降级);
+   *   ② 这一格 **有已裁的价**(`isSellableVideoSku`,与付费闸 `assertSpendableModel` 同一个
+   *      函数)—— 没价的格子只能落护栏或兜底,那是替 Founder 发明价格。
+   *
+   * 拒绝的代价是一句话,$0:抛在 `pricedGenCredits` 之前,GEN_CARD 一行都不落库,
+   * ledger 自然零新增行。`sm.params.durationSeconds` 到这里已经吸附过,所以秒数这一轴
+   * 判的就是这张卡真会送出去的那个数。
+   */
+  if (kind === "video" && input.desiredResolution) {
+    const got = sm.params.resolution ?? "";
+    const seconds = sm.params.durationSeconds ?? 0;
+    if (got !== input.desiredResolution || !isSellableVideoSku(sm.model, got, seconds)) {
+      throw new VideoTierUnavailableError(input.desiredResolution, sm.model);
+    }
   }
 
   // Step 3.5: ad-pack count — the user can ask for N image options to choose from.
@@ -594,6 +666,9 @@ export function buildProposeCard(
         kind: "video",
         desiredAspect: input.desiredAspect,
         desiredDuration: input.desiredDuration,
+        // 两步计划的第二步就是那条片子 —— 商家点的档位在这里也算数,否则「先出图再出片」
+        // 那张卡上的片段预估会按默认档报,与第二步真正会铸的卡对不上。
+        desiredResolution: input.desiredResolution,
         desiredAudio: input.desiredAudio,
         hasSourceImage: true,
         hasTail: false,
