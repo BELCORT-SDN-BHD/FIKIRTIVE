@@ -20,15 +20,36 @@
  *   1. 有卡在跑        → Generating —— 钱已经花出去了，这是屏幕上最该说的一件事；
  *   2. 有卡等确认      → Needs confirmation —— 停在商家身上，产品不该假装自己在忙；
  *   3. 这一轮在飞      → 正在跑的那一步的标签（真的工具名），没有就退回三句叙述之一；
- *   4. 线程失败        → Failed；
- *   5. 其余            → Ready。
+ *   4. 这一轮的终局是失败 → Failed；
+ *   5. 这一轮的终局是产出 → Done；
+ *   6. 其余            → Ready。
  *
  * 只有 1 和 3 允许转圈（`runStateSpins` 的同一条规矩：停着的东西不许有动画）。
+ *
+ * ## 状态漂移（Codex QA-CRE-004，2026-09-04 只读审计 §4.2）
+ *
+ * 这张卡曾经有**两个**状态源：圆点读的是在飞的任务，正文读的是「整条对话里最后一条
+ * assistant TEXT」——不管那句话有多老。于是审计录到：同一个画布里先失败一次、再成功一次
+ * 直出视频之后，卡上是绿灯「Ready」配着上一轮那句「That generation didn't go through」；
+ * 强制刷新，还是同一句。成功的产物、它花了多少钱，一个字都没有。
+ *
+ * 病根不是那句话选错了，是**没有排序**：一条 TEXT 一旦落库就永远是「最后一句」，哪怕
+ * 后来又落了一条 GEN_RESULT。所以这个文件现在只认一件事 —— **谁更新**：
+ *
+ *   · `latestTurnTerminal` 找这一轮最新的那个终局任务事件（GEN_RESULT / TURN_ERROR）；
+ *   · 正文（`canvasTurnText`）在「Otto 后来说过的话」与「那个终局自己」之间取**更新的那个**；
+ *   · 状态词也由同一个终局给（不再由 `thread.status` 给 —— 见下）。
+ *
+ * 顺带修掉一件死掉的接线：`failed` 从前的唯一触发是 `ChatThreadDTO.status`，而画布这条路
+ * 上的 thread 由 `toChatThreadDTO` 建（`lib/dto.ts:196`），**它根本不写 status**（只有线程
+ * 列表那份 `toChatThreadMetaDTO` 写）。也就是说画布卡的 failed 态从来没有可能出现过。
+ * 现在它和 done 一样，由这一轮自己的消息给 —— 一个来源，不是两个。
  */
 import type { OttoStatusData } from "./otto-stream-bridge";
 import type { TraceStepView } from "./otto-status-helpers";
 import { turnNarrationText } from "./otto-turn-narration";
 import { STILL_WORKING_NOTE } from "./progress-format";
+import { creditsLabel } from "./credit-format";
 
 /** 画布卡的状态面。`dotTone` 是设计稿 `CanvasReference.tsx` 的 STATUS_META 那五个色。 */
 export type CanvasTurnPhase =
@@ -36,6 +57,7 @@ export type CanvasTurnPhase =
   | "needs-confirmation"
   | "working"
   | "failed"
+  | "done"
   | "ready";
 
 export interface CanvasTurnStatus {
@@ -63,8 +85,8 @@ export interface CanvasTurnInput {
   workingCardCount: number;
   /** 有多少张卡在等商家按确认。 */
   pendingConfirmCount: number;
-  /** durable thread 的状态（"failed" 时卡面要说失败）。 */
-  threadStatus?: string | null;
+  /** 这一轮最新的那个终局任务事件（`latestTurnTerminal` 的产物）；没有就是 null。 */
+  terminal?: TurnTerminal | null;
   /** 距离上一次「屏幕上真的变了」过去了多少秒。超过 30 秒就补一句 still working。 */
   secondsSinceProgress?: number;
 }
@@ -126,8 +148,13 @@ export function canvasTurnStatus(input: CanvasTurnInput): CanvasTurnStatus {
       busy: true,
     };
   }
-  if (input.threadStatus === "failed") {
+  // 这一轮的终局。停着的时候，卡面说的就是这一轮真正结束在哪 —— 而不是「Ready」。
+  const outcome = input.terminal?.outcome;
+  if (outcome === "failed") {
     return { phase: "failed", label: "Failed", dot: "bg-destructive", detail: null, busy: false };
+  }
+  if (outcome === "done") {
+    return { phase: "done", label: "Done", dot: "bg-success", detail: null, busy: false };
   }
   return { phase: "ready", label: "Ready", dot: "bg-success", detail: null, busy: false };
 }
@@ -182,4 +209,129 @@ export function latestAssistantSayable(
     if (text) return text;
   }
   return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 这一轮的终局 —— Codex QA-CRE-004
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 那条消息在列表里的位置（一起带出来，因为「谁更新」就是靠它判的）。 */
+export interface TurnTerminal {
+  index: number;
+  /** `cancelled` 是商家自己按停的（#602 T3），不是失败 —— 与线程徽章同一条口径。 */
+  outcome: "done" | "failed" | "cancelled";
+  /** 成功时这一件产出是什么（GEN_RESULT payload 自己写的 kind）。读不出来就是 null。 */
+  kind: "image" | "video" | null;
+  /** 成功时产出了几件（payload 自己的 urls 长度）。 */
+  count: number;
+  /** 成功时真的收了多少 credit（worker 写在 GEN_RESULT payload 上那个数）。没有就是 null。 */
+  costCredits: number | null;
+  /** 失败/取消时那条持久消息自己那句**给商家读**的话（`appendCoworkResult` 写的）。 */
+  text: string | null;
+}
+
+/** 一条消息的 text 部件拼起来。`latestAssistantSayable` 与这里共用同一条判据。 */
+function textOf(parts: readonly unknown[]): string {
+  return parts
+    .filter((part): part is { type: "text"; text: string } =>
+      !!part && typeof part === "object"
+      && (part as { type?: unknown }).type === "text"
+      && typeof (part as { text?: unknown }).text === "string")
+    .map((part) => part.text)
+    .join(" ")
+    .trim();
+}
+
+type TurnMessage = {
+  role: string;
+  metadata?: { kind?: string; payload?: unknown } | null;
+  parts: readonly unknown[];
+};
+
+/**
+ * 这一轮（`currentTurnStartIndex` 之后）最新的那个**终局任务事件**，没有就是 null。
+ *
+ * 只认 worker 真的落库的那两种终局消息（GEN_RESULT / TURN_ERROR）—— 卡片自己的运行态
+ * (`deriveCardState`) 读的也是同一对，所以圆点、卡面、抽屉里的卡不可能各说各话。
+ *
+ * 为什么要按轮切：商家做完一次生成再开口说下一句，那一次成功就不再是「此刻这一轮」的结论了。
+ * 卡上还挂着上一轮的 Done，就是同一种漂移换个方向。
+ */
+export function latestTurnTerminal(messages: readonly TurnMessage[]): TurnTerminal | null {
+  const start = currentTurnStartIndex(messages);
+  for (let i = messages.length - 1; i >= start; i--) {
+    const m = messages[i];
+    const kind = m.metadata?.kind;
+    if (kind !== "GEN_RESULT" && kind !== "TURN_ERROR") continue;
+    const payload = (m.metadata?.payload ?? {}) as {
+      kind?: unknown;
+      urls?: unknown;
+      costCredits?: unknown;
+      cancelled?: unknown;
+    };
+    if (kind === "TURN_ERROR") {
+      return {
+        index: i,
+        outcome: payload.cancelled === true ? "cancelled" : "failed",
+        kind: null,
+        count: 0,
+        costCredits: null,
+        text: textOf(m.parts) || null,
+      };
+    }
+    return {
+      index: i,
+      outcome: "done",
+      kind: payload.kind === "video" || payload.kind === "image" ? payload.kind : null,
+      count: Array.isArray(payload.urls) ? payload.urls.length : 0,
+      costCredits: typeof payload.costCredits === "number" ? payload.costCredits : null,
+      // 成功那条的 text 是内部占位串（`🖼 result`），不是给商家读的话 —— 不带出来。
+      text: null,
+    };
+  }
+  return null;
+}
+
+/** 一个终局自己该怎么说。成功那一句是这张卡唯一的新文案，用词跟着卡上确认位走
+ *  （「1 video · 11 credits」），数字全部来自 payload，一个都不算、不猜。 */
+function terminalSentence(terminal: TurnTerminal): string | null {
+  if (terminal.outcome !== "done") return terminal.text;
+  const noun = terminal.kind === "video" ? "video" : terminal.kind === "image" ? "image" : null;
+  const made = noun && terminal.count > 0
+    ? `${terminal.count} ${noun}${terminal.count === 1 ? "" : "s"}`
+    : null;
+  const cost = terminal.costCredits === null ? null : creditsLabel(terminal.costCredits);
+  if (made && cost) return `Made ${made} · ${cost}.`;
+  if (made) return `Made ${made}.`;
+  if (cost) return `Made it · ${cost}.`;
+  return "Made it.";
+}
+
+/**
+ * 那张卡此刻该显示的正文 —— **一个来源，按时间排序**（Codex QA-CRE-004）。
+ *
+ * 在「Otto 最后说的那句话」与「这一轮的终局」之间取更新的那个：
+ *
+ *   · Otto 后来解释过了（TEXT 比终局新）→ 说他的原话；
+ *   · 终局比 Otto 最后一句新 → 终局自己说话（成功 = 产物 + 收费；失败/取消 = 那条持久
+ *     消息自己那句给商家读的话）。
+ *
+ * 审计录到的那一幕正落在第二条上：失败之后 Otto 说了「didn't go through」，再成功一次，
+ * 屏幕上还是那句 —— 因为从前只有第一条，而且没有比较。
+ */
+export function canvasTurnText(messages: readonly TurnMessage[]): string | null {
+  const terminal = latestTurnTerminal(messages);
+  const said = latestAssistantSayable(messages);
+  if (!terminal) return said;
+  if (said !== null) {
+    // Otto 那句话在不在终局之后？在，就说他的原话。
+    for (let i = messages.length - 1; i > terminal.index; i--) {
+      const m = messages[i];
+      if (m.role !== "assistant") continue;
+      const kind = m.metadata?.kind;
+      if (kind !== undefined && kind !== "TEXT") continue;
+      if (textOf(m.parts)) return said;
+    }
+  }
+  return terminalSentence(terminal) ?? said;
 }

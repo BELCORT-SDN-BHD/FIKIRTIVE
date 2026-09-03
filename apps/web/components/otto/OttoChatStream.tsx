@@ -93,8 +93,9 @@ import {
 import {
   activeStepLabel,
   canvasTurnStatus,
+  canvasTurnText,
   currentTurnStartIndex,
-  latestAssistantSayable,
+  latestTurnTerminal,
 } from "@/lib/otto-canvas-turn";
 import { creditsLabel } from "@/lib/credit-format";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
@@ -869,10 +870,13 @@ export function OttoChatStream({
     messages.length > 0 &&
     messages[messages.length - 1].role === "assistant";
 
-  // Otto 最近说的、**给商家读**的那段话。走查 P1-1:这里从前收下任何一条 assistant 消息的
-  // text 部件,而 `threadToUiMessages` 给每一条非 TEXT 的持久消息都塞了一个内部占位串,
-  // 于是一次成功生成之后画布卡上写着「🖼 result」。判据搬进纯函数,连同测试。
-  const latestAssistantText = latestAssistantSayable(messages);
+  // 画布卡的正文。走查 P1-1 修掉了「🖼 result」那种内部占位串;Codex QA-CRE-004 修掉了它的
+  // 另一半 —— 那句话从前**不比时间**,于是一条落库的 TEXT 永远是「最后一句」,哪怕后来又落了
+  // 一条 GEN_RESULT。现在在「Otto 后来说的话」与「这一轮的终局」之间取更新的那个。判据全在
+  // 纯函数里,连同测试。
+  const latestAssistantText = canvasTurnText(messages);
+  // 这一轮的终局(GEN_RESULT / TURN_ERROR),状态词与正文读的是**同一个**。
+  const turnTerminal = latestTurnTerminal(messages);
   const canvasLayout = layout === "canvas";
 
   // ── 画布卡这一刻的脸(走查 P0-3 / P0-4)────────────────────────────────────────
@@ -929,7 +933,7 @@ export function OttoChatStream({
     steps: traceSteps,
     workingCardCount,
     pendingConfirmCount: confirmCards.length,
-    threadStatus: thread.status,
+    terminal: turnTerminal,
     secondsSinceProgress,
   });
 

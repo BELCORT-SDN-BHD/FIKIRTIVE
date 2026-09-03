@@ -400,6 +400,133 @@ export async function seedApprovedPlanCard(
   return { cardId, refId };
 }
 
+/**
+ * 一次**失败**过的生成留下的痕迹：卡 + 那条终局消息 + Otto 随后说的那句话。
+ *
+ * Codex QA-CRE-004（2026-09-04 只读审计 §4.2）复现步骤 ①：同一个画布先经历一次失败。
+ * 三样东西都是产品自己写的形状 —— `appendCoworkResult` 写 TURN_ERROR（它自己那句给商家
+ * 读的话就在 `text` 上），模型随后按 `packages/otto/src/instructions.ts` 的指令说一句
+ * 「didn't go through」。旅程要证的是**这句话后来会不会赖着不走**，所以它必须真的在库里。
+ */
+export async function seedFailedGeneration(
+  ws: Workspace,
+  threadId: string,
+  opts: { seq: number; ottoSays: string },
+): Promise<{ refId: string }> {
+  const refId = id("job");
+  await seedGenJob(ws, refId, "IMAGE", "FAILED", false);
+  const { cardId } = await seedPlanCard(ws, threadId, { seq: opts.seq, credits: 1 });
+  await runAsTenant(ws.orgId, () =>
+    prisma.chatMessage.updateMany({ where: { id: cardId, ownerId: ws.orgId }, data: { genJobId: refId } }),
+  );
+  await runAsTenant(ws.orgId, () =>
+    prisma.chatMessage.create({
+      data: {
+        id: id("err"),
+        threadId,
+        ownerId: ws.orgId,
+        role: "AGENT" as never,
+        kind: "TURN_ERROR" as never,
+        seq: opts.seq + 1,
+        text: "That one didn't come through — you weren't charged.",
+        genJobId: refId,
+        createdAt: at(opts.seq + 1),
+      },
+    }),
+  );
+  await seedAgentText(ws, threadId, { seq: opts.seq + 2, text: opts.ottoSays });
+  return { refId };
+}
+
+/**
+ * 一次**成功**的生成留下的痕迹：一件真的资产 + 那条 GEN_RESULT。
+ *
+ * Codex QA-CRE-004 复现步骤 ②：失败之后再完成一次成功的生成。产出与收费两个数字都写在
+ * 产品自己写的地方 —— urls 由 `resolveCoworkResultUrls` 从 GenJob.generationIds 解析
+ * （所以这里种的是真的 Generation + Asset 行，不是一段假 url），`costCredits` 是 worker
+ * 写在 GEN_RESULT payload 上那个真的收费数。卡上那句「Made 1 video · 11 credits.」只能
+ * 由它们拼出来，旅程才证得了「成功状态可理解」。
+ */
+export async function seedFinishedGeneration(
+  ws: Workspace,
+  threadId: string,
+  opts: { seq: number; kind?: "image" | "video"; costCredits: number },
+): Promise<{ refId: string }> {
+  const kind = opts.kind ?? "video";
+  const refId = id("job");
+  const assetId = id("asset");
+  const generationId = id("gen");
+  await runAsTenant(ws.orgId, () =>
+    prisma.asset.create({
+      data: {
+        id: assetId,
+        ownerId: ws.orgId,
+        // 64 hex —— `storage-key.ts` 的 HEX_64 是真的门，随便一段字符串会让整块画布打不开。
+        contentHash: randomUUID().replace(/-/g, "").repeat(2),
+        ext: kind === "video" ? "mp4" : "png",
+        mime: kind === "video" ? "video/mp4" : "image/png",
+        sizeBytes: BigInt(1024),
+        source: "GENERATED" as never,
+        createdAt: at(opts.seq),
+      },
+    }),
+  );
+  await runAsTenant(ws.orgId, () =>
+    prisma.generation.create({
+      data: {
+        id: generationId,
+        ownerId: ws.orgId,
+        projectId: ws.projectId,
+        assetId,
+        source: "GENERATED" as never,
+        entitySnapshot: { entities: [] },
+        threadId,
+        createdAt: at(opts.seq),
+      },
+    }),
+  );
+  await runAsTenant(ws.orgId, () =>
+    prisma.genJob.create({
+      data: {
+        id: refId,
+        ownerId: ws.orgId,
+        projectId: ws.projectId,
+        prompt: "Pan across the kopi set on a rattan table",
+        kind: (kind === "video" ? "VIDEO" : "IMAGE") as never,
+        model: kind === "video" ? "seedance-2-mini" : "seedream",
+        status: "DONE" as never,
+        spent: true,
+        generationIds: [generationId],
+        idempotencyKey: `cowork:${refId}`,
+        createdAt: at(opts.seq),
+      },
+    }),
+  );
+  const { cardId } = await seedPlanCard(ws, threadId, {
+    seq: opts.seq, credits: opts.costCredits, kind, prompt: "Pan across the kopi set on a rattan table",
+  });
+  await runAsTenant(ws.orgId, () =>
+    prisma.chatMessage.updateMany({ where: { id: cardId, ownerId: ws.orgId }, data: { genJobId: refId } }),
+  );
+  await runAsTenant(ws.orgId, () =>
+    prisma.chatMessage.create({
+      data: {
+        id: id("res"),
+        threadId,
+        ownerId: ws.orgId,
+        role: "AGENT" as never,
+        kind: "GEN_RESULT" as never,
+        seq: opts.seq + 1,
+        text: "",
+        payload: { kind, costCredits: opts.costCredits },
+        genJobId: refId,
+        createdAt: at(opts.seq + 1),
+      },
+    }),
+  );
+  return { refId };
+}
+
 /** The wallet as the database holds it — internal units, straight from the account row. */
 export async function readAccount(ws: Workspace): Promise<{ balance: number; reserved: number }> {
   const account = await prisma.creditAccount.findUniqueOrThrow({
