@@ -13,6 +13,14 @@
  * What a merchant sees here: the element's BASE look (the identity anchor every variant is
  * generated from) and its named variants — "same face, different outfit". A variant is a paid
  * single image; the price shown comes from the central pricing helper, never a literal.
+ *
+ * OFFICIAL AVATARS ARE READ-ONLY (Founder 2026-08-30, information-architecture/README.md, the
+ * Elements row). Every mutation control below is gated on `entity.capabilities` — the answer the
+ * DTO carried over from the ONE domain function (packages/core/src/entity-policy.ts), never a
+ * second judgement made here out of the element's name or its catalogKey. A control the merchant
+ * may not use is NOT rendered disabled: a dead button that takes a click and then apologises is
+ * exactly what this replaces (Codex QA-CRE-003 found one on Aisyah). The server actions refuse
+ * independently — this layer is the honest surface, not the fence.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ImageIcon, MoreHorizontal, Pencil, RotateCcw, Sparkles, Trash2 } from "lucide-react";
@@ -354,6 +362,12 @@ export function ElementVariantsDialog({
 
   if (!entity) return null;
 
+  // 官方目录只读。判据来自 DTO 带过来的域层答案 —— 这里不重新判一次。
+  const caps = entity.capabilities;
+  const readOnly = entity.origin === "OFFICIAL_CATALOG";
+  // 三格全关 ⇒ 那个「⋯」菜单里一条也没有,整个触发器就不该出现。
+  const canActOnVariant = caps.regenerateVariant || caps.renameVariant || caps.deleteVariant;
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
@@ -369,8 +383,9 @@ export function ElementVariantsDialog({
         <DialogHeader>
           <DialogTitle>{entity.name}</DialogTitle>
           <DialogDescription>
-            One saved photo is the base look — the face and identity every variant keeps. Add
-            variants for the different outfits and looks you want to reuse.
+            {readOnly
+              ? "This cast member is provided by Fikirtive. Its base look and saved variants stay as they are — use it in Canvas, or type @ in a prompt to put it in your work."
+              : "One saved photo is the base look — the face and identity every variant keeps. Add variants for the different outfits and looks you want to reuse."}
           </DialogDescription>
         </DialogHeader>
 
@@ -419,7 +434,7 @@ export function ElementVariantsDialog({
                         </Badge>
                       )}
                     </div>
-                    {!isBase && (
+                    {!isBase && caps.mutateBase && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -448,7 +463,9 @@ export function ElementVariantsDialog({
                 <EmptyMedia variant="icon"><Sparkles /></EmptyMedia>
                 <EmptyTitle className="text-sm">No styling variants</EmptyTitle>
                 <EmptyDescription>
-                  Keep the same identity while changing the outfit, styling or setting.
+                  {readOnly
+                    ? "This cast member ships without saved variants. Describe the outfit you want in your prompt instead."
+                    : "Keep the same identity while changing the outfit, styling or setting."}
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
@@ -485,6 +502,7 @@ export function ElementVariantsDialog({
                           </Empty>
                         )}
                       </div>
+                      {canActOnVariant && (
                       <div className="absolute right-1.5 top-1.5">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -499,35 +517,42 @@ export function ElementVariantsDialog({
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuGroup>
-                              <DropdownMenuItem
-                                disabled={paidLocked || running}
-                                onSelect={() => void regenerate(variant.id)}
-                              >
-                                <RotateCcw />
-                                Make it again · {variantCost}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={writeLocked}
-                                onSelect={() => {
-                                  setRenamingId(variant.id);
-                                  setRenameValue(variant.name);
-                                }}
-                              >
-                                <Pencil />
-                                Rename
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                variant="destructive"
-                                disabled={writeLocked || running}
-                                onSelect={() => setDeleteTarget({ id: variant.id, name: variant.name })}
-                              >
-                                <Trash2 />
-                                Delete
-                              </DropdownMenuItem>
+                              {caps.regenerateVariant && (
+                                <DropdownMenuItem
+                                  disabled={paidLocked || running}
+                                  onSelect={() => void regenerate(variant.id)}
+                                >
+                                  <RotateCcw />
+                                  Make it again · {variantCost}
+                                </DropdownMenuItem>
+                              )}
+                              {caps.renameVariant && (
+                                <DropdownMenuItem
+                                  disabled={writeLocked}
+                                  onSelect={() => {
+                                    setRenamingId(variant.id);
+                                    setRenameValue(variant.name);
+                                  }}
+                                >
+                                  <Pencil />
+                                  Rename
+                                </DropdownMenuItem>
+                              )}
+                              {caps.deleteVariant && (
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  disabled={writeLocked || running}
+                                  onSelect={() => setDeleteTarget({ id: variant.id, name: variant.name })}
+                                >
+                                  <Trash2 />
+                                  Delete
+                                </DropdownMenuItem>
+                              )}
                             </DropdownMenuGroup>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
+                      )}
                     </CardHeader>
                     <CardContent className="flex flex-col gap-2 px-3 pt-3">
                       {renamingId === variant.id ? (
@@ -605,7 +630,8 @@ export function ElementVariantsDialog({
           )}
         </section>
 
-        {/* Add a variant */}
+        {/* Add a variant — 官方目录不出这一块(不是禁用,是不画:Founder 2026-08-30 只读裁决) */}
+        {caps.createVariant && (
         <Card size="sm" className="gap-3 shadow-none">
           <CardHeader>
             <CardTitle>Add a variant</CardTitle>
@@ -662,6 +688,7 @@ export function ElementVariantsDialog({
             )}
           </CardFooter>
         </Card>
+        )}
 
         <AlertDialog
           open={deleteTarget !== null}
