@@ -104,6 +104,10 @@
       "types": "./dist/refgen.d.ts",
       "default": "./dist/refgen.js"
     },
+    "./reference-ref": {
+      "types": "./dist/reference-ref.d.ts",
+      "default": "./dist/reference-ref.js"
+    },
     "./schedule-draft": {
       "types": "./dist/schedule-draft.d.ts",
       "default": "./dist/schedule-draft.js"

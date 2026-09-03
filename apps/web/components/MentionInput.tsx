@@ -12,7 +12,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import { Placeholder } from "@tiptap/extensions";
 import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion";
-import type { ReferenceType } from "@fikirtive/core";
+import type { ReferenceType } from "@fikirtive/core/reference-ref";
 import {
   ReferencePickerMenu,
   type ReferencePickerRow,

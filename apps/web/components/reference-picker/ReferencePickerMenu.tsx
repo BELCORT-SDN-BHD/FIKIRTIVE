@@ -17,7 +17,7 @@ import {
   UserRoundIcon,
   UsersRoundIcon,
 } from "lucide-react";
-import type { ReferenceType } from "@fikirtive/core";
+import type { ReferenceType } from "@fikirtive/core/reference-ref";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";

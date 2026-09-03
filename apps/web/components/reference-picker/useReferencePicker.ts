@@ -2,7 +2,7 @@
 
 import type React from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { ENTITY_REFERENCE_TYPES, type ReferenceRef, type ReferenceType } from "@fikirtive/core";
+import { ENTITY_REFERENCE_TYPES, type ReferenceRef, type ReferenceType } from "@fikirtive/core/reference-ref";
 
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import { searchReferencesAction } from "@/lib/reference-search-actions";

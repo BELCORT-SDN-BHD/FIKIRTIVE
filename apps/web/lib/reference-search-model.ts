@@ -7,7 +7,7 @@
  * drifts. Design authority: `design-system/information-architecture/reference-picker-contract.md`
  * §2 (ordering, row cap, Recent cap) and §3 (row anatomy).
  */
-import type { ReferenceType } from "@fikirtive/core";
+import type { ReferenceType } from "@fikirtive/core/reference-ref";
 
 /** Contract §2 — "最多显示约 8 行，之后在菜单内部滚动". */
 export const REFERENCE_PAGE_LIMIT = 8;
