@@ -53,9 +53,11 @@ CREATE TABLE IF NOT EXISTS "BrandContextRevision" (
 );
 
 -- 幂等键。同一次保存被重放(双击/网络重试/Server Action 重发)只留一行历史。
--- 索引名逐字照 Prisma 对 @@unique([ownerId, targetKind, targetId, revisionKey]) 的命名规则,
--- 否则下一次 `prisma migrate dev` 会认为 schema 与库不一致、再生成一份重复迁移。
-CREATE UNIQUE INDEX IF NOT EXISTS "BrandContextRevision_ownerId_targetKind_targetId_revisionKey_key"
+-- 索引名逐字照 Prisma 对 @@unique([ownerId, targetKind, targetId, revisionKey]) 的命名规则。
+-- 注意结尾是 `revisionKe_key` 而不是 `revisionKey_key`:全名有 64 字符,超过 PostgreSQL 的
+-- 63 字符上限,而 Prisma 与 PostgreSQL 的截断方式不同 —— 照抄全名会让 `migrate diff` 当场
+-- 报「索引被重命名」的漂移(实测:CI 的 prisma schema drift 闸就是这么红的)。
+CREATE UNIQUE INDEX IF NOT EXISTS "BrandContextRevision_ownerId_targetKind_targetId_revisionKe_key"
     ON "BrandContextRevision" ("ownerId", "targetKind", "targetId", "revisionKey");
 
 CREATE INDEX IF NOT EXISTS "BrandContextRevision_ownerId_targetKind_targetId_changedAt_idx"
