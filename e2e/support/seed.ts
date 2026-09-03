@@ -435,11 +435,20 @@ const MOCK_MP4 = Buffer.from(
   "base64",
 );
 
-/** 本地盘上的那一份 —— 键的形状由 `@fikirtive/core` 的 `storageKey` 说了算,这里不另写一份。 */
+/**
+ * 本地盘上的那一份 —— 键的形状由 `@fikirtive/core` 的 `storageKey` 说了算,这里不另写一份。
+ *
+ * 根目录必须和 `apps/web/lib/storage.ts` 的 `LOCAL_ROOT` 算出同一个地方:那边是
+ * `path.join(process.cwd(), "..", "..", ".data", "storage")`,`next start` 的
+ * `process.cwd()` 是 `apps/web/`,两级向上正好落在仓库根。这里的 `process.cwd()`
+ * 是仓库根本身(`pnpm e2e`/本套件从仓库根跑),往上多退一级会跳出仓库,种下的文件
+ * 和产品运行时读的目录对不上 —— 卡面因此判定 `missing`(`getGenerationThumbs` 的
+ * `storage.exists(key)` 落空)。
+ */
 async function putLocalObject(ownerId: string, bytes: Buffer, ext: string): Promise<{ contentHash: string; key: string }> {
   const contentHash = createHash("sha256").update(bytes).digest("hex");
   const key = storageKey(ownerId, contentHash, ext);
-  const file = path.join(process.cwd(), "..", ".data", "storage", key);
+  const file = path.join(process.cwd(), ".data", "storage", key);
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, bytes);
   return { contentHash, key };
@@ -529,7 +538,16 @@ export async function readCanvasNodePosition(ws: Workspace, nodeId: string): Pro
   return row ? { x: row.x, y: row.y } : null;
 }
 
-/** 板上还剩几张卡。删除是不是真的落到库里,问的是这一个数。 */
+/**
+ * 板上还剩几张卡。删除是不是真的落到库里,问的是这一个数。
+ *
+ * 删除是**墓碑**(`tombstoneCanvasNode` 把 `status` 改成 `"deleted"`,不删行——
+ * `apps/web/lib/canvas-node-placement.ts:367-372`;为的是让延迟到达的 Otto/GEN_RESULT
+ * 回收不会在商家删完之后又把同一张付费产出复活)。这个数问的是「板上看得见几张」,
+ * 所以要把墓碑排除在外——数全表行数会让每一次删除都像没有发生。
+ */
 export async function countCanvasNodes(ws: Workspace): Promise<number> {
-  return prisma.canvasNode.count({ where: { ownerId: ws.orgId, projectId: ws.projectId } });
+  return prisma.canvasNode.count({
+    where: { ownerId: ws.orgId, projectId: ws.projectId, status: { not: "deleted" } },
+  });
 }

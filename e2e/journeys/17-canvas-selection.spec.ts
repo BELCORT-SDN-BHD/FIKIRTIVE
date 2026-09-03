@@ -74,8 +74,9 @@ test("FRONT-A15 — 键盘删得掉选中的卡,多选删得掉一组,视频卡�
 
   // ② Shift 点第二张 = 真的两张都选中,Delete 一次拿走两张。
   await pick(page, shot.nodeId);
+  await expect.poll(() => selectedIds(page)).toEqual([shot.nodeId]);
   await pick(page, dud.nodeId, ["Shift"]);
-  expect((await selectedIds(page)).sort()).toEqual([shot.nodeId, dud.nodeId].sort());
+  await expect.poll(() => selectedIds(page).then((ids) => ids.sort())).toEqual([shot.nodeId, dud.nodeId].sort());
   await page.keyboard.press("Delete");
   const batch = page.getByRole("alertdialog");
   await expect(batch).toContainText("Remove 2 cards from canvas?");
