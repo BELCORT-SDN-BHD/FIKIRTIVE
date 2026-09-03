@@ -12,11 +12,22 @@
 --
 -- 顺序:先删子表(CollectionItem 的外键指着 Collection),再删父表。
 -- 三句都带 IF EXISTS,可重跑。
+--
+-- 最后那一句删的是**迁移台账行**,它和三个 DROP 一样是回滚的一部分,不是收尾清扫。
+-- Prisma 把「这条迁移已经跑过」记在 "_prisma_migrations" 里。只 DROP 表、不删这一行,
+-- 下一次 `prisma migrate deploy` 会回答「No pending migrations to apply」,应用于是连上
+-- 一个**没有这三张表**的库,Library 的每一次读都炸 relation does not exist。
+-- 也就是说:少了这一句,回滚脚本自己跑完是绿的,恢复却做不到 —— 而恢复走的正是
+-- deploy 这条路(生产上没有人会手动重跑 migration.sql)。所以删行与删表同一个事务,
+-- 要么一起成立,要么一起不成立。
 
 BEGIN;
 
 DROP TABLE IF EXISTS "CollectionItem";
 DROP TABLE IF EXISTS "Collection";
 DROP TABLE IF EXISTS "Favorite";
+
+DELETE FROM "_prisma_migrations"
+WHERE migration_name = '20260903120000_library_favorites_and_collections';
 
 COMMIT;

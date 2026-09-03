@@ -53,11 +53,11 @@ export function CollectionDialogs({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  // 调用方只在需要时才挂上这个弹层(`LibraryView`:`{collectionDialog ? <CollectionDialogs open … /> : null}`),
+  // 所以每次「打开」都是一次全新的 mount —— 上面三个 useState 的初值本身就是重置。
+  // 不在 effect 里再同步 setState 一遍:那既是 react-hooks/set-state-in-effect,也是白跑一次渲染。
   React.useEffect(() => {
     if (!open) return;
-    setStep(startOnCreate ? "create" : "pick");
-    setName("");
-    setError(null);
     let cancelled = false;
     void (async () => {
       const result = await listCollections();

@@ -45,6 +45,13 @@ test("FRONT-A5 / FRONT-A6 — 收藏与合集刷新之后仍然成立,删掉合�
   await expect(page.getByText("2 selected")).toBeVisible();
   await page.getByRole("button", { name: "Favorite" }).click();
 
+  // 先等这两次写**真的写完**再刷新。批量收藏一件一件发 server action,React 把它们排成
+  // 一队;在队还没走完时 reload,导航会把后面那一次掐掉 —— 于是第二件根本没进库,
+  // 而屏幕上什么也看不出来。选择条只有在 `await Promise.all(...)` 落地、且**全部成功**
+  // 之后才卸掉(LibraryView 的 favoriteSelected:有一件失败就把选择条连同那行小字留住),
+  // 所以「2 selected 不见了」正是「两次写都回话了且都成功」的信号。
+  await expect(page.getByText("2 selected")).toBeHidden();
+
   // 「刷新之后还在」才算数 —— 屏幕上消失或出现都可能只是浏览器里的一次乐观更新。
   await page.reload();
   await page.getByRole("tab", { name: "Favorites" }).click();
@@ -63,6 +70,9 @@ test("FRONT-A5 / FRONT-A6 — 收藏与合集刷新之后仍然成立,删掉合�
   // 一个合集都还没有,所以弹层直接开在「新建」那一步。
   await page.getByLabel("Collection name").fill("Raya launch");
   await page.getByRole("button", { name: "Create collection" }).click();
+  // 同一条纪律:「新建合集」是两次连着发的 server action(先建合集,再把这一件加进去)。
+  // 弹层只在两次都回话之后才关,所以等它关掉再刷新,别让导航掐掉后面那一次。
+  await expect(page.getByLabel("Collection name")).toBeHidden();
 
   await page.reload();
   await page.getByRole("tab", { name: "Collections" }).click();

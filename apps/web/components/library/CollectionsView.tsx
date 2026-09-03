@@ -99,7 +99,8 @@ export function CollectionsView({
 
   React.useEffect(() => {
     const ticket = ++requestRef.current;
-    setError(null);
+    // 上一次的错误在**这一次拿到答案之后**才清 —— effect 体里同步 setState 是
+    // react-hooks/set-state-in-effect,而且提前清掉会让重试时错误闪一下才回来。
     void (async () => {
       if (activeCollectionId) {
         const result = await getCollection(activeCollectionId, { take: COLLECTION_PAGE_SIZE });
@@ -110,6 +111,7 @@ export function CollectionsView({
           setError(result.error);
           return;
         }
+        setError(null);
         setDetail(result.collection);
         setDetailCursor(result.nextCursor);
         return;
@@ -122,6 +124,7 @@ export function CollectionsView({
         setError(result.error);
         return;
       }
+      setError(null);
       setCollections(result.collections);
     })();
   }, [activeCollectionId, refreshToken, localRefresh]);
@@ -381,7 +384,7 @@ export function CollectionsView({
 
   if (collections === null) {
     return (
-      <div className="grid grid-cols-3 gap-4" aria-hidden>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-hidden>
         {Array.from({ length: 3 }, (_, index) => (
           <Skeleton key={index} className="h-28 w-full rounded-[var(--radius-card)]" />
         ))}
@@ -402,7 +405,10 @@ export function CollectionsView({
   }
 
   return (
-    <div className="grid grid-cols-3 gap-4">
+    // 三列是**够宽时**的样子。死写 `grid-cols-3` 会在 1100×800(很常见的笔记本)
+    // 把卡片压到 ~256px:封面 `w-32` 占死 128px,余下装不下合集名与那行计数,
+    // 商家看到的是一排认不出来的缩略图。列数随视口降到 2 / 1,够宽时仍是设计里的三列。
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {collections.map((collection) => (
         <Button
           key={collection.id}
@@ -420,7 +426,8 @@ export function CollectionsView({
           </span>
           <span className="min-w-0 p-4">
             <span className="block truncate text-sm font-semibold">{collection.name}</span>
-            <span className="mt-1 block text-xs font-normal text-muted-foreground">
+            {/* 外层 Button 基类带 `whitespace-nowrap`:这一行不 truncate 就会被硬切在字中间。 */}
+            <span className="mt-1 block truncate text-xs font-normal text-muted-foreground">
               {collectionItemCountLabel(collection.itemCount)} ·{" "}
               {collectionUpdatedLabel(collection.updatedAt, new Date())}
             </span>

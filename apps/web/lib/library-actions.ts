@@ -60,6 +60,19 @@ function librarySourceWhere(sources: readonly LibrarySourceKind[] | undefined) {
 }
 
 /**
+ * `favoriteOnly` 接不住的那几个筛选键。传进来任何一个就当场回错误 —— 不是丢掉它再返回一页。
+ * 这个数组是**唯一**的名单:新增一个筛选参数时如果收藏读模型也接不住,把键名加到这里。
+ */
+const FAVORITE_ONLY_FILTER_KEYS = [
+  "search",
+  "sources",
+  "mediaKind",
+  "projectId",
+  "since",
+  "order",
+] as const;
+
+/**
  * One keyset page of the owner's full generation history (every source: cowork, canvas,
  * upload, crop), newest first. Cursor = "<createdAt-iso>|<id>" (id breaks ties so no row is
  * skipped/repeated). Owner-scoped; read-only. Optional prompt search + favorites filter.
@@ -71,8 +84,12 @@ export async function getGenerationHistory(
      * 只要收藏的那些。**这一条走的是收藏自己的读模型**(`lib/library-favorites.ts`),
      * 不是在这张表上加一个 `favorite: true` —— 收藏的权威从 2026-09-03 起是 `Favorite`
      * 那张跨类型的表(Founder 裁决十),而这里没有指向它的关系可以 join。
-     * 后果对调用方只有一件事:这一路的游标是**收藏行**的游标(按收藏时间排),
-     * 与不带这个开关时的生成时间游标不通用 —— 两者都只是不透明字符串,原样传回即可。
+     * 后果对调用方有两件事:
+     * ① 这一路的游标是**收藏行**的游标(按收藏时间排),与不带这个开关时的生成时间游标
+     *    不通用 —— 两者都只是不透明字符串,原样传回即可;
+     * ② 收藏读模型今天**没有筛选契约**,所以这个开关不能和 `search` / `sources` /
+     *    `mediaKind` / `projectId` / `since` / `order` 同用 —— 同用会当场回错误,
+     *    不会悄悄把筛选丢掉(见下面 `FAVORITE_ONLY_FILTER_KEYS`)。
      */
     favoriteOnly?: boolean;
     cursor?: string | null;
@@ -91,7 +108,19 @@ export async function getGenerationHistory(
   if ("error" in gate) return gate;
   const { ownerId } = gate;
 
-  if (opts?.favoriteOnly) return favoritesAsLibraryPage(opts);
+  if (opts?.favoriteOnly) {
+    // 收藏这一路借的是收藏自己的读模型,它今天只认 cursor / take。任何别的筛选传进来
+    // 都**接不住**,而接不住又照样返回一页,就是一次读起来很像答案的错答案:
+    // Otto 问「我收藏过的 laksa 图」会拿到全部收藏,还当成命中的那几张报给商家。
+    // 这与本文件下面对空 sources 的处理是同一条原则 —— 宁可说不行,不装作做到了。
+    const ignored = FAVORITE_ONLY_FILTER_KEYS.filter((key) => opts[key] !== undefined);
+    if (ignored.length) {
+      return {
+        error: `Favorites can't be filtered yet (${ignored.join(", ")}). Ask for favorites on their own, or drop the favorites filter and search everything.`,
+      };
+    }
+    return favoritesAsLibraryPage(opts);
+  }
 
   const take = opts?.take ?? 60;
   const scanTake = Math.min(Math.max(take + LIBRARY_SCAN_BUFFER, take + 1), 100);
@@ -189,8 +218,9 @@ export async function getGenerationHistory(
  * (那是**故意**的 —— 收藏是链接,加外键会把「取消收藏」和「删素材」焊死)。先取一把
  * 收藏 id 再 `IN (…)` 也不行:那把 id 是无界的,游标语义还会跟着错。所以这一路整个
  * 交给收藏读模型,连排序与游标都用它的 —— 一个收藏视图,一套分页,不是两套。
- * 代价写在上面 `favoriteOnly` 的注释里:这一路不吃搜索与筛选(收藏读模型今天没有那个
- * 契约),调用方要筛就不要开这个开关。
+ * 代价:这一路不吃搜索与筛选(收藏读模型今天没有那个契约)。这个代价**在上面就拦住了**——
+ * `getGenerationHistory` 见到 `favoriteOnly` 带着筛选键进来会直接回错误,所以这个函数
+ * 只会拿到 cursor / take,永远不会静静地把一个筛选吃掉。
  */
 async function favoritesAsLibraryPage(
   opts: { cursor?: string | null; take?: number },

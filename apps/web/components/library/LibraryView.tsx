@@ -97,6 +97,7 @@ import {
 import { cn } from "@/lib/utils";
 
 type MediaFilter = "all" | "image" | "video";
+
 type DateFilter = "all" | "today" | "week";
 type SortOrder = "newest" | "oldest";
 
@@ -534,7 +535,8 @@ export function LibraryView({
   // ── 段②:收藏、合集与选择模式 ────────────────────────────────────────────────
   // 收藏是**自己的读模型**(Founder 2026-09-03 裁决十:一次查询、按收藏时间排),
   // 不是把生成历史再筛一遍 —— 所以它有自己的一份列表与游标,与上面那一组互不干扰。
-  const [favorites, setFavorites] = React.useState<LibraryFavoriteItem[]>([]);
+  // `null` = 还没取过第一页(骨架屏),`[]` = 取过了、真的一件都没有(空态)。
+  const [favorites, setFavorites] = React.useState<LibraryFavoriteItem[] | null>(null);
   const [favoritesCursor, setFavoritesCursor] = React.useState<string | null>(null);
   const [favoritesLoading, setFavoritesLoading] = React.useState(false);
   const [favoritesError, setFavoritesError] = React.useState<string | null>(null);
@@ -716,10 +718,14 @@ export function LibraryView({
     writeRoute({ collection: collectionId });
   }
 
-  /** 收藏页自己的一页 —— 与生成历史那一组各走各的游标。 */
+  /**
+   * 收藏页自己的一页 —— 与生成历史那一组各走各的游标。
+   *
+   * 第一句就是 `await`:这个函数下面那个 effect 会直接调它,而 effect 体里同步 setState
+   * 是 react-hooks/set-state-in-effect。「还没取到第一页」这件事不靠 loading 旗子表达,
+   * 靠 `favorites === null`(初值),所以这里不需要在发请求前先 setState。
+   */
   const loadFavorites = React.useCallback(async (cursorValue: string | null) => {
-    setFavoritesLoading(true);
-    if (!cursorValue) setFavoritesError(null);
     const result = await listLibraryFavorites({ cursor: cursorValue, take: PAGE_SIZE });
     setFavoritesLoading(false);
     if ("error" in result) {
@@ -730,8 +736,8 @@ export function LibraryView({
     setFavoritesError(null);
     setFavorites((current) => {
       if (!cursorValue) return result.items;
-      const seen = new Set(current.map((item) => item.subjectId));
-      return [...current, ...result.items.filter((item) => !seen.has(item.subjectId))];
+      const seen = new Set((current ?? []).map((item) => item.subjectId));
+      return [...(current ?? []), ...result.items.filter((item) => !seen.has(item.subjectId))];
     });
     setFavoritesCursor(result.nextCursor);
   }, []);
@@ -780,12 +786,17 @@ export function LibraryView({
     setOrganizing(false);
     const failed = results.filter((result) => "error" in result).length;
     if (failed) {
+      // 有一件没成就**把选择条留在屏幕上** —— 那行小字唯一的落点就在选择条里
+      // (下面 `{selectionMode && selectedIds.size ? …}` 那一块)。同一次渲染里
+      // 既写这条消息又退出选择模式,等于写完就把它连同容器一起卸掉:商家什么也看不到,
+      // 却以为 N 件全收进去了。所以只有全成功才退出。
       setOrganizeError(
         `${subjects.length - failed} of ${subjects.length} saved to Favorites. ${failed} couldn’t be saved.`,
       );
+    } else {
+      setSelectionMode(false);
+      setSelectedIds(new Set());
     }
-    setSelectionMode(false);
-    setSelectedIds(new Set());
     setFavoritesToken((value) => value + 1);
     // 网格里那一列 favorite 也变了,重取同一组条件的第一页。
     if (gridView) void reload(view, filters);
@@ -953,7 +964,7 @@ export function LibraryView({
                       onClick={() => setFavoritesToken((value) => value + 1)}
                     >Try again</Button>
                   </div>
-                ) : favoritesLoading && !favorites.length ? (
+                ) : favorites === null ? (
                   <GridSkeleton />
                 ) : favorites.length ? (
                   <MediaGrid
@@ -981,7 +992,12 @@ export function LibraryView({
                       variant="secondary"
                       size="sm"
                       disabled={favoritesLoading}
-                      onClick={() => void loadFavorites(favoritesCursor)}
+                      onClick={() => {
+                        // 旗子只在这条(事件触发的)路上点亮 —— 第一页由 effect 触发,
+                        // 它的「还在取」是 `favorites === null`。
+                        setFavoritesLoading(true);
+                        void loadFavorites(favoritesCursor);
+                      }}
                     >{favoritesLoading ? "Loading…" : "Load older"}</Button>
                   </div>
                 ) : null}

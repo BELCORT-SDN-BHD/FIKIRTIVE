@@ -77,6 +77,34 @@ describe("getGenerationHistory — filters", () => {
     );
     expect(res).toEqual({ items: [], nextCursor: null, hasMore: false });
   });
+  it("FRONT-A5 favoriteOnly 配上收藏读模型接不住的筛选时当场回错误,不静静把筛选丢掉", async () => {
+    // 这是 Otto 真会发的一句:`manageLibrary { action: "history", search: "laksa",
+    // favoriteOnly: true }`。收藏读模型今天只认 cursor / take;把 search 吃掉再照样返回
+    // 一页,商家拿到的是「全部收藏」,而 Otto 会把它们当成命中的那几张报出去 ——
+    // 一个读起来很像答案的错答案。宁可说不行。
+    const res = await getGenerationHistory({ favoriteOnly: true, search: "laksa" });
+    expect("error" in res && res.error).toContain("Favorites can't be filtered yet");
+    expect("error" in res && res.error).toContain("search");
+    // 两张表一张都没查 —— 拦在读之前,不是读完再挑。
+    expect(mockGenFindMany).not.toHaveBeenCalled();
+    expect(mockFavoriteFindMany).not.toHaveBeenCalled();
+  });
+  it("FRONT-A5 接不住的筛选键逐个都拦,cursor / take 照旧放行", async () => {
+    for (const opts of [
+      { sources: ["upload"] as const },
+      { mediaKind: "video" as const },
+      { projectId: "prj_1" },
+      { since: "2026-01-01T00:00:00.000Z" },
+      { order: "oldest" as const },
+    ]) {
+      const res = await getGenerationHistory({ favoriteOnly: true, ...opts });
+      expect("error" in res, `${Object.keys(opts)[0]} 被静静吃掉了`).toBe(true);
+    }
+    // 收藏读模型接得住的这两个不是筛选,不该被拦。
+    mockFavoriteFindMany.mockResolvedValue([]);
+    const ok = await getGenerationHistory({ favoriteOnly: true, cursor: null, take: 10 });
+    expect(ok).toEqual({ items: [], nextCursor: null, hasMore: false });
+  });
   it("adds a case-insensitive promptText contains when search is set", async () => {
     mockGenFindMany.mockResolvedValue([]);
     await getGenerationHistory({ search: "  sale  " });
