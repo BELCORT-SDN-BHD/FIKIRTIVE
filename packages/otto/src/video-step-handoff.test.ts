@@ -103,7 +103,10 @@ describe("CREATE-A1 buildVideoStepCardPayload —— 第二步的确认卡", () 
   });
 
   it("CREATE-A2 首帧那一件的回执在卡上 —— 少了它这张卡在前端根本按不下去", () => {
-    expect(built().mediaReferences).toEqual([RECEIPT]);
+    // Codex staging CRE-STG-P1-003 起,卡上那一份回执比服务端解析出来的那一份多一格
+    // `role` —— 它是「这一件在**这张卡**里坐哪一格」的答案,由铸卡侧冻上去。第二步这张卡
+    // 的那一件是 i2v 首帧,所以角色恒为 `startFrame`(商家读到的是 "Starting frame")。
+    expect(built().mediaReferences).toEqual([{ ...RECEIPT, role: "startFrame" }]);
   });
 
   it("CREATE-A1 血缘可查:卡上写着它是从哪一张 Step 1 卡接力出来的", () => {

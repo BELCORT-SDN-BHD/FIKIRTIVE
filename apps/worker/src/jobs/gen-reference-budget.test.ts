@@ -231,7 +231,10 @@ describe("#619 E-5 —— 卡面数字 = worker 真正发出去的参考图张�
     ["元素刚好压线(=上限)", [5, 5], false, 0],
     ["挂图 + 元素刚好压线 —— 底图在上限之外再加一张", [5, 5], true, 1],
     ["元素超限 17 → 10", [9, 8], false, 0],
-    ["挂图 + 元素超限 17 → 10 + 1", [9, 8], true, 3],
+    // CRE-STG-P1-003 起 `attachedImageCount` 说的就是**这一单真的带了几张挂图** ——
+    // 从前这一行写 3 而任务上只有 1(那时多出来的两张确实被丢掉了)。多挂几张的情形
+    // 现在有自己的一组对表(见文末「CRE-STG-P1-003」那一块),不再靠一个对不上的入参。
+    ["挂图 + 元素超限 17 → 10 + 1", [9, 8], true, 1],
     ["一个元素独占很多图,另一个只有一张(round-robin 不许饿死后者)", [20, 1], false, 0],
   ])("%s", async (_label, perEntityLiveCounts, hasBaseImage, attachedImageCount) => {
     const entityIds = perEntityLiveCounts.map((_, i) => `e${i}`);

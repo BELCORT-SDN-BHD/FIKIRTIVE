@@ -21,13 +21,23 @@
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
+// Codex staging CRE-STG-P2-004 —— 失败那一句与那个短号,措辞与算法都只有这一份
+// (`@fikirtive/core/gen-failure`)。子路径而不是包根:包根会把 node:crypto 拖进客户端包。
+import { GENERATION_START_FAILED, diagnosticRef } from "@fikirtive/core/gen-failure";
 import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
 import type { OttoPlanCardPayload } from "./plan-card-contract";
 
 /** 这一次批准的结局。`error` 是给商家看的一句话，不是异常。 */
 export type PlanApprovalResult =
   | { ok: true; chained: ChainedApproval | null }
-  | { ok: false; error: string };
+  /**
+   * Codex staging CRE-STG-P2-004 —— `ref` 是这一次动作的**可复制短号**,只在失败时出现。
+   *
+   * 它给商家一个能念给客服听的把手:服务端在日志里写同一串,两边算的是同一个函数
+   * (`diagnosticRef`)。句子里一个 id、URL、路径、堆栈都不许有 —— 那些是日志的活;
+   * 短号单独一格,由卡面渲染在句子旁边。
+   */
+  | { ok: false; error: string; ref: string | null };
 
 export interface RunPlanApprovalInput {
   threadId: string;
@@ -54,10 +64,22 @@ export async function runPlanApproval(input: RunPlanApprovalInput): Promise<Plan
           entityIds: Array.isArray(payload.entityIds) ? payload.entityIds : [],
           variantSel: payload.variantSel && typeof payload.variantSel === "object" ? payload.variantSel : {},
         });
-    if (res && "error" in res) return { ok: false, error: res.error };
+    if (res && "error" in res) {
+      // 服务端已经说清楚了 —— 原样传上去,泛化句不许盖掉它。短号优先跟着服务端那一份
+      // (它与那一行日志同源);服务端没给的分支由卡的身份算一个,算法是同一个函数。
+      const serverRef = typeof (res as { ref?: unknown }).ref === "string" ? (res as { ref: string }).ref : null;
+      return { ok: false, error: res.error, ref: serverRef ?? diagnosticRef(cardId) };
+    }
     return { ok: true, chained: chainedApprovalOf(res) };
   } catch {
-    return { ok: false, error: "Couldn't start that — please try again." };
+    // Codex staging CRE-STG-P0-001 / P2-004 —— 走查那两次点击读到的就是这一支。
+    //
+    // 从前这里是一句写死的 `Couldn't start that — please try again.`:服务端动作只要**抛**
+    // 了(任何原因),商家、走查员、日志三方看到的就是三件对不起来的事,而唯一能把它们串
+    // 起来的东西不存在。现在句子来自单一措辞源,短号来自这张卡自己的身份,服务端在日志里
+    // 写的是同一串。泛化句**只**留给这一支(真正未知的错误);已知的拒绝走上面那条路,
+    // 原样把服务端那句话交给商家。
+    return { ok: false, error: GENERATION_START_FAILED, ref: diagnosticRef(cardId) };
   } finally {
     // 扣费的那一刻：两条路都会预扣（ottoApprove 续跑一次已停住的付费生成，
     // coworkGenerate 派发一次新的）。放在 finally 里是因为**失败的响应从不证明零花费**（#550）。

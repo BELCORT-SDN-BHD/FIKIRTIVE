@@ -345,6 +345,15 @@ type TrustedCoworkRequest = {
    *  跳过父卡指针核对,普通 propose/canvas/asset 卡零行为改变。服务端从子卡持久化的
    *  payload 读出,不由调用方提交——与 `expectedCredits`/`approvedEntities` 同一条纪律。 */
   storyboardCardId: string | null;
+  /**
+   * Codex staging CRE-STG-P1-003 —— 商家挂的**第一张之外**的图片参考,次序即引擎收到的次序。
+   *
+   * 与 `approvedEntities` 完全同一条纪律,而且更严一格:它**根本不是** `genRequest` 的字段。
+   * 走这条进程内通道意味着浏览器连提交它的机会都没有(`.strict()` 会整单拒收),所以
+   * 「卡上写着 A、请求里塞进 B」这个伪造面在结构上不存在 —— 值只可能来自上面那次服务端
+   * 读卡。空数组 = 这张卡没有第二张挂图(既有每一条路)。
+   */
+  referenceGenerationIds: string[];
 };
 const TRUSTED_COWORK_REQUESTS = new WeakMap<object, TrustedCoworkRequest>();
 
@@ -530,6 +539,11 @@ export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
   // 不是分镜子卡(普通 propose/canvas/asset)的 payload 上没有这一格,下面的父卡指针核对
   // 因此整段跳过——零行为改变。
   const storyboardCardId = typeof payload.storyboardCardId === "string" ? payload.storyboardCardId : null;
+  // Codex staging CRE-STG-P1-003 —— 第一张之外的挂图,只从**这张服务端读出来的卡**取。
+  // 卡上没有这一格(挂 0/1 张的卡、这条修改之前铸的老卡)⇒ 空数组 ⇒ 下游一格不动。
+  const cardReferenceGenerationIds = Array.isArray(payload.referenceGenerationIds)
+    ? payload.referenceGenerationIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+    : [];
   TRUSTED_COWORK_REQUESTS.set(trustedRequest, {
     ownerId: gate.ownerId,
     cardId,
@@ -542,6 +556,7 @@ export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
     // 那张 WeakMap。取不到就是 null,读取端据此把 `prompt` 本身当成商家写的那句。
     merchantPrompt: readMerchantPrompt(raw) ?? null,
     storyboardCardId,
+    referenceGenerationIds: cardReferenceGenerationIds,
   });
   return startGen(trustedRequest);
 }
@@ -688,6 +703,11 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       // 一堆散图是**另一个**动作,不是同一个动作的重试。所以它进材料、落快照
       // (`GenJob.imageOptions`),worker 照着快照发请求。收费一格不动。
       coherentSet,
+      // Codex staging CRE-STG-P1-003 —— 第一张之外的挂图,**只**从上面那条进程内可信通道取
+      // (`startCoworkGen` 读的那张持久化卡)。它不是 `genRequest` 的字段,所以浏览器连提交
+      // 的机会都没有;其余几条付费入口(画布 / 资产 / 工厂 / 战役)没有这条通道 ⇒ undefined
+      // ⇒ 快照与从前逐字相同。进材料 = 换了参考图就是换了内容,与 `coherentSet` 同一条纪律。
+      referenceGenerationIds: trustedCoworkRequest?.referenceGenerationIds,
     });
     const effectiveVariantSel = material.variantSel ?? undefined;
     const factoryAttempt = parseFactoryAttemptKey(idempotencyKey);

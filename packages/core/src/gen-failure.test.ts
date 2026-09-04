@@ -397,6 +397,28 @@ describe("referenceUnavailableSentence — CREATE-A2: 一份白名单,不是 pas
     expect(referenceUnavailableSentence(sentence)).toBe(sentence);
   });
 
+  // Codex staging CRE-STG-P0-001 —— 走查那一天商家把一支片子放进图片那一格,读到的是
+  // notFound 那句「isn't available any more」:片子就在 Library 里,他一看就知道是假的,
+  // 而且那句话指着一个从未发生过的删除,他永远修不好。四个原因是四件不同的事,所以必须
+  // 是四句不同的话 —— 任何一句被换回另一句的措辞,这里当场红。
+  it("CREATE-A2: 四个原因四句话,没有两个原因共用同一句", () => {
+    const sentences = REFERENCE_UNAVAILABLE_REASONS.map((r) => referenceUnavailableMessage(r));
+    expect(new Set(sentences).size).toBe(REFERENCE_UNAVAILABLE_REASONS.length);
+  });
+
+  // 「拿错了类型」必须说出**是哪一种**,而且必须给出那个真能修好它的动作(换一件对的素材)。
+  it("CREATE-A2: videoAsImage 说的是视频、imageAsVideo 说的是图片,两句都点名要换掉它", () => {
+    const asImage = referenceUnavailableMessage("videoAsImage");
+    expect(asImage).toMatch(/video/i);
+    expect(asImage).toMatch(/swap/i);
+    expect(asImage).not.toMatch(/isn't available any more/i);
+
+    const asVideo = referenceUnavailableMessage("imageAsVideo");
+    expect(asVideo).toMatch(/image/i);
+    expect(asVideo).toMatch(/swap/i);
+    expect(asVideo).not.toMatch(/isn't available any more/i);
+  });
+
   it("CREATE-A2: 两个原因一个不落 —— 表里每一句都认得出,且认回它自己", () => {
     // 结构性:将来加第三个原因(比如「格式不支持」),忘了它会在这里红,而不是等到某天
     // 商家看见一段裸 body。
