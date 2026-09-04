@@ -18,7 +18,16 @@ import { act, createElement, useEffect, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { canvasDeleteKeyIds } from "@/lib/canvas-selection";
-import { canvasFitPadding, canvasFitPaddingPx, CANVAS_FIT_GAP } from "@/lib/canvas-fit-padding";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  canvasFitPadding,
+  canvasFitPaddingPx,
+  CANVAS_FIT_GAP,
+  CANVAS_FIT_OVERLAY_SELECTORS,
+  CANVAS_NODE_TOOLBAR_REACH,
+  CANVAS_OTTO_CORNER_ATTR,
+} from "@/lib/canvas-fit-padding";
 import { canvasTerminalNodeSize, DEFAULT_CANVAS_MEDIA_NODE_SIDE } from "@/lib/canvas-node-size";
 
 type FlowProps = {
@@ -27,6 +36,9 @@ type FlowProps = {
   nodeTypes: Record<string, (props: Record<string, unknown>) => ReactElement | null>;
   onNodesChange: (changes: unknown[]) => void;
   onInit?: (instance: Record<string, unknown>) => void;
+  /** 挂载时的那份摆位 —— 本票之后它必须不存在(留白只能有一个来源)。 */
+  fitView?: boolean;
+  fitViewOptions?: { padding?: unknown };
 };
 
 const mocks = vi.hoisted(() => ({
@@ -347,9 +359,12 @@ describe("FRONT-A15 摆板留白:量出来的安全区,不是对称的百分比"
   });
   const board = rect(0, 48, 1440, 852);
 
-  it("FRONT-A15: 没有覆盖层时四边只留一点空隙", () => {
+  it("FRONT-A15: 没有覆盖层时四边只留一点空隙,上边多留一条卡的操作条", () => {
     expect(canvasFitPadding(board, [])).toEqual({
-      top: CANVAS_FIT_GAP, right: CANVAS_FIT_GAP, bottom: CANVAS_FIT_GAP, left: CANVAS_FIT_GAP,
+      top: CANVAS_FIT_GAP + CANVAS_NODE_TOOLBAR_REACH,
+      right: CANVAS_FIT_GAP,
+      bottom: CANVAS_FIT_GAP,
+      left: CANVAS_FIT_GAP,
     });
   });
 
@@ -357,7 +372,36 @@ describe("FRONT-A15 摆板留白:量出来的安全区,不是对称的百分比"
     // 走查实测的那一张:x16 y64 280×235。
     const padding = canvasFitPadding(board, [rect(16, 64, 280, 235)]);
     expect(padding.left).toBe(296 + CANVAS_FIT_GAP);
-    expect(padding.top).toBe(CANVAS_FIT_GAP);
+    expect(padding.top).toBe(CANVAS_FIT_GAP + CANVAS_NODE_TOOLBAR_REACH);
+  });
+
+  /**
+   * 卡顶操作条的两个数,**照实测抄一遍**,不从被测常量借。
+   *
+   * 本机与 CI 实证 2026-09-04(生产构建 1440×900,e2e 探针):操作条离卡上沿 22px
+   * (`NodeToolbar offset`),自身高 32px(一行图标按钮)。借常量写就成了同义反复 ——
+   * 把 `CANVAS_NODE_TOOLBAR_REACH` 改成 0,断言还会绿。
+   */
+  const MEASURED_TOOLBAR_OFFSET = 22;
+  const MEASURED_TOOLBAR_HEIGHT = 32;
+
+  it("FRONT-A15: 最上排卡的操作条不再伸出画板(旅程 17 ⑤ 的那一幕)", () => {
+    // 实测那一幕:画板 y=48…900,上面那 48px 是应用外壳顶栏。上边只留 CANVAS_FIT_GAP 时,
+    // 最上排卡摆在 y=72,操作条落在 y=18…50 —— 整条在画板外,`elementFromPoint` 在 Download
+    // 键正中取到的是 <header>,商家看不见也点不着。
+    const cardTop = board.top + canvasFitPadding(board, []).top;
+    const toolbarTop = cardTop - MEASURED_TOOLBAR_OFFSET - MEASURED_TOOLBAR_HEIGHT;
+    expect(toolbarTop).toBeGreaterThanOrEqual(board.top);
+  });
+
+  it("FRONT-A15: 顶上有覆盖层时,操作条也在覆盖层之外", () => {
+    const topOverlay = rect(0, 48, 1440, 60); // 顶上钉着一条 60px 高的覆盖层
+    const padding = canvasFitPadding(board, [topOverlay]);
+    // 让开覆盖层(60 + gap),再往外空出整条操作条。
+    expect(padding.top).toBe(60 + CANVAS_FIT_GAP + CANVAS_NODE_TOOLBAR_REACH);
+    const cardTop = board.top + padding.top;
+    const toolbarTop = cardTop - MEASURED_TOOLBAR_OFFSET - MEASURED_TOOLBAR_HEIGHT;
+    expect(toolbarTop).toBeGreaterThanOrEqual(topOverlay.bottom);
   });
 
   it("FRONT-A15: 底部的 Otto 输入框与工具条纵列都让开(走查 QA-CRE-008)", () => {
@@ -369,7 +413,10 @@ describe("FRONT-A15 摆板留白:量出来的安全区,不是对称的百分比"
 
   it("FRONT-A15: 画板之外的东西不算数", () => {
     expect(canvasFitPadding(board, [rect(2000, 0, 100, 100)])).toEqual({
-      top: CANVAS_FIT_GAP, right: CANVAS_FIT_GAP, bottom: CANVAS_FIT_GAP, left: CANVAS_FIT_GAP,
+      top: CANVAS_FIT_GAP + CANVAS_NODE_TOOLBAR_REACH,
+      right: CANVAS_FIT_GAP,
+      bottom: CANVAS_FIT_GAP,
+      left: CANVAS_FIT_GAP,
     });
   });
 
@@ -386,6 +433,96 @@ describe("FRONT-A15 摆板留白:量出来的安全区,不是对称的百分比"
     const padding = canvasFitPadding(shortBoard, [rect(0, 0, 400, 280)]);
     expect(padding.top + padding.bottom).toBeLessThanOrEqual(300 * 0.8);
     expect(padding.left + padding.right).toBeLessThanOrEqual(400 * 0.8);
+  });
+});
+
+describe("FRONT-A15 摆板只有一个来源:首屏与「Fit to screen」读同一份留白", () => {
+  /** 首屏那一次摆板挂在 effect + `requestAnimationFrame` 上。 */
+  async function settleFirstFit(): Promise<void> {
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+  }
+
+  function button(label: string): HTMLButtonElement {
+    const found = [...document.querySelectorAll("button")]
+      .find((b) => b.getAttribute("aria-label") === label);
+    if (!found) throw new Error(`按钮不在屏幕上:${label}`);
+    return found;
+  }
+
+  it("FRONT-A15: 首屏摆板与手动「Fit to screen」拿到的是同一份留白", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
+    await renderBoard();
+    await settleFirstFit();
+
+    // 先按手动那条路摆一次 —— 覆盖层此刻都在屏幕上,量出来的就是这块板真正的安全区。
+    await act(async () => { button("Fit to screen").click(); });
+    const manualFit = mocks.fitView.mock.calls.at(-1)?.[0] as
+      { padding?: unknown; duration?: number } | undefined;
+    // 手里拿的确实是**这一次点击**摆的板,不是首屏那一次留在数组尾巴上的记录 ——
+    // 少了这一句,两边比的可能是同一个调用,断言就永远绿(手动 220ms,首屏 160ms)。
+    expect(manualFit?.duration, "「Fit to screen」这一下应当自己调一次 fitView").toBe(220);
+
+    // 再让首屏那条路在同一份屏幕上跑一次:换个项目,「每个项目摆一次」的 effect 就会重新摆板。
+    mocks.fitView.mockClear();
+    await act(async () => {
+      root!.render(createElement(FlowCanvas, { projectId: "p2", skin: "gb" as const }));
+    });
+    await settleFirstFit();
+    const firstFit = mocks.fitView.mock.calls.at(0)?.[0] as { padding?: unknown } | undefined;
+    expect(firstFit, "换项目之后首屏应当重新摆一次板").toBeDefined();
+
+    // 同一个来源 = 同一份留白;而且是量出来的像素,不是 React Flow 的比例标量。
+    expect(firstFit?.padding).toEqual(manualFit?.padding);
+    expect(typeof firstFit?.padding).toBe("object");
+    expect(firstFit?.padding).toEqual(expect.objectContaining({
+      top: expect.stringMatching(/^\d+px$/u),
+      right: expect.stringMatching(/^\d+px$/u),
+      bottom: expect.stringMatching(/^\d+px$/u),
+      left: expect.stringMatching(/^\d+px$/u),
+    }));
+    // 上边永远留得下最上排卡自己那条操作条 —— 少了它,操作条伸出画板被顶栏盖住(旅程 17 ⑤)。
+    const top = Number.parseInt(String((firstFit!.padding as { top: string }).top), 10);
+    expect(top).toBeGreaterThanOrEqual(CANVAS_FIT_GAP + CANVAS_NODE_TOOLBAR_REACH);
+  });
+
+  it("FRONT-A15: 挂载处不再自带第二份留白(`fitViewOptions` 没有 padding 字面量)", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
+    await renderBoard();
+    await settleFirstFit();
+
+    // 变异守卫:把 `fitViewOptions={{ padding: 0.22 }}` 加回 FlowCanvas 的挂载处,这一条就红。
+    // 那一份是旅程 17 时红时绿的病根 —— 两份留白按时序抢最后一次落地。
+    expect(mocks.flow.current!.fitView).toBeUndefined();
+    expect(mocks.flow.current!.fitViewOptions).toBeUndefined();
+  });
+});
+
+/**
+ * 左上角那张 Otto 卡两副面孔都要被摆板看见。
+ *
+ * 这是**逐块读源码**的判据,不是渲染断言:两副面孔各自住在自己的组件里,而 jsdom 里没有版式,
+ * 量不出「谁压住谁」。真浏览器那一头由 e2e 旅程 17 第①步守着(在卡外面 24px 起手框选)。
+ */
+describe("FRONT-A15 摆板认得出左上角那张 Otto 卡的两副面孔", () => {
+  const componentRoot = path.join(__dirname, "..", "..", "components", "otto");
+  const read = (file: string) => fs.readFileSync(path.join(componentRoot, file), "utf8");
+
+  it("FRONT-A15: 门厅与对话流两张角落卡都挂着摆板认的那个记号", () => {
+    for (const file of ["OttoFrontDoor.tsx", "OttoTurnCard.tsx"]) {
+      const source = read(file);
+      // 两边画的是同一张卡(同一处定位与宽度)——
+      expect(source, `${file} 应当还在左上角画那张 280px 的卡`)
+        .toContain("absolute left-4 top-4 w-[280px]");
+      // —— 所以两边都要挂同一个记号,摆板才不必知道当下是哪一副面孔。
+      expect(source, `${file} 少了摆板认的记号,商家的卡会被摆进这张卡底下`)
+        .toContain("CANVAS_OTTO_CORNER_ATTR");
+    }
+  });
+
+  it("FRONT-A15: 覆盖层清单读的就是那个记号", () => {
+    expect(CANVAS_FIT_OVERLAY_SELECTORS).toContain(`[${CANVAS_OTTO_CORNER_ATTR}]`);
   });
 });
 
