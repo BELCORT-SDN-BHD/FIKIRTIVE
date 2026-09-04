@@ -126,13 +126,16 @@ export function CanvasLibraryPicker({
         ) : (
           <ul className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">
             {items.map((item) => {
+              const name = item.prompt.trim();
+              // Codex QA-CRE-FE9-013:芯片上带的是这件素材**自己的名字**,不再是 `Image ref`。
+              // 走查里商家看着一个占位词,既认不出选中的是哪一件,也发现不了它其实没上车。
               const reference = canvasComposerReferenceForNode({
                 type: item.kind,
                 generationId: item.id,
                 src: item.url,
+                name,
               });
               if (!reference) return null;
-              const name = item.prompt.trim();
               return (
                 <li key={item.id}>
                   <Button

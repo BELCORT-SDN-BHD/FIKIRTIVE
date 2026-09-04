@@ -23,7 +23,11 @@
  *    （data-step 的工具标签 / data-status 的三句叙述 / 卡片自己的 CardState），这里只渲染。
  *
  * 3. **正文是人话（P1-1）**。原始 Markdown 交给 `OttoMarkdown`（与抽屉里同一个渲染器），
- *    并且只认真的 TEXT —— `🖼 result` 那种内部占位串由 `latestAssistantSayable` 挡在外面。
+ *    并且只认真的 TEXT —— `🖼 result` 那种内部占位串由 `canvasTurnText` 挡在外面。
+ *
+ * 4. **一张脸只说一件事（Codex QA-CRE-004）**。状态词与正文由 `lib/otto-canvas-turn.ts` 从
+ *    **同一个**来源投影：这一轮最新的那个事件。所以「绿灯 Ready 配着上一轮那句失败」这种
+ *    自相矛盾的脸，在这一层没有地方生出来 —— 它连两个状态源都没有。
  */
 
 import React, { useState } from "react";
@@ -34,6 +38,8 @@ import { OttoMarkdown } from "./parts/OttoMarkdown";
 import { creditsLabel } from "@/lib/credit-format";
 import { approvedEntitiesNote } from "@fikirtive/core/reference-budget";
 import { planCardGate } from "./plan-card-contract";
+// Codex QA-CRE-FE9-013 —— 参考回执那一块。抽屉里那张卡读的是同一个组件。
+import { CardReferenceReceipt } from "./CardReferenceReceipt";
 import { runPlanApproval } from "./plan-approval";
 import type { PlanApproveOutcome } from "./OttoPlanCard";
 import type { CanvasTurnStatus } from "@/lib/otto-canvas-turn";
@@ -178,10 +184,17 @@ function CanvasConfirmRow({
         </div>
         <strong className="shrink-0 text-sm tabular-nums text-foreground">{creditsLabel(credits)}</strong>
       </div>
-      {referenceNote ? (
-        <p className="mt-2 truncate rounded-[var(--radius)] bg-muted px-2 py-1.5 text-xs text-muted-foreground">
-          {referenceNote}
-        </p>
+      {/* Codex QA-CRE-FE9-013 —— 参考回执逐项列出:人物那一句在前,媒体参考(缩略图 + 真实
+          名字 + 来源画布)在后。与抽屉里那张卡共用同一个组件,两处不可能说出两件事。
+          (缺回执的卡走不到这里 —— `gate.approvable` 在上面就把整块按钮位收掉了。) */}
+      {referenceNote || (p.mediaReferences?.length ?? 0) > 0 ? (
+        <div className="mt-2 rounded-[var(--radius)] bg-muted px-2 py-1.5">
+          <CardReferenceReceipt
+            approvedEntitiesNote={referenceNote}
+            mediaReferences={p.mediaReferences ?? []}
+            missing={gate.missingReferenceReceipts}
+          />
+        </div>
       ) : null}
       {error ? (
         <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>

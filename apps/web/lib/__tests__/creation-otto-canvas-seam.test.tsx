@@ -24,8 +24,10 @@ const {
   activeStepLabel,
   canvasProgressDetail,
   canvasTurnStatus,
+  canvasTurnText,
   currentTurnStartIndex,
   latestAssistantSayable,
+  latestTurnTerminal,
   STILL_WORKING_AFTER_SECONDS,
 } = await import("@/lib/otto-canvas-turn");
 const { STILL_WORKING_NOTE } = await import("@/lib/progress-format");
@@ -359,5 +361,207 @@ describe("CREATE-A1 · 新做好的视频显示首帧而不是黑砖（走查 P1
     expect(video).not.toBeNull();
     expect(video.getAttribute("src")).toBe("https://cdn.example/clip.mp4?sig=abc#t=0.001");
     expect(video.getAttribute("preload")).toBe("metadata");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Codex QA-CRE-004（2026-09-04 只读审计 §4.2）—— 当前轮只投影一个权威状态
+//
+// 审计原话：「current-turn 曾在后续 direct video 已成功后仍显示 That generation didn't go
+// through；最新强制刷新后显示 🖼 result，仍不是可理解的 done state。」期望：「current-turn
+// 只表达当前 Conversation 的一个明确阶段，成功状态可理解，批准一个 step 后进入下一个需要
+// 用户决定的 step。」下面每一条都钉在那句话上。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 一条持久消息在 useChat 列表里的样子（`threadToUiMessages` 给的那份形状）。 */
+const said = (text: string) =>
+  ({ role: "assistant", metadata: { kind: "TEXT" }, parts: [{ type: "text", text }] });
+const genCard = () =>
+  ({ role: "assistant", metadata: { kind: "GEN_CARD" }, parts: [{ type: "text", text: "📋 plan card" }] });
+const genResult = (payload: Record<string, unknown>) =>
+  ({ role: "assistant", metadata: { kind: "GEN_RESULT", payload }, parts: [{ type: "text", text: "🖼 result" }] });
+const turnError = (text: string, payload: Record<string, unknown> = {}) =>
+  ({ role: "assistant", metadata: { kind: "TURN_ERROR", payload }, parts: [{ type: "text", text }] });
+/** 商家自己开口说的那一句 —— 它就是「上一轮」与「这一轮」的分界。 */
+const asked = (text: string) =>
+  ({ role: "user", metadata: { kind: "TEXT" }, parts: [{ type: "text", text }] });
+
+/** 审计里屏幕上那句话，逐字。 */
+const FAILURE_LINE = "That generation didn't go through — you weren't charged for it.";
+
+describe("CREATE-A1 · 当前轮只投影一个权威状态（Codex QA-CRE-004）", () => {
+  it("CREATE-A1 · 失败之后再成功一次，卡上不再留着上一句失败", () => {
+    // 审计复现步骤 ①②：同一个画布先失败一次，再完成一次成功的直出视频。
+    const messages = [
+      genCard(),
+      turnError("That one didn't come through — you weren't charged."),
+      said(FAILURE_LINE),
+      genCard(),
+      genResult({ kind: "video", urls: ["https://cdn.example/clip.mp4"], costCredits: 11 }),
+    ];
+    const body = canvasTurnText(messages);
+    expect(body).not.toContain("didn't go through");
+    // 成功态说得出产物和收费 —— 两个数字都来自 GEN_RESULT payload 自己，不是这里算的。
+    expect(body).toBe("Made 1 video · 11 credits.");
+    const status = canvasTurnStatus({ ...baseStatus, terminal: latestTurnTerminal(messages) });
+    expect(status.phase).toBe("done");
+    expect(status.label).toBe("Done");
+  });
+
+  it("CREATE-A1 · 刷新之后同一份持久状态给同一张脸，不退化成 🖼 result 也不退化成空态", () => {
+    // 审计复现步骤 ③：强制刷新读的是 durable thread —— 与上一条同一个列表形状。
+    const messages = [
+      said(FAILURE_LINE),
+      genResult({ kind: "image", urls: ["https://cdn.example/a.png", "https://cdn.example/b.png"], costCredits: 2 }),
+    ];
+    const body = canvasTurnText(messages);
+    expect(body).toBe("Made 2 images · 2 credits.");
+    expect(body).not.toContain("🖼");
+    const el = render(
+      <OttoTurnCard
+        status={canvasTurnStatus({ ...baseStatus, terminal: latestTurnTerminal(messages) })}
+        text={body}
+        streaming={false}
+        confirmCards={[]}
+        onApproved={() => {}}
+        onChangeSomething={() => {}}
+      />,
+    );
+    expect(el.textContent).toContain("Made 2 images · 2 credits.");
+    expect(el.textContent).toContain("Done");
+    expect(el.textContent).not.toContain(CANVAS_TURN_EMPTY_TEXT);
+  });
+
+  it("CREATE-A1 · Otto 在终局之后解释过了，就说他的原话", () => {
+    // 「更新的那个赢」反过来也一样：失败之后 Otto 那句解释比 TURN_ERROR 新。
+    const messages = [genCard(), turnError("That one didn't come through."), said(FAILURE_LINE)];
+    expect(canvasTurnText(messages)).toBe(FAILURE_LINE);
+    const status = canvasTurnStatus({ ...baseStatus, terminal: latestTurnTerminal(messages) });
+    expect(status.phase).toBe("failed");
+    expect(status.label).toBe("Failed");
+  });
+
+  it("CREATE-A1 · 失败的终局说的是那条持久消息自己那句给商家读的话", () => {
+    const messages = [genCard(), turnError("I couldn't finish that one — and you weren't charged.")];
+    expect(canvasTurnText(messages)).toBe("I couldn't finish that one — and you weren't charged.");
+    expect(latestTurnTerminal(messages)?.outcome).toBe("failed");
+  });
+
+  it("CREATE-A1 · 商家自己按停的那一次不是失败", () => {
+    // #602 T3 与线程徽章同一条口径：cancel 走的是同一种 TURN_ERROR，但它不是坏消息。
+    const messages = [genCard(), turnError("You stopped that one.", { cancelled: true })];
+    expect(latestTurnTerminal(messages)?.outcome).toBe("cancelled");
+    expect(canvasTurnStatus({ ...baseStatus, terminal: latestTurnTerminal(messages) }).phase).toBe("ready");
+  });
+
+  it("CREATE-A1 · 上一轮的终局不挂在这一轮脸上", () => {
+    // 商家做完一次生成又开口说下一句：那一次成功不再是「此刻这一轮」的结论。
+    const messages = [
+      genCard(),
+      genResult({ kind: "video", urls: ["https://cdn.example/clip.mp4"], costCredits: 11 }),
+      { role: "user", metadata: { kind: "TEXT" }, parts: [{ type: "text", text: "make it 1080p" }] },
+    ];
+    expect(latestTurnTerminal(messages)).toBeNull();
+    expect(canvasTurnStatus({ ...baseStatus, terminal: latestTurnTerminal(messages) }).phase).toBe("ready");
+  });
+
+  it("CREATE-A1 · 有卡在跑、有卡等确认时终局让位 —— 五个状态互斥", () => {
+    const messages = [
+      genCard(),
+      genResult({ kind: "image", urls: ["https://cdn.example/a.png"], costCredits: 1 }),
+    ];
+    const terminal = latestTurnTerminal(messages);
+    expect(canvasTurnStatus({ ...baseStatus, terminal, workingCardCount: 1 }).phase).toBe("generating");
+    expect(canvasTurnStatus({ ...baseStatus, terminal, pendingConfirmCount: 1 }).phase).toBe("needs-confirmation");
+    expect(canvasTurnStatus({ ...baseStatus, terminal, isBusy: true }).phase).toBe("working");
+    expect(canvasTurnStatus({ ...baseStatus, terminal }).phase).toBe("done");
+  });
+
+  // ── 判官复核 P1-1（2026-09-04，PR #1173）─────────────────────────────────────
+  // 判官在真浏览器里录到：上面那句失败**换一条路又回来了**。这一轮没有终局时，正文从前直接
+  // 吐「整条对话最后一条 assistant TEXT」，于是商家失败之后开口说下一句，卡上照旧挂着上一轮
+  // 那句话。下面两条就是判官那两个纯函数探针的形状，逐字钉住。
+
+  it("CREATE-A1 · 失败之后商家开口说下一句，这一轮的确认位不挂上一轮那句失败（判官探针 A）", () => {
+    // 判官 PROBE-A：terminal=null，状态词 Needs confirmation，正文却是上一轮那句失败。
+    const messages = [
+      genCard(),
+      turnError("That one didn't come through — you weren't charged."),
+      said(FAILURE_LINE),
+      asked("actually, make it a pandan kaya jar photo"),
+      // 这一轮 Otto 只铸了一张卡，一个字没说。
+      genCard(),
+    ];
+    expect(latestTurnTerminal(messages)).toBeNull();
+    const body = canvasTurnText(messages);
+    expect(body).toBeNull();
+    const status = canvasTurnStatus({ ...baseStatus, pendingConfirmCount: 1 });
+    expect(status.label).toBe("Needs confirmation");
+    const el = render(
+      <OttoTurnCard
+        status={status}
+        text={body}
+        streaming={false}
+        confirmCards={[{ cardId: "c1", threadId: "t1", payload: plan(), pendingApproval: false }]}
+        onApproved={() => {}}
+        onChangeSomething={() => {}}
+      />,
+    );
+    // 屏幕上那句话没了 —— 全卡逐字搜。
+    expect(el.textContent).not.toContain("didn't go through");
+    expect(el.textContent).toContain(CANVAS_TURN_EMPTY_TEXT);
+  });
+
+  it("CREATE-A1 · 这一轮既没终局也没话说，卡面回空态而不是上一轮那句失败（判官探针 B）", () => {
+    // 判官 PROBE-B：terminal=null，绿灯 Ready 配着那句失败 —— 正是审计截图那张脸。
+    const messages = [
+      turnError("That one didn't come through — you weren't charged."),
+      said(FAILURE_LINE),
+      asked("let's try something else"),
+    ];
+    const body = canvasTurnText(messages);
+    expect(body).toBeNull();
+    const status = canvasTurnStatus({ ...baseStatus, terminal: latestTurnTerminal(messages) });
+    expect(status.phase).toBe("ready");
+    const el = render(
+      <OttoTurnCard
+        status={status}
+        text={body}
+        streaming={false}
+        confirmCards={[]}
+        onApproved={() => {}}
+        onChangeSomething={() => {}}
+      />,
+    );
+    expect(el.textContent).not.toContain("didn't go through");
+    expect(el.textContent).toContain(CANVAS_TURN_EMPTY_TEXT);
+    // 反面：Otto 这一轮一开口，说的就是他这一轮的原话 —— 修的是「按轮切」，不是把正文清空。
+    expect(canvasTurnText([...messages, said("Sure — a jam jar it is.")])).toBe("Sure — a jam jar it is.");
+  });
+
+  it("CREATE-A1 · 批准一步之后，下一张确认卡还在这张卡上等商家决定", () => {
+    // 审计复现步骤 ④：两步 image → video 计划，批准图片之后 video 确认位必须还在。
+    // 批过的那张进了 working（`deriveCardState`），没批的那张仍是 idle —— 判据同一个。
+    const el = render(
+      <OttoTurnCard
+        status={canvasTurnStatus({ ...baseStatus, workingCardCount: 1, pendingConfirmCount: 1 })}
+        text="Approved the image — the video is next."
+        streaming={false}
+        confirmCards={[
+          {
+            cardId: "c2",
+            threadId: "t1",
+            payload: plan({ kind: "video", estimatedCredits: 11, specChips: ["16:9", "5s", "720p"] }),
+            pendingApproval: false,
+          },
+        ]}
+        onApproved={() => {}}
+        onChangeSomething={() => {}}
+      />,
+    );
+    const rows = el.querySelectorAll('[aria-label="Generation confirmation"]');
+    expect(rows.length).toBe(1);
+    expect(rows[0].textContent).toContain("1 video");
+    expect(rows[0].textContent).toContain("11 credits");
   });
 });

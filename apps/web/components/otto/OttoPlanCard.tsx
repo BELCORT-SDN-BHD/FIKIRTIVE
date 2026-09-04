@@ -16,6 +16,8 @@ import type { CardState } from "@/lib/otto-inject-helpers";
 // The ONE contract layer: runtime parse + the ONE price-guarantee predicate. The render
 // gate and approve() both read this — they cannot disagree any more (#580 复审 r2 P1-1).
 import { guaranteedCredits, planCardGate, type OttoPlanCardPayload } from "./plan-card-contract";
+// Codex QA-CRE-FE9-013 —— 参考回执那一块。两张确认卡共用这一份,抄成两份必有一份先烂。
+import { CardReferenceReceipt } from "./CardReferenceReceipt";
 // #774 判官 r2 P1 —— 卡上那行「引擎会被告知这些照片是谁」的措辞,与真正送出去的名字
 // 共用同一个纯函数(同一把长度尺),所以卡说的不可能比做的多。走**子路径**而不是包根:
 // `@fikirtive/core` 的桶文件带出 `node:crypto`(hash.ts),那会被拖进客户端包。
@@ -350,11 +352,14 @@ export function OttoPlanCard({
             就是付费提示词里那几个字:名字冻结在这张卡上,批准之后谁也改不动它,worker
             只认这一份(改名不会偷偷换掉已经批准的指令)。老卡没有这份快照 → 不显示这行,
             而不是猜一个。 */}
-        {referenceNamesNote && (
-          <div className="mt-[9px] text-[0.75rem] text-muted-foreground">
-            {referenceNamesNote}
-          </div>
-        )}
+        {/* Codex QA-CRE-FE9-013 —— 人物那一行下面,是媒体参考的逐项回执(缩略图、真实名字、
+            来源画布)。从前这里只有人物,商家从 Library 挑的那张产品图在卡上一个字都没有。
+            回执缺一件时这一块自己说出来缺哪一件,而 Generate 由 gate.approvable 关掉。 */}
+        <CardReferenceReceipt
+          approvedEntitiesNote={referenceNamesNote}
+          mediaReferences={p.mediaReferences ?? []}
+          missing={gate.missingReferenceReceipts}
+        />
 
         {/* A payload that carried malformed fields is disclosed, not quietly patched —
             and, since r2 P1-2, not approvable either (see the button block below). */}

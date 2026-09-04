@@ -55,6 +55,7 @@ import {
   buildContextSystemMessage,
   finalizeOttoRun,
   validateOttoTurnReferences,
+  unavailableReferenceMessage,
 } from "@/lib/otto-actions";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
@@ -161,6 +162,14 @@ export async function POST(req: NextRequest): Promise<Response> {
         referenceVideoGenerationId,
         referenceVideoGenerationIds,
       });
+      // Codex QA-CRE-FE9-013 —— **静默丢弃到此为止**。挂上来的引用有一件取不到,这一轮就
+      // 整轮不发:不建对话、不落 USER 消息、不开 SSE、不进 Otto、不铸卡、不预扣。它是一个
+      // 普通的 JSON 400(在流打开之前),所以 composer 拿到的是一句可读的错误而不是半开的流,
+      // 草稿与那几个附件都留在原地。上一版把取不到的滤成空数组继续跑,于是 Otto 按「没有产品
+      // 参考」的前提铸卡、商家为一张不含指定产品的素材付了钱。
+      if (refs.unavailable.length > 0) {
+        return Response.json({ error: unavailableReferenceMessage(refs.unavailable) }, { status: 400 });
+      }
 
       // Resolve thread: new vs existing-owned-and-in-project
       isNew = !parsed.data.threadId;
@@ -232,6 +241,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         threadId,
         sourceGenerationIds: refs.sourceGenerationIds,
         referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
+        mediaReferences: refs.mediaReferences,
         turnText: text,
         simpleMode: parsed.data.simple,
       });
