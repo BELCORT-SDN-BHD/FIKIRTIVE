@@ -8,8 +8,8 @@ import {
 } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import {
-  buildProposeCard, buildSpecChips, EXECUTED_SPEC, ImageAspectUnavailableError, ProposeRefusal,
-  VideoTierUnavailableError,
+  buildProposeCard, buildSpecChips, EXECUTED_SPEC, ImageAspectMismatchError,
+  ImageAspectUnavailableError, ProposeRefusal, VideoTierUnavailableError,
 } from "./propose.helpers.js";
 import { imageAspectHonoured, VIDEO_START_FRAME_CHIP } from "@fikirtive/core";
 // executePropose (DB-side) still imported from propose.ts
@@ -1885,5 +1885,249 @@ describe("CREATE-A1 两步任务的 Step 1 卡", () => {
         [XINYI],
       ),
     ).toThrow(ProposeRefusal);
+  });
+
+  // ── Codex 全 beta 审计 P0-002 ────────────────────────────────────────────
+  //
+  // 现场:商家按下 `Generate · 14 credits` 启动那条片子之后,Otto 又问「A) 现在这支
+  // B) 更稳的两步先出首帧」。那是一个**站在付费卡旁边**的选择题 —— 商家答哪一边都
+  // 已经付过钱了。
+  //
+  // 这道题本来就不该存在:两步接力落地之后,「先出图再出片」不是两个方案,而是**同一个
+  // 方案**,一次 `propose`(`forVideo` + `videoPrompt`)就铸完,第二张卡自己会出现。
+  // 下面这条钉的就是这个结构事实;Otto 那句自由文本由 instructions 的硬规矩管
+  // (`instructions.test.ts` 的 CREATE-A2 一条),两者一起构成这条验收。
+  it("CREATE-A2 两步计划的卡只为**第一步**报价:第二步的预估另占一格,不并进批准价", () => {
+    // 判官 2026-09-04 P2-3:上一版这条叫「只铸一张卡、两步已冻在卡上」,却一条都没断言
+    // 那件事 —— `buildProposeCard` 按构造只返回一张卡,而 `videoStep.next` 的深等与上面
+    // 「冻结了第二步的整份规格」逐字重复。改成钉它真正量到的东西:**批准价的口径**。
+    //
+    // 这一条也是 P0-002「按下 Generate 之后不再给选择题」的结构那一半:两步的钱分两次
+    // 各自确认,所以「现在这支 / 更稳的两步」根本不是一道要商家回答的题 —— 他批准的这张
+    // 卡只会扣第一步的钱,第二步的价另行呈上。
+    const { cardPayload } = buildProposeCard(step1Input, scenarioCtx(), [XINYI]);
+    const firstStepOnly = displayCredits(
+      pricedGenCredits({ kind: "IMAGE", model: cardPayload.model, count: 1, videoOptions: null }),
+    );
+    expect(cardPayload.estimatedCredits).toBe(firstStepOnly);
+    // 第二步的预估是**另一格**,而不是加进上面那个数里。
+    const videoEst = cardPayload.videoStep?.estimatedCredits;
+    expect(typeof videoEst).toBe("number");
+    expect(videoEst).toBeGreaterThan(0);
+    expect(cardPayload.estimatedCredits).not.toBe(firstStepOnly + (videoEst ?? 0));
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// 画幅的第二个证人:商家这一轮自己打出来的那句话
+// (Codex 全 beta 审计 P0-001;规格 docs/specs/creation-engine.md §5 2026-09-04)
+//
+// 上一版的画幅闸只有一个证人,而那个证人是**模型的转述**(`desiredAspect`)。商家两次
+// 说 4:5,模型按当时的说明书「挑最接近的一格」换成 4:3 —— 4:3 在菜单上,闸永远走不到,
+// 商家拿到的是一张写着 `2304 × 1728 · 4:3`、`Generate` 按得下去的付费卡,而 Otto 嘴上
+// 还在说 4:5。转述过一次的东西不能自己给自己作证。
+//
+// 这一族刻意**不依赖说明书**:每一条都直接喂 `desiredAspect` + `ctx.turnText`,所以把
+// instructions.ts 改回「pick the closest」也一条都不会变绿 —— 闸不靠说明书站着。
+// ---------------------------------------------------------------------------
+describe("CREATE-A1 画幅:商家原话是第二个证人", () => {
+  const imageInput = (desiredAspect?: string, extra?: Record<string, unknown>) => ({
+    kind: "image" as const,
+    structuredPrompt: "a pandan kaya jar on a marble counter",
+    entityIds: [] as string[],
+    variantSel: {} as Record<string, string>,
+    ...(desiredAspect ? { desiredAspect } : {}),
+    ...extra,
+  });
+
+  it("CREATE-A1 模型把 4:5 换成菜单内的 4:3 ⇒ 商家原话照样拦住,一张卡都不铸", () => {
+    // 审计现场逐字:商家要 4:5,卡上是 `2304 × 1728 · 4:3`(=GEN_IMAGE_SIZES["4:3"])。
+    expect(() =>
+      buildProposeCard(
+        imageInput("4:3"),
+        makeCtx({ turnText: "boleh buat poster 4:5 untuk IG?" }),
+        [],
+      ),
+    ).toThrow(ImageAspectUnavailableError);
+  });
+
+  it("CREATE-A1 拒绝句说的是**商家的**那个形状(4:5),不是模型换过的那一格", () => {
+    try {
+      buildProposeCard(imageInput("4:3"), makeCtx({ turnText: "buat 4:5 ya" }), []);
+      throw new Error("模型换档之后仍然必须被拒绝");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ImageAspectUnavailableError);
+      const message = (e as Error).message;
+      expect(message).toContain("4:5");
+      // 「我能做」那半句列的是这台引擎真做得到的最接近几格。
+      expect(message).toContain("3:4");
+      expect(message).toContain("2:3");
+      // 模型偷换的那一格不许被当成商家点的形状复述回去。
+      expect(message.startsWith("4:3")).toBe(false);
+      // 商家可见字符串里一个型号名都不许有(S1 九问4)。
+      expect(message).toBe(redactProviderNames(message));
+    }
+  });
+
+  it("CREATE-A1 模型干脆漏传形状、卡落到默认方图 ⇒ 商家说的 4:5 同样拦得住", () => {
+    // 这一条盖住另一半病:卡上没有 `desiredAspect` 时,证人①根本不发言。
+    expect(() =>
+      buildProposeCard(imageInput(), makeCtx({ turnText: "I want it 4:5 please" }), []),
+    ).toThrow(ImageAspectUnavailableError);
+  });
+
+  it("CREATE-A1 拒绝走 ProposeRefusal 家族 ⇒ 抛在报价与预扣之前,GEN_CARD 一行都不落库", () => {
+    // `buildProposeCard` 是纯函数,落库在它**之后**(propose.ts 的 chatMessage.create),
+    // 所以「抛出去」与「零 GEN_CARD」是同一件事。
+    expect(() =>
+      buildProposeCard(imageInput("4:3"), makeCtx({ turnText: "4:5 please" }), []),
+    ).toThrow(ProposeRefusal);
+  });
+
+  it("CREATE-A1 商家原话与卡上那一格一致 ⇒ 照铸,人话写法也不许被误伤", () => {
+    // 商家打的是 9:16,模型转述成人话 portrait —— 归一之后是同一格,不是分歧。
+    const { cardPayload } = buildProposeCard(
+      imageInput("portrait"),
+      makeCtx({ turnText: "nak 9:16 untuk story" }),
+      [],
+    );
+    expect(cardPayload.params.aspectRatio).toBe("9:16");
+    expect(cardPayload.downgraded).toBe(false);
+  });
+
+  it("CREATE-A1 一句话里两个不同比例 ⇒ 没有意见,不拿关键词去推翻模型", () => {
+    // 模型看得见整段对话,这里只看得见这一句。含糊 ⇒ 闭嘴,照旧交给模型那一格。
+    const { cardPayload } = buildProposeCard(
+      imageInput("1:1"),
+      makeCtx({ turnText: "4:5 or 1:1, which one is better?" }),
+      [],
+    );
+    expect(cardPayload.params.aspectRatio).toBe("1:1");
+  });
+
+  it("CREATE-A1 零信号(没提比例)⇒ 一切照旧,不因为多了一个证人就拒绝", () => {
+    const { cardPayload } = buildProposeCard(
+      imageInput("4:3"),
+      makeCtx({ turnText: "buatkan gambar balang kaya atas meja marble" }),
+      [],
+    );
+    expect(cardPayload.params.aspectRatio).toBe("4:3");
+  });
+
+  it("CREATE-A1 没有 turnText(别的入口 / 两步接力)⇒ 没有第二个证人,行为一格不动", () => {
+    const { cardPayload } = buildProposeCard(imageInput("4:3"), makeCtx(), []);
+    expect(cardPayload.params.aspectRatio).toBe("4:3");
+  });
+
+  it("CREATE-A1 数字得**长得像形状**才算数:这几种时间写法不当比例读", () => {
+    // 窄化不读语义,只看数字:两边都 ≤ 菜单上最大的那个数(21)、比例落在 1:4 ~ 4:1、
+    // 右边不许带前导零。`11:05` 靠最后那一条挡下 —— 上一版不但没挡,还会把它回述成
+    // 「11:5」(判官 2026-09-04 P2-1)。
+    for (const text of [
+      "hantar pukul 3:30 petang",   // 30 > 21
+      "meeting at 12:30",           // 30 > 21
+      "post it 10:45 pagi",         // 10/45 = 0.222 < 1:4
+      "call me at 11:05",           // 前导零 = 时间写法
+      "schedule 4:05 pm",           // 同上(而 4:5 是真形状,两者只差那个零)
+    ]) {
+      const { cardPayload } = buildProposeCard(imageInput("1:1"), makeCtx({ turnText: text }), []);
+      expect(cardPayload.params.aspectRatio, text).toBe("1:1");
+    }
+  });
+
+  it("CREATE-A1 **误伤面照实钉住**:分钟 01–21 不带前导零的时间仍会被读成形状", () => {
+    // 判官 2026-09-04 P2-1 实跑出来的两个反例。不假装挡住了 —— 门槛是菜单最大项(21),
+    // 想再收窄得改菜单。代价方向是单向的:这道闸只会让卡**不铸**($0 一句反问),
+    // 永远不会让卡多收一分。这条测试的作用是让这个已知缺口有名有姓,改门槛时当场变红。
+    for (const text of ["let's talk at 9:15", "boleh call 10:15?"]) {
+      expect(() => buildProposeCard(imageInput("1:1"), makeCtx({ turnText: text }), []), text)
+        .toThrow(ProposeRefusal);
+    }
+  });
+
+  it("CREATE-A1 商家点的是**菜单内**的 9:16、模型漏传 ⇒ 说事实差异,绝不说「做不到 9:16」", () => {
+    // 判官 2026-09-04 P1-1 的主路径。上一版无条件走 `mintableImageAspects`,而 9:16 到
+    // 自己的距离是 0、排第一,于是拒绝句成了「9:16 isn't a shape I can make here — the
+    // closest I can do are 9:16, 2:3, 3:4」:对旗舰竖版格式的假能力声明,还自相矛盾。
+    try {
+      buildProposeCard(imageInput(), makeCtx({ turnText: "nak 9:16 untuk story" }), []);
+      throw new Error("卡落成 1:1 而商家点的是 9:16,必须停下来");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ImageAspectMismatchError);
+      expect(e).toBeInstanceOf(ProposeRefusal); // 入口照旧接得住,零 GEN_CARD
+      const message = (e as Error).message;
+      // 这台引擎做得到的格子,一个字都不许被说成做不到。
+      expect(message).not.toContain("isn't a shape");
+      expect(message).not.toContain("closest I can do");
+      // 说的是事实差异:他要哪一格、这一趟本来会做成哪一格、什么都还没铸。
+      expect(message).toContain("9:16");
+      expect(message).toContain("1:1");
+      expect(message).toContain("put nothing up");
+      expect(message).toBe(redactProviderNames(message));
+    }
+  });
+
+  it("CREATE-A1 模型把 9:16 换成 4:3(两格都在菜单上)⇒ 同样说事实差异,不说做不到", () => {
+    expect(() =>
+      buildProposeCard(imageInput("4:3"), makeCtx({ turnText: "please make it 9:16" }), []),
+    ).toThrow(ImageAspectMismatchError);
+  });
+
+  it("CREATE-A1 菜单**外**的 4:5 照旧走「做不到 + 最接近几格」那一句,两句不混用", () => {
+    try {
+      buildProposeCard(imageInput("4:3"), makeCtx({ turnText: "buat 4:5 ya" }), []);
+      throw new Error("4:5 必须被拒绝");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ImageAspectUnavailableError);
+      expect(e).not.toBeInstanceOf(ImageAspectMismatchError);
+      expect((e as Error).message).toContain("isn't a shape I can make here");
+    }
+  });
+
+  it("CREATE-A1 拒绝句回述的是商家**原文**的写法,不是我们重排过的一份", () => {
+    // 判官 P2-1:上一版用 `${w}:${h}` 重建,`9 : 16` 会被回述成 `9:16`、`11:05` 成 `11:5`。
+    try {
+      buildProposeCard(imageInput(), makeCtx({ turnText: "boleh 9 : 16 tak?" }), []);
+      throw new Error("必须停下来");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ImageAspectMismatchError);
+      expect((e as ImageAspectMismatchError).wanted).toBe("9 : 16");
+    }
+  });
+
+  it("CREATE-A1 走通那一格时:卡面的话、卡上的规格、付费请求体是**同一份** payload", () => {
+    // 审计验收句的后半段 —— 选 3:4 之后,比例/尺寸/数量/参考/报价全部出自同一张卡。
+    const { cardPayload } = buildProposeCard(
+      imageInput("3:4", { count: 2, entityIds: [OWNED_ENTITY_1.id] }),
+      makeCtx({ turnText: "3:4 please, dua keping" }),
+      [OWNED_ENTITY_1],
+    );
+    const size = EXECUTED_SPEC.image.outputSizes["3:4"];
+    // 「话」:卡面那几格逐字来自 params。
+    expect(cardPayload.specChips).toEqual([`${size.width} × ${size.height}`, "3:4", "2 images"]);
+    expect(cardPayload.params.aspectRatio).toBe("3:4");
+    expect(cardPayload.params.count).toBe(2);
+    // 参考:批准前看得见的身份快照,与 entityIds 同一份。
+    expect(cardPayload.approvedEntities).toEqual([OWNED_ENTITY_1]);
+    expect(cardPayload.entityIds).toEqual([OWNED_ENTITY_1.id]);
+    // 报价:按同一份 params 的张数算,不是另算一次。
+    expect(cardPayload.estimatedCredits).toBe(
+      displayCredits(pricedGenCredits({ kind: "IMAGE", model: cardPayload.model, count: 2, videoOptions: null })),
+    );
+    // 「卡」:付费请求体从同一张卡派生,比例逐字相同。
+    const built = buildGenRequestFromCard({
+      cardPayload,
+      projectId: "proj-test",
+      threadId: "thread-test",
+      cardId: "card_1",
+      entityIds: cardPayload.entityIds,
+      variantSel: {},
+    });
+    expect(built.ok).toBe(true);
+    expect((built as { ok: true; req: Record<string, unknown> }).req.aspectRatio).toBe("3:4");
+    // 走通了就不是降级 —— 没有一句「You asked for … this will be …」。
+    expect(cardPayload.downgraded).toBe(false);
+    expect(cardPayload.downgradeNote).toBeUndefined();
   });
 });

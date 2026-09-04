@@ -56,5 +56,5 @@ export default async function proxy(req: NextRequest) {
 // prefix belongs inside the wall like every other product surface. The pages keep their own
 // requireOwner() gates — the wall is the outer of two locks, not the only one.
 export const config = {
-  matcher: ["/((?!login/?$|signup/?$|forgot-password/?$|reset-password/?$|verify-email/?$|schedule/share-preview/?$|terms/?$|privacy(?:/.*)?$|legal(?:/.*)?$|api/better-auth(?:/.*)?$|api/stripe(?:/.*)?$|api/health/?$|api/ops/dlq/?$|api/ready/?$|api/meta/data-deletion/?$|api/media/pub(?:/.*)?$|_next/static(?:/.*)?$|_next/image(?:/.*)?$|favicon\\.ico/?$).*)"],
+  matcher: ["/((?!login/?$|signup/?$|forgot-password/?$|reset-password/?$|verify-email/?$|schedule/share-preview/?$|terms/?$|privacy(?:/.*)?$|legal(?:/.*)?$|api/better-auth(?:/.*)?$|api/stripe(?:/.*)?$|api/health/?$|api/ops/dlq/?$|api/ready/?$|api/build-info/?$|api/meta/data-deletion/?$|api/media/pub(?:/.*)?$|_next/static(?:/.*)?$|_next/image(?:/.*)?$|favicon\\.ico/?$).*)"],
 };
