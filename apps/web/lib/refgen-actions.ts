@@ -15,14 +15,15 @@ import {
   isModelDisabled,
   displayCredits,
   pricedRefgenCredits,
+  merchantGenFailureCopy,
   type RefGenJobData,
 } from "@fikirtive/core";
+import { entityCapabilities, OFFICIAL_CATALOG_REFUSAL } from "@fikirtive/core/entity-policy";
 import { runAsUser } from "@fikirtive/db/principal";
 import { getBoss } from "./queue";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
-import { sanitizeUserError } from "./provider-secrecy";
 import { outOfCreditsMessage, spendCapBlockedMessage } from "./credit-format";
 
 // a job stuck QUEUED/GENERATING past the queue's expiry is treated as abandoned
@@ -185,6 +186,11 @@ export async function setBaseAsset(entityId: string, assetId: string): Promise<{
   return runAsUser(principal, async (): Promise<{ ok: true } | { error: string }> => {
     const { ownerId } = gate;
     const OWNED = { ownerId, deletedAt: null } as const;
+    // 官方目录只读(Founder 2026-08-30):定锚图就是这位演员的身份本身,换它 = 改 identity。
+    // 判据回数据库现读 catalogKey —— DTO 上那两格是客户端能编的,守卫不信它。
+    const owner = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED }, select: { catalogKey: true } });
+    if (!owner) return { error: "Element not found." };
+    if (!entityCapabilities(owner).mutateBase) return { error: OFFICIAL_CATALOG_REFUSAL };
     const ref = await prisma.referenceImage.findFirst({
       where: { entityId, assetId, ...OWNED, variantId: null },
       select: { id: true },
@@ -401,8 +407,11 @@ export async function createVariant(entityId: string, name: string, prompt: stri
     if (!cleanPrompt) return { error: "Describe the variant." };
     if (cleanPrompt.length > 2000) return { error: "That description is too long." };
 
-    const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED }, select: { id: true, baseAssetId: true } });
+    const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED }, select: { id: true, baseAssetId: true, catalogKey: true } });
     if (!entity) return { error: "Element not found." };
+    // 官方目录只读 —— **在任何 reserve / RefGenJob 之前**:这条路下面就是 dispatchVariantJob,
+    // 那里第一件事就是建单 + 同事务 reserve。拒绝发生在这里,所以 ledger 零新增行、余额不动。
+    if (!entityCapabilities(entity).createVariant) return { error: OFFICIAL_CATALOG_REFUSAL };
     if (!entity.baseAssetId) return { error: "Set a base identity first — variants are generated from it." };
     const base = await prisma.asset.findFirst({ where: { id: entity.baseAssetId, ownerId, deletedAt: null }, select: { id: true } });
     if (!base) return { error: "The base image is missing — set a new base before generating variants." };
@@ -484,9 +493,11 @@ export async function regenerateVariant(variantId: string): Promise<{ jobId: str
     const OWNED = { ownerId, deletedAt: null } as const;
     const variant = await prisma.entityVariant.findFirst({
       where: { id: variantId, ...OWNED },
-      select: { id: true, entityId: true, prompt: true, entity: { select: { baseAssetId: true } } },
+      select: { id: true, entityId: true, prompt: true, entity: { select: { baseAssetId: true, catalogKey: true } } },
     });
     if (!variant) return { error: "Variant not found." };
+    // 官方目录只读 —— 同样在 dispatchVariantJob(建单 + reserve)之前。
+    if (!entityCapabilities(variant.entity).regenerateVariant) return { error: OFFICIAL_CATALOG_REFUSAL };
     if (!variant.entity.baseAssetId) return { error: "The base image is missing — set a new base before regenerating." };
     const dispatched = await dispatchVariantJob(ownerId, variant.entityId, variantId, variant.prompt);
     if ("error" in dispatched) return dispatched;
@@ -504,8 +515,13 @@ export async function renameVariant(variantId: string, name: string): Promise<{ 
     const OWNED = { ownerId, deletedAt: null } as const;
     const cleanName = name.trim();
     if (!cleanName) return { error: "Give the variant a name." };
-    const exists = await prisma.entityVariant.findFirst({ where: { id: variantId, ...OWNED }, select: { id: true } });
+    const exists = await prisma.entityVariant.findFirst({
+      where: { id: variantId, ...OWNED },
+      select: { id: true, entity: { select: { catalogKey: true } } },
+    });
     if (!exists) return { error: "Variant not found." };
+    // 官方目录只读。
+    if (!entityCapabilities(exists.entity).renameVariant) return { error: OFFICIAL_CATALOG_REFUSAL };
     const done = await withUniqueHandle(cleanName, async (handle) => {
       const { count } = await prisma.entityVariant.updateMany({ where: { id: variantId, ...OWNED }, data: { name: cleanName, handle } });
       if (count === 0) throw new Error("gone");
@@ -548,8 +564,13 @@ export async function deleteVariant(variantId: string): Promise<{ ok: true } | {
   return runAsUser(principal, async (): Promise<{ ok: true } | { error: string }> => {
     const { ownerId } = gate;
     const OWNED = { ownerId, deletedAt: null } as const;
-    const variant = await prisma.entityVariant.findFirst({ where: { id: variantId, ...OWNED }, select: { id: true, entityId: true } });
+    const variant = await prisma.entityVariant.findFirst({
+      where: { id: variantId, ...OWNED },
+      select: { id: true, entityId: true, entity: { select: { catalogKey: true } } },
+    });
     if (!variant) return { error: "Variant not found." };
+    // 官方目录只读 —— 在认领(tombstone)那个事务之前,所以官方演员这一路一行都不写。
+    if (!entityCapabilities(variant.entity).deleteVariant) return { error: OFFICIAL_CATALOG_REFUSAL };
     const now = new Date();
     let claimed: boolean;
     try {
@@ -603,7 +624,12 @@ export async function getRefGenJobs(entityId: string, variantId?: string | null)
       // ids against the images already on screen answers it exactly (see lib/variant-progress).
       // Owner-scoped read, and the same ids the element's own reference images already carry.
       outputAssetIds: j.outputAssetIds,
-      error: sanitizeUserError(j.error),
+      // Codex QA-CRE-007 — same rule as apps/web/lib/data.ts's AdJobItem: never the raw
+      // RefGenJob.error ops string (it used to reach ElementVariantsDialog's "problem" line
+      // verbatim, e.g. "conditioning refs unreachable (0/2 signable) — refusing to spend on a
+      // degraded generation"). Honest mapped copy when the failure is one of ours, "" otherwise
+      // — the dialog's own fallback sentence covers the unmapped/not-failed case.
+      error: j.status === "FAILED" ? merchantGenFailureCopy(j.error) : "",
       createdAt: j.createdAt.toISOString(),
     }));
   });

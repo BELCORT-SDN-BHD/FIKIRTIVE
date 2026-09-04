@@ -35,7 +35,8 @@
  * moves the unreachable control. So the journey ends by typing into the Otto composer and reading
  * the value back: the tools are pressable AND Otto still takes a keystroke, or this is red.
  *
- * TWO VIEWPORTS, because the overlap is a layout fact and layout facts are width-dependent.
+ * THREE VIEWPORTS, because the overlap is a layout fact and layout facts are width-dependent —
+ * and the sweep runs twice at each of them, with Otto's conversation history collapsed and open.
  */
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { seedWorkspace } from "../support/seed.js";
@@ -56,9 +57,18 @@ const TOOL_GROUPS = [
   { group: "Canvas zoom", role: "toolbar", names: ["Zoom out", "Fit to screen", "Zoom in"] },
 ] as const;
 
+/**
+ * 1100 is here because it is where the left column and the creation band nearly touch. The
+ * approved pattern keeps Otto's status card, its conversation dock and the dock's history list all
+ * at `w-[280px]` at `left-4`, and starts the creation band at `left-[300px]`; production's history
+ * list was `w-[380px]`, which reaches 396px and therefore lay across the board's own tool column on
+ * any window narrow enough for the band to matter. Narrow viewport, history OPEN, is the only shape
+ * in which that overlap exists.
+ */
 const VIEWPORTS = [
   { width: 1440, height: 900 },
   { width: 1280, height: 800 },
+  { width: 1100, height: 800 },
 ] as const;
 
 /**
@@ -139,10 +149,10 @@ test("FRONT-A14 — a merchant can press every canvas tool while Otto's composer
   // the two steps): Home → Create → describe → Start.
   await page.getByRole("link", { name: "Create something new" }).click();
   await expect(page).toHaveURL(/\/create$/);
-  const brief = page.getByRole("textbox", { name: "Describe what you want to create" });
+  const brief = page.getByRole("textbox", { name: "Otto creation prompt" });
   await waitUntilInteractive(brief);
   await brief.fill("A poster for our weekend kopi set");
-  const start = page.getByRole("button", { name: "Start a Canvas with Otto" });
+  const start = page.getByRole("button", { name: "Send prompt" });
   await expect(start).toBeEnabled();
   await start.click();
   await expect(page).toHaveURL(/\/create\/canvas\?project=/);
@@ -182,7 +192,38 @@ test("FRONT-A14 — a merchant can press every canvas tool while Otto's composer
       }
     }
 
-    // ② The two tools a merchant loses the most by not reaching, pressed for real.
+    // ② …and they are still reachable with the conversation history OPEN, which is the state the
+    //    280px alignment is about. The open list is the tallest, widest thing in the left column;
+    //    at 380px wide it crossed `left: 300px` and covered the board's own tool column, so the
+    //    same two questions are asked again with it on screen rather than only with it collapsed.
+    // Anchor the name deliberately: the dock header's toggle reads "Conversation <n>", and the
+    // anchor keeps this from matching any future control whose name merely contains the word.
+    // (Until QA-CRE-FE9-005 the header also carried a "New conversation" icon button, which a
+    //  plain substring match hit as well; the canvas no longer offers one.)
+    const historyToggle = page.getByRole("button", { name: /^Conversation\b/ });
+    await expect(historyToggle, `the conversation dock is missing at ${where}`).toBeVisible();
+    await historyToggle.click();
+    await expect(historyToggle).toHaveAttribute("aria-expanded", "true");
+    for (const { group, role, names } of TOOL_GROUPS) {
+      const cluster = canvasGroup(page, group, role);
+      for (const name of names) {
+        const control = cluster.getByRole("button", { name, exact: true }).first();
+        await expect
+          .poll(() => whatCovers(control), {
+            message: `at ${where}, with the conversation history open, a click on "${name}" lands somewhere else`,
+          })
+          .toBeNull();
+        await expect
+          .poll(() => whatPaintsOver(control), {
+            message: `at ${where}, with the conversation history open, "${name}" is painted over`,
+          })
+          .toBeNull();
+      }
+    }
+    await historyToggle.click();
+    await expect(historyToggle).toHaveAttribute("aria-expanded", "false");
+
+    // ③ The two tools a merchant loses the most by not reaching, pressed for real.
     const generate = tools.getByRole("button", { name: "Generate image", exact: true });
     await generate.click();
     // The prompt bar itself, not a role: its input is a TipTap contenteditable whose placeholder
@@ -200,7 +241,7 @@ test("FRONT-A14 — a merchant can press every canvas tool while Otto's composer
     await page.keyboard.press("Escape");
     await expect(videoDialog).toBeHidden();
 
-    // ③ …and moving the tools out from under Otto did not bury Otto instead.
+    // ④ …and moving the tools out from under Otto did not bury Otto instead.
     await ottoComposer.click();
     await ottoComposer.fill("");
     await ottoComposer.press("k");

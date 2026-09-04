@@ -47,6 +47,7 @@ import {
   type StuffItem,
   filterStuffItems,
 } from "@/lib/stuff-items";
+import { conciseAssetTitle } from "@/lib/library-item-a11y";
 
 /** What a search that found nothing actually means (#701).
  *
@@ -97,6 +98,18 @@ function Thumb({ item }: { item: StuffItem }) {
   }
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={item.url} alt={item.label} className="h-full w-full object-cover" />;
+}
+
+/**
+ * Codex staging audit, 2026-09-04, **LIB-STG-P2-005**: this grid's `aria-label`s were the raw
+ * `item.label` — for a generation, that is the full prompt, sometimes 100+ words, read aloud on
+ * every Tab stop and unusable as a voice-control target. Shared truncation lives in
+ * `lib/library-item-a11y.ts` (also used by the Canvas composer's `CanvasLibraryPicker`, §7.3
+ * single source). Falls back to the raw label on the empty edge case, though `buildStuffItems`
+ * (lib/stuff-items.ts) never actually produces one.
+ */
+function conciseItemTitle(item: StuffItem): string {
+  return conciseAssetTitle(item.label) || item.label;
 }
 
 function itemTypeLabel(item: StuffItem): string {
@@ -223,7 +236,8 @@ export function StuffLibrary({
                 key={item.id}
                 type="button"
                 variant="ghost"
-                aria-label={`Choose ${item.label}`}
+                title={item.label}
+                aria-label={`Choose ${conciseItemTitle(item)}`}
                 disabled={pickPending}
                 onClick={() => item.assetId && onPick?.(item.assetId)}
                 className="group relative h-auto w-full flex-col items-stretch justify-start gap-0 overflow-hidden rounded-[var(--radius-card)] border border-border bg-card p-0 text-left shadow-none hover:border-foreground/25 hover:bg-card hover:text-foreground"
@@ -251,7 +265,11 @@ export function StuffLibrary({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-card p-2 shadow-[var(--shadow-xs)] lg:flex-row lg:items-center lg:justify-between">
-        <div className="w-full overflow-x-auto pb-0.5 lg:w-auto">
+        {/* `min-w-0` 是这里的关键(走查 P1-8):`lg:w-auto` 之后这只盒子按内容量宽,而 flex
+            子项的默认 `min-width: auto` 不许它缩到内容以下 —— 于是右侧被压掉,`overflow-x-auto`
+            永远不生效,最后一颗筛选片("Ads")被裁掉半个词。Otto 面板停靠时少掉 360px 正是
+            这个宽度,商家因此点不到那一格。允许它缩,滚动条才接得上手。 */}
+        <div className="w-full min-w-0 overflow-x-auto pb-0.5 lg:w-auto">
           <ToggleGroup
             type="single"
             value={filter}
@@ -369,11 +387,18 @@ export function StuffLibrary({
               // merchant's "click the thing to see it" habit works on both.
               const canOpenEntityTile = isEntity && !!onOpenEntity;
               const canOpen = canOpenGeneration || canOpenEntityTile;
+              // 官方目录只读(Founder 2026-08-30)。能力表由 EntityDTO 经 buildStuffItems 带到
+              // 这里,这一层不重新判断来源。全关的那几格**不画**(不是画成禁用的假控件),
+              // 三格都关时连「⋯」触发器都不出现。「Set as product image」不在其中:那是把
+              // 一张图链给商家自己的产品记录,属于 Founder 裁决里的 use,不改这位演员的身份。
+              const entityCaps = item.entityCapabilities;
+              const canRenameEntity = isEntity && !!onRename && entityCaps?.editIdentity !== false;
+              const canChangeTypeEntity =
+                isEntity && !!item.entityType && !!onChangeType && entityCaps?.editIdentity !== false;
+              const canDeleteEntity = isEntity && !!onDelete && entityCaps?.deleteEntity !== false;
               const hasPrimaryActions =
-                (canSetProduct && !!onSetProductImage) ||
-                (isEntity &&
-                  (!!onRename || (!!item.entityType && !!onChangeType)));
-              const hasActions = hasPrimaryActions || (isEntity && !!onDelete);
+                (canSetProduct && !!onSetProductImage) || canRenameEntity || canChangeTypeEntity;
+              const hasActions = hasPrimaryActions || canDeleteEntity;
               const openItem = () => {
                 if (canOpenGeneration) {
                   onOpenGeneration?.(item.generationId!, item.projectId!);
@@ -391,7 +416,8 @@ export function StuffLibrary({
                       <Button
                         type="button"
                         variant="ghost"
-                        aria-label={`Open ${item.label}`}
+                        title={item.label}
+                        aria-label={`Open ${conciseItemTitle(item)}`}
                         onClick={openItem}
                         className="absolute inset-0 h-full w-full rounded-none border-0 bg-transparent p-0 text-left hover:bg-transparent"
                       >
@@ -416,7 +442,8 @@ export function StuffLibrary({
                             size="icon-xs"
                             variant="secondary"
                             className="absolute right-2.5 top-2.5 bg-card/90 backdrop-blur-sm"
-                            aria-label={`Actions for ${item.label}`}
+                            title={item.label}
+                            aria-label={`Actions for ${conciseItemTitle(item)}`}
                           >
                             <MoreHorizontal aria-hidden />
                           </Button>
@@ -434,7 +461,7 @@ export function StuffLibrary({
                                   Set as product image
                                 </DropdownMenuItem>
                               )}
-                              {isEntity && onRename && (
+                              {canRenameEntity && (
                                 <DropdownMenuItem
                                   onSelect={() => {
                                     setRenameTarget(item);
@@ -444,7 +471,7 @@ export function StuffLibrary({
                                   Rename
                                 </DropdownMenuItem>
                               )}
-                              {isEntity && item.entityType && onChangeType && (
+                              {canChangeTypeEntity && (
                                 <DropdownMenuItem
                                   onSelect={() => {
                                     setTypeTarget(item);
@@ -456,7 +483,7 @@ export function StuffLibrary({
                               )}
                             </DropdownMenuGroup>
                           )}
-                          {isEntity && onDelete && (
+                          {canDeleteEntity && (
                             <>
                               {hasPrimaryActions && <DropdownMenuSeparator />}
                               <DropdownMenuGroup>

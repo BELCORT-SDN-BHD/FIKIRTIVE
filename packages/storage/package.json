@@ -12,7 +12,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "echo 'covered by app-level smokes'"
+    "test": "vitest run"
   },
   "dependencies": {
     "@fikirtive/core": "workspace:*",
@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^22",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
   }
 }
