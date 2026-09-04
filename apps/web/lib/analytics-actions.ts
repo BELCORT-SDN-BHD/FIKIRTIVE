@@ -16,6 +16,12 @@ export type AnalyticsData =
       chart: { linePath: string; areaPath: string; points: ChartPoint[] } | null;
       insight: { text: string; prefill: string } | null;
       empty: boolean;
+      /** Whether this Meta login exposes ANY ad account at all (`me/adaccounts` non-empty).
+       *  Separate from `empty`: a login with no ad accounts and a login whose accounts simply
+       *  did not run anything both report nothing, and only the second one is fixed by widening
+       *  the period. Readers that tell a merchant what to do next must be able to tell them
+       *  apart — Home does (see lib/home-marketing-health.ts). */
+      hasAdAccounts: boolean;
     };
 
 // Chart geometry matches the ui_kit viewBox (Task 4 renders into an 820×180 <svg>).
@@ -73,6 +79,6 @@ export async function getAnalytics(raw: unknown): Promise<AnalyticsData> {
     const insight = buildInsightText(series);
     const empty = series.length === 0 && accounts.every((a) => metricsAllNull(a.metrics));
 
-    return { state: "ready", range, kpis, chart, insight, empty };
+    return { state: "ready", range, kpis, chart, insight, empty, hasAdAccounts: accounts.length > 0 };
   });
 }

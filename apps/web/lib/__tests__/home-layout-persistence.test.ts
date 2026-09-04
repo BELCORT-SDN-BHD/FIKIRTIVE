@@ -261,6 +261,25 @@ describe("FRONT-A3:两个租户的 Home 各看各的", () => {
  * `home-marketing-health.test.ts` 的 FRONT-A3 一组。
  */
 describe("FRONT-A3:一家店的连接状态来自它自己那一行,别家的连接进不来", () => {
+  // B 家的连接行在这里建,不在某一条用例里建 —— 下面第三条断言的是「B 连了 Meta,A 不受
+  // 影响」,而一条要靠**上一条**跑过才成立的测试,单跑就是红的(判官 2026-09-05 P2-2)。
+  //
+  // 密钥轮换过、或密文被改过的真实形状:行还在,但 accessTokenEnc 解不出来。`decryptToken`
+  // 在拿密钥之前就对畸形密文抛错,所以这组测试不打 Meta,也不需要 TOKEN_ENCRYPTION_KEY。
+  beforeAll(async () => {
+    await prisma.metaConnection.upsert({
+      where: { ownerId: orgB },
+      update: { accessTokenEnc: "this-is-not-a-valid-ciphertext" },
+      create: {
+        id: `mc_${randomUUID()}`,
+        ownerId: orgB,
+        metaUserId: `meta_${randomUUID()}`,
+        accessTokenEnc: "this-is-not-a-valid-ciphertext",
+        scope: "ads_read",
+      },
+    });
+  });
+
   it("FRONT-A3:库里没有这家店的 Meta 连接 → 未连接态,一个数都不编", async () => {
     asUser(A_EMAIL);
     expect(await prisma.metaConnection.findUnique({ where: { ownerId: orgA } })).toBeNull();
@@ -275,17 +294,6 @@ describe("FRONT-A3:一家店的连接状态来自它自己那一行,别家的连
   });
 
   it("FRONT-A3:连接行在、token 解不开 → 需重连态,不是「没连过」", async () => {
-    // 密钥轮换过、或密文被改过的真实形状:行还在,但 accessTokenEnc 解不出来。
-    await prisma.metaConnection.create({
-      data: {
-        id: `mc_${randomUUID()}`,
-        ownerId: orgB,
-        metaUserId: `meta_${randomUUID()}`,
-        accessTokenEnc: "this-is-not-a-valid-ciphertext",
-        scope: "ads_read",
-      },
-    });
-
     asUser(B_EMAIL);
     const analytics = await getAnalytics({ range: "30d" });
     expect(analytics).toEqual({ state: "needsReconnect" });
@@ -297,8 +305,9 @@ describe("FRONT-A3:一家店的连接状态来自它自己那一行,别家的连
   });
 
   it("FRONT-A3:B 连了 Meta,A 的 Home 一个字都不变 —— 连接是这家店自己的", async () => {
-    // 上一条给 B 建了连接行。A 那边必须一如既往地是「未连接」。
+    // B 的连接行由这一组的 beforeAll 建,所以这一条单跑也成立。
     expect(await prisma.metaConnection.findUnique({ where: { ownerId: orgB } })).not.toBeNull();
+    expect(await prisma.metaConnection.findUnique({ where: { ownerId: orgA } })).toBeNull();
 
     asUser(A_EMAIL);
     expect(await getAnalytics({ range: "30d" })).toEqual({ state: "notConnected" });

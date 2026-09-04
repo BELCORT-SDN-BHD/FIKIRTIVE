@@ -33,6 +33,7 @@ const readyAnalytics = {
   },
   insight: { text: "Reach increased during this period.", prefill: "Explain the reach increase." },
   empty: false,
+  hasAdAccounts: true,
 } satisfies AnalyticsData;
 
 describe("production Home marketing-health read model", () => {
@@ -84,7 +85,13 @@ describe("production Home marketing-health read model", () => {
     expect(marketingHealthFromAnalytics({ state: "transientError" }, "online-sales", "30-days")).toMatchObject({
       state: "unavailable",
     });
-    expect(marketingHealthFromAnalytics({ ...readyAnalytics, empty: true }, "online-sales", "30-days")).toMatchObject({
+    expect(
+      marketingHealthFromAnalytics(
+        { ...readyAnalytics, empty: true, hasAdAccounts: true },
+        "online-sales",
+        "30-days",
+      ),
+    ).toMatchObject({
       state: "insufficient",
     });
   });
@@ -142,7 +149,45 @@ describe("FRONT-A3:Home 连接五态,每一态都由服务器说了算", () => {
       goal: "online-sales",
       retryable: true,
     });
-    expect(marketingHealthFromAnalytics({ ...readyAnalytics, empty: true }, "online-sales", "30-days")).toEqual({
+    expect(
+      marketingHealthFromAnalytics(
+        { ...readyAnalytics, empty: true, hasAdAccounts: true },
+        "online-sales",
+        "30-days",
+      ),
+    ).toEqual({
+      state: "insufficient",
+      goal: "online-sales",
+      source: { id: "meta-ads", label: "Meta ads" },
+    });
+  });
+
+  it("FRONT-A3:Meta 连上了但名下没有广告账号 —— 说的是「接一个投广告的账号」,不是「换 90 天」", () => {
+    // 只为发帖连了 Instagram／Facebook 的商家:`me/adaccounts` 回空,所以 series 空、
+    // 账号汇总也空 —— 旧口径下它和「有账号但没投放」长得一模一样,于是被一路引去换期间,
+    // 而换到 90 天照样什么都没有(判官 2026-09-05 P1-1)。
+    const noAdAccounts = marketingHealthFromAnalytics(
+      { ...readyAnalytics, kpis: [], chart: null, insight: null, empty: true, hasAdAccounts: false },
+      "online-sales",
+      "30-days",
+    );
+    expect(noAdAccounts).toEqual({
+      state: "not-configured",
+      goal: "online-sales",
+      action: "connect-ad-account",
+    });
+    // 而且它不是 insufficient —— 两者的下一步不一样,不能合成一句。
+    expect(noAdAccounts.state).not.toBe("insufficient");
+  });
+
+  it("FRONT-A3:有广告账号、只是这段期间没投放 —— 才轮到「换个更宽的期间」", () => {
+    expect(
+      marketingHealthFromAnalytics(
+        { ...readyAnalytics, empty: true, hasAdAccounts: true },
+        "online-sales",
+        "30-days",
+      ),
+    ).toEqual({
       state: "insufficient",
       goal: "online-sales",
       source: { id: "meta-ads", label: "Meta ads" },
@@ -191,7 +236,8 @@ describe("FRONT-A3:Home 连接五态,每一态都由服务器说了算", () => {
       { state: "notConnected" },
       { state: "needsReconnect" },
       { state: "transientError" },
-      { ...readyAnalytics, empty: true },
+      { ...readyAnalytics, empty: true, hasAdAccounts: true },
+      { ...readyAnalytics, empty: true, hasAdAccounts: false },
       readyAnalytics,
       { ...readyAnalytics, chart: null, insight: null },
       { ...readyAnalytics, kpis: [] },

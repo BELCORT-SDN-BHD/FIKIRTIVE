@@ -262,6 +262,17 @@ describe("FRONT-A3:Meta 单源版面的五态与它们各自的真动作", () =>
     expect(markup).not.toContain("Connect marketing data to see your health");
   });
 
+  it("FRONT-A3:连上了但名下没有广告账号 —— 界面上说的也是接账号,不是换期间", () => {
+    const markup = render({ state: "not-configured", goal: "online-sales", action: "connect-ad-account" });
+    expect(markup).toContain("This Meta login has no ad accounts yet");
+    expect(markup).toContain("connect a Meta account that runs ads");
+    expect(markup).toContain('href="/settings/connections"');
+    // 决不能把这些商家引去换期间 —— 他们换到 90 天照样什么都没有(判官 2026-09-05 P1-1)。
+    expect(markup).not.toContain("Use last 90 days");
+    expect(markup).not.toContain("range=90-days");
+    expect(markup).not.toContain("Not enough evidence yet");
+  });
+
   it("FRONT-A3:读不出来 —— 与「真的没有数据」分开说,重试不动筛选", () => {
     const markup = render({ state: "unavailable", goal: "online-sales", retryable: true });
     expect(markup).toContain("Marketing data is temporarily unavailable");
@@ -278,9 +289,12 @@ describe("FRONT-A3:Meta 单源版面的五态与它们各自的真动作", () =>
       source: { id: "meta-ads", label: "Meta ads" },
     });
     expect(markup).toContain("Not enough evidence yet");
-    expect(markup).toContain("reported no ad delivery in this period");
+    expect(markup).toContain("your ad accounts reported no delivery in this period");
+    expect(markup).toContain("Nothing has run yet");
     expect(markup).toContain("Use last 90 days");
     expect(markup).toContain("range=90-days");
+    // 这一态已经排除了「压根没有广告账号」,所以不该说那句话。
+    expect(markup).not.toContain("This Meta login has no ad accounts yet");
   });
 
   it("FRONT-A3:partial —— 真数据 + 数到哪一天 + 「只包含 Meta 广告」一句", () => {

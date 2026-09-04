@@ -70,7 +70,21 @@ export type MarketingHealthReadModel =
     })
   | (MarketingHealthBase & {
       state: "not-configured";
-      action: "connect" | "reconnect";
+      /**
+       * 三种「这里还没有可用的连接」,各自要商家做的事不同:
+       *   connect          —— 一条 Meta 连接都没有,去连。
+       *   reconnect        —— 连接还在,但授权坏了,去重新授权。
+       *   connect-ad-account —— 连上了,可这个 Meta 登录名下**一个广告账号都没有**
+       *                       (`me/adaccounts` 回空)。只为发帖连了 Instagram／Facebook 的
+       *                       商家就是这一种,而 Home 看的是广告表现。这一态过去混在
+       *                       `insufficient` 里,把这些商家一路引去「换 90 天」——一个
+       *                       他们换到底也救不了的动作(判官 2026-09-05 P1-1)。
+       *
+       * 三种都归 `not-configured`:规格 §3 给它的定义就是「没有适合当前 goal 的连接;
+       * 显示连接入口,不显示样板数字」,而这三种都正是这句话。读模型的状态仍是冻结的
+       * 那五个,不多不少。
+       */
+      action: "connect" | "reconnect" | "connect-ad-account";
     })
   | (MarketingHealthBase & {
       state: "insufficient";
@@ -166,11 +180,12 @@ export function analyticsRangeForHomeRange(range: HomeRange): RangeKey {
  * Meta 的一次读 → Home 的五态之一。整个产品对「这一刻商家的营销健康是什么状态」只有这一个答案。
  *
  * 五态与它们各自的真实动作(界面在 `components/home/MarketingHomeView.tsx`):
- *   未连接      `not-configured` / connect   → Connections 连 Instagram 或 Facebook(同一条 Meta 连接)
- *   需重连      `not-configured` / reconnect → 同一扇门重新授权(token 解不开或 Meta 退回 OAuth 错误)
- *   读不出来    `unavailable`                → 原样重试,不改筛选(与「真的没有数据」分开说)
- *   连上但没数  `insufficient`               → 换 90 天,或去 Connections 看是不是投放本身没跑
- *   partial     `partial`                    → 真数据 + 数到哪天 + 「只包含 Meta 广告」一句
+ *   未连接      `not-configured` / connect            → Connections 连 Instagram 或 Facebook(同一条 Meta 连接)
+ *   需重连      `not-configured` / reconnect          → 同一扇门重新授权(token 解不开或 Meta 退回 OAuth 错误)
+ *   没广告账号  `not-configured` / connect-ad-account → 连上了但这个登录名下没有广告账号,去接一个投广告的
+ *   读不出来    `unavailable`                         → 原样重试,不改筛选(与「真的没有数据」分开说)
+ *   连上但没数  `insufficient`                        → 换 90 天(这一态**已经**排除了「压根没有广告账号」)
+ *   partial     `partial`                             → 真数据 + 数到哪天 + 「只包含 Meta 广告」一句
  *
  * 没有第六态,也不会有 `ready`(见 {@link MarketingHealthReadModel} 开头)。
  */
@@ -187,6 +202,11 @@ export function marketingHealthFromAnalytics(
     case "transientError":
       return { state: "unavailable", goal, retryable: true };
     case "ready":
+      // 顺序是有话说的:先问「有没有广告账号」,再问「有没有投放」。反过来问,没有广告账号的
+      // 商家会拿到「换 90 天」——一个换到底也变不出数据的建议(判官 2026-09-05 P1-1)。
+      if (!analytics.hasAdAccounts) {
+        return { state: "not-configured", goal, action: "connect-ad-account" };
+      }
       if (analytics.empty) {
         return { state: "insufficient", goal, source: META_ADS_SOURCE };
       }
