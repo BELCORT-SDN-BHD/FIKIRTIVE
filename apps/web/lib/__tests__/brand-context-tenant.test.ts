@@ -41,6 +41,8 @@ const {
   getBrandContextText, updateMemory, deleteMemory, restoreMemory,
 } = await import("@/lib/memory-actions");
 const { loadBrandSections } = await import("@/lib/brand-context-data");
+const { repackBrandContent } = await import("@/lib/brand-context-format");
+const { brandOriginLabelForSource } = await import("@fikirtive/core");
 const { listBrandRevisionsAction } = await import("@/lib/brand-revision-actions");
 
 function asUser(email: string) { mockAuth.mockResolvedValue({ user: { email } }); }
@@ -101,7 +103,9 @@ describe("FRONT-A8 商家在 Brand 五个分区写记录:刷新仍在、显示�
   it("FRONT-A8 每条都带「谁改的、何时改的」,而不是只带一个 user/otto", async () => {
     const sections = await loadBrandSections(orgA);
     const entry = sections.find((s) => s.key === "brand-voice")!.entries.find((e) => e.id === aReadyId)!;
-    expect(entry.updatedByLabel).toBe(A_EMAIL);
+    // 判官 P2-6:这个 fixture 用户没填过显示名,标签因此是中性词 —— 不是邮箱。
+    expect(entry.updatedByLabel).toBe("a teammate");
+    expect(entry.updatedByLabel).not.toContain("@");
     expect(entry.updatedAt).toBeInstanceOf(Date);
     expect(entry.origin).toBe("text");
   });
@@ -110,7 +114,8 @@ describe("FRONT-A8 商家在 Brand 五个分区写记录:刷新仍在、显示�
     asUser(A_EMAIL);
     const history = await listBrandRevisionsAction({ kind: "memory", id: aReadyId });
     expect(history.map((r) => r.action)).toContain("confirmed");
-    expect(history.every((r) => r.changedByLabel === A_EMAIL)).toBe(true);
+    expect(history.every((r) => r.changedByLabel === "a teammate")).toBe(true);
+    expect(history.every((r) => !r.changedByLabel.includes("@"))).toBe(true);
   });
 
   it("FRONT-A8 编辑、删除、恢复:恢复之后内容完整", async () => {
@@ -129,6 +134,96 @@ describe("FRONT-A8 商家在 Brand 五个分区写记录:刷新仍在、显示�
     const back = voice.entries.find((e) => e.id === aReadyId)!;
     expect(back.name).toBe("A voice");
     expect(back.content).toBe("A speaks warmly and slowly.");
+  });
+});
+
+describe("FRONT-A8 / FRONT-A9 判官落修:存量行、Otto 写的行、重复确认", () => {
+  it("FRONT-A9 编辑一条没有名字的存量记录,不会把分区名写进 Otto 读到的正文", async () => {
+    // 判官 P1-2。存量 Memory 行从来没有名字,界面显示的「Brand voice」是分区标签兜的底;
+    // 回写时若把它一起打包,Otto 下一次读到的就是「About the brand: Brand voice …」——
+    // 一个界面占位词变成了商家品牌事实的一部分。
+    asUser(A_EMAIL);
+    const legacyId = `mem_${randomUUID()}`;
+    await prisma.memory.create({
+      data: {
+        id: legacyId, ownerId: orgA, brandId: null,
+        category: "about", content: "Legacy note with no name.",
+        source: "user", pinned: false,
+      },
+    });
+
+    const before = await getBrandContextText();
+    expect(before).toContain("Legacy note with no name.");
+    expect(before).not.toContain("Brand voice");
+
+    const sections = await loadBrandSections(orgA);
+    const legacy = sections.find((s) => s.key === "brand-voice")!.entries.find((e) => e.id === legacyId)!;
+    // 界面上看得到一个名字,但那个名字是兜底来的 —— `named` 就是这件事的记录。
+    expect(legacy.name).toBe("Brand voice");
+    expect(legacy.named).toBe(false);
+
+    // 走生产那条决定路径(界面调的就是这个函数),不是在测试里另写一遍。
+    const next = "Legacy note, now edited.";
+    expect(await updateMemory({ id: legacyId, content: repackBrandContent(legacy, next) })).toEqual({ ok: true });
+
+    const after = await getBrandContextText();
+    expect(after).toContain("Legacy note, now edited.");
+    expect(after).not.toContain("Brand voice");
+    // 与编辑前**只差正文**这一处。
+    expect(after).toBe(before.replace("Legacy note with no name.", "Legacy note, now edited."));
+
+    await prisma.memory.deleteMany({ where: { id: legacyId, ownerId: orgA } });
+  });
+
+  it("FRONT-A8 Otto 自己记下的一条:作者写 Otto,来路不谎报「Written here」", async () => {
+    // 判官 P1-3。Otto 的写路径(packages/otto 的 remember-brand-fact / _brand-record)
+    // 只写 source='otto',不写 updatedById,也不写 origin。
+    asUser(A_EMAIL);
+    const ottoId = `mem_${randomUUID()}`;
+    await prisma.memory.create({
+      data: {
+        id: ottoId, ownerId: orgA, brandId: null,
+        category: "about", content: "Otto learned this from the conversation.",
+        source: "otto", pinned: false,
+      },
+    });
+
+    const sections = await loadBrandSections(orgA);
+    const row = sections.find((s) => s.key === "brand-voice")!.entries.find((e) => e.id === ottoId)!;
+    expect(row.updatedByLabel).toBe("Otto");
+    expect(row.source).toBe("otto");
+    expect(brandOriginLabelForSource(row.origin, row.source)).toBe("Saved by Otto");
+
+    await prisma.memory.deleteMany({ where: { id: ottoId, ownerId: orgA } });
+  });
+
+  it("FRONT-A8 重复确认之后,改动史里 confirmed 仍然只有一行", async () => {
+    // 判官 P2-5:少了 where 上的 contextStatus:"Draft",每一次重发都会 bump updatedAt,
+    // 而幂等键含 updatedAt —— 一次保存于是被讲成三次。
+    asUser(A_EMAIL);
+    const draft = await saveBrandDraft({
+      section: "style-guide", name: "A rules", content: "A never says cheap.", origin: "text", originDetail: "Pasted text",
+    });
+    if ("error" in draft) throw new Error(draft.error);
+
+    expect(await confirmBrandDraft({ id: draft.id })).toEqual({ ok: true });
+    expect(await confirmBrandDraft({ id: draft.id })).toEqual({ ok: true });
+    expect(await confirmBrandDraft({ id: draft.id })).toEqual({ ok: true });
+
+    const history = await listBrandRevisionsAction({ kind: "memory", id: draft.id });
+    expect(history.filter((r) => r.action === "confirmed")).toHaveLength(1);
+  });
+
+  it("FRONT-A8 放弃草稿也留下一行改动史", async () => {
+    // 判官 P2-3。
+    asUser(A_EMAIL);
+    const draft = await saveBrandDraft({
+      section: "audiences", name: "A crowd", content: "A serves office workers.", origin: "text", originDetail: "Pasted text",
+    });
+    if ("error" in draft) throw new Error(draft.error);
+    expect(await discardBrandDraft({ id: draft.id })).toEqual({ ok: true });
+    const history = await listBrandRevisionsAction({ kind: "memory", id: draft.id });
+    expect(history.map((r) => r.action)).toContain("discarded");
   });
 });
 

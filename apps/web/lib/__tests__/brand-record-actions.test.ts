@@ -77,8 +77,9 @@ describe("delete / restore", () => {
     expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenCalledWith({
       where: { id: "r1", ownerId: "o1" },
-      // FRONT-A8:删除/恢复也是一次「谁动的」,所以同一笔写盖上作者。
-      data: { deletedAt: expect.any(Date), updatedById: null },
+      // FRONT-A8:删除/恢复也是一次「谁动的」。判官 P2-4:认得出人才写 —— 这一份的
+      // fixture 查不到 User 行(userId 为 null),写进去等于把这一行已知的作者抹掉。
+      data: { deletedAt: expect.any(Date) },
     });
   });
   it("soft-delete is safe to repeat after an uncertain response", async () => {
@@ -87,8 +88,9 @@ describe("delete / restore", () => {
     expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenNthCalledWith(2, {
       where: { id: "r1", ownerId: "o1" },
-      // FRONT-A8:删除/恢复也是一次「谁动的」,所以同一笔写盖上作者。
-      data: { deletedAt: expect.any(Date), updatedById: null },
+      // FRONT-A8:删除/恢复也是一次「谁动的」。判官 P2-4:认得出人才写 —— 这一份的
+      // fixture 查不到 User 行(userId 为 null),写进去等于把这一行已知的作者抹掉。
+      data: { deletedAt: expect.any(Date) },
     });
   });
   it("restore clears deletedAt", async () => {
@@ -96,7 +98,9 @@ describe("delete / restore", () => {
     expect(await restoreBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenCalledWith({
       where: { id: "r1", ownerId: "o1" },
-      data: { deletedAt: null, updatedById: null },
+      // FRONT-A8:删除/恢复也是一次「谁动的」。判官 P2-4:认得出人才写 —— 这一份的
+      // fixture 查不到 User 行(userId 为 null),写进去等于把这一行已知的作者抹掉。
+      data: { deletedAt: null },
     });
   });
 });

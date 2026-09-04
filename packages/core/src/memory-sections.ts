@@ -162,3 +162,25 @@ const ORIGIN_LABEL: Record<BrandContextOrigin, string> = {
 export function brandOriginLabel(origin: string): string {
   return isBrandContextOrigin(origin) ? ORIGIN_LABEL[origin] : ORIGIN_LABEL.manual;
 }
+
+/** Otto 自己写下的一行，来路标签不能说「Written here」。 */
+const OTTO_ORIGIN_LABEL = "Saved by Otto";
+
+/**
+ * 来路标签的单一权威（判官 P1-3）。
+ *
+ * `origin` 这一列是本轮才加的，默认 `manual`；Otto 的写路径
+ * （`packages/otto/src/skills/remember-brand-fact.ts`、`_brand-record.ts`）不写它，
+ * 只写 `source: "otto"`。于是光看 `origin` 会把 Otto 记下的每一条都标成
+ * 「Written here」——那是一句谎：商家没有在这一面写过它。两列一起读才答得出真话：
+ * `origin` 仍是 `manual`（没有人记下过真实来路）而 `source` 是 `otto` 时，
+ * 说的是「Saved by Otto」。商家真在这一面写的行 `source` 是 `user`，照旧。
+ */
+export function brandOriginLabelForSource(origin: string, source: string): string {
+  if (source === "otto" && !isBrandContextOrigin(origin)) return OTTO_ORIGIN_LABEL;
+  if (source === "otto" && origin === "manual") return OTTO_ORIGIN_LABEL;
+  return brandOriginLabel(origin);
+}
+
+/** 「谁改的」拿不到人时的兜底（判官 P1-3）。Otto 写的行不该显示成「不知道是谁」。 */
+export const OTTO_AUTHOR_LABEL = "Otto";

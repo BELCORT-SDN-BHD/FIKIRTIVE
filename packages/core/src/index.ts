@@ -123,6 +123,7 @@ export {
   isBrandSectionKey, brandSectionLabel, brandSectionAction,
   brandSectionForCategory, brandSectionForRecordKind,
   isBrandContextStatus, isBrandContextOrigin, brandOriginLabel,
+  brandOriginLabelForSource, OTTO_AUTHOR_LABEL,
 } from "./memory-sections.js";
 export type { BrandSectionKey, BrandContextStatus, BrandContextOrigin } from "./memory-sections.js";
 export { tavilySearch, braveSearch, searchWithFallback } from "./websearch.js";

@@ -11,11 +11,21 @@ import { newId } from "@fikirtive/core";
  * `deletedAt` ＋ restore,答得出「它还在不在」,答不出「它被改成什么样了」。
  *
  * 这个模块**不是** Server Action(没有 "use server"):它是给 `memory-actions.ts` 与
- * `brand-record-actions.ts` 两条真实写路径共用的内部件。人工 UI 与 Otto 走的是同一批
- * 动作函数,所以历史也只有这一处写法,不存在第二套。
+ * `brand-record-actions.ts` 两条真实写路径共用的内部件。
+ *
+ * 说清楚边界(判官 P1-3):**商家在这一面做的每一个动作**都走这两个模块,历史因此只有
+ * 这一处写法。但 Otto 有它自己的写路径 —— `packages/otto/src/skills/remember-brand-fact.ts`
+ * 与 `_brand-record.ts` 直接 `prisma.memory.create` / `brandRecord.create`,写 `source:"otto"`,
+ * 不经过这里(主干既有,本段没有改动它)。所以 Otto 写下的行没有 `updatedById`、也没有
+ * 改动史;读模型 `brand-context-data.ts` 靠 `source` 这一列把它们照实说成 Otto 写的,
+ * 而不是说成「不知道是谁」。要让 Otto 的写也留下历史,得改 packages/otto 的写路径 ——
+ * 那不在本段写集里。
  */
 
 export type BrandActor = { userId: string | null; label: string };
+
+/** 显示名缺失时的中性说法(判官 P2-6)。英文 sentence case,与这一面其他文案同口径。 */
+export const ANONYMOUS_ACTOR_LABEL = "a teammate";
 
 /** 把一次已经通过闸的会话变成「谁」。拿不到 User 行时留空 id、用邮箱当标签 —— 编一个
  *  id 比留空更糟:历史行会指向一个不存在的人。 */
@@ -26,11 +36,26 @@ export async function resolveActor(email: string): Promise<BrandActor> {
   const user = await prisma.user
     .findUnique({ where: { email }, select: { id: true, name: true } })
     .catch(() => null);
-  const label = user?.name?.trim() || email;
+  // 判官 P2-6:显示名缺不能拿邮箱顶上 —— 改动史与「Updated by …」都是给同工作区其他人
+  // 看的,一条私人邮箱不该因为某人没填过名字就出现在别人的屏幕上。中性词说的是真话
+  // (我们知道是工作区里的人,不知道他叫什么),而且不泄露任何东西。
+  const label = user?.name?.trim() || ANONYMOUS_ACTOR_LABEL;
   return { userId: user?.id ?? null, label };
 }
 
-export type BrandRevisionAction = "created" | "updated" | "deleted" | "restored" | "confirmed";
+/**
+ * 「谁改的」只在**认得出人**的时候才写(判官 P2-4)。
+ *
+ * `resolveActor` 查不到 User 行时 `userId` 是 null。把 null 写进 `updatedById`,
+ * 等于用一次删除或恢复把这一行已知的作者抹掉 —— 商家看到的会从「Updated by Nadia」
+ * 退回成「we don't have a record of who」。认不出人时就什么都不写。
+ */
+export function actorStamp(actor: BrandActor): { updatedById?: string } {
+  return actor.userId ? { updatedById: actor.userId } : {};
+}
+
+export type BrandRevisionAction =
+  | "created" | "updated" | "deleted" | "restored" | "confirmed" | "discarded";
 
 /**
  * 追加一行改动史。**尽力而为**:历史写失败绝不把商家已经成功的保存变成失败
@@ -111,5 +136,6 @@ export async function labelsForUserIds(ids: readonly string[]): Promise<Map<stri
   const users = await prisma.user
     .findMany({ where: { id: { in: unique } }, select: { id: true, name: true, email: true } })
     .catch(() => []);
-  return new Map(users.map((u) => [u.id, u.name?.trim() || u.email || "Someone in your workspace"]));
+  // 同 `resolveActor`(判官 P2-6):没有显示名就用中性词,不把邮箱摆到别人面前。
+  return new Map(users.map((u) => [u.id, u.name?.trim() || ANONYMOUS_ACTOR_LABEL]));
 }

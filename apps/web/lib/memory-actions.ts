@@ -6,7 +6,7 @@ import {
   isBrandSectionKey, isBrandContextOrigin,
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
-import { resolveActor, recordBrandRevision, stampOf } from "./brand-revision";
+import { resolveActor, recordBrandRevision, stampOf, actorStamp } from "./brand-revision";
 import { packBrandContent } from "./brand-context-format";
 
 export type MemoryRow = {
@@ -23,6 +23,7 @@ export type MemoryRow = {
  *  一条 where 条件,而不是一句约定:任何忘了带它的读路径会读到草稿,带上了就不可能读到。
  *  (规格 docs/specs/frontend-baseline.md §7.3④。) */
 const READY_ONLY = { contextStatus: "Ready" } as const;
+
 
 /** Client-callable list: resolves the owner from the session (the client never
  *  passes an ownerId). Used by the Memory screen to refetch after a mutation. */
@@ -117,7 +118,9 @@ export async function deleteMemory(raw: unknown): Promise<{ ok: true } | { error
     const { count } = await prisma.memory.updateMany({
       // Match an already-deleted row too: retrying an uncertain request must stay successful.
       where: { id: r.id, ownerId: gate.ownerId },
-      data: { deletedAt: new Date(), updatedById: actor.userId },
+      // 判官 P2-4:`actor.userId` 查不到 User 行时是 null,无条件写会把这一行已知的作者
+      // **抹掉**。删除这件事不该让「谁写的」变成「不知道是谁」——认得出人才改这一列。
+      data: { deletedAt: new Date(), ...actorStamp(actor) },
     });
     if (!count) return { error: "Memory not found." };
   } catch { return { error: "Couldn't delete — please try again." }; }
@@ -138,7 +141,8 @@ export async function restoreMemory(raw: unknown): Promise<{ ok: true } | { erro
   try {
     const { count } = await prisma.memory.updateMany({
       where: { id: r.id, ownerId: gate.ownerId },
-      data: { deletedAt: null, updatedById: actor.userId },
+      // 判官 P2-4:同上 —— 恢复不该顺手把已知作者抹掉。
+      data: { deletedAt: null, ...actorStamp(actor) },
     });
     if (!count) return { error: "Memory not found." };
   } catch { return { error: "Couldn't restore — please try again." }; }
@@ -407,19 +411,33 @@ export async function confirmBrandDraft(
   if (typeof r?.id !== "string") return { error: "Invalid request." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const actor = await resolveActor(gate.email);
+  let confirmed = false;
   try {
+    // 判官 P2-5:where 必须带 `contextStatus: "Draft"`。少了它,一条已经是 Ready 的行
+    // 每被确认一次就 bump 一次 `updatedAt`,并且因为幂等键含 updatedAt,改动史里会多出
+    // 一行又一行「Saved this context for Otto.」—— 一次保存被讲成三次。
     const { count } = await prisma.memory.updateMany({
-      // 已经确认过的行也算命中:同一个确认被重发一次,结果仍然是「已保存」,而不是一句错误。
-      where: { id: r.id, ownerId: gate.ownerId, deletedAt: null },
-      data: { contextStatus: "Ready", updatedById: actor.userId },
+      where: { id: r.id, ownerId: gate.ownerId, deletedAt: null, contextStatus: "Draft" },
+      data: { contextStatus: "Ready", ...actorStamp(actor) },
     });
-    if (!count) return { error: "That draft is no longer here." };
+    confirmed = count > 0;
+    if (!confirmed) {
+      // 命中 0 行有两种可能:①这一行已经是 Ready —— 重发的确认,结果仍然是「已保存」,
+      // 不是错误,也不该再写一行历史;②它真的不在了。
+      const already = await prisma.memory.findFirst({
+        where: { id: r.id, ownerId: gate.ownerId, deletedAt: null, ...READY_ONLY },
+        select: { id: true },
+      });
+      if (!already) return { error: "That draft is no longer here." };
+    }
   } catch { return { error: "Couldn't save that — please try again." }; }
-  await recordBrandRevision({
-    ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "confirmed",
-    stamp: await stampOf(gate.ownerId, r.id, "memory"), actor,
-    summary: "Saved this context for Otto.",
-  });
+  if (confirmed) {
+    await recordBrandRevision({
+      ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "confirmed",
+      stamp: await stampOf(gate.ownerId, r.id, "memory"), actor,
+      summary: "Saved this context for Otto.",
+    });
+  }
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -431,13 +449,21 @@ export async function discardBrandDraft(
   const r = raw as { id?: unknown };
   if (typeof r?.id !== "string") return { error: "Invalid request." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const actor = await resolveActor(gate.email);
   try {
     const { count } = await prisma.memory.updateMany({
       where: { id: r.id, ownerId: gate.ownerId, contextStatus: "Draft" },
-      data: { deletedAt: new Date() },
+      data: { deletedAt: new Date(), ...actorStamp(actor) },
     });
     if (!count) return { error: "That draft is no longer here." };
   } catch { return { error: "Couldn't discard that — please try again." }; }
+  // 判官 P2-3:这是这一面**唯一**一个不写改动史的写动作。放弃草稿也是一次改动 ——
+  // 「这里本来有一条,是谁在什么时候丢掉的」跟其他四个动作一样该答得出。
+  await recordBrandRevision({
+    ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "discarded",
+    stamp: await stampOf(gate.ownerId, r.id, "memory"), actor,
+    summary: "Discarded this draft.",
+  });
   revalidatePath("/", "layout");
   return { ok: true };
 }

@@ -10,7 +10,7 @@ import { CheckCircle2, Eye, FileText, History, Plus, Sparkles, Trash2, Undo2 } f
 // Node-only 的东西,而这一份是 "use client"(围栏 lib/__tests__/client-core-imports.test.ts)。
 import {
   BRAND_SECTIONS,
-  brandOriginLabel,
+  brandOriginLabelForSource,
   brandSectionAction,
   brandSectionLabel,
   isBrandSectionKey,
@@ -52,7 +52,7 @@ import {
 } from "@/lib/memory-actions";
 import { deleteBrandRecord, restoreBrandRecord } from "@/lib/brand-record-actions";
 import { listBrandRevisionsAction } from "@/lib/brand-revision-actions";
-import { packBrandContent } from "@/lib/brand-context-format";
+import { repackBrandContent } from "@/lib/brand-context-format";
 import type { BrandContextEntry, BrandSectionView } from "@/lib/brand-context-data";
 import type { BrandRevisionRow } from "@/lib/brand-revision";
 
@@ -163,12 +163,15 @@ function ContextList({
               key={entry.id}
               variant="ghost"
               motion="instant"
-              aria-selected={selected}
+              // 判官 P2-1:这是一颗按钮,不是 listbox 的 option —— `aria-selected` 在
+              // role=button 上无效(读屏根本不念)。`aria-pressed` 才是「这一颗是当前
+              // 选中的那一颗」的正确说法,夹具的单选按钮列语义原样保留。
+              aria-pressed={selected}
               onClick={() => onSelect(entry.id)}
               className={cn(
                 "h-auto w-full items-start justify-start rounded-lg border border-transparent px-3 py-3.5 text-left font-normal",
                 !selected && "rounded-none border-b-border",
-                selected && "border-foreground/70 bg-card shadow-xs aria-selected:bg-card",
+                selected && "border-foreground/70 bg-card shadow-xs aria-pressed:bg-card",
               )}
             >
               <span className="min-w-0 flex-1">
@@ -401,7 +404,7 @@ function DetailAccordion({ entry }: { entry: BrandContextEntry }) {
             <div className="flex items-center gap-3 px-4 py-3.5">
               <FileText className="size-4 text-muted-foreground" aria-hidden />
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{brandOriginLabel(entry.origin)}</p>
+                <p className="text-sm font-medium">{brandOriginLabelForSource(entry.origin, entry.source)}</p>
                 {entry.originDetail ? (
                   <p className="truncate text-xs text-muted-foreground">{entry.originDetail}</p>
                 ) : null}
@@ -504,12 +507,20 @@ export function BrandWorkspace({
   async function openPreview(entry: BrandContextEntry) {
     setPreview(null);
     setPreviewOpen(true);
-    const result = await previewBrandContextEffect({ id: entry.id });
-    if ("error" in result) {
+    // 判官 P2-2:server action 抛出(网络断、部署换版、服务端异常)时,`await` 会 reject,
+    // 下面的 setPreview 永远跑不到 —— 弹层就卡在「Reading your brand context…」上,
+    // 商家没有任何出路。抛出与 { error } 归到同一条处置:关掉弹层,说一句人话。
+    try {
+      const result = await previewBrandContextEffect({ id: entry.id });
+      if ("error" in result) {
+        setPreviewOpen(false);
+        return void toast.error(result.error);
+      }
+      setPreview({ without: result.without, with: result.with });
+    } catch {
       setPreviewOpen(false);
-      return void toast.error(result.error);
+      toast.error("Couldn't read your brand context — please try again.");
     }
-    setPreview({ without: result.without, with: result.with });
   }
 
   return (
@@ -653,7 +664,10 @@ export function BrandWorkspace({
                       onClick={() => {
                         const next = editing.content;
                         setEditing(null);
-                        run(() => updateMemory({ id: selected.id, content: packBrandContent(selected.name, next) }), "Saved.");
+                        // 判官 P1-2:`selected.name` 对存量行是**分区标签兜的底**(Brand voice…),
+                        // 无条件打包会把那个占位词写进 `Memory.content` 的第一行 —— Otto 下一次
+                        // 读到的就是「About the brand: Brand voice …」。决定权在 repackBrandContent。
+                        run(() => updateMemory({ id: selected.id, content: repackBrandContent(selected, next) }), "Saved.");
                       }}
                     >
                       Save

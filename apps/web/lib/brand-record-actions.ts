@@ -5,7 +5,7 @@ import {
   newId, RECORD_KINDS, recordSchemaFor, recordName, normalizeNameKey, type RecordKind,
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
-import { resolveActor, recordBrandRevision, stampOf } from "./brand-revision";
+import { resolveActor, recordBrandRevision, stampOf, actorStamp } from "./brand-revision";
 
 export type BrandRecordRow = {
   id: string;
@@ -133,7 +133,8 @@ export async function deleteBrandRecord(raw: unknown): Promise<{ ok: true } | { 
     const { count } = await prisma.brandRecord.updateMany({
       // Include an already-deleted row so an uncertain request can be retried safely.
       where: { id: r.id, ownerId: gate.ownerId },
-      data: { deletedAt: new Date(), updatedById: actor.userId },
+      // 判官 P2-4:认不出人时 `actor.userId` 是 null,无条件写会把这一行已知的作者抹掉。
+      data: { deletedAt: new Date(), ...actorStamp(actor) },
     });
     if (!count) return { error: "Record not found." };
   } catch { return { error: "Couldn't delete — please try again." }; }
@@ -155,7 +156,8 @@ export async function restoreBrandRecord(raw: unknown): Promise<{ ok: true } | {
   try {
     const { count } = await prisma.brandRecord.updateMany({
       where: { id: r.id, ownerId: gate.ownerId },
-      data: { deletedAt: null, updatedById: actor.userId },
+      // 判官 P2-4:同上。
+      data: { deletedAt: null, ...actorStamp(actor) },
     });
     if (!count) return { error: "Record not found." };
   } catch { return { error: "Couldn't restore — please try again." }; }

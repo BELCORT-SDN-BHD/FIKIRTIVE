@@ -3,6 +3,7 @@ import {
   SECTIONS, FACT_SECTION_KEYS, sectionForCategory, diffRows, sectionsTouched,
   BRAND_SECTIONS, brandSectionForCategory, brandSectionForRecordKind,
   brandSectionLabel, brandSectionAction, isBrandSectionKey, brandOriginLabel,
+  brandOriginLabelForSource,
   LEGACY_SECTION_TO_BRAND_SECTION, BRAND_SECTION_TO_LEGACY_SECTION,
 } from "./memory-sections.js";
 
@@ -116,6 +117,18 @@ describe("FRONT-A8 六→五节映射(裁决三＋裁决十一,全表已裁)", (
 
   it("FRONT-A8 未知 category 仍落在 Brand voice,而不是抛错或丢行", () => {
     expect(brandSectionForCategory("whatever-this-is")).toBe("brand-voice");
+  });
+
+  it("FRONT-A8 Otto 记下的一行,来路不说「Written here」", () => {
+    // 判官 P1-3:`origin` 是本轮才加的列,默认 manual,而 Otto 的写路径不写它,只写
+    // source='otto'。光看 origin 会把 Otto 记下的每一条都标成「商家在这一面写的」。
+    expect(brandOriginLabelForSource("manual", "otto")).toBe("Saved by Otto");
+    // 列没写值(存量行)也一样成立 —— 拿不到 origin 不等于商家写过它。
+    expect(brandOriginLabelForSource("", "otto")).toBe("Saved by Otto");
+    // 商家自己写的照旧;Otto 从一份粘贴材料学到的,来路仍是那份材料。
+    expect(brandOriginLabelForSource("manual", "user")).toBe("Written here");
+    expect(brandOriginLabelForSource("text", "otto")).toBe("Pasted text");
+    expect(brandOriginLabelForSource("url", "user")).toBe("Web page");
   });
 
   it("FRONT-A8 分区标签、主动作与来源标签都有,且不认不存在的 key", () => {

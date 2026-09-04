@@ -142,8 +142,9 @@ describe("restoreMemory", () => {
     expect(await restoreMemory({ id: "m_1" })).toEqual({ ok: true });
     expect(mockMemoryUpdateMany).toHaveBeenNthCalledWith(1, {
       where: { id: "m_1", ownerId: "o1" },
-      // FRONT-A8:恢复也是一次「谁动的」,所以同一笔写也盖上作者。
-      data: { deletedAt: null, updatedById: null },
+      // FRONT-A8:删除/恢复也是一次「谁动的」。判官 P2-4:认得出人才写 —— 这一份的
+      // fixture 查不到 User 行(userId 为 null),写进去等于把这一行已知的作者抹掉。
+      data: { deletedAt: null },
     });
   });
 

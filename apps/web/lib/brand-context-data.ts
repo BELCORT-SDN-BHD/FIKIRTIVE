@@ -6,6 +6,7 @@ import {
   brandSectionForRecordKind,
   brandSectionLabel,
   recordName,
+  OTTO_AUTHOR_LABEL,
   type BrandSectionKey,
   type BrandContextStatus,
 } from "@fikirtive/core";
@@ -33,11 +34,17 @@ export type BrandContextEntry = {
   kind: "memory" | "record";
   section: BrandSectionKey;
   name: string;
+  /** 这个名字是这一行**自己**带的,还是分区标签兜的底(判官 P1-2)。编辑回写时要它:
+   *  兜底来的名字一旦被打包进 `Memory.content`,那个占位词就成了 Otto 读到的正文。 */
+  named: boolean;
   content: string;
   status: BrandContextStatus;
   /** 来源:'manual' | 'text' | 'url' | 'file'。 */
   origin: string;
   originDetail: string | null;
+  /** 最后是**谁**写的:'otto' | 'user'。与 `origin`(材料从哪来)不是一回事;来路标签
+   *  与作者兜底两处都要它 —— Otto 的写路径只写这一列(判官 P1-3)。 */
+  source: string;
   updatedAt: Date;
   /** 「谁改的」。拿不到人时是 null —— 界面照直说不知道,而不是填一个名字。 */
   updatedByLabel: string | null;
@@ -79,7 +86,8 @@ export async function loadBrandSections(ownerId: string): Promise<BrandSectionVi
       take: 300,
       select: {
         id: true, category: true, content: true, contextStatus: true,
-        origin: true, originDetail: true, updatedAt: true, updatedById: true, deletedAt: true,
+        origin: true, originDetail: true, source: true,
+        updatedAt: true, updatedById: true, deletedAt: true,
       },
     }),
     prisma.brandRecord.findMany({
@@ -88,7 +96,8 @@ export async function loadBrandSections(ownerId: string): Promise<BrandSectionVi
       take: 300,
       select: {
         id: true, kind: true, data: true, contextStatus: true,
-        origin: true, originDetail: true, updatedAt: true, updatedById: true, deletedAt: true,
+        origin: true, originDetail: true, source: true,
+        updatedAt: true, updatedById: true, deletedAt: true,
       },
     }),
   ]);
@@ -102,18 +111,20 @@ export async function loadBrandSections(ownerId: string): Promise<BrandSectionVi
 
   for (const m of memories) {
     const section = brandSectionForCategory(m.category);
-    const { name, content } = unpackBrandContent(m.content, brandSectionLabel(section));
+    const { name, named, content } = unpackBrandContent(m.content, brandSectionLabel(section));
     entries.push({
       id: m.id,
       kind: "memory",
       section,
       name,
+      named,
       content,
       status: (m.contextStatus as BrandContextStatus) ?? "Ready",
       origin: m.origin ?? "manual",
       originDetail: m.originDetail,
+      source: m.source ?? "user",
       updatedAt: m.updatedAt,
-      updatedByLabel: m.updatedById ? labels.get(m.updatedById) ?? null : null,
+      updatedByLabel: authorLabel(m.updatedById, m.source, labels),
       removed: m.deletedAt !== null,
     });
   }
@@ -124,12 +135,15 @@ export async function loadBrandSections(ownerId: string): Promise<BrandSectionVi
       kind: "record",
       section: brandSectionForRecordKind(r.kind),
       name: recordTitle(r.kind, r.data),
+      // 结构化记录的名字来自它自己的 data,不是兜底来的。
+      named: true,
       content: recordSummary(r.data),
       status: (r.contextStatus as BrandContextStatus) ?? "Ready",
       origin: r.origin ?? "manual",
       originDetail: r.originDetail,
+      source: r.source ?? "user",
       updatedAt: r.updatedAt,
-      updatedByLabel: r.updatedById ? labels.get(r.updatedById) ?? null : null,
+      updatedByLabel: authorLabel(r.updatedById, r.source, labels),
       removed: r.deletedAt !== null,
     });
   }
@@ -143,6 +157,25 @@ export async function loadBrandSections(ownerId: string): Promise<BrandSectionVi
       removed: mine.filter((e) => e.removed).sort(byRecency),
     };
   });
+}
+
+/**
+ * 「谁改的」(判官 P1-3)。`updatedById` 是本轮才加的列,Otto 的写路径不写它 —— 光看
+ * 那一列,Otto 记下的每一条都会显示成「we don't have a record of who」,而库里其实
+ * 答得出:`source = 'otto'`。顺序因此是「先认人,认不出再问是不是 Otto,都不是才照直
+ * 说不知道」—— 不编一个人,也不把已经知道的事说成不知道。
+ */
+function authorLabel(
+  updatedById: string | null,
+  source: string | null,
+  labels: Map<string, string>,
+): string | null {
+  if (updatedById) {
+    const known = labels.get(updatedById);
+    if (known) return known;
+  }
+  if (source === "otto") return OTTO_AUTHOR_LABEL;
+  return null;
 }
 
 function byRecency(a: BrandContextEntry, b: BrandContextEntry): number {
