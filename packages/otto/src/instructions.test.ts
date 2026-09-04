@@ -309,6 +309,17 @@ describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled w
     expect(ottoInstructions).toMatch(new RegExp(`delivered as ${GEN_IMAGE_DEFAULT_ASPECT}`));
   });
 
+  // Codex 只读 E2E E2E-CRE-PAV-004 —— 两步任务不许把内部接缝丢给商家。
+  // 生产原句是 `Once you approve and generate it, bring that image back here`:那一句在当时
+  // 是**诚实的**(系统真的没有接力),所以这条钉的不是措辞洁癖 —— 接力落地之后它就变成了假话。
+  it("CREATE-A1 两步计划:教 Otto 传 videoPrompt,并明令不许叫商家把图带回来", () => {
+    expect(ottoInstructions).toMatch(/videoPrompt/);
+    // 第二张确认卡自己出现 —— 这句话是接力那段代码的产品面承诺。
+    expect(ottoInstructions).toMatch(/confirmation card appears by itself/i);
+    // 生产原句的三个动作,逐个禁掉。
+    expect(ottoInstructions).toMatch(/NEVER ask them to bring the picture back/i);
+  });
+
   it("bridges the keyframe rule to seedreamPrompt's forVideo (Fix 8)", () => {
     expect(ottoInstructions).toMatch(/keyframe/i);
     expect(ottoInstructions).toMatch(/forVideo/);
