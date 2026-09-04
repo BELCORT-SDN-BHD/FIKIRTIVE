@@ -12,6 +12,7 @@ import { prisma } from "@fikirtive/db";
 import { displayCredits, CREDITS_PER_USD, FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { readDisplayName } from "./profile-names";
+import { buildInfo } from "@/lib/health";
 import { auth } from "@/lib/better-auth/server";
 import { formatCredits } from "@/lib/credit-format";
 import { partsInTz, formatDayLabel, formatTime } from "@/lib/schedule-view";
@@ -38,6 +39,14 @@ export type AccountInfo = {
   reserved: number; // in-flight hold, DISPLAYED credits
   balanceUsd: number; // ≈ USD of the spendable balance
   recent: AccountActivity[];
+  // P2-3 (Codex 全 beta 审计 P1-012 判官四轮):账号菜单要显示 `Build <sha>`,读法是
+  // `buildInfo(process.env).sha` —— 纯同步取 env,零 I/O。搭这趟 getMyAccount() 的顺风车,
+  // 而不是让菜单自己去打 /api/build-info:那个端点会为了拿这一格顺带跑两次 DB 查询
+  // (worker 心跳 + 迁移前沿),为一个不需要碰数据库的 env 读取白付两次查询的代价。
+  // 可选(而非必填):既有测试在这个字段存在之前就构造了字面量 `AccountInfo` 夹具(如
+  // account-settings.test.ts、settings-route.test.ts 等,与本票无关),把它设成可选让那批
+  // 夹具不必逐个改——真实实现(下面)一律填值,消费端(global-navigation.tsx)按 `?? null` 兜底。
+  buildSha?: string | null;
 };
 
 /* This file owns no wording of its own for a ledger row. It calls `spendLabelOf`
@@ -215,6 +224,7 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
     reserved: displayCredits(account?.reserved ?? 0),
     balanceUsd: balanceInternal / CREDITS_PER_USD,
     recent,
+    buildSha: buildInfo(process.env).sha,
   };
 }
 
