@@ -39,10 +39,13 @@ test("FRONT-A10 — @ in Otto finds this workspace's own element and the keyboar
   // The one production entry into a canvas, walked rather than deep-linked (journey 12).
   await page.getByRole("link", { name: "Create something new" }).click();
   await expect(page).toHaveURL(/\/create$/);
-  const brief = page.getByRole("textbox", { name: "Describe what you want to create" });
+  // 这两个无障碍名跟着旅程 12／14 走(`StartSomething.tsx` 的 `Otto creation prompt` 与
+  // `Send prompt`)。这一条旅程写在主干把它们改名之前,合主干时按现名对齐——只动定位器,
+  // 这一步要证明的事一个字没改。
+  const brief = page.getByRole("textbox", { name: "Otto creation prompt" });
   await waitUntilInteractive(brief);
   await brief.fill("A poster for our weekend kopi set");
-  const start = page.getByRole("button", { name: "Start a Canvas with Otto" });
+  const start = page.getByRole("button", { name: "Send prompt" });
   await expect(start).toBeEnabled();
   await start.click();
   await expect(page).toHaveURL(/\/create\/canvas\?project=/);
