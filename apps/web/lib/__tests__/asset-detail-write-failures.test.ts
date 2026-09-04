@@ -214,15 +214,34 @@ describe("FRONT-A12 ② Copy link", () => {
   });
 
   it("FRONT-A12 铸链被服务端拒绝:说得出为什么,而且不冒充已复制", async () => {
-    mocks.getPublicMediaLink.mockResolvedValue({ error: "Sharing links aren't configured on this environment yet." });
+    mocks.getPublicMediaLink.mockResolvedValue({ error: "Sharing links aren't configured in this environment yet." });
     await renderPanel();
 
     await click(buttonNamed(surface(), "Copy link"));
 
     expect(mocks.writeText).not.toHaveBeenCalled();
     expect(alertsText()).toContain("Couldn't copy the link");
-    expect(alertsText()).toContain("Sharing links aren't configured on this environment yet.");
+    expect(alertsText()).toContain("Sharing links aren't configured in this environment yet.");
     expect(surface().textContent).not.toContain("Copied!");
+  });
+
+  it("FRONT-A12 先成功再失败:上一轮的「Copied!」必须撤掉,不与错误同屏", async () => {
+    await renderPanel();
+
+    // 第一次:真的复制成功了,屏幕上有「Copied!」和那句时长。
+    await click(buttonNamed(surface(), "Copy link"));
+    expect(surface().textContent).toContain("Copied!");
+    expect(surface().textContent).toContain("open the asset for 10 minutes");
+
+    // 第二次:同一颗键、同一个 6 秒窗口内失败。旧的成功提示留着的话,屏幕上会同时写着
+    // 「已复制」和「复制不了」—— 商家有理由相信前者。
+    // 成功之后这颗键自己写着「Copied!」(不是 "Copy link"),第二次按的就是它。
+    mocks.getPublicMediaLink.mockResolvedValue({ error: "Not found." });
+    await click(buttonNamed(surface(), "Copied!"));
+
+    expect(alertsText()).toContain("Couldn't copy the link");
+    expect(surface().textContent).not.toContain("Copied!");
+    expect(surface().textContent).not.toContain("open the asset for 10 minutes");
   });
 
   it("FRONT-A12 剪贴板被浏览器拒:不再静默吞掉,屏幕上说清楚什么都没复制成", async () => {
@@ -278,6 +297,22 @@ describe("FRONT-A12 ④ 变体选择只存在这台浏览器上", () => {
     expect(PICK_SCOPE_NOTE).toContain("this browser only");
     expect(PICK_SCOPE_NOTE.toLowerCase()).not.toContain("sync");
     expect(PICK_SCOPE_NOTE.toLowerCase()).not.toContain("account");
+  });
+
+  it("FRONT-A12 换一张变体:上一张留下的错误当场作废,不冒充新这张的状态", async () => {
+    mocks.setFavorite.mockResolvedValue({ error: "Not found." });
+    await renderPanel(two);
+
+    // 第一张收藏失败,错误上屏。
+    await click(buttonNamed(surface(), "Save"));
+    expect(alertsText()).toContain("Not found.");
+
+    // 换第二张 —— 收藏/复制都按**选中的那一张**的 id 走,所以旧错误说的是上一张的事。
+    const thumbs = [...surface().querySelectorAll("button")].filter((b) => b.querySelector('img[alt^="Variant"]'));
+    expect(thumbs.length, "多图时应该有变体缩略图").toBeGreaterThanOrEqual(2);
+    await click(thumbs[1]!);
+
+    expect(alertsText()).toBe("");
   });
 
   it("FRONT-A12 只有一张图时不出现这句话(没有可选的东西就不解释存法)", async () => {

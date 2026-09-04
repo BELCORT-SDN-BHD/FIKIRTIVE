@@ -486,6 +486,10 @@ export default function DetailPanel({
     const minted = await getPublicMediaLink(selectedGenId);
     if (cancelledRef.current) return;
     if ("error" in minted) {
+      // 判官 P2-1:失败必须**撤掉上一轮的成功提示**。这颗键按得动第二次,上一次成功留下的
+      // 「Copied!」与那句时长还在 6 秒窗口里;不撤的话,屏幕上同时写着「已复制」和
+      // 「复制不了」—— 商家有理由相信前者,那正是这一票要消灭的假成功。
+      setCopied(false);
       setActionError({ title: "Couldn't copy the link", message: minted.error });
       return;
     }
@@ -502,6 +506,8 @@ export default function DetailPanel({
       // 浏览器拒了剪贴板(权限、非安全上下文、根本没有这个 API)。旧写法在这里一个字都不说 ——
       // 按钮不变、剪贴板是空的,商家以为链接已经在手上了。这一句没有服务端来源,所以由这里
       // 写,但只说已知的事实:什么都没复制成。
+      // 判官 P2-1:同上 —— 上一轮的「Copied!」不撤,就跟这句错误同屏打架。
+      setCopied(false);
       setActionError({
         title: "Couldn't copy the link",
         message: "Your browser blocked clipboard access, so nothing was copied.",
@@ -539,6 +545,9 @@ export default function DetailPanel({
     if (!gen) return;
     setSelectedIdx(idx);
     setFavoriteLocal(gen.variants[idx]?.favorite ?? gen.favorite);
+    // 判官 P2-2:这一条错误说的是**上一张**(收藏/复制都按选中的那一张的 id 走)。换了张图
+    // 还挂着它,商家会把它读成新这张的状态。换图＝换对象,旧的那句就此作废。
+    setActionError(null);
     writePick(gen.id, idx);
   }, [gen]);
 

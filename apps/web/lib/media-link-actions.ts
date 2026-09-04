@@ -33,7 +33,7 @@ export async function getPublicMediaLink(
   const { ownerId } = gate;
 
   const secret = process.env.MEDIA_PROXY_SECRET ?? "";
-  if (!secret) return { error: "Sharing links aren't configured on this environment yet." };
+  if (!secret) return { error: "Sharing links aren't configured in this environment yet." };
 
   const gen = await prisma.generation.findFirst({
     where: { id: generationId, ownerId, deletedAt: null },
