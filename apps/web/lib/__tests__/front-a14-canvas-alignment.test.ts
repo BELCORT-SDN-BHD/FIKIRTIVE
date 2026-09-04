@@ -256,3 +256,95 @@ describe("FRONT-A14 钱披露不因对齐设计而缩水", () => {
     );
   });
 });
+
+/**
+ * 出片弹窗（t2v / Animate）里打的字看不见 —— 矩阵走查 P1-a。
+ *
+ * The prompt editor (`MentionInput`) is one component mounted on several surfaces. It used to
+ * paint the Vapor dark-shell ink (`--fg-1`, #f6f7f9), so every LIGHT surface had to hand the ink
+ * back with its own rule; the dialogs mount the editor bare inside `DialogContent`, got no such
+ * rule, and rendered near-white text on the white popover (~1.05:1 — the merchant types and sees
+ * nothing). The fix is the component reading the SEMANTIC ink token, so the assertions below are
+ * a chain: (1) the one rule declares a semantic token, (2) that token really is readable on the
+ * dialog's own surface in both themes, (3) nothing re-states it per surface again.
+ */
+const CSS = codeOnly(globalsCss);
+
+/** A block at column 0, comments already stripped. Token roots and these rules have no nesting. */
+function block(selector: string): string {
+  const start = CSS.indexOf(`${selector} {`);
+  expect(start, `globals.css 里找不到 \`${selector}\``).toBeGreaterThan(-1);
+  return CSS.slice(start, CSS.indexOf("\n}", start));
+}
+
+/** The `color:` declaration's custom property — `background-color` must not answer for it. */
+function inkTokenOf(rule: string): string | undefined {
+  return /(?:^|[;{])\s*color:\s*var\((--[\w-]+)\)/m.exec(rule)?.[1];
+}
+
+/** A token's literal, read from one root, falling back to the Vapor `:root` it may still live in. */
+function tokenValue(root: string, name: string): string {
+  const read = (where: string) => new RegExp(`[\\s;{]${name}:\\s*([^;]+);`).exec(where)?.[1]?.trim();
+  const value = read(root) ?? read(block(":root"));
+  expect(value, `没有任何 token 根声明 ${name}`).toBeTruthy();
+  return value as string;
+}
+
+/** `#rgb` / `#rrggbb` / `rgba(…)`, the last composited over `over` — 55% white on white is invisible. */
+function rgb(color: string, over: [number, number, number]): [number, number, number] {
+  const fn = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,/\s]+([\d.]+))?\s*\)/.exec(color);
+  if (fn) {
+    const [r, g, b] = [fn[1], fn[2], fn[3]].map(Number) as [number, number, number];
+    const a = fn[4] === undefined ? 1 : Number(fn[4]);
+    return [r, g, b].map((c, i) => a * c + (1 - a) * over[i]) as [number, number, number];
+  }
+  const hex = color.replace("#", "");
+  const wide = hex.length === 3 ? hex.split("").map((c) => c + c).join("") : hex;
+  expect(wide, `看不懂的颜色字面量 ${color}`).toMatch(/^[0-9a-fA-F]{6}$/);
+  return [0, 2, 4].map((i) => parseInt(wide.slice(i, i + 2), 16)) as [number, number, number];
+}
+
+/** WCAG 2.1 contrast ratio. */
+function contrast(fg: string, bg: string): number {
+  const surface = rgb(bg, [255, 255, 255]);
+  const luminance = (c: [number, number, number]) =>
+    c.map((v) => (v / 255 <= 0.04045 ? v / 255 / 12.92 : (((v / 255) + 0.055) / 1.055) ** 2.4))
+      .reduce((sum, v, i) => sum + [0.2126, 0.7152, 0.0722][i] * v, 0);
+  const [a, b] = [luminance(rgb(fg, surface)), luminance(surface)].sort((x, y) => y - x);
+  return (a + 0.05) / (b + 0.05);
+}
+
+describe("FRONT-A14 出片弹窗的提示词框", () => {
+  const LIGHT = block(".gb");
+  const DARK = block('.gb.dark, .gb[data-theme="dark"], .dark .gb');
+
+  it("FRONT-A14: the @ prompt editor takes the semantic ink token, not the dark bar's own", () => {
+    expect(inkTokenOf(block(".mention-input .tiptap")), "打的字不是语义前景 token")
+      .toBe("--foreground");
+    expect(inkTokenOf(block(".mention-input .tiptap p.is-editor-empty:first-child::before")), "提示语不是语义 muted token")
+      .toBe("--muted-foreground");
+  });
+
+  it("FRONT-A14: what the merchant types in the t2v/Animate dialog clears AA on the popover", () => {
+    // The dialogs put the editor straight on `DialogContent` — `bg-popover` and nothing else
+    // between it and the rule above, which is why the rule alone has to be right.
+    expect(codeOf("design-system/primitives/dialog.tsx"), "弹窗底不再是 popover 面，这条断言的基准错了")
+      .toContain("bg-popover");
+    const ink = inkTokenOf(block(".mention-input .tiptap")) as string;
+    const hint = inkTokenOf(block(".mention-input .tiptap p.is-editor-empty:first-child::before")) as string;
+    for (const [theme, root] of [["浅色", LIGHT], ["深色", DARK]] as const) {
+      const popover = tokenValue(root, "--popover");
+      expect(contrast(tokenValue(root, ink), popover), `${theme}弹窗里打的字看不见`)
+        .toBeGreaterThanOrEqual(4.5);
+      expect(contrast(tokenValue(root, hint), popover), `${theme}弹窗里的提示语看不见`)
+        .toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("FRONT-A14: no surface hands the editor its ink back one patch at a time", () => {
+    // `.gb .al-promptbar .tiptap { color: … }` and `.gb .cv-detail .tiptap { color: … }` were
+    // exactly that, and the surface with no patch is the defect. One source, or none.
+    expect(CSS, "又出现按 surface 重写 .tiptap 字色的补丁 —— 单一源头是 .mention-input")
+      .not.toMatch(/\.gb\s+\.[\w-]+\s+\.tiptap[^{}]*\{[^{}]*?[\s;{]color:/);
+  });
+});

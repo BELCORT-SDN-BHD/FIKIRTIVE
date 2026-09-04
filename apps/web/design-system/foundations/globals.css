@@ -354,19 +354,30 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   pointer-events: none;
 }
 
-/* reusable @mention editor (MentionInput) — works outside the prompt bar too */
+/* reusable @mention editor (MentionInput) — works outside the prompt bar too.
+ *
+ * INK IS THE SURFACE'S, NOT THE BAR'S. This used to paint `--fg-1` / `--fg-3`, the Vapor
+ * dark-shell foreground (near-white, #f6f7f9). That reads correctly only on a dark surface,
+ * so every LIGHT surface that mounted this editor had to hand the ink back one rule at a
+ * time — `.gb .al-promptbar .tiptap` for the canvas bottom bar, `.gb .cv-detail .tiptap` for
+ * the asset panel. The t2v / Animate dialogs mount a bare <MentionInput> inside
+ * DialogContent, which is neither, so they got no patch: white text on the white popover,
+ * ~1.05:1, the merchant typed and saw nothing (`FlowCanvas.tsx`, `canvas-t2v-*`).
+ * A component that is placed on many surfaces must read the SEMANTIC ink token, which is
+ * what every surface under `.gb` declares; the per-surface patches are then unnecessary and
+ * are gone. Dark theme comes free — the `.dark .gb` root re-points the same token. */
 .mention-input .tiptap {
   min-height: 36px;
   outline: none;
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
-  color: var(--fg-1);
+  color: var(--foreground);
 }
 .mention-input .tiptap:focus-visible { box-shadow: none; outline: none; }
 .mention-input .tiptap p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
-  color: var(--fg-3);
+  color: var(--muted-foreground);
   float: left;
   height: 0;
   pointer-events: none;
@@ -786,8 +797,8 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
     linear-gradient(var(--card), var(--card)) padding-box,
     var(--composer-prism) border-box;
 }
-.gb .al-promptbar .tiptap { color: var(--foreground); }
-.gb .al-promptbar .tiptap p.is-editor-empty:first-child::before { color: var(--muted-foreground); }
+/* The composer's editor ink is NOT re-stated here — `.mention-input .tiptap` above already
+ * reads the semantic token, on every surface. A copy here is how the dialogs went blind. */
 .gb .al-promptbar .al-btn-primary {
   background: var(--primary);
   color: var(--primary-foreground);
@@ -1103,8 +1114,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .cv-detail .al-seg { background: var(--muted); border: 1px solid var(--border); border-radius: 10px; padding: 2px; }
 .gb .cv-detail .al-seg-item { color: var(--muted-foreground); }
 .gb .cv-detail .al-seg-item-active { background: var(--card); color: var(--foreground); border-radius: 8px; }
-.gb .cv-detail .tiptap { color: var(--foreground); }
-.gb .cv-detail .tiptap p.is-editor-empty:first-child::before { color: var(--muted-foreground); }
+/* Same as the composer: the edit box's ink comes from `.mention-input .tiptap`, not from here. */
 
 /* ── Canvas nodes (legacy .al-panel cards) re-skinned Grok-bright.
  * Scoped to ReactFlow nodes so only the canvas changes; gated by gb-skin.
