@@ -111,7 +111,7 @@ export function deriveCardState(args: {
  * 30 分钟这个数不是随手取的：它必须盖过服务端自己对「一个生成一定会有终局」的保证 ——
  * `GEN_QUEUE_POLICY.expireInSeconds`（20 分钟，一次投递最长能活多久）之外还有 worker 的
  * 收尸器兜底。屏幕停止发问的那一刻，必须晚于服务端交出终局的那一刻，否则就是同一个病。
- * 这条不变量由 `otto-inject-helpers.test.ts` 钉住，改小了会红。
+ * 这条不变量由 `__tests__/otto-generation-watch.test.ts` 钉住，改小了会红。
  */
 export const GENERATION_WATCH_GEARS = {
   /** 刚花完钱、盯着结果的那一档。原来的唯一一档，数字未动。 */
