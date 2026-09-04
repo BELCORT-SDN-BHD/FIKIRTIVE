@@ -114,16 +114,23 @@ function NameField({
           {status === "saving" && <Spinner data-icon="inline-start" />}
           {status === "saving" ? "Saving…" : "Save changes"}
         </Button>
-        {status === "saved" ? (
-          <span
-            role="status"
-            aria-live="polite"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-success"
-          >
-            <Check className="size-4" aria-hidden />
-            Saved
-          </span>
-        ) : null}
+        {/* 判官 [P2-1]:live region 必须**常驻**。挂载它的同时才把字放进去,读屏往往
+            什么都不报 —— 区域是在这一帧才出现的,变化发生在它存在之前。主干原本就是
+            常驻的(`<FieldDescription role="status" aria-live="polite">` 一直在,只有
+            children 在 hint 与 "Saved" 之间换),换皮不该把这条性质弄丢。所以这里只换
+            children:容器一直在,保存成功那一刻变的是它装的东西。 */}
+        <span
+          role="status"
+          aria-live="polite"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-success"
+        >
+          {status === "saved" ? (
+            <>
+              <Check className="size-4" aria-hidden />
+              Saved
+            </>
+          ) : null}
+        </span>
       </div>
     </form>
   );
