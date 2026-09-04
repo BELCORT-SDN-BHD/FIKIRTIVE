@@ -38,6 +38,29 @@ import {
 /** One page is what a composer shortcut needs; the Library page owns search and paging. */
 const PICKER_PAGE_SIZE = 24;
 
+/**
+ * THE ACCESSIBLE NAME for one picker item's button (Codex E2E-CRE-FE9-013's later read-only
+ * pass, E2E-CRE-PAV-006, P2 Accessibility).
+ *
+ * The walkthrough found each item as an unnamed `button` + `image` in the AX tree: the visible
+ * caption (`item.prompt`, or "Image"/"Video" when it has none) sits in a plain `<span>` below the
+ * thumbnail, which a mouse reads by proximity and a screen reader or keyboard user cannot. Moving
+ * that same text onto the button's `aria-label` — rather than writing a second, different string —
+ * is the fix: one name, wherever it is read.
+ *
+ * The suggested shape was "asset title, media type, source" (e.g. "…tumbler, image, generated in
+ * this Canvas"). The source clause is left OFF here: `LibraryItem` (`lib/library-actions.ts`)
+ * carries no canvas name or upload/generated distinction today — inventing one would be exactly
+ * the kind of guess this whole file exists to avoid making about a merchant's own asset. Title +
+ * media type is real, provable data; a caller that later threads that provenance through can add
+ * the clause without touching this shape.
+ */
+function libraryItemAccessibleName(name: string, kind: "image" | "video"): string {
+  const trimmed = name.trim();
+  if (!trimmed) return kind === "video" ? "Video" : "Image";
+  return `${trimmed}, ${kind}`;
+}
+
 export function CanvasLibraryPicker({
   open,
   onOpenChange,
@@ -136,6 +159,9 @@ export function CanvasLibraryPicker({
                 name,
               });
               if (!reference) return null;
+              // E2E-CRE-PAV-006: the button carries the item's name — the caption span below is
+              // the same words, sighted-only, so nothing is said twice with different wording.
+              const accessibleName = libraryItemAccessibleName(name, item.kind);
               return (
                 <li key={item.id}>
                   <Button
@@ -143,6 +169,7 @@ export function CanvasLibraryPicker({
                     variant="ghost"
                     className="h-auto w-full flex-col items-stretch gap-1 p-1 text-left"
                     title={name || undefined}
+                    aria-label={accessibleName}
                     onClick={() => {
                       onPick(reference);
                       onOpenChange(false);
@@ -155,11 +182,14 @@ export function CanvasLibraryPicker({
                           muted
                           playsInline
                           preload="metadata"
+                          aria-hidden
                           className="size-full object-cover"
                         />
                       ) : (
+                        // Decorative: the name lives on the button's aria-label above, so this
+                        // must not announce a second time with different wording.
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={item.url} alt={name} className="size-full object-cover" />
+                        <img src={item.url} alt="" className="size-full object-cover" />
                       )}
                     </span>
                     <span className="block truncate text-xs font-normal text-muted-foreground">
