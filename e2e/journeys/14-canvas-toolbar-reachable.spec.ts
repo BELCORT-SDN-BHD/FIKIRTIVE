@@ -196,9 +196,10 @@ test("FRONT-A14 — a merchant can press every canvas tool while Otto's composer
     //    280px alignment is about. The open list is the tallest, widest thing in the left column;
     //    at 380px wide it crossed `left: 300px` and covered the board's own tool column, so the
     //    same two questions are asked again with it on screen rather than only with it collapsed.
-    // Anchor the name: the dock header carries TWO buttons whose accessible name contains
-    // "conversation" — this toggle ("Conversation <n>") and the icon button "New conversation".
-    // A plain substring match hits both and Playwright's strict mode throws.
+    // Anchor the name deliberately: the dock header's toggle reads "Conversation <n>", and the
+    // anchor keeps this from matching any future control whose name merely contains the word.
+    // (Until QA-CRE-FE9-005 the header also carried a "New conversation" icon button, which a
+    //  plain substring match hit as well; the canvas no longer offers one.)
     const historyToggle = page.getByRole("button", { name: /^Conversation\b/ });
     await expect(historyToggle, `the conversation dock is missing at ${where}`).toBeVisible();
     await historyToggle.click();
