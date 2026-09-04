@@ -7,6 +7,7 @@ import {
   backupAgeHours,
   backupFreshness,
   bestEffort,
+  buildInfo,
   singleFlight,
   workerStatus,
   workersHealth,
@@ -204,5 +205,45 @@ describe("singleFlight(在途查询只许有一个)", () => {
   it("并发的调用者拿到的是同一个 promise(共享,不是各跑各的)", () => {
     const shared = singleFlight(() => new Promise<void>(() => {}));
     expect(shared()).toBe(shared());
+  });
+});
+
+/**
+ * buildInfo — E2E-STG-VERSION(2026-09-04 Codex staging 审计,"Version and evidence
+ * boundary":`/api/health` 此前不报 commit sha,E2E 报告没法把发现绑定到具体部署)。
+ */
+describe("buildInfo(2026-09-04 Codex staging 审计 E2E-STG-VERSION)", () => {
+  it("E2E-STG-VERSION: Railway 注入了 sha → 报短 sha,ref 取 RAILWAY_GIT_BRANCH", () => {
+    expect(
+      buildInfo({ RAILWAY_GIT_COMMIT_SHA: "abc123def4567890", RAILWAY_GIT_BRANCH: "main" }),
+    ).toEqual({ sha: "abc123de", ref: "main" });
+  });
+
+  it("E2E-STG-VERSION: 什么都没注入(本机/未知平台)→ sha 与 ref 都是 null,绝不假造", () => {
+    expect(buildInfo({})).toEqual({ sha: null, ref: null });
+  });
+
+  it("E2E-STG-VERSION: Railway 缺失时回退 Vercel 的 GIT_COMMIT_SHA/GIT_COMMIT_REF", () => {
+    expect(
+      buildInfo({ VERCEL_GIT_COMMIT_SHA: "fedcba9876543210", VERCEL_GIT_COMMIT_REF: "staging" }),
+    ).toEqual({ sha: "fedcba98", ref: "staging" });
+  });
+
+  it("E2E-STG-VERSION: Railway 的值优先于 Vercel 的值(两边都设时不混着取)", () => {
+    expect(
+      buildInfo({
+        RAILWAY_GIT_COMMIT_SHA: "1111111122222222",
+        RAILWAY_GIT_BRANCH: "railway-branch",
+        VERCEL_GIT_COMMIT_SHA: "9999999988888888",
+        VERCEL_GIT_COMMIT_REF: "vercel-branch",
+      }),
+    ).toEqual({ sha: "11111111", ref: "railway-branch" });
+  });
+
+  it("E2E-STG-VERSION: 空白字符串按未设置处理,不当成真值", () => {
+    expect(buildInfo({ RAILWAY_GIT_COMMIT_SHA: "   ", RAILWAY_GIT_BRANCH: "  " })).toEqual({
+      sha: null,
+      ref: null,
+    });
   });
 });
