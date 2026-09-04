@@ -42,7 +42,6 @@ import {
   referenceUnavailableMessage,
   // 「行在、文件在不在」那一问。取不到的引用要在 reserve 之前拦住,而不是等 worker 退款。
   storageKey,
-  storageKeyToSrc,
   type ReferenceUnavailableReason,
   type SegmentRuleGroup,
 } from "@fikirtive/core";
@@ -65,6 +64,9 @@ import {
   tryRestoreRunState,
   tryRestoreRunStateWithContext,
   approvalRefOf,
+  // 媒体参考回执的唯一构造处 —— 两步接力铸第二张卡时用的是同一份口径。
+  mediaReferenceReceipt,
+  UNTITLED_CANVAS_NAME,
 } from "@fikirtive/otto";
 import type { OttoContext, OttoMediaReference, AgentInputItem, ApprovalInterruption } from "@fikirtive/otto";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
@@ -416,17 +418,18 @@ export async function validateOttoTurnReferences(input: {
     input.ownerId,
     [...source.refs, ...video.refs].map((r) => r.projectId),
   );
-  const receipt = (ref: OwnedGenerationRef, kind: "image" | "video"): OttoMediaReference => ({
-    generationId: ref.id,
-    kind,
-    label: referenceLabel(ref.prompt, kind),
-    sourceProjectId: ref.projectId,
-    sourceProjectName: projectNames.get(ref.projectId) ?? UNTITLED_CANVAS_NAME,
-    sameCanvas: ref.projectId === input.projectId,
-    previewUrl: storageKeyToSrc(
-      storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext.toLowerCase()),
-    ),
-  });
+  // 回执的构造口径只有一份(`mediaReferenceReceipt`,@fikirtive/otto)—— 两步接力在
+  // Step 1 出图之后自己铸第二张卡时用的是同一份,所以商家在两张卡上读到的是同一种说法。
+  const receipt = (ref: OwnedGenerationRef, kind: "image" | "video"): OttoMediaReference =>
+    mediaReferenceReceipt({
+      generationId: ref.id,
+      kind,
+      prompt: ref.prompt,
+      sourceProjectId: ref.projectId,
+      sourceProjectName: projectNames.get(ref.projectId) ?? null,
+      sameCanvas: ref.projectId === input.projectId,
+      asset: ref.asset,
+    });
   return {
     sourceGenerationIds: source.refs.map((r) => r.id),
     referenceVideoGenerationIds: video.refs.map((r) => r.id),
@@ -451,15 +454,6 @@ async function referenceProjectNames(ownerId: string, projectIds: string[]): Pro
   } catch {
     return new Map();
   }
-}
-
-const UNTITLED_CANVAS_NAME = "Untitled canvas";
-
-/** 商家读得懂的一行名字。素材当初的提示词太长就截断,空的就退回类型词。 */
-function referenceLabel(prompt: string, kind: "image" | "video"): string {
-  const trimmed = prompt.trim().replace(/\s+/g, " ");
-  if (!trimmed) return kind === "video" ? "Video" : "Image";
-  return trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed;
 }
 
 /**

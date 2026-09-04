@@ -13,7 +13,7 @@
  * Conditioning = the @mentioned entities' reference images, resolved here from
  * the job's entityIds (D19 trust boundary).
  */
-import { prisma, settleCredits, refundReservation, settleCanvasCardsForGenJob, type GenJob, type RefundOutcome } from "@fikirtive/db";
+import { type Prisma, prisma, settleCredits, refundReservation, settleCanvasCardsForGenJob, type GenJob, type RefundOutcome } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   storageKey,
@@ -55,6 +55,8 @@ import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
 import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
+// Codex E2E-CRE-PAV-004 —— 两步任务的接力:Step 1 出图后铸第二步的确认卡($0,不扣费)。
+import { planVideoStepHandoff, type PreparedVideoStep } from "@fikirtive/otto";
 
 /** 这一行 GenJob 的计价输入 —— 报价与报警必须看**同一个**对象,否则两边可能各算各的。 */
 function genSpendInputOf(job: GenJob) {
@@ -417,18 +419,61 @@ async function appendCoworkResult(
   costCredits?: number,
 ): Promise<void> {
   if (!job.threadId) return;
+  const threadId = job.threadId;
+
+  // Codex E2E-CRE-PAV-004 —— 两步任务的**接力**。这一单如果是一张「先出图、再出片」的
+  // Step 1 卡,而且真的交付了图,第二步的确认卡就在这里由服务端自己铸出来($0)——
+  // 商家不必再去找图、再附加一次、再把同一件事讲一遍。
+  //
+  // 准备工作全在事务**外面**跑,而且整段(含读模型开关那一次)包在 try 里:接力是交付路径上的
+  // 尾巴,它不该有能力把一次已经付过钱、已经交付的生成写坏。算不出来就是 null = 不接力
+  // (fail closed:连引擎开着没有都读不到,就不铸一张可能根本做不了的付费卡)。
+  let handoff: PreparedVideoStep | null = null;
+  if (kind === "GEN_RESULT") {
+    try {
+      handoff = await planVideoStepHandoff({
+        jobId: job.id,
+        ownerId: job.ownerId,
+        threadId,
+        generationIds,
+        disabledModels: [...(await workerDisabledModels())],
+      });
+    } catch (e) {
+      console.warn(`[gen] ${job.id}: video-step handoff skipped (non-fatal):`, e instanceof Error ? e.message : e);
+    }
+  }
+
   try {
-    const last = await prisma.chatMessage.findFirst({ where: { threadId: job.threadId, ownerId: job.ownerId }, orderBy: { seq: "desc" }, select: { seq: true } });
-    await prisma.chatMessage.create({
-      data: {
-        id: newId(), threadId: job.threadId, ownerId: job.ownerId, role: "AGENT", kind,
-        seq: (last?.seq ?? 0) + 1, text: errorText,
-        genJobId: job.id,
-        payload: {
-          kind: job.kind === "VIDEO" ? "video" : "image", model: job.model, generationIds,
-          ...(kind === "GEN_RESULT" && typeof costCredits === "number" ? { costCredits } : {}),
+    // 结果与接力卡写在**同一个事务**里,于是两件事同时成立:
+    //   · 至多一张 —— 恰好一个事务能赢下 `ChatMessage(genJobId)` 那个部分唯一索引,
+    //     重投/恢复再跑一次会撞 P2002、整个事务回滚,第二张卡不可能出现两张;
+    //   · 原子可见 —— 轮询看得见 GEN_RESULT,就一定同时看得见这张卡(不会漏在两次写之间)。
+    // 一分钱不动:两行都是 ChatMessage,没有 reserve / settle / refund,账本零新增行。
+    await prisma.$transaction(async (tx) => {
+      const last = await tx.chatMessage.findFirst({ where: { threadId, ownerId: job.ownerId }, orderBy: { seq: "desc" }, select: { seq: true } });
+      const seq = (last?.seq ?? 0) + 1;
+      await tx.chatMessage.create({
+        data: {
+          id: newId(), threadId, ownerId: job.ownerId, role: "AGENT", kind,
+          seq, text: errorText,
+          genJobId: job.id,
+          payload: {
+            kind: job.kind === "VIDEO" ? "video" : "image", model: job.model, generationIds,
+            ...(kind === "GEN_RESULT" && typeof costCredits === "number" ? { costCredits } : {}),
+          },
         },
-      },
+      });
+      if (handoff) {
+        await tx.chatMessage.create({
+          data: {
+            id: newId(), threadId, ownerId: job.ownerId, role: "AGENT", kind: "GEN_CARD",
+            // 结果在前、待确认的第二步在后 —— 商家先看到刚做好的那张图,再看到下一步。
+            seq: seq + 1, text: "",
+            // genJobId 不写:这张卡还没被批准,它自己的付费幂等域是 `cowork:<cardId>`。
+            payload: handoff.payload as unknown as Prisma.InputJsonObject,
+          },
+        });
+      }
     });
   } catch (e) {
     if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") return; // already written (resume) → no-op
