@@ -47,6 +47,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/design-system/primitives/alert-dialog";
+import { Badge } from "@/design-system/primitives/badge";
 import { Button, buttonVariants } from "@/design-system/primitives/button";
 import {
   Dialog,
@@ -80,10 +81,12 @@ import {
   type LibraryElement,
   type LibraryElementKind,
 } from "@/lib/library-elements-model";
+import { libraryItemAccessibleName } from "@/lib/library-item-a11y";
 import {
   LIBRARY_VIEWS,
   groupLibraryItems,
   libraryDurationLabel,
+  libraryItemRawName,
   libraryItemTitle,
   librarySinceForDateFilter,
   parseLibraryView,
@@ -325,6 +328,11 @@ function LibraryToolbar({
 
 function MediaTile({ item, selected, onOpen }: { item: LibraryItem; selected: boolean; onOpen: () => void }) {
   const title = libraryItemTitle(item);
+  // 看得见的那行字仍是 `libraryItemTitle`(设计的 caption);**读屏念的那句**走
+  // `lib/library-item-a11y.ts` —— Codex staging 审计 LIB-STG-P2-005 定的那一份单源
+  // (整段提示词当无障碍名,每个 Tab 停顿都念一整段;#1185 已经在 CanvasLibraryPicker 与
+  // StuffLibrary 落过)。Library 网格是第三个同病的调用点,照样读同一个函数,不自建第二套截断。
+  const accessibleName = libraryItemAccessibleName(libraryItemRawName(item), item.kind);
   const duration = libraryDurationLabel(item);
   // 已批准的 Library 用「保持原始比例的紧凑 media grid」(README §3.1),瀑布流的高低差
   // 就是从这来的。比例是 `Asset` 上的真实两条边,不是一个统一裁出来的框;两条边缺一条的
@@ -334,7 +342,8 @@ function MediaTile({ item, selected, onOpen }: { item: LibraryItem; selected: bo
     <div className="relative mb-2 break-inside-avoid">
       <Button
         variant="ghost"
-        aria-label={`Open ${title}`}
+        aria-label={`Open ${accessibleName}`}
+        title={title}
         aria-selected={selected}
         onClick={onOpen}
         className={cn(
@@ -358,7 +367,7 @@ function MediaTile({ item, selected, onOpen }: { item: LibraryItem; selected: bo
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={item.url}
-            alt={title}
+            alt=""
             loading="lazy"
             style={ratio ? { aspectRatio: ratio } : undefined}
             className={cn(
@@ -440,6 +449,14 @@ function MediaGrid({
  * 有的、删自己数据的那条路(`lib/actions.ts:softDeleteEntity`,软删)。换壳不该把它弄丢,
  * 所以按前端规则第②条:生产必需而设计没有明说的东西,用设计的样式(AlertDialog)呈现,
  * 文案与旧壳(`stuff/StuffLibrary.tsx`)一字不改。
+ *
+ * **Official avatars 是只读的**(Founder 2026-08-30;已批准 pattern README §5 的
+ * "Read-only：Official avatar actions 与 Founder-owned Element actions 明确不同")。
+ * 判据不是「哪一栏」,是域层能力表 `element.capabilities.deleteEntity`
+ * (`packages/core/src/entity-policy.ts`,和 `EntityDTO` 同一个函数)。按第③层的做法:
+ * 官方那一格**根本不画**这颗键,而不是画一颗禁用的假控件;同时按第②点挂一枚
+ * 「Official avatar · Read only」标签 —— 只读要看得见,不能靠「按钮怎么少了」去猜。
+ * server action 那一层仍然自己回库现读 `catalogKey` 再拒一次,这里少画一颗键不是围栏。
  */
 function ElementsView({
   elements,
@@ -534,7 +551,16 @@ function ElementsView({
           {selected ? (
             <>
               <DialogHeader>
-                <DialogTitle>{selected.name}</DialogTitle>
+                <DialogTitle className="flex flex-wrap items-center gap-2">
+                  {selected.name}
+                  {/* 与 `stuff/ElementVariantsDialog.tsx` 同一枚标签、同一句话 —— 商家在
+                      两个面上看到的是同一个事实。 */}
+                  {selected.origin === "OFFICIAL_CATALOG" ? (
+                    <Badge variant="outline" className="font-medium text-muted-foreground">
+                      Official avatar · Read only
+                    </Badge>
+                  ) : null}
+                </DialogTitle>
                 <DialogDescription>
                   {viewLabel} · {selected.mediaCount} linked {selected.mediaCount === 1 ? "image" : "images"}
                 </DialogDescription>
@@ -550,16 +576,18 @@ function ElementsView({
                   </div>
                 )}
               </div>
-              <DialogFooter>
-                <Button
-                  variant="ghost"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => { setRemoveError(null); setRemoveTarget(selected); }}
-                >
-                  <Trash2 aria-hidden />
-                  Remove from Library
-                </Button>
-              </DialogFooter>
+              {selected.capabilities.deleteEntity ? (
+                <DialogFooter>
+                  <Button
+                    variant="ghost"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => { setRemoveError(null); setRemoveTarget(selected); }}
+                  >
+                    <Trash2 aria-hidden />
+                    Remove from Library
+                  </Button>
+                </DialogFooter>
+              ) : null}
             </>
           ) : null}
         </DialogContent>

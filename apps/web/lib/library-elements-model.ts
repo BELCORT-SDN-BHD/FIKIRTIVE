@@ -3,6 +3,8 @@
  *
  * 与读取分家,是因为浏览器那一端也要认这些类型,而读取本身是 server-only。
  */
+import type { EntityCapabilities, EntityOrigin } from "@fikirtive/core";
+
 
 /**
  * 设计里那几栏的产品名,加一栏 `brandmarks`。
@@ -27,6 +29,15 @@ export type LibraryElement = {
   id: string;
   kind: LibraryElementKind;
   name: string;
+  /**
+   * 这一行是谁的、允许改哪些格 —— 判据只有 `packages/core/src/entity-policy.ts` 一份
+   * (Founder 2026-08-30「Official avatars 由 Fikirtive 提供、read-only」;四层落位见
+   * `lib/dto.ts:toEntityDTO`)。Library 这一读跟 `EntityDTO` 用**同一对**字段名与同一个
+   * 函数,所以 Library 卡片与 Otto 那边永远不会对「这一行能不能删」得出两个答案。
+   * `kind === "official-avatars"` 是**分栏**,不是权限 —— 绝不拿它当判据。
+   */
+  origin: EntityOrigin;
+  capabilities: EntityCapabilities;
   /** 封面 —— 真有一张存在的参考图才给;没有就 null,卡片画占位而不是画一个坏图。 */
   coverUrl: string | null;
   /** 关联媒体数 = 这个元素身上的基础参考图张数(设计卡片上的 "linked media count")。 */
