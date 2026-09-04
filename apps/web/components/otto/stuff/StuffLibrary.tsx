@@ -47,6 +47,7 @@ import {
   type StuffItem,
   filterStuffItems,
 } from "@/lib/stuff-items";
+import { conciseAssetTitle } from "@/lib/library-item-a11y";
 
 /** What a search that found nothing actually means (#701).
  *
@@ -97,6 +98,18 @@ function Thumb({ item }: { item: StuffItem }) {
   }
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={item.url} alt={item.label} className="h-full w-full object-cover" />;
+}
+
+/**
+ * Codex staging audit, 2026-09-04, **LIB-STG-P2-005**: this grid's `aria-label`s were the raw
+ * `item.label` — for a generation, that is the full prompt, sometimes 100+ words, read aloud on
+ * every Tab stop and unusable as a voice-control target. Shared truncation lives in
+ * `lib/library-item-a11y.ts` (also used by the Canvas composer's `CanvasLibraryPicker`, §7.3
+ * single source). Falls back to the raw label on the empty edge case, though `buildStuffItems`
+ * (lib/stuff-items.ts) never actually produces one.
+ */
+function conciseItemTitle(item: StuffItem): string {
+  return conciseAssetTitle(item.label) || item.label;
 }
 
 function itemTypeLabel(item: StuffItem): string {
@@ -223,7 +236,8 @@ export function StuffLibrary({
                 key={item.id}
                 type="button"
                 variant="ghost"
-                aria-label={`Choose ${item.label}`}
+                title={item.label}
+                aria-label={`Choose ${conciseItemTitle(item)}`}
                 disabled={pickPending}
                 onClick={() => item.assetId && onPick?.(item.assetId)}
                 className="group relative h-auto w-full flex-col items-stretch justify-start gap-0 overflow-hidden rounded-[var(--radius-card)] border border-border bg-card p-0 text-left shadow-none hover:border-foreground/25 hover:bg-card hover:text-foreground"
@@ -402,7 +416,8 @@ export function StuffLibrary({
                       <Button
                         type="button"
                         variant="ghost"
-                        aria-label={`Open ${item.label}`}
+                        title={item.label}
+                        aria-label={`Open ${conciseItemTitle(item)}`}
                         onClick={openItem}
                         className="absolute inset-0 h-full w-full rounded-none border-0 bg-transparent p-0 text-left hover:bg-transparent"
                       >
@@ -427,7 +442,8 @@ export function StuffLibrary({
                             size="icon-xs"
                             variant="secondary"
                             className="absolute right-2.5 top-2.5 bg-card/90 backdrop-blur-sm"
-                            aria-label={`Actions for ${item.label}`}
+                            title={item.label}
+                            aria-label={`Actions for ${conciseItemTitle(item)}`}
                           >
                             <MoreHorizontal aria-hidden />
                           </Button>
