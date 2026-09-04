@@ -50,6 +50,17 @@ describe("GET /api/build-info", () => {
     expect(body.migrations.appliedAt).not.toBeNull();
   });
 
+  /** 判官四轮 P1-1:`_prisma_migrations` 真实的 `migration_name` 天然带下划线(测试库跑过
+   *  `20260903120000_org_home_layout` 这类迁移),这条断言证的是 route.ts 的
+   *  `.replace(/_.*$/, "")` 真的接上了真库——去掉那次 replace,这条会看见下划线后半截人写的
+   *  迁移描述,当场变红。 */
+  it("E2E-STG-VERSION: migrations.latest 是裸迁移 id,不含下划线后缀(人写的迁移描述不外泄)", async () => {
+    const body = await (await GET()).json();
+    expect(body.migrations.latest).not.toBeNull();
+    expect(body.migrations.latest).not.toContain("_");
+    expect(body.migrations.latest).toMatch(/^\d+$/);
+  });
+
   it("E2E-STG-VERSION: 本机测试环境没有平台注入的 sha → web.sha/ref 如实报 null,不假造", async () => {
     const body = await (await GET()).json();
     expect(body.web.sha).toBeNull();

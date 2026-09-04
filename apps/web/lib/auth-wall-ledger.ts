@@ -150,13 +150,17 @@ export const AUTH_WALL_EXEMPTIONS: readonly AuthWallExemption[] = [
     semantics: "exact",
     reason: "#796 platform deploy/load probe; ready true/false plus a reason word, no merchant data.",
   },
-  // Codex 全 beta 审计 P1-012:发布身份(sha/ref/迁移前沿)必须能被无会话的运维流程读到——
-  // 这正是它存在的理由(核对一次修复到底在哪次部署上验的)。与 api/health 同一份零数据契约:
-  // 不含 configFingerprint、env 变量名或任何商家数据(见 lib/build-info.ts)。
+  // Codex 全 beta 审计 P1-012:发布身份(web sha/ref、逐班 worker 短 sha、迁移 id、外加
+  // web.startedAt/worker[].at/migrations.appliedAt 三个时间戳)必须能被无会话的运维流程
+  // 读到——这正是它存在的理由(核对一次修复到底在哪次部署上验的)。判官四轮 P1-1:这**不是**
+  // api/health 那份「只报状态词、不报时间戳」的零数据契约(app/api/health/route.ts:5、:33)——
+  // 本端点如实报时间戳,因为「这一班 worker 什么时候活着」「库迁移什么时候跑完」这两件事
+  // 本身就是发布身份要核对的东西,藏起来这个端点就白建了。仍然零敏感字段:不含
+  // configFingerprint、env 变量名或任何商家数据(见 lib/build-info.ts)。
   {
     path: "api/build-info",
     semantics: "exact",
-    reason: "P1-012 release identity probe; sha/ref/migration frontier only, no configFingerprint or merchant data.",
+    reason: "P1-012 release identity probe; exposes web sha/ref, per-worker short sha, migration id, and three diagnostic timestamps (web.startedAt/worker[].at/migrations.appliedAt) — not api/health's status-word-only contract, but still no configFingerprint or merchant data.",
   },
   // Meta 无认证调它,signed_request 就是它的认证。app/api/meta/data-deletion/ 下只有 route.ts,
   // 没有任何子回调(同级的 api/meta/authorize 与 api/meta/callback 是各自独立的路径,本来就在墙内)。

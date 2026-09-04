@@ -7,12 +7,19 @@
  *
  *   - web  —— 复用 `lib/health.ts` 的 `buildInfo`(同一对 `commitShaFrom`/`shortSha`,§7.3
  *             单一权威,不另起一套),外加这个进程从什么时候开始服务(`startedAt`)。
- *   - worker —— 每一班还活着的心跳(`WorkerHeartbeat`)各报一行 sha 与最近一次心跳时间。
+ *   - worker —— 每一班还活着的心跳(`WorkerHeartbeat`)各报一行短 sha 与最近一次心跳时间。
  *             刻意**不带** `configFingerprint`——那一格的比对纪律留在鉴权后的
  *             `lib/deploy-fingerprint.ts`(admin 面),这里是匿名端点。
  *   - migrations —— 数据库真正跑到了哪一步(`_prisma_migrations` 最新一条成功记录的迁移
- *             目录名),而不是`lib/boot-status.ts`那句「这次启动跑成没跑成」的二元判断——
- *             两者答的是不同问题,后者今天没有别的地方能读到。
+ *             **id**,不带迁移名后缀——见 route.ts 的 `readLatestMigration`,那半截人写的
+ *             描述文字不该白送给没有会话的调用方),而不是 `lib/boot-status.ts` 那句「这次
+ *             启动跑成没跑成」的二元判断——两者答的是不同问题,后者今天没有别的地方能读到。
+ *
+ * 判官四轮 P1-1:这不是 `/api/health` 那份「只报状态词、不报时间戳」的零数据契约——本端点
+ * 如实报三个时间戳(`web.startedAt`、`worker[].at`、`migrations.appliedAt`),因为这几个
+ * 时间戳本身就是「哪次部署」这句话的组成部分:没有它们,两次共享同一个 sha 的部署(比如
+ * 没有新提交的重启)分不清先后,一班 worker 死没死、库结构追没追上代码也都答不出来。
+ * 仍然零敏感字段:不含 `configFingerprint`、env 变量名或任何商家数据。
  *
  * 纯函数,和 `lib/health.ts` 同一个理由:调用方(route.ts)负责去拿数据库/环境这些不纯的
  * 输入,这里只负责把它们拼成响应形状,方便单测覆盖每一种「读不到」的组合。
@@ -34,7 +41,9 @@ export type BuildInfoResponse = {
 /** 读心跳表拿到的一行,只取组成响应要用的三列——调用方选列即选中这个形状。 */
 export type HeartbeatRow = { id: string; commitSha: string | null; at: Date };
 
-/** `_prisma_migrations` 最新一条**成功**记录,读不到就是 `null`(调用方的 `bestEffort` 已处理)。 */
+/** `_prisma_migrations` 最新一条**成功**记录,读不到就是 `null`(调用方的 `bestEffort` 已处理)。
+ *  `name` 这里已经是 route.ts 剥过后缀的迁移**id**(时间戳前缀),不是完整目录名——见
+ *  route.ts 的 `readLatestMigration`;这个模块自己不做剥离,只负责原样传到响应里。 */
 export type LatestMigration = { name: string; finishedAt: Date | null };
 
 /**

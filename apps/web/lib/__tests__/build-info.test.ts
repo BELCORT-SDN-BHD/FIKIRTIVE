@@ -76,17 +76,21 @@ describe("buildBuildInfoResponse(E2E-STG-VERSION P1-012)", () => {
     ]);
   });
 
-  it("E2E-STG-VERSION: 迁移前沿读到了 → migrations.latest 是迁移目录名,appliedAt 是完成时刻", () => {
+  /** 判官四轮 P1-1:route.ts 在读出 `_prisma_migrations` 时已经把下划线后面那半截人写的
+   *  迁移描述剥掉,传进这个纯函数的 `latestMigration.name` 本来就已经是裸 id——这里的
+   *  夹具改成裸 id 形状,和真实调用方一致(剥离本身的红线在真库测试
+   *  app/api/build-info/__tests__/route.test.ts,那里去掉 `.replace()` 才会让断言变红)。 */
+  it("E2E-STG-VERSION: 迁移前沿读到了 → migrations.latest 是迁移 id(裸时间戳,不带名字后缀),appliedAt 是完成时刻", () => {
     const finishedAt = new Date("2026-09-03T12:00:00.000Z");
     const body = buildBuildInfoResponse({
       env: {},
       processStartedAt: STARTED,
       now: NOW,
       heartbeatRows: [],
-      latestMigration: { name: "20260903120000_org_home_layout", finishedAt },
+      latestMigration: { name: "20260903120000", finishedAt },
     });
     expect(body.migrations).toEqual({
-      latest: "20260903120000_org_home_layout",
+      latest: "20260903120000",
       appliedAt: finishedAt.toISOString(),
     });
   });
@@ -121,7 +125,7 @@ describe("buildBuildInfoResponse(E2E-STG-VERSION P1-012)", () => {
       processStartedAt: STARTED,
       now: NOW,
       heartbeatRows: [{ id: "worker", commitSha: "abc123def4567890", at: NOW }],
-      latestMigration: { name: "20260903120000_org_home_layout", finishedAt: NOW },
+      latestMigration: { name: "20260903120000", finishedAt: NOW },
     });
     expect(Object.keys(body).sort()).toEqual(["generatedAt", "migrations", "web", "worker"]);
     expect(Object.keys(body.web).sort()).toEqual(["ref", "sha", "startedAt"]);

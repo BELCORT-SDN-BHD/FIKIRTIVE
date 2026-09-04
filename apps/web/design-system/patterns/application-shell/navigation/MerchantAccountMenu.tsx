@@ -1,11 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import Link from "next/link"
 import { LogOut, User } from "lucide-react"
 
 import { SHELL_ROUTES } from "@fikirtive/core/navigation"
-import type { BuildInfoResponse } from "@/lib/build-info"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -30,45 +28,23 @@ export function merchantIdentityLabel(account: MerchantShellAccount | null | und
   return account.displayName || account.email || "Account"
 }
 
-/** `/api/build-info`'s web sha — the only field this menu shows. Failure or no platform-injected
- *  sha (local dev) both read as `null`; the label falls back to "local" either way (P1-012). */
-async function defaultFetchBuildSha(): Promise<string | null> {
-  try {
-    const res = await fetch("/api/build-info")
-    if (!res.ok) return null
-    const data = (await res.json()) as BuildInfoResponse
-    return data.web?.sha ?? null
-  } catch {
-    return null
-  }
-}
-
 export function MerchantAccountMenu({
   account,
   signOutAction,
   profileHref = SHELL_ROUTES.profile,
   showSignOutAction = true,
-  fetchBuildSha = defaultFetchBuildSha,
+  buildSha = null,
 }: {
   account?: MerchantShellAccount | null
   signOutAction: () => Promise<void>
   profileHref?: string
   showSignOutAction?: boolean
-  /** Injected for tests (`web-page-cache.test.ts`'s DI convention) — production never passes it. */
-  fetchBuildSha?: () => Promise<string | null>
+  /** P2-3(判官四轮):`buildInfo(process.env).sha`,读法是纯同步 env 读取——`getMyAccount()`
+   *  在 `global-navigation.tsx` 已经在跑的那一趟顺风车带下来的,这个组件自己不发任何请求。
+   *  没有平台注入(本机)或还没加载完都是 `null`,标签统一落 "local"。 */
+  buildSha?: string | null
 }) {
   const label = merchantIdentityLabel(account)
-  const [buildSha, setBuildSha] = useState<string | null>(null)
-
-  useEffect(() => {
-    let alive = true
-    fetchBuildSha().then((sha) => {
-      if (alive) setBuildSha(sha)
-    })
-    return () => {
-      alive = false
-    }
-  }, [fetchBuildSha])
 
   const copyBuildInfoLink = async () => {
     try {
@@ -127,9 +103,12 @@ export function MerchantAccountMenu({
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          {/* P1-012 — release identity, compact so it never competes with Profile/Sign out. */}
+          {/* P1-012 — release identity, compact so it never competes with Profile/Sign out.
+              判官四轮 P2-2:可见文案是紧凑版本号,读屏该报的是这颗项真正做的事(复制链接),
+              两者不是同一句话,所以 aria-label 单独给。 */}
           <DropdownMenuItem
             data-shell-build-info
+            aria-label="Copy build info link"
             onSelect={() => {
               void copyBuildInfoLink()
             }}
