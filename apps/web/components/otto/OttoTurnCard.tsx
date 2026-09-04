@@ -23,7 +23,11 @@
  *    （data-step 的工具标签 / data-status 的三句叙述 / 卡片自己的 CardState），这里只渲染。
  *
  * 3. **正文是人话（P1-1）**。原始 Markdown 交给 `OttoMarkdown`（与抽屉里同一个渲染器），
- *    并且只认真的 TEXT —— `🖼 result` 那种内部占位串由 `latestAssistantSayable` 挡在外面。
+ *    并且只认真的 TEXT —— `🖼 result` 那种内部占位串由 `canvasTurnText` 挡在外面。
+ *
+ * 4. **一张脸只说一件事（Codex QA-CRE-004）**。状态词与正文由 `lib/otto-canvas-turn.ts` 从
+ *    **同一个**来源投影：这一轮最新的那个事件。所以「绿灯 Ready 配着上一轮那句失败」这种
+ *    自相矛盾的脸，在这一层没有地方生出来 —— 它连两个状态源都没有。
  */
 
 import React, { useState } from "react";
