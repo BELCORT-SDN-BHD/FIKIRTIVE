@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// 本面自 PR #1152 起无路由挂载(/library 改画 components/library/LibraryView.tsx),围栏仅护组件本身；tidy 待登记。
 /**
  * library-empty-states — #701:Library 两处「话说了一半」。
  *
