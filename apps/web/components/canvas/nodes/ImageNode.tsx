@@ -1,6 +1,7 @@
 // apps/web/components/canvas/nodes/ImageNode.tsx
 import { useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
+import { CANVAS_NODE_TOOLBAR_OFFSET } from "@/lib/canvas-fit-padding";
 import {
   CopyPlusIcon,
   DownloadIcon,
@@ -124,7 +125,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
         isVisible={soloSelected}
         position={Position.Top}
         align="start"
-        offset={22}
+        offset={CANVAS_NODE_TOOLBAR_OFFSET}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >

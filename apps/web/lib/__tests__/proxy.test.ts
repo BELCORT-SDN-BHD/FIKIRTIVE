@@ -952,6 +952,7 @@ describe("proxy — the ledger refuses a malformed exemption (#901)", () => {
 /** 今天故意公开的路由,一条不多一条不少。改这份名单 = 决定让某条路由无会话可达。 */
 const PUBLIC_APP_ROUTES = [
   "/api/better-auth/all/all",
+  "/api/build-info",
   "/api/health",
   "/api/media/pub/token",
   "/api/meta/data-deletion",

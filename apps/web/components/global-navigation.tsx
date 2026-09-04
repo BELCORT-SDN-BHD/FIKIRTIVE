@@ -117,6 +117,7 @@ export function MerchantShellFrame({
   profileHref,
   creditsHref,
   showSignOutAction,
+  buildSha,
 }: {
   children: React.ReactNode;
   pathname: string;
@@ -129,6 +130,11 @@ export function MerchantShellFrame({
   profileHref?: string;
   creditsHref?: string;
   showSignOutAction?: boolean;
+  /** P2-3(Codex 全 beta 审计 P1-012 判官四轮)—— 账号菜单的 `Build <sha>` 一行。从
+   *  `MerchantShellContent` 已经在调的 `getMyAccount()` 顺风车带下来(`buildInfo(process.env)`
+   *  是纯同步取 env,零 I/O),不让菜单自己再打一次 /api/build-info 去为一个 env 读取
+   *  白付两次 DB 查询(worker 心跳 + 迁移前沿)。 */
+  buildSha?: string | null;
 }) {
   const controls = useOttoPanelControls();
 
@@ -151,6 +157,7 @@ export function MerchantShellFrame({
           activeLabelOverride={topBarLabel}
           profileHref={profileHref}
           showSignOutAction={showSignOutAction}
+          buildSha={buildSha}
         />
         <div data-merchant-shell-content className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           {children}
@@ -171,6 +178,9 @@ export function MerchantShellContent({
 }) {
   const merchantSurface = isMerchantSurface(pathname);
   const [account, setAccount] = useState<RailAccount | null>(null);
+  // P2-3 —— rides the same getMyAccount() round trip as `account`; see MerchantShellFrame's
+  // `buildSha` prop doc for why this isn't its own fetch.
+  const [buildSha, setBuildSha] = useState<string | null>(null);
 
   // 导轨持着全产品唯一的余额数字,所以它要在每次结算后重读,不只是挂载时读一次(#550:
   // 曾经卡在挂载值上,直到整页刷新才追上数据库,滞后 84 秒以上)。订阅花费信号而不是轮询,
@@ -191,6 +201,7 @@ export function MerchantShellContent({
       getMyAccount().then((result) => {
         if (!alive || !isLatest() || "error" in result) return;
         setAccount({ email: result.email, displayName: result.displayName, balance: result.balance });
+        setBuildSha(result.buildSha ?? null);
       }).catch(() => {});
     };
     const loadIfVisible = () => {
@@ -220,6 +231,7 @@ export function MerchantShellContent({
           signOutAction={signOutAction}
           account={account}
           topBarLabel={shellTopBarLabel(pathname)}
+          buildSha={buildSha}
         >
           {children}
         </MerchantShellFrame>

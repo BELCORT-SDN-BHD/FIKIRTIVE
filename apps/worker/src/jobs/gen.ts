@@ -23,6 +23,7 @@ import {
   videoDefaults,
   imageDefaults,
   conditioningCap,
+  attachedImageCap,
   withReferenceMap,
   approvedEntityMap,
   type ReferenceSlot,
@@ -111,6 +112,45 @@ async function alertIfGuardrailPriced(job: GenJob, spendInput: ReturnType<typeof
  * 单位是引擎自己的口径(图 = 张,视频 = token),由同一行的 kind 决定。
  * 纯函数,不读库、不参与任何 spend 判定。
  */
+/**
+ * 这一单图片作业带着商家挂的哪几张图 —— **一份**,次序即引擎收到的次序。
+ *
+ * ── Codex staging CRE-STG-P1-003(2026-09-04)──────────────────────────────────
+ * 走查那一轮商家挂了产品图与人物图两张,确认卡只列得出一件,付费请求里也只有一件。修法
+ * 是让两边都读同一串 id:卡上冻结它(`CardPayload.referenceGenerationIds`),入队时它进
+ * 幂等材料与规格快照(`GenJob.imageOptions.referenceGenerationIds`),这里从那份快照读回来。
+ *
+ * 为什么第一张仍然是 `GenJob.sourceGenerationId`:那一列已经存在,而且被画幅继承、付费前
+ * 守卫、`<Image_1>` 编号三处读着。把它一起搬进 JSON 会动到三条与本次修复无关的路;留在
+ * 原位,挂 0/1 张的每一条既有任务因此逐字不变。
+ *
+ * VIDEO 作业永远返回空:首帧走它自己那条路(它是**帧**,不是参考照),整段参考片也是。
+ * 纯函数,不读库、不定价。
+ */
+function jobAttachedImageIds(job: {
+  kind: string;
+  sourceGenerationId: string | null;
+  imageOptions: unknown;
+}): string[] {
+  if (job.kind === "VIDEO") return [];
+  const io = job.imageOptions as { referenceGenerationIds?: unknown } | null;
+  const extra = Array.isArray(io?.referenceGenerationIds)
+    ? io.referenceGenerationIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+    : [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of [job.sourceGenerationId, ...extra]) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  // #1187 判官 P2-1 —— 纵深防御。铸卡侧已经用同一个 `attachedImageCap` 截过一次,所以这一刀
+  // 在今天每一条路上都切不掉任何东西。它守的是**明天**:这份快照是一列 JSON,一条手写的行、
+  // 一次迁移、一个将来的入队点都可能塞进比上限更多的 id,而这里再往下就是掏钱调引擎了。
+  // 名额的算法只有一份 —— 与卡面、与 `conditioningCap` 读的是同一个函数。
+  return out.slice(0, attachedImageCap(out.length));
+}
+
 function jobBilledUnits(outputs: { receipt?: GenerationReceipt }[]): number | null {
   if (outputs.length === 0) return null;
   let total = 0;
@@ -1147,11 +1187,18 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // the ONE place that knows it, and `referenceBudget` (what the card counts) reads the same
       // function. A video job's ceiling depends on how many image_url slots its frames take, so
       // it is derived from the job's OWN shape — the same shape the card had at approval time.
+      //
+      // Codex staging CRE-STG-P1-003 —— 图片这一支多了一个入参:商家挂了几张图。第 2 张起
+      // 每一张从 @元素的名额里扣一格,所以引擎收到的总张数**不超过这条修改之前的上限**。
+      // 挂 0/1 张 ⇒ 扣 0 格 ⇒ 与从前逐字相同。数字从 `attachedImageIds`(下面那一份冻结快照)
+      // 来,卡面读的是同一个 `conditioningCap` —— 说的和送的仍然只有一份答案。
+      const attachedImageIds = jobAttachedImageIds(job);
       const refCap = conditioningCap({
         kind: job.kind === "VIDEO" ? "video" : "image",
         hasVideoStartFrame: !!(job.sourceGenerationId || job.shotId),
         hasVideoTailFrame: !!job.tailGenerationId,
         hasReferenceVideo: !!job.referenceVideoGenerationId,
+        attachedImageCount: attachedImageIds.length,
       });
       // #774 U2:每张上车的图连它属于哪个 @元素一起记 —— 编号(`<Image_N>`)就是从这里
       // 长出来的,与 `inputImageUrls` 同一趟循环、同一个下标,所以两者不可能各说各话。
@@ -1349,9 +1396,20 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // paid edit relates to the image the user was viewing, not an unconditioned fresh gen.
         // Prepended so it's the primary reference (byteplus sends inputImageUrls[0] first; with
         // multi-reference conditioning the @ref images ride along after it). Pre-spend.
-        if (job.sourceGenerationId) {
+        //
+        // ── Codex staging CRE-STG-P1-003 —— 这里从「一张」变成「这一单挂的那几张」 ──────
+        // 循环取代了原来那个 `if`,而挂 1 张时它逐字等价于原来那个 `if`(同样的 where、同样
+        // 的 fail-closed、同样的 unshift 到第 0 位)。多出来的那几张按商家挂的次序坐进
+        // `<Image_2>`、`<Image_3>`…;名额已经由上面的 `refCap` 从 @元素那边扣过格了,所以
+        // 引擎收到的总张数不会超过这条修改之前的上限。
+        //
+        // 钱路纪律一格没松:行找不到 ⇒ fail-closed 退款(永久错误,重试也长不出那一行);
+        // 行在但取不到文件 ⇒ 抛 `REFERENCE_ASSET_UNREACHABLE`(可重试),两者都在付费调用
+        // **之前**。少一张就不发 —— 商家批的是 N 张参考,发 N-1 张就是交付另一样东西。
+        const attachedUrls: string[] = [];
+        for (const attachedId of attachedImageIds) {
           const src = await prisma.generation.findFirst({
-            where: { id: job.sourceGenerationId, ...generationReferenceScope(job.ownerId, REFERENCE_IMAGE_EXTS) },
+            where: { id: attachedId, ...generationReferenceScope(job.ownerId, REFERENCE_IMAGE_EXTS) },
             include: { asset: true },
           });
           if (!src) { await failClosedWithRefund(job, "edit source image not found (or not an image) for this account"); return; }
@@ -1360,10 +1418,22 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             console.error(`[gen] ${job.id}: edit source image unreachable — refusing to spend`);
             throw new Error(REFERENCE_ASSET_UNREACHABLE);
           }
-          if (srcUrl) {
-            inputImageUrls.unshift(srcUrl);
-            refSlots.unshift({ kind: "baseImage" }); // 底图坐第 0 位 → 它就是 <Image_1>
-          }
+          if (srcUrl) attachedUrls.push(srcUrl);
+        }
+        if (attachedUrls.length > 0) {
+          // 一次 unshift 整批 —— 次序保住:第 0 位是商家挂的第一张,它就是 <Image_1>。
+          //
+          // 槽位分两种,而且必须分:第一张是**正在被编辑的那张**(`baseImage`),第 2 张起
+          // 是**参考**(`attachedReference`)。编号句由槽位产出,所以把第 2 张也标成
+          // `baseImage` 就等于告诉引擎「这张也在被编辑」—— 而卡上给商家读的是 `Reference`
+          // (同一份角色表 `cardReferenceRoleLabel`)。卡说一套、请求说另一套,正是
+          // CRE-STG-P1-003 这一票在修的那类分家。挂 1 张时整段与从前逐字相同。
+          inputImageUrls.unshift(...attachedUrls);
+          refSlots.unshift(
+            ...attachedUrls.map(
+              (_url, index) => ({ kind: index === 0 ? "baseImage" : "attachedReference" }) as ReferenceSlot,
+            ),
+          );
         }
         // #642: the shape the merchant bought, frozen onto the job at enqueue. A legacy row
         // (or a malformed snapshot) has none → the model's default square, which is exactly
