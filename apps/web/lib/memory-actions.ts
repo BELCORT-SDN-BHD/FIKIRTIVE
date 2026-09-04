@@ -452,7 +452,10 @@ export async function discardBrandDraft(
   const actor = await resolveActor(gate.email);
   try {
     const { count } = await prisma.memory.updateMany({
-      where: { id: r.id, ownerId: gate.ownerId, contextStatus: "Draft" },
+      // 判官复验尾巴①:`deletedAt: null` 少不得。已经放弃过的行还留着 Draft 状态,
+      // 少了它,重复调用会把 `deletedAt` 盖成新的时间,幂等键(含 updatedAt)也就跟着
+      // 变 —— 改动史里于是一行接一行「Discarded this draft.」,一次放弃被讲成三次。
+      where: { id: r.id, ownerId: gate.ownerId, contextStatus: "Draft", deletedAt: null },
       data: { deletedAt: new Date(), ...actorStamp(actor) },
     });
     if (!count) return { error: "That draft is no longer here." };

@@ -19,15 +19,6 @@ export function packBrandContent(name: string, content: string): string {
 }
 
 /**
- * `named` 回答的是「这一行**自己**带名字吗」,而不是「界面显示的名字是什么」。
- *
- * 判官 P1-2:存量 Memory 行从来没有名字,`name` 是分区标签兜的底(Brand voice…)。
- * 编辑之后若无条件 `packBrandContent(name, next)` 回写,那个兜底标签会被**写进**
- * `Memory.content` 的第一行,Otto 下一次读到的就是「About the brand: Brand voice …」——
- * 界面上的一个占位词变成了商家品牌事实的一部分。所以回写前必须问这一行原本有没有名字:
- * 没有的照原样只写正文,有的才连名字一起打包。
- */
-/**
  * 编辑之后怎么写回 `Memory.content` —— 判官 P1-2 的单一权威。
  *
  * 界面上每一行都有名字可看,但存量行的那个名字是**分区标签兜的底**。回写时若不分青红
@@ -39,6 +30,15 @@ export function repackBrandContent(previous: { name: string; named: boolean }, c
   return previous.named ? packBrandContent(previous.name, content) : content.trim();
 }
 
+/**
+ * `named` 回答的是「这一行**自己**带名字吗」,而不是「界面显示的名字是什么」。
+ *
+ * 判官 P1-2:存量 Memory 行从来没有名字,`name` 是分区标签兜的底(Brand voice…)。
+ * 编辑之后若无条件 `packBrandContent(name, next)` 回写,那个兜底标签会被**写进**
+ * `Memory.content` 的第一行,Otto 下一次读到的就是「About the brand: Brand voice …」——
+ * 界面上的一个占位词变成了商家品牌事实的一部分。所以回写前必须问这一行原本有没有名字:
+ * 没有的照原样只写正文,有的才连名字一起打包。
+ */
 export function unpackBrandContent(
   packed: string,
   fallbackName: string,

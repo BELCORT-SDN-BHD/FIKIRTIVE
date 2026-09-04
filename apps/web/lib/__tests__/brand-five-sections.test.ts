@@ -183,7 +183,9 @@ describe("FRONT-A8 草稿流:确认之前不落正式记录", () => {
   it("FRONT-A8 放弃草稿走软删除,而且只碰草稿行", async () => {
     expect(await discardBrandDraft({ id: "m_draft" })).toEqual({ ok: true });
     expect(mockMemoryUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "m_draft", ownerId: "o1", contextStatus: "Draft" } }),
+      expect.objectContaining({
+        where: { id: "m_draft", ownerId: "o1", contextStatus: "Draft", deletedAt: null },
+      }),
     );
   });
 });

@@ -1162,7 +1162,7 @@ model BrandContextRevision {
   organization Organization @relation(fields: [ownerId], references: [id])
   targetKind   String   // 'memory' | 'record'
   targetId     String
-  action       String   // 'created' | 'updated' | 'deleted' | 'restored' | 'confirmed'
+  action       String   // 'created' | 'updated' | 'deleted' | 'restored' | 'confirmed' | 'discarded'
   revisionKey  String   // 幂等键的可变半段:`${action}:${该行这一次的 updatedAt.toISOString()}`
   changedById  String?  // User.id;拿不到时留空,而不是编一个
   changedByLabel String // 商家看得懂的那一半(邮箱/显示名),历史行不该因为改名而失真

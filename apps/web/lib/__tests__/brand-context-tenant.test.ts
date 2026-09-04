@@ -225,6 +225,23 @@ describe("FRONT-A8 / FRONT-A9 判官落修:存量行、Otto 写的行、重复�
     const history = await listBrandRevisionsAction({ kind: "memory", id: draft.id });
     expect(history.map((r) => r.action)).toContain("discarded");
   });
+
+  it("FRONT-A8 重复放弃同一份草稿:改动史里 discarded 仍然只有一行", async () => {
+    // 判官复验尾巴①:where 少了 `deletedAt: null` 时,第二次调用会把 deletedAt 盖成
+    // 新时间,幂等键(含 updatedAt)跟着变 —— 一次放弃被讲成两次。
+    asUser(A_EMAIL);
+    const draft = await saveBrandDraft({
+      section: "visual-guidelines", name: "A look", content: "A shoots in daylight.", origin: "text", originDetail: "Pasted text",
+    });
+    if ("error" in draft) throw new Error(draft.error);
+
+    expect(await discardBrandDraft({ id: draft.id })).toEqual({ ok: true });
+    // 第二次:这一行已经放弃过了,不是「还在的草稿」——照直说它不在了,不再动库。
+    expect(await discardBrandDraft({ id: draft.id })).toEqual({ error: expect.any(String) });
+
+    const history = await listBrandRevisionsAction({ kind: "memory", id: draft.id });
+    expect(history.filter((r) => r.action === "discarded")).toHaveLength(1);
+  });
 });
 
 describe("FRONT-A8 租户隔离:两个方向都看不到对方", () => {
