@@ -23,6 +23,7 @@ import {
   videoDefaults,
   imageDefaults,
   conditioningCap,
+  attachedImageCap,
   withReferenceMap,
   approvedEntityMap,
   type ReferenceSlot,
@@ -143,7 +144,11 @@ function jobAttachedImageIds(job: {
     seen.add(id);
     out.push(id);
   }
-  return out;
+  // #1187 判官 P2-1 —— 纵深防御。铸卡侧已经用同一个 `attachedImageCap` 截过一次,所以这一刀
+  // 在今天每一条路上都切不掉任何东西。它守的是**明天**:这份快照是一列 JSON,一条手写的行、
+  // 一次迁移、一个将来的入队点都可能塞进比上限更多的 id,而这里再往下就是掏钱调引擎了。
+  // 名额的算法只有一份 —— 与卡面、与 `conditioningCap` 读的是同一个函数。
+  return out.slice(0, attachedImageCap(out.length));
 }
 
 function jobBilledUnits(outputs: { receipt?: GenerationReceipt }[]): number | null {

@@ -73,7 +73,11 @@ const hashOf = (seed: number) => seed.toString(16).padStart(64, "0");
 const urlOf = (contentHash: string) => `url:u/o1/${contentHash}.png`;
 
 /** 商家挂的第 n 张图(0 = 编辑底图 = `<Image_1>`)。 */
-const ATTACHED = [0, 1, 2].map((i) => ({ id: `gen_att${i}`, hash: hashOf(900 + i) }));
+// 上限 + 2 张,好让 P2-1 那条兜底测得到。前三张的 id 与哈希与从前逐字相同,既有用例不动。
+const ATTACHED = Array.from({ length: MAX_CONDITIONING_IMAGES + 2 }, (_, i) => ({
+  id: `gen_att${i}`,
+  hash: hashOf(900 + i),
+}));
 const attachedUrl = (i: number) => urlOf(ATTACHED[i]!.hash);
 
 /** 某个元素的第 `refIndex` 张活参考照。 */
@@ -184,6 +188,25 @@ describe("CREATE-A1 商家挂了几张,引擎就收到几张(CRE-STG-P1-003)", (
     expect(cardReferenceRoleLabel("reference")).toBe("Reference");
     expect(lines).toContain("<Image_2> is a reference image.");
     expect(lines).not.toContain("<Image_2> is the image being edited.");
+  });
+
+  it("CREATE-A2 快照里塞进超上限的参考 id:worker 自己也只取上限张(#1187 判官 P2-1)", async () => {
+    // 纵深防御:铸卡侧已经截过一次,所以今天走不到这里。它守的是明天 —— 一条手写的行、
+    // 一次迁移、一个将来的入队点都可能塞进比上限更多的 id,而这里再往下就是掏钱调引擎。
+    const tooMany = ATTACHED.slice(1).map((a) => a.id); // 底图之外还有 MAX+1 张
+    expect(1 + tooMany.length).toBeGreaterThan(MAX_CONDITIONING_IMAGES);
+
+    const call = await paidImageCall({
+      ...imageJob,
+      sourceGenerationId: ATTACHED[0]!.id,
+      imageOptions: { aspectRatio: "9:16", referenceGenerationIds: tooMany },
+    });
+
+    // 恰好上限张,而且是**前**上限张 —— 次序不许被截断打乱。
+    expect(call.inputImageUrls).toHaveLength(MAX_CONDITIONING_IMAGES);
+    expect(call.inputImageUrls).toEqual(
+      Array.from({ length: MAX_CONDITIONING_IMAGES }, (_, i) => attachedUrl(i)),
+    );
   });
 
   it("CREATE-A1 挂 1 张:编号句与这条修改之前逐字相同(只有底图那一句)", async () => {

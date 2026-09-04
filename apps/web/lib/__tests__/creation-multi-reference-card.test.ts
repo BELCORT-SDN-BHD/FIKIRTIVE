@@ -347,8 +347,27 @@ describe("CREATE-A1 批准失败读得懂", () => {
   it("CREATE-A1 泛化句来自单一措辞源,不含 id、URL、路径或堆栈", () => {
     // 走查那句 `Couldn't start that - please try again.` 是客户端 catch 里的字面量,
     // 措辞源里根本没有它 —— 现在有了,而且只有这一份。
-    expect(GENERATION_START_FAILED).toMatch(/nothing was charged/i);
-    expect(GENERATION_START_FAILED).not.toMatch(/https?:|\/|Error|at\s+\w+\.|gen_|msg_/);
+    expect(GENERATION_START_FAILED).toMatch(/couldn't start that generation/i);
+    // `\bat` 而不是裸 `at` —— 它抓的是堆栈帧那个**独立的词**(`at handleGen.`)。
+    // 少了词界,`that generation.` 里的 "th|at" 也命中:一句普通英语被当成堆栈。
+    expect(GENERATION_START_FAILED).not.toMatch(/https?:|\/|Error|\bat\s+\w+\.|gen_|msg_/);
+  });
+
+  it("CREATE-A1 这一句不许替账本担保零花费(#1187 判官 P1-1)", () => {
+    // 它的两个调用点都接住一切,**包括预扣已提交之后**才炸的形状:`gen-actions.ts` 那支
+    // 「事务完成但结局未知」回查不到就原样抛,`plan-approval.ts` 的客户端 catch 更是
+    // 「服务端已扣、响应没回来」的典型。同一个 `plan-approval.ts` 的 finally 里逐字写着
+    // **失败的响应从不证明零花费**(#550)—— 一句安慰话会让商家恰好在最该看余额的时候不看。
+    expect(GENERATION_START_FAILED).not.toMatch(/nothing was charged|no charge|not charged|wasn't charged|free|\$0|zero credits?/i);
+    // 反过来,真正零花费的那些拒绝说得起这句话 —— 它们在铸卡/预扣之前就抛。
+    expect(referenceUnavailableMessage("videoAsImage")).toMatch(/nothing was sent/i);
+  });
+
+  it("CREATE-A1 堆栈守卫收紧后仍抓得住真堆栈,只是不再误伤普通英语", () => {
+    const guard = /https?:|\/|Error|\bat\s+\w+\.|gen_|msg_/;
+    expect("at handleGen.").toMatch(guard);   // 真堆栈帧,照旧命中
+    expect("at Object.").toMatch(guard);
+    expect("that generation.").not.toMatch(guard); // 普通英语,不再误伤
   });
 
   it("CREATE-A1 短号由那次动作自己的身份算出来,两边同一个函数、同一串", () => {

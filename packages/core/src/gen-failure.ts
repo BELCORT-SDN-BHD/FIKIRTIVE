@@ -472,11 +472,27 @@ export function referenceUnavailableSentence(text: string | null | undefined): s
  * 没存下来」的那一刻。卡 id 是这次批准唯一确定存在、两边都握着的身份 —— 服务端在日志里
  * 写它,卡面在商家眼前显示它,两边算的是**同一个函数**。
  *
- * 「nothing was charged」在这里是可以说的:这一句只在 create/reserve 之前抛出的那一支上使
- * 用(见调用点),而预扣一旦发生,失败会走 worker 的退款路,商家读到的是那条路自己的句子。
+ * ── 这一句为什么**不**说「nothing was charged」(#1187 判官 P1-1)────────────────────
+ *
+ * 上一版写的是 `…, and nothing was charged.`,理由是「它只在 create/reserve 之前那一支上
+ * 使用」。那个理由不成立,而且是这条钱路上最贵的一种不成立:它的两个调用点都**接住一切**,
+ * 包括预扣已经提交之后才炸的那些形状 ——
+ *
+ *   · `apps/web/lib/gen-actions.ts` 的「事务回调完成了,但结局未知」那一支(连接/ACK 丢了):
+ *     回查那一行拿不到就原样 `throw e`。此刻 create + reserve + enqueue **可能已经原子提交**,
+ *     只是我们查不到;
+ *   · `apps/web/lib/cowork-actions.ts` 的外壳接住这个抛;
+ *   · `apps/web/components/otto/plan-approval.ts` 的客户端 catch 更是典型形状 ——
+ *     「服务端已经扣了、响应没回来」。同一个文件的 `finally` 里逐字写着这条纪律:
+ *     **失败的响应从不证明零花费**(#550),`notifyBalanceRefresh()` 正因此才放在那里。
+ *
+ * 所以这一句只说它**确实知道**的事:这次没能开始,请刷新后再试。余额的真相由那次刷新
+ * (`notifyBalanceRefresh`)与账本自己回答 —— 一句安慰话换来的是商家按我们说的不去看余额,
+ * 而那正是他最该看的时候。真正零花费的那些拒绝有它们自己的句子(`ProposeRefusal` 家族、
+ * `REFERENCE_UNAVAILABLE_SENTENCES` 的 `nothing was sent`),那些地方说得起,这里说不起。
  */
 export const GENERATION_START_FAILED =
-  "We couldn't start that generation, and nothing was charged. Try again in a moment.";
+  "We couldn't start that generation. Refresh and try again in a moment.";
 
 /** 短号的长度 —— 够短到商家愿意念出来,够长到一天里的卡不会撞。 */
 const DIAGNOSTIC_REF_LENGTH = 8;
