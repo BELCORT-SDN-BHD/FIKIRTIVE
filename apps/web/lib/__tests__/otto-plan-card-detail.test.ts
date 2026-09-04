@@ -103,6 +103,8 @@ const SERVER_PAYLOAD_KEYS = {
   sourceGenerationId: true,
   goal: true,
   referenceVideoGenerationId: true,
+  // Codex QA-CRE-FE9-013:媒体参考的审批回执 —— 卡面逐项列出、缺一件就不许 Generate。
+  mediaReferences: true,
 } satisfies Record<keyof Required<ServerCardPayload>, true>;
 
 const CARD_PAYLOAD_KEYS = {
@@ -124,6 +126,8 @@ const CARD_PAYLOAD_KEYS = {
   sourceGenerationId: true,
   goal: true,
   referenceVideoGenerationId: true,
+  // Codex QA-CRE-FE9-013:媒体参考的审批回执 —— 卡面逐项列出、缺一件就不许 Generate。
+  mediaReferences: true,
 } satisfies Record<keyof Required<OttoPlanCardPayload>, true>;
 
 describe("#580 P1-1 卡面 payload 类型 = 服务端契约", () => {

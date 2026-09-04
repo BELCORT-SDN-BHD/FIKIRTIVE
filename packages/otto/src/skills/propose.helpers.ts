@@ -34,7 +34,7 @@ import {
   type ReferenceBudget,
   type ApprovedEntity,
 } from "@fikirtive/core";
-import type { OttoContext } from "../context.js";
+import type { OttoContext, OttoMediaReference } from "../context.js";
 import { decideVideoAction } from "./video-intent.js";
 import { videoActionUnavailableReason } from "./video-capabilities.js";
 
@@ -137,6 +137,21 @@ export type CardPayload = {
   /** 这条创作的目的/意图（来自 propose 的资讯门）。展示/审计用。 */
   goal?: string;
   referenceVideoGenerationId?: string;
+  /**
+   * Codex QA-CRE-FE9-013 —— **这张卡真会带上路的每一件媒体参考的回执**,与
+   * `approvedEntities` 同一条纪律:名字在铸卡那一刻冻结,批准前看得见,批准后谁也改不动。
+   *
+   * 从前卡上只有 `sourceGenerationId` 一个 id,于是确认卡要么不提它、要么写成 `Image ref`——
+   * Codex 那一轮的确认卡只列得出 `Aisyah (person)`,商家无从确认「上车的到底是不是我选的
+   * 那只蓝杯子」,而实际上那张图早就被静默丢掉了。
+   *
+   * 收的**只有真会进付费请求的那几件**(编辑底图 / i2v 首帧 / 整段参考片)——多列一件就是
+   * 一次新的谎报。次序:图片在前,参考片在后。
+   *
+   * 老卡没有这个字段:卡上带着 `sourceGenerationId` 却没有对应回执的,前端一律判为
+   * 「读不全」,不给 Generate 按钮(`planCardGate`)。
+   */
+  mediaReferences?: OttoMediaReference[];
 };
 
 export type ProposeCardResult = {
@@ -905,6 +920,25 @@ export function buildProposeCard(
     .map((id) => ownedById.get(id))
     .filter((e): e is ApprovedEntity => !!e);
 
+  // Step 4.8b(Codex QA-CRE-FE9-013)—— 媒体参考的审批回执,与上面那份名字快照同一条纪律。
+  //
+  // 只收**这张卡真会带上路的那几件**:图片那一格是 `sourceGenerationId`(video ⇒ i2v 首帧,
+  // image ⇒ 引擎的编辑底图),视频那一格是 `referenceVideoGenerationId`。商家这一轮可能挂了
+  // 好几张图,但只有第一张会成为付费请求里的那一张 —— 把其余的也列进回执,就是把「Otto 看过」
+  // 说成「引擎会用」,那是同一类谎报换个方向。
+  //
+  // 回执由服务端解析器一次产出(`validateOttoTurnReferences`),这里只按 id 取,不自己编名字:
+  // 取不到就宁可少一行(与 `approvedEntities` 同样的安全降级),而 `planCardGate` 会因为
+  // 「有 id 没回执」判这张卡不可批准 —— 少一行不会变成一次没有回执的付费。
+  const receiptById = new Map((ctx.mediaReferences ?? []).map((r) => [r.generationId, r]));
+  const cardMediaIds: string[] = [
+    ...(isI2V || usesAttachedImage ? [ctx.sourceGenerationId!] : []),
+    ...(isRefVideo ? [ctx.referenceVideoGenerationId!] : []),
+  ];
+  const mediaReferences = cardMediaIds
+    .map((id) => receiptById.get(id))
+    .filter((r): r is OttoMediaReference => !!r);
+
   // Step 5: cardPayload (mirror coworkTurn 401–406)
   const cardPayload: CardPayload = {
     kind,
@@ -936,6 +970,8 @@ export function buildProposeCard(
     ...(isI2V || usesAttachedImage ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
     // isRefVideo ⇒ kind==="video" && !!ctx.referenceVideoGenerationId, so the non-null assertion is sound.
     ...(isRefVideo ? { referenceVideoGenerationId: ctx.referenceVideoGenerationId! } : {}),
+    // 媒体参考的审批回执(Codex QA-CRE-FE9-013)。空的就不写这个字段(老卡的形状)。
+    ...(mediaReferences.length ? { mediaReferences } : {}),
   };
 
   // Step 6: the credit amount Otto may mention in chat = the real charge (estimatedCredits).

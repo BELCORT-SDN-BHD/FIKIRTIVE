@@ -42,6 +42,9 @@ import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
 import { ChevronDown, ImagesIcon, MessageSquarePlus, PlusIcon, UploadIcon, XIcon } from "lucide-react";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { UPLOAD_FAILURE_COPY } from "@fikirtive/core/upload";
+// Codex QA-CRE-FE9-013 —— 「这句话是不是我们写给商家的那两句之一」的白名单。走**子路径**:
+// `@fikirtive/core` 的桶文件带出 `node:crypto`,那会被拖进客户端包。
+import { referenceUnavailableSentence } from "@fikirtive/core/gen-failure";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_SIDE, FRAME_JPEG_QUALITY, REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS, isRefVideoDurationOk } from "@/lib/video-frame";
 import {
@@ -169,6 +172,25 @@ function revokeAttachedPreviews(refs: AttachedReference[]): void {
   refs.forEach(revokeAttachedPreview);
 }
 
+/**
+ * Codex QA-CRE-FE9-013 —— 路由在流打开之前拒绝这一轮时,body 是一段 JSON(`{"error":"…"}`)。
+ * `DefaultChatTransport` 把它原样塞进 `Error.message`,所以这里只做一件事:把那一层信封拆掉。
+ * 拆不开就原样交出去 —— 判断「这句话是不是我们写的」是白名单的事,不是这里的事。
+ */
+function errorBodyText(message: string | undefined): string | null {
+  const raw = (message ?? "").trim();
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && typeof (parsed as { error?: unknown }).error === "string") {
+      return (parsed as { error: string }).error;
+    }
+  } catch {
+    // 不是 JSON —— 那就是普通的传输层文本,原样交给白名单去否决它。
+  }
+  return raw;
+}
+
 /** The latest user message's text — what the strict route body needs for `text`. */
 function latestUserText(messages: OttoUiMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -230,6 +252,11 @@ export function OttoChatStream({
   const [attachError, setAttachError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastSubmittedTextRef = useRef("");
+  /** Codex QA-CRE-FE9-013:这一轮送出去的草稿与附件,留到**知道服务端收下了**为止。
+   *  服务端因为某件参考取不到而整轮拒绝时,它们原样放回输入框(附件条里就是他要移掉的那一件);
+   *  正常收尾或别的错误则在这里释放 —— blob 预览的 revoke 也跟着挪到那一刻,不然放回去的
+   *  芯片会是一张已经被撤销的图。 */
+  const lastSubmittedRef = useRef<{ text: string; refs: AttachedReference[] } | null>(null);
   const submitLockRef = useRef(false);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -384,6 +411,9 @@ export function OttoChatStream({
       }
     },
     onFinish: () => {
+      // The turn was accepted and ran — the held draft/attachments are no longer a restore
+      // candidate, so their blob previews can go (QA-CRE-FE9-013).
+      releaseSubmitted();
       // Sync the parent thread list + make reload authoritative. Non-blocking.
       // Safety net (F23): backfill any card-kind durable the live stream missed
       // (e.g. a dropped data-tool-propose part) so cards never need a reload.
@@ -408,8 +438,38 @@ export function OttoChatStream({
   // data-error part and render via OttoStreamErrorNotice instead, see below). Its raw
   // `.message` (e.g. "Failed to fetch") is developer-facing, not merchant-facing (#949
   // A2) — log it for diagnosis, keep the friendly copy on screen.
+  //
+  // Codex QA-CRE-FE9-013 —— **一个例外,而且只有这一个**:挂上来的参考取不到时,路由在流
+  // 打开之前就回一个普通 400,body 是我们自己写的那一句。`referenceUnavailableSentence` 是
+  // 一份白名单(与 `GenJob.error` 那份同一条纪律):只有这个文件写给商家的句子才认得出来,
+  // 别的一律留给上面那句友好兜底。认出来时:那句话上屏,而且**把这一轮的草稿与附件放回去**——
+  // 商家要移掉的那一件就在附件条里,草稿丢了他就得重打一遍。
+  /** 放开这一轮扣在手里的草稿与附件(并撤销它们的本地 blob 预览)。 */
+  function releaseSubmitted(): void {
+    const held = lastSubmittedRef.current;
+    lastSubmittedRef.current = null;
+    if (held) revokeAttachedPreviews(held.refs);
+  }
+
   useEffect(() => {
-    if (error) console.error("[OttoChatStream] transport error:", error);
+    if (!error) return;
+    console.error("[OttoChatStream] transport error:", error);
+    const sentence = referenceUnavailableSentence(errorBodyText(error.message));
+    if (!sentence) {
+      releaseSubmitted();
+      return;
+    }
+    const draft = lastSubmittedRef.current;
+    lastSubmittedRef.current = null;
+    // 与卡上那个计时器同一条写法(`OttoPlanCard` 的 `queueMicrotask(() => setElapsed(0))`):
+    // 在 effect 里同步 setState 会把这一帧再渲染一遍,而这里三个更新本来就属于同一次「放回去」。
+    queueMicrotask(() => {
+      setAttachError(sentence);
+      if (!draft) return;
+      setText((current) => (current.trim() ? current : draft.text));
+      setAttachedRefs((current) => (current.length ? current : draft.refs));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [error]);
 
   const isStreaming = status === "streaming";
@@ -584,10 +644,13 @@ export function OttoChatStream({
     setAttachError(null);
     // A new turn may queue a new generation — re-arm polling.
     rearmGenerationPoll();
-    // Capture and clear attachments before send. Revoke local preview blob URLs
-    // (the source is the generationId, not the blob) so repeated attach/send doesn't leak.
+    // Capture and clear attachments before send. The local preview blob URLs are NOT revoked
+    // here any more (QA-CRE-FE9-013): the server can still refuse this whole turn because one of
+    // these references is gone, and the chips have to go back into the composer intact. They are
+    // revoked the moment the turn is known to have been accepted (onFinish) or to have failed for
+    // any other reason — `releaseSubmitted()`.
     const attachedNow = attachedRefs;
-    revokeAttachedPreviews(attachedNow);
+    lastSubmittedRef.current = { text: trimmed, refs: attachedNow };
     setAttachedRefs([]);
     // Pass the live projectId/threadId, optional @mention entityIds, and optional
     // sourceGenerationId (attached image) or referenceVideoGenerationId (attached whole

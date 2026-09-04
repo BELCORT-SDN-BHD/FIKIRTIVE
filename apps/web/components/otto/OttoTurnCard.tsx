@@ -38,6 +38,8 @@ import { OttoMarkdown } from "./parts/OttoMarkdown";
 import { creditsLabel } from "@/lib/credit-format";
 import { approvedEntitiesNote } from "@fikirtive/core/reference-budget";
 import { planCardGate } from "./plan-card-contract";
+// Codex QA-CRE-FE9-013 —— 参考回执那一块。抽屉里那张卡读的是同一个组件。
+import { CardReferenceReceipt } from "./CardReferenceReceipt";
 import { runPlanApproval } from "./plan-approval";
 import type { PlanApproveOutcome } from "./OttoPlanCard";
 import type { CanvasTurnStatus } from "@/lib/otto-canvas-turn";
@@ -182,10 +184,17 @@ function CanvasConfirmRow({
         </div>
         <strong className="shrink-0 text-sm tabular-nums text-foreground">{creditsLabel(credits)}</strong>
       </div>
-      {referenceNote ? (
-        <p className="mt-2 truncate rounded-[var(--radius)] bg-muted px-2 py-1.5 text-xs text-muted-foreground">
-          {referenceNote}
-        </p>
+      {/* Codex QA-CRE-FE9-013 —— 参考回执逐项列出:人物那一句在前,媒体参考(缩略图 + 真实
+          名字 + 来源画布)在后。与抽屉里那张卡共用同一个组件,两处不可能说出两件事。
+          (缺回执的卡走不到这里 —— `gate.approvable` 在上面就把整块按钮位收掉了。) */}
+      {referenceNote || (p.mediaReferences?.length ?? 0) > 0 ? (
+        <div className="mt-2 rounded-[var(--radius)] bg-muted px-2 py-1.5">
+          <CardReferenceReceipt
+            approvedEntitiesNote={referenceNote}
+            mediaReferences={p.mediaReferences ?? []}
+            missing={gate.missingReferenceReceipts}
+          />
+        </div>
       ) : null}
       {error ? (
         <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>

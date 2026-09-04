@@ -437,13 +437,17 @@ describe("#922 缺口 A — 租户", () => {
     const result = await proposeClipActionCard({ generationId: CLIP, action: "edit", wording: "x" });
     expect(result).toEqual({ error: "That clip isn't available." });
     expect(mockChatCreate).not.toHaveBeenCalled();
-    // 校验器问的确实是视频扩展名,而且带着这个租户与这个项目。
+    // 校验器问的确实是视频扩展名,而且带着这个租户。
+    // Codex QA-CRE-FE9-013 之后判据里不再有 `projectId`:引用范围 = 同一 owner 的任意画布
+    // (画布是出处,不是权限边界)。这条入口的行为一格未变 —— `projectId` 本来就是从这一行
+    // **自己**读出来再传回去的,它从来不是一个独立的限制。
     expect(mockGenerationFindFirst.mock.calls[1]![0].where).toMatchObject({
       id: CLIP,
       ownerId: OWNER,
-      projectId: "proj-1",
+      deletedAt: null,
       asset: { ext: { in: ["mp4", "mov", "webm"] } },
     });
+    expect(JSON.stringify(mockGenerationFindFirst.mock.calls[1]![0].where)).not.toContain("projectId");
   });
 
   it("卡落在这条片子出生的那条会话里(有迹可循),会话查询同样是 owner 作用域的", async () => {

@@ -13,12 +13,15 @@ import {
   GENERATION_DID_NOT_GO_THROUGH,
   REFERENCE_ASSET_UNREACHABLE,
   REFERENCE_IMAGE_PERSON_REJECTED,
+  REFERENCE_UNAVAILABLE_REASONS,
   isGenFailureReason,
   merchantGenFailureCopy,
   merchantGenFailureExplanation,
   merchantGenFailureMessage,
   merchantGenFailureReason,
   referenceImagePersonRejected,
+  referenceUnavailableMessage,
+  referenceUnavailableSentence,
 } from "./gen-failure.js";
 import { redactProviderNames } from "./provider-secrecy.js";
 
@@ -361,5 +364,94 @@ describe("merchantGenFailureCopy — always a sentence, never the raw string (Co
       expect(GENERATION_DID_NOT_GO_THROUGH.toLowerCase()).not.toContain(secret);
     }
     expect(redactProviderNames(GENERATION_DID_NOT_GO_THROUGH)).toBe(GENERATION_DID_NOT_GO_THROUGH);
+  });
+});
+
+/**
+ * `referenceUnavailableSentence` —— 判官 P1-1(PR #1177)。
+ *
+ * 这是一道**守卫**,不是一个格式化函数:路由在 SSE 打开之前用普通 400 拒绝整轮,客户端
+ * (`apps/web/components/otto/OttoChatStream.tsx`)手上只有那段原始 body。把 body 原样上屏,
+ * 迟早会把代理的 HTML 错误页、堆栈、内部串送到商家眼前。所以只有**这个文件写给商家的那两句**
+ * 认得出来,别的一律回 `null`,由界面用它自己的诚实兜底句收场。
+ *
+ * 与上面 `merchantGenFailureMessage` 是同一条纪律(白名单,不是 passthrough),测法也照抄。
+ */
+describe("referenceUnavailableSentence — CREATE-A2: 一份白名单,不是 passthrough", () => {
+  it("CREATE-A2: notFound 那一句原样送回来,认得出", () => {
+    const sentence = referenceUnavailableMessage("notFound");
+    expect(referenceUnavailableSentence(sentence)).toBe(sentence);
+  });
+
+  it("CREATE-A2: fileMissing 那一句原样送回来,认得出", () => {
+    const sentence = referenceUnavailableMessage("fileMissing");
+    expect(referenceUnavailableSentence(sentence)).toBe(sentence);
+  });
+
+  it("CREATE-A2: 两个原因一个不落 —— 表里每一句都认得出,且认回它自己", () => {
+    // 结构性:将来加第三个原因(比如「格式不支持」),忘了它会在这里红,而不是等到某天
+    // 商家看见一段裸 body。
+    for (const reason of REFERENCE_UNAVAILABLE_REASONS) {
+      const sentence = referenceUnavailableMessage(reason);
+      expect(referenceUnavailableSentence(sentence), `reason "${reason}" 没被自己的白名单认出来`)
+        .toBe(sentence);
+    }
+  });
+
+  it("CREATE-A2: 传输层给句子裹了空白 —— 去掉首尾空白后仍然认得出", () => {
+    // 唯一允许的宽容,而且是文档写明的:前后空白。信封拆解与换行会带上它们。
+    const sentence = referenceUnavailableMessage("notFound");
+    expect(referenceUnavailableSentence(`  ${sentence}\n`)).toBe(sentence);
+  });
+
+  it("CREATE-A2: 多一个空格、前后加字、大小写变了 —— 一律不认,回 null", () => {
+    const sentence = referenceUnavailableMessage("notFound");
+    const nearMisses = [
+      sentence.replace("references isn't", "references  isn't"), // 句中多一个空格
+      `Otto says: ${sentence}`, // 前面加字
+      `${sentence} (ref_01H8XYZ)`, // 后面加字(正是我们最怕的那类:尾巴上挂个 id)
+      sentence.toLowerCase(), // 大小写变了
+      sentence.slice(0, -1), // 少了句末的句号
+      sentence.replace(/—/g, "-"), // em dash 被某一层换成了连字符
+    ];
+    for (const nearMiss of nearMisses) {
+      expect(referenceUnavailableSentence(nearMiss), `${JSON.stringify(nearMiss)} 不是我们写的那一句,不该放行`)
+        .toBeNull();
+    }
+  });
+
+  it.each([
+    // 代理的 HTML 错误页 —— 这道守卫存在的头号理由。
+    "<html><head><title>502 Bad Gateway</title></head><body><h1>502 Bad Gateway</h1></body></html>",
+    "<!DOCTYPE html>\n<html><body>Request Timeout</body></html>",
+    // 堆栈。
+    "TypeError: Cannot read properties of undefined (reading 'ownerId')\n    at validateOttoTurnReferences (/app/packages/core/dist/generation-reference.js:46:19)",
+    // 传输层自己的话(#949 A2 那一句)。
+    "Failed to fetch",
+    // 内部串:ops 文案、id、存储路径。
+    "conditioning refs unreachable (0/2) — refusing to spend",
+    "generation cm_01H8XYZ not found (or not an image) for this account",
+    "https://storage.internal/tenants/org_123/generations/cm_01H8XYZ.png",
+    // 空的与只有空白的。
+    "",
+    "   ",
+  ])("CREATE-A2: 不是我方文案的 %j —— 回 null,让界面用自己的兜底句", (foreign) => {
+    expect(referenceUnavailableSentence(foreign)).toBeNull();
+  });
+
+  it("CREATE-A2: 没有 body(null / undefined)也回 null,不抛", () => {
+    expect(referenceUnavailableSentence(null)).toBeNull();
+    expect(referenceUnavailableSentence(undefined)).toBeNull();
+  });
+
+  it("CREATE-A2: 认得出的那两句本身不含 id、URL 或存储路径", () => {
+    // 白名单放行的东西必须自己先干净 —— 否则守卫只是把泄露搬进了表里。
+    for (const reason of REFERENCE_UNAVAILABLE_REASONS) {
+      const sentence = referenceUnavailableMessage(reason);
+      expect(sentence).not.toMatch(/https?:\/\//);
+      expect(sentence).not.toContain("/");
+      expect(sentence).not.toMatch(/\bcm_[a-z0-9]/i);
+      expect(redactProviderNames(sentence)).toBe(sentence);
+    }
   });
 });
