@@ -301,12 +301,67 @@ describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled w
   });
 
   it("#643 T2:图片形状菜单是插值进来的真菜单 —— 不是抄在文本里的一份副本", async () => {
-    const { GEN_IMAGE_ASPECTS, GEN_IMAGE_DEFAULT_ASPECT } = await import("@fikirtive/core");
+    const { GEN_IMAGE_ASPECTS } = await import("@fikirtive/core");
     // 每一格都真的出现在指令里（菜单加一格，这条自动开始要求它出现）。
     for (const aspect of GEN_IMAGE_ASPECTS) expect(ottoInstructions).toContain(aspect);
     expect(ottoInstructions).toContain(GEN_IMAGE_ASPECTS.join(", "));
-    // 菜单外的形状会被交付成默认形状，这句话必须说出口。
-    expect(ottoInstructions).toMatch(new RegExp(`delivered as ${GEN_IMAGE_DEFAULT_ASPECT}`));
+  });
+
+  /**
+   * Codex 全 beta 审计 P0-001 —— **说明书自己就是那道闸的漏洞**。
+   *
+   * 旧口径逐字是「Pick the closest one to what the user described … anything else is
+   * delivered as 1:1 and the card says so out loud」。商家说 4:5,模型照它换成菜单内的
+   * 4:3,而画幅闸比对的正是模型交上来的那一格 —— 于是闸永远走不到,卡上写着
+   * `2304 × 1728 · 4:3` 且按得下去。口径改成画质档同款:原样传、菜单外由服务端拒绝。
+   *
+   * 这一条只钉**说明书**;真正的守卫是 `skills/propose.test.ts` 的第二个证人那一族
+   * (直接喂 desiredAspect + turnText,一个字都不读这份说明书)。
+   */
+  it("CREATE-A1 图片形状的口径与画质档同款:原样传、不许替商家挑最接近的一格", async () => {
+    const { GEN_IMAGE_DEFAULT_ASPECT } = await import("@fikirtive/core");
+    // 旧口径的两半都必须消失 —— 留着任何一半,模型就还有理由自己换档。
+    expect(ottoInstructions).not.toContain("Pick the closest one");
+    expect(ottoInstructions).not.toMatch(new RegExp(`delivered as ${GEN_IMAGE_DEFAULT_ASPECT}`));
+    // 新口径的三件事:原样传(含菜单外)、不许替他挑、菜单外在铸卡前被拒且 $0。
+    expect(ottoInstructions).toMatch(/exactly as they named it/i);
+    expect(ottoInstructions).toMatch(/INCLUDING a shape that is not on this menu/);
+    expect(ottoInstructions).toMatch(/Never substitute the closest one on their behalf/i);
+    expect(ottoInstructions).toMatch(/refused before a card exists \(nothing is charged\)/i);
+    // 判官 2026-09-04 P2-2 —— 旧句里「story 就是 9:16」的默认推断一并删了。商家只说「IG story」
+    // 而不报比例时,卡从此落默认方图 —— 这是商家可见行为变化,已登记进规格 §5。
+    // 钉住那句明令本身:没有它,模型会回到“自己猜一个形状”的老路。
+    expect(ottoInstructions).toMatch(
+      /never infer a shape from the kind of post they mentioned — leave the field out when they never named one/,
+    );
+    expect(ottoInstructions).not.toContain("a story or status post is");
+  });
+
+  /**
+   * Codex 全 beta 审计 P0-002 —— **按下 Generate 之后不许再给选择题**。
+   *
+   * 现场:商家按下 `Generate · 14 credits` 之后,Otto 又问「A) 现在这支 B) 更稳的两步
+   * 先出首帧」。铸卡与继续说话天生同一轮(卡由 propose 在 run 中途落库,最终文本在 run
+   * 结束后另存一条 TEXT),所以这不是接线缺陷,而是**没有一条规矩说过不许这么写**。
+   *
+   * 这一条钉的是规矩在提示词里。它的限度要说清楚:它证明不了模型每一轮都照做 ——
+   * 自由文本没有任何单测能钉死(这正是 #541 r6 放弃词表判定、改用 golden 快照的理由)。
+   * 结构那一半由 `skills/propose.test.ts` 的 CREATE-A2 钉:两步是一次 propose 铸成的
+   * **一个**方案,所以这道选择题从一开始就不该存在。
+   */
+  it("CREATE-A2 铸卡之后的回复只许指向那张卡:不许给备选、不许二选一", () => {
+    expect(ottoInstructions).toMatch(/the rest of your reply may only point AT that card/i);
+    expect(ottoInstructions).toMatch(/Do NOT offer an alternative plan/);
+    expect(ottoInstructions).toMatch(/do NOT put two ways of doing it side by side and ask which one they want/i);
+    // 方案的取舍必须发生在铸卡**之前**。
+    expect(ottoInstructions).toMatch(/Every decision between plans happens BEFORE any card/);
+    // 「先出图再出片」被点名为**一个**方案,不是一道选择题 —— 出口是 forVideo + videoPrompt。
+    expect(ottoInstructions).toMatch(/it is a single plan, laid out once with `forVideo: true` and `videoPrompt`/);
+    // 判官 2026-09-04 P2-4 —— 这条硬规矩与下一节「Offering a few directions」(`proposePack`
+    // 摆选项)字面相撞。豁免必须写在规矩里:选项在**卡里面**不是“卡旁边的一个问题”。
+    expect(ottoInstructions).toMatch(
+      /options laid out INSIDE one `proposePack` card are not that, because they are the card rather than a question beside it/,
+    );
   });
 
   // Codex 只读 E2E E2E-CRE-PAV-004 —— 两步任务不许把内部接缝丢给商家。
