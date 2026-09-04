@@ -17,6 +17,7 @@ import {
   VIDEO_ASPECT_ADAPTIVE,
   GEN_VIDEO_MODEL_OPTIONS,
   GEN_VIDEO_MODEL_INFO,
+  GEN_IMAGE_ASPECTS,
   GEN_IMAGE_MODEL_OPTIONS,
   GEN_PRICE_USD_PER_IMAGE,
   GEN_VIDEO_SECONDS,
@@ -322,6 +323,48 @@ function imageAspectValue(raw: string): number | null {
   const w = Number(m[1]);
   const h = Number(m[2]);
   return Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? w / h : null;
+}
+
+/**
+ * 商家这一轮**自己打出来的**那个形状 —— 画幅的第二个证人(Codex 全 beta 审计 P0-001)。
+ *
+ * 为什么需要第二个:Step 3.7 原来只有一个证人,而那个证人是**模型的转述**
+ * (`input.desiredAspect`)。商家说 4:5,模型按当时的说明书「挑最接近的一格」换成 4:3,
+ * 4:3 在菜单上 —— 于是那道闸永远走不到,商家拿到的是一张写着 `2304 × 1728 · 4:3` 的
+ * 付费确认卡,而 Otto 嘴上仍说 4:5。转述过一次的东西不能自己给自己作证。
+ *
+ * 这道对表刻意**很窄**,窄法与视频动作那一处(`decideVideoAction` 的措辞分支)同源:
+ *   · 只认**显式的比例写法**(`4:5`、`9:16`),一句自然语言都不猜 —— 「竖版」「story」
+ *     这类说法留给模型,它看得见整段对话,这里只看得见这一句;
+ *   · 只在措辞侧给出**唯一**结论时才算数:一句话里出现两个不同比例(「4:5 还是 1:1?」)
+ *     ⇒ 没有意见,照旧交给模型那一格;
+ *   · 对不上时**不改判、不替他挑**,而是在铸卡前停下来问($0,`pricedGenCredits` 之前)。
+ *
+ * 两道窄化都不读语义,只看数字本身:两边都是 1–2 位整数且都不大于菜单上最大的那个数
+ * (今天是 21,取自 `GEN_IMAGE_ASPECTS` 自己),比例落在 1:4 ~ 4:1 之间。时钟写法
+ * (`3:30`、`12:30`)因此绝大多数落在门外。仍有极少数写法(如 `9:15`)读起来既像时间
+ * 又像比例 —— 那时的代价是**一句 $0 的反问**,而不是一次收错的钱:这道闸只会让卡不铸,
+ * 永远不会让卡多收一分。
+ */
+const SPOKEN_ASPECT_MAX_TERM = Math.max(
+  ...GEN_IMAGE_ASPECTS.flatMap((a) => a.split(":").map(Number)),
+);
+const SPOKEN_ASPECT_RE = /(?<![\d.:])(\d{1,2})\s*[:：]\s*(\d{1,2})(?![\d.:])/gu;
+
+function spokenImageAspect(text: string): { raw: string; value: number } | null {
+  /** 比例值 → 商家原样的写法。同一个值的两种写法(`4:5` / `8:10`)算同一个结论。 */
+  const found = new Map<number, string>();
+  for (const m of text.matchAll(SPOKEN_ASPECT_RE)) {
+    const w = Number(m[1]);
+    const h = Number(m[2]);
+    if (w < 1 || h < 1 || w > SPOKEN_ASPECT_MAX_TERM || h > SPOKEN_ASPECT_MAX_TERM) continue;
+    const value = w / h;
+    if (value < 0.25 || value > 4) continue;
+    if (!found.has(value)) found.set(value, `${w}:${h}`);
+  }
+  if (found.size !== 1) return null;
+  for (const [value, raw] of found) return { raw, value };
+  return null;
 }
 
 /** 拒绝句里最多列几个建议(读得懂他要的比例时)。多了就不是人话,是一堵墙。 */
@@ -798,11 +841,31 @@ export function buildProposeCard(
    *
    * 两步计划(`forVideo`)的图片步走的就是这里 —— 它的 `kind` 也是 image,所以不必也
    * 不该再补一支守卫(视频档位那边要补 Step 4.6a,是因为 Step 3.6 写的是 `kind === "video"`)。
+   *
+   * **两个证人**(Codex 全 beta 审计 P0-001)。上一版只有证人①,而证人①是模型的转述:
+   * 商家说 4:5、模型按当时的说明书换成菜单内的 4:3,这道闸就永远走不到 —— 卡上写
+   * `2304 × 1728 · 4:3`,`Generate` 按得下去,Otto 嘴上还在说 4:5。所以证人②直接读商家
+   * 这一轮自己打的那句话(`ctx.turnText`,服务端写入,永不来自模型入参),窄法见
+   * `spokenImageAspect`。两个证人对的是**同一个靶子**:这张卡真会交付的那一格。
    */
-  if (kind === "image" && input.desiredAspect) {
-    if (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio) {
+  if (kind === "image") {
+    // 证人①:模型转述的那一格(`desiredAspect`)。
+    if (
+      input.desiredAspect &&
+      (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio)
+    ) {
       const { offered, nearest } = mintableImageAspects(sm.model as GenModel, input.desiredAspect);
       throw new ImageAspectUnavailableError(input.desiredAspect, offered, nearest);
+    }
+    // 证人②:商家这一轮自己打出来的那个形状。模型漏传 `desiredAspect`(卡落到默认方图)
+    // 也归这一条管 —— 那同样是一张写着他没要过的形状的付费卡。
+    const spoken = ctx.turnText ? spokenImageAspect(ctx.turnText) : null;
+    if (spoken) {
+      const onCard = imageAspectHonoured() ? imageAspectValue(sm.params.aspectRatio ?? "") : null;
+      if (onCard === null || Math.abs(Math.log(spoken.value / onCard)) > 1e-9) {
+        const { offered, nearest } = mintableImageAspects(sm.model as GenModel, spoken.raw);
+        throw new ImageAspectUnavailableError(spoken.raw, offered, nearest);
+      }
     }
   }
 
