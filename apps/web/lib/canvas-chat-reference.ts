@@ -82,10 +82,28 @@ export function canvasSendToOttoTitle(input: { chatOpen: boolean; many: boolean 
   return input.many ? "Hand these to Otto as references" : "Hand this to Otto as a reference";
 }
 
+/**
+ * Codex QA-CRE-FE9-013 —— 芯片上那几个字。
+ *
+ * 走查里 composer 上只写着 `Image ref`:商家从 Library 一次点了两张相似的产品图,分不清
+ * 哪一张在车上,也无从在发送前发现自己选错了。素材有名字(它当初的提示词)时就用它,
+ * 没有名字才退回类型词 —— 一个占位词不该是常态。
+ */
+export function composerReferenceLabel(
+  name: string | null | undefined,
+  kind: OttoComposerReferenceKind,
+): string {
+  const trimmed = (name ?? "").trim().replace(/\s+/g, " ");
+  if (!trimmed) return kind === "refVideo" ? "Video ref" : "Image ref";
+  return trimmed.length > 40 ? `${trimmed.slice(0, 37)}…` : trimmed;
+}
+
 export function canvasComposerReferenceForNode(input: {
   type: string | null | undefined;
   generationId: string | null | undefined;
   src: string | null | undefined;
+  /** 商家读得懂的名字(素材当初的提示词)。缺席就退回 `Image ref` / `Video ref`。 */
+  name?: string | null;
 }): Omit<OttoComposerReference, "requestId"> | null {
   if (!input.generationId || !input.src) return null;
   if (input.type === "image") {
@@ -94,7 +112,7 @@ export function canvasComposerReferenceForNode(input: {
       src: input.src,
       kind: "image",
       previewKind: "image",
-      label: "Image ref",
+      label: composerReferenceLabel(input.name, "image"),
     };
   }
   if (input.type === "video") {
@@ -103,7 +121,7 @@ export function canvasComposerReferenceForNode(input: {
       src: input.src,
       kind: "refVideo",
       previewKind: "video",
-      label: "Video ref",
+      label: composerReferenceLabel(input.name, "refVideo"),
     };
   }
   return null;

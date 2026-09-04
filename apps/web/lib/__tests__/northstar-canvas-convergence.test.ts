@@ -382,9 +382,11 @@ describe("what the merchant lands on", () => {
 
     expect(mocks.boardRead).toHaveBeenCalledWith("p1");
     expect(mocks.flow.current!.nodes.map((node) => node.id)).toEqual(["n1", "n2"]);
-    // Real cards, not placeholders: a picked card offers the kernel's own Info action.
+    // Real cards, not placeholders: a picked card offers the kernel's own action bar. Since the
+    // canvas was aligned to the approved pattern the record ("how this was made") lives inside
+    // that bar's ⋯ menu rather than on a button of its own, so the ⋯ is what proves the bar.
     select(["n1"]);
-    expect([...container!.querySelectorAll("button")].filter((b) => b.textContent === "Info")).toHaveLength(1);
+    expect(container!.querySelectorAll('button[aria-label="More actions"]')).toHaveLength(1);
   });
 
   it("keeps the minimal Canvas chrome: back to Create, Canvas name and credits", async () => {
@@ -450,10 +452,19 @@ describe("the kernel's behaviour came along with it", () => {
     openImageComposer();
     await act(async () => { await Promise.resolve(); });
 
+    // 「再来一张」是卡上唯一那条「从这张卡再生一张」的付费路（卡下方那条改写输入条按
+    // Founder 2026-09-03 裁决①退场，改写改走 Edit with Otto）。落点规则是同一条。
     const anchor = mocks.flow.current!.nodes.find((node) => node.id === "far")!;
     await act(async () => {
-      (anchor.data.onEvolve as (id: string, text: string) => void)("far", "same cup, warmer light");
+      (anchor.data.onVariant as (id: string, aspect?: string) => void)("far");
     });
+    // QA-CRE-FE9-001（Founder 2026-09-04 07:05 裁决）：第一下只开确认卡，付费在卡上那颗
+    // `Generate · N credits`。落点规则一格没变，只是要多按这一下才走到付费请求。
+    expect(mocks.generateImage).not.toHaveBeenCalled();
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+      .find((b) => b.textContent?.startsWith("Generate · "))!;
+    expect(confirm, "变体确认卡上没有 `Generate · N credits`").not.toBeUndefined();
+    await act(async () => { confirm.click(); });
 
     expect(mocks.generateImage).toHaveBeenCalledTimes(1);
     const rect = mocks.generateImage.mock.calls[0]![1] as SpawnRect;

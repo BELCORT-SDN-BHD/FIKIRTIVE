@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
+import { merchantGenFailureCopy } from "@fikirtive/core/gen-failure";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,6 +71,18 @@ function libraryItemToHistoryThumb(item: LibraryItem): HistoryThumb {
   };
 }
 
+/** Codex QA-CRE-007 — a failed card's title used to be the WHOLE prompt: CSS line-clamp hid the
+ *  overflow visually, but the full string still sat in the DOM (a screen reader, "view source",
+ *  or a wide card before the clamp kicks in all showed it whole). A short title is enough to
+ *  recognise which generation this is; the merchant reads the honest reason below it, not the
+ *  prompt, to learn what went wrong. */
+const LIBRARY_CARD_TITLE_MAX = 60;
+
+function libraryCardTitle(prompt: string): string {
+  const trimmed = prompt.trim();
+  return trimmed.length > LIBRARY_CARD_TITLE_MAX ? `${trimmed.slice(0, LIBRARY_CARD_TITLE_MAX)}…` : trimmed;
+}
+
 function AdJobCard({
   job,
   onOpenThread,
@@ -84,6 +97,12 @@ function AdJobCard({
   const isProcessing = job.status === "processing";
   const pillLabel = isProcessing ? "Processing…" : "Didn't go through";
   const when = new Date(job.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  // Codex QA-CRE-007 — the card's OWN floor, independent of `apps/web/lib/data.ts` having mapped
+  // `job.error` already: a row persisted before that fix shipped (or by a code path it missed)
+  // can still carry the raw ops diagnostic. Re-running it through the same whitelist here is
+  // idempotent for an already-mapped sentence (it is itself a whitelisted entry) and turns any
+  // unrecognised string into the honest generic line instead of showing it verbatim.
+  const errorCopy = job.error ? merchantGenFailureCopy(job.error) : "";
 
   return (
     <Card size="sm" className="gap-3 shadow-none">
@@ -96,7 +115,7 @@ function AdJobCard({
         </div>
         {job.prompt && (
           <CardTitle className="overflow-hidden text-[0.8125rem] leading-5 [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [display:-webkit-box]">
-            {job.prompt}
+            {libraryCardTitle(job.prompt)}
           </CardTitle>
         )}
         <div className="font-mono text-[0.6875rem] tabular-nums text-muted-foreground">
@@ -104,9 +123,9 @@ function AdJobCard({
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {job.error && !isProcessing && (
+        {errorCopy && !isProcessing && (
           <p className="overflow-hidden text-[0.75rem] leading-5 text-muted-foreground [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [display:-webkit-box]">
-            {job.error}
+            {errorCopy}
           </p>
         )}
         <div className="flex flex-wrap gap-1.5">

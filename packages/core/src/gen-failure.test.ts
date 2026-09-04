@@ -10,12 +10,18 @@
 import { describe, it, expect } from "vitest";
 import {
   GEN_FAILURE_REASONS,
+  GENERATION_DID_NOT_GO_THROUGH,
+  REFERENCE_ASSET_UNREACHABLE,
   REFERENCE_IMAGE_PERSON_REJECTED,
+  REFERENCE_UNAVAILABLE_REASONS,
   isGenFailureReason,
+  merchantGenFailureCopy,
   merchantGenFailureExplanation,
   merchantGenFailureMessage,
   merchantGenFailureReason,
   referenceImagePersonRejected,
+  referenceUnavailableMessage,
+  referenceUnavailableSentence,
 } from "./gen-failure.js";
 import { redactProviderNames } from "./provider-secrecy.js";
 
@@ -247,6 +253,225 @@ describe("merchantGenFailureExplanation — ONE table, so two surfaces cannot dr
       // Vendor-free at the source, not scrubbed on the way out — the whitelist compares bytes,
       // so a scrub would silently turn the merchant's own advice back into the generic apology.
       expect(redactProviderNames(String(sentence))).toBe(sentence);
+    }
+  });
+});
+
+/**
+ * Codex QA-CRE-007 — the QA report's own finding: Library "Needs attention" and the cast
+ * library's variant problem line showed backend/provider sentences verbatim ("reference video
+ * unreachable — refusing to spend", "conditioning refs unreachable (0/2)" and siblings). This
+ * reason maps every one of those throw sites (apps/worker/src/jobs/gen.ts,
+ * apps/worker/src/jobs/refgen.ts) to ONE honest sentence, under the docs/specs/creation-engine.md
+ * CREATE-A2 principle — refuse before spend, tell the merchant why, in words they can act on.
+ */
+describe("REFERENCE_ASSET_UNREACHABLE — CREATE-A2: honest refusal before spend, Codex QA-CRE-007", () => {
+  it("names no engine, model or vendor", () => {
+    for (const secret of ["seedance", "seedream", "byteplus", "bytedance", "dreamina", "ark", "jimeng"]) {
+      expect(REFERENCE_ASSET_UNREACHABLE.toLowerCase()).not.toContain(secret);
+    }
+  });
+
+  it("survives the provider-name redactor byte for byte", () => {
+    expect(redactProviderNames(REFERENCE_ASSET_UNREACHABLE)).toBe(REFERENCE_ASSET_UNREACHABLE);
+  });
+
+  it("fits inside the 300-character cap every persisted job error is truncated to", () => {
+    expect(REFERENCE_ASSET_UNREACHABLE.length).toBeLessThanOrEqual(300);
+  });
+
+  it("CREATE-A2: says nothing was charged, and gives a recovery hint", () => {
+    expect(REFERENCE_ASSET_UNREACHABLE).toContain("so nothing was charged");
+    expect(REFERENCE_ASSET_UNREACHABLE).toContain("Replace it and ask again.");
+  });
+
+  // Codex E2E-CRE-PAV-005 — "Try again" is a copy-editing trap here: pressing retry alone can
+  // never succeed while the same unreachable reference is still attached, so the sentence must
+  // not say the one thing a merchant could do that keeps failing. "ask again" names what happens
+  // AFTER the fix ("Replace it"), never an action that stands alone.
+  it("E2E-CRE-PAV-005: does not say 'Try again' — retrying alone cannot fix an unreachable reference", () => {
+    expect(REFERENCE_ASSET_UNREACHABLE).not.toContain("Try again");
+    expect(REFERENCE_ASSET_UNREACHABLE).not.toContain("try again");
+  });
+
+  it("is not an internal diagnostic — no 'refusing to spend', no 'unreachable ('", () => {
+    // The exact two substrings the QA report caught reaching the merchant. If a future edit to
+    // this sentence reintroduces either, this is the first thing that goes red.
+    expect(REFERENCE_ASSET_UNREACHABLE).not.toContain("refusing to spend");
+    expect(REFERENCE_ASSET_UNREACHABLE).not.toContain("unreachable (");
+  });
+
+  it("is recognised as the reason 'referenceAssetUnreachable'", () => {
+    expect(merchantGenFailureReason(REFERENCE_ASSET_UNREACHABLE)).toBe("referenceAssetUnreachable");
+    expect(merchantGenFailureExplanation("referenceAssetUnreachable")).toBe(REFERENCE_ASSET_UNREACHABLE);
+  });
+});
+
+describe("the ops strings this reason replaces never reach a merchant — Codex QA-CRE-007 grep-guard", () => {
+  // Copied verbatim from the throw sites that used to persist these (before this fix): five in
+  // apps/worker/src/jobs/gen.ts (conditioning refs, i2v source, last-frame, reference video, edit
+  // source) and three in apps/worker/src/jobs/refgen.ts (variant base missing/unreachable,
+  // refgen conditioning refs). A row persisted before this fix shipped still carries one of these
+  // — the whitelist must keep refusing them, not just refuse the new sentence's opposite.
+  const RAW_OPS_STRINGS = [
+    "conditioning refs unreachable (0/2) — refusing to spend",
+    "source image unreachable — refusing to spend on i2v",
+    "last-frame image unreachable — refusing to spend on i2v",
+    "reference video unreachable — refusing to spend",
+    "edit source image unreachable — refusing to spend",
+    "variant base asset is missing — refusing to spend",
+    "variant base unreachable — refusing to spend on a degraded generation",
+    "conditioning refs unreachable (0/2 signable) — refusing to spend on a degraded generation",
+  ];
+
+  it.each(RAW_OPS_STRINGS)("refuses to present %j as merchant advice", (raw) => {
+    expect(merchantGenFailureMessage(raw)).toBeNull();
+    expect(merchantGenFailureReason(raw)).toBe("unexplained");
+  });
+
+  it("no whitelisted sentence itself contains either raw marker — a structural guard against a future reason copying the ops string in", () => {
+    for (const reason of GEN_FAILURE_REASONS) {
+      if (reason === "unexplained") continue;
+      const sentence = String(merchantGenFailureExplanation(reason));
+      expect(sentence, `reason "${reason}" reads like an ops string, not merchant copy`).not.toContain("refusing to spend");
+      expect(sentence, `reason "${reason}" reads like an ops string, not merchant copy`).not.toContain("unreachable (");
+    }
+  });
+});
+
+/**
+ * `merchantGenFailureCopy` — the total function `apps/web/lib/data.ts` (getMyAdJobs) and
+ * `apps/web/lib/refgen-actions.ts` (getRefGenJobs) now call so the Library "Needs attention"
+ * card and the cast library's variant problem line NEVER render the raw persisted string:
+ * a mapped explanation when there is one, `GENERATION_DID_NOT_GO_THROUGH` otherwise.
+ */
+describe("merchantGenFailureCopy — always a sentence, never the raw string (Codex QA-CRE-007)", () => {
+  it("gives the specific explanation for a known reason", () => {
+    expect(merchantGenFailureCopy(REFERENCE_ASSET_UNREACHABLE)).toBe(REFERENCE_ASSET_UNREACHABLE);
+    expect(merchantGenFailureCopy(REFERENCE_IMAGE_PERSON_REJECTED)).toBe(REFERENCE_IMAGE_PERSON_REJECTED);
+  });
+
+  it.each([
+    "conditioning refs unreachable (0/2) — refusing to spend",
+    "stale GENERATING reaped — worker hung or crashed; refunded",
+    "generation provider video submit failed (400)",
+    "",
+    "   ",
+  ])("falls back to the honest generic line for %j, never the raw string", (persisted) => {
+    const copy = merchantGenFailureCopy(persisted);
+    expect(copy).toBe(GENERATION_DID_NOT_GO_THROUGH);
+    if (persisted.trim()) expect(copy).not.toBe(persisted);
+  });
+
+  it("falls back to the honest generic line for an absent error", () => {
+    expect(merchantGenFailureCopy(null)).toBe(GENERATION_DID_NOT_GO_THROUGH);
+    expect(merchantGenFailureCopy(undefined)).toBe(GENERATION_DID_NOT_GO_THROUGH);
+  });
+
+  it("the fallback itself names no engine/model/vendor and promises no unproven charge claim", () => {
+    for (const secret of ["seedance", "seedream", "byteplus", "bytedance", "dreamina", "ark", "jimeng"]) {
+      expect(GENERATION_DID_NOT_GO_THROUGH.toLowerCase()).not.toContain(secret);
+    }
+    expect(redactProviderNames(GENERATION_DID_NOT_GO_THROUGH)).toBe(GENERATION_DID_NOT_GO_THROUGH);
+  });
+});
+
+/**
+ * `referenceUnavailableSentence` —— 判官 P1-1(PR #1177)。
+ *
+ * 这是一道**守卫**,不是一个格式化函数:路由在 SSE 打开之前用普通 400 拒绝整轮,客户端
+ * (`apps/web/components/otto/OttoChatStream.tsx`)手上只有那段原始 body。把 body 原样上屏,
+ * 迟早会把代理的 HTML 错误页、堆栈、内部串送到商家眼前。所以只有**这个文件写给商家的那两句**
+ * 认得出来,别的一律回 `null`,由界面用它自己的诚实兜底句收场。
+ *
+ * 与上面 `merchantGenFailureMessage` 是同一条纪律(白名单,不是 passthrough),测法也照抄。
+ */
+describe("referenceUnavailableSentence — CREATE-A2: 一份白名单,不是 passthrough", () => {
+  it("CREATE-A2: notFound 那一句原样送回来,认得出", () => {
+    const sentence = referenceUnavailableMessage("notFound");
+    expect(referenceUnavailableSentence(sentence)).toBe(sentence);
+  });
+
+  it("CREATE-A2: fileMissing 那一句原样送回来,认得出", () => {
+    const sentence = referenceUnavailableMessage("fileMissing");
+    expect(referenceUnavailableSentence(sentence)).toBe(sentence);
+  });
+
+  it("CREATE-A2: 两个原因一个不落 —— 表里每一句都认得出,且认回它自己", () => {
+    // 结构性:将来加第三个原因(比如「格式不支持」),忘了它会在这里红,而不是等到某天
+    // 商家看见一段裸 body。
+    for (const reason of REFERENCE_UNAVAILABLE_REASONS) {
+      const sentence = referenceUnavailableMessage(reason);
+      expect(referenceUnavailableSentence(sentence), `reason "${reason}" 没被自己的白名单认出来`)
+        .toBe(sentence);
+    }
+  });
+
+  // Codex E2E-CRE-PAV-005 — same discipline as REFERENCE_ASSET_UNREACHABLE above: retrying alone
+  // cannot fix an attachment that is gone or unopenable, so neither sentence may say "Try again".
+  it("E2E-CRE-PAV-005: neither reason says 'Try again' — removing the attachment is the actual fix", () => {
+    for (const reason of REFERENCE_UNAVAILABLE_REASONS) {
+      const sentence = referenceUnavailableMessage(reason);
+      expect(sentence, `reason "${reason}"`).not.toContain("Try again");
+      expect(sentence, `reason "${reason}"`).not.toContain("try again");
+      expect(sentence, `reason "${reason}"`).toContain("ask again");
+    }
+  });
+
+  it("CREATE-A2: 传输层给句子裹了空白 —— 去掉首尾空白后仍然认得出", () => {
+    // 唯一允许的宽容,而且是文档写明的:前后空白。信封拆解与换行会带上它们。
+    const sentence = referenceUnavailableMessage("notFound");
+    expect(referenceUnavailableSentence(`  ${sentence}\n`)).toBe(sentence);
+  });
+
+  it("CREATE-A2: 多一个空格、前后加字、大小写变了 —— 一律不认,回 null", () => {
+    const sentence = referenceUnavailableMessage("notFound");
+    const nearMisses = [
+      sentence.replace("references isn't", "references  isn't"), // 句中多一个空格
+      `Otto says: ${sentence}`, // 前面加字
+      `${sentence} (ref_01H8XYZ)`, // 后面加字(正是我们最怕的那类:尾巴上挂个 id)
+      sentence.toLowerCase(), // 大小写变了
+      sentence.slice(0, -1), // 少了句末的句号
+      sentence.replace(/—/g, "-"), // em dash 被某一层换成了连字符
+    ];
+    for (const nearMiss of nearMisses) {
+      expect(referenceUnavailableSentence(nearMiss), `${JSON.stringify(nearMiss)} 不是我们写的那一句,不该放行`)
+        .toBeNull();
+    }
+  });
+
+  it.each([
+    // 代理的 HTML 错误页 —— 这道守卫存在的头号理由。
+    "<html><head><title>502 Bad Gateway</title></head><body><h1>502 Bad Gateway</h1></body></html>",
+    "<!DOCTYPE html>\n<html><body>Request Timeout</body></html>",
+    // 堆栈。
+    "TypeError: Cannot read properties of undefined (reading 'ownerId')\n    at validateOttoTurnReferences (/app/packages/core/dist/generation-reference.js:46:19)",
+    // 传输层自己的话(#949 A2 那一句)。
+    "Failed to fetch",
+    // 内部串:ops 文案、id、存储路径。
+    "conditioning refs unreachable (0/2) — refusing to spend",
+    "generation cm_01H8XYZ not found (or not an image) for this account",
+    "https://storage.internal/tenants/org_123/generations/cm_01H8XYZ.png",
+    // 空的与只有空白的。
+    "",
+    "   ",
+  ])("CREATE-A2: 不是我方文案的 %j —— 回 null,让界面用自己的兜底句", (foreign) => {
+    expect(referenceUnavailableSentence(foreign)).toBeNull();
+  });
+
+  it("CREATE-A2: 没有 body(null / undefined)也回 null,不抛", () => {
+    expect(referenceUnavailableSentence(null)).toBeNull();
+    expect(referenceUnavailableSentence(undefined)).toBeNull();
+  });
+
+  it("CREATE-A2: 认得出的那两句本身不含 id、URL 或存储路径", () => {
+    // 白名单放行的东西必须自己先干净 —— 否则守卫只是把泄露搬进了表里。
+    for (const reason of REFERENCE_UNAVAILABLE_REASONS) {
+      const sentence = referenceUnavailableMessage(reason);
+      expect(sentence).not.toMatch(/https?:\/\//);
+      expect(sentence).not.toContain("/");
+      expect(sentence).not.toMatch(/\bcm_[a-z0-9]/i);
+      expect(redactProviderNames(sentence)).toBe(sentence);
     }
   });
 });

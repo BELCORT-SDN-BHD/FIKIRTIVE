@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createElement } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,6 +12,34 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/actions", () => ({ createEntity: mocks.createEntity }));
 vi.mock("@/lib/refgen-actions", () => ({ startRefGen: mocks.startRefGen }));
 vi.mock("@/lib/balance-refresh", () => ({ notifyBalanceRefresh: mocks.notifyBalanceRefresh }));
+// P1-6 —— Radix 的下拉在 jsdom 里没有指针/布局引擎;换成原生 `<select>` 测的仍然是**页面自己
+// 传下去的 `value`/`disabled`/`onValueChange`**,与 campaign-confirm-requote-race.test.ts 同一条
+// 理由。`data-slot`/`data-disabled` 原样保留在这颗原生 select 上,好让既有的锁定断言不用改。
+vi.mock("@/components/ui/select", () => ({
+  Select: ({ value, disabled, onValueChange, children }: {
+    value?: string;
+    disabled?: boolean;
+    onValueChange?: (value: string) => void;
+    children?: ReactNode;
+  }) =>
+    createElement(
+      "select",
+      {
+        "data-slot": "select-trigger",
+        ...(disabled ? { "data-disabled": "" } : {}),
+        value: value ?? "",
+        disabled: Boolean(disabled),
+        onChange: (event: { target: { value: string } }) => onValueChange?.(event.target.value),
+      },
+      children,
+    ),
+  SelectTrigger: ({ children }: { children?: ReactNode }) => children,
+  SelectValue: () => null,
+  SelectContent: ({ children }: { children?: ReactNode }) => children,
+  SelectGroup: ({ children }: { children?: ReactNode }) => children,
+  SelectItem: ({ value, children }: { value: string; children?: ReactNode }) =>
+    createElement("option", { value }, children),
+}));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -67,6 +95,13 @@ async function typeInto(input: HTMLInputElement | HTMLTextAreaElement, value: st
 
 async function prepareUpload() {
   await typeInto(dialog().querySelector<HTMLInputElement>("#add-asset-name")!, "Rosa");
+  // P1-6 —— Add 现在要求明确选一个类型才会解锁(不再默认 CHARACTER);Rosa 是人名,这里
+  // 选 Cast 是诚实的显式选择,不是残留的默认值。
+  const typeSelect = dialog().querySelector<HTMLSelectElement>('[data-slot="select-trigger"]')!;
+  await act(async () => {
+    typeSelect.value = "CHARACTER";
+    typeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  });
   const fileInput = dialog().querySelector<HTMLInputElement>("#add-asset-images")!;
   const file = new File(["image"], "rosa.png", { type: "image/png" });
   Object.defineProperty(fileInput, "files", { configurable: true, value: [file] });

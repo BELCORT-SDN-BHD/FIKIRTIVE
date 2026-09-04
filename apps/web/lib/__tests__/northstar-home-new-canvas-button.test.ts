@@ -49,7 +49,7 @@ describe("Create first prompt handoff", () => {
       handoffId: "handoff-1",
     });
     const dom = await renderComposer();
-    const textarea = dom.querySelector<HTMLTextAreaElement>('textarea[aria-label="Describe what you want to create"]')!;
+    const textarea = dom.querySelector<HTMLTextAreaElement>('textarea[aria-label="Otto creation prompt"]')!;
 
     await act(async () => typeInto(textarea, "Raya promo for the croffle set"));
     await act(async () => {

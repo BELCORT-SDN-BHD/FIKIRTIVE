@@ -75,6 +75,15 @@ export type SystemReason =
    *  creating its AssetUnderstanding row. Genuinely platform-wide (it spans every tenant's new
    *  uploads); each per-row write re-enters under that row's own tenant. */
   | "understanding-scan"
+  /**
+   * 2026-09-03 判官第一轮复审 P1-7 —— `scripts/tools/purge-deleted-entity-assets.ts` 不带
+   * `--owner` 的默认模式:「哪些已软删的实体还漏着活的参考照」这句话没有单一租户可以收口,
+   * 跟 `understanding-scan` 一样是平台级的存量清理扫描。READ-ONLY(见下方
+   * {@link READ_ONLY_SYSTEM_REASONS})——这个名字只包住脚本里那一条跨租户 `findMany`
+   * 列表读,真正的软删/打墓碑写入发生在这个系统帧**之外**、每条候选行自带 `ownerId` 显式
+   * 过滤的既有查询里(不需要租户帧也能通过闸——见 `tenant-guard.ts` 的 `whereHasOwnerId`)。
+   */
+  | "entity-asset-purge-sweep"
   /** #784 — returns AssetUnderstanding rows a crashed worker left RUNNING to the queue. */
   | "understanding-reaper"
   /** #784 — sums today's understanding token spend across every tenant against the PLATFORM
@@ -115,6 +124,11 @@ export const READ_ONLY_SYSTEM_REASONS: ReadonlySet<SystemReason> = new Set<Syste
   // #784 — the platform understanding-budget read. It sums two token columns across every
   // tenant and returns a number; enforcing that here beats trusting it to stay that way.
   "understanding-budget",
+  // 2026-09-03 P1-7 — the purge script's cross-tenant listing reads only ever list candidate
+  // rows; every actual write happens through the ownerId-scoped queries downstream (see the
+  // reason's own doc comment above). Read-only here is a real invariant, not a courtesy: it
+  // catches a future edit that accidentally moves a write inside this frame.
+  "entity-asset-purge-sweep",
 ]);
 
 /**

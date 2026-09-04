@@ -219,7 +219,7 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
   // reservation didn't happen.
   it("the spend card announces the balance change itself, on every exit of every spend path", () => {
     const src = fs.readFileSync(path.join(REPO_ROOT, "apps/web/components/otto/OttoPlanCard.tsx"), "utf8");
-    for (const handler of ["approve", "cancel", "retry"]) {
+    for (const handler of ["cancel", "retry"]) {
       const body = src.match(new RegExp(`async function ${handler}\\(\\) \\{([\\s\\S]*?)\\n  \\}`))?.[1] ?? "";
       expect(body, `OttoPlanCard.${handler}() must exist for this seam to mean anything`).not.toBe("");
       expect(
@@ -227,6 +227,40 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
         `OttoPlanCard.${handler}() must announce the balance change in a finally — not on the ` +
           `success path only, and not by delegating to a parent callback that never runs when it throws.`,
       ).toMatch(/finally \{[\s\S]*notifyBalanceRefresh\(\)/);
+    }
+  });
+
+  /**
+   * APPROVE 的那一半搬了家(2026-09-04 走查 P0-3),担保**变强**而不是变弱。
+   *
+   * 画布上那张始终可见的 Otto 卡现在也带一颗 Generate —— 同一张卡、同一次批准、第二颗按钮。
+   * 两颗按钮各抄一份 `ottoApprove`/`coworkGenerate` 的分支,就是把钱路复制成两份;所以那一次
+   * **动作**收进了 `plan-approval.ts`,连同它的 `finally`。这条围栏跟着搬:
+   *   ① 那一份共享动作在 finally 里报余额(失败的响应从不证明零花费);
+   *   ② 每一颗按下去会花钱的按钮都走它,谁都不许自己再开一条路。
+   */
+  it("every approve button spends through the one shared action, which announces on every exit", () => {
+    const action = fs.readFileSync(path.join(REPO_ROOT, "apps/web/components/otto/plan-approval.ts"), "utf8");
+    const body = action.match(/export async function runPlanApproval\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(body, "runPlanApproval must exist — it is the one authority for a card's approval").not.toBe("");
+    expect(
+      body,
+      "runPlanApproval must announce the balance change in a finally — a failed response never proves zero spend.",
+    ).toMatch(/finally \{[\s\S]*notifyBalanceRefresh\(\)/);
+    // 两条路都还在它里面,而且只在它里面。
+    expect(body).toMatch(/ottoApprove\(/);
+    expect(body).toMatch(/coworkGenerate\(/);
+
+    for (const file of [
+      "apps/web/components/otto/OttoPlanCard.tsx",
+      "apps/web/components/otto/OttoTurnCard.tsx",
+    ]) {
+      const src = fs.readFileSync(path.join(REPO_ROOT, file), "utf8");
+      expect(src, `${file} must spend through runPlanApproval`).toMatch(/runPlanApproval\(/);
+      // 自己再开一条 approve 路 = 第二份钱路。抽屉那张卡里 coworkGenerate 只剩 coworkVaryCard
+      // 的 import 行,所以这里比对的是**调用**,不是名字出现。
+      expect(src, `${file} must not call ottoApprove directly`).not.toMatch(/await ottoApprove\(/);
+      expect(src, `${file} must not call coworkGenerate directly`).not.toMatch(/await coworkGenerate\(/);
     }
   });
 

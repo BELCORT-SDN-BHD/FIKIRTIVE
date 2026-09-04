@@ -10,10 +10,15 @@ import "server-only";
  * only ever ADDS blocks; it can't loosen the existing money-safety.
  */
 import { prisma } from "@fikirtive/db";
-import { modelFamily, deriveMode, castFindings, type CastFinding } from "@fikirtive/core";
+import {
+  modelFamily,
+  deriveMode,
+  castFindings,
+  generationReferenceScope,
+  REFERENCE_IMAGE_EXTS,
+  type CastFinding,
+} from "@fikirtive/core";
 import { getCastRule } from "./cowork-knowledge";
-
-const IMG_EXTS = ["png", "jpg", "jpeg", "webp"];
 
 export async function checkCast(req: {
   ownerId: string;
@@ -65,7 +70,7 @@ export async function checkCast(req: {
       findings.push(...castFindings({ requestedEntityIds: req.entityIds, entities: mapped, castRule }));
     }
 
-    // The source/tail frames must be an owned, same-project, live image — checked
+    // The source/tail frames must be an owned, live image — checked
     // exactly where the worker actually consumes them (apps/worker/src/jobs/gen.ts):
     //   - VIDEO: source is the i2v start frame; tail only alongside a source.
     //   - IMAGE: source is the edit base image — unshifted to inputImageUrls[0] and sent
@@ -80,12 +85,16 @@ export async function checkCast(req: {
         [req.sourceGenerationId, req.kind === "video" ? "start frame" : "reference image"],
       ];
       if (req.kind === "video" && req.tailGenerationId) frames.push([req.tailGenerationId, "end frame"]);
+      // Codex QA-CRE-FE9-013:这里从前多写了一格 `projectId`,于是一张从别的画布引用过来
+      // 的合法参考会在**付费之前**被这道守卫判成「不是这个项目里的图」。判据现在与校验器、
+      // Otto 视觉、worker 共读同一份 `generationReferenceScope`(同一 owner、活着、图片扩展
+      // 名)—— 画布是出处,不是权限边界。租户这一格一点没松。
       for (const [id, label] of frames) {
         const gen = await prisma.generation.findFirst({
-          where: { id, ownerId: req.ownerId, projectId: req.projectId, deletedAt: null, asset: { ext: { in: IMG_EXTS } } },
+          where: { id, ...generationReferenceScope(req.ownerId, REFERENCE_IMAGE_EXTS) },
           select: { id: true },
         });
-        if (!gen) findings.push({ kind: "missing-source", message: `The ${label} image isn't an owned image in this project — pick another.` });
+        if (!gen) findings.push({ kind: "missing-source", message: `The ${label} image isn't one of your images any more — pick another.` });
       }
     }
 

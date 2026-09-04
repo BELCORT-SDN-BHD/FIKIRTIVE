@@ -20,6 +20,9 @@
  *   - `worker`:至少有一班在写心跳;按班真相在 `workers` 里。
  *   - `migrations`:本次启动的迁移到底跑成了没有(见 apps/web/scripts/boot.mjs)。
  *   - `backup`(#794 ③):`"fresh"` / `"stale"` / `"missing"` / `"unknown"`。
+ *   - `build`(2026-09-04 Codex staging 审计):`{sha, ref}`,平台没注入就是 `null`——
+ *     绝不假造。只有这两个字段,不含 configFingerprint 或任何路径/变量名(见 lib/health.ts
+ *     的 buildInfo)。
  * 接法见 docs/ops/incident-visibility.md 与 docs/ops/worker-services.md。
  *
  * ## 备份新鲜度也是一个字段,不是一个状态码(#794 ③)
@@ -31,7 +34,7 @@
  * 任何人都能打)。要看细节去 /admin/system。
  */
 import { prisma } from "@fikirtive/db";
-import { backupFreshness, bestEffort, singleFlight, workersHealth } from "@/lib/health";
+import { backupFreshness, bestEffort, buildInfo, singleFlight, workersHealth } from "@/lib/health";
 import { bootMigrationStatus } from "@/lib/boot-status";
 
 export const dynamic = "force-dynamic";
@@ -70,9 +73,10 @@ export async function GET(): Promise<Response> {
   const [rows, lastBackup] = await Promise.all([bestEffort(readHeartbeats), bestEffort(readLastBackup)]);
   const now = new Date();
   const backup = lastBackup ? backupFreshness(lastBackup.finishedAt, now) : "unknown";
+  const build = buildInfo(process.env);
   if (!rows) {
-    return Response.json({ ok: true, db: "unknown", worker: "unknown", workers: {}, backup, migrations }, { status: 200 });
+    return Response.json({ ok: true, db: "unknown", worker: "unknown", workers: {}, backup, migrations, build }, { status: 200 });
   }
   const { worker, workers } = workersHealth(rows, now);
-  return Response.json({ ok: true, db: "up", worker, workers, backup, migrations }, { status: 200 });
+  return Response.json({ ok: true, db: "up", worker, workers, backup, migrations, build }, { status: 200 });
 }

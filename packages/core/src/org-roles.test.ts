@@ -32,6 +32,21 @@ describe("organization permission bundles", () => {
     }
   });
 
+  /**
+   * FRONT-A4(规格 docs/specs/frontend-baseline.md §7.3⑤):Home 定制是**工作区级**的,
+   * 判的是这一条能力,不是角色名字。管理员改得动,普通成员／creator／approver 改不动。
+   */
+  it("FRONT-A4 gives Manage home to owner and admin, and to nobody else", () => {
+    expect(orgRolesAllow(["owner"], "workspace.manage_home")).toBe(true);
+    expect(orgRolesAllow(["admin"], "workspace.manage_home")).toBe(true);
+    expect(orgRolesAllow(["member"], "workspace.manage_home")).toBe(false);
+    expect(orgRolesAllow(["creator"], "workspace.manage_home")).toBe(false);
+    expect(orgRolesAllow(["approver"], "workspace.manage_home")).toBe(false);
+    // 两个都不带这条能力的角色叠加,叠不出这条能力来。
+    expect(orgRolesAllow(["creator", "approver"], "workspace.manage_home")).toBe(false);
+    expect(isOrgCapability("workspace.manage_home")).toBe(true);
+  });
+
   it("denies empty and unknown assignments", () => {
     expect(orgRolesAllow([], "workspace.read")).toBe(false);
     expect(orgRolesAllow(["super-admin"], "workspace.read")).toBe(false);

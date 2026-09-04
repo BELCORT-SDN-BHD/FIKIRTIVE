@@ -39,8 +39,12 @@ import { Marker, MarkerContent } from "@/components/ui/marker";
 import { Spinner } from "@/components/ui/spinner";
 import { getCoworkThreadClient, getOlderCoworkThreadMessagesClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
-import { ChevronDown, ImageIcon, MessageSquarePlus, XIcon } from "lucide-react";
+import { ChevronDown, ImagesIcon, MessageSquarePlus, PlusIcon, UploadIcon, XIcon } from "lucide-react";
 import { uploadFilesDirect } from "@/lib/direct-upload";
+import { UPLOAD_FAILURE_COPY } from "@fikirtive/core/upload";
+// Codex QA-CRE-FE9-013 —— 「这句话是不是我们写给商家的那两句之一」的白名单。走**子路径**:
+// `@fikirtive/core` 的桶文件带出 `node:crypto`,那会被拖进客户端包。
+import { referenceUnavailableSentence } from "@fikirtive/core/gen-failure";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_SIDE, FRAME_JPEG_QUALITY, REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS, isRefVideoDurationOk } from "@/lib/video-frame";
 import {
@@ -54,6 +58,7 @@ import {
   injectCardMessage,
   appendMissingCards,
   appendResearchReports,
+  backfillMissingAssistantText,
   syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
 import { mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
@@ -69,6 +74,7 @@ import { ResearchCard } from "./ResearchCard";
 import { ResearchReport } from "./ResearchReport";
 import { PerformanceCard } from "./PerformanceCard";
 import { OttoResult } from "./OttoResult";
+import { OttoTurnCard, type CanvasConfirmCard } from "./OttoTurnCard";
 import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
 import { OttoTrace } from "./OttoTrace";
@@ -85,6 +91,15 @@ import {
   shouldShowTracePanel,
   turnCostOf,
 } from "@/lib/otto-status-helpers";
+// 画布那张始终可见的 Otto 卡片,此刻该说什么(走查 P0-3/P0-4/P1-1)。判据全在纯函数里,
+// 组件只渲染 —— 与 otto-status-helpers 同一条纪律。
+import {
+  activeStepLabel,
+  canvasTurnStatus,
+  canvasTurnText,
+  currentTurnStartIndex,
+  latestTurnTerminal,
+} from "@/lib/otto-canvas-turn";
 import { creditsLabel } from "@/lib/credit-format";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import type { OttoErrorData, OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
@@ -92,6 +107,15 @@ import type { ReasoningUIPart } from "ai";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import { composerReferencePayload, composerReferencesPlaceholder, removeComposerReference, upsertComposerReference, upsertComposerReferences, type OttoComposerReference } from "@/lib/canvas-chat-reference";
 import { CANVAS_OTTO_DOCK_ATTR } from "@/lib/canvas-otto-dock";
+import { CanvasLibraryPicker } from "@/components/canvas/CanvasLibraryPicker";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // Re-export the mapping seam so callers/tests can import it from the component too.
 export { threadToUiMessages } from "@/lib/otto-ui-messages";
@@ -104,13 +128,24 @@ export interface OttoChatStreamProps {
   entities: EntityDTO[];
   thread: ChatThreadDTO;
   balanceUsd: number;
-  /** Starts a new conversation in this project. Rendered as a persistent button
-   *  in the chat header, so it's always reachable — not only via a sidebar hover. */
+  /** Starts a new conversation in this project. Rendered as a persistent button in the
+   *  side panel's chat header — that surface has its own `OttoThreadList`, so an older
+   *  conversation stays reachable. The canvas does NOT offer it (QA-CRE-FE9-005). */
   onNewConversation?: () => void;
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
   /** Re-reads the account balance and updates the nav display after a spend event. */
   onBalanceRefresh?: () => void | Promise<void>;
+  /**
+   * 这条对话此刻**有没有付费生成在跑**(走查 P0-1)。
+   *
+   * 画板与这块对话是两个兄弟组件,同时挂在 `NorthstarCanvasWorkspace` 里。批准之后余额
+   * 会刷新、卡片会变成排队,唯独画板什么都不知道 —— 商家付了钱,板上一片空白,按 F5 图才
+   * 出现。画板本来就有一条现成的路(`FlowCanvas` 的 `activity` → 重读画板 → 服务端
+   * chat→canvas 桥放下在飞的占位卡),缺的只是有人告诉它。这个回调就是那一句话:
+   * 只报事实,不带画板状态,不新起第二套机制。
+   */
+  onGenerationActivityChange?: (active: boolean) => void;
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
    *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
    *  so the route's existing-thread branch handles it. */
@@ -137,6 +172,25 @@ function revokeAttachedPreviews(refs: AttachedReference[]): void {
   refs.forEach(revokeAttachedPreview);
 }
 
+/**
+ * Codex QA-CRE-FE9-013 —— 路由在流打开之前拒绝这一轮时,body 是一段 JSON(`{"error":"…"}`)。
+ * `DefaultChatTransport` 把它原样塞进 `Error.message`,所以这里只做一件事:把那一层信封拆掉。
+ * 拆不开就原样交出去 —— 判断「这句话是不是我们写的」是白名单的事,不是这里的事。
+ */
+function errorBodyText(message: string | undefined): string | null {
+  const raw = (message ?? "").trim();
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && typeof (parsed as { error?: unknown }).error === "string") {
+      return (parsed as { error: string }).error;
+    }
+  } catch {
+    // 不是 JSON —— 那就是普通的传输层文本,原样交给白名单去否决它。
+  }
+  return raw;
+}
+
 /** The latest user message's text — what the strict route body needs for `text`. */
 function latestUserText(messages: OttoUiMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -158,6 +212,7 @@ export function OttoChatStream({
   onNewConversation,
   onThreadUpdate,
   onBalanceRefresh,
+  onGenerationActivityChange,
   pendingFirst,
   onPendingFirstSent,
   composerReferences,
@@ -197,6 +252,11 @@ export function OttoChatStream({
   const [attachError, setAttachError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastSubmittedTextRef = useRef("");
+  /** Codex QA-CRE-FE9-013:这一轮送出去的草稿与附件,留到**知道服务端收下了**为止。
+   *  服务端因为某件参考取不到而整轮拒绝时,它们原样放回输入框(附件条里就是他要移掉的那一件);
+   *  正常收尾或别的错误则在这里释放 —— blob 预览的 revoke 也跟着挪到那一刻,不然放回去的
+   *  芯片会是一张已经被撤销的图。 */
+  const lastSubmittedRef = useRef<{ text: string; refs: AttachedReference[] } | null>(null);
   const submitLockRef = useRef(false);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -206,6 +266,8 @@ export function OttoChatStream({
   // frame" can't attach a blank JPEG before the first paint.
   const [frameReady, setFrameReady] = useState(false);
   const [canvasHistoryOpen, setCanvasHistoryOpen] = useState(false);
+  /** "Choose from Library" — the second of the pattern's Add-context ways in. */
+  const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(Boolean(thread.hasOlderMessages));
   const [oldestSeq, setOldestSeq] = useState<number | null>(thread.messages[0]?.seq ?? null);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
@@ -349,14 +411,21 @@ export function OttoChatStream({
       }
     },
     onFinish: () => {
+      // The turn was accepted and ran — the held draft/attachments are no longer a restore
+      // candidate, so their blob previews can go (QA-CRE-FE9-013).
+      releaseSubmitted();
       // Sync the parent thread list + make reload authoritative. Non-blocking.
       // Safety net (F23): backfill any card-kind durable the live stream missed
       // (e.g. a dropped data-tool-propose part) so cards never need a reload.
+      // P2-1(判官二轮复核):也在这一刻补一句可读 TEXT——某些轮次直播结束时,live 列表里
+      // 这一轮最终没有任何 text 部件(叙述文字这次没有随流下来),画布卡在这个 turn-end
+      // 才会落回空态句;`backfillMissingAssistantText` 只在 live 列表读不出话时才动手,
+      // 天然不会把已经画出来的那条 TEXT 再叠一遍。
       void (async () => {
         const fresh = await getCoworkThreadClient(thread.id);
         if (fresh) {
           onThreadUpdate(fresh);
-          setMessages((cur) => appendMissingCards(cur, fresh));
+          setMessages((cur) => backfillMissingAssistantText(appendMissingCards(cur, fresh), fresh));
         }
       })();
       // A completed turn meters LLM credits — refresh the nav balance display.
@@ -369,8 +438,38 @@ export function OttoChatStream({
   // data-error part and render via OttoStreamErrorNotice instead, see below). Its raw
   // `.message` (e.g. "Failed to fetch") is developer-facing, not merchant-facing (#949
   // A2) — log it for diagnosis, keep the friendly copy on screen.
+  //
+  // Codex QA-CRE-FE9-013 —— **一个例外,而且只有这一个**:挂上来的参考取不到时,路由在流
+  // 打开之前就回一个普通 400,body 是我们自己写的那一句。`referenceUnavailableSentence` 是
+  // 一份白名单(与 `GenJob.error` 那份同一条纪律):只有这个文件写给商家的句子才认得出来,
+  // 别的一律留给上面那句友好兜底。认出来时:那句话上屏,而且**把这一轮的草稿与附件放回去**——
+  // 商家要移掉的那一件就在附件条里,草稿丢了他就得重打一遍。
+  /** 放开这一轮扣在手里的草稿与附件(并撤销它们的本地 blob 预览)。 */
+  function releaseSubmitted(): void {
+    const held = lastSubmittedRef.current;
+    lastSubmittedRef.current = null;
+    if (held) revokeAttachedPreviews(held.refs);
+  }
+
   useEffect(() => {
-    if (error) console.error("[OttoChatStream] transport error:", error);
+    if (!error) return;
+    console.error("[OttoChatStream] transport error:", error);
+    const sentence = referenceUnavailableSentence(errorBodyText(error.message));
+    if (!sentence) {
+      releaseSubmitted();
+      return;
+    }
+    const draft = lastSubmittedRef.current;
+    lastSubmittedRef.current = null;
+    // 与卡上那个计时器同一条写法(`OttoPlanCard` 的 `queueMicrotask(() => setElapsed(0))`):
+    // 在 effect 里同步 setState 会把这一帧再渲染一遍,而这里三个更新本来就属于同一次「放回去」。
+    queueMicrotask(() => {
+      setAttachError(sentence);
+      if (!draft) return;
+      setText((current) => (current.trim() ? current : draft.text));
+      setAttachedRefs((current) => (current.length ? current : draft.refs));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [error]);
 
   const isStreaming = status === "streaming";
@@ -545,10 +644,13 @@ export function OttoChatStream({
     setAttachError(null);
     // A new turn may queue a new generation — re-arm polling.
     rearmGenerationPoll();
-    // Capture and clear attachments before send. Revoke local preview blob URLs
-    // (the source is the generationId, not the blob) so repeated attach/send doesn't leak.
+    // Capture and clear attachments before send. The local preview blob URLs are NOT revoked
+    // here any more (QA-CRE-FE9-013): the server can still refuse this whole turn because one of
+    // these references is gone, and the chips have to go back into the composer intact. They are
+    // revoked the moment the turn is known to have been accepted (onFinish) or to have failed for
+    // any other reason — `releaseSubmitted()`.
     const attachedNow = attachedRefs;
-    revokeAttachedPreviews(attachedNow);
+    lastSubmittedRef.current = { text: trimmed, refs: attachedNow };
     setAttachedRefs([]);
     // Pass the live projectId/threadId, optional @mention entityIds, and optional
     // sourceGenerationId (attached image) or referenceVideoGenerationId (attached whole
@@ -593,7 +695,7 @@ export function OttoChatStream({
     try {
       const outcome = await uploadFilesDirect([file], () => {});
       if (outcome.files.length === 0) {
-        setAttachError(outcome.failures[0]?.reason ?? "Upload failed.");
+        setAttachError(outcome.failures[0]?.reason ?? UPLOAD_FAILURE_COPY.blocked);
         return;
       }
       const res = await finalizeCandidateUploads(projectId, "", [], outcome.files);
@@ -602,8 +704,10 @@ export function OttoChatStream({
         return;
       }
       setAttachedRefs((current) => upsertComposerReference(current, { generationId: res.generationIds[0], src: URL.createObjectURL(file), kind: "image", previewKind: "image", label: "Image ref" }));
-    } catch (err) {
-      setAttachError(err instanceof Error ? err.message : "Upload failed.");
+    } catch {
+      // 2026-09-03 走查 S2 —— 这里曾把任何一层抛上来的 `err.message` 原样上屏,
+      // 商家读到的那句「Unknown error」就是这么来的。底层原文只进日志。
+      setAttachError(UPLOAD_FAILURE_COPY.blocked);
     } finally {
       setUploading(false);
     }
@@ -705,7 +809,7 @@ export function OttoChatStream({
       const preview = c.toDataURL("image/jpeg", FRAME_JPEG_QUALITY);
       const outcome = await uploadFilesDirect([file], () => {});
       if (outcome.files.length === 0) {
-        setAttachError(outcome.failures[0]?.reason ?? "Upload failed.");
+        setAttachError(outcome.failures[0]?.reason ?? UPLOAD_FAILURE_COPY.blocked);
         return;
       }
       const r = await finalizeCandidateUploads(projectId, "", [], outcome.files);
@@ -715,8 +819,10 @@ export function OttoChatStream({
       }
       setAttachedRefs((current) => upsertComposerReference(current, { generationId: r.generationIds[0], src: preview, kind: "image", previewKind: "image", label: "Image ref" }));
       closeVideoPick();
-    } catch (err) {
-      setAttachError(err instanceof Error ? err.message : "Upload failed.");
+    } catch {
+      // 2026-09-03 走查 S2 —— 这里曾把任何一层抛上来的 `err.message` 原样上屏,
+      // 商家读到的那句「Unknown error」就是这么来的。底层原文只进日志。
+      setAttachError(UPLOAD_FAILURE_COPY.blocked);
     } finally {
       setUploading(false);
     }
@@ -732,14 +838,14 @@ export function OttoChatStream({
     setUploading(true);
     try {
       const outcome = await uploadFilesDirect([wholeVideoFileRef.current], () => {});
-      if (outcome.files.length === 0) { setAttachError(outcome.failures[0]?.reason ?? "Upload failed."); return; }
+      if (outcome.files.length === 0) { setAttachError(outcome.failures[0]?.reason ?? UPLOAD_FAILURE_COPY.blocked); return; }
       const r = await finalizeCandidateUploads(projectId, "", [], outcome.files);
       if ("error" in r || !r.generationIds?.[0]) { setAttachError("error" in r ? r.error : "Could not attach video."); return; }
       const preview = canvasRef.current?.toDataURL("image/jpeg", FRAME_JPEG_QUALITY) ?? "";
       setAttachedRefs((current) => upsertComposerReference(current, { generationId: r.generationIds[0], src: preview, kind: "refVideo", previewKind: "image", label: "Video ref" }));
       closeVideoPick();
-    } catch (err) {
-      setAttachError(err instanceof Error ? err.message : "Upload failed.");
+    } catch {
+      setAttachError(UPLOAD_FAILURE_COPY.blocked);
     } finally { setUploading(false); }
   }
 
@@ -808,6 +914,19 @@ export function OttoChatStream({
     }
   }
 
+  /** 「Change something」把这张卡的原话塞回输入框,让商家在它上面改。抽屉里那张卡与画布上
+   *  那张确认卡按的是同一个动作,所以它只能有一份实现。 */
+  function seedComposer(seed: string) {
+    const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
+    if (!ta) return;
+    // Prefill with the plan prompt so the user edits from it.
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+    nativeInputValueSetter?.call(ta, seed);
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    ta.focus();
+    setText(seed); // sync React state directly
+  }
+
   // The index of the message that holds the actively-streaming assistant text, so
   // only its last text part gets the blinking caret.
   const lastMessageIsStreamingAssistant =
@@ -815,12 +934,80 @@ export function OttoChatStream({
     messages.length > 0 &&
     messages[messages.length - 1].role === "assistant";
 
-  const latestAssistantText = [...messages].reverse().find((message) => message.role === "assistant")
-    ?.parts.filter((part): part is { type: "text"; text: string } => part.type === "text")
-    .map((part) => part.text)
-    .join(" ")
-    .trim();
+  // 画布卡的正文。走查 P1-1 修掉了「🖼 result」那种内部占位串;Codex QA-CRE-004 修掉了它的
+  // 另一半 —— 那句话从前**不比时间**,于是一条落库的 TEXT 永远是「最后一句」,哪怕后来又落了
+  // 一条 GEN_RESULT。现在在「Otto 后来说的话」与「这一轮的终局」之间取更新的那个。判据全在
+  // 纯函数里,连同测试。
+  const latestAssistantText = canvasTurnText(messages);
+  // 这一轮的终局(GEN_RESULT / TURN_ERROR),状态词与正文读的是**同一个**。
+  const turnTerminal = latestTurnTerminal(messages);
   const canvasLayout = layout === "canvas";
+
+  // ── 画布卡这一刻的脸(走查 P0-3 / P0-4)────────────────────────────────────────
+  // 每一张 GEN_CARD 的运行态,与抽屉里那张卡读的是同一个 `deriveCardState`。
+  const genCardStates = messages
+    .map((m, index) => ({ m, index }))
+    .filter(({ m }) => m.metadata?.kind === "GEN_CARD" && m.metadata.durableId)
+    .map(({ m, index }) => ({
+      index,
+      message: m,
+      durableId: m.metadata!.durableId,
+      state: deriveCardState({
+        genJobId: m.metadata?.genJobId ?? null,
+        submitted: submittedCardIds.has(m.metadata!.durableId),
+        results: jobsWithResult,
+        errors: jobsWithError,
+        cancelled: jobsCancelled,
+      }),
+    }));
+  // 等商家按确认的卡。`idle` 就是「有卡、没开跑」—— 与卡自己的 approve 门同一个判据。
+  // 只取**这一轮**的(最后一条商家发言之后):这张卡是「当前回合」卡,更早几轮没按的卡
+  // 仍在对话抽屉里、照旧可以批准,不该在这里堆成一叠让商家在里面挑一个付钱。
+  const turnStart = currentTurnStartIndex(messages);
+  const confirmCards: CanvasConfirmCard[] = genCardStates
+    .filter((c) => c.state === "idle" && c.index >= turnStart)
+    .map((c) => ({
+      cardId: c.durableId,
+      threadId: thread.id,
+      payload: c.message.metadata?.payload,
+      pendingApproval: pendingApprovalCardIds.has(c.durableId),
+    }));
+  const workingCardCount = genCardStates.filter((c) => c.state === "working").length;
+  // 「屏幕上多久没变了」的输入。变的定义 = 状态词 + 那句进度话 + 消息条数,任一变化就重新计时。
+  const canvasProgressKey = `${isBusy}|${liveStatus?.kind ?? ""}|${activeStepLabel(traceSteps) ?? ""}|${messages.length}|${workingCardCount}|${confirmCards.length}`;
+  const [progressKey, setProgressKey] = useState(canvasProgressKey);
+  const [secondsSinceProgress, setSecondsSinceProgress] = useState(0);
+  if (progressKey !== canvasProgressKey) {
+    // Render-phase "adjust state when an input changes" (React docs pattern) — not setState-in-effect.
+    // 计秒本身不在这里读时钟(渲染必须是纯的):秒数只归零,由下面那个每秒 +1 的计时器数。
+    setProgressKey(canvasProgressKey);
+    setSecondsSinceProgress(0);
+  }
+  const canvasTurnBusy = isBusy || workingCardCount > 0;
+  useEffect(() => {
+    if (!canvasLayout || !canvasTurnBusy) return;
+    const t = setInterval(() => setSecondsSinceProgress((n) => n + 1), 1000);
+    return () => clearInterval(t);
+    // progressKey 进依赖:屏幕上一变化,这只计时器就重开,从刚归零的那一秒重新数起。
+  }, [canvasLayout, canvasTurnBusy, progressKey]);
+  const canvasStatus = canvasTurnStatus({
+    isBusy,
+    hasAssistantText: !!hasAssistantText,
+    liveStatus,
+    steps: traceSteps,
+    workingCardCount,
+    pendingConfirmCount: confirmCards.length,
+    terminal: turnTerminal,
+    secondsSinceProgress,
+  });
+
+  // 画板要知道「这条对话此刻有没有付费任务在跑」——`activity` 一翻 true,FlowCanvas 就去
+  // 重读画板,服务端的 chat→canvas 桥把在飞的那张占位卡放上去;翻 false 再读一次,产出把
+  // 占位卡换掉(走查 P0-1)。这里只报事实,不碰画板的任何状态,也不新起第二套机制。
+  const generationActive = workingCardCount > 0;
+  useEffect(() => {
+    onGenerationActivityChange?.(generationActive);
+  }, [generationActive, onGenerationActivityChange]);
 
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
@@ -859,26 +1046,33 @@ export function OttoChatStream({
         }
       `}</style>
       {canvasLayout ? (
-        <div
-          aria-label="Otto current turn"
-          className="pointer-events-auto absolute left-4 top-4 w-[280px] rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-sm)]"
-        >
-          <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
-            <span className="flex items-center gap-2 text-xs font-semibold">
-              <OttoAvatar size={22} state={isBusy ? "thinking" : "idle"} />
-              Otto
-            </span>
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className={`size-1.5 rounded-full ${isBusy ? "bg-brand" : thread.status === "failed" ? "bg-destructive" : "bg-success"}`} />
-              {isBusy ? "Working" : thread.status === "failed" ? "Failed" : "Ready"}
-            </span>
-          </div>
-          <p className="line-clamp-3 px-3 py-3 text-sm leading-5 text-foreground">
-            {isBusy ? "Working through your latest request…" : latestAssistantText || "Tell Otto what you want to create or change."}
-          </p>
-        </div>
+        <OttoTurnCard
+          status={canvasStatus}
+          text={latestAssistantText}
+          streaming={lastMessageIsStreamingAssistant}
+          confirmCards={confirmCards}
+          onApproved={({ cardId: approvedCardId, chained }) => {
+            // 与抽屉里那张卡按下去之后**逐字相同**的善后:同一份 pending 集合合并规矩、
+            // 同一次轮询重装、同一条注入路径。两个按钮,一套状态机。
+            if (!chained?.pendingCardIds.includes(approvedCardId)) {
+              setSubmittedCardIds((cur) => new Set(cur).add(approvedCardId));
+            }
+            setPendingApprovalCardIds((cur) =>
+              nextPendingApprovalCardIds(cur, [approvedCardId], chained?.pendingCardIds),
+            );
+            rearmGenerationPoll();
+            void pollAndInjectResults(
+              chained?.narrationMessageId ? [chained.narrationMessageId] : undefined,
+            );
+          }}
+          onChangeSomething={(seed) => seedComposer(seed)}
+        />
       ) : null}
-      {/* Header — New conversation is always visible here, not only on a sidebar hover. */}
+      {/* Header. QA-CRE-FE9-005（Founder 2026-09-04 07:05 裁决）：**画布上没有 New conversation**。
+          一张画布就是它那一条按时间的 Conversation —— 画布从来没有 thread 切换器，所以那颗键
+          只会造出「写得进、找不回」的对话（Codex 只读走查 Stage 7）。beta 先收掉它；多对话切换
+          列表登记下一轮。侧栏 Otto 面板不受影响：那一面有自己的 `OttoThreadList`，旧对话找得回，
+          所以下面 `!canvasLayout` 那一支照旧带这颗键。 */}
       {canvasLayout ? (
         <div className="otto-chat-header pointer-events-auto absolute bottom-4 left-4 flex h-10 w-[280px] items-center gap-1 rounded-[var(--radius-card)] border border-border bg-card p-1 shadow-[var(--shadow-sm)]">
           <Button
@@ -895,18 +1089,6 @@ export function OttoChatStream({
               <ChevronDown className={`size-3.5 transition-transform duration-150 ease-out motion-reduce:transition-none ${canvasHistoryOpen ? "rotate-180" : ""}`} aria-hidden />
             </span>
           </Button>
-          {onNewConversation ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={onNewConversation}
-              title="Start a new conversation in this Canvas"
-              aria-label="New conversation"
-            >
-              <MessageSquarePlus aria-hidden />
-            </Button>
-          ) : null}
         </div>
       ) : (
         <div className="otto-chat-header flex items-center gap-[9px] border-b border-border bg-card px-4 py-[13px]">
@@ -934,7 +1116,17 @@ export function OttoChatStream({
       {/* Messages — shadcn owns follow, anchoring, and jump-to-latest behavior. */}
       <MessageScrollerProvider autoScroll>
         <MessageScroller className={canvasLayout
-          ? `${canvasHistoryOpen ? "flex" : "hidden"} pointer-events-auto absolute bottom-16 left-4 h-[min(58vh,560px)] w-[380px] overflow-hidden rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-md)]`
+          // THE PATTERN'S OWN CONVERSATION DOCK (Founder 2026-09-03: 生产界面严格按 UIUX 设计走).
+          // `design-system/patterns/canvas/CanvasReference.tsx` gives it `w-[280px]` and a
+          // `max-h-[260px]` scrolling list — the same 280 as the current-turn card above it and
+          // the toggle below it, so the whole left column is one width.
+          //
+          // 380px was not just wider, it OVERLAPPED. The board's creation band starts at
+          // `left: 300px` (globals.css `.cv-creation-band` / `.cv-bottom-stack`, the pattern's own
+          // number), and `left-4` + 380px reaches 396px — so on any window narrow enough for the
+          // band to matter, the open history sat across the canvas's own tool column. At 280px it
+          // ends at 296px and clears it by 4px at every width, which is why the pattern picks 280.
+          ? `${canvasHistoryOpen ? "flex" : "hidden"} pointer-events-auto absolute bottom-16 left-4 max-h-[min(46vh,260px)] w-[280px] overflow-hidden rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-md)]`
           : "min-h-0 flex-1"}
         >
           <MessageScrollerViewport>
@@ -1142,17 +1334,7 @@ export function OttoChatStream({
                         chained?.narrationMessageId ? [chained.narrationMessageId] : undefined,
                       );
                     }}
-                    onChangeSomething={(seed) => {
-                      const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
-                      if (ta) {
-                        // Prefill with the plan prompt so the user edits from it.
-                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-                        nativeInputValueSetter?.call(ta, seed);
-                        ta.dispatchEvent(new Event("input", { bubbles: true }));
-                        ta.focus();
-                        setText(seed); // sync React state directly
-                      }
-                    }}
+                    onChangeSomething={(seed) => seedComposer(seed)}
                     onRetry={() => {
                       // A fresh card was spawned — re-arm poll and refetch so it appears.
                       // Reset the poll round too: the retried job gets the full two-round
@@ -1529,6 +1711,17 @@ export function OttoChatStream({
             onChange={handleFilePick}
           />
 
+          {/* Attaching a reference spends nothing — it is context the composer carries until the
+              merchant sends their own message. */}
+          <CanvasLibraryPicker
+            open={libraryPickerOpen}
+            onOpenChange={setLibraryPickerOpen}
+            onPick={(reference) => {
+              setAttachError(null);
+              setAttachedRefs((current) => upsertComposerReference(current, reference));
+            }}
+          />
+
           {/* Video frame picker: pick a frame to use as the image reference */}
           {videoPick && (
             <div className="mb-2 rounded-[14px] border border-border bg-muted p-2">
@@ -1677,18 +1870,51 @@ export function OttoChatStream({
                 className="field-sizing-fixed min-h-0 w-full px-4 text-[0.90625rem]"
               />
               <InputGroupAddon align="block-end" className="justify-between border-t border-border">
-                {/* Attach image button */}
-                <InputGroupButton
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Attach reference image"
-                  disabled={isBusy || uploading || !!videoPick}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={attachedRefs.length ? "text-primary" : "text-muted-foreground"}
-                >
-                  <ImageIcon aria-hidden="true" />
-                </InputGroupButton>
+                {/* ADD CONTEXT — the approved pattern's own menu, not a bare attach icon
+                    (`design-system/patterns/canvas/CreationComposer.tsx`: a `+` trigger labelled
+                    "Add a reference", the words "Add context" beside it, and three ways in).
+                    Two of the three are wired to capabilities that already exist; the third is
+                    not rendered, because it has no production contract (Founder 2026-09-03 rule ①):
+                    · Upload — the file picker this composer already owns.
+                    · Choose from Library — `getGenerationHistory`, the owner-gated action the
+                      Library page reads, mapped through the board's own reference mapping.
+                    · Add URL — the only URL import in the repo is `ctx.mediaImport.fromUrl`
+                      (`lib/otto-media-port.ts`), a tool Otto calls inside its own turn. There is
+                      no server action a composer can call, so the item is absent rather than a
+                      button that does nothing. */}
+                <div className="flex min-w-0 items-center gap-1">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <InputGroupButton
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Add a reference"
+                        disabled={isBusy || uploading || !!videoPick}
+                        className={attachedRefs.length ? "text-primary" : "text-muted-foreground"}
+                      >
+                        <PlusIcon aria-hidden="true" />
+                      </InputGroupButton>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" side="top">
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>Add a reference</DropdownMenuLabel>
+                        <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                          <UploadIcon aria-hidden="true" />
+                          {/* The pattern's item reads "Upload image"; this picker genuinely takes
+                              a video too (that is what the frame picker below is for), so the
+                              label says both rather than the pattern's shorter half-truth. */}
+                          Upload image or video
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => setLibraryPickerOpen(true)}>
+                          <ImagesIcon aria-hidden="true" />
+                          Choose from Library
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <span className="hidden text-[0.75rem] text-muted-foreground sm:inline">Add context</span>
+                </div>
                 <div className="flex items-center gap-2">
                   <span
                     className="otto-send-hint text-[0.75rem] text-muted-foreground"
@@ -1696,9 +1922,12 @@ export function OttoChatStream({
                   >
                     Enter to send
                   </span>
+                  {/* 走查 P0-4:这颗按钮从前整整 49 秒都写着「Sending…」,读起来是请求挂住了,
+                      而不是 Otto 在做事。发送与做事是两件事,`status` 本来就分得清:
+                      submitted = 请求还在路上,streaming = 回信已经在写了。 */}
                   <InputGroupButton variant="default" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
-                    {isBusy && <Spinner data-icon="inline-start" aria-label="Sending message" />}
-                    {isBusy ? "Sending…" : "Send"}
+                    {isBusy && <Spinner data-icon="inline-start" aria-label={isStreaming ? "Otto is working" : "Sending message"} />}
+                    {isBusy ? (isStreaming ? "Working…" : "Sending…") : "Send"}
                   </InputGroupButton>
                 </div>
               </InputGroupAddon>

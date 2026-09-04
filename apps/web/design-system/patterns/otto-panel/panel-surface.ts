@@ -16,10 +16,24 @@
  * 从不出现在浏览器里,`ottoPanelMountsOn("/otto")` 结果因此不再重要:面板挂不挂在一条
  * 永远重定向掉的地址上,商家永远看不见。
  */
-import { CANVAS_HREF } from "@fikirtive/core/navigation";
+import { CANVAS_HREF, CREATE_NAV_HREF } from "@fikirtive/core/navigation";
 
 /** 这一面自己已经有一个 Otto,面板不再来第二个。 */
-const SURFACES_WITH_THEIR_OWN_OTTO: readonly string[] = [CANVAS_HREF];
+const SURFACES_WITH_THEIR_OWN_OTTO: readonly string[] = [
+  /** 创作前厅 —— 页面正中就是「Create with Otto」那只输入框。
+   *
+   *  2026-09-04 走查 P1-8:在**清空浏览器存储**的全新会话里打开 `/create`,面板自己弹开,
+   *  于是屏幕上并排两个 Otto 入口 —— 一个是这一面自己的创作输入框,另一个是面板,而且面板
+   *  里装着上一场关于标签文案的旧对话。两个入口一个页面,商家不知道该对哪一个说话。
+   *
+   *  判据与画布那条**一模一样**:「这一面自己已经有一个 Otto」。这一条只管挂不挂,不管
+   *  默认开合本身 —— 那条口径后来又改过一次(Founder 2026-09-04 裁决收起为默认,取代
+   *  Q3-A「首开默认开」,见 `panel-state.ts` 的 `defaultOttoPanelState`),这里不重复。
+   *  `/create/canvas` 前缀落在这一条里,下面那一条仍然单列 —— 它的理由不同(画板自带
+   *  始终可见的 Otto 卡),而 `some()` 对重叠无所谓。 */
+  CREATE_NAV_HREF,
+  CANVAS_HREF,
+];
 
 /** 传进来的可能带 query(`MerchantShellContent` 拿到的就是 path+query),只看路径那一段。 */
 function pathOf(location: string): string {

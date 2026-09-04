@@ -11,6 +11,8 @@ import {
   marketingHealthFromAnalytics,
   type HomeSearchState,
 } from "@/lib/home-marketing-health";
+import { availableHomeComponents, resolveHomeComponents } from "@/lib/home-layout";
+import { canManageHome, readHomeLayout } from "@/lib/home-layout-store";
 import { MY_DATE_FORMAT } from "@/lib/my-date-format";
 
 const HOME_RECENT_CANVAS_LIMIT = 2;
@@ -40,11 +42,14 @@ export async function HomeEntry({ filters }: { filters: HomeSearchState }) {
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
 
-  const [recents, analytics] = await Promise.all([
+  const [recents, analytics, saved, manageHome] = await Promise.all([
     readRecentCanvases(owner.ownerId),
     getAnalytics({ range: analyticsRangeForHomeRange(filters.range) }).catch(
       () => ({ state: "transientError" as const }),
     ),
+    // 版面从服务器读,不从浏览器读 —— 换浏览器、换设备登录读到的是同一行(FRONT-A4)。
+    readHomeLayout(owner.ownerId),
+    canManageHome(owner),
   ]);
 
   return (
@@ -52,6 +57,10 @@ export async function HomeEntry({ filters }: { filters: HomeSearchState }) {
       filters={filters}
       recents={recents}
       health={marketingHealthFromAnalytics(analytics, filters.goal, filters.range)}
+      components={resolveHomeComponents({ goal: filters.goal, saved })}
+      offeredComponents={availableHomeComponents()}
+      recommendedComponents={resolveHomeComponents({ goal: filters.goal, saved: null })}
+      canManageHome={manageHome}
     />
   );
 }

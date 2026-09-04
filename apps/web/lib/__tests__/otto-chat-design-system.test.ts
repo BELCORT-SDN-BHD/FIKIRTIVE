@@ -56,12 +56,18 @@ describe("Otto chat design system", () => {
   it("uses that same transcript in Canvas with separate current turn, history and composer placement", () => {
     const overlay = source("components/canvas/CanvasOttoOverlay.tsx");
     const stream = source("components/otto/OttoChatStream.tsx");
+    // 2026-09-04 走查 P0-3/P0-4:那张始终可见的当前回合卡搬进了自己的组件,因为它现在装得下
+    // 确认位(方案摘要 + 价格 + Generate)与真进度。挂点没变(画布形态由这块对话渲染它),
+    // 所以这一条钉的还是同一件事,只是钉在它现在住的文件上。
+    const turnCard = source("components/otto/OttoTurnCard.tsx");
     const frontDoor = source("components/otto/OttoFrontDoor.tsx");
 
     expect(overlay).toContain("<OttoChatStream");
     expect(overlay).toContain('layout="canvas"');
     expect(overlay).toContain("<OttoFrontDoor");
-    expect(stream).toContain('aria-label="Otto current turn"');
+    expect(stream).toContain("<OttoTurnCard");
+    expect(turnCard).toContain('aria-label="Otto current turn"');
+    expect(turnCard).toContain('aria-label="Generation confirmation"');
     expect(stream).toContain("Conversation");
     expect(stream).toContain("Load earlier messages");
     expect(frontDoor).toContain('layout === "canvas"');

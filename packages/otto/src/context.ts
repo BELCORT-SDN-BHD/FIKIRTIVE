@@ -334,6 +334,32 @@ export interface FactoryBatchResult {
   failed: number;
 }
 
+/**
+ * 一件媒体参考的**回执** —— 商家在花钱之前读得懂的那一行。
+ *
+ * 稳定身份是 `generationId`(同一个 id 一路走到 GenJob 与供应商请求);其余三格是给人看的:
+ * 它叫什么、它出生在哪一块画布、那块画布是不是当前这一块。`sameCanvas` 为 false 就是
+ * 「这是你从别的画布拿过来的」—— Founder 2026-08-30 裁定 Library 是全店级的,所以这不是
+ * 错误,只是一句必须说出口的出处。
+ */
+export type OttoMediaReference = {
+  generationId: string;
+  kind: "image" | "video";
+  /** 商家读得懂的名字(素材当初的提示词,过长截断)。绝不是 `Image ref` 这种占位词。 */
+  label: string;
+  sourceProjectId: string;
+  sourceProjectName: string;
+  sameCanvas: boolean;
+  /**
+   * 缩略图地址 —— 同源的 `/files/<key>`,key 由资产的**内容哈希**拼出来。
+   *
+   * 冻进卡里是安全的:它不是一条会过期的签名链接,而是一个内容寻址的同源路由,租户校验在
+   * 读取那一刻由 `/files` 自己做。名字回答「它叫什么」,这一格回答「是不是长这样」——
+   * 商家在付费之前认图,认的是这一格。
+   */
+  previewUrl: string;
+};
+
 export interface OttoContext {
   /** = ownerId under org-as-tenant. Ledger key + ownership scope. From the verified session, NEVER the model. */
   orgId: string;
@@ -360,6 +386,19 @@ export interface OttoContext {
   /** All server-validated whole-clip reference videos attached to this turn. The first
    *  one remains `referenceVideoGenerationId` for the current single-primary spend path. */
   referenceVideoGenerationIds?: string[];
+  /**
+   * Codex QA-CRE-FE9-013 —— **回执**:这一轮真正解析出来的每一件媒体参考,配上商家读得懂
+   * 的名字与它出生的那块画布。
+   *
+   * 为什么需要它:确认卡从前只列得出 `Aisyah (person)` —— @元素有名字快照
+   * (`approvedEntities`),而媒体参考只有一个 id,于是卡上要么不提它,要么写成
+   * `Image ref`。商家没法在按下 `Generate · N credits` 之前确认「上车的到底是不是我选的
+   * 那只蓝杯子」。铸卡时把这一份冻进卡里(与 `approvedEntities` 同一条纪律:批准前看得见,
+   * 批准后改不动),卡面才说得出人话。
+   *
+   * 由服务端解析器一次产出(`validateOttoTurnReferences`),模型永远碰不到它。
+   */
+  mediaReferences?: OttoMediaReference[];
   /**
    * #775 判官 r3 P1-2 —— 商家**这一轮自己打的那句话**,由服务端从入站请求原样带进来。
    *

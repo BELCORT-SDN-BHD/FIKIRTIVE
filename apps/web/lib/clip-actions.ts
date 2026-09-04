@@ -30,13 +30,13 @@
  */
 import { z } from "zod";
 import { prisma } from "@fikirtive/db";
-import { newId } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { buildProposeCard, anchoredClipLines, ProposeRefusal } from "@fikirtive/otto";
-import type { OttoContext } from "@fikirtive/otto";
+import type { OttoContext, OttoMediaReference } from "@fikirtive/otto";
 import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
-import { validateOwnedGenerationExt } from "./otto-generation-validate";
+import { validateOwnedGenerationExt, type OwnedGenerationRef } from "./otto-generation-validate";
 import { clipEntrySegment } from "./clip-action-entry";
 
 /** 与 `otto-actions.ts` 的 VIDEO_EXTS 同一份口径 —— 整段参考视频认得的扩展名。 */
@@ -95,12 +95,14 @@ export async function proposeClipActionCard(
       });
       if (!clip) return { error: "That clip isn't available." };
 
-      // ② 再过一次 Otto 路验整段参考视频用的**同一个**校验器(owner + project + 视频
-      //    扩展名)。两条路对「这条片子能不能当参考」只许有一个答案。
+      // ② 再过一次 Otto 路验整段参考视频用的**同一个**校验器(owner + 视频扩展名)。
+      //    两条路对「这条片子能不能当参考」只许有一个答案。
+      //    (Codex QA-CRE-FE9-013 之后校验器不再按 projectId 过滤 —— 这里本来就是从这一行
+      //    **自己**读出 projectId 再传回去,所以行为一格未变;`clip.projectId` 仍然用在
+      //    下面第 ③ 步「卡落在哪条会话里」。)
       const validated = await validateOwnedGenerationExt(prisma, {
         id: clip.id,
         ownerId,
-        projectId: clip.projectId,
         exts: CLIP_VIDEO_EXTS,
       });
       if (!validated) return { error: "That clip isn't available." };
@@ -116,14 +118,15 @@ export async function proposeClipActionCard(
       //    (id 不是行),真正落库放到第 ⑥ 步、与卡在**同一个事务**里:卡铸不出来,事务
       //    根本不会开始;事务里任何一步失败,两行一起回滚。
       const existingThreadId = await findLiveClipCardThread(ownerId, clip.projectId, clip.threadId);
-      if (!existingThreadId) {
-        // 要新开会话就得先确认项目也是这个租户的 —— 同样只读,拒绝路径零写入。
-        const project = await prisma.project.findFirst({
-          where: { id: clip.projectId, ownerId, deletedAt: null },
-          select: { id: true },
-        });
-        if (!project) return { error: "Couldn't set this up — please try again." };
-      }
+      // 这一块画布 —— owner 作用域、只读。两个用途:
+      //   · 回执上那句「来自哪一块画布」(第 ⑤ 步);
+      //   · 要新开会话时,它同时是「项目也是这个租户的」那一道确认(拒绝路径零写入)。
+      // 读不到画布名不是错:回执可以少一个好名字,不能少一行(与 Otto 路同一条纪律)。
+      const project = await prisma.project.findFirst({
+        where: { id: clip.projectId, ownerId, deletedAt: null },
+        select: { id: true, name: true },
+      });
+      if (!existingThreadId && !project) return { error: "Couldn't set this up — please try again." };
       const threadId = existingThreadId ?? newId();
 
       // ④ 官方那两句话由 #775 的同一个装配器写。商家的那句话原样做 segment。
@@ -148,8 +151,13 @@ export async function proposeClipActionCard(
         disabledModels: [...registry.disabled],
         sourceGenerationId: undefined,
         // 这就是把整张卡钉在商家那条片子上的那一格 —— 与 Otto 路逐字同一个语义。
-        referenceVideoGenerationId: validated,
-        referenceVideoGenerationIds: [validated],
+        referenceVideoGenerationId: validated.id,
+        referenceVideoGenerationIds: [validated.id],
+        // 参考回执(Codex QA-CRE-FE9-013)。上面那一格是一个 id —— 它会随付费请求上路,而
+        // 商家在按下按钮之前读不到它是什么。`buildProposeCard` 的 Step 4.8b 按 id 从这里取,
+        // 把回执冻进卡面;`planCardGate` 反过来要求「有 id 就必须有回执」,否则整张卡不可批准。
+        // 不写这一格,这条入口铸出来的每一张卡都出不了 Generate 按钮(#1177 之后的回归)。
+        mediaReferences: [clipReferenceReceipt(validated, project?.name)],
         // `turnText` 是 #775 的「第二个证人」:模型自选动作时才需要对表。这条路上动作
         // 是商家**自己按的那个键**,没有第二次转述可以对,所以不设 —— 设了反而是拿他打的
         // 那句话去推翻他按的那个键。
@@ -222,6 +230,38 @@ export async function proposeClipActionCard(
       return { error: "Couldn't set this up — please try again." };
     }
   });
+}
+
+/**
+ * 商家在按下 Generate 之前读到的那一行:这张卡到底会带哪条片子上路。
+ *
+ * 形状与措辞逐字对齐 Otto 路的 `validateOttoTurnReferences`(`lib/otto-actions.ts`)——
+ * 两条路铸的是同一种卡,回执少一格、名字换一种写法,`CardReferenceReceipt` 就会开始显示
+ * 两种脸。**唯一的来源是服务端已验过归属的那一行**(`validateOwnedGenerationExt` 的返回值),
+ * 客户端送得进来的只有一个 id。
+ *
+ * 这里是一份**本地**构造:PR #1182 正在把回执的构造收进 `packages/otto/src/media-reference.ts`,
+ * 它合入之后这个函数应当改调那一处(单一构造点),而不是继续留着第二份。
+ */
+function clipReferenceReceipt(ref: OwnedGenerationRef, projectName?: string | null): OttoMediaReference {
+  // 素材当初的提示词就是商家在素材库卡片上读到的那串名字;太长截断,空的退回类型词。
+  const prompt = ref.prompt.trim().replace(/\s+/g, " ");
+  return {
+    generationId: ref.id,
+    kind: "video",
+    label: !prompt ? "Video" : prompt.length > 60 ? `${prompt.slice(0, 57)}…` : prompt,
+    sourceProjectId: ref.projectId,
+    // 读不到画布名就退回「Untitled canvas」—— 与 Otto 路同一句兜底。
+    sourceProjectName: projectName?.trim() || "Untitled canvas",
+    // 这条入口把卡铸进**这条片子自己那块画布**(上面 `ctx.projectId = clip.projectId`,
+    // 而 `clip` 与 `ref` 是同一行),所以来源永远就是当前画布。
+    sameCanvas: true,
+    // 同源的 `/files/<key>`,key 由资产的内容哈希拼出来 —— 不是会过期的签名链接,
+    // 租户校验在读取那一刻由 `/files` 自己做。商家付费之前认的就是这一格。
+    previewUrl: storageKeyToSrc(
+      storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext.toLowerCase()),
+    ),
+  };
 }
 
 /**
