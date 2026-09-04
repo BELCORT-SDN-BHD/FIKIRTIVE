@@ -23,27 +23,25 @@ test("An element deleted from the Library is gone, and is still gone after a rel
   // walks that redirect on purpose); a merchant who clicked "Library" is sent HERE, so this is
   // the address to be signed back into.
   await signIn(page, ws, "/library");
+  // 前端基线段②:`/library` 改画已批准的 Library pattern,元素住在 Elements 页签下
+  // (默认打开的那一格是 Generation history)。地址栏就是这一格的入口。
+  await page.goto("/library?view=elements&element=products");
 
   const doomed = page.getByRole("button", { name: "Open Kopi tumbler" });
   const survivor = page.getByRole("button", { name: "Open Pandan roll" });
   await expect(doomed).toBeVisible();
   await expect(survivor).toBeVisible();
 
-  // The switched shell moved this control. On the old tile a hover overlay exposed a bare
-  // "Delete"; the Library tile a merchant now touches (components/otto/stuff/StuffLibrary.tsx)
-  // puts every per-item action behind one always-rendered menu button labelled
-  // `Actions for <name>`, and removal is the destructive item "Remove from Library" inside it.
-  // Same destination, one more click — so this drives the menu rather than a control that no
-  // longer exists. (The trigger is not hover-gated any more, so no hover step is needed; the
-  // tile is still scoped so the menu belongs to the doomed item and not to its neighbour.)
-  const tile = page.locator("div.group", { has: doomed });
-  await tile.getByRole("button", { name: "Actions for Kopi tumbler" }).click();
-  await page.getByRole("menuitem", { name: "Remove from Library" }).click();
+  // 控件又搬了一次家。已批准的 Elements 卡片点开的是一个元素弹层,删除是弹层里那颗
+  // destructive 的 "Remove from Library"(前端基线 PR:设计没明说、生产必需的动作,
+  // 用设计的样式呈现,文案与旧壳一字不改)。目的地没变:同一个 softDeleteEntity。
+  await doomed.click();
+  await page.getByRole("button", { name: "Remove from Library" }).click();
 
   // #934 — removal opens a confirmation instead of taking the tile away straight away.
   //
-  // #359 / 2026-08-15 — the tile disappears optimistically the instant Remove is clicked
-  // (OttoStuff.handleDelete), before softDeleteEntity's server action has actually landed.
+  // #359 / 2026-08-15 — the tile disappears optimistically the instant Remove is clicked,
+  // before softDeleteEntity's server action has actually landed.
   // A reload racing that in-flight request can beat the write to the database, and this
   // journey flashed red on exactly that race once. Wait for the delete's OWN server-action
   // response before reloading — a Next.js Server Action call is a POST carrying a `next-action`
@@ -59,7 +57,9 @@ test("An element deleted from the Library is gone, and is still gone after a rel
     if ((await req.headerValue("next-action")) === null) return false;
     return (req.postData() ?? "").includes(entityId);
   });
-  await page.getByRole("button", { name: "Remove" }).click();
+  // `exact` 不是装饰:弹层里那颗键叫 "Remove from Library",子串匹配会先抓到它,
+  // 于是这一步点的是刚才已经点过的那颗,确认框永远不被按下。
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
   await deleteRequestLanded;
 
   await expect(doomed).toHaveCount(0);
