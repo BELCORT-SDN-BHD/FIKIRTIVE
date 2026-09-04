@@ -127,10 +127,30 @@ export const GENERATION_ENGINE_UNAVAILABLE =
  * from there, wherever server logs go), which is what "for support/debugging" means here. What
  * changes is what gets PERSISTED to the row a merchant's own screen reads back: the merchant
  * sentence itself, not the ops string, mirroring `REFERENCE_IMAGE_PERSON_REJECTED` above.
+ *
+ * ── WHY THE ENDING SAYS "ask again", NOT "try again" (Codex E2E-CRE-PAV-005, 2026-09-04) ──
+ *
+ * The QA-CRE-007 PR that introduced this sentence deliberately left its recovery action alone
+ * ("Try again/Replace reference 类专属恢复动作未新增" — the change register row for that PR says
+ * so in as many words) and kept the card's existing "Retry with Otto" button as the only control.
+ * That was the right call for that PR's scope, but it left the WORDING doing something the button
+ * still cannot: a merchant who reads "Replace it and try again" and then just presses retry —
+ * without swapping the reference — spends a second attempt on the exact request that already
+ * failed, because the same missing/unreachable asset is still attached. The retry was never going
+ * to succeed until something about the request changed; the old wording said "try again" right
+ * next to the actual fix, so it read as permission to skip the fix.
+ *
+ * "ask again" names what happens ONLY after the merchant has done the fix ("Replace it"), not an
+ * action that stands on its own — it cannot be read as "press retry and hope". The generic
+ * catch-all a merchant sees for an ordinary, actually-retryable failure (`GENERATION_DID_NOT_GO_
+ * THROUGH` / the card's own resting-face copy) keeps "Try again" verbatim, because for THAT case
+ * pressing retry is the whole fix. Reserving the phrase for the case where it is true is the
+ * point: `E2E-CRE-PAV-005` — reference-unavailable copy must point at an executable action, and a
+ * retryable provider error is the only class allowed to still say "Try again".
  */
 export const REFERENCE_ASSET_UNREACHABLE =
   "We couldn't reach one of your references, so nothing was charged. "
-  + "Replace it and try again.";
+  + "Replace it and ask again.";
 
 /**
  * WHY A GENERATION FAILED, as a CLOSED SET OF NAMES (#827).
@@ -369,12 +389,17 @@ export type ReferenceUnavailableReason = (typeof REFERENCE_UNAVAILABLE_REASONS)[
  * `notFound` deliberately covers "deleted since you attached it" AND "belongs to someone else"
  * with ONE sentence: telling those two apart would answer whether a given id exists in another
  * account.
+ *
+ * Ending is "ask again", not "try again" — same discipline as `REFERENCE_ASSET_UNREACHABLE` above
+ * (Codex E2E-CRE-PAV-005): the request cannot succeed by pressing retry alone, only by removing
+ * the attachment first, and "ask again" names what happens after that fix rather than reading as
+ * permission to skip it.
  */
 const REFERENCE_UNAVAILABLE_SENTENCES: Readonly<Record<ReferenceUnavailableReason, string>> = {
   notFound:
-    "One of your references isn't available any more. Remove it and try again — nothing was sent.",
+    "One of your references isn't available any more. Remove it and ask again — nothing was sent.",
   fileMissing:
-    "One of your references can't be opened right now. Remove it and try again — nothing was sent.",
+    "One of your references can't be opened right now. Remove it and ask again — nothing was sent.",
 };
 
 /** The sentence a merchant reads for an unusable attachment. One table, no second mapping. */
