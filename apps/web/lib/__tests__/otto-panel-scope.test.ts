@@ -19,7 +19,7 @@
  * 没有任何读者会因为这一页是哪一页而改变这一轮的上下文。所以这里也反向钉一条:面板不许
  * 再出现「On this page:」那种写法,也不许出现「停止使用本页作为上下文」那颗叉。
  */
-import { act, createElement, type ReactElement } from "react";
+import { act, createElement, type FunctionComponent, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -166,9 +166,10 @@ async function mount(element: ReactElement): Promise<HTMLDivElement> {
 
 /** 从某一页展开面板。`location` 就是 `OttoPanelMount` 交给 Host 的那个字符串。 */
 async function openPanelOn(location: string): Promise<HTMLDivElement> {
-  return mount(
-    createElement(OttoPanelHost, { location, children: createElement("main", null, "page") }),
-  );
+  // `children` 走 createElement 的第三个参数(eslint react/no-children-prop)。Host 的 props
+  // 把 children 标成必填,所以这里把它当成 children 可选的组件用 —— 第三个参数会覆盖它。
+  const Host = OttoPanelHost as FunctionComponent<{ location: string; children?: ReactNode }>;
+  return mount(createElement(Host, { location }, createElement("main", null, "page")));
 }
 
 describe("FRONT-A14 侧栏 Otto 的范围(Codex 全 beta 审计 P1-010)", () => {
