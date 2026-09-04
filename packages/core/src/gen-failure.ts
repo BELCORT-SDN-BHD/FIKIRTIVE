@@ -374,7 +374,12 @@ export function merchantGenFailureCopy(persistedError: string | null | undefined
  * whitelist for `GenJob.error`, and every member of it needs terminal-card copy. A refusal that
  * happens before a job exists must never be able to arrive as a card state.
  */
-export const REFERENCE_UNAVAILABLE_REASONS = ["notFound", "fileMissing"] as const;
+export const REFERENCE_UNAVAILABLE_REASONS = [
+  "notFound",
+  "fileMissing",
+  "videoAsImage",
+  "imageAsVideo",
+] as const;
 
 export type ReferenceUnavailableReason = (typeof REFERENCE_UNAVAILABLE_REASONS)[number];
 
@@ -390,6 +395,16 @@ export type ReferenceUnavailableReason = (typeof REFERENCE_UNAVAILABLE_REASONS)[
  * with ONE sentence: telling those two apart would answer whether a given id exists in another
  * account.
  *
+ * ── THE TWO KIND SENTENCES (Codex staging CRE-STG-P0-001, 2026-09-04) ──────────────────
+ *
+ * `videoAsImage` / `imageAsVideo` are the merchant's OWN asset, in their OWN account, alive —
+ * it is simply the wrong medium for the slot it was attached to. Answering that with the
+ * `notFound` sentence ("isn't available any more") is a lie the merchant can check: the clip is
+ * right there in their Library. It also sends them looking for a deletion that never happened
+ * instead of doing the one thing that works — attach a still instead. The kind IS knowable
+ * (the lookup that failed under image extensions is re-run under video ones, still inside the
+ * same owner scope, so nothing about another account is revealed), so it gets said.
+ *
  * Ending is "ask again", not "try again" — same discipline as `REFERENCE_ASSET_UNREACHABLE` above
  * (Codex E2E-CRE-PAV-005): the request cannot succeed by pressing retry alone, only by removing
  * the attachment first, and "ask again" names what happens after that fix rather than reading as
@@ -400,6 +415,13 @@ const REFERENCE_UNAVAILABLE_SENTENCES: Readonly<Record<ReferenceUnavailableReaso
     "One of your references isn't available any more. Remove it and ask again — nothing was sent.",
   fileMissing:
     "One of your references can't be opened right now. Remove it and ask again — nothing was sent.",
+  // 结尾与上面两句同一条纪律(Codex E2E-CRE-PAV-005):先点名那一个真能修好它的动作
+  // (换一件对的素材),再说「ask again」—— 「Try again」在这里会读成「你可以跳过那一步」,
+  // 而光按重试永远修不好一件类型不对的附件。
+  videoAsImage:
+    "A video can't be used as a reference for an image. Swap it for an image and ask again — nothing was sent.",
+  imageAsVideo:
+    "An image can't be used as a reference clip. Swap it for a video and ask again — nothing was sent.",
 };
 
 /** The sentence a merchant reads for an unusable attachment. One table, no second mapping. */
@@ -426,4 +448,63 @@ export function referenceUnavailableSentence(text: string | null | undefined): s
     if (sentence.trim() === written) return sentence;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// 批准之后、任务进队之前就断了(Codex staging CRE-STG-P2-004,2026-09-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * WHEN THE APPROVAL ITSELF DIED — the merchant pressed `Generate · N credits` and no job exists.
+ *
+ * ── 走查那两次点击(CRE-STG-P0-001 / P2-004)───────────────────────────────────────
+ *
+ * 确认卡是启用的,按下去两次,两次都回同一句 `Couldn't start that — please try again.`。那句
+ * 话不是一条**措辞**,而是一个 `catch {}` 的字面量(`components/otto/plan-approval.ts`):
+ * 服务端动作只要**抛**了 —— 任何原因 —— 客户端就把它折叠成这一句。于是走查员看到的、
+ * 商家看到的、日志里那一行看到的,是三件互不相干的事,而唯一能把它们对起来的东西不存在。
+ *
+ * 所以这里给它两样东西,而且只给这两样:
+ *   ① **一句**人话,住在这一份表里(不含 id / URL / 路径 / 堆栈 —— 那些是日志的活);
+ *   ② 一个**短号**,由已经存在的身份(卡 id)算出来,商家复制得走、日志里搜得到。
+ *
+ * 短号不是一个新 id:发明一个新 id 就意味着它得存在某处,而一次失败的批准恰恰是「什么都
+ * 没存下来」的那一刻。卡 id 是这次批准唯一确定存在、两边都握着的身份 —— 服务端在日志里
+ * 写它,卡面在商家眼前显示它,两边算的是**同一个函数**。
+ *
+ * ── 这一句为什么**不**说「nothing was charged」(#1187 判官 P1-1)────────────────────
+ *
+ * 上一版写的是 `…, and nothing was charged.`,理由是「它只在 create/reserve 之前那一支上
+ * 使用」。那个理由不成立,而且是这条钱路上最贵的一种不成立:它的两个调用点都**接住一切**,
+ * 包括预扣已经提交之后才炸的那些形状 ——
+ *
+ *   · `apps/web/lib/gen-actions.ts` 的「事务回调完成了,但结局未知」那一支(连接/ACK 丢了):
+ *     回查那一行拿不到就原样 `throw e`。此刻 create + reserve + enqueue **可能已经原子提交**,
+ *     只是我们查不到;
+ *   · `apps/web/lib/cowork-actions.ts` 的外壳接住这个抛;
+ *   · `apps/web/components/otto/plan-approval.ts` 的客户端 catch 更是典型形状 ——
+ *     「服务端已经扣了、响应没回来」。同一个文件的 `finally` 里逐字写着这条纪律:
+ *     **失败的响应从不证明零花费**(#550),`notifyBalanceRefresh()` 正因此才放在那里。
+ *
+ * 所以这一句只说它**确实知道**的事:这次没能开始,请刷新后再试。余额的真相由那次刷新
+ * (`notifyBalanceRefresh`)与账本自己回答 —— 一句安慰话换来的是商家按我们说的不去看余额,
+ * 而那正是他最该看的时候。真正零花费的那些拒绝有它们自己的句子(`ProposeRefusal` 家族、
+ * `REFERENCE_UNAVAILABLE_SENTENCES` 的 `nothing was sent`),那些地方说得起,这里说不起。
+ */
+export const GENERATION_START_FAILED =
+  "We couldn't start that generation. Refresh and try again in a moment.";
+
+/** 短号的长度 —— 够短到商家愿意念出来,够长到一天里的卡不会撞。 */
+const DIAGNOSTIC_REF_LENGTH = 8;
+
+/**
+ * 一次动作的**可复制短号** —— 由它自己的持久身份算出来,不是新生成的。
+ *
+ * 纯函数、无副作用:同一张卡在服务端日志与商家卡面上永远算出同一串。取末段是因为本仓的
+ * id 前缀是类型名(`msg_` / `01M…`),末段才是区分度所在;大写只是为了念得准。
+ */
+export function diagnosticRef(id: string | null | undefined): string | null {
+  const trimmed = String(id ?? "").trim().replace(/[^A-Za-z0-9]/g, "");
+  if (!trimmed) return null;
+  return trimmed.slice(-DIAGNOSTIC_REF_LENGTH).toUpperCase();
 }

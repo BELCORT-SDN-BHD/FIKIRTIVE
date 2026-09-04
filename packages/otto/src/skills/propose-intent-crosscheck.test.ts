@@ -95,12 +95,27 @@ describe("对得上 / 没有意见 ⇒ 照铸,一个字节都不变", () => {
   });
 
   it("图片卡完全不受影响", () => {
+    // Codex staging CRE-STG-P0-001 —— 这一条问的是「续写/编辑的对表会不会误伤图片卡」,
+    // 所以它现在用一个**不带片子**的图片语境:挂着片子却要图,已经由铸卡侧另一道闸
+    // 诚实拒绝(见下面那一条),那是另一件事,不该混进这条断言里。
     const { cardPayload } = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
-      clipCtx("sambung klip ni"),
+      makeCtx({ turnText: "sambung klip ni" }),
       [],
     );
     expect(cardPayload.kind).toBe("image");
+  });
+
+  it("CRE-STG-P0-001 图片卡挂着整段参考片 ⇒ 铸卡之前拒绝,不是静默丢掉那支片子", () => {
+    // 走查那一轮:composer 收下了片子、Otto 说「收到」,而图片计划从头到尾看都不看它一眼 ——
+    // 卡上没有它的 id、没有回执、没有一个字提到它。静默丢弃换成一次诚实拒绝($0,零卡)。
+    expect(() =>
+      buildProposeCard(
+        { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
+        clipCtx("sambung klip ni"),
+        [],
+      ),
+    ).toThrow(ProposeRefusal);
   });
 });
 
