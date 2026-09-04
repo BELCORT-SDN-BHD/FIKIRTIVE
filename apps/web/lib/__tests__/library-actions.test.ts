@@ -64,18 +64,30 @@ describe("getGenerationHistory — filters", () => {
       expect.objectContaining({ where: expect.objectContaining({ favorite: true }) }),
     );
   });
-  it("adds a case-insensitive promptText contains when search is set", async () => {
+  it("adds a case-insensitive contains on BOTH searchable columns when search is set", async () => {
+    // 打两列:引擎产物有提示词,商家上传的没有(它的名字在 `Asset.originalFilename`)。
+    // 只打 promptText 的搜索在 Uploads 那一格必然搜空。
     mockGenFindMany.mockResolvedValue([]);
     await getGenerationHistory({ search: "  sale  " });
     expect(mockGenFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ promptText: { contains: "sale", mode: "insensitive" } }) }),
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { promptText: { contains: "sale", mode: "insensitive" } },
+            { asset: { originalFilename: { contains: "sale", mode: "insensitive" } } },
+          ],
+        }),
+      }),
     );
+    // 两条 OR 与 ownerId 同级 —— Prisma 把它们作 AND,搜索没有跑出租户之外。
+    expect(mockGenFindMany.mock.calls[0][0].where.ownerId).toBe("u1");
   });
   it("omits the search filter for blank/whitespace search", async () => {
     mockGenFindMany.mockResolvedValue([]);
     await getGenerationHistory({ search: "   " });
     const arg = mockGenFindMany.mock.calls[0][0];
     expect("promptText" in arg.where).toBe(false);
+    expect("OR" in arg.where, "空搜索不该留下一个空的 OR").toBe(false);
   });
   it("builds the keyset OR clause from a cursor", async () => {
     mockGenFindMany.mockResolvedValue([]);

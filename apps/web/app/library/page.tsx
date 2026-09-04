@@ -60,6 +60,9 @@ export default async function LibraryPage({
       initialElementView={initialElementView}
       initialPage={"error" in page ? page : { items: page.items, nextCursor: page.nextCursor }}
       projects={projects.map((row) => ({ id: row.id, name: row.name }))}
+      // 这个 `[]` 不是「读挂了就画成空库」:`getLibraryElements()` 唯一的 `{ error }` 出口
+      // 就是它自己那句 `requireOwner()`,而本页第 38-39 行已经先过了同一道门并 redirect 掉了
+      // ——所以走到这里时这一支不可达,`[]` 只是让类型收窄,不是一次沉默的降级。
       elements={"error" in elements ? [] : elements}
       // 深链:两个 id 都只是**待验证的定位参数**,详情面自己按当前 principal 再解析一次
       // (§8.3③:目标被删除或不可访问时说不可用,而不是画成空库)。

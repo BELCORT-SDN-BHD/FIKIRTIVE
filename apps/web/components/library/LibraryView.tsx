@@ -35,6 +35,7 @@ import {
   Trash2,
 } from "lucide-react";
 
+import { OFFICIAL_CATALOG_BADGE } from "@fikirtive/core/entity-policy";
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import DetailPanel from "@/components/asset/DetailPanel";
 import {
@@ -343,7 +344,9 @@ function MediaTile({ item, selected, onOpen }: { item: LibraryItem; selected: bo
       <Button
         variant="ghost"
         aria-label={`Open ${accessibleName}`}
-        title={title}
+        // 悬停/长按看到的是**完整**原名,和 `CanvasLibraryPicker.tsx` 同源;`title` 变量是
+        // 给看得见的 caption 用的 72 字截断版,拿它当 tooltip 等于把截断又说了一遍。
+        title={libraryItemRawName(item)}
         aria-selected={selected}
         onClick={onOpen}
         className={cn(
@@ -557,7 +560,7 @@ function ElementsView({
                       两个面上看到的是同一个事实。 */}
                   {selected.origin === "OFFICIAL_CATALOG" ? (
                     <Badge variant="outline" className="font-medium text-muted-foreground">
-                      Official avatar · Read only
+                      {OFFICIAL_CATALOG_BADGE}
                     </Badge>
                   ) : null}
                 </DialogTitle>
