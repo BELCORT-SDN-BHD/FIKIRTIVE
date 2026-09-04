@@ -77,7 +77,7 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 // and as the real two numbers there.
 import { ottoFailureMessage } from "@/lib/otto-error-copy";
 import { newThreadTitle } from "@/lib/otto-canned-starters";
-import { coerceThreadSurface } from "@/lib/otto-thread-surface";
+import { coerceThreadSurface, DEFAULT_THREAD_SURFACE } from "@/lib/otto-thread-surface";
 // #524 r2 — the READ-ONLY look at the merchant's spend cap that keeps an approval from being
 // burned by a refusal knowable one line earlier. Never an authority; reserveCredits still decides.
 import { spendCapRefusal, approvedToolCostInternal, approvedGenerateCostInternal } from "@/lib/spend-cap-preflight";
@@ -1744,9 +1744,14 @@ export async function ottoTurn(raw: unknown): Promise<
           // 四句)被点一下也是一条消息,但它是我们的文案 —— 拿它当标题,画布随后沿用,
           // 商家的画布就在侧栏里叫「Let me describe my brand to you — …」(beta 录像 01:28)。
           //
-          // FRONT-A14:来源过 `coerceThreadSurface` 这一道闸再落库 —— 客户端可以声明自己
-          // 在哪个门,认不出来的一律按画布读,不原样落一个自造的字符串。
-          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text), surface: coerceThreadSurface(parsed.data.surface) },
+          // FRONT-A14(判官 P2-2):这一扇门开出来的**一定是画布对话**,所以写死。
+          //
+          // 不读 `parsed.data.surface`:那一格是 #879 step 1 的**页面位置**(自测值就是
+          // "campaign"),与「这条对话从哪个门开」是两件事,只是重名。拿它当线程来源,
+          // #879 step 2 一落地、客户端开始如实上报 "campaign",这里就会把它 coerce 成
+          // canvas —— 一个靠巧合才正确的值。侧栏面板永远先走 `createEmptyCoworkThread`
+          // 建线程再发第一句,所以它一次都不会走到这里。
+          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text), surface: DEFAULT_THREAD_SURFACE },
         });
       }
       const userMessageId = newId();

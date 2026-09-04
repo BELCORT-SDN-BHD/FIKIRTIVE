@@ -7,10 +7,13 @@ import type { EntityWithRefs, ChatThreadWithMessages } from "./data";
 import type { EntityDTO, ChatMessageDTO, ChatThreadDTO } from "./types";
 
 type EntityWithOttoUsage = EntityWithRefs & { _ottoUsageCount?: number };
+// `surface` 是**必填**的(FRONT-A14 判官 P1-1)。上一版把它写成 `Partial<...>`,于是任何
+// 一条漏 select 的读路都静默映成 `null` —— 编译期一声不吭,商家点开自己的对话才发现它被
+// 标成了画布。必填之后,漏 select 的读路是一个 tsc 错误,不是一个线上现象。
 type ChatThreadDTOInput = Pick<
   ChatThreadWithMessages,
-  "id" | "projectId" | "title" | "updatedAt" | "pinnedAt" | "messages"
-> & Partial<Pick<ChatThreadWithMessages, "surface">>;
+  "id" | "projectId" | "title" | "updatedAt" | "pinnedAt" | "surface" | "messages"
+>;
 
 export function assetUrl(ownerId: string, contentHash: string, ext: string) {
   return storage.url(storageKey(ownerId, contentHash, ext));

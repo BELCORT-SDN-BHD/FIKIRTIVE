@@ -19,10 +19,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 
-import { CHAT_THREAD_SURFACES, coerceThreadSurface, isPanelThread } from "@/lib/otto-thread-surface";
+import { CHAT_THREAD_SURFACES, coerceThreadSurface, isCanvasThread, isPanelThread } from "@/lib/otto-thread-surface";
 
 const { prisma } = await import("@fikirtive/db");
 const data = await import("@/lib/data");
+const { toChatThreadDTO, toChatThreadMetaDTO } = await import("@/lib/dto");
 
 const orgA = `org_${randomUUID()}`;
 const orgB = `org_${randomUUID()}`;
@@ -85,6 +86,36 @@ describe("FRONT-A14 对话来源这一格,对着真库", () => {
     expect(rowsB.some((r) => r.id === panelThreadId || r.id === canvasThreadId)).toBe(false);
   });
 
+  it("FRONT-A14 — the click-to-open read path carries surface", async () => {
+    // 判官 P1-1:这是**点开列表里一条对话**走的那条读路(`getCoworkThreadClient` → 这里),
+    // 与面板首开取种子那条(`getAllCoworkThreadMetas`)是两条不同的查询。上一版只补了
+    // 后者,于是商家点开自己的面板对话,取回来的那一份 `surface` 是 `null` —— 上层拿它
+    // 顶替掉列表里本来正确的那一行,头部当场翻成「Canvas · …」、列表长出 Canvas 徽章。
+    const page = await data.getCoworkThreadPage(orgA, panelThreadId);
+    expect(page).not.toBeNull();
+    expect(page!.surface).toBe("panel");
+    // 一路映到 DTO 也还在 —— 顶替发生在 DTO 这一层,断言就钉到这一层。
+    expect(toChatThreadDTO(page!, new Map()).surface).toBe("panel");
+
+    const canvasPage = await data.getCoworkThreadPage(orgA, canvasThreadId);
+    expect(toChatThreadDTO(canvasPage!, new Map()).surface).toBe("canvas");
+
+    // 两条读路对同一条线程说的是同一件事(顶替之所以有害,正因为它们本该一致)。
+    const metas = await data.getAllCoworkThreadMetas(orgA);
+    const meta = metas.find((r) => r.id === panelThreadId)!;
+    expect(toChatThreadMetaDTO(meta).surface).toBe(toChatThreadDTO(page!, new Map()).surface);
+  });
+
+  it("FRONT-A14 — the canvas board's own read path carries surface too", async () => {
+    // 判官 P2-3:画布「打开时接着聊哪一条」读的是 `getCoworkThreads`(按 project),
+    // 它同样要看得见来源,否则商家在侧栏聊完再开 Create,画布续的是那条侧栏对话。
+    const rows = await data.getCoworkThreads(orgA, projectA);
+    const bySurface = new Map(rows.map((r) => [r.id, r.surface]));
+    expect(bySurface.get(panelThreadId)).toBe("panel");
+    expect(bySurface.get(canvasThreadId)).toBe("canvas");
+    expect(bySurface.get(legacyThreadId) ?? null).toBeNull();
+  });
+
   it("FRONT-A14 — a self-declared surface is validated server-side, never stored as sent", () => {
     // 客户端可以声明自己在哪个门(位置),但只有这两个字面量能落库。
     expect(CHAT_THREAD_SURFACES).toEqual(["canvas", "panel"]);
@@ -98,5 +129,17 @@ describe("FRONT-A14 对话来源这一格,对着真库", () => {
     expect(isPanelThread("panel")).toBe(true);
     expect(isPanelThread("canvas")).toBe(false);
     expect(isPanelThread(null)).toBe(false);
+  });
+
+  it("FRONT-A14 — an unknown origin is neither panel nor canvas, so the panel says nothing about it", () => {
+    // 判官 P2-1:`isCanvasThread` 不是 `isPanelThread` 的反面。老行(`null`)来路无法回溯,
+    // 两句话都不成立 —— 界面上说出口的东西(徽章、「Canvas · …」头部)只认 `isCanvasThread`,
+    // 而「要不要自动续它」那个不出声的决定用 `isPanelThread`(未知 → 不自动续)。
+    for (const unknown of [null, undefined, "", "workspace", "PANEL"]) {
+      expect(isPanelThread(unknown)).toBe(false);
+      expect(isCanvasThread(unknown)).toBe(false);
+    }
+    expect(isCanvasThread("canvas")).toBe(true);
+    expect(isCanvasThread("panel")).toBe(false);
   });
 });

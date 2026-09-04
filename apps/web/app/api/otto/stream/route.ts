@@ -62,7 +62,7 @@ import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-str
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
 import { ottoFailureMessage } from "@/lib/otto-error-copy";
 import { newThreadTitle } from "@/lib/otto-canned-starters";
-import { coerceThreadSurface } from "@/lib/otto-thread-surface";
+import { DEFAULT_THREAD_SURFACE } from "@/lib/otto-thread-surface";
 import { consumeOttoTurnGate, OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
@@ -211,11 +211,14 @@ export async function POST(req: NextRequest): Promise<Response> {
           // #979:与 ottoTurn 同一条规矩、同一个函数 —— 产品自己写好的起手 chip 不算商家的
           // 命名(两个门都建对话,只在一个门上装守卫就等于没装)。
           //
-          // FRONT-A14:来源同样过 `coerceThreadSurface` 这一道闸。请求体里的 `surface` 是
-          // 一句**位置声明**,落到消息行上一直是原样写(#879 step 1);落到**线程**行上不
-          // 行 —— 面板「打开时自动接着聊哪一条」就问这一列,一个自造的字符串会让一条来路
-          // 不明的对话在商家每一页上自动摊开。认不出来的一律按画布读。
-          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text), surface: coerceThreadSurface(surface) },
+          // FRONT-A14(判官 P2-2):这一扇门开出来的**一定是画布对话**,所以写死。
+          //
+          // 请求体那一格 `surface` 不参与:它是 #879 step 1 的**页面位置**(下面原样写进
+          // ChatMessage 那一行,那个语义不动),与「这条对话从哪个门开」只是重名。#879
+          // step 2 一落地、客户端如实上报 "campaign",拿它当线程来源就会 coerce 成 canvas
+          // —— 一个靠巧合才正确的值。侧栏面板永远先走 `createEmptyCoworkThread` 建线程
+          // 再发第一句,所以它一次都不会走到这里。
+          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text), surface: DEFAULT_THREAD_SURFACE },
         });
       }
       userMessageId = newId();

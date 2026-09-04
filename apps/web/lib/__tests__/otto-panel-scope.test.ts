@@ -50,7 +50,12 @@ vi.mock("@/lib/actions", () => ({
   deleteProject: vi.fn(),
   setProjectPinned: vi.fn(),
 }));
-vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: vi.fn() }));
+/** 点开一条**还没带消息**的对话时,面板会用它把那一条整份取回来(`selectThread`)。
+ *  判官 P1-1 的现场就在这一步:取回来的那一份少了 `surface`,就把列表里本来正确的行顶掉。 */
+const getCoworkThreadClient = vi.fn();
+vi.mock("@/lib/cowork-fetch", () => ({
+  getCoworkThreadClient: (...args: unknown[]) => getCoworkThreadClient(...args),
+}));
 vi.mock("@/lib/account-actions", () => ({
   getMyAccount: vi.fn().mockResolvedValue({ error: "not mocked in this test" }),
 }));
@@ -107,6 +112,17 @@ const CANVAS_THREAD = {
   updatedAt: "2026-08-21T09:00:00.000Z",
   pinnedAt: null,
   surface: "canvas",
+  messages: [],
+};
+
+/** 这一票之前写的那一批 —— 列在,但从来没有人写过它。 */
+const LEGACY_THREAD = {
+  id: "thr_legacy",
+  projectId: OWNER_PROJECT,
+  title: "Something from before",
+  updatedAt: "2026-08-19T09:00:00.000Z",
+  pinnedAt: null,
+  surface: null,
   messages: [],
 };
 
@@ -172,6 +188,18 @@ async function openPanelOn(location: string): Promise<HTMLDivElement> {
   return mount(createElement(Host, { location }, createElement("main", null, "page")));
 }
 
+/** 点开一条历史对话:开历史 → 点那一行 → 等取数落地。 */
+async function openFromHistory(el: HTMLDivElement, threadId: string): Promise<void> {
+  await act(async () => {
+    el.querySelector<HTMLElement>('[aria-label="Conversation history"]')?.click();
+  });
+  await settle();
+  await act(async () => {
+    el.querySelector<HTMLElement>(`[data-otto-thread-list-thread="${threadId}"]`)?.click();
+  });
+  await settle();
+}
+
 describe("FRONT-A14 侧栏 Otto 的范围(Codex 全 beta 审计 P1-010)", () => {
   it("FRONT-A14 — opening the panel on Billing does not load an unrelated canvas conversation", async () => {
     loadOttoPanelSeed.mockResolvedValue(seedWith({ activeThreadId: null }));
@@ -185,22 +213,37 @@ describe("FRONT-A14 侧栏 Otto 的范围(Codex 全 beta 审计 P1-010)", () => 
     expect(el.querySelector('[data-otto-panel-conversation="ready"]')).not.toBeNull();
   });
 
-  it("FRONT-A14 — the panel header says which conversation this is: Workspace and the page it was opened on", async () => {
-    loadOttoPanelSeed.mockResolvedValue(seedWith({ activeThreadId: null }));
-
-    const el = await openPanelOn(SHELL_ROUTES.billing);
-    const chip = el.querySelector("[data-otto-panel-context]");
-
-    expect(chip).not.toBeNull();
-    expect(chip!.textContent).toContain("Workspace · Billing & credits");
-  });
-
   it("FRONT-A14 — the header names the canvas when a canvas conversation is the one open", async () => {
     loadOttoPanelSeed.mockResolvedValue(seedWith({ activeThreadId: CANVAS_THREAD.id }));
 
     const el = await openPanelOn(SHELL_ROUTES.billing);
 
+    // 这是商家在面板上读不到的那件事实:你现在接着聊的这一段属于别处。
     expect(el.querySelector("[data-otto-panel-context]")!.textContent).toContain("Canvas · Kaya jar ad");
+  });
+
+  it("FRONT-A14 — a workspace conversation gets no header strip: it would only repeat what is on screen", async () => {
+    // 判官 P2-4:「Workspace · Billing & credits」是真话,但商家就在那一页上、面板就是他
+    // 刚点开的那一块 —— 它不带新信息,却占掉 320px 面板里的一整行,而且不在已批准的设计里。
+    loadOttoPanelSeed.mockResolvedValue(seedWith({ activeThreadId: PANEL_THREAD.id }));
+
+    const el = await openPanelOn(SHELL_ROUTES.billing);
+
+    expect(el.querySelector("[data-otto-panel-context]")).toBeNull();
+    expect(el.textContent).not.toContain("Workspace ·");
+  });
+
+  it("FRONT-A14 — a conversation with no recorded origin is never labelled Canvas", async () => {
+    // 判官 P2-1:老行来路无法回溯。把它标成 Canvas 是替一件查不出来的事作证 —— 商家会
+    // 以为自己在一块画布里,而我们并不知道。徽章与头部都不出现。
+    loadOttoPanelSeed.mockResolvedValue(
+      seedWith({ threads: [LEGACY_THREAD], activeThreadId: LEGACY_THREAD.id }),
+    );
+
+    const el = await openPanelOn(SHELL_ROUTES.billing);
+
+    expect(el.querySelector("[data-otto-panel-context]")).toBeNull();
+    expect(el.textContent).not.toContain("Canvas");
   });
 
   it("FRONT-A14 — the panel never claims Otto can read the page it is open on", async () => {
@@ -229,5 +272,62 @@ describe("FRONT-A14 侧栏 Otto 的范围(Codex 全 beta 审计 P1-010)", () => 
     expect(panelRow).not.toBeNull();
     expect(canvasRow!.querySelector('[data-otto-thread-source="canvas"]')).not.toBeNull();
     expect(panelRow!.querySelector('[data-otto-thread-source="canvas"]')).toBeNull();
+  });
+
+  it("FRONT-A14 — clicking a workspace conversation open does not relabel it as a canvas", async () => {
+    // 判官 P1-1(真现象):点开一条**面板自己的**对话,面板会把它整份取回来顶替列表里
+    // 那一行。取回来的那一份少了 `surface`,商家点一下,他自己的工作区对话当场被标成
+    // Canvas —— 头部长出「Canvas · …」、列表长出徽章。产品自己改口。
+    //
+    // 这里让取数返回**生产读路真正会返回的那一份**(`getCoworkThreadPage` 现在带 surface,
+    // 由 `otto-thread-surface.test.ts` 对着真库钉),再看顶替之后界面说了什么。
+    loadOttoPanelSeed.mockResolvedValue(
+      seedWith({ threads: [PANEL_THREAD, CANVAS_THREAD], activeThreadId: null }),
+    );
+    getCoworkThreadClient.mockResolvedValue({
+      ...PANEL_THREAD,
+      messages: [{ id: "m1", role: "USER", kind: "TEXT", seq: 1, text: "hi", createdAt: "2026-08-20T12:00:00.000Z" }],
+    });
+
+    const el = await openPanelOn(SHELL_ROUTES.billing);
+    await openFromHistory(el, PANEL_THREAD.id);
+
+    expect(getCoworkThreadClient).toHaveBeenCalledWith(PANEL_THREAD.id);
+    expect(el.querySelector("[data-otto-panel-context]")).toBeNull();
+    expect(el.textContent).not.toContain("Canvas");
+  });
+
+  it("FRONT-A14 — clicking a canvas conversation open names the canvas it belongs to", async () => {
+    loadOttoPanelSeed.mockResolvedValue(
+      seedWith({ threads: [PANEL_THREAD, CANVAS_THREAD], activeThreadId: null }),
+    );
+    getCoworkThreadClient.mockResolvedValue({
+      ...CANVAS_THREAD,
+      messages: [{ id: "m1", role: "USER", kind: "TEXT", seq: 1, text: "hi", createdAt: "2026-08-21T09:00:00.000Z" }],
+    });
+
+    const el = await openPanelOn(SHELL_ROUTES.billing);
+    await openFromHistory(el, CANVAS_THREAD.id);
+
+    expect(el.querySelector("[data-otto-panel-context]")!.textContent).toContain("Canvas · Kaya jar ad");
+  });
+
+  it("FRONT-A14 — the history badges only the conversations known to be a canvas, never the unknown ones", async () => {
+    // 判官 P2-1:徽章是一句**说出口**的话,只对确知的那几条说。
+    loadOttoPanelSeed.mockResolvedValue(
+      seedWith({ threads: [PANEL_THREAD, CANVAS_THREAD, LEGACY_THREAD], activeThreadId: null }),
+    );
+
+    const el = await openPanelOn(SHELL_ROUTES.billing);
+    await act(async () => {
+      el.querySelector<HTMLElement>('[aria-label="Conversation history"]')?.click();
+    });
+    await settle();
+
+    const badged = [...el.querySelectorAll('[data-otto-thread-source="canvas"]')];
+    expect(badged).toHaveLength(1);
+    const legacyRow = el.querySelector(`[data-otto-thread-list-thread="${LEGACY_THREAD.id}"]`);
+    expect(legacyRow).not.toBeNull();
+    expect(legacyRow!.querySelector('[data-otto-thread-source="canvas"]')).toBeNull();
   });
 });

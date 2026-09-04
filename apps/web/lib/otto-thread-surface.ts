@@ -48,8 +48,23 @@ export function coerceThreadSurface(raw: unknown): ChatThreadSurface {
 /**
  * 这一条是侧栏面板自己的对话吗。
  *
- * `null`(老行)与任何认不出来的值都是 `false`。面板「打开时接着聊哪一条」只问这一句。
+ * `null`(老行)与任何认不出来的值都是 `false`。面板「打开时接着聊哪一条」只问这一句 ——
+ * 它是一个**自动动作**的判据,拿不准就不做,所以未知归到「不自动续」这一边。
  */
 export function isPanelThread(surface: string | null | undefined): boolean {
   return surface === "panel";
+}
+
+/**
+ * 这一条**确知**是画布对话吗。
+ *
+ * 判官 P2-1:它不是 `isPanelThread` 的反面。「不是 panel」里混着两种东西 —— 确知是画布的
+ * (`"canvas"`),和**来路不明**的老行(`null`,这一票之前写的每一条)。把后者也标成
+ * 「Canvas」是在替一件查不出来的事作证:那句话我们并不知道它真不真。
+ *
+ * 所以界面上**说出口**的两件事(列表徽章、头部「Canvas · …」)只认这一句;而「面板要不要
+ * 自动续它」那个不出声的决定仍然用 `isPanelThread`(未知 → 不自动续),两边行为不变。
+ */
+export function isCanvasThread(surface: string | null | undefined): boolean {
+  return surface === "canvas";
 }

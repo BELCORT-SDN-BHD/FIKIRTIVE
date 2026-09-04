@@ -348,7 +348,9 @@ export async function getCoworkThreads(ownerId: string, projectId: string) {
   const threads = await prisma.chatThread.findMany({
     where: { projectId, ownerId, ...notDeleted },
     orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { updatedAt: "desc" }],
-    select: { id: true, projectId: true, title: true, updatedAt: true, pinnedAt: true },
+    // `surface`(FRONT-A14 判官 P2-3):画布自己「开哪一条」也要看这一列 —— 不看的话,
+    // 商家在侧栏聊完再开 Create,画布续的是那条侧栏对话(P1-010 的镜像)。
+    select: { id: true, projectId: true, title: true, updatedAt: true, pinnedAt: true, surface: true },
   });
 
   // Attach latest GenJob status per thread for nav status badges (best-effort: never throws).
@@ -420,7 +422,11 @@ export async function getCoworkThreadPage(
 ) {
   const thread = await prisma.chatThread.findFirst({
     where: { id: threadId, ownerId, ...notDeleted },
-    select: { id: true, projectId: true, title: true, updatedAt: true, pinnedAt: true },
+    // `surface`(FRONT-A14 判官 P1-1):这是**点开一条对话**走的那条读路
+    // (`getCoworkThreadClient` → 这里)。不取这一列,面板一点开自己的对话就把它读成
+    // `null`,头部当场翻成「Canvas · …」、列表长出 Canvas 徽章 —— 商家点一下,产品就改口。
+    // 漏掉它现在是一个 tsc 错误(`ChatThreadDTOInput` 把 `surface` 收成必填),不是一个线上现象。
+    select: { id: true, projectId: true, title: true, updatedAt: true, pinnedAt: true, surface: true },
   });
   if (!thread) return null;
 

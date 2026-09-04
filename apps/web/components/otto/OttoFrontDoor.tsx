@@ -95,6 +95,10 @@ export interface OttoFrontDoorProps {
    * 从这道前门开出来的对话登记成哪个来源(FRONT-A14)。不给就是画布 —— `/otto` 与画布
    * 覆盖层走的都是这一档;全局侧栏面板把它设成 `"panel"`,面板下次打开才认得出自己那一批
    * (`lib/otto-thread-surface.ts`)。服务端仍自己过一道闸,这里给的是声明不是判定。
+   *
+   * 只作用于**流式**那条路(`startStreamedThread` → `createEmptyCoworkThread`,先建线程
+   * 再发第一句)。下面那条经典 `ottoTurn` 兜底路径不接它:那扇门建的对话一律是画布的
+   * (判官 P2-2 —— turn 接口的 `surface` 是 #879 的页面位置字段,与线程来源只是重名)。
    */
   threadSurface?: ChatThreadSurface;
 }
@@ -220,9 +224,6 @@ export function OttoFrontDoor({
         projectId,
         text: msgText,
         entityIds,
-        // FRONT-A14:经典(非流式)兜底路径也建对话,来源同样要登记,否则面板一旦落到
-        // 这条路上,它自己开的对话下次就认不出来了。
-        ...(threadSurface ? { surface: threadSurface } : {}),
         variantSel: {},
         simple: true,
         ...(opts.goalKey ? { goalKey: opts.goalKey } : {}),

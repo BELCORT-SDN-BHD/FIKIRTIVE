@@ -43,13 +43,13 @@ import {
   setProjectPinned as setProjectPinnedAction,
 } from "@/lib/actions";
 import { nextActiveThreadId } from "@/lib/thread-list";
-import { isPanelThread } from "@/lib/otto-thread-surface";
+import { isCanvasThread } from "@/lib/otto-thread-surface";
 import { OttoConfirmDialog, OttoRenameDialog } from "@/components/otto/OttoPromptDialog";
 import type { OttoPanelConversationState, PendingFirst } from "./OttoPanelConversation";
 import { OttoPanelShell, useOttoPanelControls } from "./OttoPanelShell";
 import { OttoQuickChips } from "./OttoQuickChips";
 import { OttoThreadList } from "./OttoThreadList";
-import { panelQuickChips, panelScopeLabel } from "./panel-page";
+import { formatPanelScope, panelQuickChips } from "./panel-page";
 
 const OttoPanelConversation = React.lazy(() =>
   import("./OttoPanelConversation").then((m) => ({ default: m.OttoPanelConversation })),
@@ -239,40 +239,40 @@ export function OttoPanelHost({
     };
   }, [open, fetchTrigger]);
 
-  // ── 头部那一行:**范围**标签,不是上下文 chip ──────────────────────────────
+  // ── 头部那一行:只在它带得来新信息时才画 ──────────────────────────────────
   //
-  // 判官 r1 [P2] 的裁定今天仍然成立,而且这一段照它写:chip 写「On this page: Raya promo」
-  // 时,商家读到的是「Otto 看得见我这一页」;关掉它读到的是「Otto 不再看了」。两句话都
-  // 不成立 —— 服务端没有任何读者会因为这一页是哪一页而改变这一轮的上下文
-  // (`buildOttoContext` 的入参里没有 `surface`/`subjectRef`;引擎里这两个名字出现 0 次)。
+  // 判官 r1 [P2] 的裁定今天仍然成立:chip 写「On this page: Raya promo」时,商家读到的是
+  // 「Otto 看得见我这一页」;关掉它读到的是「Otto 不再看了」。两句话都不成立 —— 服务端
+  // 没有任何读者会因为这一页是哪一页而改变这一轮的上下文(`buildOttoContext` 的入参里
+  // 没有 `surface`/`subjectRef`;引擎里这两个名字出现 0 次)。
   //
-  // 所以 FRONT-A14 接回来的不是那句话,是**另一句**:这段对话归谁。
-  //   · 面板自己的对话 / 新对话 → `Workspace · Billing`(页面名只用来说「你在哪儿开的它」);
-  //   · 商家从列表里点开一条画布对话 → `Canvas · <画布名>`。
-  // 它不承诺 Otto 读得到任何东西,所以也**不给** `onDismiss`(关不掉的东西不摆关掉的按钮),
-  // 也**不设** `contextAttached`(那一格断言的是「这一轮会自动带上这一页」,今天为假)。
+  // 判官 P2-4:上一版改口说「Workspace · <页面名>」,那句话是真的,但对**面板自己的**对话
+  // 来说不带任何新信息 —— 商家就在那一页上,面板就是他刚点开的那一块。它只是把他看得见的
+  // 两件事又说一遍,还占掉 320px 面板里的一整行,而且不在已批准的设计里。所以现在只画
+  // **确知是画布**的那一种:
+  //   · 打开的是一条 `surface === "canvas"` 的对话 → `Canvas · <画布名>`;
+  //   · 面板自己的对话、新对话、以及来路不明的老行(`surface === null`)→ 一行都不画。
+  //
+  // 为什么老行也不画(判官 P2-1):「不是 panel」里混着「确知是画布」与「查不出来」两种
+  // 东西。把后者标成 Canvas 是替一件我们并不知道真假的事作证。所以说出口的话只认
+  // `isCanvasThread`;而「要不要自动续它」那个不出声的决定仍用 `isPanelThread`(未知 →
+  // 不自动续),两边行为都不变。
   //
   // 这一格补的是 P1-010 的第二半:商家在 /billing 展开面板读到一段画布对话时,面板上一个
   // 字都没写这段对话属于别处。第一半(它根本不该被自动摊开)在 `lib/otto-panel-seed.ts`。
   //
-  // 取对象真名字的那个 server action 仍然是删掉的(零调用者的租户查询就是没人守望的攻击
-  // 面),所以 `/campaign/<id>` 这种对象页只落到 `Workspace` 这一档,不去查真名字。
+  // 「常驻 Workspace · <页面名> 横条要不要」已登记进规格 §5,待 Founder 在 FRONT-A14 走查
+  // 时裁;要接回来时 `panelContextSubject` 与它的围栏都还在。
   const scopeChip = React.useMemo(() => {
     const active = activeThreadId ? threads.find((t) => t.id === activeThreadId) ?? null : null;
-    // 老行 `surface = null` 按画布读(`otto-thread-surface.ts`)—— 面板不会自动摊开它们,
-    // 但商家从列表里点开一条时,标签要如实说它是画布的。
-    if (active && !isPanelThread(active.surface)) {
-      const canvasName = seed?.projects.find((p) => p.id === active.projectId)?.name?.trim();
-      return {
-        label: canvasName ? `Canvas · ${canvasName}` : "Canvas",
-        hint: "This conversation belongs to a canvas.",
-      };
-    }
+    if (!active || !isCanvasThread(active.surface)) return undefined;
+    // 画布名从种子里那份项目清单取(那是这个商家自己的项目,已经按 ownerId 查出来过);
+    // 取不到名字就只写 `Canvas` —— 不编一个名字,也不去多查一次库。
     return {
-      label: panelScopeLabel(location),
-      hint: "This conversation is saved to your workspace, not to a canvas.",
+      label: formatPanelScope("Canvas", seed?.projects.find((p) => p.id === active.projectId)?.name),
+      hint: "This conversation belongs to a canvas.",
     };
-  }, [activeThreadId, threads, seed, location]);
+  }, [activeThreadId, threads, seed]);
 
   // ── 会话 ────────────────────────────────────────────────────────────────
   //
@@ -607,9 +607,9 @@ export function OttoPanelHost({
           />
         ) : null
       }
-      // 范围标签只在种子到了之后才画 —— 之前「现在是哪一条对话」还没有答案,先摆一个
-      // `Workspace` 会在种子落地那一下翻成 `Canvas · …`,商家看到的是产品自己改口。
-      contextChip={seed ? scopeChip : undefined}
+      // 只有「打开的是一条确知的画布对话」时才有这一行;`scopeChip` 自己就是 undefined
+      // (种子还没到时 `threads` 是空的,同样落到 undefined),不必再包一层。
+      contextChip={scopeChip}
       // 历史入口只在真的有列表可开时才画 —— 种子还没到就没有历史可看(§3.4:没接上的东西不画)。
       onOpenHistory={seed ? toggleHistory : undefined}
       historyOpen={historyOpen}
