@@ -48,12 +48,20 @@ vi.mock("../queue", () => ({
   })),
 }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
+// CRE-STG-P2-004 —— 卡面那一层读的是 `runPlanApproval` 的返回值,所以那两个服务端动作在这
+// 里被替掉:本例要钉的是「动作抛了之后商家手上剩什么」,不是动作自己的逻辑。两者在本文件
+// 的其余用例里都没有被用到(付费那几条走的是真的 `startCoworkGen`)。
+const mockCoworkGenerate = vi.fn();
+vi.mock("@/lib/cowork-actions", () => ({ coworkGenerate: (...a: unknown[]) => mockCoworkGenerate(...a) }));
+vi.mock("@/lib/otto-client-actions", () => ({ ottoApprove: vi.fn() }));
+vi.mock("@/lib/balance-refresh", () => ({ notifyBalanceRefresh: vi.fn() }));
 
 const { validateOttoTurnReferences, unavailableReferenceMessage } = await import("../otto-actions");
 const { startCoworkGen } = await import("../gen-actions");
 const { storage } = await import("../storage");
 const { prisma } = await import("@fikirtive/db");
 const { planCardGate } = await import("@/components/otto/plan-card-contract");
+const { runPlanApproval } = await import("@/components/otto/plan-approval");
 
 const INTERNAL_PER_DISPLAY_BALANCE = 500_000;
 const PRODUCT_PROMPT = "A brushed steel tumbler on marble";
@@ -352,5 +360,48 @@ describe("CREATE-A1 批准失败读得懂", () => {
     // 它是**短号**,不是那个 id:整串 id 绝不上商家的屏幕。
     expect(cardId).not.toBe(ref);
     expect(diagnosticRef(null)).toBeNull();
+  });
+
+  it("CREATE-A1 服务端动作抛了:商家读到单一措辞源那一句 + 那张卡自己的短号", async () => {
+    // 走查按下 `Generate · 1 credit` 两次,两次都落进这一支 —— 从前它是一个写死的
+    // `Couldn't start that — please try again.`,商家、日志、走查报告三方没有共同的把手。
+    const cardId = `msg_${randomUUID()}`;
+    mockCoworkGenerate.mockRejectedValueOnce(new Error("boom: something server-side"));
+
+    const outcome = await runPlanApproval({
+      threadId: `thr_${randomUUID()}`,
+      cardId,
+      pendingApproval: false, // 刚被提议的卡 —— 走 `coworkGenerate` 那条路
+      payload: { kind: "image", model: "seedream-4-0", credits: 1 } as never,
+    });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("unreachable");
+    // 句子:单一措辞源那一份,一字不改。
+    expect(outcome.error).toBe(GENERATION_START_FAILED);
+    // 短号:与服务端日志里那一行同一个函数、同一串,而且真的到得了卡面。
+    expect(outcome.ref).toBe(diagnosticRef(cardId));
+    expect(outcome.ref).toMatch(/^[A-Z0-9]{8}$/);
+    // 抛出来的原文一个字都不上商家的屏幕。
+    expect(outcome.error).not.toContain("boom");
+  });
+
+  it("CREATE-A2 服务端已经说清楚了:泛化句盖不掉那句具体的拒绝,短号照旧给", async () => {
+    const cardId = `msg_${randomUUID()}`;
+    const spoken = referenceUnavailableMessage("videoAsImage");
+    mockCoworkGenerate.mockResolvedValueOnce({ error: spoken });
+
+    const outcome = await runPlanApproval({
+      threadId: `thr_${randomUUID()}`,
+      cardId,
+      pendingApproval: false, // 刚被提议的卡 —— 走 `coworkGenerate` 那条路
+      payload: { kind: "image", model: "seedream-4-0", credits: 1 } as never,
+    });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("unreachable");
+    expect(outcome.error).toBe(spoken);
+    expect(outcome.error).not.toBe(GENERATION_START_FAILED);
+    expect(outcome.ref).toBe(diagnosticRef(cardId));
   });
 });

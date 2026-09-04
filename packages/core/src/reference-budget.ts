@@ -213,6 +213,17 @@ export type ReferenceSlotType = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMAR
  */
 export type ReferenceSlot =
   | { kind: "baseImage" }
+  /**
+   * Codex staging CRE-STG-P1-003 —— 商家挂的**第一张之外**的那几张图。
+   *
+   * 它们与底图坐在同一段(`unshift` 到数组最前),但它们**不是**「正在被编辑的那张」。
+   * 从前挂图只有一张,所以整段只有 `baseImage` 一种;多张上车之后再把第 2 张也说成
+   * `is the image being edited`,就是同一件事在卡面与引擎那里各说一套 —— 卡上写着
+   * `Reference`(`cardReferenceRoleLabel`),给引擎的编号句却写着「在编辑它」。
+   *
+   * 两种说法里只有一种能是真的,而付费请求那一份必须与商家批准的那一份逐字同义。
+   */
+  | { kind: "attachedReference" }
   | {
       kind: "entity";
       entityId: string;
@@ -329,6 +340,9 @@ export function referenceMapLines(slots: ReferenceSlot[]): string[] {
   return slots.map((slot, idx) => {
     const n = idx + 1;
     if (slot.kind === "baseImage") return `<Image_${n}> is the image being edited.`;
+    // 商家挂的第 2 张起:说它是一张参考图,不多说一个字 —— 它画的是人还是杯子,
+    // 系统并不知道(带类型的只有 @元素,走上面那一支)。猜一个名词就是编造。
+    if (slot.kind === "attachedReference") return `<Image_${n}> is a reference image.`;
     const first = firstSlotOf.get(slot.entityId);
     const name = slot.name === null ? null : slotName(slot.name);
     if (first === undefined) {

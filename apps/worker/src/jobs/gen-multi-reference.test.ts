@@ -64,7 +64,7 @@ vi.mock("../storage.js", () => ({ storage: m.storage }));
 vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
-import { referenceBudget, MAX_CONDITIONING_IMAGES } from "@fikirtive/core";
+import { referenceBudget, MAX_CONDITIONING_IMAGES, cardReferenceRoleLabel } from "@fikirtive/core";
 import { handleGen } from "./gen.js";
 
 /** content hash 必须是 64 位小写 hex(storageKey 会校验)。 */
@@ -166,6 +166,33 @@ describe("CREATE-A1 商家挂了几张,引擎就收到几张(CRE-STG-P1-003)", (
     ]);
     // 编号句说的第 1 张,就是商家挂的第一张 —— `<Image_1>` 不许指向别人。
     expect(call.prompt.split("\n")[0]).toContain("<Image_1>");
+  });
+
+  it("CREATE-A2 编号句说的角色 = 卡上写的角色:第一张在编辑,第 2 张起是参考", async () => {
+    const call = await paidImageCall({
+      ...imageJob,
+      sourceGenerationId: ATTACHED[0]!.id,
+      imageOptions: { aspectRatio: "9:16", referenceGenerationIds: [ATTACHED[1]!.id] },
+    });
+
+    const lines = call.prompt.split("\n")[0]!;
+    // 卡上第一条回执写 `Base image`,给引擎的第一句就得是「在编辑它」。
+    expect(cardReferenceRoleLabel("baseImage")).toBe("Base image");
+    expect(lines).toContain("<Image_1> is the image being edited.");
+    // 卡上第二条回执写 `Reference` —— 那么引擎收到的第二句**不许**也说「在编辑它」。
+    // 说成编辑就是同一件事在卡面与付费请求里各说一套(CRE-STG-P1-003 修的正是这类分家)。
+    expect(cardReferenceRoleLabel("reference")).toBe("Reference");
+    expect(lines).toContain("<Image_2> is a reference image.");
+    expect(lines).not.toContain("<Image_2> is the image being edited.");
+  });
+
+  it("CREATE-A1 挂 1 张:编号句与这条修改之前逐字相同(只有底图那一句)", async () => {
+    const call = await paidImageCall({
+      ...imageJob,
+      sourceGenerationId: ATTACHED[0]!.id,
+      imageOptions: { aspectRatio: "9:16" },
+    });
+    expect(call.prompt.split("\n")[0]).toBe("<Image_1> is the image being edited.");
   });
 
   it("CREATE-A1 卡面说的张数 = 引擎真收到的张数(超限时挂图从 @元素的名额里扣格)", async () => {

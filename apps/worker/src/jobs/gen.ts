@@ -1417,8 +1417,18 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         }
         if (attachedUrls.length > 0) {
           // 一次 unshift 整批 —— 次序保住:第 0 位是商家挂的第一张,它就是 <Image_1>。
+          //
+          // 槽位分两种,而且必须分:第一张是**正在被编辑的那张**(`baseImage`),第 2 张起
+          // 是**参考**(`attachedReference`)。编号句由槽位产出,所以把第 2 张也标成
+          // `baseImage` 就等于告诉引擎「这张也在被编辑」—— 而卡上给商家读的是 `Reference`
+          // (同一份角色表 `cardReferenceRoleLabel`)。卡说一套、请求说另一套,正是
+          // CRE-STG-P1-003 这一票在修的那类分家。挂 1 张时整段与从前逐字相同。
           inputImageUrls.unshift(...attachedUrls);
-          refSlots.unshift(...attachedUrls.map(() => ({ kind: "baseImage" }) as ReferenceSlot));
+          refSlots.unshift(
+            ...attachedUrls.map(
+              (_url, index) => ({ kind: index === 0 ? "baseImage" : "attachedReference" }) as ReferenceSlot,
+            ),
+          );
         }
         // #642: the shape the merchant bought, frozen onto the job at enqueue. A legacy row
         // (or a malformed snapshot) has none → the model's default square, which is exactly
