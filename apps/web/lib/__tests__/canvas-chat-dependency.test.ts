@@ -267,7 +267,13 @@ describe("#548 — with no Otto conversation open, every paid canvas action stil
     select(["n1"]);
     await act(async () => { await Promise.resolve(); });
 
+    // QA-CRE-FE9-001: the first press only opens the confirmation; the paid press is the
+    // `Generate · N credits` on that card. "No thread" must refuse neither of them.
     await act(async () => { buttonsLabelled("Create variations")[0]!.click(); });
+    expect(mocks.generateImage).not.toHaveBeenCalled();
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+      .find((b) => b.textContent?.startsWith("Generate · "))!;
+    await act(async () => { confirm.click(); });
 
     expect(mocks.generateImage).toHaveBeenCalledTimes(1);
     expect(mocks.toastError).not.toHaveBeenCalled();

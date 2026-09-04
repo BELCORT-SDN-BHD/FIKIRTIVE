@@ -125,8 +125,9 @@ export interface OttoChatStreamProps {
   entities: EntityDTO[];
   thread: ChatThreadDTO;
   balanceUsd: number;
-  /** Starts a new conversation in this project. Rendered as a persistent button
-   *  in the chat header, so it's always reachable — not only via a sidebar hover. */
+  /** Starts a new conversation in this project. Rendered as a persistent button in the
+   *  side panel's chat header — that surface has its own `OttoThreadList`, so an older
+   *  conversation stays reachable. The canvas does NOT offer it (QA-CRE-FE9-005). */
   onNewConversation?: () => void;
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
@@ -1004,7 +1005,11 @@ export function OttoChatStream({
           onChangeSomething={(seed) => seedComposer(seed)}
         />
       ) : null}
-      {/* Header — New conversation is always visible here, not only on a sidebar hover. */}
+      {/* Header. QA-CRE-FE9-005（Founder 2026-09-04 07:05 裁决）：**画布上没有 New conversation**。
+          一张画布就是它那一条按时间的 Conversation —— 画布从来没有 thread 切换器，所以那颗键
+          只会造出「写得进、找不回」的对话（Codex 只读走查 Stage 7）。beta 先收掉它；多对话切换
+          列表登记下一轮。侧栏 Otto 面板不受影响：那一面有自己的 `OttoThreadList`，旧对话找得回，
+          所以下面 `!canvasLayout` 那一支照旧带这颗键。 */}
       {canvasLayout ? (
         <div className="otto-chat-header pointer-events-auto absolute bottom-4 left-4 flex h-10 w-[280px] items-center gap-1 rounded-[var(--radius-card)] border border-border bg-card p-1 shadow-[var(--shadow-sm)]">
           <Button
@@ -1021,18 +1026,6 @@ export function OttoChatStream({
               <ChevronDown className={`size-3.5 transition-transform duration-150 ease-out motion-reduce:transition-none ${canvasHistoryOpen ? "rotate-180" : ""}`} aria-hidden />
             </span>
           </Button>
-          {onNewConversation ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={onNewConversation}
-              title="Start a new conversation in this Canvas"
-              aria-label="New conversation"
-            >
-              <MessageSquarePlus aria-hidden />
-            </Button>
-          ) : null}
         </div>
       ) : (
         <div className="otto-chat-header flex items-center gap-[9px] border-b border-border bg-card px-4 py-[13px]">
