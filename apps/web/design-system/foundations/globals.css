@@ -360,8 +360,8 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
  * dark-shell foreground (near-white, #f6f7f9). That reads correctly only on a dark surface,
  * so every LIGHT surface that mounted this editor had to hand the ink back one rule at a
  * time — `.gb .al-promptbar .tiptap` for the canvas bottom bar, `.gb .cv-detail .tiptap` for
- * the asset panel. The t2v / Animate dialogs mount a bare <MentionInput> inside
- * DialogContent, which is neither, so they got no patch: white text on the white popover,
+ * the asset panel. The t2v dialog mounts a bare <MentionInput> inside
+ * DialogContent, which is neither, so it got no patch: white text on the white popover,
  * ~1.05:1, the merchant typed and saw nothing (`FlowCanvas.tsx`, `canvas-t2v-*`).
  * A component that is placed on many surfaces must read the SEMANTIC ink token, which is
  * what every surface under `.gb` declares; the per-surface patches are then unnecessary and
