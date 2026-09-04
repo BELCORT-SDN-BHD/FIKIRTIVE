@@ -470,8 +470,12 @@ describe("FRONT-A15 摆板只有一个来源:首屏与「Fit to screen」读同�
       root!.render(createElement(FlowCanvas, { projectId: "p2", skin: "gb" as const }));
     });
     await settleFirstFit();
-    const firstFit = mocks.fitView.mock.calls.at(0)?.[0] as { padding?: unknown } | undefined;
+    const firstFit = mocks.fitView.mock.calls.at(0)?.[0] as
+      { padding?: unknown; duration?: number } | undefined;
     expect(firstFit, "换项目之后首屏应当重新摆一次板").toBeDefined();
+    // 首屏那一次不做动画:开画布的第一眼没有「从哪里来」,而动画那几十毫秒里卡还在挪 ——
+    // 商家(和旅程 17 第①步的框选)伸手够的是一个还在移动的目标。
+    expect(firstFit?.duration, "首屏摆板不应当有动画").toBe(0);
 
     // 同一个来源 = 同一份留白;而且是量出来的像素,不是 React Flow 的比例标量。
     expect(firstFit?.padding).toEqual(manualFit?.padding);

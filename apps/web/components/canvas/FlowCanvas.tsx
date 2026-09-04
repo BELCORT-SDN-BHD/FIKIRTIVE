@@ -1425,13 +1425,20 @@ export default function FlowCanvas({
   // (`fitPadding` 的说明记了它怎么让旅程 17 时红时绿),已经删掉。
   // 每个项目摆一次,用的是量出来的安全区:卡的操作条不再伸到画板外被顶栏盖住,也不会藏在
   // Otto 面板底下变成「看得见点不着」。
+  //
+  // **这一次不做动画**(`0`,而手动「Fit to screen」仍是 220ms)。开画布的第一眼没有「从哪里
+  // 来」可言 —— 动画是从一个商家根本没见过的取景滑过去,而且那 160ms 里板上的卡还在移动:
+  // 手已经伸出去的那一下会落空。旅程 17 第①步(在卡外面 24px 起手框选)因此间歇红:量卡的
+  // 位置与按下鼠标之间隔着几十毫秒,卡在这几十毫秒里挪了 50 多像素,框就框在旧位置上
+  // (2026-09-04 e2e 探针实测:同一次拖动里卡从 x=316 挪到 x=368,框选一张都没圈到)。
+  // 手动那一次不同:商家自己按下 Fit to screen,动画正是在告诉他板去了哪里。
   useEffect(() => {
     if (!flowReady || !flowRef.current || nodes.length === 0) return;
     const scope = projectId;
     if (fittedScopeRef.current === scope) return;
     fittedScopeRef.current = scope;
     requestAnimationFrame(() => {
-      fitBoard(160);
+      fitBoard(0);
     });
   }, [flowReady, nodes.length, projectId, fitBoard]);
 
