@@ -43,14 +43,83 @@ export type CanvasFitPadding = {
 export const CANVAS_FIT_GAP = 24;
 
 /**
+ * 卡顶那条操作条离卡上沿多远 —— 三张卡(Image / Video / Text)的 `NodeToolbar offset` 读的
+ * 就是这一个数,所以它在这里只有一份。
+ */
+export const CANVAS_NODE_TOOLBAR_OFFSET = 22;
+
+/**
+ * 操作条自己的高度 —— 一行图标按钮,`cv-node-action-group` 不额外加高(globals.css 只给它
+ * 圆角与投影)。来源:`NodeToolbarIconButton` 一律 `size="icon-xs"`,而 `icon-xs` 是
+ * `size-8` = 32px(`design-system/primitives/button.tsx` 的 size 变体表)。
+ * 生产构建 1440×900 实测同一个数(2026-09-04 探针:操作条 y=18…50,高 32)。
+ *
+ * 为什么是抄来的常量而不是量出来的:第一次摆板时一张卡都没被选中,屏幕上根本没有操作条可量
+ * (`NodeToolbar` 只在选中时渲染)。所以这里只能按已知的按钮尺寸留位置 —— 改了 `icon-xs`
+ * 的定义就要回来改这一个数,`__tests__/front-a15-canvas-selection.test.ts` 里照实测抄的那
+ * 两个数是这件事的看守。
+ */
+export const CANVAS_NODE_TOOLBAR_HEIGHT = 32;
+
+/**
+ * 操作条从卡的上沿往上伸多少 —— 摆板时上边至少要空出这么多。
+ *
+ * 病根(本机与 CI 实证 2026-09-04,e2e 旅程 17 第⑤步间歇红):摆板只让开了「钉在画板上的
+ * 覆盖层」,没让开**卡自己带的那条操作条**。于是最上面一排卡被摆在离画板上沿只有
+ * `CANVAS_FIT_GAP` 的地方,它的操作条(卡上沿往上 22+32=54px)整条伸到画板外面 ——
+ * 实测 Download 键落在 y=18…50,而画板从 y=48 才开始、上面那 48px 是应用外壳的顶栏:
+ * 操作条被顶栏盖住,商家看不见也点不到(`document.elementFromPoint` 在按钮正中取到的是
+ * `<header>`)。所以「让开覆盖层」的清单里必须算上这一条:它和别的覆盖层一样,是画板上
+ * 一块不能压卡的地方,只不过它贴的是画板自己的上沿。
+ *
+ * 同一个 24px 还让旅程 17 的第①步(在卡外面 24px 起手框选)时红时绿:最上排卡摆在 y=72 时,
+ * 起手点正落在 y=48 —— 顶栏与画板的那条缝上,按下去有时按在顶栏上,框选就不发生
+ * (本机修前 5 次留了记录的预跑全红:3 次红在第⑤步的 Download,2 次红在第①步的框选)。
+ * 两处是同一个病根。
+ *
+ * 卡被商家自己拖到画板顶上时操作条一样会出界 —— 那是另一件事(操作条该翻到卡下面),
+ * 不在这一票里。
+ */
+export const CANVAS_NODE_TOOLBAR_REACH = CANVAS_NODE_TOOLBAR_OFFSET + CANVAS_NODE_TOOLBAR_HEIGHT;
+
+/**
+ * 「还没量到画板」时的画板 —— 宽高为 0,`canvasFitPadding` 见到它就只回基础留白。
+ *
+ * 从前这里的兜底是一个光秃秃的 `0.22`(比例),于是「量不到」的那一次摆板用的是另一套规矩。
+ * 一份安全区只能有一个来源,兜底也不例外。
+ */
+export const CANVAS_FIT_EMPTY_RECT: CanvasFitRect = {
+  left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0,
+};
+
+/**
+ * 画布左上角那张 Otto 卡的记号 —— **两种形态各挂一次**。
+ *
+ * 画布上的 Otto 有两副面孔:还没开对话时是门厅(`OttoFrontDoor`),开了对话是对话流
+ * (`OttoChatStream` 的 `OttoTurnCard`)。两边在左上角画的是同一张卡(都是
+ * `absolute left-4 top-4 w-[280px]`,连空态那句话都是同一句),但从前只有对话流那一张带
+ * `aria-label="Otto current turn"`。摆板按 `aria-label` 找它,于是**商家还没开口的那一次**
+ * 什么也没找到:左边一寸都没让,最上排的卡就摆进这张卡底下。
+ *
+ * 实证(2026-09-04,生产构建 1440×900,e2e 探针):门厅那张卡占 x=16…296 / y=64…172,
+ * 摆板算出的左留白只有 `CANVAS_FIT_GAP`,文字卡落在 x=256 —— 卡的左上角压在卡片底下,
+ * 在它外面 24px 起手框选,`elementFromPoint` 取到的是门厅卡的表头(旅程 17 第①步)。
+ *
+ * 底部输入框早就是这么解决的(`CANVAS_OTTO_DOCK_ATTR`,`lib/canvas-otto-dock.ts`:
+ * 「两种画布 Otto 形态各挂一次,所以工作区不必知道当下是哪一种」)—— 左上角这张卡沿用同一条
+ * 规矩,而不是让摆板去认两个记号。`aria-label` 留着不动:那是 e2e 旅程 16／18 在用的名字。
+ */
+export const CANVAS_OTTO_CORNER_ATTR = "data-canvas-otto-corner";
+
+/**
  * 画布上「钉住不动」的东西 —— 谁挡住画,谁就在这张单子里。
  *
  * Otto 那三块用的是它们自己已有的记号(`data-canvas-otto-dock` 由 `lib/canvas-otto-dock.ts`
- * 定义并由 Otto 组件贴上;当前轮卡的 `aria-label` 是 e2e 旅程 16 已经在用的那一个;
- * `.otto-chat-header` 是 globals.css 里的真类名),所以这一段不必去改 Otto 自己的文件。
+ * 定义、左上角那张卡由上面这一份定义,两个都由 Otto 组件贴上;`.otto-chat-header` 是
+ * globals.css 里的真类名)。
  */
 export const CANVAS_FIT_OVERLAY_SELECTORS: readonly string[] = [
-  "[aria-label='Otto current turn']",
+  `[${CANVAS_OTTO_CORNER_ATTR}]`,
   "[data-canvas-otto-dock]",
   ".otto-chat-header",
   ".cv-bottom-stack",
@@ -95,6 +164,9 @@ function intrusion(board: CanvasFitRect, overlay: CanvasFitRect, edge: keyof Can
 /**
  * 四边各留多少像素,才能让「Fit to screen」摆出来的画一寸都不压在覆盖层底下。
  *
+ * 上边的基础留白比别的三边多一条操作条(`CANVAS_NODE_TOOLBAR_REACH`):最上面那排卡的操作条
+ * 长在卡的上沿之外,不给它留位置,它就伸到画板外、被应用外壳的顶栏盖住。
+ *
  * 与画板不相交的覆盖层不算数(它已经在画板外了);算出来的两边之和被夹在画板的 80% 以内,
  * 免得极矮/极窄的窗口里 `fitView` 拿到一块负面积。
  */
@@ -104,7 +176,10 @@ export function canvasFitPadding(
   gap: number = CANVAS_FIT_GAP,
 ): CanvasFitPadding {
   const padding: CanvasFitPadding = { top: gap, right: gap, bottom: gap, left: gap };
-  if (!(board.width > 0) || !(board.height > 0)) return padding;
+  if (!(board.width > 0) || !(board.height > 0)) {
+    padding.top += CANVAS_NODE_TOOLBAR_REACH;
+    return padding;
+  }
 
   for (const overlay of overlays) {
     if (!(overlay.width > 0) || !(overlay.height > 0)) continue;
@@ -115,6 +190,10 @@ export function canvasFitPadding(
     const reach = Math.ceil(intrusion(board, overlay, edge)) + gap;
     if (reach > padding[edge]) padding[edge] = reach;
   }
+
+  // 最上面那排卡的操作条长在卡的上沿之外 —— 顶上让开的东西再多,也还要在它之外再空出这一条,
+  // 否则操作条不是伸出画板(被顶栏盖住)就是压在顶部的覆盖层底下。
+  padding.top += CANVAS_NODE_TOOLBAR_REACH;
 
   return {
     ...clampAxis(padding.left, padding.right, board.width),
