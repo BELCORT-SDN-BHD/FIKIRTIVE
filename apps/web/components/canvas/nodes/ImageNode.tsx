@@ -156,7 +156,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
         )}
         {/* A3: another take of THIS image from its own prompt — the old path was
             Detail → Regenerate (two clicks and a panel).
-            QA-CRE-FE9-001（Founder 2026-09-04 07:05 裁决）：这一press **只开确认卡**，钱在
+            QA-CRE-FE9-001（Founder 2026-09-04 07:05 裁决）：按这一下**只开确认卡**，钱在
             那张卡上的 `Generate · N credits` 才动。价钱仍在这颗键自己的 title 上先说一遍，
             后面再跟一句它此刻真正会做的事 —— 免得商家以为按下去就扣。 */}
         {canVariant && (
