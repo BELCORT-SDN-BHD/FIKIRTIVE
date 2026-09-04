@@ -205,9 +205,10 @@ function LibraryToolbar({
           aria-label="Search Library"
           value={filters.query}
           onChange={(event) => onChange({ query: event.target.value })}
-          // 设计的占位符还提到 Canvas;服务端的搜索今天只走提示词,所以这里只说提示词 ——
-          // 一句做不到的占位符就是一次小小的假承诺。
-          placeholder="Search prompts"
+          // 占位符只承诺服务端真的会打的那几列。今天是两列:引擎产物的提示词,与商家上传时
+          // 自己那个文件名(`getGenerationHistory` 的 OR)。设计的占位符还提到 Canvas ——
+          // 那一列今天搜不了,照抄就是一次做不到的承诺(Founder 2026-09-05 裁:如实写两列)。
+          placeholder="Search prompts or file names"
           className="h-9 text-sm"
         />
       </InputGroup>
