@@ -183,14 +183,16 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
     for (const component of [OTTO_CHAT_STREAM]) {
       const src = fs.readFileSync(component, "utf8");
       const helper = src.match(/function rearmGenerationPoll\(\) \{([\s\S]*?)\n  \}/)?.[1] ?? "";
-      expect(helper).toContain("setPollGaveUp(false)");
-      expect(helper).toContain("setPollTerminal(false)");
-      expect(helper).toContain('setPollRound("initial")');
+      // The watch's phase, back to the FIRST gear. This used to be three booleans
+      // (pollGaveUp / pollTerminal / pollRound); E2E-CRE-PAV-003 replaced them with the one
+      // named phase the rule itself is written in (`SyncPhase`, #782 r7) — the guarantee
+      // asserted here is unchanged, it just has one source instead of three.
+      expect(helper).toContain('setPollGear("fast")');
       // Window-restart guard (NOTE-1 regression): rearm must UNCONDITIONALLY restart the
-      // poll window so a freshly-approved/retried generation gets the full MAX_POLLS
-      // budget — not just the remainder of a poll already mid-flight. The three setters
-      // above are no-ops (React bail-out) when already at their reset values, so the
-      // reset must ride a monotonic nonce that the bounded-poll effect depends on.
+      // poll window so a freshly-approved/retried generation gets the full fast-gear
+      // budget — not just the remainder of a poll already mid-flight. The setter above is
+      // a no-op (React bail-out) when already at its reset value, so the reset must ride a
+      // monotonic nonce that the bounded-poll effect depends on.
       // Assert the whole wiring, not merely that a setter was called:
       //   1. rearm bumps a monotonic nonce (functional +1 → always a new value),
       //   2. the nonce is real useState-backed state, and
