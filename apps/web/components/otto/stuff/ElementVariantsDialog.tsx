@@ -79,6 +79,7 @@ import {
   setBaseAsset,
 } from "@/lib/refgen-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
+import { OFFICIAL_CATALOG_BADGE } from "@fikirtive/core/entity-policy";
 import { displayCredits, pricedRefgenCredits } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
 import { ErrorWithTopUp } from "@/components/exits/Exits";
@@ -388,7 +389,7 @@ export function ElementVariantsDialog({
                 favorite)一个不少。 */}
             {readOnly && (
               <Badge variant="outline" className="font-medium text-muted-foreground">
-                Official avatar · Read only
+                {OFFICIAL_CATALOG_BADGE}
               </Badge>
             )}
           </DialogTitle>
