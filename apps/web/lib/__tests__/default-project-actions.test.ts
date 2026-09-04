@@ -88,22 +88,23 @@ describe("getOrCreateDefaultProject", () => {
 
   it("creates the first project without render-time revalidation", async () => {
     (prisma.project.findFirst as Mock).mockResolvedValue(null);
-    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New project" });
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New canvas" });
 
     await expect(getOrCreateDefaultProject()).resolves.toEqual({ id: "p_new" });
 
     // #546 F-18: no more pre-seeded "My Videos" — a fresh org's bootstrap project is
-    // the standard "New project" placeholder, which auto-titles from the first
-    // conversation and is reused by the rail's New-project entry while still empty.
+    // the standard canvas-vocabulary placeholder (Codex QA-CRE-006 — "Canvas, not
+    // Project", `docs/specs/frontend-baseline.md` §5), which auto-titles from the first
+    // conversation and is reused by the rail's New-canvas entry while still empty.
     expect(prisma.project.create).toHaveBeenCalledWith({
-      data: { id: expect.any(String), ownerId: "o1", name: "New project" },
+      data: { id: expect.any(String), ownerId: "o1", name: "New canvas" },
     });
     expect(prisma.actionEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         ownerId: "o1",
         projectId: "p_new",
         type: "project.create",
-        payload: { name: "New project", via: "bootstrap" },
+        payload: { name: "New canvas", via: "bootstrap" },
       }),
     }));
     expect(revalidatePath).not.toHaveBeenCalled();
@@ -419,7 +420,9 @@ describe("createProject", () => {
     expect(prisma.project.findMany).toHaveBeenCalledWith({
       where: {
         ownerId: "o1",
-        name: { in: ["New project", "New campaign", "Untitled Project"] },
+        // Codex QA-CRE-006: the recognized-placeholder list now comes from the single
+        // source in `canvas-title.ts` — every legacy name plus today's "New canvas".
+        name: { in: ["New project", "New campaign", "Untitled Project", "My First Project", "New canvas"] },
         deletedAt: null,
       },
       orderBy: { createdAt: "desc" },
@@ -447,7 +450,7 @@ describe("createProject", () => {
     expect(prisma.project.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         ownerId: "o1",
-        name: { in: ["New project", "New campaign", "Untitled Project"] },
+        name: { in: ["New project", "New campaign", "Untitled Project", "My First Project", "New canvas"] },
         deletedAt: null,
       },
       select: { id: true, name: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
