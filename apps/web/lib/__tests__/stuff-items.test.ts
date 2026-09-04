@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildStuffItems, filterStuffItems, productImageIndex } from "../stuff-items";
+import { capabilitiesForOrigin } from "@fikirtive/core/entity-policy";
 import type { EntityDTO } from "../types";
 import type { BrandRecordRow } from "../brand-record-actions";
 
@@ -7,6 +8,7 @@ const ent = (id: string, type: EntityDTO["type"], name: string, assetId?: string
   id, type, name, aliases: [], notes: "", negativeConstraints: "",
   refs: assetId ? [{ id: `ref-${id}`, assetId, url: `/a/${assetId}.png`, kind: "image" }] : [],
   baseAssetId: assetId ?? null, variants: [], usageCount: 0,
+  origin: "USER", capabilities: capabilitiesForOrigin("USER"),
 });
 const rec = (name: string, imageAssetId?: string): BrandRecordRow => ({
   id: `r-${name}`, kind: "product", data: { name, ...(imageAssetId ? { imageAssetId } : {}) },

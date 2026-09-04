@@ -9,6 +9,9 @@
 // held a third copy that was two behind — the same "what we say" / "what we do" split this repo
 // keeps paying for. Deriving it means a member added to the schema cannot be missing here.
 import type { ChatMessageKind } from "@fikirtive/db";
+// 官方目录只读的判据(Founder 2026-08-30 裁决)——**类型来自域层**,不在这里手抄一份。
+// 判据函数与能力表见 packages/core/src/entity-policy.ts;DTO 只负责把它的答案带过河。
+import type { EntityCapabilities, EntityOrigin } from "@fikirtive/core/entity-policy";
 
 export type EntityTypeDTO = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK";
 export type ShotStatusDTO = "DRAFT" | "EXPORTED" | "ATTACHED" | "FINAL";
@@ -39,6 +42,10 @@ export interface EntityDTO {
   baseAssetId: string | null; // the locked base — one of refs' assetId, or null
   variants: VariantDTO[];
   usageCount: number; // # of shots whose prompt mentions this entity
+  /** Fikirtive 的平台目录(演员库),还是商家自己建的?判据是 Entity.catalogKey,不是名字。 */
+  origin: EntityOrigin;
+  /** 这一行允许哪些改动。官方目录逐格 false —— UI 据此决定画不画那个控件。 */
+  capabilities: EntityCapabilities;
 }
 
 export interface GenerationDTO {
