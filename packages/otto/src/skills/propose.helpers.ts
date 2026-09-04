@@ -66,6 +66,21 @@ export const proposeInput = z.object({
   // Set true when this image is the starting keyframe for a video the user asked for —
   // so the card shows the full two-step plan (image now, video next).
   forVideo: z.boolean().optional(),
+  /**
+   * Creation §5 2026-09-04(Codex E2E-CRE-PAV-004)—— 两步计划**第二步那条片子**的提示词
+   * (`seedancePrompt` 的产物,与第一步的图片提示词是两段不同的字)。
+   *
+   * 这个字段之前不存在,于是「先出图、再出片」在系统里根本不是一条任务:卡上只有一行片段
+   * 预估,第二步的规格没有任何地方存得住。Otto 唯一诚实的下一句就只剩「你生成完把那张图
+   * 带回来给我」—— 内部接缝直接漏到商家面前。
+   *
+   * 带上它 ⇒ 第二步作为**冻结计划**写进 Step 1 的卡(`videoStep.next`),Step 1 出图之后由
+   * 服务端照它铸出第二张确认卡(见 `video-step-handoff.ts`)。铸卡 $0:第二笔钱照旧要商家
+   * 自己按 `Generate · N credits`,一格不动「每一笔付费各自一次确认」。
+   *
+   * 缺席 ⇒ 老行为逐字保留:卡上照旧只有那一行预估,没有接力。
+   */
+  videoPrompt: z.string().min(1).max(MAX_GEN_PROMPT).optional(),
   // 创作意图/目的 —— requires 资讯门要求它非空。琐碎请求可由 Otto 从上下文推断填入。
   goal: z.string().optional(),
   /**
@@ -82,6 +97,24 @@ export const proposeInput = z.object({
 });
 
 export type ProposeInput = z.infer<typeof proposeInput>;
+
+/**
+ * 两步计划**第二步**的冻结计划 —— Step 1 的卡上带着它,Step 1 出图之后服务端照它铸第二张
+ * 确认卡(`buildVideoStepCardPayload`)。
+ *
+ * 为什么这几格与 Step 1 的入参**同名**且取自同一份输入:卡上那行「Then the video — ~N」
+ * 的报价正是用它们算出来的(Step 4.6)。计划与预估共用一份输入,两者就不可能分家 ——
+ * 第二张卡的价与第一张卡上写的那个数出自同一条路(`suggestModel` → `pricedGenCredits`)。
+ *
+ * 只有**规格**,没有价:价永远在铸卡那一刻由服务端单一价目源现算,绝不从这里搬一个数字。
+ */
+export type VideoStepPlan = {
+  structuredPrompt: string;
+  desiredAspect?: string;
+  desiredDuration?: number;
+  desiredResolution?: string;
+  desiredAudio?: boolean;
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -131,8 +164,12 @@ export type CardPayload = {
    *  estimatedPriceUsd (which is the record-only engine cost, ~2.5x lower). */
   estimatedCredits: number;
   /** Present only when this image card is the first step of a two-step video plan.
-   *  DISPLAY ONLY — an estimate of the follow-on video step's cost. Never used to charge. */
-  videoStep?: { estimatedCredits: number };
+   *  `estimatedCredits` is DISPLAY ONLY — an estimate of the follow-on video step's cost,
+   *  never used to charge. `next` is the FROZEN second step: present ⇒ once this image
+   *  lands the server mints the video confirmation card itself (`video-step-handoff.ts`),
+   *  so the merchant never has to carry the picture back. Absent ⇒ old card shape,
+   *  no handoff. Neither field ever moves money. */
+  videoStep?: { estimatedCredits: number; next?: VideoStepPlan };
   sourceGenerationId?: string;
   /** 这条创作的目的/意图（来自 propose 的资讯门）。展示/审计用。 */
   goal?: string;
@@ -557,7 +594,7 @@ export function buildDowngradeNote(
  *                        breath as the ownership check, never later.
  */
 export function buildProposeCard(
-  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredResolution" | "desiredAudio" | "count" | "forVideo">,
+  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredResolution" | "desiredAudio" | "count" | "forVideo" | "videoPrompt">,
   ctx: OttoContext,
   ownedEntities: ApprovedEntity[],
 ): ProposeCardResult {
@@ -862,6 +899,25 @@ export function buildProposeCard(
       }
     }
 
+    /**
+     * Step 4.6b(Codex E2E-CRE-PAV-004,规格 §5 2026-09-04)—— **第二步现在就得铸得出来**。
+     *
+     * 冻结计划的意思是「出图之后系统照它铸第二张卡」。那张卡是 `buildProposeCard` 自己铸的,
+     * 而铸视频卡的第一道闸是 `decideVideoAction`:提示词撑不起这个形状就抛。若等到出图之后
+     * 才发现撑不起,商家已经为第一步付过钱,而第二步永远不会出现 —— 一次沉默的半截任务。
+     *
+     * 所以在这里先用**同一个函数、同一个形状**(带首帧、无末帧、无参考片 = 第二步真正的形状)
+     * 对这段字问一次。撑不起 ⇒ 一张卡都不铸、$0(抛在落库与预扣之前),商家听到的是那句
+     * 本来就该在这时候说的话。
+     */
+    if (input.videoPrompt) {
+      const nextDecision = decideVideoAction({
+        prompt: input.videoPrompt,
+        shape: { hasStill: true, hasEndStill: false, hasClip: false },
+      });
+      if (nextDecision.kind === "ask") throw new VideoActionUnavailableError(nextDecision.question);
+    }
+
     try {
       const videoEstCredits = vm === null ? null : displayCredits(
         pricedGenCredits({
@@ -875,7 +931,24 @@ export function buildProposeCard(
           },
         }),
       );
-      if (videoEstCredits !== null) videoStep = { estimatedCredits: videoEstCredits };
+      if (videoEstCredits !== null) {
+        videoStep = {
+          estimatedCredits: videoEstCredits,
+          // 冻结计划与上面那个预估**共用同一份输入**,所以卡上写的价和第二张卡真正的价
+          // 出自同一条路。片子的提示词缺席 ⇒ 不冻结,老行为一格不动。
+          ...(input.videoPrompt
+            ? {
+                next: {
+                  structuredPrompt: input.videoPrompt,
+                  ...(input.desiredAspect ? { desiredAspect: input.desiredAspect } : {}),
+                  ...(typeof input.desiredDuration === "number" ? { desiredDuration: input.desiredDuration } : {}),
+                  ...(input.desiredResolution ? { desiredResolution: input.desiredResolution } : {}),
+                  ...(typeof input.desiredAudio === "boolean" ? { desiredAudio: input.desiredAudio } : {}),
+                },
+              }
+            : {}),
+        };
+      }
     } catch {
       // Best-effort — omit videoStep on any error
     }
