@@ -150,6 +150,14 @@ export const AUTH_WALL_EXEMPTIONS: readonly AuthWallExemption[] = [
     semantics: "exact",
     reason: "#796 platform deploy/load probe; ready true/false plus a reason word, no merchant data.",
   },
+  // Codex 全 beta 审计 P1-012:发布身份(sha/ref/迁移前沿)必须能被无会话的运维流程读到——
+  // 这正是它存在的理由(核对一次修复到底在哪次部署上验的)。与 api/health 同一份零数据契约:
+  // 不含 configFingerprint、env 变量名或任何商家数据(见 lib/build-info.ts)。
+  {
+    path: "api/build-info",
+    semantics: "exact",
+    reason: "P1-012 release identity probe; sha/ref/migration frontier only, no configFingerprint or merchant data.",
+  },
   // Meta 无认证调它,signed_request 就是它的认证。app/api/meta/data-deletion/ 下只有 route.ts,
   // 没有任何子回调(同级的 api/meta/authorize 与 api/meta/callback 是各自独立的路径,本来就在墙内)。
   {

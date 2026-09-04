@@ -169,4 +169,46 @@ describe("MerchantAccountMenu", () => {
     expect(document.querySelector("[data-shell-signout]")).toBeNull();
     expect(signOutAction).not.toHaveBeenCalled();
   });
+
+  /** P1-012(发布身份)— the menu is shared shell chrome, so it rides FRONT-A14's six-face pass. */
+  it("FRONT-A14: shows a compact build version row and copies the /api/build-info link", async () => {
+    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: clipboardWrite },
+      configurable: true,
+    });
+    const el = await render(
+      createElement(MerchantAccountMenu, {
+        account: { email: "owner@example.com", displayName: "Aisyah", balance: 1240 },
+        signOutAction: async () => {},
+        fetchBuildSha: async () => "abc123de",
+      }),
+    );
+    await openAccountMenu(el.querySelector<HTMLElement>("[data-shell-identity]")!);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const build = document.querySelector<HTMLElement>("[data-shell-build-info]");
+    expect(build?.textContent).toContain("Build abc123de");
+
+    await act(async () => build?.click());
+    expect(clipboardWrite).toHaveBeenCalledWith(expect.stringContaining("/api/build-info"));
+  });
+
+  it("FRONT-A14: no platform-injected sha (local dev) shows 'Build local', never a blank row", async () => {
+    const el = await render(
+      createElement(MerchantAccountMenu, {
+        account: null,
+        signOutAction: async () => {},
+        fetchBuildSha: async () => null,
+      }),
+    );
+    await openAccountMenu(el.querySelector<HTMLElement>("[data-shell-identity]")!);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector("[data-shell-build-info]")?.textContent).toContain("Build local");
+  });
 });
