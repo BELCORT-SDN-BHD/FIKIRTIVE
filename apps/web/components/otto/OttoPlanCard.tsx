@@ -389,6 +389,14 @@ export function OttoPlanCard({
               <div className="mt-1 text-[0.875rem] text-muted-foreground">
                 Then the video &mdash; <CardMoney>~{creditsLabel(videoCredits)}</CardMoney>
               </div>
+              {/* Codex E2E-CRE-PAV-004 —— 第二步的卡由服务端接力铸出(冻结计划在 `videoStep.next`),
+                  所以这里可以照实说下一步会自己出现。没有冻结计划的老卡不说这句:那种卡上
+                  第二步确实还得靠对话继续,承诺一件不会发生的事比不说更糟。 */}
+              {p.videoStep?.next ? (
+                <div className="mt-1 text-[0.75rem] text-muted-foreground">
+                  Once this picture is made, the video comes back for you to confirm on its own.
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="font-mono text-[11.5px] text-muted-foreground">
