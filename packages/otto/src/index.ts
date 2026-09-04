@@ -88,6 +88,12 @@ export {
   PARENT_POINTER_STALE_MESSAGE,
 } from "./storyboard-child-job.js";
 export type { ChildJob, PrismaTx } from "./storyboard-child-job.js";
+// Codex E2E-CRE-PAV-004 —— 两步任务的接力:Step 1 出图后由服务端铸第二张确认卡($0)。
+export { planVideoStepHandoff, buildVideoStepCardPayload, videoStepPlanOf } from "./video-step-handoff.js";
+export type { PreparedVideoStep, VideoStepCardPayload } from "./video-step-handoff.js";
+export type { VideoStepPlan } from "./skills/propose.helpers.js";
+// 媒体参考回执的唯一构造处 —— 铸卡入口(web 的一轮解析 / 接力)共用同一份口径。
+export { mediaReferenceReceipt, referenceLabel, UNTITLED_CANVAS_NAME } from "./media-reference.js";
 export { proposeResearchSkill } from "./skills/propose-research.js";
 export type { ResearchCardPayload, ResearchCardInput } from "./skills/propose-research.helpers.js";
 export {

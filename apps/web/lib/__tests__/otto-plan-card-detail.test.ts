@@ -794,6 +794,20 @@ describe("#580 r2 P1-1 渲染门与批准门是同一道门", () => {
     expect(broken).not.toContain("Two-step plan");
     expect(broken).not.toContain("Then the video");
   });
+
+  // Codex 只读 E2E E2E-CRE-PAV-004 —— 卡上那句「下一步会自己回来」只有在**真会自己回来**
+  // 时才许出现。判据是卡自己带没带冻结的第二步(`videoStep.next`),不是两步计划这个形状:
+  // 冻结计划之前铸的卡上,第二步确实还得靠对话继续,承诺一件不会发生的事比不说更糟。
+  it("CREATE-A1 带冻结的第二步 ⇒ 卡上说清下一步会自己回来;没带 ⇒ 一个字都不承诺", () => {
+    const twoStep = { ...VIDEO_PAYLOAD, kind: "image" as const, videoStep: { estimatedCredits: 12 } };
+    expect(renderCard(twoStep)).not.toContain("comes back for you to confirm");
+
+    const withHandoff = {
+      ...twoStep,
+      videoStep: { estimatedCredits: 12, next: { structuredPrompt: "she raises the tumbler and smiles" } },
+    };
+    expect(renderCard(withHandoff)).toContain("Once this picture is made, the video comes back for you to confirm on its own.");
+  });
 });
 
 describe("#580 r2 P1-2 畸形字段 = 不许批准", () => {
