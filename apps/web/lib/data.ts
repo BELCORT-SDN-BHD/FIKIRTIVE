@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@fikirtive/db";
-import { newId, storageKey, storageKeyToSrc } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc, merchantGenFailureCopy } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { tallyEntityUsage } from "./entity-usage";
 import { threadBadgeFromJobStatus } from "./thread-status";
@@ -47,10 +47,18 @@ export async function ensureDefaultProject(ownerId: string) {
   });
 }
 
+/** Pinned first, then most-recently-active first (Codex QA-CRE-006 —
+ *  `docs/specs/frontend-baseline.md` §5: the Create startup page's Canvas history was
+ *  oldest-first, the opposite of "recent activity first"). `updatedAt` is Prisma's
+ *  `@updatedAt` on `Project` (`packages/db/prisma/schema.prisma`) — it moves on rename,
+ *  pin/unpin and every `editJson` save (`actions.ts`'s `renameProject`,
+ *  `setProjectPinned`, and the edit-desk/cowork save paths), so it approximates recent
+ *  activity today; a canvas-node-only session (generate, chat — no rename/save) does not
+ *  yet touch it, which is the next-round gap this line registers. */
 export async function getProjects(ownerId: string) {
   return prisma.project.findMany({
     where: { ownerId, ...notDeleted },
-    orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { createdAt: "asc" }],
+    orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { updatedAt: "desc" }],
   });
 }
 
@@ -293,7 +301,14 @@ export async function getMyAds(ownerId: string, take = 60): Promise<AdItem[]> {
 }
 
 /** Otto ad jobs that are still running or failed — shown as status cards in Library → Ads.
- *  DONE jobs are excluded (they show as finished media via getMyAds). */
+ *  DONE jobs are excluded (they show as finished media via getMyAds).
+ *
+ *  Codex QA-CRE-007 — `error` is NOT the raw `GenJob.error` ops column any more. It is always a
+ *  sentence a merchant may read: the specific explanation when the worker's failure is one of
+ *  ours (`@fikirtive/core/gen-failure`'s whitelist), the honest generic line otherwise — never
+ *  the raw backend/provider string. The raw column stays in the database for support/debugging;
+ *  this field is the merchant-facing translation of it, computed once here rather than in the
+ *  card (single source, same table the canvas card and the cowork chat already read). */
 export type AdJobItem = { id: string; projectId: string; threadId: string; kind: "image" | "video"; status: "processing" | "failed"; prompt: string; createdAt: string; error: string };
 export async function getMyAdJobs(ownerId: string, take = 30): Promise<AdJobItem[]> {
   const { adJobStatusFromGenStatus } = await import("./ad-job-status");
@@ -313,7 +328,7 @@ export async function getMyAdJobs(ownerId: string, take = 30): Promise<AdJobItem
       kind: r.kind === "VIDEO" ? ("video" as const) : ("image" as const),
       status,
       prompt: r.prompt ?? "",
-      error: r.error ?? "",
+      error: status === "failed" ? merchantGenFailureCopy(r.error) : "",
       createdAt: r.createdAt.toISOString(),
     }];
   });

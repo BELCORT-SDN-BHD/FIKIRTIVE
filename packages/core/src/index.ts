@@ -101,6 +101,7 @@ export * from "./llm-prices.js";
 export * from "./pricing-config.js";
 export * from "./cost-pins.js";
 export * from "./finance-limits.js";
+export * from "./entity-policy.js";
 export * from "./reconcile-observations.js";
 export { GOAL_PRESETS, GOAL_KEYS, isGoalKey, type GoalKey } from "./goals.js";
 export * from "./model-config.js";
@@ -218,3 +219,8 @@ export * from "./campaign-lifecycle.js";
 // 引用选择器提交的「类型化 ID」词汇(前端基线规格 §7.3③)。放在 core 而不是 apps/web:
 // 服务端搜索、两处 `@` 菜单与将来落进消息的引用列读的必须是同一张类型表。
 export * from "./reference-ref.js";
+
+// 「这一件素材能不能当这一轮的参考」的唯一判据(Codex QA-CRE-FE9-013)。读者有六个:
+// composer 校验器、Otto 视觉、付费前守卫,以及 worker 的首帧/末帧/参考片/编辑底图 ——
+// 从前六处各写一份 where,六处都多写了一格 projectId,跨画布的参考于是被静默丢掉。
+export * from "./generation-reference.js";

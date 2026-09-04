@@ -98,6 +98,8 @@ spec_ref_paths() {
 # 触发 #1127——引用的规格刚被归档、改动文件又踩钱路地板,交付后的零行为维护两条路同时堵死。
 # 刻意在主 shell 里跑,不进子壳——命令替换里的 exit 只杀子壳,fail-closed 会被 if 吞掉。
 # 走通时把这次引用走的是哪条路写进全局 SPEC_REF_ROUTE(frozen / archived-light),供 m1 报绿用。
+# 2026-09-04:原来 `printf | grep -q` 在 pipefail 下会因 grep 先退出让 printf 收到 SIGPIPE(规格文件长到 5 万字节后在 CI 上稳定复现,
+# #1166 update-branch 后 M1/M3 把「已冻结 · v2」的 creation-engine.md 判成「既不是已冻结也不是归档」),改用 here-string 不走管道。
 validate_spec_ref() {
   local spec="$1" content
   SPEC_REF_ROUTE=""
@@ -106,11 +108,11 @@ validate_spec_ref() {
       "规格只在主干上有效(铁律 3):先把它以 docs-only PR 合进主干,再开产品 PR——" \
       "规格-only PR 走 docs 快路,几分钟的事,不是官僚主义。"
   fi
-  if printf '%s' "$content" | grep -qE '^>?[[:space:]]*状态(:|：).*已冻结'; then
+  if grep -qE '^>?[[:space:]]*状态(:|：).*已冻结' <<< "$content"; then
     SPEC_REF_ROUTE="frozen"
     return 0
   fi
-  if printf '%s' "$content" | grep -qE '^>?[[:space:]]*状态(:|：).*已交付.*归档'; then
+  if grep -qE '^>?[[:space:]]*状态(:|：).*已交付.*归档' <<< "$content"; then
     body_lines | grep -qE "$LIGHT_LINE_RE" || fail \
       "M 闸:主干上的 $spec 状态是「已交付 · 归档」——归档规格只能作轻改引用" \
       "(PR 描述须同时独立成行写  轻改: <勾选句>,自报零商家可见行为变化)。" \

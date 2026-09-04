@@ -6,6 +6,7 @@
  * 探测点;worker 每 60s 把心跳 upsert 进 WorkerHeartbeat 单行表,这里按时间差
  * 判活。逻辑纯函数化,便于单测;阈值 5 分钟 = 容忍一次部署重启窗口。
  */
+import { commitShaFrom, shortSha } from "@fikirtive/core/env-contract";
 
 /** worker 心跳超过这个毫秒数没更新 = stale。 */
 export const WORKER_STALE_MS = 5 * 60_000;
@@ -128,4 +129,35 @@ export function singleFlight<T>(work: () => Promise<T>): () => Promise<T> {
     pending = attempt;
     return attempt;
   };
+}
+
+/* ─── 构建身份(2026-09-04 Codex staging 审计)─────────────────────────────── */
+
+export type BuildInfo = { sha: string | null; ref: string | null };
+
+const isSet = (v: string | undefined): v is string => typeof v === "string" && v.trim() !== "";
+
+/**
+ * 这次响应到底是哪次部署吐出来的——此前 /api/health 完全不报,Codex 的 staging E2E
+ * 审计(docs/audits/creation-staging-product-avatar-video-2026-09-04.md,"Version and
+ * evidence boundary")因此没法把任何发现绑定到一次具体部署。
+ *
+ * sha 复用 packages/core 的 commitShaFrom/shortSha——worker 心跳(apps/worker/src/heartbeat.ts)
+ * 与 admin 的部署对比面板(apps/web/lib/deploy-fingerprint.ts)已经是同一对函数的权威读法,
+ * 这里不再另起一套(§7.3 单一权威)。平台今天只在 Railway 上跑,取值优先级仍按平台注入的
+ * 变量名区分:RAILWAY_GIT_COMMIT_SHA/RAILWAY_GIT_BRANCH 在先,VERCEL_GIT_COMMIT_SHA/
+ * VERCEL_GIT_COMMIT_REF 作后备(今天恒为空,只是不假设永远只有一个平台)。本机两者都没有
+ * 就是 null——绝不在运行时现取 git,也絶不假造一个。
+ *
+ * 只回 sha 与 ref 两个字段:不含 configFingerprint(那一格照 deploy-fingerprint.ts 的既有
+ * 纪律留在鉴权后的 admin 面),不含任何路径、变量名或时间戳——这是一个免鉴权端点。
+ */
+export function buildInfo(env: Record<string, string | undefined>): BuildInfo {
+  const sha = commitShaFrom(env) ?? (isSet(env.VERCEL_GIT_COMMIT_SHA) ? env.VERCEL_GIT_COMMIT_SHA.trim() : null);
+  const ref = isSet(env.RAILWAY_GIT_BRANCH)
+    ? env.RAILWAY_GIT_BRANCH.trim()
+    : isSet(env.VERCEL_GIT_COMMIT_REF)
+      ? env.VERCEL_GIT_COMMIT_REF.trim()
+      : null;
+  return { sha: shortSha(sha), ref };
 }

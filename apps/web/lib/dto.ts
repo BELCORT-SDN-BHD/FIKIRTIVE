@@ -1,5 +1,6 @@
 import "server-only";
 import { storageKey, coworkProposalSchema } from "@fikirtive/core";
+import { entityCapabilities, entityOrigin } from "@fikirtive/core/entity-policy";
 import { storage, kindOf } from "./storage";
 import { sanitizeUserError } from "./provider-secrecy";
 import type { EntityWithRefs, ChatThreadWithMessages } from "./data";
@@ -44,6 +45,11 @@ export function toEntityDTO(e: EntityWithOttoUsage): EntityDTO {
       refs: v.referenceImages.map(refOf),
     })),
     usageCount: e._count.shotRefs + (e._ottoUsageCount ?? 0),
+    // 官方目录只读(Founder 2026-08-30)。判据算在域层、只算这一次:UI 与 Otto 读的是
+    // 同一份 DTO,所以两边永远不会对「这一行能不能改」得出两个答案。server action 不
+    // 信这两格(客户端能编),它自己回数据库现读 catalogKey —— 同一个函数,同一个判据。
+    origin: entityOrigin(e),
+    capabilities: entityCapabilities(e),
   };
 }
 

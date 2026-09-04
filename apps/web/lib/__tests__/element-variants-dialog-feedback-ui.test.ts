@@ -2,6 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { capabilitiesForOrigin } from "@fikirtive/core/entity-policy";
 import type { EntityDTO } from "@/lib/types";
 
 const mocks = vi.hoisted(() => ({
@@ -50,6 +51,9 @@ const entity: EntityDTO = {
   baseAssetId: "asset-1",
   variants: [],
   usageCount: 0,
+  // 商家自己的元素 —— 能力表全开(官方目录只读的对照见 element-official-readonly-ui.test.tsx)。
+  origin: "USER",
+  capabilities: capabilitiesForOrigin("USER"),
 };
 
 const entityWithVariant: EntityDTO = {

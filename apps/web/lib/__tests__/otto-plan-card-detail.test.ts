@@ -101,8 +101,12 @@ const SERVER_PAYLOAD_KEYS = {
   estimatedCredits: true,
   videoStep: true,
   sourceGenerationId: true,
+  // Codex staging CRE-STG-P1-003:第一张之外的挂图 —— 卡上冻结,付费请求照它送参考图。
+  referenceGenerationIds: true,
   goal: true,
   referenceVideoGenerationId: true,
+  // Codex QA-CRE-FE9-013:媒体参考的审批回执 —— 卡面逐项列出、缺一件就不许 Generate。
+  mediaReferences: true,
 } satisfies Record<keyof Required<ServerCardPayload>, true>;
 
 const CARD_PAYLOAD_KEYS = {
@@ -122,8 +126,12 @@ const CARD_PAYLOAD_KEYS = {
   estimatedCredits: true,
   videoStep: true,
   sourceGenerationId: true,
+  // Codex staging CRE-STG-P1-003:第一张之外的挂图 —— 卡上冻结,付费请求照它送参考图。
+  referenceGenerationIds: true,
   goal: true,
   referenceVideoGenerationId: true,
+  // Codex QA-CRE-FE9-013:媒体参考的审批回执 —— 卡面逐项列出、缺一件就不许 Generate。
+  mediaReferences: true,
 } satisfies Record<keyof Required<OttoPlanCardPayload>, true>;
 
 describe("#580 P1-1 卡面 payload 类型 = 服务端契约", () => {
@@ -331,17 +339,19 @@ describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () 
     expect(markup).not.toMatch(/You asked for/);
   });
 
-  it("图片卡(#643 T2):引擎给不了的形状 —— 卡面照旧把降级说出口,而且规格里不出现那个比例", async () => {
-    const { buildProposeCard } = await import("@fikirtive/otto");
-    const { cardPayload } = buildProposeCard(
-      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "5:7", count: 3 },
-      { orgId: "o", userId: "u", projectId: "p", threadId: "t", disabledModels: [], sourceGenerationId: null } as never,
-      [],
-    );
-    const markup = renderCard(cardPayload);
-    expect(cardPayload.specChips).toEqual(["2048 × 2048", "1:1", "3 images"]);
-    expect(cardPayload.specChips).not.toContain("5:7");
-    expect(markup).toContain("You asked for 5:7 — this will be a square 2048 × 2048 image.");
+  // Codex QA-CRE-FE9-014(规格 §5 2026-09-04)—— 上一版这里渲染的是一张写着「1:1」的
+  // 付费卡外加一句「You asked for 5:7 — this will be a square…」。那张卡本身就是病:
+  // 商家的硬规格被改掉,却仍然请他批准。现在做不到的形状在铸卡前就被拒绝,所以这条
+  // 渲染用例改成钉「**没有卡可渲染**」—— 图片降级那句话从此没有生产者。
+  it("CREATE-A4 图片卡:引擎给不了的形状 —— 一张卡都不铸,没有可渲染的降级卡", async () => {
+    const { buildProposeCard, ProposeRefusal } = await import("@fikirtive/otto");
+    expect(() =>
+      buildProposeCard(
+        { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "5:7", count: 3 },
+        { orgId: "o", userId: "u", projectId: "p", threadId: "t", disabledModels: [], sourceGenerationId: null } as never,
+        [],
+      ),
+    ).toThrow(ProposeRefusal);
   });
 
   // ── #774 判官 r2 P1 —— 引擎认人的名字,商家在花钱之前就看得见 ──────────────
@@ -787,6 +797,20 @@ describe("#580 r2 P1-1 渲染门与批准门是同一道门", () => {
     const broken = renderCard({ ...twoStep, videoStep: { estimatedCredits: 0 } });
     expect(broken).not.toContain("Two-step plan");
     expect(broken).not.toContain("Then the video");
+  });
+
+  // Codex 只读 E2E E2E-CRE-PAV-004 —— 卡上那句「下一步会自己回来」只有在**真会自己回来**
+  // 时才许出现。判据是卡自己带没带冻结的第二步(`videoStep.next`),不是两步计划这个形状:
+  // 冻结计划之前铸的卡上,第二步确实还得靠对话继续,承诺一件不会发生的事比不说更糟。
+  it("CREATE-A1 带冻结的第二步 ⇒ 卡上说清下一步会自己回来;没带 ⇒ 一个字都不承诺", () => {
+    const twoStep = { ...VIDEO_PAYLOAD, kind: "image" as const, videoStep: { estimatedCredits: 12 } };
+    expect(renderCard(twoStep)).not.toContain("comes back for you to confirm");
+
+    const withHandoff = {
+      ...twoStep,
+      videoStep: { estimatedCredits: 12, next: { structuredPrompt: "she raises the tumbler and smiles" } },
+    };
+    expect(renderCard(withHandoff)).toContain("Once this picture is made, the video comes back for you to confirm on its own.");
   });
 });
 

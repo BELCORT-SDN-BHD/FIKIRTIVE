@@ -41,6 +41,7 @@ import {
 } from "@/lib/edit-desk-actions";
 import { startCaption, getCaptionJob, getRenderJobs } from "@/lib/actions";
 import { uploadFilesDirect } from "@/lib/direct-upload";
+import { UPLOAD_FAILURE_COPY } from "@fikirtive/core/upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import { UPLOAD_EXTS, mimeOf } from "@fikirtive/core/upload";
 import type { CutSummary, DeskMedia } from "@/lib/edit-desk";
@@ -310,6 +311,8 @@ export function EditDesk({ projectId }: { projectId: string }) {
       const outcome = await uploadFilesDirect([file], () => {});
       const failure = outcome.failures[0];
       if (failure) {
+        // `failure.reason` 已经是商家话(direct-upload 那一层收口,2026-09-03 走查 S2);
+        // 文件名留在前面,配乐一次只上传一首,商家看得出说的是哪一首。
         if (alive.current) setError(`${failure.filename}: ${failure.reason}`);
         return;
       }
@@ -322,7 +325,7 @@ export function EditDesk({ projectId }: { projectId: string }) {
       setMessage("That music is in your media — pick it below to lay it under the video.");
       await refresh();
     } catch {
-      if (alive.current) setError("That upload didn't go through — try again.");
+      if (alive.current) setError(UPLOAD_FAILURE_COPY.blocked);
     } finally {
       if (alive.current) setBusy(null);
       if (fileInput.current) fileInput.current.value = "";

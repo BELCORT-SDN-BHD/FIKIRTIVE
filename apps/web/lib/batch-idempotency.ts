@@ -36,8 +36,21 @@ export interface FactoryVideoOptions extends Record<string, string | number | bo
 }
 
 /** #642: the image shape frozen at enqueue — mirrors FactoryVideoOptions. */
-export interface FactoryImageOptions extends Record<string, string | boolean | undefined> {
+export interface FactoryImageOptions extends Record<string, string | boolean | string[] | undefined> {
   aspectRatio: string;
+  /**
+   * Codex staging CRE-STG-P1-003 —— 商家挂的**第一张之外**的图片参考,次序即引擎收到的次序。
+   *
+   * 为什么住在这一格,而不是 `GenJob` 上一列自己的列:`GenJob.sourceGenerationId` 是单值,
+   * 加一列复数列要动 prisma schema 与迁移,而这一趟的授权范围里没有它(Founder 未批的
+   * schema 变更不在本次修复的范围内)。`imageOptions` 正是「这一单图片作业在入队那一刻
+   * 冻结的规格快照」,worker 已经从它读画幅与组图开关 —— 参考图是同一类事实,同一个读者。
+   *
+   * 与 `coherentSet` 同一条纪律:**只在非空时出现**。挂 0 或 1 张的任务快照与这条修改之前
+   * 逐字相同,所以库里每一条既有行的幂等重放一格没变。进材料 = 「换了参考图就是换了内容」,
+   * 同一个动作的重试照旧复用,换了图的请求照实被判成另一件事。
+   */
+  referenceGenerationIds?: string[];
   /**
    * #777:这一单是不是**一组要连贯的图**(一次调用出齐整组)。
    *
@@ -86,6 +99,9 @@ export interface FactoryMaterialInput {
   audio?: boolean | null;
   /** #777:这 `count` 张是一组要连贯的图。image-only(视频侧没有这个能力)。 */
   coherentSet?: boolean | null;
+  /** CRE-STG-P1-003:第一张之外的图片参考(image-only)。来源只有一处 —— 服务端读出来的
+   *  那张持久化卡(`startCoworkGen`),调用方提交的同名字段永远到不了这里。 */
+  referenceGenerationIds?: string[] | null;
 }
 
 export type StoredFactoryMaterial = Omit<FactoryMaterial, "videoOptions" | "imageOptions" | "variantSel" | "threadId"> & {
@@ -215,6 +231,11 @@ export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMa
     ? {
         aspectRatio: input.aspectRatio ?? imageDefaults(input.model as GenModel).aspectRatio,
         ...(input.coherentSet === true && input.count >= COHERENT_SET_MIN_IMAGES ? { coherentSet: true as const } : {}),
+        // CRE-STG-P1-003:与 `coherentSet` 同一条「只在有内容时出现」的纪律 —— 见
+        // FactoryImageOptions 的注释:写一格空数组进去就会把库里每一条既有行判成材料不符。
+        ...(input.referenceGenerationIds?.length
+          ? { referenceGenerationIds: [...input.referenceGenerationIds] }
+          : {}),
       }
     : null;
 

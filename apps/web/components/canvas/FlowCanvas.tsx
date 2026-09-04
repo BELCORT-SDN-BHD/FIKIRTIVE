@@ -78,7 +78,24 @@ import {
 import { buildCanvasLineageTree } from "@/lib/canvas-lineage-tree";
 import { CanvasLineagePanel } from "./CanvasLineagePanel";
 import { CanvasComparePanel, type CanvasCompareCard } from "./CanvasComparePanel";
-import { canvasBatchDeleteCopy, canvasBatchSelection, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
+import {
+  CANVAS_DIALOG_SELECTOR,
+  CANVAS_EDITABLE_SELECTOR,
+  canvasBatchDeleteCopy,
+  canvasBatchSelection,
+  canvasDeleteKeyIds,
+  canvasDownloadFileName,
+  mergeReloadedCanvasNodes,
+} from "@/lib/canvas-selection";
+import {
+  CANVAS_FIT_EMPTY_RECT,
+  CANVAS_FIT_OVERLAY_SELECTORS,
+  canvasFitPadding,
+  canvasFitPaddingPx,
+  type CanvasFitPaddingPx,
+} from "@/lib/canvas-fit-padding";
+import { isTerminalCardStatus } from "@/lib/canvas-card-status";
+import { sameOriginDownloadUrl } from "@/lib/download-url";
 import {
   CANVAS_OTTO_CHAT_REQUIRED,
   canvasComposerReferenceForNode,
@@ -87,6 +104,7 @@ import {
 } from "@/lib/canvas-chat-reference";
 import {
   canvasMediaNodeSize,
+  canvasTerminalNodeSize,
   DEFAULT_CANVAS_MEDIA_NODE_SIDE,
   hasCanvasNodeSizeChanged,
   type CanvasMediaDimensions,
@@ -325,10 +343,23 @@ export default function FlowCanvas({
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [videoSubmitting, setVideoSubmitting] = useState(false);
-  const [pendingImageAction, setPendingImageAction] = useState<{
-    nodeId: string;
-    origin: "variant" | "edit";
-  } | null>(null);
+  /** 哪张卡的付费图片动作正在被接受（「再来一张」是这条路上唯一的按键 —— 卡下方那条
+   *  改写输入条按 Founder 2026-09-03 裁决①已退场）。 */
+  const [pendingImageAction, setPendingImageAction] = useState<{ nodeId: string } | null>(null);
+  /**
+   * QA-CRE-FE9-001（Founder 2026-09-04 07:05 裁决）——「Create variations」按下去的**意图**，
+   * 还不是一次付费动作。这一格里没有 action id、没有预留、没有 job：它只是这张卡此刻要送去的
+   * 那份材料，等商家在确认卡上按 `Generate · N credits` 才交给 `runImageEvolve`。
+   *
+   * 这条路此前走的是宪法例外①「余额即闸」（图片直出、不弹确认，Founder 2026-07-06 拍板）。
+   * 变体这一条按 07:05 裁决回到设计权威的 variation journey
+   * （`design-system/patterns/canvas/stitch-image-video-parity-spec.md:149`
+   *   `Select image → Variations → count/range/aspects → confirmation → side-by-side variants`）；
+   * 创作输入条那条直出路不在本次裁决范围内，一格没动。
+   */
+  const [pendingVariant, setPendingVariant] = useState<
+    { nodeId: string; prompt: string; aspect?: string; sourceUrl?: string } | null
+  >(null);
   const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
   // Creation S2 §8.1①(CREATE-A6)—— 精修那一格在**服务端说它卖得了**的时候才存在。
   // 菜单读不到 / 服务端说 null ⇒ 整格不渲染,而且这一趟一定按默认档走(见 `fineDetailOn`)。
@@ -442,13 +473,42 @@ export default function FlowCanvas({
 
   // Build a stable per-node onAnimate that reads generationId at call time
   const onAnimateByNode = useRef<Record<string, () => void>>({});
+
+  /**
+   * 「摆好这块板」要给固定覆盖层让出的四边留白 —— 量出来的,不是写死的(FRONT-A15)。
+   *
+   * 从前这里传的是一个标量 `0.22`,而标量在 React Flow 里是「四边各留 22%」。画布上钉住的东西
+   * 一个都不对称(Otto 当前轮卡在左上、Otto 输入框在下方正中、工具条纵列在它上面、模式条与
+   * 缩放簇在右侧),所以对称留白摆出来的画有一部分就压在覆盖层底下:走查实测「Fit to screen」
+   * 之后一张视频卡 45% 被压住,点它落在 Otto 输入框上(QA-CRE-008)。算法与选择器清单都在
+   * `lib/canvas-fit-padding.ts` 一处。
+   *
+   * **这块板上只有这一条摆位路**。从前 `<ReactFlow fitView fitViewOptions={{ padding: 0.22 }}>`
+   * 在挂载时先按老规矩摆一次,下面那条「每个项目摆一次」的 effect 再按安全区摆第二次 ——
+   * 两份留白,谁最后落地取决于时序,于是同一份代码有时把最上排的卡摆在安全区边上(操作条
+   * 伸出画板、被顶栏盖住 → 旅程 17 第⑤步红),有时摆在 22% 的对称留白里(绿)。挂载那一份
+   * 已经删掉:摆位只剩这一个来源。
+   */
+  const fitPadding = useCallback((): CanvasFitPaddingPx => {
+    const board = canvasHostRef.current?.getBoundingClientRect() ?? CANVAS_FIT_EMPTY_RECT;
+    const overlays = CANVAS_FIT_OVERLAY_SELECTORS
+      .flatMap((selector) => Array.from(document.querySelectorAll<HTMLElement>(selector)))
+      .map((element) => element.getBoundingClientRect());
+    // 带 `px` 交出去:光秃秃的数字在 React Flow 里是比例,不是像素(见 canvasFitPaddingPx)。
+    return canvasFitPaddingPx(canvasFitPadding(board, overlays));
+  }, []);
+
+  const fitBoard = useCallback((duration: number) => {
+    void flowRef.current?.fitView({ padding: fitPadding(), duration });
+  }, [fitPadding]);
+
   const scheduleFitView = useCallback(() => {
     if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
     fitTimerRef.current = window.setTimeout(() => {
       fitTimerRef.current = null;
-      void flowRef.current?.fitView({ padding: 0.22, duration: 160 });
+      fitBoard(160);
     }, 80);
-  }, []);
+  }, [fitBoard]);
 
   useEffect(() => () => {
     if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
@@ -715,7 +775,9 @@ export default function FlowCanvas({
     if (downloads.length === 0) return;
     for (const item of downloads) {
       const link = document.createElement("a");
-      link.href = item.url;
+      // 走查 P0-2:同源附件地址。`/files/…` 会 302 到 R2,`download` 跨源被忽略 ——
+      // 那样按「Download N」不是存下 N 个文件,而是把商家导航去最后一个文件的裸地址。
+      link.href = sameOriginDownloadUrl(item.url, item.fileName);
       link.download = item.fileName;
       link.rel = "noopener";
       document.body.appendChild(link);
@@ -724,6 +786,34 @@ export default function FlowCanvas({
     }
     toast.success(downloads.length === 1 ? "Saving 1 file." : `Saving ${downloads.length} files.`);
   }, []);
+
+  /**
+   * Save ONE card — the Download icon the approved canvas pattern puts on a picked artifact
+   * (`design-system/patterns/canvas/CanvasReference.tsx`).
+   *
+   * No new business layer and no new transfer path: it hands the board's existing
+   * `downloadSelection` a one-item list, and the file name comes from the same
+   * `canvasDownloadFileName` the "N selected" bar uses, so one card saved alone and the same card
+   * saved in a batch are named by the same rule. The card's media URL is read at press time from
+   * the live board rather than captured when the handler was made — a card resolves its media
+   * after it is placed, and a captured URL would be the empty one it had while queueing.
+   */
+  const onDownloadByNode = useRef<Record<string, () => void>>({});
+  const getOnDownload = useCallback((id: string): (() => void) => {
+    if (!onDownloadByNode.current[id]) {
+      onDownloadByNode.current[id] = () => {
+        const node = nodesRef.current.find((n) => n.id === id);
+        const url = typeof node?.data?.url === "string" ? node.data.url : "";
+        if (!node || !url) return;
+        const prompt = typeof node.data?.prompt === "string" ? node.data.prompt : null;
+        downloadSelection([{
+          url,
+          fileName: canvasDownloadFileName({ id, type: node.type, url, prompt }, 0, url),
+        }]);
+      };
+    }
+    return onDownloadByNode.current[id]!;
+  }, [downloadSelection]);
 
   // stable text-change
   const onTextChange = useCallback((id: string, text: string) => {
@@ -747,6 +837,7 @@ export default function FlowCanvas({
             ...updated.data,
             ...(!updated.data.onOpenDetail ? { onOpenDetail: getOnOpenDetail(id) } : {}),
             ...(!updated.data.onSendToOtto ? { onSendToOtto: sendSelectionToOtto } : {}),
+            ...(!updated.data.onDownload ? { onDownload: getOnDownload(id) } : {}),
             ...(n.type === "image" && !updated.data.onAnimate ? { onAnimate: getOnAnimate(id) } : {}),
             ...(!updated.data.onMediaSize ? { onMediaSize: getOnMediaSize(id) } : {}),
           };
@@ -754,7 +845,7 @@ export default function FlowCanvas({
         return updated;
       }),
     );
-  }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto]);
+  }, [getOnAnimate, getOnDownload, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto]);
 
   /**
    * Put down the card a press has just been accepted for.
@@ -791,6 +882,7 @@ export default function FlowCanvas({
             onRefresh: requestReload,
             onMediaSize: getOnMediaSize(n.id),
             onSendToOtto: sendSelectionToOtto,
+            onDownload: getOnDownload(n.id),
             // onAnimate added after generationId arrives via onResolve
           },
           style: { width: n.pos.w, height: n.pos.h, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
@@ -926,7 +1018,6 @@ export default function FlowCanvas({
     id: string,
     rawPrompt: string,
     aspect: string | undefined,
-    origin: "variant" | "edit",
   ): Promise<boolean> => {
     const text = rawPrompt.trim();
     if (!text) return false;
@@ -941,7 +1032,7 @@ export default function FlowCanvas({
       return false;
     }
     evolveBusyRef.current = true;
-    setPendingImageAction({ nodeId: id, origin });
+    setPendingImageAction({ nodeId: id });
     // #643 T2：「改这张图 / 再来一张」默认交付**和这张一样的形状**（那张卡自己记着的形状；
     // 记录不到的老图就是默认方图，那也正是它们当年真的形状）。商家在卡上换了形状，就带
     // 他换的那一格 —— 换形状是另一个动作，所以它进材料。
@@ -988,15 +1079,19 @@ export default function FlowCanvas({
     }
   }, [activeThreadId, costQuote, generateImage, projectId, spawnRect]);
 
-  const handleEvolve = useCallback((id: string, text: string, aspect?: string) => {
-    void runImageEvolve(id, text, aspect, "edit");
-  }, [runImageEvolve]);
-
   /** 事件处理里按 id 取同一件事（渲染期不许读 ref —— 那是 React 的规矩，也是本仓库的 lint 闸）。 */
   const nodeImageShape = useCallback((id: string): string | undefined => (
     recordedImageShape(nodesRef.current.find((n) => n.id === id), imageShape)
   ), [imageShape]);
 
+  /**
+   * 第一下只**开确认**（QA-CRE-FE9-001 / Founder 2026-09-04 07:05 裁决）。
+   *
+   * 这里一分钱都动不了：不建 action id、不 reserve、不建 job —— 只把这张卡此刻要送去的材料
+   * 记进 `pendingVariant`。真正的付费入口是确认卡上那颗 `Generate · N credits`，它调的仍是
+   * 同一个 `runImageEvolve`（同一条 `generateImage` 花钱路、同一份幂等边界），所以钱路语义
+   * 一格没变，变的只是**谁按了才算数**。
+   */
   const handleVariant = useCallback((id: string, aspect?: string) => {
     const node = nodesRef.current.find((n) => n.id === id);
     const prompt = typeof node?.data?.prompt === "string" ? node.data.prompt : "";
@@ -1004,8 +1099,16 @@ export default function FlowCanvas({
       toast.error("This image has no saved description to build on.");
       return;
     }
-    void runImageEvolve(id, prompt, aspect ?? nodeImageShape(id), "variant");
-  }, [runImageEvolve, nodeImageShape]);
+    const sourceUrl = typeof node?.data?.url === "string" ? node.data.url : undefined;
+    // 形状口径与裁决①后一模一样：卡自己记着的那一格（记录不到就是默认方图）。
+    const shape = aspect ?? nodeImageShape(id);
+    setPendingVariant({
+      nodeId: id,
+      prompt,
+      ...(shape ? { aspect: shape } : {}),
+      ...(sourceUrl ? { sourceUrl } : {}),
+    });
+  }, [nodeImageShape]);
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
   const addTextNode = useCallback(async () => {
@@ -1071,7 +1174,7 @@ export default function FlowCanvas({
             id: created.id,
             type: "image",
             position: { x, y },
-            data: { status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onSendToOtto: sendSelectionToOtto, onMediaSize: getOnMediaSize(created.id) },
+            data: { status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onSendToOtto: sendSelectionToOtto, onDownload: getOnDownload(created.id), onMediaSize: getOnMediaSize(created.id) },
             style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
             threadId: activeThreadId ?? null,
           },
@@ -1178,18 +1281,20 @@ export default function FlowCanvas({
   // must be loaded while the composer is visible — its cost label sits next to the
   // Generate button. Video/t2v quotes still load when their confirm dialogs open.
   const composerVisible = skin === "gb" ? composerOpen : true;
-  // Same rule for a selected card's attached bar and its "More like this" button: both show
-  // the exact price before submit (#550 ②, #547 A3/A4), so the quote has to be loaded while
-  // a card is selected. ensureModels caches after the first call, so re-selecting cards
+  // Same rule for a picked card's own priced buttons ("Create variations", "Animate"): each
+  // shows the exact price before submit (#550 ②, #547 A3/A4), so the quote has to be loaded
+  // while a card is selected. ensureModels caches after the first call, so re-selecting cards
   // costs no round trips.
   const cardBarVisible = nodes.some(
     (n) => (n.type === "image" || n.type === "video")
       && n.selected === true
       && imageNodeActionable(n.data as { status?: string; url?: string; generationId?: string }),
   );
+  // 变体确认卡把这个数渲染成商家正要批准的价（QA-CRE-FE9-001），所以它开着的时候也要有报价；
+  // 报不出来那颗 `Generate` 就不给按（与两个视频弹窗同一口径）。
   useEffect(() => {
-    if (composerVisible || cardBarVisible || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
-  }, [composerVisible, cardBarVisible, pendingAnimateId, t2vOpen, refreshCostQuote]);
+    if (composerVisible || cardBarVisible || pendingAnimateId !== null || t2vOpen || pendingVariant !== null) refreshCostQuote();
+  }, [composerVisible, cardBarVisible, pendingAnimateId, t2vOpen, pendingVariant, refreshCostQuote]);
 
   // Load (and, under the Grok-bright skin, bridge OTTO's chat results onto) the
   // canvas. The gb path resolves each node's media URL and ensures a node exists
@@ -1221,8 +1326,13 @@ export default function FlowCanvas({
     if (!("rows" in read)) return;
     const mapped = read.rows.map((r) => {
       nodeDataRef.current[r.id] = { generationId: r.generationId ?? undefined, pos: { x: r.x, y: r.y } };
+      // 一张已经停下来的卡永远没有媒体可量,所以 `canvasMediaNodeSize` 对它是空转,它会一直
+      // 顶着 320×320 的默认正方形站在出好的卡(实测 320×180)旁边(走查 QA-CRE-008「失败卡
+      // 过大、盖住工作区」)。收成同一块板上正常卡的外形,规则在 `lib/canvas-node-size.ts`。
       const nodeSize = (r.type === "image" || r.type === "video")
-        ? canvasMediaNodeSize({ width: r.mediaWidth, height: r.mediaHeight }, { w: r.w, h: r.h })
+        ? (isTerminalCardStatus(r.status)
+            ? canvasTerminalNodeSize({ w: r.w, h: r.h })
+            : canvasMediaNodeSize({ width: r.mediaWidth, height: r.mediaHeight }, { w: r.w, h: r.h }))
         : { w: r.w, h: r.h };
       return {
         id: r.id,
@@ -1259,6 +1369,7 @@ export default function FlowCanvas({
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
           onOpenDetail: r.type === "image" || r.type === "video" ? getOnOpenDetail(r.id) : undefined,
           onSendToOtto: r.type === "image" || r.type === "video" ? sendSelectionToOtto : undefined,
+          onDownload: r.type === "image" || r.type === "video" ? getOnDownload(r.id) : undefined,
           onMediaSize: r.type === "image" || r.type === "video" ? getOnMediaSize(r.id) : undefined,
         },
         style: { width: nodeSize.w, height: nodeSize.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
@@ -1274,7 +1385,7 @@ export default function FlowCanvas({
     // merchant has selected — the board reloads on a timer, and a selection that vanishes
     // mid-action is the board undoing their work (review P2-1).
     setNodes((prev) => mergeReloadedCanvasNodes(prev, mapped, removedNodeIdsRef.current));
-  }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload]);
+  }, [skin, projectId, onTextChange, getOnAnimate, getOnDownload, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload]);
   // keep reloadRef current (in an effect — refs must not be written during render);
   // declared before the consumers below, so it runs first within any commit.
   useEffect(() => { reloadRef.current = reload; }, [reload]);
@@ -1291,36 +1402,52 @@ export default function FlowCanvas({
     url: n.data?.url as string | null | undefined,
   }));
 
+  /** 这条对话此刻有没有 Otto 那边的付费生成在跑。 */
+  const ottoWorkActive = !!(activeThreadId && activity?.has(activeThreadId));
+
   // A direct canvas generation can finish after the original client poll was
   // interrupted. While a paid image/video card is still unresolved, keep asking
   // the server reload path to reconcile owned GenJobs into visible media.
+  //
+  // Otto 那条路也吃这条轮询(走查 P0-1):批准的那一瞬间画板会读一次,但那时任务刚建好,
+  // 服务端桥有可能还看不到它 —— 只读一次就赌上了那一次的时序,赌输就是商家看着空白画板
+  // 等到刷新。占位卡一旦放上去,`hasInFlightPaidNode` 会自己接手;在那之前由这一条兜着。
   useEffect(() => {
-    if (!hasInFlightPaidNode) return;
+    if (!hasInFlightPaidNode && !ottoWorkActive) return;
     const id = window.setInterval(() => {
       void reloadRef.current?.();
     }, 5000);
     return () => window.clearInterval(id);
-  }, [hasInFlightPaidNode]);
+  }, [hasInFlightPaidNode, ottoWorkActive]);
 
-  // ReactFlow's `fitView` prop only runs on mount, before our async canvas nodes arrive.
-  // Fit once per project after nodes load so left-edge node action buttons do not
-  // sit underneath the Otto panel and become visible-but-unclickable.
+  // 第一次摆位就在这里 —— ReactFlow 的 `fitView` prop 只在挂载时跑一次,而那时我们的卡还在
+  // 路上,所以它从来摆不到真正的内容;它按自己的一份留白摆出来的那一次,只会和这里打架
+  // (`fitPadding` 的说明记了它怎么让旅程 17 时红时绿),已经删掉。
+  // 每个项目摆一次,用的是量出来的安全区:卡的操作条不再伸到画板外被顶栏盖住,也不会藏在
+  // Otto 面板底下变成「看得见点不着」。
+  //
+  // **这一次不做动画**(`0`,而手动「Fit to screen」仍是 220ms)。开画布的第一眼没有「从哪里
+  // 来」可言 —— 动画是从一个商家根本没见过的取景滑过去,而且那 160ms 里板上的卡还在移动:
+  // 手已经伸出去的那一下会落空。旅程 17 第①步(在卡外面 24px 起手框选)因此间歇红:量卡的
+  // 位置与按下鼠标之间隔着几十毫秒,卡在这几十毫秒里挪了 50 多像素,框就框在旧位置上
+  // (2026-09-04 e2e 探针实测:同一次拖动里卡从 x=316 挪到 x=368,框选一张都没圈到)。
+  // 手动那一次不同:商家自己按下 Fit to screen,动画正是在告诉他板去了哪里。
   useEffect(() => {
     if (!flowReady || !flowRef.current || nodes.length === 0) return;
     const scope = projectId;
     if (fittedScopeRef.current === scope) return;
     fittedScopeRef.current = scope;
     requestAnimationFrame(() => {
-      void flowRef.current?.fitView({ padding: 0.22, duration: 160 });
+      fitBoard(0);
     });
-  }, [flowReady, nodes.length, projectId]);
+  }, [flowReady, nodes.length, projectId, fitBoard]);
 
   // When the active thread's OTTO work starts, reload so the server bridge can
   // place a pending GenJob card on the canvas. When it finishes, reload again
   // so the produced media replaces that pending card.
   const prevActivityRef = useRef<{ threadId: string | null; pending: boolean }>({ threadId: null, pending: false });
   useEffect(() => {
-    const pending = !!(activeThreadId && activity?.has(activeThreadId));
+    const pending = ottoWorkActive;
     const prev = prevActivityRef.current;
     const threadChanged = prev.threadId !== activeThreadId;
     if (pending && (!prev.pending || threadChanged)) {
@@ -1329,7 +1456,7 @@ export default function FlowCanvas({
       void reload();
     }
     prevActivityRef.current = { threadId: activeThreadId, pending };
-  }, [activity, activeThreadId, reload]);
+  }, [ottoWorkActive, activeThreadId, reload]);
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -1376,6 +1503,41 @@ export default function FlowCanvas({
     for (const id of deletes) void deleteCanvasNode(projectId, id);
   }, [projectId]);
 
+  /**
+   * Delete / Backspace takes the picked cards off the board (FRONT-A15).
+   *
+   * 走查 QA-CRE-002:选中一张卡按 Delete 与 Backspace,屏幕上什么都不发生。React Flow 自己的
+   * 删除键是**关着**的(`deleteKeyCode={null}`,下面那个 prop),因为它会不问一声就删,而在飞
+   * 的付费卡删掉不退款 —— 所以键盘这条路必须自己接,并且接到**已有的那两个确认框**上,不是
+   * 另开一条删除路:单张走 ✕/菜单同一个 `pendingDeleteId`(它带「还在生成、删了不退款」那句
+   * 警告),多张走批量确认框。已批准的设计夹具 `CanvasReference.tsx:470` 给的就是这个键。
+   *
+   * 选中状态只有一份 —— React Flow 记在卡上的 `selected`;这里读的是屏幕上那一份(会话过滤之后
+   * 的可见卡),看不见的卡不会被一次按键删掉。
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const ids = canvasDeleteKeyIds(
+        {
+          key: event.key,
+          editing: !!target?.closest?.(CANVAS_EDITABLE_SELECTOR),
+          dialogOpen: !!document.querySelector(CANVAS_DIALOG_SELECTOR),
+        },
+        filterNodesByConvo(nodesRef.current, activeThreadId, filterToConvo)
+          .filter((n) => n.selected === true)
+          .map((n) => n.id),
+      );
+      if (!ids) return;
+      // Backspace on a board is not the browser's "go back" — the press is ours now.
+      event.preventDefault();
+      if (ids.length === 1) setPendingDeleteId(ids[0]!);
+      else setPendingBatchDeleteIds(ids);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeThreadId, filterToConvo]);
+
   // Is the card awaiting delete a PAID generation still in flight? If so the confirm
   // must warn that removing won't refund and re-running charges again — this is what
   // stops the "delete a stuck-looking paid card → reclick → second charge" vector
@@ -1398,6 +1560,10 @@ export default function FlowCanvas({
   };
   const t2vCostLabel = specCostLabel(t2vSpec);
   const animateCostLabel = specCostLabel(animateSpec);
+  /** 变体确认卡上的那个数 —— 与卡上 tooltip 同一个服务端报价，界面一分钱都不自己算。 */
+  const variantCostLabel = typeof costQuote?.imageCredits === "number"
+    ? creditsLabel(costQuote.imageCredits)
+    : "checking exact cost";
   // #785 判官 r2 P1-a —— 出片框只在 @元素**真的会进引擎**时才提这件事。
   //
   // 承诺与执行必须同源:这个布尔值来自服务端解析的那一份(`getActiveGenModels`),而它读的
@@ -1441,20 +1607,15 @@ export default function FlowCanvas({
           ...n.data,
           selectedCount,
           sendToOttoTitle,
-          onEvolve: handleEvolve,
           onVariant: handleVariant,
           imageActionPending: pendingImageAction !== null,
-          imageVariantPending:
-            pendingImageAction?.nodeId === n.id && pendingImageAction.origin === "variant",
-          imageEvolvePending:
-            pendingImageAction?.nodeId === n.id && pendingImageAction.origin === "edit",
+          imageVariantPending: pendingImageAction?.nodeId === n.id,
           evolveCostHint,
           onOpenLineage: openLineage,
           // #643 T2: the shape a new take of THIS card will be delivered in — this card's own
           // recorded shape, so "make another one like this" keeps the shape by default. The menu
           // comes from the server; the card writes down nothing itself.
           imageShape: recordedImageShape(n, imageShape),
-          imageShapeOptions: imageShapeMenu?.options,
         }
       : n.type === "video"
         ? { ...n.data, selectedCount, sendToOttoTitle, onRemake: handleVideoRemake, remakeCostHint, onOpenLineage: openLineage }
@@ -1682,8 +1843,8 @@ export default function FlowCanvas({
             deleteKeyCode={null}
             proOptions={{ hideAttribution: true }}
             minZoom={0.1}
-            fitView
-            fitViewOptions={{ padding: 0.22 }}
+            // 这里**刻意没有** `fitView` / `fitViewOptions`:第一次摆位由下面那条 effect 用
+            // `fitPadding()` 做,和「Fit to screen」同一个来源(见 fitPadding 的说明)。
           >
             <Background />
           </ReactFlow>
@@ -2017,7 +2178,7 @@ export default function FlowCanvas({
               type="button"
               variant="ghost"
               size="icon-sm"
-              onClick={() => void flowRef.current?.fitView({ padding: 0.22, duration: 220 })}
+              onClick={() => fitBoard(220)}
             >
               <Maximize2 aria-hidden="true" strokeWidth={1.9} />
             </TooltipButton>
@@ -2120,6 +2281,84 @@ export default function FlowCanvas({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/* QA-CRE-FE9-001 —— 变体的付费确认卡（Founder 2026-09-04 07:05 裁决）。
+          承载它的就是 Animate／出片框那一家的 `Dialog`，不另发明第二套确认 UI；内容按设计权威
+          `stitch-image-video-parity-spec.md` §5「Paid generation confirmation」：要生成的东西、
+          数量、比例、用到的材料、准确 credits，primary CTA `Generate · N credits`。
+          这张卡开着的时候一分钱都还没动 —— 第一次点击不建 job、不进账本。 */}
+      <Dialog
+        open={pendingVariant !== null}
+        onOpenChange={(open) => { if (!open && pendingImageAction === null) setPendingVariant(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Make another one like this?</DialogTitle>
+            <DialogDescription>
+              Cost: {variantCostLabel}. No charge until you confirm.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3">
+            {pendingVariant?.sourceUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- 画布媒体一律签名 URL，与卡片同一条路
+              <img
+                src={pendingVariant.sourceUrl}
+                alt=""
+                className="size-20 shrink-0 rounded-[var(--radius-sm)] border border-border object-cover"
+              />
+            ) : null}
+            <dl className="min-w-0 flex-1 space-y-1 text-sm">
+              <div className="flex gap-2">
+                <dt className="text-muted-foreground">Images</dt>
+                <dd className="tabular-nums">{CANVAS_IMAGE_DEFAULT_COUNT}</dd>
+              </div>
+              {pendingVariant?.aspect ? (
+                <div className="flex gap-2">
+                  <dt className="text-muted-foreground">Shape</dt>
+                  <dd>{pendingVariant.aspect}</dd>
+                </div>
+              ) : null}
+              <div className="flex min-w-0 gap-2">
+                <dt className="shrink-0 text-muted-foreground">From</dt>
+                <dd className="min-w-0 line-clamp-3 text-muted-foreground">{pendingVariant?.prompt}</dd>
+              </div>
+            </dl>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              disabled={pendingImageAction !== null}
+              onClick={() => setPendingVariant(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={!costQuote || pendingImageAction !== null}
+              aria-live="polite"
+              onClick={async () => {
+                const intent = pendingVariant;
+                if (!intent) return;
+                // 这一按才是付费动作：稳定 action id → reserve → provider job，全在
+                // `runImageEvolve` 里，与改动前逐字一样（含 `evolveBusyRef` 那道防双击闸）。
+                if (await runImageEvolve(intent.nodeId, intent.prompt, intent.aspect)) {
+                  setPendingVariant(null);
+                }
+              }}
+            >
+              {!costQuote ? (
+                <>
+                  <Spinner data-icon="inline-start" aria-hidden="true" />
+                  Checking cost…
+                </>
+              ) : pendingImageAction !== null ? (
+                <>
+                  <Spinner data-icon="inline-start" aria-hidden="true" />
+                  Starting…
+                </>
+              ) : `Generate · ${creditsLabel(costQuote.imageCredits)}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={pendingAnimateId !== null} onOpenChange={(open) => { if (!open && !videoSubmitting) { setPendingAnimateId(null); setMotion("gentle"); setCustomMotion(""); } }}>
         <DialogContent>
           <DialogHeader>
@@ -2130,7 +2369,10 @@ export default function FlowCanvas({
           </DialogHeader>
           <div className="flex flex-col gap-2.5">
             {/* #645 T4 — the spec this clip will be made in. Shape defaults to Adaptive here:
-                with a source image the engine follows that image instead of being told a ratio. */}
+                with a source image the engine follows that image instead of being told a ratio.
+                CREATE-A3(§8.2 批 II):声音那一格现在自报接线 —— 从这个 picker 的 onChange
+                到付费请求体之间 `audio` 一路不掉(`clampVideoSpec` 保留它,`useCanvasGen`
+                的 animate 请求体带上它),开关拨了真的算数,不是收了钱的假控件。 */}
             {videoSpecMenu && animateSpec && (
               <VideoSpecPicker
                 value={animateSpec}
@@ -2138,6 +2380,7 @@ export default function FlowCanvas({
                 onChange={setAnimateSpec}
                 disabled={videoSubmitting}
                 hasSourceImage
+                audioToggle
               />
             )}
             <ToggleGroup
@@ -2233,13 +2476,15 @@ export default function FlowCanvas({
             onChange={(t, ids, vsel) => { setT2vPrompt(t); setT2vIds(ids); setT2vVariantSel(vsel); }}
           />
           {/* #645 T4 — the spec this clip will be made in. No source image here, so the shape
-              default is the model's own t2v default (16:9), not Adaptive. */}
+              default is the model's own t2v default (16:9), not Adaptive.
+              CREATE-A3(§8.2 批 II):声音那一格与上面的 Animate 弹窗同一条接线口径。 */}
           {videoSpecMenu && t2vSpec && (
             <VideoSpecPicker
               value={t2vSpec}
               menu={videoSpecMenu.menu}
               onChange={setT2vSpec}
               disabled={videoSubmitting}
+              audioToggle
             />
           )}
           <DialogFooter>

@@ -210,7 +210,10 @@ function buttonsLabelled(text: string): HTMLButtonElement[] {
   return [...container!.querySelectorAll("button")].filter((b) => b.textContent === text);
 }
 
+/** 批量条上的那颗(FlowCanvas 的「N selected」条),本段没有改名。 */
 const SEND_TO_OTTO = "Send to Otto";
+/** 卡上自己的那颗。已批准的 canvas pattern 把它叫 Edit with Otto —— 与批量条不是同一颗键。 */
+const EDIT_WITH_OTTO = "Edit with Otto";
 
 describe("clicking a card just picks it up (#604 · D6)", () => {
   it("hands Otto nothing — browsing costs the merchant no side effects", async () => {
@@ -276,10 +279,10 @@ describe("sending cards to Otto is its own button (#604 · D6)", () => {
     await renderBoard({ onReferenceInChat });
 
     // Nothing picked yet — nothing to send.
-    expect(buttonsLabelled(SEND_TO_OTTO)).toHaveLength(0);
+    expect(buttonsLabelled(EDIT_WITH_OTTO)).toHaveLength(0);
 
     select(["n1"]);
-    const send = buttonsLabelled(SEND_TO_OTTO);
+    const send = buttonsLabelled(EDIT_WITH_OTTO);
     expect(send).toHaveLength(1);
 
     await act(async () => { send[0]!.click(); });
@@ -318,7 +321,7 @@ describe("sending cards to Otto is its own button (#604 · D6)", () => {
     await renderBoard();
 
     select(["n1"]);
-    await act(async () => { buttonsLabelled(SEND_TO_OTTO)[0]!.click(); });
+    await act(async () => { buttonsLabelled(EDIT_WITH_OTTO)[0]!.click(); });
 
     expect(mocks.toastError).not.toHaveBeenCalled();
     expect(mocks.toastMessage).toHaveBeenCalledTimes(1);
@@ -519,6 +522,6 @@ describe("with several cards picked, only the batch bar acts on them (#604 r2 P2
     const toolbars = container!.querySelectorAll(".cv-node-toolbar");
     expect(toolbars).toHaveLength(1);
     expect(toolbars[0]!.closest("[data-node]")!.getAttribute("data-node")).toBe("n1");
-    expect(buttonsLabelled(SEND_TO_OTTO)).toHaveLength(1);
+    expect(buttonsLabelled(EDIT_WITH_OTTO)).toHaveLength(1);
   });
 });

@@ -222,3 +222,61 @@ export const finalizeUploadsInput = z
   .object({ files: z.array(finalizedUpload).min(1).max(50) })
   .strict();
 export type FinalizeUploadsInput = z.infer<typeof finalizeUploadsInput>;
+
+/**
+ * 上传失败时商家读到的**唯一**两句话（2026-09-03 staging 走查 S2）。
+ *
+ * 走查现场:staging 的存储桶 CORS 把浏览器直传挡在门外,商家看到的是上传库自己的原话
+ * 「Unknown error」——既没告诉他发生了什么,也没给他下一步,而「Unknown error」这四个字
+ * 本身就是我们在替一个第三方库对商家说话。同一族的漏法还有三处组件里的
+ * `err.message` 直出:任何一层抛上来的字符串都能原样上屏。
+ *
+ * 所以话在这里定,只定两句 —— 因为商家真正需要区分的只有两件事:
+ *   `blocked`  文件本身没问题,是这一趟没走通(断网、被拦、传到一半断) → 再试一次就有救。
+ *   `rejected` 这个文件我们收不了(类型不在允许名单、空文件、超过上限) → 换一个文件才有救。
+ * 把两者混成一句,就会让「换个文件」和「再试一次」这两条互斥的出路互相盖掉。
+ *
+ * 摆在 upload.ts 而不是 apps/web:这两句引用的上限就定义在本文件上面几十行
+ * ({@link UPLOAD_MAX_BYTES}),放一起才不会出现「话说 2 GB、闸放 4 GB」那种漂移;
+ * 而且浏览器端(direct-upload.ts)与服务端两边都能读同一份,不必抄第二遍。
+ *
+ * 白标纪律照旧:不出现库名、供应商名、HTTP 状态码或任何技术名词 —— 底层细节只进日志
+ * (`reportDirectUploadFailure`),不进界面。
+ */
+export type UploadFailureCategory = "blocked" | "rejected";
+
+/** 上限说给商家听的说法。数字算自 {@link UPLOAD_MAX_BYTES},不写第二遍。 */
+export const UPLOAD_MAX_LABEL = `${Math.round(UPLOAD_MAX_BYTES / (1024 * 1024 * 1024))} GB`;
+
+export const UPLOAD_FAILURE_COPY: Record<UploadFailureCategory, string> = {
+  blocked: "We couldn’t upload that file. Check your connection and try again.",
+  rejected: `We can’t use that file. Pick an image, video, or audio file under ${UPLOAD_MAX_LABEL}.`,
+};
+
+/**
+ * 直传失败向服务端报的那一笔（2026-09-03 staging 走查 S3）。
+ *
+ * 走查现场的第二条缺陷:直传是浏览器→存储桶,失败**完全不经过我们的服务器**,所以
+ * staging 那次商家撞墙时,web 日志里一行都没有。没有日志 = 只能等商家开口 = 我们永远
+ * 是最后一个知道的人。
+ *
+ * 字段是一份**封闭集**,不是一个自由文本通道 —— 这是刻意的:
+ *   - 没有文件内容、没有文件名、没有 URL。预签名 URL 的 query 里带签名,一旦让原始错误
+ *     串搭车进来,凭据就会从浏览器流进日志。所以这里连原始 message 都不收。
+ *   - 没有 orgId 字段。租户身份只能来自已认证的 server principal(`requireOwner()`),
+ *     客户端说自己是谁一律不算数。
+ *   - `httpStatus` 是数字,`stage`/`category` 是枚举 —— 三个都无法夹带任意字符串。
+ */
+export const directUploadFailureReport = z
+  .object({
+    /** 哪一步断的:浏览器自己的预检、向服务端要授权、还是真正传字节。 */
+    stage: z.enum(["precheck", "authorize", "transfer"]),
+    category: z.enum(["blocked", "rejected"]),
+    /** 允许名单里的扩展名;认不出扩展名的文件报 null(不回传原始文件名)。 */
+    ext: z.string().regex(/^[a-z0-9]{1,8}$/).nullable(),
+    sizeBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    /** 传输层拿得到就带上(0 / 缺失 ≈ 被 CORS 或断网掐掉),拿不到就 null。 */
+    httpStatus: z.number().int().min(0).max(599).nullable(),
+  })
+  .strict();
+export type DirectUploadFailureReport = z.infer<typeof directUploadFailureReport>;
