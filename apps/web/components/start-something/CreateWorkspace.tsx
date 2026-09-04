@@ -19,6 +19,12 @@
  * The empty state is production-necessary and the design fixture has none (it always ships three
  * canvases), so it uses the design system's own `Empty` primitive — Founder rule ②.
  *
+ * Also production-necessary and absent from the fixture (its three sample names are already short):
+ * the row's visible name runs through `formatCanvasTitle` (`@/lib/canvas-title`), so a legacy
+ * placeholder ("New project", …) reads as canvas vocabulary and a long auto-titled prompt collapses
+ * to one scannable line; the untruncated name (`canvasDisplayName`) sits on the row's `title=` so it's
+ * still one hover away. Codex QA-CRE-006 — `docs/specs/frontend-baseline.md` §5.
+ *
  * Data comes from `CreateWorkspaceEntry`, the controlled server adapter: this component reads no
  * session, no database and no server action, exactly like the shell it replaced.
  */
@@ -29,6 +35,7 @@ import { CREATE_NAV_LABEL } from "@fikirtive/core/navigation";
 import { canvasHref } from "@/components/canvas/canvas-href";
 import { StartSomething } from "@/components/start-something/StartSomething";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { canvasDisplayName, formatCanvasTitle } from "@/lib/canvas-title";
 
 export interface CreateWorkspaceProject {
   id: string;
@@ -81,10 +88,10 @@ export function CreateWorkspace({ projects }: { projects: CreateWorkspaceProject
           <ul className="mt-3">
             {projects.map((project) => (
               <li key={project.id} className="border-b border-border">
-                <Link href={canvasHref(project.id)} className="group flex items-center gap-3 rounded-[var(--radius)] px-1 py-3 outline-none transition-colors duration-[var(--dur-1)] ease-[var(--ease-standard)] hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/40 motion-reduce:transition-none">
+                <Link href={canvasHref(project.id)} title={canvasDisplayName(project.name)} className="group flex items-center gap-3 rounded-[var(--radius)] px-1 py-3 outline-none transition-colors duration-[var(--dur-1)] ease-[var(--ease-standard)] hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/40 motion-reduce:transition-none">
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius)] bg-muted"><PanelsTopLeft className="size-4" aria-hidden /></span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold">{project.name}</span>
+                    <span className="block truncate text-sm font-semibold">{formatCanvasTitle(project.name)}</span>
                     <span className="mt-0.5 block truncate text-xs text-muted-foreground">Updated {project.updatedLabel}</span>
                   </span>
                   <ArrowUpRight className="size-4 text-muted-foreground" aria-hidden />

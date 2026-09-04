@@ -23,6 +23,7 @@ import path from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { canvasDisplayName, formatCanvasTitle } from "@/lib/canvas-title";
 
 vi.mock("@/lib/canvas-entry-actions", () => ({ createCanvasConversation: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -181,5 +182,40 @@ describe("FRONT-A12 起步页不出现夹具数据,也不出现没有契约的�
     expect(PRODUCTION_COMPOSER_CODE).not.toContain("Choose from Library");
     expect(PRODUCTION_COMPOSER_CODE).not.toContain("Add URL");
     expect(PRODUCTION_COMPOSER_CODE).not.toContain("DropdownMenu");
+  });
+});
+
+describe("FRONT-A15 Canvas history 行的显示层映射（判官 #1174 P2：接线本身此前无测试守）", () => {
+  // `canvas-title.test.ts` 钉的是 `formatCanvasTitle`/`canvasDisplayName` 这两个纯函数
+  // 本身；这里钉的是 `CreateWorkspace.tsx` 真的把它们接到了 DOM 上——把 `:94` 的
+  // `formatCanvasTitle(project.name)` 改回裸的 `{project.name}`，或者删掉 `:91` 的
+  // `title={canvasDisplayName(project.name)}`，下面两条断言要先红。
+
+  it("FRONT-A15 legacy 占位名（\"New project\"）在起步页显示为今天的画布词汇，不是裸库名", async () => {
+    const legacyName = "New project";
+    const dom = await renderWorkspace([{ id: "p-legacy", name: legacyName, updatedLabel: "1 Aug 2026" }]);
+
+    const visible = dom.querySelector<HTMLSpanElement>("ul > li > a span.block.truncate.text-sm.font-semibold");
+    expect(visible?.textContent).toBe(formatCanvasTitle(legacyName));
+    expect(visible?.textContent).toBe("New canvas");
+    expect(visible?.textContent).not.toBe(legacyName); // 裸库名 "New project" 不该直接进商家看到的 DOM
+
+    const link = dom.querySelector<HTMLAnchorElement>("ul > li > a");
+    expect(link?.getAttribute("title")).toBe(canvasDisplayName(legacyName));
+  });
+
+  it("FRONT-A15 很长的 prompt 名：可见行截断带省略号，title= 是没截断的完整名", async () => {
+    const longName =
+      "Warm golden hour lifestyle photo of a young family unboxing a new tea gift set on their dining table with soft morning light streaming through the window and steam rising from the teapot";
+    const dom = await renderWorkspace([{ id: "p-long", name: longName, updatedLabel: "3 Aug 2026" }]);
+
+    const visible = dom.querySelector<HTMLSpanElement>("ul > li > a span.block.truncate.text-sm.font-semibold");
+    expect(visible?.textContent).toBe(formatCanvasTitle(longName));
+    expect(visible?.textContent).not.toBe(longName); // 一行放不下,必须截断
+    expect(visible?.textContent?.endsWith("…")).toBe(true);
+
+    const link = dom.querySelector<HTMLAnchorElement>("ul > li > a");
+    expect(link?.getAttribute("title")).toBe(canvasDisplayName(longName));
+    expect(link?.getAttribute("title")).toBe(longName); // title= 兜住完整名,不截断——一次 hover 就够
   });
 });
