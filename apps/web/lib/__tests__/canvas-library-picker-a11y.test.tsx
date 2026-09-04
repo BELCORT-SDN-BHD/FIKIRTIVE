@@ -18,6 +18,12 @@
  * 「来源」(generated in this Canvas / uploaded)这一段有意不做:`LibraryItem`
  * (`lib/library-actions.ts`)当前不带画布名或上传/生成的区分,编一个就是向商家撒谎。
  *
+ * 2026-09-04 Codex staging 审计 **LIB-STG-P2-005** 追加:名字本身(整段生成提示词)也可能过
+ * 长甚至重复两遍。截断/去重规则挪进单一源头 `lib/library-item-a11y.ts`(`StuffLibrary.tsx`
+ * 的 Library 主网格同一个 helper),这里的用例照该模块的规则更新了预期值——超过 60 字符的
+ * 默认夹具因此改成带省略号的短标题,其余短提示词不受影响。规则本身的用例在
+ * `lib/__tests__/library-item-a11y.test.ts`。
+ *
  * 挂法照抄 `library-failure-human-copy.test.ts` 的配方(`react-dom/client` 的 `createRoot` +
  * `act`,这个仓库没有 `@testing-library/react`);Dialog 的 polyfill 抄
  * `overlay-design-system.test.tsx`(`ResizeObserver`/pointer capture/`scrollIntoView` 存根,
@@ -102,12 +108,18 @@ function pickerButtons(): HTMLButtonElement[] {
 }
 
 describe("E2E-CRE-PAV-006 / FRONT-A14: Library picker items are readable by keyboard and screen reader", () => {
-  it("FRONT-A14: an image item's button carries an accessible name — asset title + media type", async () => {
+  it("FRONT-A14: an image item's button carries an accessible name — CONCISE asset title + media type, not the raw prompt", async () => {
     await mountPicker([item()]);
     const buttons = pickerButtons();
     expect(buttons).toHaveLength(1);
+    // The fixture prompt is 65 chars — over the 60-char title cap (lib/library-item-a11y.ts),
+    // so it truncates on a word boundary with an ellipsis instead of reading the full prompt.
     expect(buttons[0]!.getAttribute("aria-label")).toBe(
-      "A premium coral-orange insulated tumbler, ribbed grip, silver lid, image",
+      "A premium coral-orange insulated tumbler, ribbed grip,…, image",
+    );
+    // The full prompt is not lost — it still reaches sighted users/tooltips via `title`.
+    expect(buttons[0]!.getAttribute("title")).toBe(
+      "A premium coral-orange insulated tumbler, ribbed grip, silver lid",
     );
   });
 
