@@ -44,6 +44,10 @@
       "types": "./dist/env-contract.d.ts",
       "default": "./dist/env-contract.js"
     },
+    "./entity-policy": {
+      "types": "./dist/entity-policy.d.ts",
+      "default": "./dist/entity-policy.js"
+    },
     "./finance-limits": {
       "types": "./dist/finance-limits.d.ts",
       "default": "./dist/finance-limits.js"

@@ -245,8 +245,9 @@ describe("CREATE-A3:视频声音开关", () => {
  *
  * 所以这里钉两条:
  *   ① 没自报 `audioToggle` 的调用点,屏幕上根本没有这一格(默认关,新入口不会误开);
- *   ② 画布那两处 picker 至今没有自报 —— 等 §8.2 批 II 把 clamp 与两处请求体收口后,
- *      改这条断言与那两处渲染是同一次改动,漏一边就红。
+ *   ② 画布那两处 picker 自报了 `audioToggle`,**当且仅当**画布的提交路真的把 audio 发出去
+ *      ——「显示开关」与「发得出去」写在同一条断言里,漏一边就红(§8.2 批 II 2026-09-04
+ *      收口,触发＝Codex QA-CRE-001;行为级证据在 canvas-video-audio-submit.test.ts)。
  */
 describe("CREATE-A3 围栏:没接线的面上不许出现声音开关", () => {
   it("CREATE-A3:调用点不自报 audioToggle ⇒ 规格选择器上没有声音这一格", async () => {
@@ -269,15 +270,20 @@ describe("CREATE-A3 围栏:没接线的面上不许出现声音开关", () => {
     host.remove();
   });
 
-  it("CREATE-A3:画布两条视频路在把 audio 发出去之前,不许自报 audioToggle", () => {
+  it("CREATE-A3:画布显示声音开关,当且仅当画布的提交路真的把 audio 发出去", () => {
     // jsdom 下 import.meta.url 是 http: —— 只能走 cwd(vitest 的根就是 apps/web,
     // 与 canvas-click-semantics.test.ts 读 globals.css 同一套)。
     const read = (rel: string) => readFileSync(join(process.cwd(), "components", "canvas", rel), "utf8");
     const canvasUi = read("FlowCanvas.tsx");
     const canvasSubmit = read("useCanvasGen.ts");
-    // 前提:画布的提交路今天确实不带 audio。这一条一旦不成立(批 II 收口了),
-    // 下面那条断言就该跟着改成「必须自报」—— 两条一起改,才不会一边接线一边忘了开开关。
-    expect(/\baudio\b/.test(canvasSubmit), "useCanvasGen 开始发 audio 了 ⇒ 该把画布两处 audioToggle 打开并改这条围栏").toBe(false);
-    expect(canvasUi.includes("audioToggle"), "画布提交路还没带 audio,不许在画布上渲染声音开关").toBe(false);
+    const clamp = readFileSync(join(process.cwd(), "lib", "video-spec.ts"), "utf8");
+    // 三段接线缺一不可,而且它们必须**一起**成立:clamp 保住 audio、两处付费请求体带上
+    // audio、画布两个弹窗才许自报 audioToggle。任何一段被回退,这条就红。
+    const submitSends = (canvasSubmit.match(/audio: spec\.audio/g) ?? []).length;
+    const clampKeeps = /typeof spec\?\.audio === "boolean"/.test(clamp);
+    const uiShows = (canvasUi.match(/audioToggle/g) ?? []).length;
+    expect(clampKeeps, "clampVideoSpec 必须保留 audio,否则开关在提交前被静默抹掉").toBe(true);
+    expect(submitSends, "useCanvasGen 的 animate 与 t2v 两处请求体都要带 audio").toBe(2);
+    expect(uiShows, "画布 Animate 与 t2v 两个弹窗都要自报 audioToggle").toBe(2);
   });
 });

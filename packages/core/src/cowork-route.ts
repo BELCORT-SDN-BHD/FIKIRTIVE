@@ -4,6 +4,7 @@ import {
   GEN_IMAGE_MODEL_OPTIONS,
   imageDefaults,
   normalizeImageAspect,
+  routeVideoModel,
   videoDefaults,
   VIDEO_ASPECT_ADAPTIVE,
   type GenModel,
@@ -15,6 +16,18 @@ export interface SuggestModelInput {
   kind: "image" | "video";
   desiredAspect?: string;
   desiredDuration?: number;
+  /**
+   * 商家点名的**画质档**(480p / 720p / 1080p)。视频专用;省略 = 一格不动,
+   * 槽位与档位照旧由默认槽位自己声明的默认值决定。
+   *
+   * Creation S2 §8.1①(CREATE-A4)—— 给了值就是「商家说了话」,于是两件事跟着变:
+   *   ① **档位挑槽位**,走的是人工路那一个 `routeVideoModel`(1080p → 高清槽位,
+   *      其余 → 默认槽位),所以对话路与人工路不可能为同一句话挑出两台引擎;
+   *   ② 档位吸附到该槽位的能力表,吸不上 ⇒ `downgraded` 为 true。
+   *      **本函数不拒绝**(它的 null 只有一个含义:引擎被关掉了)——「拒绝还是降级」
+   *      由铸卡侧判,判据是「卡上这一格 ≠ 商家点名的那一格」。
+   */
+  desiredResolution?: string;
   desiredAudio?: boolean;
   hasSourceImage?: boolean;
   hasTail?: boolean;
@@ -89,11 +102,16 @@ export function suggestModel(input: SuggestModelInput): SuggestModelResult | nul
   // kept for the aspectDropped flag below (still meaningful even with a locked model).
   const t2vNeedsAspect = !input.hasSourceImage && !!input.desiredAspect;
 
-  // Locked to the single active video model (product decision: one video model, no picker).
-  // The spend gate (assertSpendableModel) only allows activeVideoModel(); proposing any other
-  // model would freeze a price onto a card that startGen then rejects. Params below are still
-  // clamped to THIS model's options, so capability mismatches degrade to the model's defaults.
-  const pick = activeVideoModel() as GenVideoModel;
+  // 槽位由**商家点名的画质**挑(Creation S2 §8.1①,CREATE-A4)—— 与人工路同一个
+  // `routeVideoModel`,所以「商家要 1080p」在两条路上落到的是同一台引擎、同一个价。
+  // 商家没点名 ⇒ 一格不动:仍是 env/默认那一格(`activeVideoModel`,CREATE-A5 前半条)。
+  //
+  // 为什么这样安全:付费闸 `assertSpendableModel` 早已判到 **SKU 级**(槽位 × 档位),
+  // 不再是「等于唯一在产型号」——所以铸一张高清卡不再是「冻一个 startGen 必拒的价」。
+  // 下面的参数照旧吸附到**这一台**的能力表上;吸不上只标 downgraded,拒不拒由铸卡侧定。
+  const pick = (input.desiredResolution
+    ? routeVideoModel(input.desiredResolution).model
+    : activeVideoModel()) as GenVideoModel;
   // #647 T6:菜单上只剩这一台,所以「它被关掉」就是「视频全关」。铸不出真卡就一张都不铸。
   if (input.disabled?.has(pick)) return null;
 
@@ -110,6 +128,11 @@ export function suggestModel(input: SuggestModelInput): SuggestModelResult | nul
   }
 
   const dur = snap(input.desiredDuration, o.durations, d.seconds);
+  // 画质与时长同一个吸附器:商家点名的那一格在这台引擎的能力表上就照给,不在就回默认
+  // 并**标成降级**(铸卡侧据此拒绝,绝不静默换档)。没点名 ⇒ 该槽位自己的默认档,与旧写法逐字同义。
+  const res = o.resolutions.length > 0
+    ? snap(input.desiredResolution, o.resolutions, d.resolution)
+    : { v: undefined as string | undefined, downgraded: false };
   const aspect = o.aspectRatios.length > 0
     ? snap(input.desiredAspect, o.aspectRatios, d.aspectRatio)
     : { v: undefined as string | undefined, downgraded: false };
@@ -118,7 +141,7 @@ export function suggestModel(input: SuggestModelInput): SuggestModelResult | nul
   // a desired t2v aspect that NO eligible model could honor (only reachable via the
   // empty-pool fallback) is a genuine downgrade — surface it rather than silently drop.
   const aspectDropped = t2vNeedsAspect && o.aspectRatios.length === 0;
-  const downgraded = dur.downgraded || aspect.downgraded || aspectDropped;
+  const downgraded = dur.downgraded || aspect.downgraded || res.downgraded || aspectDropped;
   // honest aspect note: a snapped value when the model exposes aspects; "from source
   // frame" for i2v (empty-aspect); "default aspect" for t2v with no aspect to set.
   // #645 T4:adaptive 不是一个具体形状 —— 如实说成「跟着首帧走」,绝不翻译成 16:9 之类
@@ -132,7 +155,7 @@ export function suggestModel(input: SuggestModelInput): SuggestModelResult | nul
     params: {
       durationSeconds: dur.v,
       ...(aspect.v ? { aspectRatio: aspect.v } : {}),
-      ...(o.resolutions.length ? { resolution: d.resolution } : {}),
+      ...(res.v ? { resolution: res.v } : {}),
       audio,
       count: 1,
     },

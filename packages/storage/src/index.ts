@@ -184,8 +184,12 @@ export class LocalDiskStorage implements Storage {
   async deleteObject(key: string): Promise<void> {
     try {
       await unlink(this.fileFor(key));
-    } catch {
-      // missing object is a no-op by contract
+    } catch (e) {
+      // 2026-09-03 判官第一轮复审 P1-4:只有「本来就不在」(ENOENT)才是这份合同承诺的
+      // no-op —— 别的失败(权限、磁盘、目录当文件之类的 EACCES/EPERM/EISDIR/EIO)吞下去会
+      // 让调用方(asset-purge.ts 的删除类改动)误以为字节真的没了,实际字节还在磁盘上。
+      if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return;
+      throw e;
     }
   }
 

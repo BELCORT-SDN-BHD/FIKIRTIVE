@@ -6,14 +6,18 @@
  */
 import { z } from "zod";
 import {
+  activeVideoModel,
   buildSpecChips,
+  isSellableVideoSku,
   suggestModel,
   generationUnavailableMessage,
+  SELLABLE_VIDEO_RESOLUTIONS,
   videoPriceUsd,
   videoDefaults,
   VIDEO_ASPECT_ADAPTIVE,
   GEN_VIDEO_MODEL_OPTIONS,
   GEN_VIDEO_MODEL_INFO,
+  GEN_IMAGE_MODEL_OPTIONS,
   GEN_PRICE_USD_PER_IMAGE,
   GEN_VIDEO_SECONDS,
   REFERENCE_VIDEO_MODEL,
@@ -25,11 +29,12 @@ import {
   imageAspectHonoured,
   normalizeImageAspect,
   EXECUTED_SPEC,
+  type GenModel,
   type GenVideoModel,
   type ReferenceBudget,
   type ApprovedEntity,
 } from "@fikirtive/core";
-import type { OttoContext } from "../context.js";
+import type { OttoContext, OttoMediaReference } from "../context.js";
 import { decideVideoAction } from "./video-intent.js";
 import { videoActionUnavailableReason } from "./video-capabilities.js";
 
@@ -43,6 +48,17 @@ export const proposeInput = z.object({
   variantSel: z.record(z.string(), z.string()).default({}),
   desiredAspect: z.string().optional(),
   desiredDuration: z.number().optional(),
+  /**
+   * 商家点名的**画质档**(视频专用;`480p` / `720p` / `1080p`)。
+   *
+   * Creation §5 2026-09-04 —— 这个字段以前不存在,所以「帮我改成 1080p」这句话在提案层
+   * 就断了:模型无处安放它,卡上照旧是默认档,而 Otto 嘴上说改好了。加它的同时钱路也跟着
+   * 走完整条:档位挑槽位(`routeVideoModel`)、卡上按档报价、批准按卡上那个数预扣。
+   *
+   * 没点名 ⇒ 一格不动(默认槽位的默认档)。点了名而这条路给不了 ⇒ **拒绝、$0**
+   * (`VideoTierUnavailableError`),绝不静默换一档。
+   */
+  desiredResolution: z.string().optional(),
   desiredAudio: z.boolean().optional(),
   // Ad pack: how many image options to offer the user to choose from (images only;
   // video is always one clip). Clamped server-side to [1, MAX_GEN_COUNT].
@@ -50,6 +66,21 @@ export const proposeInput = z.object({
   // Set true when this image is the starting keyframe for a video the user asked for —
   // so the card shows the full two-step plan (image now, video next).
   forVideo: z.boolean().optional(),
+  /**
+   * Creation §5 2026-09-04(Codex E2E-CRE-PAV-004)—— 两步计划**第二步那条片子**的提示词
+   * (`seedancePrompt` 的产物,与第一步的图片提示词是两段不同的字)。
+   *
+   * 这个字段之前不存在,于是「先出图、再出片」在系统里根本不是一条任务:卡上只有一行片段
+   * 预估,第二步的规格没有任何地方存得住。Otto 唯一诚实的下一句就只剩「你生成完把那张图
+   * 带回来给我」—— 内部接缝直接漏到商家面前。
+   *
+   * 带上它 ⇒ 第二步作为**冻结计划**写进 Step 1 的卡(`videoStep.next`),Step 1 出图之后由
+   * 服务端照它铸出第二张确认卡(见 `video-step-handoff.ts`)。铸卡 $0:第二笔钱照旧要商家
+   * 自己按 `Generate · N credits`,一格不动「每一笔付费各自一次确认」。
+   *
+   * 缺席 ⇒ 老行为逐字保留:卡上照旧只有那一行预估,没有接力。
+   */
+  videoPrompt: z.string().min(1).max(MAX_GEN_PROMPT).optional(),
   // 创作意图/目的 —— requires 资讯门要求它非空。琐碎请求可由 Otto 从上下文推断填入。
   goal: z.string().optional(),
   /**
@@ -66,6 +97,24 @@ export const proposeInput = z.object({
 });
 
 export type ProposeInput = z.infer<typeof proposeInput>;
+
+/**
+ * 两步计划**第二步**的冻结计划 —— Step 1 的卡上带着它,Step 1 出图之后服务端照它铸第二张
+ * 确认卡(`buildVideoStepCardPayload`)。
+ *
+ * 为什么这几格与 Step 1 的入参**同名**且取自同一份输入:卡上那行「Then the video — ~N」
+ * 的报价正是用它们算出来的(Step 4.6)。计划与预估共用一份输入,两者就不可能分家 ——
+ * 第二张卡的价与第一张卡上写的那个数出自同一条路(`suggestModel` → `pricedGenCredits`)。
+ *
+ * 只有**规格**,没有价:价永远在铸卡那一刻由服务端单一价目源现算,绝不从这里搬一个数字。
+ */
+export type VideoStepPlan = {
+  structuredPrompt: string;
+  desiredAspect?: string;
+  desiredDuration?: number;
+  desiredResolution?: string;
+  desiredAudio?: boolean;
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -115,12 +164,31 @@ export type CardPayload = {
    *  estimatedPriceUsd (which is the record-only engine cost, ~2.5x lower). */
   estimatedCredits: number;
   /** Present only when this image card is the first step of a two-step video plan.
-   *  DISPLAY ONLY — an estimate of the follow-on video step's cost. Never used to charge. */
-  videoStep?: { estimatedCredits: number };
+   *  `estimatedCredits` is DISPLAY ONLY — an estimate of the follow-on video step's cost,
+   *  never used to charge. `next` is the FROZEN second step: present ⇒ once this image
+   *  lands the server mints the video confirmation card itself (`video-step-handoff.ts`),
+   *  so the merchant never has to carry the picture back. Absent ⇒ old card shape,
+   *  no handoff. Neither field ever moves money. */
+  videoStep?: { estimatedCredits: number; next?: VideoStepPlan };
   sourceGenerationId?: string;
   /** 这条创作的目的/意图（来自 propose 的资讯门）。展示/审计用。 */
   goal?: string;
   referenceVideoGenerationId?: string;
+  /**
+   * Codex QA-CRE-FE9-013 —— **这张卡真会带上路的每一件媒体参考的回执**,与
+   * `approvedEntities` 同一条纪律:名字在铸卡那一刻冻结,批准前看得见,批准后谁也改不动。
+   *
+   * 从前卡上只有 `sourceGenerationId` 一个 id,于是确认卡要么不提它、要么写成 `Image ref`——
+   * Codex 那一轮的确认卡只列得出 `Aisyah (person)`,商家无从确认「上车的到底是不是我选的
+   * 那只蓝杯子」,而实际上那张图早就被静默丢掉了。
+   *
+   * 收的**只有真会进付费请求的那几件**(编辑底图 / i2v 首帧 / 整段参考片)——多列一件就是
+   * 一次新的谎报。次序:图片在前,参考片在后。
+   *
+   * 老卡没有这个字段:卡上带着 `sourceGenerationId` 却没有对应回执的,前端一律判为
+   * 「读不全」,不给 Generate 按钮(`planCardGate`)。
+   */
+  mediaReferences?: OttoMediaReference[];
 };
 
 export type ProposeCardResult = {
@@ -183,6 +251,137 @@ export class VideoActionUnavailableError extends ProposeRefusal {
   constructor(message: string) {
     super(message);
     this.name = "VideoActionUnavailableError";
+  }
+}
+
+/**
+ * 商家点名的**画质档**在这条路上给不了(Creation §5 2026-09-04,CREATE-A4/A5)。
+ *
+ * 为什么是拒绝而不是换一档:换档 = 他批的是 1080p、拿到的是 720p,而两档的价还不一样 ——
+ * 那不是「少给一点」,那是拿他的钱做了一件他没批准的事。拒绝一分钱都不花(抛在报价与
+ * 预扣之前),代价只有一句话。
+ *
+ * 那句话里**只有能力名词**(档位),一个引擎名都没有,而且能给的那几档是从可售白名单
+ * (`SELLABLE_VIDEO_RESOLUTIONS`,与付费闸同一份)现算的 —— 上架一档,这句话跟着改口。
+ */
+export class VideoTierUnavailableError extends ProposeRefusal {
+  constructor(
+    /** 商家点名的那一档,原样回给他听(不润色、不猜)。 */
+    readonly wanted: string,
+    /**
+     * **这条路真正铸得出**的那几档,由调用现场算好传进来(`mintableVideoTiers`)。
+     *
+     * 判官 2026-09-04 P1-1 落修:这里以前收的是「槽位」,自己去查那台引擎的可售白名单。
+     * 参考视频那条路把分辨率硬写回该引擎的默认档(见 `buildProposeCard` 的 `isRefVideo`
+     * 分支),所以它其实只铸得出那一档 —— 而白名单里还有别的档,于是商家点 480p 会听到
+     * 「480p isn't available — I can do 480p or 720p」这种自相矛盾的话,照它再说一次
+     * 480p 还是同一句,死循环。能给什么只有调用现场知道,所以判断权归现场。
+     */
+    offered: readonly string[],
+  ) {
+    const tiers = [...offered].sort((a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10));
+    super(
+      tiers.length > 0
+        ? `${wanted} isn't available for this one — I can do ${tiers.join(" or ")}. Tell me which and I'll set it up.`
+        : `${wanted} isn't available for this one — tell me what else you'd like and I'll set it up.`,
+    );
+    this.name = "VideoTierUnavailableError";
+  }
+}
+
+/**
+ * 这条路**真正铸得出**的那几档 —— `VideoTierUnavailableError` 那句话里只许出现这些。
+ *
+ * 两层筛,缺一不可:
+ *   ① **有已裁的价**(`SELLABLE_VIDEO_RESOLUTIONS`,与付费闸 `assertSpendableModel` 同
+ *      一份)—— 没价的格子不能拿来许诺,那是替 Founder 发明价格;
+ *   ② **这条路够得到**——参考视频路把分辨率硬写回这台引擎的默认档,所以它只有那一档;
+ *      其余路走 `suggestModel` 的 `snap`,该槽位白名单里的每一档都到得了。
+ *
+ * 判官 2026-09-04 P1-1:少了 ② 那一层,拒绝句就会列出这条路根本铸不出来的档,商家照着
+ * 它再说一次仍然被拒 —— 一句假话加一个死循环,而这张票的全部理由正是「Otto 不许说卡
+ * 做不到的事」。
+ */
+function mintableVideoTiers(slot: GenVideoModel, opts: { refPath: boolean }): string[] {
+  const model = opts.refPath ? REFERENCE_VIDEO_MODEL : slot;
+  const sellable = SELLABLE_VIDEO_RESOLUTIONS[model] ?? [];
+  const reachable = opts.refPath ? [videoDefaults(REFERENCE_VIDEO_MODEL).resolution] : sellable;
+  return sellable.filter((r) => reachable.includes(r));
+}
+
+/**
+ * 「宽:高」→ 一个数,**读不懂就 null**(Codex QA-CRE-FE9-014)。
+ *
+ * 只用来给拒绝句里那几个建议**排序**,一步都不参与选型、报价或请求体 —— 所以它可以
+ * 收下菜单上没有的写法(`4:5`),而 `normalizeImageAspect`(决定卡上落哪一格的那个)
+ * 必须继续只认菜单,一个字都不放宽。
+ */
+function imageAspectValue(raw: string): number | null {
+  const m = /^(\d+(?:\.\d+)?)\s*[x×:：]\s*(\d+(?:\.\d+)?)$/u.exec(raw.trim().toLowerCase());
+  if (!m) return null;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  return Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? w / h : null;
+}
+
+/** 拒绝句里最多列几个建议(读得懂他要的比例时)。多了就不是人话,是一堵墙。 */
+const IMAGE_ASPECT_OFFER_LIMIT = 3;
+
+/**
+ * 这条路**真做得到**的画幅 —— `ImageAspectUnavailableError` 那句话里只许出现这些。
+ *
+ * 与 `mintableVideoTiers` 同一条判据:能力表里有(这台引擎收得下这一格),而且这一趟
+ * 真会跑的适配器兑现画幅(`imageAspectHonoured`)—— 不兑现就一个都给不了,空数组。
+ *
+ * 读得懂他要的比例时按**接近程度**排(对数距离:比例是乘法量,`2:1` 与 `1:2` 到 `1:1`
+ * 的距离必须一样),只取最近的几个;读不懂就原样交出整张菜单(那时「最接近」没有意义,
+ * 拒绝句会换一种说法,见下面的文案)。
+ */
+function mintableImageAspects(model: GenModel, wanted: string): { offered: string[]; nearest: boolean } {
+  if (!imageAspectHonoured()) return { offered: [], nearest: false };
+  const menu = [...GEN_IMAGE_MODEL_OPTIONS[model].aspectRatios];
+  const target = imageAspectValue(wanted);
+  if (target === null) return { offered: menu, nearest: false };
+  const ranked = menu
+    .map((a) => ({ a, d: Math.abs(Math.log((imageAspectValue(a) ?? target) / target)) }))
+    .sort((x, y) => x.d - y.d)
+    .map((e) => e.a);
+  return { offered: ranked.slice(0, IMAGE_ASPECT_OFFER_LIMIT), nearest: true };
+}
+
+/** 拒绝句本体。`super()` 必须是第一句,所以文案在这里拼好再交给它。 */
+function imageAspectRefusalCopy(wanted: string, offered: readonly string[], nearest: boolean): string {
+  if (offered.length === 0) {
+    return `${wanted} isn't a shape I can make here — tell me what else you'd like and I'll set it up.`;
+  }
+  return nearest
+    ? `${wanted} isn't a shape I can make here — the closest I can do are ${offered.join(", ")}. Tell me which, or name another shape and I'll check it.`
+    : `${wanted} isn't a shape I can make here — I can do ${offered.join(" or ")}. Tell me which and I'll set it up.`;
+}
+
+/**
+ * 商家点名的**画幅**在这条路上做不到(Codex QA-CRE-FE9-014,规格 §5 2026-09-04)。
+ *
+ * 为什么是拒绝而不是换一格:上一版在这里**悄悄换成方图 + 卡上一句说明**,而那张卡
+ * 仍然是一个点得下去的付费承诺 —— 商家两次说 4:5,拿到的是一张写着「1:1」的确认卡。
+ * 「说了」不等于「问了」:他的硬规格被改掉,却没有一个地方让他改回来或明确接受。
+ * 与画质档(`VideoTierUnavailableError`)同一条规矩、同一个位置:做不到就在铸卡前
+ * 停下来问,一分钱不花(抛在报价与预扣之前,GEN_CARD 一行都不落库)。
+ *
+ * 那句话里只有比例,一个引擎名都没有;能给的那几格从**这台引擎的能力表**现算 ——
+ * 菜单加一格,这句话跟着改口。
+ */
+export class ImageAspectUnavailableError extends ProposeRefusal {
+  constructor(
+    /** 商家点名的那个形状,原样回给他听(不润色、不猜)。 */
+    readonly wanted: string,
+    /** 这条路真做得到的那几格(`mintableImageAspects` 现算,已排好序)。 */
+    offered: readonly string[],
+    /** true = 我们读懂了他要的比例,所以 `offered` 真是「最接近的那几个」。 */
+    nearest: boolean,
+  ) {
+    super(imageAspectRefusalCopy(wanted, offered, nearest));
+    this.name = "ImageAspectUnavailableError";
   }
 }
 
@@ -395,7 +594,7 @@ export function buildDowngradeNote(
  *                        breath as the ownership check, never later.
  */
 export function buildProposeCard(
-  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count" | "forVideo">,
+  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredResolution" | "desiredAudio" | "count" | "forVideo" | "videoPrompt">,
   ctx: OttoContext,
   ownedEntities: ApprovedEntity[],
 ): ProposeCardResult {
@@ -505,12 +704,23 @@ export function buildProposeCard(
     kind,
     desiredAspect: input.desiredAspect,
     desiredDuration: input.desiredDuration,
+    desiredResolution: input.desiredResolution,
     desiredAudio: input.desiredAudio,
     hasSourceImage,
     hasTail: false,
     disabled: new Set(ctx.disabledModels),
   });
-  if (!sm) throw new GenerationUnavailableError(kind);
+  if (!sm) {
+    // 商家点了一档,而**那一档落到的那台**被后台关掉了 —— 这不是「视频全关」。
+    // 默认那一台还开着就说实话:这一档现在拿不到,能拿到的是那几档。
+    if (kind === "video" && input.desiredResolution && !ctx.disabledModels.includes(activeVideoModel())) {
+      throw new VideoTierUnavailableError(
+        input.desiredResolution,
+        mintableVideoTiers(activeVideoModel() as GenVideoModel, { refPath: isRefVideo }),
+      );
+    }
+    throw new GenerationUnavailableError(kind);
+  }
 
   /**
    * #775 —— 改这条片子 / 把这条片子接下去,形状**只能**跟着商家那条片子走。
@@ -543,6 +753,57 @@ export function buildProposeCard(
     // 于是内部/审计文案会继续说一台已经不在产的引擎 —— 与 cowork-route 的做法对齐。
     sm.reason = `${GEN_VIDEO_MODEL_INFO[REFERENCE_VIDEO_MODEL].label} — ${sm.params.aspectRatio}, ${GEN_VIDEO_SECONDS}s reference video`;
     sm.downgraded = sm.downgraded || (input.desiredDuration != null && input.desiredDuration !== GEN_VIDEO_SECONDS);
+  }
+
+  /**
+   * Step 3.6(Creation §5 2026-09-04,CREATE-A4/A5)—— **商家点名的档位,要么原样上卡,
+   * 要么一张卡都不铸**。
+   *
+   * 两条判据缺一不可,而且都在报价、预扣之前:
+   *   ① 卡上这一格 **等于** 他点的那一格 —— 不等于就是「批 A 做 B」,而降级正是这条规矩
+   *      要挡的东西(规格 §1 九问4:商家直接请求的档位一律拒绝、不降级);
+   *   ② 这一格 **有已裁的价**(`isSellableVideoSku`,与付费闸 `assertSpendableModel` 同一个
+   *      函数)—— 没价的格子只能落护栏或兜底,那是替 Founder 发明价格。
+   *
+   * 拒绝的代价是一句话,$0:抛在 `pricedGenCredits` 之前,GEN_CARD 一行都不落库,
+   * ledger 自然零新增行。`sm.params.durationSeconds` 到这里已经吸附过,所以秒数这一轴
+   * 判的就是这张卡真会送出去的那个数。
+   */
+  if (kind === "video" && input.desiredResolution) {
+    const got = sm.params.resolution ?? "";
+    const seconds = sm.params.durationSeconds ?? 0;
+    if (got !== input.desiredResolution || !isSellableVideoSku(sm.model, got, seconds)) {
+      throw new VideoTierUnavailableError(
+        input.desiredResolution,
+        mintableVideoTiers(sm.model as GenVideoModel, { refPath: isRefVideo }),
+      );
+    }
+  }
+
+  /**
+   * Step 3.7(Codex QA-CRE-FE9-014,规格 §5 2026-09-04)—— **画幅与画质档同一条规矩**:
+   * 商家点名的形状要么原样上卡,要么一张卡都不铸。
+   *
+   * 判据只有一条,而且判的是**这张卡真会交付什么**:卡上这一格 ≠ 他点的那一格 ⇒ 拒绝。
+   * 两种落法都被它盖住:
+   *   ① 这一趟真会跑的适配器根本不采纳画幅(`imageAspectHonoured` 说了不算数);
+   *   ② 采纳,但他要的那格不在这台引擎的能力表上(`4:5` 就是这一种)。
+   * `normalizeImageAspect` 先归一写法(`9x16` / `portrait` 都是菜单上那一格),所以一次
+   * **已经兑现**的请求不会被误判成拒绝。
+   *
+   * 为什么不是「换成方图 + 卡上一句说明」(上一版的做法):那句说明写在一张**点得下去
+   * 的付费卡**上,商家两次说 4:5,系统主动改成 1:1 却仍然请他批准 —— 改的是他的硬规格,
+   * 而他没有任何地方可以改回来。说了不等于问了。拒绝的代价只有一句话,$0:抛在
+   * `pricedGenCredits` 之前,GEN_CARD 一行都不落库,ledger 自然零新增行。
+   *
+   * 两步计划(`forVideo`)的图片步走的就是这里 —— 它的 `kind` 也是 image,所以不必也
+   * 不该再补一支守卫(视频档位那边要补 Step 4.6a,是因为 Step 3.6 写的是 `kind === "video"`)。
+   */
+  if (kind === "image" && input.desiredAspect) {
+    if (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio) {
+      const { offered, nearest } = mintableImageAspects(sm.model as GenModel, input.desiredAspect);
+      throw new ImageAspectUnavailableError(input.desiredAspect, offered, nearest);
+    }
   }
 
   // Step 3.5: ad-pack count — the user can ask for N image options to choose from.
@@ -584,21 +845,80 @@ export function buildProposeCard(
   // Step 4.6: video-step estimate — DISPLAY ONLY.
   // When this image card is the first step of a two-step video plan (forVideo=true),
   // estimate the follow-on video cost so the card can show the full plan total.
-  // Errors are silently swallowed — videoStep is best-effort and must never break the card.
+  // 报价这一段的错误照旧静默吞掉 —— videoStep 是 best-effort,算不出就少一行,绝不因此
+  // 毁掉这张图片卡。**唯一例外**是下面的 Step 4.6a:商家点名的档位给不了时那是拒绝,
+  // 不是「少一行」,它必须抛出去(判官 2026-09-04 P1-2)。
   // #647 T6:视频引擎被关掉时 `vm` 是 null —— 这张图片卡照铸(图片引擎还开着),只是
   // 不再替一条现在做不了的片子报价。卡面上少一行,好过多一行做不到的承诺。
   let videoStep: { estimatedCredits: number } | undefined;
   if (kind === "image" && input.forVideo) {
+    // 选型单独跑一趟(不再和报价共用一个 try)—— 它的结果要先过下面那道**不是**
+    // best-effort 的档位闸,过了才轮到报价那一段继续「算不出就少一行」。
+    let vm: ReturnType<typeof suggestModel> = null;
     try {
-      const vm = suggestModel({
+      vm = suggestModel({
         kind: "video",
         desiredAspect: input.desiredAspect,
         desiredDuration: input.desiredDuration,
+        // 两步计划的第二步就是那条片子 —— 商家点的档位在这里也算数,否则「先出图再出片」
+        // 那张卡上的片段预估会按默认档报,与第二步真正会铸的卡对不上。
+        desiredResolution: input.desiredResolution,
         desiredAudio: input.desiredAudio,
         hasSourceImage: true,
         hasTail: false,
         disabled: new Set(ctx.disabledModels),
       });
+    } catch {
+      vm = null;
+    }
+
+    /**
+     * Step 4.6a(判官 2026-09-04 P1-2 落修)—— **两步计划的第二步同样归 Step 3.6 管**。
+     *
+     * Step 3.6 的守卫写的是 `kind === "video"`,而两步计划这张卡的 `kind` 是 image ——
+     * 于是整条绕过去:商家说「4k」,卡上那行片段预估按默认档报(`OttoPlanCard` 把它
+     * 渲染成商家**正要批准**的那张卡的总价),而第二步真去铸卡时又会被 Step 3.6 拒。
+     * 披露与将要发生的事不是一件事 —— 正是这张票要挡的那一类病,只是守卫少了一支。
+     *
+     * 所以这里用**同一条判据、同一句话**:点名的档没有原样落到这条片子上、或不是可售
+     * SKU ⇒ 一张卡都不铸。为什么不是「悄悄少一行 videoStep」:商家点了一档,他该得到的
+     * 是一句诚实的回答,而不是一张自己少了一行的卡 —— 少那一行他看不出来,于是仍然以为
+     * 第二步会按他点的档做。拒绝照旧 $0(抛在落库与预扣之前)。
+     *
+     * `vm === null`(视频引擎被后台关掉)不走这里:那是 #647 T6 早就裁过的另一件事 ——
+     * 图片卡照铸、只是不替一条现在做不了的片子报价,行为一格不动。
+     */
+    if (vm && input.desiredResolution) {
+      const got = vm.params.resolution ?? "";
+      const seconds = vm.params.durationSeconds ?? 0;
+      if (got !== input.desiredResolution || !isSellableVideoSku(vm.model, got, seconds)) {
+        throw new VideoTierUnavailableError(
+          input.desiredResolution,
+          mintableVideoTiers(vm.model as GenVideoModel, { refPath: isRefVideo }),
+        );
+      }
+    }
+
+    /**
+     * Step 4.6b(Codex E2E-CRE-PAV-004,规格 §5 2026-09-04)—— **第二步现在就得铸得出来**。
+     *
+     * 冻结计划的意思是「出图之后系统照它铸第二张卡」。那张卡是 `buildProposeCard` 自己铸的,
+     * 而铸视频卡的第一道闸是 `decideVideoAction`:提示词撑不起这个形状就抛。若等到出图之后
+     * 才发现撑不起,商家已经为第一步付过钱,而第二步永远不会出现 —— 一次沉默的半截任务。
+     *
+     * 所以在这里先用**同一个函数、同一个形状**(带首帧、无末帧、无参考片 = 第二步真正的形状)
+     * 对这段字问一次。撑不起 ⇒ 一张卡都不铸、$0(抛在落库与预扣之前),商家听到的是那句
+     * 本来就该在这时候说的话。
+     */
+    if (input.videoPrompt) {
+      const nextDecision = decideVideoAction({
+        prompt: input.videoPrompt,
+        shape: { hasStill: true, hasEndStill: false, hasClip: false },
+      });
+      if (nextDecision.kind === "ask") throw new VideoActionUnavailableError(nextDecision.question);
+    }
+
+    try {
       const videoEstCredits = vm === null ? null : displayCredits(
         pricedGenCredits({
           kind: "VIDEO",
@@ -611,23 +931,35 @@ export function buildProposeCard(
           },
         }),
       );
-      if (videoEstCredits !== null) videoStep = { estimatedCredits: videoEstCredits };
+      if (videoEstCredits !== null) {
+        videoStep = {
+          estimatedCredits: videoEstCredits,
+          // 冻结计划与上面那个预估**共用同一份输入**,所以卡上写的价和第二张卡真正的价
+          // 出自同一条路。片子的提示词缺席 ⇒ 不冻结,老行为一格不动。
+          ...(input.videoPrompt
+            ? {
+                next: {
+                  structuredPrompt: input.videoPrompt,
+                  ...(input.desiredAspect ? { desiredAspect: input.desiredAspect } : {}),
+                  ...(typeof input.desiredDuration === "number" ? { desiredDuration: input.desiredDuration } : {}),
+                  ...(input.desiredResolution ? { desiredResolution: input.desiredResolution } : {}),
+                  ...(typeof input.desiredAudio === "boolean" ? { desiredAudio: input.desiredAudio } : {}),
+                },
+              }
+            : {}),
+        };
+      }
     } catch {
       // Best-effort — omit videoStep on any error
     }
   }
 
-  // Step 4.7: 商家要的画幅没落到这张卡上,也是降级 —— 必须显式披露,不得静默。
-  // suggestModel 只知道「这个模型能不能」，不知道「执行层会不会真用」，所以这两项
-  // 在这里补齐。判据是**这张卡真会交付什么**,两种情况都算掉了:
-  //   ① 这一趟真正会跑的适配器根本不采纳画幅(imageAspectHonoured 说了不算数);
-  //   ② 采纳,但这条路没把商家的画幅放上卡(卡上的画幅 ≠ 他要的)。
+  // Step 4.7: 声音开关没落到这张卡上,是降级 —— 必须显式披露,不得静默。
+  // suggestModel 只知道「这个模型能不能」，不知道「执行层会不会真用」，所以在这里补齐。
   // 纯展示：不改 params、不改选型、不改报价。
-  // #643 T2：比对前先归一商家的写法。`portrait` 和 `9:16` 是同一个形状，逐字比对会把一次
-  // **已经兑现**的请求误报成降级 —— 那句披露会变成噪音，商家学会忽略它，真降级也就跟着被忽略。
-  const imageAspectDropped =
-    kind === "image" && !!input.desiredAspect &&
-    (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio);
+  //
+  // 画幅那一项**不再**走这条披露路:做不到就在 Step 3.7 拒绝、$0(Codex QA-CRE-FE9-014)。
+  // 走到这里的图片卡,画幅一定就是商家点的那一格 —— 没有可披露的落差。
   const audioNotHonoured =
     kind === "video" && typeof input.desiredAudio === "boolean" && !EXECUTED_SPEC.video.audioHonoured;
   // #775 —— 剪辑/续写把商家点的形状换成了 adaptive,这同样是降级,必须**说出来**。
@@ -636,10 +968,10 @@ export function buildProposeCard(
     anchoredToClip && !!input.desiredAspect && input.desiredAspect !== VIDEO_ASPECT_ADAPTIVE;
   const requested: RequestedSpec = {
     ...sm.requested,
-    ...(imageAspectDropped || clipAspectForced ? { aspect: input.desiredAspect } : {}),
+    ...(clipAspectForced ? { aspect: input.desiredAspect } : {}),
     ...(audioNotHonoured ? { audio: input.desiredAudio } : {}),
   };
-  const downgraded = sm.downgraded || imageAspectDropped || audioNotHonoured || clipAspectForced;
+  const downgraded = sm.downgraded || audioNotHonoured || clipAspectForced;
   /**
    * #775 —— 卡面/披露文案这一层,「商家给了一个引擎会照着定形状的东西」为真。
    *
@@ -660,6 +992,25 @@ export function buildProposeCard(
   const approvedEntities = entityIds
     .map((id) => ownedById.get(id))
     .filter((e): e is ApprovedEntity => !!e);
+
+  // Step 4.8b(Codex QA-CRE-FE9-013)—— 媒体参考的审批回执,与上面那份名字快照同一条纪律。
+  //
+  // 只收**这张卡真会带上路的那几件**:图片那一格是 `sourceGenerationId`(video ⇒ i2v 首帧,
+  // image ⇒ 引擎的编辑底图),视频那一格是 `referenceVideoGenerationId`。商家这一轮可能挂了
+  // 好几张图,但只有第一张会成为付费请求里的那一张 —— 把其余的也列进回执,就是把「Otto 看过」
+  // 说成「引擎会用」,那是同一类谎报换个方向。
+  //
+  // 回执由服务端解析器一次产出(`validateOttoTurnReferences`),这里只按 id 取,不自己编名字:
+  // 取不到就宁可少一行(与 `approvedEntities` 同样的安全降级),而 `planCardGate` 会因为
+  // 「有 id 没回执」判这张卡不可批准 —— 少一行不会变成一次没有回执的付费。
+  const receiptById = new Map((ctx.mediaReferences ?? []).map((r) => [r.generationId, r]));
+  const cardMediaIds: string[] = [
+    ...(isI2V || usesAttachedImage ? [ctx.sourceGenerationId!] : []),
+    ...(isRefVideo ? [ctx.referenceVideoGenerationId!] : []),
+  ];
+  const mediaReferences = cardMediaIds
+    .map((id) => receiptById.get(id))
+    .filter((r): r is OttoMediaReference => !!r);
 
   // Step 5: cardPayload (mirror coworkTurn 401–406)
   const cardPayload: CardPayload = {
@@ -692,6 +1043,8 @@ export function buildProposeCard(
     ...(isI2V || usesAttachedImage ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
     // isRefVideo ⇒ kind==="video" && !!ctx.referenceVideoGenerationId, so the non-null assertion is sound.
     ...(isRefVideo ? { referenceVideoGenerationId: ctx.referenceVideoGenerationId! } : {}),
+    // 媒体参考的审批回执(Codex QA-CRE-FE9-013)。空的就不写这个字段(老卡的形状)。
+    ...(mediaReferences.length ? { mediaReferences } : {}),
   };
 
   // Step 6: the credit amount Otto may mention in chat = the real charge (estimatedCredits).

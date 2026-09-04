@@ -20,6 +20,7 @@ import DetailPanel from "@/components/asset/DetailPanel";
 import { startAssetGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { uploadFilesDirect } from "@/lib/direct-upload";
+import { UPLOAD_FAILURE_COPY } from "@fikirtive/core/upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import type { EntityDTO } from "@/lib/types";
 import {
@@ -223,17 +224,24 @@ export default function TemplateModal({
     setUploading(true);
     try {
       const outcome = await uploadFilesDirect([file], () => {});
+      // 2026-09-03 走查 S2 —— 这一支以前不看 `failures`:上传被挡住时,空回执照样送进
+      // finalize,商家读到的是「please try another image」,而问题根本不在那张图上。
+      const failure = outcome.failures[0];
+      if (failure) {
+        dispatchRun({ type: "explicit-error", message: failure.reason });
+        return;
+      }
       const res = await finalizeCandidateUploads(projectId, "", [], outcome.files);
       if ("error" in res) {
         dispatchRun({ type: "explicit-error", message: res.error });
       } else if (res.generationIds.length === 0) {
-        dispatchRun({ type: "explicit-error", message: "Upload failed — please try another image." });
+        dispatchRun({ type: "explicit-error", message: UPLOAD_FAILURE_COPY.blocked });
       } else {
         setSourceGenId(res.generationIds[0]);
         setThumbUrl(URL.createObjectURL(file));
       }
     } catch {
-      dispatchRun({ type: "explicit-error", message: "Upload failed — please try again." });
+      dispatchRun({ type: "explicit-error", message: UPLOAD_FAILURE_COPY.blocked });
     } finally {
       setUploading(false);
     }

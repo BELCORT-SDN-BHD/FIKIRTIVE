@@ -21,6 +21,7 @@ import {
   authorizeUploadInput,
   signPartInput,
   abortUploadInput,
+  directUploadFailureReport,
   finalizeUploadsInput,
   storageKey,
   mimeOf,
@@ -145,6 +146,41 @@ export async function abortDirectUpload(raw: unknown): Promise<{ ok: true } | { 
   if (!parsed.success) return { error: "Malformed abort request." };
   const { sha256, ext, uploadId } = parsed.data;
   await storage.abortMultipart(storageKey(ownerId, sha256, ext), uploadId);
+  return { ok: true };
+}
+
+/**
+ * 直传失败的留痕（2026-09-03 staging 走查 S3）。
+ *
+ * 病根:直传的字节走「浏览器 → 存储桶」,我们的服务器**完全不在这条路上**。所以 staging
+ * 那次桶的 CORS 把商家挡在门外时,web 日志里连一行都没有 —— 商家撞了墙,我们零感知。
+ * 这个 action 就是把那条缺失的边补回来:传不动的那一刻,浏览器主动回报一笔。
+ *
+ * 三件事刻意为之:
+ *   ① **租户身份不收客户端的**。`requireOwner()` 出来的 `ownerId` 才是这条日志上的 org;
+ *      报告体里根本没有 orgId 字段可填(见 `directUploadFailureReport`)。
+ *   ② **不收原始错误串**。预签名 URL 的 query 带签名,一旦让底层 message 搭车,凭据就
+ *      从浏览器流进日志。报告体只有枚举与数字,夹带不进任意字符串。
+ *   ③ **只记录,不改变任何东西**。没有数据库写、没有钱路、没有存储动作 —— 一次失败的
+ *      上传本来就没留下要清理的东西(multipart 由 `abortDirectUpload` 收尾)。
+ *
+ * 日志行按本文件既有的 `[upload] …` 形状写,可直接 grep `DIRECT-UPLOAD-FAILED`;同时补一条
+ * Sentry(与 `reportUndispatchedIngest` 同一约定:没配 DSN 就只留 stdout,本地/CI 零副作用)。
+ */
+export async function reportDirectUploadFailure(raw: unknown): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const parsed = directUploadFailureReport.safeParse(raw);
+  if (!parsed.success) return { error: "Malformed upload failure report." };
+  const { stage, category, ext, sizeBytes, httpStatus } = parsed.data;
+  const line = `[upload] DIRECT-UPLOAD-FAILED org=${gate.ownerId} stage=${stage} category=${category} ext=${ext ?? "unknown"} sizeBytes=${sizeBytes} httpStatus=${httpStatus ?? "none"}`;
+  console.error(line);
+  if (process.env.SENTRY_DSN) {
+    Sentry.captureMessage(line, {
+      level: "error",
+      tags: { probe: "direct-upload", stage, category },
+      extra: { orgId: gate.ownerId, ext: ext ?? "unknown", sizeBytes, httpStatus },
+    });
+  }
   return { ok: true };
 }
 

@@ -146,7 +146,9 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 describe("deleteVariant — a variant being generated right now cannot be deleted, by anyone", () => {
   beforeEach(() => {
-    h.variantFindFirst.mockResolvedValue({ id: "var-1", entityId: "ent-1" });
+    // catalogKey: null ＝ 商家自己的元素。官方目录那条路(只读拒绝)由
+    // official-avatar-readonly-actions.test.ts 在真库上钉,这里要的是「不是官方」这一支。
+    h.variantFindFirst.mockResolvedValue({ id: "var-1", entityId: "ent-1", entity: { catalogKey: null } });
   });
 
   it("refuses while a paid job is QUEUED/GENERATING, and takes its own tombstone back with it", async () => {
@@ -226,7 +228,8 @@ describe("deleteVariant — a variant being generated right now cannot be delete
 describe("regenerateVariant — the paid insert claims the variant row before it spends", () => {
   beforeEach(() => {
     h.variantFindFirst.mockResolvedValue({
-      id: "var-1", entityId: "ent-1", prompt: "in a red evening gown", entity: { baseAssetId: "ast-base" },
+      id: "var-1", entityId: "ent-1", prompt: "in a red evening gown",
+      entity: { baseAssetId: "ast-base", catalogKey: null },
     });
     h.refGenJobFindFirst.mockResolvedValue(null); // nothing already in flight
     h.getBoss.mockResolvedValue({ send: vi.fn().mockResolvedValue("queue-1") });
@@ -266,7 +269,7 @@ describe("regenerateVariant — the paid insert claims the variant row before it
 // ---------------------------------------------------------------------------
 describe("createVariant — a refusal before any spend takes the empty variant with it", () => {
   beforeEach(() => {
-    h.entityFindFirst.mockResolvedValue({ id: "ent-1", baseAssetId: "ast-base" });
+    h.entityFindFirst.mockResolvedValue({ id: "ent-1", baseAssetId: "ast-base", catalogKey: null });
     h.assetFindFirst.mockResolvedValue({ id: "ast-base" });
     h.refGenJobFindMany.mockResolvedValue([]); // no in-flight twin to reuse
     h.refGenJobFindFirst.mockResolvedValue(null); // no active job for the new variant
@@ -321,7 +324,7 @@ describe("createVariant — a rollback that fails is never filed as non-fatal", 
   }
 
   beforeEach(() => {
-    h.entityFindFirst.mockResolvedValue({ id: "ent-1", baseAssetId: "ast-base" });
+    h.entityFindFirst.mockResolvedValue({ id: "ent-1", baseAssetId: "ast-base", catalogKey: null });
     h.assetFindFirst.mockResolvedValue({ id: "ast-base" });
     h.refGenJobFindMany.mockResolvedValue([]);
     h.refGenJobFindFirst.mockResolvedValue(null);

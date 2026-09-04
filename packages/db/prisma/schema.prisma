@@ -749,6 +749,8 @@ model Organization {
   brandRecords            BrandRecord[]
   brandContextRevisions   BrandContextRevision[]
   metaConnection          MetaConnection?
+  // FRONT-A4(规格 docs/specs/frontend-baseline.md §7.3⑤):Home 版面每个工作区一行。
+  homeLayout              OrgHomeLayout?
   researchJobs            ResearchJob[]
   scheduledPosts          ScheduledPost[]
   // B0-30: generic multi-channel connection layer (seam 4/5); back-relation required by Prisma.
@@ -1381,6 +1383,44 @@ model MetaConnection {
   defaultPageId  String?                         // FB Page the org wants to post to by default
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+}
+
+// FRONT-A4(规格 docs/specs/frontend-baseline.md §7.3⑤「Customize home 落库」)。
+//
+// 一个工作区一行 —— `ownerId @unique` 就是那条「org 级一行」的约束本身,不是索引优化。
+// Home 版面是**工作区共有**的东西(设计权威 patterns/founder-home/README.md:「Customization
+// is workspace-wide and permissioned by `Manage home`」),不是每个成员各存一份;所以这里没有
+// userId 维度,改动它要 `workspace.manage_home` 能力(packages/core/src/org-roles.ts)。
+//
+// ── 为什么租户列叫 ownerId 而不是规格里写的 orgId ──────────────────────────────
+// 规格 §7.3⑤ 的原话是「`orgId` 唯一」,指的是「租户列上有唯一约束」这件事。本仓库里
+// 那条列在每一张业务表上都叫 `ownerId`(Organization 的全部业务反向关系、requireOwner()
+// 的返回字段、tenant-guard 注入的字面列名都是它)。叫 orgId 的表只有三张,而且**进不了**
+// 运行时租户守卫 —— 守卫注入的是 `ownerId` 这个字面名,orgId 族只能走
+// ORG_SCOPED_TENANT_GUARD_EXEMPT 的明示登记(见 packages/db/src/tenant-guard.ts 注释)。
+// 也就是说:叫 orgId 会让这张表**失去**运行时守卫。所以用 ownerId,并把它登记进
+// TENANT_MODELS —— 这是同一条规格意图在本仓库里唯一守得住的写法。
+//
+// ── 两个数组列各自守什么 ──────────────────────────────────────────────────────
+// `componentIds` = 商家保存那一刻**看得见**的组件顺序(顺序权威)。
+// `hiddenIds`    = 商家**明确取消勾选**的组件。
+// 分成两列而不是只存一个「选中列表」,是为了让后面逐个点亮的组件有确定归宿(§7.3⑤
+// 「ready 多源版面随生产者逐个点亮」):一个今天还没有真实生产者、明天才出现的组件,
+// 既不在 componentIds 里也不在 hiddenIds 里,解析时按推荐模板补到末尾出现 —— 而不是
+// 被当成「商家关掉过」永远不再露面。取值本身不设 CHECK:组件名单是产品层的
+// `patterns/founder-home/model.ts`,读的时候按名单过滤(未知 id 直接丢弃),
+// 加一个组件不该是一次迁移。
+model OrgHomeLayout {
+  id           String       @id // ULID
+  ownerId      String       @unique // 一个工作区一行 —— 这条唯一约束就是「org 级一行」
+  organization Organization @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  componentIds String[]     @default([])
+  hiddenIds    String[]     @default([])
+  // 谁最后改的(User.id)。刻意不建外键:这里只用来在审计里说一句「谁改、何时改」,
+  // 一个被删掉的用户不该挡住工作区改版面。
+  updatedById  String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 }
 
 // R-010 D9 M1: provider-neutral stable channel-instance identity authority. Phase 1 is deliberately
