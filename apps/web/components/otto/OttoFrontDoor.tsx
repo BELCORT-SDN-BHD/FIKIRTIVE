@@ -31,6 +31,7 @@ import { BILLING_HREF } from "@/lib/exits";
 import { defaultVideoDisplayCredits, INTERNAL_PER_DISPLAY } from "@fikirtive/core/spend";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { CANVAS_OTTO_DOCK_ATTR } from "@/lib/canvas-otto-dock";
+import { CANVAS_OTTO_CORNER_ATTR } from "@/lib/canvas-fit-padding";
 import {
   FRONT_DOOR_GOAL_LABELS, type FrontDoorGoalKey,
 } from "@/lib/otto-canned-starters";
@@ -330,7 +331,14 @@ export function OttoFrontDoor({
       // 嵌套的 `gb` 只多做了两件坏事:铺纸,以及把沉浸壳的 scoped 覆盖
       // (`app/create/immersive-tokens.css` 的 --background / --ring / --info)重置回全局值。
       <div className="pointer-events-none absolute inset-0 z-30 leading-[1.5]">
-        <div className="pointer-events-auto absolute left-4 top-4 w-[280px] rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-sm)]">
+        {/* 摆板要给这张卡让位 —— 记号与开了对话之后那张 `OttoTurnCard` 是同一个,所以
+            `canvasFitPadding` 不必知道当下是门厅还是对话流(说明在 `lib/canvas-fit-padding.ts`
+            的 `CANVAS_OTTO_CORNER_ATTR`)。少了它,商家还没开口的那一次摆板左边一寸不让,
+            最上排的卡就摆进这张卡底下(旅程 17 第①步)。 */}
+        <div
+          {...{ [CANVAS_OTTO_CORNER_ATTR]: "" }}
+          className="pointer-events-auto absolute left-4 top-4 w-[280px] rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-sm)]"
+        >
           <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
             <span className="flex items-center gap-2 text-xs font-semibold">
               <OttoAvatar size={22} state={busy ? "thinking" : "idle"} />
