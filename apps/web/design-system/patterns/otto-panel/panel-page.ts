@@ -12,10 +12,10 @@
  *   · 路径是某个 SHELL_ROUTES 再加一段 id → 这一档是**一个对象**,只交出
  *     `{ objectKind, objectId }`。对象的真名字要读数据库,而纯函数里不许有取数。
  *
- * **今天没有人拿它去画上下文 chip**:判官 r1 [P2] 查明服务端没有任何读者会因为商家在看
- * 哪一页而改变这一轮的上下文,所以 chip 会说假话,W2-8 不画它。取真名字的那个 server
- * action 一并删了(零调用者的租户查询就是没人守望的攻击面)——#879 step 2 接上真语义时
- * 按它自己的需要写读者,这个解析器与它的围栏那时直接用得上。
+ * **它不说 Otto 读得到什么**(判官 r1 [P2] 的裁定至今成立):服务端没有任何读者会因为
+ * 商家在看哪一页而改变这一轮的上下文,所以「On this page: X」那种写法会说假话。W2-8 因此
+ * 不画 chip。FRONT-A14 把它接回来,但换成一句**范围**标签(`panelScopeLabel`):说的是
+ * 「这段对话存去哪儿」,不是「Otto 看得见什么」—— 前者今天为真,后者仍要等 #879 step 2。
  */
 import { GOAL_PRESETS, type GoalKey } from "@fikirtive/core/goals";
 import { SHELL_ROUTES, everyNavDestination } from "@fikirtive/core/navigation";
@@ -79,9 +79,9 @@ function matchShellRoute(location: string): ShellRouteMatch | null {
   return null;
 }
 
-/** 上下文 chip 会说的那一件事(今天没有人画它,理由见文件头)。 */
+/** 这一页是哪一页(`panelScopeLabel` 拿它取名字;不描述 Otto 读得到什么,见文件头)。 */
 export type PanelContextSubject =
-  /** 一页。`label` 就是它在导航里的名字(`On this page: Library`)。 */
+  /** 一页。`label` 就是它在导航里的名字(`Library`)。 */
   | { kind: "page"; routeKey: ShellRouteKey; label: string }
   /** 一个对象。名字要去数据库读,所以这里只给身份。 */
   | { kind: "object"; routeKey: ShellRouteKey; objectKind: PanelObjectKind; objectId: string };
@@ -106,6 +106,28 @@ export function panelContextSubject(location: string): PanelContextSubject | nul
   }
   const label = navLabelForRoute(match.key);
   return label ? { kind: "page", routeKey: match.key, label } : null;
+}
+
+/** 面板范围标签的第一段 —— 侧栏面板的对话都存在商家的工作区,不属于任何一块画布。 */
+export const PANEL_WORKSPACE_SCOPE = "Workspace";
+
+/**
+ * 面板头部那一行**范围**标签(FRONT-A14;Codex 全 beta 审计 P1-010)。
+ *
+ * P1-010 的第二半:商家在 /billing 展开面板,读到的是一段画布对话,而面板上没有任何一个
+ * 字告诉他这段对话属于别处。范围标签补的就是这一格 —— 「这段对话归谁」。
+ *
+ * 措辞纪律(判官 r1 [P2]):只写位置,不写行为。`Workspace · Billing` 说的是「这是一段
+ * 工作区对话,你在 Billing 这一页开的它」;它**不**说 Otto 看得见这一页上的东西 —— 那
+ * 句话今天不成立(服务端没有任何读者读 `surface`/`subjectRef`)。所以也没有「停止使用
+ * 本页作为上下文」那颗叉:关不掉的东西,不摆一颗关掉它的按钮。
+ *
+ * 认不出来的地址(导航里没有名字的那几面:首页、个人资料、画布)只剩 `Workspace` ——
+ * 有可说的才说,不摆一个写着路径的标签。
+ */
+export function panelScopeLabel(location: string): string {
+  const subject = panelContextSubject(location);
+  return subject && subject.kind === "page" ? `${PANEL_WORKSPACE_SCOPE} · ${subject.label}` : PANEL_WORKSPACE_SCOPE;
 }
 
 /**

@@ -10,7 +10,7 @@ type EntityWithOttoUsage = EntityWithRefs & { _ottoUsageCount?: number };
 type ChatThreadDTOInput = Pick<
   ChatThreadWithMessages,
   "id" | "projectId" | "title" | "updatedAt" | "pinnedAt" | "messages"
->;
+> & Partial<Pick<ChatThreadWithMessages, "surface">>;
 
 export function assetUrl(ownerId: string, contentHash: string, ext: string) {
   return storage.url(storageKey(ownerId, contentHash, ext));
@@ -206,12 +206,13 @@ export function toChatThreadDTO(t: ChatThreadDTOInput, urlsByJob: Map<string, { 
     title: t.title,
     updatedAt: t.updatedAt.toISOString(),
     pinnedAt: t.pinnedAt ? t.pinnedAt.toISOString() : null,
+    surface: t.surface ?? null,
     messages: t.messages.map((m) => toChatMessageDTO(m, urlsByJob)),
   };
 }
 
 /** Thread-LIST DTO: metadata only, empty messages. The rail renders title + time; the
  *  active thread's messages lazy-load via getCoworkThreadClient. (scale audit 2026-06-20) */
-export function toChatThreadMetaDTO(t: { id: string; projectId: string; title: string; updatedAt: Date; pinnedAt?: Date | null; _badge?: "working" | "failed" | "done" | null }): ChatThreadDTO {
-  return { id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt.toISOString(), pinnedAt: t.pinnedAt ? t.pinnedAt.toISOString() : null, messages: [], status: t._badge ?? null };
+export function toChatThreadMetaDTO(t: { id: string; projectId: string; title: string; updatedAt: Date; pinnedAt?: Date | null; surface?: string | null; _badge?: "working" | "failed" | "done" | null }): ChatThreadDTO {
+  return { id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt.toISOString(), pinnedAt: t.pinnedAt ? t.pinnedAt.toISOString() : null, surface: t.surface ?? null, messages: [], status: t._badge ?? null };
 }

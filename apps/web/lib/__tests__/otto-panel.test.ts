@@ -266,10 +266,15 @@ describe("头部与插槽 (§3.4)", () => {
     expect(composed.textContent).toContain("Chatting with Otto costs credits");
   });
 
-  it("shows the page-context chip when one is handed in", async () => {
-    const el = await render(shell({ contextChip: { label: "Raya promo" } }));
+  it("FRONT-A14 — renders the scope label verbatim, with no context claim wrapped around it", async () => {
+    // 标签是整句话,由调用方给全(`Workspace · Billing & credits` / `Canvas · Kaya jar ad`)。
+    // 从前这里包了一层「On this page:」—— 那句话说的是 Otto 读得到这一页,而今天服务端
+    // 没有任何读者读 `surface`/`subjectRef`(判官 r1 [P2])。所以只画调用方给的那一句。
+    const el = await render(shell({ contextChip: { label: "Workspace · Billing & credits" } }));
 
-    expect(el.querySelector("[data-otto-panel-context]")!.textContent).toContain("On this page: Raya promo");
+    const chip = el.querySelector("[data-otto-panel-context]")!;
+    expect(chip.textContent).toContain("Workspace · Billing & credits");
+    expect(chip.textContent).not.toContain("On this page");
   });
 
   it("offers a keyboard route to the resize handle", async () => {

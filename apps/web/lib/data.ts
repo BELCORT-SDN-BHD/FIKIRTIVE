@@ -378,7 +378,9 @@ export async function getAllCoworkThreadMetas(ownerId: string) {
   const threads = await prisma.chatThread.findMany({
     where: { ownerId, ...notDeleted },
     orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { updatedAt: "desc" }],
-    select: { id: true, projectId: true, title: true, updatedAt: true, pinnedAt: true },
+    // `surface`(FRONT-A14):面板「打开时接着聊哪一条」只续自己开的那一批,判据在
+    // `lib/otto-thread-surface.ts`。不取这一列,面板就只能按 project 猜。
+    select: { id: true, projectId: true, title: true, updatedAt: true, pinnedAt: true, surface: true },
   });
   try {
     const threadIds = threads.map((t) => t.id);

@@ -195,7 +195,8 @@ export async function proposeClipActionCard(
       await prisma.$transaction(async (tx) => {
         if (!existingThreadId) {
           // "Untitled" —— 与 `createEmptyCoworkThread` 同一份措辞(会话不是战役,#546)。
-          await tx.chatThread.create({ data: { id: threadId, ownerId, projectId: clip.projectId, title: "Untitled" } });
+          // FRONT-A14:剪辑入口开在画布那一侧,登记成 `canvas`(`lib/otto-thread-surface.ts`)。
+          await tx.chatThread.create({ data: { id: threadId, ownerId, projectId: clip.projectId, title: "Untitled", surface: "canvas" } });
         }
         const last = existingThreadId
           ? await tx.chatMessage.findFirst({

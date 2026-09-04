@@ -77,6 +77,7 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 // and as the real two numbers there.
 import { ottoFailureMessage } from "@/lib/otto-error-copy";
 import { newThreadTitle } from "@/lib/otto-canned-starters";
+import { coerceThreadSurface } from "@/lib/otto-thread-surface";
 // #524 r2 — the READ-ONLY look at the merchant's spend cap that keeps an approval from being
 // burned by a refusal knowable one line earlier. Never an authority; reserveCredits still decides.
 import { spendCapRefusal, approvedToolCostInternal, approvedGenerateCostInternal } from "@/lib/spend-cap-preflight";
@@ -1742,7 +1743,10 @@ export async function ottoTurn(raw: unknown): Promise<
           // #979:标题只能来自商家**自己**打的字。产品自己写好的起手 chip(Brand memory 那
           // 四句)被点一下也是一条消息,但它是我们的文案 —— 拿它当标题,画布随后沿用,
           // 商家的画布就在侧栏里叫「Let me describe my brand to you — …」(beta 录像 01:28)。
-          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text) },
+          //
+          // FRONT-A14:来源过 `coerceThreadSurface` 这一道闸再落库 —— 客户端可以声明自己
+          // 在哪个门,认不出来的一律按画布读,不原样落一个自造的字符串。
+          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text), surface: coerceThreadSurface(parsed.data.surface) },
         });
       }
       const userMessageId = newId();
@@ -2695,6 +2699,9 @@ export async function createEmptyCoworkThread(raw: unknown): Promise<{ id: strin
     return { error: "Invalid request." };
   }
   const { projectId, title } = raw as { projectId: string; title: string };
+  // FRONT-A14:第三扇门也要登记来源。声明来自调用方(前门 / 侧栏面板),但只有过闸的两个
+  // 字面量能落库 —— 认不出来的按画布读(`lib/otto-thread-surface.ts`)。
+  const surface = coerceThreadSurface((raw as Record<string, unknown>).surface);
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
@@ -2715,7 +2722,7 @@ export async function createEmptyCoworkThread(raw: unknown): Promise<{ id: strin
         // 再把第一条消息交给 OttoChatStream。只在另外两扇上装守卫等于没装:点目标格子
         // 送进来的 `title` 就是我们自己写的标签(「Sell a product」),画布随后沿用它。
         // 空标题照旧退回 "Untitled" —— `newThreadTitle` 自己就管这一档。
-        data: { id, ownerId, projectId, title: newThreadTitle(title) },
+        data: { id, ownerId, projectId, title: newThreadTitle(title), surface },
       });
       return { id };
     } catch (e) {
