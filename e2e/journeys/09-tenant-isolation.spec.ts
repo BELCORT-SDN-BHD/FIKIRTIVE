@@ -36,7 +36,11 @@ test("A second merchant sees only their own balance, history and Library", async
   await expect(page.getByText("-111")).toHaveCount(0); // Kaia's charge
   await expect(page.getByText("Your 1 credit entry so far. No charges yet.")).toBeVisible();
 
+  // 旧书签仍然 307 到真 Library(§2.5「旧地址一律 307,永不 404」)。
   await page.goto("/otto?view=library");
+  await expect(page).toHaveURL(/\/library(\?|$)/);
+  // 前端基线段②:元素住在 Elements 页签下,默认打开的那一格是 Generation history。
+  await page.goto("/library?view=elements&element=products");
   await expect(page.getByRole("button", { name: "Open Suri tote bag" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open Kaia secret recipe board" })).toHaveCount(0);
 });
