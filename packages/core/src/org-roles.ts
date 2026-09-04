@@ -15,6 +15,10 @@ export const ORG_CAPABILITIES = [
   "broadcast.manage",
   "workflow.read",
   "workflow.manage",
+  // FRONT-A4(规格 docs/specs/frontend-baseline.md §7.3⑤):设计权威把 Home 定制写成
+  // 「workspace-wide and permissioned by `Manage home`」(patterns/founder-home/README.md)。
+  // 这一条就是那句话的机器形状 —— 判的是能力,不是角色名(项目指南「Permission-based access」)。
+  "workspace.manage_home",
 ] as const;
 export type OrgCapability = (typeof ORG_CAPABILITIES)[number];
 
@@ -36,6 +40,8 @@ export const ORG_ROLE_CAPABILITIES: Record<OrgRole, ReadonlySet<OrgCapability>> 
     "inbox.reply",
     "inbox.manage",
     "broadcast.read",
+    // Home 版面是整个工作区共用的一份;管理员改得动,普通成员改不动(A4 的后半句)。
+    "workspace.manage_home",
   ]),
   member: new Set([
     "workspace.read",

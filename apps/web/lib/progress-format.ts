@@ -26,3 +26,13 @@ export function formatElapsed(totalSeconds: number): string {
  * 那是分位数而不是承诺。真正的进度信息照旧由旁边那个走着的计时器提供,它说的是事实。
  */
 export const QUEUE_WAIT_NOTE = "this can take a moment";
+
+/**
+ * 一句话停在屏幕上太久之后，产品自己说的那一句。**同一条纪律**：没有量级、不承诺时间，
+ * 只说一件此刻为真的事 —— 还在做。
+ *
+ * 走查 P0-4：从 t+2.5s 到 t+48.8s，画布上那句忙碌文案一个字没变，读起来像卡死而不是在做事。
+ * 阈值与用法在 `lib/otto-canvas-turn.ts`（`STILL_WORKING_AFTER_SECONDS`）；这里只管那句话，
+ * 与 `QUEUE_WAIT_NOTE` 同一处作者，别处要说「还在做」引这里，不要再写一句。
+ */
+export const STILL_WORKING_NOTE = "still working…";

@@ -115,15 +115,31 @@ vi.mock("@fikirtive/core", async (importOriginal) => ({
 
 const { proposeClipActionCard } = await import("../clip-actions");
 const { clipEntrySegment, CLIP_ENTRY_ACTIONS, CLIP_ENTRY_COPY, CLIP_ENTRY_WORDING_MAX } = await import("../clip-action-entry");
+// 渲染与批准共用的那一道门 —— 这条入口铸出来的卡要过的是**同一个**函数,不是它的副本。
+const { planCardGate, missingReferenceReceipts } = await import("@/components/otto/plan-card-contract");
 
 const OWNER = "owner-1";
 const CLIP = "gen_clip_1";
+/** 这条片子在库里的真名(= 它当初的提示词)与它的存储坐标 —— 回执那三格全部从这一行来。 */
+const CLIP_PROMPT = "Blue mug rotating on a marble counter";
+// contentHash 必须是真的 64 位十六进制 —— `storageKey` 自己会验(存疑的 key 不许拼出来)。
+const CLIP_HASH = "a".repeat(63) + "1";
+const CLIP_ASSET = { ownerId: OWNER, contentHash: CLIP_HASH, ext: "MP4" };
 
 function armHappyPath(): void {
   mockOwner.mockResolvedValue({ ownerId: OWNER, userId: "user-1" });
   mockResolveDisabled.mockResolvedValue({ disabled: new Set<string>() });
-  mockGenerationFindFirst.mockResolvedValue({ id: CLIP, projectId: "proj-1", threadId: "thread-1" });
+  // 这一行同时喂两趟查询:① 自己那一行(id/projectId/threadId)与 ② 校验器
+  // (id/projectId/promptText/asset)。校验器读出来的那三格就是回执上的名字与缩略图。
+  mockGenerationFindFirst.mockResolvedValue({
+    id: CLIP,
+    projectId: "proj-1",
+    threadId: "thread-1",
+    promptText: CLIP_PROMPT,
+    asset: CLIP_ASSET,
+  });
   mockThreadFindFirst.mockResolvedValue({ id: "thread-1" });
+  mockProjectFindFirst.mockResolvedValue({ id: "proj-1", name: "Ramadan campaign" });
   mockChatFindFirst.mockResolvedValue({ seq: 7 });
   mockChatCreate.mockResolvedValue({});
 }
@@ -437,13 +453,17 @@ describe("#922 缺口 A — 租户", () => {
     const result = await proposeClipActionCard({ generationId: CLIP, action: "edit", wording: "x" });
     expect(result).toEqual({ error: "That clip isn't available." });
     expect(mockChatCreate).not.toHaveBeenCalled();
-    // 校验器问的确实是视频扩展名,而且带着这个租户与这个项目。
+    // 校验器问的确实是视频扩展名,而且带着这个租户。
+    // Codex QA-CRE-FE9-013 之后判据里不再有 `projectId`:引用范围 = 同一 owner 的任意画布
+    // (画布是出处,不是权限边界)。这条入口的行为一格未变 —— `projectId` 本来就是从这一行
+    // **自己**读出来再传回去的,它从来不是一个独立的限制。
     expect(mockGenerationFindFirst.mock.calls[1]![0].where).toMatchObject({
       id: CLIP,
       ownerId: OWNER,
-      projectId: "proj-1",
+      deletedAt: null,
       asset: { ext: { in: ["mp4", "mov", "webm"] } },
     });
+    expect(JSON.stringify(mockGenerationFindFirst.mock.calls[1]![0].where)).not.toContain("projectId");
   });
 
   it("卡落在这条片子出生的那条会话里(有迹可循),会话查询同样是 owner 作用域的", async () => {
@@ -487,6 +507,102 @@ describe("#922 缺口 A — 租户", () => {
     const result = await proposeClipActionCard({ generationId: CLIP, action: "edit", wording: "x" });
     expect(result).toEqual({ error: "Not signed in." });
     expect(mockGenerationFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * 参考回执(Codex QA-CRE-FE9-013 的门,#1177 之后)—— 规格 `docs/specs/creation-engine.md`,
+ * 验收 **CREATE-A1**(花钱前可见、判定落在确认卡上)。
+ *
+ * #1177 给卡装了一道门:卡上有 `referenceVideoGenerationId` 就必须有那一件的 video 回执,
+ * 否则 `planCardGate.approvable` 为假 —— 卡上不出 `Generate · N credits`,只剩 Ask again。
+ * 这条入口**每一张卡**都带那个 id,于是 #1177 合入当天,素材面板铸出来的卡全部批不下去。
+ *
+ * 这里断的是终局:把真的铸出来的那份 payload 交给**真的那道门**(不是它的副本)。
+ * 变异检查:把 `clip-actions.ts` 的 `mediaReferences: [...]` 那一行删掉 ⇒ 本组前两条当场红。
+ */
+describe("CREATE-A1 —— 素材面板铸的卡带得起自己的参考回执", () => {
+  /** 真的落库的那份 payload —— 界面读的就是它。 */
+  function mintedPayload(): Record<string, unknown> {
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    return mockChatCreate.mock.calls[0]![0].data.payload as Record<string, unknown>;
+  }
+
+  it("CREATE-A1: 铸出来的卡过同一道门 ⇒ 回执一件不缺、可批准", async () => {
+    armHappyPath();
+    const result = await proposeClipActionCard({ generationId: CLIP, action: "edit", wording: "the shirt to red" });
+    if ("error" in result) throw new Error(result.error);
+
+    const gate = planCardGate(mintedPayload());
+    expect(gate.missingReferenceReceipts).toEqual([]);
+    expect(gate.approvable).toBe(true);
+    // 门放行 ⇒ 卡上真的报得出价,商家看得见要花多少。
+    expect(gate.credits).toBe(result.estimatedCredits);
+  });
+
+  it("CREATE-A1: 回执指的就是他点的那条片子,名字是真名、缩略图同源", async () => {
+    armHappyPath();
+    const result = await proposeClipActionCard({ generationId: CLIP, action: "edit", wording: "the shirt to red" });
+    if ("error" in result) throw new Error(result.error);
+
+    const payload = mintedPayload();
+    const receipts = payload.mediaReferences as Array<Record<string, unknown>>;
+    expect(receipts).toHaveLength(1);
+    // 回执与卡上那个会随付费请求上路的 id,是同一个 —— 门判的正是这一对。
+    expect(receipts[0]!.generationId).toBe(payload.referenceVideoGenerationId);
+    expect(receipts[0]!.generationId).toBe(CLIP);
+    expect(receipts[0]!.kind).toBe("video");
+    // 真名 = 这条片子当初的提示词(Library 卡片上显示的同一串),不是 `Video ref` 这种占位词。
+    expect(receipts[0]!.label).toBe(CLIP_PROMPT);
+    // 同源的 `/files/u/<owner>/<内容哈希>.<ext>` —— 不是会过期的签名链接;扩展名一律小写。
+    expect(receipts[0]!.previewUrl).toBe(`/files/u/${OWNER}/${CLIP_HASH}.mp4`);
+    // 来源画布:这条入口把卡铸进这条片子自己那块画布。
+    expect(receipts[0]!.sourceProjectId).toBe("proj-1");
+    expect(receipts[0]!.sourceProjectName).toBe("Ramadan campaign");
+    expect(receipts[0]!.sameCanvas).toBe(true);
+  });
+
+  it("CREATE-A1: 画布名读不到也不少一行回执 —— 退回 Untitled canvas,卡照样可批准", async () => {
+    armHappyPath();
+    mockProjectFindFirst.mockResolvedValue(null); // 画布那一行读不出来(会话已存在,不走新建那条路)
+    const result = await proposeClipActionCard({ generationId: CLIP, action: "edit", wording: "the shirt to red" });
+    if ("error" in result) throw new Error(result.error);
+
+    const gate = planCardGate(mintedPayload());
+    expect(gate.missingReferenceReceipts).toEqual([]);
+    expect(gate.approvable).toBe(true);
+    const receipts = mintedPayload().mediaReferences as Array<Record<string, unknown>>;
+    expect(receipts[0]!.sourceProjectName).toBe("Untitled canvas");
+  });
+
+  it("CREATE-A1: 门本身认的就是这张卡的 id —— 抽掉回执立刻判成不可批准", async () => {
+    armHappyPath();
+    await proposeClipActionCard({ generationId: CLIP, action: "edit", wording: "the shirt to red" });
+    // 拿真的那份 payload 做反证:少了回执这一格,同一道门当场说缺哪一件。
+    const withoutReceipts = { ...mintedPayload() };
+    delete withoutReceipts.mediaReferences;
+    expect(missingReferenceReceipts(withoutReceipts)).toEqual(["reference video"]);
+    expect(planCardGate(withoutReceipts).approvable).toBe(false);
+  });
+
+  it("CREATE-A1: 别家的片子 ⇒ 既有拒绝一格未变,零回执零卡", async () => {
+    armHappyPath();
+    // owner 作用域的查询对别人的片子就是空 —— 补回执这一改没有给它开第二扇门。
+    mockGenerationFindFirst.mockResolvedValue(null);
+    const result = await proposeClipActionCard({ generationId: "gen_of_other_tenant", action: "edit", wording: "x" });
+    expect(result).toEqual({ error: "That clip isn't available." });
+    expect(mockChatCreate).not.toHaveBeenCalled();
+  });
+
+  it("CREATE-A1: 第二趟校验器读不出来(不是这个租户的视频行)⇒ 不铸卡,不编回执", async () => {
+    armHappyPath();
+    mockGenerationFindFirst
+      .mockResolvedValueOnce({ id: CLIP, projectId: "proj-1", threadId: "thread-1" })
+      .mockResolvedValueOnce(null); // 校验器那一趟空 = 回执无从谈起
+    const result = await proposeClipActionCard({ generationId: CLIP, action: "edit", wording: "x" });
+    expect(result).toEqual({ error: "That clip isn't available." });
+    expect(mockChatCreate).not.toHaveBeenCalled();
   });
 });
 

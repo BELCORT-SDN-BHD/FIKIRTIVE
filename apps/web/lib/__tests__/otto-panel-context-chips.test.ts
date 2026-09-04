@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GOAL_PRESETS } from "@fikirtive/core/goals";
 import { SHELL_ROUTES, navLinkByKey } from "@fikirtive/core/navigation";
+import { OTTO_PANEL_STORAGE_KEY } from "@/components/otto/panel/panel-state";
 
 vi.mock("next/navigation", () => ({
   usePathname: vi.fn(() => "/billing"),
@@ -113,6 +114,10 @@ beforeEach(() => {
   Object.defineProperty(window, "innerWidth", { value: 1440, writable: true, configurable: true });
   Object.defineProperty(window, "innerHeight", { value: 900, writable: true, configurable: true });
   window.localStorage.clear();
+  // 这个文件里的用例测的是面板体的内容(chip/历史/草稿),不是默认开合本身——默认从
+  // 2026-09-04 起改成收起(FRONT-A14,取代 Q3-A,见 panel-state.ts),这里按「商家上次
+  // 留着开着」起步,省得每条用例各自造存档(同一处理法见 otto-panel-mount.test.ts)。
+  window.localStorage.setItem(OTTO_PANEL_STORAGE_KEY, JSON.stringify({ mode: "docked", open: true, width: 360 }));
   loadOttoPanelSeed.mockResolvedValue(SEED);
   getCoworkThreadClient.mockResolvedValue(fullThread("Kuih teaser for Raya"));
 });

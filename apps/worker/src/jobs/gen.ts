@@ -13,7 +13,7 @@
  * Conditioning = the @mentioned entities' reference images, resolved here from
  * the job's entityIds (D19 trust boundary).
  */
-import { prisma, settleCredits, refundReservation, settleCanvasCardsForGenJob, type GenJob, type RefundOutcome } from "@fikirtive/db";
+import { type Prisma, prisma, settleCredits, refundReservation, settleCanvasCardsForGenJob, type GenJob, type RefundOutcome } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   storageKey,
@@ -35,8 +35,15 @@ import {
   displayCredits,
   genJobEndedWithoutDelivering,
   merchantGenFailureMessage,
+  REFERENCE_ASSET_UNREACHABLE,
   routeReasonFor,
   genImageModel,
+  // Codex QA-CRE-FE9-013 —— 「这一件素材能不能当参考」只有一份判据(同一 owner、活着、
+  // 扩展名对得上)。这里的四处解析从前各写一份 where、四份都多写了一格 `projectId`,
+  // 于是跨画布引用哪怕过了前面所有的门,也会在这里 fail-closed 退款。
+  generationReferenceScope,
+  REFERENCE_IMAGE_EXTS,
+  REFERENCE_VIDEO_EXTS,
   type GenJobData,
   type GenModel,
   type GenVideoModel,
@@ -48,6 +55,8 @@ import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
 import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
+// Codex E2E-CRE-PAV-004 —— 两步任务的接力:Step 1 出图后铸第二步的确认卡($0,不扣费)。
+import { planVideoStepHandoff, type PreparedVideoStep } from "@fikirtive/otto";
 
 /** 这一行 GenJob 的计价输入 —— 报价与报警必须看**同一个**对象,否则两边可能各算各的。 */
 function genSpendInputOf(job: GenJob) {
@@ -410,18 +419,61 @@ async function appendCoworkResult(
   costCredits?: number,
 ): Promise<void> {
   if (!job.threadId) return;
+  const threadId = job.threadId;
+
+  // Codex E2E-CRE-PAV-004 —— 两步任务的**接力**。这一单如果是一张「先出图、再出片」的
+  // Step 1 卡,而且真的交付了图,第二步的确认卡就在这里由服务端自己铸出来($0)——
+  // 商家不必再去找图、再附加一次、再把同一件事讲一遍。
+  //
+  // 准备工作全在事务**外面**跑,而且整段(含读模型开关那一次)包在 try 里:接力是交付路径上的
+  // 尾巴,它不该有能力把一次已经付过钱、已经交付的生成写坏。算不出来就是 null = 不接力
+  // (fail closed:连引擎开着没有都读不到,就不铸一张可能根本做不了的付费卡)。
+  let handoff: PreparedVideoStep | null = null;
+  if (kind === "GEN_RESULT") {
+    try {
+      handoff = await planVideoStepHandoff({
+        jobId: job.id,
+        ownerId: job.ownerId,
+        threadId,
+        generationIds,
+        disabledModels: [...(await workerDisabledModels())],
+      });
+    } catch (e) {
+      console.warn(`[gen] ${job.id}: video-step handoff skipped (non-fatal):`, e instanceof Error ? e.message : e);
+    }
+  }
+
   try {
-    const last = await prisma.chatMessage.findFirst({ where: { threadId: job.threadId, ownerId: job.ownerId }, orderBy: { seq: "desc" }, select: { seq: true } });
-    await prisma.chatMessage.create({
-      data: {
-        id: newId(), threadId: job.threadId, ownerId: job.ownerId, role: "AGENT", kind,
-        seq: (last?.seq ?? 0) + 1, text: errorText,
-        genJobId: job.id,
-        payload: {
-          kind: job.kind === "VIDEO" ? "video" : "image", model: job.model, generationIds,
-          ...(kind === "GEN_RESULT" && typeof costCredits === "number" ? { costCredits } : {}),
+    // 结果与接力卡写在**同一个事务**里,于是两件事同时成立:
+    //   · 至多一张 —— 恰好一个事务能赢下 `ChatMessage(genJobId)` 那个部分唯一索引,
+    //     重投/恢复再跑一次会撞 P2002、整个事务回滚,第二张卡不可能出现两张;
+    //   · 原子可见 —— 轮询看得见 GEN_RESULT,就一定同时看得见这张卡(不会漏在两次写之间)。
+    // 一分钱不动:两行都是 ChatMessage,没有 reserve / settle / refund,账本零新增行。
+    await prisma.$transaction(async (tx) => {
+      const last = await tx.chatMessage.findFirst({ where: { threadId, ownerId: job.ownerId }, orderBy: { seq: "desc" }, select: { seq: true } });
+      const seq = (last?.seq ?? 0) + 1;
+      await tx.chatMessage.create({
+        data: {
+          id: newId(), threadId, ownerId: job.ownerId, role: "AGENT", kind,
+          seq, text: errorText,
+          genJobId: job.id,
+          payload: {
+            kind: job.kind === "VIDEO" ? "video" : "image", model: job.model, generationIds,
+            ...(kind === "GEN_RESULT" && typeof costCredits === "number" ? { costCredits } : {}),
+          },
         },
-      },
+      });
+      if (handoff) {
+        await tx.chatMessage.create({
+          data: {
+            id: newId(), threadId, ownerId: job.ownerId, role: "AGENT", kind: "GEN_CARD",
+            // 结果在前、待确认的第二步在后 —— 商家先看到刚做好的那张图,再看到下一步。
+            seq: seq + 1, text: "",
+            // genJobId 不写:这张卡还没被批准,它自己的付费幂等域是 `cowork:<cardId>`。
+            payload: handoff.payload as unknown as Prisma.InputJsonObject,
+          },
+        });
+      }
     });
   } catch (e) {
     if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") return; // already written (resume) → no-op
@@ -1130,7 +1182,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       }
       const isMock = provider.name === "mock";
       if (!isMock && cappedRefs.length > 0 && inputImageUrls.length < cappedRefs.length) {
-        throw new Error(`conditioning refs unreachable (${inputImageUrls.length}/${cappedRefs.length}) — refusing to spend`);
+        // Codex QA-CRE-007 — the merchant sentence (REFERENCE_ASSET_UNREACHABLE) is what gets
+        // PERSISTED (GenJob.error → Library card, cast library problem line); the diagnostic
+        // counts stay in the worker log only, for support.
+        console.error(`[gen] ${job.id}: conditioning refs unreachable (${inputImageUrls.length}/${cappedRefs.length}) — refusing to spend`);
+        throw new Error(REFERENCE_ASSET_UNREACHABLE);
       }
 
       // frozen provenance snapshot (same shape as uploadCandidates)
@@ -1174,11 +1230,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         let sourceAsset: { ownerId: string; contentHash: string; ext: string } | null = null;
         if (job.sourceGenerationId) {
           const src = await prisma.generation.findFirst({
-            where: { id: job.sourceGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+            where: { id: job.sourceGenerationId, ...generationReferenceScope(job.ownerId, REFERENCE_IMAGE_EXTS) },
             include: { asset: true },
           });
           if (!src) {
-            await failClosedWithRefund(job,"image-to-video source not found (or not an image) in this project");
+            await failClosedWithRefund(job,"image-to-video source not found (or not an image) for this account");
             return;
           }
           sourceAsset = src.asset;
@@ -1197,7 +1253,12 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         }
         if (sourceAsset) {
           imageUrl = (await storage.presignedGet(storageKey(sourceAsset.ownerId, sourceAsset.contentHash, sourceAsset.ext), 3600)) ?? "";
-          if (provider.name !== "mock" && !imageUrl) throw new Error("source image unreachable — refusing to spend on i2v");
+          if (provider.name !== "mock" && !imageUrl) {
+            // Codex QA-CRE-007 — see the conditioning-refs throw above for why the persisted
+            // message is the merchant sentence and the diagnostic stays in this log line.
+            console.error(`[gen] ${job.id}: source image unreachable — refusing to spend on i2v`);
+            throw new Error(REFERENCE_ASSET_UNREACHABLE);
+          }
         }
         // #646: an end frame with NO start frame used to fall through the `&& sourceAsset`
         // guard below — the tail silently vanished and the merchant was charged for an
@@ -1213,26 +1274,29 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         let tailImageUrl = "";
         if (job.tailGenerationId && sourceAsset) {
           const tail = await prisma.generation.findFirst({
-            where: { id: job.tailGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+            where: { id: job.tailGenerationId, ...generationReferenceScope(job.ownerId, REFERENCE_IMAGE_EXTS) },
             include: { asset: true },
           });
           if (!tail) {
-            await failClosedWithRefund(job,"last-frame image not found (or not an image) in this project");
+            await failClosedWithRefund(job,"last-frame image not found (or not an image) for this account");
             return;
           }
           tailImageUrl = (await storage.presignedGet(storageKey(tail.asset.ownerId, tail.asset.contentHash, tail.asset.ext), 3600)) ?? "";
-          if (provider.name !== "mock" && !tailImageUrl) throw new Error("last-frame image unreachable — refusing to spend on i2v");
+          if (provider.name !== "mock" && !tailImageUrl) {
+            console.error(`[gen] ${job.id}: last-frame image unreachable — refusing to spend on i2v`);
+            throw new Error(REFERENCE_ASSET_UNREACHABLE);
+          }
         }
         // Whole-clip reference video (整段视频参考). Resolved server-side from an owned,
         // in-project, video-ext Generation; fail-closed if set-but-missing (never spend).
         let refVideoUrl = "";
         if (job.referenceVideoGenerationId) {
           const rv = await prisma.generation.findFirst({
-            where: { id: job.referenceVideoGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["mp4", "mov", "webm"] } } },
+            where: { id: job.referenceVideoGenerationId, ...generationReferenceScope(job.ownerId, REFERENCE_VIDEO_EXTS) },
             include: { asset: true },
           });
           if (!rv) {
-            await failClosedWithRefund(job, "reference video not found (or not a video) in this project");
+            await failClosedWithRefund(job, "reference video not found (or not a video) for this account");
             return;
           }
           // Margin guard: BytePlus bills reference-video input by duration while our charge is
@@ -1245,7 +1309,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             return;
           }
           refVideoUrl = (await storage.presignedGet(storageKey(rv.asset.ownerId, rv.asset.contentHash, rv.asset.ext), 3600)) ?? "";
-          if (provider.name !== "mock" && !refVideoUrl) throw new Error("reference video unreachable — refusing to spend");
+          if (provider.name !== "mock" && !refVideoUrl) {
+            console.error(`[gen] ${job.id}: reference video unreachable — refusing to spend`);
+            throw new Error(REFERENCE_ASSET_UNREACHABLE);
+          }
         }
         // per-model controls chosen in the composer (resolved + stored at enqueue);
         // fall back to the legacy fixed duration if an older job has none.
@@ -1284,12 +1351,15 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // multi-reference conditioning the @ref images ride along after it). Pre-spend.
         if (job.sourceGenerationId) {
           const src = await prisma.generation.findFirst({
-            where: { id: job.sourceGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+            where: { id: job.sourceGenerationId, ...generationReferenceScope(job.ownerId, REFERENCE_IMAGE_EXTS) },
             include: { asset: true },
           });
-          if (!src) { await failClosedWithRefund(job, "edit source image not found (or not an image) in this project"); return; }
+          if (!src) { await failClosedWithRefund(job, "edit source image not found (or not an image) for this account"); return; }
           const srcUrl = (await storage.presignedGet(storageKey(src.asset.ownerId, src.asset.contentHash, src.asset.ext), 3600)) ?? "";
-          if (provider.name !== "mock" && !srcUrl) throw new Error("edit source image unreachable — refusing to spend");
+          if (provider.name !== "mock" && !srcUrl) {
+            console.error(`[gen] ${job.id}: edit source image unreachable — refusing to spend`);
+            throw new Error(REFERENCE_ASSET_UNREACHABLE);
+          }
           if (srcUrl) {
             inputImageUrls.unshift(srcUrl);
             refSlots.unshift({ kind: "baseImage" }); // 底图坐第 0 位 → 它就是 <Image_1>

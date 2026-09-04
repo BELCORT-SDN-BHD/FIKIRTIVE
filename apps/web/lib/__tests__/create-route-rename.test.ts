@@ -46,25 +46,29 @@ describe("legacy Create routes", () => {
   });
 });
 
+// FRONT §7.1 ⑨ moved the Create start page onto the approved design fixture, so the surface it
+// pins is now `components/start-something/CreateWorkspace{,Entry}.tsx` instead of the canvas tree's
+// NorthstarHome pair. The claims themselves are unchanged: one controlled entry, one real composer
+// action, one Canvas history, authentication at the server adapter.
 describe("frozen Create surface", () => {
   it("renders the controlled Create entry and no browse homepage", () => {
     const page = source("app/create/page.tsx");
-    expect(page).toContain("NorthstarHomeEntry");
+    expect(page).toContain("CreateWorkspaceEntry");
     expect(page).not.toContain("CreateBrowseEntry");
     expect(page).not.toContain("CreateBrowseSections");
   });
 
   it("has one real composer action and one Canvas history", () => {
-    const home = source("components/canvas/NorthstarHome.tsx");
+    const workspace = source("components/start-something/CreateWorkspace.tsx");
     const composer = source("components/start-something/StartSomething.tsx");
-    expect(home).toContain("<StartSomething />");
-    expect(home).toContain("Canvas history");
+    expect(workspace).toContain("<StartSomething />");
+    expect(workspace).toContain("Canvas history");
     expect(composer).toContain("createCanvasConversation");
     expect(composer).not.toContain("createProject");
   });
 
   it("keeps authentication at the controlled server entry", () => {
-    const entry = source("components/canvas/NorthstarHomeEntry.tsx");
+    const entry = source("components/start-something/CreateWorkspaceEntry.tsx");
     expect(entry).toContain("requireOwner()");
     expect(entry).toContain('redirect("/login")');
     expect(entry).toContain("getProjects(owner.ownerId)");

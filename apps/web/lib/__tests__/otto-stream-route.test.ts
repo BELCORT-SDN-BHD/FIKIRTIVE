@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 import { OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
+import { referenceUnavailableMessage } from "@fikirtive/core";
 
 const mocks = vi.hoisted(() => {
   class MockInsufficientCredits extends Error {
@@ -84,12 +85,19 @@ vi.mock("@/lib/rate-limit-gates", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/rate-limit-gates")>()),
   consumeOttoTurnGate: mocks.consumeOttoTurnGate,
 }));
-vi.mock("@/lib/otto-actions", () => ({
-  buildOttoContext: mocks.buildOttoContext,
-  buildContextSystemMessage: mocks.buildContextSystemMessage,
-  finalizeOttoRun: mocks.finalizeOttoRun,
-  validateOttoTurnReferences: mocks.validateOttoTurnReferences,
-}));
+vi.mock("@/lib/otto-actions", async () => {
+  // 措辞不打桩:路由回给商家的那一句必须真的来自 `gen-failure.ts` 的那张表,否则下面那条
+  // 断言只是在核对一个我们刚编出来的字符串(QA-CRE-FE9-013)。
+  const { referenceUnavailableMessage } = await import("@fikirtive/core");
+  return {
+    buildOttoContext: mocks.buildOttoContext,
+    buildContextSystemMessage: mocks.buildContextSystemMessage,
+    finalizeOttoRun: mocks.finalizeOttoRun,
+    validateOttoTurnReferences: mocks.validateOttoTurnReferences,
+    unavailableReferenceMessage: (unavailable: { reason: "notFound" | "fileMissing" }[]) =>
+      referenceUnavailableMessage(unavailable[0]?.reason ?? "notFound"),
+  };
+});
 vi.mock("@/lib/otto-generation-validate", () => ({
   validateOwnedGenerationExt: mocks.validateOwnedGenerationExt,
 }));
@@ -231,6 +239,8 @@ beforeEach(() => {
       ...(input.referenceVideoGenerationIds ?? []),
       ...(input.referenceVideoGenerationId ? [input.referenceVideoGenerationId] : []),
     ],
+    mediaReferences: [],
+    unavailable: [],
   }));
   mocks.withLlmBudget.mockImplementation(
     async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
@@ -346,6 +356,34 @@ describe("POST /api/otto/stream", () => {
         }),
       }),
     }));
+  });
+
+  /**
+   * CREATE-A2(Codex 只读 E2E QA-CRE-FE9-013)—— 挂上来的引用取不到时,这一轮**整轮不发**。
+   *
+   * 上一版这里是静默丢弃:解析器把取不到的滤成空数组,路由照常建对话、落 USER 消息、开流,
+   * Otto 按「没有产品参考」的前提铸卡,商家为一张不含指定产品的素材付了钱。
+   */
+  it("CREATE-A2 一件引用取不到:400 + 那一句人话,而且不建对话、不落 USER 消息、不开流", async () => {
+    mocks.validateOttoTurnReferences.mockResolvedValue({
+      sourceGenerationIds: [],
+      referenceVideoGenerationIds: [],
+      mediaReferences: [],
+      unavailable: [{ id: "gen_cup", reason: "notFound" }],
+    });
+
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "Put my cup on a marble counter",
+      sourceGenerationIds: ["gen_cup"],
+    }));
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: referenceUnavailableMessage("notFound") });
+    expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+    expect(mocks.buildOttoContext).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
   });
 
   // #498: the verbal-approval repro (storyboard → Otto invites "全部生成" → merchant sends

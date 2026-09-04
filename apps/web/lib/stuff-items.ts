@@ -1,4 +1,5 @@
 /** Pure classifier for the unified Library (spec R3). No IO. */
+import type { EntityCapabilities } from "@fikirtive/core/entity-policy";
 import type { EntityDTO } from "./types";
 import type { HistoryThumb } from "./data";
 import type { AdTile } from "@/components/otto/OttoStuff";
@@ -18,6 +19,10 @@ export type StuffItem = {
   projectId?: string;
   assetId?: string;
   productName?: string;
+  /** 官方目录只读(Founder 2026-08-30):`source === "entity"` 时,把 EntityDTO 上域层算好的
+   *  能力表原样带过来。Library 的动作菜单据此决定画不画 Rename / Change type / Remove ——
+   *  这里不重新判一次「是不是官方」,那会是第二份真相。 */
+  entityCapabilities?: EntityCapabilities;
 };
 
 /**
@@ -75,6 +80,7 @@ export function buildStuffItems(args: {
       mediaKind: base ? base.kind : "other",
       entityId: e.id,
       entityType: e.type,
+      entityCapabilities: e.capabilities,
       ...(base ? { assetId: base.assetId } : {}),
       ...(base && pidx.has(base.assetId) ? { productName: pidx.get(base.assetId) } : {}),
     });

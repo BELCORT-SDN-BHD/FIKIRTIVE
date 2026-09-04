@@ -20,12 +20,12 @@ export function CanvasOttoOverlay({
   activeThread,
   pendingFirst,
   composerReferences,
-  onNewConversation,
   onThreadChange,
   onStreamStart,
   onPendingFirstSent,
   onComposerReferencesConsumed,
   onBalanceRefresh,
+  onGenerationActivityChange,
 }: {
   projectId: string;
   entities: EntityDTO[];
@@ -33,12 +33,13 @@ export function CanvasOttoOverlay({
   activeThread: ChatThreadDTO | null;
   pendingFirst: CanvasPendingFirst | null;
   composerReferences: OttoComposerReference[];
-  onNewConversation: () => void;
   onThreadChange: (thread: ChatThreadDTO) => void;
   onStreamStart: (thread: ChatThreadDTO, pending: Omit<CanvasPendingFirst, "handoffId">) => void;
   onPendingFirstSent: () => void;
   onComposerReferencesConsumed: (requestIds: string[]) => void;
   onBalanceRefresh: () => void | Promise<void>;
+  /** 这条对话此刻有没有付费生成在跑 —— 画板据此重读自己的板(走查 P0-1)。 */
+  onGenerationActivityChange: (active: boolean) => void;
 }) {
   if (!activeThread) {
     return (
@@ -62,7 +63,6 @@ export function CanvasOttoOverlay({
       entities={entities}
       thread={activeThread}
       balanceUsd={balanceUsd}
-      onNewConversation={onNewConversation}
       onRefresh={async () => {
         const fresh = await getCoworkThreadClient(activeThread.id);
         if (fresh) onThreadChange(fresh);
@@ -73,6 +73,7 @@ export function CanvasOttoOverlay({
       onPendingFirstSent={onPendingFirstSent}
       composerReferences={composerReferences}
       onComposerReferencesConsumed={onComposerReferencesConsumed}
+      onGenerationActivityChange={onGenerationActivityChange}
     />
   );
 }

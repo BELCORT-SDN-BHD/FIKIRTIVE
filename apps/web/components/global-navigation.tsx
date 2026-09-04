@@ -95,8 +95,11 @@ export function shellTopBarLabel(pathname: string): string | undefined {
  * Utility bar 里的 Ask Otto 必须挂在 `OttoPanelMount` 之内才够得着
  * `useOttoPanelControls()`(那个 context 由 `OttoPanelShell` 往下发,只喂给它的后代)。
  *
- * 面板没有挂在这一面时(今天只有画布,见 `panel-surface.ts`)`controls` 是 `null` ——
- * 按钮因此什么都不做,这不是一个错误,是「这一面自己已经有一个 Otto」的意思本身。
+ * 面板没有挂在这一面时(见 `panel-surface.ts` 的「这一面自己已经有一个 Otto」名单,今天
+ * 是画布与 `/create`)`controls` 是 `null` —— 这不是一个错误,是「这一面自己已经有一个
+ * Otto」的意思本身,所以 `onAskOtto` 传 `undefined`,`MerchantTopBar` 就不画这颗按钮
+ * (判官 P1-A:此前传的是 `() => controls?.togglePanel()`,按钮仍然画出来,按下去却是一次
+ * 空动作 —— 一颗建了没用的死按钮)。
  *
  * 余额从父层(`MerchantShellContent`)当 prop 收下来,不在这里自己取:画布与非画布之间
  * 那次 `OttoPanelMount` 内部形状切换(fragment ↔ `OttoPanelShell`)会让这一层重挂,状态
@@ -144,7 +147,7 @@ export function MerchantShellFrame({
           pathname={pathname}
           account={account}
           signOutAction={signOutAction}
-          onAskOtto={() => controls?.togglePanel()}
+          onAskOtto={controls ? () => controls.togglePanel() : undefined}
           activeLabelOverride={topBarLabel}
           profileHref={profileHref}
           showSignOutAction={showSignOutAction}

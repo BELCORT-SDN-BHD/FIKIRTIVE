@@ -51,6 +51,12 @@ export const TENANT_MODELS = new Set([
   // 什么」,越租户读一行就是把 A 家的菜单讲给 B 家听。worker 走的是标准两段式(具名系统身份
   // 扫描 + runAsTenant 逐行写),Otto 取回那一侧全程带 ctx.orgId,所以它不需要豁免。
   "AssetUnderstanding",
+  // FRONT-A4 (2026-09-03,规格 docs/specs/frontend-baseline.md §7.3⑤):工作区 Home 版面。
+  // GUARDED,不 EXEMPT —— 它装的是「这个商家的 Home 长什么样」,越租户读一行就是把 A 家的
+  // 工作区偏好讲给 B 家看;而且它**没有**任何平台级读取需求(admin 不读版面),所以保守默认
+  // 就是进守卫。唯一的读写方 apps/web/lib/home-layout-store.ts 全程显式带 ownerId,
+  // 无帧(未进 runAsUser)时走的正是守卫的显式兜底那一支。
+  "OrgHomeLayout",
 ]);
 
 /** Tenant-scoped models whose tenant column is `orgId`, NOT `ownerId` (钱引擎⑤B, 规格 §7.7

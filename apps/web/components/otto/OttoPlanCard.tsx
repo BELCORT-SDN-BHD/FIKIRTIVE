@@ -4,18 +4,20 @@ import { formatElapsed, QUEUE_WAIT_NOTE } from "@/lib/progress-format";
 import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { ottoApprove } from "@/lib/otto-client-actions";
-import { coworkGenerate, coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
+import { coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
 import { CHAT_SPEND_NOTE, creditsLabel } from "@/lib/credit-format";
 import { ErrorWithTopUp } from "@/components/exits/Exits";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
-import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
+import { type ChainedApproval } from "./approval-chain";
+import { runPlanApproval } from "./plan-approval";
 import { runStateOfCard } from "@/lib/otto-status-helpers";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
 // The ONE contract layer: runtime parse + the ONE price-guarantee predicate. The render
 // gate and approve() both read this — they cannot disagree any more (#580 复审 r2 P1-1).
 import { guaranteedCredits, planCardGate, type OttoPlanCardPayload } from "./plan-card-contract";
+// Codex QA-CRE-FE9-013 —— 参考回执那一块。两张确认卡共用这一份,抄成两份必有一份先烂。
+import { CardReferenceReceipt } from "./CardReferenceReceipt";
 // #774 判官 r2 P1 —— 卡上那行「引擎会被告知这些照片是谁」的措辞,与真正送出去的名字
 // 共用同一个纯函数(同一把长度尺),所以卡说的不可能比做的多。走**子路径**而不是包根:
 // `@fikirtive/core` 的桶文件带出 `node:crypto`(hash.ts),那会被拖进客户端包。
@@ -192,7 +194,12 @@ export function OttoPlanCard({
   /** The merchant's approval, in ONE press (#896). The button carries the price, so the
    *  press IS the approval — there is no second "are you sure" screen showing the same
    *  number a second time. Everything money-shaped below is untouched: same approval
-   *  chain, same idempotency, same server actions, same fail-closed gate. */
+   *  chain, same idempotency, same server actions, same fail-closed gate.
+   *
+   *  THE ACTION ITSELF lives in `plan-approval.ts` now, because the canvas's always-visible
+   *  Otto card carries a second Generate button for the same card (走查 P0-3) and two copies
+   *  of a spend path is exactly how one of them drifts (§7.3). This function keeps the gate,
+   *  the busy flag and the wording; the spend is that one shared call. */
   async function approve() {
     // Fail closed on the SAME gate the render used: a plan we couldn't read, couldn't
     // price, or couldn't read in full renders no approve button — and may not start a
@@ -200,46 +207,25 @@ export function OttoPlanCard({
     if (busy || cardState !== "idle" || !gate.approvable) return;
     setBusy(true);
     setError(null);
-    try {
-      // Two spend paths. If Otto PARKED a generate (the turn returned needs_approval),
-      // resume it via ottoApprove. Otherwise this is a freshly PROPOSED card — trigger
-      // generation directly with coworkGenerate. (ottoApprove on a proposed card fails
-      // with "That card isn't awaiting approval", which is why generation never started.)
-      const res = pendingApproval
-        ? await ottoApprove({ threadId, cardId })
-        : await coworkGenerate({
-            cardId,
-            prompt: p.structuredPrompt ?? "",
-            entityIds: Array.isArray(p.entityIds) ? p.entityIds : [],
-            variantSel: p.variantSel && typeof p.variantSel === "object" ? p.variantSel : {},
-          });
-      if (res && "error" in res) {
-        setError(res.error);
-        return;
-      }
-      // #498 P1b (round-4): an ottoApprove resume can park AGAIN on further
-      // approval(s). Surface the server's localized receipt here, and hand the
-      // chained card ids UP via onApproved so the parent marks them
-      // pendingApproval and renders them — their clicks must resume the RunState
-      // (ottoApprove), never coworkGenerate. (This card's own generation DID
-      // start; onApproved stays correct either way.)
-      //
-      // #591 / P1-4: the parked step-trace above also has to stop asking for a click
-      // that already happened — but it learns that from the parent's NEW pending set
-      // (derived from `chained` right here), not from a module-level broadcast that
-      // hid every waiting panel on the page.
-      const chained = chainedApprovalOf(res);
-      if (chained) setChainedReceipt(chained.fallbackReply);
-      onApproved({ cardId, chained });
-    } catch {
-      setError("Couldn't start that — please try again.");
-    } finally {
-      setBusy(false);
-      // The charge moment: both branches reserve credits (ottoApprove resumes a parked paid
-      // generation, coworkGenerate dispatches a fresh one). Announced in a finally because a
-      // failed response never proves zero spend (#550).
-      notifyBalanceRefresh();
+    const outcome = await runPlanApproval({ threadId, cardId, pendingApproval, payload: p });
+    setBusy(false);
+    if (!outcome.ok) {
+      setError(outcome.error);
+      return;
     }
+    // #498 P1b (round-4): an ottoApprove resume can park AGAIN on further
+    // approval(s). Surface the server's localized receipt here, and hand the
+    // chained card ids UP via onApproved so the parent marks them
+    // pendingApproval and renders them — their clicks must resume the RunState
+    // (ottoApprove), never coworkGenerate. (This card's own generation DID
+    // start; onApproved stays correct either way.)
+    //
+    // #591 / P1-4: the parked step-trace above also has to stop asking for a click
+    // that already happened — but it learns that from the parent's NEW pending set
+    // (derived from `chained` right here), not from a module-level broadcast that
+    // hid every waiting panel on the page.
+    if (outcome.chained) setChainedReceipt(outcome.chained.fallbackReply);
+    onApproved({ cardId, chained: outcome.chained });
   }
 
   function handleCopy() {
@@ -366,11 +352,14 @@ export function OttoPlanCard({
             就是付费提示词里那几个字:名字冻结在这张卡上,批准之后谁也改不动它,worker
             只认这一份(改名不会偷偷换掉已经批准的指令)。老卡没有这份快照 → 不显示这行,
             而不是猜一个。 */}
-        {referenceNamesNote && (
-          <div className="mt-[9px] text-[0.75rem] text-muted-foreground">
-            {referenceNamesNote}
-          </div>
-        )}
+        {/* Codex QA-CRE-FE9-013 —— 人物那一行下面,是媒体参考的逐项回执(缩略图、真实名字、
+            来源画布)。从前这里只有人物,商家从 Library 挑的那张产品图在卡上一个字都没有。
+            回执缺一件时这一块自己说出来缺哪一件,而 Generate 由 gate.approvable 关掉。 */}
+        <CardReferenceReceipt
+          approvedEntitiesNote={referenceNamesNote}
+          mediaReferences={p.mediaReferences ?? []}
+          missing={gate.missingReferenceReceipts}
+        />
 
         {/* A payload that carried malformed fields is disclosed, not quietly patched —
             and, since r2 P1-2, not approvable either (see the button block below). */}
@@ -400,6 +389,14 @@ export function OttoPlanCard({
               <div className="mt-1 text-[0.875rem] text-muted-foreground">
                 Then the video &mdash; <CardMoney>~{creditsLabel(videoCredits)}</CardMoney>
               </div>
+              {/* Codex E2E-CRE-PAV-004 —— 第二步的卡由服务端接力铸出(冻结计划在 `videoStep.next`),
+                  所以这里可以照实说下一步会自己出现。没有冻结计划的老卡不说这句:那种卡上
+                  第二步确实还得靠对话继续,承诺一件不会发生的事比不说更糟。 */}
+              {p.videoStep?.next ? (
+                <div className="mt-1 text-[0.75rem] text-muted-foreground">
+                  Once this picture is made, the video comes back for you to confirm on its own.
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="font-mono text-[11.5px] text-muted-foreground">
