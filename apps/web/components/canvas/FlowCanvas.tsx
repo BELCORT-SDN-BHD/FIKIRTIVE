@@ -1284,12 +1284,10 @@ export default function FlowCanvas({
       && n.selected === true
       && imageNodeActionable(n.data as { status?: string; url?: string; generationId?: string }),
   );
+  // 变体确认卡把这个数渲染成商家正要批准的价（QA-CRE-FE9-001），所以它开着的时候也要有报价；
+  // 报不出来那颗 `Generate` 就不给按（与两个视频弹窗同一口径）。
   useEffect(() => {
-    // 变体确认卡把这个数渲染成商家正要批准的价（QA-CRE-FE9-001），所以它开着的时候也要有报价；
-    // 报不出来那颗 `Generate` 就不给按（与两个视频弹窗同一口径）。
-    if (composerVisible || cardBarVisible || pendingAnimateId !== null || t2vOpen || pendingVariant !== null) {
-      refreshCostQuote();
-    }
+    if (composerVisible || cardBarVisible || pendingAnimateId !== null || t2vOpen || pendingVariant !== null) refreshCostQuote();
   }, [composerVisible, cardBarVisible, pendingAnimateId, t2vOpen, pendingVariant, refreshCostQuote]);
 
   // Load (and, under the Grok-bright skin, bridge OTTO's chat results onto) the

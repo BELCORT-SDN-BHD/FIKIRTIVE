@@ -115,9 +115,6 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   // what it settled, so a card that is still queueing says nothing about its batch (#605 r1 P1-1).
   const letter = canvasBatchLetter(canvasRecordedFacts(d));
   const canVariant = actionable && !!d.onVariant && !!originalPrompt;
-  // One sentence for the "Create variations" key: what it delivers, in which shape, at what
-  // price — and, since QA-CRE-FE9-001, that pressing it only opens the confirmation.
-  const variantHint = `Make another one like this${d.imageShape ? ` · ${d.imageShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""} · No charge until you confirm`;
   const canSendToOtto = actionable && !!d.onSendToOtto;
   return (
     <>
@@ -168,8 +165,8 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             onPointerDown={(e) => e.stopPropagation()}
             // #643 T2：交付的是这张卡自己记着的那一格形状 —— 「和这张一样」就是一样。
             onClick={(e) => { e.stopPropagation(); d.onVariant?.(id, d.imageShape); }}
-            tooltip={variantHint}
-            title={variantHint}
+            tooltip={`Make another one like this${d.imageShape ? ` · ${d.imageShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""} · No charge until you confirm`}
+            title={`Make another one like this${d.imageShape ? ` · ${d.imageShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""} · No charge until you confirm`}
           >
             {d.imageVariantPending ? <Spinner aria-hidden="true" /> : <CopyPlusIcon aria-hidden />}
           </NodeToolbarIconButton>

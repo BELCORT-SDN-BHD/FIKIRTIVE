@@ -458,6 +458,13 @@ describe("the kernel's behaviour came along with it", () => {
     await act(async () => {
       (anchor.data.onVariant as (id: string, aspect?: string) => void)("far");
     });
+    // QA-CRE-FE9-001（Founder 2026-09-04 07:05 裁决）：第一下只开确认卡，付费在卡上那颗
+    // `Generate · N credits`。落点规则一格没变，只是要多按这一下才走到付费请求。
+    expect(mocks.generateImage).not.toHaveBeenCalled();
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+      .find((b) => b.textContent?.startsWith("Generate · "))!;
+    expect(confirm, "变体确认卡上没有 `Generate · N credits`").not.toBeUndefined();
+    await act(async () => { confirm.click(); });
 
     expect(mocks.generateImage).toHaveBeenCalledTimes(1);
     const rect = mocks.generateImage.mock.calls[0]![1] as SpawnRect;
