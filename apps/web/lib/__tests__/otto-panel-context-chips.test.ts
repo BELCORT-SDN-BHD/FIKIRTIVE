@@ -6,9 +6,11 @@
  *
  * 三件事:
  *
- *  ① **上下文 chip 这一票不画**。判官 r1 [P2]:服务端没有任何读者会因为商家在看哪一页
- *     而改变这一轮的上下文,所以「Otto 看得见我这一页」与「关掉它就不看了」都是假话。
- *     解析器留着、围栏留着,chip 随 #879 step 2 启用。
+ *  ① **头部那一行只说范围,不说 Otto 读得到什么**。判官 r1 [P2] 的裁定至今成立:服务端
+ *     没有任何读者会因为商家在看哪一页而改变这一轮的上下文,所以「Otto 看得见我这一页」
+ *     与「关掉它就不看了」都是假话。W2-8 因此一个字都不说;FRONT-A14(Codex 全 beta 审计
+ *     P1-010)改说**另一句** —— 这段对话归谁(`Workspace · <页面名>`)。这一组钉的就是
+ *     「说了范围」与「没说那两句假话」同时成立。
  *  ② **面板仍然认得这一页是哪一页**(纯函数),包括「战役底下的固定子段不是一条战役」。
  *  ③ **快捷 chips 随页面变,而且文案不是这一票新写的**。每一颗的字都必须逐字等于
  *     `GOAL_PRESETS` 里那个目标的 label —— 也就是商家点下去真正发出的那句话。
@@ -55,7 +57,7 @@ vi.mock("@/lib/cowork-fetch", () => ({
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { MerchantShellContent } = await import("@/components/global-navigation");
-const { panelContextSubject, panelQuickChips } = await import("@/components/otto/panel/panel-page");
+const { panelContextSubject, panelQuickChips, formatPanelScope } = await import("@/components/otto/panel/panel-page");
 // 会话体现在由 `OttoPanelHost` 里的 `React.lazy` 分包(收口移植,main P3-6)。先把它取进
 // registry,`mount()` 里那两拍 microtask 才等得到落地的结果,不然看到的永远是 Suspense
 // fallback(同一处理法见 otto-panel-mount.test.ts)。
@@ -222,21 +224,26 @@ describe("面板知道商家在看哪一页 (§3.4)", () => {
 // ---------------------------------------------------------------------------
 // 上下文 chip
 // ---------------------------------------------------------------------------
-describe("上下文 chip 这一票不画 —— 因为它今天说不出真话", () => {
+describe("头部那一行:只在带得来新信息时才画", () => {
   /**
    * 判官 r1 [P2]:chip 写着「On this page: Raya promo」,商家读到的是「Otto 看得见我这一页」。
    * 今天没有任何服务端读者会因为这一页是哪一页而改变这一轮的上下文,所以那句话是假的,
    * 「关掉它 Otto 就不看了」也是假的。两句假话不如不说。
    *
-   * 这一组断言钉的是**两件事同时成立**:界面上不画,以及解析器仍然备着 —— #879 step 2
-   * 接上真读者的那一天,接回两个 prop 就够,不必重做一遍。
+   * 判官 P2-4:上一版改口说「Workspace · <页面名>」—— 那句话是真的,但对面板自己的对话
+   * 来说不带新信息(商家就在那一页上,面板就是他刚点开的那一块),而且不在已批准的设计
+   * 里。所以工作区对话上一行都不画;真正缺的那一句(「你现在接着聊的这一段属于别处」)
+   * 由 `otto-panel-scope.test.ts` 钉,那里种得进一条画布线程。
    */
-  it("任何一面上都不画 chip", async () => {
+  it("FRONT-A14 — a workspace conversation gets no header strip at all", async () => {
     for (const location of [MERCHANT_SURFACE, SHELL_ROUTES.library]) {
       const el = await mount(shell(location));
-      // 先钉住「面板真的在」—— 否则「没有 chip」会因为整块面板都没画而空转成假绿。
+      // 先钉住「面板真的在」—— 否则断言会因为整块面板都没画而空转成假绿。
       expect(el.querySelector("[data-otto-panel]"), location).not.toBeNull();
       expect(el.querySelector("[data-otto-panel-context]"), location).toBeNull();
+      // 那两句假话:一句都不说,那颗「关掉上下文」的叉也不摆。
+      expect(el.textContent, location).not.toContain("On this page");
+      expect(el.querySelector('[aria-label="Stop using this page as context"]'), location).toBeNull();
       expect(el.querySelector("[data-otto-panel][data-otto-panel-context-attached]"), location).toBeNull();
       if (root) await act(async () => root?.unmount());
       container?.remove();
@@ -245,10 +252,10 @@ describe("上下文 chip 这一票不画 —— 因为它今天说不出真话",
     }
   });
 
-  it("对象页上也没有 —— 名字读得到与否都不改变这一条", async () => {
-    // beta 期唯一有对象页的那扇门(campaign)被收起来了,商家壳在它底下不画,所以这一条
-    // 拆成两半照钉:解析器那一侧确实解出了一个**对象**(名字要读库,这里读不到),
-    // 而真正挂起来的面板上一颗 chip 都没有 —— 「名字读得到与否」不改变这一条。
+  it("FRONT-A14 — an object page draws no strip either: the panel never guesses a name", async () => {
+    // beta 期唯一有对象页的那扇门(campaign)被收起来了。解析器那一侧确实解出了一个
+    // **对象**(真名字要读库,而取那个名字的 server action 是删掉的 —— 零调用者的租户
+    // 查询就是没人守望的攻击面)。既然名字读不到,就一个字都不说,不摆一个写着 id 的标签。
     expect(panelContextSubject(`${SHELL_ROUTES.campaign}/01J0000000000000000000000A`)).toMatchObject({
       kind: "object",
       objectId: "01J0000000000000000000000A",
@@ -256,6 +263,17 @@ describe("上下文 chip 这一票不画 —— 因为它今天说不出真话",
     const el = await mount(shell(MERCHANT_SURFACE));
     expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
     expect(el.querySelector("[data-otto-panel-context]")).toBeNull();
+    expect(el.textContent).not.toContain("01J0000000000000000000000A");
+  });
+
+  it("FRONT-A14 — the two-part label lives in one formatter, and drops the name it does not have", () => {
+    // 判官 nit:「 · 」上一版在 `panel-page.ts` 与 `OttoPanelHost` 各写了一遍。只此一处。
+    expect(formatPanelScope("Canvas", "Kaya jar ad")).toBe("Canvas · Kaya jar ad");
+    expect(formatPanelScope("Canvas", "  Kaya jar ad  ")).toBe("Canvas · Kaya jar ad");
+    // 名字取不到就只剩第一段 —— 不编一个名字,也不留一个尾巴分隔符。
+    for (const empty of [undefined, null, "", "   "]) {
+      expect(formatPanelScope("Canvas", empty)).toBe("Canvas");
+    }
   });
 
   it("解析器仍然认得这一页与这个对象(#879 step 2 接得上)", () => {
@@ -351,7 +369,9 @@ describe("页面快捷 chips", () => {
       el.querySelector<HTMLButtonElement>(`[data-otto-quick-chip="${first.goalKey}"]`)!.click();
     });
 
-    expect(createEmptyCoworkThread).toHaveBeenCalledWith({ projectId: SEED.projectId, title: first.label });
+    // FRONT-A14:chip 是**面板**上的入口,它开的对话登记成面板自己的 —— 下次打开面板才
+    // 接得回来(画布那一批不再被自动摊开)。
+    expect(createEmptyCoworkThread).toHaveBeenCalledWith({ projectId: SEED.projectId, title: first.label, surface: "panel" });
   });
 });
 
