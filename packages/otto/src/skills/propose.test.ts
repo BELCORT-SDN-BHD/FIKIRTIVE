@@ -7,8 +7,8 @@ import {
 } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import {
-  buildProposeCard, buildSpecChips, EXECUTED_SPEC, ImageAspectUnavailableError, ProposeRefusal,
-  VideoTierUnavailableError,
+  buildProposeCard, buildSpecChips, EXECUTED_SPEC, ImageAspectMismatchError,
+  ImageAspectUnavailableError, ProposeRefusal, VideoTierUnavailableError,
 } from "./propose.helpers.js";
 import { imageAspectHonoured, VIDEO_START_FRAME_CHIP } from "@fikirtive/core";
 // executePropose (DB-side) still imported from propose.ts
@@ -1871,24 +1871,24 @@ describe("CREATE-A1 两步任务的 Step 1 卡", () => {
   // 方案**,一次 `propose`(`forVideo` + `videoPrompt`)就铸完,第二张卡自己会出现。
   // 下面这条钉的就是这个结构事实;Otto 那句自由文本由 instructions 的硬规矩管
   // (`instructions.test.ts` 的 CREATE-A2 一条),两者一起构成这条验收。
-  it("CREATE-A2 两参考 + 一句「拍成片子」⇒ 只铸一张卡,两步已经冻在卡上(没有 A/B 可问)", () => {
+  it("CREATE-A2 两步计划的卡只为**第一步**报价:第二步的预估另占一格,不并进批准价", () => {
+    // 判官 2026-09-04 P2-3:上一版这条叫「只铸一张卡、两步已冻在卡上」,却一条都没断言
+    // 那件事 —— `buildProposeCard` 按构造只返回一张卡,而 `videoStep.next` 的深等与上面
+    // 「冻结了第二步的整份规格」逐字重复。改成钉它真正量到的东西:**批准价的口径**。
+    //
+    // 这一条也是 P0-002「按下 Generate 之后不再给选择题」的结构那一半:两步的钱分两次
+    // 各自确认,所以「现在这支 / 更稳的两步」根本不是一道要商家回答的题 —— 他批准的这张
+    // 卡只会扣第一步的钱,第二步的价另行呈上。
     const { cardPayload } = buildProposeCard(step1Input, scenarioCtx(), [XINYI]);
-
-    // ① 一次调用 = 一张卡 = 一次预留。卡上的价是这一步的价,不是两步的合计。
-    expect(cardPayload.kind).toBe("image");
-    expect(cardPayload.estimatedCredits).toBe(
-      displayCredits(pricedGenCredits({ kind: "IMAGE", model: cardPayload.model, count: 1, videoOptions: null })),
+    const firstStepOnly = displayCredits(
+      pricedGenCredits({ kind: "IMAGE", model: cardPayload.model, count: 1, videoOptions: null }),
     );
-    // ② 第二步是**冻结的计划**,不是一个待商量的选项:片子的话、形状、长度、声音全在。
-    //    商家批准这张卡之后,系统照它铸第二张卡 —— 中间没有一个需要他回答的问题。
-    expect(cardPayload.videoStep?.next).toEqual({
-      structuredPrompt: step1Input.videoPrompt,
-      desiredAspect: "9:16",
-      desiredDuration: 5,
-      desiredAudio: false,
-    });
-    // ③ 两步的总价在卡上先说清楚 —— 「更稳的两步」这条路的代价,是在按下去之前看见的。
-    expect(typeof cardPayload.videoStep?.estimatedCredits).toBe("number");
+    expect(cardPayload.estimatedCredits).toBe(firstStepOnly);
+    // 第二步的预估是**另一格**,而不是加进上面那个数里。
+    const videoEst = cardPayload.videoStep?.estimatedCredits;
+    expect(typeof videoEst).toBe("number");
+    expect(videoEst).toBeGreaterThan(0);
+    expect(cardPayload.estimatedCredits).not.toBe(firstStepOnly + (videoEst ?? 0));
   });
 });
 
@@ -1994,11 +1994,79 @@ describe("CREATE-A1 画幅:商家原话是第二个证人", () => {
     expect(cardPayload.params.aspectRatio).toBe("4:3");
   });
 
-  it("CREATE-A1 数字得**长得像形状**才算数:时间写法不当比例读", () => {
-    // 窄化不读语义,只看数字:两边都 ≤ 菜单上最大的那个数,比例落在 1:4 ~ 4:1。
-    for (const text of ["hantar pukul 3:30 petang", "meeting at 12:30", "post it 10:45 pagi"]) {
+  it("CREATE-A1 数字得**长得像形状**才算数:这几种时间写法不当比例读", () => {
+    // 窄化不读语义,只看数字:两边都 ≤ 菜单上最大的那个数(21)、比例落在 1:4 ~ 4:1、
+    // 右边不许带前导零。`11:05` 靠最后那一条挡下 —— 上一版不但没挡,还会把它回述成
+    // 「11:5」(判官 2026-09-04 P2-1)。
+    for (const text of [
+      "hantar pukul 3:30 petang",   // 30 > 21
+      "meeting at 12:30",           // 30 > 21
+      "post it 10:45 pagi",         // 10/45 = 0.222 < 1:4
+      "call me at 11:05",           // 前导零 = 时间写法
+      "schedule 4:05 pm",           // 同上(而 4:5 是真形状,两者只差那个零)
+    ]) {
       const { cardPayload } = buildProposeCard(imageInput("1:1"), makeCtx({ turnText: text }), []);
       expect(cardPayload.params.aspectRatio, text).toBe("1:1");
+    }
+  });
+
+  it("CREATE-A1 **误伤面照实钉住**:分钟 01–21 不带前导零的时间仍会被读成形状", () => {
+    // 判官 2026-09-04 P2-1 实跑出来的两个反例。不假装挡住了 —— 门槛是菜单最大项(21),
+    // 想再收窄得改菜单。代价方向是单向的:这道闸只会让卡**不铸**($0 一句反问),
+    // 永远不会让卡多收一分。这条测试的作用是让这个已知缺口有名有姓,改门槛时当场变红。
+    for (const text of ["let's talk at 9:15", "boleh call 10:15?"]) {
+      expect(() => buildProposeCard(imageInput("1:1"), makeCtx({ turnText: text }), []), text)
+        .toThrow(ProposeRefusal);
+    }
+  });
+
+  it("CREATE-A1 商家点的是**菜单内**的 9:16、模型漏传 ⇒ 说事实差异,绝不说「做不到 9:16」", () => {
+    // 判官 2026-09-04 P1-1 的主路径。上一版无条件走 `mintableImageAspects`,而 9:16 到
+    // 自己的距离是 0、排第一,于是拒绝句成了「9:16 isn't a shape I can make here — the
+    // closest I can do are 9:16, 2:3, 3:4」:对旗舰竖版格式的假能力声明,还自相矛盾。
+    try {
+      buildProposeCard(imageInput(), makeCtx({ turnText: "nak 9:16 untuk story" }), []);
+      throw new Error("卡落成 1:1 而商家点的是 9:16,必须停下来");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ImageAspectMismatchError);
+      expect(e).toBeInstanceOf(ProposeRefusal); // 入口照旧接得住,零 GEN_CARD
+      const message = (e as Error).message;
+      // 这台引擎做得到的格子,一个字都不许被说成做不到。
+      expect(message).not.toContain("isn't a shape");
+      expect(message).not.toContain("closest I can do");
+      // 说的是事实差异:他要哪一格、这一趟本来会做成哪一格、什么都还没铸。
+      expect(message).toContain("9:16");
+      expect(message).toContain("1:1");
+      expect(message).toContain("put nothing up");
+      expect(message).toBe(redactProviderNames(message));
+    }
+  });
+
+  it("CREATE-A1 模型把 9:16 换成 4:3(两格都在菜单上)⇒ 同样说事实差异,不说做不到", () => {
+    expect(() =>
+      buildProposeCard(imageInput("4:3"), makeCtx({ turnText: "please make it 9:16" }), []),
+    ).toThrow(ImageAspectMismatchError);
+  });
+
+  it("CREATE-A1 菜单**外**的 4:5 照旧走「做不到 + 最接近几格」那一句,两句不混用", () => {
+    try {
+      buildProposeCard(imageInput("4:3"), makeCtx({ turnText: "buat 4:5 ya" }), []);
+      throw new Error("4:5 必须被拒绝");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ImageAspectUnavailableError);
+      expect(e).not.toBeInstanceOf(ImageAspectMismatchError);
+      expect((e as Error).message).toContain("isn't a shape I can make here");
+    }
+  });
+
+  it("CREATE-A1 拒绝句回述的是商家**原文**的写法,不是我们重排过的一份", () => {
+    // 判官 P2-1:上一版用 `${w}:${h}` 重建,`9 : 16` 会被回述成 `9:16`、`11:05` 成 `11:5`。
+    try {
+      buildProposeCard(imageInput(), makeCtx({ turnText: "boleh 9 : 16 tak?" }), []);
+      throw new Error("必须停下来");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ImageAspectMismatchError);
+      expect((e as ImageAspectMismatchError).wanted).toBe("9 : 16");
     }
   });
 

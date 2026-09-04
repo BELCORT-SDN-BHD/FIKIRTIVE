@@ -328,6 +328,13 @@ describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled w
     expect(ottoInstructions).toMatch(/INCLUDING a shape that is not on this menu/);
     expect(ottoInstructions).toMatch(/Never substitute the closest one on their behalf/i);
     expect(ottoInstructions).toMatch(/refused before a card exists \(nothing is charged\)/i);
+    // 判官 2026-09-04 P2-2 —— 旧句里「story 就是 9:16」的默认推断一并删了。商家只说「IG story」
+    // 而不报比例时,卡从此落默认方图 —— 这是商家可见行为变化,已登记进规格 §5。
+    // 钉住那句明令本身:没有它,模型会回到“自己猜一个形状”的老路。
+    expect(ottoInstructions).toMatch(
+      /never infer a shape from the kind of post they mentioned — leave the field out when they never named one/,
+    );
+    expect(ottoInstructions).not.toContain("a story or status post is");
   });
 
   /**
@@ -350,6 +357,11 @@ describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled w
     expect(ottoInstructions).toMatch(/Every decision between plans happens BEFORE any card/);
     // 「先出图再出片」被点名为**一个**方案,不是一道选择题 —— 出口是 forVideo + videoPrompt。
     expect(ottoInstructions).toMatch(/it is a single plan, laid out once with `forVideo: true` and `videoPrompt`/);
+    // 判官 2026-09-04 P2-4 —— 这条硬规矩与下一节「Offering a few directions」(`proposePack`
+    // 摆选项)字面相撞。豁免必须写在规矩里:选项在**卡里面**不是“卡旁边的一个问题”。
+    expect(ottoInstructions).toMatch(
+      /options laid out INSIDE one `proposePack` card are not that, because they are the card rather than a question beside it/,
+    );
   });
 
   // Codex 只读 E2E E2E-CRE-PAV-004 —— 两步任务不许把内部接缝丢给商家。

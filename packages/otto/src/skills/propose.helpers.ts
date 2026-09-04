@@ -341,29 +341,41 @@ function imageAspectValue(raw: string): number | null {
  *   · 对不上时**不改判、不替他挑**,而是在铸卡前停下来问($0,`pricedGenCredits` 之前)。
  *
  * 两道窄化都不读语义,只看数字本身:两边都是 1–2 位整数且都不大于菜单上最大的那个数
- * (今天是 21,取自 `GEN_IMAGE_ASPECTS` 自己),比例落在 1:4 ~ 4:1 之间。时钟写法
- * (`3:30`、`12:30`)因此绝大多数落在门外。仍有极少数写法(如 `9:15`)读起来既像时间
- * 又像比例 —— 那时的代价是**一句 $0 的反问**,而不是一次收错的钱:这道闸只会让卡不铸,
- * 永远不会让卡多收一分。
+ * (今天是 21,取自 `GEN_IMAGE_ASPECTS` 自己),比例落在 1:4 ~ 4:1 之间,并且右边不许带
+ * 前导零(`11:05` 是时间,不是形状 —— 比例没人写成 `4:05`)。
+ *
+ * **误伤面照实说,别写成「极少数」**(判官 2026-09-04 P2-1 实跑 24 个反例):分钟落在
+ * 01–21 且不带前导零的时间写法 —— `9:15`、`10:15` —— 仍然会被读成形状。门槛是菜单
+ * 最大项(21),想再收窄就得改菜单,而那是另一件事。这一族的代价是**一句 $0 的反问**,
+ * 不是一次收错的钱:这道闸只会让卡不铸,永远不会让卡多收一分,方向是单向的。
+ * `propose.test.ts` 把两半都钉着 —— 挡住的那几种,和这两种仍然误伤的。
  */
 const SPOKEN_ASPECT_MAX_TERM = Math.max(
   ...GEN_IMAGE_ASPECTS.flatMap((a) => a.split(":").map(Number)),
 );
 const SPOKEN_ASPECT_RE = /(?<![\d.:])(\d{1,2})\s*[:：]\s*(\d{1,2})(?![\d.:])/gu;
 
-function spokenImageAspect(text: string): { raw: string; value: number } | null {
-  /** 比例值 → 商家原样的写法。同一个值的两种写法(`4:5` / `8:10`)算同一个结论。 */
-  const found = new Map<number, string>();
+function spokenImageAspect(
+  text: string,
+): { raw: string; canonical: string; value: number } | null {
+  /** 比例值 → 两个写法。同一个值的两种写法(`4:5` / `8:10`)算同一个结论。
+   *  `raw` 是商家屏幕上那几个字的**原文**(拒绝句要原样回给他听);
+   *  `canonical` 是拿来与能力表对账的那份(`9 : 16` → `9:16`)。
+   *  判官 2026-09-04 P2-1:上一版用 `${w}:${h}` 重建 raw,把商家打的 `11:05`
+   *  回述成了 `11:5` —— 拿他没说过的话当他说过的话。 */
+  const found = new Map<number, { raw: string; canonical: string }>();
   for (const m of text.matchAll(SPOKEN_ASPECT_RE)) {
+    // 右边带前导零 = 时间写法，不是形状(没人把 4:5 写成 4:05)。
+    if (/^0\d/u.test(m[2] ?? "")) continue;
     const w = Number(m[1]);
     const h = Number(m[2]);
     if (w < 1 || h < 1 || w > SPOKEN_ASPECT_MAX_TERM || h > SPOKEN_ASPECT_MAX_TERM) continue;
     const value = w / h;
     if (value < 0.25 || value > 4) continue;
-    if (!found.has(value)) found.set(value, `${w}:${h}`);
+    if (!found.has(value)) found.set(value, { raw: m[0].trim(), canonical: `${w}:${h}` });
   }
   if (found.size !== 1) return null;
-  for (const [value, raw] of found) return { raw, value };
+  for (const [value, shape] of found) return { ...shape, value };
   return null;
 }
 
@@ -425,6 +437,35 @@ export class ImageAspectUnavailableError extends ProposeRefusal {
   ) {
     super(imageAspectRefusalCopy(wanted, offered, nearest));
     this.name = "ImageAspectUnavailableError";
+  }
+}
+
+/**
+ * 商家点名的画幅**这台引擎做得到**,只是这一趟没落到卡上(判官 2026-09-04 P1-1)。
+ *
+ * 为什么必须与 `ImageAspectUnavailableError` 分家:那句话的第一个字是「做不到」,而
+ * 上一版无条件用它 —— 商家说「nak 9:16 untuk story」、模型漏传 `desiredAspect`、卡落
+ * 默认方图,拒绝句于是变成
+ *   「9:16 isn't a shape I can make here — the closest I can do are 9:16, 2:3, 3:4」
+ * (距离 0 的那一格排第一,所以他要的那个原样出现在「我能做」半句里)。对旗舰竖版格式
+ * 的一句假能力声明,还自相矛盾 —— 而这正是最主流的那条路。
+ *
+ * 这一句只说**事实差异**:他要的是哪一格、这一趟本来会做成哪一格、什么都还没铸。
+ * 一样是 `ProposeRefusal`,一样抛在 `pricedGenCredits` 之前:$0、零 GEN_CARD。
+ * 刻意**不**拿商家原话直接覆盖模型那一格 —— 那是行为改变,而这道对表只看得见一句话,
+ * 读错了就要花钱。
+ */
+export class ImageAspectMismatchError extends ProposeRefusal {
+  constructor(
+    /** 商家自己打出来的那个形状,原样回给他听。 */
+    readonly wanted: string,
+    /** 这一趟本来会落到卡上的那一格。 */
+    readonly onCard: string,
+  ) {
+    super(
+      `You asked for ${wanted}, and what I had ready was ${onCard} — so I've put nothing up. Tell me to go ahead and I'll lay it out at ${wanted}.`,
+    );
+    this.name = "ImageAspectMismatchError";
   }
 }
 
@@ -863,6 +904,14 @@ export function buildProposeCard(
     if (spoken) {
       const onCard = imageAspectHonoured() ? imageAspectValue(sm.params.aspectRatio ?? "") : null;
       if (onCard === null || Math.abs(Math.log(spoken.value / onCard)) > 1e-9) {
+        // 判官 P1-1 —— **他要的那一格做不做得到,决定说哪一句**。做得到(在这台引擎的
+        // 能力表上、且这一趟真会兑现画幅)⇒ 说事实差异;做不到 ⇒ 才是那句「做不到」。
+        // 少了这一分岔,「nak 9:16」会换来「9:16 isn't a shape I can make here — the
+        // closest I can do are 9:16…」,一句对旗舰竖版格式的假话。
+        const menu: readonly string[] = GEN_IMAGE_MODEL_OPTIONS[sm.model as GenModel].aspectRatios;
+        if (imageAspectHonoured() && menu.includes(spoken.canonical)) {
+          throw new ImageAspectMismatchError(spoken.raw, sm.params.aspectRatio ?? "");
+        }
         const { offered, nearest } = mintableImageAspects(sm.model as GenModel, spoken.raw);
         throw new ImageAspectUnavailableError(spoken.raw, offered, nearest);
       }
