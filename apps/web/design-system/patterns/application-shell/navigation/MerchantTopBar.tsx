@@ -19,6 +19,7 @@ export function MerchantTopBar({
   activeLabelOverride,
   profileHref,
   showSignOutAction,
+  buildSha,
 }: {
   pathname: string
   account?: MerchantShellAccount | null
@@ -30,6 +31,9 @@ export function MerchantTopBar({
   activeLabelOverride?: string
   profileHref?: string
   showSignOutAction?: boolean
+  /** P2-3 — passthrough from MerchantShellFrame straight to MerchantAccountMenu's `Build <sha>`
+   *  row; this component owns no logic about it. */
+  buildSha?: string | null
 }) {
   const activeKey = activeNavKey(pathname)
   const activeLabel = activeLabelOverride ?? (activeKey ? navLabel(activeKey) : "Workspace")
@@ -57,7 +61,13 @@ export function MerchantTopBar({
             {OTTO_ASSISTANT.label}
           </Button>
         ) : null}
-        <MerchantAccountMenu account={account} signOutAction={signOutAction} profileHref={profileHref} showSignOutAction={showSignOutAction} />
+        <MerchantAccountMenu
+          account={account}
+          signOutAction={signOutAction}
+          profileHref={profileHref}
+          showSignOutAction={showSignOutAction}
+          buildSha={buildSha}
+        />
       </div>
     </header>
   )

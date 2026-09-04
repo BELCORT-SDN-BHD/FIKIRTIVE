@@ -42,6 +42,7 @@ import { planCardGate } from "./plan-card-contract";
 // Codex QA-CRE-FE9-013 —— 参考回执那一块。抽屉里那张卡读的是同一个组件。
 import { CardReferenceReceipt } from "./CardReferenceReceipt";
 import { runPlanApproval } from "./plan-approval";
+import { CardApprovalRef } from "./CardApprovalRef";
 import type { PlanApproveOutcome } from "./OttoPlanCard";
 import type { CanvasTurnStatus } from "@/lib/otto-canvas-turn";
 
@@ -142,6 +143,8 @@ function CanvasConfirmRow({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Codex staging CRE-STG-P2-004 —— 失败那一句旁边的可复制短号(服务端日志里同一串)。 */
+  const [errorRef, setErrorRef] = useState<string | null>(null);
   const gate = planCardGate(card.payload);
   const p = gate.value;
   const credits = gate.credits;
@@ -161,6 +164,7 @@ function CanvasConfirmRow({
     if (busy) return;
     setBusy(true);
     setError(null);
+    setErrorRef(null);
     const outcome = await runPlanApproval({
       threadId: card.threadId,
       cardId: card.cardId,
@@ -170,6 +174,7 @@ function CanvasConfirmRow({
     setBusy(false);
     if (!outcome.ok) {
       setError(outcome.error);
+      setErrorRef(outcome.ref);
       return;
     }
     onApproved({ cardId: card.cardId, chained: outcome.chained });
@@ -198,8 +203,14 @@ function CanvasConfirmRow({
           />
         </div>
       ) : null}
+      {/* CRE-STG-P2-004 —— 失败留在卡上(不是 toast),而且带着那个可复制的短号:走查那两次
+          点击之后卡面上什么都不剩,商家除了「再试一次」没有第二个动作。短号与抽屉里那张卡
+          共用同一个组件(`CardApprovalRef`),两处不可能长出两种写法。 */}
       {error ? (
-        <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>
+        <div role="alert" className="mt-2 text-xs text-destructive">
+          <span className="block">{error}</span>
+          <CardApprovalRef refId={errorRef} />
+        </div>
       ) : null}
       <div className="mt-3 flex justify-end gap-1.5">
         <Button
