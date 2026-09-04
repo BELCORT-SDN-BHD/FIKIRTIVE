@@ -88,6 +88,7 @@ import {
   mergeReloadedCanvasNodes,
 } from "@/lib/canvas-selection";
 import {
+  CANVAS_FIT_EMPTY_RECT,
   CANVAS_FIT_OVERLAY_SELECTORS,
   canvasFitPadding,
   canvasFitPaddingPx,
@@ -481,15 +482,20 @@ export default function FlowCanvas({
    * 缩放簇在右侧),所以对称留白摆出来的画有一部分就压在覆盖层底下:走查实测「Fit to screen」
    * 之后一张视频卡 45% 被压住,点它落在 Otto 输入框上(QA-CRE-008)。算法与选择器清单都在
    * `lib/canvas-fit-padding.ts` 一处。
+   *
+   * **这块板上只有这一条摆位路**。从前 `<ReactFlow fitView fitViewOptions={{ padding: 0.22 }}>`
+   * 在挂载时先按老规矩摆一次,下面那条「每个项目摆一次」的 effect 再按安全区摆第二次 ——
+   * 两份留白,谁最后落地取决于时序,于是同一份代码有时把最上排的卡摆在安全区边上(操作条
+   * 伸出画板、被顶栏盖住 → 旅程 17 第⑤步红),有时摆在 22% 的对称留白里(绿)。挂载那一份
+   * 已经删掉:摆位只剩这一个来源。
    */
-  const fitPadding = useCallback((): CanvasFitPaddingPx | number => {
-    const board = canvasHostRef.current;
-    if (!board) return 0.22;
+  const fitPadding = useCallback((): CanvasFitPaddingPx => {
+    const board = canvasHostRef.current?.getBoundingClientRect() ?? CANVAS_FIT_EMPTY_RECT;
     const overlays = CANVAS_FIT_OVERLAY_SELECTORS
       .flatMap((selector) => Array.from(document.querySelectorAll<HTMLElement>(selector)))
       .map((element) => element.getBoundingClientRect());
     // 带 `px` 交出去:光秃秃的数字在 React Flow 里是比例,不是像素(见 canvasFitPaddingPx)。
-    return canvasFitPaddingPx(canvasFitPadding(board.getBoundingClientRect(), overlays));
+    return canvasFitPaddingPx(canvasFitPadding(board, overlays));
   }, []);
 
   const fitBoard = useCallback((duration: number) => {
@@ -1414,16 +1420,25 @@ export default function FlowCanvas({
     return () => window.clearInterval(id);
   }, [hasInFlightPaidNode, ottoWorkActive]);
 
-  // ReactFlow's `fitView` prop only runs on mount, before our async canvas nodes arrive.
-  // Fit once per project after nodes load so left-edge node action buttons do not
-  // sit underneath the Otto panel and become visible-but-unclickable.
+  // 第一次摆位就在这里 —— ReactFlow 的 `fitView` prop 只在挂载时跑一次,而那时我们的卡还在
+  // 路上,所以它从来摆不到真正的内容;它按自己的一份留白摆出来的那一次,只会和这里打架
+  // (`fitPadding` 的说明记了它怎么让旅程 17 时红时绿),已经删掉。
+  // 每个项目摆一次,用的是量出来的安全区:卡的操作条不再伸到画板外被顶栏盖住,也不会藏在
+  // Otto 面板底下变成「看得见点不着」。
+  //
+  // **这一次不做动画**(`0`,而手动「Fit to screen」仍是 220ms)。开画布的第一眼没有「从哪里
+  // 来」可言 —— 动画是从一个商家根本没见过的取景滑过去,而且那 160ms 里板上的卡还在移动:
+  // 手已经伸出去的那一下会落空。旅程 17 第①步(在卡外面 24px 起手框选)因此间歇红:量卡的
+  // 位置与按下鼠标之间隔着几十毫秒,卡在这几十毫秒里挪了 50 多像素,框就框在旧位置上
+  // (2026-09-04 e2e 探针实测:同一次拖动里卡从 x=316 挪到 x=368,框选一张都没圈到)。
+  // 手动那一次不同:商家自己按下 Fit to screen,动画正是在告诉他板去了哪里。
   useEffect(() => {
     if (!flowReady || !flowRef.current || nodes.length === 0) return;
     const scope = projectId;
     if (fittedScopeRef.current === scope) return;
     fittedScopeRef.current = scope;
     requestAnimationFrame(() => {
-      fitBoard(160);
+      fitBoard(0);
     });
   }, [flowReady, nodes.length, projectId, fitBoard]);
 
@@ -1828,8 +1843,8 @@ export default function FlowCanvas({
             deleteKeyCode={null}
             proOptions={{ hideAttribution: true }}
             minZoom={0.1}
-            fitView
-            fitViewOptions={{ padding: 0.22 }}
+            // 这里**刻意没有** `fitView` / `fitViewOptions`:第一次摆位由下面那条 effect 用
+            // `fitPadding()` 做,和「Fit to screen」同一个来源(见 fitPadding 的说明)。
           >
             <Background />
           </ReactFlow>

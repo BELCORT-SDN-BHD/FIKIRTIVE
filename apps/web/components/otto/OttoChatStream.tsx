@@ -60,7 +60,10 @@ import {
   appendResearchReports,
   backfillMissingAssistantText,
   syncCardJobIds,
+  GENERATION_WATCH_GEARS,
 } from "@/lib/otto-inject-helpers";
+// 观察窗「到顶不等于放弃」的那一条规则,只有这一份实现(#782 r7,判官 r6 P1-A)。
+import { nextSyncPhase, type SyncPhase } from "@/lib/storyboard-card";
 import { mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
 import { UnderstandingCostHint } from "./UnderstandingCostHint";
 import { SearchCostHint } from "./SearchCostHint";
@@ -281,24 +284,27 @@ export function OttoChatStream({
   // non-streaming chat, removed):
   // a GEN_CARD whose genJobId is set but with no terminal GEN_RESULT/TURN_ERROR keeps
   // hasWorkingJob true; we poll the durable thread and inject the result when it lands.
-  const POLL_MS = 2500;
-  const MAX_POLLS = 48; // ~2 minutes
-  const [pollGaveUp, setPollGaveUp] = useState(false);
-  /** Set to true after the user has clicked "Check again" and the second MAX_POLLS round
-   *  also exhausted — shows a terminal message instead of re-arming indefinitely. */
-  const [pollTerminal, setPollTerminal] = useState(false);
-  const [pollRound, setPollRound] = useState<"initial" | "retry">("initial");
+  //
+  // Codex E2E-CRE-PAV-003:这扇窗从前只有一档,打满两分钟就不再问了 —— 而服务端那一头
+  // 一个失败的生成走完自己的重投序列本来就可能更久,于是「库里已经 FAILED 并退款、屏幕上
+  // 还写着 Generating,刷新才诚实」。齿轮与判词都在 `GENERATION_WATCH_GEARS` 上,规则本身
+  // 是 StoryboardCard 早就判过的那一条(`nextSyncPhase`,#782 r7 判官 r6 P1-A):**到顶不
+  // 等于放弃**。这里一个新状态机都不建,只是把那条规则用在一直缺第二档的这条窗上。
+  /** 这扇窗此刻在哪一档。`"off"` 由 `nextSyncPhase` 的规则保留给「服务端已经给了终局」,
+   *  而这条效应本来就被 `hasWorkingJob` 挡着,所以实际只在 fast → slow → exhausted 上走。 */
+  const [pollGear, setPollGear] = useState<SyncPhase>("fast");
+  /** 快轮的额度用完了 —— 抽屉里那句「比平常久」与「Check again」读的是这个。 */
+  const pollGaveUp = pollGear !== "fast";
+  /** 慢轮也用完了:我们**放弃**了,不是它**结束**了(SyncPhase 分这两档的原因)。 */
+  const pollTerminal = pollGear === "exhausted";
   /** Monotonic re-arm token. Bumped on every rearm so the bounded-poll effect below
-   *  ALWAYS re-runs (resetting its local pollCount to 0), even when pollGaveUp /
-   *  pollTerminal / pollRound are already at their reset values — otherwise React
-   *  bails out and a mid-flight poll window carries its spent budget into a
-   *  freshly-approved generation, showing "Check again" early. */
+   *  ALWAYS re-runs (resetting its local pollCount to 0), even when pollGear is already
+   *  back at "fast" — otherwise React bails out and a mid-flight poll window carries its
+   *  spent budget into a freshly-approved generation, showing "Check again" early. */
   const [pollNonce, setPollNonce] = useState(0);
 
   function rearmGenerationPoll() {
-    setPollGaveUp(false);
-    setPollTerminal(false);
-    setPollRound("initial");
+    setPollGear("fast");
     setPollNonce((n) => n + 1);
   }
 
@@ -588,28 +594,33 @@ export function OttoChatStream({
   }, [thread.id]);
 
   // Bounded poll: a worker that fails-closed without writing a terminal message would
-  // otherwise keep hasWorkingJob true forever. After ~2 min we stop and show "Check again".
-  // If the user clicks "Check again" and we exhaust again, show a terminal message
-  // instead of looping forever (pollRound tracks the second exhaustion).
+  // otherwise keep hasWorkingJob true forever, so the window is bounded — but it is bounded
+  // in TWO gears, not one (Codex E2E-CRE-PAV-003). The fast gear is unchanged (~2 min); when
+  // it runs out and the server still has not written a terminal message, we keep asking at
+  // the slow gear rather than falling silent, and only the slow gear's own cap is terminal.
+  // The rule is `nextSyncPhase` — the same one StoryboardCard was given in #782 r7.
   useEffect(() => {
-    if (!hasWorkingJob || pollGaveUp) return;
+    if (!hasWorkingJob || pollGear === "off" || pollGear === "exhausted") return;
+    const gear = GENERATION_WATCH_GEARS[pollGear];
     let pollCount = 0;
     const t = setInterval(() => {
       pollCount += 1;
-      if (pollCount >= MAX_POLLS) {
-        if (pollRound === "retry") {
-          // Second exhaustion after "Check again" → terminal, stop re-arming.
-          setPollTerminal(true);
-        }
-        setPollGaveUp(true);
+      if (pollCount >= gear.maxTries) {
         clearInterval(t);
+        // 「到顶」不等于「放弃」:fast → slow → exhausted,判据不在这里,在那条纯函数里。
+        setPollGear(nextSyncPhase({
+          phase: pollGear,
+          triesUsed: pollCount,
+          maxTries: gear.maxTries,
+          stillPending: hasWorkingJob,
+        }));
         return;
       }
       void pollAndInjectResults();
-    }, POLL_MS);
+    }, gear.intervalMs);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasWorkingJob, thread.id, pollGaveUp, pollRound, pollNonce]);
+  }, [hasWorkingJob, thread.id, pollGear, pollNonce]);
 
   // Streaming front door: auto-send the first message ONCE into the empty thread.
   // The per-mount ref guards against double-send; onPendingFirstSent clears the
@@ -1337,8 +1348,8 @@ export function OttoChatStream({
                     onChangeSomething={(seed) => seedComposer(seed)}
                     onRetry={() => {
                       // A fresh card was spawned — re-arm poll and refetch so it appears.
-                      // Reset the poll round too: the retried job gets the full two-round
-                      // stall budget, not a one-round dead-end from an earlier "Check again".
+                      // Back to the fast gear too: the retried job gets the full watch window,
+                      // not the spent remainder of an earlier job's.
                       rearmGenerationPoll();
                       void refetchAndAppendCards();
                     }}
@@ -1631,8 +1642,9 @@ export function OttoChatStream({
                   variant="link"
                   size="xs"
                   onClick={() => {
-                    setPollRound("retry");
-                    setPollGaveUp(false);
+                    // 商家自己按的这一下,把窗口拨回快轮 —— 慢轮本来也一直在问,这只是
+                    // 「现在就问」。它不再是从前那个「第二轮用完就死路」的唯一出口。
+                    rearmGenerationPoll();
                     void pollAndInjectResults();
                   }}
                 >
