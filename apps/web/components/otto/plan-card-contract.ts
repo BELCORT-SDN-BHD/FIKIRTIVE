@@ -163,10 +163,21 @@ export function parsePlanCardPayload(raw: unknown): ParsedPlanCardPayload | null
       };
     },
   );
+  // 两步计划那一行。`next` 是**冻结的第二步**(Codex E2E-CRE-PAV-004):带着它 ⇒ 这张图片
+  // 出来之后,视频的确认卡由服务端自己铸出来,商家不必把图带回去。这里只判「有没有一份
+  // 读得懂的计划」—— 卡面据此换一句话,永远不据此算钱。
   take(
     "videoStep",
     (v) => !!v && typeof v === "object" && num((v as Record<string, unknown>).estimatedCredits),
-    (v) => ({ estimatedCredits: (v as { estimatedCredits: number }).estimatedCredits }),
+    (v) => {
+      const q = v as { estimatedCredits: number; next?: unknown };
+      const next = q.next;
+      const handoff =
+        !!next && typeof next === "object" && !Array.isArray(next) && str((next as Record<string, unknown>).structuredPrompt)
+          ? { structuredPrompt: (next as { structuredPrompt: string }).structuredPrompt }
+          : null;
+      return { estimatedCredits: q.estimatedCredits, ...(handoff ? { next: handoff } : {}) };
+    },
   );
 
   return { value, malformedFields };

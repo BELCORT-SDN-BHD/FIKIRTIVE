@@ -4,7 +4,7 @@ import {
   REFERENCE_VIDEO_MODEL,
   activeVideoModel, buildGenRequestFromCard, displayCredits, pricedGenCredits, redactProviderNames,
   referenceUnavailableMessage,
-  routeVideoModel, videoDefaults, type GenVideoModel,
+  routeVideoModel, videoDefaults, VIDEO_EDIT_OPENING, type GenVideoModel,
 } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import {
@@ -1769,5 +1769,121 @@ describe("CREATE-A4 商家点名的画幅", () => {
       expect(cardPayload.params.aspectRatio, aspect).toBe(aspect);
       expect(cardPayload.downgraded, aspect).toBe(false);
     }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// 两步任务 = 一条任务:Step 1 的卡带着第二步的**冻结计划**
+// (Codex 只读 E2E E2E-CRE-PAV-004;规格 docs/specs/creation-engine.md §5 2026-09-04)
+//
+// Codex 抓到的原话是 Otto 的一句 `Once you approve and generate it, bring that image
+// back here` —— 内部接缝直接漏到商家面前。根因不在措辞:两步计划在这之前只是第一张卡上
+// 的一行价格披露,系统里没有任何一处会在图出来之后接着走第二步,所以 Otto 唯一诚实的
+// 下一句就只剩「你自己把图带回来」。
+//
+// 这一组钉的是那条链的**第一段**:商家一句话(产品图 + @演员 + 要 9:16 / 5 秒 / 无声的片子)
+// ⇒ 铸出的 Step 1 卡上,第二步的规格与两份回执都在。接力那一段(出图后自动铸第二张卡)
+// 由 `../video-step-handoff.test.ts` 与 worker 的真库用例钉。
+// ---------------------------------------------------------------------------
+describe("CREATE-A1 两步任务的 Step 1 卡", () => {
+  /** 商家在画布 B 的 Library 里选中的那张产品图 —— 服务端解析出来的回执(名字/缩略图/出处)。 */
+  const PRODUCT_RECEIPT = {
+    generationId: "gen_tumbler",
+    kind: "image" as const,
+    label: "A tall matte tumbler on a walnut table",
+    sourceProjectId: "proj-library",
+    sourceProjectName: "Product shots",
+    sameCanvas: false,
+    previewUrl: "/files/tumbler.png",
+  };
+  /** 官方演员库那位 —— @ 到的元素,身份与归属同一趟读出来。 */
+  const XINYI = { id: "entity-xinyi", type: "CHARACTER" as const, name: "Xinyi" };
+
+  /** 那一轮的 ctx:挂着产品图 + 它的回执。 */
+  const scenarioCtx = () =>
+    makeCtx({
+      sourceGenerationId: PRODUCT_RECEIPT.generationId,
+      sourceGenerationIds: [PRODUCT_RECEIPT.generationId],
+      mediaReferences: [PRODUCT_RECEIPT],
+    });
+
+  /** Otto 拆出来的第一步:9:16 的首帧图,带产品参考与 @Xinyi。 */
+  const step1Input = {
+    kind: "image" as const,
+    structuredPrompt: "Xinyi holding the tumbler in a warm-toned cafe, tall vertical frame",
+    entityIds: [XINYI.id],
+    variantSel: {} as Record<string, string>,
+    desiredAspect: "9:16",
+    forVideo: true,
+    // 第二步那条片子:5 秒、9:16、无声。
+    videoPrompt: "Xinyi raises the tumbler, takes a sip, then smiles at the camera",
+    desiredDuration: 5,
+    desiredAudio: false,
+  };
+
+  it("CREATE-A1 一句话 ⇒ Step 1 的卡冻结了第二步的整份规格(片子的话、形状、长度、声音)", () => {
+    const { cardPayload } = buildProposeCard(step1Input, scenarioCtx(), [XINYI]);
+
+    expect(cardPayload.kind).toBe("image");
+    expect(cardPayload.params.aspectRatio).toBe("9:16");
+    // 第二步不是一行价,而是一份**规格**:出图之后照它铸第二张卡,不必再问商家一次。
+    expect(cardPayload.videoStep?.next).toEqual({
+      structuredPrompt: step1Input.videoPrompt,
+      desiredAspect: "9:16",
+      desiredDuration: 5,
+      desiredAudio: false,
+    });
+  });
+
+  it("CREATE-A2 Step 1 的卡上两份回执都在:产品图那一件 + @Xinyi 那一位", () => {
+    const { cardPayload } = buildProposeCard(step1Input, scenarioCtx(), [XINYI]);
+
+    // 媒体参考回执 —— 商家在按下 `Generate` 之前认得出上车的是哪一只杯子。
+    // CRE-STG-P1-003 起卡上那一份比服务端解析出来的多一格 `role`:这是一张图片卡的
+    // 第一张挂图,所以它坐第 0 位(引擎的编辑底图 `<Image_1>`,商家读到 "Base image")。
+    expect(cardPayload.sourceGenerationId).toBe(PRODUCT_RECEIPT.generationId);
+    expect(cardPayload.mediaReferences).toEqual([{ ...PRODUCT_RECEIPT, role: "baseImage" }]);
+    // 元素身份快照 —— 引擎认人那几句指令里的名字,批准前看得见。
+    expect(cardPayload.approvedEntities).toEqual([XINYI]);
+    expect(cardPayload.entityIds).toEqual([XINYI.id]);
+  });
+
+  it("CREATE-A1 第二步的预估与冻结计划**共用同一份输入**(卡上的价与第二张卡的价同源)", () => {
+    const { cardPayload } = buildProposeCard(step1Input, scenarioCtx(), [XINYI]);
+    // 第二步真正会铸的那张卡 —— 预估要对得上的是它,不是一个手抄的数字。
+    const second = buildProposeCard(
+      {
+        kind: "video",
+        structuredPrompt: cardPayload.videoStep!.next!.structuredPrompt,
+        entityIds: [],
+        variantSel: {},
+        desiredAspect: cardPayload.videoStep!.next!.desiredAspect,
+        desiredDuration: cardPayload.videoStep!.next!.desiredDuration,
+        desiredAudio: cardPayload.videoStep!.next!.desiredAudio,
+      },
+      makeCtx({ sourceGenerationId: PRODUCT_RECEIPT.generationId }),
+      [],
+    ).cardPayload;
+    expect(cardPayload.videoStep?.estimatedCredits).toBe(second.estimatedCredits);
+  });
+
+  it("CREATE-A1 没给片子的话 ⇒ 不冻结第二步(老卡形状逐字保留,只有那一行预估)", () => {
+    const { videoPrompt: _dropped, ...withoutVideoPrompt } = step1Input;
+    const { cardPayload } = buildProposeCard(withoutVideoPrompt, scenarioCtx(), [XINYI]);
+    expect(typeof cardPayload.videoStep?.estimatedCredits).toBe("number");
+    expect(cardPayload.videoStep?.next).toBeUndefined();
+  });
+
+  it("CREATE-A2 第二步的话这个形状撑不起来 ⇒ 一张卡都不铸(拒绝在花钱之前,$0)", () => {
+    // 「严格编辑 <Video_1>」需要一条参考片,而两步计划第二步手上只有一张首帧。
+    // 若不在这里拦,商家会为第一步付钱,而第二步永远不会出现 —— 一次沉默的半截任务。
+    expect(() =>
+      buildProposeCard(
+        { ...step1Input, videoPrompt: `${VIDEO_EDIT_OPENING} the tumbler to be red.` },
+        scenarioCtx(),
+        [XINYI],
+      ),
+    ).toThrow(ProposeRefusal);
   });
 });

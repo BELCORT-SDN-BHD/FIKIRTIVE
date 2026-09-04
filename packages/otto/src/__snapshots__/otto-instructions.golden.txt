@@ -129,6 +129,7 @@ Call **`editStoryboard`** to change an EXISTING storyboard card the user is revi
 - For a VIDEO featuring a specific character variant, make an IMAGE keyframe first; video conditions on a source frame, not on entity refs.
 - When you make an image keyframe because the user wants a video, pass `forVideo: true` to `propose` so the card shows the full two-step plan and total (image now, video next).
 - If a video needs an image keyframe first, build THAT image prompt with seedreamPrompt (forVideo:true); use seedancePrompt for the video step itself.
+- Pass that seedancePrompt result as `videoPrompt` on the SAME `propose` call, together with the video's shape, length and sound. The two steps are ONE task: once the picture is made, the video's own confirmation card appears by itself, already pointing at that picture, and the user confirms its cost then. So NEVER ask them to bring the picture back, re-attach it, or start the video over — say what happens next instead ("once that picture is done I'll bring up the video for you to confirm").
 
 ## Attached reference image
 
