@@ -48,7 +48,15 @@ describe("GET /api/health", () => {
       workers: {},
       backup: "missing",
       migrations: "applied",
+      build: { sha: null, ref: null },
     });
+  });
+
+  /** E2E-STG-VERSION — 2026-09-04 Codex staging 审计:build sha 读自平台注入的 env,测试环境
+   *  没有注入,所以如实报 null;真实取值规则在 lib/__tests__/health.test.ts 的 buildInfo 用例。 */
+  it("E2E-STG-VERSION: build sha/ref 出现在响应里,测试环境没有平台注入就如实报 null", async () => {
+    const body = await (await GET()).json();
+    expect(body.build).toEqual({ sha: null, ref: null });
   });
 
   // #796: the web container now starts even when `prisma migrate deploy` could not run, because
@@ -112,8 +120,14 @@ describe("GET /api/health", () => {
     it("exposes only the one word — no key, size, or timestamp on this unauthenticated route", async () => {
       await recordBackup({ status: "succeeded", finishedAt: new Date() });
       const body = await (await GET()).json();
-      expect(Object.keys(body).sort()).toEqual(["backup", "db", "migrations", "ok", "worker", "workers"]);
+      expect(Object.keys(body).sort()).toEqual(["backup", "build", "db", "migrations", "ok", "worker", "workers"]);
       expect(JSON.stringify(body)).not.toContain("backups/db/");
+    });
+
+    /** E2E-STG-VERSION — build 只报 {sha, ref} 两个字段,不含 configFingerprint 或任何变量名。 */
+    it("E2E-STG-VERSION: build 字段只有 sha 与 ref,没有 configFingerprint 或其他 env 值", async () => {
+      const body = await (await GET()).json();
+      expect(Object.keys(body.build).sort()).toEqual(["ref", "sha"]);
     });
   });
 
