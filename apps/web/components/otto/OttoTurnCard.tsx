@@ -36,6 +36,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { OttoMarkdown } from "./parts/OttoMarkdown";
 import { creditsLabel } from "@/lib/credit-format";
+import { CANVAS_OTTO_CORNER_ATTR } from "@/lib/canvas-fit-padding";
 import { approvedEntitiesNote } from "@fikirtive/core/reference-budget";
 import { planCardGate } from "./plan-card-contract";
 // Codex QA-CRE-FE9-013 —— 参考回执那一块。抽屉里那张卡读的是同一个组件。
@@ -78,6 +79,7 @@ export function OttoTurnCard({
   return (
     <div
       aria-label="Otto current turn"
+      {...{ [CANVAS_OTTO_CORNER_ATTR]: "" }}
       className="pointer-events-auto absolute left-4 top-4 w-[280px] rounded-[var(--radius-card)] border border-border bg-card shadow-[var(--shadow-sm)]"
     >
       <div className="flex items-center justify-between border-b border-border px-3 py-2.5">

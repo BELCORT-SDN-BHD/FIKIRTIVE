@@ -1,6 +1,7 @@
 // apps/web/components/canvas/nodes/TextNode.tsx
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NodeToolbar, Position, type NodeProps } from "@xyflow/react";
+import { CANVAS_NODE_TOOLBAR_OFFSET } from "@/lib/canvas-fit-padding";
 import { Trash2Icon } from "lucide-react";
 import { NodeResize } from "./NodeResize";
 import { CanvasNodeLabel } from "./CanvasNodeLabel";
@@ -67,7 +68,7 @@ export function TextNode({ data, selected }: NodeProps) {
         isVisible={selected}
         position={Position.Top}
         align="start"
-        offset={22}
+        offset={CANVAS_NODE_TOOLBAR_OFFSET}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
