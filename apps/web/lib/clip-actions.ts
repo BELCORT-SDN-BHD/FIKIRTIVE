@@ -30,8 +30,8 @@
  */
 import { z } from "zod";
 import { prisma } from "@fikirtive/db";
-import { newId, storageKey, storageKeyToSrc } from "@fikirtive/core";
-import { buildProposeCard, anchoredClipLines, ProposeRefusal } from "@fikirtive/otto";
+import { newId } from "@fikirtive/core";
+import { buildProposeCard, anchoredClipLines, ProposeRefusal, mediaReferenceReceipt } from "@fikirtive/otto";
 import type { OttoContext, OttoMediaReference } from "@fikirtive/otto";
 import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
@@ -240,28 +240,25 @@ export async function proposeClipActionCard(
  * 两种脸。**唯一的来源是服务端已验过归属的那一行**(`validateOwnedGenerationExt` 的返回值),
  * 客户端送得进来的只有一个 id。
  *
- * 这里是一份**本地**构造:PR #1182 正在把回执的构造收进 `packages/otto/src/media-reference.ts`,
- * 它合入之后这个函数应当改调那一处(单一构造点),而不是继续留着第二份。
+ * 构造**不在这里**:`mediaReferenceReceipt`(`packages/otto/src/media-reference.ts`)是回执
+ * 的唯一构造点。#1184 落地时它还没合进主干,所以当时留了一份本地拷贝并登记了这条待办
+ * (规格 §5,2026-09-04 那一行的登记①);#1182 合入后本函数只剩「把这一行素材翻译成
+ * 那个构造点的入参」—— 名字长度、`Untitled canvas` 兜底、`/files/` 缩略图全在那边,
+ * 两条入口因此不可能再长出两种写法。
  */
 function clipReferenceReceipt(ref: OwnedGenerationRef, projectName?: string | null): OttoMediaReference {
-  // 素材当初的提示词就是商家在素材库卡片上读到的那串名字;太长截断,空的退回类型词。
-  const prompt = ref.prompt.trim().replace(/\s+/g, " ");
-  return {
+  return mediaReferenceReceipt({
     generationId: ref.id,
     kind: "video",
-    label: !prompt ? "Video" : prompt.length > 60 ? `${prompt.slice(0, 57)}…` : prompt,
+    // 素材当初的提示词就是商家在素材库卡片上读到的那串名字(截断口径在构造点里)。
+    prompt: ref.prompt,
     sourceProjectId: ref.projectId,
-    // 读不到画布名就退回「Untitled canvas」—— 与 Otto 路同一句兜底。
-    sourceProjectName: projectName?.trim() || "Untitled canvas",
+    sourceProjectName: projectName,
     // 这条入口把卡铸进**这条片子自己那块画布**(上面 `ctx.projectId = clip.projectId`,
     // 而 `clip` 与 `ref` 是同一行),所以来源永远就是当前画布。
     sameCanvas: true,
-    // 同源的 `/files/<key>`,key 由资产的内容哈希拼出来 —— 不是会过期的签名链接,
-    // 租户校验在读取那一刻由 `/files` 自己做。商家付费之前认的就是这一格。
-    previewUrl: storageKeyToSrc(
-      storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext.toLowerCase()),
-    ),
-  };
+    asset: ref.asset,
+  });
 }
 
 /**

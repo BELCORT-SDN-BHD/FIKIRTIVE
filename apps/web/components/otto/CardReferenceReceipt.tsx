@@ -20,6 +20,11 @@
 
 import { ImageIcon, Film } from "lucide-react";
 
+// 角色 → 商家读到的那个词。一份,住在 `@fikirtive/core/reference-budget`(它是关于引擎
+// 输入数组的事实);这里只渲染,不自己翻译。子路径而不是包根 —— 包根会把 node:crypto
+// 拖进客户端包(同 plan-card-contract 的那条注释)。
+import { cardReferenceRoleLabel } from "@fikirtive/core/reference-budget";
+
 import type { OttoPlanCardPayload } from "./plan-card-contract";
 
 /** 缺回执时卡面读到的那一句 —— 缺哪一件,逐字说出来。 */
@@ -60,6 +65,10 @@ export function CardReferenceReceipt({
                   {ref.kind === "video" ? <Film size={12} aria-hidden /> : <ImageIcon size={12} aria-hidden />}
                   <span className="truncate text-foreground">{ref.label}</span>
                 </span>
+                {/* Codex staging CRE-STG-P1-003 —— 这一件在这个计划里坐哪一格。走查的
+                    商家看着卡上一行 `a women`,分不出它是「起始画面」还是「参考之一」,
+                    而那两件事做出来的东西完全不同。角色由铸卡侧冻在卡上,这里只念出来。 */}
+                <span className="block truncate">{cardReferenceRoleLabel(ref.role)}</span>
                 {/* 出处。同一块画布上的就不说 —— 那句话是噪音;从别的画布拿过来的必须说,
                     因为 Library 是全店级的,而商家有权知道上车的是哪一块画布上的那一件。 */}
                 {!ref.sameCanvas && (

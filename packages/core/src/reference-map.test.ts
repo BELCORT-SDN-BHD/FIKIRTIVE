@@ -45,6 +45,30 @@ describe("referenceMapLines", () => {
     ]);
   });
 
+  // Codex staging CRE-STG-P1-003 —— 商家挂了不止一张:第一张在被编辑,其余是参考。
+  it("CREATE-A2 the merchant's 2nd attachment onward is a reference, not another edit base", () => {
+    expect(referenceMapLines([
+      { kind: "baseImage" },
+      { kind: "attachedReference" },
+      { kind: "attachedReference" },
+      ent("e1", "CHARACTER", "Mia"),
+    ])).toEqual([
+      "<Image_1> is the image being edited.",
+      // 卡上这两条写的是 `Reference`;这里说成 "is the image being edited" 就是卡与
+      // 付费请求各说一套 —— 那正是这一票在修的分家。
+      "<Image_2> is a reference image.",
+      "<Image_3> is a reference image.",
+      "Define the person in <Image_4> as <Subject_4>: Mia.",
+    ]);
+  });
+
+  // 刻意不猜名词:这张图画的是人还是杯子,系统并不知道(带类型的只有 @元素)。
+  it("CREATE-A2 an attached reference is never given a subject or a made-up noun", () => {
+    const [line] = referenceMapLines([{ kind: "attachedReference" }]);
+    expect(line).toBe("<Image_1> is a reference image.");
+    expect(line).not.toContain("<Subject_");
+  });
+
   it("a second photo of the same element points back at its own subject, it is not redefined", () => {
     expect(referenceMapLines([
       ent("e1", "CHARACTER", "Mia"),
