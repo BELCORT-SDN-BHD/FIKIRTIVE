@@ -29,6 +29,10 @@ import {
   imageAspectHonoured,
   normalizeImageAspect,
   EXECUTED_SPEC,
+  attachedImageCap,
+  // CRE-STG-P0-001:「挂错了类型」那句话的唯一出处 —— 发送前那道闸与这里共用一份。
+  referenceUnavailableMessage,
+  type CardReferenceRole,
   type GenModel,
   type GenVideoModel,
   type ReferenceBudget,
@@ -87,6 +91,23 @@ export type ProposeInput = z.infer<typeof proposeInput>;
 // Types
 // ---------------------------------------------------------------------------
 
+/** 一条冻结在卡上的媒体参考回执 —— 服务端解析出来的那一份,加上它在这张卡里的角色。
+ *  角色的闭集住在 `@fikirtive/core` 的 `reference-budget`(它是关于引擎输入数组的事实),
+ *  确认卡从那条子路径读同一份,所以卡面与铸卡侧不可能各有一套角色。 */
+export type CardMediaReference = OttoMediaReference & { role: CardReferenceRole };
+
+/** 去重 + 保序 —— 挂图次序就是引擎收到的次序,所以不能用 Set 直接倒出来。 */
+function orderedUniqueRefIds(ids: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 export type CardPayload = {
   kind: "image" | "video";
   model: string;
@@ -134,6 +155,15 @@ export type CardPayload = {
    *  DISPLAY ONLY — an estimate of the follow-on video step's cost. Never used to charge. */
   videoStep?: { estimatedCredits: number };
   sourceGenerationId?: string;
+  /**
+   * Codex staging CRE-STG-P1-003 —— 商家挂的**第一张之外**的图片参考,次序即引擎收到的次序
+   * (`<Image_2>`、`<Image_3>`…)。第一张仍然是 `sourceGenerationId`(编辑底图 `<Image_1>`),
+   * 所以挂 0 或 1 张的卡与这条修改之前逐字相同 —— 这个字段整个缺席。
+   *
+   * 它与 `sourceGenerationId` 同级可信:卡是商家批准前看过、批准后不可变的那一份,付费请求
+   * 里的参考图只能从这里来(`startCoworkGen` 读的是服务端查出来的卡,不是调用方提交的字段)。
+   */
+  referenceGenerationIds?: string[];
   /** 这条创作的目的/意图（来自 propose 的资讯门）。展示/审计用。 */
   goal?: string;
   referenceVideoGenerationId?: string;
@@ -145,13 +175,14 @@ export type CardPayload = {
    * Codex 那一轮的确认卡只列得出 `Aisyah (person)`,商家无从确认「上车的到底是不是我选的
    * 那只蓝杯子」,而实际上那张图早就被静默丢掉了。
    *
-   * 收的**只有真会进付费请求的那几件**(编辑底图 / i2v 首帧 / 整段参考片)——多列一件就是
-   * 一次新的谎报。次序:图片在前,参考片在后。
+   * 收的**只有真会进付费请求的那几件**(编辑底图 / 第 2 张起的图片参考 / i2v 首帧 /
+   * 整段参考片)——多列一件就是一次新的谎报,少列一件就是 CRE-STG-P1-003 那一天。
+   * 次序:图片按商家挂的次序在前,参考片在后;每一条带着它在这张卡里的 `role`。
    *
    * 老卡没有这个字段:卡上带着 `sourceGenerationId` 却没有对应回执的,前端一律判为
    * 「读不全」,不给 Generate 按钮(`planCardGate`)。
    */
-  mediaReferences?: OttoMediaReference[];
+  mediaReferences?: CardMediaReference[];
 };
 
 export type ProposeCardResult = {
@@ -348,6 +379,29 @@ export class ImageAspectUnavailableError extends ProposeRefusal {
   }
 }
 
+/**
+ * 商家挂了一支**片子**,却要一张**图**(Codex staging CRE-STG-P0-001,2026-09-04)。
+ *
+ * ── 走查那一轮的静默 ────────────────────────────────────────────────────────
+ * composer 把视频芯片放进 `referenceVideoGenerationIds`(那一格是对的:它确实是一支视频)。
+ * 可是图片计划的 `isRefVideo` 恒为 false —— 整段参考片只有视频卡认得。于是那支片子在铸卡
+ * 这一步**无声消失**:卡上没有它的 id、没有它的回执、没有一个字提到它,而 Otto 在对话里
+ * 已经说了「收到」。商家按下 `Generate · 1 credit`,买回来的是一张与那支片子毫无关系的图。
+ *
+ * 「无声消失」正是这一族拒绝存在的理由。造不出一张诚实的卡时唯一诚实的产物是**没有卡**:
+ * 抛在落库与预扣之前 ⇒ 一张 GEN_CARD 都不落库、ledger 零新增行、$0。
+ *
+ * 措辞不在这里写:`referenceUnavailableMessage("videoAsImage")` 是那句话的唯一出处,与
+ * 发送前那道闸(`validateOttoTurnReferences` 把视频 id 塞进图片格时说的同一句)共用一份 ——
+ * 同一件事在两个时刻不该有两种说法。
+ */
+export class ReferenceKindUnavailableError extends ProposeRefusal {
+  constructor(readonly slot: "videoAsImage" | "imageAsVideo") {
+    super(referenceUnavailableMessage(slot));
+    this.name = "ReferenceKindUnavailableError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 有效规格 —— 卡面文案的唯一真相来源
 // ---------------------------------------------------------------------------
@@ -443,8 +497,15 @@ export function buildReferenceBudgetNotes(input: {
     );
   }
   if (input.usesAttachedImage && input.attachedImageCount > 1) {
+    // ── Codex staging CRE-STG-P1-003 —— 这句话从前是真的,现在不是了 ──────────────────
+    // 旧文案:「the first one is the base image; the others only informed this plan.」它准确
+    // 描述了当时的行为,而那个行为本身就是走查逮到的病 —— 商家挂了产品图和人物图,只有第一张
+    // 上车。现在两张都上车,所以这句话必须跟着改;留着它就是把一句已经不成立的话继续说给商家听。
+    const used = attachedImageCap(input.attachedImageCount);
     notes.push(
-      `You attached ${input.attachedImageCount} images — the first one is the base image; the others only informed this plan.`,
+      used >= input.attachedImageCount
+        ? `All ${used} images you attached go to the engine, in the order you attached them.`
+        : `You attached ${input.attachedImageCount} images — only the first ${used} go to the engine.`,
     );
   }
   return notes;
@@ -574,6 +635,24 @@ export function buildProposeCard(
   const hasSourceImage = isI2V;
   /** 图片方案带着商家挂的那张图（付费请求的编辑底图）。 */
   const usesAttachedImage = kind === "image" && !!ctx.sourceGenerationId;
+
+  /**
+   * Codex staging CRE-STG-P0-001 —— **挂着片子却要图,停在这里。**
+   *
+   * 整段参考片只有视频卡认得(`isRefVideo`)。图片计划走到下面每一步都不会再看它一眼:
+   * 卡上不会有它的 id、不会有它的回执、不会有一个字提到它 —— 而 Otto 在对话里已经说了
+   * 「收到」。那是一次静默的丢弃,商家为一张与那支片子无关的图付钱。
+   *
+   * 停在这里 = 一张 GEN_CARD 都不落库、ledger 零新增行、$0(落库与预扣都在后面)。
+   */
+  if (kind === "image" && !!ctx.referenceVideoGenerationId) {
+    throw new ReferenceKindUnavailableError("videoAsImage");
+  }
+  /** 这一轮解析出来的挂图总数 —— 与 `propose.ts` 喂给 `referenceBudget` 的是同一个数。 */
+  const attachedImageCount = orderedUniqueRefIds([
+    ctx.sourceGenerationId,
+    ...(ctx.sourceGenerationIds ?? []),
+  ]).length;
 
   /**
    * #775 判官 r1 P1-1 / P1-2 —— **这张卡是能力表上的哪一个动作**,在这里定,一次。
@@ -922,22 +1001,47 @@ export function buildProposeCard(
 
   // Step 4.8b(Codex QA-CRE-FE9-013)—— 媒体参考的审批回执,与上面那份名字快照同一条纪律。
   //
-  // 只收**这张卡真会带上路的那几件**:图片那一格是 `sourceGenerationId`(video ⇒ i2v 首帧,
-  // image ⇒ 引擎的编辑底图),视频那一格是 `referenceVideoGenerationId`。商家这一轮可能挂了
-  // 好几张图,但只有第一张会成为付费请求里的那一张 —— 把其余的也列进回执,就是把「Otto 看过」
-  // 说成「引擎会用」,那是同一类谎报换个方向。
+  // 只收**这张卡真会带上路的那几件**,而「真会带上路」这一句在 2026-09-04 变了口径:
+  //
+  // ── Codex staging CRE-STG-P1-003 —— 第二张图去哪了 ──────────────────────────────
+  // 走查那一轮 composer 上挂着两个芯片(人物 + 产品),Otto 说两张都收到了,确认卡却只列
+  // 得出一件。原因就在这几行:卡只认 `ctx.sourceGenerationId`(=解析结果的**第一个**),
+  // 其余的连回执都不铸,更不会进付费请求。商家按下 `Generate · 1 credit` 买回来的,是一张
+  // 不含他指定产品的商业素材 —— 与 QA-CRE-FE9-013 是同一个病,只是这一次图没被丢在解析器,
+  // 而是被丢在铸卡这一步。
+  //
+  // 现在图片这一支**逐张上车**,次序 = 商家挂的次序(第 0 张 = `<Image_1>` = 编辑底图)。
+  // 名额由 `attachedImageCap` 划(引擎输入张数上限,与 `conditioningCap` 同一份),超出的
+  // 那几张在下面 `buildReferenceBudgetNotes` 里逐字说出来 —— 不许沉默。
+  //
+  // 视频那一支一格没动:i2v 只有一张**首帧**(它是帧,不是参考照),整段参考片只有一条。
+  // 把挂图算进视频卡就是承诺一件引擎不会做的事(`videoReferencesRide` 的那条互斥)。
   //
   // 回执由服务端解析器一次产出(`validateOttoTurnReferences`),这里只按 id 取,不自己编名字:
   // 取不到就宁可少一行(与 `approvedEntities` 同样的安全降级),而 `planCardGate` 会因为
   // 「有 id 没回执」判这张卡不可批准 —— 少一行不会变成一次没有回执的付费。
   const receiptById = new Map((ctx.mediaReferences ?? []).map((r) => [r.generationId, r]));
-  const cardMediaIds: string[] = [
-    ...(isI2V || usesAttachedImage ? [ctx.sourceGenerationId!] : []),
-    ...(isRefVideo ? [ctx.referenceVideoGenerationId!] : []),
+  /** 这张图片卡真会带上路的挂图,已按引擎名额截断。次序即引擎收到的次序。 */
+  const cardAttachedImageIds = usesAttachedImage
+    ? orderedUniqueRefIds([ctx.sourceGenerationId, ...(ctx.sourceGenerationIds ?? [])])
+        .slice(0, attachedImageCap(attachedImageCount))
+    : [];
+  const cardMediaIds: { id: string; role: CardReferenceRole }[] = [
+    ...(isI2V ? [{ id: ctx.sourceGenerationId!, role: "startFrame" as const }] : []),
+    ...cardAttachedImageIds.map((id, index) => ({
+      id,
+      role: (index === 0 ? "baseImage" : "reference") as CardReferenceRole,
+    })),
+    ...(isRefVideo ? [{ id: ctx.referenceVideoGenerationId!, role: "referenceClip" as const }] : []),
   ];
   const mediaReferences = cardMediaIds
-    .map((id) => receiptById.get(id))
-    .filter((r): r is OttoMediaReference => !!r);
+    .map(({ id, role }) => {
+      const receipt = receiptById.get(id);
+      return receipt ? { ...receipt, role } : null;
+    })
+    .filter((r): r is CardMediaReference => !!r);
+  /** 第一张之外的那几张 —— 卡上带走它们,付费请求照它们送参考图(见 `startCoworkGen`)。 */
+  const extraReferenceIds = cardAttachedImageIds.slice(1);
 
   // Step 5: cardPayload (mirror coworkTurn 401–406)
   const cardPayload: CardPayload = {
@@ -970,6 +1074,9 @@ export function buildProposeCard(
     ...(isI2V || usesAttachedImage ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
     // isRefVideo ⇒ kind==="video" && !!ctx.referenceVideoGenerationId, so the non-null assertion is sound.
     ...(isRefVideo ? { referenceVideoGenerationId: ctx.referenceVideoGenerationId! } : {}),
+    // Codex staging CRE-STG-P1-003 —— 第一张之外的挂图。空的就不写(挂 0/1 张的卡与从前
+    // 逐字相同),所以既有每一条路的 payload 形状一格没动。
+    ...(extraReferenceIds.length ? { referenceGenerationIds: extraReferenceIds } : {}),
     // 媒体参考的审批回执(Codex QA-CRE-FE9-013)。空的就不写这个字段(老卡的形状)。
     ...(mediaReferences.length ? { mediaReferences } : {}),
   };

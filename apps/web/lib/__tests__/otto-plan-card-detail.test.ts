@@ -101,6 +101,8 @@ const SERVER_PAYLOAD_KEYS = {
   estimatedCredits: true,
   videoStep: true,
   sourceGenerationId: true,
+  // Codex staging CRE-STG-P1-003:第一张之外的挂图 —— 卡上冻结,付费请求照它送参考图。
+  referenceGenerationIds: true,
   goal: true,
   referenceVideoGenerationId: true,
   // Codex QA-CRE-FE9-013:媒体参考的审批回执 —— 卡面逐项列出、缺一件就不许 Generate。
@@ -124,6 +126,8 @@ const CARD_PAYLOAD_KEYS = {
   estimatedCredits: true,
   videoStep: true,
   sourceGenerationId: true,
+  // Codex staging CRE-STG-P1-003:第一张之外的挂图 —— 卡上冻结,付费请求照它送参考图。
+  referenceGenerationIds: true,
   goal: true,
   referenceVideoGenerationId: true,
   // Codex QA-CRE-FE9-013:媒体参考的审批回执 —— 卡面逐项列出、缺一件就不许 Generate。

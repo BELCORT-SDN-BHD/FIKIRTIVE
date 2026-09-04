@@ -10,6 +10,7 @@ import { ErrorWithTopUp } from "@/components/exits/Exits";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { type ChainedApproval } from "./approval-chain";
 import { runPlanApproval } from "./plan-approval";
+import { CardApprovalRef } from "./CardApprovalRef";
 import { runStateOfCard } from "@/lib/otto-status-helpers";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -99,6 +100,9 @@ export function OttoPlanCard({
   const p: OttoPlanCardPayload = gate.value;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Codex staging CRE-STG-P2-004 —— 失败那一句旁边的可复制短号(服务端日志里是同一串)。
+   *  与 `error` 同生同灭:它不是一条独立的状态,而是那一次失败的一部分。 */
+  const [errorRef, setErrorRef] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "no-api">("idle");
@@ -207,10 +211,12 @@ export function OttoPlanCard({
     if (busy || cardState !== "idle" || !gate.approvable) return;
     setBusy(true);
     setError(null);
+    setErrorRef(null);
     const outcome = await runPlanApproval({ threadId, cardId, pendingApproval, payload: p });
     setBusy(false);
     if (!outcome.ok) {
       setError(outcome.error);
+      setErrorRef(outcome.ref);
       return;
     }
     // #498 P1b (round-4): an ottoApprove resume can park AGAIN on further
@@ -490,6 +496,10 @@ export function OttoPlanCard({
           <Alert role="alert" variant="destructive" density="compact" className="mt-2">
             <AlertDescription>
               <ErrorWithTopUp text={error} />
+              {/* CRE-STG-P2-004 —— 短号住在这块**持久**的 Alert 里(不是 toast):走查那两次
+                  失败之后卡面上什么都不剩,商家除了「再试一次」没有第二个动作。它可选中、
+                  可复制,与服务端日志里那一行同一串。 */}
+              <CardApprovalRef refId={errorRef} />
             </AlertDescription>
           </Alert>
         ) : (

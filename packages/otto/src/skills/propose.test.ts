@@ -3,6 +3,7 @@ import {
   GEN_PRICE_USD_PER_IMAGE, GEN_IMAGE_MODEL_OPTIONS, HD_VIDEO_RESOLUTION, SELLABLE_VIDEO_RESOLUTIONS,
   REFERENCE_VIDEO_MODEL,
   activeVideoModel, buildGenRequestFromCard, displayCredits, pricedGenCredits, redactProviderNames,
+  referenceUnavailableMessage,
   routeVideoModel, videoDefaults, type GenVideoModel,
 } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
@@ -282,10 +283,28 @@ describe("buildProposeCard — pure helper", () => {
     expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBeUndefined();
   });
 
-  it("reference video: kind=image ignores referenceVideoGenerationId (not in payload)", () => {
+  // ── Codex staging CRE-STG-P0-001(2026-09-04)—— 「ignores」正是那个病 ──────────
+  // 这一条从前钉的是「图片卡**无视** referenceVideoGenerationId」。字面为真,而那正是走查
+  // 逮到的静默:composer 收下了片子、Otto 说「收到」,图片计划却从头到尾看都不看它一眼 ——
+  // 卡上没有它的 id、没有回执、没有一个字提到它,商家为一张与那支片子无关的图付钱。
+  // 现在同一个形状换成一次**诚实拒绝**:一张 GEN_CARD 都不铸、$0。
+  it("CRE-STG-P0-001 reference video: kind=image refuses instead of silently dropping the clip", () => {
     const ctx = makeCtx({ referenceVideoGenerationId: "gen_vid" });
+    expect(() =>
+      buildProposeCard({ kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} }, ctx, []),
+    ).toThrow(ProposeRefusal);
+    // 措辞与发送前那道闸共用一份(`referenceUnavailableMessage("videoAsImage")`),
+    // 所以同一件事在两个时刻不会有两种说法。
+    try {
+      buildProposeCard({ kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} }, ctx, []);
+    } catch (e) {
+      expect((e as Error).message).toBe(referenceUnavailableMessage("videoAsImage"));
+    }
+  });
+
+  it("plain image card is untouched: no clip attached → still an image at the image tier", () => {
     const { cardPayload } = buildProposeCard(
-      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} }, ctx, []);
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} }, makeCtx(), []);
     expect(cardPayload.kind).toBe("image");
     expect((cardPayload as Record<string, unknown>)["referenceVideoGenerationId"]).toBeUndefined();
     expect(cardPayload.estimatedCredits).toBe(1); // image tier unchanged
@@ -829,8 +848,13 @@ describe("executePropose — mock DB", () => {
     const payload = persistedPayload();
     expect(payload["sourceGenerationId"]).toBe("gen-1");
     expect(payload["downgraded"]).toBe(true);
-    expect(payload["downgradeNote"]).toContain("You attached 3 images");
+    // Codex staging CRE-STG-P1-003 —— 那句话从前是「只有第一张会用上,其余只参与理解」。
+    // 它准确描述了当时的行为,而那个行为本身就是走查逮到的病:商家挂了产品图和人物图,
+    // 只有第一张上车。现在三张都上车,所以卡面那句话跟着改;留着旧话就是继续说一句不成立的话。
+    expect(payload["downgradeNote"]).toContain("All 3 images you attached go to the engine");
     expect(payload["specChips"]).toContain("Uses your attached image");
+    // 第一张之外的那两张真的冻在卡上 —— 付费请求照它们送参考图。
+    expect(payload["referenceGenerationIds"]).toEqual(["gen-2", "gen-3"]);
   });
 });
 
