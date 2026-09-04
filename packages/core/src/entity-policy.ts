@@ -95,6 +95,16 @@ const USER_CAPABILITIES: Readonly<EntityCapabilities> = {
  *
  * 口径照 Founder 裁决:能用、能引用,不能改身份。English sentence case(项目 UI copy 规矩)。
  */
+/**
+ * 官方目录那一枚标签上的字。**只有这一句**,Library 的元素弹层与 Cast 的变体弹层共用 ——
+ * 商家在两个面上看到的必须是同一个事实,而不是两份各自漂移的字面量。
+ *
+ * 它和上面那句拒绝话分工不同:拒绝话是 server action 拒下来时的 `{ error }`,商家很少看到;
+ * 这一句是**平时就挂在标题旁**的说明,只读要看得见,而不是靠「按钮怎么少了」去猜。
+ * English sentence case(项目 UI copy 规矩)。
+ */
+export const OFFICIAL_CATALOG_BADGE = "Official avatar · Read only";
+
 export const OFFICIAL_CATALOG_REFUSAL =
   "This cast member is provided by Fikirtive — use it in Canvas or an @ mention, but its identity can't be changed.";
 
