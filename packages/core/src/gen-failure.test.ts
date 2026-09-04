@@ -282,7 +282,16 @@ describe("REFERENCE_ASSET_UNREACHABLE — CREATE-A2: honest refusal before spend
 
   it("CREATE-A2: says nothing was charged, and gives a recovery hint", () => {
     expect(REFERENCE_ASSET_UNREACHABLE).toContain("so nothing was charged");
-    expect(REFERENCE_ASSET_UNREACHABLE).toContain("Replace it and try again.");
+    expect(REFERENCE_ASSET_UNREACHABLE).toContain("Replace it and ask again.");
+  });
+
+  // Codex E2E-CRE-PAV-005 — "Try again" is a copy-editing trap here: pressing retry alone can
+  // never succeed while the same unreachable reference is still attached, so the sentence must
+  // not say the one thing a merchant could do that keeps failing. "ask again" names what happens
+  // AFTER the fix ("Replace it"), never an action that stands alone.
+  it("E2E-CRE-PAV-005: does not say 'Try again' — retrying alone cannot fix an unreachable reference", () => {
+    expect(REFERENCE_ASSET_UNREACHABLE).not.toContain("Try again");
+    expect(REFERENCE_ASSET_UNREACHABLE).not.toContain("try again");
   });
 
   it("is not an internal diagnostic — no 'refusing to spend', no 'unreachable ('", () => {
@@ -395,6 +404,17 @@ describe("referenceUnavailableSentence — CREATE-A2: 一份白名单,不是 pas
       const sentence = referenceUnavailableMessage(reason);
       expect(referenceUnavailableSentence(sentence), `reason "${reason}" 没被自己的白名单认出来`)
         .toBe(sentence);
+    }
+  });
+
+  // Codex E2E-CRE-PAV-005 — same discipline as REFERENCE_ASSET_UNREACHABLE above: retrying alone
+  // cannot fix an attachment that is gone or unopenable, so neither sentence may say "Try again".
+  it("E2E-CRE-PAV-005: neither reason says 'Try again' — removing the attachment is the actual fix", () => {
+    for (const reason of REFERENCE_UNAVAILABLE_REASONS) {
+      const sentence = referenceUnavailableMessage(reason);
+      expect(sentence, `reason "${reason}"`).not.toContain("Try again");
+      expect(sentence, `reason "${reason}"`).not.toContain("try again");
+      expect(sentence, `reason "${reason}"`).toContain("ask again");
     }
   });
 
