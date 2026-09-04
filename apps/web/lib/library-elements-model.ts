@@ -3,7 +3,9 @@
  *
  * 与读取分家,是因为浏览器那一端也要认这些类型,而读取本身是 server-only。
  */
-import type { EntityCapabilities, EntityOrigin } from "@fikirtive/core";
+// 叶子子路径,不是 barrel:这个模块是浏览器那端也要认的类型,而 `@fikirtive/core` 的 barrel
+// 会把 Node 才有的东西一起拖进客户端图(围栏 `lib/__tests__/client-core-imports.test.ts`)。
+import type { EntityCapabilities, EntityOrigin } from "@fikirtive/core/entity-policy";
 
 
 /**
