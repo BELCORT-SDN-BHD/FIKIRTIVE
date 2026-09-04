@@ -57,8 +57,24 @@ test("FRONT-A4 — a customized Home survives a reload and a fresh browser", asy
 
   await panel.getByRole("checkbox", { name: "Marketing health" }).click();
   await panel.getByRole("button", { name: "Save" }).click();
+  // WAIT FOR THE SAVE, AND WAIT FOR IT ON THE RIGHT SIGNAL. While the panel is open the page
+  // renders the DRAFT, not the saved layout (`MarketingHomeView`: `customizing ? draft :
+  // components`) — so "the empty state is on screen" is already true the instant the checkbox is
+  // cleared, before anything is sent anywhere. Asserting it here therefore measured nothing and,
+  // worse, released the journey to reload while the save was still in flight: measured
+  // 2026-09-04, the reload landed 39ms after the click and CANCELLED the server action
+  // (trace: `POST /` carrying the saveHomeLayout action id, status -1 = aborted). The row did
+  // commit a moment later — nothing was lost — but the reload had already read the database
+  // ahead of it, so the page honestly showed the pre-save layout and the journey called that a
+  // persistence bug.
+  //
+  // The panel is the honest signal. `saveDraft` awaits `saveHomeLayout` and only then sets
+  // `customizing` to false, so the panel disappearing means the server action RETURNED OK — the
+  // row is committed. No sleep, no arbitrary timeout: an unsaved layout leaves the panel open.
+  await expect(panel).toHaveCount(0);
 
-  // The empty state is the design's invitation, not a blank page.
+  // And only now is Home rendering the SERVER's answer (`components`), so the empty state below
+  // is the design's invitation rather than an unsaved preview of it.
   await expect(home.getByText(EMPTY_HOME)).toBeVisible();
   await expect(home.getByText(HEALTH_BLOCK)).toHaveCount(0);
 
@@ -81,6 +97,9 @@ test("FRONT-A4 — a customized Home survives a reload and a fresh browser", asy
     const secondPanel = secondScreen.getByRole("complementary", { name: "Customize home" });
     await secondPanel.getByRole("checkbox", { name: "Marketing health" }).click();
     await secondPanel.getByRole("button", { name: "Save" }).click();
+    // Same signal, same reason as above — and this is the one CI tripped over: the draft already
+    // shows the component again, so without this the reload below raced the second save too.
+    await expect(secondPanel).toHaveCount(0);
     await expect(secondHome.getByText(HEALTH_BLOCK)).toBeVisible();
 
     await page.reload();
