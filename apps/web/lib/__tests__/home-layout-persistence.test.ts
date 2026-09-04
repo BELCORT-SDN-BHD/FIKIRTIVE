@@ -52,6 +52,8 @@ const { canManageHome, readHomeLayout } = await import("@/lib/home-layout-store"
 const { saveHomeLayout } = await import("@/lib/home-layout-actions");
 const { resolveHomeComponents } = await import("@/lib/home-layout");
 const { getProjects } = await import("@/lib/data");
+const { getAnalytics } = await import("@/lib/analytics-actions");
+const { marketingHealthFromAnalytics } = await import("@/lib/home-marketing-health");
 
 function asUser(email: string) {
   mockAuth.mockResolvedValue({ user: { email } });
@@ -242,5 +244,72 @@ describe("FRONT-A3:两个租户的 Home 各看各的", () => {
     expect(bList.map((p) => p.id), "B 的 Home 上出现了 A 的画布").not.toContain(aProjectId);
     // 验收原话是「对方的数据永不出现」——连名字都不许漏过去。
     expect(JSON.stringify(bList)).not.toContain(aName);
+  });
+});
+
+/**
+ * FRONT-A3 —— 连接状态五态,打真库(Founder 2026-09-04 裁决「Meta 单源版面」)。
+ *
+ * 上面几组守的是版面那一行与画布列表。这一组守的是 Home 的**数据源本身**:一家店有没有
+ * 连上 Meta,是 `MetaConnection` 那一行说了算(`lib/meta-insights.ts` 逐个 fetcher 的第一句
+ * 就是 `findUnique({ where: { ownerId } })`)。所以「未连接」和「需重连」不能靠 mock 证明 ——
+ * mock 只证明我们**调用了**读,证明不了读的是这家店自己的那一行。
+ *
+ * 这两态都在网络之前就分出胜负:没有行 → notConnected;有行但 token 解不开 → needsReconnect
+ * (`decryptToken` 在拿密钥之前就对畸形密文抛错)。所以这组测试不打 Meta,也不需要密钥。
+ * 另外三态(partial / insufficient / unavailable)取决于 Meta 回什么,钉在
+ * `home-marketing-health.test.ts` 的 FRONT-A3 一组。
+ */
+describe("FRONT-A3:一家店的连接状态来自它自己那一行,别家的连接进不来", () => {
+  it("FRONT-A3:库里没有这家店的 Meta 连接 → 未连接态,一个数都不编", async () => {
+    asUser(A_EMAIL);
+    expect(await prisma.metaConnection.findUnique({ where: { ownerId: orgA } })).toBeNull();
+
+    const analytics = await getAnalytics({ range: "30d" });
+    expect(analytics).toEqual({ state: "notConnected" });
+    expect(marketingHealthFromAnalytics(analytics, "online-sales", "30-days")).toEqual({
+      state: "not-configured",
+      goal: "online-sales",
+      action: "connect",
+    });
+  });
+
+  it("FRONT-A3:连接行在、token 解不开 → 需重连态,不是「没连过」", async () => {
+    // 密钥轮换过、或密文被改过的真实形状:行还在,但 accessTokenEnc 解不出来。
+    await prisma.metaConnection.create({
+      data: {
+        id: `mc_${randomUUID()}`,
+        ownerId: orgB,
+        metaUserId: `meta_${randomUUID()}`,
+        accessTokenEnc: "this-is-not-a-valid-ciphertext",
+        scope: "ads_read",
+      },
+    });
+
+    asUser(B_EMAIL);
+    const analytics = await getAnalytics({ range: "30d" });
+    expect(analytics).toEqual({ state: "needsReconnect" });
+    expect(marketingHealthFromAnalytics(analytics, "online-sales", "30-days")).toEqual({
+      state: "not-configured",
+      goal: "online-sales",
+      action: "reconnect",
+    });
+  });
+
+  it("FRONT-A3:B 连了 Meta,A 的 Home 一个字都不变 —— 连接是这家店自己的", async () => {
+    // 上一条给 B 建了连接行。A 那边必须一如既往地是「未连接」。
+    expect(await prisma.metaConnection.findUnique({ where: { ownerId: orgB } })).not.toBeNull();
+
+    asUser(A_EMAIL);
+    expect(await getAnalytics({ range: "30d" })).toEqual({ state: "notConnected" });
+
+    // 反向同样成立:A 的会话读不到 B 的连接状态,B 的会话也读不到 A 的。
+    asUser(B_EMAIL);
+    expect(await getAnalytics({ range: "30d" })).toEqual({ state: "needsReconnect" });
+  });
+
+  it("FRONT-A3:没登录 → 未连接态,而不是报错或读到某一家的连接", async () => {
+    mockAuth.mockResolvedValue(null);
+    expect(await getAnalytics({ range: "30d" })).toEqual({ state: "notConnected" });
   });
 });
