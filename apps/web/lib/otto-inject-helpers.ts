@@ -88,6 +88,38 @@ export function deriveCardState(args: {
   return "idle";
 }
 
+/**
+ * 那扇看着生成结果的窗，开多久、多久问一次 —— **两档**（Codex E2E-CRE-PAV-003）。
+ *
+ * ## 病根
+ *
+ * 这条轮询从前只有一档：每 2.5 秒问一次，问满 48 次（两分钟）就**不再问了**。而服务端
+ * 那一头，一个失败的生成走完它自己的重投序列本来就可能超过两分钟 —— `GEN_QUEUE_POLICY`
+ * 允许两次重投，间隔按 pg-boss 的退避公式是 30–60 秒和 60–120 秒，最坏 180 秒纯等待，
+ * 每次投递本身还要跑（`expireInSeconds` 给到 20 分钟）。于是 Codex 在真浏览器里录到那一幕：
+ * 数据库 03:33:26 已经是 FAILED、1 credit 也已经退回，画布上那张 Otto 卡还写着
+ * 「Generating · still working…」，刷新才变成「Failed」。屏幕不是读错了，是**先闭嘴了**。
+ *
+ * ## 这条规则不是这里发明的
+ *
+ * 同一件事在 StoryboardCard 上已经被判过一次（#782 r7，判官 r6 P1-A）：快轮打满之后
+ * 服务端可能还有活作业，所以「**到顶不等于放弃**」—— 降频接着问，慢轮也到顶才真的停。
+ * 判词与那条纯函数都在 `storyboard-card.ts` 的 `nextSyncPhase`，这里一个字都不重写，
+ * 只把同一套齿轮交给这条一直缺第二档的观察窗：快轮 2.5s × 48（≈2 分钟，原样不动），
+ * 慢轮 60s × 30（≈30 分钟）。
+ *
+ * 30 分钟这个数不是随手取的：它必须盖过服务端自己对「一个生成一定会有终局」的保证 ——
+ * `GEN_QUEUE_POLICY.expireInSeconds`（20 分钟，一次投递最长能活多久）之外还有 worker 的
+ * 收尸器兜底。屏幕停止发问的那一刻，必须晚于服务端交出终局的那一刻，否则就是同一个病。
+ * 这条不变量由 `__tests__/otto-generation-watch.test.ts` 钉住，改小了会红。
+ */
+export const GENERATION_WATCH_GEARS = {
+  /** 刚花完钱、盯着结果的那一档。原来的唯一一档，数字未动。 */
+  fast: { intervalMs: 2500, maxTries: 48 },
+  /** 快轮到顶、服务端还没给终局的那一档 —— 「我们不再盯着看了」不等于「我们不听了」。 */
+  slow: { intervalMs: 60_000, maxTries: 30 },
+} as const;
+
 /** A job is "working" once its GEN_CARD has a genJobId (it was approved/generated)
  *  but no terminal message (GEN_RESULT or TURN_ERROR) has landed for that job yet.
  *  While any job is working the component polls the durable thread for the result. */
