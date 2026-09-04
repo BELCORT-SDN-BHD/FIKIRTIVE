@@ -267,7 +267,8 @@ describe("Card paid-action price tag seam (#550 ② · #547 A4)", () => {
     expect(src).toMatch(/canvasGenCostQuote\(\{\s*\.\.\.costQuote,\s*imageCredits:\s*imageUnitCredits\s*\},\s*imageCount\)\.imageCredits/);
     // A price can never be on screen without its quote having been loaded.
     expect(src).toMatch(/cardBarVisible/);
-    expect(src).toMatch(/if \(composerVisible \|\| cardBarVisible \|\| pendingAnimateId !== null \|\| t2vOpen\) refreshCostQuote\(\)/);
+    // QA-CRE-FE9-001：变体确认卡也把这个数渲染成商家正要批准的价，所以它也在这张名单上。
+    expect(src).toMatch(/if \(composerVisible \|\| cardBarVisible \|\| pendingAnimateId !== null \|\| t2vOpen \|\| pendingVariant !== null\) refreshCostQuote\(\)/);
   });
 
   it("no canvas price is written as a literal in the UI", () => {

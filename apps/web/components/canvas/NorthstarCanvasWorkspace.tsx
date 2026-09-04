@@ -199,12 +199,6 @@ export function NorthstarCanvasWorkspace({
           activeThread={activeThread}
           pendingFirst={pendingFirst}
           composerReferences={composerReferences}
-          onNewConversation={() => {
-            setActiveThread(null);
-            setPendingFirst(null);
-            setComposerReferences([]);
-            replaceCanvasUrl();
-          }}
           onThreadChange={handleThreadChange}
           onStreamStart={handleStreamStart}
           // Keep the durable handoff in the URL until the streamed turn is visible in the
