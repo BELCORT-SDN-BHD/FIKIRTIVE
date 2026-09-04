@@ -19,7 +19,7 @@
 import type { CardPayload as ServerCardPayload } from "@fikirtive/otto";
 // #774:审批身份的解析口径,与付费请求、worker 共用同一个纯函数。走**子路径**而不是包
 // 根:`@fikirtive/core` 的桶文件带出 `node:crypto`(hash.ts),那会被拖进客户端包。
-import { parseApprovedEntities } from "@fikirtive/core/reference-budget";
+import { parseApprovedEntities, cardReferenceRoleOf } from "@fikirtive/core/reference-budget";
 
 /**
  * The GEN_CARD payload as the card reads it — **derived from the server contract, not
@@ -60,6 +60,11 @@ function parseMediaReferences(raw: unknown): NonNullable<OttoPlanCardPayload["me
     if (!str(e.previewUrl)) return [];
     if (e.kind !== "image" && e.kind !== "video") return [];
     if (typeof e.sameCanvas !== "boolean") return [];
+    // Codex staging CRE-STG-P1-003 —— 角色是**这条修改之后**铸的卡才有的一格。老卡(在它
+    // 存在之前铸的)缺席就退回 `reference`:少一个精确的标签是安全的降级,而把整条回执丢掉
+    // 会让一张本来说得清楚的老卡突然不可批准 —— 那是拿商家的钱赔我们的迁移。
+    // 值只认闭集里的那几个:陌生词同样退回 `reference`,绝不原样渲染进卡面。
+    const role = cardReferenceRoleOf(e.role);
     return [{
       generationId: e.generationId,
       kind: e.kind,
@@ -68,6 +73,7 @@ function parseMediaReferences(raw: unknown): NonNullable<OttoPlanCardPayload["me
       sourceProjectName: e.sourceProjectName,
       sameCanvas: e.sameCanvas,
       previewUrl: e.previewUrl,
+      role,
     }];
   });
 }
@@ -110,6 +116,9 @@ export function parsePlanCardPayload(raw: unknown): ParsedPlanCardPayload | null
   take("structuredPrompt", str, (v) => v as string);
   take("goal", str, (v) => v as string);
   take("sourceGenerationId", str, (v) => v as string);
+  // Codex staging CRE-STG-P1-003 —— 第一张之外的挂图。与 entityIds 同一条解析纪律:
+  // 不是「每一项都是字符串的数组」就是畸形,记账、披露、不许批准。
+  take("referenceGenerationIds", (v) => Array.isArray(v) && v.length > 0 && v.every(str), (v) => v as string[]);
   take("referenceVideoGenerationId", str, (v) => v as string);
   take("downgradeNote", str, (v) => v as string);
   take("downgraded", (v) => typeof v === "boolean", (v) => v as boolean);
@@ -224,6 +233,15 @@ export function missingReferenceReceipts(value: OttoPlanCardPayload): string[] {
   const receipts = value.mediaReferences ?? [];
   const missing: string[] = [];
   if (value.sourceGenerationId && !receipts.some((r) => r.generationId === value.sourceGenerationId)) {
+    missing.push("reference image");
+  }
+  // Codex staging CRE-STG-P1-003 —— 第 2 张起的挂图同样是「一个会随付费请求上路的 id」,
+  // 所以同样必须有回执。缺一条就整张卡不可批准:走查那一天商家读不到的正是这几张。
+  // 一句话只说一次(缺 3 张也只写一个 "reference image"),否则卡上那句会念成绕口令。
+  if (
+    (value.referenceGenerationIds ?? []).some((id) => !receipts.some((r) => r.generationId === id)) &&
+    !missing.includes("reference image")
+  ) {
     missing.push("reference image");
   }
   if (

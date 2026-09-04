@@ -40,6 +40,8 @@ import {
   // Codex QA-CRE-FE9-013:挂上来的引用取不到时,商家读到的那一句 —— 措辞的单一权威是
   // `gen-failure.ts` 里的那张表,这里只按名字取,绝不在别处再写一份句子。
   referenceUnavailableMessage,
+  // CRE-STG-P2-004:批准失败时商家与日志共用的那个短号,算法只有这一份。
+  diagnosticRef,
   // 「行在、文件在不在」那一问。取不到的引用要在 reserve 之前拦住,而不是等 worker 退款。
   storageKey,
   type ReferenceUnavailableReason,
@@ -354,6 +356,8 @@ async function resolveGenerationRefs(input: {
   ownerId: string;
   ids: string[];
   exts: string[];
+  /** 这一格要的是哪一种媒体 —— 只用来把「拿错了类型」与「找不到」分开说(见下)。 */
+  slot: "image" | "video";
 }): Promise<{ refs: OwnedGenerationRef[]; unavailable: UnavailableTurnReference[] }> {
   const refs: OwnedGenerationRef[] = [];
   const unavailable: UnavailableTurnReference[] = [];
@@ -364,7 +368,24 @@ async function resolveGenerationRefs(input: {
       exts: input.exts,
     });
     if (!resolved) {
-      unavailable.push({ id, reason: "notFound" });
+      // Codex staging CRE-STG-P0-001 —— **拿错了类型不是「找不到」。**
+      //
+      // 商家从「My Videos」里挑了一支片子当图片参考:行在、是他自己的、没删,只是扩展名
+      // 属于另一族。上一版把这一档也说成「isn't available any more」—— 那句话他一看
+      // Library 就知道是假的,而且指着一个从未发生过的删除,他永远修不好。
+      //
+      // 再查一次的范围仍然是**同一个 owner**(`generationReferenceScope` 那一份判据),
+      // 所以这里多说出来的只有「它是另一种媒体」,一个字都没有泄露别家账号里有什么。
+      const otherExts = input.slot === "image" ? VIDEO_EXTS : IMAGE_EXTS;
+      const wrongKind = await validateOwnedGenerationExt(prisma, {
+        id,
+        ownerId: input.ownerId,
+        exts: otherExts,
+      });
+      unavailable.push({
+        id,
+        reason: wrongKind ? (input.slot === "image" ? "videoAsImage" : "imageAsVideo") : "notFound",
+      });
       continue;
     }
     // 行在、文件不在:这一条走到引擎那里也是 fail-closed 退款,所以在**发送之前**就说。
@@ -411,8 +432,8 @@ export async function validateOttoTurnReferences(input: {
   const sourceIds = orderedUniqueIds([...(input.sourceGenerationIds ?? []), input.sourceGenerationId]);
   const videoIds = orderedUniqueIds([...(input.referenceVideoGenerationIds ?? []), input.referenceVideoGenerationId]);
   const [source, video] = await Promise.all([
-    resolveGenerationRefs({ ownerId: input.ownerId, ids: sourceIds, exts: IMAGE_EXTS }),
-    resolveGenerationRefs({ ownerId: input.ownerId, ids: videoIds, exts: VIDEO_EXTS }),
+    resolveGenerationRefs({ ownerId: input.ownerId, ids: sourceIds, exts: IMAGE_EXTS, slot: "image" }),
+    resolveGenerationRefs({ ownerId: input.ownerId, ids: videoIds, exts: VIDEO_EXTS, slot: "video" }),
   ]);
   const projectNames = await referenceProjectNames(
     input.ownerId,
@@ -1865,7 +1886,8 @@ export async function ottoApprove(raw: unknown): Promise<
   | { ok: true; status: "stale" }
   | { ok: true; genJobId: string; status: string } // double-approve: existing job
   | { ok: true; alreadyResolved: true; resolution: ApprovalCardResolution } // consumed/expired card: idempotent refusal
-  | { error: string }
+  // Codex staging CRE-STG-P2-004 —— `ref` 只在真正未知的那一支出现(见文末 catch)。
+  | { error: string; ref?: string | null }
 > {
   // Inline validation (no zod dep in apps/web) — mirror brief schema
   if (
@@ -1893,7 +1915,8 @@ export async function ottoApprove(raw: unknown): Promise<
     | { ok: true; status: "stale" }
     | { ok: true; genJobId: string; status: string } // double-approve: existing job
     | { ok: true; alreadyResolved: true; resolution: ApprovalCardResolution } // consumed/expired card: idempotent refusal
-    | { error: string }
+    // Codex staging CRE-STG-P2-004 —— `ref` 只在真正未知的那一支出现(见文末 catch)。
+    | { error: string; ref?: string | null }
   > => {
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
     const { ownerId } = gate;
@@ -2514,7 +2537,10 @@ export async function ottoApprove(raw: unknown): Promise<
       // of not letting a second failure speak over the first.
       const sentence = ottoFailureMessage(e, "Couldn't approve — please try again.");
       await persistAgentNote(threadId, ownerId, sentence);
-      return { error: sentence };
+      // Codex staging CRE-STG-P2-004 —— 商家手上要有一个能念给客服听的把手,而它必须与
+      // 上面那行 `console.error` 是同一串。短号由卡的身份算出来(`diagnosticRef`,单一算法),
+      // 不是新造的 id —— 一次失败的批准恰恰是「什么都没存下来」的那一刻。句子本身一格没动。
+      return { error: sentence, ref: diagnosticRef(cardId) };
     }
   });
 }
