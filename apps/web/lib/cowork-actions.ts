@@ -15,6 +15,8 @@ import {
   coworkGenerateRequest, coworkProposalSchema,
   coworkRenameThreadRequest, coworkDeleteThreadRequest, coworkVaryCardRequest, coworkBriefRequest, MAX_GEN_PROMPT,
   composePrompt, isModelDisabled,
+  // CRE-STG-P2-004:失败那一句与那个短号,措辞与算法都只有这一份。
+  GENERATION_START_FAILED, diagnosticRef,
   buildGenRequestFromCard,
   suggestModel, generationUnavailableMessage,
   anchoredVideoAction, anchoredActionUnavailableReason,
@@ -27,7 +29,37 @@ import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { familyHasPromptSkill } from "@fikirtive/otto";
 
-export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { error: string }> {
+/**
+ * Codex staging CRE-STG-P0-001 / P2-004 —— **一次批准不许以「抛」结束。**
+ *
+ * 走查按下 `Generate · 1 credit` 两次,两次都读到同一句 "Couldn’t start that — please try
+ * again."。那句话不是一条措辞,而是客户端 catch 里的一个字面量:这个 Server Action 只要抛出
+ * 任何东西,浏览器拿到的就是一个通用的 Server Component 错误,于是**所有**失败被折叠成同一
+ * 句 —— 商家看到的、日志里那一行、走查报告三方之间没有一个可以对起来的把手。
+ *
+ * 这个外壳把它接住:句子来自单一措辞源(`GENERATION_START_FAILED`),短号来自这张卡自己的
+ * 身份(`diagnosticRef`)—— 同一串同时进 `console.error` 与商家的卡面。已知的拒绝一格没动:
+ * 里面那些 `return { error: <自己那句话> }` 原样穿过,泛化句盖不到它们。
+ *
+ * 写成外壳而不是在原函数里包一层 try:原函数整段是钱路,重排它的缩进会让下一次复审读的是
+ * 一份看不出改了什么的 diff。外壳只多一层,身体一个字节没动。
+ */
+export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { error: string; ref?: string | null }> {
+  const cardId = typeof (raw as { cardId?: unknown } | null)?.cardId === "string"
+    ? (raw as { cardId: string }).cardId
+    : null;
+  try {
+    return await coworkGenerateInner(raw);
+  } catch (e) {
+    // 短号是**这张卡的身份**,不是一个新造的 id:一次失败的批准恰恰是「什么都没存下来」
+    // 的那一刻,所以能被两边同时握住的只有卡。诊断细节只进日志,一个字都不上商家的卡面。
+    const ref = diagnosticRef(cardId);
+    console.error(`[coworkGenerate] failed (ref=${ref ?? "none"}, cardId=${cardId ?? "none"}):`, e instanceof Error ? e.message : e);
+    return { error: GENERATION_START_FAILED, ref };
+  }
+}
+
+async function coworkGenerateInner(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = coworkGenerateRequest.safeParse(raw);
   if (!parsed.success) return { error: "That card can't be generated." };
   const gate = await requireOwner(); if ("error" in gate) return gate;

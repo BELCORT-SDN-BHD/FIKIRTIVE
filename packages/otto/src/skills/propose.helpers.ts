@@ -17,6 +17,7 @@ import {
   VIDEO_ASPECT_ADAPTIVE,
   GEN_VIDEO_MODEL_OPTIONS,
   GEN_VIDEO_MODEL_INFO,
+  GEN_IMAGE_ASPECTS,
   GEN_IMAGE_MODEL_OPTIONS,
   GEN_PRICE_USD_PER_IMAGE,
   GEN_VIDEO_SECONDS,
@@ -29,6 +30,10 @@ import {
   imageAspectHonoured,
   normalizeImageAspect,
   EXECUTED_SPEC,
+  attachedImageCap,
+  // CRE-STG-P0-001:「挂错了类型」那句话的唯一出处 —— 发送前那道闸与这里共用一份。
+  referenceUnavailableMessage,
+  type CardReferenceRole,
   type GenModel,
   type GenVideoModel,
   type ReferenceBudget,
@@ -120,6 +125,23 @@ export type VideoStepPlan = {
 // Types
 // ---------------------------------------------------------------------------
 
+/** 一条冻结在卡上的媒体参考回执 —— 服务端解析出来的那一份,加上它在这张卡里的角色。
+ *  角色的闭集住在 `@fikirtive/core` 的 `reference-budget`(它是关于引擎输入数组的事实),
+ *  确认卡从那条子路径读同一份,所以卡面与铸卡侧不可能各有一套角色。 */
+export type CardMediaReference = OttoMediaReference & { role: CardReferenceRole };
+
+/** 去重 + 保序 —— 挂图次序就是引擎收到的次序,所以不能用 Set 直接倒出来。 */
+function orderedUniqueRefIds(ids: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 export type CardPayload = {
   kind: "image" | "video";
   model: string;
@@ -171,6 +193,15 @@ export type CardPayload = {
    *  no handoff. Neither field ever moves money. */
   videoStep?: { estimatedCredits: number; next?: VideoStepPlan };
   sourceGenerationId?: string;
+  /**
+   * Codex staging CRE-STG-P1-003 —— 商家挂的**第一张之外**的图片参考,次序即引擎收到的次序
+   * (`<Image_2>`、`<Image_3>`…)。第一张仍然是 `sourceGenerationId`(编辑底图 `<Image_1>`),
+   * 所以挂 0 或 1 张的卡与这条修改之前逐字相同 —— 这个字段整个缺席。
+   *
+   * 它与 `sourceGenerationId` 同级可信:卡是商家批准前看过、批准后不可变的那一份,付费请求
+   * 里的参考图只能从这里来(`startCoworkGen` 读的是服务端查出来的卡,不是调用方提交的字段)。
+   */
+  referenceGenerationIds?: string[];
   /** 这条创作的目的/意图（来自 propose 的资讯门）。展示/审计用。 */
   goal?: string;
   referenceVideoGenerationId?: string;
@@ -182,13 +213,14 @@ export type CardPayload = {
    * Codex 那一轮的确认卡只列得出 `Aisyah (person)`,商家无从确认「上车的到底是不是我选的
    * 那只蓝杯子」,而实际上那张图早就被静默丢掉了。
    *
-   * 收的**只有真会进付费请求的那几件**(编辑底图 / i2v 首帧 / 整段参考片)——多列一件就是
-   * 一次新的谎报。次序:图片在前,参考片在后。
+   * 收的**只有真会进付费请求的那几件**(编辑底图 / 第 2 张起的图片参考 / i2v 首帧 /
+   * 整段参考片)——多列一件就是一次新的谎报,少列一件就是 CRE-STG-P1-003 那一天。
+   * 次序:图片按商家挂的次序在前,参考片在后;每一条带着它在这张卡里的 `role`。
    *
    * 老卡没有这个字段:卡上带着 `sourceGenerationId` 却没有对应回执的,前端一律判为
    * 「读不全」,不给 Generate 按钮(`planCardGate`)。
    */
-  mediaReferences?: OttoMediaReference[];
+  mediaReferences?: CardMediaReference[];
 };
 
 export type ProposeCardResult = {
@@ -324,6 +356,60 @@ function imageAspectValue(raw: string): number | null {
   return Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? w / h : null;
 }
 
+/**
+ * 商家这一轮**自己打出来的**那个形状 —— 画幅的第二个证人(Codex 全 beta 审计 P0-001)。
+ *
+ * 为什么需要第二个:Step 3.7 原来只有一个证人,而那个证人是**模型的转述**
+ * (`input.desiredAspect`)。商家说 4:5,模型按当时的说明书「挑最接近的一格」换成 4:3,
+ * 4:3 在菜单上 —— 于是那道闸永远走不到,商家拿到的是一张写着 `2304 × 1728 · 4:3` 的
+ * 付费确认卡,而 Otto 嘴上仍说 4:5。转述过一次的东西不能自己给自己作证。
+ *
+ * 这道对表刻意**很窄**,窄法与视频动作那一处(`decideVideoAction` 的措辞分支)同源:
+ *   · 只认**显式的比例写法**(`4:5`、`9:16`),一句自然语言都不猜 —— 「竖版」「story」
+ *     这类说法留给模型,它看得见整段对话,这里只看得见这一句;
+ *   · 只在措辞侧给出**唯一**结论时才算数:一句话里出现两个不同比例(「4:5 还是 1:1?」)
+ *     ⇒ 没有意见,照旧交给模型那一格;
+ *   · 对不上时**不改判、不替他挑**,而是在铸卡前停下来问($0,`pricedGenCredits` 之前)。
+ *
+ * 两道窄化都不读语义,只看数字本身:两边都是 1–2 位整数且都不大于菜单上最大的那个数
+ * (今天是 21,取自 `GEN_IMAGE_ASPECTS` 自己),比例落在 1:4 ~ 4:1 之间,并且右边不许带
+ * 前导零(`11:05` 是时间,不是形状 —— 比例没人写成 `4:05`)。
+ *
+ * **误伤面照实说,别写成「极少数」**(判官 2026-09-04 P2-1 实跑 24 个反例):分钟落在
+ * 01–21 且不带前导零的时间写法 —— `9:15`、`10:15` —— 仍然会被读成形状。门槛是菜单
+ * 最大项(21),想再收窄就得改菜单,而那是另一件事。这一族的代价是**一句 $0 的反问**,
+ * 不是一次收错的钱:这道闸只会让卡不铸,永远不会让卡多收一分,方向是单向的。
+ * `propose.test.ts` 把两半都钉着 —— 挡住的那几种,和这两种仍然误伤的。
+ */
+const SPOKEN_ASPECT_MAX_TERM = Math.max(
+  ...GEN_IMAGE_ASPECTS.flatMap((a) => a.split(":").map(Number)),
+);
+const SPOKEN_ASPECT_RE = /(?<![\d.:])(\d{1,2})\s*[:：]\s*(\d{1,2})(?![\d.:])/gu;
+
+function spokenImageAspect(
+  text: string,
+): { raw: string; canonical: string; value: number } | null {
+  /** 比例值 → 两个写法。同一个值的两种写法(`4:5` / `8:10`)算同一个结论。
+   *  `raw` 是商家屏幕上那几个字的**原文**(拒绝句要原样回给他听);
+   *  `canonical` 是拿来与能力表对账的那份(`9 : 16` → `9:16`)。
+   *  判官 2026-09-04 P2-1:上一版用 `${w}:${h}` 重建 raw,把商家打的 `11:05`
+   *  回述成了 `11:5` —— 拿他没说过的话当他说过的话。 */
+  const found = new Map<number, { raw: string; canonical: string }>();
+  for (const m of text.matchAll(SPOKEN_ASPECT_RE)) {
+    // 右边带前导零 = 时间写法，不是形状(没人把 4:5 写成 4:05)。
+    if (/^0\d/u.test(m[2] ?? "")) continue;
+    const w = Number(m[1]);
+    const h = Number(m[2]);
+    if (w < 1 || h < 1 || w > SPOKEN_ASPECT_MAX_TERM || h > SPOKEN_ASPECT_MAX_TERM) continue;
+    const value = w / h;
+    if (value < 0.25 || value > 4) continue;
+    if (!found.has(value)) found.set(value, { raw: m[0].trim(), canonical: `${w}:${h}` });
+  }
+  if (found.size !== 1) return null;
+  for (const [value, shape] of found) return { ...shape, value };
+  return null;
+}
+
 /** 拒绝句里最多列几个建议(读得懂他要的比例时)。多了就不是人话,是一堵墙。 */
 const IMAGE_ASPECT_OFFER_LIMIT = 3;
 
@@ -382,6 +468,58 @@ export class ImageAspectUnavailableError extends ProposeRefusal {
   ) {
     super(imageAspectRefusalCopy(wanted, offered, nearest));
     this.name = "ImageAspectUnavailableError";
+  }
+}
+
+/**
+ * 商家挂了一支**片子**,却要一张**图**(Codex staging CRE-STG-P0-001,2026-09-04)。
+ *
+ * ── 走查那一轮的静默 ────────────────────────────────────────────────────────
+ * composer 把视频芯片放进 `referenceVideoGenerationIds`(那一格是对的:它确实是一支视频)。
+ * 可是图片计划的 `isRefVideo` 恒为 false —— 整段参考片只有视频卡认得。于是那支片子在铸卡
+ * 这一步**无声消失**:卡上没有它的 id、没有它的回执、没有一个字提到它,而 Otto 在对话里
+ * 已经说了「收到」。商家按下 `Generate · 1 credit`,买回来的是一张与那支片子毫无关系的图。
+ *
+ * 「无声消失」正是这一族拒绝存在的理由。造不出一张诚实的卡时唯一诚实的产物是**没有卡**:
+ * 抛在落库与预扣之前 ⇒ 一张 GEN_CARD 都不落库、ledger 零新增行、$0。
+ *
+ * 措辞不在这里写:`referenceUnavailableMessage("videoAsImage")` 是那句话的唯一出处,与
+ * 发送前那道闸(`validateOttoTurnReferences` 把视频 id 塞进图片格时说的同一句)共用一份 ——
+ * 同一件事在两个时刻不该有两种说法。
+ */
+export class ReferenceKindUnavailableError extends ProposeRefusal {
+  constructor(readonly slot: "videoAsImage" | "imageAsVideo") {
+    super(referenceUnavailableMessage(slot));
+    this.name = "ReferenceKindUnavailableError";
+  }
+}
+
+/**
+ * 商家点名的画幅**这台引擎做得到**,只是这一趟没落到卡上(判官 2026-09-04 P1-1)。
+ *
+ * 为什么必须与 `ImageAspectUnavailableError` 分家:那句话的第一个字是「做不到」,而
+ * 上一版无条件用它 —— 商家说「nak 9:16 untuk story」、模型漏传 `desiredAspect`、卡落
+ * 默认方图,拒绝句于是变成
+ *   「9:16 isn't a shape I can make here — the closest I can do are 9:16, 2:3, 3:4」
+ * (距离 0 的那一格排第一,所以他要的那个原样出现在「我能做」半句里)。对旗舰竖版格式
+ * 的一句假能力声明,还自相矛盾 —— 而这正是最主流的那条路。
+ *
+ * 这一句只说**事实差异**:他要的是哪一格、这一趟本来会做成哪一格、什么都还没铸。
+ * 一样是 `ProposeRefusal`,一样抛在 `pricedGenCredits` 之前:$0、零 GEN_CARD。
+ * 刻意**不**拿商家原话直接覆盖模型那一格 —— 那是行为改变,而这道对表只看得见一句话,
+ * 读错了就要花钱。
+ */
+export class ImageAspectMismatchError extends ProposeRefusal {
+  constructor(
+    /** 商家自己打出来的那个形状,原样回给他听。 */
+    readonly wanted: string,
+    /** 这一趟本来会落到卡上的那一格。 */
+    readonly onCard: string,
+  ) {
+    super(
+      `You asked for ${wanted}, and what I had ready was ${onCard} — so I've put nothing up. Tell me to go ahead and I'll lay it out at ${wanted}.`,
+    );
+    this.name = "ImageAspectMismatchError";
   }
 }
 
@@ -480,8 +618,15 @@ export function buildReferenceBudgetNotes(input: {
     );
   }
   if (input.usesAttachedImage && input.attachedImageCount > 1) {
+    // ── Codex staging CRE-STG-P1-003 —— 这句话从前是真的,现在不是了 ──────────────────
+    // 旧文案:「the first one is the base image; the others only informed this plan.」它准确
+    // 描述了当时的行为,而那个行为本身就是走查逮到的病 —— 商家挂了产品图和人物图,只有第一张
+    // 上车。现在两张都上车,所以这句话必须跟着改;留着它就是把一句已经不成立的话继续说给商家听。
+    const used = attachedImageCap(input.attachedImageCount);
     notes.push(
-      `You attached ${input.attachedImageCount} images — the first one is the base image; the others only informed this plan.`,
+      used >= input.attachedImageCount
+        ? `All ${used} images you attached go to the engine, in the order you attached them.`
+        : `You attached ${input.attachedImageCount} images — only the first ${used} go to the engine.`,
     );
   }
   return notes;
@@ -611,6 +756,24 @@ export function buildProposeCard(
   const hasSourceImage = isI2V;
   /** 图片方案带着商家挂的那张图（付费请求的编辑底图）。 */
   const usesAttachedImage = kind === "image" && !!ctx.sourceGenerationId;
+
+  /**
+   * Codex staging CRE-STG-P0-001 —— **挂着片子却要图,停在这里。**
+   *
+   * 整段参考片只有视频卡认得(`isRefVideo`)。图片计划走到下面每一步都不会再看它一眼:
+   * 卡上不会有它的 id、不会有它的回执、不会有一个字提到它 —— 而 Otto 在对话里已经说了
+   * 「收到」。那是一次静默的丢弃,商家为一张与那支片子无关的图付钱。
+   *
+   * 停在这里 = 一张 GEN_CARD 都不落库、ledger 零新增行、$0(落库与预扣都在后面)。
+   */
+  if (kind === "image" && !!ctx.referenceVideoGenerationId) {
+    throw new ReferenceKindUnavailableError("videoAsImage");
+  }
+  /** 这一轮解析出来的挂图总数 —— 与 `propose.ts` 喂给 `referenceBudget` 的是同一个数。 */
+  const attachedImageCount = orderedUniqueRefIds([
+    ctx.sourceGenerationId,
+    ...(ctx.sourceGenerationIds ?? []),
+  ]).length;
 
   /**
    * #775 判官 r1 P1-1 / P1-2 —— **这张卡是能力表上的哪一个动作**,在这里定,一次。
@@ -798,11 +961,39 @@ export function buildProposeCard(
    *
    * 两步计划(`forVideo`)的图片步走的就是这里 —— 它的 `kind` 也是 image,所以不必也
    * 不该再补一支守卫(视频档位那边要补 Step 4.6a,是因为 Step 3.6 写的是 `kind === "video"`)。
+   *
+   * **两个证人**(Codex 全 beta 审计 P0-001)。上一版只有证人①,而证人①是模型的转述:
+   * 商家说 4:5、模型按当时的说明书换成菜单内的 4:3,这道闸就永远走不到 —— 卡上写
+   * `2304 × 1728 · 4:3`,`Generate` 按得下去,Otto 嘴上还在说 4:5。所以证人②直接读商家
+   * 这一轮自己打的那句话(`ctx.turnText`,服务端写入,永不来自模型入参),窄法见
+   * `spokenImageAspect`。两个证人对的是**同一个靶子**:这张卡真会交付的那一格。
    */
-  if (kind === "image" && input.desiredAspect) {
-    if (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio) {
+  if (kind === "image") {
+    // 证人①:模型转述的那一格(`desiredAspect`)。
+    if (
+      input.desiredAspect &&
+      (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio)
+    ) {
       const { offered, nearest } = mintableImageAspects(sm.model as GenModel, input.desiredAspect);
       throw new ImageAspectUnavailableError(input.desiredAspect, offered, nearest);
+    }
+    // 证人②:商家这一轮自己打出来的那个形状。模型漏传 `desiredAspect`(卡落到默认方图)
+    // 也归这一条管 —— 那同样是一张写着他没要过的形状的付费卡。
+    const spoken = ctx.turnText ? spokenImageAspect(ctx.turnText) : null;
+    if (spoken) {
+      const onCard = imageAspectHonoured() ? imageAspectValue(sm.params.aspectRatio ?? "") : null;
+      if (onCard === null || Math.abs(Math.log(spoken.value / onCard)) > 1e-9) {
+        // 判官 P1-1 —— **他要的那一格做不做得到,决定说哪一句**。做得到(在这台引擎的
+        // 能力表上、且这一趟真会兑现画幅)⇒ 说事实差异;做不到 ⇒ 才是那句「做不到」。
+        // 少了这一分岔,「nak 9:16」会换来「9:16 isn't a shape I can make here — the
+        // closest I can do are 9:16…」,一句对旗舰竖版格式的假话。
+        const menu: readonly string[] = GEN_IMAGE_MODEL_OPTIONS[sm.model as GenModel].aspectRatios;
+        if (imageAspectHonoured() && menu.includes(spoken.canonical)) {
+          throw new ImageAspectMismatchError(spoken.raw, sm.params.aspectRatio ?? "");
+        }
+        const { offered, nearest } = mintableImageAspects(sm.model as GenModel, spoken.raw);
+        throw new ImageAspectUnavailableError(spoken.raw, offered, nearest);
+      }
     }
   }
 
@@ -995,22 +1186,47 @@ export function buildProposeCard(
 
   // Step 4.8b(Codex QA-CRE-FE9-013)—— 媒体参考的审批回执,与上面那份名字快照同一条纪律。
   //
-  // 只收**这张卡真会带上路的那几件**:图片那一格是 `sourceGenerationId`(video ⇒ i2v 首帧,
-  // image ⇒ 引擎的编辑底图),视频那一格是 `referenceVideoGenerationId`。商家这一轮可能挂了
-  // 好几张图,但只有第一张会成为付费请求里的那一张 —— 把其余的也列进回执,就是把「Otto 看过」
-  // 说成「引擎会用」,那是同一类谎报换个方向。
+  // 只收**这张卡真会带上路的那几件**,而「真会带上路」这一句在 2026-09-04 变了口径:
+  //
+  // ── Codex staging CRE-STG-P1-003 —— 第二张图去哪了 ──────────────────────────────
+  // 走查那一轮 composer 上挂着两个芯片(人物 + 产品),Otto 说两张都收到了,确认卡却只列
+  // 得出一件。原因就在这几行:卡只认 `ctx.sourceGenerationId`(=解析结果的**第一个**),
+  // 其余的连回执都不铸,更不会进付费请求。商家按下 `Generate · 1 credit` 买回来的,是一张
+  // 不含他指定产品的商业素材 —— 与 QA-CRE-FE9-013 是同一个病,只是这一次图没被丢在解析器,
+  // 而是被丢在铸卡这一步。
+  //
+  // 现在图片这一支**逐张上车**,次序 = 商家挂的次序(第 0 张 = `<Image_1>` = 编辑底图)。
+  // 名额由 `attachedImageCap` 划(引擎输入张数上限,与 `conditioningCap` 同一份),超出的
+  // 那几张在下面 `buildReferenceBudgetNotes` 里逐字说出来 —— 不许沉默。
+  //
+  // 视频那一支一格没动:i2v 只有一张**首帧**(它是帧,不是参考照),整段参考片只有一条。
+  // 把挂图算进视频卡就是承诺一件引擎不会做的事(`videoReferencesRide` 的那条互斥)。
   //
   // 回执由服务端解析器一次产出(`validateOttoTurnReferences`),这里只按 id 取,不自己编名字:
   // 取不到就宁可少一行(与 `approvedEntities` 同样的安全降级),而 `planCardGate` 会因为
   // 「有 id 没回执」判这张卡不可批准 —— 少一行不会变成一次没有回执的付费。
   const receiptById = new Map((ctx.mediaReferences ?? []).map((r) => [r.generationId, r]));
-  const cardMediaIds: string[] = [
-    ...(isI2V || usesAttachedImage ? [ctx.sourceGenerationId!] : []),
-    ...(isRefVideo ? [ctx.referenceVideoGenerationId!] : []),
+  /** 这张图片卡真会带上路的挂图,已按引擎名额截断。次序即引擎收到的次序。 */
+  const cardAttachedImageIds = usesAttachedImage
+    ? orderedUniqueRefIds([ctx.sourceGenerationId, ...(ctx.sourceGenerationIds ?? [])])
+        .slice(0, attachedImageCap(attachedImageCount))
+    : [];
+  const cardMediaIds: { id: string; role: CardReferenceRole }[] = [
+    ...(isI2V ? [{ id: ctx.sourceGenerationId!, role: "startFrame" as const }] : []),
+    ...cardAttachedImageIds.map((id, index) => ({
+      id,
+      role: (index === 0 ? "baseImage" : "reference") as CardReferenceRole,
+    })),
+    ...(isRefVideo ? [{ id: ctx.referenceVideoGenerationId!, role: "referenceClip" as const }] : []),
   ];
   const mediaReferences = cardMediaIds
-    .map((id) => receiptById.get(id))
-    .filter((r): r is OttoMediaReference => !!r);
+    .map(({ id, role }) => {
+      const receipt = receiptById.get(id);
+      return receipt ? { ...receipt, role } : null;
+    })
+    .filter((r): r is CardMediaReference => !!r);
+  /** 第一张之外的那几张 —— 卡上带走它们,付费请求照它们送参考图(见 `startCoworkGen`)。 */
+  const extraReferenceIds = cardAttachedImageIds.slice(1);
 
   // Step 5: cardPayload (mirror coworkTurn 401–406)
   const cardPayload: CardPayload = {
@@ -1043,6 +1259,9 @@ export function buildProposeCard(
     ...(isI2V || usesAttachedImage ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
     // isRefVideo ⇒ kind==="video" && !!ctx.referenceVideoGenerationId, so the non-null assertion is sound.
     ...(isRefVideo ? { referenceVideoGenerationId: ctx.referenceVideoGenerationId! } : {}),
+    // Codex staging CRE-STG-P1-003 —— 第一张之外的挂图。空的就不写(挂 0/1 张的卡与从前
+    // 逐字相同),所以既有每一条路的 payload 形状一格没动。
+    ...(extraReferenceIds.length ? { referenceGenerationIds: extraReferenceIds } : {}),
     // 媒体参考的审批回执(Codex QA-CRE-FE9-013)。空的就不写这个字段(老卡的形状)。
     ...(mediaReferences.length ? { mediaReferences } : {}),
   };

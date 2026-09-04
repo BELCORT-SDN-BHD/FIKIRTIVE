@@ -39,6 +39,9 @@ export { anchoredClipLines } from "./skills/seedance-prompt.helpers.js";
 // entry silently uncaught (#775 · #647 T6). Exposed for the #922 缺口 A minting entry.
 export { ProposeRefusal } from "./skills/propose.js";
 export type { CardPayload, ProposeCardResult } from "./skills/propose.js";
+// Codex staging CRE-STG-P1-003 —— 卡上一条参考回执的形状(服务端那一份 + 它的角色)。
+// 角色的闭集本身在 `@fikirtive/core/reference-budget`,前端从那条子路径读。
+export type { CardMediaReference } from "./skills/propose.helpers.js";
 export { sanitizeRefDescription } from "./skills/describe-refs.js";
 export type { OttoContext, OttoMediaReference, OttoSearchSlots, EntityType, LibraryItemView, LibraryHistoryView } from "./context.js";
 export { buildUserTurn, stripHistoryImages, sanitizeHistory, tryRestoreRunState, tryRestoreRunStateWithContext } from "./run-input.js";

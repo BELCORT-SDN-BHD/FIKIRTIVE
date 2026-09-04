@@ -169,4 +169,62 @@ describe("MerchantAccountMenu", () => {
     expect(document.querySelector("[data-shell-signout]")).toBeNull();
     expect(signOutAction).not.toHaveBeenCalled();
   });
+
+  /** P1-012(发布身份)— the menu is shared shell chrome, so it rides FRONT-A14's six-face pass.
+   *  判官四轮 P2-3:sha 现在是直接传进来的 prop(`getMyAccount()` 那趟顺风车的产物),这个组件
+   *  自己不再发任何请求——测试直接传 `buildSha`,不再需要 DI 或等一轮微任务去 flush 一个
+   *  已经不存在的 useEffect。 */
+  it("FRONT-A14: shows a compact build version row and copies the /api/build-info link", async () => {
+    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: clipboardWrite },
+      configurable: true,
+    });
+    const el = await render(
+      createElement(MerchantAccountMenu, {
+        account: { email: "owner@example.com", displayName: "Aisyah", balance: 1240 },
+        signOutAction: async () => {},
+        buildSha: "abc123de",
+      }),
+    );
+    await openAccountMenu(el.querySelector<HTMLElement>("[data-shell-identity]")!);
+
+    const build = document.querySelector<HTMLElement>("[data-shell-build-info]");
+    expect(build?.textContent).toContain("Build abc123de");
+
+    await act(async () => build?.click());
+    expect(clipboardWrite).toHaveBeenCalledWith(expect.stringContaining("/api/build-info"));
+  });
+
+  it("FRONT-A14: no platform-injected sha (local dev) shows 'Build local', never a blank row", async () => {
+    const el = await render(
+      createElement(MerchantAccountMenu, {
+        account: null,
+        signOutAction: async () => {},
+        buildSha: null,
+      }),
+    );
+    await openAccountMenu(el.querySelector<HTMLElement>("[data-shell-identity]")!);
+
+    expect(document.querySelector("[data-shell-build-info]")?.textContent).toContain("Build local");
+  });
+
+  /** 判官四轮 P2-2:可见文案是紧凑版本号「Build <sha>」,不该也不会变;读屏该报的是这颗项
+   *  真正做的事(复制链接),按 accessible name(`aria-label`)能单独取到它,且落在同一个元素上。 */
+  it("P2-2: the build-info item's accessible name describes the action, visible text stays the compact label", async () => {
+    const el = await render(
+      createElement(MerchantAccountMenu, {
+        account: { email: "owner@example.com", displayName: "Aisyah", balance: 1240 },
+        signOutAction: async () => {},
+        buildSha: "abc123de",
+      }),
+    );
+    await openAccountMenu(el.querySelector<HTMLElement>("[data-shell-identity]")!);
+
+    const byAccessibleName = document.querySelector<HTMLElement>('[aria-label="Copy build info link"]');
+    const byTestHook = document.querySelector<HTMLElement>("[data-shell-build-info]");
+    expect(byAccessibleName).not.toBeNull();
+    expect(byAccessibleName).toBe(byTestHook);
+    expect(byAccessibleName?.textContent).toContain("Build abc123de");
+  });
 });
