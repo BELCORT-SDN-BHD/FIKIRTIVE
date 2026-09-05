@@ -4,7 +4,7 @@ import { ReactFlow, Background, type Edge, type Node, type NodeChange, applyNode
 import "@xyflow/react/dist/style.css";
 import { ImageNode, imageNodeActionable } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
-import { TextNode } from "./nodes/TextNode";
+import { TextNode, type CanvasTextSaveOutcome } from "./nodes/TextNode";
 import {
   useCanvasGen,
   isInFlightPaidGen,
@@ -121,6 +121,18 @@ type CanvasFlowNode = Node & {
   batchSize?: number | null;
 };
 const CANVAS_CARD_SIDE = 320;
+/**
+ * WHAT THE BOARD SAYS WHEN A WRITE NEVER REACHED THE SERVER (接线盘点 L1 · FRONT-A12).
+ *
+ * Every canvas write that can now be reported answers with the SERVER'S own sentence when there
+ * is one ("Not authorized.", "Project not found.", "Node not found."). This is the other case:
+ * the action threw, so there is no server sentence to quote — the request never got an answer at
+ * all. It is not a new piece of product copy; it is the sentence this product already gives a
+ * merchant for exactly that (`lib/memory-actions.ts`, `lib/schedule-actions.ts`,
+ * `lib/brand-record-actions.ts`), reused so the canvas does not become the one surface that says
+ * the same thing differently.
+ */
+const CANVAS_SAVE_FAILED = "Couldn't save that — please try again.";
 /**
  * #643 T2 —— 一张卡默认会交付的形状：它自己记着的那一格（板子读回来的 lineage），
  * 记不到就退回输入条当前的形状。纯函数：只看传进来的这张卡，不碰任何 ref。
@@ -700,24 +712,72 @@ export default function FlowCanvas({
     );
   }, []);
 
+  /**
+   * ONE voice for a board-wide refusal — PER REFUSAL, not per session.
+   *
+   * A refit fires once per card as each picture resolves, so the thing that stops one write — an
+   * expired session, a board deleted in another tab — stops all of them at once. Reported straight,
+   * a board of twelve pictures answers a single expiry with twelve identical toasts stacked over
+   * the work. The merchant needs to be told once; twelve times is the same fact made unreadable.
+   *
+   * So the memory is of WHAT WAS SAID, not of "something was said". A latch that simply stopped
+   * after the first report would be this whole ticket's bug reintroduced one level down: the
+   * second, different failure later in the same session — a genuinely new refusal the merchant has
+   * never seen — would go to nobody, and `FRONT-A12` asks that ANY write failure be reported. Two
+   * different sentences are two different facts and each gets said once.
+   */
+  const sizeSaveReportedRef = useRef<Set<string>>(new Set());
+  const reportSizeSaveFailure = useCallback((message: string) => {
+    if (sizeSaveReportedRef.current.has(message)) return;
+    sizeSaveReportedRef.current.add(message);
+    toast.error(message);
+  }, []);
+
+  /**
+   * A card takes the shape of the picture it just loaded — AND KEEPS IT (接线盘点 L1 · FRONT-A12).
+   *
+   * The refit itself is old: a 320×320 placeholder resolves its media, learns the real aspect, and
+   * snaps to it. What it never did was tell anyone. The new size lived in `style` and nowhere else,
+   * so the board wrote it to the screen and the database went on holding 320×320 — reload, and
+   * every card the merchant had watched settle into shape was a square again, and the tidy board
+   * they left was not the board they came back to.
+   *
+   * Persisting it needs no new path and no new permission: this is the same `moveCanvasNode` a
+   * drag and a hand-resize already end on (x/y/w/h, no spend, tenant-scoped server-side). The
+   * measurement moved OUT of the `setNodes` updater to get here — an updater must stay pure and
+   * may be run twice, and a server write is the one thing that must happen exactly once.
+   */
   const fitMediaNodeToSize = useCallback((id: string, media: CanvasMediaSize) => {
+    const node = nodesRef.current.find((n) => n.id === id);
+    if (!node || (node.type !== "image" && node.type !== "video")) return;
+    const currentSize = {
+      w: Number(node.style?.width ?? DEFAULT_CANVAS_MEDIA_NODE_SIDE),
+      h: Number(node.style?.height ?? DEFAULT_CANVAS_MEDIA_NODE_SIDE),
+    };
+    const fitted = canvasMediaNodeSize(media, currentSize);
+    if (!hasCanvasNodeSizeChanged(currentSize, fitted)) return;
     setNodes((current) => {
       let changed = false;
       const next = current.map((n) => {
-        if (n.id !== id || (n.type !== "image" && n.type !== "video")) return n;
-        const currentSize = {
-          w: Number(n.style?.width ?? DEFAULT_CANVAS_MEDIA_NODE_SIDE),
-          h: Number(n.style?.height ?? DEFAULT_CANVAS_MEDIA_NODE_SIDE),
-        };
-        const fitted = canvasMediaNodeSize(media, currentSize);
-        if (!hasCanvasNodeSizeChanged(currentSize, fitted)) return n;
+        if (n.id !== id) return n;
         changed = true;
         return { ...n, style: { ...n.style, width: fitted.w, height: fitted.h } };
       }) as CanvasFlowNode[];
       if (changed) nodesRef.current = next;
       return changed ? next : current;
     });
-  }, []);
+    void moveCanvasNode(projectId, id, {
+      x: node.position.x,
+      y: node.position.y,
+      w: fitted.w,
+      h: fitted.h,
+    }).then(
+      (result) => { if ("error" in result) reportSizeSaveFailure(result.error); },
+      // The card is already the right shape on screen; what failed is the remembering. Say that,
+      // in the words this product already uses when a write does not land.
+      () => reportSizeSaveFailure(CANVAS_SAVE_FAILED),
+    );
+  }, [projectId, reportSizeSaveFailure]);
 
   const onMediaSizeByNode = useRef<Record<string, (size: CanvasMediaSize) => void>>({});
   const getOnMediaSize = useCallback((id: string): ((size: CanvasMediaSize) => void) => {
@@ -815,9 +875,25 @@ export default function FlowCanvas({
     return onDownloadByNode.current[id]!;
   }, [downloadSelection]);
 
-  // stable text-change
-  const onTextChange = useCallback((id: string, text: string) => {
-    void updateTextNode(projectId, id, text);
+  /**
+   * The card's words go to the server — and the CARD is told what happened (接线盘点 L1 · FRONT-A12).
+   *
+   * This used to be `void updateTextNode(...)`: the server's answer was dropped on the floor, so a
+   * refusal it can and does return — the session expired, the card was removed in another tab —
+   * reached nobody. The merchant kept typing into a note that was no longer being stored, and only
+   * the next board read told them, by quietly replacing what they wrote.
+   *
+   * The board owns the wording because the board owns the call: the server's own sentence when
+   * there is one, and the shared throw sentence when the request never got an answer. `TextNode`
+   * renders what it is handed and writes none of it — one place for these words, not two.
+   */
+  const onTextChange = useCallback(async (id: string, text: string): Promise<CanvasTextSaveOutcome> => {
+    try {
+      const result = await updateTextNode(projectId, id, text);
+      return "error" in result ? { error: result.error } : { ok: true };
+    } catch {
+      return { error: CANVAS_SAVE_FAILED };
+    }
   }, [projectId]);
 
   // onResolve: store generationId in nodeDataRef AND in node.data
@@ -1110,11 +1186,27 @@ export default function FlowCanvas({
     });
   }, [nodeImageShape]);
 
-  // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
+  /**
+   * Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
+   *
+   * A REFUSED PRESS IS SAID OUT LOUD (接线盘点 L1 · FRONT-A12). The server can and does refuse this
+   * one — an expired session, a project that is not this owner's — and the refusal used to go to
+   * `console.warn`, which no merchant has open. They pressed the text tool, no card appeared, and
+   * the board's account of itself was a blank patch of canvas; the natural reading is that the
+   * tool is broken, and the natural next move is to press it again into the same refusal. The
+   * sibling path one screen over — dropping a file, `handleCanvasDrop` — has always answered this
+   * with `toast.error`, and this is that same answer on the same board.
+   */
   const addTextNode = useCallback(async () => {
     closeComposer(false);
     const { x, y } = spawnRect();
-    const result = await createCanvasNode({ projectId, type: "text", x, y, w: 240, h: 120, text: "", status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
+    let result: Awaited<ReturnType<typeof createCanvasNode>>;
+    try {
+      result = await createCanvasNode({ projectId, type: "text", x, y, w: 240, h: 120, text: "", status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
+    } catch {
+      toast.error(CANVAS_SAVE_FAILED);
+      return;
+    }
     if ("id" in result) {
       setNodes((ns) => [
         ...ns,
@@ -1129,6 +1221,7 @@ export default function FlowCanvas({
       ]);
       scheduleFitView();
     } else {
+      toast.error(result.error || CANVAS_SAVE_FAILED);
       console.warn("Failed to create text node:", result.error);
     }
   }, [projectId, activeThreadId, onTextChange, skin, scheduleFitView, closeComposer, spawnRect]);
