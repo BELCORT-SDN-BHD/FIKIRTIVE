@@ -36,6 +36,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 const { CreateWorkspace } = await import("@/components/start-something/CreateWorkspace");
 const { CONVERSATION_COST_HINT } = await import("@/components/otto/ConversationCostHint");
+const { SEARCH_COST_HINT } = await import("@/components/otto/SearchCostHint");
 const { CHAT_HOLD_NOTE } = await import("@/lib/credit-format");
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
@@ -106,6 +107,37 @@ describe("FRONT-A15 起步页:输入框下面那一行价钱", () => {
     const src = codeOf(START_PAGE);
     expect(src).toContain('import { ConversationCostHint } from "@/components/otto/ConversationCostHint"');
     expect(src.split("<ConversationCostHint />").length - 1, "起步页不是只挂一次").toBe(1);
+  });
+
+  it("FRONT-A15 搜索那一条也在同一屏上 —— 起步页发出的第一轮对话就会自己去搜网", async () => {
+    // 终检 r5:画布 composer 下面挂三条(理解 / 搜索 / 这一轮对话本身),这一页此前只挂两条。
+    // 起步框按下去开的就是那条对话,Otto 该搜就搜,而每一次搜索都记在商家账上 ——
+    // 同一笔钱不能在一个入口披露、在另一个入口不披露(MONEY-A10「披露先于扣费」的商家侧读法)。
+    const dom = await renderWorkspace();
+
+    expect(dom.textContent, "起步页读不到网页搜索那一条价目").toContain(SEARCH_COST_HINT);
+    const src = codeOf(START_PAGE);
+    expect(src, "抄了一份文案而不是挂那个组件").toContain(
+      'import { SearchCostHint } from "@/components/otto/SearchCostHint"',
+    );
+  });
+
+  it("FRONT-A15 三条披露是一叠 —— 都在输入框之下、Canvas history 之上", async () => {
+    const dom = await renderWorkspace();
+
+    const textarea = dom.querySelector('textarea[aria-label="Otto creation prompt"]')!;
+    const history = dom.querySelector("h2#canvas-history-heading")!;
+    const search = [...dom.querySelectorAll("span")].find((el) => el.textContent === SEARCH_COST_HINT);
+    expect(search, "找不到搜索那一条披露").toBeDefined();
+
+    expect(
+      textarea.compareDocumentPosition(search!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      "搜索披露跑到输入框上面去了",
+    ).toBeGreaterThan(0);
+    expect(
+      search!.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING,
+      "搜索披露掉到 Canvas history 下面去了",
+    ).toBeGreaterThan(0);
   });
 });
 

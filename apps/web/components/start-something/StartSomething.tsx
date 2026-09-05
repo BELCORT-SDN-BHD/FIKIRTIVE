@@ -56,6 +56,7 @@ import { createCanvasConversation, ensureCanvasDraft } from "@/lib/canvas-entry-
 import { canvasHref } from "@/components/canvas/canvas-href";
 import { CanvasLibraryPicker } from "@/components/canvas/CanvasLibraryPicker";
 import { ConversationCostHint } from "@/components/otto/ConversationCostHint";
+import { SearchCostHint } from "@/components/otto/SearchCostHint";
 import { UnderstandingCostHint } from "@/components/otto/UnderstandingCostHint";
 import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePickerMenu";
 import { useReferencePicker } from "@/components/reference-picker/useReferencePicker";
@@ -359,8 +360,14 @@ export function StartSomething() {
           传不了东西,所以这一句不在;本刀给它装上了 Upload image,这一句就跟着来 —— 挂的是
           三处上传口用的**同一个**组件(`components/otto/UnderstandingCostHint.tsx`),不是这一页
           自己写的第二份价目,而且它在文件选择器还没打开的时候就在屏幕上。 */}
+      {/* 网页搜索也是这一下按出来的(MONEY-A10「披露先于扣费」)。这一页发出的第一句话就是
+          一轮**会自己去搜网**的对话:问题需要外面的事实(「我对手卖多少钱」)时 Otto 就搜,
+          每一次搜索都记在商家账上,而商家自己设的单动作花费上限挡不住这条腿。画布下面挂着
+          三条,这一页此前只挂两条 —— 于是同一笔钱在一个入口披露、在另一个入口不披露。
+          挂的是画布那一支用的**同一个**组件,顺序也照它:理解 → 搜索 → 这一轮对话本身。 */}
       <div className="mt-2 flex flex-col gap-0.5">
         <UnderstandingCostHint />
+        <SearchCostHint />
         <ConversationCostHint />
       </div>
       <CanvasLibraryPicker open={libraryOpen} onOpenChange={setLibraryOpen} onPick={attach} />

@@ -96,6 +96,22 @@ describe("MONEY-A10 商家侧披露:聊天输入框下的价目小字", () => {
   it("MONEY-A10:样式照抄现成的成本小字,不是第三种长相", () => {
     expect(markup).toContain("text-[0.75rem] text-muted-foreground");
   });
+
+  it("MONEY-A10:`/create` 起步页同样挂着它 —— 会搜网的第一轮对话就是从那一页按出去的", () => {
+    // 终检 r5:起步页按一下发送键就在同一笔事务里开一条对话,画布挂载即把第一轮送出去 ——
+    // 那一轮 Otto 该搜就搜。这一页此前只挂了理解与对话两条,于是同一笔钱在画布披露、
+    // 在起步页零披露。挂的必须是**同一个**组件(不是抄一份文案),而且与邻居并排。
+    const src = codeOf("components/start-something/StartSomething.tsx");
+    expect(src, "起步页没有 import 搜索披露组件").toContain(
+      'import { SearchCostHint } from "@/components/otto/SearchCostHint"',
+    );
+    expect(src, "import 了却没有渲染").toContain("<SearchCostHint />");
+    expect(src.split("<SearchCostHint />").length - 1, "起步页不是只挂一次").toBe(1);
+    const understandingAt = src.indexOf("<UnderstandingCostHint />");
+    const searchAt = src.indexOf("<SearchCostHint />");
+    expect(searchAt - understandingAt, "两行披露被拆散了").toBeLessThan(200);
+    expect(searchAt - understandingAt, "搜索那一条跑到理解上面去了").toBeGreaterThan(0);
+  });
 });
 
 describe("MONEY-A10 商家侧披露:billing 价目区的搜索行", () => {
