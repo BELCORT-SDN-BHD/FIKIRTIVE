@@ -3,14 +3,19 @@ import "server-only";
 import { prisma } from "@fikirtive/db";
 import { storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { storage } from "./storage";
-import { subjectKey, type LibrarySubjectItem, type LibrarySubjectRef } from "./library-types";
+import {
+  LIBRARY_VIDEO_EXTS,
+  subjectKey,
+  type LibrarySubjectItem,
+  type LibrarySubjectRef,
+} from "./library-types";
 
 /**
  * 类型化 ID 的**服务端**那一半:租户校验与 resolve(规格 §7.3②;FRONT-A5 / A6 / A7)。
  * 类型定义与两个纯函数住在 `library-types.ts`(客户端也要用),这里只放要读库的东西。
  */
 
-const LIBRARY_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
+
 
 /**
  * 把一批 ref 过一遍租户与存活校验,返回**当前这个 org 真的看得见**的那些。

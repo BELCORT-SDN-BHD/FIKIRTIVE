@@ -11,6 +11,10 @@ export type CanvasPendingFirst = {
   text: string;
   goalKey?: string;
   entityIds?: string[];
+  /** 起步页挂的图片素材(规格 §7.3⑨)——首轮按与手动送出**同一份**映射进 body。 */
+  sourceGenerationIds?: string[];
+  /** 起步页挂的影片素材。 */
+  referenceVideoGenerationIds?: string[];
 };
 
 export function CanvasOttoOverlay({
