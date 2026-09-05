@@ -22,7 +22,7 @@ import {
   GEN_VIDEO_MODEL_INFO,
   GEN_IMAGE_ASPECTS,
   GEN_IMAGE_MODEL_OPTIONS,
-  GEN_PRICE_USD_PER_IMAGE,
+  genImageCostUsd,
   GEN_VIDEO_SECONDS,
   REFERENCE_VIDEO_MODEL,
   MAX_GEN_PROMPT,
@@ -1089,7 +1089,9 @@ export function buildProposeCard(
           audio: !!sm.params.audio,
           count: sm.params.count,
         })
-      : GEN_PRICE_USD_PER_IMAGE * sm.params.count;
+      // record-only 的引擎成本按**这张卡自己那一档**的钉点取(复审 r1 P2-2):精修卡跑的是
+      // pro,写死 lite 基数会让毛利核算读到偏低的数。报价仍然只有 `pricedGenCredits` 一处。
+      : genImageCostUsd(sm.model) * sm.params.count;
 
   // Step 4.5: the DISPLAYED charge in CREDITS — computed from the SAME pricedGenCredits
   // value startGen reserves (gen-actions.ts), so the card quote equals what actually

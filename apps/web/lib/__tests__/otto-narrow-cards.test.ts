@@ -238,6 +238,7 @@ function renderPlanCard(over: Partial<OttoPlanCardPayload> = {}, cardState: "idl
         pendingApproval: false,
         onApproved: vi.fn(),
         onChangeSomething: vi.fn(),
+        onOptionsChanged: vi.fn(),
       }),
     ),
   );

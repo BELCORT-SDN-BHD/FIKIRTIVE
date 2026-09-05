@@ -959,6 +959,28 @@ export function OttoChatStream({
       payload: c.message.metadata?.payload,
       pendingApproval: pendingApprovalCardIds.has(c.durableId),
     }));
+  /**
+   * 三格（张数／形状／精修）改完之后，服务端重铸的那张卡落回**这条消息**（复审 r1 P1-1）。
+   *
+   * 为什么必须落在这里而不是卡自己手里：同一个 cardId 今天有两处确认位 —— 对话抽屉里那张
+   * `OttoPlanCard` 与画布上那张 `OttoTurnCard`，而画布形态下抽屉只是 CSS 隐藏（上面那个
+   * `canvasHistoryOpen ? "flex" : "hidden"`），不是卸载。两处各留一份「重铸后的 payload」，
+   * 就是同一张卡上一处写着新价、另一处仍按旧价出 Generate；批准请求不带价（服务端从库里
+   * 那张卡重建），所以陈旧那一侧按下去照旧按新价预扣。写进 metadata.payload 之后两处读的
+   * 是同一份，下一帧一起换。
+   *
+   * 这里不算钱、不改任何别的格：整张卡逐字来自服务端那一次 $0 重铸。轮询回来的库里那一份
+   * （`mergeDurableIntoLive` / `appendMissingCards`）照旧压过它 —— 库永远是权威。
+   */
+  function applyRemintedCard(cardId: string, payload: unknown) {
+    setMessages((cur) =>
+      cur.map((m) =>
+        m.metadata?.kind === "GEN_CARD" && m.metadata.durableId === cardId
+          ? { ...m, metadata: { ...m.metadata, payload } }
+          : m,
+      ),
+    );
+  }
   const workingCardCount = genCardStates.filter((c) => c.state === "working").length;
   // 「屏幕上多久没变了」的输入。变的定义 = 状态词 + 那句进度话 + 消息条数,任一变化就重新计时。
   const canvasProgressKey = `${isBusy}|${liveStatus?.kind ?? ""}|${activeStepLabel(traceSteps) ?? ""}|${messages.length}|${workingCardCount}|${confirmCards.length}`;
@@ -1054,6 +1076,7 @@ export function OttoChatStream({
             );
           }}
           onChangeSomething={(seed) => seedComposer(seed)}
+          onOptionsChanged={applyRemintedCard}
         />
       ) : null}
       {/* Header. QA-CRE-FE9-005（Founder 2026-09-04 07:05 裁决）：**画布上没有 New conversation**。
@@ -1323,6 +1346,7 @@ export function OttoChatStream({
                       );
                     }}
                     onChangeSomething={(seed) => seedComposer(seed)}
+                    onOptionsChanged={applyRemintedCard}
                     onRetry={() => {
                       // A fresh card was spawned — re-arm poll and refetch so it appears.
                       // Back to the fast gear too: the retried job gets the full watch window,

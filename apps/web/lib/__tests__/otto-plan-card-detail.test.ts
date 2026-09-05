@@ -287,6 +287,7 @@ function renderCard(payload: unknown, over: { cardState?: "idle" | "working" | "
       pendingApproval: false,
       onApproved: vi.fn(),
       onChangeSomething: vi.fn(),
+      onOptionsChanged: vi.fn(),
     }),
   );
   // React escapes apostrophes into entities; the merchant sees the character, so
@@ -626,6 +627,7 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
           pendingApproval: props.pendingApproval,
           onApproved: props.onApproved,
           onChangeSomething: vi.fn(),
+          onOptionsChanged: vi.fn(),
         }),
       );
     });
@@ -845,6 +847,7 @@ describe("#580 r2 P1-2 畸形字段 = 不许批准", () => {
           pendingApproval: true,
           onApproved: vi.fn(),
           onChangeSomething: vi.fn(),
+          onOptionsChanged: vi.fn(),
         }),
       );
     });

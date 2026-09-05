@@ -84,6 +84,7 @@ function renderCard(payload: unknown): string {
       pendingApproval: false,
       onApproved: vi.fn(),
       onChangeSomething: vi.fn(),
+      onOptionsChanged: vi.fn(),
     }),
   );
   return markup.replaceAll("&#x27;", "'").replaceAll("&#39;", "'").replaceAll("&quot;", '"');

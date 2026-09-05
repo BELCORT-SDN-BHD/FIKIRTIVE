@@ -58,6 +58,16 @@ export interface OttoPlanCardProps {
   /** Called when the user clicks "Change something". Receives the current
    *  structuredPrompt as a seed so the caller can prefill the composer. */
   onChangeSomething: (seed: string) => void;
+  /**
+   * 商家在这张卡上改完三格之后，服务端重铸出来的**整张卡**（复审 r1 P1-1）。
+   *
+   * 它必须往上走,不能停在这个组件里:同一个 cardId 今天有两处确认位(这张抽屉卡、画布上
+   * 那张 `OttoTurnCard`),画布形态下抽屉只是 CSS 隐藏而非卸载 —— 两处各留一份「重铸后的
+   * payload」,就是同一张卡上一处写着新价、另一处仍按旧价出按钮。批准请求不带价(服务端
+   * 从库里那张卡重建),所以陈旧那一侧按下去照旧按新价预扣。唯一的收口是让两处读**同一份**
+   * payload:父组件改写这条消息的 metadata.payload,两张卡下一帧一起换。
+   */
+  onOptionsChanged: (cardId: string, payload: unknown) => void;
   /** Called after a fresh-card retry spawns a new card (failed state only). */
   onRetry?: () => void;
   /** Called after a successful cancel + refund so the parent can refresh. */
@@ -92,6 +102,7 @@ export function OttoPlanCard({
   pendingApproval,
   onApproved,
   onChangeSomething,
+  onOptionsChanged,
   onRetry,
   onCancelled,
 }: OttoPlanCardProps) {
@@ -99,16 +110,10 @@ export function OttoPlanCard({
   // ONE price-guarantee predicate. Everything below — what renders, and whether approve()
   // may spend — reads this same object, so the display and the spend can't disagree
   // (#580 复审 r1 P1-1 / r2 P1-1).
-  /**
-   * Founder 2026-09-05「加进确认卡」—— 商家在这张卡上改完三格之后,服务端重铸出来的那一份。
-   *
-   * 它是**服务端算过价的整张卡**,不是界面自己拼的补丁:价、规格条目、菜单全部随它一起换。
-   * `payload` 这个 prop 一换(父组件重新取回这条会话)就清空 —— 库里那一份永远压过手里这一份。
-   */
-  const [reminted, setReminted] = useState<{ from: unknown; value: unknown } | null>(null);
-  // 纯派生,没有 effect:重铸的那一份只在**它当时那张卡**还在时算数。prop 一换(父组件
-  // 重新取回这条会话)`from` 就对不上,库里那一份自动压过手里这一份。
-  const gate = planCardGate(reminted && reminted.from === payload ? reminted.value : payload);
+  // Founder 2026-09-05「加进确认卡」—— 改完三格之后服务端重铸的那张卡不停在这里:它顺着
+  // `onOptionsChanged` 走回父组件,写进这条消息的 metadata.payload,再从 `payload` 这个
+  // prop 流回来。所以两处确认位读的是同一份,库里那一份永远压过手里这一份(复审 r1 P1-1)。
+  const gate = planCardGate(payload);
   const p: OttoPlanCardPayload = gate.value;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -405,7 +410,7 @@ export function OttoPlanCard({
             cardId={cardId}
             payload={p}
             disabled={busy}
-            onChanged={(next) => setReminted({ from: payload, value: next })}
+            onChanged={(next) => onOptionsChanged(cardId, next)}
           />
         )}
 

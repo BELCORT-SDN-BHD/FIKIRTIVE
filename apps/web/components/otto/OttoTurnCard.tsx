@@ -68,6 +68,9 @@ export interface OttoTurnCardProps {
   onApproved: (outcome: PlanApproveOutcome) => void;
   /** 「Change」把这张卡的原话塞回输入框，让商家改了再来。 */
   onChangeSomething: (seed: string) => void;
+  /** 改完三格之后服务端重铸的那张卡,原样交回父组件 —— 抽屉里那张卡下一帧读到的是同一份
+   *  (复审 r1 P1-1:两处各留一份就是「卡上一个数、预扣另一个数」)。 */
+  onOptionsChanged: (cardId: string, payload: unknown) => void;
   /**
    * 这一轮失败时，商家原来打的那句话 —— 有它才出「Edit and retry」（2026-09-05 走查修复一）。
    * 只有能重试的那一种失败给得出（充值 / 抬上限那两种的出路不在这里），判据在调用方，
@@ -85,6 +88,7 @@ export function OttoTurnCard({
   confirmCards,
   onApproved,
   onChangeSomething,
+  onOptionsChanged,
   retryDraft,
 }: OttoTurnCardProps) {
   const failed = status.phase === "failed";
@@ -149,6 +153,7 @@ export function OttoTurnCard({
             card={card}
             onApproved={onApproved}
             onChangeSomething={onChangeSomething}
+            onOptionsChanged={onOptionsChanged}
           />
         ))}
       </div>
@@ -166,20 +171,21 @@ function CanvasConfirmRow({
   card,
   onApproved,
   onChangeSomething,
+  onOptionsChanged,
 }: {
   card: CanvasConfirmCard;
   onApproved: (outcome: PlanApproveOutcome) => void;
   onChangeSomething: (seed: string) => void;
+  onOptionsChanged: (cardId: string, payload: unknown) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Codex staging CRE-STG-P2-004 —— 失败那一句旁边的可复制短号(服务端日志里同一串)。 */
   const [errorRef, setErrorRef] = useState<string | null>(null);
-  /** 商家在这张卡上改完三格之后,服务端重铸出来的那一份(整张卡,含新的价与菜单)。
-   *  卡换了(父组件重新取回这条会话)就清空 —— 库里那一份永远压过手里这一份。 */
-  const [reminted, setReminted] = useState<{ from: unknown; value: unknown } | null>(null);
-  // 纯派生,没有 effect:重铸的那一份只在**它当时那张卡**还在时算数;卡一换就自动作废。
-  const gate = planCardGate(reminted && reminted.from === card.payload ? reminted.value : card.payload);
+  // 改完三格之后服务端重铸的那张卡不停在这里:它顺着 `onOptionsChanged` 走回 OttoChatStream,
+  // 写进这条消息的 metadata.payload,再从 `card.payload` 流回来 —— 抽屉里那张卡读的是同一份
+  // (复审 r1 P1-1)。
+  const gate = planCardGate(card.payload);
   const p = gate.value;
   const credits = gate.credits;
   // 读不懂或担保不住价格的卡不在这里出现 —— 抽屉里那张会把原因说清楚（UNREADABLE_PLAN_NOTE
@@ -245,7 +251,7 @@ function CanvasConfirmRow({
         cardId={card.cardId}
         payload={p}
         disabled={busy}
-        onChanged={(next) => setReminted({ from: card.payload, value: next })}
+        onChanged={(next) => onOptionsChanged(card.cardId, next)}
       />
       {/* CRE-STG-P2-004 —— 失败留在卡上(不是 toast),而且带着那个可复制的短号:走查那两次
           点击之后卡面上什么都不剩,商家除了「再试一次」没有第二个动作。短号与抽屉里那张卡

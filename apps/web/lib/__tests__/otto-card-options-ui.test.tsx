@@ -5,15 +5,19 @@
  * 规格 docs/specs/otto-engine.md，验收 ENGINE-A3（§5 登记 2026-09-05，Founder 裁决
  * 「加进确认卡」）。⑦段退役直出 composer 之后这三格无处可选，而这张卡是唯一的花钱入口。
  *
- * 这一份钉三件事：
+ * 这一份钉四件事：
  *  1. 三格真的接在生产的那个 $0 服务端动作上（改一格 = 一次调用，参数逐字是那一格）；
  *  2. 服务端重铸回来的那张卡**换掉了按钮上的价** —— 界面自己一分钱都不算；
  *  3. 精修那一格在服务端说它今天卖不动时**不出现**（Creation 规格里「没有价的 SKU
- *     ⇒ 拒绝、$0」那条验收的商家侧读法：菜单上不摆一个点了必然被拒的选项）。
+ *     ⇒ 拒绝、$0」那条验收的商家侧读法：菜单上不摆一个点了必然被拒的选项）；
+ *  4. 复审 r1 P1-1：同一张卡的**两处**确认位（抽屉里那张 `OttoPlanCard` 与画布上那张
+ *     `OttoTurnCard`，画布形态下抽屉只是 CSS 隐藏、不是卸载）同时挂着时，在一处改一格，
+ *     另一处按钮上那个价必须跟着换 —— 两处各留一份重铸结果，就是「卡上一个数、预扣
+ *     另一个数」。
  *
  * 钱路本身的证据在 `otto-card-options-ledger.test.ts`（真库、真 reserve）。
  */
-import { act, createElement } from "react";
+import { act, createElement, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OttoPlanCardPayload } from "@/components/otto/plan-card-contract";
@@ -41,6 +45,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const { OttoPlanCard } = await import("@/components/otto/OttoPlanCard");
+const { OttoTurnCard } = await import("@/components/otto/OttoTurnCard");
 
 /** 一张服务端今天真会铸出来的图片卡（三格菜单齐全）。 */
 function imageCard(over: Partial<OttoPlanCardPayload> = {}): OttoPlanCardPayload {
@@ -70,26 +75,62 @@ afterEach(() => {
   updateOptionsMock.mockReset();
 });
 
-function mount(payload: OttoPlanCardPayload, cardState: "idle" | "working" = "idle"): HTMLElement {
+/**
+ * 生产里那个父组件的最小替身（`OttoChatStream`）：重铸后的整张卡由**它**持有，两处确认位
+ * 都从它读。复审 r1 P1-1 的修法就是这条线 —— 组件自己不留一份重铸结果。
+ */
+function CardHost({
+  initial,
+  cardState,
+  both,
+}: {
+  initial: OttoPlanCardPayload;
+  cardState: "idle" | "working";
+  both: boolean;
+}) {
+  const [payload, setPayload] = useState<unknown>(initial);
+  const onOptionsChanged = (_cardId: string, next: unknown) => setPayload(next);
+  const drawer = createElement(OttoPlanCard, {
+    key: "drawer",
+    cardId: "card_1",
+    payload,
+    entities: [],
+    threadId: "thread_1",
+    projectId: "proj_1",
+    genJobId: cardState === "working" ? "job_1" : null,
+    cardState,
+    pendingApproval: true,
+    onApproved: vi.fn(),
+    onChangeSomething: vi.fn(),
+    onOptionsChanged,
+  });
+  if (!both) return drawer;
+  return createElement("div", null, [
+    drawer,
+    createElement(OttoTurnCard, {
+      key: "canvas",
+      status: { phase: "needs-confirmation", label: "Waiting for you", dot: "bg-brand", detail: null, busy: false } as const,
+      text: "Here's what I'll make.",
+      streaming: false,
+      confirmCards: [{ cardId: "card_1", threadId: "thread_1", payload, pendingApproval: true }],
+      onApproved: vi.fn(),
+      onChangeSomething: vi.fn(),
+      onOptionsChanged,
+    }),
+  ]);
+}
+
+function mount(
+  payload: OttoPlanCardPayload,
+  cardState: "idle" | "working" = "idle",
+  both = false,
+): HTMLElement {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
   roots.push([root, host]);
   act(() => {
-    root.render(
-      createElement(OttoPlanCard, {
-        cardId: "card_1",
-        payload,
-        entities: [],
-        threadId: "thread_1",
-        projectId: "proj_1",
-        genJobId: cardState === "working" ? "job_1" : null,
-        cardState,
-        pendingApproval: true,
-        onApproved: vi.fn(),
-        onChangeSomething: vi.fn(),
-      }),
-    );
+    root.render(createElement(CardHost, { initial: payload, cardState, both }));
   });
   return host;
 }
@@ -166,6 +207,31 @@ describe("ENGINE-A3 确认卡上的三格 —— 接在生产那条 $0 路上", 
     expect(selectByLabel(host, "How many images")).toBeUndefined();
     expect(host.querySelector('[aria-label="Fine detail"]')).toBeNull();
     expect(host.textContent).toContain("Generate · 1 credit");
+  });
+
+  it("ENGINE-A3 两处确认位同挂 —— 在画布那一格改张数,抽屉那一张按钮上的价跟着换(复审 r1 P1-1)", async () => {
+    // 生产里这两处是同时挂着的:画布形态下抽屉只是 CSS 隐藏(`canvasHistoryOpen ? "flex" : "hidden"`),
+    // 不是卸载。重铸结果若停在各自组件里,就会一处写着新价、另一处仍按旧价出按钮 —— 而批准
+    // 请求不带价(服务端从库里那张卡重建),陈旧那一侧按下去照旧按新价预扣。
+    const host = mount(imageCard(), "idle", true);
+    const canvas = host.querySelector('[aria-label="Otto current turn"]') as HTMLElement | null;
+    expect(canvas).toBeTruthy();
+    const generateLabels = () =>
+      [...host.querySelectorAll("button")]
+        .map((b) => (b.textContent ?? "").replace(/\s+/g, " ").trim())
+        .filter((t) => t.startsWith("Generate"));
+    expect(generateLabels()).toEqual(["Generate · 1 credit", "Generate · 1 credit"]);
+    updateOptionsMock.mockResolvedValue({
+      ok: true,
+      payload: { ...imageCard(), params: { aspectRatio: "1:1", count: 3 }, estimatedCredits: 3 },
+    });
+    const canvasCount = [...canvas!.querySelectorAll("select")].find(
+      (s) => s.getAttribute("aria-label") === "How many images",
+    );
+    expect(canvasCount).toBeTruthy();
+    await chooseOption(canvasCount!, "3");
+    // 两颗按钮,一个数。
+    expect(generateLabels()).toEqual(["Generate · 3 credits", "Generate · 3 credits"]);
   });
 
   it("ENGINE-A3 已经排队的卡不再出现这三格 —— 批准之后没有「再改一格」这回事", () => {

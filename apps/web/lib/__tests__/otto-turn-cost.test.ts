@@ -79,6 +79,7 @@ describe("the conversation-charge disclosure is one sentence in three places", (
       pendingApproval: false,
       onApproved: vi.fn(),
       onChangeSomething: vi.fn(),
+      onOptionsChanged: vi.fn(),
     }));
   }
 

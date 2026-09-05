@@ -90,6 +90,7 @@ describe("CREATE-A1 · 确认卡在始终可见的 Otto 卡片里（走查 P0-3�
         confirmCards={[{ cardId: "card-1", threadId: "thr-1", payload: plan(), pendingApproval: true }]}
         onApproved={() => {}}
         onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
       />,
     );
     const confirm = el.querySelector('[aria-label="Generation confirmation"]');
@@ -113,6 +114,7 @@ describe("CREATE-A1 · 确认卡在始终可见的 Otto 卡片里（走查 P0-3�
         confirmCards={[{ cardId: "card-9", threadId: "thr-7", payload: plan(), pendingApproval: true }]}
         onApproved={approved}
         onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
       />,
     );
     const generate = [...el.querySelectorAll("button")].find((b) => b.textContent?.includes("Generate ·"));
@@ -144,6 +146,7 @@ describe("CREATE-A1 · 确认卡在始终可见的 Otto 卡片里（走查 P0-3�
         }]}
         onApproved={() => {}}
         onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
       />,
     );
     expect(el.querySelector('[aria-label="Generation confirmation"]')).toBeNull();
@@ -247,6 +250,7 @@ describe("CREATE-A1 · 卡上说的是真进度（走查 P0-4）", () => {
         confirmCards={[]}
         onApproved={() => {}}
         onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
       />,
     );
     const status = el.querySelector('[role="status"]');
@@ -282,6 +286,7 @@ describe("CREATE-A1 · 卡上的正文是人话（走查 P1-1）", () => {
         confirmCards={[]}
         onApproved={() => {}}
         onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
       />,
     );
     expect(el.textContent).toContain("two cards");
@@ -298,6 +303,7 @@ describe("CREATE-A1 · 卡上的正文是人话（走查 P1-1）", () => {
         confirmCards={[]}
         onApproved={() => {}}
         onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
       />,
     );
     expect(el.textContent).toContain(CANVAS_TURN_EMPTY_TEXT);
@@ -425,6 +431,7 @@ describe("CREATE-A1 · 当前轮只投影一个权威状态（Codex QA-CRE-004�
         confirmCards={[]}
         onApproved={() => {}}
         onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
       />,
     );
     expect(el.textContent).toContain("Made 2 images · 2 credits.");
@@ -505,6 +512,7 @@ describe("CREATE-A1 · 当前轮只投影一个权威状态（Codex QA-CRE-004�
         confirmCards={[{ cardId: "c1", threadId: "t1", payload: plan(), pendingApproval: false }]}
         onApproved={() => {}}
         onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
       />,
     );
     // 屏幕上那句话没了 —— 全卡逐字搜。
@@ -531,6 +539,7 @@ describe("CREATE-A1 · 当前轮只投影一个权威状态（Codex QA-CRE-004�
         confirmCards={[]}
         onApproved={() => {}}
         onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
       />,
     );
     expect(el.textContent).not.toContain("didn't go through");
@@ -557,6 +566,7 @@ describe("CREATE-A1 · 当前轮只投影一个权威状态（Codex QA-CRE-004�
         ]}
         onApproved={() => {}}
         onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
       />,
     );
     const rows = el.querySelectorAll('[aria-label="Generation confirmation"]');

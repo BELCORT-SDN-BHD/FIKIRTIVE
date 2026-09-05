@@ -20,10 +20,10 @@ import {
   DEFAULT_IMAGE_MODEL,
   PRO_IMAGE_MODEL,
   GEN_IMAGE_MODEL_OPTIONS,
-  GEN_PRICE_USD_PER_IMAGE,
   MAX_GEN_COUNT,
   buildSpecChips,
   displayCredits,
+  genImageCostUsd,
   imageAspectHonoured,
   imageDefaults,
   isSellableImageSku,
@@ -170,7 +170,10 @@ export function applyCardOptions(payload: CardPayload, edit: CardOptionEdit): Ca
         elementReferenceCount: 0,
         hasStartFrame: false,
       }),
-      estimatedPriceUsd: GEN_PRICE_USD_PER_IMAGE * count,
+      // 记账用的引擎成本(record-only,不是报价 —— 报价是下面那个 `estimatedCredits`)。
+      // **按这一档自己的钉点取**:精修档跑的是 pro,成本钉点也就该是 pro 那一条。写死 lite
+      // 基数会让将来的毛利核算读到一个偏低的数(复审 r1 P2-2)。
+      estimatedPriceUsd: genImageCostUsd(model) * count,
       estimatedCredits,
       ...(wantFineDetail ? { fineDetail: true as const } : {}),
       options: cardOptionMenu(model) ?? payload.options,
