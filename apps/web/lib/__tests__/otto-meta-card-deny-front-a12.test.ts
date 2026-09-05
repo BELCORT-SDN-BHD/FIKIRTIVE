@@ -163,11 +163,15 @@ describe("FRONT-A12 — Otto Meta card Deny goes to the server", () => {
     });
     expect(note).not.toBeNull();
 
-    const audit = await prisma.actionEvent.findFirst({
+    // Ordered, not "whichever row Postgres hands back first": this file declines several cards
+    // into the same org, so an unordered findFirst only held while this happened to be the first
+    // case to run (#1202 judge P2-3).
+    const audits = await prisma.actionEvent.findMany({
       where: { ownerId: orgA, type: "approval.declined" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
-    expect(audit).not.toBeNull();
-    expect((audit!.payload as unknown as { cardId: string }).cardId).toBe(cardId);
+    expect(audits.length).toBeGreaterThan(0);
+    expect((audits[0].payload as unknown as { cardId: string }).cardId).toBe(cardId);
   });
 
   it("FRONT-A12 declining a BUILD_CARD persists with the build's own sentence", async () => {
@@ -225,6 +229,48 @@ describe("FRONT-A12 — Otto Meta card Deny goes to the server", () => {
     currentOwnerId = orgB;
     const crossed = await ottoReject({ threadId: threadB, cardId });
     expect(crossed).toEqual({ error: "That card isn't awaiting approval." });
+    expect((await reReadPayload(cardId)).declinedAt).toBeUndefined();
+  });
+
+  it("FRONT-A12 an expired ask lands its own terminal state — a refresh does not show it pending again", async () => {
+    currentOwnerId = orgA;
+    const expiredPayload = actionCardPayload(orgA);
+    expiredPayload.approval.expiresAt = new Date(Date.now() - 60 * 1000).toISOString();
+    const cardId = await makeCard(orgA, threadA, "ACTION_CARD", expiredPayload);
+    const notesBefore = await prisma.chatMessage.count({
+      where: { threadId: threadA, ownerId: orgA, kind: "TEXT", text: ACTION_PLAN_DECLINE_TEXT },
+    });
+
+    const res = await ottoReject({ threadId: threadA, cardId });
+    expect(res).toEqual({ ok: true, alreadyResolved: true, resolution: "expired" });
+
+    const payload = await reReadPayload(cardId);
+    // The terminal mark the CARD itself reads. Before this, only `approval.consumedAt` was
+    // stamped, so a refresh re-read the card as pending and offered Approve on an ask that could
+    // never be approved (#1202 judge P2-2).
+    expect(typeof payload.expiredAt).toBe("string");
+    // …and it is not called a decline: the merchant never refused this, it ran out of time.
+    expect(payload.declinedAt).toBeUndefined();
+    // Un-approvable, structurally, exactly as a decline is: the frozen binding is consumed, and
+    // its own deadline is past, so `verifyApproval` shuts the gate whichever check it reaches
+    // first (it tests consumed before expired). The word the MERCHANT reads is the card's, and
+    // that one says expired — see the UI test in otto-card-deny-ui-front-a12.test.tsx.
+    const approval = payload.approval as { consumedAt?: string; boundActor: string; expiresAt: string; paramHash: string };
+    expect(typeof approval.consumedAt).toBe("string");
+    expect(verifyApproval(approval, PLAN_STEPS, orgA, new Date().toISOString())).toEqual({
+      ok: false,
+      reason: "consumed",
+    });
+    // Nothing was declined, so no decline sentence joined the conversation.
+    const notesAfter = await prisma.chatMessage.count({
+      where: { threadId: threadA, ownerId: orgA, kind: "TEXT", text: ACTION_PLAN_DECLINE_TEXT },
+    });
+    expect(notesAfter).toBe(notesBefore);
+
+    // Clicking Deny again on that card still says "expired" — never "approved", which is what the
+    // consumed stamp alone used to make it look like.
+    const second = await ottoReject({ threadId: threadA, cardId });
+    expect(second).toEqual({ ok: true, alreadyResolved: true, resolution: "expired" });
     expect((await reReadPayload(cardId)).declinedAt).toBeUndefined();
   });
 
