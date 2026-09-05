@@ -384,7 +384,7 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     secret: false,
     shared: false,
     summary:
-      "Which mail transport the web app uses. Unset = Resend when RESEND_API_KEY is set, otherwise the local stub off production. stub forces the local stub (test runners); production refuses it.",
+      "Which mail transport the web app uses. Unset = Resend when RESEND_API_KEY is set, otherwise the local stub off production. stub forces the local stub (test runners); production refuses it by default — FIKIRTIVE_ENV_CONTRACT=warn downgrades that refusal to a warning.",
   },
 
   // ── 共享密钥(web 与 worker 必须同值)────────────────────────────────────

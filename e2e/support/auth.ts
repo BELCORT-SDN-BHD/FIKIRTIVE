@@ -182,6 +182,14 @@ export async function requestSignInCode(page: Page, email: string, callbackURL: 
  * the merchant actually lands on; where a redirect is the thing under test, `page.goto()` is the
  * honest way to walk it (journeys 7 and 9 do).
  */
+export async function signIn(page: Page, ws: Workspace, callbackURL = "/"): Promise<void> {
+  const code = await requestSignInCode(page, ws.email, callbackURL);
+  await page.getByLabel("Login code").fill(code);
+  await page.getByRole("button", { name: "Continue with login code" }).click();
+  await expect(page).toHaveURL(new URL(callbackURL, E2E_BASE_URL).toString());
+  await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
+}
+
 /**
  * The OTHER front door: email + password, walked exactly as the login page lays it out.
  *
@@ -205,14 +213,6 @@ export async function signInWithPassword(
   // and fails strict mode on a page that is in fact correct.
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page).toHaveURL(new URL(callbackURL, E2E_BASE_URL).toString());
-  await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
-}
-
-export async function signIn(page: Page, ws: Workspace, callbackURL = "/"): Promise<void> {
-  const code = await requestSignInCode(page, ws.email, callbackURL);
-  await page.getByLabel("Login code").fill(code);
-  await page.getByRole("button", { name: "Continue with login code" }).click();
   await expect(page).toHaveURL(new URL(callbackURL, E2E_BASE_URL).toString());
   await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
 }
