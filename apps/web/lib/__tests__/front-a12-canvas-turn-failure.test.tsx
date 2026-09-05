@@ -55,7 +55,14 @@ vi.mock("@/lib/direct-upload", () => ({ uploadFilesDirect: vi.fn() }));
 
 const { canvasTurnStatus, canvasTurnText, latestTurnTerminal } = await import("@/lib/otto-canvas-turn");
 const { OttoTurnCard, CANVAS_TURN_EMPTY_TEXT } = await import("@/components/otto/OttoTurnCard");
-const { EDIT_AND_RETRY_LABEL } = await import("@/components/otto/OttoStreamErrorNotice");
+const {
+  CAP_EXIT_HREF,
+  CAP_EXIT_LABEL,
+  EDIT_AND_RETRY_LABEL,
+  TOP_UP_HREF,
+  TOP_UP_LABEL,
+} = await import("@/components/otto/OttoStreamErrorNotice");
+const { referenceUnavailableMessage } = await import("@fikirtive/core/gen-failure");
 const { OttoChatStream } = await import("@/components/otto/OttoChatStream");
 const CANVAS_CARD = '[aria-label="Otto current turn"]';
 
@@ -108,7 +115,11 @@ function render(node: React.ReactElement) {
 /** 一张卡此刻的整张脸 —— 状态词、正文、出路，全部由同一份消息派生。 */
 function card(
   messages: readonly Record<string, unknown>[],
-  opts: { isBusy?: boolean; liveError?: { kind: "error" | "insufficient_credits" | "spend_cap"; text: string } | null; retryDraft?: string | null } = {},
+  opts: {
+    isBusy?: boolean;
+    liveError?: { kind: "error" | "insufficient_credits" | "spend_cap" | "provider_unavailable"; text: string } | null;
+    retryDraft?: string | null;
+  } = {},
 ) {
   const list = messages as Parameters<typeof latestTurnTerminal>[0];
   const terminal = latestTurnTerminal(list, opts.liveError ?? null);
@@ -118,6 +129,8 @@ function card(
       text={canvasTurnText(list, opts.liveError ?? null)}
       streaming={false}
       confirmCards={[]}
+      // 出路按类型分岔 —— 与 `OttoChatStream` 那一行逐字同一条判据。
+      errorKind={terminal?.outcome === "failed" ? terminal.error?.kind ?? null : null}
       retryDraft={opts.retryDraft ?? null}
       onApproved={() => {}}
       onChangeSomething={() => {}}
@@ -266,6 +279,54 @@ describe("FRONT-A12 ⑥ 画布状态卡：这一轮失败了就当场说出口",
     expect(el.textContent).toContain(CANVAS_TURN_EMPTY_TEXT);
   });
 
+  /**
+   * #1225 判官 P2-5 —— 失败也要排在「有卡在跑」前面。
+   *
+   * `workingCardCount` 数的是画布上**所有**在飞的付费任务，不只是这一轮的。于是更早一轮的
+   * 生成还在跑时，这一轮报的失败被一句「Generating」盖掉：商家看着绿灯转，以为自己刚说的
+   * 那句话正在被做，而它已经失败了 —— 与走查那 48 秒是同一种病，只是换了个盖住它的词。
+   *
+   * 变异实证：把 `outcome !== "failed"` 这个判据从 `workingCardCount` 那一支去掉，这一条红。
+   */
+  it("FRONT-A12: 更早一轮还在生成，也不许把这一轮的失败写成 Generating", () => {
+    const messages = [asked("make it 1080p"), liveErrorMessage(SNAG)];
+    const list = messages as Parameters<typeof latestTurnTerminal>[0];
+    const el = render(
+      <OttoTurnCard
+        status={canvasTurnStatus({ ...baseStatus, workingCardCount: 1, terminal: latestTurnTerminal(list) })}
+        text={canvasTurnText(list)}
+        streaming={false}
+        confirmCards={[]}
+        retryDraft="make it 1080p"
+        onApproved={() => {}}
+        onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
+      />,
+    );
+    expect(el.textContent).toContain("Failed");
+    expect(el.textContent, "在飞的那张卡把这一轮的失败盖掉了").not.toContain("Generating");
+    expect(el.textContent).toContain(SNAG);
+  });
+
+  /** 没失败的时候顺序一个字没变（上面那条不是把 Generating 判死）。 */
+  it("FRONT-A12: 这一轮没失败时，有卡在跑照旧是 Generating", () => {
+    const messages = [asked("make it 1080p")];
+    const list = messages as Parameters<typeof latestTurnTerminal>[0];
+    const el = render(
+      <OttoTurnCard
+        status={canvasTurnStatus({ ...baseStatus, workingCardCount: 1, terminal: latestTurnTerminal(list) })}
+        text={canvasTurnText(list)}
+        streaming={false}
+        confirmCards={[]}
+        onApproved={() => {}}
+        onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
+      />,
+    );
+    expect(el.textContent).toContain("Generating");
+    expect(el.textContent).not.toContain("Failed");
+  });
+
   it("FRONT-A12: 好好走完的一轮不因为这条路变成失败（对照组）", () => {
     const el = card([asked("a jam jar"), said("Here's what I'd make.")]);
     expect(el.textContent).toContain("Ready");
@@ -322,5 +383,112 @@ describe("FRONT-A12 ⑥ 画布里那张卡真的接到了这一轮的失败", ()
     const el = await canvas();
     expect(el.textContent).toContain("Working");
     expect(el.textContent).not.toContain("Ready");
+  });
+
+  /**
+   * #1225 判官 P2-4 —— 失败正文的**颜色**此前只在投影那一组钉过（圆点 `bg-destructive`），
+   * 真接线这一侧一条都没有。那句话读起来是不是一次失败，靠的就是它。
+   *
+   * 变异实证：把卡上正文那一段的 `text-destructive` 换成 `text-foreground`，这一条红。
+   */
+  it("FRONT-A12: 画布里那句失败正文是失败色，而且当场念给读屏软件听", async () => {
+    mocks.chat.messages = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "make it 1080p" }] },
+      { id: "a1", role: "assistant", parts: [{ type: "data-error", data: { kind: "error", text: SNAG } }] },
+    ];
+    const el = await canvas();
+    const alert = el.querySelector('[role="alert"]');
+    expect(alert?.textContent, "失败那一句没被念出来").toContain(SNAG);
+    expect(alert?.className).toContain("text-destructive");
+    expect(alert?.className).not.toContain("text-foreground");
+  });
+
+  /**
+   * #1225 判官 P2-2 与残留 —— 「两档不给重试键」此前只有投影那一组的一条，真接线一条都没有；
+   * 而这两档在这张卡上从前**一个出口都没有**：商家读到「Not enough credits …」之后，卡上一个
+   * 能按的东西都没有（画布形态下抽屉是折起的，那两颗键在里面他看不见）。
+   *
+   * 变异实证：把 `canvasRetryDraft` 的 `error?.kind === "error"` 判据去掉 ⇒ 这两条红；
+   * 把 `errorKind` 这条线摘掉 ⇒ 同样红。
+   */
+  it("FRONT-A12: 充值那一档在画布里不给重试键，给的是 Top up", async () => {
+    mocks.chat.messages = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "make it 1080p" }] },
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [{
+          type: "data-error",
+          data: {
+            kind: "insufficient_credits",
+            text: "You have 0.8 credits — starting a message with Otto needs at least 1 credit. Top up in Billing.",
+          },
+        }],
+      },
+    ];
+    const el = await canvas();
+    expect(el.textContent).toContain("Failed");
+    expect([...el.querySelectorAll("button")].some((b) => b.textContent === EDIT_AND_RETRY_LABEL)).toBe(false);
+    const exit = [...el.querySelectorAll("a")].find((a) => a.textContent === TOP_UP_LABEL);
+    expect(exit, "卡上没有那条充值出路").toBeTruthy();
+    expect(exit!.getAttribute("href")).toBe(TOP_UP_HREF);
+  });
+
+  it("FRONT-A12: 抬上限那一档在画布里不给重试键，给的是上限那一页", async () => {
+    mocks.chat.messages = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "make it 1080p" }] },
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [{
+          type: "data-error",
+          data: {
+            kind: "spend_cap",
+            text: "Paused by your spend cap — this needs 11 credits and your cap is 5 credits per action. Raise the cap in Billing & credits to run it.",
+          },
+        }],
+      },
+    ];
+    const el = await canvas();
+    expect(el.textContent).toContain("Failed");
+    expect([...el.querySelectorAll("button")].some((b) => b.textContent === EDIT_AND_RETRY_LABEL)).toBe(false);
+    const exit = [...el.querySelectorAll("a")].find((a) => a.textContent === CAP_EXIT_LABEL);
+    expect(exit, "卡上没有那条抬上限的出路").toBeTruthy();
+    expect(exit!.getAttribute("href")).toBe(CAP_EXIT_HREF);
+    // 上限被拒 ≠ 没钱:这条出路不许退化成一颗充值键。
+    expect(el.textContent).not.toContain(TOP_UP_LABEL);
+  });
+
+  /** #1224 判官 P2-2 的画布这一半:说了「等一会儿再说」,就不许再给一颗「马上再送一次」。 */
+  it("FRONT-A12: 供应商侧那一档在画布里一个键都不给", async () => {
+    const honest =
+      "Otto is unavailable right now on our side. This turn wasn't charged. Please try again later. Reference: OTTO-4F2A9C31";
+    mocks.chat.messages = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "make it 1080p" }] },
+      { id: "a1", role: "assistant", parts: [{ type: "data-error", data: { kind: "provider_unavailable", text: honest } }] },
+    ];
+    const el = await canvas();
+    expect(el.textContent).toContain("Failed");
+    expect(el.textContent).toContain(honest);
+    expect([...el.querySelectorAll("button")].some((b) => b.textContent === EDIT_AND_RETRY_LABEL)).toBe(false);
+    expect(el.querySelector("a")).toBeNull();
+  });
+
+  /**
+   * #1225 残留 —— 同一次失败，两张脸各说一套：参考取不到那种 400 在输入框旁边写的是真正的
+   * 原因，在这张卡上却是一句通用的「Otto hit a snag — please try again.」（照它说的再送一次，
+   * 那件参考照样取不到）。现在两处读的是**同一次判定**。
+   */
+  it("FRONT-A12: 参考取不到那一种被退回，卡上说的是那句具体的原因", async () => {
+    const sentence = referenceUnavailableMessage("notFound");
+    mocks.chat.status = "error";
+    mocks.chat.error = new Error(JSON.stringify({ error: sentence }));
+    mocks.chat.messages = [{ id: "u1", role: "user", parts: [{ type: "text", text: "make it 1080p" }] }];
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const el = await canvas();
+    expect(el.textContent).toContain("Failed");
+    expect(el.textContent).toContain(sentence);
+    expect(el.textContent, "卡上仍是那句通用兜底").not.toContain("Otto hit a snag — please try again.");
+    consoleError.mockRestore();
   });
 });

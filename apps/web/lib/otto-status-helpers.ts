@@ -77,7 +77,10 @@ export function persistedStreamErrorOf(payload: unknown, fallbackText: string): 
       const kind = (error as { kind?: unknown }).kind;
       const text = (error as { text?: unknown }).text;
       if (
-        (kind === "insufficient_credits" || kind === "spend_cap" || kind === "error")
+        // #1224 判官 P2-2:供应商侧那一档刷新之后也必须认得回来,否则它退回通用 `error`,
+        // 而那一颗「Edit and retry」就跟着回来了(它正是这条修法要拿掉的东西)。
+        (kind === "insufficient_credits" || kind === "spend_cap"
+          || kind === "provider_unavailable" || kind === "error")
         && typeof text === "string"
       ) {
         return { kind, text };

@@ -65,10 +65,10 @@ import {
   // tenant constraint on that write has a single place to be守.
   saveRollingSummary,
 } from "@/lib/otto-actions";
-import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
+import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID, OTTO_TRANSIENT_FAILURE_SENTENCE } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
-import { ottoDegradeText, ottoFailureMessage } from "@/lib/otto-error-copy";
+import { isProviderSideFailure, ottoDegradeText, ottoFailureMessage } from "@/lib/otto-error-copy";
 import { newThreadTitle } from "@/lib/otto-canned-starters";
 import { DEFAULT_THREAD_SURFACE } from "@/lib/otto-thread-surface";
 import { consumeOttoTurnGate, OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
@@ -326,9 +326,10 @@ export async function POST(req: NextRequest): Promise<Response> {
     // --- Open the UI-message stream and run the agent inside it -----------------
     const stream = createUIMessageStream({
       // Default onError masks server details; we surface a generic message to the client.
-      // 走查修复三(#3310):同一句「Otto hit a snag — please try again.」在**供应商侧**失败上
-      // 是误导(再试永远失败),所以这道兜底也过一次同一份分类器;瞬时那一档一个字没变。
-      onError: (e: unknown) => ottoFailureMessage(e, "Otto hit a snag — please try again."),
+      // 走查修复三(#3310):瞬时那一句在**供应商侧**失败上是误导(再试永远失败),所以这道
+      // 兜底也过一次同一份分类器;瞬时那一档一个字没变 —— 而且句子本身读单源
+      // (`OTTO_TRANSIENT_FAILURE_SENTENCE`,#1224 判官 P2-3),不再各抄一份。
+      onError: (e: unknown) => ottoFailureMessage(e, OTTO_TRANSIENT_FAILURE_SENTENCE),
       execute: async ({ writer }) => {
         // Lazily open text/reasoning parts so we only frame what actually streams.
         let textOpen = false;
@@ -532,7 +533,14 @@ export async function POST(req: NextRequest): Promise<Response> {
           // 把手(Reference)照旧带上,供应商名与技术栈照旧不出现。瞬时那一档一个字没变。
           // `chargedNothing` 是 ENGINE-A4 那个只读钩子点亮的:整笔退了才说「没收钱」。
           const text = ottoFailureMessage(e, streamTurnErrorText(errorId), { chargedNothing, errorId });
-          const error = { kind: "error", text } satisfies OttoErrorData;
+          // #1224 判官 P2-2:诚实句改了,可 kind 没改 —— 于是那一档旁边照旧长出一颗
+          // 「Edit and retry」,一句「等一会儿再说」配一颗「马上再送一次」,而每按一次都
+          // 重新走一遍预扣/退款。分类用的是同一份判据(`isProviderSideFailure`),所以句子
+          // 与出路不可能各说各话:说了没得试,就一个键都不给。
+          const error = {
+            kind: isProviderSideFailure(e) ? "provider_unavailable" : "error",
+            text,
+          } satisfies OttoErrorData;
           console.error("[otto/stream] run failed:", {
             errorId,
             threadId,

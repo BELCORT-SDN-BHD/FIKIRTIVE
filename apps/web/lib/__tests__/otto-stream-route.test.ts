@@ -707,10 +707,18 @@ describe("POST /api/otto/stream", () => {
     );
     expect(streamedError?.text).not.toMatch(/hit a snag/i);
     expect(streamedError?.text).not.toMatch(/anthropic|credit balance/i);
-    // 刷新之后还得是同一句 —— 落盘的那条 TURN_ERROR 与流上这一条逐字相同。
+    // #1224 判官 P2-2:句子改了,**类型也要改**。顶着 `error` 这个 kind 的话,渲染层照旧在
+    // 这句「等一会儿再说」旁边长出一颗「Edit and retry」—— 一个按了必然再失败的死循环入口。
+    // 上一条测试钉的是瞬时那一档仍是 `error`,所以「一律改成新 kind」也会当场红。
+    expect(streamedError?.kind).toBe("provider_unavailable");
+    // 刷新之后还得是同一句、同一个类型 —— 落盘的那条 TURN_ERROR 与流上这一条逐字相同。
     expect(mocks.chatMessageCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ kind: "TURN_ERROR", text: streamedError?.text }),
+        data: expect.objectContaining({
+          kind: "TURN_ERROR",
+          text: streamedError?.text,
+          payload: expect.objectContaining({ error: streamedError }),
+        }),
       }),
     );
     log.mockRestore();
