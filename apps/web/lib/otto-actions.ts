@@ -70,7 +70,7 @@ import {
   mediaReferenceReceipt,
   UNTITLED_CANVAS_NAME,
 } from "@fikirtive/otto";
-import type { OttoContext, OttoMediaReference, AgentInputItem, ApprovalInterruption } from "@fikirtive/otto";
+import type { OttoContext, OttoMediaReference, AgentInputItem, ApprovalInterruption, OttoTurnTraceFacts } from "@fikirtive/otto";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -1668,6 +1668,70 @@ export async function finalizeOttoRun({
 }
 
 // ---------------------------------------------------------------------------
+// ENGINE-A2 — 每轮调试档案的落盘实现(规格 docs/specs/otto-engine.md §7.2②)
+// ---------------------------------------------------------------------------
+
+/**
+ * The ONE writer behind all three doors (stream route / ottoTurn / ottoApprove).
+ *
+ * 无明文围栏是**类型层**的:入参 `OttoTurnTraceFacts` 上没有任何自由文本字段(动作名已在
+ * 引擎侧折过注册表白名单,文件名来自文件柜清单),所以这个函数拿不到 prompt、消息正文或
+ * 工具参数,也就无从写进去。落库时**逐字段挑选**而不是把 facts 摊开写,是同一条围栏的
+ * 收尾;但真正拦住「悄悄多写一列明文」的是引擎侧的类型与封闭集走查
+ * (packages/otto/src/runtime-turn-trace.test.ts),不是这里的挑选写法 —— 下面那条
+ * 列集测试钉住的是**当前入库列集**,不是「加字段必须来这里改」这句更强的话。
+ *
+ * `settledInternal` 在这里读,不在引擎里读:它是账本的事实,引擎包不直连 prisma(与
+ * `ctx` 上其他 port 同一条规矩)。读法与流式路由的 `settledTurnCost` 同源 —— 必须先有
+ * 终结行(SETTLE 或 REFUND),一个只有 RESERVE 的 refId 是持有不是花费,写进「花了多少」
+ * 那一列就是一句假话,所以那种情况写 null。
+ *
+ * 诊断性质,永不影响商家的这一轮:所有异常在 `runOttoTurn` 的 `emitTurnTrace` 里被吞掉,
+ * 这里只负责把话说完整。`upsert` 而不是 `create` 是为了让重跑同一个 refId(比如手工补档)
+ * 安全,而不是为了掩盖冲突 —— refId 全仓每轮唯一。
+ */
+export async function recordOttoTurnTrace(facts: OttoTurnTraceFacts): Promise<void> {
+  const settledInternal = await settledTurnInternal(facts.orgId, facts.refId);
+  const row = {
+    orgId: facts.orgId,
+    threadId: facts.threadId,
+    surface: facts.surface,
+    modelId: facts.modelId,
+    steps: facts.steps,
+    toolCalls: facts.toolCalls.map((c) => ({ name: c.name, calls: c.calls, ok: c.ok, failed: c.failed })),
+    skillFiles: [...facts.skillFiles],
+    truncated: facts.truncated,
+    settledInternal,
+  };
+  await prisma.ottoTurnTrace.upsert({
+    where: { refId: facts.refId },
+    create: { refId: facts.refId, ...row },
+    update: row,
+  });
+}
+
+/** 这一轮结算掉的 internal credits,或 null(账本还没有终结行 / 读失败 / 免费轮)。
+ *  与 apps/web/app/api/otto/stream/route.ts 的 settledTurnCost 同一条口径,但有两处差别:
+ *  (1) 单位 —— 那一处给商家看显示面值,这一处进档案存 internal;
+ *  (2) 整笔退款那一轮(reserve+refund 净变 0)这里存 0 而不是 null(stream route 的
+ *      `chargedInternal <= 0 → null` 是给商家的显示口径)。档案要能区分「退过、净收 0」
+ *      与「还没结、根本没有终结行」,所以 0 与 null 在这里是两件事。 */
+async function settledTurnInternal(orgId: string, refId: string): Promise<number | null> {
+  try {
+    const rows = await prisma.creditLedger.findMany({
+      where: { orgId, refId },
+      select: { kind: true, balanceDelta: true },
+    });
+    if (!rows.some((row) => row.kind === "SETTLE" || row.kind === "REFUND")) return null;
+    const charged = -rows.reduce((sum, row) => sum + row.balanceDelta, 0);
+    return Number.isFinite(charged) ? charged : null;
+  } catch (e) {
+    console.error("[otto:trace] could not read the settled amount:", { refId, error: errSummary(e) });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // ottoTurn — the main server action
 // ---------------------------------------------------------------------------
 
@@ -1836,7 +1900,14 @@ export async function ottoTurn(raw: unknown): Promise<
 
       try {
         agentResult = await runOttoTurn(
-          { orgId: ownerId, refId, input: runInput },
+          {
+            orgId: ownerId,
+            refId,
+            input: runInput,
+            // ENGINE-A2 — 这一门的落盘实现。surface/threadId 由入口给(它们来自已认证的
+            // 会话,不来自模型);其余结构事实由引擎累计。
+            trace: { surface: "action", threadId, sink: recordOttoTurnTrace },
+          },
           ctx,
           ottoInteractiveRuntime,
           { meter: withLlmBudget, runAgent: run, maxTurnsExceededError: MaxTurnsExceededError },
@@ -2232,7 +2303,15 @@ export async function ottoApprove(raw: unknown): Promise<
 
       try {
         agentResult = await runOttoTurn(
-          { orgId: ownerId, refId, input: state },
+          {
+            orgId: ownerId,
+            refId,
+            input: state,
+            // ENGINE-A2 — 恢复轮同样落一行档案。它的 refId 带 attempt 序号
+            // (`otto-approve:<threadId>:<cardId>:a<n>`),所以重试是**新的一行**,
+            // 不会覆盖上一次尝试的档案。
+            trace: { surface: "approve-resume", threadId, sink: recordOttoTurnTrace },
+          },
           ctx,
           ottoApprovalResumeRuntime,
           {

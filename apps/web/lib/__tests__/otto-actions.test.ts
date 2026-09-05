@@ -322,6 +322,13 @@ const { mockFinalizedReservations, mockOtherHoldsSince } = vi.hoisted(() => ({
 
 const { mockConsumeOttoTurnGate } = vi.hoisted(() => ({ mockConsumeOttoTurnGate: vi.fn(async () => true) }));
 
+// ENGINE-A2 (规格 docs/specs/otto-engine.md §7.2②): 每轮调试档案的落盘替身。默认账本里没有
+// 终结行 —— 那正是「只有 RESERVE 时 settledInternal 必须是 null」那条要验的起点。
+const { mockOttoTurnTraceUpsert, mockCreditLedgerFindMany } = vi.hoisted(() => ({
+  mockOttoTurnTraceUpsert: vi.fn(async (_args: unknown) => ({})),
+  mockCreditLedgerFindMany: vi.fn(async (_args: unknown) => [] as Array<{ kind: string; balanceDelta: number }>),
+}));
+
 // Founder 2026-08-18 — the conversation gate is a REAL Postgres counter that fails CLOSED when it
 // cannot reach the database (packages/db/src/rate-limit.ts, deliberately). This suite mocks the db
 // barrel wholesale, so an unmocked gate would refuse every `ottoTurn` here and turn the file red
@@ -356,6 +363,9 @@ vi.mock("@fikirtive/db", () => ({
     scheduledPost: { findFirst: mockScheduledPostFindFirst },
     organization: { findUnique: mockOrganizationFindUnique },
     actionEvent: { create: mockActionEventCreate },
+    // ENGINE-A2 (规格 docs/specs/otto-engine.md §7.2②): 每轮调试档案的写入口与它读的账本。
+    ottoTurnTrace: { upsert: mockOttoTurnTraceUpsert },
+    creditLedger: { findMany: mockCreditLedgerFindMany },
     researchJob: { findFirst: mockResearchJobFindFirst, deleteMany: mockResearchJobDeleteMany },
     canvasNode: { updateMany: mockCanvasNodeUpdateMany },
     generation: {
@@ -442,7 +452,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang, APPROVE_STALE_COMPLETED_NOTE, APPROVE_STALE_INTERRUPTED_NOTE } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang, APPROVE_STALE_COMPLETED_NOTE, APPROVE_STALE_INTERRUPTED_NOTE, recordOttoTurnTrace } = await import("@/lib/otto-actions");
 const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs, refgenApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
 // #524 r6: the second leg of a plain generate approval, priced by the same chain startGen charges with.
 const { approvedGenerateCostInternal } = await import("@/lib/spend-cap-preflight");
@@ -4736,5 +4746,79 @@ describe("ottoApprove — every terminal exit leaves evidence in the thread (jud
     expect(new Set(notes).size).toBe(notes.length);
     // 这两句讲的是「活跑完了 / 还要再问一次」,不是钱 —— 不许让商家以为这里另外扣了什么。
     for (const note of notes) expect(note).not.toMatch(/credit/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENGINE-A2 —— 每轮调试档案的落盘实现(规格 docs/specs/otto-engine.md §7.2②)
+//
+// 引擎侧的围栏(facts 上没有自由文本字段、动作名折过注册表白名单)钉在
+// packages/otto/src/runtime-turn-trace.test.ts。这里钉的是**入库那一刀**:
+// 写进去的列只有白名单那几个;settledInternal 只在账本有终结行时才是一个数。
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ENGINE-A2 —— recordOttoTurnTrace 只写白名单列", () => {
+  const facts = {
+    refId: "otto-stream:msg_a2",
+    orgId: "org_a2",
+    threadId: "thread_a2",
+    surface: "stream" as const,
+    modelId: "claude-sonnet-4-6",
+    steps: 3,
+    toolCalls: [{ name: "lookupProducts", calls: 2, ok: 1, failed: 1 }],
+    skillFiles: [] as string[],
+    truncated: false,
+  };
+
+  beforeEach(() => {
+    mockOttoTurnTraceUpsert.mockClear();
+    mockCreditLedgerFindMany.mockReset();
+    mockCreditLedgerFindMany.mockResolvedValue([]);
+  });
+
+  it("ENGINE-A2: 入库的列**逐字**是白名单那几个,一个都不多", async () => {
+    await recordOttoTurnTrace(facts);
+
+    expect(mockOttoTurnTraceUpsert).toHaveBeenCalledTimes(1);
+    const call = mockOttoTurnTraceUpsert.mock.calls[0]![0] as {
+      where: { refId: string };
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    expect(call.where).toEqual({ refId: "otto-stream:msg_a2" });
+    // 这条钉的是**当前入库列集**:改了写入口的列,这里就红。它不等于「加一个 facts 字段
+    // 必然会红」—— 真正的无明文围栏在引擎侧(packages/otto/src/runtime-turn-trace.test.ts
+    // 的类型层与封闭集走查),这条只是它在入口这一侧的对账。
+    expect(Object.keys(call.create).sort()).toEqual(
+      ["modelId", "orgId", "refId", "settledInternal", "skillFiles", "steps", "surface", "threadId", "toolCalls", "truncated"],
+    );
+    expect(call.create.toolCalls).toEqual([{ name: "lookupProducts", calls: 2, ok: 1, failed: 1 }]);
+    expect(call.create.skillFiles).toEqual([]);
+    expect(call.create.surface).toBe("stream");
+  });
+
+  it("ENGINE-A2: 账本只有 RESERVE(持有不是花费)时 settledInternal 是 null,不写一个假数", async () => {
+    mockCreditLedgerFindMany.mockResolvedValue([{ kind: "RESERVE", balanceDelta: 0 }]);
+    await recordOttoTurnTrace(facts);
+    const call = mockOttoTurnTraceUpsert.mock.calls[0]![0] as { create: Record<string, unknown> };
+    expect(call.create.settledInternal).toBeNull();
+  });
+
+  it("ENGINE-A2: 有终结行时 settledInternal 是这一轮真正扣掉的 internal 净额", async () => {
+    mockCreditLedgerFindMany.mockResolvedValue([
+      { kind: "RESERVE", balanceDelta: 0 },
+      { kind: "SETTLE", balanceDelta: -17 },
+    ]);
+    await recordOttoTurnTrace(facts);
+    const call = mockOttoTurnTraceUpsert.mock.calls[0]![0] as { create: Record<string, unknown> };
+    expect(call.create.settledInternal).toBe(17);
+  });
+
+  it("ENGINE-A2: 读账本失败不拖垮落盘 —— 档案照落,只是那一列是 null", async () => {
+    mockCreditLedgerFindMany.mockRejectedValue(new Error("ledger read exploded"));
+    await recordOttoTurnTrace(facts);
+    expect(mockOttoTurnTraceUpsert).toHaveBeenCalledTimes(1);
+    const call = mockOttoTurnTraceUpsert.mock.calls[0]![0] as { create: Record<string, unknown> };
+    expect(call.create.settledInternal).toBeNull();
   });
 });

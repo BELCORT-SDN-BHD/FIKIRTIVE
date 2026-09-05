@@ -22,6 +22,11 @@ export const TENANT_MODELS = new Set([
   // checked-op call site (schedule-actions, brand-record-actions, memory-actions,
   // lookup-products, _brand-record) — guarded, not exempt.
   "ScheduledPost", "BrandKit", "BrandRecord", "BrandRule",
+  // FRONT-A8 (2026-09-03, 规格 docs/specs/frontend-baseline.md §7.3④):品牌上下文的改动史。
+  // 它用的就是 `ownerId`(与 Memory / BrandRecord 同一条边界),而这个文件里的读写路径
+  // (brand-revision.ts 的 recordBrandRevision / listBrandRevisions / stampOf)每一处都自带
+  // ownerId —— 所以是 guarded,不是 exempt。
+  "BrandContextRevision",
   // B0-30 (2026-07-13): generic channel-connection layer. Owner-scoped by birth (宪法 6); unlike
   // MetaConnection (EXEMPT: worker resolves ads tokens by connection id + platform-wide admin list),
   // this new table has NO platform-wide read requirement yet, so the conservative default is guarded.
@@ -96,6 +101,17 @@ export const ORG_SCOPED_TENANT_GUARD_EXEMPT: Record<string, string> = {
   Membership:
     "orgId-scoped, not ownerId — same mechanism blocker. It is also the suspension AUTHORITY, read " +
     "platform-wide by the admin console, so a tenant-pinned read would be wrong for it anyway.",
+  // ENGINE-A2 (规格 docs/specs/otto-engine.md §7.2②): Otto 每轮调试档案。它的 refId 主键
+  // 就是账本里 `reserve:<refId>` 的那把钥匙,所以它的租户列跟着账本叫 `orgId` —— 一张
+  // 「按 refId 对得上钱账」的表不能有第二种租户列名。那也正是它进不了 TENANT_MODELS 的
+  // 原因(守卫注入的是字面 `ownerId`,见本常量上方的实测注释)。
+  OttoTurnTrace:
+    "orgId-scoped, not ownerId — same mechanism blocker (the refId primary key is the ledger's own " +
+    "`reserve:<refId>` key, so the tenant column follows the ledger's name). Scoped by the orgId " +
+    "foreign key (ON DELETE CASCADE) plus every read/write site passing orgId explicitly: the writer " +
+    "takes it from the verified session principal (apps/web/lib/otto-actions.ts recordOttoTurnTrace), " +
+    "and the only reader is the ops script scripts/ops/otto-turn-trace.ts. Two-tenant test: " +
+    "packages/db/src/otto-turn-trace-tenant.test.ts.",
 };
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
