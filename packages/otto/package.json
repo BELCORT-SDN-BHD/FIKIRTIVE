@@ -11,10 +11,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.evals.json",
     "test": "vitest run",
     "catalog": "tsx scripts/gen-catalog.ts",
-    "catalog:check": "tsx scripts/gen-catalog.ts --check"
+    "catalog:check": "tsx scripts/gen-catalog.ts --check",
+    "evals": "tsx evals/runner.ts",
+    "evals:check": "tsx evals/runner.ts --check"
   },
   "dependencies": {
     "@openai/agents": "^0.11.8",

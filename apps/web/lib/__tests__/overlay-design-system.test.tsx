@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { Button } from "@/components/ui/button";
-import { OttoMentionPopover } from "@/components/otto/OttoMentionPopover";
+import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePickerMenu";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -103,33 +103,38 @@ describe("FIKIRTIVE overlay visual contract", () => {
     expect(reference).not.toContain("<DropdownMenu");
   });
 
-  it("routes both Otto composers through the shared anchored mention surface", () => {
-    for (const file of ["OttoFrontDoor.tsx", "OttoChatStream.tsx"]) {
-      const contents = source(`components/otto/${file}`);
-      expect(contents, file).toContain("<OttoMentionPopover");
-      expect(contents, file).toContain('aria-autocomplete="list"');
-      expect(contents, file).toContain("aria-activedescendant=");
+  it("routes both Otto composers AND the Tiptap editor through ONE mention surface", () => {
+    // Spec §7.3③: the two `@` implementations collapse into one component. This guard is the
+    // ratchet — a third menu (or a composer quietly rebuilding its own) fails here.
+    for (const file of ["otto/OttoFrontDoor.tsx", "otto/OttoChatStream.tsx", "MentionInput.tsx"]) {
+      const contents = source(`components/${file}`);
+      expect(contents, file).toContain("<ReferencePickerMenu");
+      expect(contents, file).not.toContain("<PopoverContent");
+    }
+    for (const file of ["otto/OttoFrontDoor.tsx", "otto/OttoChatStream.tsx"]) {
+      const contents = source(`components/${file}`);
+      expect(contents, file).toContain("picker.ariaProps");
       expect(contents, file).not.toContain("absolute bottom-full");
     }
 
-    const mentionSurface = source("components/otto/OttoMentionPopover.tsx");
+    const mentionSurface = source("components/reference-picker/ReferencePickerMenu.tsx");
     expect(mentionSurface).toContain("<PopoverAnchor asChild>");
+    expect(mentionSurface).toContain("<PopoverAnchor virtualRef={virtualRef} />");
     expect(mentionSurface).toContain("<PopoverContent");
     expect(mentionSurface).toContain('role="listbox"');
+    expect(mentionSurface).toContain('role="option"');
+    expect(mentionSurface).toContain('motion="instant"');
     expect(mentionSurface).toContain("onOpenChange=");
     expect(mentionSurface).not.toMatch(/z-\d|z-\[/);
   });
 
-  it("routes Tiptap suggestions through the same virtual-anchor surface without legacy popup CSS", () => {
+  it("keeps the anchored-popover primitives the mention surface depends on", () => {
     const mentionInput = source("components/MentionInput.tsx");
     const globals = source("app/globals.css");
     const popover = source("components/ui/popover.tsx");
     const button = source("components/ui/button.tsx");
 
-    expect(mentionInput).toContain("<PopoverAnchor virtualRef={virtualRef}");
-    expect(mentionInput).toContain('motion="instant"');
-    expect(mentionInput).toContain('role="listbox"');
-    expect(mentionInput).toContain('role="option"');
+    expect(mentionInput).toContain("virtualRef={virtualRef}");
     expect(mentionInput).not.toMatch(/popup\.style|style\.zIndex|style\.position|window\.innerHeight|pop-menu|pop-item/);
     expect(globals).not.toMatch(/\.pop-menu|\.pop-item/);
 
@@ -171,27 +176,31 @@ async function press(key: string, target: EventTarget = document): Promise<void>
   });
 }
 
+/** The `@` menu both Otto composers and the Tiptap canvas editor now render (spec §7.3③). */
 function MentionHarness({ onSelect }: { onSelect?: (name: string) => void }) {
-  const [suggestions, setSuggestions] = useState([
-    { id: "product-1", name: "Morning mug" },
-    { id: "product-2", name: "Canvas tote" },
-  ]);
+  const [open, setOpen] = useState(true);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const rows = [
+    { key: "product:product-1", kind: "reference" as const, name: "Morning mug", source: "Product · Otto IQ", type: "product" as const },
+    { key: "product:product-2", kind: "reference" as const, name: "Canvas tote", source: "Product · Otto IQ", type: "product" as const },
+  ];
 
   return (
-    <OttoMentionPopover
-      suggestions={suggestions}
-      highlightedIndex={highlightedIndex}
+    <ReferencePickerMenu
+      open={open}
       listId="mention-suggestions"
-      onDismiss={() => setSuggestions([])}
+      rows={rows}
+      highlightedIndex={highlightedIndex}
+      title="References"
+      onDismiss={() => setOpen(false)}
       onHighlightChange={setHighlightedIndex}
-      onSelect={(suggestion) => {
-        onSelect?.(suggestion.name);
-        setSuggestions([]);
+      onSelect={(index) => {
+        onSelect?.(rows[index]!.name);
+        setOpen(false);
       }}
     >
       <textarea aria-label="Composer" />
-    </OttoMentionPopover>
+    </ReferencePickerMenu>
   );
 }
 

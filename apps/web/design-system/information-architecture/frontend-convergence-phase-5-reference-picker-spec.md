@@ -65,7 +65,7 @@ Review fixture 获 Founder 冻结后，production implementation 仍必须先确
 
 - Interaction authority：`apps/web/design-system/information-architecture/reference-picker-contract.md`。
 - Product ownership：`apps/web/design-system/information-architecture/surface-contract.md`。
-- Existing runtime gap：`apps/web/components/otto/OttoMentionPopover.tsx` 目前只显示简单名称列表；`apps/web/lib/types.ts` 的 `EntityDTO` 尚未覆盖完整 v1 taxonomy。
+- Runtime gap（2026-09-01 写下时的现状，2026-09-04 已关）：当时 `apps/web/components/otto/OttoMentionPopover.tsx` 只显示简单名称列表、`apps/web/lib/types.ts` 的 `EntityDTO` 未覆盖完整 v1 taxonomy。现状：那个组件已随「两套 `@` 收口成一个选择器」删除，三处输入口同走 `apps/web/components/reference-picker/ReferencePickerMenu.tsx`，类型词汇改由 `packages/core/src/reference-ref.ts` 单源持有（契约七型 ＋ 生产既有的 `brandmark`，后者待 Founder 裁）。
 - Visual implementation完成后必须通过 focused component tests、keyboard tests、scoped ESLint、TypeScript 与 Design System audit。
 
 ## 8. Decision record
