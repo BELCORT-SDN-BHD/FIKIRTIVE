@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+// Next 自己的 redirect 错误构造器:成功登出那一路的拒因就是它做出来的东西(见下面 P1-1 那条)。
+import { getRedirectError } from "next/dist/client/components/redirect";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { OTTO_ASSISTANT, SHELL_ROUTES } from "@fikirtive/core/navigation";
@@ -198,6 +200,60 @@ describe("MerchantAccountMenu", () => {
 
     await act(async () => signOut().click());
     expect(signOutAction).toHaveBeenCalledTimes(2);
+  });
+
+  /** 判官 P1-1(2026-09-05)—— 上一条只证明了**失败**那一路。真正的成功那一路长得像失败:
+   *  Next 16 的 server-action reducer 只要服务端答了 redirect 就 `reject` 一个 redirect 错误
+   *  (`next/dist/.../server-action-reducer.js`),而 `signOutAction()` 每次成功都以
+   *  `redirect("/login")` 收尾。改前那个不分辨的 catch 于是把每一次成功登出都报成失败。
+   *  这里的拒因不是手写 digest,是 Next 自己的 `getRedirectError()`,所以格式变了这条会红。 */
+  it("FRONT-A12: sign out stays in progress and stays silent when the action redirects (the real success path)", async () => {
+    vi.mocked(toast.error).mockClear();
+    const signOutAction = vi.fn(async () => {
+      throw getRedirectError("/login", "push");
+    });
+    const el = await render(
+      createElement(MerchantAccountMenu, {
+        account: { email: "owner@example.com", displayName: "Aisyah", balance: 1240 },
+        signOutAction,
+      }),
+    );
+    await openAccountMenu(el.querySelector<HTMLElement>("[data-shell-identity]")!);
+
+    const signOut = () => document.querySelector<HTMLElement>("[data-shell-signout]")!;
+    await act(async () => {
+      signOut().click();
+      await Promise.resolve();
+    });
+
+    // 壳马上被换掉,进行中才是实话——不复位、不弹失败。
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(signOut().textContent).toContain("Signing out");
+    expect(signOut().getAttribute("aria-busy")).toBe("true");
+  });
+
+  /** 判官 P2-3(2026-09-05)—— 评审夹具传的是 `async () => {}`:不跳转,正常 resolve。
+   *  「成功＝壳会被换掉」写死成假设时,这一路会把菜单项永久钉在「Signing out…」。 */
+  it("FRONT-A12: sign out resets when the action resolves without redirecting (review fixtures)", async () => {
+    vi.mocked(toast.error).mockClear();
+    const signOutAction = vi.fn(async () => {});
+    const el = await render(
+      createElement(MerchantAccountMenu, {
+        account: { email: "owner@example.com", displayName: "Aisyah", balance: 1240 },
+        signOutAction,
+      }),
+    );
+    await openAccountMenu(el.querySelector<HTMLElement>("[data-shell-identity]")!);
+
+    const signOut = () => document.querySelector<HTMLElement>("[data-shell-signout]")!;
+    await act(async () => {
+      signOut().click();
+      await Promise.resolve();
+    });
+
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(signOut().textContent).toContain("Sign out");
+    expect(signOut().getAttribute("aria-busy")).toBeNull();
   });
 
   it("can hide sign out on a review surface without hiding Profile", async () => {
