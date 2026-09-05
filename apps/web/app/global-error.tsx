@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import * as Sentry from "@sentry/nextjs";
-import { Button } from "@/components/ui/button";
+import { CrashPage } from "@/components/crash-page";
 import { crashReportContext } from "@/lib/sentry-browser";
 import "./globals.css";
 
@@ -15,6 +15,11 @@ import "./globals.css";
  *
  * 它自己不能再崩:不读任何数据、不碰任何 provider。控件仍走 @/components/ui(#840 常令,
  * 与同族的 app/error.tsx 一致)—— 那一层只是 cva + Slot,不是崩溃的来源。
+ *
+ * 2026-09-05 走查 P2(FRONT-A14):与 `app/error.tsx` 渲染**同一个** `CrashPage`,所以
+ * 两次崩溃长得一样、错误编号那一行叫同一个名字。注意这一页天生没有导轨与顶栏 ——
+ * 根 layout(外壳所在)已经不存在了,这是 Next.js 的形状,不是可以补上的东西;
+ * 有外壳的那一路是 `app/error.tsx`。
  */
 export default function GlobalError({ error }: { error: Error & { digest?: string } }) {
   useEffect(() => {
@@ -24,21 +29,13 @@ export default function GlobalError({ error }: { error: Error & { digest?: strin
   return (
     <html lang="en">
       <body className="gb">
-        <main className="min-h-dvh flex flex-col items-center justify-center gap-4 p-8 text-center">
-          <h1 className="text-xl font-semibold text-foreground">Something broke</h1>
-          <p className="max-w-md text-sm text-muted-foreground">
-            The page could not be loaded. Your saved work is safe — nothing was lost.
-          </p>
-          {/* digest 是把商家截图里的这一串和服务端日志里的那一条对上的唯一钥匙。 */}
-          {error.digest && (
-            <p className="text-xs text-muted-foreground">
-              Reference: <span className="font-mono">{error.digest}</span>
-            </p>
-          )}
-          <Button type="button" onClick={() => window.location.reload()}>
-            Reload page
-          </Button>
-        </main>
+        <CrashPage
+          title="Something broke"
+          body="The page could not be loaded. Your saved work is safe — nothing was lost."
+          digest={error.digest}
+          actionLabel="Reload page"
+          onAction={() => window.location.reload()}
+        />
       </body>
     </html>
   );
