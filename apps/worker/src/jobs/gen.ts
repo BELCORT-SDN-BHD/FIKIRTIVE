@@ -71,6 +71,23 @@ function genSpendInputOf(job: GenJob) {
 }
 
 /**
+ * 这一行 GenJob 的结果消息上要显示的那个数(credits)。
+ *
+ * 与交付路那一处**同一个**来源(`pricedGenCredits` + `displayCredits`)—— 补投
+ * (`gen-thread-redelivery.ts`)不许自己算一份,否则同一次生成会有两个价的说法。
+ * 纯函数:不读库、不动钱。
+ */
+export function genThreadResultCredits(job: {
+  kind: string;
+  model: string;
+  count: number;
+  referenceVideoGenerationId: string | null;
+  videoOptions: unknown;
+}): number {
+  return displayCredits(pricedGenCredits(genSpendInputOf(job as unknown as GenJob)));
+}
+
+/**
  * MONEY-A3 后半句:**结算路径落到护栏价就报警**。
  *
  * 护栏价按定义只该给「下架前存下的历史行」和「畸形 videoOptions JSON」兜底 —— 一条
@@ -451,7 +468,7 @@ async function storeLastFrameBestEffort(
 // firstGenerationIdOf); before r5 it read only this message, and one swallowed error meant a
 // paid frame could never reach the storyboard again. Anything else that starts depending on
 // this row must read the job row the same way, or give this write a real backstop.
-async function appendCoworkResult(
+export async function appendCoworkResult(
   job: { id: string; threadId: string | null; ownerId: string; kind: string; model: string },
   kind: "GEN_RESULT" | "TURN_ERROR",
   generationIds: string[],
@@ -517,7 +534,14 @@ async function appendCoworkResult(
     });
   } catch (e) {
     if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") return; // already written (resume) → no-op
-    console.warn(`[gen] ${job.id}: ${kind} append failed (non-fatal):`, e instanceof Error ? e.message : e);
+    // Founder 2026-09-04 20:45(清单②)—— **不静默丢**。这里仍然吞掉异常(一次已经收了钱的
+    // 交付不许被一条聊天消息写失败弄崩),但它不再是终点:`error` 级日志把它留下痕迹,而
+    // 真正的补投在 `gen-thread-redelivery.ts` —— 那条扫描每 5 分钟找一次「作业已经终结、
+    // 对话里却没有结果」的行,把这条消息补上(同一个唯一索引保证至多一条)。
+    console.error(
+      `[gen] ${job.id}: ${kind} append failed — the thread has no result yet; the redelivery sweep will retry it:`,
+      e instanceof Error ? e.message : e,
+    );
   }
 }
 
