@@ -19,9 +19,10 @@ export const metadata = { title: "Library · Fikirtive" };
  * 所以屏幕上的东西改由 `components/library/LibraryView` 按已批准的 Library pattern 画
  * (`design-system/patterns/library/`)。
  *
- * **只接现有数据**:生成历史与上传都来自同一张 `Generation` 表(`Generation.source` 区分
- * 两者),Elements 来自 `Entity`(含 `catalogKey` 标出来的演员库)。后端今天没有对象的
- * Favorites 与 Collections 两个页签本轮**不画** —— 它们是段②后续切片。
+ * 生成历史与上传都来自同一张 `Generation` 表(`Generation.source` 区分两者),Elements
+ * 来自 `Entity`(含 `catalogKey` 标出来的演员库)。Favorites 与 Collections 由段②第②③刀
+ * 建起来的三张表供数据(`Favorite` / `Collection` / `CollectionItem`);它们各有自己的
+ * 读模型与游标,所以不在这里预取 —— 切到那一格再向服务器要第一页。
  *
  * 首屏那一页在服务端取好,后续的搜索、筛选、排序与「加载更多」由客户端再向同一个
  * owner-gated server action 要 —— 一切筛选都作用在完整结果集上,不在浏览器里过滤已加载的
@@ -33,13 +34,19 @@ export const metadata = { title: "Library · Fikirtive" };
 export default async function LibraryPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ asset?: string; element?: string; project?: string; view?: string }>;
+  searchParams?: Promise<{
+    asset?: string;
+    collection?: string;
+    element?: string;
+    project?: string;
+    view?: string;
+  }>;
 }) {
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
   const { ownerId } = owner;
 
-  const { asset, element, project, view } = (await searchParams) ?? {};
+  const { asset, collection, element, project, view } = (await searchParams) ?? {};
   const initialView = parseLibraryView(view);
   const initialElementView = parseLibraryElementView(element);
 
@@ -67,6 +74,7 @@ export default async function LibraryPage({
       // 深链:两个 id 都只是**待验证的定位参数**,详情面自己按当前 principal 再解析一次
       // (§8.3③:目标被删除或不可访问时说不可用,而不是画成空库)。
       initialAsset={asset && project ? { generationId: asset, projectId: project } : undefined}
+      initialCollectionId={collection}
     />
   );
 }

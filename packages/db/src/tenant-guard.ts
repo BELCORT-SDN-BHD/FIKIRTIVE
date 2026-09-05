@@ -56,6 +56,12 @@ export const TENANT_MODELS = new Set([
   // 什么」,越租户读一行就是把 A 家的菜单讲给 B 家听。worker 走的是标准两段式(具名系统身份
   // 扫描 + runAsTenant 逐行写),Otto 取回那一侧全程带 ctx.orgId,所以它不需要豁免。
   "AssetUnderstanding",
+  // 前端基线 §7.3②(FRONT-A5 / A6,2026-09-03):素材库的收藏与合集。GUARDED,不 EXEMPT ——
+  // 这三张表回答的是「这个商家收藏了什么、把什么归到了一起」,没有任何平台级读取需求,
+  // 所以保守默认就是运行时守卫。Favorite / CollectionItem 的 subjectId 是**类型化 ID**
+  // 而不是外键(取消收藏不许删原对象),目标的租户归属由 lib/library-subjects.ts 在每次
+  // 写入前重新校验 —— 守卫管的是这三张表自己的行,那道校验管的是它们指向的东西。
+  "Favorite", "Collection", "CollectionItem",
   // FRONT-A4 (2026-09-03,规格 docs/specs/frontend-baseline.md §7.3⑤):工作区 Home 版面。
   // GUARDED,不 EXEMPT —— 它装的是「这个商家的 Home 长什么样」,越租户读一行就是把 A 家的
   // 工作区偏好讲给 B 家看;而且它**没有**任何平台级读取需求(admin 不读版面),所以保守默认

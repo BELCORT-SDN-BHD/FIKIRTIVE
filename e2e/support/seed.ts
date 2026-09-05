@@ -20,6 +20,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { storageKey } from "../../packages/core/dist/index.js";
 import { prisma, runAsTenant, INTERNAL_PER_DISPLAY } from "./db.js";
+import { freshPng } from "./upload-fixture.js";
 
 /** Displayed credits → the internal unit the ledger and the account column are kept in. */
 function internal(displayed: number): number {
@@ -344,6 +345,64 @@ export async function seedElementVariant(
     });
   });
   return { variantId };
+}
+
+/**
+ * One piece of media already sitting in this merchant's Library — the rows AND the bytes.
+ *
+ * Two things have to line up or the Library will honestly refuse to draw the tile: the
+ * `Asset` + `Generation` rows, and a real object under the local-disk storage key the read
+ * model checks with `storage.exists()`. So this writes both — the bytes through
+ * `putLocalObject`, which owns the key scheme and the disk root — with a genuinely fresh
+ * PNG per call.
+ *
+ * `source` is what splits the Library's two grids: `UPLOAD` is the merchant's own file
+ * (Uploads tab), anything else is something we made for them (Generation history).
+ * A journey that is ABOUT favouriting or collecting starts from media that already exists —
+ * making the media is journey 13's subject, not this one's.
+ */
+export async function seedLibraryMedia(
+  ws: Workspace,
+  opts: { prompt: string; source?: "GENERATED" | "UPLOAD"; filename?: string },
+): Promise<{ generationId: string; assetId: string }> {
+  // 键的形状与本地盘的位置只有一份 —— `putLocalObject`(它自己再读 `@fikirtive/core`
+  // 的 `storageKey`)。这里另写一份 `u/<owner>/<hash>.png` 的那一天,两处就会开始各说各话。
+  const bytes = freshPng();
+  const { contentHash } = await putLocalObject(ws.orgId, bytes, "png");
+
+  const assetId = id("asset");
+  const generationId = id("gen");
+  const source = opts.source ?? "GENERATED";
+  await runAsTenant(ws.orgId, async () => {
+    await prisma.asset.create({
+      data: {
+        id: assetId,
+        ownerId: ws.orgId,
+        contentHash,
+        ext: "png",
+        mime: "image/png",
+        sizeBytes: BigInt(bytes.byteLength),
+        originalFilename: opts.filename ?? "",
+        source: source as never,
+        width: 1,
+        height: 1,
+        createdAt: ws.next(),
+      },
+    });
+    await prisma.generation.create({
+      data: {
+        id: generationId,
+        ownerId: ws.orgId,
+        projectId: ws.projectId,
+        assetId,
+        source: source as never,
+        promptText: opts.prompt,
+        entitySnapshot: {},
+        createdAt: ws.next(),
+      },
+    });
+  });
+  return { generationId, assetId };
 }
 
 /** An empty conversation thread in the seeded project — landing on it is what puts the merchant
