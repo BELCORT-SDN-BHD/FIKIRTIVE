@@ -42,6 +42,7 @@ import { planCardGate } from "./plan-card-contract";
 // Codex QA-CRE-FE9-013 —— 参考回执那一块。抽屉里那张卡读的是同一个组件。
 import { CardReferenceReceipt } from "./CardReferenceReceipt";
 import { runPlanApproval } from "./plan-approval";
+import { EDIT_AND_RETRY_LABEL } from "./OttoStreamErrorNotice";
 import { CardApprovalRef } from "./CardApprovalRef";
 import type { PlanApproveOutcome } from "./OttoPlanCard";
 import type { CanvasTurnStatus } from "@/lib/otto-canvas-turn";
@@ -65,6 +66,12 @@ export interface OttoTurnCardProps {
   onApproved: (outcome: PlanApproveOutcome) => void;
   /** 「Change」把这张卡的原话塞回输入框，让商家改了再来。 */
   onChangeSomething: (seed: string) => void;
+  /**
+   * 这一轮失败时，商家原来打的那句话 —— 有它才出「Edit and retry」（2026-09-05 走查修复一）。
+   * 只有能重试的那一种失败给得出（充值 / 抬上限那两种的出路不在这里），判据在调用方，
+   * 与抽屉里那张 `OttoStreamErrorNotice` 是同一个。
+   */
+  retryDraft?: string | null;
 }
 
 export const CANVAS_TURN_EMPTY_TEXT = "Tell Otto what you want to create or change.";
@@ -76,7 +83,9 @@ export function OttoTurnCard({
   confirmCards,
   onApproved,
   onChangeSomething,
+  retryDraft,
 }: OttoTurnCardProps) {
+  const failed = status.phase === "failed";
   return (
     <div
       aria-label="Otto current turn"
@@ -96,13 +105,32 @@ export function OttoTurnCard({
       <div className="px-3 py-3">
         {/* 正文。滚动而不是硬截三行:走查记到第四行会溢出卡片的圆角下缘,而截断本身也让
             商家读不完 Otto 刚说的话。上限跟着设计稿的对话抽屉走(max-h-[260px])。 */}
-        <div className="max-h-[168px] overflow-y-auto text-sm leading-5 text-foreground">
+        {/* 失败那一轮的原句就落在这里,不在默认折起的抽屉里(2026-09-05 走查修复一):
+            `role="alert"` 让读屏软件当场念出来,颜色跟着圆点走。 */}
+        <div
+          {...(failed ? { role: "alert" as const } : {})}
+          className={`max-h-[168px] overflow-y-auto text-sm leading-5 ${failed ? "text-destructive" : "text-foreground"}`}
+        >
           {text ? (
             <OttoMarkdown text={text} streaming={streaming} />
           ) : (
             <p className="text-muted-foreground">{CANVAS_TURN_EMPTY_TEXT}</p>
           )}
         </div>
+        {/* 商家的下一个动作就摆在这句话旁边 —— 与抽屉里那张告示同一颗键、同一份措辞。
+            按下去把他原来那句话放回输入框(`onChangeSomething` 就是那条路),改了再送。 */}
+        {failed && retryDraft ? (
+          <div className="mt-3 flex justify-end">
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={() => onChangeSomething(retryDraft)}
+            >
+              {EDIT_AND_RETRY_LABEL}
+            </Button>
+          </div>
+        ) : null}
         {status.detail ? (
           <p
             role="status"
