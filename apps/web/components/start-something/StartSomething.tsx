@@ -9,9 +9,11 @@
  * FRONT §7.1 ⑨ (`docs/specs/frontend-baseline.md`): the geometry, copy and control set here are
  * the approved entry-surface composer — `design-system/patterns/canvas/CreationComposer.tsx`
  * rendered with `surface="entry"`. Every class string below is copied from that pattern verbatim
- * so the two cannot drift silently (`create-design-parity.test.ts` compares them line by line).
+ * so the two cannot drift silently (`create-design-parity.test.ts` compares them line by line) —
+ * except the disclosure line in departure ③, which the pattern does not have at all.
  *
- * Two deliberate departures, both Founder rules from the same ruling:
+ * Three deliberate departures, ①② Founder rules from the same 2026-09-03 ruling and ③ a later
+ * ruling that reopened one cell of it:
  *   ① 设计有、后端没有契约的控件不渲染 — the pattern's "Add context" reference menu (Upload image /
  *      Choose from Library / Add URL) is fixture-only: it sets a display string and nothing is
  *      persisted. `createCanvasConversation` takes `{prompt, requestId}` and the handoff row stores
@@ -23,6 +25,14 @@
  *      table mirrors those two; this PR changes no spec file.
  *   ② 生产必需而设计没有的用设计的样式呈现 — the error and pending states (Field / FieldError /
  *      Spinner) are production-necessary and use the design system's own primitives, no new copy.
+ *   ③ 披露先于扣费 — Founder 2026-09-05 裁决②「输入框下加一行价钱」reopened exactly one cell of
+ *      the 2026-09-03 ruling: this page may carry a price line again. The pattern has no such line,
+ *      so the block below the composer is the one place whose class strings are not copied from it.
+ *      It renders the same `ConversationCostHint` the Canvas and the Otto front door already use —
+ *      no second price copy, and not a single number is written here (`lib/credit-format.ts` stays
+ *      the only author). The rest of 裁决五 is untouched: the visible "Create with Otto" heading and
+ *      the "Nothing paid starts before you confirm the exact credits in Canvas." sentence stay gone.
+ *      Registered in `docs/specs/frontend-baseline.md` §5, row 2026-09-05「裁决②」.
  */
 
 import { useRef, useState, useTransition } from "react";

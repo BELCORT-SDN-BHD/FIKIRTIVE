@@ -3,8 +3,11 @@
  *
  * 规格:`docs/specs/wave2-shell.md` §3.2 末段;票 #994(W2-7)挂载项。
  *
- * 默认是**挂**:Otto 的自我介绍就是「beside you on every page」
- * (`packages/core/src/navigation.ts` 的 `OTTO_ASSISTANT.does`)。这里只列一个例外,
+ * 默认是**挂**:Otto 的自我介绍逐字是「Otto sits on the right of the workspace pages」
+ * (`packages/core/src/navigation.ts:166` 的 `OTTO_ASSISTANT.does`;例外由 `merchantNavMap()`
+ * 那一行的后半句 `:545` 逐条点名,围栏 `apps/web/lib/__tests__/otto-panel-mount.test.ts`)。
+ * 旧引文「beside you on every page」已经不在现码里 —— 那句「每一页」是 Otto 自己做不到的
+ * 承诺,PR #1220 把它改掉了(判官 #1220 P2-2 订正本行)。这里只列一个例外,
  * 「这一面自己已经有一个 Otto」:
  *
  *   画布 —— 页面自带真输入框。今天那颗 `fixed right-4 bottom-4` 的 Otto 按钮就是因为
