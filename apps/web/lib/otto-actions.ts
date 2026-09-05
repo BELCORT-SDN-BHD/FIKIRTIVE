@@ -79,6 +79,7 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 // and as the real two numbers there.
 import { ottoFailureMessage } from "@/lib/otto-error-copy";
 import { newThreadTitle } from "@/lib/otto-canned-starters";
+import { coerceThreadSurface, DEFAULT_THREAD_SURFACE } from "@/lib/otto-thread-surface";
 // #524 r2 — the READ-ONLY look at the merchant's spend cap that keeps an approval from being
 // burned by a refusal knowable one line earlier. Never an authority; reserveCredits still decides.
 import { spendCapRefusal, approvedToolCostInternal, approvedGenerateCostInternal } from "@/lib/spend-cap-preflight";
@@ -1758,12 +1759,22 @@ export async function ottoTurn(raw: unknown): Promise<
       let seq = last?.seq ?? 0;
 
       // Persist USER message first (create thread row first if new — FK ordering)
+      // #979:标题只能来自商家**自己**打的字。产品自己写好的起手 chip(Brand memory 那
+      // 四句)被点一下也是一条消息,但它是我们的文案 —— 拿它当标题,画布随后沿用,
+      // 商家的画布就在侧栏里叫「Let me describe my brand to you — …」(beta 录像 01:28)。
+      //
+      // FRONT-A14(判官 P2-2):这一扇门开出来的**一定是画布对话**,所以 `surface` 写死。
+      // 不读 `parsed.data.surface`:那一格是 #879 step 1 的**页面位置**(自测值就是
+      // "campaign"),与「这条对话从哪个门开」是两件事,只是重名。拿它当线程来源,#879
+      // step 2 一落地、客户端开始如实上报 "campaign",这里就会把它 coerce 成 canvas ——
+      // 一个靠巧合才正确的值。侧栏面板永远先走 `createEmptyCoworkThread` 建线程再发第一句,
+      // 所以它一次都不会走到这里。
+      //
+      // 注释写在 `create(` **上面**而不是里面:#979 那道命名守卫按「`chatThread.create(`
+      // 起 10 行内必须看得见 title」扫全仓,长注释塞进 data 里会把 title 挤出那扇窗。
       if (isNew) {
         await prisma.chatThread.create({
-          // #979:标题只能来自商家**自己**打的字。产品自己写好的起手 chip(Brand memory 那
-          // 四句)被点一下也是一条消息,但它是我们的文案 —— 拿它当标题,画布随后沿用,
-          // 商家的画布就在侧栏里叫「Let me describe my brand to you — …」(beta 录像 01:28)。
-          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text) },
+          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text), surface: DEFAULT_THREAD_SURFACE },
         });
       }
       const userMessageId = newId();
@@ -2721,6 +2732,9 @@ export async function createEmptyCoworkThread(raw: unknown): Promise<{ id: strin
     return { error: "Invalid request." };
   }
   const { projectId, title } = raw as { projectId: string; title: string };
+  // FRONT-A14:第三扇门也要登记来源。声明来自调用方(前门 / 侧栏面板),但只有过闸的两个
+  // 字面量能落库 —— 认不出来的按画布读(`lib/otto-thread-surface.ts`)。
+  const surface = coerceThreadSurface((raw as Record<string, unknown>).surface);
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
@@ -2741,7 +2755,7 @@ export async function createEmptyCoworkThread(raw: unknown): Promise<{ id: strin
         // 再把第一条消息交给 OttoChatStream。只在另外两扇上装守卫等于没装:点目标格子
         // 送进来的 `title` 就是我们自己写的标签(「Sell a product」),画布随后沿用它。
         // 空标题照旧退回 "Untitled" —— `newThreadTitle` 自己就管这一档。
-        data: { id, ownerId, projectId, title: newThreadTitle(title) },
+        data: { id, ownerId, projectId, title: newThreadTitle(title), surface },
       });
       return { id };
     } catch (e) {

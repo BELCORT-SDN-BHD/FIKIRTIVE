@@ -28,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { ChatThreadDTO } from "@/lib/types";
+import { isCanvasThread } from "@/lib/otto-thread-surface";
 import {
   OTTO_NAV_PROJECT_LIMIT,
   OTTO_NAV_THREAD_LIMIT,
@@ -200,6 +201,20 @@ export function OttoThreadList({
                           }`}
                         >
                           {pinned && <Pin className="size-3 shrink-0" fill="currentColor" aria-hidden />}
+                          {/* FRONT-A14:来源标签。面板只自动续它自己开的对话,画布对话要
+                              商家在这里显式点选 —— 那就得让他看得出哪一条是画布的,否则
+                              点开一条 /billing 上毫不相干的画布对话仍然只能靠猜。
+                              判官 P2-1:只标**确知**是画布的那几条(`isCanvasThread`)。
+                              这一票之前写的老行 `surface = null` 来路无法回溯,不挂徽章 ——
+                              替一件查不出来的事作证,比不说更糟。 */}
+                          {isCanvasThread(thread.surface) && (
+                            <span
+                              data-otto-thread-source="canvas"
+                              className="shrink-0 rounded-[5px] border border-border px-1 text-[10px] leading-[15px] font-normal text-muted-foreground/80"
+                            >
+                              Canvas
+                            </span>
+                          )}
                           {dot && (
                             <span
                               className={`inline-block size-[7px] shrink-0 rounded-full ${dot}`}

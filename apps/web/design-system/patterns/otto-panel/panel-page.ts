@@ -12,10 +12,11 @@
  *   · 路径是某个 SHELL_ROUTES 再加一段 id → 这一档是**一个对象**,只交出
  *     `{ objectKind, objectId }`。对象的真名字要读数据库,而纯函数里不许有取数。
  *
- * **今天没有人拿它去画上下文 chip**:判官 r1 [P2] 查明服务端没有任何读者会因为商家在看
- * 哪一页而改变这一轮的上下文,所以 chip 会说假话,W2-8 不画它。取真名字的那个 server
- * action 一并删了(零调用者的租户查询就是没人守望的攻击面)——#879 step 2 接上真语义时
- * 按它自己的需要写读者,这个解析器与它的围栏那时直接用得上。
+ * **它不说 Otto 读得到什么**(判官 r1 [P2] 的裁定至今成立):服务端没有任何读者会因为
+ * 商家在看哪一页而改变这一轮的上下文,所以「On this page: X」那种写法会说假话。W2-8 因此
+ * 不画 chip。FRONT-A14 之后头部只在打开的是一条**确知的画布对话**时写一句
+ * 「Canvas · <画布名>」(见下方 `formatPanelScope` 上面那段):说的是「这段对话属于别处」,
+ * 不是「Otto 看得见什么」—— 前者今天为真,后者仍要等 #879 step 2。
  */
 import { GOAL_PRESETS, type GoalKey } from "@fikirtive/core/goals";
 import { SHELL_ROUTES, everyNavDestination } from "@fikirtive/core/navigation";
@@ -79,9 +80,9 @@ function matchShellRoute(location: string): ShellRouteMatch | null {
   return null;
 }
 
-/** 上下文 chip 会说的那一件事(今天没有人画它,理由见文件头)。 */
+/** 这一页是哪一页(今天没有人画它,理由见 `formatPanelScope` 上面那段;不描述 Otto 读得到什么)。 */
 export type PanelContextSubject =
-  /** 一页。`label` 就是它在导航里的名字(`On this page: Library`)。 */
+  /** 一页。`label` 就是它在导航里的名字(`Library`)。 */
   | { kind: "page"; routeKey: ShellRouteKey; label: string }
   /** 一个对象。名字要去数据库读,所以这里只给身份。 */
   | { kind: "object"; routeKey: ShellRouteKey; objectKind: PanelObjectKind; objectId: string };
@@ -107,6 +108,30 @@ export function panelContextSubject(location: string): PanelContextSubject | nul
   const label = navLabelForRoute(match.key);
   return label ? { kind: "page", routeKey: match.key, label } : null;
 }
+
+/**
+ * 面板头部那一行标签的两段式写法。**分隔符只有这一处**(判官 nit:上一版在这里和
+ * `OttoPanelHost` 各写了一遍「 · 」,两处迟早不一样)。名字空/只有空白就只剩第一段。
+ */
+export function formatPanelScope(scope: string, name: string | null | undefined): string {
+  const trimmed = name?.trim();
+  return trimmed ? `${scope} · ${trimmed}` : scope;
+}
+
+/**
+ * 为什么这里**没有**一个「Workspace · <页面名>」的常驻标签(判官 P2-4)。
+ *
+ * 上一版让面板头部每一页都挂一条横条。判官 r1 当初裁的是「不画」,而那一条横条对**面板
+ * 自己的**对话来说不带任何新信息:商家就在那一页上,面板就是他刚点开的那一块 —— 它只是
+ * 把他看得见的两件事又说了一遍,还占掉 320px 面板里的一整行,而且不在已批准的设计里。
+ *
+ * 现在只在**带新信息**的那一种情况下画:打开的是一条**确知**的画布对话时,头部写
+ * 「Canvas · <画布名>」——「你现在接着聊的这一段属于别处」是商家在面板上读不到的事实,
+ * 那正是 P1-010 报的第二半。工作区对话与来路不明的老行都不画。
+ *
+ * 「常驻 Workspace · <页面名> 横条要不要」已登记进 `docs/specs/frontend-baseline.md` §5,
+ * 待 Founder 在 FRONT-A14 走查时裁。要接回来时,`panelContextSubject` 与它的围栏都还在。
+ */
 
 /**
  * 每一页给哪几颗快捷 chips。

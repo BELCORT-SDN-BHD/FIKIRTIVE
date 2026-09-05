@@ -124,6 +124,10 @@ export function OttoPanelConversation({
           userName={seed.userName}
           onThreadStarted={onThreadStarted}
           onStreamStart={onStreamStart}
+          // FRONT-A14:在面板里打的第一句话开出来的是**面板自己的**对话。不登记这一格,
+          // 它就会被当成一条画布对话,而面板下次打开时不再自动续画布对话 —— 商家会发现
+          // 刚聊过的那一条第二天不见了(要去列表里找)。
+          threadSurface="panel"
         />
       )}
     </div>

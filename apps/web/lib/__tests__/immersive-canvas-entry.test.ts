@@ -146,6 +146,49 @@ describe("immersive canvas owned runtime selection", () => {
     });
   });
 
+  /**
+   * FRONT-A14(判官 P2-3)—— P1-010 的**镜像**。
+   *
+   * P1-010 是「侧栏面板续到了画布对话」。反方向同一个病:画布也按 project 取最新一条,
+   * 不看来源 —— 商家在侧栏 Otto 聊完,转头打开 Create,画布接上的是那条侧栏对话。
+   */
+  const withPanelThread = [
+    ...threads,
+    {
+      id: "t-panel-newest",
+      projectId: "p-oldest",
+      title: "Asked in the sidebar",
+      updatedAt: new Date("2026-08-20T00:00:00.000Z"),
+      pinnedAt: null,
+      surface: "panel",
+    },
+  ];
+
+  it("FRONT-A14 — the canvas never auto-resumes a conversation the sidebar panel started", () => {
+    // `t-panel-newest` 是最新的一条 —— 旧规则会选它,那正是这一条要挡住的。
+    expect(selectImmersiveThread(withPanelThread, undefined)).toEqual({
+      activeThreadId: "t-recent",
+      shouldRedirect: false,
+    });
+  });
+
+  it("FRONT-A14 — a deep-linked panel conversation still opens on the canvas: the merchant named it", () => {
+    expect(selectImmersiveThread(withPanelThread, "t-panel-newest")).toEqual({
+      activeThreadId: "t-panel-newest",
+      shouldRedirect: false,
+    });
+  });
+
+  it("FRONT-A14 — a conversation with no recorded origin is still resumed, so nothing regresses for older threads", () => {
+    // 老行 `surface` 是空的。排的是「确知是面板的」,不是「不是画布的」—— 商家原来能接回
+    // 哪一条,现在还是哪一条(零降级)。
+    expect(threads.every((t) => !("surface" in t))).toBe(true);
+    expect(selectImmersiveThread(threads, undefined)).toEqual({
+      activeThreadId: "t-recent",
+      shouldRedirect: false,
+    });
+  });
+
   it("preserves unrelated deep-link params while canonicalizing project and thread", () => {
     const url = buildImmersiveCanvasCanonicalUrl(
       { project: "p-forged", thread: "t-forged", audience: "a-1", persona: ["face-1", "face-2"] },
