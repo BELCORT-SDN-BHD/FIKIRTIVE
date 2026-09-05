@@ -5,6 +5,7 @@ import { SCHEDULE_CHANNEL_CAPS, isScheduleChannel } from "@fikirtive/core/schedu
 import { signMediaToken, verifySharePreviewToken } from "@fikirtive/token-crypto";
 import { verifySharePreview } from "./share-preview";
 import { consumeSharePreviewDoor } from "./rate-limit-gates";
+import { PUBLIC_MEDIA_TTL_MS, publicMediaPath } from "./media-public-link";
 
 /**
  * share-preview-view — the READ side of the seat-less share link (B0-28), and the ONLY module the
@@ -43,8 +44,11 @@ import { consumeSharePreviewDoor } from "./rate-limit-gates";
 
 /** How long the media URLs handed to a viewer stay fetchable. Minutes, not the link's own days:
  *  the browser fetches them the moment the page paints, and a URL that outlives the page view is
- *  a copy of the merchant's image that keeps working after the link is revoked. */
-const PREVIEW_MEDIA_TTL_MS = 10 * 60 * 1000;
+ *  a copy of the merchant's image that keeps working after the link is revoked.
+ *
+ *  第二个消费者(素材面板的 Copy link)出现后,这个数字与 URL 模板搬到了唯一源头
+ *  `lib/media-public-link.ts`;这里保留原来的名字与那句理由,值改成引用。 */
+const PREVIEW_MEDIA_TTL_MS = PUBLIC_MEDIA_TTL_MS;
 
 export type SharePreviewMedia = {
   /** A signed media-proxy URL for THIS post's image/clip. Nothing about storage is exposed. */
@@ -171,7 +175,7 @@ async function previewMedia(ownerId: string, generationIds: string[]): Promise<S
     const ext = gen.asset.ext.toLowerCase();
     const key = storageKey(gen.asset.ownerId, gen.asset.contentHash, ext);
     out.push({
-      src: `/api/media/pub/${encodeURIComponent(signMediaToken(ownerId, key, expMs, secret))}`,
+      src: publicMediaPath(signMediaToken(ownerId, key, expMs, secret)),
       kind: VIDEO_EXTS.has(ext) ? "video" : "image",
       width: gen.asset.width,
       height: gen.asset.height,
