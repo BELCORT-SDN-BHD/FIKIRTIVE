@@ -402,8 +402,20 @@ export async function POST(req: NextRequest): Promise<Response> {
             {
               // ENGINE-A4:唯一的改动就是挂上这个**只读**钩子。它改不了任何金额(meter.ts
               // 不变量 #7),只是把「整笔退了」这件事告诉入口,好让下面的降级句说实话。
+              //
+              // 先转调、再置旗:今天 `ottoBudgetArgsFor` 不产出 `onRefundedFailure`,但对象
+              // 展开会**静默盖掉**将来引擎侧自己挂的钩子,所以这里不覆盖,只在它后面接一句。
               meter: (budgetArgs, fn) =>
-                withLlmBudget({ ...budgetArgs, onRefundedFailure: () => { chargedNothing = true; } }, fn),
+                withLlmBudget(
+                  {
+                    ...budgetArgs,
+                    onRefundedFailure: () => {
+                      budgetArgs.onRefundedFailure?.();
+                      chargedNothing = true;
+                    },
+                  },
+                  fn,
+                ),
               runAgent: run,
               maxTurnsExceededError: MaxTurnsExceededError,
             },

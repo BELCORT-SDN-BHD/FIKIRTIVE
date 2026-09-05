@@ -14,6 +14,11 @@
  *
  * 为什么零调用真模型:被测的是**判词与账本**,不是模型。`fn` 直接抛一个带着 RunState 的
  * 截断错误 —— 那正是 SDK 跑满步数时抛的形状,而判词读的就是它。
+ *
+ * 「落盘」这一半是**真的落盘**:有交付那两条用例在抛截断之前,拿这一轮的 ctx 把生产注册表里
+ * 的 `saveProduct` 真调一遍,真库里真的多出一行 BrandRecord。判词不从 SDK 的 state 上猜「写
+ * 动作成功了没有」—— SDK 对 function tool 的结果一律写 `status:"completed"`,失败的写在那上面
+ * 与成功的写长得一模一样(判官 P1-A)。
  */
 import { describe, expect, it, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -56,9 +61,11 @@ async function runTruncatedTurn(
   orgId: string,
   refId: string,
   items: unknown[],
+  /** 这一轮的 ctx **本体**。交付计数按 ctx 对象分账(引擎侧 WeakMap),所以这里传进去的
+   *  必须与下面调工具时传的是同一个对象。 */
   context?: Pick<OttoContext, "research">,
-  /** 跑到一半、抛截断之前发生的事(用来让搜索腿真的产生成功次数)。 */
-  duringRun?: () => void,
+  /** 跑到一半、抛截断之前发生的事(让搜索腿真的产生成功次数,或真的落一笔盘)。 */
+  duringRun?: () => void | Promise<void>,
 ): Promise<{ chargedNothing: boolean }> {
   let chargedNothing = false;
   const args = ottoBudgetArgsFor(
@@ -69,7 +76,7 @@ async function runTruncatedTurn(
   );
   await expect(
     withLlmBudget({ ...args, onRefundedFailure: () => { chargedNothing = true; } }, async () => {
-      duringRun?.();
+      await duringRun?.();
       throw new TruncatedRun(items);
     }),
   ).rejects.toBeInstanceOf(TruncatedRun);
@@ -89,11 +96,35 @@ const READ_ONLY_ITEMS: unknown[] = [
   { type: "message_output_item", rawItem: { type: "message", role: "assistant", content: [{ type: "output_text", text: "let me look again" }] } },
 ];
 
-/** 一个**落盘**的写动作 —— 画布节点这一类:轮子死了,东西还在。 */
+/** 一个落盘的写动作在 SDK 的 state 上留下的两行。**注意**:这两行本身证明不了「写成功了」——
+ *  失败的写在 state 上一模一样(同样是 `status:"completed"`)。真的落盘由下面 `landAWrite`
+ *  当场做出来。 */
 const LANDED_WRITE_ITEMS: unknown[] = [
-  { type: "tool_call_item", rawItem: { type: "function_call", callId: "c1", name: "manageCanvas", arguments: "{}", status: "completed" } },
-  { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c1", name: "manageCanvas", status: "completed" } },
+  { type: "tool_call_item", rawItem: { type: "function_call", callId: "c1", name: "saveProduct", arguments: "{}", status: "completed" } },
+  { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c1", name: "saveProduct", status: "completed" } },
 ];
+
+/** 这一轮的 ctx。写技能只要 `orgId`;它同时是交付计数的账户键。 */
+function turnContext(orgId: string): OttoContext {
+  return {
+    orgId,
+    userId: orgId,
+    projectId: null,
+    threadId: null,
+    disabledModels: [],
+    sourceGenerationId: null,
+  } as unknown as OttoContext;
+}
+
+/** 真的落一笔盘:拿生产注册表里的 `saveProduct`(`effect:"write"`),用这一轮的 ctx 调一遍。
+ *  跑完真库里就多了一行 BrandRecord —— 轮子死了,这一行还在,这才是「有交付」。 */
+async function landAWrite(ctx: OttoContext): Promise<void> {
+  const tool = ottoInteractiveRuntime.agent.tools.find(
+    (t) => (t as { name?: string }).name === "saveProduct",
+  ) as unknown as { invoke: (rc: { context: OttoContext }, input: string) => Promise<unknown> };
+  const out = await tool.invoke({ context: ctx }, JSON.stringify({ name: "Kopi O" }));
+  expect(out).toMatchObject({ ok: true });
+}
 
 beforeAll(() => {
   // 这一票是钱路的真库证据。没有库就**不许**静悄悄地绿 —— 那比红更糟。
@@ -186,9 +217,14 @@ describe("ENGINE-A4 — 截断且零交付的一轮全额退款(规格 otto-engi
   it("ENGINE-A4:有交付的截断轮**不退** —— 落盘的写动作按实际用量结算", async () => {
     const orgId = await seedOrg();
     const refId = `otto-stream:${randomUUID()}`;
+    const ctx = turnContext(orgId);
 
-    const { chargedNothing } = await runTruncatedTurn(orgId, refId, LANDED_WRITE_ITEMS);
+    const { chargedNothing } = await runTruncatedTurn(orgId, refId, LANDED_WRITE_ITEMS, ctx, () =>
+      landAWrite(ctx),
+    );
 
+    // 东西真的在商家手里 —— 真库里那一行还在。
+    expect(await prisma.brandRecord.count({ where: { ownerId: orgId, kind: "product" } })).toBe(1);
     expect(chargedNothing).toBe(false);
     const rows = await ledger(orgId);
     expect(kindsOf(rows)).toEqual(["RESERVE", "SETTLE"]);
@@ -203,6 +239,27 @@ describe("ENGINE-A4 — 截断且零交付的一轮全额退款(规格 otto-engi
     expect(entry.category).toBe("chat");
     expect(entry.delta).toBe(-displayCredits(charged));
     expect(entry.detail).not.toBe("Held, then refunded in full");
+  });
+
+  it("ENGINE-A4:失败的写不算交付 —— state 上与成功的写一模一样,照样全额退款", async () => {
+    const orgId = await seedOrg();
+    const refId = `otto-stream:${randomUUID()}`;
+    const ctx = turnContext(orgId);
+
+    // 这一轮**只调了写工具、没调成**(`saveProduct` 少了必填的 name ⇒ 技能抛错,SDK 把它折成
+    // 一句普通文本当返回值,state 上那一行照样是 status:"completed")。商家手里什么都没多。
+    const { chargedNothing } = await runTruncatedTurn(orgId, refId, LANDED_WRITE_ITEMS, ctx, async () => {
+      const tool = ottoInteractiveRuntime.agent.tools.find(
+        (t) => (t as { name?: string }).name === "saveProduct",
+      ) as unknown as { invoke: (rc: { context: OttoContext }, input: string) => Promise<unknown> };
+      const out = await tool.invoke({ context: ctx }, JSON.stringify({ name: "   " }));
+      expect(typeof out === "string" || (out && typeof out === "object" && "error" in out)).toBe(true);
+    });
+
+    expect(await prisma.brandRecord.count({ where: { ownerId: orgId } })).toBe(0);
+    expect(chargedNothing).toBe(true);
+    expect(kindsOf(await ledger(orgId))).toEqual(["REFUND", "RESERVE"]);
+    expect((await account(orgId)).balance).toBe(SEED_INTERNAL);
   });
 
   it("ENGINE-A4:铸出的卡片也算交付 —— 停在审批位上的一轮照旧结算", async () => {
