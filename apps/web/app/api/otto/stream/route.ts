@@ -55,12 +55,14 @@ import {
   buildContextSystemMessage,
   finalizeOttoRun,
   validateOttoTurnReferences,
+  unavailableReferenceMessage,
 } from "@/lib/otto-actions";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
 import { ottoFailureMessage } from "@/lib/otto-error-copy";
 import { newThreadTitle } from "@/lib/otto-canned-starters";
+import { DEFAULT_THREAD_SURFACE } from "@/lib/otto-thread-surface";
 import { consumeOttoTurnGate, OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
@@ -161,6 +163,14 @@ export async function POST(req: NextRequest): Promise<Response> {
         referenceVideoGenerationId,
         referenceVideoGenerationIds,
       });
+      // Codex QA-CRE-FE9-013 —— **静默丢弃到此为止**。挂上来的引用有一件取不到,这一轮就
+      // 整轮不发:不建对话、不落 USER 消息、不开 SSE、不进 Otto、不铸卡、不预扣。它是一个
+      // 普通的 JSON 400(在流打开之前),所以 composer 拿到的是一句可读的错误而不是半开的流,
+      // 草稿与那几个附件都留在原地。上一版把取不到的滤成空数组继续跑,于是 Otto 按「没有产品
+      // 参考」的前提铸卡、商家为一张不含指定产品的素材付了钱。
+      if (refs.unavailable.length > 0) {
+        return Response.json({ error: unavailableReferenceMessage(refs.unavailable) }, { status: 400 });
+      }
 
       // Resolve thread: new vs existing-owned-and-in-project
       isNew = !parsed.data.threadId;
@@ -196,11 +206,22 @@ export async function POST(req: NextRequest): Promise<Response> {
       let seq = last?.seq ?? 0;
 
       // Persist USER message first (create thread row first if new — FK ordering)
+      // #979:与 ottoTurn 同一条规矩、同一个函数 —— 产品自己写好的起手 chip 不算商家的
+      // 命名(两个门都建对话,只在一个门上装守卫就等于没装)。
+      //
+      // FRONT-A14(判官 P2-2):这一扇门开出来的**一定是画布对话**,所以 `surface` 写死。
+      // 请求体那一格 `surface` 不参与:它是 #879 step 1 的**页面位置**(下面原样写进
+      // ChatMessage 那一行,那个语义不动),与「这条对话从哪个门开」只是重名。#879 step 2
+      // 一落地、客户端如实上报 "campaign",拿它当线程来源就会 coerce 成 canvas —— 一个
+      // 靠巧合才正确的值。侧栏面板永远先走 `createEmptyCoworkThread` 建线程再发第一句,
+      // 所以它一次都不会走到这里。
+      //
+      // 注释写在 `create(` **上面**而不是里面:#979 那道命名守卫按「`chatThread.create(`
+      // 起 10 行内必须看得见 title」扫全仓,把长注释塞进 data 里会把 title 挤出那扇窗,
+      // 守卫就此空转。规矩是守卫的,不是注释的。
       if (isNew) {
         await prisma.chatThread.create({
-          // #979:与 ottoTurn 同一条规矩、同一个函数 —— 产品自己写好的起手 chip 不算商家的
-          // 命名(两个门都建对话,只在一个门上装守卫就等于没装)。
-          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text) },
+          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text), surface: DEFAULT_THREAD_SURFACE },
         });
       }
       userMessageId = newId();
@@ -232,6 +253,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         threadId,
         sourceGenerationIds: refs.sourceGenerationIds,
         referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
+        mediaReferences: refs.mediaReferences,
         turnText: text,
         simpleMode: parsed.data.simple,
       });

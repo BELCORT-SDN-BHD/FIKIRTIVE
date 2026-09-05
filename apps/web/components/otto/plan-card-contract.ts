@@ -19,7 +19,7 @@
 import type { CardPayload as ServerCardPayload } from "@fikirtive/otto";
 // #774:审批身份的解析口径,与付费请求、worker 共用同一个纯函数。走**子路径**而不是包
 // 根:`@fikirtive/core` 的桶文件带出 `node:crypto`(hash.ts),那会被拖进客户端包。
-import { parseApprovedEntities } from "@fikirtive/core/reference-budget";
+import { parseApprovedEntities, cardReferenceRoleOf } from "@fikirtive/core/reference-budget";
 
 /**
  * The GEN_CARD payload as the card reads it — **derived from the server contract, not
@@ -42,6 +42,40 @@ export interface ParsedPlanCardPayload {
 
 function str(v: unknown): v is string {
   return typeof v === "string";
+}
+
+/**
+ * 媒体参考回执的解析口径 —— 一份,在这里(Codex QA-CRE-FE9-013)。
+ *
+ * 只收**每一格都读得懂**的那几条:身份(generationId)、类型、给人看的名字、来源画布。
+ * 少一格就整条丢掉,于是 `parsePlanCardPayload` 上面那句「解出来的条数必须等于原条数」
+ * 会把这张卡记成畸形 —— 一条读不全的回执绝不能装成一条完整的回执。
+ */
+function parseMediaReferences(raw: unknown): NonNullable<OttoPlanCardPayload["mediaReferences"]> {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const e = entry as Record<string, unknown>;
+    if (!str(e.generationId) || !str(e.label) || !str(e.sourceProjectId) || !str(e.sourceProjectName)) return [];
+    if (!str(e.previewUrl)) return [];
+    if (e.kind !== "image" && e.kind !== "video") return [];
+    if (typeof e.sameCanvas !== "boolean") return [];
+    // Codex staging CRE-STG-P1-003 —— 角色是**这条修改之后**铸的卡才有的一格。老卡(在它
+    // 存在之前铸的)缺席就退回 `reference`:少一个精确的标签是安全的降级,而把整条回执丢掉
+    // 会让一张本来说得清楚的老卡突然不可批准 —— 那是拿商家的钱赔我们的迁移。
+    // 值只认闭集里的那几个:陌生词同样退回 `reference`,绝不原样渲染进卡面。
+    const role = cardReferenceRoleOf(e.role);
+    return [{
+      generationId: e.generationId,
+      kind: e.kind,
+      label: e.label,
+      sourceProjectId: e.sourceProjectId,
+      sourceProjectName: e.sourceProjectName,
+      sameCanvas: e.sameCanvas,
+      previewUrl: e.previewUrl,
+      role,
+    }];
+  });
 }
 function num(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
@@ -82,6 +116,9 @@ export function parsePlanCardPayload(raw: unknown): ParsedPlanCardPayload | null
   take("structuredPrompt", str, (v) => v as string);
   take("goal", str, (v) => v as string);
   take("sourceGenerationId", str, (v) => v as string);
+  // Codex staging CRE-STG-P1-003 —— 第一张之外的挂图。与 entityIds 同一条解析纪律:
+  // 不是「每一项都是字符串的数组」就是畸形,记账、披露、不许批准。
+  take("referenceGenerationIds", (v) => Array.isArray(v) && v.length > 0 && v.every(str), (v) => v as string[]);
   take("referenceVideoGenerationId", str, (v) => v as string);
   take("downgradeNote", str, (v) => v as string);
   take("downgraded", (v) => typeof v === "boolean", (v) => v as boolean);
@@ -96,6 +133,13 @@ export function parsePlanCardPayload(raw: unknown): ParsedPlanCardPayload | null
     "approvedEntities",
     (v) => Array.isArray(v) && v.length > 0 && parseApprovedEntities(v).length === v.length,
     (v) => parseApprovedEntities(v),
+  );
+  // Codex QA-CRE-FE9-013 —— 媒体参考的审批回执。与 approvedEntities 同一条纪律:带了但读不
+  // 懂 = 畸形,记账、披露、不许批准;一条都不带就是老卡的形状(下面 planCardGate 另有一问)。
+  take(
+    "mediaReferences",
+    (v) => Array.isArray(v) && v.length > 0 && parseMediaReferences(v).length === v.length,
+    (v) => parseMediaReferences(v),
   );
   take(
     "variantSel",
@@ -119,10 +163,21 @@ export function parsePlanCardPayload(raw: unknown): ParsedPlanCardPayload | null
       };
     },
   );
+  // 两步计划那一行。`next` 是**冻结的第二步**(Codex E2E-CRE-PAV-004):带着它 ⇒ 这张图片
+  // 出来之后,视频的确认卡由服务端自己铸出来,商家不必把图带回去。这里只判「有没有一份
+  // 读得懂的计划」—— 卡面据此换一句话,永远不据此算钱。
   take(
     "videoStep",
     (v) => !!v && typeof v === "object" && num((v as Record<string, unknown>).estimatedCredits),
-    (v) => ({ estimatedCredits: (v as { estimatedCredits: number }).estimatedCredits }),
+    (v) => {
+      const q = v as { estimatedCredits: number; next?: unknown };
+      const next = q.next;
+      const handoff =
+        !!next && typeof next === "object" && !Array.isArray(next) && str((next as Record<string, unknown>).structuredPrompt)
+          ? { structuredPrompt: (next as { structuredPrompt: string }).structuredPrompt }
+          : null;
+      return { estimatedCredits: q.estimatedCredits, ...(handoff ? { next: handoff } : {}) };
+    },
   );
 
   return { value, malformedFields };
@@ -154,9 +209,48 @@ export interface PlanCardGate {
   credits: number | null;
   /** 读得懂,而且价格担保得住 —— 可以把它当一个方案渲染出来。 */
   readable: boolean;
-  /** 在 `readable` 之上再要求「一个字段都没读错」。畸形的卡自己都承认读不全,
-   *  不许拿去花钱(#580 复审 r2 P1-2)。 */
+  /**
+   * Codex QA-CRE-FE9-013 —— 这张卡带着一件参考,却没有它的回执。
+   *
+   * 值是人话的参考名(`"reference image"` / `"reference video"`),空数组 = 每一件都有回执。
+   * 非空 ⇒ 不可批准:卡上有一个 id 会随付费请求上路,而商家在按下按钮之前读不到它是什么。
+   */
+  missingReferenceReceipts: string[];
+  /** 在 `readable` 之上再要求「一个字段都没读错」,且每一件参考都有回执。畸形或缺回执的卡
+   *  自己都承认说不清将要用什么,不许拿去花钱(#580 复审 r2 P1-2;QA-CRE-FE9-013)。 */
   approvable: boolean;
+}
+
+/**
+ * 这张卡带着 id 却没有回执的那几件参考(Codex QA-CRE-FE9-013)。
+ *
+ * 判据是**卡自己**的两个 id 字段:有 `sourceGenerationId` 就必须有一条 image 回执,有
+ * `referenceVideoGenerationId` 就必须有一条 video 回执。老卡(在回执存在之前铸的)因此会
+ * 落进这里 —— 那是有意的:一张说不清将要用哪张图的卡,重铸一张的代价是一句话,批下去的
+ * 代价是一次不含指定产品的付费素材。
+ */
+export function missingReferenceReceipts(value: OttoPlanCardPayload): string[] {
+  const receipts = value.mediaReferences ?? [];
+  const missing: string[] = [];
+  if (value.sourceGenerationId && !receipts.some((r) => r.generationId === value.sourceGenerationId)) {
+    missing.push("reference image");
+  }
+  // Codex staging CRE-STG-P1-003 —— 第 2 张起的挂图同样是「一个会随付费请求上路的 id」,
+  // 所以同样必须有回执。缺一条就整张卡不可批准:走查那一天商家读不到的正是这几张。
+  // 一句话只说一次(缺 3 张也只写一个 "reference image"),否则卡上那句会念成绕口令。
+  if (
+    (value.referenceGenerationIds ?? []).some((id) => !receipts.some((r) => r.generationId === id)) &&
+    !missing.includes("reference image")
+  ) {
+    missing.push("reference image");
+  }
+  if (
+    value.referenceVideoGenerationId &&
+    !receipts.some((r) => r.generationId === value.referenceVideoGenerationId)
+  ) {
+    missing.push("reference video");
+  }
+  return missing;
 }
 
 /** 过门。渲染门与 approve() 都调这一个函数,所以两者不可能判出不同结果。 */
@@ -166,12 +260,14 @@ export function planCardGate(raw: unknown): PlanCardGate {
   const malformedFields = parsed?.malformedFields ?? [];
   const credits = parsed === null ? null : guaranteedCredits(value);
   const readable = parsed !== null && credits !== null;
+  const missing = parsed === null ? [] : missingReferenceReceipts(value);
   return {
     parsed,
     value,
     malformedFields,
     credits,
     readable,
-    approvable: readable && malformedFields.length === 0,
+    missingReferenceReceipts: missing,
+    approvable: readable && malformedFields.length === 0 && missing.length === 0,
   };
 }

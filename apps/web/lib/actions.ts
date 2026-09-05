@@ -24,10 +24,12 @@ import {
   type CaptionJobData,
   type RenderJobData,
 } from "@fikirtive/core";
+import { entityCapabilities, OFFICIAL_CATALOG_REFUSAL } from "@fikirtive/core/entity-policy";
 import type { EntityType, ShotStatus } from "@fikirtive/db";
 import { storage, extFromFilename } from "./storage";
 import { getBoss } from "./queue";
 import { isCannedStarter } from "./otto-canned-starters";
+import { DEFAULT_CANVAS_NAME, LEGACY_DEFAULT_CANVAS_NAMES } from "./canvas-title";
 import { buildBoardEdit, transitionFor } from "./edit";
 import { getShots, getLooseVideoClips, getMediaPage, type MediaPage } from "./data";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
@@ -105,10 +107,14 @@ function assetUpsert(
 // ---------- projects ----------
 
 /** Placeholder names a fresh project carries until its first conversation names it.
- *  "New project" is the current default (#546 — a Project is never called a campaign;
- *  the independent Campaign object lives in campaign-actions.ts). "New campaign" and
- *  "Untitled Project" stay listed so pre-#546 DB rows keep reusing/auto-titling. */
-const DEFAULT_PROJECT_NAMES = new Set(["New project", "New campaign", "Untitled Project"]);
+ *  "New project" (#546 — a Project is never called a campaign; the independent Campaign
+ *  object lives in campaign-actions.ts) is itself a legacy value now: the bootstrap
+ *  default has moved to canvas vocabulary (`DEFAULT_CANVAS_NAME`, Codex QA-CRE-006 —
+ *  "Canvas, not Project", `docs/specs/frontend-baseline.md` §5). "New project", "New
+ *  campaign" and "Untitled Project" stay listed — imported from the single source in
+ *  `canvas-title.ts` — so pre-existing DB rows keep reusing/auto-titling regardless of
+ *  which placeholder generation created them. */
+const DEFAULT_PROJECT_NAMES = new Set<string>([...LEGACY_DEFAULT_CANVAS_NAMES, DEFAULT_CANVAS_NAME]);
 
 /** Empty Chat title fallback. It is not a reusable Project placeholder, but auto-title
  *  must still refuse to copy it onto a default Project. */
@@ -161,11 +167,11 @@ async function findReusableEmptyDefaultProject(ownerId: string, name: string): P
 }
 
 /** Idempotent: returns the owner's oldest non-deleted project, or creates one with the
- *  standard "New project" placeholder name if none exist (used by /otto, the immersive
- *  canvas entry, and Otto's projects port). #546 F-18: no pre-seeded "My Videos" — the
- *  bootstrap project is
+ *  standard `DEFAULT_CANVAS_NAME` placeholder name if none exist (used by /otto, the
+ *  immersive canvas entry, and Otto's projects port). #546 F-18: no pre-seeded "My
+ *  Videos" — the bootstrap project is
  *  indistinguishable from one the merchant created themselves: it auto-titles from its
- *  first conversation and is reused by the rail's New-project entry while still empty.
+ *  first conversation and is reused by the rail's New-canvas entry while still empty.
  *  Never throws — the caller surfaces any auth failure via the {error} contract. */
 export async function getOrCreateDefaultProject(): Promise<{ id: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
@@ -179,7 +185,7 @@ export async function getOrCreateDefaultProject(): Promise<{ id: string } | { er
     });
     if (existing) return { id: existing.id };
     const project = await prisma.project.create({
-      data: { id: newId(), ownerId, name: "New project" },
+      data: { id: newId(), ownerId, name: DEFAULT_CANVAS_NAME },
     });
     await logAction(ownerId, "project.create", project.id, { name: project.name, via: "bootstrap" });
     return { id: project.id };
@@ -482,6 +488,14 @@ export async function updateEntity(
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async () => {
     const { ownerId } = gate;
+    // 官方目录只读(Founder 2026-08-30「不能修改 identity」)。名字、类型、备注、禁写
+    // 四格都是这位演员的身份,所以守卫在收集 data 之前 —— 判据回数据库现读 catalogKey。
+    const target = await prisma.entity.findFirst({
+      where: { id: entityId, ownerId, deletedAt: null },
+      select: { catalogKey: true },
+    });
+    if (!target) return { error: "Entity not found." };
+    if (!entityCapabilities(target).editIdentity) return { error: OFFICIAL_CATALOG_REFUSAL };
     const data: { name?: string; notes?: string; negativeConstraints?: string; type?: EntityType } = {};
     if (fields.name !== undefined && fields.name.trim()) data.name = fields.name.trim();
     if (fields.notes !== undefined) data.notes = fields.notes;
@@ -586,6 +600,8 @@ export async function addEntityAlias(entityId: string, alias: string): Promise<{
     if (!clean) return { error: "Alias is empty." };
     const entity = await prisma.entity.findFirst({ where: { id: entityId, ownerId, deletedAt: null } });
     if (!entity) return { error: "Entity not found." };
+    // 官方目录只读:别名是 @ 引用认的名字,同属 identity。
+    if (!entityCapabilities(entity).editIdentity) return { error: OFFICIAL_CATALOG_REFUSAL };
     // atomic append guarded against dupes — NOT read-modify-write, so two concurrent
     // adds can't lose one (the prior delta-from-client design left this server race) (#9)
     await prisma.$executeRaw`UPDATE "Entity" SET "aliases" = array_append("aliases", ${clean}) WHERE "id" = ${entityId} AND "ownerId" = ${ownerId} AND "deletedAt" IS NULL AND NOT (${clean} = ANY("aliases"))`;
@@ -602,6 +618,8 @@ export async function removeEntityAlias(entityId: string, alias: string): Promis
     const { ownerId } = gate;
     const entity = await prisma.entity.findFirst({ where: { id: entityId, ownerId, deletedAt: null } });
     if (!entity) return { error: "Entity not found." };
+    // 官方目录只读(同 addEntityAlias)。
+    if (!entityCapabilities(entity).editIdentity) return { error: OFFICIAL_CATALOG_REFUSAL };
     // atomic remove (same lost-update guard as the add above) (#9)
     await prisma.$executeRaw`UPDATE "Entity" SET "aliases" = array_remove("aliases", ${alias}) WHERE "id" = ${entityId} AND "ownerId" = ${ownerId} AND "deletedAt" IS NULL`;
     await logAction(ownerId, "entity.update", null, { entityId, removeAlias: alias });
@@ -618,8 +636,13 @@ export async function softDeleteReferenceImage(refImageId: string): Promise<{ ok
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async () => {
     const { ownerId } = gate;
-    const ref = await prisma.referenceImage.findFirst({ where: { id: refImageId, ownerId, deletedAt: null } });
+    const ref = await prisma.referenceImage.findFirst({
+      where: { id: refImageId, ownerId, deletedAt: null },
+      include: { entity: { select: { catalogKey: true } } },
+    });
     if (!ref) return { error: "Reference image not found." };
+    // 官方目录只读:定妆照就是这位演员的 identity,删一张等于改身份(而且底下还会真删字节)。
+    if (!entityCapabilities(ref.entity).editIdentity) return { error: OFFICIAL_CATALOG_REFUSAL };
     const purged = await prisma.$transaction(async (tx) => {
       await tx.referenceImage.update({
         where: { id: refImageId },
@@ -659,6 +682,16 @@ export async function softDeleteEntity(entityId: string): Promise<{ ok: true; sh
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async () => {
     const { ownerId } = gate;
+    // 官方目录只读 —— **假设,待 Founder 追认**(PR「假设」节):只读目录不该被商家删掉,
+    // 否则这位演员会连同底下的定妆照字节一起消失(softDeleteEntity 会真删独占资产),
+    // 而商家无法自己把她放回来。Founder 2026-08-30 裁决只写了「不能修改 identity」,
+    // 没有逐字说「不能删」;这里按只读的字面意思 fail closed,裁决另有口径就改这一格。
+    const target = await prisma.entity.findFirst({
+      where: { id: entityId, ownerId, deletedAt: null },
+      select: { catalogKey: true },
+    });
+    if (!target) return { error: "Entity not found." };
+    if (!entityCapabilities(target).deleteEntity) return { error: OFFICIAL_CATALOG_REFUSAL };
     const refCount = await prisma.shotEntityRef.count({ where: { entityId } });
     const purged = await prisma.$transaction(async (tx) => {
       const { count } = await tx.entity.updateMany({

@@ -19,14 +19,21 @@ export function MerchantTopBar({
   activeLabelOverride,
   profileHref,
   showSignOutAction,
+  buildSha,
 }: {
   pathname: string
   account?: MerchantShellAccount | null
   signOutAction: () => Promise<void>
-  onAskOtto: () => void
+  /** `undefined` on a surface that doesn't mount the shared Otto panel (`panel-surface.ts`'s
+   *  "this page already has its own Otto" list) — the button has nothing to open there, so it
+   *  doesn't render rather than sitting there doing nothing when pressed (判官 P1-A). */
+  onAskOtto?: () => void
   activeLabelOverride?: string
   profileHref?: string
   showSignOutAction?: boolean
+  /** P2-3 — passthrough from MerchantShellFrame straight to MerchantAccountMenu's `Build <sha>`
+   *  row; this component owns no logic about it. */
+  buildSha?: string | null
 }) {
   const activeKey = activeNavKey(pathname)
   const activeLabel = activeLabelOverride ?? (activeKey ? navLabel(activeKey) : "Workspace")
@@ -41,18 +48,26 @@ export function MerchantTopBar({
       <span className="font-medium text-foreground">{activeLabel}</span>
 
       <div className="ml-auto flex items-center gap-1">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          data-shell-ask-otto
-          onClick={onAskOtto}
-          aria-label={OTTO_ASSISTANT.label}
-        >
-          <OttoAvatar size={18} mood="idle" />
-          {OTTO_ASSISTANT.label}
-        </Button>
-        <MerchantAccountMenu account={account} signOutAction={signOutAction} profileHref={profileHref} showSignOutAction={showSignOutAction} />
+        {onAskOtto ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-shell-ask-otto
+            onClick={onAskOtto}
+            aria-label={OTTO_ASSISTANT.label}
+          >
+            <OttoAvatar size={18} mood="idle" />
+            {OTTO_ASSISTANT.label}
+          </Button>
+        ) : null}
+        <MerchantAccountMenu
+          account={account}
+          signOutAction={signOutAction}
+          profileHref={profileHref}
+          showSignOutAction={showSignOutAction}
+          buildSha={buildSha}
+        />
       </div>
     </header>
   )

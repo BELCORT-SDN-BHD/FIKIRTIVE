@@ -5,20 +5,34 @@
  * Conversation and a durable first-turn handoff; Canvas then sends that exact prompt through the
  * existing Otto stream. The browser UUID is held across a retry so an uncertain response cannot
  * duplicate the merchant's work.
+ *
+ * FRONT §7.1 ⑨ (`docs/specs/frontend-baseline.md`): the geometry, copy and control set here are
+ * the approved entry-surface composer — `design-system/patterns/canvas/CreationComposer.tsx`
+ * rendered with `surface="entry"`. Every class string below is copied from that pattern verbatim
+ * so the two cannot drift silently (`create-design-parity.test.ts` compares them line by line).
+ *
+ * Two deliberate departures, both Founder rules from the same ruling:
+ *   ① 设计有、后端没有契约的控件不渲染 — the pattern's "Add context" reference menu (Upload image /
+ *      Choose from Library / Add URL) is fixture-only: it sets a display string and nothing is
+ *      persisted. `createCanvasConversation` takes `{prompt, requestId}` and the handoff row stores
+ *      `{prompt, threadId}`, so there is no contract to carry a reference from this page into the
+ *      Canvas. The control stays out; with the left group gone the control row is `justify-end` and
+ *      the send key keeps its position. This is already on the record in the frozen spec: `docs/
+ *      specs/frontend-baseline.md` §5, row 2026-09-03「⑨ 段下一刀「起步页参考契约」」, with the
+ *      wiring and estimate in §7.3「⑨ 下一刀 · 起步页参考契约」. The PR's 「设计有、生产暂不显示」
+ *      table mirrors those two; this PR changes no spec file.
+ *   ② 生产必需而设计没有的用设计的样式呈现 — the error and pending states (Field / FieldError /
+ *      Spinner) are production-necessary and use the design system's own primitives, no new copy.
  */
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUp } from "lucide-react";
+import { ArrowUpIcon } from "lucide-react";
 import { createCanvasConversation } from "@/lib/canvas-entry-actions";
 import { canvasHref } from "@/components/canvas/canvas-href";
+import { Button } from "@/components/ui/button";
 import { Field, FieldError } from "@/components/ui/field";
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupTextarea,
-} from "@/components/ui/input-group";
+import { InputGroup, InputGroupTextarea } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
 
 export function StartSomething() {
@@ -58,43 +72,36 @@ export function StartSomething() {
       }}
     >
       <Field data-invalid={Boolean(error)}>
-        <InputGroup className="overflow-hidden rounded-[var(--radius-card)] shadow-[var(--shadow-sm)]">
+        <InputGroup className="flex-col items-stretch rounded-[var(--radius-card)] bg-background p-2">
           <InputGroupTextarea
+            aria-label="Otto creation prompt"
+            className="w-full px-2.5 py-2 text-base leading-6 min-h-[78px]"
+            placeholder="Describe an image or video to create"
             value={draft}
+            aria-invalid={Boolean(error)}
+            maxLength={4000}
             onChange={(event) => {
               setDraft(event.target.value);
               if (error) setError(null);
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && draft.trim()) {
                 event.preventDefault();
                 startCanvas(draft);
               }
             }}
-            placeholder="Describe an image, video or campaign idea…"
-            aria-label="Describe what you want to create"
-            aria-invalid={Boolean(error)}
-            maxLength={4000}
-            rows={3}
-            className="field-sizing-fixed min-h-24 px-4 py-3 text-[0.90625rem] leading-6"
           />
-          <InputGroupAddon align="block-end" className="justify-between border-t border-border">
-            <span className="text-xs text-muted-foreground">Enter to send · Shift+Enter for a new line</span>
-            <InputGroupButton
+          <div className="flex items-center justify-end gap-2">
+            <Button
               type="submit"
-              variant="default"
-              size="sm"
-              aria-label="Start a Canvas with Otto"
+              aria-label="Send prompt"
               disabled={pending || !draft.trim()}
+              size="icon-sm"
+              variant="otto"
             >
-              {pending ? (
-                <Spinner data-icon="inline-start" aria-label="Starting Canvas" />
-              ) : (
-                <ArrowUp data-icon="inline-start" strokeWidth={2.5} />
-              )}
-              {pending ? "Starting…" : "Start"}
-            </InputGroupButton>
-          </InputGroupAddon>
+              {pending ? <Spinner aria-label="Starting Canvas" /> : <ArrowUpIcon />}
+            </Button>
+          </div>
         </InputGroup>
         <FieldError>{error}</FieldError>
       </Field>

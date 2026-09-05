@@ -1,14 +1,18 @@
 import "server-only";
 import { storageKey, coworkProposalSchema } from "@fikirtive/core";
+import { entityCapabilities, entityOrigin } from "@fikirtive/core/entity-policy";
 import { storage, kindOf } from "./storage";
 import { sanitizeUserError } from "./provider-secrecy";
 import type { EntityWithRefs, ChatThreadWithMessages } from "./data";
 import type { EntityDTO, ChatMessageDTO, ChatThreadDTO } from "./types";
 
 type EntityWithOttoUsage = EntityWithRefs & { _ottoUsageCount?: number };
+// `surface` 是**必填**的(FRONT-A14 判官 P1-1)。上一版把它写成 `Partial<...>`,于是任何
+// 一条漏 select 的读路都静默映成 `null` —— 编译期一声不吭,商家点开自己的对话才发现它被
+// 标成了画布。必填之后,漏 select 的读路是一个 tsc 错误,不是一个线上现象。
 type ChatThreadDTOInput = Pick<
   ChatThreadWithMessages,
-  "id" | "projectId" | "title" | "updatedAt" | "pinnedAt" | "messages"
+  "id" | "projectId" | "title" | "updatedAt" | "pinnedAt" | "surface" | "messages"
 >;
 
 export function assetUrl(ownerId: string, contentHash: string, ext: string) {
@@ -44,6 +48,11 @@ export function toEntityDTO(e: EntityWithOttoUsage): EntityDTO {
       refs: v.referenceImages.map(refOf),
     })),
     usageCount: e._count.shotRefs + (e._ottoUsageCount ?? 0),
+    // 官方目录只读(Founder 2026-08-30)。判据算在域层、只算这一次:UI 与 Otto 读的是
+    // 同一份 DTO,所以两边永远不会对「这一行能不能改」得出两个答案。server action 不
+    // 信这两格(客户端能编),它自己回数据库现读 catalogKey —— 同一个函数,同一个判据。
+    origin: entityOrigin(e),
+    capabilities: entityCapabilities(e),
   };
 }
 
@@ -200,12 +209,13 @@ export function toChatThreadDTO(t: ChatThreadDTOInput, urlsByJob: Map<string, { 
     title: t.title,
     updatedAt: t.updatedAt.toISOString(),
     pinnedAt: t.pinnedAt ? t.pinnedAt.toISOString() : null,
+    surface: t.surface ?? null,
     messages: t.messages.map((m) => toChatMessageDTO(m, urlsByJob)),
   };
 }
 
 /** Thread-LIST DTO: metadata only, empty messages. The rail renders title + time; the
  *  active thread's messages lazy-load via getCoworkThreadClient. (scale audit 2026-06-20) */
-export function toChatThreadMetaDTO(t: { id: string; projectId: string; title: string; updatedAt: Date; pinnedAt?: Date | null; _badge?: "working" | "failed" | "done" | null }): ChatThreadDTO {
-  return { id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt.toISOString(), pinnedAt: t.pinnedAt ? t.pinnedAt.toISOString() : null, messages: [], status: t._badge ?? null };
+export function toChatThreadMetaDTO(t: { id: string; projectId: string; title: string; updatedAt: Date; pinnedAt?: Date | null; surface?: string | null; _badge?: "working" | "failed" | "done" | null }): ChatThreadDTO {
+  return { id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt.toISOString(), pinnedAt: t.pinnedAt ? t.pinnedAt.toISOString() : null, surface: t.surface ?? null, messages: [], status: t._badge ?? null };
 }

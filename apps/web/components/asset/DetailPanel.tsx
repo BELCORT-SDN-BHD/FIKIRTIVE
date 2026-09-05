@@ -47,6 +47,8 @@ import {
   type VideoSpec,
 } from "@/lib/video-spec";
 import { creditsLabel } from "@/lib/credit-format";
+import { canvasDownloadFileName } from "@/lib/canvas-selection";
+import { sameOriginDownloadUrl } from "@/lib/download-url";
 import { assetSpendControlDisabled, type AssetSpendStatus } from "@/lib/asset-detail-status";
 import { ClipActions } from "@/components/asset/ClipActions";
 import type { EntityDTO } from "@/lib/types";
@@ -901,9 +903,17 @@ export default function DetailPanel({
                 </Button>
               )}
 
-              {/* Download */}
+              {/* Download —— 走查 P0-2:必须走同源附件地址。直接指向 `/files/…` 会 302 到 R2,
+                  `download` 属性跨源被浏览器忽略,商家就被导航出应用、片子也没存下。
+                  文件名与画布批量下载同一个函数,商家在两处存到的名字一模一样。 */}
               <Button asChild variant="ghost" size="sm">
-                <a href={displayUrl} download>
+                <a
+                  href={sameOriginDownloadUrl(
+                    displayUrl,
+                    canvasDownloadFileName({ id: selectedGenId, type: gen.kind, prompt: gen.prompt }, 0, displayUrl),
+                  )}
+                  download
+                >
                   <DownloadIcon data-icon="inline-start" />
                   Download
                 </a>

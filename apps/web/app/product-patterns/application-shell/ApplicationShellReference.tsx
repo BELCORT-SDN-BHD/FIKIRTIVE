@@ -7,6 +7,7 @@ import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { MerchantShellFrame } from "@/components/global-navigation";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { OttoPanelShell } from "@/components/otto/panel/OttoPanelShell";
+import { formatPanelScope } from "@/components/otto/panel/panel-page";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -126,8 +127,15 @@ export function ApplicationShellReference() {
     <div className="gb min-h-dvh bg-background text-foreground">
       <OttoPanelShell
         forceOpenSignal="application-shell-reference"
-        contextChip={{ label: "Home" }}
-        contextAttached
+        // FRONT-A14(判官 P2-5):参照页画的必须是产品真的会画的东西。
+        // · 标签走与产品同一个 formatter(`formatPanelScope`),不在这里手拼一句字符串;
+        // · 头部这一行只在打开的是一条**画布**对话时出现,所以夹具举的例子就是那一种;
+        // · `contextAttached` 不传 —— 那一格断言「这一轮会自动把这一页带给 Otto」,今天为假
+        //   (判官 r1 [P2];服务端没有任何读者读 `surface`/`subjectRef`)。
+        contextChip={{
+          label: formatPanelScope("Canvas", "Raya campaign"),
+          hint: "This conversation belongs to a canvas.",
+        }}
         panelBody={<OttoShellFixture />}
       >
         <MerchantShellFrame

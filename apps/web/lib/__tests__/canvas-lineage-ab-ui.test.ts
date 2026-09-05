@@ -228,10 +228,33 @@ async function click(button: HTMLButtonElement): Promise<void> {
   await act(async () => { button.click(); });
 }
 
-/** Open the lineage tree for a single card, the way a merchant does: pick it, press Lineage. */
+/**
+ * Open the lineage tree for a single card, the way a merchant does: pick it, open the card's
+ * ⋯ menu, choose "Show what this card came from".
+ *
+ * The approved canvas pattern gives a picked card five controls, and Lineage is not one of the
+ * five — it lives in the ⋯ dropdown the pattern puts at the end of the row. So the merchant's
+ * real path is now two presses, and this helper walks both.
+ */
+async function openMoreMenu(): Promise<void> {
+  const trigger = container!.querySelector<HTMLButtonElement>('button[aria-label="More actions"]');
+  expect(trigger, "the picked card has no ⋯ menu").toBeTruthy();
+  await act(async () => {
+    trigger!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+}
+
+async function chooseMenuItem(label: string): Promise<void> {
+  const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    .find((el) => el.textContent?.trim() === label);
+  expect(item, `the ⋯ menu has no "${label}"`).toBeTruthy();
+  await act(async () => { item!.click(); });
+}
+
 async function openLineageFor(id: string): Promise<HTMLElement> {
   select([id]);
-  await click(buttonNamed("Lineage")!);
+  await openMoreMenu();
+  await chooseMenuItem("Show what this card came from");
   const panel = container!.querySelector<HTMLElement>('[aria-label="Lineage"]');
   if (!panel) throw new Error("no lineage panel on screen");
   return panel;

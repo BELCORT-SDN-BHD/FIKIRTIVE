@@ -40,6 +40,11 @@ beforeEach(() => {
   Object.defineProperty(window, "innerWidth", { value: VIEWPORT.width, writable: true, configurable: true });
   Object.defineProperty(window, "innerHeight", { value: VIEWPORT.height, writable: true, configurable: true });
   window.localStorage.clear();
+  // 这个文件里的大多数用例测的是面板本身的行为(拖动/缩放/键盘/launcher),不是默认开合
+  // 本身 —— 默认从 2026-09-04 起改成收起(FRONT-A14,取代 Q3-A,见 panel-state.ts),
+  // 所以这里统一按「商家上次留着开着」起步,省得每条用例各自造一份存档。真正测默认值的
+  // 那几条用例(见下面「首帧默认值」块)会显式清掉这份存档,回到真的第一次访问。
+  window.localStorage.setItem(OTTO_PANEL_STORAGE_KEY, JSON.stringify({ mode: "docked", open: true, width: DEFAULT_WIDTH }));
 });
 
 afterEach(async () => {
@@ -118,13 +123,18 @@ describe("Dock, don't cover (§3.5 ①,G2)", () => {
 });
 
 describe("首帧默认值,挂载后才套存值 (§3.3)", () => {
-  it("renders the default width with transitions off on the server", () => {
+  it("collapses by default on the server — no active conversation, nothing stored yet (FRONT-A14)", () => {
+    // FRONT-A14(Founder 2026-09-04 裁决,取代 Q3-A):真的第一次访问,首帧就该是
+    // 收起(launcher),不是先画一个开着的面板再等挂载套回关着。
+    window.localStorage.clear();
     const markup = renderToStaticMarkup(shell());
 
-    expect(markup).toContain("data-otto-panel-mode=\"docked\"");
+    expect(markup).not.toContain("data-otto-panel-mode=\"docked\"");
     expect(markup).not.toContain("data-otto-panel-hydrated");
-    expect(markup).toContain("transition:none");
-    expect(markup).toContain(`width:${DEFAULT_WIDTH}px`);
+    expect(markup).toContain("data-otto-launcher=\"\"");
+    // 首帧不跳(§3.3 同一条纪律,套到收起状态上):launcher 位置的过渡只在挂载后开,
+    // 首帧渲染不该带位置过渡,不然套用存值那一下会滑一截。
+    expect(markup).not.toContain("180ms");
   });
 
   it("marks itself hydrated and applies the stored width after mount", async () => {
@@ -143,9 +153,15 @@ describe("首帧默认值,挂载后才套存值 (§3.3)", () => {
   it("falls back to defaults — and does not throw — on a corrupt stored value", async () => {
     window.localStorage.setItem(OTTO_PANEL_STORAGE_KEY, "{ this is not json");
 
-    const panel = panelOf(await render(shell()));
+    const el = await render(shell());
 
-    expect(panel.style.width).toBe(`${DEFAULT_WIDTH}px`);
+    // 损坏的存档退回默认值——默认收起(FRONT-A14),不是把面板炸没了或者硬开一个。
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    const launcher = document.querySelector<HTMLButtonElement>("[data-otto-launcher]")!;
+    expect(launcher).not.toBeNull();
+
+    await act(async () => launcher.click());
+    expect(panelOf(el).style.width).toBe(`${DEFAULT_WIDTH}px`);
   });
 
   it("writes the geometry back to the spec's key", async () => {
@@ -250,10 +266,15 @@ describe("头部与插槽 (§3.4)", () => {
     expect(composed.textContent).toContain("Chatting with Otto costs credits");
   });
 
-  it("shows the page-context chip when one is handed in", async () => {
-    const el = await render(shell({ contextChip: { label: "Raya promo" } }));
+  it("FRONT-A14 — renders the scope label verbatim, with no context claim wrapped around it", async () => {
+    // 标签是整句话,由调用方给全(`Workspace · Billing & credits` / `Canvas · Kaya jar ad`)。
+    // 从前这里包了一层「On this page:」—— 那句话说的是 Otto 读得到这一页,而今天服务端
+    // 没有任何读者读 `surface`/`subjectRef`(判官 r1 [P2])。所以只画调用方给的那一句。
+    const el = await render(shell({ contextChip: { label: "Workspace · Billing & credits" } }));
 
-    expect(el.querySelector("[data-otto-panel-context]")!.textContent).toContain("On this page: Raya promo");
+    const chip = el.querySelector("[data-otto-panel-context]")!;
+    expect(chip.textContent).toContain("Workspace · Billing & credits");
+    expect(chip.textContent).not.toContain("On this page");
   });
 
   it("offers a keyboard route to the resize handle", async () => {

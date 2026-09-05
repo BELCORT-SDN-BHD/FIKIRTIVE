@@ -168,6 +168,9 @@ function receiptVideoSpec(receipt: StoredCanvasActionReceipt): VideoSpec | null 
     seconds: receipt.videoSeconds,
     resolution: receipt.videoResolution,
     aspectRatio: receipt.aspectRatio ?? "",
+    // CREATE-A3:声音也是商家按下去的那一份授权。回执里没记(旧回执,或商家没碰过开关)
+    // ⇒ 这一格照旧缺席 ⇒ 重放的请求体也不带 audio,服务端按默认档交付。
+    ...(typeof receipt.videoAudio === "boolean" ? { audio: receipt.videoAudio } : {}),
   };
 }
 
@@ -222,6 +225,10 @@ export type StoredCanvasActionReceipt = {
    *  否则刷新后重放的可能是一档更贵/更便宜的片子，与商家当时按下去的那一档不是同一件事。 */
   videoSeconds?: number;
   videoResolution?: string;
+  /** CREATE-A3(§8.2 批 II):声音开关**不改价**,但它改交付物 —— 关掉声音的那一条与
+   *  带 AI 配音的那一条不是同一件东西。所以它与形状、组图同一条规矩:进回执,刷新后重放的
+   *  必须还是商家当时批准的那一档。只在商家真的拨过时出现;缺席 ⇒ 服务端默认档。 */
+  videoAudio?: boolean;
 };
 
 const CANVAS_RECEIPT_PREFIX = "fikirtive:canvas-action:v1:";
@@ -969,6 +976,9 @@ export function useCanvasGen(
       model: video,
       sourceGenerationId,
       ...(spec ? { durationSeconds: spec.seconds, resolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
+      // CREATE-A3(§8.2 批 II):商家拨过的声音开关跟着这一次付费请求走。没拨过 ⇒ 这一格
+      // 不出现 ⇒ 服务端按默认档交付,与本格接线之前逐字一样。
+      ...(typeof spec?.audio === "boolean" ? { audio: spec.audio } : {}),
       ...(requestThreadId && { threadId: requestThreadId }),
     };
     const receipt: StoredCanvasActionReceipt = {
@@ -984,6 +994,7 @@ export function useCanvasGen(
       sourceGenerationId,
       sourceNodeId,
       ...(spec ? { videoSeconds: spec.seconds, videoResolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
+      ...(typeof spec?.audio === "boolean" ? { videoAudio: spec.audio } : {}),
     };
     const receiptClaim = claimCanvasActionReceipt(receipt);
     if (receiptClaim !== "ok") {
@@ -1093,6 +1104,8 @@ export function useCanvasGen(
       ...(entityIds.length ? { entityIds } : {}),
       ...(Object.keys(variantSel).length ? { variantSel } : {}),
       ...(spec ? { durationSeconds: spec.seconds, resolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
+      // CREATE-A3(§8.2 批 II):与 animate 那条路逐字同一条 —— 拨过才发,没拨过不发。
+      ...(typeof spec?.audio === "boolean" ? { audio: spec.audio } : {}),
       ...(requestThreadId && { threadId: requestThreadId }),
     };
     const receipt: StoredCanvasActionReceipt = {
@@ -1108,6 +1121,7 @@ export function useCanvasGen(
       ...(entityIds.length ? { entityIds } : {}),
       ...(Object.keys(variantSel).length ? { variantSel } : {}),
       ...(spec ? { videoSeconds: spec.seconds, videoResolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
+      ...(typeof spec?.audio === "boolean" ? { videoAudio: spec.audio } : {}),
     };
     const receiptClaim = claimCanvasActionReceipt(receipt);
     if (receiptClaim !== "ok") {

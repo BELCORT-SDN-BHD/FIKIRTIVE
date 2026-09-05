@@ -20,6 +20,7 @@ import { threadToUiMessages } from "./otto-ui-messages";
 import type { ChatThreadDTO } from "./types";
 import type { MetaActionStep } from "./meta-plan-card";
 import type { StepResultStatus } from "./meta-write-actions";
+import { latestAssistantSayable } from "./otto-canvas-turn";
 
 /** The genJobIds that already have a durable GEN_RESULT — so we never double-render
  *  a result for a job whose card also shows "✓ making this now". */
@@ -86,6 +87,38 @@ export function deriveCardState(args: {
   if (genJobId || submitted) return "working";
   return "idle";
 }
+
+/**
+ * 那扇看着生成结果的窗，开多久、多久问一次 —— **两档**（Codex E2E-CRE-PAV-003）。
+ *
+ * ## 病根
+ *
+ * 这条轮询从前只有一档：每 2.5 秒问一次，问满 48 次（两分钟）就**不再问了**。而服务端
+ * 那一头，一个失败的生成走完它自己的重投序列本来就可能超过两分钟 —— `GEN_QUEUE_POLICY`
+ * 允许两次重投，间隔按 pg-boss 的退避公式是 30–60 秒和 60–120 秒，最坏 180 秒纯等待，
+ * 每次投递本身还要跑（`expireInSeconds` 给到 20 分钟）。于是 Codex 在真浏览器里录到那一幕：
+ * 数据库 03:33:26 已经是 FAILED、1 credit 也已经退回，画布上那张 Otto 卡还写着
+ * 「Generating · still working…」，刷新才变成「Failed」。屏幕不是读错了，是**先闭嘴了**。
+ *
+ * ## 这条规则不是这里发明的
+ *
+ * 同一件事在 StoryboardCard 上已经被判过一次（#782 r7，判官 r6 P1-A）：快轮打满之后
+ * 服务端可能还有活作业，所以「**到顶不等于放弃**」—— 降频接着问，慢轮也到顶才真的停。
+ * 判词与那条纯函数都在 `storyboard-card.ts` 的 `nextSyncPhase`，这里一个字都不重写，
+ * 只把同一套齿轮交给这条一直缺第二档的观察窗：快轮 2.5s × 48（≈2 分钟，原样不动），
+ * 慢轮 60s × 30（≈30 分钟）。
+ *
+ * 30 分钟这个数不是随手取的：它必须盖过服务端自己对「一个生成一定会有终局」的保证 ——
+ * `GEN_QUEUE_POLICY.expireInSeconds`（20 分钟，一次投递最长能活多久）之外还有 worker 的
+ * 收尸器兜底。屏幕停止发问的那一刻，必须晚于服务端交出终局的那一刻，否则就是同一个病。
+ * 这条不变量由 `__tests__/otto-generation-watch.test.ts` 钉住，改小了会红。
+ */
+export const GENERATION_WATCH_GEARS = {
+  /** 刚花完钱、盯着结果的那一档。原来的唯一一档，数字未动。 */
+  fast: { intervalMs: 2500, maxTries: 48 },
+  /** 快轮到顶、服务端还没给终局的那一档 —— 「我们不再盯着看了」不等于「我们不听了」。 */
+  slow: { intervalMs: 60_000, maxTries: 30 },
+} as const;
 
 /** A job is "working" once its GEN_CARD has a genJobId (it was approved/generated)
  *  but no terminal message (GEN_RESULT or TURN_ERROR) has landed for that job yet.
@@ -200,6 +233,56 @@ export function appendChainedNarrations(
   });
   if (additions.length === 0) return messages;
   return [...messages, ...additions];
+}
+
+/**
+ * P2-1(判官二轮复核,2026-09-04)—— 直播这一轮结束时,若 live 列表里读不出一句可读的
+ * TEXT(`latestAssistantSayable` 返回 null),从 durable 补那一条,只补缺、不重复。
+ *
+ * 病根:走查录到首轮直播里,按下 Generate 之后画布那张始终可见的卡(`OttoTurnCard`)
+ * 正文变成空态引导句「Tell Otto what you want to create or change.」,一直到刷新才回来
+ * Otto 的原话。`appendMissingCards` 刻意从不补 TEXT(避免把已经流过的回复再叠一遍),但
+ * 那份注释假设的前提——「流过的回复已经画出来了」——在这一轮不成立:live 列表里那条
+ * assistant 消息最终没有任何 text 部件(叙述文字这次没有随流下来,只有 durable 那份
+ * 存住了),`latestAssistantSayable` 于是找不到东西,画布卡只能落回空态句。
+ *
+ * 与 `appendChainedNarrations` 的分工:那个是服务端点名(`narrationMessageId`)的窄口子,
+ * 只覆盖链式批准那一条路径;这个不看服务端点没点名,只看 live 列表此刻有没有话可说——
+ * 先检查 `latestAssistantSayable(messages)` 不是 null 就原样返回,天然不会把已经画出来的
+ * 那条 TEXT 再叠一遍。
+ *
+ * 调用点只有一处,刻意不接进 `mergeDurableIntoLive`(生成期间每 2.5 秒跑一次的那个轮询):
+ * 轮询跑在这一轮**还没结束**的当中,「此刻没有可读文字」不等于「这一轮不会再有」,猜着补
+ * 会有把不相关的旧 durable 行拉进来的风险(`approval-chain.test.ts` 的「un-named TEXT is
+ * never re-injected」钉的正是这条界线)。只在 `OttoChatStream.tsx` 的 `useChat` 自己的
+ * `onFinish` 里调用——那才是「这一轮到底有没有文字」真正见分晓的那一刻。
+ */
+export function backfillMissingAssistantText(
+  messages: OttoUiMessage[],
+  fresh: ChatThreadDTO,
+): OttoUiMessage[] {
+  if (latestAssistantSayable(messages) !== null) return messages;
+  const present = new Set(
+    messages.map((m) => m.metadata?.durableId).filter((id): id is string => !!id),
+  );
+  const freshMessages = threadToUiMessages(fresh);
+  for (let i = freshMessages.length - 1; i >= 0; i--) {
+    const u = freshMessages[i];
+    if (u.role !== "assistant") continue;
+    const meta = u.metadata;
+    if (meta?.kind !== "TEXT") continue;
+    if (present.has(meta.durableId)) continue;
+    const text = u.parts
+      .filter((p): p is { type: "text"; text: string } =>
+        !!p && typeof p === "object" && (p as { type?: unknown }).type === "text"
+        && typeof (p as { text?: unknown }).text === "string")
+      .map((p) => p.text)
+      .join(" ")
+      .trim();
+    if (!text) continue;
+    return [...messages, u];
+  }
+  return messages;
 }
 
 /** Patch in-memory GEN_CARD genJobIds from the durable thread. After "Make it",
