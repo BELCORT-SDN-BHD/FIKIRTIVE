@@ -6,6 +6,7 @@ import { DefaultChatTransport } from "ai";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePickerMenu";
 import { useReferencePicker } from "@/components/reference-picker/useReferencePicker";
+import { MessageReferences } from "@/components/reference-picker/MessageReferences";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Attachment,
@@ -154,7 +155,7 @@ export interface OttoChatStreamProps {
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
    *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
    *  so the route's existing-thread branch handles it. */
-  pendingFirst?: { text: string; goalKey?: string; entityIds?: string[] };
+  pendingFirst?: { text: string; goalKey?: string; entityIds?: string[]; references?: string[] };
   /** Called right after the pendingFirst message is dispatched, so the parent can
    *  clear it (prevents a re-send if this thread is remounted later). */
   onPendingFirstSent?: () => void;
@@ -348,6 +349,7 @@ export function OttoChatStream({
           sourceGenerationIds?: string[];
           referenceVideoGenerationId?: string;
           referenceVideoGenerationIds?: string[];
+          references?: string[];
         };
         return {
           body: {
@@ -363,6 +365,8 @@ export function OttoChatStream({
             ...(ids.sourceGenerationId ? { sourceGenerationId: ids.sourceGenerationId } : {}),
             ...(ids.referenceVideoGenerationIds?.length ? { referenceVideoGenerationIds: ids.referenceVideoGenerationIds } : {}),
             ...(ids.referenceVideoGenerationId ? { referenceVideoGenerationId: ids.referenceVideoGenerationId } : {}),
+            // FRONT-A10:这一轮 `@` 到的对象(类型化 ID),落进 ChatMessage.referenceRefs 供回链。
+            ...(ids.references?.length ? { references: ids.references } : {}),
           },
         };
       },
@@ -659,7 +663,7 @@ export function OttoChatStream({
     lastSubmittedTextRef.current = pendingFirst.text;
     void sendMessage(
       { text: pendingFirst.text },
-      { body: { projectId, threadId: thread.id, ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}), ...(pendingFirst.entityIds?.length ? { entityIds: pendingFirst.entityIds } : {}) } }, // F30: carry entity conditioning into the first streamed turn
+      { body: { projectId, threadId: thread.id, ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}), ...(pendingFirst.entityIds?.length ? { entityIds: pendingFirst.entityIds } : {}), ...(pendingFirst.references?.length ? { references: pendingFirst.references } : {}) } }, // F30: carry entity conditioning into the first streamed turn; FRONT-A10: and the typed references it named
     );
     onPendingFirstSent?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -670,6 +674,8 @@ export function OttoChatStream({
     if (!trimmed || isBusy || submitLockRef.current) return;
     submitLockRef.current = true;
     const entityIds = picker.entityIdsForSend(trimmed);
+    // FRONT-A10:「这条消息提到了谁」—— 与 entityIds(生成条件)是两条路,一起上行。
+    const references = picker.referencesForSend(trimmed);
     lastSubmittedTextRef.current = trimmed;
     setText(""); // clear the composer immediately; sendMessage echoes the user msg
     picker.clearPicked();
@@ -702,6 +708,7 @@ export function OttoChatStream({
             projectId,
             threadId: thread.id,
             ...(entityIds.length ? { entityIds } : {}),
+            ...(references.length ? { references } : {}),
             ...composerReferencePayload(attachedNow),
           },
         },
@@ -1598,6 +1605,12 @@ export function OttoChatStream({
                     // Graceful: only rendered when reasoning arrives; most models omit it.
                     <ReasoningPart key={`${m.id}:r${ri}`} part={p} />
                   ))}
+                  {/* FRONT-A10 回链:这一条消息 `@` 到的对象,点得回去。名字与地址来自服务端
+                      那一次 owner-scoped 解析(lib/reference-refs.ts),客户端不自己拼。
+                      刚发出去那一条还没有 —— 它要等这一轮落库、下一次取数才带上引用。 */}
+                  {m.metadata?.references?.length ? (
+                    <MessageReferences references={m.metadata.references} />
+                  ) : null}
                   {turnCost !== null && (
                     <Marker>
                       <MarkerContent>This reply used {creditsLabel(turnCost)}.</MarkerContent>

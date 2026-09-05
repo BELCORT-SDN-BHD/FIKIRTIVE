@@ -28,6 +28,12 @@ let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 /** Every turn the composer would have sent — the billed action this menu must not trigger. */
 let sent: string[] = [];
+/**
+ * What the composers put on the wire for the turn they just sent (FRONT-A10 slice ③):
+ * `entityIds` is generation conditioning, `references` is "这条消息提到了谁". Two lists, never
+ * merged — recorded here so a test can prove a media reference reaches the second and NOT the first.
+ */
+let lastPayload: { entityIds: string[]; references: string[] } | null = null;
 
 function Harness() {
   const [text, setText] = useState("");
@@ -50,6 +56,10 @@ function Harness() {
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault();
             sent.push(text);
+            lastPayload = {
+              entityIds: picker.entityIdsForSend(text),
+              references: picker.referencesForSend(text),
+            };
             setText("");
           }
         }}
@@ -62,6 +72,7 @@ function Harness() {
 beforeEach(() => {
   vi.useFakeTimers();
   sent = [];
+  lastPayload = null;
   searchReferencesAction.mockReset();
   searchReferencesAction.mockResolvedValue({ items: ROWS, nextCursor: null });
 });
@@ -272,5 +283,77 @@ describe("FRONT-A10 — 两套 @ 实现收口成一个选择器", () => {
     const event = await pressNow("Tab");
     expect(event.defaultPrevented).toBe(true);
     expect(sent).toEqual([]);
+  });
+});
+
+/**
+ * 清单 C1 收口 —— 「商家实际能 `@` 到几类」。
+ *
+ * 这一组之前只到实体四格:generation／upload 服务端搜得到、菜单不给,理由是「聊天轮没有列
+ * 可以带媒体引用」。第③刀给了那一列(`ChatMessage.referenceRefs`),所以两格按裁决九
+ * 「有契约才出现」回到菜单里,并且要证明它们走的是**引用**那条路、不是生成条件那条路。
+ */
+describe("FRONT-A10 — 选择器按契约补齐类别", () => {
+  it("FRONT-A10 bare @ offers every contract type production can answer", async () => {
+    await render();
+    await type("@");
+    const labels = options().map((option) => option.textContent ?? "");
+    for (const label of ["Products", "Characters", "Official avatars", "Locations", "Generations", "Uploads"]) {
+      expect(labels.some((entry) => entry.includes(label)), `菜单里没有「${label}」这一格`).toBe(true);
+    }
+    // Clothes 是契约里唯一没有生产记录的一型 —— 裁决九:无契约的控件不出现。
+    expect(labels.some((entry) => entry.includes("Clothes"))).toBe(false);
+  });
+
+  it("FRONT-A10 a picked category searches only that type on the server", async () => {
+    await render();
+    await type("@");
+    const uploads = options().find((option) => option.textContent?.includes("Uploads"))!;
+    await act(async () => uploads.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    await settle();
+    const lastCall = searchReferencesAction.mock.calls.at(-1)?.[0] as { types?: string[] };
+    expect(lastCall?.types).toEqual(["upload"]);
+  });
+
+  it("FRONT-A10 a media reference travels as a typed reference, never as generation conditioning", async () => {
+    searchReferencesAction.mockResolvedValue({
+      items: [
+        { type: "upload", id: "ast_1", name: "cendol-shelf.png", source: "Upload · Library", thumbUrl: null },
+        ...ROWS,
+      ],
+      nextCursor: null,
+    });
+    await render();
+    await type("@cendol");
+    const row = options().find((option) => option.textContent?.includes("cendol-shelf.png"))!;
+    await act(async () => row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    await press("Enter");
+
+    expect(sent).toEqual(["@cendol-shelf.png "]);
+    // 引用那条路带上了它;生成条件那条路一个都没有 —— 一个 Asset id 混进 entityIds 会被
+    // 查到另一张表上去,而且会读成「这张图参与了成图」,而它并没有。
+    expect(lastPayload?.references).toEqual(["upload:ast_1"]);
+    expect(lastPayload?.entityIds).toEqual([]);
+  });
+
+  it("FRONT-A10 an entity reference is on BOTH lists — it conditions the image and it is what was named", async () => {
+    await render();
+    await type("@ja");
+    const row = options().find((option) => option.textContent?.includes("Jasmine gift box"))!;
+    await act(async () => row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    await press("Enter");
+    expect(lastPayload?.entityIds).toEqual(["p1"]);
+    expect(lastPayload?.references).toEqual(["product:p1"]);
+  });
+
+  it("FRONT-A10 deleting the @name from the draft drops it from both lists", async () => {
+    await render();
+    await type("@ja");
+    const row = options().find((option) => option.textContent?.includes("Jasmine gift box"))!;
+    await act(async () => row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    await type("something else entirely");
+    await press("Enter");
+    expect(lastPayload?.entityIds).toEqual([]);
+    expect(lastPayload?.references).toEqual([]);
   });
 });

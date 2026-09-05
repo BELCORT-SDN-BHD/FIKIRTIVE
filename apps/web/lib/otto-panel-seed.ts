@@ -29,6 +29,7 @@ import {
   getEntities,
   getProjects,
   resolveCoworkResultUrls,
+  resolveCoworkMessageReferences,
 } from "./data";
 import { toChatThreadDTO, toChatThreadMetaDTO, toEntityDTO } from "./dto";
 import { ottoGreetingNameFromProfile } from "./otto-greeting";
@@ -160,8 +161,12 @@ export async function loadOttoPanelSeed(
     if (openThreadId) {
       const full = await getCoworkThread(ownerId, openThreadId);
       if (full) {
-        const urls = await resolveCoworkResultUrls(ownerId, [full]);
-        const dto = toChatThreadDTO(full, urls);
+        const [urls, references] = await Promise.all([
+          resolveCoworkResultUrls(ownerId, [full]),
+          // FRONT-A10 回链:侧栏摊开的这一条也要能点回它提到的对象。
+          resolveCoworkMessageReferences(ownerId, [full]),
+        ]);
+        const dto = toChatThreadDTO(full, urls, references);
         threads = threads.map((t) => (t.id === dto.id ? dto : t));
       }
     }

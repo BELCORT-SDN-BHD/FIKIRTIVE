@@ -11,6 +11,8 @@ export type CanvasPendingFirst = {
   text: string;
   goalKey?: string;
   entityIds?: string[];
+  /** FRONT-A10:第一句话 `@` 到的对象(类型化 ID),落进 ChatMessage.referenceRefs 供回链。 */
+  references?: string[];
 };
 
 export function CanvasOttoOverlay({

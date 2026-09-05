@@ -1082,6 +1082,12 @@ model ChatMessage {
   actorId    String?
   visibility String?
   outletId   String?
+  // FRONT-A10 (spec docs/specs/frontend-baseline.md §7.3③ slice ③): the typed reference ids this
+  // turn was about, in wire form `"<type>:<id>"` (packages/core/src/reference-ref.ts). A typed id,
+  // never a bare one: `payload.entityIds` cannot say WHICH source an id belongs to, so a message
+  // could not be linked back to the object it named. Every value here is resolved against this
+  // owner BEFORE the row is written (apps/web/lib/reference-refs.ts) — a foreign id never lands.
+  referenceRefs      String[]
   createdAt          DateTime        @default(now())
   deletedAt          DateTime?
 

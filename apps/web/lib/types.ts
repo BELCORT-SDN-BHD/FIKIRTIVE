@@ -12,6 +12,7 @@ import type { ChatMessageKind } from "@fikirtive/db";
 // 官方目录只读的判据(Founder 2026-08-30 裁决)——**类型来自域层**,不在这里手抄一份。
 // 判据函数与能力表见 packages/core/src/entity-policy.ts;DTO 只负责把它的答案带过河。
 import type { EntityCapabilities, EntityOrigin } from "@fikirtive/core/entity-policy";
+import type { ReferenceLink } from "./reference-search-model";
 
 export type EntityTypeDTO = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK";
 export type ShotStatusDTO = "DRAFT" | "EXPORTED" | "ATTACHED" | "FINAL";
@@ -85,6 +86,12 @@ export interface ChatMessageDTO {
   payload: unknown | null;
   genJobId: string | null;
   createdAt: string;
+  /**
+   * FRONT-A10 —— 这条消息 `@` 到的对象,已经由服务端按当前 principal 解析回名字与地址
+   * (`lib/reference-refs.ts`)。缺席/空数组 = 这条消息没提到任何对象(迁移之前的老消息
+   * 一律如此:那时客户端只上报裸 id,补不出类型)。客户端只画它,不回传它。
+   */
+  references?: ReferenceLink[];
 }
 
 export interface ChatThreadDTO {

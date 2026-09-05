@@ -32,6 +32,7 @@ const {
   mockGetAllCoworkThreadMetas,
   mockGetCoworkThread,
   mockResolveCoworkResultUrls,
+  mockResolveCoworkMessageReferences,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockGetOrCreateDefaultProject: vi.fn(),
@@ -41,6 +42,7 @@ const {
   mockGetAllCoworkThreadMetas: vi.fn(),
   mockGetCoworkThread: vi.fn(),
   mockResolveCoworkResultUrls: vi.fn(),
+  mockResolveCoworkMessageReferences: vi.fn(),
 }));
 
 vi.mock("../auth-guard", () => ({
@@ -65,6 +67,7 @@ vi.mock("../data", () => ({
   getAllCoworkThreadMetas: mockGetAllCoworkThreadMetas,
   getCoworkThread: mockGetCoworkThread,
   resolveCoworkResultUrls: mockResolveCoworkResultUrls,
+  resolveCoworkMessageReferences: mockResolveCoworkMessageReferences,
 }));
 vi.mock("../dto", () => ({
   toEntityDTO: (e: unknown) => e,
@@ -115,6 +118,7 @@ beforeEach(() => {
     return { ...row, messages: [{ role: "user", content: `full content for ${row.id}` }] };
   });
   mockResolveCoworkResultUrls.mockReset().mockResolvedValue(new Map());
+  mockResolveCoworkMessageReferences.mockReset().mockResolvedValue(new Map());
 });
 
 describe("不带 select:停在默认 project,续面板自己那一批里最近的一条", () => {

@@ -34,6 +34,7 @@ import {
   displayCredits,
   GOAL_PRESETS,
   isGoalKey,
+  referenceUnavailableMessage,
 } from "@fikirtive/core";
 import {
   otto,
@@ -65,6 +66,7 @@ import {
   // tenant constraint on that write has a single place to be守.
   saveRollingSummary,
 } from "@/lib/otto-actions";
+import { resolveOwnedReferenceRefs } from "@/lib/reference-refs";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID, OTTO_TRANSIENT_FAILURE_SENTENCE } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
@@ -160,6 +162,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     let userMessageId: string;
     let runInput: AgentInputItem[];
     let ctx: Awaited<ReturnType<typeof buildOttoContext>>;
+    let picked: Awaited<ReturnType<typeof resolveOwnedReferenceRefs>>;
 
     try {
       // Validate the project is owned + live
@@ -181,6 +184,15 @@ export async function POST(req: NextRequest): Promise<Response> {
       // 参考」的前提铸卡、商家为一张不含指定产品的素材付了钱。
       if (refs.unavailable.length > 0) {
         return Response.json({ error: unavailableReferenceMessage(refs.unavailable) }, { status: 400 });
+      }
+
+      // FRONT-A10(§7.3③ 第③刀):`@` 到的对象在**落库之前**按当前 principal 的 ownerId 解析
+      // 一遍(判官 P2-1 的收口位)。与上面媒体引用同一条纪律:一件解不出来,这一轮整轮不发,
+      // 而且是一个流打开**之前**的普通 400,所以 composer 拿到的是一句可读的话。那句话对
+      // 「别人的」和「自己删掉的」说得一模一样 —— 它不会变成存在性问答机。
+      picked = await resolveOwnedReferenceRefs(ownerId, parsed.data.references);
+      if (picked.unresolved > 0) {
+        return Response.json({ error: referenceUnavailableMessage("notFound") }, { status: 400 });
       }
 
       // Resolve thread: new vs existing-owned-and-in-project
@@ -247,6 +259,8 @@ export async function POST(req: NextRequest): Promise<Response> {
           seq: ++seq,
           text,
           payload: { entityIds, variantSel, sourceGenerationIds: refs.sourceGenerationIds, referenceVideoGenerationIds: refs.referenceVideoGenerationIds },
+          // FRONT-A10:这条消息**提到了谁**,类型化 ID,服务端解析过的那一份。
+          referenceRefs: picked.wire,
           replyToMessageId: validReplyId,
           // #879 step 1: page-context pins, written as-is when the caller sent them (else
           // NULL). Identity columns (actorId, visibility) are never set from a request —
