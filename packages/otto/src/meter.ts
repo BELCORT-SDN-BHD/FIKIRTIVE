@@ -6,7 +6,9 @@
  *  2. Settle ACTUAL token cost (≤ reserved); remainder is refunded inside settleCredits.
  *  3. A FAILED model call (fn throws) refunds the WHOLE reservation; user never charged.
  *  4. Mock/free calls (paid:false) bypass all metering — ZERO credits touched.
- *  5. Unknown model → sonnet pricing (never free = never a metering hole).
+ *  5. (ENGINE-A5, ①段) An UNPRICED model THROWS — llmPricesFor has no guessing arm left, so a
+ *     model that is not in the table can never be charged at a neighbour's price. (Until ①段
+ *     this line read "unknown model → sonnet pricing"; the substring guess it described is gone.)
  *  6. (#524 r3) An optional `afterReserve` claim runs between the hold and the model call. It can
  *     only STOP the call: a lost/failed claim refunds the whole hold and fn never runs. It cannot
  *     raise, lower or redirect a charge — reserve/settle/refund are byte-identical to before.
@@ -26,7 +28,14 @@
  *     merchant's goods and the charge both land, or neither does and the whole hold is refunded.
  *     Callers that do not pass it are byte-identical to before. NOTE the one path it does NOT
  *     cover, spelled out on the field itself: a `usageOnError` settle (invariant #2's truncated
- *     turn) charges real tokens and never calls the hook — delivery-less but paid, by design.
+ *     turn) charges real tokens and never calls the hook. (ENGINE-A4, Otto ⑤段) That settle is
+ *     no longer the delivery-less case: the chat runner's `usageOnError` now returns real usage
+ *     ONLY when the truncated turn actually left a deliverable behind (a minted card, a landed
+ *     write), and returns null otherwise — so a delivery-less truncated turn takes the refund
+ *     arm below, hook and all. What reaches this settle is therefore a turn that DID deliver
+ *     something the merchant still has; the settle-side gap this note warns about is now about
+ *     ordering (the delivery landed inside the tool, not in this transaction), not about paying
+ *     for nothing.
  *     #1046-P1: before the hook runs, the SAME transaction reads this refId's finalizer directly.
  *     A REFUND already there ⇒ `SettleLostToRefund` ⇒ the whole transaction rolls back. "settle
  *     no-opped" is otherwise indistinguishable from "settle succeeded", and delivering on the
@@ -155,7 +164,8 @@ export type LlmBudgetArgs = {
   maxSteps?: number;
   /** Price table for this call. When supplied it MUST come from the Otto model-runtime
    *  manifest (runtime.ts ottoBudgetArgsFor — the single billing source, PH1-A1).
-   *  Omitted → llmPricesFor(model), the fail-closed lookup (unknown → sonnet, never free). */
+   *  Omitted → llmPricesFor(model), the fail-closed lookup (ENGINE-A5: an unpriced model
+   *  THROWS — never a guessed neighbour's price, never free). */
   prices?: LlmPrices;
   /** #543 — an upper bound on the HOLD, in INTERNAL credits. Server-owned composition
    *  data only (runtime.ts ottoBudgetArgsFor); never request/client supplied. It can only
@@ -175,6 +185,13 @@ export type LlmBudgetArgs = {
    *  than a refusal — see reserveCreditsUpTo in @fikirtive/db for why a hold is clamped where a
    *  charge is refused. The cap remains a hard ceiling; the hold can only come out smaller. */
   reserveMinInternal?: number;
+  /** Maps a THROWN call to the usage it really burned, or null.
+   *
+   *  null ⇒ 整笔预扣退掉(不变量 #3)+ `onRefundedFailure`;非 null ⇒ 按这个用量结算。
+   *
+   *  ENGINE-A4(Otto ⑤段):这个判定是**调用方**的,不是这里的。聊天那一门(runtime.ts
+   *  `ottoBudgetArgsFor`)现在只在「跑满步数 **且** 这一轮真的交付了东西」时才交回用量,
+   *  零交付就交回 null 走整笔退款。这个 wrapper 的两条分支一个字节都没改。 */
   usageOnError?: (e: unknown) => TokenUsage | null;
   /**
    * 钱路 M1-b —— **交付与结算同一笔提交**。在 settle 的那一笔事务里运行,拿到的就是 settle
@@ -198,8 +215,15 @@ export type LlmBudgetArgs = {
    * 按实际 token 结算,然后把错误抛出去 —— **这个钩子根本不会被调用**。于是:
    *   ③ 什么都没交付,但商家**按真实烧掉的 token 付了钱**。
    * 这是既有的定价决定(文件头不变量 #2/#3:截断的一轮按实际用量收费,绝不按预扣满额收费),
-   * 不是这条缝带来的缺口 —— 模型确实替商家干了那些活,只是没干完。要改它得单独立项,由 Founder
-   * 拍板;在此之前,谁读这段注释都必须知道它存在。
+   * 不是这条缝带来的缺口 —— 模型确实替商家干了那些活,只是没干完。
+   *
+   * **③ 这一条,聊天那一门上已经不存在了(ENGINE-A4,Otto ⑤段,Founder S1 九问 1② 裁决)。**
+   * 上面那句「要改它得单独立项,由 Founder 拍板」说的就是这一段:聊天轮的 `usageOnError`
+   * (runtime.ts `ottoBudgetArgsFor`)现在先判这一轮有没有交付 —— 零交付就交回 null,于是走
+   * 上面的②(全额退款 + `onRefundedFailure`),烧掉的 token 与已成功的搜索由平台吸收。留在③
+   * 的只剩两种人:**有交付**的截断轮(卡片/落盘产物已在商家手里,按实结算是对的),以及深研
+   * worker 那一门(apps/worker/src/jobs/research.ts,它有自己的 `usageOnError`,本次未改 ——
+   * 那是另一份规格的钱)。
    *
    * 不传这个钩子的调用方,行为一个字节都没变(结算失败照旧原样抛出,不新增退款)。
    *
