@@ -106,11 +106,14 @@ function RecoveryState({
   filters,
   onRetry,
   retrying,
+  retryFailed,
 }: {
   health: MarketingHealthReadModel;
   filters: HomeSearchState;
   onRetry: () => void;
   retrying: boolean;
+  /** 已经重试过一次、服务器仍然读不出来。首屏为 false —— 没试过就没有「仍然」。 */
+  retryFailed: boolean;
 }) {
   if (health.state === "partial" || health.state === "ready") return null;
 
@@ -177,9 +180,18 @@ function RecoveryState({
         <EmptyDescription>{content.description}</EmptyDescription>
       </EmptyHeader>
       {content.retry ? (
-        <Button type="button" size="sm" onClick={onRetry} disabled={retrying}>
-          {retrying ? "Retrying…" : content.action}
-        </Button>
+        <>
+          <Button type="button" size="sm" onClick={onRetry} disabled={retrying}>
+            {retrying ? "Retrying…" : content.action}
+          </Button>
+          {/*
+            重试失败的唯一反馈。live region 从一开始就在 DOM 里(空的),句子后填 —— 与内容
+            同时插入的 live region 读屏常常读不到。首屏没有句子,所以商家看不到多余的话。
+          */}
+          <p role="status" aria-live="polite" className="text-xs text-muted-foreground">
+            {retryFailed ? MARKETING_HOME_COPY.retryStillUnavailable : ""}
+          </p>
+        </>
       ) : (
         <Link href={content.href} className={buttonVariants({ size: "sm" })}>
           {content.action}
@@ -306,17 +318,19 @@ function HomeComponentBlock({
   filters,
   onRetry,
   retrying,
+  retryFailed,
 }: {
   id: HomeComponentId;
   health: MarketingHealthReadModel;
   filters: HomeSearchState;
   onRetry: () => void;
   retrying: boolean;
+  retryFailed: boolean;
 }) {
   if (id !== "marketing-health") return null;
   return (
     <>
-      <RecoveryState health={health} filters={filters} onRetry={onRetry} retrying={retrying} />
+      <RecoveryState health={health} filters={filters} onRetry={onRetry} retrying={retrying} retryFailed={retryFailed} />
       {health.state === "partial" ? <PartialMarketingHealth health={health} filters={filters} /> : null}
       {health.state === "ready" ? <ReadyMarketingHealth health={health} filters={filters} /> : null}
     </>
@@ -359,6 +373,16 @@ export function MarketingHomeView({
    * 说得出「正在重试」,而不是按下去看着没反应。
    */
   const [retrying, startRetry] = useTransition();
+  /**
+   * 按过一次 Retry 没有?按过、而且这一轮已经跑完,屏幕上却还是同一屏读不出来 ——
+   * 那就说一句实话,而不是让商家对着逐字相同的画面猜自己按没按到(判官 2026-09-05 P2-3)。
+   * 重试成功时服务器给的是 partial/ready,`RecoveryState` 整块不出现,这一句自然也不出现。
+   */
+  const [retryAttempted, setRetryAttempted] = useState(false);
+  const retry = () => {
+    setRetryAttempted(true);
+    startRetry(() => router.refresh());
+  };
 
   useEffect(() => {
     const targetId = window.location.hash.slice(1);
@@ -479,8 +503,9 @@ export function MarketingHomeView({
                     id={id}
                     health={health}
                     filters={filters}
-                    onRetry={() => startRetry(() => router.refresh())}
+                    onRetry={retry}
                     retrying={retrying}
+                    retryFailed={retryAttempted && !retrying}
                   />
                 </div>
               ))}
