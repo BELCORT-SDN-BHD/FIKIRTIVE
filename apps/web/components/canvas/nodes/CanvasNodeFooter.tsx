@@ -22,32 +22,48 @@
  *     renumber a survivor (the invented-identity class #603 T4 closed) and a card that is still
  *     queueing wears no version at all. Unknown renders nothing — never "v?" and never a guess.
  */
-import { canvasBatchSize, type CanvasBatchFacts } from "@/lib/canvas-batch-identity";
-import { truncateCanvasTitle } from "@/lib/canvas-title";
+import { canvasBatchPosition, type CanvasBatchFacts } from "@/lib/canvas-batch-identity";
+import { DEFAULT_CANVAS_NAME, truncateCanvasTitle } from "@/lib/canvas-title";
 
 /**
  * Which one of its press this card is, 1-based — or null when the press has not said.
  *
- * Reads the recorded size through the same exported reader the A/B letter and the compare gate
- * use, so "what counts as a recorded batch" is decided in one place. A position outside its own
- * recorded size is not a position, and answers null like anything else unrecorded.
+ * The whole judgment of "is this a recorded position at all" belongs to `canvasBatchPosition`,
+ * the reader the A/B letter and the compare gate already share; this is only the 0-based → 1-based
+ * step the merchant reads. It used to re-state that guard here, and two copies of one rule are two
+ * truths waiting to drift (judge #1194 P2-1).
  */
 export function canvasCardVersion(facts: CanvasBatchFacts): number | null {
-  const size = canvasBatchSize(facts);
-  if (size === null) return null;
-  const index = facts.batchIndex;
-  if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index >= size) return null;
-  return index + 1;
+  const index = canvasBatchPosition(facts);
+  return index === null ? null : index + 1;
+}
+
+/**
+ * The card's name, as the strip should show it — or "" for a card that has no name to show.
+ *
+ * `truncateCanvasTitle` is a CANVAS titler: handed something that reduces to nothing it answers
+ * with the Canvas placeholder ("New canvas"). A card is not a Canvas, and a prompt of nothing but
+ * quotation marks trimmed to nothing used to reach it and borrow that placeholder, so a nameless
+ * card announced itself as a canvas (judge #1194 P2-2). The strip therefore checks what the titler
+ * ACTUALLY produced: a result that is the placeholder, from a card that was not literally named
+ * that, is not this card's name.
+ */
+function cardStripName(full: string): string {
+  if (!full) return "";
+  const shown = truncateCanvasTitle(full);
+  if (shown === DEFAULT_CANVAS_NAME && full !== DEFAULT_CANVAS_NAME) return "";
+  return shown;
 }
 
 export function CanvasNodeFooter({ name, facts }: { name?: string | null; facts?: CanvasBatchFacts }) {
   const full = (name ?? "").trim();
+  const shown = cardStripName(full);
   const version = facts ? canvasCardVersion(facts) : null;
-  if (!full && version === null) return null;
+  if (!shown && version === null) return null;
   return (
     <footer className="cv-node-footer">
-      {full ? (
-        <span className="cv-node-footer-name" title={full}>{truncateCanvasTitle(full)}</span>
+      {shown ? (
+        <span className="cv-node-footer-name" title={full}>{shown}</span>
       ) : (
         <span className="cv-node-footer-name" />
       )}
