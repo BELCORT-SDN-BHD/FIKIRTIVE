@@ -667,6 +667,54 @@ describe("POST /api/otto/stream", () => {
     );
     log.mockRestore();
   });
+
+  // 走查修复三(#3310,截图 09、13-15):我们这边的 Anthropic 账户余额不足 → 服务端拿到
+  // status=400「Your credit balance is too low…」,商家却读到「please try again」并一直重试。
+  // 上一条钉的是**瞬时**那一档(照旧 snag + Reference);这一条钉它的另一半:供应商侧
+  // 不可恢复的那一档换诚实句、说清没收钱、把手仍在,而且不点名供应商。
+  it("ENGINE-A4: 供应商侧不可恢复的失败说实话,而不是「再试一次」", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const body = JSON.stringify({
+      type: "error",
+      error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." },
+    });
+    const providerError = Object.assign(new Error("AI_APICallError: Invalid request"), {
+      name: "AI_APICallError",
+      statusCode: 400,
+      responseBody: body,
+    });
+    mocks.run.mockRejectedValue(providerError);
+    // 真实合约:fn 抛了、usageOnError 交回 null ⇒ 整笔退款 ⇒ 钩子响 ⇒ 原错误照抛。
+    mocks.withLlmBudget.mockImplementation(
+      async (args: { onRefundedFailure?: () => void }, fn: () => Promise<unknown>) => {
+        try {
+          return await fn();
+        } catch (e) {
+          args.onRefundedFailure?.();
+          throw e;
+        }
+      },
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "Make a launch post" }))).json()) as Array<{
+      type?: string;
+      data?: { kind?: string; text?: string };
+    }>;
+    const streamedError = parts.find((part) => part.type === "data-error")?.data;
+
+    expect(streamedError?.text).toMatch(
+      /^Otto is unavailable right now on our side\. This turn wasn't charged\. Please try again later\. Reference: OTTO-/,
+    );
+    expect(streamedError?.text).not.toMatch(/hit a snag/i);
+    expect(streamedError?.text).not.toMatch(/anthropic|credit balance/i);
+    // 刷新之后还得是同一句 —— 落盘的那条 TURN_ERROR 与流上这一条逐字相同。
+    expect(mocks.chatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ kind: "TURN_ERROR", text: streamedError?.text }),
+      }),
+    );
+    log.mockRestore();
+  });
 });
 
 /**

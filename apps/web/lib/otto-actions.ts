@@ -83,7 +83,7 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 // #810 P2-2: the ONE translation of a failed turn into what the merchant reads — shared with
 // the streaming route so an out-of-credits refusal is never reported as a product fault here
 // and as the real two numbers there.
-import { ottoFailureMessage } from "@/lib/otto-error-copy";
+import { ottoDegradeText, ottoFailureMessage } from "@/lib/otto-error-copy";
 import { newThreadTitle } from "@/lib/otto-canned-starters";
 import { coerceThreadSurface, DEFAULT_THREAD_SURFACE } from "@/lib/otto-thread-surface";
 // #524 r2 — the READ-ONLY look at the merchant's spend cap that keeps an approval from being
@@ -1822,6 +1822,13 @@ export async function ottoTurn(raw: unknown): Promise<
 
     const { projectId, text, entityIds, variantSel, sourceGenerationId, sourceGenerationIds, referenceVideoGenerationId, referenceVideoGenerationIds, replyToMessageId } = parsed.data;
 
+    // ENGINE-A4(规格 docs/specs/otto-engine.md §7.2⑤ 第③刀):由 withLlmBudget 在**整笔退款**
+    // 时点亮 —— 唯一一种「这一轮没收钱」是真话的状态。
+    // 走查修复三(#3310):声明提到**外层 try 之前**,因为供应商侧失败是从 `runOttoTurn` 里
+    // 抛出去、被文末那个 catch 接住的,而那句诚实话要在那里说 —— 在里面声明等于那句话
+    // 在唯一需要它的地方读不到。
+    let chargedNothing = false;
+
     try {
       const OWNED = { ownerId, deletedAt: null } as const;
 
@@ -1965,9 +1972,6 @@ export async function ottoTurn(raw: unknown): Promise<
       // the same seq → the same `otto-turn:threadId:seq` refId → the second reserveCredits collides
       // on the reserve:<refId> unique index and no-ops, running a turn WITHOUT holding credits (F27).
       const refId = `otto-turn:${userMessageId}`;
-      // ENGINE-A4(规格 docs/specs/otto-engine.md §7.2⑤ 第③刀):由 withLlmBudget 在**整笔退款**
-      // 时点亮 —— 唯一一种「这一轮没收钱」是真话的状态。今天只有截断且零交付的那一轮走到这里。
-      let chargedNothing = false;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let agentResult: any;
 
@@ -2011,9 +2015,8 @@ export async function ottoTurn(raw: unknown): Promise<
           // ENGINE-A4(§7.2⑤ 第③刀):整笔退了的那一轮,商家读到的必须是「没收钱」,而不是一句
           // 道歉之后账单上冒出一笔他拿不到东西的钱。两句合成**一条**持久化消息(与流式门同一
           // 句字面量),刷新之后还在,不需要第二条只在内存里活一瞬的提示。
-          const degradeText = chargedNothing
-            ? "I got a bit tangled up — try asking again. This turn wasn't charged."
-            : "I got a bit tangled up — try asking again.";
+          // 走查修复三:那份字面量现在真的只有一处(`otto-error-copy.ts`),三门共读。
+          const degradeText = ottoDegradeText(chargedNothing);
           await prisma.chatMessage.create({
             data: {
               id: newId(),
@@ -2049,7 +2052,9 @@ export async function ottoTurn(raw: unknown): Promise<
       // Log the real cause server-side: the generic client message hides it, and a swallowed
       // error here once masked an Anthropic 529 for hours. The client message stays generic.
       console.error("[ottoTurn] failed:", errSummary(e));
-      return { error: ottoFailureMessage(e, "Couldn't reach Otto — please try again.") };
+      // 走查修复三(#3310):供应商侧的那一档在这里也换诚实句 —— 与流式门同一份分类器、
+      // 同一份文案。「没收钱」只在 ENGINE-A4 的钩子真的点亮时才说。
+      return { error: ottoFailureMessage(e, "Couldn't reach Otto — please try again.", { chargedNothing }) };
     }
   });
 }
@@ -2199,6 +2204,16 @@ export async function ottoApprove(raw: unknown): Promise<
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
     const { ownerId } = gate;
 
+    // Set by withLlmBudget when a thrown run was refunded in FULL — the only state in which
+    // "nothing was charged" is a true sentence to put in front of the merchant (#524 r5).
+    // 走查修复三(#3310):声明提到**外层 try 之前** —— 供应商侧失败是被文末那个 catch 接住的,
+    // 而那句诚实话要在那里说。
+    let chargedNothing = false;
+    // Set the moment the CAS actually consumed the consent — the only way the catch below can
+    // tell "the consent is spent and the run died" from "the consent is still intact" (#524 r5).
+    // 同上提到外层:文末的 catch 要靠它判断「这一门到底有没有为别的东西收过钱」。
+    let claimedPayload: ApprovalCardPayload | null = null;
+
     try {
       // Load thread owner-scoped (cross-tenant rejected)
       const thread = await prisma.chatThread.findFirst({
@@ -2231,14 +2246,8 @@ export async function ottoApprove(raw: unknown): Promise<
       // #524 r3: set only on the branch that holds a one-shot consent. It is invoked inside the
       // metered call, after the hold and before the model — see claimApprovalCard.
       let claimCard: (() => Promise<boolean>) | null = null;
-      // Set the moment the CAS actually consumed the consent — the only way the catch below can
-      // tell "the consent is spent and the run died" from "the consent is still intact" (#524 r5).
-      let claimedPayload: ApprovalCardPayload | null = null;
       // The card as this try read it. Needed to rewrite the payload when an attempt is retired.
       let cardPayloadForRetry: ApprovalCardPayload | null = null;
-      // Set by withLlmBudget when a thrown run was refunded in FULL — the only state in which
-      // "nothing was charged" is a true sentence to put in front of the merchant (#524 r5).
-      let chargedNothing = false;
       // The FULL cost of the approval as one action — this resume's LLM hold PLUS the
       // deterministic charge of the tool being approved. Handed to the meter so the spend cap is
       // judged against the whole thing inside the reserve's transaction (#524 r5, judge r4 P1-B).
@@ -2606,9 +2615,8 @@ export async function ottoApprove(raw: unknown): Promise<
           // ENGINE-A4(§7.2⑤ 第③刀):这一门早就有 `chargedNothing`(挂在同一个
           // `onRefundedFailure` 上),只是这条分支从前不读它 —— 恢复轮的零交付截断现在也整笔退,
           // 商家却读不到「没收钱」。与另外两门同一句字面量。
-          const degradeText = chargedNothing
-            ? "I got a bit tangled up — try asking again. This turn wasn't charged."
-            : "I got a bit tangled up — try asking again.";
+          // 走查修复三:那份字面量现在真的只有一处(`otto-error-copy.ts`)。
+          const degradeText = ottoDegradeText(chargedNothing);
           // Persist the degrade message so the user actually sees it (parity with ottoTurn),
           // plus the partial RunState if the SDK attached one.
           const seq = await prisma.chatMessage.findFirst({
@@ -2828,7 +2836,14 @@ export async function ottoApprove(raw: unknown): Promise<
       // `persistAgentNote` cannot throw — see its doc — so a database that is down here costs the
       // note and nothing else; the real error still reaches the merchant, which is the whole point
       // of not letting a second failure speak over the first.
-      const sentence = ottoFailureMessage(e, "Couldn't approve — please try again.");
+      // 走查修复三(#3310):供应商侧的那一档换诚实句(与另外两门同一份分类器与文案)。
+      // 「没收钱」在这一门要更严:`chargedNothing` 只证明**这一轮的预扣**退了,而恢复轮可能
+      // 先跑完被批准的那件工具、付过它的钱(#524 r6)。所以只在**没有任何一张卡被消费**时
+      // 才说 —— 卡被消费的那一支由上面第 5 支自己的句子负责,根本走不到这里。
+      // 把手照旧走 `ref` 字段(`diagnosticRef`),不在句子里再造第二串。
+      const sentence = ottoFailureMessage(e, "Couldn't approve — please try again.", {
+        chargedNothing: chargedNothing && claimedPayload === null,
+      });
       await persistAgentNote(threadId, ownerId, sentence);
       // Codex staging CRE-STG-P2-004 —— 商家手上要有一个能念给客服听的把手,而它必须与
       // 上面那行 `console.error` 是同一串。短号由卡的身份算出来(`diagnosticRef`,单一算法),
