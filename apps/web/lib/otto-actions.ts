@@ -2131,8 +2131,9 @@ export async function ottoTurn(raw: unknown): Promise<
  *
  * 三道门,顺序即理由:
  *  ① 身份只来自 `requireOwner`,卡按 owner + threadId 作用域读 —— 跨租户的 cardId 读不到;
- *  ② 已经有任务行(`cowork:<cardId>`)的卡不许再改:那张卡已经被商家批准并花过钱,
- *     改它就是改一份已经成交的授权;
+ *  ② 已经成交的卡不许再改。三条判据各拦各的:卡上有 `canvasAction`(画布节点级那张回执)、
+ *     卡上有 `genJobId`(这张卡已经挂着一行任务)、以及已经有任务行(`cowork:<cardId>`)——
+ *     那张卡已经被商家批准并花过钱,改它就是改一份已经成交的授权;
  *  ③ 改不动的(视频卡、老卡、这一档收不下的形状、今天没有价的精修)一律**如实拒绝**,
  *     卡一个字节不动 —— 绝不静默换一档。
  */
@@ -2172,7 +2173,12 @@ export async function ottoUpdateGenCardOptions(raw: unknown): Promise<
 
     const card = await prisma.chatMessage.findFirst({
       where: { id: cardId, threadId, ownerId, kind: "GEN_CARD", deletedAt: null },
-      select: { id: true, payload: true, thread: { select: { ownerId: true, deletedAt: true } } },
+      select: {
+        id: true,
+        payload: true,
+        genJobId: true,
+        thread: { select: { ownerId: true, deletedAt: true } },
+      },
     });
     if (!card || card.thread.deletedAt || card.thread.ownerId !== ownerId) return { error: "Card not found." };
 
@@ -2185,6 +2191,24 @@ export async function ottoUpdateGenCardOptions(raw: unknown): Promise<
       typeof (persisted as Record<string, unknown>).params !== "object"
     ) {
       return { error: "I can't read this plan any more — ask me to put it together again and I'll make a fresh one." };
+    }
+
+    // #1239 判官 P2-1 —— **已经成交的那张卡改不动**,判据不止一条。
+    //
+    // 下面那道「已经在跑」的闸只认 `cowork:<cardId>` 这一个幂等键,而画布节点级那张卡
+    // (`canvas-thread-log.ts` 铸的回执)用的是 `canvas:<actionId>`,又长得跟 Otto 那张确认卡
+    // 一模一样 —— 它是一次**已经批过、已经扣过**的动作的收据,却能从这条 $0 的改档路上被
+    // 改写。界面那一侧改不到它(有 genJobId ⇒ `deriveCardState` 不是 idle,三格不渲染),但
+    // Server Action 是可以直接调的:少了这一道,商家的历史里那张收据说的就不再是当时真正
+    // 花掉的那一件事(付费闸 `gen-actions.ts` 那一句同一条口径)。
+    //
+    // 两条判据各拦各的:`canvasAction` 认画布回执,`genJobId` 认「这张卡上已经挂了一行任务」
+    // (Otto 路批准后由交付路写回)。拒在任何写之前 ⇒ payload 一个字节不动、账本零新增行。
+    if (typeof (persisted as Record<string, unknown>).canvasAction === "string") {
+      return { error: "That was already generated from the canvas — start a new action instead." };
+    }
+    if (typeof card.genJobId === "string" && card.genJobId.length > 0) {
+      return { error: "This one's already under way — ask me for a fresh plan if you'd like it different." };
     }
 
     const applied = applyCardOptions(persisted as unknown as CardPayload, edit);
