@@ -219,3 +219,56 @@ describe("FRONT-A15 Canvas history 行的显示层映射（判官 #1174 P2：接
     expect(link?.getAttribute("title")).toBe(longName); // title= 兜住完整名,不截断——一次 hover 就够
   });
 });
+
+/**
+ * FRONT-A15 —— 起步页「渲染出的控件集合与夹具逐控件一致」。
+ *
+ * 上面 FRONT-A14 各条钉的是「这两句文案不在」与「class 字串同源」;这一组把起步页上
+ * **所有**可按的东西整套读出来再比,所以多长一颗键(哪怕没人事先为它写断言)也会红 ——
+ * 这就是设计对照要的变异判据:多画一个／少一个都当场红。
+ */
+describe("FRONT-A15 起步页:整套控件与夹具比集合", () => {
+  /** DOM 里所有可按的东西,按屏幕阅读器读到的名字。 */
+  function controlNames(dom: HTMLElement): string[] {
+    return [...dom.querySelectorAll("button, a, input, [role='button']")].map(
+      (el) =>
+        el.getAttribute("aria-label") ??
+        el.getAttribute("title") ??
+        (el.textContent ?? "").replace(/\s+/g, " ").trim(),
+    );
+  }
+
+  it("FRONT-A15 空画布史时,起步页只有一个发送键 —— 没有第二颗,也没有 Add context", async () => {
+    const dom = await renderWorkspace([]);
+
+    expect(controlNames(dom)).toEqual(["Send prompt"]);
+    // 夹具的另一颗(「Add a reference」)不在:把引用带进画布的契约还没建
+    // (`docs/specs/frontend-baseline.md` §7.3「⑨ 下一刀 · 起步页参考契约」)。
+    expect(FIXTURE_COMPOSER).toContain('aria-label="Add a reference"');
+    expect(dom.querySelector('[aria-label="Add a reference"]')).toBeNull();
+  });
+
+  it("FRONT-A15 有画布史时,多出来的每一项都是一行画布,没有别的控件混进来", async () => {
+    const dom = await renderWorkspace();
+
+    expect(controlNames(dom)).toEqual(["Send prompt", "Raya campaign", "Weekend tea launch"]);
+  });
+
+  it("FRONT-A15 裁决五点名的标题行与那一句,在 DOM 与源码里都不在", async () => {
+    const dom = await renderWorkspace();
+
+    // 屏幕上没有这一行标题(夹具里 "Create with Otto" 只是 section 的无障碍名字)。
+    expect(dom.querySelector("h2#create-with-otto-heading")).toBeNull();
+    expect(dom.textContent).not.toContain("Nothing paid starts before you confirm the exact credits in Canvas.");
+    expect(FIXTURE_WORKSPACE).toContain('aria-label="Create with Otto"');
+    expect(PRODUCTION_WORKSPACE).toContain('aria-label="Create with Otto"');
+  });
+
+  it("FRONT-A15 裁决六点名的两个控件,起步页也不出现", async () => {
+    const dom = await renderWorkspace();
+
+    for (const name of ["Frame select", "Undo", "Redo"]) {
+      expect(controlNames(dom)).not.toContain(name);
+    }
+  });
+});
