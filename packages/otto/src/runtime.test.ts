@@ -454,12 +454,23 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
       parameters: z.object({ v: z.string() }),
       execute: async () => ({ ok: true, products: [] }),
     });
+    /** 判官 P2-a:一把 `effect:"write"` 的多动作工具,底下挂着一个纯读动作 —— 生产里
+     *  `manageCanvas.view` / `manageLibrary.history` / `manageMedia.list` 就是这个形状,
+     *  成功时同样返回 `{ ok:true, … }`,从返回值一层根本分不出来。 */
+    const writeWithReadAction = defineOttoSkill({
+      name: "manageBoard",
+      cost: "free", effect: "write", reach: "internal",
+      description: "Test-only multi-action write skill whose `view` only reads.",
+      parameters: z.object({ action: z.enum(["view", "place"]), v: z.string().optional() }),
+      readOnlyActions: { field: "action", actions: ["view"] },
+      execute: async () => ({ ok: true, nodes: [] }),
+    });
 
     const rt = () =>
       createOttoRuntime(
         {
           modelRuntime: paidFixtureModelRuntime(fakeTextModel("hi")),
-          skills: [writeLands, writeRefuses, writeThrows, writeNeedsInfo, readOnly],
+          skills: [writeLands, writeRefuses, writeThrows, writeNeedsInfo, readOnly, writeWithReadAction],
         },
         "interactive",
       );
@@ -538,6 +549,65 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
         expect(verdict(runtime, ctx, failedWrite)).toBeNull();
       });
     }
+
+    // ── 判官 P2-a:写技能底下的**纯读动作**不算交付 ──────────────────────────────
+    //
+    // 六个纯读动作(manageCanvas.view / manageLibrary.history / .detail / manageMedia.list /
+    // .load_more / draftWorkflows.validateWorkflowRules)住在 `effect:"write"` 的技能里,成功
+    // 时返回 `{ ok:true, … }`,落修前一律被记成一次落盘 —— 于是「只反复看板、列清单直到跑满
+    // 步数」的死胡同照收钱,与 ENGINE-A4 正相反。
+    it("ENGINE-A4:写技能里的纯读动作 —— 一轮只看板不落盘 ⇒ null ⇒ 整笔退款", async () => {
+      const runtime = rt();
+      const ctx = freshCtx();
+      const out = await callTool(runtime, "manageBoard", { action: "view" }, ctx);
+      // 返回值与一次真写逐字同形:判据不可能来自返回值。
+      expect(out).toMatchObject({ ok: true });
+      expect(runtime.deliveringActionNames.has("manageBoard")).toBe(true);
+      const onlyReads = truncatedWith([
+        { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c1", name: "manageBoard", status: "completed" } },
+      ]);
+      expect(verdict(runtime, ctx, onlyReads)).toBeNull();
+    });
+
+    it("ENGINE-A4:同一把工具的真写动作照旧算交付 ⇒ 按实结算,不退", async () => {
+      const runtime = rt();
+      const ctx = freshCtx();
+      await callTool(runtime, "manageBoard", { action: "place", v: "a note" }, ctx);
+      const wrote = truncatedWith([
+        { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c1", name: "manageBoard", status: "completed" } },
+      ]);
+      expect(verdict(runtime, ctx, wrote)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    });
+
+    it("ENGINE-A4:一轮里翻了三次看板、最后真写了一笔 ⇒ 仍算交付", async () => {
+      const runtime = rt();
+      const ctx = freshCtx();
+      await callTool(runtime, "manageBoard", { action: "view" }, ctx);
+      await callTool(runtime, "manageBoard", { action: "view" }, ctx);
+      await callTool(runtime, "manageBoard", { action: "view" }, ctx);
+      await callTool(runtime, "manageBoard", { action: "place", v: "a note" }, ctx);
+      expect(verdict(runtime, ctx, truncatedWith([]))).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    });
+
+    it("ENGINE-A4:生产里那六个纯读动作,由技能自己声明(runtime 不存第二份名册)", () => {
+      const declared = new Map(
+        allSkills
+          .filter((s) => s.readOnlyActions)
+          .map((s) => [s.name, [...s.readOnlyActions!.actions].sort()] as const),
+      );
+      expect(Object.fromEntries(declared)).toEqual({
+        manageCanvas: ["view"],
+        manageLibrary: ["detail", "history"],
+        manageMedia: ["list", "load_more"],
+        draftWorkflows: ["validateWorkflowRules"],
+      });
+      // 判别键必须真是那把工具的参数(工厂在定义期就会拦,这里再钉一次口径)。
+      for (const skill of allSkills) {
+        if (!skill.readOnlyActions) continue;
+        expect(skill.effect).toBe("write");
+        expect(["action", "operation"]).toContain(skill.readOnlyActions.field);
+      }
+    });
 
     it("ENGINE-A4:一轮里既有失败的写也有成功的写 ⇒ 有交付,按实结算", async () => {
       const runtime = rt();

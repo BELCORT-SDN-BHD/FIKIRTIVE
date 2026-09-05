@@ -29,6 +29,23 @@ export const OTTO_FALLBACK_MODEL = "claude-sonnet-4-5";
  */
 export const OTTO_DEFAULT_MODEL = OTTO_PRIMARY_MODEL;
 
+/**
+ * ENGINE-A6 —— 滚动摘要那次**折叠**跑在哪个型号上(规格 §7.2④:「摘要本身是一次便宜的小调用」)。
+ *
+ * 从前这个决定不存在:`runtime.ts` 的 `foldRollingSummary` 直接取 manifest 的主绑定,谁都改不到。
+ * 现在它是这里的一个常量,manifest 把它作为 `summaryBinding` 带下去,调用处一行型号都不写死。
+ *
+ * **今天的取值等于主力型号**,理由是价目表里没有更便宜的一档 —— `PRICED_MODEL_IDS` 只有
+ * `claude-opus-4-8` / `claude-sonnet-4-6` / `claude-sonnet-4-5`,后两个同价(packages/core/src/
+ * llm-prices.ts)。所以「便宜」今天仍由两端硬顶承担(输入 24,000 字符、输出 400 token,见
+ * runtime.ts)。**要真的换小型号,得先有 Founder 的两个决定**,规格 §5 已登记:
+ *   (1) 往价目表加一行 haiku 档(型号 id 与四个真实单价 —— 猜价在本仓库已被删掉,查不到就拒绝启动);
+ *   (2) 折叠那条腿的**计价**怎么算 —— 它烧的 token 今天并进本轮 usage,按 `billableModelId`
+ *       (sonnet)结算;跑小型号却按 sonnet 收,对商家是多收,不能由施工方默默决定。
+ * 换型号时 529 的同档接管(OTTO_FALLBACK_MODEL)也要一起想:两者今天共用同一个备份型号。
+ */
+export const OTTO_SUMMARY_MODEL = OTTO_PRIMARY_MODEL;
+
 type LanguageModel = ReturnType<typeof anthropic>;
 
 /**
@@ -112,16 +129,32 @@ export function ottoPromptCacheEnabled(): boolean {
 }
 
 /**
- * Pure transform: mark Otto's CONSTANT prompt prefix with Anthropic ephemeral cache_control.
+ * Pure transform: mark Otto's prompt prefix with Anthropic ephemeral cache_control.
  * Exactly two breakpoints per request (limit is 4):
  *
- *  1. The LAST function tool — caches the ~7.7k-token tool-schema block (tools precede
- *     system in Anthropic's request layout, so this breakpoint stands even if the system
- *     text ever changes).
- *  2. The LEADING system message (Otto's inlined instructions, ~4.7k tokens) — a breakpoint
- *     here caches everything up to and including it, i.e. tools + system: the full ~12.4k
- *     constant prefix. Steps 2..N of a turn (and turns within Anthropic's 5-min TTL) then
- *     read the prefix at the cached rate.
+ *  1. The LAST function tool — caches the tool-schema block (tools precede system in
+ *     Anthropic's request layout, so this breakpoint stands even if the system text
+ *     changes). This one IS constant across turns: the toolset is composed once per
+ *     process (`createOttoRuntime`) and never varies per request.
+ *  2. The LEADING system message — a breakpoint here caches everything up to and
+ *     including it, i.e. tools + system. Within ONE turn, steps 2..N always read it at
+ *     the cached rate (the same assembled text goes out every step).
+ *
+ * ⑤⑥⑦尾巴轮按现码改口(⑥段登记 P2-5,规格 §5)。这一段原本写着「Otto 的**恒定**前缀」,
+ * 并按「system 块 ~4.7k tokens、前缀共 ~12.4k、5 分钟 TTL 内跨轮按缓存价读」推理。⑥段用
+ * 文件柜换掉单体说明书之后,那已经不是实话:
+ *
+ *  · 断点 2 **不再跨轮恒定** —— 每一轮的说明书是现装的(`instructions.ts` 的
+ *    `assembleOttoInstructions`:常驻薄层 ＋ 全部书脊标签 ＋ 这一轮对上标签的那几份全文)。
+ *    商家换个话题拉进一份新柜文,那一轮就付一次 cache write 而不是 cache read。
+ *    (恢复轮是例外:它整柜装载,system 文本回到那份恒定的全柜稿。)
+ *  · 装载集**不单调**:④段之后,匹配输入是这一轮此刻真正带着的上下文(裁剪后的历史 ＋ 滚动
+ *    摘要 ＋ 本轮刚裁掉的那几轮),而摘要每折一次就整段重写 —— 不再被提起的话题当轮就掉出去,
+ *    下次再提又装回来。所以「一场对话最多付 12 次 cache write」那条上界不成立。
+ *  · 上面那三个 token 数是单体时代的量,⑥段之后**没有重新测过**,已从正文删去;缓存的净账
+ *    (省下的 cache read 减去多付的 cache write)同样**没有数** —— 装载集的实际抖动频率没测,
+ *    §7.7 那句「实测峰值约 $0.17/轮」又是按旧的恒定前缀假设算的。两个数都要等一次真跑
+ *    (与 ENGINE-A1 基线同一把钥匙、同一趟)。
  *
  * Per-turn conversation history is deliberately NOT marked (engine spec §三点五·3).
  * Never mutates its input: options, prompt, and tools arrays are copied on write.
@@ -182,12 +215,17 @@ export function withPromptCaching(model: LanguageModel): LanguageModel {
   };
 }
 
+/** One model binding: prompt-cache marking over same-tier 529-failover, adapted for the OpenAI
+ *  Agents SDK. Written once so the fold's binding cannot drift into a second wrapper stack. */
+const ottoBindingFor = (modelId: string) =>
+  aisdk(withPromptCaching(withOverloadFailover(anthropic(modelId), anthropic(OTTO_FALLBACK_MODEL))));
+
 /** Otto's model: prompt-cache marking over same-tier 529-failover, adapted for the OpenAI Agents SDK. */
-export const ottoModel = aisdk(
-  withPromptCaching(
-    withOverloadFailover(anthropic(OTTO_PRIMARY_MODEL), anthropic(OTTO_FALLBACK_MODEL)),
-  ),
-);
+export const ottoModel = ottoBindingFor(OTTO_PRIMARY_MODEL);
+
+/** ENGINE-A6 —— 折叠那次调用的绑定(型号见 OTTO_SUMMARY_MODEL)。今天与主绑定同型号、同一套
+ *  包装,所以行为与本改动之前逐字相同;换型号时只动那一个常量。 */
+export const ottoSummaryModel = ottoBindingFor(OTTO_SUMMARY_MODEL);
 
 // ── The production atomic model-runtime manifest (engine spec §6.2, PH1-A1) ─────────────────
 //
@@ -214,6 +252,8 @@ export function assertOttoModelsPriced(
     ["OTTO_PRIMARY_MODEL", OTTO_PRIMARY_MODEL],
     ["OTTO_FALLBACK_MODEL", OTTO_FALLBACK_MODEL],
     ["OTTO_DEFAULT_MODEL", OTTO_DEFAULT_MODEL],
+    // 折叠也真的会被跑到,所以它也必须有价 —— 换成一个没登记的小型号,开机就被拒。
+    ["OTTO_SUMMARY_MODEL", OTTO_SUMMARY_MODEL],
   ],
 ): void {
   for (const [constant, id] of ids) {
@@ -231,6 +271,8 @@ assertOttoModelsPriced();
 
 export const ottoModelRuntime: OttoModelRuntime = Object.freeze({
   binding: ottoModel,
+  // ENGINE-A6:折叠那条腿的绑定也在 manifest 上,`foldRollingSummary` 从这里取。
+  summaryBinding: ottoSummaryModel,
   billableModelId: OTTO_DEFAULT_MODEL,
   resolvedModelPolicy: Object.freeze({
     primaryModelId: OTTO_PRIMARY_MODEL,

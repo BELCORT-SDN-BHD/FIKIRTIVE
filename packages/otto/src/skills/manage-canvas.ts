@@ -208,6 +208,12 @@ export const manageCanvasSkill = defineOttoSkill({
   cost: "free",
   effect: "write",
   reach: "internal",
+  // ENGINE-A4:view 不产生任何花钱动作 —— 它前面那次 sync(apps/web/lib/otto-canvas-bridge.ts)
+  // **确实会写 CanvasNode 行**:商家刚从聊天里开工、结算故意不投影的那批**在飞占位卡**由它落下。
+  // 但那是**显示层**的节点,只映射已经开工(或已在 hold 里)的批次,不调 startGen、不碰供应商、
+  // 不碰账本,一分钱不会因这一轮而多花。所以它不算「交付」:轮子死了商家手里什么都不多,
+  // 整笔退才对。「只反复看板直到跑满步数」正是本条要治的那条死胡同。
+  readOnlyActions: { field: "action", actions: ["view"] },
   description:
     "See and arrange the project's creative canvas ($0 — never generates media or spends credits). " +
     "view: all nodes with status, prompts, which paid press each came out of (genJobId + batchIndex + batchSize — cards of one press are siblings, not parent and children), and madeFromNodeId, the only card a node was actually built on. " +
