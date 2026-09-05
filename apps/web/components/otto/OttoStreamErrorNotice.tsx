@@ -9,6 +9,12 @@ import { Button } from "@/components/ui/button";
 /** 花费上限住在哪一面 —— 名字与地址都来自导航 registry(`SETTINGS_SECTIONS`)。 */
 const CAP_SECTION = SETTINGS_SECTIONS.find((section) => section.key === "billing")!;
 
+/**
+ * 「改了再送」那颗键上的字。画布那张始终可见的 Otto 卡片(`OttoTurnCard`)在同一种失败下
+ * 提供同一个出路,读的是这一份 —— 一句话一个产地(2026-09-05 走查修复一)。
+ */
+export const EDIT_AND_RETRY_LABEL = "Edit and retry";
+
 export interface OttoStreamErrorNoticeProps {
   error: OttoErrorData;
   retryDraft?: string | null;
@@ -55,7 +61,7 @@ export function OttoStreamErrorNotice({
             variant="outline"
             onClick={() => onRetry(retryDraft)}
           >
-            Edit and retry
+            {EDIT_AND_RETRY_LABEL}
           </Button>
         )}
       </AlertDescription>
