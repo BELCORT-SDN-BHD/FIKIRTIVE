@@ -74,6 +74,13 @@ function item(over: Partial<LibraryItem> = {}): LibraryItem {
     assetId: "asset_1",
     url: "/files/org/aa/bb/tumbler.png",
     kind: "image",
+    // 段②A 把 `LibraryItem` 撑宽了(来源、文件名、两条边、时长)。引擎产物的那一行就长
+    // 这样:`source: "generated"`、没有商家给的文件名、尺寸与时长按真库可空。
+    source: "generated",
+    filename: "",
+    width: null,
+    height: null,
+    durationS: null,
     prompt: "A premium coral-orange insulated tumbler, ribbed grip, silver lid",
     favorite: false,
     createdAt: "2026-09-04T00:00:00.000Z",

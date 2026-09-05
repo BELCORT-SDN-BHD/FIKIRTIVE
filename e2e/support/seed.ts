@@ -292,12 +292,32 @@ export async function seedElement(ws: Workspace, name: string): Promise<{ entity
 
 /** An empty conversation thread in the seeded project — landing on it is what puts the merchant
  *  straight on the chat composer (with its attach button) instead of the "new chat" front door,
- *  the same way opening a project with a prior conversation would. */
-export async function seedThread(ws: Workspace): Promise<{ threadId: string }> {
+ *  the same way opening a project with a prior conversation would.
+ *
+ *  `surface` (FRONT-A14) says which door this conversation was opened at, exactly as the product
+ *  now records it (`apps/web/lib/otto-thread-surface.ts`). It matters for **how the journey gets
+ *  back to this thread**:
+ *    · a canvas deep link (`/create/canvas?project=…&thread=…`) opens whatever it names, so those
+ *      journeys leave it unset — a null surface reads as a canvas conversation, which is what
+ *      every thread written before that rule is;
+ *    · the docked panel (`/?otto=1`, no `thread=`) resumes only conversations **it** started, so a
+ *      journey that expects the panel to land on this thread must seed it as `"panel"`. Leaving it
+ *      unset there gets the front door instead, and every composer control with it. */
+export async function seedThread(
+  ws: Workspace,
+  opts: { surface?: "canvas" | "panel" } = {},
+): Promise<{ threadId: string }> {
   const threadId = id("thread");
   await runAsTenant(ws.orgId, () =>
     prisma.chatThread.create({
-      data: { id: threadId, ownerId: ws.orgId, projectId: ws.projectId, title: "", createdAt: at(0) },
+      data: {
+        id: threadId,
+        ownerId: ws.orgId,
+        projectId: ws.projectId,
+        title: "",
+        createdAt: at(0),
+        ...(opts.surface ? { surface: opts.surface } : {}),
+      },
     }),
   );
   return { threadId };
