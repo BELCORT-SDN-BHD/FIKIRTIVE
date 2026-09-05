@@ -3,11 +3,15 @@ import React, { useState } from "react";
 import { ClipboardList, ShieldCheck, CheckCircle2, Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { approveMetaActionPlan } from "@/lib/otto-client-actions";
+import { approveMetaActionPlan, ottoReject } from "@/lib/otto-client-actions";
+import { ACTION_PLAN_DECLINE_TEXT, isDeclinedPayload } from "@/lib/meta-card-decline-view";
 import type { MetaActionCardPayload } from "@/lib/meta-plan-card";
 
 export interface OttoActionPlanCardProps {
   cardId: string;
+  /** The conversation this card lives in — `ottoReject` is thread-scoped, like every other
+   *  card action, so the server never takes a card id on its own. */
+  threadId: string;
   payload: unknown;
 }
 
@@ -50,24 +54,52 @@ function opLabel(op: string): string {
 /** Otto's Meta action-plan card. Shown for ACTION_CARD messages.
  *  - Renders the plan title, each step with a money-class badge, and the total spend impact.
  *  - If autoEligible the plan runs automatically; show status only, no approve/deny.
- *  - Otherwise the user must click Approve. Approve calls approveMetaActionPlan (real money gate). */
-export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps) {
+ *  - Otherwise the user must click Approve. Approve calls approveMetaActionPlan (real money gate),
+ *    Deny calls ottoReject (FRONT-A12: the refusal is persisted server-side, so a refresh still
+ *    shows it declined and the plan can never be approved afterwards). */
+export function OttoActionPlanCard({ cardId, threadId, payload }: OttoActionPlanCardProps) {
   const p = (payload ?? {}) as Partial<MetaActionCardPayload>;
   const steps = Array.isArray(p.steps) ? p.steps : [];
-  const [busy, setBusy] = useState(false);
-  const [denied, setDenied] = useState(false);
+  // WHICH button is in flight, not just "something is" — otherwise clicking Deny relabels
+  // Approve to "Applying…" and the card claims a spend that is not happening.
+  const [busyKind, setBusyKind] = useState<"approve" | "deny" | null>(null);
+  const busy = busyKind !== null;
+  const [deniedLocal, setDeniedLocal] = useState(false);
   const [result, setResult] = useState<{ ok: true; state: string } | { error: string } | null>(null);
+
+  // A decline persisted on the card payload outlives this component — that is the whole point.
+  const denied = deniedLocal || isDeclinedPayload(payload);
 
   async function approve() {
     if (busy || denied) return;
-    setBusy(true);
+    setBusyKind("approve");
     try {
       const res = await approveMetaActionPlan(cardId);
       setResult(res);
     } catch {
       setResult({ error: "Couldn't submit — please try again." });
     } finally {
-      setBusy(false);
+      setBusyKind(null);
+    }
+  }
+
+  async function deny() {
+    if (busy || denied) return;
+    setBusyKind("deny");
+    setResult(null);
+    try {
+      const res = await ottoReject({ threadId, cardId });
+      // Anything but an error is a settled card: "already resolved" means someone else got there
+      // first, and the plan is just as un-approvable as if this click had done it.
+      if (res && typeof res === "object" && "error" in res) {
+        setResult({ error: (res as { error: string }).error });
+        return;
+      }
+      setDeniedLocal(true);
+    } catch {
+      setResult({ error: "Couldn't decline that — please try again." });
+    } finally {
+      setBusyKind(null);
     }
   }
 
@@ -168,6 +200,10 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
               Otto tried to apply this automatically but it failed — no changes were made.
             </div>
           )
+        ) : denied ? (
+          <div className="text-[0.875rem] text-muted-foreground">
+            {ACTION_PLAN_DECLINE_TEXT}
+          </div>
         ) : approveResult ? (
           /* Post-approve result */
           <div className="text-[0.875rem]">
@@ -188,23 +224,19 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
               </div>
             )}
           </div>
-        ) : denied ? (
-          <div className="text-[0.875rem] text-muted-foreground">
-            Plan declined — nothing was changed.
-          </div>
         ) : (
           /* Pending approval */
           <div className="flex gap-3">
             <Button variant="default" disabled={busy} onClick={approve}>
-              {busy ? (
+              {busyKind === "approve" ? (
                 <span className="flex items-center gap-2">
                   <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
                   Applying…
                 </span>
               ) : "Approve"}
             </Button>
-            <Button variant="secondary" disabled={busy} onClick={() => setDenied(true)}>
-              Deny
+            <Button variant="secondary" disabled={busy} onClick={deny}>
+              {busyKind === "deny" ? "Declining…" : "Deny"}
             </Button>
           </div>
         )}
