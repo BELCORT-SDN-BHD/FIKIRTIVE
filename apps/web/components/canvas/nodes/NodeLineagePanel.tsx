@@ -26,17 +26,45 @@ export function NodeLineagePanel({
   onClose?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  /**
+   * The press that did NOT copy (接线盘点 L1 · FRONT-A12).
+   *
+   * A clipboard write is refused far more often than it looks: an insecure origin, a browser that
+   * only allows it inside a user gesture it has already stopped counting, or a permission the
+   * merchant declined. Every one of those rejects the promise, and this panel used to answer them
+   * by putting `copied` back to `false` — which is the same thing it does while nothing has been
+   * pressed at all. The merchant pressed a button and the screen said nothing, so the only reading
+   * available was "it copied"; they then pasted the previous clipboard into an ad.
+   *
+   * The recovery is already on screen: this panel prints the prompt itself, right below, so being
+   * told the copy did not happen is enough — select it and copy by hand. No new control is added,
+   * and the sentence is the one this product already uses for a refused clipboard write
+   * (`components/otto/OttoResult.tsx`), so a merchant reads the same words in both places.
+   */
+  const [copyFailed, setCopyFailed] = useState(false);
   const rows = lineage ? canvasLineageRows(lineage, { hasSource }) : [];
   const text = (prompt ?? "").trim();
 
   const copyPrompt = () => {
     if (!text) return;
-    void navigator.clipboard?.writeText(text).then(
+    // No clipboard API at all is the same outcome as a refusal, and it must read as one: an
+    // optional-chained `undefined` would otherwise sail past `.then` and leave the press silent.
+    const write = navigator.clipboard?.writeText(text);
+    if (!write) {
+      setCopied(false);
+      setCopyFailed(true);
+      return;
+    }
+    void write.then(
       () => {
+        setCopyFailed(false);
         setCopied(true);
         window.setTimeout(() => setCopied(false), 1600);
       },
-      () => setCopied(false),
+      () => {
+        setCopied(false);
+        setCopyFailed(true);
+      },
     );
   };
 
@@ -79,6 +107,11 @@ export function NodeLineagePanel({
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+      {copyFailed && (
+        <p role="alert" className="text-xs text-destructive">
+          Couldn&apos;t copy automatically.
+        </p>
+      )}
       {text && (
         <section className="flex flex-col gap-1.5">
           <span className="cv-node-info-label">Prompt</span>

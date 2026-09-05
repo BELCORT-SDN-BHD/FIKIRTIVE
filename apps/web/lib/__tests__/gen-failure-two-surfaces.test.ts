@@ -52,7 +52,7 @@ describe("ENTRY creation surface — the card's poll passes the explanation on",
   });
 
   it("stays quiet for an ordinary failure — there is nothing useful to add", async () => {
-    // The card already says "You weren't charged. Try again." A second, contentless message on
+    // The card already says "That didn't finish. You weren't charged." A second, contentless message on
     // top of it is noise, and noise trains merchants to ignore the one that matters.
     m.getGenJob.mockResolvedValue({ status: "FAILED", urls: [], generationIds: [], guidance: null });
     const onFailure = vi.fn();
