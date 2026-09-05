@@ -47,6 +47,7 @@ import {
   type OttoTurnTraceFacts,
   type OttoTurnTracePort,
 } from "./runtime.js";
+import { allKnowledgePaths } from "./instructions.js";
 import { mapOttoUsage } from "./meter.js";
 import { defineOttoSkill } from "./skill.js";
 import type { OttoContext } from "./context.js";
@@ -210,14 +211,28 @@ describe("ENGINE-A2 — 跑完一轮就有档案", () => {
     expect(seen[0]!.toolCalls[0]!.calls).toBeGreaterThan(1);
   });
 
-  it("ENGINE-A2: ⑥段之前 skillFiles 恒为空数组(没有文件柜就不假造名单)", async () => {
+  // ⑥段（ENGINE-A7）之后这一栏不再恒为空：文件柜建好了，装配器每轮报出装了哪几份。
+  // 空表的旧断言换成两条真的判据 —— 常驻薄层永远在，且列出来的每一份都是真柜文。
+  it("ENGINE-A2: skillFiles 记下这一轮真装的那几份(⑥段之后不再恒为空)", async () => {
     const runtime = createOttoRuntime(
       { modelRuntime: fixtureModelRuntime(toolThenTextModel("echoBrand", { q: "hi" }, "done")), skills: [echoSkill()] },
       "interactive",
     );
     const { port, seen } = recordingPort();
     await runOttoTurn({ orgId: "org_t", refId: "otto-turn:msg_3", input: "hello", trace: port }, baseCtx, runtime);
-    expect(seen[0]!.skillFiles).toEqual([]);
+    expect(seen[0]!.skillFiles).toEqual(["_core.md"]);
+
+    const { port: p2, seen: s2 } = recordingPort();
+    await runOttoTurn(
+      { orgId: "org_t", refId: "otto-turn:msg_4", input: "make me a poster", trace: p2 },
+      baseCtx,
+      runtime,
+    );
+    expect(s2[0]!.skillFiles).toContain("_core.md");
+    expect(s2[0]!.skillFiles).toContain("product-map/creating.md");
+    // 与工具名同一条纪律：名单是 build 期的柜子本身，柜外的字符串无处可落。
+    const cabinet = new Set(allKnowledgePaths());
+    for (const f of s2[0]!.skillFiles) expect(cabinet.has(f), `${f} 不是柜文`).toBe(true);
   });
 });
 
@@ -291,6 +306,22 @@ describe("ENGINE-A2 — 无明文围栏(prompt / 消息正文 / 参数值都进�
     };
     const facts = collectTurnTraceFacts(state, runtimeLike, port, { orgId: "org_t", refId: "otto-stream:m3" }, false);
     expect(facts.toolCalls).toEqual([{ name: UNREGISTERED_ACTION, calls: 2, ok: 0, failed: 0 }]);
+  });
+  // ENGINE-A7 的 `skillFiles` 与工具名走同一条纪律,所以也要同一种围栏:直接喂一个柜外字符串。
+  // `collectTurnTraceFacts` 是 index.ts 导出的公开函数,调用方不止 `runOttoTurn` 一个 ——
+  // 只喂装配器的产物(天然合法)证明不了这道白名单存在。判官 r2 变异实证:删掉 runtime.ts 的
+  // 那一行 filter,两处围栏测试仍全绿。
+  it("ENGINE-A2: skillFiles 也过白名单 —— 柜外的字符串当场落地,不进档案", () => {
+    const facts = collectTurnTraceFacts(
+      { _currentTurn: 1, _generatedItems: [] },
+      runtimeLike,
+      port,
+      { orgId: "org_t", refId: "otto-stream:m3b" },
+      false,
+      ["Make a launch post", "_core.md", "playbooks/does-not-exist.md"],
+    );
+    expect(facts.skillFiles).toEqual(["_core.md"]);
+    expect(JSON.stringify(facts)).not.toContain("Make a launch post");
   });
 
   it("ENGINE-A2: 白名单来自组合这台 runtime 的那份技能表(registry),不是一份手抄名单", () => {

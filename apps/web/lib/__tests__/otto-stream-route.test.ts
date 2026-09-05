@@ -359,7 +359,12 @@ describe("POST /api/otto/stream", () => {
     expect(facts.orgId).toBe("org_stream");
     expect(facts.refId).toEqual(expect.stringMatching(/^otto-stream:/));
     expect(facts.threadId).toEqual(expect.any(String));
-    expect(facts.skillFiles).toEqual([]);
+    // ⑥段(ENGINE-A7)之后这一栏不再恒为空:装配器报出这一轮装了哪几份知识文件。
+    // 常驻薄层永远在,而且每一份都必须是真柜文 —— 名单是 build 期的柜子本身。
+    expect(facts.skillFiles).toContain("_core.md");
+    for (const f of facts.skillFiles as string[]) {
+      expect(f, `${f} 不是柜文`).toMatch(/^(?:_core\.md|craft\/|playbooks\/|product-map\/)/);
+    }
     // 商家写的那句话不在档案里 —— 围栏在引擎侧是类型层的,这里再当场看一眼。
     expect(JSON.stringify(facts)).not.toContain("Make a launch post");
   });
@@ -1149,5 +1154,46 @@ describe("POST /api/otto/stream — ENGINE-A6 长对话预算闸", () => {
     const sys = (mainTurnCall()![1] as { role?: string; content?: string }[])[0]!;
     expect(sys.role).toBe("system");
     expect(sys.content).toContain("older notes: merchant sells kopi");
+  });
+
+  // ENGINE-A7 × ENGINE-A6(判官 2026-09-05 P1):裁剪之后装载集不许缩水 —— 被折走的上下文里
+  // 点名过的事,标签仍然对得上。变异实证:把 route 里的
+  // `if (dropped.length > 0 || priorRollingSummary)` 改回 `if (dropped.length > 0)`,
+  // 或把引擎里的 `instructionsForTurn(request.input, request.rollingSummary)` 改回单参数,
+  // 这一条当场红。
+  it("ENGINE-A7: 被折进摘要的话题,这一轮仍然把对应的柜文装进说明书", async () => {
+    mocks.chatThreadFindFirst.mockResolvedValue({
+      projectId: "proj_stream",
+      ottoState: '{"prior":"state"}',
+      rollingSummary: "merchant asked for a facebook advert; targeting agreed",
+    });
+    // 这一轮什么都没裁掉(短历史),被折走的话题只活在摘要里。
+    mocks.tryRestoreRunState.mockResolvedValue({ history: [{ role: "user", content: "ok" }] });
+
+    await POST(req({ projectId: "proj_stream", threadId: "thread_long", text: "carry on then" }));
+
+    const instructions = (mainTurnCall()![0] as { instructions: string }).instructions;
+    expect(instructions).toContain("`meta-list-objects`");
+  });
+
+  // ENGINE-A7(判官第二轮 P2-1):`tryRestoreRunState` 回 null 的那一轮 —— F24 的坏状态、或者
+  // 线程根本没存过状态 —— 此前走的是 else 分支,一个端口都不传,于是**只在摘要里点过名**的
+  // 那几份柜文当场掉出装载集。摘要还好端端地回注在 system 消息上,Otto 却丢了对应的规矩。
+  // 变异实证:把 route 那个 else 分支里新加的端口构造删掉,这一条当场红。
+  it("ENGINE-A7: 状态恢复不回来的一轮,摘要点名的柜文仍然装进说明书", async () => {
+    mocks.chatThreadFindFirst.mockResolvedValue({
+      projectId: "proj_stream",
+      ottoState: '{"corrupt":',
+      rollingSummary: "merchant asked for a facebook advert; targeting agreed",
+    });
+    mocks.tryRestoreRunState.mockResolvedValue(null);
+
+    await POST(req({ projectId: "proj_stream", threadId: "thread_long", text: "carry on then" }));
+
+    const instructions = (mainTurnCall()![0] as { instructions: string }).instructions;
+    expect(instructions).toContain("`meta-list-objects`");
+    // 钱路与折叠一个字没动:没裁掉任何东西 ⇒ 零折叠调用、零落盘。
+    expect(foldCall()).toBeUndefined();
+    expect(mocks.saveRollingSummary).not.toHaveBeenCalled();
   });
 });

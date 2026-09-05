@@ -993,6 +993,10 @@ gate lint "lint" pnpm lint
 
 # 4. Small node checks that only need packages/* built.
 gate checks "otto CATALOG.md freshness" pnpm --filter @fikirtive/otto catalog:check
+# ENGINE-A7（docs/specs/otto-engine.md §7.2⑥）：技能文件柜是 build 期产物。柜里的 markdown
+# 改了却没重生成，生成的常量表就还是旧的一份 —— 商家听到的仍是旧说明书，而 diff 看起来像
+# 「知识已经改好了」。和上面那条目录总表同一条理由、同一个形状。
+gate checks "otto knowledge cabinet freshness" pnpm --filter @fikirtive/otto knowledge:check
 gate checks "margin-floor gate self-test" node scripts/__tests__/check-margin-floor.test.mjs
 gate checks "margin floor" node scripts/check-margin-floor.mjs
 
