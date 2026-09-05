@@ -142,6 +142,15 @@ async function type(dom: HTMLElement, value: string): Promise<void> {
   });
 }
 
+/** 键盘那一条路:发送键之外,Enter 也送出 —— 两个入口共用一把闸。 */
+async function pressEnter(dom: HTMLElement): Promise<void> {
+  const textarea = dom.querySelector<HTMLTextAreaElement>('[aria-label="Otto creation prompt"]')!;
+  await act(async () => {
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+  await act(async () => { await Promise.resolve(); });
+}
+
 async function send(dom: HTMLElement): Promise<void> {
   const button = dom.querySelector<HTMLButtonElement>('[aria-label="Send prompt"]')!;
   await act(async () => { button.click(); });
@@ -306,6 +315,78 @@ describe("FRONT-A14 起步页 Add context 三条路", () => {
     expect(mocks.uploadFilesDirect).not.toHaveBeenCalled();
     expect(mocks.finalizeCandidateUploads).not.toHaveBeenCalled();
     expect(mocks.ensureCanvasDraft).not.toHaveBeenCalled();
+  });
+
+  it("FRONT-A14: 上传还没落地时 Enter 不放行 —— 与发送键同一把闸", async () => {
+    // 上传卡在半路:`ensureCanvasDraft` 永不落地,组件停在 uploading。
+    let releaseDraft: (() => void) | null = null;
+    mocks.ensureCanvasDraft.mockImplementation(
+      () => new Promise((resolve) => { releaseDraft = () => resolve({ projectId: "canvas_1" }); }),
+    );
+
+    const dom = await mount();
+    await openAddContext(dom);
+    await act(async () => { menuItem("Upload image").click(); });
+    const input = dom.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", {
+      value: [new File([new Uint8Array([1])], "hoodie.png", { type: "image/png" })],
+      configurable: true,
+    });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    await type(dom, DRAFT);
+    // 发送键此刻是关着的 —— Enter 必须读同一把闸,否则那张正在传的图会被丢在原地。
+    expect(dom.querySelector<HTMLButtonElement>('[aria-label="Send prompt"]')!.disabled).toBe(true);
+    await pressEnter(dom);
+    expect(mocks.createCanvasConversation).not.toHaveBeenCalled();
+
+    // 上传落地之后,同一下 Enter 照送 —— 挡的是「还没好」,不是键盘这条路。
+    await act(async () => { releaseDraft!(); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    await pressEnter(dom);
+    expect(sentReferences()).toEqual([{ type: "generation", id: "gen-upload" }]);
+  });
+
+  it("FRONT-A14: 从 Library 挑一段影片,芯片按 previewKind 用 <video> 画,不是一个破图", async () => {
+    mocks.getGenerationHistory.mockResolvedValue({
+      items: [{
+        id: "gen-clip",
+        projectId: "canvas_other",
+        assetId: "asset-2",
+        url: "https://cdn.example/hoodie-spin.mp4",
+        kind: "video",
+        source: "generated",
+        prompt: "Hoodie spin",
+        filename: "",
+        width: null,
+        height: null,
+        durationS: 5,
+        favorite: false,
+        createdAt: "2026-09-04T00:00:00.000Z",
+      }],
+      nextCursor: null,
+      hasMore: false,
+    });
+
+    const dom = await mount();
+    await openAddContext(dom);
+    await act(async () => { menuItem("Choose from Library").click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const tile = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+      (el) => el.getAttribute("aria-label")?.includes("Hoodie spin"),
+    )!;
+    expect(tile, "挑选器里没有那段影片").toBeDefined();
+    await act(async () => { tile.click(); });
+
+    // 芯片那一格:影片用 <video>,同一格里没有第二个 <img> 顶着一个画不出来的 .mp4。
+    const chip = [...dom.querySelectorAll<HTMLElement>("div")].find(
+      (el) => (el.textContent ?? "").includes("Hoodie spin") && el.querySelector("video, img"),
+    )!;
+    expect(chip, "输入框上没有那件芯片").toBeDefined();
+    expect(chip.querySelector("video")?.getAttribute("src")).toBe("https://cdn.example/hoodie-spin.mp4");
+    expect(chip.querySelector("img")).toBeNull();
   });
 });
 

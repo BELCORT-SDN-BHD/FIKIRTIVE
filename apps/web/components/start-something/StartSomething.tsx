@@ -181,8 +181,15 @@ export function StartSomething() {
     }
   }
 
+  /**
+   * 一把闸,两个入口。发送键 `disabled={busy}`,而 Enter 从前只看 `pending` —— 上传还没落地时
+   * 商家敲一下 Enter,画布照开、那张正在传的图**不在 references 里**(它此刻还没有 generationId),
+   * 屏幕上也没有一个字说它掉了。同一把闸(判官 #1242 第二轮 P1-1)。
+   */
+  const busy = pending || uploading;
+
   function startCanvas(prompt: string) {
-    if (pending) return;
+    if (busy) return;
     const trimmed = prompt.trim();
     if (!trimmed) {
       setError("Describe what you want to create.");
@@ -216,8 +223,6 @@ export function StartSomething() {
     });
   }
 
-  const busy = pending || uploading;
-
   return (
     <form
       onSubmit={(event) => {
@@ -235,9 +240,21 @@ export function StartSomething() {
                     key={reference.generationId}
                     className="flex items-center gap-2 rounded-[var(--radius)] bg-muted px-2 py-1 text-xs"
                   >
-                    {/* Decorative — the name is right beside it in the same chip. */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={reference.src} alt="" className="size-5 rounded-[2px] object-cover" />
+                    {/* Decorative — the name is right beside it in the same chip. 影片走
+                        `<video>`:同一个 `previewKind` 判据画布 composer(`OttoChatStream`)也在用,
+                        Library 挑一段影片过来时 `<img>` 只会画出一个破图(判官 #1242 第二轮 P2-1)。 */}
+                    {reference.previewKind === "video" ? (
+                      <video
+                        src={reference.src}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        className="size-5 rounded-[2px] object-cover"
+                      />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={reference.src} alt="" className="size-5 rounded-[2px] object-cover" />
+                    )}
                     <span className="max-w-72 truncate">{reference.label}</span>
                     <Button
                       type="button"
