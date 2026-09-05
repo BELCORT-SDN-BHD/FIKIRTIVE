@@ -19,6 +19,13 @@ env -u ANTHROPIC_BASE_URL pnpm --filter @fikirtive/otto run evals:check  # 重�
 `evals:check` **要花钱**（它会真的重跑一遍），所以它不是 CI 闸，只在人手里跑 ——
 ⑥段（技能文件柜替换单体）落地后重跑它，就是那一段「总分不低于基线」的判据。
 
+## 基线还没跑出来（2026-09-05）
+
+`baselines/engine.json` **目前不存在**：主检出 `.env.local` 里的 `ANTHROPIC_API_KEY` 是 401
+（`GET https://api.anthropic.com/v1/models` → `authentication_error: API key is invalid.`，零 token 的探针，见
+`docs/specs/otto-engine.md` §5 2026-09-05 登记行）。换一把有效钥匙之后按上面的跑法跑一次即可，
+档案会自己写出来。在那之前 `evals:check` 会明说「没有基线可比」并非零退出 —— 它不会假绿。
+
 ## 预算
 
 单次全跑硬上限 **$10**，本段累计 **$20**（`docs/specs/otto-engine.md` §7.7）。
