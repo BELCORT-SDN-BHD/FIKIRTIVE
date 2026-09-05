@@ -41,21 +41,13 @@ import { OttoFrontDoor } from "@/components/otto/OttoFrontDoor";
 import { CONVERSATION_COST_HINT } from "@/components/otto/ConversationCostHint";
 import { FRONT_DOOR_GOAL_LABELS } from "@/lib/otto-canned-starters";
 import { CHAT_HOLD_NOTE } from "@/lib/credit-format";
+import { copyLines, HAND_TYPED_CREDITS } from "./helpers/price-literal-fence";
 
 const WEB_ROOT = process.cwd();
 const codeOf = (rel: string) => readFileSync(path.join(WEB_ROOT, rel), "utf8");
 
-/** 「12 credits」「0.1 credit」这类**手抄的钱数**。`text-[0.75rem]` 不会命中(rem 不是 credit),
- *  命中的只有真把价钱写死进文案的那种写法 —— 与另外两条成本小字用的是同一条正则。 */
-const HAND_TYPED_CREDITS = /\d[\d,.]*\s*credits?\b/i;
-
-/** 只扫商家读得到的那部分:注释里解释「这个数怎么来的」是文档,不是文案。 */
-function copyLines(src: string): string[] {
-  return src
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line))
-    .map((line) => line.trim());
-}
+/** 「手抄的钱数」与「只扫商家读得到的那部分」两条判据,与另外三条成本小字围栏共用同一份
+ *  (`helpers/price-literal-fence.ts`;判官 #1227 P2-3 ＝ #1219 P2-4)。 */
 
 /** 门厅的默认(非画布)那一支,渲染成 markup —— 与 `otto-greeting.test.ts` 同一种渲染法。 */
 function frontDoorMarkup(): string {

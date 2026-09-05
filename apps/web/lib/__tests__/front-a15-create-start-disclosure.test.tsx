@@ -4,7 +4,9 @@
  *
  * 为什么这一页非有不可。起步页按一下发送键,`lib/canvas-entry-actions.ts` 在同一笔事务里
  * 建好一条 `surface="canvas"` 的对话,画布拿到 `pendingFirst` 之后**挂载即把第一轮送出去**
- * (`components/otto/OttoChatStream.tsx` 的预扣 `otto-stream:<userMessageId>`)。也就是说:
+ * (`components/otto/OttoChatStream.tsx` 挂载即 `sendMessage`;那一轮的预扣
+ * `otto-stream:<userMessageId>` 是**服务端**写的,住在 `app/api/otto/stream/route.ts:324`,
+ * 不在这个客户端组件里 —— 判官 #1227 P2-1 订正)。也就是说:
  * 第一轮付费对话由这一页按下的那一下发出,而这条路径此前从按下到扣钱**全程零披露** ——
  * 画布门厅那一支挂着的披露被整条路径跳过。Founder 2026-09-05 裁决②松开 2026-09-03 裁决五
  * 的一格,给这一页补上与画布**同一份**文案。
@@ -27,6 +29,7 @@ import path from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { copyLines, HAND_TYPED_CREDITS } from "./helpers/price-literal-fence";
 
 vi.mock("@/lib/canvas-entry-actions", () => ({ createCanvasConversation: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -40,16 +43,8 @@ const codeOf = (relativePath: string) => fs.readFileSync(path.join(WEB_ROOT, rel
 
 const START_PAGE = "components/start-something/StartSomething.tsx";
 
-/** 「12 credits」「0.1 credit」这类**手抄的钱数** —— 与另外三条成本小字围栏用的是同一条正则。 */
-const HAND_TYPED_CREDITS = /\d[\d,.]*\s*credits?\b/i;
-
-/** 只扫商家读得到的那部分:注释里解释「这个数怎么来的」是文档,不是文案。 */
-function copyLines(src: string): string[] {
-  return src
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line))
-    .map((line) => line.trim());
-}
+/** 「手抄的钱数」与「只扫商家读得到的那部分」两条判据,与另外三条成本小字围栏共用同一份
+ *  (`helpers/price-literal-fence.ts`;判官 #1227 P2-3 ＝ #1219 P2-4)。 */
 
 const PROJECTS = [{ id: "p-1", name: "Raya campaign", updatedLabel: "1 Aug 2026" }];
 
