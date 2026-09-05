@@ -70,8 +70,8 @@ vi.mock("../dto", () => ({
   toEntityDTO: (e: unknown) => e,
   // 传进来的就是 mock 好的 meta 行,原样当 ChatThreadDTO 用(messages 留空,和真实现同义:
   // 列表里的行本来就是 meta,不带消息)。
-  toChatThreadMetaDTO: (t: { id: string; projectId: string; title: string; updatedAt: string; pinnedAt?: string | null }) =>
-    ({ id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt, pinnedAt: t.pinnedAt ?? null, messages: [] }) satisfies ChatThreadDTO,
+  toChatThreadMetaDTO: (t: { id: string; projectId: string; title: string; updatedAt: string; pinnedAt?: string | null; surface?: string | null }) =>
+    ({ id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt, pinnedAt: t.pinnedAt ?? null, surface: t.surface ?? null, messages: [] }) satisfies ChatThreadDTO,
   toChatThreadDTO: (t: { id: string; projectId: string; title: string; updatedAt: string; messages: unknown[] }) =>
     ({ id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt, pinnedAt: null, messages: t.messages }) as unknown as ChatThreadDTO,
 }));
@@ -86,12 +86,17 @@ const OTHER_PROJECT = "proj_other";
 const FOREIGN_PROJECT = "proj_someone_elses";
 
 /** 两个 project,每个 project 底下的会话已经按「最近在前」排好(与 getAllCoworkThreadMetas
- *  真实的 orderBy pinnedAt desc, updatedAt desc 同一个约定 —— 选择逻辑不自己再排一次序)。 */
+ *  真实的 orderBy pinnedAt desc, updatedAt desc 同一个约定 —— 选择逻辑不自己再排一次序)。
+ *
+ *  FRONT-A14 起每一行都带 `surface`:`"panel"` 是面板自己开的,`"canvas"` 是画布那一侧开的,
+ *  `null` 是这一票之前的老行(一律按画布读)。默认 project 里**最近的一条是画布的** ——
+ *  P1-010 的现场就长这样(商家在 /billing 展开面板,读到一条画布对话)。 */
 const THREAD_ROWS = [
-  { id: "thr_default_recent", projectId: DEFAULT_PROJECT, title: "Default recent", updatedAt: "2026-08-20T12:00:00.000Z", pinnedAt: null },
-  { id: "thr_default_older", projectId: DEFAULT_PROJECT, title: "Default older", updatedAt: "2026-08-01T00:00:00.000Z", pinnedAt: null },
-  { id: "thr_other_recent", projectId: OTHER_PROJECT, title: "Other recent", updatedAt: "2026-08-19T00:00:00.000Z", pinnedAt: null },
-  { id: "thr_other_older", projectId: OTHER_PROJECT, title: "Other older", updatedAt: "2026-08-02T00:00:00.000Z", pinnedAt: null },
+  { id: "thr_default_canvas_newest", projectId: DEFAULT_PROJECT, title: "Professional Male Model Image", updatedAt: "2026-08-21T09:00:00.000Z", pinnedAt: null, surface: "canvas" },
+  { id: "thr_default_recent", projectId: DEFAULT_PROJECT, title: "Default recent", updatedAt: "2026-08-20T12:00:00.000Z", pinnedAt: null, surface: "panel" },
+  { id: "thr_default_older", projectId: DEFAULT_PROJECT, title: "Default older", updatedAt: "2026-08-01T00:00:00.000Z", pinnedAt: null, surface: null },
+  { id: "thr_other_recent", projectId: OTHER_PROJECT, title: "Other recent", updatedAt: "2026-08-19T00:00:00.000Z", pinnedAt: null, surface: "panel" },
+  { id: "thr_other_older", projectId: OTHER_PROJECT, title: "Other older", updatedAt: "2026-08-02T00:00:00.000Z", pinnedAt: null, surface: null },
 ];
 
 beforeEach(() => {
@@ -112,12 +117,58 @@ beforeEach(() => {
   mockResolveCoworkResultUrls.mockReset().mockResolvedValue(new Map());
 });
 
-describe("不带 select:与深链之前逐字同义(回归钉)", () => {
-  it("停在 getOrCreateDefaultProject 给的那个 project,选它最近那一条", async () => {
+describe("不带 select:停在默认 project,续面板自己那一批里最近的一条", () => {
+  it("停在 getOrCreateDefaultProject 给的那个 project,选它最近那一条面板对话", async () => {
     const seed = await loadOttoPanelSeed();
     if ("error" in seed) throw new Error("unexpected error: " + seed.error);
     expect(seed.projectId).toBe(DEFAULT_PROJECT);
     expect(seed.activeThreadId).toBe("thr_default_recent");
+  });
+});
+
+/**
+ * FRONT-A14(Codex 全 beta 审计 P1-010)—— 面板只自动续**它自己开的**对话。
+ *
+ * 现场:商家从 /billing 展开侧栏 Otto,面板摊开的是一条画布对话
+ * 「Professional Male Model Image」。根因不在面板,在这一层的选择判据:它只按 project 取
+ * 最近一条,而 project 来自 `getOrCreateDefaultProject()`,与商家在看哪一页毫无关系。
+ */
+describe("FRONT-A14 面板只续自己开的对话(Codex 全 beta 审计 P1-010)", () => {
+  it("FRONT-A14 — the panel resumes its own conversation, never the newer canvas one in the same project", async () => {
+    const seed = await loadOttoPanelSeed();
+    if ("error" in seed) throw new Error("unexpected error: " + seed.error);
+    // 最近的一条(`thr_default_canvas_newest`)是画布的 —— 旧规则会选它,这就是 P1-010。
+    expect(seed.activeThreadId).not.toBe("thr_default_canvas_newest");
+    expect(seed.activeThreadId).toBe("thr_default_recent");
+  });
+
+  it("FRONT-A14 — with no panel conversation in the project the panel opens a new one instead of a canvas thread", async () => {
+    mockGetAllCoworkThreadMetas.mockResolvedValue([
+      { id: "thr_canvas_only", projectId: DEFAULT_PROJECT, title: "Professional Male Model Image", updatedAt: "2026-08-21T09:00:00.000Z", pinnedAt: null, surface: "canvas" },
+    ]);
+    const seed = await loadOttoPanelSeed();
+    if ("error" in seed) throw new Error("unexpected error: " + seed.error);
+    // 不预选 —— 面板画新对话态,而不是替商家打开一段他没有在这里开过的上下文。
+    expect(seed.activeThreadId).toBeNull();
+    // 画布那一条仍然在列表里,商家点得到 —— 只是不再自动摊开。
+    expect(seed.threads.map((t) => t.id)).toContain("thr_canvas_only");
+  });
+
+  it("FRONT-A14 — a thread with no recorded surface counts as a canvas conversation", async () => {
+    mockGetAllCoworkThreadMetas.mockResolvedValue([
+      { id: "thr_legacy", projectId: DEFAULT_PROJECT, title: "Legacy", updatedAt: "2026-08-21T09:00:00.000Z", pinnedAt: null, surface: null },
+    ]);
+    const seed = await loadOttoPanelSeed();
+    if ("error" in seed) throw new Error("unexpected error: " + seed.error);
+    // 老行没有办法回溯它当初从哪个门开的。诚实登记:按画布读,面板不自动续它。
+    expect(seed.activeThreadId).toBeNull();
+  });
+
+  it("FRONT-A14 — a deep-linked canvas thread still opens, because the merchant named it", async () => {
+    // 深链是商家自己点名的到达,与「面板自动续哪一条」是两件事。
+    const seed = await loadOttoPanelSeed({ projectId: DEFAULT_PROJECT, threadId: "thr_default_canvas_newest" });
+    if ("error" in seed) throw new Error("unexpected error: " + seed.error);
+    expect(seed.activeThreadId).toBe("thr_default_canvas_newest");
   });
 });
 

@@ -47,7 +47,12 @@ test("A freshly-uploaded image reaches the server and becomes a real Asset, ever
   });
   // Puts the merchant straight on the chat composer (attach button included) instead of the
   // "new chat" front door — see support/seed.ts's seedThread.
-  await seedThread(ws);
+  //
+  // `surface: "panel"` (FRONT-A14): this journey lands on `/?otto=1` with no `thread=`, and the
+  // docked panel resumes only conversations it started — a canvas conversation is never reopened
+  // on an unrelated page (Codex 全 beta 审计 P1-010). So the fixture has to be what it claims to
+  // be: a conversation the merchant had **in the panel**.
+  await seedThread(ws, { surface: "panel" });
 
   const bytes = freshPng();
   const sha256 = createHash("sha256").update(bytes).digest("hex");
