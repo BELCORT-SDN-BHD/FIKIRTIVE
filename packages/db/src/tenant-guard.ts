@@ -22,6 +22,11 @@ export const TENANT_MODELS = new Set([
   // checked-op call site (schedule-actions, brand-record-actions, memory-actions,
   // lookup-products, _brand-record) — guarded, not exempt.
   "ScheduledPost", "BrandKit", "BrandRecord", "BrandRule",
+  // FRONT-A8 (2026-09-03, 规格 docs/specs/frontend-baseline.md §7.3④):品牌上下文的改动史。
+  // 它用的就是 `ownerId`(与 Memory / BrandRecord 同一条边界),而这个文件里的读写路径
+  // (brand-revision.ts 的 recordBrandRevision / listBrandRevisions / stampOf)每一处都自带
+  // ownerId —— 所以是 guarded,不是 exempt。
+  "BrandContextRevision",
   // B0-30 (2026-07-13): generic channel-connection layer. Owner-scoped by birth (宪法 6); unlike
   // MetaConnection (EXEMPT: worker resolves ads tokens by connection id + platform-wide admin list),
   // this new table has NO platform-wide read requirement yet, so the conservative default is guarded.
