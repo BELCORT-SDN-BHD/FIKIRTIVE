@@ -24,10 +24,12 @@
  *
  *  - **CANCELLED**：那条消息带着 `{ cancelled: true }` 这个耳记(`cowork-actions.ts`)，
  *    只有按下取消的那条路知道它。这里补一条普通的失败消息，就是把商家「我自己停的」
- *    改写成「我们没做成」—— 宁可不写。
+ *    改写成「我们没做成」—— 宁可不写。诚实口径(#1239 判官 P2-2)：它**连日志都没有**，
+ *    因为扫描的 `status` 只收 DONE / FAILED(`REDELIVERABLE_STATUSES`)，取消的行压根
+ *    不进候选 —— 不是「看到了、记下来、不补」。
  *  - **DONE 但一件产出都没有**：这一行到底算交付还是算失败，只有当时那条路说得清。
- *    猜一个说法比不说更糟。
- *  两种都照实记进日志，不静默丢。
+ *    猜一个说法比不说更糟 —— 这一种是看到了才跳过的，所以照实记进日志(`console.error`)，
+ *    不静默丢。
  */
 import { prisma } from "@fikirtive/db";
 import { runAsTenant } from "@fikirtive/db/principal";
