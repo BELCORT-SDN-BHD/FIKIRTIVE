@@ -3,6 +3,12 @@
 /**
  * Production Canvas shell. FlowCanvas remains the only spatial/generation kernel; this file only
  * joins it to the real Otto conversation and the small amount of route/account state around it.
+ *
+ * ENGINE-A3(`docs/specs/otto-engine.md` §7.2⑦)—— **画布上只有一个输入框**,就是这一层挂的
+ * `CanvasOttoOverlay`。从前 `FlowCanvas` 还带着自己的一个直出 composer(藏在工具条的 Generate
+ * 按钮后面,按下就扣钱),那是第二个输入、也是画布上唯一一条绕过对话审批卡的花钱路;它已随
+ * 本段退役,`defaultComposerOpen` 这个属性也一并消失。画布上的花钱从此只有一条路:跟 Otto 说
+ * → Otto 出一张确认卡 → 商家在卡上按下才扣钱。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -190,7 +196,6 @@ export function NorthstarCanvasWorkspace({
           skin="gb"
           onBalanceRefresh={refreshBalance}
           onReferenceInChat={activeThread ? addComposerReferences : undefined}
-          defaultComposerOpen={false}
         />
         <CanvasOttoOverlay
           projectId={runtimeContext.activeProjectId}

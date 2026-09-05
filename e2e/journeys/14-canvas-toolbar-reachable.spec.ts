@@ -50,7 +50,10 @@ import { waitUntilInteractive } from "../support/ui.js";
  * merchant's screen reader reads, and grouped so a failure says which cluster moved.
  */
 const TOOL_GROUPS = [
-  { group: "Canvas tools", role: "toolbar", names: ["Generate image", "Video", "Add text"] },
+  // ENGINE-A3(otto-engine.md §7.2⑦):这一排从前的第一颗是 `Generate image`,它掀开的直出
+  // composer 按下就扣钱。⑦段把两者一并撤下 —— 画布只留 Otto 对话那一个输入,出图走对话的
+  // 确认卡。余下两颗都不是直出:Video 先开确认框,Add text 一分钱不花。
+  { group: "Canvas tools", role: "toolbar", names: ["Video", "Add text"] },
   // The mode rail is a ToggleGroup, which the primitive renders as role="group" — asked for by the
   // role it really has rather than the one it looks like.
   { group: "Canvas interaction mode", role: "group", names: ["Hand tool", "Select tool"] },
@@ -223,16 +226,11 @@ test("FRONT-A14 — a merchant can press every canvas tool while Otto's composer
     await historyToggle.click();
     await expect(historyToggle).toHaveAttribute("aria-expanded", "false");
 
-    // ③ The two tools a merchant loses the most by not reaching, pressed for real.
-    const generate = tools.getByRole("button", { name: "Generate image", exact: true });
-    await generate.click();
-    // The prompt bar itself, not a role: its input is a TipTap contenteditable whose placeholder
-    // is drawn in CSS, so it carries no accessible name to ask for.
-    const imagePrompt = page.locator("form.cv-composer-pop");
-    await expect(imagePrompt, `pressing Generate image at ${where} did not open the image prompt`).toBeVisible();
-    await expect(imagePrompt.getByRole("button", { name: "Generate", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Close image prompt" }).click();
-    await expect(imagePrompt).toBeHidden();
+    // ③ The tool a merchant loses the most by not reaching, pressed for real.
+    //    ENGINE-A3(§7.2⑦):从前这里先按 `Generate image` 验那条直出的 composer 掀得开。
+    //    那条路已退役,所以顺带在这里守住它**没有回来**:板上既没有那颗键,也没有那张表单。
+    await expect(tools.getByRole("button", { name: "Generate image", exact: true })).toHaveCount(0);
+    await expect(page.locator("form.cv-composer-pop")).toHaveCount(0);
 
     const video = tools.getByRole("button", { name: "Video", exact: true });
     await video.click();
