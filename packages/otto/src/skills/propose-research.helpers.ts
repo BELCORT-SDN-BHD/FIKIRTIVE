@@ -6,13 +6,8 @@ import {
   ottoLlmMargin,
   displayCredits,
   searchChargeInternal,
+  OTTO_BILLABLE_MODEL_ID,
 } from "@fikirtive/core";
-
-/** The model whose prices the worker meters research against. Mirrors OTTO_DEFAULT_MODEL
- *  (packages/otto/src/model.ts). Inlined as a bare string — NOT imported from ../model.ts —
- *  so this pure, client-adjacent helpers module never drags the Agents/AI-SDK value graph
- *  (aisdk(...)) into a bundle. llmPricesFor resolves any "sonnet…" id to the sonnet table. */
-const RESEARCH_METER_MODEL = "claude-sonnet-4-6";
 
 /** 每档 maxSteps → worker 真 reserve 的 RAW INTERNAL budget(未转显示前的值)。
  *
@@ -32,7 +27,10 @@ const RESEARCH_METER_MODEL = "claude-sonnet-4-6";
  *  报低价。必填之后,漏传是编译错误,不是一个悄悄变便宜的估值。 */
 export function researchTierBudgetInternal(maxSteps: number, maxSearches: number): number {
   return (
-    turnBudgetInternal(llmPricesFor(RESEARCH_METER_MODEL), ottoLlmMargin(), maxSteps) +
+    // 计价型号取 @fikirtive/core 的唯一源(ENGINE-A5):从前这里抄了一份裸字符串
+    // `RESEARCH_METER_MODEL`,与 model.ts 的 OTTO_DEFAULT_MODEL 是两份真相。抄的理由(不把
+    // Agents/AI-SDK 的值图拖进 bundle)仍然成立,而一个纯字符串常量导出就解决了它。
+    turnBudgetInternal(llmPricesFor(OTTO_BILLABLE_MODEL_ID), ottoLlmMargin(), maxSteps) +
     searchChargeInternal(maxSearches)
   );
 }
