@@ -18,7 +18,9 @@
  *   ③ 两句既有事实不许在这次改写里丢:stored file 尚未被自动清理、canvas 卡片仍在并显示
  *      Preview missing;
  *   ④ 一个保留天数都不许承诺(全仓没有清扫任务硬删这些行,没有单一来源的天数可引用);
- *   ⑤ 详情面确认框那一句同样不许把商家指到一个在 Favorites / Collections 上不存在的控件。
+ *   ⑤ 详情面确认框那一句同样不许把商家指到一个在 Favorites / Collections 上不存在的控件;
+ *   ⑥ 讲完回收站要指得出「真要抹掉这条记录」的两条路(删所属 campaign / 账户删除),
+ *      否则这一页对永久删除是沉默的(判官 #1238 P2)。
  *
  * 变异自查(逐一实做、做完还原,红→绿):
  *   - 把页面那一条改回 "choose Delete … cannot be undone" ⇒ ① 两条一起红;
@@ -84,6 +86,21 @@ describe("FRONT-A12 · /legal/data-deletion 的删素材那一条说的是实话
     const bullet = libraryAssetBullet();
     expect(bullet).toContain("not yet removed by an automatic clean-up job");
     expect(bullet).toContain("Preview missing");
+  });
+
+  it("FRONT-A12 · 指得出真能把这条记录抹掉的两条路(删所属 campaign / 账户删除)", () => {
+    // 判官 #1238 P2:这一条把「回收站」讲得很清楚,却没说「那我要真删掉呢」往哪走 ——
+    // 商家读完只知道东西还在。产品里真会硬删这行的只有两条路:
+    //   ① `deleteProject`(`lib/actions.ts`)在同一笔事务里 `generation.deleteMany`,
+    //      而 `Generation.projectId` 是非空列(`schema.prisma`),所以每一件素材都属于某个
+    //      campaign,这条路对每一件都成立;
+    //   ② 账户删除那条人工路(本页上方已有)。
+    // 两条都必须在这一条 bullet 里点得到名字,不然这一页对「永久删除」这件事是沉默的。
+    const bullet = libraryAssetBullet();
+    expect(bullet).toContain("campaign");
+    expect(bullet).toContain("account deletion");
+    // 不许把回收站本身写成永久删除。
+    expect(bullet).toMatch(/nothing on this route removes the record itself/i);
   });
 
   it("FRONT-A12 · 一个保留天数都不承诺", () => {

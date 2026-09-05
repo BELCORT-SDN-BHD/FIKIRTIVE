@@ -344,7 +344,10 @@ export default async function DataDeletionPage({
               <span className="text-foreground">Restore</span>. Fikirtive does not put a number of days on that wait:
               nothing removes these rows on a timer. It does not clear the asset off a campaign canvas: any canvas card
               showing it stays where it is and reads <span className="text-foreground">Preview missing</span> until you
-              restore it. The stored file behind it is not yet removed by an automatic clean-up job.
+              restore it. The stored file behind it is not yet removed by an automatic clean-up job. Trash is where
+              the asset stays: nothing on this route removes the record itself. The two routes that do are deleting
+              the campaign the asset was made in, which permanently deletes the assets held in it, and the account
+              deletion route above.
             </li>
             <li>
               <span className="text-foreground">A saved reference.</span> Library also lists the products, characters,

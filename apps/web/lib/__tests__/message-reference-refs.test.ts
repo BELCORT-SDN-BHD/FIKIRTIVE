@@ -312,10 +312,17 @@ describe("FRONT-A10 — 一页的引用不被单轮上限截断", () => {
 
   it("FRONT-A10 the write side still stops at one turn's worth — the read fix does not widen what a turn may submit", async () => {
     // 同一批 id,这次走**写**侧:第 25 个起不该被悄悄放行,它算解不出来的那一类。
-    const tooMany = Array.from({ length: MAX_TURN_REFERENCES + 1 }, () =>
+    // 同一个对象重复挑不算失败(去重),所以「超上限」这件事要用真的不同 id 才说明问题。
+    // 先把去重那一半钉住:25 份**同一个** id 送进去 —— 解出来的是一件(去重),而第 25 个
+    // 仍然算越界(`unresolved` 记 1),不是静默丢弃。(判官 #1240 P2:这个数组从前只被
+    // 断言了长度,没进过解析器,是一段死脚手架。)
+    const sameOneTwentyFive = Array.from({ length: MAX_TURN_REFERENCES + 1 }, () =>
       formatReferenceRef({ type: "product", id: aProductId }),
     );
-    // 同一个对象重复挑不算失败(去重),所以这里用真的不同 id 才说明问题。
+    const deduped = await resolveOwnedReferenceRefs(orgA, sameOneTwentyFive);
+    expect(deduped.wire).toEqual([formatReferenceRef({ type: "product", id: aProductId })]);
+    expect(deduped.unresolved).toBe(1);
+
     const distinct = await Promise.all(
       Array.from({ length: MAX_TURN_REFERENCES + 1 }, async (_, i) =>
         formatReferenceRef({
@@ -326,8 +333,6 @@ describe("FRONT-A10 — 一页的引用不被单轮上限截断", () => {
         }),
       ),
     );
-    expect(tooMany).toHaveLength(MAX_TURN_REFERENCES + 1);
-
     const resolved = await resolveOwnedReferenceRefs(orgA, distinct);
     expect(resolved.wire).toHaveLength(MAX_TURN_REFERENCES);
     // 被砍掉的那一个是「没解出来」,不是静默丢弃 —— 调用方据此整轮不发。
