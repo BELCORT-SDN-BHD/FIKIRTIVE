@@ -643,7 +643,12 @@ export default function DetailPanel({
         title: "Move this asset to trash?",
         // 不承诺任何保留天数:全仓没有一个清扫任务硬删这些行,也就没有一个「30 天」的单一
         // 来源可以引用(唯一硬删是项目删除,那是另一件事)。说得出来的只有「找得回来」。
-        description: "It leaves your library and waits in Trash — open More filters → Show → Trash to bring it back. A canvas card that uses it stays where it is and reads 'Preview missing' until you restore it.",
+        // 指路必须从**任何一格**都走得通:这块面板也从 Favorites 与 Collections 里掀得开,
+        // 而 More filters 只画在 Generation history / Uploads 两格上(LibraryView 的
+        // `showFilters={gridView}`),Collections 那一格连工具条都没有(`toolbarView`)。
+        // 原来那句「open More filters → Show → Trash」在那两格上指向一个屏幕上不存在的控件,
+        // 所以先把商家带回 Generation history —— 补一段路,而不是给那两格另画一条工具条。
+        description: "It leaves your library and waits in trash — go to Library → Generation history → More filters → Show → Trash to bring it back. A canvas card that uses it stays where it is and reads 'Preview missing' until you restore it.",
         confirmLabel: "Move to trash",
         disabled: readOnly,
       }
@@ -1199,7 +1204,8 @@ export default function DetailPanel({
               {/* Move to trash(清单 B3 / P1-007)。数据层历来就是软删(`lib/actions.ts` 的
                   `deleteGeneration` 写 `deletedAt`),只是屏幕上写着 "This cannot be undone." ——
                   一句关于我们自己的假话。措辞改成它真正做的事;回收站与 Restore 在 Library
-                  的 More filters → Show → Trash。 */}
+                  的 Generation history → More filters → Show → Trash(这块面板从 Favorites /
+                  Collections 也掀得开,那两格没有 More filters,所以指路带上前一段)。 */}
               <Button variant="destructive-secondary" size="sm" onClick={() => { if (!readOnly) { setDeleteError(null); setConfirmAction("delete"); } }} disabled={readOnly} title={readOnlyReason}>
                 Move to trash
               </Button>
