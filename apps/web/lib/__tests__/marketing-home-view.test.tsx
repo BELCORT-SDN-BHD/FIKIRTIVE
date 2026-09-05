@@ -109,8 +109,10 @@ describe("production Marketing Home", () => {
   it("offers an in-place retry when the source is unavailable", () => {
     const markup = renderHealth({ state: "unavailable", goal: "online-sales", retryable: true });
     expect(markup).toContain("Marketing data is temporarily unavailable");
-    expect(markup).toContain("Retry");
-    expect(markup).toContain("goal=online-sales");
+    // Retry 是一颗按钮(按下去 `router.refresh()`),不再是一条指回同一个地址的链接 ——
+    // 所以这里断言的是那颗按钮,不再是 URL。真按一下的围栏在
+    // `home-honesty-l3.test.tsx`(FRONT-A3)。
+    expect(markup).toContain(">Retry</button>");
   });
 
   it("keeps the future aggregate ready state distinct", () => {
@@ -276,9 +278,10 @@ describe("FRONT-A3:Meta 单源版面的五态与它们各自的真动作", () =>
   it("FRONT-A3:读不出来 —— 与「真的没有数据」分开说,重试不动筛选", () => {
     const markup = render({ state: "unavailable", goal: "online-sales", retryable: true });
     expect(markup).toContain("Marketing data is temporarily unavailable");
-    expect(markup).toContain("Retry");
-    // 重试回到同一组筛选,不悄悄换成别的期间。
-    expect(markup).toContain("goal=online-sales&amp;range=30-days&amp;comparison=previous-period");
+    // 重试是原地再读一次:一颗调 `router.refresh()` 的按钮,连 URL 都不碰,所以「不悄悄
+    // 换成别的期间」这件事现在由形状本身保证 —— 它压根没有一个可以改的地址。
+    expect(markup).toContain(">Retry</button>");
+    expect(markup).not.toContain("range=90-days");
     expect(markup).not.toContain("Not enough evidence yet");
   });
 
