@@ -1,6 +1,6 @@
 import { aisdk } from "@openai/agents-extensions/ai-sdk"; // SUBPATH, not the package root
 import { anthropic } from "@ai-sdk/anthropic";
-import { llmPricesFor } from "@fikirtive/core";
+import { llmPricesFor, llmPricesOrNull, OTTO_BILLABLE_MODEL_ID, PRICED_MODEL_IDS } from "@fikirtive/core";
 import { mapOttoUsage } from "./meter.js";
 import type { OttoModelRuntime } from "./runtime.js";
 
@@ -15,8 +15,10 @@ import type { OttoModelRuntime } from "./runtime.js";
  * paths are all covered without touching the run() call sites.
  */
 
-/** Primary model. Used again automatically once Anthropic capacity recovers (failover is per-call, not sticky). */
-export const OTTO_PRIMARY_MODEL = "claude-sonnet-4-6";
+/** Primary model. Used again automatically once Anthropic capacity recovers (failover is per-call, not sticky).
+ *  值取自 `@fikirtive/core` 的 OTTO_BILLABLE_MODEL_ID —— 计价型号与跑的型号是同一件事,
+ *  一份真相(ENGINE-A5;从前 propose-research.helpers.ts 抄了第二份裸字符串)。 */
+export const OTTO_PRIMARY_MODEL = OTTO_BILLABLE_MODEL_ID;
 
 /** Same-tier sibling used ONLY on a 529 overload of the primary. Same pricing tier (sonnet) — see OTTO_DEFAULT_MODEL. */
 export const OTTO_FALLBACK_MODEL = "claude-sonnet-4-5";
@@ -194,6 +196,39 @@ export const ottoModel = aisdk(
 // derive from THIS manifest (runtime.ts ottoBudgetArgsFor) — no entry holds an independent
 // model or price constant. Frozen: nothing at runtime can flip the billable model or swap
 // the binding (fixture/CLI runtimes are separate TEST compositions, never this object).
+/**
+ * ENGINE-A5 —— **manifest 组合期查价:任一型号没价就拒绝启动。**
+ *
+ * 这个 manifest 是模块加载期的冻结常量,所以在它构造之前抛错就是「进程起不来」:web 与
+ * worker 都 import 得到 otto,谁都躲不过。查的是 manifest 真的会用到的三个 id —— 主力、
+ * 529 同档接管的备份、以及计价用的那一个。
+ *
+ * 为什么组合期和开机检查(env-contract 的「型号必须已定价」)两处都要:开机检查是**说给
+ * 运维听的**那一半(点名、给出路、warn 免疫),这里是**物理上拦住**的那一半 —— 换型号的
+ * 人改的是这个文件,错误必须长在他手边,而不是等某次生产开机才出现。
+ *
+ * 导出成函数只为可测:默认参数就是生产的三个 id,测试传一个假 id 来演示它真的会抛。
+ */
+export function assertOttoModelsPriced(
+  ids: readonly (readonly [constant: string, id: string])[] = [
+    ["OTTO_PRIMARY_MODEL", OTTO_PRIMARY_MODEL],
+    ["OTTO_FALLBACK_MODEL", OTTO_FALLBACK_MODEL],
+    ["OTTO_DEFAULT_MODEL", OTTO_DEFAULT_MODEL],
+  ],
+): void {
+  for (const [constant, id] of ids) {
+    if (llmPricesOrNull(id) === null) {
+      throw new Error(
+        `Otto refuses to start: ${constant} = "${id}" has no entry in the LLM price table ` +
+          `— 未定价的型号一律拒绝:把它加进价目表(packages/core/src/llm-prices.ts 的 TABLE),` +
+          `或改回已定价型号(priced today: ${PRICED_MODEL_IDS.join(", ")})。`,
+      );
+    }
+  }
+}
+
+assertOttoModelsPriced();
+
 export const ottoModelRuntime: OttoModelRuntime = Object.freeze({
   binding: ottoModel,
   billableModelId: OTTO_DEFAULT_MODEL,
