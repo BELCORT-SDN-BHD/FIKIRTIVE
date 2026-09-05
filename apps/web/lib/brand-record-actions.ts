@@ -1,5 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
+import { SAVE_FAILED } from "./save-failed-copy";
 import { prisma, Prisma } from "@fikirtive/db";
 import {
   newId, RECORD_KINDS, recordSchemaFor, recordName, normalizeNameKey, type RecordKind,
@@ -119,7 +120,7 @@ export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: str
     revalidatePath("/", "layout");
     return { ok: true, id };
   } catch {
-    return { error: "Couldn't save that — please try again." };
+    return { error: SAVE_FAILED };
   }
 }
 

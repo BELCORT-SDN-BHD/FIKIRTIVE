@@ -549,7 +549,6 @@ describe("FRONT-A15 摆板认得出左上角那张 Otto 卡的两副面孔", () 
   it("FRONT-A15: 门厅那张卡(还没开对话)挂着摆板认的那个记号", () => {
     const host = mount(createElement(OttoFrontDoor, {
       projectId: "p1",
-      entities: [],
       userName: "Rahim",
       onThreadStarted: () => {},
       layout: "canvas" as const,

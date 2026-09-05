@@ -16,8 +16,11 @@
  *     A card with no prompt (an upload dropped straight onto the board) still says nothing rather
  *     than borrowing the Canvas placeholder — a card is not a Canvas.
  *   · version — this card's 1-based position inside the paid press that produced it
- *     (`batchIndex` + 1), which is the same ordinal the pattern's `v1 … v4` shows for the four
- *     cards of one turn. It is READ, never derived from the board: `canvasRecordedFacts` has
+ *     (`batchIndex` + 1). The design fixture numbers by LINEAGE instead
+ *     (`design-system/patterns/canvas/CanvasReference.tsx:513` — a press off a v2 card yields
+ *     v3 … v6), so the two are not the same ordinal; the divergence and the pending ruling are
+ *     registered as `docs/specs/frontend-baseline.md` §5 差异 ⑦. It is READ, never derived from
+ *     the board: `canvasRecordedFacts` has
  *     already refused everything the server has not settled, so deleting a sibling cannot
  *     renumber a survivor (the invented-identity class #603 T4 closed) and a card that is still
  *     queueing wears no version at all. Unknown renders nothing — never "v?" and never a guess.

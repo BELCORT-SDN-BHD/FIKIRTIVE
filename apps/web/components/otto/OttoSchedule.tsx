@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect, useMemo, useCallback, useRef, useTransition } from "react";
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Pencil, Plus, Rows3, X } from "lucide-react";
+import { SAVE_FAILED } from "@/lib/save-failed-copy";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1450,7 +1451,7 @@ function Composer({
       }
       await onSaved();
     } catch {
-      setError("Couldn't save that — please try again.");
+      setError(SAVE_FAILED);
     } finally {
       setBusy(false);
     }
