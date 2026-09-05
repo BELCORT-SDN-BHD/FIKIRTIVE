@@ -49,7 +49,7 @@ vi.mock("@fikirtive/db", async (importOriginal) => ({
 
 import { Usage } from "@openai/agents";
 import type { AgentInputItem, Model, ModelRequest, ModelResponse, StreamEvent } from "@openai/agents";
-import { llmPricesFor, OTTO_CONVERSATION_TURN_MARGIN, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "@fikirtive/core";
+import { llmPricesFor, OTTO_CONVERSATION_TURN_MARGIN, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, type LlmPrices } from "@fikirtive/core";
 import { createOttoRuntime, runOttoTurn, type OttoModelRuntime, type OttoRollingSummaryPort } from "./runtime.js";
 import { actualCostInternal, mapOttoUsage } from "./meter.js";
 import {
@@ -511,6 +511,57 @@ describe("ENGINE-A6 — 长对话：旧轮被摘要收拢，新一轮成本不�
         actualCostInternal(MAIN_USAGE, llmPricesFor(SONNET), margin) +
           actualCostInternal(FOLD_USAGE, llmPricesFor(SONNET), margin),
       );
+    }, 60_000);
+
+    /**
+     * 判官 P2-1 —— `legPricesOf` 的**登记价地板**从前零测试。
+     *
+     * manifest 是唯一计价源(PH1-A1),但一份把折叠型号报得**比登记价便宜**的 manifest 不能少收:
+     * `meter.ts` 的 `legPricesOf` 逐字段取大者,所以折叠腿仍按登记表那份 Haiku 价结算。
+     * 变异实证:把 `legPricesOf` 首行改成 `return leg.prices;`,这条当场红。
+     */
+    it("ENGINE-A6: manifest 把折叠型号报得比登记价便宜时,折叠腿仍按登记价结算（地板守卫）", async () => {
+      const cheap = (id: string): LlmPrices => {
+        const registry = llmPricesFor(id);
+        if (id !== HAIKU) return registry;
+        return {
+          inputPerToken: registry.inputPerToken / 4,
+          outputPerToken: registry.outputPerToken / 4,
+          cachedInputPerToken: registry.cachedInputPerToken / 4,
+          cacheWriteInputPerToken: registry.cacheWriteInputPerToken / 4,
+        };
+      };
+      const binding = fixedUsageModel();
+      const runtime = createOttoRuntime(
+        {
+          modelRuntime: Object.freeze({
+            binding,
+            summaryBinding: binding,
+            summaryBillableModelId: HAIKU,
+            billableModelId: SONNET,
+            resolvedModelPolicy: Object.freeze({ primaryModelId: SONNET, fallbackModelId: null, failover: "none" as const }),
+            mapUsage: mapOttoUsage,
+            cacheCapabilities: Object.freeze({ promptCache: false }),
+            pricing: cheap,
+          }) satisfies OttoModelRuntime,
+          skills: [],
+        },
+        "interactive",
+      );
+
+      mocks.settleCredits.mockClear();
+      await runOttoTurn(foldingTurn("otto-turn:haiku_floor"), baseCtx, runtime);
+      const settled = settledOnce();
+
+      const margin = OTTO_CONVERSATION_TURN_MARGIN;
+      const mainLeg = actualCostInternal(MAIN_USAGE, llmPricesFor(SONNET), margin);
+      const foldAtRegistry = actualCostInternal(FOLD_USAGE, llmPricesFor(HAIKU), margin);
+      const foldAtManifest = actualCostInternal(FOLD_USAGE, cheap(HAIKU), margin);
+
+      // 两个数确实不同 —— 否则下面那一行对两种实现都绿,等于没测。
+      expect(foldAtManifest).toBeLessThan(foldAtRegistry);
+      expect(settled).toBe(mainLeg + foldAtRegistry);
+      expect(settled).not.toBe(mainLeg + foldAtManifest);
     }, 60_000);
 
     it("ENGINE-A6: 折叠腿不新开钱路 —— 同一轮重放,两次都只用同一个幂等键,金额逐分相同", async () => {
