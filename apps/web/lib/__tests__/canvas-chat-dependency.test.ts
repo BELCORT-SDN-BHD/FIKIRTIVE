@@ -21,6 +21,11 @@
  *
  * Everything is driven through the real FlowCanvas with the real ImageNode / VideoNode. Only the
  * paid functions are handles, so no assertion in this file can spend a credit or reach a provider.
+ *
+ * **ENGINE-A3(otto-engine.md §7.2⑦)之后,上面第一条的一半已经改写**:`Generate image` 那颗
+ * 工具与它掀开的直出 composer **已退役** —— 画布只留 Otto 对话那一个输入,出图走对话的确认卡。
+ * 「没有对话就不能花钱」这条病根的答案没变(视频、变体、动画三条路仍然不需要先开对话),
+ * 变的是图片那一条:它今天的入口就是 Otto,而 Otto 会先出卡再收钱。
  */
 import { act, createElement, useEffect, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -203,7 +208,7 @@ async function renderBoard(props: Record<string, unknown> = {}): Promise<void> {
   root = createRoot(container);
   await act(async () => {
     root!.render(createElement(FlowCanvas, {
-      projectId: "p1", skin: "gb" as const, defaultComposerOpen: true, ...props,
+      projectId: "p1", skin: "gb" as const, ...props,
     }));
   });
   await act(async () => { await Promise.resolve(); });
@@ -247,17 +252,18 @@ describe("#548 — with no Otto conversation open, every paid canvas action stil
     expect(mocks.toastError).not.toHaveBeenCalled();
   });
 
-  it("makes an image from the composer, with no thread and no refusal", async () => {
+  it("ENGINE-A3 — 直出 composer 已退役:板上没有它,一句话也发不出去", async () => {
     await renderBoard();
 
-    const composer = container!.querySelector<HTMLTextAreaElement>('[data-testid="mention"]')!;
-    await act(async () => { typeInto(composer, "a cup steaming"); });
-    await act(async () => {
-      container!.querySelector<HTMLFormElement>("form.al-promptbar")!
-        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-
-    expect(mocks.generateImage).toHaveBeenCalledTimes(1);
+    // 从前这一条是「从 composer 出一张图,不用开对话」。⑦段(otto-engine.md §7.2⑦)把那个
+    // composer 与工具条上的 Generate 按钮一并撤下 —— 画布只留 Otto 对话那一个输入。所以
+    // 同一件事今天的正确断言是**它不在了**:没有那张表单、没有输入框、也没有 Generate 键。
+    expect(container!.querySelector("form.al-promptbar")).toBeNull();
+    expect(container!.querySelector('[data-testid="mention"]')).toBeNull();
+    expect(
+      [...container!.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Generate"),
+    ).toBe(false);
+    expect(mocks.generateImage).not.toHaveBeenCalled();
     expect(mocks.toastError).not.toHaveBeenCalled();
   });
 

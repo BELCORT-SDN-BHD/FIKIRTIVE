@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => ({
   imageShapes: vi.fn(),
   videoSpecs: vi.fn(),
   generateImage: vi.fn(),
+  generateVideoFromText: vi.fn(),
   // The controlled entry's own dependencies — the @ reference chain starts at the session,
   // so this file drives the real entry instead of hand-feeding the workspace a prop.
   getOrCreateDefaultProject: vi.fn(),
@@ -158,7 +159,7 @@ vi.mock("@/components/canvas/useCanvasGen", () => ({
   useCanvasGen: () => ({
     generateImage: mocks.generateImage,
     animate: vi.fn(),
-    generateVideoFromText: vi.fn(),
+    generateVideoFromText: mocks.generateVideoFromText,
     quoteCosts: mocks.quoteCosts,
     // #643 T2: 形状菜单来自服务端解析，测试替身也必须给得出，否则选择器渲染不出来。
     imageShapes: mocks.imageShapes,
@@ -287,6 +288,7 @@ beforeEach(() => {
       Math.ceil((seconds * (resolution === "480p" ? 11 : 22)) / 10),
   });
   mocks.generateImage.mockResolvedValue(true);
+  mocks.generateVideoFromText.mockResolvedValue(true);
   mocks.getMyAccount.mockResolvedValue({ balance: 1240, balanceUsd: 124 });
   mocks.requireOwner.mockResolvedValue({ email: "owner@example.com", ownerId: "owner-1" });
   mocks.getOrCreateDefaultProject.mockResolvedValue({ id: "p1" });
@@ -338,10 +340,24 @@ function select(ids: string[]): void {
   act(() => mocks.flow.current!.onNodesChange(ids.map((id) => ({ id, type: "select" as const, selected: true }))));
 }
 
-function openImageComposer(): void {
-  const button = buttonLabelled("Generate image");
-  if (!button) throw new Error("Generate image tool not found");
+/**
+ * ENGINE-A3(otto-engine.md §7.2⑦)之后画布上**没有**直出的图片输入框了 —— 这里从前是
+ * `openImageComposer()`(按工具行的图片键掀开 composer)。板上仍然带着一个 `MentionInput`
+ * 的地方只剩视频那一个:工具行的 Video 键开出的出片确认框(「No charge until you confirm」)。
+ * 「@ 引用商家自己的东西真的接到了内核」这条链路照旧从这里读,只是读的是视频那一扇门。
+ */
+function openVideoComposer(): void {
+  const button = buttonLabelled("Video");
+  if (!button) throw new Error("Video tool not found");
   act(() => button.click());
+}
+
+/** 出片确认框上那颗真正的付费键。 */
+function makeVideoButton(): HTMLButtonElement {
+  const found = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+    .find((b) => b.textContent === "Make video");
+  if (!found) throw new Error("Make video button not found");
+  return found;
 }
 
 /**
@@ -410,12 +426,18 @@ describe("what the merchant lands on", () => {
     expect(container!.querySelector('[aria-label="Canvas tools"]')).not.toBeNull();
   });
 
-  it("starts with Otto as the primary composer and keeps the direct image tool one click away", async () => {
+  it("ENGINE-A3 — 画布只留 Otto 那一个输入:直出的图片工具与它的输入框都不在了", async () => {
     await renderPage();
 
-    expect(container!.querySelector<HTMLTextAreaElement>('[data-testid="canvas-prompt"]')).toBeNull();
-    openImageComposer();
-    expect(container!.querySelector<HTMLTextAreaElement>('[data-testid="canvas-prompt"]')?.placeholder).toContain("@");
+    // Otto 覆盖层(这份文件里是替身)是画布上唯一的输入。
+    expect(container!.querySelector('[data-testid="canvas-otto-overlay"]')).not.toBeNull();
+    // 直出那条路的三件东西一件都不剩:工具行的键、它掀开的输入框、以及那颗 Generate。
+    expect(buttonLabelled("Generate image")).toBeUndefined();
+    expect(container!.querySelector('[data-testid="canvas-prompt"]')).toBeNull();
+    expect(
+      [...container!.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Generate"),
+    ).toBe(false);
+    expect(mocks.generateImage).not.toHaveBeenCalled();
   });
 });
 
@@ -432,13 +454,15 @@ describe("the kernel's behaviour came along with it", () => {
   it("never lands a new card on top of one already paid for", async () => {
     mocks.boardRead.mockResolvedValue([boardRow("n1")]);
     await renderPage();
-    openImageComposer();
+    // 落位规则(`spawnRect`)是内核共用的一条,ENGINE-A3 退役直出 composer 之后,板上仍然
+    // 自己发起新卡的那条路是出片框 —— 走的是同一个 `spawnRect`,所以这条断言一格没弱。
+    openVideoComposer();
+    await act(async () => { mocks.mentionChange.current!("a bowl of laksa steaming", [], {}); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { makeVideoButton().click(); });
 
-    await act(async () => { mocks.mentionChange.current!("a bowl of laksa", [], {}); });
-    await act(async () => { mocks.mentionSubmit.current!(); });
-
-    expect(mocks.generateImage).toHaveBeenCalledTimes(1);
-    const rect = mocks.generateImage.mock.calls[0]![1] as SpawnRect;
+    expect(mocks.generateVideoFromText).toHaveBeenCalledTimes(1);
+    const rect = mocks.generateVideoFromText.mock.calls[0]![1] as SpawnRect;
     const overlaps = rect.x < 320 && rect.x + rect.w > 0 && rect.y < 320 && rect.y + rect.h > 0;
     expect(overlaps).toBe(false);
   });
@@ -449,7 +473,6 @@ describe("the kernel's behaviour came along with it", () => {
       boardRow("near-origin"),
     ]);
     await renderPage();
-    openImageComposer();
     await act(async () => { await Promise.resolve(); });
 
     // 「再来一张」是卡上唯一那条「从这张卡再生一张」的付费路（卡下方那条改写输入条按
@@ -515,7 +538,7 @@ describe("@ references reach the merchant's own things", () => {
 
     // ③ 输入框真收到它 —— 直接渲染 Entry 交出来的那棵树,中间没人补货。
     await renderElement(element);
-    openImageComposer();
+    openVideoComposer();
     expect(mocks.mentionEntities.current).toEqual([expected]);
   });
 
@@ -523,27 +546,29 @@ describe("@ references reach the merchant's own things", () => {
     mocks.getEntities.mockResolvedValue([entityRow]);
 
     await renderElement(await ImmersiveCanvasEntry({ searchParams: Promise.resolve({}) }));
-    openImageComposer();
+    openVideoComposer();
 
-    const option = [...container!.querySelectorAll<HTMLButtonElement>('[data-testid="canvas-mention-option"]')]
+    // 出片框走 portal,落在 document.body 上,不在 container 里。
+    const option = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="canvas-mention-option"]')]
       .find((button) => button.textContent === "Signature mug");
     expect(option).toBeDefined();
 
     await act(async () => { option!.click(); });
-    await act(async () => { mocks.mentionSubmit.current!(); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { makeVideoButton().click(); });
 
     // 仍然是替身在收钱路的入参 —— 断言只看「这条 id 有没有跟着走」,一个积分都不花。
-    expect(mocks.generateImage).toHaveBeenCalledTimes(1);
-    expect(mocks.generateImage.mock.calls[0]![2]).toEqual(["e-mug"]);
+    expect(mocks.generateVideoFromText).toHaveBeenCalledTimes(1);
+    expect(mocks.generateVideoFromText.mock.calls[0]![4]).toMatchObject({ entityIds: ["e-mug"] });
   });
 
   it("offers nothing to pick when the merchant has saved nothing", async () => {
     mocks.getEntities.mockResolvedValue([]);
 
     await renderElement(await ImmersiveCanvasEntry({ searchParams: Promise.resolve({}) }));
-    openImageComposer();
+    openVideoComposer();
 
     expect(mocks.mentionEntities.current).toEqual([]);
-    expect(container!.querySelectorAll('[data-testid="canvas-mention-option"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-testid="canvas-mention-option"]')).toHaveLength(0);
   });
 });

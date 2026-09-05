@@ -30,6 +30,6 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.0 七段三批)", () => {
   it.todo("ENGINE-A4 截断且零交付的一轮全额退款、消费历史可见退款行 —— 批 II §7.2⑤（钱路重挡）");
   it.todo("ENGINE-A7 技能文件柜替换单体后重跑评测，总分不低于基线 —— 批 II §7.2⑥（跑法：evals:check）");
 
-  // ── 批 III（等 PR #1150 / #1151 / #1158 三者合入主干）──────────────────────
-  it.todo("ENGINE-A3 画布输入框发消息得到对话回复、花钱动作仍走卡片确认 —— 批 III §7.2⑦");
+  // ── 批 III（已交付；#1150 / #1151 / #1158 / #1194 / #1197 均已在主干）───────
+  it.todo("ENGINE-A3 见 apps/web/lib/__tests__/engine-a3-canvas-conversation.test.tsx 与 e2e/journeys/engine-a3-canvas-conversation.spec.ts（⑦段已交付：直出 composer 与工具条 Generate 退役、送出接 Otto 对话、花钱走审批卡）");
 });

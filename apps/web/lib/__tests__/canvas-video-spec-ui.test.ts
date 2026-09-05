@@ -209,7 +209,7 @@ async function renderBoard(props: Record<string, unknown> = {}): Promise<void> {
   root = createRoot(container);
   await act(async () => {
     root!.render(createElement(FlowCanvas, {
-      projectId: "p1", skin: "gb" as const, defaultComposerOpen: true, ...props,
+      projectId: "p1", skin: "gb" as const, ...props,
     }));
   });
   await act(async () => { await Promise.resolve(); });

@@ -1392,11 +1392,19 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
     expect(src).toContain("pricedUnderstandingCredits");
   });
 
-  it("样式照抄现成的成本小字(FlowCanvas 的那一行),不是第三种长相", () => {
+  it("样式照抄现成的成本小字,不是第三种长相", () => {
+    // 从前这一条钉的样板是 `FlowCanvas` 直出 composer 旁边那行价目小字。ENGINE-A3
+    // (otto-engine.md §7.2⑦)把那个 composer 退役了,样板改钉同一叠里的两位邻居 ——
+    // 它们与本条挂在**同一个** `div` 里,长得不一样一眼就看得见。
     expect(markup).toContain("text-[0.75rem] text-muted-foreground");
-    expect(codeOf("components/canvas/FlowCanvas.tsx")).toContain(
-      'className="text-[0.75rem] text-muted-foreground"',
-    );
+    for (const sibling of [
+      "components/otto/SearchCostHint.tsx",
+      "components/otto/ConversationCostHint.tsx",
+    ]) {
+      expect(codeOf(sibling), `${sibling} 的成本小字换了长相`).toContain(
+        'className="text-[0.75rem] text-muted-foreground"',
+      );
+    }
   });
 
   it.each(MOUNTS)("%s 挂的是同一个共享组件", (file) => {

@@ -245,14 +245,18 @@ describe("FRONT-A14 钱披露不因对齐设计而缩水", () => {
     // Founder 2026-09-02 (钱引擎 §7.4 / MONEY-A10): 聊天输入框下**常驻**一行价目小字;
     // MONEY-A9 §7.3: the understanding price is on screen while the file picker is still closed.
     // Aligning the composer to the design may not quietly turn either into an on-request line.
+    // ENGINE-A3(otto-engine.md §7.4/§7.6 处置一)之后是**三**行:第三行说这一轮对话本身
+    // 也按用量计费 —— ⑦段把画布上那条直出的出图路撤了,同一张图从此必须先经过至少一轮对话。
+    // 「常驻、不许改成按需披露」这条纪律对三行同样有效(裁决十三,frontend-baseline.md §5)。
     expect(chatStream).toContain("<UnderstandingCostHint />");
     expect(chatStream).toContain("<SearchCostHint />");
+    expect(chatStream).toContain("<ConversationCostHint />");
     const understandingAt = chatStream.indexOf("<UnderstandingCostHint />");
-    const searchAt = chatStream.indexOf("<SearchCostHint />");
-    expect(searchAt - understandingAt, "两行披露被拆散了").toBeLessThan(200);
-    // Neither is behind a menu, a hover or a press: no conditional between them and the composer.
+    const conversationAt = chatStream.indexOf("<ConversationCostHint />");
+    expect(conversationAt - understandingAt, "几行披露被拆散了").toBeLessThan(200);
+    // None is behind a menu, a hover or a press: no conditional between them and the composer.
     expect(chatStream).toMatch(
-      /<div className="mb-2 flex flex-col gap-0\.5">\s*<UnderstandingCostHint \/>\s*<SearchCostHint \/>\s*<\/div>/,
+      /<div className="mb-2 flex flex-col gap-0\.5">\s*<UnderstandingCostHint \/>\s*<SearchCostHint \/>\s*<ConversationCostHint \/>\s*<\/div>/,
     );
   });
 });
