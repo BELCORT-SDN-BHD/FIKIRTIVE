@@ -783,6 +783,9 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
       modelRuntime: legacyModelRuntime,
       agent: legacyAgent,
       maxTurns: OTTO_MAX_STEPS,
+      // ENGINE-A2: the trace's action whitelist travels with the runtime. This hand-built
+      // legacy runtime mirrors createOttoRuntime's derivation from the same skill list.
+      actionNames: new Set(allSkills.map((skill) => skill.name)) as ReadonlySet<string>,
     });
     const parkedResult = await runOttoTurn(
       { orgId: "org_t", refId: "fixture:legacy-park", input: "approve the legacy post" },

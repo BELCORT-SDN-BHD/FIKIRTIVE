@@ -87,6 +87,7 @@ Otto 的引擎重组为「技能文件柜大脑 + 类型化动作 + 可测质量
 | 日期 | 想法 | 裁决（留空待 S5） |
 |---|---|---|
 | 2026-09-02 | **素材理解时效目标未定义**(上传后多久被 Otto 认识)。现值=扫描器 25 件/分钟建行 + UNDERSTAND_CONCURRENCY=2(2000 张≈80 分钟),沿用平台自付时代保守值,不对应任何承诺;供应商请求闸门是平台共享参数(官方并发 10,生成侧用 1),调整须同时看 Creation。钱引擎顾问复审场(Founder 2026-09-02)判定此事归 Otto 引擎而非钱引擎;待 beta 真实上传量后定时效目标,再调两常量 | |
+| 2026-09-05 | **②段施工登记(ENGINE-A2,按现码落地的三处)**:(1) §7.2② 写「`orgId` 外键＋租户约束照 `ActionEvent` 同形」,但 `ActionEvent` 的租户列叫 `ownerId`,而运行时守卫**注入**的正是 `ownerId` 这个字面列名 —— 一张 `orgId` 表登记进 `TENANT_MODELS` 会把它打坏(`packages/db/src/tenant-guard.ts` 有 2026-09-02 实测)。故按现码:列名保持规格写的 `orgId`(它就是账本 `reserve:<refId>` 的那把钥匙),登记进 `ORG_SCOPED_TENANT_GUARD_EXEMPT`,租户边界由外键 CASCADE ＋ 读写口显式带 orgId 承担,双租户测试 `packages/db/src/otto-turn-trace-tenant.test.ts`。(2) `settledInternal` 由**入口侧**读账本填(引擎包不直连 prisma,与其他 port 同一条规矩);只有 RESERVE 无终结行时写 null。(3) `steps` 取自 SDK 的轮计数,截断时它是 maxSteps+1(先自增再判上限),测试按「≥ maxSteps」钉,不钉 SDK 内部时序 | |
 
 ## 6. 改签记录
 
