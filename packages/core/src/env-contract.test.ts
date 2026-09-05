@@ -782,6 +782,29 @@ describe("bootEnvDecision", () => {
     // 值本身也不合法(enum),所以它自己也是一条问题;关键是没有换来降级。
     expect(d.action).toBe("exit");
   });
+
+  // 判官 #1229 P2-2:「对外服务的生产进程设成 stub 即拒绝开机」被四处注释与规格 §5 当成
+  // 无条件的保证写着,而它其实是**默认**拒绝 —— AUTH_EMAIL_TRANSPORT 没有打 moneyInvariant,
+  // 逃生门够得着它。这两条把那句实话写成会红的形状:哪天有人给它打上 moneyInvariant(或反过来
+  // 把逃生门收紧),下面第二条当场红,注释与 §5 就该跟着改。
+  describe("AUTH_EMAIL_TRANSPORT=stub 的生产围栏是默认拒绝,不是免疫", () => {
+    const prodStub = { ...goodProd, AUTH_EMAIL_TRANSPORT: "stub" };
+
+    it("FRONT-A12: a serving production process refuses to boot on stub — by default", () => {
+      const d = bootEnvDecision(prodStub, { surface: "web", production: true });
+      expect(d.action).toBe("exit");
+      expect(d.action === "exit" && d.report).toContain("AUTH_EMAIL_TRANSPORT");
+    });
+
+    it("FRONT-A12: FIKIRTIVE_ENV_CONTRACT=warn downgrades it — the fence is a default, not a lock", () => {
+      const d = bootEnvDecision(
+        { ...prodStub, FIKIRTIVE_ENV_CONTRACT: "warn" },
+        { surface: "web", production: true },
+      );
+      expect(d.action).toBe("warn");
+      expect(d.action === "warn" && d.report).toContain("AUTH_EMAIL_TRANSPORT");
+    });
+  });
 });
 
 describe("configFingerprint", () => {
