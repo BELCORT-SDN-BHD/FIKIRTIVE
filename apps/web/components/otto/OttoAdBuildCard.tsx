@@ -3,11 +3,15 @@ import React, { useState } from "react";
 import { Hammer, ShieldCheck, CheckCircle2, Loader2, ExternalLink } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { approveAdBuild, launchAdDraft } from "@/lib/otto-client-actions";
+import { approveAdBuild, launchAdDraft, ottoReject } from "@/lib/otto-client-actions";
+import { AD_BUILD_DECLINE_TEXT, isDeclinedPayload } from "@/lib/meta-card-decline-view";
 import type { MetaAdBuildCardPayload } from "@/lib/meta-build-spec";
 
 export interface OttoAdBuildCardProps {
   cardId: string;
+  /** The conversation this card lives in — `ottoReject` is thread-scoped, like every other
+   *  card action, so the server never takes a card id on its own. */
+  threadId: string;
   payload: unknown;
 }
 
@@ -52,7 +56,10 @@ function targetingSummary(targeting: Record<string, unknown>): string {
   return parts.join(" · ") || "Broad";
 }
 
-export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
+/** Otto's Meta ad-build card. Approve calls approveAdBuild; Deny calls ottoReject (FRONT-A12:
+ *  the refusal is persisted server-side, so a refresh still shows it declined and the build can
+ *  never be approved afterwards). */
+export function OttoAdBuildCard({ cardId, threadId, payload }: OttoAdBuildCardProps) {
   const p = (payload ?? {}) as Partial<MetaAdBuildCardPayload>;
 
   // buildOutcome is stamped by maybeAutoBuild / the approveAdBuild path
@@ -62,8 +69,11 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
   const isBuilt = buildOutcome?.built === true && buildOutcome?.state === "done";
   const createdIds = buildOutcome?.createdIds ?? {};
 
-  const [busy, setBusy] = useState(false);
-  const [denied, setDenied] = useState(false);
+  // WHICH button is in flight, not just "something is" — otherwise clicking Deny relabels
+  // Approve to "Building…" and the card claims a build that is not happening.
+  const [busyKind, setBusyKind] = useState<"approve" | "deny" | "launch" | null>(null);
+  const busy = busyKind !== null;
+  const [deniedLocal, setDeniedLocal] = useState(false);
   const [approveResult, setApproveResult] = useState<
     { ok: true; state: string; createdIds: Record<string, string> } | { error: string } | null
   >(null);
@@ -74,29 +84,52 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
     | null
   >(null);
 
+  // A decline persisted on the card payload outlives this component — that is the whole point.
+  const denied = deniedLocal || isDeclinedPayload(payload);
+
   async function approve() {
     if (busy || denied) return;
-    setBusy(true);
+    setBusyKind("approve");
     try {
       const res = await approveAdBuild(cardId);
       setApproveResult(res);
     } catch {
       setApproveResult({ error: "Couldn't submit — please try again." });
     } finally {
-      setBusy(false);
+      setBusyKind(null);
+    }
+  }
+
+  async function deny() {
+    if (busy || denied) return;
+    setBusyKind("deny");
+    setApproveResult(null);
+    try {
+      const res = await ottoReject({ threadId, cardId });
+      // Anything but an error is a settled card: "already resolved" means someone else got there
+      // first, and the build is just as un-approvable as if this click had done it.
+      if (res && typeof res === "object" && "error" in res) {
+        setApproveResult({ error: (res as { error: string }).error });
+        return;
+      }
+      setDeniedLocal(true);
+    } catch {
+      setApproveResult({ error: "Couldn't decline that — please try again." });
+    } finally {
+      setBusyKind(null);
     }
   }
 
   async function launch() {
     if (busy) return;
-    setBusy(true);
+    setBusyKind("launch");
     try {
       const res = await launchAdDraft(cardId);
       setLaunchResult(res);
     } catch {
       setLaunchResult({ error: "Couldn't queue the launch — please try again." });
     } finally {
-      setBusy(false);
+      setBusyKind(null);
     }
   }
 
@@ -231,7 +264,7 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
               </div>
               {launchReady ? (
                 <Button variant="default" size="default" disabled={busy} onClick={launch}>
-                  {busy ? (
+                  {busyKind === "launch" ? (
                     <span className="flex items-center gap-2">
                       <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
                       Queuing…
@@ -272,41 +305,41 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
             {!denied && !approveResult && (
               <div className="flex gap-3">
                 <Button variant="default" size="default" disabled={busy} onClick={approve}>
-                  {busy ? (
+                  {busyKind === "approve" ? (
                     <span className="flex items-center gap-2">
                       <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
                       Building…
                     </span>
                   ) : "Approve"}
                 </Button>
-                <Button variant="outline" size="default" disabled={busy} onClick={() => setDenied(true)}>
-                  Deny
+                <Button variant="outline" size="default" disabled={busy} onClick={deny}>
+                  {busyKind === "deny" ? "Declining…" : "Deny"}
                 </Button>
               </div>
             )}
             {denied && (
               <div className="text-[0.875rem] text-muted-foreground">
-                Build declined — nothing was created.
+                {AD_BUILD_DECLINE_TEXT}
               </div>
             )}
           </div>
         ) : denied ? (
           <div className="text-[0.875rem] text-muted-foreground">
-            Build declined — nothing was created.
+            {AD_BUILD_DECLINE_TEXT}
           </div>
         ) : (
           /* Pending approval */
           <div className="flex gap-3">
             <Button variant="default" size="default" disabled={busy} onClick={approve}>
-              {busy ? (
+              {busyKind === "approve" ? (
                 <span className="flex items-center gap-2">
                   <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
                   Building…
                 </span>
               ) : "Approve"}
             </Button>
-            <Button variant="outline" size="default" disabled={busy} onClick={() => setDenied(true)}>
-              Deny
+            <Button variant="outline" size="default" disabled={busy} onClick={deny}>
+              {busyKind === "deny" ? "Declining…" : "Deny"}
             </Button>
           </div>
         )}

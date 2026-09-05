@@ -80,7 +80,7 @@ async function renderCard(
 describe("what a card says once it has stopped being made", () => {
   it.each([
     ["cancelled", "Canceled", "This generation was canceled."],
-    ["failed", "That didn't finish", "You weren't charged. Try again."],
+    ["failed", "That didn't finish", "You weren't charged."],
     ["timeout", "Still working…", "This is taking longer than usual — check back in a moment."],
     ["missing", "Preview missing", "The job finished, but this card could not load the media."],
   ])("shows an image card in %s as its own ending", async (status, title, detail) => {
@@ -123,7 +123,9 @@ describe("what a card says once it has stopped being made", () => {
  * #765 taught the system to recognise one refusal a merchant can act on and to explain it in
  * plain words. But the explaining was LIVE: a toast and a poll inside the tab that pressed
  * generate. Reload, and the card went back to "That didn't finish — you weren't charged. Try
- * again." — true, and an invitation to retry the one thing that cannot work.
+ * again." — true, and an invitation to retry the one thing that cannot work. (That generic line
+ * has since lost its "Try again." for a second reason — 接线盘点 L1 · FRONT-A12 — but what this
+ * block proves is unchanged: the refusal replaces it.)
  *
  * Every render below is a FRESH MOUNT with nothing but the board read's own data on it. That is
  * exactly what a reload is: no component state, no poll in flight, no toast — just the card's
@@ -142,8 +144,10 @@ describe("a refused card explains itself, on every mount", () => {
     expect(text).toContain(
       "Real human faces aren't supported yet. Pick a cast member from your Library instead.",
     );
-    // The generic line it replaces is gone: "Try again" is the wrong advice for this ending.
-    expect(text).not.toContain("You weren't charged. Try again.");
+    // The generic line it replaces is gone. Since 接线盘点 L1 · FRONT-A12 the generic line ends
+    // on the same refund promise this refusal does, so what proves the REPLACEMENT is that the
+    // generic line's own advice is absent — the refusal says "ask again", never "Try again".
+    expect(text).not.toContain("Try again");
     // It is still a failed card, and it still says so.
     expect(text).toContain("That didn't finish");
     expect(text).not.toContain("Rendering…");
@@ -168,7 +172,10 @@ describe("a refused card explains itself, on every mount", () => {
     const text = await renderCard(ImageNode, "failed", { failureReason: "unexplained" });
 
     expect(text).toContain("That didn't finish");
-    expect(text).toContain("You weren't charged. Try again.");
+    expect(text).toContain("You weren't charged.");
+    // 接线盘点 L1 · FRONT-A12 —— 这张脸不给重试键(`offersRefresh: false`),所以它的话里也
+    // 不许有「Try again」:一句叫商家去按一颗不存在的按钮的话,是这一处修掉的那个缺口本身。
+    expect(text).not.toContain("Try again");
     expect(text).not.toContain("reference image");
   });
 

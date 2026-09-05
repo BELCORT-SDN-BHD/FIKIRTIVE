@@ -44,9 +44,12 @@ import {
   MaxTurnsExceededError,
   buildUserTurn,
   sanitizeHistory,
+  // ENGINE-A6 (spec §7.2④): the pair-aware history trim; the fold that follows it lives in
+  // the engine (runtime.ts) and rides this turn's own reserve.
+  trimHistoryToBudget,
   tryRestoreRunState,
 } from "@fikirtive/otto";
-import type { AgentInputItem } from "@fikirtive/otto";
+import type { AgentInputItem, OttoRollingSummaryPort } from "@fikirtive/otto";
 import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -58,6 +61,9 @@ import {
   unavailableReferenceMessage,
   // ENGINE-A2 (spec §7.2②): the one turn-trace writer, shared with ottoTurn / ottoApprove.
   recordOttoTurnTrace,
+  // ENGINE-A6 (spec §7.2④): the one rolling-summary writer, shared with ottoTurn — so the
+  // tenant constraint on that write has a single place to be守.
+  saveRollingSummary,
 } from "@/lib/otto-actions";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
@@ -147,6 +153,9 @@ export async function POST(req: NextRequest): Promise<Response> {
     let threadId: string;
     let isNew: boolean;
     let priorOttoState: string | null = null;
+    // ENGINE-A6 —— 这条对话此前折叠掉的旧轮。每一轮都回注,不只是发生裁剪的那一轮。
+    let priorRollingSummary: string | null = null;
+    let rollingSummaryPort: OttoRollingSummaryPort | undefined;
     let seqAfterUser: number;
     let userMessageId: string;
     let runInput: AgentInputItem[];
@@ -181,10 +190,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       if (!isNew) {
         const t = await prisma.chatThread.findFirst({
           where: { id: threadId, ...OWNED },
-          select: { projectId: true, ottoState: true },
+          select: { projectId: true, ottoState: true, rollingSummary: true },
         });
         if (!t || t.projectId !== projectId) return Response.json({ error: "Conversation not found." }, { status: 404 });
         priorOttoState = t.ottoState;
+        priorRollingSummary = t.rollingSummary;
       }
 
       // Validate replyToMessageId (scoped, else null)
@@ -268,11 +278,22 @@ export async function POST(req: NextRequest): Promise<Response> {
       }
 
       // Build run input: system message + (prior history | fresh) + user message
-      const sys = buildContextSystemMessage(ctx);
+      const sys = buildContextSystemMessage(ctx, priorRollingSummary);
       const userTurn = buildUserTurn(text, ctx.images);
       const priorState = priorOttoState ? await tryRestoreRunState(otto, priorOttoState) : null;
       if (priorState) {
-        runInput = [...(sys ? [sys] : []), ...sanitizeHistory(priorState.history), userTurn];
+        // ENGINE-A6(规格 §7.2④):成对感知地裁到预算以内,裁掉的那些轮交给引擎折进
+        // rollingSummary —— 沿用本轮 refId,不新开钱路。没裁掉东西的一轮不传端口,
+        // 与本改动之前逐字节相同。
+        const { kept, dropped } = trimHistoryToBudget(sanitizeHistory(priorState.history));
+        if (dropped.length > 0) {
+          rollingSummaryPort = {
+            dropped,
+            priorSummary: priorRollingSummary,
+            save: (summary: string) => saveRollingSummary(threadId, ownerId, summary),
+          };
+        }
+        runInput = [...(sys ? [sys] : []), ...kept, userTurn];
       } else {
         // No prior state OR an unrestorable one (F24): start fresh — the turn still runs and its
         // normal state write self-heals ottoState to the current schema.
@@ -344,6 +365,11 @@ export async function POST(req: NextRequest): Promise<Response> {
           }
         };
 
+        // ENGINE-A4(规格 docs/specs/otto-engine.md §7.2⑤):set by withLlmBudget when this turn
+        // was refunded in FULL — the ONLY state in which「这一轮没有收费」是一句真话。今天它只
+        // 可能被截断且零交付的那一轮点亮(其余的抛错路径根本走不到下面的 MaxTurns 分支)。
+        let chargedNothing = false;
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let agentResult: any;
         try {
@@ -357,6 +383,8 @@ export async function POST(req: NextRequest): Promise<Response> {
               // 与另外两门(ottoTurn / ottoApprove)共用 recordOttoTurnTrace —— 一个写入口,
               // 所以「不记商家内容」只有一处需要守。surface/threadId 来自已认证的会话。
               trace: { surface: "stream", threadId, sink: recordOttoTurnTrace },
+              // ENGINE-A6 —— 本轮裁掉的旧轮(有才传)。
+              rollingSummary: rollingSummaryPort,
               onStream: async (r) => {
                 // stream:true → StreamedRunResult: AsyncIterable over RunStreamEvent.
                 for await (const event of r) {
@@ -394,7 +422,26 @@ export async function POST(req: NextRequest): Promise<Response> {
             },
             ctx,
             ottoInteractiveRuntime,
-            { meter: withLlmBudget, runAgent: run, maxTurnsExceededError: MaxTurnsExceededError },
+            {
+              // ENGINE-A4:唯一的改动就是挂上这个**只读**钩子。它改不了任何金额(meter.ts
+              // 不变量 #7),只是把「整笔退了」这件事告诉入口,好让下面的降级句说实话。
+              //
+              // 先转调、再置旗:今天 `ottoBudgetArgsFor` 不产出 `onRefundedFailure`,但对象
+              // 展开会**静默盖掉**将来引擎侧自己挂的钩子,所以这里不覆盖,只在它后面接一句。
+              meter: (budgetArgs, fn) =>
+                withLlmBudget(
+                  {
+                    ...budgetArgs,
+                    onRefundedFailure: () => {
+                      budgetArgs.onRefundedFailure?.();
+                      chargedNothing = true;
+                    },
+                  },
+                  fn,
+                ),
+              runAgent: run,
+              maxTurnsExceededError: MaxTurnsExceededError,
+            },
           );
         } catch (e) {
           // Reserve failed (InsufficientCredits, or #524 SpendCapBlocked): fn NEVER ran →
@@ -434,7 +481,13 @@ export async function POST(req: NextRequest): Promise<Response> {
           // friendly degrade message (parity with ottoTurn) and surface a status part.
           if (e instanceof MaxTurnsExceededError) {
             closeOpenParts();
-            const degradeText = "I got a bit tangled up — try asking again.";
+            // ENGINE-A4(§7.2⑤ 第③刀):一句诚实文案。这一轮零交付时整笔预扣已经退回,所以
+            // 商家读到的必须是「没收钱」,而不是一句道歉之后账单上冒出一笔他拿不到东西的钱。
+            // 两句合成**一条**消息:降级句已经是这条路上唯一那条持久化的人话,退款这件事跟着
+            // 它走,刷新之后还在,不需要第二条只在内存里活一瞬的提示。
+            const degradeText = chargedNothing
+              ? "I got a bit tangled up — try asking again. This turn wasn't charged."
+              : "I got a bit tangled up — try asking again.";
             // Tools may have persisted cards mid-run at max(seq)+1 — the pre-run
             // seqAfterUser snapshot could collide (same fix as finalizeOttoRun).
             const lastMsg = await prisma.chatMessage.findFirst({
@@ -445,9 +498,12 @@ export async function POST(req: NextRequest): Promise<Response> {
             await prisma.chatMessage.create({
               data: { id: newId(), threadId, ownerId, role: "AGENT", kind: "TEXT", seq: Math.max(seqAfterUser, lastMsg?.seq ?? 0) + 1, text: degradeText },
             });
-            // A tangled run still burned tokens and withLlmBudget already settled them —
-            // the merchant paid for this turn, so it must show a cost like any other.
-            await emitTurnCost();
+            // A tangled run that DELIVERED something still burned tokens and withLlmBudget
+            // settled them — the merchant paid for this turn, so it must show a cost like any
+            // other. ENGINE-A4: a zero-delivery one was refunded in full, and the ledger's net
+            // is zero, so there is no cost line to emit (settledTurnCost would return null
+            // anyway; skipping it also skips a pointless read).
+            if (!chargedNothing) await emitTurnCost();
             writer.write({ type: "data-status", data: { kind: "degraded", text: degradeText } satisfies OttoStatusData });
             return;
           }
