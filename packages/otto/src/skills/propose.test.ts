@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   GEN_PRICE_USD_PER_IMAGE, GEN_IMAGE_MODEL_OPTIONS, HD_VIDEO_RESOLUTION, SELLABLE_VIDEO_RESOLUTIONS,
   REFERENCE_VIDEO_MODEL,
+  DEFAULT_IMAGE_MODEL, PRO_IMAGE_MODEL,
   activeVideoModel, buildGenRequestFromCard, displayCredits, pricedGenCredits, redactProviderNames,
   referenceUnavailableMessage,
   routeVideoModel, videoDefaults, VIDEO_EDIT_OPENING, type GenVideoModel,
@@ -9,8 +10,10 @@ import {
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import {
   buildProposeCard, buildSpecChips, EXECUTED_SPEC, ImageAspectMismatchError,
-  ImageAspectUnavailableError, ProposeRefusal, VideoTierUnavailableError,
+  ImageAspectUnavailableError, ProposeRefusal, VideoTierUnavailableError, proposeInput,
 } from "./propose.helpers.js";
+// Founder 2026-09-05「加进确认卡」—— 三格菜单的唯一来源,测试与生产读同一个函数。
+import { cardOptionMenu } from "./propose-card-options.js";
 import { imageAspectHonoured, VIDEO_START_FRAME_CHIP } from "@fikirtive/core";
 // executePropose (DB-side) still imported from propose.ts
 import { executePropose, proposeSkill } from "./propose.js";
@@ -2129,5 +2132,86 @@ describe("CREATE-A1 画幅:商家原话是第二个证人", () => {
     // 走通了就不是降级 —— 没有一句「You asked for … this will be …」。
     expect(cardPayload.downgraded).toBe(false);
     expect(cardPayload.downgradeNote).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Founder 2026-09-05 裁决「加进确认卡」—— 商家在对话里点名精修档(图片侧的档位路由,
+// 与画质档那条逐字同形)。规格 docs/specs/otto-engine.md,验收 ENGINE-A3。
+// ---------------------------------------------------------------------------
+describe("ENGINE-A3 商家在对话里点名精修档", () => {
+  const fineInput = (extra?: Record<string, unknown>) => ({
+    kind: "image" as const,
+    structuredPrompt: "a pandan kaya jar on a marble counter",
+    entityIds: [],
+    variantSel: {},
+    fineDetail: true,
+    ...extra,
+  });
+
+  it("ENGINE-A3 说要精修 ⇒ 卡落精修档,而且报价取自单一价目源按**那一档**算", () => {
+    const { cardPayload } = buildProposeCard(fineInput(), makeCtx(), []);
+    expect(cardPayload.model).toBe(PRO_IMAGE_MODEL);
+    expect(cardPayload.fineDetail).toBe(true);
+    expect(cardPayload.estimatedCredits).toBe(
+      displayCredits(pricedGenCredits({ kind: "IMAGE", model: PRO_IMAGE_MODEL, count: 1, videoOptions: null })),
+    );
+  });
+
+  it("ENGINE-A3 精修档比默认档贵 —— 卡上那个数真的换了,不是同一个数换了个标签", () => {
+    const plain = buildProposeCard({ ...fineInput(), fineDetail: false }, makeCtx(), []).cardPayload;
+    const fine = buildProposeCard(fineInput(), makeCtx(), []).cardPayload;
+    expect(fine.estimatedCredits).toBeGreaterThan(plain.estimatedCredits);
+    expect(plain.model).toBe(DEFAULT_IMAGE_MODEL);
+    expect(plain.fineDetail).toBeUndefined();
+  });
+
+  it("ENGINE-A3 精修档的形状菜单更窄 ⇒ 卡上那一格一定落在它自己收得下的那几格里", () => {
+    const { cardPayload } = buildProposeCard(fineInput(), makeCtx(), []);
+    expect(GEN_IMAGE_MODEL_OPTIONS[PRO_IMAGE_MODEL].aspectRatios).toContain(cardPayload.params.aspectRatio);
+    expect(cardPayload.options?.aspectRatios).toEqual(cardOptionMenu(PRO_IMAGE_MODEL)!.aspectRatios);
+  });
+
+  it("ENGINE-A3 精修档收不下的形状(16:9)⇒ 一张卡都不铸,拒绝而**不是**降级", () => {
+    const wide = GEN_IMAGE_MODEL_OPTIONS[DEFAULT_IMAGE_MODEL].aspectRatios.find(
+      (a) => !GEN_IMAGE_MODEL_OPTIONS[PRO_IMAGE_MODEL].aspectRatios.includes(a),
+    );
+    if (!wide || !imageAspectHonoured()) return;
+    expect(() => buildProposeCard(fineInput({ desiredAspect: wide }), makeCtx(), [])).toThrow(ProposeRefusal);
+  });
+
+  it("ENGINE-A3 没点名精修 ⇒ 一格不动(默认档、默认价,旧行为逐字保留)", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "a pandan kaya jar on a marble counter", entityIds: [], variantSel: {} },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.model).toBe(DEFAULT_IMAGE_MODEL);
+    expect(cardPayload.fineDetail).toBeUndefined();
+    expect(cardPayload.estimatedCredits).toBe(
+      displayCredits(pricedGenCredits({ kind: "IMAGE", model: DEFAULT_IMAGE_MODEL, count: 1, videoOptions: null })),
+    );
+  });
+
+  it("ENGINE-A3 `proposeInput` 逐字收下 fineDetail —— 这个字段唯一的运行时看守", () => {
+    const parsed = proposeInput.safeParse({
+      kind: "image",
+      structuredPrompt: "a pandan kaya jar on a marble counter",
+      entityIds: [],
+      variantSel: {},
+      fineDetail: true,
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.fineDetail).toBe(true);
+    // 不是布尔的一律拒 —— 一个「说了不算数」的能力位会让卡与请求分家。
+    expect(
+      proposeInput.safeParse({
+        kind: "image",
+        structuredPrompt: "a pandan kaya jar on a marble counter",
+        entityIds: [],
+        variantSel: {},
+        fineDetail: "yes",
+      }).success,
+    ).toBe(false);
   });
 });
