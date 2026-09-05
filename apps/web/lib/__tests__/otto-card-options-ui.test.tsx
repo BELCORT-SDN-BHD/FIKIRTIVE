@@ -146,6 +146,32 @@ async function chooseOption(select: HTMLSelectElement, value: string): Promise<v
   });
 }
 
+function fineDetailSwitch(host: HTMLElement): HTMLElement | null {
+  return host.querySelector('[aria-label="Fine detail"]');
+}
+
+async function click(el: HTMLElement): Promise<void> {
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+/** 抽屉那张卡的规格条,逐格取（`OttoPlanCard` 里那几颗 `rounded-[7px]` 的小格）。 */
+function specChipTexts(root: HTMLElement): string[] {
+  return [...root.querySelectorAll('[class*="rounded-[7px]"]')].map((n) => (n.textContent ?? "").trim());
+}
+
+/** 一个可以按住不放的服务端答复 —— 用来站在「重铸还在飞」那半秒里。 */
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
 describe("ENGINE-A3 确认卡上的三格 —— 接在生产那条 $0 路上", () => {
   it("ENGINE-A3 张数、形状、精修三格都在卡上,菜单逐字来自卡自己的 options", () => {
     const host = mount(imageCard());
@@ -238,5 +264,97 @@ describe("ENGINE-A3 确认卡上的三格 —— 接在生产那条 $0 路上", 
     const host = mount(imageCard(), "working");
     expect(selectByLabel(host, "How many images")).toBeUndefined();
     expect(host.querySelector('[aria-label="Fine detail"]')).toBeNull();
+  });
+});
+
+/**
+ * 终检 r4（2026-09-05 20:15，截图 r4-16-card-finedetail.png / r4-20-finedetail-attempt.png）
+ * 的两条商家可见 P2。
+ */
+describe("ENGINE-A3 确认卡三格的界面残留 —— 终检 r4", () => {
+  it("ENGINE-A3 精修打开 ⇒ 规格条多一格 Fine detail(价变了,规格条得说出贵在哪)", () => {
+    const on = mount(imageCard({ fineDetail: true, estimatedCredits: 2 }));
+    expect(specChipTexts(on)).toEqual(["2048 × 2048", "1:1", "1 image", "Fine detail"]);
+    expect(on.textContent).toContain("Generate · 2 credits");
+    // 关着的时候一格都不多 —— 这一格只跟着卡上那个 fineDetail 走。
+    const off = mount(imageCard());
+    expect(specChipTexts(off)).toEqual(["2048 × 2048", "1:1", "1 image"]);
+  });
+
+  it("ENGINE-A3 精修那一格补在服务端那份规格之后,老卡(没有 specChips)照旧不显示规格条", () => {
+    const old = imageCard({ fineDetail: true });
+    delete old.specChips;
+    const host = mount(old);
+    // 没有服务端那份规格就不猜一份出来（#580）—— 只剩一格「Fine detail」也不算规格条。
+    expect(specChipTexts(host)).toEqual([]);
+  });
+
+  it("ENGINE-A3 画布那张卡的规格行同样多出 Fine detail —— 两处规格不说两件事", () => {
+    const host = mount(imageCard({ fineDetail: true, estimatedCredits: 2 }), "idle", true);
+    const canvas = host.querySelector('[aria-label="Otto current turn"]') as HTMLElement | null;
+    expect(canvas).toBeTruthy();
+    expect(canvas!.textContent).toContain("2048 × 2048 · 1:1 · 1 image · Fine detail");
+  });
+
+  it("ENGINE-A3 下拉改完立刻点精修 ⇒ 两次改动都落地(那一次点击不再被吞)", async () => {
+    const first = deferred<unknown>();
+    updateOptionsMock.mockReturnValueOnce(first.promise);
+    updateOptionsMock.mockResolvedValueOnce({
+      ok: true,
+      payload: imageCard({
+        params: { aspectRatio: "1:1", count: 3 },
+        fineDetail: true,
+        estimatedCredits: 6,
+        specChips: ["2048 × 2048", "1:1", "3 images"],
+      }),
+    });
+    const host = mount(imageCard());
+    await chooseOption(selectByLabel(host, "How many images")!, "3");
+    // 第一趟重铸还在飞的时候点精修 —— 这一次点击必须真的落地。
+    const toggle = fineDetailSwitch(host)!;
+    await click(toggle);
+    // 点下去立刻看得见（这一格自己的显示,价照旧等服务端）。
+    expect(fineDetailSwitch(host)!.getAttribute("aria-checked")).toBe("true");
+    expect(updateOptionsMock).toHaveBeenCalledTimes(1);
+    // 机制：重铸进行中控件**不是 disabled 的**（disabled 的 Switch 连事件都没有,那正是
+    // 终检 r4 里被吞掉的那一次点击）,而是自报 aria-busy 并把这一格排进队。
+    expect(toggle.hasAttribute("disabled")).toBe(false);
+    expect(toggle.getAttribute("aria-busy")).toBe("true");
+    expect(selectByLabel(host, "How many images")!.disabled).toBe(false);
+
+    await act(async () => {
+      first.resolve({
+        ok: true,
+        payload: imageCard({ params: { aspectRatio: "1:1", count: 3 }, estimatedCredits: 3, specChips: ["2048 × 2048", "1:1", "3 images"] }),
+      });
+      await first.promise;
+    });
+
+    // 排在后面那一格立刻接着发,参数逐字是他点的那一格。
+    expect(updateOptionsMock).toHaveBeenCalledTimes(2);
+    expect(updateOptionsMock).toHaveBeenNthCalledWith(1, { threadId: "thread_1", cardId: "card_1", count: 3 });
+    expect(updateOptionsMock).toHaveBeenNthCalledWith(2, { threadId: "thread_1", cardId: "card_1", fineDetail: true });
+    // 两次改动都落在卡上：价是服务端最后那张卡的价,规格条也说出了精修。
+    expect(host.textContent).toContain("Generate · 6 credits");
+    expect(specChipTexts(host)).toEqual(["2048 × 2048", "1:1", "3 images", "Fine detail"]);
+    expect(fineDetailSwitch(host)!.getAttribute("aria-checked")).toBe("true");
+    expect(fineDetailSwitch(host)!.getAttribute("aria-busy")).toBe("false");
+  });
+
+  it("ENGINE-A3 排队那一格被拒 ⇒ 说出服务端那句话,而且不替他再发一次", async () => {
+    const first = deferred<unknown>();
+    updateOptionsMock.mockReturnValueOnce(first.promise);
+    const host = mount(imageCard());
+    await chooseOption(selectByLabel(host, "How many images")!, "3");
+    await click(fineDetailSwitch(host)!);
+    await act(async () => {
+      first.resolve({ error: "Fine detail can't do that shape." });
+      await first.promise;
+    });
+    expect(updateOptionsMock).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain("Fine detail can't do that shape.");
+    // 卡一格没动 —— 价、规格条、开关都回到服务端那一份。
+    expect(host.textContent).toContain("Generate · 1 credit");
+    expect(fineDetailSwitch(host)!.getAttribute("aria-checked")).toBe("false");
   });
 });

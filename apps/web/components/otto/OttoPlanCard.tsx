@@ -13,7 +13,7 @@ import { runPlanApproval } from "./plan-approval";
 import { CardApprovalRef } from "./CardApprovalRef";
 // Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修)。两张确认卡共用这一份,
 // 抄成两份必有一份先烂(改了什么、按什么价,两处会各说各的)。
-import { CardOptionControls } from "./CardOptionControls";
+import { CardOptionControls, cardSpecChips } from "./CardOptionControls";
 import { runStateOfCard } from "@/lib/otto-status-helpers";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -156,7 +156,9 @@ export function OttoPlanCard({
   // The card renders it VERBATIM — it derives no spec of its own any more, because two
   // derivations of one fact is exactly how the card came to promise things the
   // generator never received (#580 复审 r1 P1-2).
-  const specChips = p.specChips ?? [];
+  // 终检 r4：精修那一格补在末尾（`cardSpecChips`，与开关共用一个名字）—— 打开精修价会变,
+  // 规格条不说它,商家就看得见贵了却看不出贵在哪。它不参与算钱。
+  const specChips = cardSpecChips(p);
   const referenceNamesNote = approvedEntitiesNote(p.approvedEntities ?? []);
   // The card's honest run state. `working` maps to "queued": the card knows a job was
   // created, not that it started — so it must not say "making this now" (P1-3).
