@@ -17,6 +17,7 @@ import { uploadReference } from "../../lib/actions";
 import { syncOttoCanvasNodes } from "../../lib/otto-canvas-bridge";
 import { OttoCanvasStatus } from "../otto/OttoTrace";
 import { UnderstandingCostHint } from "@/components/otto/UnderstandingCostHint";
+import { SAVE_FAILED } from "@/lib/save-failed-copy";
 import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -122,11 +123,11 @@ const CANVAS_CARD_SIDE = 320;
  * is one ("Not authorized.", "Project not found.", "Node not found."). This is the other case:
  * the action threw, so there is no server sentence to quote — the request never got an answer at
  * all. It is not a new piece of product copy; it is the sentence this product already gives a
- * merchant for exactly that (`lib/memory-actions.ts`, `lib/schedule-actions.ts`,
- * `lib/brand-record-actions.ts`), reused so the canvas does not become the one surface that says
- * the same thing differently.
+ * merchant for exactly that — and it is no longer re-typed here: the words live once, in
+ * `@/lib/save-failed-copy`, and every surface that says them imports that one export (判官 #1197
+ * P2-3 — 这里曾是第 7 份字面量;抄件之间只会越漂越远).
  */
-const CANVAS_SAVE_FAILED = "Couldn't save that — please try again.";
+const CANVAS_SAVE_FAILED = SAVE_FAILED;
 /**
  * #643 T2 —— 一张卡默认会交付的形状：它自己记着的那一格（板子读回来的 lineage），
  * 记不到就退回输入条当前的形状。纯函数：只看传进来的这张卡，不碰任何 ref。
