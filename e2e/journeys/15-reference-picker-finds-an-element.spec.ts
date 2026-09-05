@@ -90,8 +90,14 @@ test("FRONT-A10 — @ in Otto finds this workspace's own element and the keyboar
   // 这一段证明它现在开的是**同一个** `References` listbox,并且带上了 Otto 输入框拿不到的那一行:
   // 元素的具名 variant。没有这几行,画布那一半只有源码子串围栏在盯(overlay-design-system 那份),
   // 而「两处渲染同一个组件」这句话,只有真浏览器能证。
-  await page.getByRole("button", { name: "Generate image" }).click();
-  const shotPrompt = page.locator('.mention-input [contenteditable="true"]');
+  // ENGINE-A3(otto-engine.md §7.2⑦):这一半从前开的是工具条 `Generate image` 掀出来的直出
+  // composer。那条路已退役(画布只留 Otto 对话那一个输入),板上仍然带着同一个 `MentionInput`
+  // 的地方是出片确认框 —— 换的是哪一扇门,要证的事(两处开的是同一个 References 菜单、
+  // 画布这一半多出具名 variant 那一行)一个字没改。
+  await page.getByRole("toolbar", { name: "Canvas tools" })
+    .getByRole("button", { name: "Video", exact: true })
+    .click();
+  const shotPrompt = page.locator('[role="dialog"] .mention-input [contenteditable="true"]');
   await expect(shotPrompt).toBeVisible();
   await shotPrompt.click();
   await shotPrompt.pressSequentially("@Pandan");

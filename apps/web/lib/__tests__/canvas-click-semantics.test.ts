@@ -362,22 +362,24 @@ describe("the bars along the bottom stay out of each other's way (#604 r2 P2①)
     expect(batchBar!.style.zIndex).toBe("");
   });
 
-  it("keeps the composer in the same column, so three open bars still cannot overlap", async () => {
+  it("ENGINE-A3 — 纵列里再没有那个直出 composer,余下两行仍各占一行", async () => {
     mocks.boardRead.mockResolvedValue([boardRow("n1"), boardRow("n2", { x: 360 })]);
     await renderBoard({ onReferenceInChat: vi.fn() });
 
     select(["n1", "n2"]);
-    // The tool row's image button opens the prompt composer.
-    const openComposer = container!.querySelector<HTMLButtonElement>('button[aria-label="Generate image"]');
-    expect(openComposer).not.toBeNull();
-    await act(async () => { openComposer!.click(); });
 
+    // 从前这里是「按工具行的图片键掀开 composer,纵列变成三行」。⑦段(otto-engine.md §7.2⑦)
+    // 把那颗键与它掀开的 composer 一并撤下,所以今天的正确断言是**纵列最多两行**:多选条、
+    // 工具行 —— 而且那个 composer 的容器整个不存在,不是「藏起来了」。
     const stack = container!.querySelector<HTMLElement>(".cv-bottom-stack")!;
-    const composer = stack.querySelector<HTMLElement>(".cv-composer-pop");
-    expect(composer).not.toBeNull();
-    expect(composer!.parentElement).toBe(stack);
-    expect(composer!.style.position).toBe("");
-    expect(stack.children).toHaveLength(3);
+    expect(stack.querySelector(".cv-composer-pop")).toBeNull();
+    expect(container!.querySelector('button[aria-label="Generate image"]')).toBeNull();
+    expect(stack.children).toHaveLength(2);
+    for (const row of [...stack.children] as HTMLElement[]) {
+      // 每一行仍然只是纵列里的一行,没有谁把自己钉回画布底边去盖住别人(#604 r2 P2①)。
+      expect(row.style.position).toBe("");
+      expect(row.style.bottom).toBe("");
+    }
   });
 
   /**
@@ -471,9 +473,11 @@ describe("the bars along the bottom stay out of each other's way (#604 r2 P2①)
     expect(stack.contains(zoom)).toBe(false);
     expect(rail.className).toContain("cv-mode-rail");
     expect(zoom.className).toContain("cv-zoom-cluster");
-    // 三个直接创作工具留在创作带里;缩放与模式一个都不在。
+    // 留在创作带里的工具;缩放与模式一个都不在。ENGINE-A3(§7.2⑦)撤走了这一排的第一颗
+    // `Generate image`(它掀开的是直出 composer)—— 余下两颗都不是直出:Video 先开确认框,
+    // Add text 一分钱不花。
     const creationLabels = [...creation.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"));
-    expect(creationLabels).toEqual(["Generate image", "Video", "Add text"]);
+    expect(creationLabels).toEqual(["Video", "Add text"]);
   });
 
   /**
