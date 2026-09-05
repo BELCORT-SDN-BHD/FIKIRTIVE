@@ -391,6 +391,26 @@ describe("ENGINE-A3 商家在确认卡上改三格,一路走到账本", () => {
     expect(JSON.stringify(await persistedCard(world, cardId))).toBe(before);
     expect(await ledgerRows(world.ownerId)).toHaveLength(0);
     expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
+
+    // 同一张回执,只是那一格 `genJobId` 缺席(别的铸点、老行)。判它是回执的是 **payload 上
+    // 那一格**,不是那一列 —— 这一段单独钉住 `canvasAction` 那条判据本身。
+    const noJobId = `msg_${randomUUID()}`;
+    await prisma.chatMessage.create({
+      data: {
+        id: noJobId,
+        threadId: world.threadId,
+        ownerId: world.ownerId,
+        role: "AGENT",
+        kind: "GEN_CARD",
+        seq: 2,
+        text: "",
+        payload: receipt as unknown as object,
+      },
+    });
+    const beforeNoJobId = JSON.stringify(await persistedCard(world, noJobId));
+    expect("error" in (await ottoUpdateGenCardOptions({ threadId: world.threadId, cardId: noJobId, count: 3 }))).toBe(true);
+    expect(JSON.stringify(await persistedCard(world, noJobId))).toBe(beforeNoJobId);
+    expect(await ledgerRows(world.ownerId)).toHaveLength(0);
   });
 
   it("ENGINE-A3 卡上已经挂了一行任务(genJobId)就改不动 —— 哪怕没有 `cowork:` 那个幂等键", async () => {

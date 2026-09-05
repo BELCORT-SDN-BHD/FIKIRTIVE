@@ -16,7 +16,7 @@ import { CardApprovalRef } from "./CardApprovalRef";
 // 清单 A5(P2-013)—— 「Change something」那张小表单与它送回对话的那句话,同住一处
 // (哪一格能就地改的判据只有一份)。
 import { CardChangeForm, CardOptionControls, cardSpecChips, changeRequestSeed } from "./CardOptionControls";
-import { runStateOfCard } from "@/lib/otto-status-helpers";
+import { runStateOfCard, type OttoRunState } from "@/lib/otto-status-helpers";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
 // The ONE contract layer: runtime parse + the ONE price-guarantee predicate. The render
@@ -128,9 +128,10 @@ export function OttoPlanCard({
   const [errorRef, setErrorRef] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "no-api">("idle");
-  /** 清单 A5(P2-013)—— 「Change something」那张小表单开着没有。默认关:卡面第一眼
-   *  是「要不要买」,不是「怎么改」。 */
-  const [changeOpen, setChangeOpen] = useState(false);
+  /** 清单 A5(P2-013)—— 「Change something」那张小表单是在**哪一个运行状态**下按开的。
+   *  null = 关着。默认关:卡面第一眼是「要不要买」,不是「怎么改」。存状态而不是存一个
+   *  布尔,卡一换状态它就自己不算数了(#1245 复判 P2-1,见下面 `changeOpen`)。 */
+  const [changeOpenFor, setChangeOpenFor] = useState<OttoRunState | null>(null);
   /** #498: set when THIS approve's resume parked again on more approvals (chained
    *  needs_approval) — the story didn't end with this card, and hiding that is the
    *  same silent death one click deeper. Holds the SERVER's localized receipt
@@ -175,14 +176,12 @@ export function OttoPlanCard({
   // created, not that it started — so it must not say "making this now" (P1-3).
   const runState = runStateOfCard(cardState);
 
-  // 卡一离开「等确认」就把表单收回去（#1245 复判 P2-1）。渲染闸只问「此刻是不是 waiting
-  // 或 failed」，而 `changeOpen` 是留着的 —— 于是一张走过「等确认 → 已排队 → 失败」的卡
-  // 会在失败那一刻**自己**把表单弹开，商家并没有再按过 Change something。收在这里而不是
-  // 收进那个闸：闸只管这一刻显不显示，开关本身该跟着卡的状态走。失败之后他再按一下，
-  // 照旧打得开（这条 effect 只在 `runState` 变化的那一帧跑）。
-  useEffect(() => {
-    if (runState !== "waiting") setChangeOpen(false);
-  }, [runState]);
+  // 表单开着没有 —— 判据是「他是在**哪一个状态**下按开的」，不是一个裸的布尔（#1245
+  // 复判 P2-1）。渲染闸只问「此刻是不是 waiting 或 failed」，一个裸布尔会被留下来：一张
+  // 走过「等确认 → 已排队 → 失败」的卡，在失败那一刻表单会**自己**弹开，商家并没有再按过
+  // Change something。比一次状态就自己收，卡一换状态它就不再等于此刻 —— 不必再拿一条
+  // effect 去追（那也正是 `react-hooks/set-state-in-effect` 拦下的写法）。
+  const changeOpen = changeOpenFor === runState;
 
   // Two ways this card can know it was stopped, and it needs both (#602 T3). The local flag is
   // this press, right now, before any durable message exists; `runState` is the DURABLE answer,
@@ -299,12 +298,13 @@ export function OttoPlanCard({
    * 真正想改的(形状、时长、声音、参考)在那段字里根本认不出来。
    */
   function handleChangeSomething() {
-    setChangeOpen((open) => !open);
+    // 同一颗键两个方向：开着(在这一刻这个状态下开的)就收回去，否则记下它是在哪个状态下开的。
+    setChangeOpenFor((open) => (open === runState ? null : runState));
   }
 
   /** 表单按下 Send:商家那句话连同这张卡的原话,走**既有**那一条对话路。 */
   function submitChange(note: string) {
-    setChangeOpen(false);
+    setChangeOpenFor(null);
     onChangeSomething(changeRequestSeed(note, p));
   }
 
