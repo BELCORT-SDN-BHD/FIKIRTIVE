@@ -108,6 +108,8 @@ export const manageMediaSkill = defineOttoSkill({
   cost: "free",
   effect: "write",
   reach: "internal",
+  // ENGINE-A4:list / load_more 只列不改 —— 翻素材页翻到跑满步数的一轮是零交付。
+  readOnlyActions: { field: "action", actions: ["list", "load_more"] },
   description:
     "See and organize the project's generated media ($0 — never generates media or spends credits). " +
     "list: media as timeline-ready clips. load_more: page the Assets library. " +

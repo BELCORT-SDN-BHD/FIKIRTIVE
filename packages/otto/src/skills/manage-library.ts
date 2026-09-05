@@ -106,6 +106,8 @@ export const manageLibrarySkill = defineOttoSkill({
   cost: "free",
   effect: "write",
   reach: "internal",
+  // ENGINE-A4:history / detail 只查不写 —— 只翻了几页历史的一轮,商家手里什么都没多。
+  readOnlyActions: { field: "action", actions: ["history", "detail"] },
   description:
     `Browse the user's ${navLabel("library")} — every image/video they've made — $0, never generates or spends. ` +
     "history: a page of their generation history, newest first (optional search text and a cursor to page). " +

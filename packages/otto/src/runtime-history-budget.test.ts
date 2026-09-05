@@ -265,6 +265,54 @@ describe("ENGINE-A6 — 长对话：旧轮被摘要收拢，新一轮成本不�
     expect(block).toContain(saved[0]!);
   }, 60_000);
 
+  it("ENGINE-A6: 折叠跑在 manifest 声明的 summaryBinding 上,不是主轮那个绑定", async () => {
+    // §7.2④「摘要本身是一次便宜的小调用」——「折叠用哪个型号」必须是 manifest 上的一个决定
+    // (model.ts 的 OTTO_SUMMARY_MODEL),不是 foldRollingSummary 里写死的一行。这条钉的是那根线。
+    const mainCalls: ModelRequest[] = [];
+    const summaryCalls: ModelRequest[] = [];
+    const recording = (log: ModelRequest[]): Model => {
+      const inner = usageTracksInputModel();
+      return {
+        async getResponse(request: ModelRequest): Promise<ModelResponse> {
+          log.push(request);
+          return inner.getResponse(request);
+        },
+        getStreamedResponse: inner.getStreamedResponse.bind(inner),
+      };
+    };
+    const runtime = createOttoRuntime(
+      {
+        modelRuntime: Object.freeze({
+          ...paidModelRuntime(recording(mainCalls)),
+          summaryBinding: recording(summaryCalls),
+        }),
+        skills: [],
+      },
+      "interactive",
+    );
+    const history = Array.from({ length: 12 }, (_, i) =>
+      ({ role: i % 2 ? "assistant" : "user", content: `t${i} ${"h".repeat(6_000)}` }) as unknown as AgentInputItem,
+    );
+    const { kept, dropped } = trimHistoryToBudget(sanitizeHistory(history));
+    expect(dropped.length).toBeGreaterThan(0);
+
+    await runOttoTurn(
+      {
+        orgId: "org_a6",
+        refId: "otto-turn:msg_summary_binding",
+        input: [...kept, { role: "user", content: "next" } as unknown as AgentInputItem],
+        rollingSummary: { dropped, priorSummary: null, save: () => {} },
+      },
+      baseCtx,
+      runtime,
+    );
+
+    // 折叠那次调用落在 summaryBinding 上,主轮那次落在主绑定上 —— 两边各一次,不串。
+    expect(summaryCalls).toHaveLength(1);
+    expect(mainCalls).toHaveLength(1);
+    expect(summaryCalls[0]!.systemInstructions).toContain("compress the older part of one conversation");
+  }, 60_000);
+
   it("ENGINE-A6: 没有裁掉任何东西的一轮不折叠、不写摘要、不多花一次调用", async () => {
     const runtime = createOttoRuntime(
       { modelRuntime: paidModelRuntime(usageTracksInputModel()), skills: [] },

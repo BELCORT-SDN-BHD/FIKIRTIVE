@@ -89,6 +89,11 @@ export type PricingLookup = (modelId: string) => LlmPrices;
  */
 export type OttoModelRuntime = {
   readonly binding: ModelBinding;
+  /** ENGINE-A6 —— 滚动摘要那次折叠用的绑定(规格 §7.2④「摘要本身是一次便宜的小调用」)。
+   *  它与主轮的绑定分开声明,是为了让「折叠跑在哪个型号上」是**manifest 上的一个决定**,而
+   *  不是 `foldRollingSummary` 里写死的一行。缺省(undefined)＝与主轮同一个绑定,所以夹具
+   *  与 CLI 那几份 manifest 一个字都不用改。 */
+  readonly summaryBinding?: ModelBinding;
   readonly billableModelId: string | "fixture-no-charge";
   readonly resolvedModelPolicy: ResolvedModelPolicy;
   readonly mapUsage: UsageMapper;
@@ -168,8 +173,9 @@ export function createOttoRuntime(deps: OttoRuntimeDeps, profile: OttoRunProfile
     modelSettings: { maxTokens: OTTO_OUTPUT_CAP_TOKENS },
     // ENGINE-A4:写技能多包一层,好在它**真的落盘**的那一刻记一笔(countingDeliveryTool)。
     // 为什么不能事后从 SDK 的 state 上数出来,见那个函数的注释:「跑完了」与「落盘了」在
-    // state 上长得一模一样。
-    tools: deps.skills.map((s) => (delivering.has(s.name) ? countingDeliveryTool(s.tool) : s.tool)),
+    // state 上长得一模一样。包进去的是**整个技能**而不只是它的工具:那一层还要读技能自己
+    // 声明的 `readOnlyActions`,把这把工具下的纯读动作从账上摘掉(判官 P2-a)。
+    tools: deps.skills.map((s) => (delivering.has(s.name) ? countingDeliveryTool(s) : s.tool)),
   });
   return Object.freeze({
     profile,
@@ -412,20 +418,53 @@ function landedOnDisk(out: unknown): boolean {
 }
 
 /**
+ * 这一次调用是不是这把工具下的**纯读动作**(⑤段判官 P2-a)。
+ *
+ * 一把 `effect:"write"` 的工具底下常常挂着几个只查不写的动作 —— `manageCanvas` 的 `view`、
+ * `manageLibrary` 的 `history`/`detail`、`manageMedia` 的 `list`/`load_more`、`draftWorkflows`
+ * 的 `validateWorkflowRules`。它们成功时同样返回 `{ ok:true, … }`,从返回值一层根本分不出来,
+ * 于是「只反复看板、列清单直到跑满步数」的死胡同也被记成交付、照收钱 —— 与 ENGINE-A4
+ * 「轮子死了商家手里什么都没多就整笔退」正相反。
+ *
+ * 判据取的是**技能自己声明**的那份 `readOnlyActions`(skill.ts),不是 runtime 里手抄的第二份
+ * 名册。`input` 在 SDK 的 FunctionTool 边界上就是那串 JSON 实参(`invoke(runContext, input)`,
+ * `@openai/agents-core@0.11.8` dist/tool.d.ts:183),所以这里读的是**模型真正提交的那个
+ * 动作名**,不是事后猜的。
+ *
+ * 方向:只有**确凿读出**判别键、且它逐字在名单里,才算纯读;读不出来(解析失败、字段缺席、
+ * 类型不对)一律退回原行为——记一笔。这一刀只把已证明的纯读从账上摘掉,不新造任何「该收没收」
+ * 的口子。
+ */
+function isPureReadCall(skill: OttoSkill, input: string): boolean {
+  const declared = skill.readOnlyActions;
+  if (!declared) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object") return false;
+  const action = (parsed as Record<string, unknown>)[declared.field];
+  return typeof action === "string" && declared.actions.includes(action);
+}
+
+/**
  * 给一个 `effect: "write"` 的技能包一层:它**真的落盘**的那一刻,在这一轮的记账本上记一笔。
  *
  * 只做这一件事 —— 参数、审批闸、抛出去的错误、返回值一个字节都不改(SDK 照旧把抛错折成返回
  * 值,我们照旧原样交回去),所以模型看到的东西与本改动之前逐字相同,记账失败也不会打断一轮
  * 已经在跑的对话。
  */
-function countingDeliveryTool(skillTool: OttoSkill["tool"]): OttoSkill["tool"] {
+function countingDeliveryTool(skill: OttoSkill): OttoSkill["tool"] {
+  const skillTool = skill.tool;
   const invoke = skillTool.invoke.bind(skillTool);
   return {
     ...skillTool,
     invoke: async (runContext, input, details) => {
       const out = await invoke(runContext, input, details);
       const context: unknown = runContext?.context;
-      if (landedOnDisk(out) && context && typeof context === "object") {
+      if (landedOnDisk(out) && !isPureReadCall(skill, input) && context && typeof context === "object") {
         const tally = turnDeliveryTallies.get(context) ?? { writes: 0 };
         tally.writes += 1;
         turnDeliveryTallies.set(context, tally);
@@ -577,7 +616,9 @@ async function foldRollingSummary(
     const agent = new Agent({
       name: "Otto rolling summary",
       instructions: ROLLING_SUMMARY_INSTRUCTIONS,
-      model: runtime.modelRuntime.binding,
+      // ENGINE-A6(§7.2④「一次便宜的小调用」):折叠跑在 manifest 自己声明的 summaryBinding 上,
+      // 缺省回落到主轮那一个。哪个型号是 manifest 的决定(model.ts),不是这里写死的一行。
+      model: runtime.modelRuntime.summaryBinding ?? runtime.modelRuntime.binding,
       modelSettings: { maxTokens: ROLLING_SUMMARY_OUTPUT_CAP_TOKENS },
       tools: [],
     });
