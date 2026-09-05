@@ -352,3 +352,36 @@ describe("FRONT-A14 出片弹窗的提示词框", () => {
       .not.toMatch(/\.gb\s+\.[\w-]+\s+\.tiptap[^{}]*\{[^{}]*?[\s;{]color:/);
   });
 });
+
+/**
+ * FRONT-A14 —— 空画板上的那一句引导(2026-09-05 走查 P2④)。
+ *
+ * 从前板上没有卡的时候屏幕中央只有一块点阵底纹:商家看不出这里会长出东西,也看不出该从哪里
+ * 开口。左上角那张状态卡说的是 Otto 此刻在不在,不是这块板是干什么的。
+ *
+ * 与本文件其余各条同一个理由走源码级:一张画布卡只在 React Flow provider 与一块活的板里才画
+ * 得出来,在这里做 DOM 断言等于把板本身也 mock 掉。这里钉的三件都是源码看得见的结构:
+ * 走的是共用空态组件、只在**读成功且真的零张卡**时出现、以及它不是一层挡住画板的纸。
+ */
+describe("FRONT-A14 空画板的引导", () => {
+  const code = codeOnly(flowCanvas);
+
+  it("FRONT-A14: the empty board says what it is for, through the shared empty-state component", () => {
+    expect(flowCanvas, "空画板引导没走共用空态组件").toContain('from "@/components/ui/empty"');
+    expect(code).toContain("Nothing on this canvas yet");
+    expect(code).toContain("Ask Otto in the box below, and what it makes will appear here.");
+  });
+
+  it("FRONT-A14: the guidance appears only on a board that really loaded and really has no cards", () => {
+    // 「读不出来」有自己的 Alert、「还在读」有自己的 Badge;把那两种说成「这里还什么都没有」
+    // 是假话,所以这一句的条件里必须同时有 ready 与零张卡。
+    expect(code).toMatch(/boardStatus === "ready" && nodesOnBoard\.length === 0/);
+  });
+
+  it("FRONT-A14: the guidance is a sentence, not a sheet over the board", () => {
+    // 拖动、框选、滚轮缩放都要照旧穿过去 —— 与 `.cv-dropzone` 不同,这一层永远不接事件。
+    const guidance = /nodesOnBoard\.length === 0 && \(\s*<div className="([^"]*)"/.exec(code);
+    expect(guidance, "找不到空画板引导那一层的类名").not.toBeNull();
+    expect(guidance![1]).toContain("pointer-events-none");
+  });
+});
