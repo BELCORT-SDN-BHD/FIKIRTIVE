@@ -93,7 +93,14 @@ export function canvasRecordedFacts(card: CanvasRecordedFactsSource): CanvasReco
   };
 }
 
-function knownIndex(facts: CanvasBatchFacts): number | null {
+/**
+ * 这张卡在它那次付费按下的产出列表里的位置(0 起) —— 记录说了才算,否则 null。
+ *
+ * 从私有的 `knownIndex` 提成导出的读取器(判官 #1194 P2-1):卡片页脚的版本栏也要问同一件事,
+ * 它先前在 `CanvasNodeFooter` 里逐条重写了同一套守卫,两份守卫就是两份会各自漂移的真相。
+ * 「越界的位置不算位置」这一条只在这里写一次。
+ */
+export function canvasBatchPosition(facts: CanvasBatchFacts): number | null {
   const { batchIndex, batchSize } = facts;
   if (typeof batchIndex !== "number" || !Number.isInteger(batchIndex) || batchIndex < 0) return null;
   if (typeof batchSize !== "number" || !Number.isInteger(batchSize) || batchSize < 1) return null;
@@ -119,7 +126,7 @@ export function isCanvasBatchCard(facts: CanvasBatchFacts): boolean {
  */
 export function canvasBatchLetter(facts: CanvasBatchFacts): "A" | "B" | null {
   if (canvasBatchSize(facts) !== AB_BATCH_SIZE) return null;
-  const index = knownIndex(facts);
+  const index = canvasBatchPosition(facts);
   return index === null ? null : AB_LETTERS[index] ?? null;
 }
 
@@ -213,7 +220,7 @@ export function canvasBatchGroups(nodes: readonly CanvasBatchNode[]): CanvasBatc
       batchSize: group.batchSize,
       memberIds: group.members
         .slice()
-        .sort((left, right) => (knownIndex(left) ?? 0) - (knownIndex(right) ?? 0) || left.id.localeCompare(right.id))
+        .sort((left, right) => (canvasBatchPosition(left) ?? 0) - (canvasBatchPosition(right) ?? 0) || left.id.localeCompare(right.id))
         .map((member) => member.id),
     });
   }
