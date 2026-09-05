@@ -22,7 +22,7 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.0 七段三批)", () => {
   it.todo("ENGINE-A1 见 packages/otto/evals/evals.test.ts（本段已交付：跑一次、逐题有分、总分入档、回归即非零退出）");
 
   // ── 批 I 的其余三段，不在本段写集 ─────────────────────────────────────────
-  it.todo("ENGINE-A5 价目表查无此型号即拒绝启动 —— 批 I §7.2①（型号与价目 fail closed）");
+  it.todo("ENGINE-A5 见 packages/core/src/llm-prices.test.ts 与 env-contract.test.ts（①段已交付并合入主干：价目查不到即抛、开机拒绝）");
   it.todo("ENGINE-A2 每轮调试档案：装了哪些技能文件、走了几步、调了哪些动作，零商家内容明文 —— 批 I §7.2②");
   it.todo("ENGINE-A6 长对话旧轮折成摘要、成对感知的历史裁剪 —— 批 I §7.2④");
 

@@ -4,6 +4,10 @@
  *   pnpm --filter @fikirtive/otto run evals          写档案（baselines/<line>.json）
  *   pnpm --filter @fikirtive/otto run evals:check    重跑并比对基线，回归即非零退出
  *
+ * 哪一条线由 `--line=engine|creation` 决定，缺省 engine（§7.3 给 Creation 的接口第一件：
+ * Creation 只往 tasks/creation/ 加文件，不改本文件）。pnpm 传参要加 `--`：
+ *   pnpm --filter @fikirtive/otto run evals -- --line=creation
+ *
  * 两条纪律，都在 README 第一段：
  *   · 一律 `env -u ANTHROPIC_BASE_URL`（本文件开跑前会亲自检查一次，设了就拒跑）；
  *   · 本 runner **不加载仓库 `.env.local`** —— 变量只从已经在 shell 里的 `process.env` 读。
@@ -36,10 +40,24 @@ import {
 import { runEvals, type Judge, type Subject } from "./run.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const LINE = "engine" as const;
-const TASKS_DIR = join(HERE, "tasks", LINE);
-const BASELINE = join(HERE, "baselines", `${LINE}.json`);
 const JUDGE_RUBRIC_PATH = join(HERE, "judge.md");
+
+/** 两条线共用同一个 runner（§7.3 给 Creation 的接口第一件：只加文件，不改 runner）。 */
+export type EvalLine = "engine" | "creation";
+
+/** 纯：`--line=creation` → 哪一条线；不给就是 engine（本规格自己的那条）。 */
+export function resolveLine(argv: readonly string[]): EvalLine {
+  const raw = argv.find((a) => a.startsWith("--line="))?.slice("--line=".length) ?? "engine";
+  if (raw !== "engine" && raw !== "creation") {
+    throw new Error(`--line 只能是 engine 或 creation，收到 "${raw}"`);
+  }
+  return raw;
+}
+
+/** 纯：一条线的两个路径——题目目录与它自己那一份档案。 */
+export function pathsFor(line: EvalLine): { tasksDir: string; baseline: string } {
+  return { tasksDir: join(HERE, "tasks", line), baseline: join(HERE, "baselines", `${line}.json`) };
+}
 
 const SUBJECT_MAX_OUTPUT = 900;
 const JUDGE_MAX_OUTPUT = 700;
@@ -157,11 +175,18 @@ function makeJudge(model: string, meter: Meter): Judge {
 
 // ── 题目与档案 ──────────────────────────────────────────────────────────────
 
-export function loadTasks(dir: string): EvalTask[] {
+export function loadTasks(dir: string, expectedLine: EvalLine): EvalTask[] {
   const files = readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "README.md").sort();
   const tasks = files.map((f) => parseTask(readFileSync(join(dir, f), "utf8"), join(dir, f)));
   const ids = new Set(tasks.map((t) => t.id));
   if (ids.size !== tasks.length) throw new Error("题目 id 撞号了——一题一个 id");
+  // 题的 line 必须与它所在目录对得上：一道 creation 题掉进 tasks/engine/ 就是一份写错的档案，
+  // 而档案是「不低于基线」的比较对象——那种错必须当场炸，不能静默入档。
+  for (const t of tasks) {
+    if (t.line !== expectedLine) {
+      throw new Error(`题 ${t.id} 写着 line: ${t.line}，却放在 tasks/${expectedLine}/ 里——两者必须一致`);
+    }
+  }
   return tasks;
 }
 
@@ -173,10 +198,13 @@ function commitSha(): string {
   }
 }
 
-/** baselines/ 里已记的花费总和——本段累计预算（$20）的对照，只报数不拦。 */
-function spentSoFarUsd(): number {
-  if (!existsSync(BASELINE)) return 0;
-  const prev = JSON.parse(readFileSync(BASELINE, "utf8")) as EvalArchive;
+/**
+ * 这条线的档案里已记的花费——**只报数不拦**（`SEGMENT_BUDGET_USD` 是记账口径，
+ * 真闸只有单次全跑的 `FULL_RUN_BUDGET_USD`，见 README「预算」一节）。
+ */
+function spentSoFarUsd(baseline: string): number {
+  if (!existsSync(baseline)) return 0;
+  const prev = JSON.parse(readFileSync(baseline, "utf8")) as EvalArchive;
   return prev.costUsd ?? 0;
 }
 
@@ -196,17 +224,25 @@ function report(archive: EvalArchive): void {
 
 async function main(): Promise<void> {
   const check = process.argv.includes("--check");
+  const line = resolveLine(process.argv);
+  const { tasksDir, baseline: BASELINE } = pathsFor(line);
   assertEnvironment();
 
-  const tasks = loadTasks(TASKS_DIR);
+  // `--check` 没有基线可比是**开跑前**就知道的事——先说，别烧完一整趟钱再说。
+  if (check && !existsSync(BASELINE)) {
+    console.error(`没有基线可比（${BASELINE} 不存在）。先跑一次 evals 写档案。`);
+    process.exit(1);
+  }
+
+  const tasks = loadTasks(tasksDir, line);
   const model = OTTO_PRIMARY_MODEL;
   const budgetUsd = FULL_RUN_BUDGET_USD;
   const meter = new Meter(budgetUsd);
 
-  const already = spentSoFarUsd();
+  const already = spentSoFarUsd(BASELINE);
   console.log(
-    `${LINE} 线 ${tasks.length} 题，型号 ${model}，单次上限 $${budgetUsd}` +
-      `（本段累计预算 $${SEGMENT_BUDGET_USD}，档案里已记 $${already.toFixed(4)}）`,
+    `${line} 线 ${tasks.length} 题，型号 ${model}，单次上限 $${budgetUsd}` +
+      `（本段累计记账口径 $${SEGMENT_BUDGET_USD}，只报数不拦；这条线的档案里已记 $${already.toFixed(4)}）`,
   );
 
   const archive = await runEvals(tasks, makeSubject(model, meter), makeJudge(model, meter), {
@@ -225,10 +261,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (!existsSync(BASELINE)) {
-    console.error(`没有基线可比（${BASELINE} 不存在）。先跑一次 evals 写档案。`);
-    process.exit(1);
-  }
   const baseline = JSON.parse(readFileSync(BASELINE, "utf8")) as EvalArchive;
   const { regressed, delta } = compareToBaseline(baseline.total, archive.total);
   console.log(

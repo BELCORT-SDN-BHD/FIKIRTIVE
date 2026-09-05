@@ -168,8 +168,18 @@ export function callCostUsd(
   return usage.inputTokens * prices.inputPerToken + usage.outputTokens * prices.outputPerToken;
 }
 
-/** 纯：粗估 token 数（4 字符 ≈ 1 token）。只用于**开跑前**的最坏估算，从不用于计费。 */
-export const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
+/**
+ * 纯：粗估 token 数。只用于**开跑前**的最坏估算，从不用于计费（计费永远用真实用量）。
+ *
+ * 「4 字符 ≈ 1 token」是**英文**口径。这个闸的输入端常常是整份华语文件
+ * （`judge.md` 与题目的华语 rubric 就是），而华语大致 1–2 token/字 ——
+ * 拿英文口径去估华语，最坏情况会被低估好几倍。一个自称 fail closed 的闸不能用乐观口径估最坏，
+ * 所以这里按 CJK 与非 CJK 分档：CJK 每字算 2，其余仍按 4 字符 1 token。
+ */
+export function estimateTokens(text: string): number {
+  const cjk = (text.match(/[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/gu) ?? []).length;
+  return Math.ceil(cjk * 2 + (text.length - cjk) / 4);
+}
 
 /**
  * 纯：预算看门人。每次模型调用**之前**问它一次。

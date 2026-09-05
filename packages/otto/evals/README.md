@@ -16,6 +16,15 @@ env -u ANTHROPIC_BASE_URL pnpm --filter @fikirtive/otto run evals        # 跑�
 env -u ANTHROPIC_BASE_URL pnpm --filter @fikirtive/otto run evals:check  # 重跑并比对基线，回归即非零退出
 ```
 
+哪一条线由 `--line=engine|creation` 决定，**缺省 `engine`**（本规格自己的那条）。pnpm 传参要加 `--`：
+
+```bash
+env -u ANTHROPIC_BASE_URL pnpm --filter @fikirtive/otto run evals -- --line=creation
+```
+
+题目从 `tasks/<line>/` 装载、档案写 `baselines/<line>.json`，两条线共用这一个 runner。
+题里的 `line` 字段必须与它所在的目录一致——对不上就当场炸，不会静默写进另一条线的档案。
+
 `evals:check` **要花钱**（它会真的重跑一遍），所以它不是 CI 闸，只在人手里跑 ——
 ⑥段（技能文件柜替换单体）落地后重跑它，就是那一段「总分不低于基线」的判据。
 
@@ -24,12 +33,14 @@ env -u ANTHROPIC_BASE_URL pnpm --filter @fikirtive/otto run evals:check  # 重�
 `baselines/engine.json` **目前不存在**：主检出 `.env.local` 里的 `ANTHROPIC_API_KEY` 是 401
 （`GET https://api.anthropic.com/v1/models` → `authentication_error: API key is invalid.`，零 token 的探针，见
 `docs/specs/otto-engine.md` §5 2026-09-05 登记行）。换一把有效钥匙之后按上面的跑法跑一次即可，
-档案会自己写出来。在那之前 `evals:check` 会明说「没有基线可比」并非零退出 —— 它不会假绿。
+档案会自己写出来。在那之前 `evals:check` 会**在开跑前**（不花一分钱）就明说「没有基线可比」并非零退出 —— 它不会假绿，也不会先烧掉一整趟钱再告诉你。
 
 ## 预算
 
-单次全跑硬上限 **$10**，本段累计 **$20**（`docs/specs/otto-engine.md` §7.7）。
-上限写在 `core.ts` 的 `FULL_RUN_BUDGET_USD`，**每次模型调用之前**过一次预算闸：
+**真闸只有一道**：单次全跑硬上限 **$10**，写在 `core.ts` 的 `FULL_RUN_BUDGET_USD`。
+`SEGMENT_BUDGET_USD`（本段累计 **$20**，`docs/specs/otto-engine.md` §7.7）是**记账口径，只印不拦** ——
+开跑那一行会把它连同「这条线的档案里已记多少」印出来给人看，代码里没有任何地方据它停跑。
+$10 的那一道则是真的：**每次模型调用之前**过一次预算闸，
 已花的 + 这一次的最坏情况超过上限就**就地停**并非零退出。花费按真实 token 用量 × `@fikirtive/core` 的价目表算，
 写进档案的 `costUsd`。
 
@@ -40,8 +51,8 @@ evals/
 ├── README.md        ← 本文
 ├── judge.md         ← 判分标准（单一权威；engine 与 creation 两条线共用一份）
 ├── tasks/
-│   ├── engine/      ← 本规格的营销任务（ENGINE-A1 基线）
-│   └── creation/    ← Creation 的题（creation-engine.md 批 III 自己填）
+│   ├── engine/      ← 本规格的营销任务（ENGINE-A1 基线；缺省的那条线）
+│   └── creation/    ← Creation 的题（creation-engine.md 批 III 自己填，跑法 --line=creation）
 ├── checks/          ← 机械检查注册表（纯函数）
 ├── baselines/       ← 跑分档案（JSON：日期、commit、型号、逐题分、总分、花费）
 ├── core.ts          ← front-matter 契约、判分、预算闸（纯函数，测试跑它零成本）

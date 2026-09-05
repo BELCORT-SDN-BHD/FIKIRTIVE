@@ -6,13 +6,14 @@
  * （判词解析、题目装载、预算闸）在这里单独钉。
  */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   FULL_RUN_BUDGET_USD,
   budgetGate,
   compareToBaseline,
+  estimateTokens,
   parseTask,
   scoreTask,
   type EvalTask,
@@ -21,9 +22,10 @@ import {
 import { runEvals } from "./run.js";
 import { runCheck } from "./checks/index.js";
 import { parseGlossary, shotGlossary, SEEDANCE_CRAFT_PATH } from "./checks/glossary.js";
-import { loadTasks, parseVerdicts } from "./runner.js";
+import { loadTasks, parseVerdicts, pathsFor, resolveLine } from "./runner.js";
 
-const TASKS_DIR = join(dirname(fileURLToPath(import.meta.url)), "tasks", "engine");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const TASKS_DIR = join(HERE, "tasks", "engine");
 
 const meta = {
   commit: "deadbeef",
@@ -110,7 +112,7 @@ describe("ENGINE-A1 评测基线骨架", () => {
 
 describe("ENGINE-A1 题目契约与注册表", () => {
   it("ENGINE-A1 engine 线至少 10 题，front-matter 五字段齐全、id 不撞号", () => {
-    const tasks = loadTasks(TASKS_DIR);
+    const tasks = loadTasks(TASKS_DIR, "engine");
     expect(tasks.length).toBeGreaterThanOrEqual(10);
     expect(new Set(tasks.map((t) => t.id)).size).toBe(tasks.length);
     for (const t of tasks) {
@@ -151,6 +153,34 @@ describe("ENGINE-A1 题目契约与注册表", () => {
     expect(() => parseVerdicts("说了半天没有数组", ["诚实"])).toThrow(/JSON/);
     expect(() => parseVerdicts('[{"score":2}]', ["a", "b"])).toThrow(/维度/);
     expect(() => parseVerdicts('[{"score":5}]', ["a"])).toThrow(/0\/1\/2/);
+  });
+
+  it("ENGINE-A1 两条线共用同一个 runner：--line=creation 指向 tasks/creation 与 baselines/creation.json", () => {
+    // §7.3 给 Creation 批 III 的接口第一件：只往 tasks/creation/ 加文件，不改 runner。
+    expect(resolveLine([])).toBe("engine");
+    expect(resolveLine(["node", "runner.ts", "--check"])).toBe("engine");
+    expect(resolveLine(["node", "runner.ts", "--line=creation"])).toBe("creation");
+    expect(() => resolveLine(["--line=nope"])).toThrow(/engine 或 creation/);
+
+    const creation = pathsFor("creation");
+    expect(creation.tasksDir).toBe(join(HERE, "tasks", "creation"));
+    expect(creation.baseline).toBe(join(HERE, "baselines", "creation.json"));
+    const engine = pathsFor("engine");
+    expect(engine.tasksDir).toBe(TASKS_DIR);
+    expect(engine.baseline).toBe(join(HERE, "baselines", "engine.json"));
+    // 目录确实存在——批 III 加文件那一刻就跑得动，不必先改 runner。
+    expect(existsSync(creation.tasksDir)).toBe(true);
+  });
+
+  it("ENGINE-A1 题的 line 与它所在目录必须对得上，否则当场炸（不静默写进别人的档案）", () => {
+    expect(() => loadTasks(TASKS_DIR, "creation")).toThrow(/两者必须一致/);
+  });
+
+  it("ENGINE-A1 最坏情况估算对华语不能乐观：同长度的华语估得比英文高", () => {
+    // 闸的输入端是整份华语 judge.md；英文口径（4 字符 1 token）会把最坏情况低估好几倍。
+    expect(estimateTokens("abcd")).toBe(1);
+    expect(estimateTokens("判分标准")).toBe(8);
+    expect(estimateTokens("判分标准 abcd")).toBeGreaterThan(estimateTokens("abcdefgh abcd"));
   });
 
   it("ENGINE-A1 判分刻度：0/1/2 折成半分，机械检查一条一分", () => {
