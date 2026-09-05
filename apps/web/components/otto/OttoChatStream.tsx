@@ -1,10 +1,11 @@
 "use client";
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { MSG_ENTER_STYLE } from "./parts/motion";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
-import { OttoMentionPopover } from "@/components/otto/OttoMentionPopover";
+import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePickerMenu";
+import { useReferencePicker } from "@/components/reference-picker/useReferencePicker";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Attachment,
@@ -104,7 +105,6 @@ import {
   latestTurnTerminal,
 } from "@/lib/otto-canvas-turn";
 import { creditsLabel } from "@/lib/credit-format";
-import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import type { OttoErrorData, OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
 import type { ReasoningUIPart } from "ai";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
@@ -223,10 +223,13 @@ export function OttoChatStream({
   layout = "default",
 }: OttoChatStreamProps) {
   const [text, setText] = useState("");
-  const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
-  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
-  const [mentionHighlight, setMentionHighlight] = useState(0);
-  const mentionListId = useId();
+  // The one `@` reference picker (spec §7.3③) — the same hook the front door uses. Its rows come
+  // from the server search, not from the `entities` prop this file used to filter in the browser.
+  const picker = useReferencePicker({
+    text,
+    setText,
+    getTextarea: () => document.getElementById("otto-composer") as HTMLTextAreaElement | null,
+  });
   /** Latest data-status received for the in-flight turn; reset on each new turn. */
   const [liveStatus, setLiveStatus] = useState<OttoStatusData | null>(null);
   /** Ordered agent step events for this turn (data-step) → the live OttoTrace. Reset per turn. */
@@ -642,10 +645,10 @@ export function OttoChatStream({
     const trimmed = text.trim();
     if (!trimmed || isBusy || submitLockRef.current) return;
     submitLockRef.current = true;
-    const entityIds = resolveSentEntityIds(trimmed, pickedMentions);
+    const entityIds = picker.entityIdsForSend(trimmed);
     lastSubmittedTextRef.current = trimmed;
     setText(""); // clear the composer immediately; sendMessage echoes the user msg
-    setPickedMentions([]);
+    picker.clearPicked();
     // Reset ephemeral stream state for the new turn.
     setLiveStatus(null);
     setStepEvents([]);
@@ -860,65 +863,16 @@ export function OttoChatStream({
     } finally { setUploading(false); }
   }
 
-  const mentionSuggestions = mentionQuery !== null
-    ? (entities ?? []).filter(e => e.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)
-    : [];
-
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setText(val);
-    const caret = e.target.selectionStart ?? val.length;
-    setMentionQuery(activeMentionQuery(val, caret));
-    setMentionHighlight(0);
-  };
-
-  const selectMention = (entity: {id: string; name: string}) => {
-    const textarea = document.getElementById("otto-composer") as HTMLTextAreaElement;
-    const caret = textarea?.selectionStart ?? text.length;
-    const before = text.slice(0, caret);
-    const atIdx = before.lastIndexOf("@");
-    const newText = text.slice(0, atIdx) + `@${entity.name} ` + text.slice(caret);
-    setText(newText);
-    setPickedMentions(prev => prev.some(p => p.id === entity.id) ? prev : [...prev, {id: entity.id, name: entity.name}]);
-    setMentionQuery(null);
-    setMentionHighlight(0);
-    setTimeout(() => textarea?.focus(), 0);
-  };
-
-  const dismissMentions = () => {
-    setMentionQuery(null);
-    setMentionHighlight(0);
+    picker.handleTextChange(val, e.target.selectionStart ?? val.length);
   };
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (mentionSuggestions.length > 0) {
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setMentionHighlight(h => Math.max(0, h - 1));
-        return;
-      }
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setMentionHighlight(h => Math.min(mentionSuggestions.length - 1, h + 1));
-        return;
-      }
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        selectMention(mentionSuggestions[mentionHighlight]);
-        return;
-      }
-      if (e.key === "Tab") {
-        e.preventDefault();
-        selectMention(mentionSuggestions[mentionHighlight]);
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setMentionQuery(null);
-        setMentionHighlight(0);
-        return;
-      }
-    }
+    // the picker gets first refusal: while its menu is open, arrows / Enter / Tab / Escape are
+    // navigation, not composition
+    if (picker.handleKeyDown(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       submit();
@@ -1852,14 +1806,7 @@ export function OttoChatStream({
             <SearchCostHint />
           </div>
 
-          <OttoMentionPopover
-            suggestions={mentionSuggestions}
-            highlightedIndex={mentionHighlight}
-            listId={mentionListId}
-            onDismiss={dismissMentions}
-            onHighlightChange={setMentionHighlight}
-            onSelect={selectMention}
-          >
+          <ReferencePickerMenu {...picker.menuProps}>
             <InputGroup className="overflow-hidden rounded-[var(--radius-card)] bg-card shadow-[var(--shadow-sm)]">
               <InputGroupTextarea
                 id="otto-composer"
@@ -1869,10 +1816,7 @@ export function OttoChatStream({
                 value={text}
                 onChange={handleTextChange}
                 onKeyDown={handleKeyDown}
-                aria-autocomplete="list"
-                aria-controls={mentionSuggestions.length > 0 ? mentionListId : undefined}
-                aria-expanded={mentionSuggestions.length > 0}
-                aria-activedescendant={mentionSuggestions.length > 0 ? `${mentionListId}-option-${mentionHighlight}` : undefined}
+                {...picker.ariaProps}
                 disabled={isBusy}
                 placeholder={composerReferencesPlaceholder(attachedRefs)}
                 rows={2}
@@ -1944,7 +1888,7 @@ export function OttoChatStream({
                 </div>
               </InputGroupAddon>
             </InputGroup>
-          </OttoMentionPopover>
+          </ReferencePickerMenu>
         </div>
       </div>
     </div>

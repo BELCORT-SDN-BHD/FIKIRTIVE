@@ -56,6 +56,8 @@ import {
   finalizeOttoRun,
   validateOttoTurnReferences,
   unavailableReferenceMessage,
+  // ENGINE-A2 (spec §7.2②): the one turn-trace writer, shared with ottoTurn / ottoApprove.
+  recordOttoTurnTrace,
 } from "@/lib/otto-actions";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
@@ -351,6 +353,10 @@ export async function POST(req: NextRequest): Promise<Response> {
               refId,
               input: runInput,
               stream: true,
+              // ENGINE-A2(规格 docs/specs/otto-engine.md §7.2②):这一门的落盘实现。
+              // 与另外两门(ottoTurn / ottoApprove)共用 recordOttoTurnTrace —— 一个写入口,
+              // 所以「不记商家内容」只有一处需要守。surface/threadId 来自已认证的会话。
+              trace: { surface: "stream", threadId, sink: recordOttoTurnTrace },
               onStream: async (r) => {
                 // stream:true → StreamedRunResult: AsyncIterable over RunStreamEvent.
                 for await (const event of r) {
