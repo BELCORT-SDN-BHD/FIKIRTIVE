@@ -2,12 +2,13 @@
 
 import { useEffect } from "react";
 import * as Sentry from "@sentry/nextjs";
-import { Button } from "@/components/ui/button";
+import { CrashPage } from "@/components/crash-page";
 import { crashReportContext } from "@/lib/sentry-browser";
 
 /**
  * 页面错误边界(route error boundary)。根 layout 自己炸掉时接手的是 `global-error.tsx`;
- * 普通页面或组件抛错落在这里。
+ * 普通页面或组件抛错落在这里 —— 包括没有自己 boundary 的那些面(`/brand`、`/library`、
+ * `/settings` …),所以这一页是产品里最常被看见的崩溃页。
  *
  * r2(判官 r1 P1):这里从前把 `error.message` 原样印给商家看,而 Next 对 Client Component
  * 抛出的错误保留原始 message —— 于是一句 "BytePlus Seedance rate limit exceeded" 可以从供应商
@@ -16,6 +17,10 @@ import { crashReportContext } from "@/lib/sentry-browser";
  *
  * 同时补上第二个洞:被 React 捕获的错误**不算** unhandled error,Sentry 不会自动收 ——
  * 不显式上报,这一路崩溃就是零信号,而「零信号」正是这一票要消灭的东西。
+ *
+ * 2026-09-05 走查 P2(FRONT-A14):版面从「居中裸文字」换成全产品同一张崩溃卡
+ * (`components/crash-page.tsx`),错误编号那一行的措辞也跟着收进同一处作者 ——
+ * 从前这里叫 `Reference:`,九个路由段的 boundary 叫 `Error reference:`。文案本身一字未改。
  */
 export default function Error({
   error,
@@ -29,20 +34,12 @@ export default function Error({
   }, [error]);
 
   return (
-    // F42: shadcn tokens, not Vapor `text-dim`/`btn-primary` — text-dim is translucent white and
-    // was illegible on the light `.gb` body, and btn-primary no longer exists post-migration.
-    <main className="gb min-h-dvh flex flex-col items-center justify-center gap-4 p-8 text-center">
-      <h1 className="text-xl font-semibold text-foreground">Something broke</h1>
-      <p className="text-sm text-muted-foreground max-w-md">
-        This view could not be loaded. Your saved data is safe — nothing was lost.
-      </p>
-      {/* digest 是把商家截图里的这一串和服务端日志里的那一条对上的唯一钥匙。 */}
-      {error.digest && (
-        <p className="text-xs text-muted-foreground">
-          Reference: <span className="font-mono">{error.digest}</span>
-        </p>
-      )}
-      <Button onClick={reset}>Reload workbench</Button>
-    </main>
+    <CrashPage
+      title="Something broke"
+      body="This view could not be loaded. Your saved data is safe — nothing was lost."
+      digest={error.digest}
+      actionLabel="Reload workbench"
+      onAction={reset}
+    />
   );
 }
