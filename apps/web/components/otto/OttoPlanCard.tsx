@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { formatElapsed, QUEUE_WAIT_NOTE } from "@/lib/progress-format";
-import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
+import { ChevronDown, ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
@@ -13,7 +13,9 @@ import { runPlanApproval } from "./plan-approval";
 import { CardApprovalRef } from "./CardApprovalRef";
 // Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修)。两张确认卡共用这一份,
 // 抄成两份必有一份先烂(改了什么、按什么价,两处会各说各的)。
-import { CardOptionControls, cardSpecChips } from "./CardOptionControls";
+// 清单 A5(P2-013)—— 「Change something」那张小表单与它送回对话的那句话,同住一处
+// (哪一格能就地改的判据只有一份)。
+import { CardChangeForm, CardOptionControls, cardSpecChips, changeRequestSeed } from "./CardOptionControls";
 import { runStateOfCard } from "@/lib/otto-status-helpers";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -55,8 +57,12 @@ export interface OttoPlanCardProps {
    *  (#498 round-4 chained needs_approval rides along so the parent can mark the new
    *  card ids pendingApproval and render them). */
   onApproved: (outcome: PlanApproveOutcome) => void;
-  /** Called when the user clicks "Change something". Receives the current
-   *  structuredPrompt as a seed so the caller can prefill the composer. */
+  /**
+   * 「Change something」那张小表单按下 Send 之后走的那一条路（清单 A5 / P2-013）。
+   *
+   * 收到的是**商家写的那句话连同这张卡的原话**（`changeRequestSeed` 拼的那一份），
+   * 调用方照旧把它放进输入框 —— 仍是从前那**一条**对话路，没有第二条。
+   */
   onChangeSomething: (seed: string) => void;
   /**
    * 商家在这张卡上改完三格之后，服务端重铸出来的**整张卡**（复审 r1 P1-1）。
@@ -121,8 +127,10 @@ export function OttoPlanCard({
    *  与 `error` 同生同灭:它不是一条独立的状态,而是那一次失败的一部分。 */
   const [errorRef, setErrorRef] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [expanded, setExpanded] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "no-api">("idle");
+  /** 清单 A5(P2-013)—— 「Change something」那张小表单开着没有。默认关:卡面第一眼
+   *  是「要不要买」,不是「怎么改」。 */
+  const [changeOpen, setChangeOpen] = useState(false);
   /** #498: set when THIS approve's resume parked again on more approvals (chained
    *  needs_approval) — the story didn't end with this card, and hiding that is the
    *  same silent death one click deeper. Holds the SERVER's localized receipt
@@ -151,7 +159,10 @@ export function OttoPlanCard({
   // for is not shown as a number, so the two-step total is never half-guessed.
   const videoCredits = guaranteedCredits({ estimatedCredits: p.videoStep?.estimatedCredits });
   const isTwoStep = !isVideo && videoCredits !== null;
-  const desc = p.structuredPrompt || (isVideo ? "A short video" : isTwoStep ? "Starting picture for your video" : "An image");
+  // 清单 A5（P2-013）—— 供应商提示词（seedream/seedance 那段送去执行的原话）。它住在
+  // 下面的 Advanced details 里（默认收起），不再占着卡面主视图的第一行。老卡没有它就
+  // 整块不出现：这一块只念卡上真有的那段字，绝不编一句“A short video”充数。
+  const providerPrompt = p.structuredPrompt ?? "";
   // The spec the merchant reads, built server-side from what execution really honours.
   // The card renders it VERBATIM — it derives no spec of its own any more, because two
   // derivations of one fact is exactly how the card came to promise things the
@@ -171,6 +182,9 @@ export function OttoPlanCard({
   // back red with a "Try again" button on it.
   const [locallyCancelled, setLocallyCancelled] = useState(false);
   const cancelled = locallyCancelled || runState === "cancelled";
+  // 这一刻卡上是不是真的渲染着那三格。小表单据此决定说不说那句指路话 —— 它自己不重判
+  // 一遍（重判就是第二份判据），而 `CardOptionControls` 在没有 `options` 时自己返回 null。
+  const optionsOnCard = runState === "waiting" && !cancelled && gate.approvable && !!p.options;
 
   async function cancel() {
     if (!genJobId || busy || cancelled) return;
@@ -270,7 +284,23 @@ export function OttoPlanCard({
     );
   }
 
+  /**
+   * 「Change something」—— 清单 A5(P2-013)之后它开的是**卡上那张小表单**,不再是
+   * 「把供应商提示词整段塞回输入框」。从前那一下把一坨机器措辞丢给商家自己改,而他
+   * 真正想改的(形状、时长、声音、参考)在那段字里根本认不出来。
+   */
   function handleChangeSomething() {
+    setChangeOpen((open) => !open);
+  }
+
+  /** 表单按下 Send:商家那句话连同这张卡的原话,走**既有**那一条对话路。 */
+  function submitChange(note: string) {
+    setChangeOpen(false);
+    onChangeSomething(changeRequestSeed(note, p));
+  }
+
+  /** 读不懂 / 读不全的卡上那颗「Ask again」—— 那种卡没有可改的一格,照旧把原话送回去。 */
+  function handleAskAgain() {
     onChangeSomething(p.structuredPrompt ?? "");
   }
 
@@ -289,7 +319,7 @@ export function OttoPlanCard({
           </div>
           <div className="text-[0.8125rem] text-muted-foreground">{UNREADABLE_PLAN_NOTE}</div>
           <div className="mt-3">
-            <Button variant="secondary" size="sm" className="rounded-[11px]" onClick={handleChangeSomething}>
+            <Button variant="secondary" size="sm" className="rounded-[11px]" onClick={handleAskAgain}>
               Ask again
             </Button>
           </div>
@@ -319,38 +349,14 @@ export function OttoPlanCard({
             <div className="text-[0.8125rem] font-bold text-foreground">
               {isVideo ? "A short video" : isTwoStep ? "Starting picture for your video" : "An image"}
             </div>
-            <div
-              className={`text-[0.75rem] text-muted-foreground${
-                expanded ? " whitespace-pre-wrap break-words" : " overflow-hidden text-ellipsis whitespace-nowrap"
-              }`}
-            >
-              {desc}
-            </div>
-            {/* Expand/collapse + copy row — only when there's a real prompt */}
-            {p.structuredPrompt && (
-              <div className="mt-1 flex items-center gap-3">
-                <Button
-                  type="button"
-                  variant="link"
-                  onClick={() => setExpanded((v) => !v)}
-                  className="h-auto w-auto p-0 text-[0.75rem] text-muted-foreground/70 underline"
-                >
-                  {expanded ? "show less" : "show more"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="link"
-                  onClick={handleCopy}
-                  className={`h-auto w-auto p-0 text-[0.75rem] underline ${
-                    copyState === "copied" ? "text-[var(--success-soft-foreground)]" : "text-muted-foreground/70"
-                  }`}
-                >
-                  {copyState === "copied"
-                    ? "Copied"
-                    : copyState === "no-api"
-                    ? "Long-press to copy"
-                    : "Copy"}
-                </Button>
+            {/* 清单 A5(P2-013)—— 主视图这一行是**给商家读的**那句话。供应商提示词
+                (seedream/seedance 那段原话)已经收进下面的 Advanced details:它是送去
+                执行的机器措辞,摆在卡面第一行既占掉整张卡的第一眼,又让商家误以为那是
+                他该改的字。老卡没有 `goal`(服务端至今不写这一格)⇒ 这一行不出现,
+                标题与规格条自己说得清楚,绝不拿提示词顶上来充数。 */}
+            {p.goal && (
+              <div className="whitespace-pre-wrap break-words text-[0.75rem] text-muted-foreground">
+                {p.goal}
               </div>
             )}
           </div>
@@ -406,7 +412,7 @@ export function OttoPlanCard({
             ⑦段退役直出 composer 之后这三格无处可选,而这张卡是唯一的花钱入口。改一格 = 服务端
             重铸这张卡($0),新的价随新卡回来 —— 界面一分钱都不自己算,所以卡面那个数与真正
             离开余额的那个数只可能是同一个。已排队/已完成/已取消的卡不再出现这三格。 */}
-        {runState === "waiting" && !cancelled && gate.approvable && (
+        {optionsOnCard && (
           <CardOptionControls
             threadId={threadId}
             cardId={cardId}
@@ -414,6 +420,37 @@ export function OttoPlanCard({
             disabled={busy}
             onChanged={(next) => onOptionsChanged(cardId, next)}
           />
+        )}
+
+        {/* 清单 A5（P2-013）—— 供应商提示词（seedream/seedance 那段送去执行的原话）收进
+            这里，默认收起。它不是商家该逐字读的东西：走查里那段机器措辞占着卡面第一行，
+            商家读不懂又以为得在它上面改（旧的「Change something」正是把它塞回输入框）。
+            收起不等于藏起 —— 它就在卡上，一下点开，Copy 也还在。 */}
+        {providerPrompt && (
+          <details className="group mt-3 rounded-[11px] border border-border bg-card">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-[11px] px-3 py-2 text-[0.75rem] text-muted-foreground [&::-webkit-details-marker]:hidden">
+              <span>Advanced details</span>
+              <ChevronDown size={14} className="shrink-0 transition-transform group-open:rotate-180" aria-hidden />
+            </summary>
+            <div className="border-t border-border px-3 py-2">
+              <div className="text-[0.75rem] text-muted-foreground/70">
+                {isVideo ? "The prompt sent to the video engine" : "The prompt sent to the image engine"}
+              </div>
+              <div className="mt-1 whitespace-pre-wrap break-words text-[0.75rem] text-muted-foreground">
+                {providerPrompt}
+              </div>
+              <Button
+                type="button"
+                variant="link"
+                onClick={handleCopy}
+                className={`mt-1 h-auto w-auto p-0 text-[0.75rem] underline ${
+                  copyState === "copied" ? "text-[var(--success-soft-foreground)]" : "text-muted-foreground/70"
+                }`}
+              >
+                {copyState === "copied" ? "Copied" : copyState === "no-api" ? "Long-press to copy" : "Copy"}
+              </Button>
+            </div>
+          </details>
         )}
 
         <div className="mt-4 border-t border-border pt-4">
@@ -460,7 +497,14 @@ export function OttoPlanCard({
               <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={retry}>
                 {busy ? "Queuing…" : "Try again"}
               </Button>
-              <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={handleChangeSomething}>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="rounded-[11px]"
+                disabled={busy}
+                aria-expanded={changeOpen}
+                onClick={handleChangeSomething}
+              >
                 Change something
               </Button>
             </div>
@@ -500,7 +544,7 @@ export function OttoPlanCard({
           // to read (above) and says so (PARTIAL_PLAN_NOTE), but the path to spending on
           // it does not exist — no confirm step, no approve button, and approve() refuses.
           <div className={`mt-4 ${CARD_ACTIONS_CLASS}`}>
-            <Button variant="secondary" size="sm" className="rounded-[11px]" onClick={handleChangeSomething}>
+            <Button variant="secondary" size="sm" className="rounded-[11px]" onClick={handleAskAgain}>
               Ask again
             </Button>
           </div>
@@ -512,10 +556,29 @@ export function OttoPlanCard({
             <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={approve}>
               {busy ? "Starting…" : `Generate · ${creditsLabel(credits)}`}
             </Button>
-            <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={handleChangeSomething}>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="rounded-[11px]"
+              disabled={busy}
+              aria-expanded={changeOpen}
+              onClick={handleChangeSomething}
+            >
               Change something
             </Button>
           </div>
+        )}
+
+        {/* 清单 A5（P2-013）—— 「Change something」打开的那张小表单。
+            两个状态给得出它：等确认的卡（能就地改的三格就在上面）与失败的卡（那三格不再渲染，
+            人话那一行是唯一的出路）。提交走 `onChangeSomething` —— 仍是从前那**一条**对话路。 */}
+        {changeOpen && !cancelled && (
+          <CardChangeForm
+            payload={p}
+            optionsOnCard={optionsOnCard}
+            disabled={busy}
+            onSubmit={submitChange}
+          />
         )}
 
         {/* #498 (round-4): chained needs_approval after THIS approve — the honest
