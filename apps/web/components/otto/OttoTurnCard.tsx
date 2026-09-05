@@ -30,7 +30,7 @@
  *    自相矛盾的脸，在这一层没有地方生出来 —— 它连两个状态源都没有。
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -42,6 +42,8 @@ import { planCardGate } from "./plan-card-contract";
 // Codex QA-CRE-FE9-013 —— 参考回执那一块。抽屉里那张卡读的是同一个组件。
 import { CardReferenceReceipt } from "./CardReferenceReceipt";
 import { runPlanApproval } from "./plan-approval";
+// Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修),与抽屉里那张卡共用一份。
+import { CardOptionControls } from "./CardOptionControls";
 import { EDIT_AND_RETRY_LABEL } from "./OttoStreamErrorNotice";
 import { CardApprovalRef } from "./CardApprovalRef";
 import type { PlanApproveOutcome } from "./OttoPlanCard";
@@ -173,7 +175,11 @@ function CanvasConfirmRow({
   const [error, setError] = useState<string | null>(null);
   /** Codex staging CRE-STG-P2-004 —— 失败那一句旁边的可复制短号(服务端日志里同一串)。 */
   const [errorRef, setErrorRef] = useState<string | null>(null);
-  const gate = planCardGate(card.payload);
+  /** 商家在这张卡上改完三格之后,服务端重铸出来的那一份(整张卡,含新的价与菜单)。
+   *  卡换了(父组件重新取回这条会话)就清空 —— 库里那一份永远压过手里这一份。 */
+  const [reminted, setReminted] = useState<unknown>(null);
+  useEffect(() => { setReminted(null); }, [card.payload]);
+  const gate = planCardGate(reminted ?? card.payload);
   const p = gate.value;
   const credits = gate.credits;
   // 读不懂或担保不住价格的卡不在这里出现 —— 抽屉里那张会把原因说清楚（UNREADABLE_PLAN_NOTE
@@ -231,6 +237,16 @@ function CanvasConfirmRow({
           />
         </div>
       ) : null}
+      {/* Founder 2026-09-05「加进确认卡」—— 张数／形状／精修就长在这里,批准之前可以改。
+          改一格 = 服务端重铸这张卡($0);上面那个价与下面按钮上的数都随新卡一起换,
+          界面一分钱都不自己算。 */}
+      <CardOptionControls
+        threadId={card.threadId}
+        cardId={card.cardId}
+        payload={p}
+        disabled={busy}
+        onChanged={setReminted}
+      />
       {/* CRE-STG-P2-004 —— 失败留在卡上(不是 toast),而且带着那个可复制的短号:走查那两次
           点击之后卡面上什么都不剩,商家除了「再试一次」没有第二个动作。短号与抽屉里那张卡
           共用同一个组件(`CardApprovalRef`),两处不可能长出两种写法。 */}

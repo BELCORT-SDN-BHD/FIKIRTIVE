@@ -11,6 +11,9 @@ import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { type ChainedApproval } from "./approval-chain";
 import { runPlanApproval } from "./plan-approval";
 import { CardApprovalRef } from "./CardApprovalRef";
+// Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修)。两张确认卡共用这一份,
+// 抄成两份必有一份先烂(改了什么、按什么价,两处会各说各的)。
+import { CardOptionControls } from "./CardOptionControls";
 import { runStateOfCard } from "@/lib/otto-status-helpers";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -96,7 +99,15 @@ export function OttoPlanCard({
   // ONE price-guarantee predicate. Everything below — what renders, and whether approve()
   // may spend — reads this same object, so the display and the spend can't disagree
   // (#580 复审 r1 P1-1 / r2 P1-1).
-  const gate = planCardGate(payload);
+  /**
+   * Founder 2026-09-05「加进确认卡」—— 商家在这张卡上改完三格之后,服务端重铸出来的那一份。
+   *
+   * 它是**服务端算过价的整张卡**,不是界面自己拼的补丁:价、规格条目、菜单全部随它一起换。
+   * `payload` 这个 prop 一换(父组件重新取回这条会话)就清空 —— 库里那一份永远压过手里这一份。
+   */
+  const [reminted, setReminted] = useState<unknown>(null);
+  useEffect(() => { setReminted(null); }, [payload]);
+  const gate = planCardGate(reminted ?? payload);
   const p: OttoPlanCardPayload = gate.value;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -381,6 +392,20 @@ export function OttoPlanCard({
           <div className="mt-[9px] text-[0.75rem] text-[var(--warning-soft-foreground)]">
             {p.downgradeNote || DOWNGRADE_FALLBACK_NOTE}
           </div>
+        )}
+
+        {/* Founder 2026-09-05「加进确认卡」—— 张数／形状／精修就长在这里,**批准之前**可以改。
+            ⑦段退役直出 composer 之后这三格无处可选,而这张卡是唯一的花钱入口。改一格 = 服务端
+            重铸这张卡($0),新的价随新卡回来 —— 界面一分钱都不自己算,所以卡面那个数与真正
+            离开余额的那个数只可能是同一个。已排队/已完成/已取消的卡不再出现这三格。 */}
+        {runState === "waiting" && !cancelled && gate.approvable && (
+          <CardOptionControls
+            threadId={threadId}
+            cardId={cardId}
+            payload={p}
+            disabled={busy}
+            onChanged={setReminted}
+          />
         )}
 
         <div className="mt-4 border-t border-border pt-4">

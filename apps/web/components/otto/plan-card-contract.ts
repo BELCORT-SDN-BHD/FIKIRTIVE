@@ -163,6 +163,23 @@ export function parsePlanCardPayload(raw: unknown): ParsedPlanCardPayload | null
       };
     },
   );
+  // Founder 2026-09-05「加进确认卡」—— 商家勾的那一句能力,以及三格控件的菜单。
+  // 与别的字段同一条纪律:读不懂就记进 malformedFields(卡因此不可批准),不静默糊过去。
+  // 一张读不全自己菜单的卡,不该在上面让商家改一格再花钱。
+  take("fineDetail", (v) => v === true, () => true as const);
+  take(
+    "options",
+    (v) => {
+      if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+      const q = v as Record<string, unknown>;
+      return num(q.maxCount) && q.maxCount >= 1 && Array.isArray(q.aspectRatios) && q.aspectRatios.every(str)
+        && typeof q.fineDetailAvailable === "boolean";
+    },
+    (v) => {
+      const q = v as { maxCount: number; aspectRatios: string[]; fineDetailAvailable: boolean };
+      return { maxCount: q.maxCount, aspectRatios: [...q.aspectRatios], fineDetailAvailable: q.fineDetailAvailable };
+    },
+  );
   // 两步计划那一行。`next` 是**冻结的第二步**(Codex E2E-CRE-PAV-004):带着它 ⇒ 这张图片
   // 出来之后,视频的确认卡由服务端自己铸出来,商家不必把图带回去。这里只判「有没有一份
   // 读得懂的计划」—— 卡面据此换一句话,永远不据此算钱。

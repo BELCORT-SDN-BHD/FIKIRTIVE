@@ -119,6 +119,10 @@ export type { ChildJob, PrismaTx } from "./storyboard-child-job.js";
 export { planVideoStepHandoff, buildVideoStepCardPayload, videoStepPlanOf } from "./video-step-handoff.js";
 export type { PreparedVideoStep, VideoStepCardPayload } from "./video-step-handoff.js";
 export type { VideoStepPlan } from "./skills/propose.helpers.js";
+// Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修)的菜单与改档口径。
+// 落库与归属由 web 那个 Server Action 负责,判词只有这一份。
+export { applyCardOptions, cardOptionMenu } from "./skills/propose-card-options.js";
+export type { CardOptions, CardOptionEdit, CardOptionResult } from "./skills/propose-card-options.js";
 // 媒体参考回执的唯一构造处 —— 铸卡入口(web 的一轮解析 / 接力)共用同一份口径。
 export { mediaReferenceReceipt, referenceLabel, UNTITLED_CANVAS_NAME } from "./media-reference.js";
 export { proposeResearchSkill } from "./skills/propose-research.js";

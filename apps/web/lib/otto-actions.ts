@@ -72,8 +72,11 @@ import {
   // 媒体参考回执的唯一构造处 —— 两步接力铸第二张卡时用的是同一份口径。
   mediaReferenceReceipt,
   UNTITLED_CANVAS_NAME,
+  // Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修)的改档口径。
+  // 判词是纯函数,住在引擎包;这里只负责归属、可改与否、以及把新卡落库。
+  applyCardOptions,
 } from "@fikirtive/otto";
-import type { OttoContext, OttoMediaReference, AgentInputItem, ApprovalInterruption, OttoTurnTraceFacts, OttoRollingSummaryPort } from "@fikirtive/otto";
+import type { OttoContext, OttoMediaReference, AgentInputItem, ApprovalInterruption, OttoTurnTraceFacts, OttoRollingSummaryPort, CardPayload, CardOptionEdit } from "@fikirtive/otto";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -2048,6 +2051,104 @@ export async function ottoTurn(raw: unknown): Promise<
       console.error("[ottoTurn] failed:", errSummary(e));
       return { error: ottoFailureMessage(e, "Couldn't reach Otto — please try again.") };
     }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// ottoUpdateGenCardOptions —— 商家在确认卡上改那三格(张数／形状／精修),$0
+// (Founder 2026-09-05 裁决「加进确认卡」;规格 docs/specs/otto-engine.md,ENGINE-A3)
+// ---------------------------------------------------------------------------
+
+/**
+ * ⑦段把画布上那个直出 composer 退役之后,张数／形状／精修在商家那一侧无处可选 ——
+ * 唯一的花钱入口是这张卡,而这张卡从前只能整张接受或整张丢掉。这个动作就是
+ * 「商家批准前可改」那一句裁决。
+ *
+ * **零花费**:它只重写一张还没有任务行的 GEN_CARD 的 payload。没有 reserve、没有
+ * GenJob、没有 provider 调用 —— 花钱仍然只发生在商家按下 `Generate · N credits` 那一刻。
+ *
+ * 报价与预扣同源,靠的是**不新增第二处派生**:新价由引擎包那个纯函数用
+ * `pricedGenCredits`(startGen 预扣时用的同一个函数)算出来写进卡,而 `startCoworkGen`
+ * 只从**持久化的卡**读 `expectedCredits` 再现算一次比对 —— 对不上就在 create/reserve
+ * 之前拒。所以卡面那个数与真正离开余额的那个数不可能是两个数。
+ *
+ * 三道门,顺序即理由:
+ *  ① 身份只来自 `requireOwner`,卡按 owner + threadId 作用域读 —— 跨租户的 cardId 读不到;
+ *  ② 已经有任务行(`cowork:<cardId>`)的卡不许再改:那张卡已经被商家批准并花过钱,
+ *     改它就是改一份已经成交的授权;
+ *  ③ 改不动的(视频卡、老卡、这一档收不下的形状、今天没有价的精修)一律**如实拒绝**,
+ *     卡一个字节不动 —— 绝不静默换一档。
+ */
+export async function ottoUpdateGenCardOptions(raw: unknown): Promise<
+  { ok: true; payload: CardPayload } | { error: string }
+> {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    typeof (raw as Record<string, unknown>).threadId !== "string" ||
+    typeof (raw as Record<string, unknown>).cardId !== "string" ||
+    ((raw as Record<string, unknown>).threadId as string).length < 1 ||
+    ((raw as Record<string, unknown>).threadId as string).length > 64 ||
+    ((raw as Record<string, unknown>).cardId as string).length < 1 ||
+    ((raw as Record<string, unknown>).cardId as string).length > 64
+  ) {
+    return { error: "Invalid request." };
+  }
+  const r = raw as Record<string, unknown>;
+  const threadId = r.threadId as string;
+  const cardId = r.cardId as string;
+  // 只收这三格,而且只收**说得清楚**的值:一个「说了不算数」的入参会让卡与请求分家。
+  const edit: CardOptionEdit = {
+    ...(typeof r.count === "number" && Number.isFinite(r.count) ? { count: r.count } : {}),
+    ...(typeof r.aspectRatio === "string" && r.aspectRatio.length > 0 && r.aspectRatio.length <= 16
+      ? { aspectRatio: r.aspectRatio }
+      : {}),
+    ...(typeof r.fineDetail === "boolean" ? { fineDetail: r.fineDetail } : {}),
+  };
+
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true; payload: CardPayload } | { error: string }> => {
+    if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
+    const { ownerId } = gate;
+
+    const card = await prisma.chatMessage.findFirst({
+      where: { id: cardId, threadId, ownerId, kind: "GEN_CARD", deletedAt: null },
+      select: { id: true, payload: true, thread: { select: { ownerId: true, deletedAt: true } } },
+    });
+    if (!card || card.thread.deletedAt || card.thread.ownerId !== ownerId) return { error: "Card not found." };
+
+    // 已经花过钱的卡不许再改。判据是**账本那一份**(GenJob 的 `cowork:<cardId>`,由
+    // startGen 原子写下),不是卡上那个 best-effort 的标记 —— 与 `coworkGenerate` 的
+    // 再花钱守卫同一个判据、同一把钥匙。
+    const existingJob = await prisma.genJob.findFirst({
+      where: { ownerId, idempotencyKey: `cowork:${cardId}` },
+      select: { id: true },
+    });
+    if (existingJob) {
+      return { error: "This one's already under way — ask me for a fresh plan if you'd like it different." };
+    }
+
+    const persisted = card.payload;
+    if (
+      !persisted ||
+      typeof persisted !== "object" ||
+      Array.isArray(persisted) ||
+      typeof (persisted as Record<string, unknown>).model !== "string" ||
+      typeof (persisted as Record<string, unknown>).params !== "object"
+    ) {
+      return { error: "I can't read this plan any more — ask me to put it together again and I'll make a fresh one." };
+    }
+
+    const applied = applyCardOptions(persisted as unknown as CardPayload, edit);
+    if (!applied.ok) return { error: applied.error };
+
+    await prisma.chatMessage.update({
+      where: { id: cardId, ownerId },
+      data: { payload: applied.payload as unknown as object },
+    });
+    return { ok: true, payload: applied.payload };
   });
 }
 
