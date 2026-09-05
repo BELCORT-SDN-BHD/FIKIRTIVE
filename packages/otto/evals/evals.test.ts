@@ -36,6 +36,7 @@ import {
   pathsFor,
   preflight,
   recordedSegmentUsd,
+  recordingSpend,
   resolveLine,
   resolveTolerance,
   runMain,
@@ -145,6 +146,10 @@ describe("ENGINE-A1 评测基线骨架", () => {
     expect(resolveTolerance(["--tolerance=2.5"])).toBe(2.5);
     expect(() => resolveTolerance(["--tolerance=-1"])).toThrow(/百分点/);
     expect(() => resolveTolerance(["--tolerance=abc"])).toThrow(/百分点/);
+    // 判官 2026-09-05 P2-5：空值（shell 里变量没展开）从前静默变成最严的 0，
+    // 跑的人以为自己给的是默认的 ±5。要 0 得把 0 写出来。
+    expect(() => resolveTolerance(["--tolerance="])).toThrow(/空的/);
+    expect(() => resolveTolerance(["--tolerance=   "])).toThrow(/空的/);
   });
 
   it("ENGINE-A1 预算硬上限：已花的加这一次的最坏情况超上限就停", () => {
@@ -188,6 +193,25 @@ describe("ENGINE-A1 题目契约与注册表", () => {
     expect(runCheck("forbids:Inbox", "two inboxes later").pass).toBe(true);
     // 词组同理，只看整段词组的两端；大小写仍不敏感。
     expect(runCheck("forbids:already researched", "It is Already Researched.").pass).toBe(false);
+  });
+
+  it("ENGINE-A1 禁词把屈折形也写出来：题目里的那份名单真的拦得住复数与进行时", () => {
+    // 判官 2026-09-05 P2-2：词边界拦不住屈折形，而编造一个页面时用的正是复数
+    // （Inboxes）、承诺做不到的事时用的正是进行时（extending）。这里读的是**题目文件**
+    // 里真正在跑的那份名单，不是测试里另抄的一份。
+    const tasks = loadTasks(TASKS_DIR, "engine");
+    const specOf = (id: string, name: string) => {
+      const spec = tasks.find((t) => t.id === id)?.checks.find((c) => c.startsWith(`${name}:`));
+      expect(spec).toBeDefined();
+      return spec!;
+    };
+    const map = specOf("engine-6", "forbids");
+    expect(runCheck(map, "check your Inboxes for the reply").pass).toBe(false); // 反：复数溜不掉
+    expect(runCheck(map, "Settings, then Connections — that is the whole path.").pass).toBe(true); // 正：正当回答照过
+
+    const clip = specOf("engine-5", "forbids");
+    expect(runCheck(clip, "I'll be extending your clip for you").pass).toBe(false); // 反：进行时溜不掉
+    expect(runCheck(clip, "that is the extended cut, not a new clip").pass).toBe(true); // 正：不冤枉片名
   });
 
   it("ENGINE-A1 镜头术语表只有一份：检查从 craft/seedance.md 解析取词", () => {
@@ -380,6 +404,75 @@ describe("ENGINE-A1 守卫在花钱之前", () => {
       }),
     ).resolves.toBe("档案");
     expect(runs).toBe(1);
+  });
+
+  it("ENGINE-A1 中途炸掉的一趟也进账本：钱花到哪儿记到哪儿，带 failed 标记", async () => {
+    // 判官 2026-09-05 P2-1：从前只有跑完写档案那一路追加账本行。第七题上判分器连读两次
+    // 都读不懂，前六题的钱已经付了，账本却一行都没有 —— 累计闸下一次读到的数偏小。
+    const dir = mkdtempSync(join(tmpdir(), "otto-evals-spend-failed-"));
+    const ledger = join(dir, "spend.jsonl");
+    try {
+      appendSpend(ledger, { line: "engine", date: "d", commit: "c", costUsd: 0.2 });
+      expect(recordedSegmentUsd(ledger)).toBeCloseTo(0.2, 12);
+      let spent = 0;
+      await expect(
+        recordingSpend(
+          ledger,
+          {
+            line: "engine",
+            commit: () => "beefcafe",
+            now: () => new Date("2026-09-05T12:00:00.000Z"),
+            spentUsd: () => spent,
+          },
+          async () => {
+            spent = 0.3; // 前几题的钱已经真花出去了
+            throw new Error("判分器连读两次都读不懂");
+          },
+        ),
+      ).rejects.toThrow(/读不懂/); // 错误原样抛回去，退出码那条路不变
+      const lines = readFileSync(ledger, "utf8").trim().split("\n");
+      expect(lines).toHaveLength(2); // 账本多了一行
+      const failed = JSON.parse(lines[1]!) as Record<string, unknown>;
+      expect(failed.failed).toBe(true);
+      expect(failed.costUsd).toBeCloseTo(0.3, 12);
+      expect(failed.commit).toBe("beefcafe");
+      // 累计闸下一次读到的就是 0.2 + 0.3，不是 0.2。
+      expect(recordedSegmentUsd(ledger)).toBeCloseTo(0.5, 12);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ENGINE-A1 跑成功那一趟不在这一层记账：账本只多失败那一行，不重复计", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "otto-evals-spend-ok-"));
+    const ledger = join(dir, "spend.jsonl");
+    try {
+      await expect(
+        recordingSpend(
+          ledger,
+          { line: "engine", commit: () => "c", now: () => new Date(), spentUsd: () => 0.9 },
+          async () => "档案",
+        ),
+      ).resolves.toBe("档案");
+      expect(existsSync(ledger)).toBe(false); // 成功那一路由 main() 用档案里的真值追加
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ENGINE-A1 花钱的那一趟真的经过 runMain（不是只有测试里那一份接线）", () => {
+    // 判官 2026-09-05 P2-3：runMain 的契约有测试，但没有一条钉住 main() 用的就是它。
+    // 把 main() 改回「先 runEvals 再问守卫」不会让上面两条红 —— 所以这里钉源码里的接线。
+    const src = readFileSync(join(HERE, "runner.ts"), "utf8");
+    const mainAt = src.indexOf("async function main()");
+    expect(mainAt).toBeGreaterThan(0);
+    const body = src.slice(mainAt);
+    const wiredAt = body.indexOf("await runMain({");
+    const spendAt = body.indexOf("runEvals(tasks,");
+    expect(wiredAt).toBeGreaterThan(0);
+    expect(spendAt).toBeGreaterThan(wiredAt); // 花钱那一趟长在 runMain 的参数里
+    // main() 里也不许绕过 runMain 自己去调 guardedRun（那就等于又有了第二条接线）。
+    expect(body).not.toContain("guardedRun(");
   });
 
   it("ENGINE-A1 最坏花费估算随题量与 rubric 增长，且判分调用按重试一次计两遍", () => {
