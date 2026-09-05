@@ -1787,6 +1787,38 @@ async function settledTurnInternal(orgId: string, refId: string): Promise<number
   }
 }
 
+/**
+ * ENGINE-A4 —— 「这一轮没收钱」的**统一判据**,两门(`ottoTurn` / `ottoApprove`)共用。
+ *
+ * 从前截断那一支只凭 `onRefundedFailure` 点亮的那面旗就对商家说「没收钱」,而同一个 catch
+ * 的第 5 支写着相反的规定。那面旗证明的只是 meter **走过**退款那一步,不证明账本真的把钱
+ * 放开了:`refundReservation` 会返回 `already-settled` / `already-refunded` / `no-reservation`
+ * (`RefundOutcome`,packages/db/src/credits.ts),而钩子是 `void` 的 —— 那个返回值到不了入口。
+ * 判据从此只有一条:**钱话要有账本证据,拿不到证据就不说**。
+ *
+ * 证据两件,都直接问账本(只读:不移动任何钱、不写任何行):
+ *  1. 这笔预扣名下真有一行 `refund:<refId>` —— 退款**真的发生**,而不是被一笔 SETTLE 抢先
+ *     (退款的幂等键就是这个字符串,所以「行在」等于「钱回去了」);
+ *  2. `otherHoldsSince` === `"none"` —— 这次动作没有第二条腿收过钱(恢复轮先跑完被批准的
+ *     那件工具、再在下一次模型调用里死掉,那笔生成已经付过钱了 —— #524 r6)。
+ * 读不出来就当没有证据(fail closed):宁可少说一句,也不对着账单说假话。
+ */
+async function chargedNothingProven(ownerId: string, refundedRefId: string | null): Promise<boolean> {
+  if (!refundedRefId) return false; // 退款那一步根本没走到 —— 无从谈起
+  try {
+    const refund = await prisma.creditLedger.findFirst({
+      where: { orgId: ownerId, idempotencyKey: `refund:${refundedRefId}` },
+      select: { id: true },
+    });
+    if (!refund) return false;
+  } catch (e) {
+    console.error("[otto:money] could not verify the refund landed:", { refId: refundedRefId, error: errSummary(e) });
+    return false;
+  }
+  const holds = await otherHoldsSince(ownerId, refundedRefId).catch(() => "unknown" as const);
+  return holds === "none";
+}
+
 // ---------------------------------------------------------------------------
 // ottoTurn — the main server action
 // ---------------------------------------------------------------------------
@@ -1823,11 +1855,12 @@ export async function ottoTurn(raw: unknown): Promise<
     const { projectId, text, entityIds, variantSel, sourceGenerationId, sourceGenerationIds, referenceVideoGenerationId, referenceVideoGenerationIds, replyToMessageId } = parsed.data;
 
     // ENGINE-A4(规格 docs/specs/otto-engine.md §7.2⑤ 第③刀):由 withLlmBudget 在**整笔退款**
-    // 时点亮 —— 唯一一种「这一轮没收钱」是真话的状态。
+    // 时记下这一轮的 refId —— 「钱话要有账本证据」的入口(判据见 `chargedNothingProven`)。
+    // 记 refId 而不是一面布尔旗:旗只说「钩子响过」,refId 才是回账本对证的那把钥匙。
     // 走查修复三(#3310):声明提到**外层 try 之前**,因为供应商侧失败是从 `runOttoTurn` 里
     // 抛出去、被文末那个 catch 接住的,而那句诚实话要在那里说 —— 在里面声明等于那句话
-    // 在唯一需要它的地方读不到。
-    let chargedNothing = false;
+    // 在唯一需要它的地方读不到(而 `refId` 本身住在里面)。
+    let refundedRefId: string | null = null;
 
     try {
       const OWNED = { ownerId, deletedAt: null } as const;
@@ -2000,7 +2033,7 @@ export async function ottoTurn(raw: unknown): Promise<
                   ...budgetArgs,
                   onRefundedFailure: () => {
                     budgetArgs.onRefundedFailure?.();
-                    chargedNothing = true;
+                    refundedRefId = refId;
                   },
                 },
                 fn,
@@ -2016,7 +2049,8 @@ export async function ottoTurn(raw: unknown): Promise<
           // 道歉之后账单上冒出一笔他拿不到东西的钱。两句合成**一条**持久化消息(与流式门同一
           // 句字面量),刷新之后还在,不需要第二条只在内存里活一瞬的提示。
           // 走查修复三:那份字面量现在真的只有一处(`otto-error-copy.ts`),三门共读。
-          const degradeText = ottoDegradeText(chargedNothing);
+          // 尾巴组十一:这句话现在要账本证据才说 —— 与另一门同一个判据。
+          const degradeText = ottoDegradeText(await chargedNothingProven(ownerId, refundedRefId));
           await prisma.chatMessage.create({
             data: {
               id: newId(),
@@ -2053,8 +2087,12 @@ export async function ottoTurn(raw: unknown): Promise<
       // error here once masked an Anthropic 529 for hours. The client message stays generic.
       console.error("[ottoTurn] failed:", errSummary(e));
       // 走查修复三(#3310):供应商侧的那一档在这里也换诚实句 —— 与流式门同一份分类器、
-      // 同一份文案。「没收钱」只在 ENGINE-A4 的钩子真的点亮时才说。
-      return { error: ottoFailureMessage(e, "Couldn't reach Otto — please try again.", { chargedNothing }) };
+      // 同一份文案。「没收钱」只在账本能证明退款真的落地时才说(`chargedNothingProven`)。
+      return {
+        error: ottoFailureMessage(e, "Couldn't reach Otto — please try again.", {
+          chargedNothing: await chargedNothingProven(ownerId, refundedRefId),
+        }),
+      };
     }
   });
 }
@@ -2124,17 +2162,6 @@ export async function ottoUpdateGenCardOptions(raw: unknown): Promise<
     });
     if (!card || card.thread.deletedAt || card.thread.ownerId !== ownerId) return { error: "Card not found." };
 
-    // 已经花过钱的卡不许再改。判据是**账本那一份**(GenJob 的 `cowork:<cardId>`,由
-    // startGen 原子写下),不是卡上那个 best-effort 的标记 —— 与 `coworkGenerate` 的
-    // 再花钱守卫同一个判据、同一把钥匙。
-    const existingJob = await prisma.genJob.findFirst({
-      where: { ownerId, idempotencyKey: `cowork:${cardId}` },
-      select: { id: true },
-    });
-    if (existingJob) {
-      return { error: "This one's already under way — ask me for a fresh plan if you'd like it different." };
-    }
-
     const persisted = card.payload;
     if (
       !persisted ||
@@ -2149,10 +2176,31 @@ export async function ottoUpdateGenCardOptions(raw: unknown): Promise<
     const applied = applyCardOptions(persisted as unknown as CardPayload, edit);
     if (!applied.ok) return { error: applied.error };
 
-    await prisma.chatMessage.update({
-      where: { id: cardId, ownerId },
-      data: { payload: applied.payload as unknown as object },
+    // 已经花过钱的卡不许再改。判据是**账本那一份**(GenJob 的 `cowork:<cardId>`,由 startGen
+    // 原子写下),不是卡上那个 best-effort 的标记 —— 与 `coworkGenerate` 的再花钱守卫同一个
+    // 判据、同一把钥匙。
+    //
+    // 钱安全(#1230 判官 P2-3):这道闸从前是**先查后写** —— 查账本、回到 Node、再改卡,两条
+    // 语句之间有一道应用层的缝,`startCoworkGen` 正好在缝里把这张卡的任务行建出来,商家就会
+    // 拿到一张「已经开跑、事后又被改过」的卡:卡面写着新报价,账本上冻着旧那一笔。现在两步
+    // 进**同一个事务**,而且写的那一句是**条件更新**(`updateMany` 的 `where` 带上租户、线程、
+    // 卡种与未删除),对不上就是零行受影响 —— 缝合上了,判据一格没松。
+    const verdict = await prisma.$transaction(async (tx) => {
+      const existingJob = await tx.genJob.findFirst({
+        where: { ownerId, idempotencyKey: `cowork:${cardId}` },
+        select: { id: true },
+      });
+      if (existingJob) return "running" as const;
+      const { count } = await tx.chatMessage.updateMany({
+        where: { id: cardId, threadId, ownerId, kind: "GEN_CARD", deletedAt: null },
+        data: { payload: applied.payload as unknown as object },
+      });
+      return count === 0 ? ("gone" as const) : ("updated" as const);
     });
+    if (verdict === "running") {
+      return { error: "This one's already under way — ask me for a fresh plan if you'd like it different." };
+    }
+    if (verdict === "gone") return { error: "Card not found." };
     return { ok: true, payload: applied.payload };
   });
 }
@@ -2204,11 +2252,13 @@ export async function ottoApprove(raw: unknown): Promise<
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
     const { ownerId } = gate;
 
-    // Set by withLlmBudget when a thrown run was refunded in FULL — the only state in which
-    // "nothing was charged" is a true sentence to put in front of the merchant (#524 r5).
+    // Set by withLlmBudget when a thrown run was refunded in FULL — the starting point (never the
+    // whole proof) for "nothing was charged" being a true sentence in front of the merchant (#524 r5).
+    // 尾巴组十一:记的是这一次尝试的 refId,不是一面布尔旗 —— 那句话现在要回账本对证
+    // (`chargedNothingProven`),而对证要的正是这把钥匙。
     // 走查修复三(#3310):声明提到**外层 try 之前** —— 供应商侧失败是被文末那个 catch 接住的,
     // 而那句诚实话要在那里说。
-    let chargedNothing = false;
+    let refundedRefId: string | null = null;
     // Set the moment the CAS actually consumed the consent — the only way the catch below can
     // tell "the consent is spent and the run died" from "the consent is still intact" (#524 r5).
     // 同上提到外层:文末的 catch 要靠它判断「这一门到底有没有为别的东西收过钱」。
@@ -2543,7 +2593,7 @@ export async function ottoApprove(raw: unknown): Promise<
                   // 先转调、再置旗(与另外两门同形):对象展开会静默盖掉将来引擎侧自己挂的钩子。
                   onRefundedFailure: () => {
                     budgetArgs.onRefundedFailure?.();
-                    chargedNothing = true;
+                    refundedRefId = refId;
                   },
                 },
                 fn,
@@ -2612,11 +2662,14 @@ export async function ottoApprove(raw: unknown): Promise<
         //    the run DID happen, so the card reading "approved" is true and the merchant already
         //    hears what went wrong in the thread.
         if (e instanceof MaxTurnsExceededError) {
-          // ENGINE-A4(§7.2⑤ 第③刀):这一门早就有 `chargedNothing`(挂在同一个
-          // `onRefundedFailure` 上),只是这条分支从前不读它 —— 恢复轮的零交付截断现在也整笔退,
-          // 商家却读不到「没收钱」。与另外两门同一句字面量。
+          // ENGINE-A4(§7.2⑤ 第③刀):这一门早就有那面旗(挂在同一个 `onRefundedFailure` 上),
+          // 只是这条分支从前不读它 —— 恢复轮的零交付截断现在也整笔退,商家却读不到「没收钱」。
+          // 与另外两门同一句字面量。
           // 走查修复三:那份字面量现在真的只有一处(`otto-error-copy.ts`)。
-          const degradeText = ottoDegradeText(chargedNothing);
+          // 尾巴组十一(#1218 判官 P2-3):从前这里只凭那面旗就说「没收钱」,与下面第 5 支
+          // 「PROVEN, not assumed」的规定正好相反 —— 恢复轮是**先跑完被批准的那件工具**再撞上
+          // 步数上限的,那笔生成可能已经付过钱了。现在两门同一个判据:要账本证据才说。
+          const degradeText = ottoDegradeText(await chargedNothingProven(ownerId, refundedRefId));
           // Persist the degrade message so the user actually sees it (parity with ottoTurn),
           // plus the partial RunState if the SDK attached one.
           const seq = await prisma.chatMessage.findFirst({
@@ -2660,7 +2713,7 @@ export async function ottoApprove(raw: unknown): Promise<
         //    free. Anything else, including a read that failed, gets the sentence that promises
         //    less. One helper writes both sentences (approvalCardResolutionText), so the card, this
         //    response and the thread note cannot drift into three different claims.
-        if (claimedPayload && chargedNothing) {
+        if (claimedPayload && refundedRefId !== null) {
           // Pinned before the ledger read: `claimedPayload` is assigned inside the claim closure,
           // so TypeScript drops the guard's narrowing across the intervening await.
           const spentCard: ApprovalCardPayload = claimedPayload;
@@ -2837,12 +2890,13 @@ export async function ottoApprove(raw: unknown): Promise<
       // note and nothing else; the real error still reaches the merchant, which is the whole point
       // of not letting a second failure speak over the first.
       // 走查修复三(#3310):供应商侧的那一档换诚实句(与另外两门同一份分类器与文案)。
-      // 「没收钱」在这一门要更严:`chargedNothing` 只证明**这一轮的预扣**退了,而恢复轮可能
-      // 先跑完被批准的那件工具、付过它的钱(#524 r6)。所以只在**没有任何一张卡被消费**时
-      // 才说 —— 卡被消费的那一支由上面第 5 支自己的句子负责,根本走不到这里。
+      // 「没收钱」在这一门要更严:钩子只证明**这一轮的预扣**退了,而恢复轮可能先跑完被批准
+      // 的那件工具、付过它的钱(#524 r6)。所以两道:账本证据(`chargedNothingProven`,与另一门
+      // 同一个判据)＋**没有任何一张卡被消费** —— 卡被消费的那一支由上面第 5 支自己的句子
+      // 负责,根本走不到这里。
       // 把手照旧走 `ref` 字段(`diagnosticRef`),不在句子里再造第二串。
       const sentence = ottoFailureMessage(e, "Couldn't approve — please try again.", {
-        chargedNothing: chargedNothing && claimedPayload === null,
+        chargedNothing: claimedPayload === null && (await chargedNothingProven(ownerId, refundedRefId)),
       });
       await persistAgentNote(threadId, ownerId, sentence);
       // Codex staging CRE-STG-P2-004 —— 商家手上要有一个能念给客服听的把手,而它必须与

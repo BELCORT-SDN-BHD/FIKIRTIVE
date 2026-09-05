@@ -32,10 +32,14 @@ import {
 import { buildProposeCard, type CardPayload, type OttoContext } from "@fikirtive/otto";
 
 const mockRequireOwner = vi.fn();
-vi.mock("@/lib/auth-guard", async () => ({
+// 身份帧默认走真夹具(与 requireOwner 同一个租户);只有那条「拆掉应用层闸就红」的用例
+// 临时把它换成一个**无租户的系统帧**,好把底下那道 Prisma 租户守卫让开。
+const mockResolveUserPrincipal = vi.fn();
+vi.mock("@/lib/auth-guard", () => ({
   requireOwner: mockRequireOwner,
-  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+  resolveUserPrincipal: (...args: unknown[]) => mockResolveUserPrincipal(...args),
 }));
+const { stubResolveUserPrincipal } = await import("@/lib/__tests__/__stubs__/resolve-user-principal");
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: vi.fn(async () => false) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../queue", () => ({
@@ -149,6 +153,7 @@ function updatedPayload(result: Awaited<ReturnType<typeof ottoUpdateGenCardOptio
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockResolveUserPrincipal.mockImplementation(stubResolveUserPrincipal as never);
 });
 
 describe("ENGINE-A3 商家在确认卡上改三格,一路走到账本", () => {
@@ -267,6 +272,31 @@ describe("ENGINE-A3 商家在确认卡上改三格,一路走到账本", () => {
     expect("error" in refused).toBe(true);
     expect((await persistedCard(owner, card.cardId)).estimatedCredits).toBe(card.payload.estimatedCredits);
     expect((await persistedCard(owner, card.cardId)).params.count).toBe(1);
+    expect(await prisma.chatMessage.count({ where: { ownerId: intruder.ownerId, kind: "GEN_CARD" } })).toBe(0);
+  });
+  // #1230 判官 P2-2 —— 上面那条跨租户用例**不是应用层闸的变异见证**:把这个动作里的两道
+  // 应用层闸(读卡 where 上的 `ownerId`、以及 `card.thread.ownerId !== ownerId` 那一句)一起
+  // 拆掉,它照样绿 —— 因为底下还有一层 Prisma 租户守卫(packages/db/src/tenant-guard.ts)会
+  // 把 `ownerId` 注进每一条语句。所以这一条把**底下那层让开**:身份帧换成一个无租户的
+  // 系统帧(守卫对它只放读、不注 ownerId),而 `requireOwner` 仍然是入侵者。此时挡住这一手的
+  // 只剩应用层那道闸 —— 拆掉它,入侵者就真的读到并改到了别人的卡。
+  it("ENGINE-A3 跨租户:让 DB 层放行,只靠应用层闸拦 —— 入侵者仍然读不到别人的卡", async () => {
+    const owner = await seedWorld(500);
+    const card = await mintImageCard(owner);
+    const intruder = await seedWorld(500); // 这一行同时把 requireOwner 换成入侵者
+    // 底下那层让开:无租户系统帧 ⇒ 守卫不注 ownerId、读一律放行。
+    mockResolveUserPrincipal.mockResolvedValue({
+      kind: "system",
+      reason: "test:tenant-guard-open",
+      ownerId: null,
+    } as never);
+
+    const refused = await ottoUpdateGenCardOptions({ threadId: owner.threadId, cardId: card.cardId, count: 4 });
+
+    expect(refused).toEqual({ error: "Card not found." });
+    mockResolveUserPrincipal.mockImplementation(stubResolveUserPrincipal as never);
+    expect((await persistedCard(owner, card.cardId)).params.count).toBe(1);
+    expect((await persistedCard(owner, card.cardId)).estimatedCredits).toBe(card.payload.estimatedCredits);
     expect(await prisma.chatMessage.count({ where: { ownerId: intruder.ownerId, kind: "GEN_CARD" } })).toBe(0);
   });
 });
