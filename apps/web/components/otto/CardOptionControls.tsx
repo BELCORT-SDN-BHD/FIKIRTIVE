@@ -67,6 +67,10 @@ export interface CardOptionControlsProps {
 
 const FAILED_NOTE = "That didn't go through — please try again.";
 
+/** 这一趟被拒时，排在它后面那一格是被丢掉的 —— 商家点过它，所以必须听见这件事
+ *  （#1241 判官 P2-2）。服务端那句原话在前，这一句跟在后面，绝不盖掉它。 */
+export const QUEUED_DROPPED_NOTE = "Your other change was not sent either — try it again.";
+
 export function CardOptionControls({ threadId, cardId, payload, disabled, onChanged }: CardOptionControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,9 +117,11 @@ export function CardOptionControls({ threadId, cardId, payload, disabled, onChan
         const res = await ottoUpdateGenCardOptions({ threadId, cardId, ...next });
         if (!res || "error" in res) {
           // 服务端已经说清楚了 —— 原样交给商家,泛化句不许盖掉它。
-          setError(res ? res.error : FAILED_NOTE);
           // 这一趟被拒,排在后面那一格就不再替他发了 —— 他没看到这句话之前,再改一格
-          // 是我们替他做的决定。
+          // 是我们替他做的决定。但**被丢掉这件事他得听见**(#1241 判官 P2-2):否则那一格
+          // 会退回卡上原来的值,而屏幕上只有另一格的拒绝理由,像是白点了一下。
+          const said = res ? res.error : FAILED_NOTE;
+          setError(queued.current ? `${said} ${QUEUED_DROPPED_NOTE}` : said);
           break;
         }
         onChanged(res.payload);
@@ -139,8 +145,15 @@ export function CardOptionControls({ threadId, cardId, payload, disabled, onChan
   // 锁住的那半秒正是终检 r4 里那次被吞掉的点击,现在改成排队 + `aria-busy`。
   const locked = disabled === true;
 
+  // 重铸在飞时**看得见**(#1241 判官 P2-1):从前只有 `aria-busy`,屏幕读者听得到、眼睛
+  // 看不到 —— 三格照旧可点(排队),但商家得知道上一趟还没回来。只改透明度,不锁控件、
+  // 不改行为(`aria-busy:` 这个变体读的就是下面那一格 `aria-busy`,不是第二份状态)。
   return (
-    <div className="mt-3 flex flex-col gap-2" data-slot="card-options" aria-busy={busy}>
+    <div
+      className="mt-3 flex flex-col gap-2 transition-opacity aria-busy:opacity-60"
+      data-slot="card-options"
+      aria-busy={busy}
+    >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {/* 只能选「1」的卡上不摆这一格（#1245 判官 P2-4）—— 一个只有一个选项的下拉改不了
             任何东西,而小表单那句指路话（`inPlaceOptionNames` 的 `maxCount > 1`）也不会点
@@ -257,7 +270,11 @@ export function inPlaceOptionNames(payload: OttoPlanCardPayload): string[] {
  */
 export function askOttoOnlyChanges(payload: OttoPlanCardPayload): string[] {
   const items: string[] = [];
-  if (payload.kind === "video") items.push("length and sound");
+  // 时长与声音是**两件事,两格**(#1245 复判 P2-2):从前它们合成一格「length and sound」,
+  // 带参考的视频卡上就念成「length and sound and which references it uses」—— 一句话里两个
+  // and 连读。拆成两格之后 `joinWords` 自己接得对:「length, sound and which references it
+  // uses」;没有参考的视频卡仍是「length and sound」,与从前逐字相同。
+  if (payload.kind === "video") items.push("length", "sound");
   if ((payload.mediaReferences?.length ?? 0) > 0 || (payload.approvedEntities?.length ?? 0) > 0) {
     items.push("which references it uses");
   }

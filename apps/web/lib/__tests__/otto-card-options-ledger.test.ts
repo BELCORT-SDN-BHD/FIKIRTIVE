@@ -11,7 +11,9 @@
  *   · 卡上改一格 ⇒ 卡面报价换了一个数,而 `reserve:<jobId>` 的绝对值**等于卡上那个数**;
  *   · 变异证据:把卡上的价钉死在旧值(预扣不随卡变)⇒ 付费路在 create/reserve **之前**拒,
  *     ledger 零新增行 —— 这一条就是「报价与预扣同源」那句话的反证;
- *   · 已经在跑的卡改不动;跨租户改不动(卡一个字节不动)。
+ *   · 已经在跑的卡改不动;跨租户改不动(卡一个字节不动);
+ *   · 已经成交的卡改不动 —— 画布那张回执卡(`canvasAction`)与卡上已挂任务行的卡
+ *     (`genJobId`)都拒在任何写之前,payload 一个字节不动、账本零新增行(#1239 判官 P2-1)。
  *
  * 真 Postgres(*_test)、真 Prisma、真 credit ledger(经真 `startCoworkGen` → `startGen` 的
  * `reserveCredits`),worker 的结算走它自己那个函数原样模拟 —— 零真实 provider 调用、
@@ -51,6 +53,7 @@ vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
 
 const { checkCast: mockCheckCast } = await import("../cowork-guardian");
+const { buildCanvasPaidCardPayload } = await import("../canvas-thread-log");
 const { startCoworkGen } = await import("../gen-actions");
 const { ottoUpdateGenCardOptions } = await import("../otto-actions");
 const { prisma, settleCredits } = await import("@fikirtive/db");
@@ -343,6 +346,67 @@ describe("ENGINE-A3 商家在确认卡上改三格,一路走到账本", () => {
     expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
     // 卡本身仍然是重铸后的那一份:商家再按一次批的就是他刚改出来的那一档。
     expect((await persistedCard(world, card.cardId)).params.aspectRatio).toBe("9:16");
+  });
+
+  /**
+   * #1239 判官 P2-1 —— 画布节点级那张卡是一次**已经批过、已经扣过**的动作的回执
+   * (`canvas-thread-log.ts` 铸的,幂等键是 `canvas:<actionId>`)。上面那道「已经在跑」的
+   * 闸只查 `cowork:<cardId>`,所以从前这条 $0 改档路能把一张已成交的收据改写:商家历史
+   * 里那张卡说的,就不再是当时真正花掉的那一件事。
+   *
+   * 两条判据分两条用例钉,变异各红各的:去掉 `canvasAction` 那一句 ⇒ 第一条红;
+   * 去掉 `genJobId` 那一句 ⇒ 第二条红。
+   */
+  it("ENGINE-A3 画布已成交的回执卡改不动:payload 一个字节不动、ledger 零新增行", async () => {
+    const world = await seedWorld(500);
+    const cardId = `msg_${randomUUID()}`;
+    const receipt = buildCanvasPaidCardPayload({
+      kind: "image",
+      model: DEFAULT_IMAGE_MODEL,
+      params: { aspectRatio: "1:1", count: 1 },
+      hasSourceImage: false,
+      prompt: PROMPT,
+      entityIds: [],
+      variantSel: null,
+      estimatedCredits: 1,
+    });
+    await prisma.chatMessage.create({
+      data: {
+        id: cardId,
+        threadId: world.threadId,
+        ownerId: world.ownerId,
+        role: "AGENT",
+        kind: "GEN_CARD",
+        seq: 1,
+        text: "",
+        genJobId: `gj_${randomUUID()}`,
+        payload: receipt as unknown as object,
+      },
+    });
+    const before = JSON.stringify(await persistedCard(world, cardId));
+
+    const refused = await ottoUpdateGenCardOptions({ threadId: world.threadId, cardId, count: 3 });
+    expect("error" in refused).toBe(true);
+    // 一个字节不动 —— 不是「改了但价没变」,是根本没写。
+    expect(JSON.stringify(await persistedCard(world, cardId))).toBe(before);
+    expect(await ledgerRows(world.ownerId)).toHaveLength(0);
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
+  });
+
+  it("ENGINE-A3 卡上已经挂了一行任务(genJobId)就改不动 —— 哪怕没有 `cowork:` 那个幂等键", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+    // Otto 那张卡自己的形状:payload 上没有 `canvasAction`,但交付路已经把任务行写回卡上。
+    await prisma.chatMessage.update({
+      where: { id: card.cardId, ownerId: world.ownerId },
+      data: { genJobId: `gj_${randomUUID()}` },
+    });
+    const before = JSON.stringify(await persistedCard(world, card.cardId));
+
+    const refused = await ottoUpdateGenCardOptions({ threadId: world.threadId, cardId: card.cardId, count: 3 });
+    expect("error" in refused).toBe(true);
+    expect(JSON.stringify(await persistedCard(world, card.cardId))).toBe(before);
+    expect(await ledgerRows(world.ownerId)).toHaveLength(0);
   });
 
   it("ENGINE-A3 没人在窗口里动过卡:指纹对得上,照常建任务行、照常预扣一次", async () => {
