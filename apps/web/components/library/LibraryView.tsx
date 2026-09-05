@@ -78,7 +78,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/design-system/primitives/toggle-
 import { CollectionDialogs } from "@/components/library/CollectionDialogs";
 import { CollectionsView } from "@/components/library/CollectionsView";
 import { GridSkeleton, MediaGrid } from "@/components/library/MediaGrid";
-import { softDeleteEntity } from "@/lib/actions";
+import { restoreGeneration, softDeleteEntity } from "@/lib/actions";
 import { getGenerationHistory, type LibraryItem, type LibrarySourceKind } from "@/lib/library-actions";
 import {
   LIBRARY_ELEMENT_VIEWS,
@@ -93,6 +93,8 @@ import {
 import type { LibraryFavoriteItem, LibrarySubjectRef } from "@/lib/library-types";
 import {
   LIBRARY_VIEWS,
+  libraryCardBaseTitle,
+  libraryDetailIdFromPath,
   librarySinceForDateFilter,
   parseLibraryView,
   type LibraryTimeZone,
@@ -148,6 +150,15 @@ const SERVER_TIME_ZONE = (): LibraryTimeZone => "UTC";
  */
 const VIEWER_TIME_ZONE = (): LibraryTimeZone => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+/**
+ * 看的是库里的东西,还是回收站里的(清单 B3 / P1-007)。
+ *
+ * 删除历来就是软删(`lib/actions.deleteGeneration` 写 `deletedAt`),只是商家侧从来没有一扇
+ * 门看得见那些行,于是详情面把一次可撤销的动作说成 "This cannot be undone."。这个开关就是
+ * 那扇门:同一张网格、同一组筛选、同一套分页,只是 `deletedAt` 那一列反过来读。
+ */
+type ShowFilter = "library" | "trash";
+
 type Filters = {
   query: string;
   media: MediaFilter;
@@ -155,6 +166,7 @@ type Filters = {
   date: DateFilter;
   sources: LibrarySourceKind[];
   sort: SortOrder;
+  show: ShowFilter;
 };
 
 const DEFAULT_FILTERS: Filters = {
@@ -164,6 +176,7 @@ const DEFAULT_FILTERS: Filters = {
   date: "all",
   sources: ["generated", "upload"],
   sort: "newest",
+  show: "library",
 };
 
 function filtersAreDefault(filters: Filters): boolean {
@@ -173,7 +186,8 @@ function filtersAreDefault(filters: Filters): boolean {
     filters.projectId === "all" &&
     filters.date === "all" &&
     filters.sources.length === 2 &&
-    filters.sort === "newest"
+    filters.sort === "newest" &&
+    filters.show === "library"
   );
 }
 
@@ -192,6 +206,7 @@ function LibraryToolbar({
   onChange,
   onClear,
   showFilters,
+  canSelect,
   selectionMode,
   onSelectionModeChange,
 }: {
@@ -201,6 +216,8 @@ function LibraryToolbar({
   onClear: () => void;
   /** 收藏页没有搜索 / 筛选 / 排序的服务端契约,那几颗控件在那一格不渲染。 */
   showFilters: boolean;
+  /** 回收站里没有可做的批量动作,所以只有 Select 那一颗不画 —— 工具条本身留着。 */
+  canSelect: boolean;
   selectionMode: boolean;
   onSelectionModeChange: (selectionMode: boolean) => void;
 }) {
@@ -318,6 +335,17 @@ function LibraryToolbar({
             >Uploads</DropdownMenuCheckboxItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
+          {/* 回收站(清单 B3 / P1-007)。已批准的 Library 只有五个一级 views,所以这里
+              **不加第六个页签** —— 回收站是同一张生成历史网格的一个筛选,与 Source 并列。 */}
+          <DropdownMenuRadioGroup
+            value={filters.show}
+            onValueChange={(value) => onChange({ show: value as ShowFilter })}
+          >
+            <DropdownMenuLabel>Show</DropdownMenuLabel>
+            <DropdownMenuRadioItem value="library">In library</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="trash">Trash</DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={onClear}>Clear filters</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -342,15 +370,21 @@ function LibraryToolbar({
       ) : null}
 
       {/* 设计把 Select 放在工具条最右(`LibraryReference.tsx` 的 `ml-auto`)。
-          它在 seg2a 那一票里因为「批量动作没有后端」而不画;收藏与合集落地之后它回来了。 */}
-      <Button
-        variant={selectionMode ? "secondary" : "ghost"}
-        size="sm"
-        className="ml-auto"
-        onClick={() => onSelectionModeChange(!selectionMode)}
-      >
-        {selectionMode ? "Done" : "Select"}
-      </Button>
+          它在 seg2a 那一票里因为「批量动作没有后端」而不画;收藏与合集落地之后它回来了。
+          回收站里它又不画:那一格的两颗批量键(Add to collection / Favorite)写入前都要过
+          存活校验(`library-subjects.filterVisibleSubjects` 的 `deletedAt: null`),对着一批
+          已删素材按下去只会整批被拒 —— 必然失败的键不该出现。**只有这一颗不画**,
+          搜索、筛选与「回到 In library」那一路都留在原地(见 `canSelect`)。 */}
+      {canSelect ? (
+        <Button
+          variant={selectionMode ? "secondary" : "ghost"}
+          size="sm"
+          className="ml-auto"
+          onClick={() => onSelectionModeChange(!selectionMode)}
+        >
+          {selectionMode ? "Done" : "Select"}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -546,6 +580,9 @@ export type LibraryViewProps = {
   initialAsset?: { generationId: string; projectId: string };
   /** 深链进来的那个合集(`?collection=`);同样只是定位参数,服务端自己再验一次。 */
   initialCollectionId?: string;
+  /** 深链进来的那一堆(`?show=trash`)。首屏那一页服务端只取活着的行,回收站那一份由客户端
+   *  用同一组条件再要一次 —— 地址说的是回收站,屏幕就得是回收站。 */
+  initialShow?: ShowFilter;
 };
 
 export function LibraryView({
@@ -556,11 +593,14 @@ export function LibraryView({
   elements,
   initialAsset,
   initialCollectionId,
+  initialShow,
 }: LibraryViewProps) {
   const router = useRouter();
   const [view, setView] = React.useState<LibraryViewName>(initialView);
   const [elementView, setElementView] = React.useState<LibraryElementKind>(initialElementView);
-  const [filters, setFilters] = React.useState<Filters>(DEFAULT_FILTERS);
+  const [filters, setFilters] = React.useState<Filters>(
+    initialShow === "trash" ? { ...DEFAULT_FILTERS, show: "trash" } : DEFAULT_FILTERS,
+  );
   const [items, setItems] = React.useState<LibraryItem[]>(
     "error" in initialPage ? [] : initialPage.items,
   );
@@ -597,6 +637,14 @@ export function LibraryView({
   const [organizeError, setOrganizeError] = React.useState<string | null>(null);
   const [organizing, setOrganizing] = React.useState(false);
 
+  // ── 回收站(清单 B3 / P1-007)────────────────────────────────────────────────
+  // 回收站里点一格不是「看详情」而是「拿回来」:详情面读的是活着的行
+  // (`asset-actions.getGeneration` 带 `deletedAt: null`),对着一件已删素材开它只会得到
+  // 一句「不可用」。所以这一格改问一句话,答完就地重取。
+  const [restoreTarget, setRestoreTarget] = React.useState<{ id: string; title: string } | null>(null);
+  const [restoreBusy, setRestoreBusy] = React.useState(false);
+  const [restoreError, setRestoreError] = React.useState<string | null>(null);
+
   // 日界只解析一次,分组与 `Date created` 筛选共用它 —— 两处各拿一个时区,就会出现
   // 「分组说 Today、筛选说今天没有」这种自相矛盾的屏幕。
   const timeZone = React.useSyncExternalStore(NEVER_CHANGES, VIEWER_TIME_ZONE, SERVER_TIME_ZONE);
@@ -607,8 +655,14 @@ export function LibraryView({
 
   const gridView = view === "history" || view === "uploads";
   const favoritesView = view === "favorites";
-  /** 选择模式只在有批量动作可做的那几格出现(设计:history / uploads / favorites)。 */
-  const selectableView = gridView || favoritesView;
+  /** 工具条在哪几格出现(设计:history / uploads / favorites)。**回收站也在内** ——
+   *  它是这张网格的一个筛选,不是一扇单向门:搜索、筛选与「Show → In library」那一路
+   *  必须一直在屏幕上,否则商家进了回收站就只剩整页刷新一条出路。 */
+  const toolbarView = gridView || favoritesView;
+  /** 能不能进选择模式,是另一件事:回收站里的两颗批量动作(收藏、加进合集)写入前都要过
+   *  存活校验(`library-subjects.filterVisibleSubjects` 的 `deletedAt: null`),对着一批
+   *  已删素材按下去只会整批被拒 —— 一颗必然失败的键不该出现。 */
+  const canSelect = toolbarView && filters.show !== "trash";
 
   const queryFor = React.useCallback(
     (nextView: LibraryViewName, nextFilters: Filters, nextCursor: string | null) => ({
@@ -624,6 +678,8 @@ export function LibraryView({
       // 首屏那一页 `date` 是 "all",走不到 `timeZone`,所以 hydration 前后签名一致。
       since: librarySinceForDateFilter(nextFilters.date, new Date(), timeZone),
       order: nextFilters.sort,
+      // 回收站那一格 —— 一个开关,同一个读模型(`getGenerationHistory`),不是第二份查询。
+      trashed: nextFilters.show === "trash" ? true : undefined,
       cursor: nextCursor,
       take: PAGE_SIZE,
     }),
@@ -695,12 +751,18 @@ export function LibraryView({
    * 用的是浏览器自己的 `history.pushState`(与已批准的 `LibraryReference` 同一种做法),
    * 不走 `router.push/replace`:这一页是 `force-dynamic` 的,每开一次详情面就让服务端把
    * 整页重跑一遍,既慢又会把已经加载的那几页滚回去。地址变了,页面不用重来。
+   *
+   * **详情住在路径里,不在查询串里**(清单 B3 / P1-007):打开一件素材 = `/library/<id>`,
+   * 关掉 = 回到 `/library`。真路径才是能贴给别人、刷新回得来、后退退得掉的那种地址,
+   * 服务端也有一个真的 route 文件接住它(`app/library/[id]/page.tsx`)。老链接的
+   * `?asset=`/`?project=` 仍然认(服务端解析),只是我们自己不再产出那种地址。
    */
   const writeRoute = React.useCallback((next: {
     view?: LibraryViewName;
     element?: LibraryElementKind;
     asset?: { generationId: string; projectId: string } | null;
     collection?: string | null;
+    show?: ShowFilter;
   }) => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
@@ -708,10 +770,19 @@ export function LibraryView({
     if (next.view !== undefined) {
       if (next.view === "history") params.delete("view");
       else params.set("view", next.view);
+      url.pathname = SHELL_ROUTES.library;
+      // 老链接的两个参数:换页签时照样清掉,否则它们会跟着地址一路带下去。
       params.delete("asset");
       params.delete("project");
+      // 回收站是**这一格**的筛选,不是跟着人走的模式:换页签就回到 In library
+      // (地址与屏幕一起复位,不然 Trash 会悄悄渗进 Uploads 那一格)。
+      params.delete("show");
       if (next.view !== "elements") params.delete("element");
       if (next.view !== "collections") params.delete("collection");
+    }
+    if (next.show !== undefined) {
+      if (next.show === "trash") params.set("show", "trash");
+      else params.delete("show");
     }
     if (next.element !== undefined) params.set("element", next.element);
     if (next.collection !== undefined) {
@@ -719,13 +790,12 @@ export function LibraryView({
       else params.delete("collection");
     }
     if (next.asset !== undefined) {
-      if (next.asset) {
-        params.set("asset", next.asset.generationId);
-        params.set("project", next.asset.projectId);
-      } else {
-        params.delete("asset");
-        params.delete("project");
-      }
+      url.pathname = next.asset
+        ? `${SHELL_ROUTES.library}/${encodeURIComponent(next.asset.generationId)}`
+        : SHELL_ROUTES.library;
+      // 老形状一律不再写出去(读的时候还认,见 `syncFromRoute` 与服务端那两个 page)。
+      params.delete("asset");
+      params.delete("project");
     }
     window.history.pushState(window.history.state, "", url);
   }, []);
@@ -733,13 +803,27 @@ export function LibraryView({
   /** 后退键要真的往回走一格:页签、Elements 分栏与详情面都跟着地址回到上一步。 */
   React.useEffect(() => {
     function syncFromRoute() {
-      const params = new URL(window.location.href).searchParams;
+      const url = new URL(window.location.href);
+      const params = url.searchParams;
       setView(parseLibraryView(params.get("view") ?? undefined));
       setElementView(parseLibraryElementView(params.get("element") ?? undefined));
-      const asset = params.get("asset");
-      const project = params.get("project");
-      setDetail(asset && project ? { generationId: asset, projectId: project } : undefined);
+      // 详情的权威是**路径段**(`/library/<id>`);`?asset=` 只为老链接保留。
+      const fromPath = libraryDetailIdFromPath(url.pathname);
+      const assetId = fromPath ?? params.get("asset");
+      setDetail(assetId
+        // `projectId` 只是付费动作在 DTO 落地前的兜底值:后退回来时能从已加载的那几行里
+        // 认出来就用它,认不出来留空 —— 详情面自己 `getGeneration()` 会填上真的那一个。
+        ? { generationId: assetId, projectId: params.get("project") ?? "" }
+        : undefined);
       setActiveCollectionId(params.get("collection") ?? undefined);
+      // 回收站也在地址里(`?show=trash`),所以后退键能从回收站退回 In library。
+      const nextShow: ShowFilter = params.get("show") === "trash" ? "trash" : "library";
+      setFilters((current) => (current.show === nextShow ? current : { ...current, show: nextShow }));
+      if (nextShow === "trash") {
+        setSelectionMode(false);
+        setSelectedIds(new Set());
+        setOrganizeError(null);
+      }
     }
     window.addEventListener("popstate", syncFromRoute);
     return () => window.removeEventListener("popstate", syncFromRoute);
@@ -754,13 +838,49 @@ export function LibraryView({
     setSelectedIds(new Set());
     setOrganizeError(null);
     setActiveCollectionId(undefined);
+    // 回收站跟着页签一起复位 —— 它是「这一格现在看哪一堆」,不是一个跟着人走的模式。
+    setFilters((current) => (current.show === "library" ? current : { ...current, show: "library" }));
     writeRoute({ view: nextView });
+  }
+
+  /**
+   * 筛选改动的单一出口。多数键只改 state,只有 `show`(回收站)另外两件事:
+   *   ① 进地址 —— 屏幕上看的是哪一堆,地址就得说得出来(刷新、后退、贴给别人都靠它);
+   *   ② 进回收站就退出选择模式 —— 那一格没有可做的批量动作(见 `canSelect`)。
+   */
+  function applyFilters(next: Partial<Filters>) {
+    setFilters((current) => ({ ...current, ...next }));
+    if (next.show === undefined) return;
+    writeRoute({ show: next.show });
+    if (next.show === "trash") {
+      setSelectionMode(false);
+      setSelectedIds(new Set());
+      setOrganizeError(null);
+    }
   }
 
   function openItem(item: { id: string; projectId: string }) {
     const next = { generationId: item.id, projectId: item.projectId };
     setDetail(next);
     writeRoute({ asset: next });
+  }
+
+  /** 回收站里按下一格 —— 先问一句,答完才写库(恢复本身是可再删的,所以不再问第二次)。 */
+  async function confirmRestore() {
+    if (!restoreTarget) return;
+    setRestoreBusy(true);
+    setRestoreError(null);
+    const result = await restoreGeneration(restoreTarget.id);
+    setRestoreBusy(false);
+    if ("error" in result) {
+      // 服务端拒绝了这一次恢复 ⇒ 框留在原地、把它那句话摆出来、还能再按一次。
+      setRestoreError(result.error);
+      return;
+    }
+    setRestoreTarget(null);
+    // 它已经不在回收站里了 —— 同一组条件重取一次,不在浏览器里把它偷偷抹掉。
+    void reload(view, filters);
+    router.refresh();
   }
 
   function openCollection(collectionId: string | null) {
@@ -900,21 +1020,22 @@ export function LibraryView({
             </Tabs>
           </header>
 
-          {selectableView ? (
+          {toolbarView ? (
             <LibraryToolbar
               filters={filters}
               projects={projects}
               /* 收藏页是自己的读模型(裁决十:一次查询、按收藏时间排),它没有搜索与筛选
                  的服务端契约 —— 按前端规则第①条,那几颗控件在这一格不渲染,只留 Select。 */
               showFilters={gridView}
+              canSelect={canSelect}
               selectionMode={selectionMode}
               onSelectionModeChange={(next) => {
                 setSelectionMode(next);
                 if (!next) setSelectedIds(new Set());
                 setOrganizeError(null);
               }}
-              onChange={(next) => setFilters((current) => ({ ...current, ...next }))}
-              onClear={() => setFilters(DEFAULT_FILTERS)}
+              onChange={applyFilters}
+              onClear={() => applyFilters(DEFAULT_FILTERS)}
             />
           ) : <div className="border-b border-border" />}
 
@@ -952,12 +1073,30 @@ export function LibraryView({
                   <MediaGrid
                     items={items}
                     selectedId={detail?.generationId}
-                    onOpen={openItem}
+                    // 回收站里点一格是「拿回来」,不是「看详情」—— 详情面读的是活着的行。
+                    onOpen={(item) => {
+                      if (filters.show === "trash") {
+                        setRestoreError(null);
+                        setRestoreTarget({ id: item.id, title: libraryCardBaseTitle(item) });
+                        return;
+                      }
+                      openItem(item);
+                    }}
                     timeZone={timeZone}
-                    selectionMode={selectionMode}
+                    // 回收站里勾选框一律不出现 —— 即便选择模式是从别处带进来的
+                    // (`canSelect` 是那一格的硬闸,不只是 Select 那颗键的可见性)。
+                    selectionMode={canSelect && selectionMode}
                     selectedIds={selectedIds}
                     onSelect={(item, checked) => updateSelection(item.id, checked)}
                   />
+                ) : filters.show === "trash" ? (
+                  <div className="flex min-h-72 flex-col items-center justify-center text-center">
+                    <Trash2 className="size-6 text-muted-foreground" aria-hidden />
+                    <h2 className="mt-4 text-sm font-semibold">Trash is empty</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Anything you move to trash waits here until you restore it.
+                    </p>
+                  </div>
                 ) : filtersActive ? (
                   <div className="flex min-h-72 flex-col items-center justify-center text-center">
                     <Search className="size-6 text-muted-foreground" aria-hidden />
@@ -1073,7 +1212,7 @@ export function LibraryView({
 
             {/* 选择条:设计里它悬在网格底部(`LibraryReference.tsx` 的 `SelectionBar`)。
                 设计的第三颗键 Download 今天没有批量下载的真实路径,按前端规则第①条不画。 */}
-            {selectionMode && selectedIds.size ? (
+            {canSelect && selectionMode && selectedIds.size ? (
               <div className="sticky bottom-4 z-20 mx-auto flex w-fit flex-col items-center gap-1">
                 <div className="flex items-center gap-2 rounded-[var(--radius-card)] border border-border bg-popover p-2 shadow-[var(--shadow-lg)]">
                   <span className="px-2 text-sm font-semibold">{selectedIds.size} selected</span>
@@ -1133,6 +1272,35 @@ export function LibraryView({
           }}
         />
       ) : null}
+
+      <AlertDialog
+        open={Boolean(restoreTarget)}
+        onOpenChange={(open) => { if (!open) { setRestoreTarget(null); setRestoreError(null); } }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore this asset?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {restoreTarget
+                ? `"${restoreTarget.title}" goes back to your library. It does not reattach itself to a shot — put it back on a canvas yourself.`
+                : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {/* 服务端拒绝了这一次恢复 ⇒ 那句话就摆在按下 Restore 的地方,框不关、可重试。 */}
+          {restoreError ? (
+            <p className="text-xs text-destructive">{restoreError}</p>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restoreBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={restoreBusy}
+              onClick={(event) => { event.preventDefault(); void confirmRestore(); }}
+            >
+              {restoreBusy ? "Restoring…" : "Restore"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {collectionDialog ? (
         <CollectionDialogs

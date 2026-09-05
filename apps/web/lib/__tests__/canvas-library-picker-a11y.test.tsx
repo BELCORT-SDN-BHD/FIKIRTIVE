@@ -78,6 +78,7 @@ function item(over: Partial<LibraryItem> = {}): LibraryItem {
     // 这样:`source: "generated"`、没有商家给的文件名、尺寸与时长按真库可空。
     source: "generated",
     filename: "",
+    summary: "",
     width: null,
     height: null,
     durationS: null,

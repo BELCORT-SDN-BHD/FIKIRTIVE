@@ -25,6 +25,15 @@ export type LibraryItem = {
   prompt: string;
   /** The name the merchant's own file arrived under; "" for engine output (there is none). */
   filename: string;
+  /**
+   * Otto 读懂这件素材之后写下的那一句(`AssetUnderstanding.summary`,kind `image-caption`,
+   * status DONE;worker 落盘前已白标)。卡片标题优先写它(清单 B4 / P2-014)。
+   *
+   * `""` = 这件素材没有摘要,**不是**空摘要:今天理解只扫 UPLOAD / IMPORT
+   * (`apps/worker/src/jobs/understand.ts` 的 `UNDERSTOOD_SOURCES`),引擎产物一律走
+   * 标题的回落规则(`libraryCardBaseTitle`)。绝不拿提示词冒充摘要。
+   */
+  summary: string;
   width: number | null;
   height: number | null;
   durationS: number | null;
@@ -82,6 +91,10 @@ const FAVORITE_ONLY_FILTER_KEYS = [
   "projectId",
   "since",
   "order",
+  // 回收站也接不住:收藏读模型读的是 `Favorite` 那张表,它 resolve 时只认还活着的行
+  // (`library-subjects.filterVisibleSubjects` 的 `deletedAt: null`)。同用会静静地
+  // 返回一页「活着的收藏」,而屏幕上写着 Trash —— 宁可说不行。
+  "trashed",
 ] as const;
 
 /**
@@ -114,6 +127,15 @@ export async function getGenerationHistory(
     /** ISO instant; keeps rows created at or after it (the Date filter). */
     since?: string;
     order?: LibraryOrder;
+    /**
+     * 回收站那一格(清单 B3 / P1-007)。`true` = 只要**已经移进回收站**的行
+     * (`deletedAt IS NOT NULL`),其余一切筛选照旧生效。
+     *
+     * 删除历来就是软删(`lib/actions.ts` 的 `deleteGeneration` 写 `deletedAt`),只是商家侧
+     * 从来没有一扇门看得到那些行 —— 于是一次可撤销的动作在屏幕上被说成 "This cannot be
+     * undone."。这个开关就是那扇门;它不改删除本身的语义,只是把已经存在的事实显示出来。
+     */
+    trashed?: boolean;
   },
 ): Promise<LibraryPage | { error: string }> {
   const gate = await requireOwner();
@@ -170,7 +192,8 @@ export async function getGenerationHistory(
   const rows = await prisma.generation.findMany({
     where: {
       ownerId,
-      deletedAt: null,
+      // 回收站那一格反过来读同一列 —— 一个开关,两个视图,不是第二份查询。
+      deletedAt: opts?.trashed ? { not: null } : null,
       // 搜索打两列,不是一列。`Uploads` 页签上的每一行 `promptText` 都是空的(商家上传的
       // 文件没有提示词),所以只打 `promptText` 的搜索在那一格**必然搜空** —— 而输入框上写着
       // "Search prompts",商家看到的是一句自己做不到的承诺(占位符已随之改成如实的
@@ -202,6 +225,10 @@ export async function getGenerationHistory(
   // 收藏状态来自 `Favorite` 那张表,不是 `Generation.favorite` 那一列 —— 那一列自
   // 2026-09-03 的回灌之后没有任何写入者,继续读它就是读一份过期的影子。
   const favoriteIds = await favoriteGenerationIds(ownerId, scanned.map((g) => g.id));
+  // 卡片标题的摘要那一半(清单 B4)。**一次查询**问完这一页的全部素材,不是逐行问 ——
+  // 与上面的收藏状态同一手法。只收 DONE 且真的写下了一句的行:QUEUED / RUNNING / FAILED
+  // 的行没有可说的,空串在读取端与「没有这一行」是同一件事。
+  const summaryByAsset = await libraryAssetSummaries(ownerId, scanned.map((g) => g.assetId));
   const resolved = await Promise.all(scanned.map(async (g) => {
     const ext = g.asset.ext.toLowerCase();
     const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
@@ -217,6 +244,7 @@ export async function getGenerationHistory(
         source: libraryItemSource(g.source),
         prompt: g.promptText ?? "",
         filename: g.asset.originalFilename ?? "",
+        summary: summaryByAsset.get(g.assetId) ?? "",
         width: g.asset.width ?? null,
         height: g.asset.height ?? null,
         durationS: g.asset.durationS ?? null,
@@ -234,6 +262,34 @@ export async function getGenerationHistory(
       : null;
   const nextCursor = cursorRow ? `${cursorRow.createdAt.toISOString()}|${cursorRow.id}` : null;
   return { items, nextCursor, hasMore: nextCursor != null };
+}
+
+/**
+ * 这一页的素材里,哪些已经被 Otto 读懂并留下了一句(清单 B4 / P2-014)。
+ *
+ * `AssetUnderstanding` 的唯一键是 (ownerId, assetId, kind),所以同一件素材同一种理解只有
+ * 一行 —— 这里一次问完整页,不逐行问。`ownerId` 是这道查询自己的租户闸(调用方已经过了
+ * `requireOwner`,这里不重复接受任何客户端传来的 owner)。
+ *
+ * 只取 `image-caption`:那是「这件素材是什么」的那一句,也就是标题要写的东西;
+ * `doc-extract` / `video-qa` 是结构化产物,不是一个名字。
+ */
+async function libraryAssetSummaries(
+  ownerId: string,
+  assetIds: readonly string[],
+): Promise<Map<string, string>> {
+  const ids = [...new Set(assetIds)];
+  if (!ids.length) return new Map();
+  const rows = await prisma.assetUnderstanding.findMany({
+    where: { ownerId, assetId: { in: ids }, kind: "image-caption", status: "DONE" },
+    select: { assetId: true, summary: true },
+  });
+  const out = new Map<string, string>();
+  for (const row of rows) {
+    const summary = row.summary.trim();
+    if (summary) out.set(row.assetId, summary);
+  }
+  return out;
 }
 
 /**
@@ -265,6 +321,9 @@ async function favoritesAsLibraryPage(
       source: item.source,
       prompt: item.prompt,
       filename: item.filename,
+      // 收藏这一路借的是收藏读模型,它没有摘要那一列 —— `""` 在标题规则里就是「没有摘要」,
+      // 于是收藏页的卡片走回落那一支。宁可回落,也不在这里补第二份摘要查询。
+      summary: "",
       width: item.width,
       height: item.height,
       durationS: item.durationS,

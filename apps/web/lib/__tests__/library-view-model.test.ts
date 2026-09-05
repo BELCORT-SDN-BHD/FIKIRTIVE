@@ -17,6 +17,9 @@ import type { LibraryItem } from "../library-actions";
 import {
   LIBRARY_VIEWS,
   groupLibraryItems,
+  libraryCardBaseTitle,
+  libraryCardTitles,
+  libraryDetailIdFromPath,
   libraryDurationLabel,
   libraryItemTitle,
   librarySinceForDateFilter,
@@ -42,6 +45,7 @@ function item(overrides: Partial<LibraryItem> & { id: string; createdAt: string 
     source: "generated",
     prompt: "",
     filename: "",
+    summary: "",
     width: null,
     height: null,
     durationS: null,
@@ -200,5 +204,113 @@ describe("FRONT-A5 一级视图清单 = 今天真的有数据支撑的那几格"
     expect(parseLibraryView("collections")).toBe("collections");
     expect(parseLibraryView("nope")).toBe("history");
     expect(parseLibraryView(undefined)).toBe("history");
+  });
+});
+
+/**
+ * 清单 B4(P2-014)—— 卡片标题 = Otto 摘要 + 序号,没有摘要就回落到原有标题规则。
+ *
+ * 病象:格子上写的是整段提示词的前 72 字。同一句话做出来的四张图,四格写着一模一样的开头,
+ * 商家在网格里分不出谁是谁;而整段提示词早就在详情面里(`DetailPanel` 的 `gen.prompt`)。
+ *
+ * 变异自查(逐一实做,做完还原,红→绿):
+ *   · 让 `libraryCardBaseTitle` 在没有摘要时回落成 item.prompt 的原文(不走
+ *     `libraryItemTitle`)⇒「上传仍写文件名」红;
+ *   · 让 `libraryCardTitles` 给每一格都加序号 ⇒「同名只有一格时不写序号」红;
+ *   · 让 `libraryCardTitles` 一格一格各算各的(每格都从 1 起)⇒「重名的那几格按顺序编号」红。
+ */
+describe("FRONT-A5 卡片标题:Otto 摘要优先,没有摘要才回落", () => {
+  const card = (over: Partial<{ source: "upload" | "generated"; filename: string; prompt: string; summary: string | null }>) => ({
+    source: "generated" as const,
+    filename: "",
+    prompt: "",
+    ...over,
+  });
+
+  it("有摘要就写摘要 —— 提示词不再当标题", () => {
+    expect(libraryCardBaseTitle(card({
+      summary: "A jar of pandan kaya on a rattan table",
+      prompt: "Steam curling off a jar of pandan kaya, warm morning light, shallow depth of field",
+    }))).toBe("A jar of pandan kaya on a rattan table");
+  });
+
+  it("没有摘要就回落到原有规则 —— 上传写文件名,引擎产物写提示词", () => {
+    expect(libraryCardBaseTitle(card({ source: "upload", filename: "raya-storefront.png", summary: "" })))
+      .toBe("raya-storefront.png");
+    expect(libraryCardBaseTitle(card({ prompt: "laksa on a rattan table" })))
+      .toBe(libraryItemTitle({ source: "generated", filename: "", prompt: "laksa on a rattan table" }));
+    // 摘要那一列缺席(收藏 / 合集那两格借的读模型没有它)与空串同义。
+    expect(libraryCardBaseTitle(card({ prompt: "laksa on a rattan table", summary: null })))
+      .toBe("laksa on a rattan table");
+  });
+
+  it("空白摘要不算摘要 —— 不拿一格空白冒充一个名字", () => {
+    expect(libraryCardBaseTitle(card({ summary: "   ", prompt: "laksa on a rattan table" })))
+      .toBe("laksa on a rattan table");
+  });
+
+  it("长摘要按 caption 的宽度截断(与原有标题同一个 72 字口径)", () => {
+    expect(libraryCardBaseTitle(card({ summary: "x".repeat(200) }))).toHaveLength(72);
+  });
+});
+
+describe("FRONT-A5 卡片序号:只在同一组里重名时出现", () => {
+  const generated = (prompt: string, summary = "") => ({ source: "generated" as const, filename: "", prompt, summary });
+
+  it("同名的那几格按传进来的顺序编号 —— 商家分得出一批四张里的哪一张", () => {
+    expect(libraryCardTitles([
+      generated("kaya toast promo"),
+      generated("kaya toast promo"),
+      generated("kaya toast promo"),
+    ])).toEqual(["kaya toast promo · 1", "kaya toast promo · 2", "kaya toast promo · 3"]);
+  });
+
+  it("同名只有一格时不写序号 —— 「· 1」是噪音,不是信息", () => {
+    expect(libraryCardTitles([generated("kaya toast promo"), generated("laksa bowl")]))
+      .toEqual(["kaya toast promo", "laksa bowl"]);
+  });
+
+  it("序号按**标题**分组,不是按整组位次 —— 两串重名各自从 1 起", () => {
+    expect(libraryCardTitles([
+      generated("kaya toast promo"),
+      generated("laksa bowl"),
+      generated("kaya toast promo"),
+      generated("laksa bowl"),
+    ])).toEqual([
+      "kaya toast promo · 1",
+      "laksa bowl · 1",
+      "kaya toast promo · 2",
+      "laksa bowl · 2",
+    ]);
+  });
+
+  it("摘要参与重名判定 —— 提示词一样但 Otto 摘要不同的两格不算重名", () => {
+    expect(libraryCardTitles([
+      generated("kaya toast promo", "Toast with kaya, top-down"),
+      generated("kaya toast promo", "Toast with kaya, on a plate"),
+    ])).toEqual(["Toast with kaya, top-down", "Toast with kaya, on a plate"]);
+  });
+});
+
+/**
+ * 清单 B3(P1-007)—— 详情住在路径里(`/library/<id>`),不在查询串里。
+ *
+ * 变异自查:把 `LIBRARY_NON_ASSET_SEGMENTS` 那一句去掉 ⇒「剪辑台不是一件素材」红。
+ */
+describe("FRONT-A14 /library/<id> 是详情的地址", () => {
+  it("第二段就是那件素材的 id", () => {
+    expect(libraryDetailIdFromPath("/library/gen_01ABC")).toBe("gen_01ABC");
+    expect(libraryDetailIdFromPath("/library/gen%2F01")).toBe("gen/01");
+  });
+  it("Library 自己没开详情", () => {
+    expect(libraryDetailIdFromPath("/library")).toBeNull();
+    expect(libraryDetailIdFromPath("/library/")).toBeNull();
+  });
+  it("剪辑台是一条静态路由,不是一件素材 —— 从那里按后退不该弹出「素材不可用」", () => {
+    expect(libraryDetailIdFromPath("/library/editor")).toBeNull();
+  });
+  it("别的路由与更深的路径都不是 Library 详情", () => {
+    expect(libraryDetailIdFromPath("/create/canvas")).toBeNull();
+    expect(libraryDetailIdFromPath("/library/gen_1/extra")).toBeNull();
   });
 });
