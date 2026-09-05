@@ -29,10 +29,12 @@ import {
   ArrowDownUp,
   CalendarDays,
   ChevronDown,
-  Film,
+  FolderPlus,
+  Heart,
   Search,
   SlidersHorizontal,
   Trash2,
+  X,
 } from "lucide-react";
 
 import { OFFICIAL_CATALOG_BADGE } from "@fikirtive/core/entity-policy";
@@ -71,9 +73,11 @@ import {
   DropdownMenuTrigger,
 } from "@/design-system/primitives/dropdown-menu";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/design-system/primitives/input-group";
-import { Skeleton } from "@/design-system/primitives/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/design-system/primitives/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/design-system/primitives/toggle-group";
+import { CollectionDialogs } from "@/components/library/CollectionDialogs";
+import { CollectionsView } from "@/components/library/CollectionsView";
+import { GridSkeleton, MediaGrid } from "@/components/library/MediaGrid";
 import { softDeleteEntity } from "@/lib/actions";
 import { getGenerationHistory, type LibraryItem, type LibrarySourceKind } from "@/lib/library-actions";
 import {
@@ -82,13 +86,13 @@ import {
   type LibraryElement,
   type LibraryElementKind,
 } from "@/lib/library-elements-model";
-import { libraryItemAccessibleName } from "@/lib/library-item-a11y";
+import {
+  listLibraryFavorites,
+  setLibraryFavorite,
+} from "@/lib/library-favorites";
+import type { LibraryFavoriteItem, LibrarySubjectRef } from "@/lib/library-types";
 import {
   LIBRARY_VIEWS,
-  groupLibraryItems,
-  libraryDurationLabel,
-  libraryItemRawName,
-  libraryItemTitle,
   librarySinceForDateFilter,
   parseLibraryView,
   type LibraryTimeZone,
@@ -97,6 +101,7 @@ import {
 import { cn } from "@/lib/utils";
 
 type MediaFilter = "all" | "image" | "video";
+
 type DateFilter = "all" | "today" | "week";
 type SortOrder = "newest" | "oldest";
 
@@ -186,17 +191,26 @@ function LibraryToolbar({
   projects,
   onChange,
   onClear,
+  showFilters,
+  selectionMode,
+  onSelectionModeChange,
 }: {
   filters: Filters;
   projects: readonly { id: string; name: string }[];
   onChange: (next: Partial<Filters>) => void;
   onClear: () => void;
+  /** 收藏页没有搜索 / 筛选 / 排序的服务端契约,那几颗控件在那一格不渲染。 */
+  showFilters: boolean;
+  selectionMode: boolean;
+  onSelectionModeChange: (selectionMode: boolean) => void;
 }) {
   const sourceFilterCount = 2 - filters.sources.length;
   const activeProject = projects.find((project) => project.id === filters.projectId);
 
   return (
     <div data-library-toolbar className="flex flex-wrap items-center gap-2 border-b border-border px-6 py-3">
+      {showFilters ? (
+        <>
       <InputGroup className="min-h-9 min-w-52 max-w-80 flex-1 bg-background shadow-none">
         <InputGroupAddon>
           <Search aria-hidden />
@@ -324,122 +338,19 @@ function LibraryToolbar({
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
-  );
-}
+        </>
+      ) : null}
 
-function MediaTile({ item, selected, onOpen }: { item: LibraryItem; selected: boolean; onOpen: () => void }) {
-  const title = libraryItemTitle(item);
-  // 看得见的那行字仍是 `libraryItemTitle`(设计的 caption);**读屏念的那句**走
-  // `lib/library-item-a11y.ts` —— Codex staging 审计 LIB-STG-P2-005 定的那一份单源
-  // (整段提示词当无障碍名,每个 Tab 停顿都念一整段;#1185 已经在 CanvasLibraryPicker 与
-  // StuffLibrary 落过)。Library 网格是第三个同病的调用点,照样读同一个函数,不自建第二套截断。
-  const accessibleName = libraryItemAccessibleName(libraryItemRawName(item), item.kind);
-  const duration = libraryDurationLabel(item);
-  // 已批准的 Library 用「保持原始比例的紧凑 media grid」(README §3.1),瀑布流的高低差
-  // 就是从这来的。比例是 `Asset` 上的真实两条边,不是一个统一裁出来的框;两条边缺一条的
-  // 旧行退回 4:5 的占位比例(而不是让格子塌成零高)。
-  const ratio = item.width && item.height ? `${item.width} / ${item.height}` : null;
-  return (
-    <div className="relative mb-2 break-inside-avoid">
+      {/* 设计把 Select 放在工具条最右(`LibraryReference.tsx` 的 `ml-auto`)。
+          它在 seg2a 那一票里因为「批量动作没有后端」而不画;收藏与合集落地之后它回来了。 */}
       <Button
-        variant="ghost"
-        aria-label={`Open ${accessibleName}`}
-        // 悬停/长按看到的是**完整**原名,和 `CanvasLibraryPicker.tsx` 同源;`title` 变量是
-        // 给看得见的 caption 用的 72 字截断版,拿它当 tooltip 等于把截断又说了一遍。
-        title={libraryItemRawName(item)}
-        aria-selected={selected}
-        onClick={onOpen}
-        className={cn(
-          "group relative h-auto w-full overflow-hidden rounded-lg border border-border bg-muted p-0 shadow-none",
-          "hover:border-foreground/25 hover:bg-muted focus-visible:ring-offset-2",
-          selected && "border-foreground ring-1 ring-ring/20",
-        )}
+        variant={selectionMode ? "secondary" : "ghost"}
+        size="sm"
+        className="ml-auto"
+        onClick={() => onSelectionModeChange(!selectionMode)}
       >
-        {item.kind === "video" ? (
-          <video
-            src={item.url}
-            muted
-            playsInline
-            preload="metadata"
-            style={ratio ? { aspectRatio: ratio } : undefined}
-            className={cn("h-auto w-full object-cover", !ratio && "aspect-[4/5]")}
-          />
-        ) : (
-          // 商家素材走自家 `/files` 路由,尺寸由 Asset 行决定 —— 与 StuffLibrary、
-          // DetailPanel 同一种做法:裸 img/video,不过 next/image 的优化管线。
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={item.url}
-            alt=""
-            loading="lazy"
-            style={ratio ? { aspectRatio: ratio } : undefined}
-            className={cn(
-              "h-auto w-full object-cover transition-transform duration-[var(--dur-3)] ease-[var(--ease-out)] group-hover:scale-[1.015] motion-reduce:transition-none",
-              !ratio && "aspect-[4/5]",
-            )}
-          />
-        )}
-        {item.kind === "video" && duration ? (
-          <span className="absolute right-2 bottom-2 inline-flex items-center gap-1 rounded-md bg-foreground/80 px-1.5 py-1 text-xs font-medium text-background backdrop-blur-sm">
-            <Film className="size-3" aria-hidden />
-            {duration}
-          </span>
-        ) : null}
-        <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-foreground/60 to-transparent px-2.5 pt-8 pb-2 text-left text-xs font-medium text-background opacity-0 transition-opacity duration-[var(--dur-2)] group-hover:opacity-100 group-focus-visible:opacity-100">
-          {title}
-        </span>
+        {selectionMode ? "Done" : "Select"}
       </Button>
-    </div>
-  );
-}
-
-function GridSkeleton() {
-  return (
-    <div className="[column-count:5] [column-gap:0.5rem]" aria-hidden>
-      {Array.from({ length: 10 }, (_, index) => (
-        <Skeleton key={index} className="mb-2 aspect-[4/5] w-full rounded-lg" />
-      ))}
-    </div>
-  );
-}
-
-function MediaGrid({
-  items,
-  selectedId,
-  onOpen,
-  timeZone,
-}: {
-  items: readonly LibraryItem[];
-  selectedId?: string;
-  onOpen: (item: LibraryItem) => void;
-  /** 分组的日界按这个时区算 —— 与 `Date created` 筛选是同一个值。 */
-  timeZone: LibraryTimeZone;
-}) {
-  const groups = React.useMemo(
-    () => groupLibraryItems(items, new Date(), timeZone),
-    [items, timeZone],
-  );
-  return (
-    <div className="space-y-7">
-      {groups.map((group) => (
-        <section key={group.key} aria-labelledby={`library-${group.key}`}>
-          <div className="mb-3 flex items-center gap-2">
-            <h2 id={`library-${group.key}`} className="text-sm font-semibold">{group.label}</h2>
-            <span className="text-xs text-muted-foreground">{group.items.length}</span>
-          </div>
-          <div className="[column-count:5] [column-gap:0.5rem]">
-            {group.items.map((item) => (
-              <MediaTile
-                key={item.id}
-                item={item}
-                selected={item.id === selectedId}
-                onOpen={() => onOpen(item)}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
     </div>
   );
 }
@@ -633,6 +544,8 @@ export type LibraryViewProps = {
   elements: LibraryElement[];
   /** 深链进来的那一格(`?asset=` + `?project=`);详情面自己按 id 再验一次归属。 */
   initialAsset?: { generationId: string; projectId: string };
+  /** 深链进来的那个合集(`?collection=`);同样只是定位参数,服务端自己再验一次。 */
+  initialCollectionId?: string;
 };
 
 export function LibraryView({
@@ -642,6 +555,7 @@ export function LibraryView({
   projects,
   elements,
   initialAsset,
+  initialCollectionId,
 }: LibraryViewProps) {
   const router = useRouter();
   const [view, setView] = React.useState<LibraryViewName>(initialView);
@@ -662,6 +576,27 @@ export function LibraryView({
   const [detail, setDetail] = React.useState(initialAsset);
   const [elementList, setElementList] = React.useState<LibraryElement[]>(elements);
 
+  // ── 段②:收藏、合集与选择模式 ────────────────────────────────────────────────
+  // 收藏是**自己的读模型**(Founder 2026-09-03 裁决十:一次查询、按收藏时间排),
+  // 不是把生成历史再筛一遍 —— 所以它有自己的一份列表与游标,与上面那一组互不干扰。
+  // `null` = 还没取过第一页(骨架屏),`[]` = 取过了、真的一件都没有(空态)。
+  const [favorites, setFavorites] = React.useState<LibraryFavoriteItem[] | null>(null);
+  const [favoritesCursor, setFavoritesCursor] = React.useState<string | null>(null);
+  const [favoritesLoading, setFavoritesLoading] = React.useState(false);
+  const [favoritesError, setFavoritesError] = React.useState<string | null>(null);
+  const [favoritesToken, setFavoritesToken] = React.useState(0);
+  const [selectionMode, setSelectionMode] = React.useState(false);
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [collectionDialog, setCollectionDialog] = React.useState<
+    { subjects: LibrarySubjectRef[]; startOnCreate: boolean } | null
+  >(null);
+  const [collectionsToken, setCollectionsToken] = React.useState(0);
+  const [activeCollectionId, setActiveCollectionId] = React.useState<string | undefined>(
+    initialCollectionId,
+  );
+  const [organizeError, setOrganizeError] = React.useState<string | null>(null);
+  const [organizing, setOrganizing] = React.useState(false);
+
   // 日界只解析一次,分组与 `Date created` 筛选共用它 —— 两处各拿一个时区,就会出现
   // 「分组说 Today、筛选说今天没有」这种自相矛盾的屏幕。
   const timeZone = React.useSyncExternalStore(NEVER_CHANGES, VIEWER_TIME_ZONE, SERVER_TIME_ZONE);
@@ -671,6 +606,9 @@ export function LibraryView({
   const requestRef = React.useRef(0);
 
   const gridView = view === "history" || view === "uploads";
+  const favoritesView = view === "favorites";
+  /** 选择模式只在有批量动作可做的那几格出现(设计:history / uploads / favorites)。 */
+  const selectableView = gridView || favoritesView;
 
   const queryFor = React.useCallback(
     (nextView: LibraryViewName, nextFilters: Filters, nextCursor: string | null) => ({
@@ -762,6 +700,7 @@ export function LibraryView({
     view?: LibraryViewName;
     element?: LibraryElementKind;
     asset?: { generationId: string; projectId: string } | null;
+    collection?: string | null;
   }) => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
@@ -772,8 +711,13 @@ export function LibraryView({
       params.delete("asset");
       params.delete("project");
       if (next.view !== "elements") params.delete("element");
+      if (next.view !== "collections") params.delete("collection");
     }
     if (next.element !== undefined) params.set("element", next.element);
+    if (next.collection !== undefined) {
+      if (next.collection) params.set("collection", next.collection);
+      else params.delete("collection");
+    }
     if (next.asset !== undefined) {
       if (next.asset) {
         params.set("asset", next.asset.generationId);
@@ -795,6 +739,7 @@ export function LibraryView({
       const asset = params.get("asset");
       const project = params.get("project");
       setDetail(asset && project ? { generationId: asset, projectId: project } : undefined);
+      setActiveCollectionId(params.get("collection") ?? undefined);
     }
     window.addEventListener("popstate", syncFromRoute);
     return () => window.removeEventListener("popstate", syncFromRoute);
@@ -803,13 +748,114 @@ export function LibraryView({
   function changeView(nextView: LibraryViewName) {
     setView(nextView);
     setDetail(undefined);
+    // 换一格就退出选择模式:选中的那几件属于上一格的查询范围,带过去只会让计数
+    // 与实际操作对象对不上(backend-handoff-contract.md §8.3①)。
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    setOrganizeError(null);
+    setActiveCollectionId(undefined);
     writeRoute({ view: nextView });
   }
 
-  function openItem(item: LibraryItem) {
+  function openItem(item: { id: string; projectId: string }) {
     const next = { generationId: item.id, projectId: item.projectId };
     setDetail(next);
     writeRoute({ asset: next });
+  }
+
+  function openCollection(collectionId: string | null) {
+    setActiveCollectionId(collectionId ?? undefined);
+    writeRoute({ collection: collectionId });
+  }
+
+  /**
+   * 收藏页自己的一页 —— 与生成历史那一组各走各的游标。
+   *
+   * 第一句就是 `await`:这个函数下面那个 effect 会直接调它,而 effect 体里同步 setState
+   * 是 react-hooks/set-state-in-effect。「还没取到第一页」这件事不靠 loading 旗子表达,
+   * 靠 `favorites === null`(初值),所以这里不需要在发请求前先 setState。
+   */
+  const loadFavorites = React.useCallback(async (cursorValue: string | null) => {
+    const result = await listLibraryFavorites({ cursor: cursorValue, take: PAGE_SIZE });
+    setFavoritesLoading(false);
+    if ("error" in result) {
+      setFavoritesError(result.error);
+      if (!cursorValue) setFavorites([]);
+      return;
+    }
+    setFavoritesError(null);
+    setFavorites((current) => {
+      if (!cursorValue) return result.items;
+      const seen = new Set((current ?? []).map((item) => item.subjectId));
+      return [...(current ?? []), ...result.items.filter((item) => !seen.has(item.subjectId))];
+    });
+    setFavoritesCursor(result.nextCursor);
+  }, []);
+
+  React.useEffect(() => {
+    if (!favoritesView) return;
+    // 包一层 async IIFE 再 await:effect 体里直接 `void loadFavorites(null)`,
+    // react-hooks/set-state-in-effect 会顺着调用图看进那个 useCallback 的函数体,
+    // 把它里面的 setState 记在 effect 头上(即便它们全在 await 之后)。
+    // 与 `CollectionsView` 的取数是同一个写法。
+    void (async () => {
+      await loadFavorites(null);
+    })();
+  }, [favoritesView, favoritesToken, loadFavorites]);
+
+  /** Escape 退出选择模式(已批准设计 §5「Selection」)。 */
+  React.useEffect(() => {
+    if (!selectionMode) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSelectionMode(false);
+        setSelectedIds(new Set());
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectionMode]);
+
+  function updateSelection(id: string, checked: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  /** 选中的那几件 —— 类型化 ID,不是裸字符串(`lib/library-types.ts`)。 */
+  function selectedSubjects(): LibrarySubjectRef[] {
+    return [...selectedIds].map((subjectId) => ({ subjectType: "generation" as const, subjectId }));
+  }
+
+  /** 批量收藏。逐件写、逐件等服务端回话 —— 有一件没成就说清楚,不弹一句笼统的成功。 */
+  async function favoriteSelected() {
+    if (organizing || !selectedIds.size) return;
+    setOrganizing(true);
+    setOrganizeError(null);
+    const subjects = selectedSubjects();
+    const results = await Promise.all(
+      subjects.map((subject) => setLibraryFavorite(subject.subjectType, subject.subjectId, true)),
+    );
+    setOrganizing(false);
+    const failed = results.filter((result) => "error" in result).length;
+    if (failed) {
+      // 有一件没成就**把选择条留在屏幕上** —— 那行小字唯一的落点就在选择条里
+      // (下面 `{selectionMode && selectedIds.size ? …}` 那一块)。同一次渲染里
+      // 既写这条消息又退出选择模式,等于写完就把它连同容器一起卸掉:商家什么也看不到,
+      // 却以为 N 件全收进去了。所以只有全成功才退出。
+      setOrganizeError(
+        `${subjects.length - failed} of ${subjects.length} saved to Favorites. ${failed} couldn’t be saved.`,
+      );
+    } else {
+      setSelectionMode(false);
+      setSelectedIds(new Set());
+    }
+    setFavoritesToken((value) => value + 1);
+    // 网格里那一列 favorite 也变了,重取同一组条件的第一页。
+    if (gridView) void reload(view, filters);
   }
 
   function closeDetail() {
@@ -831,6 +877,12 @@ export function LibraryView({
                   Find, organize and reuse everything you create.
                 </p>
               </div>
+              {view === "collections" && !activeCollectionId ? (
+                <Button
+                  size="sm"
+                  onClick={() => setCollectionDialog({ subjects: [], startOnCreate: true })}
+                >New collection</Button>
+              ) : null}
             </div>
 
             <Tabs value={view} onValueChange={(value) => changeView(value as LibraryViewName)} className="mt-5 gap-0">
@@ -848,10 +900,19 @@ export function LibraryView({
             </Tabs>
           </header>
 
-          {gridView ? (
+          {selectableView ? (
             <LibraryToolbar
               filters={filters}
               projects={projects}
+              /* 收藏页是自己的读模型(裁决十:一次查询、按收藏时间排),它没有搜索与筛选
+                 的服务端契约 —— 按前端规则第①条,那几颗控件在这一格不渲染,只留 Select。 */
+              showFilters={gridView}
+              selectionMode={selectionMode}
+              onSelectionModeChange={(next) => {
+                setSelectionMode(next);
+                if (!next) setSelectedIds(new Set());
+                setOrganizeError(null);
+              }}
               onChange={(next) => setFilters((current) => ({ ...current, ...next }))}
               onClear={() => setFilters(DEFAULT_FILTERS)}
             />
@@ -893,6 +954,9 @@ export function LibraryView({
                     selectedId={detail?.generationId}
                     onOpen={openItem}
                     timeZone={timeZone}
+                    selectionMode={selectionMode}
+                    selectedIds={selectedIds}
+                    onSelect={(item, checked) => updateSelection(item.id, checked)}
                   />
                 ) : filtersActive ? (
                   <div className="flex min-h-72 flex-col items-center justify-center text-center">
@@ -943,6 +1007,109 @@ export function LibraryView({
                 ) : null}
               </>
             ) : null}
+
+            {favoritesView ? (
+              <>
+                {favoritesError ? (
+                  <div className="flex min-h-72 flex-col items-center justify-center text-center">
+                    <h2 className="text-sm font-semibold">We couldn&apos;t load your favorites</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">{favoritesError}</p>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="mt-4"
+                      onClick={() => setFavoritesToken((value) => value + 1)}
+                    >Try again</Button>
+                  </div>
+                ) : favorites === null ? (
+                  <GridSkeleton />
+                ) : favorites.length ? (
+                  <MediaGrid
+                    items={favorites}
+                    selectedId={detail?.generationId}
+                    onOpen={openItem}
+                    timeZone={timeZone}
+                    selectionMode={selectionMode}
+                    selectedIds={selectedIds}
+                    onSelect={(item, checked) => updateSelection(item.id, checked)}
+                  />
+                ) : (
+                  <div className="flex min-h-72 flex-col items-center justify-center text-center">
+                    <Heart className="size-6 text-muted-foreground" aria-hidden />
+                    <h2 className="mt-4 text-sm font-semibold">No favorites yet</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Open anything you make and save it. Favorites keep a link — the original stays
+                      where it is.
+                    </p>
+                  </div>
+                )}
+
+                {favoritesCursor && !favoritesError ? (
+                  <div className="flex justify-center pt-6">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={favoritesLoading}
+                      onClick={() => {
+                        // 旗子只在这条(事件触发的)路上点亮 —— 第一页由 effect 触发,
+                        // 它的「还在取」是 `favorites === null`。
+                        setFavoritesLoading(true);
+                        void loadFavorites(favoritesCursor);
+                      }}
+                    >{favoritesLoading ? "Loading…" : "Load older"}</Button>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+
+            {view === "collections" ? (
+              <CollectionsView
+                activeCollectionId={activeCollectionId}
+                onOpenCollection={openCollection}
+                onOpenItem={(item) => openItem({ id: item.generationId, projectId: item.projectId })}
+                refreshToken={collectionsToken}
+              />
+            ) : null}
+
+            {/* 选择条:设计里它悬在网格底部(`LibraryReference.tsx` 的 `SelectionBar`)。
+                设计的第三颗键 Download 今天没有批量下载的真实路径,按前端规则第①条不画。 */}
+            {selectionMode && selectedIds.size ? (
+              <div className="sticky bottom-4 z-20 mx-auto flex w-fit flex-col items-center gap-1">
+                <div className="flex items-center gap-2 rounded-[var(--radius-card)] border border-border bg-popover p-2 shadow-[var(--shadow-lg)]">
+                  <span className="px-2 text-sm font-semibold">{selectedIds.size} selected</span>
+                  <Button
+                    size="sm"
+                    disabled={organizing}
+                    onClick={() =>
+                      setCollectionDialog({ subjects: selectedSubjects(), startOnCreate: false })
+                    }
+                  >
+                    <FolderPlus aria-hidden />
+                    Add to collection
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={organizing}
+                    onClick={() => void favoriteSelected()}
+                  >
+                    <Heart aria-hidden />
+                    {organizing ? "Saving…" : "Favorite"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Exit selection"
+                    onClick={() => { setSelectionMode(false); setSelectedIds(new Set()); }}
+                  >
+                    <X aria-hidden />
+                  </Button>
+                </div>
+                {organizeError ? (
+                  <p className="text-xs text-destructive">{organizeError}</p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       </main>
@@ -958,7 +1125,25 @@ export function LibraryView({
             // 假状态)。`router.refresh()` 只会刷新服务端那一份首屏 props,它管不到这个
             // 客户端列表,所以两件都做:壳(余额等)走 refresh,列表走同一组条件的重取。
             router.refresh();
-            void reload(view, filters);
+            if (gridView) void reload(view, filters);
+            // 详情面里的 Save 走的就是收藏那一张表(lib/asset-actions.setFavorite 已经
+            // 收口到 lib/library-favorites.setLibraryFavorite),所以收藏页也要重取。
+            setFavoritesToken((value) => value + 1);
+            setCollectionsToken((value) => value + 1);
+          }}
+        />
+      ) : null}
+
+      {collectionDialog ? (
+        <CollectionDialogs
+          open
+          subjects={collectionDialog.subjects}
+          startOnCreate={collectionDialog.startOnCreate}
+          onOpenChange={(open) => { if (!open) setCollectionDialog(null); }}
+          onChanged={() => {
+            setCollectionsToken((value) => value + 1);
+            setSelectionMode(false);
+            setSelectedIds(new Set());
           }}
         />
       ) : null}
