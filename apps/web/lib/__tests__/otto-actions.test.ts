@@ -3990,12 +3990,18 @@ describe("contract matrix — fresh non-stream entry (ottoTurn)", () => {
     expect(args.paid).toBe(true);
     expect(args.maxSteps).toBe(10); // OTTO_MAX_STEPS
     expect(args.refId).toMatch(/^otto-turn:/);
-    // Truncation metering: a MaxTurnsExceededError carrying state.usage settles ACTUAL usage;
-    // any other error yields null (whole-reservation refund inside withLlmBudget).
+    // Truncation metering: a MaxTurnsExceededError carrying state.usage settles ACTUAL usage —
+    // ENGINE-A4(⑤段)起,只在这一轮**真的交付了东西**时才如此(这里:一张铸出来的卡)。
+    // 任何其他错误、以及零交付的截断轮,都交回 null ⇒ withLlmBudget 整笔退款。
+    // 卡是唯一能从 state 单独读出来的交付:落盘的写动作由工具当场记账,因为 SDK 对失败的写
+    // 也写 status:"completed"(判官 P1-A;判词那一半钉在 packages/otto/src/runtime.test.ts)。
     expect(typeof args.usageOnError).toBe("function");
     const truncated = new MockMaxTurnsExceededError();
     (truncated as unknown as { state: unknown }).state = {
       usage: { inputTokens: 7, outputTokens: 3, requestUsageEntries: [] },
+      _generatedItems: [
+        { type: "tool_approval_item", rawItem: { type: "function_call", callId: "c1", name: "generate", arguments: "{}", status: "completed" } },
+      ],
     };
     expect(args.usageOnError!(truncated)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
     expect(args.usageOnError!(new Error("other"))).toBeNull();
