@@ -423,6 +423,42 @@ export function MarketingHomeView({
     setCustomizing(false);
   }
 
+  /**
+   * 草稿与已存版面**真的不一样**了没有(2026-09-05 走查 P2③,验收 FRONT-A4)。
+   *
+   * 从前只要面板一开就打出「Previewing unsaved changes」—— 商家什么都还没动,界面已经在说
+   * 他有一份没存的改动。那句话是给「离开会丢东西」用的,把它挂在「面板开着」上,它就从一句
+   * 警告退化成一块装饰:真有未存改动的那一次,商家也不会再当回事。
+   *
+   * 版面就是一列有序的 id,所以比较也只是「长度相同 + 逐格相同」——顺序算差异(Home order
+   * 的上下箭头与拖拽改的正是它)。
+   */
+  const layoutChanged =
+    draft.length !== components.length || draft.some((id, index) => id !== components[index]);
+
+  /**
+   * Escape 退出 Customize(2026-09-05 走查 P2⑥,验收 FRONT-A4)。
+   *
+   * 面板从前只有两条出路:右上角的 ✕ 和底部的 Cancel。Escape 是每个人在一个「临时模式」里
+   * 第一个按的键,按下去什么都不发生,商家于是以为自己被困在这个模式里了。语义与 Cancel
+   * 逐字相同(草稿丢弃、回到已存版面),不是第三条出路。
+   *
+   * 存盘途中不接 —— 那一刻 Cancel 自己也是 disabled 的(`CustomizeHomePanel` 的 `saving`),
+   * 键盘不该比按钮多一条路。`defaultPrevented` 让位给已经处理掉这一下的东西(例如面板里
+   * 某个弹层自己要先关)。
+   */
+  useEffect(() => {
+    if (!customizing || saving) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      setDraft([...components]);
+      setCustomizing(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [customizing, saving, components]);
+
   function toggleComponent(id: HomeComponentId, checked: boolean) {
     setDraft((current) => (checked ? [...current, id] : current.filter((value) => value !== id)));
   }
@@ -479,7 +515,9 @@ export function MarketingHomeView({
             <h1 className="text-3xl font-semibold tracking-[-0.035em]">Home</h1>
             {canManageHome ? (
               customizing ? (
-                <span className="text-xs font-medium text-muted-foreground">Previewing unsaved changes</span>
+                layoutChanged ? (
+                  <span className="text-xs font-medium text-muted-foreground">Previewing unsaved changes</span>
+                ) : null
               ) : (
                 <Button type="button" variant="secondary" size="sm" onClick={startCustomizing}>
                   <Settings2 aria-hidden /> Customize home
