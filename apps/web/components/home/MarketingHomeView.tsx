@@ -383,6 +383,24 @@ export function MarketingHomeView({
     setRetryAttempted(true);
     startRetry(() => router.refresh());
   };
+  /**
+   * 读回来了就把这颗记号清掉(判官 2026-09-05 #1216 P2-2)。
+   *
+   * 它从前只置真、不复位,而这一层在一程里活得比一屏久:商家按 Retry 读回来了(partial/
+   * ready),接着换个 range 或 comparison 再读,这一次服务器又读不出来 —— 商家一根手指
+   * 都没碰 Retry,屏幕却先说「Still unavailable」。那一句的意思是「你刚按过的那一次仍然
+   * 没读出来」,不是「这一屏读不出来」;服务器给出数据的那一刻,上一次重试的故事就结束了。
+   *
+   * 复位写在渲染里而不是 effect 里(React 官方的「prop 变了就调整 state」那一条):effect
+   * 会多渲一拍,而且 `react-hooks/set-state-in-effect` 直接判红。这里只在 partial/ready 与
+   * 「读不出来」之间**真的翻面**的那一次改 state,同一屏重渲染零动作。
+   */
+  const healthRecovered = health.state === "partial" || health.state === "ready";
+  const [lastRecovered, setLastRecovered] = useState(healthRecovered);
+  if (healthRecovered !== lastRecovered) {
+    setLastRecovered(healthRecovered);
+    if (healthRecovered) setRetryAttempted(false);
+  }
 
   useEffect(() => {
     const targetId = window.location.hash.slice(1);

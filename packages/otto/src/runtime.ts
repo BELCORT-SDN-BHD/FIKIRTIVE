@@ -34,7 +34,7 @@ import type { LlmPrices } from "@fikirtive/core";
 import type { OttoContext } from "./context.js";
 import type { OttoSkill } from "./skill.js";
 import { allKnowledgePaths, assembleOttoInstructions, ottoInstructions } from "./instructions.js";
-import { withLlmBudget, type TokenUsage } from "./meter.js";
+import { withLlmBudget, type LlmBillingLeg, type TokenUsage } from "./meter.js";
 import { collectApprovalInterruptions, type ApprovalInterruption } from "./approval-tools.js";
 import { extractText } from "./run-output.js";
 
@@ -94,6 +94,12 @@ export type OttoModelRuntime = {
    *  不是 `foldRollingSummary` 里写死的一行。缺省(undefined)＝与主轮同一个绑定,所以夹具
    *  与 CLI 那几份 manifest 一个字都不用改。 */
   readonly summaryBinding?: ModelBinding;
+  /** ENGINE-A6 × Founder 2026-09-05 裁决④ —— 折叠腿**按哪个型号计价**。
+   *
+   *  它与 `summaryBinding` 是同一个决定的两面:绑定说折叠跑在哪,这个说那一段 token 按谁的价
+   *  结算。缺省(undefined)＝ `billableModelId`,于是折叠腿与主腿同价 —— 与本字段出现之前
+   *  逐字相同,夹具与 CLI 那几份 manifest 一个字都不用改。 */
+  readonly summaryBillableModelId?: string;
   readonly billableModelId: string | "fixture-no-charge";
   readonly resolvedModelPolicy: ResolvedModelPolicy;
   readonly mapUsage: UsageMapper;
@@ -592,7 +598,8 @@ function foldMaterial(port: OttoRollingSummaryPort): string {
  *
  * MONEY (spec §7.2④「不新开钱路、不新增幂等键，沿用本轮的 refId」): this runs INSIDE the turn's
  * own `withLlmBudget` body, so the hold was already taken on this turn's refId and the tokens it
- * burns are ADDED to the usage that turn settles. There is no second reserve, no second refId
+ * burns are settled as a SEPARATE billing leg on that same refId (see `foldBillingLeg` /
+ * meter.ts invariant #13) — priced at the fold's own model. There is no second reserve, no second refId
  * and no second idempotency key — a second `withLlmBudget` on the same refId would collide on
  * `reserve:<refId>`, no-op, and leave the real turn running against nothing. Because settle is
  * clamped to the hold (meter.ts invariant #2), the fold can only ever consume part of what was
@@ -640,16 +647,20 @@ async function foldRollingSummary(
   }
 }
 
-/** Add the fold's tokens to the turn's tokens. One settle, one refId — see foldRollingSummary. */
-function addTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
-  const cached = (a.cachedInputTokens ?? 0) + (b.cachedInputTokens ?? 0);
-  const cacheWrite = (a.cacheWriteInputTokens ?? 0) + (b.cacheWriteInputTokens ?? 0);
-  return {
-    inputTokens: (a.inputTokens || 0) + (b.inputTokens || 0),
-    outputTokens: (a.outputTokens || 0) + (b.outputTokens || 0),
-    cachedInputTokens: cached > 0 ? cached : undefined,
-    cacheWriteInputTokens: cacheWrite > 0 ? cacheWrite : undefined,
-  };
+/**
+ * 折叠那条腿的**计费明细**(Founder 2026-09-05 裁决④)。
+ *
+ * 从前折叠的 token 直接加进主轮的 usage(`addTokenUsage`),于是整包按 `billableModelId`
+ * (Sonnet)结算 —— 折叠换成 Haiku 之后那就是**跑便宜的按贵的收**。现在它带着自己的型号 id
+ * 与价目单独交给 meter:一次 settle、一个 refId、同一个毛利率,只是两条腿各按各的价。
+ *
+ * manifest 没声明折叠计价型号(夹具、CLI)时回落到 `billableModelId`,两条腿同价。此时与本改动
+ * 之前的差别只有取整:`actualCostInternal` 对用量是线性的,但它末尾 `Math.ceil` 一次 —— 分开算
+ * 就是两次,最多多 1 credit(方向是多收,不是少收)。
+ */
+function foldBillingLeg(mr: OttoModelRuntime, usage: TokenUsage): LlmBillingLeg {
+  const model = mr.summaryBillableModelId ?? mr.billableModelId;
+  return { model, prices: mr.pricing(model), usage };
 }
 
 /**
@@ -947,8 +958,8 @@ export async function runOttoTurn(
             ? await foldRollingSummary(runtime, execution, summaryPort)
             : null;
         if (folded) foldedSummary = folded.summary;
-        const withFold = (usage: TokenUsage): TokenUsage =>
-          folded ? addTokenUsage(usage, folded.usage) : usage;
+        // 裁决④:折叠腿单独记一条,按它自己的型号价结算(meter.ts 不变量 #13)。
+        const legs = folded ? [foldBillingLeg(mr, folded.usage)] : undefined;
         if (request.stream) {
           const r = await execution.runAgent(agent, request.input as never, {
             context,
@@ -960,14 +971,14 @@ export async function runOttoTurn(
           // known after the stream is drained).
           await r.completed;
           const result = r as unknown as OttoTurnRunResult;
-          return { result, usage: withFold(mr.mapUsage(result.state.usage)) };
+          return { result, usage: mr.mapUsage(result.state.usage), legs };
         }
         const r = await execution.runAgent(agent, request.input as never, {
           context,
           maxTurns: runtime.maxTurns,
         });
         const result = r as unknown as OttoTurnRunResult;
-        return { result, usage: withFold(mr.mapUsage(result.state.usage)) };
+        return { result, usage: mr.mapUsage(result.state.usage), legs };
       },
     );
     if (summaryPort && foldedSummary !== null) {

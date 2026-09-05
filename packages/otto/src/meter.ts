@@ -56,10 +56,17 @@
  *     reports the count back through the hook BEFORE fn runs. Invariants 1–3 and 9 are untouched:
  *     the count can only ever be smaller than the cap, and a caller that never hears it stays at
  *     0 (fail closed — reserve threw, so nothing may be spent).
+ * 13. (ENGINE-A6, Founder 2026-09-05 裁决④) `fn` 可以交回 `legs` —— 这一次调用里**跑在别的型号
+ *     上**的那几段 token(今天唯一用户 = 滚动摘要的折叠腿,跑 Haiku)。每条腿按**它自己的**型号
+ *     价折算,和主腿相加后一起结算:一次 reserve、一次 settle、一个 refId,幂等键一个字未动。
+ *     毛利加成(`margin`)照旧套在两腿之和上 —— 它是一次对话轮的定价,不是某个型号的属性。
+ *     不变量 1–3 不受影响:settle 仍被 `settleCredits` clamp 到 ≤ 持有额(所以加法不可能超收),
+ *     失败的一轮仍然整笔退款。腿的价钱只能比登记价**更贵**,不能更便宜(legPricesOf)。
  */
 import {
   CREDITS_PER_USD,
   llmPricesFor,
+  llmPricesOrNull,
   ottoLlmMargin,
   turnBudgetInternal,
   type LlmPrices,
@@ -153,6 +160,61 @@ export function actualCostInternal(
     output * prices.outputPerToken;
   const result = Math.ceil(usd * margin * CREDITS_PER_USD);
   return Number.isFinite(result) ? Math.max(0, result) : 0;
+}
+
+/**
+ * ENGINE-A6(Founder 2026-09-05 裁决④)—— 这一次调用里**另一个型号**烧掉的一段 token。
+ *
+ * 今天唯一的用户是滚动摘要的折叠腿:它跑 Haiku(`OTTO_SUMMARY_MODEL`),主轮跑 Sonnet。
+ * 从前折叠的 token 直接并进主腿的 usage,整包按 Sonnet 价结算 —— 那时折叠自己也跑 Sonnet,
+ * 所以那样算逐分正确,从未多收;但**折叠一旦换成更便宜的型号**,同一段代码就成了跑便宜的
+ * 按贵的收,对商家是多收。把它单独记成一条腿,本轮总额 = 主腿按主型号价 + 每条腿按各自型号价。
+ *
+ * `prices` 由**调用方的 manifest** 给(PH1-A1:manifest 是唯一计价源);meter 仍然拿登记表
+ * 当地板,见 `legPricesOf`。
+ */
+export type LlmBillingLeg = {
+  readonly model: string;
+  readonly prices: LlmPrices;
+  readonly usage: TokenUsage;
+};
+
+/**
+ * 一条腿的**结算价**:manifest 报的价与登记价**逐字段取大者**(与主腿同一条规则 ——
+ * manifest 只能报得更保守,不能更便宜)。登记表里查不到这个型号时,地板退回**主腿的价** ——
+ * 这只在腿比主腿便宜时才是保守方向。一条未登记且**更贵**的腿会被压到主腿价之下(少收),
+ * 但它今天到不了这里:唯一造腿处 `runtime.ts` 的 `foldBillingLeg` 用 `mr.pricing` = `llmPricesFor`,
+ * 未登记直接抛(抛在 `fn` 体内,走整笔退款分支,不留悬预扣);`assertOttoModelsPriced` 也在
+ * 模块加载期查过这两个折叠常量。换言之这一句是**今天的不变量**,不是一条普遍成立的性质。
+ *
+ * 为什么这里 clamp 而不像主腿那样抛:主腿那道校验跑在 reserve **之前**,抛出去等于「什么都
+ * 没发生」;这里跑在 `fn` 之后、settle 之前,一个抛错会把预扣**挂在那里** —— 既不结算也不
+ * 退款。宁可多收几分钱,也不留一笔悬着的预扣。
+ */
+function legPricesOf(leg: LlmBillingLeg, fallback: LlmPrices): LlmPrices {
+  const floor = llmPricesOrNull(leg.model) ?? fallback;
+  const pick = (k: keyof LlmPrices): number => {
+    const v = leg.prices?.[k];
+    return typeof v === "number" && Number.isFinite(v) && v > floor[k] ? v : floor[k];
+  };
+  return {
+    inputPerToken: pick("inputPerToken"),
+    outputPerToken: pick("outputPerToken"),
+    cachedInputPerToken: pick("cachedInputPerToken"),
+    cacheWriteInputPerToken: pick("cacheWriteInputPerToken"),
+  };
+}
+
+/** 全部附加腿按**各自型号价**折算出来的 internal credits(没有腿 = 0,与本改动之前逐字相同)。 */
+function legsCostInternal(
+  legs: readonly LlmBillingLeg[] | undefined,
+  fallback: LlmPrices,
+  margin: number,
+): number {
+  if (!legs || legs.length === 0) return 0;
+  let total = 0;
+  for (const leg of legs) total += actualCostInternal(leg.usage, legPricesOf(leg, fallback), margin);
+  return total;
 }
 
 export type LlmBudgetArgs = {
@@ -446,14 +508,14 @@ function extraSettleOf(args: LlmBudgetArgs): number {
  * Wrap a paid LLM call with the reserve→settle credit accounting.
  *
  * @param args.paid  - false = mock/free path: fn runs without ANY reserve/settle.
- * @param args.model - used for price lookup (unknown → sonnet, never free).
+ * @param args.model - used for price lookup (ENGINE-A5: unpriced → THROWS, never guessed, never free).
  * @param args.prices - optional manifest-sourced price table (see field doc above).
  * @param args.maxSteps - 1 for single calls (enhance/draft); OTTO_MAX_STEPS for Otto turns.
- * @param fn         - async function that calls the LLM and returns { result, usage? }.
+ * @param fn         - async function that calls the LLM and returns { result, usage?, legs? }.
  */
 export async function withLlmBudget<T>(
   args: LlmBudgetArgs,
-  fn: () => Promise<{ result: T; usage?: TokenUsage }>,
+  fn: () => Promise<{ result: T; usage?: TokenUsage; legs?: readonly LlmBillingLeg[] }>,
 ): Promise<T> {
   // Invariant #4: mock/free path — no metering at all.
   if (!args.paid) {
@@ -581,7 +643,7 @@ export async function withLlmBudget<T>(
   }
 
   // Invariant #3: refund the whole reservation if fn throws (unless usageOnError yields actual usage).
-  let out: { result: T; usage?: TokenUsage };
+  let out: { result: T; usage?: TokenUsage; legs?: readonly LlmBillingLeg[] };
   try {
     out = await fn();
   } catch (e) {
@@ -608,11 +670,14 @@ export async function withLlmBudget<T>(
   }
 
   // Invariant #2: settle actual cost (≤ reserved); settleCredits refunds the remainder.
+  // 不变量 #13(ENGINE-A6):跑在别的型号上的那几段 token 按**各自型号价**折算,与主腿相加。
+  // 没有腿时它是 0,两条分支都与本改动之前逐字相同。
+  const legsInternal = legsCostInternal(out.legs, prices, margin);
   let actualInternal: number;
   if (out.usage) {
     // 钱路 M1-c:token 那一笔 + 非 LLM 那一笔(现役 = 搜索 3×)。settleCredits 仍然 clamp
     // 到 ≤ 持有额,所以加法不可能变成超收;而 hold 侧已经把 worst case 一起持住了。
-    actualInternal = actualCostInternal(out.usage, prices, margin) + extraSettleOf(args);
+    actualInternal = actualCostInternal(out.usage, prices, margin) + legsInternal + extraSettleOf(args);
   } else {
     // No usage info → LLM 腿按**预扣满额**收(#5 的既有保守行为:token 用量不可知,就按最坏收,
     // 不退)。但搜索腿不跟着走这条保守路 —— 七维审核 P2:`reserve` 里含着这一轮**持住**的搜索
@@ -636,7 +701,7 @@ export async function withLlmBudget<T>(
     // 所以收之前先按这条腿自己的上限封顶。`llmLegInternal` 就是那个上限(worst case 与 #543
     // 的 cap 取小),两条既有路径上它不改变任何数:全额固定预留 llmHeld 恰好等于它,
     // 余额自适应路径上 llmHeld 只会更小。
-    actualInternal = Math.min(llmHeldInternal, llmLegInternal(args)) + extraSettleOf(args);
+    actualInternal = Math.min(llmHeldInternal, llmLegInternal(args)) + legsInternal + extraSettleOf(args);
   }
 
   // 钱路 M1-b —— 结算与交付同一笔提交(见 `commitInSettleTx` 的字段说明)。

@@ -259,12 +259,15 @@ describe("#699 nothing in apps/ or packages/ calls them beta credits", () => {
 // ---------------------------------------------------------------------------
 // ④ one sentence, one dash
 // ---------------------------------------------------------------------------
+/**
+ * #1224 判官 P2-3:这条围栏原来盯着**三个**抄写点(`lib/otto-stream-errors.ts`、
+ * 路由的 onError 兜底、`OttoChatStream` 的传输级替身),因为同一句话在三处曾经两种破折号。
+ * 三份现在收成一份(`lib/otto-stream-bridge.ts` 的 `OTTO_TRANSIENT_FAILURE_SENTENCE`),
+ * 所以这里跟着盯那一份 —— 「不许再长出第二份」由
+ * `otto-provider-failure-copy.test.ts` 的单源围栏负责,两条各管一件事。
+ */
 describe("#699 the Otto snag sentence is punctuated the same way everywhere", () => {
-  const SNAG_SITES = [
-    "lib/otto-stream-errors.ts",
-    "app/api/otto/stream/route.ts",
-    "components/otto/OttoChatStream.tsx",
-  ];
+  const SNAG_SITES = ["lib/otto-stream-bridge.ts"];
 
   it.each(SNAG_SITES)("%s uses the em dash", (relative) => {
     const source = readFileSync(path.join(WEB_ROOT, relative), "utf8");

@@ -30,6 +30,24 @@ describe("ENGINE-A5 llmPricesFor — 未定价的型号一律抛错(fail closed,
     expect(llmPricesFor("claude-sonnet-4-5")).toEqual({ inputPerToken: 3e-6, outputPerToken: 15e-6, cachedInputPerToken: 0.3e-6, cacheWriteInputPerToken: 3.75e-6 });
   });
 
+  it("ENGINE-A6:折叠摘要的 Haiku 档四个单价逐字等于官方定价页(Founder 2026-09-05 裁决④)", () => {
+    // 官方定价(每百万 token 美元,2026-09-05 两名取证员独立抓取且一致):
+    //   Base input 1 / Output 5 / Cache hits and refreshes 0.10 / 5m cache writes 1.25。
+    // 来源 https://platform.claude.com/docs/en/about-claude/pricing;型号 id 来源
+    // https://platform.claude.com/docs/en/models/overview(`claude-haiku-4-5-20251001`)。
+    // 变异:把这四个数里任何一个改掉(例如 input 写成 3e-6)——这一行当场红。
+    // 断言用「每百万美元」的原始口径(perToken × 1e6),照着定价页逐个对,不必在源码里换算。
+    const p = llmPricesFor("claude-haiku-4-5-20251001");
+    expect(p.inputPerToken * 1e6).toBeCloseTo(1, 12);
+    expect(p.outputPerToken * 1e6).toBeCloseTo(5, 12);
+    expect(p.cachedInputPerToken * 1e6).toBeCloseTo(0.1, 12);
+    expect(p.cacheWriteInputPerToken * 1e6).toBeCloseTo(1.25, 12);
+    // 它必须比主力 Sonnet 便宜 —— 换 Haiku 的**全部理由**就是这一条。
+    const sonnet = llmPricesFor("claude-sonnet-4-6");
+    expect(p.inputPerToken).toBeLessThan(sonnet.inputPerToken);
+    expect(p.outputPerToken).toBeLessThan(sonnet.outputPerToken);
+  });
+
   it("ENGINE-A5:未知型号必抛,判词带型号名与两条出路", () => {
     expect(() => llmPricesFor("totally-unknown-model-xyz")).toThrow(/totally-unknown-model-xyz/);
     expect(() => llmPricesFor("totally-unknown-model-xyz")).toThrow(/价目表/);

@@ -49,9 +49,9 @@ vi.mock("@fikirtive/db", async (importOriginal) => ({
 
 import { Usage } from "@openai/agents";
 import type { AgentInputItem, Model, ModelRequest, ModelResponse, StreamEvent } from "@openai/agents";
-import { llmPricesFor, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "@fikirtive/core";
+import { llmPricesFor, OTTO_CONVERSATION_TURN_MARGIN, OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, type LlmPrices } from "@fikirtive/core";
 import { createOttoRuntime, runOttoTurn, type OttoModelRuntime, type OttoRollingSummaryPort } from "./runtime.js";
-import { mapOttoUsage } from "./meter.js";
+import { actualCostInternal, mapOttoUsage } from "./meter.js";
 import {
   sanitizeHistory,
   trimHistoryToBudget,
@@ -390,6 +390,205 @@ describe("ENGINE-A6 — 长对话：旧轮被摘要收拢，新一轮成本不�
 
     expect(withFold).toBeGreaterThan(withoutFold);
   }, 60_000);
+
+  /**
+   * Founder 2026-09-05 裁决④ —— 「折叠摘要换 Haiku,按 Haiku 实价计入商家账单」。
+   *
+   * 这一族用**账本上真的那一个数**判:主腿按 Sonnet 价、折叠腿按 Haiku 价,本轮实结逐分等于
+   * 两腿之和。用量是常数(夹具直接给),所以期望值是当场算得出来的一个整数,不是「大于/小于」。
+   */
+  describe("裁决④ — 折叠腿按 Haiku 实价单独计价", () => {
+    const HAIKU = "claude-haiku-4-5-20251001";
+    const SONNET = "claude-sonnet-4-6";
+    const MAIN_USAGE = { inputTokens: 30_000, outputTokens: 2_000 };
+    const FOLD_USAGE = { inputTokens: 24_000, outputTokens: 400 };
+
+    /** 折叠那一次调用与主轮那一次各给一份**固定且不同**的用量,于是两腿各自的钱是可算的。 */
+    function fixedUsageModel(): Model {
+      const reply = (text: string, u: { inputTokens: number; outputTokens: number }): ModelResponse => ({
+        usage: new Usage({ ...u, totalTokens: u.inputTokens + u.outputTokens }),
+        output: [
+          {
+            type: "message" as const,
+            role: "assistant" as const,
+            status: "completed" as const,
+            content: [{ type: "output_text" as const, text }],
+          },
+        ],
+      });
+      const isFold = (request: ModelRequest): boolean =>
+        String(request.systemInstructions ?? "").startsWith("You compress");
+      return {
+        async getResponse(request: ModelRequest): Promise<ModelResponse> {
+          return isFold(request) ? reply("folded notes", FOLD_USAGE) : reply("answer", MAIN_USAGE);
+        },
+        async *getStreamedResponse(): AsyncIterable<StreamEvent> {
+          yield { type: "response_done", response: { id: "x", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, output: [] } } as StreamEvent;
+        },
+      };
+    }
+
+    /** 生产 manifest 的形状:`pricing` 照**型号 id**查价,折叠腿声明自己的计价型号。 */
+    function haikuFoldRuntime(summaryBillableModelId: string | undefined) {
+      const binding = fixedUsageModel();
+      return createOttoRuntime(
+        {
+          modelRuntime: Object.freeze({
+            binding,
+            summaryBinding: binding,
+            summaryBillableModelId,
+            billableModelId: SONNET,
+            resolvedModelPolicy: Object.freeze({ primaryModelId: SONNET, fallbackModelId: null, failover: "none" as const }),
+            mapUsage: mapOttoUsage,
+            cacheCapabilities: Object.freeze({ promptCache: false }),
+            pricing: (id: string) => llmPricesFor(id),
+          }) satisfies OttoModelRuntime,
+          skills: [],
+        },
+        "interactive",
+      );
+    }
+
+    const foldingTurn = (refId: string) => {
+      const history = Array.from({ length: 12 }, (_, i) =>
+        ({ role: i % 2 ? "assistant" : "user", content: `t${i} ${"h".repeat(6_000)}` }) as unknown as AgentInputItem,
+      );
+      const { kept, dropped } = trimHistoryToBudget(sanitizeHistory(history));
+      return {
+        orgId: "org_a6",
+        refId,
+        input: [...kept, { role: "user", content: "next" } as unknown as AgentInputItem],
+        rollingSummary: { dropped, priorSummary: null, save: () => {} },
+      };
+    };
+
+    const settledOnce = (): number => {
+      expect(mocks.settleCredits).toHaveBeenCalledTimes(1);
+      return mocks.settleCredits.mock.calls[0]![1].actualInternal as number;
+    };
+
+    it("ENGINE-A6: 带折叠的一轮 = 主腿按 Sonnet 价 + 折叠腿按 Haiku 价（变异：折叠腿按 Sonnet 价必红）", async () => {
+      const runtime = haikuFoldRuntime(HAIKU);
+      mocks.settleCredits.mockClear();
+      await runOttoTurn(foldingTurn("otto-turn:haiku_fold"), baseCtx, runtime);
+      const settled = settledOnce();
+
+      const margin = OTTO_CONVERSATION_TURN_MARGIN;
+      const mainLeg = actualCostInternal(MAIN_USAGE, llmPricesFor(SONNET), margin);
+      const foldLegHaiku = actualCostInternal(FOLD_USAGE, llmPricesFor(HAIKU), margin);
+      expect(settled).toBe(mainLeg + foldLegHaiku);
+
+      // 变异守卫:把折叠腿按 Sonnet 价收(裁决④之前的行为)是一个**不同的数**,所以上面那一行
+      // 不可能对两种实现都绿。
+      const foldLegSonnet = actualCostInternal(FOLD_USAGE, llmPricesFor(SONNET), margin);
+      expect(foldLegSonnet).toBeGreaterThan(foldLegHaiku);
+      expect(settled).not.toBe(mainLeg + foldLegSonnet);
+    }, 60_000);
+
+    it("ENGINE-A6: 没有折叠的一轮实结不变 —— 只有主腿那一份（回归）", async () => {
+      const runtime = haikuFoldRuntime(HAIKU);
+      mocks.settleCredits.mockClear();
+      await runOttoTurn(
+        {
+          orgId: "org_a6",
+          refId: "otto-turn:haiku_no_fold",
+          input: [{ role: "user", content: "next" } as unknown as AgentInputItem],
+        },
+        baseCtx,
+        runtime,
+      );
+      expect(settledOnce()).toBe(
+        actualCostInternal(MAIN_USAGE, llmPricesFor(SONNET), OTTO_CONVERSATION_TURN_MARGIN),
+      );
+    }, 60_000);
+
+    it("ENGINE-A6: manifest 不声明折叠计价型号时,折叠腿回落到主型号价（夹具与 CLI 不受影响）", async () => {
+      const runtime = haikuFoldRuntime(undefined);
+      mocks.settleCredits.mockClear();
+      await runOttoTurn(foldingTurn("otto-turn:haiku_fallback"), baseCtx, runtime);
+      const margin = OTTO_CONVERSATION_TURN_MARGIN;
+      expect(settledOnce()).toBe(
+        actualCostInternal(MAIN_USAGE, llmPricesFor(SONNET), margin) +
+          actualCostInternal(FOLD_USAGE, llmPricesFor(SONNET), margin),
+      );
+    }, 60_000);
+
+    /**
+     * 判官 P2-1 —— `legPricesOf` 的**登记价地板**从前零测试。
+     *
+     * manifest 是唯一计价源(PH1-A1),但一份把折叠型号报得**比登记价便宜**的 manifest 不能少收:
+     * `meter.ts` 的 `legPricesOf` 逐字段取大者,所以折叠腿仍按登记表那份 Haiku 价结算。
+     * 变异实证:把 `legPricesOf` 首行改成 `return leg.prices;`,这条当场红。
+     */
+    it("ENGINE-A6: manifest 把折叠型号报得比登记价便宜时,折叠腿仍按登记价结算（地板守卫）", async () => {
+      const cheap = (id: string): LlmPrices => {
+        const registry = llmPricesFor(id);
+        if (id !== HAIKU) return registry;
+        return {
+          inputPerToken: registry.inputPerToken / 4,
+          outputPerToken: registry.outputPerToken / 4,
+          cachedInputPerToken: registry.cachedInputPerToken / 4,
+          cacheWriteInputPerToken: registry.cacheWriteInputPerToken / 4,
+        };
+      };
+      const binding = fixedUsageModel();
+      const runtime = createOttoRuntime(
+        {
+          modelRuntime: Object.freeze({
+            binding,
+            summaryBinding: binding,
+            summaryBillableModelId: HAIKU,
+            billableModelId: SONNET,
+            resolvedModelPolicy: Object.freeze({ primaryModelId: SONNET, fallbackModelId: null, failover: "none" as const }),
+            mapUsage: mapOttoUsage,
+            cacheCapabilities: Object.freeze({ promptCache: false }),
+            pricing: cheap,
+          }) satisfies OttoModelRuntime,
+          skills: [],
+        },
+        "interactive",
+      );
+
+      mocks.settleCredits.mockClear();
+      await runOttoTurn(foldingTurn("otto-turn:haiku_floor"), baseCtx, runtime);
+      const settled = settledOnce();
+
+      const margin = OTTO_CONVERSATION_TURN_MARGIN;
+      const mainLeg = actualCostInternal(MAIN_USAGE, llmPricesFor(SONNET), margin);
+      const foldAtRegistry = actualCostInternal(FOLD_USAGE, llmPricesFor(HAIKU), margin);
+      const foldAtManifest = actualCostInternal(FOLD_USAGE, cheap(HAIKU), margin);
+
+      // 两个数确实不同 —— 否则下面那一行对两种实现都绿,等于没测。
+      expect(foldAtManifest).toBeLessThan(foldAtRegistry);
+      expect(settled).toBe(mainLeg + foldAtRegistry);
+      expect(settled).not.toBe(mainLeg + foldAtManifest);
+    }, 60_000);
+
+    it("ENGINE-A6: 折叠腿不新开钱路 —— 同一轮重放,两次都只用同一个幂等键,金额逐分相同", async () => {
+      const runtime = haikuFoldRuntime(HAIKU);
+      const refId = "otto-turn:haiku_replay";
+
+      mocks.reserveCreditsUpTo.mockClear();
+      mocks.settleCredits.mockClear();
+      await runOttoTurn(foldingTurn(refId), baseCtx, runtime);
+      const first = settledOnce();
+      expect(mocks.reserveCreditsUpTo).toHaveBeenCalledTimes(1);
+      expect(mocks.reserveCreditsUpTo.mock.calls[0]![1].refId).toBe(refId);
+      expect(mocks.settleCredits.mock.calls[0]![1].refId).toBe(refId);
+
+      mocks.reserveCreditsUpTo.mockClear();
+      mocks.settleCredits.mockClear();
+      await runOttoTurn(foldingTurn(refId), baseCtx, runtime);
+      // 重放走的是**同一个** refId:账本侧 `reserve:<refId>` 的唯一约束把第二次变成空操作
+      // (那一层的证明在 @fikirtive/db 自己的测试里;这里 prisma 是 mock,能证的是「键没变」)。
+      // 折叠腿没有把这一点改掉 —— 它既没有第二次 reserve,也没有第二个 refId。
+      expect(mocks.reserveCreditsUpTo).toHaveBeenCalledTimes(1);
+      expect(mocks.reserveCreditsUpTo.mock.calls[0]![1].refId).toBe(refId);
+      expect(mocks.reserveCredits).not.toHaveBeenCalled();
+      expect(settledOnce()).toBe(first);
+      expect(mocks.settleCredits.mock.calls[0]![1].refId).toBe(refId);
+    }, 60_000);
+  });
 
   it("ENGINE-A6: 摘要调用抛错不拖垮商家这一轮（历史照裁、摘要不变、turn 照常返回）", async () => {
     const exploding: Model = {
