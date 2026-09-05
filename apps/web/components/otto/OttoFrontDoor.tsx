@@ -26,7 +26,7 @@ import { ConversationCostHint } from "@/components/otto/ConversationCostHint";
 import { SearchCostHint } from "@/components/otto/SearchCostHint";
 import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePickerMenu";
 import { useReferencePicker } from "@/components/reference-picker/useReferencePicker";
-import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
+import type { ChatThreadDTO } from "@/lib/types";
 import { ottoGreeting } from "@/lib/otto-greeting";
 import { CHAT_HOLD_NOTE, CHAT_SPEND_NOTE, lowBalanceForVideoMessage } from "@/lib/credit-format";
 import { ExitLink } from "@/components/exits/Exits";
@@ -81,9 +81,6 @@ export interface OttoFrontDoorProps {
   /** Org spendable balance in USD — the same value the cards' afford gate reads.
    *  Drives the #791-7 early low-balance line below the composer. */
   balanceUsd?: number;
-  /** @deprecated Not read any more: the `@` picker searches the server (spec §7.3③). Kept so
-   *  the callers that still pass it are unchanged by this slice; removing it is a caller cleanup. */
-  entities?: EntityDTO[];
   userName: string;
   onThreadStarted: (thread: ChatThreadDTO) => void;
   /** Streaming path: an empty thread was created; hand its first message up so
@@ -367,6 +364,15 @@ export function OttoFrontDoor({
 
         {/* Composer */}
         <div className="w-full">
+          {/* ENGINE-A3 §7.4/§7.6 处置一 —— 披露先于扣费,画布那一支之外也一样。这道门厅的
+              四颗目标格子按一下就把那句话送出去、开一条真对话,而一轮对话本身按用量计费;
+              把价目留给画布那一支就等于「按得到的地方读不到,读得到的地方按不着」。挂的是
+              画布那一支的**同一个**组件(`ConversationCostHint`),不是第二份价目 —— 数值只有
+              一处作者(`lib/credit-format.ts` 从 `OTTO_CONVERSATION_TURN_RESERVE_INTERNAL` 现算)。
+              搜索那一条(`SearchCostHint`)不在本刀范围内,画布那一支已挂,这里登记待下一刀。 */}
+          <div className="mb-2 flex flex-col gap-0.5">
+            <ConversationCostHint />
+          </div>
           {composer}
         </div>
 
