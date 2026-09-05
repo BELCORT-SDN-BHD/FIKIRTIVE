@@ -112,9 +112,12 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   // no recorded reason has always said. Never a crash, never an invented reason.
   const failureReason = isGenFailureReason(d.failureReason) ? d.failureReason : "unexplained";
   const actionable = imageNodeActionable(d);
-  // Only a card a board read has answered for wears a letter. What a press ASKED for is not
-  // what it settled, so a card that is still queueing says nothing about its batch (#605 r1 P1-1).
-  const letter = canvasBatchLetter(canvasRecordedFacts(d));
+  // Only a card a board read has answered for wears a letter — or a version. What a press ASKED
+  // for is not what it settled, so a card that is still queueing says nothing about its batch
+  // (#605 r1 P1-1). Read once and shared by both, so the badge and the strip can never disagree
+  // about which press this card belongs to.
+  const recorded = canvasRecordedFacts(d);
+  const letter = canvasBatchLetter(recorded);
   const canVariant = actionable && !!d.onVariant && !!originalPrompt;
   const canSendToOtto = actionable && !!d.onSendToOtto;
   return (
@@ -286,7 +289,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
         />
       )}
       </div>
-      <CanvasNodeFooter name={originalPrompt} />
+      <CanvasNodeFooter name={originalPrompt} facts={recorded} />
       {/* Lineage endpoints: an image can now be BOTH the parent of a video/new image and the
           child of the image it was evolved from, so it needs both ends of the line (#547 B4). */}
       <Handle type="target" position={Position.Left} />

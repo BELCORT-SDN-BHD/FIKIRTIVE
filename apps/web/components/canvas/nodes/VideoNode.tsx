@@ -73,9 +73,12 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     remakeCostHint?: string;
   };
   const gb = d.skin === "gb";
-  // Only a card a board read has answered for wears a letter. What a press ASKED for is not
-  // what it settled, so a card that is still queueing says nothing about its batch (#605 r1 P1-1).
-  const letter = canvasBatchLetter(canvasRecordedFacts(d));
+  // Only a card a board read has answered for wears a letter — or a version. What a press ASKED
+  // for is not what it settled, so a card that is still queueing says nothing about its batch
+  // (#605 r1 P1-1). Read once and shared by both, so the badge and the strip can never disagree
+  // about which press this card belongs to.
+  const recorded = canvasRecordedFacts(d);
+  const letter = canvasBatchLetter(recorded);
   const terminal = isTerminalCardStatus(d.status);
   // WHY this card rested, narrowed back into the algebra (#827) — same rule as the image card:
   // React Flow's `data` is untyped, so an unrecognised word rests on `unexplained` rather than
@@ -285,7 +288,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
         />
       )}
       </div>
-      <CanvasNodeFooter name={originalPrompt} />
+      <CanvasNodeFooter name={originalPrompt} facts={recorded} />
       {/* Left end receives the line from the image this video was made from (#547 B4). */}
       <Handle type="target" position={Position.Left} />
       <Handle type="source" position={Position.Right} />
