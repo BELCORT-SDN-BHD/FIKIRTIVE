@@ -211,7 +211,21 @@ export function LoginForm({
           <FieldGroup className="gap-5">
             {error ? (
               <Alert role="alert" variant="destructive">
-                <AlertTitle>Email could not be continued</AlertTitle>
+                {/* FRONT-A14 —— 邮箱步的错误标题按已批准的 Auth pattern 分成两种。
+
+                    夹具(design-system/patterns/auth/AuthAccessJourneyReference.tsx:136)在这一步
+                    只有一个错误态:商家还没给出可用的邮箱就按「Use password instead」,标题写
+                    「Email needed」。生产走的是同一条路 —— 那颗按钮是 type="button",浏览器的
+                    原生 required 不拦它,所以这一态在生产**可达**,标题必须与夹具逐字一致。
+
+                    另一种是服务端故障(reason "unknown",signin-code-contract.ts 两种 reason 之一),
+                    夹具没有这一态。按 Founder 裁决②,生产必需而设计没有的错误态沿用设计的样式呈现,
+                    标题保留主干原句 —— 那时邮箱本身是好的,写「Email needed」会指错地方。 */}
+                <AlertTitle>
+                  {error.source === "sign_in_code" && error.reason === "invalid_email"
+                    ? "Email needed"
+                    : "Email could not be continued"}
+                </AlertTitle>
                 <AlertDescription>{error.message}</AlertDescription>
               </Alert>
             ) : null}
@@ -362,7 +376,12 @@ export function LoginForm({
           <FieldGroup className="gap-5">
             {error ? (
               <Alert role="alert" variant="destructive">
-                <AlertTitle>Sign-in failed</AlertTitle>
+                {/* FRONT-A14:已批准的 Auth pattern 在密码这一步写的是「Password not accepted」
+                    (design-system/patterns/auth/AuthAccessJourneyReference.tsx 的 password 步)。
+                    主干这里写的是「Sign-in failed」—— 同一句在 hub 上是对的(社交登录失败与
+                    密码无关),在密码步上它比设计稿模糊。只改这一步的标题,不动下面那句
+                    「Wrong email or password.」:中性、不泄露邮箱是否存在,是 FRONT-A2 要的口径。 */}
+                <AlertTitle>Password not accepted</AlertTitle>
                 <AlertDescription>{error.message}</AlertDescription>
               </Alert>
             ) : null}

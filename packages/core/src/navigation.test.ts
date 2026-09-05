@@ -13,6 +13,7 @@ import {
   CREATE_NAV_LABEL,
   MERCHANT_NAV,
   MERCHANT_NAV_REDIRECTS,
+  NAVIGATION_OWNED_SURFACES,
   NAV_PATH_SEPARATOR,
   NAV_LABEL_ALLOWED_CHARS,
   NAV_PATH_SEPARATOR_FAMILY,
@@ -296,6 +297,17 @@ describe("路名(#802:Otto 说出口的地名只有这一个来源)", () => {
       expect(
         NAV_LABEL_ALLOWED_CHARS.test(group.label),
         `${group.key} 的分组名有白名单外的字符:${group.label}`,
+      ).toBe(true);
+    }
+    // 判官 [P2-2]:`breadcrumbLabel` 也是商家可见的标签,而且它就长在面包屑上 ——
+    // 顶栏写的是 `${navLabel(ownerKey)} / ${breadcrumbLabel}`,那一格分隔线由壳自己拼,
+    // 标签**自己**再带一个分隔符就等于凭空多出一层(`"Analysis › Secrets"` 会写成
+    // 「Home / Analysis › Secrets」)。它和 label、分组名同属一份权威,就受同一条白名单。
+    for (const surface of NAVIGATION_OWNED_SURFACES) {
+      if (!surface.breadcrumbLabel) continue;
+      expect(
+        NAV_LABEL_ALLOWED_CHARS.test(surface.breadcrumbLabel),
+        `${surface.key} 的面包屑标签有白名单外的字符:${surface.breadcrumbLabel}`,
       ).toBe(true);
     }
   });
