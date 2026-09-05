@@ -2,7 +2,12 @@
 
 import type React from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { ENTITY_REFERENCE_TYPES, type ReferenceRef, type ReferenceType } from "@fikirtive/core/reference-ref";
+import {
+  ENTITY_REFERENCE_TYPES,
+  formatReferenceRef,
+  type ReferenceRef,
+  type ReferenceType,
+} from "@fikirtive/core/reference-ref";
 
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import { searchReferencesAction } from "@/lib/reference-search-actions";
@@ -22,23 +27,51 @@ import type { ReferencePickerRow } from "./ReferencePickerMenu";
  * tracking — and each filtered an in-memory `EntityDTO[]` prop. Spec
  * `docs/specs/frontend-baseline.md` §7.3③ replaces both with this hook over the one server search.
  *
- * WHICH TYPES A COMPOSER MAY OFFER, and why it is not all seven. Generations and uploads are
- * searchable server-side and appear in Library, but a chat turn has no column to carry a media
- * reference yet (§7.3③ slice ③ adds it), so a media row here would insert a token that silently
- * reaches no model — worse than an absent row, because the merchant would believe it landed.
- * Clothes has no production record at all. Both are registered, not faked (Founder ruling 9:
- * a control with no backend contract is not rendered).
+ * WHICH TYPES A COMPOSER MAY OFFER, and why it is five category entries rather than the contract's
+ * six. Generations and uploads are here NOW: slice ③ gave the message a typed reference column
+ * (`ChatMessage.referenceRefs`), so a media row inserts a reference the server stores, owner-checks
+ * and links back to — which is precisely what was missing when this hook first shipped without
+ * them. They arrive behind ONE `Media` entry rather than two, because that is what the frozen
+ * contract says in as many words (§2: "`Media` 继续覆盖具体的 `Uploads` 与 `Generations`,不创建
+ * 第三份媒体对象"), and it is what the approved fixture draws
+ * (`design-system/patterns/reference-picker/ReferencePickerReference.tsx`, one row,
+ * `types: ["generation", "upload"]`).
+ *
+ * What a media reference still does NOT do is condition the picture the way an entity does: image
+ * conditioning travels on `sourceGenerationIds` ("Add context"), a separate and separately priced
+ * path, and routing an `@` into it would silently turn a text-to-image turn into an image-to-image
+ * one. That asymmetry is registered in spec §5, not papered over.
+ *
+ * Clothes is the one contract entry with no category here: production has no clothes record at all
+ * (`lib/reference-search.ts` returns nothing for it), so under Founder ruling 9 — a control with no
+ * backend contract is not rendered — it stays out until the actor library's outfit presets exist.
+ * `brandmark` stays searchable without a category of its own, pending the ruling already in §5.
  */
 
-/** Contract §2's category entries, minus the ones production cannot answer. */
-const CATEGORIES: readonly { label: string; type: ReferenceType }[] = [
-  { label: "Products", type: "product" },
-  { label: "Characters", type: "character" },
-  { label: "Official avatars", type: "official-avatar" },
-  { label: "Locations", type: "location" },
+/**
+ * Contract §2's category entries, minus `Clothes` — the one entry production has no record of.
+ *
+ * A category is a LABEL over a SET of types, not a single type: `Media` is one entry covering two.
+ * Its label is the identity the menu and the state below carry, because two of these no longer map
+ * one-to-one onto a `ReferenceType`.
+ */
+const CATEGORIES: readonly { label: string; types: readonly ReferenceType[] }[] = [
+  { label: "Products", types: ["product"] },
+  { label: "Characters", types: ["character"] },
+  { label: "Official avatars", types: ["official-avatar"] },
+  { label: "Locations", types: ["location"] },
+  { label: "Media", types: ["generation", "upload"] },
 ];
 
-const COMPOSER_TYPES: readonly ReferenceType[] = ENTITY_REFERENCE_TYPES;
+/**
+ * What a bare `@` searches: every category above plus `brandmark` (searchable, no category of its
+ * own) — i.e. every contract type production can actually answer.
+ */
+const COMPOSER_TYPES: readonly ReferenceType[] = [
+  ...ENTITY_REFERENCE_TYPES,
+  "generation",
+  "upload",
+];
 const SEARCH_DEBOUNCE_MS = 120;
 
 export interface PickedReference {
@@ -56,7 +89,8 @@ export interface UseReferencePickerOptions {
 export function useReferencePicker({ text, setText, getTextarea }: UseReferencePickerOptions) {
   const listId = useId();
   const [query, setQuery] = useState<string | null>(null);
-  const [category, setCategory] = useState<ReferenceType | null>(null);
+  /** The category entry stepped into, BY LABEL — `Media` is one entry over two types. */
+  const [category, setCategory] = useState<string | null>(null);
   /**
    * The last answer AND the request it answers, in one value. Keeping them together is what lets
    * the menu know whether its rows are about the query on screen: two separate states could not
@@ -78,10 +112,11 @@ export function useReferencePicker({ text, setText, getTextarea }: UseReferenceP
   useEffect(() => {
     if (requestKey === null) return;
     const seq = ++requestSeq.current;
+    const entry = category ? CATEGORIES.find((item) => item.label === category) : undefined;
     const timer = setTimeout(() => {
       void searchReferencesAction({
         query,
-        types: category ? [category] : [...COMPOSER_TYPES],
+        types: entry ? [...entry.types] : [...COMPOSER_TYPES],
         limit: query === "" && !category ? RECENT_REFERENCE_LIMIT : REFERENCE_PAGE_LIMIT,
       })
         .then((page) => {
@@ -124,10 +159,12 @@ export function useReferencePicker({ text, setText, getTextarea }: UseReferenceP
     return [
       ...referenceRows,
       ...CATEGORIES.map((entry) => ({
-        key: `category:${entry.type}`,
+        key: `category:${entry.label}`,
         kind: "category" as const,
         name: entry.label,
-        type: entry.type,
+        // A one-type entry carries its own type icon; `Media` covers two, so it passes none and
+        // the menu draws the multi-media icon the fixture uses for that row.
+        type: entry.types.length === 1 ? entry.types[0] : null,
       })),
     ];
   }, [results, showCategories]);
@@ -196,7 +233,7 @@ export function useReferencePicker({ text, setText, getTextarea }: UseReferenceP
       const row = rows[index];
       if (!row) return;
       if (row.kind === "category") {
-        setCategory(row.type ?? null);
+        setCategory(row.name);
         setHighlight(0);
         focusComposer();
         return;
@@ -274,15 +311,41 @@ export function useReferencePicker({ text, setText, getTextarea }: UseReferenceP
       resolveSentEntityIds(
         sentText,
         picked
-          .filter((entry) => COMPOSER_TYPES.includes(entry.ref.type))
+          // ENTITY types ONLY, deliberately. This list is generation CONDITIONING (the worker loads
+          // each id's reference images). A generation or upload id here would be looked up in the
+          // wrong table and — worse — would read as "this object shaped the picture" when it did
+          // not. What the merchant pointed at is `referencesForSend` below; the two are not the
+          // same list and must not be merged.
+          .filter((entry) => (ENTITY_REFERENCE_TYPES as readonly ReferenceType[]).includes(entry.ref.type))
           .map((entry) => ({ id: entry.ref.id, name: entry.name })),
+      ),
+    [picked],
+  );
+
+  /**
+   * FRONT-A10 — the typed references this turn is about, in wire form (`"<type>:<id>"`), destined
+   * for `ChatMessage.referenceRefs`. Same survival rule as `entityIdsForSend`, and deliberately the
+   * same function: a reference whose `@name` is no longer in the sent text was removed by the
+   * merchant, so it is not part of this message.
+   *
+   * All seven offered types travel here (`COMPOSER_TYPES` — the five entity types plus `generation`
+   * and `upload`), entities included — this is "what the merchant pointed at",
+   * not "what conditioned the picture". The server trusts none of it: every id is re-resolved
+   * against the authenticated owner before the row is written (`apps/web/lib/reference-refs.ts`).
+   */
+  const referencesForSend = useCallback(
+    (sentText: string) =>
+      resolveSentEntityIds(
+        sentText,
+        picked.map((entry) => ({ id: formatReferenceRef(entry.ref), name: entry.name })),
       ),
     [picked],
   );
 
   const clearPicked = useCallback(() => setPicked([]), []);
 
-  const categoryLabel = category ? CATEGORIES.find((entry) => entry.type === category)?.label : null;
+  /** The state IS the label (see `CATEGORIES`) — nothing to look up. */
+  const categoryLabel = category;
 
   return {
     listId,
@@ -292,6 +355,7 @@ export function useReferencePicker({ text, setText, getTextarea }: UseReferenceP
     handleTextChange,
     handleKeyDown,
     entityIdsForSend,
+    referencesForSend,
     clearPicked,
     menuProps: {
       open,

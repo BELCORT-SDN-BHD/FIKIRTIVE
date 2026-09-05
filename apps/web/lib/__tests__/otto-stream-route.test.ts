@@ -1,7 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 import { OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
-import { referenceUnavailableMessage } from "@fikirtive/core";
+import {
+  referenceUnavailableMessage,
+  MAX_TURN_REFERENCES,
+  TOO_MANY_REFERENCES_SENTENCE,
+  TURN_REQUEST_GENERIC_REFUSAL,
+} from "@fikirtive/core";
 
 const mocks = vi.hoisted(() => {
   class MockInsufficientCredits extends Error {
@@ -52,6 +57,8 @@ const mocks = vi.hoisted(() => {
     chatMessageCreate: vi.fn(),
     chatMessageFindFirst: vi.fn(),
     generationFindFirst: vi.fn(),
+    // FRONT-A10: the media half of `resolveOwnedReferenceRefs` (generations + uploads).
+    generationFindMany: vi.fn(),
     genJobFindFirst: vi.fn(),
     creditLedgerFindMany: vi.fn(),
     entityFindMany: vi.fn(),
@@ -72,6 +79,11 @@ const mocks = vi.hoisted(() => {
     // ENGINE-A6: 摘要落盘的那个写入口。这个文件是 DB-free 的,所以这里只核「被叫了没、带的是
     // 哪一条线程与哪个 ownerId」—— where 子句(含 `deletedAt: null`)的断言在 otto-actions.test.ts。
     saveRollingSummary: vi.fn(async (_threadId: string, _ownerId: string, _summary: string) => {}),
+    // ENGINE-A4(尾巴轮四组一,#1234 判官 P2-3):三门共用的那个「这一轮没收钱」判据。
+    // 这个文件是 DB-free 的,所以替身只按「退款那一步走到没有」作答(账本对证那两问的真库
+    // 断言在 otto-actions.test.ts / engine-a4-truncated-turn-refund.test.ts);要复现「钩子响过
+    // 但账本证明不了」的那一档,单条测试自己 `mockResolvedValue(false)`。
+    chargedNothingProven: vi.fn(async (_ownerId: string, refundedRefId: string | null) => refundedRefId !== null),
   };
 });
 
@@ -113,6 +125,8 @@ vi.mock("@/lib/otto-actions", async () => {
     recordOttoTurnTrace: mocks.recordOttoTurnTrace,
     // ENGINE-A6 (规格 §7.2④): 折叠好的滚动摘要由 otto-actions 里那个唯一的写入口落盘。
     saveRollingSummary: mocks.saveRollingSummary,
+    // ENGINE-A4 (规格 §7.2⑤): 「这一轮没收钱」的统一判据,三门同一个函数。
+    chargedNothingProven: mocks.chargedNothingProven,
   };
 });
 vi.mock("@/lib/otto-generation-validate", () => ({
@@ -146,7 +160,7 @@ vi.mock("@fikirtive/db", () => ({
       create: mocks.chatMessageCreate,
       findFirst: mocks.chatMessageFindFirst,
     },
-    generation: { findFirst: mocks.generationFindFirst },
+    generation: { findFirst: mocks.generationFindFirst, findMany: mocks.generationFindMany },
     genJob: { findFirst: mocks.genJobFindFirst },
     creditLedger: { findMany: mocks.creditLedgerFindMany },
     entity: { findMany: mocks.entityFindMany },
@@ -723,6 +737,65 @@ describe("POST /api/otto/stream", () => {
     );
     log.mockRestore();
   });
+
+  /**
+   * ENGINE-A4 —— 这一门的钱话也要账本证据(尾巴轮四组一,#1234 判官 P2-3)。
+   *
+   * 从前这句「This turn wasn't charged.」只凭 `onRefundedFailure` 点亮的那面裸旗就说得出口,
+   * 而另外两门(`ottoTurn` / `ottoApprove`)早就改成「账本上真有那一行退款才说」。旗只说明
+   * meter **走过**退款那一步:`refundReservation` 还会返回 `already-settled` /
+   * `already-refunded` / `no-reservation`,而钩子是 `void` 的,那个返回值到不了入口 —— 于是
+   * 一笔被 SETTLE 抢先的预扣照样能让屏幕对着账单说「没收钱」。
+   *
+   * 下面这一条钉的正是这件事:这一门问的是那个共用判据、带的是本轮的 refId;判据说
+   * 「证明不了」时,那半句当场消失(而句子的其余部分、把手与类型一个字不变)。
+   */
+  it("ENGINE-A4: 账本证明不了退款落地时,这一门就不说「没收钱」", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    // 钩子照响(meter 走过了退款那一步),可账本对证失败 —— fail closed。
+    mocks.chargedNothingProven.mockResolvedValue(false);
+    const body = JSON.stringify({
+      type: "error",
+      error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." },
+    });
+    const providerError = Object.assign(new Error("AI_APICallError: Invalid request"), {
+      name: "AI_APICallError",
+      statusCode: 400,
+      responseBody: body,
+    });
+    mocks.run.mockRejectedValue(providerError);
+    mocks.withLlmBudget.mockImplementation(
+      async (args: { onRefundedFailure?: () => void }, fn: () => Promise<unknown>) => {
+        try {
+          return await fn();
+        } catch (e) {
+          args.onRefundedFailure?.();
+          throw e;
+        }
+      },
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "Make a launch post" }))).json()) as Array<{
+      type?: string;
+      data?: { kind?: string; text?: string };
+    }>;
+    const streamedError = parts.find((part) => part.type === "data-error")?.data;
+
+    // 判据被真的问过,带的是这一轮的身份与这一轮的 refId(裸旗那条路根本不问)。
+    expect(mocks.chargedNothingProven).toHaveBeenCalledWith(
+      "org_stream",
+      expect.stringMatching(/^otto-stream:/),
+    );
+    expect(streamedError?.text, "账本证明不了,屏幕却替账单说了一句「没收钱」").not.toContain(
+      "This turn wasn't charged.",
+    );
+    // 少的只有那半句:诚实句的其余部分、把手与类型照旧。
+    expect(streamedError?.text).toMatch(
+      /^Otto is unavailable right now on our side\. Please try again later\. Reference: OTTO-/,
+    );
+    expect(streamedError?.kind).toBe("provider_unavailable");
+    log.mockRestore();
+  });
 });
 
 /**
@@ -1251,5 +1324,113 @@ describe("POST /api/otto/stream — ENGINE-A6 长对话预算闸", () => {
     // 钱路与折叠一个字没动:没裁掉任何东西 ⇒ 零折叠调用、零落盘。
     expect(foldCall()).toBeUndefined();
     expect(mocks.saveRollingSummary).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FRONT-A10 —— 这条路由(聊天输入框实际走的那一条)把类型化引用写进 ChatMessage
+// ---------------------------------------------------------------------------
+/**
+ * 判官第二轮 P1-1:C2 写的那一半有两条落库路,`ottoTurn` 那条上一轮补了围栏,**这一条**没有
+ * —— 删掉 `referenceRefs: picked.wire,` 全仓 7630 条照旧全绿。画布与侧栏的输入框走的正是这条
+ * 流式路由,所以「这条消息提到了谁」在生产上到底有没有落库,此前没有任何一条测试说得出来。
+ *
+ * 这里不打桩 `@/lib/reference-refs`:真正跑的是它,只有 Prisma 是替身 —— 否则围栏钉的是替身的
+ * 返回值,而不是那一行有没有被写进去。
+ */
+describe("FRONT-A10 —— 流式落库路把类型化引用写进 ChatMessage", () => {
+  const PRODUCT_ID = "ent_stream_product";
+  const GENERATION_ID = "gen_stream_one";
+  const UPLOAD_ASSET_ID = "ast_stream_one";
+  const THREE_TYPES = [`product:${PRODUCT_ID}`, `generation:${GENERATION_ID}`, `upload:${UPLOAD_ASSET_ID}`];
+
+  /** org_stream 自己的三行:一件实体、一件生成、一件上传。 */
+  function ownRowsResolve() {
+    mocks.entityFindMany.mockResolvedValue([
+      { id: PRODUCT_ID, name: "Kopi cendol tin", type: "PRODUCT", catalogKey: null },
+    ]);
+    mocks.generationFindMany.mockResolvedValue([
+      {
+        id: GENERATION_ID, assetId: "ast_gen", source: "GENERATED",
+        promptText: "Cendol hero shot", projectId: "proj_stream",
+        project: { name: "Raya launch" }, asset: { originalFilename: "out.png" },
+      },
+      {
+        id: "gen_from_upload", assetId: UPLOAD_ASSET_ID, source: "UPLOAD",
+        promptText: "", projectId: "proj_stream",
+        project: { name: "Raya launch" }, asset: { originalFilename: "cendol-shelf.png" },
+      },
+    ]);
+  }
+
+  function persistedUserMessage() {
+    return mocks.chatMessageCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> } | undefined;
+  }
+
+  it("FRONT-A10 三型引用一起发 ⇒ ChatMessage 那一列落的就是服务端解析过的类型化 ID", async () => {
+    ownRowsResolve();
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "@Kopi cendol tin like this shot",
+      references: THREE_TYPES,
+    }));
+
+    expect(res.status).toBe(200);
+    const created = persistedUserMessage();
+    // 逐字相等,不是「包含」:少写一型、写成裸 id、或整格没写,这一条当场红。
+    expect(created?.data.referenceRefs).toEqual(THREE_TYPES);
+    // `payload.entityIds`(生成条件)是另一条路,不因为这一格而改样。
+    expect((created?.data.payload as { entityIds?: unknown }).entityIds).toEqual([]);
+  });
+
+  it("FRONT-A10 一件都没 @ 的一轮,那一列是空表而不是缺了那一格", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+
+    await POST(req({ projectId: "proj_stream", text: "just talk to me" }));
+
+    expect(persistedUserMessage()?.data.referenceRefs).toEqual([]);
+    // 一个 id 都没有 ⇒ 连库都不问。
+    expect(mocks.entityFindMany).not.toHaveBeenCalled();
+    expect(mocks.generationFindMany).not.toHaveBeenCalled();
+  });
+
+  it("FRONT-A10 别家的 id 混进来 ⇒ 整轮不发:不落消息、不建对话、不进 Otto、不预扣", async () => {
+    // 解析器按 owner 查,什么都查不到 —— 别家的 id 与自己删掉的在这里长得一模一样。
+    mocks.entityFindMany.mockResolvedValue([]);
+    mocks.generationFindMany.mockResolvedValue([]);
+
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "@someone else's tin",
+      references: ["product:ent_other_shop"],
+    }));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: referenceUnavailableMessage("notFound") });
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+    expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
+    expect(mocks.withLlmBudget).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+  });
+
+  it("FRONT-A10 `@` 得比一轮能带的还多 ⇒ 读到的是那一格自己的那句话,不是通用那一句", async () => {
+    const tooMany = Array.from({ length: MAX_TURN_REFERENCES + 1 }, (_, i) => `product:ent_${i}`);
+
+    const res = await POST(req({ projectId: "proj_stream", text: "make me a poster", references: tooMany }));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: TOO_MANY_REFERENCES_SENTENCE });
+    // 通用那一句会把商家指向他已经写好了的正文 —— 判官 P2-2 点的就是这个。
+    expect(TOO_MANY_REFERENCES_SENTENCE).not.toBe(TURN_REQUEST_GENERIC_REFUSAL);
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+  });
+
+  it("FRONT-A10 正文空着的一轮仍然读到通用那一句(改了引用那一格,别的口径不许跟着变)", async () => {
+    const res = await POST(req({ projectId: "proj_stream", text: "" }));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: TURN_REQUEST_GENERIC_REFUSAL });
   });
 });

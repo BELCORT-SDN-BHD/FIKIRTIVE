@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   getCoworkThreads: vi.fn(),
   getCoworkThreadPage: vi.fn(),
   resolveCoworkResultUrls: vi.fn(),
+  resolveCoworkMessageReferences: vi.fn(),
   getCanvasConversationHandoff: vi.fn(),
   getEntities: vi.fn(),
   getMyAccount: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("@/lib/data", () => ({
   getEntities: mocks.getEntities,
   getProjects: mocks.getProjects,
   resolveCoworkResultUrls: mocks.resolveCoworkResultUrls,
+  resolveCoworkMessageReferences: mocks.resolveCoworkMessageReferences,
 }));
 vi.mock("@/lib/dto", () => ({
   toEntityDTO: (entity: { id: string }) => entity,
@@ -71,6 +73,7 @@ beforeEach(() => {
   mocks.getEntities.mockResolvedValue([]);
   mocks.getCoworkThreadPage.mockResolvedValue(null);
   mocks.resolveCoworkResultUrls.mockResolvedValue(new Map());
+  mocks.resolveCoworkMessageReferences.mockResolvedValue(new Map());
   mocks.getCanvasConversationHandoff.mockResolvedValue(null);
 });
 

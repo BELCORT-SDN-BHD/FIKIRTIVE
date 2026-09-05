@@ -9,7 +9,7 @@ import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { getMyAccount } from "@/lib/account-actions";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
-import { getCoworkThreadPage, getCoworkThreads, getEntities, getProjects, resolveCoworkResultUrls } from "@/lib/data";
+import { getCoworkThreadPage, getCoworkThreads, getEntities, getProjects, resolveCoworkResultUrls, resolveCoworkMessageReferences } from "@/lib/data";
 import { toChatThreadDTO, toEntityDTO } from "@/lib/dto";
 import { getCanvasConversationHandoff } from "@/lib/canvas-entry-actions";
 import { isPanelThread } from "@/lib/otto-thread-surface";
@@ -138,11 +138,18 @@ export async function ImmersiveCanvasEntry({
   const activeThreadRow = threadSelection.activeThreadId
     ? await getCoworkThreadPage(owner.ownerId, threadSelection.activeThreadId)
     : null;
-  const resultUrls = activeThreadRow
-    ? await resolveCoworkResultUrls(owner.ownerId, [activeThreadRow])
-    : new Map();
+  const [resultUrls, messageReferences] = activeThreadRow
+    ? await Promise.all([
+        resolveCoworkResultUrls(owner.ownerId, [activeThreadRow]),
+        // FRONT-A10 回链:画布这条读路也要带上「这条消息提到了谁」。
+        resolveCoworkMessageReferences(owner.ownerId, [activeThreadRow]),
+      ])
+    : [new Map(), new Map()];
   const activeThread = activeThreadRow
-    ? { ...toChatThreadDTO(activeThreadRow, resultUrls), hasOlderMessages: activeThreadRow.hasOlderMessages }
+    ? {
+        ...toChatThreadDTO(activeThreadRow, resultUrls, messageReferences),
+        hasOlderMessages: activeThreadRow.hasOlderMessages,
+      }
     : null;
   const handoffId = firstSearchParam(sp.handoff);
   const handoff = handoffId && activeThread && activeThread.messages.length === 0

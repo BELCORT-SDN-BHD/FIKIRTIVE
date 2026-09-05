@@ -5,6 +5,7 @@ import { storage, kindOf } from "./storage";
 import { sanitizeUserError } from "./provider-secrecy";
 import type { EntityWithRefs, ChatThreadWithMessages } from "./data";
 import type { EntityDTO, ChatMessageDTO, ChatThreadDTO } from "./types";
+import type { ReferenceLink } from "./reference-search-model";
 
 type EntityWithOttoUsage = EntityWithRefs & { _ottoUsageCount?: number };
 // `surface` 是**必填**的(FRONT-A14 判官 P1-1)。上一版把它写成 `Partial<...>`,于是任何
@@ -59,6 +60,12 @@ export function toEntityDTO(e: EntityWithOttoUsage): EntityDTO {
 export function toChatMessageDTO(
   m: ChatThreadWithMessages["messages"][number],
   urlsByJob: Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>,
+  /**
+   * FRONT-A10 —— messageId → 这条消息提到的对象,由 `resolveCoworkMessageReferences` 一次解好
+   * (owner scoped)。省略 = 这一条读路径还没接回链,画面上就没有引用小片;绝不在这里拿
+   * `m.referenceRefs` 的裸串自己编一个名字或地址 —— 名字与地址只能来自服务端那次解析。
+   */
+  referenceLinks?: Map<string, ReferenceLink[]>,
 ): ChatMessageDTO {
   let payload: unknown | null = null;
   if (m.kind === "GEN_CARD" && m.payload) {
@@ -202,10 +209,15 @@ export function toChatMessageDTO(
     payload,
     genJobId: m.genJobId,
     createdAt: m.createdAt.toISOString(),
+    ...(referenceLinks?.get(m.id)?.length ? { references: referenceLinks.get(m.id) } : {}),
   };
 }
 
-export function toChatThreadDTO(t: ChatThreadDTOInput, urlsByJob: Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>): ChatThreadDTO {
+export function toChatThreadDTO(
+  t: ChatThreadDTOInput,
+  urlsByJob: Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>,
+  referenceLinks?: Map<string, ReferenceLink[]>,
+): ChatThreadDTO {
   return {
     id: t.id,
     projectId: t.projectId,
@@ -213,7 +225,7 @@ export function toChatThreadDTO(t: ChatThreadDTOInput, urlsByJob: Map<string, { 
     updatedAt: t.updatedAt.toISOString(),
     pinnedAt: t.pinnedAt ? t.pinnedAt.toISOString() : null,
     surface: t.surface ?? null,
-    messages: t.messages.map((m) => toChatMessageDTO(m, urlsByJob)),
+    messages: t.messages.map((m) => toChatMessageDTO(m, urlsByJob, referenceLinks)),
   };
 }
 

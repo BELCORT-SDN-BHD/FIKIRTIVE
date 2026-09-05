@@ -372,15 +372,19 @@ describe("FRONT-A14 空画板的引导", () => {
     expect(code).toContain("Ask Otto in the box below, and what it makes will appear here.");
   });
 
-  it("FRONT-A14: the guidance appears only on a board that really loaded and really has no cards", () => {
+  it("FRONT-A14: the guidance appears only on a board that really loaded, has no cards, and is not mid-turn", () => {
     // 「读不出来」有自己的 Alert、「还在读」有自己的 Badge;把那两种说成「这里还什么都没有」
     // 是假话,所以这一句的条件里必须同时有 ready 与零张卡。
-    expect(code).toMatch(/boardStatus === "ready" && nodesOnBoard\.length === 0/);
+    // Otto 正在跑这一轮时也不出现(#1244 判官 P2-2):左上角写着「Working on it…」,板中央却
+    // 同时劝商家「Ask Otto in the box below」—— 他刚问完。
+    expect(code).toMatch(
+      /boardStatus === "ready" && nodesOnBoard\.length === 0 && !ottoWorkActive/,
+    );
   });
 
   it("FRONT-A14: the guidance is a sentence, not a sheet over the board", () => {
     // 拖动、框选、滚轮缩放都要照旧穿过去 —— 与 `.cv-dropzone` 不同,这一层永远不接事件。
-    const guidance = /nodesOnBoard\.length === 0 && \(\s*<div className="([^"]*)"/.exec(code);
+    const guidance = /nodesOnBoard\.length === 0 && !ottoWorkActive && \(\s*<div className="([^"]*)"/.exec(code);
     expect(guidance, "找不到空画板引导那一层的类名").not.toBeNull();
     expect(guidance![1]).toContain("pointer-events-none");
   });

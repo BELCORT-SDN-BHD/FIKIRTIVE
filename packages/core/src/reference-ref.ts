@@ -30,6 +30,14 @@ export const REFERENCE_TYPES = [...CONTRACT_REFERENCE_TYPES, "brandmark"] as con
 
 export type ReferenceType = (typeof REFERENCE_TYPES)[number];
 
+/**
+ * How many typed references one chat turn may carry. The menu offers 8 rows at a time and a
+ * merchant picks a handful; a bound a real draft cannot reach still stops a scripted client from
+ * turning one message into an unbounded batch of ownership lookups. One number, read by the
+ * request schema (`cowork.ts`) and by the server-side resolver, so the two can never disagree.
+ */
+export const MAX_TURN_REFERENCES = 24;
+
 /** A reference is a *type plus an id*, never a bare string: two sources can share an id shape. */
 export interface ReferenceRef {
   type: ReferenceType;
@@ -70,6 +78,22 @@ export function parseReferenceRef(raw: string): ReferenceRef | null {
   const id = raw.slice(at + 1);
   if (!id || !isReferenceType(type)) return null;
   return { type, id };
+}
+
+/**
+ * Parse a whole wire list: every well-formed ref, deduped, order preserved.
+ *
+ * Malformed entries are DROPPED, not coerced. The alternative — guessing a type for a bare id —
+ * is what the typed form exists to make impossible, and a ref nobody can name is a ref nobody
+ * can link back to. Callers that must refuse the request instead of dropping compare lengths.
+ */
+export function parseReferenceRefs(raw: readonly string[]): ReferenceRef[] {
+  const parsed: ReferenceRef[] = [];
+  for (const entry of raw) {
+    const ref = parseReferenceRef(entry);
+    if (ref) parsed.push(ref);
+  }
+  return dedupeReferenceRefs(parsed);
 }
 
 /** Deduplicate by identity (type + id), first occurrence wins. Contract §2/§6. */

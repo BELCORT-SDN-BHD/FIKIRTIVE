@@ -85,7 +85,7 @@ export interface OttoFrontDoorProps {
   onThreadStarted: (thread: ChatThreadDTO) => void;
   /** Streaming path: an empty thread was created; hand its first message up so
    *  OttoChatStream streams it in on mount. Used only when provided. */
-  onStreamStart?: (thread: ChatThreadDTO, pending: { text: string; goalKey?: string; entityIds?: string[] }) => void;
+  onStreamStart?: (thread: ChatThreadDTO, pending: { text: string; goalKey?: string; entityIds?: string[]; references?: string[] }) => void;
   /** When set (e.g. from Discover), pre-fills the composer. */
   seedText?: string;
   /** Called once the seed has been applied so the parent can clear it — otherwise a stale
@@ -169,6 +169,9 @@ export function OttoFrontDoor({
     setBusy(true);
     setError(null);
     const entityIds = picker.entityIdsForSend(msgText);
+    // FRONT-A10:这一句 `@` 到的对象(类型化 ID),与 entityIds 是两条路 —— 一条是生成条件,
+    // 一条是「这条消息提到了谁」,后者落进 ChatMessage.referenceRefs 供回链。
+    const references = picker.referencesForSend(msgText);
     // Only the non-streaming fallback below meters credits from HERE. The streaming branch
     // hands the first message to OttoChatStream and returns having spent nothing, so it must
     // not announce a balance change (round-2 review P2 — a "refresh" that follows no charge
@@ -185,7 +188,7 @@ export function OttoFrontDoor({
         // 面板底部的页面 chips 走的是同一份 —— 两处各写一份,先漂的一定是 #979 的标题守卫。
         // F30: 解析出来的 @mention entityIds 一并带进第一条流式消息(下面那条经典 ottoTurn
         // 路径本来就带,流式这一条不带就等于第一轮悄悄丢了实体条件)。
-        const started = await startStreamedThread({ projectId, text: msgText, goalKey: opts.goalKey, entityIds, surface: threadSurface });
+        const started = await startStreamedThread({ projectId, text: msgText, goalKey: opts.goalKey, entityIds, references, surface: threadSurface });
         if ("error" in started) {
           setError(started.error);
           return;
@@ -201,6 +204,7 @@ export function OttoFrontDoor({
         projectId,
         text: msgText,
         entityIds,
+        ...(references.length ? { references } : {}),
         variantSel: {},
         simple: true,
         ...(opts.goalKey ? { goalKey: opts.goalKey } : {}),

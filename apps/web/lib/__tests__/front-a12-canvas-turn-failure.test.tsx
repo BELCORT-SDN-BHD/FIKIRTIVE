@@ -327,6 +327,70 @@ describe("FRONT-A12 ⑥ 画布状态卡：这一轮失败了就当场说出口",
     expect(el.textContent).not.toContain("Failed");
   });
 
+  /**
+   * 「供应商侧一个键都不给」这条不变量现在住在卡本体（尾巴轮四组一，#1233 判官 P2-2）。
+   *
+   * 从前它只写在调用方那一行 `kind === "error"`：卡自己不知道这条规矩，谁把商家原话原样传
+   * 进来，那一档旁边就会重新长出一颗「Edit and retry」—— 一句「等一会儿再说」配一颗「马上
+   * 再送一次」，而每按一次都重新走一遍预扣／退款。这一条**故意**把 retryDraft 传满，看卡
+   * 自己拦不拦得住。变异实证：把 `retryableKind` 从 `showRetry` 去掉，这两条当场红。
+   */
+  it("FRONT-A12: 供应商侧那一档，就算把商家原话递到卡上也不给重试键", () => {
+    const el = card(
+      [asked("make it 1080p"), liveErrorMessage("Otto is unavailable right now on our side.", "provider_unavailable")],
+      { retryDraft: "make it 1080p" },
+    );
+    expect(el.textContent).toContain("Failed");
+    expect(
+      [...el.querySelectorAll("button")].some((b) => b.textContent === EDIT_AND_RETRY_LABEL),
+      "供应商侧那一档旁边又长出了一颗按了必然再失败的键",
+    ).toBe(false);
+  });
+
+  it("FRONT-A12: 充值与抬上限那两档同样不因为有原话就冒出重试键", () => {
+    for (const kind of ["insufficient_credits", "spend_cap"] as const) {
+      const el = card([asked("a"), liveErrorMessage("You have 3.9 credits; this turn holds 11.", kind)], {
+        retryDraft: "a",
+      });
+      expect([...el.querySelectorAll("button")].some((b) => b.textContent === EDIT_AND_RETRY_LABEL)).toBe(false);
+      act(() => { root?.unmount(); });
+      container?.remove();
+      root = null;
+      container = null;
+    }
+  });
+
+  /**
+   * 三态一起来的那一格（尾巴轮四组一，#1233 判官 P2-4）。
+   *
+   * #1225 P2-5 把「这一轮失败」排到了「有卡在跑」前面，可它顺带改了另一格没人钉过的组合：
+   * 这一轮失败 ＋ 更早一轮的卡还在跑 ＋ 还有一张卡等确认。改前卡上写「Generating」，改后
+   * 落到「Needs confirmation」—— 停在商家身上的那件事排在失败前面（钱路那颗确认键的位置不
+   * 动，是 `pendingConfirmCount` 一直就有的优先级）。这一条只把今天的答案钉住，不改行为：
+   * 哪天有人动了那两支的先后，这里当场红。
+   */
+  it("FRONT-A12: 失败 ＋ 有卡在跑 ＋ 有卡等确认，卡上说的是 Needs confirmation", () => {
+    const list = [asked("make it 1080p"), liveErrorMessage(SNAG)] as Parameters<typeof latestTurnTerminal>[0];
+    const el = render(
+      <OttoTurnCard
+        status={canvasTurnStatus({
+          ...baseStatus,
+          workingCardCount: 1,
+          pendingConfirmCount: 1,
+          terminal: latestTurnTerminal(list),
+        })}
+        text={canvasTurnText(list)}
+        streaming={false}
+        confirmCards={[]}
+        onApproved={() => {}}
+        onChangeSomething={() => {}}
+        onOptionsChanged={() => {}}
+      />,
+    );
+    expect(el.textContent).toContain("Needs confirmation");
+    expect(el.textContent, "在飞的那张卡又把这一轮盖回去了").not.toContain("Generating");
+  });
+
   it("FRONT-A12: 好好走完的一轮不因为这条路变成失败（对照组）", () => {
     const el = card([asked("a jam jar"), said("Here's what I'd make.")]);
     expect(el.textContent).toContain("Ready");

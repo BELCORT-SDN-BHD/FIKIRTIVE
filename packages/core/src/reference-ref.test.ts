@@ -8,6 +8,7 @@ import {
   isEntityReferenceType,
   isReferenceType,
   parseReferenceRef,
+  parseReferenceRefs,
 } from "./reference-ref.js";
 
 describe("FRONT-A10 typed reference ids", () => {
@@ -46,6 +47,21 @@ describe("FRONT-A10 typed reference ids", () => {
     expect(parseReferenceRef("product:")).toBeNull();
     expect(parseReferenceRef(":ent_123")).toBeNull();
     expect(isReferenceType("Product")).toBe(false);
+  });
+
+  it("FRONT-A10 parses a whole wire list: malformed entries drop, duplicates collapse, order holds", () => {
+    expect(
+      parseReferenceRefs([
+        "product:a",
+        "ent_bare",          // no type — never guessed at
+        "product:a",         // the same object picked twice is one reference
+        "clothes:c",         // a real type production has no record of: still a well-formed ref
+        "nonsense:d",
+      ]),
+    ).toEqual([
+      { type: "product", id: "a" },
+      { type: "clothes", id: "c" },
+    ]);
   });
 
   it("FRONT-A10 dedupes on type AND id, so two sources sharing an id stay two references", () => {

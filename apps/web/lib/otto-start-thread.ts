@@ -16,13 +16,20 @@ import { DEFAULT_THREAD_SURFACE, type ChatThreadSurface } from "./otto-thread-su
 import type { ChatThreadDTO } from "./types";
 
 /** 会话建好之后,交给 `OttoChatStream` 在挂载时自动发出去的第一句话。 */
-export type PendingFirstMessage = { text: string; goalKey?: string; entityIds?: string[] };
+export type PendingFirstMessage = {
+  text: string;
+  goalKey?: string;
+  entityIds?: string[];
+  /** FRONT-A10:第一句话 `@` 到的对象(类型化 ID 线形),与 entityIds 是两件事。 */
+  references?: string[];
+};
 
 export async function startStreamedThread(input: {
   projectId: string;
   text: string;
   goalKey?: string;
   entityIds?: string[];
+  references?: string[];
   /**
    * 这一条从哪个门开(FRONT-A14)。不给就是画布 —— 前门与画布那一侧走的都是这一档,
    * 只有全局侧栏面板会明说 `"panel"`。服务端仍然自己过一道闸,这里给的是声明不是判定
@@ -54,6 +61,7 @@ export async function startStreamedThread(input: {
       text,
       ...(input.goalKey ? { goalKey: input.goalKey } : {}),
       ...(input.entityIds?.length ? { entityIds: input.entityIds } : {}),
+      ...(input.references?.length ? { references: input.references } : {}),
     },
   };
 }

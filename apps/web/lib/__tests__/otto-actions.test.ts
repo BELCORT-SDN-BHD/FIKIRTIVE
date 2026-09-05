@@ -758,6 +758,51 @@ describe("ottoTurn — new thread", () => {
   });
 });
 
+// ── FRONT-A10: the USER message row carries the typed references ─────────────
+
+/**
+ * 清单 C2 的承重接线:`ottoTurn` 把**服务端按当前 owner 解析过**的那一份引用写进
+ * `ChatMessage.referenceRefs`,并且解不出一件就整轮不发。
+ *
+ * #1240 判官 P1-2 实证:把 `otto-actions.ts` 里那一行 `referenceRefs: picked.wire,` 删掉,
+ * 既有 224 条测试照旧全绿 —— 「消息保存引用 ID」这条验收当时产品端一行都没写也测不出来。
+ * 这两条就是那一行与它上面那道写闸(`picked.unresolved > 0`)的围栏。
+ */
+describe("ottoTurn — FRONT-A10 typed references on the persisted USER message", () => {
+  const OWN_PRODUCT = "ent_own_product";
+
+  it("FRONT-A10 writes the server-resolved refs onto the USER message row", async () => {
+    setupHappyPath();
+    // 按 ownerId 查得到的那一条 —— `resolveOwnedReferenceRefs` 的实体解析走的就是这张表。
+    mockEntityFindMany.mockResolvedValue([
+      { id: OWN_PRODUCT, name: "Kopi cendol tin", type: "PRODUCT", catalogKey: null, variants: [] },
+    ]);
+
+    const res = await ottoTurn({ ...BASE_INPUT, references: [`product:${OWN_PRODUCT}`] });
+    expect(res).toMatchObject({ status: "done" });
+
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ role: "USER", referenceRefs: [`product:${OWN_PRODUCT}`] }),
+      }),
+    );
+  });
+
+  it("FRONT-A10 a reference this owner does not own stops the whole turn — nothing is persisted", async () => {
+    setupHappyPath();
+    // 别家的 id:同一句 where 带 ownerId,所以一条都查不到。
+    mockEntityFindMany.mockResolvedValue([]);
+
+    const res = await ottoTurn({ ...BASE_INPUT, references: ["product:ent_someone_else"] });
+
+    expect(res).toHaveProperty("error");
+    // 整轮不发:不落 USER 消息、不建对话、不进 Otto —— 静默丢弃到此为止。
+    expect(mockChatMessageCreate).not.toHaveBeenCalled();
+    expect(mockChatThreadCreate).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+});
+
 // ── Test 2: continuing thread ────────────────────────────────────────────────
 
 describe("ottoTurn — continuing thread", () => {
