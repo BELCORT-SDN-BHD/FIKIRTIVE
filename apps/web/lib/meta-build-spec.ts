@@ -120,6 +120,8 @@ export type MetaAdBuildCardPayload = {
   intoExisting?: { adsetId: string };
   approval: Approval;
   buildOutcome?: Record<string, unknown>;
+  /** ISO instant the merchant declined this build (FRONT-A12). See MetaActionCardPayload. */
+  declinedAt?: string;
 };
 
 /**
