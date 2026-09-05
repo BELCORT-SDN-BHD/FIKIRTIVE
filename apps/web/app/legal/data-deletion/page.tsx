@@ -346,8 +346,8 @@ export default async function DataDeletionPage({
               showing it stays where it is and reads <span className="text-foreground">Preview missing</span> until you
               restore it. The stored file behind it is not yet removed by an automatic clean-up job. Trash is where
               the asset stays: nothing on this route removes the record itself. The two routes that do are deleting
-              the campaign the asset was made in, which permanently deletes the assets held in it, and the account
-              deletion route above.
+              the campaign the asset was made in, which permanently deletes the records held in it, and the account
+              deletion route below.
             </li>
             <li>
               <span className="text-foreground">A saved reference.</span> Library also lists the products, characters,
