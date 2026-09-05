@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   ArrowUp,
@@ -21,9 +21,9 @@ import { ottoTurn } from "@/lib/otto-client-actions";
 import { startStreamedThread } from "@/lib/otto-start-thread";
 import type { ChatThreadSurface } from "@/lib/otto-thread-surface";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
-import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import { QuickBrief } from "@/components/otto/QuickBrief";
-import { OttoMentionPopover } from "@/components/otto/OttoMentionPopover";
+import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePickerMenu";
+import { useReferencePicker } from "@/components/reference-picker/useReferencePicker";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import { ottoGreeting } from "@/lib/otto-greeting";
 import { CHAT_HOLD_NOTE, CHAT_SPEND_NOTE, lowBalanceForVideoMessage } from "@/lib/credit-format";
@@ -79,7 +79,9 @@ export interface OttoFrontDoorProps {
   /** Org spendable balance in USD — the same value the cards' afford gate reads.
    *  Drives the #791-7 early low-balance line below the composer. */
   balanceUsd?: number;
-  entities: EntityDTO[];
+  /** @deprecated Not read any more: the `@` picker searches the server (spec §7.3③). Kept so
+   *  the callers that still pass it are unchanged by this slice; removing it is a caller cleanup. */
+  entities?: EntityDTO[];
   userName: string;
   onThreadStarted: (thread: ChatThreadDTO) => void;
   /** Streaming path: an empty thread was created; hand its first message up so
@@ -107,7 +109,6 @@ export interface OttoFrontDoorProps {
 export function OttoFrontDoor({
   projectId,
   balanceUsd,
-  entities,
   userName,
   onThreadStarted,
   onStreamStart,
@@ -138,10 +139,6 @@ export function OttoFrontDoor({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [seedText, onSeedConsumed]);
-  const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
-  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
-  const [mentionHighlight, setMentionHighlight] = useState(0);
-  const mentionListId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -154,34 +151,14 @@ export function OttoFrontDoor({
   // SAME string this renders, not a re-typed copy of it (round-2 review P2).
   const greeting = ottoGreeting(userName);
 
-  const mentionSuggestions = mentionQuery !== null
-    ? (entities ?? []).filter(e => e.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)
-    : [];
+  // The one `@` reference picker (spec §7.3③). Its rows come from the server search, not from
+  // the `entities` prop this component used to filter in the browser.
+  const picker = useReferencePicker({ text, setText, getTextarea: () => textareaRef.current });
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setText(val);
-    const caret = e.target.selectionStart ?? val.length;
-    setMentionQuery(activeMentionQuery(val, caret));
-    setMentionHighlight(0);
-  };
-
-  const selectMention = (entity: {id: string; name: string}) => {
-    const textarea = textareaRef.current;
-    const caret = textarea?.selectionStart ?? text.length;
-    const before = text.slice(0, caret);
-    const atIdx = before.lastIndexOf("@");
-    const newText = text.slice(0, atIdx) + `@${entity.name} ` + text.slice(caret);
-    setText(newText);
-    setPickedMentions(prev => prev.some(p => p.id === entity.id) ? prev : [...prev, {id: entity.id, name: entity.name}]);
-    setMentionQuery(null);
-    setMentionHighlight(0);
-    setTimeout(() => textarea?.focus(), 0);
-  };
-
-  const dismissMentions = () => {
-    setMentionQuery(null);
-    setMentionHighlight(0);
+    picker.handleTextChange(val, e.target.selectionStart ?? val.length);
   };
 
   async function start(opts: { goalKey?: GoalTile["goalKey"] }) {
@@ -192,7 +169,7 @@ export function OttoFrontDoor({
     startingRef.current = true;
     setBusy(true);
     setError(null);
-    const entityIds = resolveSentEntityIds(msgText, pickedMentions);
+    const entityIds = picker.entityIdsForSend(msgText);
     // Only the non-streaming fallback below meters credits from HERE. The streaming branch
     // hands the first message to OttoChatStream and returns having spent nothing, so it must
     // not announce a balance change (round-2 review P2 — a "refresh" that follows no charge
@@ -251,34 +228,9 @@ export function OttoFrontDoor({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (mentionSuggestions.length > 0) {
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setMentionHighlight(h => Math.max(0, h - 1));
-        return;
-      }
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setMentionHighlight(h => Math.min(mentionSuggestions.length - 1, h + 1));
-        return;
-      }
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        selectMention(mentionSuggestions[mentionHighlight]);
-        return;
-      }
-      if (e.key === "Tab") {
-        e.preventDefault();
-        selectMention(mentionSuggestions[mentionHighlight]);
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setMentionQuery(null);
-        setMentionHighlight(0);
-        return;
-      }
-    }
+    // the picker gets first refusal: while its menu is open, arrows / Enter / Tab / Escape are
+    // navigation, not composition
+    if (picker.handleKeyDown(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void start({});
@@ -286,14 +238,7 @@ export function OttoFrontDoor({
   }
 
   const composer = (
-    <OttoMentionPopover
-      suggestions={mentionSuggestions}
-      highlightedIndex={mentionHighlight}
-      listId={mentionListId}
-      onDismiss={dismissMentions}
-      onHighlightChange={setMentionHighlight}
-      onSelect={selectMention}
-    >
+    <ReferencePickerMenu {...picker.menuProps}>
       <InputGroup className="overflow-hidden rounded-[var(--radius-card)]">
         <InputGroupTextarea
           ref={textareaRef}
@@ -301,10 +246,7 @@ export function OttoFrontDoor({
           value={text}
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
-          aria-autocomplete="list"
-          aria-controls={mentionSuggestions.length > 0 ? mentionListId : undefined}
-          aria-expanded={mentionSuggestions.length > 0}
-          aria-activedescendant={mentionSuggestions.length > 0 ? `${mentionListId}-option-${mentionHighlight}` : undefined}
+          {...picker.ariaProps}
           disabled={busy}
           placeholder="Describe what you want to make…"
           rows={3}
@@ -328,7 +270,7 @@ export function OttoFrontDoor({
           </InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
-    </OttoMentionPopover>
+    </ReferencePickerMenu>
   );
 
   if (layout === "canvas") {
