@@ -43,7 +43,7 @@ import { planCardGate } from "./plan-card-contract";
 import { CardReferenceReceipt } from "./CardReferenceReceipt";
 import { runPlanApproval } from "./plan-approval";
 // Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修),与抽屉里那张卡共用一份。
-import { CardOptionControls } from "./CardOptionControls";
+import { CardOptionControls, cardSpecChips } from "./CardOptionControls";
 import {
   CAP_EXIT_HREF,
   CAP_EXIT_LABEL,
@@ -232,7 +232,9 @@ function CanvasConfirmRow({
   // 规格行**逐字**取自卡自己的 specChips（服务端按执行真正认的东西建的那一份）。
   // 走查 P1-2：Otto 曾口头宣称「两张卡都改成 1080p 了」而卡上仍是 720p —— 商家按下去
   // 之前看到的必须是卡自己说的话，不是聊天气泡里的说法。
-  const spec = (p.specChips ?? []).join(" · ");
+  // 终检 r4：精修那一格补在末尾（`cardSpecChips`，与抽屉那张卡共用同一个派生）—— 两处
+  // 规格不可能说出两件事。
+  const spec = cardSpecChips(p).join(" · ");
   const referenceNote = approvedEntitiesNote(p.approvedEntities ?? []);
 
   async function confirm() {

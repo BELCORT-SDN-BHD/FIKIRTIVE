@@ -14,7 +14,7 @@
  * 服务端那个 $0 动作重铸整张卡，新的价随新卡回来。界面自己乘一个数当报价，就是第二处
  * 派生 —— 那正是「卡面说的」与「真正扣的」分家的来源（#580）。
  */
-import React, { useId, useState } from "react";
+import React, { useId, useRef, useState } from "react";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
@@ -23,6 +23,29 @@ import type { OttoPlanCardPayload } from "./plan-card-contract";
 
 /** 精修那一格旁边那句话 —— 它会改价，所以这件事必须写在开关旁边，而不是等按下去才知道。 */
 export const FINE_DETAIL_NOTE = "Costs more — the price below updates.";
+
+/** 规格条上那一格。与开关上那个名字**同一个常量** —— 两处各写一遍字面量，就是同一件事
+ *  在界面上有两个名字。 */
+export const FINE_DETAIL_CHIP = "Fine detail";
+
+/**
+ * 卡面规格条 —— 服务端那份 `specChips` 逐字在前，精修那一格补在末尾。
+ *
+ * 终检 r4：精修打开之后价从 1 变 2 credits，而规格条仍是「2048 × 2048 · 1:1 · 1 image」——
+ * 商家看得见贵了，看不出贵在哪。服务端那份 `buildSpecChips`（`packages/core/src/spec-chips.ts`）
+ * 不认识精修这一格，所以这一格由卡自己按**卡上那个已被服务端写定的 `fineDetail`** 派生：
+ * 它不是界面自己发明的事实，也不参与算钱（价照旧只从 `estimatedCredits` 来）。
+ *
+ * 老卡（没有 specChips）照旧不显示规格条 —— 猜一份规格出来是 #580 那条禁令。
+ */
+export function cardSpecChips(payload: OttoPlanCardPayload): string[] {
+  const chips = payload.specChips ?? [];
+  if (chips.length === 0 || payload.fineDetail !== true) return chips;
+  return [...chips, FINE_DETAIL_CHIP];
+}
+
+/** 商家在这三格里改的那一格。三格都可空 —— 一次交互只动一格。 */
+type CardOptionEdit = { count?: number; aspectRatio?: string; fineDetail?: boolean };
 
 export interface CardOptionControlsProps {
   threadId: string;
@@ -36,43 +59,82 @@ export interface CardOptionControlsProps {
   onChanged: (payload: unknown) => void;
 }
 
+const FAILED_NOTE = "That didn't go through — please try again.";
+
 export function CardOptionControls({ threadId, cardId, payload, disabled, onChanged }: CardOptionControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 重铸还没回来时,商家**已经点过**的那几格 —— 只管这三格自己怎么显示,不参与算钱。 */
+  const [pending, setPending] = useState<CardOptionEdit | null>(null);
+  /** 重铸进行中又点的那一格,排在这里等上一趟回来（后点的盖前点的同一格）。 */
+  const queued = useRef<CardOptionEdit | null>(null);
+  const running = useRef(false);
   const countId = useId();
   const shapeId = useId();
 
   const options = payload.options;
-  const count = payload.params?.count ?? 1;
-  const aspectRatio = payload.params?.aspectRatio ?? "";
-  const fineDetail = payload.fineDetail === true;
+  // 显示值 = 已经点过的那一格优先,其余照卡上那一份。重铸回来之后 `pending` 清空,
+  // 卡上那一份就是唯一的事实（服务端说了算,界面不留第二份）。
+  const count = pending?.count ?? payload.params?.count ?? 1;
+  const aspectRatio = pending?.aspectRatio ?? payload.params?.aspectRatio ?? "";
+  const fineDetail = pending?.fineDetail ?? payload.fineDetail === true;
 
-  async function apply(edit: { count?: number; aspectRatio?: string; fineDetail?: boolean }) {
-    if (busy || disabled) return;
+  /**
+   * 改一格。
+   *
+   * 终检 r4：下拉改完**紧接着**点精修,那一次点击被吞（开关一动不动、价不变）。原因是
+   * 上一趟重铸还在飞的时候这三格是 `disabled` 的 —— base-ui 的 Switch 在 disabled 下
+   * 就是一颗 disabled 的按钮,那次点击连事件都没有,商家看到的是「点了没反应」。
+   *
+   * 修法：重铸进行中**不再锁控件**,而是把这一次改动排队（`queued`,后点的盖同一格),
+   * 上一趟回来立刻接着发,并用 `aria-busy` 说明正在重铸。这三格从头到尾一分钱不算,
+   * 所以排队不会让「卡面说的」与「真正扣的」分家：每一趟都是服务端重铸整张卡,价随
+   * 新卡回来。
+   */
+  async function apply(edit: CardOptionEdit) {
+    if (disabled) return;
+    setPending((prev) => ({ ...(prev ?? {}), ...edit }));
+    if (running.current) {
+      queued.current = { ...(queued.current ?? {}), ...edit };
+      return;
+    }
+    running.current = true;
     setBusy(true);
     setError(null);
     try {
-      const res = await ottoUpdateGenCardOptions({ threadId, cardId, ...edit });
-      if (!res || "error" in res) {
-        // 服务端已经说清楚了 —— 原样交给商家,泛化句不许盖掉它。
-        setError(res ? res.error : "That didn't go through — please try again.");
-        return;
+      let next: CardOptionEdit | null = edit;
+      while (next) {
+        const res = await ottoUpdateGenCardOptions({ threadId, cardId, ...next });
+        if (!res || "error" in res) {
+          // 服务端已经说清楚了 —— 原样交给商家,泛化句不许盖掉它。
+          setError(res ? res.error : FAILED_NOTE);
+          // 这一趟被拒,排在后面那一格就不再替他发了 —— 他没看到这句话之前,再改一格
+          // 是我们替他做的决定。
+          break;
+        }
+        onChanged(res.payload);
+        next = queued.current;
+        queued.current = null;
       }
-      onChanged(res.payload);
     } catch {
-      setError("That didn't go through — please try again.");
+      setError(FAILED_NOTE);
     } finally {
+      queued.current = null;
+      running.current = false;
       setBusy(false);
+      setPending(null);
     }
   }
 
   // 老卡(这条修改之前铸的)与视频卡没有这份菜单 —— 一格都不渲染,与从前逐字相同。
   if (!options) return null;
   const counts = Array.from({ length: Math.max(1, options.maxCount) }, (_, i) => i + 1);
-  const locked = busy || disabled === true;
+  // 只有卡自己忙别的事(正在批准 / 已排队)才真的锁住这三格。**重铸进行中不锁** ——
+  // 锁住的那半秒正是终检 r4 里那次被吞掉的点击,现在改成排队 + `aria-busy`。
+  const locked = disabled === true;
 
   return (
-    <div className="mt-3 flex flex-col gap-2" data-slot="card-options">
+    <div className="mt-3 flex flex-col gap-2" data-slot="card-options" aria-busy={busy}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <Field orientation="horizontal" className="w-auto gap-2">
           <FieldLabel htmlFor={countId} className="text-[0.75rem] text-muted-foreground">Images</FieldLabel>
@@ -81,6 +143,7 @@ export function CardOptionControls({ threadId, cardId, payload, disabled, onChan
             size="sm"
             value={count}
             disabled={locked}
+            aria-busy={busy}
             aria-label="How many images"
             onChange={(event) => void apply({ count: Number(event.target.value) })}
           >
@@ -97,6 +160,7 @@ export function CardOptionControls({ threadId, cardId, payload, disabled, onChan
               size="sm"
               value={aspectRatio}
               disabled={locked}
+              aria-busy={busy}
               aria-label="Shape of the image"
               onChange={(event) => void apply({ aspectRatio: event.target.value })}
             >
@@ -110,11 +174,12 @@ export function CardOptionControls({ threadId, cardId, payload, disabled, onChan
             函数)。菜单上摆一格没有价的能力,商家点了才被拒,那是把 fail closed 做成陷阱。 */}
         {options.fineDetailAvailable && (
           <span className="flex items-center gap-2 text-[0.75rem] text-muted-foreground">
-            <span className="font-semibold text-foreground">Fine detail</span>
+            <span className="font-semibold text-foreground">{FINE_DETAIL_CHIP}</span>
             <Switch
               checked={fineDetail}
               disabled={locked}
-              aria-label="Fine detail"
+              aria-busy={busy}
+              aria-label={FINE_DETAIL_CHIP}
               title={FINE_DETAIL_NOTE}
               onCheckedChange={(checked) => void apply({ fineDetail: checked })}
             />
