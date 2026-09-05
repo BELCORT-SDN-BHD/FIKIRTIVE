@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useTransition, type ReactNode } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -53,11 +53,14 @@ function BlockedAnalysis({
   context,
   onRetry,
   retrying,
+  retryFailed,
 }: {
   health: Exclude<MarketingHealthReadModel, { state: "partial" | "ready" }>;
   context: HomeAnalysisContext;
   onRetry: () => void;
   retrying: boolean;
+  /** 已经重试过一次、服务器仍然读不出来(Home 那一侧同一条口径)。 */
+  retryFailed: boolean;
 }) {
   const homeHref = homeHrefFromAnalysis(context);
   const content: BlockedContent = health.state === "not-configured"
@@ -109,6 +112,15 @@ function BlockedAnalysis({
           )}
           <Link href={homeHref} className={buttonVariants({ variant: "ghost", size: "sm" })}>Back to Home</Link>
         </div>
+        {/*
+          重试失败的唯一反馈,与 Home 同一句、同一条口径:live region 常驻 DOM,句子后填;
+          首屏没有句子(判官 2026-09-05 #1209 P2-3)。
+        */}
+        {content.retry ? (
+          <p role="status" aria-live="polite" className="mt-3 text-xs text-muted-foreground">
+            {retryFailed ? MARKETING_HOME_COPY.retryStillUnavailable : ""}
+          </p>
+        ) : null}
       </Empty>
     </main>
   );
@@ -243,7 +255,13 @@ export function HomeAnalysisView({
   const isDesktop = useDesktopHome();
   /** Retry analysis 的重取 —— 与 Home 同一条路子,见 `BlockedAnalysis` 的注释。 */
   const [retrying, startRetry] = useTransition();
-  const retry = () => startRetry(() => router.refresh());
+  /** 见 `BlockedAnalysis` 的注释:按过一次、这一轮跑完了、屏幕还是同一屏,才说那一句。 */
+  const [retryAttempted, setRetryAttempted] = useState(false);
+  const retry = () => {
+    setRetryAttempted(true);
+    startRetry(() => router.refresh());
+  };
+  const retryFailed = retryAttempted && !retrying;
   const goalLabel = HOME_GOALS.find((item) => item.value === context.goal)?.label ?? "Online sales";
 
   if (!isDesktop) return <DesktopHomeRequired />;
@@ -255,12 +273,13 @@ export function HomeAnalysisView({
         health={{ state: "insufficient", goal: context.goal, source: health.source }}
         onRetry={retry}
         retrying={retrying}
+        retryFailed={retryFailed}
       />
     );
   }
 
   if (health.state !== "partial" && health.state !== "ready") {
-    return <BlockedAnalysis health={health} context={context} onRetry={retry} retrying={retrying} />;
+    return <BlockedAnalysis health={health} context={context} onRetry={retry} retrying={retrying} retryFailed={retryFailed} />;
   }
 
   return (
