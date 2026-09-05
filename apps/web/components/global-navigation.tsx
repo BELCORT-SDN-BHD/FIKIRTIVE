@@ -7,6 +7,7 @@ import {
   MERCHANT_NAV_REDIRECTS,
   NAVIGATION_OWNED_SURFACES,
   everyNavDestination,
+  navLabel,
 } from "@fikirtive/core/navigation";
 import { NavigationRail, type RailAccount } from "@/components/navigation/rail/NavigationRail";
 import { MerchantTopBar } from "@/components/navigation/MerchantTopBar";
@@ -63,6 +64,31 @@ export function isMerchantSurface(pathname: string): boolean {
     APPLICATION_SHELL_CARVE_OUTS.some((href) => isAtOrBelow(href))
   ) return false;
   return MERCHANT_SURFACE_PATHS.some((href) => navMatchesLocation(pathname, href));
+}
+
+/**
+ * FRONT-A14 —— 顶栏面包屑写不写出 child surface 那一层。
+ *
+ * `MerchantTopBar` 自己的默认答案是「亮着的那一格叫什么」,所以 `/analysis` 上它写的是
+ * 「Workspace › Home」。已批准的设计要的是「Workspace › Home / Analysis」
+ * (design-system/patterns/founder-home/HomeAnalysisReference.tsx 的夹具就是这么画的,
+ * 它靠 `topBarLabel` 传进去)。生产从来没传过这个 prop —— 这就是那处差异。
+ *
+ * 补的是**接线**,不是设计源:字从导航权威源的 `breadcrumbLabel` 读
+ * (`NAVIGATION_OWNED_SURFACES`),壳里一个地名都不手打。没有 `breadcrumbLabel` 的
+ * child surface(`/billing`、`/profile`、`/settings/connections`)返回 undefined,
+ * 面包屑照旧只写 owner 那格的名字 —— 已批准的 Settings pattern 要的就是这样。
+ *
+ * 最长匹配者独赢,与 `activeNavHref` 同一条规则:child surface 的地址天然比 owner 的长。
+ */
+export function shellTopBarLabel(pathname: string): string | undefined {
+  const surface = NAVIGATION_OWNED_SURFACES
+    .filter((item) => item.breadcrumbLabel && navMatchesLocation(pathname, item.href))
+    .reduce<(typeof NAVIGATION_OWNED_SURFACES)[number] | null>(
+      (longest, item) => (!longest || item.href.length > longest.href.length ? item : longest),
+      null,
+    );
+  return surface ? `${navLabel(surface.ownerKey)} / ${surface.breadcrumbLabel}` : undefined;
 }
 
 /**
@@ -200,7 +226,13 @@ export function MerchantShellContent({
           (spec §3.5 ①)。导轨必须挂在 `OttoPanelMount` 内部(而不是它旁边),才能读到
           面板的开合状态机去驱动 utility bar 的 Ask Otto 按钮。 */}
       <OttoPanelMount location={pathname}>
-        <MerchantShellFrame pathname={pathname} signOutAction={signOutAction} account={account} buildSha={buildSha}>
+        <MerchantShellFrame
+          pathname={pathname}
+          signOutAction={signOutAction}
+          account={account}
+          topBarLabel={shellTopBarLabel(pathname)}
+          buildSha={buildSha}
+        >
           {children}
         </MerchantShellFrame>
       </OttoPanelMount>
