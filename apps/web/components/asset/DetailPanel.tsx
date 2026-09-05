@@ -20,6 +20,18 @@ import {
   type ActiveGenModels,
 } from "@/lib/gen-actions";
 import { readPick, writePick, PICK_SCOPE_NOTE } from "@/lib/result-pick";
+import {
+  PUBLIC_MEDIA_TTL_MS,
+  PUBLIC_MEDIA_TTL_PRESETS_MS,
+  PUBLIC_MEDIA_TTL_SCOPE_NOTE,
+  publicMediaTtlFromCustom,
+  publicMediaTtlLabel,
+  publicMediaTtlProblem,
+  publicMediaTtlToCustom,
+  readTtlPick,
+  writeTtlPick,
+  type PublicMediaTtlUnit,
+} from "@/lib/media-public-link";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { CropIcon, DownloadIcon, HeartIcon, LinkIcon, PlayIcon, RotateCcwIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -27,6 +39,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -169,9 +183,18 @@ export default function DetailPanel({
   // 失败连按钮都不动。这一格专收它们,标题随动作走,句子是**这一次**真的失败原因。
   const [actionError, setActionError] = useState<{ title: string; message: string } | null>(null);
   const [copied, setCopied] = useState(false);
-  // 复制成功时说清楚这条链子活多久 —— 分钟数来自铸链那一处(lib/media-public-link.ts),
-  // 不在这一层写第二个数字。一条 10 分钟后就打不开的链子,不说＝另一种假成功。
-  const [copiedMinutes, setCopiedMinutes] = useState<number | null>(null);
+  // 复制成功时说清楚这条链子活多久 —— 时长来自**服务端真签进令牌的那个数字**
+  // (`getPublicMediaLink` 回的 `expiresInMs`),不在这一层写第二个数字。一条会过期的链子
+  // 不说出口＝另一种假成功;而说错时长比不说更糟。
+  const [copiedMs, setCopiedMs] = useState<number | null>(null);
+  // Founder 2026-09-05 裁决「同意,但是加上可以自由设定时间」—— 四个预设档 + 自定义。
+  // 默认仍是 10 分钟(`PUBLIC_MEDIA_TTL_MS`),挑过一次就记在这台浏览器上。
+  const [ttlPresetMs, setTtlPresetMs] = useState<number>(PUBLIC_MEDIA_TTL_MS);
+  const [ttlCustom, setTtlCustom] = useState(false);
+  const [ttlCustomValue, setTtlCustomValue] = useState("30");
+  const [ttlCustomUnit, setTtlCustomUnit] = useState<PublicMediaTtlUnit>("minutes");
+  // 商家有没有真的动过那一格。挂载时恢复上次的选择不算「动过」—— 见下面那条写回 effect。
+  const ttlTouchedRef = useRef(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   // 删除自己一格:它的错误必须留在确认框里(框不关、可重试),不能混进面板下方那一条 ——
   // 面板一关商家就以为删掉了,而服务端刚刚拒绝了这次删除。
@@ -208,6 +231,9 @@ export default function DetailPanel({
       setPaidActionError(null);
       setActionError(null);
       setDeleteError(null);
+      // 换看另一条素材 ⇒ 上一条的复制回执同样作废(判官 #1193 P2-d 的第二处)。
+      setCopied(false);
+      setCopiedMs(null);
     });
     getGeneration(generationId).then((result) => {
       if (cancelledRef.current) return;
@@ -267,6 +293,45 @@ export default function DetailPanel({
   // prop. All mutate/spend handlers act on this so a sibling variant isn't animated/deleted/
   // starred/edited against the wrong image (F08/F09). Still an owned id resolved server-side.
   const selectedGenId = gen ? (gen.variants[selectedIdx]?.id ?? gen.id) : generationId;
+
+  // 屏幕上此刻挑着的那个时长。自定义那一格随时可能填着看不懂的东西(空、字母、负数)⇒ NaN,
+  // 不在这里各判一次:按下复制时与服务端读**同一个** `publicMediaTtlProblem`,一句话两处用。
+  const chosenTtlMs = ttlCustom
+    ? publicMediaTtlFromCustom(ttlCustomValue, ttlCustomUnit)
+    : ttlPresetMs;
+
+  // 上次挑的那一档只活在这台浏览器上(`PUBLIC_MEDIA_TTL_SCOPE_NOTE` 就说的这件事)。
+  // 读不到、坏了、越界、存储被禁一律走默认档 —— 存法、判据、毫秒↔「2 / Hours」的换算
+  // 全在 lib/media-public-link.ts,这一层只摆状态。
+  // 读 localStorage 只能在挂载之后(服务端没有这个东西,首帧必须与服务端一致),所以走
+  // `queueMicrotask` —— 与这个文件里其它「挂载后再落一次状态」的地方同一个写法。
+  useEffect(() => {
+    const saved = readTtlPick();
+    if (saved === null) return;
+    queueMicrotask(() => {
+      // 自定义填的数正好等于某个预设(60 分钟＝1 hour 那一档)时,仍然回到 Custom… ——
+      // 存的是**来源**,不是靠数字反推,否则商家会以为自己填的那一格没保住。
+      if (saved.source === "preset") {
+        setTtlCustom(false);
+        setTtlPresetMs(saved.ttlMs);
+        return;
+      }
+      const custom = publicMediaTtlToCustom(saved.ttlMs);
+      setTtlCustom(true);
+      setTtlCustomUnit(custom.unit);
+      setTtlCustomValue(custom.value);
+    });
+  }, []);
+
+  useEffect(() => {
+    // 挂载那一次**不写**:商家还没碰过这一格,把默认档写进去等于让浏览器里多出一条他从没
+    // 挑过的偏好(存储被禁的浏览器上还白抛一次)。只有他真的动了这一格才记。
+    if (!ttlTouchedRef.current) return;
+    // 只记能用的值:存一个用不了的时长,等于下次开面板就先给商家一个错误。
+    if (publicMediaTtlProblem(chosenTtlMs) === null) {
+      writeTtlPick({ ttlMs: chosenTtlMs, source: ttlCustom ? "custom" : "preset" });
+    }
+  }, [chosenTtlMs, ttlCustom]);
   const targetProjectId = gen?.projectId ?? projectId;
   const imageCost = activeModels?.imageCredits ?? null;
   // #645 T4：视频按档计价，所以这里报的必须是**选中那一档**的价（服务端那张按档价目表），
@@ -488,13 +553,23 @@ export default function DetailPanel({
     // 复制的必须是**别人打得开**的那条链子。`gen.urls[i]` 是 `/files/…` 站内相对路径:登录墙
     // 后面、而且没有域名 —— 贴到别处一无所用。这里向既有的签名公共门要一条(服务端
     // `getPublicMediaLink`,复用 `/api/media/pub/<token>` 那道门,不另造一套分享)。
-    const minted = await getPublicMediaLink(selectedGenId);
+    // 时长先在这一头判一次(判据与服务端同一个函数),不合规就当场说 —— 让商家立刻看见
+    // 哪里填错了,而不是往返一次再拿回同一句话。真正的闸仍在服务端:它自己再判一次。
+    const ttlProblem = publicMediaTtlProblem(chosenTtlMs);
+    if (ttlProblem) {
+      setCopied(false);
+      setCopiedMs(null);
+      setActionError({ title: "Couldn't copy the link", message: ttlProblem });
+      return;
+    }
+    const minted = await getPublicMediaLink(selectedGenId, chosenTtlMs);
     if (cancelledRef.current) return;
     if ("error" in minted) {
       // 判官 P2-1:失败必须**撤掉上一轮的成功提示**。这颗键按得动第二次,上一次成功留下的
       // 「Copied!」与那句时长还在 6 秒窗口里;不撤的话,屏幕上同时写着「已复制」和
       // 「复制不了」—— 商家有理由相信前者,那正是这一票要消灭的假成功。
       setCopied(false);
+      setCopiedMs(null);
       setActionError({ title: "Couldn't copy the link", message: minted.error });
       return;
     }
@@ -503,7 +578,8 @@ export default function DetailPanel({
     try {
       await navigator.clipboard.writeText(url);
       setActionError(null);
-      setCopiedMinutes(minted.expiresInMinutes);
+      // 服务端回的是它真签进令牌的那个时长 —— 屏幕上那句话照它写。
+      setCopiedMs(minted.expiresInMs);
       setCopied(true);
       // 6 秒,不是原来的 2 秒:现在这块地方还要放下「这条链子活多久」那一句,2 秒读不完。
       // 再按一次就重新计时:先撤掉上一颗,否则它会在新提示刚出来时把提示抹掉。
@@ -515,12 +591,13 @@ export default function DetailPanel({
       // 写,但只说已知的事实:什么都没复制成。
       // 判官 P2-1:同上 —— 上一轮的「Copied!」不撤,就跟这句错误同屏打架。
       setCopied(false);
+      setCopiedMs(null);
       setActionError({
         title: "Couldn't copy the link",
         message: "Your browser blocked clipboard access, so nothing was copied.",
       });
     }
-  }, [gen, selectedGenId]);
+  }, [gen, selectedGenId, chosenTtlMs]);
 
   const handleDelete = useCallback(async () => {
     if (readOnly) return;
@@ -555,6 +632,12 @@ export default function DetailPanel({
     // 判官 P2-2:这一条错误说的是**上一张**(收藏/复制都按选中的那一张的 id 走)。换了张图
     // 还挂着它,商家会把它读成新这张的状态。换图＝换对象,旧的那句就此作废。
     setActionError(null);
+    // 判官 #1193 P2-d:**成功那一半同理**。剪贴板里躺着的是上一张的链子,屏幕却把
+    // 「Copied!」和那句时长挂在新选中的这一张上 —— 商家有理由以为手上那条链子是这一张的。
+    setCopied(false);
+    setCopiedMs(null);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = null;
     writePick(gen.id, idx);
   }, [gen]);
 
@@ -996,11 +1079,66 @@ export default function DetailPanel({
                 </a>
               </Button>
 
-              {/* Copy link */}
-              <Button variant="ghost" size="sm" onClick={handleCopyLink}>
-                <LinkIcon data-icon="inline-start" />
-                {copied ? "Copied!" : "Copy link"}
-              </Button>
+              {/* Copy link —— 键旁边就是「这条链子活多久」(Founder 2026-09-05 裁决:
+                  「同意,但是加上可以自由设定时间」)。四个预设档 + Custom…,默认 10 分钟。
+                  原生 select:高频小控件不加动画,键盘与手机系统选择器白拿(与
+                  VideoSpecPicker 同一条判据)。档位、上下限、那句人话全部来自
+                  lib/media-public-link.ts —— 屏幕与服务端读同一份,不可能各说各话。 */}
+              <div className="flex items-center gap-1.5">
+                <Button variant="ghost" size="sm" onClick={handleCopyLink}>
+                  <LinkIcon data-icon="inline-start" />
+                  {copied ? "Copied!" : "Copy link"}
+                </Button>
+                <NativeSelect
+                  size="sm"
+                  className="text-sm"
+                  aria-label="Link duration"
+                  title="How long the copied link keeps working"
+                  value={ttlCustom ? "custom" : String(ttlPresetMs)}
+                  onChange={(e) => {
+                    ttlTouchedRef.current = true;
+                    if (e.target.value === "custom") {
+                      setTtlCustom(true);
+                      return;
+                    }
+                    setTtlCustom(false);
+                    setTtlPresetMs(Number(e.target.value));
+                  }}
+                >
+                  {PUBLIC_MEDIA_TTL_PRESETS_MS.map((ms) => (
+                    <NativeSelectOption key={ms} value={String(ms)}>
+                      {publicMediaTtlLabel(ms)}
+                    </NativeSelectOption>
+                  ))}
+                  <NativeSelectOption value="custom">Custom…</NativeSelectOption>
+                </NativeSelect>
+                {ttlCustom && (
+                  <>
+                    <Input
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      aria-label="Custom link duration"
+                      className="h-9 w-20 text-sm"
+                      value={ttlCustomValue}
+                      onChange={(e) => { ttlTouchedRef.current = true; setTtlCustomValue(e.target.value); }}
+                    />
+                    <NativeSelect
+                      size="sm"
+                      className="text-sm"
+                      aria-label="Custom link duration unit"
+                      value={ttlCustomUnit}
+                      onChange={(e) => {
+                        ttlTouchedRef.current = true;
+                        setTtlCustomUnit(e.target.value === "hours" ? "hours" : "minutes");
+                      }}
+                    >
+                      <NativeSelectOption value="minutes">Minutes</NativeSelectOption>
+                      <NativeSelectOption value="hours">Hours</NativeSelectOption>
+                    </NativeSelect>
+                  </>
+                )}
+              </div>
 
               {/* Delete */}
               <Button variant="destructive-secondary" size="sm" onClick={() => { if (!readOnly) { setDeleteError(null); setConfirmAction("delete"); } }} disabled={readOnly} title={readOnlyReason}>
@@ -1008,12 +1146,16 @@ export default function DetailPanel({
               </Button>
             </div>
 
+            {/* 挑过的那一档只记在这台浏览器上(与变体那一格同一个口径,存法与这句话同源在
+                lib/media-public-link.ts)。不说出口就等于让浏览器临时状态冒充账号设置。 */}
+            <p className="text-[0.75rem] text-muted-foreground">{PUBLIC_MEDIA_TTL_SCOPE_NOTE}</p>
+
             {/* 复制出去的是一条签名公共链接(`/api/media/pub/<token>`),寿命就是铸它时那个
-                TTL。不说出口的话,商家把它贴进邮件、十分钟后对方打不开 —— 复制那一刻的
-                「Copied!」就成了假成功。分钟数由服务端连着链子一起给。 */}
-            {copied && copiedMinutes !== null && (
+                TTL。不说出口的话,商家把它贴进邮件、隔天对方打不开 —— 复制那一刻的
+                「Copied!」就成了假成功。时长由服务端连着链子一起给(它真签进令牌的那个)。 */}
+            {copied && copiedMs !== null && (
               <p className="text-[0.75rem] text-muted-foreground" role="status">
-                {`Anyone with this link can open the asset for ${copiedMinutes} minutes.`}
+                {`Anyone with this link can open the asset for ${publicMediaTtlLabel(copiedMs)}.`}
               </p>
             )}
 

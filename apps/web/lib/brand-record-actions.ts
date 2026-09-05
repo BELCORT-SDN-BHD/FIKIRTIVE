@@ -129,19 +129,31 @@ export async function deleteBrandRecord(raw: unknown): Promise<{ ok: true } | { 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const actor = await resolveActor(gate.email);
+  let removed = false;
   try {
     const { count } = await prisma.brandRecord.updateMany({
-      // Include an already-deleted row so an uncertain request can be retried safely.
-      where: { id: r.id, ownerId: gate.ownerId },
+      // 判官 P2-1:`deletedAt: null` 少不得 —— 少了它,连按 Remove 会把 `deletedAt` 一次次
+      // 盖成新时间,幂等键(含 updatedAt)跟着变,改动史里一次删除被讲成三次。
+      where: { id: r.id, ownerId: gate.ownerId, deletedAt: null },
       // 判官 P2-4:认不出人时 `actor.userId` 是 null,无条件写会把这一行已知的作者抹掉。
       data: { deletedAt: new Date(), ...actorStamp(actor) },
     });
-    if (!count) return { error: "Record not found." };
+    removed = count > 0;
+    if (!removed) {
+      // 回查真实状态(照 memory 那条同一口径):已经删掉的行,重发仍然算成功,不再写历史。
+      const already = await prisma.brandRecord.findFirst({
+        where: { id: r.id, ownerId: gate.ownerId, deletedAt: { not: null } },
+        select: { id: true },
+      });
+      if (!already) return { error: "Record not found." };
+    }
   } catch { return { error: "Couldn't delete — please try again." }; }
-  await recordBrandRevision({
-    ownerId: gate.ownerId, targetKind: "record", targetId: r.id, action: "deleted",
-    stamp: await stampOf(gate.ownerId, r.id, "record"), actor, summary: "Removed this record.",
-  });
+  if (removed) {
+    await recordBrandRevision({
+      ownerId: gate.ownerId, targetKind: "record", targetId: r.id, action: "deleted",
+      stamp: await stampOf(gate.ownerId, r.id, "record"), actor, summary: "Removed this record.",
+    });
+  }
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -153,18 +165,29 @@ export async function restoreBrandRecord(raw: unknown): Promise<{ ok: true } | {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const actor = await resolveActor(gate.email);
+  let broughtBack = false;
   try {
     const { count } = await prisma.brandRecord.updateMany({
-      where: { id: r.id, ownerId: gate.ownerId },
+      // 判官 P2-1:镜像的那一半 —— 只有还在删除态的行才需要恢复。
+      where: { id: r.id, ownerId: gate.ownerId, deletedAt: { not: null } },
       // 判官 P2-4:同上。
       data: { deletedAt: null, ...actorStamp(actor) },
     });
-    if (!count) return { error: "Record not found." };
+    broughtBack = count > 0;
+    if (!broughtBack) {
+      const already = await prisma.brandRecord.findFirst({
+        where: { id: r.id, ownerId: gate.ownerId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!already) return { error: "Record not found." };
+    }
   } catch { return { error: "Couldn't restore — please try again." }; }
-  await recordBrandRevision({
-    ownerId: gate.ownerId, targetKind: "record", targetId: r.id, action: "restored",
-    stamp: await stampOf(gate.ownerId, r.id, "record"), actor, summary: "Brought this record back.",
-  });
+  if (broughtBack) {
+    await recordBrandRevision({
+      ownerId: gate.ownerId, targetKind: "record", targetId: r.id, action: "restored",
+      stamp: await stampOf(gate.ownerId, r.id, "record"), actor, summary: "Brought this record back.",
+    });
+  }
   revalidatePath("/", "layout");
   return { ok: true };
 }

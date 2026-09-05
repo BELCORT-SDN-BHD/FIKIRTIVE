@@ -72,32 +72,33 @@ describe("saveBrandRecord — update by id", () => {
 });
 
 describe("delete / restore", () => {
-  it("soft-deletes owner-scoped", async () => {
+  it("FRONT-A8 soft-deletes owner-scoped", async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
     expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "r1", ownerId: "o1" },
+      // 判官 P2-1:只有还在的行才删 —— 已经删掉的行不再被写第二次,改动史里就不会
+      // 一行接一行 deleted。
+      where: { id: "r1", ownerId: "o1", deletedAt: null },
       // FRONT-A8:删除/恢复也是一次「谁动的」。判官 P2-4:认得出人才写 —— 这一份的
       // fixture 查不到 User 行(userId 为 null),写进去等于把这一行已知的作者抹掉。
       data: { deletedAt: expect.any(Date) },
     });
   });
-  it("soft-delete is safe to repeat after an uncertain response", async () => {
-    mockUpdateMany.mockResolvedValue({ count: 1 });
+  it("FRONT-A8 soft-delete is safe to repeat after an uncertain response", async () => {
+    mockUpdateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+    mockFindFirst.mockResolvedValue({ id: "r1" });   // 回查:它已经在删除态了
     expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
-    expect(mockUpdateMany).toHaveBeenNthCalledWith(2, {
-      where: { id: "r1", ownerId: "o1" },
-      // FRONT-A8:删除/恢复也是一次「谁动的」。判官 P2-4:认得出人才写 —— 这一份的
-      // fixture 查不到 User 行(userId 为 null),写进去等于把这一行已知的作者抹掉。
-      data: { deletedAt: expect.any(Date) },
-    });
+    expect(mockFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "r1", ownerId: "o1", deletedAt: { not: null } },
+    }));
   });
-  it("restore clears deletedAt", async () => {
+  it("FRONT-A8 restore clears deletedAt", async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
     expect(await restoreBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "r1", ownerId: "o1" },
+      // 判官 P2-1:镜像的那一半 —— 只有还在删除态的行才恢复。
+      where: { id: "r1", ownerId: "o1", deletedAt: { not: null } },
       // FRONT-A8:删除/恢复也是一次「谁动的」。判官 P2-4:认得出人才写 —— 这一份的
       // fixture 查不到 User 行(userId 为 null),写进去等于把这一行已知的作者抹掉。
       data: { deletedAt: null },

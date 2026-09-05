@@ -12,8 +12,12 @@
  *   · 一律 `env -u ANTHROPIC_BASE_URL`（本文件开跑前会亲自检查一次，设了就拒跑）；
  *   · 本 runner **不加载仓库 `.env.local`** —— 变量只从已经在 shell 里的 `process.env` 读。
  *
- * 预算：单次全跑硬上限 $10（`FULL_RUN_BUDGET_USD`），每次模型调用之前问一次预算闸，
- * 超了就地停并非零退出 —— 不是「跑完再看花了多少」。
+ * 预算两道，都在花钱之前：
+ *   · 本段累计 $20（`SEGMENT_BUDGET_USD`）—— 开跑前把 `baselines/` 里每一份档案的 `costUsd`
+ *     加起来，再加上本次全跑的最坏花费，超了就拒跑，一分钱不花；
+ *   · 单次全跑 $10（`FULL_RUN_BUDGET_USD`）—— 每次模型调用之前问一次，超了就地停并非零退出。
+ * 两道都不是「跑完再看花了多少」。开跑前的那几道守卫由 `preflight` 判、`guardedRun` 执行：
+ * 花钱的那一趟是传给它的闭包，所以「守卫在花钱之前」是结构上的事实，不是注释里的说法。
  */
 import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -36,6 +40,7 @@ import {
   type EvalArchive,
   type EvalTask,
   type JudgeVerdict,
+  type TokenPrices,
 } from "./core.js";
 import { runEvals, type Judge, type Subject } from "./run.js";
 
@@ -54,9 +59,12 @@ export function resolveLine(argv: readonly string[]): EvalLine {
   return raw;
 }
 
+/** 档案目录：本段累计花费的账本就是这里的每一份 `*.json`（两条线各一份）。 */
+const BASELINES_DIR = join(HERE, "baselines");
+
 /** 纯：一条线的两个路径——题目目录与它自己那一份档案。 */
 export function pathsFor(line: EvalLine): { tasksDir: string; baseline: string } {
-  return { tasksDir: join(HERE, "tasks", line), baseline: join(HERE, "baselines", `${line}.json`) };
+  return { tasksDir: join(HERE, "tasks", line), baseline: join(BASELINES_DIR, `${line}.json`) };
 }
 
 const SUBJECT_MAX_OUTPUT = 900;
@@ -72,18 +80,114 @@ const HARNESS_SUFFIX = `
 ---
 You are answering inside an offline evaluation harness. No tools are connected this turn and nothing you say spends money. Answer the merchant as you normally would, and state plainly — in order — which tools or prompt skills you would call and the key fields you would pass. Do not invent results you have not got.`;
 
-// ── 环境前置（§7.7 的那颗雷）────────────────────────────────────────────────
+// ── 开跑前的守卫（§7.7 的那颗雷 ＋ 两道预算）────────────────────────────────
 
-function assertEnvironment(): void {
-  if (process.env.ANTHROPIC_BASE_URL) {
-    throw new Error(
-      "ANTHROPIC_BASE_URL 有值——本机 Anthropic 调用会 404（症状像「型号不存在」，别去改型号常量）。\n" +
+/** 开跑前能判的全部条件。全是值，所以这道守卫可以在测试里逐条钉，不必起进程、不必有钥匙。 */
+export interface PreflightInput {
+  /** `process.env.ANTHROPIC_BASE_URL`——有值就拒跑（§7.7 那颗 404 雷）。 */
+  baseUrl: string | undefined;
+  apiKey: string | undefined;
+  /** `--check`：比对基线的那一趟。没有基线可比是开跑前就知道的事。 */
+  check: boolean;
+  baselineExists: boolean;
+  baselinePath: string;
+  /** `baselines/` 里已记的花费之和。 */
+  recordedUsd: number;
+  /** 本次全跑的最坏花费（已被单次硬上限截住）。 */
+  worstCaseUsd: number;
+  segmentBudgetUsd: number;
+}
+
+/**
+ * 纯：开跑前的判词。`ok:false` 就是「这一趟一次调用都不发」。
+ *
+ * 顺序即优先级：环境不对 → 没有基线可比 → 本段累计预算不够。
+ */
+export function preflight(i: PreflightInput): { ok: boolean; reason: string } {
+  if (i.baseUrl) {
+    return {
+      ok: false,
+      reason:
+        "ANTHROPIC_BASE_URL 有值——本机 Anthropic 调用会 404（症状像「型号不存在」，别去改型号常量）。\n" +
         "跑法：env -u ANTHROPIC_BASE_URL pnpm --filter @fikirtive/otto run evals",
+    };
+  }
+  if (!i.apiKey) {
+    return {
+      ok: false,
+      reason: "ANTHROPIC_API_KEY 不在环境里。先 `set -a; . .env.local; set +a`，再 env -u ANTHROPIC_BASE_URL 跑。",
+    };
+  }
+  if (i.check && !i.baselineExists) {
+    return { ok: false, reason: `没有基线可比（${i.baselinePath} 不存在）。先跑一次 evals 写档案。` };
+  }
+  const segment = budgetGate(i.recordedUsd, i.worstCaseUsd, i.segmentBudgetUsd);
+  if (!segment.ok) {
+    return {
+      ok: false,
+      reason:
+        `本段累计预算闸：baselines/ 已记 $${i.recordedUsd.toFixed(4)} + 本次最坏 $${i.worstCaseUsd.toFixed(4)} ` +
+        `> 本段上限 $${i.segmentBudgetUsd.toFixed(2)}，拒跑（一分钱不花）。`,
+    };
+  }
+  return { ok: true, reason: "" };
+}
+
+/** 守卫没过时抛它——runner 据此非零退出。 */
+export class EvalPreflightFailed extends Error {}
+
+/**
+ * 守卫在花钱之前：`run` 是**闭包**，`verdict.ok` 为假时它根本不会被调用。
+ *
+ * main() 与回归测试跑的是同一个函数——否则「守卫在前」只是位置上的巧合，
+ * 谁把两行调个个儿都不会红。
+ */
+export async function guardedRun<T>(
+  verdict: { ok: boolean; reason: string },
+  run: () => Promise<T>,
+): Promise<T> {
+  if (!verdict.ok) throw new EvalPreflightFailed(verdict.reason);
+  return run();
+}
+
+/** `baselines/` 里每一份档案的 `costUsd` 之和——本段到今天为止已记的花费。 */
+export function recordedSegmentUsd(dir: string): number {
+  if (!existsSync(dir)) return 0;
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .reduce((sum, f) => {
+      const archive = JSON.parse(readFileSync(join(dir, f), "utf8")) as EvalArchive;
+      return sum + (archive.costUsd ?? 0);
+    }, 0);
+}
+
+/**
+ * 纯：本次全跑的最坏花费估算——每题一次被测调用，有 rubric 的再加判分调用
+ * （判分器读不懂会重试一次，所以按两次算）。产物长度未知，按被测输出上限当最坏。
+ *
+ * 只用于开跑前的累计闸；计费永远用真实用量。
+ */
+export function worstCaseRunUsd(
+  tasks: readonly EvalTask[],
+  parts: { system: string; judgeRubric: string; prices: TokenPrices },
+): number {
+  const systemTokens = estimateTokens(parts.system);
+  const rubricTokens = estimateTokens(parts.judgeRubric);
+  return tasks.reduce((sum, t) => {
+    const promptTokens = estimateTokens(t.prompt);
+    const subject = callCostUsd(
+      { inputTokens: systemTokens + promptTokens, outputTokens: SUBJECT_MAX_OUTPUT },
+      parts.prices,
     );
-  }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY 不在环境里。先 `set -a; . .env.local; set +a`，再 env -u ANTHROPIC_BASE_URL 跑。");
-  }
+    if (t.rubric.length === 0) return sum + subject;
+    const judgeInput =
+      rubricTokens + promptTokens + SUBJECT_MAX_OUTPUT + estimateTokens(t.rubric.join("\n"));
+    const judge = callCostUsd(
+      { inputTokens: judgeInput, outputTokens: JUDGE_MAX_OUTPUT },
+      parts.prices,
+    );
+    return sum + subject + judge * 2;
+  }, 0);
 }
 
 // ── 计费器：真实用量 × 价目表，每次调用之前过一次预算闸 ──────────────────────
@@ -201,16 +305,6 @@ function commitSha(): string {
   }
 }
 
-/**
- * 这条线的档案里已记的花费——**只报数不拦**（`SEGMENT_BUDGET_USD` 是记账口径，
- * 真闸只有单次全跑的 `FULL_RUN_BUDGET_USD`，见 README「预算」一节）。
- */
-function spentSoFarUsd(baseline: string): number {
-  if (!existsSync(baseline)) return 0;
-  const prev = JSON.parse(readFileSync(baseline, "utf8")) as EvalArchive;
-  return prev.costUsd ?? 0;
-}
-
 function report(archive: EvalArchive): void {
   for (const t of archive.tasks) {
     const failed = t.checks.filter((c) => !c.pass);
@@ -229,33 +323,49 @@ async function main(): Promise<void> {
   const check = process.argv.includes("--check");
   const line = resolveLine(process.argv);
   const { tasksDir, baseline: BASELINE } = pathsFor(line);
-  assertEnvironment();
 
-  // `--check` 没有基线可比是**开跑前**就知道的事——先说，别烧完一整趟钱再说。
-  if (check && !existsSync(BASELINE)) {
-    console.error(`没有基线可比（${BASELINE} 不存在）。先跑一次 evals 写档案。`);
-    process.exit(1);
-  }
-
+  // 装题、读文件、估最坏花费——全都不花钱，都在守卫之前算好。
   const tasks = loadTasks(tasksDir, line);
   const model = OTTO_PRIMARY_MODEL;
   const budgetUsd = FULL_RUN_BUDGET_USD;
   const meter = new Meter(budgetUsd);
-
-  const already = spentSoFarUsd(BASELINE);
-  console.log(
-    `${line} 线 ${tasks.length} 题，型号 ${model}，单次上限 $${budgetUsd}` +
-      `（本段累计记账口径 $${SEGMENT_BUDGET_USD}，只报数不拦；这条线的档案里已记 $${already.toFixed(4)}）`,
+  const recordedUsd = recordedSegmentUsd(BASELINES_DIR);
+  // 本次最坏花费被单次硬上限截住：那一道会在超上限之前就地停，所以这一趟的真实上界就是它。
+  const worstCaseUsd = Math.min(
+    worstCaseRunUsd(tasks, {
+      system: ottoInstructions + HARNESS_SUFFIX,
+      judgeRubric: readFileSync(JUDGE_RUBRIC_PATH, "utf8"),
+      prices: llmPricesFor(model),
+    }),
+    budgetUsd,
   );
 
-  const archive = await runEvals(tasks, makeSubject(model, meter), makeJudge(model, meter), {
-    commit: commitSha(),
-    subjectModel: model,
-    judgeModel: model,
-    budgetUsd,
-    costUsd: () => meter.usd,
-    now: () => new Date(),
-  });
+  console.log(
+    `${line} 线 ${tasks.length} 题，型号 ${model}，单次上限 $${budgetUsd}` +
+      `（本段累计上限 $${SEGMENT_BUDGET_USD}：baselines/ 已记 $${recordedUsd.toFixed(4)}，本次最坏 $${worstCaseUsd.toFixed(4)}）`,
+  );
+
+  const archive = await guardedRun(
+    preflight({
+      baseUrl: process.env.ANTHROPIC_BASE_URL,
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      check,
+      baselineExists: existsSync(BASELINE),
+      baselinePath: BASELINE,
+      recordedUsd,
+      worstCaseUsd,
+      segmentBudgetUsd: SEGMENT_BUDGET_USD,
+    }),
+    () =>
+      runEvals(tasks, makeSubject(model, meter), makeJudge(model, meter), {
+        commit: commitSha(),
+        subjectModel: model,
+        judgeModel: model,
+        budgetUsd,
+        costUsd: () => meter.usd,
+        now: () => new Date(),
+      }),
+  );
   report(archive);
 
   if (!check) {
