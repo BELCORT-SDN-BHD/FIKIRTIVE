@@ -141,12 +141,17 @@ export const GENERATION_ENGINE_UNAVAILABLE =
  * next to the actual fix, so it read as permission to skip the fix.
  *
  * "ask again" names what happens ONLY after the merchant has done the fix ("Replace it"), not an
- * action that stands on its own — it cannot be read as "press retry and hope". The generic
- * catch-all a merchant sees for an ordinary, actually-retryable failure (`GENERATION_DID_NOT_GO_
- * THROUGH` / the card's own resting-face copy) keeps "Try again" verbatim, because for THAT case
- * pressing retry is the whole fix. Reserving the phrase for the case where it is true is the
- * point: `E2E-CRE-PAV-005` — reference-unavailable copy must point at an executable action, and a
- * retryable provider error is the only class allowed to still say "Try again".
+ * action that stands on its own — it cannot be read as "press retry and hope". Reserving the
+ * phrase for the case where it is true is the point: `E2E-CRE-PAV-005` — reference-unavailable
+ * copy must point at an executable action.
+ *
+ * 接线盘点 L1 · FRONT-A12 (2026-09-05) closed the same gap on the OTHER side of that sentence.
+ * This block used to add that the generic catch-all "keeps 'Try again' verbatim, because for THAT
+ * case pressing retry is the whole fix". It does not, and could not: `GENERATION_DID_NOT_GO_
+ * THROUGH` below never contained the phrase, and the card's generic resting face is the one ending
+ * that renders no control at all (`offersRefresh: false` in `apps/web/lib/canvas-terminal-copy.ts`)
+ * — so the words told the merchant to press a button the same row refuses to draw. The phrase now
+ * belongs to controls that exist, and to nothing else.
  */
 export const REFERENCE_ASSET_UNREACHABLE =
   "We couldn't reach one of your references, so nothing was charged. "
