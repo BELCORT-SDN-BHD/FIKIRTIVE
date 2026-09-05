@@ -14,9 +14,9 @@
  *
  * **它不说 Otto 读得到什么**(判官 r1 [P2] 的裁定至今成立):服务端没有任何读者会因为
  * 商家在看哪一页而改变这一轮的上下文,所以「On this page: X」那种写法会说假话。W2-8 因此
- * 不画 chip。FRONT-A14 之后头部只在打开的是一条**确知的画布对话**时写一句
- * 「Canvas · <画布名>」(见下方 `formatPanelScope` 上面那段):说的是「这段对话属于别处」,
- * 不是「Otto 看得见什么」—— 前者今天为真,后者仍要等 #879 step 2。
+ * 不画 chip。FRONT-A14 之后头部只写**这一条对话属于哪里**:确知的画布对话写
+ * 「Canvas · <画布名>」,面板自己的对话写「Workspace · <页面名>」(见下方 `formatPanelScope`
+ * 下面那一段)。说的是归属,不是「Otto 看得见什么」—— 前者今天为真,后者仍要等 #879 step 2。
  */
 import { GOAL_PRESETS, type GoalKey } from "@fikirtive/core/goals";
 import { SHELL_ROUTES, everyNavDestination } from "@fikirtive/core/navigation";
@@ -80,7 +80,7 @@ function matchShellRoute(location: string): ShellRouteMatch | null {
   return null;
 }
 
-/** 这一页是哪一页(今天没有人画它,理由见 `formatPanelScope` 上面那段;不描述 Otto 读得到什么)。 */
+/** 这一页是哪一页(头部那条 `Workspace · <页面名>` 横条的名字来源;不描述 Otto 读得到什么)。 */
 export type PanelContextSubject =
   /** 一页。`label` 就是它在导航里的名字(`Library`)。 */
   | { kind: "page"; routeKey: ShellRouteKey; label: string }
@@ -119,18 +119,22 @@ export function formatPanelScope(scope: string, name: string | null | undefined)
 }
 
 /**
- * 为什么这里**没有**一个「Workspace · <页面名>」的常驻标签(判官 P2-4)。
+ * 「Workspace · <页面名>」这条横条画在哪里、为什么(清单 G1 / P1-010,FRONT-A14 家族)。
  *
- * 上一版让面板头部每一页都挂一条横条。判官 r1 当初裁的是「不画」,而那一条横条对**面板
- * 自己的**对话来说不带任何新信息:商家就在那一页上,面板就是他刚点开的那一块 —— 它只是
- * 把他看得见的两件事又说了一遍,还占掉 320px 面板里的一整行,而且不在已批准的设计里。
+ * 画的地方是 `OttoPanelHost` 的 `scopeChip`,取的名字就是 `panelContextSubject()` 交出的
+ * `label` —— 导航表那一份权威,这里不写第二份页面名。
  *
- * 现在只在**带新信息**的那一种情况下画:打开的是一条**确知**的画布对话时,头部写
- * 「Canvas · <画布名>」——「你现在接着聊的这一段属于别处」是商家在面板上读不到的事实,
- * 那正是 P1-010 报的第二半。工作区对话与来路不明的老行都不画。
+ * 判据只有一句:**只对归属确知的那一条对话出声**。
+ *   · `surface === "canvas"` → `Canvas · <画布名>`(这一段属于别处,P1-010 报的第二半);
+ *   · `surface === "panel"`  → `Workspace · <页面名>`(这一段属于工作区,不属于任何画布);
+ *   · 新对话与来路不明的老行(`surface === null`)→ 一行都不画(判官 P2-1)。
  *
- * 「常驻 Workspace · <页面名> 横条要不要」已登记进 `docs/specs/frontend-baseline.md` §5,
- * 待 Founder 在 FRONT-A14 走查时裁。要接回来时,`panelContextSubject` 与它的围栏都还在。
+ * 判官 P2-4 上一轮把工作区那一半收窄掉,理由是「商家就在那一页上,不带新信息」,并挂起
+ * 待裁。清单 G1 的原文要求是两态都写明范围:商家在工作区与画布对话之间来回时,只有画布
+ * 那一态出声,等于让工作区对话看起来像是「没有归属」。这一轮按清单接回来,Founder 走查
+ * FRONT-A14 时可改判(登记在 `docs/specs/frontend-baseline.md` §5)。
+ *
+ * 这条横条仍然**不说 Otto 读得到什么**(判官 r1 [P2] 至今成立):写的是位置,不是上下文。
  */
 
 /**
