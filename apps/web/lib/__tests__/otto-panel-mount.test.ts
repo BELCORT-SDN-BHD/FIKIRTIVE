@@ -56,7 +56,10 @@ vi.mock("@/lib/otto-panel-seed", () => ({
  *  `fetch('/api/otto/thread-activity')`,判据在服务端;这里只需要证明「答什么,面板就
  *  怎么开合」。默认答「没有」,好让这个文件里其余用例的开合仍由存档/深链说了算。 */
 const fetchPanelThreadPending = vi.fn();
-vi.mock("@/lib/otto-panel-activity", () => ({
+// 只换掉那一次网络读,「商家关过面板吗」那两个记号用真的(它们只碰 sessionStorage) ——
+// 关掉面板会不会真的压住下一次到访的自动展开,是这个文件要证明的事(#1200 判官 P2-4)。
+vi.mock("@/lib/otto-panel-activity", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/otto-panel-activity")>()),
   fetchPanelThreadPending: (...args: unknown[]) => fetchPanelThreadPending(...args),
 }));
 
@@ -124,6 +127,9 @@ beforeEach(() => {
   Object.defineProperty(window, "innerWidth", { value: VIEWPORT.width, writable: true, configurable: true });
   Object.defineProperty(window, "innerHeight", { value: VIEWPORT.height, writable: true, configurable: true });
   window.localStorage.clear();
+  // 「商家这一程关过面板」的记号也逐条清干净 —— 不清的话,上一条用例按下的 Cmd+J 会压住
+  // 下一条用例的自动展开(#1200 判官 P2-4)。
+  window.sessionStorage.clear();
   // 这个文件里的大多数用例测的是面板挂进真壳之后的行为(开合、存档、懒加载、会话/项目
   // 整理),不是默认开合本身——默认从 2026-09-04 起改成收起(FRONT-A14,取代 Q3-A,见
   // panel-state.ts),所以这里统一按「商家上次留着开着」起步,省得每条用例各自造存档。
@@ -140,6 +146,7 @@ afterEach(async () => {
   root = null;
   container = null;
   window.localStorage.clear();
+  window.sessionStorage.clear();
   vi.clearAllMocks();
 });
 
@@ -807,6 +814,33 @@ describe("默认开合(FRONT-A14,Founder 2026-09-04 裁决,取代 Q3-A)", () => 
     const el = await mount(shell(MERCHANT_SURFACE));
 
     expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+  });
+
+  it("FRONT-A14: 商家关过之后,同一程的下一次整页加载不再自动展开(/create 与画布往返)", async () => {
+    // 现场:一单生成还在跑,商家从 /create 进画布再回来。每一次整页加载都会重问一次那句
+    // 「有没有在跑的面板对话」,答案还是「有」,于是刚被他关掉的面板又被顶开(判官 P2-4)。
+    writeClosedState();
+    fetchPanelThreadPending.mockResolvedValue(true);
+    const first = await mount(shell(MERCHANT_SURFACE));
+    expect(first.querySelector("[data-otto-panel]")).not.toBeNull();
+
+    // 商家自己关掉(Cmd+J 与头部 ✕、launcher 走的是同一条 setPanelOpen(false))。
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, metaKey: true }));
+    });
+    await settle();
+    expect(first.querySelector("[data-otto-panel]")).toBeNull();
+
+    // 下一次整页加载(新的挂载根,存档仍说「关着」,信号仍答「有」)。
+    await act(async () => root?.unmount());
+    container?.remove();
+    root = null;
+    container = null;
+    const second = await mount(shell(MERCHANT_SURFACE));
+
+    expect(second.querySelector("[data-otto-panel]")).toBeNull();
+    // 而且连问都不再问 —— 商家的手已经决定了这一程。
+    expect(fetchPanelThreadPending).toHaveBeenCalledTimes(1);
   });
 
   it("FRONT-A14: 展开一次之后商家自己关掉,不会被同一个信号重新弹开", async () => {
