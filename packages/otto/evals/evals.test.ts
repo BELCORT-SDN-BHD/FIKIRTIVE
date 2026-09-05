@@ -6,11 +6,13 @@
  * （判词解析、题目装载、预算闸）在这里单独钉。
  */
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   FULL_RUN_BUDGET_USD,
+  REGRESSION_TOLERANCE_POINTS,
   SEGMENT_BUDGET_USD,
   budgetGate,
   compareToBaseline,
@@ -25,6 +27,8 @@ import { runCheck } from "./checks/index.js";
 import { parseGlossary, shotGlossary, SEEDANCE_CRAFT_PATH } from "./checks/glossary.js";
 import {
   EvalPreflightFailed,
+  SPEND_LEDGER,
+  appendSpend,
   guardedRun,
   HARNESS_SUFFIX,
   loadTasks,
@@ -33,6 +37,8 @@ import {
   preflight,
   recordedSegmentUsd,
   resolveLine,
+  resolveTolerance,
+  runMain,
   worstCaseRunUsd,
   worstCaseSystem,
   type PreflightInput,
@@ -112,10 +118,33 @@ describe("ENGINE-A1 评测基线骨架", () => {
     expect(archive.total).toBe(0.5);
   });
 
-  it("ENGINE-A1 evals:check 回归即非零退出的判据：低于基线＝回归，持平与更高＝不回归", () => {
-    expect(compareToBaseline(0.8, 0.79).regressed).toBe(true);
+  it("ENGINE-A1 evals:check 回归即非零退出的判据：低于基线超过容差＝回归，持平与更高＝不回归", () => {
+    expect(compareToBaseline(0.8, 0.74).regressed).toBe(true);
     expect(compareToBaseline(0.8, 0.8).regressed).toBe(false);
     expect(compareToBaseline(0.8, 0.81).regressed).toBe(false);
+  });
+
+  it("ENGINE-A1 判分噪声容差：默认 ±5 个百分点内不算回归，容差可由参数覆盖", () => {
+    // 判分器对同一份产物两次跑不一定给同一个分（engine-6 那 1 分就这么浮动过）：
+    // 一题 4 分、共 10 题，一个维度抖一档＝总分 1.25 个百分点。默认容差要吃得下它。
+    expect(REGRESSION_TOLERANCE_POINTS).toBe(5);
+    expect(compareToBaseline(0.8, 0.79).regressed).toBe(false);
+    expect(compareToBaseline(0.8, 0.75).regressed).toBe(false);
+    expect(compareToBaseline(0.8, 0.7499).regressed).toBe(true);
+    // 覆盖成 0 就是旧口径：低一点点也算回归。
+    expect(compareToBaseline(0.8, 0.79, 0).regressed).toBe(true);
+    expect(compareToBaseline(0.8, 0.7, 10).regressed).toBe(false);
+    // delta 本身不受容差影响——印出来的还是真差值。
+    expect(compareToBaseline(0.8, 0.79).delta).toBeCloseTo(-0.01, 12);
+  });
+
+  it("ENGINE-A1 --tolerance= 解析：缺省用默认值，读不懂或负数当场炸", () => {
+    expect(resolveTolerance([])).toBe(REGRESSION_TOLERANCE_POINTS);
+    expect(resolveTolerance(["node", "runner.ts", "--check"])).toBe(REGRESSION_TOLERANCE_POINTS);
+    expect(resolveTolerance(["--tolerance=0"])).toBe(0);
+    expect(resolveTolerance(["--tolerance=2.5"])).toBe(2.5);
+    expect(() => resolveTolerance(["--tolerance=-1"])).toThrow(/百分点/);
+    expect(() => resolveTolerance(["--tolerance=abc"])).toThrow(/百分点/);
   });
 
   it("ENGINE-A1 预算硬上限：已花的加这一次的最坏情况超上限就停", () => {
@@ -149,6 +178,16 @@ describe("ENGINE-A1 题目契约与注册表", () => {
 
   it("ENGINE-A1 注册表里没有的检查名＝抛错", () => {
     expect(() => runCheck("no-such-check", "x")).toThrow(/没有/);
+  });
+
+  it("ENGINE-A1 禁词按词边界判：说出禁词才算命中，长单词里的同一串字母不算", () => {
+    // 判官 2026-09-05 P2-3：裸子串会冤枉人 —— `extend` 撞上 “the extended cut”。
+    expect(runCheck("forbids:extend", "I will extend your clip").pass).toBe(false); // 真说了＝命中
+    expect(runCheck("forbids:extend", "that is the extended cut, not an edit").pass).toBe(true);
+    expect(runCheck("forbids:Inbox", "check your Inbox").pass).toBe(false);
+    expect(runCheck("forbids:Inbox", "two inboxes later").pass).toBe(true);
+    // 词组同理，只看整段词组的两端；大小写仍不敏感。
+    expect(runCheck("forbids:already researched", "It is Already Researched.").pass).toBe(false);
   });
 
   it("ENGINE-A1 镜头术语表只有一份：检查从 craft/seedance.md 解析取词", () => {
@@ -271,11 +310,76 @@ describe("ENGINE-A1 守卫在花钱之前", () => {
     expect(archive.tasks).toHaveLength(1);
   });
 
-  it("ENGINE-A1 已记花费＝baselines/ 里每一份档案的 costUsd 之和，目录不存在算 0", () => {
-    expect(recordedSegmentUsd(join(HERE, "baselines-does-not-exist"))).toBe(0);
-    const real = recordedSegmentUsd(join(HERE, "baselines"));
-    expect(real).toBeGreaterThanOrEqual(0);
+  it("ENGINE-A1 已记花费＝花费账本每一行 costUsd 之和，账本不存在算 0", () => {
+    expect(recordedSegmentUsd(join(HERE, "baselines", "spend-does-not-exist.jsonl"))).toBe(0);
+    const real = recordedSegmentUsd(SPEND_LEDGER);
+    expect(real).toBeGreaterThan(0); // 首跑那一趟的钱真的花了，账本里有它
     expect(real).toBeLessThan(SEGMENT_BUDGET_USD);
+  });
+
+  it("ENGINE-A1 累计是真累计：跑三趟＝三趟之和，重读账本不重复计", () => {
+    // 「本段累计 $20」从前读的是各线**最近一次**的档案（覆盖写），跑三趟只记得到一趟的钱。
+    // 账本只追加，所以三趟就是三趟（判官 2026-09-05 P2-1）。
+    const dir = mkdtempSync(join(tmpdir(), "otto-evals-spend-"));
+    const ledger = join(dir, "spend.jsonl");
+    try {
+      expect(recordedSegmentUsd(ledger)).toBe(0);
+      const runs = [0.5, 0.25, 0.125];
+      for (const costUsd of runs) {
+        appendSpend(ledger, { line: "engine", date: new Date().toISOString(), commit: "abc", costUsd });
+      }
+      expect(recordedSegmentUsd(ledger)).toBeCloseTo(0.875, 12);
+      // 读第二遍还是同一个数：求和不因为重读而翻倍。
+      expect(recordedSegmentUsd(ledger)).toBeCloseTo(0.875, 12);
+      // 追加从不改写既有的行：三趟仍在，第四趟只是多一行。
+      expect(readFileSync(ledger, "utf8").trim().split("\n")).toHaveLength(3);
+      appendSpend(ledger, { line: "engine", date: "d", commit: "c", costUsd: 0.125 });
+      expect(recordedSegmentUsd(ledger)).toBeCloseTo(1, 12);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ENGINE-A1 账本读不懂的一行当场炸，不静默按 0 计（累计闸只许高估）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "otto-evals-spend-bad-"));
+    const ledger = join(dir, "spend.jsonl");
+    try {
+      writeFileSync(ledger, '{"line":"engine","date":"d","commit":"c","costUsd":0.5}\n不是 JSON\n');
+      expect(() => recordedSegmentUsd(ledger)).toThrow(/第 2 行/);
+      writeFileSync(ledger, '{"line":"engine","date":"d","commit":"c","costUsd":"贵"}\n');
+      expect(() => recordedSegmentUsd(ledger)).toThrow(/costUsd/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ENGINE-A1 main() 的接线：守卫没过时，花钱的那一趟一次都没被调用", async () => {
+    // 判官 2026-09-05 P2-2：从前只钉了 guardedRun 的契约，把 main() 改成先跑后判照样全绿。
+    let runs = 0;
+    await expect(
+      runMain({
+        preflight: () => ({ ok: false, reason: "拒跑" }),
+        runEvals: async () => {
+          runs += 1;
+          return "花掉了";
+        },
+      }),
+    ).rejects.toBeInstanceOf(EvalPreflightFailed);
+    expect(runs).toBe(0);
+  });
+
+  it("ENGINE-A1 main() 的接线：守卫过了才跑，产物原样回来", async () => {
+    let runs = 0;
+    await expect(
+      runMain({
+        preflight: () => ({ ok: true, reason: "" }),
+        runEvals: async () => {
+          runs += 1;
+          return "档案";
+        },
+      }),
+    ).resolves.toBe("档案");
+    expect(runs).toBe(1);
   });
 
   it("ENGINE-A1 最坏花费估算随题量与 rubric 增长，且判分调用按重试一次计两遍", () => {
