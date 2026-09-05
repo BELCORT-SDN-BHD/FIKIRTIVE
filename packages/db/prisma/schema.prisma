@@ -788,6 +788,10 @@ model Organization {
   businessHoursPolicies     BusinessHoursPolicy[]
   // ENGINE-A2(规格 docs/specs/otto-engine.md §7.2②):每轮调试档案。Prisma 要求的反向关系。
   ottoTurnTraces            OttoTurnTrace[]
+  // 前端基线 §7.3②(FRONT-A5 / A6):素材库的收藏与合集。
+  favorites                 Favorite[]
+  collections               Collection[]
+  collectionItems           CollectionItem[]
 }
 
 // User <-> Organization join. MembershipRole is the authorization source; the legacy role
@@ -1225,6 +1229,69 @@ model GenerationBatch {
   deletedAt DateTime?
 
   @@index([ownerId, projectId, deletedAt])
+}
+
+// 素材库收藏(FRONT-A5,规格 docs/specs/frontend-baseline.md §7.3② 与 §5「裁决十」)。
+//
+// 一张**不分素材类型**的表:记「这个租户收藏了哪一个素材」。设计里的 Favorites 是把生成
+// 结果与上传混在一起、按时间排的单一列表,所以它只能是一次查询、一套游标 —— 备选的
+// 「给每一类各补一列」会把这个视图变成 N 次查询 + 应用层合并排序(Founder 已否决)。
+//
+// subjectType 是**类型化 ID 的类型**,不是外键。刻意没有指向 Generation 的外键:收藏是
+// 一条链接,取消收藏不许删原对象,而外键的 ON DELETE 语义会把这两件事焊死。目标是否
+// 存在、是否属于当前租户,由 lib/library-subjects.ts 在每一次写入前重新校验。
+// 今天 subjectType 只有 "generation" 一个合法值(上传在本仓库也是一行 source=UPLOAD 的
+// Generation),表的形状已经准备好接别的类型;新类型开放前必须先有真实读模型,不然
+// 就是「无契约的控件」(裁决九)。
+model Favorite {
+  id           String       @id
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  subjectType  String
+  subjectId    String
+  createdAt    DateTime     @default(now())
+
+  // 幂等的写入压在这个约束上,而不是「先查后建」——后者在两次快速点击下会双双查空、双双插入。
+  @@unique([ownerId, subjectType, subjectId])
+  // 收藏页:一次查询、按时间倒序;id 是并列时的 tiebreak,让 keyset 分页全走索引。
+  @@index([ownerId, createdAt, id], map: "Favorite_owner_recent_idx")
+}
+
+// 合集(FRONT-A6)。一层结构,只保存对象链接;同一对象可以属于多个合集
+// (design-system/patterns/library/README.md §3.4)。
+model Collection {
+  id           String       @id
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  name         String
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  deletedAt    DateTime?
+
+  items CollectionItem[]
+
+  // 复合唯一键的用处只有一个:让子表的外键**带上 ownerId**(仓库租户铁律,
+  // packages/db/src/tenant-guard-coverage.test.ts 的「every direct relation … carries ownerId」)。
+  @@unique([id, ownerId])
+  @@index([ownerId, deletedAt, updatedAt])
+}
+
+// 合集成员。删合集只删这里的行,成员对象仍在 Library(验收 FRONT-A6 明写)——
+// 所以指向 Collection 的外键是 Cascade,而指向素材的「外键」根本不存在(同 Favorite 的理由)。
+model CollectionItem {
+  id           String       @id
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  collectionId String
+  subjectType  String
+  subjectId    String
+  createdAt    DateTime     @default(now())
+
+  collection Collection @relation(fields: [collectionId, ownerId], references: [id, ownerId], onDelete: Cascade)
+
+  // 同一个合集里同一个素材只有一行(规格 §7.3②)。
+  @@unique([collectionId, subjectType, subjectId])
+  @@index([ownerId, collectionId, createdAt, id], map: "CollectionItem_owner_collection_recent_idx")
 }
 
 // --- Better Auth (dormant foundation) — own tables, no collision with NextAuth's User/Account/Session/VerificationToken ---
