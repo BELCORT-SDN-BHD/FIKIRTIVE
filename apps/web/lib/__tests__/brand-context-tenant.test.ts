@@ -214,6 +214,42 @@ describe("FRONT-A8 / FRONT-A9 判官落修:存量行、Otto 写的行、重复�
     expect(history.filter((r) => r.action === "confirmed")).toHaveLength(1);
   });
 
+  it("FRONT-A8 连按三次 Remove:改动史里 deleted 仍然只有一行", async () => {
+    // 判官 P2-1:`deleteMemory` 的 where 少了 `deletedAt: null` 时,第二、第三次点击会把
+    // `deletedAt` 盖成新时间,幂等键(含 updatedAt)跟着变 —— 商家看到的改动史于是一行
+    // 接一行「Removed this context.」,一次删除被讲成三次。重发仍然算成功。
+    asUser(A_EMAIL);
+    const draft = await saveBrandDraft({
+      section: "brand-voice", name: "A triple remove", content: "A says thank you.", origin: "text", originDetail: "Pasted text",
+    });
+    if ("error" in draft) throw new Error(draft.error);
+    expect(await confirmBrandDraft({ id: draft.id })).toEqual({ ok: true });
+
+    expect(await deleteMemory({ id: draft.id })).toEqual({ ok: true });
+    expect(await deleteMemory({ id: draft.id })).toEqual({ ok: true });
+    expect(await deleteMemory({ id: draft.id })).toEqual({ ok: true });
+
+    const history = await listBrandRevisionsAction({ kind: "memory", id: draft.id });
+    expect(history.filter((r) => r.action === "deleted")).toHaveLength(1);
+  });
+
+  it("FRONT-A8 连按两次 Restore:改动史里 restored 仍然只有一行", async () => {
+    // 判官 P2-1 的镜像那一半。
+    asUser(A_EMAIL);
+    const draft = await saveBrandDraft({
+      section: "brand-voice", name: "A double restore", content: "A says come again.", origin: "text", originDetail: "Pasted text",
+    });
+    if ("error" in draft) throw new Error(draft.error);
+    expect(await confirmBrandDraft({ id: draft.id })).toEqual({ ok: true });
+    expect(await deleteMemory({ id: draft.id })).toEqual({ ok: true });
+
+    expect(await restoreMemory({ id: draft.id })).toEqual({ ok: true });
+    expect(await restoreMemory({ id: draft.id })).toEqual({ ok: true });
+
+    const history = await listBrandRevisionsAction({ kind: "memory", id: draft.id });
+    expect(history.filter((r) => r.action === "restored")).toHaveLength(1);
+  });
+
   it("FRONT-A8 放弃草稿也留下一行改动史", async () => {
     // 判官 P2-3。
     asUser(A_EMAIL);

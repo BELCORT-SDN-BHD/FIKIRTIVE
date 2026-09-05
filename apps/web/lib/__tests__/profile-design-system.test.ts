@@ -87,17 +87,23 @@ describe("Profile uses the shared product design system", () => {
     expect(form).not.toContain("<label");
   });
 
-  it("keeps Save explicit, shows progress, and replaces the draft with the server-confirmed name", async () => {
+  it("FRONT-A11 keeps Save explicit, shows progress, and replaces the draft with the server-confirmed name", async () => {
     let finish: ((value: { ok: true; name: string }) => void) | undefined;
     actions.updateDisplayName.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
 
     const dom = await renderProfileNames();
     const input = inputNamed(dom, "Display name");
-    const button = input.closest("form")!.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    const form = input.closest("form")!;
+    const button = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
 
     expect(button.disabled).toBe(true);
     await typeInto(input, "  Alya Tan  ");
     expect(button.disabled).toBe(false);
+
+    // 判官 P2-A:保存回执的 live region 必须**常驻**,而不是保存成功那一刻才挂上去 ——
+    // 读屏对「这一帧才出现的区域」往往什么都不报,因为变化发生在它存在之前。所以在按下
+    // Save **之前**就钉住它已经在页面上;下面几条再钉它装的东西按状态变。
+    expect(form.querySelector('[role="status"][aria-live="polite"]')).toBeTruthy();
 
     await submit(input);
     expect(actions.updateDisplayName).toHaveBeenCalledWith("  Alya Tan  ");
@@ -107,7 +113,7 @@ describe("Profile uses the shared product design system", () => {
 
     await act(async () => { finish?.({ ok: true, name: "Alya Tan" }); });
     expect(input.value).toBe("Alya Tan");
-    expect(input.closest("form")!.textContent).toContain("Saved");
+    expect(form.textContent).toContain("Saved");
   });
 
   it("associates a failed save with the field and keeps the server message visible", async () => {
