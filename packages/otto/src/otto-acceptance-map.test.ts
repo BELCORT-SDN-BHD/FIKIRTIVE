@@ -4,7 +4,7 @@
  * 规格 docs/specs/otto-engine.md 的验收表有七行(ENGINE-A1–A7),而 S2 §7.1 把它们按依赖
  * 切成七段、三批。这个文件是**全表**的登记处:哪一段落地就把它那一行转正,
  * 别处不再另立第二份登记表。今天已转正四条:ENGINE-A5(①段 §7.2①)、ENGINE-A2(②段 §7.2②)、
- * ENGINE-A4(⑤段 §7.2⑤)、ENGINE-A3(⑦段 §7.2⑦)。
+ * ENGINE-A4(⑤段 §7.2⑤)、ENGINE-A1(③段 §7.2③,基线档案已入档)。
  *
  * 这个文件的用处与 Creation 那份(packages/core/src/creation-acceptance-map.test.ts)相同:
  * **把没交付的那几条说出口**,而不是让它们从测试树上消失 ——
@@ -16,7 +16,10 @@
  * 每一条 todo 都注明归哪一段,所以哪一段落地时该把哪一条转正是确定的,不需要谁去回忆。
  * 转正 = 把 `it.todo` 换成真正的行为测试(S5 验收只认真身)。
  */
-import { describe, it } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
 
 describe("Otto 验收表 ↔ 测试映射(S2 §7.1 七段)", () => {
   // ── ①段(本段交付,真身在这三个文件里)────────────────────────────────────
@@ -25,8 +28,28 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.1 七段)", () => {
   // ── ②段(已交付,真身在这三个文件里)────────────────────────────────────
   it.todo("ENGINE-A2 见 packages/otto/src/runtime-turn-trace.test.ts(跑完/截断都落档案、无明文围栏、sink 抛错不承重)+ packages/db/src/otto-turn-trace-tenant.test.ts(双租户互不可见、外键与主键)+ apps/web/lib/__tests__/otto-actions.test.ts 与 otto-stream-route.test.ts(三门接线与入库列集)——②段已交付");
 
-  // ── 批 I 的其余两段(不在本段写集)─────────────────────────────────────────
-  it.todo("ENGINE-A1 评测集 v0 ≥10 题逐个判分 + 基线档案入档 —— ③段 §7.2③(评测集与基线都已在库:packages/otto/evals/ 十题 + baselines/engine.json,commit 003cebbe、总分 65.0%、花费 $0.4617;这一行的转正条件是把它换成真身测试,留给下一次碰 evals/ 的段)");
+  // ── ③段(已交付,基线已入档)──────────────────────────────────────────────
+  // 真身是 packages/otto/evals/evals.test.ts(骨架的行为测试,mock 判分器,零花费);
+  // 下面这一条钉的是**基线档案本身**——「不低于基线」这句话要有一个真的比较对象,
+  // 档案不在或缺字段就等于没有基线,那时 it.todo 说的「今天没有证据」才是实话。
+  it("ENGINE-A1 基线档案已入档:baselines/engine.json 存在且带日期、commit、型号、总分、真实花费", () => {
+    const archivePath = join(dirname(fileURLToPath(import.meta.url)), "..", "evals", "baselines", "engine.json");
+    expect(existsSync(archivePath)).toBe(true);
+    const archive = JSON.parse(readFileSync(archivePath, "utf8")) as Record<string, unknown>;
+    expect(typeof archive.date).toBe("string");
+    expect(Number.isNaN(Date.parse(String(archive.date)))).toBe(false);
+    expect(String(archive.commit)).toMatch(/^[0-9a-f]{40}$/);
+    // 型号两份:被测的与判分的。档案不说清是谁跑的,分数就不可比。
+    expect(String(archive.subjectModel).length).toBeGreaterThan(0);
+    expect(String(archive.judgeModel).length).toBeGreaterThan(0);
+    expect(typeof archive.total).toBe("number");
+    expect(archive.total as number).toBeGreaterThan(0);
+    expect(archive.total as number).toBeLessThanOrEqual(1);
+    expect(typeof archive.costUsd).toBe("number");
+    expect(archive.costUsd as number).toBeGreaterThan(0);
+  });
+
+  // ── 批 I 的其余一段(不在本段写集)─────────────────────────────────────────
   it.todo("ENGINE-A6 长对话旧轮折成摘要、对话继续,新一轮成本不随历史无限上涨 —— ④段 §7.2④");
 
   // ── ⑤段(已交付,真身在这三个文件里)────────────────────────────────────

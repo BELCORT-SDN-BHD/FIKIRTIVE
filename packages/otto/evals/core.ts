@@ -153,9 +153,13 @@ export function totalScore(tasks: TaskResult[]): { total: number; points: number
 /** 单次全跑的硬上限（`docs/specs/otto-engine.md` §7.7 建议值）。超了就停，不是警告。 */
 export const FULL_RUN_BUDGET_USD = 10;
 /**
- * 本段累计预算（§7.7）。**是真闸，不是记账口径**：开跑之前 runner 把 `baselines/` 里
- * 每一份档案的 `costUsd` 加起来，再加上本次全跑的最坏花费，超过它就拒跑（一分钱不花）。
- * 见 `runner.ts` 的 `recordedSegmentUsd` / `worstCaseRunUsd` / `preflight`。
+ * 本段累计预算（§7.7）。**是真闸，不是记账口径**，而且累计的是**真累计**：
+ * 开跑之前 runner 把 `baselines/spend.jsonl`（只追加、不覆盖的花费账本）里每一行的
+ * `costUsd` 加起来，再加上本次全跑的最坏花费，超过它就拒跑（一分钱不花）。
+ *
+ * 账本与档案是两件事：`baselines/<line>.json` 是**最近一次**的跑分档案（每跑一次就被覆盖），
+ * 拿它当累计只会算到最后一趟；跑了三趟就该记三趟的钱。
+ * 见 `runner.ts` 的 `recordedSegmentUsd` / `appendSpend` / `worstCaseRunUsd` / `preflight`。
  */
 export const SEGMENT_BUDGET_USD = 20;
 
@@ -214,11 +218,31 @@ export class EvalBudgetExceeded extends Error {}
 /** 浮点比较的容差：判分本身有噪声，回归判定不该被第 12 位小数触发。 */
 export const REGRESSION_EPSILON = 1e-9;
 
-/** 纯：`--check` 的判词。总分低于基线即回归（⑥段「不低于基线」用的也是这一句）。 */
-export function compareToBaseline(baselineTotal: number, currentTotal: number): {
+/**
+ * 判分噪声容差，单位＝**百分点**（总分是 0–1，比较时按 /100 折算）。
+ *
+ * 判分器对同一份产物两次跑不一定给同一个分（engine-6 那 1 分就是这样浮动的：
+ * 判词自相矛盾，同一段产物一次判 2、一次判 1）。一题 4 分、共 10 题，一个维度
+ * 抖 1 档就是总分 1.25 个百分点——`--check` 若按「低一点点就是回归」判，
+ * 会把噪声报成回归。所以默认留 ±5 个百分点，超出这一格才算真回归。
+ *
+ * 不做「多跑取中位」（那要花好几倍的钱）；那条路登记在 §5，等真有必要再说。
+ */
+export const REGRESSION_TOLERANCE_POINTS = 5;
+
+/**
+ * 纯：`--check` 的判词。总分低于基线**超过容差**才算回归（⑥段「不低于基线」用的也是这一句）。
+ *
+ * `tolerancePoints` 是百分点，可由 `--tolerance=` 覆盖；给 0 就是「低一点点也算回归」。
+ */
+export function compareToBaseline(
+  baselineTotal: number,
+  currentTotal: number,
+  tolerancePoints: number = REGRESSION_TOLERANCE_POINTS,
+): {
   regressed: boolean;
   delta: number;
 } {
   const delta = currentTotal - baselineTotal;
-  return { regressed: delta < -REGRESSION_EPSILON, delta };
+  return { regressed: delta < -(tolerancePoints / 100) - REGRESSION_EPSILON, delta };
 }

@@ -40,15 +40,37 @@ env -u ANTHROPIC_BASE_URL pnpm --filter @fikirtive/otto run evals -- --line=crea
 
 **两道闸，都是真的，都在花钱之前**（`docs/specs/otto-engine.md` §7.7）：
 
-1. **本段累计 $20**（`core.ts` 的 `SEGMENT_BUDGET_USD`）：**开跑之前**把 `baselines/` 里**每一份**档案的
-   `costUsd` 加起来，再加上本次全跑的最坏花费，超过 $20 就**拒跑** —— 一分钱不花、非零退出。
+1. **本段累计 $20**（`core.ts` 的 `SEGMENT_BUDGET_USD`）：**开跑之前**把 `baselines/spend.jsonl`
+   这本**只追加、不覆盖**的花费账本里**每一行**的 `costUsd` 加起来，再加上本次全跑的最坏花费，
+   超过 $20 就**拒跑** —— 一分钱不花、非零退出。每成功跑一趟（写档案或 `--check`，两者都花钱）
+   就往账本追加一行，所以「累计」是真累计：跑三趟记三趟的钱。
+   （账本与 `baselines/<line>.json` 是两件事：后者是**最近一次**的跑分档案，每跑一次就被整份覆盖，
+   拿它求和只算得到每条线最后那一趟。）
    本次最坏花费按「每题一次被测调用 + 有 rubric 的再按判分重试一次算两遍」估，并被下面那道 $10 截住。
 2. **单次全跑 $10**（`FULL_RUN_BUDGET_USD`）：**每次模型调用之前**过一次，
    已花的 + 这一次的最坏情况超过上限就**就地停**并非零退出。
 
 花费按真实 token 用量 × `@fikirtive/core` 的价目表算，写进档案的 `costUsd`。
-开跑前的那几道守卫（环境、有没有基线可比、累计预算）由 `runner.ts` 的 `preflight` 判、`guardedRun` 执行：
-真跑的那一趟是传给它的闭包，所以「守卫在花钱之前」是结构上的事实，不是注释里的说法（回归测试钉的正是这一条）。
+开跑前的那几道守卫（环境、有没有基线可比、累计预算）由 `runner.ts` 的 `preflight` 判、`guardedRun` 执行，
+而 `main()` 的**接线**本身抽成了 `runMain({ preflight, runEvals })`：两件事都是闭包，谁先谁后由它一个函数说了算。
+所以「守卫在花钱之前」是结构上的事实，不是注释里的说法 —— 回归测试钉的正是 `runMain`：
+把它改成先跑后判，测试当场红。
+
+## 回归判定的噪声容差
+
+`evals:check` 比对总分时留 **±5 个百分点**（`core.ts` 的 `REGRESSION_TOLERANCE_POINTS`）：
+判分器对同一份产物两次跑不一定给同一个分（`engine-6` 那 1 分就这么浮动过），
+一题 4 分、共 10 题，一个维度抖一档就是总分 1.25 个百分点 —— 按「低一点点就是回归」判，
+报的是噪声不是回归。低于基线**超过**这一格才算真回归。
+
+要更严就自己给：
+
+```bash
+env -u ANTHROPIC_BASE_URL pnpm --filter @fikirtive/otto run evals:check -- --tolerance=0
+```
+
+`--tolerance=` 收一个 ≥0 的百分点数；`0` 就是旧口径（低一点点也算回归）。
+不做「多跑取中位」——那要花好几倍的钱，登记在 `docs/specs/otto-engine.md` §5 等有必要再说。
 
 ## 目录
 
@@ -60,7 +82,7 @@ evals/
 │   ├── engine/      ← 本规格的营销任务（ENGINE-A1 基线；缺省的那条线）
 │   └── creation/    ← Creation 的题（creation-engine.md 批 III 自己填，跑法 --line=creation）
 ├── checks/          ← 机械检查注册表（纯函数）
-├── baselines/       ← 跑分档案（JSON：日期、commit、型号、逐题分、总分、花费）
+├── baselines/       ← 跑分档案（JSON：日期、commit、型号、逐题分、总分、花费）＋ spend.jsonl（只追加的花费账本）
 ├── core.ts          ← front-matter 契约、判分、预算闸（纯函数，测试跑它零成本）
 ├── run.ts           ← 跑一遍（subject 与 judge 都是注入的）
 └── runner.ts        ← tsx 入口：真调用、写档案、--check
@@ -89,6 +111,8 @@ rubric:
 
 - `id`：逐字等于验收编号，或 `<line>-<n>`。
 - `checks`：`checks/index.ts` 注册表里的名字，可带 `:参数,参数`。名字拼错＝当场炸，不会静默满分。
+  `forbids` **按词边界**判（`extended` 不算命中 `extend`）；`mentions-all` / `mentions-any` 仍是子串
+  （它们判的是「有没有提到」，宁可宽一点）。
 - `rubric`：**只写机械检查判不了的事**。机械检查判得了的分永远不进模型（省钱，也省噪声）。
 - 两者不能都是空的。
 
