@@ -2,7 +2,6 @@ import { formatCredits } from "@/lib/credit-format";
 import { countCharges, type SpendEntry } from "@/lib/spend-history";
 import type { SpendWindow } from "@/lib/spend-history-data";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import {
   Table,
@@ -53,22 +52,32 @@ export function windowSummary(window: SpendWindow, entries: readonly SpendEntry[
  */
 export function SpendHistory({ entries, window }: { entries: SpendEntry[]; window: SpendWindow }) {
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <ReceiptText className="size-4 text-muted-foreground" aria-hidden />
-            <CardTitle>Spend history</CardTitle>
-          </div>
-          {entries.length > 0 ? <Badge variant="outline">{entries.length} entries</Badge> : null}
+    /* 第 1 轮判官 P1②:`/billing` 去卡片化之后,这一节还是一张 marketing card —— 图标画在
+       盒子里、`text-lg` 的卡片标题、`bg-card` 的底 —— 而同页其余五节已经全部是夹具的
+       section 词汇。已冻结的 Settings screen pattern §3.3 明写这一面「默认使用 plain rows /
+       forms,不堆独立 marketing cards」。这里改成同一套词汇:图标 + `text-base font-semibold`
+       标题 + 说明在盒子**外面**,盒子里只剩那张表。表格本体、文案、列与徽章一字未改。
+       夹具没有「支出流水」这一节(它那张是假的 Credit usage 弹层),按 Founder 2026-09-03 的
+       第②条例外,用夹具的样式呈现,不自创长相。 */
+    <section>
+      <div className="flex items-start gap-3">
+        <ReceiptText className="mt-0.5 size-5 shrink-0" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base font-semibold">Spend history</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {entries.length === 0
+              ? "Charges, top-ups, refunds, and held credits will appear here."
+              : `${windowSummary(window, entries)} Chat and Review are Otto’s conversation turns.`}
+          </p>
         </div>
-        <CardDescription>
-          {entries.length === 0
-            ? "Charges, top-ups, refunds, and held credits will appear here."
-            : `${windowSummary(window, entries)} Chat and Review are Otto’s conversation turns.`}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
+        {entries.length > 0 ? <Badge variant="outline">{entries.length} entries</Badge> : null}
+      </div>
+      {/* 列的显隐留在**视口**断点上,不跟着上面那一节改成容器查询 —— 试过,是错的:
+          `Table` 自己就带 `overflow-x-auto`(components/ui/table.tsx:11),表格永远撑不破这个
+          盒子,所以这里根本没有 P1① 那个溢出问题;而按盒子宽度判断会在内容列窄于 448px 时
+          把 `Details` 整列藏起来,那一列写的正是「12 credits used · 28 refunded」——
+          退了多少钱。三条钱路 e2e(02/03/04)当场变红,是它们逮住的。 */}
+      <div className="mt-4 overflow-hidden rounded-[var(--radius-card)] border border-border">
         {entries.length === 0 ? (
           <Empty>
             <EmptyHeader>
@@ -112,8 +121,8 @@ export function SpendHistory({ entries, window }: { entries: SpendEntry[]; windo
             </TableBody>
           </Table>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }
 
