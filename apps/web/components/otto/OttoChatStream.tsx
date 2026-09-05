@@ -924,8 +924,14 @@ export function OttoChatStream({
     }
   }
 
-  /** 「Change something」把这张卡的原话塞回输入框,让商家在它上面改。抽屉里那张卡与画布上
-   *  那张确认卡按的是同一个动作,所以它只能有一份实现。 */
+  /**
+   * 确认卡那张小表单送回来的那句话,落进输入框(清单 A5 / P2-013)。
+   *
+   * 从前这里收到的是**这张卡的原话**(送给供应商的那段机器措辞),商家得自己在它上面改;
+   * 现在收到的是 `changeRequestSeed` 拼好的那一份 —— 他写的那句在前,卡的原话跟在后面。
+   * 这一层一个字都不改它:拼句子的口径住在 `CardOptionControls.tsx`,两处各拼一遍就是
+   * 第二份口径。抽屉里那张卡与画布上那张确认卡按的仍是同一个动作,所以它只有一份实现。
+   */
   function seedComposer(seed: string) {
     const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
     if (!ta) return;
