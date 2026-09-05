@@ -10,7 +10,8 @@
  *   · 未交付的编号是 `it.todo`，即「登记在册、尚未实现」—— M3 认这个形状，
  *     而它对人的意思是一句诚实话：这条验收今天**没有**证据，别把闸绿当成它过了。
  *
- * 今天有真身的是 ENGINE-A1（它钉的是基线档案本身；骨架的行为测试在 `./evals.test.ts`）。
+ * 今天有真身的是 ENGINE-A1（钉基线档案本身；骨架的行为测试在 `./evals.test.ts`）与 ENGINE-A7
+ * （钉文件柜之后那一趟对照 `evals:check` 真的跑过：账本里有它、规格 §5 里有它的结论）。
  * 其余各行仍是 `it.todo`——七段的**全表**登记处在 `packages/otto/src/otto-acceptance-map.test.ts`，
  * 各段落地时以那一份为准；这一份只管本段（③ 评测基线骨架）说得出口的那部分。
  *
@@ -53,14 +54,28 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.0 七段三批)", () => {
 
   // ── 批 II（依赖批 I）──────────────────────────────────────────────────────
   it.todo("ENGINE-A4 见 apps/web/lib/__tests__/engine-a4-truncated-turn-refund.test.ts（真库账本 reserve/refund 成对 + 消费历史退款行）与 packages/otto/src/runtime.test.ts（零交付判词三态）—— ⑤段已交付");
-  // ⑥段已交付**机制**（柜子、生成器、装配器、新鲜度闸、单体退役）——真身在
+  // ⑥段的**机制**（柜子、生成器、装配器、新鲜度闸、单体退役）真身在
   // packages/otto/src/knowledge-cabinet.test.ts 与 instructions.test.ts 的两道 golden。
-  // 但这一行的判定是「重跑评测**总分不低于基线**」，所以它要的是**对照那一趟**：基线档案
-  // `baselines/engine.json` 现在有了（上面那条 ENGINE-A1 钉着），欠的是文件柜之后再跑一次
-  // `evals:check` 并把那一趟的花费记进账本 `baselines/spend.jsonl`。那一趟的入档在 #1231，
-  // 尚未合入主干，所以这一行今天仍是 `it.todo`——把机制测试当成它过了，就是这份映射表存在
-  // 的意义的反面（判官 2026-09-05 #1221 P2-4：#1231 合入后把它转真身，断言账本里那一行）。
-  it.todo("ENGINE-A7 技能文件柜替换单体后重跑评测，总分不低于基线 —— 批 II §7.2⑥（机制已交付：src/knowledge-cabinet.test.ts；对照那一趟的入档在 #1231，合入后本行转真身）");
+  // 但这一行的判定是「重跑评测**总分不低于基线**」，所以它要的是**对照那一趟**本身：
+  // 一次真的 `evals:check`，以及它在账本与规格 §5 里留下的那两笔记录（#1231）。
+  // 机制测试绿不等于这一行过了——那正是这份映射表存在的意义的反面。
+  it("ENGINE-A7 文件柜之后的对照那一趟真的跑过：账本有那一行 --check，§5 有它的登记", () => {
+    // #1231：main 9a1f5292 上跑的 evals:check，62.5% 对基线 65%，差 -2.5 个百分点、
+    // 落在 ±5 容差内 ⇒ 不回退。这里钉的是「那一趟真花过钱、真留了痕」，不是再跑一次。
+    const ledger = readFileSync(join(HERE, "baselines", "spend.jsonl"), "utf8")
+      .split(/\r?\n/)
+      .filter((l) => l.trim() !== "")
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    const checkRun = ledger.find((e) => String(e.commit).startsWith("9a1f5292"));
+    expect(checkRun).toBeDefined();
+    expect(checkRun!.line).toBe("engine");
+    expect(checkRun!.costUsd).toBeCloseTo(0.301413, 6);
+    // 对照那一趟排在基线那一趟之后：账本只追加，顺序就是先后。
+    expect(ledger.indexOf(checkRun!)).toBeGreaterThan(0);
+    // 结论落在规格里，不是只落在某个 PR 描述里。
+    const spec = readFileSync(join(HERE, "..", "..", "..", "docs", "specs", "otto-engine.md"), "utf8");
+    expect(spec).toContain("⑥ 段 ENGINE-A7 对照登记");
+  });
 
   // ── 批 III（已交付；#1150 / #1151 / #1158 / #1194 / #1197 均已在主干）───────
   it.todo("ENGINE-A3 见 apps/web/lib/__tests__/engine-a3-canvas-conversation.test.tsx 与 e2e/journeys/engine-a3-canvas-conversation.spec.ts（⑦段已交付：直出 composer 与工具条 Generate 退役、送出接 Otto 对话、花钱走审批卡）");
