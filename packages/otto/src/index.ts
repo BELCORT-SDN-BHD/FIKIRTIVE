@@ -11,6 +11,11 @@ export {
   runOttoTurn,
   finalizeOttoTurn,
   ottoBudgetArgsFor,
+  // ENGINE-A2 (spec §7.2②): the per-turn trace fold and the literal an unregistered action
+  // name is folded into. Exported so the entries' sinks and their fence tests read the SAME
+  // whitelist rule the engine applies.
+  collectTurnTraceFacts,
+  UNREGISTERED_ACTION,
 } from "./runtime.js";
 export type {
   OttoRunProfile,
@@ -21,6 +26,11 @@ export type {
   OttoTurnRequest,
   OttoTurnRunResult,
   OttoTurnFinalization,
+  OttoTraceSurface,
+  OttoTraceToolCall,
+  OttoTurnTraceFacts,
+  OttoTurnTraceSink,
+  OttoTurnTracePort,
 } from "./runtime.js";
 export { ottoSimpleModeBlock } from "./instructions.js";
 // buildProposeCard — the pure $0 card-payload helper (no DB/SDK). Exposed for the
