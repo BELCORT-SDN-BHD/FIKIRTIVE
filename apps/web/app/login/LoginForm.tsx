@@ -18,6 +18,7 @@ import {
   SIGN_IN_CODE_INVALID_EMAIL_MESSAGE,
   SIGN_IN_CODE_LENGTH,
   SIGN_IN_CODE_REJECTED_MESSAGE,
+  SIGN_IN_CODE_UNAVAILABLE_MESSAGE,
   SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE,
   normalizeSignInEmail,
   type SignInCodeFailure,
@@ -71,11 +72,21 @@ function BackToLogin({ onClick }: { onClick: () => void }) {
 export function LoginForm({
   from,
   googleEnabled,
+  signInCodesAvailable = true,
   initialError = null,
   initialStep = "hub",
 }: {
   from: string;
   googleEnabled: boolean;
+  /** FRONT-A12/A2 —— 这个部署到底寄不寄得出信(Founder 2026-09-05 裁决①「按环境提示」)。
+   *
+   *  服务端算好了递下来,和 `googleEnabled` 一模一样的做法:一个部署级的 env 读
+   *  (`lib/email/transport.ts` 的 `emailDeliveryAvailable()`),对每个邮箱答案都一样,所以说出来
+   *  不构成「这个邮箱有没有账号」的探针。客户端不自己去猜——猜出来的第二份事实迟早与真正
+   *  要去寄信的那一半对不上,正是 #681 那颗 Google 按钮的病。
+   *
+   *  默认 true:评审夹具与既有测试不必知道这件事,而生产那一路总是显式传值。 */
+  signInCodesAvailable?: boolean;
   initialError?: string | null;
   initialStep?: LoginStep;
 }) {
@@ -116,6 +127,10 @@ export function LoginForm({
   async function sendSignInCode(e?: React.SyntheticEvent): Promise<boolean> {
     e?.preventDefault();
     if (busy) return false;
+    // 寄不出去的部署上,这颗按钮本来就是禁用的、code 那条入口也不画;这一句挡的是仍然到得了
+    // 这里的那条路(输入框里按 Enter 的隐式提交)。不另设错误:该说的话就在这一步的说明里,
+    // 说第二遍等于两个产地。
+    if (!signInCodesAvailable) return false;
     const normalizedEmail = normalizeSignInEmail(email);
     if (!normalizedEmail) {
       setError({
@@ -216,10 +231,18 @@ export function LoginForm({
   }
 
   if (step === "email" || ((step === "code" || step === "password") && !email)) {
+    // FRONT-A12 —— 寄不出信的部署不许在这一步许下一个它做不到的承诺。夹具那句
+    // 「We'll send a temporary login code.」是能寄信时说的话;寄不出去时这一步改说环境本身
+    // (措辞只提部署、不提这个邮箱,FRONT-A2),商家在**输入邮箱这一步**就读到,而不是翻到
+    // 下一屏之后才被告知一句假的「已寄出」。
     return (
       <AuthStepCard
         title="What's your email address?"
-        description="We'll send a temporary login code."
+        description={
+          signInCodesAvailable
+            ? "We'll send a temporary login code."
+            : SIGN_IN_CODE_UNAVAILABLE_MESSAGE
+        }
         footer={<BackToLogin onClick={() => go("hub")} />}
       >
         <form onSubmit={sendSignInCode}>
@@ -263,7 +286,7 @@ export function LoginForm({
                 }}
               />
             </Field>
-            <Button type="submit" disabled={!!busy} className="w-full">
+            <Button type="submit" disabled={!!busy || !signInCodesAvailable} className="w-full">
               {busy === "code" && <Spinner data-icon="inline-start" />}
               {busy === "code" ? "Sending…" : "Continue with email"}
             </Button>
@@ -440,12 +463,18 @@ export function LoginForm({
               >
                 Forgot password?
               </Link>
-              <span aria-hidden className="text-border">
-                ·
-              </span>
-              <Button type="button" variant="link" size="xs" onClick={() => sendSignInCode()}>
-                Use a login code
-              </Button>
+              {signInCodesAvailable ? (
+                <>
+                  <span aria-hidden className="text-border">
+                    ·
+                  </span>
+                  {/* FRONT-A12 —— 寄不出信的部署上这条入口不画:按下去只会得到一句
+                      「Password not accepted」加一段与密码无关的解释,指错地方。 */}
+                  <Button type="button" variant="link" size="xs" onClick={() => sendSignInCode()}>
+                    Use a login code
+                  </Button>
+                </>
+              ) : null}
             </div>
           </FieldGroup>
         </form>

@@ -4,32 +4,22 @@ import type { EmailMessage, EmailPort } from "./types";
 
 /**
  * Resend REST API adapter (#393). 1:1 port of the direct-fetch logic formerly inline in
- * better-auth/sender.ts — same env vars (RESEND_API_KEY / AUTH_EMAIL_FROM), same dev fallback
- * (no key + non-production → write <repo>/.data/last-magic-link.txt + console.log instead of
- * sending), same request shape. No behavior change; only the transport moved behind EmailPort.
+ * better-auth/sender.ts — same env vars (RESEND_API_KEY / AUTH_EMAIL_FROM), same request shape.
  *
- * THE DEV FILE'S NAME IS OLDER THAN WHAT IT HOLDS. It is written whatever the credential is —
- * a verification link, a reset link, or (since sign-in moved to one-time codes) six digits. The
- * path is left alone because a dozen local tracer scripts read it by name; renaming it is a
- * tooling change, not part of the auth flow.
+ * IT ONLY SPEAKS TO RESEND NOW. The keyless fallback that used to live in this function moved out
+ * whole to `lib/email/stub-adapter.ts`, and which of the two runs is decided once, by name, in
+ * `lib/email/transport.ts` — the same decision the login page reads to know whether it may promise
+ * a code at all (Founder 2026-09-05 裁决①). This adapter is therefore only ever chosen WITH a key;
+ * the guard below is what makes calling it without one a loud fault rather than a `Bearer
+ * undefined` request the provider answers 401 to.
  */
 export function createResendEmailPort(): EmailPort {
   return {
     async send(message: EmailMessage): Promise<void> {
       const { to, subject, text, html, from, signal, idempotencyKey } = message;
-      const preview = message.devPreview ?? text ?? message.html ?? "";
 
       if (!process.env.RESEND_API_KEY) {
-        if (process.env.NODE_ENV === "production") {
-          throw new EmailSendError("RESEND_API_KEY is not configured.", "config_missing");
-        }
-        const { writeFile, mkdir } = await import("node:fs/promises");
-        const path = await import("node:path");
-        const dir = path.join(process.cwd(), "..", "..", ".data");
-        await mkdir(dir, { recursive: true });
-        await writeFile(path.join(dir, "last-magic-link.txt"), preview, "utf8");
-        console.log(`[better-auth] ${subject} for ${to}: ${preview}`);
-        return;
+        throw new EmailSendError("RESEND_API_KEY is not configured.", "config_missing");
       }
 
       const res = await fetch("https://api.resend.com/emails", {

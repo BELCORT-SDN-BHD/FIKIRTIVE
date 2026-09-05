@@ -4,6 +4,24 @@ export const SIGN_IN_CODE_INVALID_EMAIL_MESSAGE = "Enter a valid email address."
 export const SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE =
   "We couldn't send a sign-in code. Try again.";
 
+/**
+ * What a merchant is told on a deployment that has no way to send mail at all
+ * (Founder 2026-09-05 裁决①「按环境提示」).
+ *
+ * IT TALKS ABOUT THE ENVIRONMENT, NEVER ABOUT THE ADDRESS — and that is what keeps it on the
+ * right side of FRONT-A2. The fact behind it is one env read (`emailDeliveryAvailable()`,
+ * lib/email/transport.ts): the same answer for every address, decided before any address is
+ * looked at, so it cannot encode whether an account exists. A single failed delivery is the
+ * opposite case and still says nothing — only an address with access is ever handed to the mail
+ * provider, which is why "delivery_failed" is deliberately absent from the reasons below.
+ *
+ * ONE sentence, and it is the whole vocabulary for this state: the login page shows it in place
+ * of "We'll send a temporary login code." on the email step, and the server action answers with
+ * it if a press gets through anyway.
+ */
+export const SIGN_IN_CODE_UNAVAILABLE_MESSAGE =
+  "Sign-in codes aren't available in this environment yet.";
+
 /** #678 — TWO reasons, and the omissions are the point.
  *
  *  No "rate_limited": being over the per-address hourly cap is reachable only for an address

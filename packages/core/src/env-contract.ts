@@ -354,6 +354,31 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     shared: false,
     summary: "Verified Resend sender address, used by auth email and by the founder alert email.",
   },
+  {
+    // Founder 2026-09-05 裁决①「按环境提示」的另一半:没有邮件商的部署照样要能跑登录旅程,
+    // 所以它需要一条**明写的**假投递通道,而不是藏在 Resend 适配器里的一个 if。
+    //
+    // 为什么不能只按 NODE_ENV 判:`next start` 自己把 NODE_ENV 设成 production,e2e 跑的正是
+    // 这条命令(e2e/playwright.config.ts 的 webServer)。于是「非生产才用假通道」在 e2e 上一定
+    // 不成立,登录旅程会全红。开关必须是显式的。
+    //
+    // 生产围栏落在 productionValues:真正对外服务的生产进程一旦把它设成 stub,开机检查判
+    // not-production-safe 并拒绝启动;e2e 是显式带着 FIKIRTIVE_ENV_CONTRACT=warn 跑的
+    // (e2e/support/env.ts),所以它只拿到一条响亮的警告 —— 正好是这种部署该被喊出来的事。
+    name: "AUTH_EMAIL_TRANSPORT",
+    surface: "web",
+    readBy: "code",
+    requirement: "optional",
+    format: "enum",
+    values: ["resend", "stub"],
+    productionValues: ["resend"],
+    productionReason:
+      "stub writes the sign-in code to a local file instead of mailing it — a production deployment that ran it would hand every merchant's code to whoever can read that disk",
+    secret: false,
+    shared: false,
+    summary:
+      "Which mail transport the web app uses. Unset = Resend when RESEND_API_KEY is set, otherwise the local stub off production. stub forces the local stub (test runners); production refuses it.",
+  },
 
   // ── 共享密钥(web 与 worker 必须同值)────────────────────────────────────
   {
@@ -1127,6 +1152,26 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
 export const ENV_CONTRACT_BY_NAME: ReadonlyMap<string, EnvVarSpec> = new Map(
   ENV_CONTRACT.map((spec) => [spec.name, spec]),
 );
+
+/**
+ * 「这个变量在这份 env 里配了没有」——只判有无,永不回显值。
+ *
+ * 存在的理由是产品代码里已经长出过第二套读法:`apps/web/lib/better-auth/social-config.ts`
+ * 自己写了一个 `configured()`(present 且非空白)。同一个判断散成两份,迟早有一份开始把
+ * `" "` 当成配好了,而开机检查那一份不会。这里把 checkEnv 用的同一个 `isSet` 开放出来,
+ * 于是「契约认为它配了」和「消费方认为它配了」按定义是同一句话。
+ *
+ * 名字必须先在契约里登记:一个哪里都没登记的 env 读取正是 #797 要消灭的东西,所以这里
+ * 抛错而不是静默回 false —— 后者会让漏登记的变量表现成「永远没配」,一个查不出来的怪病。
+ */
+export function envVarConfigured(env: EnvRecord, name: string): boolean {
+  if (!ENV_CONTRACT_BY_NAME.has(name)) {
+    throw new Error(
+      `${name} is not declared in the env contract — register it in packages/core/src/env-contract.ts before reading it`,
+    );
+  }
+  return isSet(env[name]);
+}
 
 /* ────────────────────────── 格式校验 ────────────────────────── */
 
