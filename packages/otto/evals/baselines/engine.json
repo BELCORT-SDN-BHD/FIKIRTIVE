@@ -1,0 +1,324 @@
+{
+  "line": "engine",
+  "date": "2026-09-05T04:41:45.920Z",
+  "commit": "2cb54e2d13000f819ecbb4aa7b8e0a01c589dde5",
+  "subjectModel": "claude-sonnet-4-6",
+  "judgeModel": "claude-sonnet-4-6",
+  "costUsd": 0.46167,
+  "budgetUsd": 10,
+  "total": 0.65,
+  "points": 26,
+  "maxPoints": 40,
+  "tasks": [
+    {
+      "id": "engine-1",
+      "artifact": "I'd love to make that for you! Before I build the prompt, a couple of quick things that would help me nail it:\n\n1. **What's the name or vibe of this iced coffee?** (e.g. \"creamy caramel latte\", \"bold cold brew\", \"fruity Vietnamese-style\" — anything that captures it)\n2. **Do you have a preferred shape?** Instagram feed posts work great in **1:1** (square) or **4:5** (portrait) — or I can do **9:16** for Stories/Reels.\n\nIf you're happy for me to use your brand context and run with it, just say the word and I'll go ahead!",
+      "checks": [
+        {
+          "name": "mentions-all:seedreamPrompt,propose",
+          "pass": false,
+          "reason": "没提到：seedreamPrompt, propose"
+        },
+        {
+          "name": "forbids:Campaigns",
+          "pass": true,
+          "reason": "禁词零命中：Campaigns"
+        }
+      ],
+      "judge": [
+        {
+          "dimension": "在提议之前只问了真正缺的那两三件（目标／产品／受众／形状之一），没有把商家审问一遍，也没有反过来问镜头或布光这类手艺",
+          "score": 2,
+          "reason": "只问了产品气质和画幅两件商家无法省略的事，镜头、布光、构图等手艺问题全部留给自己填，没有审问商家。"
+        },
+        {
+          "dimension": "说清楚了会先出一张确认卡、商家点了才扣钱，没有把「计划」说成「已经做好了」",
+          "score": 0,
+          "reason": "全文没有任何一句提到会先出确认卡、商家点了才扣钱，未履行该告知义务。"
+        }
+      ],
+      "score": 0.5,
+      "points": 2,
+      "maxPoints": 4
+    },
+    {
+      "id": "engine-10",
+      "artifact": "Great — I'll make a vertical version of the tumbler clip for an IG story, 9:16, with sound.\n\nBefore I build the prompt, I want to check one thing: I don't have the original tumbler clip in front of me this turn. Could you attach the clip (or let me know its generation ID / where it lives in your Library) so I can reference it properly?\n\nOnce I have it, here's exactly what I'd do:\n\n---\n\n**Tools I'd call, in order:**\n\n1. **`seedancePrompt`**\n - `mode`: `'edit'` (changing an existing clip — making it vertical with sound)\n - `aspect`: `'9:16'`\n - `references`: the tumbler entity (if it's a saved element), role + name\n - Goal: adapt the tumbler clip for a vertical IG Story format with audio\n\n2. **`propose`**\n - `kind`: `\"video\"`\n - `structuredPrompt`: the prompt returned by `seedancePrompt`\n - `desiredAspect`: `\"9:16\"`\n - `desiredAudio`: `true` (sound on)\n - `desiredDuration`: carry over from the original (or confirm with you if unclear)\n - `desiredResolution`: I'd leave this out unless you've told me a quality tier — I won't raise or lower it on your behalf\n\n---\n\nOnce you attach the clip (or point me to it), I'll build the card straight away. On a clip edit, the shape is driven by your clip, so the card will note that — but since you've explicitly asked for 9:16 I'll make sure that's passed through clearly.",
+      "checks": [
+        {
+          "name": "mentions-all:desiredAspect,9:16",
+          "pass": true,
+          "reason": "都提到了：desiredAspect, 9:16"
+        },
+        {
+          "name": "mentions-any:aspect,vertical",
+          "pass": true,
+          "reason": "命中：aspect, vertical"
+        }
+      ],
+      "judge": [
+        {
+          "dimension": "形状既传给了 propose 的字段、也传给了提示词那一侧（同一个值传两处），因为竖版要额外一句防字幕",
+          "score": 1,
+          "reason": "9:16 传给了 propose 的 desiredAspect 字段，也在 seedancePrompt 的 Goal 里提到了 vertical IG Story format，但没有明说要在提示词文本里加一句防字幕的竖版专属说明，方向对但漏了那半句。"
+        },
+        {
+          "dimension": "时长、清晰度、声音这几项走 propose 的字段，没有被写进提示词文本",
+          "score": 1,
+          "reason": "desiredAudio: true 和 desiredDuration 明确走 propose 字段，但 desiredResolution 的处理说明（'leave this out unless you've told me'）混在了叙述里而非字段列表，且 desiredDuration 写成 'carry over or confirm' 而非明确字段值，整体方向对但时长和清晰度的字段交代不够干净。"
+        }
+      ],
+      "score": 0.75,
+      "points": 3,
+      "maxPoints": 4
+    },
+    {
+      "id": "engine-2",
+      "artifact": "I'd love to help you make a video of your new tumbler! Since we don't have any photos of it yet, the best path is to **make a keyframe image first, then animate it into a video** — that's the standard two-step flow for a specific product.\n\nBefore I build the plan, I need a couple of quick things:\n\n1. **What does the tumbler look like?** (color, finish, any logo or design details — whatever you can describe)\n2. **What vibe/mood are you going for?** (e.g. sleek and minimal, outdoorsy, cozy lifestyle, bold and energetic)\n\nOnce I know that, I'll craft the image and video prompts and lay out a card for you to review — no credits spent until you approve.",
+      "checks": [
+        {
+          "name": "mentions-all:seedancePrompt",
+          "pass": false,
+          "reason": "没提到：seedancePrompt"
+        },
+        {
+          "name": "mentions-any:t2v,text-to-video",
+          "pass": false,
+          "reason": "一条都没提到：t2v, text-to-video"
+        }
+      ],
+      "judge": [
+        {
+          "dimension": "认出了手上没有首帧，所以这一趟是从零起片子（t2v），而不是默认那档「让一张首帧动起来」",
+          "score": 1,
+          "reason": "Otto 正确认出手上没有图片、需要先建 keyframe 再转 video，但把流程描述为「先出 keyframe 图、再动起来」——这仍然是 i2v 路径（首帧动画），而不是 t2v（从零直接生视频）；两步流和 t2v 是不同的方案，Otto 并未真正识别出可以走 t2v 这条路。"
+        },
+        {
+          "dimension": "时长／清晰度／画幅／声音这几项说清了是走 propose 的字段，而不是写进提示词文本里",
+          "score": 0,
+          "reason": "时长、清晰度、画幅、声音这四项参数完全未被提及，没有任何迹象表明它们会走 propose 字段而非写进提示词文本，判不到分。"
+        }
+      ],
+      "score": 0.125,
+      "points": 0.5,
+      "maxPoints": 4
+    },
+    {
+      "id": "engine-3",
+      "artifact": "Love that concept — a classic three-act cafe story. Before I build the storyboard, just a couple of quick things:\n\n1. **What's the goal of the ad?** (e.g. drive foot traffic, grow social following, promote a specific drink or offer?)\n2. **Any particular format or platform in mind?** (e.g. vertical 9:16 for Instagram Reels/Stories, square, widescreen?)\n\nOnce I have those I'll map out the three shots properly and lay out the storyboard for you to review.",
+      "checks": [
+        {
+          "name": "mentions-all:proposeStoryboard",
+          "pass": false,
+          "reason": "没提到：proposeStoryboard"
+        },
+        {
+          "name": "forbids:proposePack",
+          "pass": true,
+          "reason": "禁词零命中：proposePack"
+        }
+      ],
+      "judge": [
+        {
+          "dimension": "认出这是分开的多个镜头、要走分镜卡，而不是一次 propose",
+          "score": 0,
+          "reason": "Otto 没有认出这是三个分开的镜头需要走分镜卡流程，只说了'map out the three shots'和'lay out the storyboard'，但完全没有提及分镜卡这一具体产物或流程步骤。"
+        },
+        {
+          "dimension": "明说了分镜卡本身不扣一分钱、首帧与视频是之后各自单独批准的步骤",
+          "score": 0,
+          "reason": "Otto 没有提及分镜卡不扣费、首帧确认、视频单独批准等任何费用与审批步骤，商家无法知道钱在哪个环节才会动。"
+        }
+      ],
+      "score": 0.25,
+      "points": 1,
+      "maxPoints": 4
+    },
+    {
+      "id": "engine-4",
+      "artifact": "Great — I'll edit your clip to make the shirt red while keeping everything else exactly as it is.\n\nHere's what I would do:\n\n---\n\n**Step 1 — Build the edit prompt with `seedancePrompt`**\n\nI'd call **`seedancePrompt`** with:\n- `mode: 'edit'`\n- A description focused only on the change: something like *\"Change the shirt color to red; keep all other elements — background, lighting, movement, and everything on screen — exactly as they are.\"*\n- The attached clip as the reference\n\n---\n\n**Step 2 — Propose the edit with `propose`**\n\nI'd call **`propose`** with:\n- `kind: \"video\"`\n- `structuredPrompt`: the prompt returned by `seedancePrompt` above\n- The attached clip as the source (the edit rides on it)\n\nThis lays out a card showing the cost for you to review before anything is charged or started.\n\n---\n\n**Once the card is up**, you'd review it and approve it there to start the edit. Nothing is charged until you do that on the card itself.\n\nReady to go whenever you are — just confirm and I'll put the card together!",
+      "checks": [
+        {
+          "name": "mentions-all:seedancePrompt",
+          "pass": true,
+          "reason": "都提到了：seedancePrompt"
+        },
+        {
+          "name": "mentions-any:edit,strict edit",
+          "pass": true,
+          "reason": "命中：edit"
+        }
+      ],
+      "judge": [
+        {
+          "dimension": "挑的是「改这条片子里的一处」那一档，且明说其余部分原样不动",
+          "score": 2,
+          "reason": "产物明确以 mode:'edit' 处理原片，prompt 描述限定为「Change the shirt color to red; keep all other elements — background, lighting, movement, and everything on screen — exactly as they are」，与「改一处、其余原样」完全对应。"
+        },
+        {
+          "dimension": "没有顺手给这条片子加风格、加画质基调、或改口说要重做一条新的",
+          "score": 2,
+          "reason": "产物全程只提颜色变更，没有附加任何风格、画质基调描述，也没有提议重新生成新片，克制地止步于商家要求的单一修改。"
+        }
+      ],
+      "score": 1,
+      "points": 4,
+      "maxPoints": 4
+    },
+    {
+      "id": "engine-5",
+      "artifact": "Great idea! I'd love to make a new clip in the same spirit as your last one.\n\nA couple of quick things before I build it:\n\n1. **What's the new flavour?** (name, and anything distinctive about it — colour, ingredients, vibe)\n2. **Any key message or feel you want the clip to carry?** (e.g. \"bold and spicy\", \"light and refreshing\", \"summer launch energy\") — or I can pull direction from your brand if you'd like me to go with that.\n\nOnce I have those, here's exactly what I'd do:\n\n---\n\n**Tools I'd call, in order:**\n\n1. **`seedancePrompt`** — with `mode: 't2v'` (a new clip in the same spirit, not an edit to your clip), passing the new flavour details, the motion/pacing/feel I want to borrow from the reference, and any brand context I have. I'd supply the craft myself — camera movement, energy, composition.\n\n2. **`propose`** — with:\n   - `kind: \"video\"`\n   - `structuredPrompt`: the prompt returned by `seedancePrompt`\n   - `desiredAspect`: matched to the shape of your attached clip (or whatever you specify)\n   - `desiredDuration` / `desiredResolution` / `desiredAudio`: matched to your attached clip's specs, or as you direct\n\nThe card would then appear for you to review and approve before anything is charged.\n\n---\n\nJust share the flavour details and I'll get the plan together!",
+      "checks": [
+        {
+          "name": "mentions-any:t2v,new clip",
+          "pass": true,
+          "reason": "命中：t2v, new clip"
+        },
+        {
+          "name": "forbids:extend",
+          "pass": true,
+          "reason": "禁词零命中：extend"
+        }
+      ],
+      "judge": [
+        {
+          "dimension": "认出这不是改那条片子、也不是把它接下去，而是要一条新的、只是借它的感觉",
+          "score": 2,
+          "reason": "Otto 明确选用 t2v 模式并注明「not an edit to your clip」，确认了这是一条全新生成的片子而非对原片的续接或修改。"
+        },
+        {
+          "dimension": "说清了会借的是什么（动感、节奏、观感），不是把原片当参考图送进去",
+          "score": 2,
+          "reason": "Otto 写明要从原片「借」的是 motion/pacing/feel，并说 camera movement、energy、composition 由自己填写，未将原片当参考图送进模型。"
+        }
+      ],
+      "score": 1,
+      "points": 4,
+      "maxPoints": 4
+    },
+    {
+      "id": "engine-6",
+      "artifact": "You can connect your Instagram account at **Settings › Connections**.",
+      "checks": [
+        {
+          "name": "mentions-all:Connections",
+          "pass": true,
+          "reason": "都提到了：Connections"
+        },
+        {
+          "name": "forbids:Campaigns,Segments,Inbox",
+          "pass": true,
+          "reason": "禁词零命中：Campaigns, Segments, Inbox"
+        }
+      ],
+      "judge": [
+        {
+          "dimension": "直接给了地图上那条路（Settings 底下的 Connections），没有推说「我看不见你的界面」",
+          "score": 2,
+          "reason": "直接给出 Settings › Connections 这条路径，没有推脱或含糊。"
+        },
+        {
+          "dimension": "没有顺手编造任何一个地图上没有的页面、标签或开关",
+          "score": 0,
+          "reason": "无法确认 FIKIRTIVE 应用内真实存在 'Settings › Connections' 这一路径，Otto 直接报出该路径但没有任何出处支撑，属于编造页面。"
+        }
+      ],
+      "score": 0.75,
+      "points": 3,
+      "maxPoints": 4
+    },
+    {
+      "id": "engine-7",
+      "artifact": "I'd be happy to set up a deep competitive research dive for you! Before I propose the plan, I need one thing:\n\n**Who are your two biggest competitors?**\n\nIf you can share their names (and their websites if you have them), I'll build a proper research plan that covers things like their positioning, messaging, creative approach, offers, and any gaps you could exploit.",
+      "checks": [
+        {
+          "name": "mentions-all:proposeResearch",
+          "pass": false,
+          "reason": "没提到：proposeResearch"
+        },
+        {
+          "name": "forbids:already researched",
+          "pass": true,
+          "reason": "禁词零命中：already researched"
+        }
+      ],
+      "judge": [
+        {
+          "dimension": "明说这一步只是摆出一张研究计划卡，真正的研究要等商家批准之后才跑、也才扣费",
+          "score": 0,
+          "reason": "Otto 只说了「I'll build a proper research plan」，完全没有提到确认卡、批准流程或扣费节点，商家无从知道研究在哪一步才真正启动、钱在哪一步才动。"
+        },
+        {
+          "dimension": "没有把还没发生的研究说成已经做完（没有编造任何一条竞争对手的事实）",
+          "score": 2,
+          "reason": "Otto 明确表示需要商家先提供竞争对手名称才能开始，全文没有捏造任何竞争对手信息或声称研究已完成。"
+        }
+      ],
+      "score": 0.5,
+      "points": 2,
+      "maxPoints": 4
+    },
+    {
+      "id": "engine-8",
+      "artifact": "That's a great question to keep tabs on! I can look that up for you using `researchWeb`, but I'd need a bit more to go on:\n\n1. **Who's the competitor?** (Name and/or their website URL)\n2. **What's your street/area?** (So I can narrow it down to the right location)\n\nOnce I have those, I'll do a quick search and see if their BOGO promotion is still showing up anywhere online — their site, social pages, or local listings.",
+      "checks": [
+        {
+          "name": "mentions-all:researchWeb",
+          "pass": true,
+          "reason": "都提到了：researchWeb"
+        },
+        {
+          "name": "forbids:proposeResearch",
+          "pass": true,
+          "reason": "禁词零命中：proposeResearch"
+        }
+      ],
+      "judge": [
+        {
+          "dimension": "挑的是随手查那一条路（不需要批准），而不是那张要批准、要扣费的深研计划卡",
+          "score": 2,
+          "reason": "Otto 说「I can look that up for you using researchWeb」，走的是随手调工具那条路，没有提审批卡或费用。"
+        },
+        {
+          "dimension": "说了这一趟会怎么查（先拿一串结果、再挑一两条真去读），没有承诺一个它还没查到的答案",
+          "score": 1,
+          "reason": "Otto 只说了「do a quick search and see if their BOGO promotion is still showing up anywhere online」，提到了查哪些地方（官网、社媒、本地列表），但没有说明会先拿一批结果、再选几条深读的两步动作，查法描述停在第一步。"
+        }
+      ],
+      "score": 0.875,
+      "points": 3.5,
+      "maxPoints": 4
+    },
+    {
+      "id": "engine-9",
+      "artifact": "I'll create a smooth, cinematic shot of your tumbler resting on a warm wooden table — natural light, close detail, satisfying stillness with a subtle camera push.\n\nBefore I build the prompt, let me note what I'd need to proceed fully in a live session: I'd call **`describeRefs`** if I could see your tumbler's reference image, and **`manageEntities`** / check available refs to find your tumbler entity. Since no tools are connected this turn, I'll lay out exactly what I'd do:\n\n---\n\n**Step 1 — `seedancePrompt`**\n\nI'd call `seedancePrompt` with:\n- `mode`: `'t2v'` (no source frame to animate from)\n- `aspect`: `'16:9'` *(defaulting to landscape — a natural table-top product shot)*\n- `references`: your tumbler entity (e.g. `{ role: \"product\", name: \"@YourTumbler\" }`)\n- Subject, camera, lighting filled in by me: a slow, cinematic push-in on the tumbler, warm side-lighting raking across the wood grain, shallow depth of field, steam or condensation on the cup if brand-appropriate\n\n**Step 2 — `propose`**\n\nI'd call `propose` with:\n- `kind`: `\"video\"`\n- `structuredPrompt`: *(the prompt returned by seedancePrompt above)*\n- `desiredDuration`: `5`\n- `desiredAspect`: `'16:9'`\n- `entityIds`: your tumbler's entity id\n\n---\n\n**Two quick things I need to move forward:**\n\n1. **Do you have a tumbler saved in your Brand elements?** If so, I can lock its look in the generation. If not, you can add it under **Brand** and I'll reference it properly.\n2. **Any preference on the vibe?** (e.g. warm & cozy, sleek & modern, outdoorsy) — or just say \"you decide\" and I'll go warm and lifestyle-focused.\n\nOnce I have those, I'll put the card in front of you right away. 🎬",
+      "checks": [
+        {
+          "name": "uses-shot-vocabulary",
+          "pass": false,
+          "reason": "术语表里的镜头运动命中 0 个、景别命中 1 个（各需 ≥1）"
+        },
+        {
+          "name": "mentions-all:seedancePrompt",
+          "pass": true,
+          "reason": "都提到了：seedancePrompt"
+        }
+      ],
+      "judge": [
+        {
+          "dimension": "手艺是 Otto 自己填的：镜头运动、景别、布光都给了，没有反过来问商家要这些",
+          "score": 2,
+          "reason": "开头即给出「slow cinematic push-in」、「warm side-lighting raking across the wood grain」、「shallow depth of field」，镜头运动与布光均由 Otto 自填，未反问商家。"
+        },
+        {
+          "dimension": "给的镜头运动只有一个（不是堆了三四个），布光带方向或色温而不是一句「好看的光」",
+          "score": 2,
+          "reason": "镜头运动只给了一个「slow cinematic push-in」；布光给了具体方向与色温——「warm side-lighting raking across the wood grain」，而非泛称「好看的光」。"
+        }
+      ],
+      "score": 0.75,
+      "points": 3,
+      "maxPoints": 4
+    }
+  ]
+}

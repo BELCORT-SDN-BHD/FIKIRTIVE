@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   FULL_RUN_BUDGET_USD,
+  SEGMENT_BUDGET_USD,
   budgetGate,
   compareToBaseline,
   estimateTokens,
@@ -22,7 +23,18 @@ import {
 import { runEvals } from "./run.js";
 import { runCheck } from "./checks/index.js";
 import { parseGlossary, shotGlossary, SEEDANCE_CRAFT_PATH } from "./checks/glossary.js";
-import { loadTasks, parseVerdicts, pathsFor, resolveLine } from "./runner.js";
+import {
+  EvalPreflightFailed,
+  guardedRun,
+  loadTasks,
+  parseVerdicts,
+  pathsFor,
+  preflight,
+  recordedSegmentUsd,
+  resolveLine,
+  worstCaseRunUsd,
+  type PreflightInput,
+} from "./runner.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TASKS_DIR = join(HERE, "tasks", "engine");
@@ -187,5 +199,89 @@ describe("ENGINE-A1 题目契约与注册表", () => {
     const checks = [{ name: "c", pass: true, reason: "" }];
     const judge: JudgeVerdict[] = [{ dimension: "d", score: 1, reason: "" }];
     expect(scoreTask(checks, judge)).toEqual({ points: 1.5, maxPoints: 2, score: 0.75 });
+  });
+});
+
+describe("ENGINE-A1 守卫在花钱之前", () => {
+  const ok = (over: Partial<PreflightInput> = {}): PreflightInput => ({
+    baseUrl: undefined,
+    apiKey: "sk-ant-mock",
+    check: false,
+    baselineExists: true,
+    baselinePath: "/tmp/engine.json",
+    recordedUsd: 1,
+    worstCaseUsd: 2,
+    segmentBudgetUsd: SEGMENT_BUDGET_USD,
+    ...over,
+  });
+
+  it("ENGINE-A1 环境不对就拒跑：ANTHROPIC_BASE_URL 有值＝那颗 404 雷，不许发调用", () => {
+    const v = preflight(ok({ baseUrl: "https://api.anthropic.com" }));
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain("ANTHROPIC_BASE_URL");
+  });
+
+  it("ENGINE-A1 没有钥匙就拒跑", () => {
+    expect(preflight(ok({ apiKey: undefined })).ok).toBe(false);
+  });
+
+  it("ENGINE-A1 evals:check 没有基线可比是开跑前就知道的事，不烧一趟钱再说", () => {
+    expect(preflight(ok({ check: true, baselineExists: false })).ok).toBe(false);
+    expect(preflight(ok({ check: false, baselineExists: false })).ok).toBe(true);
+  });
+
+  it("ENGINE-A1 本段累计闸是真闸：已记 + 本次最坏超过 $20 就拒跑，不到就放行", () => {
+    expect(preflight(ok({ recordedUsd: 15, worstCaseUsd: 6 })).ok).toBe(false);
+    expect(preflight(ok({ recordedUsd: 15, worstCaseUsd: 6 })).reason).toContain("本段累计预算闸");
+    expect(preflight(ok({ recordedUsd: 15, worstCaseUsd: 5 })).ok).toBe(true);
+  });
+
+  it("ENGINE-A1 守卫没过时，被测对象与判分器一次都不被调用（花钱的那一趟根本没开始）", async () => {
+    let subjectCalls = 0;
+    let judgeCalls = 0;
+    const spend = async () => {
+      subjectCalls++;
+      return runEvals(
+        [task()],
+        async () => {
+          subjectCalls++;
+          return "propose";
+        },
+        async (t) => {
+          judgeCalls++;
+          return perfectJudge(t);
+        },
+        meta,
+      );
+    };
+    await expect(guardedRun({ ok: false, reason: "拒跑" }, spend)).rejects.toBeInstanceOf(
+      EvalPreflightFailed,
+    );
+    expect(subjectCalls).toBe(0);
+    expect(judgeCalls).toBe(0);
+  });
+
+  it("ENGINE-A1 守卫过了才真跑，档案照常回来", async () => {
+    const archive = await guardedRun({ ok: true, reason: "" }, () =>
+      runEvals([task()], async () => "propose", perfectJudge, meta),
+    );
+    expect(archive.tasks).toHaveLength(1);
+  });
+
+  it("ENGINE-A1 已记花费＝baselines/ 里每一份档案的 costUsd 之和，目录不存在算 0", () => {
+    expect(recordedSegmentUsd(join(HERE, "baselines-does-not-exist"))).toBe(0);
+    const real = recordedSegmentUsd(join(HERE, "baselines"));
+    expect(real).toBeGreaterThanOrEqual(0);
+    expect(real).toBeLessThan(SEGMENT_BUDGET_USD);
+  });
+
+  it("ENGINE-A1 最坏花费估算随题量与 rubric 增长，且判分调用按重试一次计两遍", () => {
+    const prices = { inputPerToken: 3 / 1e6, outputPerToken: 15 / 1e6 };
+    const parts = { system: "s".repeat(400), judgeRubric: "j".repeat(400), prices };
+    const one = worstCaseRunUsd([task()], parts);
+    const two = worstCaseRunUsd([task(), task({ id: "engine-u" })], parts);
+    const noRubric = worstCaseRunUsd([task({ rubric: [] })], parts);
+    expect(two).toBeCloseTo(one * 2, 12);
+    expect(noRubric).toBeLessThan(one);
   });
 });
