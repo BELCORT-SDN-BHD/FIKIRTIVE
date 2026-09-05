@@ -26,7 +26,7 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.1 七段)", () => {
   it.todo("ENGINE-A2 见 packages/otto/src/runtime-turn-trace.test.ts(跑完/截断都落档案、无明文围栏、sink 抛错不承重)+ packages/db/src/otto-turn-trace-tenant.test.ts(双租户互不可见、外键与主键)+ apps/web/lib/__tests__/otto-actions.test.ts 与 otto-stream-route.test.ts(三门接线与入库列集)——②段已交付");
 
   // ── 批 I 的其余两段(不在本段写集)─────────────────────────────────────────
-  it.todo("ENGINE-A1 评测集 v0 ≥10 题逐个判分 + 基线档案入档 —— ③段 §7.2③(packages/otto/evals/ 今天还不存在)");
+  it.todo("ENGINE-A1 评测集 v0 ≥10 题逐个判分 + 基线档案入档 —— ③段 §7.2③(评测集与基线都已在库:packages/otto/evals/ 十题 + baselines/engine.json,commit 003cebbe、总分 65.0%、花费 $0.4617;这一行的转正条件是把它换成真身测试,留给下一次碰 evals/ 的段)");
   it.todo("ENGINE-A6 长对话旧轮折成摘要、对话继续,新一轮成本不随历史无限上涨 —— ④段 §7.2④");
 
   // ── ⑤段(已交付,真身在这三个文件里)────────────────────────────────────

@@ -428,7 +428,7 @@ function landedOnDisk(out: unknown): boolean {
  *
  * 判据取的是**技能自己声明**的那份 `readOnlyActions`(skill.ts),不是 runtime 里手抄的第二份
  * 名册。`input` 在 SDK 的 FunctionTool 边界上就是那串 JSON 实参(`invoke(runContext, input)`,
- * `@openai/agents-core@0.11.8` dist/types/tool.d.ts:183),所以这里读的是**模型真正提交的那个
+ * `@openai/agents-core@0.11.8` dist/tool.d.ts:183),所以这里读的是**模型真正提交的那个
  * 动作名**,不是事后猜的。
  *
  * 方向:只有**确凿读出**判别键、且它逐字在名单里,才算纯读;读不出来(解析失败、字段缺席、

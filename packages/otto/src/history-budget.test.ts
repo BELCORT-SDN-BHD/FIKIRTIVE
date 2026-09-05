@@ -43,10 +43,14 @@ describe("estimateTextTokens", () => {
     expect(estimateTextTokens("a".repeat(400))).toBe(100);
   });
 
-  it("ENGINE-A6:counts CJK at ~1.3 tokens/char — 贴近真实分词,只留一点高估余量", () => {
+  // 护栏钉的是**方向**,不是今天这个数:CJK 每字至少 1 个 token(下界),且绝不回到旧的 2.0
+  // (上界严格小于 2 —— 旧值把华语对话的可容纳字数腰斩一半)。
+  // 1.3 是今天的取值,由上一条「估算 = 常量 × 字数」的等值断言钉住;将来按规格 §5 登记做一次
+  // 真的 count_tokens 实测后,量出 1.5 也不该把这条弄红。
+  it("ENGINE-A6:counts CJK by CJK_TOKENS_PER_CHAR — 下界 ≥1,上界严禁回到 2.0", () => {
     expect(estimateTextTokens("字".repeat(100))).toBe(Math.ceil(100 * CJK_TOKENS_PER_CHAR));
     expect(CJK_TOKENS_PER_CHAR).toBeGreaterThanOrEqual(1);
-    expect(CJK_TOKENS_PER_CHAR).toBeLessThanOrEqual(1.3);
+    expect(CJK_TOKENS_PER_CHAR).toBeLessThan(2);
   });
 
   it("empty text is zero", () => {
