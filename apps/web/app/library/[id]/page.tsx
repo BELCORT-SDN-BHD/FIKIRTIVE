@@ -26,7 +26,7 @@ export default async function LibraryAssetPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<{ collection?: string; element?: string; view?: string }>;
+  searchParams?: Promise<{ collection?: string; element?: string; show?: string; view?: string }>;
 }) {
   const { id } = await params;
   const rest = (await searchParams) ?? {};

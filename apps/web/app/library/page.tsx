@@ -42,6 +42,7 @@ export default async function LibraryPage({
     collection?: string;
     element?: string;
     project?: string;
+    show?: string;
     view?: string;
   }>;
 }) {
@@ -49,7 +50,7 @@ export default async function LibraryPage({
   if ("error" in owner) redirect("/login");
   const { ownerId } = owner;
 
-  const { asset, collection, element, project, view } = (await searchParams) ?? {};
+  const { asset, collection, element, project, show, view } = (await searchParams) ?? {};
   const initialView = parseLibraryView(view);
   const initialElementView = parseLibraryElementView(element);
 
@@ -80,6 +81,9 @@ export default async function LibraryPage({
       // 兜底值,新路径 `/library/<id>` 不需要它:归属本来就该由服务端按 id 重新解析。
       initialAsset={asset ? { generationId: asset, projectId: project ?? "" } : undefined}
       initialCollectionId={collection}
+      // 回收站在地址里(`?show=trash`),所以刷新与「贴给别人」都回得到同一堆东西。
+      // 首屏这一页仍只取活着的行 —— 回收站那一份由客户端用同一个读模型再要一次。
+      initialShow={show === "trash" ? "trash" : undefined}
     />
   );
 }

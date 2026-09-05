@@ -32,6 +32,9 @@ const mocks = vi.hoisted(() => ({
   getGenerationLineage: vi.fn(),
   getPublicMediaLink: vi.fn(),
   writeText: vi.fn(),
+  listCollections: vi.fn(),
+  addToCollection: vi.fn(),
+  createCollection: vi.fn(),
 }));
 
 vi.mock("@/lib/asset-actions", () => ({
@@ -47,6 +50,13 @@ vi.mock("@/lib/actions", () => ({
   getGenerationLineage: mocks.getGenerationLineage,
 }));
 vi.mock("@/lib/media-link-actions", () => ({ getPublicMediaLink: mocks.getPublicMediaLink }));
+// 「Add to collection」掀的是 Library 网格那个弹层(#1159 的 `CollectionDialogs`),它一打开
+// 就向服务端要一次合集列表 —— 假件挂在**动作层**上,弹层本身是真组件。
+vi.mock("@/lib/library-collections", () => ({
+  listCollections: mocks.listCollections,
+  addToCollection: mocks.addToCollection,
+  createCollection: mocks.createCollection,
+}));
 vi.mock("@/lib/gen-actions", () => ({
   startGen: mocks.startGen,
   startAssetGen: mocks.startAssetGen,
@@ -145,6 +155,15 @@ beforeEach(() => {
   mocks.getPublicMediaLink.mockImplementation(() =>
     Promise.resolve({ path: "/api/media/pub/signed-token", expiresInMs: serverTtlMs }),
   );
+  mocks.listCollections.mockResolvedValue({
+    collections: [{
+      id: "col_1",
+      name: "Raya campaign",
+      itemCount: 2,
+      updatedAt: "2026-09-05T02:00:00.000Z",
+      coverUrl: null,
+    }],
+  });
 });
 
 afterEach(async () => {
@@ -155,14 +174,14 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function renderPanel(variants: Variant[] = one): Promise<void> {
+async function renderPanel(variants: Variant[] = one, readOnlyReason?: string): Promise<void> {
   mocks.getGeneration.mockResolvedValue(generation(variants));
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
     root!.render(createElement(DetailPanel, {
-      generationId: "g1", projectId: "p1", onClose: () => { closed += 1; }, entities: [],
+      generationId: "g1", projectId: "p1", onClose: () => { closed += 1; }, entities: [], readOnlyReason,
     } as never));
   });
   await act(async () => { await Promise.resolve(); });
@@ -577,6 +596,42 @@ describe("FRONT-A12 ⑤ Copy link 的有效期", () => {
     expect(surface().textContent).not.toContain("open the asset for");
     // 挑好的那一档不跟着作废 —— 作废的是「已经复制好了」这个回执。
     expect(control<HTMLSelectElement>("Link duration").value).toBe(String(24 * 60 * 60 * 1000));
+  });
+});
+
+/**
+ * 清单 B3(P2-017)—— 详情面的第二颗「存到哪里」的键:Add to collection。
+ *
+ * 收藏那一颗是自己的写(`setFavorite`),这一颗不是:它掀开的是 Library 网格用的**同一个**
+ * 弹层(`components/library/CollectionDialogs`,#1159 的动作层)。所以这里钉的是「按下去
+ * 掀起来的确实是那一个」,而不是这一面又复制了第二份合集实现 —— 复制的那天,两处会开始
+ * 对同一个合集说两套话。
+ *
+ * 变异自查:把 `setCollectionOpen(true)` 去掉 ⇒ 第一条红;把 `disabled={readOnly}` 去掉
+ * ⇒ 第二条红。
+ */
+describe("FRONT-A12 ⑥ Add to collection", () => {
+  it("FRONT-A12 按下去掀的是 Library 那个合集弹层,不是这一面自己的第二份", async () => {
+    await renderPanel();
+
+    await click(buttonNamed(surface(), "Add to collection"));
+
+    const opened = dialog();
+    expect(opened, "按下 Add to collection 之后应该有一个弹层").not.toBeNull();
+    expect(opened?.textContent ?? "").toContain("Add to collection");
+    // 弹层一打开就向**动作层**要一次合集列表 —— 证明掀起来的是那个真弹层,
+    // 而不是一段长得像它的静态壳。
+    expect(mocks.listCollections).toHaveBeenCalled();
+    expect(opened?.textContent ?? "").toContain("Raya campaign");
+  });
+
+  it("FRONT-A12 只读的那一面按不动它 —— 键在,但是灰的,不掀任何弹层", async () => {
+    await renderPanel(one, "This asset is read-only.");
+
+    const button = buttonNamed(surface(), "Add to collection");
+    expect(button.disabled, "只读时 Add to collection 仍可按").toBe(true);
+    await click(button);
+    expect(dialog(), "只读时按下去仍掀开了合集弹层").toBeNull();
   });
 });
 

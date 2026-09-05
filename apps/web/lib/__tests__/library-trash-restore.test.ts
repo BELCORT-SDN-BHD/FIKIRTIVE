@@ -21,7 +21,9 @@
  *
  * 变异自查(逐一实做,做完还原,红→绿):
  *   · 把 `getGenerationHistory` 的 `trashed` 分支改回恒 `deletedAt: null` ⇒ ①红;
- *   · 把 `restoreGeneration` 的 `where` 去掉 `ownerId` ⇒ ③红;
+ *   · 把 `restoreGeneration` 的 `where` 去掉 `ownerId` ⇒ **仍然绿**(判官 2026-09-05 实做):
+ *     那两处是纵深防御,真正挡住跨租户的是 `packages/db/src/tenant-guard.ts` 按当前帧注入的
+ *     `ownerId`。③ 钉的是**那条真防线**,所以下面另加了一条:没有帧就直接被拒;
  *   · 把 `getGenerationLineage` 的成本改成读 `GenJob.spentUsd` 换算 ⇒ 成本那一条红。
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
@@ -231,6 +233,17 @@ describe("FRONT-A5 回收站与恢复都是租户内的", () => {
     expect(mine.items.map((item) => item.id), "跨租户那一下把我的行改掉了").toContain(genA);
     // 收拾干净,免得后面的用例读到一件躺在回收站里的素材。
     expect(await restoreGeneration(genA)).toEqual({ ok: true });
+  });
+
+  it("FRONT-A5 真正挡住越租户改写的是 Prisma 租户守卫 —— 没有帧又没有 ownerId 的那一次直接被拒", async () => {
+    // 判官 2026-09-05 实做变异:把 `restoreGeneration` 里显式的两处 `ownerId` 双双删掉,
+    // 上面那条跨租户用例**照样绿** —— 因为 `Generation` 在 `TENANT_MODELS` 里,守卫按当前帧
+    // 注入了 `ownerId`。所以那两处是纵深防御,这一条钉的才是真防线本身:同一句写,不带帧、
+    // 不带 ownerId,守卫当场拒绝,不是悄悄改掉全平台同 id 的行。
+    await expect(prisma.generation.updateMany({
+      where: { id: genA, deletedAt: { not: null } },
+      data: { deletedAt: null },
+    })).rejects.toThrow(/no ownerId filter/);
   });
 });
 

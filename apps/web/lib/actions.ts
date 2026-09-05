@@ -1036,7 +1036,11 @@ export async function deleteGeneration(generationId: string): Promise<{ ok: true
  *     可能已经挂上了别的东西。素材回到候选区,挂不挂由商家自己在画布上决定。
  *   · **不重建首帧/末帧指针**,理由同上(删除时清空是为了不留悬空 id)。
  *
- * 租户闸在 `updateMany` 的 `where` 里:`ownerId` + `deletedAt: { not: null }`。命中 0 行
+ * **真正的租户闸在 `packages/db/src/tenant-guard.ts`**:`Generation` 在 `TENANT_MODELS` 里,
+ * 守卫按当前帧(`runAsUser` 那一层)把 `ownerId` 注入每一次 `where`。这里 `findFirst` /
+ * `updateMany` 上显式写的那两处 `ownerId` 是**纵深防御**,不是唯一那道门 —— 把它们双双去掉,
+ * `library-trash-restore.test.ts` 的跨租户用例照样绿(判官 2026-09-05 实做变异)。别据此以为
+ * 那两处「被测过」;要动它们,先去看守卫那一层。命中 0 行
  * 一律回同一句 "Not found." —— 不区分「不属于你」和「本来就没删」,那个区别本身就是
  * 跨租户的信息(与 `library-subjects.filterVisibleSubjects` 同一条纪律)。幂等:
  * 对一件没在回收站里的素材再按一次,得到的是同一句话,不是一次静默的成功。
