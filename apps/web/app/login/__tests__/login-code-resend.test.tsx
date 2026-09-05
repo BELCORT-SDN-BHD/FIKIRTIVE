@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 //
-// 接线盘点 L5 —— 登录码这一步的两条「说实话」。
+// 登录页「不许说一句自己做不到的话」—— 三组围栏。
+//
+// 抬头随内容改过一次(#1223 P2-2):这个文件起初只有接线盘点 L5 那两条(code 步的「Send again」
+// 报假成功、错误标题写死),#1223 又加了邮箱步那一条;#1223 已由 #1229 取代并入主干,现在这里
+// 是三组 ——
+//   ① `FRONT-A12 — a deployment that cannot send mail says so on the email step`
+//      (Founder 2026-09-05 裁决①「按环境提示」:部署级判定,含能寄信的控制组);
+//   ② `FRONT-A12 — a refused request never becomes 'We sent a temporary login code'`
+//      (#1223 那条页面侧围栏:能寄信的部署上服务端如实回绝,页面留在邮箱步);
+//   ③ `login code step`(code 步的「Send again」与两种错误标题)。
 //
 // 这里刻意是行为测试而不是源码断言:上一版的 bug(`await sendSignInCode(); setCodeSentAgain(true)`)
 // 在源码里长得完全正常,只有真的点一下「Send again」并让它失败,才看得见商家同时读到一条错误
@@ -197,6 +206,56 @@ describe("FRONT-A12 — a deployment that cannot send mail says so on the email 
 
     expect(el.textContent).toContain("Check your email");
     expect(el.textContent).toContain("We sent a temporary login code to");
+  });
+});
+
+/**
+ * #1223 那条页面侧围栏,回补(#1229 判官 P2-3:被环境口径那一组改写时净减掉了)。
+ *
+ * 上一组说的是「这个**部署**寄不出信」——判定在 env 上,按钮根本按不下去。这一组说的是另一半:
+ * 部署**能**寄信(`signInCodesAvailable` 为真、按钮可按),而服务端对这一次请求如实回绝
+ * (resolve 的 `{status:"error"}`,不是 reject)。今天的服务端在这条路上从不这样回答
+ * (`app/login/actions.ts` 只在部署级判定与地址格式两处回绝,单封投递失败按 #678 留在运维日志里),
+ * 所以这一幕在生产还不可能发生;这条钉的是它一旦发生,页面不会翻到「已寄出」那一屏说假话。
+ * 任何一版让服务端如实回绝的修法都必须让它保持绿。
+ */
+describe("FRONT-A12 — a refused request never becomes 'We sent a temporary login code'", () => {
+  it("FRONT-A12: stays on the email step and says why, instead of claiming a code was sent", async () => {
+    const tree = createElement(LoginForm, {
+      from: "/create",
+      googleEnabled: false,
+      // 能寄信的部署 —— 与上一组的区别就在这一格。
+      signInCodesAvailable: true,
+      initialStep: "email" as const,
+    });
+    requestSignInCodeMock.mockResolvedValueOnce({
+      status: "error",
+      reason: "unknown",
+      message: "We couldn't send a sign-in code. Try again.",
+    });
+    const el = await render(tree);
+
+    const email = el.querySelector<HTMLInputElement>('input[type="email"]')!;
+    await act(async () => {
+      setReactInputValue(email, "owner@example.com");
+    });
+    await act(async () => {
+      el.querySelector("form")!.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    // 服务端真的被问了 —— 少了这条,一个「什么都不做」的实现也能让下面全绿。
+    expect(requestSignInCodeMock).toHaveBeenCalledTimes(1);
+    await act(async () => root!.render(tree));
+
+    expect(el.textContent).not.toContain("Check your email");
+    expect(el.textContent).not.toContain("We sent a temporary login code to");
+    // 还站在邮箱步上,而且说了原因。
+    expect(el.textContent).toContain("your email address?");
+    const alert = el.querySelector('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert!.textContent).toContain("Email could not be continued");
+    expect(alert!.textContent).toContain("We couldn't send a sign-in code. Try again.");
   });
 });
 

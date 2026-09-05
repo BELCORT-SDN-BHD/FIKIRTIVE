@@ -41,6 +41,15 @@ type Env = Readonly<Record<string, string | undefined>>;
  * because `next start` — the command the suite runs — sets NODE_ENV to production itself, so
  * "non-production" cannot be derived from NODE_ENV there. The env contract refuses that value on
  * a serving production process (`productionValues`), which is where that fence belongs.
+ *
+ * HOW STRONG THAT FENCE ACTUALLY IS — said plainly rather than overstated (判官 #1229 P2-2). It is
+ * the contract's DEFAULT refusal, not an unconditional one: `bootEnvDecision`
+ * (packages/core/src/env-contract.ts) downgrades every non-money problem to a warning when the
+ * process is started with `FIKIRTIVE_ENV_CONTRACT=warn`, and this variable is not marked
+ * `moneyInvariant`, so that escape hatch reaches it too. A production process launched with that
+ * flag AND this value would boot, log the refusal as a warning, and mail nothing — which is why
+ * the e2e suite (which does pass the flag, e2e/support/env.ts) sees a warning rather than a dead
+ * server. Whoever opens the escape hatch owns that; the fence is a default, not a lock.
  */
 export function emailTransportChoice(env: Env = process.env): EmailTransportChoice {
   if (env.AUTH_EMAIL_TRANSPORT === "stub") return "stub";
