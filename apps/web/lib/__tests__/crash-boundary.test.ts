@@ -27,7 +27,9 @@ vi.mock("@sentry/nextjs", () => ({
 const { default: RouteError } = await import("@/app/error");
 const { default: GlobalError } = await import("@/app/global-error");
 
-/** 同族崩溃卡的外框 —— 九个路由段 boundary 与共用 `CrashPage` 逐字相同的那一串。 */
+/** 同族崩溃卡的外框 —— 路由段 boundary 与共用 `CrashPage` 逐字相同的那一串。
+ *  不再数个数(尾巴轮四组一,#1244 判官 P2-1):写下「九个」的那天磁盘上是十个,今天是十一个,
+ *  而这个数每加一面就过期一次 —— 承重的是「同族逐字相同」,从来不是数量。 */
 const CRASH_CARD_CLASSES =
   "mx-auto max-w-xl rounded-[var(--radius-card)] border border-border bg-card p-6 shadow-[var(--shadow-sm)] sm:p-8";
 
@@ -141,7 +143,7 @@ describe("every merchant-facing error boundary", () => {
  * 2026-09-05 走查 P2 —— 「崩溃页两套不一致」(验收 FRONT-A14)。
  *
  * `/brand` 这类没有自己 boundary 的面崩起来落在 `app/error.tsx`,而它和 `app/global-error.tsx`
- * 从前是独立手写的第二套:居中裸文字、没有卡、错误编号那一行叫 `Reference:`,而九个路由段的
+ * 从前是独立手写的第二套:居中裸文字、没有卡、错误编号那一行叫 `Reference:`,而路由段那一族的
  * boundary 叫 `Error reference:`。两处现在渲染**同一个** `CrashPage`,所以这里钉的是
  * 「同一个组件」这件事本身:把其中一处改回手写的形状,或者把编号那一行的措辞改成第三种说法,
  * 当场红。
@@ -175,7 +177,7 @@ describe("FRONT-A14:两个兜底崩溃页渲染同一个 CrashPage", () => {
     }
   });
 
-  it("FRONT-A14: the shared card is what the nine route boundaries already look like", () => {
+  it("FRONT-A14: the shared card is what the route-segment boundaries already look like", () => {
     // 形状的参照物是同族里现成的那一个,不是这条测试自己编的一份描述。
     const family = fs.readFileSync(path.resolve(__dirname, "../../app/create/error.tsx"), "utf8");
     expect(family).toContain(CRASH_CARD_CLASSES);
