@@ -713,17 +713,23 @@ export default function FlowCanvas({
   }, []);
 
   /**
-   * ONE voice for a board-wide refusal.
+   * ONE voice for a board-wide refusal — PER REFUSAL, not per session.
    *
-   * A refit fires per card as each picture resolves, so the thing that stops one write — an
+   * A refit fires once per card as each picture resolves, so the thing that stops one write — an
    * expired session, a board deleted in another tab — stops all of them at once. Reported straight,
    * a board of twelve pictures answers a single expiry with twelve identical toasts stacked over
    * the work. The merchant needs to be told once; twelve times is the same fact made unreadable.
+   *
+   * So the memory is of WHAT WAS SAID, not of "something was said". A latch that simply stopped
+   * after the first report would be this whole ticket's bug reintroduced one level down: the
+   * second, different failure later in the same session — a genuinely new refusal the merchant has
+   * never seen — would go to nobody, and `FRONT-A12` asks that ANY write failure be reported. Two
+   * different sentences are two different facts and each gets said once.
    */
-  const sizeSaveReportedRef = useRef(false);
+  const sizeSaveReportedRef = useRef<Set<string>>(new Set());
   const reportSizeSaveFailure = useCallback((message: string) => {
-    if (sizeSaveReportedRef.current) return;
-    sizeSaveReportedRef.current = true;
+    if (sizeSaveReportedRef.current.has(message)) return;
+    sizeSaveReportedRef.current.add(message);
     toast.error(message);
   }, []);
 

@@ -417,6 +417,29 @@ describe("FRONT-A12 ③ 图片卡收形：新尺寸真的落盘，失败有话",
     expect(mocks.toastError).toHaveBeenCalledTimes(1);
     expect(mocks.toastError).toHaveBeenCalledWith(SERVER_NOT_AUTHORIZED);
   });
+
+  it("FRONT-A12: 换了一句新的拒绝就再说一次 —— 收声的是重复，不是「已经说过话了」", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("i1"), boardRow("i2"), boardRow("i3")]);
+    mocks.moveCanvasNode.mockResolvedValue({ error: SERVER_NOT_AUTHORIZED });
+    await renderBoard();
+
+    reportMediaSize("i1", { width: 1600, height: 900 });
+    await settle();
+    // 第二张撞上同一句 —— 不重复。
+    reportMediaSize("i2", { width: 1600, height: 900 });
+    await settle();
+    expect(mocks.toastError).toHaveBeenCalledTimes(1);
+
+    // 第三张撞上**另一句** —— 这是商家没读到过的一件新事，必须说。
+    // 病症会长这样:一个「已经报过了」的开关把整场会话之后所有失败一并静音 ——
+    // 那正是这一票要修的那个缺口，只是往下挪了一层。
+    mocks.moveCanvasNode.mockResolvedValue({ error: SERVER_NODE_GONE });
+    reportMediaSize("i3", { width: 1600, height: 900 });
+    await settle();
+
+    expect(mocks.toastError).toHaveBeenCalledTimes(2);
+    expect(mocks.toastError).toHaveBeenLastCalledWith(SERVER_NODE_GONE);
+  });
 });
 
 describe("FRONT-A12 ④ 失败卡：不叫商家去按一颗不存在的按钮", () => {
