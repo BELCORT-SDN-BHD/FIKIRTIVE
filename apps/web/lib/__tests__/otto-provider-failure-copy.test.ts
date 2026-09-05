@@ -29,6 +29,7 @@ import {
   OTTO_PROVIDER_UNAVAILABLE_SENTENCE,
   TURN_NOT_CHARGED_SENTENCE,
 } from "../otto-error-copy";
+import { OTTO_TRANSIENT_FAILURE_SENTENCE } from "../otto-stream-bridge";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 const REPO_ROOT = path.resolve(WEB_ROOT, "../..");
@@ -167,5 +168,34 @@ describe("ENGINE-A4 「这一轮没收钱」只有一份字面量", () => {
         "apps/web/lib/otto-error-copy.ts",
       ]);
     }
+  });
+
+  /**
+   * #1224 判官 P2-3 —— 瞬时那一句从前也是抄的:路由的 `onError` 兜底、
+   * `lib/otto-stream-errors.ts` 的 `streamTurnErrorText`、`OttoChatStream` 的传输级替身,
+   * 三处各写死一份逐字相同的字面量。#699 的破折号围栏(同一句话在三处曾经两种破折号)
+   * 就是被这种抄法招来的。
+   *
+   * 单源不在 `otto-error-copy.ts`,因为那个文件第一行是 `import "server-only"`,而这一句
+   * **客户端组件也要读**;它落在 `data-error` 契约自己那个模块里(见该文件的抬头)。
+   */
+  it("ENGINE-A4:瞬时失败那一句全仓也只写死一次", () => {
+    const tracked = execFileSync("git", ["ls-files", "apps", "packages"], { cwd: REPO_ROOT, encoding: "utf8" })
+      .split("\n")
+      .filter(Boolean)
+      .filter((rel) => rel !== SELF && !rel.includes("/__tests__/") && !rel.endsWith(".test.ts"));
+
+    const offenders = tracked.filter((rel) => {
+      let source: string;
+      try {
+        source = readFileSync(path.join(REPO_ROOT, rel), "utf8");
+      } catch {
+        return false;
+      }
+      return source.includes(OTTO_TRANSIENT_FAILURE_SENTENCE);
+    });
+
+    expect(offenders, `"${OTTO_TRANSIENT_FAILURE_SENTENCE}" 被抄成了多份:\n${offenders.join("\n")}`)
+      .toEqual(["apps/web/lib/otto-stream-bridge.ts"]);
   });
 });

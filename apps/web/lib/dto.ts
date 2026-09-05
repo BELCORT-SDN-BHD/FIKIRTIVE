@@ -156,7 +156,10 @@ export function toChatMessageDTO(
     if (p.cancelled === true) {
       payload = { kind: "cancelled", cancelled: true };
     } else if (
-      (error?.kind === "insufficient_credits" || error?.kind === "spend_cap" || error?.kind === "error")
+      // `provider_unavailable` 与另外三种同等对待(#1224 判官 P2-2):这个白名单认不出的
+      // kind 会让整份 payload 落空,刷新之后那一档退回通用 `error` —— 重试键就又回来了。
+      (error?.kind === "insufficient_credits" || error?.kind === "spend_cap"
+        || error?.kind === "provider_unavailable" || error?.kind === "error")
       && typeof error.text === "string"
     ) {
       payload = {

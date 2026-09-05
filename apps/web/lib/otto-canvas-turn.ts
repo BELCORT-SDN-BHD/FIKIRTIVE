@@ -18,6 +18,8 @@
  * ## 优先级（从确定到不确定）
  *
  *   1. 有卡在跑        → Generating —— 钱已经花出去了，这是屏幕上最该说的一件事；
+ *                        （这一轮已经报了失败就让位给 Failed —— 在飞的那张卡多半是**更早
+ *                        一轮**的，拿它盖住这一轮的失败等于说了一件不成立的事，#1225 P2-5）；
  *   2. 有卡等确认      → Needs confirmation —— 停在商家身上，产品不该假装自己在忙；
  *   3. 这一轮在飞      → 正在跑的那一步的标签（真的工具名），没有就退回三句叙述之一；
  *   4. 这一轮的终局是失败 → Failed；
@@ -147,7 +149,13 @@ export function canvasTurnStatus(input: CanvasTurnInput): CanvasTurnStatus {
   const stalled =
     (input.secondsSinceProgress ?? 0) >= STILL_WORKING_AFTER_SECONDS;
 
-  if (input.workingCardCount > 0) {
+  // 这一轮的终局。停着的时候，卡面说的就是这一轮真正结束在哪 —— 而不是「Ready」。
+  const outcome = input.terminal?.outcome;
+  // 失败也排在「有卡在跑」前面（#1225 判官 P2-5）：`workingCardCount` 数的是**画布上所有**
+  // 在飞的付费任务，不只是这一轮的。于是更早一轮的生成还在跑时，这一轮报的失败被一句
+  // 「Generating」盖掉 —— 商家看着绿灯转，以为自己刚说的那句话正在被做，而它已经失败了。
+  // 那一轮的进度并没有丢：卡自己的运行态照旧在画板上，这里让位给屏幕上最该说的那件事。
+  if (input.workingCardCount > 0 && outcome !== "failed") {
     return {
       phase: "generating",
       label: "Generating",
@@ -166,8 +174,6 @@ export function canvasTurnStatus(input: CanvasTurnInput): CanvasTurnStatus {
       busy: false,
     };
   }
-  // 这一轮的终局。停着的时候，卡面说的就是这一轮真正结束在哪 —— 而不是「Ready」。
-  const outcome = input.terminal?.outcome;
   // 失败排在 `isBusy` 前面（2026-09-05 走查修复一）：`data-error` 是终局部件，路由写完它
   // 就 `return`，可是 `useChat` 的 status 要等流真的关掉才落回 ready。那半拍里卡上写
   // 「Working」，说的是一件已经不成立的事 —— 商家看着它转，而这一轮早就结束了。

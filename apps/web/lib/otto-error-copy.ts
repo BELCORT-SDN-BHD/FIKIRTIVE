@@ -24,7 +24,8 @@ import { chatHoldShortfallMessage, spendCapBlockedMessage } from "@/lib/credit-f
  * 供应商侧不可恢复的失败(#3310 走查实证:我们这边的 Anthropic 账户余额不足,服务端拿到
  * `AI_APICallError` status=400「Your credit balance is too low…」)。
  *
- * 病灶:这一类失败被包成 `Otto hit a snag — please try again.`,而那句话在瞬时错误上成立、
+ * 病灶:这一类失败被包成瞬时那一句(`OTTO_TRANSIENT_FAILURE_SENTENCE`,单源在
+ * `lib/otto-stream-bridge.ts`),而那句话在瞬时错误上成立、
  * 在「我们这边坏了」上是**误导** —— 商家照它说的再试,永远失败,而且每试一次都重新走一遍
  * 预扣/退款。分类与文案因此必须同源:一处判、一处说,三门共用。
  *

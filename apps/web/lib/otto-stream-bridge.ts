@@ -46,7 +46,33 @@ export type OttoErrorData =
   /** #524 — the merchant's own spend cap refused the turn. Its own kind because its exit is
    *  Settings, not Billing: a top-up buys nothing when the limit is one they set. */
   | { kind: "spend_cap"; text: string }
+  /**
+   * ENGINE-A4(#1224 判官 P2-2)—— **我们这边**坏了的那一档(计费 400 / 鉴权 / 型号 /
+   * 配额 / 5xx,判据在 `lib/otto-error-copy.ts` 的 `isProviderSideFailure`)。
+   *
+   * 它自己一个 kind,理由与 `spend_cap` 完全一样:**类型决定出路**。文案已经改成诚实句
+   * (「Otto is unavailable right now on our side.… Please try again later.」),可只要它还
+   * 顶着 `error` 这个 kind,旁边那颗「Edit and retry」就照旧长出来 —— 一句「等一会儿再说」
+   * 配一颗「马上再送一次」,而每按一次都重新走一遍预扣/退款。这一档**没有**商家能按的出路,
+   * 所以它一个键都不给。
+   */
+  | { kind: "provider_unavailable"; text: string }
   | { kind: "error"; text: string };
+
+/**
+ * 瞬时失败对商家说的那一句 —— **全仓唯一的一份**(#1224 判官 P2-3)。
+ *
+ * 从前它被抄成三份:路由的 `onError` 兜底、`lib/otto-stream-errors.ts` 的
+ * `streamTurnErrorText`、`components/otto/OttoChatStream.tsx` 的传输级替身。三处逐字相同、
+ * 谁也不知道另外两处存在(#699 的破折号围栏就是被这种抄法招来的:同一句话在三处曾经两种
+ * 破折号)。
+ *
+ * 为什么落在这个文件而不是 `lib/otto-error-copy.ts`(那里是别的失败文案的单源):
+ * `otto-error-copy.ts` 第一行是 `import "server-only"`(它要读 `@fikirtive/db` 的 typed
+ * 错误),而这一句**客户端组件也要读**。这个模块是 `data-error` 契约本身,服务端与客户端
+ * 本来就同读一份,不带任何 Node 依赖 —— 一句话与它的 kind 住在一起。
+ */
+export const OTTO_TRANSIENT_FAILURE_SENTENCE = "Otto hit a snag — please try again.";
 
 /** Payload for the `data-tool-propose` stream part (the propose tool's return value). */
 export type OttoProposeData = unknown;

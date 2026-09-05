@@ -1,13 +1,14 @@
 import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
-import type { OttoErrorData } from "./otto-stream-bridge";
+import { OTTO_TRANSIENT_FAILURE_SENTENCE, type OttoErrorData } from "./otto-stream-bridge";
 
 export function streamTurnErrorId(): string {
   return `OTTO-${newId().slice(-8).toUpperCase()}`;
 }
 
+/** 瞬时失败那一句 ＋ 支持把手。句子本身读单源(#1224 判官 P2-3),这里只挂 Reference。 */
 export function streamTurnErrorText(errorId: string): string {
-  return `Otto hit a snag — please try again. Reference: ${errorId}`;
+  return `${OTTO_TRANSIENT_FAILURE_SENTENCE} Reference: ${errorId}`;
 }
 
 export async function persistStreamTurnError(args: {
