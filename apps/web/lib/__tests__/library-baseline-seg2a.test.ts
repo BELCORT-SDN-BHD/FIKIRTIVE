@@ -25,7 +25,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LIBRARY_VIEWS as APPROVED_VIEWS, ELEMENT_VIEWS as APPROVED_ELEMENT_VIEWS } from "@/design-system/patterns/library/model";
-import { LIBRARY_ELEMENT_VIEWS, libraryElementKind } from "@/lib/library-elements-model";
+import { entityCapabilities, entityOrigin } from "@fikirtive/core";
+import { LIBRARY_ELEMENT_VIEWS, libraryElementKind, type LibraryElement } from "@/lib/library-elements-model";
+import { libraryItemAccessibleName } from "@/lib/library-item-a11y";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 const read = (relative: string) => fs.readFileSync(path.join(WEB_ROOT, relative), "utf8");
@@ -88,6 +90,29 @@ const HISTORY_PAGE = {
   hasMore: false,
 };
 
+/**
+ * 元素夹具 —— `origin` / `capabilities` 与真读一样,由域层那一份判据算出来
+ * (`packages/core/src/entity-policy.ts`),而不是在测试里手打两个布尔。手打的话,
+ * 哪天能力表加一格,这里就会悄悄停在旧形状上。
+ */
+function element(over: Partial<LibraryElement> & Pick<LibraryElement, "id" | "kind" | "name">): LibraryElement {
+  const catalogKey = over.kind === "official-avatars" ? `catalog_${over.id}` : null;
+  return {
+    coverUrl: null,
+    mediaCount: 0,
+    origin: entityOrigin({ catalogKey }),
+    capabilities: entityCapabilities({ catalogKey }),
+    ...over,
+  };
+}
+
+/**
+ * 第一格素材上,读屏念到的那句 —— 取自 `lib/library-item-a11y.ts`(那份单源),不在这里
+ * 照抄一份字面量。Codex staging 审计 LIB-STG-P2-005 定的规矩:抄成字面量,句子改了这条
+ * 断言就悄悄不再断言任何东西。
+ */
+const FIRST_TILE_NAME = libraryItemAccessibleName(HISTORY_PAGE.items[0]!.prompt, "image");
+
 const mounted: { root: Root; container: HTMLDivElement }[] = [];
 
 beforeEach(() => {
@@ -96,7 +121,7 @@ beforeEach(() => {
   mocks.getProjects.mockResolvedValue([{ id: "prj_1", name: "Hari Raya gifting" }]);
   mocks.getGenerationHistory.mockResolvedValue(HISTORY_PAGE);
   mocks.getLibraryElements.mockResolvedValue([
-    { id: "ent_1", kind: "products" as const, name: "Kopi tumbler", coverUrl: null, mediaCount: 2 },
+    element({ id: "ent_1", kind: "products", name: "Kopi tumbler", mediaCount: 2 }),
   ]);
 });
 
@@ -202,8 +227,11 @@ describe("FRONT-A5 没有真实能力的入口一个都不出现", () => {
 
   it("FRONT-A5 地址栏点名 Favorites 时就开在 Favorites 那一格", async () => {
     const dom = await mount(await LibraryPage({ searchParams: Promise.resolve({ view: "favorites" }) }));
-    // 收藏有自己的读模型与游标(裁决十),服务端这一趟仍然只取生成历史首屏;
-    // 屏幕上开着的那一格由 `?view=` 决定。
+    // 收藏有自己的读模型与游标(裁决十),服务端这一趟仍然只取生成历史首屏,而且是
+    // 不带来源约束的那一次(Uploads 那一格才会带 sources);屏幕上开着的那一格由 `?view=` 决定。
+    expect(mocks.getGenerationHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ sources: undefined }),
+    );
     expect(tabLabels(dom)).toContain("Favorites");
     expect(
       dom.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim(),
@@ -219,7 +247,7 @@ describe("FRONT-A5 列表与筛选来自服务器", () => {
     expect(mocks.getGenerationHistory).toHaveBeenCalledTimes(1);
     // 页面不自己传 ownerId —— 身份只来自服务端 principal(规格 §1 九问6)。
     expect(JSON.stringify(mocks.getGenerationHistory.mock.calls[0][0] ?? {})).not.toContain("own_1");
-    expect(dom.querySelector('button[aria-label="Open Raya storefront at dusk"]')).toBeTruthy();
+    expect(dom.querySelector(`button[aria-label="Open ${FIRST_TILE_NAME}"]`)).toBeTruthy();
   });
 
   it("Uploads 页签本身就是一次来源约束,服务端照这个约束查", async () => {
@@ -315,7 +343,7 @@ describe("FRONT-A5 每一个创建得出来的 EntityType 都有回得去的家"
 
   it("Brand mark 元素在 Elements 里画得出卡片,也点得开那个删除入口", async () => {
     mocks.getLibraryElements.mockResolvedValue([
-      { id: "ent_bm", kind: "brandmarks" as const, name: "Kedai Kopi wordmark", coverUrl: null, mediaCount: 1 },
+      element({ id: "ent_bm", kind: "brandmarks", name: "Kedai Kopi wordmark", mediaCount: 1 }),
     ]);
     const dom = await mount(
       await LibraryPage({ searchParams: Promise.resolve({ view: "elements", element: "brandmarks" }) }),
@@ -326,6 +354,64 @@ describe("FRONT-A5 每一个创建得出来的 EntityType 都有回得去的家"
     await act(async () => { (card as HTMLButtonElement).click(); });
     const buttons = Array.from(dom.querySelectorAll("button")).map((button) => button.textContent?.trim());
     expect(buttons, "删自己元素的唯一入口没了").toContain("Remove from Library");
+  });
+});
+
+/* ── 只读与无障碍名:两条今天已经在主干上的行为,换壳不许退回去 ─────────────── */
+
+describe("FRONT-A5 换壳没有把主干上的 Library 行为退回去", () => {
+  it("FRONT-A5 官方演员在 Library 里是只读的:标签看得见,删除入口根本不画", async () => {
+    // Founder 2026-08-30(已批准 pattern README §5「Read-only」;域层判据
+    // packages/core/src/entity-policy.ts,与 EntityDTO 同一个函数)。
+    mocks.getLibraryElements.mockResolvedValue([
+      element({ id: "ent_off", kind: "official-avatars", name: "Aisyah", mediaCount: 3 }),
+    ]);
+    const dom = await mount(
+      await LibraryPage({
+        searchParams: Promise.resolve({ view: "elements", element: "official-avatars" }),
+      }),
+    );
+    const card = dom.querySelector('button[aria-label="Open Aisyah"]');
+    expect(card, "官方演员在 Library 里看不见").toBeTruthy();
+    await act(async () => { (card as HTMLButtonElement).click(); });
+
+    expect(dom.textContent ?? "").toContain("Official avatar · Read only");
+    const buttons = Array.from(dom.querySelectorAll("button")).map((button) => button.textContent?.trim());
+    expect(buttons, "官方演员被画出了一颗按下去必被服务端拒的删除键").not.toContain("Remove from Library");
+  });
+
+  it("FRONT-A5 商家自建的同类元素一个动作都没少", async () => {
+    // 只读判据是 catalogKey,不是「Character 一刀切」—— 商家自己的角色照样删得掉。
+    mocks.getLibraryElements.mockResolvedValue([
+      element({ id: "ent_mine", kind: "characters", name: "Aisyah", mediaCount: 1 }),
+    ]);
+    const dom = await mount(
+      await LibraryPage({
+        searchParams: Promise.resolve({ view: "elements", element: "characters" }),
+      }),
+    );
+    await act(async () => {
+      (dom.querySelector('button[aria-label="Open Aisyah"]') as HTMLButtonElement).click();
+    });
+    expect(dom.textContent ?? "").not.toContain("Official avatar · Read only");
+    const buttons = Array.from(dom.querySelectorAll("button")).map((button) => button.textContent?.trim());
+    expect(buttons).toContain("Remove from Library");
+  });
+
+  it("FRONT-A5 素材格的无障碍名走 library-item-a11y 那份单源,不是整段提示词", async () => {
+    // Codex staging 审计 LIB-STG-P2-005 / #1185:CanvasLibraryPicker 与 StuffLibrary 已经
+    // 改过,Library 网格是第三个同病的调用点。
+    const longPrompt =
+      "A premium coral-orange insulated tumbler, ribbed grip, silver lid, on a marble counter at golden hour. A premium coral-orange insulated tumbler, ribbed grip, silver lid, on a marble counter at golden hour.";
+    mocks.getGenerationHistory.mockResolvedValue({
+      ...HISTORY_PAGE,
+      items: [{ ...HISTORY_PAGE.items[0]!, prompt: longPrompt }],
+    });
+    const dom = await mount(await LibraryPage({ searchParams: Promise.resolve({}) }));
+    const label = dom.querySelector("button[aria-label^='Open A premium']")?.getAttribute("aria-label") ?? "";
+    expect(label).toBe(`Open ${libraryItemAccessibleName(longPrompt, "image")}`);
+    // 念一遍就够了:整段提示词、以及它写了两遍的那一份,都不该进无障碍名。
+    expect(label.length).toBeLessThan(longPrompt.length);
   });
 });
 

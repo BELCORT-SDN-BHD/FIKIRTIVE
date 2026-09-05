@@ -275,6 +275,7 @@ describe("两页真的画得出来(真 React,真组件)", () => {
   // 前端基线段②起,这条断言不再指向 `/library`(那一页改画已批准的 Library pattern,
   // 上面没有聊天,也没有失败任务卡)。它测的一直是 `OttoStuff` 自己的行为——按 handler
   // 在不在决定画不画那两颗「跳进聊天」的键——所以直接挂它,断言一字未改。
+  // 本面自 PR #1152 起无路由挂载(/library 改画 components/library/LibraryView.tsx),围栏仅护组件本身；tidy 待登记。
   it("聊天不在这一页上,「跳进聊天」的两颗键就不出现", async () => {
     const dom = await mount(
       createElement(OttoStuff, { entities: [], ads: [], adJobs: [FAILED_JOB], records: [], history: [] }),

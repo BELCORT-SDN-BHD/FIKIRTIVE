@@ -169,7 +169,20 @@ export async function getGenerationHistory(
     where: {
       ownerId,
       deletedAt: null,
-      ...(search ? { promptText: { contains: search, mode: "insensitive" as const } } : {}),
+      // 搜索打两列,不是一列。`Uploads` 页签上的每一行 `promptText` 都是空的(商家上传的
+      // 文件没有提示词),所以只打 `promptText` 的搜索在那一格**必然搜空** —— 而输入框上写着
+      // "Search prompts",商家看到的是一句自己做不到的承诺(占位符已随之改成如实的
+      // "Search prompts or file names",Founder 2026-09-05)。上传行真的有名字的那一列是
+      // `Asset.originalFilename`,就是卡片上写给他看的那个名字(`libraryItemTitle`)。
+      // 两条 OR 都仍在上面那句 `ownerId` 的域内 —— Prisma 把 OR 和同级的 ownerId 作 AND。
+      ...(search
+        ? {
+            OR: [
+              { promptText: { contains: search, mode: "insensitive" as const } },
+              { asset: { originalFilename: { contains: search, mode: "insensitive" as const } } },
+            ],
+          }
+        : {}),
       ...sourceWhere,
       ...mediaWhere,
       ...(opts?.projectId ? { projectId: opts.projectId } : {}),

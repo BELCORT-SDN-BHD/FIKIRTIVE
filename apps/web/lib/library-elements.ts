@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@fikirtive/db";
-import { storageKey, storageKeyToSrc } from "@fikirtive/core";
+import { entityCapabilities, entityOrigin, storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { storage } from "./storage";
 import { libraryElementKind, type LibraryElement } from "./library-elements-model";
@@ -56,6 +56,10 @@ export async function getLibraryElements(): Promise<LibraryElement[] | { error: 
       id: row.id,
       kind,
       name: row.name,
+      // 只读判据算在域层、只算这一次(`packages/core/src/entity-policy.ts`),和
+      // `lib/dto.ts:toEntityDTO` 走的是同一个函数 —— Library 不另起一套「是不是官方」。
+      origin: entityOrigin(row),
+      capabilities: entityCapabilities(row),
       coverUrl,
       mediaCount: row.referenceImages.length,
     } satisfies LibraryElement;

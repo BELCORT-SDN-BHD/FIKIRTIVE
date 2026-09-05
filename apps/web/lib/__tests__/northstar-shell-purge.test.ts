@@ -362,7 +362,10 @@ describe("退场", () => {
     const surface = readFileSync(resolve(WEB_ROOT, "components/otto/panel/panel-surface.ts"), "utf8");
     expect(surface).toContain("CANVAS_HREF");
     expect(ottoPanelMountsOn(CANVAS_HREF)).toBe(false);
-    expect(ottoPanelMountsOn(CREATE_NAV_HREF)).toBe(true);
+    // 2026-09-04 走查 P1-8:创作前厅也自带一只 Otto 输入框,同一条判据把它收进去了
+    // (`panel-surface.ts` 的名单)。面板的默认开合不变。
+    expect(surface).toContain("CREATE_NAV_HREF");
+    expect(ottoPanelMountsOn(CREATE_NAV_HREF)).toBe(false);
   });
 
   it("退役组件不再被壳里任何一页引用", () => {

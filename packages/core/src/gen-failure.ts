@@ -95,6 +95,64 @@ export const GENERATION_ENGINE_UNAVAILABLE =
   + "You weren't charged, and trying again won't help until we've fixed it.";
 
 /**
+ * The sentence a merchant reads when a REFERENCE ASSET the job needed could not be fetched right
+ * before the paid call (Codex QA-CRE-007, docs/specs/creation-engine.md CREATE-A2).
+ *
+ * ── WHERE THIS COMES FROM ──
+ *
+ * A generation can name up to five kinds of reference asset — @mentioned entity/product refs,
+ * an i2v start frame, an end frame, a whole-clip reference video, an edit's base image, a cast
+ * variant's locked base — and every one of those is re-resolved from storage immediately before
+ * the paid engine call (`apps/worker/src/jobs/gen.ts`, `apps/worker/src/jobs/refgen.ts`). Before
+ * this file existed, a presign miss there threw the OPS diagnostic itself — e.g.
+ * "conditioning refs unreachable (0/2) — refusing to spend", "reference video unreachable —
+ * refusing to spend" — straight into `GenJob.error`/`RefGenJob.error`, and two surfaces read that
+ * column with nothing but a vendor-name scrub between it and the merchant: the Library "Needs
+ * attention" board (`apps/web/components/otto/OttoStuff.tsx`) and the cast library's variant
+ * problem line (`apps/web/components/otto/stuff/ElementVariantsDialog.tsx`). Both would show the
+ * sentence above, byte for byte, to a merchant who has never heard the word "conditioning" — an
+ * internal diagnostic standing in for advice, the exact failure #765 exists to stop.
+ *
+ * ONE SENTENCE for all of them, deliberately: from where a merchant stands, "the picture/video I
+ * gave you couldn't be reached" is the same problem and the same fix (swap the reference, try
+ * again) whether the asset in question was a product photo, a start frame, or a cast member's
+ * locked base. Splitting this into five near-identical sentences would multiply the whitelist for
+ * no question a merchant actually has.
+ *
+ * "so nothing was charged" is safe here for the same reason it is safe on the sibling sentences
+ * above: every throw site this maps sits BEFORE the paid provider call, so the worker's terminal
+ * branch refunds the hold (or never took it past a pre-charge retry) — never a spend.
+ *
+ * The raw diagnostic is not thrown away — it still reaches `console.error` at the throw site (and
+ * from there, wherever server logs go), which is what "for support/debugging" means here. What
+ * changes is what gets PERSISTED to the row a merchant's own screen reads back: the merchant
+ * sentence itself, not the ops string, mirroring `REFERENCE_IMAGE_PERSON_REJECTED` above.
+ *
+ * ── WHY THE ENDING SAYS "ask again", NOT "try again" (Codex E2E-CRE-PAV-005, 2026-09-04) ──
+ *
+ * The QA-CRE-007 PR that introduced this sentence deliberately left its recovery action alone
+ * ("Try again/Replace reference 类专属恢复动作未新增" — the change register row for that PR says
+ * so in as many words) and kept the card's existing "Retry with Otto" button as the only control.
+ * That was the right call for that PR's scope, but it left the WORDING doing something the button
+ * still cannot: a merchant who reads "Replace it and try again" and then just presses retry —
+ * without swapping the reference — spends a second attempt on the exact request that already
+ * failed, because the same missing/unreachable asset is still attached. The retry was never going
+ * to succeed until something about the request changed; the old wording said "try again" right
+ * next to the actual fix, so it read as permission to skip the fix.
+ *
+ * "ask again" names what happens ONLY after the merchant has done the fix ("Replace it"), not an
+ * action that stands on its own — it cannot be read as "press retry and hope". The generic
+ * catch-all a merchant sees for an ordinary, actually-retryable failure (`GENERATION_DID_NOT_GO_
+ * THROUGH` / the card's own resting-face copy) keeps "Try again" verbatim, because for THAT case
+ * pressing retry is the whole fix. Reserving the phrase for the case where it is true is the
+ * point: `E2E-CRE-PAV-005` — reference-unavailable copy must point at an executable action, and a
+ * retryable provider error is the only class allowed to still say "Try again".
+ */
+export const REFERENCE_ASSET_UNREACHABLE =
+  "We couldn't reach one of your references, so nothing was charged. "
+  + "Replace it and ask again.";
+
+/**
  * WHY A GENERATION FAILED, as a CLOSED SET OF NAMES (#827).
  *
  * #765 gave the refusal a sentence. This gives it a NAME, and the difference is what survives a
@@ -115,7 +173,12 @@ export const GENERATION_ENGINE_UNAVAILABLE =
  * table `apps/web/lib/canvas-terminal-copy.ts` (the same trick). That is the closed algebra doing
  * its job: a reason nobody wrote copy for cannot ship as a blank card.
  */
-export const GEN_FAILURE_REASONS = ["unexplained", "referenceImagePerson", "engineUnavailable"] as const;
+export const GEN_FAILURE_REASONS = [
+  "unexplained",
+  "referenceImagePerson",
+  "engineUnavailable",
+  "referenceAssetUnreachable",
+] as const;
 
 export type GenFailureReason = (typeof GEN_FAILURE_REASONS)[number];
 
@@ -138,6 +201,7 @@ export type ExplainedGenFailureReason = Exclude<GenFailureReason, "unexplained">
 const MERCHANT_GEN_FAILURE_SENTENCES: Readonly<Record<ExplainedGenFailureReason, string>> = {
   referenceImagePerson: REFERENCE_IMAGE_PERSON_REJECTED,
   engineUnavailable: GENERATION_ENGINE_UNAVAILABLE,
+  referenceAssetUnreachable: REFERENCE_ASSET_UNREACHABLE,
 };
 
 /** Is this string one of the names above? For the untyped edges — a React node's data bag, a
@@ -263,4 +327,184 @@ export function referenceImagePersonRejected(detail: string | null | undefined):
  */
 export function merchantGenFailureMessage(persistedError: string | null | undefined): string | null {
   return merchantGenFailureExplanation(merchantGenFailureReason(persistedError));
+}
+
+/**
+ * The honest thing to say about a failed generation when NOTHING more specific is known
+ * (`unexplained` — a queue hiccup, a dropped download, a persisted row from before this file
+ * existed). Codex QA-CRE-007 — added because the Library "Needs attention" board had no fallback
+ * at all: it showed `GenJob.error` whenever the column was non-empty, so an unrecognised ops
+ * string reached the merchant exactly as often as a recognised one did. `merchantGenFailureCopy`
+ * below is that fallback, composed with the whitelist above, so a caller never has to remember to
+ * apply it.
+ */
+export const GENERATION_DID_NOT_GO_THROUGH = "This generation didn't go through and nothing was charged.";
+
+/**
+ * ALWAYS a sentence a merchant may read — the specific explanation when the persisted error is
+ * one of ours, the honest generic line otherwise. Never the raw string: unlike
+ * `merchantGenFailureMessage` (which answers `null` for "nothing to say" and leaves the fallback
+ * to the caller), this is the total function a card can call and render without a branch of its
+ * own — the same shape `terminalCardCopy` already gets for free by keying `TERMINAL_FACE_COPY`
+ * on status first.
+ */
+export function merchantGenFailureCopy(persistedError: string | null | undefined): string {
+  return merchantGenFailureMessage(persistedError) ?? GENERATION_DID_NOT_GO_THROUGH;
+}
+
+// ---------------------------------------------------------------------------
+// 挂在这一轮消息上的参考,发送之前就取不到(Codex QA-CRE-FE9-013,2026-09-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * A REFERENCE THE MERCHANT ATTACHED IS NOT USABLE — and the send has to say so.
+ *
+ * This is not a generation failure: nothing has been queued, nothing reserved, no engine has
+ * seen anything. It is the moment BEFORE all of that, when the composer carries a reference
+ * (an `Image ref` chip, a clip) whose generation the server cannot resolve for this tenant.
+ *
+ * It lives in this file because it is the same discipline the rest of the file exists for: a
+ * closed set of NAMES, one table from name to the sentence a merchant reads, and no second
+ * mapping anywhere. What made QA-CRE-FE9-013 a P0 was precisely the absence of a sentence —
+ * the reference was dropped in silence, Otto planned without it, the confirmation card listed
+ * only the person, and the merchant approved and paid for a picture that never contained the
+ * product they had picked.
+ *
+ * These names are DELIBERATELY separate from `GenFailureReason` above: that union is the
+ * whitelist for `GenJob.error`, and every member of it needs terminal-card copy. A refusal that
+ * happens before a job exists must never be able to arrive as a card state.
+ */
+export const REFERENCE_UNAVAILABLE_REASONS = [
+  "notFound",
+  "fileMissing",
+  "videoAsImage",
+  "imageAsVideo",
+] as const;
+
+export type ReferenceUnavailableReason = (typeof REFERENCE_UNAVAILABLE_REASONS)[number];
+
+/**
+ * THE ONE TABLE for the two ways an attached reference can be unusable.
+ *
+ * Both sentences say the same three things, because for the merchant both endings are the same:
+ * what happened, that nothing was sent, and the one move that fixes it. Neither names the tenant
+ * check, the storage layer, or an id — a merchant learns that this attachment can't be used, not
+ * how our lookup works.
+ *
+ * `notFound` deliberately covers "deleted since you attached it" AND "belongs to someone else"
+ * with ONE sentence: telling those two apart would answer whether a given id exists in another
+ * account.
+ *
+ * ── THE TWO KIND SENTENCES (Codex staging CRE-STG-P0-001, 2026-09-04) ──────────────────
+ *
+ * `videoAsImage` / `imageAsVideo` are the merchant's OWN asset, in their OWN account, alive —
+ * it is simply the wrong medium for the slot it was attached to. Answering that with the
+ * `notFound` sentence ("isn't available any more") is a lie the merchant can check: the clip is
+ * right there in their Library. It also sends them looking for a deletion that never happened
+ * instead of doing the one thing that works — attach a still instead. The kind IS knowable
+ * (the lookup that failed under image extensions is re-run under video ones, still inside the
+ * same owner scope, so nothing about another account is revealed), so it gets said.
+ *
+ * Ending is "ask again", not "try again" — same discipline as `REFERENCE_ASSET_UNREACHABLE` above
+ * (Codex E2E-CRE-PAV-005): the request cannot succeed by pressing retry alone, only by removing
+ * the attachment first, and "ask again" names what happens after that fix rather than reading as
+ * permission to skip it.
+ */
+const REFERENCE_UNAVAILABLE_SENTENCES: Readonly<Record<ReferenceUnavailableReason, string>> = {
+  notFound:
+    "One of your references isn't available any more. Remove it and ask again — nothing was sent.",
+  fileMissing:
+    "One of your references can't be opened right now. Remove it and ask again — nothing was sent.",
+  // 结尾与上面两句同一条纪律(Codex E2E-CRE-PAV-005):先点名那一个真能修好它的动作
+  // (换一件对的素材),再说「ask again」—— 「Try again」在这里会读成「你可以跳过那一步」,
+  // 而光按重试永远修不好一件类型不对的附件。
+  videoAsImage:
+    "A video can't be used as a reference for an image. Swap it for an image and ask again — nothing was sent.",
+  imageAsVideo:
+    "An image can't be used as a reference clip. Swap it for a video and ask again — nothing was sent.",
+};
+
+/** The sentence a merchant reads for an unusable attachment. One table, no second mapping. */
+export function referenceUnavailableMessage(reason: ReferenceUnavailableReason): string {
+  return REFERENCE_UNAVAILABLE_SENTENCES[reason];
+}
+
+/**
+ * Is this transport text one of OUR two sentences? A WHITELIST, exactly like the `GenJob.error`
+ * reader above and for the same reason.
+ *
+ * The composer needs it because the refusal arrives as a plain 400 BEFORE the SSE opens, so what
+ * the client holds is the raw response body. Forwarding whatever came back would eventually put a
+ * stack trace, a proxy's HTML error page, or an internal string on a merchant's screen. Only a
+ * sentence written in this file may come back out of it; anything else keeps the surface's own
+ * honest generic copy.
+ *
+ * Exact match after trimming — not a prefix, not a substring.
+ */
+export function referenceUnavailableSentence(text: string | null | undefined): string | null {
+  const written = String(text ?? "").trim();
+  if (!written) return null;
+  for (const sentence of Object.values(REFERENCE_UNAVAILABLE_SENTENCES)) {
+    if (sentence.trim() === written) return sentence;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// 批准之后、任务进队之前就断了(Codex staging CRE-STG-P2-004,2026-09-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * WHEN THE APPROVAL ITSELF DIED — the merchant pressed `Generate · N credits` and no job exists.
+ *
+ * ── 走查那两次点击(CRE-STG-P0-001 / P2-004)───────────────────────────────────────
+ *
+ * 确认卡是启用的,按下去两次,两次都回同一句 `Couldn't start that — please try again.`。那句
+ * 话不是一条**措辞**,而是一个 `catch {}` 的字面量(`components/otto/plan-approval.ts`):
+ * 服务端动作只要**抛**了 —— 任何原因 —— 客户端就把它折叠成这一句。于是走查员看到的、
+ * 商家看到的、日志里那一行看到的,是三件互不相干的事,而唯一能把它们对起来的东西不存在。
+ *
+ * 所以这里给它两样东西,而且只给这两样:
+ *   ① **一句**人话,住在这一份表里(不含 id / URL / 路径 / 堆栈 —— 那些是日志的活);
+ *   ② 一个**短号**,由已经存在的身份(卡 id)算出来,商家复制得走、日志里搜得到。
+ *
+ * 短号不是一个新 id:发明一个新 id 就意味着它得存在某处,而一次失败的批准恰恰是「什么都
+ * 没存下来」的那一刻。卡 id 是这次批准唯一确定存在、两边都握着的身份 —— 服务端在日志里
+ * 写它,卡面在商家眼前显示它,两边算的是**同一个函数**。
+ *
+ * ── 这一句为什么**不**说「nothing was charged」(#1187 判官 P1-1)────────────────────
+ *
+ * 上一版写的是 `…, and nothing was charged.`,理由是「它只在 create/reserve 之前那一支上
+ * 使用」。那个理由不成立,而且是这条钱路上最贵的一种不成立:它的两个调用点都**接住一切**,
+ * 包括预扣已经提交之后才炸的那些形状 ——
+ *
+ *   · `apps/web/lib/gen-actions.ts` 的「事务回调完成了,但结局未知」那一支(连接/ACK 丢了):
+ *     回查那一行拿不到就原样 `throw e`。此刻 create + reserve + enqueue **可能已经原子提交**,
+ *     只是我们查不到;
+ *   · `apps/web/lib/cowork-actions.ts` 的外壳接住这个抛;
+ *   · `apps/web/components/otto/plan-approval.ts` 的客户端 catch 更是典型形状 ——
+ *     「服务端已经扣了、响应没回来」。同一个文件的 `finally` 里逐字写着这条纪律:
+ *     **失败的响应从不证明零花费**(#550),`notifyBalanceRefresh()` 正因此才放在那里。
+ *
+ * 所以这一句只说它**确实知道**的事:这次没能开始,请刷新后再试。余额的真相由那次刷新
+ * (`notifyBalanceRefresh`)与账本自己回答 —— 一句安慰话换来的是商家按我们说的不去看余额,
+ * 而那正是他最该看的时候。真正零花费的那些拒绝有它们自己的句子(`ProposeRefusal` 家族、
+ * `REFERENCE_UNAVAILABLE_SENTENCES` 的 `nothing was sent`),那些地方说得起,这里说不起。
+ */
+export const GENERATION_START_FAILED =
+  "We couldn't start that generation. Refresh and try again in a moment.";
+
+/** 短号的长度 —— 够短到商家愿意念出来,够长到一天里的卡不会撞。 */
+const DIAGNOSTIC_REF_LENGTH = 8;
+
+/**
+ * 一次动作的**可复制短号** —— 由它自己的持久身份算出来,不是新生成的。
+ *
+ * 纯函数、无副作用:同一张卡在服务端日志与商家卡面上永远算出同一串。取末段是因为本仓的
+ * id 前缀是类型名(`msg_` / `01M…`),末段才是区分度所在;大写只是为了念得准。
+ */
+export function diagnosticRef(id: string | null | undefined): string | null {
+  const trimmed = String(id ?? "").trim().replace(/[^A-Za-z0-9]/g, "");
+  if (!trimmed) return null;
+  return trimmed.slice(-DIAGNOSTIC_REF_LENGTH).toUpperCase();
 }

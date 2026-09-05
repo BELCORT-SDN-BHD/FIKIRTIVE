@@ -301,12 +301,78 @@ describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled w
   });
 
   it("#643 T2:图片形状菜单是插值进来的真菜单 —— 不是抄在文本里的一份副本", async () => {
-    const { GEN_IMAGE_ASPECTS, GEN_IMAGE_DEFAULT_ASPECT } = await import("@fikirtive/core");
+    const { GEN_IMAGE_ASPECTS } = await import("@fikirtive/core");
     // 每一格都真的出现在指令里（菜单加一格，这条自动开始要求它出现）。
     for (const aspect of GEN_IMAGE_ASPECTS) expect(ottoInstructions).toContain(aspect);
     expect(ottoInstructions).toContain(GEN_IMAGE_ASPECTS.join(", "));
-    // 菜单外的形状会被交付成默认形状，这句话必须说出口。
-    expect(ottoInstructions).toMatch(new RegExp(`delivered as ${GEN_IMAGE_DEFAULT_ASPECT}`));
+  });
+
+  /**
+   * Codex 全 beta 审计 P0-001 —— **说明书自己就是那道闸的漏洞**。
+   *
+   * 旧口径逐字是「Pick the closest one to what the user described … anything else is
+   * delivered as 1:1 and the card says so out loud」。商家说 4:5,模型照它换成菜单内的
+   * 4:3,而画幅闸比对的正是模型交上来的那一格 —— 于是闸永远走不到,卡上写着
+   * `2304 × 1728 · 4:3` 且按得下去。口径改成画质档同款:原样传、菜单外由服务端拒绝。
+   *
+   * 这一条只钉**说明书**;真正的守卫是 `skills/propose.test.ts` 的第二个证人那一族
+   * (直接喂 desiredAspect + turnText,一个字都不读这份说明书)。
+   */
+  it("CREATE-A1 图片形状的口径与画质档同款:原样传、不许替商家挑最接近的一格", async () => {
+    const { GEN_IMAGE_DEFAULT_ASPECT } = await import("@fikirtive/core");
+    // 旧口径的两半都必须消失 —— 留着任何一半,模型就还有理由自己换档。
+    expect(ottoInstructions).not.toContain("Pick the closest one");
+    expect(ottoInstructions).not.toMatch(new RegExp(`delivered as ${GEN_IMAGE_DEFAULT_ASPECT}`));
+    // 新口径的三件事:原样传(含菜单外)、不许替他挑、菜单外在铸卡前被拒且 $0。
+    expect(ottoInstructions).toMatch(/exactly as they named it/i);
+    expect(ottoInstructions).toMatch(/INCLUDING a shape that is not on this menu/);
+    expect(ottoInstructions).toMatch(/Never substitute the closest one on their behalf/i);
+    expect(ottoInstructions).toMatch(/refused before a card exists \(nothing is charged\)/i);
+    // 判官 2026-09-04 P2-2 —— 旧句里「story 就是 9:16」的默认推断一并删了。商家只说「IG story」
+    // 而不报比例时,卡从此落默认方图 —— 这是商家可见行为变化,已登记进规格 §5。
+    // 钉住那句明令本身:没有它,模型会回到“自己猜一个形状”的老路。
+    expect(ottoInstructions).toMatch(
+      /never infer a shape from the kind of post they mentioned — leave the field out when they never named one/,
+    );
+    expect(ottoInstructions).not.toContain("a story or status post is");
+  });
+
+  /**
+   * Codex 全 beta 审计 P0-002 —— **按下 Generate 之后不许再给选择题**。
+   *
+   * 现场:商家按下 `Generate · 14 credits` 之后,Otto 又问「A) 现在这支 B) 更稳的两步
+   * 先出首帧」。铸卡与继续说话天生同一轮(卡由 propose 在 run 中途落库,最终文本在 run
+   * 结束后另存一条 TEXT),所以这不是接线缺陷,而是**没有一条规矩说过不许这么写**。
+   *
+   * 这一条钉的是规矩在提示词里。它的限度要说清楚:它证明不了模型每一轮都照做 ——
+   * 自由文本没有任何单测能钉死(这正是 #541 r6 放弃词表判定、改用 golden 快照的理由)。
+   * 结构那一半由 `skills/propose.test.ts` 的 CREATE-A2 钉:两步是一次 propose 铸成的
+   * **一个**方案,所以这道选择题从一开始就不该存在。
+   */
+  it("CREATE-A2 铸卡之后的回复只许指向那张卡:不许给备选、不许二选一", () => {
+    expect(ottoInstructions).toMatch(/the rest of your reply may only point AT that card/i);
+    expect(ottoInstructions).toMatch(/Do NOT offer an alternative plan/);
+    expect(ottoInstructions).toMatch(/do NOT put two ways of doing it side by side and ask which one they want/i);
+    // 方案的取舍必须发生在铸卡**之前**。
+    expect(ottoInstructions).toMatch(/Every decision between plans happens BEFORE any card/);
+    // 「先出图再出片」被点名为**一个**方案,不是一道选择题 —— 出口是 forVideo + videoPrompt。
+    expect(ottoInstructions).toMatch(/it is a single plan, laid out once with `forVideo: true` and `videoPrompt`/);
+    // 判官 2026-09-04 P2-4 —— 这条硬规矩与下一节「Offering a few directions」(`proposePack`
+    // 摆选项)字面相撞。豁免必须写在规矩里:选项在**卡里面**不是“卡旁边的一个问题”。
+    expect(ottoInstructions).toMatch(
+      /options laid out INSIDE one `proposePack` card are not that, because they are the card rather than a question beside it/,
+    );
+  });
+
+  // Codex 只读 E2E E2E-CRE-PAV-004 —— 两步任务不许把内部接缝丢给商家。
+  // 生产原句是 `Once you approve and generate it, bring that image back here`:那一句在当时
+  // 是**诚实的**(系统真的没有接力),所以这条钉的不是措辞洁癖 —— 接力落地之后它就变成了假话。
+  it("CREATE-A1 两步计划:教 Otto 传 videoPrompt,并明令不许叫商家把图带回来", () => {
+    expect(ottoInstructions).toMatch(/videoPrompt/);
+    // 第二张确认卡自己出现 —— 这句话是接力那段代码的产品面承诺。
+    expect(ottoInstructions).toMatch(/confirmation card appears by itself/i);
+    // 生产原句的三个动作,逐个禁掉。
+    expect(ottoInstructions).toMatch(/NEVER ask them to bring the picture back/i);
   });
 
   it("bridges the keyframe rule to seedreamPrompt's forVideo (Fix 8)", () => {
@@ -650,10 +716,10 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
   // #559-style conservative safety lint: these are auditable banned wording families,
   // not a general English classifier. An ambiguous new instruction should be reviewed.
   const SAY_TO_START_INVITATIONS = [
-    /\bjust\s+say\b[^.!?\n]{1,50}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
-    /\b(?:say|reply|respond|type|write|message|send|answer)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
-    /\b(?:tell(?:\s+me)?|give(?:\s+me)?)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
-    /\b(?:let\s+me\s+know|just\s+confirm)\b[^.!?\n]{0,50}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
+    /\bjust\s+say\b[^.!?\n]{1,50}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing)|submit(?:ting)?|send(?:ing)?|queu(?:e|ing)|put(?:ting)?\s+it\s+through|hand(?:ing)?\s+it\s+over)\b/i,
+    /\b(?:say|reply|respond|type|write|message|send|answer)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing)|submit(?:ting)?|send(?:ing)?|queu(?:e|ing)|put(?:ting)?\s+it\s+through|hand(?:ing)?\s+it\s+over)\b/i,
+    /\b(?:tell(?:\s+me)?|give(?:\s+me)?)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing)|submit(?:ting)?|send(?:ing)?|queu(?:e|ing)|put(?:ting)?\s+it\s+through|hand(?:ing)?\s+it\s+over)\b/i,
+    /\b(?:let\s+me\s+know|just\s+confirm)\b[^.!?\n]{0,50}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing)|submit(?:ting)?|send(?:ing)?|queu(?:e|ing)|put(?:ting)?\s+it\s+through|hand(?:ing)?\s+it\s+over)\b/i,
     /\b(?:say|reply|respond|type|write|message|send|answer|tell|give)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\bwe['’]re\s+off\b/i,
   ];
 
@@ -663,6 +729,23 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
         invitation,
       );
     }
+  });
+
+  // Codex QA-CRE-FE9-004(E2E fe9c70bd)—— 同一个画面上有**两条批准指令**:Otto 的叙述说
+  // 「Just say yes and I'll submit it — then you'll confirm on the card to start」,而卡上
+  // 已经摆着那一个按钮。商家于是不知道「yes」会不会花钱、卡是不是还要再确认一次。
+  // 病根就在这份提示词自己:上一版最后一句把「说 yes → 我送上去 → 你再在卡上确认」
+  // 写成了标准流程,模型只是忠实复述它。这里把裁决钉住:一张卡,一个批准点,在卡上。
+  it("CREATE-A1 一张卡只有一条批准指令 —— 话永远不提交、不送出、不排队", () => {
+    expect(ottoInstructions).toContain(
+      "there is exactly ONE approval for a card, and it happens on the card",
+    );
+    expect(ottoInstructions).toContain(
+      "Words also never submit, send, queue, put through or hand over a card",
+    );
+    // 「说 yes」是兴趣,不是批准 —— 上一版那句两步流程不许再回来。
+    expect(ottoInstructions).not.toMatch(/AND tell them to approve it on the card to start/);
+    expect(ottoInstructions).toContain("take it as interest and not as that approval");
   });
 
   // Positive control (same discipline as the completeness family below): a ban that
@@ -716,6 +799,14 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
       // r7 — Founder "just say X" wording may use any short phrase:
       "Just say ship it and I'll start the work.",
       "Just say do it then I will generate the image.",
+      // Codex QA-CRE-FE9-004(E2E fe9c70bd 生产原句)—— 「我替你送上去」是同一个
+      // 假承诺换了一个动词:话仍然什么都启动不了,而它还额外发明了第二个批准点。
+      // 上一版词表只挡「开跑」那一族动词,于是这句逐字穿了过去。
+      "Just say yes and I'll submit it — then you'll confirm on the card to start.",
+      "Reply yes and I will send it through.",
+      "Say the word and I'll queue it.",
+      "Tell me yes and I'll put it through.",
+      "Say yes and I will hand it over.",
     ];
     for (const escape of escapes) {
       expect(

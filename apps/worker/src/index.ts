@@ -39,6 +39,7 @@ import { maybeRunNightlyBackup } from "./db-backup.js";
 import { publishChainWarning } from "./publish-env-check.js";
 import { assertWorkerEnv } from "./boot-env.js";
 import { startHeartbeat } from "./heartbeat.js";
+import { commitShaFrom, shortSha } from "@fikirtive/core/env-contract";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
@@ -100,7 +101,10 @@ const plan = (() => {
     process.exit(1);
   }
 })();
-console.log(`[worker] ${planSummary(plan)}`);
+// 启动横幅带 sha(2026-09-04 Codex staging 审计):此前只有心跳行带部署身份,一次启动
+// 失败在心跳写成之前就退出时,日志里连"这次跑的是哪个 commit"都查不到。复用心跳同一对
+// commitShaFrom/shortSha(heartbeat.ts),不是另起一套——没有就是 "unknown",绝不假造。
+console.log(`[worker] ${planSummary(plan)} sha=${shortSha(commitShaFrom(process.env)) ?? "unknown"}`);
 {
   const budget = providerBudgetLine(plan, process.env);
   if (budget) console.log(budget);

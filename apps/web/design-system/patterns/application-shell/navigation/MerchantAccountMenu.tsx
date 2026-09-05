@@ -15,6 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { toast } from "@/components/ui/toast"
 
 export type MerchantShellAccount = {
   email: string
@@ -32,13 +33,27 @@ export function MerchantAccountMenu({
   signOutAction,
   profileHref = SHELL_ROUTES.profile,
   showSignOutAction = true,
+  buildSha = null,
 }: {
   account?: MerchantShellAccount | null
   signOutAction: () => Promise<void>
   profileHref?: string
   showSignOutAction?: boolean
+  /** P2-3(判官四轮):`buildInfo(process.env).sha`,读法是纯同步 env 读取——`getMyAccount()`
+   *  在 `global-navigation.tsx` 已经在跑的那一趟顺风车带下来的,这个组件自己不发任何请求。
+   *  没有平台注入(本机)或还没加载完都是 `null`,标签统一落 "local"。 */
+  buildSha?: string | null
 }) {
   const label = merchantIdentityLabel(account)
+
+  const copyBuildInfoLink = async () => {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/api/build-info`)
+      toast.success("Build info link copied")
+    } catch {
+      toast.error("Couldn't copy the build info link")
+    }
+  }
 
   return (
     <DropdownMenu>
@@ -85,6 +100,21 @@ export function MerchantAccountMenu({
               <span>Sign out</span>
             </DropdownMenuItem>
           ) : null}
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          {/* P1-012 — release identity, compact so it never competes with Profile/Sign out.
+              判官四轮 P2-2:可见文案是紧凑版本号,读屏该报的是这颗项真正做的事(复制链接),
+              两者不是同一句话,所以 aria-label 单独给。 */}
+          <DropdownMenuItem
+            data-shell-build-info
+            aria-label="Copy build info link"
+            onSelect={() => {
+              void copyBuildInfoLink()
+            }}
+          >
+            <span className="text-xs text-muted-foreground">Build {buildSha ?? "local"}</span>
+          </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>

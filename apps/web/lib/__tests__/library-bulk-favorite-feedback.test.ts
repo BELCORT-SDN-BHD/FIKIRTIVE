@@ -139,8 +139,10 @@ async function click(node: HTMLElement) {
 /** 进入选择模式并勾上两件。 */
 async function selectTwo() {
   await click(byText("Select"));
-  await click(byLabel("Select Raya cookie tin on marble"));
-  await click(byLabel("Select Kopi tumbler on wood"));
+  // 勾选框的无障碍名与「Open」那颗键同源(`lib/library-item-a11y.ts`),所以带着媒体类型
+  // 那半句 —— 这是 #1185 那份单源的形状,不是这个测试自己编的字符串。
+  await click(byLabel("Select Raya cookie tin on marble, image"));
+  await click(byLabel("Select Kopi tumbler on wood, image"));
   expect(document.body.textContent).toContain("2 selected");
 }
 

@@ -2,7 +2,7 @@
 
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { NorthstarHomeEntry } from "@/components/canvas/NorthstarHomeEntry";
+import { CreateWorkspaceEntry } from "@/components/start-something/CreateWorkspaceEntry";
 import { DeepLinkFallback } from "@/components/northstar/immersive/deeplink-fallback";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 export default function Page() {
   return (
     <Suspense fallback={<DeepLinkFallback />}>
-      <NorthstarHomeEntry />
+      <CreateWorkspaceEntry />
     </Suspense>
   );
 }

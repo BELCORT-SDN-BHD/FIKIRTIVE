@@ -177,10 +177,19 @@ describe("FRONT-A5 两个租户的 Library 互不可见", () => {
     // 演员库是引导时按 org 播的,所以两边各有自己的一套 Official avatars。
     const officialA = a.filter((element) => element.kind === "official-avatars");
     const officialB = b.filter((element) => element.kind === "official-avatars");
+    // 先钉「真有」:下面两条比的都是 A 与 B 的对称性,而两个空集同样对称 —— 少了这一条,
+    // 把 `lib/library-elements.ts` 的 select 里那格 `catalogKey` 删掉(于是每个 CHARACTER
+    // 都落进 Characters 栏、Official avatars 恒空),这条测试照样绿。
+    expect(officialA.length, "演员库一个都没落进 Official avatars 栏").toBeGreaterThan(0);
     expect(officialA.length).toBe(officialB.length);
     expect(officialA.map((element) => element.name).sort()).toEqual(
       officialB.map((element) => element.name).sort(),
     );
+    // 只读那一格也走真读:能力表由域层按 catalogKey 算,不是 UI 自己拍脑袋。
+    expect(
+      officialA.every((element) => element.capabilities.deleteEntity === false),
+      "官方演员在真读回来的 Elements 里居然是可删的",
+    ).toBe(true);
   });
 });
 
@@ -201,6 +210,21 @@ describe("FRONT-A5 Uploads 与 Generation history 由真实来源列分开", () 
     const ids = page.items.map((item) => item.id);
     expect(ids).toContain(genA);
     expect(ids, "上传的那一行漏进了生成结果").not.toContain(uploadA);
+  });
+
+  it("FRONT-A5 上传按商家自己的文件名搜得到 —— 它没有提示词可搜", async () => {
+    // 上传行的 `promptText` 永远是空的,所以只打 promptText 的搜索在 Uploads 那一格
+    // 必然搜空。卡片上写给商家看的名字是 `Asset.originalFilename`,搜的就该是它。
+    await signInAs(EMAIL_A);
+    const page = await getGenerationHistory({ sources: ["upload"], search: "a-raya", take: 100 });
+    if ("error" in page) throw new Error(page.error);
+    expect(page.items.map((item) => item.id), "按上传自己的文件名搜不到它").toEqual([uploadA]);
+
+    // 仍是租户内的:B 拿 A 的文件名也搜不到 A 的东西。
+    await signInAs(EMAIL_B);
+    const cross = await getGenerationHistory({ search: "a-raya", take: 100 });
+    if ("error" in cross) throw new Error(cross.error);
+    expect(cross.items.map((item) => item.id), "文件名搜索绕过了租户约束").not.toContain(uploadA);
   });
 
   it("两个来源都不勾时一条都不返回 —— 不是悄悄给整库", async () => {

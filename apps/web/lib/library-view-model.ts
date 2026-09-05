@@ -207,11 +207,23 @@ export function groupLibraryItems<T extends { createdAt: string }>(
  * 写提示词(截断),两样都没有才说 "Untitled" —— 绝不拿 id、存储键、URL 或来源冒充名字。
  */
 export function libraryItemTitle(item: Pick<LibraryItem, "source" | "filename" | "prompt">): string {
+  const raw = libraryItemRawName(item);
+  return raw.length > 72 ? `${raw.slice(0, 71)}…` : raw;
+}
+
+/**
+ * 同一个名字,**没截断**的那一版。
+ *
+ * 上面那个 72 字的截断是给**看得见的 caption** 用的(格子只有那么宽)。读屏念的那句归
+ * `lib/library-item-a11y.ts` 管,它要先去重再按词边界截 —— 喂它一份已经被拦腰砍过的字符串,
+ * 「同一句写了两遍」那一半就检测不出来了(Codex staging 审计 LIB-STG-P2-005)。所以两条路
+ * 从同一份原名分出去,而不是一条串在另一条后面。
+ */
+export function libraryItemRawName(item: Pick<LibraryItem, "source" | "filename" | "prompt">): string {
   const filename = item.source === "upload" ? item.filename.trim() : "";
   if (filename) return filename;
   const prompt = item.prompt.trim();
-  if (!prompt) return "Untitled";
-  return prompt.length > 72 ? `${prompt.slice(0, 71)}…` : prompt;
+  return prompt || "Untitled";
 }
 
 /** `0:08`。没有真实时长的视频不显示假时长。 */

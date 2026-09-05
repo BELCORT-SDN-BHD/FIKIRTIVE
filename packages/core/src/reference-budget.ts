@@ -47,9 +47,68 @@ export type ReferenceBudgetInput = VideoReferenceShape & {
   perEntityLiveCounts: number[];
   /** 这张卡带走了编辑底图吗(image 卡的 `sourceGenerationId`)。 */
   hasBaseImage: boolean;
-  /** 商家这一轮挂进来的图片总数 —— 只有第一张会成为底图,其余只参与理解。 */
+  /**
+   * 商家这一轮挂进来的图片总数。
+   *
+   * Codex staging CRE-STG-P1-003(2026-09-04)—— 从前这里写着「只有第一张会成为底图,
+   * 其余只参与理解」,而那正是走查那一轮的病:两个芯片挂上去,卡上只列得出一件,付费请求
+   * 里也只有一件。图片这一支现在**全部上车**,顺序就是商家挂的顺序(`<Image_1>` 起),
+   * 名额由 `attachedImageCap` 划,超出的那几张卡面必须说出来。
+   */
   attachedImageCount: number;
 };
+
+/**
+ * 图片这一趟,商家自己挂的参考图**真会上车几张** —— 名额的单一出处。
+ *
+ * 上限就是引擎的输入张数上限(`MAX_CONDITIONING_IMAGES`)。挂 1 张时一切与从前逐字相同
+ * (那一张是 `unshift` 进去的编辑底图,不占 @元素的名额);第 2 张起,每多一张就从 @元素
+ * 的名额里扣一格 —— 所以引擎收到的总张数**永远不超过今天已有的上限**,不是悄悄放宽。
+ */
+export function attachedImageCap(attachedImageCount: number): number {
+  return Math.max(0, Math.min(attachedImageCount, MAX_CONDITIONING_IMAGES));
+}
+
+/**
+ * 一件参考在**这张确认卡的这个计划里**扮演的角色(Codex staging CRE-STG-P1-003)。
+ *
+ * 走查的建议是按 `Character` / `Product` / `Starting frame` 分组。前两个这里**说不出口**,
+ * 而且刻意不猜:一张从 Library 挑出来的生成图,系统只知道它的提示词与出处,不知道画的是人
+ * 还是杯子。真正带类型的是 @元素(`Entity.type`),它们另有一行披露 —— `approvedEntitiesNote`
+ * 写的就是 `Aisyah (person)`。所以这里只说**这张卡确实知道的那件事**:这一件在引擎的输入
+ * 数组里坐哪一格。
+ *
+ * · `startFrame`    —— 视频的首帧(i2v)。它是帧,不是参考照。
+ * · `baseImage`     —— 图片计划的第一张挂图,引擎的编辑底图,也就是 `<Image_1>`。
+ * · `reference`     —— 图片计划的第 2 张起,按次序进 `<Image_2>`、`<Image_3>`…
+ * · `referenceClip` —— 整段参考视频。
+ *
+ * 它住在**这个模块**而不是铸卡侧,原因与 `ReferenceSlot`(下面)相同:这是一件关于引擎
+ * 输入数组的事实,而卡面只是把它翻译成人话。住在这里,确认卡才可以从 `@fikirtive/core/
+ * reference-budget` 这条子路径读它 —— 包根的桶文件会把 `node:crypto` 拖进客户端包。
+ */
+export const CARD_REFERENCE_ROLES = ["startFrame", "baseImage", "reference", "referenceClip"] as const;
+
+export type CardReferenceRole = (typeof CARD_REFERENCE_ROLES)[number];
+
+/** 角色 → 商家在卡上读到的那个词。一份,前端只渲染,不自己翻译。 */
+const CARD_REFERENCE_ROLE_LABELS: Readonly<Record<CardReferenceRole, string>> = {
+  startFrame: "Starting frame",
+  baseImage: "Base image",
+  reference: "Reference",
+  referenceClip: "Reference clip",
+};
+
+/** 读不懂的值退回 `reference` —— 老卡缺这一格是正常的,陌生词绝不原样渲染进卡面。 */
+export function cardReferenceRoleOf(value: unknown): CardReferenceRole {
+  return (CARD_REFERENCE_ROLES as readonly string[]).includes(String(value))
+    ? (value as CardReferenceRole)
+    : "reference";
+}
+
+export function cardReferenceRoleLabel(role: CardReferenceRole): string {
+  return CARD_REFERENCE_ROLE_LABELS[role];
+}
 
 /**
  * #785 —— @元素参考照**这一档视频能不能带**。
@@ -82,8 +141,15 @@ export function videoReferencesRide(shape: VideoReferenceShape): boolean {
  * `videoElementReferencesHonoured` 一处,所以「说的」与「送的」在 provider 这一维上
  * 不可能分家。
  */
-export function conditioningCap(input: VideoReferenceShape & { kind: "image" | "video" }): number {
-  if (input.kind !== "video") return MAX_CONDITIONING_IMAGES;
+export function conditioningCap(
+  input: VideoReferenceShape & { kind: "image" | "video"; attachedImageCount?: number },
+): number {
+  if (input.kind !== "video") {
+    // Codex staging CRE-STG-P1-003 —— 商家挂的第 2 张起,每一张从 @元素的名额里扣一格。
+    // 挂 0/1 张 ⇒ 减 0 ⇒ 与从前逐字相同(既有每一条路的行为一格不动)。
+    const extraAttached = Math.max(0, attachedImageCap(input.attachedImageCount ?? 0) - 1);
+    return Math.max(0, MAX_CONDITIONING_IMAGES - extraAttached);
+  }
   if (!videoElementReferencesHonoured()) return 0;
   if (!videoReferencesRide(input)) return 0;
   const frames = (input.hasVideoStartFrame ? 1 : 0) + (input.hasVideoTailFrame ? 1 : 0);
@@ -117,12 +183,16 @@ export function referenceBudget(input: ReferenceBudgetInput): ReferenceBudget {
     return { used: taken, total: elementTotal, truncated: taken < elementTotal };
   }
 
-  // 底图是 unshift 进去的,不占元素的上限名额。
-  const base = input.hasBaseImage ? 1 : 0;
+  // 第一张(编辑底图)是 unshift 进去的,不占元素的上限名额;第 2 张起已经在
+  // `conditioningCap` 里扣过格了。两处读的是同一个 `attachedImageCap`。
+  const attachedTotal = input.hasBaseImage ? Math.max(input.attachedImageCount, 1) : 0;
+  const attachedUsed = attachedImageCap(attachedTotal);
   return {
-    used: taken + base,
-    total: elementTotal + Math.max(input.attachedImageCount, base),
-    truncated: taken < elementTotal,
+    used: taken + attachedUsed,
+    total: elementTotal + attachedTotal,
+    // Codex staging CRE-STG-P1-003 —— 挂图被上限截掉时同样是「说了不算数」,
+    // 必须与元素照被截掉走同一句披露,不能只有元素那一半。
+    truncated: taken < elementTotal || attachedUsed < attachedTotal,
   };
 }
 
@@ -143,6 +213,17 @@ export type ReferenceSlotType = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMAR
  */
 export type ReferenceSlot =
   | { kind: "baseImage" }
+  /**
+   * Codex staging CRE-STG-P1-003 —— 商家挂的**第一张之外**的那几张图。
+   *
+   * 它们与底图坐在同一段(`unshift` 到数组最前),但它们**不是**「正在被编辑的那张」。
+   * 从前挂图只有一张,所以整段只有 `baseImage` 一种;多张上车之后再把第 2 张也说成
+   * `is the image being edited`,就是同一件事在卡面与引擎那里各说一套 —— 卡上写着
+   * `Reference`(`cardReferenceRoleLabel`),给引擎的编号句却写着「在编辑它」。
+   *
+   * 两种说法里只有一种能是真的,而付费请求那一份必须与商家批准的那一份逐字同义。
+   */
+  | { kind: "attachedReference" }
   | {
       kind: "entity";
       entityId: string;
@@ -259,6 +340,9 @@ export function referenceMapLines(slots: ReferenceSlot[]): string[] {
   return slots.map((slot, idx) => {
     const n = idx + 1;
     if (slot.kind === "baseImage") return `<Image_${n}> is the image being edited.`;
+    // 商家挂的第 2 张起:说它是一张参考图,不多说一个字 —— 它画的是人还是杯子,
+    // 系统并不知道(带类型的只有 @元素,走上面那一支)。猜一个名词就是编造。
+    if (slot.kind === "attachedReference") return `<Image_${n}> is a reference image.`;
     const first = firstSlotOf.get(slot.entityId);
     const name = slot.name === null ? null : slotName(slot.name);
     if (first === undefined) {

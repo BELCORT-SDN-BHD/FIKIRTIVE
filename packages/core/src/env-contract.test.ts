@@ -504,6 +504,37 @@ describe("钱路不变量对 FIKIRTIVE_ENV_CONTRACT=warn 免疫(MONEY-A2)", () =
     expect(d.action === "warn" && d.report).toContain("OTTO_LLM_MARGIN");
   });
 
+  /**
+   * ENGINE-A5(Otto 引擎 S2 §7.2①)—— **型号必须已定价**,判词与费率地板同形,warn 免疫。
+   *
+   * 这条检查判的是两个**代码常量**是否还对得上(计价型号 vs 价目表),没有 env 变量名可查,
+   * 所以免疫资格挂在问题本身上(EnvProblem.moneyInvariant)。`pricedModelIds` 是它唯一的
+   * 测试缝:默认值下常量对常量,一个用例都写不出来。
+   */
+  it("ENGINE-A5:生产 + warn + 计价型号没价 → 照旧 exit(型号必须已定价,warn 免疫)", () => {
+    const d = bootEnvDecision(prodWarn, {
+      surface: "worker",
+      production: true,
+      pricedModelIds: ["claude-does-not-exist-9"],
+    });
+    expect(d.action).toBe("exit");
+    expect(d.action === "exit" && d.report).toContain("claude-does-not-exist-9");
+    expect(d.action === "exit" && d.report).toContain("价目表");
+    // 与 OTTO_LLM_MARGIN 同形:必须说清楚逃生门救不了它。
+    expect(d.action === "exit" && d.report).toContain("钱路不变量");
+  });
+
+  it("ENGINE-A5:同一份 env、型号有价 → 不再有这条问题(检查不是常黑的装饰)", () => {
+    const d = bootEnvDecision(prodWarn, { surface: "worker", production: true });
+    expect(d.action).toBe("ok");
+  });
+
+  it("ENGINE-A5:非生产 + 型号没价 → 只 warn(dev 不砖),但问题照旧被点名", () => {
+    const d = bootEnvDecision({}, { surface: "worker", production: false, pricedModelIds: ["claude-does-not-exist-9"] });
+    expect(d.action).toBe("warn");
+    expect(d.action === "warn" && d.report).toContain("claude-does-not-exist-9");
+  });
+
   it("免疫名单是**具名**的,不是「所有带 minimum 的变量」—— 今天只有 OTTO_LLM_MARGIN", () => {
     const flagged = ENV_CONTRACT.filter((s) => s.moneyInvariant).map((s) => s.name);
     expect(flagged).toEqual(["OTTO_LLM_MARGIN"]);

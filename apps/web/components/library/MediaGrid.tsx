@@ -18,9 +18,11 @@ import { Film } from "lucide-react";
 import { Button } from "@/design-system/primitives/button";
 import { Checkbox } from "@/design-system/primitives/checkbox";
 import { Skeleton } from "@/design-system/primitives/skeleton";
+import { libraryItemAccessibleName } from "@/lib/library-item-a11y";
 import {
   groupLibraryItems,
   libraryDurationLabel,
+  libraryItemRawName,
   libraryItemTitle,
   type LibraryTimeZone,
 } from "@/lib/library-view-model";
@@ -61,6 +63,11 @@ export function MediaTile({
   onCheckedChange?: (checked: boolean) => void;
 }) {
   const title = libraryItemTitle(item);
+  // 看得见的那行字仍是 `libraryItemTitle`(设计的 caption);**读屏念的那句**走
+  // `lib/library-item-a11y.ts` —— Codex staging 审计 LIB-STG-P2-005 定的那一份单源
+  // (整段提示词当无障碍名,每个 Tab 停顿都念一整段;#1185 已经在 CanvasLibraryPicker 与
+  // StuffLibrary 落过)。Library 网格是第三个同病的调用点,照样读同一个函数,不自建第二套截断。
+  const accessibleName = libraryItemAccessibleName(libraryItemRawName(item), item.kind);
   const duration = libraryDurationLabel(item);
   // 已批准的 Library 用「保持原始比例的紧凑 media grid」(README §3.1),瀑布流的高低差
   // 就是从这来的。比例是 `Asset` 上的真实两条边,不是一个统一裁出来的框;两条边缺一条的
@@ -71,7 +78,7 @@ export function MediaTile({
       {selectionMode ? (
         <div className="absolute top-2 left-2 z-10 rounded-md bg-background/90 p-1 shadow-sm backdrop-blur-sm">
           <Checkbox
-            aria-label={`Select ${title}`}
+            aria-label={`Select ${accessibleName}`}
             checked={checked}
             onCheckedChange={(next) => onCheckedChange?.(Boolean(next))}
           />
@@ -81,8 +88,11 @@ export function MediaTile({
         variant="ghost"
         /* 名字与已批准设计一致(`LibraryReference.tsx` 的 MediaTile):这一块砖永远叫
            「Open <名字>」,勾选那一颗才叫「Select <名字>」—— 两个控件两个名字,读屏
-           不会听到同一句话说两遍。 */
-        aria-label={`Open ${title}`}
+           不会听到同一句话说两遍。两颗键的 <名字> 走同一份 `accessibleName`(单源)。 */
+        aria-label={`Open ${accessibleName}`}
+        // 悬停/长按看到的是**完整**原名,和 `CanvasLibraryPicker.tsx` 同源;`title` 变量是
+        // 给看得见的 caption 用的 72 字截断版,拿它当 tooltip 等于把截断又说了一遍。
+        title={libraryItemRawName(item)}
         aria-selected={selected}
         onClick={selectionMode ? () => onCheckedChange?.(!checked) : onOpen}
         className={cn(
@@ -107,7 +117,7 @@ export function MediaTile({
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={item.url}
-            alt={title}
+            alt=""
             loading="lazy"
             style={ratio ? { aspectRatio: ratio } : undefined}
             className={cn(

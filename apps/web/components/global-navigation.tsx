@@ -69,8 +69,11 @@ export function isMerchantSurface(pathname: string): boolean {
  * Utility bar 里的 Ask Otto 必须挂在 `OttoPanelMount` 之内才够得着
  * `useOttoPanelControls()`(那个 context 由 `OttoPanelShell` 往下发,只喂给它的后代)。
  *
- * 面板没有挂在这一面时(今天只有画布,见 `panel-surface.ts`)`controls` 是 `null` ——
- * 按钮因此什么都不做,这不是一个错误,是「这一面自己已经有一个 Otto」的意思本身。
+ * 面板没有挂在这一面时(见 `panel-surface.ts` 的「这一面自己已经有一个 Otto」名单,今天
+ * 是画布与 `/create`)`controls` 是 `null` —— 这不是一个错误,是「这一面自己已经有一个
+ * Otto」的意思本身,所以 `onAskOtto` 传 `undefined`,`MerchantTopBar` 就不画这颗按钮
+ * (判官 P1-A:此前传的是 `() => controls?.togglePanel()`,按钮仍然画出来,按下去却是一次
+ * 空动作 —— 一颗建了没用的死按钮)。
  *
  * 余额从父层(`MerchantShellContent`)当 prop 收下来,不在这里自己取:画布与非画布之间
  * 那次 `OttoPanelMount` 内部形状切换(fragment ↔ `OttoPanelShell`)会让这一层重挂,状态
@@ -88,6 +91,7 @@ export function MerchantShellFrame({
   profileHref,
   creditsHref,
   showSignOutAction,
+  buildSha,
 }: {
   children: React.ReactNode;
   pathname: string;
@@ -100,6 +104,11 @@ export function MerchantShellFrame({
   profileHref?: string;
   creditsHref?: string;
   showSignOutAction?: boolean;
+  /** P2-3(Codex 全 beta 审计 P1-012 判官四轮)—— 账号菜单的 `Build <sha>` 一行。从
+   *  `MerchantShellContent` 已经在调的 `getMyAccount()` 顺风车带下来(`buildInfo(process.env)`
+   *  是纯同步取 env,零 I/O),不让菜单自己再打一次 /api/build-info 去为一个 env 读取
+   *  白付两次 DB 查询(worker 心跳 + 迁移前沿)。 */
+  buildSha?: string | null;
 }) {
   const controls = useOttoPanelControls();
 
@@ -118,10 +127,11 @@ export function MerchantShellFrame({
           pathname={pathname}
           account={account}
           signOutAction={signOutAction}
-          onAskOtto={() => controls?.togglePanel()}
+          onAskOtto={controls ? () => controls.togglePanel() : undefined}
           activeLabelOverride={topBarLabel}
           profileHref={profileHref}
           showSignOutAction={showSignOutAction}
+          buildSha={buildSha}
         />
         <div data-merchant-shell-content className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           {children}
@@ -142,6 +152,9 @@ export function MerchantShellContent({
 }) {
   const merchantSurface = isMerchantSurface(pathname);
   const [account, setAccount] = useState<RailAccount | null>(null);
+  // P2-3 —— rides the same getMyAccount() round trip as `account`; see MerchantShellFrame's
+  // `buildSha` prop doc for why this isn't its own fetch.
+  const [buildSha, setBuildSha] = useState<string | null>(null);
 
   // 导轨持着全产品唯一的余额数字,所以它要在每次结算后重读,不只是挂载时读一次(#550:
   // 曾经卡在挂载值上,直到整页刷新才追上数据库,滞后 84 秒以上)。订阅花费信号而不是轮询,
@@ -162,6 +175,7 @@ export function MerchantShellContent({
       getMyAccount().then((result) => {
         if (!alive || !isLatest() || "error" in result) return;
         setAccount({ email: result.email, displayName: result.displayName, balance: result.balance });
+        setBuildSha(result.buildSha ?? null);
       }).catch(() => {});
     };
     const loadIfVisible = () => {
@@ -186,7 +200,7 @@ export function MerchantShellContent({
           (spec §3.5 ①)。导轨必须挂在 `OttoPanelMount` 内部(而不是它旁边),才能读到
           面板的开合状态机去驱动 utility bar 的 Ask Otto 按钮。 */}
       <OttoPanelMount location={pathname}>
-        <MerchantShellFrame pathname={pathname} signOutAction={signOutAction} account={account}>
+        <MerchantShellFrame pathname={pathname} signOutAction={signOutAction} account={account} buildSha={buildSha}>
           {children}
         </MerchantShellFrame>
       </OttoPanelMount>

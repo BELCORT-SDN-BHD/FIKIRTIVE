@@ -242,8 +242,22 @@ function select(ids: string[]): void {
   act(() => mocks.flow.current!.onNodesChange(changes));
 }
 
-function infoButtons(): HTMLButtonElement[] {
-  return [...container!.querySelectorAll("button")].filter((b) => b.textContent === "Info");
+/**
+ * Open a picked card's "how this was made" record. The approved canvas pattern keeps five
+ * controls on the card itself and puts everything else in the ⋯ dropdown, so Info is now a
+ * menu item rather than a sixth button — the merchant's path is ⋯ → "Show how this image was
+ * made".
+ */
+async function openInfo(): Promise<void> {
+  const trigger = container!.querySelector<HTMLButtonElement>('button[aria-label="More actions"]');
+  expect(trigger, "the picked card has no ⋯ menu").toBeTruthy();
+  await act(async () => {
+    trigger!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+  const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    .find((el) => el.textContent?.trim() === "Show how this image was made");
+  expect(item, "the ⋯ menu has no \"Show how this image was made\"").toBeTruthy();
+  await act(async () => { item!.click(); });
 }
 
 describe("a card that finishes in front of the merchant (review P1-2)", () => {
@@ -264,7 +278,7 @@ describe("a card that finishes in front of the merchant (review P1-2)", () => {
     expect(mocks.boardRead).toHaveBeenCalledTimes(2);
 
     select(["n1"]);
-    await act(async () => { infoButtons()[0]!.click(); });
+    await openInfo();
 
     const panel = container!.textContent ?? "";
     expect(panel).toContain("Jul 30, 2:15 PM");
@@ -344,7 +358,7 @@ describe("two board reads racing each other (review P2-1 · r3)", () => {
     await settleBoard();
 
     select(["n1"]);
-    await act(async () => { infoButtons()[0]!.click(); });
+    await openInfo();
 
     const panel = container!.textContent ?? "";
     expect(panel).toContain("Jul 30, 2:15 PM");

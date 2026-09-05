@@ -37,6 +37,7 @@ import {
   X,
 } from "lucide-react";
 
+import { OFFICIAL_CATALOG_BADGE } from "@fikirtive/core/entity-policy";
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import DetailPanel from "@/components/asset/DetailPanel";
 import {
@@ -49,6 +50,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/design-system/primitives/alert-dialog";
+import { Badge } from "@/design-system/primitives/badge";
 import { Button, buttonVariants } from "@/design-system/primitives/button";
 import {
   Dialog,
@@ -217,9 +219,10 @@ function LibraryToolbar({
           aria-label="Search Library"
           value={filters.query}
           onChange={(event) => onChange({ query: event.target.value })}
-          // 设计的占位符还提到 Canvas;服务端的搜索今天只走提示词,所以这里只说提示词 ——
-          // 一句做不到的占位符就是一次小小的假承诺。
-          placeholder="Search prompts"
+          // 占位符只承诺服务端真的会打的那几列。今天是两列:引擎产物的提示词,与商家上传时
+          // 自己那个文件名(`getGenerationHistory` 的 OR)。设计的占位符还提到 Canvas ——
+          // 那一列今天搜不了,照抄就是一次做不到的承诺(Founder 2026-09-05 裁:如实写两列)。
+          placeholder="Search prompts or file names"
           className="h-9 text-sm"
         />
       </InputGroup>
@@ -361,6 +364,14 @@ function LibraryToolbar({
  * 有的、删自己数据的那条路(`lib/actions.ts:softDeleteEntity`,软删)。换壳不该把它弄丢,
  * 所以按前端规则第②条:生产必需而设计没有明说的东西,用设计的样式(AlertDialog)呈现,
  * 文案与旧壳(`stuff/StuffLibrary.tsx`)一字不改。
+ *
+ * **Official avatars 是只读的**(Founder 2026-08-30;已批准 pattern README §5 的
+ * "Read-only：Official avatar actions 与 Founder-owned Element actions 明确不同")。
+ * 判据不是「哪一栏」,是域层能力表 `element.capabilities.deleteEntity`
+ * (`packages/core/src/entity-policy.ts`,和 `EntityDTO` 同一个函数)。按第③层的做法:
+ * 官方那一格**根本不画**这颗键,而不是画一颗禁用的假控件;同时按第②点挂一枚
+ * 「Official avatar · Read only」标签 —— 只读要看得见,不能靠「按钮怎么少了」去猜。
+ * server action 那一层仍然自己回库现读 `catalogKey` 再拒一次,这里少画一颗键不是围栏。
  */
 function ElementsView({
   elements,
@@ -455,7 +466,16 @@ function ElementsView({
           {selected ? (
             <>
               <DialogHeader>
-                <DialogTitle>{selected.name}</DialogTitle>
+                <DialogTitle className="flex flex-wrap items-center gap-2">
+                  {selected.name}
+                  {/* 与 `stuff/ElementVariantsDialog.tsx` 同一枚标签、同一句话 —— 商家在
+                      两个面上看到的是同一个事实。 */}
+                  {selected.origin === "OFFICIAL_CATALOG" ? (
+                    <Badge variant="outline" className="font-medium text-muted-foreground">
+                      {OFFICIAL_CATALOG_BADGE}
+                    </Badge>
+                  ) : null}
+                </DialogTitle>
                 <DialogDescription>
                   {viewLabel} · {selected.mediaCount} linked {selected.mediaCount === 1 ? "image" : "images"}
                 </DialogDescription>
@@ -471,16 +491,18 @@ function ElementsView({
                   </div>
                 )}
               </div>
-              <DialogFooter>
-                <Button
-                  variant="ghost"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => { setRemoveError(null); setRemoveTarget(selected); }}
-                >
-                  <Trash2 aria-hidden />
-                  Remove from Library
-                </Button>
-              </DialogFooter>
+              {selected.capabilities.deleteEntity ? (
+                <DialogFooter>
+                  <Button
+                    variant="ghost"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => { setRemoveError(null); setRemoveTarget(selected); }}
+                  >
+                    <Trash2 aria-hidden />
+                    Remove from Library
+                  </Button>
+                </DialogFooter>
+              ) : null}
             </>
           ) : null}
         </DialogContent>
