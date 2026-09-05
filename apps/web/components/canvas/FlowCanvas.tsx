@@ -38,22 +38,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import { Hand, ImageIcon, Maximize2, MousePointer2, RefreshCw, Type, Video, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Hand, Maximize2, MousePointer2, RefreshCw, Type, Video, ZoomIn, ZoomOut } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TooltipButton } from "@/components/ui/tooltip-button";
 import { cn } from "@/lib/utils";
 import type { EntityDTO } from "@/lib/types";
-import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
+import { convoColor } from "@/lib/convo-canvas";
 import { creditsLabel } from "@/lib/credit-format";
 import {
   CANVAS_IMAGE_DEFAULT_COUNT,
-  CANVAS_IMAGE_MAX_VARIANT_COUNT,
-  canvasGenCostQuote,
-  clampImageVariantCount,
   genCostHint,
   type CanvasGenCostQuote,
 } from "@/lib/canvas-gen-costs";
@@ -65,9 +60,8 @@ import {
   type CanvasRect,
 } from "@/lib/canvas-batch-layout";
 import { buildCanvasLineageEdges, type CanvasNodeLineage } from "@/lib/canvas-lineage";
-import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
 import { VideoSpecPicker } from "@/components/gen/VideoSpecPicker";
-import type { CanvasImageShapes, CanvasVideoSpecs } from "@/components/canvas/useCanvasGen";
+import type { CanvasVideoSpecs } from "@/components/canvas/useCanvasGen";
 import type { VideoSpec } from "@/lib/video-spec";
 import {
   canvasBatchFrameLabel,
@@ -172,13 +166,6 @@ type FlowCanvasProps = {
   onBalanceRefresh?: () => void | Promise<void>;
   onActivityRefresh?: () => void | Promise<void>;
   onReferenceInChat?: (refs: Omit<OttoComposerReference, "requestId">[]) => void;
-  /**
-   * Whether the gb composer starts open. Otto's canvas keeps the Grok pattern — revealed by the
-   * image tool, default false. The north-star canvas page shows the prompt box as part of the
-   * page itself, so it opens with the board (#600 · spec #599 D2). Display state only: the
-   * merchant can still close it, and nothing about the paid path changes either way.
-   */
-  defaultComposerOpen?: boolean;
 };
 
 // Must be stable (defined outside component) per ReactFlow requirements
@@ -285,19 +272,10 @@ export default function FlowCanvas({
   onBalanceRefresh,
   onActivityRefresh,
   onReferenceInChat,
-  defaultComposerOpen = false,
 }: FlowCanvasProps) {
   const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
-  const [prompt, setPrompt] = useState("");
-  const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
-  const [variantSel, setVariantSel] = useState<Record<string, string>>({}); // entityId → variant from @mention chip
   // holds the generationId whose detail panel is open (null = closed)
   const [detailFor, setDetailFor] = useState<string | null>(null);
-  const [filterToConvo, setFilterToConvo] = useState(false);
-  // gb toolbar: the prompt composer is hidden behind the Generate button (Grok
-  // pattern) instead of sitting persistently on the canvas. Display state only.
-  // The north-star canvas page opts into starting it open (`defaultComposerOpen`).
-  const [composerOpen, setComposerOpen] = useState(defaultComposerOpen);
   // Canvas tool: pan (grab hand, drag pans the board) vs select (arrow cursor,
   // drag box-selects). The toolbar's cursor button toggles this. Display-only.
   const [panMode, setPanMode] = useState(true);
@@ -307,22 +285,11 @@ export default function FlowCanvas({
   // Same confirm, for a whole multi-card selection (#547 B6). Holds the ids awaiting
   // confirm; null = no dialog.
   const [pendingBatchDeleteIds, setPendingBatchDeleteIds] = useState<string[] | null>(null);
-  // How many images one Generate makes. Founder default is still 1; the merchant can ask
-  // for up to the cap and the price shown next to Generate follows the choice (#547 A2).
-  const [imageCount, setImageCount] = useState<number>(CANVAS_IMAGE_DEFAULT_COUNT);
-  // #777:这几张要不要当**一组连贯的图**来做(同一个模特的几个角度、同一件产品的几个
-  // 尺寸)。默认关 —— 多张图今日的含义是「几个不同的选择」,默认打开会把那个含义悄悄
-  // 换掉。开关只在 >1 张时出现,而且**不改价**(仍按张收),所以它旁边不需要第二个价钱。
-  const [imageCoherentSet, setImageCoherentSet] = useState(false);
-  // #643 T2：这次出图的形状。菜单与默认值都来自服务端（`imageShapes`）—— 界面一格都不写死，
-  // 所以商家看见的每一格都是引擎真给得了的，且选中的那一格就是会交付的那一格。
-  const [imageShapeMenu, setImageShapeMenu] = useState<CanvasImageShapes | null>(null);
+  // #643 T2：一张卡「再来一张」默认交付的形状。菜单与默认值都来自服务端（`imageShapes`）——
+  // 界面一格都不写死。ENGINE-A3(⑦段)退役直出 composer 之后，这份菜单在画布上只剩这一个
+  // 读者：`nodeImageShape` 用它当「这张卡没记形状」时的兜底档。要换形状请在对话里说，
+  // Otto 把它写进确认卡。
   const [imageShape, setImageShape] = useState<string | null>(null);
-  // Creation S2 §8.1①(CREATE-A6):这次出图要不要走**精修 / 高细节**那一档。默认关。
-  // 它**会改价**,所以旁边那个价钱跟着它走(与张数同一条规矩:商家授权的是他看见的数字),
-  // 而且它自己那份形状菜单比默认档窄 —— 勾上之后形状那一格会跟着收窄。
-  // 商家侧只见能力:这里没有、也不会有任何引擎名。
-  const [imageFineDetail, setImageFineDetail] = useState(false);
 
   // #645 T4：这条片子的规格（长度 / 清晰度 / 形状）。菜单、默认档与每一档的价格都来自
   // 服务端解析（`videoSpecs`）—— 界面一格都不写死，一分钱都不自己算。
@@ -349,11 +316,7 @@ export default function FlowCanvas({
   const [lineageUnavailable, setLineageUnavailable] = useState(false);
   // Two cards being looked at side by side. Holds their ids; null = no comparison open.
   const [compareIds, setCompareIds] = useState<[string, string] | null>(null);
-  // bumped on successful generation submit to remount MentionInput cleared
-  const [composerKey, setComposerKey] = useState(0);
   // double-submit guard
-  const submittingRef = useRef(false);
-  const [submitting, setSubmitting] = useState(false);
   const [videoSubmitting, setVideoSubmitting] = useState(false);
   /** 哪张卡的付费图片动作正在被接受（「再来一张」是这条路上唯一的按键 —— 卡下方那条
    *  改写输入条按 Founder 2026-09-03 裁决①已退场）。 */
@@ -373,17 +336,7 @@ export default function FlowCanvas({
     { nodeId: string; prompt: string; aspect?: string; sourceUrl?: string } | null
   >(null);
   const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
-  // Creation S2 §8.1①(CREATE-A6)—— 精修那一格在**服务端说它卖得了**的时候才存在。
-  // 菜单读不到 / 服务端说 null ⇒ 整格不渲染,而且这一趟一定按默认档走(见 `fineDetailOn`)。
-  const fineDetailOption = imageShapeMenu?.fineDetail ?? null;
-  const fineDetailOn = imageFineDetail && !!fineDetailOption;
-  // 勾了精修就用**那一档自己**的形状菜单:它的像素上限更低,收不下的形状不许出现在菜单上
-  // (菜单上出现一个必然生成失败的形状,就是一次注定要让商家白花一趟的付费请求)。
-  const imageShapeOptionsNow = fineDetailOn ? fineDetailOption!.options : (imageShapeMenu?.options ?? []);
-  // 这一档每张的价。仍然只有服务端那一个来源 —— 界面一分钱都不自己算。
-  const imageUnitCredits = fineDetailOn ? fineDetailOption!.credits : costQuote?.imageCredits;
 
-  const imageActionRef = useRef<{ material: string; actionId: string } | null>(null);
   const videoActionRef = useRef<{ material: string; actionId: string } | null>(null);
 
   // Per-node data refs so stable onAnimate closures can read current generationId + position
@@ -405,21 +358,12 @@ export default function FlowCanvas({
   // Counts board reads so a late answer from an overtaken read can be recognised and dropped.
   const reloadSeqRef = useRef(0);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
-  const composerFormRef = useRef<HTMLFormElement | null>(null);
   const fittedScopeRef = useRef<string | null>(null);
   const fitTimerRef = useRef<number | null>(null);
   const lineageReloadTimerRef = useRef<number | null>(null);
   const [flowReady, setFlowReady] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
   const [boardStatus, setBoardStatus] = useState<"loading" | "ready" | "unavailable">("loading");
-  const closeComposer = useCallback((clearPrompt = false) => {
-    setComposerOpen(false);
-    if (!clearPrompt) return;
-    setPrompt("");
-    setPromptIds([]);
-    setVariantSel({});
-    setComposerKey((k) => k + 1);
-  }, []);
   const requestReload = useCallback(() => {
     void (async () => {
       await Promise.resolve(onActivityRefresh?.()).catch(() => undefined);
@@ -462,23 +406,6 @@ export default function FlowCanvas({
     });
     return { ...origin, ...card };
   }, []);
-
-  useEffect(() => {
-    if (!composerOpen) return;
-    let retryTimer: number | null = null;
-    const focusEditor = () => {
-      const editor = composerFormRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
-      editor?.focus();
-      return !!editor;
-    };
-    const frame = window.requestAnimationFrame(() => {
-      if (!focusEditor()) retryTimer = window.setTimeout(focusEditor, 0);
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-      if (retryTimer !== null) window.clearTimeout(retryTimer);
-    };
-  }, [composerOpen, composerKey]);
 
   // Keep a ref to animate() so per-node closures don't go stale
   const animateFnRef = useRef<ReturnType<typeof useCanvasGen>["animate"] | null>(null);
@@ -992,10 +919,9 @@ export default function FlowCanvas({
     // 服务端按默认形状交付）—— 界面绝不用一份自己编的菜单顶上。
     void imageShapes()
       .then((shapes) => {
-        setImageShapeMenu(shapes);
         setImageShape((current) => current ?? shapes.defaultAspect);
       })
-      .catch(() => setImageShapeMenu(null));
+      .catch(() => undefined);
     // #645 T4：视频规格菜单 + 按档价目表，与图片形状同一条路。取不到就不渲染规格选择器
     // （仍然能出片，服务端按默认档交付）—— 界面绝不用一份自己编的菜单或价格顶上。
     void videoSpecs()
@@ -1009,75 +935,19 @@ export default function FlowCanvas({
   // keep animateFnRef current (in an effect — refs must not be written during render)
   useEffect(() => { animateFnRef.current = animate; }, [animate]);
 
-  // Shared submit handler — used by form onSubmit and MentionInput onSubmit
-  const handleGenerate = useCallback(async () => {
-    if (!prompt.trim()) return;
-    if (!costQuote) {
-      toast.error("Wait for the exact image cost before generating.");
-      return;
-    }
-    if (submittingRef.current) return;
-    submittingRef.current = true;
-    setSubmitting(true);
-    try {
-      // The number of images is part of what the merchant authorized (it multiplies the
-      // charge), so it is part of the action's material — asking for 4 after asking for 1 is
-      // a different action, not a retry of the same one.
-      const count = clampImageVariantCount(imageCount);
-      // #643 T2：形状和张数一样，是商家授权内容的一部分 —— 要竖版之后再要方图是**另一个**
-      // 动作，不是同一个动作的重试。所以它进材料。
-      const aspectRatio = imageShapeOptionsNow.length > 0 ? imageShape : null;
-      // #777:「一组连贯的图」不改价,但它改的是**交付物** —— 要一组之后再要一堆散图
-      // 是另一个动作,不是同一个动作的重试。所以它和张数、形状一样进材料。
-      const coherentSet = count > 1 && imageCoherentSet;
-      // Creation S2 §8.1①(CREATE-A6):精修与形状、张数同一条规矩 —— 它**会改价**、
-      // 也会换掉交付物,所以要精修之后再要默认档是**另一个**动作,不是同一个动作的重试。
-      // 所以它进材料。
-      const fineDetail = fineDetailOn;
-      const material = JSON.stringify({
-        projectId,
-        threadId: activeThreadId ?? null,
-        kind: "image",
-        prompt: prompt.trim(),
-        entityIds: promptIds,
-        variantSel: Object.fromEntries(
-          Object.entries(variantSel).sort(([left], [right]) => left.localeCompare(right)),
-        ),
-        count,
-        aspectRatio,
-        coherentSet,
-        fineDetail,
-      });
-      if (imageActionRef.current?.material !== material) {
-        imageActionRef.current = { material, actionId: freshCanvasActionId() };
-      }
-      const accepted = await generateImage(
-        prompt.trim(),
-        spawnRect(count),
-        promptIds,
-        variantSel,
-        count,
-        {
-          actionId: imageActionRef.current.actionId,
-          ...(aspectRatio ? { aspectRatio } : {}),
-          ...(coherentSet ? { coherentSet: true } : {}),
-          ...(fineDetail ? { fineDetail: true } : {}),
-        },
-      );
-      if (accepted) {
-        imageActionRef.current = null;
-        closeComposer(true);
-      } else if (!loadCanvasActionReceipts(projectId).some((receipt) => receipt.actionId === imageActionRef.current?.actionId)) {
-        // A deterministic rejection (including a dispatch failure that was refunded) clears
-        // the receipt. The next explicit retry is therefore a new authorized action. Unknown
-        // outcomes retain the receipt and this same UI action ID.
-        imageActionRef.current = null;
-      }
-    } finally {
-      submittingRef.current = false;
-      setSubmitting(false);
-    }
-  }, [activeThreadId, closeComposer, costQuote, fineDetailOn, generateImage, imageCoherentSet, imageCount, imageShape, imageShapeOptionsNow, projectId, prompt, promptIds, spawnRect, variantSel]);
+  /**
+   * ENGINE-A3(otto-engine.md §7.2⑦)—— 画布上那条**直出**的付费路已退役。
+   *
+   * 从前这里有一个 `handleGenerate`:右侧工具条的 Generate 按钮掀开一个 composer,按下就
+   * 直接 reserve、直接建 job(宪法例外①「余额即闸」,图片不弹确认)。已批准的画布设计只有
+   * 一个输入框 —— Otto 那一个(`design-system/patterns/canvas/CanvasReference.tsx:419` 底部
+   * 唯一 composer;:421 的工具条只有 select / frame select / hand,没有 Generate),确认长在
+   * Otto 当前轮的卡片上(同文件 :257-273)。所以画布上的花钱一律走对话审批卡
+   * (`components/otto/OttoApprovalCard.tsx`,闭集由 `packages/otto/src/approval-tools.ts` 机器推导)。
+   *
+   * **卡上那几条付费路一格没动**:「再来一张」(`runImageEvolve`,先开确认卡再付费)、
+   * Animate、视频「照这条再来一次」与 t2v 弹窗 —— 它们各自本来就有确认,不是直出。
+   */
 
   /**
    * "More like this" / the edited prompt on a selected image card (#547 A3 · A4).
@@ -1198,7 +1068,6 @@ export default function FlowCanvas({
    * with `toast.error`, and this is that same answer on the same board.
    */
   const addTextNode = useCallback(async () => {
-    closeComposer(false);
     const { x, y } = spawnRect();
     let result: Awaited<ReturnType<typeof createCanvasNode>>;
     try {
@@ -1224,7 +1093,7 @@ export default function FlowCanvas({
       toast.error(result.error || CANVAS_SAVE_FAILED);
       console.warn("Failed to create text node:", result.error);
     }
-  }, [projectId, activeThreadId, onTextChange, skin, scheduleFitView, closeComposer, spawnRect]);
+  }, [projectId, activeThreadId, onTextChange, skin, scheduleFitView, spawnRect]);
 
   // Drag-and-drop an image file from anywhere onto the canvas → upload it as an
   // image node. Upload-only (uploadReference creates an UPLOAD Generation); it
@@ -1357,7 +1226,6 @@ export default function FlowCanvas({
   const handleVideoRemake = useCallback((_id: string, text: string) => {
     const prompt = text.trim();
     if (!prompt) return;
-    closeComposer(false);
     setCostQuote(null);
     setT2vPrompt(prompt);
     // #785：这个对话框现在是 @ 输入框，所以「照这条再来一次」必须把原提示词**种进**编辑器，
@@ -1368,12 +1236,11 @@ export default function FlowCanvas({
     setT2vSeedDoc({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: prompt }] }] });
     setT2vKey((k) => k + 1);
     setT2vOpen(true);
-  }, [closeComposer]);
+  }, []);
 
-  // Cost transparency (宪法 3): images generate with no confirm dialog, so the quote
-  // must be loaded while the composer is visible — its cost label sits next to the
-  // Generate button. Video/t2v quotes still load when their confirm dialogs open.
-  const composerVisible = skin === "gb" ? composerOpen : true;
+  // Cost transparency (宪法 3). ENGINE-A3(§7.2⑦)之后画布上再没有直出 composer，所以这里
+  // 不再有「composer 开着就取报价」那一格：报价只在**确认要出现的时候**取 —— 一张卡被选中
+  // （卡上那两颗有价的按钮）、Animate／t2v 弹窗开着、变体确认卡开着。
   // Same rule for a picked card's own priced buttons ("Create variations", "Animate"): each
   // shows the exact price before submit (#550 ②, #547 A3/A4), so the quote has to be loaded
   // while a card is selected. ensureModels caches after the first call, so re-selecting cards
@@ -1386,8 +1253,8 @@ export default function FlowCanvas({
   // 变体确认卡把这个数渲染成商家正要批准的价（QA-CRE-FE9-001），所以它开着的时候也要有报价；
   // 报不出来那颗 `Generate` 就不给按（与两个视频弹窗同一口径）。
   useEffect(() => {
-    if (composerVisible || cardBarVisible || pendingAnimateId !== null || t2vOpen || pendingVariant !== null) refreshCostQuote();
-  }, [composerVisible, cardBarVisible, pendingAnimateId, t2vOpen, pendingVariant, refreshCostQuote]);
+    if (cardBarVisible || pendingAnimateId !== null || t2vOpen || pendingVariant !== null) refreshCostQuote();
+  }, [cardBarVisible, pendingAnimateId, t2vOpen, pendingVariant, refreshCostQuote]);
 
   // Load (and, under the Grok-bright skin, bridge OTTO's chat results onto) the
   // canvas. The gb path resolves each node's media URL and ensures a node exists
@@ -1617,7 +1484,7 @@ export default function FlowCanvas({
           editing: !!target?.closest?.(CANVAS_EDITABLE_SELECTOR),
           dialogOpen: !!document.querySelector(CANVAS_DIALOG_SELECTOR),
         },
-        filterNodesByConvo(nodesRef.current, activeThreadId, filterToConvo)
+        nodesRef.current
           .filter((n) => n.selected === true)
           .map((n) => n.id),
       );
@@ -1629,7 +1496,7 @@ export default function FlowCanvas({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeThreadId, filterToConvo]);
+  }, []);
 
   // Is the card awaiting delete a PAID generation still in flight? If so the confirm
   // must warn that removing won't refund and re-running charges again — this is what
@@ -1664,22 +1531,15 @@ export default function FlowCanvas({
   // 界面于是一个字都不提 —— 替一条做不到的路许诺,商家会照着那句话去 @,然后付钱拿到一支
   // 跟他的产品毫无关系的片子。菜单没取到(null)⇒ 同样闭嘴:没确认的事不许说。
   const t2vElementsRide = videoSpecMenu?.elementReferences === true;
-  // Image generation has no confirm dialog (founder 2026-07-06, constitutional exception ①
-  // "balance is the gate"), so the cost must be visible AT the input before submit (宪法 3).
-  // The composer's price follows the chosen number of images, from the same clamp the paid
-  // call applies — the label and the charge can never disagree (#547 A2).
-  const composerCostHint = genCostHint(
-    costQuote && typeof imageUnitCredits === "number"
-      ? canvasGenCostQuote({ ...costQuote, imageCredits: imageUnitCredits }, imageCount).imageCredits
-      : undefined,
-  );
   // A card's own bar makes ONE image built on that card, so it is priced by the single-image
   // quote — one source, no second price for the same action (#550 ②, #547 A4).
   const evolveCostHint = genCostHint(costQuote?.imageCredits);
   // 视频卡的「More like this」是去开 t2v 确认框的,所以这里报的必须是**那个框会用的那一档**
   // 的价 —— 报默认档就会出现「卡上说 11、框里收 27」。价格仍然只有服务端那一个来源。
   const remakeCostHint = genCostHint(specCredits(t2vSpec) ?? costQuote?.videoCredits);
-  const nodesOnBoard = filterNodesByConvo(nodes, activeThreadId, filterToConvo);
+  // ENGINE-A3(§7.2⑦):「Filter to this convo」那颗开关长在已退役的直出 composer 上，随它
+  // 一起退役 —— 板上一律显示这个 project 的全部卡片(过滤开关从来只有关着这一个默认态)。
+  const nodesOnBoard = nodes;
   // How many cards are picked right now. A card's own toolbar is about THAT card, so it only
   // appears while exactly one is picked: with several picked, neighbouring cards' toolbars
   // landed on top of each other and there was no telling which card a button would act on
@@ -1972,152 +1832,11 @@ export default function FlowCanvas({
         />
       )}
       {skin === "gb" ? (
-        // Every bottom-anchored control lives in ONE column (#604 r2): composer, then the
-        // multi-card bar, then the tool row. Stacked rows cannot cover each other, which
-        // is exactly what the old "two bars, same bottom: 20px" pair did.
+        // Every bottom-anchored control lives in ONE column (#604 r2): the multi-card bar,
+        // then the tool row. Stacked rows cannot cover each other, which is exactly what the
+        // old "two bars, same bottom: 20px" pair did. ENGINE-A3(§7.2⑦):这一列顶上从前还有
+        // 一个直出 composer，已随 Generate 按钮一并退役 —— 画布只留 Otto 对话那一个输入。
         <div className="cv-bottom-stack">
-          {/* Composer — hidden until Generate is clicked (Grok pattern). Reuses the
-              existing handleGenerate spend path unchanged; sits on top of the stack. */}
-          {composerOpen && (
-            <form
-              ref={composerFormRef}
-              // Fixed 520px used to get clipped by the host's overflow:hidden whenever
-              // the canvas pane shrank below that (narrow chat pane + nav rail at
-              // 1024–1279px, #513). maxWidth caps it to the stack's own width, which is
-              // already inset from the host, so the fee note and close button are never
-              // cut off.
-              className="al-promptbar cv-composer-pop w-[520px] max-w-full"
-              onSubmit={(e) => { e.preventDefault(); void handleGenerate(); }}
-            >
-              <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
-                <MentionInput
-                  entities={entities}
-                  docKey={`canvas-${composerKey}`}
-                  placeholder="Describe an image… (@ to reference your stuff)"
-                  disabled={submitting}
-                  onChange={(t, ids, vsel) => { setPrompt(t); setPromptIds(ids); setVariantSel(vsel); }}
-                  onSubmit={() => void handleGenerate()}
-                />
-              </div>
-              {/* One row for "what this Generate will make": how many, and what shape. Both are
-                  answers to the same question, so they sit together rather than as two stray
-                  full-width rows in the composer's column (#643 T2). */}
-              <div className="flex flex-wrap items-center gap-2">
-                {/* A2: how many images this one Generate makes. The price beside it follows the
-                    choice, so the merchant sees the real total before pressing anything. */}
-                <ToggleGroup
-                  type="single"
-                  value={String(imageCount)}
-                  onValueChange={(value) => value && setImageCount(Number(value))}
-                  variant="outline"
-                  size="sm"
-                  disabled={submitting}
-                  aria-label="How many images to make"
-                >
-                  {Array.from({ length: CANVAS_IMAGE_MAX_VARIANT_COUNT }, (_, i) => i + 1).map((n) => (
-                    <ToggleGroupItem
-                      key={n}
-                      value={String(n)}
-                      aria-label={n === 1 ? "Make 1 image" : `Make ${n} images`}
-                      title={n === 1 ? "Make 1 image" : `Make ${n} images in one go`}
-                    >
-                      {n}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
-                {/* #643 T2: the shape this Generate will deliver. The menu is whatever the server
-                    says the engine can make — nothing is written down here — and the selected one
-                    is exactly what the request carries. Costs the same in every shape. */}
-                {imageShapeOptionsNow.length > 0 && imageShape && (
-                  <ImageShapePicker
-                    compact
-                    value={imageShape}
-                    options={imageShapeOptionsNow}
-                    onChange={setImageShape}
-                    disabled={submitting}
-                    title="The shape these images will be made in — same cost in every shape"
-                  />
-                )}
-                {/* Creation S2 §8.1①(CREATE-A6):高细节那一档。它**会改价**,所以标签里
-                    写着那个价 —— 一个会动价钱的开关旁边不写价,商家只能猜。这一格由服务端
-                    说它今天卖不卖得了(`fineDetail === null` ⇒ 整格不渲染);勾上之后形状
-                    那一格会跟着收窄,因为这一档收不下最宽的那两个形状。 */}
-                {fineDetailOption && (
-                  <div
-                    className="flex items-center gap-2"
-                    title={`Sharper, finer detail on this image — ${creditsLabel(fineDetailOption.credits)} each instead of ${costQuote ? creditsLabel(costQuote.imageCredits) : "the standard price"}. Some shapes aren't available at this level.`}
-                  >
-                    <Checkbox
-                      id="canvas-fine-detail"
-                      checked={imageFineDetail}
-                      onCheckedChange={(checked) => {
-                        const on = checked === true;
-                        setImageFineDetail(on);
-                        // 勾上之后当前形状可能已经不在这一档的菜单上 —— 立刻夹回它自己的
-                        // 第一格,免得界面显示一个这一档发不出去的形状。
-                        if (on) {
-                          setImageShape((current) => (
-                            current && fineDetailOption.options.includes(current)
-                              ? current
-                              : fineDetailOption.options[0] ?? current
-                          ));
-                        }
-                      }}
-                    />
-                    <Label htmlFor="canvas-fine-detail" className="text-[0.75rem] font-normal text-muted-foreground">
-                      Fine detail ({creditsLabel(fineDetailOption.credits)} each)
-                    </Label>
-                  </div>
-                )}
-                {/* #777: one coherent set vs several independent options. Only meaningful for
-                    more than one image, so it only exists then. It costs the same either way —
-                    the label says so, because a toggle beside a price that doesn't move it is
-                    a question the merchant would otherwise have to guess the answer to. */}
-                {imageCount > 1 && (
-                  <div
-                    className="flex items-center gap-2"
-                    title="Make these as one set — the same subject, wardrobe and style across every image. Same cost either way."
-                  >
-                    <Checkbox
-                      id="canvas-coherent-set"
-                      checked={imageCoherentSet}
-                      disabled={submitting}
-                      onCheckedChange={(checked) => setImageCoherentSet(checked === true)}
-                    />
-                    <Label htmlFor="canvas-coherent-set" className="text-[0.75rem] font-normal text-muted-foreground">
-                      Keep as one set
-                    </Label>
-                  </div>
-                )}
-              </div>
-              <Badge variant="outline" title="Charged when you press Generate">{composerCostHint}</Badge>
-              <Button
-                variant="default"
-                size="sm"
-                type="submit"
-                disabled={!costQuote || submitting || !prompt.trim()}
-                aria-live="polite"
-              >
-                {submitting ? (
-                  <>
-                    <Spinner data-icon="inline-start" aria-hidden="true" />
-                    Starting…
-                  </>
-                ) : "Generate"}
-              </Button>
-              <TooltipButton
-                label="Close image prompt"
-                tooltip="Close prompt"
-                variant="ghost"
-                size="icon-sm"
-                type="button"
-                disabled={submitting}
-                onClick={() => closeComposer(true)}
-              >
-                <X aria-hidden="true" strokeWidth={2.2} />
-              </TooltipButton>
-            </form>
-          )}
           {/* B6: what to do with several cards at once. Appears only when more than one card
               is selected, so the single-card toolbar is untouched. */}
           {selection.count > 1 && (
@@ -2188,24 +1907,17 @@ export default function FlowCanvas({
               shrink below its natural row width (#513/#522) — maxWidth + flexWrap wrap it to
               a second row instead of letting the host's overflow:hidden clip it. */}
           <div className="cv-toolbar max-w-full flex-wrap justify-center" role="toolbar" aria-label="Canvas tools">
-            <TooltipButton
-              label="Generate image"
-              tooltip="Generate an image — describe what you want"
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-expanded={composerOpen}
-              onClick={() => setComposerOpen((v) => !v)}
-            >
-              <ImageIcon aria-hidden="true" strokeWidth={1.9} />
-            </TooltipButton>
+            {/* ENGINE-A3(§7.2⑦):这一排从前的第一颗是 `Generate image` —— 掀开直出 composer、
+                按下就扣钱。它已退役:画布上要出图,跟 Otto 说,确认在对话的审批卡上完成。
+                余下两颗都不是直出 —— Video 先开确认框(「No charge until you confirm」),
+                Add text 一分钱都不花。 */}
             <TooltipButton
               label="Video"
               tooltip="Make a video from a prompt"
               type="button"
               variant="ghost"
               size="icon-sm"
-              onClick={() => { closeComposer(false); setCostQuote(null); setT2vOpen(true); }}
+              onClick={() => { setCostQuote(null); setT2vOpen(true); }}
             >
               <Video aria-hidden="true" strokeWidth={1.9} />
             </TooltipButton>
@@ -2286,53 +1998,7 @@ export default function FlowCanvas({
             </TooltipButton>
           </div>
         </>
-      ) : (
-        <form
-          className="al-promptbar"
-          style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", width: 560 }}
-          onSubmit={(e) => { e.preventDefault(); handleGenerate(); }}
-        >
-          <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
-            <MentionInput
-              entities={entities}
-              docKey={`canvas-${composerKey}`}
-              placeholder="Type to imagine… (@ to reference elements)"
-              disabled={submitting}
-              onChange={(t, ids, vsel) => { setPrompt(t); setPromptIds(ids); setVariantSel(vsel); }}
-              onSubmit={handleGenerate}
-            />
-          </div>
-          <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{composerCostHint}</span>
-          <Button
-            variant="default"
-            size="sm"
-            className="h-auto px-[13px] py-1.5 text-[12.5px] shadow-none"
-            type="submit"
-            disabled={!costQuote || submitting || !prompt.trim()}
-            aria-live="polite"
-          >
-            {submitting ? (
-              <>
-                <Spinner data-icon="inline-start" aria-hidden="true" />
-                Starting…
-              </>
-            ) : "Generate"}
-          </Button>
-          {activeThreadId && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-auto px-[13px] py-1.5 text-[12.5px]"
-              aria-pressed={filterToConvo}
-              onClick={() => setFilterToConvo((v) => !v)}
-            >
-              {filterToConvo ? "Showing this convo" : "Filter to this convo"}
-            </Button>
-          )}
-          <Button variant="ghost" size="sm" className="h-auto px-[13px] py-1.5 text-[12.5px]" type="button" onClick={addTextNode}>+ Text</Button>
-        </form>
-      )}
+      ) : null}
       <AlertDialog open={pendingDeleteId !== null} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>

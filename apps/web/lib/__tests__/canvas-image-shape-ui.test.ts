@@ -208,7 +208,7 @@ async function renderBoard(props: Record<string, unknown> = {}): Promise<void> {
   root = createRoot(container);
   await act(async () => {
     root!.render(createElement(FlowCanvas, {
-      projectId: "p1", skin: "gb" as const, defaultComposerOpen: true, ...props,
+      projectId: "p1", skin: "gb" as const, ...props,
     }));
   });
   await act(async () => { await Promise.resolve(); });
@@ -271,113 +271,6 @@ function buttonsLabelled(text: string): HTMLButtonElement[] {
   return [...container!.querySelectorAll("button")].filter((b) => b.textContent === text);
 }
 
-// ---------------------------------------------------------------------------
-// 入口①：画布文字出图（t2i）
-// ---------------------------------------------------------------------------
-describe("画布 t2i：形状在花钱之前就看得见、改得动", () => {
-  it("菜单就是服务端给的那份，一格不多一格不少（界面不写死任何形状）", async () => {
-    await renderBoard();
-    const picker = shapePickers()[0];
-    expect(picker, "输入条上应该有形状选择器").toBeDefined();
-    expect([...picker!.options].map((o) => o.value)).toEqual(MENU);
-  });
-
-  it("默认选中的是服务端说的默认形状（1:1）—— 界面自己不编默认值", async () => {
-    await renderBoard();
-    expect(shapePickers()[0]!.value).toBe("1:1");
-  });
-
-  it("商家选了 9:16 ⇒ 付费请求里逐字带着 9:16（显示的 = 发出去的）", async () => {
-    await renderBoard();
-    await pick(shapePickers()[0]!, "9:16");
-    await typePrompt("a poster for the weekend sale");
-    await submitComposer();
-
-    expect(mocks.generateImage).toHaveBeenCalledTimes(1);
-    const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string };
-    expect(options.aspectRatio).toBe("9:16");
-  });
-
-  it("没动选择器 ⇒ 请求里带的是默认方图（今日行为不变）", async () => {
-    await renderBoard();
-    await typePrompt("a poster");
-    await submitComposer();
-
-    const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string };
-    expect(options.aspectRatio).toBe("1:1");
-  });
-
-  it("请求还在接受时，按钮立即说明正在启动，并锁住这次付费内容", async () => {
-    let finish: ((accepted: boolean) => void) | undefined;
-    mocks.generateImage.mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
-    await renderBoard();
-
-    const twoImages = container!.querySelector<HTMLButtonElement>('button[aria-label="Make 2 images"]');
-    expect(twoImages).not.toBeNull();
-    await act(async () => { twoImages!.click(); });
-    await typePrompt("a two-image weekend campaign");
-
-    const form = container!.querySelector<HTMLFormElement>("form.al-promptbar")!;
-    await act(async () => {
-      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-
-    const pendingButton = [...form.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => (button.textContent ?? "").includes("Starting…"));
-    expect(pendingButton).toBeDefined();
-    expect(pendingButton!.disabled).toBe(true);
-    expect(pendingButton!.querySelector('[aria-label="Loading"]')).not.toBeNull();
-    expect(form.querySelector<HTMLTextAreaElement>('[data-testid="mention"]')!.disabled).toBe(true);
-    expect(form.querySelector<HTMLSelectElement>('select[aria-label="Shape of the image"]')!.disabled).toBe(true);
-    expect(form.querySelector<HTMLInputElement>('#canvas-coherent-set')!.disabled).toBe(true);
-    expect([...form.querySelectorAll<HTMLButtonElement>('button[aria-label^="Make "]')]
-      .every((button) => button.disabled)).toBe(true);
-
-    await act(async () => {
-      finish?.(true);
-      await Promise.resolve();
-    });
-  });
-
-  it("菜单读不到（服务端没答上来）⇒ 不渲染选择器，也不发一个界面自己编的形状", async () => {
-    mocks.imageShapes.mockRejectedValue(new Error("nope"));
-    await renderBoard();
-    expect(shapePickers()).toHaveLength(0);
-
-    await typePrompt("a poster");
-    await submitComposer();
-    const options = mocks.generateImage.mock.calls[0]![5] as { aspectRatio?: string };
-    expect(options.aspectRatio).toBeUndefined();
-  });
-
-  it("换形状是**另一个**付费动作 —— 不是同一个动作的重试", async () => {
-    // 结果未知（没被接受）时动作身份被保留，重按同一件事 = 同一个动作的重试；
-    // 换了形状就必须是新的动作身份，否则商家的第二次按压会被幂等成第一次那一单，
-    // 拿回一张他没要的形状。
-    mocks.generateImage.mockResolvedValue(false);
-    await renderBoard();
-
-    await typePrompt("a poster");
-    await submitComposer();
-    const first = (mocks.generateImage.mock.calls[0]![5] as { actionId: string }).actionId;
-
-    // 一模一样地再按一次 ⇒ 同一个动作。
-    await submitComposer();
-    const retry = (mocks.generateImage.mock.calls[1]![5] as { actionId: string }).actionId;
-    expect(retry, "同样的文字 + 同样的形状 = 同一个动作的重试").toBe(first);
-
-    // 只换形状 ⇒ 另一个动作。
-    await pick(shapePickers()[0]!, "21:9");
-    await submitComposer();
-    const reshaped = mocks.generateImage.mock.calls[2]![5] as { actionId: string; aspectRatio?: string };
-    expect(reshaped.aspectRatio).toBe("21:9");
-    expect(reshaped.actionId, "换了形状就是另一个动作").not.toBe(first);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 入口②：改这张图 / 再来一张（带底图）
-// ---------------------------------------------------------------------------
 describe("画布「再来一张」：默认继承这张卡的形状", () => {
   it("卡上不再有第二个输入条、也不再有第二个形状选择器（Founder 2026-09-03 裁决①）", async () => {
     mocks.boardRead.mockResolvedValue([boardRow("n1", { lineage: lineageWithShape("9:16") })]);
@@ -454,94 +347,24 @@ describe("画布「再来一张」：默认继承这张卡的形状", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Creation S2 §8.1①(CREATE-A6,Codex 跨厂复审 r1 P1-2 落修)
-// 「精修 / 高细节」这一格能力 —— 从**界面**一路到付费请求。
+// ENGINE-A3(otto-engine.md §7.2⑦)—— 这里从前还有两组断言，随直出 composer 一起退役。
 //
-// 判官说的是:pro 槽位没有任何生产入口,只能靠一个知道隐藏别名的调用方点名。
-// 所以这里断言的全部是**商家看得见/按得到的东西**:勾得到、价钱当场跟着变、
-// 形状菜单跟着收窄、按下去发出的是一格能力(不是型号名)。
+//   ① 「画布 t2i:形状在花钱之前就看得见、改得动」(#643 T2 的 composer 那一半)
+//   ② 「CREATE-A6 画布出图:「精修」这一格能力在花钱之前就看得见、勾得动」
+//
+// 两组测的都是**直出 composer 上的控件**(张数 / 形状 / 精修 / 成组)。⑦段把那个 composer
+// 与工具条上的 Generate 按钮一并撤下 —— 画布只留 Otto 对话那一个输入,出图的数量、形状与
+// 档位改由对话谈定、写进 Otto 的确认卡。被测对象没有了,断言就不能留:留下来只会变成对着
+// 一段不存在的界面空转的绿灯。
+//
+// **两件事没有跟着消失,各自另有归属**:
+//   · CREATE-A6 的**冻结验收**判的是服务端那一句(「请求未定价的 pro SKU ⇒ 拒绝生成、$0」),
+//     它的真身在 `creation-routing-ledger.test.ts`(含「勾了精修却按默认档报价 ⇒ 花钱之前拒、
+//     ledger 零新增行」),本段一个字没动。
+//   · 「再来一张」继承这张卡自己记着的形状 —— 下面那一组断言,是画布上仅存的形状链路,
+//     它走的是确认卡,不是直出。
+//
+// **一个缺口,已在 otto-engine.md §5 登记**:精修(pro 档)今天在 `packages/otto/` 里没有任何
+// 参数位,所以 composer 退役之后,商家侧暂时没有别的地方勾得到它。要不要给 Otto 的确认卡补
+// 这一格,由 Founder 定 —— 不是本段能自行决定的事。
 // ---------------------------------------------------------------------------
-
-/** pro 那一档自己的形状菜单:它的像素上限更低,16:9 / 9:16 收不下。 */
-const FINE_MENU = ["1:1", "4:3", "3:4", "3:2", "2:3", "21:9"];
-
-function fineDetailCheckbox(): HTMLElement | null {
-  return container!.querySelector<HTMLElement>("#canvas-fine-detail");
-}
-async function tickFineDetail(): Promise<void> {
-  const box = fineDetailCheckbox();
-  expect(box, "输入条上应该有「精修」那一格").not.toBeNull();
-  await act(async () => { box!.click(); });
-}
-function composerPriceText(): string {
-  const hint = [...container!.querySelectorAll("span")]
-    .find((s) => (s.textContent ?? "").startsWith("Cost: "));
-  return hint?.textContent ?? "";
-}
-
-describe("CREATE-A6 画布出图:「精修」这一格能力在花钱之前就看得见、勾得动", () => {
-  beforeEach(() => {
-    mocks.imageShapes.mockResolvedValue({
-      options: MENU,
-      defaultAspect: "1:1",
-      fineDetail: { credits: 2, options: FINE_MENU },
-    });
-    mocks.quoteCosts.mockResolvedValue({ imageCredits: 1, videoCredits: 80 });
-  });
-
-  it("CREATE-A6 标签写着能力与价钱,**一个型号名都没有**", async () => {
-    await renderBoard();
-    const label = container!.querySelector('label[for="canvas-fine-detail"]');
-    expect(label, "「精修」那一格应该有人话标签").not.toBeNull();
-    expect(label!.textContent).toBe("Fine detail (2 credits each)");
-    for (const secret of ["seedream", "dola", "byteplus", "pro", "lite"]) {
-      expect(label!.textContent!.toLowerCase()).not.toContain(secret);
-    }
-  });
-
-  it("CREATE-A6 勾上之后**同屏的价钱当场变成 2 credits**(授权的是他看见的数字)", async () => {
-    await renderBoard();
-    expect(composerPriceText()).toBe("Cost: 1 credit");
-    await tickFineDetail();
-    expect(composerPriceText()).toBe("Cost: 2 credits");
-  });
-
-  it("CREATE-A6 勾上之后形状菜单跟着收窄,而且当前形状被夹回这一档收得下的那一格", async () => {
-    await renderBoard();
-    // 商家先选了一个只有默认档收得下的形状。
-    await pick(shapePickers()[0]!, "16:9");
-    expect(shapePickers()[0]!.value).toBe("16:9");
-    await tickFineDetail();
-    // 菜单收窄 —— 收不下的两格不许留在菜单上(留着就是一次注定失败的付费请求)。
-    expect([...shapePickers()[0]!.options].map((o) => o.value)).toEqual(FINE_MENU);
-    expect(shapePickers()[0]!.value).toBe("1:1");
-  });
-
-  it("CREATE-A6 按下 Generate ⇒ 请求里带的是**一格能力**,不是型号名", async () => {
-    await renderBoard();
-    await tickFineDetail();
-    await typePrompt("the bottle on a marble counter");
-    await submitComposer();
-    expect(mocks.generateImage).toHaveBeenCalledTimes(1);
-    const options = mocks.generateImage.mock.calls[0]![5] as { fineDetail?: boolean; aspectRatio?: string };
-    expect(options.fineDetail).toBe(true);
-    expect(options.aspectRatio).toBe("1:1");
-    expect(JSON.stringify(options).toLowerCase()).not.toContain("seedream");
-  });
-
-  it("CREATE-A6 不勾 ⇒ 请求里一个字都不多(今日行为逐字不变)", async () => {
-    await renderBoard();
-    expect(composerPriceText()).toBe("Cost: 1 credit");
-    await typePrompt("the bottle on a marble counter");
-    await submitComposer();
-    const options = mocks.generateImage.mock.calls[0]![5] as { fineDetail?: boolean };
-    expect(options.fineDetail).toBeUndefined();
-  });
-
-  it("CREATE-A6 服务端说这一格今天卖不了(null)⇒ 整格不渲染,一个字都不说", async () => {
-    mocks.imageShapes.mockResolvedValue({ options: MENU, defaultAspect: "1:1", fineDetail: null });
-    await renderBoard();
-    expect(fineDetailCheckbox()).toBeNull();
-    expect(container!.textContent).not.toContain("Fine detail");
-  });
-});
