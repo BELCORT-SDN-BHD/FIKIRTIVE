@@ -111,7 +111,19 @@ export function OttoTurnCard({
   // 这一次失败在这张卡上能给出的出路。三种失败三条路，一次只有一条（类型决定，不看措辞）。
   const showTopUp = failed && errorKind === "insufficient_credits";
   const showCapExit = failed && errorKind === "spend_cap";
-  const showRetry = failed && !!retryDraft;
+  /**
+   * 「供应商侧一个键都不给」这条不变量住在卡本体（尾巴轮四组一，#1233 判官 P2-2）。
+   *
+   * 从前它只写在调用方：`OttoChatStream` 算 `canvasRetryDraft` 时带一句 `kind === "error"`，
+   * 于是卡自己并不知道这条规矩 —— 只要有人（另一处接线、一次重构、一个新形态）把商家原话
+   * 原样传进来，`provider_unavailable` 那一档旁边就会重新长出一颗「Edit and retry」：一句
+   * 「等一会儿再说」配一颗「马上再送一次」，而每按一次都重新走一遍预扣／退款。
+   *
+   * 所以判据搬到这里：能重试的只有「说不清的那一种失败」（`error`，以及没带类型的旧接线）。
+   * 充值与抬上限那两档各有自己的那颗键，供应商侧那一档确实没有出路 —— 一个键都不给。
+   */
+  const retryableKind = errorKind == null || errorKind === "error";
+  const showRetry = failed && !!retryDraft && retryableKind;
   return (
     <div
       aria-label="Otto current turn"

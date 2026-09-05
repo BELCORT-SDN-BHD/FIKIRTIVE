@@ -261,8 +261,10 @@ export function HomeAnalysisView({
     setRetryAttempted(true);
     startRetry(() => router.refresh());
   };
-  /** 读回来了就复位 —— 与 Home 同一条口径、同一个理由、同一种写法(判官 2026-09-05 #1216 P2-2)。 */
-  const healthRecovered = health.state === "partial" || health.state === "ready";
+  /** 读回来了就复位 —— 与 Home 同一条口径、同一个理由、同一种写法(判官 2026-09-05 #1216 P2-2)。
+   *  口径同样是「不是 `unavailable` 就算读回来了」(尾巴轮四组一,#1232 判官 P2-2);理由与
+   *  两处的一字之差都写在 `MarketingHomeView` 那一段注释里,这里不抄第二份。 */
+  const healthRecovered = health.state !== "unavailable";
   const [lastRecovered, setLastRecovered] = useState(healthRecovered);
   if (healthRecovered !== lastRecovered) {
     setLastRecovered(healthRecovered);
