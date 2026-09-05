@@ -9,11 +9,16 @@ function source(file: string): string {
 }
 
 describe("Billing and Settings use the shared design system", () => {
-  it("composes Billing from shadcn cards, alerts, empty states, and buttons", () => {
+  it("composes Billing from shared alerts, empty states, badges, and buttons", () => {
     const page = source("app/billing/page.tsx");
     const button = source("components/billing/BuyPackButton.tsx");
 
-    expect(page).toMatch(/CardHeader|CardContent|CardFooter/);
+    // 前端基线第⑦段(FRONT-A11):`/CardHeader|CardContent|CardFooter/` 那条撤了。它当初钉的
+    // 是「走设计系统,不手搓」,而已冻结的 Settings screen pattern §3.3 现在明写这一面
+    // 「默认使用 plain rows / forms,不堆独立 marketing cards」—— 继续要求 Card 就是拿一条
+    // 旧围栏顶住新的设计权威。要钉的那件事没松:这一页仍然只由设计系统组件组成(下面几条),
+    // 而「不许套 Card」由 `app/settings/__tests__/front-a11-settings-skin.test.ts` 反向钉住。
+    expect(page).toMatch(/<Badge/);
     expect(page).toMatch(/<Alert|<Empty/);
     expect(button).toMatch(/<Button|<Spinner|<Alert/);
     expect(page).not.toContain("style={{");
