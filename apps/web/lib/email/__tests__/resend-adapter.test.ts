@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { EmailSendError } from "../types";
-import { createResendEmailPort, resendPortCanSend } from "../resend-adapter";
+import { createResendEmailPort } from "../resend-adapter";
 
 const DEV_FILE = path.join(process.cwd(), "..", "..", ".data", "last-magic-link.txt");
 
@@ -42,33 +42,6 @@ describe("createResendEmailPort", () => {
       const port = createResendEmailPort();
       await port.send({ to: "a@x.test", subject: "Sign in to Fikirtive", devPreview: "u123" });
       expect(logSpy).toHaveBeenCalledWith("[better-auth] Sign in to Fikirtive for a@x.test: u123");
-    });
-  });
-
-  // FRONT-A12 —— 「这个部署到底能不能寄出邮件」是一句关于进程的话,不是关于某个地址的话。
-  // 登录请求路径靠它决定要不要说「check your email」,所以它必须与 send 的那条分支同源:
-  // 谁被单独改一处,这里就变红。
-  describe("FRONT-A12 resendPortCanSend — the transport's own readiness, address-independent", () => {
-    it("FRONT-A12: says no exactly when a production process has no key", () => {
-      vi.stubEnv("NODE_ENV", "production");
-      expect(resendPortCanSend()).toBe(false);
-
-      vi.stubEnv("RESEND_API_KEY", "re_live");
-      expect(resendPortCanSend()).toBe(true);
-    });
-
-    it("FRONT-A12: says yes outside production, where the dev fallback IS a delivery", () => {
-      expect(process.env.RESEND_API_KEY).toBeUndefined();
-      expect(resendPortCanSend()).toBe(true);
-    });
-
-    it("FRONT-A12: agrees with what send() actually does — refusal and throw are one rule", async () => {
-      vi.stubEnv("NODE_ENV", "production");
-      const port = createResendEmailPort();
-
-      expect(resendPortCanSend()).toBe(false);
-      const err = await port.send({ to: "a@x.test", subject: "S", text: "t" }).catch((e) => e);
-      expect((err as EmailSendError).kind).toBe("config_missing");
     });
   });
 

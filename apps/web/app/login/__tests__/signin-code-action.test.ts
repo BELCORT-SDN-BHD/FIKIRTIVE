@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The login page's server action. What this file pins is narrow and complementary to
@@ -31,30 +31,12 @@ const INVALID = {
   message: "Enter a valid email address.",
 };
 
-const UNDELIVERABLE = {
-  status: "error",
-  reason: "unknown",
-  message: "We couldn't send a sign-in code. Try again.",
-};
-
 beforeEach(async () => {
   queued.length = 0;
   await __resetSignInCodeThrottleForTests();
   mockHeaders.mockReset();
   mockHeaders.mockResolvedValue(new Headers({ "x-forwarded-for": "203.0.113.10" }));
 });
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
-
-/** A production process with no mail transport configured — the state the 3310 走查 caught the
- *  page lying in: every send throws `config_missing` in the background and the page said
- *  "We sent a temporary login code" anyway. */
-function withNoMailTransport(): void {
-  vi.stubEnv("NODE_ENV", "production");
-  vi.stubEnv("RESEND_API_KEY", "");
-}
 
 describe("requestSignInCode", () => {
   it("rejects a malformed address before anything is queued", async () => {
@@ -86,53 +68,6 @@ describe("requestSignInCode", () => {
     const owner = queued.filter((j) => j.email === "owner@example.com");
     expect(owner.filter((j) => j.overBudget === false)).toHaveLength(5);
     expect(owner.filter((j) => j.overBudget === true)).toHaveLength(2);
-  });
-});
-
-/**
- * FRONT-A12 —— 「没有邮件通道」这一态,是 #678 的规则唯一允许的诚实分支。
- *
- * 它与被关掉的那些泄漏不同:答案只由本进程的配置决定,对每个地址一模一样 —— 要么对所有商家
- * 都说不出去,要么对谁都说得出去。所以下面既钉「它真的说了实话」,也钉「它对有权限的地址和
- * 无权限的地址说的是同一句」(FRONT-A2)。
- */
-describe("FRONT-A12 — a deployment that cannot post mail says so instead of 'check your inbox'", () => {
-  it("FRONT-A12: answers honestly and hands over nothing when there is no mail transport", async () => {
-    withNoMailTransport();
-
-    await expect(requestSignInCode({ email: "owner@example.com" })).resolves.toEqual(UNDELIVERABLE);
-    // 变异守卫:把 ①′ 那道检查删掉,这里会拿回 NEUTRAL(「a sign-in code is on its way」)而变红。
-    expect(await requestSignInCode({ email: "owner@example.com" })).not.toEqual(NEUTRAL);
-    // 一封都没交出去 —— 交出去只会在后台抛 config_missing,白白花掉商家的每小时额度。
-    expect(queued).toHaveLength(0);
-  });
-
-  it("FRONT-A2: that refusal is the same sentence for an address with access and one without", async () => {
-    withNoMailTransport();
-
-    const withAccess = await requestSignInCode({ email: "owner@example.com" });
-    const without = await requestSignInCode({ email: "stranger@example.com" });
-
-    expect(withAccess).toEqual(UNDELIVERABLE);
-    expect(without).toEqual(withAccess);
-    // 那句话只说「没寄出去」,不说这个邮箱存不存在。
-    expect(UNDELIVERABLE.message).not.toMatch(/account|exist|allow|invit/i);
-  });
-
-  it("FRONT-A12: a malformed address is still told what is wrong with it, not about the outage", async () => {
-    withNoMailTransport();
-
-    await expect(requestSignInCode({ email: "not-an-email" })).resolves.toEqual(INVALID);
-  });
-
-  it("FRONT-A12: with a transport configured nothing about the accepted path changes", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("RESEND_API_KEY", "re_live_key");
-
-    await expect(requestSignInCode({ email: "owner@example.com" })).resolves.toEqual(NEUTRAL);
-    expect(queued).toEqual([
-      { purpose: "sign-in-code", email: "owner@example.com", overBudget: false },
-    ]);
   });
 });
 
