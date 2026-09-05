@@ -12,13 +12,14 @@ import { getGeneration } from "@/lib/asset-actions";
 import { saveCroppedGeneration } from "@/lib/asset-actions";
 import { setFavorite } from "@/lib/asset-actions";
 import { deleteGeneration } from "@/lib/actions";
+import { getPublicMediaLink } from "@/lib/media-link-actions";
 import {
   startAssetGen,
   getGenJob,
   getActiveGenModels,
   type ActiveGenModels,
 } from "@/lib/gen-actions";
-import { readPick, writePick } from "@/lib/result-pick";
+import { readPick, writePick, PICK_SCOPE_NOTE } from "@/lib/result-pick";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { CropIcon, DownloadIcon, HeartIcon, LinkIcon, PlayIcon, RotateCcwIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -163,13 +164,27 @@ export default function DetailPanel({
   const [regenStatus, setRegenStatus] = useState<AssetSpendStatus>("idle");
   const [animStatus, setAnimStatus] = useState<AssetSpendStatus>("idle");
   const [paidActionError, setPaidActionError] = useState<string | null>(null);
+  // FRONT-A12「任何写入失败都有错误反馈,不出现『假成功』」—— 付费那三条路早就有
+  // `paidActionError`,不花钱的那几个动作却一声不吭:收藏失败只把心形悄悄弹回去,复制链接
+  // 失败连按钮都不动。这一格专收它们,标题随动作走,句子是**这一次**真的失败原因。
+  const [actionError, setActionError] = useState<{ title: string; message: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  // 复制成功时说清楚这条链子活多久 —— 分钟数来自铸链那一处(lib/media-public-link.ts),
+  // 不在这一层写第二个数字。一条 10 分钟后就打不开的链子,不说＝另一种假成功。
+  const [copiedMinutes, setCopiedMinutes] = useState<number | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  // 删除自己一格:它的错误必须留在确认框里(框不关、可重试),不能混进面板下方那一条 ——
+  // 面板一关商家就以为删掉了,而服务端刚刚拒绝了这次删除。
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const regenBusyRef = useRef(false);
   const animBusyRef = useRef(false);
   const editBusyRef = useRef(false);
 
   const cancelledRef = useRef(false);
+  // 「Copied!」那 6 秒的计时器要留个把手:连按两次复制时,不清掉上一颗,第二次的提示会被
+  // 上一轮的计时器提前抹掉(最短只剩几毫秒)—— 而 6 秒本来就是为了放下「链子活多久」那句。
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Fetch opaque active capability ids, exact quotes, and video controls once. Spend handlers
   // await this server-derived contract; provider-backed model ids stay server-side.
   const [activeModels, setActiveModels] = useState<ActiveGenModels | null>(null);
@@ -191,6 +206,8 @@ export default function DetailPanel({
       setCropOpen(false);
       setEditStatus("idle");
       setPaidActionError(null);
+      setActionError(null);
+      setDeleteError(null);
     });
     getGeneration(generationId).then((result) => {
       if (cancelledRef.current) return;
@@ -211,6 +228,8 @@ export default function DetailPanel({
     });
     return () => {
       cancelledRef.current = true;
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
     };
   }, [generationId]);
 
@@ -290,7 +309,15 @@ export default function DetailPanel({
     };
     applyLocal(next); // optimistic
     const result = await setFavorite(targetGenId, next);
-    if ("error" in result) applyLocal(!next); // revert
+    if ("error" in result) {
+      applyLocal(!next); // revert
+      // 服务端那句原样送到屏幕上(`setFavorite` 的 "Not authorized." / "Not found.",
+      // asset-actions.ts)—— 不在这一层编一句更好听的。回滚是**状态**正确,不是反馈:
+      // 心形自己弹回去,商家只看见「点了又弹回来」,不知道是被拒了还是自己点空了。
+      setActionError({ title: "Couldn't update Saved", message: result.error });
+      return;
+    }
+    setActionError(null);
   }, [gen, favorite, selectedGenId, readOnly]);
 
   const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed" | "cancelled" | "timeout"> => {
@@ -458,19 +485,56 @@ export default function DetailPanel({
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
-    const url = gen.urls[selectedIdx] ?? gen.url;
+    // 复制的必须是**别人打得开**的那条链子。`gen.urls[i]` 是 `/files/…` 站内相对路径:登录墙
+    // 后面、而且没有域名 —— 贴到别处一无所用。这里向既有的签名公共门要一条(服务端
+    // `getPublicMediaLink`,复用 `/api/media/pub/<token>` 那道门,不另造一套分享)。
+    const minted = await getPublicMediaLink(selectedGenId);
+    if (cancelledRef.current) return;
+    if ("error" in minted) {
+      // 判官 P2-1:失败必须**撤掉上一轮的成功提示**。这颗键按得动第二次,上一次成功留下的
+      // 「Copied!」与那句时长还在 6 秒窗口里;不撤的话,屏幕上同时写着「已复制」和
+      // 「复制不了」—— 商家有理由相信前者,那正是这一票要消灭的假成功。
+      setCopied(false);
+      setActionError({ title: "Couldn't copy the link", message: minted.error });
+      return;
+    }
+    // 相对路径要在浏览器这一头补成绝对地址 —— 服务端不可靠地知道对外的域名,浏览器知道。
+    const url = new URL(minted.path, window.location.origin).toString();
     try {
       await navigator.clipboard.writeText(url);
+      setActionError(null);
+      setCopiedMinutes(minted.expiresInMinutes);
       setCopied(true);
-      setTimeout(() => { if (!cancelledRef.current) setCopied(false); }, 2000);
+      // 6 秒,不是原来的 2 秒:现在这块地方还要放下「这条链子活多久」那一句,2 秒读不完。
+      // 再按一次就重新计时:先撤掉上一颗,否则它会在新提示刚出来时把提示抹掉。
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => { if (!cancelledRef.current) setCopied(false); }, 6000);
     } catch {
-      // silently ignore clipboard errors
+      // 浏览器拒了剪贴板(权限、非安全上下文、根本没有这个 API)。旧写法在这里一个字都不说 ——
+      // 按钮不变、剪贴板是空的,商家以为链接已经在手上了。这一句没有服务端来源,所以由这里
+      // 写,但只说已知的事实:什么都没复制成。
+      // 判官 P2-1:同上 —— 上一轮的「Copied!」不撤,就跟这句错误同屏打架。
+      setCopied(false);
+      setActionError({
+        title: "Couldn't copy the link",
+        message: "Your browser blocked clipboard access, so nothing was copied.",
+      });
     }
-  }, [gen, selectedIdx]);
+  }, [gen, selectedGenId]);
 
   const handleDelete = useCallback(async () => {
     if (readOnly) return;
-    await deleteGeneration(selectedGenId);
+    setDeleteBusy(true);
+    const result = await deleteGeneration(selectedGenId);
+    setDeleteBusy(false);
+    if ("error" in result) {
+      // 服务端拒绝了这次删除 ⇒ 确认框留在原地、把它那句话摆出来、Delete 还能再按一次。
+      // 旧写法把返回值整个丢掉、无条件 onClose():屏幕上跟删成功一模一样,而东西还在
+      // ——FRONT-A12 要拦的正是这种「假成功」。
+      setDeleteError(result.error);
+      return;
+    }
+    setConfirmAction(null);
     onClose();
   }, [selectedGenId, onClose, readOnly]);
 
@@ -488,6 +552,9 @@ export default function DetailPanel({
     if (!gen) return;
     setSelectedIdx(idx);
     setFavoriteLocal(gen.variants[idx]?.favorite ?? gen.favorite);
+    // 判官 P2-2:这一条错误说的是**上一张**(收藏/复制都按选中的那一张的 id 走)。换了张图
+    // 还挂着它,商家会把它读成新这张的状态。换图＝换对象,旧的那句就此作废。
+    setActionError(null);
     writePick(gen.id, idx);
   }, [gen]);
 
@@ -552,9 +619,11 @@ export default function DetailPanel({
     }
   }, [gen, editPrompt, editIds, editBlocked, targetProjectId, pollJob, reloadFromJob, selectedGenId, chosenImageAspect]);
 
+  // 确认框**不再抢先关掉** —— 关不关由服务端的答复决定(handleDelete):成功才关,失败留在
+  // 原地带着那句话。抢先关是旧写法里「假成功」的另一半。
   const runConfirmedAction = useCallback(() => {
-    setConfirmAction(null);
     if (readOnly) return;
+    setDeleteError(null);
     void handleDelete();
   }, [handleDelete, readOnly]);
 
@@ -695,6 +764,14 @@ export default function DetailPanel({
                   </Button>
                 ))}
               </div>
+            )}
+
+            {/* 选中哪一张只写进这台浏览器的 localStorage(`lib/result-pick.ts` 的
+                `otto:pick:<id>`),不是账号级设置 —— 换台机器、换个浏览器、清一次站点数据
+                就回到第一张。不说出口就等于让浏览器临时状态冒充持久化(接线书 §3.4)。
+                升级成账号级要新的持久化列,不在本票(§5 已登记)。 */}
+            {gen.urls.length > 1 && (
+              <p className="text-[0.75rem] text-muted-foreground">{PICK_SCOPE_NOTE}</p>
             )}
 
             {/* Prompt text */}
@@ -926,15 +1003,34 @@ export default function DetailPanel({
               </Button>
 
               {/* Delete */}
-              <Button variant="destructive-secondary" size="sm" onClick={() => { if (!readOnly) setConfirmAction("delete"); }} disabled={readOnly} title={readOnlyReason}>
+              <Button variant="destructive-secondary" size="sm" onClick={() => { if (!readOnly) { setDeleteError(null); setConfirmAction("delete"); } }} disabled={readOnly} title={readOnlyReason}>
                 Delete
               </Button>
             </div>
+
+            {/* 复制出去的是一条签名公共链接(`/api/media/pub/<token>`),寿命就是铸它时那个
+                TTL。不说出口的话,商家把它贴进邮件、十分钟后对方打不开 —— 复制那一刻的
+                「Copied!」就成了假成功。分钟数由服务端连着链子一起给。 */}
+            {copied && copiedMinutes !== null && (
+              <p className="text-[0.75rem] text-muted-foreground" role="status">
+                {`Anyone with this link can open the asset for ${copiedMinutes} minutes.`}
+              </p>
+            )}
 
             {paidActionError && (
               <Alert variant="destructive" density="compact" role="alert">
                 <AlertTitle>Couldn&apos;t complete this action</AlertTitle>
                 <AlertDescription>{paidActionError}</AlertDescription>
+              </Alert>
+            )}
+
+            {/* FRONT-A12 —— 不花钱的写入(收藏)与剪贴板动作(复制链接)失败时的那一句。
+                与上面那条分开存:付费路每次开跑都会清掉自己那一格,共用一格的话商家一按
+                Regenerate,刚刚那条「收藏没保存上」就无声消失了。 */}
+            {actionError && (
+              <Alert variant="destructive" density="compact" role="alert">
+                <AlertTitle>{actionError.title}</AlertTitle>
+                <AlertDescription>{actionError.message}</AlertDescription>
               </Alert>
             )}
 
@@ -1050,7 +1146,7 @@ export default function DetailPanel({
           <Dialog
             open={confirmAction !== null}
             onOpenChange={(open) => {
-              if (!open) setConfirmAction(null);
+              if (!open) { setConfirmAction(null); setDeleteError(null); }
             }}
           >
             <DialogContent>
@@ -1058,16 +1154,24 @@ export default function DetailPanel({
                 <DialogTitle>{confirmDetails?.title ?? ""}</DialogTitle>
                 <DialogDescription>{confirmDetails?.description ?? ""}</DialogDescription>
               </DialogHeader>
+              {/* FRONT-A12 —— 服务端拒绝这次删除时,那句话就摆在按下 Delete 的地方,框不关、
+                  东西还在,再按一次就是重试。 */}
+              {deleteError && (
+                <Alert variant="destructive" density="compact" role="alert">
+                  <AlertTitle>Couldn&apos;t delete this asset</AlertTitle>
+                  <AlertDescription>{deleteError}</AlertDescription>
+                </Alert>
+              )}
               <DialogFooter>
-                <Button variant="secondary" onClick={() => setConfirmAction(null)}>
+                <Button variant="secondary" onClick={() => { setConfirmAction(null); setDeleteError(null); }}>
                   Cancel
                 </Button>
                 <Button
                   variant={confirmAction === "delete" ? "destructive" : "default"}
-                  disabled={confirmDetails?.disabled ?? true}
+                  disabled={(confirmDetails?.disabled ?? true) || deleteBusy}
                   onClick={runConfirmedAction}
                 >
-                  {confirmDetails?.confirmLabel ?? "Confirm"}
+                  {deleteBusy ? "Deleting…" : (confirmDetails?.confirmLabel ?? "Confirm")}
                 </Button>
               </DialogFooter>
             </DialogContent>
