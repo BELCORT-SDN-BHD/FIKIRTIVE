@@ -245,7 +245,16 @@ export function LoginForm({
         }
         footer={<BackToLogin onClick={() => go("hub")} />}
       >
-        <form onSubmit={sendSignInCode}>
+        {/* FRONT-A12 —— 「这个地址不对」在这一步只有一个声音(判官 #1237 P2-3)。
+            两条路都到得了「地址无效」:提交(`Continue with email` / 输入框里按 Enter)与
+            `Use password instead`(type="button",浏览器的原生校验碰不到它)。后者早就走
+            `SIGN_IN_CODE_INVALID_EMAIL_MESSAGE`,前者却被 `type="email" required` 的原生气泡
+            先接走 —— 同一个问题两种措辞、两种样式、还随浏览器与系统语言变,商家读到哪一句
+            全看他按了哪颗键。`noValidate` 把提交这一路交回给 `sendSignInCode` 里那道同样的
+            检查,于是两条路读到逐字相同的一句。
+            `type="email"` 与 `required` 都留着:它们仍然管键盘形态与无障碍语义,只是不再另开
+            一个错误产地。围栏在 `__tests__/login-code-resend.test.tsx` 第四组。 */}
+        <form noValidate onSubmit={sendSignInCode}>
           <FieldGroup className="gap-5">
             {error ? (
               <Alert role="alert" variant="destructive">

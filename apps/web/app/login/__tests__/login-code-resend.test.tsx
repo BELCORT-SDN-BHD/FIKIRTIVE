@@ -9,7 +9,9 @@
 //      (Founder 2026-09-05 裁决①「按环境提示」:部署级判定,含能寄信的控制组);
 //   ② `FRONT-A12 — a refused request never becomes 'We sent a temporary login code'`
 //      (#1223 那条页面侧围栏:能寄信的部署上服务端如实回绝,页面留在邮箱步);
-//   ③ `login code step`(code 步的「Send again」与两种错误标题)。
+//   ③ `login code step`(code 步的「Send again」与两种错误标题);
+//   ④ `FRONT-A12 — an invalid address on the email step speaks with one voice`
+//      (判官 #1237 P2-3:同一个「地址不对」不许有原生气泡与自家提示两个产地)。
 //
 // 这里刻意是行为测试而不是源码断言:上一版的 bug(`await sendSignInCode(); setCodeSentAgain(true)`)
 // 在源码里长得完全正常,只有真的点一下「Send again」并让它失败,才看得见商家同时读到一条错误
@@ -330,5 +332,67 @@ describe("login code step", () => {
     const alert = el.querySelector('[role="alert"]')!;
     expect(alert.textContent).toContain("Code not accepted");
     expect(alert.textContent).toContain("That code didn't work.");
+  });
+});
+
+/**
+ * 第四组 —— 同一个「地址不对」只许有一个产地(判官 #1237 P2-3)。
+ *
+ * 邮箱这一步有两条路会碰到无效地址:提交(`Continue with email`,以及在输入框里按 Enter)与
+ * `Use password instead`。后者是 `type="button"`,浏览器的原生校验碰不到它,所以它一直走
+ * 产品自己那句 `Enter a valid email address.`;而提交那一路被 `type="email" required` 的原生
+ * 气泡先接走 —— 措辞、样式、语言都不一样,商家读到哪一句全看他按了哪颗键。
+ *
+ * 这一组钉的是收成一句之后的状态:表单 `noValidate`,两条路读到逐字相同的一句。
+ * 摘掉 `noValidate` ⇒ 第一条当场红;把任一条路换成第二种措辞 ⇒ 第二条当场红。
+ */
+describe("FRONT-A12 — an invalid address on the email step speaks with one voice", () => {
+  function emailStepTree() {
+    return createElement(LoginForm, {
+      from: "/create",
+      googleEnabled: false,
+      signInCodesAvailable: true,
+      initialStep: "email" as const,
+    });
+  }
+
+  it("FRONT-A12: the email step opts out of the browser's native bubble, so the product's own message is the one shown", async () => {
+    const el = await render(emailStepTree());
+    const form = el.querySelector("form")!;
+
+    // 原生气泡是第二个产地:jsdom 不画它,所以只能钉「这条路已经交回给我们自己的检查」。
+    expect(form.noValidate, "表单还开着浏览器原生校验 —— 提交这一路会先弹原生气泡").toBe(true);
+    // 输入框的语义不受影响:键盘形态与无障碍语义都还在,只是不再另开一个错误产地。
+    const email = el.querySelector<HTMLInputElement>('input[type="email"]')!;
+    expect(email.required).toBe(true);
+  });
+
+  it("FRONT-A12: submitting a bad address and asking for the password path give the SAME single sentence", async () => {
+    const el = await render(emailStepTree());
+    const email = el.querySelector<HTMLInputElement>('input[type="email"]')!;
+    await act(async () => {
+      setReactInputValue(email, "not-an-address");
+    });
+
+    const said: string[] = [];
+
+    // 路一:提交。
+    await act(async () => {
+      el.querySelector("form")!.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    said.push(el.querySelector('[role="alert"]')!.textContent ?? "");
+    // 地址都没解析过,服务端一次都不该被问 —— 少了这条,一个「先送出去再说」的实现也能绿。
+    expect(requestSignInCodeMock).not.toHaveBeenCalled();
+
+    // 路二:`Use password instead`(type="button",原生校验碰不到它)。
+    await act(async () => buttonByText(el, "Use password instead").click());
+    said.push(el.querySelector('[role="alert"]')!.textContent ?? "");
+
+    expect(said[0]).toContain("Enter a valid email address.");
+    expect(new Set(said).size, `两条路说了两句不同的话:${said.join(" / ")}`).toBe(1);
+    // 两条路都留在邮箱步,没有一条把商家推去下一屏。
+    expect(el.textContent).toContain("your email address?");
   });
 });
