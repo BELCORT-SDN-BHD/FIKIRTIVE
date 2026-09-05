@@ -1,11 +1,74 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  llmPricesFor,
+  llmPricesOrNull,
+  ottoLlmMargin,
+  searchChargeInternal,
+  turnBudgetInternal,
+  OTTO_BILLABLE_MODEL_ID,
+} from "@fikirtive/core";
+import { RESEARCH_TIERS, researchTierBudgetInternal } from "./skills/propose-research.helpers.js";
+import {
+  assertOttoModelsPriced,
   isOverloadError,
   withOverloadFailover,
   injectPromptCacheControl,
+  ottoModelRuntime,
   ottoPromptCacheEnabled,
   withPromptCaching,
+  OTTO_PRIMARY_MODEL,
+  OTTO_FALLBACK_MODEL,
+  OTTO_DEFAULT_MODEL,
 } from "./model.js";
+
+/**
+ * ENGINE-A5(Otto 引擎 S2 §7.2①)—— **组合期查价:任一型号没价就拒绝启动。**
+ *
+ * manifest 是模块加载期的冻结常量,所以「这个文件被 import 成功了」本身就是第一条断言:
+ * 三个型号里有一个没价,这整份测试文件根本加载不起来。
+ */
+describe("ENGINE-A5 型号与价目 fail closed(manifest 组合期)", () => {
+  it("ENGINE-A5:manifest 的三个型号今天逐个都查得到价(模块能加载 = 已经过了这一关)", () => {
+    for (const id of [OTTO_PRIMARY_MODEL, OTTO_FALLBACK_MODEL, OTTO_DEFAULT_MODEL]) {
+      expect(llmPricesOrNull(id), id).not.toBeNull();
+    }
+    expect(ottoModelRuntime.billableModelId).toBe(OTTO_DEFAULT_MODEL);
+  });
+
+  it("ENGINE-A5:任一型号查不到价 → 抛,判词点名是哪个常量、带型号名与两条出路", () => {
+    expect(() => assertOttoModelsPriced([["OTTO_FALLBACK_MODEL", "claude-not-in-the-table"]])).toThrow(
+      /OTTO_FALLBACK_MODEL/,
+    );
+    expect(() => assertOttoModelsPriced([["OTTO_FALLBACK_MODEL", "claude-not-in-the-table"]])).toThrow(
+      /claude-not-in-the-table/,
+    );
+    expect(() => assertOttoModelsPriced([["OTTO_PRIMARY_MODEL", "claude-not-in-the-table"]])).toThrow(/价目表/);
+    // 一份清单里只要有一个没价就拒绝 —— 不是「大部分有价就放行」。
+    expect(() =>
+      assertOttoModelsPriced([
+        ["OTTO_PRIMARY_MODEL", OTTO_PRIMARY_MODEL],
+        ["OTTO_FALLBACK_MODEL", "claude-not-in-the-table"],
+      ]),
+    ).toThrow();
+  });
+
+  it("ENGINE-A5:计价型号是单一源 —— 主力型号逐字取自 @fikirtive/core 的常量", () => {
+    expect(OTTO_PRIMARY_MODEL).toBe(OTTO_BILLABLE_MODEL_ID);
+    expect(OTTO_DEFAULT_MODEL).toBe(OTTO_BILLABLE_MODEL_ID);
+  });
+
+  it("ENGINE-A5:深研预估与 manifest 同取一源 —— RESEARCH_METER_MODEL 那份抄件已消除", () => {
+    // 从前 propose-research.helpers.ts 抄了一份裸字符串。抄件与 manifest 分家时,卡面预估
+    // 与 worker 真 reserve 会按两个型号的价算,而两边都不会红。绑死在同一个常量上之后,
+    // 「分家」在编译期就不存在了;这条用例守的是这层绑定本身。
+    const maxSteps = RESEARCH_TIERS.standard.maxSteps;
+    const maxSearches = RESEARCH_TIERS.standard.maxSearches;
+    expect(researchTierBudgetInternal(maxSteps, maxSearches)).toBe(
+      turnBudgetInternal(llmPricesFor(ottoModelRuntime.billableModelId), ottoLlmMargin(), maxSteps) +
+        searchChargeInternal(maxSearches),
+    );
+  });
+});
 
 describe("isOverloadError", () => {
   it("detects a raw 529 status code", () => {
