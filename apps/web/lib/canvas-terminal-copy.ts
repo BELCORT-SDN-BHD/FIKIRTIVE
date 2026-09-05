@@ -35,7 +35,13 @@ export type TerminalCardCopy = {
 /**
  * ONE ENTRY PER RESTING FACE, and each one says only what it can prove.
  *
- * `failed` is a hard fail: the worker refunded the job, so "You weren't charged" is safe here.
+ * `failed` is a hard fail: the worker refunded the job, so "You weren't charged" is safe here. It
+ * says only that, and stops (接线盘点 L1 · FRONT-A12): this face is the one ending that offers no
+ * control at all (`offersRefresh: false`), so the "Try again." it used to end on was an instruction
+ * with nothing on the card to carry it out — the merchant looked for the button the sentence had
+ * just promised and there was none. The words a resting card says and the control it renders come
+ * out of the same row, and they now agree.
+ *
  * `cancelled` is the merchant's own decision rather than a failure, so it claims nothing about
  * money it cannot prove and offers nothing to retry. `timeout` is SOFT — the tab stopped polling
  * but the worker may still settle it — so it invites a check-back instead of claiming failure.
@@ -47,7 +53,7 @@ const TERMINAL_FACE_COPY: Readonly<Record<TerminalCardStatus, TerminalCardCopy>>
   failed: {
     icon: "⚠️",
     title: "That didn't finish",
-    detail: "You weren't charged. Try again.",
+    detail: "You weren't charged.",
     offersRefresh: false,
   },
   cancelled: {
@@ -80,8 +86,8 @@ const TERMINAL_FACE_COPY: Readonly<Record<TerminalCardStatus, TerminalCardCopy>>
  * The words for a card that has come to rest, given its face AND why it rested (#827).
  *
  * A reason REPLACES the generic detail line and nothing else. That is deliberate: the generic
- * line ("You weren't charged. Try again.") is true but tells the merchant to repeat the one thing
- * that cannot work, and the explanation it gives way to already ends with the same refund promise.
+ * line ("You weren't charged.") says all it can prove and no more, and the explanation it gives
+ * way to already ends with the same refund promise.
  * No new merchant-facing sentence is written here — the replacement is the exact whitelisted
  * sentence, so the card, the toast and Otto are the same words by construction rather than by
  * three people keeping three copies in step.
