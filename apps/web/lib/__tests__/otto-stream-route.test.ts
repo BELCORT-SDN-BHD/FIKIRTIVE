@@ -79,6 +79,11 @@ const mocks = vi.hoisted(() => {
     // ENGINE-A6: 摘要落盘的那个写入口。这个文件是 DB-free 的,所以这里只核「被叫了没、带的是
     // 哪一条线程与哪个 ownerId」—— where 子句(含 `deletedAt: null`)的断言在 otto-actions.test.ts。
     saveRollingSummary: vi.fn(async (_threadId: string, _ownerId: string, _summary: string) => {}),
+    // ENGINE-A4(尾巴轮四组一,#1234 判官 P2-3):三门共用的那个「这一轮没收钱」判据。
+    // 这个文件是 DB-free 的,所以替身只按「退款那一步走到没有」作答(账本对证那两问的真库
+    // 断言在 otto-actions.test.ts / engine-a4-truncated-turn-refund.test.ts);要复现「钩子响过
+    // 但账本证明不了」的那一档,单条测试自己 `mockResolvedValue(false)`。
+    chargedNothingProven: vi.fn(async (_ownerId: string, refundedRefId: string | null) => refundedRefId !== null),
   };
 });
 
@@ -120,6 +125,8 @@ vi.mock("@/lib/otto-actions", async () => {
     recordOttoTurnTrace: mocks.recordOttoTurnTrace,
     // ENGINE-A6 (规格 §7.2④): 折叠好的滚动摘要由 otto-actions 里那个唯一的写入口落盘。
     saveRollingSummary: mocks.saveRollingSummary,
+    // ENGINE-A4 (规格 §7.2⑤): 「这一轮没收钱」的统一判据,三门同一个函数。
+    chargedNothingProven: mocks.chargedNothingProven,
   };
 });
 vi.mock("@/lib/otto-generation-validate", () => ({
@@ -728,6 +735,65 @@ describe("POST /api/otto/stream", () => {
         }),
       }),
     );
+    log.mockRestore();
+  });
+
+  /**
+   * ENGINE-A4 —— 这一门的钱话也要账本证据(尾巴轮四组一,#1234 判官 P2-3)。
+   *
+   * 从前这句「This turn wasn't charged.」只凭 `onRefundedFailure` 点亮的那面裸旗就说得出口,
+   * 而另外两门(`ottoTurn` / `ottoApprove`)早就改成「账本上真有那一行退款才说」。旗只说明
+   * meter **走过**退款那一步:`refundReservation` 还会返回 `already-settled` /
+   * `already-refunded` / `no-reservation`,而钩子是 `void` 的,那个返回值到不了入口 —— 于是
+   * 一笔被 SETTLE 抢先的预扣照样能让屏幕对着账单说「没收钱」。
+   *
+   * 下面这一条钉的正是这件事:这一门问的是那个共用判据、带的是本轮的 refId;判据说
+   * 「证明不了」时,那半句当场消失(而句子的其余部分、把手与类型一个字不变)。
+   */
+  it("ENGINE-A4: 账本证明不了退款落地时,这一门就不说「没收钱」", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    // 钩子照响(meter 走过了退款那一步),可账本对证失败 —— fail closed。
+    mocks.chargedNothingProven.mockResolvedValue(false);
+    const body = JSON.stringify({
+      type: "error",
+      error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." },
+    });
+    const providerError = Object.assign(new Error("AI_APICallError: Invalid request"), {
+      name: "AI_APICallError",
+      statusCode: 400,
+      responseBody: body,
+    });
+    mocks.run.mockRejectedValue(providerError);
+    mocks.withLlmBudget.mockImplementation(
+      async (args: { onRefundedFailure?: () => void }, fn: () => Promise<unknown>) => {
+        try {
+          return await fn();
+        } catch (e) {
+          args.onRefundedFailure?.();
+          throw e;
+        }
+      },
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "Make a launch post" }))).json()) as Array<{
+      type?: string;
+      data?: { kind?: string; text?: string };
+    }>;
+    const streamedError = parts.find((part) => part.type === "data-error")?.data;
+
+    // 判据被真的问过,带的是这一轮的身份与这一轮的 refId(裸旗那条路根本不问)。
+    expect(mocks.chargedNothingProven).toHaveBeenCalledWith(
+      "org_stream",
+      expect.stringMatching(/^otto-stream:/),
+    );
+    expect(streamedError?.text, "账本证明不了,屏幕却替账单说了一句「没收钱」").not.toContain(
+      "This turn wasn't charged.",
+    );
+    // 少的只有那半句:诚实句的其余部分、把手与类型照旧。
+    expect(streamedError?.text).toMatch(
+      /^Otto is unavailable right now on our side\. Please try again later\. Reference: OTTO-/,
+    );
+    expect(streamedError?.kind).toBe("provider_unavailable");
     log.mockRestore();
   });
 });

@@ -1786,8 +1786,12 @@ export default function FlowCanvas({
        *
        * `pointer-events-none` —— 它只是一句话,不是一层纸:拖动、框选、滚轮缩放照旧穿过去。
        * 只在**读成功且真的一张卡都没有**时才出现:`loading` 有自己的那颗 Badge,
-       * `unavailable` 有自己的那条 Alert,把「读不出来」说成「这里还什么都没有」是假话。 */}
-      {showGraph && boardStatus === "ready" && nodesOnBoard.length === 0 && (
+       * `unavailable` 有自己的那条 Alert,把「读不出来」说成「这里还什么都没有」是假话。
+       *
+       * Otto 正在跑这一轮时同样不出现(尾巴轮四组一,#1244 判官 P2-2):那半分钟里板上确实
+       * 还是空的,可屏幕左上角正写着「Working on it…」,而板中央同时劝商家「Ask Otto in the
+       * box below」—— 他刚问完。产物落板之前这块地方什么都不说,比说一句已经不成立的话强。 */}
+      {showGraph && boardStatus === "ready" && nodesOnBoard.length === 0 && !ottoWorkActive && (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-8">
           <Empty data-canvas-empty className="max-w-sm flex-none border-0 bg-transparent">
             <EmptyHeader>

@@ -1790,7 +1790,9 @@ async function settledTurnInternal(orgId: string, refId: string): Promise<number
 }
 
 /**
- * ENGINE-A4 —— 「这一轮没收钱」的**统一判据**,两门(`ottoTurn` / `ottoApprove`)共用。
+ * ENGINE-A4 —— 「这一轮没收钱」的**统一判据**,三门共用(`ottoTurn` / `ottoApprove` /
+ * 流式门 `app/api/otto/stream/route.ts` 的失败分支 —— 尾巴轮四组一把第三门也接了上来:
+ * 同一句商家可读的钱话,从此只有一套举证标准)。
  *
  * 从前截断那一支只凭 `onRefundedFailure` 点亮的那面旗就对商家说「没收钱」,而同一个 catch
  * 的第 5 支写着相反的规定。那面旗证明的只是 meter **走过**退款那一步,不证明账本真的把钱
@@ -1805,7 +1807,7 @@ async function settledTurnInternal(orgId: string, refId: string): Promise<number
  *     那件工具、再在下一次模型调用里死掉,那笔生成已经付过钱了 —— #524 r6)。
  * 读不出来就当没有证据(fail closed):宁可少说一句,也不对着账单说假话。
  */
-async function chargedNothingProven(ownerId: string, refundedRefId: string | null): Promise<boolean> {
+export async function chargedNothingProven(ownerId: string, refundedRefId: string | null): Promise<boolean> {
   if (!refundedRefId) return false; // 退款那一步根本没走到 —— 无从谈起
   try {
     const refund = await prisma.creditLedger.findFirst({

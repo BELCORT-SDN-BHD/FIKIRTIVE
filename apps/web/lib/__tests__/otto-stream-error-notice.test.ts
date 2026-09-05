@@ -11,7 +11,7 @@ vi.mock("@/lib/storage", () => ({
   kindOf: () => "image",
 }));
 
-import { OttoStreamErrorNotice } from "@/components/otto/OttoStreamErrorNotice";
+import { OttoStreamErrorNotice, TOP_UP_HREF, CAP_EXIT_HREF } from "@/components/otto/OttoStreamErrorNotice";
 import { toChatMessageDTO } from "@/lib/dto";
 import { persistedStreamErrorOf } from "@/lib/otto-status-helpers";
 import { threadToUiMessages } from "@/lib/otto-ui-messages";
@@ -70,8 +70,27 @@ describe("OttoStreamErrorNotice", () => {
 
     expect(markup).toContain('role="alert"');
     expect(markup).toContain("You&#x27;re out of credits.");
-    expect(markup).toContain('href="/billing"');
+    // 地址从 registry 推导,不手抄 —— 与旁边那颗上限键同一条规矩。
+    expect(markup).toContain(`href="${CAP_SECTION.href}"`);
     expect(markup).toContain("Top up");
+  });
+
+  /**
+   * 充值那颗键的地址也来自 registry(尾巴轮四组一,#1233 判官 P2-1)。
+   *
+   * `TOP_UP_HREF` 从前是一句写死的 `"/billing"`:取值碰巧与 registry 相同,可 Billing 哪天换了
+   * 路由,这颗「Top up」就会静静指向一个 404,而它旁边那颗「Open Billing & credits」照常好用
+   * —— 同一张告示上两颗键,一颗跟着搬、一颗留在原地。所以这里钉的是**来源**:组件里不许再
+   * 出现写死的路由字面量。取值相等是钉不住这件事的(今天两边本来就相等)。
+   */
+  it("ENGINE-A4: 充值与上限两颗键的地址都从导航 registry 读,组件里不写死路由", () => {
+    const source = readFileSync(
+      path.join(WEB_ROOT, "components", "otto", "OttoStreamErrorNotice.tsx"),
+      "utf8",
+    );
+    expect(source, "告示组件里又出现了写死的路由字面量").not.toMatch(/"\/[a-z][a-z-]*"/);
+    expect(TOP_UP_HREF).toBe(CAP_SECTION.href);
+    expect(CAP_EXIT_HREF).toBe(CAP_SECTION.href);
   });
 
   it("rehydrates the user message and honest failure after a remount", () => {

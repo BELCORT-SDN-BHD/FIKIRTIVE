@@ -66,6 +66,8 @@ import {
   // ENGINE-A6 (spec §7.2④): the one rolling-summary writer, shared with ottoTurn — so the
   // tenant constraint on that write has a single place to be守.
   saveRollingSummary,
+  // ENGINE-A4 (spec §7.2⑤): the one「这一轮没收钱」判据, shared with ottoTurn / ottoApprove.
+  chargedNothingProven,
 } from "@/lib/otto-actions";
 import { resolveOwnedReferenceRefs } from "@/lib/reference-refs";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID, OTTO_TRANSIENT_FAILURE_SENTENCE } from "@/lib/otto-stream-bridge";
@@ -403,6 +405,15 @@ export async function POST(req: NextRequest): Promise<Response> {
         // was refunded in FULL — the ONLY state in which「这一轮没有收费」是一句真话。今天它只
         // 可能被截断且零交付的那一轮点亮(其余的抛错路径根本走不到下面的 MaxTurns 分支)。
         let chargedNothing = false;
+        // 尾巴轮四组一(#1234 判官 P2-3):同一句 `TURN_NOT_CHARGED_SENTENCE`(otto-error-copy.ts)在这个文件里从前
+        // 只凭上面那面裸旗就说得出口,而另外两门(`ottoTurn` / `ottoApprove`)早已改成「钱话要有
+        // 账本证据」。旗只说明 meter **走过**退款那一步 —— `refundReservation` 还会返回
+        // `already-settled` / `already-refunded` / `no-reservation`,而钩子是 `void` 的,那个返回值
+        // 到不了这里。所以这里另记这一轮的 refId:它才是回账本对证的那把钥匙,判据见
+        // `chargedNothingProven`(三门同一个函数,不复制第三份)。
+        // 只接失败分支:MaxTurns 降级那一支的同一面旗还兼着「要不要发这一轮的花费行」
+        // (`emitTurnCost`),换判据会一并改动那件事,不在本刀射程内 —— 已登记。
+        let refundedRefId: string | null = null;
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let agentResult: any;
@@ -469,6 +480,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     onRefundedFailure: () => {
                       budgetArgs.onRefundedFailure?.();
                       chargedNothing = true;
+                      refundedRefId = refId;
                     },
                   },
                   fn,
@@ -548,8 +560,13 @@ export async function POST(req: NextRequest): Promise<Response> {
           // 走查修复三(#3310):供应商侧不可恢复的那一档(计费/鉴权/型号/配额/5xx)不能再说
           // 「再试一次」—— 那是误导,商家会一直试。分类与文案同源(`otto-error-copy.ts`),
           // 把手(Reference)照旧带上,供应商名与技术栈照旧不出现。瞬时那一档一个字没变。
-          // `chargedNothing` 是 ENGINE-A4 那个只读钩子点亮的:整笔退了才说「没收钱」。
-          const text = ottoFailureMessage(e, streamTurnErrorText(errorId), { chargedNothing, errorId });
+          // 「没收钱」这句话现在要账本证据才说 —— 与 `ottoTurn` / `ottoApprove` 同一个判据
+          // (尾巴轮四组一,#1234 判官 P2-3)。读不出来就 fail closed:宁可少说一句,也不对着
+          // 账单说假话。
+          const text = ottoFailureMessage(e, streamTurnErrorText(errorId), {
+            chargedNothing: await chargedNothingProven(ownerId, refundedRefId),
+            errorId,
+          });
           // #1224 判官 P2-2:诚实句改了,可 kind 没改 —— 于是那一档旁边照旧长出一颗
           // 「Edit and retry」,一句「等一会儿再说」配一颗「马上再送一次」,而每按一次都
           // 重新走一遍预扣/退款。分类用的是同一份判据(`isProviderSideFailure`),所以句子

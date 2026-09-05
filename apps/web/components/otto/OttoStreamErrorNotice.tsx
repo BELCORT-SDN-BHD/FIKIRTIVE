@@ -24,9 +24,15 @@ export const EDIT_AND_RETRY_LABEL = "Edit and retry";
  *
  * 地址与名字照旧从导航 registry 那一格读(`CAP_SECTION`),所以「句子念的名字 / 按钮上的名字 /
  * 按钮去的地方」三样同源;两张脸也不可能各说各话。
+ *
+ * 两个地址都从 registry 那一格读(尾巴轮四组一,#1233 判官 P2-1):`TOP_UP_HREF` 从前是一句
+ * 写死的那句 billing 路由字面量 —— 取值碰巧与 registry 相同,可 Billing 哪天换了路由,抽屉与状态卡上
+ * 那颗「Top up」就会静静指向一个 404,而旁边那颗「Open Billing & credits」照常好用。
+ * 「充值」与「改上限」今天落在同一面(`SETTINGS_SECTIONS` 的 billing 那一格,它的 `does`
+ * 里逐字写着「Buy credits, set your spend cap」),所以同源不是巧合,是那一格的定义。
  */
 export const TOP_UP_LABEL = "Top up";
-export const TOP_UP_HREF = "/billing";
+export const TOP_UP_HREF: string = CAP_SECTION.href;
 export const CAP_EXIT_LABEL = `Open ${CAP_SECTION.label}`;
 export const CAP_EXIT_HREF: string = CAP_SECTION.href;
 
