@@ -30,6 +30,7 @@ import { useRouter } from "next/navigation";
 import { ArrowUpIcon } from "lucide-react";
 import { createCanvasConversation } from "@/lib/canvas-entry-actions";
 import { canvasHref } from "@/components/canvas/canvas-href";
+import { ConversationCostHint } from "@/components/otto/ConversationCostHint";
 import { Button } from "@/components/ui/button";
 import { Field, FieldError } from "@/components/ui/field";
 import { InputGroup, InputGroupTextarea } from "@/components/ui/input-group";
@@ -105,6 +106,16 @@ export function StartSomething() {
         </InputGroup>
         <FieldError>{error}</FieldError>
       </Field>
+      {/* 披露先于扣费(Founder 2026-09-05 裁决②「输入框下加一行价钱」;登记在
+          `docs/specs/frontend-baseline.md` §5)。按一下这个发送键就在同一笔事务里开一条
+          `surface="canvas"` 的对话,画布挂载即把这第一轮送出去 —— 那一轮**本身按用量计费**,
+          而这条路径此前从按下到扣钱全程零披露。挂的是画布与门厅用的**同一个**组件,不是
+          第二份价目:数值只有 `lib/credit-format.ts` 一处作者,这份文件里一个钱数都不写。
+          裁决五删掉的「Create with Otto」标题行与「Nothing paid starts…」那句不恢复 ——
+          松开的只有「这一页不出现价钱」这一格。 */}
+      <div className="mt-2 flex">
+        <ConversationCostHint />
+      </div>
     </form>
   );
 }

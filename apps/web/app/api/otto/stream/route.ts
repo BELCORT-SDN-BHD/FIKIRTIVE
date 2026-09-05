@@ -68,7 +68,7 @@ import {
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
-import { ottoFailureMessage } from "@/lib/otto-error-copy";
+import { ottoDegradeText, ottoFailureMessage } from "@/lib/otto-error-copy";
 import { newThreadTitle } from "@/lib/otto-canned-starters";
 import { DEFAULT_THREAD_SURFACE } from "@/lib/otto-thread-surface";
 import { consumeOttoTurnGate, OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
@@ -326,7 +326,9 @@ export async function POST(req: NextRequest): Promise<Response> {
     // --- Open the UI-message stream and run the agent inside it -----------------
     const stream = createUIMessageStream({
       // Default onError masks server details; we surface a generic message to the client.
-      onError: () => "Otto hit a snag — please try again.",
+      // 走查修复三(#3310):同一句「Otto hit a snag — please try again.」在**供应商侧**失败上
+      // 是误导(再试永远失败),所以这道兜底也过一次同一份分类器;瞬时那一档一个字没变。
+      onError: (e: unknown) => ottoFailureMessage(e, "Otto hit a snag — please try again."),
       execute: async ({ writer }) => {
         // Lazily open text/reasoning parts so we only frame what actually streams.
         let textOpen = false;
@@ -499,9 +501,9 @@ export async function POST(req: NextRequest): Promise<Response> {
             // 商家读到的必须是「没收钱」,而不是一句道歉之后账单上冒出一笔他拿不到东西的钱。
             // 两句合成**一条**消息:降级句已经是这条路上唯一那条持久化的人话,退款这件事跟着
             // 它走,刷新之后还在,不需要第二条只在内存里活一瞬的提示。
-            const degradeText = chargedNothing
-              ? "I got a bit tangled up — try asking again. This turn wasn't charged."
-              : "I got a bit tangled up — try asking again.";
+            // 走查修复三:两句合成的这条降级消息现在读 `otto-error-copy.ts` 的同一份字面量
+            // (⑤段登记里留的「把这两句收进单源」),三门不再各抄一份。文案一个字没变。
+            const degradeText = ottoDegradeText(chargedNothing);
             // Tools may have persisted cards mid-run at max(seq)+1 — the pre-run
             // seqAfterUser snapshot could collide (same fix as finalizeOttoRun).
             const lastMsg = await prisma.chatMessage.findFirst({
@@ -525,7 +527,11 @@ export async function POST(req: NextRequest): Promise<Response> {
           // durable TURN_ERROR so reloads do not erase the failure, and give support
           // a safe reference id without exposing provider details.
           const errorId = streamTurnErrorId();
-          const text = streamTurnErrorText(errorId);
+          // 走查修复三(#3310):供应商侧不可恢复的那一档(计费/鉴权/型号/配额/5xx)不能再说
+          // 「再试一次」—— 那是误导,商家会一直试。分类与文案同源(`otto-error-copy.ts`),
+          // 把手(Reference)照旧带上,供应商名与技术栈照旧不出现。瞬时那一档一个字没变。
+          // `chargedNothing` 是 ENGINE-A4 那个只读钩子点亮的:整笔退了才说「没收钱」。
+          const text = ottoFailureMessage(e, streamTurnErrorText(errorId), { chargedNothing, errorId });
           const error = { kind: "error", text } satisfies OttoErrorData;
           console.error("[otto/stream] run failed:", {
             errorId,
