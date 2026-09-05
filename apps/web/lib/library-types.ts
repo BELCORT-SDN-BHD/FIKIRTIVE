@@ -18,6 +18,21 @@
  * 类型(Founder 2026-09-03 裁决十:不分素材类型);但新类型开放之前必须先有它自己的真实
  * 读模型,否则就是「无契约的控件」(裁决九)。
  */
+/**
+ * 「哪个扩展名算影片」这条规则的**单一源**(CLAUDE.md §7.3)。
+ *
+ * 在起步页参考契约(§7.3⑨)之前,这个集合在 `library-actions.ts` 与 `library-subjects.ts`
+ * 里各抄了一份;handoff 读回一件素材时也要判同一件事(图片进 `sourceGenerationIds`,影片进
+ * `referenceVideoGenerationIds`),再抄第三份就等于让「同一件素材在两个读法里是两种东西」
+ * 成为可能。规则搬到这里,那两处改成引用它 —— 行为一字不变。
+ */
+export const LIBRARY_VIDEO_EXTS: ReadonlySet<string> = new Set(["mp4", "mov", "webm", "mkv"]);
+
+/** 扩展名 → 素材库的两种媒体形态。大小写不敏感,`Asset.ext` 两种写法都见过。 */
+export function libraryMediaKindForExt(ext: string): "image" | "video" {
+  return LIBRARY_VIDEO_EXTS.has(ext.toLowerCase()) ? "video" : "image";
+}
+
 export const LIBRARY_SUBJECT_TYPES = ["generation"] as const;
 
 export type LibrarySubjectType = (typeof LIBRARY_SUBJECT_TYPES)[number];
