@@ -102,6 +102,16 @@ function RecoveryState({ health, filters }: { health: MarketingHealthReadModel; 
           href: SHELL_ROUTES.connections,
           icon: <Database />,
         }
+      : health.action === "connect-ad-account"
+      ? {
+          // 连上了,但这个 Meta 登录名下没有广告账号。同一扇门,不同的话:要他接一个
+          // 投广告的账号,而不是「换 90 天」(判官 2026-09-05 P1-1)。
+          title: MARKETING_HOME_COPY.noAdAccountsTitle,
+          description: MARKETING_HOME_COPY.noAdAccountsDescription,
+          action: "Manage connections",
+          href: SHELL_ROUTES.connections,
+          icon: <Database />,
+        }
       : {
           title: MARKETING_HOME_COPY.notConfiguredTitle,
           description: MARKETING_HOME_COPY.notConfiguredDescription,
@@ -123,6 +133,12 @@ function RecoveryState({ health, filters }: { health: MarketingHealthReadModel; 
           title: MARKETING_HOME_COPY.unavailableTitle,
           description: MARKETING_HOME_COPY.unavailableDescription,
           action: "Retry",
+          // Retry 指回**同一个**地址,而它真的会重取页面段,靠的是 Next 16.2.9 对
+          // same-page 导航的特判(`segment-cache/navigation.js` 的 `isSamePageNavigation`)
+          // 加上 dynamic 段的路由缓存默认不留存(`staleTimes.dynamic` 默认 0;
+          // `next.config.ts` 没有覆盖它)。两条都是**框架的行为,不是我们自己的保证**,
+          // 而且今天没有自动化测试守着(判官 2026-09-05 P2-1)。升级 Next 时复核这两条,
+          // 或者把这个链接改成一颗调 `router.refresh()` 的按钮,把保证收回自己手里。
           href: homeHref(filters),
           icon: <RefreshCw />,
         };
