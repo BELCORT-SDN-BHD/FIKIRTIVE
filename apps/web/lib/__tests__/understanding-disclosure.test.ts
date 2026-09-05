@@ -53,6 +53,7 @@ import {
   UNDERSTANDING_COST_HINT_TITLE,
   UnderstandingCostHint,
 } from "@/components/otto/UnderstandingCostHint";
+import { copyLines, HAND_TYPED_CREDITS } from "./helpers/price-literal-fence";
 
 const WEB_ROOT = process.cwd();
 const codeOf = (rel: string) => readFileSync(path.join(WEB_ROOT, rel), "utf8");
@@ -61,9 +62,8 @@ const codeOf = (rel: string) => readFileSync(path.join(WEB_ROOT, rel), "utf8");
 const priceOf = (kind: keyof typeof UNDERSTANDING_PRICED_INTERNAL) =>
   creditsLabel(displayCredits(pricedUnderstandingCredits(kind)));
 
-/** 「12 credits」「0.1 credit」这类**手抄的钱数**。className 里的 `text-[0.75rem]` 不会命中
- *  (它后面跟的是 rem,不是 credit),命中的只有真的把价钱写死在文案里的那种写法。 */
-const HAND_TYPED_CREDITS = /\d[\d,.]*\s*credits?\b/i;
+/** 「手抄的钱数」与「只扫商家读得到的那部分」两条判据住在 `helpers/price-literal-fence.ts` ——
+ *  四份成本小字围栏共用同一份,不再各抄一遍(判官 #1227 P2-3 ＝ #1219 P2-4)。 */
 
 /**
  * 「上传那一刻就锁价」这一族**假话**。
@@ -107,15 +107,6 @@ function assertQueuedNotUploadWording(label: string, sentence: string): void {
     `${label} 只说了「排队时」却没说排队**可能要等**(缺「${BACKLOG_PHRASE}」)—— 少了这一半,`
       + "商家仍然会把它读成上传那一刻",
   ).toContain(BACKLOG_PHRASE);
-}
-
-/** 只扫**会被商家读到的那部分**:注释里举例说明「0.1 credits 是怎么来的」是文档,不是文案,
- *  而且它正是我们希望留在源码里的解释。手抄的价钱如果藏在注释里,一个商家也看不见。 */
-function copyLines(src: string): string[] {
-  return src
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line))
-    .map((line) => line.trim());
 }
 
 // ────────────────────────── 入口普查(结构性围栏) ──────────────────────────

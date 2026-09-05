@@ -150,8 +150,15 @@ export const OTTO_HISTORY_BUDGET_TOKENS = OTTO_CONTEXT_CAP_TOKENS;
  * 一倍的虚高去掉。
  *
  * **未实测**:钉死它需要一次真的 `count_tokens` 调用(与 ENGINE-A1 基线同一把钥匙、同一趟)。
- * 这个数只决定「留哪些历史」,永远不决定收多少钱 —— 钱一律按 provider 报回来的实际用量算
- * (meter.ts)。
+ * 这个数只决定「留哪些历史」,永远不决定收商家多少钱 —— 商家那一头按 provider 报回来的实际
+ * 用量算(meter.ts)。
+ *
+ * **钱线在我们这一头**(判官 2026-09-05 #1222 P2-2):这个数是**预扣安全边际**的承重件。
+ * 一步按 `OTTO_CONTEXT_CAP_TOKENS` 定价(`turnBudgetInternal` → reserve),而这个常量决定
+ * 那条历史被裁到多长。低估(真值 > 1.3)时留下的历史比以为的长,真发出去的 input token 就比
+ * 预扣那一步算的多 —— 多出来的那一截是**我们自己吃**,不是商家多付。所以偏高一点是安全方向
+ * (早裁、少赚一点上下文),偏低才是要命的方向;真做完 count_tokens 量出 > 1.3,先看的是毛利
+ * 而不是这行注释。
  */
 export const CJK_TOKENS_PER_CHAR = 1.3;
 
