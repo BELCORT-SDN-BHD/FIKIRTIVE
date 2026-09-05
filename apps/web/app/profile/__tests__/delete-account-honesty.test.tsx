@@ -20,8 +20,10 @@ class ResizeObserverStub {
   disconnect() {}
 }
 
-let root: Root | null = null;
-let container: HTMLDivElement | null = null;
+// 每次渲染都记下来,afterEach 全部卸掉。一个测试里渲染两次却只记住后一次,前一次那颗 portal
+// 到 body 的对话框就会留在文档里 —— vitest 在同一个 worker 里连着跑 jsdom 文件,它会漏进**别的
+// 测试文件**(CI 实证:`segment-delete-feedback-ui.test.tsx` 读到了本文件的确认框)。
+const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 beforeAll(() => {
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
@@ -35,23 +37,23 @@ beforeAll(() => {
 });
 
 afterEach(async () => {
-  if (root) await act(async () => root?.unmount());
-  container?.remove();
-  root = null;
-  container = null;
+  for (const entry of mounted.splice(0)) {
+    await act(async () => entry.root.unmount());
+    entry.container.remove();
+  }
 });
 
-async function renderCard() {
-  container = document.createElement("div");
+async function renderCard(): Promise<HTMLDivElement> {
+  const container = document.createElement("div");
   document.body.appendChild(container);
-  root = createRoot(container);
-  await act(async () => root!.render(createElement(DeleteAccountCard, { email: "kaia@e2e.test" })));
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  await act(async () => root.render(createElement(DeleteAccountCard, { email: "kaia@e2e.test" })));
   return container;
 }
 
 /** 商家按下 Delete 之后,确认框(portal 到 body 末尾)里的全部文字。 */
-async function openConfirmDialog(): Promise<string> {
-  const el = await renderCard();
+async function openConfirmDialog(el: HTMLDivElement): Promise<string> {
   const del = [...el.querySelectorAll("button")].find((b) =>
     (b.textContent ?? "").trim().startsWith("Delete"),
   );
@@ -74,7 +76,7 @@ describe("FRONT-A12 — the delete-account screen promises only what it does", (
   });
 
   it("FRONT-A12: the confirm step names all four — the request, what goes, what stays, how long", async () => {
-    const shown = await openConfirmDialog();
+    const shown = await openConfirmDialog(await renderCard());
 
     // ① 这是给客服的请求。
     expect(shown, "① 客服请求").toContain("This opens an email to support");
@@ -100,7 +102,7 @@ describe("FRONT-A12 — the delete-account screen promises only what it does", (
     expect(link, "行里没有指向 /legal/data-deletion 的链接").not.toBeNull();
     expect(link!.textContent).toContain("how long deleted records are kept");
 
-    const shown = `${el.textContent ?? ""}\n${await openConfirmDialog()}`;
+    const shown = `${el.textContent ?? ""}\n${await openConfirmDialog(el)}`;
     expect(shown, "这一屏自己写了一个保留天数 —— 数字只能有一个作者").not.toMatch(
       /\d+\s*(day|days|week|weeks|month|months)/i,
     );
@@ -109,7 +111,7 @@ describe("FRONT-A12 — the delete-account screen promises only what it does", (
   it("FRONT-A12: the button still only opens an email — the honest copy did not grow a real deletion", async () => {
     const el = await renderCard();
     // 组件行为一字未改是这一轮的前提:它不碰数据库,唯一的出口是 mailto。
-    const shown = await openConfirmDialog();
+    const shown = await openConfirmDialog(el);
     expect(shown).toContain("Request account deletion?");
     // 二次确认仍然要输入自己的登录邮箱。
     expect(el.ownerDocument.body.textContent).toContain("Open email request");

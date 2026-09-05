@@ -198,9 +198,12 @@ export async function signInWithPassword(
   await clearAuthRateLimitCounters();
   await page.goto(`/login?from=${encodeURIComponent(callbackURL)}`);
   await page.getByRole("button", { name: "Continue with email" }).click();
-  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByRole("button", { name: "Use password instead" }).click();
-  await page.getByLabel("Password").fill(password);
+  // `exact` is load-bearing: the field's own visibility toggle is labelled "Show password", and
+  // getByLabel matches on a case-insensitive SUBSTRING, so the loose form resolves to two nodes
+  // and fails strict mode on a page that is in fact correct.
+  await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Log in" }).click();
   await expect(page).toHaveURL(new URL(callbackURL, E2E_BASE_URL).toString());
   await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
