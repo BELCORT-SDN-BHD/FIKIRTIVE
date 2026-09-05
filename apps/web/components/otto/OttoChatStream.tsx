@@ -521,6 +521,10 @@ export function OttoChatStream({
 
   const isStreaming = status === "streaming";
   const isBusy = status === "submitted" || status === "streaming";
+  // 送出那一下的闸,键盘与发送键读同一个判据(判官 #1242)。`isBusy` 只说「这一轮还在路上」,
+  // 而一张还在传的参考此刻还没有 generationId —— 让 Enter 抢在它前面送出,那件参考就无声不上车。
+  // 起步页 `StartSomething.tsx` 的 `busy = pending || uploading` 是同一个形状。
+  const composerBusy = isBusy || uploading;
 
   async function loadOlderMessages() {
     if (!hasOlderMessages || oldestSeq === null || loadingOlderMessages) return;
@@ -697,7 +701,7 @@ export function OttoChatStream({
 
   function submit() {
     const trimmed = text.trim();
-    if (!trimmed || isBusy || submitLockRef.current) return;
+    if (!trimmed || composerBusy || submitLockRef.current) return;
     submitLockRef.current = true;
     const entityIds = picker.entityIdsForSend(trimmed);
     // FRONT-A10:「这条消息提到了谁」—— 与 entityIds(生成条件)是两条路,一起上行。
@@ -2002,7 +2006,7 @@ export function OttoChatStream({
                   {/* 走查 P0-4:这颗按钮从前整整 49 秒都写着「Sending…」,读起来是请求挂住了,
                       而不是 Otto 在做事。发送与做事是两件事,`status` 本来就分得清:
                       submitted = 请求还在路上,streaming = 回信已经在写了。 */}
-                  <InputGroupButton variant="default" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
+                  <InputGroupButton variant="default" size="sm" disabled={composerBusy || !text.trim()} onClick={submit}>
                     {isBusy && <Spinner data-icon="inline-start" aria-label={isStreaming ? "Otto is working" : "Sending message"} />}
                     {isBusy ? (isStreaming ? "Working…" : "Sending…") : "Send"}
                   </InputGroupButton>
