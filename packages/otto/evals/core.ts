@@ -152,7 +152,11 @@ export function totalScore(tasks: TaskResult[]): { total: number; points: number
 
 /** 单次全跑的硬上限（`docs/specs/otto-engine.md` §7.7 建议值）。超了就停，不是警告。 */
 export const FULL_RUN_BUDGET_USD = 10;
-/** 本段累计预算（§7.7）。runner 会把 baselines/ 里已记的花费加起来对照它。 */
+/**
+ * 本段累计预算（§7.7）。**是真闸，不是记账口径**：开跑之前 runner 把 `baselines/` 里
+ * 每一份档案的 `costUsd` 加起来，再加上本次全跑的最坏花费，超过它就拒跑（一分钱不花）。
+ * 见 `runner.ts` 的 `recordedSegmentUsd` / `worstCaseRunUsd` / `preflight`。
+ */
 export const SEGMENT_BUDGET_USD = 20;
 
 export interface TokenPrices {
