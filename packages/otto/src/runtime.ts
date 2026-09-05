@@ -77,8 +77,9 @@ export type CacheCapabilities = {
   readonly promptCache: boolean;
 };
 
-/** Credit price lookup for a billable model id (production: llmPricesFor — unknown
- *  model falls back to sonnet pricing, NEVER zero). */
+/** Credit price lookup for a billable model id (production: llmPricesFor — ENGINE-A5(①段):
+ *  一个不在价目表里的型号 THROWS。猜价(子串匹配 → sonnet 兜底)已经删掉,所以这里再没有
+ *  「查不到也能收钱」的那条路。 */
 export type PricingLookup = (modelId: string) => LlmPrices;
 
 /**
@@ -115,6 +116,13 @@ export type OttoRuntime = {
    *  WHITELIST the turn trace folds tool names through: a name that is not in here can never
    *  reach the trace row, so no model-authored string can ride in on that field. */
   readonly actionNames: ReadonlySet<string>;
+  /** ENGINE-A4 — the subset of `actionNames` that can LEAVE SOMETHING BEHIND: every composed
+   *  skill declared `effect: "write"` (registry.ts). It is the structural half of §7.2⑤'s
+   *  「这一轮交付了什么」 verdict — a completed call to one of these is a canvas node, a saved
+   *  product, a written message artifact; a completed call to anything else is a READ, which
+   *  hands the merchant nothing they still have after the turn dies. Derived from the SAME
+   *  `deps.skills` as `actionNames`, so the two can never drift. */
+  readonly deliveringActionNames: ReadonlySet<string>;
 };
 
 /**
@@ -163,6 +171,12 @@ export function createOttoRuntime(deps: OttoRuntimeDeps, profile: OttoRunProfile
     // ENGINE-A2: the trace's action whitelist, derived from the very same list the tools are
     // built from — one registry, so the two can never drift into "traced but not composed".
     actionNames: Object.freeze(new Set(deps.skills.map((s) => s.name))) as ReadonlySet<string>,
+    // ENGINE-A4: same list, one filter. `effect` is a DECLARED field on every skill
+    // (skill.ts) — the refund verdict therefore reads a property the skill author already had
+    // to fill in, not a second hand-maintained roster that a new skill could be forgotten from.
+    deliveringActionNames: Object.freeze(
+      new Set(deps.skills.filter((s) => s.effect === "write").map((s) => s.name)),
+    ) as ReadonlySet<string>,
   });
 }
 
@@ -337,6 +351,66 @@ export function collectTurnTraceFacts(
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ENGINE-A4 — 这一轮交付了什么(spec §7.2⑤)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The COUNTER §7.2⑤ asks for: how many deliverables this turn left behind.
+ *
+ * 「交付」的口径是**结构性**的,不是读文本 —— 没有任何一处去看模型说了什么:
+ *   · `cards`  = 铸出的卡片:停在审批位上的调用。商家屏幕上就是一张等他确认的卡。
+ *   · `writes` = 落盘的产物:**完成**的写动作(画布节点、保存的产品、记下的品牌事实……),
+ *                名字必须在 `deliveringActionNames`(= 声明了 `effect: "write"` 的技能)里。
+ *
+ * 一次成功的**读**(查产品、搜网页、看排期)不算交付:轮子死了之后商家手里什么都没多。
+ * 这正是本段与钱的接缝 —— 搜索腿也跟着整笔退(§7.2⑤「搜索腿一并退」),而一轮只搜不写的
+ * 截断轮,按这个口径就是零交付。
+ */
+export type OttoTurnDelivery = {
+  readonly cards: number;
+  readonly writes: number;
+};
+
+/**
+ * Fold one finished/truncated run into the delivery counter.
+ *
+ * 与②段的 `collectTurnTraceFacts` **同一份事实**:同一个 `generatedItemsOf(state)`、同一种
+ * 结构读法(never cast),所以「档案说这一轮调了什么」与「钱说这一轮交付了没有」不可能各说
+ * 各话。SDK 的 state 形状变了就退化成「数不到交付」—— 方向是**退钱**,不是照收。
+ */
+export function collectTurnDelivery(
+  state: unknown,
+  deliveringActionNames: ReadonlySet<string>,
+): OttoTurnDelivery {
+  let cards = 0;
+  let writes = 0;
+  for (const item of generatedItemsOf(state)) {
+    const type = (item as { type?: unknown }).type;
+    if (type === "tool_approval_item") {
+      cards += 1;
+      continue;
+    }
+    const raw = rawItemOf(item);
+    if (!raw) continue;
+    if (
+      type === "tool_call_output_item" &&
+      raw.type === "function_call_result" &&
+      raw.status === "completed" &&
+      typeof raw.name === "string" &&
+      deliveringActionNames.has(raw.name)
+    ) {
+      writes += 1;
+    }
+  }
+  return { cards, writes };
+}
+
+/** 零交付 = 卡片和落盘产物都是 0。一个字段都不许缺省成「有」—— fail closed 的方向是退钱。 */
+export function turnDelivered(delivery: OttoTurnDelivery): boolean {
+  return delivery.cards + delivery.writes > 0;
+}
+
 /** Hand the facts to the sink. A trace is DIAGNOSTIC: it must never be able to fail a turn the
  *  merchant already paid for, so every throw stops here with one log line. The facts arrive as a
  *  thunk on purpose: collecting them walks SDK-shaped state, so that walk has to sit INSIDE this
@@ -427,10 +501,27 @@ export function ottoBudgetArgsFor(
       : undefined,
     extraSettleInternal: slots ? () => searchChargeInternal(slots.succeeded) : undefined,
     prices: mr.pricing(mr.billableModelId),
-    usageOnError: (e: unknown) =>
-      e instanceof MaxTurnsError && (e as { state?: { usage?: unknown } }).state?.usage
-        ? mr.mapUsage((e as { state: { usage: Parameters<UsageMapper>[0] } }).state.usage)
-        : null,
+    // ENGINE-A4(规格 §7.2⑤,Founder S1 九问 1② 的裁决)—— **截断且零交付的一轮全额退款**。
+    //
+    // 从前这里只问一件事:「跑满步数的错误身上带着真实用量吗?」带着就按实结算。meter.ts 的
+    // 不变量 #10 把那条路写成 by design:「delivery-less but paid」。裁决把它改了 —— 商家手里
+    // 什么都没多出来的一轮,不收钱;烧掉的 token 与已经成功的搜索由平台吸收。
+    //
+    // 判定读的是错误自己带回来的 RunState,与②段的档案同一份事实(collectTurnDelivery)。
+    // 返回 null ⇒ 走 meter.ts 的整笔退款分支:退的是**整个预扣**(含 extraHoldUnits 那几格
+    // 坚实预留的搜索钱,refundReservation 的金额读自 RESERVE 行,不分腿),并触发既有的
+    // `onRefundedFailure` 只读钩子,让入口能对商家说实话。账本形态不变:reserve/refund 成对、
+    // 净变 0,不新增幂等键。
+    //
+    // 有交付的截断轮**维持原状**按实际用量结算 —— 卡片、画布节点、写下的产物都已经在商家
+    // 手里了,那一轮不是白跑。
+    usageOnError: (e: unknown) => {
+      if (!(e instanceof MaxTurnsError)) return null;
+      const state = (e as { state?: { usage?: unknown } }).state;
+      if (!state?.usage) return null;
+      if (!turnDelivered(collectTurnDelivery(state, runtime.deliveringActionNames))) return null;
+      return mr.mapUsage((state as { usage: Parameters<UsageMapper>[0] }).usage);
+    },
   };
 }
 
@@ -489,6 +580,11 @@ function assertResumedStateCarriesLiveContext(input: OttoTurnRequest["input"], c
  *    (emitTurnTrace takes the collector as a thunk), nothing here touches
  *    the reserve/settle/refund parameters, and the runner's return value and thrown errors are
  *    byte-identical to before with or without a port.
+ *
+ * ENGINE-A4 (spec §7.2⑤): the truncated exit is ALSO where the money verdict is made. The same
+ * RunState the trace is folded from decides, through `ottoBudgetArgsFor`'s `usageOnError`,
+ * whether this turn delivered anything — zero delivery ⇒ the whole hold is refunded. The
+ * runner's own control flow is unchanged: the error still propagates untouched.
  */
 export async function runOttoTurn(
   request: OttoTurnRequest,

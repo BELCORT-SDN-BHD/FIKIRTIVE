@@ -379,12 +379,80 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
     expect(args.paid).toBe(true);
     expect(args.maxSteps).toBe(OTTO_MAX_STEPS);
     expect(args.prices).toBe(llmPricesFor("claude-sonnet-4-6"));
-    // Truncation metering: MaxTurnsExceededError carrying state.usage → ACTUAL usage settle.
+    // Truncation metering: MaxTurnsExceededError carrying state.usage → ACTUAL usage settle,
+    // **只在这一轮真的交付了东西时**(ENGINE-A4,⑤段)。这里放一个完成的写动作(manageCanvas)。
     const truncated = new MaxTurnsExceededError("max turns");
-    (truncated as unknown as { state: unknown }).state = { usage: { inputTokens: 7, outputTokens: 3 } };
+    (truncated as unknown as { state: unknown }).state = {
+      usage: { inputTokens: 7, outputTokens: 3 },
+      _generatedItems: [
+        { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c1", name: "manageCanvas", status: "completed" } },
+      ],
+    };
     expect(args.usageOnError?.(truncated)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
     expect(args.usageOnError?.(new MaxTurnsExceededError("no state"))).toBeNull();
     expect(args.usageOnError?.(new Error("boom"))).toBeNull();
+  });
+
+  // ── ENGINE-A4(⑤段 §7.2⑤):截断轮退款的判定,在 budget args 这一层 ──────────────────
+  //
+  // 这几条钉的是**判词本身**,不是账本(账本那一半在 apps/web 的真库行为测试里)。判词只有
+  // 一句话:usageOnError 交回 null ⇒ meter.ts 整笔退款;交回用量 ⇒ 按实结算。
+  describe("ENGINE-A4 — 截断轮:零交付交回 null(整笔退款),有交付照旧按实结算", () => {
+    const truncatedWith = (items: unknown[]) => {
+      const e = new MaxTurnsExceededError("max turns");
+      (e as unknown as { state: unknown }).state = {
+        usage: { inputTokens: 7, outputTokens: 3 },
+        _generatedItems: items,
+      };
+      return e;
+    };
+    const args = () =>
+      ottoBudgetArgsFor(ottoInteractiveRuntime, { orgId: "org_1", refId: "otto-stream:m1", input: "x" });
+
+    it("ENGINE-A4:什么都没交付(只成功搜了几次网)⇒ null ⇒ 整笔退款,搜索腿一并退", () => {
+      const onlyReads = truncatedWith([
+        { type: "tool_call_item", rawItem: { type: "function_call", callId: "c1", name: "researchWeb", arguments: "{}", status: "completed" } },
+        { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c1", name: "researchWeb", status: "completed" } },
+        { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c2", name: "lookupProducts", status: "completed" } },
+        { type: "message_output_item", rawItem: { type: "message", role: "assistant", content: [{ type: "output_text", text: "still thinking" }] } },
+      ]);
+      expect(args().usageOnError?.(onlyReads)).toBeNull();
+    });
+
+    it("ENGINE-A4:零 item 的截断轮 ⇒ null", () => {
+      expect(args().usageOnError?.(truncatedWith([]))).toBeNull();
+    });
+
+    it("ENGINE-A4:落盘的产物(完成的写动作)⇒ 按实结算,不退", () => {
+      const wrote = truncatedWith([
+        { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c1", name: "rememberBrandFact", status: "completed" } },
+      ]);
+      expect(wrote && args().usageOnError?.(wrote)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    });
+
+    it("ENGINE-A4:铸出的卡片(停在审批位上的调用)⇒ 按实结算,不退", () => {
+      const carded = truncatedWith([
+        { type: "tool_approval_item", rawItem: { type: "function_call", callId: "c1", name: "generate", arguments: "{}", status: "completed" } },
+      ]);
+      expect(args().usageOnError?.(carded)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    });
+
+    it("ENGINE-A4:失败的写动作不算交付 —— 商家手里还是什么都没有 ⇒ null", () => {
+      const failedWrite = truncatedWith([
+        { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c1", name: "manageCanvas", status: "incomplete" } },
+      ]);
+      expect(args().usageOnError?.(failedWrite)).toBeNull();
+    });
+
+    it("ENGINE-A4:交付名单来自注册表的 effect:\"write\",不是第二份手抄名单", () => {
+      const write = [...ottoInteractiveRuntime.deliveringActionNames];
+      expect(write).toContain("manageCanvas");
+      expect(write).toContain("rememberBrandFact");
+      expect(write).not.toContain("researchWeb");
+      expect(write).not.toContain("lookupProducts");
+      // 交付名单必然是动作白名单的子集 —— 两者折自同一份 deps.skills。
+      for (const name of write) expect(ottoInteractiveRuntime.actionNames.has(name)).toBe(true);
+    });
   });
 
   // ── Founder 的第二次裁决(2026-08-18):对话按用量收费,API 成本 + 5% ──────────────────────
@@ -790,6 +858,10 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
       // ENGINE-A2: the trace's action whitelist travels with the runtime. This hand-built
       // legacy runtime mirrors createOttoRuntime's derivation from the same skill list.
       actionNames: new Set(allSkills.map((skill) => skill.name)) as ReadonlySet<string>,
+      // ENGINE-A4: 同一份名单的写子集,同样照 createOttoRuntime 的推导写一遍。
+      deliveringActionNames: new Set(
+        allSkills.filter((skill) => skill.effect === "write").map((skill) => skill.name),
+      ) as ReadonlySet<string>,
     });
     const parkedResult = await runOttoTurn(
       { orgId: "org_t", refId: "fixture:legacy-park", input: "approve the legacy post" },
