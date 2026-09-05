@@ -87,6 +87,7 @@ Otto 的引擎重组为「技能文件柜大脑 + 类型化动作 + 可测质量
 | 日期 | 想法 | 裁决（留空待 S5） |
 |---|---|---|
 | 2026-09-02 | **素材理解时效目标未定义**(上传后多久被 Otto 认识)。现值=扫描器 25 件/分钟建行 + UNDERSTAND_CONCURRENCY=2(2000 张≈80 分钟),沿用平台自付时代保守值,不对应任何承诺;供应商请求闸门是平台共享参数(官方并发 10,生成侧用 1),调整须同时看 Creation。钱引擎顾问复审场(Founder 2026-09-02)判定此事归 Otto 引擎而非钱引擎;待 beta 真实上传量后定时效目标,再调两常量 | |
+| 2026-09-05 | **①段（ENGINE-A5）落地登记（三件与 §7.2① 写法不同之处，均按现码做）**：(a) `OTTO_FALLBACK_MODEL = "claude-sonnet-4-5"` 从前靠子串猜价才拿到 sonnet 价，猜价删掉后它必须自己进价目表，故 `packages/core/src/llm-prices.ts` 的表从两行加到三行（同档价，$3/$15）；(b) 开机检查的「型号必须已定价」判的是两个**代码常量**而非 env 变量，warn 免疫资格因此挂到 `EnvProblem.moneyInvariant` 上（`ENV_CONTRACT` 的 spec 标记仍只有 `OTTO_LLM_MARGIN`），并给 `CheckEnvOptions` 加一个只为可测而存在的 `pricedModelIds` 缝；(c) `packages/otto/src/meter.ts:5`（不变量 #5「Unknown model → sonnet pricing」）、`:158`、`packages/otto/src/runtime.ts:80` 三处注释在本段之后已失真，但这两个文件属②④⑤⑥段写集，本段未动——请⑤段（或先合并到这两个文件的那一段）顺手改成「未定价即抛」。另记：`runtime.ts:258` 的 `prices: mr.pricing(mr.billableModelId)` 对 `paid:false` 的夹具 manifest 也照查价（本段把夹具的 `pricing` 改成自带 sonnet 价目以适配），是否改成只在 paid 时查价，留给⑤段判断 | |
 
 ## 6. 改签记录
 

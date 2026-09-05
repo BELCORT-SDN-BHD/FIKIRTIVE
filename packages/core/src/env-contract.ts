@@ -40,7 +40,7 @@
  */
 import { createHmac } from "node:crypto";
 import { z } from "zod";
-import { OTTO_LLM_MARGIN_FLOOR } from "./llm-prices.js";
+import { OTTO_LLM_MARGIN_FLOOR, OTTO_BILLABLE_MODEL_ID, PRICED_MODEL_IDS, llmPricesOrNull } from "./llm-prices.js";
 
 /** 谁读这个变量。both = web 与 worker 都读(其中 shared 的还必须是同一个值)。 */
 export type EnvSurface = "web" | "worker" | "both";
@@ -1199,6 +1199,15 @@ export type EnvProblem = {
   kind: EnvProblemKind;
   /** 人话说明。永远只含变量名与规则,绝不含值。 */
   message: string;
+  /**
+   * 这条问题本身是**钱路不变量**(对 `FIKIRTIVE_ENV_CONTRACT=warn` 免疫,MONEY-A2)。
+   *
+   * 为什么问题上要有这个标记,而不是只看 `ENV_CONTRACT_BY_NAME` 上的 spec 标记:因为不是
+   * 每一条钱路开机检查都对应一个 env 变量。ENGINE-A5 的「型号必须已定价」判的是两个**代码
+   * 常量**是否还对得上(计价型号 vs 价目表),它没有变量名可查,而它配错的后果与费率配错
+   * 同一族 —— 每一笔都按错的价收。所以免疫资格跟着**问题**走,spec 标记是它的来源之一。
+   */
+  moneyInvariant?: true;
 };
 
 export type CheckEnvOptions = {
@@ -1206,6 +1215,13 @@ export type CheckEnvOptions = {
   surface: "web" | "worker";
   /** true 时缺失也是问题;false 时只报格式错误。 */
   production: boolean;
+  /**
+   * 开机必须查到价的型号 id(ENGINE-A5)。默认就是计价型号本身,生产调用方不传。
+   *
+   * 参数存在的唯一理由是**这条检查可被测**:默认值下它是常量对常量,一个用例都写不出来
+   * (要么永远绿,要么永远红),而「warn 免疫」这条验收必须当场演示得出来。
+   */
+  pricedModelIds?: readonly string[];
 };
 
 const appliesTo = (spec: EnvVarSpec, surface: "web" | "worker") => spec.surface === "both" || spec.surface === surface;
@@ -1300,7 +1316,32 @@ export function checkEnv(env: EnvRecord, opts: CheckEnvOptions): EnvProblem[] {
       });
     }
   }
+  problems.push(...unpricedModelProblems(opts.pricedModelIds ?? [OTTO_BILLABLE_MODEL_ID]));
   return problems;
+}
+
+/**
+ * ENGINE-A5 —— **型号必须已定价**。计价用的型号 id 在价目表里查不到 → 开机拒绝。
+ *
+ * 与 OTTO_LLM_MARGIN 的 `minimum` 同一族守卫,只是配错的位置从环境变量挪到了代码常量:
+ * 换一个型号进 manifest 而忘了给它一行价,以前不会红、不会报,只会按别人的价收钱
+ * (llm-prices.ts 的子串猜价,已删)。两处落点缺一不可 —— 组合期在
+ * `packages/otto/src/model.ts` 的 manifest 构造处抛(拒绝启动),这里是**说给运维听的**
+ * 那一半:点名型号、给出两条出路,并且**对 `FIKIRTIVE_ENV_CONTRACT=warn` 免疫**(MONEY-A2
+ * 已立的口径:钱的违规不因 warn 模式转黄)。
+ */
+function unpricedModelProblems(ids: readonly string[]): EnvProblem[] {
+  return ids
+    .filter((id) => llmPricesOrNull(id) === null)
+    .map((id) => ({
+      name: "OTTO_BILLABLE_MODEL_ID",
+      kind: "invalid" as const,
+      message:
+        `OTTO_BILLABLE_MODEL_ID is "${id}", which has no entry in the LLM price table ` +
+        `— 未定价的型号会让每一次计费都按别的型号的价收钱:把它加进 packages/core/src/llm-prices.ts ` +
+        `的价目表,或改回已定价型号(priced today: ${PRICED_MODEL_IDS.join(", ")})`,
+      moneyInvariant: true as const,
+    }));
 }
 
 /**
@@ -1340,7 +1381,9 @@ export type BootEnvDecision =
 export function bootEnvDecision(env: EnvRecord, opts: CheckEnvOptions): BootEnvDecision {
   const problems = checkEnv(env, opts);
   if (problems.length === 0) return { action: "ok" };
-  const moneyProblems = problems.filter((p) => ENV_CONTRACT_BY_NAME.get(p.name)?.moneyInvariant === true);
+  const moneyProblems = problems.filter(
+    (p) => p.moneyInvariant === true || ENV_CONTRACT_BY_NAME.get(p.name)?.moneyInvariant === true,
+  );
   const report =
     formatEnvProblems(problems, opts.surface) +
     (moneyProblems.length && opts.production
