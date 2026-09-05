@@ -57,6 +57,37 @@ export function toEntityDTO(e: EntityWithOttoUsage): EntityDTO {
   };
 }
 
+/**
+ * 确认卡上那份 `params`,**商家看得见的那几格**,原样送到客户端。
+ *
+ * 终检 r5(#1230 G3):改过张数与形状之后刷新画布,同一张卡上「选中的」与「要收的钱」
+ * 分了家 —— 卡头写「1 image」、Images 下拉回到 1、Shape 下拉回到第一格,而规格条与按钮
+ * 上的价说的是真正会跑的那一份(2 张、4:3)。根因就在这里:这条读路把整个 `params` 丢掉了,
+ * 于是 `CardOptionControls` 与卡头只能落回自己的默认值(`params?.count ?? 1`、空字符串 ⇒
+ * 浏览器选第一格),而 `specChips` / `estimatedCredits` / `fineDetail` 走的是另一条(未被丢掉的)
+ * 路。改完还没刷新时两边一致,是因为那一刻卡面读的是服务端动作直接交回来的**完整** payload。
+ *
+ * 修在这里而不是在卡上:卡面每一格都必须读**同一份服务端已落库的选项**。让卡自己从
+ * `specChips` 那几句话里反推张数与形状,就是第二处派生 —— 那正是 #580 的病。
+ *
+ * 仍然丢掉的是 `model` 与 `reason`:它们带引擎名(Founder 常令,供应商保密),而这里这五格
+ * 都是商家在卡上自己选的东西,规格条早已把它们写在同一张卡上。白名单式取值 ⇒ 将来往
+ * `params` 里加一格内部字段,不会因为「展开」而悄悄跟着上路。
+ */
+function cardParamsDTO(raw: unknown): { params?: Record<string, unknown> } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const q = raw as Record<string, unknown>;
+  return {
+    params: {
+      ...(typeof q.aspectRatio === "string" ? { aspectRatio: q.aspectRatio } : {}),
+      ...(typeof q.resolution === "string" ? { resolution: q.resolution } : {}),
+      ...(typeof q.durationSeconds === "number" ? { durationSeconds: q.durationSeconds } : {}),
+      ...(typeof q.audio === "boolean" ? { audio: q.audio } : {}),
+      ...(typeof q.count === "number" ? { count: q.count } : {}),
+    },
+  };
+}
+
 export function toChatMessageDTO(
   m: ChatThreadWithMessages["messages"][number],
   urlsByJob: Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>,
@@ -83,11 +114,11 @@ export function toChatMessageDTO(
     if (proposal.success) {
       const {
         model: _model,
-        params: _params,
+        params: rawParams,
         reason: _reason,
         ...publicPayload
       } = p;
-      payload = { ...publicPayload, ...proposal.data };
+      payload = { ...publicPayload, ...cardParamsDTO(rawParams), ...proposal.data };
     }
   } else if (m.kind === "GEN_RESULT") {
     const p = (m.payload ?? {}) as { kind?: string; costCredits?: number };

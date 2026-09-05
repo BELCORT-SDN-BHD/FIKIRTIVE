@@ -26,7 +26,8 @@ describe("toChatMessageDTO — generation provider secrecy", () => {
         entityIds: [],
         variantSel: {},
         model: "seedream",
-        params: { count: 1 },
+        // 商家在卡上自己选的那几格 + 一格内部字段(白名单外,不该上路)。
+        params: { count: 2, aspectRatio: "4:3", providerRoute: "seedream-fast" },
         reason: "Selected by the generation provider",
         packId: "pack-1",
         packTitle: "Launch pack",
@@ -44,8 +45,11 @@ describe("toChatMessageDTO — generation provider secrecy", () => {
       estimatedCredits: 1,
     });
     expect(payload).not.toHaveProperty("model");
-    expect(payload).not.toHaveProperty("params");
     expect(payload).not.toHaveProperty("reason");
+    // 终检 r5(#1230 G3):`params` 里**商家自己选的那几格**必须上路 —— 卡头与卡上那两个
+    // 下拉读的就是它。从前整块被剥掉,于是刷新之后「选中的」与「要收的钱」分了家。
+    // 取值是白名单式的:`providerRoute` 这种内部字段照旧留在服务端。
+    expect(payload.params).toEqual({ count: 2, aspectRatio: "4:3" });
     expect(JSON.stringify(payload)).not.toMatch(/seedance|seedream|byteplus|bytedance|jimeng|即梦|\bfal\b|anthropic|claude/iu);
   });
 
