@@ -303,9 +303,13 @@ export function OttoPanelHost({
   // 没有任何读者会因为这一页是哪一页而改变这一轮的上下文(`buildOttoContext` 的入参里
   // 没有 `surface`/`subjectRef`;引擎里这两个名字出现 0 次)。
   //
-  // 这一行说的是**这一条对话属于哪里**,不是「Otto 读得到什么」。两种确知的归属各写一句:
-  //   · `surface === "canvas"` → `Canvas · <画布名>`;
-  //   · `surface === "panel"`  → `Workspace · <页面名>`(页面名取自导航表那一份权威);
+  // 这一行说的是**位置**,不是「Otto 读得到什么」。两段不是同一件事,别把整条读成「归属」
+  // (判官 #1247 K7 P2-2):第一段(`Canvas` / `Workspace`)才是这一条对话的归属,取自
+  // `active.surface`;第二段是名字,而两态取法不同 ——
+  //   · `surface === "canvas"` → `Canvas · <画布名>`,画布名跟着这条对话走(`active.projectId`);
+  //   · `surface === "panel"`  → `Workspace · <页面名>`,页面名跟着**商家此刻打开的那一页**走
+  //     (`panelContextSubject(location)`,导航表那一份权威),同一条工作区对话在不同页面上
+  //     读到的第二段就不一样 —— 它说的是「你现在在哪一页」,不是「这条对话属于哪一页」;
   //   · 新对话、以及来路不明的老行(`surface === null`)→ 一行都不画。
   //
   // 为什么老行不画(判官 P2-1):「不是 panel」里混着「确知是画布」与「查不出来」两种东西。
