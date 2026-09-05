@@ -254,6 +254,55 @@ describe("FRONT-A3:Home 的 Retry 是一次真重取,不是一条指回原地的
     expect(statusText()).not.toContain("Still unavailable");
   });
 
+  /**
+   * 复位的口径是「**不是** `unavailable` 就算读回来了」(尾巴轮四组一,#1232 判官 P2-2)。
+   *
+   * 上面两条用的是 `partial`,而当时的判据写的正是 `partial || ready` —— 它比自己的理由窄了
+   * 两格。`insufficient`(连上了、这段时间的数不够下结论)与 `not-configured`(还没有能用的
+   * 连接)同样是一次**成功的读**:服务器答上来了,上一次重试的故事就结束了。下面两条走的正是
+   * 判官探针那条时间线:unavailable → Retry → insufficient → 再翻回 unavailable。
+   * 变异实证:把判据改回 `partial || ready`,这两条当场红。
+   */
+  it("FRONT-A3:Home 重试读到 insufficient 之后再翻回读不出来,没按 Retry 就不说那一句", async () => {
+    await renderHome({ state: "unavailable", goal: "online-sales", retryable: true });
+    await click(buttonLabelled("Retry")!);
+    expect(statusText()).toContain("Still unavailable. Try again in a few minutes.");
+
+    // 服务器这一次答上来了 —— 答的是「数不够」,可它仍然是一次读回来。
+    await act(async () =>
+      root!.render(
+        homeElement({ state: "insufficient", goal: "online-sales", source: { id: "meta-ads", label: "Meta ads" } }),
+      ),
+    );
+    // 同一个挂载里再翻回读不出来(换个 range/comparison 再读的那一下)。
+    await act(async () =>
+      root!.render(homeElement({ state: "unavailable", goal: "online-sales", retryable: true })),
+    );
+
+    expect(buttonLabelled("Retry"), "这一屏本该又是那颗 Retry 按钮").toBeTruthy();
+    expect(statusText(), "商家没按 Retry,屏幕却替他说了一句「仍然」").not.toContain(
+      "Still unavailable",
+    );
+  });
+
+  it("FRONT-A3:Analysis 重试读到 insufficient 之后再翻回读不出来,同样不说那一句", async () => {
+    await renderAnalysis({ state: "unavailable", goal: "online-sales", retryable: true });
+    await click(buttonLabelled("Retry analysis")!);
+    expect(statusText()).toContain("Still unavailable. Try again in a few minutes.");
+
+    await act(async () =>
+      root!.render(
+        analysisElement({ state: "insufficient", goal: "online-sales", source: { id: "meta-ads", label: "Meta ads" } }),
+      ),
+    );
+    await act(async () =>
+      root!.render(analysisElement({ state: "unavailable", goal: "online-sales", retryable: true })),
+    );
+
+    expect(buttonLabelled("Retry analysis")).toBeTruthy();
+    expect(statusText()).not.toContain("Still unavailable");
+  });
+
   it("FRONT-A3:不是重试的恢复状态不会冒出那一句", async () => {
     await renderHome({ state: "not-configured", goal: "online-sales", action: "connect" });
     expect(statusText()).not.toContain("Still unavailable");

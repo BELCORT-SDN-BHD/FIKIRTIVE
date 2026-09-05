@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
  * 崩溃页的共用形状 —— 2026-09-05 走查 P2「崩溃页两套不一致」(验收 FRONT-A14)。
  *
  * 仓库里本来有两套崩溃页:
- *   ① 路由段自己的那九个 boundary(`app/create/error.tsx`、`app/campaign/error.tsx`、
+ *   ① 路由段自己的那些 boundary(`app/create/error.tsx`、`app/campaign/error.tsx`、
  *      `app/crm/<节>/error.tsx` …)—— 一张卡、一颗警告图标、一行 `Error reference: <digest>`;
  *   ② 兜底的那两个(`app/error.tsx`、`app/global-error.tsx`)—— 居中裸文字、没有卡、
  *      错误编号那一行的措辞还不一样(`Reference:`)。

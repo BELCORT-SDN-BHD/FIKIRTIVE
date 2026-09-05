@@ -392,10 +392,17 @@ export function MarketingHomeView({
    * 没读出来」,不是「这一屏读不出来」;服务器给出数据的那一刻,上一次重试的故事就结束了。
    *
    * 复位写在渲染里而不是 effect 里(React 官方的「prop 变了就调整 state」那一条):effect
-   * 会多渲一拍,而且 `react-hooks/set-state-in-effect` 直接判红。这里只在 partial/ready 与
+   * 会多渲一拍,而且 `react-hooks/set-state-in-effect` 直接判红。这里只在「读回来了」与
    * 「读不出来」之间**真的翻面**的那一次改 state,同一屏重渲染零动作。
+   *
+   * 口径是「**不是** `unavailable` 就算读回来了」(尾巴轮四组一,#1232 判官 P2-2)。从前写的是
+   * `partial || ready`,比它自己的理由窄了两格:`insufficient`(连上了、可这段时间的数不够
+   * 下结论)与 `not-configured`(还没有能用的连接)同样是一次**成功的读** —— 服务器答上来了。
+   * 商家按过 Retry 读到 `insufficient`、接着换个 range 再读又碰上一次读不出来,记号没复位,
+   * 屏幕就替他说了一句「Still unavailable」—— 而他一根手指都没碰 Retry。那一句只属于他**刚
+   * 按过的那一次**重试;`unavailable` 才是「这一次仍然没读出来」,别的都不是。
    */
-  const healthRecovered = health.state === "partial" || health.state === "ready";
+  const healthRecovered = health.state !== "unavailable";
   const [lastRecovered, setLastRecovered] = useState(healthRecovered);
   if (healthRecovered !== lastRecovered) {
     setLastRecovered(healthRecovered);
