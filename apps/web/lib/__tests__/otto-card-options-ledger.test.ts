@@ -52,12 +52,14 @@ const { prisma, settleCredits } = await import("@fikirtive/db");
 
 const PROMPT = "A pandan kaya jar on a marble counter";
 
-function ottoCtx(over: { orgId: string; projectId: string; threadId: string }): OttoContext {
+function ottoCtx(world: { ownerId: string; projectId: string; threadId: string }): OttoContext {
   return {
+    orgId: world.ownerId,
     userId: "user-test",
+    projectId: world.projectId,
+    threadId: world.threadId,
     disabledModels: [],
     sourceGenerationId: null,
-    ...over,
   } as OttoContext;
 }
 
