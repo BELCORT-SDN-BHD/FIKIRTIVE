@@ -1,10 +1,25 @@
 // @vitest-environment jsdom
+/**
+ * FRONT-A10 — the one `@` reference menu: row anatomy, row cap and the empty-state exit.
+ *
+ * 前身是 `otto-mention-popover.test.tsx`(打在 `components/otto/OttoMentionPopover.tsx` 上)。
+ * 那个组件被「两套 `@` 收口成一个选择器」这一刀替换成 `ReferencePickerMenu`,断言指着的组件
+ * 因此换了一个;**口径一个字没改**:
+ *   - 合约 §2「最多显示约 8 行,之后在菜单内部滚动」——「切到 8 行」仍在菜单渲染时做
+ *     (`REFERENCE_PAGE_LIMIT`),服务端一页的上限是另一道同数闸,两边都在;
+ *   - 合约 §3 行解剖:缩略图或类型图标 / 名字 / 一行来源 / 尾部类型图标;
+ *   - 合约 §7 空态只留 `Browse Library` 一个出口,没有 `Upload media`;
+ *   - 没有在跟踪的 `@query` 时菜单不开。
+ */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { OttoMentionPopover } from "@/components/otto/OttoMentionPopover";
-import type { MentionSuggestion } from "@/lib/mention-presentation";
+import {
+  ReferencePickerMenu,
+  type ReferencePickerRow,
+} from "@/components/reference-picker/ReferencePickerMenu";
+import { REFERENCE_PAGE_LIMIT, referenceTypeLabel } from "@/lib/reference-search-model";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.requestAnimationFrame = (callback) => {
@@ -23,8 +38,9 @@ afterEach(async () => {
 });
 
 async function render(props: {
-  suggestions: MentionSuggestion[];
-  queryActive?: boolean;
+  rows: ReferencePickerRow[];
+  open?: boolean;
+  pending?: boolean;
   highlightedIndex?: number;
 }) {
   container = document.createElement("div");
@@ -32,42 +48,55 @@ async function render(props: {
   root = createRoot(container);
   await act(async () =>
     root!.render(
-      <OttoMentionPopover
-        suggestions={props.suggestions}
-        queryActive={props.queryActive}
+      <ReferencePickerMenu
+        open={props.open ?? true}
+        rows={props.rows}
+        pending={props.pending ?? false}
         highlightedIndex={props.highlightedIndex ?? 0}
-        listId="mention-suggestions"
+        listId="reference-picker"
+        title="References"
         onDismiss={() => {}}
         onHighlightChange={() => {}}
         onSelect={() => {}}
       >
         <textarea aria-label="Composer" />
-      </OttoMentionPopover>,
+      </ReferencePickerMenu>,
     ),
   );
   return container;
 }
 
-function entity(index: number): MentionSuggestion {
-  return { id: `entity-${index}`, name: `Reference ${index}`, type: "PRODUCT" };
+function referenceRow(index: number): ReferencePickerRow {
+  return {
+    key: `product:entity-${index}`,
+    kind: "reference",
+    name: `Reference ${index}`,
+    source: `${referenceTypeLabel("product")} · Library`,
+    thumbUrl: null,
+    type: "product",
+  };
 }
 
 describe("FRONT-A10 Otto reference picker menu", () => {
   it("FRONT-A10 caps the menu at eight rows and scrolls the rest inside the menu", async () => {
-    await render({ suggestions: Array.from({ length: 12 }, (_, index) => entity(index)) });
+    // 合约 §2 的上限由**画行的那个组件**兜底:给它 12 行,它只画 8 行,第 9 行看不到。
+    // 服务端一页也是 8(`REFERENCE_PAGE_LIMIT`),但那是另一道闸——这一条钉的是菜单自己。
+    expect(REFERENCE_PAGE_LIMIT).toBe(8);
+
+    await render({ rows: Array.from({ length: 12 }, (_, i) => referenceRow(i)) });
 
     const options = document.querySelectorAll('[role="option"]');
     expect(options).toHaveLength(8);
     expect(options[7]?.textContent).toContain("Reference 7");
     expect(document.body.textContent).not.toContain("Reference 8");
 
-    const scroller = document.querySelector('[role="listbox"] > div')!;
+    const scroller = document.querySelector('[role="option"]')!.parentElement!;
     expect(scroller.className).toContain("max-h-[352px]");
     expect(scroller.className).toContain("overflow-y-auto");
   });
 
   it("FRONT-A10 offers only the Browse Library exit when a live query finds nothing", async () => {
-    await render({ suggestions: [], queryActive: true });
+    await render({ rows: [], open: true });
 
     const listbox = document.querySelector('[role="listbox"]')!;
     expect(listbox.textContent).toContain("No references found");
@@ -82,25 +111,30 @@ describe("FRONT-A10 Otto reference picker menu", () => {
   });
 
   it("FRONT-A10 keeps the menu closed when no query is being tracked and nothing matches", async () => {
-    await render({ suggestions: [] });
+    await render({ rows: [], open: false });
 
     expect(document.querySelector('[role="listbox"]')).toBeNull();
   });
 
   it("FRONT-A10 draws each row as thumbnail or type icon, name and one source line", async () => {
     await render({
-      suggestions: [
+      rows: [
         {
-          id: "product-1",
+          key: "product:product-1",
+          kind: "reference",
           name: "Jasmine soap",
-          type: "PRODUCT",
-          baseAssetId: "asset-2",
-          refs: [
-            { assetId: "asset-1", url: "/first.png", kind: "image" },
-            { assetId: "asset-2", url: "/base.png", kind: "image" },
-          ],
+          source: `${referenceTypeLabel("product")} · Library`,
+          thumbUrl: "/base.png",
+          type: "product",
         },
-        { id: "character-1", name: "Aisyah", type: "CHARACTER" },
+        {
+          key: "character:character-1",
+          kind: "reference",
+          name: "Aisyah",
+          source: `${referenceTypeLabel("character")} · Library`,
+          thumbUrl: null,
+          type: "character",
+        },
       ],
       highlightedIndex: 1,
     });

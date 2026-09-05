@@ -263,8 +263,21 @@ export const NAVIGATION_OWNED_SURFACES: readonly {
   readonly key: string;
   readonly href: string;
   readonly ownerKey: "home" | "create" | "library" | "brand" | "settings";
+  /**
+   * 顶栏面包屑上,这一层自己的字 —— 面包屑写成 `<owner 那格的名字> / <这个字>`。
+   *
+   * 没有它 = 面包屑就是 owner 那格的名字,这是绝大多数 child surface 的样子(`/billing`
+   * 写「Settings」,不写「Settings / Billing & credits」;已批准的 Settings pattern 就是
+   * 这么画的)。有它 = 已批准的设计明确要求写出这一层:Home analysis 的夹具
+   * (design-system/patterns/founder-home/HomeAnalysisReference.tsx)顶栏写的是
+   * 「Workspace › Home / Analysis」。
+   *
+   * 放在这里而不是壳里:面包屑的字是导航数据,壳只是渲染器。壳里再写一份就又是一处
+   * 会各自漂移的真相。
+   */
+  readonly breadcrumbLabel?: string;
 }[] = [
-  { key: "homeAnalysis", href: SHELL_ROUTES.homeAnalysis, ownerKey: "home" },
+  { key: "homeAnalysis", href: SHELL_ROUTES.homeAnalysis, ownerKey: "home", breadcrumbLabel: "Analysis" },
   { key: "canvas", href: SHELL_ROUTES.canvas, ownerKey: "create" },
   ...SETTINGS_DESTINATIONS.map((item) => ({
     key: item.key,

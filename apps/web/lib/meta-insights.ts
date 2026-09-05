@@ -18,11 +18,18 @@ function readCurrency(raw: unknown): string | null {
 }
 
 /** Owner-scoped insights for all of the owner's connected ad accounts. Plain server fn (NOT a
- *  "use server" action) — reachable only server-side, so it carries no IDOR surface. Token stays here. */
+ *  "use server" action) — reachable only server-side, so it carries no IDOR surface. Token stays here.
+ *
+ *  `accounts` only carries the accounts that HAD an insights row for `datePreset` — `getAccountInsights`
+ *  returns null for an account that ran nothing, and that account is dropped below. So `accounts.length`
+ *  answers "who reported delivery in this period", NOT "does this Meta login own any ad account".
+ *  `adAccountCount` answers the second question: it is the length of the raw `me/adaccounts` list,
+ *  before the insights filter. A reader that tells a merchant what to do next needs both, and they
+ *  differ exactly for the merchant who owns ad accounts but paused them (判官 2026-09-05 P1-1). */
 export async function fetchOwnerInsights(
   ownerId: string,
   datePreset: string,
-): Promise<{ accounts: AccountInsights[] } | { needsReconnect: true } | { transientError: true } | { notConnected: true }> {
+): Promise<{ accounts: AccountInsights[]; adAccountCount: number } | { needsReconnect: true } | { transientError: true } | { notConnected: true }> {
   const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
   if (!conn) return { notConnected: true };
   let token: string;
@@ -45,7 +52,7 @@ export async function fetchOwnerInsights(
       const metrics = await getAccountInsights(token, a.id, datePreset);
       if (metrics) accounts.push({ accountId: a.id, name: a.name, currency: a.currency, metrics });
     }
-    return { accounts };
+    return { accounts, adAccountCount: accountsRaw.length };
   } catch (e) {
     return classifyMetaGraphError(ownerId, e);
   }
