@@ -17,9 +17,15 @@ export type MarketingHealthSource = {
   label: "Meta ads";
 };
 
+/**
+ * 「数到哪一天」的两种可能。判别名是 `known` / `unknown`,**故意中性**:我们知道的只是
+ * Meta 报到哪一天为止,没有任何地方拿这个日期和今天比过。叫它 `current` 会断言一句
+ * 「数据是新的」——一个没人验过的说法(判官 2026-09-05 P2-3)。真要分 current/stale,
+ * 得先有一条「多旧算旧」的规则,那是另一票。
+ */
 export type MarketingHealthFreshness =
   | {
-      status: "current";
+      status: "known";
       label: string;
       asOf: string;
     }
@@ -48,7 +54,7 @@ export type MarketingHealthReadModel =
       sources: MarketingHealthSource[];
       snapshot: HomeDashboardSnapshot;
       period: HomeRange;
-      freshness: Extract<MarketingHealthFreshness, { status: "current" }>;
+      freshness: Extract<MarketingHealthFreshness, { status: "known" }>;
       evidenceStrength: "complete";
     })
   | (MarketingHealthBase & {
@@ -123,7 +129,7 @@ function freshnessFromSeries(
   if (!last) return UNKNOWN_FRESHNESS;
   const asOf = new Date(`${last.date}T00:00:00Z`);
   if (Number.isNaN(asOf.getTime())) return UNKNOWN_FRESHNESS;
-  return { status: "current", label: `Data through ${MY_DATE_FORMAT.format(asOf)}`, asOf: last.date };
+  return { status: "known", label: `Data through ${MY_DATE_FORMAT.format(asOf)}`, asOf: last.date };
 }
 
 export type HomeSearchState = {

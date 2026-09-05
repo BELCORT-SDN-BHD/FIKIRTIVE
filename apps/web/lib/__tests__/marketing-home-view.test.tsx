@@ -118,7 +118,7 @@ describe("production Marketing Home", () => {
       state: "ready",
       goal: "online-sales",
       period: "30-days",
-      freshness: { status: "current", label: "Updated 12 min ago", asOf: "2026-08-31T15:00:00Z" },
+      freshness: { status: "known", label: "Updated 12 min ago", asOf: "2026-08-31T15:00:00Z" },
       evidenceStrength: "complete",
       sources: [{ id: "meta-ads", label: "Meta ads" }],
       snapshot: buildHomeDashboardFixture("online-sales", "30-days", "previous-period"),
@@ -224,7 +224,7 @@ describe("FRONT-A3:Meta 单源版面的五态与它们各自的真动作", () =>
     state: "partial",
     goal: "online-sales",
     period: "30-days",
-    freshness: { status: "current", label: "Data through 2 Aug 2026", asOf: "2026-08-02" },
+    freshness: { status: "known", label: "Data through 2 Aug 2026", asOf: "2026-08-02" },
     evidenceStrength: "limited",
     source: { id: "meta-ads", label: "Meta ads" },
     metrics: [

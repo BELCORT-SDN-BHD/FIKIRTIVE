@@ -16,7 +16,11 @@ export type AnalyticsData =
       chart: { linePath: string; areaPath: string; points: ChartPoint[] } | null;
       insight: { text: string; prefill: string } | null;
       empty: boolean;
-      /** Whether this Meta login exposes ANY ad account at all (`me/adaccounts` non-empty).
+      /** Whether this Meta login exposes ANY ad account at all — the length of the RAW
+       *  `me/adaccounts` list (`fetchOwnerInsights().adAccountCount`), taken before insights
+       *  are fetched. It must NOT be derived from `accounts`: that list already dropped every
+       *  account with no insights row for this period, so an owner with paused accounts would
+       *  read as "no ad accounts" (判官 2026-09-05 P1-1).
        *  Separate from `empty`: a login with no ad accounts and a login whose accounts simply
        *  did not run anything both report nothing, and only the second one is fixed by widening
        *  the period. Readers that tell a merchant what to do next must be able to tell them
@@ -79,6 +83,7 @@ export async function getAnalytics(raw: unknown): Promise<AnalyticsData> {
     const insight = buildInsightText(series);
     const empty = series.length === 0 && accounts.every((a) => metricsAllNull(a.metrics));
 
-    return { state: "ready", range, kpis, chart, insight, empty, hasAdAccounts: accounts.length > 0 };
+    // `adAccountCount`, not `accounts.length` — see the field's note on the type above.
+    return { state: "ready", range, kpis, chart, insight, empty, hasAdAccounts: insightsResult.adAccountCount > 0 };
   });
 }

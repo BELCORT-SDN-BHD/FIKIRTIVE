@@ -104,7 +104,7 @@ describe("production Home marketing-health read model", () => {
       period: "30-days",
       evidenceStrength: "limited",
       freshness: {
-        status: "current",
+        status: "known",
         label: "Data through 2 Aug 2026",
         asOf: "2026-08-02",
       },
@@ -199,7 +199,7 @@ describe("FRONT-A3:Home 连接五态,每一态都由服务器说了算", () => {
     if (result.state !== "partial") throw new Error(`expected partial, got ${result.state}`);
     // 日序列的最后一天(2026-08-02),不是「我们刚刚读过」。
     expect(result.freshness).toEqual({
-      status: "current",
+      status: "known",
       label: "Data through 2 Aug 2026",
       asOf: "2026-08-02",
     });
