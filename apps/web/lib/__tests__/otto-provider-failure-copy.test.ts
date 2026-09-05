@@ -34,7 +34,7 @@ const WEB_ROOT = path.resolve(__dirname, "../..");
 const REPO_ROOT = path.resolve(WEB_ROOT, "../..");
 
 /** 供应商 400 计费错误的真实形状(AI SDK 的 APICallError:message + responseBody + data)。 */
-function billingError(): Error & Record<string, unknown> {
+function billingError(): Error {
   const body = JSON.stringify({
     type: "error",
     error: {
@@ -50,7 +50,7 @@ function billingError(): Error & Record<string, unknown> {
   });
 }
 
-function statusError(statusCode: number): Error & Record<string, unknown> {
+function statusError(statusCode: number): Error {
   return Object.assign(new Error(`provider said ${statusCode}`), { name: "AI_APICallError", statusCode });
 }
 
