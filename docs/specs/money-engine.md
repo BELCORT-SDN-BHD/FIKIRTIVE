@@ -116,6 +116,7 @@
 | 2026-09-02 | **④b 人工退款重试防线=先查后建**:同单号重跑在向 Stripe 发起前先查既有退款(审计行 → 按 payment_intent 列表按 metadata.manualRefundId),找到按状态收口,查不到才发起;不依赖 Stripe 幂等键(24 小时过期)。Stripe 幂等键改带 org(`manual-refund:<orgId>:<uuid>`),账本 refId 仍 `manual-refund:<uuid>`。PR #1120 | |
 | 2026-09-02 | **④b Abandon 残余竞态(待决)**:放弃未收口退款前先查 Stripe、UI 二次确认、runbook 明写;理论缝=退款 create 刚发出而 Stripe 尚未列出的一瞬。更严规则(仅当 create 从未发出且超过 N 分钟才允许放弃)需规格授权,登记待 Founder 裁 | |
 | 2026-09-02 | **④a 对账缺口「已手工补发」关闭的绑定规则(实现备案)**:关闭凭据账本行必须 `idempotencyKey = stripe:<sessionId>` 或 reason 含该 session id(完整 token);一条账本行只能关闭一个缺口(占用标记同事务,撞键即拒);账本首见查不动时观察行照写并标未验证,不升级只进名单,确认后翻真。PR #1119 | |
+| 2026-09-05 | **聊天截断轮由「按实结算」改「全额退款」(回填,交 Founder 追认)**:Otto 跑满步数被截断、且这一轮**零交付**(没有铸出卡片、没有落盘任何写动作)时,整笔预扣全额退回——含本轮坚实预留的搜索格;烧掉的 token 与已成功的搜索由平台吸收(单轮最坏 ≈$0.67)。有交付的截断轮维持按实结算。账本形态不变(reserve/refund 成对、净变 0,即本规格已有的「花钱后失败」那一种形态),不新增幂等键。**出处**:Otto 引擎规格 docs/specs/otto-engine.md 已冻结验收行 ENGINE-A4 与其 S2 §7.2⑤(Founder S1 九问 1② 裁决);本规格状态是「已交付 · 归档」,归档规格只能作轻改引用,故实现 PR 引用 Otto 规格,这一行只是把钱的行为变化回填到钱这本账上。落地 PR #1204 | |
 | 2026-09-02 | **A9 披露入口补挂的附带事实**:EditDesk 音频上传入口原无类型守卫(仅 accept 提示),补客户端守卫——扩展名为硬条件(白名单由 `@fikirtive/core/upload` 的 mimeOf 派生,webm 因判 video 剔除),豁免「音频不计费」前提由围栏 guard 钉住;披露围栏改为 TypeScript AST 双侧普查(写点函数计数、全目录传播闭包、default/namespace/动态导入)。PR #1118 | |
 
 ## 6. 改签记录

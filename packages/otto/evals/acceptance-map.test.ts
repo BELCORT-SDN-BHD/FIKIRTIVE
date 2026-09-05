@@ -27,7 +27,7 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.0 七段三批)", () => {
   it.todo("ENGINE-A6 见 packages/otto/src/runtime-history-budget.test.ts 与 src/history-budget.test.ts（④段已交付：成对感知裁剪、旧轮折进 rollingSummary、第 N+1 轮实结不随历史上涨）");
 
   // ── 批 II（依赖批 I）──────────────────────────────────────────────────────
-  it.todo("ENGINE-A4 截断且零交付的一轮全额退款、消费历史可见退款行 —— 批 II §7.2⑤（钱路重挡）");
+  it.todo("ENGINE-A4 见 apps/web/lib/__tests__/engine-a4-truncated-turn-refund.test.ts（真库账本 reserve/refund 成对 + 消费历史退款行）与 packages/otto/src/runtime.test.ts（零交付判词三态）—— ⑤段已交付");
   it.todo("ENGINE-A7 技能文件柜替换单体后重跑评测，总分不低于基线 —— 批 II §7.2⑥（跑法：evals:check）");
 
   // ── 批 III（等 PR #1150 / #1151 / #1158 三者合入主干）──────────────────────
