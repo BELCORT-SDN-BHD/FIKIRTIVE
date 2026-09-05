@@ -43,7 +43,9 @@ import { planCardGate } from "./plan-card-contract";
 import { CardReferenceReceipt } from "./CardReferenceReceipt";
 import { runPlanApproval } from "./plan-approval";
 // Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修),与抽屉里那张卡共用一份。
-import { CardOptionControls, cardSpecChips } from "./CardOptionControls";
+// 清单 A5(P2-013)—— 「Change」打开的那张小表单同样共用那一份(措辞、哪一格改得动、
+// 送回对话的那句话,两处不可能说出两件事)。
+import { CardChangeForm, CardOptionControls, cardSpecChips, changeRequestSeed } from "./CardOptionControls";
 import {
   CAP_EXIT_HREF,
   CAP_EXIT_LABEL,
@@ -73,7 +75,11 @@ export interface OttoTurnCardProps {
   /** 等商家确认的卡，按对话顺序。 */
   confirmCards: readonly CanvasConfirmCard[];
   onApproved: (outcome: PlanApproveOutcome) => void;
-  /** 「Change」把这张卡的原话塞回输入框，让商家改了再来。 */
+  /**
+   * 「Change」那张小表单按下 Send 之后走的那一条路（清单 A5 / P2-013）：商家写的那句话
+   * 连同这张卡的原话回到输入框。失败那一轮的「Edit and retry」走的也是它（送商家自己
+   * 打的那句原话）—— 一条路，两个入口。
+   */
   onChangeSomething: (seed: string) => void;
   /** 改完三格之后服务端重铸的那张卡,原样交回父组件 —— 抽屉里那张卡下一帧读到的是同一份
    *  (复审 r1 P1-1:两处各留一份就是「卡上一个数、预扣另一个数」)。 */
@@ -229,6 +235,8 @@ function CanvasConfirmRow({
   const [error, setError] = useState<string | null>(null);
   /** Codex staging CRE-STG-P2-004 —— 失败那一句旁边的可复制短号(服务端日志里同一串)。 */
   const [errorRef, setErrorRef] = useState<string | null>(null);
+  /** 清单 A5(P2-013)—— 「Change」打开的那张小表单。默认关。 */
+  const [changeOpen, setChangeOpen] = useState(false);
   // 改完三格之后服务端重铸的那张卡不停在这里:它顺着 `onOptionsChanged` 走回 OttoChatStream,
   // 写进这条消息的 metadata.payload,再从 `card.payload` 流回来 —— 抽屉里那张卡读的是同一份
   // (复审 r1 P1-1)。
@@ -302,6 +310,20 @@ function CanvasConfirmRow({
         disabled={busy}
         onChanged={(next) => onOptionsChanged(card.cardId, next)}
       />
+      {/* 清单 A5(P2-013)—— 「Change」打开的那张小表单,与抽屉里那张卡共用一份。
+          改得动的那几格就在上面;改不动的(视频的时长与声音、用哪几件参考)用人话说给
+          Otto,走的仍是 `onChangeSomething` 那一条既有对话路。 */}
+      {changeOpen && (
+        <CardChangeForm
+          payload={p}
+          optionsOnCard={!!p.options}
+          disabled={busy}
+          onSubmit={(note) => {
+            setChangeOpen(false);
+            onChangeSomething(changeRequestSeed(note, p));
+          }}
+        />
+      )}
       {/* CRE-STG-P2-004 —— 失败留在卡上(不是 toast),而且带着那个可复制的短号:走查那两次
           点击之后卡面上什么都不剩,商家除了「再试一次」没有第二个动作。短号与抽屉里那张卡
           共用同一个组件(`CardApprovalRef`),两处不可能长出两种写法。 */}
@@ -317,7 +339,8 @@ function CanvasConfirmRow({
           size="xs"
           variant="ghost"
           disabled={busy}
-          onClick={() => onChangeSomething(p.structuredPrompt ?? "")}
+          aria-expanded={changeOpen}
+          onClick={() => setChangeOpen((open) => !open)}
         >
           Change
         </Button>
