@@ -102,6 +102,22 @@ export function appEnv(): Record<string, string> {
     // No production configuration exists on a test runner; the boot contract would refuse to
     // serve. `warn` is the contract's own documented escape hatch (lib/env-boot.ts).
     FIKIRTIVE_ENV_CONTRACT: "warn",
+    // The mail transport, said out loud (Founder 2026-09-05 裁决①「按环境提示」).
+    //
+    // Sign-in codes now depend on the deployment HAVING a way to send mail: without one the login
+    // page says so and refuses, instead of claiming "We sent a temporary login code to …" while
+    // the server log says delivery failed. This runner has no mail provider and must never get
+    // one — RESEND_API_KEY stays in OFF_MACHINE_CREDENTIAL_NAMES above, unchanged — so it names
+    // the STUB transport instead: the code is written to `.data/last-magic-link.txt` and logged,
+    // and `support/auth.ts` keeps reading the minted code out of the database, as before.
+    //
+    // It has to be said explicitly rather than derived from NODE_ENV: `next start` (the command
+    // this suite runs) sets NODE_ENV to production itself, so "non-production" is not a fact this
+    // process can observe. The fence lives in the env contract instead — a SERVING production
+    // process refuses to boot with this value (`productionValues`, packages/core/src/
+    // env-contract.ts); this suite passes FIKIRTIVE_ENV_CONTRACT=warn on purpose, so here it
+    // surfaces as one loud warning, which is exactly what a stub mail transport deserves.
+    AUTH_EMAIL_TRANSPORT: "stub",
     NEXT_TELEMETRY_DISABLED: "1",
     // GENERATION_PROVIDER is deliberately absent — see OFF_MACHINE_CREDENTIAL_NAMES above.
   };

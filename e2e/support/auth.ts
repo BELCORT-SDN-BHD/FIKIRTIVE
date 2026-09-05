@@ -10,11 +10,13 @@
  * gate runs, `session.create.before` re-checks access, identity convergence runs, and the session
  * cookie is set by the app.
  *
- * WHY NOT WAIT FOR THE MAIL. There is no mail provider on a test runner (support/env.ts refuses
- * to run with a RESEND_API_KEY present), so the send fails into an operator log by design. Reading
- * the stored code is the only honest stand-in, and it is a strictly SMALLER shortcut than the one
- * it replaces: the previous helper FORGED a verification row, this one reads the row the product
- * minted for itself.
+ * WHY NOT WAIT FOR THE MAIL. There is no mail provider on a test runner and there never will be
+ * (support/env.ts refuses to run with a RESEND_API_KEY present); what the app under test carries
+ * instead is the STUB transport it is explicitly told to use — `AUTH_EMAIL_TRANSPORT=stub`,
+ * support/env.ts — which writes the code to a local file rather than mailing it. Reading the
+ * stored code is still the honest stand-in for an inbox, and it is a strictly SMALLER shortcut
+ * than the one it replaces: the previous helper FORGED a verification row, this one reads the row
+ * the product minted for itself.
  *
  * WHY NOT FABRICATE THE COOKIE. A hand-written session row plus a hand-signed cookie would skip
  * every gate above — the journeys would prove that the pages render for a session, not that this
