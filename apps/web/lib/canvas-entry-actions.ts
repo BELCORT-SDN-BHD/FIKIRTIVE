@@ -75,7 +75,9 @@ export async function createCanvasConversation(raw: unknown): Promise<CanvasConv
           select: { id: true },
         });
         await tx.chatThread.create({
-          data: { id: ids.threadId, ownerId, projectId: ids.projectId, title: newThreadTitle(prompt) },
+          // FRONT-A14:画布入口开的对话登记成 `canvas`,侧栏面板就不会在别的页面上把它
+          // 当成「你刚才在聊的那条」自动摊开(`lib/otto-thread-surface.ts`)。
+          data: { id: ids.threadId, ownerId, projectId: ids.projectId, title: newThreadTitle(prompt), surface: "canvas" },
           select: { id: true },
         });
         await tx.actionEvent.create({

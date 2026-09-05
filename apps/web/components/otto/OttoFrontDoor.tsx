@@ -19,6 +19,7 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { ottoTurn } from "@/lib/otto-client-actions";
 import { startStreamedThread } from "@/lib/otto-start-thread";
+import type { ChatThreadSurface } from "@/lib/otto-thread-surface";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { QuickBrief } from "@/components/otto/QuickBrief";
 import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePickerMenu";
@@ -93,6 +94,16 @@ export interface OttoFrontDoorProps {
   onSeedConsumed?: () => void;
   /** Canvas uses the same conversation action with a spatial, minimal shell. */
   layout?: "default" | "canvas";
+  /**
+   * 从这道前门开出来的对话登记成哪个来源(FRONT-A14)。不给就是画布 —— `/otto` 与画布
+   * 覆盖层走的都是这一档;全局侧栏面板把它设成 `"panel"`,面板下次打开才认得出自己那一批
+   * (`lib/otto-thread-surface.ts`)。服务端仍自己过一道闸,这里给的是声明不是判定。
+   *
+   * 只作用于**流式**那条路(`startStreamedThread` → `createEmptyCoworkThread`,先建线程
+   * 再发第一句)。下面那条经典 `ottoTurn` 兜底路径不接它:那扇门建的对话一律是画布的
+   * (判官 P2-2 —— turn 接口的 `surface` 是 #879 的页面位置字段,与线程来源只是重名)。
+   */
+  threadSurface?: ChatThreadSurface;
 }
 
 export function OttoFrontDoor({
@@ -104,6 +115,7 @@ export function OttoFrontDoor({
   seedText,
   onSeedConsumed,
   layout = "default",
+  threadSurface,
 }: OttoFrontDoorProps) {
   const [text, setText] = useState("");
   // #791-7: below one video's price, say so now. Balance arrives in USD (the same value the
@@ -174,7 +186,7 @@ export function OttoFrontDoor({
         // 面板底部的页面 chips 走的是同一份 —— 两处各写一份,先漂的一定是 #979 的标题守卫。
         // F30: 解析出来的 @mention entityIds 一并带进第一条流式消息(下面那条经典 ottoTurn
         // 路径本来就带,流式这一条不带就等于第一轮悄悄丢了实体条件)。
-        const started = await startStreamedThread({ projectId, text: msgText, goalKey: opts.goalKey, entityIds });
+        const started = await startStreamedThread({ projectId, text: msgText, goalKey: opts.goalKey, entityIds, surface: threadSurface });
         if ("error" in started) {
           setError(started.error);
           return;
