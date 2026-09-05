@@ -168,6 +168,50 @@ describe("FRONT-A3:Home 的 Retry 是一次真重取,不是一条指回原地的
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * 失败的重试要留下一句实话。改前:按下去只有一次亚秒级的「Retrying…」闪动,随后是逐字
+   * 相同的一屏 —— 商家看到的是「按了没反应」(判官 2026-09-05 #1209 P2-3)。
+   * 这三条钉的是:首屏不说、失败后说、去别处的那些状态不说。
+   */
+  function statusText(): string {
+    return Array.from(document.body.querySelectorAll('[role="status"]'))
+      .map((node) => (node.textContent ?? "").trim())
+      .join(" ")
+      .trim();
+  }
+
+  it("FRONT-A3:Home 重试后服务器仍读不出来时,屏幕上留下一句实话", async () => {
+    await renderHome({ state: "unavailable", goal: "online-sales", retryable: true });
+
+    // 首屏不说 —— 没试过就没有「仍然」。
+    expect(statusText()).not.toContain("Still unavailable");
+
+    const retry = buttonLabelled("Retry");
+    await click(retry!);
+
+    // 服务器答的还是 unavailable(这一份 health 没变),所以那句话必须出现。
+    expect(statusText(), "失败的重试没有留下任何反馈").toContain(
+      "Still unavailable. Try again in a few minutes.",
+    );
+    const live = Array.from(document.body.querySelectorAll('[role="status"]')).find((node) =>
+      (node.textContent ?? "").includes("Still unavailable"),
+    );
+    expect(live?.getAttribute("aria-live"), "那句话不在 polite live region 里").toBe("polite");
+  });
+
+  it("FRONT-A3:Analysis 重试后仍读不出来时,同样留下那一句", async () => {
+    await renderAnalysis({ state: "unavailable", goal: "online-sales", retryable: true });
+
+    expect(statusText()).not.toContain("Still unavailable");
+    await click(buttonLabelled("Retry analysis")!);
+    expect(statusText()).toContain("Still unavailable. Try again in a few minutes.");
+  });
+
+  it("FRONT-A3:不是重试的恢复状态不会冒出那一句", async () => {
+    await renderHome({ state: "not-configured", goal: "online-sales", action: "connect" });
+    expect(statusText()).not.toContain("Still unavailable");
+  });
+
   it("FRONT-A3:去别处的恢复动作仍然是真链接,没有被一起改成按钮", async () => {
     await renderHome({ state: "not-configured", goal: "online-sales", action: "connect" });
 

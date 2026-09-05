@@ -130,7 +130,9 @@ describe("2-org isolation — org B can never read org A", () => {
   //
   // `getPublicMediaLink` 里那道「资产命名空间再核一次」的二次闸没有单独的钉子,不是漏了:
   // 数据库不让摆出会触发它的行 —— `Generation.asset` 是复合外键 `[assetId, ownerId] →
-  // Asset[id, ownerId]`(packages/db/prisma/schema.prisma:161),本轮实测手工造这种行会被
+  // Asset[id, ownerId]`(packages/db/prisma/schema.prisma:404 —— `model Generation` 起于
+  // :348;:161 是 `ReferenceImage` 的同形关系,判官 #1193 P2-e 纠正的就是这个指针),
+  // 本轮实测手工造这种行会被
   // `Generation_assetId_ownerId_fkey` 拒掉。二次闸是纯冗余防线,由 schema 兜底。
   describe("FRONT-A12 public media link (getPublicMediaLink)", () => {
     // 钥匙只在这一段里存在:vitest 单线程,整个 apps/web 共用一个进程的 process.env,
