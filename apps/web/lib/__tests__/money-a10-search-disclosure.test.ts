@@ -34,19 +34,13 @@ import {
 import { displayCredits } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
 import { SearchCostHint, SEARCH_COST_HINT, SEARCH_COST_HINT_TITLE } from "@/components/otto/SearchCostHint";
+import { copyLines, HAND_TYPED_CREDITS } from "./helpers/price-literal-fence";
 
 const WEB_ROOT = process.cwd();
 const codeOf = (rel: string) => readFileSync(path.join(WEB_ROOT, rel), "utf8");
 
-/** 「0.3 credits」这类**手抄的钱数**(与 understanding-disclosure 同一条规则)。 */
-const HAND_TYPED_CREDITS = /\d[\d,.]*\s*credits?\b/i;
-
-/** 只扫会被商家读到的那部分 —— 注释里解释「0.3 是怎么来的」是文档,不是文案。 */
-const copyLines = (src: string): string[] =>
-  src
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line))
-    .map((line) => line.trim());
+/** 「手抄的钱数」与「只扫商家读得到的那部分」两条判据,与另外三条成本小字围栏共用同一份
+ *  (`helpers/price-literal-fence.ts`;判官 #1227 P2-3 ＝ #1219 P2-4)。 */
 
 /** React 把 `'` 转义成 `&#x27;`;要读的是商家看到的那句话。 */
 const asReadText = (html: string): string => html.replace(/&#x27;|&#39;|&apos;/g, "'");
