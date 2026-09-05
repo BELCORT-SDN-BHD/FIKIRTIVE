@@ -110,6 +110,11 @@ export type OttoRuntime = {
   /** The profile's step cap — BOTH the run() maxTurns AND the reserve maxSteps,
    *  so the reserve is always priced for exactly the steps the run may take. */
   readonly maxTurns: number;
+  /** ENGINE-A2 — the composed action names, frozen at composition time from the SAME
+   *  `deps.skills` the agent's tools come from (registry.ts is the one registry). It is the
+   *  WHITELIST the turn trace folds tool names through: a name that is not in here can never
+   *  reach the trace row, so no model-authored string can ride in on that field. */
+  readonly actionNames: ReadonlySet<string>;
 };
 
 /**
@@ -155,6 +160,9 @@ export function createOttoRuntime(deps: OttoRuntimeDeps, profile: OttoRunProfile
     modelRuntime: deps.modelRuntime,
     agent,
     maxTurns: OTTO_MAX_STEPS,
+    // ENGINE-A2: the trace's action whitelist, derived from the very same list the tools are
+    // built from — one registry, so the two can never drift into "traced but not composed".
+    actionNames: Object.freeze(new Set(deps.skills.map((s) => s.name))) as ReadonlySet<string>,
   });
 }
 
@@ -176,6 +184,9 @@ export type OttoTurnRequest = {
    *  after the stream is fully drained). */
   readonly stream?: boolean;
   readonly onStream?: (stream: AsyncIterable<RunStreamEvent>) => Promise<void> | void;
+  /** ENGINE-A2 — where this turn's structural facts go. Optional: a caller that passes no
+   *  sink is byte-identical to before (no read, no write, no extra await). */
+  readonly trace?: OttoTurnTracePort;
 };
 
 /** Structural view of a RunResult/StreamedRunResult that the finalizer consumes. */
@@ -183,6 +194,171 @@ export type OttoTurnRunResult = {
   state: { toString(): string; usage: Parameters<UsageMapper>[0] };
   interruptions?: unknown[];
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENGINE-A2 — the per-turn debug trace (spec §7.2②)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Which door this turn came through. A CLOSED set, mirrored verbatim by the
+ *  `OttoTurnTrace.surface` column's comment in schema.prisma. */
+export type OttoTraceSurface = "stream" | "action" | "approve-resume" | "worker-research";
+
+/** The fold of one action across this turn: its NAME and three COUNTS. Nothing else —
+ *  no arguments, no return value, no error message. */
+export type OttoTraceToolCall = {
+  readonly name: string;
+  /** how many times the model asked for it */
+  readonly calls: number;
+  /** results that came back `completed` */
+  readonly ok: number;
+  /** results that came back anything else (`incomplete`) */
+  readonly failed: number;
+};
+
+/**
+ * The WHITELISTED, content-free facts one turn produces — the whole payload the sink may
+ * persist (spec §7.2②「不记商家内容的机器保证」).
+ *
+ * The guarantee is STRUCTURAL, not a convention: this type has **no free-text field**. Every
+ * string on it comes from a closed source —
+ *   · `name`      → folded through `runtime.actionNames` (registry.ts); anything else becomes
+ *                   the fixed literal UNREGISTERED_ACTION, so a model-authored tool name has
+ *                   nowhere to land;
+ *   · `surface`   → the caller's literal union above;
+ *   · `modelId`   → the frozen manifest's billableModelId;
+ *   · `skillFiles`→ folded through the composed knowledge cabinet (`allKnowledgePaths()`), so a
+ *                   path that is not a real cabinet file cannot land here either (§7.2⑥).
+ * A prompt, a message body, or a tool argument cannot be represented here at all. The fence
+ * test that pins this is runtime-turn-trace.test.ts.
+ */
+export type OttoTurnTraceFacts = {
+  readonly refId: string;
+  readonly orgId: string;
+  readonly threadId: string | null;
+  readonly surface: OttoTraceSurface;
+  readonly modelId: string;
+  readonly steps: number;
+  readonly toolCalls: readonly OttoTraceToolCall[];
+  readonly skillFiles: readonly string[];
+  readonly truncated: boolean;
+};
+
+/** The injected persistence port. The engine package never touches prisma — each entry
+ *  supplies its own writer, exactly like every other port on `ctx`. */
+export type OttoTurnTraceSink = (facts: OttoTurnTraceFacts) => void | Promise<void>;
+
+/** What an entry hands the runner: the caller-owned identity bits the engine cannot know,
+ *  plus the sink. `threadId` is caller-owned for the same reason `orgId` is — it comes from
+ *  the verified session, never from the model. */
+export type OttoTurnTracePort = {
+  readonly surface: OttoTraceSurface;
+  readonly threadId?: string | null;
+  readonly sink: OttoTurnTraceSink;
+};
+
+/** Where a tool name lands when it is not in the composed registry. A fixed literal, never
+ *  the observed string — that is the whole point of the fold. */
+export const UNREGISTERED_ACTION = "(unregistered)";
+
+/** 一轮都没装（不该发生：常驻薄层永远在）时的诚实空表 — spec §7.2②. */
+const NO_SKILL_FILES: readonly string[] = Object.freeze([]);
+
+type ObservedRunState = {
+  _currentTurn?: unknown;
+  _generatedItems?: unknown;
+};
+
+/** `RunItem`s the SDK keeps on the state. Read structurally (never cast) so a shape change
+ *  in the SDK degrades to "fewer facts", never to a crash inside a paid turn. */
+function generatedItemsOf(state: unknown): unknown[] {
+  const items = (state as ObservedRunState | null | undefined)?._generatedItems;
+  return Array.isArray(items) ? items : [];
+}
+
+function rawItemOf(item: unknown): Record<string, unknown> | null {
+  if (!item || typeof item !== "object") return null;
+  const raw = (item as { rawItem?: unknown }).rawItem;
+  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+}
+
+/**
+ * Fold one finished/truncated run into the trace facts.
+ *
+ * Exported for the fence test, which feeds it a state stuffed with prompts, message bodies and
+ * tool arguments and asserts that none of them appear anywhere in the output.
+ */
+export function collectTurnTraceFacts(
+  state: unknown,
+  runtime: Pick<OttoRuntime, "modelRuntime" | "actionNames">,
+  port: OttoTurnTracePort,
+  identity: Pick<OttoTurnRequest, "orgId" | "refId">,
+  truncated: boolean,
+  /** 这一轮装了哪几份知识文件（ENGINE-A7 的装配器给的）。与工具名同一条纪律：**过白名单**
+   *  ——名单是 build 期的柜子本身，所以一个不是柜文的字符串在这里无处可落。 */
+  loadedKnowledge: readonly string[] = NO_SKILL_FILES,
+): OttoTurnTraceFacts {
+  const cabinet = new Set(allKnowledgePaths());
+  const skillFiles = loadedKnowledge.filter((p) => cabinet.has(p));
+  const steps = (state as ObservedRunState | null | undefined)?._currentTurn;
+  // The fold key is the WHITELISTED name, so two different unregistered names collapse into
+  // one `(unregistered)` row instead of each smuggling its own string through.
+  const byName = new Map<string, { calls: number; ok: number; failed: number }>();
+  const bucket = (rawName: unknown) => {
+    const name =
+      typeof rawName === "string" && runtime.actionNames.has(rawName) ? rawName : UNREGISTERED_ACTION;
+    let entry = byName.get(name);
+    if (!entry) {
+      entry = { calls: 0, ok: 0, failed: 0 };
+      byName.set(name, entry);
+    }
+    return entry;
+  };
+
+  for (const item of generatedItemsOf(state)) {
+    const type = (item as { type?: unknown }).type;
+    const raw = rawItemOf(item);
+    if (!raw) continue;
+    if (type === "tool_call_item" && raw.type === "function_call") {
+      bucket(raw.name).calls += 1;
+      continue;
+    }
+    if (type === "tool_call_output_item" && raw.type === "function_call_result") {
+      const entry = bucket(raw.name);
+      if (raw.status === "completed") entry.ok += 1;
+      else entry.failed += 1;
+    }
+  }
+
+  return {
+    refId: identity.refId,
+    orgId: identity.orgId,
+    threadId: port.threadId ?? null,
+    surface: port.surface,
+    modelId: runtime.modelRuntime.billableModelId,
+    steps: typeof steps === "number" && Number.isFinite(steps) ? steps : 0,
+    toolCalls: [...byName].map(([name, counts]) => ({ name, ...counts })),
+    skillFiles,
+    truncated,
+  };
+}
+
+/** Hand the facts to the sink. A trace is DIAGNOSTIC: it must never be able to fail a turn the
+ *  merchant already paid for, so every throw stops here with one log line. The facts arrive as a
+ *  thunk on purpose: collecting them walks SDK-shaped state, so that walk has to sit INSIDE this
+ *  try too — otherwise a collector throw would surface out of an already-settled turn. */
+async function emitTurnTrace(
+  collect: () => OttoTurnTraceFacts,
+  sink: OttoTurnTraceSink,
+  refId: string,
+): Promise<void> {
+  try {
+    await sink(collect());
+  } catch (e) {
+    console.error(
+      `[otto:trace] failed for ${refId} (category=${e instanceof Error ? e.name : typeof e})`,
+    );
+  }
+}
 
 /**
  * 这一轮**装了哪几份知识文件**（ENGINE-A7 的装配器 ＋ ENGINE-A2 的 `skillFiles` 那一栏）。
@@ -347,6 +523,17 @@ function assertResumedStateCarriesLiveContext(input: OttoTurnRequest["input"], c
  * usage → settle/refund, with the profile's step cap on both sides. Streaming
  * differs ONLY in draining events through `onStream` and awaiting `completed`
  * before usage settlement — the metering contract is byte-identical.
+ *
+ * ENGINE-A2 (spec §7.2②): when the caller injects a `trace` port, the runner accumulates
+ * this turn's structural facts and hands them to that port AFTER the meter has finished.
+ * Two rules make the addition non-load-bearing:
+ *  - it runs on BOTH exits. A truncated turn (MaxTurnsExceededError, which withLlmBudget
+ *    settles and rethrows) is exactly the turn worth looking at, so its facts are read off the
+ *    error's own state and emitted before the error propagates unchanged;
+ *  - it can only observe. Collecting the facts AND the sink's throw are both swallowed
+ *    (emitTurnTrace takes the collector as a thunk), nothing here touches
+ *    the reserve/settle/refund parameters, and the runner's return value and thrown errors are
+ *    byte-identical to before with or without a port.
  */
 export async function runOttoTurn(
   request: OttoTurnRequest,
@@ -356,8 +543,8 @@ export async function runOttoTurn(
 ): Promise<OttoTurnRunResult> {
   const mr = runtime.modelRuntime;
   assertResumedStateCarriesLiveContext(request.input, context);
-  // ENGINE-A7 —— 每轮现装的说明书。柜子替换单体之后，`runtime.agent` 上那份整柜底稿只是
-  // 底稿：真正跑的是这一轮装出来的那一份（恢复轮除外，它整柜装载，agent 直接用）。
+  // ENGINE-A7 —— 每轮现装的说明书（§7.2⑥）。柜子替换单体之后，`runtime.agent` 上那份整柜
+  // 底稿只是底稿：真正跑的是这一轮装出来的那一份（恢复轮除外，它整柜装载，agent 直接用）。
   // `clone` 只换 instructions，name/tools/model/settings 全部原样带过去，所以工具名照旧
   // 解析得到 —— 组合根文件头记着的那条实测（恢复只要求工具名能解析，不要求同一个实例）。
   const assembled = instructionsForTurn(request.input);
@@ -365,30 +552,54 @@ export async function runOttoTurn(
     assembled.text === runtime.agent.instructions
       ? runtime.agent
       : runtime.agent.clone({ instructions: assembled.text });
-  return execution.meter(
-    ottoBudgetArgsFor(runtime, request, context, execution.maxTurnsExceededError),
-    async () => {
-      if (request.stream) {
+  const port = request.trace;
+  const MaxTurnsError = execution.maxTurnsExceededError ?? MaxTurnsExceededError;
+  try {
+    const result = await execution.meter(
+      ottoBudgetArgsFor(runtime, request, context, execution.maxTurnsExceededError),
+      async () => {
+        if (request.stream) {
+          const r = await execution.runAgent(agent, request.input as never, {
+            context,
+            maxTurns: runtime.maxTurns,
+            stream: true,
+          });
+          if (request.onStream) await request.onStream(r);
+          // Ensure the run is fully settled before reading usage/state (usage is only
+          // known after the stream is drained).
+          await r.completed;
+          const result = r as unknown as OttoTurnRunResult;
+          return { result, usage: mr.mapUsage(result.state.usage) };
+        }
         const r = await execution.runAgent(agent, request.input as never, {
           context,
           maxTurns: runtime.maxTurns,
-          stream: true,
         });
-        if (request.onStream) await request.onStream(r);
-        // Ensure the run is fully settled before reading usage/state (usage is only
-        // known after the stream is drained).
-        await r.completed;
         const result = r as unknown as OttoTurnRunResult;
         return { result, usage: mr.mapUsage(result.state.usage) };
-      }
-      const r = await execution.runAgent(agent, request.input as never, {
-        context,
-        maxTurns: runtime.maxTurns,
-      });
-      const result = r as unknown as OttoTurnRunResult;
-      return { result, usage: mr.mapUsage(result.state.usage) };
-    },
-  );
+      },
+    );
+    if (port) {
+      await emitTurnTrace(
+        () => collectTurnTraceFacts(result?.state, runtime, port, request, false, assembled.files),
+        port.sink,
+        request.refId,
+      );
+    }
+    return result;
+  } catch (e) {
+    // A reserve refusal (InsufficientCredits / SpendCapBlocked) never ran the model, so there
+    // are no facts and no row — only a turn that actually ran gets an archive entry.
+    if (port && e instanceof MaxTurnsError) {
+      const state = (e as { state?: unknown }).state;
+      await emitTurnTrace(
+        () => collectTurnTraceFacts(state, runtime, port, request, true, assembled.files),
+        port.sink,
+        request.refId,
+      );
+    }
+    throw e;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
