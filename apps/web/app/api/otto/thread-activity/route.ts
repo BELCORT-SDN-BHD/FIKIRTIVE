@@ -4,7 +4,9 @@
  * ① `?projectId=P` → `{ activity: [{ threadId, pending }] }`。一个 project 里每条对话
  *    各一行,owner+project 双闸(既有契约,一个字没动)。
  * ② **不带参数** → `{ pending: boolean }`。侧栏面板问的那一句:这次到访要不要因为
- *    「本页有进行中的对话」而展开(FRONT-A14,`docs/specs/frontend-baseline.md` §5)。
+ *    「**这个商家**有进行中的面板对话」而展开(FRONT-A14,`docs/specs/frontend-baseline.md`
+ *    §5)。口径是全店,不是「本页」——这里从前写的是后者(#1215 判官 P2-3),而②这一问
+ *    根本不带 project,读者照文件头理解会读成一句它从未做过的判断。
  *    判据与租户口径写在 `lib/thread-activity.ts` 的 `hasPendingPanelThread` 上;这里没有
  *    project 参数是有意的——面板挂在每一个商家表面上,不属于任何一个 project。
  *

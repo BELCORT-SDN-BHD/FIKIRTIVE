@@ -61,7 +61,8 @@ export type OttoPanelSeed = {
    *
    * FRONT-A14:只在**面板自己开的**对话里选(`surface === "panel"`),不再是「这个
    * project 最近的一条」—— 后者会把画布对话摊到 /billing 这种毫不相干的页面上。
-   * 选的范围是**全店**(先当前 project,再退到全店最近那一条),与展开信号同一口径。
+   * 选的范围是**全店**(先当前 project,再退到全店最近那一条),与展开信号同一口径 ——
+   * 深链点名了 project 也一样回落(#1215 判官 P2-2),那条例外会让空面板原样复现。
    */
   activeThreadId: string | null;
   balanceUsd: number;
@@ -143,11 +144,17 @@ export async function loadOttoPanelSeed(
     // 当前 project 里没有面板对话时,就往全店的面板对话里续最近那一条,并让
     // 「停在哪个 project」跟着它走(项目与会话必须是同一件事,与深链那条同一个规矩)。
     //
-    // 只在**没有深链点名 project** 时才放宽:地址栏点了名,就不该跨到另一个 project 去。
+    // 深链点名了 project 也走同一条回落(#1215 判官 P2-2)。这里从前留过一个例外
+    // (「地址栏点了名就不跨 project」),而信号那一边不认识 project:深链
+    // `/?otto=1&project=P` 进来、P 里一条面板对话都没有时,信号照样答「有」把面板顶开,
+    // 面板却选不到任何一条 —— 同一块凭空弹出来的空面板原样复现,只是换了个入口。所以
+    // 点名的 project 里有面板对话就用它(地址栏说的仍然优先),没有就退到全店最近那一条,
+    // 「停在哪个 project」跟着它走。深链点名的**会话**(`?thread=`)不受影响:那是商家
+    // 逐字点名的一条,上面那一支直接命中。
     const seatedThread = requestedThreadId
       ? threadRows.find((t) => t.id === requestedThreadId)
       : threadRows.find((t) => t.projectId === activeProjectId && isPanelThread(t.surface))
-        ?? (requestedProjectId === null ? threadRows.find((t) => isPanelThread(t.surface)) : undefined);
+        ?? threadRows.find((t) => isPanelThread(t.surface));
     const openThreadId = seatedThread?.id ?? null;
     const panelProjectId = seatedThread?.projectId ?? activeProjectId;
     if (openThreadId) {
