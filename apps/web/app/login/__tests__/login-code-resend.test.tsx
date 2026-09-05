@@ -110,7 +110,115 @@ async function reachCodeStep() {
   return el;
 }
 
+/**
+ * 走查修复二 —— 3310 走查看到的那一幕:服务端日志写着
+ * `[better-auth] auth email delivery failed: EmailSendError`,页面照样翻到「Check your email /
+ * We sent a temporary login code to …」。
+ *
+ * Founder 2026-09-05 裁决①「按环境提示」定下的口径,是这一组现在钉的东西:判断落在**部署**
+ * 层——这个部署有没有邮件通道(`lib/email/transport.ts` 的 `emailDeliveryAvailable()`,一次
+ * env 读,对每个地址同一个答案),服务端算好了当 prop 递给页面(`app/login/page.tsx`),页面
+ * 在**输入邮箱那一步**就说出来,而不是翻到下一屏再讲一句假的「已寄出」。措辞只提环境、不提
+ * 邮箱,所以它不构成「这个地址有没有账号」的探针(FRONT-A2);单封信投递失败仍然是运维信号,
+ * 与这件事不是一回事(`lib/better-auth/signin-code-contract.ts`)。
+ *
+ * 下面第二组(code 步的「Send again」)钉的是页面侧的通用围栏:服务端**任何**一版如实回绝
+ * (resolve 的 `{status:"error"}`,不是 reject)都不许被报成「已重发」。
+ */
+describe("FRONT-A12 — a deployment that cannot send mail says so on the email step", () => {
+  const ENVIRONMENT_SENTENCE = "Sign-in codes aren't available in this environment yet.";
+
+  function emailStep(signInCodesAvailable: boolean) {
+    return createElement(LoginForm, {
+      from: "/create",
+      googleEnabled: false,
+      signInCodesAvailable,
+      initialStep: "email" as const,
+    });
+  }
+
+  it("FRONT-A12: says the environment sentence and never claims a code was sent", async () => {
+    const el = await render(emailStep(false));
+
+    expect(el.textContent).toContain(ENVIRONMENT_SENTENCE);
+    // 这一步原本许下的承诺,现在不说了。
+    expect(el.textContent).not.toContain("We'll send a temporary login code.");
+    expect(el.textContent).not.toContain("Check your email");
+    expect(el.textContent).not.toContain("We sent a temporary login code to");
+  });
+
+  it("FRONT-A12: the button is disabled and a submit still asks the server for nothing", async () => {
+    const el = await render(emailStep(false));
+
+    expect(buttonByText(el, "Continue with email").disabled).toBe(true);
+    const email = el.querySelector<HTMLInputElement>('input[type="email"]')!;
+    await act(async () => {
+      setReactInputValue(email, "owner@example.com");
+    });
+    // 输入框里按 Enter 的隐式提交也走这一条 —— 页面绝不能因此翻页。
+    await act(async () => {
+      el.querySelector("form")!.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(requestSignInCodeMock).not.toHaveBeenCalled();
+    expect(el.textContent).not.toContain("Check your email");
+    expect(el.textContent).not.toContain("We sent a temporary login code to");
+  });
+
+  it("FRONT-A2: the sentence talks about the environment, never about this email address", async () => {
+    const el = await render(emailStep(false));
+    const shown = el.textContent ?? "";
+    expect(shown).not.toContain("owner@example.com");
+    expect(ENVIRONMENT_SENTENCE).not.toMatch(/email|address|account/i);
+  });
+
+  it("FRONT-A12: a deployment that CAN send mail is unchanged — it still reaches 'Check your email'", async () => {
+    // 控制组。少了它,「永远显示环境句」的实现也会让上面三条全绿。
+    const tree = emailStep(true);
+    requestSignInCodeMock.mockResolvedValueOnce({ status: "success", message: "sent" });
+    const el = await render(tree);
+
+    expect(el.textContent).toContain("We'll send a temporary login code.");
+    expect(el.textContent).not.toContain(ENVIRONMENT_SENTENCE);
+    expect(buttonByText(el, "Continue with email").disabled).toBe(false);
+
+    const email = el.querySelector<HTMLInputElement>('input[type="email"]')!;
+    await act(async () => {
+      setReactInputValue(email, "owner@example.com");
+    });
+    await act(async () => {
+      el.querySelector("form")!.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    await act(async () => root!.render(tree));
+
+    expect(el.textContent).toContain("Check your email");
+    expect(el.textContent).toContain("We sent a temporary login code to");
+  });
+});
+
 describe("login code step", () => {
+  it("FRONT-A12: a 'Send again' the server refuses is not reported as 'A new login code was sent.'", async () => {
+    const el = await reachCodeStep();
+
+    requestSignInCodeMock.mockResolvedValueOnce({
+      status: "error",
+      reason: "unknown",
+      message: "We couldn't send a sign-in code. Try again.",
+    });
+    await act(async () => {
+      buttonByText(el, "Send again").click();
+    });
+
+    expect(el.textContent).not.toContain("A new login code was sent.");
+    expect(el.querySelector('[role="alert"]')!.textContent).toContain(
+      "We couldn't send a sign-in code. Try again.",
+    );
+  });
+
   it("FRONT-A12: a failed 'Send again' is reported as a failure, never as 'a new code was sent'", async () => {
     const el = await reachCodeStep();
 

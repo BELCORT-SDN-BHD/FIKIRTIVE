@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AuthPageShell } from "@/components/auth/AuthPageShell";
 import { auth } from "@/lib/better-auth/compat";
 import { googleSignInConfigured } from "@/lib/better-auth/social-config";
+import { emailDeliveryAvailable } from "@/lib/email/transport";
 import { authDestination, parseLoginStep } from "@/lib/auth-journey";
 
 import { LoginForm } from "./LoginForm";
@@ -33,6 +34,7 @@ export default async function LoginPage({
       <LoginForm
         from={authDestination(from)}
         googleEnabled={googleSignInConfigured()}
+        signInCodesAvailable={emailDeliveryAvailable()}
         initialError={error ? ERRORS[error] ?? ERRORS.Default : null}
         initialStep={parseLoginStep(step)}
       />
