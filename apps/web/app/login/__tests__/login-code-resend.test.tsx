@@ -113,9 +113,14 @@ async function reachCodeStep() {
 /**
  * 走查修复二 —— 3310 走查看到的那一幕:服务端日志写着
  * `[better-auth] auth email delivery failed: EmailSendError`,页面照样翻到「Check your email /
- * We sent a temporary login code to …」。现在服务端在没有邮件通道时如实回一条失败(reason
- * "unknown",见 app/login/actions.ts 与 lib/better-auth/signin-code-request.ts 的 ①′),
- * 这一组钉的是页面**读得懂这条失败**:留在邮箱步、说实话、绝不翻页去讲那句「已寄出」。
+ * We sent a temporary login code to …」。
+ *
+ * 这一组钉的是**页面侧**那一半:服务端一旦如实回绝(resolve 的 `{status:"error"}`,不是 reject),
+ * 页面必须留在邮箱步说实话,绝不翻页去讲那句「已寄出」。该分支页面早就有
+ * (`app/login/LoginForm.tsx:144-147`),但**服务端今天从不触发它**——`app/login/actions.ts:36-38`
+ * 仍是「非 invalid_email 一律回成功」。服务端侧怎么改是产品裁决,见
+ * `docs/specs/frontend-baseline.md` §5 2026-09-05 尾巴组 F2 那一行(待 Founder 三选一);
+ * 这两条是前置围栏:任何一版服务端修法都必须让它们保持绿。
  */
 describe("FRONT-A12 — an undeliverable request never becomes 'We sent a temporary login code'", () => {
   it("FRONT-A12: stays on the email step and says why, instead of claiming a code was sent", async () => {
@@ -124,8 +129,8 @@ describe("FRONT-A12 — an undeliverable request never becomes 'We sent a tempor
       googleEnabled: false,
       initialStep: "email" as const,
     });
-    // 服务端「这个部署寄不出邮件」的回答 —— 是 resolve 的错误,不是 reject。上一版页面对它
-    // 已经有分支,但服务端从来不会这样回答,所以这一幕在生产不可能发生;现在会。
+    // 服务端如实回绝的形状 —— resolve 的 `{status:"error"}`,不是 reject。今天的服务端从不这样
+    // 回答(见本组抬头),所以这一幕在生产还不可能发生;这条钉的是它一旦发生页面不会说假话。
     requestSignInCodeMock.mockResolvedValueOnce({
       status: "error",
       reason: "unknown",
