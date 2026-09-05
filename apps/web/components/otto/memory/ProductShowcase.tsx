@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { MemoryNoteCard } from "./MemoryNoteCard";
 import { MemorySourceBadge } from "./MemorySourceBadge";
 import { useAsyncActionFeedback } from "./useAsyncActionFeedback";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 /** Short "Mon D" label for a row's updatedAt. Deterministic — no toLocaleDateString (SSR-safe).
  *  The month names come from lib/short-date-label; OfferList.tsx held the identical copy. */
@@ -492,7 +493,7 @@ export function ProductShowcase({
                     onClick={() => openImagePicker(r)}
                     className="h-[150px] w-full rounded-none bg-muted text-sm font-normal text-muted-foreground hover:bg-muted/80 hover:text-foreground"
                   >
-                    <ImageOff data-icon="inline-start" />Add image · from Library
+                    <ImageOff data-icon="inline-start" />{`Add image · from ${PRODUCT_VOCABULARY.library}`}
                   </Button>
                 )}
                 {r.pinned && (

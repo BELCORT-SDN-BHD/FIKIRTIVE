@@ -6,9 +6,10 @@ import { getLibraryElements } from "@/lib/library-elements";
 import { parseLibraryElementView } from "@/lib/library-elements-model";
 import { parseLibraryView } from "@/lib/library-view-model";
 import { LibraryView } from "@/components/library/LibraryView";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Library · Fikirtive" };
+export const metadata = { title: `${PRODUCT_VOCABULARY.library} · Fikirtive` };
 
 /**
  * Library —— 商家找回、整理与重用自己作品的那一面(前端基线规格

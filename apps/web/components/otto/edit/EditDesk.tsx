@@ -45,6 +45,7 @@ import { UPLOAD_FAILURE_COPY } from "@fikirtive/core/upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import { UPLOAD_EXTS, mimeOf } from "@fikirtive/core/upload";
 import type { CutSummary, DeskMedia } from "@/lib/edit-desk";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 const POLL_MS = 2000;
 
@@ -375,7 +376,7 @@ export function EditDesk({ projectId }: { projectId: string }) {
             <EmptyHeader>
               <EmptyMedia variant="icon"><Spinner /></EmptyMedia>
               <EmptyTitle>Opening your video…</EmptyTitle>
-              <EmptyDescription>Loading the saved cut and media for this project.</EmptyDescription>
+              <EmptyDescription>{`Loading the saved cut and media for this ${PRODUCT_VOCABULARY.canvas}.`}</EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : openFailed ? (

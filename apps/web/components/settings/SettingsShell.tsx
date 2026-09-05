@@ -4,6 +4,7 @@ import { CircleUserRound, CreditCard, Settings2, Unplug } from "lucide-react"
 import { SETTINGS_SECTIONS, type SettingsScope } from "@fikirtive/core/navigation"
 import { buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary"
 
 export type SettingsSectionKey = (typeof SETTINGS_SECTIONS)[number]["key"]
 
@@ -67,7 +68,7 @@ export function SettingsShell({
           className="shrink-0 border-b border-border bg-background px-4 py-6 lg:w-[220px] lg:border-b-0 lg:border-r"
           aria-label="Settings sections"
         >
-          {(["Personal", "Workspace"] as const satisfies readonly SettingsScope[]).map((scope, scopeIndex) => (
+          {(["Personal", PRODUCT_VOCABULARY.workspace] as const satisfies readonly SettingsScope[]).map((scope, scopeIndex) => (
             <div key={scope} className={cn(scopeIndex > 0 && "mt-7 border-t border-border pt-6")}>
               <p className="mb-2 px-2 text-xs font-semibold text-foreground">{scope}</p>
               <div className="space-y-1">

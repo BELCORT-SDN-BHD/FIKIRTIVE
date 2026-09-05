@@ -24,9 +24,12 @@
  * Pure functions, no React/Prisma/server-only — usable from a server entry
  * (`CreateWorkspaceEntry.tsx`) or a client component (`CreateWorkspace.tsx`) alike.
  */
+import { PRODUCT_VOCABULARY } from "./product-vocabulary";
 
-/** The name a freshly bootstrapped Canvas gets today. */
-export const DEFAULT_CANVAS_NAME = "New canvas";
+/** The name a freshly bootstrapped Canvas gets today. The noun comes from
+ *  `product-vocabulary.ts` — that file is where the five product words are decided,
+ *  this one only decides what a *name* made of that word looks like. */
+export const DEFAULT_CANVAS_NAME = `New ${PRODUCT_VOCABULARY.canvas.toLowerCase()}`;
 
 /** Every placeholder name a Canvas record has ever been created with, oldest first —
  *  still-live rows may carry any of these. Kept for `actions.ts`'s reuse/auto-title

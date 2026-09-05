@@ -45,6 +45,7 @@ import { canvasHref } from "@/components/canvas/canvas-href";
 import { StartSomething } from "@/components/start-something/StartSomething";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { canvasDisplayName, formatCanvasTitle } from "@/lib/canvas-title";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 export interface CreateWorkspaceProject {
   id: string;
@@ -89,7 +90,7 @@ export function CreateWorkspace({ projects }: { projects: CreateWorkspaceProject
               </EmptyMedia>
               <EmptyTitle className="text-base">No canvases yet</EmptyTitle>
               <EmptyDescription>
-                Describe something above. Your Canvas and Conversation will stay together here.
+                {`Describe something above. Your ${PRODUCT_VOCABULARY.canvas} and Conversation will stay together here.`}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

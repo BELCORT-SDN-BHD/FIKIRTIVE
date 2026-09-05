@@ -81,6 +81,7 @@ import {
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import { ACCEPT_ATTACH } from "@/lib/video-frame";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 /**
  * 起步页的上传只收图片,菜单项就照夹具写「Upload image」。
@@ -100,7 +101,7 @@ const ACCEPT_ENTRY_IMAGE = ACCEPT_ATTACH.split(",")
  * `<img>` 去画它 —— 屏幕上一个破图,而商家什么都没做错(判官 #1242 P2-4)。挡在这里,并说
  * 一句他下一步能照做的话。
  */
-const ENTRY_VIDEO_NOT_HERE = "Videos go in from the Canvas — this page takes images.";
+const ENTRY_VIDEO_NOT_HERE = `Videos go in from the ${PRODUCT_VOCABULARY.canvas} — this page takes images.`;
 
 type EntryReference = Omit<OttoComposerReference, "requestId">;
 
@@ -326,7 +327,7 @@ export function StartSomething() {
                       </DropdownMenuItem>
                       <DropdownMenuItem onSelect={() => setLibraryOpen(true)}>
                         <ImagesIcon aria-hidden="true" />
-                        Choose from Library
+                        {`Choose from ${PRODUCT_VOCABULARY.library}`}
                       </DropdownMenuItem>
                     </DropdownMenuGroup>
                   </DropdownMenuContent>
@@ -340,7 +341,7 @@ export function StartSomething() {
                 size="icon-sm"
                 variant="otto"
               >
-                {pending ? <Spinner aria-label="Starting Canvas" /> : <ArrowUpIcon />}
+                {pending ? <Spinner aria-label={`Starting ${PRODUCT_VOCABULARY.canvas}`} /> : <ArrowUpIcon />}
               </Button>
             </div>
           </InputGroup>

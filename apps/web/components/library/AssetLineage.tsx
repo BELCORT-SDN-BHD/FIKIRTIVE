@@ -4,6 +4,7 @@ import Link from "next/link";
 import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { creditsLabel } from "@/lib/credit-format";
 import type { GenerationLineage } from "@/lib/actions";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 /**
  * 血缘节 —— 一件素材的出处、参考、成本、状态、用途(清单 B3 / P1-007;
@@ -36,7 +37,7 @@ export function AssetLineage({ lineage }: { lineage: GenerationLineage }) {
     <div className="cv-detail-fact">
       <span className="cv-panel-label">Where this came from</span>
       <p className="cv-detail-fact-copy">
-        {"Canvas: "}
+        {`${PRODUCT_VOCABULARY.canvas}: `}
         <Link href={canvasHref} className="underline">
           {lineage.canvas.name ?? "Open canvas"}
         </Link>

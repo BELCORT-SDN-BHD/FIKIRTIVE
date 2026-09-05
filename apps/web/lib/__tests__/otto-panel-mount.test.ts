@@ -1221,7 +1221,7 @@ describe("整理项目也在面板里接得到(W2-11)", () => {
     const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
     await openProjectMenu(el, "Raya campaign");
-    await act(async () => menuItem("Pin project").click());
+    await act(async () => menuItem("Pin Canvas").click());
 
     expect(setProjectPinned).toHaveBeenCalledWith("prj_1", true);
   });
@@ -1233,9 +1233,9 @@ describe("整理项目也在面板里接得到(W2-11)", () => {
     const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
     await openProjectMenu(el, "Raya campaign");
-    await act(async () => menuItem("Rename project").click());
+    await act(async () => menuItem("Rename Canvas").click());
 
-    const input = document.querySelector<HTMLInputElement>('[aria-label="Project name"]')!;
+    const input = document.querySelector<HTMLInputElement>('[aria-label="Canvas name"]')!;
     await act(async () => setInputValue(input, "Raya launch"));
     await act(async () => {
       document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
@@ -1261,11 +1261,11 @@ describe("整理项目也在面板里接得到(W2-11)", () => {
     const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
     await openProjectMenu(el, "Raya campaign");
-    await act(async () => menuItem("Delete project").click());
+    await act(async () => menuItem("Delete Canvas").click());
 
     const confirmButton = () =>
       Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
-        (b) => b.textContent === "Delete project",
+        (b) => b.textContent === "Delete Canvas",
       )!;
     expect(confirmButton().disabled).toBe(true);
 
@@ -1286,12 +1286,12 @@ describe("整理项目也在面板里接得到(W2-11)", () => {
     const el = await mount(shell(MERCHANT_SURFACE));
     await openHistory(el);
     await openProjectMenu(el, "Raya campaign");
-    await act(async () => menuItem("Delete project").click());
+    await act(async () => menuItem("Delete Canvas").click());
 
     const typed = document.querySelector<HTMLInputElement>('[aria-label="Type Raya campaign to confirm"]')!;
     await act(async () => setInputValue(typed, "Raya campaign"));
     const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent === "Delete project",
+      (button) => button.textContent === "Delete Canvas",
     )!;
     await act(async () => confirm.click());
     await settle();

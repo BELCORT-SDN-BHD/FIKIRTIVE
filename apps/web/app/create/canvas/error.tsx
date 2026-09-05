@@ -6,6 +6,7 @@ import * as Sentry from "@sentry/nextjs";
 import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { crashReportContext } from "@/lib/sentry-browser";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 /**
  * 画布路由的错误边界 —— 2026-09-04 走查 P0-5「导航失败＝永远的骨架屏」。
@@ -37,7 +38,7 @@ export default function CanvasError({
         <span className="grid size-11 place-items-center rounded-xl bg-error-soft text-destructive">
           <AlertTriangle className="size-5" />
         </span>
-        <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Canvas</p>
+        <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{PRODUCT_VOCABULARY.canvas}</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">This canvas didn&apos;t open</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           It stopped loading part way through. Nothing you made was lost — everything is still saved. Try again, or go

@@ -152,8 +152,31 @@ export function copyVariants(source, file = "planted.tsx") {
         "请把这段拆简,或带理由上豁免板;这里不静默放行。",
     );
   }
-  const clean = (runs) =>
-    runs.map((run) => run.trim()).filter((run) => /[A-Za-z]/.test(run)).join(" ");
+  /**
+   * 收尾:丢掉没有字母的片段(样式类碎片、纯数字),其余按出现顺序用空格接起来。
+   *
+   * **只有一个例外:句末标点**(`.` `!` `?`)。一句话以插值收尾时——
+   * `` `…across every ${PRODUCT_VOCABULARY.canvas}.` ``——模板的尾巴就只剩那个句号,
+   * 一律按「没有字母」丢掉的话,这句话就没有句界了,和后面那一句并成一句。
+   * 那正是本文件抬头 #816 要修的病,只是方向相反:句界丢了,规则要么零命中,要么把
+   * 隔着两个界面的两句话判成相邻(2026-09-06 实例:`StuffLibrary` 的上手空态与
+   * `Rename item` 弹层的说明句被并成一句,#682 的代词规则误报)。
+   * 句末标点因此不另起一段,直接贴回前一段——它不是文案,它是标点。
+   */
+  const clean = (runs) => {
+    let out = "";
+    for (const raw of runs) {
+      const run = raw.trim();
+      if (!run) continue;
+      if (/^[.!?]+$/.test(run)) {
+        out += run;
+        continue;
+      }
+      if (!/[A-Za-z]/.test(run)) continue;
+      out = out ? `${out} ${run}` : run;
+    }
+    return out;
+  };
 
   if (choices === 0) return [clean(renderPieces(pieces, () => 0))];
 

@@ -1,7 +1,8 @@
 import LibraryPage from "../page";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Library · Fikirtive" };
+export const metadata = { title: `${PRODUCT_VOCABULARY.library} · Fikirtive` };
 
 /**
  * `/library/<generationId>` —— 一件素材的详情,**一条真地址**(清单 B3 / P1-007;

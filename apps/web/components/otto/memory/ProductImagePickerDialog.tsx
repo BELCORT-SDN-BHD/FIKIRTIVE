@@ -13,6 +13,7 @@ import { Spinner } from "@/components/ui/spinner";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { StuffItem } from "@/lib/stuff-items";
 import { StuffLibrary } from "../stuff/StuffLibrary";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 export function ProductImagePickerDialog({ product, items, onClose, onSetImage }: {
   product: BrandRecordRow | null;
@@ -61,9 +62,10 @@ export function ProductImagePickerDialog({ product, items, onClose, onSetImage }
         className="max-h-[80vh] max-w-[min(720px,calc(100vw-2rem))] overflow-auto"
       >
         <DialogHeader className="pr-8">
-          <DialogTitle>Choose an image from Library</DialogTitle>
+          <DialogTitle>{`Choose an image from ${PRODUCT_VOCABULARY.library}`}</DialogTitle>
           <DialogDescription>
-            Pick one of your own images to show on this product. The Library image stays available if you replace it later.
+            Pick one of your own images to show on this product. The {PRODUCT_VOCABULARY.library} image stays available if
+            you replace it later.
           </DialogDescription>
         </DialogHeader>
         {pending && (

@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { MemoryRow } from "@/lib/memory-actions";
 import { MemorySourceBadge } from "./MemorySourceBadge";
 import { useAsyncActionFeedback } from "./useAsyncActionFeedback";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 export function MemoryNoteCard({ note, fresh, onSave, onDelete }: {
   note: MemoryRow;
@@ -150,7 +151,8 @@ export function MemoryNoteCard({ note, fresh, onSave, onDelete }: {
           <Alert variant="warning" density="compact">
             <AlertTitle>What changes</AlertTitle>
             <AlertDescription>
-              Otto will stop using this note in future projects. Existing projects and generated assets stay unchanged.
+              Otto will stop using this note in future {PRODUCT_VOCABULARY.canvas}es. Existing{" "}
+              {PRODUCT_VOCABULARY.canvas}es and generated assets stay unchanged.
             </AlertDescription>
           </Alert>
           {deleteError && (

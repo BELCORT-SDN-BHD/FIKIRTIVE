@@ -8,6 +8,7 @@
  * §2 (ordering, row cap, Recent cap) and §3 (row anatomy).
  */
 import type { ReferenceType } from "@fikirtive/core/reference-ref";
+import { PRODUCT_VOCABULARY } from "./product-vocabulary";
 
 /** Contract §2 — "最多显示约 8 行，之后在菜单内部滚动". */
 export const REFERENCE_PAGE_LIMIT = 8;
@@ -69,9 +70,9 @@ export function referenceTypeLabel(type: ReferenceType): string {
  */
 export function referenceSourceLine(type: ReferenceType, detail?: string | null): string {
   if (type === "official-avatar") return "Official avatar · Read only";
-  if (type === "product") return "Product · Otto IQ";
+  if (type === "product") return `Product · ${PRODUCT_VOCABULARY.ottoIq}`;
   const trimmed = detail?.trim();
-  return `${TYPE_LABELS[type]} · ${trimmed || "Library"}`;
+  return `${TYPE_LABELS[type]} · ${trimmed || PRODUCT_VOCABULARY.library}`;
 }
 
 /**

@@ -100,6 +100,7 @@ import {
   type LibraryTimeZone,
   type LibraryView as LibraryViewName,
 } from "@/lib/library-view-model";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import { cn } from "@/lib/utils";
 
 type MediaFilter = "all" | "image" | "video";
@@ -233,7 +234,7 @@ function LibraryToolbar({
           <Search aria-hidden />
         </InputGroupAddon>
         <InputGroupInput
-          aria-label="Search Library"
+          aria-label={`Search ${PRODUCT_VOCABULARY.library}`}
           value={filters.query}
           onChange={(event) => onChange({ query: event.target.value })}
           // 占位符只承诺服务端真的会打的那几列。今天是两列:引擎产物的提示词,与商家上传时
@@ -269,14 +270,14 @@ function LibraryToolbar({
       {projects.length ? (
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={<FilterButton>{activeProject ? activeProject.name : "Canvas"}</FilterButton>}
+            render={<FilterButton>{activeProject ? activeProject.name : PRODUCT_VOCABULARY.canvas}</FilterButton>}
           />
           <DropdownMenuContent align="start">
             <DropdownMenuRadioGroup
               value={filters.projectId}
               onValueChange={(value) => onChange({ projectId: value })}
             >
-              <DropdownMenuLabel>Source Canvas</DropdownMenuLabel>
+              <DropdownMenuLabel>{`Source ${PRODUCT_VOCABULARY.canvas}`}</DropdownMenuLabel>
               <DropdownMenuRadioItem value="all">All canvases</DropdownMenuRadioItem>
               {projects.map((project) => (
                 <DropdownMenuRadioItem key={project.id} value={project.id}>
@@ -423,7 +424,7 @@ function ElementsView({
   const [removing, setRemoving] = React.useState(false);
   const [removeError, setRemoveError] = React.useState<string | null>(null);
   const visible = elements.filter((element) => element.kind === elementView);
-  const viewLabel = LIBRARY_ELEMENT_VIEWS.find((view) => view.value === elementView)?.label ?? "Elements";
+  const viewLabel = LIBRARY_ELEMENT_VIEWS.find((view) => view.value === elementView)?.label ?? PRODUCT_VOCABULARY.elements;
 
   async function confirmRemove() {
     if (!removeTarget || removing) return;
@@ -490,7 +491,7 @@ function ElementsView({
         <div className="flex min-h-72 flex-col items-center justify-center text-center">
           <h3 className="text-sm font-semibold">No {viewLabel.toLowerCase()} yet</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            Elements you and Otto save while creating show up here.
+            {`${PRODUCT_VOCABULARY.elements} you and Otto save while creating show up here.`}
           </p>
         </div>
       )}
@@ -533,7 +534,7 @@ function ElementsView({
                     onClick={() => { setRemoveError(null); setRemoveTarget(selected); }}
                   >
                     <Trash2 aria-hidden />
-                    Remove from Library
+                    {`Remove from ${PRODUCT_VOCABULARY.library}`}
                   </Button>
                 </DialogFooter>
               ) : null}
@@ -548,7 +549,7 @@ function ElementsView({
             <AlertDialogTitle>Remove from library?</AlertDialogTitle>
             <AlertDialogDescription>
               {removeTarget
-                ? `This moves "${removeTarget.name}" out of Library. It won't show up in projects, pickers, or search anymore.`
+                ? `This moves "${removeTarget.name}" out of ${PRODUCT_VOCABULARY.library}. It won't show up on a ${PRODUCT_VOCABULARY.canvas}, in pickers, or in search anymore.`
                 : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -992,7 +993,7 @@ export function LibraryView({
           <header className="shrink-0 px-6 pt-5">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h1 className="text-2xl font-semibold tracking-[-0.03em]">Library</h1>
+                <h1 className="text-2xl font-semibold tracking-[-0.03em]">{PRODUCT_VOCABULARY.library}</h1>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Find, organize and reuse everything you create.
                 </p>
@@ -1058,7 +1059,7 @@ export function LibraryView({
               <>
                 {error ? (
                   <div className="flex min-h-72 flex-col items-center justify-center text-center">
-                    <h2 className="text-sm font-semibold">We couldn&apos;t load your Library</h2>
+                    <h2 className="text-sm font-semibold">We couldn&apos;t load your {PRODUCT_VOCABULARY.library}</h2>
                     <p className="mt-1 text-xs text-muted-foreground">{error}</p>
                     <Button
                       variant="secondary"

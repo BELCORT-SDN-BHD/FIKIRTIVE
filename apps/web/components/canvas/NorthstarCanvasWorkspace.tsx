@@ -35,6 +35,7 @@ import {
 } from "./CanvasOttoOverlay";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 export type ImmersiveCanvasRuntimeContext = {
   projects: Array<{ id: string; name: string }>;
@@ -174,7 +175,7 @@ export function NorthstarCanvasWorkspace({
         </Button>
         <span className="h-4 w-px bg-border" aria-hidden="true" />
         <span className="min-w-0 truncate text-sm font-semibold text-foreground">
-          {activeCanvas?.name ?? "Canvas"}
+          {activeCanvas?.name ?? PRODUCT_VOCABULARY.canvas}
         </span>
         <div className="flex-1" />
         <Badge

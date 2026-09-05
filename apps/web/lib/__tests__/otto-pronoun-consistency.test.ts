@@ -419,9 +419,11 @@ describe("#830 an expression container inside JSX text no longer throws the sent
 
   it("keeps order across several interpolations in one template", () => {
     const planted = '<p>{`Otto drafts ${count} posts. ${busy ? "It is still working." : "Done."} Ask ${name}.`}</p>';
+    // 尾巴 `.` 从 2026-09-06 起留着:一句话以插值收尾时,那个句号就是它唯一的句界,
+    // 丢掉它这句就和后面那句并成一句(见 copy-stream-model.mjs 的 `clean`)。
     expect(copyVariants(planted).sort()).toEqual([
-      "Otto drafts posts. Done. Ask",
-      "Otto drafts posts. It is still working. Ask",
+      "Otto drafts posts. Done. Ask.",
+      "Otto drafts posts. It is still working. Ask.",
     ]);
     expect(rulesFor(planted)).toContain(RULE);
   });

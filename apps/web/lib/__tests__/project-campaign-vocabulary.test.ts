@@ -72,8 +72,8 @@ async function submit(form: HTMLFormElement) {
   });
 }
 
-describe("#546 F-06 — the per-project brief is a Project brief, not a brand brief", () => {
-  it("labels the intake toggle 'Project brief' and points store-level facts to Brand memory", async () => {
+describe("#546 F-06 — the per-Canvas brief is a Canvas brief, not a brand brief", () => {
+  it("labels the intake toggle 'Canvas brief' and points store-level facts to Brand memory", async () => {
     const dom = await render(createElement(QuickBrief, { projectId: "p1" }));
 
     const toggle = Array.from(dom.querySelectorAll("button")).find((b) =>
@@ -81,9 +81,11 @@ describe("#546 F-06 — the per-project brief is a Project brief, not a brand br
     );
     expect(toggle, "the brief toggle must exist").toBeTruthy();
     // "Set up brand brief" was the 2026-07 UI drift: it stored Project.coworkBrief
-    // (per-project, gone when you switch projects) while sounding like the org-level
-    // Brand memory. The vocabulary name is "Project brief".
-    expect(toggle!.textContent).toContain("Project brief");
+    // (per-Canvas, gone when you switch Canvases) while sounding like the org-level
+    // Brand memory. F-06 原意不变 —— 这是**这一件作品**的 brief,不是品牌 brief;
+    // 只是商家面前那个词在 2026-09-06 由 FRONT-A14 词汇围栏统一成 Canvas
+    // (IA README §6,Founder 2026-08-30),标签因此是 "Canvas brief"。
+    expect(toggle!.textContent).toContain("Canvas brief");
     expect(toggle!.textContent).not.toMatch(/brand brief/i);
 
     // Open it: the form must carry the one-line pointer that brand-constant facts
@@ -92,11 +94,11 @@ describe("#546 F-06 — the per-project brief is a Project brief, not a brand br
     expect(dom.textContent).toContain("Brand memory");
   });
 
-  it("keeps the original four-field brief capability while scoping every prompt to this Project", async () => {
+  it("keeps the original four-field brief capability while scoping every prompt to this Canvas", async () => {
     setCoworkBriefMock.mockResolvedValue({ ok: true });
     const dom = await render(createElement(QuickBrief, { projectId: "p1" }));
     const toggle = Array.from(dom.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("Project brief"),
+      button.textContent?.includes("Canvas brief"),
     );
     await click(toggle!);
 
@@ -108,10 +110,15 @@ describe("#546 F-06 — the per-project brief is a Project brief, not a brand br
     expect(audience).toBeTruthy();
     expect(platform).toBeTruthy();
     expect(budget).toBeTruthy();
-    expect(dom.textContent).toContain("Offer for this project");
-    expect(dom.textContent).toContain("Audience for this project");
-    expect(dom.textContent).toContain("Where this project will run");
-    expect(dom.textContent).toContain("Budget for this project");
+    // 词汇本身在 2026-09-06 由 FRONT-A14 词汇围栏统一到 `lib/product-vocabulary.ts`:
+    // 商家面前 Project 一律说 Canvas(IA README §6,Founder 2026-08-30)。这条断言守的
+    // 仍是 F-06 原意 —— 这四格问的是**这一件作品**的 offer/audience/channel/budget,
+    // 不是店铺层面的常量事实(那些在 Brand memory)。
+    expect(dom.textContent).toContain("Offer for this Canvas");
+    expect(dom.textContent).toContain("Audience for this Canvas");
+    expect(dom.textContent).toContain("Where this Canvas will run");
+    expect(dom.textContent).toContain("Budget for this Canvas");
+    expect(dom.textContent).not.toContain("for this project");
     expect(dom.textContent).not.toContain("What you sell / offer");
 
     await typeInto(offer!, "The summer collection");

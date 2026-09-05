@@ -32,6 +32,7 @@ import {
 } from "@/lib/templates";
 import { creditsLabel } from "@/lib/credit-format";
 import { UnderstandingCostHint } from "./UnderstandingCostHint";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 type Phase = "form" | "generating" | "done" | "cancelled" | "unknown";
 
@@ -76,7 +77,7 @@ export function templateRunReducer(state: TemplateRunState, event: TemplateRunEv
       return {
         ...state,
         phase: "unknown",
-        message: "We couldn't confirm whether this finished. Check your Library in a minute.",
+        message: `We couldn't confirm whether this finished. Check your ${PRODUCT_VOCABULARY.library} in a minute.`,
       };
     case "done":
       return { phase: "done", message: null, resultUrl: event.url, resultGenId: event.genId };

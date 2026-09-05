@@ -14,6 +14,7 @@ import {
   clampImageVariantCount,
 } from "@/lib/canvas-gen-costs";
 import { canvasBatchSlotOffset } from "@/lib/canvas-batch-layout";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import {
   clampVideoSpec,
   defaultVideoSpec,
@@ -817,7 +818,7 @@ export function useCanvasGen(
       ...(requestThreadId ? { threadId: requestThreadId } : {}),
     });
     if ("error" in created) {
-      fail("Your image is generating — the card didn't appear yet. Refresh Canvas to recover it without paying again.");
+      fail(`Your image is generating — the card didn't appear yet. Refresh ${PRODUCT_VOCABULARY.canvas} to recover it without paying again.`);
       return false;
     }
     clearCanvasActionReceipt(receipt);
@@ -1009,7 +1010,7 @@ export function useCanvasGen(
     }
     void onBalanceRefresh?.();
     const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", ...(requestThreadId ? { threadId: requestThreadId } : {}) });
-    if ("error" in created) { fail("Your video is generating — the card didn't appear yet. Refresh Canvas to recover it without paying again."); return false; }
+    if ("error" in created) { fail(`Your video is generating — the card didn't appear yet. Refresh ${PRODUCT_VOCABULARY.canvas} to recover it without paying again.`); return false; }
     clearCanvasActionReceipt(receipt);
     const createdPos = persistedNodePos(created, pos);
     onNode({
@@ -1136,7 +1137,7 @@ export function useCanvasGen(
     }
     void onBalanceRefresh?.();
     const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", ...(requestThreadId ? { threadId: requestThreadId } : {}) });
-    if ("error" in created) { fail("Your video is generating — the card didn't appear yet. Refresh Canvas to recover it without paying again."); return false; }
+    if ("error" in created) { fail(`Your video is generating — the card didn't appear yet. Refresh ${PRODUCT_VOCABULARY.canvas} to recover it without paying again.`); return false; }
     clearCanvasActionReceipt(receipt);
     const createdPos = persistedNodePos(created, pos);
     onNode({

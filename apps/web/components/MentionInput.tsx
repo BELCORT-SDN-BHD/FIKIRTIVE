@@ -18,6 +18,7 @@ import {
   type ReferencePickerRow,
 } from "@/components/reference-picker/ReferencePickerMenu";
 import { referenceSourceLine } from "@/lib/reference-search-model";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import type { EntityDTO } from "@/lib/types";
 
 // A suggestion row: either a bare entity (variantId undefined) or one of its named
@@ -110,7 +111,7 @@ const MentionList = forwardRef<MentionListHandle, MentionListProps>(function Men
       rows={rows}
       highlightedIndex={selected}
       title="References"
-      subtitle={props.query ? `Results for "${props.query}"` : "Elements in this workspace"}
+      subtitle={props.query ? `Results for "${props.query}"` : `${PRODUCT_VOCABULARY.elements} in this ${PRODUCT_VOCABULARY.workspace.toLowerCase()}`}
       onHighlightChange={setSelected}
       onSelect={pick}
       onDismiss={() => {}}

@@ -113,8 +113,8 @@ describe("Brand memory fact removal", () => {
 
     const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
     expect(dialog?.textContent).toContain("This removes the saved detail from Brand memory.");
-    expect(dialog?.textContent).toContain("Otto will stop using this detail in future projects.");
-    expect(dialog?.textContent).toContain("Existing projects and generated assets stay unchanged.");
+    expect(dialog?.textContent).toContain("Otto will stop using this detail in future Canvases.");
+    expect(dialog?.textContent).toContain("Existing Canvases and generated assets stay unchanged.");
 
     await click(button("Keep detail"));
     expect(remove).not.toHaveBeenCalled();

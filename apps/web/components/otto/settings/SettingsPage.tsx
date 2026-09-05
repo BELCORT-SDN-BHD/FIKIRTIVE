@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/field";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 type NumberFieldData = Extract<SettingsField, { kind: "number" }>;
 
@@ -276,7 +277,7 @@ export function SettingsPage({ sections }: { sections: SettingsSection[] }) {
           <div className="flex flex-col gap-5 lg:sticky lg:top-8">
             <div className="flex flex-col gap-1">
               <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-              <p className="text-sm text-muted-foreground">Workspace controls and defaults.</p>
+              <p className="text-sm text-muted-foreground">{`${PRODUCT_VOCABULARY.workspace} controls and defaults.`}</p>
             </div>
             <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0">
               {sections.map((section) => (
@@ -296,7 +297,7 @@ export function SettingsPage({ sections }: { sections: SettingsSection[] }) {
 
         <div className="flex min-w-0 max-w-4xl flex-col gap-8">
           <header className="flex max-w-2xl flex-col gap-2">
-            <Badge variant="outline">Workspace controls</Badge>
+            <Badge variant="outline">{`${PRODUCT_VOCABULARY.workspace} controls`}</Badge>
             <h2 className="text-3xl font-semibold tracking-tight">Preferences</h2>
             <p className="text-base text-muted-foreground">
               Decide how Otto acts, where content connects, and what requires your approval.
