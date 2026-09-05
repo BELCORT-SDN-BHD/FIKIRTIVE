@@ -231,3 +231,53 @@ describe("owner 校验沿既有模式——无效 id 回落默认,不炸", () =>
     expect("error" in seed).toBe(false);
   });
 });
+
+/**
+ * FRONT-A14(#1200 判官 P2-2)—— 落座口径与展开信号必须是同一句话。
+ *
+ * 展开信号(`hasPendingPanelThread`)按 ownerId 查、**不带 project**;落座从前只在当前
+ * project 里选。两者口径不一致时的现场:一条在别的 project 里跑着的面板对话把面板顶开,
+ * 面板打开后却画的是新对话空态 —— 商家看到的是凭空弹出来的一块空面板。
+ */
+describe("FRONT-A14 落座与展开信号同一口径:全店(#1200 判官 P2-2)", () => {
+  const CANVAS_ROW = { id: "thr_default_canvas", projectId: DEFAULT_PROJECT, title: "Professional Male Model Image", updatedAt: "2026-08-21T09:00:00.000Z", pinnedAt: null, surface: "canvas" };
+  const OTHER_PANEL_ROW = { id: "thr_other_panel", projectId: OTHER_PROJECT, title: "Top up my credits", updatedAt: "2026-08-19T00:00:00.000Z", pinnedAt: null, surface: "panel" };
+
+  it("FRONT-A14 — 当前 project 没有面板对话时,续全店最近那一条,并跟着它停在那个 project", async () => {
+    mockGetAllCoworkThreadMetas.mockResolvedValue([CANVAS_ROW, OTHER_PANEL_ROW]);
+
+    const seed = await loadOttoPanelSeed();
+    if ("error" in seed) throw new Error("unexpected error: " + seed.error);
+    expect(seed.activeThreadId).toBe("thr_other_panel");
+    // 项目与会话是同一件事:续了别的 project 那一条,就停在那个 project。
+    expect(seed.projectId).toBe(OTHER_PROJECT);
+  });
+
+  it("FRONT-A14 — 当前 project 自己有面板对话时照旧先选它,不跨项目", async () => {
+    const seed = await loadOttoPanelSeed();
+    if ("error" in seed) throw new Error("unexpected error: " + seed.error);
+    expect(seed.activeThreadId).toBe("thr_default_recent");
+    expect(seed.projectId).toBe(DEFAULT_PROJECT);
+  });
+
+  it("FRONT-A14 — 深链点名了 project 就不放宽:那个 project 里没有面板对话就不预选", async () => {
+    mockGetAllCoworkThreadMetas.mockResolvedValue([CANVAS_ROW, OTHER_PANEL_ROW]);
+
+    const seed = await loadOttoPanelSeed({ projectId: DEFAULT_PROJECT });
+    if ("error" in seed) throw new Error("unexpected error: " + seed.error);
+    expect(seed.activeThreadId).toBeNull();
+    expect(seed.projectId).toBe(DEFAULT_PROJECT);
+  });
+
+  it("FRONT-A14 — 全店一条面板对话都没有时仍然不预选(不会退去续画布或老行)", async () => {
+    mockGetAllCoworkThreadMetas.mockResolvedValue([
+      CANVAS_ROW,
+      { id: "thr_other_legacy", projectId: OTHER_PROJECT, title: "Legacy", updatedAt: "2026-08-19T00:00:00.000Z", pinnedAt: null, surface: null },
+    ]);
+
+    const seed = await loadOttoPanelSeed();
+    if ("error" in seed) throw new Error("unexpected error: " + seed.error);
+    expect(seed.activeThreadId).toBeNull();
+    expect(seed.projectId).toBe(DEFAULT_PROJECT);
+  });
+});
