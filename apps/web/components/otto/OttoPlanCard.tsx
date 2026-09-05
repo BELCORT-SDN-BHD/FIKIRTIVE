@@ -105,9 +105,10 @@ export function OttoPlanCard({
    * 它是**服务端算过价的整张卡**,不是界面自己拼的补丁:价、规格条目、菜单全部随它一起换。
    * `payload` 这个 prop 一换(父组件重新取回这条会话)就清空 —— 库里那一份永远压过手里这一份。
    */
-  const [reminted, setReminted] = useState<unknown>(null);
-  useEffect(() => { setReminted(null); }, [payload]);
-  const gate = planCardGate(reminted ?? payload);
+  const [reminted, setReminted] = useState<{ from: unknown; value: unknown } | null>(null);
+  // 纯派生,没有 effect:重铸的那一份只在**它当时那张卡**还在时算数。prop 一换(父组件
+  // 重新取回这条会话)`from` 就对不上,库里那一份自动压过手里这一份。
+  const gate = planCardGate(reminted && reminted.from === payload ? reminted.value : payload);
   const p: OttoPlanCardPayload = gate.value;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -404,7 +405,7 @@ export function OttoPlanCard({
             cardId={cardId}
             payload={p}
             disabled={busy}
-            onChanged={setReminted}
+            onChanged={(next) => setReminted({ from: payload, value: next })}
           />
         )}
 

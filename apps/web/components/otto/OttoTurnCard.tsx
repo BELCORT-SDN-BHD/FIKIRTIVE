@@ -30,7 +30,7 @@
  *    自相矛盾的脸，在这一层没有地方生出来 —— 它连两个状态源都没有。
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -177,9 +177,9 @@ function CanvasConfirmRow({
   const [errorRef, setErrorRef] = useState<string | null>(null);
   /** 商家在这张卡上改完三格之后,服务端重铸出来的那一份(整张卡,含新的价与菜单)。
    *  卡换了(父组件重新取回这条会话)就清空 —— 库里那一份永远压过手里这一份。 */
-  const [reminted, setReminted] = useState<unknown>(null);
-  useEffect(() => { setReminted(null); }, [card.payload]);
-  const gate = planCardGate(reminted ?? card.payload);
+  const [reminted, setReminted] = useState<{ from: unknown; value: unknown } | null>(null);
+  // 纯派生,没有 effect:重铸的那一份只在**它当时那张卡**还在时算数;卡一换就自动作废。
+  const gate = planCardGate(reminted && reminted.from === card.payload ? reminted.value : card.payload);
   const p = gate.value;
   const credits = gate.credits;
   // 读不懂或担保不住价格的卡不在这里出现 —— 抽屉里那张会把原因说清楚（UNREADABLE_PLAN_NOTE
@@ -245,7 +245,7 @@ function CanvasConfirmRow({
         cardId={card.cardId}
         payload={p}
         disabled={busy}
-        onChanged={setReminted}
+        onChanged={(next) => setReminted({ from: card.payload, value: next })}
       />
       {/* CRE-STG-P2-004 —— 失败留在卡上(不是 toast),而且带着那个可复制的短号:走查那两次
           点击之后卡面上什么都不剩,商家除了「再试一次」没有第二个动作。短号与抽屉里那张卡

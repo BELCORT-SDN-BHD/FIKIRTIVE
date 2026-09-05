@@ -160,7 +160,8 @@ describe("ENGINE-A3 确认卡上的三格 —— 接在生产那条 $0 路上", 
   });
 
   it("ENGINE-A3 这条修改之前铸的老卡(没有 options)⇒ 一格控件都不渲染,与从前逐字相同", () => {
-    const { options: _drop, ...old } = imageCard();
+    const old = { ...imageCard() };
+    delete old.options;
     const host = mount(old);
     expect(selectByLabel(host, "How many images")).toBeUndefined();
     expect(host.querySelector('[aria-label="Fine detail"]')).toBeNull();
