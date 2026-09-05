@@ -6,6 +6,7 @@
 
 - `checklist-closure.md` — 2026-08-28 Phase 1C 查漏补缺结论与延期边界。
 - `internationalization.md` — locale、文案扩张、数字、货币、日期、timezone、RTL 与验收规则。
+- [content-disclosure.md](content-disclosure.md) — 文案与信息展示：辅助说明、费用披露、状态、异常与图片理解的用户语言；新增或修改这些内容时必读。
 - [frontend-integration-handoff.md](frontend-integration-handoff.md) — 后端接线涉及前端时必读：设计来源核对、组件复用／扩展、变更批准与验证边界。
 - [frontend-baseline-handoff.md](frontend-baseline-handoff.md) — 2026-09-02 本次基线交付快照、源码入口、验证范围和接手顺序；不替代实时 convergence record。
 - `design-rules.md` 与 `cards/` — 为旧链接保留的 compatibility symlink；真实文件在

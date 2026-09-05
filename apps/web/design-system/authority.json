@@ -18,6 +18,7 @@
     "referencePicker": "apps/web/design-system/patterns/reference-picker",
     "informationArchitecture": "apps/web/design-system/information-architecture",
     "governance": "apps/web/design-system/governance",
+    "contentDisclosure": "apps/web/design-system/governance/content-disclosure.md",
     "frontendIntegrationHandoff": "apps/web/design-system/governance/frontend-integration-handoff.md",
     "frontendBaselineHandoff": "apps/web/design-system/governance/frontend-baseline-handoff.md"
   },

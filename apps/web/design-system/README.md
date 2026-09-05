@@ -55,6 +55,8 @@
 
 ## 修改规则
 
+新增或修改辅助说明、费用提示、Otto 状态或内部能力的用户表达时，先读 [文案与信息展示规则](governance/content-disclosure.md)。它是该类决定的唯一 owner，不改变业务收费合同。
+
 接手本轮前端基线时，先读[前端基线交付与接手入口](governance/frontend-baseline-handoff.md)；它是交付快照，不替代各板块 spec 或实时接线记录。
 
 涉及后端接线、组件或流程变更时，先读[前端接线与设计变更交接规范](governance/frontend-integration-handoff.md)。组件复用、缺口处理、变更批准与接线验收的流程只维护在该文件。
