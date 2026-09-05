@@ -114,20 +114,35 @@ export async function deleteMemory(raw: unknown): Promise<{ ok: true } | { error
   if (typeof r?.id !== "string") return { error: "Invalid request." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const actor = await resolveActor(gate.email);
+  let removed = false;
   try {
     const { count } = await prisma.memory.updateMany({
-      // Match an already-deleted row too: retrying an uncertain request must stay successful.
-      where: { id: r.id, ownerId: gate.ownerId },
+      // 判官 P2-1:`deletedAt: null` 少不得。少了它,连按 Remove 会把 `deletedAt` 一次次
+      // 盖成新时间,幂等键(含 updatedAt)跟着变 —— 改动史里于是一行接一行 deleted,
+      // 一次删除被讲成三次。(与 `discardBrandDraft` 同一条口径。)
+      where: { id: r.id, ownerId: gate.ownerId, deletedAt: null },
       // 判官 P2-4:`actor.userId` 查不到 User 行时是 null,无条件写会把这一行已知的作者
       // **抹掉**。删除这件事不该让「谁写的」变成「不知道是谁」——认得出人才改这一列。
       data: { deletedAt: new Date(), ...actorStamp(actor) },
     });
-    if (!count) return { error: "Memory not found." };
+    removed = count > 0;
+    if (!removed) {
+      // 命中 0 行有两种可能(照 `confirmBrandDraft` 的写法回查真实状态):①这一行已经
+      // 删掉了 —— 重发的删除,结果仍然是「已删除」,不是错误,也不该再写一行历史;
+      // ②它真的不在了(或不属于这个租户)。
+      const already = await prisma.memory.findFirst({
+        where: { id: r.id, ownerId: gate.ownerId, deletedAt: { not: null } },
+        select: { id: true },
+      });
+      if (!already) return { error: "Memory not found." };
+    }
   } catch { return { error: "Couldn't delete — please try again." }; }
-  await recordBrandRevision({
-    ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "deleted",
-    stamp: await stampOf(gate.ownerId, r.id, "memory"), actor, summary: "Removed this context.",
-  });
+  if (removed) {
+    await recordBrandRevision({
+      ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "deleted",
+      stamp: await stampOf(gate.ownerId, r.id, "memory"), actor, summary: "Removed this context.",
+    });
+  }
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -138,18 +153,31 @@ export async function restoreMemory(raw: unknown): Promise<{ ok: true } | { erro
   if (typeof r?.id !== "string") return { error: "Invalid request." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const actor = await resolveActor(gate.email);
+  let broughtBack = false;
   try {
     const { count } = await prisma.memory.updateMany({
-      where: { id: r.id, ownerId: gate.ownerId },
+      // 判官 P2-1:同上的镜像 —— 只有还在删除态的行才需要恢复。少了它,连按 Restore 会
+      // 每次都 bump `updatedAt`,改动史里于是一行接一行 restored。
+      where: { id: r.id, ownerId: gate.ownerId, deletedAt: { not: null } },
       // 判官 P2-4:同上 —— 恢复不该顺手把已知作者抹掉。
       data: { deletedAt: null, ...actorStamp(actor) },
     });
-    if (!count) return { error: "Memory not found." };
+    broughtBack = count > 0;
+    if (!broughtBack) {
+      // 回查真实状态:这一行已经在了 —— 重发的恢复,结果仍然是「已恢复」。
+      const already = await prisma.memory.findFirst({
+        where: { id: r.id, ownerId: gate.ownerId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!already) return { error: "Memory not found." };
+    }
   } catch { return { error: "Couldn't restore — please try again." }; }
-  await recordBrandRevision({
-    ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "restored",
-    stamp: await stampOf(gate.ownerId, r.id, "memory"), actor, summary: "Brought this context back.",
-  });
+  if (broughtBack) {
+    await recordBrandRevision({
+      ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "restored",
+      stamp: await stampOf(gate.ownerId, r.id, "memory"), actor, summary: "Brought this context back.",
+    });
+  }
   revalidatePath("/", "layout");
   return { ok: true };
 }
