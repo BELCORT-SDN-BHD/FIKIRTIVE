@@ -2989,6 +2989,123 @@ describe("ENGINE-A6 — ottoTurn 的历史预算闸接线", () => {
 });
 
 
+// ── ENGINE-A4 / ENGINE-A2: ottoTurn 与 ottoApprove 两门的尾巴 ────────────────
+// ENGINE-A4(§7.2⑤ 第③刀)—— 入口诚实文案。流式那门早就说了这句话,这两门此前只有降级句、
+// 没有「没收钱」那半句:零交付的截断轮整笔退了,商家却读不到。判定来自 withLlmBudget 的
+// `onRefundedFailure`(引擎侧的零交付判词已在 packages/otto/src/runtime.test.ts 钉过),
+// 这里的替身照真实合约触发它。
+// ENGINE-A2(§7.2②)—— 每轮档案的落盘。变异实证:此前拆掉这两门的 `trace:` 一整个文件全绿
+// (docs/specs/otto-engine.md §5 已登记),所以这两条断言是这两门唯一的回归网。
+const REFUNDED_METER = async (args: { onRefundedFailure?: () => void }, fn: () => Promise<unknown>) => {
+  try {
+    return await fn();
+  } catch (e) {
+    args.onRefundedFailure?.();
+    throw e;
+  }
+};
+const CHARGED_DEGRADE = "I got a bit tangled up — try asking again.";
+const REFUNDED_DEGRADE = "I got a bit tangled up — try asking again. This turn wasn't charged.";
+
+/** 本次持久化的全部 AGENT 文本 —— 断言的是商家真读得到的那条,不是内存里的变量。 */
+function persistedAgentTexts(): string[] {
+  return mockChatMessageCreate.mock.calls
+    .map((c) => (c[0] as { data?: { role?: string; text?: string } }).data)
+    .filter((d): d is { role: string; text: string } => d?.role === "AGENT" && typeof d.text === "string")
+    .map((d) => d.text);
+}
+
+describe("ENGINE-A4 / ENGINE-A2 — ottoTurn 这一门的尾巴", () => {
+  beforeEach(() => {
+    setupHappyPath();
+    mockCreditLedgerFindMany.mockResolvedValue([]);
+  });
+
+  it("ENGINE-A4: 截断且整笔退款的一轮,持久化的降级句自己说「没收钱」", async () => {
+    mockRun.mockRejectedValue(new MockMaxTurnsExceededError());
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+
+    const res = await ottoTurn(BASE_INPUT);
+
+    expect(res).toMatchObject({ status: "degraded" });
+    expect(persistedAgentTexts()).toContain(REFUNDED_DEGRADE);
+  });
+
+  it("ENGINE-A4: 照常收费的截断轮不说这句 —— 收了钱还说没收就是另一句假话", async () => {
+    mockRun.mockRejectedValue(new MockMaxTurnsExceededError());
+    // 钩子不响 = 这一轮真结算了 usage。
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<unknown>) => fn());
+
+    const res = await ottoTurn(BASE_INPUT);
+
+    expect(res).toMatchObject({ status: "degraded" });
+    expect(persistedAgentTexts()).toContain(CHARGED_DEGRADE);
+    expect(persistedAgentTexts()).not.toContain(REFUNDED_DEGRADE);
+  });
+
+  it("ENGINE-A2: 这一轮落一行档案,surface 是 action、threadId 是本对话、refId 是本轮那把钥匙", async () => {
+    const res = await ottoTurn({ ...BASE_INPUT, threadId: THREAD_ID });
+
+    expect(res).toMatchObject({ status: "done" });
+    expect(mockOttoTurnTraceUpsert).toHaveBeenCalledTimes(1);
+    const call = mockOttoTurnTraceUpsert.mock.calls[0]![0] as {
+      where: { refId: string };
+      create: { threadId: string; surface: string; orgId: string; refId: string };
+    };
+    expect(call.create.surface).toBe("action");
+    expect(call.create.threadId).toBe(THREAD_ID);
+    expect(call.create.orgId).toBe(OWNER_ID);
+    expect(call.where.refId).toMatch(/^otto-turn:/);
+    expect(call.create.refId).toBe(call.where.refId);
+  });
+});
+
+describe("ENGINE-A4 / ENGINE-A2 — ottoApprove 这一门的尾巴", () => {
+  beforeEach(() => {
+    setupApproveHappyPath();
+    mockCreditLedgerFindMany.mockResolvedValue([]);
+  });
+
+  it("ENGINE-A4: 恢复轮截断且整笔退款时,降级句自己说「没收钱」", async () => {
+    mockRun.mockRejectedValue(new MockMaxTurnsExceededError());
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "degraded" });
+    expect(persistedAgentTexts()).toContain(REFUNDED_DEGRADE);
+  });
+
+  it("ENGINE-A4: 恢复轮照常收费时不说这句", async () => {
+    mockRun.mockRejectedValue(new MockMaxTurnsExceededError());
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<unknown>) => fn());
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "degraded" });
+    expect(persistedAgentTexts()).toContain(CHARGED_DEGRADE);
+    expect(persistedAgentTexts()).not.toContain(REFUNDED_DEGRADE);
+  });
+
+  it("ENGINE-A2: 恢复轮落一行档案,surface 是 approve-resume、threadId 是本对话、refId 带 attempt 序号", async () => {
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    expect(mockOttoTurnTraceUpsert).toHaveBeenCalledTimes(1);
+    const call = mockOttoTurnTraceUpsert.mock.calls[0]![0] as {
+      where: { refId: string };
+      create: { threadId: string; surface: string; orgId: string; refId: string };
+    };
+    expect(call.create.surface).toBe("approve-resume");
+    expect(call.create.threadId).toBe(APPROVE_THREAD_ID);
+    expect(call.create.orgId).toBe(OWNER_ID);
+    expect(call.where.refId).toBe(`otto-approve:${APPROVE_THREAD_ID}:${CARD_ID}:a1`);
+    expect(call.create.refId).toBe(call.where.refId);
+  });
+});
+
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Universal approval card chain (B4 debt-70, spec §五 5.1·附 + AR1 处方1/2) — the
 // five-test clause: ① card persistence (rendered content asserted in
