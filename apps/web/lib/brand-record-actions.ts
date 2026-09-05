@@ -5,6 +5,7 @@ import {
   newId, RECORD_KINDS, recordSchemaFor, recordName, normalizeNameKey, type RecordKind,
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
+import { resolveActor, recordBrandRevision, stampOf, actorStamp } from "./brand-revision";
 
 export type BrandRecordRow = {
   id: string;
@@ -33,7 +34,8 @@ export async function listBrandRecords(_ownerId?: string, brandId?: string | nul
   const gate = await requireOwner();
   if ("error" in gate) return [];
   const rows = await prisma.brandRecord.findMany({
-    where: { ownerId: gate.ownerId, brandId: brandId ?? null, deletedAt: null },
+    // 与 Memory 同一条纪律:只有 Ready 是正式记录(FRONT-A8,规格 §7.3④)。
+    where: { ownerId: gate.ownerId, brandId: brandId ?? null, deletedAt: null, contextStatus: "Ready" },
     orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
     select: SELECT,
   });
@@ -70,6 +72,7 @@ export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: str
   if ("error" in input) return input;
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const actor = await resolveActor(gate.email);
   const nameKey = normalizeNameKey(recordName(input.kind, input.data));
   if (!nameKey) return { error: "A record needs a name." };
 
@@ -79,12 +82,17 @@ export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: str
         where: { id: input.id, ownerId: gate.ownerId, deletedAt: null },
         data: {
           data: input.data as unknown as Prisma.InputJsonObject, nameKey, source: "user",
+          updatedById: actor.userId,
           ...(input.status !== undefined ? { status: input.status } : {}),
           ...(input.startsAt !== undefined ? { startsAt: input.startsAt } : {}),
           ...(input.endsAt !== undefined ? { endsAt: input.endsAt } : {}),
         },
       });
       if (!count) return { error: "Record not found." };
+      await recordBrandRevision({
+        ownerId: gate.ownerId, targetKind: "record", targetId: input.id, action: "updated",
+        stamp: await stampOf(gate.ownerId, input.id, "record"), actor, summary: "Edited this record.",
+      });
       revalidatePath("/", "layout");
       return { ok: true, id: input.id };
     }
@@ -101,7 +109,12 @@ export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: str
         status: input.status ?? "active",
         startsAt: input.startsAt ?? null, endsAt: input.endsAt ?? null,
         source: "user", pinned: false,
+        updatedById: actor.userId,
       },
+    });
+    await recordBrandRevision({
+      ownerId: gate.ownerId, targetKind: "record", targetId: id, action: "created",
+      stamp: await stampOf(gate.ownerId, id, "record"), actor, summary: "Added this record.",
     });
     revalidatePath("/", "layout");
     return { ok: true, id };
@@ -115,14 +128,20 @@ export async function deleteBrandRecord(raw: unknown): Promise<{ ok: true } | { 
   if (typeof r?.id !== "string") return { error: "Invalid request." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const actor = await resolveActor(gate.email);
   try {
     const { count } = await prisma.brandRecord.updateMany({
       // Include an already-deleted row so an uncertain request can be retried safely.
       where: { id: r.id, ownerId: gate.ownerId },
-      data: { deletedAt: new Date() },
+      // 判官 P2-4:认不出人时 `actor.userId` 是 null,无条件写会把这一行已知的作者抹掉。
+      data: { deletedAt: new Date(), ...actorStamp(actor) },
     });
     if (!count) return { error: "Record not found." };
   } catch { return { error: "Couldn't delete — please try again." }; }
+  await recordBrandRevision({
+    ownerId: gate.ownerId, targetKind: "record", targetId: r.id, action: "deleted",
+    stamp: await stampOf(gate.ownerId, r.id, "record"), actor, summary: "Removed this record.",
+  });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -133,13 +152,19 @@ export async function restoreBrandRecord(raw: unknown): Promise<{ ok: true } | {
   if (typeof r?.id !== "string") return { error: "Invalid request." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const actor = await resolveActor(gate.email);
   try {
     const { count } = await prisma.brandRecord.updateMany({
       where: { id: r.id, ownerId: gate.ownerId },
-      data: { deletedAt: null },
+      // 判官 P2-4:同上。
+      data: { deletedAt: null, ...actorStamp(actor) },
     });
     if (!count) return { error: "Record not found." };
   } catch { return { error: "Couldn't restore — please try again." }; }
+  await recordBrandRevision({
+    ownerId: gate.ownerId, targetKind: "record", targetId: r.id, action: "restored",
+    stamp: await stampOf(gate.ownerId, r.id, "record"), actor, summary: "Brought this record back.",
+  });
   revalidatePath("/", "layout");
   return { ok: true };
 }
