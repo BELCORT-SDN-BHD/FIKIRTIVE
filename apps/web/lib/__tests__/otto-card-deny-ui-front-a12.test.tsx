@@ -41,7 +41,7 @@ vi.mock("@/lib/cowork-actions", () => ({
 import { OttoActionPlanCard } from "@/components/otto/OttoActionPlanCard";
 import { OttoAdBuildCard } from "@/components/otto/OttoAdBuildCard";
 import { OttoResult } from "@/components/otto/OttoResult";
-import { ACTION_PLAN_DECLINE_TEXT, AD_BUILD_DECLINE_TEXT } from "@/lib/meta-card-decline-view";
+import { ACTION_PLAN_DECLINE_TEXT, AD_BUILD_DECLINE_TEXT, settlementTextFor } from "@/lib/meta-card-decline-view";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -192,6 +192,99 @@ describe("FRONT-A12 — Deny on Otto's Meta cards reaches the server", () => {
     expect(container.textContent).toContain(AD_BUILD_DECLINE_TEXT);
     expect(buttonNamed("Approve")).toBeUndefined();
     expect(buttonNamed("Deny")).toBeUndefined();
+  });
+});
+
+describe("FRONT-A12 — a card that was already settled says WHICH settlement", () => {
+  // Deny used to render the decline sentence for every non-error answer, so a plan someone else
+  // had approved, and an ask that had run out of time, both read "Plan declined — nothing was
+  // changed" (#1202 judge P2-1). Each of those is a different fact about the merchant's money.
+  it("FRONT-A12 Deny on an already approved plan says it was approved, not that it was declined", async () => {
+    ottoReject.mockResolvedValue({ ok: true, alreadyResolved: true, resolution: "approved" });
+    await act(async () => {
+      root.render(
+        createElement(OttoActionPlanCard, { cardId: CARD_ID, threadId: THREAD_ID, payload: planPayload }),
+      );
+    });
+
+    await click(buttonNamed("Deny")!);
+
+    expect(container.textContent).toContain(settlementTextFor("ACTION_CARD", "approved"));
+    expect(container.textContent).not.toContain(ACTION_PLAN_DECLINE_TEXT);
+    expect(buttonNamed("Approve")).toBeUndefined();
+    expect(buttonNamed("Deny")).toBeUndefined();
+  });
+
+  it("FRONT-A12 Deny on an expired plan says it expired, not that it was declined", async () => {
+    ottoReject.mockResolvedValue({ ok: true, alreadyResolved: true, resolution: "expired" });
+    await act(async () => {
+      root.render(
+        createElement(OttoActionPlanCard, { cardId: CARD_ID, threadId: THREAD_ID, payload: planPayload }),
+      );
+    });
+
+    await click(buttonNamed("Deny")!);
+
+    expect(container.textContent).toContain(settlementTextFor("ACTION_CARD", "expired"));
+    expect(container.textContent).not.toContain(ACTION_PLAN_DECLINE_TEXT);
+    expect(buttonNamed("Approve")).toBeUndefined();
+  });
+
+  it("FRONT-A12 Deny on an already approved build says it was approved, in the build's own words", async () => {
+    ottoReject.mockResolvedValue({ ok: true, alreadyResolved: true, resolution: "approved" });
+    await act(async () => {
+      root.render(
+        createElement(OttoAdBuildCard, { cardId: CARD_ID, threadId: THREAD_ID, payload: buildPayload }),
+      );
+    });
+
+    await click(buttonNamed("Deny")!);
+
+    expect(container.textContent).toContain(settlementTextFor("BUILD_CARD", "approved"));
+    expect(container.textContent).not.toContain(AD_BUILD_DECLINE_TEXT);
+    expect(buttonNamed("Approve")).toBeUndefined();
+  });
+
+  it("FRONT-A12 Deny on an expired build says it expired, in the build's own words", async () => {
+    ottoReject.mockResolvedValue({ ok: true, alreadyResolved: true, resolution: "expired" });
+    await act(async () => {
+      root.render(
+        createElement(OttoAdBuildCard, { cardId: CARD_ID, threadId: THREAD_ID, payload: buildPayload }),
+      );
+    });
+
+    await click(buttonNamed("Deny")!);
+
+    expect(container.textContent).toContain(settlementTextFor("BUILD_CARD", "expired"));
+    expect(container.textContent).not.toContain(AD_BUILD_DECLINE_TEXT);
+  });
+
+  it("FRONT-A12 a card that comes back carrying expiredAt renders expired and offers no Approve — the terminal state survives the refresh", async () => {
+    await act(async () => {
+      root.render(
+        createElement(OttoActionPlanCard, {
+          cardId: CARD_ID,
+          threadId: THREAD_ID,
+          payload: { ...planPayload, expiredAt: "2026-09-05T00:00:00.000Z" },
+        }),
+      );
+    });
+    expect(container.textContent).toContain(settlementTextFor("ACTION_CARD", "expired"));
+    expect(container.textContent).not.toContain(ACTION_PLAN_DECLINE_TEXT);
+    expect(buttonNamed("Approve")).toBeUndefined();
+    expect(buttonNamed("Deny")).toBeUndefined();
+
+    await act(async () => {
+      root.render(
+        createElement(OttoAdBuildCard, {
+          cardId: CARD_ID,
+          threadId: THREAD_ID,
+          payload: { ...buildPayload, expiredAt: "2026-09-05T00:00:00.000Z" },
+        }),
+      );
+    });
+    expect(container.textContent).toContain(settlementTextFor("BUILD_CARD", "expired"));
+    expect(buttonNamed("Approve")).toBeUndefined();
   });
 });
 

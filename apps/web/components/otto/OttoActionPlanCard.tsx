@@ -4,7 +4,7 @@ import { ClipboardList, ShieldCheck, CheckCircle2, Loader2 } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { approveMetaActionPlan, ottoReject } from "@/lib/otto-client-actions";
-import { ACTION_PLAN_DECLINE_TEXT, isDeclinedPayload } from "@/lib/meta-card-decline-view";
+import { ACTION_PLAN_DECLINE_TEXT, settledTextFromPayload, settlementTextFor } from "@/lib/meta-card-decline-view";
 import type { MetaActionCardPayload } from "@/lib/meta-plan-card";
 
 export interface OttoActionPlanCardProps {
@@ -64,11 +64,15 @@ export function OttoActionPlanCard({ cardId, threadId, payload }: OttoActionPlan
   // Approve to "Applying…" and the card claims a spend that is not happening.
   const [busyKind, setBusyKind] = useState<"approve" | "deny" | null>(null);
   const busy = busyKind !== null;
-  const [deniedLocal, setDeniedLocal] = useState(false);
+  // The sentence this card shows once it is settled — set by the click, or read off a payload that
+  // came back from the server already settled. Not a boolean: "declined" and "already approved" and
+  // "expired" are three different things to tell the merchant, and only the server knows which.
+  const [settledLocal, setSettledLocal] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: true; state: string } | { error: string } | null>(null);
 
-  // A decline persisted on the card payload outlives this component — that is the whole point.
-  const denied = deniedLocal || isDeclinedPayload(payload);
+  // A settled card persisted on the payload outlives this component — that is the whole point.
+  const settledText = settledLocal ?? settledTextFromPayload("ACTION_CARD", payload);
+  const denied = settledText !== null;
 
   async function approve() {
     if (busy || denied) return;
@@ -90,12 +94,17 @@ export function OttoActionPlanCard({ cardId, threadId, payload }: OttoActionPlan
     try {
       const res = await ottoReject({ threadId, cardId });
       // Anything but an error is a settled card: "already resolved" means someone else got there
-      // first, and the plan is just as un-approvable as if this click had done it.
+      // first, and the plan is just as un-approvable as if this click had done it — but it is NOT
+      // necessarily declined, so the card says which settlement the server actually reported.
       if (res && typeof res === "object" && "error" in res) {
         setResult({ error: (res as { error: string }).error });
         return;
       }
-      setDeniedLocal(true);
+      setSettledLocal(
+        res && typeof res === "object" && "alreadyResolved" in res
+          ? settlementTextFor("ACTION_CARD", res.resolution)
+          : ACTION_PLAN_DECLINE_TEXT,
+      );
     } catch {
       setResult({ error: "Couldn't decline that — please try again." });
     } finally {
@@ -200,9 +209,9 @@ export function OttoActionPlanCard({ cardId, threadId, payload }: OttoActionPlan
               Otto tried to apply this automatically but it failed — no changes were made.
             </div>
           )
-        ) : denied ? (
+        ) : settledText ? (
           <div className="text-[0.875rem] text-muted-foreground">
-            {ACTION_PLAN_DECLINE_TEXT}
+            {settledText}
           </div>
         ) : approveResult ? (
           /* Post-approve result */

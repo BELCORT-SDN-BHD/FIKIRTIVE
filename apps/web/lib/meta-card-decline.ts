@@ -24,7 +24,7 @@ import "server-only";
 import { prisma, Prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import type { Approval } from "./meta-approval";
-import { declineTextFor, isDeclinedPayload, type MetaCardKind } from "./meta-card-decline-view";
+import { declineTextFor, isDeclinedPayload, isExpiredPayload, type MetaCardKind } from "./meta-card-decline-view";
 
 /** How a Meta card can already be settled when a decline arrives. */
 export type MetaCardResolution = "approved" | "declined" | "expired";
@@ -39,6 +39,7 @@ export type MetaCardDeclineResult =
 type DeclinablePayload = {
   approval?: Approval;
   declinedAt?: string;
+  expiredAt?: string;
   autoOutcome?: { ran?: boolean } | null;
   buildOutcome?: { built?: boolean } | null;
 };
@@ -81,6 +82,11 @@ export async function declineMetaCard(args: {
   const payload = message.payload as unknown as DeclinablePayload;
   if (isDeclinedPayload(payload)) {
     return { ok: true, alreadyResolved: true, resolution: "declined" };
+  }
+  // Before the consumed check: an expired card carries `consumedAt` too (stamped below), and
+  // reporting that one as "approved" would tell the merchant a plan ran that never could.
+  if (isExpiredPayload(payload)) {
+    return { ok: true, alreadyResolved: true, resolution: "expired" };
   }
   if (alreadyRan(payload) || typeof payload.approval?.consumedAt === "string") {
     return { ok: true, alreadyResolved: true, resolution: "approved" };
@@ -131,7 +137,15 @@ export async function declineMetaCard(args: {
   return { ok: true, status: "done", reply };
 }
 
-/** Stamp the frozen payload: `declinedAt` for the UI, `approval.consumedAt` for the gate. */
+/**
+ * Stamp the frozen payload: a terminal instant for the UI, `approval.consumedAt` for the gate.
+ *
+ * Which instant is the honest one, and both are needed. `declinedAt` says the merchant refused.
+ * `expiredAt` says the ask ran out of time — a state the approve gate already reports the same
+ * way (`verifyApproval` → reason "expired"). Stamping only `consumedAt` on the expired path left
+ * the card with no terminal mark of its own, so a refresh re-read it as pending and offered
+ * Approve again on an ask that could never be approved.
+ */
 async function stampDeclined(
   cardId: string,
   ownerId: string,
@@ -141,7 +155,7 @@ async function stampDeclined(
   const nowIso = new Date().toISOString();
   const next = {
     ...(payload as Record<string, unknown>),
-    ...(opts.expired ? {} : { declinedAt: nowIso }),
+    ...(opts.expired ? { expiredAt: nowIso } : { declinedAt: nowIso }),
     ...(payload.approval
       ? { approval: { ...payload.approval, consumedAt: payload.approval.consumedAt ?? nowIso } }
       : {}),

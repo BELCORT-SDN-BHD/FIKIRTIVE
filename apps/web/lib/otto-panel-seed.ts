@@ -38,7 +38,11 @@ import type { ChatThreadDTO, EntityDTO } from "./types";
 
 /** 面板画一段会话所需的全部事实,一次给齐。 */
 export type OttoPanelSeed = {
-  /** 新会话开在哪个 project(商家没有 project 时会先建一个,与 `/otto` 同一条)。 */
+  /**
+   * 新会话开在哪个 project(商家没有 project 时会先建一个,与 `/otto` 同一条)。
+   *
+   * 续上了某一条面板对话时,跟着**那一条**走 —— 项目与会话是同一件事(#1200 判官 P2-2)。
+   */
   projectId: string;
   /** @提及要用的清单。 */
   entities: EntityDTO[];
@@ -57,6 +61,7 @@ export type OttoPanelSeed = {
    *
    * FRONT-A14:只在**面板自己开的**对话里选(`surface === "panel"`),不再是「这个
    * project 最近的一条」—— 后者会把画布对话摊到 /billing 这种毫不相干的页面上。
+   * 选的范围是**全店**(先当前 project,再退到全店最近那一条),与展开信号同一口径。
    */
   activeThreadId: string | null;
   balanceUsd: number;
@@ -130,9 +135,21 @@ export async function loadOttoPanelSeed(
     //
     // 老行(这一票之前的每一条)`surface` 是 `null`,一律按画布读,理由与代价写在
     // `lib/otto-thread-surface.ts`:宁可让面板少续一条老对话,也不要它继续摊开别处的上下文。
-    const openThreadId = requestedThreadId
-      ?? threadRows.find((t) => t.projectId === activeProjectId && isPanelThread(t.surface))?.id
-      ?? null;
+    //
+    // 落座口径与展开信号同一句话:**全店**(#1200 判官 P2-2)。展开信号那一边
+    // (`hasPendingPanelThread`)按 ownerId 查、不带 project;这一边从前只在
+    // `activeProjectId` 里选,两者口径不一致时商家看到的是:一条在别的 project 里跑着的
+    // 面板对话把面板顶开,而面板打开后画的是新对话空态 —— 凭空弹出来一块空面板。所以
+    // 当前 project 里没有面板对话时,就往全店的面板对话里续最近那一条,并让
+    // 「停在哪个 project」跟着它走(项目与会话必须是同一件事,与深链那条同一个规矩)。
+    //
+    // 只在**没有深链点名 project** 时才放宽:地址栏点了名,就不该跨到另一个 project 去。
+    const seatedThread = requestedThreadId
+      ? threadRows.find((t) => t.id === requestedThreadId)
+      : threadRows.find((t) => t.projectId === activeProjectId && isPanelThread(t.surface))
+        ?? (requestedProjectId === null ? threadRows.find((t) => isPanelThread(t.surface)) : undefined);
+    const openThreadId = seatedThread?.id ?? null;
+    const panelProjectId = seatedThread?.projectId ?? activeProjectId;
     if (openThreadId) {
       const full = await getCoworkThread(ownerId, openThreadId);
       if (full) {
@@ -143,7 +160,7 @@ export async function loadOttoPanelSeed(
     }
 
     return {
-      projectId: activeProjectId,
+      projectId: panelProjectId,
       entities: entities.map(toEntityDTO),
       projects: projectRows.map((p) => ({
         id: p.id,
