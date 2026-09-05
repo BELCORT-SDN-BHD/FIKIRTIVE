@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockRequireOwner, mockMemoryCreate, mockMemoryFindMany, mockMemoryUpdateMany, mockKitFindFirst, mockRuleFindMany, mockRecordFindMany } = vi.hoisted(() => ({
+const { mockRequireOwner, mockMemoryCreate, mockMemoryFindMany, mockMemoryUpdateMany, mockMemoryFindFirst, mockKitFindFirst, mockRuleFindMany, mockRecordFindMany } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockMemoryCreate: vi.fn(),
   mockMemoryFindMany: vi.fn(),
   mockMemoryUpdateMany: vi.fn(),
+  mockMemoryFindFirst: vi.fn(),
   mockKitFindFirst: vi.fn(),
   mockRuleFindMany: vi.fn(),
   mockRecordFindMany: vi.fn(),
@@ -15,7 +16,7 @@ vi.mock("@fikirtive/db", () => ({
   prisma: {
     memory: {
       create: mockMemoryCreate, findMany: mockMemoryFindMany, updateMany: mockMemoryUpdateMany,
-      findFirst: vi.fn().mockResolvedValue({ updatedAt: new Date("2026-09-03T00:00:00.000Z") }),
+      findFirst: mockMemoryFindFirst,
     },
     brandKit: { findFirst: mockKitFindFirst },
     brandRule: { findMany: mockRuleFindMany },
@@ -36,6 +37,8 @@ import { addMemory, updateMemory, deleteMemory, restoreMemory, getBrandContextTe
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireOwner.mockResolvedValue({ ownerId: "o1", email: "merchant@fikirtive.test" });
+  // 两用:`stampOf` 的 updatedAt 回读,以及 delete/restore 命中 0 行时的「真实状态回查」。
+  mockMemoryFindFirst.mockResolvedValue({ id: "m_1", updatedAt: new Date("2026-09-03T00:00:00.000Z") });
   // Default: no kit, no rules, no records (so existing tests are unaffected)
   mockKitFindFirst.mockResolvedValue(null);
   mockRuleFindMany.mockResolvedValue([]);
@@ -104,26 +107,29 @@ describe("updateMemory", () => {
 });
 
 describe("deleteMemory", () => {
-  it("soft-deletes owner-scoped memory", async () => {
+  it("FRONT-A8 soft-deletes owner-scoped memory", async () => {
     mockMemoryUpdateMany.mockResolvedValue({ count: 1 });
     const res = await deleteMemory({ id: "m_1" });
     expect(res).toEqual({ ok: true });
     expect(mockMemoryUpdateMany).toHaveBeenCalledWith({
-      where: { id: "m_1", ownerId: "o1" },
+      // 判官 P2-1:只有还在的行才删。已经删掉的行不再被写第二次,所以 `deletedAt` 不会
+      // 被盖成新时间,改动史里也就不会多出第二行 deleted。
+      where: { id: "m_1", ownerId: "o1", deletedAt: null },
       data: expect.objectContaining({ deletedAt: expect.any(Date) }),
     });
   });
 
-  it("is retry-safe because an already-deleted row still matches", async () => {
-    mockMemoryUpdateMany.mockResolvedValue({ count: 1 });
+  it("FRONT-A8 is retry-safe: a second delete finds the row already gone and still succeeds", async () => {
+    mockMemoryUpdateMany.mockResolvedValue({ count: 0 });
     expect(await deleteMemory({ id: "m_1" })).toEqual({ ok: true });
-    expect(mockMemoryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "m_1", ownerId: "o1" },
+    expect(mockMemoryFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "m_1", ownerId: "o1", deletedAt: { not: null } },
     }));
   });
 
-  it("returns error when memory not found (count 0)", async () => {
+  it("FRONT-A8 returns error when memory not found (count 0 and no already-deleted row)", async () => {
     mockMemoryUpdateMany.mockResolvedValue({ count: 0 });
+    mockMemoryFindFirst.mockResolvedValue(null);
     const res = await deleteMemory({ id: "m_1" });
     expect(res).toEqual({ error: expect.any(String) });
   });
@@ -136,20 +142,23 @@ describe("deleteMemory", () => {
 });
 
 describe("restoreMemory", () => {
-  it("restores the original owner-scoped row and is safe to repeat", async () => {
-    mockMemoryUpdateMany.mockResolvedValue({ count: 1 });
+  it("FRONT-A8 restores the original owner-scoped row and is safe to repeat", async () => {
+    mockMemoryUpdateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
     expect(await restoreMemory({ id: "m_1" })).toEqual({ ok: true });
+    // 第二次:这一行已经回来了,`updateMany` 命中 0 行,回查确认它在 —— 仍然算成功。
     expect(await restoreMemory({ id: "m_1" })).toEqual({ ok: true });
     expect(mockMemoryUpdateMany).toHaveBeenNthCalledWith(1, {
-      where: { id: "m_1", ownerId: "o1" },
+      // 判官 P2-1:只有还在删除态的行才恢复,连按 Restore 不会一行接一行 restored。
+      where: { id: "m_1", ownerId: "o1", deletedAt: { not: null } },
       // FRONT-A8:删除/恢复也是一次「谁动的」。判官 P2-4:认得出人才写 —— 这一份的
       // fixture 查不到 User 行(userId 为 null),写进去等于把这一行已知的作者抹掉。
       data: { deletedAt: null },
     });
   });
 
-  it("returns a refusal when the row does not belong to this owner", async () => {
+  it("FRONT-A8 returns a refusal when the row does not belong to this owner", async () => {
     mockMemoryUpdateMany.mockResolvedValue({ count: 0 });
+    mockMemoryFindFirst.mockResolvedValue(null);
     expect(await restoreMemory({ id: "missing" })).toEqual({ error: "Memory not found." });
   });
 });
