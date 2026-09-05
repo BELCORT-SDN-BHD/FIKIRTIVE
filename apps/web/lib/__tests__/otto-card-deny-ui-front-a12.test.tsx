@@ -41,7 +41,7 @@ vi.mock("@/lib/cowork-actions", () => ({
 import { OttoActionPlanCard } from "@/components/otto/OttoActionPlanCard";
 import { OttoAdBuildCard } from "@/components/otto/OttoAdBuildCard";
 import { OttoResult } from "@/components/otto/OttoResult";
-import { ACTION_PLAN_DECLINE_TEXT, AD_BUILD_DECLINE_TEXT, settlementTextFor } from "@/lib/meta-card-decline-view";
+import { ACTION_PLAN_DECLINE_TEXT, AD_BUILD_DECLINE_TEXT } from "@/lib/meta-card-decline-view";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -199,6 +199,11 @@ describe("FRONT-A12 — a card that was already settled says WHICH settlement", 
   // Deny used to render the decline sentence for every non-error answer, so a plan someone else
   // had approved, and an ask that had run out of time, both read "Plan declined — nothing was
   // changed" (#1202 judge P2-1). Each of those is a different fact about the merchant's money.
+  //
+  // The expected sentences are written out here, not read back from `settlementTextFor` (#1215
+  // judge P2-1): asserting against the very function under test proves only that the card calls
+  // it — the judge's own mutation, rewriting the approved sentence to say something false, left
+  // all ten of these green. Pinned literally, a change to what the merchant reads shows up here.
   it("FRONT-A12 Deny on an already approved plan says it was approved, not that it was declined", async () => {
     ottoReject.mockResolvedValue({ ok: true, alreadyResolved: true, resolution: "approved" });
     await act(async () => {
@@ -209,7 +214,7 @@ describe("FRONT-A12 — a card that was already settled says WHICH settlement", 
 
     await click(buttonNamed("Deny")!);
 
-    expect(container.textContent).toContain(settlementTextFor("ACTION_CARD", "approved"));
+    expect(container.textContent).toContain("This plan was already approved.");
     expect(container.textContent).not.toContain(ACTION_PLAN_DECLINE_TEXT);
     expect(buttonNamed("Approve")).toBeUndefined();
     expect(buttonNamed("Deny")).toBeUndefined();
@@ -225,7 +230,7 @@ describe("FRONT-A12 — a card that was already settled says WHICH settlement", 
 
     await click(buttonNamed("Deny")!);
 
-    expect(container.textContent).toContain(settlementTextFor("ACTION_CARD", "expired"));
+    expect(container.textContent).toContain("This plan expired before you decided.");
     expect(container.textContent).not.toContain(ACTION_PLAN_DECLINE_TEXT);
     expect(buttonNamed("Approve")).toBeUndefined();
   });
@@ -240,7 +245,7 @@ describe("FRONT-A12 — a card that was already settled says WHICH settlement", 
 
     await click(buttonNamed("Deny")!);
 
-    expect(container.textContent).toContain(settlementTextFor("BUILD_CARD", "approved"));
+    expect(container.textContent).toContain("This build was already approved.");
     expect(container.textContent).not.toContain(AD_BUILD_DECLINE_TEXT);
     expect(buttonNamed("Approve")).toBeUndefined();
   });
@@ -255,7 +260,7 @@ describe("FRONT-A12 — a card that was already settled says WHICH settlement", 
 
     await click(buttonNamed("Deny")!);
 
-    expect(container.textContent).toContain(settlementTextFor("BUILD_CARD", "expired"));
+    expect(container.textContent).toContain("This build expired before you decided.");
     expect(container.textContent).not.toContain(AD_BUILD_DECLINE_TEXT);
   });
 
@@ -269,7 +274,7 @@ describe("FRONT-A12 — a card that was already settled says WHICH settlement", 
         }),
       );
     });
-    expect(container.textContent).toContain(settlementTextFor("ACTION_CARD", "expired"));
+    expect(container.textContent).toContain("This plan expired before you decided.");
     expect(container.textContent).not.toContain(ACTION_PLAN_DECLINE_TEXT);
     expect(buttonNamed("Approve")).toBeUndefined();
     expect(buttonNamed("Deny")).toBeUndefined();
@@ -283,7 +288,7 @@ describe("FRONT-A12 — a card that was already settled says WHICH settlement", 
         }),
       );
     });
-    expect(container.textContent).toContain(settlementTextFor("BUILD_CARD", "expired"));
+    expect(container.textContent).toContain("This build expired before you decided.");
     expect(buttonNamed("Approve")).toBeUndefined();
   });
 });
