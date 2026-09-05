@@ -915,6 +915,10 @@ const MOUNTS = [
   ["components/otto/OttoChatStream.tsx", "Otto 对话的附件入口", 3],
   ["components/otto/TemplateModal.tsx", "模板的产品图上传", 1],
   ["components/otto/stuff/AddAssetDialog.tsx", "素材库的多图上传", 2],
+  // FRONT §7.3⑨(起步页参考契约):Create 起步页从此有 Upload image。它落的是同一行
+  // `Generation(source: "UPLOAD")`,自动理解照样会跑 —— 所以这一句在这里也必须在场,
+  // 而且是在文件选择器还没打开的时候就在屏幕上(与另外几处同一个组件、同一句话)。
+  ["components/start-something/StartSomething.tsx", "Create 起步页的 Add context 上传", 1],
 ] as const;
 
 /** 取一个具名函数的源码片段(豁免 guard 要核的是**处理函数**,不是整份文件)。 */
