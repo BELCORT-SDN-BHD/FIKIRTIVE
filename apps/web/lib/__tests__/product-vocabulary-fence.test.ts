@@ -33,7 +33,7 @@ import {
 const WEB_ROOT = join(__dirname, "..", "..");
 
 /** beta 六面的源码树（Home / Create / Library / Brand / Settings / Otto 面板）。 */
-const BETA_SURFACES: readonly { readonly surface: string; readonly roots: readonly string[] }[] = [
+const SURFACES_IN_BETA: readonly { readonly surface: string; readonly roots: readonly string[] }[] = [
   { surface: "Home", roots: ["app/(home)", "components/home"] },
   { surface: "Create / Canvas", roots: ["app/create", "components/start-something", "components/canvas"] },
   { surface: "Library", roots: ["app/library", "components/library"] },
@@ -102,7 +102,7 @@ function retiredWordHits(files: readonly string[]): string[] {
 }
 
 describe("FRONT-A14 词汇围栏:beta 六面的界面文案不再出现被裁掉的旧产品名", () => {
-  it.each(BETA_SURFACES.map((s) => [s.surface, s.roots] as const))(
+  it.each(SURFACES_IN_BETA.map((s) => [s.surface, s.roots] as const))(
     "FRONT-A14 %s 面的界面文案零旧产品名",
     (_surface, roots) => {
       const files = roots.flatMap((root) => sourceFilesUnder(join(WEB_ROOT, root)));
