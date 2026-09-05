@@ -17,8 +17,11 @@
  *   · 节点操作条 = DOM 集合比对(下面第一组)。
  *   · 裁决六那三颗 = DOM(整块真板子上找不到)+ 源码(挡住「先写上、暂时不渲染」)两条一起,
  *     浏览器那一头另有旅程 17。
- *   · composer 的「+ Add context」 = 仍是源码判据:要读到它的 DOM 得挂整个 `OttoChatStream`
- *     (连着两条常驻钱披露),不在本刀写集内。
+ *   · composer 的「+ Add context」 = **也已经是 DOM 集合比对**(清单 I2)。三边各自真挂起来
+ *     再把菜单按开,读 `[role="menuitem"]` 的可及名:夹具 `CreationComposer`、画布的
+ *     `OttoChatStream`、起步页的 `StartSomething`。此前这一格读的是源码字串
+ *     (`menuItemsOf` 扫 `<DropdownMenuItem>`),判官 #1194 P1-2 已经证过那种判据挡不住
+ *     「插一颗真按钮」——同样的变异这一版当场红(见本组末条的变异记录)。
  *
  * 权威(只读,不得改夹具迁就实现 —— §7.4 裁决九):
  *   · `design-system/patterns/canvas/CanvasReference.tsx` —— 画布、卡片、节点操作条
@@ -145,9 +148,41 @@ vi.mock("@xyflow/react", async (importOriginal) => {
   };
 });
 
+// ── 三份 composer 都要真挂起来,所以连它们各自的把手一起换成假件 ────────────────
+// 一条也够不着钱、够不着网络:聊天传输、上传、素材库读、起步页的画布开单,全是替身。
+const composerMocks = vi.hoisted(() => ({
+  sendMessage: vi.fn(),
+  finalizeCandidateUploads: vi.fn(),
+  uploadFilesDirect: vi.fn(),
+  getGenerationHistory: vi.fn(),
+  createCanvasConversation: vi.fn(),
+  ensureCanvasDraft: vi.fn(),
+}));
+vi.mock("@ai-sdk/react", () => ({
+  useChat: () => ({
+    messages: [],
+    setMessages: vi.fn(),
+    sendMessage: composerMocks.sendMessage,
+    status: "ready",
+    error: null,
+  }),
+}));
+vi.mock("ai", () => ({ DefaultChatTransport: class { constructor(_opts: unknown) { void _opts; } } }));
+vi.mock("@/lib/upload-actions", () => ({ finalizeCandidateUploads: composerMocks.finalizeCandidateUploads }));
+vi.mock("@/lib/direct-upload", () => ({ uploadFilesDirect: composerMocks.uploadFilesDirect }));
+vi.mock("@/lib/library-actions", () => ({ getGenerationHistory: composerMocks.getGenerationHistory }));
+vi.mock("@/lib/canvas-entry-actions", () => ({
+  createCanvasConversation: composerMocks.createCanvasConversation,
+  ensureCanvasDraft: composerMocks.ensureCanvasDraft,
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { default: FlowCanvas } = await import("@/components/canvas/FlowCanvas");
+const { OttoChatStream } = await import("@/components/otto/OttoChatStream");
+const { StartSomething } = await import("@/components/start-something/StartSomething");
+const { CreationComposer } = await import("@/design-system/patterns/canvas/CreationComposer");
 
 const WEB_ROOT = process.cwd();
 const codeOf = (rel: string) => readFileSync(path.join(WEB_ROOT, rel), "utf8");
@@ -210,11 +245,6 @@ const FIXTURE_TOOLBAR = region(
 const FIXTURE_TOOLBAR_CONTROLS = matchAll(FIXTURE_TOOLBAR, ARIA_LABELS);
 const FIXTURE_MORE_ITEMS = menuItemTexts(FIXTURE_TOOLBAR);
 
-// ── composer 的「+ Add context」两边各有哪几项(源码判据,见抬头的边界说明) ──
-const menuItemsOf = (source: string, label: string) =>
-  menuItemTexts(
-    region(source, "<DropdownMenuLabel>Add a reference</DropdownMenuLabel>", "</DropdownMenuGroup>", label),
-  );
 /** 生产图片卡 ⋯ 菜单里的字面项。Radix 的菜单内容要按开才进 DOM,所以这一段仍读源码 ——
  *  它守的是「这两项不该被加回来」,是负向断言,源码判据够用。 */
 const IMAGE_MORE_ITEMS = menuItemTexts(
@@ -225,9 +255,6 @@ const IMAGE_MORE_ITEMS = menuItemTexts(
     "生产图片卡 ⋯ 菜单",
   ),
 );
-
-const FIXTURE_ADD_CONTEXT = menuItemsOf(patternComposer, "夹具 Add context 菜单");
-const PRODUCTION_ADD_CONTEXT = menuItemsOf(codeOnly(chatStream), "生产 Add context 菜单");
 
 // ── 生产侧:挂真板子,读真 DOM ───────────────────────────────────────────────
 const boardRow = (id: string, overrides: Record<string, unknown> = {}) => ({
@@ -377,35 +404,93 @@ describe("FRONT-A15 节点操作条:真渲染之后,整套控件与夹具比集�
   });
 });
 
-describe("FRONT-A15 composer 的「+ Add context」:两项,并说明第三项为什么不在", () => {
-  it("FRONT-A15: 夹具是三项 —— 比对的基准先立住", () => {
-    expect(FIXTURE_ADD_CONTEXT).toEqual(["Upload image", "Choose from Library", "Add URL"]);
+/**
+ * composer 的「+ Add context」—— 三边**都真渲染再数控件**(清单 I2)。
+ *
+ * 判官 #1194 P1-2 的证法搬到这里:此前这一格读源码里的 `<DropdownMenuItem>` 字串,
+ * 往生产菜单里插一颗真的下拉项(不用那种写法,例如直接 `createElement`)照样全绿。改成
+ * 「按开菜单、读 `[role="menuitem"]` 的可及名」之后,变异实跑记录见本组末条。
+ */
+async function mountComposer(node: ReactElement): Promise<HTMLDivElement> {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  await act(async () => { root!.render(node); });
+  await act(async () => { await Promise.resolve(); });
+  return container;
+}
+
+/** 真鼠标那一发:Radix 的 trigger 认的是 pointerdown,不是 click。 */
+async function openAddContext(dom: HTMLElement): Promise<string[]> {
+  const trigger = dom.querySelector<HTMLButtonElement>('[aria-label="Add a reference"]');
+  expect(trigger, "整份 composer 上找不到「Add a reference」那颗键").not.toBeNull();
+  await act(async () => {
+    trigger!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    trigger!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+  });
+  // 菜单内容走 portal,挂在 document 上而不是这个容器里。
+  return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((item) =>
+    (item.textContent ?? "").replace(/\s+/gu, " ").trim(),
+  );
+}
+
+const chatStreamComposer = (): ReactElement => createElement(OttoChatStream, {
+  projectId: "p1",
+  entities: [],
+  thread: {
+    id: "thread-1",
+    projectId: "p1",
+    title: "Untitled",
+    updatedAt: new Date("2026-09-05T00:00:00.000Z").toISOString(),
+    messages: [],
+  },
+  balanceUsd: 10,
+  onRefresh: async () => {},
+  onThreadUpdate: () => {},
+});
+
+const fixtureComposer = (): ReactElement => createElement(CreationComposer, {
+  prompt: "",
+  onPromptChange: () => {},
+  onReferenceChange: () => {},
+  onSubmit: () => {},
+});
+
+describe("FRONT-A15 composer 的「+ Add context」:渲染后数控件,三边比集合", () => {
+  it("FRONT-A15: 夹具真渲染出来是三项 —— 比对的基准先立住", async () => {
+    const items = await openAddContext(await mountComposer(fixtureComposer()));
+    expect(items).toEqual(["Upload image", "Choose from Library", "Add URL"]);
   });
 
-  it("FRONT-A15: 生产恰好两项,Add URL 不出现", () => {
-    expect(PRODUCTION_ADD_CONTEXT).toHaveLength(2);
-    // 上传那一项的文案比夹具长半句:这个选择器真的也收视频,写「Upload image」是半句真话。
-    expect(PRODUCTION_ADD_CONTEXT[0]).toBe("Upload image or video");
-    expect(PRODUCTION_ADD_CONTEXT[1]).toBe("Choose from Library");
-    expect(PRODUCTION_ADD_CONTEXT, "渲染了没有契约的 Add URL").not.toContain("Add URL");
+  it("FRONT-A15: 画布 composer 真渲染恰好两项,Add URL 不出现", async () => {
+    const items = await openAddContext(await mountComposer(chatStreamComposer()));
+    // 上传那一项的文案比夹具长半句:画布这个选择器真的也收视频(它自己带抽帧器),
+    // 写「Upload image」是半句真话。
+    expect(items).toEqual(["Upload image or video", "Choose from Library"]);
+    expect(items, "渲染了没有契约的 Add URL").not.toContain("Add URL");
   });
 
-  it("FRONT-A15: 两项都接在既有能力上,不是摆设", () => {
-    expect(chatStream, "上传那一项没接现成的文件选择器").toContain("fileInputRef.current?.click()");
-    expect(chatStream, "素材库那一项没接现成的挑选器").toContain("CanvasLibraryPicker");
+  it("FRONT-A15: 起步页 composer 真渲染恰好两项,Add URL 不出现", async () => {
+    const items = await openAddContext(await mountComposer(createElement(StartSomething)));
+    // 起步页没有抽帧器,所以它收的就是图片 —— 文案照夹具写「Upload image」,不多说半句。
+    expect(items).toEqual(["Upload image", "Choose from Library"]);
+    expect(items, "渲染了没有契约的 Add URL").not.toContain("Add URL");
+  });
+
+  it("FRONT-A15: 两边的两项都接在既有能力上,不是摆设", () => {
+    expect(chatStream, "画布上传那一项没接现成的文件选择器").toContain("fileInputRef.current?.click()");
+    expect(chatStream, "画布素材库那一项没接现成的挑选器").toContain("CanvasLibraryPicker");
+    // 起步页走的是同一条上传权威与同一个素材库挑选器 —— 不另造第二套。
+    expect(startSomething, "起步页上传那一项没接现成的上传权威").toContain("finalizeCandidateUploads");
+    expect(startSomething, "起步页素材库那一项没复用画布那一个挑选器").toContain("CanvasLibraryPicker");
+    // 起步页此刻没有 projectId,上传落不下去 —— 先把画布开出来(规格 §7.3⑨ 点了这个问题的名)。
+    expect(startSomething, "起步页上传前没先把画布开出来").toContain("ensureCanvasDraft");
   });
 
   it("FRONT-A15: Add URL 缺席的理由写在代码里,不只写在 PR 里", () => {
     // 下一个人读到这段菜单时,必须当场看见「为什么少一项」,否则半年后会有人把它补回来。
     expect(chatStream).toMatch(/Add URL[\s\S]{0,400}otto-media-port/);
-  });
-
-  it("FRONT-A15: 起步页那一份 composer 仍不渲染 Add context —— 引用带不进画布(契约待下一刀)", () => {
-    // `createCanvasConversation` 的 handoff 只落 `{prompt, threadId}`;在契约补上之前,
-    // 起步页画一颗「加参考」等于让商家选一件navigation 之后就消失的东西。
-    // 登记:`docs/specs/frontend-baseline.md` §7.3「⑨ 下一刀 · 起步页参考契约」。
-    expect(codeOnly(startSomething), "起步页渲染了带不进画布的 Add context").not.toContain("Add a reference");
-    expect(codeOnly(startSomething)).not.toContain("Add context");
+    expect(startSomething).toMatch(/Add URL[\s\S]{0,400}otto-media-port/);
   });
 });
 
