@@ -17,6 +17,19 @@ export type CheckFn = (artifact: string, args: string[]) => { pass: boolean; rea
 
 const has = (artifact: string, term: string) => artifact.toLowerCase().includes(term.toLowerCase());
 
+/**
+ * 禁词专用：**按词边界**匹配，不是裸子串。
+ *
+ * 裸子串会冤枉人：`forbids:extend` 会被 “the extended cut” 命中，`forbids:Inbox` 会被
+ * “inboxes” 命中——那不是编造页面，却照样扣一分。禁词判的是「说没说出这个词」，
+ * 所以词的左右两边不许再接字母、数字或下划线。词组（`already researched`）同理，
+ * 只看整段词组的两端。
+ */
+const hasWord = (artifact: string, term: string): boolean => {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, "iu").test(artifact);
+};
+
 export const CHECKS: Record<string, CheckFn> = {
   /** 逐条都要出现。`mentions-all:seedreamPrompt,propose` */
   "mentions-all": (artifact, args) => {
@@ -34,9 +47,9 @@ export const CHECKS: Record<string, CheckFn> = {
       : { pass: false, reason: `一条都没提到：${args.join(", ")}` };
   },
 
-  /** 一条都不许出现。`forbids:reference,Campaigns` */
+  /** 一条都不许出现，**按词边界**判（`extended` 不算命中 `extend`）。`forbids:reference,Campaigns` */
   forbids: (artifact, args) => {
-    const hit = args.filter((t) => has(artifact, t));
+    const hit = args.filter((t) => hasWord(artifact, t));
     return hit.length === 0
       ? { pass: true, reason: `禁词零命中：${args.join(", ")}` }
       : { pass: false, reason: `出现了禁词：${hit.join(", ")}` };

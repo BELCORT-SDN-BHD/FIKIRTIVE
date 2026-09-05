@@ -13,13 +13,15 @@
  *   · 本 runner **不加载仓库 `.env.local`** —— 变量只从已经在 shell 里的 `process.env` 读。
  *
  * 预算两道，都在花钱之前：
- *   · 本段累计 $20（`SEGMENT_BUDGET_USD`）—— 开跑前把 `baselines/` 里每一份档案的 `costUsd`
- *     加起来，再加上本次全跑的最坏花费，超了就拒跑，一分钱不花；
+ *   · 本段累计 $20（`SEGMENT_BUDGET_USD`）—— 开跑前把 `baselines/spend.jsonl`（只追加、
+ *     不覆盖的花费账本）里每一行的 `costUsd` 加起来，再加上本次全跑的最坏花费，
+ *     超了就拒跑，一分钱不花。每成功跑一趟就追加一行，所以「累计」是真累计；
  *   · 单次全跑 $10（`FULL_RUN_BUDGET_USD`）—— 每次模型调用之前问一次，超了就地停并非零退出。
- * 两道都不是「跑完再看花了多少」。开跑前的那几道守卫由 `preflight` 判、`guardedRun` 执行：
- * 花钱的那一趟是传给它的闭包，所以「守卫在花钱之前」是结构上的事实，不是注释里的说法。
+ * 两道都不是「跑完再看花了多少」。开跑前的那几道守卫由 `preflight` 判、`guardedRun` 执行，
+ * 而 main() 的接线本身是 `runMain({ preflight, runEvals })`：花钱的那一趟是传给它的闭包，
+ * 所以「守卫在花钱之前」是结构上的事实，不是注释里的说法（回归测试钉的正是它）。
  */
-import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
+import { appendFileSync, readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -31,6 +33,7 @@ import { OTTO_PRIMARY_MODEL } from "../src/model.js";
 import {
   EvalBudgetExceeded,
   FULL_RUN_BUDGET_USD,
+  REGRESSION_TOLERANCE_POINTS,
   SEGMENT_BUDGET_USD,
   budgetGate,
   callCostUsd,
@@ -59,8 +62,24 @@ export function resolveLine(argv: readonly string[]): EvalLine {
   return raw;
 }
 
-/** 档案目录：本段累计花费的账本就是这里的每一份 `*.json`（两条线各一份）。 */
+/** 档案目录：每条线一份跑分档案（覆盖写），外加一份只追加的花费账本 `spend.jsonl`。 */
 const BASELINES_DIR = join(HERE, "baselines");
+
+/**
+ * 纯：`--tolerance=<百分点>` → 回归判定的噪声容差；不给就是默认的 ±5 个百分点。
+ *
+ * 给 0 就是「低一点点也算回归」（旧口径）。负数与读不懂的值当场炸：一个悄悄变成
+ * 「永不回归」的容差比没有容差更坏。
+ */
+export function resolveTolerance(argv: readonly string[]): number {
+  const raw = argv.find((a) => a.startsWith("--tolerance="))?.slice("--tolerance=".length);
+  if (raw === undefined) return REGRESSION_TOLERANCE_POINTS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`--tolerance 要一个 ≥0 的百分点数，收到 "${raw}"`);
+  }
+  return n;
+}
 
 /** 纯：一条线的两个路径——题目目录与它自己那一份档案。 */
 export function pathsFor(line: EvalLine): { tasksDir: string; baseline: string } {
@@ -94,7 +113,7 @@ export interface PreflightInput {
   check: boolean;
   baselineExists: boolean;
   baselinePath: string;
-  /** `baselines/` 里已记的花费之和。 */
+  /** 花费账本 `baselines/spend.jsonl` 里已记的花费之和。 */
   recordedUsd: number;
   /** 本次全跑的最坏花费（已被单次硬上限截住）。 */
   worstCaseUsd: number;
@@ -129,7 +148,7 @@ export function preflight(i: PreflightInput): { ok: boolean; reason: string } {
     return {
       ok: false,
       reason:
-        `本段累计预算闸：baselines/ 已记 $${i.recordedUsd.toFixed(4)} + 本次最坏 $${i.worstCaseUsd.toFixed(4)} ` +
+        `本段累计预算闸：账本已记 $${i.recordedUsd.toFixed(4)} + 本次最坏 $${i.worstCaseUsd.toFixed(4)} ` +
         `> 本段上限 $${i.segmentBudgetUsd.toFixed(2)}，拒跑（一分钱不花）。`,
     };
   }
@@ -153,15 +172,65 @@ export async function guardedRun<T>(
   return run();
 }
 
-/** `baselines/` 里每一份档案的 `costUsd` 之和——本段到今天为止已记的花费。 */
-export function recordedSegmentUsd(dir: string): number {
-  if (!existsSync(dir)) return 0;
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
-    .reduce((sum, f) => {
-      const archive = JSON.parse(readFileSync(join(dir, f), "utf8")) as EvalArchive;
-      return sum + (archive.costUsd ?? 0);
+/**
+ * main() 的**接线**本身，抽出来是为了能被钉住：两件事都是闭包，谁先谁后是这一个函数说了算。
+ *
+ * `guardedRun` 只保证「verdict 为假时不跑」；它保不了 main() 有没有先把钱花掉再去问守卫
+ * （判官 2026-09-05 P2-2：只把 main() 改成先跑后判，从前 22 条测试全绿）。
+ * 真正花钱的那一趟必须经过这里，回归测试才有对象可钉。
+ */
+export async function runMain<T>(deps: {
+  preflight: () => { ok: boolean; reason: string };
+  runEvals: () => Promise<T>;
+}): Promise<T> {
+  return guardedRun(deps.preflight(), deps.runEvals);
+}
+
+/**
+ * 花费账本：**只追加、不覆盖**，一行一趟（JSON Lines）。
+ *
+ * 为什么不是 `baselines/<line>.json`：那份是**最近一次**的跑分档案，每跑一次就被整份覆盖，
+ * 拿它求和只会算到「每条线最后那一趟」——跑了三趟只记一趟的钱，「本段累计 $20」就名不副实。
+ * 账本每成功跑一次追加一行，累计闸读它求和，所以三趟就是三趟的钱。
+ */
+export const SPEND_LEDGER = join(BASELINES_DIR, "spend.jsonl");
+
+/** 账本一行：哪条线、什么时候、哪个 commit、这一趟真花了多少。 */
+export interface SpendEntry {
+  line: EvalLine;
+  date: string;
+  commit: string;
+  costUsd: number;
+}
+
+/**
+ * 本段到今天为止**已记的真实花费**＝账本每一行 `costUsd` 之和。账本不存在算 0。
+ *
+ * 读不懂的一行当场炸：一个 fail closed 的闸不能把「读不懂」静默当成 0，
+ * 那会让累计凭空变小、闸凭空放行。
+ */
+export function recordedSegmentUsd(ledgerPath: string): number {
+  if (!existsSync(ledgerPath)) return 0;
+  return readFileSync(ledgerPath, "utf8")
+    .split(/\r?\n/)
+    .filter((l) => l.trim() !== "")
+    .reduce((sum, line, i) => {
+      let entry: SpendEntry;
+      try {
+        entry = JSON.parse(line) as SpendEntry;
+      } catch {
+        throw new Error(`${ledgerPath} 第 ${i + 1} 行读不懂，累计闸拒绝按 0 计：${line.slice(0, 120)}`);
+      }
+      if (typeof entry.costUsd !== "number" || !Number.isFinite(entry.costUsd)) {
+        throw new Error(`${ledgerPath} 第 ${i + 1} 行的 costUsd 不是数字，累计闸拒绝按 0 计`);
+      }
+      return sum + entry.costUsd;
     }, 0);
+}
+
+/** 追加一行——只追加，从不改写既有的行（改写就等于把已经花掉的钱抹掉）。 */
+export function appendSpend(ledgerPath: string, entry: SpendEntry): void {
+  appendFileSync(ledgerPath, `${JSON.stringify(entry)}\n`);
 }
 
 /**
@@ -339,6 +408,7 @@ function report(archive: EvalArchive): void {
 async function main(): Promise<void> {
   const check = process.argv.includes("--check");
   const line = resolveLine(process.argv);
+  const tolerancePoints = resolveTolerance(process.argv);
   const { tasksDir, baseline: BASELINE } = pathsFor(line);
 
   // 装题、读文件、估最坏花费——全都不花钱，都在守卫之前算好。
@@ -346,7 +416,7 @@ async function main(): Promise<void> {
   const model = OTTO_PRIMARY_MODEL;
   const budgetUsd = FULL_RUN_BUDGET_USD;
   const meter = new Meter(budgetUsd);
-  const recordedUsd = recordedSegmentUsd(BASELINES_DIR);
+  const recordedUsd = recordedSegmentUsd(SPEND_LEDGER);
   // 本次最坏花费被单次硬上限截住：那一道会在超上限之前就地停，所以这一趟的真实上界就是它。
   const worstCaseUsd = Math.min(
     worstCaseRunUsd(tasks, {
@@ -359,21 +429,22 @@ async function main(): Promise<void> {
 
   console.log(
     `${line} 线 ${tasks.length} 题，型号 ${model}，单次上限 $${budgetUsd}` +
-      `（本段累计上限 $${SEGMENT_BUDGET_USD}：baselines/ 已记 $${recordedUsd.toFixed(4)}，本次最坏 $${worstCaseUsd.toFixed(4)}）`,
+      `（本段累计上限 $${SEGMENT_BUDGET_USD}：账本已记 $${recordedUsd.toFixed(4)}，本次最坏 $${worstCaseUsd.toFixed(4)}）`,
   );
 
-  const archive = await guardedRun(
-    preflight({
-      baseUrl: process.env.ANTHROPIC_BASE_URL,
-      apiKey: process.env.ANTHROPIC_API_KEY,
-      check,
-      baselineExists: existsSync(BASELINE),
-      baselinePath: BASELINE,
-      recordedUsd,
-      worstCaseUsd,
-      segmentBudgetUsd: SEGMENT_BUDGET_USD,
-    }),
-    () =>
+  const archive = await runMain({
+    preflight: () =>
+      preflight({
+        baseUrl: process.env.ANTHROPIC_BASE_URL,
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        check,
+        baselineExists: existsSync(BASELINE),
+        baselinePath: BASELINE,
+        recordedUsd,
+        worstCaseUsd,
+        segmentBudgetUsd: SEGMENT_BUDGET_USD,
+      }),
+    runEvals: () =>
       runEvals(tasks, makeSubject(model, meter), makeJudge(model, meter), {
         commit: commitSha(),
         subjectModel: model,
@@ -382,7 +453,14 @@ async function main(): Promise<void> {
         costUsd: () => meter.usd,
         now: () => new Date(),
       }),
-  );
+  });
+  // 钱已经花掉了——不管这一趟是写档案还是 --check，账本都要记上这一行。
+  appendSpend(SPEND_LEDGER, {
+    line,
+    date: archive.date,
+    commit: archive.commit,
+    costUsd: archive.costUsd,
+  });
   report(archive);
 
   if (!check) {
@@ -392,13 +470,14 @@ async function main(): Promise<void> {
   }
 
   const baseline = JSON.parse(readFileSync(BASELINE, "utf8")) as EvalArchive;
-  const { regressed, delta } = compareToBaseline(baseline.total, archive.total);
+  const { regressed, delta } = compareToBaseline(baseline.total, archive.total, tolerancePoints);
   console.log(
     `基线 ${(baseline.total * 100).toFixed(1)}%（${baseline.date}，commit ${baseline.commit.slice(0, 8)}）` +
-      ` → 本次 ${(archive.total * 100).toFixed(1)}%，差 ${(delta * 100).toFixed(1)} 个百分点`,
+      ` → 本次 ${(archive.total * 100).toFixed(1)}%，差 ${(delta * 100).toFixed(1)} 个百分点` +
+      `（噪声容差 ±${tolerancePoints} 个百分点${tolerancePoints === REGRESSION_TOLERANCE_POINTS ? "" : "，--tolerance= 覆盖"}）`,
   );
   if (regressed) {
-    console.error("回归：总分低于基线。");
+    console.error(`回归：总分低于基线超过容差 ±${tolerancePoints} 个百分点。`);
     process.exit(1);
   }
   console.log("不低于基线。");
