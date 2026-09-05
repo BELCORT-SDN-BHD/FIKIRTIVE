@@ -6,6 +6,8 @@ import { requireOwner } from "./auth-guard";
 import { storage } from "./storage";
 import { listLibraryFavorites } from "./library-favorites";
 import { favoriteGenerationIds } from "./library-subjects";
+// 「哪个扩展名算影片」的单一源(§7.3)——本文件与 library-subjects.ts、canvas-entry-actions.ts 同读一份。
+import { LIBRARY_VIDEO_EXTS } from "./library-types";
 
 /** Uploaded bytes vs. something an engine made. `Generation.source` is the canonical column. */
 export type LibrarySourceKind = "generated" | "upload";
@@ -40,7 +42,7 @@ export type LibraryItem = {
 };
 export type LibraryPage = { items: LibraryItem[]; nextCursor: string | null; hasMore: boolean };
 
-const LIBRARY_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
+
 /**
  * The same four extensions the row mapper uses, spelled in both cases so the DB-side media
  * filter and the mapped `kind` can never disagree (a row that says "image" in the list but
