@@ -111,7 +111,14 @@ export function OttoPanelConversation({
           onBalanceRefresh={notifyBalanceRefresh}
           pendingFirst={
             pendingFirst && pendingFirst.threadId === activeThread.id
-              ? { text: pendingFirst.text, goalKey: pendingFirst.goalKey, entityIds: pendingFirst.entityIds }
+              ? {
+                  text: pendingFirst.text,
+                  goalKey: pendingFirst.goalKey,
+                  entityIds: pendingFirst.entityIds,
+                  // FRONT-A10:第一句话 `@` 到的对象也要跟着进第一条流式消息,否则侧栏开的
+                  // 那一条从一开始就没有引用可回链。
+                  references: pendingFirst.references,
+                }
               : undefined
           }
           onPendingFirstSent={onPendingFirstSent}

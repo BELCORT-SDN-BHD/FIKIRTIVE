@@ -14,6 +14,7 @@
  */
 import type { UIMessage } from "ai";
 import type { ChatThreadDTO, ChatMessageDTO } from "./types";
+import type { ReferenceLink } from "./reference-search-model";
 
 /** Persisted-message context carried on each mapped UIMessage so Task 5 can render
  *  the real widget (plan card / result / denial) instead of the placeholder stub. */
@@ -26,6 +27,11 @@ export interface OttoUiMessageMetadata {
   payload: unknown | null;
   /** The async generation job id, when the message is tied to one. */
   genJobId: string | null;
+  /**
+   * FRONT-A10 —— 这条消息 `@` 到的对象,服务端解析过的那一份(名字与地址都来自它)。
+   * 缺席 = 没有引用,或这条读路径还没接回链。绝不在客户端自己拼名字或地址。
+   */
+  references?: ReferenceLink[];
 }
 
 /** A UIMessage whose metadata carries the durable-message context above. */
@@ -90,6 +96,7 @@ export function threadToUiMessages(thread: ChatThreadDTO): OttoUiMessage[] {
         kind: m.kind,
         payload: m.payload,
         genJobId: m.genJobId,
+        ...(m.references?.length ? { references: m.references } : {}),
       },
     };
   });

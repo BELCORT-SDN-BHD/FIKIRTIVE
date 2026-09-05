@@ -1,5 +1,5 @@
 "use server";
-import { getCoworkThreadPage, resolveCoworkResultUrls } from "./data";
+import { getCoworkThreadPage, resolveCoworkResultUrls, resolveCoworkMessageReferences } from "./data";
 import { toChatThreadDTO } from "./dto";
 import type { ChatThreadDTO } from "./types";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
@@ -12,8 +12,12 @@ export async function getCoworkThreadClient(threadId: string): Promise<ChatThrea
   return runAsUser(principal, async () => {
     const t = await getCoworkThreadPage(ownerId, threadId);
     if (!t) return null;
-    const urls = await resolveCoworkResultUrls(ownerId, [t]);
-    return { ...toChatThreadDTO(t, urls), hasOlderMessages: t.hasOlderMessages };
+    const [urls, references] = await Promise.all([
+      resolveCoworkResultUrls(ownerId, [t]),
+      // FRONT-A10 回链:这一页每条消息提到的对象,一次解好(owner scoped)。
+      resolveCoworkMessageReferences(ownerId, [t]),
+    ]);
+    return { ...toChatThreadDTO(t, urls, references), hasOlderMessages: t.hasOlderMessages };
   });
 }
 
@@ -27,7 +31,11 @@ export async function getOlderCoworkThreadMessagesClient(
   return runAsUser(principal, async () => {
     const t = await getCoworkThreadPage(ownerId, threadId, beforeSeq);
     if (!t) return null;
-    const urls = await resolveCoworkResultUrls(ownerId, [t]);
-    return { ...toChatThreadDTO(t, urls), hasOlderMessages: t.hasOlderMessages };
+    const [urls, references] = await Promise.all([
+      resolveCoworkResultUrls(ownerId, [t]),
+      // FRONT-A10 回链:这一页每条消息提到的对象,一次解好(owner scoped)。
+      resolveCoworkMessageReferences(ownerId, [t]),
+    ]);
+    return { ...toChatThreadDTO(t, urls, references), hasOlderMessages: t.hasOlderMessages };
   });
 }

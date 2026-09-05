@@ -15,6 +15,7 @@ vi.mock("@/lib/reference-search-actions", () => ({ searchReferencesAction }));
 
 const { ReferencePickerMenu } = await import("@/components/reference-picker/ReferencePickerMenu");
 const { useReferencePicker } = await import("@/components/reference-picker/useReferencePicker");
+const { MessageReferences } = await import("@/components/reference-picker/MessageReferences");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.requestAnimationFrame = (callback) => { callback(0); return 0; };
@@ -28,6 +29,12 @@ let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 /** Every turn the composer would have sent — the billed action this menu must not trigger. */
 let sent: string[] = [];
+/**
+ * What the composers put on the wire for the turn they just sent (FRONT-A10 slice ③):
+ * `entityIds` is generation conditioning, `references` is "这条消息提到了谁". Two lists, never
+ * merged — recorded here so a test can prove a media reference reaches the second and NOT the first.
+ */
+let lastPayload: { entityIds: string[]; references: string[] } | null = null;
 
 function Harness() {
   const [text, setText] = useState("");
@@ -50,6 +57,10 @@ function Harness() {
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault();
             sent.push(text);
+            lastPayload = {
+              entityIds: picker.entityIdsForSend(text),
+              references: picker.referencesForSend(text),
+            };
             setText("");
           }
         }}
@@ -62,6 +73,7 @@ function Harness() {
 beforeEach(() => {
   vi.useFakeTimers();
   sent = [];
+  lastPayload = null;
   searchReferencesAction.mockReset();
   searchReferencesAction.mockResolvedValue({ items: ROWS, nextCursor: null });
 });
@@ -272,5 +284,146 @@ describe("FRONT-A10 — 两套 @ 实现收口成一个选择器", () => {
     const event = await pressNow("Tab");
     expect(event.defaultPrevented).toBe(true);
     expect(sent).toEqual([]);
+  });
+});
+
+/**
+ * 清单 C1 收口 —— 「商家实际能 `@` 到几类」。
+ *
+ * 这一组之前只到实体四格:generation／upload 服务端搜得到、菜单不给,理由是「聊天轮没有列
+ * 可以带媒体引用」。第③刀给了那一列(`ChatMessage.referenceRefs`),所以两格按裁决九
+ * 「有契约才出现」回到菜单里,并且要证明它们走的是**引用**那条路、不是生成条件那条路。
+ *
+ * 分类入口的形状**逐字照冻结契约**(`design-system/information-architecture/
+ * reference-picker-contract.md` §2):媒体是**一格 `Media`**、覆盖 Uploads 与 Generations,
+ * 不拆成两格。#1240 判官 P1-1 抓到的就是拆成两格那一版 —— 这一组现在钉的是契约那一版。
+ */
+describe("FRONT-A10 — 选择器按契约补齐类别", () => {
+  it("FRONT-A10 bare @ offers the contract's category entries production can answer", async () => {
+    await render();
+    await type("@");
+    const labels = options().map((option) => option.textContent ?? "");
+    for (const label of ["Products", "Characters", "Official avatars", "Locations", "Media"]) {
+      expect(labels.some((entry) => entry.includes(label)), `菜单里没有「${label}」这一格`).toBe(true);
+    }
+    // Clothes 是契约里唯一没有生产记录的一型 —— 裁决九:无契约的控件不出现。
+    expect(labels.some((entry) => entry.includes("Clothes"))).toBe(false);
+    // 契约 §2「不创建第三份媒体对象」:媒体只有 `Media` 这一格,没有并列的两格。
+    expect(labels.some((entry) => entry.includes("Generations"))).toBe(false);
+    expect(labels.some((entry) => entry.includes("Uploads"))).toBe(false);
+  });
+
+  it("FRONT-A10 the Media category searches both media types, as contract §2 says", async () => {
+    await render();
+    await type("@");
+    const media = options().find((option) => option.textContent?.includes("Media"))!;
+    await act(async () => media.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    await settle();
+    const lastCall = searchReferencesAction.mock.calls.at(-1)?.[0] as { types?: string[] };
+    expect(lastCall?.types).toEqual(["generation", "upload"]);
+  });
+
+  it("FRONT-A10 a single-type category still searches only that type on the server", async () => {
+    await render();
+    await type("@");
+    const products = options().find((option) => option.textContent?.includes("Products"))!;
+    await act(async () => products.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    await settle();
+    const lastCall = searchReferencesAction.mock.calls.at(-1)?.[0] as { types?: string[] };
+    expect(lastCall?.types).toEqual(["product"]);
+  });
+
+  it("FRONT-A10 a media reference travels as a typed reference, never as generation conditioning", async () => {
+    searchReferencesAction.mockResolvedValue({
+      items: [
+        { type: "upload", id: "ast_1", name: "cendol-shelf.png", source: "Upload · Library", thumbUrl: null },
+        ...ROWS,
+      ],
+      nextCursor: null,
+    });
+    await render();
+    await type("@cendol");
+    const row = options().find((option) => option.textContent?.includes("cendol-shelf.png"))!;
+    await act(async () => row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    await press("Enter");
+
+    expect(sent).toEqual(["@cendol-shelf.png "]);
+    // 引用那条路带上了它;生成条件那条路一个都没有 —— 一个 Asset id 混进 entityIds 会被
+    // 查到另一张表上去,而且会读成「这张图参与了成图」,而它并没有。
+    expect(lastPayload?.references).toEqual(["upload:ast_1"]);
+    expect(lastPayload?.entityIds).toEqual([]);
+  });
+
+  it("FRONT-A10 an entity reference is on BOTH lists — it conditions the image and it is what was named", async () => {
+    await render();
+    await type("@ja");
+    const row = options().find((option) => option.textContent?.includes("Jasmine gift box"))!;
+    await act(async () => row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    await press("Enter");
+    expect(lastPayload?.entityIds).toEqual(["p1"]);
+    expect(lastPayload?.references).toEqual(["product:p1"]);
+  });
+
+  it("FRONT-A10 deleting the @name from the draft drops it from both lists", async () => {
+    await render();
+    await type("@ja");
+    const row = options().find((option) => option.textContent?.includes("Jasmine gift box"))!;
+    await act(async () => row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+    await type("something else entirely");
+    await press("Enter");
+    expect(lastPayload?.entityIds).toEqual([]);
+    expect(lastPayload?.references).toEqual([]);
+  });
+});
+
+/**
+ * 清单 C2 收口的**上屏**这一半 —— 「消息记录…可回链」(FRONT-A10)。
+ *
+ * #1240 判官 P1-2 实证:`MessageReferences` 与它的挂点当时全仓零测试引用,删掉 DTO 那一格
+ * (`lib/dto.ts` 的 `references`)全量 vitest 照旧全绿 —— 引用小片永远到不了商家屏幕、
+ * 一条围栏都不红。这一组挂真组件读真 DOM:名字与地址只能来自服务端解析过的入参。
+ */
+describe("FRONT-A10 — 已发消息的引用小片", () => {
+  async function mount(references: Parameters<typeof MessageReferences>[0]["references"]) {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root!.render(<MessageReferences references={references} />));
+    return container;
+  }
+
+  it("FRONT-A10 draws one link per reference, with the name and address the server resolved", async () => {
+    const node = await mount([
+      {
+        type: "product",
+        id: "p1",
+        name: "Kopi cendol tin",
+        source: "Product · Otto IQ",
+        href: "/library?view=elements&element=products",
+      },
+      {
+        type: "upload",
+        id: "ast_1",
+        name: "cendol-shelf.png",
+        source: "Upload · Library",
+        href: "/library?asset=gen_1&project=prj_1",
+      },
+    ]);
+
+    const links = [...node.querySelectorAll("a")];
+    expect(links.map((link) => link.textContent)).toEqual(["Kopi cendol tin", "cendol-shelf.png"]);
+    // 地址逐字来自入参:这个组件从不由 id 拼地址 —— 拼出来的地址可能指向商家打不开的对象。
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/library?view=elements&element=products",
+      "/library?asset=gen_1&project=prj_1",
+    ]);
+    // 悬停说明就是选择器当初给的那一句(契约 §3),商家认得出自己挑的是哪一个。
+    expect(links[0].getAttribute("title")).toBe("Product · Otto IQ");
+  });
+
+  it("FRONT-A10 draws nothing at all when the message named no object", async () => {
+    const node = await mount([]);
+    expect(node.textContent).toBe("");
+    expect(node.querySelector("ul")).toBeNull();
   });
 });
