@@ -1,0 +1,10 @@
+[Otto 引擎] ⑥ 合主干后接上②段的 skillFiles，并校正 §5 登记
+
+②段（#1199）本场合入主干，装配器报出的「这一轮装了哪几份」当场接进
+collectTurnTraceFacts，并与工具名同一条纪律过白名单（名单＝build 期的柜子本身，
+柜外的字符串无处可落）。②段留的「skillFiles 恒为空」断言换成两条真判据：
+常驻薄层永远在、列出来的每一份都是真柜文。
+
+Spec: docs/specs/otto-engine.md §7.2⑥
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
