@@ -30,6 +30,7 @@ import type { Prisma } from "@fikirtive/db";
 import {
   newId,
   coworkTurnRequest,
+  turnRequestRefusal,
   GOAL_PRESETS,
   isGoalKey,
   tavilySearch,
@@ -120,6 +121,7 @@ import { proposeAdBuildForOwner } from "./meta-build-propose";
 import { declineMetaCard } from "./meta-card-decline";
 import type { MetaCardKind } from "./meta-card-decline-view";
 import { validateOwnedGenerationExt, type OwnedGenerationRef } from "./otto-generation-validate";
+import { resolveOwnedReferenceRefs } from "./reference-refs";
 import { storage } from "./storage";
 import { makeOttoCanvasPort } from "./otto-canvas-port";
 import { makeOttoMediaPort, makeOttoRenderPort, makeOttoMediaImportPort } from "./otto-media-port";
@@ -1833,7 +1835,7 @@ export async function ottoTurn(raw: unknown): Promise<
   | { error: string }
 > {
   const parsed = coworkTurnRequest.safeParse(raw);
-  if (!parsed.success) return { error: "Say what you'd like to make." };
+  if (!parsed.success) return { error: turnRequestRefusal(parsed.error) };
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
@@ -1885,6 +1887,13 @@ export async function ottoTurn(raw: unknown): Promise<
       // 上一版在这里把它滤成空数组继续跑,于是 Otto 按「没有产品参考」的前提铸卡、商家批准
       // 并为一张不含他指定产品的素材付了钱。
       if (refs.unavailable.length > 0) return { error: unavailableReferenceMessage(refs.unavailable) };
+
+      // FRONT-A10(§7.3③ 第③刀):`@` 到的对象在**落库之前**按当前 principal 的 ownerId 解析
+      // 一遍(判官 P2-1 的收口位)。一件解不出来 —— 别家的、已删的、形状不对的 —— 这一轮就
+      // 整轮不发,与上面媒体引用同一条纪律,读到的也是同一句话:那句话对「别人的」和「自己
+      // 删掉的」说得一模一样,所以它不会变成一个「这个 id 在别家存在吗」的问答机。
+      const picked = await resolveOwnedReferenceRefs(ownerId, parsed.data.references);
+      if (picked.unresolved > 0) return { error: referenceUnavailableMessage("notFound") };
 
       // Resolve thread: new vs existing-owned-and-in-project
       const isNew = !parsed.data.threadId;
@@ -1953,6 +1962,9 @@ export async function ottoTurn(raw: unknown): Promise<
           seq: ++seq,
           text,
           payload: { entityIds, variantSel, sourceGenerationIds: refs.sourceGenerationIds, referenceVideoGenerationIds: refs.referenceVideoGenerationIds },
+          // FRONT-A10:这条消息**提到了谁**,类型化 ID,服务端解析过的那一份(不是客户端上报
+          // 的那一份)。`payload.entityIds` 是另一件事(生成条件),两格并存、互不取代。
+          referenceRefs: picked.wire,
           replyToMessageId: validReplyId,
         },
       });

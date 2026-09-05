@@ -6,6 +6,7 @@ import { DefaultChatTransport } from "ai";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePickerMenu";
 import { useReferencePicker } from "@/components/reference-picker/useReferencePicker";
+import { MessageReferences } from "@/components/reference-picker/MessageReferences";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Attachment,
@@ -158,6 +159,8 @@ export interface OttoChatStreamProps {
     text: string;
     goalKey?: string;
     entityIds?: string[];
+    /** FRONT-A10:第一句话 `@` 到的对象(类型化 ID),落进 ChatMessage.referenceRefs 供回链。 */
+    references?: string[];
     /** 起步页在 Create 上挂的素材(规格 §7.3⑨)。首轮走的是与手动送出**同一份**
      *  `composerReferencePayload` 映射,不另开一条引用通道。 */
     sourceGenerationIds?: string[];
@@ -356,6 +359,7 @@ export function OttoChatStream({
           sourceGenerationIds?: string[];
           referenceVideoGenerationId?: string;
           referenceVideoGenerationIds?: string[];
+          references?: string[];
         };
         return {
           body: {
@@ -371,6 +375,8 @@ export function OttoChatStream({
             ...(ids.sourceGenerationId ? { sourceGenerationId: ids.sourceGenerationId } : {}),
             ...(ids.referenceVideoGenerationIds?.length ? { referenceVideoGenerationIds: ids.referenceVideoGenerationIds } : {}),
             ...(ids.referenceVideoGenerationId ? { referenceVideoGenerationId: ids.referenceVideoGenerationId } : {}),
+            // FRONT-A10:这一轮 `@` 到的对象(类型化 ID),落进 ChatMessage.referenceRefs 供回链。
+            ...(ids.references?.length ? { references: ids.references } : {}),
           },
         };
       },
@@ -673,6 +679,9 @@ export function OttoChatStream({
           threadId: thread.id,
           ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}),
           ...(pendingFirst.entityIds?.length ? { entityIds: pendingFirst.entityIds } : {}), // F30: carry entity conditioning into the first streamed turn
+          // FRONT-A10:第一句话 `@` 到的对象也进首轮 —— 少了这一格,从前门开出来的每一条对话
+          // 从第一句起就没有引用可回链。
+          ...(pendingFirst.references?.length ? { references: pendingFirst.references } : {}),
           // FRONT §7.3⑨:起步页挂的素材也进首轮。走的是手动送出用的**那一个**映射函数,
           // 所以「一件参考在 body 里长什么样」全仓只有一个作者。
           ...composerReferencePayload([
@@ -691,6 +700,8 @@ export function OttoChatStream({
     if (!trimmed || isBusy || submitLockRef.current) return;
     submitLockRef.current = true;
     const entityIds = picker.entityIdsForSend(trimmed);
+    // FRONT-A10:「这条消息提到了谁」—— 与 entityIds(生成条件)是两条路,一起上行。
+    const references = picker.referencesForSend(trimmed);
     lastSubmittedTextRef.current = trimmed;
     setText(""); // clear the composer immediately; sendMessage echoes the user msg
     picker.clearPicked();
@@ -723,6 +734,7 @@ export function OttoChatStream({
             projectId,
             threadId: thread.id,
             ...(entityIds.length ? { entityIds } : {}),
+            ...(references.length ? { references } : {}),
             ...composerReferencePayload(attachedNow),
           },
         },
@@ -1625,6 +1637,12 @@ export function OttoChatStream({
                     // Graceful: only rendered when reasoning arrives; most models omit it.
                     <ReasoningPart key={`${m.id}:r${ri}`} part={p} />
                   ))}
+                  {/* FRONT-A10 回链:这一条消息 `@` 到的对象,点得回去。名字与地址来自服务端
+                      那一次 owner-scoped 解析(lib/reference-refs.ts),客户端不自己拼。
+                      刚发出去那一条还没有 —— 它要等这一轮落库、下一次取数才带上引用。 */}
+                  {m.metadata?.references?.length ? (
+                    <MessageReferences references={m.metadata.references} />
+                  ) : null}
                   {turnCost !== null && (
                     <Marker>
                       <MarkerContent>This reply used {creditsLabel(turnCost)}.</MarkerContent>

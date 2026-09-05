@@ -11,6 +11,8 @@ export type CanvasPendingFirst = {
   text: string;
   goalKey?: string;
   entityIds?: string[];
+  /** FRONT-A10:第一句话 `@` 到的对象(类型化 ID),落进 ChatMessage.referenceRefs 供回链。 */
+  references?: string[];
   /** 起步页挂的图片素材(规格 §7.3⑨)——首轮按与手动送出**同一份**映射进 body。 */
   sourceGenerationIds?: string[];
   /** 起步页挂的影片素材。 */

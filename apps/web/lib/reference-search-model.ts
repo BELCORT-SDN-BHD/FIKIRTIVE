@@ -27,6 +27,20 @@ export interface ReferenceResult {
   thumbUrl: string | null;
 }
 
+/**
+ * A reference the merchant already sent, resolved back to the object it names (FRONT-A10
+ * "可回链"). Same identity as `ReferenceResult` plus the address that shows the object; the server
+ * builds `href` from its own read of the row, so a message can never link somewhere the merchant
+ * is not allowed to go.
+ */
+export interface ReferenceLink {
+  type: ReferenceType;
+  id: string;
+  name: string;
+  source: string;
+  href: string;
+}
+
 export interface ReferenceSearchPage {
   items: ReferenceResult[];
   /** Opaque; pass back verbatim to continue. `null` = this was the last page. */
