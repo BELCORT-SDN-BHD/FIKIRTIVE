@@ -215,6 +215,42 @@ describe("createCanvasConversation:起步页挂的参考", () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
+  /**
+   * 判官 #1242 P1-2:上限从前是**合计** 8。商家挂 3 张图(媒体侧封顶 8,没超)再 `@` 6 件实体
+   * (画布首轮那一侧按 `MAX_GEN_ENTITIES` = 8 卡,也没超),合计 9 —— 起步页整笔被拒,屏幕上只有
+   * 一句通用的「请再试一次」,而再试永远不会成功。那是这一页新造的一条口径。现在两本分开数,
+   * 与画布同一个口径。
+   */
+  it("FRONT-A14:媒体与实体各数各的上限 —— 3 图 + 6 实体(合计 9)照常开画布", async () => {
+    const references = [
+      ...Array.from({ length: 3 }, (_, i) => ({ type: "generation", id: `gen-${i}` })),
+      ...Array.from({ length: 6 }, (_, i) => ({ type: "product", id: `ent-${i}` })),
+    ];
+
+    await expect(createCanvasConversation({
+      prompt: "Put her in the new hoodie",
+      requestId: REQUEST_ID,
+      references,
+    })).resolves.toEqual({ projectId: PROJECT_ID, threadId: THREAD_ID, handoffId: HANDOFF_ID });
+
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.eventCreate.mock.calls[0]![0].data.payload.references).toEqual(references);
+  });
+
+  it("FRONT-A14:任何一本自己超了才拒 —— 9 件媒体拒,9 件实体也拒", async () => {
+    for (const references of [
+      Array.from({ length: 9 }, (_, i) => ({ type: "generation", id: `gen-${i}` })),
+      Array.from({ length: 9 }, (_, i) => ({ type: "product", id: `ent-${i}` })),
+    ]) {
+      await expect(createCanvasConversation({
+        prompt: "A poster",
+        requestId: REQUEST_ID,
+        references,
+      })).resolves.toEqual({ error: "Couldn't start that Canvas — please try again." });
+    }
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
   it("FRONT-A14:草稿画布(先挂参考后送出)被收编成同一块,不开第二块", async () => {
     // `ensureCanvasDraft` 已经用同一个 requestId 开过这块画布 —— 这时只改名字。
     mocks.projectFindFirst.mockResolvedValue({ id: PROJECT_ID });

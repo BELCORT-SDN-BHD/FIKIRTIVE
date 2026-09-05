@@ -15,12 +15,23 @@
  *
  * 三条最后都汇到同一处:`createCanvasConversation` 的 `references`,类型化 `{type, id}`。
  * 断言落在「送出那一下真的带了什么」上,不是落在源码字串上。
+ *
+ * 最后一环单独一组(判官 #1242 P1-1):起步页挂上去的那件东西,**画布首轮那一发请求里真的有**。
+ * 此前这条链在测试上只闭合到 `ImmersiveCanvasEntry` 交出来的 `pendingFirst` prop 为止 ——
+ * 判官把 `OttoChatStream` 里那段映射整段删掉,全量 543 文件 / 7558 条测试逐字照绿:商家把图挂上、
+ * 画布照开、第一轮照送,而那张图从来没上车,屏幕上也没有一个字说它掉了。下面那一组真挂
+ * `OttoChatStream`(`useChat` 用替身),读 `sendMessage` 的第二参 `body`。
+ *
+ * 文件名前缀是 `front-a14-`,不是同族那份 `front-a15-create-start-disclosure`:这里四条判据
+ * 落的验收是 **FRONT-A14**(规格 `docs/specs/frontend-baseline.md`「验收落点：A14」),编号与文件名
+ * 从此一致(判官 #1242 P2-3)。
  */
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  sendMessage: vi.fn(),
   createCanvasConversation: vi.fn(),
   ensureCanvasDraft: vi.fn(),
   uploadFilesDirect: vi.fn(),
@@ -39,8 +50,20 @@ vi.mock("@/lib/upload-actions", () => ({ finalizeCandidateUploads: mocks.finaliz
 vi.mock("@/lib/library-actions", () => ({ getGenerationHistory: mocks.getGenerationHistory }));
 vi.mock("@/lib/reference-search-actions", () => ({ searchReferencesAction: mocks.searchReferencesAction }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push }) }));
+// 画布首轮那一发请求的出口。真传输够得着网络也够得着钱,所以换成替身 —— 断言读它收到的 body。
+vi.mock("@ai-sdk/react", () => ({
+  useChat: () => ({
+    messages: [],
+    setMessages: vi.fn(),
+    sendMessage: mocks.sendMessage,
+    status: "ready",
+    error: null,
+  }),
+}));
+vi.mock("ai", () => ({ DefaultChatTransport: class { constructor(_opts: unknown) { void _opts; } } }));
 
 const { StartSomething } = await import("@/components/start-something/StartSomething");
+const { OttoChatStream } = await import("@/components/otto/OttoChatStream");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -52,6 +75,11 @@ let container: HTMLDivElement | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
   mocks.createCanvasConversation.mockResolvedValue({
     projectId: "canvas_1",
     threadId: "thread_1",
@@ -256,5 +284,105 @@ describe("FRONT-A14 起步页 Add context 三条路", () => {
     await type(dom, DRAFT);
     await send(dom);
     expect(sentReferences()).toBeUndefined();
+  });
+
+  it("FRONT-A14: 上传只收图片 —— 挑到影片当场说人话,不留一个画不出来的芯片", async () => {
+    const dom = await mount();
+    await openAddContext(dom);
+    await act(async () => { menuItem("Upload image").click(); });
+
+    // `accept` 只是提示:系统对话框切到「所有文件」就挑得到这一段。
+    const input = dom.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", {
+      value: [new File([new Uint8Array([1])], "clip.mp4", { type: "video/mp4" })],
+      configurable: true,
+    });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(dom.textContent).toContain("Videos go in from the Canvas");
+    expect(dom.textContent).not.toContain("clip.mp4");
+    // 一步都没往上传权威那边走 —— 不花钱、不落 Generation、不开画布。
+    expect(mocks.uploadFilesDirect).not.toHaveBeenCalled();
+    expect(mocks.finalizeCandidateUploads).not.toHaveBeenCalled();
+    expect(mocks.ensureCanvasDraft).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 最后一环:画布**首轮那一发请求**。上面四条问的是「送出那一下 `createCanvasConversation`
+ * 收到了什么」,这一条问的是「navigation 之后,那件东西真的上了第一轮的车吗」。
+ * 挂真 `OttoChatStream`,`pendingFirst` 给三份 id(服务端 `getCanvasConversationHandoff`
+ * 重查归属之后交出来的就是这个形状),断言 `sendMessage` 的第二参 `body`。
+ */
+describe("FRONT-A14 起步页挂的引用真的进画布首轮那一发请求", () => {
+  const THREAD = {
+    id: "thread-1",
+    projectId: "canvas_1",
+    title: "Untitled",
+    updatedAt: new Date("2026-09-05T00:00:00.000Z").toISOString(),
+    messages: [],
+  };
+
+  async function mountStream(pendingFirst: Record<string, unknown> | null): Promise<void> {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(createElement(OttoChatStream, {
+        projectId: "canvas_1",
+        entities: [],
+        thread: THREAD,
+        balanceUsd: 10,
+        onRefresh: async () => {},
+        onThreadUpdate: () => {},
+        ...(pendingFirst ? { pendingFirst } : {}),
+      } as never));
+    });
+    await act(async () => { await Promise.resolve(); });
+  }
+
+  it("FRONT-A14: 首轮 body 同时带 entityIds、图片与影片素材 —— 三份都上车", async () => {
+    await mountStream({
+      text: DRAFT,
+      entityIds: ["ent-hoodie", "ent-model"],
+      sourceGenerationIds: ["gen-upload", "gen-library"],
+      referenceVideoGenerationIds: ["gen-clip"],
+    });
+
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+    const [message, options] = mocks.sendMessage.mock.calls[0] as [
+      { text: string },
+      { body: Record<string, unknown> },
+    ];
+    expect(message).toEqual({ text: DRAFT });
+    expect(options.body).toMatchObject({
+      projectId: "canvas_1",
+      threadId: "thread-1",
+      entityIds: ["ent-hoodie", "ent-model"],
+      // 形状由手动送出用的**同一个** `composerReferencePayload` 铺开:单数键给旧路径,
+      // 复数键给整串。少了任何一半,画布那一头就只认得第一件。
+      sourceGenerationId: "gen-upload",
+      sourceGenerationIds: ["gen-upload", "gen-library"],
+      referenceVideoGenerationId: "gen-clip",
+      referenceVideoGenerationIds: ["gen-clip"],
+    });
+  });
+
+  it("FRONT-A14: 没挂引用的首轮不凭空造出引用键", async () => {
+    await mountStream({ text: DRAFT });
+
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+    const body = (mocks.sendMessage.mock.calls[0] as [unknown, { body: Record<string, unknown> }])[1].body;
+    expect(body).toMatchObject({ projectId: "canvas_1", threadId: "thread-1" });
+    for (const key of [
+      "entityIds",
+      "sourceGenerationId",
+      "sourceGenerationIds",
+      "referenceVideoGenerationId",
+      "referenceVideoGenerationIds",
+    ]) {
+      expect(body, `没挂引用却带了 ${key}`).not.toHaveProperty(key);
+    }
   });
 });

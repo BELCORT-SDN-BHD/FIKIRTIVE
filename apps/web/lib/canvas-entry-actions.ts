@@ -12,6 +12,7 @@ import {
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { newThreadTitle } from "./otto-canned-starters";
+import { MAX_GEN_ENTITIES } from "@fikirtive/core/gen";
 import { MAX_OTTO_COMPOSER_REFERENCES } from "./canvas-chat-reference";
 import { DEFAULT_CANVAS_NAME } from "./canvas-title";
 import { libraryMediaKindForExt } from "./library-types";
@@ -39,10 +40,20 @@ export type CanvasHandoffReference = ReferenceRef;
  * `null` = 这份引用列表**不是我们发出的形状**,整笔按失败处理(fail closed)。空数组 = 没带引用。
  * 客户端可以自报 id,但自报不等于拥有 —— 归属在读回那一刻按 ownerId 重新查
  * (`getCanvasConversationHandoff`),这里只管形状。
+ *
+ * 上限分两本,与画布 composer **同一个口径**(判官 #1242 P1-2):
+ *   · 媒体(上传／Library 挑的)`MAX_OTTO_COMPOSER_REFERENCES` = 8 —— 画布那一侧的 8 件
+ *     也只罩媒体(`upsertComposerReference`),实体不计入;
+ *   · 实体(`@` 出来的)`MAX_GEN_ENTITIES` = 8 —— 画布首轮送到 `/api/otto/stream` 时,
+ *     `entityIds` 也是按这一条卡的(`packages/core/src/cowork.ts`)。
+ * 从前这里是**合计** 8:商家挂 3 张图再 `@` 6 件实体(两边各自都没超),起步页整笔被拒、
+ * 屏幕上只有一句通用的「请再试一次」,而再试永远不会成功。那是本页新造的一条口径,不是
+ * 画布的口径,现在两边一致。
  */
 function parseHandoffReferences(raw: unknown): CanvasHandoffReference[] | null {
   if (raw === undefined || raw === null) return [];
-  if (!Array.isArray(raw) || raw.length > MAX_OTTO_COMPOSER_REFERENCES) return null;
+  // 去重之前先给这一笔封个顶,免得一份超长(哪怕全是重复项)的数组白跑一遍循环。
+  if (!Array.isArray(raw) || raw.length > MAX_OTTO_COMPOSER_REFERENCES + MAX_GEN_ENTITIES) return null;
   const refs: CanvasHandoffReference[] = [];
   for (const entry of raw) {
     if (!entry || typeof entry !== "object") return null;
@@ -51,7 +62,11 @@ function parseHandoffReferences(raw: unknown): CanvasHandoffReference[] | null {
     if (typeof id !== "string" || !id || id.length > MAX_REFERENCE_ID) return null;
     refs.push({ type, id });
   }
-  return dedupeReferenceRefs(refs);
+  const deduped = dedupeReferenceRefs(refs);
+  const entityCount = deduped.filter((ref) => isEntityReferenceType(ref.type)).length;
+  if (entityCount > MAX_GEN_ENTITIES) return null;
+  if (deduped.length - entityCount > MAX_OTTO_COMPOSER_REFERENCES) return null;
+  return deduped;
 }
 
 function identities(requestId: string) {

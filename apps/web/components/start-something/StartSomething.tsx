@@ -94,6 +94,14 @@ const ACCEPT_ENTRY_IMAGE = ACCEPT_ATTACH.split(",")
   .filter((type) => type.startsWith("image/"))
   .join(",");
 
+/**
+ * `accept` 只是文件选择器的**提示**:商家在系统对话框里切到「所有文件」照样挑得到一段影片,
+ * 而上传权威本身收视频(`ACCEPT_ATTACH` 含 `video/*`),于是那段影片真的传得上去,芯片再用
+ * `<img>` 去画它 —— 屏幕上一个破图,而商家什么都没做错(判官 #1242 P2-4)。挡在这里,并说
+ * 一句他下一步能照做的话。
+ */
+const ENTRY_VIDEO_NOT_HERE = "Videos go in from the Canvas — this page takes images.";
+
 type EntryReference = Omit<OttoComposerReference, "requestId">;
 
 export function StartSomething() {
@@ -136,6 +144,10 @@ export function StartSomething() {
     event.target.value = "";
     if (!file) return;
     setAttachError(null);
+    if (!file.type.startsWith("image/")) {
+      setAttachError(ENTRY_VIDEO_NOT_HERE);
+      return;
+    }
     setUploading(true);
     try {
       // 先有画布才落得下这一行 Generation —— 见文件抬头的 Add context 那一段。
