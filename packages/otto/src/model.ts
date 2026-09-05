@@ -35,16 +35,26 @@ export const OTTO_DEFAULT_MODEL = OTTO_PRIMARY_MODEL;
  * 从前这个决定不存在:`runtime.ts` 的 `foldRollingSummary` 直接取 manifest 的主绑定,谁都改不到。
  * 现在它是这里的一个常量,manifest 把它作为 `summaryBinding` 带下去,调用处一行型号都不写死。
  *
- * **今天的取值等于主力型号**,理由是价目表里没有更便宜的一档 —— `PRICED_MODEL_IDS` 只有
- * `claude-opus-4-8` / `claude-sonnet-4-6` / `claude-sonnet-4-5`,后两个同价(packages/core/src/
- * llm-prices.ts)。所以「便宜」今天仍由两端硬顶承担(输入 24,000 字符、输出 400 token,见
- * runtime.ts)。**要真的换小型号,得先有 Founder 的两个决定**,规格 §5 已登记:
- *   (1) 往价目表加一行 haiku 档(型号 id 与四个真实单价 —— 猜价在本仓库已被删掉,查不到就拒绝启动);
- *   (2) 折叠那条腿的**计价**怎么算 —— 它烧的 token 今天并进本轮 usage,按 `billableModelId`
- *       (sonnet)结算;跑小型号却按 sonnet 收,对商家是多收,不能由施工方默默决定。
- * 换型号时 529 的同档接管(OTTO_FALLBACK_MODEL)也要一起想:两者今天共用同一个备份型号。
+ * **Founder 2026-09-05 裁决④**:「折叠摘要换 Haiku,按 Haiku 实价计入商家账单」。规格 §5 登记的
+ * 那两个决定因此都有了答案:
+ *   (1) 价目表加了 `claude-haiku-4-5-20251001` 一行(四个官方单价,来源写在那一行的注释里);
+ *   (2) 折叠那条腿**按它自己跑的型号计价** —— 它的 usage 单独记成一条 `LlmBillingLeg`,本轮
+ *       总额 = 主腿按 Sonnet 价 + 折叠腿按 Haiku 价(meter.ts 不变量 #13)。仍然是一次 reserve、
+ *       一次 settle、一个 refId;毛利加成照旧套在两腿之和上。
+ * 两端硬顶(输入 24,000 字符、输出 400 token,见 runtime.ts)不变 —— 换小型号是省价,不是放宽量。
  */
-export const OTTO_SUMMARY_MODEL = OTTO_PRIMARY_MODEL;
+export const OTTO_SUMMARY_MODEL = "claude-haiku-4-5-20251001";
+
+/**
+ * 折叠腿的 529 同档接管型号 —— **刻意等于折叠型号自己**。
+ *
+ * 主轮的接管(OTTO_FALLBACK_MODEL = sonnet-4-5)之所以安全,是因为它与主力**同价**:跑哪个都
+ * 按同一张价目结算。折叠腿换成 Haiku 之后这条不再成立 —— 用 sonnet 接管一次 haiku 的折叠,
+ * 就是跑贵的型号按便宜的价收,差额静默由我们吃(ENGINE-A5 要消灭的正是这一族)。折叠本身
+ * **从不 load-bearing**(`foldRollingSummary` 吞掉任何抛错,这一轮照常返回),所以「不跨档接管」
+ * 的全部代价只是偶尔少折一次摘要 —— 比一条按错价的账便宜得多。
+ */
+export const OTTO_SUMMARY_FALLBACK_MODEL = OTTO_SUMMARY_MODEL;
 
 type LanguageModel = ReturnType<typeof anthropic>;
 
@@ -217,15 +227,14 @@ export function withPromptCaching(model: LanguageModel): LanguageModel {
 
 /** One model binding: prompt-cache marking over same-tier 529-failover, adapted for the OpenAI
  *  Agents SDK. Written once so the fold's binding cannot drift into a second wrapper stack. */
-const ottoBindingFor = (modelId: string) =>
-  aisdk(withPromptCaching(withOverloadFailover(anthropic(modelId), anthropic(OTTO_FALLBACK_MODEL))));
+const ottoBindingFor = (modelId: string, fallbackId: string) =>
+  aisdk(withPromptCaching(withOverloadFailover(anthropic(modelId), anthropic(fallbackId))));
 
 /** Otto's model: prompt-cache marking over same-tier 529-failover, adapted for the OpenAI Agents SDK. */
-export const ottoModel = ottoBindingFor(OTTO_PRIMARY_MODEL);
+export const ottoModel = ottoBindingFor(OTTO_PRIMARY_MODEL, OTTO_FALLBACK_MODEL);
 
-/** ENGINE-A6 —— 折叠那次调用的绑定(型号见 OTTO_SUMMARY_MODEL)。今天与主绑定同型号、同一套
- *  包装,所以行为与本改动之前逐字相同;换型号时只动那一个常量。 */
-export const ottoSummaryModel = ottoBindingFor(OTTO_SUMMARY_MODEL);
+/** ENGINE-A6 —— 折叠那次调用的绑定(型号见 OTTO_SUMMARY_MODEL,接管型号见 OTTO_SUMMARY_FALLBACK_MODEL)。 */
+export const ottoSummaryModel = ottoBindingFor(OTTO_SUMMARY_MODEL, OTTO_SUMMARY_FALLBACK_MODEL);
 
 // ── The production atomic model-runtime manifest (engine spec §6.2, PH1-A1) ─────────────────
 //
@@ -254,6 +263,9 @@ export function assertOttoModelsPriced(
     ["OTTO_DEFAULT_MODEL", OTTO_DEFAULT_MODEL],
     // 折叠也真的会被跑到,所以它也必须有价 —— 换成一个没登记的小型号,开机就被拒。
     ["OTTO_SUMMARY_MODEL", OTTO_SUMMARY_MODEL],
+    // 折叠腿的接管型号今天等于折叠型号本身,但它是**另一个常量**:有人把它指向别处时,
+    // 「那个型号有没有价」必须照样在开机时被问一次。
+    ["OTTO_SUMMARY_FALLBACK_MODEL", OTTO_SUMMARY_FALLBACK_MODEL],
   ],
 ): void {
   for (const [constant, id] of ids) {
@@ -273,6 +285,9 @@ export const ottoModelRuntime: OttoModelRuntime = Object.freeze({
   binding: ottoModel,
   // ENGINE-A6:折叠那条腿的绑定也在 manifest 上,`foldRollingSummary` 从这里取。
   summaryBinding: ottoSummaryModel,
+  // ENGINE-A6 × Founder 2026-09-05 裁决④:折叠腿**按自己的型号计价**。绑定与计价 id 是同一个
+  // 决定的两面,所以它们并排放在 manifest 上,而不是让计费处去猜绑定跑的是哪个型号。
+  summaryBillableModelId: OTTO_SUMMARY_MODEL,
   billableModelId: OTTO_DEFAULT_MODEL,
   resolvedModelPolicy: Object.freeze({
     primaryModelId: OTTO_PRIMARY_MODEL,
