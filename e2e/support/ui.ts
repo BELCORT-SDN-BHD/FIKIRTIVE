@@ -57,9 +57,13 @@ export async function waitUntilInteractive(locator: Locator): Promise<void> {
  *  <h2>,页面上再没有 `[data-slot="card"]`。旧锚点会交回一个**空** locator,下游读起来是
  *  「产品没显示这个」而不是「journey 找错地方」,所以锚点跟着结构一起搬。 */
 export function spendHistory(page: Page): Locator {
+  // 判官 P2-B:`page.locator("section").filter({ has: heading })` 交回的是**每一个**装着
+  // 这个标题的 <section> —— 只要这一节外面再包一层 section(壳、栏目、未来某次布局改动),
+  // strict mode 就会因为「resolved to 2 elements」红掉,而红的地方读起来像产品坏了,
+  // 不像 journey 找错地方。从标题本身往上取**最近**的那一个 section,答案永远只有一个。
   return page
-    .locator("section")
-    .filter({ has: page.getByRole("heading", { name: "Spend history", exact: true }) });
+    .getByRole("heading", { name: "Spend history", exact: true })
+    .locator("xpath=ancestor::section[1]");
 }
 
 /** The persistent left rail: identity, the credits figure, and the way out. */
