@@ -74,8 +74,11 @@ const JUDGE_MAX_OUTPUT = 700;
  * 离线台架的固定后缀。它**不是**被测内容的一部分：被测的是 Otto 的说明书本身
  * （⑥段把单体换成文件柜之后，换掉的正是上面那一份），这一段永远不变，
  * 所以两次跑分比的仍是同一件事。
+ *
+ * 导出是给测试用的：ENGINE-A7 那条「最坏不短于任何一题」的断言，两边必须是**同一种形状**
+ * （都带台架后缀），否则少掉的那一段会替真正的上界白白垫高一截，掉了后缀也照样绿。
  */
-const HARNESS_SUFFIX = `
+export const HARNESS_SUFFIX = `
 
 ---
 You are answering inside an offline evaluation harness. No tools are connected this turn and nothing you say spends money. Answer the merchant as you normally would, and state plainly — in order — which tools or prompt skills you would call and the key fields you would pass. Do not invent results you have not got.`;

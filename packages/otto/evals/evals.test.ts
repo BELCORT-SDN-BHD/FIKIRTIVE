@@ -26,6 +26,7 @@ import { parseGlossary, shotGlossary, SEEDANCE_CRAFT_PATH } from "./checks/gloss
 import {
   EvalPreflightFailed,
   guardedRun,
+  HARNESS_SUFFIX,
   loadTasks,
   parseVerdicts,
   pathsFor,
@@ -292,8 +293,9 @@ describe("ENGINE-A1 守卫在花钱之前", () => {
     expect(tasks.length).toBeGreaterThan(1);
     const worst = worstCaseSystem(tasks);
     for (const t of tasks) {
-      const assembled = assembleOttoInstructions(t.prompt).text;
-      expect(worst.length).toBeGreaterThanOrEqual(assembled.length);
+      // 两边同形状：`worstCaseSystem` 拼了台架后缀，右边也得拼上，否则后缀那一段
+      // 会白白垫高左边 —— `worstCaseSystem` 哪天丢掉后缀，这条断言也照样绿。
+      const assembled = assembleOttoInstructions(t.prompt).text + HARNESS_SUFFIX;
       expect(estimateTokens(worst)).toBeGreaterThanOrEqual(estimateTokens(assembled));
     }
   });
