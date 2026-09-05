@@ -150,11 +150,20 @@ export const CANVAS_HREF = SHELL_ROUTES.canvas;
  * 没有 `MerchantNavLink` 类型标注,是因为它没有 `href`——那个类型要求真地址,Otto 给不出。
  * `navPath()` / `navLabel()` 仍然对 `otto` key 单独判断(它俩不读 `.href`),所以 Otto 仍能
  * 说出自己的名字;`everyNavDestination()` 不再把它接进去,因为那份名单的契约就是「真链接」。
+ *
+ * 2026-09-05(接线盘点 L6 落修,规格 `docs/specs/frontend-baseline.md` §5):`does` 原写
+ * 「Otto sits on the right of every page」。`merchantNavMap()` 把这句话与「except
+ * ${CREATE_NAV_HREF} and ${CANVAS_HREF}」拼成同一行,于是同一句话的前半句说「每一页」、
+ * 后半句自己数出两个例外 —— 商家读到的是一句自相矛盾的话。改的是措辞:「每一页」换成
+ * 「workspace pages」,例外仍由后半句逐条点名(围栏
+ * `apps/web/lib/__tests__/otto-panel-mount.test.ts` 从 `ottoPanelMountsOn()` 现算,不手抄)。
+ * **挂载范围一个字没动**;这一句是全仓唯一的出处,`packages/otto` 的提示词与 golden 快照
+ * 跟着它读。
  */
 export const OTTO_ASSISTANT = {
   key: "otto",
   label: "Ask Otto",
-  does: "Ask Otto to do any of this with you — Otto sits on the right of every page, and is never a section of its own.",
+  does: "Ask Otto to do any of this with you — Otto sits on the right of the workspace pages, and is never a section of its own.",
 } as const;
 
 /**

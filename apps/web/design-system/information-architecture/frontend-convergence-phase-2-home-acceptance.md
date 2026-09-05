@@ -16,7 +16,7 @@
 | 6 | Pass | Goal、range、comparison 共用 canonical registries，并由 URL 持有。 |
 | 7 | Pass | Shared read model 持有 period、source provenance、freshness 与 evidence strength；无法取得 freshness 时明确显示 unknown。 |
 | 8 | Pass（2026-09-05 回写） | Workspace-wide Home layout persistence 已接通：server action `apps/web/lib/home-layout-actions.ts`（`saveHomeLayout`）、读写单源 `apps/web/lib/home-layout-store.ts`、`OrgHomeLayout` 表（`packages/db/prisma/schema.prisma:1369`）与迁移 `packages/db/prisma/migrations/20260903120000_org_home_layout`；跨刷新与换浏览器由 `e2e/journeys/15-home-layout-persists.spec.ts:35`（FRONT-A4）守。原文「persistence action 尚不存在」是本文件冻结当时（2026-08-31）的观察，与 live code 冲突，已按现状回写。 |
-| 9 | Pass（2026-09-05 回写） | `Manage home` capability 已存在：`canManageHome()` 在 `apps/web/lib/home-layout-store.ts:37` 按 org permission `workspace.manage_home` 判，founder-admin 那一支单独放行；商家侧入口是 Customize home 面板（`apps/web/components/home/CustomizeHomePanel.tsx:56`，由 `apps/web/components/home/MarketingHomeView.tsx:381` 打开）。原文「capability seam 尚不存在」是本文件冻结当时（2026-08-31）的观察，已按现状回写。 |
+| 9 | Pass（2026-09-05 回写） | `Manage home` capability 已存在：`canManageHome()` 在 `apps/web/lib/home-layout-store.ts:37` 按 org permission `workspace.manage_home` 判，founder-admin 那一支单独放行；商家侧入口是 Customize home 面板（`apps/web/components/home/CustomizeHomePanel.tsx:56`，由 `apps/web/components/home/MarketingHomeView.tsx:442-443` 打开）。原文「capability seam 尚不存在」是本文件冻结当时（2026-08-31）的观察，已按现状回写。 |
 | 10 | Pass | Analysis 只接受 typed type / subject / filters / return target；query copy 不成为 truth。 |
 | 11 | Pass | Ready 与 partial Analysis 都遵循 `conclusion → value → chart → evidence → meaning → action`。 |
 | 12 | Pass | Partial / insufficient / unavailable 不作 causal claim，不显示无来源 confidence。 |
