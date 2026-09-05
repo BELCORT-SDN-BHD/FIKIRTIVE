@@ -16,13 +16,15 @@
  * 「utility bar 的 Ask Otto 拨的是同一个开关」这条 Application shell 接线,钉在
  * `otto-panel-mount.test.ts`(它已经有完整的面板挂载测试台,不在这里重复搭一遍)。
  */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { APPLICATION_SHELL_CARVE_OUTS, SHELL_ROUTES, everyNavDestination, merchantNavLinks } from "@fikirtive/core/navigation";
+import { APPLICATION_SHELL_CARVE_OUTS, NAVIGATION_OWNED_SURFACES, SHELL_ROUTES, everyNavDestination, merchantNavLinks } from "@fikirtive/core/navigation";
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
-import { MerchantShellContent, isMerchantSurface } from "@/components/global-navigation";
+import { MerchantShellContent, isMerchantSurface, shellTopBarLabel } from "@/components/global-navigation";
 
 vi.mock("next/navigation", () => ({
   usePathname: vi.fn(() => "/"),
@@ -115,6 +117,43 @@ describe("MerchantShellContent —— 只管这一面要不要壳", () => {
       expect(markup).toContain("Page content");
     },
   );
+
+  // FRONT-A14 —— 顶栏面包屑。已批准的 Home analysis 夹具
+  // (design-system/patterns/founder-home/HomeAnalysisReference.tsx)在顶栏写的是
+  // 「Workspace › Home / Analysis」,它靠 `topBarLabel` 传给壳;生产从来没传过这个 prop,
+  // 于是 /analysis 上只写「Workspace › Home」。补的是接线,字从导航权威源读。
+  it("FRONT-A14: /analysis 的面包屑写出 Home / Analysis,与已批准的夹具一致", () => {
+    expect(shellTopBarLabel(SHELL_ROUTES.homeAnalysis)).toBe("Home / Analysis");
+
+    const markup = renderShell(SHELL_ROUTES.homeAnalysis);
+    expect(markup).toContain("data-merchant-topbar");
+    expect(markup).toContain("Home / Analysis");
+  });
+
+  it("FRONT-A14: 没有 breadcrumbLabel 的 child surface 面包屑照旧只写 owner 那格", () => {
+    // 已批准的 Settings pattern 顶栏写的是「Settings」,不是「Settings / Billing & credits」。
+    for (const pathname of [SHELL_ROUTES.billing, SHELL_ROUTES.profile, SHELL_ROUTES.connections]) {
+      expect(shellTopBarLabel(pathname)).toBeUndefined();
+    }
+    expect(shellTopBarLabel(SHELL_ROUTES.home)).toBeUndefined();
+    expect(shellTopBarLabel(SHELL_ROUTES.library)).toBeUndefined();
+
+    const markup = renderShell(SHELL_ROUTES.billing);
+    expect(markup).toContain("Settings");
+    expect(markup).not.toContain("Settings / ");
+  });
+
+  it("FRONT-A14: 面包屑的字来自导航权威源,壳里一个地名都不手打", () => {
+    const shellSource = readFileSync(
+      resolve(__dirname, "../../components/global-navigation.tsx"),
+      "utf8",
+    );
+    expect(shellSource).not.toContain('"Home / Analysis"');
+    expect(shellSource).toContain("breadcrumbLabel");
+    expect(
+      NAVIGATION_OWNED_SURFACES.find((surface) => surface.key === "homeAnalysis")?.breadcrumbLabel,
+    ).toBe("Analysis");
+  });
 
   it("keeps the impersonation banner above the merchant sidebar", () => {
     const markup = renderToStaticMarkup(
