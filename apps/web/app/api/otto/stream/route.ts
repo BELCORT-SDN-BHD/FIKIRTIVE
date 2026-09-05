@@ -62,6 +62,7 @@ import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-str
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
 import { ottoFailureMessage } from "@/lib/otto-error-copy";
 import { newThreadTitle } from "@/lib/otto-canned-starters";
+import { DEFAULT_THREAD_SURFACE } from "@/lib/otto-thread-surface";
 import { consumeOttoTurnGate, OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
@@ -205,11 +206,22 @@ export async function POST(req: NextRequest): Promise<Response> {
       let seq = last?.seq ?? 0;
 
       // Persist USER message first (create thread row first if new — FK ordering)
+      // #979:与 ottoTurn 同一条规矩、同一个函数 —— 产品自己写好的起手 chip 不算商家的
+      // 命名(两个门都建对话,只在一个门上装守卫就等于没装)。
+      //
+      // FRONT-A14(判官 P2-2):这一扇门开出来的**一定是画布对话**,所以 `surface` 写死。
+      // 请求体那一格 `surface` 不参与:它是 #879 step 1 的**页面位置**(下面原样写进
+      // ChatMessage 那一行,那个语义不动),与「这条对话从哪个门开」只是重名。#879 step 2
+      // 一落地、客户端如实上报 "campaign",拿它当线程来源就会 coerce 成 canvas —— 一个
+      // 靠巧合才正确的值。侧栏面板永远先走 `createEmptyCoworkThread` 建线程再发第一句,
+      // 所以它一次都不会走到这里。
+      //
+      // 注释写在 `create(` **上面**而不是里面:#979 那道命名守卫按「`chatThread.create(`
+      // 起 10 行内必须看得见 title」扫全仓,把长注释塞进 data 里会把 title 挤出那扇窗,
+      // 守卫就此空转。规矩是守卫的,不是注释的。
       if (isNew) {
         await prisma.chatThread.create({
-          // #979:与 ottoTurn 同一条规矩、同一个函数 —— 产品自己写好的起手 chip 不算商家的
-          // 命名(两个门都建对话,只在一个门上装守卫就等于没装)。
-          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text) },
+          data: { id: threadId, ownerId, projectId, title: newThreadTitle(text), surface: DEFAULT_THREAD_SURFACE },
         });
       }
       userMessageId = newId();

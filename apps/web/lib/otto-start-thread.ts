@@ -12,6 +12,7 @@
  */
 import { createEmptyCoworkThread } from "./otto-client-actions";
 import { newThreadTitle } from "./otto-canned-starters";
+import { DEFAULT_THREAD_SURFACE, type ChatThreadSurface } from "./otto-thread-surface";
 import type { ChatThreadDTO } from "./types";
 
 /** 会话建好之后,交给 `OttoChatStream` 在挂载时自动发出去的第一句话。 */
@@ -22,11 +23,18 @@ export async function startStreamedThread(input: {
   text: string;
   goalKey?: string;
   entityIds?: string[];
+  /**
+   * 这一条从哪个门开(FRONT-A14)。不给就是画布 —— 前门与画布那一侧走的都是这一档,
+   * 只有全局侧栏面板会明说 `"panel"`。服务端仍然自己过一道闸,这里给的是声明不是判定
+   * (`lib/otto-thread-surface.ts`)。
+   */
+  surface?: ChatThreadSurface;
 }): Promise<{ thread: ChatThreadDTO; pending: PendingFirstMessage } | { error: string }> {
   const text = input.text.trim();
   if (!text) return { error: "Type something for Otto to work on." };
 
-  const created = await createEmptyCoworkThread({ projectId: input.projectId, title: text });
+  const surface = input.surface ?? DEFAULT_THREAD_SURFACE;
+  const created = await createEmptyCoworkThread({ projectId: input.projectId, title: text, surface });
   if ("error" in created) return { error: created.error };
 
   const thread: ChatThreadDTO = {
@@ -36,6 +44,8 @@ export async function startStreamedThread(input: {
     // 刷新后再翻成 Untitled —— 商家看到的是产品自己改口。
     title: newThreadTitle(text),
     updatedAt: new Date().toISOString(),
+    // 乐观的那一份也要带来源,否则列表里这一条要等下一次取数才显出它的来源标签。
+    surface,
     messages: [],
   };
   return {
