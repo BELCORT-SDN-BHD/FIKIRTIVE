@@ -219,6 +219,18 @@ function shell(pathname: string, page?: ReactElement) {
   );
 }
 
+/**
+ * 「这句话有没有整段点名这条路」—— 用于地图那一行的两条围栏。
+ *
+ * 不用 `String.prototype.includes`:路径之间互为前缀(`/create` ⊂ `/create/canvas`),
+ * 子串匹配会让「只写了长的那一条」冒充「两条都写了」。路径后面紧跟的必须是句子里的
+ * 停顿(空格、逗号、句号、行尾),不能是又一段路。
+ */
+function namesPathExactly(sentence: string, href: string): boolean {
+  const escaped = href.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`${escaped}(?![\\w/-])`).test(sentence);
+}
+
 describe("哪些面挂面板 (§3.2 末段)", () => {
   it("默认每一面都挂 —— Otto 就在商家正在看的那一页旁边", () => {
     for (const surface of ["/campaign", "/billing", "/profile", "/library", "/campaign/abc?tab=plan"]) {
@@ -272,9 +284,19 @@ describe("哪些面挂面板 (§3.2 末段)", () => {
     const surfaces = [...new Set(Object.values(SHELL_ROUTES))];
     const withoutPanel = surfaces.filter((href) => !ottoPanelMountsOn(href));
     expect(withoutPanel.length, "自检:至少有一面不挂,否则这条断言永远为真").toBeGreaterThan(0);
+    // 自检二:互为前缀的那两条都在名单里 —— 下面那条整段比才真的在做事。
+    expect(withoutPanel, "自检:不挂面板的两面互为前缀,是前缀陷阱的现场").toEqual(
+      expect.arrayContaining([CREATE_NAV_HREF, CANVAS_HREF]),
+    );
 
     for (const href of withoutPanel) {
-      expect(ottoLine, `地图没说清 ${href} 不挂面板 —— Otto 会对商家承诺一件那里做不到的事`).toContain(href);
+      // 逐条整段比,不做前缀包含:`/create` 是 `/create/canvas` 的前缀,`toContain("/create")`
+      // 光凭句子里那一句 `/create/canvas` 就能绿 —— 地图漏掉 `/create` 这一面照样过关
+      // (判官 #1207 P2-3)。所以要求路径后面紧跟的不是又一段路。
+      expect(
+        namesPathExactly(ottoLine!, href),
+        `地图没说清 ${href} 不挂面板 —— Otto 会对商家承诺一件那里做不到的事`,
+      ).toBe(true);
     }
   });
 
@@ -282,8 +304,12 @@ describe("哪些面挂面板 (§3.2 末段)", () => {
     const ottoLine = merchantNavMap()
       .split("\n")
       .find((row) => row.startsWith(`- ${OTTO_ASSISTANT.label}`))!;
-    // 例外从 "except" 之后那一段读;挂着面板的面不许出现在那里。
-    const exceptions = ottoLine.slice(ottoLine.indexOf("except"));
+    // 例外从 "except" 之后那一段读。**先证明它真的在**:`indexOf` 找不到时回 -1,
+    // `slice(-1)` 会把整句话缩成最后一个字符,下面每一条 `not.toContain` 都白过 ——
+    // 那时这条测试测的是空气(判官 #1207 P2-1)。
+    const exceptAt = ottoLine.indexOf("except");
+    expect(exceptAt, "地图那一行必须写出例外那一段,否则下面几条断言测的是空气").toBeGreaterThan(-1);
+    const exceptions = ottoLine.slice(exceptAt);
     for (const href of [SHELL_ROUTES.billing, SHELL_ROUTES.library, SHELL_ROUTES.brand]) {
       expect(ottoPanelMountsOn(href), href).toBe(true);
       expect(exceptions, `${href} 挂着面板,不该被写成例外`).not.toContain(href);
