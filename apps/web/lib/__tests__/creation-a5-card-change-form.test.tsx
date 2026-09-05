@@ -49,9 +49,8 @@ vi.mock("next/navigation", () => ({
 
 const { OttoPlanCard } = await import("@/components/otto/OttoPlanCard");
 const { OttoTurnCard } = await import("@/components/otto/OttoTurnCard");
-const { CHANGE_FORM_LABEL, CHANGE_FORM_SEND, changeRequestSeed, askOttoNote } = await import(
-  "@/components/otto/CardOptionControls"
-);
+const { CHANGE_FORM_LABEL, CHANGE_FORM_SEND, changeRequestSeed, askOttoNote, inPlaceOptionNames } =
+  await import("@/components/otto/CardOptionControls");
 
 const PROMPT = "A pandan kaya jar on a marble counter, soft window light, 50mm";
 
@@ -102,7 +101,15 @@ afterEach(() => {
 });
 
 /** 生产里那个父组件的最小替身：重铸后的整张卡由它持有，送回对话的那句话记在 `seeds` 里。 */
-function CardHost({ initial, seeds }: { initial: OttoPlanCardPayload; seeds: string[] }) {
+function CardHost({
+  initial,
+  seeds,
+  cardState = "idle",
+}: {
+  initial: OttoPlanCardPayload;
+  seeds: string[];
+  cardState?: "idle" | "working";
+}) {
   const [payload, setPayload] = useState<unknown>(initial);
   return createElement(OttoPlanCard, {
     cardId: "card_1",
@@ -110,8 +117,9 @@ function CardHost({ initial, seeds }: { initial: OttoPlanCardPayload; seeds: str
     entities: [],
     threadId: "thread_1",
     projectId: "proj_1",
-    genJobId: null,
-    cardState: "idle" as const,
+    // 生产里这张卡由消息 id 挂载：批准之后 `cardState` 从 idle 变 working，**组件不卸载**。
+    genJobId: cardState === "working" ? "job_1" : null,
+    cardState,
     pendingApproval: true,
     onApproved: vi.fn(),
     onChangeSomething: (seed: string) => { seeds.push(seed); },
@@ -119,14 +127,25 @@ function CardHost({ initial, seeds }: { initial: OttoPlanCardPayload; seeds: str
   });
 }
 
-function mount(payload: OttoPlanCardPayload): { host: HTMLElement; seeds: string[] } {
+function mount(payload: OttoPlanCardPayload): {
+  host: HTMLElement;
+  seeds: string[];
+  /** 同一棵树上换 `cardState` —— 卡不卸载，正是生产里按下 Generate 之后那一刻。 */
+  setCardState: (next: "idle" | "working") => void;
+} {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
   roots.push([root, host]);
   const seeds: string[] = [];
   act(() => { root.render(createElement(CardHost, { initial: payload, seeds })); });
-  return { host, seeds };
+  return {
+    host,
+    seeds,
+    setCardState: (next) => {
+      act(() => { root.render(createElement(CardHost, { initial: payload, seeds, cardState: next })); });
+    },
+  };
 }
 
 function mountCanvas(payload: OttoPlanCardPayload): { host: HTMLElement; seeds: string[] } {
@@ -198,6 +217,41 @@ describe("CREATE-A1 确认卡的「Change something」= 一张小表单，不是
     // 再按一下收回去 —— 同一颗键，两个方向。
     await click(buttonByText(host, "Change something"));
     expect(noteBox(host)).toBeNull();
+  });
+
+  it("CREATE-A1 卡一开跑表单就消失 —— 已扣过钱的卡上不许挂一张关不掉的「告诉我要改什么」", async () => {
+    // 判官 #1245 P1-1：卡由消息 id 挂载，按下 Generate 之后组件不卸载。渲染闸从前只问
+    // `changeOpen`，于是表单跟着已付费的卡走，而那颗切换键此刻已经不在了 —— 商家关不掉它。
+    const { host, setCardState } = mount(imageCard());
+    await click(buttonByText(host, "Change something"));
+    expect(noteBox(host)).toBeTruthy();
+    setCardState("working");
+    // 已排队的卡：那一行写着「✓ You approved this」，表单与切换键都必须已经不在。
+    expect(host.textContent).toContain("✓ Approved — in the queue");
+    expect(noteBox(host)).toBeNull();
+    expect(host.querySelector('[data-slot="card-change-form"]')).toBeNull();
+    expect([...host.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim())).not.toContain(
+      "Change something",
+    );
+  });
+
+  it("CREATE-A1 只出得了一张的卡：Images 那一格不渲染，指路句也不点它的名（两边同一条判据）", async () => {
+    // 判官 #1245 P2-4：`inPlaceOptionNames` 早就只在 `maxCount > 1` 时说 images，而卡上那颗
+    // 下拉照旧渲染成一个只有一项的死控件 —— 话与卡面对不上。
+    const single = imageCard({ options: { maxCount: 1, aspectRatios: ["1:1", "4:3"], fineDetailAvailable: false } });
+    expect(inPlaceOptionNames(single)).toEqual(["shape"]);
+    const { host } = mount(single);
+    expect(
+      [...host.querySelectorAll("select")].find((s) => s.getAttribute("aria-label") === "How many images"),
+    ).toBeUndefined();
+    // 形状那一格照旧在 —— 一格摆不动不该把整块控件收掉。
+    expect(
+      [...host.querySelectorAll("select")].find((s) => s.getAttribute("aria-label") === "Shape of the image"),
+    ).toBeTruthy();
+    await click(buttonByText(host, "Change something"));
+    const form = host.querySelector('[data-slot="card-change-form"]')!;
+    expect(form.textContent).toContain("Shape is on the card above");
+    expect(form.textContent).not.toContain("images");
   });
 
   it("CREATE-A1 空的那一行送不出去 —— Send 在他写字之前是禁用的", async () => {

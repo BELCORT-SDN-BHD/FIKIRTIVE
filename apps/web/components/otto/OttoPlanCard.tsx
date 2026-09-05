@@ -352,7 +352,8 @@ export function OttoPlanCard({
             {/* 清单 A5(P2-013)—— 主视图这一行是**给商家读的**那句话。供应商提示词
                 (seedream/seedance 那段原话)已经收进下面的 Advanced details:它是送去
                 执行的机器措辞,摆在卡面第一行既占掉整张卡的第一眼,又让商家误以为那是
-                他该改的字。老卡没有 `goal`(服务端至今不写这一格)⇒ 这一行不出现,
+                他该改的字。服务端只在商家说了用途时才写 `goal` 这一格
+                (`packages/otto/src/skills/propose.ts:150`)⇒ 没说用途的卡上这一行不出现,
                 标题与规格条自己说得清楚,绝不拿提示词顶上来充数。 */}
             {p.goal && (
               <div className="whitespace-pre-wrap break-words text-[0.75rem] text-muted-foreground">
@@ -571,8 +572,13 @@ export function OttoPlanCard({
 
         {/* 清单 A5（P2-013）—— 「Change something」打开的那张小表单。
             两个状态给得出它：等确认的卡（能就地改的三格就在上面）与失败的卡（那三格不再渲染，
-            人话那一行是唯一的出路）。提交走 `onChangeSomething` —— 仍是从前那**一条**对话路。 */}
-        {changeOpen && !cancelled && (
+            人话那一行是唯一的出路）。提交走 `onChangeSomething` —— 仍是从前那**一条**对话路。
+
+            闸必须逐字点名那两个状态（#1245 判官 P1-1）：这张卡由消息 id 挂载，商家先展开
+            表单再按 Generate，组件不卸载、`changeOpen` 不归零，于是一张关不掉的
+            「Tell Otto what to change」会挂在刚扣过钱的卡上（切换那颗键此刻已经不在了）。
+            画布那一侧没有这个坑纯属那一行会卸载 —— 两处确认位不该靠这种巧合才一致。 */}
+        {changeOpen && (runState === "waiting" || runState === "failed") && !cancelled && (
           <CardChangeForm
             payload={p}
             optionsOnCard={optionsOnCard}

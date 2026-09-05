@@ -142,22 +142,27 @@ export function CardOptionControls({ threadId, cardId, payload, disabled, onChan
   return (
     <div className="mt-3 flex flex-col gap-2" data-slot="card-options" aria-busy={busy}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Field orientation="horizontal" className="w-auto gap-2">
-          <FieldLabel htmlFor={countId} className="text-[0.75rem] text-muted-foreground">Images</FieldLabel>
-          <NativeSelect
-            id={countId}
-            size="sm"
-            value={count}
-            disabled={locked}
-            aria-busy={busy}
-            aria-label="How many images"
-            onChange={(event) => void apply({ count: Number(event.target.value) })}
-          >
-            {counts.map((n) => (
-              <NativeSelectOption key={n} value={n}>{n}</NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </Field>
+        {/* 只能选「1」的卡上不摆这一格（#1245 判官 P2-4）—— 一个只有一个选项的下拉改不了
+            任何东西,而小表单那句指路话（`inPlaceOptionNames` 的 `maxCount > 1`）也不会点
+            它的名,于是话与卡面对不上。判据两处同一条,与精修那一格同一条理由。 */}
+        {options.maxCount > 1 && (
+          <Field orientation="horizontal" className="w-auto gap-2">
+            <FieldLabel htmlFor={countId} className="text-[0.75rem] text-muted-foreground">Images</FieldLabel>
+            <NativeSelect
+              id={countId}
+              size="sm"
+              value={count}
+              disabled={locked}
+              aria-busy={busy}
+              aria-label="How many images"
+              onChange={(event) => void apply({ count: Number(event.target.value) })}
+            >
+              {counts.map((n) => (
+                <NativeSelectOption key={n} value={n}>{n}</NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </Field>
+        )}
         {options.aspectRatios.length > 0 && (
           <Field orientation="horizontal" className="w-auto gap-2">
             <FieldLabel htmlFor={shapeId} className="text-[0.75rem] text-muted-foreground">Shape</FieldLabel>
