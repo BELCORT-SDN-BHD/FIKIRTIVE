@@ -28,7 +28,12 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.0 七段三批)", () => {
 
   // ── 批 II（依赖批 I）──────────────────────────────────────────────────────
   it.todo("ENGINE-A4 见 apps/web/lib/__tests__/engine-a4-truncated-turn-refund.test.ts（真库账本 reserve/refund 成对 + 消费历史退款行）与 packages/otto/src/runtime.test.ts（零交付判词三态）—— ⑤段已交付");
-  it.todo("ENGINE-A7 技能文件柜替换单体后重跑评测，总分不低于基线 —— 批 II §7.2⑥（跑法：evals:check）");
+  // ⑥段已交付**机制**（柜子、生成器、装配器、新鲜度闸、单体退役）——真身在
+  // packages/otto/src/knowledge-cabinet.test.ts 与 instructions.test.ts 的两道 golden。
+  // 但这一行的判定是「重跑评测**总分不低于基线**」，而基线档案 `baselines/engine.json`
+  // 至今跑不出来（③段登记：主检出 .env.local 的 Anthropic 钥匙 401）。所以它仍是 `it.todo`：
+  // 没有基线就没有「不低于」，把机制测试当成这一行过了，就是这份映射表存在的意义的反面。
+  it.todo("ENGINE-A7 技能文件柜替换单体后重跑评测，总分不低于基线 —— 批 II §7.2⑥（机制已交付：src/knowledge-cabinet.test.ts；跑分待 Founder 换钥匙后 evals:check）");
 
   // ── 批 III（已交付；#1150 / #1151 / #1158 / #1194 / #1197 均已在主干）───────
   it.todo("ENGINE-A3 见 apps/web/lib/__tests__/engine-a3-canvas-conversation.test.tsx 与 e2e/journeys/engine-a3-canvas-conversation.spec.ts（⑦段已交付：直出 composer 与工具条 Generate 退役、送出接 Otto 对话、花钱走审批卡）");

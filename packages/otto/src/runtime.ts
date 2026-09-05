@@ -33,7 +33,7 @@ import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, OTTO_CONVERSATION_TURN_MARGIN, 
 import type { LlmPrices } from "@fikirtive/core";
 import type { OttoContext } from "./context.js";
 import type { OttoSkill } from "./skill.js";
-import { ottoInstructions } from "./instructions.js";
+import { allKnowledgePaths, assembleOttoInstructions, ottoInstructions } from "./instructions.js";
 import { withLlmBudget, type TokenUsage } from "./meter.js";
 import { collectApprovalInterruptions, type ApprovalInterruption } from "./approval-tools.js";
 import { extractText } from "./run-output.js";
@@ -247,7 +247,8 @@ export type OttoTraceToolCall = {
  *                   nowhere to land;
  *   · `surface`   → the caller's literal union above;
  *   · `modelId`   → the frozen manifest's billableModelId;
- *   · `skillFiles`→ the knowledge-cabinet listing (empty until §7.2⑥ builds the cabinet).
+ *   · `skillFiles`→ folded through the composed knowledge cabinet (`allKnowledgePaths()`), so a
+ *                   path that is not a real cabinet file cannot land here either (§7.2⑥).
  * A prompt, a message body, or a tool argument cannot be represented here at all. The fence
  * test that pins this is runtime-turn-trace.test.ts.
  */
@@ -280,8 +281,7 @@ export type OttoTurnTracePort = {
  *  the observed string — that is the whole point of the fold. */
 export const UNREGISTERED_ACTION = "(unregistered)";
 
-/** ⑥段(技能文件柜)之前恒为空数组 — spec §7.2②. There is no cabinet to list yet, so the
- *  column is honestly empty rather than filled with a guess. */
+/** 一轮都没装（不该发生：常驻薄层永远在）时的诚实空表 — spec §7.2②. */
 const NO_SKILL_FILES: readonly string[] = Object.freeze([]);
 
 type ObservedRunState = {
@@ -314,7 +314,12 @@ export function collectTurnTraceFacts(
   port: OttoTurnTracePort,
   identity: Pick<OttoTurnRequest, "orgId" | "refId">,
   truncated: boolean,
+  /** 这一轮装了哪几份知识文件（ENGINE-A7 的装配器给的）。与工具名同一条纪律：**过白名单**
+   *  ——名单是 build 期的柜子本身，所以一个不是柜文的字符串在这里无处可落。 */
+  loadedKnowledge: readonly string[] = NO_SKILL_FILES,
 ): OttoTurnTraceFacts {
+  const cabinet = new Set(allKnowledgePaths());
+  const skillFiles = loadedKnowledge.filter((p) => cabinet.has(p));
   const steps = (state as ObservedRunState | null | undefined)?._currentTurn;
   // The fold key is the WHITELISTED name, so two different unregistered names collapse into
   // one `(unregistered)` row instead of each smuggling its own string through.
@@ -353,7 +358,7 @@ export function collectTurnTraceFacts(
     modelId: runtime.modelRuntime.billableModelId,
     steps: typeof steps === "number" && Number.isFinite(steps) ? steps : 0,
     toolCalls: [...byName].map(([name, counts]) => ({ name, ...counts })),
-    skillFiles: NO_SKILL_FILES,
+    skillFiles,
     truncated,
   };
 }
@@ -607,6 +612,92 @@ function addTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
 }
 
 /**
+ * 这一轮**装了哪几份知识文件**（ENGINE-A7 的装配器 ＋ ENGINE-A2 的 `skillFiles` 那一栏）。
+ *
+ * 柜内路径，装配顺序，`_core.md` 永远第一。恢复轮（approval-resume）照 B9「恢复轮全量装载」
+ * 走整柜，所以它列出的是柜里的全部文件。
+ */
+export type OttoTurnKnowledge = { readonly files: readonly string[] };
+
+/**
+ * ④段（ENGINE-A6）之后，这一轮的对话**不只在 item 数组里**：最旧的那些轮已经被裁走，只以
+ * 滚动摘要的形式回注在那条 system 消息上。装配器要对的是**整段对话**，所以裁走的部分必须
+ * 一起交给它 —— 这个结构就是那两块。`OttoRollingSummaryPort` 天然是它的一个实现。
+ */
+export type OttoCarriedContext = {
+  /** 更早那些轮折成的摘要（本轮之前就在线程上的那一份）。 */
+  readonly priorSummary?: string | null;
+  /** 本轮刚被裁掉、正要折进摘要的那几轮（此刻还没进摘要，所以要单独看）。 */
+  readonly dropped?: readonly AgentInputItem[];
+};
+
+/**
+ * 纯：这一轮的输入（＋这一轮带着的旧上下文）→ 这一轮的说明书。
+ *
+ * 新鲜轮（字符串或 item 数组）按商家这一轮说的话对书脊标签，装常驻薄层 ＋ 对上的那几份全文；
+ * 恢复轮（RunState）**整柜装载** —— 与 B9 已冻结的「恢复轮全量装载」同一条理由：一个被审批
+ * 卡打断、几分钟后才回来的状态，我们无法从它身上重算出当初那一轮说了什么，宁可全带。
+ *
+ * **`carried` 是 ④段之后的必需品，不是锦上添花**（判官 2026-09-05 在真合并树上复现）：④把最旧
+ * 的几轮裁走之后，把某份柜文拉进来的那几个词就从 item 数组里消失了，下一轮该文件掉出装载集 ——
+ * Otto 丢掉一条他两轮前还遵守的规矩，无红无告警。裁走的内容并没有离开这一轮的上下文（它就回注
+ * 在那条 system 消息上），所以拿它对标签是**照实匹配**，不是把上一轮的装载集硬带过来：
+ * 取用三规则③「用完不带入下一轮」在这里仍然逐字成立 —— 没有任何跨轮状态被保存，每一轮都是
+ * 从它**自己此刻的上下文**重算的纯函数；摘要里不再提的事，下一轮就照样掉出去。
+ */
+export function instructionsForTurn(
+  input: OttoTurnRequest["input"],
+  carried?: OttoCarriedContext | null,
+): {
+  readonly text: string;
+  readonly files: readonly string[];
+} {
+  if (typeof input === "string") return assembleOttoInstructions(joinMatchText(input, carried));
+  if (Array.isArray(input)) {
+    return assembleOttoInstructions(joinMatchText(conversationText(input), carried));
+  }
+  // 恢复轮（RunState）：整柜装载，没有可再宽的余地 —— `carried` 对它无意义。
+  return { text: ottoInstructions, files: allKnowledgePaths() };
+}
+
+/**
+ * 纯：这一轮真正拿去对书脊标签的那段话 —— 还在 item 数组里的对话 ＋ 已经被折走的那部分。
+ *
+ * 折走的部分有两块，两块都要：摘要是**更早**几轮压缩后的样子，而 `dropped` 是**这一轮刚裁掉**、
+ * 此刻还没进任何摘要的那几轮 —— 只看摘要的话，触发裁剪的那一轮会正好漏掉自己刚裁走的东西。
+ */
+function joinMatchText(saidText: string, carried?: OttoCarriedContext | null): string {
+  if (!carried) return saidText;
+  const parts = [saidText];
+  const summary = carried.priorSummary?.trim();
+  if (summary) parts.push(summary);
+  const droppedSaid = carried.dropped ? conversationOnly(carried.dropped) : [];
+  if (droppedSaid.length > 0) parts.push(JSON.stringify(droppedSaid));
+  return parts.join("\n");
+}
+
+/**
+ * 纯：一组 item 里**对话里的话** —— 商家说的与 Otto 回的,不含我们自己塞进去的那一条上下文
+ * item(品牌记忆、可用素材、当前状态……),也不含工具调用与工具结果。
+ *
+ * 为什么要挑:那条上下文 item 是**我们写的**,里面天然带着 Library / product / brand 这些词。
+ * 拿它去对书脊标签,等于每一轮都替商家把柜子全打开 —— 拆柜省下的那一半当场还回去,
+ * 而且它变一次(多一个产品名),装载结果就跟着变,基线也就不可比了。
+ */
+function conversationOnly(items: readonly AgentInputItem[]): AgentInputItem[] {
+  return items.filter((i) => {
+    const role = (i as { role?: unknown }).role;
+    return role === "user" || role === "assistant";
+  });
+}
+
+/** 一轮 item 数组 → 对话文本。一条像话的 item 都没有时退回整份(防御:总比什么都不对好)。 */
+function conversationText(items: readonly AgentInputItem[]): string {
+  const said = conversationOnly(items);
+  return JSON.stringify(said.length > 0 ? said : items);
+}
+
+/**
  * Derive the FULL withLlmBudget parameter set from the runtime manifest (PH1-A1):
  * billable model, paid flag, step cap, prices, and the truncation usage mapper all
  * come from the SAME manifest — an entry only contributes identity + refId.
@@ -787,6 +878,17 @@ export async function runOttoTurn(
 ): Promise<OttoTurnRunResult> {
   const mr = runtime.modelRuntime;
   assertResumedStateCarriesLiveContext(request.input, context);
+  // ENGINE-A7 —— 每轮现装的说明书（§7.2⑥）。柜子替换单体之后，`runtime.agent` 上那份整柜
+  // 底稿只是底稿：真正跑的是这一轮装出来的那一份（恢复轮除外，它整柜装载，agent 直接用）。
+  // `clone` 只换 instructions，name/tools/model/settings 全部原样带过去，所以工具名照旧
+  // 解析得到 —— 组合根文件头记着的那条实测（恢复只要求工具名能解析，不要求同一个实例）。
+  // `request.rollingSummary` 同时是④段的折叠端口与⑥段的「这一轮还带着哪些旧话」——
+  // 装配器要看它，否则装载集会在裁剪之后中途缩水（见 instructionsForTurn 的文件注）。
+  const assembled = instructionsForTurn(request.input, request.rollingSummary);
+  const agent =
+    assembled.text === runtime.agent.instructions
+      ? runtime.agent
+      : runtime.agent.clone({ instructions: assembled.text });
   const port = request.trace;
   const summaryPort = request.rollingSummary;
   const MaxTurnsError = execution.maxTurnsExceededError ?? MaxTurnsExceededError;
@@ -807,7 +909,7 @@ export async function runOttoTurn(
         const withFold = (usage: TokenUsage): TokenUsage =>
           folded ? addTokenUsage(usage, folded.usage) : usage;
         if (request.stream) {
-          const r = await execution.runAgent(runtime.agent, request.input as never, {
+          const r = await execution.runAgent(agent, request.input as never, {
             context,
             maxTurns: runtime.maxTurns,
             stream: true,
@@ -819,7 +921,7 @@ export async function runOttoTurn(
           const result = r as unknown as OttoTurnRunResult;
           return { result, usage: withFold(mr.mapUsage(result.state.usage)) };
         }
-        const r = await execution.runAgent(runtime.agent, request.input as never, {
+        const r = await execution.runAgent(agent, request.input as never, {
           context,
           maxTurns: runtime.maxTurns,
         });
@@ -840,7 +942,7 @@ export async function runOttoTurn(
     }
     if (port) {
       await emitTurnTrace(
-        () => collectTurnTraceFacts(result?.state, runtime, port, request, false),
+        () => collectTurnTraceFacts(result?.state, runtime, port, request, false, assembled.files),
         port.sink,
         request.refId,
       );
@@ -852,7 +954,7 @@ export async function runOttoTurn(
     if (port && e instanceof MaxTurnsError) {
       const state = (e as { state?: unknown }).state;
       await emitTurnTrace(
-        () => collectTurnTraceFacts(state, runtime, port, request, true),
+        () => collectTurnTraceFacts(state, runtime, port, request, true, assembled.files),
         port.sink,
         request.refId,
       );

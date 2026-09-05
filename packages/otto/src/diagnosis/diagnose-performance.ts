@@ -1,5 +1,5 @@
-import type { MetaExpertiseKB, MetaCitation } from "../knowledge/meta-expertise.types.js";
-import { queryMetaKnowledge } from "../knowledge/meta-expertise.js";
+import type { MetaExpertiseKB, MetaCitation } from "../meta-expertise/meta-expertise.types.js";
+import { queryMetaKnowledge } from "../meta-expertise/meta-expertise.js";
 
 /** #692 r3: no spend AMOUNT crosses into the diagnosis — money reaches Otto as finished text
  *  that cannot be summed. `hasSpend` is all this ever used the amount for. */
