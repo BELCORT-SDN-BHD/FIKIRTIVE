@@ -46,6 +46,7 @@ vi.mock("next/navigation", () => ({
 
 const { OttoPlanCard } = await import("@/components/otto/OttoPlanCard");
 const { OttoTurnCard } = await import("@/components/otto/OttoTurnCard");
+const { QUEUED_DROPPED_NOTE } = await import("@/components/otto/CardOptionControls");
 
 /** 一张服务端今天真会铸出来的图片卡（三格菜单齐全）。 */
 function imageCard(over: Partial<OttoPlanCardPayload> = {}): OttoPlanCardPayload {
@@ -217,6 +218,8 @@ describe("ENGINE-A3 确认卡上的三格 —— 接在生产那条 $0 路上", 
     await chooseOption(selectByLabel(host, "How many images")!, "2");
     expect(host.textContent).toContain("Fine detail can't do 16:9");
     expect(host.textContent).toContain("Generate · 1 credit");
+    // 没有第二格在排队时,不许平白多说一句「另一格也没送出去」。
+    expect(host.textContent).not.toContain(QUEUED_DROPPED_NOTE);
   });
 
   it("ENGINE-A3 精修那一格今天卖不动 ⇒ 卡上不出现它(不摆一个点了必然被拒的选项)", () => {
@@ -356,5 +359,45 @@ describe("ENGINE-A3 确认卡三格的界面残留 —— 终检 r4", () => {
     // 卡一格没动 —— 价、规格条、开关都回到服务端那一份。
     expect(host.textContent).toContain("Generate · 1 credit");
     expect(fineDetailSwitch(host)!.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("ENGINE-A3 第一趟被拒 ⇒ 排在后面那一格被丢掉这件事也说出来(#1241 判官 P2-2)", async () => {
+    // 他点过两格,只有一格得到答复。排队那一格退回卡上原来的值,屏幕上却只有另一格的
+    // 拒绝理由 —— 看上去像白点了一下。服务端那句原话在前,这一句跟在后面。
+    const first = deferred<unknown>();
+    updateOptionsMock.mockReturnValueOnce(first.promise);
+    const host = mount(imageCard());
+    await chooseOption(selectByLabel(host, "How many images")!, "3");
+    await click(fineDetailSwitch(host)!);
+    await act(async () => {
+      first.resolve({ error: "Fine detail can't do that shape." });
+      await first.promise;
+    });
+    expect(updateOptionsMock).toHaveBeenCalledTimes(1);
+    const said = host.querySelector('[role="alert"]')!.textContent ?? "";
+    expect(said).toContain("Fine detail can't do that shape.");
+    expect(said).toContain(QUEUED_DROPPED_NOTE);
+    expect(fineDetailSwitch(host)!.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("ENGINE-A3 重铸在飞时看得见 —— 那三格自己变淡,不只是 aria-busy(#1241 判官 P2-1)", async () => {
+    const first = deferred<unknown>();
+    updateOptionsMock.mockReturnValueOnce(first.promise);
+    const host = mount(imageCard());
+    const box = () => host.querySelector<HTMLElement>('[data-slot="card-options"]')!;
+    expect(box().getAttribute("aria-busy")).toBe("false");
+
+    await chooseOption(selectByLabel(host, "How many images")!, "3");
+    // 看得见的那一半:`aria-busy` 是给屏幕读者的,变淡是给眼睛的 —— 同一格状态,两个出口。
+    expect(box().getAttribute("aria-busy")).toBe("true");
+    expect(box().className).toContain("aria-busy:opacity-60");
+    // 但控件仍然可点(变淡不是锁住):这一格照旧排得进队。
+    expect(selectByLabel(host, "How many images")!.disabled).toBe(false);
+
+    await act(async () => {
+      first.resolve({ ok: true, payload: imageCard({ params: { aspectRatio: "1:1", count: 3 }, estimatedCredits: 3 }) });
+      await first.promise;
+    });
+    expect(box().getAttribute("aria-busy")).toBe("false");
   });
 });

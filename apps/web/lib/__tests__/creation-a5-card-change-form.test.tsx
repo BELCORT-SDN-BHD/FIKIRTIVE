@@ -108,7 +108,7 @@ function CardHost({
 }: {
   initial: OttoPlanCardPayload;
   seeds: string[];
-  cardState?: "idle" | "working";
+  cardState?: "idle" | "working" | "failed";
 }) {
   const [payload, setPayload] = useState<unknown>(initial);
   return createElement(OttoPlanCard, {
@@ -118,7 +118,7 @@ function CardHost({
     threadId: "thread_1",
     projectId: "proj_1",
     // 生产里这张卡由消息 id 挂载：批准之后 `cardState` 从 idle 变 working，**组件不卸载**。
-    genJobId: cardState === "working" ? "job_1" : null,
+    genJobId: cardState === "idle" ? null : "job_1",
     cardState,
     pendingApproval: true,
     onApproved: vi.fn(),
@@ -131,7 +131,7 @@ function mount(payload: OttoPlanCardPayload): {
   host: HTMLElement;
   seeds: string[];
   /** 同一棵树上换 `cardState` —— 卡不卸载，正是生产里按下 Generate 之后那一刻。 */
-  setCardState: (next: "idle" | "working") => void;
+  setCardState: (next: "idle" | "working" | "failed") => void;
 } {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -235,6 +235,24 @@ describe("CREATE-A1 确认卡的「Change something」= 一张小表单，不是
     );
   });
 
+  it("CREATE-A1 卡走「等确认 → 已排队 → 失败」之后表单不自己弹开（商家没再按过 Change something）", async () => {
+    // 判官 #1245 复判 P2-1：渲染闸只问「此刻是不是 waiting 或 failed」，而 `changeOpen`
+    // 是留着的 —— 排队那一程它只是被闸挡住，作业一失败又被放出来，表单自己长回卡上。
+    const { host, setCardState } = mount(imageCard());
+    await click(buttonByText(host, "Change something"));
+    expect(noteBox(host)).toBeTruthy();
+    setCardState("working");
+    expect(noteBox(host)).toBeNull();
+    setCardState("failed");
+    // 失败的卡上那颗键回来了，但表单必须是收着的 —— 他没按过第二次。
+    expect(host.textContent).toContain("didn’t come through");
+    expect(buttonByText(host, "Change something").getAttribute("aria-expanded")).toBe("false");
+    expect(noteBox(host)).toBeNull();
+    // 他自己再按一下，照旧打得开。
+    await click(buttonByText(host, "Change something"));
+    expect(noteBox(host)).toBeTruthy();
+  });
+
   it("CREATE-A1 只出得了一张的卡：Images 那一格不渲染，指路句也不点它的名（两边同一条判据）", async () => {
     // 判官 #1245 P2-4：`inPlaceOptionNames` 早就只在 `maxCount > 1` 时说 images，而卡上那颗
     // 下拉照旧渲染成一个只有一项的死控件 —— 话与卡面对不上。
@@ -315,6 +333,20 @@ describe("CREATE-A1 确认卡的「Change something」= 一张小表单，不是
     // 能就地改的那几格在卡上，表单只指路，不抄第二份控件。
     expect(form.querySelectorAll("select").length).toBe(0);
     expect(form.textContent).toContain("are on the card above");
+  });
+
+  it("CREATE-A1 带参考的视频卡：那一句读得通（不再是「and sound and」两个 and 连读）", () => {
+    // 判官 #1245 复判 P2-2：时长与声音从前合成一格，两件事撞在一起就念成
+    // 「length and sound and which references it uses」。拆成两格之后由 `joinWords` 自己接。
+    const note = askOttoNote(
+      videoCard({ approvedEntities: [{ id: "e1", name: "Aisyah", type: "CHARACTER" }] }),
+    );
+    expect(note).toBe(
+      "I can't change length, sound and which references it uses on this card — tell me below and I'll redo the plan.",
+    );
+    expect(note).not.toContain("and sound and");
+    // 没有参考的视频卡照旧只说那两件事，与从前逐字相同。
+    expect(askOttoNote(videoCard())).toContain("I can't change length and sound on this card");
   });
 
   it("CREATE-A1 画布上那张卡的 Change 打开的是同一份表单（两处不可能说出两件事）", async () => {

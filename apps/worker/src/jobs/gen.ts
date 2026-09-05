@@ -460,7 +460,11 @@ async function storeLastFrameBestEffort(
 // hits P2002 and is swallowed.
 //
 // #782 r5 (judge r4 P1-①) — WHAT "BEST-EFFORT" IS ALLOWED TO COST. This swallows persistence
-// failures on purpose, and nothing downstream retries it (a redelivery sees DONE and returns).
+// failures on purpose. Nothing on THIS path retries it; the one retry that exists is the reaper's
+// redelivery sweep (apps/worker/src/jobs/gen-thread-redelivery.ts), which re-attempts this write
+// for a terminal job whose thread still has no result message. That sweep is a backstop, not a
+// guarantee (#1239 judge P2-3 corrects the old "nothing downstream retries it"): DONE/FAILED only,
+// inside a look-back window, capped per tick, and its failure copy is the generic one.
 // That is only acceptable while this message is a DELIVERY of the outcome and never the RECORD
 // of it: the record is GenJob.generationIds, written inside the commit transaction that settles
 // the charge — so it exists before DONE and outlives any failure here. The storyboard's sync
