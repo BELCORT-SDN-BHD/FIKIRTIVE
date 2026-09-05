@@ -114,9 +114,17 @@ export function appEnv(): Record<string, string> {
     // It has to be said explicitly rather than derived from NODE_ENV: `next start` (the command
     // this suite runs) sets NODE_ENV to production itself, so "non-production" is not a fact this
     // process can observe. The fence lives in the env contract instead — a SERVING production
-    // process refuses to boot with this value (`productionValues`, packages/core/src/
-    // env-contract.ts); this suite passes FIKIRTIVE_ENV_CONTRACT=warn on purpose, so here it
-    // surfaces as one loud warning, which is exactly what a stub mail transport deserves.
+    // process refuses to boot with this value BY DEFAULT (`productionValues`, packages/core/src/
+    // env-contract.ts).
+    //
+    // BY DEFAULT, not unconditionally, and that distinction is not a suite-local footnote
+    // (判官 #1237 P2-2). AUTH_EMAIL_TRANSPORT is not marked `moneyInvariant`, so
+    // `bootEnvDecision`'s FIKIRTIVE_ENV_CONTRACT=warn escape hatch reaches it: ANY production
+    // process started with that flag — not just this suite — boots, logs the refusal as a
+    // warning, and then mails nothing at all. This suite passes the flag on purpose (four lines
+    // up), so here it surfaces as one loud warning, which is exactly what a stub mail transport
+    // deserves; on a real deployment the same pair would be a silent outage. The fence is a
+    // default, not a lock — whoever opens the hatch owns that.
     AUTH_EMAIL_TRANSPORT: "stub",
     NEXT_TELEMETRY_DISABLED: "1",
     // GENERATION_PROVIDER is deliberately absent — see OFF_MACHINE_CREDENTIAL_NAMES above.

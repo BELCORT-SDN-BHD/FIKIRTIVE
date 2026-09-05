@@ -299,7 +299,12 @@ describe("ImmersiveCanvasEntry", () => {
       messages: [],
       hasOlderMessages: false,
     });
-    mocks.getCanvasConversationHandoff.mockResolvedValue({ prompt: "Create a Merdeka gift-box hero" });
+    mocks.getCanvasConversationHandoff.mockResolvedValue({
+      prompt: "Create a Merdeka gift-box hero",
+      entityIds: [],
+      sourceGenerationIds: [],
+      referenceVideoGenerationIds: [],
+    });
 
     const element = await ImmersiveCanvasEntry({
       searchParams: Promise.resolve({ project: "p-oldest", thread: "t-new", handoff: "handoff-1" }),
@@ -314,6 +319,49 @@ describe("ImmersiveCanvasEntry", () => {
     expect(element.props.runtimeContext.pendingFirst).toEqual({
       handoffId: "handoff-1",
       text: "Create a Merdeka gift-box hero",
+    });
+  });
+
+  /**
+   * FRONT-A14(规格 §7.3⑨)—— 起步页挂的参考,要跟着这条 handoff 进**首轮**。
+   * 没有这一条,商家在 Create 上挑的那张图会在 navigation 之后无声消失:画布照样开、话照样送,
+   * 只是那件参考从来没上车 —— 而屏幕上没有任何地方会说它掉了。
+   */
+  it("FRONT-A14: 起步页挂的引用随 handoff 进画布首轮", async () => {
+    mocks.getProjects.mockResolvedValue([{ id: "p-oldest", name: "Raya stills" }]);
+    mocks.getCoworkThreads.mockResolvedValue([{
+      id: "t-new",
+      projectId: "p-oldest",
+      title: "Merdeka gift box",
+      updatedAt: new Date("2026-07-16T00:00:00.000Z"),
+      pinnedAt: null,
+    }]);
+    mocks.getCoworkThreadPage.mockResolvedValue({
+      id: "t-new",
+      projectId: "p-oldest",
+      title: "Merdeka gift box",
+      updatedAt: new Date("2026-07-16T00:00:00.000Z"),
+      pinnedAt: null,
+      messages: [],
+      hasOlderMessages: false,
+    });
+    mocks.getCanvasConversationHandoff.mockResolvedValue({
+      prompt: "Put her in the new hoodie",
+      entityIds: ["ent-1"],
+      sourceGenerationIds: ["gen-img"],
+      referenceVideoGenerationIds: ["gen-vid"],
+    });
+
+    const element = await ImmersiveCanvasEntry({
+      searchParams: Promise.resolve({ project: "p-oldest", thread: "t-new", handoff: "handoff-1" }),
+    });
+
+    expect(element.props.runtimeContext.pendingFirst).toEqual({
+      handoffId: "handoff-1",
+      text: "Put her in the new hoodie",
+      entityIds: ["ent-1"],
+      sourceGenerationIds: ["gen-img"],
+      referenceVideoGenerationIds: ["gen-vid"],
     });
   });
 

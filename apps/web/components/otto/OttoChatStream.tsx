@@ -155,7 +155,17 @@ export interface OttoChatStreamProps {
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
    *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
    *  so the route's existing-thread branch handles it. */
-  pendingFirst?: { text: string; goalKey?: string; entityIds?: string[]; references?: string[] };
+  pendingFirst?: {
+    text: string;
+    goalKey?: string;
+    entityIds?: string[];
+    /** FRONT-A10:第一句话 `@` 到的对象(类型化 ID),落进 ChatMessage.referenceRefs 供回链。 */
+    references?: string[];
+    /** 起步页在 Create 上挂的素材(规格 §7.3⑨)。首轮走的是与手动送出**同一份**
+     *  `composerReferencePayload` 映射,不另开一条引用通道。 */
+    sourceGenerationIds?: string[];
+    referenceVideoGenerationIds?: string[];
+  };
   /** Called right after the pendingFirst message is dispatched, so the parent can
    *  clear it (prevents a re-send if this thread is remounted later). */
   onPendingFirstSent?: () => void;
@@ -663,7 +673,23 @@ export function OttoChatStream({
     lastSubmittedTextRef.current = pendingFirst.text;
     void sendMessage(
       { text: pendingFirst.text },
-      { body: { projectId, threadId: thread.id, ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}), ...(pendingFirst.entityIds?.length ? { entityIds: pendingFirst.entityIds } : {}), ...(pendingFirst.references?.length ? { references: pendingFirst.references } : {}) } }, // F30: carry entity conditioning into the first streamed turn; FRONT-A10: and the typed references it named
+      {
+        body: {
+          projectId,
+          threadId: thread.id,
+          ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}),
+          ...(pendingFirst.entityIds?.length ? { entityIds: pendingFirst.entityIds } : {}), // F30: carry entity conditioning into the first streamed turn
+          // FRONT-A10:第一句话 `@` 到的对象也进首轮 —— 少了这一格,从前门开出来的每一条对话
+          // 从第一句起就没有引用可回链。
+          ...(pendingFirst.references?.length ? { references: pendingFirst.references } : {}),
+          // FRONT §7.3⑨:起步页挂的素材也进首轮。走的是手动送出用的**那一个**映射函数,
+          // 所以「一件参考在 body 里长什么样」全仓只有一个作者。
+          ...composerReferencePayload([
+            ...(pendingFirst.sourceGenerationIds ?? []).map((generationId) => ({ generationId, kind: "image" as const })),
+            ...(pendingFirst.referenceVideoGenerationIds ?? []).map((generationId) => ({ generationId, kind: "refVideo" as const })),
+          ]),
+        },
+      },
     );
     onPendingFirstSent?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps

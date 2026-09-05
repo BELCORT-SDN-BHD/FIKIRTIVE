@@ -187,7 +187,23 @@ export async function ImmersiveCanvasEntry({
     initialBalance: "error" in accountResult ? 0 : accountResult.balance,
     initialBalanceUsd: "error" in accountResult ? 0 : accountResult.balanceUsd,
     activeThread,
-    pendingFirst: handoffId && handoff ? { handoffId, text: handoff.prompt } : null,
+    // 起步页挂上的引用随 handoff 进这条对话的**首轮**(规格 §7.3⑨)。归属已在
+    // `getCanvasConversationHandoff` 里按 ownerId 重查过,这里只是把它交给同一个
+    // pendingFirst 通道 —— 画布自己那套引用消费不改。
+    pendingFirst:
+      handoffId && handoff
+        ? {
+            handoffId,
+            text: handoff.prompt,
+            ...(handoff.entityIds.length ? { entityIds: handoff.entityIds } : {}),
+            ...(handoff.sourceGenerationIds.length
+              ? { sourceGenerationIds: handoff.sourceGenerationIds }
+              : {}),
+            ...(handoff.referenceVideoGenerationIds.length
+              ? { referenceVideoGenerationIds: handoff.referenceVideoGenerationIds }
+              : {}),
+          }
+        : null,
   };
 
   // #600 (spec #599 D1/D2): this page mounts the mature canvas kernel (FlowCanvas / @xyflow)

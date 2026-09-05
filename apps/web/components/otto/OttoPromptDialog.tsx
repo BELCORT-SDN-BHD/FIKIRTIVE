@@ -44,7 +44,13 @@ export function OttoConfirmDialog({
   onOpenChange: (open: boolean) => void;
   title: string;
   description: string;
-  impacts?: string[];
+  /**
+   * 「What happens」那几条。收 `ReactNode` 而不只是 `string`:有些影响句本身要**指到**一处
+   * 权威页(删账号那条「留多久」的天数只有 `/legal/data-deletion` 一个作者),而确认框一开就
+   * 盖住了整页——把链接只放在卡片行上，等于在框里点名一个框里点不到的地方(判官 #1237 P2-4)。
+   * 传字符串的调用方一个字都不用改:`string` 本身就是 `ReactNode`。
+   */
+  impacts?: React.ReactNode[];
   confirmText?: string;
   confirmPlaceholder?: string;
   confirmLabel?: string;
@@ -111,8 +117,10 @@ export function OttoConfirmDialog({
               <AlertTitle>What happens</AlertTitle>
               <AlertDescription className="w-full">
                 <ul className="flex list-disc flex-col gap-1 pl-4">
-                  {impacts.map((impact) => (
-                    <li key={impact}>{impact}</li>
+                  {impacts.map((impact, index) => (
+                    // 键按位置取:名单是这一次调用写死的一串常量,顺序不变、不重排,而
+                    // `ReactNode` 本身当不了键。
+                    <li key={index}>{impact}</li>
                   ))}
                 </ul>
               </AlertDescription>
