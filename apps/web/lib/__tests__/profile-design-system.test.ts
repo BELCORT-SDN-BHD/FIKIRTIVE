@@ -64,14 +64,19 @@ async function submit(input: HTMLInputElement): Promise<void> {
 }
 
 describe("Profile uses the shared product design system", () => {
-  it("composes the route from Card, Field and semantic tokens without inline styling", () => {
+  it("composes the route from the shared shell, Field and semantic tokens without inline styling", () => {
     const page = source("app/profile/page.tsx");
     const form = source("app/profile/ProfileNames.tsx");
 
-    expect(page).toContain("<Card");
-    expect(page).toContain("<CardHeader>");
-    expect(page).toContain("<CardContent");
+    // 前端基线第⑦段(FRONT-A11):`<Card`/`<CardHeader>`/`<CardContent` 三条断言撤了。
+    // 它们当初钉的是「走设计系统,不手搓」,而已冻结的 Settings screen pattern §3.3 现在
+    // 明写这一面「默认使用 plain rows / forms,不堆独立 marketing cards」—— 继续要求
+    // Card 就是拿一条旧围栏顶住新的设计权威。要钉的那件事没松:页面仍然只由 shell 与
+    // 设计系统的 Field / Input 组成(下面几条),而「不许套 Card」由
+    // `app/settings/__tests__/front-a11-settings-skin.test.ts` 反向钉住。
     expect(page).toContain("<SettingsShell");
+    expect(page).toContain("<Field");
+    expect(page).toContain("<Input");
     expect(page).toContain("<DisplayNameField");
     expect(form).toContain("<FieldGroup>");
     expect(form).toContain("<FieldLabel");
@@ -87,7 +92,7 @@ describe("Profile uses the shared product design system", () => {
     actions.updateDisplayName.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
 
     const dom = await renderProfileNames();
-    const input = inputNamed(dom, "Your name");
+    const input = inputNamed(dom, "Display name");
     const button = input.closest("form")!.querySelector<HTMLButtonElement>('button[type="submit"]')!;
 
     expect(button.disabled).toBe(true);
@@ -109,7 +114,7 @@ describe("Profile uses the shared product design system", () => {
     actions.updateWorkspaceName.mockResolvedValue({ error: "That workspace name is not available." });
 
     const dom = await renderProfileNames();
-    const input = inputNamed(dom, "Workspace");
+    const input = inputNamed(dom, "Workspace name");
     await typeInto(input, "Another shop");
     await submit(input);
 
