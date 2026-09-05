@@ -24,6 +24,11 @@ const has = (artifact: string, term: string) => artifact.toLowerCase().includes(
  * “inboxes” 命中——那不是编造页面，却照样扣一分。禁词判的是「说没说出这个词」，
  * 所以词的左右两边不许再接字母、数字或下划线。词组（`already researched`）同理，
  * 只看整段词组的两端。
+ *
+ * 代价写在明处：词边界也拦不住**屈折形**——`forbids:Inbox` 放过 “check your Inboxes”，
+ * `forbids:extend` 放过 “I'll be extending it”（判官 2026-09-05 P2-2）。这里不去猜词尾
+ * （猜错就会把 “the extended cut” 这种正当说法冤枉成编造），改由题目把要拦的形态逐个写出来：
+ * `forbids:extend,extending`、`forbids:Inbox,Inboxes`。拦哪几种形态是题目的事，不是这张表的事。
  */
 const hasWord = (artifact: string, term: string): boolean => {
   const escaped = term.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
