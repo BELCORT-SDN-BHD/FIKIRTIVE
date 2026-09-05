@@ -4,7 +4,8 @@
  * FRONT-A14 是 Founder 走 Home → Create / Canvas → Library → Brand → Settings → Auth
  * 六面、逐面对已批准设计。词汇不一致正是那趟走查最容易撞上、又最容易被下一个 PR 撞回去
  * 的一类差异——`Canvas` 那一个词在 2026-09-04 才刚收成单源（`canvas-title.ts`），而 Otto
- * 前门的 `QuickBrief` 到今天还在对商家说 "project"。人走一趟能发现它，机器每次都能。
+ * 前门的 `QuickBrief` 直到 2026-09-06 第三轮才把最后一处 "project" 换掉。人走一趟能发现
+ * 它，机器每次都能。
  *
  * 两道判据，同一套「商家读得到的字」提取器：
  *   ① **旧词**（`RETIRED_PRODUCT_WORDS`）不许出现在界面文案里；
@@ -15,7 +16,10 @@
  * 与 Brand 两面渲染的组件住在 `components/otto/` 上层，扫不到，围栏名不副实还长绿）：
  *   · Otto 面板：`OttoPanelConversation` 在无活动对话时渲染 `components/otto/OttoFrontDoor`，
  *     前门再渲染 `components/otto/QuickBrief` —— 所以整个 `components/otto/` 都要扫；
- *   · Brand：`/brand/records` 渲染 `components/otto/OttoMemory` 与 `components/otto/memory/*`。
+ *   · Brand：`/brand/records` 渲染 `components/otto/OttoMemory` 与 `components/otto/memory/*`；
+ *     `components/otto/stuff/` 也在两面的渲染树里（`OttoStuff` 与 Brand 的
+ *     `memory/ProductImagePickerDialog` 都渲染 `stuff/StuffLibrary`），所以整棵一并扫
+ *     （判官 #1251 第三轮 P2-1 推翻了上一轮「旧壳，不在 beta 六面」的说法）。
  *   · `components/otto/panel` 与 `components/brand` 是**软链**（分别指向
  *     `design-system/patterns/otto-panel` 与 `design-system/brand/components`）。目录遍历
  *     因此按 `statSync` 判目录（`Dirent.isDirectory()` 对软链返回 false，会把整棵 panel
@@ -29,11 +33,12 @@
  *   · **全小写的单词片段**（`"project"`、`"canvas"`）：判别式常量、query 参数、路由片段。
  *     首字母大写的单词片段（`Assets`、`Library`）照扫——那正是面名标签的形状
  *     （判官 #1251 P2-3：一律跳过没有空格的片段，等于让 `<h2>Projects</h2>` 永远漏网）。
- *   · **剩下的盲点**（今天没有已知实例，但写在这里）：跨行的 JSX 文本节点只在整行都是
- *     散文时才认得出（见 `merchantCopySegments`），一句话被拆成「半行 JSX + 半行文字」
- *     时会漏；数据库里的商家自填文本本围栏也管不到。
- *   · `components/otto/stuff/`（旧壳素材库）本轮整棵不扫，登记在
- *     `docs/specs/frontend-baseline.md` §5。
+ *   · **剩下的盲点**（有已知实例，写在这里免得下一个人以为守住了）：跨行的 JSX 文本节点
+ *     只在**整行都是散文**时才认得出（见 `merchantCopySegments`）——一句话被拆成
+ *     「半行 JSX ＋ 半行文字」时会漏，例如
+ *     `<p>Otto uses this on every <strong>Canvas</strong>` 这种把词包进标签的写法，
+ *     `<>` 一出现整行就不算散文了。**全小写的独占行**（`project` 独占一行）也跳过，
+ *     那是标识符的形状。数据库里商家自填的文本本围栏同样管不到。
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -64,11 +69,14 @@ const SCANNED_SURFACES: readonly { readonly surface: string; readonly roots: rea
   { surface: "Otto 面板", roots: ["components/otto"] },
 ];
 
-/** 本轮整棵不扫的子树（每一条都要在 §5 有登记，否则它就是个后门）。 */
-const UNSCANNED_SUBTREES: readonly string[] = [
-  // 旧壳素材库,不在 beta 六面;登记在 docs/specs/frontend-baseline.md §5。
-  "components/otto/stuff",
-];
+/**
+ * 整棵不扫的子树（每一条都要在 §5 有登记，否则它就是个后门）。今天一条都没有：
+ * `components/otto/stuff/` 上一轮以「旧壳素材库，不在 beta 六面」为由排除，那句话是错的
+ * （判官 #1251 第三轮 P2-1）—— `stuff/StuffLibrary.tsx` 由 `components/otto/OttoStuff.tsx`
+ * 与 Brand 面的 `components/otto/memory/ProductImagePickerDialog.tsx` 双双渲染，商家读得到
+ * 里面的字。本轮纳入扫描。
+ */
+const UNSCANNED_SUBTREES: readonly string[] = [];
 
 /**
  * 「旧词零出现」的**具名豁免**：整句列在这里，改一个字就不再豁免（所以它挡不住漂移，
@@ -154,7 +162,12 @@ function stripComments(source: string): string {
  *
  * 「整行散文」那一条补的是最常见的一个漏：多行 JSX 里，一句 `<AlertDescription>` 的正文
  * 独占一行，同行既没有 `>` 也没有 `<`，按同行规则永远抓不到（`FactSection.tsx` 的删除
- * 影响句就是这样藏了下来）。判据取得很紧：整行没有 `<>{}=();[]`、至少三个词。
+ * 影响句就是这样藏了下来）。判据＝整行没有 `<>{}=();[]`、非空、不是全小写。
+ *
+ * **判据在 2026-09-06 放宽过一次**（判官 #1251 第三轮 P1-2）：原本还要求「至少三个词」，
+ * 于是**独占一行的一两个词**——多行 JSX 里最常见的徽章／标签形状，例如
+ * `OttoThreadList.tsx` 那个独占一行的 `Canvas` 徽章——整类都是盲区。现在只要整行是散文
+ * 且带大写字母就算文案；全小写的独占行（`project`、`canvas`）仍跳过，那是标识符的形状。
  */
 function merchantCopySegments(line: string): string[] {
   if (/\bconsole\.\w+\(/.test(line)) return [];
@@ -164,7 +177,7 @@ function merchantCopySegments(line: string): string[] {
   const jsxText = [...withoutStyles.matchAll(/>([^<>{}]+)</g)].map((match) => match[1]);
   const proseOnly = withoutStyles.replace(/&[a-z]+;/g, "").trim();
   const proseLine =
-    proseOnly && !/[<>{}=();[\]]/.test(proseOnly) && proseOnly.split(/\s+/).length >= 3 ? [proseOnly] : [];
+    proseOnly && !/[<>{}=();[\]]/.test(proseOnly) && proseOnly !== proseOnly.toLowerCase() ? [proseOnly] : [];
   return [...literals, ...jsxText, ...proseLine]
     .map((segment) => segment.replace(/\$\{[^}]*\}/g, " "))
     .filter((segment) => /\s/.test(segment.trim()) || /^[A-Z]/.test(segment.trim()));
@@ -249,11 +262,16 @@ describe("FRONT-A14 词汇围栏自证", () => {
       "Otto will stop using this detail in future projects.",
     ]);
     expect(merchantCopySegments("<h2>Projects</h2>")).toContain("Projects");
+    // 独占一行的一两个词:多行 JSX 里徽章／标签最常见的形状,放宽前整类是盲区
+    // (判官 #1251 第三轮 P1-2,实例是 OttoThreadList 的画布徽章)。
+    expect(merchantCopySegments("              Canvas")).toEqual(["Canvas"]);
+    expect(merchantCopySegments("              Otto IQ")).toEqual(["Otto IQ"]);
     // 反面:标识符、样式类、日志、插值都不算文案。
     expect(merchantCopySegments('const key = "project";')).toEqual([]);
     expect(merchantCopySegments('<div className="group/project flex items-center">')).toEqual([]);
     expect(merchantCopySegments('console.warn("canvas recovery will place its card");')).toEqual([]);
     expect(merchantCopySegments("<span>{project.name}</span>")).toEqual([]);
+    expect(merchantCopySegments("              project")).toEqual([]);
   });
 
   it("FRONT-A14 目录遍历跟得过软链:panel 与 brand 两棵软链子树真的被扫到了", () => {
@@ -261,7 +279,10 @@ describe("FRONT-A14 词汇围栏自证", () => {
     const ottoPanelFiles = filesOfSurface(["components/otto"]).map((f) => f.slice(WEB_ROOT.length + 1));
     expect(ottoPanelFiles).toContain("components/otto/panel/OttoPanelHost.tsx");
     expect(ottoPanelFiles).toContain("components/otto/QuickBrief.tsx");
-    expect(ottoPanelFiles.some((f) => f.startsWith("components/otto/stuff/"))).toBe(false);
+    // stuff/ 由 OttoStuff 与 Brand 的 ProductImagePickerDialog 双双渲染,商家读得到,
+    // 所以它必须在扫描范围内(判官 #1251 第三轮 P2-1 推翻了上一轮的「不在 beta 六面」)。
+    expect(ottoPanelFiles).toContain("components/otto/stuff/StuffLibrary.tsx");
+    expect(UNSCANNED_SUBTREES).toEqual([]);
     expect(filesOfSurface(["components/brand"]).length).toBeGreaterThan(0);
   });
 

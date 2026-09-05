@@ -53,9 +53,9 @@ async function click(el: Element) {
 
 function toggleOf(dom: HTMLElement): HTMLButtonElement {
   const button = Array.from(dom.querySelectorAll("button")).find((b) =>
-    (b.textContent ?? "").includes("Project brief"),
+    (b.textContent ?? "").includes("Canvas brief"),
   );
-  if (!button) throw new Error("Project brief toggle not found");
+  if (!button) throw new Error("Canvas brief toggle not found");
   return button as HTMLButtonElement;
 }
 

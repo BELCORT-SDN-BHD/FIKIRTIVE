@@ -106,7 +106,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
         aria-expanded={open}
       >
         <NotebookPen data-icon="inline-start" aria-hidden="true" />
-        Project brief
+        {`${PRODUCT_VOCABULARY.canvas} brief`}
         <ChevronDown
           data-icon="inline-end"
           aria-hidden="true"

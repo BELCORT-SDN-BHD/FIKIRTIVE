@@ -13,7 +13,9 @@ describe("Library design-system language", () => {
     expect(source).toContain("<DropdownMenu>");
     expect(source).toContain("<DropdownMenuItem");
     expect(source).toContain('variant="destructive"');
-    expect(source).toContain("Remove from Library");
+    // 「Library」这个词在 2026-09-06 由 FRONT-A14 词汇围栏收进 lib/product-vocabulary.ts,
+    // 这里按源码字面比对,所以跟着改成取词后的形状(渲染出来的字仍是 "Remove from Library")。
+    expect(source).toContain("Remove from ${PRODUCT_VOCABULARY.library}");
     expect(source).not.toContain("<TooltipButton");
   });
 

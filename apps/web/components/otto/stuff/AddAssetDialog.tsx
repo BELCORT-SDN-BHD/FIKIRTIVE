@@ -36,6 +36,7 @@ import { displayCredits, pricedRefgenCredits } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
 import { ErrorWithTopUp } from "@/components/exits/Exits";
 import { UnderstandingCostHint } from "@/components/otto/UnderstandingCostHint";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 type Mode = "upload" | "generate";
 
@@ -142,7 +143,7 @@ export function AddAssetDialog({
         });
       } catch {
         setUncertainMessage(
-          "We couldn't confirm whether generation started. Check Library in a minute before trying again.",
+          `We couldn't confirm whether generation started. Check ${PRODUCT_VOCABULARY.library} in a minute before trying again.`,
         );
         return;
       }
@@ -154,7 +155,7 @@ export function AddAssetDialog({
       onDone();
     } catch {
       setUncertainMessage(
-        "We couldn't confirm whether the reference was created. Check Library before trying again.",
+        `We couldn't confirm whether the reference was created. Check ${PRODUCT_VOCABULARY.library} before trying again.`,
       );
     } finally {
       // A reference generation reserves credits the moment startRefGen accepts — tell the
@@ -205,7 +206,7 @@ export function AddAssetDialog({
       onClose();
     } catch {
       setUncertainMessage(
-        "We couldn't confirm whether this was added. Check Library before trying again.",
+        `We couldn't confirm whether this was added. Check ${PRODUCT_VOCABULARY.library} before trying again.`,
       );
     } finally {
       submittingRef.current = false;
@@ -235,7 +236,7 @@ export function AddAssetDialog({
         }}
       >
         <DialogHeader className="mb-4 pr-8">
-          <DialogTitle>Add to Library</DialogTitle>
+          <DialogTitle>{`Add to ${PRODUCT_VOCABULARY.library}`}</DialogTitle>
           <DialogDescription>
             Upload an image you already have, or generate a new reference.
           </DialogDescription>
@@ -384,7 +385,7 @@ export function AddAssetDialog({
                 <Alert role="status" variant="success">
                   <AlertTitle>Reference queued</AlertTitle>
                   <AlertDescription>
-                    Generating — it will appear in Library shortly.
+                    {`Generating — it will appear in ${PRODUCT_VOCABULARY.library} shortly.`}
                   </AlertDescription>
                 </Alert>
                 <DialogFooter>

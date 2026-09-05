@@ -740,10 +740,10 @@ export function OttoPanelHost({
         open={!!deleteProjectTarget}
         onOpenChange={(open) => { if (!open) setDeleteProjectTarget(null); }}
         title={`Permanently delete ${PRODUCT_VOCABULARY.canvas}?`}
-        description={deleteProjectTarget ? `Otto will delete "${deleteProjectTarget.name}" and everything scoped to that ${PRODUCT_VOCABULARY.canvas}.` : ""}
+        description={deleteProjectTarget ? `Otto will delete "${deleteProjectTarget.name}" and its ${PRODUCT_VOCABULARY.canvas}-scoped work.` : ""}
         impacts={[
           `The ${PRODUCT_VOCABULARY.canvas} record is permanently deleted.`,
-          `Its chats, nodes, jobs, and ${PRODUCT_VOCABULARY.canvas}-scoped media records are deleted.`,
+          `Its chats, canvas nodes, jobs, and ${PRODUCT_VOCABULARY.canvas} media records are deleted.`,
           "Global library assets and credit ledger rows are not deleted here.",
         ]}
         confirmText={deleteProjectTarget?.name}

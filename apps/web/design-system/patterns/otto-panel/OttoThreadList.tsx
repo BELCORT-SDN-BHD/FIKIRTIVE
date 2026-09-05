@@ -213,7 +213,7 @@ export function OttoThreadList({
                               data-otto-thread-source="canvas"
                               className="shrink-0 rounded-[5px] border border-border px-1 text-[10px] leading-[15px] font-normal text-muted-foreground/80"
                             >
-                              Canvas
+                              {PRODUCT_VOCABULARY.canvas}
                             </span>
                           )}
                           {dot && (

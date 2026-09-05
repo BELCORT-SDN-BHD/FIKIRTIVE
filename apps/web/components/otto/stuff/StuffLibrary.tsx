@@ -48,6 +48,7 @@ import {
   filterStuffItems,
 } from "@/lib/stuff-items";
 import { conciseAssetTitle } from "@/lib/library-item-a11y";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 /** What a search that found nothing actually means (#701).
  *
@@ -363,7 +364,7 @@ export function StuffLibrary({
             <EmptyContent>
               <Button type="button" size="sm" onClick={onAdd}>
                 <Plus aria-hidden />
-                Add to Library
+                {`Add to ${PRODUCT_VOCABULARY.library}`}
               </Button>
             </EmptyContent>
           </Empty>
@@ -495,7 +496,7 @@ export function StuffLibrary({
                                   }}
                                 >
                                   <Trash2 aria-hidden />
-                                  Remove from Library
+                                  {`Remove from ${PRODUCT_VOCABULARY.library}`}
                                 </DropdownMenuItem>
                               </DropdownMenuGroup>
                             </>
@@ -535,7 +536,7 @@ export function StuffLibrary({
           if (!open) setRenameTarget(null);
         }}
         title="Rename item"
-        description="This changes the label you see in Library. It does not edit the original media."
+        description={`This changes the label you see in ${PRODUCT_VOCABULARY.library}. It does not edit the original media.`}
         label="Item name"
         initialValue={renameTarget?.label ?? ""}
         onSubmit={async (name) => {
@@ -569,7 +570,7 @@ export function StuffLibrary({
             <AlertDialogTitle>Remove from library?</AlertDialogTitle>
             <AlertDialogDescription>
               {deleteTarget
-                ? `This moves "${deleteTarget.label}" out of Library. It won't show up in projects, pickers, or search anymore.`
+                ? `This moves "${deleteTarget.label}" out of ${PRODUCT_VOCABULARY.library}. It won't show up on a ${PRODUCT_VOCABULARY.canvas}, in pickers, or in search anymore.`
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>

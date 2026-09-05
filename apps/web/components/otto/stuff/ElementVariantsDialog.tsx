@@ -93,6 +93,7 @@ import {
   type VariantJobView,
 } from "@/lib/variant-progress";
 import type { EntityDTO } from "@/lib/types";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 /** How often an in-flight variant generation is re-checked. Same cadence as the other
  *  generation pollers on this surface — slow enough to be cheap, fast enough to feel live. */
@@ -395,7 +396,7 @@ export function ElementVariantsDialog({
           </DialogTitle>
           <DialogDescription>
             {readOnly
-              ? "This cast member is provided by Fikirtive. Its base look and saved variants stay as they are — use it in Canvas, or type @ in a prompt to put it in your work."
+              ? `This cast member is provided by Fikirtive. Its base look and saved variants stay as they are — use it in ${PRODUCT_VOCABULARY.canvas}, or type @ in a prompt to put it in your work.`
               : "One saved photo is the base look — the face and identity every variant keeps. Add variants for the different outfits and looks you want to reuse."}
           </DialogDescription>
         </DialogHeader>
@@ -426,7 +427,7 @@ export function ElementVariantsDialog({
                 <EmptyMedia variant="icon"><ImageIcon /></EmptyMedia>
                 <EmptyTitle className="text-sm">No base photo</EmptyTitle>
                 <EmptyDescription>
-                  Add a photo from Library first. Every variant starts from that base look.
+                  {`Add a photo from ${PRODUCT_VOCABULARY.library} first. Every variant starts from that base look.`}
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
