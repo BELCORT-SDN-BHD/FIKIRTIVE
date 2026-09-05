@@ -384,7 +384,16 @@ export function OttoFrontDoor({
         )}
 
         {/* Goal starters — merchant actions stay neutral; coral is reserved for Otto itself. */}
-        <section className="flex w-full flex-col gap-3" aria-labelledby="otto-goal-heading">
+        {/* `@container` —— 四格摆几列跟着**这一段自己那只盒子**走,不跟着窗口走
+            (2026-09-05 走查 P2「面板四格标题折行拥挤」,验收 FRONT-A14)。前门只在面板里
+            渲染这一段(画布那一支 `layout="canvas"` 提前 return),而面板是能拖宽窄的
+            (320px – min(720px,50vw)):窗口一动不动的时候面板照样在变,所以从前那条
+            `max-[480px]:grid-cols-1` 的视口断点在 1440 的屏幕上**永远不生效** ——
+            340px 的面板里两列各剩几十 px 给标题,「Sell a product」于是折成两行。
+            断点沿用面板自己已有的那一个(`components/otto/card-narrow.tsx` 的
+            `CARD_NARROW_BREAKPOINT_PX` = 420),不新造尺寸;两条严格互补,任何宽度下恰好
+            一条生效。 */}
+        <section className="@container flex w-full flex-col gap-3" aria-labelledby="otto-goal-heading">
           <div className="flex flex-col gap-0.5">
             <h2 id="otto-goal-heading" className="text-sm font-semibold text-foreground">
               Start with a goal
@@ -393,7 +402,7 @@ export function OttoFrontDoor({
               Otto will turn it into a plan for you to review.
             </p>
           </div>
-          <div className="otto-goal-grid grid grid-cols-2 gap-2 max-[480px]:grid-cols-1">
+          <div className="otto-goal-grid grid gap-2 @max-[420px]:grid-cols-1 @min-[420px]:grid-cols-2">
             {GOAL_TILES.map((goal) => {
               const GoalIcon = goal.icon;
               return (

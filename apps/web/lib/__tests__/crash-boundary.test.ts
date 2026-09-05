@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const captureException = vi.fn();
@@ -24,6 +25,11 @@ vi.mock("@sentry/nextjs", () => ({
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { default: RouteError } = await import("@/app/error");
+const { default: GlobalError } = await import("@/app/global-error");
+
+/** 同族崩溃卡的外框 —— 九个路由段 boundary 与共用 `CrashPage` 逐字相同的那一串。 */
+const CRASH_CARD_CLASSES =
+  "mx-auto max-w-xl rounded-[var(--radius-card)] border border-border bg-card p-6 shadow-[var(--shadow-sm)] sm:p-8";
 
 /** 一条真实形态的供应商报错:名字、模型 ID、限流措辞、内部 request id 全在里面。 */
 const VENDOR_MESSAGE =
@@ -128,5 +134,51 @@ describe("every merchant-facing error boundary", () => {
       .filter(({ src }) => /\{\s*error\.message/.test(src))
       .map(({ rel }) => rel);
     expect(offenders).toEqual([]);
+  });
+});
+
+/**
+ * 2026-09-05 走查 P2 —— 「崩溃页两套不一致」(验收 FRONT-A14)。
+ *
+ * `/brand` 这类没有自己 boundary 的面崩起来落在 `app/error.tsx`,而它和 `app/global-error.tsx`
+ * 从前是独立手写的第二套:居中裸文字、没有卡、错误编号那一行叫 `Reference:`,而九个路由段的
+ * boundary 叫 `Error reference:`。两处现在渲染**同一个** `CrashPage`,所以这里钉的是
+ * 「同一个组件」这件事本身:把其中一处改回手写的形状,或者把编号那一行的措辞改成第三种说法,
+ * 当场红。
+ */
+describe("FRONT-A14:两个兜底崩溃页渲染同一个 CrashPage", () => {
+  const DIGEST = "2718281828";
+
+  function markupOf(boundary: unknown): string {
+    return renderToStaticMarkup(
+      createElement(boundary as never, {
+        error: Object.assign(new Error(VENDOR_MESSAGE), { digest: DIGEST }),
+        reset: () => {},
+      } as never),
+    );
+  }
+
+  it("FRONT-A14: both fallback boundaries render the one shared crash card", () => {
+    for (const boundary of [RouteError, GlobalError]) {
+      const markup = markupOf(boundary);
+      expect(markup).toContain("data-crash-page");
+      expect(markup).toContain(CRASH_CARD_CLASSES);
+    }
+  });
+
+  it("FRONT-A14: both call the error number by the same name the rest of the family uses", () => {
+    for (const boundary of [RouteError, GlobalError]) {
+      const markup = markupOf(boundary);
+      expect(markup).toContain(`Error reference: ${DIGEST}`);
+      // 旧的第二种说法不许回来 —— 商家报的那一串在两处只有一个名字。
+      expect(markup).not.toMatch(/>Reference:/);
+    }
+  });
+
+  it("FRONT-A14: the shared card is what the nine route boundaries already look like", () => {
+    // 形状的参照物是同族里现成的那一个,不是这条测试自己编的一份描述。
+    const family = fs.readFileSync(path.resolve(__dirname, "../../app/create/error.tsx"), "utf8");
+    expect(family).toContain(CRASH_CARD_CLASSES);
+    expect(family).toContain("Error reference:");
   });
 });

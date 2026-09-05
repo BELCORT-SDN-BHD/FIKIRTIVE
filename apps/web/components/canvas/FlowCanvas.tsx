@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Hand, Maximize2, MousePointer2, RefreshCw, Type, Video, ZoomIn, ZoomOut } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
@@ -1775,6 +1776,27 @@ export default function FlowCanvas({
         <div className="cv-dropzone">
           <span aria-hidden>Drop image to add it to the canvas</span>
           <div className="cv-dropzone-cost"><UnderstandingCostHint /></div>
+        </div>
+      )}
+      {/* 空画板上的一句引导(2026-09-05 走查 P2④,验收 FRONT-A14)。
+       *
+       * 从前一块点阵底纹就是全部:板上没有卡的时候,屏幕中央是一片什么都没说的灰点,商家
+       * 看不出这里会长出东西、也看不出该从哪里开口。左上角那张状态卡说的是 Otto 此刻在不在,
+       * 不是这块板是干什么的。
+       *
+       * `pointer-events-none` —— 它只是一句话,不是一层纸:拖动、框选、滚轮缩放照旧穿过去。
+       * 只在**读成功且真的一张卡都没有**时才出现:`loading` 有自己的那颗 Badge,
+       * `unavailable` 有自己的那条 Alert,把「读不出来」说成「这里还什么都没有」是假话。 */}
+      {showGraph && boardStatus === "ready" && nodesOnBoard.length === 0 && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-8">
+          <Empty data-canvas-empty className="max-w-sm flex-none border-0 bg-transparent">
+            <EmptyHeader>
+              <EmptyTitle>Nothing on this canvas yet</EmptyTitle>
+              <EmptyDescription>
+                Ask Otto in the box below, and what it makes will appear here.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         </div>
       )}
       {showGraph && (
