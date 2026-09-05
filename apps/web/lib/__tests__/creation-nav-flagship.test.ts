@@ -22,6 +22,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { ottoInstructions } from "@fikirtive/otto";
 import {
   CANVAS_HREF,
   CREATE_NAV_HREF,
@@ -179,10 +180,10 @@ describe("壳里不留第二份地址", () => {
 
 describe("Otto 的指路文案与导轨同源", () => {
   it("Otto 的指令里真的带着这份界面地图", () => {
-    const instructions = readFileSync(
-      path.join(REPO_ROOT, "packages/otto/src/__snapshots__/otto-instructions.golden.txt"),
-      "utf8",
-    );
+    // ENGINE-A7(otto-engine.md §7.2⑥)之后,单体的 golden 快照文件不存在了 —— 说明书由
+    // 技能文件柜每轮现装。这一层问的是「地图还在说明书里吗」,那是整个柜子的问题,
+    // 所以读整柜装出来的那一份。
+    const instructions = ottoInstructions;
 
     expect(instructions).toContain("Where things are in the app");
     for (const item of everyNavDestination()) {
@@ -191,10 +192,10 @@ describe("Otto 的指路文案与导轨同源", () => {
   });
 
   it("Otto 不会把 Parked 的 Campaigns 或 Schedule 说成 Beta 页面", () => {
-    const instructions = readFileSync(
-      path.join(REPO_ROOT, "packages/otto/src/__snapshots__/otto-instructions.golden.txt"),
-      "utf8",
-    );
+    // ENGINE-A7(otto-engine.md §7.2⑥)之后,单体的 golden 快照文件不存在了 —— 说明书由
+    // 技能文件柜每轮现装。这一层问的是「地图还在说明书里吗」,那是整个柜子的问题,
+    // 所以读整柜装出来的那一份。
+    const instructions = ottoInstructions;
 
     expect(instructions).toContain("Campaigns and scheduling have no place on this Beta map");
     expect(instructions).not.toContain("Campaigns (/campaign)");

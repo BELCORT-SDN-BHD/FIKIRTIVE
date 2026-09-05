@@ -33,7 +33,7 @@ import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, OTTO_CONVERSATION_TURN_MARGIN, 
 import type { LlmPrices } from "@fikirtive/core";
 import type { OttoContext } from "./context.js";
 import type { OttoSkill } from "./skill.js";
-import { ottoInstructions } from "./instructions.js";
+import { allKnowledgePaths, assembleOttoInstructions, ottoInstructions } from "./instructions.js";
 import { withLlmBudget, type TokenUsage } from "./meter.js";
 import { collectApprovalInterruptions, type ApprovalInterruption } from "./approval-tools.js";
 import { extractText } from "./run-output.js";
@@ -185,6 +185,46 @@ export type OttoTurnRunResult = {
 };
 
 /**
+ * 这一轮**装了哪几份知识文件**（ENGINE-A7 的装配器 ＋ ENGINE-A2 的 `skillFiles` 那一栏）。
+ *
+ * 柜内路径，装配顺序，`_core.md` 永远第一。恢复轮（approval-resume）照 B9「恢复轮全量装载」
+ * 走整柜，所以它列出的是柜里的全部文件。
+ */
+export type OttoTurnKnowledge = { readonly files: readonly string[] };
+
+/**
+ * 纯：这一轮的输入 → 这一轮的说明书。
+ *
+ * 新鲜轮（字符串或 item 数组）按商家这一轮说的话对书脊标签，装常驻薄层 ＋ 对上的那几份全文；
+ * 恢复轮（RunState）**整柜装载** —— 与 B9 已冻结的「恢复轮全量装载」同一条理由：一个被审批
+ * 卡打断、几分钟后才回来的状态，我们无法从它身上重算出当初那一轮说了什么，宁可全带。
+ */
+export function instructionsForTurn(input: OttoTurnRequest["input"]): {
+  readonly text: string;
+  readonly files: readonly string[];
+} {
+  if (typeof input === "string") return assembleOttoInstructions(input);
+  if (Array.isArray(input)) return assembleOttoInstructions(conversationText(input));
+  return { text: ottoInstructions, files: allKnowledgePaths() };
+}
+
+/**
+ * 纯：从一轮的 item 数组里取出**对话里的话** —— 商家说的与 Otto 回的,不含我们自己塞进去的
+ * 那一条上下文 item(品牌记忆、可用素材、当前状态……)。
+ *
+ * 为什么要挑:那条上下文 item 是**我们写的**,里面天然带着 Library / product / brand 这些词。
+ * 拿它去对书脊标签,等于每一轮都替商家把柜子全打开 —— 拆柜省下的那一半当场还回去,
+ * 而且它变一次(多一个产品名),装载结果就跟着变,基线也就不可比了。
+ */
+function conversationText(items: readonly AgentInputItem[]): string {
+  const said = items.filter((i) => {
+    const role = (i as { role?: unknown }).role;
+    return role === "user" || role === "assistant";
+  });
+  return JSON.stringify(said.length > 0 ? said : items);
+}
+
+/**
  * Derive the FULL withLlmBudget parameter set from the runtime manifest (PH1-A1):
  * billable model, paid flag, step cap, prices, and the truncation usage mapper all
  * come from the SAME manifest — an entry only contributes identity + refId.
@@ -316,11 +356,20 @@ export async function runOttoTurn(
 ): Promise<OttoTurnRunResult> {
   const mr = runtime.modelRuntime;
   assertResumedStateCarriesLiveContext(request.input, context);
+  // ENGINE-A7 —— 每轮现装的说明书。柜子替换单体之后，`runtime.agent` 上那份整柜底稿只是
+  // 底稿：真正跑的是这一轮装出来的那一份（恢复轮除外，它整柜装载，agent 直接用）。
+  // `clone` 只换 instructions，name/tools/model/settings 全部原样带过去，所以工具名照旧
+  // 解析得到 —— 组合根文件头记着的那条实测（恢复只要求工具名能解析，不要求同一个实例）。
+  const assembled = instructionsForTurn(request.input);
+  const agent =
+    assembled.text === runtime.agent.instructions
+      ? runtime.agent
+      : runtime.agent.clone({ instructions: assembled.text });
   return execution.meter(
     ottoBudgetArgsFor(runtime, request, context, execution.maxTurnsExceededError),
     async () => {
       if (request.stream) {
-        const r = await execution.runAgent(runtime.agent, request.input as never, {
+        const r = await execution.runAgent(agent, request.input as never, {
           context,
           maxTurns: runtime.maxTurns,
           stream: true,
@@ -332,7 +381,7 @@ export async function runOttoTurn(
         const result = r as unknown as OttoTurnRunResult;
         return { result, usage: mr.mapUsage(result.state.usage) };
       }
-      const r = await execution.runAgent(runtime.agent, request.input as never, {
+      const r = await execution.runAgent(agent, request.input as never, {
         context,
         maxTurns: runtime.maxTurns,
       });

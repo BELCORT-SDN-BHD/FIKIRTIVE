@@ -15,6 +15,8 @@
     "test": "vitest run",
     "catalog": "tsx scripts/gen-catalog.ts",
     "catalog:check": "tsx scripts/gen-catalog.ts --check",
+    "knowledge": "tsx scripts/gen-knowledge.ts",
+    "knowledge:check": "tsx scripts/gen-knowledge.ts --check",
     "evals": "tsx evals/runner.ts",
     "evals:check": "tsx evals/runner.ts --check"
   },

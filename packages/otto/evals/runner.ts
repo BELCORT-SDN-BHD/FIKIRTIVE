@@ -22,7 +22,7 @@ import { dirname, join } from "node:path";
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { llmPricesFor } from "@fikirtive/core";
-import { ottoInstructions } from "../src/instructions.js";
+import { assembleOttoInstructions } from "../src/instructions.js";
 import { OTTO_PRIMARY_MODEL } from "../src/model.js";
 import {
   EvalBudgetExceeded,
@@ -116,8 +116,11 @@ class Meter {
 // ── 被测对象与判分器 ────────────────────────────────────────────────────────
 
 function makeSubject(model: string, meter: Meter): Subject {
-  const system = ottoInstructions + HARNESS_SUFFIX;
   return async (task) => {
+    // ⑥段（ENGINE-A7）之后，被测的说明书是**这一轮装出来的那一份** —— 商家真正拿到的
+    // 就是它。单体时代这里是 `ottoInstructions` 整份；台架后缀一个字没动，所以两次跑分
+    // 比的仍是同一件事：同一道题、同一段后缀、Otto 的说明书换了组织方式。
+    const system = assembleOttoInstructions(task.prompt).text + HARNESS_SUFFIX;
     meter.guard(model, system + task.prompt, SUBJECT_MAX_OUTPUT);
     const r = await generateText({
       model: anthropic(model),

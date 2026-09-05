@@ -7,11 +7,19 @@
  * credits 拼写数字)。根因是判定环节本身:只要守卫要"读懂"一句话是不是在点名按钮、
  * 是不是在承诺金额,就总有它没读懂的写法。
  *
- * ── 主守卫:golden 快照 ──────────────────────────────────────────────────
- * `ottoInstructions` 整份文本冻结在 `__snapshots__/otto-instructions.golden.txt`。
- * **任何字节改动 → 红。这个守卫没有判定环节,因此不存在写法逃逸。**
- * 有意修改提示词的人必须同步更新快照,而**快照 diff 就是复审对象** —— 改了什么、
+ * ── 主守卫:golden 快照(ENGINE-A7 之后换了对象,§7.2⑥)────────────────────
+ * 单体退役前:`ottoInstructions` 整份文本冻结在 `__snapshots__/otto-instructions.golden.txt`。
+ * 单体退役后:冻结的是**常驻薄层** `_core.md`(`__snapshots__/otto-core.golden.txt`)
+ * 与**柜子的形状**(`__snapshots__/otto-knowledge-cabinet.golden.txt`:哪几份、书脊标签、
+ * 装载关键词)。按需装载的 craft/ playbooks/ product-map/ 正文**不再逐字节冻结** ——
+ * 那一半改由③段的评测分数把关,这正是 ENGINE-A7 那一行存在的意义。
+ * **被冻的那两样,任何字节改动 → 红。这个守卫没有判定环节,因此不存在写法逃逸。**
+ * 有意修改的人必须同步更新快照,而**快照 diff 就是复审对象** —— 改了什么、
  * 改成什么样,一行不落地摆在复审者面前。
+ *
+ * ⚠️ 下面的存在性断言读的是 `ottoInstructions` —— 它现在是**整柜**装出来的那一份
+ * (`otto.ts` 的底稿与恢复轮用它)。「这句话还在说明书里吗」问的是整个柜子,不是某一轮
+ * 碰巧装了哪几份;哪一轮装哪几份由 `knowledge-cabinet.test.ts` 的装配器测试钉。
  *
  * ── 辅助:启发式预警 ────────────────────────────────────────────────────
  * 下面的 UI/金额词表与存在断言**降级为启发式**:它们的价值是在常见回归上给出
@@ -32,7 +40,8 @@ import {
   OTTO_CHAT_MAX_SEARCHES_PER_TURN,
   searchUnitChargeInternal,
 } from "@fikirtive/core";
-import { ottoSimpleModeBlock, ottoInstructions } from "./instructions.js";
+import { ottoSimpleModeBlock, ottoInstructions, ottoCoreInstructions } from "./instructions.js";
+import { KNOWLEDGE_CABINET } from "./knowledge-cabinet.generated.js";
 
 /**
  * MONEY-A9(规格 §7.3):importMedia 段里那三格理解价的**期望值,现算**。
@@ -73,21 +82,32 @@ const CHAT_SEARCH_MERCHANT_CLAUSE =
   `${displayCredits(searchUnitChargeInternal("basic"))} credits — including one that comes back empty-handed — ` +
   `and one message can make at most ${OTTO_CHAT_MAX_SEARCHES_PER_TURN} of them`;
 
-describe("ottoInstructions — golden 快照(#541 r6 主守卫)", () => {
-  // 没有判定环节:不解析、不匹配、不推断语义,只比字节。
-  // 红了不代表错了 —— 只代表"提示词变了,请复审这段 diff"。
+describe("ENGINE-A7 — golden 快照迁移(#541 r6 主守卫,按 §7.2⑥ 换了对象)", () => {
+  // 单体退役之后,字节冻结**不再罩整份说明书** —— 那正是 ENGINE-A7 那一行存在的意义:
+  // 按需装载的 craft/ playbooks/ product-map/ 由③段的评测分数把关,不再逐字节冻结,
+  // 否则「拆成文件柜」等于换个地方继续冻结同一坨字节。
   //
-  // ⚠️ 这条红了怎么办:
-  //  1. 你**有意**改了 `instructions.ts` ⇒ 跑 `vitest -u` 更新快照,把快照 diff
-  //     一并提交,复审看的就是它。
-  //  2. 你**没碰** `instructions.ts` 却红了 ⇒ 大概率是**上游插值**变了。提示词
-  //     用模板串插入了 `@fikirtive/core` 的 `GEN_IMAGE_ASPECTS` /
-  //     `GEN_IMAGE_DEFAULT_ASPECT`(见 instructions.ts 的图片形状段),所以改动
-  //     图片形状菜单会连带改变提示词文本。这是**真的变了**,同样按 1 更新快照。
-  it("整份提示词与 golden 快照逐字节一致", async () => {
-    await expect(ottoInstructions).toMatchFileSnapshot(
-      "./__snapshots__/otto-instructions.golden.txt",
-    );
+  // 留下来被冻结的是两样(§7.2⑥ 原话):
+  //  ① 常驻薄层 `_core.md` —— 它每轮必带,继承单体那道字节冻结;
+  //  ② 生成产物的**形状** —— 柜里有哪几份、各自的书脊标签与装载关键词。
+  //     不冻正文,所以加一段打法不会红;但**加一份文件、改一句书脊、动一个关键词**
+  //     会红 —— 那三件都在改「Otto 每轮见到什么」,理应摆到复审桌上。
+  //
+  // ⚠️ 这两条红了怎么办:
+  //  1. 你**有意**改了 `knowledge/_core.md` 或柜子的形状 ⇒ 跑 `vitest -u` 更新快照,
+  //     把快照 diff 一并提交,复审看的就是它。
+  //  2. 你**没碰**柜子却红了 ⇒ 大概率是**上游插值**变了(`{{imageAspects}}`、
+  //     `{{navPath:…}}`、两条价目句…… 名单在 instructions.ts 的 placeholderValues)。
+  //     这是**真的变了**,同样按 1 更新快照。
+  it("ENGINE-A7:常驻薄层 _core.md 与 golden 快照逐字节一致", async () => {
+    await expect(ottoCoreInstructions).toMatchFileSnapshot("./__snapshots__/otto-core.golden.txt");
+  });
+
+  it("ENGINE-A7:文件柜的形状(路径 · 书脊标签 · 装载关键词)与 golden 快照一致", async () => {
+    const shape = KNOWLEDGE_CABINET.map(
+      (f) => `${f.path}\n  spine: ${f.spine}\n  when: ${f.when.join(", ") || "(always)"}`,
+    ).join("\n");
+    await expect(shape).toMatchFileSnapshot("./__snapshots__/otto-knowledge-cabinet.golden.txt");
   });
 });
 

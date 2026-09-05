@@ -11,6 +11,10 @@ export {
   runOttoTurn,
   finalizeOttoTurn,
   ottoBudgetArgsFor,
+  // ENGINE-A7 的装配器出口（规格 §7.2⑥）。纯函数、与 `runOttoTurn` 内部用的是同一个，
+  // 所以入口拿它算出来的名单，逐字节就是那一轮真装进去的那几份 —— ②段（ENGINE-A2）的
+  // `skillFiles` 那一栏读它落盘。
+  instructionsForTurn,
 } from "./runtime.js";
 export type {
   OttoRunProfile,
@@ -115,10 +119,10 @@ export type { ResearchContext } from "./research-agent.js";
 // holds the citation floor on the shipped data. It was never consumed outside this package.
 export {
   META_EXPERTISE_KB, queryMetaKnowledge,
-} from "./knowledge/meta-expertise.js";
+} from "./meta-expertise/meta-expertise.js";
 export type {
   MetaExpertiseKB, MetaKnowledgeDomain, MetaCitation, MetaBenchmark, MetaKnowledgeEntry,
-} from "./knowledge/meta-expertise.types.js";
+} from "./meta-expertise/meta-expertise.types.js";
 export { diagnosePerformance } from "./diagnosis/diagnose-performance.js";
 export type { DiagAdInput, DiagReason, DiagReasonKind, AdVerdict, PerformanceDiagnosis } from "./diagnosis/diagnose-performance.js";
 export { buildPerformanceCardPayload } from "./skills/meta-expert.helpers.js";
