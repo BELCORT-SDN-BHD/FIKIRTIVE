@@ -179,7 +179,7 @@ describe("2-org isolation — org B can never read org A", () => {
       return { minted, claims, before, after };
     }
 
-    it("FRONT-A5 link duration: a preset (24 hours) is the expiry actually signed into the token", async () => {
+    it("FRONT-A12 link duration: a preset (24 hours) is the expiry actually signed into the token", async () => {
       await asUser(A_EMAIL);
       const ttl = 24 * 60 * 60 * 1000;
       const { minted, claims, before, after } = await mintedExpiry(aGenerationId, ttl);
@@ -189,7 +189,7 @@ describe("2-org isolation — org B can never read org A", () => {
       expect(claims!.exp).toBeLessThanOrEqual(after + ttl);
     });
 
-    it("FRONT-A5 link duration: a custom value (90 minutes) is the expiry actually signed into the token", async () => {
+    it("FRONT-A12 link duration: a custom value (90 minutes) is the expiry actually signed into the token", async () => {
       await asUser(A_EMAIL);
       const ttl = 90 * 60 * 1000;
       const { minted, claims, before, after } = await mintedExpiry(aGenerationId, ttl);

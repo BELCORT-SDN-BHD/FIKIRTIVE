@@ -27,6 +27,7 @@ import {
   publicMediaTtlFromCustom,
   publicMediaTtlLabel,
   publicMediaTtlProblem,
+  publicMediaTtlToCustom,
   readTtlPick,
   writeTtlPick,
   type PublicMediaTtlUnit,
@@ -192,6 +193,8 @@ export default function DetailPanel({
   const [ttlCustom, setTtlCustom] = useState(false);
   const [ttlCustomValue, setTtlCustomValue] = useState("30");
   const [ttlCustomUnit, setTtlCustomUnit] = useState<PublicMediaTtlUnit>("minutes");
+  // 商家有没有真的动过那一格。挂载时恢复上次的选择不算「动过」—— 见下面那条写回 effect。
+  const ttlTouchedRef = useRef(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   // 删除自己一格:它的错误必须留在确认框里(框不关、可重试),不能混进面板下方那一条 ——
   // 面板一关商家就以为删掉了,而服务端刚刚拒绝了这次删除。
@@ -298,28 +301,37 @@ export default function DetailPanel({
     : ttlPresetMs;
 
   // 上次挑的那一档只活在这台浏览器上(`PUBLIC_MEDIA_TTL_SCOPE_NOTE` 就说的这件事)。
-  // 读不到、坏了、越界一律走默认档 —— 这一格的存法与判据都在 lib/media-public-link.ts。
+  // 读不到、坏了、越界、存储被禁一律走默认档 —— 存法、判据、毫秒↔「2 / Hours」的换算
+  // 全在 lib/media-public-link.ts,这一层只摆状态。
   // 读 localStorage 只能在挂载之后(服务端没有这个东西,首帧必须与服务端一致),所以走
   // `queueMicrotask` —— 与这个文件里其它「挂载后再落一次状态」的地方同一个写法。
   useEffect(() => {
     const saved = readTtlPick();
     if (saved === null) return;
     queueMicrotask(() => {
-      if (PUBLIC_MEDIA_TTL_PRESETS_MS.includes(saved)) {
-        setTtlPresetMs(saved);
+      // 自定义填的数正好等于某个预设(60 分钟＝1 hour 那一档)时,仍然回到 Custom… ——
+      // 存的是**来源**,不是靠数字反推,否则商家会以为自己填的那一格没保住。
+      if (saved.source === "preset") {
+        setTtlCustom(false);
+        setTtlPresetMs(saved.ttlMs);
         return;
       }
-      const wholeHours = saved % (60 * 60 * 1000) === 0;
+      const custom = publicMediaTtlToCustom(saved.ttlMs);
       setTtlCustom(true);
-      setTtlCustomUnit(wholeHours ? "hours" : "minutes");
-      setTtlCustomValue(String(saved / (wholeHours ? 60 * 60 * 1000 : 60 * 1000)));
+      setTtlCustomUnit(custom.unit);
+      setTtlCustomValue(custom.value);
     });
   }, []);
 
   useEffect(() => {
+    // 挂载那一次**不写**:商家还没碰过这一格,把默认档写进去等于让浏览器里多出一条他从没
+    // 挑过的偏好(存储被禁的浏览器上还白抛一次)。只有他真的动了这一格才记。
+    if (!ttlTouchedRef.current) return;
     // 只记能用的值:存一个用不了的时长,等于下次开面板就先给商家一个错误。
-    if (publicMediaTtlProblem(chosenTtlMs) === null) writeTtlPick(chosenTtlMs);
-  }, [chosenTtlMs]);
+    if (publicMediaTtlProblem(chosenTtlMs) === null) {
+      writeTtlPick({ ttlMs: chosenTtlMs, source: ttlCustom ? "custom" : "preset" });
+    }
+  }, [chosenTtlMs, ttlCustom]);
   const targetProjectId = gen?.projectId ?? projectId;
   const imageCost = activeModels?.imageCredits ?? null;
   // #645 T4：视频按档计价，所以这里报的必须是**选中那一档**的价（服务端那张按档价目表），
@@ -1084,6 +1096,7 @@ export default function DetailPanel({
                   title="How long the copied link keeps working"
                   value={ttlCustom ? "custom" : String(ttlPresetMs)}
                   onChange={(e) => {
+                    ttlTouchedRef.current = true;
                     if (e.target.value === "custom") {
                       setTtlCustom(true);
                       return;
@@ -1108,14 +1121,17 @@ export default function DetailPanel({
                       aria-label="Custom link duration"
                       className="h-9 w-20 text-sm"
                       value={ttlCustomValue}
-                      onChange={(e) => setTtlCustomValue(e.target.value)}
+                      onChange={(e) => { ttlTouchedRef.current = true; setTtlCustomValue(e.target.value); }}
                     />
                     <NativeSelect
                       size="sm"
                       className="text-sm"
                       aria-label="Custom link duration unit"
                       value={ttlCustomUnit}
-                      onChange={(e) => setTtlCustomUnit(e.target.value === "hours" ? "hours" : "minutes")}
+                      onChange={(e) => {
+                        ttlTouchedRef.current = true;
+                        setTtlCustomUnit(e.target.value === "hours" ? "hours" : "minutes");
+                      }}
                     >
                       <NativeSelectOption value="minutes">Minutes</NativeSelectOption>
                       <NativeSelectOption value="hours">Hours</NativeSelectOption>

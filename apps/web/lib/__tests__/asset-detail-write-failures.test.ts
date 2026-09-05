@@ -87,6 +87,8 @@ const generation = (variants: Variant[]) => ({
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 let closed = 0;
+/** 假服务端**真签进令牌**的那个时长。屏幕上挑的是另一回事:成功句只许照这个数字写。 */
+let serverTtlMs = 10 * 60 * 1000;
 
 // jsdom 没有 navigator.clipboard。`configurable: true` 是刻意的:整套 apps/web 的 vitest 跑在
 // 同一个 globalThis 上(见 result-pick.test.ts 里那段说明),不可配置的属性会永久钉住,后面
@@ -121,10 +123,12 @@ beforeEach(() => {
   mocks.startAssetGen.mockResolvedValue({ id: "job-1", disposition: "fresh" });
   mocks.getGenJob.mockResolvedValue({ status: "DONE", generationIds: [] });
   mocks.writeText.mockResolvedValue(undefined);
-  // 假件照真件的契约回话:回的是**它签进令牌的那个时长**(默认 10 分钟),
-  // 所以屏幕上那句话写什么,取决于商家挑了多久 —— 与真服务端同一条因果。
-  mocks.getPublicMediaLink.mockImplementation((_id: string, ttlMs?: number) =>
-    Promise.resolve({ path: "/api/media/pub/signed-token", expiresInMs: ttlMs ?? 10 * 60 * 1000 }),
+  serverTtlMs = 10 * 60 * 1000;
+  // 假件**不回显**请求里的 ttl:回显的话,「成功句读服务端的数」与「成功句读屏幕上挑的数」
+  // 两种写法在测试里长得一模一样,这一族就证明不了任何事。它回的是 `serverTtlMs` ——
+  // 由每条测试自己说「服务端到底签了多久」,成功句必须照它写。
+  mocks.getPublicMediaLink.mockImplementation(() =>
+    Promise.resolve({ path: "/api/media/pub/signed-token", expiresInMs: serverTtlMs }),
   );
 });
 
@@ -377,23 +381,31 @@ describe("FRONT-A12 ④ 变体选择只存在这台浏览器上", () => {
 /**
  * Founder 2026-09-05 裁决:「同意,但是加上可以自由设定时间」。
  *
+ * 验收编号仍是 **FRONT-A12**(「任何写入失败都有错误反馈,不出现『假成功』」)—— 冻结表里
+ * FRONT-A5 说的是 Library 的搜索/筛选/收藏,与链接有效期无关,挂错编号等于把这一族测试
+ * 记在别人的验收条目下(#1210 判官 P2-a)。
+ *
  * 挑时长这件事的**真闸在服务端**(`lib/media-link-actions.ts` 再判一次,越界拒绝铸链,
- * 钉子在 `isolation.test.ts` 的 FRONT-A5 / FRONT-A12 那几条)。这里钉的是屏幕:挑了什么,
- * 就把什么发下去、就说什么 —— 屏幕上写 24 小时而链子活 10 分钟,是同一族的假成功。
+ * 钉子在 `isolation.test.ts` 那几条)。这里钉的是屏幕:挑了什么就把什么发下去,而说出口的
+ * 那句时长只许照**服务端真签进令牌的那个数**写 —— 屏幕上写 24 小时而链子活 10 分钟,
+ * 是同一族的假成功。
  */
-describe("FRONT-A5 ⑤ Copy link 的有效期", () => {
-  it("FRONT-A5 选 24 hours 之后复制:发下去的就是 24 小时,成功句写的也是 24 hours", async () => {
+describe("FRONT-A12 ⑤ Copy link 的有效期", () => {
+  it("FRONT-A12 选 24 hours 之后复制:发下去的是 24 小时,成功句写的是服务端真签的那个时长", async () => {
+    // 服务端这一次签的是 6 小时(与屏幕上挑的 24 小时**故意不同**)。成功句要是读屏幕上
+    // 那一格而不是服务端的回话,这条就红 —— 它正是这一族存在的理由。
+    serverTtlMs = 6 * 60 * 60 * 1000;
     await renderPanel();
 
     await setControl(control<HTMLSelectElement>("Link duration"), String(24 * 60 * 60 * 1000));
     await click(buttonNamed(surface(), "Copy link"));
 
     expect(mocks.getPublicMediaLink).toHaveBeenCalledWith("g1", 24 * 60 * 60 * 1000);
-    expect(surface().textContent).toContain("open the asset for 24 hours");
-    expect(surface().textContent).not.toContain("for 10 minutes");
+    expect(surface().textContent).toContain("open the asset for 6 hours");
+    expect(surface().textContent).not.toContain("open the asset for 24 hours");
   });
 
-  it("FRONT-A5 默认仍是 10 minutes,四档预设都挑得到,还有一格 Custom…", async () => {
+  it("FRONT-A12 默认仍是 10 minutes,四档预设都挑得到,还有一格 Custom…", async () => {
     await renderPanel();
 
     const select = control<HTMLSelectElement>("Link duration");
@@ -402,7 +414,8 @@ describe("FRONT-A5 ⑤ Copy link 的有效期", () => {
     expect(options).toEqual(["10 minutes", "1 hour", "24 hours", "7 days", "Custom…"]);
   });
 
-  it("FRONT-A5 自定义 2 hours:发下去的是 2 小时,成功句写 2 hours", async () => {
+  it("FRONT-A12 自定义 2 hours:发下去的是 2 小时,成功句照服务端签的那个时长写", async () => {
+    serverTtlMs = 90 * 60 * 1000;
     await renderPanel();
 
     await setControl(control<HTMLSelectElement>("Link duration"), "custom");
@@ -411,10 +424,11 @@ describe("FRONT-A5 ⑤ Copy link 的有效期", () => {
     await click(buttonNamed(surface(), "Copy link"));
 
     expect(mocks.getPublicMediaLink).toHaveBeenCalledWith("g1", 2 * 60 * 60 * 1000);
-    expect(surface().textContent).toContain("open the asset for 2 hours");
+    expect(surface().textContent).toContain("open the asset for 90 minutes");
+    expect(surface().textContent).not.toContain("open the asset for 2 hours");
   });
 
-  it("FRONT-A5 挑过的那一档记在这台浏览器上,并且屏幕上说明了这件事", async () => {
+  it("FRONT-A12 挑过的那一档记在这台浏览器上,并且屏幕上说明了这件事", async () => {
     await renderPanel();
     await setControl(control<HTMLSelectElement>("Link duration"), String(60 * 60 * 1000));
 
@@ -428,6 +442,53 @@ describe("FRONT-A5 ⑤ Copy link 的有效期", () => {
     root = null;
     await renderPanel();
     expect(control<HTMLSelectElement>("Link duration").value).toBe(String(60 * 60 * 1000));
+  });
+
+  it("FRONT-A12 自定义值正好等于某个预设(60 分钟):重开面板仍停在 Custom…,不跳回预设档", async () => {
+    await renderPanel();
+
+    await setControl(control<HTMLSelectElement>("Link duration"), "custom");
+    await setControl(control<HTMLInputElement>("Custom link duration"), "60");
+    // 60 minutes 与「1 hour」那一档是同一个毫秒数。只存数字的话,重开面板会跳回预设档 ——
+    // 商家会以为自己填的那一格没保住(#1210 判官 P2-e)。
+    await act(async () => root?.unmount());
+    container?.remove();
+    root = null;
+    await renderPanel();
+
+    expect(control<HTMLSelectElement>("Link duration").value).toBe("custom");
+    expect(control<HTMLInputElement>("Custom link duration").value).toBe("1");
+    expect(control<HTMLSelectElement>("Custom link duration unit").value).toBe("hours");
+  });
+
+  it("FRONT-A12 只开面板不碰那一格:一个字都不往浏览器存储里写;真改了才写", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    try {
+      await renderPanel();
+      // 挂载就写＝把默认档冒充成「商家挑过的偏好」(#1210 判官 P2-d)。
+      expect(setItem).not.toHaveBeenCalled();
+
+      await setControl(control<HTMLSelectElement>("Link duration"), String(60 * 60 * 1000));
+      expect(setItem).toHaveBeenCalled();
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
+  it("FRONT-A12 浏览器禁掉站点存储(getItem 直接抛):面板照常打开,按默认 10 minutes 渲染", async () => {
+    // 隐私设置关掉站点存储时 localStorage 的每一次读都抛。这一格只是个方便,不能连累
+    // 整个素材面板打不开(#1210 判官 P2-c)。
+    const getItem = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("The operation is insecure.", "SecurityError");
+    });
+    try {
+      await renderPanel();
+      expect(surface().textContent).toContain(MERCHANT_PROMPT);
+      expect(control<HTMLSelectElement>("Link duration").value).toBe(String(10 * 60 * 1000));
+      expect(buttonNamed(surface(), "Copy link")).toBeDefined();
+    } finally {
+      getItem.mockRestore();
+    }
   });
 
   it("FRONT-A12 自定义 90 天:当场说不行,一条链子都不铸、也不冒充已复制", async () => {
@@ -459,6 +520,7 @@ describe("FRONT-A5 ⑤ Copy link 的有效期", () => {
   it("FRONT-A12 换一张变体:上一轮的「Copied!」与那句时长当场作废(剪贴板里是上一张的链子)", async () => {
     await renderPanel(two);
 
+    serverTtlMs = 24 * 60 * 60 * 1000;
     await setControl(control<HTMLSelectElement>("Link duration"), String(24 * 60 * 60 * 1000));
     await click(buttonNamed(surface(), "Copy link"));
     expect(surface().textContent).toContain("Copied!");

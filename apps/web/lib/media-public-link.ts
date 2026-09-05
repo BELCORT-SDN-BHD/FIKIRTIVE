@@ -49,6 +49,19 @@ export function publicMediaTtlFromCustom(raw: string, unit: PublicMediaTtlUnit):
 }
 
 /**
+ * 毫秒 → 自定义那两格(`publicMediaTtlFromCustom` 的**逆**)。整小时说小时,其余说分钟。
+ * 两个方向必须待在同一处:面板重开时要把存着的毫秒数还原回商家看得懂的「2 / Hours」,
+ * 换算写在面板里就成了第二个源头 —— 哪天单位多一格,只改一边就会两边打架(§7.3)。
+ */
+export function publicMediaTtlToCustom(ttlMs: number): { value: string; unit: PublicMediaTtlUnit } {
+  const wholeHours = ttlMs % (60 * 60 * 1000) === 0;
+  return {
+    value: String(ttlMs / (wholeHours ? 60 * 60 * 1000 : 60 * 1000)),
+    unit: wholeHours ? "hours" : "minutes",
+  };
+}
+
+/**
  * 这个时长能不能用 —— 能用回 `null`,不能用回**说给商家听的那一句**。
  * UI 与服务端动作读同一个函数:屏幕上先拦一次是体验,服务端再拦一次才是闸(fail closed)。
  */
@@ -87,21 +100,49 @@ export const PUBLIC_MEDIA_TTL_SCOPE_NOTE = "Link duration is saved on this brows
 
 const TTL_PICK_KEY = "otto:link-ttl";
 
-/** 读上次挑的时长;没有、坏了、或者越界(上限哪天调小了)一律回 `null` ⇒ 用默认档。 */
-export function readTtlPick(): number | null {
+/**
+ * 上次挑的那一格。除了毫秒数还要记住**它是从哪一格来的**:自定义填了正好等于某个预设的
+ * 数(60 分钟＝1 hour 那一档),只存毫秒的话重开面板会跳回预设档 —— 商家会以为自己填的
+ * 那一格没保住。所以来源与数字一起存。
+ */
+export type PublicMediaTtlPick = { ttlMs: number; source: "preset" | "custom" };
+
+/**
+ * 读上次挑的那一格;没有、坏了、或者越界(上限哪天调小了)一律回 `null` ⇒ 用默认档。
+ *
+ * localStorage 本身也会**直接抛**:浏览器隐私设置里把站点存储关掉、iframe 里的第三方
+ * cookie 拦截、无痕模式配额为零 —— 这时连 `getItem` 都是异常。这一格只是个方便,绝不能
+ * 让整个素材面板打不开,所以抛了就当「没挑过」,按默认档渲染。
+ */
+export function readTtlPick(): PublicMediaTtlPick | null {
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(TTL_PICK_KEY);
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(TTL_PICK_KEY);
+  } catch {
+    return null;
+  }
   if (raw === null) return null;
-  const n = Number(raw);
+  const [source, ms] = raw.split(":");
+  if (source !== "preset" && source !== "custom") return null;
+  const n = Number(ms);
   if (publicMediaTtlProblem(n) !== null) return null;
-  return n;
+  return { ttlMs: n, source };
 }
 
-/** 记下这次挑的时长。只在通过校验时调用 —— 存一个用不了的值等于下次开面板就报错。 */
-export function writeTtlPick(ttlMs: number): void {
+/**
+ * 记下这次挑的那一格。只在通过校验时写 —— 存一个用不了的值等于下次开面板就报错。
+ * 写不进去(存储被禁 / 配额满)同样不是商家要处理的事:这次挑的时长照常生效,只是下次
+ * 不记得,所以吞掉,绝不让它炸到面板上。
+ */
+export function writeTtlPick(pick: PublicMediaTtlPick): void {
   if (typeof window === "undefined") return;
-  if (publicMediaTtlProblem(ttlMs) !== null) return;
-  window.localStorage.setItem(TTL_PICK_KEY, String(ttlMs));
+  if (publicMediaTtlProblem(pick.ttlMs) !== null) return;
+  try {
+    window.localStorage.setItem(TTL_PICK_KEY, `${pick.source}:${pick.ttlMs}`);
+  } catch {
+    // 记不住比打不开好。
+  }
 }
 
 /**
