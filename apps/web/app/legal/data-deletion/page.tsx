@@ -89,6 +89,18 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *     getGenerationThumbs 过滤 deletedAt(lib/data.ts:20)取不到 url,于是 canvas-actions.ts:75
  *     把状态判为 "missing",ImageNode.tsx:171 渲染 FailedBody,GeneratingBody.tsx:60 显示
  *     "Preview missing"。r1 写「removes it from your library and canvas views」是失实的,已改。
+ *     ⚠️ 2026-09-05 K5b 修正(清单 B3 / P1-007 的对外那一半):这一条原本还写着
+ *     「choose Delete … cannot be undone」—— 键名与后果两处都已经不是实话。键名在
+ *     components/asset/DetailPanel.tsx 上是 **Move to trash**(确认框 `confirmDetails`
+ *     的 title/confirmLabel 同源);而软删的逆动作 `restoreGeneration`
+ *     (lib/actions.ts,`deletedAt` 写回 null)已经有了商家自己按得到的入口 ——
+ *     components/library/LibraryView.tsx 的 More filters → Show → Trash 那一格,点一格开
+ *     「Restore this asset?」。所以「cannot be undone」是第二句关于我们自己的假话,本轮改成
+ *     实话并写清恢复路径(路径逐字对着 LibraryView 的工具条:`showFilters={gridView}`,
+ *     所以 More filters 只在 Generation history / Uploads 两格上,指路先带回 Generation history)。
+ *     天数仍然一个字都不说 —— 全仓没有清扫任务硬删这些行,没有单一来源可引用。
+ *     「stored file 尚未被自动清理」与「canvas 卡片仍在、显示 Preview missing」两句是既有事实,
+ *     原样保留。围栏:lib/__tests__/data-deletion-trash-copy.test.ts。
  *   · 断开 Meta —— lib/meta-actions.ts:103 `disconnectMeta`,:107 删整行 MetaConnection;
  *     该表字段见 prisma/schema.prisma:1122-1142(metaUserId / accessTokenEnc / scope /
  *     defaultPageId 等),故列举到字段一级。UI:components/otto/OttoConnections.tsx:462,
@@ -323,10 +335,16 @@ export default async function DataDeletionPage({
             <li>
               <span className="text-foreground">A generated asset in your library.</span> Open{" "}
               <span className="text-foreground">Library</span>, open the asset, and choose{" "}
-              <span className="text-foreground">Delete</span>, then confirm. This removes the asset from your library
-              and cannot be undone. It does not clear the asset off a campaign canvas: any canvas card showing it stays
-              where it is and reads <span className="text-foreground">Preview missing</span>. The stored file behind it
-              is not yet removed by an automatic clean-up job.
+              <span className="text-foreground">Move to trash</span>, then confirm. This takes the asset out of your
+              library and leaves it in trash, and you can bring it back yourself: go to{" "}
+              <span className="text-foreground">Library</span> →{" "}
+              <span className="text-foreground">Generation history</span> →{" "}
+              <span className="text-foreground">More filters</span> → <span className="text-foreground">Show</span> →{" "}
+              <span className="text-foreground">Trash</span>, select the asset there and confirm{" "}
+              <span className="text-foreground">Restore</span>. Fikirtive does not put a number of days on that wait:
+              nothing removes these rows on a timer. It does not clear the asset off a campaign canvas: any canvas card
+              showing it stays where it is and reads <span className="text-foreground">Preview missing</span> until you
+              restore it. The stored file behind it is not yet removed by an automatic clean-up job.
             </li>
             <li>
               <span className="text-foreground">A saved reference.</span> Library also lists the products, characters,

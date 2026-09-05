@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockOwner, mockGenFindMany, mockFavoriteFindMany, mockStorageExists } = vi.hoisted(() => ({
+const {
+  mockOwner,
+  mockGenFindMany,
+  mockFavoriteFindMany,
+  mockUnderstandingFindMany,
+  mockStorageExists,
+} = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockGenFindMany: vi.fn(),
   mockFavoriteFindMany: vi.fn(),
+  mockUnderstandingFindMany: vi.fn(),
   mockStorageExists: vi.fn(),
 }));
 
@@ -14,6 +21,9 @@ vi.mock("@fikirtive/db", () => ({
     // 收藏的权威从 2026-09-03 起是 `Favorite` 那张跨类型的表(前端基线 §7.3② / 裁决十),
     // 所以每一页的 favorite 都要向它问一次 —— `Generation.favorite` 那一列已经没有读者。
     favorite: { findMany: mockFavoriteFindMany },
+    // 卡片标题的摘要那一半(清单 B4):Otto 读懂素材之后写下的那一句住在
+    // `AssetUnderstanding`,每一页向它问一次 —— 提示词从来不是摘要。
+    assetUnderstanding: { findMany: mockUnderstandingFindMany },
   },
 }));
 vi.mock("@fikirtive/core", () => ({
@@ -38,6 +48,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockOwner.mockResolvedValue({ ownerId: "u1", email: "a@b.c" });
   mockFavoriteFindMany.mockResolvedValue([]);
+  mockUnderstandingFindMany.mockResolvedValue([]);
   mockStorageExists.mockResolvedValue(true);
 });
 
@@ -151,7 +162,7 @@ describe("getGenerationHistory — paging & mapping", () => {
     mockFavoriteFindMany.mockResolvedValue([{ subjectId: "a" }]);
     const res = await getGenerationHistory({ take: 60 });
     if ("error" in res) throw new Error("unexpected error");
-    expect(res.items[0]).toEqual({ id: "a", projectId: "p-a", assetId: "asset-a", url: "https://cdn/u1/h-a.mp4", kind: "video", source: "generated", prompt: "p-a", filename: "", width: null, height: null, durationS: null, favorite: true, createdAt: "2026-01-03T00:00:00.000Z" });
+    expect(res.items[0]).toEqual({ id: "a", projectId: "p-a", assetId: "asset-a", url: "https://cdn/u1/h-a.mp4", kind: "video", source: "generated", prompt: "p-a", filename: "", summary: "", width: null, height: null, durationS: null, favorite: true, createdAt: "2026-01-03T00:00:00.000Z" });
     expect(res.items[1].kind).toBe("image");
     expect(res.hasMore).toBe(false);
     expect(res.nextCursor).toBe(null);
@@ -254,5 +265,80 @@ describe("FRONT-A5 Library toolbar 的每一条筛选都落到服务端查询上
     expect(res.items[0].filename).toBe("raya.png");
     expect(res.items[0].width).toBe(1024);
     expect(res.items[0].height).toBe(1280);
+  });
+});
+
+/**
+ * 清单 B4(P2-014)—— 卡片标题的**摘要**那一半从哪一列来。
+ *
+ * 变异自查:把 `libraryAssetSummaries` 的 `kind` 条件去掉 ⇒「只认 image-caption」红;
+ * 让它把空串也放进 map ⇒「空摘要 = 没有摘要」红。
+ */
+describe("FRONT-A5 卡片标题的摘要来自 AssetUnderstanding,不是提示词", () => {
+  it("每一页只问一次,而且只问 image-caption 的 DONE 行", async () => {
+    mockGenFindMany.mockResolvedValue([row("g1", "png", "2026-09-03T10:00:00Z")]);
+    mockUnderstandingFindMany.mockResolvedValue([
+      { assetId: "asset-g1", summary: "A jar of pandan kaya on a rattan table" },
+    ]);
+    const page = await getGenerationHistory({ take: 10 });
+    if ("error" in page) throw new Error(page.error);
+    expect(mockUnderstandingFindMany).toHaveBeenCalledTimes(1);
+    expect(mockUnderstandingFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          ownerId: "u1",
+          kind: "image-caption",
+          status: "DONE",
+          assetId: { in: ["asset-g1"] },
+        }),
+      }),
+    );
+    expect(page.items[0].summary).toBe("A jar of pandan kaya on a rattan table");
+  });
+
+  it("没有理解行的素材摘要是空串 —— 不拿提示词冒充摘要", async () => {
+    mockGenFindMany.mockResolvedValue([row("g1", "png", "2026-09-03T10:00:00Z")]);
+    mockUnderstandingFindMany.mockResolvedValue([]);
+    const page = await getGenerationHistory({ take: 10 });
+    if ("error" in page) throw new Error(page.error);
+    expect(page.items[0].summary).toBe("");
+    expect(page.items[0].prompt).toBe("p-g1");
+  });
+
+  it("只有空白的摘要等于没有摘要", async () => {
+    mockGenFindMany.mockResolvedValue([row("g1", "png", "2026-09-03T10:00:00Z")]);
+    mockUnderstandingFindMany.mockResolvedValue([{ assetId: "asset-g1", summary: "   " }]);
+    const page = await getGenerationHistory({ take: 10 });
+    if ("error" in page) throw new Error(page.error);
+    expect(page.items[0].summary).toBe("");
+  });
+});
+
+/**
+ * 清单 B3(P1-007)—— 回收站读的是同一个读模型,只是 `deletedAt` 那一列反过来。
+ *
+ * 变异自查:把 `trashed` 分支改回恒 `deletedAt: null` ⇒ 这两条红。
+ */
+describe("FRONT-A5 回收站是同一个查询的一个开关", () => {
+  it("trashed:true 只要已删的行,其余筛选照旧", async () => {
+    mockGenFindMany.mockResolvedValue([]);
+    await getGenerationHistory({ take: 10, trashed: true, mediaKind: "video" });
+    expect(mockGenFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ ownerId: "u1", deletedAt: { not: null } }),
+      }),
+    );
+  });
+
+  it("不传就还是只要活着的行 —— 回收站不会漏进正常列表", async () => {
+    mockGenFindMany.mockResolvedValue([]);
+    await getGenerationHistory({ take: 10 });
+    expect(mockGenFindMany.mock.calls[0][0].where.deletedAt).toBeNull();
+  });
+
+  it("收藏那一路接不住回收站 ⇒ 当场说不行,不悄悄返回一页活着的收藏", async () => {
+    const result = await getGenerationHistory({ favoriteOnly: true, trashed: true });
+    expect("error" in result && result.error).toContain("trashed");
+    expect(mockGenFindMany).not.toHaveBeenCalled();
   });
 });
