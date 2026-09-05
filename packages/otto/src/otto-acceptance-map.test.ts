@@ -3,8 +3,9 @@
  *
  * 规格 docs/specs/otto-engine.md 的验收表有七行(ENGINE-A1–A7),而 S2 §7.1 把它们按依赖
  * 切成七段、三批。这个文件是**全表**的登记处:哪一段落地就把它那一行转正,
- * 别处不再另立第二份登记表。今天已转正四条:ENGINE-A5(①段 §7.2①)、ENGINE-A2(②段 §7.2②)、
- * ENGINE-A4(⑤段 §7.2⑤)、ENGINE-A1(③段 §7.2③,基线档案已入档)。
+ * 别处不再另立第二份登记表。今天已转正五条:ENGINE-A5(①段 §7.2①)、ENGINE-A2(②段 §7.2②)、
+ * ENGINE-A4(⑤段 §7.2⑤)、ENGINE-A1(③段 §7.2③,基线档案已入档)、
+ * ENGINE-A3(⑦段 §7.2⑦,真身见 apps/web/lib/__tests__/engine-a3-canvas-conversation.test.tsx)。
  *
  * 这个文件的用处与 Creation 那份(packages/core/src/creation-acceptance-map.test.ts)相同:
  * **把没交付的那几条说出口**,而不是让它们从测试树上消失 ——
