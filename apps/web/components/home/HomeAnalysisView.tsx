@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useTransition, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -16,7 +17,7 @@ import {
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { Alert, AlertDescription, AlertTitle } from "@/design-system/primitives/alert";
 import { Badge } from "@/design-system/primitives/badge";
-import { buttonVariants } from "@/design-system/primitives/button";
+import { Button, buttonVariants } from "@/design-system/primitives/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/design-system/primitives/empty";
 import { DesktopHomeRequired, useDesktopHome } from "@/design-system/patterns/founder-home/DesktopHomeBoundary";
 import {
@@ -36,15 +37,30 @@ import { HomeFilterPicker } from "./HomeFilterPicker";
 import { ReadyHomeAnalysis } from "./ReadyHomeAnalysis";
 import { MARKETING_HOME_COPY } from "./marketing-home-copy";
 
+/**
+ * 与 Home 那一侧同形:恢复动作要么是**去别处**(真链接),要么是**再读一次这一页**
+ * (真按钮)。没有第三种(裁决九)。
+ */
+type BlockedContent = {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  action: string;
+} & ({ href: string; retry?: false } | { retry: true; href?: undefined });
+
 function BlockedAnalysis({
   health,
   context,
+  onRetry,
+  retrying,
 }: {
   health: Exclude<MarketingHealthReadModel, { state: "partial" | "ready" }>;
   context: HomeAnalysisContext;
+  onRetry: () => void;
+  retrying: boolean;
 }) {
   const homeHref = homeHrefFromAnalysis(context);
-  const content = health.state === "not-configured"
+  const content: BlockedContent = health.state === "not-configured"
     ? {
         icon: <Database />,
         title: health.action === "reconnect" ? MARKETING_HOME_COPY.analysis.reconnectTitle : MARKETING_HOME_COPY.analysis.connectTitle,
@@ -67,7 +83,12 @@ function BlockedAnalysis({
           title: MARKETING_HOME_COPY.analysis.unavailableTitle,
           description: MARKETING_HOME_COPY.analysis.unavailableDescription,
           action: "Retry analysis",
-          href: homeAnalysisHref(context),
+          /**
+           * 与 Home 的 Retry 同一条理由:这以前是一条指回**同一个地址**的链接,重取靠的是
+           * Next 对 same-page 导航的特判,不是我们自己的保证(判官 2026-09-05 P2-1)。
+           * 现在是一颗按钮,按下去 `router.refresh()`,服务器重跑这一页、真的再读一次 Meta。
+           */
+          retry: true,
         };
 
   return (
@@ -79,7 +100,13 @@ function BlockedAnalysis({
           <EmptyDescription>{content.description}</EmptyDescription>
         </EmptyHeader>
         <div className="mt-5 flex items-center justify-center gap-2">
-          <Link href={content.href} className={buttonVariants({ size: "sm" })}>{content.action}</Link>
+          {content.retry ? (
+            <Button type="button" size="sm" onClick={onRetry} disabled={retrying}>
+              {retrying ? "Retrying…" : content.action}
+            </Button>
+          ) : (
+            <Link href={content.href} className={buttonVariants({ size: "sm" })}>{content.action}</Link>
+          )}
           <Link href={homeHref} className={buttonVariants({ variant: "ghost", size: "sm" })}>Back to Home</Link>
         </div>
       </Empty>
@@ -108,7 +135,12 @@ function PartialAnalysis({
         <Database aria-hidden />
         <AlertTitle>{MARKETING_HOME_COPY.analysis.limitedCoverageTitle}</AlertTitle>
         <AlertDescription>
-          {MARKETING_HOME_COPY.analysis.limitedCoverageDescription(health.period, health.freshness.label)}
+          {/* 「数到哪一天」只在真有那一天时说 —— 拿不到日序列时不往这句话尾巴上贴一句
+              「Freshness unavailable」(Home 那一侧同一条口径)。 */}
+          {MARKETING_HOME_COPY.analysis.limitedCoverageDescription(
+            health.period,
+            health.freshness.status === "known" ? health.freshness.label : null,
+          )}
         </AlertDescription>
       </Alert>
 
@@ -186,6 +218,20 @@ function PartialAnalysis({
   );
 }
 
+/**
+ * 顶栏那一行 provenance —— 「这一页的数是谁报的、数到哪一天」。逐字来自读模型:
+ * 来源标签由服务器给,时间戳只在 `known` 时才说(`home-marketing-health.ts` 的
+ * `freshnessFromSeries` 拿不到日序列就回 `unknown`)。这里不拼任何形容词。
+ */
+function sourceProvenance(
+  health: Extract<MarketingHealthReadModel, { state: "partial" | "ready" }>,
+): string {
+  const reported = health.state === "ready"
+    ? health.sources.map((source) => source.label).join(" · ")
+    : health.source.label;
+  return health.freshness.status === "known" ? `${reported} · ${health.freshness.label}` : reported;
+}
+
 export function HomeAnalysisView({
   context,
   health,
@@ -195,6 +241,9 @@ export function HomeAnalysisView({
 }) {
   const router = useRouter();
   const isDesktop = useDesktopHome();
+  /** Retry analysis 的重取 —— 与 Home 同一条路子,见 `BlockedAnalysis` 的注释。 */
+  const [retrying, startRetry] = useTransition();
+  const retry = () => startRetry(() => router.refresh());
   const goalLabel = HOME_GOALS.find((item) => item.value === context.goal)?.label ?? "Online sales";
 
   if (!isDesktop) return <DesktopHomeRequired />;
@@ -204,12 +253,14 @@ export function HomeAnalysisView({
       <BlockedAnalysis
         context={context}
         health={{ state: "insufficient", goal: context.goal, source: health.source }}
+        onRetry={retry}
+        retrying={retrying}
       />
     );
   }
 
   if (health.state !== "partial" && health.state !== "ready") {
-    return <BlockedAnalysis health={health} context={context} />;
+    return <BlockedAnalysis health={health} context={context} onRetry={retry} retrying={retrying} />;
   }
 
   return (
@@ -223,8 +274,20 @@ export function HomeAnalysisView({
           <Target className="size-4 text-muted-foreground" aria-hidden /> {goalLabel}
         </span>
         <HomeFilterPicker label="Date range" icon={CalendarRange} value={context.range} options={HOME_RANGES} onValueChange={(value) => router.push(homeAnalysisHref(context, { range: value as HomeRange }), { scroll: false })} />
-        <HomeFilterPicker label="Comparison" icon={ArrowUpRight} value={context.comparison} options={HOME_COMPARISONS} onValueChange={(value) => router.push(homeAnalysisHref(context, { comparison: value as HomeComparison }), { scroll: false })} />
-        <span className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground"><Database className="size-3.5" aria-hidden /> Live source data</span>
+        {/* Comparison 只在 `ready` 版面出现 —— 读得懂它的只有多来源 aggregate 的对比栏
+            (`ReadyHomeAnalysis` 的 `dashboard.comparison`)。partial 单源分析里没有任何
+            东西消费它:这一页只按 `range` 去读 Meta,换个对比口径页面上一个数字都不变。
+            摆着它就是摆一颗点了没反应的控件(裁决九)。URL 那一段照旧解析与保留。 */}
+        {health.state === "ready" ? (
+          <HomeFilterPicker label="Comparison" icon={ArrowUpRight} value={context.comparison} options={HOME_COMPARISONS} onValueChange={(value) => router.push(homeAnalysisHref(context, { comparison: value as HomeComparison }), { scroll: false })} />
+        ) : null}
+        {/* 这一栏过去写死一句「Live source data」—— 不管数据从哪来、有多旧都照说。
+            「Live」是一句没人验过的新鲜度断言(与 `MarketingHealthFreshness` 刻意不叫
+            `current` 是同一条道理,判官 2026-09-05 P2-3)。现在它逐字来自读模型:说得出
+            是谁报的,有真时间戳才补一句数到哪一天。 */}
+        <span className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground">
+          <Database className="size-3.5" aria-hidden /> {sourceProvenance(health)}
+        </span>
       </div>
       {health.state === "partial"
         ? <PartialAnalysis health={health} context={context} />
