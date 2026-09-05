@@ -45,8 +45,10 @@ export const MARKETING_HOME_COPY = {
     partialDataHealthTitle: "Meta ads is the only reporting source",
     partialPerformanceTitle: "Meta ads changed during this period",
     limitedCoverageTitle: "Limited source coverage",
-    limitedCoverageDescription: (period: string, freshness: string) =>
-      `This explanation uses Meta ads only for the selected ${period}. It does not claim revenue impact or cross-channel attribution. ${freshness}.`,
+    // `freshness` 为 null = 拿不到 Meta 的日序列,没有真时间戳。那就不说 —— 句尾贴一句
+    // 「Freshness unavailable.」既不是新鲜度,也帮不上商家判断这份解释能不能用。
+    limitedCoverageDescription: (period: string, freshness: string | null) =>
+      `This explanation uses Meta ads only for the selected ${period}. It does not claim revenue impact or cross-channel attribution.${freshness ? ` ${freshness}.` : ""}`,
     partialMeaningFallback: "Meta ads supplied observable activity for this period.",
     partialMeaningBoundary:
       "Add another supported source before using this as a complete marketing-health conclusion.",
