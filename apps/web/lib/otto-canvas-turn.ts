@@ -47,13 +47,33 @@
  * `currentTurnStartIndex`）：这一轮既没有终局、Otto 也还没开口，就诚实地什么都不说，
  * 卡面落回 `CANVAS_TURN_EMPTY_TEXT`。
  *
+ * ## 失败要**立刻**上脸（2026-09-05 走查修复一）
+ *
+ * 上面那套只认两种**落了库**的终局（GEN_RESULT / TURN_ERROR），而落库那份要等整页刷新才
+ * 回到 `messages` 里 —— 直播里没有任何东西把它接进来（`appendMissingCards` 只补卡，
+ * `backfillMissingAssistantText` 只补一句 TEXT）。走查录到的就是这半段：在画布里发一句、
+ * 这一轮失败，48 秒内卡上一直是绿灯「Ready」，失败只出现在默认折起的 Conversation 抽屉里；
+ * 刷新一次，同一张卡立刻变「Failed … Reference: OTTO-…」。商家读到的是「按了没反应」。
+ *
+ * 病根不是少了一个订阅，是**这一轮的终局有两种到达方式而投影只认一种**。所以这里加的不是
+ * 第二个状态源，是同一个终局的另外两条到达路径：
+ *
+ *   · 直播：失败作为一个 `data-error` 部件挂在这一轮那条 assistant 消息上（AI SDK 把非
+ *     transient 的 data 部件写进 `message.parts`，抽屉里那张告示读的就是它）；
+ *   · 传输级：流还没打开就断了，消息上没有部件，调用方把 `useChat` 的那个 error 作为
+ *     `liveError` 传进来。
+ *
+ * 三条路径出来的是**同一个** `TurnTerminal`，所以卡面、圆点、抽屉不可能各说各话，刷新前后
+ * 也是同一张脸。
+ *
  * 顺带修掉一件死掉的接线：`failed` 从前的唯一触发是 `ChatThreadDTO.status`，而画布这条路
  * 上的 thread 由 `toChatThreadDTO` 建（`lib/dto.ts:196`），**它根本不写 status**（只有线程
  * 列表那份 `toChatThreadMetaDTO` 写）。也就是说画布卡的 failed 态从来没有可能出现过。
  * 现在它和 done 一样，由这一轮自己的消息给 —— 一个来源，不是两个。
  */
-import type { OttoStatusData } from "./otto-stream-bridge";
+import type { OttoStatusData, OttoErrorData } from "./otto-stream-bridge";
 import type { TraceStepView } from "./otto-status-helpers";
+import { dataErrorOf, persistedStreamErrorOf } from "./otto-status-helpers";
 import { turnNarrationText } from "./otto-turn-narration";
 import { STILL_WORKING_NOTE } from "./progress-format";
 import { creditsLabel } from "./credit-format";
@@ -146,6 +166,14 @@ export function canvasTurnStatus(input: CanvasTurnInput): CanvasTurnStatus {
       busy: false,
     };
   }
+  // 这一轮的终局。停着的时候，卡面说的就是这一轮真正结束在哪 —— 而不是「Ready」。
+  const outcome = input.terminal?.outcome;
+  // 失败排在 `isBusy` 前面（2026-09-05 走查修复一）：`data-error` 是终局部件，路由写完它
+  // 就 `return`，可是 `useChat` 的 status 要等流真的关掉才落回 ready。那半拍里卡上写
+  // 「Working」，说的是一件已经不成立的事 —— 商家看着它转，而这一轮早就结束了。
+  if (outcome === "failed") {
+    return { phase: "failed", label: "Failed", dot: "bg-destructive", detail: null, busy: false };
+  }
   if (input.isBusy) {
     return {
       phase: "working",
@@ -154,11 +182,6 @@ export function canvasTurnStatus(input: CanvasTurnInput): CanvasTurnStatus {
       detail: stalled && detailBase ? `${detailBase} ${STILL_WORKING_NOTE}` : detailBase,
       busy: true,
     };
-  }
-  // 这一轮的终局。停着的时候，卡面说的就是这一轮真正结束在哪 —— 而不是「Ready」。
-  const outcome = input.terminal?.outcome;
-  if (outcome === "failed") {
-    return { phase: "failed", label: "Failed", dot: "bg-destructive", detail: null, busy: false };
   }
   if (outcome === "done") {
     return { phase: "done", label: "Done", dot: "bg-success", detail: null, busy: false };
@@ -235,6 +258,14 @@ export interface TurnTerminal {
   costCredits: number | null;
   /** 失败/取消时那条持久消息自己那句**给商家读**的话（`appendCoworkResult` 写的）。 */
   text: string | null;
+  /**
+   * 失败时那个**有类型**的失败本身，成功与取消是 null。
+   *
+   * 类型决定出路，而不是措辞：`error` 能重试，`insufficient_credits` 要充值，`spend_cap`
+   * 要抬自己的上限 —— 抽屉里那张 `OttoStreamErrorNotice` 分的是同一个岔路口，所以这里带的
+   * 是同一份 `OttoErrorData`，不是一句被再解析一次的话。
+   */
+  error: OttoErrorData | null;
 }
 
 /** 一条消息的 text 部件拼起来。`latestAssistantSayable` 与这里共用同一条判据。 */
@@ -283,10 +314,24 @@ function sayableSince(messages: readonly TurnMessage[], start: number): string |
  * 为什么要按轮切：商家做完一次生成再开口说下一句，那一次成功就不再是「此刻这一轮」的结论了。
  * 卡上还挂着上一轮的 Done，就是同一种漂移换个方向。
  */
-export function latestTurnTerminal(messages: readonly TurnMessage[]): TurnTerminal | null {
+export function latestTurnTerminal(
+  messages: readonly TurnMessage[],
+  liveError?: OttoErrorData | null,
+): TurnTerminal | null {
   const start = currentTurnStartIndex(messages);
   for (let i = messages.length - 1; i >= start; i--) {
     const m = messages[i];
+    // 直播这一轮的失败,在它落库之前就在这里(2026-09-05 走查修复一)。路由把失败写成一个
+    // `data-error` 部件,AI SDK 把非 transient 的 data 部件**写进这条 assistant 消息的
+    // parts**(`dataErrorOf` 的抬头钉着这条实证),抽屉里那张告示读的就是同一个部件。
+    // 从前这里只认落了库的 TURN_ERROR,而它要等整页刷新才回来 —— 于是失败的那 48 秒,
+    // 卡上写着「Ready」。
+    const live = m.role === "assistant"
+      ? dataErrorOf(m.parts as ReadonlyArray<{ type: string; data?: unknown }>)
+      : null;
+    if (live) {
+      return { index: i, outcome: "failed", kind: null, count: 0, costCredits: null, text: live.text, error: live };
+    }
     const kind = m.metadata?.kind;
     if (kind !== "GEN_RESULT" && kind !== "TURN_ERROR") continue;
     const payload = (m.metadata?.payload ?? {}) as {
@@ -296,13 +341,18 @@ export function latestTurnTerminal(messages: readonly TurnMessage[]): TurnTermin
       cancelled?: unknown;
     };
     if (kind === "TURN_ERROR") {
+      const durableText = textOf(m.parts);
+      const cancelled = payload.cancelled === true;
       return {
         index: i,
-        outcome: payload.cancelled === true ? "cancelled" : "failed",
+        outcome: cancelled ? "cancelled" : "failed",
         kind: null,
         count: 0,
         costCredits: null,
-        text: textOf(m.parts) || null,
+        text: durableText || null,
+        // 刷新之后那个岔路口还得在：持久 payload 上存着的就是当初 data-error 那一份
+        // （`persistStreamTurnError` 原样写下的），抽屉里那张告示读的是同一个函数。
+        error: cancelled ? null : persistedStreamErrorOf(m.metadata?.payload, durableText),
       };
     }
     return {
@@ -313,6 +363,21 @@ export function latestTurnTerminal(messages: readonly TurnMessage[]): TurnTermin
       costCredits: typeof payload.costCredits === "number" ? payload.costCredits : null,
       // 成功那条的 text 是内部占位串（`🖼 result`），不是给商家读的话 —— 不带出来。
       text: null,
+      error: null,
+    };
+  }
+  // 流还没打开就断了的那一种（`useChat` 的传输级 error）：这一轮的消息上不会有任何部件，
+  // 失败只活在调用方的 status 里。它同样是这一轮的终局，所以从这里进同一条投影 —— 而不是
+  // 在组件里长出第二个「卡该说什么」的判断。
+  if (liveError) {
+    return {
+      index: messages.length,
+      outcome: "failed",
+      kind: null,
+      count: 0,
+      costCredits: null,
+      text: liveError.text,
+      error: liveError,
     };
   }
   return null;
@@ -350,8 +415,11 @@ function terminalSentence(terminal: TurnTerminal): string | null {
  * 商家失败之后开口说下一句，这一轮只有一张待确认的新卡，正文却仍挂着上一轮那句失败 ——
  * 因为从前不切轮。空态句比一句过期的失败诚实。
  */
-export function canvasTurnText(messages: readonly TurnMessage[]): string | null {
-  const terminal = latestTurnTerminal(messages);
+export function canvasTurnText(
+  messages: readonly TurnMessage[],
+  liveError?: OttoErrorData | null,
+): string | null {
+  const terminal = latestTurnTerminal(messages, liveError);
   const said = sayableSince(messages, currentTurnStartIndex(messages));
   if (!terminal) return said;
   // Otto 那句话在不在终局之后？在，就说他的原话。
