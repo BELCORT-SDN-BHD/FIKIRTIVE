@@ -3,7 +3,7 @@
  *
  * 规格 docs/specs/otto-engine.md 的验收表有七行(ENGINE-A1–A7),而 S2 §7.1 把它们按依赖
  * 切成七段、三批。这个文件是**全表**的登记处:哪一段落地就把它那一行转正,
- * 别处不再另立第二份登记表。今天已转正两条:ENGINE-A5(①段 §7.2①)、ENGINE-A2(②段 §7.2②)。
+ * 别处不再另立第二份登记表。今天已转正三条:ENGINE-A5(①段 §7.2①)、ENGINE-A2(②段 §7.2②)、ENGINE-A4(⑤段 §7.2⑤)。
  *
  * 这个文件的用处与 Creation 那份(packages/core/src/creation-acceptance-map.test.ts)相同:
  * **把没交付的那几条说出口**,而不是让它们从测试树上消失 ——
@@ -28,8 +28,10 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.1 七段)", () => {
   it.todo("ENGINE-A1 评测集 v0 ≥10 题逐个判分 + 基线档案入档 —— ③段 §7.2③(packages/otto/evals/ 今天还不存在)");
   it.todo("ENGINE-A6 长对话旧轮折成摘要、对话继续,新一轮成本不随历史无限上涨 —— ④段 §7.2④");
 
-  // ── 批 II(依赖批 I)──────────────────────────────────────────────────────
-  it.todo("ENGINE-A4 跑满步数且零交付的一轮全额退款,消费历史可见退款行 —— ⑤段 §7.2⑤(钱路重挡)");
+  // ── ⑤段(已交付,真身在这三个文件里)────────────────────────────────────
+  it.todo("ENGINE-A4 见 apps/web/lib/__tests__/engine-a4-truncated-turn-refund.test.ts(真库:零交付 → reserve/refund 成对、余额净变 0、消费历史「Held, then refunded in full」;有交付 → 按实结算不退)+ packages/otto/src/runtime.test.ts(零交付判词:只读/无 item/失败的写 ⇒ 退,落盘的写/铸出的卡片 ⇒ 结算)+ apps/web/lib/__tests__/otto-stream-route.test.ts(入口诚实文案)——⑤段已交付");
+
+  // ── 批 II 的另一段(不在本段写集)─────────────────────────────────────────
   it.todo("ENGINE-A7 技能文件柜替换单体后重跑评测,总分不低于 ENGINE-A1 基线 —— ⑥段 §7.2⑥");
 
   // ── 批 III(等在飞前端基线 PR #1150 / #1151 / #1158 全部合入)──────────────

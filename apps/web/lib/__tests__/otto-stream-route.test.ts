@@ -780,6 +780,43 @@ describe("POST /api/otto/stream — #555 per-turn cost is visible", () => {
     expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "degraded")).toBe(true);
   });
 
+  // ENGINE-A4(规格 docs/specs/otto-engine.md §7.2⑤ 第③刀)—— 入口诚实文案。
+  //
+  // 上一条钉的是「交付了就照收」;这一条钉的是它的另一半:整笔退了的那一轮,商家读到的那句话
+  // 必须自己说出「没收钱」,而且**不许**再挂一条 data-cost。判定来自 withLlmBudget 的
+  // onRefundedFailure 钩子(引擎侧的零交付判词已经在 packages/otto/src/runtime.test.ts 钉过),
+  // 这里替身照真实合约触发它。
+  it("ENGINE-A4: 截断且整笔退款的一轮,降级句自己说「没收钱」,而且不报花费", async () => {
+    mocks.run.mockRejectedValue(new MaxTurnsExceededError("too many turns"));
+    mocks.chatMessageFindFirst.mockResolvedValue({ seq: 3 });
+    // 真实合约:fn 抛了、usageOnError 交回 null ⇒ 整笔退款 ⇒ 钩子响 ⇒ 原错误照抛。
+    mocks.withLlmBudget.mockImplementation(
+      async (args: { onRefundedFailure?: () => void }, fn: () => Promise<unknown>) => {
+        try {
+          return await fn();
+        } catch (e) {
+          args.onRefundedFailure?.();
+          throw e;
+        }
+      },
+    );
+
+    const parts = await (await POST(req({ projectId: "proj_stream", text: "go round in circles" }))).json();
+
+    expect(mocks.chatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ text: "I got a bit tangled up — try asking again. This turn wasn't charged." }),
+      }),
+    );
+    expect(parts).toEqual(
+      expect.arrayContaining([
+        { type: "data-status", data: { kind: "degraded", text: "I got a bit tangled up — try asking again. This turn wasn't charged." } },
+      ]),
+    );
+    // 净变 0 的一轮没有花费可报 —— 报一个数就是在说一件没发生的事。
+    expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
+  });
+
   it("charges nothing and says nothing when the reserve itself failed", async () => {
     mocks.run.mockRejectedValue(new mocks.MockInsufficientCredits());
     mocks.creditLedgerFindMany.mockResolvedValue([]);

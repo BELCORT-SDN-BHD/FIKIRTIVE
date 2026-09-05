@@ -380,12 +380,269 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
     expect(args.paid).toBe(true);
     expect(args.maxSteps).toBe(OTTO_MAX_STEPS);
     expect(args.prices).toBe(llmPricesFor("claude-sonnet-4-6"));
-    // Truncation metering: MaxTurnsExceededError carrying state.usage → ACTUAL usage settle.
+    // Truncation metering: MaxTurnsExceededError carrying state.usage → ACTUAL usage settle,
+    // **只在这一轮真的交付了东西时**(ENGINE-A4,⑤段)。这里放一张铸出来的卡 —— 卡是唯一能
+    // 从 state 单独读出来的交付(落盘的产物由工具当场记账,见下面那一组用例)。
     const truncated = new MaxTurnsExceededError("max turns");
-    (truncated as unknown as { state: unknown }).state = { usage: { inputTokens: 7, outputTokens: 3 } };
+    (truncated as unknown as { state: unknown }).state = {
+      usage: { inputTokens: 7, outputTokens: 3 },
+      _generatedItems: [
+        { type: "tool_approval_item", rawItem: { type: "function_call", callId: "c1", name: "generate", arguments: "{}", status: "completed" } },
+      ],
+    };
     expect(args.usageOnError?.(truncated)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
     expect(args.usageOnError?.(new MaxTurnsExceededError("no state"))).toBeNull();
     expect(args.usageOnError?.(new Error("boom"))).toBeNull();
+  });
+
+  // ── ENGINE-A4(⑤段 §7.2⑤):截断轮退款的判定,在 budget args 这一层 ──────────────────
+  //
+  // 这几条钉的是**判词本身**,不是账本(账本那一半在 apps/web 的真库行为测试里)。判词只有
+  // 一句话:usageOnError 交回 null ⇒ meter.ts 整笔退款;交回用量 ⇒ 按实结算。
+  //
+  // 落修轮(判官 P1-A)之后,「写动作成功了没有」不再从 SDK 的 state 上读 —— SDK 对 function
+  // tool 的结果一律写 status:"completed",抛错、`{ needMoreInfo }`、`{ ok:false, error }` 三种
+  // 失败全躲在那面牌子后面。所以下面的用例**真的把工具调一遍**,走的正是生产那条包装路径。
+  describe("ENGINE-A4 — 截断轮:零交付交回 null(整笔退款),有交付照旧按实结算", () => {
+    const truncatedWith = (items: unknown[]) => {
+      const e = new MaxTurnsExceededError("max turns");
+      (e as unknown as { state: unknown }).state = {
+        usage: { inputTokens: 7, outputTokens: 3 },
+        _generatedItems: items,
+      };
+      return e;
+    };
+
+    /** 一个真的落盘的写技能。 */
+    const writeLands = defineOttoSkill({
+      name: "rememberBrandFact",
+      cost: "free", effect: "write", reach: "internal",
+      description: "Test-only write skill that lands.",
+      parameters: z.object({ v: z.string() }),
+      execute: async () => ({ ok: true, id: "rec_1" }),
+    });
+    /** 技能自己拒绝(manage-canvas.ts 那一连串 `{ ok:false, error }`)。 */
+    const writeRefuses = defineOttoSkill({
+      name: "manageCanvas",
+      cost: "free", effect: "write", reach: "internal",
+      description: "Test-only write skill that refuses.",
+      parameters: z.object({ v: z.string() }),
+      execute: async () => ({ ok: false, error: "place needs `type` (text | image | video)." }),
+    });
+    /** `execute` 抛错 —— SDK 的 defaultToolErrorFunction 把它折成一句普通文本当返回值。 */
+    const writeThrows = defineOttoSkill({
+      name: "saveProduct",
+      cost: "free", effect: "write", reach: "internal",
+      description: "Test-only write skill that throws.",
+      parameters: z.object({ v: z.string() }),
+      execute: async () => { throw new Error("upstream said no"); },
+    });
+    /** `requires` 闸拦下 —— 返回 `{ needMoreInfo }`。 */
+    const writeNeedsInfo = defineOttoSkill({
+      name: "setTitle",
+      cost: "free", effect: "write", reach: "internal",
+      description: "Test-only write skill behind a requires gate.",
+      parameters: z.object({ title: z.string() }),
+      requires: [{ field: "title", question: "What title?" }],
+      execute: async () => ({ ok: true }),
+    });
+    /** 成功的**读** —— 轮子死了商家手里什么都不剩,不算交付。 */
+    const readOnly = defineOttoSkill({
+      name: "lookupProducts",
+      cost: "free", effect: "read", reach: "internal",
+      description: "Test-only read skill.",
+      parameters: z.object({ v: z.string() }),
+      execute: async () => ({ ok: true, products: [] }),
+    });
+
+    const rt = () =>
+      createOttoRuntime(
+        {
+          modelRuntime: paidFixtureModelRuntime(fakeTextModel("hi")),
+          skills: [writeLands, writeRefuses, writeThrows, writeNeedsInfo, readOnly],
+        },
+        "interactive",
+      );
+
+    /** 直接调这一轮**组合出来的**那把工具(生产里 SDK 调的就是它),带上这一轮的 ctx。 */
+    const callTool = async (
+      runtime: ReturnType<typeof createOttoRuntime>,
+      name: string,
+      args: Record<string, unknown>,
+      ctx: OttoContext,
+    ): Promise<unknown> => {
+      const t = runtime.agent.tools.find((x) => (x as { name?: string }).name === name) as unknown as {
+        invoke: (rc: { context: OttoContext }, input: string) => Promise<unknown>;
+      };
+      return t.invoke({ context: ctx }, JSON.stringify(args));
+    };
+
+    /** 每个用例一个**新的 ctx 对象** —— 记账本按 ctx 分账,两轮不串。 */
+    const freshCtx = (): OttoContext => ({ ...baseCtx });
+    const verdict = (runtime: ReturnType<typeof createOttoRuntime>, ctx: OttoContext | undefined, e: unknown, input: unknown = "x") =>
+      ottoBudgetArgsFor(runtime, { orgId: "org_1", refId: "otto-stream:m1", input: input as never }, ctx).usageOnError?.(e);
+
+    it("ENGINE-A4:什么都没交付(只成功搜了几次网)⇒ null ⇒ 整笔退款,搜索腿一并退", async () => {
+      const runtime = rt();
+      const ctx = freshCtx();
+      await callTool(runtime, "lookupProducts", { v: "kopi" }, ctx);
+      const onlyReads = truncatedWith([
+        { type: "tool_call_item", rawItem: { type: "function_call", callId: "c1", name: "lookupProducts", arguments: "{}", status: "completed" } },
+        { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c1", name: "lookupProducts", status: "completed" } },
+        { type: "message_output_item", rawItem: { type: "message", role: "assistant", content: [{ type: "output_text", text: "still thinking" }] } },
+      ]);
+      expect(verdict(runtime, ctx, onlyReads)).toBeNull();
+    });
+
+    it("ENGINE-A4:零 item 的截断轮 ⇒ null", () => {
+      expect(verdict(rt(), freshCtx(), truncatedWith([]))).toBeNull();
+    });
+
+    it("ENGINE-A4:落盘的产物(真的写成了的写动作)⇒ 按实结算,不退", async () => {
+      const runtime = rt();
+      const ctx = freshCtx();
+      const out = await callTool(runtime, "rememberBrandFact", { v: "we sell kopi" }, ctx);
+      expect(out).toMatchObject({ ok: true });
+      const wrote = truncatedWith([
+        { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c1", name: "rememberBrandFact", status: "completed" } },
+      ]);
+      expect(verdict(runtime, ctx, wrote)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    });
+
+    it("ENGINE-A4:铸出的卡片(停在审批位上的调用)⇒ 按实结算,不退", () => {
+      const carded = truncatedWith([
+        { type: "tool_approval_item", rawItem: { type: "function_call", callId: "c1", name: "generate", arguments: "{}", status: "completed" } },
+      ]);
+      expect(verdict(rt(), freshCtx(), carded)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    });
+
+    // ── 判官 P1-A:失败的写**在 SDK 的 state 上与成功的写一模一样** ──────────────────
+    //
+    // 三种失败各一条。每条都先断言 SDK 侧记下来的那一行确实是 status:"completed"(即「照 state
+    // 判就会误判成有交付」),再断言判词交回 null。
+    const failures: Array<[string, string, Record<string, unknown>]> = [
+      ["技能自己拒绝 `{ ok:false, error }`(Otto 拿错参数反复重试的那条死胡同)", "manageCanvas", { v: "x" }],
+      ["`execute` 抛错(SDK 把它折成一句普通文本当返回值)", "saveProduct", { v: "x" }],
+      ["`requires` 闸拦下 `{ needMoreInfo }`", "setTitle", { title: "   " }],
+    ];
+    for (const [label, name, args] of failures) {
+      it(`ENGINE-A4:失败的写不算交付 —— ${label} ⇒ null`, async () => {
+        const runtime = rt();
+        const ctx = freshCtx();
+        await callTool(runtime, name, args, ctx);
+        // SDK 侧这一行长这样:名字在交付名单里,状态是 completed —— 从 state 判必然误判。
+        const failedWrite = truncatedWith([
+          { type: "tool_call_output_item", rawItem: { type: "function_call_result", callId: "c1", name, status: "completed" } },
+        ]);
+        expect(runtime.deliveringActionNames.has(name)).toBe(true);
+        expect(verdict(runtime, ctx, failedWrite)).toBeNull();
+      });
+    }
+
+    it("ENGINE-A4:一轮里既有失败的写也有成功的写 ⇒ 有交付,按实结算", async () => {
+      const runtime = rt();
+      const ctx = freshCtx();
+      await callTool(runtime, "manageCanvas", { v: "x" }, ctx);
+      await callTool(runtime, "rememberBrandFact", { v: "ok" }, ctx);
+      expect(verdict(runtime, ctx, truncatedWith([]))).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    });
+
+    it("ENGINE-A4:两轮不串账 —— 上一轮的落盘不能让这一轮免退", async () => {
+      const runtime = rt();
+      const first = freshCtx();
+      await callTool(runtime, "rememberBrandFact", { v: "ok" }, first);
+      const second = freshCtx();
+      expect(verdict(runtime, first, truncatedWith([]))).not.toBeNull();
+      expect(verdict(runtime, second, truncatedWith([]))).toBeNull();
+    });
+
+    // ── 判官 P1-B:恢复轮的起点 ────────────────────────────────────────────────
+    //
+    // `RunState.fromString` 把上一轮的 `_generatedItems` 整条带回来,里面就有上一轮那张
+    // tool_approval_item —— 那张卡的钱早在**别的 refId** 下付过了。从 0 数起的话,ottoApprove
+    // 那一门在一步都还没跑的时候就已经「有交付」,ENGINE-A4 在那条钱腿上等于没落地。
+    it("ENGINE-A4:恢复轮只数这一轮新长出来的 —— 上一轮那张卡不算这一轮的交付 ⇒ null", () => {
+      const carriedOver = [
+        { type: "tool_call_item", rawItem: { type: "function_call", callId: "c1", name: "generate", arguments: "{}", status: "completed" } },
+        { type: "tool_approval_item", rawItem: { type: "function_call", callId: "c1", name: "generate", arguments: "{}", status: "completed" } },
+      ];
+      const resumed = { _generatedItems: carriedOver, _context: { context: {} } };
+      expect(verdict(rt(), freshCtx(), truncatedWith([...carriedOver]), resumed)).toBeNull();
+    });
+
+    // 生产里恢复轮的 RunState 是**就地**长大的:错误身上带回来的和 `request.input` 是同一个
+    // 对象。起点必须在**跑之前**折好,否则到判词那一刻起点已经等于终点,这一轮新铸的卡会被
+    // 一起抹掉 —— 该收的钱变成退款。
+    it("ENGINE-A4:恢复轮的 state 就地长大 —— 起点在跑之前折好,新铸的卡照样算交付", () => {
+      const items: unknown[] = [
+        { type: "tool_approval_item", rawItem: { type: "function_call", callId: "c1", name: "generate", arguments: "{}", status: "completed" } },
+      ];
+      const resumed = { _generatedItems: items, _context: { context: {} } };
+      // 跑之前建 args(生产里 runOttoTurn 就是这个次序)。
+      const usageOnError = ottoBudgetArgsFor(
+        rt(),
+        { orgId: "org_1", refId: "otto-approve:t:c:a1", input: resumed as never },
+        freshCtx(),
+      ).usageOnError;
+      // 跑到一半:这一轮又铸了一张卡,就地追加进同一个数组。
+      items.push({ type: "tool_approval_item", rawItem: { type: "function_call", callId: "c2", name: "renderVideo", arguments: "{}", status: "completed" } });
+      const e = new MaxTurnsExceededError("max turns");
+      (e as unknown as { state: unknown }).state = { usage: { inputTokens: 7, outputTokens: 3 }, ...resumed };
+      expect(usageOnError?.(e)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    });
+
+    it("ENGINE-A4:恢复轮的 state 就地长大 —— 这一轮什么都没铸 ⇒ 仍是零交付,null", () => {
+      const items: unknown[] = [
+        { type: "tool_approval_item", rawItem: { type: "function_call", callId: "c1", name: "generate", arguments: "{}", status: "completed" } },
+      ];
+      const resumed = { _generatedItems: items, _context: { context: {} } };
+      const usageOnError = ottoBudgetArgsFor(
+        rt(),
+        { orgId: "org_1", refId: "otto-approve:t:c:a1", input: resumed as never },
+        freshCtx(),
+      ).usageOnError;
+      items.push({ type: "message_output_item", rawItem: { type: "message", role: "assistant", content: [{ type: "output_text", text: "hmm" }] } });
+      const e = new MaxTurnsExceededError("max turns");
+      (e as unknown as { state: unknown }).state = { usage: { inputTokens: 7, outputTokens: 3 }, ...resumed };
+      expect(usageOnError?.(e)).toBeNull();
+    });
+
+    it("ENGINE-A4:恢复轮自己又铸出一张新卡 ⇒ 有交付,按实结算", () => {
+      const carriedOver = [
+        { type: "tool_approval_item", rawItem: { type: "function_call", callId: "c1", name: "generate", arguments: "{}", status: "completed" } },
+      ];
+      const resumed = { _generatedItems: carriedOver, _context: { context: {} } };
+      const grew = truncatedWith([
+        ...carriedOver,
+        { type: "tool_approval_item", rawItem: { type: "function_call", callId: "c2", name: "renderVideo", arguments: "{}", status: "completed" } },
+      ]);
+      expect(verdict(rt(), freshCtx(), grew, resumed)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    });
+
+    it("ENGINE-A4:包装名单来自注册表的 effect:\"write\",不是第二份手抄名单", () => {
+      const write = [...ottoInteractiveRuntime.deliveringActionNames];
+      expect(write).toContain("manageCanvas");
+      expect(write).toContain("rememberBrandFact");
+      expect(write).not.toContain("researchWeb");
+      expect(write).not.toContain("lookupProducts");
+      // 包装名单必然是动作白名单的子集 —— 两者折自同一份 deps.skills。
+      for (const name of write) expect(ottoInteractiveRuntime.actionNames.has(name)).toBe(true);
+    });
+
+    it("ENGINE-A4:包装只改记账,模型看到的返回值一个字节都没变", async () => {
+      const runtime = rt();
+      const ctx = freshCtx();
+      expect(await callTool(runtime, "rememberBrandFact", { v: "a" }, ctx)).toEqual({ ok: true, id: "rec_1" });
+      expect(await callTool(runtime, "manageCanvas", { v: "a" }, ctx)).toEqual({
+        ok: false,
+        error: "place needs `type` (text | image | video).",
+      });
+      expect(await callTool(runtime, "setTitle", { title: " " }, ctx)).toEqual({
+        needMoreInfo: [{ field: "title", question: "What title?" }],
+      });
+      // 抛错那条:SDK 的 defaultToolErrorFunction 折成一句普通文本 —— 不是对象,所以不算落盘。
+      expect(await callTool(runtime, "saveProduct", { v: "a" }, ctx)).toContain("upstream said no");
+    });
   });
 
   // ── Founder 的第二次裁决(2026-08-18):对话按用量收费,API 成本 + 5% ──────────────────────
@@ -905,6 +1162,10 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
       // ENGINE-A2: the trace's action whitelist travels with the runtime. This hand-built
       // legacy runtime mirrors createOttoRuntime's derivation from the same skill list.
       actionNames: new Set(allSkills.map((skill) => skill.name)) as ReadonlySet<string>,
+      // ENGINE-A4: 同一份名单的写子集,同样照 createOttoRuntime 的推导写一遍。
+      deliveringActionNames: new Set(
+        allSkills.filter((skill) => skill.effect === "write").map((skill) => skill.name),
+      ) as ReadonlySet<string>,
     });
     const parkedResult = await runOttoTurn(
       { orgId: "org_t", refId: "fixture:legacy-park", input: "approve the legacy post" },

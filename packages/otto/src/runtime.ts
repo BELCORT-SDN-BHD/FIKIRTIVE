@@ -77,8 +77,9 @@ export type CacheCapabilities = {
   readonly promptCache: boolean;
 };
 
-/** Credit price lookup for a billable model id (production: llmPricesFor — unknown
- *  model falls back to sonnet pricing, NEVER zero). */
+/** Credit price lookup for a billable model id (production: llmPricesFor — ENGINE-A5(①段):
+ *  一个不在价目表里的型号 THROWS。猜价(子串匹配 → sonnet 兜底)已经删掉,所以这里再没有
+ *  「查不到也能收钱」的那条路。 */
 export type PricingLookup = (modelId: string) => LlmPrices;
 
 /**
@@ -115,6 +116,15 @@ export type OttoRuntime = {
    *  WHITELIST the turn trace folds tool names through: a name that is not in here can never
    *  reach the trace row, so no model-authored string can ride in on that field. */
   readonly actionNames: ReadonlySet<string>;
+  /** ENGINE-A4 — the subset of `actionNames` that can LEAVE SOMETHING BEHIND: every composed
+   *  skill declared `effect: "write"` (registry.ts). A call to one of these can be a canvas
+   *  node, a saved product, a written message artifact; a call to anything else is a READ,
+   *  which hands the merchant nothing they still have after the turn dies. Derived from the
+   *  SAME `deps.skills` as `actionNames`, so the two can never drift.
+   *
+   *  这份名单是**包装名单**,不是判词:一个名字在这里,只说明它那把工具被
+   *  `countingDeliveryTool` 包了一层;这一轮到底落没落盘,由那一层当场记的账说了算。 */
+  readonly deliveringActionNames: ReadonlySet<string>;
 };
 
 /**
@@ -148,12 +158,18 @@ const defaultRuntimeExecution: OttoRuntimeExecution = Object.freeze({
  *    恢复轮全量装载; eval mirrors the production budget, spec §13.3.)
  */
 export function createOttoRuntime(deps: OttoRuntimeDeps, profile: OttoRunProfile): OttoRuntime {
+  // ENGINE-A4: one filter, used twice — 决定给谁包一层,以及对外公布的那份名单。`effect` 是
+  // 每个技能自己声明的字段(skill.ts),所以这不是第二份手抄名册,新技能也不会被漏掉。
+  const delivering = new Set(deps.skills.filter((s) => s.effect === "write").map((s) => s.name));
   const agent = new Agent<OttoContext>({
     name: "Otto",
     instructions: ottoInstructions,
     model: deps.modelRuntime.binding,
     modelSettings: { maxTokens: OTTO_OUTPUT_CAP_TOKENS },
-    tools: deps.skills.map((s) => s.tool),
+    // ENGINE-A4:写技能多包一层,好在它**真的落盘**的那一刻记一笔(countingDeliveryTool)。
+    // 为什么不能事后从 SDK 的 state 上数出来,见那个函数的注释:「跑完了」与「落盘了」在
+    // state 上长得一模一样。
+    tools: deps.skills.map((s) => (delivering.has(s.name) ? countingDeliveryTool(s.tool) : s.tool)),
   });
   return Object.freeze({
     profile,
@@ -163,6 +179,8 @@ export function createOttoRuntime(deps: OttoRuntimeDeps, profile: OttoRunProfile
     // ENGINE-A2: the trace's action whitelist, derived from the very same list the tools are
     // built from — one registry, so the two can never drift into "traced but not composed".
     actionNames: Object.freeze(new Set(deps.skills.map((s) => s.name))) as ReadonlySet<string>,
+    // ENGINE-A4: the very set the tools above were wrapped from — one filter, no second copy.
+    deliveringActionNames: Object.freeze(delivering) as ReadonlySet<string>,
   });
 }
 
@@ -343,6 +361,115 @@ export function collectTurnTraceFacts(
     skillFiles,
     truncated,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENGINE-A4 — 这一轮交付了什么(spec §7.2⑤)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The COUNTER §7.2⑤ asks for: how many deliverables THIS turn left behind.
+ *
+ * 「交付」的口径是**结构性**的,不是读文本 —— 没有任何一处去看模型说了什么:
+ *   · `cards`  = 铸出的卡片:**这一轮新**停在审批位上的调用。商家屏幕上就是一张等他确认的卡。
+ *   · `writes` = 落盘的产物:**这一轮真的写成了**的写动作(画布节点、保存的产品、记下的品牌
+ *                事实……),由包在写技能外面的 `countingDeliveryTool` 当场记账。
+ *
+ * 一次成功的**读**(查产品、搜网页、看排期)不算交付:轮子死了之后商家手里什么都没多。
+ * 这正是本段与钱的接缝 —— 搜索腿也跟着整笔退(§7.2⑤「搜索腿一并退」),而一轮只搜不写的
+ * 截断轮,按这个口径就是零交付。
+ */
+export type OttoTurnDelivery = {
+  readonly cards: number;
+  readonly writes: number;
+};
+
+/** 这一轮的落盘记账本。键是**这一轮自己的 `OttoContext` 对象** —— 每个请求现造一个,和
+ *  `ctx.research.searchSlots` 是同一种「随 run 走的计数器」(§7.2⑤ 的原话就是「由 runOttoTurn
+ *  侧的计数器给出」)。并行的两轮因此互不串账,ctx 被回收时这条记录跟着走。用 WeakMap 而不是
+ *  往 ctx 上加一个字段,只是因为 `context.ts` 不在本段写集里(§7.5 表 A);记在哪里不改口径。 */
+const turnDeliveryTallies = new WeakMap<object, { writes: number }>();
+
+/**
+ * 「跑完了」≠「落盘了」——这一条是本段全部机关的由来。
+ *
+ * SDK 对 function tool 的结果**一律**写 `status: "completed"`(`@openai/agents-core` 的
+ * `getToolCallOutputItem`,两条返回路径都是写死的 'completed'),而我们的写技能失败有三种
+ * 长相,三种都躲在那面「completed」的牌子后面:
+ *   ① `execute` 抛错 —— `tool()` 我们没传 `errorFunction`,SDK 的 `defaultToolErrorFunction`
+ *      把错误折成**一句普通文本**当作返回值(skill.ts:191-193 的注释原话就是这件事);
+ *   ② `requires` 闸拦下 —— 返回 `{ needMoreInfo: [...] }`(skill.ts);
+ *   ③ 技能自己拒绝 —— 返回 `{ ok: false, error: … }`(manage-canvas.ts 一连串就是这个,也正是
+ *      「Otto 拿错参数反复重试直到跑满步数」那条最典型的死胡同)。
+ *
+ * 所以「有没有落盘」只能在**工具返回值**这一层判,而且判的是**我们自己的信封**、不是模型的
+ * 散文:对象里出现 `error` 或 `needMoreInfo` ⇒ 没落盘;返回值根本不是对象(①那句字符串)
+ * ⇒ 没落盘。判不出来就当没落盘 —— fail closed 的方向是退钱。
+ */
+function landedOnDisk(out: unknown): boolean {
+  if (!out || typeof out !== "object") return false;
+  return !("error" in out) && !("needMoreInfo" in out);
+}
+
+/**
+ * 给一个 `effect: "write"` 的技能包一层:它**真的落盘**的那一刻,在这一轮的记账本上记一笔。
+ *
+ * 只做这一件事 —— 参数、审批闸、抛出去的错误、返回值一个字节都不改(SDK 照旧把抛错折成返回
+ * 值,我们照旧原样交回去),所以模型看到的东西与本改动之前逐字相同,记账失败也不会打断一轮
+ * 已经在跑的对话。
+ */
+function countingDeliveryTool(skillTool: OttoSkill["tool"]): OttoSkill["tool"] {
+  const invoke = skillTool.invoke.bind(skillTool);
+  return {
+    ...skillTool,
+    invoke: async (runContext, input, details) => {
+      const out = await invoke(runContext, input, details);
+      const context: unknown = runContext?.context;
+      if (landedOnDisk(out) && context && typeof context === "object") {
+        const tally = turnDeliveryTallies.get(context) ?? { writes: 0 };
+        tally.writes += 1;
+        turnDeliveryTallies.set(context, tally);
+      }
+      return out;
+    },
+  };
+}
+
+/**
+ * Fold one finished/truncated run into the delivery counter.
+ *
+ * `cards` 与②段的 `collectTurnTraceFacts` **同一份事实**(同一个 `generatedItemsOf(state)`、
+ * 同一种结构读法,never cast),`writes` 来自上面那本记账本。SDK 的 state 形状变了就退化成
+ * 「数不到交付」—— 方向是**退钱**,不是照收。
+ *
+ * `baselineItems` 是**这一轮的起点**。`RunState.fromString` 把上一轮的 `_generatedItems` 整条
+ * 带回来(SDK 侧 `generatedItems = preStepItems.concat(newStepItems)`,序列化与反序列化都原样
+ * 保留,全包只有新建 state 那一处会清空),所以恢复轮从 0 数起的话,`ottoApprove` 那一门在
+ * **一步都还没跑**的时候就已经是「有交付」——上一轮那张 `tool_approval_item` 就在里面,而那张
+ * 卡的钱早在别的 refId 下付过了。只数这一轮新长出来的那一截。
+ */
+export function collectTurnDelivery(
+  state: unknown,
+  context?: object,
+  baselineItems = 0,
+): OttoTurnDelivery {
+  let cards = 0;
+  const items = generatedItemsOf(state);
+  for (let i = Math.max(0, baselineItems); i < items.length; i += 1) {
+    if ((items[i] as { type?: unknown }).type === "tool_approval_item") cards += 1;
+  }
+  return { cards, writes: context ? (turnDeliveryTallies.get(context)?.writes ?? 0) : 0 };
+}
+
+/** 这一轮**输入自带**的 item 数,也就是交付计数的起点。新鲜的一轮(字符串/数组输入)天然
+ *  是 0;恢复轮是上一轮留下的那条历史的长度。 */
+export function turnBaselineItemCount(input: OttoTurnRequest["input"]): number {
+  return generatedItemsOf(input).length;
+}
+
+/** 零交付 = 卡片和落盘产物都是 0。一个字段都不许缺省成「有」—— fail closed 的方向是退钱。 */
+export function turnDelivered(delivery: OttoTurnDelivery): boolean {
+  return delivery.cards + delivery.writes > 0;
 }
 
 /** Hand the facts to the sink. A trace is DIAGNOSTIC: it must never be able to fail a turn the
@@ -615,6 +742,10 @@ export function ottoBudgetArgsFor(
   // rather than two hand-maintained switches, is what made both directions of this ruling a
   // single-constant change.
   const chatChargesCredits = OTTO_CONVERSATION_TURN_MARGIN > 0;
+  // ENGINE-A4:交付计数的**起点**,现在就折。恢复轮的 `RunState` 会在跑的过程中被**就地**
+  // 追加(错误身上带回来的就是同一个对象),所以这一步晚一刻做就等于没做 —— 到 usageOnError
+  // 那一刻再数,起点已经等于终点,这一轮新铸的卡会被一起抹掉。
+  const baselineItems = turnBaselineItemCount(request.input);
   return {
     orgId: request.orgId,
     refId: request.refId,
@@ -642,10 +773,31 @@ export function ottoBudgetArgsFor(
       : undefined,
     extraSettleInternal: slots ? () => searchChargeInternal(slots.succeeded) : undefined,
     prices: mr.pricing(mr.billableModelId),
-    usageOnError: (e: unknown) =>
-      e instanceof MaxTurnsError && (e as { state?: { usage?: unknown } }).state?.usage
-        ? mr.mapUsage((e as { state: { usage: Parameters<UsageMapper>[0] } }).state.usage)
-        : null,
+    // ENGINE-A4(规格 §7.2⑤,Founder S1 九问 1② 的裁决)—— **截断且零交付的一轮全额退款**。
+    //
+    // 从前这里只问一件事:「跑满步数的错误身上带着真实用量吗?」带着就按实结算。meter.ts 的
+    // 不变量 #10 把那条路写成 by design:「delivery-less but paid」。裁决把它改了 —— 商家手里
+    // 什么都没多出来的一轮,不收钱;烧掉的 token 与已经成功的搜索由平台吸收。
+    //
+    // 判定读两样东西:错误自己带回来的 RunState(卡片,与②段的档案同一份事实),以及这一轮
+    // 写技能的当场记账(落盘产物,`countingDeliveryTool`)—— 后者不能从 state 上数,因为 SDK
+    // 对失败的工具也写 status:"completed"(见 landedOnDisk)。
+    // 返回 null ⇒ 走 meter.ts 的整笔退款分支:退的是**整个预扣**(含 extraHoldUnits 那几格
+    // 坚实预留的搜索钱,refundReservation 的金额读自 RESERVE 行,不分腿),并触发既有的
+    // `onRefundedFailure` 只读钩子,让入口能对商家说实话。账本形态不变:reserve/refund 成对、
+    // 净变 0,不新增幂等键。
+    //
+    // 有交付的截断轮**维持原状**按实际用量结算 —— 卡片、画布节点、写下的产物都已经在商家
+    // 手里了,那一轮不是白跑。
+    usageOnError: (e: unknown) => {
+      if (!(e instanceof MaxTurnsError)) return null;
+      const state = (e as { state?: { usage?: unknown } }).state;
+      if (!state?.usage) return null;
+      // 起点在上面**跑之前**就折好了(见 baselineItems),只数这一轮新长出来的那一截。
+      const delivery = collectTurnDelivery(state, context, baselineItems);
+      if (!turnDelivered(delivery)) return null;
+      return mr.mapUsage((state as { usage: Parameters<UsageMapper>[0] }).usage);
+    },
   };
 }
 
@@ -710,6 +862,13 @@ function assertResumedStateCarriesLiveContext(input: OttoTurnRequest["input"], c
  * second reserve, no second idempotency key — adds the fold's tokens to what this turn settles,
  * and hands the summary to the entry's writer once the meter is done. A caller that passes no
  * port makes no model call and no write.
+ *
+ * ENGINE-A4 (spec §7.2⑤): the truncated exit is ALSO where the money verdict is made. The same
+ * RunState the trace is folded from decides, through `ottoBudgetArgsFor`'s `usageOnError`,
+ * whether this turn delivered anything — zero delivery ⇒ the whole hold is refunded. The
+ * runner's own control flow is unchanged: the error still propagates untouched. The fold above
+ * rides inside the SAME hold, and it produces no deliverable of its own (no tool call, no card),
+ * so a truncated zero-delivery turn is still refunded WHOLE — the fold's tokens included.
  */
 export async function runOttoTurn(
   request: OttoTurnRequest,

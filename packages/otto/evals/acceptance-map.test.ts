@@ -27,7 +27,7 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.0 七段三批)", () => {
   it.todo("ENGINE-A6 见 packages/otto/src/runtime-history-budget.test.ts 与 src/history-budget.test.ts（④段已交付：成对感知裁剪、旧轮折进 rollingSummary、第 N+1 轮实结不随历史上涨）");
 
   // ── 批 II（依赖批 I）──────────────────────────────────────────────────────
-  it.todo("ENGINE-A4 截断且零交付的一轮全额退款、消费历史可见退款行 —— 批 II §7.2⑤（钱路重挡）");
+  it.todo("ENGINE-A4 见 apps/web/lib/__tests__/engine-a4-truncated-turn-refund.test.ts（真库账本 reserve/refund 成对 + 消费历史退款行）与 packages/otto/src/runtime.test.ts（零交付判词三态）—— ⑤段已交付");
   // ⑥段已交付**机制**（柜子、生成器、装配器、新鲜度闸、单体退役）——真身在
   // packages/otto/src/knowledge-cabinet.test.ts 与 instructions.test.ts 的两道 golden。
   // 但这一行的判定是「重跑评测**总分不低于基线**」，而基线档案 `baselines/engine.json`
