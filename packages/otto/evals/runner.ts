@@ -15,7 +15,8 @@
  * 预算两道，都在花钱之前：
  *   · 本段累计 $20（`SEGMENT_BUDGET_USD`）—— 开跑前把 `baselines/spend.jsonl`（只追加、
  *     不覆盖的花费账本）里每一行的 `costUsd` 加起来，再加上本次全跑的最坏花费，
- *     超了就拒跑，一分钱不花。每成功跑一趟就追加一行，所以「累计」是真累计；
+ *     超了就拒跑，一分钱不花。每跑一趟就追加一行——**中途炸掉的那一趟也追加**（记到
+ *     炸的那一刻为止的真实花费，带 `failed`），所以「累计」是真累计；
  *   · 单次全跑 $10（`FULL_RUN_BUDGET_USD`）—— 每次模型调用之前问一次，超了就地停并非零退出。
  * 两道都不是「跑完再看花了多少」。开跑前的那几道守卫由 `preflight` 判、`guardedRun` 执行，
  * 而 main() 的接线本身是 `runMain({ preflight, runEvals })`：花钱的那一趟是传给它的闭包，
@@ -70,10 +71,17 @@ const BASELINES_DIR = join(HERE, "baselines");
  *
  * 给 0 就是「低一点点也算回归」（旧口径）。负数与读不懂的值当场炸：一个悄悄变成
  * 「永不回归」的容差比没有容差更坏。
+ *
+ * 空值（`--tolerance=`，多半是 shell 里那个变量没展开）也当场炸：`Number("")` 是 0，
+ * 从前它会静默变成**最严**的口径，跑的人以为自己给的是默认的 ±5（判官 2026-09-05 P2-5）。
+ * 「打错字」与「我要 0」必须分得开，所以要 0 得把 0 写出来。
  */
 export function resolveTolerance(argv: readonly string[]): number {
   const raw = argv.find((a) => a.startsWith("--tolerance="))?.slice("--tolerance=".length);
   if (raw === undefined) return REGRESSION_TOLERANCE_POINTS;
+  if (raw.trim() === "") {
+    throw new Error("--tolerance= 后面是空的：要最严的口径请写 --tolerance=0，不给就是默认的 ±5 个百分点");
+  }
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) {
     throw new Error(`--tolerance 要一个 ≥0 的百分点数，收到 "${raw}"`);
@@ -195,12 +203,18 @@ export async function runMain<T>(deps: {
  */
 export const SPEND_LEDGER = join(BASELINES_DIR, "spend.jsonl");
 
-/** 账本一行：哪条线、什么时候、哪个 commit、这一趟真花了多少。 */
+/**
+ * 账本一行：哪条线、什么时候、哪个 commit、这一趟真花了多少。
+ *
+ * `failed: true` ＝ 这一趟中途炸了（判分器读不懂两次、单次预算闸拦下、网络断），
+ * `costUsd` 记的是**炸到那一刻为止**已经真花掉的钱。没有档案可写不等于没花钱。
+ */
 export interface SpendEntry {
   line: EvalLine;
   date: string;
   commit: string;
   costUsd: number;
+  failed?: boolean;
 }
 
 /**
@@ -231,6 +245,36 @@ export function recordedSegmentUsd(ledgerPath: string): number {
 /** 追加一行——只追加，从不改写既有的行（改写就等于把已经花掉的钱抹掉）。 */
 export function appendSpend(ledgerPath: string, entry: SpendEntry): void {
   appendFileSync(ledgerPath, `${JSON.stringify(entry)}\n`);
+}
+
+/**
+ * 花钱的那一趟外面这一层：**炸了也记账**，然后把错误原样抛回去。
+ *
+ * 从前只有跑完写档案那一路会追加账本行。可钱是一次调用一次地花出去的：第七题上判分器
+ * 连读两次都读不懂、或者单次预算闸把这一趟拦停，前六题的钱已经付了，账本却一行都没有。
+ * 累计闸下一次读到的数就偏小，于是「本段累计 $20」会被一趟趟失败悄悄花穿
+ * （判官 2026-09-05 P2-1，方向是低估——正是 fail closed 最不能有的那个方向）。
+ *
+ * `spentUsd()` 读的是计费器**当下**的真实花费，所以记的是「炸到那一刻为止」的钱，
+ * 不是估算、也不是 0。守卫拒跑那一档不经过这里（一分钱没花，不该在账本上留行）。
+ */
+export async function recordingSpend<T>(
+  ledgerPath: string,
+  meta: { line: EvalLine; commit: () => string; now: () => Date; spentUsd: () => number },
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    appendSpend(ledgerPath, {
+      line: meta.line,
+      date: meta.now().toISOString(),
+      commit: meta.commit(),
+      costUsd: meta.spentUsd(),
+      failed: true,
+    });
+    throw err;
+  }
 }
 
 /**
@@ -445,14 +489,19 @@ async function main(): Promise<void> {
         segmentBudgetUsd: SEGMENT_BUDGET_USD,
       }),
     runEvals: () =>
-      runEvals(tasks, makeSubject(model, meter), makeJudge(model, meter), {
-        commit: commitSha(),
-        subjectModel: model,
-        judgeModel: model,
-        budgetUsd,
-        costUsd: () => meter.usd,
-        now: () => new Date(),
-      }),
+      recordingSpend(
+        SPEND_LEDGER,
+        { line, commit: commitSha, now: () => new Date(), spentUsd: () => meter.usd },
+        () =>
+          runEvals(tasks, makeSubject(model, meter), makeJudge(model, meter), {
+            commit: commitSha(),
+            subjectModel: model,
+            judgeModel: model,
+            budgetUsd,
+            costUsd: () => meter.usd,
+            now: () => new Date(),
+          }),
+      ),
   });
   // 钱已经花掉了——不管这一趟是写档案还是 --check，账本都要记上这一行。
   appendSpend(SPEND_LEDGER, {
