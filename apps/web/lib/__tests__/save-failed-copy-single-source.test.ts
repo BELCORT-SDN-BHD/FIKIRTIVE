@@ -41,8 +41,18 @@ function walk(dir: string): string[] {
   });
 }
 
+/**
+ * 覆盖边界(判官 #1219 P2-3):扫的是 `apps/web/` 下这四棵树。`design-system/` 在名单里,
+ * 所以设计系统里的组件也逃不掉(`components/otto/panel` 那条 symlink 只罩住其中一个子树,
+ * 单靠它扫不到别的 pattern)。**不在**名单里的是 `apps/web/e2e/` 与仓库里的 `packages/`——
+ * 那两处今天一份抄件也没有(全仓 grep 该字面量只剩 `lib/save-failed-copy.ts` 一处定义),
+ * 真要在那里写第 9 份,得先把目录加进来。
+ */
 function sourceFiles(): string[] {
-  return ["app", "components", "lib"].flatMap((dir) => walk(path.join(WEB_ROOT, dir)));
+  const files = ["app", "components", "design-system", "lib"].flatMap((dir) => walk(path.join(WEB_ROOT, dir)));
+  // `components/otto/panel` 是指向 `design-system/patterns/otto-panel/` 的 symlink,两棵树
+  // 会把同一份文件各走一遍;去重只是为了报错时不重复点名同一个文件。
+  return [...new Set(files.map((file) => fs.realpathSync(file)))];
 }
 
 describe("FRONT-A12 —— 「没拿到回答」那一句只有一个作者", () => {
