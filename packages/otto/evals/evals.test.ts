@@ -33,8 +33,10 @@ import {
   recordedSegmentUsd,
   resolveLine,
   worstCaseRunUsd,
+  worstCaseSystem,
   type PreflightInput,
 } from "./runner.js";
+import { assembleOttoInstructions } from "../src/instructions.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TASKS_DIR = join(HERE, "tasks", "engine");
@@ -283,5 +285,16 @@ describe("ENGINE-A1 守卫在花钱之前", () => {
     const noRubric = worstCaseRunUsd([task({ rubric: [] })], parts);
     expect(two).toBeCloseTo(one * 2, 12);
     expect(noRubric).toBeLessThan(one);
+  });
+
+  it("ENGINE-A7 最坏花费用的说明书不短于任何一题装出来的那一份（累计闸只许高估）", () => {
+    const tasks = loadTasks(TASKS_DIR, "engine");
+    expect(tasks.length).toBeGreaterThan(1);
+    const worst = worstCaseSystem(tasks);
+    for (const t of tasks) {
+      const assembled = assembleOttoInstructions(t.prompt).text;
+      expect(worst.length).toBeGreaterThanOrEqual(assembled.length);
+      expect(estimateTokens(worst)).toBeGreaterThanOrEqual(estimateTokens(assembled));
+    }
   });
 });

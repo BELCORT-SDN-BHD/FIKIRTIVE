@@ -190,6 +190,20 @@ export function worstCaseRunUsd(
   }, 0);
 }
 
+/**
+ * 纯：本次全跑最坏的那一份说明书 —— 逐题装一遍，取 token 估算最长的那一份，再拼台架后缀。
+ *
+ * ⑥段（ENGINE-A7）之后说明书是**每轮现装**的，每题装出来的不一样长；单体时代那句
+ * `ottoInstructions + HARNESS_SUFFIX` 已经没有对应物。累计闸只许高估不许低估
+ * （fail closed），所以这里取逐题装配里最长的那一份当上界：真跑的任何一题都不会比它贵。
+ */
+export function worstCaseSystem(tasks: readonly EvalTask[]): string {
+  const worst = tasks
+    .map((t) => assembleOttoInstructions(t.prompt).text)
+    .reduce((a, b) => (estimateTokens(b) > estimateTokens(a) ? b : a), "");
+  return worst + HARNESS_SUFFIX;
+}
+
 // ── 计费器：真实用量 × 价目表，每次调用之前过一次预算闸 ──────────────────────
 
 class Meter {
@@ -333,7 +347,7 @@ async function main(): Promise<void> {
   // 本次最坏花费被单次硬上限截住：那一道会在超上限之前就地停，所以这一趟的真实上界就是它。
   const worstCaseUsd = Math.min(
     worstCaseRunUsd(tasks, {
-      system: ottoInstructions + HARNESS_SUFFIX,
+      system: worstCaseSystem(tasks),
       judgeRubric: readFileSync(JUDGE_RUBRIC_PATH, "utf8"),
       prices: llmPricesFor(model),
     }),
