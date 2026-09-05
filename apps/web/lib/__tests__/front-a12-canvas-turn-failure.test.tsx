@@ -121,6 +121,7 @@ function card(
       retryDraft={opts.retryDraft ?? null}
       onApproved={() => {}}
       onChangeSomething={() => {}}
+      onOptionsChanged={() => {}}
     />,
   );
 }
@@ -216,6 +217,7 @@ describe("FRONT-A12 ⑥ 画布状态卡：这一轮失败了就当场说出口",
         retryDraft="make it 1080p"
         onApproved={() => {}}
         onChangeSomething={(seed) => seeded.push(seed)}
+        onOptionsChanged={() => {}}
       />,
     );
     const button = [...el.querySelectorAll("button")].find((b) => b.textContent === EDIT_AND_RETRY_LABEL);

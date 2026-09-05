@@ -170,6 +170,8 @@ export const proposeSkill = defineOttoSkill({
     "Do NOT pick a model or set a price — those are computed server-side. " +
     "When the user wants a few options to choose from (an 'ad pack'), pass count (2–4) " +
     "to offer that many image variants — images only; video is always a single clip. " +
+    "When the user asks for extra-fine detail on a picture, pass fineDetail:true — images " +
+    "only; it costs more and the card shows the new price before they approve. " +
     "For a video that needs a starting picture, propose the picture with forVideo:true AND " +
     "videoPrompt (the seedancePrompt text for the clip): the video's own confirmation card " +
     "is then created for the user once that picture is made — never ask them to bring it back.",

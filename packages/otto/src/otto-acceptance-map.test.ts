@@ -60,5 +60,5 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.1 七段)", () => {
   it.todo("ENGINE-A7 技能文件柜替换单体后重跑评测,总分不低于 ENGINE-A1 基线 —— ⑥段 §7.2⑥");
 
   // ── 批 III(已交付;#1150 / #1151 / #1158 / #1194 / #1197 均已在主干)────────
-  it.todo("ENGINE-A3 见 apps/web/lib/__tests__/engine-a3-canvas-conversation.test.tsx(画布上没有任何直出花钱控件的真渲染集合断言、送出开的是一条 surface=canvas 的对话、花钱动作仍长在 OttoApprovalCard 上、三条常驻价目披露)+ e2e/journeys/engine-a3-canvas-conversation.spec.ts(端到端旅程)——⑦段已交付");
+  it.todo("ENGINE-A3 见 apps/web/lib/__tests__/engine-a3-canvas-conversation.test.tsx(画布上没有任何直出花钱控件的真渲染集合断言、送出开的是一条 surface=canvas 的对话、花钱动作仍长在 OttoApprovalCard 上、三条常驻价目披露)+ e2e/journeys/engine-a3-canvas-conversation.spec.ts(端到端旅程)——⑦段已交付;Founder 2026-09-05「加进确认卡」那三格另见 packages/otto/src/skills/propose-card-options.test.ts + packages/otto/src/skills/propose-card-options.sellability.test.ts(纯判词与精修可售派生)、apps/web/lib/__tests__/otto-card-options-ledger.test.ts(真库 reserve)、apps/web/lib/__tests__/otto-card-options-ui.test.tsx(两处确认位同一份 payload)");
 });

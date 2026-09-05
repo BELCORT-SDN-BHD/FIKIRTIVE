@@ -8,7 +8,10 @@ import { z } from "zod";
 import {
   activeVideoModel,
   buildSpecChips,
+  isSellableImageSku,
   isSellableVideoSku,
+  PRO_IMAGE_MODEL,
+  imageDefaults,
   suggestModel,
   generationUnavailableMessage,
   SELLABLE_VIDEO_RESOLUTIONS,
@@ -19,7 +22,7 @@ import {
   GEN_VIDEO_MODEL_INFO,
   GEN_IMAGE_ASPECTS,
   GEN_IMAGE_MODEL_OPTIONS,
-  GEN_PRICE_USD_PER_IMAGE,
+  genImageCostUsd,
   GEN_VIDEO_SECONDS,
   REFERENCE_VIDEO_MODEL,
   MAX_GEN_PROMPT,
@@ -40,6 +43,9 @@ import {
   type ApprovedEntity,
 } from "@fikirtive/core";
 import type { OttoContext, OttoMediaReference } from "../context.js";
+// 三格控件(张数／形状／精修)的菜单与改档口径 —— 铸卡侧与改档侧共用这一份,抄成两份
+// 必有一份先烂(卡上写着「可以选这几个形状」而真正收得下的是另外几个)。
+import { cardOptionMenu, type CardOptions } from "./propose-card-options.js";
 import { decideVideoAction } from "./video-intent.js";
 import { videoActionUnavailableReason } from "./video-capabilities.js";
 
@@ -68,6 +74,16 @@ export const proposeInput = z.object({
   // Ad pack: how many image options to offer the user to choose from (images only;
   // video is always one clip). Clamped server-side to [1, MAX_GEN_COUNT].
   count: z.number().int().min(1).max(MAX_GEN_COUNT).optional(),
+  /**
+   * 商家点名的**精修档**(图片专用;Founder 2026-09-05 裁决「加进确认卡」)。
+   *
+   * 与画质档(`desiredResolution`)完全同形:它是一格**能力**,不是槽位名 —— 服务端据它
+   * 挑槽位(`routeImageModel` 的同一条判据),按那一档报价,商家在卡上还能自己改。
+   *
+   * 没点名 ⇒ 一格不动(默认槽位)。点了名而这一格今天没有价 ⇒ **拒绝、$0**
+   * (`ImageFineDetailUnavailableError`),绝不静默按默认档报价。
+   */
+  fineDetail: z.boolean().optional(),
   // Set true when this image is the starting keyframe for a video the user asked for —
   // so the card shows the full two-step plan (image now, video next).
   forVideo: z.boolean().optional(),
@@ -204,6 +220,23 @@ export type CardPayload = {
   referenceGenerationIds?: string[];
   /** 这条创作的目的/意图（来自 propose 的资讯门）。展示/审计用。 */
   goal?: string;
+  /**
+   * Founder 2026-09-05 裁决「加进确认卡」—— 这张卡走的是**精修档**。
+   *
+   * 它与 `model` 不是两份事实:`model` 是槽位(付费请求带走的那一格),这一格是**商家勾的
+   * 那一句能力**,卡面据它把开关渲染成打开。两者由同一个函数一起定(`applyCardOptions`),
+   * 所以不可能一格说精修、另一格挂着默认槽位。缺席 = 没勾(默认档),与这条修改之前的
+   * 每一张卡逐字相同。
+   */
+  fineDetail?: true;
+  /**
+   * Founder 2026-09-05 裁决「加进确认卡」—— 三格控件(张数／形状／精修)的**菜单**。
+   *
+   * 服务端唯一一次派生(`cardOptionMenu`),界面照它渲染,自己一格都不写死:界面写死的
+   * 菜单会在槽位换档、能力下架的那一天继续摆着一个点了必然失败的选项。
+   * 缺席(视频卡、这条修改之前铸的老卡)⇒ 卡上不出现这三格,与从前逐字相同。
+   */
+  options?: CardOptions;
   referenceVideoGenerationId?: string;
   /**
    * Codex QA-CRE-FE9-013 —— **这张卡真会带上路的每一件媒体参考的回执**,与
@@ -468,6 +501,21 @@ export class ImageAspectUnavailableError extends ProposeRefusal {
   ) {
     super(imageAspectRefusalCopy(wanted, offered, nearest));
     this.name = "ImageAspectUnavailableError";
+  }
+}
+
+/**
+ * 商家点名了**精修档**,而这一格今天没有价(Founder 2026-09-05 裁决「加进确认卡」)。
+ *
+ * 与画质档那条(`VideoTierUnavailableError`)逐字同一条口径:没有价的格子只能落护栏或
+ * 兜底,那是替 Founder 发明价格;而按默认档铸一张卡是「批精修、做普通」——两档的价还
+ * 不一样。所以拒绝,抛在 `pricedGenCredits` 之前:一张 GEN_CARD 都不落库,ledger 零新增行,
+ * $0。判据是 `isSellableImageSku`,与付费闸 `assertSpendableModel` 同一个函数。
+ */
+export class ImageFineDetailUnavailableError extends ProposeRefusal {
+  constructor() {
+    super("Fine detail isn't available right now — tell me to go ahead without it and I'll set it up.");
+    this.name = "ImageFineDetailUnavailableError";
   }
 }
 
@@ -739,7 +787,7 @@ export function buildDowngradeNote(
  *                        breath as the ownership check, never later.
  */
 export function buildProposeCard(
-  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredResolution" | "desiredAudio" | "count" | "forVideo" | "videoPrompt">,
+  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredResolution" | "desiredAudio" | "count" | "fineDetail" | "forVideo" | "videoPrompt">,
   ctx: OttoContext,
   ownedEntities: ApprovedEntity[],
 ): ProposeCardResult {
@@ -944,6 +992,32 @@ export function buildProposeCard(
   }
 
   /**
+   * Step 3.65(Founder 2026-09-05 裁决「加进确认卡」)—— **图片侧的档位,与视频侧同形**。
+   *
+   * 商家说「要精修的」时,`suggestModel` 给不出这一档:它的图片支把槽位写死成默认那一台
+   * (那是对的 —— 槽位由**能力**挑,而能力位过去只有画布那条路带得动)。于是这里做与
+   * `routeVideoModel` 完全同形的一件事:能力 → 槽位,然后让下面每一站(画幅两证人、
+   * 报价、卡面规格)统统按**这一档**来算。
+   *
+   * 两条判据缺一不可,而且都在报价、预扣之前:
+   *   ① 这一格**有已裁的价**(`isSellableImageSku`,与付费闸同一个函数)—— 没有就拒绝,
+   *      不按默认档铸卡(那是「批精修、做普通」,而两档的价还不一样);
+   *   ② 换档之后**形状要重新落到这一档的菜单上** —— pro 的像素上限更低,16:9 / 9:16
+   *      两格收不下。商家点名的形状若不在,下面 Step 3.7 的两个证人会照实拒绝;他没点名
+   *      的,这里回落到这一档自己的默认形状,而不是留一个这台引擎必拒的值。
+   */
+  const wantsFineDetail = kind === "image" && input.fineDetail === true;
+  if (wantsFineDetail) {
+    if (!isSellableImageSku(PRO_IMAGE_MODEL)) throw new ImageFineDetailUnavailableError();
+    sm.model = PRO_IMAGE_MODEL;
+    const proMenu = GEN_IMAGE_MODEL_OPTIONS[PRO_IMAGE_MODEL].aspectRatios;
+    if (!proMenu.includes(sm.params.aspectRatio ?? "")) {
+      sm.params.aspectRatio = imageDefaults(PRO_IMAGE_MODEL).aspectRatio;
+    }
+    sm.reason = `image → fine-detail tier — ${sm.params.aspectRatio}`;
+  }
+
+  /**
    * Step 3.7(Codex QA-CRE-FE9-014,规格 §5 2026-09-04)—— **画幅与画质档同一条规矩**:
    * 商家点名的形状要么原样上卡,要么一张卡都不铸。
    *
@@ -1015,7 +1089,9 @@ export function buildProposeCard(
           audio: !!sm.params.audio,
           count: sm.params.count,
         })
-      : GEN_PRICE_USD_PER_IMAGE * sm.params.count;
+      // record-only 的引擎成本按**这张卡自己那一档**的钉点取(复审 r1 P2-2):精修卡跑的是
+      // pro,写死 lite 基数会让毛利核算读到偏低的数。报价仍然只有 `pricedGenCredits` 一处。
+      : genImageCostUsd(sm.model) * sm.params.count;
 
   // Step 4.5: the DISPLAYED charge in CREDITS — computed from the SAME pricedGenCredits
   // value startGen reserves (gen-actions.ts), so the card quote equals what actually
@@ -1176,6 +1252,9 @@ export function buildProposeCard(
    */
   const shapeFollowsWhatTheyGave = hasSourceImage || anchoredToClip;
 
+  /** Founder 2026-09-05「加进确认卡」—— 这张图片卡上那三格控件的菜单(视频卡不带)。 */
+  const optionMenu = kind === "image" ? cardOptionMenu(sm.model) : null;
+
   // Step 4.8: 审批身份快照 —— 这张卡最终留下的每个 @元素,配上它**此刻**的名字与类型。
   // 只认 ownedEntities 里那一份(归属查询同一趟读出来的),`entityIds` 里找不到身份的
   // 元素宁可不进快照:少一个名字是安全的降级,编一个名字不是。
@@ -1253,6 +1332,11 @@ export function buildProposeCard(
     variantSel,
     estimatedPriceUsd: price,
     estimatedCredits,
+    // Founder 2026-09-05「加进确认卡」—— 商家勾的那一句能力,以及这张卡上三格控件的菜单。
+    // 视频卡两格都不带(一条片子不成组、画质那一格走 `desiredResolution` 自己的路),所以
+    // 视频卡的 payload 形状与这条修改之前逐字相同。
+    ...(wantsFineDetail ? { fineDetail: true as const } : {}),
+    ...(optionMenu ? { options: optionMenu } : {}),
     ...(videoStep ? { videoStep } : {}),
     // isI2V | usesAttachedImage ⇒ !!ctx.sourceGenerationId, so the non-null assertion is sound.
     // video ⇒ i2v 起始帧；image ⇒ 引擎的编辑底图（第一参考）。两条路都真的送图。

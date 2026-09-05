@@ -42,6 +42,8 @@ import { planCardGate } from "./plan-card-contract";
 // Codex QA-CRE-FE9-013 —— 参考回执那一块。抽屉里那张卡读的是同一个组件。
 import { CardReferenceReceipt } from "./CardReferenceReceipt";
 import { runPlanApproval } from "./plan-approval";
+// Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修),与抽屉里那张卡共用一份。
+import { CardOptionControls } from "./CardOptionControls";
 import { EDIT_AND_RETRY_LABEL } from "./OttoStreamErrorNotice";
 import { CardApprovalRef } from "./CardApprovalRef";
 import type { PlanApproveOutcome } from "./OttoPlanCard";
@@ -66,6 +68,9 @@ export interface OttoTurnCardProps {
   onApproved: (outcome: PlanApproveOutcome) => void;
   /** 「Change」把这张卡的原话塞回输入框，让商家改了再来。 */
   onChangeSomething: (seed: string) => void;
+  /** 改完三格之后服务端重铸的那张卡,原样交回父组件 —— 抽屉里那张卡下一帧读到的是同一份
+   *  (复审 r1 P1-1:两处各留一份就是「卡上一个数、预扣另一个数」)。 */
+  onOptionsChanged: (cardId: string, payload: unknown) => void;
   /**
    * 这一轮失败时，商家原来打的那句话 —— 有它才出「Edit and retry」（2026-09-05 走查修复一）。
    * 只有能重试的那一种失败给得出（充值 / 抬上限那两种的出路不在这里），判据在调用方，
@@ -83,6 +88,7 @@ export function OttoTurnCard({
   confirmCards,
   onApproved,
   onChangeSomething,
+  onOptionsChanged,
   retryDraft,
 }: OttoTurnCardProps) {
   const failed = status.phase === "failed";
@@ -147,6 +153,7 @@ export function OttoTurnCard({
             card={card}
             onApproved={onApproved}
             onChangeSomething={onChangeSomething}
+            onOptionsChanged={onOptionsChanged}
           />
         ))}
       </div>
@@ -164,15 +171,20 @@ function CanvasConfirmRow({
   card,
   onApproved,
   onChangeSomething,
+  onOptionsChanged,
 }: {
   card: CanvasConfirmCard;
   onApproved: (outcome: PlanApproveOutcome) => void;
   onChangeSomething: (seed: string) => void;
+  onOptionsChanged: (cardId: string, payload: unknown) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Codex staging CRE-STG-P2-004 —— 失败那一句旁边的可复制短号(服务端日志里同一串)。 */
   const [errorRef, setErrorRef] = useState<string | null>(null);
+  // 改完三格之后服务端重铸的那张卡不停在这里:它顺着 `onOptionsChanged` 走回 OttoChatStream,
+  // 写进这条消息的 metadata.payload,再从 `card.payload` 流回来 —— 抽屉里那张卡读的是同一份
+  // (复审 r1 P1-1)。
   const gate = planCardGate(card.payload);
   const p = gate.value;
   const credits = gate.credits;
@@ -231,6 +243,16 @@ function CanvasConfirmRow({
           />
         </div>
       ) : null}
+      {/* Founder 2026-09-05「加进确认卡」—— 张数／形状／精修就长在这里,批准之前可以改。
+          改一格 = 服务端重铸这张卡($0);上面那个价与下面按钮上的数都随新卡一起换,
+          界面一分钱都不自己算。 */}
+      <CardOptionControls
+        threadId={card.threadId}
+        cardId={card.cardId}
+        payload={p}
+        disabled={busy}
+        onChanged={(next) => onOptionsChanged(card.cardId, next)}
+      />
       {/* CRE-STG-P2-004 —— 失败留在卡上(不是 toast),而且带着那个可复制的短号:走查那两次
           点击之后卡面上什么都不剩,商家除了「再试一次」没有第二个动作。短号与抽屉里那张卡
           共用同一个组件(`CardApprovalRef`),两处不可能长出两种写法。 */}

@@ -11,6 +11,9 @@ import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { type ChainedApproval } from "./approval-chain";
 import { runPlanApproval } from "./plan-approval";
 import { CardApprovalRef } from "./CardApprovalRef";
+// Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修)。两张确认卡共用这一份,
+// 抄成两份必有一份先烂(改了什么、按什么价,两处会各说各的)。
+import { CardOptionControls } from "./CardOptionControls";
 import { runStateOfCard } from "@/lib/otto-status-helpers";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -55,6 +58,16 @@ export interface OttoPlanCardProps {
   /** Called when the user clicks "Change something". Receives the current
    *  structuredPrompt as a seed so the caller can prefill the composer. */
   onChangeSomething: (seed: string) => void;
+  /**
+   * 商家在这张卡上改完三格之后，服务端重铸出来的**整张卡**（复审 r1 P1-1）。
+   *
+   * 它必须往上走,不能停在这个组件里:同一个 cardId 今天有两处确认位(这张抽屉卡、画布上
+   * 那张 `OttoTurnCard`),画布形态下抽屉只是 CSS 隐藏而非卸载 —— 两处各留一份「重铸后的
+   * payload」,就是同一张卡上一处写着新价、另一处仍按旧价出按钮。批准请求不带价(服务端
+   * 从库里那张卡重建),所以陈旧那一侧按下去照旧按新价预扣。唯一的收口是让两处读**同一份**
+   * payload:父组件改写这条消息的 metadata.payload,两张卡下一帧一起换。
+   */
+  onOptionsChanged: (cardId: string, payload: unknown) => void;
   /** Called after a fresh-card retry spawns a new card (failed state only). */
   onRetry?: () => void;
   /** Called after a successful cancel + refund so the parent can refresh. */
@@ -89,6 +102,7 @@ export function OttoPlanCard({
   pendingApproval,
   onApproved,
   onChangeSomething,
+  onOptionsChanged,
   onRetry,
   onCancelled,
 }: OttoPlanCardProps) {
@@ -96,6 +110,9 @@ export function OttoPlanCard({
   // ONE price-guarantee predicate. Everything below — what renders, and whether approve()
   // may spend — reads this same object, so the display and the spend can't disagree
   // (#580 复审 r1 P1-1 / r2 P1-1).
+  // Founder 2026-09-05「加进确认卡」—— 改完三格之后服务端重铸的那张卡不停在这里:它顺着
+  // `onOptionsChanged` 走回父组件,写进这条消息的 metadata.payload,再从 `payload` 这个
+  // prop 流回来。所以两处确认位读的是同一份,库里那一份永远压过手里这一份(复审 r1 P1-1)。
   const gate = planCardGate(payload);
   const p: OttoPlanCardPayload = gate.value;
   const [busy, setBusy] = useState(false);
@@ -381,6 +398,20 @@ export function OttoPlanCard({
           <div className="mt-[9px] text-[0.75rem] text-[var(--warning-soft-foreground)]">
             {p.downgradeNote || DOWNGRADE_FALLBACK_NOTE}
           </div>
+        )}
+
+        {/* Founder 2026-09-05「加进确认卡」—— 张数／形状／精修就长在这里,**批准之前**可以改。
+            ⑦段退役直出 composer 之后这三格无处可选,而这张卡是唯一的花钱入口。改一格 = 服务端
+            重铸这张卡($0),新的价随新卡回来 —— 界面一分钱都不自己算,所以卡面那个数与真正
+            离开余额的那个数只可能是同一个。已排队/已完成/已取消的卡不再出现这三格。 */}
+        {runState === "waiting" && !cancelled && gate.approvable && (
+          <CardOptionControls
+            threadId={threadId}
+            cardId={cardId}
+            payload={p}
+            disabled={busy}
+            onChanged={(next) => onOptionsChanged(cardId, next)}
+          />
         )}
 
         <div className="mt-4 border-t border-border pt-4">

@@ -9,6 +9,7 @@ import {
   ottoTurn as _ottoTurn,
   ottoApprove as _ottoApprove,
   ottoReject as _ottoReject,
+  ottoUpdateGenCardOptions as _ottoUpdateGenCardOptions,
   createEmptyCoworkThread as _createEmptyCoworkThread,
   deleteCoworkThread as _deleteCoworkThread,
   setCoworkThreadPinned as _setCoworkThreadPinned,
@@ -30,6 +31,12 @@ export async function ottoApprove(raw: unknown) {
  *  the deterministic confirmation message, and the ActionEvent audit row. */
 export async function ottoReject(raw: unknown) {
   return _ottoReject(raw);
+}
+
+/** Founder 2026-09-05「加进确认卡」—— 商家在确认卡上改张数／形状／精修。$0:它只重写
+ *  一张还没有任务行的卡的 payload,新价由服务端按单一价目源现算,预扣仍只认那张卡。 */
+export async function ottoUpdateGenCardOptions(raw: unknown) {
+  return _ottoUpdateGenCardOptions(raw);
 }
 
 export async function createEmptyCoworkThread(raw: unknown) {
