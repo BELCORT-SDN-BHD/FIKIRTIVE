@@ -39,6 +39,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { merchantNavLinks, merchantNavMap } from "@fikirtive/core/navigation";
+import { ottoInstructions } from "@fikirtive/otto";
 import {
   MESSAGING_STATUS_ASSISTANT,
   MESSAGING_STATUS_CANNOT_CONNECT,
@@ -248,10 +249,17 @@ function decode(markup: string): string {
 
 const previewMarkup = decode(renderToStaticMarkup(createElement(CustomersPreviewPage)));
 
-const ottoInstructionsText = readFileSync(
-  path.join(REPO_ROOT, "packages/otto/src/__snapshots__/otto-instructions.golden.txt"),
-  "utf8",
-);
+/**
+ * ④层读的是 Otto 说明书的**全文**。
+ *
+ * ENGINE-A7(otto-engine.md §7.2⑥)之前它是 golden 快照文件
+ * `packages/otto/src/__snapshots__/otto-instructions.golden.txt`;单体退役之后那个文件不存在了
+ * —— 说明书由技能文件柜每轮现装,冻结的只剩常驻薄层与柜子的形状。这里改成读**整柜装出来的
+ * 那一份**(`ottoInstructions`),因为这一层问的正是「这句实话还在说明书里吗」——那是整个柜子的
+ * 问题,不是某一轮碰巧装了哪几份。占位符也因此是算过的:`MESSAGING_STATUS_ASSISTANT` 那一句
+ * 从 `@fikirtive/core` 现算插入,快照时代读到的同样是算过的字节。
+ */
+const ottoInstructionsText = ottoInstructions;
 
 /* ── ① UI 一面:CRM 整段不在商家表面上(W2-13 / #993)────────────────────────── */
 

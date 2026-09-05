@@ -34,6 +34,9 @@ e2e/.report/
 
 # working drafts / scratch (underscore-prefixed) — kept on disk, out of git
 _*.md
+# …except Otto 技能文件柜的常驻薄层:`_core.md` 这个名字是 S1 §1 九问 4 冻结的柜子形态
+# (docs/specs/otto-engine.md §7.2⑥),不是草稿。少了它,生成器与 CI 新鲜度闸都读不到柜底。
+!packages/otto/knowledge/_core.md
 
 # tool-local staging (gstack / superpowers) — not project artifacts
 .out-of-scope/

@@ -1,18 +1,25 @@
 # 手艺 · Seedream（图片提示词）：t2i 还是 i2i、一句一要素、画面上的字
+<!-- when: reference -->
+<!--
+**来源（本文不是新知识，是把现有的两处抄成一份可读的手艺文件）**
+- `packages/otto/src/instructions.ts` 的 "Craft the prompt with the model skill"、"When to call `propose`"、
+  "Attached reference image"、"Video keyframes" 四段；
+- `packages/otto/src/skills/seedream-prompt.ts`（skill description）与
+  `packages/otto/src/skills/seedream-prompt.helpers.ts`（装配器 `assembleSeedream`）；
+- 身份锁措辞与竖版防字幕句逐字来自 `packages/otto/src/skills/prompt-vocab.ts`。
+- **镜头运动／景别／布光的术语表不在本文** —— 唯一真相源是 `packages/otto/knowledge/craft/seedance.md` 的
+  「镜头术语表」一节，图片侧的 `cameraLens` 与 `lighting` 用同一份词。抄第二份就是给自己造一次失同步。
 
-> **来源（本文不是新知识，是把现有的两处抄成一份可读的手艺文件）**
-> - `packages/otto/src/instructions.ts` 的 "Craft the prompt with the model skill"、"When to call `propose`"、
->   "Attached reference image"、"Video keyframes" 四段；
-> - `packages/otto/src/skills/seedream-prompt.ts`（skill description）与
->   `packages/otto/src/skills/seedream-prompt.helpers.ts`（装配器 `assembleSeedream`）；
-> - 身份锁措辞与竖版防字幕句逐字来自 `packages/otto/src/skills/prompt-vocab.ts`。
-> - **镜头运动／景别／布光的术语表不在本文** —— 唯一真相源是 `packages/otto/knowledge/craft/seedance.md` 的
->   「镜头术语表」一节，图片侧的 `cameraLens` 与 `lighting` 用同一份词。抄第二份就是给自己造一次失同步。
->
-> **路径**：`docs/specs/otto-engine.md` §7.0 拍板一定案（取代 `docs/specs/creation-engine.md` §8.0 拍板三的占位路径 `packages/otto/craft/*.md`）。
->
-> **两份并存是有期限的**：⑥段（技能文件柜替换单体，`docs/specs/otto-engine.md` §7.2⑥）退役 `instructions.ts` 单体时把本文收编进文件柜，
-> 由生成器变成 build 期 TS 常量（§7.0 拍板三）。在那之前，**代码里的那几份仍是运行期权威**；两边冲突时以代码为准，并回来改本文。
+**路径**：`docs/specs/otto-engine.md` §7.0 拍板一定案（取代 `docs/specs/creation-engine.md` §8.0 拍板三的占位路径 `packages/otto/craft/*.md`）。
+
+**本文已在柜中，但身份是 `reference`**（本文第 2 行那条 `when:` 注释写的就是 `reference`）：⑥段
+（技能文件柜替换单体，`docs/specs/otto-engine.md` §7.2⑥）已把本文收编进文件柜，由
+`packages/otto/scripts/gen-knowledge.ts` 变成 build 期 TS 常量（§7.0 拍板三）。有书脊在册、
+`packages/otto/evals/checks/glossary.ts` 从这里取词，**但它不进任何一轮的上下文** ——
+`packages/otto/src/knowledge-cabinet.ts` 的 `spineIndex` 只列 `on-demand`，`matchKnowledge` 也只返回
+`always` 与 `on-demand`（`packages/otto/src/knowledge-cabinet.test.ts` 钉死这一点）。
+**代码里的那几份（skill description 与装配器）仍是运行期权威**；两边冲突时以代码为准，并回来改本文。
+-->
 
 ## 一、先挑档（`mode`）
 
@@ -47,7 +54,7 @@
 
 商家点名的形状原样传给 `propose` 的 `desiredAspect`（**含菜单外的形状**），
 菜单外由服务端在铸卡前拒绝、$0，不许替商家挑最接近的一格，也不许从「他说要发 story」反推一个竖版。
-形状是唯一同时也要传给提示词的一项（`aspect`）：竖版会额外加一句 caption-free —— 竖版长「鬼字幕」的概率明显更高。
+形状是唯一同时也要传给提示词的一项（`aspect`）：竖版会额外加一句「不要字幕」的防字幕措辞 —— 竖版长「鬼字幕」的概率明显更高。
 
 ## 四、身份锁：靠名字，不靠编号
 

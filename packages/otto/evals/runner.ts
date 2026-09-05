@@ -26,7 +26,7 @@ import { dirname, join } from "node:path";
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { llmPricesFor } from "@fikirtive/core";
-import { ottoInstructions } from "../src/instructions.js";
+import { assembleOttoInstructions } from "../src/instructions.js";
 import { OTTO_PRIMARY_MODEL } from "../src/model.js";
 import {
   EvalBudgetExceeded,
@@ -74,8 +74,11 @@ const JUDGE_MAX_OUTPUT = 700;
  * 离线台架的固定后缀。它**不是**被测内容的一部分：被测的是 Otto 的说明书本身
  * （⑥段把单体换成文件柜之后，换掉的正是上面那一份），这一段永远不变，
  * 所以两次跑分比的仍是同一件事。
+ *
+ * 导出是给测试用的：ENGINE-A7 那条「最坏不短于任何一题」的断言，两边必须是**同一种形状**
+ * （都带台架后缀），否则少掉的那一段会替真正的上界白白垫高一截，掉了后缀也照样绿。
  */
-const HARNESS_SUFFIX = `
+export const HARNESS_SUFFIX = `
 
 ---
 You are answering inside an offline evaluation harness. No tools are connected this turn and nothing you say spends money. Answer the merchant as you normally would, and state plainly — in order — which tools or prompt skills you would call and the key fields you would pass. Do not invent results you have not got.`;
@@ -190,6 +193,20 @@ export function worstCaseRunUsd(
   }, 0);
 }
 
+/**
+ * 纯：本次全跑最坏的那一份说明书 —— 逐题装一遍，取 token 估算最长的那一份，再拼台架后缀。
+ *
+ * ⑥段（ENGINE-A7）之后说明书是**每轮现装**的，每题装出来的不一样长；单体时代那句
+ * `ottoInstructions + HARNESS_SUFFIX` 已经没有对应物。累计闸只许高估不许低估
+ * （fail closed），所以这里取逐题装配里最长的那一份当上界：真跑的任何一题都不会比它贵。
+ */
+export function worstCaseSystem(tasks: readonly EvalTask[]): string {
+  const worst = tasks
+    .map((t) => assembleOttoInstructions(t.prompt).text)
+    .reduce((a, b) => (estimateTokens(b) > estimateTokens(a) ? b : a), "");
+  return worst + HARNESS_SUFFIX;
+}
+
 // ── 计费器：真实用量 × 价目表，每次调用之前过一次预算闸 ──────────────────────
 
 class Meter {
@@ -220,8 +237,11 @@ class Meter {
 // ── 被测对象与判分器 ────────────────────────────────────────────────────────
 
 function makeSubject(model: string, meter: Meter): Subject {
-  const system = ottoInstructions + HARNESS_SUFFIX;
   return async (task) => {
+    // ⑥段（ENGINE-A7）之后，被测的说明书是**这一轮装出来的那一份** —— 商家真正拿到的
+    // 就是它。单体时代这里是 `ottoInstructions` 整份；台架后缀一个字没动，所以两次跑分
+    // 比的仍是同一件事：同一道题、同一段后缀、Otto 的说明书换了组织方式。
+    const system = assembleOttoInstructions(task.prompt).text + HARNESS_SUFFIX;
     meter.guard(model, system + task.prompt, SUBJECT_MAX_OUTPUT);
     const r = await generateText({
       model: anthropic(model),
@@ -330,7 +350,7 @@ async function main(): Promise<void> {
   // 本次最坏花费被单次硬上限截住：那一道会在超上限之前就地停，所以这一趟的真实上界就是它。
   const worstCaseUsd = Math.min(
     worstCaseRunUsd(tasks, {
-      system: ottoInstructions + HARNESS_SUFFIX,
+      system: worstCaseSystem(tasks),
       judgeRubric: readFileSync(JUDGE_RUBRIC_PATH, "utf8"),
       prices: llmPricesFor(model),
     }),

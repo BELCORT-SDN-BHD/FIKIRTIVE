@@ -16,6 +16,10 @@ export {
   // whitelist rule the engine applies.
   collectTurnTraceFacts,
   UNREGISTERED_ACTION,
+  // ENGINE-A7 的装配器出口（规格 §7.2⑥）。纯函数、与 `runOttoTurn` 内部用的是同一个，
+  // 所以入口拿它算出来的名单，逐字节就是那一轮真装进去的那几份 —— ②段（ENGINE-A2）的
+  // `skillFiles` 那一栏读它落盘。
+  instructionsForTurn,
 } from "./runtime.js";
 export type {
   OttoRunProfile,
@@ -34,6 +38,9 @@ export type {
   // ENGINE-A6 (spec §7.2④): what an entry hands the runner so the turns it trimmed away are
   // folded into the thread's rolling summary — on the SAME refId this turn already holds.
   OttoRollingSummaryPort,
+  // ENGINE-A7 × A6：这一轮除了 item 数组之外还带着的旧上下文（摘要 ＋ 刚裁掉的那几轮）。
+  // 装配器要看它，否则装载集会在裁剪之后中途缩水。
+  OttoCarriedContext,
 } from "./runtime.js";
 export { ottoSimpleModeBlock } from "./instructions.js";
 // buildProposeCard — the pure $0 card-payload helper (no DB/SDK). Exposed for the
@@ -132,10 +139,10 @@ export type { ResearchContext } from "./research-agent.js";
 // holds the citation floor on the shipped data. It was never consumed outside this package.
 export {
   META_EXPERTISE_KB, queryMetaKnowledge,
-} from "./knowledge/meta-expertise.js";
+} from "./meta-expertise/meta-expertise.js";
 export type {
   MetaExpertiseKB, MetaKnowledgeDomain, MetaCitation, MetaBenchmark, MetaKnowledgeEntry,
-} from "./knowledge/meta-expertise.types.js";
+} from "./meta-expertise/meta-expertise.types.js";
 export { diagnosePerformance } from "./diagnosis/diagnose-performance.js";
 export type { DiagAdInput, DiagReason, DiagReasonKind, AdVerdict, PerformanceDiagnosis } from "./diagnosis/diagnose-performance.js";
 export { buildPerformanceCardPayload } from "./skills/meta-expert.helpers.js";

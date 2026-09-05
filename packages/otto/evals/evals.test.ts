@@ -26,6 +26,7 @@ import { parseGlossary, shotGlossary, SEEDANCE_CRAFT_PATH } from "./checks/gloss
 import {
   EvalPreflightFailed,
   guardedRun,
+  HARNESS_SUFFIX,
   loadTasks,
   parseVerdicts,
   pathsFor,
@@ -33,8 +34,10 @@ import {
   recordedSegmentUsd,
   resolveLine,
   worstCaseRunUsd,
+  worstCaseSystem,
   type PreflightInput,
 } from "./runner.js";
+import { assembleOttoInstructions } from "../src/instructions.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TASKS_DIR = join(HERE, "tasks", "engine");
@@ -283,5 +286,17 @@ describe("ENGINE-A1 守卫在花钱之前", () => {
     const noRubric = worstCaseRunUsd([task({ rubric: [] })], parts);
     expect(two).toBeCloseTo(one * 2, 12);
     expect(noRubric).toBeLessThan(one);
+  });
+
+  it("ENGINE-A7 最坏花费用的说明书不短于任何一题装出来的那一份（累计闸只许高估）", () => {
+    const tasks = loadTasks(TASKS_DIR, "engine");
+    expect(tasks.length).toBeGreaterThan(1);
+    const worst = worstCaseSystem(tasks);
+    for (const t of tasks) {
+      // 两边同形状：`worstCaseSystem` 拼了台架后缀，右边也得拼上，否则后缀那一段
+      // 会白白垫高左边 —— `worstCaseSystem` 哪天丢掉后缀，这条断言也照样绿。
+      const assembled = assembleOttoInstructions(t.prompt).text + HARNESS_SUFFIX;
+      expect(estimateTokens(worst)).toBeGreaterThanOrEqual(estimateTokens(assembled));
+    }
   });
 });

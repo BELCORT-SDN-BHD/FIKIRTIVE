@@ -1749,7 +1749,10 @@ function planHistoryBudget(
   ownerId: string,
 ): { kept: AgentInputItem[]; rollingSummary?: OttoRollingSummaryPort } {
   const { kept, dropped } = trimHistoryToBudget(history);
-  if (dropped.length === 0) return { kept };
+  // 端口在**这一轮裁掉了东西、或线程上已经有摘要**时都要传:折叠仍只在有裁掉的轮时发生(引擎侧
+  // `dropped.length > 0` 那道判据没动),但⑥段的装配器要靠它看见被折走的那部分对话 —— 否则
+  // 装载集会在裁剪之后中途缩水(见 packages/otto/src/runtime.ts 的 instructionsForTurn)。
+  if (dropped.length === 0 && !priorSummary) return { kept };
   return {
     kept,
     rollingSummary: {
@@ -1945,6 +1948,12 @@ export async function ottoTurn(raw: unknown): Promise<
       } else {
         // No prior state OR an unrestorable one (F24): start fresh — the turn still runs and its
         // normal state write self-heals ottoState to the current schema.
+        // 判官 P2-1(⑥段):恢复不回来的这一轮**照样要带端口**。历史没了,但线程上那份摘要还在,
+        // 而它就是这一轮真正带着的旧上下文 —— 上面那条 system 消息里回注的正是它。不传的话,
+        // 只在摘要里点过名的那几份柜文会在恢复失败的这一轮悄悄掉出装载集(与④段之后中途缩水
+        // 同一个病灶,只是触发处不同)。空历史 ⇒ `dropped` 为空 ⇒ 引擎侧 `dropped.length > 0`
+        // 那道判据仍然不成立:零模型调用、零落盘,钱路一个字没动。
+        rollingSummaryPort = planHistoryBudget([], priorRollingSummary, threadId, ownerId).rollingSummary;
         runInput = [...(sys ? [sys] : []), userTurn];
       }
 

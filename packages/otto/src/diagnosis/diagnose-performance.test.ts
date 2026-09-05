@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { diagnosePerformance } from "./diagnose-performance.js";
-import { META_EXPERTISE_KB } from "../knowledge/meta-expertise.js";
+import { META_EXPERTISE_KB } from "../meta-expertise/meta-expertise.js";
 
 // #692 r3: the diagnosis no longer sees a spend AMOUNT — money reaches Otto as finished text
 // that cannot be summed. All it ever needed was "did this ad actually spend anything".

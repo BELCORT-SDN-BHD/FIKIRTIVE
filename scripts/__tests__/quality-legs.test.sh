@@ -351,6 +351,9 @@ expected_gates=(
   "typecheck|typecheck"
   "lint|lint"
   "checks|otto CATALOG.md freshness"
+  # ENGINE-A7（docs/specs/otto-engine.md §7.2⑥）：技能文件柜是 build 期产物，跟目录总表
+  # 同一条理由、同一条腿——柜里的 markdown 改了却没重生成，说明书就还是旧的一份。
+  "checks|otto knowledge cabinet freshness"
   "checks|margin-floor gate self-test"
   "checks|margin floor"
   "checks,tests|prisma migrate deploy"
