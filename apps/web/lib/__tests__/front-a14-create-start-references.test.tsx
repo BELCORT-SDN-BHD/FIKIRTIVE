@@ -467,3 +467,111 @@ describe("FRONT-A14 起步页挂的引用真的进画布首轮那一发请求", 
     }
   });
 });
+
+/**
+ * 同一件事的**画布那一头**(判官 #1242)。起步页那条已经在上面钉死了(「上传还没落地时 Enter
+ * 不放行」),而画布 composer 从前是两套口径:`+` 键读 `isBusy || uploading`,送出那一下只读
+ * `isBusy` —— 商家挂了一张图、图还在传的当口敲一下 Enter(或点 Send),这一轮照送,那张正在传的
+ * 参考此刻还没有 generationId,于是无声不上车,屏幕上也没有一个字说它掉了。
+ * 两个入口现在读同一把闸 `composerBusy`。
+ */
+describe("FRONT-A14 画布 composer 上传在飞时不放行", () => {
+  const THREAD = {
+    id: "thread-1",
+    projectId: "canvas_1",
+    title: "Untitled",
+    updatedAt: new Date("2026-09-05T00:00:00.000Z").toISOString(),
+    messages: [],
+  };
+
+  async function mountComposer(): Promise<HTMLDivElement> {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(createElement(OttoChatStream, {
+        projectId: "canvas_1",
+        entities: [],
+        thread: THREAD,
+        balanceUsd: 10,
+        onRefresh: async () => {},
+        onThreadUpdate: () => {},
+      } as never));
+    });
+    await act(async () => { await Promise.resolve(); });
+    return container;
+  }
+
+  function sendButton(dom: HTMLElement): HTMLButtonElement {
+    const button = [...dom.querySelectorAll<HTMLButtonElement>("button")].find(
+      (el) => (el.textContent ?? "").replace(/\s+/gu, " ").trim() === "Send",
+    );
+    expect(button, "composer 里没有 Send 键").toBeDefined();
+    return button!;
+  }
+
+  async function typeInComposer(dom: HTMLElement, value: string): Promise<void> {
+    const textarea = dom.querySelector<HTMLTextAreaElement>('[aria-label="Reply to Otto"]')!;
+    const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => {
+      setValue.call(textarea, value);
+      textarea.selectionStart = value.length;
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  async function pressEnterInComposer(dom: HTMLElement): Promise<void> {
+    const textarea = dom.querySelector<HTMLTextAreaElement>('[aria-label="Reply to Otto"]')!;
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    await act(async () => { await Promise.resolve(); });
+  }
+
+  it("FRONT-A14: 上传还没落地时 Enter 与发送键都不放行,落地后照送且引用上车", async () => {
+    // 上传卡在半路:`uploadFilesDirect` 永不落地,组件停在 uploading。
+    let releaseUpload: (() => void) | null = null;
+    mocks.uploadFilesDirect.mockImplementation(
+      () => new Promise((resolve) => {
+        releaseUpload = () => resolve({
+          files: [{ sha256: "a".repeat(64), ext: "png", sizeBytes: 12, originalFilename: "hoodie.png", upload: { mode: "existed" } }],
+          failures: [],
+        });
+      }),
+    );
+
+    const dom = await mountComposer();
+    const input = dom.querySelector<HTMLInputElement>('[aria-label="Attach a file"]')!;
+    Object.defineProperty(input, "files", {
+      value: [new File([new Uint8Array([1])], "hoodie.png", { type: "image/png" })],
+      configurable: true,
+    });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    await typeInComposer(dom, DRAFT);
+    // 发送键此刻是关着的 —— Enter 必须读同一把闸,否则那张正在传的图会被丢在原地。
+    expect(sendButton(dom).disabled).toBe(true);
+    await pressEnterInComposer(dom);
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+
+    // 上传落地之后,同一下 Enter 照送 —— 挡的是「还没好」,不是键盘这条路。
+    await act(async () => { releaseUpload!(); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(sendButton(dom).disabled).toBe(false);
+    await pressEnterInComposer(dom);
+
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+    const [message, options] = mocks.sendMessage.mock.calls[0] as [
+      { text: string },
+      { body: Record<string, unknown> },
+    ];
+    expect(message).toEqual({ text: DRAFT });
+    expect(options.body).toMatchObject({
+      projectId: "canvas_1",
+      threadId: "thread-1",
+      sourceGenerationId: "gen-upload",
+      sourceGenerationIds: ["gen-upload"],
+    });
+  });
+});
