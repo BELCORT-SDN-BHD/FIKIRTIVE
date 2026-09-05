@@ -21,6 +21,7 @@ import {
   TRANSCRIPT_GENERATION,
   type FikirtiveEdit,
   type CaptionCue,
+  displayCredits,
   type CaptionJobData,
   type RenderJobData,
 } from "@fikirtive/core";
@@ -35,6 +36,9 @@ import { getShots, getLooseVideoClips, getMediaPage, type MediaPage } from "./da
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { purgeOrphanedReferenceAssets, purgeAssetStorage } from "./asset-purge";
+// 血缘节的成本那一格与画布卡片信息面折的是**同一个**函数 —— 两处各写一份,同一件素材
+// 就会被报出两个价(`lib/canvas-lineage-data.ts` 的文件头说的正是这件事)。
+import { netChargedInternalCredits } from "./canvas-lineage-data";
 
 /**
  * M0 server actions. Conventions:
@@ -980,8 +984,14 @@ export async function detachGeneration(generationId: string): Promise<{ ok: true
   });
 }
 
-/** Soft-delete a generation from the Assets library. If it was a shot's last
- *  live render, the shot drops back to DRAFT (same "last one out" rule). */
+/** Move a generation to Trash (soft delete). If it was a shot's last live render, the shot
+ *  drops back to DRAFT (same "last one out" rule).
+ *
+ *  **可撤销** —— 这一直是一次软删(下面写的是 `deletedAt`,不是 `delete`),只是商家侧从来
+ *  没有一扇门看得见那些行,于是屏幕上把它说成 "This cannot be undone."(清单 B3 / P1-007)。
+ *  恢复走 `restoreGeneration`,回收站视图走 `getGenerationHistory({ trashed: true })`。
+ *  没有任何清扫任务硬删这些行(全仓只有项目硬删会:本文件 `tx.generation.deleteMany`),
+ *  所以界面**不承诺**任何保留天数 —— 没有单一来源的天数,就一个字都不说。 */
 export async function deleteGeneration(generationId: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
@@ -1015,6 +1025,160 @@ export async function deleteGeneration(generationId: string): Promise<{ ok: true
     revalidatePath("/", "layout");
     return { ok: true };
   });
+}
+
+/**
+ * 把一件素材从回收站拿回来(清单 B3 / P1-007 —— 删除的另一半)。
+ *
+ * `deleteGeneration` 的**逆动作**,一行一列:`deletedAt` 写回 `null`。刻意不做别的:
+ *   · **不把它挂回原来的分镜**。删除时若它是那一镜最后一张 live 渲染,分镜已经退回 DRAFT;
+ *     恢复时替商家把分镜再改回 ATTACHED 是替他做了一个他没要求的决定,而那一镜这期间
+ *     可能已经挂上了别的东西。素材回到候选区,挂不挂由商家自己在画布上决定。
+ *   · **不重建首帧/末帧指针**,理由同上(删除时清空是为了不留悬空 id)。
+ *
+ * **真正的租户闸在 `packages/db/src/tenant-guard.ts`**:`Generation` 在 `TENANT_MODELS` 里,
+ * 守卫按当前帧(`runAsUser` 那一层)把 `ownerId` 注入每一次 `where`。这里 `findFirst` /
+ * `updateMany` 上显式写的那两处 `ownerId` 是**纵深防御**,不是唯一那道门 —— 把它们双双去掉,
+ * `library-trash-restore.test.ts` 的跨租户用例照样绿(判官 2026-09-05 实做变异)。别据此以为
+ * 那两处「被测过」;要动它们,先去看守卫那一层。命中 0 行
+ * 一律回同一句 "Not found." —— 不区分「不属于你」和「本来就没删」,那个区别本身就是
+ * 跨租户的信息(与 `library-subjects.filterVisibleSubjects` 同一条纪律)。幂等:
+ * 对一件没在回收站里的素材再按一次,得到的是同一句话,不是一次静默的成功。
+ */
+export async function restoreGeneration(generationId: string): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true } | { error: string }> => {
+    const { ownerId } = gate;
+    const gen = await prisma.generation.findFirst({
+      where: { id: generationId, ownerId, deletedAt: { not: null } },
+      select: { id: true, projectId: true },
+    });
+    if (!gen) return { error: "Not found." };
+    const { count } = await prisma.generation.updateMany({
+      where: { id: generationId, ownerId, deletedAt: { not: null } },
+      data: { deletedAt: null },
+    });
+    if (count === 0) return { error: "Not found." };
+    await logAction(ownerId, "generation.restore", gen.projectId, { generationId });
+    revalidatePath("/", "layout");
+    return { ok: true };
+  });
+}
+
+/**
+ * 一件素材的**血缘节**:出处、参考、成本、状态、用途(清单 B3 / P1-007)。
+ *
+ * 「每个东西都要有迹可循」在素材详情面上的那一半。五格全部读**已经记下来的**列,
+ * 一个都不现算:
+ *   · **出处** —— `Generation.projectId`(画布)与 `Generation.threadId`(对话)。名字取
+ *     `Project.name` / `ChatThread.title`,两条都能回链;
+ *   · **参考** —— `Generation.entitySnapshot`,生成那一刻冻结的元素名快照(改名/删元素
+ *     不破历史)。刻意读快照而不是现读 `Entity`:现读会让一次改名把历史记录也改掉;
+ *   · **成本** —— 产出它那一单的**账本行**,`netChargedInternalCredits`(与画布卡片信息面
+ *     同一个函数,`lib/canvas-lineage-data.ts`)折出净扣费,再按 `displayCredits` 换成
+ *     商家看的单位。没有账本行 = 这一行不是付费产物(上传、裁剪)⇒ 显示 0;
+ *     有任务但一条账本行都没有 = 未知 ⇒ null,面板如实说不知道;
+ *   · **状态** —— `GenJob.status`(QUEUED/GENERATING/DONE/FAILED)翻成商家的话;没有任务的
+ *     行按 `Generation.source` 说它是上传还是我们存下来的;
+ *   · **用途** —— 这一行**已经记在自己身上**的两处去向:挂在哪个分镜(`shotId`)、属于哪个
+ *     战役(`campaignId`)。两列都在同一行上,不额外发查询。
+ *
+ * 租户:`requireOwner` 一处守门,下面每一条查询各自再带 `ownerId`。只读 —— 不 reserve、
+ * 不 settle、不 refund,读的是账本已经写下的东西。
+ */
+export type GenerationLineage = {
+  /** 出处画布:名字 + 可回链的 id。名字读不到(画布已被硬删)就只有 id。 */
+  canvas: { id: string; name: string | null };
+  /** 出处对话;`null` = 这一件不是从一次对话里出来的(画布直做、上传)。 */
+  conversation: { id: string; title: string | null } | null;
+  /** 生成那一刻冻结的元素名(参考)。空数组 = 这一趟没引用任何元素。 */
+  references: string[];
+  /** 这一件用掉的 credits(商家单位)。`null` = 未知,`0` = 没花钱(上传/裁剪)。 */
+  costCredits: number | null;
+  /** 商家话的状态。 */
+  status: string;
+  /** 这一件今天被用在哪里;空数组 = 还没被用到别处。 */
+  usedIn: string[];
+};
+
+export async function getGenerationLineage(
+  generationId: string,
+): Promise<GenerationLineage | { error: string }> {
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+
+  const gen = await prisma.generation.findFirst({
+    // `deletedAt` 不设条件:回收站里的素材照样说得出自己的来历。
+    where: { id: generationId, ownerId },
+    select: {
+      projectId: true,
+      threadId: true,
+      shotId: true,
+      campaignId: true,
+      source: true,
+      entitySnapshot: true,
+    },
+  });
+  if (!gen) return { error: "Not found." };
+
+  const job = await prisma.genJob.findFirst({
+    where: { generationIds: { has: generationId }, ownerId },
+    select: { id: true, status: true },
+  });
+
+  const [project, thread, shot, campaign, ledgerRows] = await Promise.all([
+    prisma.project.findFirst({ where: { id: gen.projectId, ownerId }, select: { name: true } }),
+    gen.threadId
+      ? prisma.chatThread.findFirst({ where: { id: gen.threadId, ownerId }, select: { title: true } })
+      : Promise.resolve(null),
+    gen.shotId
+      ? prisma.shot.findFirst({ where: { id: gen.shotId, ownerId }, select: { title: true, number: true } })
+      : Promise.resolve(null),
+    gen.campaignId
+      ? prisma.campaign.findFirst({ where: { id: gen.campaignId, ownerId }, select: { name: true } })
+      : Promise.resolve(null),
+    job
+      ? prisma.creditLedger.findMany({
+          where: { orgId: ownerId, refId: job.id },
+          select: { balanceDelta: true },
+        })
+      : Promise.resolve([] as { balanceDelta: number }[]),
+  ]);
+
+  const usedIn: string[] = [];
+  if (shot) usedIn.push(shot.title.trim() || `Shot ${shot.number}`);
+  if (campaign) usedIn.push(campaign.name);
+
+  return {
+    canvas: { id: gen.projectId, name: project?.name ?? null },
+    conversation: gen.threadId ? { id: gen.threadId, title: thread?.title?.trim() || null } : null,
+    references: entitySnapshotNames(gen.entitySnapshot),
+    costCredits: job
+      ? (ledgerRows.length ? displayCredits(netChargedInternalCredits(ledgerRows)) : null)
+      : 0,
+    status: lineageStatus(job?.status ?? null, gen.source),
+    usedIn,
+  };
+}
+
+/** `Generation.entitySnapshot` 里那几个名字。形状不对(老行、手写脏数据)一律当作没有引用。 */
+function entitySnapshotNames(snapshot: unknown): string[] {
+  if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) return [];
+  const entities = (snapshot as { entities?: unknown }).entities;
+  if (!Array.isArray(entities)) return [];
+  return entities
+    .map((entry) => (entry && typeof entry === "object" ? (entry as { name?: unknown }).name : null))
+    .filter((name): name is string => typeof name === "string" && name.trim().length > 0)
+    .map((name) => name.trim());
+}
+
+/** 引擎任务的状态翻成商家的话。没有任务的行按它自己的来源说。 */
+function lineageStatus(jobStatus: string | null, source: string): string {
+  if (jobStatus === "DONE") return "Delivered";
+  if (jobStatus === "FAILED") return "Failed";
+  if (jobStatus === "QUEUED" || jobStatus === "GENERATING") return "Still working";
+  return source === "UPLOAD" ? "Uploaded by you" : "Saved to your library";
 }
 
 // ---------- editor (phase-③ tracer: contract → queue → worker → asset) ----------
