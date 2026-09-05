@@ -104,12 +104,21 @@ describe("auth design system", () => {
     ];
     expect(fixtureTitles.length).toBeGreaterThan(0);
 
+    // 只在生产的 <AlertTitle> 块里找 —— 对整份源码做子串匹配的话,中文注释里出现的
+    // 同名字符串就能把这条测试喂饱:标题从 JSX 里删掉它照样绿,证明不了它声称的事。
+    const loginFormAlertTitles = [
+      ...loginForm.matchAll(/<AlertTitle>([\s\S]*?)<\/AlertTitle>/g),
+    ]
+      .map((match) => match[1])
+      .join("\n");
+    expect(loginFormAlertTitles.length).toBeGreaterThan(0);
+
     for (const title of fixtureTitles) {
       if (FIXTURE_ONLY.has(title)) {
-        expect(loginForm).not.toContain(title);
+        expect(loginFormAlertTitles).not.toContain(title);
         continue;
       }
-      expect(loginForm).toContain(title);
+      expect(loginFormAlertTitles).toContain(title);
     }
   });
 
@@ -122,11 +131,18 @@ describe("auth design system", () => {
     // 生产同一条路可达 —— 那颗按钮是 type="button",原生 required 拦不住它,
     // 所以它命中 invalid_email 这条 reason,标题必须是夹具那一句。
     expect(loginForm).toContain('reason: "invalid_email"');
-    expect(loginForm).toContain(
-      '{error.source === "sign_in_code" && error.reason === "invalid_email"\n'
-        + '                    ? "Email needed"\n'
-        + '                    : "Email could not be continued"}',
-    );
+
+    // 三条互不依赖格式的断言,一起证明「两种错误态、两个标题」这件事。
+    // (钉整段带缩进的源码字面量会被一次 prettier 重排在零行为变化下打红。)
+    const emailStepTitle = [
+      ...loginForm.matchAll(/<AlertTitle>([\s\S]*?)<\/AlertTitle>/g),
+    ]
+      .map((match) => match[1])
+      .find((body) => body.includes("Email needed"));
+    expect(emailStepTitle).toBeDefined();
+    expect(emailStepTitle).toContain('error.reason === "invalid_email"');
+    expect(emailStepTitle).toContain('? "Email needed"');
+    expect(emailStepTitle).toContain(': "Email could not be continued"');
 
     // 服务端故障(reason "unknown")夹具没有这一态,标题保留主干原句 —— 那时邮箱是好的。
     expect(loginForm).toContain("SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE");
