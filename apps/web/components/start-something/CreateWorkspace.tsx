@@ -13,8 +13,17 @@
  * What main had added and Founder ruled out (2026-09-03): the visible `Create with Otto` heading
  * row with its Otto avatar and the sentence "Start with the outcome. Otto will ask only what
  * changes the result.", and the sentence "Nothing paid starts before you confirm the exact credits
- * in Canvas." — the credits disclosure lives on the Canvas confirmation card, which is where the
- * money actually moves; this page starts no paid action, so it makes no money claim of its own.
+ * in Canvas." Both are still gone.
+ *
+ * THE REASON GIVEN FOR THE SECOND ONE IS NO LONGER TRUE, and this comment used to state it as a
+ * fact (判官 #1236 left_undone 3). It read "this page starts no paid action, so it makes no money
+ * claim of its own" — but pressing send here opens a Canvas conversation and Canvas sends that
+ * first turn straight through the Otto stream, and that turn IS metered. Founder 2026-09-05
+ * 裁决②「输入框下加一行价钱」reopened exactly that cell: `StartSomething` now renders the same
+ * `ConversationCostHint` the Canvas and the Otto front door use, below the composer (see its
+ * departure ③). So the honest statement is the narrower one — the per-generation credits
+ * confirmation still lives on the Canvas card, where the generation money moves; this page
+ * discloses the conversation cost it does start, and writes no number of its own.
  *
  * The empty state is production-necessary and the design fixture has none (it always ships three
  * canvases), so it uses the design system's own `Empty` primitive — Founder rule ②.
