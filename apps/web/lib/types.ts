@@ -95,6 +95,11 @@ export interface ChatThreadDTO {
   pinnedAt?: string | null;
   messages: ChatMessageDTO[];
   status?: "working" | "failed" | "done" | null;
+  /**
+   * 这一条对话是从哪个门开出来的(FRONT-A14):`"canvas"` / `"panel"`,老行是 `null`。
+   * 读法只有一份 —— `lib/otto-thread-surface.ts` 的 `isPanelThread`(`null` 按画布读)。
+   */
+  surface?: string | null;
   /** True when the server returned the newest page rather than the complete transcript. */
   hasOlderMessages?: boolean;
 }
