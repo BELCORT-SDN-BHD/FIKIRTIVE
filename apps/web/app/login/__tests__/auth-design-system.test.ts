@@ -142,9 +142,14 @@ describe("auth design system", () => {
     expect(emailStepTitle).toBeDefined();
     expect(emailStepTitle).toContain('error.reason === "invalid_email"');
     expect(emailStepTitle).toContain('? "Email needed"');
-    expect(emailStepTitle).toContain(': "Email could not be continued"');
+    expect(emailStepTitle).toContain(": SIGN_IN_CODE_FAILED_TITLE");
 
     // 服务端故障(reason "unknown")夹具没有这一态,标题保留主干原句 —— 那时邮箱是好的。
+    // 那一句现在只写一次(常量),邮箱步与 code 步的「Send again」共用它。
+    expect(loginForm).toContain(
+      'const SIGN_IN_CODE_FAILED_TITLE = "Email could not be continued"',
+    );
+    expect(loginForm.match(/"Email could not be continued"/g) ?? []).toHaveLength(1);
     expect(loginForm).toContain("SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE");
     expect(reviewFixture).not.toContain("Email could not be continued");
   });
