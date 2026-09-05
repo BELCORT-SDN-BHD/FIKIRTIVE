@@ -1087,7 +1087,7 @@ model ChatMessage {
   // never a bare one: `payload.entityIds` cannot say WHICH source an id belongs to, so a message
   // could not be linked back to the object it named. Every value here is resolved against this
   // owner BEFORE the row is written (apps/web/lib/reference-refs.ts) — a foreign id never lands.
-  referenceRefs      String[]
+  referenceRefs      String[]        @default([])
   createdAt          DateTime        @default(now())
   deletedAt          DateTime?
 

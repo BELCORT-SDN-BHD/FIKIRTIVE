@@ -26,7 +26,10 @@
 -- ② `TEXT[]` 而不是 JSONB:值是一串封闭形状的短字符串,永远整份写、整份读,没有按字段
 --    查询的读面。今天不建索引:唯一的读面是「按 id 取这条消息,再解析它自己的这一列」。
 -- ③ NOT NULL DEFAULT '{}':空数组与 NULL 在这里是同一个意思(这条消息没提到任何对象),
---    留两种写法就等于让每个读点各猜一次。
+--    留两种写法就等于让每个读点各猜一次。这个默认值在 schema 里也必须写出来
+--    (`referenceRefs String[] @default([])`,与 `Entity.aliases`／`OrgHomeLayout.componentIds`
+--    同一写法)—— 漏掉它,`prisma migrate diff` 会把库里这个默认值判成漂移,quality 的
+--    `prisma schema drift` 那一腿当场红。
 --
 -- 租户边界不在这一列上,而在写入口:`apps/web/lib/reference-refs.ts` 的
 -- `resolveOwnedReferenceRefs` 在落库前把每一个 id 按当前 principal 的 ownerId 解析一遍,
