@@ -50,6 +50,36 @@ describe("writePick / readPick", () => {
     expect(readPick("gen_xyz")).toBe(3);
   });
 
+  /**
+   * 存储被禁或写满的浏览器上,`getItem`／`setItem` 自己就抛。这一格只是个方便 ——
+   * 判官 #1210 P2-2／P2-3 实测:读侧的这条路与写侧整个都没有钉子,把 try/catch 拆掉
+   * 全绿。下面两条各钉一边:抛出来的那一下不许冒到调用方(素材面板)身上。
+   */
+  it("readPick 在 getItem 直接抛时当作没挑过,自己不抛", () => {
+    const getItem = vi.spyOn(localStorageMock, "getItem").mockImplementation(() => {
+      throw new DOMException("The operation is insecure.", "SecurityError");
+    });
+    try {
+      expect(() => readPick("gen_blocked")).not.toThrow();
+      expect(readPick("gen_blocked")).toBeNull();
+    } finally {
+      getItem.mockRestore();
+    }
+  });
+
+  it("writePick 在 setItem 抛 QuotaExceededError 时吞掉,自己不抛", () => {
+    const setItem = vi.spyOn(localStorageMock, "setItem").mockImplementation(() => {
+      throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+    });
+    try {
+      expect(() => writePick("gen_full", 2)).not.toThrow();
+    } finally {
+      setItem.mockRestore();
+    }
+    // 记不住:下次读回来是「没挑过」,而不是一个半截的值。
+    expect(readPick("gen_full")).toBeNull();
+  });
+
   it("isolates picks by id", () => {
     writePick("gen_a", 0);
     writePick("gen_b", 1);

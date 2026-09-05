@@ -56,7 +56,7 @@ vi.mock("@/components/MentionInput", () => ({
 
 const { default: DetailPanel } = await import("@/components/asset/DetailPanel");
 const { PICK_SCOPE_NOTE } = await import("@/lib/result-pick");
-const { PUBLIC_MEDIA_TTL_SCOPE_NOTE } = await import("@/lib/media-public-link");
+const { PUBLIC_MEDIA_TTL_SCOPE_NOTE, readTtlPick, writeTtlPick } = await import("@/lib/media-public-link");
 
 const MERCHANT_PROMPT = "a poster for the weekend sale";
 
@@ -515,6 +515,32 @@ describe("FRONT-A12 ⑤ Copy link 的有效期", () => {
 
     expect(mocks.getPublicMediaLink).not.toHaveBeenCalled();
     expect(alertsText()).toContain("Enter how long the link should work, in whole minutes or hours.");
+  });
+
+  it("FRONT-A12 存储写满(setItem 抛 QuotaExceededError):记不住没关系,不许炸到面板上", async () => {
+    // 读侧的那一条(getItem 直接抛)已经有钉子,写侧一直没有 —— 判官 #1210 P2-3 实测
+    // 「写侧无任何变异可证」。配额满、隐私设置只读、无痕模式,`setItem` 都会直接抛。
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+    });
+    try {
+      // ① 直接打这个函数:它自己吞掉,不往外抛,也没有留下半条记录。
+      expect(() => writeTtlPick({ ttlMs: 60 * 60 * 1000, source: "preset" })).not.toThrow();
+
+      // ② 面板上真挑一档:照常挑得动、照常铸得出链子,挑的就是屏幕上那一档。
+      await renderPanel();
+      await setControl(control<HTMLSelectElement>("Link duration"), String(24 * 60 * 60 * 1000));
+      expect(control<HTMLSelectElement>("Link duration").value).toBe(String(24 * 60 * 60 * 1000));
+
+      serverTtlMs = 24 * 60 * 60 * 1000;
+      await click(buttonNamed(surface(), "Copy link"));
+      expect(mocks.getPublicMediaLink).toHaveBeenCalledWith("g1", 24 * 60 * 60 * 1000);
+      expect(surface().textContent).toContain("Copied!");
+      // 存不进去就当没挑过 —— 下次开面板回默认档,而不是报错。
+      expect(readTtlPick()).toBeNull();
+    } finally {
+      setItem.mockRestore();
+    }
   });
 
   it("FRONT-A12 换一张变体:上一轮的「Copied!」与那句时长当场作废(剪贴板里是上一张的链子)", async () => {

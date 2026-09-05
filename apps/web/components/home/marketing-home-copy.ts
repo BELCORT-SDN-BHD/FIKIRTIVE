@@ -28,6 +28,10 @@ export const MARKETING_HOME_COPY = {
   unavailableTitle: "Marketing data is temporarily unavailable",
   unavailableDescription:
     "Your existing data is safe. Try the read again without changing your Home filters.",
+  // 按下 Retry、服务器仍然读不出来时说的那一句。首屏不说 —— 没试过就没有「仍然」。
+  // 这一句是 Retry 唯一的失败反馈:没有它,商家看到的是一屏逐字相同的画面,像「按了没反应」
+  // (判官 2026-09-05 #1209 P2-3)。Home 与 Analysis 共用同一句,只有一个产地。
+  retryStillUnavailable: "Still unavailable. Try again in a few minutes.",
   recentsTitle: "Continue creating",
   recentsDescription: "Pick up a recent canvas, or start from a fresh outcome.",
   recentsUnreadable: "Recent canvases could not be read just now.",

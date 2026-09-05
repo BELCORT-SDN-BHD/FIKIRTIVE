@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
@@ -636,12 +637,54 @@ function xConnectUrl(): string {
   return hit[1];
 }
 
+/** App Router 认得的 route handler 文件名 —— 只认 `route.ts` 会漏掉其余几种写法。 */
+const ROUTE_FILE_NAMES = ["route.ts", "route.tsx", "route.js", "route.jsx", "route.mjs"] as const;
+
+/**
+ * 一个 URL 在仓库里到底有没有对应的 route handler。
+ *
+ * 单点 `existsSync(app/<各段>/route.ts)` 有两个漏(判官 #1201 P2-1):扩展名不是 `.ts` 的写法,
+ * 以及路径里夹了**路由组**段 `(group)` —— 路由组不出现在 URL 里,却可以插在任何一层,而
+ * `app/(home)` 证明这在本仓是活体约定。两个漏都是同一种后果:真路由落地那天这条围栏继续绿,
+ * 屏幕上那句 Unavailable 就成了没人管的假话。
+ */
+function routeExistsFor(url: string, appRoot: string = join(WEB_ROOT, "app")): boolean {
+  const segments = url.replace(/^\//, "").split("/").filter(Boolean);
+  const walk = (dir: string, rest: readonly string[]): boolean => {
+    if (!existsSync(dir)) return false;
+    if (rest.length === 0) return ROUTE_FILE_NAMES.some((name) => existsSync(join(dir, name)));
+    const [head, ...tail] = rest;
+    if (walk(join(dir, head), tail)) return true;
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^\(.+\)$/.test(entry.name))
+      .some((entry) => walk(join(dir, entry.name), rest));
+  };
+  return walk(appRoot, segments);
+}
+
 describe("FRONT-A11 Connections 的 X 行:诚实的 Unavailable", () => {
+  it("FRONT-A11:路由探测本身是活的 —— 认得路由组与 route.ts 以外的扩展名", () => {
+    // 对照组:一条真实存在的授权路由必须被找到。探测器若整个坏掉(永远回 false),
+    // 下一条围栏会一直绿着说谎,这一条先把它钉死。
+    expect(routeExistsFor("/api/meta/authorize"), "探测器找不到一条确实存在的路由").toBe(true);
+    expect(routeExistsFor("/api/definitely-not-a-route")).toBe(false);
+
+    // 路由组 + .tsx:两种漏各造一次,在临时树上验,不动仓库。
+    const root = mkdtempSync(join(tmpdir(), "fikirtive-route-probe-"));
+    try {
+      mkdirSync(join(root, "(social)", "api", "x", "authorize"), { recursive: true });
+      writeFileSync(join(root, "(social)", "api", "x", "authorize", "route.tsx"), "export {};");
+      expect(routeExistsFor("/api/x/authorize", root), "夹了路由组或换了扩展名就找不到了").toBe(true);
+      expect(routeExistsFor("/api/x/callback", root)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("FRONT-A11:X 的 Unavailable 绑在真实授权路由上 —— 路由没建就必须留在不可连名单里", () => {
     const url = xConnectUrl();
-    // "/api/x/authorize" ⇒ app/api/x/authorize/route.ts
-    const routeFile = join(WEB_ROOT, "app", ...url.replace(/^\//, "").split("/"), "route.ts");
-    const routeExists = existsSync(routeFile);
+    // "/api/x/authorize" ⇒ app/**/api/x/authorize/route.{ts,tsx,js,jsx,mjs}
+    const routeExists = routeExistsFor(url);
 
     expect(
       UNAVAILABLE_PUBLISHING_CHANNEL_IDS.has("x"),
