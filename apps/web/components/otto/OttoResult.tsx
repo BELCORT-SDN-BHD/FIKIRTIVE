@@ -129,23 +129,22 @@ async function attemptCopy(url: string): Promise<CopyState> {
   }
 }
 
-/** Fix #12 — "how's it look?" nudge, purely client-side, no Otto turn */
+/** Fix #12 — "how's it look?" nudge, purely client-side, no Otto turn.
+ *
+ *  FRONT-A12 (接线盘点 L8): there used to be a "Looks great" button beside "Tweak it". It had
+ *  nowhere to go — it hid its own row and told nobody: no server call, no preference stored, no
+ *  signal Otto could ever read. A button that only removes itself teaches the merchant that
+ *  their answer was recorded when it was not, so it is gone. Doing nothing is already how you
+ *  say "looks great" here; "Tweak it" stays because it does something real — it puts the cursor
+ *  in the composer (or hands control to the parent's `onTweak`). */
 function ResultNudge({ onTweak }: { onTweak?: () => void }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
   return (
     <div className="mt-4 flex flex-wrap items-center gap-3">
       <span className="text-[0.875rem] text-muted-foreground">
-        Done — happy with it, or want a tweak?
+        Done — want a tweak?
       </span>
-      <Button
-        type="button"
-        variant="secondary"
-        onClick={() => setDismissed(true)}
-        className="h-auto rounded-[14px] px-3 py-1 text-[0.875rem] font-normal text-muted-foreground shadow-none"
-      >
-        Looks great
-      </Button>
       <Button
         type="button"
         variant="secondary"

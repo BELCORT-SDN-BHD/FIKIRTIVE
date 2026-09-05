@@ -111,6 +111,8 @@ import { fetchOwnerAdObjects } from "./meta-objects";
 import { fetchOwnerPages } from "./meta-pages";
 import { proposeMetaActionForOwner } from "./meta-propose";
 import { proposeAdBuildForOwner } from "./meta-build-propose";
+import { declineMetaCard } from "./meta-card-decline";
+import type { MetaCardKind } from "./meta-card-decline-view";
 import { validateOwnedGenerationExt, type OwnedGenerationRef } from "./otto-generation-validate";
 import { storage } from "./storage";
 import { makeOttoCanvasPort } from "./otto-canvas-port";
@@ -2695,6 +2697,36 @@ export async function ottoReject(raw: unknown): Promise<
         where: { id: cardId, threadId, ownerId, kind: "APPROVAL_CARD", deletedAt: null },
         select: { id: true, payload: true },
       });
+
+      // FRONT-A12: not an APPROVAL_CARD? It may be one of Otto's two Meta cards (ACTION_CARD /
+      // BUILD_CARD), whose Deny now lands here too — one decline entry point, one audit trail.
+      // Their consent is a frozen `Approval` binding rather than an SDK park, so the write itself
+      // lives in meta-card-decline; everything below this branch is the APPROVAL_CARD (park) path.
+      if (!cardMsg) {
+        const metaCardMsg = await prisma.chatMessage.findFirst({
+          where: { id: cardId, threadId, ownerId, kind: { in: ["ACTION_CARD", "BUILD_CARD"] }, deletedAt: null },
+          select: { kind: true },
+        });
+        if (metaCardMsg) {
+          const declined = await declineMetaCard({
+            ownerId,
+            threadId,
+            cardId,
+            kind: metaCardMsg.kind as MetaCardKind,
+          });
+          if ("error" in declined) return declined;
+          if ("alreadyResolved" in declined) {
+            // "declined" is this chain's word for the universal card's "rejected" — one vocabulary
+            // reaches the client, so a caller never has to know which chain answered.
+            const resolution: ApprovalCardResolution =
+              declined.resolution === "declined" ? "rejected" : declined.resolution;
+            return { ok: true, alreadyResolved: true, resolution };
+          }
+          revalidatePath("/", "layout");
+          return declined;
+        }
+      }
+
       const cardPayload = cardMsg ? asApprovalCardPayload(cardMsg.payload) : null;
       if (!cardMsg || !cardPayload) return { error: "That card isn't awaiting approval." };
       if (cardPayload.status !== "pending") {
