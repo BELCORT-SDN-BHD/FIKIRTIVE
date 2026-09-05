@@ -89,8 +89,12 @@ export interface OttoPanelShellProps {
   onNewChat?: () => void;
   headerBusy?: boolean;
   /**
-   * 深链「到达」信号(`?otto=1`,规格书 §2.5;判官 r2 根因修复,PR #1086)——盖过
-   * localStorage 记的上次开合状态。每次这个值相对上一次真的变化(且不是 `null`)都算一次
+   * 「这次必须开」的信号——盖过 localStorage 记的上次开合状态。今天有两个来源,这一层
+   * 一个都不认识,只认「这个值变了」:① 深链到达 `?otto=1`(规格书 §2.5;判官 r2 根因
+   * 修复,PR #1086),商家点名要开面板;② 本页有进行中的对话(FRONT-A14 真信号,
+   * `lib/thread-activity.ts`)。判定与合流都在 `OttoPanelHost`。
+   *
+   * 每次这个值相对上一次真的变化(且不是 `null`)都算一次
    * 新到达,必须开,不管这次到达发生在挂载时还是挂载之后——`OttoPanelHost` 挂在根 layout
    * 上跨软导航不卸载,Back/Forward 或第二次软导航到同一个深链地址都要认。传 `null` 或与
    * 上次相同的值 = 零动作,尤其是:商家自己关掉面板之后,没有新到达就不会被这个信号重新
@@ -143,7 +147,7 @@ export function OttoPanelShell({
     setHydrated(true);
   }, []);
 
-  // 深链强开(见上面 `forceOpenSignal` 的说明)——独立于挂载 hydration 之外的一个 effect,
+  // 强开(见上面 `forceOpenSignal` 的说明)——独立于挂载 hydration 之外的一个 effect,
   // 用函数式 `setState` 保证不管两个 effect 的先后顺序都正确叠加。`lastForceOpenSignalRef`
   // 只用来判定「这次是不是一个新信号」;`null` 或重复值本身不做任何事,把「什么算一次新
   // 到达」完全交给调用方(`OttoPanelHost`)判定。
