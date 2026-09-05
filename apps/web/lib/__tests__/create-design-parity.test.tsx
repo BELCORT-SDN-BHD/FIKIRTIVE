@@ -13,10 +13,12 @@
  *   ② 生产组件与夹具组件同源:标题、composer、Canvas history 行、发送键的
  *      class / aria 字串逐条在两边源码里都出现,任何一边先漂移这条就红。
  *
- * 「+ Add context」在生产上不渲染:`createCanvasConversation` 只收
- * `{prompt, requestId}`,handoff 行只存 `{prompt, threadId}`,起步页没有把引用带进画布的
- * 契约。按 Founder 规则①「设计有、后端没有契约的控件不渲染」,并登记在 PR 的
- * 「设计有、生产暂不显示」表里。
+ * 「+ Add context」现在**渲染**:契约已经建起来了(规格 §7.3⑨「起步页参考契约」)——
+ * `createCanvasConversation` 收类型化的 `references`,handoff 行存 `{type, id}`,画布首轮
+ * 把它们挂上去。所以这一格从「不渲染」的围栏翻成「渲染,且每一项都接在真能力上」的围栏。
+ * 仍然不渲染的只剩夹具的第三项 **Add URL**:全仓唯一的按网址导入是 Otto 自己一轮里调的
+ * `ctx.mediaImport.fromUrl`,没有 composer 能调的 server action,按 Founder 规则①
+ * 「设计有、后端没有契约的控件不渲染」处置。
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -25,8 +27,16 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { canvasDisplayName, formatCanvasTitle } from "@/lib/canvas-title";
 
-vi.mock("@/lib/canvas-entry-actions", () => ({ createCanvasConversation: vi.fn() }));
+vi.mock("@/lib/canvas-entry-actions", () => ({
+  createCanvasConversation: vi.fn(),
+  ensureCanvasDraft: vi.fn(),
+}));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+// 起步页的 Add context 接的是真能力(上传权威、素材库读),这一份只比控件集合,
+// 所以把手换成假件 —— 一条断言也够不着钱、够不着数据库。
+vi.mock("@/lib/upload-actions", () => ({ finalizeCandidateUploads: vi.fn() }));
+vi.mock("@/lib/direct-upload", () => ({ uploadFilesDirect: vi.fn() }));
+vi.mock("@/lib/library-actions", () => ({ getGenerationHistory: vi.fn() }));
 
 const { CreateWorkspace } = await import("@/components/start-something/CreateWorkspace");
 
@@ -170,18 +180,22 @@ describe("FRONT-A12 起步页不出现夹具数据,也不出现没有契约的�
     }
   });
 
-  it("FRONT-A12 「+ Add context」在起步页不渲染:没有把引用带进画布的后端契约", async () => {
+  it("FRONT-A12 「+ Add context」在起步页渲染,而没有契约的 Add URL 仍然不渲染", async () => {
     const dom = await renderWorkspace();
 
-    expect(dom.querySelector('button[aria-label="Add a reference"]')).toBeNull();
-    expect(dom.textContent).not.toContain("Add context");
-    expect(dom.querySelector('input[type="file"]')).toBeNull();
-    // 夹具那三条都是只改一个显示字串、什么都不落库的样板动作。生产源码里(注释以外)
-    // 一处都不该有。
-    expect(FIXTURE_COMPOSER).toContain("Choose from Library");
-    expect(PRODUCTION_COMPOSER_CODE).not.toContain("Choose from Library");
+    // 契约建好之后这颗键回来了(规格 §7.3⑨);它掀开的两项与它们接的能力,
+    // 由 `front-a15-design-parity.test.ts` 真按开菜单逐项比集合。
+    expect(dom.querySelector('button[aria-label="Add a reference"]')).not.toBeNull();
+    expect(dom.textContent).toContain("Add context");
+    // 上传那一项要有真的文件选择器可点,不是一个只改显示字串的样板动作。
+    expect(dom.querySelector('input[type="file"]')).not.toBeNull();
+    // 夹具第三项在生产上一处都不该有 —— 注释以外。
+    expect(FIXTURE_COMPOSER).toContain("Add URL");
     expect(PRODUCTION_COMPOSER_CODE).not.toContain("Add URL");
-    expect(PRODUCTION_COMPOSER_CODE).not.toContain("DropdownMenu");
+    // 夹具那三条本身都是只改一个显示字串、什么都不落库的样板动作;生产不许照抄它们的假动作。
+    expect(FIXTURE_COMPOSER).toContain('onReferenceChange("Warm gift-box hero · Library")');
+    expect(PRODUCTION_COMPOSER_CODE).not.toContain("Warm gift-box hero");
+    expect(PRODUCTION_COMPOSER_CODE).not.toContain("fikirtive.com/product");
   });
 });
 
@@ -230,7 +244,9 @@ describe("FRONT-A15 Canvas history 行的显示层映射（判官 #1174 P2：接
 describe("FRONT-A15 起步页:整套控件与夹具比集合", () => {
   /** DOM 里所有可按的东西,按屏幕阅读器读到的名字。 */
   function controlNames(dom: HTMLElement): string[] {
-    return [...dom.querySelectorAll("button, a, input, [role='button']")].map(
+    // `[hidden]` 的不算 —— 上传那颗真的文件选择器是藏起来的,商家点的是菜单里那一项
+    // (夹具自己也是这么摆的)。它在不在,由上面 FRONT-A12 那条单独钉。
+    return [...dom.querySelectorAll("button, a, input, [role='button']")].filter((el) => !el.hasAttribute("hidden")).map(
       (el) =>
         el.getAttribute("aria-label") ??
         el.getAttribute("title") ??
@@ -238,20 +254,24 @@ describe("FRONT-A15 起步页:整套控件与夹具比集合", () => {
     );
   }
 
-  it("FRONT-A15 空画布史时,起步页只有一个发送键 —— 没有第二颗,也没有 Add context", async () => {
+  it("FRONT-A15 空画布史时,起步页恰好两颗键:加参考与发送 —— 与夹具同一套", async () => {
     const dom = await renderWorkspace([]);
 
-    expect(controlNames(dom)).toEqual(["Send prompt"]);
-    // 夹具的另一颗(「Add a reference」)不在:把引用带进画布的契约还没建
-    // (`docs/specs/frontend-baseline.md` §7.3「⑨ 下一刀 · 起步页参考契约」)。
+    expect(controlNames(dom)).toEqual(["Add a reference", "Send prompt"]);
+    // 两颗都是夹具自己命名的那两颗,不是生产另起的名字。
     expect(FIXTURE_COMPOSER).toContain('aria-label="Add a reference"');
-    expect(dom.querySelector('[aria-label="Add a reference"]')).toBeNull();
+    expect(FIXTURE_COMPOSER).toContain('aria-label="Send prompt"');
   });
 
   it("FRONT-A15 有画布史时,多出来的每一项都是一行画布,没有别的控件混进来", async () => {
     const dom = await renderWorkspace();
 
-    expect(controlNames(dom)).toEqual(["Send prompt", "Raya campaign", "Weekend tea launch"]);
+    expect(controlNames(dom)).toEqual([
+      "Add a reference",
+      "Send prompt",
+      "Raya campaign",
+      "Weekend tea launch",
+    ]);
   });
 
   it("FRONT-A15 裁决五点名的标题行与那一句,在 DOM 与源码里都不在", async () => {
