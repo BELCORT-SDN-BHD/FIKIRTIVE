@@ -174,7 +174,7 @@ describe("a card with no recorded reason says the honest generic thing", () => {
 
     expect(card!.status).toBe("failed");
     expect(card!.failureReason).toBe("unexplained");
-    expect(terminalCardCopy("failed", "unexplained").detail).toBe("You weren't charged. Try again.");
+    expect(terminalCardCopy("failed", "unexplained").detail).toBe("You weren't charged.");
   });
 
   it("invents nothing for a job that ended before any of this existed", async () => {

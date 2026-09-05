@@ -65,11 +65,13 @@ export const OTTO_PANEL_STORAGE_KEY = "fikirtive:otto-panel:v1";
  * 不用再造一份:
  *   · 商家上次留着开着 —— `parseOttoPanelState` 读到的存档 `open:true` 原样生效,这个
  *     函数根本不会被问到(§3.3 的既有存档语义没动一个字)。
- *   · 这一页有活动对话 —— `OttoPanelShell` 的 `forceOpenSignal`(深链 `?otto=1`)已经是
- *     「盖过存档,这次访问强开」的独立效果,不看这里的默认值。**假设**:「活动对话」取的
- *     就是这个既有的深链信号——面板体的会话数据(`activeThreadId`/消息)本来就要等面板真的
- *     开了才取数(见 `OttoPanelHost.tsx` 顶部),开之前没有更早的信号可读,深链是这套代码
- *     里唯一「这次到访确实带着一个 Otto 会话」的预取信号。
+ *   · 这一页有活动对话 —— `OttoPanelShell` 的 `forceOpenSignal` 已经是「盖过存档,这次
+ *     访问强开」的独立效果,不看这里的默认值。它读的是**真信号**:服务端按 ownerId 查
+ *     在途 GenJob + 面板自己的对话(`lib/thread-activity.ts` 的 `hasPendingPanelThread`,
+ *     `OttoPanelHost` 挂载时问一次)。2026-09-04 那一轮拿深链 `?otto=1` 当这一条用,
+ *     Founder 当天追认那是近似;真信号已在下一轮接上,`?otto=1` 退回它本来的意思 ——
+ *     「商家点名要开面板」(`/otto` 旧地址的重定向落点),仍然强开,只是不再兼任
+ *     「这里有一段正在跑的对话」。
  *
  * 窄屏那条**过渡性**豁免(`PANEL_DEFAULT_OPEN_MIN_WIDTH`,W2-11 删移动层时一并清)因此
  * 也不用留在这里了 —— 默认本来就是收起,不必再单独压一次。

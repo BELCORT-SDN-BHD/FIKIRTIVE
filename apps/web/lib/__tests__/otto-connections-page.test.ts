@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core/schedule-draft";
+import { UNAVAILABLE_PUBLISHING_CHANNEL_IDS } from "@/lib/channels/channel-meta";
 
 // #518 — the Connections page (/otto?view=connections) is now the single real page every
 // "Connect a channel" entry point lands on. It must group channels by merchant task
@@ -604,5 +608,90 @@ describe("不可连的渠道:行级零控件(#1139 P2-1 补回)", () => {
     for (const row of dialogRows(dialog).filter((r) => (r.textContent ?? "").includes("Unavailable"))) {
       expect(row.querySelector("a, button")).toBeNull();
     }
+  });
+});
+
+// ── FRONT-A11(接线盘点 L7):X 的 "Unavailable" 必须是诚实,不只是写死 ──────────────────
+//
+// 上面那组围栏钉的是**形状** —— X 那一行三处零控件。它钉不住的是**诚实**:两个方向各有一种
+// 说谎法,每一种都只要改一处就会发生。
+//   ① 名单先动:有人从 UNAVAILABLE_PUBLISHING_CHANNEL_IDS 里删掉 "x",授权路由却还没建。
+//      商家按下 Connect,落进一个 404。
+//   ② 路由先落地:有人建好了 X 的授权路由,却忘了把 "x" 从名单里删。屏幕继续说
+//      "Unavailable",而它其实已经连得上 —— 同一个词,反方向的谎。
+// 所以这条围栏把徽章绑在**仓库里那条路由存不存在**上,双向都会红:真连 X 那天,是先补
+// 开发者凭据与那条路由,再删名单里那个 id,两件事必须同一次动。
+//
+// 授权地址不写死在测试里,而是从 `lib/channels/x.ts` 的 connectUrl 读回来 —— 那是它的单一
+// 权威(7.3)。上面那两条围栏守着 "/api/x/authorize" 这个字面量,有人改了适配器里那一行,
+// 它们会守着一个过期的字符串继续绿;这一条跟着走。
+const HERE = dirname(fileURLToPath(import.meta.url));
+const WEB_ROOT = resolve(HERE, "../..");
+
+/** X 适配器自己声明的授权入口(唯一权威);读源码而不 import,因为 x.ts 会拉进 Prisma。 */
+function xConnectUrl(): string {
+  const src = readFileSync(join(WEB_ROOT, "lib/channels/x.ts"), "utf8");
+  const hit = /connectUrl:\s*\(\)\s*=>\s*"([^"]+)"/.exec(src);
+  if (!hit) throw new Error("lib/channels/x.ts 里找不到 connectUrl —— 围栏失去了它的锚点");
+  return hit[1];
+}
+
+describe("FRONT-A11 Connections 的 X 行:诚实的 Unavailable", () => {
+  it("FRONT-A11:X 的 Unavailable 绑在真实授权路由上 —— 路由没建就必须留在不可连名单里", () => {
+    const url = xConnectUrl();
+    // "/api/x/authorize" ⇒ app/api/x/authorize/route.ts
+    const routeFile = join(WEB_ROOT, "app", ...url.replace(/^\//, "").split("/"), "route.ts");
+    const routeExists = existsSync(routeFile);
+
+    expect(
+      UNAVAILABLE_PUBLISHING_CHANNEL_IDS.has("x"),
+      routeExists
+        ? `${url} 已经建好了,X 却还留在不可连名单里 —— 屏幕在说一句已经不成立的 Unavailable`
+        : `${url} 还不存在,X 却被当成可连 —— 商家会被送到一个 404`,
+    ).toBe(!routeExists);
+  });
+
+  it("FRONT-A11:X 那一行读作 Unavailable,整页没有一条通往 X 授权地址的出路", async () => {
+    const url = xConnectUrl();
+    mocks.getAccountViewData.mockResolvedValue({
+      settings: {},
+      channels: DISCONNECTED_CHANNELS,
+      shelf: { packs: [] },
+      adsAutonomy: "ASK",
+      canPublish: false,
+      meta: { connected: false },
+    });
+
+    const dom = await renderConnections();
+
+    const listRow = dom.querySelector<HTMLElement>('[data-channel="x"]');
+    expect(listRow, "服务清单里没有 X 这一行").toBeTruthy();
+    expect(listRow!.textContent).toContain("Unavailable");
+
+    // 选中 X 之后,详情面板也只说实话。
+    await act(async () => listRow!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const detail = dom.querySelector<HTMLElement>('section[aria-live="polite"]');
+    expect(detail!.textContent).toContain("Unavailable");
+
+    // Add connection 弹层打开(能连的渠道在这里才长出 Connect),X 依旧没有出路。
+    const trigger = Array.from(dom.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Add connection"),
+    );
+    expect(trigger, "Add connection 这颗按钮不在了").toBeTruthy();
+    await act(async () => trigger!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const dialog = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
+    expect(dialog, "Add connection 弹层没有打开").toBeTruthy();
+
+    for (const scope of [dom, dialog!]) {
+      expect(
+        scope.querySelector(`a[href="${url}"], a[href^="${url}?"]`),
+        `出现了一条通往 ${url} 的可点出路,而那条路由并不存在`,
+      ).toBeNull();
+    }
+    // 对照组:能连的渠道在弹层里确实有出路,否则「零出路」只是因为整块 UI 是死的。
+    expect(dialog!.querySelectorAll('a[href="/api/meta/authorize"]').length).toBe(2);
   });
 });

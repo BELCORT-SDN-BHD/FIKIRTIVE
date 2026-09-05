@@ -698,6 +698,56 @@ describe("proxy — dead-letter probe (/api/ops/dlq)", () => {
 const EXACT_EXEMPTIONS = AUTH_WALL_EXEMPTIONS.filter((e) => e.semantics === "exact");
 const SUBTREE_EXEMPTIONS = AUTH_WALL_EXEMPTIONS.filter((e) => e.semantics === "subtree");
 
+/* ──────────────────────────────────────────────────────────────────────────────
+ * FRONT-A2:登录页自己的品牌 logo。
+ *
+ * `next/image` 对 `.svg` 一律自动 unoptimized,所以浏览器请求的是 `/brand/<file>.svg` 本身,
+ * 不是已豁免的 `/_next/image`。修复前墙把它 307 去了 /login —— 登录页顶上那枚 F 是一张破图。
+ * 双向钉死:静态图出墙,商家自己的 /brand 页面留在墙内。
+ * ────────────────────────────────────────────────────────────────────────────── */
+describe("proxy — FRONT-A2 the sign-in doors can load their own brand art", () => {
+  it("FRONT-A2: a session-less browser can fetch the login page's Fikirtive mark", () => {
+    expect(matcherRuns("/brand/f-app-icon-coral.svg")).toBe(false);
+  });
+
+  it("FRONT-A2: the merchant's own Brand page stays behind the wall", async () => {
+    expect(matcherRuns("/brand")).toBe(true);
+    expect(matcherRuns("/brand/")).toBe(true);
+    expect(matcherRuns("/brand/anything")).toBe(true);
+    const res = await proxy(req("/brand"));
+    expect(res?.status).toBe(307);
+    expect(mockGetSession).toHaveBeenCalledOnce();
+  });
+
+  it("FRONT-A2: the exemption is the file, not a prefix — a look-alike name stays walled", () => {
+    expect(matcherRuns("/brand/f-app-icon-coral.svgx")).toBe(true);
+    expect(matcherRuns("/brand/f-app-icon-coralXsvg")).toBe(true);
+    expect(matcherRuns("/brand/f-app-icon-coral.svg/secrets")).toBe(true);
+  });
+
+  it("FRONT-A2: public/brand/ and the ledger hold exactly the same files", () => {
+    // 目录对账。加了第七枚标识却忘了登记(或登记了一条不存在的文件)都在这里变红,
+    // 所以「哪一枚今天被无会话的页面用到」不再是每次都要重做一遍的人肉判断。
+    const onDisk = readdirSync(resolve(WEB_ROOT, "public/brand"))
+      .filter((name) => !name.startsWith("."))
+      .map((name) => `brand/${name}`)
+      .sort();
+    const inLedger = AUTH_WALL_EXEMPTIONS
+      .filter((exemption) => exemption.path.startsWith("brand/"))
+      .map((exemption) => exemption.path)
+      .sort();
+    expect(inLedger).toEqual(onDisk);
+    expect(onDisk.length).toBeGreaterThan(0);
+  });
+
+  it("FRONT-A2: every brand-art exemption is exact — no subtree may open /brand", () => {
+    for (const exemption of AUTH_WALL_EXEMPTIONS.filter((e) => e.path.startsWith("brand/"))) {
+      expect(exemption.semantics).toBe("exact");
+    }
+    expect(AUTH_WALL_EXEMPTIONS.some((e) => e.path === "brand")).toBe(false);
+  });
+});
+
 describe("proxy — the exemption ledger generates the matcher (#901)", () => {
   it("config.matcher is byte-for-byte what the ledger generates", () => {
     // 围栏。Next 要 matcher 是构建期常量,所以 proxy.ts 里必须是手写字面量;这条断言就是

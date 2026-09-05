@@ -73,7 +73,7 @@ describe("production Home analysis", () => {
         state: "ready",
         goal: "online-sales",
         period: "30-days",
-        freshness: { status: "current", label: "Updated 12 min ago", asOf: "2026-08-31T15:00:00Z" },
+        freshness: { status: "known", label: "Updated 12 min ago", asOf: "2026-08-31T15:00:00Z" },
         evidenceStrength: "complete",
         sources: [
           { id: "meta-ads", label: "Meta ads" },
