@@ -71,6 +71,12 @@ const ALLOWED_MODULES = [
   // The public-door rate gate, and the caller identity it counts.
   "lib/rate-limit-gates.ts",
   "lib/caller-identity.ts",
+  // 签名媒体地址的 TTL 与路径模板,唯一源头。纯常量 + 一个 `encodeURIComponent` 包装,
+  // **零 import**(所以下面那张外部边表一行都没多)、不碰数据库、不判断谁有资格拿链子。
+  // 它出现在这张表上,是因为素材面板的 Copy link 成了第二个消费者:同一条规则原本抄在
+  // share-preview-view.ts 里,再抄一份就是两个地方各定一个 TTL。收进来之后,谁想给这个
+  // 文件加一个 import,下面那张边表当场变红 —— 公共页能碰到的东西仍然逐条被钉住。
+  "lib/media-public-link.ts",
   // Presentation only — shadcn primitives and the class merger.
   "components/ui/badge.tsx",
   "components/ui/card.tsx",
@@ -220,8 +226,11 @@ describe("the public share-preview page reaches nothing it does not need", () =>
   });
 
   it("reads its data from exactly one module, so there is one place to review", () => {
+    // 排除的是**碰不到数据的纯函数**:class 合并器、来电地址解析、签名地址的 TTL 与路径模板。
+    // 三个都零数据库、零 session;判定标准是「它能不能读到东西」,不是「它住在 lib/ 下」。
+    const PURE_HELPERS = ["lib/utils.ts", "lib/caller-identity.ts", "lib/media-public-link.ts"];
     const dataModules = importClosure(PAGE).modules.filter(
-      (file) => file.startsWith("lib/") && file !== "lib/utils.ts" && file !== "lib/caller-identity.ts",
+      (file) => file.startsWith("lib/") && !PURE_HELPERS.includes(file),
     );
     expect(dataModules).toEqual(["lib/rate-limit-gates.ts", "lib/share-preview-view.ts", "lib/share-preview.ts"]);
   });
