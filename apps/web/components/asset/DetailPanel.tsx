@@ -182,6 +182,9 @@ export default function DetailPanel({
   const editBusyRef = useRef(false);
 
   const cancelledRef = useRef(false);
+  // 「Copied!」那 6 秒的计时器要留个把手:连按两次复制时,不清掉上一颗,第二次的提示会被
+  // 上一轮的计时器提前抹掉(最短只剩几毫秒)—— 而 6 秒本来就是为了放下「链子活多久」那句。
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Fetch opaque active capability ids, exact quotes, and video controls once. Spend handlers
   // await this server-derived contract; provider-backed model ids stay server-side.
   const [activeModels, setActiveModels] = useState<ActiveGenModels | null>(null);
@@ -225,6 +228,8 @@ export default function DetailPanel({
     });
     return () => {
       cancelledRef.current = true;
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
     };
   }, [generationId]);
 
@@ -501,7 +506,9 @@ export default function DetailPanel({
       setCopiedMinutes(minted.expiresInMinutes);
       setCopied(true);
       // 6 秒,不是原来的 2 秒:现在这块地方还要放下「这条链子活多久」那一句,2 秒读不完。
-      setTimeout(() => { if (!cancelledRef.current) setCopied(false); }, 6000);
+      // 再按一次就重新计时:先撤掉上一颗,否则它会在新提示刚出来时把提示抹掉。
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => { if (!cancelledRef.current) setCopied(false); }, 6000);
     } catch {
       // 浏览器拒了剪贴板(权限、非安全上下文、根本没有这个 API)。旧写法在这里一个字都不说 ——
       // 按钮不变、剪贴板是空的,商家以为链接已经在手上了。这一句没有服务端来源,所以由这里

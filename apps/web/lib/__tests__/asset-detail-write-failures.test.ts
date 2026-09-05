@@ -244,6 +244,33 @@ describe("FRONT-A12 ② Copy link", () => {
     expect(surface().textContent).not.toContain("open the asset for 10 minutes");
   });
 
+  it("FRONT-A12 连按两次复制:第二次的提示不被上一轮的 6 秒计时器提前抹掉", async () => {
+    // 复制完贴给一个人,再复制给第二个人 —— 很自然的动作。旧写法每次成功都起一颗裸
+    // `setTimeout`,谁也不撤谁:第一颗在第二次提示刚出来时到点,把「Copied!」和那句时长
+    // 一起抹掉(最短只剩几毫秒),而 6 秒这个数字本来就是为了让那句时长读得完。
+    await renderPanel();
+    // 只假造 setTimeout / clearTimeout:这个组件到处用 queueMicrotask,连它一起假造会卡住渲染。
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await click(buttonNamed(surface(), "Copy link"));
+      expect(surface().textContent).toContain("Copied!");
+
+      await act(async () => { vi.advanceTimersByTime(5_900); });
+      await click(buttonNamed(surface(), "Copied!"));
+      // 第一颗计时器的到点时刻(6000)已过;没撤掉的话,这一刻提示就没了。
+      await act(async () => { vi.advanceTimersByTime(200); });
+
+      expect(surface().textContent).toContain("Copied!");
+      expect(surface().textContent).toContain("open the asset for 10 minutes");
+
+      // 新那颗照样到点收工 —— 不是把提示改成永久的。
+      await act(async () => { vi.advanceTimersByTime(6_000); });
+      expect(surface().textContent).not.toContain("Copied!");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("FRONT-A12 剪贴板被浏览器拒:不再静默吞掉,屏幕上说清楚什么都没复制成", async () => {
     mocks.writeText.mockRejectedValue(new Error("NotAllowedError"));
     await renderPanel();
