@@ -14,9 +14,11 @@
  *
  * **它不说 Otto 读得到什么**(判官 r1 [P2] 的裁定至今成立):服务端没有任何读者会因为
  * 商家在看哪一页而改变这一轮的上下文,所以「On this page: X」那种写法会说假话。W2-8 因此
- * 不画 chip。FRONT-A14 之后头部只写**这一条对话属于哪里**:确知的画布对话写
- * 「Canvas · <画布名>」,面板自己的对话写「Workspace · <页面名>」(见下方 `formatPanelScope`
- * 下面那一段)。说的是归属,不是「Otto 看得见什么」—— 前者今天为真,后者仍要等 #879 step 2。
+ * 不画 chip。FRONT-A14 之后头部只写**位置**:确知的画布对话写「Canvas · <画布名>」,面板
+ * 自己的对话写「Workspace · <页面名>」(见下方 `formatPanelScope` 下面那一段)。两段不是同
+ * 一件事(判官 #1247 K7 P2-2):第一段是这一条对话的归属,第二段在工作区那一态是**商家此刻
+ * 打开的那一页**,跟着 `location` 走而不是跟着对话走。说的是位置,不是「Otto 看得见什么」
+ * —— 前者今天为真,后者仍要等 #879 step 2。
  */
 import { GOAL_PRESETS, type GoalKey } from "@fikirtive/core/goals";
 import { SHELL_ROUTES, everyNavDestination } from "@fikirtive/core/navigation";
@@ -126,7 +128,8 @@ export function formatPanelScope(scope: string, name: string | null | undefined)
  *
  * 判据只有一句:**只对归属确知的那一条对话出声**。
  *   · `surface === "canvas"` → `Canvas · <画布名>`(这一段属于别处,P1-010 报的第二半);
- *   · `surface === "panel"`  → `Workspace · <页面名>`(这一段属于工作区,不属于任何画布);
+ *   · `surface === "panel"`  → `Workspace · <页面名>`(这一条对话属于工作区、不属于任何画布;
+ *     **`<页面名>` 是商家此刻打开的那一页**,不是这条对话的归属 —— 换一页它就换一个名字);
  *   · 新对话与来路不明的老行(`surface === null`)→ 一行都不画(判官 P2-1)。
  *
  * 判官 P2-4 上一轮把工作区那一半收窄掉,理由是「商家就在那一页上,不带新信息」,并挂起

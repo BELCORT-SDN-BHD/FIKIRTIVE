@@ -121,10 +121,11 @@ export function appEnv(): Record<string, string> {
     // (判官 #1237 P2-2). AUTH_EMAIL_TRANSPORT is not marked `moneyInvariant`, so
     // `bootEnvDecision`'s FIKIRTIVE_ENV_CONTRACT=warn escape hatch reaches it: ANY production
     // process started with that flag — not just this suite — boots, logs the refusal as a
-    // warning, and then mails nothing at all. This suite passes the flag on purpose (four lines
-    // up), so here it surfaces as one loud warning, which is exactly what a stub mail transport
-    // deserves; on a real deployment the same pair would be a silent outage. The fence is a
-    // default, not a lock — whoever opens the hatch owns that.
+    // warning, and then mails nothing at all. This suite passes the flag on purpose (the
+    // `FIKIRTIVE_ENV_CONTRACT: "warn"` entry in this same map), so here it surfaces as one loud
+    // warning, which is exactly what a stub mail transport deserves; on a real deployment the
+    // same pair would be a silent outage. The fence is a default, not a lock — whoever opens the
+    // hatch owns that.
     AUTH_EMAIL_TRANSPORT: "stub",
     NEXT_TELEMETRY_DISABLED: "1",
     // GENERATION_PROVIDER is deliberately absent — see OFF_MACHINE_CREDENTIAL_NAMES above.

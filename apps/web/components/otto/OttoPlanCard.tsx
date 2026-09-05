@@ -588,9 +588,10 @@ export function OttoPlanCard({
             「Tell Otto what to change」会挂在刚扣过钱的卡上（切换那颗键此刻已经不在了）。
             画布那一侧没有这个坑纯属那一行会卸载 —— 两处确认位不该靠这种巧合才一致。
 
-            开关本身的复位在上面那条 effect 里（#1245 复判 P2-1）：闸只管这一刻显不显示，
-            所以卡走过「等确认 → 已排队 → 失败」时，光有闸会在失败那一刻把留着的 `changeOpen`
-            重新显示出来 —— 表单自己弹开。 */}
+            开关本身的复位**不是 effect**（判官 #1249 P2-1 订正）：它是上面 `changeOpen =
+            changeOpenFor === runState` 那个派生量 —— 打开时记下当时的 `runState`，卡一换状态
+            这份记号就自己不算数了。闸只管这一刻显不显示，所以卡走过「等确认 → 已排队 → 失败」
+            时，光有闸会在失败那一刻把留着的 `changeOpen` 重新显示出来 —— 表单自己弹开。 */}
         {changeOpen && (runState === "waiting" || runState === "failed") && !cancelled && (
           <CardChangeForm
             payload={p}
