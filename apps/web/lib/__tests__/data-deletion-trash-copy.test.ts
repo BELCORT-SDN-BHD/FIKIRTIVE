@@ -97,7 +97,9 @@ describe("FRONT-A12 · /legal/data-deletion 的删素材那一条说的是实话
     //   ② 账户删除那条人工路(本页上方已有)。
     // 两条都必须在这一条 bullet 里点得到名字,不然这一页对「永久删除」这件事是沉默的。
     const bullet = libraryAssetBullet();
-    expect(bullet).toContain("campaign");
+    // 钉整句片语,不钉光秃秃的 "campaign" —— 这一条 bullet 前面本来就写着「campaign canvas」,
+    // 单个词的断言删掉整句新话也照样绿(判官 #1252 P2-3)。
+    expect(bullet).toMatch(/deleting the campaign the asset was made in, which permanently deletes the records held in it/i);
     expect(bullet).toContain("account deletion");
     // 不许把回收站本身写成永久删除。
     expect(bullet).toMatch(/nothing on this route removes the record itself/i);
