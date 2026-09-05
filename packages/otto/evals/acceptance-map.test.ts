@@ -24,7 +24,7 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.0 七段三批)", () => {
   // ── 批 I 的其余三段，不在本段写集 ─────────────────────────────────────────
   it.todo("ENGINE-A5 见 packages/core/src/llm-prices.test.ts 与 env-contract.test.ts（①段已交付并合入主干：价目查不到即抛、开机拒绝）");
   it.todo("ENGINE-A2 每轮调试档案：装了哪些技能文件、走了几步、调了哪些动作，零商家内容明文 —— 批 I §7.2②");
-  it.todo("ENGINE-A6 长对话旧轮折成摘要、成对感知的历史裁剪 —— 批 I §7.2④");
+  it.todo("ENGINE-A6 见 packages/otto/src/runtime-history-budget.test.ts 与 src/history-budget.test.ts（④段已交付：成对感知裁剪、旧轮折进 rollingSummary、第 N+1 轮实结不随历史上涨）");
 
   // ── 批 II（依赖批 I）──────────────────────────────────────────────────────
   it.todo("ENGINE-A4 见 apps/web/lib/__tests__/engine-a4-truncated-turn-refund.test.ts（真库账本 reserve/refund 成对 + 消费历史退款行）与 packages/otto/src/runtime.test.ts（零交付判词三态）—— ⑤段已交付");
