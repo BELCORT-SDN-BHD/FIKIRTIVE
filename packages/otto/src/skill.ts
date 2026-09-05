@@ -32,6 +32,12 @@ export interface OttoSkillSpec<P extends z.ZodObject<any>> {
    *  工厂据此 (a) 把问题追加进 description 让模型先问，(b) 在 execute 前预检——
    *  缺字段则跳过 execute、返回 { needMoreInfo }，让 agent 去追问。 */
   requires?: { field: string; question: string }[];
+  /** ENGINE-A4 可选：这把工具下**只读**的那几个动作。多动作技能（`manageCanvas` 的
+   *  `view`、`manageLibrary` 的 `history`…）整体声明 `effect:"write"`，但其中几个动作只查
+   *  不写——轮子死了商家手里什么都没多，按 §7.2⑤ 的口径**不算交付**。
+   *  `field` 必须是 `parameters` 的一个 key（就是那个动作判别键，工厂校验），`actions` 是
+   *  其中纯读的取值。声明在技能自己家里，所以 runtime 不需要第二份手抄名册。 */
+  readOnlyActions?: { field: string; actions: readonly string[] };
 }
 
 export interface OttoSkill {
@@ -43,6 +49,8 @@ export interface OttoSkill {
   description: string;
   /** 声明的资讯门（空数组表示无）。 */
   requires: { field: string; question: string }[];
+  /** ENGINE-A4：这把工具下只读的那几个动作（未声明则为 null＝每个动作都可能落盘）。 */
+  readOnlyActions: { field: string; actions: readonly string[] } | null;
   /** The @openai/agents tool, ready for the agent's `tools` array. */
   tool: FunctionTool<OttoContext, any, unknown>;
 }
@@ -164,6 +172,16 @@ export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<
     );
   }
 
+  // ENGINE-A4 readOnlyActions: 判别键必须真在 parameters 里（同上，fail-loud）。改了动作名却忘了
+  // 改这里的人，要在定义期就撞上，而不是在某一轮结算时静静多收一笔。
+  const readOnlyActions = spec.readOnlyActions ?? null;
+  if (readOnlyActions && !Object.keys(shape).includes(readOnlyActions.field)) {
+    throw new Error(
+      `[defineOttoSkill] "${spec.name}" declares readOnlyActions.field "${readOnlyActions.field}" ` +
+        "which is not in parameters. Add it to the z.object({...}) schema.",
+    );
+  }
+
   const needsApproval = deriveNeedsApproval(cost, effect, reach);
 
   // requires 非空时，把"先确认什么"追加进 model-facing description（单一事实源：同一份 requires）。
@@ -210,5 +228,5 @@ export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<
     },
   });
 
-  return { name: spec.name, cost, effect, reach, needsApproval, description: spec.description, requires, tool: built };
+  return { name: spec.name, cost, effect, reach, needsApproval, description: spec.description, requires, readOnlyActions, tool: built };
 }

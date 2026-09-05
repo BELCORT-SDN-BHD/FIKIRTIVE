@@ -208,6 +208,9 @@ export const manageCanvasSkill = defineOttoSkill({
   cost: "free",
   effect: "write",
   reach: "internal",
+  // ENGINE-A4:view 只看不改 —— 它前面那次 sync 只是把商家**已经付过钱**的结果映到画布上显示,
+  // 没有任何新东西因这一轮而生。「只反复看板直到跑满步数」正是本条要治的那条死胡同。
+  readOnlyActions: { field: "action", actions: ["view"] },
   description:
     "See and arrange the project's creative canvas ($0 — never generates media or spends credits). " +
     "view: all nodes with status, prompts, which paid press each came out of (genJobId + batchIndex + batchSize — cards of one press are siblings, not parent and children), and madeFromNodeId, the only card a node was actually built on. " +

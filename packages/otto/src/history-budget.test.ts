@@ -11,6 +11,7 @@ import {
   estimateTextTokens,
   rollingSummaryBlock,
   OTTO_HISTORY_BUDGET_TOKENS,
+  CJK_TOKENS_PER_CHAR,
 } from "./run-input.js";
 import type { AgentInputItem } from "@openai/agents";
 
@@ -42,12 +43,44 @@ describe("estimateTextTokens", () => {
     expect(estimateTextTokens("a".repeat(400))).toBe(100);
   });
 
-  it("counts CJK at ~2 tokens/char — 一个刻意保守(偏高)的上界,方向是宁可早裁", () => {
-    expect(estimateTextTokens("字".repeat(100))).toBe(200);
+  it("ENGINE-A6:counts CJK at ~1.3 tokens/char — 贴近真实分词,只留一点高估余量", () => {
+    expect(estimateTextTokens("字".repeat(100))).toBe(Math.ceil(100 * CJK_TOKENS_PER_CHAR));
+    expect(CJK_TOKENS_PER_CHAR).toBeGreaterThanOrEqual(1);
+    expect(CJK_TOKENS_PER_CHAR).toBeLessThanOrEqual(1.3);
   });
 
   it("empty text is zero", () => {
     expect(estimateTextTokens("")).toBe(0);
+  });
+});
+
+/**
+ * ENGINE-A6 —— 华语商家的那一半:旧的「每字 2 token」把中文历史算成了双倍,于是华语对话在
+ * 12,000 预算里只装得下英文对话一半的字数就开始折叠丢上下文。这两条钉的就是这个口径。
+ * 用的是**整段历史**(JSON 形态,与生产同一条路径),不是裸字符串。
+ */
+describe("ENGINE-A6 · 华语长对话的折叠触发点", () => {
+  /** 一段共约 `chars` 个汉字的对话（user/assistant 交替，每条 500 字）。 */
+  const chineseHistory = (chars: number): AgentInputItem[] => {
+    const items: AgentInputItem[] = [];
+    for (let i = 0; i < Math.ceil(chars / 500); i += 1) {
+      items.push(say(i % 2 === 0 ? "user" : "assistant", 500, "字"));
+    }
+    return items;
+  };
+
+  it("ENGINE-A6:6,000 字华语历史 —— 还在 12,000 预算之内,零折叠", () => {
+    const out = trimHistoryToBudget(chineseHistory(6_000), OTTO_HISTORY_BUDGET_TOKENS);
+    expect(estimateHistoryTokens(out.kept)).toBeLessThanOrEqual(OTTO_HISTORY_BUDGET_TOKENS);
+    expect(out.dropped).toEqual([]);
+  });
+
+  it("ENGINE-A6:12,000 字华语历史 —— 越过预算,从最旧一端裁并交给摘要", () => {
+    const history = chineseHistory(12_000);
+    const out = trimHistoryToBudget(history, OTTO_HISTORY_BUDGET_TOKENS);
+    expect(out.dropped.length).toBeGreaterThan(0);
+    expect(estimateHistoryTokens(out.kept)).toBeLessThanOrEqual(OTTO_HISTORY_BUDGET_TOKENS);
+    expect([...out.dropped, ...out.kept]).toEqual(history);
   });
 });
 
