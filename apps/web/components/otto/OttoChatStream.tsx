@@ -1320,11 +1320,12 @@ export function OttoChatStream({
 
             // Meta approval-flow cards (F23).
             // The approve buttons inside call the existing gated server actions
-            // (approveMetaActionPlan / approveAdBuild); this only renders them.
+            // (approveMetaActionPlan / approveAdBuild) and Deny calls ottoReject — the same
+            // action the universal approval card uses (FRONT-A12); this only renders them.
             if (kind === "ACTION_CARD") {
               return (
                 <WidgetRow key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
-                  <OttoActionPlanCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
+                  <OttoActionPlanCard cardId={m.metadata!.durableId} threadId={thread.id} payload={m.metadata?.payload} />
                 </WidgetRow>
               );
             }
@@ -1332,7 +1333,7 @@ export function OttoChatStream({
             if (kind === "BUILD_CARD") {
               return (
                 <WidgetRow key={m.id} messageId={m.id} animateIn={isNewMessage(m.id)}>
-                  <OttoAdBuildCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
+                  <OttoAdBuildCard cardId={m.metadata!.durableId} threadId={thread.id} payload={m.metadata?.payload} />
                 </WidgetRow>
               );
             }

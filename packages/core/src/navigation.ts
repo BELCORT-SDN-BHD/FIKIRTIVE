@@ -519,7 +519,22 @@ export function merchantNavMap(): string {
   // describeNavLink() 那副「名字 (href) — 能做什么」的模具(它要求一条真地址)。
   // 不写 "button"——packages/otto 的 #541 词表禁令挡的正是这个词:Otto 看不见 app 的
   // 控件,连自己这份地图里都不许出现点名控件的写法(否则这句话本身就会被它复述出去)。
-  lines.push(`- ${OTTO_ASSISTANT.label} — ${OTTO_ASSISTANT.does} Reachable on every page, or with Cmd/Ctrl+J.`);
+  //
+  // 2026-09-05(接线盘点 L6,规格 `docs/specs/frontend-baseline.md` §5):这一句原来是
+  // 「Reachable on every page, or with Cmd/Ctrl+J.」—— 一句 Otto 自己做不到的承诺。
+  // `CREATE_NAV_HREF` 与 `CANVAS_HREF` 两面**刻意不挂面板**(判据「这一面自己已经有一个
+  // Otto」,见 apps/web/design-system/patterns/otto-panel/panel-surface.ts 的
+  // `SURFACES_WITH_THEIR_OWN_OTTO`):那两面页面自己就有一只 Otto 输入框,面板不来第二个,
+  // 顶栏那颗 Ask Otto 与 Cmd/Ctrl+J 因此在那里同样缺席。地图是 Otto 照着对商家说话的稿子,
+  // 不许留一句它复述出去就会落空的话。**只改这一句措辞,挂载范围一个字没动。**
+  //
+  // 例外写成裸路径、不写成「名字 (href)」:navigation.test.ts 钉死这一行不许长成
+  // describeNavLink() 那副模具(它没有自己的地址可以摆进括号里)。围栏在
+  // apps/web/lib/__tests__/otto-panel-mount.test.ts —— 只有那里同时看得见这份地图与
+  // `ottoPanelMountsOn()`,拿一份去核另一份。
+  lines.push(
+    `- ${OTTO_ASSISTANT.label} — ${OTTO_ASSISTANT.does} Reachable with Cmd/Ctrl+J on every page except ${CREATE_NAV_HREF} and ${CANVAS_HREF}, where the page itself already carries an Otto input instead.`,
+  );
   for (const node of MERCHANT_NAV) {
     if (!isNavGroup(node)) {
       lines.push(describeNavLink(node));

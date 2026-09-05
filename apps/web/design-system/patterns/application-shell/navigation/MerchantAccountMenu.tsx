@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import Link from "next/link"
 import { LogOut, User } from "lucide-react"
 
@@ -15,6 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 
 export type MerchantShellAccount = {
@@ -26,6 +28,28 @@ export type MerchantShellAccount = {
 export function merchantIdentityLabel(account: MerchantShellAccount | null | undefined): string {
   if (!account) return "Account"
   return account.displayName || account.email || "Account"
+}
+
+/** 判官 P1-1(2026-09-05)—— 登出**成功**那一路,server action 的 promise 是被**拒绝**的,不是 resolve 的。
+ *
+ *  Next 16 的 server-action reducer 只要服务端答了一个 redirect,就一律
+ *  `reject(createRedirectErrorForAction(...))`,把控制权交还给 RedirectBoundary,再自己继续导航
+ *  (`next/dist/client/components/router-reducer/reducers/server-action-reducer.js`,原注释
+ *  「the action promise will be rejected with a redirect」);只有**没有** redirect 的那一路才 `resolve`。
+ *  而 `signOutAction()` 每一次成功都以 `redirect("/login")` 收尾(`apps/web/lib/account-actions.ts:235`),
+ *  所以一个不分辨的 `catch` 会把每一次成功登出都当成失败,商家落到 /login(其实已登出)还读到一条红字。
+ *
+ *  分辨的依据是 digest 前缀,仓库里已有先例(`apps/web/lib/__tests__/brand-route.test.ts:312`)。
+ *  不用 `next/navigation` 的 `unstable_rethrow`:在事件处理器里 rethrow 只会变成一次 unhandled rejection,
+ *  导航本来就由 reducer 自己完成,识别出来直接放行即可。 */
+function isRedirectRejection(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "digest" in error &&
+    typeof (error as { digest?: unknown }).digest === "string" &&
+    (error as { digest: string }).digest.startsWith("NEXT_REDIRECT")
+  )
 }
 
 export function MerchantAccountMenu({
@@ -45,6 +69,27 @@ export function MerchantAccountMenu({
   buildSha?: string | null
 }) {
   const label = merchantIdentityLabel(account)
+  const [signingOut, setSigningOut] = useState(false)
+
+  /** FRONT-A12 —— 登出以前是 `void signOutAction()`:点下去屏幕上什么都不变,失败了也什么都不说,
+   *  商家读到的是「大概退出了吧」。
+   *
+   *  只有一种出口保持「进行中」:被识别为框架 redirect 的拒绝(见 `isRedirectRejection`)。那是登出
+   *  成功、壳马上被换掉的那一路,在跳走之前一直显示进行中才是实话,更不该弹失败。
+   *  其余每一种出口都复位——真失败弹 toast 让商家重来;而一个正常 resolve 的 action(评审夹具传的
+   *  `async () => {}`,不跳转)也复位,否则那颗菜单项会永久卡在「Signing out…」(判官 P2-3)。 */
+  const runSignOut = async () => {
+    if (signingOut) return
+    setSigningOut(true)
+    try {
+      await signOutAction()
+      setSigningOut(false)
+    } catch (error) {
+      if (isRedirectRejection(error)) return
+      setSigningOut(false)
+      toast.error("Couldn't sign you out. Try again.")
+    }
+  }
 
   const copyBuildInfoLink = async () => {
     try {
@@ -92,12 +137,16 @@ export function MerchantAccountMenu({
             <DropdownMenuItem
               data-shell-signout
               variant="destructive"
+              /* 菜单不在这一下关掉:关掉就没地方显示进行中,失败时商家也看不出是哪一颗按钮的事。 */
+              closeOnClick={false}
+              disabled={signingOut}
+              aria-busy={signingOut || undefined}
               onSelect={() => {
-                void signOutAction()
+                void runSignOut()
               }}
             >
-              <LogOut />
-              <span>Sign out</span>
+              {signingOut ? <Spinner /> : <LogOut />}
+              <span>{signingOut ? "Signing out…" : "Sign out"}</span>
             </DropdownMenuItem>
           ) : null}
         </DropdownMenuGroup>

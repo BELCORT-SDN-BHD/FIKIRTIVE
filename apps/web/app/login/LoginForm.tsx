@@ -37,6 +37,16 @@ type LoginFormError =
   | ({ source: "sign_in_code" } & SignInCodeFailure)
   | { source: "password" | "social" | "code_entry"; message: string };
 
+/** FRONT-A2/A12 —— 「送码这件事失败了」的标题，一句话、一个来源。
+ *
+ *  已批准的 Auth 夹具没有这一态（`design-system/patterns/auth/AuthAccessJourneyReference.tsx`
+ *  的每一步只画一种错误），按 Founder 裁决②「生产必需而设计没有的错误态沿用设计的样式呈现，
+ *  标题保留主干原句」，这里保留主干在邮箱步已经在用的那一句。
+ *
+ *  邮箱步的「Continue with email」与 code 步的「Send again」走的是同一个函数、同一个错误源
+ *  （`source: "sign_in_code"`），所以共用这一句，而不是在 code 步另写一份措辞。 */
+const SIGN_IN_CODE_FAILED_TITLE = "Email could not be continued";
+
 function GoogleMark() {
   return (
     <span
@@ -99,9 +109,13 @@ export function LoginForm({
     router.push(loginStepHref(next, callbackURL), { scroll: false });
   }
 
-  async function sendSignInCode(e?: React.SyntheticEvent) {
+  /** FRONT-A12 —— 返回值就是「码到底送出去了没有」。
+   *
+   *  code 步的「Send again」以前 `await sendSignInCode()` 之后无条件报成功，失败时商家会同时
+   *  读到一条错误和一句「A new login code was sent.」——后者是假的。真话只能从这里带出来。 */
+  async function sendSignInCode(e?: React.SyntheticEvent): Promise<boolean> {
     e?.preventDefault();
-    if (busy) return;
+    if (busy) return false;
     const normalizedEmail = normalizeSignInEmail(email);
     if (!normalizedEmail) {
       setError({
@@ -111,7 +125,7 @@ export function LoginForm({
         message: SIGN_IN_CODE_INVALID_EMAIL_MESSAGE,
       });
       emailInputRef.current?.focus();
-      return;
+      return false;
     }
 
     setBusy("code");
@@ -129,12 +143,13 @@ export function LoginForm({
     setBusy(null);
     if (result.status === "error") {
       setError({ source: "sign_in_code", ...result });
-      return;
+      return false;
     }
 
     setEmail(normalizedEmail);
     setCode("");
     go("code");
+    return true;
   }
 
   async function verifySignInCode(e: React.FormEvent) {
@@ -224,7 +239,7 @@ export function LoginForm({
                 <AlertTitle>
                   {error.source === "sign_in_code" && error.reason === "invalid_email"
                     ? "Email needed"
-                    : "Email could not be continued"}
+                    : SIGN_IN_CODE_FAILED_TITLE}
                 </AlertTitle>
                 <AlertDescription>{error.message}</AlertDescription>
               </Alert>
@@ -294,7 +309,18 @@ export function LoginForm({
           <FieldGroup className="gap-5">
             {error ? (
               <Alert role="alert" variant="destructive">
-                <AlertTitle>Code not accepted</AlertTitle>
+                {/* FRONT-A2 —— 这一步有两个错误源,标题读真分支,不写死。
+
+                    `code_entry` 是商家输入的码被拒(错、过期、次数用尽合成同一句,见
+                    signin-code-contract.ts 的 SIGN_IN_CODE_REJECTED_MESSAGE),标题是夹具
+                    (AuthAccessJourneyReference.tsx:172)的「Code not accepted」。
+
+                    `sign_in_code` 是「Send again」这一次重发本身失败——码根本没送出去,商家
+                    再怎么检查手上那六位数也没用,写「Code not accepted」是指错地方。这一态
+                    与邮箱步的送码失败同源,共用同一句标题。 */}
+                <AlertTitle>
+                  {error.source === "sign_in_code" ? SIGN_IN_CODE_FAILED_TITLE : "Code not accepted"}
+                </AlertTitle>
                 <AlertDescription>{error.message}</AlertDescription>
               </Alert>
             ) : null}
@@ -338,8 +364,8 @@ export function LoginForm({
                 variant="ghost"
                 size="xs"
                 onClick={async () => {
-                  await sendSignInCode();
-                  setCodeSentAgain(true);
+                  // FRONT-A12:只有真的送出去了才报「已重发」。失败时上面那条 Alert 说明原因。
+                  setCodeSentAgain(await sendSignInCode());
                 }}
                 disabled={!!busy}
               >
