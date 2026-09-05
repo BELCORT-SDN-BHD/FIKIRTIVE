@@ -107,7 +107,11 @@ function fixtureModelRuntime(binding: Model): OttoModelRuntime {
     resolvedModelPolicy: Object.freeze({ primaryModelId: "fixture", fallbackModelId: null, failover: "none" as const }),
     mapUsage: mapOttoUsage,
     cacheCapabilities: Object.freeze({ promptCache: false }),
-    pricing: llmPricesFor,
+    // ENGINE-A5:价目查不到即抛,而 "fixture-no-charge" 当然不在价目表里(它是夹具的自我
+    // 声明,不是一个型号)。夹具本来就是**独立的测试组合**(见 model.ts 的 manifest 注释),
+    // 所以它自带 pricing:一个不花钱的 manifest 仍要交出一份价目形状,给的是 sonnet 档那份。
+    // 生产 manifest 照旧是 llmPricesFor 本身(下面 :452 的用例逐字守着这一点)。
+    pricing: () => llmPricesFor("claude-sonnet-4-6"),
   });
 }
 
@@ -783,6 +787,9 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
       modelRuntime: legacyModelRuntime,
       agent: legacyAgent,
       maxTurns: OTTO_MAX_STEPS,
+      // ENGINE-A2: the trace's action whitelist travels with the runtime. This hand-built
+      // legacy runtime mirrors createOttoRuntime's derivation from the same skill list.
+      actionNames: new Set(allSkills.map((skill) => skill.name)) as ReadonlySet<string>,
     });
     const parkedResult = await runOttoTurn(
       { orgId: "org_t", refId: "fixture:legacy-park", input: "approve the legacy post" },

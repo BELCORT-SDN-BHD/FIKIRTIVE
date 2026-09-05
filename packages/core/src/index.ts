@@ -116,6 +116,16 @@ export type {
 export { SECTIONS, FACT_SECTION_KEYS, sectionForCategory, diffRows } from "./memory-sections.js";
 export { sectionsTouched } from "./memory-sections.js";
 export type { SectionKey, RowDiff } from "./memory-sections.js";
+// 五节品牌分区(FRONT-A8;规格 §7.3④,Founder 2026-09-03 裁决三＋十一)
+export {
+  BRAND_SECTIONS, BRAND_CONTEXT_STATUSES, BRAND_CONTEXT_ORIGINS,
+  LEGACY_SECTION_TO_BRAND_SECTION, BRAND_SECTION_TO_LEGACY_SECTION,
+  isBrandSectionKey, brandSectionLabel, brandSectionAction,
+  brandSectionForCategory, brandSectionForRecordKind,
+  isBrandContextStatus, isBrandContextOrigin, brandOriginLabel,
+  brandOriginLabelForSource, OTTO_AUTHOR_LABEL,
+} from "./memory-sections.js";
+export type { BrandSectionKey, BrandContextStatus, BrandContextOrigin } from "./memory-sections.js";
 export { tavilySearch, braveSearch, searchWithFallback } from "./websearch.js";
 export type { WebSearchResult, WebSearchFn } from "./websearch.js";
 // url-safety (node:dns) + fetch-extract are SERVER-ONLY — import from
@@ -215,6 +225,10 @@ export * from "./messaging-status.js";
 // 战役状态与它们之间的合法动作(#710 的那一张表,C7 从 apps/web 搬来)。读者现在有三个:
 // 服务端动作、商家那一页,以及 Otto —— 词汇不再各抄一份,转移表也第一次对助手可见。
 export * from "./campaign-lifecycle.js";
+
+// 引用选择器提交的「类型化 ID」词汇(前端基线规格 §7.3③)。放在 core 而不是 apps/web:
+// 服务端搜索、两处 `@` 菜单与将来落进消息的引用列读的必须是同一张类型表。
+export * from "./reference-ref.js";
 
 // 「这一件素材能不能当这一轮的参考」的唯一判据(Codex QA-CRE-FE9-013)。读者有六个:
 // composer 校验器、Otto 视觉、付费前守卫,以及 worker 的首帧/末帧/参考片/编辑底图 ——

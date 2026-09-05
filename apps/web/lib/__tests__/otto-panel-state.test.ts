@@ -65,8 +65,10 @@ describe("defaultOttoPanelState", () => {
    * 这个函数只兜「没有可信来源」的那一刻:真的第一次访问,或存档坏了读不出 `open`。
    * 「商家上次留着开着」与「这一页有活动对话」两条覆盖路径不在这个函数里 ——
    * 前者是 `parseOttoPanelState` 读到的存档 `open:true` 原样生效,后者是
-   * `OttoPanelShell` 的深链强开(`forceOpenSignal`,§3.3 之外的独立效果),两条都在
-   * `otto-panel-mount.test.ts` 的「默认开合(FRONT-A14)」一组里按真实到访路径钉。
+   * `OttoPanelShell` 的强开信号(`forceOpenSignal`,§3.3 之外的独立效果),由
+   * `OttoPanelHost` 挂载时问一次服务端(`lib/thread-activity.ts` 的
+   * `hasPendingPanelThread`;2026-09-04 那一轮的 `?otto=1` 近似已由本轮换成真信号)。
+   * 两条都在 `otto-panel-mount.test.ts` 的「默认开合(FRONT-A14)」一组里按真实到访路径钉。
    */
   it("FRONT-A14: 没有可信来源的默认收起(第一次访问,不管视窗多宽)", () => {
     for (const viewport of [WIDE, { width: 375, height: 812 }, { width: 1024, height: 800 }]) {

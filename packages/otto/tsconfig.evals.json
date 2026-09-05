@@ -1,0 +1,13 @@
+// evals/ 经 tsx 跑、不进 dist（`docs/specs/otto-engine.md` §7.3），所以它**不在**
+// tsconfig.json 的 include 里。但「不编译」不等于「不检查」：这个第二 project 只做
+// 类型检查、不产出任何文件，让 `pnpm -r typecheck` 照样管得到这几百行 —— 否则它们的
+// 类型错误要等到真花钱那一趟才现形。
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["evals"]
+}

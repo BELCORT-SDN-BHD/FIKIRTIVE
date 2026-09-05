@@ -43,6 +43,8 @@ const mocks = vi.hoisted(() => {
     requireOwner: vi.fn(),
     isImpersonating: vi.fn(),
     consumeOttoTurnGate: vi.fn(),
+    // ENGINE-A2 (spec §7.2②): the turn-trace writer this route hands its facts to.
+    recordOttoTurnTrace: vi.fn(async (_facts: unknown) => {}),
     projectFindFirst: vi.fn(),
     chatThreadCreate: vi.fn(),
     chatThreadFindFirst: vi.fn(),
@@ -96,6 +98,10 @@ vi.mock("@/lib/otto-actions", async () => {
     validateOttoTurnReferences: mocks.validateOttoTurnReferences,
     unavailableReferenceMessage: (unavailable: { reason: "notFound" | "fileMissing" }[]) =>
       referenceUnavailableMessage(unavailable[0]?.reason ?? "notFound"),
+    // ENGINE-A2 (规格 docs/specs/otto-engine.md §7.2②): 这条路由把每轮调试档案交给
+    // otto-actions 里那个唯一的写入口。这个文件是 DB-free 的,所以替身只记「被叫了没、
+    // 拿到的是什么」—— 落盘那一刀的断言在 otto-actions.test.ts。
+    recordOttoTurnTrace: mocks.recordOttoTurnTrace,
   };
 });
 vi.mock("@/lib/otto-generation-validate", () => ({
@@ -321,6 +327,28 @@ describe("POST /api/otto/stream", () => {
         { type: "data-status", data: { kind: "done", threadId } },
       ]),
     );
+  });
+
+  // ENGINE-A2(规格 docs/specs/otto-engine.md §7.2②):流式这一门确实把档案交出去了。
+  // 这个用例跑的是**真的** runOttoTurn(本文件只替身 withLlmBudget 与 run),所以它验的是
+  // 端口接线本身,不是一个替身在自说自话。
+  it("ENGINE-A2: 流式一轮跑完,把这一轮的结构事实交给唯一的写入口(surface=stream)", async () => {
+    mocks.run.mockResolvedValue(
+      streamedRunResult({ events: [tokenEvent("Done")], usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+
+    const res = await POST(req({ projectId: "proj_stream", text: "Make a launch post" }));
+    await res.json();
+
+    expect(mocks.recordOttoTurnTrace).toHaveBeenCalledTimes(1);
+    const facts = mocks.recordOttoTurnTrace.mock.calls[0]![0] as Record<string, unknown>;
+    expect(facts.surface).toBe("stream");
+    expect(facts.orgId).toBe("org_stream");
+    expect(facts.refId).toEqual(expect.stringMatching(/^otto-stream:/));
+    expect(facts.threadId).toEqual(expect.any(String));
+    expect(facts.skillFiles).toEqual([]);
+    // 商家写的那句话不在档案里 —— 围栏在引擎侧是类型层的,这里再当场看一眼。
+    expect(JSON.stringify(facts)).not.toContain("Make a launch post");
   });
 
   it("validates and threads multiple canvas references into the Otto context", async () => {

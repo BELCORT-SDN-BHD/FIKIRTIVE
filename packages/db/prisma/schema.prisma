@@ -747,6 +747,7 @@ model Organization {
   brandKits               BrandKit[]
   brandRules              BrandRule[]
   brandRecords            BrandRecord[]
+  brandContextRevisions   BrandContextRevision[]
   metaConnection          MetaConnection?
   // FRONT-A4(规格 docs/specs/frontend-baseline.md §7.3⑤):Home 版面每个工作区一行。
   homeLayout              OrgHomeLayout?
@@ -785,6 +786,8 @@ model Organization {
   contactJourneyStates      ContactJourneyState[]
   workflowStepExecutions    WorkflowStepExecution[]
   businessHoursPolicies     BusinessHoursPolicy[]
+  // ENGINE-A2(规格 docs/specs/otto-engine.md §7.2②):每轮调试档案。Prisma 要求的反向关系。
+  ottoTurnTraces            OttoTurnTrace[]
 }
 
 // User <-> Organization join. MembershipRole is the authorization source; the legacy role
@@ -1102,6 +1105,17 @@ model Memory {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
+  // ── FRONT-A8 五节 Brand(规格 docs/specs/frontend-baseline.md §7.3④)──────────
+  // contextStatus 与既有列语义不同,故不复用任何一列:'Ready' | 'Draft' | 'Processing'。
+  // 只有 Ready 进 Otto 上下文 —— 草稿因此结构上不可能被 Otto 读到(裁决四)。
+  contextStatus String  @default("Ready")
+  // origin 回答「这条内容打哪来」('manual' | 'text' | 'url' | 'file'),与 source
+  // ('otto' | 'user' ＝ 最后是谁写的)是两件事,合并会把两个问题讲成一句话。
+  origin        String  @default("manual")
+  originDetail  String?
+  // 谁改的。source 只答得出「是不是 Otto」,答不出「是谁」;updatedAt 已经答得出「何时」。
+  updatedById   String?
+
   @@index([ownerId, brandId, deletedAt])
 }
 
@@ -1124,9 +1138,41 @@ model BrandRecord {
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?
 
+  // 同 Memory,FRONT-A8 的四列(规格 §7.3④)。默认 'Ready' ⇒ 存量行语义不变。
+  contextStatus String  @default("Ready")
+  origin        String  @default("manual")
+  originDetail  String?
+  updatedById   String?
+
   // A raw partial UNIQUE INDEX on (ownerId, COALESCE(brandId,''), kind, nameKey) WHERE deletedAt IS NULL
   // lives in the accompanying migration (same pattern as BrandKit F5) — Prisma can't model partial indexes.
   @@index([ownerId, brandId, kind, deletedAt])
+}
+
+/// Brand context revision log (FRONT-A8「每条显示谁改的、何时改的」的历史那一半)。
+///
+/// 只追加,永不改写。今天 Memory / BrandRecord 只有 `deletedAt` ＋ restore —— 答得出
+/// 「这条还在不在」,答不出「改过什么」。设计的 Change history 分层要的正是后者。
+///
+/// 唯一约束 (ownerId, targetKind, targetId, revisionKey) 是这张表的**幂等键**:
+/// revisionKey 由「动作 ＋ 该行这一次的 updatedAt」拼出,所以同一次保存被重放
+/// (双击、网络重试、Server Action 重发)只会留下一行历史,不会把一次修改讲成三次。
+/// 租户列是 ownerId,与 Memory / BrandRecord 同一条边界;读写一律带它。
+model BrandContextRevision {
+  id           String   @id
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  targetKind   String   // 'memory' | 'record'
+  targetId     String
+  action       String   // 'created' | 'updated' | 'deleted' | 'restored' | 'confirmed' | 'discarded'
+  revisionKey  String   // 幂等键的可变半段:`${action}:${该行这一次的 updatedAt.toISOString()}`
+  changedById  String?  // User.id;拿不到时留空,而不是编一个
+  changedByLabel String // 商家看得懂的那一半(邮箱/显示名),历史行不该因为改名而失真
+  summary      String   // 一句人话:改了什么
+  changedAt    DateTime @default(now())
+
+  @@unique([ownerId, targetKind, targetId, revisionKey])
+  @@index([ownerId, targetKind, targetId, changedAt])
 }
 
 // Brand Kit: structured brand metadata (colors, fonts, tone, style guide, logo) per owner/brand.
@@ -2494,4 +2540,56 @@ model BackupRun {
 
   @@index([status, finishedAt])
   @@index([startedAt])
+}
+
+// ENGINE-A2(规格 `docs/specs/otto-engine.md` §7.2②「每轮调试档案」):Otto 每跑完一轮,
+// 落一行**只有结构事实**的档案 —— 这一轮走了几步、调了哪些动作、装了哪些技能文件。
+// 在它之前可观测性是零:`apps/web/components/otto/OttoTrace.tsx` 是纯展示的实时步骤条,
+// 跑完即消失,没有任何地方能回答「刚才那一轮到底做了什么」。
+//
+// ── 零商家内容明文,是机器保证而不是约定 ──────────────────────────────────────
+// 写入这张表的结构体在**类型层就没有自由文本字段**(`OttoTurnTraceFacts`,
+// packages/otto/src/runtime.ts):动作名只能来自注册表 `packages/otto/src/registry.ts`
+// (不在册的名字被折成固定字面量 `(unregistered)`),技能文件名只能来自文件柜清单。
+// prompt、消息正文、工具参数值没有可以落进来的列,所以「不记商家内容」不靠人记得。
+// 围栏测试:packages/otto/src/runtime-turn-trace.test.ts。
+//
+// ── refId 是主键,不另造第二把钥匙 ────────────────────────────────────────────
+// 它就是账本里 `reserve:<refId>` 的那个键(三种形状:`otto-stream:<userMessageId>` /
+// `otto-turn:<userMessageId>` / `otto-approve:<threadId>:<cardId>:a<n>`),全仓已经是
+// 每轮唯一的稳定锚。于是调试档案与钱账天然对得上:同一个 refId 查 CreditLedger 是这一轮
+// 的钱,查这张表是这一轮的动作。
+//
+// ── 租户列是 orgId,所以它走**明示登记**而不是运行时守卫 ─────────────────────
+// `packages/db/src/tenant-guard.ts` 的守卫**注入**的是 `ownerId` 这个字面列名,把一张
+// orgId 表塞进 TENANT_MODELS 会把它打坏而不是守住(那份注释里有 2026-09-02 的实测)。
+// 所以它进 ORG_SCOPED_TENANT_GUARD_EXEMPT,理由与证据写在那里;租户约束落在外键
+// (onDelete: Cascade)与「每一个读写口都显式带 orgId」上,双租户测试在
+// packages/db/src/otto-turn-trace-tenant.test.ts。
+model OttoTurnTrace {
+  // 主键就是这一轮的 refId(见上)。@id 让「一轮一行」成为数据库事实:重复写入撞主键,
+  // 不会悄悄留下两份互相矛盾的档案。
+  refId           String   @id
+  orgId           String
+  threadId        String?
+  // 封闭集(引擎侧 `OttoTraceSurface` 是同一份字面量联合):
+  // "stream" | "action" | "approve-resume" | "worker-research"
+  surface         String
+  // 计价用的那个 model id(来自模型 manifest 的 billableModelId,不是请求里的任何东西)
+  modelId         String
+  // 这一轮实走的步数
+  steps           Int
+  // [{ name, calls, ok, failed }] —— **只有名字与计数**,没有参数、没有返回值
+  toolCalls       Json
+  // string[] —— 本轮装入的技能文件名单;⑥段(技能文件柜)之前恒为空数组
+  skillFiles      Json
+  // 跑满步数被截断的一轮(ENGINE-A4 要退款的正是这一类,它先要能被看见)
+  truncated       Boolean  @default(false)
+  // 这一轮结算掉的 internal credits;账本还没有终结行时为 null(hold 不是花费)
+  settledInternal Int?
+  createdAt       DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
 }
