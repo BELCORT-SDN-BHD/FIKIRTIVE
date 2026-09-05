@@ -365,6 +365,11 @@ export async function POST(req: NextRequest): Promise<Response> {
           }
         };
 
+        // ENGINE-A4(规格 docs/specs/otto-engine.md §7.2⑤):set by withLlmBudget when this turn
+        // was refunded in FULL — the ONLY state in which「这一轮没有收费」是一句真话。今天它只
+        // 可能被截断且零交付的那一轮点亮(其余的抛错路径根本走不到下面的 MaxTurns 分支)。
+        let chargedNothing = false;
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let agentResult: any;
         try {
@@ -417,7 +422,26 @@ export async function POST(req: NextRequest): Promise<Response> {
             },
             ctx,
             ottoInteractiveRuntime,
-            { meter: withLlmBudget, runAgent: run, maxTurnsExceededError: MaxTurnsExceededError },
+            {
+              // ENGINE-A4:唯一的改动就是挂上这个**只读**钩子。它改不了任何金额(meter.ts
+              // 不变量 #7),只是把「整笔退了」这件事告诉入口,好让下面的降级句说实话。
+              //
+              // 先转调、再置旗:今天 `ottoBudgetArgsFor` 不产出 `onRefundedFailure`,但对象
+              // 展开会**静默盖掉**将来引擎侧自己挂的钩子,所以这里不覆盖,只在它后面接一句。
+              meter: (budgetArgs, fn) =>
+                withLlmBudget(
+                  {
+                    ...budgetArgs,
+                    onRefundedFailure: () => {
+                      budgetArgs.onRefundedFailure?.();
+                      chargedNothing = true;
+                    },
+                  },
+                  fn,
+                ),
+              runAgent: run,
+              maxTurnsExceededError: MaxTurnsExceededError,
+            },
           );
         } catch (e) {
           // Reserve failed (InsufficientCredits, or #524 SpendCapBlocked): fn NEVER ran →
@@ -457,7 +481,13 @@ export async function POST(req: NextRequest): Promise<Response> {
           // friendly degrade message (parity with ottoTurn) and surface a status part.
           if (e instanceof MaxTurnsExceededError) {
             closeOpenParts();
-            const degradeText = "I got a bit tangled up — try asking again.";
+            // ENGINE-A4(§7.2⑤ 第③刀):一句诚实文案。这一轮零交付时整笔预扣已经退回,所以
+            // 商家读到的必须是「没收钱」,而不是一句道歉之后账单上冒出一笔他拿不到东西的钱。
+            // 两句合成**一条**消息:降级句已经是这条路上唯一那条持久化的人话,退款这件事跟着
+            // 它走,刷新之后还在,不需要第二条只在内存里活一瞬的提示。
+            const degradeText = chargedNothing
+              ? "I got a bit tangled up — try asking again. This turn wasn't charged."
+              : "I got a bit tangled up — try asking again.";
             // Tools may have persisted cards mid-run at max(seq)+1 — the pre-run
             // seqAfterUser snapshot could collide (same fix as finalizeOttoRun).
             const lastMsg = await prisma.chatMessage.findFirst({
@@ -468,9 +498,12 @@ export async function POST(req: NextRequest): Promise<Response> {
             await prisma.chatMessage.create({
               data: { id: newId(), threadId, ownerId, role: "AGENT", kind: "TEXT", seq: Math.max(seqAfterUser, lastMsg?.seq ?? 0) + 1, text: degradeText },
             });
-            // A tangled run still burned tokens and withLlmBudget already settled them —
-            // the merchant paid for this turn, so it must show a cost like any other.
-            await emitTurnCost();
+            // A tangled run that DELIVERED something still burned tokens and withLlmBudget
+            // settled them — the merchant paid for this turn, so it must show a cost like any
+            // other. ENGINE-A4: a zero-delivery one was refunded in full, and the ledger's net
+            // is zero, so there is no cost line to emit (settledTurnCost would return null
+            // anyway; skipping it also skips a pointless read).
+            if (!chargedNothing) await emitTurnCost();
             writer.write({ type: "data-status", data: { kind: "degraded", text: degradeText } satisfies OttoStatusData });
             return;
           }
