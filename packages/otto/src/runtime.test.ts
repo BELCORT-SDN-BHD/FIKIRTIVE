@@ -64,6 +64,7 @@ import {
   runOttoTurn,
   finalizeOttoTurn,
   ottoBudgetArgsFor,
+  instructionsForTurn,
   type OttoModelRuntime,
   type OttoRuntimeDeps,
 } from "./runtime.js";
@@ -752,6 +753,44 @@ describe("runOttoTurn — ENGINE-A7:交给 SDK 的 agent 带的是这一轮装�
     expect(seen).toHaveLength(1);
     expect(seen[0]!.instructions).toBe(ottoInstructions);
     expect(seen[0]!.agent).toBe(rt.agent); // 整柜相等就不 clone,原样送出去
+  });
+
+  /**
+   * ENGINE-A7 × ENGINE-A6 —— ④段(#1206)合进主干之后的那条接线:被裁走的旧上下文必须真的走到
+   * 装配器手里。变异实证:把 `runOttoTurn` 里的 `instructionsForTurn(request.input, request.rollingSummary)`
+   * 改回 `instructionsForTurn(request.input)`,这一条当场红(装出来的说明书里没有那份柜文)。
+   */
+  it("ENGINE-A7:折叠端口带着的旧上下文真的进了装配器(裁剪之后不缩水)", async () => {
+    const rt = runtime();
+    const { seen, execution } = capturingExecution();
+    const port = {
+      dropped: [{ role: "user", content: "help me run a facebook advert" }] as never,
+      priorSummary: null,
+      save: () => {},
+    };
+
+    await runOttoTurn(
+      {
+        orgId: "org_t",
+        refId: "fixture:a7-carried",
+        input: [{ role: "user", content: "carry on then" }] as never,
+        rollingSummary: port,
+      },
+      baseCtx,
+      rt,
+      execution as never,
+    );
+
+    // 两次调用:先是④段的折叠(那个 agent 用的是它自己那份摘要指令),再是商家这一轮。
+    expect(seen).toHaveLength(2);
+    expect((seen[0]!.agent as { name: string }).name).toBe("Otto rolling summary");
+
+    const turnInput = [{ role: "user", content: "carry on then" }] as never;
+    const withCarried = instructionsForTurn(turnInput, port);
+    const withoutCarried = instructionsForTurn(turnInput);
+    // 前提:带与不带确实装出两份不同的说明书,否则下面那句等式没有分辨力。
+    expect(withCarried.files).not.toEqual(withoutCarried.files);
+    expect(seen[1]!.instructions).toBe(withCarried.text);
   });
 });
 

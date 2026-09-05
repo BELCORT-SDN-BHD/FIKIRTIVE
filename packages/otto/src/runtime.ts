@@ -187,6 +187,9 @@ export type OttoTurnRequest = {
   /** ENGINE-A2 — where this turn's structural facts go. Optional: a caller that passes no
    *  sink is byte-identical to before (no read, no write, no extra await). */
   readonly trace?: OttoTurnTracePort;
+  /** ENGINE-A6 — the turns this entry trimmed off the history, and where their summary goes.
+   *  Optional: a caller that passes none is byte-identical to before (no model call, no write). */
+  readonly rollingSummary?: OttoRollingSummaryPort;
 };
 
 /** Structural view of a RunResult/StreamedRunResult that the finalizer consumes. */
@@ -360,6 +363,127 @@ async function emitTurnTrace(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ENGINE-A6 — 长对话摘要（规格 §7.2④ 第二刀：摘要生成与计费）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What an entry hands the runner so the turns it trimmed away are not simply forgotten.
+ *
+ * The split of duties is the same one every other port on this file follows: the ENTRY owns
+ * identity and persistence (it read the thread row, it writes the thread row — the engine
+ * package never touches prisma), the ENGINE owns the model call and its billing.
+ */
+export type OttoRollingSummaryPort = {
+  /** The oldest turns `trimHistoryToBudget` (run-input.ts) removed from this turn's input,
+   *  oldest first. Empty ⇒ nothing to fold ⇒ no model call at all. */
+  readonly dropped: readonly AgentInputItem[];
+  /** The thread's rolling summary BEFORE this turn (null on a thread never trimmed). The fold
+   *  rewrites it whole, so the summary stays one bounded block instead of a growing chain. */
+  readonly priorSummary: string | null;
+  /** Persist the folded summary. Called once, AFTER the meter has settled this turn. */
+  readonly save: (summary: string) => void | Promise<void>;
+};
+
+/** Output ceiling for the fold. The summary is re-injected on EVERY later turn, so its size is
+ *  a recurring cost — this is the constant that keeps the rolling summary from becoming the
+ *  next unbounded input. */
+const ROLLING_SUMMARY_OUTPUT_CAP_TOKENS = 400;
+
+/** Input ceiling for the fold, in characters of serialized history. A thread can drop a very
+ *  large prefix on one turn (or a single oversized item); without this the "cheap small call"
+ *  would be the most expensive call of the turn. Oldest content is cut first — the newest
+ *  dropped turns are the ones the merchant is most likely to refer back to. */
+const ROLLING_SUMMARY_INPUT_CHAR_CAP = 24_000;
+
+const ROLLING_SUMMARY_INSTRUCTIONS =
+  "You compress the older part of one conversation between a merchant and their marketing " +
+  "assistant so it can be carried forward in far fewer tokens. Write a single dense block of " +
+  "plain English notes: what the merchant asked for, decisions and preferences they stated, " +
+  "names and ids that were agreed, and what was produced or refused. Keep concrete details " +
+  "(names, ids, numbers) verbatim; drop pleasantries, restatements and step-by-step narration. " +
+  "Write notes, not a reply — never address the merchant, never offer to help, never invent " +
+  "anything that is not in the material.";
+
+/** Serialize the dropped turns for the fold, newest-biased and hard-capped. */
+function foldMaterial(port: OttoRollingSummaryPort): string {
+  const parts: string[] = [];
+  for (const item of port.dropped) {
+    try {
+      parts.push(JSON.stringify(item) ?? "");
+    } catch {
+      /* an unserializable item contributes nothing rather than failing the fold */
+    }
+  }
+  const joined = parts.join("\n");
+  return joined.length > ROLLING_SUMMARY_INPUT_CHAR_CAP
+    ? joined.slice(joined.length - ROLLING_SUMMARY_INPUT_CHAR_CAP)
+    : joined;
+}
+
+/**
+ * ENGINE-A6 — fold the trimmed-away turns into the next rolling summary.
+ *
+ * MONEY (spec §7.2④「不新开钱路、不新增幂等键，沿用本轮的 refId」): this runs INSIDE the turn's
+ * own `withLlmBudget` body, so the hold was already taken on this turn's refId and the tokens it
+ * burns are ADDED to the usage that turn settles. There is no second reserve, no second refId
+ * and no second idempotency key — a second `withLlmBudget` on the same refId would collide on
+ * `reserve:<refId>`, no-op, and leave the real turn running against nothing. Because settle is
+ * clamped to the hold (meter.ts invariant #2), the fold can only ever consume part of what was
+ * already held; it can never raise the ceiling.
+ *
+ * It reuses the manifest's own binding, usage mapper and output redaction — no second model
+ * constant, no second provider wiring (PH1-A1: one manifest is the single billing source).
+ *
+ * NEVER LOAD-BEARING: any throw is swallowed and the turn continues with the summary unchanged.
+ * The cost of that is bounded (a stretch of old context is lost); the cost of the alternative is
+ * failing a turn the merchant is paying for, over a diagnostic-grade nicety.
+ */
+async function foldRollingSummary(
+  runtime: OttoRuntime,
+  execution: OttoRuntimeExecution,
+  port: OttoRollingSummaryPort,
+): Promise<{ summary: string; usage: TokenUsage } | null> {
+  try {
+    const material = foldMaterial(port);
+    if (!material) return null;
+    const agent = new Agent({
+      name: "Otto rolling summary",
+      instructions: ROLLING_SUMMARY_INSTRUCTIONS,
+      model: runtime.modelRuntime.binding,
+      modelSettings: { maxTokens: ROLLING_SUMMARY_OUTPUT_CAP_TOKENS },
+      tools: [],
+    });
+    const prompt =
+      (port.priorSummary?.trim()
+        ? `Notes so far (rewrite them together with the new material into ONE block):\n${port.priorSummary.trim()}\n\n`
+        : "") + `Older conversation turns to fold in:\n${material}`;
+    // maxTurns: 1 — a tool-less agent cannot take a second step, and pinning it says so.
+    const r = await execution.runAgent(agent as never, prompt as never, { maxTurns: 1 });
+    const result = r as unknown as OttoTurnRunResult;
+    const summary = extractText(r).trim();
+    if (!summary) return null;
+    return { summary, usage: runtime.modelRuntime.mapUsage(result.state.usage) };
+  } catch (e) {
+    console.error(
+      `[otto:summary] fold failed (category=${e instanceof Error ? e.name : typeof e}) — history was trimmed, summary left unchanged`,
+    );
+    return null;
+  }
+}
+
+/** Add the fold's tokens to the turn's tokens. One settle, one refId — see foldRollingSummary. */
+function addTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  const cached = (a.cachedInputTokens ?? 0) + (b.cachedInputTokens ?? 0);
+  const cacheWrite = (a.cacheWriteInputTokens ?? 0) + (b.cacheWriteInputTokens ?? 0);
+  return {
+    inputTokens: (a.inputTokens || 0) + (b.inputTokens || 0),
+    outputTokens: (a.outputTokens || 0) + (b.outputTokens || 0),
+    cachedInputTokens: cached > 0 ? cached : undefined,
+    cacheWriteInputTokens: cacheWrite > 0 ? cacheWrite : undefined,
+  };
+}
+
 /**
  * 这一轮**装了哪几份知识文件**（ENGINE-A7 的装配器 ＋ ENGINE-A2 的 `skillFiles` 那一栏）。
  *
@@ -369,34 +493,80 @@ async function emitTurnTrace(
 export type OttoTurnKnowledge = { readonly files: readonly string[] };
 
 /**
- * 纯：这一轮的输入 → 这一轮的说明书。
+ * ④段（ENGINE-A6）之后，这一轮的对话**不只在 item 数组里**：最旧的那些轮已经被裁走，只以
+ * 滚动摘要的形式回注在那条 system 消息上。装配器要对的是**整段对话**，所以裁走的部分必须
+ * 一起交给它 —— 这个结构就是那两块。`OttoRollingSummaryPort` 天然是它的一个实现。
+ */
+export type OttoCarriedContext = {
+  /** 更早那些轮折成的摘要（本轮之前就在线程上的那一份）。 */
+  readonly priorSummary?: string | null;
+  /** 本轮刚被裁掉、正要折进摘要的那几轮（此刻还没进摘要，所以要单独看）。 */
+  readonly dropped?: readonly AgentInputItem[];
+};
+
+/**
+ * 纯：这一轮的输入（＋这一轮带着的旧上下文）→ 这一轮的说明书。
  *
  * 新鲜轮（字符串或 item 数组）按商家这一轮说的话对书脊标签，装常驻薄层 ＋ 对上的那几份全文；
  * 恢复轮（RunState）**整柜装载** —— 与 B9 已冻结的「恢复轮全量装载」同一条理由：一个被审批
  * 卡打断、几分钟后才回来的状态，我们无法从它身上重算出当初那一轮说了什么，宁可全带。
+ *
+ * **`carried` 是 ④段之后的必需品，不是锦上添花**（判官 2026-09-05 在真合并树上复现）：④把最旧
+ * 的几轮裁走之后，把某份柜文拉进来的那几个词就从 item 数组里消失了，下一轮该文件掉出装载集 ——
+ * Otto 丢掉一条他两轮前还遵守的规矩，无红无告警。裁走的内容并没有离开这一轮的上下文（它就回注
+ * 在那条 system 消息上），所以拿它对标签是**照实匹配**，不是把上一轮的装载集硬带过来：
+ * 取用三规则③「用完不带入下一轮」在这里仍然逐字成立 —— 没有任何跨轮状态被保存，每一轮都是
+ * 从它**自己此刻的上下文**重算的纯函数；摘要里不再提的事，下一轮就照样掉出去。
  */
-export function instructionsForTurn(input: OttoTurnRequest["input"]): {
+export function instructionsForTurn(
+  input: OttoTurnRequest["input"],
+  carried?: OttoCarriedContext | null,
+): {
   readonly text: string;
   readonly files: readonly string[];
 } {
-  if (typeof input === "string") return assembleOttoInstructions(input);
-  if (Array.isArray(input)) return assembleOttoInstructions(conversationText(input));
+  if (typeof input === "string") return assembleOttoInstructions(joinMatchText(input, carried));
+  if (Array.isArray(input)) {
+    return assembleOttoInstructions(joinMatchText(conversationText(input), carried));
+  }
+  // 恢复轮（RunState）：整柜装载，没有可再宽的余地 —— `carried` 对它无意义。
   return { text: ottoInstructions, files: allKnowledgePaths() };
 }
 
 /**
- * 纯：从一轮的 item 数组里取出**对话里的话** —— 商家说的与 Otto 回的,不含我们自己塞进去的
- * 那一条上下文 item(品牌记忆、可用素材、当前状态……)。
+ * 纯：这一轮真正拿去对书脊标签的那段话 —— 还在 item 数组里的对话 ＋ 已经被折走的那部分。
+ *
+ * 折走的部分有两块，两块都要：摘要是**更早**几轮压缩后的样子，而 `dropped` 是**这一轮刚裁掉**、
+ * 此刻还没进任何摘要的那几轮 —— 只看摘要的话，触发裁剪的那一轮会正好漏掉自己刚裁走的东西。
+ */
+function joinMatchText(saidText: string, carried?: OttoCarriedContext | null): string {
+  if (!carried) return saidText;
+  const parts = [saidText];
+  const summary = carried.priorSummary?.trim();
+  if (summary) parts.push(summary);
+  const droppedSaid = carried.dropped ? conversationOnly(carried.dropped) : [];
+  if (droppedSaid.length > 0) parts.push(JSON.stringify(droppedSaid));
+  return parts.join("\n");
+}
+
+/**
+ * 纯：一组 item 里**对话里的话** —— 商家说的与 Otto 回的,不含我们自己塞进去的那一条上下文
+ * item(品牌记忆、可用素材、当前状态……),也不含工具调用与工具结果。
  *
  * 为什么要挑:那条上下文 item 是**我们写的**,里面天然带着 Library / product / brand 这些词。
  * 拿它去对书脊标签,等于每一轮都替商家把柜子全打开 —— 拆柜省下的那一半当场还回去,
  * 而且它变一次(多一个产品名),装载结果就跟着变,基线也就不可比了。
  */
-function conversationText(items: readonly AgentInputItem[]): string {
-  const said = items.filter((i) => {
+function conversationOnly(items: readonly AgentInputItem[]): AgentInputItem[] {
+  return items.filter((i) => {
     const role = (i as { role?: unknown }).role;
     return role === "user" || role === "assistant";
   });
+}
+
+/** 一轮 item 数组 → 对话文本。一条像话的 item 都没有时退回整份(防御:总比什么都不对好)。 */
+function conversationText(items: readonly AgentInputItem[]): string {
+  const said = conversationOnly(items);
   return JSON.stringify(said.length > 0 ? said : items);
 }
 
@@ -534,6 +704,12 @@ function assertResumedStateCarriesLiveContext(input: OttoTurnRequest["input"], c
  *    (emitTurnTrace takes the collector as a thunk), nothing here touches
  *    the reserve/settle/refund parameters, and the runner's return value and thrown errors are
  *    byte-identical to before with or without a port.
+ *
+ * ENGINE-A6 (spec §7.2④): when the caller injects a `rollingSummary` port carrying trimmed-away
+ * turns, the runner folds them into one summary INSIDE this turn's own hold — same refId, no
+ * second reserve, no second idempotency key — adds the fold's tokens to what this turn settles,
+ * and hands the summary to the entry's writer once the meter is done. A caller that passes no
+ * port makes no model call and no write.
  */
 export async function runOttoTurn(
   request: OttoTurnRequest,
@@ -547,17 +723,32 @@ export async function runOttoTurn(
   // 底稿只是底稿：真正跑的是这一轮装出来的那一份（恢复轮除外，它整柜装载，agent 直接用）。
   // `clone` 只换 instructions，name/tools/model/settings 全部原样带过去，所以工具名照旧
   // 解析得到 —— 组合根文件头记着的那条实测（恢复只要求工具名能解析，不要求同一个实例）。
-  const assembled = instructionsForTurn(request.input);
+  // `request.rollingSummary` 同时是④段的折叠端口与⑥段的「这一轮还带着哪些旧话」——
+  // 装配器要看它，否则装载集会在裁剪之后中途缩水（见 instructionsForTurn 的文件注）。
+  const assembled = instructionsForTurn(request.input, request.rollingSummary);
   const agent =
     assembled.text === runtime.agent.instructions
       ? runtime.agent
       : runtime.agent.clone({ instructions: assembled.text });
   const port = request.trace;
+  const summaryPort = request.rollingSummary;
   const MaxTurnsError = execution.maxTurnsExceededError ?? MaxTurnsExceededError;
+  // ENGINE-A6 — filled inside the metered body, persisted after the meter has settled (so a turn
+  // that never completed cannot leave a summary standing over history the merchant still has).
+  let foldedSummary: string | null = null;
   try {
     const result = await execution.meter(
       ottoBudgetArgsFor(runtime, request, context, execution.maxTurnsExceededError),
       async () => {
+        // ENGINE-A6 (spec §7.2④): the fold rides INSIDE this turn's hold, so its tokens settle on
+        // the same refId. It runs before the agent so a failed fold cannot strand a finished turn.
+        const folded =
+          summaryPort && summaryPort.dropped.length > 0
+            ? await foldRollingSummary(runtime, execution, summaryPort)
+            : null;
+        if (folded) foldedSummary = folded.summary;
+        const withFold = (usage: TokenUsage): TokenUsage =>
+          folded ? addTokenUsage(usage, folded.usage) : usage;
         if (request.stream) {
           const r = await execution.runAgent(agent, request.input as never, {
             context,
@@ -569,16 +760,27 @@ export async function runOttoTurn(
           // known after the stream is drained).
           await r.completed;
           const result = r as unknown as OttoTurnRunResult;
-          return { result, usage: mr.mapUsage(result.state.usage) };
+          return { result, usage: withFold(mr.mapUsage(result.state.usage)) };
         }
         const r = await execution.runAgent(agent, request.input as never, {
           context,
           maxTurns: runtime.maxTurns,
         });
         const result = r as unknown as OttoTurnRunResult;
-        return { result, usage: mr.mapUsage(result.state.usage) };
+        return { result, usage: withFold(mr.mapUsage(result.state.usage)) };
       },
     );
+    if (summaryPort && foldedSummary !== null) {
+      // Diagnostic-grade like the trace below: a failed write costs some old context on the next
+      // turn, and must never throw out of a turn the ledger has already settled.
+      try {
+        await summaryPort.save(foldedSummary);
+      } catch (e) {
+        console.error(
+          `[otto:summary] save failed for ${request.refId} (category=${e instanceof Error ? e.name : typeof e})`,
+        );
+      }
+    }
     if (port) {
       await emitTurnTrace(
         () => collectTurnTraceFacts(result?.state, runtime, port, request, false, assembled.files),

@@ -29,6 +29,7 @@ import {
   ottoInstructions,
 } from "./instructions.js";
 import { instructionsForTurn } from "./runtime.js";
+import { trimHistoryToBudget } from "./run-input.js";
 
 const file = (over: Partial<KnowledgeFile> = {}): KnowledgeFile => ({
   path: "playbooks/x.md",
@@ -231,5 +232,85 @@ describe("ENGINE-A7 · 占位符：柜里写死一个值就是失同步，名单
     const bodies = KNOWLEDGE_CABINET.map((f) => f.text).join("\n");
     expect(bodies).not.toMatch(/\bcosts the user about \d/);
     expect(bodies).not.toMatch(/one turn allows at most \d/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENGINE-A7 × ENGINE-A6 —— 裁剪之后，装载集不许在会话中途缩水
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 判官 2026-09-05 在真合并树上复现的那一条：④段（长对话摘要与预算闸，#1206）把最旧的几轮裁走
+ * 之后，把某份柜文拉进来的那几个词就从 item 数组里消失了 —— 下一轮该文件掉出装载集，Otto 丢掉
+ * 一条他两轮前还遵守的规矩，无红无告警。
+ *
+ * 口径要同时满足两头，所以这一组三条一起读：
+ *  · 前两条 —— 被折走的上下文里点名过的事，标签仍然对得上（裁剪那一轮看 `dropped`，之后的轮
+ *    次看摘要）。每一条都配一句「只看裁剪后历史会怎样」的对照断言：那正是变异后的实现，
+ *    对照句一红，整条测试就红。
+ *  · 第三条 —— 摘要里不再提的事照样掉出去。**没有任何跨轮状态被保存**：取用三规则③
+ *    「用完不带入下一轮」在这里逐字成立，装配仍是从这一轮自己的上下文重算的纯函数。
+ */
+describe("ENGINE-A7 × ENGINE-A6 · 裁剪之后装载集不许中途缩水", () => {
+  const TOPIC = "help me run a facebook advert and pick the targeting for it";
+  const TOPIC_FILE = "playbooks/meta-ads.md";
+  // 填充语一个书脊关键词都不许带（不然对照断言会被填充语自己喂绿）。
+  const FILLER = "alpha beta gamma delta epsilon zeta theta iota kappa lambda sigma omega. ";
+  const say = (role: "user" | "assistant", text: string) => ({ role, content: text }) as never;
+
+  /** N 轮对话：最旧的一轮点名 Facebook 投放，之后全是与柜子无关的填充语。 */
+  function history(turns: number) {
+    const items = [say("user", TOPIC), say("assistant", `Sure. ${FILLER.repeat(40)}`)];
+    for (let i = 0; i < turns; i++) {
+      items.push(say("user", `next please. ${FILLER.repeat(40)}`));
+      items.push(say("assistant", `Done. ${FILLER.repeat(40)}`));
+    }
+    return items;
+  }
+
+  it("ENGINE-A7:裁剪那一轮 —— 刚被裁走的旧轮点过名，该柜文仍被装入", () => {
+    const { kept, dropped } = trimHistoryToBudget(history(60));
+    // 前提：这一轮真的裁掉了东西，而且 TOPIC 已经不在留下来的历史里。
+    expect(dropped.length).toBeGreaterThan(0);
+    expect(JSON.stringify(kept)).not.toContain("facebook");
+
+    const turn = [...kept, say("user", "carry on then")];
+    expect(instructionsForTurn(turn, { priorSummary: null, dropped }).files).toContain(TOPIC_FILE);
+    // 对照＝变异后的实现（匹配只看裁剪后的历史）：该柜文当场掉出装载集。
+    expect(instructionsForTurn(turn).files).not.toContain(TOPIC_FILE);
+  });
+
+  it("ENGINE-A7:裁剪之后的每一轮 —— 摘要里还点着名，该柜文仍被装入", () => {
+    const { kept } = trimHistoryToBudget(history(60));
+    const turn = [...kept, say("user", "carry on then")];
+    // 这一轮什么都没裁掉，被折走的上下文只活在线程的摘要里。
+    const summary = "Merchant asked for a facebook advert; targeting was agreed as KL foodies.";
+
+    expect(instructionsForTurn(turn, { priorSummary: summary, dropped: [] }).files).toContain(
+      TOPIC_FILE,
+    );
+    expect(instructionsForTurn(turn).files).not.toContain(TOPIC_FILE);
+  });
+
+  it("ENGINE-A7:取用三规则③仍然成立 —— 摘要里不再提的事，下一轮照样掉出去", () => {
+    const { kept } = trimHistoryToBudget(history(60));
+    const turn = [...kept, say("user", "carry on then")];
+    const summary = "Merchant wanted a quiet check-in; nothing was decided.";
+
+    // 没有任何「上一轮装过所以这一轮也装」的记忆：摘要不提，就不装。
+    expect(instructionsForTurn(turn, { priorSummary: summary, dropped: [] }).files).not.toContain(
+      TOPIC_FILE,
+    );
+  });
+
+  it("ENGINE-A7:我们自己塞进去的上下文 item 仍然不参与对标签（缩水的修法没把柜子打开）", () => {
+    const summary = "Merchant asked for a facebook advert.";
+    const turn = [
+      { role: "system", content: "Brand memory: product catalog, video assets, poster ideas." },
+      say("user", "hello"),
+    ] as never;
+    const files = instructionsForTurn(turn, { priorSummary: summary, dropped: [] }).files;
+    expect(files).toContain(TOPIC_FILE); // 摘要点了名
+    expect(files).not.toContain("product-map/creating.md"); // 但那条 system 上下文没被读进来
   });
 });

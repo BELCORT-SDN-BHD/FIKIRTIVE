@@ -11,7 +11,7 @@
 
 ## 三层地图
 
-- **大脑(loop 与知识)**:`src/otto.ts`(组合根)、`src/runtime.ts`(跑一轮)、`src/model.ts`(模型绑定与 529 容灾)、`src/instructions.ts`(**装配器**:每轮现装 = 常驻薄层 ＋ 全部书脊标签 ＋ 对上标签的那几份全文;单体常量已退役)、`src/knowledge-cabinet.ts`(柜子的纯机制)、`knowledge/**.md`(知识本身)、`src/run-input.ts`(历史恢复与清洗)。
+- **大脑(loop 与知识)**:`src/otto.ts`(组合根)、`src/runtime.ts`(跑一轮)、`src/model.ts`(模型绑定与 529 容灾)、`src/instructions.ts`(**装配器**:每轮现装 = 常驻薄层 ＋ 全部书脊标签 ＋ 对上标签的那几份全文;单体常量已退役)、`src/knowledge-cabinet.ts`(柜子的纯机制)、`knowledge/**.md`(知识本身)、`src/run-input.ts`(历史恢复与清洗 ＋ ENGINE-A6 的成对感知裁剪与 token 预算闸)。
 - **手(动作层)**:`src/skills/`(现役 57 个 action;**怎么新增见 `src/skills/AGENTS.md` 的五步法**)、`src/registry.ts`(唯一注册表)、`src/approval-tools.ts`(审批闭集,由三字段机器推导)、`src/context.ts`(port 缝——action 只经注入的 port 碰外界,port 在服务端预绑身份)。
 - **钱**:`src/meter.ts`(`withLlmBudget`:预扣→结算→退款单一通道;11 条不变量在文件头,改任何计费逻辑前先读)。
 - **家(入口)**:web 全局停靠面板 + `/api/otto/stream`(流式轮);深研走 worker 队列(`src/research-agent.ts`,独立的第二个 agent)。

@@ -35,6 +35,12 @@ export type {
   OttoTurnTraceFacts,
   OttoTurnTraceSink,
   OttoTurnTracePort,
+  // ENGINE-A6 (spec §7.2④): what an entry hands the runner so the turns it trimmed away are
+  // folded into the thread's rolling summary — on the SAME refId this turn already holds.
+  OttoRollingSummaryPort,
+  // ENGINE-A7 × A6：这一轮除了 item 数组之外还带着的旧上下文（摘要 ＋ 刚裁掉的那几轮）。
+  // 装配器要看它，否则装载集会在裁剪之后中途缩水。
+  OttoCarriedContext,
 } from "./runtime.js";
 export { ottoSimpleModeBlock } from "./instructions.js";
 // buildProposeCard — the pure $0 card-payload helper (no DB/SDK). Exposed for the
@@ -59,7 +65,11 @@ export type { CardMediaReference } from "./skills/propose.helpers.js";
 export { sanitizeRefDescription } from "./skills/describe-refs.js";
 export type { OttoContext, OttoMediaReference, OttoSearchSlots, EntityType, LibraryItemView, LibraryHistoryView } from "./context.js";
 export { buildUserTurn, stripHistoryImages, sanitizeHistory, tryRestoreRunState, tryRestoreRunStateWithContext } from "./run-input.js";
-export type { RefImage } from "./run-input.js";
+// ENGINE-A6 (spec §7.2④): the pair-aware history trimmer, its budget, and the re-injection
+// block. The entries call these — the trim decision is theirs (they own the input assembly),
+// the fold that follows it is the engine's (runtime.ts), so both halves stay in one place each.
+export { trimHistoryToBudget, rollingSummaryBlock, estimateHistoryTokens, estimateItemTokens, estimateTextTokens, OTTO_HISTORY_BUDGET_TOKENS } from "./run-input.js";
+export type { RefImage, TrimmedHistory } from "./run-input.js";
 export { extractText } from "./run-output.js";
 export { withLlmBudget, llmHoldInternal, actualCostInternal, mapOttoUsage, ReservationNotClaimed, ClaimFailed, SettleLostToRefund, type LlmBudgetArgs } from "./meter.js";
 export type { TokenUsage } from "./meter.js";

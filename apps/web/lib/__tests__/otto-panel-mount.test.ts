@@ -31,7 +31,7 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CANVAS_HREF, CREATE_NAV_HREF, SHELL_ROUTES } from "@fikirtive/core/navigation";
+import { CANVAS_HREF, CREATE_NAV_HREF, OTTO_ASSISTANT, SHELL_ROUTES, merchantNavMap } from "@fikirtive/core/navigation";
 import { expectDockedStaysInFlow } from "./otto-panel-dock-contract";
 
 vi.mock("next/navigation", () => ({
@@ -237,6 +237,50 @@ describe("哪些面挂面板 (§3.2 末段)", () => {
   it("只按整段路径比,不按前缀字符串比", () => {
     // 「/ottoman」不是 Otto 的任何一页,不许被顺手一起豁免掉。
     expect(ottoPanelMountsOn("/ottoman")).toBe(true);
+  });
+
+  /**
+   * FRONT-A14(接线盘点 L6,规格 `docs/specs/frontend-baseline.md` §5)——
+   * Otto 读给商家的那份界面地图,不许承诺它自己做不到的事。
+   *
+   * 地图那一行原来逐字写「Reachable on every page, or with Cmd/Ctrl+J.」
+   * (`packages/core/src/navigation.ts` 的 `merchantNavMap()`),而这个文件上面几条刚刚证明
+   * `CREATE_NAV_HREF` 与 `CANVAS_HREF` 两面**根本不挂面板** —— 顶栏那颗 Ask Otto 与
+   * Cmd/Ctrl+J 在那里同样缺席。Otto 会把那句话原样复述给商家,商家照着按,什么都不会发生。
+   *
+   * 围栏站在这里而不是 core:只有 apps/web 同时看得见这份地图与 `ottoPanelMountsOn()`,
+   * 才能拿一份去核另一份;把名单抄进 core 再对账,对的就是自己抄的那一份
+   * (同一个理由写在 `route-redirects.test.ts` 开头)。
+   *
+   * 不挂面板的那一份名单**从函数算出来**,不在这里手打:哪天挂载范围多一面、少一面,
+   * 地图那句话不跟着改,这一条就红。
+   */
+  it("FRONT-A14: 界面地图那句话点名了每一面不挂面板的地方,一面都不漏", () => {
+    const ottoLine = merchantNavMap()
+      .split("\n")
+      .find((row) => row.startsWith(`- ${OTTO_ASSISTANT.label}`));
+    expect(ottoLine, "地图里应当有助手那一行").toBeDefined();
+
+    // 枚举源 = 商家真能站上去的每一条壳路由(`SHELL_ROUTES`),不是手抄的两条。
+    const surfaces = [...new Set(Object.values(SHELL_ROUTES))];
+    const withoutPanel = surfaces.filter((href) => !ottoPanelMountsOn(href));
+    expect(withoutPanel.length, "自检:至少有一面不挂,否则这条断言永远为真").toBeGreaterThan(0);
+
+    for (const href of withoutPanel) {
+      expect(ottoLine, `地图没说清 ${href} 不挂面板 —— Otto 会对商家承诺一件那里做不到的事`).toContain(href);
+    }
+  });
+
+  it("FRONT-A14: 那句话也不许反过来把挂着面板的面写成例外", () => {
+    const ottoLine = merchantNavMap()
+      .split("\n")
+      .find((row) => row.startsWith(`- ${OTTO_ASSISTANT.label}`))!;
+    // 例外从 "except" 之后那一段读;挂着面板的面不许出现在那里。
+    const exceptions = ottoLine.slice(ottoLine.indexOf("except"));
+    for (const href of [SHELL_ROUTES.billing, SHELL_ROUTES.library, SHELL_ROUTES.brand]) {
+      expect(ottoPanelMountsOn(href), href).toBe(true);
+      expect(exceptions, `${href} 挂着面板,不该被写成例外`).not.toContain(href);
+    }
   });
 });
 
