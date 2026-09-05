@@ -44,7 +44,14 @@ import { CardReferenceReceipt } from "./CardReferenceReceipt";
 import { runPlanApproval } from "./plan-approval";
 // Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修),与抽屉里那张卡共用一份。
 import { CardOptionControls } from "./CardOptionControls";
-import { EDIT_AND_RETRY_LABEL } from "./OttoStreamErrorNotice";
+import {
+  CAP_EXIT_HREF,
+  CAP_EXIT_LABEL,
+  EDIT_AND_RETRY_LABEL,
+  TOP_UP_HREF,
+  TOP_UP_LABEL,
+} from "./OttoStreamErrorNotice";
+import type { OttoErrorData } from "@/lib/otto-stream-bridge";
 import { CardApprovalRef } from "./CardApprovalRef";
 import type { PlanApproveOutcome } from "./OttoPlanCard";
 import type { CanvasTurnStatus } from "@/lib/otto-canvas-turn";
@@ -77,6 +84,14 @@ export interface OttoTurnCardProps {
    * 与抽屉里那张 `OttoStreamErrorNotice` 是同一个。
    */
   retryDraft?: string | null;
+  /**
+   * 这一轮失败的**类型**（#1225 判官残留）——「类型决定出路，而不是措辞」的另一半。
+   *
+   * `retryDraft` 只管得了能重试的那一档；充值与抬上限那两种在这张卡上从前一个出口都没有，
+   * 商家读到「Not enough credits …」之后只能自己去找 Billing 在哪（画布形态下抽屉是折起的，
+   * 那两颗键在里面他看不见）。这里给的正是抽屉里那两颗**同一份**键（同一段字、同一个地址）。
+   */
+  errorKind?: OttoErrorData["kind"] | null;
 }
 
 export const CANVAS_TURN_EMPTY_TEXT = "Tell Otto what you want to create or change.";
@@ -90,8 +105,13 @@ export function OttoTurnCard({
   onChangeSomething,
   onOptionsChanged,
   retryDraft,
+  errorKind,
 }: OttoTurnCardProps) {
   const failed = status.phase === "failed";
+  // 这一次失败在这张卡上能给出的出路。三种失败三条路，一次只有一条（类型决定，不看措辞）。
+  const showTopUp = failed && errorKind === "insufficient_credits";
+  const showCapExit = failed && errorKind === "spend_cap";
+  const showRetry = failed && !!retryDraft;
   return (
     <div
       aria-label="Otto current turn"
@@ -124,17 +144,32 @@ export function OttoTurnCard({
           )}
         </div>
         {/* 商家的下一个动作就摆在这句话旁边 —— 与抽屉里那张告示同一颗键、同一份措辞。
-            按下去把他原来那句话放回输入框(`onChangeSomething` 就是那条路),改了再送。 */}
-        {failed && retryDraft ? (
-          <div className="mt-3 flex justify-end">
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              onClick={() => onChangeSomething(retryDraft)}
-            >
-              {EDIT_AND_RETRY_LABEL}
-            </Button>
+            按下去把他原来那句话放回输入框(`onChangeSomething` 就是那条路),改了再送。
+            充值与抬上限那两种的出路是一条真能点的链接(同一份地址与字,#1225 判官残留):
+            画布形态下抽屉是折起的,那两颗键在里面商家看不见,而他已经决定要付钱/要改上限了。
+            供应商侧那一档(`provider_unavailable`)在这里一个键都没有 —— 它确实没有出路。 */}
+        {showTopUp || showCapExit || showRetry ? (
+          <div className="mt-3 flex justify-end gap-1.5">
+            {showTopUp ? (
+              <Button type="button" size="xs" variant="outline" asChild>
+                <a href={TOP_UP_HREF}>{TOP_UP_LABEL}</a>
+              </Button>
+            ) : null}
+            {showCapExit ? (
+              <Button type="button" size="xs" variant="outline" asChild>
+                <a href={CAP_EXIT_HREF}>{CAP_EXIT_LABEL}</a>
+              </Button>
+            ) : null}
+            {showRetry ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={() => onChangeSomething(retryDraft!)}
+              >
+                {EDIT_AND_RETRY_LABEL}
+              </Button>
+            ) : null}
           </div>
         ) : null}
         {status.detail ? (

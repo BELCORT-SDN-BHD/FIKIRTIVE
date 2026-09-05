@@ -189,6 +189,70 @@ describe("OttoStreamErrorNotice", () => {
     expect(renderNotice(durableError)).toContain(`href="${CAP_CONTROL_ROUTE}"`);
   });
 
+  /**
+   * #1224 判官 P2-2 —— 诚实句配着一颗死循环入口。
+   *
+   * 走查 3310 那一档(我们这边的账户余额不足)现在读到的是「Otto is unavailable right now on
+   * our side. … Please try again later.」,可它从前顶着 `error` 这个 kind,于是旁边照旧长出
+   * 「Edit and retry」:一句「等一会儿再说」配一颗「马上再送一次」,而每按一次都重新走一遍
+   * 预扣/退款。这一档没有商家能按的出路,所以它一个键都不给。
+   *
+   * 变异实证:把这一档的 kind 改回 `error`(或把 `provider_unavailable` 从渲染判据里去掉),
+   * 这一条当场红。
+   */
+  it("ENGINE-A4: 供应商侧那一档不给重试键 —— 也不给充值键", () => {
+    const markup = renderNotice(
+      {
+        kind: "provider_unavailable",
+        text: "Otto is unavailable right now on our side. This turn wasn't charged. Please try again later. Reference: OTTO-ABCD1234",
+      },
+      "Make a launch post",
+    );
+
+    expect(markup).toContain("Otto is unavailable right now on our side.");
+    expect(markup).toContain("Reference: OTTO-ABCD1234");
+    expect(markup, "说了没得试,却还摆着一颗「改了再送」").not.toContain("Edit and retry");
+    expect(markup).not.toContain("Top up");
+    expect(markup).not.toContain(`href="${CAP_CONTROL_ROUTE}"`);
+  });
+
+  // 刷新是这条修法最容易漏掉的一半:kind 只要在 DTO 或 `persistedStreamErrorOf` 的白名单里
+  // 认不出来,那一档就退回通用 `error`,而那颗「Edit and retry」跟着回来了。
+  it("ENGINE-A4: 刷新之后供应商侧那一档还认得回来(重试键不许自己长回来)", () => {
+    const honest =
+      "Otto is unavailable right now on our side. This turn wasn't charged. Please try again later. Reference: OTTO-ABCD1234";
+    const createdAt = new Date("2026-09-05T00:00:00.000Z");
+    const failureMessage = toChatMessageDTO({
+      id: "error_3",
+      role: "AGENT",
+      kind: "TURN_ERROR",
+      seq: 2,
+      text: honest,
+      payload: {
+        kind: "stream_run_error",
+        userMessageId: "user_1",
+        error: { kind: "provider_unavailable", text: honest },
+      },
+      genJobId: null,
+      createdAt,
+    } as never, new Map());
+    const thread: ChatThreadDTO = {
+      id: "thread_3",
+      projectId: "project_1",
+      title: "Launch post",
+      updatedAt: "2026-09-05T00:00:00.000Z",
+      messages: [failureMessage],
+    };
+
+    const durableError = persistedStreamErrorOf(
+      threadToUiMessages(thread)[0].metadata?.payload,
+      "fallback must not replace server copy",
+    );
+
+    expect(durableError).toEqual({ kind: "provider_unavailable", text: honest });
+    expect(renderNotice(durableError, "Make a launch post")).not.toContain("Edit and retry");
+  });
+
   it("keeps the existing generic reply failure presentation and retry action", () => {
     const markup = renderNotice(
       { kind: "error", text: "Otto hit a snag - please try again." },

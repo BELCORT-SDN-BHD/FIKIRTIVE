@@ -106,6 +106,7 @@ import {
   latestTurnTerminal,
 } from "@/lib/otto-canvas-turn";
 import { creditsLabel } from "@/lib/credit-format";
+import { OTTO_TRANSIENT_FAILURE_SENTENCE } from "@/lib/otto-stream-bridge";
 import type { OttoErrorData, OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
 import type { ReasoningUIPart } from "ai";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
@@ -199,8 +200,11 @@ function errorBodyText(message: string | undefined): string | null {
  * 传输级失败(fetch / 解析在流打开之前就断了)对商家说的那一句。`error.message` 是开发者
  * 看的原文(#949 A2),不上屏;这一句是它唯一的替身,底下那条 Alert 与画布那张始终可见的
  * Otto 卡片读的是同一份 —— 一种失败一句话(#699 的破折号围栏也钉在这个文件上)。
+ *
+ * #1224 判官 P2-3:这一句从前在三个文件里各写死一份(这里、路由的 onError 兜底、
+ * `lib/otto-stream-errors.ts`)。现在只剩单源一份,这里只是给它起个本地名字。
  */
-const TRANSPORT_FAILURE_TEXT = "Otto hit a snag — please try again.";
+const TRANSPORT_FAILURE_TEXT = OTTO_TRANSIENT_FAILURE_SENTENCE;
 
 /** The latest user message's text — what the strict route body needs for `text`. */
 function latestUserText(messages: OttoUiMessage[]): string {
@@ -468,10 +472,22 @@ export function OttoChatStream({
     if (held) revokeAttachedPreviews(held.refs);
   }
 
+  /**
+   * 这一次被退回的整轮,白名单认得出的那句**具体**话（认不出来就是 null）。
+   *
+   * 判一次,两处用（#1225 判官残留）：输入框旁那条附件错误，与画布上那张始终可见的状态卡。
+   * 从前只有输入框那一处判，画布卡走的是传输级那句通用兜底 —— 同一次失败，两张脸各说一套：
+   * 卡上写的是那句通用兜底（照它说的再送一次，那件参考照样取不到），
+   * 输入框旁边写的才是真正的原因。一句话一个产地。
+   */
+  const transportRefusalSentence = error
+    ? referenceUnavailableSentence(errorBodyText(error.message))
+    : null;
+
   useEffect(() => {
     if (!error) return;
     console.error("[OttoChatStream] transport error:", error);
-    const sentence = referenceUnavailableSentence(errorBodyText(error.message));
+    const sentence = transportRefusalSentence;
     if (!sentence) {
       releaseSubmitted();
       return;
@@ -916,8 +932,11 @@ export function OttoChatStream({
   // 消息上,纯函数直接读得到;传输级那一种(流还没开就断了)消息上什么都没有,只活在
   // `useChat` 的 status 里 —— 作为 `liveError` 走进同一条投影,而不是在这里长出第二个
   // 「卡该说什么」的判断。
+  // 那一句具体的原因(参考取不到)优先于通用兜底 —— 与输入框旁那条读的是同一次判定。
   const transportTurnError: OttoErrorData | null =
-    status === "error" ? { kind: "error", text: TRANSPORT_FAILURE_TEXT } : null;
+    status === "error"
+      ? { kind: "error", text: transportRefusalSentence ?? TRANSPORT_FAILURE_TEXT }
+      : null;
   const latestAssistantText = canvasTurnText(messages, transportTurnError);
   // 这一轮的终局(直播 data-error / 传输级失败 / 落库的 GEN_RESULT・TURN_ERROR),
   // 状态词与正文读的是**同一个**。
@@ -928,6 +947,10 @@ export function OttoChatStream({
     turnTerminal?.outcome === "failed" && turnTerminal.error?.kind === "error"
       ? latestUserText(messages) || null
       : null;
+  // 出路按**类型**分岔(#1225 判官残留):充值那一种给 Top up、上限那一种给 Open Billing &
+  // credits、供应商侧那一档一个键都不给。判据与抽屉里那张告示逐字同一个,卡自己不解析措辞。
+  const canvasErrorKind: OttoErrorData["kind"] | null =
+    turnTerminal?.outcome === "failed" ? turnTerminal.error?.kind ?? null : null;
   const canvasLayout = layout === "canvas";
 
   // ── 画布卡这一刻的脸(走查 P0-3 / P0-4)────────────────────────────────────────
@@ -1061,6 +1084,7 @@ export function OttoChatStream({
           streaming={lastMessageIsStreamingAssistant}
           confirmCards={confirmCards}
           retryDraft={canvasRetryDraft}
+          errorKind={canvasErrorKind}
           onApproved={({ cardId: approvedCardId, chained }) => {
             // 与抽屉里那张卡按下去之后**逐字相同**的善后:同一份 pending 集合合并规矩、
             // 同一次轮询重装、同一条注入路径。两个按钮,一套状态机。

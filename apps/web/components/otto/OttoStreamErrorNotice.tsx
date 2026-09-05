@@ -15,6 +15,21 @@ const CAP_SECTION = SETTINGS_SECTIONS.find((section) => section.key === "billing
  */
 export const EDIT_AND_RETRY_LABEL = "Edit and retry";
 
+/**
+ * 另外两条出路的字与地址 —— 画布那张状态卡读的是**同一份**(#1225 判官残留)。
+ *
+ * 从前这两颗键只长在抽屉里那张告示上。可画布形态下抽屉默认折起、被画板盖着,商家在状态卡上
+ * 读到「Not enough credits …」之后,卡上一个能按的东西都没有:他已经决定要付钱了,产品却让
+ * 他自己去找 Billing 在哪 —— 与 #979 记下的那 40 秒是同一种病。
+ *
+ * 地址与名字照旧从导航 registry 那一格读(`CAP_SECTION`),所以「句子念的名字 / 按钮上的名字 /
+ * 按钮去的地方」三样同源;两张脸也不可能各说各话。
+ */
+export const TOP_UP_LABEL = "Top up";
+export const TOP_UP_HREF = "/billing";
+export const CAP_EXIT_LABEL = `Open ${CAP_SECTION.label}`;
+export const CAP_EXIT_HREF: string = CAP_SECTION.href;
+
 export interface OttoStreamErrorNoticeProps {
   error: OttoErrorData;
   retryDraft?: string | null;
@@ -36,7 +51,7 @@ export function OttoStreamErrorNotice({
         <p>{error.text}</p>
         {error.kind === "insufficient_credits" && (
           <Button type="button" size="xs" variant="outline" asChild>
-            <a href="/billing">Top up</a>
+            <a href={TOP_UP_HREF}>{TOP_UP_LABEL}</a>
           </Button>
         )}
       {/* #524 — the merchant's own spend cap stopped this turn. The only thing that moves is
@@ -51,7 +66,7 @@ export function OttoStreamErrorNotice({
           地址,三样同源,不可能各说各话。 */}
         {error.kind === "spend_cap" && (
           <Button type="button" size="xs" variant="outline" asChild>
-            <a href={CAP_SECTION.href}>Open {CAP_SECTION.label}</a>
+            <a href={CAP_EXIT_HREF}>{CAP_EXIT_LABEL}</a>
           </Button>
         )}
         {error.kind === "error" && retryDraft && onRetry && (
