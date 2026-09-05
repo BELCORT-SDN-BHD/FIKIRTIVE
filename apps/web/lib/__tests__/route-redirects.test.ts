@@ -37,6 +37,7 @@ vi.mock("next/navigation", () => ({ redirect: mockRedirect }));
 
 const { default: OttoRedirect } = await import("../../app/otto/page");
 const { default: ParkedCampaignLayout } = await import("../../app/campaign/layout");
+const { default: CampaignCalendarRoute } = await import("../../app/campaign/calendar/page");
 const { default: ParkedSchedulePage } = await import("../../app/schedule/page");
 const { default: LegacyScheduleAnalyticsPage } = await import("../../app/schedule/analytics/page");
 const { default: ParkedEditorPage } = await import("../../app/library/editor/page");
@@ -239,6 +240,39 @@ describe("Phase 1 parked routes 的真实 server redirects", () => {
     await expect(Promise.resolve().then(() => ParkedEditorPage())).rejects.toThrow(
       `NEXT_REDIRECT:${SHELL_ROUTES.create}`,
     );
+  });
+
+  /**
+   * FRONT-A14(接线盘点 L6,规格 `docs/specs/frontend-baseline.md` §5)——
+   * 「表说的」与「文件做的」是同一句话。
+   *
+   * `MERCHANT_NAV_REDIRECTS` 那张表的契约逐字写在它自己的注释里:每一条 `from` 都必须有
+   * 一个真的 route 文件把人送到 `to`。此前 `/campaign/calendar` 那一行写 `SHELL_ROUTES.home`
+   * (理由栏:Campaigns are parked in the Beta),而路由文件跳的是 `SHELL_ROUTES.schedule`
+   * (W2-11 留下的旧理由)。商家侧看不出差别 —— `app/campaign/layout.tsx` 抢在前面,这一页的
+   * `redirect()` 实际跑不到 —— 但围栏在替一句假话背书。
+   *
+   * 期望值**从表里读**,不在这里手打第二遍:改表就必须改文件,否则这一条红。
+   */
+  it("FRONT-A14: /campaign/calendar 这一页跳的地方,与权威重定向表那一行逐字同一个去处", async () => {
+    const row = MERCHANT_NAV_REDIRECTS.find((entry) => entry.from === "/campaign/calendar");
+    expect(row, "权威表里应当还有 /campaign/calendar 这一行").toBeDefined();
+
+    // 逐字比,不用 `rejects.toThrow(string)` —— 那是**子串**匹配,而这一行的去处是 `/`,
+    // 「NEXT_REDIRECT:/」是任何一条去处的前缀,写成 toThrow 这条围栏跳去哪里都绿
+    // (本轮真的先写错过一次,把文件改回 `/schedule` 照样通过)。
+    const thrown = await Promise.resolve()
+      .then(() => CampaignCalendarRoute())
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(thrown, "这一页应当把人送走,而不是渲染出点什么").toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe(`NEXT_REDIRECT:${row!.to}`);
+
+    // 反面:今天那一行就是 Home。写死这一句,是为了让「有人把表改成别处、又顺手把文件改成
+    // 一样」这种双改也留下痕迹 —— 上面那条只保证两边一致,不保证一致在哪一头。
+    expect(row!.to).toBe(SHELL_ROUTES.home);
   });
 
   it("public share page 不被 Schedule merchant redirect 捕获", () => {
