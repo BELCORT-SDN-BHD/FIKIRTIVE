@@ -8,13 +8,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
 import type { Area } from "react-easy-crop";
-import Link from "next/link";
-import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { getGeneration } from "@/lib/asset-actions";
 import { saveCroppedGeneration } from "@/lib/asset-actions";
 import { setFavorite } from "@/lib/asset-actions";
 import { deleteGeneration, getGenerationLineage, type GenerationLineage } from "@/lib/actions";
 import { CollectionDialogs } from "@/components/library/CollectionDialogs";
+import { AssetLineage } from "@/components/library/AssetLineage";
 import { getPublicMediaLink } from "@/lib/media-link-actions";
 import {
   startAssetGen,
@@ -963,51 +962,16 @@ export default function DetailPanel({
               </div>
             )}
 
-            {/* 血缘节(清单 B3 / P1-007)—— 「每个东西都要有迹可循」在这一面上的那一半。
-
-                五格全部读**已经记下来的**列(`lib/actions.getGenerationLineage`),一个都不
-                现算:出处画布/对话来自 `Generation.projectId` / `threadId`(两条都能点回去)、
-                参考来自生成那一刻冻结的元素名快照、成本折的是产出它那一单的**账本行**
-                (与画布卡片信息面同一个 `netChargedInternalCredits`)、状态来自 `GenJob.status`、
-                用途来自这一行自己身上的 `shotId` / `campaignId`。
+            {/* 血缘节(清单 B3 / P1-007)—— 「每个东西都要有迹可循」在这一面上的那一半:
+                出处画布/对话(可回链)、参考、成本、状态、用途。五格全部读**已经记下来的**列
+                (`lib/actions.getGenerationLineage`),一个都不现算。
 
                 取不到就整块不渲染(`lineage === null`),与本面板另外三块回执同一条纪律:
                 有则显示、无则整行不出现,不用占位话冒充一份不存在的记录。
-                每一行也各自这样办 —— 没有引用就不写 "None"、成本未知就不写一个 0。 */}
-            {lineage && (
-              <div className="cv-detail-fact">
-                <span className="cv-panel-label">Where this came from</span>
-                <p className="cv-detail-fact-copy">
-                  {"Canvas: "}
-                  <Link href={`${CANVAS_HREF}?project=${encodeURIComponent(lineage.canvas.id)}`} className="underline">
-                    {lineage.canvas.name ?? "Open canvas"}
-                  </Link>
-                  {lineage.conversation ? (
-                    <>
-                      {" · Conversation: "}
-                      <Link
-                        href={`${CANVAS_HREF}?project=${encodeURIComponent(lineage.canvas.id)}&thread=${encodeURIComponent(lineage.conversation.id)}`}
-                        className="underline"
-                      >
-                        {lineage.conversation.title ?? "Open conversation"}
-                      </Link>
-                    </>
-                  ) : null}
-                </p>
-                {lineage.references.length > 0 && (
-                  <p className="cv-detail-fact-copy">References used: {lineage.references.join(", ")}</p>
-                )}
-                {lineage.costCredits != null && (
-                  <p className="cv-detail-fact-copy">
-                    {lineage.costCredits === 0 ? "Cost: no credits charged" : `Cost: ${creditsLabel(lineage.costCredits)}`}
-                  </p>
-                )}
-                <p className="cv-detail-fact-copy">Status: {lineage.status}</p>
-                {lineage.usedIn.length > 0 && (
-                  <p className="cv-detail-fact-copy">Used in: {lineage.usedIn.join(", ")}</p>
-                )}
-              </div>
-            )}
+
+                节本身住在 `components/library/AssetLineage` —— 理由写在那个文件头上
+                (文案围栏按文件穷举条件组合,这一份塞进来会把整个面板推出围栏)。 */}
+            {lineage && <AssetLineage lineage={lineage} />}
 
             {/* #643 T2 — Image shape: what Regenerate and the edit composer below will deliver.
                 Seeded from the shape this image was made in, so neither one silently reshapes it.
