@@ -34,6 +34,29 @@ export const LIBRARY_VIEWS = [
 
 export type LibraryView = (typeof LIBRARY_VIEWS)[number]["value"];
 
+/**
+ * `/library/<generationId>` 里的那个 id —— 详情**路径**的解析器(清单 B3 / P1-007)。
+ *
+ * 详情从查询参数升成一段真路径之后,「地址上开着哪一件」这件事就由 pathname 说了算;
+ * 后退键(`popstate`)与服务端的 `app/library/[id]/page.tsx` 读的是同一条规则。
+ *
+ * 两个不是 id 的段要认出来:
+ *   · `/library` 本身(没有第二段)= 没开详情;
+ *   · `/library/editor` 是一条**静态**路由(剪辑台),它永远不是一件素材。静态段在
+ *     Next 里天然优先于 `[id]`,这里手写一遍是为了让浏览器侧的后退键与服务端同判 ——
+ *     少写这一句,从剪辑台按后退会让详情面对着 "editor" 这个 id 报「素材不可用」。
+ *
+ * 返回的是一个**待验证的定位参数**,不是一次授权:归属由服务端按当前 principal 再解析。
+ */
+const LIBRARY_NON_ASSET_SEGMENTS = new Set(["editor"]);
+
+export function libraryDetailIdFromPath(pathname: string): string | null {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length !== 2 || segments[0] !== "library") return null;
+  const id = decodeURIComponent(segments[1]!);
+  return LIBRARY_NON_ASSET_SEGMENTS.has(id) ? null : id;
+}
+
 /** 地址里的 `?view=` —— 认不出来的值一律落回默认那一格,不 404、也不画空白。 */
 export function parseLibraryView(raw: string | undefined): LibraryView {
   return LIBRARY_VIEWS.some((item) => item.value === raw) ? (raw as LibraryView) : "history";
@@ -224,6 +247,56 @@ export function libraryItemRawName(item: Pick<LibraryItem, "source" | "filename"
   if (filename) return filename;
   const prompt = item.prompt.trim();
   return prompt || "Untitled";
+}
+
+/**
+ * 卡片上那行字的**最终**规则(清单 B4 / P2-014;`docs/specs/frontend-baseline.md` §5
+ * 2026-09-05 行)。
+ *
+ * 病象:格子上写的是**整段提示词的前 72 字**。同一句话做出来的四张图,四格上写着一模一样
+ * 的开头,商家在网格里分不出谁是谁;而整段提示词本来就已经在详情面里了(`DetailPanel` 的
+ * `gen.prompt`,未截断)——网格再念一遍长文没有增加任何信息。
+ *
+ * 两件事:
+ *
+ * ① **摘要优先。** `summary` 是 Otto 真的读懂这件素材之后写下的那一句
+ *    (`AssetUnderstanding.summary`,kind `image-caption`,worker 落盘前已白标)。有它就写它;
+ *    **没有就回落到原有标题规则**(`libraryItemTitle`:上传写文件名、引擎产物写提示词)——
+ *    今天理解只扫 UPLOAD / IMPORT(`apps/worker/src/jobs/understand.ts` 的
+ *    `UNDERSTOOD_SOURCES`),所以引擎产物走的一直是回落那一支。这不是降级,是「没有摘要就
+ *    别编一个」:绝不拿 id、存储键或来源冒充摘要。
+ *
+ * ② **序号只在重名时出现,而且它数的是屏幕上这一组。** 序号 = 这一格在**同一时间组内、
+ *    同名的那几格**里排第几(1 起,按服务端返回的顺序)。同名只有一格时不写序号 ——
+ *    「laksa · 1」这种孤零零的序号只是噪音。数据库里没有一列叫「序号」,所以这里**不编**
+ *    一个:`Generation.version` 只在挂到分镜上时才有意义(未挂载的行恒为 1),批次里的位次
+ *    要回头问产出它的 `GenJob`(每行一次查询)。屏幕上的位次是屏幕自己算得出来的唯一诚实
+ *    答案,也正是商家要的那个区分。
+ *
+ * 纯函数、按整组算:序号必须由**同一次遍历**发出去,一格一格各算各的必然重号。
+ */
+export function libraryCardBaseTitle(
+  item: Pick<LibraryItem, "source" | "filename" | "prompt"> & { summary?: string | null },
+): string {
+  const summary = (item.summary ?? "").trim();
+  if (!summary) return libraryItemTitle(item);
+  return summary.length > 72 ? `${summary.slice(0, 71)}…` : summary;
+}
+
+/** 一组卡片的标题,与传进来的顺序一一对应(见 `libraryCardBaseTitle` 的两条规则)。 */
+export function libraryCardTitles(
+  items: readonly (Pick<LibraryItem, "source" | "filename" | "prompt"> & { summary?: string | null })[],
+): string[] {
+  const bases = items.map(libraryCardBaseTitle);
+  const total = new Map<string, number>();
+  for (const base of bases) total.set(base, (total.get(base) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  return bases.map((base) => {
+    if ((total.get(base) ?? 0) < 2) return base;
+    const seq = (seen.get(base) ?? 0) + 1;
+    seen.set(base, seq);
+    return `${base} · ${seq}`;
+  });
 }
 
 /** `0:08`。没有真实时长的视频不显示假时长。 */

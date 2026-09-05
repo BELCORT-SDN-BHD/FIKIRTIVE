@@ -21,9 +21,10 @@ import { Skeleton } from "@/design-system/primitives/skeleton";
 import { libraryItemAccessibleName } from "@/lib/library-item-a11y";
 import {
   groupLibraryItems,
+  libraryCardBaseTitle,
+  libraryCardTitles,
   libraryDurationLabel,
   libraryItemRawName,
-  libraryItemTitle,
   type LibraryTimeZone,
 } from "@/lib/library-view-model";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,12 @@ export type MediaTileItem = {
       提示词)认的就是它。`LibraryItem` 与 `LibrarySubjectItem` 都带着它。 */
   source: "upload" | "generated";
   filename: string;
+  /**
+   * Otto 读懂这件素材之后写下的那一句(清单 B4)。卡片标题优先写它。
+   * 可选:收藏 / 合集那两格借的是 `LibrarySubjectItem`,它没有这一列 —— 缺席与空串同义
+   * (「没有摘要」),标题按 `libraryCardBaseTitle` 回落到原有规则。
+   */
+  summary?: string | null;
   width: number | null;
   height: number | null;
   durationS: number | null;
@@ -49,6 +56,7 @@ export type MediaTileItem = {
 
 export function MediaTile({
   item,
+  title,
   selected,
   onOpen,
   selectionMode = false,
@@ -56,14 +64,20 @@ export function MediaTile({
   onCheckedChange,
 }: {
   item: MediaTileItem;
+  /**
+   * 看得见的那行字。由 `MediaGrid` 按**整组**算好传进来(`libraryCardTitles`)——
+   * 序号数的是同组里的重名,一格一格各算各的必然重号,所以这一格不自己算标题。
+   * 省略 = 单独用这块砖(组外)时退回单格规则。
+   */
+  title?: string;
   selected: boolean;
   onOpen: () => void;
   selectionMode?: boolean;
   checked?: boolean;
   onCheckedChange?: (checked: boolean) => void;
 }) {
-  const title = libraryItemTitle(item);
-  // 看得见的那行字仍是 `libraryItemTitle`(设计的 caption);**读屏念的那句**走
+  const shownTitle = title ?? libraryCardBaseTitle(item);
+  // 看得见的那行字走 `libraryCardTitles`(设计的 caption);**读屏念的那句**走
   // `lib/library-item-a11y.ts` —— Codex staging 审计 LIB-STG-P2-005 定的那一份单源
   // (整段提示词当无障碍名,每个 Tab 停顿都念一整段;#1185 已经在 CanvasLibraryPicker 与
   // StuffLibrary 落过)。Library 网格是第三个同病的调用点,照样读同一个函数,不自建第二套截断。
@@ -90,8 +104,8 @@ export function MediaTile({
            「Open <名字>」,勾选那一颗才叫「Select <名字>」—— 两个控件两个名字,读屏
            不会听到同一句话说两遍。两颗键的 <名字> 走同一份 `accessibleName`(单源)。 */
         aria-label={`Open ${accessibleName}`}
-        // 悬停/长按看到的是**完整**原名,和 `CanvasLibraryPicker.tsx` 同源;`title` 变量是
-        // 给看得见的 caption 用的 72 字截断版,拿它当 tooltip 等于把截断又说了一遍。
+        // 悬停/长按看到的是**完整**原名,和 `CanvasLibraryPicker.tsx` 同源;caption 那一份是
+        // 摘要 / 截断 + 序号,拿它当 tooltip 等于把截断又说了一遍。
         title={libraryItemRawName(item)}
         aria-selected={selected}
         onClick={selectionMode ? () => onCheckedChange?.(!checked) : onOpen}
@@ -133,7 +147,7 @@ export function MediaTile({
           </span>
         ) : null}
         <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-foreground/60 to-transparent px-2.5 pt-8 pb-2 text-left text-xs font-medium text-background opacity-0 transition-opacity duration-[var(--dur-2)] group-hover:opacity-100 group-focus-visible:opacity-100">
-          {title}
+          {shownTitle}
         </span>
       </Button>
     </div>
@@ -172,6 +186,18 @@ export function MediaGrid<T extends MediaTileItem>({
     () => groupLibraryItems(items, new Date(), timeZone),
     [items, timeZone],
   );
+  /**
+   * 卡片标题按**时间组**一次算完(清单 B4):序号数的是同一组里的重名,所以它只能由
+   * 一次整组遍历发出去 —— 一格一格各算各的必然重号。
+   */
+  const titleById = React.useMemo(() => {
+    const out = new Map<string, string>();
+    for (const group of groups) {
+      const titles = libraryCardTitles(group.items);
+      group.items.forEach((item, index) => out.set(item.id, titles[index]!));
+    }
+    return out;
+  }, [groups]);
   return (
     <div className="space-y-7">
       {groups.map((group) => (
@@ -185,6 +211,7 @@ export function MediaGrid<T extends MediaTileItem>({
               <MediaTile
                 key={item.id}
                 item={item}
+                title={titleById.get(item.id)}
                 selected={item.id === selectedId}
                 onOpen={() => onOpen(item)}
                 selectionMode={selectionMode}
