@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 import {
   ArrowUpRight,
   CalendarRange,
@@ -90,10 +90,31 @@ function ContinueCreating({ recents }: { recents: HomeRecentCanvasRead }) {
   );
 }
 
-function RecoveryState({ health, filters }: { health: MarketingHealthReadModel; filters: HomeSearchState }) {
+/**
+ * 一条恢复动作只有两种形状:**去别处**(一条真链接)或**再读一次这一页**(一颗真按钮)。
+ * 没有第三种,也没有「看起来像动作、其实什么都不做」的那一种(裁决九)。
+ */
+type RecoveryContent = {
+  title: string;
+  description: string;
+  action: string;
+  icon: ReactNode;
+} & ({ href: string; retry?: false } | { retry: true; href?: undefined });
+
+function RecoveryState({
+  health,
+  filters,
+  onRetry,
+  retrying,
+}: {
+  health: MarketingHealthReadModel;
+  filters: HomeSearchState;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
   if (health.state === "partial" || health.state === "ready") return null;
 
-  const content = health.state === "not-configured"
+  const content: RecoveryContent = health.state === "not-configured"
     ? health.action === "reconnect"
       ? {
           title: MARKETING_HOME_COPY.reconnectTitle,
@@ -133,13 +154,18 @@ function RecoveryState({ health, filters }: { health: MarketingHealthReadModel; 
           title: MARKETING_HOME_COPY.unavailableTitle,
           description: MARKETING_HOME_COPY.unavailableDescription,
           action: "Retry",
-          // Retry 指回**同一个**地址,而它真的会重取页面段,靠的是 Next 16.2.9 对
-          // same-page 导航的特判(`segment-cache/navigation.js` 的 `isSamePageNavigation`)
-          // 加上 dynamic 段的路由缓存默认不留存(`staleTimes.dynamic` 默认 0;
-          // `next.config.ts` 没有覆盖它)。两条都是**框架的行为,不是我们自己的保证**,
-          // 而且今天没有自动化测试守着(判官 2026-09-05 P2-1)。升级 Next 时复核这两条,
-          // 或者把这个链接改成一颗调 `router.refresh()` 的按钮,把保证收回自己手里。
-          href: homeHref(filters),
+          /**
+           * Retry 现在是一颗**真按钮**,按下去调 `router.refresh()` —— 服务器重跑这一页的
+           * RSC,`getAnalytics()` 因此真的再读一次 Meta。
+           *
+           * 它以前是一条指回**同一个地址**的链接,而「同一个地址也会重取」靠的是两条
+           * 框架行为:Next 对 same-page 导航的特判,加上 dynamic 段路由缓存默认不留存
+           * (`staleTimes.dynamic` 默认 0)。两条都不是我们自己的保证,升级 Next 就可能
+           * 静默失效,商家按下去看到的还是同一份读不出来的旧结果(判官 2026-09-05 P2-1)。
+           * 改成按钮之后这句保证收回自己手里,并且有围栏测试真按一下守着
+           * (`lib/__tests__/home-honesty-l3.test.tsx`,FRONT-A3)。
+           */
+          retry: true,
           icon: <RefreshCw />,
         };
 
@@ -150,9 +176,15 @@ function RecoveryState({ health, filters }: { health: MarketingHealthReadModel; 
         <EmptyTitle>{content.title}</EmptyTitle>
         <EmptyDescription>{content.description}</EmptyDescription>
       </EmptyHeader>
-      <Link href={content.href} className={buttonVariants({ size: "sm" })}>
-        {content.action}
-      </Link>
+      {content.retry ? (
+        <Button type="button" size="sm" onClick={onRetry} disabled={retrying}>
+          {retrying ? "Retrying…" : content.action}
+        </Button>
+      ) : (
+        <Link href={content.href} className={buttonVariants({ size: "sm" })}>
+          {content.action}
+        </Link>
+      )}
     </Empty>
   );
 }
@@ -199,7 +231,11 @@ function PartialMarketingHealth({
             href={SHELL_ROUTES.connections}
             className="inline-flex h-8 shrink-0 items-center gap-2 rounded-lg px-2.5 text-xs text-muted-foreground outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/40"
           >
-            <Database className="size-3.5" aria-hidden /> {health.source.label} · {health.freshness.label}
+            <Database className="size-3.5" aria-hidden /> {health.source.label}
+            {/* 「数到哪一天」只在真有那一天时说。拿不到日序列时这里过去写的是
+                「Freshness unavailable」—— 一句占着 provenance 位置、却什么也没告诉商家的
+                话;按裁决九「无契约的控件不出现」,没有真时间戳就不摆这一栏。 */}
+            {health.freshness.status === "known" ? ` · ${health.freshness.label}` : null}
           </Link>
         </div>
 
@@ -268,15 +304,19 @@ function HomeComponentBlock({
   id,
   health,
   filters,
+  onRetry,
+  retrying,
 }: {
   id: HomeComponentId;
   health: MarketingHealthReadModel;
   filters: HomeSearchState;
+  onRetry: () => void;
+  retrying: boolean;
 }) {
   if (id !== "marketing-health") return null;
   return (
     <>
-      <RecoveryState health={health} filters={filters} />
+      <RecoveryState health={health} filters={filters} onRetry={onRetry} retrying={retrying} />
       {health.state === "partial" ? <PartialMarketingHealth health={health} filters={filters} /> : null}
       {health.state === "ready" ? <ReadyMarketingHealth health={health} filters={filters} /> : null}
     </>
@@ -313,6 +353,12 @@ export function MarketingHomeView({
   const [customizing, setCustomizing] = useState(false);
   const [draft, setDraft] = useState<HomeComponentId[]>([...components]);
   const [saving, startSaving] = useTransition();
+  /**
+   * Retry 的重取。`router.refresh()` 让服务器重跑这一页的 RSC —— `HomeEntry` 因此重新
+   * `getAnalytics()`,真的再问一次 Meta。放在 transition 里,是为了让按钮在这段等待里
+   * 说得出「正在重试」,而不是按下去看着没反应。
+   */
+  const [retrying, startRetry] = useTransition();
 
   useEffect(() => {
     const targetId = window.location.hash.slice(1);
@@ -402,7 +448,15 @@ export function MarketingHomeView({
           <div className="mt-3 flex flex-wrap items-center gap-1 border-b border-border pb-4">
             <HomeFilterPicker label="Business goal" icon={Target} value={filters.goal} options={HOME_GOALS} disabled={customizing} onValueChange={(value) => replaceFilter({ goal: value as HomeGoal })} />
             <HomeFilterPicker label="Date range" icon={CalendarRange} value={filters.range} options={HOME_RANGES} disabled={customizing} onValueChange={(value) => replaceFilter({ range: value as HomeRange })} />
-            <HomeFilterPicker label="Comparison" icon={ArrowUpRight} value={filters.comparison} options={HOME_COMPARISONS} disabled={customizing} onValueChange={(value) => replaceFilter({ comparison: value as HomeComparison })} />
+            {/* Comparison 只在 `ready` 版面出现 —— 今天唯一读得懂它的是多来源 aggregate
+                的对比栏(`ReadyMarketingHealth` 的 `dashboard.comparison`)。partial 单源
+                版面里没有任何东西消费它:`HomeEntry` 只按 `range` 去读 Meta,换个对比口径
+                页面上一个数字都不会变。摆着它就是摆一颗点了没反应的控件(裁决九)。
+                URL 里那一段照旧解析与保留 —— 深链、Analysis 的 originComparison 回程都还
+                认它,只是没有真消费者时不给一颗控件。 */}
+            {health.state === "ready" ? (
+              <HomeFilterPicker label="Comparison" icon={ArrowUpRight} value={filters.comparison} options={HOME_COMPARISONS} disabled={customizing} onValueChange={(value) => replaceFilter({ comparison: value as HomeComparison })} />
+            ) : null}
           </div>
 
           {customizing ? null : <ContinueCreating recents={recents} />}
@@ -421,7 +475,13 @@ export function MarketingHomeView({
                   data-home-component={id}
                   className={cn("min-w-0", FULL_WIDTH_HOME_COMPONENTS.has(id) && "col-span-full")}
                 >
-                  <HomeComponentBlock id={id} health={health} filters={filters} />
+                  <HomeComponentBlock
+                    id={id}
+                    health={health}
+                    filters={filters}
+                    onRetry={() => startRetry(() => router.refresh())}
+                    retrying={retrying}
+                  />
                 </div>
               ))}
             </div>
