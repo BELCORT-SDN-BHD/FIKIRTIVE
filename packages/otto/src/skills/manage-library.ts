@@ -27,7 +27,7 @@ const params = z.object({
   action: z.enum(["history", "detail", "set_favorite"]),
   // history — filters:
   search: z.string().max(200).optional().describe("history: only generations whose prompt contains this text."),
-  favoriteOnly: z.boolean().optional().describe("history: only starred generations."),
+  favoriteOnly: z.boolean().optional().describe("history: only starred generations, newest-starred first. Cannot be combined with search (or any other history filter) — ask for favorites on their own."),
   cursor: z.string().max(120).optional().describe("history: the nextCursor from a previous page (to read the next page)."),
   // detail / set_favorite — which generation:
   generationId: z.string().min(1).max(80).optional().describe("detail / set_favorite: the generation id."),
@@ -108,7 +108,9 @@ export const manageLibrarySkill = defineOttoSkill({
   reach: "internal",
   description:
     `Browse the user's ${navLabel("library")} — every image/video they've made — $0, never generates or spends. ` +
-    "history: a page of their generation history, newest first (optional search text, favoriteOnly, and a cursor to page). " +
+    "history: a page of their generation history, newest first (optional search text and a cursor to page). " +
+    "favoriteOnly returns their favorites instead — newest-starred first, and it cannot be combined with search " +
+    "or any other history filter (asking for both is refused, so ask for favorites on their own). " +
     "detail: one generation's prompt/kind/favorite, plus finalPrompt — the text the engine reports it " +
     "actually executed, when its contract reports one. This is kind-dependent (#914): for kind:\"video\", " +
     "finalPrompt is a real per-generation fact — non-null means the engine REPORTED the text it ran, which " +

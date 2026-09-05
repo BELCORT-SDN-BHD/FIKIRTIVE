@@ -5,6 +5,8 @@ import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES, GEN_IMAGE_ASPE
 import { requireOwner } from "./auth-guard";
 import { storage, kindOf, extFromFilename } from "./storage";
 import { redactProviderNames } from "./provider-secrecy";
+import { setLibraryFavorite } from "./library-favorites";
+import { favoriteGenerationIds } from "./library-subjects";
 
 /**
  * #914 r4 —— 「平台实际送给引擎的那一句」跨过商家边界时的形状。
@@ -116,7 +118,6 @@ export async function getGeneration(
       // Creation S2 §8.1①(CREATE-A4 / A12,判官 r1 P1 落修)—— 「这一张为什么落到这一档」。
       // worker 在建行时用纯函数现算并落库(`routeReasonFor`);这里是它的**产品读路径**。
       routeReason: true,
-      favorite: true,
       asset: { select: { ownerId: true, contentHash: true, ext: true } },
     },
   });
@@ -138,14 +139,21 @@ export async function getGeneration(
   // Resolve sibling variants (id + url) from the producing GenJob's generationIds array
   // (owner-scoped). Kept as an aligned {id, url}[] so the panel can act on the SELECTED
   // variant's own generation id, not just show its url (F08).
-  const primaryVariant = { id: gen.id, url, favorite: gen.favorite, finalPrompt: merchantFinalPrompt(gen.finalPromptText) };
+  // 【2026-09-03 前端基线 §7.3②】收藏状态读的是 `Favorite` 那张跨类型的表,不是
+  // `Generation.favorite` 那一列 —— 那一列自当天的一次性回灌之后没有任何写入者,
+  // 继续读它,面板上的心就是一份过期的影子。主图与兄弟图一次问完。
+  const favoriteIds = await favoriteGenerationIds(
+    ownerId,
+    [gen.id, ...(job?.generationIds ?? [])],
+  );
+  const primaryVariant = { id: gen.id, url, favorite: favoriteIds.has(gen.id), finalPrompt: merchantFinalPrompt(gen.finalPromptText) };
   let variants: { id: string; url: string; favorite: boolean; finalPrompt: string | null }[] = [primaryVariant];
   if (job && job.generationIds.length > 1) {
     const siblingIds = job.generationIds.filter((id) => id !== generationId);
     const siblings = await prisma.generation.findMany({
       where: { id: { in: siblingIds }, ownerId, deletedAt: null },
       // #776 r2：兄弟行也要读回执那一列，否则切换缩略图时面板只能拿主图那一句凑数。
-      select: { id: true, favorite: true, finalPromptText: true, asset: { select: { ownerId: true, contentHash: true, ext: true } } },
+      select: { id: true, finalPromptText: true, asset: { select: { ownerId: true, contentHash: true, ext: true } } },
     });
     const siblingMap = new Map(siblings.map((s) => [s.id, s]));
     // Preserve the original generationIds order; each entry carries its own id (a missing
@@ -157,7 +165,7 @@ export async function getGeneration(
       return [{
         id,
         url: storage.url(storageKey(sib.asset.ownerId, sib.asset.contentHash, sib.asset.ext)),
-        favorite: sib.favorite,
+        favorite: favoriteIds.has(sib.id),
         finalPrompt: merchantFinalPrompt(sib.finalPromptText),
       }];
     });
@@ -178,7 +186,7 @@ export async function getGeneration(
     // 同一个字符串发出去,所以每张的这一列同值 —— 与逐张各有各的 `finalPrompt` 不同,
     // 这里不需要绑到 variants,切缩略图也不该让这一行变脸。
     sentPrompt: sentPromptReceipt(gen.sentPromptText, job?.requestedPrompt ?? gen.promptText),
-    favorite: gen.favorite,
+    favorite: favoriteIds.has(gen.id),
     sourceGenerationId: job?.sourceGenerationId ?? null,
     imageAspect: snapshotImageAspect(job?.imageOptions),
     // Creation S2 §8.1①(CREATE-A4 / A12)—— 能力路由的理由,与上面那两句回执同族:
@@ -319,18 +327,19 @@ export async function saveCroppedGeneration(
   return { id: newGenId };
 }
 
+/**
+ * 收藏 / 取消收藏一件生成结果。
+ *
+ * 【2026-09-03 前端基线 §7.3②(FRONT-A5)起改路】这里不再自己写 `Generation.favorite`,
+ * 而是转调 `lib/library-favorites.ts` 的 `setLibraryFavorite` —— 收藏的权威从那一天起是
+ * 跨素材类型的 `Favorite` 表(Founder 裁决十)。**签名一个字节没变**,所以详情面板
+ * (components/asset/DetailPanel)与 Otto 的 `manageLibrary set_favorite`
+ * (lib/otto-library-port.ts)两条路照旧调这一个,只是它们现在与素材库的 Favorites
+ * 页签写的是同一张表 —— 人工 UI 与 Otto 走同一业务动作层,不是两份实现。
+ */
 export async function setFavorite(
   generationId: string,
   favorite: boolean,
 ): Promise<{ favorite: boolean } | { error: string }> {
-  const gate = await requireOwner();
-  if ("error" in gate) return gate;
-  const { ownerId } = gate;
-
-  const result = await prisma.generation.updateMany({
-    where: { id: generationId, ownerId, deletedAt: null },
-    data: { favorite },
-  });
-
-  return result.count === 1 ? { favorite } : { error: "Not found." };
+  return setLibraryFavorite("generation", generationId, favorite);
 }

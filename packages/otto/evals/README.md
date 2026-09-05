@@ -28,21 +28,27 @@ env -u ANTHROPIC_BASE_URL pnpm --filter @fikirtive/otto run evals -- --line=crea
 `evals:check` **要花钱**（它会真的重跑一遍），所以它不是 CI 闸，只在人手里跑 ——
 ⑥段（技能文件柜替换单体）落地后重跑它，就是那一段「总分不低于基线」的判据。
 
-## 基线还没跑出来（2026-09-05）
+## 基线已入档（2026-09-05）
 
-`baselines/engine.json` **目前不存在**：主检出 `.env.local` 里的 `ANTHROPIC_API_KEY` 是 401
-（`GET https://api.anthropic.com/v1/models` → `authentication_error: API key is invalid.`，零 token 的探针，见
-`docs/specs/otto-engine.md` §5 2026-09-05 登记行）。换一把有效钥匙之后按上面的跑法跑一次即可，
-档案会自己写出来。在那之前 `evals:check` 会**在开跑前**（不花一分钱）就明说「没有基线可比」并非零退出 —— 它不会假绿，也不会先烧掉一整趟钱再告诉你。
+`baselines/engine.json` 是 engine 线的第一份基线：日期、commit sha、型号、逐题分（含产物与每一条判词）、
+总分与真实花费都在里面。它就是 ⑥段「不低于基线」的比较对象 —— 重跑用 `evals:check`。
+
+（在它存在之前，`evals:check` 会**在开跑前**、不花一分钱就明说「没有基线可比」并非零退出：它不会假绿，
+也不会先烧掉一整趟钱再告诉你。这条守卫仍在，Creation 那条线今天正处在这个状态。）
 
 ## 预算
 
-**真闸只有一道**：单次全跑硬上限 **$10**，写在 `core.ts` 的 `FULL_RUN_BUDGET_USD`。
-`SEGMENT_BUDGET_USD`（本段累计 **$20**，`docs/specs/otto-engine.md` §7.7）是**记账口径，只印不拦** ——
-开跑那一行会把它连同「这条线的档案里已记多少」印出来给人看，代码里没有任何地方据它停跑。
-$10 的那一道则是真的：**每次模型调用之前**过一次预算闸，
-已花的 + 这一次的最坏情况超过上限就**就地停**并非零退出。花费按真实 token 用量 × `@fikirtive/core` 的价目表算，
-写进档案的 `costUsd`。
+**两道闸，都是真的，都在花钱之前**（`docs/specs/otto-engine.md` §7.7）：
+
+1. **本段累计 $20**（`core.ts` 的 `SEGMENT_BUDGET_USD`）：**开跑之前**把 `baselines/` 里**每一份**档案的
+   `costUsd` 加起来，再加上本次全跑的最坏花费，超过 $20 就**拒跑** —— 一分钱不花、非零退出。
+   本次最坏花费按「每题一次被测调用 + 有 rubric 的再按判分重试一次算两遍」估，并被下面那道 $10 截住。
+2. **单次全跑 $10**（`FULL_RUN_BUDGET_USD`）：**每次模型调用之前**过一次，
+   已花的 + 这一次的最坏情况超过上限就**就地停**并非零退出。
+
+花费按真实 token 用量 × `@fikirtive/core` 的价目表算，写进档案的 `costUsd`。
+开跑前的那几道守卫（环境、有没有基线可比、累计预算）由 `runner.ts` 的 `preflight` 判、`guardedRun` 执行：
+真跑的那一趟是传给它的闭包，所以「守卫在花钱之前」是结构上的事实，不是注释里的说法（回归测试钉的正是这一条）。
 
 ## 目录
 

@@ -186,7 +186,8 @@ describe("FRONT-A13 ②:软删除可重试、可恢复,恢复后内容原样,别
     const before = await prisma.memory.findFirstOrThrow({ where: { id, ownerId: orgA } });
 
     expect(await deleteMemory({ id })).toEqual({ ok: true });
-    // 分支改的就是这一条:`where` 不再要求 deletedAt=null,所以一次不确定的删除可以放心重发。
+    // 一次不确定的删除可以放心重发:`where` 带 `deletedAt: null`(所以第二次不写库、
+    // 改动史里不会多出第二行 deleted),命中 0 行时回查真实状态,已经删掉的仍然答「成功」。
     expect(await deleteMemory({ id })).toEqual({ ok: true });
     expect((await listMemory()).some((m) => m.id === id)).toBe(false);
 
