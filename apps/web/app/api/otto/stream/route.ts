@@ -299,6 +299,18 @@ export async function POST(req: NextRequest): Promise<Response> {
       } else {
         // No prior state OR an unrestorable one (F24): start fresh — the turn still runs and its
         // normal state write self-heals ottoState to the current schema.
+        // 判官 P2-1(⑥段):恢复不回来的这一轮**照样要带端口**。历史没了,但线程上那份摘要还在,
+        // 而它就是这一轮真正带着的旧上下文 —— 上面那条 system 消息里回注的正是它。不传的话,
+        // 只在摘要里点过名的那几份柜文会在恢复失败的这一轮悄悄掉出装载集(与④段之后中途缩水
+        // 同一个病灶,只是触发处不同)。`dropped` 是空的 ⇒ 引擎侧 `dropped.length > 0` 那道判据
+        // 仍然不成立:零模型调用、零落盘,钱路一个字没动。
+        if (priorRollingSummary) {
+          rollingSummaryPort = {
+            dropped: [],
+            priorSummary: priorRollingSummary,
+            save: (summary: string) => saveRollingSummary(threadId, ownerId, summary),
+          };
+        }
         runInput = [...(sys ? [sys] : []), userTurn];
       }
     } catch (e) {

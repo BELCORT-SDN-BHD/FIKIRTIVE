@@ -3005,6 +3005,26 @@ describe("ENGINE-A6 — ottoTurn 的历史预算闸接线", () => {
     const instructions = (mainTurnCall()![0] as { instructions: string }).instructions;
     expect(instructions).toContain("`meta-list-objects`");
   });
+
+  // ENGINE-A7(判官第二轮 P2-1):`tryRestoreRunState` 回 null 的那一轮 —— F24 的坏状态 ——
+  // 此前走的是 else 分支,一个端口都不传,于是**只在摘要里点过名**的那几份柜文当场掉出装载集。
+  // 摘要还好端端地回注在 system 消息上,Otto 却丢了对应的规矩。变异实证:把 else 分支里新加的
+  // `planHistoryBudget([], priorRollingSummary, …)` 那一行删掉,这一条当场红。
+  it("ENGINE-A7: 状态恢复不回来的一轮,摘要点名的柜文仍然装进说明书", async () => {
+    mockChatThreadFindFirst.mockResolvedValue({
+      projectId: PROJECT_ID,
+      ottoState: '{"corrupt":',
+      rollingSummary: "merchant asked for a facebook advert; targeting agreed",
+    });
+    mockRunStateFromString.mockRejectedValue(new Error("Failed to parse run state"));
+
+    await ottoTurn({ ...BASE_INPUT, threadId: THREAD_ID });
+
+    const instructions = (mainTurnCall()![0] as { instructions: string }).instructions;
+    expect(instructions).toContain("`meta-list-objects`");
+    // 钱路与折叠一个字没动:没裁掉任何东西 ⇒ 零折叠调用、零落盘。
+    expect(foldCall()).toBeUndefined();
+  });
 });
 
 

@@ -1175,4 +1175,25 @@ describe("POST /api/otto/stream — ENGINE-A6 长对话预算闸", () => {
     const instructions = (mainTurnCall()![0] as { instructions: string }).instructions;
     expect(instructions).toContain("`meta-list-objects`");
   });
+
+  // ENGINE-A7(判官第二轮 P2-1):`tryRestoreRunState` 回 null 的那一轮 —— F24 的坏状态、或者
+  // 线程根本没存过状态 —— 此前走的是 else 分支,一个端口都不传,于是**只在摘要里点过名**的
+  // 那几份柜文当场掉出装载集。摘要还好端端地回注在 system 消息上,Otto 却丢了对应的规矩。
+  // 变异实证:把 route 那个 else 分支里新加的端口构造删掉,这一条当场红。
+  it("ENGINE-A7: 状态恢复不回来的一轮,摘要点名的柜文仍然装进说明书", async () => {
+    mocks.chatThreadFindFirst.mockResolvedValue({
+      projectId: "proj_stream",
+      ottoState: '{"corrupt":',
+      rollingSummary: "merchant asked for a facebook advert; targeting agreed",
+    });
+    mocks.tryRestoreRunState.mockResolvedValue(null);
+
+    await POST(req({ projectId: "proj_stream", threadId: "thread_long", text: "carry on then" }));
+
+    const instructions = (mainTurnCall()![0] as { instructions: string }).instructions;
+    expect(instructions).toContain("`meta-list-objects`");
+    // 钱路与折叠一个字没动:没裁掉任何东西 ⇒ 零折叠调用、零落盘。
+    expect(foldCall()).toBeUndefined();
+    expect(mocks.saveRollingSummary).not.toHaveBeenCalled();
+  });
 });
