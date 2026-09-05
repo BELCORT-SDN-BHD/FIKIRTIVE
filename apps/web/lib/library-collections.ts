@@ -152,13 +152,15 @@ export async function deleteCollection(
  *
  * 幂等:同一个合集里同一件素材只有一行,重复加入被 `(collectionId, subjectType, subjectId)`
  * 唯一约束挡下(`skipDuplicates`),不是靠「先查后建」。
- * 返回真正新加了几条,以及**已经在里面**的有几条(`skipped` 只数重复,不把「目标不可用」
- * 混进去 —— 那两件事的处置完全不同)。目标一件都不可用时整次回 `Not found.`。
+ * 返回三个数,三件事分开数,因为处置完全不同:`added` 真正新加了几条;`skipped` **已经在
+ * 里面**的有几条(那是幂等,不用告诉商家);`unavailable` 目标已经不在了(被删掉、或根本
+ * 不属于这个 org)的有几条 —— 这一件必须让商家看见,否则「选了 3 件,其中 1 件刚被删」
+ * 与「3 件全成功」在屏幕上长得一模一样。目标一件都不可用时整次回 `Not found.`。
  */
 export async function addToCollection(
   collectionId: string,
   refs: { subjectType: string; subjectId: string }[],
-): Promise<{ added: number; skipped: number } | { error: string }> {
+): Promise<{ added: number; skipped: number; unavailable: number } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
@@ -192,7 +194,11 @@ export async function addToCollection(
       data: { updatedAt: new Date() },
     });
   }
-  return { added: created.count, skipped: visible.length - created.count };
+  return {
+    added: created.count,
+    skipped: visible.length - created.count,
+    unavailable: wanted.length - visible.length,
+  };
 }
 
 /** 从合集里移除一件素材。移除的是**链接**;素材本身留在 Library(FRONT-A6)。 */

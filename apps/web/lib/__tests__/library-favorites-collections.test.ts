@@ -264,7 +264,7 @@ describe("FRONT-A6:合集增删改跨刷新成立,跨租户不可见", () => {
       { subjectType: "generation", subjectId: aGenerated },
       { subjectType: "generation", subjectId: aUpload },
     ]);
-    expect(added).toEqual({ added: 2, skipped: 0 });
+    expect(added).toEqual({ added: 2, skipped: 0, unavailable: 0 });
 
     // 「刷新之后仍然成立」= 重新读一次服务端,而不是看内存里那个 setState。
     const detail = await getCollection(created.id);
@@ -307,7 +307,7 @@ describe("FRONT-A6:合集增删改跨刷新成立,跨租户不可见", () => {
     await addToCollection(first.id, [{ subjectType: "generation", subjectId: aGenerated }]);
     expect(
       await addToCollection(first.id, [{ subjectType: "generation", subjectId: aGenerated }]),
-    ).toEqual({ added: 0, skipped: 1 });
+    ).toEqual({ added: 0, skipped: 1, unavailable: 0 });
     await addToCollection(second.id, [{ subjectType: "generation", subjectId: aGenerated }]);
 
     const memberships = await listCollectionMemberships([
@@ -320,6 +320,43 @@ describe("FRONT-A6:合集增删改跨刷新成立,跨租户不可见", () => {
 
     await deleteCollection(first.id);
     await deleteCollection(second.id);
+  });
+
+  it("FRONT-A6:目标里有一件已经不在了时,加入不会假装全成 —— unavailable 单独数出来", async () => {
+    // 商家选了两件、其中一件在他按下去之前刚被删掉。旧口径下这一次与「两件全成功」返回
+    // 的东西一模一样(`filterVisibleSubjects` 丢掉的那件既不进 added 也不进 skipped),
+    // 屏幕上就没有任何地方能说出那件的下落。三个数分开之后,弹层才有话可说。
+    asUser(A_EMAIL);
+    const doomed = await seedGeneration(orgA, aProjectId, {
+      source: "GENERATED",
+      prompt: "about to be deleted",
+    });
+    // `updateMany` + ownerId:运行时租户守卫拒绝没有 ownerId 过滤的写(测试里也不给例外)。
+    await prisma.generation.updateMany({
+      where: { id: doomed, ownerId: orgA },
+      data: { deletedAt: new Date() },
+    });
+
+    const created = await createCollection("Partly gone");
+    if ("error" in created) throw new Error(created.error);
+    expect(
+      await addToCollection(created.id, [
+        { subjectType: "generation", subjectId: aSecond },
+        { subjectType: "generation", subjectId: doomed },
+      ]),
+    ).toEqual({ added: 1, skipped: 0, unavailable: 1 });
+
+    // 真进去的只有活着的那一件 —— 数字不是算出来的,是重新读服务端读回来的。
+    const detail = await getCollection(created.id);
+    if ("error" in detail) throw new Error(detail.error);
+    expect(detail.collection.items.map((item) => item.subjectId)).toEqual([aSecond]);
+
+    // 别人家的素材走的也是同一条路:不可用,而不是悄悄成功。
+    expect(
+      await addToCollection(created.id, [{ subjectType: "generation", subjectId: aSecond }, { subjectType: "generation", subjectId: bGenerated }]),
+    ).toEqual({ added: 0, skipped: 1, unavailable: 1 });
+
+    await deleteCollection(created.id);
   });
 
   it("FRONT-A6:改名落库;空名字被拒,不会把合集改成没有名字", async () => {

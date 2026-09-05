@@ -29,6 +29,13 @@ import { Spinner } from "@/design-system/primitives/spinner";
 import { addToCollection, createCollection, listCollections } from "@/lib/library-collections";
 import type { LibraryCollectionSummary, LibrarySubjectRef } from "@/lib/library-types";
 
+/** 「有几件已经不在了」那一行小字。数字与单复数都从真实的返回值算,不写死。 */
+function unavailableNote(count: number): string {
+  return count === 1
+    ? "1 item is no longer available, so it wasn't added."
+    : `${count} items are no longer available, so they weren't added.`;
+}
+
 export type CollectionDialogsProps = {
   /** 要加进合集的那些素材;空数组 = 只是想新建一个空合集。 */
   subjects: readonly LibrarySubjectRef[];
@@ -52,6 +59,9 @@ export function CollectionDialogs({
   const [name, setName] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // 「选了 3 件、其中 1 件刚被删」不是错误(另外 2 件真的进去了),但也不能与「3 件全成功」
+  // 长得一模一样。所以它走自己这一行小字,而且这一次**不关弹层** —— 关掉就等于没说过。
+  const [notice, setNotice] = React.useState<string | null>(null);
 
   // 调用方只在需要时才挂上这个弹层(`LibraryView`:`{collectionDialog ? <CollectionDialogs open … /> : null}`),
   // 所以每次「打开」都是一次全新的 mount —— 上面三个 useState 的初值本身就是重置。
@@ -85,6 +95,10 @@ export function CollectionDialogs({
       return;
     }
     onChanged();
+    if (result.unavailable > 0) {
+      setNotice(unavailableNote(result.unavailable));
+      return;
+    }
     onOpenChange(false);
   }
 
@@ -106,6 +120,12 @@ export function CollectionDialogs({
         setBusy(false);
         setError(`${created.name} was created, but nothing was added. ${added.error}`);
         onChanged();
+        return;
+      }
+      if (added.unavailable > 0) {
+        setBusy(false);
+        onChanged();
+        setNotice(`${created.name} was created. ${unavailableNote(added.unavailable)}`);
         return;
       }
     }
@@ -148,11 +168,12 @@ export function CollectionDialogs({
             </div>
           )}
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
+          {notice ? <p className="text-xs text-muted-foreground">{notice}</p> : null}
           <DialogFooter>
             <Button variant="secondary" disabled={busy} onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button disabled={busy} onClick={() => { setError(null); setStep("create"); }}>
+            <Button disabled={busy} onClick={() => { setError(null); setNotice(null); setStep("create"); }}>
               New collection
             </Button>
           </DialogFooter>
@@ -177,6 +198,7 @@ export function CollectionDialogs({
             placeholder="Collection name"
           />
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
+          {notice ? <p className="text-xs text-muted-foreground">{notice}</p> : null}
           <DialogFooter>
             <Button variant="secondary" disabled={busy} onClick={() => onOpenChange(false)}>
               Cancel

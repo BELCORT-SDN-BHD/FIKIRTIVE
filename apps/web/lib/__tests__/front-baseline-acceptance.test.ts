@@ -111,14 +111,23 @@ describe("前端基线:后续各段的验收落点(§7.1;S5 前逐条转正)", (
   it.todo(
     "FRONT-A3 §7.1⑤ — 剩余:两租户各自的连接状态五态按真实生产者点亮,且互不可见(随第③刀转正)",
   );
-  // FRONT-A5 / A6 / A7 已转正(段②,2026-09-03):
-  //   · 打真库的行为测试(收藏、合集、Use in canvas 各自的落库与**双向**租户隔离)住在
+  // FRONT-A5 / A6 已转正(段②,2026-09-03):
+  //   · 打真库的行为测试(收藏、合集各自的落库与**双向**租户隔离)住在
   //     `library-favorites-collections.test.ts`;
   //   · 表面那一层(五格页签、Select、收藏页没有筛选控件)住在 `library-baseline-seg2a.test.ts`
   //     与 `library-view-model.test.ts`;
   //   · 浏览器旅程(收藏与合集刷新之后仍然成立、删合集不删素材)住在
   //     `e2e/journeys/20-library-favorites-and-collections.spec.ts`。
-  // 占位与真测试并存会让人以为还没做,所以这三行撤掉,而不是留着。
+  // 占位与真测试并存会让人以为还没做,所以这两行撤掉,而不是留着。
+  // FRONT-A7 **只转正了服务端那一半**:`createCanvasNode` 的 owner + project 校验(含双向租户)
+  // 由 `library-favorites-collections.test.ts` 的 FRONT-A7 两条钉住。商家真正按得到的那颗键
+  // (素材详情面板的 Use in canvas)生产上**还不存在** —— 今天只在设计夹具
+  // `design-system/patterns/library/LibraryReference.tsx` 里;生产的
+  // `components/asset/DetailPanel.tsx` 没有画布动作,而那个文件不在 §7.4 段② 的写集内。
+  // 所以占位留着,等段② 的剩余切片把商家入口接上再撤。
+  it.todo(
+    "FRONT-A7 §7.1② — 剩余:商家在素材详情面板按 Use in canvas 把素材送进画布(服务端半边已钉住,待剩余切片)",
+  );
   it.todo("FRONT-A8 §7.1④ — Brand 五分区记录增改删恢复,每条显示谁改的、何时改的");
   it.todo("FRONT-A9 §7.1④ — Brand 记录进 Otto 上下文,该轮可查到");
   it.todo("FRONT-A10 §7.1③ — @ 引用选择器来自服务器,消息保存真实引用 ID");
