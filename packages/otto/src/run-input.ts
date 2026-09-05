@@ -146,9 +146,17 @@ export const OTTO_HISTORY_BUDGET_TOKENS = OTTO_CONTEXT_CAP_TOKENS;
  * to charge (the charge is always the provider's reported usage, meter.ts). Cheap, synchronous,
  * no tokenizer dependency.
  *
- * CJK is counted at ~2 tokens per character and everything else at ~4 characters per token. A
- * single latin-only ratio under-counts a Chinese conversation by roughly 8×, and on this gate
- * "under-count" means "trims far too late" — the direction that costs the merchant money.
+ * CJK is counted at ~2 tokens per character and everything else at ~4 characters per token.
+ *
+ * 判官落修 A6-P2-3 —— the 2-tokens-per-character figure is a DELIBERATELY CONSERVATIVE bound, not
+ * a measured truth: it is an over-estimate against Claude's actual Chinese tokenization, so a
+ * 华语 conversation starts folding somewhat earlier than the 12,000 budget literally implies. The
+ * direction is chosen on purpose (over-estimate ⇒ trim earlier ⇒ never a surprise bill); the
+ * price is paid in product, not money — a long Chinese thread leans on its summary sooner. The
+ * alternative direction is worse: a single latin-only ratio would under-count the same
+ * conversation several-fold and trim far too late, which is the direction that costs the merchant
+ * money. Registered in the spec's §5 so re-pinning it against a real `count_tokens` run stays on
+ * the list.
  */
 export function estimateTextTokens(text: string): number {
   let cjk = 0;
@@ -197,6 +205,26 @@ function callIdOf(item: AgentInputItem): string | null {
 }
 
 /**
+ * Is this item a `user` message — the ONLY thing the kept suffix may start with?
+ *
+ * 判官落修 A6-P0-1. A cut point is not just "does it split a pair": the kept suffix becomes the
+ * provider's `messages[0]`, and Anthropic's Messages API requires that first message to be a
+ * `user` one. The entries assemble `[system?, ...kept, userTurn]`, and the ai-sdk adapter hoists
+ * the `system` item out of `messages` into the `system` parameter, so `kept[0]` IS `messages[0]`.
+ * A cut landing on an assistant message (or on a bare tool item) therefore produced a request the
+ * provider rejects outright — and a rejected turn refunds, writes no state, and re-trims to the
+ * SAME cut on the next try: a deterministic dead conversation, worse than the unbounded cost
+ * ENGINE-A6 exists to stop.
+ *
+ * Read structurally: protocol items (function_call, function_call_result, …) carry no `role`, so
+ * `role === "user"` alone excludes them; message items carry it whether or not they also carry
+ * `type: "message"`.
+ */
+function isUserMessage(item: AgentInputItem): boolean {
+  return (item as { role?: unknown }).role === "user";
+}
+
+/**
  * ENGINE-A6 · the PAIR-AWARE trimmer (spec §7.2④ 第一刀). Pure — no IO, no model call.
  *
  * Drops whole turns from the OLDEST end until the remaining history's estimated tokens fit
@@ -210,6 +238,11 @@ function callIdOf(item: AgentInputItem): string | null {
  * point. The cut is then the first LEGAL index whose suffix fits. Because a legal index lies
  * outside every span, the kept suffix can never contain half a pair, and neither can the
  * dropped prefix.
+ *
+ * A legal cut must ALSO land on a `user` message (`isUserMessage` above, 判官落修 A6-P0-1): the
+ * kept suffix becomes the provider's `messages[0]`, and that one has to be a user message or the
+ * request is rejected before a single token is spent. Skipping past an assistant message drops a
+ * little more than the budget demanded — that extra is exactly what the rolling summary absorbs.
  *
  * Two honest limits, both deliberate:
  *  - the whole history may be dropped (`kept: []`). A single item bigger than the budget has no
@@ -249,7 +282,7 @@ export function trimHistoryToBudget(
   // fits, so the loop below is exhaustive and the fallthrough is a real answer, not a giveup.
   let remaining = total;
   for (let cut = 0; cut < all.length; cut++) {
-    if (!illegalCut[cut] && remaining <= budgetTokens) {
+    if (!illegalCut[cut] && isUserMessage(all[cut]!) && remaining <= budgetTokens) {
       return { kept: all.slice(cut), dropped: all.slice(0, cut) };
     }
     remaining -= perItem[cut]!;

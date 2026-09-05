@@ -1731,7 +1731,9 @@ export async function recordOttoTurnTrace(facts: OttoTurnTraceFacts): Promise<vo
  */
 export async function saveRollingSummary(threadId: string, ownerId: string, summary: string): Promise<void> {
   await prisma.chatThread.updateMany({
-    where: { id: threadId, ownerId },
+    // 判官落修 A6-P2-2:`deletedAt: null` 与两个入口**读**线程时用的 OWNED 口径逐字一致。
+    // 少了它,一条商家已经删掉的对话仍会被改写摘要 —— 读不回来的行,写它没有任何意义。
+    where: { id: threadId, ownerId, deletedAt: null },
     data: { rollingSummary: summary },
   });
 }

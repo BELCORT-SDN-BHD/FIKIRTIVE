@@ -88,6 +88,27 @@ const REPLY_CHARS = 6_000;
 const USER_CHARS = 6_000;
 
 /**
+ * 判官落修 A6-P0-1 —— 夹具 Model 也要像真 provider 一样**挑剔请求形状**。
+ *
+ * 上一版这份夹具什么都收，于是「裁剪切在 assistant 上」这件事在 15 轮里每一轮都发生、
+ * 每一轮都是绿的。真 provider 不这么宽容：Anthropic 的 Messages API 明写 messages[0] 必须是
+ * user（`system` 那一条由 ai-sdk 适配器提到 `system` 参数，不进 messages），所以入口装配出来的
+ * `[system?, ...kept, userTurn]` 里，`kept[0]` 就是 `messages[0]`。
+ *
+ * 拆掉 `trimHistoryToBudget` 里那条「切点必须是 user」的谓词，这个断言当场红 —— 这正是今天
+ * 缺的那一次变异。折叠那一次调用喂进去的是一个字符串 prompt，直接放行。
+ */
+function assertProviderMessageShape(request: ModelRequest): void {
+  const input = request.input;
+  if (typeof input === "string") return;
+  const messages = (input as AgentInputItem[]).filter((i) => (i as { role?: string }).role !== "system");
+  const first = messages[0] as { role?: string } | undefined;
+  if (first && first.role !== "user") {
+    throw new Error(`provider would reject this request: messages[0] must be user, got ${String(first.role)}`);
+  }
+}
+
+/**
  * A model whose USAGE IS A FUNCTION OF ITS INPUT — the causal chain ENGINE-A6 is about.
  * A constant-usage double would make the plateau a tautology.
  */
@@ -112,9 +133,11 @@ function usageTracksInputModel(): Model {
   };
   return {
     async getResponse(request: ModelRequest): Promise<ModelResponse> {
+      assertProviderMessageShape(request);
       return response(request);
     },
     async *getStreamedResponse(request: ModelRequest): AsyncIterable<StreamEvent> {
+      assertProviderMessageShape(request);
       const resp = response(request);
       yield {
         type: "response_done",
@@ -221,6 +244,8 @@ describe("ENGINE-A6 — 长对话：旧轮被摘要收拢，新一轮成本不�
     const { kept, dropped } = trimHistoryToBudget(sanitizeHistory(history));
     expect(dropped.length).toBeGreaterThan(0);
     expect(estimateHistoryTokens(kept)).toBeLessThanOrEqual(OTTO_HISTORY_BUDGET_TOKENS);
+    // 判官落修 A6-P0-1：裁过的历史必须以 user 打头，否则它就是 provider 的非法 messages[0]。
+    expect((kept[0] as { role?: string }).role).toBe("user");
 
     await runOttoTurn(
       {

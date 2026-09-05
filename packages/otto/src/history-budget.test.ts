@@ -42,7 +42,7 @@ describe("estimateTextTokens", () => {
     expect(estimateTextTokens("a".repeat(400))).toBe(100);
   });
 
-  it("counts CJK at ~2 tokens/char — an 8× difference the latin-only ratio would hide", () => {
+  it("counts CJK at ~2 tokens/char — 一个刻意保守(偏高)的上界,方向是宁可早裁", () => {
     expect(estimateTextTokens("字".repeat(100))).toBe(200);
   });
 
@@ -66,7 +66,8 @@ describe("ENGINE-A6 · trimHistoryToBudget — 成对感知裁剪器", () => {
   });
 
   it("超预算 → 从最旧一端裁，保留的是后缀", () => {
-    const history = [say("user", 400, "1"), say("assistant", 400, "2"), say("user", 400, "3")];
+    // 切点落在 user 上（下面那条「切点必须是 user」的规则在这里已经成立）。
+    const history = [say("assistant", 400, "1"), say("user", 400, "2"), say("assistant", 400, "3")];
     const budget = estimateHistoryTokens(history.slice(1));
     const out = trimHistoryToBudget(history, budget);
     expect(out.dropped).toEqual([history[0]]);
@@ -74,9 +75,29 @@ describe("ENGINE-A6 · trimHistoryToBudget — 成对感知裁剪器", () => {
     expect(estimateHistoryTokens(out.kept)).toBeLessThanOrEqual(budget);
   });
 
+  // 判官落修 A6-P0-1：裁过的 kept[0] 就是 provider 的 messages[0]，而 Anthropic 要求那一条
+  // 必须是 user。切在 assistant 上的一刀会让整轮被 provider 当场拒掉 —— 退款、不写 state、
+  // 下一轮重裁到同一个切点，是**确定性复现**的死对话。
+  it("切点必须落在 user 消息上：预算允许的那一刀切在 assistant 上时，继续往后找", () => {
+    const history = [say("user", 400, "0"), say("assistant", 400, "1"), say("user", 400, "2"), say("assistant", 400, "3")];
+    // 预算装得下三条 —— 朴素切法会切在下标 1（assistant）上。
+    const budget = estimateHistoryTokens(history.slice(1));
+    const out = trimHistoryToBudget(history, budget);
+    expect((out.kept[0] as { role?: string }).role).toBe("user");
+    expect(out.kept).toEqual(history.slice(2));
+    expect(out.dropped).toEqual(history.slice(0, 2));
+  });
+
+  it("切点必须落在 user 消息上：后面根本没有 user 消息时，整段交给摘要（绝不返回 assistant 打头的 kept）", () => {
+    const history = [say("user", 4000, "0"), say("assistant", 400, "1"), say("assistant", 400, "2")];
+    const out = trimHistoryToBudget(history, estimateHistoryTokens(history.slice(1)));
+    expect(out.kept).toEqual([]);
+    expect(out.dropped).toEqual(history);
+  });
+
   it("拆对：一刀正好落在 tool_call 与 tool_result 之间时，整对一起走（永不留孤儿）", () => {
     // 预算刚好容得下「result + 尾巴」——朴素切法会把 result 留下、call 裁掉。
-    const history = [call("c1", 400), result("c1", 400), say("assistant", 40, "z")];
+    const history = [call("c1", 400), result("c1", 400), say("user", 40, "z")];
     const budget = estimateHistoryTokens(history.slice(1));
     const out = trimHistoryToBudget(history, budget);
     expect(orphanCallIds(out.kept)).toEqual([]);
@@ -92,7 +113,7 @@ describe("ENGINE-A6 · trimHistoryToBudget — 成对感知裁剪器", () => {
       call("c1", 200),
       say("assistant", 200, "m"), // 夹在对中间
       result("c1", 200),
-      say("assistant", 40, "t"),
+      say("user", 40, "t"),
     ];
     const budget = estimateHistoryTokens([history[4]!]);
     const out = trimHistoryToBudget(history, budget);
@@ -116,7 +137,7 @@ describe("ENGINE-A6 · trimHistoryToBudget — 成对感知裁剪器", () => {
   });
 
   it("超长单条 → 它自己被裁掉，后面的轮还留着", () => {
-    const history = [say("user", 200_000, "L"), say("assistant", 40, "s")];
+    const history = [say("user", 200_000, "L"), say("user", 40, "s")];
     const out = trimHistoryToBudget(history, 100);
     expect(out.dropped).toEqual([history[0]]);
     expect(out.kept).toEqual([history[1]]);
@@ -151,7 +172,11 @@ describe("ENGINE-A6 · trimHistoryToBudget — 成对感知裁剪器", () => {
     for (const budget of [50, 500, 1000, 2000, 4000]) {
       const out = trimHistoryToBudget(history, budget);
       expect(orphanCallIds(out.kept)).toEqual([]);
-      if (out.kept.length > 0) expect(estimateHistoryTokens(out.kept)).toBeLessThanOrEqual(budget);
+      if (out.kept.length > 0) {
+        expect(estimateHistoryTokens(out.kept)).toBeLessThanOrEqual(budget);
+        // 判官落修 A6-P0-1：裁过的历史永远以 user 消息打头。
+        expect((out.kept[0] as { role?: string }).role).toBe("user");
+      }
       expect([...out.dropped, ...out.kept]).toEqual(history);
     }
   });
