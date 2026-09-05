@@ -38,6 +38,10 @@ export type MetaActionCardPayload = {
   autoEligible: boolean;
   approval: Approval;
   autoOutcome?: AutoOutcome;
+  /** ISO instant the merchant declined this plan (FRONT-A12). Stamped by `declineMetaCard`
+   *  together with `approval.consumedAt`, so a declined card is un-approvable AND renders as
+   *  declined after a refresh — the Deny button is a server fact, not a React state. */
+  declinedAt?: string;
 };
 
 function resolveOp(
