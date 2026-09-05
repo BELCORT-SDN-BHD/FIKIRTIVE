@@ -195,6 +195,13 @@ function errorBodyText(message: string | undefined): string | null {
   return raw;
 }
 
+/**
+ * 传输级失败(fetch / 解析在流打开之前就断了)对商家说的那一句。`error.message` 是开发者
+ * 看的原文(#949 A2),不上屏;这一句是它唯一的替身,底下那条 Alert 与画布那张始终可见的
+ * Otto 卡片读的是同一份 —— 一种失败一句话(#699 的破折号围栏也钉在这个文件上)。
+ */
+const TRANSPORT_FAILURE_TEXT = "Otto hit a snag — please try again.";
+
 /** The latest user message's text — what the strict route body needs for `text`. */
 function latestUserText(messages: OttoUiMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -904,9 +911,23 @@ export function OttoChatStream({
   // 另一半 —— 那句话从前**不比时间**,于是一条落库的 TEXT 永远是「最后一句」,哪怕后来又落了
   // 一条 GEN_RESULT。现在在「Otto 后来说的话」与「这一轮的终局」之间取更新的那个。判据全在
   // 纯函数里,连同测试。
-  const latestAssistantText = canvasTurnText(messages);
-  // 这一轮的终局(GEN_RESULT / TURN_ERROR),状态词与正文读的是**同一个**。
-  const turnTerminal = latestTurnTerminal(messages);
+  //
+  // 2026-09-05 走查修复一:这一轮的失败还要**立刻**上脸。`data-error` 那一种自己就挂在
+  // 消息上,纯函数直接读得到;传输级那一种(流还没开就断了)消息上什么都没有,只活在
+  // `useChat` 的 status 里 —— 作为 `liveError` 走进同一条投影,而不是在这里长出第二个
+  // 「卡该说什么」的判断。
+  const transportTurnError: OttoErrorData | null =
+    status === "error" ? { kind: "error", text: TRANSPORT_FAILURE_TEXT } : null;
+  const latestAssistantText = canvasTurnText(messages, transportTurnError);
+  // 这一轮的终局(直播 data-error / 传输级失败 / 落库的 GEN_RESULT・TURN_ERROR),
+  // 状态词与正文读的是**同一个**。
+  const turnTerminal = latestTurnTerminal(messages, transportTurnError);
+  // 失败那一轮的出路:能重试的那一种(`error`)才给键,商家原来打的那句话就是这一轮开头
+  // 那条 user 消息 —— 与抽屉里那张告示同一条判据,不靠任何只活一瞬的 ref。
+  const canvasRetryDraft =
+    turnTerminal?.outcome === "failed" && turnTerminal.error?.kind === "error"
+      ? latestUserText(messages) || null
+      : null;
   const canvasLayout = layout === "canvas";
 
   // ── 画布卡这一刻的脸(走查 P0-3 / P0-4)────────────────────────────────────────
@@ -1017,6 +1038,7 @@ export function OttoChatStream({
           text={latestAssistantText}
           streaming={lastMessageIsStreamingAssistant}
           confirmCards={confirmCards}
+          retryDraft={canvasRetryDraft}
           onApproved={({ cardId: approvedCardId, chained }) => {
             // 与抽屉里那张卡按下去之后**逐字相同**的善后:同一份 pending 集合合并规矩、
             // 同一次轮询重装、同一条注入路径。两个按钮,一套状态机。
@@ -1644,7 +1666,7 @@ export function OttoChatStream({
             <ConversationItem messageId="transport-error">
               <Alert role="alert" variant="destructive">
                 <AlertTitle>Otto couldn&apos;t finish this turn</AlertTitle>
-                <AlertDescription>Otto hit a snag — please try again.</AlertDescription>
+                <AlertDescription>{TRANSPORT_FAILURE_TEXT}</AlertDescription>
               </Alert>
             </ConversationItem>
           )}
