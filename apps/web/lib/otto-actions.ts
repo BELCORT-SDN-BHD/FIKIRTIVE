@@ -63,6 +63,9 @@ import {
   ottoSimpleModeBlock,
   buildUserTurn,
   sanitizeHistory,
+  // ENGINE-A6(规格 §7.2④):成对感知的历史裁剪与摘要回注块。
+  trimHistoryToBudget,
+  rollingSummaryBlock,
   tryRestoreRunState,
   tryRestoreRunStateWithContext,
   approvalRefOf,
@@ -70,7 +73,7 @@ import {
   mediaReferenceReceipt,
   UNTITLED_CANVAS_NAME,
 } from "@fikirtive/otto";
-import type { OttoContext, OttoMediaReference, AgentInputItem, ApprovalInterruption, OttoTurnTraceFacts } from "@fikirtive/otto";
+import type { OttoContext, OttoMediaReference, AgentInputItem, ApprovalInterruption, OttoTurnTraceFacts, OttoRollingSummaryPort } from "@fikirtive/otto";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -549,8 +552,14 @@ async function loadAvailableRefsForAgent(
 // buildContextSystemMessage — compose the injected system message from OttoContext
 // ---------------------------------------------------------------------------
 
-export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | null {
+export function buildContextSystemMessage(ctx: OttoContext, rollingSummary?: string | null): AgentInputItem | null {
   const parts: string[] = [];
+  // ENGINE-A6 (规格 docs/specs/otto-engine.md §7.2④ 第三刀) —— 被裁掉的旧轮回注在**这条新鲜的
+  // system 消息**上,而且排在最前:它是这段对话里**最老**的内容,读在品牌记忆与项目 brief 之前,
+  // 不与它们争「谁说了算」(那两条的先后次序与含义原样不动)。`sanitizeHistory` 每轮都会把历史里
+  // 的旧 system 消息丢掉,所以这一条是折叠掉的上下文唯一能落脚的地方。
+  const folded = rollingSummaryBlock(rollingSummary);
+  if (folded) parts.push(folded);
   if (ctx.brandContext) parts.push(`What you know about the user's brand:\n${ctx.brandContext}`);
   // #791-1: the merchant's brief for THIS project, right after the shop-wide brand memory.
   // Order is the meaning: brand memory is who the shop is, the brief is what THIS project
@@ -1712,6 +1721,45 @@ export async function recordOttoTurnTrace(facts: OttoTurnTraceFacts): Promise<vo
   });
 }
 
+/**
+ * ENGINE-A6(规格 docs/specs/otto-engine.md §7.2④)—— 折叠好的滚动摘要落盘。
+ *
+ * 与 `recordOttoTurnTrace` 同一条规矩:引擎包不直连 prisma,所以「写哪一行」由入口给。
+ * 两个入口(`ottoTurn` 与流式路由)共用这一个写入口,于是租户约束只有一处需要守 ——
+ * `updateMany` 带 `ownerId`,租户不对就是零行更新,不是写到别人的对话上去。
+ *
+ * 迁移为零:`ChatThread.rollingSummary` 这一列 2026 年就在 schema 里等着了
+ * (`packages/db/prisma/schema.prisma:1032`,注释自陈 reserved),本段只是终于开始写它。
+ */
+export async function saveRollingSummary(threadId: string, ownerId: string, summary: string): Promise<void> {
+  await prisma.chatThread.updateMany({
+    // 判官落修 A6-P2-2:`deletedAt: null` 与两个入口**读**线程时用的 OWNED 口径逐字一致。
+    // 少了它,一条商家已经删掉的对话仍会被改写摘要 —— 读不回来的行,写它没有任何意义。
+    where: { id: threadId, ownerId, deletedAt: null },
+    data: { rollingSummary: summary },
+  });
+}
+
+/** ENGINE-A6 —— 一个入口把「这一轮要不要折叠」算出来的全部结果:裁过的历史 + 交给引擎的端口。
+ *  裁剪的决定在入口(输入装配是它的活),折叠与计费在引擎(runtime.ts),两半各住一处。 */
+function planHistoryBudget(
+  history: AgentInputItem[],
+  priorSummary: string | null,
+  threadId: string,
+  ownerId: string,
+): { kept: AgentInputItem[]; rollingSummary?: OttoRollingSummaryPort } {
+  const { kept, dropped } = trimHistoryToBudget(history);
+  if (dropped.length === 0) return { kept };
+  return {
+    kept,
+    rollingSummary: {
+      dropped,
+      priorSummary,
+      save: (summary: string) => saveRollingSummary(threadId, ownerId, summary),
+    },
+  };
+}
+
 /** 这一轮结算掉的 internal credits,或 null(账本还没有终结行 / 读失败 / 免费轮)。
  *  与 apps/web/app/api/otto/stream/route.ts 的 settledTurnCost 同一条口径,但有两处差别:
  *  (1) 单位 —— 那一处给商家看显示面值,这一处进档案存 internal;
@@ -1794,14 +1842,17 @@ export async function ottoTurn(raw: unknown): Promise<
       const isNew = !parsed.data.threadId;
       const threadId = parsed.data.threadId ?? newId();
       let priorOttoState: string | null = null;
+      // ENGINE-A6 —— 这条对话此前折叠掉的旧轮。每一轮都要回注,不只是发生裁剪的那一轮。
+      let priorRollingSummary: string | null = null;
 
       if (!isNew) {
         const t = await prisma.chatThread.findFirst({
           where: { id: threadId, ...OWNED },
-          select: { projectId: true, ottoState: true },
+          select: { projectId: true, ottoState: true, rollingSummary: true },
         });
         if (!t || t.projectId !== projectId) return { error: "Conversation not found." };
         priorOttoState = t.ottoState;
+        priorRollingSummary = t.rollingSummary;
       }
 
       // Validate replyToMessageId (scoped, else null)
@@ -1880,12 +1931,17 @@ export async function ottoTurn(raw: unknown): Promise<
 
       // Build run input: rehydrate prior state (multi-turn) or start fresh;
       // prepend a system message with brand context + available refs when present.
-      const sys = buildContextSystemMessage(ctx);
+      const sys = buildContextSystemMessage(ctx, priorRollingSummary);
       const userTurn = buildUserTurn(text, ctx.images);
       let runInput: AgentInputItem[];
+      // ENGINE-A6(规格 §7.2④):裁掉的旧轮交给引擎折进 rollingSummary —— 沿用本轮 refId,
+      // 不新开钱路。没裁掉任何东西的一轮这里是 undefined,与本改动之前逐字节相同。
+      let rollingSummaryPort: OttoRollingSummaryPort | undefined;
       const priorState = priorOttoState ? await tryRestoreRunState(otto, priorOttoState) : null;
       if (priorState) {
-        runInput = [...(sys ? [sys] : []), ...sanitizeHistory(priorState.history), userTurn];
+        const budget = planHistoryBudget(sanitizeHistory(priorState.history), priorRollingSummary, threadId, ownerId);
+        rollingSummaryPort = budget.rollingSummary;
+        runInput = [...(sys ? [sys] : []), ...budget.kept, userTurn];
       } else {
         // No prior state OR an unrestorable one (F24): start fresh — the turn still runs and its
         // normal state write self-heals ottoState to the current schema.
@@ -1909,6 +1965,8 @@ export async function ottoTurn(raw: unknown): Promise<
             // ENGINE-A2 — 这一门的落盘实现。surface/threadId 由入口给(它们来自已认证的
             // 会话,不来自模型);其余结构事实由引擎累计。
             trace: { surface: "action", threadId, sink: recordOttoTurnTrace },
+            // ENGINE-A6 —— 本轮裁掉的旧轮(有才传)。
+            rollingSummary: rollingSummaryPort,
           },
           ctx,
           ottoInteractiveRuntime,

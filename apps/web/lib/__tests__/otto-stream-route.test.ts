@@ -63,6 +63,15 @@ const mocks = vi.hoisted(() => {
     validateOwnedGenerationExt: vi.fn(),
     withLlmBudget: vi.fn(),
     run: vi.fn(),
+    // ENGINE-A6 (判官落修 A6-P1-2): the route only enters the history-budget path when a prior
+    // RunState really restores. The REAL tryRestoreRunState wraps RunState.fromString, which
+    // cannot restore against the `{ name: "Otto" }` double below — so it returned null in every
+    // case in this file and the whole ENGINE-A6 path was never executed here. Default stays null
+    // (the F24 fresh-start behaviour every existing case relies on); the A6 cases install a state.
+    tryRestoreRunState: vi.fn(async (_agent: unknown, _serialized: string) => null as unknown),
+    // ENGINE-A6: 摘要落盘的那个写入口。这个文件是 DB-free 的,所以这里只核「被叫了没、带的是
+    // 哪一条线程与哪个 ownerId」—— where 子句(含 `deletedAt: null`)的断言在 otto-actions.test.ts。
+    saveRollingSummary: vi.fn(async (_threadId: string, _ownerId: string, _summary: string) => {}),
   };
 });
 
@@ -102,6 +111,8 @@ vi.mock("@/lib/otto-actions", async () => {
     // otto-actions 里那个唯一的写入口。这个文件是 DB-free 的,所以替身只记「被叫了没、
     // 拿到的是什么」—— 落盘那一刀的断言在 otto-actions.test.ts。
     recordOttoTurnTrace: mocks.recordOttoTurnTrace,
+    // ENGINE-A6 (规格 §7.2④): 折叠好的滚动摘要由 otto-actions 里那个唯一的写入口落盘。
+    saveRollingSummary: mocks.saveRollingSummary,
   };
 });
 vi.mock("@/lib/otto-generation-validate", () => ({
@@ -153,13 +164,14 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
     otto: { name: "Otto" },
     withLlmBudget: mocks.withLlmBudget,
     run: mocks.run,
+    tryRestoreRunState: mocks.tryRestoreRunState,
   };
 });
 
 // The route decides "this was a MaxTurns degrade" with `instanceof MaxTurnsExceededError`,
 // so the test throws the REAL class the runtime is wired with — a look-alike would take the
 // generic-error branch and silently prove nothing.
-const { MaxTurnsExceededError } = await import("@fikirtive/otto");
+const { MaxTurnsExceededError, estimateHistoryTokens, OTTO_HISTORY_BUDGET_TOKENS } = await import("@fikirtive/otto");
 const { POST } = await import("@/app/api/otto/stream/route");
 
 function req(body: unknown) {
@@ -233,6 +245,7 @@ beforeEach(() => {
     disabledModels: [],
   });
   mocks.buildContextSystemMessage.mockReturnValue(null);
+  mocks.tryRestoreRunState.mockResolvedValue(null);
   mocks.finalizeOttoRun.mockResolvedValue({ status: "completed" });
   mocks.validateOttoTurnReferences.mockImplementation(async (input: {
     sourceGenerationId?: string | null;
@@ -1035,5 +1048,69 @@ describe("POST /api/otto/stream — the conversation gate (Founder 2026-08-18)",
     mocks.consumeOttoTurnGate.mockResolvedValue(false);
     const body = (await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json()) as { error: string };
     expect(body.error).not.toMatch(/credit/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENGINE-A6 —— 流式路由这一门的接线(判官落修 A6-P1-2)
+//
+// 上一轮这一门只有代码接线、零测试:删掉 `rollingSummary: rollingSummaryPort,`、或把
+// `buildContextSystemMessage(ctx, priorRollingSummary)` 改回单参数,两次独立变异都全绿 ——
+// 「历史照裁、摘要不折叠也不回注」的纯失忆状态没有任何东西挡着。这三条把那一段跑起来。
+// ─────────────────────────────────────────────────────────────────────────────
+describe("POST /api/otto/stream — ENGINE-A6 长对话预算闸", () => {
+  /** 一段稳稳超过 12,000 token 预算的历史(user/assistant 交替,与真线程同形)。 */
+  const bigHistory = Array.from({ length: 12 }, (_, i) => ({
+    role: i % 2 ? "assistant" : "user",
+    content: `t${i} ${"h".repeat(6_000)}`,
+  }));
+
+  const mainTurnCall = () => mocks.run.mock.calls.find((c) => (c[0] as { name?: string })?.name === "Otto");
+  const foldCall = () => mocks.run.mock.calls.find((c) => (c[0] as { name?: string })?.name === "Otto rolling summary");
+
+  beforeEach(() => {
+    mocks.chatThreadFindFirst.mockResolvedValue({
+      projectId: "proj_stream",
+      ottoState: '{"prior":"state"}',
+      rollingSummary: "older notes: merchant sells kopi",
+    });
+    mocks.tryRestoreRunState.mockResolvedValue({ history: [...bigHistory] });
+    mocks.buildContextSystemMessage.mockImplementation((_ctx: unknown, summary?: string | null) =>
+      ({ role: "system", content: `brand${summary ? `\n${summary}` : ""}` }));
+    // 折叠那一次调用要真的产出文字,否则引擎按「摘要为空」处理、什么都不写。
+    mocks.run.mockImplementation(async (agent: { name?: string }) => {
+      if (agent?.name === "Otto rolling summary") {
+        return { finalOutput: "folded notes", state: { usage: { inputTokens: 5, outputTokens: 5 } } };
+      }
+      return streamedRunResult({ events: [tokenEvent("Done")] });
+    });
+  });
+
+  it("ENGINE-A6: 超预算的历史被裁到预算以内才进 run(),裁掉的旧轮交给折叠端口", async () => {
+    const res = await POST(req({ projectId: "proj_stream", threadId: "thread_long", text: "Next question" }));
+    expect(res.status).toBe(200);
+
+    const input = mainTurnCall()![1] as unknown[];
+    expect(input.length).toBeLessThan(bigHistory.length + 2);
+    expect(estimateHistoryTokens(input.slice(1, -1) as never[])).toBeLessThanOrEqual(OTTO_HISTORY_BUDGET_TOKENS);
+    expect(foldCall()).toBeTruthy();
+  });
+
+  it("ENGINE-A6: 折叠好的摘要交给唯一那个写入口,带本对话与已认证的 ownerId", async () => {
+    await POST(req({ projectId: "proj_stream", threadId: "thread_long", text: "Next question" }));
+
+    expect(mocks.saveRollingSummary).toHaveBeenCalledWith("thread_long", "org_stream", "folded notes");
+  });
+
+  it("ENGINE-A6: 线程已有的摘要逐字回注在这一轮的 system 消息里", async () => {
+    await POST(req({ projectId: "proj_stream", threadId: "thread_long", text: "Next question" }));
+
+    expect(mocks.buildContextSystemMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      "older notes: merchant sells kopi",
+    );
+    const sys = (mainTurnCall()![1] as { role?: string; content?: string }[])[0]!;
+    expect(sys.role).toBe("system");
+    expect(sys.content).toContain("older notes: merchant sells kopi");
   });
 });
