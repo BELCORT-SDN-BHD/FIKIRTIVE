@@ -33,6 +33,7 @@
 
 import * as React from "react";
 import type { ChatThreadDTO } from "@/lib/types";
+import { fetchPanelThreadPending } from "@/lib/otto-panel-activity";
 import { loadOttoPanelSeed } from "@/lib/otto-panel-seed";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { startStreamedThread, type PendingFirstMessage } from "@/lib/otto-start-thread";
@@ -165,11 +166,17 @@ export function OttoPanelHost({
   // 每一次真到达都 +1——哪怕面板已经开着(裸 project/thread 到达不碰 `open`),取数 effect
   // 也要能重跑,不必等一次「关到开」的转折。
   const [fetchTrigger, setFetchTrigger] = React.useState(0);
-  // 只有带 `otto=1` 的到达才会强开面板。给 Shell 的是一个每次真到达都换新的字符串(计数器
-  // 而非签名本身),这样同一组深链参数在离开地址栏后再次出现,也照样算一次新到达而不是
-  // 「Shell 已经见过这串值」——Shell 不需要知道任何重置规则,只认「这个值变了」。
+  // 面板必须展开的**两个**理由共用这一个 token:带 `otto=1` 的深链到达(商家点名要开),
+  // 以及「本页有进行中的对话」(FRONT-A14 的真信号,见下面那个 effect)。给 Shell 的是一个
+  // 每次都换新的字符串(计数器而非签名本身),这样同一组深链参数在离开地址栏后再次出现,
+  // 也照样算一次新到达而不是「Shell 已经见过这串值」——Shell 不需要知道任何重置规则,
+  // 只认「这个值变了」,也不需要知道这一次是哪个理由让它开的。
   const forceOpenTokenRef = React.useRef(0);
   const [forceOpenToken, setForceOpenToken] = React.useState<string | null>(null);
+  const forceOpen = React.useCallback(() => {
+    forceOpenTokenRef.current += 1;
+    setForceOpenToken(String(forceOpenTokenRef.current));
+  }, []);
 
   React.useEffect(() => {
     if (signature === null) {
@@ -190,11 +197,30 @@ export function OttoPanelHost({
     consumedSignatureRef.current = signature;
     pendingSelectRef.current = { projectId: deepLink.projectId, threadId: deepLink.threadId };
     setFetchTrigger((n) => n + 1);
-    if (deepLink.forceOpen) {
-      forceOpenTokenRef.current += 1;
-      setForceOpenToken(String(forceOpenTokenRef.current));
-    }
-  }, [signature, deepLink]);
+    if (deepLink.forceOpen) forceOpen();
+  }, [signature, deepLink, forceOpen]);
+
+  // 「本页有进行中的对话 → 展开」(FRONT-A14,`docs/specs/frontend-baseline.md` §5)。
+  //
+  // 这一条从前读的是深链 `?otto=1`,Founder 2026-09-04 追认那是**近似**:`?otto=1` 说的是
+  // 「商家点名要开面板」(`/otto` 那条旧地址重定向过来的落点),不是「这里有一段正在跑的
+  // 对话」——商家在 Library 留着一条在跑的对话、离开再回来,面板不展开。现在读的是真信号:
+  // 服务端按 `ownerId` 查在途 GenJob + 面板自己的对话(`lib/thread-activity.ts`),客户端
+  // 一个参数都不传,租户只信服务端 principal。
+  //
+  // **不新增轮询**(#544):挂载时问一次。`OttoPanelHost` 挂在商家壳根部,整页加载挂一次、
+  // 软导航不卸载,所以「每次挂载问一次」正好就是「每次到访问一次」。答案是「有」就走与深链
+  // 同一条强开路(`forceOpen()`)——存档记着关也照样开,与 Founder 原话的「或」一致;答案是
+  // 「没有」就什么都不做,默认收起那一条(`defaultOttoPanelState`)自然生效。
+  //
+  // 只开一次:token 只在这里 +1 一次,商家随后自己把面板关掉不会被它重新弹开。
+  React.useEffect(() => {
+    const controller = new AbortController();
+    void fetchPanelThreadPending(controller.signal).then((pending) => {
+      if (!controller.signal.aborted && pending) forceOpen();
+    });
+    return () => controller.abort();
+  }, [forceOpen]);
 
   // 打开的每一下都重取一次,不是只在这一层挂载时取一次(见本文件顶部「取数按面板开合来」)。
   // `open` 从 false 变 true 才会真的发一次请求;从 true 变 false 只是把这一效果的依赖标记

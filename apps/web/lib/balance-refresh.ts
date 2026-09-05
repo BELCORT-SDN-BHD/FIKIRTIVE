@@ -11,8 +11,11 @@
  *
  * This is a plain module-scoped emitter, not a poll: a spend site calls
  * notifyBalanceRefresh() at the moment it already knows a charge settled, and whoever
- * displays a balance re-reads it then. No new timer is introduced (#544 already flagged
- * the existing 4s thread-activity poll as one too many).
+ * displays a balance re-reads it then. No new timer is introduced — #544 flagged one
+ * timer too many, and the discipline outlived the timer it was about: the 4s
+ * thread-activity poll this comment used to name is gone (grep: no interval reads
+ * /api/otto/thread-activity today; the panel's expand signal asks it exactly once per
+ * visit, `lib/otto-panel-activity.ts`). "No new timer" still governs both.
  *
  * Client-side only by construction — the listener set is module state, so it is
  * meaningful only inside the browser bundle where the nav and the spend sites share it.
