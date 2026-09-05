@@ -62,6 +62,11 @@ export function CollectionDialogs({
   // 「选了 3 件、其中 1 件刚被删」不是错误(另外 2 件真的进去了),但也不能与「3 件全成功」
   // 长得一模一样。所以它走自己这一行小字,而且这一次**不关弹层** —— 关掉就等于没说过。
   const [notice, setNotice] = React.useState<string | null>(null);
+  // 合集**真的建出来了**之后,这一步就到此为止。弹层为了把上面那句话说完而留着(素材没进去、
+  // 或有几件已经不在了两条路),但名字还在框里、「Create collection」还能按 —— 商家再按一次
+  // 得到的是同名的第二个合集,而屏幕上没有任何东西说过第一个已经建好。所以建成即封口:
+  // 名字框与建键一起停用,退出那颗键从 Cancel 改说 Done(合集是建出来了,不是取消掉了)。
+  const [createdId, setCreatedId] = React.useState<string | null>(null);
 
   // 调用方只在需要时才挂上这个弹层(`LibraryView`:`{collectionDialog ? <CollectionDialogs open … /> : null}`),
   // 所以每次「打开」都是一次全新的 mount —— 上面三个 useState 的初值本身就是重置。
@@ -104,7 +109,7 @@ export function CollectionDialogs({
 
   async function create() {
     const clean = name.trim();
-    if (!clean || busy) return;
+    if (!clean || busy || createdId) return;
     setBusy(true);
     setError(null);
     const created = await createCollection(clean);
@@ -113,6 +118,7 @@ export function CollectionDialogs({
       setError(created.error);
       return;
     }
+    setCreatedId(created.id);
     if (subjects.length) {
       const added = await addToCollection(created.id, [...subjects]);
       if ("error" in added) {
@@ -192,7 +198,7 @@ export function CollectionDialogs({
             aria-label="Collection name"
             autoFocus
             value={name}
-            disabled={busy}
+            disabled={busy || createdId !== null}
             onChange={(event) => setName(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Enter") void create(); }}
             placeholder="Collection name"
@@ -201,9 +207,12 @@ export function CollectionDialogs({
           {notice ? <p className="text-xs text-muted-foreground">{notice}</p> : null}
           <DialogFooter>
             <Button variant="secondary" disabled={busy} onClick={() => onOpenChange(false)}>
-              Cancel
+              {createdId ? "Done" : "Cancel"}
             </Button>
-            <Button disabled={!name.trim() || busy} onClick={() => void create()}>
+            <Button
+              disabled={!name.trim() || busy || createdId !== null}
+              onClick={() => void create()}
+            >
               {busy ? "Creating…" : "Create collection"}
             </Button>
           </DialogFooter>
