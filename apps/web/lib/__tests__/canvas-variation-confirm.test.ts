@@ -211,7 +211,7 @@ async function renderBoard(): Promise<void> {
   root = createRoot(container);
   await act(async () => {
     root!.render(createElement(FlowCanvas, {
-      projectId: "p1", skin: "gb" as const, defaultComposerOpen: false,
+      projectId: "p1", skin: "gb" as const,
     }));
   });
   await act(async () => { await Promise.resolve(); });

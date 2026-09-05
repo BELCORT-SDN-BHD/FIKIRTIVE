@@ -22,6 +22,8 @@ import { startStreamedThread } from "@/lib/otto-start-thread";
 import type { ChatThreadSurface } from "@/lib/otto-thread-surface";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { QuickBrief } from "@/components/otto/QuickBrief";
+import { ConversationCostHint } from "@/components/otto/ConversationCostHint";
+import { SearchCostHint } from "@/components/otto/SearchCostHint";
 import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePickerMenu";
 import { useReferencePicker } from "@/components/reference-picker/useReferencePicker";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
@@ -319,6 +321,16 @@ export function OttoFrontDoor({
           {...{ [CANVAS_OTTO_DOCK_ATTR]: "" }}
           className="cv-creation-band pointer-events-auto"
         >
+          {/* ENGINE-A3 §7.4/§7.6 处置一 —— 画布的**第一句话**也要先读到价目。
+              ⑦段之后这是画布上唯一的输入框,商家还没有任何一条对话,所以对话流里那一叠
+              (`OttoChatStream`)此刻还不存在;披露必须常驻在这里,否则「先披露、后执行」
+              在**第一次**花钱那一趟就是空的。
+              上传理解那一条不挂:这道门厅没有附件入口(`+ Add context` 长在对话流的
+              composer 上),替一条这里走不通的路报价是另一种不诚实。 */}
+          <div className="mb-2 flex flex-col gap-0.5">
+            <ConversationCostHint />
+            <SearchCostHint />
+          </div>
           {composer}
           {error ? (
             <Alert role="alert" variant="destructive" className="mt-2">

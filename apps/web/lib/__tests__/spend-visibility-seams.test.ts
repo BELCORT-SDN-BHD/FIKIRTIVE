@@ -258,17 +258,17 @@ describe("Card paid-action price tag seam (#550 ② · #547 A4)", () => {
     expect(src).toMatch(/remakeCostHint\s*=\s*genCostHint\(specCredits\(t2vSpec\) \?\? costQuote\?\.videoCredits\)/);
     // …and that per-tier price comes from the server's own table, never recomputed here.
     expect(src).toMatch(/videoSpecMenu\.creditsFor\(spec\)/);
-    // The composer's price follows the chosen batch size through the same clamp the paid
-    // call applies, so the label and the charge cannot drift apart (#547 A2).
-    // Creation S2 §8.1①(CREATE-A6):每张的**单价**从此还跟着「精修」那一格走
-    // (2cr vs 1cr),所以这里钉的是两截:单价只能从服务端来(默认档的报价,或服务端
-    // 交出来的那一格能力自己的价 —— 两者都不是界面算的),乘张数仍然走同一个 clamp。
-    expect(src).toMatch(/imageUnitCredits\s*=\s*fineDetailOn\s*\?\s*fineDetailOption!\.credits\s*:\s*costQuote\?\.imageCredits/);
-    expect(src).toMatch(/canvasGenCostQuote\(\{\s*\.\.\.costQuote,\s*imageCredits:\s*imageUnitCredits\s*\},\s*imageCount\)\.imageCredits/);
+    // ENGINE-A3(otto-engine.md §7.2⑦):画布上那个直出 composer 已退役,连同它的张数、
+    // 形状、「精修」三格与那一行跟着走的价钱。所以这里从前钉的两截(单价跟着精修那一格
+    // 走、乘张数走同一个 clamp)在画布上已经没有被测对象 —— 它们的真身搬去了服务端那一侧
+    // (`creation-routing-ledger.test.ts` 的 CREATE-A6 各条:报价与路由同源、报错价就在
+    // 花钱之前拒)。画布上今天仍然要钉的是**卡上那两颗**与两个确认框的价从哪来。
+    expect(src).not.toMatch(/composerCostHint/);
     // A price can never be on screen without its quote having been loaded.
     expect(src).toMatch(/cardBarVisible/);
     // QA-CRE-FE9-001：变体确认卡也把这个数渲染成商家正要批准的价，所以它也在这张名单上。
-    expect(src).toMatch(/if \(composerVisible \|\| cardBarVisible \|\| pendingAnimateId !== null \|\| t2vOpen \|\| pendingVariant !== null\) refreshCostQuote\(\)/);
+    // ⑦段之后这张名单少了 `composerVisible` 那一格 —— 那个 composer 不存在了。
+    expect(src).toMatch(/if \(cardBarVisible \|\| pendingAnimateId !== null \|\| t2vOpen \|\| pendingVariant !== null\) refreshCostQuote\(\)/);
   });
 
   it("no canvas price is written as a literal in the UI", () => {

@@ -68,6 +68,7 @@ import { nextSyncPhase, type SyncPhase } from "@/lib/storyboard-card";
 import { mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
 import { UnderstandingCostHint } from "./UnderstandingCostHint";
 import { SearchCostHint } from "./SearchCostHint";
+import { ConversationCostHint } from "./ConversationCostHint";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
 import { OttoApprovalCard } from "./OttoApprovalCard";
@@ -1801,10 +1802,14 @@ export function OttoChatStream({
               closed (披露先于扣费), and it does not squeeze the composer's bottom toolbar.
               MONEY-A10 §7.4 sits beside it: the chat turn's OTHER non-obvious charge is the
               web search the merchant's own question triggers, and until now its only
-              disclosure lived inside Otto's system prompt. */}
+              disclosure lived inside Otto's system prompt.
+              ENGINE-A3 §7.4/§7.6 处置一 —— 第三条:**这一轮对话本身**要钱。⑦段把画布上那条
+              直出的出图路撤了,同一张图从此必须先经过至少一轮对话;那一轮的钱在这里说出口,
+              而不是等商家从账单里发现(`ConversationCostHint` 的文件头有全文)。 */}
           <div className="mb-2 flex flex-col gap-0.5">
             <UnderstandingCostHint />
             <SearchCostHint />
+            <ConversationCostHint />
           </div>
 
           <ReferencePickerMenu {...picker.menuProps}>
