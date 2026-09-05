@@ -3,7 +3,6 @@
 import { NumberField } from "@/components/otto/settings/SettingsPage";
 import { setOwnerSetting } from "@/lib/owner-settings-actions";
 import { SPEND_CAP_HINT } from "@/lib/credit-format";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldGroup } from "@/components/ui/field";
 
 /**
@@ -19,32 +18,26 @@ import { FieldGroup } from "@/components/ui/field";
  * 「No cap set」而不是一个可编辑的 0、取消上限要走独立的二次确认 —— 这四条每一条都在
  * `lib/__tests__/account-settings.test.ts` 里有自己的围栏,重写一个新输入框就是把它们全部
  * 绕过去。写入走 `setOwnerSetting`(服务端仍然独立校验整数与非负)。
+ *
+ * 第⑦段(FRONT-A11)只换外观:标题与那句说明搬到 `/billing` 的 section 头上(已冻结的
+ * Settings pattern §3.3 —— 单个控件不套一张独立 card),控件本体、写入路径与四条围栏
+ * 行为一字未动。
  */
 export function SpendCapCard({ spendCapCredits }: { spendCapCredits: number }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Spend cap</CardTitle>
-        <CardDescription>
-          Your own ceiling on a single action. It never spends anything — it only refuses.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup className="gap-0">
-          <NumberField
-            field={{
-              kind: "number",
-              id: "cap",
-              label: "Spend cap",
-              hint: SPEND_CAP_HINT,
-              value: spendCapCredits,
-              unit: "credits",
-              onSave: (value) => setOwnerSetting("spendCapCredits", value),
-            }}
-          />
-        </FieldGroup>
-      </CardContent>
-    </Card>
+    <FieldGroup className="gap-0">
+      <NumberField
+        field={{
+          kind: "number",
+          id: "cap",
+          label: "Spend cap",
+          hint: SPEND_CAP_HINT,
+          value: spendCapCredits,
+          unit: "credits",
+          onSave: (value) => setOwnerSetting("spendCapCredits", value),
+        }}
+      />
+    </FieldGroup>
   );
 }
 

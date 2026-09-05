@@ -1,33 +1,62 @@
 import { describe, it, expect } from "vitest";
-import { llmPricesFor, ottoLlmMargin, OTTO_LLM_MARGIN_DEFAULT, OTTO_LLM_MARGIN_FLOOR } from "./llm-prices.js";
+import {
+  llmPricesFor,
+  llmPricesOrNull,
+  ottoLlmMargin,
+  OTTO_BILLABLE_MODEL_ID,
+  OTTO_LLM_MARGIN_DEFAULT,
+  OTTO_LLM_MARGIN_FLOOR,
+  PRICED_MODEL_IDS,
+} from "./llm-prices.js";
 
-describe("llmPricesFor — never priced free (metering-hole guard)", () => {
-  it("canonical sonnet id → sonnet rates", () => {
+/**
+ * ENGINE-A5(Otto 引擎 S2 §7.2①)—— 价目 fail closed。
+ *
+ * 从前这几条测的是「猜得对不对」:子串含 opus 就按 opus,其余一律 sonnet,于是「未知型号」
+ * 有一个**看起来很安全**的答案(非零、永远收得到钱)。它安全的只是我们不会收 0,不安全
+ * 的是我们会按**别的型号**的价收 —— 换一个更贵的型号进 manifest,账单差额静默由我们吃。
+ * 所以整族用例翻面:猜价没有了,未知型号是一条能照着修的错误。
+ */
+describe("ENGINE-A5 llmPricesFor — 未定价的型号一律抛错(fail closed,不再猜价)", () => {
+  it("ENGINE-A5:canonical sonnet id → sonnet rates(已定价型号精确命中)", () => {
     expect(llmPricesFor("claude-sonnet-4-6")).toEqual({ inputPerToken: 3e-6, outputPerToken: 15e-6, cachedInputPerToken: 0.3e-6, cacheWriteInputPerToken: 3.75e-6 });
   });
 
-  it("canonical opus id → opus rates", () => {
+  it("ENGINE-A5:canonical opus id → opus rates(已定价型号精确命中)", () => {
     expect(llmPricesFor("claude-opus-4-8")).toEqual({ inputPerToken: 5e-6, outputPerToken: 25e-6, cachedInputPerToken: 0.5e-6, cacheWriteInputPerToken: 6.25e-6 });
   });
 
-  it("provider-prefixed sonnet id (OpenRouter-style, anthropic/claude-sonnet-4.5) → sonnet rates, NOT zero", () => {
-    const p = llmPricesFor("anthropic/claude-sonnet-4.5");
-    expect(p.inputPerToken).toBe(3e-6);
-    expect(p.outputPerToken).toBe(15e-6);
+  it("ENGINE-A5:529 同档接管的 claude-sonnet-4-5 有自己的一行价 —— 同档不等于免登记", () => {
+    expect(llmPricesFor("claude-sonnet-4-5")).toEqual({ inputPerToken: 3e-6, outputPerToken: 15e-6, cachedInputPerToken: 0.3e-6, cacheWriteInputPerToken: 3.75e-6 });
   });
 
-  it("provider-prefixed opus id → opus rates (substring match)", () => {
-    expect(llmPricesFor("anthropic/claude-opus-4-8")).toEqual({ inputPerToken: 5e-6, outputPerToken: 25e-6, cachedInputPerToken: 0.5e-6, cacheWriteInputPerToken: 6.25e-6 });
+  it("ENGINE-A5:未知型号必抛,判词带型号名与两条出路", () => {
+    expect(() => llmPricesFor("totally-unknown-model-xyz")).toThrow(/totally-unknown-model-xyz/);
+    expect(() => llmPricesFor("totally-unknown-model-xyz")).toThrow(/价目表/);
+    expect(() => llmPricesFor("totally-unknown-model-xyz")).toThrow(/改回已定价型号/);
   });
 
-  it("completely unknown model → non-zero default (sonnet), NEVER zero", () => {
-    const p = llmPricesFor("totally-unknown-model-xyz");
-    expect(p.inputPerToken).toBe(3e-6);
-    expect(p.outputPerToken).toBe(15e-6);
+  it("ENGINE-A5:子串猜价整段删除 —— provider 前缀 / 大小写 / 空串一个都不再被猜中", () => {
+    // 这四个从前**全部有价**:前两个按子串猜,后两个落默认档。猜对了不代表算对了 ——
+    // "anthropic/claude-opus-4-8" 拿到的是 opus 价,而它是不是我们真的在跑的那个型号,
+    // 这个函数根本不知道。
+    for (const model of ["anthropic/claude-opus-4-8", "anthropic/claude-sonnet-4.5", "", "gpt-something"]) {
+      expect(() => llmPricesFor(model), `llmPricesFor(${JSON.stringify(model)})`).toThrow();
+      expect(llmPricesOrNull(model), `llmPricesOrNull(${JSON.stringify(model)})`).toBeNull();
+    }
   });
 
-  it("EVERY resolved price has all four fields strictly > 0 (the money invariant: a paid call can never cost 0)", () => {
-    for (const model of ["claude-sonnet-4-6", "claude-opus-4-8", "anthropic/claude-sonnet-4.5", "", "x", "gpt-something"]) {
+  it("ENGINE-A5:llmPricesOrNull 是给自己判定的调用方用的 —— 查得到就是同一个对象,不抛", () => {
+    expect(llmPricesOrNull("claude-sonnet-4-6")).toEqual(llmPricesFor("claude-sonnet-4-6"));
+  });
+
+  it("ENGINE-A5:计价型号常量本身必须在价目表里(两处常量对不上就是一次静默错价)", () => {
+    expect(PRICED_MODEL_IDS).toContain(OTTO_BILLABLE_MODEL_ID);
+    expect(llmPricesOrNull(OTTO_BILLABLE_MODEL_ID)).not.toBeNull();
+  });
+
+  it("EVERY priced model has all four fields strictly > 0 (the money invariant: a paid call can never cost 0)", () => {
+    for (const model of PRICED_MODEL_IDS) {
       const p = llmPricesFor(model);
       expect(p.inputPerToken).toBeGreaterThan(0);
       expect(p.outputPerToken).toBeGreaterThan(0);
@@ -37,7 +66,7 @@ describe("llmPricesFor — never priced free (metering-hole guard)", () => {
   });
 
   it("cache-write premium is exactly 1.25× input, and cache-read is strictly cheaper than input (Anthropic pricing shape)", () => {
-    for (const model of ["claude-sonnet-4-6", "claude-opus-4-8"]) {
+    for (const model of PRICED_MODEL_IDS) {
       const p = llmPricesFor(model);
       expect(p.cacheWriteInputPerToken).toBeCloseTo(p.inputPerToken * 1.25, 12);
       expect(p.cachedInputPerToken).toBeLessThan(p.inputPerToken);
