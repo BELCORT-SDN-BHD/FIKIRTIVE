@@ -159,6 +159,42 @@ describe("FRONT-A10 — 两套 @ 实现收口成一个选择器", () => {
     expect(composer().value).toContain("@Alya");
   });
 
+  /**
+   * 判官 #1158 P2-J4 —— 键盘能选中,不等于读屏能读出选中了什么。`aria-activedescendant` 指的
+   * 那个 id 必须是屏幕上**真实存在**的那一行:属性写着 `…-option-3` 而 DOM 里只有 2 行时,
+   * 视觉高亮照样对、Enter 照样选对,只有读屏用户听不到任何东西 —— 而这道缺陷任何一条既有
+   * 断言都看不见(它们读的是 `value` 与高亮类名)。所以这里断的是那个 id **解析得到元素**,
+   * 且解析到的正是标着 `aria-selected="true"` 的那一行。
+   */
+  it("FRONT-A10 aria-activedescendant points at a row that is really on screen", async () => {
+    await render();
+    await type("@a");
+
+    const rows = options();
+    expect(rows.length).toBeGreaterThan(1);
+
+    const activeId = composer().getAttribute("aria-activedescendant");
+    expect(activeId, "菜单开着却没有 activedescendant —— 读屏听不到高亮在哪一行").toBeTruthy();
+    const active = document.getElementById(activeId!);
+    expect(active, `aria-activedescendant 指着 ${activeId},DOM 里没有这个元素`).not.toBeNull();
+    expect(active!.getAttribute("role")).toBe("option");
+    expect(active!.getAttribute("aria-selected")).toBe("true");
+    expect(rows).toContain(active as HTMLButtonElement);
+
+    // 往下挪一行,属性跟着挪到**另一个**真实存在的 option 上,不是停在原地也不是指向空气。
+    await press("ArrowDown");
+    const nextId = composer().getAttribute("aria-activedescendant");
+    expect(nextId).not.toBe(activeId);
+    const next = document.getElementById(nextId!);
+    expect(next, `ArrowDown 之后 aria-activedescendant 指着 ${nextId},DOM 里没有这个元素`).not.toBeNull();
+    expect(next!.getAttribute("aria-selected")).toBe("true");
+    expect(options()).toContain(next as HTMLButtonElement);
+
+    // 菜单关掉之后不许留下一个悬空指针。
+    await press("Escape");
+    expect(composer().getAttribute("aria-activedescendant")).toBeNull();
+  });
+
   it("FRONT-A10 Escape closes the menu and leaves the draft alone", async () => {
     await render();
     await type("@ja");

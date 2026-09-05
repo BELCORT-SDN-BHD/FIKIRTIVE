@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 const { prisma } = await import("@fikirtive/db");
 const { newId } = await import("@fikirtive/core");
 const { searchReferences, recentReferences } = await import("@/lib/reference-search");
+const { REFERENCE_PAGE_LIMIT } = await import("@/lib/reference-search-model");
 
 // Real `newId()` ids and real shop names. An org whose NAME is its own id is exactly what
 // `app/admin/__tests__/admin-identity-truth.test.ts` exists to catch, and rows a test leaves behind
@@ -27,6 +28,8 @@ let aCharacterId = "";
 let aUploadAssetId = "";
 let aGenerationId = "";
 let bProductId = "";
+/** 服务端上限围栏用的行数:必须 > REFERENCE_PAGE_LIMIT,否则「被截断了」证明不了自己。 */
+const PROBE_ROWS = 12;
 
 async function makeOrg(id: string, name: string) {
   await prisma.organization.create({ data: { id, name } });
@@ -97,6 +100,20 @@ beforeAll(async () => {
   bProductId = (await prisma.entity.create({
     data: { id: `ent_${randomUUID()}`, ownerId: orgB, name: "Jasmine gift box", type: "PRODUCT" },
   })).id;
+
+  // 服务端上限那条围栏的料:同一个 org 下多于一页的行。名字刻意不含字母 a、不含
+  // "jasmine"、不含 "shelf" —— 上面每一条既有断言都是按这三个词命中的,这批行不许挤进
+  // 它们的结果里去改变名次。
+  for (let i = 0; i < PROBE_ROWS; i += 1) {
+    await prisma.entity.create({
+      data: {
+        id: `ent_${randomUUID()}`,
+        ownerId: orgA,
+        name: `Probe reference ${String(i).padStart(2, "0")}`,
+        type: "CHARACTER",
+      },
+    });
+  }
 });
 
 describe("FRONT-A10 — 引用选择器来自服务器:统一 reference search", () => {
@@ -154,6 +171,26 @@ describe("FRONT-A10 — 引用选择器来自服务器:统一 reference search",
     const page = await searchReferences(orgA, { query: "jasmine gift box", limit: 8 });
     expect(page.items.some((item) => item.id === bProductId)).toBe(false);
     expect(page.items.some((item) => item.id === aProductId)).toBe(true);
+  });
+
+  /**
+   * 判官 #1158 P2-J1 —— 客户端那道 8 行截断有测试,服务端这道没有。缺的正是要紧的那一半:
+   * 菜单只画 8 行,但一个 `limit: 32` 的请求如果真回 32 行,多出来的 24 行已经查过库、
+   * 已经过了缩略图那一程,只是没人画。收口在 `lib/reference-search.ts` 的 `Math.min(..., 
+   * REFERENCE_PAGE_LIMIT)`,这条钉的就是它:上限由**服务端**说了算,不由调用方说了算。
+   */
+  it("FRONT-A10 the server caps one page at its own row limit — a caller asking for 32 still gets that cap", async () => {
+    const page = await searchReferences(orgA, { query: "probe", limit: 32 });
+    // 料先要够:少于一页的候选行,截断与不截断长得一样,这条会变成恒绿的空断言。
+    expect(PROBE_ROWS).toBeGreaterThan(REFERENCE_PAGE_LIMIT);
+    expect(page.items).toHaveLength(REFERENCE_PAGE_LIMIT);
+    // 剩下的行没有被丢掉,只是要按 cursor 取 —— 上限是分页,不是审查。
+    expect(page.nextCursor).not.toBeNull();
+    const second = await searchReferences(orgA, { query: "probe", limit: 32, cursor: page.nextCursor });
+    expect(second.items.length).toBeGreaterThan(0);
+    expect(second.items.length).toBeLessThanOrEqual(REFERENCE_PAGE_LIMIT);
+    const firstIds = new Set(page.items.map((item) => item.id));
+    expect(second.items.every((item) => !firstIds.has(item.id))).toBe(true);
   });
 
   it("FRONT-A10 the page is bounded and hands back a cursor when there is more", async () => {

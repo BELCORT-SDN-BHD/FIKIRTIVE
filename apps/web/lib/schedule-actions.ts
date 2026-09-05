@@ -1,5 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
+import { SAVE_FAILED } from "./save-failed-copy";
 import { prisma } from "@fikirtive/db";
 import {
   canTransition,
@@ -267,7 +268,7 @@ export async function updateScheduledPost(
     });
   } catch (e) {
     if (e instanceof Error && e.message === "stale") return { error: "This post just changed — please refresh and try again." };
-    return { error: "Couldn't save that — please try again." };
+    return { error: SAVE_FAILED };
   }
   revalidatePath("/", "layout");
   return { ok: true };

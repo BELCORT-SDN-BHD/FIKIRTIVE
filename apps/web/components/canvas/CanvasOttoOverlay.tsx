@@ -51,7 +51,6 @@ export function CanvasOttoOverlay({
         threadSurface="canvas"
         projectId={projectId}
         balanceUsd={balanceUsd}
-        entities={entities}
         userName=""
         onThreadStarted={onThreadChange}
         onStreamStart={onStreamStart}

@@ -1,5 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
+import { SAVE_FAILED } from "./save-failed-copy";
 import { prisma } from "@fikirtive/db";
 import {
   newId, sectionForCategory, offerPhase, distinctCategories,
@@ -74,7 +75,7 @@ export async function addMemory(raw: unknown): Promise<{ ok: true; id: string } 
       select: { updatedAt: true },
     });
     stamp = created.updatedAt;
-  } catch { return { error: "Couldn't save that — please try again." }; }
+  } catch { return { error: SAVE_FAILED }; }
   await recordBrandRevision({
     ownerId: gate.ownerId, targetKind: "memory", targetId: id,
     action: "created", stamp, actor, summary: "Added this context.",
@@ -100,7 +101,7 @@ export async function updateMemory(raw: unknown): Promise<{ ok: true } | { error
       },
     });
     if (!count) return { error: "Memory not found." };
-  } catch { return { error: "Couldn't save that — please try again." }; }
+  } catch { return { error: SAVE_FAILED }; }
   await recordBrandRevision({
     ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "updated",
     stamp: await stampOf(gate.ownerId, r.id, "memory"), actor, summary: "Edited the wording.",
@@ -458,7 +459,7 @@ export async function confirmBrandDraft(
       });
       if (!already) return { error: "That draft is no longer here." };
     }
-  } catch { return { error: "Couldn't save that — please try again." }; }
+  } catch { return { error: SAVE_FAILED }; }
   if (confirmed) {
     await recordBrandRevision({
       ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "confirmed",

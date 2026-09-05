@@ -120,7 +120,6 @@ export function OttoPanelConversation({
         <OttoFrontDoor
           projectId={seed.projectId}
           balanceUsd={seed.balanceUsd}
-          entities={seed.entities}
           userName={seed.userName}
           onThreadStarted={onThreadStarted}
           onStreamStart={onStreamStart}

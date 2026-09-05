@@ -123,12 +123,14 @@ const { default: FlowCanvas } = await import("@/components/canvas/FlowCanvas");
 const { FailedBody } = await import("@/components/canvas/nodes/GeneratingBody");
 const { NodeLineagePanel } = await import("@/components/canvas/nodes/NodeLineagePanel");
 const { terminalCardCopy } = await import("@/lib/canvas-terminal-copy");
+const { SAVE_FAILED } = await import("@/lib/save-failed-copy");
 
 /** 服务端对这三个动作真会说的那几句（`lib/canvas-actions.ts` / `lib/auth-guard.ts` 原话）。 */
 const SERVER_NODE_GONE = "Node not found.";
 const SERVER_NOT_AUTHORIZED = "Not authorized.";
-/** 请求根本没拿到回答时，画布说的那一句（与 memory/schedule/brand 三处同一句）。 */
-const THROWN_SAVE_FAILED = "Couldn't save that — please try again.";
+/** 请求根本没拿到回答时，画布说的那一句 —— 从**单一源**取,不再手抄一份
+ *  (判官 #1197 P2-3;围栏在 `save-failed-copy-single-source.test.ts`)。 */
+const THROWN_SAVE_FAILED = SAVE_FAILED;
 
 const boardRow = (id: string, overrides: Record<string, unknown> = {}) => ({
   id,

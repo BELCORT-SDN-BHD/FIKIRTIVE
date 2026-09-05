@@ -63,7 +63,6 @@ function renderFrontDoor(userName: string): string {
   return renderToStaticMarkup(
     createElement(OttoFrontDoor, {
       projectId: "proj_1",
-      entities: [],
       userName,
       onThreadStarted: vi.fn(),
       onStreamStart: vi.fn(),
