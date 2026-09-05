@@ -20,6 +20,7 @@ import {
   OTTO_FALLBACK_MODEL,
   OTTO_DEFAULT_MODEL,
   OTTO_SUMMARY_MODEL,
+  OTTO_SUMMARY_FALLBACK_MODEL,
   ottoModel,
   ottoSummaryModel,
 } from "./model.js";
@@ -57,13 +58,37 @@ describe("ENGINE-A5 型号与价目 fail closed(manifest 组合期)", () => {
 
   it("ENGINE-A6:折叠型号也在组合期查价名单里,manifest 把它作为 summaryBinding 带下去", () => {
     // §7.2④「摘要本身是一次便宜的小调用」—— 折叠跑哪个型号是 manifest 上的一个决定,
-    // 不是 foldRollingSummary 里写死的一行。今天它等于主力型号:价目表里没有更便宜的一档。
+    // 不是 foldRollingSummary 里写死的一行。
     expect(llmPricesOrNull(OTTO_SUMMARY_MODEL)).not.toBeNull();
     expect(ottoModelRuntime.summaryBinding).toBe(ottoSummaryModel);
     expect(ottoModelRuntime.binding).toBe(ottoModel);
     expect(() => assertOttoModelsPriced([["OTTO_SUMMARY_MODEL", "claude-not-in-the-table"]])).toThrow(
       /OTTO_SUMMARY_MODEL/,
     );
+  });
+
+  it("ENGINE-A6:折叠跑 Haiku,并且 manifest 上的**计价型号**也是它(Founder 2026-09-05 裁决④)", () => {
+    // 裁决原话:「折叠摘要换 Haiku,按 Haiku 实价计入商家账单」。两句话是两个断言:
+    // 跑哪个(OTTO_SUMMARY_MODEL)、按谁的价收(manifest 的 summaryBillableModelId)。
+    expect(OTTO_SUMMARY_MODEL).toBe("claude-haiku-4-5-20251001");
+    expect(ottoModelRuntime.summaryBillableModelId).toBe(OTTO_SUMMARY_MODEL);
+    // 变异:把 summaryBillableModelId 改回 billableModelId(Sonnet)—— 这一行当场红。
+    expect(ottoModelRuntime.summaryBillableModelId).not.toBe(ottoModelRuntime.billableModelId);
+    // 折叠腿的价必须真的更便宜,否则这次换型号一分钱都没省。
+    expect(llmPricesFor(OTTO_SUMMARY_MODEL).outputPerToken).toBeLessThan(
+      llmPricesFor(ottoModelRuntime.billableModelId).outputPerToken,
+    );
+  });
+
+  it("ENGINE-A6:折叠腿的 529 接管不跨价档 —— 接管型号等于折叠型号自己,且同样要有价", () => {
+    // 主轮的接管(sonnet-4-5)与主力同价,所以跑哪个都收同一份钱。折叠换成 Haiku 之后这条
+    // 不再成立:用 Sonnet 接管一次 Haiku 折叠 = 跑贵的按便宜的收,差额静默由我们吃。
+    // 变异:把 OTTO_SUMMARY_FALLBACK_MODEL 指回 OTTO_FALLBACK_MODEL —— 第一行当场红。
+    expect(OTTO_SUMMARY_FALLBACK_MODEL).toBe(OTTO_SUMMARY_MODEL);
+    expect(OTTO_SUMMARY_FALLBACK_MODEL).not.toBe(OTTO_FALLBACK_MODEL);
+    expect(() =>
+      assertOttoModelsPriced([["OTTO_SUMMARY_FALLBACK_MODEL", "claude-not-in-the-table"]]),
+    ).toThrow(/OTTO_SUMMARY_FALLBACK_MODEL/);
   });
 
   it("ENGINE-A5:计价型号是单一源 —— 主力型号逐字取自 @fikirtive/core 的常量", () => {

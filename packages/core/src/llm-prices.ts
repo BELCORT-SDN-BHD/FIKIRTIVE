@@ -33,6 +33,12 @@ const TABLE: Record<string, LlmPrices> = {
   "claude-opus-4-8":   { inputPerToken: 5e-6,  outputPerToken: 25e-6, cachedInputPerToken: 0.5e-6, cacheWriteInputPerToken: 6.25e-6 },
   "claude-sonnet-4-6": { inputPerToken: 3e-6,  outputPerToken: 15e-6, cachedInputPerToken: 0.3e-6, cacheWriteInputPerToken: 3.75e-6 },
   "claude-sonnet-4-5": { inputPerToken: 3e-6,  outputPerToken: 15e-6, cachedInputPerToken: 0.3e-6, cacheWriteInputPerToken: 3.75e-6 },
+  // Haiku 4.5 —— 滚动摘要那次**折叠**跑的型号(Founder 2026-09-05 裁决④:「折叠摘要换 Haiku,
+  // 按 Haiku 实价计入商家账单」)。官方定价(每百万 token 美元,2026-09-05 取数):
+  // Base input 1 / Output 5 / Cache hits and refreshes 0.10 / 5m cache writes 1.25(= 1.25× input)。
+  // 来源 https://platform.claude.com/docs/en/about-claude/pricing;型号 id 来源
+  // https://platform.claude.com/docs/en/models/overview(`claude-haiku-4-5-20251001`)。
+  "claude-haiku-4-5-20251001": { inputPerToken: 1e-6, outputPerToken: 5e-6, cachedInputPerToken: 0.1e-6, cacheWriteInputPerToken: 1.25e-6 },
 };
 
 /** 今天有价的型号 id。判词用它告诉运维「合法取值是哪几个」。 */
