@@ -39,9 +39,17 @@ import {
 } from "./panel-geometry";
 import type { OttoPanelState } from "./panel-state";
 
-/** 上下文 chip:面板知道商家正在看哪一页(V1 只做「路由 + 对象名」这一层)。 */
+/**
+ * 面板头部那一行**范围**标签(FRONT-A14 起改成这个语义)。
+ *
+ * `label` 是整句话,由调用方给全(`Workspace · Billing` / `Canvas · Kaya jar ad`)——
+ * 这里不再拼「On this page:」那个前缀:它说的是 Otto 读得到这一页,而那句话今天不成立
+ * (判官 r1 [P2];服务端没有任何读者读 `surface`/`subjectRef`,见 `panel-page.ts` 文件头)。
+ */
 export interface OttoPanelContextChip {
   label: string;
+  /** 鼠标停住时那一句解释。说的是这段对话存去哪儿,不是 Otto 看得见什么。 */
+  hint?: string;
   onDismiss?: () => void;
 }
 
@@ -354,7 +362,9 @@ export function OttoPanel({
             data-otto-panel-context=""
             className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-[12.5px] text-muted-foreground"
           >
-            <span className="truncate">On this page: {contextChip.label}</span>
+            <span className="truncate" {...(contextChip.hint ? { title: contextChip.hint } : {})}>
+              {contextChip.label}
+            </span>
             {contextChip.onDismiss && (
               <Button
                 type="button"
