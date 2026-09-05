@@ -45,6 +45,10 @@ export function CanvasOttoOverlay({
     return (
       <OttoFrontDoor
         layout="canvas"
+        // ENGINE-A3(otto-engine.md §7.2⑦):画布 composer 的送出从此是**开一条画布对话**,
+        // 所以来源写明白 —— 不再靠 `coerceThreadSurface` 的兜底默认值把它归到 canvas。
+        // 声明不是判定:服务端仍自己过那一道闸(`lib/otto-thread-surface.ts`)。
+        threadSurface="canvas"
         projectId={projectId}
         balanceUsd={balanceUsd}
         entities={entities}

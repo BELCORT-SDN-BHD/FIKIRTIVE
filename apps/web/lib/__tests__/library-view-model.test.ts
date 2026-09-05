@@ -183,13 +183,22 @@ describe("FRONT-A5 视频时长只在真有时长的时候写", () => {
 });
 
 describe("FRONT-A5 一级视图清单 = 今天真的有数据支撑的那几格", () => {
-  it("只有生成历史、上传与 Elements —— Favorites 与 Collections 后端还没有对象", () => {
-    expect(LIBRARY_VIEWS.map((view) => view.value)).toEqual(["history", "uploads", "elements"]);
+  // 段②第②③刀(2026-09-03)把 Favorite / Collection / CollectionItem 三张表与它们的
+  // 动作层建起来了,所以这两格按前端规则第①条回到导航上 —— 顺序与已批准设计逐格一致。
+  it("FRONT-A5 五格与已批准设计逐格一致(Favorites 与 Collections 已有后端对象)", () => {
+    expect(LIBRARY_VIEWS.map((view) => view.value)).toEqual([
+      "history",
+      "uploads",
+      "favorites",
+      "collections",
+      "elements",
+    ]);
   });
   it("地址里认不出来的 ?view= 落回生成历史,而不是画一格空白", () => {
     expect(parseLibraryView("uploads")).toBe("uploads");
-    expect(parseLibraryView("favorites")).toBe("history");
-    expect(parseLibraryView("collections")).toBe("history");
+    expect(parseLibraryView("favorites")).toBe("favorites");
+    expect(parseLibraryView("collections")).toBe("collections");
+    expect(parseLibraryView("nope")).toBe("history");
     expect(parseLibraryView(undefined)).toBe("history");
   });
 });

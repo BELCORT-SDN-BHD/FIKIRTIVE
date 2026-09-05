@@ -6,6 +6,9 @@ const {
   mockGenFindMany,
   mockJobFindFirst,
   mockUpdateMany,
+  mockFavoriteFindMany,
+  mockFavoriteUpsert,
+  mockFavoriteDeleteMany,
   mockStoragePut,
   mockAssetUpsert,
   mockGenCreate,
@@ -16,6 +19,9 @@ const {
   mockGenFindMany: vi.fn(),
   mockJobFindFirst: vi.fn(),
   mockUpdateMany: vi.fn(),
+  mockFavoriteFindMany: vi.fn(),
+  mockFavoriteUpsert: vi.fn(),
+  mockFavoriteDeleteMany: vi.fn(),
   mockStoragePut: vi.fn(),
   mockAssetUpsert: vi.fn(),
   mockGenCreate: vi.fn(),
@@ -26,6 +32,13 @@ vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     generation: { findFirst: mockGenFindFirst, findMany: mockGenFindMany, updateMany: mockUpdateMany },
+    // 【2026-09-03 前端基线 §7.3②】收藏的权威是 `Favorite` 那张跨类型的表(裁决十),
+    // 不再是 `Generation.favorite` 那一列 —— 详情面板读它、Save 键写它。
+    favorite: {
+      findMany: mockFavoriteFindMany,
+      upsert: mockFavoriteUpsert,
+      deleteMany: mockFavoriteDeleteMany,
+    },
     genJob: { findFirst: mockJobFindFirst },
     asset: { upsert: mockAssetUpsert },
     $transaction: mockTransaction,
@@ -66,6 +79,8 @@ beforeEach(() => {
   // default: no job found (sourceGenerationId = null)
   mockJobFindFirst.mockResolvedValue(null);
   mockGenFindMany.mockResolvedValue([]);
+  // 默认「一件都没收藏」—— 心亮不亮由收藏表说了算,行上那一列已经没有读者。
+  mockFavoriteFindMany.mockResolvedValue([]);
   mockStoragePut.mockResolvedValue({ contentHash: "deadbeef" });
   mockTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<void>) => {
     const tx = {
@@ -120,6 +135,8 @@ describe("getGeneration", () => {
       asset: { ownerId: "u1", contentHash: "abc123", ext: "mp4" },
     });
     mockJobFindFirst.mockResolvedValue({ sourceGenerationId: "src-1", generationIds: ["g1"] });
+    // 心亮不亮由收藏表说了算(前端基线 §7.3② / 裁决十),不是行上那一列。
+    mockFavoriteFindMany.mockResolvedValue([{ subjectId: "g1" }]);
     const result = await getGeneration("g1");
     expect(result).toMatchObject({
       id: "g1",
@@ -351,26 +368,53 @@ describe("getGeneration", () => {
 // ---------------------------------------------------------------------------
 // setFavorite
 // ---------------------------------------------------------------------------
+/**
+ * 【2026-09-03 前端基线 §7.3②(FRONT-A5)】`setFavorite` 不再自己写 `Generation.favorite`,
+ * 而是转调 `lib/library-favorites.setLibraryFavorite` —— 收藏的权威是跨素材类型的
+ * `Favorite` 表(Founder 裁决十)。签名一个字节没变,所以详情面板与 Otto 两条路照旧调
+ * 这一个;这几条断言跟着改成「写到哪张表上去」,而租户与存活那道门原样还在。
+ */
 describe("setFavorite", () => {
-  it("scopes updateMany by ownerId and live rows only (cross-tenant + soft-delete guard)", async () => {
-    mockUpdateMany.mockResolvedValue({ count: 1 });
+  it("FRONT-A5 写入前先按 ownerId + 存活重新校验目标(跨租户 + 软删两道门)", async () => {
+    mockGenFindMany.mockResolvedValue([{ id: "g1" }]);
     await setFavorite("g1", true);
-    expect(mockUpdateMany).toHaveBeenCalledWith(
+    expect(mockGenFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "g1", ownerId: "u1", deletedAt: null },
-        data: { favorite: true },
+        where: { id: { in: ["g1"] }, ownerId: "u1", deletedAt: null },
       }),
     );
   });
 
-  it("returns { favorite } on success", async () => {
-    mockUpdateMany.mockResolvedValue({ count: 1 });
+  it("FRONT-A5 收藏写进 Favorite 表,幂等压在唯一约束上(upsert,不是先查后建)", async () => {
+    mockGenFindMany.mockResolvedValue([{ id: "g1" }]);
+    expect(await setFavorite("g1", true)).toEqual({ favorite: true });
+    expect(mockFavoriteUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          ownerId_subjectType_subjectId: {
+            ownerId: "u1",
+            subjectType: "generation",
+            subjectId: "g1",
+          },
+        },
+      }),
+    );
+    expect(mockUpdateMany, "`Generation.favorite` 那一列已经没有写入者了").not.toHaveBeenCalled();
+  });
+
+  it("FRONT-A5 取消收藏删的是那条链接,素材本身一个字节都没动", async () => {
+    mockGenFindMany.mockResolvedValue([{ id: "g1" }]);
     expect(await setFavorite("g1", false)).toEqual({ favorite: false });
+    expect(mockFavoriteDeleteMany).toHaveBeenCalledWith({
+      where: { ownerId: "u1", subjectType: "generation", subjectId: "g1" },
+    });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it("returns { error } when generation is not owned by caller", async () => {
-    mockUpdateMany.mockResolvedValue({ count: 0 });
+    mockGenFindMany.mockResolvedValue([]);
     expect(await setFavorite("other-g", true)).toEqual({ error: "Not found." });
+    expect(mockFavoriteUpsert).not.toHaveBeenCalled();
   });
 
   it("returns { error } when requireOwner rejects", async () => {
@@ -437,9 +481,11 @@ describe("getGeneration sibling urls", () => {
     });
     mockJobFindFirst.mockResolvedValue({ sourceGenerationId: null, generationIds: ["g1", "g2", "g3"] });
     mockGenFindMany.mockResolvedValue([
-      { id: "g2", favorite: true, asset: { ownerId: "u1", contentHash: "hash2", ext: "jpg" } },
-      { id: "g3", favorite: false, asset: { ownerId: "u1", contentHash: "hash3", ext: "jpg" } },
+      { id: "g2", asset: { ownerId: "u1", contentHash: "hash2", ext: "jpg" } },
+      { id: "g3", asset: { ownerId: "u1", contentHash: "hash3", ext: "jpg" } },
     ]);
+    // 逐张的收藏状态同样来自收藏表 —— 主图与兄弟图一次问完,不各问各的。
+    mockFavoriteFindMany.mockResolvedValue([{ subjectId: "g2" }]);
     const result = await getGeneration("g1") as { urls: string[]; variants: { id: string; url: string; favorite: boolean }[] };
     // ids in generationIds order — so variants[selectedIdx].id is the displayed image's real id
     expect(result.variants.map((v) => v.id)).toEqual(["g1", "g2", "g3"]);

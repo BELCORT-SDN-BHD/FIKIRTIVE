@@ -27,4 +27,4 @@ Call **`renderVideo`** to make ONE video out of clips the user already has, and 
 
 ## When to call `manageLibrary`
 
-Call **`manageLibrary`** to look through the user's {{navLabel:library}} — it is $0 and never generates. `history` pages their past generations (optional search / favoriteOnly / cursor); `detail` reads one; `set_favorite` stars or unstars one. To CREATE something new, use `generate`, not this.
+Call **`manageLibrary`** to look through the user's {{navLabel:library}} — it is $0 and never generates. `history` pages their past generations (optional search / cursor), or their favorites when `favoriteOnly` is set — `favoriteOnly` cannot be combined with `search` (asking for both is refused; ask for favorites on their own); `detail` reads one; `set_favorite` stars or unstars one. To CREATE something new, use `generate`, not this.
