@@ -289,3 +289,49 @@ describe("toChatMessageDTO — TURN_ERROR payload passthrough", () => {
     expect(serialized).toContain("customer order 42 remained saved.");
   });
 });
+
+/**
+ * FRONT-A10 —— 「消息记录保存该对象的真实 ID,可回链」的**上屏**那一格
+ * (规格 `docs/specs/frontend-baseline.md` §7.3③ 第③刀)。
+ *
+ * #1240 判官 P1-2 实证:删掉 `dto.ts` 里那一格 `references`,apps/web 全量 vitest 仍然全绿 ——
+ * 服务端解析好的引用永远到不了商家屏幕,而一条围栏都不红。这一组就是那一格的围栏。
+ * `referenceLinks` 是**服务端**按当前 owner 解析出来的那一份(`lib/reference-refs.ts`);
+ * DTO 只负责把它交给对应的那条消息,不自己由 id 造名字或地址。
+ */
+describe("toChatMessageDTO — FRONT-A10 message references reach the client", () => {
+  const BASE = {
+    id: "msg-1",
+    role: "USER",
+    kind: "TEXT",
+    seq: 1,
+    text: "@Kopi cendol tin on the shelf",
+    genJobId: null,
+    payload: null,
+    createdAt: new Date("2026-09-05T00:00:00Z"),
+  };
+  const LINKS = [
+    {
+      type: "product" as const,
+      id: "ent_1",
+      name: "Kopi cendol tin",
+      source: "Product · Otto IQ",
+      href: "/library?view=elements&element=products",
+    },
+  ];
+
+  it("FRONT-A10 carries the resolved reference links onto the message the merchant sent", () => {
+    const dto = toChatMessageDTO(BASE as never, new Map(), new Map([["msg-1", LINKS]]));
+    expect(dto.references).toEqual(LINKS);
+  });
+
+  it("FRONT-A10 a message that named nothing carries no references key at all", () => {
+    expect(toChatMessageDTO(BASE as never, new Map(), new Map([["msg-1", []]]))).not.toHaveProperty("references");
+    expect(toChatMessageDTO(BASE as never, new Map())).not.toHaveProperty("references");
+  });
+
+  it("FRONT-A10 links land on the message they belong to, never on a neighbour", () => {
+    const other = toChatMessageDTO({ ...BASE, id: "msg-2" } as never, new Map(), new Map([["msg-1", LINKS]]));
+    expect(other).not.toHaveProperty("references");
+  });
+});
