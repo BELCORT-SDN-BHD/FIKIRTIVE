@@ -322,11 +322,26 @@ const { mockFinalizedReservations, mockOtherHoldsSince } = vi.hoisted(() => ({
 
 const { mockConsumeOttoTurnGate } = vi.hoisted(() => ({ mockConsumeOttoTurnGate: vi.fn(async () => true) }));
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const { mockRunOttoTurn } = vi.hoisted(() => ({ mockRunOttoTurn: vi.fn<(...args: any[]) => any>() }));
+
 // ENGINE-A2 (规格 docs/specs/otto-engine.md §7.2②): 每轮调试档案的落盘替身。默认账本里没有
 // 终结行 —— 那正是「只有 RESERVE 时 settledInternal 必须是 null」那条要验的起点。
 const { mockOttoTurnTraceUpsert, mockCreditLedgerFindMany } = vi.hoisted(() => ({
   mockOttoTurnTraceUpsert: vi.fn(async (_args: unknown) => ({})),
   mockCreditLedgerFindMany: vi.fn(async (_args: unknown) => [] as Array<{ kind: string; balanceDelta: number }>),
+}));
+
+// ENGINE-A4(尾巴组十一,#1218 判官 P2-3): 「这一轮没收钱」的账本取证。两门都先回账本问一句
+// 「这笔预扣名下真有 `refund:<refId>` 那一行吗」—— 退款函数会返回 `already-settled` /
+// `no-reservation`,而钩子是 void 的,所以钩子响过 ≠ 钱真的回去了。
+// 默认:凡是问 `refund:` 键的,这个夹具世界都答「行在」(退款真的落了地);想演「退款没落地」
+// 的用例自己把它换成 null。
+const { mockCreditLedgerFindFirst } = vi.hoisted(() => ({
+  mockCreditLedgerFindFirst: vi.fn(async (args: unknown) => {
+    const key = (args as { where?: { idempotencyKey?: unknown } } | undefined)?.where?.idempotencyKey;
+    return typeof key === "string" && key.startsWith("refund:") ? { id: `cl_${key}` } : null;
+  }),
 }));
 
 // Founder 2026-08-18 — the conversation gate is a REAL Postgres counter that fails CLOSED when it
@@ -365,7 +380,7 @@ vi.mock("@fikirtive/db", () => ({
     actionEvent: { create: mockActionEventCreate },
     // ENGINE-A2 (规格 docs/specs/otto-engine.md §7.2②): 每轮调试档案的写入口与它读的账本。
     ottoTurnTrace: { upsert: mockOttoTurnTraceUpsert },
-    creditLedger: { findMany: mockCreditLedgerFindMany },
+    creditLedger: { findMany: mockCreditLedgerFindMany, findFirst: mockCreditLedgerFindFirst },
     researchJob: { findFirst: mockResearchJobFindFirst, deleteMany: mockResearchJobDeleteMany },
     canvasNode: { updateMany: mockCanvasNodeUpdateMany },
     generation: {
@@ -412,8 +427,15 @@ vi.mock("@fikirtive/core", async (importOriginal) => {
 // stays mocked so a thrown MockMaxTurnsExceededError matches `instanceof` in the SUT.
 vi.mock("@fikirtive/otto", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
+  // ENGINE-A4(尾巴组十一,#1218 判官 P2-2): 默认**就是真的那一个** —— 整份文件照旧跑真
+  // `runOttoTurn`。它之所以要经过一个 vi.fn,只为一件事:两门那个 meter 包装里的
+  // `budgetArgs.onRefundedFailure?.()` 转调,今天在生产里恰好是空转(引擎不产出这个钩子),
+  // 所以唯一能证明「没把将来引擎侧挂的钩子静默盖掉」的办法,就是由测试给一份**带钩子**的
+  // budgetArgs 走一趟。只有那两条用例临时换实现,换完即用完。
+  mockRunOttoTurn.mockImplementation(actual.runOttoTurn as never);
   return {
     ...actual,
+    runOttoTurn: mockRunOttoTurn,
     otto: { name: "Otto" },
     // #524 r3: keep a handle on the genuine metered path — the interleaving cases run it for real
     // so the reserve→claim→run order is exercised end to end instead of asserted against a double.
@@ -452,13 +474,13 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang, APPROVE_STALE_COMPLETED_NOTE, APPROVE_STALE_INTERRUPTED_NOTE, recordOttoTurnTrace } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang, APPROVE_STALE_COMPLETED_NOTE, APPROVE_STALE_INTERRUPTED_NOTE, recordOttoTurnTrace, ottoUpdateGenCardOptions } = await import("@/lib/otto-actions");
 const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs, refgenApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
 // #524 r6: the second leg of a plain generate approval, priced by the same chain startGen charges with.
 const { approvedGenerateCostInternal } = await import("@/lib/spend-cap-preflight");
 // #524 r2: the REAL hold derivation (the @fikirtive/otto mock spreads the actual module), so the
 // expected number in the spend-cap cases comes from the same code the production path runs.
-const { llmHoldInternal, ottoBudgetArgsFor, ottoApprovalResumeRuntime, ReservationNotClaimed, estimateHistoryTokens, OTTO_HISTORY_BUDGET_TOKENS } = await import("@fikirtive/otto");
+const { llmHoldInternal, ottoBudgetArgsFor, ottoApprovalResumeRuntime, ReservationNotClaimed, estimateHistoryTokens, OTTO_HISTORY_BUDGET_TOKENS, buildProposeCard } = await import("@fikirtive/otto");
 const { OTTO_TURN_RATE_LIMIT_MESSAGE } = await import("@/lib/rate-limit-gates");
 // The REAL withLlmBudget (see the @fikirtive/otto mock). Tests that need the true reserve→claim→run
 // order install it on mockWithLlmBudget; it runs against the mocked ledger writers above.
@@ -3045,6 +3067,31 @@ const REFUNDED_METER = async (args: { onRefundedFailure?: () => void }, fn: () =
 };
 const CHARGED_DEGRADE = "I got a bit tangled up — try asking again.";
 const REFUNDED_DEGRADE = "I got a bit tangled up — try asking again. This turn wasn't charged.";
+// #3310 走查修复三的那一档:供应商侧不可恢复的失败。两门在文末的 catch 里把
+// `{ chargedNothing }` 传给 `ottoFailureMessage`,商家读到的就是下面这一句。
+const PROVIDER_DOWN_NOT_CHARGED =
+  "Otto is unavailable right now on our side. This turn wasn't charged. Please try again later.";
+const PROVIDER_DOWN_PLAIN = "Otto is unavailable right now on our side. Please try again later.";
+/** 供应商侧不可恢复(429 = 我们这边被限流),不是瞬时错误。 */
+function providerSideError(): Error {
+  return Object.assign(new Error("rate limited"), { statusCode: 429 });
+}
+/** 账本取证的默认世界:退款真的落了地、这次动作没有第二条腿收过钱。
+ *  `vi.clearAllMocks()` 只清调用记录不清实现,所以演反面的用例改过之后要在这里复位。 */
+function resetMoneyProofDefaults(): void {
+  mockCreditLedgerFindFirst.mockImplementation(async (args: unknown) => {
+    const key = (args as { where?: { idempotencyKey?: unknown } } | undefined)?.where?.idempotencyKey;
+    return typeof key === "string" && key.startsWith("refund:") ? { id: `cl_${key}` } : null;
+  });
+  mockOtherHoldsSince.mockResolvedValue("none");
+}
+
+/** 这一轮到底问没问过账本「`refund:<refId>` 那一行在不在」。 */
+function refundProofQueries(): string[] {
+  return mockCreditLedgerFindFirst.mock.calls
+    .map((c) => (c[0] as { where?: { idempotencyKey?: unknown } } | undefined)?.where?.idempotencyKey)
+    .filter((k): k is string => typeof k === "string" && k.startsWith("refund:"));
+}
 
 /** 本次持久化的全部 AGENT 文本 —— 断言的是商家真读得到的那条,不是内存里的变量。 */
 function persistedAgentTexts(): string[] {
@@ -3058,6 +3105,7 @@ describe("ENGINE-A4 / ENGINE-A2 — ottoTurn 这一门的尾巴", () => {
   beforeEach(() => {
     setupHappyPath();
     mockCreditLedgerFindMany.mockResolvedValue([]);
+    resetMoneyProofDefaults();
   });
 
   it("ENGINE-A4: 截断且整笔退款的一轮,持久化的降级句自己说「没收钱」", async () => {
@@ -3082,6 +3130,81 @@ describe("ENGINE-A4 / ENGINE-A2 — ottoTurn 这一门的尾巴", () => {
     expect(persistedAgentTexts()).not.toContain(REFUNDED_DEGRADE);
   });
 
+  // #1218 判官 P2-3 —— 钱话要有账本证据。钩子只证明 meter **走过**退款那一步;真正的退款函数
+  // 会返回 already-settled / no-reservation,而钩子是 void 的,那个返回值到不了这里。
+  it("ENGINE-A4: 钩子响了但账本上没有那笔退款(退款没落地)⇒ 不说「没收钱」", async () => {
+    mockRun.mockRejectedValue(new MockMaxTurnsExceededError());
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+    mockCreditLedgerFindFirst.mockResolvedValue(null); // 账本上查无此退款
+
+    const res = await ottoTurn(BASE_INPUT);
+
+    expect(res).toMatchObject({ status: "degraded" });
+    expect(persistedAgentTexts()).toContain(CHARGED_DEGRADE);
+    expect(persistedAgentTexts()).not.toContain(REFUNDED_DEGRADE);
+    // 而且是**真的问过**账本,不是恰好没说:问的正是这一轮那把钥匙。
+    expect(refundProofQueries()).toEqual([expect.stringMatching(/^refund:otto-turn:/)]);
+  });
+
+  it("ENGINE-A4: 这次动作还有别的腿收过钱(otherHoldsSince=some)⇒ 不说「没收钱」", async () => {
+    mockRun.mockRejectedValue(new MockMaxTurnsExceededError());
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+    mockOtherHoldsSince.mockResolvedValue("some");
+
+    const res = await ottoTurn(BASE_INPUT);
+
+    expect(res).toMatchObject({ status: "degraded" });
+    expect(persistedAgentTexts()).toContain(CHARGED_DEGRADE);
+    expect(persistedAgentTexts()).not.toContain(REFUNDED_DEGRADE);
+  });
+
+  // #1224 判官 P2-1 —— 这一门传给错误文案的 `opts` 从前零测试(删掉传参整个文件仍全绿)。
+  it("ENGINE-A4: 供应商侧失败且整笔退了 ⇒ 诚实句自己带上「没收钱」", async () => {
+    mockRun.mockRejectedValue(providerSideError());
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+
+    const res = await ottoTurn(BASE_INPUT);
+
+    expect(res).toEqual({ error: PROVIDER_DOWN_NOT_CHARGED });
+  });
+
+  it("ENGINE-A4: 供应商侧失败但账本证明不了退款 ⇒ 诚实句里没有「没收钱」那半句", async () => {
+    mockRun.mockRejectedValue(providerSideError());
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+    mockCreditLedgerFindFirst.mockResolvedValue(null);
+
+    const res = await ottoTurn(BASE_INPUT);
+
+    expect(res).toEqual({ error: PROVIDER_DOWN_PLAIN });
+  });
+
+  // #1218 判官 P2-2 —— 两门那句 `budgetArgs.onRefundedFailure?.()` 转调从前零测试(删掉全绿)。
+  // 生产里引擎今天不产出这个钩子,所以由测试给一份**带钩子**的 budgetArgs 走一趟:包装必须
+  // 先转调、再置自己的旗,不能把引擎那一份静默盖掉。
+  it("ENGINE-A4: meter 包装先转调引擎自己的 onRefundedFailure,再记本轮 refId", async () => {
+    const engineHook = vi.fn();
+    let doorRefId = "";
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+    mockRunOttoTurn.mockImplementationOnce(
+      async (input: unknown, _ctx: unknown, _runtime: unknown, options: { meter: (a: unknown, f: () => Promise<unknown>) => Promise<unknown> }) => {
+        doorRefId = (input as { refId: string }).refId; // 这一门自己那把钥匙
+        // 尾巴组十一判官 P2-3:探针的 refId 刻意与真值**不同形**,否则「记的是自己那一把」
+        // 这句话在断言里立不住(旧的正则 /^refund:otto-turn:/ 对两者都成立)。
+        return options.meter({ orgId: OWNER_ID, refId: "probe:NOT-MINE", onRefundedFailure: engineHook }, async () => {
+          throw new MockMaxTurnsExceededError();
+        });
+      },
+    );
+
+    const res = await ottoTurn(BASE_INPUT);
+
+    expect(res).toMatchObject({ status: "degraded" });
+    expect(engineHook).toHaveBeenCalledTimes(1);
+    // 记下的是这一门**自己的** refId(不是探针给的那一个)—— 逐字全串,不是家族前缀。
+    expect(doorRefId).toMatch(/^otto-turn:/);
+    expect(refundProofQueries()).toEqual([`refund:${doorRefId}`]);
+  });
+
   it("ENGINE-A2: 这一轮落一行档案,surface 是 action、threadId 是本对话、refId 是本轮那把钥匙", async () => {
     const res = await ottoTurn({ ...BASE_INPUT, threadId: THREAD_ID });
 
@@ -3103,6 +3226,7 @@ describe("ENGINE-A4 / ENGINE-A2 — ottoApprove 这一门的尾巴", () => {
   beforeEach(() => {
     setupApproveHappyPath();
     mockCreditLedgerFindMany.mockResolvedValue([]);
+    resetMoneyProofDefaults();
   });
 
   it("ENGINE-A4: 恢复轮截断且整笔退款时,降级句自己说「没收钱」", async () => {
@@ -3124,6 +3248,73 @@ describe("ENGINE-A4 / ENGINE-A2 — ottoApprove 这一门的尾巴", () => {
     expect(res).toMatchObject({ ok: true, status: "degraded" });
     expect(persistedAgentTexts()).toContain(CHARGED_DEGRADE);
     expect(persistedAgentTexts()).not.toContain(REFUNDED_DEGRADE);
+  });
+
+  // #1218 判官 P2-3 —— 这一门的截断支从前只凭那面旗说「没收钱」,与同一个 catch 第 5 支
+  // 「PROVEN, not assumed」的规定正好相反。恢复轮是**先跑完被批准的那件工具**再撞上步数上限
+  // 的,那笔生成可能已经付过钱了 —— 所以两门同一个判据:要账本证据才说。
+  it("ENGINE-A4: 恢复轮钩子响了但账本上没有那笔退款 ⇒ 不说「没收钱」", async () => {
+    mockRun.mockRejectedValue(new MockMaxTurnsExceededError());
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+    mockCreditLedgerFindFirst.mockResolvedValue(null);
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "degraded" });
+    expect(persistedAgentTexts()).toContain(CHARGED_DEGRADE);
+    expect(persistedAgentTexts()).not.toContain(REFUNDED_DEGRADE);
+    expect(refundProofQueries()).toEqual([`refund:otto-approve:${APPROVE_THREAD_ID}:${CARD_ID}:a1`]);
+  });
+
+  it("ENGINE-A4: 恢复轮还有别的腿收过钱(otherHoldsSince=some)⇒ 不说「没收钱」", async () => {
+    mockRun.mockRejectedValue(new MockMaxTurnsExceededError());
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+    mockOtherHoldsSince.mockResolvedValue("some"); // 被批准的那件工具自己预扣过
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "degraded" });
+    expect(persistedAgentTexts()).toContain(CHARGED_DEGRADE);
+    expect(persistedAgentTexts()).not.toContain(REFUNDED_DEGRADE);
+  });
+
+  // #1224 判官 P2-1 —— 这一门传给错误文案的 `opts` 从前零测试。
+  it("ENGINE-A4: 恢复轮撞上供应商侧失败且整笔退了 ⇒ 诚实句自己带上「没收钱」", async () => {
+    mockRun.mockRejectedValue(providerSideError());
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ error: PROVIDER_DOWN_NOT_CHARGED });
+    expect(persistedAgentTexts()).toContain(PROVIDER_DOWN_NOT_CHARGED);
+  });
+
+  it("ENGINE-A4: 恢复轮供应商侧失败但账本证明不了退款 ⇒ 诚实句里没有「没收钱」那半句", async () => {
+    mockRun.mockRejectedValue(providerSideError());
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+    mockCreditLedgerFindFirst.mockResolvedValue(null);
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ error: PROVIDER_DOWN_PLAIN });
+  });
+
+  // #1218 判官 P2-2 —— 这一门那句转调同样零测试。
+  it("ENGINE-A4: 恢复轮 meter 包装先转调引擎自己的 onRefundedFailure,再记本轮 refId", async () => {
+    const engineHook = vi.fn();
+    mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
+    mockRunOttoTurn.mockImplementationOnce(
+      async (_input: unknown, _ctx: unknown, _runtime: unknown, options: { meter: (a: unknown, f: () => Promise<unknown>) => Promise<unknown> }) =>
+        options.meter({ orgId: OWNER_ID, refId: "otto-approve:probe", onRefundedFailure: engineHook }, async () => {
+          throw new MockMaxTurnsExceededError();
+        }),
+    );
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "degraded" });
+    expect(engineHook).toHaveBeenCalledTimes(1);
+    expect(refundProofQueries()).toEqual([`refund:otto-approve:${APPROVE_THREAD_ID}:${CARD_ID}:a1`]);
   });
 
   it("ENGINE-A2: 恢复轮落一行档案,surface 是 approve-resume、threadId 是本对话、refId 带 attempt 序号", async () => {
@@ -5070,5 +5261,88 @@ describe("ENGINE-A2 —— recordOttoTurnTrace 只写白名单列", () => {
     expect(mockOttoTurnTraceUpsert).toHaveBeenCalledTimes(1);
     const call = mockOttoTurnTraceUpsert.mock.calls[0]![0] as { create: Record<string, unknown> };
     expect(call.create.settledInternal).toBeNull();
+  });
+});
+
+// ── ENGINE-A3: 卡上改三格的写,与「已经在跑就不许改」的判据同一个事务 ─────────────
+// #1230 判官 P2-3(钱安全)—— 真库那一份(otto-card-options-ledger)证的是「先置跑再改会被
+// 拒」;这一份只钉**形状**:两条语句走同一个 tx、写的那一句是条件更新(`where` 带租户/线程/
+// 卡种/未删)。变异「改回先查后写」⇒ 基座 client 被调用 ⇒ 当场红。
+//
+// 说清这一份**没有**证到什么(尾巴组十一判官 P1-1):它证不了并发窗口被关上,因为窗口本来
+// 就没关 —— READ COMMITTED 下事务内那条 SELECT 对尚不存在的 GenJob 行不取谓词锁,并发的
+// `startCoworkGen` 在两条语句之间插入 `cowork:<cardId>` 这里仍看不见。残余窗口未消除,详见
+// `apps/web/lib/otto-actions.ts` 那道闸上的「已知未做」注释。
+describe("ENGINE-A3 —— 卡上改三格:账本判据与写卡在同一个事务里", () => {
+  const CARD = "card_options_atomic";
+
+  function seedCard() {
+    setupHappyPath();
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "A pandan kaya jar on a marble counter", entityIds: [], variantSel: {} },
+      { orgId: OWNER_ID, userId: "u1", projectId: PROJECT_ID, threadId: THREAD_ID, disabledModels: [], sourceGenerationId: null } as never,
+      [],
+    );
+    mockChatMessageFindFirst.mockResolvedValue({
+      id: CARD,
+      payload: cardPayload,
+      thread: { ownerId: OWNER_ID, deletedAt: null },
+    });
+    return cardPayload;
+  }
+
+  /** 事务替身:自带一套**独立**的 spy,所以「走的是 tx 还是基座 client」一眼可辨。 */
+  function txDouble(existingJob: { id: string } | null, count = 1) {
+    const genJobFindFirst = vi.fn(async () => existingJob);
+    const chatMessageUpdateMany = vi.fn(async (_args: { where: Record<string, unknown> }) => ({ count }));
+    mockTransaction.mockImplementation(async (fn: unknown) =>
+      (fn as (tx: unknown) => Promise<unknown>)({
+        genJob: { findFirst: genJobFindFirst },
+        chatMessage: { updateMany: chatMessageUpdateMany },
+      }),
+    );
+    return { genJobFindFirst, chatMessageUpdateMany };
+  }
+
+  it("ENGINE-A3: 查任务行与改卡都走同一个事务,写的那一句带租户/线程/卡种/未删条件", async () => {
+    seedCard();
+    const tx = txDouble(null);
+
+    const res = await ottoUpdateGenCardOptions({ threadId: THREAD_ID, cardId: CARD, count: 3 });
+
+    expect(res).toMatchObject({ ok: true });
+    expect(tx.genJobFindFirst).toHaveBeenCalledWith({
+      where: { ownerId: OWNER_ID, idempotencyKey: `cowork:${CARD}` },
+      select: { id: true },
+    });
+    expect(tx.chatMessageUpdateMany.mock.calls[0]![0].where).toEqual({
+      id: CARD,
+      threadId: THREAD_ID,
+      ownerId: OWNER_ID,
+      kind: "GEN_CARD",
+      deletedAt: null,
+    });
+    // 两条语句都在 tx 里的证据:基座 client 上一条都没走过(形状,不是并发安全)。
+    expect(mockGenJobFindFirst).not.toHaveBeenCalled();
+    expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("ENGINE-A3: 同一个事务里查到任务行 ⇒ 拒绝,卡零写入", async () => {
+    seedCard();
+    const tx = txDouble({ id: "job_running" });
+
+    const res = await ottoUpdateGenCardOptions({ threadId: THREAD_ID, cardId: CARD, count: 3 });
+
+    expect(res).toMatchObject({ error: expect.stringContaining("already under way") });
+    expect(tx.chatMessageUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("ENGINE-A3: 条件更新命中零行(卡在这一刻被删/搬走)⇒ 如实说读不到,不假报成功", async () => {
+    seedCard();
+    txDouble(null, 0);
+
+    const res = await ottoUpdateGenCardOptions({ threadId: THREAD_ID, cardId: CARD, count: 3 });
+
+    expect(res).toEqual({ error: "Card not found." });
   });
 });
