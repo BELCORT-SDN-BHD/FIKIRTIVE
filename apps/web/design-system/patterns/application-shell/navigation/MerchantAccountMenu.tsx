@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import Link from "next/link"
 import { LogOut, User } from "lucide-react"
 
@@ -15,6 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 
 export type MerchantShellAccount = {
@@ -45,6 +47,24 @@ export function MerchantAccountMenu({
   buildSha?: string | null
 }) {
   const label = merchantIdentityLabel(account)
+  const [signingOut, setSigningOut] = useState(false)
+
+  /** FRONT-A12 —— 登出以前是 `void signOutAction()`:点下去屏幕上什么都不变,失败了也什么都不说,
+   *  商家读到的是「大概退出了吧」。
+   *
+   *  成功这一路不复位 `signingOut`:`signOutAction()` 服务端跑完就 `redirect("/login")`
+   *  (`apps/web/lib/account-actions.ts:235`),这个组件会随整个壳被换掉,所以在跳走之前一直
+   *  显示进行中才是实话。失败这一路才复位,并把原因说出来。 */
+  const runSignOut = async () => {
+    if (signingOut) return
+    setSigningOut(true)
+    try {
+      await signOutAction()
+    } catch {
+      setSigningOut(false)
+      toast.error("Couldn't sign you out. Try again.")
+    }
+  }
 
   const copyBuildInfoLink = async () => {
     try {
@@ -92,12 +112,16 @@ export function MerchantAccountMenu({
             <DropdownMenuItem
               data-shell-signout
               variant="destructive"
+              /* 菜单不在这一下关掉:关掉就没地方显示进行中,失败时商家也看不出是哪一颗按钮的事。 */
+              closeOnClick={false}
+              disabled={signingOut}
+              aria-busy={signingOut || undefined}
               onSelect={() => {
-                void signOutAction()
+                void runSignOut()
               }}
             >
-              <LogOut />
-              <span>Sign out</span>
+              {signingOut ? <Spinner /> : <LogOut />}
+              <span>{signingOut ? "Signing out…" : "Sign out"}</span>
             </DropdownMenuItem>
           ) : null}
         </DropdownMenuGroup>

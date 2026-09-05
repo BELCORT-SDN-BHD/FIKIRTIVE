@@ -9,6 +9,11 @@ import {
   merchantIdentityLabel,
 } from "@/components/navigation/MerchantAccountMenu";
 import { MerchantTopBar } from "@/components/navigation/MerchantTopBar";
+import { toast } from "@/components/ui/toast";
+
+vi.mock("@/components/ui/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() },
+}));
 
 class ResizeObserverStub {
   observe() {}
@@ -148,6 +153,51 @@ describe("MerchantAccountMenu", () => {
 
     await act(async () => signOut?.click());
     expect(signOutAction).toHaveBeenCalledTimes(1);
+  });
+
+  /** 接线盘点 L5 —— 登出以前是 `void signOutAction()`:屏幕上什么都不变,失败也不出声。
+   *  这一条把两件事一起钉住:点下去有进行中态,失败有反馈且能重来。 */
+  it("FRONT-A12: sign out shows an in-progress state and reports failure instead of going quiet", async () => {
+    let rejectSignOut: (reason: unknown) => void = () => {};
+    const signOutAction = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSignOut = reject;
+        }),
+    );
+    const el = await render(
+      createElement(MerchantAccountMenu, {
+        account: { email: "owner@example.com", displayName: "Aisyah", balance: 1240 },
+        signOutAction,
+      }),
+    );
+    await openAccountMenu(el.querySelector<HTMLElement>("[data-shell-identity]")!);
+
+    const signOut = () => document.querySelector<HTMLElement>("[data-shell-signout]")!;
+    expect(signOut().textContent).toContain("Sign out");
+
+    await act(async () => signOut().click());
+
+    // 进行中:菜单不关(关了就没地方显示状态),文案与 aria 都改口。
+    expect(signOut().textContent).toContain("Signing out");
+    expect(signOut().getAttribute("aria-busy")).toBe("true");
+
+    // 进行中再点一次不会打第二趟登出。
+    await act(async () => signOut().click());
+    expect(signOutAction).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rejectSignOut(new Error("offline"));
+      await Promise.resolve();
+    });
+
+    expect(toast.error).toHaveBeenCalledWith("Couldn't sign you out. Try again.");
+    // 失败后回到可重试,不是卡死在「Signing out…」。
+    expect(signOut().textContent).toContain("Sign out");
+    expect(signOut().getAttribute("aria-busy")).toBeNull();
+
+    await act(async () => signOut().click());
+    expect(signOutAction).toHaveBeenCalledTimes(2);
   });
 
   it("can hide sign out on a review surface without hiding Profile", async () => {
