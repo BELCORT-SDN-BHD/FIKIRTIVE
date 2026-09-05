@@ -44,9 +44,12 @@ import {
   MaxTurnsExceededError,
   buildUserTurn,
   sanitizeHistory,
+  // ENGINE-A6 (spec §7.2④): the pair-aware history trim; the fold that follows it lives in
+  // the engine (runtime.ts) and rides this turn's own reserve.
+  trimHistoryToBudget,
   tryRestoreRunState,
 } from "@fikirtive/otto";
-import type { AgentInputItem } from "@fikirtive/otto";
+import type { AgentInputItem, OttoRollingSummaryPort } from "@fikirtive/otto";
 import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -58,6 +61,9 @@ import {
   unavailableReferenceMessage,
   // ENGINE-A2 (spec §7.2②): the one turn-trace writer, shared with ottoTurn / ottoApprove.
   recordOttoTurnTrace,
+  // ENGINE-A6 (spec §7.2④): the one rolling-summary writer, shared with ottoTurn — so the
+  // tenant constraint on that write has a single place to be守.
+  saveRollingSummary,
 } from "@/lib/otto-actions";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
@@ -147,6 +153,9 @@ export async function POST(req: NextRequest): Promise<Response> {
     let threadId: string;
     let isNew: boolean;
     let priorOttoState: string | null = null;
+    // ENGINE-A6 —— 这条对话此前折叠掉的旧轮。每一轮都回注,不只是发生裁剪的那一轮。
+    let priorRollingSummary: string | null = null;
+    let rollingSummaryPort: OttoRollingSummaryPort | undefined;
     let seqAfterUser: number;
     let userMessageId: string;
     let runInput: AgentInputItem[];
@@ -181,10 +190,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       if (!isNew) {
         const t = await prisma.chatThread.findFirst({
           where: { id: threadId, ...OWNED },
-          select: { projectId: true, ottoState: true },
+          select: { projectId: true, ottoState: true, rollingSummary: true },
         });
         if (!t || t.projectId !== projectId) return Response.json({ error: "Conversation not found." }, { status: 404 });
         priorOttoState = t.ottoState;
+        priorRollingSummary = t.rollingSummary;
       }
 
       // Validate replyToMessageId (scoped, else null)
@@ -268,11 +278,22 @@ export async function POST(req: NextRequest): Promise<Response> {
       }
 
       // Build run input: system message + (prior history | fresh) + user message
-      const sys = buildContextSystemMessage(ctx);
+      const sys = buildContextSystemMessage(ctx, priorRollingSummary);
       const userTurn = buildUserTurn(text, ctx.images);
       const priorState = priorOttoState ? await tryRestoreRunState(otto, priorOttoState) : null;
       if (priorState) {
-        runInput = [...(sys ? [sys] : []), ...sanitizeHistory(priorState.history), userTurn];
+        // ENGINE-A6(规格 §7.2④):成对感知地裁到预算以内,裁掉的那些轮交给引擎折进
+        // rollingSummary —— 沿用本轮 refId,不新开钱路。没裁掉东西的一轮不传端口,
+        // 与本改动之前逐字节相同。
+        const { kept, dropped } = trimHistoryToBudget(sanitizeHistory(priorState.history));
+        if (dropped.length > 0) {
+          rollingSummaryPort = {
+            dropped,
+            priorSummary: priorRollingSummary,
+            save: (summary: string) => saveRollingSummary(threadId, ownerId, summary),
+          };
+        }
+        runInput = [...(sys ? [sys] : []), ...kept, userTurn];
       } else {
         // No prior state OR an unrestorable one (F24): start fresh — the turn still runs and its
         // normal state write self-heals ottoState to the current schema.
@@ -357,6 +378,8 @@ export async function POST(req: NextRequest): Promise<Response> {
               // 与另外两门(ottoTurn / ottoApprove)共用 recordOttoTurnTrace —— 一个写入口,
               // 所以「不记商家内容」只有一处需要守。surface/threadId 来自已认证的会话。
               trace: { surface: "stream", threadId, sink: recordOttoTurnTrace },
+              // ENGINE-A6 —— 本轮裁掉的旧轮(有才传)。
+              rollingSummary: rollingSummaryPort,
               onStream: async (r) => {
                 // stream:true → StreamedRunResult: AsyncIterable over RunStreamEvent.
                 for await (const event of r) {

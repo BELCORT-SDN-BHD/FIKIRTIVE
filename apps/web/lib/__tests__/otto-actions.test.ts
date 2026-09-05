@@ -2900,6 +2900,36 @@ describe("buildContextSystemMessage — reference video signal", () => {
   });
 });
 
+// ── ENGINE-A6: the rolling summary rides the FRESH system message ────────────
+// 规格 docs/specs/otto-engine.md §7.2④ 第三刀。`sanitizeHistory` 每轮都把历史里的旧 system
+// 消息丢掉,所以这一条新鲜的 system 消息是被折叠掉的上下文**唯一**能落脚的地方 —— 回注断了,
+// 长对话就成了失忆的对话,而裁剪照样在跑。
+describe("ENGINE-A6 — buildContextSystemMessage 回注滚动摘要", () => {
+  const base = { orgId: "o1", userId: "o1", projectId: "p1", threadId: "t1", disabledModels: [] as string[] };
+
+  it("ENGINE-A6: 有摘要时逐字回注,并排在品牌记忆之前(它是这段对话最老的内容)", () => {
+    const result = buildContextSystemMessage({ ...base, brandContext: "sells kopi" }, "merchant wants a Raya promo");
+    const content = (result as { content: string }).content;
+    expect(content).toContain("merchant wants a Raya promo");
+    expect(content.indexOf("merchant wants a Raya promo")).toBeLessThan(content.indexOf("sells kopi"));
+  });
+
+  it("ENGINE-A6: 没有别的上下文时,光有摘要也足以生成这条 system 消息", () => {
+    const result = buildContextSystemMessage({ ...base }, "older turns folded here");
+    expect(result).not.toBeNull();
+    expect((result as { content: string }).content).toContain("older turns folded here");
+  });
+
+  it("ENGINE-A6: 没有摘要(null / 空白)时,这条消息与本改动之前逐字相同", () => {
+    const withBrand = buildContextSystemMessage({ ...base, brandContext: "sells kopi" });
+    expect((buildContextSystemMessage({ ...base, brandContext: "sells kopi" }, null) as { content: string }).content)
+      .toBe((withBrand as { content: string }).content);
+    expect((buildContextSystemMessage({ ...base, brandContext: "sells kopi" }, "   ") as { content: string }).content)
+      .toBe((withBrand as { content: string }).content);
+    expect(buildContextSystemMessage({ ...base }, null)).toBeNull();
+  });
+});
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Universal approval card chain (B4 debt-70, spec §五 5.1·附 + AR1 处方1/2) — the
