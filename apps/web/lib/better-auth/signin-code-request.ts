@@ -2,6 +2,7 @@ import "server-only";
 import { consumeRateLimit, clearRateLimitCounters } from "@fikirtive/db/rate-limit";
 import { normalizeSignInEmail } from "./signin-code-contract";
 import { enqueueAuthEmail } from "./sender";
+import { emailTransportReady } from "@/lib/email";
 import { callerKey } from "@/lib/rate-limit-gates";
 
 /**
@@ -10,6 +11,8 @@ import { callerKey } from "@/lib/rate-limit-gates";
  *
  *   ① check the address is well FORMED — pure string work, and a well-formed address is well
  *      formed whether or not anybody owns it;
+ *   ①′ check THIS DEPLOYMENT can post mail at all — one environment read whose answer is the
+ *      same for every address, so it refuses everybody or nobody (FRONT-A12);
  *   ② one constant-cost throttle keyed on the CALLER;
  *   ③ hand an opaque job to the background — no allowlist, no per-address budget, no branch of
  *      any kind on which address this is;
@@ -93,10 +96,18 @@ export const MAX_PER_CALLER = 60;
 const CALLER_BUCKET = (caller: string) => `signincode:${caller}`;
 const ADDRESS_BUCKET = (caller: string, email: string) => `signincode:${caller}|${email}`;
 
-/** The only two outcomes a caller may see. Being over the throttle is NOT one of them: it is
- *  swallowed here on purpose, so no caller — and no future edit to a caller — can turn it into
- *  a distinguishable answer. */
-export type SignInCodeRequestOutcome = "accepted" | "invalid_email";
+/** The outcomes a caller may see. Being over the throttle is NOT one of them: it is swallowed
+ *  here on purpose, so no caller — and no future edit to a caller — can turn it into a
+ *  distinguishable answer.
+ *
+ *  FRONT-A12 — `no_email_transport` joined them, and it is the ONE addition #678's rule permits.
+ *  It is not something the background learned about this address; it is a property of the
+ *  deployment, decided before the address is looked at in any way, identical for every address in
+ *  every request and flipped only by an operator changing configuration. Every existence oracle
+ *  this path closed had the same shape — an answer that DIFFERS between two addresses — and this
+ *  one cannot differ between any two addresses at all. See the step ①′ comment below for why it
+ *  had to exist. */
+export type SignInCodeRequestOutcome = "accepted" | "invalid_email" | "no_email_transport";
 
 export async function acceptSignInCodeRequest(input: {
   email: unknown;
@@ -105,6 +116,31 @@ export async function acceptSignInCodeRequest(input: {
   // ① format
   const email = normalizeSignInEmail(input.email);
   if (!email) return "invalid_email";
+
+  // ①′ CAN THIS DEPLOYMENT SEND MAIL AT ALL? (FRONT-A12)
+  //
+  //    WHY IT IS HERE. Step ④ tells the merchant a code is on its way. That sentence is a claim
+  //    about the future, and it was being made unconditionally — including by a deployment with
+  //    no mail transport configured, where the only thing that happens next is an operator log
+  //    line (`[better-auth] auth email delivery failed`) and an inbox that stays empty forever.
+  //    A merchant then reads "check your email" and waits for something nobody is sending. That
+  //    is the "假成功" FRONT-A12 forbids, and no amount of waiting or re-pressing cures it.
+  //
+  //    WHY IT DOES NOT RE-OPEN #678. The rule is that this path may ask no question whose answer
+  //    or cost varies with the address. This one varies with NOTHING but the process's own
+  //    configuration: it is a single environment read (lib/email → resendPortCanSend), returning
+  //    the same boolean for every address in every request, and it is asked before the address is
+  //    used for anything. When it says no, it says no to EVERY merchant at once — which is the
+  //    opposite of an account-existence oracle, and is also exactly why it is safe to say out
+  //    loud. Per-send delivery faults (the provider answering 429 or 500 for ONE message) stay
+  //    where #678 put them: an operator signal in the logs, never in this answer, because only an
+  //    address with access is ever handed to the provider and "the provider refused it" would
+  //    therefore mean "this address has access".
+  //
+  //    WHY BEFORE THE THROTTLE. A press that cannot possibly produce an email must not spend the
+  //    merchant's hourly budget on nothing. The ordering leaks nothing: the branch is taken for
+  //    all addresses or for none.
+  if (!emailTransportReady()) return "no_email_transport";
 
   // ② throttle — BOTH buckets in one call, so they are read together, decided together and
   //    written together. Neither is charged unless the request as a whole was granted: a bucket

@@ -13,6 +13,26 @@ import type { EmailMessage, EmailPort } from "./types";
  * path is left alone because a dozen local tracer scripts read it by name; renaming it is a
  * tooling change, not part of the auth flow.
  */
+
+/**
+ * FRONT-A12 — CAN THIS DEPLOYMENT PUT AN EMAIL ANYWHERE AT ALL?
+ *
+ * One boolean about the PROCESS, never about an address: it reads a single environment variable
+ * and returns the same answer for every caller, every address and every request. That is the
+ * whole reason a caller is allowed to ask it (see lib/better-auth/signin-code-request.ts) —
+ * #678's rule is that nothing on the sign-in path may ask a question whose ANSWER OR COST varies
+ * with the address, and this one cannot vary with anything but the deployment's own configuration.
+ *
+ * It is the SAME rule `send` below branches on, stated once: no key in production means the next
+ * send throws `config_missing`, and no key outside production means the dev fallback writes the
+ * credential to a file, which is a real delivery for a developer. Callers must not re-derive it —
+ * a second copy of this condition is how the page and the transport come to disagree about
+ * whether mail works.
+ */
+export function resendPortCanSend(): boolean {
+  return Boolean(process.env.RESEND_API_KEY) || process.env.NODE_ENV !== "production";
+}
+
 export function createResendEmailPort(): EmailPort {
   return {
     async send(message: EmailMessage): Promise<void> {
@@ -20,7 +40,9 @@ export function createResendEmailPort(): EmailPort {
       const preview = message.devPreview ?? text ?? message.html ?? "";
 
       if (!process.env.RESEND_API_KEY) {
-        if (process.env.NODE_ENV === "production") {
+        // Same condition as `resendPortCanSend`, asked through it rather than restated: the page
+        // that refuses early and the transport that throws late have to be reading one rule.
+        if (!resendPortCanSend()) {
           throw new EmailSendError("RESEND_API_KEY is not configured.", "config_missing");
         }
         const { writeFile, mkdir } = await import("node:fs/promises");

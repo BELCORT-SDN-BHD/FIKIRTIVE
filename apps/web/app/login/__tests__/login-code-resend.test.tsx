@@ -110,7 +110,68 @@ async function reachCodeStep() {
   return el;
 }
 
+/**
+ * 走查修复二 —— 3310 走查看到的那一幕:服务端日志写着
+ * `[better-auth] auth email delivery failed: EmailSendError`,页面照样翻到「Check your email /
+ * We sent a temporary login code to …」。现在服务端在没有邮件通道时如实回一条失败(reason
+ * "unknown",见 app/login/actions.ts 与 lib/better-auth/signin-code-request.ts 的 ①′),
+ * 这一组钉的是页面**读得懂这条失败**:留在邮箱步、说实话、绝不翻页去讲那句「已寄出」。
+ */
+describe("FRONT-A12 — an undeliverable request never becomes 'We sent a temporary login code'", () => {
+  it("FRONT-A12: stays on the email step and says why, instead of claiming a code was sent", async () => {
+    const tree = createElement(LoginForm, {
+      from: "/create",
+      googleEnabled: false,
+      initialStep: "email" as const,
+    });
+    // 服务端「这个部署寄不出邮件」的回答 —— 是 resolve 的错误,不是 reject。上一版页面对它
+    // 已经有分支,但服务端从来不会这样回答,所以这一幕在生产不可能发生;现在会。
+    requestSignInCodeMock.mockResolvedValueOnce({
+      status: "error",
+      reason: "unknown",
+      message: "We couldn't send a sign-in code. Try again.",
+    });
+    const el = await render(tree);
+
+    const email = el.querySelector<HTMLInputElement>('input[type="email"]')!;
+    await act(async () => {
+      setReactInputValue(email, "owner@example.com");
+    });
+    await act(async () => {
+      el.querySelector("form")!.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    await act(async () => root!.render(tree));
+
+    expect(el.textContent).not.toContain("Check your email");
+    expect(el.textContent).not.toContain("We sent a temporary login code to");
+    const alert = el.querySelector('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert!.textContent).toContain("Email could not be continued");
+    expect(alert!.textContent).toContain("We couldn't send a sign-in code. Try again.");
+  });
+});
+
 describe("login code step", () => {
+  it("FRONT-A12: a 'Send again' the server refuses is not reported as 'A new login code was sent.'", async () => {
+    const el = await reachCodeStep();
+
+    requestSignInCodeMock.mockResolvedValueOnce({
+      status: "error",
+      reason: "unknown",
+      message: "We couldn't send a sign-in code. Try again.",
+    });
+    await act(async () => {
+      buttonByText(el, "Send again").click();
+    });
+
+    expect(el.textContent).not.toContain("A new login code was sent.");
+    expect(el.querySelector('[role="alert"]')!.textContent).toContain(
+      "We couldn't send a sign-in code. Try again.",
+    );
+  });
+
   it("FRONT-A12: a failed 'Send again' is reported as a failure, never as 'a new code was sent'", async () => {
     const el = await reachCodeStep();
 
