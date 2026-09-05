@@ -103,9 +103,11 @@ describe("ENGINE-A7 — golden 快照迁移(#541 r6 主守卫,按 §7.2⑥ 换�
     await expect(ottoCoreInstructions).toMatchFileSnapshot("./__snapshots__/otto-core.golden.txt");
   });
 
-  it("ENGINE-A7:文件柜的形状(路径 · 书脊标签 · 装载关键词)与 golden 快照一致", async () => {
+  // `mode` 这一栏是判官 r2 补的:`reference` 件的 `when` 也是空表,以前和 `_core.md` 一样
+  // 掉进 `(always)` 兜底分支 —— 复审桌上那份工件于是把「永不装载」印成了「每轮必带」。
+  it("ENGINE-A7:文件柜的形状(路径 · 书脊标签 · 装载身份 · 装载关键词)与 golden 快照一致", async () => {
     const shape = KNOWLEDGE_CABINET.map(
-      (f) => `${f.path}\n  spine: ${f.spine}\n  when: ${f.when.join(", ") || "(always)"}`,
+      (f) => `${f.path}\n  spine: ${f.spine}\n  mode: ${f.mode}\n  when: ${f.when.join(", ") || "(none — 看 mode)"}`,
     ).join("\n");
     await expect(shape).toMatchFileSnapshot("./__snapshots__/otto-knowledge-cabinet.golden.txt");
   });

@@ -10,8 +10,12 @@
 
 **路径**：`docs/specs/otto-engine.md` §7.0 拍板一定案（取代 `docs/specs/creation-engine.md` §8.0 拍板三的占位路径 `packages/otto/craft/*.md`）。
 
-**本文已在柜中**：⑥段（技能文件柜替换单体，`docs/specs/otto-engine.md` §7.2⑥）已把本文收编进文件柜，
-由 `packages/otto/scripts/gen-knowledge.ts` 变成 build 期 TS 常量（§7.0 拍板三），对上书脊标签时整份装入本轮。
+**本文已在柜中，但身份是 `reference`**（本文第 2 行那条 `when:` 注释写的就是 `reference`）：⑥段
+（技能文件柜替换单体，`docs/specs/otto-engine.md` §7.2⑥）已把本文收编进文件柜，由
+`packages/otto/scripts/gen-knowledge.ts` 变成 build 期 TS 常量（§7.0 拍板三）。有书脊在册、
+`packages/otto/evals/checks/glossary.ts` 从这里取词，**但它不进任何一轮的上下文** ——
+`packages/otto/src/knowledge-cabinet.ts` 的 `spineIndex` 只列 `on-demand`，`matchKnowledge` 也只返回
+`always` 与 `on-demand`（`packages/otto/src/knowledge-cabinet.test.ts` 钉死这一点）。
 **代码里的那几份（skill description 与装配器）仍是运行期权威**；两边冲突时以代码为准，并回来改本文。
 -->
 

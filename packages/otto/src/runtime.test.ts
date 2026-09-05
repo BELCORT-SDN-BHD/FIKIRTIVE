@@ -73,7 +73,7 @@ import { actualCostInternal, llmHoldInternal, mapOttoUsage, withLlmBudget } from
 import { defineOttoSkill } from "./skill.js";
 import { tryRestoreRunStateWithContext } from "./run-input.js";
 import { allSkills } from "./registry.js";
-import { ottoInstructions } from "./instructions.js";
+import { assembleOttoInstructions, ottoInstructions } from "./instructions.js";
 import type { OttoContext } from "./context.js";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -676,6 +676,82 @@ describe("runOttoTurn — real meter stream failure and completion ordering (PH1
         actualInternal,
       }),
     );
+  });
+});
+// ── ENGINE-A7:装出来的说明书**真的送进模型** ─────────────────────────────────
+//
+// ⑥段唯一的承重接线。判官 r2 的变异实证:把 `execution.runAgent(agent, …)` 改回
+// `execution.runAgent(runtime.agent, …)`,全套 otto 测试 1482 passed 一条不红 ——
+// 每一轮都退回整柜(正是⑥段要退役的单体行为),而②段档案照样记 `skillFiles: ["_core.md"]`,
+// 档案于是声称一份模型根本没拿到的名单,ENGINE-A2 的诚实性当场作废。下面两条断言就是钉子:
+// 截下真正交给 SDK 的那个 agent,逐字节比对它的 instructions。
+describe("runOttoTurn — ENGINE-A7:交给 SDK 的 agent 带的是这一轮装出来的说明书", () => {
+  /** 截下 `runAgent` 收到的第一个参数(真正跑的那个 agent),模型侧一律不碰。 */
+  function capturingExecution() {
+    const seen: { instructions: unknown; agent: unknown }[] = [];
+    return {
+      seen,
+      execution: {
+        runAgent: vi.fn(async (agent: Agent<OttoContext>) => {
+          seen.push({ instructions: agent.instructions, agent });
+          return {
+            state: { usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } },
+            interruptions: [],
+            finalOutput: "ok",
+          };
+        }),
+        meter: async (_args: unknown, fn: () => Promise<{ result: unknown }>) => (await fn()).result,
+        maxTurnsExceededError: MaxTurnsExceededError,
+      },
+    };
+  }
+
+  const runtime = () =>
+    createOttoRuntime({ modelRuntime: fixtureModelRuntime(fakeTextModel("unused")), skills: [] }, "interactive");
+
+  it("ENGINE-A7:新鲜轮 —— agent.instructions 与 assembleOttoInstructions(这轮的话) 逐字节相等", async () => {
+    const rt = runtime();
+    const { seen, execution } = capturingExecution();
+
+    await runOttoTurn(
+      { orgId: "org_t", refId: "fixture:a7-fresh-short", input: "hi" },
+      baseCtx,
+      rt,
+      execution as never,
+    );
+    await runOttoTurn(
+      { orgId: "org_t", refId: "fixture:a7-fresh-poster", input: "make me a poster" },
+      baseCtx,
+      rt,
+      execution as never,
+    );
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]!.instructions).toBe(assembleOttoInstructions("hi").text);
+    expect(seen[1]!.instructions).toBe(assembleOttoInstructions("make me a poster").text);
+    // 而且它**不是**整柜底稿 —— 否则上面两条会被「整柜恰好等于装配结果」蒙混过去。
+    expect(seen[0]!.instructions).not.toBe(ottoInstructions);
+    expect(seen[1]!.instructions).not.toBe(ottoInstructions);
+    // 两轮装的不是同一份:一句话拉进来的柜文不同,说明书就不同(拆柜的意义所在)。
+    expect(seen[0]!.instructions).not.toBe(seen[1]!.instructions);
+  });
+
+  it("ENGINE-A7:恢复轮 —— agent 就是 runtime 那一个,instructions 是整柜底稿(B9 全量装载)", async () => {
+    const rt = runtime();
+    const { seen, execution } = capturingExecution();
+    // 恢复轮的 input 既不是 string 也不是数组;#566 的守卫只要求它交出同一个 context 对象。
+    const resumeInput = { _context: { context: baseCtx } };
+
+    await runOttoTurn(
+      { orgId: "org_t", refId: "fixture:a7-resume", input: resumeInput as never },
+      baseCtx,
+      rt,
+      execution as never,
+    );
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.instructions).toBe(ottoInstructions);
+    expect(seen[0]!.agent).toBe(rt.agent); // 整柜相等就不 clone,原样送出去
   });
 });
 

@@ -1,42 +1,56 @@
 _core.md
   spine: Otto — Durable Identity & Creative Rules
-  when: (always)
+  mode: always
+  when: (none — 看 mode)
 craft/prompting.md
   spine: Craft: how to build an image or video prompt, and what an attached picture or clip means
+  mode: on-demand
   when: image, images, picture, photo, photos, video, videos, clip, clips, footage, prompt, animate, animation, generate, make, create, ad, ads, poster, banner, reel, thumbnail, logo, style, edit, background, keyframe, shape, aspect, vertical, square, resolution, quality, 图, 图片, 视频, 短片, 广告, 海报, 生成, 做一张, 做一条
 craft/seedance.md
   spine: 手艺 · Seedance（视频提示词）：挑哪一档、怎么写一条片子、镜头术语表
-  when: (always)
+  mode: reference
+  when: (none — 看 mode)
 craft/seedream.md
   spine: 手艺 · Seedream（图片提示词）：t2i 还是 i2i、一句一要素、画面上的字
-  when: (always)
+  mode: reference
+  when: (none — 看 mode)
 playbooks/brand-memory.md
   spine: Playbook: what to keep in brand memory — facts, products, segments, offers
+  mode: on-demand
   when: brand, voice, tone, product, products, price, prices, offer, offers, promotion, promo, discount, segment, audience, remember, catalog, shopee, lazada, store, shop, brief, 品牌, 产品, 价格, 优惠, 客群, 记住
 playbooks/meta-ads.md
   spine: Playbook: Meta ads — reading what is live, proposing changes, and building a new ad
+  mode: on-demand
   when: meta, facebook, instagram, ad, ads, advert, campaign, campaigns, budget, boost, promote, targeting, page, audience, spend more, 广告, 投放, 预算, 推广
 playbooks/offering-directions.md
   spine: Playbook: offering a few genuinely different directions, and unsticking someone with ideas
+  mode: on-demand
   when: option, options, variation, variations, variant, directions, alternatives, ideas, idea, stuck, brainstorm, suggest, inspiration, a few, 想法, 点子, 几个, 方案
 playbooks/research.md
   spine: Playbook: researching the web — the quick look-up versus the paid deep dive
+  mode: on-demand
   when: research, search, look up, google, competitor, competitors, trend, trends, website, url, http, report, deep dive, find out, check, 调研, 搜索, 研究, 竞品, 报告
 playbooks/storyboards.md
   spine: Playbook: multi-shot videos — laying out a storyboard and editing one
+  mode: on-demand
   when: storyboard, scenes, scene, shots, sequence, multi-scene, short film, commercial, episode, series of, few scenes, 分镜, 脚本, 多个镜头, 几个场景
 product-map/canvas-and-media.md
   spine: Product map: the canvas, the finished media, the video desk, and the library
+  mode: on-demand
   when: canvas, board, node, nodes, library, media, clips, join, music, caption, captions, subtitle, subtitles, export, render, favourite, favorite, transcript, tidy, remove, delete, 画布, 素材, 字幕, 导出, 剪, 音乐
 product-map/creating.md
   spine: Product map: calling propose — the card that prices an image or a video
+  mode: on-demand
   when: image, images, picture, photo, video, videos, clip, create, make, generate, propose, ad, poster, banner, reel, thumbnail, logo, 图, 图片, 视频, 短片, 生成, 做, 海报
 product-map/import-media.md
   spine: Product map: importing an image or a video from a URL, and the reading charge it leaves behind
+  mode: on-demand
   when: import, url, link, upload, bring in, from this site, download, fetch, 导入, 链接, 上传
 product-map/projects-and-elements.md
   spine: Product map: projects, and the reusable elements (characters, locations, products, brandmarks)
+  mode: on-demand
   when: project, projects, folder, element, elements, character, characters, location, brandmark, mascot, spokesperson, model, rename, pin, 项目, 元素, 角色, 形象, 代言
 product-map/social-and-channels.md
   spine: Product map: when to post, sharing one scheduled post, and which channel accounts are connected
+  mode: on-demand
   when: schedule, scheduled, post, posting, when to post, best time, share, preview link, channel, channels, whatsapp, inbox, broadcast, connected, 排期, 发布, 分享, 渠道, 什么时候发

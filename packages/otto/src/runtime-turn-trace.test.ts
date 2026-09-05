@@ -307,6 +307,22 @@ describe("ENGINE-A2 — 无明文围栏(prompt / 消息正文 / 参数值都进�
     const facts = collectTurnTraceFacts(state, runtimeLike, port, { orgId: "org_t", refId: "otto-stream:m3" }, false);
     expect(facts.toolCalls).toEqual([{ name: UNREGISTERED_ACTION, calls: 2, ok: 0, failed: 0 }]);
   });
+  // ENGINE-A7 的 `skillFiles` 与工具名走同一条纪律,所以也要同一种围栏:直接喂一个柜外字符串。
+  // `collectTurnTraceFacts` 是 index.ts 导出的公开函数,调用方不止 `runOttoTurn` 一个 ——
+  // 只喂装配器的产物(天然合法)证明不了这道白名单存在。判官 r2 变异实证:删掉 runtime.ts 的
+  // 那一行 filter,两处围栏测试仍全绿。
+  it("ENGINE-A2: skillFiles 也过白名单 —— 柜外的字符串当场落地,不进档案", () => {
+    const facts = collectTurnTraceFacts(
+      { _currentTurn: 1, _generatedItems: [] },
+      runtimeLike,
+      port,
+      { orgId: "org_t", refId: "otto-stream:m3b" },
+      false,
+      ["Make a launch post", "_core.md", "playbooks/does-not-exist.md"],
+    );
+    expect(facts.skillFiles).toEqual(["_core.md"]);
+    expect(JSON.stringify(facts)).not.toContain("Make a launch post");
+  });
 
   it("ENGINE-A2: 白名单来自组合这台 runtime 的那份技能表(registry),不是一份手抄名单", () => {
     const runtime = createOttoRuntime(
