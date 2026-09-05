@@ -31,6 +31,15 @@ export const CHAT_THREAD_SURFACES = ["canvas", "panel"] as const;
 export type ChatThreadSurface = (typeof CHAT_THREAD_SURFACES)[number];
 
 /**
+ * 「侧栏面板自己的对话」这个字面量,只有这一处。
+ *
+ * `isPanelThread` 是判断,查询要的是**值**(`where: { surface: … }`)—— 两处各写一次
+ * `"panel"` 就是同一条规则的两份抄件。读它的是 `lib/thread-activity.ts` 的展开信号
+ * (FRONT-A14)。
+ */
+export const PANEL_THREAD_SURFACE: ChatThreadSurface = "panel";
+
+/**
  * 认不出来就是画布 —— 与老行 `null` 同一档。
  *
  * 面板是这里唯一「被自动续上」的一侧,所以默认值必须偏向**不自动续**那一边:猜错成
@@ -52,7 +61,7 @@ export function coerceThreadSurface(raw: unknown): ChatThreadSurface {
  * 它是一个**自动动作**的判据,拿不准就不做,所以未知归到「不自动续」这一边。
  */
 export function isPanelThread(surface: string | null | undefined): boolean {
-  return surface === "panel";
+  return surface === PANEL_THREAD_SURFACE;
 }
 
 /**
