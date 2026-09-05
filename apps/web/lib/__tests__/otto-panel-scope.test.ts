@@ -12,8 +12,10 @@
  *      `otto-panel-seed.test.ts`);这个文件钉的是**挂起来之后**的结果 —— 面板从一个
  *      非画布路由打开时,画布对话不进会话体,面板画的是新对话态。
  *   ② **说清这一条属于谁**。头部那一行范围标签:面板自己的对话写
- *      `Workspace · <页面名>`,画布对话写 `Canvas · <画布名>`;会话列表里画布那几条带
- *      `Canvas` 来源标签。
+ *      `Workspace · <页面名>`(页面名取自导航表那一份权威),画布对话写
+ *      `Canvas · <画布名>`;会话列表里画布那几条带 `Canvas` 来源标签。
+ *   ③ **回到画布对话是商家显式选择的结果**(清单 G1 ②)。开着工作区那一条时,更近的画布
+ *      对话一次都不许自己跳过去;从会话列表点中它,面板才换过去并当场改口。
  *
  * 措辞纪律(判官 r1 [P2],至今成立):标签只写**位置**,不写 Otto 读得到什么 —— 服务端
  * 没有任何读者会因为这一页是哪一页而改变这一轮的上下文。所以这里也反向钉一条:面板不许
@@ -222,15 +224,28 @@ describe("FRONT-A14 侧栏 Otto 的范围(Codex 全 beta 审计 P1-010)", () => 
     expect(el.querySelector("[data-otto-panel-context]")!.textContent).toContain("Canvas · Kaya jar ad");
   });
 
-  it("FRONT-A14 — a workspace conversation gets no header strip: it would only repeat what is on screen", async () => {
-    // 判官 P2-4:「Workspace · Billing & credits」是真话,但商家就在那一页上、面板就是他
-    // 刚点开的那一块 —— 它不带新信息,却占掉 320px 面板里的一整行,而且不在已批准的设计里。
+  it("FRONT-A14 — the header names the workspace page when the open conversation is the panel's own", async () => {
+    // 清单 G1 的原文要求:非画布页面打开的那条「工作区」对话也要在标题写明范围。只在画布
+    // 那一态出声,商家在两种对话之间来回时,工作区对话看起来像是「没有归属」。
+    // 页面名取自导航表(`Billing & credits` 就是 `MERCHANT_NAV` 里的那一份),不是手写。
     loadOttoPanelSeed.mockResolvedValue(seedWith({ activeThreadId: PANEL_THREAD.id }));
 
     const el = await openPanelOn(SHELL_ROUTES.billing);
 
-    expect(el.querySelector("[data-otto-panel-context]")).toBeNull();
-    expect(el.textContent).not.toContain("Workspace ·");
+    expect(el.querySelector("[data-otto-panel-context]")!.textContent).toContain("Workspace · Billing & credits");
+    expect(el.textContent).not.toContain("Canvas");
+  });
+
+  it("FRONT-A14 — a workspace page with no name in the navigation gets the bare Workspace label", async () => {
+    // Home analysis(`/analysis`)是一面真页面,但它不占导航一格,`everyNavDestination()`
+    // 里查不到名字。那时只写 `Workspace` 一个词 —— 不编一个页面名,也不写路径。
+    loadOttoPanelSeed.mockResolvedValue(seedWith({ activeThreadId: PANEL_THREAD.id }));
+
+    const el = await openPanelOn(SHELL_ROUTES.homeAnalysis);
+
+    const strip = el.querySelector("[data-otto-panel-context]")!;
+    expect(strip.textContent).toContain("Workspace");
+    expect(strip.textContent).not.toContain("·");
   });
 
   it("FRONT-A14 — a conversation with no recorded origin is never labelled Canvas", async () => {
@@ -293,7 +308,9 @@ describe("FRONT-A14 侧栏 Otto 的范围(Codex 全 beta 审计 P1-010)", () => 
     await openFromHistory(el, PANEL_THREAD.id);
 
     expect(getCoworkThreadClient).toHaveBeenCalledWith(PANEL_THREAD.id);
-    expect(el.querySelector("[data-otto-panel-context]")).toBeNull();
+    // 顶替之后头部说的仍然是工作区那一句(取回来的那一份带着 `surface: "panel"`);
+    // 一个 `Canvas` 字都不许冒出来。
+    expect(el.querySelector("[data-otto-panel-context]")!.textContent).toContain("Workspace ·");
     expect(el.textContent).not.toContain("Canvas");
   });
 
@@ -309,6 +326,42 @@ describe("FRONT-A14 侧栏 Otto 的范围(Codex 全 beta 审计 P1-010)", () => 
     const el = await openPanelOn(SHELL_ROUTES.billing);
     await openFromHistory(el, CANVAS_THREAD.id);
 
+    expect(el.querySelector("[data-otto-panel-context]")!.textContent).toContain("Canvas · Kaya jar ad");
+  });
+
+  it("FRONT-A14 — from a workspace conversation the newer canvas one stays closed until it is picked", async () => {
+    // 清单 G1 ②:回到画布对话必须是商家**显式选择**。这里商家正开着工作区那一条,而画布
+    // 那一条更近 —— 面板一次都不许自己跳过去,连列表都还没打开。
+    loadOttoPanelSeed.mockResolvedValue(
+      seedWith({ threads: [PANEL_THREAD, CANVAS_THREAD], activeThreadId: PANEL_THREAD.id }),
+    );
+
+    const el = await openPanelOn(SHELL_ROUTES.billing);
+
+    expect(el.querySelector(`[data-test-chat-stream="${PANEL_THREAD.id}"]`)).not.toBeNull();
+    expect(el.querySelector(`[data-test-chat-stream="${CANVAS_THREAD.id}"]`)).toBeNull();
+    // 头部写的仍然是工作区那一段的范围,不是画布的。
+    expect(el.querySelector("[data-otto-panel-context]")!.textContent).toContain("Workspace · Billing & credits");
+    // 自己没跳过去,也就没有替商家取过画布那一条。
+    expect(getCoworkThreadClient).not.toHaveBeenCalled();
+  });
+
+  it("FRONT-A14 — picking the canvas conversation from the history is what takes the merchant back to it", async () => {
+    // 同一场景的另一半:显式那一下**必须真的管用** —— 从会话列表点中画布那一行,面板才
+    // 换过去,并且当场改口写「Canvas · <画布名>」。
+    loadOttoPanelSeed.mockResolvedValue(
+      seedWith({ threads: [PANEL_THREAD, CANVAS_THREAD], activeThreadId: PANEL_THREAD.id }),
+    );
+    getCoworkThreadClient.mockResolvedValue({
+      ...CANVAS_THREAD,
+      messages: [{ id: "m1", role: "USER", kind: "TEXT", seq: 1, text: "hi", createdAt: "2026-08-21T09:00:00.000Z" }],
+    });
+
+    const el = await openPanelOn(SHELL_ROUTES.billing);
+    await openFromHistory(el, CANVAS_THREAD.id);
+
+    expect(getCoworkThreadClient).toHaveBeenCalledWith(CANVAS_THREAD.id);
+    expect(el.querySelector(`[data-test-chat-stream="${CANVAS_THREAD.id}"]`)).not.toBeNull();
     expect(el.querySelector("[data-otto-panel-context]")!.textContent).toContain("Canvas · Kaya jar ad");
   });
 
