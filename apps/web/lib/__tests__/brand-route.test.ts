@@ -68,10 +68,22 @@ describe("W2-2 ① `/brand` 是真路由", () => {
     expect(existsSync(join(WEB_ROOT, dir, "page.tsx")), `${dir}/page.tsx 不存在`).toBe(true);
   });
 
-  it("页面渲染的是 OttoMemory 那一份实现,没有第二套品牌视图", () => {
-    const page = source(join(dir, "page.tsx"));
+  // 【2026-09-03 改判 · FRONT-A8】`/brand` 的页面内容改由 `docs/specs/frontend-baseline.md`
+  // §7.3④ 说了算(Founder 2026-09-03 裁决三:Brand 按设计五节)。W2-2 立这条断言是为了钉
+  // 「搬家不是重写」—— 那件事仍然成立,只是 `OttoMemory` 这份实现搬去了 `/brand/records`:
+  // 产品 / 优惠 / 客群的结构化编辑器不在设计的五节里,而它今天是这三类记录唯一的入口,
+  // 悄悄删掉就是把一件商家在用的能力弄丢。所以断言跟着搬,不是取消。
+  it("那一份 OttoMemory 实现仍然挂着(搬去 /brand/records),没有被重写成第二套", () => {
+    const page = source(join(dir, "records", "page.tsx"));
     expect(page).toContain('from "@/components/otto/OttoMemory"');
     expect(page).toContain("<OttoMemory");
+  });
+
+  it("FRONT-A8 `/brand` 本身是设计的五节工作台,而且只有这一张 Brand home", () => {
+    const page = source(join(dir, "page.tsx"));
+    expect(page).toContain("BrandWorkspace");
+    // 五节页面自己不许再挂一份 OttoMemory —— 那才是「第二套品牌视图」。
+    expect(page).not.toContain("OttoMemory");
   });
 
   it("等待画面走 ui/skeleton,不手搓那一份 pulse 配方(规格书 §5.6 ③)", () => {
@@ -190,6 +202,9 @@ vi.mock("@/lib/dto", () => ({ toEntityDTO: (entity: unknown) => entity }));
 
 const { OttoMemory } = await import("@/components/otto/OttoMemory");
 const { default: BrandPage } = await import("@/app/brand/page");
+// FRONT-A8 之后,`?project=` 归一那件事跟着 `OttoMemory` 一起搬到了 `/brand/records`
+// (五节页面本身与 project 无关 —— 它读的是品牌记录,不续任何一条对话)。
+const { default: BrandRecordsPage } = await import("@/app/brand/records/page");
 const { ottoTurn } = await import("@/lib/otto-client-actions");
 const { getCoworkThreadClient } = await import("@/lib/cowork-fetch");
 
@@ -319,25 +334,48 @@ describe("W2-2 · /brand 这扇门自己的行为", () => {
     expect(listBrandRecords).not.toHaveBeenCalled();
   });
 
+  it("不带 ?project= 也不动地址栏", async () => {
+    const { redirectedTo } = await runBrandPage();
+    expect(redirectedTo).toBeNull();
+  });
+});
+
+// ── FRONT-A8:`?project=` 归一跟着 OttoMemory 搬到了 /brand/records ──────────────
+//
+// W2-2 把这四条钉在 `/brand` 上,因为那时 `/brand` 渲染的就是 `OttoMemory`,而 project
+// 决定的是「品牌聊天续的是哪一条会话」。五节工作台不续会话,也就没有 project 这回事;
+// 那段逐行未改的代码今天住在 `/brand/records`。断言跟着搬,行为一个字没松。
+describe("FRONT-A8 · /brand/records 的 ?project= 归一(W2-2 那四条,原地搬家)", () => {
+  async function runRecordsPage(query: Record<string, string> = {}): Promise<{ redirectedTo: string | null }> {
+    try {
+      await BrandRecordsPage({ searchParams: Promise.resolve(query) });
+      return { redirectedTo: null };
+    } catch (error) {
+      const digest = (error as { digest?: string }).digest ?? "";
+      if (!digest.startsWith("NEXT_REDIRECT;")) throw error;
+      return { redirectedTo: digest.slice("NEXT_REDIRECT;".length) };
+    }
+  }
+
   it("?project= 指到别人的项目时,改地址栏 —— 不静默回落(判官 P3-1)", async () => {
     // `/otto` 一直是这么做的。静默回落会把一个假 id 留在地址栏上,而屏幕上的内容其实来自
     // 另一个项目 —— 刷新、分享、收藏带走的都是那个假 id。
-    const { redirectedTo } = await runBrandPage({ project: "proj_someone_else" });
-    expect(redirectedTo).toBe("/brand?project=proj_1");
+    const { redirectedTo } = await runRecordsPage({ project: "proj_someone_else" });
+    expect(redirectedTo).toBe("/brand/records?project=proj_1");
   });
 
   it("纠正地址的时候不顺手把页签丢了", async () => {
-    const { redirectedTo } = await runBrandPage({ project: "proj_someone_else", tab: "products" });
-    expect(redirectedTo).toBe("/brand?project=proj_1&tab=products");
+    const { redirectedTo } = await runRecordsPage({ project: "proj_someone_else", tab: "products" });
+    expect(redirectedTo).toBe("/brand/records?project=proj_1&tab=products");
   });
 
   it("?project= 是自己的项目就不动地址栏", async () => {
-    const { redirectedTo } = await runBrandPage({ project: "proj_2" });
+    const { redirectedTo } = await runRecordsPage({ project: "proj_2" });
     expect(redirectedTo).toBeNull();
   });
 
   it("不带 ?project= 也不动地址栏 —— 归一只对着那个假 id,不是对着每一次访问", async () => {
-    const { redirectedTo } = await runBrandPage();
+    const { redirectedTo } = await runRecordsPage();
     expect(redirectedTo).toBeNull();
   });
 });
