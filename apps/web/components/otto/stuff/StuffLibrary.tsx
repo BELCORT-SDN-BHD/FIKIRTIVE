@@ -357,8 +357,7 @@ export function StuffLibrary({
               </EmptyMedia>
               <EmptyTitle>Build your reusable asset library</EmptyTitle>
               <EmptyDescription>
-                Add your first character or product photo. Otto keeps it consistent across every
-                project.
+                {`Add your first character or product photo. Otto keeps it consistent across every ${PRODUCT_VOCABULARY.canvas}.`}
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>

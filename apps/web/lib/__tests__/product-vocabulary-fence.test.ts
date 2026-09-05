@@ -33,12 +33,16 @@
  *   · **全小写的单词片段**（`"project"`、`"canvas"`）：判别式常量、query 参数、路由片段。
  *     首字母大写的单词片段（`Assets`、`Library`）照扫——那正是面名标签的形状
  *     （判官 #1251 P2-3：一律跳过没有空格的片段，等于让 `<h2>Projects</h2>` 永远漏网）。
- *   · **剩下的盲点**（有已知实例，写在这里免得下一个人以为守住了）：跨行的 JSX 文本节点
- *     只在**整行都是散文**时才认得出（见 `merchantCopySegments`）——一句话被拆成
- *     「半行 JSX ＋ 半行文字」时会漏，例如
- *     `<p>Otto uses this on every <strong>Canvas</strong>` 这种把词包进标签的写法，
- *     `<>` 一出现整行就不算散文了。**全小写的独占行**（`project` 独占一行）也跳过，
- *     那是标识符的形状。数据库里商家自填的文本本围栏同样管不到。
+ *   · **解构参数的续行**（`  projects,` 独占一行）：见 `CODE_CONTINUATION_LINE`。合并散文
+ *     段之后它才成问题，所以排除写在那里，不在这条清单上多说。
+ *   · **剩下的盲点**（有已知实例，写在这里免得下一个人以为守住了）：一句话被拆成
+ *     「半行 JSX ＋ 半行文字」时仍会漏，例如
+ *     `<p>Otto uses this on every <strong>Canvas</strong>` 这种把词包进标签的写法——
+ *     `<>` 一出现那一行就不算散文，也就接不进散文段。数据库里商家自填的文本同样管不到。
+ *   · **跳过的是「整段全小写」，不是「整行全小写」**（判官 #1251 第四轮）：连续的散文行
+ *     先合并成一段再判，所以 `Otto keeps it consistent across every` ／ `project.` 拆成
+ *     两行也照样命中；只有合并后**整段没有一个大写字母**（判别式常量、query 参数、
+ *     路由片段独占一行的形状）才跳过。
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -91,18 +95,19 @@ const RETIRED_WORD_EXEMPT_COPY: readonly { readonly file: string; readonly copy:
 ];
 
 /**
- * 「五个现行产品名不许写裸字面量」的豁免文件。只有一个理由站得住：那一句被别的围栏
- * **按源码字面**钉在设计系统夹具上，而夹具对所有段只读（`frontend-baseline.md` §7.4 裁决九），
- * 改成 `${PRODUCT_VOCABULARY.canvas}` 会让那道围栏红。
+ * 「五个现行产品名不许写裸字面量」的豁免——**按整句，不按文件**（判官 #1251 第四轮 P2-1：
+ * 按文件豁免时，那个文件里此后新写的每一处裸字面量都白白搭了顺风车；上一轮两个豁免文件
+ * 里实际站得住的只有 `Canvas history` 那一行）。形状与 `RETIRED_WORD_EXEMPT_COPY` 一样：
+ * 整句列在这里，改一个字就不再豁免。
+ *
+ * 唯一站得住的理由：那一句被别的围栏**按源码字面**钉在设计系统夹具上，而夹具对所有段
+ * 只读（`frontend-baseline.md` §7.4 裁决九），改成 `${PRODUCT_VOCABULARY.canvas}` 会让那道围栏红。
  */
-const SINGLE_SOURCE_EXEMPT_FILES: readonly { readonly file: string; readonly why: string }[] = [
+const SINGLE_SOURCE_EXEMPT_COPY: readonly { readonly file: string; readonly copy: string; readonly why: string }[] = [
   {
     file: "components/start-something/CreateWorkspace.tsx",
-    why: "`Canvas history` 那一行被 create-design-parity.test.tsx:139 逐字比对夹具 CreateWorkspaceReference.tsx，另有 create-design-system / create-route-rename 两道 toContain。",
-  },
-  {
-    file: "components/canvas/NorthstarHome.tsx",
-    why: "CreateWorkspace 的成对实现（create-route-rename.test.ts 抬头写明「NorthstarHome pair」），两边文案保持逐字相同才比得下去。",
+    copy: '<h2 id="canvas-history-heading" className="text-sm font-semibold">Canvas history</h2>',
+    why: "这一整行被 create-design-parity.test.tsx:139 逐字比对夹具 CreateWorkspaceReference.tsx，另有 create-design-system.test.ts:36 与 create-route-rename.test.ts:65 两道按源码字面的 toContain。",
   },
 ];
 
@@ -150,37 +155,93 @@ function stripComments(source: string): string {
     .replace(/(^|[^:])\/\/[^\n]*/g, (all, keep: string) => keep + " ".repeat(all.length - keep.length));
 }
 
+/** 一段商家读得到的文案，连同它在文件里从第几行开始（报错要报得出行号）。 */
+interface CopySegment {
+  readonly line: number;
+  readonly text: string;
+}
+
 /**
- * 一行里商家读得到的片段：字符串字面量 / 同行的 JSX 文本 / 整行都是散文的 JSX 文本行。
+ * 解构参数与对象字面量的**续行**：`filters,` / `sidebarThreads: threads,` 这种
+ * 「一个标识符加一个逗号」独占一行的形状。它们不含 `<>{}=();[]`，逐行判时无所谓，
+ * 合并成段之后却会和邻行拼成假文案（`OttoThreadList({ projects, activeProjectId, … })`
+ * 拼出来就带着 `projects` 这个旧词）。商家文案不长这样：一行只有一个词、还以逗号结尾。
+ */
+const CODE_CONTINUATION_LINE = /^[\w$]+(?:\s*:\s*[\w$.]+)?[,;]$/;
+
+/** 这一行是不是「整行都是散文」：剥掉样式与 HTML 实体后非空，且不含任何代码形状。 */
+function proseOf(line: string): string {
+  const withoutStyles = line.replace(/\b(?:className|class)=(?:\{[^}]*\}|"[^"]*"|'[^']*')/g, " ");
+  const prose = withoutStyles.replace(/&[a-z]+;/g, "").trim();
+  if (!prose || /[<>{}=();[\]]/.test(prose) || CODE_CONTINUATION_LINE.test(prose)) return "";
+  return prose;
+}
+
+/**
+ * 商家读得到的片段：字符串字面量 / 同行的 JSX 文本 / **连续散文行合并成的整段**。
  *
  * 每一处排除都对应一类**不是文案**的字符串——留着它们，围栏就会逼人把变量名和样式类
  * 改成假话（误报比漏报更贵：它把人训练成绕过围栏）：
  *   · `className` / `class` 的值是样式作用域名（Tailwind 的 `group/project`）；
  *   · `${…}` 插值里是表达式，商家读到的是它的**值**；
  *   · `console.*` 是开发者日志；
- *   · 全小写、没有空格的单词片段是标识符／query 参数／路由片段。
+ *   · 没有空格、又不是大写起头的单词片段是标识符／query 参数／路由片段。
  *
- * 「整行散文」那一条补的是最常见的一个漏：多行 JSX 里，一句 `<AlertDescription>` 的正文
- * 独占一行，同行既没有 `>` 也没有 `<`，按同行规则永远抓不到（`FactSection.tsx` 的删除
- * 影响句就是这样藏了下来）。判据＝整行没有 `<>{}=();[]`、非空、不是全小写。
+ * 「散文段」那一条补的是最常见的一个漏：多行 JSX 里，一句 `<EmptyDescription>` 的正文
+ * 独占一行或几行，同行既没有 `>` 也没有 `<`，按同行规则永远抓不到（`FactSection.tsx`
+ * 的删除影响句就是这样藏了下来）。
  *
- * **判据在 2026-09-06 放宽过一次**（判官 #1251 第三轮 P1-2）：原本还要求「至少三个词」，
- * 于是**独占一行的一两个词**——多行 JSX 里最常见的徽章／标签形状，例如
- * `OttoThreadList.tsx` 那个独占一行的 `Canvas` 徽章——整类都是盲区。现在只要整行是散文
- * 且带大写字母就算文案；全小写的独占行（`project`、`canvas`）仍跳过，那是标识符的形状。
+ * **合并是 2026-09-06 第四轮补的**（判官 #1251 P1-2）：判据此前逐行判，于是一句话被
+ * 折行折断时，**尾巴那一行独占的小写单词**会被当成标识符跳过——`StuffLibrary.tsx` 的
+ * 上手空态正是这样藏了三轮：`… across every` 一行、`project.` 一行，两行分开看都不像
+ * 文案，围栏长绿。现在先把**连续的散文行**按行序拼成一段（行号记第一行），再对整段判
+ * 「是不是全小写」与旧词／裸字面量；整段一个大写字母都没有才跳过。
  */
-function merchantCopySegments(line: string): string[] {
-  if (/\bconsole\.\w+\(/.test(line)) return [];
-  const withoutStyles = line.replace(/\b(?:className|class)=(?:\{[^}]*\}|"[^"]*"|'[^']*')/g, " ");
-  const literals = [...withoutStyles.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|`([^`\\]*(?:\\.[^`\\]*)*)`/g)]
-    .map((match) => match[1] ?? match[2] ?? match[3] ?? "");
-  const jsxText = [...withoutStyles.matchAll(/>([^<>{}]+)</g)].map((match) => match[1]);
-  const proseOnly = withoutStyles.replace(/&[a-z]+;/g, "").trim();
-  const proseLine =
-    proseOnly && !/[<>{}=();[\]]/.test(proseOnly) && proseOnly !== proseOnly.toLowerCase() ? [proseOnly] : [];
-  return [...literals, ...jsxText, ...proseLine]
-    .map((segment) => segment.replace(/\$\{[^}]*\}/g, " "))
-    .filter((segment) => /\s/.test(segment.trim()) || /^[A-Z]/.test(segment.trim()));
+function copySegmentsOf(input: string | readonly string[]): CopySegment[] {
+  const lines = typeof input === "string" ? [input] : input;
+  const segments: CopySegment[] = [];
+  let proseStart = -1;
+  let proseParts: string[] = [];
+
+  const flushProse = () => {
+    if (proseParts.length > 0) {
+      const merged = proseParts.join(" ").trim();
+      // 整段全小写＝标识符／query 参数／路由片段的形状,跳过;有一个大写字母就当文案。
+      if (merged && merged !== merged.toLowerCase()) segments.push({ line: proseStart, text: merged });
+    }
+    proseParts = [];
+    proseStart = -1;
+  };
+
+  lines.forEach((line, index) => {
+    if (/\bconsole\.\w+\(/.test(line)) {
+      flushProse();
+      return;
+    }
+    const withoutStyles = line.replace(/\b(?:className|class)=(?:\{[^}]*\}|"[^"]*"|'[^']*')/g, " ");
+    const literals = [...withoutStyles.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|`([^`\\]*(?:\\.[^`\\]*)*)`/g)]
+      .map((match) => match[1] ?? match[2] ?? match[3] ?? "");
+    const jsxText = [...withoutStyles.matchAll(/>([^<>{}]+)</g)].map((match) => match[1]);
+    for (const raw of [...literals, ...jsxText]) {
+      const text = raw.replace(/\$\{[^}]*\}/g, " ");
+      if (/\s/.test(text.trim()) || /^[A-Z]/.test(text.trim())) segments.push({ line: index, text });
+    }
+
+    const prose = proseOf(line);
+    if (prose) {
+      if (proseStart < 0) proseStart = index;
+      proseParts.push(prose);
+    } else {
+      flushProse();
+    }
+  });
+  flushProse();
+  return segments;
+}
+
+/** 只要文本的薄壳：自证用例读起来直白些,扫描走 `copySegmentsOf` 是为了拿行号。 */
+function merchantCopySegments(input: string | readonly string[]): string[] {
+  return copySegmentsOf(input).map((segment) => segment.text);
 }
 
 function scan(files: readonly string[], find: (copy: string) => readonly string[], label: string): string[] {
@@ -188,13 +249,13 @@ function scan(files: readonly string[], find: (copy: string) => readonly string[
   for (const file of files) {
     const raw = readFileSync(file, "utf8");
     const rawLines = raw.split("\n");
-    stripComments(raw).split("\n").forEach((line, index) => {
-      for (const segment of merchantCopySegments(line)) {
-        for (const found of find(segment)) {
-          hits.add(`${file.slice(WEB_ROOT.length + 1)}:${index + 1} ${label}「${found}」 → ${rawLines[index].trim()}`);
-        }
+    for (const segment of copySegmentsOf(stripComments(raw).split("\n"))) {
+      for (const found of find(segment.text)) {
+        hits.add(
+          `${file.slice(WEB_ROOT.length + 1)}:${segment.line + 1} ${label}「${found}」 → ${rawLines[segment.line].trim()}`,
+        );
       }
-    });
+    }
   }
   return [...hits];
 }
@@ -217,18 +278,20 @@ describe("FRONT-A14 词汇围栏:界面文案不再出现被裁掉的旧产品�
 
 describe("FRONT-A14 词汇围栏:五个产品名只在 lib/product-vocabulary.ts 定义一次", () => {
   it.each(SURFACE_CASES)("FRONT-A14 %s 面不写产品名的裸字面量", (_surface, roots) => {
-    const exempt = new Set(SINGLE_SOURCE_EXEMPT_FILES.map((e) => e.file));
-    const files = filesOfSurface(roots).filter((file) => !exempt.has(file.slice(WEB_ROOT.length + 1)));
-    const hits = scan(files, productWordLiteralsIn, "裸字面量");
+    const hits = scan(filesOfSurface(roots), productWordLiteralsIn, "裸字面量").filter(
+      (hit) => !SINGLE_SOURCE_EXEMPT_COPY.some((e) => hit.includes(e.file) && hit.includes(e.copy)),
+    );
     expect(
       hits,
       `这些文案手抄了产品名。改法:引用 PRODUCT_VOCABULARY（显示的字一个不变）。\n${hits.join("\n")}`,
     ).toEqual([]);
   });
 
-  it("FRONT-A14 单源豁免只有夹具逐字比对这一个理由,且每条都写明是哪一道围栏在钉", () => {
-    for (const { file, why } of SINGLE_SOURCE_EXEMPT_FILES) {
+  it("FRONT-A14 单源豁免逐句核对:按整句放行,那一句必须还在原文件里,且写明是哪道围栏在钉", () => {
+    // 按文件豁免＝那个文件此后新写的裸字面量全搭顺风车(判官 #1251 第四轮 P2-1)。
+    for (const { file, copy, why } of SINGLE_SOURCE_EXEMPT_COPY) {
       expect(statSync(join(WEB_ROOT, file)).isFile(), `${file} 已不存在,豁免该删了`).toBe(true);
+      expect(readFileSync(join(WEB_ROOT, file), "utf8"), `${file} 里已经没有这一句,豁免该删了`).toContain(copy);
       expect(why, `${file} 的豁免没写清是哪道围栏在钉`).toMatch(/test\.tsx?|parity|rename/);
     }
   });
@@ -272,6 +335,34 @@ describe("FRONT-A14 词汇围栏自证", () => {
     expect(merchantCopySegments('console.warn("canvas recovery will place its card");')).toEqual([]);
     expect(merchantCopySegments("<span>{project.name}</span>")).toEqual([]);
     expect(merchantCopySegments("              project")).toEqual([]);
+  });
+
+  it("FRONT-A14 提取器把折行的一句话先合并再判,尾巴那一行独占的小写词不再当标识符放走", () => {
+    // 这是 `StuffLibrary.tsx` 的上手空态藏了三轮的形状(判官 #1251 第四轮 P1-2):
+    // 「… across every」一行、「project.」一行,逐行判时后一行全小写被当标识符跳过。
+    const wrapped = ["    Otto keeps it consistent across every", "    project."];
+    expect(merchantCopySegments(wrapped)).toEqual(["Otto keeps it consistent across every project."]);
+    expect(retiredProductWordsIn(merchantCopySegments(wrapped)[0]!)).toContain("Project");
+    // 合并后的行号记的是第一行,报错才指得回那句话的开头。
+    expect(copySegmentsOf(["", ...wrapped])[0]?.line).toBe(1);
+    // 非散文的一行把段落切断:两句不相干的话不会被拼成一段。
+    expect(merchantCopySegments(["    Otto keeps it consistent across every", "    <Button>", "    project."])).toEqual(
+      ["Otto keeps it consistent across every"],
+    );
+    // 「整段全小写」仍然跳过 —— 跳过的判据从「整行」挪到了「整段」,不是取消了。
+    expect(merchantCopySegments(["    canvas", "    project"])).toEqual([]);
+  });
+
+  it("FRONT-A14 合并不把解构参数当文案:一行一个标识符加逗号的形状不进散文段", () => {
+    // 合并带来的唯一一类新误报:`OttoThreadList({ projects, activeProjectId, … })` 这样
+    // 一行一个参数的写法,逐行都不含代码字符,拼起来却带着 `projects` 这个旧词。
+    const destructuring = ["export function OttoThreadList({", "  projects,", "  activeProjectId,", "}) {"];
+    expect(merchantCopySegments(destructuring)).toEqual([]);
+    expect(merchantCopySegments(["  sidebarThreads: threads,"])).toEqual([]);
+    // 反面:真文案里的逗号结尾行(多个词)照旧算散文,不许借这条规则开后门。
+    expect(merchantCopySegments(["    Upload a product photo,", "    a character, or a logo."])).toEqual([
+      "Upload a product photo, a character, or a logo.",
+    ]);
   });
 
   it("FRONT-A14 目录遍历跟得过软链:panel 与 brand 两棵软链子树真的被扫到了", () => {

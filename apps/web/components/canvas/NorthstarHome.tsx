@@ -11,6 +11,7 @@ import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Separator } from "@/components/ui/separator";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 export interface NorthstarHomeProject {
   id: string;
@@ -48,13 +49,13 @@ export function NorthstarHome({ projects }: { projects: NorthstarHomeProject[] }
         </div>
         <StartSomething />
         <p className="mt-2 text-xs text-muted-foreground">
-          Nothing paid starts before you confirm the exact credits in Canvas.
+          {`Nothing paid starts before you confirm the exact credits in ${PRODUCT_VOCABULARY.canvas}.`}
         </p>
       </section>
 
       <section aria-labelledby="canvas-history-heading" className="mt-14 border-t border-border pt-7">
         <h2 id="canvas-history-heading" className="text-sm font-semibold text-foreground">
-          Canvas history
+          {`${PRODUCT_VOCABULARY.canvas} history`}
         </h2>
         {projects.length === 0 ? (
           <Empty className="mt-3 min-h-40 border border-dashed py-8">
@@ -64,7 +65,7 @@ export function NorthstarHome({ projects }: { projects: NorthstarHomeProject[] }
               </EmptyMedia>
               <EmptyTitle className="text-base">No canvases yet</EmptyTitle>
               <EmptyDescription>
-                Describe something above. Your Canvas and Conversation will stay together here.
+                {`Describe something above. Your ${PRODUCT_VOCABULARY.canvas} and Conversation will stay together here.`}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
