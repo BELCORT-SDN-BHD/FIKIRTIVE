@@ -1,10 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { readFile, rm } from "node:fs/promises";
-import path from "node:path";
 import { EmailSendError } from "../types";
 import { createResendEmailPort } from "../resend-adapter";
-
-const DEV_FILE = path.join(process.cwd(), "..", "..", ".data", "last-magic-link.txt");
 
 describe("createResendEmailPort", () => {
   beforeEach(() => {
@@ -12,47 +8,25 @@ describe("createResendEmailPort", () => {
     delete process.env.AUTH_EMAIL_FROM;
     vi.stubEnv("NODE_ENV", "test");
   });
-  afterEach(async () => {
-    await rm(DEV_FILE, { force: true });
+  afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
 
-  describe("dev fallback (no RESEND_API_KEY, non-production)", () => {
-    it("writes devPreview to <repo>/.data/last-magic-link.txt when given, without hitting the network", async () => {
+  describe("config_missing classification", () => {
+    it("throws EmailSendError(kind: config_missing) whenever no key is configured", async () => {
+      // 这一条从「生产才抛」放宽成「没钥匙就抛」:没钥匙时的本地回落已经整块搬去
+      // `stub-adapter.ts`,由 `transport.ts` 按名字挑,这个适配器只会在**有钥匙**时被选中。
+      // 于是没钥匙调用它是一个响亮的故障,而不是一次 `Bearer undefined` 的真请求。
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock);
-      const port = createResendEmailPort();
-
-      await port.send({ to: "a@x.test", subject: "S", text: "Sign in:\nhttps://x.test/verify?t=1\n\nignore.", devPreview: "https://x.test/verify?t=1" });
-
-      expect(await readFile(DEV_FILE, "utf8")).toBe("https://x.test/verify?t=1");
-      expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-    it("falls back to text (then html) when devPreview is omitted", async () => {
-      const port = createResendEmailPort();
-      await port.send({ to: "a@x.test", subject: "S", text: "plain body" });
-      expect(await readFile(DEV_FILE, "utf8")).toBe("plain body");
-    });
-
-    it("logs the same preview value it persists", async () => {
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      const port = createResendEmailPort();
-      await port.send({ to: "a@x.test", subject: "Sign in to Fikirtive", devPreview: "u123" });
-      expect(logSpy).toHaveBeenCalledWith("[better-auth] Sign in to Fikirtive for a@x.test: u123");
-    });
-  });
-
-  describe("config_missing classification", () => {
-    it("throws EmailSendError(kind: config_missing) when no key is configured in production", async () => {
-      vi.stubEnv("NODE_ENV", "production");
       const port = createResendEmailPort();
       const err = await port.send({ to: "a@x.test", subject: "S", text: "t" }).catch((e) => e);
       expect(err).toBeInstanceOf(EmailSendError);
       expect((err as EmailSendError).message).toBe("RESEND_API_KEY is not configured.");
       expect((err as EmailSendError).kind).toBe("config_missing");
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 
