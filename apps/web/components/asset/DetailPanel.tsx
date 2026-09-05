@@ -8,10 +8,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
 import type { Area } from "react-easy-crop";
+import Link from "next/link";
+import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { getGeneration } from "@/lib/asset-actions";
 import { saveCroppedGeneration } from "@/lib/asset-actions";
 import { setFavorite } from "@/lib/asset-actions";
-import { deleteGeneration } from "@/lib/actions";
+import { deleteGeneration, getGenerationLineage, type GenerationLineage } from "@/lib/actions";
+import { CollectionDialogs } from "@/components/library/CollectionDialogs";
 import { getPublicMediaLink } from "@/lib/media-link-actions";
 import {
   startAssetGen,
@@ -33,7 +36,7 @@ import {
   type PublicMediaTtlUnit,
 } from "@/lib/media-public-link";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
-import { CropIcon, DownloadIcon, HeartIcon, LinkIcon, PlayIcon, RotateCcwIcon } from "lucide-react";
+import { CropIcon, DownloadIcon, FolderPlusIcon, HeartIcon, LinkIcon, PlayIcon, RotateCcwIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -200,6 +203,14 @@ export default function DetailPanel({
   // 面板一关商家就以为删掉了,而服务端刚刚拒绝了这次删除。
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  /**
+   * 血缘节(清单 B3 / P1-007):出处、参考、成本、状态、用途。
+   * `null` = 还没取到 / 取不到 ⇒ 整块不渲染,一个字都不说 —— 与本面板另外三块回执同一条
+   * 纪律(有则显示、无则整行不出现),绝不用占位话冒充一份不存在的记录。
+   */
+  const [lineage, setLineage] = useState<GenerationLineage | null>(null);
+  /** 「Add to collection」掀开的那个弹层 —— 与 Library 网格用的是同一个(#1159 的动作层)。 */
+  const [collectionOpen, setCollectionOpen] = useState(false);
   const regenBusyRef = useRef(false);
   const animBusyRef = useRef(false);
   const editBusyRef = useRef(false);
@@ -231,6 +242,8 @@ export default function DetailPanel({
       setPaidActionError(null);
       setActionError(null);
       setDeleteError(null);
+      // 换看另一条素材 ⇒ 上一条的血缘节作废,不让上一件的出处/成本停在这一件上。
+      setLineage(null);
       // 换看另一条素材 ⇒ 上一条的复制回执同样作废(判官 #1193 P2-d 的第二处)。
       setCopied(false);
       setCopiedMs(null);
@@ -244,6 +257,17 @@ export default function DetailPanel({
       setGen(result);
       setFavoriteLocal(result.favorite);
       setState("ready");
+
+      // 血缘节自己一趟读:它比主 DTO 多问四张表(画布、对话、分镜/战役、账本),
+      // 取不到就整块不显示 —— 一次追溯读失败不该把这一面素材本身也拖成错误态。
+      void getGenerationLineage(generationId)
+        .then((record) => {
+          if (cancelledRef.current) return;
+          setLineage("error" in record ? null : record);
+        })
+        // 这一趟**摔了也只是少一块追溯记录**:面板本身、素材本身、那几颗动作键都不受影响。
+        // 不 catch 的话,一次网络抖动会变成一条未处理的 promise 拒绝。
+        .catch(() => { if (!cancelledRef.current) setLineage(null); });
 
       // Restore persisted variant pick
       const saved = readPick(result.id);
@@ -379,7 +403,7 @@ export default function DetailPanel({
       // 服务端那句原样送到屏幕上(`setFavorite` 的 "Not authorized." / "Not found.",
       // asset-actions.ts)—— 不在这一层编一句更好听的。回滚是**状态**正确,不是反馈:
       // 心形自己弹回去,商家只看见「点了又弹回来」,不知道是被拒了还是自己点空了。
-      setActionError({ title: "Couldn't update Saved", message: result.error });
+      setActionError({ title: "Couldn't update favorites", message: result.error });
       return;
     }
     setActionError(null);
@@ -617,9 +641,11 @@ export default function DetailPanel({
 
   const confirmDetails = confirmAction === "delete"
     ? {
-        title: "Delete this asset?",
-        description: "This removes the selected generation from your library. A canvas card that uses it stays where it is and reads 'Preview missing'. This cannot be undone.",
-        confirmLabel: "Delete",
+        title: "Move this asset to trash?",
+        // 不承诺任何保留天数:全仓没有一个清扫任务硬删这些行,也就没有一个「30 天」的单一
+        // 来源可以引用(唯一硬删是项目删除,那是另一件事)。说得出来的只有「找得回来」。
+        description: "It leaves your library and waits in Trash — open More filters → Show → Trash to bring it back. A canvas card that uses it stays where it is and reads 'Preview missing' until you restore it.",
+        confirmLabel: "Move to trash",
         disabled: readOnly,
       }
     : null;
@@ -937,6 +963,52 @@ export default function DetailPanel({
               </div>
             )}
 
+            {/* 血缘节(清单 B3 / P1-007)—— 「每个东西都要有迹可循」在这一面上的那一半。
+
+                五格全部读**已经记下来的**列(`lib/actions.getGenerationLineage`),一个都不
+                现算:出处画布/对话来自 `Generation.projectId` / `threadId`(两条都能点回去)、
+                参考来自生成那一刻冻结的元素名快照、成本折的是产出它那一单的**账本行**
+                (与画布卡片信息面同一个 `netChargedInternalCredits`)、状态来自 `GenJob.status`、
+                用途来自这一行自己身上的 `shotId` / `campaignId`。
+
+                取不到就整块不渲染(`lineage === null`),与本面板另外三块回执同一条纪律:
+                有则显示、无则整行不出现,不用占位话冒充一份不存在的记录。
+                每一行也各自这样办 —— 没有引用就不写 "None"、成本未知就不写一个 0。 */}
+            {lineage && (
+              <div className="cv-detail-fact">
+                <span className="cv-panel-label">Where this came from</span>
+                <p className="cv-detail-fact-copy">
+                  {"Canvas: "}
+                  <Link href={`${CANVAS_HREF}?project=${encodeURIComponent(lineage.canvas.id)}`} className="underline">
+                    {lineage.canvas.name ?? "Open canvas"}
+                  </Link>
+                  {lineage.conversation ? (
+                    <>
+                      {" · Conversation: "}
+                      <Link
+                        href={`${CANVAS_HREF}?project=${encodeURIComponent(lineage.canvas.id)}&thread=${encodeURIComponent(lineage.conversation.id)}`}
+                        className="underline"
+                      >
+                        {lineage.conversation.title ?? "Open conversation"}
+                      </Link>
+                    </>
+                  ) : null}
+                </p>
+                {lineage.references.length > 0 && (
+                  <p className="cv-detail-fact-copy">References used: {lineage.references.join(", ")}</p>
+                )}
+                {lineage.costCredits != null && (
+                  <p className="cv-detail-fact-copy">
+                    {lineage.costCredits === 0 ? "Cost: no credits charged" : `Cost: ${creditsLabel(lineage.costCredits)}`}
+                  </p>
+                )}
+                <p className="cv-detail-fact-copy">Status: {lineage.status}</p>
+                {lineage.usedIn.length > 0 && (
+                  <p className="cv-detail-fact-copy">Used in: {lineage.usedIn.join(", ")}</p>
+                )}
+              </div>
+            )}
+
             {/* #643 T2 — Image shape: what Regenerate and the edit composer below will deliver.
                 Seeded from the shape this image was made in, so neither one silently reshapes it.
                 Same cost in every shape. */}
@@ -977,7 +1049,16 @@ export default function DetailPanel({
 
             {/* Action rail */}
             <div className="cv-detail-actions">
-              {/* Favorite */}
+              {/* Favorites & collections(清单 B3 / P2-017)。
+
+                  改前这颗键叫 "Save" / "Saved" —— 一个不说明**存到哪里**的动词。它写的是
+                  `Favorite` 那张表(`lib/library-favorites.setLibraryFavorite`),也就是 Library
+                  的 Favorites 那一格;而 Library 网格上同一件事的选择条早就叫
+                  「Add to collection」/「Favorite」。同一个动作在两处两个说法,商家按下
+                  「Save」之后不知道该去哪一格找它。措辞跟着动作走,动作层一行没变。
+
+                  「Add to collection」掀的就是 Library 网格用的那个弹层(#1159 的
+                  `CollectionDialogs`),不是这里复制的第二份。 */}
               <Button
                 variant={favorite ? "secondary" : "ghost"}
                 size="sm"
@@ -986,7 +1067,18 @@ export default function DetailPanel({
                 title={readOnlyReason}
               >
                 <HeartIcon data-icon="inline-start" fill={favorite ? "currentColor" : "none"} />
-                {favorite ? "Saved" : "Save"}
+                {favorite ? "In favorites" : "Add to favorites"}
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { if (!readOnly) setCollectionOpen(true); }}
+                disabled={readOnly}
+                title={readOnlyReason}
+              >
+                <FolderPlusIcon data-icon="inline-start" />
+                Add to collection
               </Button>
 
               {/* Regenerate — #896: the canvas rule. The price is on the button, the press
@@ -1140,9 +1232,12 @@ export default function DetailPanel({
                 )}
               </div>
 
-              {/* Delete */}
+              {/* Move to trash(清单 B3 / P1-007)。数据层历来就是软删(`lib/actions.ts` 的
+                  `deleteGeneration` 写 `deletedAt`),只是屏幕上写着 "This cannot be undone." ——
+                  一句关于我们自己的假话。措辞改成它真正做的事;回收站与 Restore 在 Library
+                  的 More filters → Show → Trash。 */}
               <Button variant="destructive-secondary" size="sm" onClick={() => { if (!readOnly) { setDeleteError(null); setConfirmAction("delete"); } }} disabled={readOnly} title={readOnlyReason}>
-                Delete
+                Move to trash
               </Button>
             </div>
 
@@ -1300,7 +1395,7 @@ export default function DetailPanel({
                   东西还在,再按一次就是重试。 */}
               {deleteError && (
                 <Alert variant="destructive" density="compact" role="alert">
-                  <AlertTitle>Couldn&apos;t delete this asset</AlertTitle>
+                  <AlertTitle>Couldn&apos;t move this asset to trash</AlertTitle>
                   <AlertDescription>{deleteError}</AlertDescription>
                 </Alert>
               )}
@@ -1313,11 +1408,24 @@ export default function DetailPanel({
                   disabled={(confirmDetails?.disabled ?? true) || deleteBusy}
                   onClick={runConfirmedAction}
                 >
-                  {deleteBusy ? "Deleting…" : (confirmDetails?.confirmLabel ?? "Confirm")}
+                  {deleteBusy ? "Moving…" : (confirmDetails?.confirmLabel ?? "Confirm")}
                 </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
+
+          {/* 「Add to collection」的弹层 —— Library 网格用的就是这一个(#1159),不复制第二份。
+              只在需要时才挂上去:每次打开都是一次全新 mount,弹层自己的状态因此天然重置
+              (与 `LibraryView` 的挂法一致)。 */}
+          {collectionOpen ? (
+            <CollectionDialogs
+              open
+              subjects={[{ subjectType: "generation", subjectId: selectedGenId }]}
+              onOpenChange={(open) => { if (!open) setCollectionOpen(false); }}
+              // 这一面没有合集列表要刷新(网格在另一个组件里,它自己关掉详情面时会重取)。
+              onChanged={() => {}}
+            />
+          ) : null}
         </SheetContent>
       </Sheet>
     </TooltipProvider>

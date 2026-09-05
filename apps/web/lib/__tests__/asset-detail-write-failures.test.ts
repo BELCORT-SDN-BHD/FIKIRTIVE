@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   setFavorite: vi.fn(),
   saveCroppedGeneration: vi.fn(),
   deleteGeneration: vi.fn(),
+  getGenerationLineage: vi.fn(),
   getPublicMediaLink: vi.fn(),
   writeText: vi.fn(),
 }));
@@ -38,7 +39,13 @@ vi.mock("@/lib/asset-actions", () => ({
   setFavorite: mocks.setFavorite,
   saveCroppedGeneration: mocks.saveCroppedGeneration,
 }));
-vi.mock("@/lib/actions", () => ({ deleteGeneration: mocks.deleteGeneration }));
+vi.mock("@/lib/actions", () => ({
+  deleteGeneration: mocks.deleteGeneration,
+  // 血缘节的读(清单 B3 / P1-007)。假件**必须挂上**:漏掉它,面板里那一句
+  // `getGenerationLineage(...)` 就是在调 undefined,而错误被 promise 吞掉 ——
+  // 一族看起来全绿、其实半个面板没渲染的测试。
+  getGenerationLineage: mocks.getGenerationLineage,
+}));
 vi.mock("@/lib/media-link-actions", () => ({ getPublicMediaLink: mocks.getPublicMediaLink }));
 vi.mock("@/lib/gen-actions", () => ({
   startGen: mocks.startGen,
@@ -123,6 +130,14 @@ beforeEach(() => {
   mocks.startAssetGen.mockResolvedValue({ id: "job-1", disposition: "fresh" });
   mocks.getGenJob.mockResolvedValue({ status: "DONE", generationIds: [] });
   mocks.writeText.mockResolvedValue(undefined);
+  mocks.getGenerationLineage.mockResolvedValue({
+    canvas: { id: "prj_1", name: "Hari Raya gifting" },
+    conversation: { id: "thr_1", title: "Raya window display" },
+    references: ["Pandan kaya jar"],
+    costCredits: 80,
+    status: "Delivered",
+    usedIn: [],
+  });
   serverTtlMs = 10 * 60 * 1000;
   // 假件**不回显**请求里的 ttl:回显的话,「成功句读服务端的数」与「成功句读屏幕上挑的数」
   // 两种写法在测试里长得一模一样,这一族就证明不了任何事。它回的是 `serverTtlMs` ——
@@ -204,24 +219,26 @@ describe("FRONT-A12 ① 收藏写入失败", () => {
     mocks.setFavorite.mockResolvedValue({ error: "Not found." });
     await renderPanel();
 
-    await click(buttonNamed(surface(), "Save"));
+    await click(buttonNamed(surface(), "Add to favorites"));
 
     // 服务端原话,不是这一层编的新句子。
     expect(alertsText()).toContain("Not found.");
-    expect(alertsText()).toContain("Couldn't update Saved");
-    // 状态也要正确:乐观那一下必须收回去,按钮回到 "Save"。
-    expect(buttonNamed(surface(), "Save")).toBeDefined();
-    expect([...surface().querySelectorAll("button")].some((b) => b.textContent?.trim() === "Saved")).toBe(false);
+    expect(alertsText()).toContain("Couldn't update favorites");
+    // 状态也要正确:乐观那一下必须收回去,按钮回到 "Add to favorites"。
+    // 措辞是清单 B3 / P2-017 改的(Save / Saved → Add to favorites / In favorites):
+    // 「Save」不说明存到哪里,而它写的就是 Library 的 Favorites 那一格。
+    expect(buttonNamed(surface(), "Add to favorites")).toBeDefined();
+    expect([...surface().querySelectorAll("button")].some((b) => b.textContent?.trim() === "In favorites")).toBe(false);
   });
 
-  it("FRONT-A12 收藏成功:不弹错误,按钮变成 Saved(成功不冒充、失败不沉默)", async () => {
+  it("FRONT-A12 收藏成功:不弹错误,按钮变成 In favorites(成功不冒充、失败不沉默)", async () => {
     mocks.setFavorite.mockResolvedValue({ favorite: true });
     await renderPanel();
 
-    await click(buttonNamed(surface(), "Save"));
+    await click(buttonNamed(surface(), "Add to favorites"));
 
     expect(alertsText()).toBe("");
-    expect(buttonNamed(surface(), "Saved")).toBeDefined();
+    expect(buttonNamed(surface(), "In favorites")).toBeDefined();
   });
 });
 
@@ -313,22 +330,22 @@ describe("FRONT-A12 ② Copy link", () => {
 });
 
 describe("FRONT-A12 ③ 删除写入失败", () => {
-  it("FRONT-A12 删除被服务端拒绝:确认框不关、错误可见、面板没关,Delete 还能再按", async () => {
+  it("FRONT-A12 删除被服务端拒绝:确认框不关、错误可见、面板没关,Move to trash 还能再按", async () => {
     mocks.deleteGeneration.mockResolvedValue({ error: "Generation not found." });
     await renderPanel();
 
-    await click(buttonNamed(surface(), "Delete"));
+    await click(buttonNamed(surface(), "Move to trash"));
     const box = dialog();
-    expect(box, "点 Delete 应该先弹确认框").not.toBeNull();
+    expect(box, "点 Move to trash 应该先弹确认框").not.toBeNull();
 
-    await click(buttonNamed(box!, "Delete"));
+    await click(buttonNamed(box!, "Move to trash"));
 
     expect(dialog(), "服务端拒绝之后确认框必须还在").not.toBeNull();
-    expect(alertsText()).toContain("Couldn't delete this asset");
+    expect(alertsText()).toContain("Couldn't move this asset to trash");
     expect(alertsText()).toContain("Generation not found.");
     expect(closed, "面板不许关 —— 关了就跟删成功一模一样").toBe(0);
-    // 重试:框里的 Delete 还在,再按一次会再发一次请求。
-    await click(buttonNamed(dialog()!, "Delete"));
+    // 重试:框里的 Move to trash 还在,再按一次会再发一次请求。
+    await click(buttonNamed(dialog()!, "Move to trash"));
     expect(mocks.deleteGeneration).toHaveBeenCalledTimes(2);
   });
 
@@ -336,8 +353,8 @@ describe("FRONT-A12 ③ 删除写入失败", () => {
     mocks.deleteGeneration.mockResolvedValue({ ok: true });
     await renderPanel();
 
-    await click(buttonNamed(surface(), "Delete"));
-    await click(buttonNamed(dialog()!, "Delete"));
+    await click(buttonNamed(surface(), "Move to trash"));
+    await click(buttonNamed(dialog()!, "Move to trash"));
 
     expect(closed).toBe(1);
     expect(alertsText()).toBe("");
@@ -360,7 +377,7 @@ describe("FRONT-A12 ④ 变体选择只存在这台浏览器上", () => {
     await renderPanel(two);
 
     // 第一张收藏失败,错误上屏。
-    await click(buttonNamed(surface(), "Save"));
+    await click(buttonNamed(surface(), "Add to favorites"));
     expect(alertsText()).toContain("Not found.");
 
     // 换第二张 —— 收藏/复制都按**选中的那一张**的 id 走,所以旧错误说的是上一张的事。
@@ -560,5 +577,77 @@ describe("FRONT-A12 ⑤ Copy link 的有效期", () => {
     expect(surface().textContent).not.toContain("open the asset for");
     // 挑好的那一档不跟着作废 —— 作废的是「已经复制好了」这个回执。
     expect(control<HTMLSelectElement>("Link duration").value).toBe(String(24 * 60 * 60 * 1000));
+  });
+});
+
+/**
+ * 清单 B3(P1-007)—— 血缘节在屏幕上真的画得出来,而且**没有记录时一个字都不说**。
+ *
+ * 变异自查:把 `lineage &&` 那个条件去掉 ⇒「读不到就整块不出现」红。
+ */
+describe("FRONT-A14 血缘节:出处、参考、成本、状态、用途", () => {
+  it("五格都写在面板上,画布与对话都能点回去", async () => {
+    mocks.getGenerationLineage.mockResolvedValue({
+      canvas: { id: "prj_1", name: "Hari Raya gifting" },
+      conversation: { id: "thr_1", title: "Raya window display" },
+      references: ["Pandan kaya jar"],
+      costCredits: 80,
+      status: "Delivered",
+      usedIn: ["Shot 2"],
+    });
+    await renderPanel();
+
+    const text = surface().textContent ?? "";
+    expect(text).toContain("Where this came from");
+    expect(text).toContain("Hari Raya gifting");
+    expect(text).toContain("Raya window display");
+    expect(text).toContain("References used: Pandan kaya jar");
+    expect(text).toContain("Cost: 80 credits");
+    expect(text).toContain("Status: Delivered");
+    expect(text).toContain("Used in: Shot 2");
+
+    const links = [...surface().querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(links, "出处画布点不回去").toContain("/create/canvas?project=prj_1");
+    expect(links, "出处对话点不回去").toContain("/create/canvas?project=prj_1&thread=thr_1");
+  });
+
+  it("没花过钱的那一行说 no credits charged,不写一个假的 0 credits", async () => {
+    mocks.getGenerationLineage.mockResolvedValue({
+      canvas: { id: "prj_1", name: "Hari Raya gifting" },
+      conversation: null,
+      references: [],
+      costCredits: 0,
+      status: "Uploaded by you",
+      usedIn: [],
+    });
+    await renderPanel();
+    const text = surface().textContent ?? "";
+    expect(text).toContain("Cost: no credits charged");
+    // 没有引用、没有去处 ⇒ 那两行整行不出现,不写一句 "None"。
+    expect(text).not.toContain("References used");
+    expect(text).not.toContain("Used in:");
+  });
+
+  it("成本未知(有任务、零账本行)⇒ 那一行不出现,不编一个数", async () => {
+    mocks.getGenerationLineage.mockResolvedValue({
+      canvas: { id: "prj_1", name: "Hari Raya gifting" },
+      conversation: null,
+      references: [],
+      costCredits: null,
+      status: "Delivered",
+      usedIn: [],
+    });
+    await renderPanel();
+    expect(surface().textContent ?? "").not.toContain("Cost:");
+  });
+
+  it("血缘读不到 ⇒ 整块不渲染,一个字都不说(素材本身照常显示)", async () => {
+    mocks.getGenerationLineage.mockResolvedValue({ error: "Not found." });
+    await renderPanel();
+    const text = surface().textContent ?? "";
+    expect(text).not.toContain("Where this came from");
+    expect(text).not.toContain("Status:");
+    // 素材本身还在 —— 一次追溯读失败不该把这一面拖成错误态。
+    expect(text).toContain("Add to favorites");
   });
 });

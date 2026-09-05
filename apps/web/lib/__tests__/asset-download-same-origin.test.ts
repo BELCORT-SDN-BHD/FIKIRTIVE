@@ -31,7 +31,10 @@ vi.mock("@/lib/asset-actions", () => ({
   setFavorite: mocks.setFavorite,
   saveCroppedGeneration: mocks.saveCroppedGeneration,
 }));
-vi.mock("@/lib/actions", () => ({ deleteGeneration: mocks.deleteGeneration }));
+vi.mock("@/lib/actions", () => ({ deleteGeneration: mocks.deleteGeneration,
+  // 血缘节的读(清单 B3):假件挂上,否则面板里那一句是在调 undefined。
+  getGenerationLineage: async () => ({ error: "Not found." }),
+}));
 vi.mock("@/lib/gen-actions", () => ({
   startGen: mocks.startGen,
   startAssetGen: mocks.startAssetGen,

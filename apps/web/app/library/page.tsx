@@ -30,6 +30,9 @@ export const metadata = { title: "Library · Fikirtive" };
  *
  * 租户:`requireOwner()` 一处守门,三个读取各自再按服务端 principal 收口;这一页不接受、
  * 也不转发任何客户端传来的 `ownerId`。
+ *
+ * `/library/<id>`(资产详情路由,清单 B3 / P1-007)画的就是**这一页** ——
+ * `app/library/[id]/page.tsx` 把路径段当 `asset` 交给它,不复制第二份实现。
  */
 export default async function LibraryPage({
   searchParams,
@@ -71,9 +74,11 @@ export default async function LibraryPage({
       // 就是它自己那句 `requireOwner()`,而本页第 38-39 行已经先过了同一道门并 redirect 掉了
       // ——所以走到这里时这一支不可达,`[]` 只是让类型收窄,不是一次沉默的降级。
       elements={"error" in elements ? [] : elements}
-      // 深链:两个 id 都只是**待验证的定位参数**,详情面自己按当前 principal 再解析一次
+      // 深链:id 只是一个**待验证的定位参数**,详情面自己按当前 principal 再解析一次
       // (§8.3③:目标被删除或不可访问时说不可用,而不是画成空库)。
-      initialAsset={asset && project ? { generationId: asset, projectId: project } : undefined}
+      // `project` 只有老链接(`?asset=&project=`)才带 —— 它只是付费动作在 DTO 落地前的
+      // 兜底值,新路径 `/library/<id>` 不需要它:归属本来就该由服务端按 id 重新解析。
+      initialAsset={asset ? { generationId: asset, projectId: project ?? "" } : undefined}
       initialCollectionId={collection}
     />
   );
