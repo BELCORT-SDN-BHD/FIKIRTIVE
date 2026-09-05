@@ -458,7 +458,7 @@ const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs, refgenAppr
 const { approvedGenerateCostInternal } = await import("@/lib/spend-cap-preflight");
 // #524 r2: the REAL hold derivation (the @fikirtive/otto mock spreads the actual module), so the
 // expected number in the spend-cap cases comes from the same code the production path runs.
-const { llmHoldInternal, ottoBudgetArgsFor, ottoApprovalResumeRuntime, ReservationNotClaimed } = await import("@fikirtive/otto");
+const { llmHoldInternal, ottoBudgetArgsFor, ottoApprovalResumeRuntime, ReservationNotClaimed, estimateHistoryTokens, OTTO_HISTORY_BUDGET_TOKENS } = await import("@fikirtive/otto");
 const { OTTO_TURN_RATE_LIMIT_MESSAGE } = await import("@/lib/rate-limit-gates");
 // The REAL withLlmBudget (see the @fikirtive/otto mock). Tests that need the true reserve→claim→run
 // order install it on mockWithLlmBudget; it runs against the mocked ledger writers above.
@@ -2897,6 +2897,94 @@ describe("buildContextSystemMessage — reference video signal", () => {
     const result = buildContextSystemMessage({ ...base });
     // no parts at all → null; and certainly no REFERENCE VIDEO mention
     expect(result === null || !(result as { content: string }).content.includes("REFERENCE VIDEO")).toBe(true);
+  });
+});
+
+// ── ENGINE-A6: the rolling summary rides the FRESH system message ────────────
+// 规格 docs/specs/otto-engine.md §7.2④ 第三刀。`sanitizeHistory` 每轮都把历史里的旧 system
+// 消息丢掉,所以这一条新鲜的 system 消息是被折叠掉的上下文**唯一**能落脚的地方 —— 回注断了,
+// 长对话就成了失忆的对话,而裁剪照样在跑。
+describe("ENGINE-A6 — buildContextSystemMessage 回注滚动摘要", () => {
+  const base = { orgId: "o1", userId: "o1", projectId: "p1", threadId: "t1", disabledModels: [] as string[] };
+
+  it("ENGINE-A6: 有摘要时逐字回注,并排在品牌记忆之前(它是这段对话最老的内容)", () => {
+    const result = buildContextSystemMessage({ ...base, brandContext: "sells kopi" }, "merchant wants a Raya promo");
+    const content = (result as { content: string }).content;
+    expect(content).toContain("merchant wants a Raya promo");
+    expect(content.indexOf("merchant wants a Raya promo")).toBeLessThan(content.indexOf("sells kopi"));
+  });
+
+  it("ENGINE-A6: 没有别的上下文时,光有摘要也足以生成这条 system 消息", () => {
+    const result = buildContextSystemMessage({ ...base }, "older turns folded here");
+    expect(result).not.toBeNull();
+    expect((result as { content: string }).content).toContain("older turns folded here");
+  });
+
+  it("ENGINE-A6: 没有摘要(null / 空白)时,这条消息与本改动之前逐字相同", () => {
+    const withBrand = buildContextSystemMessage({ ...base, brandContext: "sells kopi" });
+    expect((buildContextSystemMessage({ ...base, brandContext: "sells kopi" }, null) as { content: string }).content)
+      .toBe((withBrand as { content: string }).content);
+    expect((buildContextSystemMessage({ ...base, brandContext: "sells kopi" }, "   ") as { content: string }).content)
+      .toBe((withBrand as { content: string }).content);
+    expect(buildContextSystemMessage({ ...base }, null)).toBeNull();
+  });
+});
+
+// ── ENGINE-A6: ottoTurn 这一门的接线（判官落修 A6-P1-2）────────────────────────
+// 上一轮这一门只有代码接线、零测试:三处独立变异(删掉 `rollingSummary: rollingSummaryPort,`、
+// 把 `buildContextSystemMessage(ctx, priorRollingSummary)` 改回 `buildContextSystemMessage(ctx)`)
+// 都能让 264 条测试全绿 —— 于是「历史照裁、摘要不回注」这种纯失忆状态没有任何东西挡着。
+// 这里跑的是真的 `ottoTurn`:一条超预算的 ottoState 进去,断言裁剪、折叠端口、落盘、回注四件。
+describe("ENGINE-A6 — ottoTurn 的历史预算闸接线", () => {
+  /** 一段稳稳超过 12,000 token 预算的历史(user/assistant 交替,与真线程同形)。 */
+  const bigHistory = Array.from({ length: 12 }, (_, i) => ({
+    role: i % 2 ? "assistant" : "user",
+    content: `t${i} ${"h".repeat(6_000)}`,
+  }));
+
+  /** 主轮那一次 run()(折叠那一次的 agent 叫 "Otto rolling summary")。 */
+  const mainTurnCall = () => mockRun.mock.calls.find((c) => (c[0] as { name?: string })?.name === "Otto");
+  const foldCall = () => mockRun.mock.calls.find((c) => (c[0] as { name?: string })?.name === "Otto rolling summary");
+
+  beforeEach(() => {
+    setupHappyPath();
+    mockChatThreadFindFirst.mockResolvedValue({
+      projectId: PROJECT_ID,
+      ottoState: '{"prior":"state"}',
+      rollingSummary: "older notes: merchant sells kopi",
+    });
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 2 });
+    mockRunStateFromString.mockResolvedValue(new MockRunState([...bigHistory]));
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("ENGINE-A6: 超预算的历史被裁到预算以内才进 run(),裁掉的旧轮交给折叠端口", async () => {
+    await ottoTurn({ ...BASE_INPUT, threadId: THREAD_ID });
+
+    const input = mainTurnCall()![1] as unknown[];
+    // 整段历史 12 条 + system + 本轮 user = 14;裁过之后必然更短。
+    expect(input.length).toBeLessThan(bigHistory.length + 2);
+    const history = input.slice(1, -1) as never[];
+    expect(estimateHistoryTokens(history)).toBeLessThanOrEqual(OTTO_HISTORY_BUDGET_TOKENS);
+    // 端口真的带着被裁掉的旧轮进了引擎 —— 折叠那一次调用是它唯一的产物。
+    expect(foldCall()).toBeTruthy();
+  });
+
+  it("ENGINE-A6: 折叠好的摘要落盘,带本对话的 ownerId 与未删除约束", async () => {
+    await ottoTurn({ ...BASE_INPUT, threadId: THREAD_ID });
+
+    expect(mockChatThreadUpdateMany).toHaveBeenCalledWith({
+      where: { id: THREAD_ID, ownerId: OWNER_ID, deletedAt: null },
+      data: { rollingSummary: expect.any(String) },
+    });
+  });
+
+  it("ENGINE-A6: 线程已有的摘要逐字回注在这一轮的 system 消息里", async () => {
+    await ottoTurn({ ...BASE_INPUT, threadId: THREAD_ID });
+
+    const sys = (mainTurnCall()![1] as { role?: string; content?: string }[])[0]!;
+    expect(sys.role).toBe("system");
+    expect(sys.content).toContain("older notes: merchant sells kopi");
   });
 });
 
