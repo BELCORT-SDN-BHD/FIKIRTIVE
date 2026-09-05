@@ -50,6 +50,7 @@ vi.mock("../queue", () => ({
 vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
 
+const { checkCast: mockCheckCast } = await import("../cowork-guardian");
 const { startCoworkGen } = await import("../gen-actions");
 const { ottoUpdateGenCardOptions } = await import("../otto-actions");
 const { prisma, settleCredits } = await import("@fikirtive/db");
@@ -303,5 +304,54 @@ describe("ENGINE-A3 商家在确认卡上改三格,一路走到账本", () => {
     expect((await persistedCard(owner, card.cardId)).params.count).toBe(1);
     expect((await persistedCard(owner, card.cardId)).estimatedCredits).toBe(card.payload.estimatedCredits);
     expect(await prisma.chatMessage.count({ where: { ownerId: intruder.ownerId, kind: "GEN_CARD" } })).toBe(0);
+  });
+
+  /**
+   * H2 #1234 留下的窗口(Founder 2026-09-04 20:45 清单④)—— **事务外读卡 → 事务内建任务行**。
+   *
+   * `startCoworkGen` 在钱事务**之外**把卡读出来,任务行却在事务**里**才建。商家(或另一个
+   * 标签页)在这两步之间按一下卡上的形状,`ottoUpdateGenCardOptions` 就把 payload 重铸了 ——
+   * 钱数不会错(报价对签在事务里),但任务行按的是**旧** payload:卡面写着新的那一档,
+   * 上路的却是旧的那一份,同一次生成两个说法。
+   *
+   * 换形状**不改价**(`pricedGenCredits` 图片侧只看槽位与张数),所以这一条正是专门照住
+   * 那道窗口的:没有指纹对签,它会静静通过。
+   *
+   * 窗口用 `checkCast` 这个缝制造 —— 它跑在读卡之后、钱事务之前(`gen-actions.ts`),
+   * 就是那道窗口本身。
+   */
+  it("ENGINE-A3 读卡之后、建任务行之前卡被改档:整笔拒在 create/reserve 之前,ledger 零新增行", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+    const priceBefore = card.payload.estimatedCredits;
+
+    (mockCheckCast as unknown as { mockImplementationOnce: (fn: () => Promise<null>) => void })
+      .mockImplementationOnce(async () => {
+        // 就在窗口里:换一格形状(不改价),卡 payload 因此被重铸。
+        const rewritten = updatedPayload(
+          await ottoUpdateGenCardOptions({ threadId: world.threadId, cardId: card.cardId, aspectRatio: "9:16" }),
+        );
+        expect(rewritten.estimatedCredits).toBe(priceBefore); // 换形状不改价 —— 报价对签抓不住它
+        return null;
+      });
+
+    const result = await approve(world, card.cardId, card.payload);
+    expect(result.result).toEqual({
+      error: "This card changed while you were approving it — review it once more, then generate.",
+    });
+    expect(await ledgerRows(world.ownerId)).toHaveLength(0);
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
+    // 卡本身仍然是重铸后的那一份:商家再按一次批的就是他刚改出来的那一档。
+    expect((await persistedCard(world, card.cardId)).params.aspectRatio).toBe("9:16");
+  });
+
+  it("ENGINE-A3 没人在窗口里动过卡:指纹对得上,照常建任务行、照常预扣一次", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+
+    const jobId = jobIdOf((await approve(world, card.cardId, card.payload)).result);
+    const rows = await ledgerRows(world.ownerId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.refId).toBe(jobId);
   });
 });

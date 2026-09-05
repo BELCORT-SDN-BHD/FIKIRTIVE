@@ -22,6 +22,8 @@ import { handleRender } from "./jobs/render.js";
 import { handleRefGen, reapStaleRefGenJobs } from "./jobs/refgen.js";
 import { handleGen, reapStaleGenJobs } from "./jobs/gen.js";
 import { backfillCanvasBoards } from "./jobs/canvas-backfill.js";
+// Founder 2026-09-04 20:45(清单②)—— 结果消息写库失败时的补投。画布那一条的同形兄弟。
+import { redeliverGenThreadResults } from "./jobs/gen-thread-redelivery.js";
 import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { reapExpiredAuthVerifications } from "./jobs/auth-verification-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
@@ -294,6 +296,11 @@ async function main(): Promise<void> {
         // same idempotent card writer for jobs whose board is provably incomplete.
         const cn = await backfillCanvasBoards();
         if (cn) console.log(`[worker] finished ${cn} incomplete canvas board(s)`);
+        // Founder 2026-09-04 20:45(清单②):结果那条消息同样是 best-effort 写的,写不成
+        // 就等于商家付了钱、图也出来了,对话里却永远停在「making this…」。这是它后面的
+        // 那一手 —— money-free,只补一条本来就该在的消息(同一个唯一索引保证至多一条)。
+        const tn = await redeliverGenThreadResults();
+        if (tn) console.log(`[worker] redelivered ${tn} missing thread result message(s)`);
         const rn = await reapStaleRefGenJobs();
         if (rn) console.log(`[worker] reaped ${rn} stale refgen job(s)`);
         const ln = await reapStaleLlmReservations();

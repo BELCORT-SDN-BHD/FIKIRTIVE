@@ -19,6 +19,9 @@ const db = vi.hoisted(() => {
   const projectFindFirst = vi.fn();
   const campaignFindFirst = vi.fn();
   const chatMessageFindFirst = vi.fn();
+  // 画布节点级付费动作的历史两行(Founder 2026-09-04 20:45)在钱事务里落库,所以这份替身
+  // 也得有它 —— 少了它,那两行会在这里炸成一个与被测行为无关的 TypeError。
+  const chatMessageCreate = vi.fn();
   const chatThreadFindFirst = vi.fn();
   const genJobFindFirst = vi.fn();
   const genJobFindMany = vi.fn();
@@ -32,7 +35,7 @@ const db = vi.hoisted(() => {
   const prisma = {
     project: { findFirst: projectFindFirst },
     campaign: { findFirst: campaignFindFirst },
-    chatMessage: { findFirst: chatMessageFindFirst },
+    chatMessage: { findFirst: chatMessageFindFirst, create: chatMessageCreate },
     chatThread: { findFirst: chatThreadFindFirst },
     genJob: { findFirst: genJobFindFirst, findMany: genJobFindMany, create: genJobCreate, update: genJobUpdate },
     entity: { findMany: entityFindMany },
@@ -45,6 +48,7 @@ const db = vi.hoisted(() => {
     projectFindFirst,
     campaignFindFirst,
     chatMessageFindFirst,
+    chatMessageCreate,
     chatThreadFindFirst,
     genJobFindFirst,
     genJobFindMany,
