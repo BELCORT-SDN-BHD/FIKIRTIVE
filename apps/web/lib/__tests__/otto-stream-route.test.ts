@@ -1,7 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 import { OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
-import { referenceUnavailableMessage } from "@fikirtive/core";
+import {
+  referenceUnavailableMessage,
+  MAX_TURN_REFERENCES,
+  TOO_MANY_REFERENCES_SENTENCE,
+  TURN_REQUEST_GENERIC_REFUSAL,
+} from "@fikirtive/core";
 
 const mocks = vi.hoisted(() => {
   class MockInsufficientCredits extends Error {
@@ -52,6 +57,8 @@ const mocks = vi.hoisted(() => {
     chatMessageCreate: vi.fn(),
     chatMessageFindFirst: vi.fn(),
     generationFindFirst: vi.fn(),
+    // FRONT-A10: the media half of `resolveOwnedReferenceRefs` (generations + uploads).
+    generationFindMany: vi.fn(),
     genJobFindFirst: vi.fn(),
     creditLedgerFindMany: vi.fn(),
     entityFindMany: vi.fn(),
@@ -146,7 +153,7 @@ vi.mock("@fikirtive/db", () => ({
       create: mocks.chatMessageCreate,
       findFirst: mocks.chatMessageFindFirst,
     },
-    generation: { findFirst: mocks.generationFindFirst },
+    generation: { findFirst: mocks.generationFindFirst, findMany: mocks.generationFindMany },
     genJob: { findFirst: mocks.genJobFindFirst },
     creditLedger: { findMany: mocks.creditLedgerFindMany },
     entity: { findMany: mocks.entityFindMany },
@@ -1251,5 +1258,113 @@ describe("POST /api/otto/stream — ENGINE-A6 长对话预算闸", () => {
     // 钱路与折叠一个字没动:没裁掉任何东西 ⇒ 零折叠调用、零落盘。
     expect(foldCall()).toBeUndefined();
     expect(mocks.saveRollingSummary).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FRONT-A10 —— 这条路由(聊天输入框实际走的那一条)把类型化引用写进 ChatMessage
+// ---------------------------------------------------------------------------
+/**
+ * 判官第二轮 P1-1:C2 写的那一半有两条落库路,`ottoTurn` 那条上一轮补了围栏,**这一条**没有
+ * —— 删掉 `referenceRefs: picked.wire,` 全仓 7630 条照旧全绿。画布与侧栏的输入框走的正是这条
+ * 流式路由,所以「这条消息提到了谁」在生产上到底有没有落库,此前没有任何一条测试说得出来。
+ *
+ * 这里不打桩 `@/lib/reference-refs`:真正跑的是它,只有 Prisma 是替身 —— 否则围栏钉的是替身的
+ * 返回值,而不是那一行有没有被写进去。
+ */
+describe("FRONT-A10 —— 流式落库路把类型化引用写进 ChatMessage", () => {
+  const PRODUCT_ID = "ent_stream_product";
+  const GENERATION_ID = "gen_stream_one";
+  const UPLOAD_ASSET_ID = "ast_stream_one";
+  const THREE_TYPES = [`product:${PRODUCT_ID}`, `generation:${GENERATION_ID}`, `upload:${UPLOAD_ASSET_ID}`];
+
+  /** org_stream 自己的三行:一件实体、一件生成、一件上传。 */
+  function ownRowsResolve() {
+    mocks.entityFindMany.mockResolvedValue([
+      { id: PRODUCT_ID, name: "Kopi cendol tin", type: "PRODUCT", catalogKey: null },
+    ]);
+    mocks.generationFindMany.mockResolvedValue([
+      {
+        id: GENERATION_ID, assetId: "ast_gen", source: "GENERATED",
+        promptText: "Cendol hero shot", projectId: "proj_stream",
+        project: { name: "Raya launch" }, asset: { originalFilename: "out.png" },
+      },
+      {
+        id: "gen_from_upload", assetId: UPLOAD_ASSET_ID, source: "UPLOAD",
+        promptText: "", projectId: "proj_stream",
+        project: { name: "Raya launch" }, asset: { originalFilename: "cendol-shelf.png" },
+      },
+    ]);
+  }
+
+  function persistedUserMessage() {
+    return mocks.chatMessageCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> } | undefined;
+  }
+
+  it("FRONT-A10 三型引用一起发 ⇒ ChatMessage 那一列落的就是服务端解析过的类型化 ID", async () => {
+    ownRowsResolve();
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "@Kopi cendol tin like this shot",
+      references: THREE_TYPES,
+    }));
+
+    expect(res.status).toBe(200);
+    const created = persistedUserMessage();
+    // 逐字相等,不是「包含」:少写一型、写成裸 id、或整格没写,这一条当场红。
+    expect(created?.data.referenceRefs).toEqual(THREE_TYPES);
+    // `payload.entityIds`(生成条件)是另一条路,不因为这一格而改样。
+    expect((created?.data.payload as { entityIds?: unknown }).entityIds).toEqual([]);
+  });
+
+  it("FRONT-A10 一件都没 @ 的一轮,那一列是空表而不是缺了那一格", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+
+    await POST(req({ projectId: "proj_stream", text: "just talk to me" }));
+
+    expect(persistedUserMessage()?.data.referenceRefs).toEqual([]);
+    // 一个 id 都没有 ⇒ 连库都不问。
+    expect(mocks.entityFindMany).not.toHaveBeenCalled();
+    expect(mocks.generationFindMany).not.toHaveBeenCalled();
+  });
+
+  it("FRONT-A10 别家的 id 混进来 ⇒ 整轮不发:不落消息、不建对话、不进 Otto、不预扣", async () => {
+    // 解析器按 owner 查,什么都查不到 —— 别家的 id 与自己删掉的在这里长得一模一样。
+    mocks.entityFindMany.mockResolvedValue([]);
+    mocks.generationFindMany.mockResolvedValue([]);
+
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "@someone else's tin",
+      references: ["product:ent_other_shop"],
+    }));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: referenceUnavailableMessage("notFound") });
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+    expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
+    expect(mocks.withLlmBudget).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+  });
+
+  it("FRONT-A10 `@` 得比一轮能带的还多 ⇒ 读到的是那一格自己的那句话,不是通用那一句", async () => {
+    const tooMany = Array.from({ length: MAX_TURN_REFERENCES + 1 }, (_, i) => `product:ent_${i}`);
+
+    const res = await POST(req({ projectId: "proj_stream", text: "make me a poster", references: tooMany }));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: TOO_MANY_REFERENCES_SENTENCE });
+    // 通用那一句会把商家指向他已经写好了的正文 —— 判官 P2-2 点的就是这个。
+    expect(TOO_MANY_REFERENCES_SENTENCE).not.toBe(TURN_REQUEST_GENERIC_REFUSAL);
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+  });
+
+  it("FRONT-A10 正文空着的一轮仍然读到通用那一句(改了引用那一格,别的口径不许跟着变)", async () => {
+    const res = await POST(req({ projectId: "proj_stream", text: "" }));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: TURN_REQUEST_GENERIC_REFUSAL });
   });
 });

@@ -202,9 +202,17 @@ async function resolveMediaRefs(ownerId: string, refs: ReferenceRef[]): Promise<
 export async function resolveOwnedReferenceRefs(
   ownerId: string,
   raw: readonly string[] | null | undefined,
+  /**
+   * How many entries this call may carry. `MAX_TURN_REFERENCES` is the WRITE-side bound — what ONE
+   * turn may submit — so it is the default only because the write paths are what submit here.
+   * The read path hands in a whole page of messages at once and passes its own bound
+   * (`lib/data.ts`); leaving the per-turn 24 in place there silently dropped every chip past the
+   * 24th reference on the page (judge round-2 P1-2).
+   */
+  limit: number = MAX_TURN_REFERENCES,
 ): Promise<ResolvedTurnReferences> {
   const all = raw ?? [];
-  const submitted = all.slice(0, MAX_TURN_REFERENCES);
+  const submitted = all.slice(0, limit);
   /**
    * The two ways a submitted entry is lost before a database is even asked. Both count as
    * unresolved: a ref the merchant picked and the server quietly forgot is the "假成功" they
@@ -250,8 +258,10 @@ export async function resolveOwnedReferenceRefs(
 export async function resolveReferenceLinks(
   ownerId: string,
   raw: readonly string[] | null | undefined,
+  /** The read side's own bound — see `resolveOwnedReferenceRefs`. Defaults to one turn's worth. */
+  limit: number = MAX_TURN_REFERENCES,
 ): Promise<ReferenceLink[]> {
   if (!raw || raw.length === 0) return [];
-  const resolved = await resolveOwnedReferenceRefs(ownerId, raw);
+  const resolved = await resolveOwnedReferenceRefs(ownerId, raw, limit);
   return resolved.links;
 }

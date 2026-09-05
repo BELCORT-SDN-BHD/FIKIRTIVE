@@ -328,7 +328,8 @@ export function useReferencePicker({ text, setText, getTextarea }: UseReferenceP
    * same function: a reference whose `@name` is no longer in the sent text was removed by the
    * merchant, so it is not part of this message.
    *
-   * All six offered types travel here, entities included — this is "what the merchant pointed at",
+   * All seven offered types travel here (`COMPOSER_TYPES` — the five entity types plus `generation`
+   * and `upload`), entities included — this is "what the merchant pointed at",
    * not "what conditioned the picture". The server trusts none of it: every id is re-resolved
    * against the authenticated owner before the row is written (`apps/web/lib/reference-refs.ts`).
    */

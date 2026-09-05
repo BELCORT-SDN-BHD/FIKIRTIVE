@@ -30,6 +30,7 @@ import type { Prisma } from "@fikirtive/db";
 import {
   newId,
   coworkTurnRequest,
+  turnRequestRefusal,
   GOAL_PRESETS,
   isGoalKey,
   tavilySearch,
@@ -1832,7 +1833,7 @@ export async function ottoTurn(raw: unknown): Promise<
   | { error: string }
 > {
   const parsed = coworkTurnRequest.safeParse(raw);
-  if (!parsed.success) return { error: "Say what you'd like to make." };
+  if (!parsed.success) return { error: turnRequestRefusal(parsed.error) };
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;

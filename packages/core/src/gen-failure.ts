@@ -35,6 +35,8 @@
  * whitelist above compares bytes and a scrub would silently break the merchant's own advice.
  */
 
+import { MAX_TURN_REFERENCES } from "./reference-ref.js";
+
 /**
  * The sentence a merchant reads when the engine refused their reference image because it shows
  * a recognisable real person.
@@ -435,6 +437,21 @@ export function referenceUnavailableMessage(reason: ReferenceUnavailableReason):
 }
 
 /**
+ * FRONT-A10 —— 一轮 `@` 得比 `MAX_TURN_REFERENCES` 还多时,商家读到的那一句。
+ *
+ * 它不在上面那张表里,因为那张表的键是**一件附件**为什么用不了(`UnavailableTurnReference` 就按
+ * 那个键逐件记);这一句说的是**整轮太多**,不指向任何一件。放在同一个文件、同一条纪律下:措辞只有
+ * 这一个产地,而且它也进 `referenceUnavailableSentence` 的白名单,所以 composer 可以原样转述。
+ *
+ * 为什么必须自己一句话(判官 #1240 P2-2):挑到第 25 个再发,请求 schema 整份不过,两条落库路
+ * 回的都是那句通用的 "Say what you'd like to make." —— 商家正文明明写了,这句话把他指向错的地方,
+ * 而真正要做的事(去掉几个 `@`)一个字都没说。数字读的是 `MAX_TURN_REFERENCES` 那一个常量,
+ * 所以上限一改,这句话跟着改。
+ */
+export const TOO_MANY_REFERENCES_SENTENCE =
+  `You can mention up to ${MAX_TURN_REFERENCES} items in one message. Remove a few and ask again — nothing was sent.`;
+
+/**
  * Is this transport text one of OUR two sentences? A WHITELIST, exactly like the `GenJob.error`
  * reader above and for the same reason.
  *
@@ -449,7 +466,7 @@ export function referenceUnavailableMessage(reason: ReferenceUnavailableReason):
 export function referenceUnavailableSentence(text: string | null | undefined): string | null {
   const written = String(text ?? "").trim();
   if (!written) return null;
-  for (const sentence of Object.values(REFERENCE_UNAVAILABLE_SENTENCES)) {
+  for (const sentence of [...Object.values(REFERENCE_UNAVAILABLE_SENTENCES), TOO_MANY_REFERENCES_SENTENCE]) {
     if (sentence.trim() === written) return sentence;
   }
   return null;

@@ -7,6 +7,7 @@ import { z } from "zod";
 import { MAX_GEN_PROMPT, MAX_GEN_ENTITIES, MAX_GEN_COUNT } from "./gen.js";
 import { GOAL_KEYS } from "./goals.js";
 import { MAX_TURN_REFERENCES } from "./reference-ref.js";
+import { TOO_MANY_REFERENCES_SENTENCE } from "./gen-failure.js";
 import { clampVisionInts } from "./runtime-config.js";
 
 export const MAX_COWORK_IDEA = 4000;
@@ -63,6 +64,26 @@ export const coworkTurnRequest = z.object({
   references: z.array(z.string().min(1).max(96)).max(MAX_TURN_REFERENCES).optional(),
 }).strict();
 export type CoworkTurnRequest = z.infer<typeof coworkTurnRequest>;
+
+/** What a merchant reads when a turn request does not parse at all. */
+export const TURN_REQUEST_GENERIC_REFUSAL = "Say what you'd like to make.";
+
+/**
+ * The sentence for a rejected turn request — one producer for both entry points (`ottoTurn` and
+ * `POST /api/otto/stream`), which each carried the generic line inline as a literal.
+ *
+ * FRONT-A10 (判官 #1240 P2-2):通用那一句只在**一个**情形下把商家指错方向 —— `@` 挑得比一轮
+ * 能带的还多。他正文明明写了,而「Say what you'd like to make.」既指向那个没坏的东西,也一个字
+ * 没说真正要做的事(去掉几个 `@`)。这个情形不用猜就认得出来:schema 自己对 `references`
+ * **数组本身**报的 `too_big`(`path` 恰好是 `["references"]` —— 报在某个元素上的那种 path 更长,
+ * 是另一回事)。其余一切照旧走通用那一句。
+ */
+export function turnRequestRefusal(error: z.ZodError): string {
+  const tooManyReferences = error.issues.some(
+    (issue) => issue.code === "too_big" && issue.path.length === 1 && issue.path[0] === "references",
+  );
+  return tooManyReferences ? TOO_MANY_REFERENCES_SENTENCE : TURN_REQUEST_GENERIC_REFUSAL;
+}
 
 /** One part of a multimodal message content (OpenAI shape). */
 export type ChatContentPart =

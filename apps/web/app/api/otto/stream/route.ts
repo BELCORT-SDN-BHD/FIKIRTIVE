@@ -35,6 +35,7 @@ import {
   GOAL_PRESETS,
   isGoalKey,
   referenceUnavailableMessage,
+  turnRequestRefusal,
 } from "@fikirtive/core";
 import {
   otto,
@@ -127,7 +128,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   const parsed = coworkTurnRequest.safeParse(raw);
-  if (!parsed.success) return Response.json({ error: "Say what you'd like to make." }, { status: 400 });
+  // FRONT-A10:两条落库路读同一份措辞(`packages/core/src/cowork.ts`)。挑得比一轮能带的还多时
+  // 回的是那一格自己的那句话,其余照旧是通用那一句。
+  if (!parsed.success) return Response.json({ error: turnRequestRefusal(parsed.error) }, { status: 400 });
 
   // Identity ONLY from the gate, never from input.
   const gate = await requireOwner();

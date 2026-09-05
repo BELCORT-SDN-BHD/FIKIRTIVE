@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@fikirtive/db";
-import { newId, storageKey, storageKeyToSrc, merchantGenFailureCopy } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc, merchantGenFailureCopy, MAX_TURN_REFERENCES } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { tallyEntityUsage } from "./entity-usage";
 import { threadBadgeFromJobStatus } from "./thread-status";
@@ -502,9 +502,17 @@ export async function resolveCoworkMessageReferences(
   const rows = threads.flatMap((t) => t.messages).filter((m) => (m.referenceRefs?.length ?? 0) > 0);
   if (rows.length === 0) return byMessage;
   try {
-    const links = await resolveReferenceLinks(ownerId, [
-      ...new Set(rows.flatMap((m) => m.referenceRefs ?? [])),
-    ]);
+    // The bound is this page's, not one turn's. `resolveReferenceLinks` defaults to
+    // `MAX_TURN_REFERENCES` — the WRITE-side cap on a single message — and this call hands it every
+    // message on the page at once, so the default truncated the whole page at 24 and every chip
+    // after that quietly vanished (judge round-2 P1-2: a merchant scrolling back past the 24th
+    // reference sees the newest messages lose their chips). Each stored row is itself capped at
+    // MAX_TURN_REFERENCES on the way in, so message-count × that cap is the real ceiling.
+    const links = await resolveReferenceLinks(
+      ownerId,
+      [...new Set(rows.flatMap((m) => m.referenceRefs ?? []))],
+      rows.length * MAX_TURN_REFERENCES,
+    );
     const byKey = new Map(links.map((link) => [`${link.type}:${link.id}`, link]));
     for (const m of rows) {
       // A ref that no longer resolves (the object was deleted since) simply drops — a chip

@@ -1,6 +1,12 @@
 /**
  * FRONT-A10 —— 消息保存类型化引用 ID 并可回链(规格 `docs/specs/frontend-baseline.md` §7.3③
- * 第③刀),外加「七类」在服务端搜索这一侧逐类各命中一条。
+ * 第③刀),外加**生产答得出的那七型**在服务端搜索这一侧逐类各命中一条。
+ *
+ * 「七型」不是冻结契约 §4 的那七型。契约那份是 product／character／official-avatar／location／
+ * **clothes**／generation／upload;生产这份把 `clothes` 换成了 `brandmark` —— `clothes` 在生产
+ * 一条记录都没有(`lib/reference-search.ts` 对它一律返回空),按裁决九不画空壳,而 `brandmark`
+ * 是 `EntityType` 早就有、今天就 `@` 得到的一型。两份都是七个,成员不一样;所以下面的用例
+ * 逐型点名,并且单独钉一条「clothes 认得但永远返回空」。
  *
  * 真 Postgres、真 Prisma、两个真 org。两条主张,两个方向:
  *  ① 写:落库前每一个 id 按 owner 解析,别家的 id 一个都进不来,而且拒绝的说法对「别家的」
@@ -11,7 +17,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
 
 const { prisma } = await import("@fikirtive/db");
-const { newId, formatReferenceRef } = await import("@fikirtive/core");
+const { newId, formatReferenceRef, MAX_TURN_REFERENCES } = await import("@fikirtive/core");
 const { resolveOwnedReferenceRefs, resolveReferenceLinks } = await import("@/lib/reference-refs");
 const { resolveCoworkMessageReferences } = await import("@/lib/data");
 const { searchReferences } = await import("@/lib/reference-search");
@@ -95,8 +101,8 @@ beforeAll(async () => {
 });
 
 /** 本轮 C1 的那一半:商家能 `@` 到的类型,服务端逐类都答得出来。 */
-describe("FRONT-A10 — 七类在服务端各命中一条", () => {
-  it("FRONT-A10 each contract type production can answer returns its own row", async () => {
+describe("FRONT-A10 — 生产答得出的七型各命中一条(契约七型里的 clothes 换成 brandmark)", () => {
+  it("FRONT-A10 each of the seven types production can answer returns its own row — product, character, official-avatar, location, brandmark, generation, upload", async () => {
     const page = await searchReferences(orgA, { query: "cendol", limit: 8 });
     const byType = new Map(page.items.map((item) => [item.type, item.id]));
     expect(byType.get("product")).toBe(aProductId);
@@ -109,7 +115,7 @@ describe("FRONT-A10 — 七类在服务端各命中一条", () => {
     expect(byType.get("upload")).toBe(aUploadAssetId);
   });
 
-  it("FRONT-A10 clothes is understood and never returned — production has no clothes record", async () => {
+  it("FRONT-A10 clothes is the contract type production cannot answer — understood, always empty, so it is not one of the seven", async () => {
     const page = await searchReferences(orgA, { query: "", types: ["clothes"], limit: 8 });
     expect(page.items).toHaveLength(0);
   });
@@ -125,7 +131,7 @@ describe("FRONT-A10 — 七类在服务端各命中一条", () => {
 });
 
 describe("FRONT-A10 — 消息保存类型化引用 ID(落库前按 owner 校验)", () => {
-  it("FRONT-A10 every offered type resolves to a typed ref this owner really owns", async () => {
+  it("FRONT-A10 all seven offered types resolve to a typed ref this owner really owns", async () => {
     const submitted = [
       formatReferenceRef({ type: "product", id: aProductId }),
       formatReferenceRef({ type: "character", id: aCharacterId }),
@@ -252,5 +258,79 @@ describe("FRONT-A10 — 消息回链(从存下来的那一行点回对象)", () 
       { messages: [{ id: messageId, referenceRefs: [formatReferenceRef({ type: "product", id: aDeletedProductId })] }] },
     ]);
     expect(byMessage.get(messageId)).toBeUndefined();
+  });
+});
+
+/**
+ * 判官第二轮 P1-2 —— 读路径把「一轮最多 24 条」当成了**整页**上限。
+ *
+ * `MAX_TURN_REFERENCES` 是**写**侧的边界:一条消息最多带 24 个 `@`。可 `resolveCoworkMessageReferences`
+ * 是一条对话一次解好的:它把整页每条消息的引用合成一份交给解析器,于是默认的 24 把整页截断了 ——
+ * 第 25 个引用之后的每一枚小片静默消失,而且消失的是**最新**那几条消息(合成时按消息顺序)。
+ * 商家看到的就是「聊到后面,引用不见了」,页面上没有任何提示。
+ */
+describe("FRONT-A10 — 一页的引用不被单轮上限截断", () => {
+  it("FRONT-A10 a page carrying 30 references renders every one of them — the 24 cap is per message, not per page", async () => {
+    // 30 件真对象、两条真消息:第一条带满 24 个(写侧的合法上限),第二条再带 6 个。
+    const productIds: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      productIds.push((await prisma.entity.create({
+        data: { id: `ent_${randomUUID()}`, ownerId: orgA, name: `Cendol page tin ${i}`, type: "PRODUCT" },
+      })).id);
+    }
+    const wireOf = (ids: string[]) => ids.map((id) => formatReferenceRef({ type: "product", id }));
+    const firstWire = wireOf(productIds.slice(0, MAX_TURN_REFERENCES));
+    const secondWire = wireOf(productIds.slice(MAX_TURN_REFERENCES));
+    expect(secondWire.length).toBe(30 - MAX_TURN_REFERENCES);
+
+    const firstId = `msg_${randomUUID()}`;
+    const secondId = `msg_${randomUUID()}`;
+    await prisma.chatMessage.create({
+      data: {
+        id: firstId, threadId: threadAId, ownerId: orgA, role: "USER", kind: "TEXT",
+        seq: 10, text: "a full turn of references", referenceRefs: firstWire,
+      },
+    });
+    await prisma.chatMessage.create({
+      data: {
+        id: secondId, threadId: threadAId, ownerId: orgA, role: "USER", kind: "TEXT",
+        seq: 11, text: "and six more", referenceRefs: secondWire,
+      },
+    });
+
+    const rows = await prisma.chatMessage.findMany({
+      where: { id: { in: [firstId, secondId] }, ownerId: orgA },
+      orderBy: { seq: "asc" },
+      select: { id: true, referenceRefs: true },
+    });
+    const byMessage = await resolveCoworkMessageReferences(orgA, [{ messages: rows }]);
+
+    // 每条消息各拿回自己那一份,一枚不少 —— 改回整页 24,第二条整条掉光(undefined),这条当场红。
+    expect(byMessage.get(firstId)?.map((link) => link.id)).toEqual(productIds.slice(0, MAX_TURN_REFERENCES));
+    expect(byMessage.get(secondId)?.map((link) => link.id)).toEqual(productIds.slice(MAX_TURN_REFERENCES));
+  });
+
+  it("FRONT-A10 the write side still stops at one turn's worth — the read fix does not widen what a turn may submit", async () => {
+    // 同一批 id,这次走**写**侧:第 25 个起不该被悄悄放行,它算解不出来的那一类。
+    const tooMany = Array.from({ length: MAX_TURN_REFERENCES + 1 }, () =>
+      formatReferenceRef({ type: "product", id: aProductId }),
+    );
+    // 同一个对象重复挑不算失败(去重),所以这里用真的不同 id 才说明问题。
+    const distinct = await Promise.all(
+      Array.from({ length: MAX_TURN_REFERENCES + 1 }, async (_, i) =>
+        formatReferenceRef({
+          type: "product",
+          id: (await prisma.entity.create({
+            data: { id: `ent_${randomUUID()}`, ownerId: orgA, name: `Cendol cap tin ${i}`, type: "PRODUCT" },
+          })).id,
+        }),
+      ),
+    );
+    expect(tooMany).toHaveLength(MAX_TURN_REFERENCES + 1);
+
+    const resolved = await resolveOwnedReferenceRefs(orgA, distinct);
+    expect(resolved.wire).toHaveLength(MAX_TURN_REFERENCES);
+    // 被砍掉的那一个是「没解出来」,不是静默丢弃 —— 调用方据此整轮不发。
+    expect(resolved.unresolved).toBe(1);
   });
 });
