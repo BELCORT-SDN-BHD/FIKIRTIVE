@@ -32,6 +32,7 @@ import {
 } from "./data";
 import { toChatThreadDTO, toChatThreadMetaDTO, toEntityDTO } from "./dto";
 import { ottoGreetingNameFromProfile } from "./otto-greeting";
+import { isPanelThread } from "./otto-thread-surface";
 import { getMyProfileNames } from "./profile-names";
 import type { ChatThreadDTO, EntityDTO } from "./types";
 
@@ -51,7 +52,12 @@ export type OttoPanelSeed = {
    * (`getAllCoworkThreadMetas`),不是为面板另写一条查询。最近那一条带完整消息。
    */
   threads: ChatThreadDTO[];
-  /** 打开时停在哪一条;没有会话就是 null(面板画前门)。 */
+  /**
+   * 打开时停在哪一条;没有可续的就是 null(面板画新对话态)。
+   *
+   * FRONT-A14:只在**面板自己开的**对话里选(`surface === "panel"`),不再是「这个
+   * project 最近的一条」—— 后者会把画布对话摊到 /billing 这种毫不相干的页面上。
+   */
   activeThreadId: string | null;
   balanceUsd: number;
   /** 问候语里的称呼。 */
@@ -103,15 +109,30 @@ export async function loadOttoPanelSeed(
       : null;
     const activeProjectId = requestedProjectId ?? ensured.id;
 
-    // 打开时停在**当前 project** 最近那一条,或者深链点名的那一条(同样必须是这个商家
-    // 自己的会话,而且落在刚定下来的 project 上)—— 与 W2-7 逐字同义,只多了深链这一条
-    // 优先级更高的分支。列表现在覆盖每一个 project,但「面板一打开接着聊哪一条」不跟着
-    // 变宽,那是另一个决定。
+    // 深链点名的那一条(同样必须是这个商家自己的会话,而且落在刚定下来的 project 上)。
+    // 深链是商家**自己点名**的到达,点名什么就开什么 —— 画布对话经由 `?thread=` 打开
+    // 照旧,不受下面那条自动续接的规则影响。
     const requestedThreadId = select?.threadId
       && threadRows.some((t) => t.id === select.threadId && t.projectId === activeProjectId)
       ? select.threadId
       : null;
-    const openThreadId = requestedThreadId ?? threadRows.find((t) => t.projectId === activeProjectId)?.id ?? null;
+
+    // 没有深链时**接着聊哪一条**(FRONT-A14;Codex 全 beta 审计 P1-010)。
+    //
+    // 从前这里是「这个 project 里最近的一条」,而 `activeProjectId` 来自
+    // `getOrCreateDefaultProject()` —— 与商家从哪一页展开面板毫无关系。于是商家在
+    // /billing 点开侧栏,面板摊开的是一条画布对话「Professional Male Model Image」:
+    // 一段他不是在这里开的、与这一页无关的上下文,而且没有任何地方写着它是画布的。
+    //
+    // 现在的判据只有一句:**面板只自动续面板自己开的对话**(`surface === "panel"`)。
+    // 画布对话只在商家从会话列表里显式点选、或深链点名时才打开。一条都没有就**不预选**
+    // (`null`)—— 面板画新对话态,商家发出第一句时才建线程,并登记成 `panel`。
+    //
+    // 老行(这一票之前的每一条)`surface` 是 `null`,一律按画布读,理由与代价写在
+    // `lib/otto-thread-surface.ts`:宁可让面板少续一条老对话,也不要它继续摊开别处的上下文。
+    const openThreadId = requestedThreadId
+      ?? threadRows.find((t) => t.projectId === activeProjectId && isPanelThread(t.surface))?.id
+      ?? null;
     if (openThreadId) {
       const full = await getCoworkThread(ownerId, openThreadId);
       if (full) {
