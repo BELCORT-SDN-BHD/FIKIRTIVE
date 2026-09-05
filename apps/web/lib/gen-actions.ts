@@ -5,7 +5,7 @@
  * provider, and writes Generation candidates (optionally bound to a shot).
  */
 import { revalidatePath } from "next/cache";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fromPrisma } from "pg-boss";
 import { prisma, reserveCredits, InsufficientCredits, SpendCapBlocked } from "@fikirtive/db";
 import {
@@ -55,6 +55,8 @@ import { sanitizeUserError } from "./provider-secrecy";
 import { readMerchantPrompt } from "./merchant-prompt-provenance";
 import { outOfCreditsMessage, spendCapBlockedMessage } from "./credit-format";
 import { consumeGenerationGate } from "./rate-limit-gates";
+// Founder 2026-09-04 20:45 —— 画布节点级付费动作落进这块画布对话历史的唯一写点。
+import { appendCanvasPaidAction } from "./canvas-thread-log";
 // #744 判官 r2 P1 —— 撤销与扣费共用的那把 campaign 锁。它必须由**提交扣费的这笔事务**持有,
 // 所以它进到下面的 money transaction 里,而不是包在 startGen 外面(包在外面的话,外层超时先
 // 放锁、内层稍后才提交,撤销就能插进中间,落成「已撤销且已扣费」)。
@@ -354,8 +356,25 @@ type TrustedCoworkRequest = {
    * 读卡。空数组 = 这张卡没有第二张挂图(既有每一条路)。
    */
   referenceGenerationIds: string[];
+  /**
+   * H2 #1234 留下的窗口(Founder 2026-09-04 20:45 清单④)—— **这张卡在读它的那一刻长什么样**。
+   *
+   * 这条路一直是「事务外读卡 → 事务内建任务行」:上面那次读之后、下面钱事务提交之前,
+   * 商家在卡上改一格(`ottoUpdateGenCardOptions` 重铸 payload)就会落进那道窗口 —— 钱数
+   * 有 `expectedCredits` 对签所以不会错,但**任务行按旧 payload 冻结**,于是卡面写着新的
+   * 那一档、上路的却是旧的那一份,同一次生成两个说法。
+   *
+   * 指纹是那次读到的 payload 的逐字快照;钱事务里再读一次同一行来对签,不一样就整笔
+   * 回滚(create/reserve 都在对签之后 ⇒ 零建任务、零预扣、账本零新增行)。
+   */
+  cardFingerprint: string;
 };
 const TRUSTED_COWORK_REQUESTS = new WeakMap<object, TrustedCoworkRequest>();
+
+/** 一张卡 payload 的逐字指纹。同一行读两次 ⇒ 同一串;中间被重铸过 ⇒ 不同串。 */
+function cardPayloadFingerprint(payload: unknown): string {
+  return createHash("sha256").update(JSON.stringify(payload ?? null)).digest("hex");
+}
 
 /** #774 判官 r4 P1 —— 「这一份审批身份就是卡上那一份」的机器判据(逐项逐字,含次序)。
  *  写成函数而不是注释,是因为它是 startGen 唯一放行这个字段的条件。 */
@@ -510,6 +529,16 @@ export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
   }
 
   const payload = (card.payload ?? {}) as Record<string, unknown>;
+  // Founder 2026-09-04 20:45 —— 画布节点级那张卡是一次**已经批过、已经扣过**的动作的回执
+  // (`canvas-thread-log.ts` 铸的,payload 上带这一格,并且卡上写着它自己的 genJobId)。
+  // 它长得跟 Otto 那张确认卡一样,所以必须在这条唯一的付费入口上 fail closed:界面那一侧
+  // 已经不出 Generate 按钮(有 genJobId ⇒ deriveCardState 不是 idle),但 Server Action 是
+  // 可以直接调的 —— 少了这一道,直接调一次就是同一件事被扣第二次钱(它的画布幂等键是
+  // `canvas:<actionId>`,与 `cowork:<cardId>` 不同域,谁也拦不住谁)。
+  // 拒在 startGen 之前 ⇒ 零建任务、零预扣、账本零新增行。
+  if (typeof payload.canvasAction === "string") {
+    return { error: "That was already generated from the canvas — start a new action instead." };
+  }
   const quote = payload.estimatedCredits;
   const expectedCredits = typeof quote === "number" && Number.isSafeInteger(quote) && quote > 0
     ? quote
@@ -557,6 +586,7 @@ export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
     merchantPrompt: readMerchantPrompt(raw) ?? null,
     storyboardCardId,
     referenceGenerationIds: cardReferenceGenerationIds,
+    cardFingerprint: cardPayloadFingerprint(card.payload ?? null),
   });
   return startGen(trustedRequest);
 }
@@ -981,6 +1011,22 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
               error: `The approved price changed from ${trustedCoworkRequest.expectedCredits} to ${displayedCost} credits. Ask Otto for an updated proposal, then review it again.`,
             };
           }
+          // H2 #1234 留下的窗口(Founder 2026-09-04 20:45 清单④)—— 卡在**事务外**那次读
+          // 之后被重铸(`ottoUpdateGenCardOptions` 改了张数/形状/精修),旧写法会拿那份旧
+          // payload 冻进下面的任务行:钱数不会错(上面刚对过签),但卡面与任务行开始说两件
+          // 事。所以在**这笔事务里**把同一行再读一次,与读它那一刻的指纹逐字对签。
+          //
+          // 读在事务里 = 与 create/reserve 同一个快照:对完签到建行之间不留任何能被并发
+          // 重铸插进来的窗口。不一样就在 create/reserve **之前**返回 ⇒ 零建任务、零预扣、
+          // 账本零新增行,商家重按一次即可(按的是刚重铸出来的那张卡)。
+          const freshCard = await tx.chatMessage.findFirst({
+            where: { id: trustedCoworkRequest.cardId, ownerId, kind: "GEN_CARD", deletedAt: null },
+            select: { payload: true },
+          });
+          if (!freshCard) return { error: "Generation card not found." };
+          if (cardPayloadFingerprint(freshCard.payload ?? null) !== trustedCoworkRequest.cardFingerprint) {
+            return { error: "This card changed while you were approving it — review it once more, then generate." };
+          }
         }
 
         if (canvasAction) {
@@ -1091,6 +1137,44 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
           },
           select: { id: true },
         });
+        // Founder 2026-09-04 20:45 裁决(编排者代记)——「画布上任何付费出图出片都写进
+        // 这张画布的对话历史(请求、确认、结果),刷新与换浏览器都在」。
+        //
+        // 节点级那几条付费路(卡上的「再来一张」、Animate、视频「照这条再来一次」、t2v
+        // 弹窗)从前只把 threadId 当标签挂在下面那一行任务上,对话里一个字都没有。这两行
+        // 补的就是「请求」与「确认」;「结果」一直由 worker 写(appendCoworkResult 认的正是
+        // job.threadId,这几条路本来就带着它)。
+        //
+        // 位置在**这笔钱事务里**、create 之后:历史与任务同生同死 —— 建了任务却没有历史
+        // (刷新即失忆),或者有历史却没有任务(对话里凭空多出一次没发生的花费),两种都
+        // 不许出现。幂等由上面那道 canvasHistoryVerdict 负责:同一个 actionId 再来一次在
+        // 走到这里之前就 reused 返回了,所以一个动作只会落一次。
+        //
+        // 一分钱不动:两行都是 ChatMessage,没有 reserve / settle / refund,账本零新增行。
+        // 卡面那个数就是下一行 reserveCredits 要预扣的那一份(displayedCost,同一个
+        // pricedGenCredits),这里不重算。
+        if (canvasAction && threadId && !trustedCoworkRequest) {
+          await appendCanvasPaidAction(tx, {
+            threadId,
+            ownerId,
+            genJobId: created.id,
+            kind: kind === "video" ? "video" : "image",
+            model,
+            params: {
+              ...(effectiveAspectRatio ? { aspectRatio: effectiveAspectRatio } : {}),
+              ...(resolution ? { resolution } : {}),
+              ...(typeof durationSeconds === "number" ? { durationSeconds } : {}),
+              ...(typeof audio === "boolean" ? { audio } : {}),
+              count: kind === "video" ? 1 : count,
+              ...(coherentSet ? { coherentSet: true } : {}),
+            },
+            hasSourceImage: !!sourceGenerationId,
+            prompt,
+            entityIds,
+            variantSel: material.variantSel ?? null,
+            estimatedCredits: displayedCost,
+          });
+        }
         await reserveCredits(tx, { orgId: ownerId, refId: created.id, cost });
         const sentQueueJobId = await boss.send(
           GEN_QUEUE,
