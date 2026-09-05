@@ -4,8 +4,10 @@
  * Design authority: `apps/web/design-system/information-architecture/reference-picker-contract.md`
  * §4 ("Picker 只提交 typed ID，不复制 image URL、Product facts 或媒体文件"). The seven contract
  * types are mirrored verbatim from the approved fixture's taxonomy
- * (`apps/web/design-system/patterns/reference-picker/model.ts`); a test in this package asserts the
- * two lists stay identical so the fixture can never drift away from production silently.
+ * (`apps/web/design-system/patterns/reference-picker/model.ts`). This package cannot import from
+ * `apps/web`, so the test that actually READS that fixture and compares it with this list lives on
+ * the web side: `apps/web/lib/__tests__/reference-picker-pattern.test.ts`. The test in this package
+ * pins the same list as a literal — the two together are what make a silent drift impossible.
  *
  * `brandmark` is the eighth member and is NOT in the contract's §4 table. It exists because
  * production's `EntityType` has had `BRANDMARK` since before this contract was written, and those

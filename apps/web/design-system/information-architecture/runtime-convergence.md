@@ -51,7 +51,7 @@
 |---|---|---|
 | Library：以已批准界面替换旧页面，并接通 views、筛选、详情与整理动作 | 上述 Library handoff contract 可用 | `app/library/page.tsx` 仍渲染 `OttoStuff`；`patterns/library/backend-handoff-contract.md` |
 | Brand：把已批准的五个 section 接到正式页面 | Otto IQ engine 提供有类型的内容、状态与来源接口 | `app/brand/page.tsx` 仍渲染 `OttoMemory`；`patterns/brand/README.md` 的 engine 边界 |
-| Reference picker：接入两处正式 Otto composer，传递准确 reference IDs | Phase 5 第 5 节 search / resolver / provenance gate 满足 | `components/otto/OttoMentionPopover.tsx`、`components/otto/OttoChatStream.tsx`；Phase 5 spec |
+| ~~Reference picker：接入两处正式 Otto composer，传递准确 reference IDs~~ —— 2026-09-04 已接入（规格 `docs/specs/frontend-baseline.md` §7.3③ 第①②刀）。剩余：把类型化引用 ID 存进消息并可回链（第③刀） | Phase 5 第 5 节 search / resolver / provenance gate 满足 | 两处 composer 与画布编辑器同走 `components/reference-picker/ReferencePickerMenu.tsx`（`components/otto/OttoFrontDoor.tsx`、`components/otto/OttoChatStream.tsx`、`components/MentionInput.tsx`）；服务端一次查询 `lib/reference-search.ts`。原先这一格点名的 `components/otto/OttoMentionPopover.tsx` 已随收口删除，不再存在 |
 | Home：接通 Customize home 保存与 Otto page context；验证完整 ready 数据 | workspace persistence / capability、context reader 与多来源 aggregate | `components/home/HomeEntry.tsx`、`lib/home-marketing-health.ts`；Phase 2 acceptance ledger |
 | 正式页面联合验收：登录后走通 Home、Create / Canvas、Library、Brand、Settings 和返回流程 | 可用的非生产测试账号环境；需付费 / 权限证明的行为由对应 backend 测试支持 | 各 phase acceptance ledger；Auth `access-journey-spec.md` |
 

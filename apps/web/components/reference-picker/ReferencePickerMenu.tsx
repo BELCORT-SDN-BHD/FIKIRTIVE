@@ -22,6 +22,7 @@ import type { ReferenceType } from "@fikirtive/core/reference-ref";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
+import { REFERENCE_PAGE_LIMIT } from "@/lib/reference-search-model";
 import { cn } from "@/lib/utils";
 
 /**
@@ -136,7 +137,17 @@ export function ReferencePickerMenu({
   }, [highlightedIndex, listId, open]);
 
   const indexed = rows.map((row, index) => ({ row, index }));
-  const references = indexed.filter(({ row }) => row.kind === "reference");
+  /**
+   * Contract §2 — "最多显示约 8 行". The cap lives HERE, on the thing that draws the rows, because
+   * that is the only place every surface passes through: the composers' rows come from one server
+   * page and the canvas editor's from a local filter, and a menu that quietly grew to a full-height
+   * list the day either of those raised its own limit is the defect this line exists to prevent.
+   * Both row sources also stop at eight upstream (`REFERENCE_PAGE_LIMIT`, `MentionInput`'s
+   * `slice(0, 8)`), so today this changes nothing on screen — it is the gate, not the only one.
+   */
+  const references = indexed
+    .filter(({ row }) => row.kind === "reference")
+    .slice(0, REFERENCE_PAGE_LIMIT);
   const categories = indexed.filter(({ row }) => row.kind === "category");
 
   return (

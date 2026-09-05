@@ -26,6 +26,8 @@ const ROWS = [
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
+/** Every turn the composer would have sent — the billed action this menu must not trigger. */
+let sent: string[] = [];
 
 function Harness() {
   const [text, setText] = useState("");
@@ -41,7 +43,16 @@ function Harness() {
           setText(event.target.value);
           picker.handleTextChange(event.target.value, event.target.selectionStart ?? event.target.value.length);
         }}
-        onKeyDown={(event) => { picker.handleKeyDown(event); }}
+        // byte-for-byte the composers' own handler (`OttoChatStream.tsx`, `OttoFrontDoor.tsx`):
+        // the picker gets first refusal, and whatever it does not consume submits the turn.
+        onKeyDown={(event) => {
+          if (picker.handleKeyDown(event)) return;
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            sent.push(text);
+            setText("");
+          }
+        }}
         {...picker.ariaProps}
       />
     </ReferencePickerMenu>
@@ -50,6 +61,7 @@ function Harness() {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  sent = [];
   searchReferencesAction.mockReset();
   searchReferencesAction.mockResolvedValue({ items: ROWS, nextCursor: null });
 });
@@ -95,9 +107,15 @@ async function type(value: string, caret = value.length) {
   await settle();
 }
 
-async function press(key: string, options: { shiftKey?: boolean } = {}) {
+/** One key with NO time advanced — pressed while a search is still in flight. */
+async function pressNow(key: string, options: { shiftKey?: boolean } = {}) {
   const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key, ...options });
   await act(async () => { composer().dispatchEvent(event); });
+  return event;
+}
+
+async function press(key: string, options: { shiftKey?: boolean } = {}) {
+  const event = await pressNow(key, options);
   await act(async () => { await vi.advanceTimersByTimeAsync(300); });
   return event;
 }
@@ -187,6 +205,36 @@ describe("FRONT-A10 — 两套 @ 实现收口成一个选择器", () => {
     await type("@zzzz");
     expect(document.body.textContent).toContain("No references found");
     await press("Enter");
-    expect(composer().value).toBe("@zzzz");
+    // The answer for this query IS in and it is empty, so there is nothing to pick and Enter is
+    // the composer's again — the turn goes out exactly as typed, with no reference invented.
+    expect(sent).toEqual(["@zzzz"]);
+  });
+
+  it("FRONT-A10 Enter during an unsettled search never sends the turn", async () => {
+    await render();
+    // No time advanced: the debounce has not fired, so the menu is open with no rows YET.
+    await keystroke("@j");
+    expect(document.body.textContent).toContain("Searching references");
+
+    const event = await pressNow("Enter");
+    // The picker consumed it. Handing it back would clear the draft and start a billed Otto turn
+    // on a message whose reference the merchant is still choosing — and nothing would attach.
+    expect(event.defaultPrevented).toBe(true);
+    expect(sent).toEqual([]);
+    expect(composer().value).toBe("@j");
+
+    // Once the answer lands the menu behaves exactly as before: Enter picks, still no turn sent.
+    await settle();
+    await press("Enter");
+    expect(composer().value).toContain("@Jasmine gift box");
+    expect(sent).toEqual([]);
+  });
+
+  it("FRONT-A10 Tab during an unsettled search does not leave the composer", async () => {
+    await render();
+    await keystroke("@j");
+    const event = await pressNow("Tab");
+    expect(event.defaultPrevented).toBe(true);
+    expect(sent).toEqual([]);
   });
 });

@@ -228,7 +228,22 @@ export function useReferencePicker({ text, setText, getTextarea }: UseReferenceP
         else dismiss();
         return true;
       }
-      if (rows.length === 0) return false;
+      if (rows.length === 0) {
+        /**
+         * There are no rows because the answer for this query has not landed yet — NOT because the
+         * merchant has finished with the menu. Handing Enter back to the composer here is the
+         * costly half of the "no rows YET" defect: `OttoChatStream`/`OttoFrontDoor` take Enter as
+         * submit, so the draft is cleared and a billed Otto turn starts on a message whose
+         * reference the merchant was still halfway through picking — and the reference never
+         * attaches, because nothing was selected. Swallow Enter/Tab while the search is in flight
+         * and let the answer arrive; every other key still reaches the composer.
+         */
+        if (pending && (event.key === "Enter" || event.key === "Tab") && !event.shiftKey) {
+          event.preventDefault();
+          return true;
+        }
+        return false;
+      }
       if (event.key === "ArrowUp") {
         event.preventDefault();
         setHighlight((h) => Math.max(0, h - 1));
@@ -246,7 +261,7 @@ export function useReferencePicker({ text, setText, getTextarea }: UseReferenceP
       }
       return false;
     },
-    [category, clearCategory, dismiss, highlight, open, rows.length, select],
+    [category, clearCategory, dismiss, highlight, open, pending, rows.length, select],
   );
 
   /**

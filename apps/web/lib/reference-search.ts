@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@fikirtive/db";
-import { storageKey, storageKeyToSrc, type ReferenceType } from "@fikirtive/core";
+import { entityOrigin, storageKey, storageKeyToSrc, type ReferenceType } from "@fikirtive/core";
 import { storage } from "./storage";
 import {
   REFERENCE_PAGE_LIMIT,
@@ -25,10 +25,11 @@ import {
  *
  * WHAT PRODUCTION CAN ANSWER, AND WHAT IT CANNOT:
  *  - `product` / `character` / `official-avatar` / `location` / `brandmark` → `Entity` rows. An
- *    official avatar is an `Entity` whose `catalogKey` is set (the platform actor library,
- *    `docs/specs/creation-engine.md` §8.1③, seeded per org); a merchant's own character has
- *    `catalogKey = null`. That is the whole difference, so the picker can name it honestly
- *    instead of showing a fake `Official avatars` bucket (FRONT-A10).
+ *    official avatar is an `Entity` the platform actor library seeded (`docs/specs/creation-engine.md`
+ *    §8.1③); a merchant's own character is not. The criterion is NOT restated here — it is
+ *    `entityOrigin` in `packages/core/src/entity-policy.ts`, the same function the DTO, the UI and
+ *    the server actions read, so the picker can name it honestly instead of showing a fake
+ *    `Official avatars` bucket (FRONT-A10) and can never drift from the read-only rule.
  *  - `generation` / `upload` → `Generation` rows. An upload is a `Generation` whose `source` is
  *    `UPLOAD` (upload-actions writes one row per uploaded file), and it reports its **Asset** id,
  *    because contract §4 names the Asset as an upload's canonical object — re-uploading the same
@@ -134,7 +135,10 @@ async function entityRows(ownerId: string, options: ReferenceSearchOptions): Pro
           ? "location"
           : row.type === "BRANDMARK"
             ? "brandmark"
-            : row.catalogKey
+            : // "platform catalogue or the merchant's own?" is decided in ONE place for the whole
+              // repo (`packages/core/src/entity-policy.ts`); the picker asks it rather than reading
+              // `catalogKey` itself, so the day that criterion changes the `@` menu changes with it.
+              entityOrigin(row) === "OFFICIAL_CATALOG"
               ? "official-avatar"
               : "character";
     // an official avatar and a merchant's own character are both CHARACTER rows, so the DB filter
@@ -259,7 +263,11 @@ export async function searchReferences(
   ownerId: string,
   options: ReferenceSearchOptions,
 ): Promise<ReferenceSearchPage> {
-  const limit = Math.min(Math.max(options.limit ?? REFERENCE_PAGE_LIMIT, 1), REFERENCE_PAGE_LIMIT * 4);
+  // One page is at most the menu's own row cap (contract §2). The clamp used to allow four times
+  // that, which made the client-supplied `limit` the real ceiling — a caller asking for 32 got 32,
+  // and the "about 8 rows" the contract promises held only as long as every caller remembered to
+  // ask for 8. Deeper results are reached with `nextCursor`, not with a bigger page.
+  const limit = Math.min(Math.max(options.limit ?? REFERENCE_PAGE_LIMIT, 1), REFERENCE_PAGE_LIMIT);
   const offset = parseCursor(options.cursor);
 
   const [entities, media] = await Promise.all([

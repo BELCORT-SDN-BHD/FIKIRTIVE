@@ -18,7 +18,7 @@
  * turn, which journey 12 already characterises as a hold, never a spend.
  */
 import { test, expect } from "@playwright/test";
-import { seedWorkspace, seedElement } from "../support/seed.js";
+import { seedWorkspace, seedElement, seedElementVariant } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 import { waitUntilInteractive } from "../support/ui.js";
 
@@ -32,8 +32,14 @@ test("FRONT-A10 — @ in Otto finds this workspace's own element and the keyboar
   // A product only THIS workspace owns — the row the menu must find, and the name is distinctive
   // so a match cannot be a coincidence of seed data.
   const elementName = "Pandan kopi gift set";
-  await seedElement(ws, elementName);
+  const element = await seedElement(ws, elementName);
+  // One named variant WITH a picture — the row only the canvas editor can offer (a shot prompt's
+  // chip binds a variant for conditioning; a chat turn has no column for one). A variant without
+  // an image is never mentionable, so the fixture seeds a real asset behind it.
+  const variantName = "Raya edition";
+  await seedElementVariant(ws, element.entityId, { name: variantName, handle: "raya" });
 
+  await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page, ws, "/");
 
   // The one production entry into a canvas, walked rather than deep-linked (journey 12).
@@ -78,4 +84,23 @@ test("FRONT-A10 — @ in Otto finds this workspace's own element and the keyboar
 
   // The draft is still the merchant's — picking a reference did not send anything.
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
+
+  // ── 画布那一半:同一个菜单,不是第二套 ──────────────────────────────────────────
+  // 收口前画布的提示词编辑器有自己的一版弹层(一颗色点 + 一个 badge,没有缩略图也没有来源行)。
+  // 这一段证明它现在开的是**同一个** `References` listbox,并且带上了 Otto 输入框拿不到的那一行:
+  // 元素的具名 variant。没有这几行,画布那一半只有源码子串围栏在盯(overlay-design-system 那份),
+  // 而「两处渲染同一个组件」这句话,只有真浏览器能证。
+  await page.getByRole("button", { name: "Generate image" }).click();
+  const shotPrompt = page.locator('.mention-input [contenteditable="true"]');
+  await expect(shotPrompt).toBeVisible();
+  await shotPrompt.click();
+  await shotPrompt.pressSequentially("@Pandan");
+
+  const canvasMenu = page.getByRole("listbox", { name: "References" });
+  await expect(canvasMenu).toBeVisible();
+  await expect(canvasMenu.getByRole("option", { name: new RegExp(elementName) }).first()).toBeVisible();
+  // The variant row: the entity's name, the variant's own source line, and the trailing tag.
+  const variantRow = canvasMenu.getByRole("option", { name: new RegExp(variantName) });
+  await expect(variantRow).toBeVisible();
+  await expect(variantRow).toContainText("Variant");
 });

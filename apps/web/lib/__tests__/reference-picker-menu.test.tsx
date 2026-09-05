@@ -5,8 +5,8 @@
  * 前身是 `otto-mention-popover.test.tsx`(打在 `components/otto/OttoMentionPopover.tsx` 上)。
  * 那个组件被「两套 `@` 收口成一个选择器」这一刀替换成 `ReferencePickerMenu`,断言指着的组件
  * 因此换了一个;**口径一个字没改**:
- *   - 合约 §2「最多显示约 8 行,之后在菜单内部滚动」——「切到 8 行」从菜单渲染时搬到了
- *     服务端一页的上限 `REFERENCE_PAGE_LIMIT`(菜单只剩下「装不下就自己滚」这一半);
+ *   - 合约 §2「最多显示约 8 行,之后在菜单内部滚动」——「切到 8 行」仍在菜单渲染时做
+ *     (`REFERENCE_PAGE_LIMIT`),服务端一页的上限是另一道同数闸,两边都在;
  *   - 合约 §3 行解剖:缩略图或类型图标 / 名字 / 一行来源 / 尾部类型图标;
  *   - 合约 §7 空态只留 `Browse Library` 一个出口,没有 `Upload media`;
  *   - 没有在跟踪的 `@query` 时菜单不开。
@@ -79,14 +79,16 @@ function referenceRow(index: number): ReferencePickerRow {
 
 describe("FRONT-A10 Otto reference picker menu", () => {
   it("FRONT-A10 caps the menu at eight rows and scrolls the rest inside the menu", async () => {
-    // 上限的家从菜单搬到了搜索的一页:服务端不会一次给出第 9 行,所以菜单不必再切。
+    // 合约 §2 的上限由**画行的那个组件**兜底:给它 12 行,它只画 8 行,第 9 行看不到。
+    // 服务端一页也是 8(`REFERENCE_PAGE_LIMIT`),但那是另一道闸——这一条钉的是菜单自己。
     expect(REFERENCE_PAGE_LIMIT).toBe(8);
 
-    await render({ rows: Array.from({ length: REFERENCE_PAGE_LIMIT }, (_, i) => referenceRow(i)) });
+    await render({ rows: Array.from({ length: 12 }, (_, i) => referenceRow(i)) });
 
     const options = document.querySelectorAll('[role="option"]');
     expect(options).toHaveLength(8);
     expect(options[7]?.textContent).toContain("Reference 7");
+    expect(document.body.textContent).not.toContain("Reference 8");
 
     const scroller = document.querySelector('[role="option"]')!.parentElement!;
     expect(scroller.className).toContain("max-h-[352px]");

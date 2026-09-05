@@ -290,6 +290,62 @@ export async function seedElement(ws: Workspace, name: string): Promise<{ entity
   return { entityId };
 }
 
+/**
+ * A named variant of an element, with one real image behind it.
+ *
+ * The image is not decoration: `MentionInput` only offers variants that have at least one
+ * reference image (`refs.length > 0`), because a variant with no picture would condition a
+ * generation on nothing. So a variant seeded without one is invisible to the picker.
+ */
+export async function seedElementVariant(
+  ws: Workspace,
+  entityId: string,
+  variant: { name: string; handle: string },
+): Promise<{ variantId: string }> {
+  const variantId = id("variant");
+  const assetId = id("asset_variant");
+  const stored = await putLocalObject(ws.orgId, MOCK_PNG_1X1, "png");
+  await runAsTenant(ws.orgId, async () => {
+    await prisma.asset.create({
+      data: {
+        id: assetId,
+        ownerId: ws.orgId,
+        contentHash: stored.contentHash,
+        ext: "png",
+        mime: "image/png",
+        sizeBytes: BigInt(MOCK_PNG_1X1.length),
+        originalFilename: `${assetId}.png`,
+        source: "UPLOAD" as never,
+        width: 1,
+        height: 1,
+        createdAt: at(0),
+      },
+    });
+    await prisma.entityVariant.create({
+      data: {
+        id: variantId,
+        ownerId: ws.orgId,
+        entityId,
+        name: variant.name,
+        handle: variant.handle,
+        createdAt: at(0),
+      },
+    });
+    await prisma.referenceImage.create({
+      data: {
+        id: id("refimg"),
+        ownerId: ws.orgId,
+        entityId,
+        assetId,
+        variantId,
+        position: 0,
+        createdAt: at(0),
+      },
+    });
+  });
+  return { variantId };
+}
+
 /** An empty conversation thread in the seeded project — landing on it is what puts the merchant
  *  straight on the chat composer (with its attach button) instead of the "new chat" front door,
  *  the same way opening a project with a prior conversation would. */
