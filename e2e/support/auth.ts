@@ -30,6 +30,8 @@
  * working loudly on the first journey, which is the right way for a security-relevant default to
  * change.
  */
+import { readFile, rm } from "node:fs/promises";
+import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { symmetricDecrypt } from "../../apps/web/node_modules/better-auth/dist/crypto/index.mjs";
 import { prisma } from "./db.js";
@@ -79,6 +81,52 @@ export async function codeFromInbox(email: string): Promise<string> {
     if (Date.now() > deadline) {
       throw new Error(`e2e: no sign-in code was minted for ${email} within 15s`);
     }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+/**
+ * The two auth emails that carry a LINK rather than six digits — signup verification and the
+ * password reset — read out of the stub transport's one-slot outbox.
+ *
+ * WHY NOT THE DATABASE, when `codeFromInbox` above reads the database. Because for these two the
+ * database is not where the credential is. The signup verification token is a SIGNED JWT, minted
+ * and handed straight to the send hook (better-auth `createEmailVerificationToken`); no row is
+ * ever written, so there is nothing to read back. The reset token IS stored
+ * (`reset-password:<token>`), but what the merchant clicks is the URL Better Auth built around it,
+ * and rebuilding that URL here would be this suite inventing the mail it is supposed to be
+ * reading. The stub transport (apps/web/lib/email/stub-adapter.ts, opted into with
+ * `AUTH_EMAIL_TRANSPORT=stub` in support/env.ts) writes exactly what would have been mailed, so
+ * this is the smallest honest stand-in for an inbox: the product's own outbox, unmodified.
+ *
+ * ONE SLOT, SO CLEAR IT FIRST. The file is overwritten by every send and carries no address, so a
+ * read is only meaningful after `clearMailOutbox()` and the action that triggers the send. That is
+ * sound here and only here: the suite is `workers: 1`, serial by construction
+ * (e2e/playwright.config.ts) — one browser, one server, one send in flight.
+ *
+ * The value is never echoed: a failure says a link did not arrive, never what it was.
+ */
+const MAIL_OUTBOX = path.join(process.cwd(), ".data", "last-magic-link.txt");
+
+/** Forget the previous send, so the next read cannot be answered by a stale link. */
+export async function clearMailOutbox(): Promise<void> {
+  await rm(MAIL_OUTBOX, { force: true });
+}
+
+/** The link that would have been in the merchant's inbox. Polls, because delivery is off the
+ *  request path (#678) — bounded, and it fails as an assertion rather than as a suite timeout. */
+export async function linkFromInbox(): Promise<string> {
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    let body = "";
+    try {
+      body = await readFile(MAIL_OUTBOX, "utf8");
+    } catch {
+      body = "";
+    }
+    const link = body.match(/https?:\/\/\S+/)?.[0];
+    if (link) return link;
+    if (Date.now() > deadline) throw new Error("e2e: no auth link was mailed within 15s");
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
@@ -134,6 +182,30 @@ export async function requestSignInCode(page: Page, email: string, callbackURL: 
  * the merchant actually lands on; where a redirect is the thing under test, `page.goto()` is the
  * honest way to walk it (journeys 7 and 9 do).
  */
+/**
+ * The OTHER front door: email + password, walked exactly as the login page lays it out.
+ *
+ * FRONT-A2 asks for the round trip through `?from=`, so the landing is asserted whole here for the
+ * same reason `signIn` asserts it (see above): a refused password leaves the merchant on /login,
+ * and a journey that carried on from there would report an empty page as a product fact.
+ */
+export async function signInWithPassword(
+  page: Page,
+  email: string,
+  password: string,
+  callbackURL = "/",
+): Promise<void> {
+  await clearAuthRateLimitCounters();
+  await page.goto(`/login?from=${encodeURIComponent(callbackURL)}`);
+  await page.getByRole("button", { name: "Continue with email" }).click();
+  await page.getByLabel("Email").fill(email);
+  await page.getByRole("button", { name: "Use password instead" }).click();
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page).toHaveURL(new URL(callbackURL, E2E_BASE_URL).toString());
+  await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
+}
+
 export async function signIn(page: Page, ws: Workspace, callbackURL = "/"): Promise<void> {
   const code = await requestSignInCode(page, ws.email, callbackURL);
   await page.getByLabel("Login code").fill(code);

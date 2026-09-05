@@ -1,8 +1,9 @@
 /**
  * 前端基线(docs/specs/frontend-baseline.md §2 验收表)—— 验收↔测试的落点登记。
  *
- * 规格 §7.1 把施工切成八段;本文件属于第 ① 段(纯合并),所以这里的真测试只有
- * **FRONT-A12** —— 夹具路由的生产构建守卫。**FRONT-A13** 同属 ① 段,它的真测试已经
+ * 规格 §7.1 把施工切成八段;本文件属于第 ① 段(纯合并),所以这里自带的真测试是
+ * **FRONT-A12** —— 夹具路由的生产构建守卫 —— 外加 **FRONT-A2** 那条转正后的落点断言
+ * (真身在 `e2e/journeys/`,见该条上方的注释)。**FRONT-A13** 同属 ① 段,它的真测试已经
  * 转正,住在 `front-a13-server-adjacent.test.ts`(分支自带四处 server 邻接改动的行为
  * 测试,打真库),所以这里不再为它留占位。其余编号仍按机器闸 M3 允许的方式用
  * `it.todo` 占位:编号在测试树里有落点,但不假装已经验过。
@@ -98,7 +99,42 @@ describe("前端基线:后续各段的验收落点(§7.1;S5 前逐条转正)", (
   //      上传入口价目小字、聊天搜索成本提示)在新壳上还在**并且还挂着**。
   // 六条钱旅程的存在由同一份文件看着;浏览器那一侧由
   // e2e/journeys/07-money-surfaces-agree.spec.ts 认领。
-  it.todo("FRONT-A2 §7.1⑥ — 注册/验证码/回跳/重置旅程走真实邮件,错误提示不泄露邮箱是否存在");
+  // FRONT-A2 已转正:占位改成指向真身的断言(尾巴清单 F3)。四条旅程各有真落点 ——
+  //   注册 + 验证 + `?from=` 回跳 → e2e/journeys/21-register-and-return.spec.ts
+  //   忘记密码 + 重置 + 新密码登录 → e2e/journeys/22-reset-password.spec.ts
+  //   验证码那条门 → e2e/journeys/01-wall-and-sign-in.spec.ts(早就在)
+  //   「提示不泄露邮箱是否存在」的单元侧 → app/login/__tests__/signin-code-action.test.ts
+  // 两条新旅程用的是明写的假投递通道(`AUTH_EMAIL_TRANSPORT=stub`,e2e/support/env.ts):
+  // 测试机没有、也永远不会有邮件商钥匙(`OFF_MACHINE_CREDENTIAL_NAMES`)。所以规格 §2 那句
+  // 「收到真实验证码邮件」在这里的诚实读法是「产品真的把信交给了它的投递通道,旅程读的是
+  // 那条通道的产物」——最后一公里(Resend 真发信)只有配了钥匙的部署才谈得上,S5 由 Founder
+  // 在真环境走一次;这一条钉的是它之前的全部环节。
+  it("FRONT-A2 §7.1⑥ — 注册/验证码/回跳/重置旅程有真旅程文件,不是占位", () => {
+    const journeys = path.resolve(__dirname, "../../../../e2e/journeys");
+    const required = {
+      "21-register-and-return.spec.ts": [
+        "/signup?from=/create", // 注册,带目的地
+        "linkFromInbox", // 产品真的寄了一封,旅程读的是它
+        "signInWithPassword", // 回跳:从 /login?from=/create 进去落回 /create
+      ],
+      "22-reset-password.spec.ts": [
+        "/forgot-password?from=/create",
+        "Save new password", // 重置真的走完
+        "countResetTokens", // 同一句话,背后一次真铸一次没铸 —— 不泄露存在性
+      ],
+    } as const;
+
+    for (const [file, anchors] of Object.entries(required)) {
+      const src = readFileSync(path.join(journeys, file), "utf8");
+      // 会跑的用例,而且没有被跳过 —— 一个 `test.skip` 满屏的文件也能通过上面的存在性检查。
+      expect(src.match(/\btest(?:\.describe\.serial)?\(/g)?.length ?? 0, `${file} 里没有会跑的用例`)
+        .toBeGreaterThan(0);
+      expect(src, `${file} 有被跳过的用例`).not.toMatch(/\btest\.(skip|fixme)\b/);
+      for (const anchor of anchors) {
+        expect(src, `${file} 少了验收里点名的一环:${anchor}`).toContain(anchor);
+      }
+    }
+  });
   // FRONT-A3 与 FRONT-A4 已**全部**转正(§7.1⑤ 三刀齐;第③刀按 Founder 2026-09-04
   // 「Meta 单源版面」裁决落地 —— ready 多来源版面不做,契约保留且不可达)。落点:
   //   lib/__tests__/home-layout.test.ts(版面定义层的规则,纯函数)

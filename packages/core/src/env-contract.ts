@@ -362,9 +362,16 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     // 这条命令(e2e/playwright.config.ts 的 webServer)。于是「非生产才用假通道」在 e2e 上一定
     // 不成立,登录旅程会全红。开关必须是显式的。
     //
-    // 生产围栏落在 productionValues:真正对外服务的生产进程一旦把它设成 stub,开机检查判
-    // not-production-safe 并拒绝启动;e2e 是显式带着 FIKIRTIVE_ENV_CONTRACT=warn 跑的
-    // (e2e/support/env.ts),所以它只拿到一条响亮的警告 —— 正好是这种部署该被喊出来的事。
+    // 生产围栏落在 productionValues:对外服务的生产进程把它设成 stub,开机检查判
+    // not-production-safe 并**默认**拒绝启动。
+    //
+    // 这道围栏有多硬,如实写(判官 #1229 P2-2):它是默认拒绝,不是无条件拒绝。本条目没有打
+    // moneyInvariant,所以 `bootEnvDecision` 的降级逃生门够得着它 —— 任何带着
+    // FIKIRTIVE_ENV_CONTRACT=warn 起的生产进程(不只是 e2e)都会把这条判定降成一条警告,照常
+    // 起来、照常一封信也寄不出去。e2e 正是显式带着这个开关跑的(e2e/support/env.ts),所以它
+    // 拿到的是一条响亮的警告 —— 正好是这种部署该被喊出来的事。要把它变成救不了的那一类,只有
+    // 打 moneyInvariant 这一条路,而那个名单的口径是「配错直接改变钱的方向或幅度」(见上面
+    // 该字段的注释),本条不属于它,所以没有打。
     name: "AUTH_EMAIL_TRANSPORT",
     surface: "web",
     readBy: "code",
