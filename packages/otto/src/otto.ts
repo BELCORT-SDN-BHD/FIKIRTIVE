@@ -30,8 +30,14 @@ import { createOttoRuntime, type OttoRuntimeDeps } from "./runtime.js";
  *  ottoModelRuntime.billableModelId) is the billing source of truth. */
 export { OTTO_DEFAULT_MODEL };
 
-/** Otto's durable identity + creative rules. Inlined as a TS constant (see instructions.ts) —
- *  NOT a runtime file read, so it loads in Next/Turbopack (web), tsx (worker), dist, and vitest. */
+/** Otto's durable identity + creative rules — the WHOLE knowledge cabinet, assembled (ENGINE-A7,
+ *  spec §7.2⑥). Still a build-time TS constant (see instructions.ts), NOT a runtime file read, so
+ *  it loads in Next/Turbopack (web), tsx (worker), dist, and vitest.
+ *
+ *  This is the Agent's baseline and the resume leg's full load (B9 恢复轮全量装载); a FRESH turn
+ *  assembles its own, thinner instructions from the turn's own words (`runOttoTurn`). Existence
+ *  guards read this one on purpose: "is that sentence still in the instructions" is a question
+ *  about the whole cabinet, not about whichever files one turn happened to load. */
 export { ottoInstructions };
 
 /** The production deps: ONE manifest + the full registry. */

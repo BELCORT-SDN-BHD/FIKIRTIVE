@@ -283,10 +283,12 @@ export async function POST(req: NextRequest): Promise<Response> {
       const priorState = priorOttoState ? await tryRestoreRunState(otto, priorOttoState) : null;
       if (priorState) {
         // ENGINE-A6(规格 §7.2④):成对感知地裁到预算以内,裁掉的那些轮交给引擎折进
-        // rollingSummary —— 沿用本轮 refId,不新开钱路。没裁掉东西的一轮不传端口,
-        // 与本改动之前逐字节相同。
+        // rollingSummary —— 沿用本轮 refId,不新开钱路。
+        // 端口在**这一轮裁掉了东西、或线程上已经有摘要**时都要传:折叠仍只在有裁掉的轮时发生
+        // (引擎侧 `dropped.length > 0` 那道判据一个字没动,零裁剪的一轮照旧零调用零落盘),
+        // 但⑥段的装配器要靠它看见「被折走的那部分对话」,否则装载集会在裁剪之后中途缩水。
         const { kept, dropped } = trimHistoryToBudget(sanitizeHistory(priorState.history));
-        if (dropped.length > 0) {
+        if (dropped.length > 0 || priorRollingSummary) {
           rollingSummaryPort = {
             dropped,
             priorSummary: priorRollingSummary,
@@ -297,6 +299,18 @@ export async function POST(req: NextRequest): Promise<Response> {
       } else {
         // No prior state OR an unrestorable one (F24): start fresh — the turn still runs and its
         // normal state write self-heals ottoState to the current schema.
+        // 判官 P2-1(⑥段):恢复不回来的这一轮**照样要带端口**。历史没了,但线程上那份摘要还在,
+        // 而它就是这一轮真正带着的旧上下文 —— 上面那条 system 消息里回注的正是它。不传的话,
+        // 只在摘要里点过名的那几份柜文会在恢复失败的这一轮悄悄掉出装载集(与④段之后中途缩水
+        // 同一个病灶,只是触发处不同)。`dropped` 是空的 ⇒ 引擎侧 `dropped.length > 0` 那道判据
+        // 仍然不成立:零模型调用、零落盘,钱路一个字没动。
+        if (priorRollingSummary) {
+          rollingSummaryPort = {
+            dropped: [],
+            priorSummary: priorRollingSummary,
+            save: (summary: string) => saveRollingSummary(threadId, ownerId, summary),
+          };
+        }
         runInput = [...(sys ? [sys] : []), userTurn];
       }
     } catch (e) {

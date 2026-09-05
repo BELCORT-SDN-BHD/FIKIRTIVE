@@ -68,6 +68,7 @@ import {
   navPointableNames,
 } from "@fikirtive/core";
 import { ottoInstructions } from "./instructions.js";
+import { KNOWLEDGE_CABINET } from "./knowledge-cabinet.generated.js";
 import { skillCatalog } from "./registry.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -207,6 +208,17 @@ function handTypedLabels(source: string, fileName = "probe.ts"): string[] {
     new RegExp(`(?<![A-Za-z0-9])${escapeRegex(label)}(?![A-Za-z0-9])`).test(literals),
   );
 }
+
+/** 同一把尺子,量的是**纯文本**(柜文没有 TS 字面量,整份都是模型看得见的话)。 */
+function handTypedLabelsInText(text: string): string[] {
+  return EVERY_LABEL.filter((label) =>
+    new RegExp(`(?<![A-Za-z0-9])${escapeRegex(label)}(?![A-Za-z0-9])`).test(text),
+  );
+}
+
+/** ③④ 的柜子扫描面:`f.text` 已剥掉 HTML 注释(注释不进模型,与 ③ 「注释不算数」同规矩),
+ *  且**占位符还没替换** —— `{{navLabel:library}}` 的 key 是小写,不会被当成手打标签。 */
+const CABINET_TEXTS = KNOWLEDGE_CABINET.map((f) => [f.path, f.text] as const);
 
 /** ④ 界面引用的形状:导航标签 + 一个界面词。业务名词句(`Campaign container`)不在内。 */
 const UI_SURFACE_WORDS = ["UI", "page", "pages", "screen", "screens", "tab", "tabs"];
@@ -427,6 +439,27 @@ describe("#802 ③ 源码里一个地名都不许手打(判官 r1 [P1-1] / r3 [P
     }
   });
 
+  // ⑥段(ENGINE-A7)把散文从 `instructions.ts` 搬进了 `knowledge/**.md`。围栏的**对象**跟着
+  // 搬,否则这把尺子还守着一间搬空了的屋子:①②仍读渲染后的 `ottoInstructions`,所以
+  // **编出来的**地名照旧逮得住;逮不住的正是 ③ 存在的理由 —— 今天写对、core 改名后失同步
+  // 的**手打**标签。(判官 r2 [P2-2];迁移当时零命中,这道围栏是为下一次写柜文的人立的。)
+  it.each(CABINET_TEXTS)("柜文 %s 里没有手打的导航标签", (path, text) => {
+    expect(handTypedLabelsInText(text), `${path} 手打了导航标签,应改走 {{navPath:…}}/{{navLabel:…}}`).toEqual(
+      [],
+    );
+  });
+
+  it("扫描面自检:柜子真的被扫到了,而且每一份都有正文", () => {
+    expect(CABINET_TEXTS.length).toBeGreaterThan(10);
+    expect(CABINET_TEXTS.map(([path]) => path)).toContain("_core.md");
+    for (const [path, text] of CABINET_TEXTS) expect(text.length, path).toBeGreaterThan(200);
+  });
+
+  it("这把尺子在柜文形态下仍然认得出手打与权威插值", () => {
+    expect(handTypedLabelsInText("Open Settings to reconnect.")).toEqual(["Settings"]);
+    expect(handTypedLabelsInText("Open {{navPath:connections}} to reconnect.")).toEqual([]);
+  });
+
   it("AST 扫描器认得出注释、字符串、模板串与插值(r3 判官 [P2-1] 的两个漏洞)", () => {
     // W2-11 权威改写把顶层标签从 `Campaign` 改成了复数 `Campaigns`,探针词跟着换 ——
     // 钉的是扫描器的能力,不是这一个字面量本身。
@@ -470,6 +503,11 @@ describe("#802 ④ 没有人指着某个界面说话(r3 判官 [P1])", () => {
 
   it.each(["instructions.ts", "connection-copy.ts"])("%s 里同样没有手写的界面引用", (file) => {
     expect(namesAScreen(literalsOf(file))).toEqual([]);
+  });
+
+  // 与 ③ 同一次搬家:界面引用的尺子也要量柜文(判官 r2 [P2-2])。
+  it.each(CABINET_TEXTS)("柜文 %s 里同样没有手写的界面引用", (path, text) => {
+    expect(namesAScreen(text), `${path} 指着界面说话了,应走权威或改写`).toEqual([]);
   });
 
   it("技能表的描述面(模型真正读到的那一份)也没有", () => {

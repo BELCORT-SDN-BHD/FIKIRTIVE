@@ -2986,6 +2986,45 @@ describe("ENGINE-A6 — ottoTurn 的历史预算闸接线", () => {
     expect(sys.role).toBe("system");
     expect(sys.content).toContain("older notes: merchant sells kopi");
   });
+
+  // ENGINE-A7 × ENGINE-A6(判官 2026-09-05 P1):裁剪之后装载集不许缩水。变异实证:把
+  // `planHistoryBudget` 的 `if (dropped.length === 0 && !priorSummary)` 改回
+  // `if (dropped.length === 0)`,或把引擎里的
+  // `instructionsForTurn(request.input, request.rollingSummary)` 改回单参数,这一条当场红。
+  it("ENGINE-A7: 被折进摘要的话题,这一轮仍然把对应的柜文装进说明书", async () => {
+    mockChatThreadFindFirst.mockResolvedValue({
+      projectId: PROJECT_ID,
+      ottoState: '{"prior":"state"}',
+      rollingSummary: "merchant asked for a facebook advert; targeting agreed",
+    });
+    // 这一轮什么都没裁掉(短历史),被折走的话题只活在摘要里。
+    mockRunStateFromString.mockResolvedValue(new MockRunState([{ role: "user", content: "ok" }]));
+
+    await ottoTurn({ ...BASE_INPUT, threadId: THREAD_ID });
+
+    const instructions = (mainTurnCall()![0] as { instructions: string }).instructions;
+    expect(instructions).toContain("`meta-list-objects`");
+  });
+
+  // ENGINE-A7(判官第二轮 P2-1):`tryRestoreRunState` 回 null 的那一轮 —— F24 的坏状态 ——
+  // 此前走的是 else 分支,一个端口都不传,于是**只在摘要里点过名**的那几份柜文当场掉出装载集。
+  // 摘要还好端端地回注在 system 消息上,Otto 却丢了对应的规矩。变异实证:把 else 分支里新加的
+  // `planHistoryBudget([], priorRollingSummary, …)` 那一行删掉,这一条当场红。
+  it("ENGINE-A7: 状态恢复不回来的一轮,摘要点名的柜文仍然装进说明书", async () => {
+    mockChatThreadFindFirst.mockResolvedValue({
+      projectId: PROJECT_ID,
+      ottoState: '{"corrupt":',
+      rollingSummary: "merchant asked for a facebook advert; targeting agreed",
+    });
+    mockRunStateFromString.mockRejectedValue(new Error("Failed to parse run state"));
+
+    await ottoTurn({ ...BASE_INPUT, threadId: THREAD_ID });
+
+    const instructions = (mainTurnCall()![0] as { instructions: string }).instructions;
+    expect(instructions).toContain("`meta-list-objects`");
+    // 钱路与折叠一个字没动:没裁掉任何东西 ⇒ 零折叠调用、零落盘。
+    expect(foldCall()).toBeUndefined();
+  });
 });
 
 

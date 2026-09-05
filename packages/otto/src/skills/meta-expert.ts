@@ -12,7 +12,7 @@ import { newId } from "@fikirtive/core";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 import { diagnosePerformance } from "../diagnosis/diagnose-performance.js";
-import { META_EXPERTISE_KB } from "../knowledge/meta-expertise.js";
+import { META_EXPERTISE_KB } from "../meta-expertise/meta-expertise.js";
 import { buildPerformanceCardPayload } from "./meta-expert.helpers.js";
 import { isConnectionBlocked, metaNotConnectedMessage, ottoConnectionBlockedAnswer } from "../connection-copy.js";
 
