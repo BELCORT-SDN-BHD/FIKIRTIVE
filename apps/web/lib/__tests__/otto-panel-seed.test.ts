@@ -260,13 +260,24 @@ describe("FRONT-A14 落座与展开信号同一口径:全店(#1200 判官 P2-2)"
     expect(seed.projectId).toBe(DEFAULT_PROJECT);
   });
 
-  it("FRONT-A14 — 深链点名了 project 就不放宽:那个 project 里没有面板对话就不预选", async () => {
+  it("FRONT-A14 — 深链点名的 project 里没有面板对话时也回落全店,不再弹一块空面板(#1215 判官 P2-2)", async () => {
+    // 现场:`/?otto=1&project=P` 进来,P 里一条面板对话都没有。信号那一边不认识 project,
+    // 照样答「有」把面板顶开 —— 从前这里的深链例外让面板选不到任何一条,商家看到的仍然是
+    // 凭空弹出来的一块空面板,只是换了个入口。
     mockGetAllCoworkThreadMetas.mockResolvedValue([CANVAS_ROW, OTHER_PANEL_ROW]);
 
     const seed = await loadOttoPanelSeed({ projectId: DEFAULT_PROJECT });
     if ("error" in seed) throw new Error("unexpected error: " + seed.error);
-    expect(seed.activeThreadId).toBeNull();
-    expect(seed.projectId).toBe(DEFAULT_PROJECT);
+    expect(seed.activeThreadId).toBe("thr_other_panel");
+    // 项目与会话是同一件事:续了别的 project 那一条,就停在那个 project。
+    expect(seed.projectId).toBe(OTHER_PROJECT);
+  });
+
+  it("FRONT-A14 — 深链点名的 project 自己有面板对话时仍然先用它,地址栏说的优先", async () => {
+    const seed = await loadOttoPanelSeed({ projectId: OTHER_PROJECT });
+    if ("error" in seed) throw new Error("unexpected error: " + seed.error);
+    expect(seed.activeThreadId).toBe("thr_other_recent");
+    expect(seed.projectId).toBe(OTHER_PROJECT);
   });
 
   it("FRONT-A14 — 全店一条面板对话都没有时仍然不预选(不会退去续画布或老行)", async () => {

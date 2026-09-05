@@ -117,7 +117,7 @@ const analysisContext = {
 };
 
 /** 读模型是服务端算好传进来的,测试直接摆一份 —— 与既有 Home 测试同一套写法。 */
-function renderHome(health: unknown, props: Record<string, unknown> = {}): Promise<void> {
+function homeElement(health: unknown, props: Record<string, unknown> = {}): ReactElement {
   const homeProps = {
     filters,
     recents: { ok: true, value: [] },
@@ -128,15 +128,23 @@ function renderHome(health: unknown, props: Record<string, unknown> = {}): Promi
     canManageHome: true,
     ...props,
   } as unknown as ComponentProps<typeof MarketingHomeView>;
-  return render(<MarketingHomeView {...homeProps} />);
+  return <MarketingHomeView {...homeProps} />;
 }
 
-function renderAnalysis(health: unknown): Promise<void> {
+function analysisElement(health: unknown): ReactElement {
   const analysisProps = {
     context: analysisContext,
     health,
   } as unknown as ComponentProps<typeof HomeAnalysisView>;
-  return render(<HomeAnalysisView {...analysisProps} />);
+  return <HomeAnalysisView {...analysisProps} />;
+}
+
+function renderHome(health: unknown, props: Record<string, unknown> = {}): Promise<void> {
+  return render(homeElement(health, props));
+}
+
+function renderAnalysis(health: unknown): Promise<void> {
+  return render(analysisElement(health));
 }
 
 describe("FRONT-A3:Home 的 Retry 是一次真重取,不是一条指回原地的链接", () => {
@@ -205,6 +213,45 @@ describe("FRONT-A3:Home 的 Retry 是一次真重取,不是一条指回原地的
     expect(statusText()).not.toContain("Still unavailable");
     await click(buttonLabelled("Retry analysis")!);
     expect(statusText()).toContain("Still unavailable. Try again in a few minutes.");
+  });
+
+  /**
+   * 那一句只属于**商家刚按过的那一次**重试(判官 2026-09-05 #1216 P2-2)。
+   *
+   * 记号从前只置真、不复位,而这一层在一程里活得比一屏久:重试读回来了(partial),商家接着
+   * 换个筛选再读一次、这次服务器又读不出来 —— 他一根手指都没碰 Retry,屏幕却先说
+   * 「Still unavailable」。下面两条用**同一个挂载**重渲染来复现这条时间线。
+   */
+  it("FRONT-A3:Home 重试成功之后再翻回读不出来,没按 Retry 就不说那一句", async () => {
+    await renderHome({ state: "unavailable", goal: "online-sales", retryable: true });
+    await click(buttonLabelled("Retry")!);
+    expect(statusText()).toContain("Still unavailable. Try again in a few minutes.");
+
+    // 服务器这一次读回来了 —— 上一次重试的故事到此结束。
+    await act(async () => root!.render(homeElement(partialHealth)));
+    // 同一个挂载里再翻回读不出来(换个 range/comparison 再读的那一下)。
+    await act(async () =>
+      root!.render(homeElement({ state: "unavailable", goal: "online-sales", retryable: true })),
+    );
+
+    expect(buttonLabelled("Retry"), "这一屏本该又是那颗 Retry 按钮").toBeTruthy();
+    expect(statusText(), "商家没按 Retry,屏幕却替他说了一句「仍然」").not.toContain(
+      "Still unavailable",
+    );
+  });
+
+  it("FRONT-A3:Analysis 重试成功之后再翻回读不出来,同样不说那一句", async () => {
+    await renderAnalysis({ state: "unavailable", goal: "online-sales", retryable: true });
+    await click(buttonLabelled("Retry analysis")!);
+    expect(statusText()).toContain("Still unavailable. Try again in a few minutes.");
+
+    await act(async () => root!.render(analysisElement(partialHealth)));
+    await act(async () =>
+      root!.render(analysisElement({ state: "unavailable", goal: "online-sales", retryable: true })),
+    );
+
+    expect(buttonLabelled("Retry analysis")).toBeTruthy();
+    expect(statusText()).not.toContain("Still unavailable");
   });
 
   it("FRONT-A3:不是重试的恢复状态不会冒出那一句", async () => {

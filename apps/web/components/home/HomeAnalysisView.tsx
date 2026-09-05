@@ -261,6 +261,13 @@ export function HomeAnalysisView({
     setRetryAttempted(true);
     startRetry(() => router.refresh());
   };
+  /** 读回来了就复位 —— 与 Home 同一条口径、同一个理由、同一种写法(判官 2026-09-05 #1216 P2-2)。 */
+  const healthRecovered = health.state === "partial" || health.state === "ready";
+  const [lastRecovered, setLastRecovered] = useState(healthRecovered);
+  if (healthRecovered !== lastRecovered) {
+    setLastRecovered(healthRecovered);
+    if (healthRecovered) setRetryAttempted(false);
+  }
   const retryFailed = retryAttempted && !retrying;
   const goalLabel = HOME_GOALS.find((item) => item.value === context.goal)?.label ?? "Online sales";
 
