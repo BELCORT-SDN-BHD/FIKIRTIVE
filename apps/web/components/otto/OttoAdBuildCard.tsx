@@ -4,7 +4,7 @@ import { Hammer, ShieldCheck, CheckCircle2, Loader2, ExternalLink } from "lucide
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { approveAdBuild, launchAdDraft, ottoReject } from "@/lib/otto-client-actions";
-import { AD_BUILD_DECLINE_TEXT, isDeclinedPayload } from "@/lib/meta-card-decline-view";
+import { AD_BUILD_DECLINE_TEXT, settledTextFromPayload, settlementTextFor } from "@/lib/meta-card-decline-view";
 import type { MetaAdBuildCardPayload } from "@/lib/meta-build-spec";
 
 export interface OttoAdBuildCardProps {
@@ -73,7 +73,9 @@ export function OttoAdBuildCard({ cardId, threadId, payload }: OttoAdBuildCardPr
   // Approve to "Building…" and the card claims a build that is not happening.
   const [busyKind, setBusyKind] = useState<"approve" | "deny" | "launch" | null>(null);
   const busy = busyKind !== null;
-  const [deniedLocal, setDeniedLocal] = useState(false);
+  // See OttoActionPlanCard: the settled sentence, not a boolean — "declined", "already approved"
+  // and "expired" are three different things to tell the merchant.
+  const [settledLocal, setSettledLocal] = useState<string | null>(null);
   const [approveResult, setApproveResult] = useState<
     { ok: true; state: string; createdIds: Record<string, string> } | { error: string } | null
   >(null);
@@ -84,8 +86,9 @@ export function OttoAdBuildCard({ cardId, threadId, payload }: OttoAdBuildCardPr
     | null
   >(null);
 
-  // A decline persisted on the card payload outlives this component — that is the whole point.
-  const denied = deniedLocal || isDeclinedPayload(payload);
+  // A settled card persisted on the payload outlives this component — that is the whole point.
+  const settledText = settledLocal ?? settledTextFromPayload("BUILD_CARD", payload);
+  const denied = settledText !== null;
 
   async function approve() {
     if (busy || denied) return;
@@ -107,12 +110,17 @@ export function OttoAdBuildCard({ cardId, threadId, payload }: OttoAdBuildCardPr
     try {
       const res = await ottoReject({ threadId, cardId });
       // Anything but an error is a settled card: "already resolved" means someone else got there
-      // first, and the build is just as un-approvable as if this click had done it.
+      // first, and the build is just as un-approvable as if this click had done it — but it is NOT
+      // necessarily declined, so the card says which settlement the server actually reported.
       if (res && typeof res === "object" && "error" in res) {
         setApproveResult({ error: (res as { error: string }).error });
         return;
       }
-      setDeniedLocal(true);
+      setSettledLocal(
+        res && typeof res === "object" && "alreadyResolved" in res
+          ? settlementTextFor("BUILD_CARD", res.resolution)
+          : AD_BUILD_DECLINE_TEXT,
+      );
     } catch {
       setApproveResult({ error: "Couldn't decline that — please try again." });
     } finally {
@@ -317,15 +325,15 @@ export function OttoAdBuildCard({ cardId, threadId, payload }: OttoAdBuildCardPr
                 </Button>
               </div>
             )}
-            {denied && (
+            {settledText && (
               <div className="text-[0.875rem] text-muted-foreground">
-                {AD_BUILD_DECLINE_TEXT}
+                {settledText}
               </div>
             )}
           </div>
-        ) : denied ? (
+        ) : settledText ? (
           <div className="text-[0.875rem] text-muted-foreground">
-            {AD_BUILD_DECLINE_TEXT}
+            {settledText}
           </div>
         ) : (
           /* Pending approval */

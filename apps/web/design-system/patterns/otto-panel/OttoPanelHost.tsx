@@ -9,15 +9,21 @@
  * 商家的会话。会话列表与会话流各存一份的那一天,商家会在同一块面板上看到列表里有、
  * 聊天里没有的会话。所以三处共用的东西(种子、会话、当前是哪一条)收在这里一份。
  *
- * 取数按**面板开合**来,不是挂载一次就够:面板挂在每一个商家表面上,把这几条查询放进
+ * **会话取数**按面板开合来,不是挂载一次就够:面板挂在每一个商家表面上,把这几条查询放进
  * 共享 layout 就等于每一次页面渲染都跑一遍 Otto 的数据装配,包括商家一次都没点开面板的
- * 那些次 —— 所以取数不能跟着这一层(`OttoPanelHost`)的挂载走,这一层是无条件挂的。真正
- * 该跟的信号是 `useOttoPanelControls().open` 从关到开的那一下:每次打开都重取一次,不是
- * 只在首次挂载时取一次。种子里带着 `balanceUsd`,商家去 /billing 充了值回来,关开一次
+ * 那些次 —— 所以那一份取数(`loadOttoPanelSeed`)不跟这一层的挂载走,这一层是无条件挂的。
+ * 真正该跟的信号是 `useOttoPanelControls().open` 从关到开的那一下:每次打开都重取一次,
+ * 不是只在首次挂载时取一次。种子里带着 `balanceUsd`,商家去 /billing 充了值回来,关开一次
  * 面板就该看见新的数字(面板会话自己没有余额刷新订阅,理由见 `OttoPanelConversation.tsx`
  * 顶部)。读 `open` 的那个小组件(`PanelOpenWatcher`,定义在下面)必须挂在 `OttoPanelShell`
  * 的 children 里才够得到那个 hook —— 这一层自己是 `OttoPanelShell` 的调用者,不是它的
  * 后代,读不到 Provider 往下发的值。
+ *
+ * 这条纪律管的是**会话取数**,不是这一层发出的每一个请求(#1200 判官 P2-5:原话写成
+ * 「取数不能跟着挂载走」,而展开信号偏偏就跟着挂载走,读起来像自相矛盾)。展开信号
+ * (`fetchPanelThreadPending`,FRONT-A14)**必须**跟挂载走:它回答的是「这次到访要不要
+ * 展开」,而面板还没开的时候没有别的时机可问 —— 它是一次不带参数、不落库、不轮询的读,
+ * 与上面那份重取讲的是两件事。
  *
  * 收口移植(main P3-6):会话那一整棵树(`OttoChatStream` → 审批卡 → 分镜卡 → …)仍然
  * `React.lazy` 按需加载 —— 静态 import 的话商家壳的 client bundle 从 9 个模块涨到 208 个,
@@ -33,7 +39,7 @@
 
 import * as React from "react";
 import type { ChatThreadDTO } from "@/lib/types";
-import { fetchPanelThreadPending } from "@/lib/otto-panel-activity";
+import { fetchPanelThreadPending, panelDismissedThisSession, rememberPanelDismissed } from "@/lib/otto-panel-activity";
 import { loadOttoPanelSeed } from "@/lib/otto-panel-seed";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { startStreamedThread, type PendingFirstMessage } from "@/lib/otto-start-thread";
@@ -70,11 +76,15 @@ function ConversationFallback() {
  * 才够得到 `useOttoPanelControls()` —— 那个 context 由 `OttoPanelShell` 自己的 Provider
  * 往下发,只喂给它的后代;`OttoPanelHost` 是 Shell 的调用者,不是后代,读不到。不画任何东西。
  */
-function PanelOpenWatcher({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
-  const open = useOttoPanelControls()?.open ?? false;
+function PanelOpenWatcher({ onOpenChange }: { onOpenChange: (open: boolean, hydrated: boolean) => void }) {
+  const controls = useOttoPanelControls();
+  const open = controls?.open ?? false;
+  // `hydrated` 一起报上去:存档套用那一步(收起→展开,或反过来)不是商家的动作,
+  // 调用方要靠它把「商家自己关的」与「hydration 落地」分开(#1200 判官 P2-4)。
+  const hydrated = controls?.hydrated ?? false;
   React.useEffect(() => {
-    onOpenChange(open);
-  }, [open, onOpenChange]);
+    onOpenChange(open, hydrated);
+  }, [open, hydrated, onOpenChange]);
   return null;
 }
 
@@ -200,7 +210,7 @@ export function OttoPanelHost({
     if (deepLink.forceOpen) forceOpen();
   }, [signature, deepLink, forceOpen]);
 
-  // 「本页有进行中的对话 → 展开」(FRONT-A14,`docs/specs/frontend-baseline.md` §5)。
+  // 「这个商家有进行中的面板对话 → 展开」(FRONT-A14,`docs/specs/frontend-baseline.md` §5)。
   //
   // 这一条从前读的是深链 `?otto=1`,Founder 2026-09-04 追认那是**近似**:`?otto=1` 说的是
   // 「商家点名要开面板」(`/otto` 那条旧地址重定向过来的落点),不是「这里有一段正在跑的
@@ -208,19 +218,39 @@ export function OttoPanelHost({
   // 服务端按 `ownerId` 查在途 GenJob + 面板自己的对话(`lib/thread-activity.ts`),客户端
   // 一个参数都不传,租户只信服务端 principal。
   //
+  // 口径是**全店**,不是「本页」(#1200 判官 P2-1/P2-2):那句服务端判据不带 project,面板
+  // 落座那一侧(`loadOttoPanelSeed`)因此也放宽到全店 —— 两处必须是同一句话,不然信号说
+  // 「有」、落座在当前 project 里选不到,弹开的是一块空面板。
+  //
   // **不新增轮询**(#544):挂载时问一次。`OttoPanelHost` 挂在商家壳根部,整页加载挂一次、
   // 软导航不卸载,所以「每次挂载问一次」正好就是「每次到访问一次」。答案是「有」就走与深链
   // 同一条强开路(`forceOpen()`)——存档记着关也照样开,与 Founder 原话的「或」一致;答案是
   // 「没有」就什么都不做,默认收起那一条(`defaultOttoPanelState`)自然生效。
   //
-  // 只开一次:token 只在这里 +1 一次,商家随后自己把面板关掉不会被它重新弹开。
+  // 商家自己关过一次就不再问(#1200 判官 P2-4):同一程里 /create 与画布往返都是整页加载,
+  // 每一次都会重跑这个 effect,而在跑的那单生成还在跑 —— 于是刚被商家关掉的面板一次次被
+  // 同一个信号弹回来。自动展开是建议,商家的手是决定;记号存在 sessionStorage,寿命就是这
+  // 一程(`panelDismissedThisSession`)。深链 `?otto=1` 不受影响,它是商家点名要开。
   React.useEffect(() => {
+    if (panelDismissedThisSession()) return;
     const controller = new AbortController();
     void fetchPanelThreadPending(controller.signal).then((pending) => {
       if (!controller.signal.aborted && pending) forceOpen();
     });
     return () => controller.abort();
   }, [forceOpen]);
+
+  // 面板从开到关只有一个来源:商家自己(头部 ✕ / launcher / `Cmd+J`,都走 `OttoPanelShell`
+  // 的 `setPanelOpen(current, false)`)。所以这一下转折就是「商家已手动关闭」,记进这一程。
+  // `hydrated` 之前不算:那一步是把 localStorage 的存档套到首帧默认值上,不是商家的动作。
+  const panelWasOpenRef = React.useRef(false);
+  const handlePanelOpenChange = React.useCallback((next: boolean, hydrated: boolean) => {
+    if (hydrated) {
+      if (panelWasOpenRef.current && !next) rememberPanelDismissed();
+      panelWasOpenRef.current = next;
+    }
+    setOpen(next);
+  }, []);
 
   // 打开的每一下都重取一次,不是只在这一层挂载时取一次(见本文件顶部「取数按面板开合来」)。
   // `open` 从 false 变 true 才会真的发一次请求;从 true 变 false 只是把这一效果的依赖标记
@@ -645,7 +675,7 @@ export function OttoPanelHost({
       headerBusy={openingThreadId !== null}
       forceOpenSignal={forceOpenToken}
     >
-      <PanelOpenWatcher onOpenChange={setOpen} />
+      <PanelOpenWatcher onOpenChange={handlePanelOpenChange} />
       {children}
       {/* 整理会话的两个对话框 —— 与 `OttoNav.tsx`/`OttoApp.tsx` 的会话删改弹窗一字不差
           (同一份文案,不是重写一份),挂在这里而不是 `OttoPanelShell` 之外:面板是常驻的,
