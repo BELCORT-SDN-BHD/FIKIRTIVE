@@ -598,7 +598,8 @@ function foldMaterial(port: OttoRollingSummaryPort): string {
  *
  * MONEY (spec §7.2④「不新开钱路、不新增幂等键，沿用本轮的 refId」): this runs INSIDE the turn's
  * own `withLlmBudget` body, so the hold was already taken on this turn's refId and the tokens it
- * burns are ADDED to the usage that turn settles. There is no second reserve, no second refId
+ * burns are settled as a SEPARATE billing leg on that same refId (see `foldBillingLeg` /
+ * meter.ts invariant #13) — priced at the fold's own model. There is no second reserve, no second refId
  * and no second idempotency key — a second `withLlmBudget` on the same refId would collide on
  * `reserve:<refId>`, no-op, and leave the real turn running against nothing. Because settle is
  * clamped to the hold (meter.ts invariant #2), the fold can only ever consume part of what was

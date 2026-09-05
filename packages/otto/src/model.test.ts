@@ -26,6 +26,32 @@ import {
 } from "./model.js";
 
 /**
+ * B1 —— **折叠绑定真的构造在 Haiku 上**:记下模块加载期每一次 `anthropic(id)` 的入参。
+ *
+ * 常量(`OTTO_SUMMARY_MODEL`)与计价 id(`summaryBillableModelId`)此前各有守卫,唯独
+ * 「常量 → provider 绑定」这一段没有:把 `ottoSummaryModel` 改回主型号绑定、常量一个字不动,
+ * 这两个文件 60 条测试一条不红。那个变异的现实后果正是「跑 Sonnet、按 Haiku 收」——
+ * 少收商家的钱、差额静默由我们吃,ENGINE-A5 要消灭的正是这一族。
+ *
+ * mock 只换掉 provider 工厂;`withOverloadFailover` / `withPromptCaching` / `aisdk` 都跑真身,
+ * 所以这条守的是真实的那条接线,不是一个平行实现。
+ */
+const anthropicCalls = vi.hoisted(() => [] as string[]);
+vi.mock("@ai-sdk/anthropic", () => ({
+  anthropic: (modelId: string) => {
+    anthropicCalls.push(modelId);
+    return {
+      specificationVersion: "v2",
+      provider: "anthropic.messages",
+      modelId,
+      supportedUrls: {},
+      doGenerate: async () => ({}),
+      doStream: async () => ({}),
+    };
+  },
+}));
+
+/**
  * ENGINE-A5(Otto 引擎 S2 §7.2①)—— **组合期查价:任一型号没价就拒绝启动。**
  *
  * manifest 是模块加载期的冻结常量,所以「这个文件被 import 成功了」本身就是第一条断言:
@@ -89,6 +115,21 @@ describe("ENGINE-A5 型号与价目 fail closed(manifest 组合期)", () => {
     expect(() =>
       assertOttoModelsPriced([["OTTO_SUMMARY_FALLBACK_MODEL", "claude-not-in-the-table"]]),
     ).toThrow(/OTTO_SUMMARY_FALLBACK_MODEL/);
+  });
+
+  it("ENGINE-A6:折叠**绑定**真的拿到 Haiku 两只 —— 主绑定仍是 Sonnet 对(B1)", () => {
+    // model.ts 在模块加载期只构造两个绑定、共四只 provider 型号,顺序即那两行 `ottoBindingFor`:
+    // ottoModel(主、529 接管)在前,ottoSummaryModel(折叠、折叠接管)在后。
+    expect(anthropicCalls).toHaveLength(4);
+    // 逐字断言,不经任何常量转述 —— 这里写死官方 id,常量被改动时它照样说真话。
+    expect(anthropicCalls[2]).toBe("claude-haiku-4-5-20251001");
+    expect(anthropicCalls[3]).toBe("claude-haiku-4-5-20251001");
+    // 变异:`ottoSummaryModel = ottoBindingFor(OTTO_PRIMARY_MODEL, OTTO_FALLBACK_MODEL)`(常量一字不动)
+    // —— 上面两行当场红。
+    expect(anthropicCalls.slice(2)).toEqual([OTTO_SUMMARY_MODEL, OTTO_SUMMARY_FALLBACK_MODEL]);
+    // 主绑定没被顺手换成折叠型号(反向变异也红)。
+    expect(anthropicCalls.slice(0, 2)).toEqual([OTTO_PRIMARY_MODEL, OTTO_FALLBACK_MODEL]);
+    expect(anthropicCalls.slice(0, 2)).not.toContain(OTTO_SUMMARY_MODEL);
   });
 
   it("ENGINE-A5:计价型号是单一源 —— 主力型号逐字取自 @fikirtive/core 的常量", () => {
