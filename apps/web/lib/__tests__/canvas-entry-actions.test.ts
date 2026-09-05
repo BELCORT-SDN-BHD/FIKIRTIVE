@@ -63,7 +63,9 @@ describe("createCanvasConversation", () => {
       select: { id: true },
     });
     expect(mocks.threadCreate).toHaveBeenCalledWith({
-      data: { id: THREAD_ID, ownerId: "owner-1", projectId: PROJECT_ID, title: "Make four Raya product photos" },
+      // FRONT-A14:画布入口开的对话登记成 `canvas` —— 侧栏面板只自动续它自己开的那一批,
+      // 不写这一格,这条对话会在商家的每一页上被当成「你刚才在聊的那条」摊开(P1-010)。
+      data: { id: THREAD_ID, ownerId: "owner-1", projectId: PROJECT_ID, title: "Make four Raya product photos", surface: "canvas" },
       select: { id: true },
     });
     expect(mocks.eventCreate).toHaveBeenCalledWith({
