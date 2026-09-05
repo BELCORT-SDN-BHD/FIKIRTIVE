@@ -1962,6 +1962,9 @@ export async function ottoTurn(raw: unknown): Promise<
       // the same seq → the same `otto-turn:threadId:seq` refId → the second reserveCredits collides
       // on the reserve:<refId> unique index and no-ops, running a turn WITHOUT holding credits (F27).
       const refId = `otto-turn:${userMessageId}`;
+      // ENGINE-A4(规格 docs/specs/otto-engine.md §7.2⑤ 第③刀):由 withLlmBudget 在**整笔退款**
+      // 时点亮 —— 唯一一种「这一轮没收钱」是真话的状态。今天只有截断且零交付的那一轮走到这里。
+      let chargedNothing = false;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let agentResult: any;
 
@@ -1979,12 +1982,35 @@ export async function ottoTurn(raw: unknown): Promise<
           },
           ctx,
           ottoInteractiveRuntime,
-          { meter: withLlmBudget, runAgent: run, maxTurnsExceededError: MaxTurnsExceededError },
+          {
+            // ENGINE-A4:唯一的改动是挂上这个**只读**钩子(meter.ts 不变量 #7 —— 它改不了任何
+            // 金额),把「整笔退了」告诉入口,好让下面的降级句说实话。先转调、再置旗:今天
+            // `ottoBudgetArgsFor` 不产出 `onRefundedFailure`,但对象展开会**静默盖掉**将来引擎
+            // 侧自己挂的钩子,所以不覆盖,只在它后面接一句(与流式门逐字同形)。
+            meter: (budgetArgs, fn) =>
+              withLlmBudget(
+                {
+                  ...budgetArgs,
+                  onRefundedFailure: () => {
+                    budgetArgs.onRefundedFailure?.();
+                    chargedNothing = true;
+                  },
+                },
+                fn,
+              ),
+            runAgent: run,
+            maxTurnsExceededError: MaxTurnsExceededError,
+          },
         );
       } catch (e) {
         if (e instanceof MaxTurnsExceededError) {
           // Graceful degrade — withLlmBudget already settled actual usage (or refunded if no usage)
-          const degradeText = "I got a bit tangled up — try asking again.";
+          // ENGINE-A4(§7.2⑤ 第③刀):整笔退了的那一轮,商家读到的必须是「没收钱」,而不是一句
+          // 道歉之后账单上冒出一笔他拿不到东西的钱。两句合成**一条**持久化消息(与流式门同一
+          // 句字面量),刷新之后还在,不需要第二条只在内存里活一瞬的提示。
+          const degradeText = chargedNothing
+            ? "I got a bit tangled up — try asking again. This turn wasn't charged."
+            : "I got a bit tangled up — try asking again.";
           await prisma.chatMessage.create({
             data: {
               id: newId(),
@@ -2404,7 +2430,9 @@ export async function ottoApprove(raw: unknown): Promise<
                   capCostInternal: approvedActionCostInternal ?? undefined,
                   // #524 r5: only this tells us "the run died AND this turn paid nothing", the
                   // starting point for whether a consumed card may stop saying "approved".
+                  // 先转调、再置旗(与另外两门同形):对象展开会静默盖掉将来引擎侧自己挂的钩子。
                   onRefundedFailure: () => {
+                    budgetArgs.onRefundedFailure?.();
                     chargedNothing = true;
                   },
                 },
@@ -2474,7 +2502,12 @@ export async function ottoApprove(raw: unknown): Promise<
         //    the run DID happen, so the card reading "approved" is true and the merchant already
         //    hears what went wrong in the thread.
         if (e instanceof MaxTurnsExceededError) {
-          const degradeText = "I got a bit tangled up — try asking again.";
+          // ENGINE-A4(§7.2⑤ 第③刀):这一门早就有 `chargedNothing`(挂在同一个
+          // `onRefundedFailure` 上),只是这条分支从前不读它 —— 恢复轮的零交付截断现在也整笔退,
+          // 商家却读不到「没收钱」。与另外两门同一句字面量。
+          const degradeText = chargedNothing
+            ? "I got a bit tangled up — try asking again. This turn wasn't charged."
+            : "I got a bit tangled up — try asking again.";
           // Persist the degrade message so the user actually sees it (parity with ottoTurn),
           // plus the partial RunState if the SDK attached one.
           const seq = await prisma.chatMessage.findFirst({
