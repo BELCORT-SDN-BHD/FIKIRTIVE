@@ -52,6 +52,14 @@ vi.mock("@/lib/otto-panel-seed", () => ({
   loadOttoPanelSeed: (...args: unknown[]) => loadOttoPanelSeed(...args),
 }));
 
+/** 「本页有进行中的对话吗」——面板展开的第二个条件(FRONT-A14 真信号)。真实现是一次
+ *  `fetch('/api/otto/thread-activity')`,判据在服务端;这里只需要证明「答什么,面板就
+ *  怎么开合」。默认答「没有」,好让这个文件里其余用例的开合仍由存档/深链说了算。 */
+const fetchPanelThreadPending = vi.fn();
+vi.mock("@/lib/otto-panel-activity", () => ({
+  fetchPanelThreadPending: (...args: unknown[]) => fetchPanelThreadPending(...args),
+}));
+
 /** 会话那一侧的服务端动作 —— 这个文件一次都不会走到它们,挡住是为了不把 Prisma 拖进来。 */
 vi.mock("@/lib/otto-client-actions", () => ({
   ottoTurn: vi.fn(),
@@ -123,6 +131,7 @@ beforeEach(() => {
   // 存档,回到它们各自要的场景。
   writeOpenState();
   loadOttoPanelSeed.mockResolvedValue({ error: "seed not wired in this test" });
+  fetchPanelThreadPending.mockResolvedValue(false);
 });
 
 afterEach(async () => {
@@ -704,11 +713,14 @@ describe("窄屏过渡守卫(判官 P2-2,W2-11 删移动层时一并清)", () =>
  *   ④ 存档说关着,但这一页有活动对话 → 展开(「活动对话」覆盖「上次留着关着」,不是
  *      反过来——Founder 原话是「或」,不是「仅当都满足」)。
  *
- * **假设**(状态层拿不到更干净的判据时,取代码里已经有的信号):「活动对话」取的就是
- * 既有的深链强开信号(`?otto=1`,`OttoPanelHost` 的 `forceOpen`)——面板体的会话数据
- * (`activeThreadId`/消息)本来就要等面板真的开了才取数(见 `OttoPanelHost.tsx` 顶部
- * 「取数按面板开合来」),开之前没有更早、更干净的信号可读;`?otto=1` 已经是这套代码里
- * 唯一「这次到访确实带着一个 Otto 会话」的预取信号。
+ * 「活动对话」读的是**真信号**(本轮接上,`docs/specs/frontend-baseline.md` §5 2026-09-05
+ * 行):服务端按 ownerId 查在途 `GenJob` ∩ `surface='panel'` 的对话
+ * (`lib/thread-activity.ts` 的 `hasPendingPanelThread`),客户端一次
+ * `fetch('/api/otto/thread-activity')`(`lib/otto-panel-activity.ts`,这里 mock 掉)。
+ * 上一轮拿深链 `?otto=1` 当这一条用,Founder 2026-09-04 追认那是近似——`?otto=1` 说的是
+ * 「商家点名要开面板」,不是「这里有一段正在跑的对话」;它那层意思照旧生效,钉在上面
+ * 「深链一次性消费」那一组,不再兼任本组的判据。判别力:把 `fetchPanelThreadPending` 的
+ * 返回改回恒 false(= 退回近似口径),②④两条当场红。
  */
 describe("默认开合(FRONT-A14,Founder 2026-09-04 裁决,取代 Q3-A)", () => {
   it("FRONT-A14: 第一次访问,没有活动对话 → 收起", async () => {
@@ -719,11 +731,23 @@ describe("默认开合(FRONT-A14,Founder 2026-09-04 裁决,取代 Q3-A)", () => 
     expect(document.querySelector("[data-otto-launcher]")).not.toBeNull();
   });
 
-  it("FRONT-A14: 这一页有活动对话 → 展开(没有存档也一样)", async () => {
+  it("FRONT-A14: 这一页有进行中的对话 → 展开(没有存档、地址栏也没有 ?otto=1)", async () => {
     window.localStorage.clear();
-    const el = await mount(shell("/?otto=1"));
+    fetchPanelThreadPending.mockResolvedValue(true);
+    const el = await mount(shell(MERCHANT_SURFACE));
 
     expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+    // 展开信号问的是服务端,客户端不传任何租户/项目参数 —— 只传一个取消用的 signal。
+    expect(fetchPanelThreadPending).toHaveBeenCalledTimes(1);
+    expect(fetchPanelThreadPending.mock.calls[0][0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it("FRONT-A14: 没有进行中的对话就不展开 —— 这次到访问过了,答案是「没有」", async () => {
+    window.localStorage.clear();
+    const el = await mount(shell(MERCHANT_SURFACE));
+
+    expect(fetchPanelThreadPending).toHaveBeenCalledTimes(1);
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
   });
 
   it("FRONT-A14: 存档说商家上次留着开着,没有活动对话 → 展开", async () => {
@@ -733,11 +757,28 @@ describe("默认开合(FRONT-A14,Founder 2026-09-04 裁决,取代 Q3-A)", () => 
     expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
   });
 
-  it("FRONT-A14: 存档说关着,但这一页有活动对话 → 展开(假设:活动对话覆盖『上次留着关着』)", async () => {
+  it("FRONT-A14: 存档说关着,但这一页有进行中的对话 → 展开(「活动对话」覆盖「上次留着关着」)", async () => {
     writeClosedState();
-    const el = await mount(shell("/?otto=1"));
+    fetchPanelThreadPending.mockResolvedValue(true);
+    const el = await mount(shell(MERCHANT_SURFACE));
 
     expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+  });
+
+  it("FRONT-A14: 展开一次之后商家自己关掉,不会被同一个信号重新弹开", async () => {
+    writeClosedState();
+    fetchPanelThreadPending.mockResolvedValue(true);
+    const el = await mount(shell(MERCHANT_SURFACE));
+    expect(el.querySelector("[data-otto-panel]")).not.toBeNull();
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, metaKey: true }));
+    });
+    await settle();
+
+    expect(el.querySelector("[data-otto-panel]")).toBeNull();
+    // 不新增轮询(#544):这次到访只问了一次。
+    expect(fetchPanelThreadPending).toHaveBeenCalledTimes(1);
   });
 });
 
