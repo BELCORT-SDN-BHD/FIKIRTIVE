@@ -199,7 +199,10 @@ export async function runMain<T>(deps: {
  *
  * 为什么不是 `baselines/<line>.json`：那份是**最近一次**的跑分档案，每跑一次就被整份覆盖，
  * 拿它求和只会算到「每条线最后那一趟」——跑了三趟只记一趟的钱，「本段累计 $20」就名不副实。
- * 账本每成功跑一次追加一行，累计闸读它求和，所以三趟就是三趟的钱。
+ * 账本**每跑一次追加一行，含中途炸掉的那一趟**（`recordingSpend` 在 catch 里补一行
+ * `failed:true`），累计闸读它求和，所以三趟就是三趟的钱。这句原写「每成功跑一次」，
+ * 是 `recordingSpend` 落地之前的旧话，方向恰好是累计闸最不能有的那个（低估，判官 2026-09-05
+ * #1235 P2-3）。
  */
 export const SPEND_LEDGER = join(BASELINES_DIR, "spend.jsonl");
 
@@ -257,6 +260,12 @@ export function appendSpend(ledgerPath: string, entry: SpendEntry): void {
  *
  * `spentUsd()` 读的是计费器**当下**的真实花费，所以记的是「炸到那一刻为止」的钱，
  * 不是估算、也不是 0。守卫拒跑那一档不经过这里（一分钱没花，不该在账本上留行）。
+ *
+ * **记账自己炸了也不许盖掉原始失败**（判官 2026-09-05 #1235 P2-4）：`appendSpend` 是一次
+ * 真的写盘（盘满、只读挂载、目录没了），裸着写在 catch 里的话，那一下抛出去的就是「写不了
+ * 文件」，而真正的病因（判分器读不懂、单次预算闸拦停）连同它的堆栈一起被顶掉——排障的人
+ * 从此对着一条错误的线索找。所以两个都报，**原始那条在前**，写盘失败挂在后面，原始错误
+ * 仍以 `cause` 原样带着。
  */
 export async function recordingSpend<T>(
   ledgerPath: string,
@@ -266,13 +275,21 @@ export async function recordingSpend<T>(
   try {
     return await run();
   } catch (err) {
-    appendSpend(ledgerPath, {
-      line: meta.line,
-      date: meta.now().toISOString(),
-      commit: meta.commit(),
-      costUsd: meta.spentUsd(),
-      failed: true,
-    });
+    try {
+      appendSpend(ledgerPath, {
+        line: meta.line,
+        date: meta.now().toISOString(),
+        commit: meta.commit(),
+        costUsd: meta.spentUsd(),
+        failed: true,
+      });
+    } catch (ledgerErr) {
+      const original = err instanceof Error ? err.message : String(err);
+      const ledger = ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr);
+      throw new Error(`${original}；另外这一趟的花费没能记进账本（${ledgerPath}）：${ledger}`, {
+        cause: err,
+      });
+    }
     throw err;
   }
 }

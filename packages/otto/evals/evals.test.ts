@@ -460,6 +460,32 @@ describe("ENGINE-A1 守卫在花钱之前", () => {
     }
   });
 
+  it("ENGINE-A1 账本自己写不进去时不许顶掉原始失败（两个都报，原始在前）", async () => {
+    // 判官 2026-09-05 #1235 P2-4：appendSpend 是一次真写盘（盘满、只读挂载、目录没了）。
+    // 裸着写在 catch 里，抛出去的就成了「写不了文件」，真正的病因连堆栈一起被顶掉。
+    const dir = mkdtempSync(join(tmpdir(), "otto-evals-spend-unwritable-"));
+    // 父目录不存在 ⇒ appendFileSync 抛 ENOENT，等价于写盘失败那一族。
+    const ledger = join(dir, "没有这个目录", "spend.jsonl");
+    try {
+      const boom = new Error("判分器连读两次都读不懂");
+      await expect(
+        recordingSpend(
+          ledger,
+          { line: "engine", commit: () => "c", now: () => new Date(), spentUsd: () => 0.3 },
+          async () => {
+            throw boom;
+          },
+        ),
+      ).rejects.toMatchObject({
+        // 原始那条在前，写盘失败挂在后面。
+        message: expect.stringMatching(/^判分器连读两次都读不懂；.*没能记进账本/s),
+        cause: boom, // 原始错误连堆栈一起原样带着
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("ENGINE-A1 花钱的那一趟真的经过 runMain（不是只有测试里那一份接线）", () => {
     // 判官 2026-09-05 P2-3：runMain 的契约有测试，但没有一条钉住 main() 用的就是它。
     // 把 main() 改回「先 runEvals 再问守卫」不会让上面两条红 —— 所以这里钉源码里的接线。
@@ -473,6 +499,23 @@ describe("ENGINE-A1 守卫在花钱之前", () => {
     expect(spendAt).toBeGreaterThan(wiredAt); // 花钱那一趟长在 runMain 的参数里
     // main() 里也不许绕过 runMain 自己去调 guardedRun（那就等于又有了第二条接线）。
     expect(body).not.toContain("guardedRun(");
+  });
+
+  it("ENGINE-A1 花钱的那一趟真的裹在 recordingSpend 里（炸了也记账这条接线本身有人钉）", () => {
+    // 判官 2026-09-05 #1235 P2-1：`recordingSpend` 的契约有两条测试（上面那两条），
+    // 但没有一条钉住 main() 用了它 —— 把它从 main() 拆掉，evals 全套照样绿，而账本从此
+    // 又只记跑成功的那一趟，累计闸重新开始低估。所以这里钉源码里的接线。
+    const src = readFileSync(join(HERE, "runner.ts"), "utf8");
+    const mainAt = src.indexOf("async function main()");
+    expect(mainAt).toBeGreaterThan(0);
+    const body = src.slice(mainAt);
+    const wiredAt = body.indexOf("await runMain({");
+    const recordingAt = body.indexOf("recordingSpend(");
+    const spendAt = body.indexOf("runEvals(tasks,");
+    expect(recordingAt).toBeGreaterThan(wiredAt); // 在 runMain 的参数里面
+    expect(spendAt).toBeGreaterThan(recordingAt); // 真花钱那一趟长在它里面
+    // 记的是产品那本账，不是另开一本。
+    expect(body.slice(recordingAt, spendAt)).toContain("SPEND_LEDGER");
   });
 
   it("ENGINE-A1 最坏花费估算随题量与 rubric 增长，且判分调用按重试一次计两遍", () => {

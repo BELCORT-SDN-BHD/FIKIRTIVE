@@ -26,11 +26,25 @@ import { Field, FieldContent, FieldDescription, FieldGroup, FieldTitle } from "@
  *
  * ④ 里的「留多久」只有一个产地。备份保留窗口那个数字写在 `/legal/data-deletion`
  * (「a snapshot more than about 30 days old is deleted during a later backup run」),这里
- * **链过去**而不是把天数再抄一遍 —— 两处各写一个数字,迟早会各说各的(§7.3)。
- * 「客服多久处理完」今天没有权威来源(没有已定的客服 SLA),所以这里不编一个天数:写的是能指着
- * 的实话 —— 没有自动删除,由人处理,处理完发邮件通知,在那之前账号照常能用。
- * 待办已登记在 `docs/specs/frontend-baseline.md` §5(自助删除另立规格,SLA 待 Founder 定)。
+ * **链过去**而不是把天数再抄一遍 —— 两处各写一个数字,迟早会各说各的(§7.3)。链在**两处**:
+ * 卡片行上一处、确认框里一处(判官 #1237 P2-4:确认框一开就盖住整页,框里点名的那一页在框里
+ * 点不到)。两处共用同一个常量 `DATA_DELETION_HREF`,不各写一份路径。
+ *
+ * 「客服多久处理完」今天没有权威来源(没有已定的客服 SLA),所以这里不编一个天数。
+ * **也不许许一封仓库寄不出的信(判官 #1237 P2-5)**:这一屏此前写着「处理完发邮件通知」,而
+ * 全仓没有任何一条在删号处理完之后发信的路径 —— 产品这边唯一发生的事就是打开一封商家自己
+ * 发给 support 的邮件(`supportMailto`),之后是人与人之间的邮件往来,产品不参与、也无从承诺。
+ * 现在写的是能指着的实话:没有自动删除、由人按手处理、在那之前账号照常能用。
+ * 待办已登记在 `docs/specs/frontend-baseline.md` §5(自助删除另立规格;处理天数与「处理完是否
+ * 由产品发一封通知信」都待 Founder 定 —— 真要发信,得先有那条发信路径,那是写集外的另一刀)。
  */
+
+/** 保留天数那一页的唯一路径 —— 卡片行与确认框共用,不各抄一份(§7.3)。 */
+const DATA_DELETION_HREF = "/legal/data-deletion";
+
+/** 「链到保留天数那一页」这句话也只有一处产地:两处链子挂的是同一段文字。 */
+const DATA_DELETION_LINK_LABEL = "how long deleted records are kept";
+
 export function DeleteAccountCard({ email }: { email: string }) {
   const [open, setOpen] = useState(false);
 
@@ -44,12 +58,12 @@ export function DeleteAccountCard({ email }: { email: string }) {
             <FieldTitle>Delete account</FieldTitle>
             <FieldDescription>
               Ending your workspace is a request to our support team, not a switch. Nothing is
-              deleted automatically: a person handles your request and emails you when it is done,
-              and your billing and credit history stay on record.{" "}
+              deleted automatically: a person handles your request by hand, and your billing and
+              credit history stay on record.{" "}
               <SupportExit subject="Erase my workspace" label="Contact us" /> to fully erase, or
               read{" "}
-              <Link href="/legal/data-deletion" className="underline underline-offset-4">
-                how long deleted records are kept
+              <Link href={DATA_DELETION_HREF} className="underline underline-offset-4">
+                {DATA_DELETION_LINK_LABEL}
               </Link>
               .
             </FieldDescription>
@@ -69,7 +83,14 @@ export function DeleteAccountCard({ email }: { email: string }) {
           "This opens an email to support. Nothing is deleted automatically, and you can keep using the account until support confirms deletion.",
           "What goes: your workspace and the work inside it, once support handles the request.",
           "What stays: billing and credit history, and audit records — they are the account of what was spent and what was done.",
-          "How long: there is no automated deletion, so a person handles it and emails you when it is done. Deleted records can still sit in backups afterwards — the Data deletion page says for how long.",
+          <>
+            How long: there is no automated deletion, so a person handles the request by hand.
+            Deleted records can still sit in backups afterwards; read{" "}
+            <Link href={DATA_DELETION_HREF} className="underline underline-offset-4">
+              {DATA_DELETION_LINK_LABEL}
+            </Link>
+            .
+          </>,
           "This does not trigger any paid provider action.",
         ]}
         confirmText={email}
