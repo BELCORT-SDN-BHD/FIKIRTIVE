@@ -3183,20 +3183,26 @@ describe("ENGINE-A4 / ENGINE-A2 — ottoTurn 这一门的尾巴", () => {
   // 先转调、再置自己的旗,不能把引擎那一份静默盖掉。
   it("ENGINE-A4: meter 包装先转调引擎自己的 onRefundedFailure,再记本轮 refId", async () => {
     const engineHook = vi.fn();
+    let doorRefId = "";
     mockWithLlmBudget.mockImplementation(REFUNDED_METER as never);
     mockRunOttoTurn.mockImplementationOnce(
-      async (_input: unknown, _ctx: unknown, _runtime: unknown, options: { meter: (a: unknown, f: () => Promise<unknown>) => Promise<unknown> }) =>
-        options.meter({ orgId: OWNER_ID, refId: "otto-turn:probe", onRefundedFailure: engineHook }, async () => {
+      async (input: unknown, _ctx: unknown, _runtime: unknown, options: { meter: (a: unknown, f: () => Promise<unknown>) => Promise<unknown> }) => {
+        doorRefId = (input as { refId: string }).refId; // 这一门自己那把钥匙
+        // 尾巴组十一判官 P2-3:探针的 refId 刻意与真值**不同形**,否则「记的是自己那一把」
+        // 这句话在断言里立不住(旧的正则 /^refund:otto-turn:/ 对两者都成立)。
+        return options.meter({ orgId: OWNER_ID, refId: "probe:NOT-MINE", onRefundedFailure: engineHook }, async () => {
           throw new MockMaxTurnsExceededError();
-        }),
+        });
+      },
     );
 
     const res = await ottoTurn(BASE_INPUT);
 
     expect(res).toMatchObject({ status: "degraded" });
     expect(engineHook).toHaveBeenCalledTimes(1);
-    // 记下的是这一门**自己的** refId(不是探针给的那一个)—— 对证要拿真钥匙去问。
-    expect(refundProofQueries()).toEqual([expect.stringMatching(/^refund:otto-turn:/)]);
+    // 记下的是这一门**自己的** refId(不是探针给的那一个)—— 逐字全串,不是家族前缀。
+    expect(doorRefId).toMatch(/^otto-turn:/);
+    expect(refundProofQueries()).toEqual([`refund:${doorRefId}`]);
   });
 
   it("ENGINE-A2: 这一轮落一行档案,surface 是 action、threadId 是本对话、refId 是本轮那把钥匙", async () => {
@@ -5259,11 +5265,14 @@ describe("ENGINE-A2 —— recordOttoTurnTrace 只写白名单列", () => {
 });
 
 // ── ENGINE-A3: 卡上改三格的写,与「已经在跑就不许改」的判据同一个事务 ─────────────
-// #1230 判官 P2-3(钱安全)—— 这道闸从前是**先查后写**:查账本有没有 `cowork:<cardId>` 的任务
-// 行、回到 Node、再改卡。两条语句之间那道应用层的缝正好是 `startCoworkGen` 建任务行的地方,
-// 商家于是会拿到一张「已经开跑、事后又被改过」的卡。真库那一份(otto-card-options-ledger)
-// 证的是「先置跑再改会被拒」;这一份证的是**缝合上了**:两条语句都走同一个 tx,而且写的
-// 那一句是条件更新。变异「改回先查后写」⇒ 基座 client 被调用 ⇒ 当场红。
+// #1230 判官 P2-3(钱安全)—— 真库那一份(otto-card-options-ledger)证的是「先置跑再改会被
+// 拒」;这一份只钉**形状**:两条语句走同一个 tx、写的那一句是条件更新(`where` 带租户/线程/
+// 卡种/未删)。变异「改回先查后写」⇒ 基座 client 被调用 ⇒ 当场红。
+//
+// 说清这一份**没有**证到什么(尾巴组十一判官 P1-1):它证不了并发窗口被关上,因为窗口本来
+// 就没关 —— READ COMMITTED 下事务内那条 SELECT 对尚不存在的 GenJob 行不取谓词锁,并发的
+// `startCoworkGen` 在两条语句之间插入 `cowork:<cardId>` 这里仍看不见。残余窗口未消除,详见
+// `apps/web/lib/otto-actions.ts` 那道闸上的「已知未做」注释。
 describe("ENGINE-A3 —— 卡上改三格:账本判据与写卡在同一个事务里", () => {
   const CARD = "card_options_atomic";
 
@@ -5313,7 +5322,7 @@ describe("ENGINE-A3 —— 卡上改三格:账本判据与写卡在同一个事�
       kind: "GEN_CARD",
       deletedAt: null,
     });
-    // 缝合上了的证据:基座 client 上一条都没走过。
+    // 两条语句都在 tx 里的证据:基座 client 上一条都没走过(形状,不是并发安全)。
     expect(mockGenJobFindFirst).not.toHaveBeenCalled();
     expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
   });

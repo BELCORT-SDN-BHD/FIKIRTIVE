@@ -2180,11 +2180,18 @@ export async function ottoUpdateGenCardOptions(raw: unknown): Promise<
     // 原子写下),不是卡上那个 best-effort 的标记 —— 与 `coworkGenerate` 的再花钱守卫同一个
     // 判据、同一把钥匙。
     //
-    // 钱安全(#1230 判官 P2-3):这道闸从前是**先查后写** —— 查账本、回到 Node、再改卡,两条
-    // 语句之间有一道应用层的缝,`startCoworkGen` 正好在缝里把这张卡的任务行建出来,商家就会
-    // 拿到一张「已经开跑、事后又被改过」的卡:卡面写着新报价,账本上冻着旧那一笔。现在两步
-    // 进**同一个事务**,而且写的那一句是**条件更新**(`updateMany` 的 `where` 带上租户、线程、
-    // 卡种与未删除),对不上就是零行受影响 —— 缝合上了,判据一格没松。
+    // 钱安全(#1230 判官 P2-3):查与写现在进**同一个事务**,而且写的那一句是**条件更新**
+    // (`updateMany` 的 `where` 带上租户、线程、卡种与未删除),对不上就是零行受影响、如实说
+    // 读不到,不假报成功。
+    //
+    // 但**竞态窗口并没有因此消除**(尾巴组十一判官 P1-1 纠正上一轮的不实措辞):Prisma 的
+    // 交互式事务不传 `isolationLevel` 就是 PostgreSQL 默认的 READ COMMITTED,事务内这条
+    // SELECT 对**尚不存在**的 GenJob 行不取任何谓词锁;而 interactive transaction 每条语句
+    // 都要回一次 Node,窗口的物理长度也没变短。所以并发的 `startCoworkGen` 若在两条语句之间
+    // 插入 `cowork:<cardId>`,这里仍然看不见,updateMany 仍会落地(幻读)。真正原子的写法是
+    // 把「未在跑」这个条件搬进那条 UPDATE 的谓词里(`NOT EXISTS (SELECT 1 FROM "GenJob" …)`),
+    // 事务内先查后写做不到这一点。**已知未做**,触发条件:下一次动这条路时改成带「未在跑」
+    // 谓词的条件更新(它绕过 Prisma 租户守卫,要另配一条真库并发测试)。
     const verdict = await prisma.$transaction(async (tx) => {
       const existingJob = await tx.genJob.findFirst({
         where: { ownerId, idempotencyKey: `cowork:${cardId}` },

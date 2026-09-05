@@ -278,9 +278,14 @@ describe("ENGINE-A3 商家在确认卡上改三格,一路走到账本", () => {
   // 应用层闸(读卡 where 上的 `ownerId`、以及 `card.thread.ownerId !== ownerId` 那一句)一起
   // 拆掉,它照样绿 —— 因为底下还有一层 Prisma 租户守卫(packages/db/src/tenant-guard.ts)会
   // 把 `ownerId` 注进每一条语句。所以这一条把**底下那层让开**:身份帧换成一个无租户的
-  // 系统帧(守卫对它只放读、不注 ownerId),而 `requireOwner` 仍然是入侵者。此时挡住这一手的
-  // 只剩应用层那道闸 —— 拆掉它,入侵者就真的读到并改到了别人的卡。
-  it("ENGINE-A3 跨租户:让 DB 层放行,只靠应用层闸拦 —— 入侵者仍然读不到别人的卡", async () => {
+  // 系统帧(守卫对它**只放读、不放写**,也不注 ownerId),而 `requireOwner` 仍然是入侵者。
+  //
+  // 这一条钉的是**读闸**的承重(尾巴组十一判官 P2-4 纠正上一轮的措辞):拆掉应用层那两道闸
+  // 之后,别人的卡确实被读了出来、并进了改档路径 —— 红的那一下是租户守卫拒写
+  // (`[tenant-guard] ChatMessage.updateMany requires runAsTenant before system writes`,
+  // packages/db/src/tenant-guard.ts),所以越权**写**并没有发生,发生的是一次跨租户**读**泄漏
+  // 加一个异常。不能读成「只靠应用层闸拦住越权写」。
+  it("ENGINE-A3 跨租户:让 DB 层放行读 —— 拆掉应用层读闸,别人的卡就会被读出来并进改档路径", async () => {
     const owner = await seedWorld(500);
     const card = await mintImageCard(owner);
     const intruder = await seedWorld(500); // 这一行同时把 requireOwner 换成入侵者
