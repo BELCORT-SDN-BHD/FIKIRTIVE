@@ -35,6 +35,7 @@ import {
   type OttoComposerReference,
 } from "@/lib/canvas-chat-reference";
 import { libraryItemAccessibleName } from "@/lib/library-item-a11y";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 /** One page is what a composer shortcut needs; the Library page owns search and paging. */
 const PICKER_PAGE_SIZE = 24;
@@ -93,7 +94,7 @@ export function CanvasLibraryPicker({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[80vh] max-w-[min(720px,calc(100vw-2rem))] overflow-auto">
         <DialogHeader className="pr-8">
-          <DialogTitle>Choose from Library</DialogTitle>
+          <DialogTitle>{`Choose from ${PRODUCT_VOCABULARY.library}`}</DialogTitle>
           <DialogDescription>
             Pick something you have already made or uploaded. Otto uses it as a reference for your
             next message — attaching it costs nothing.
@@ -102,7 +103,7 @@ export function CanvasLibraryPicker({
 
         {error ? (
           <Alert role="alert" variant="destructive">
-            <AlertTitle>Library couldn&apos;t be loaded</AlertTitle>
+            <AlertTitle>{PRODUCT_VOCABULARY.library} couldn&apos;t be loaded</AlertTitle>
             <AlertDescription>
               <span>{error}</span>
               <Button type="button" variant="outline" size="sm" onClick={() => void retry()}>
@@ -113,12 +114,12 @@ export function CanvasLibraryPicker({
         ) : items === null ? (
           <Alert role="status">
             <Spinner aria-hidden />
-            <AlertTitle>Loading your Library</AlertTitle>
+            <AlertTitle>{`Loading your ${PRODUCT_VOCABULARY.library}`}</AlertTitle>
             <AlertDescription>This only reads what you have already made.</AlertDescription>
           </Alert>
         ) : items.length === 0 ? (
           <Alert role="status">
-            <AlertTitle>Nothing in your Library yet</AlertTitle>
+            <AlertTitle>{`Nothing in your ${PRODUCT_VOCABULARY.library} yet`}</AlertTitle>
             <AlertDescription>
               Anything you make or upload lands here, and you can send it back to Otto from this
               menu.

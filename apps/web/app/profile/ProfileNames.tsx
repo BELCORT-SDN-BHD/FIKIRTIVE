@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { updateDisplayName, updateWorkspaceName } from "@/lib/profile-actions";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 type SaveResult = { ok: true; name: string } | { error: string };
 
@@ -151,8 +152,8 @@ export function ProfileNames({ displayName, workspaceName }: { displayName: stri
           sign-ins never ask), this field is EMPTY and the placeholder asks for it. It used to
           arrive pre-filled with their email address, which read as an answer they had given. */}
       <NameField
-        label="Workspace name"
-        hint="This name identifies the workspace inside Fikirtive. It does not replace your Brand context."
+        label={`${PRODUCT_VOCABULARY.workspace} name`}
+        hint={`This name identifies the ${PRODUCT_VOCABULARY.workspace.toLowerCase()} inside Fikirtive. It does not replace your Brand context.`}
         initialValue={workspaceName}
         placeholder="Set your shop name"
         autoComplete="organization"
@@ -189,8 +190,8 @@ export function WorkspaceNameField({ workspaceName }: { workspaceName: string })
   return (
     <FieldGroup>
       <NameField
-        label="Workspace name"
-        hint="This name identifies the workspace inside Fikirtive. It does not replace your Brand context."
+        label={`${PRODUCT_VOCABULARY.workspace} name`}
+        hint={`This name identifies the ${PRODUCT_VOCABULARY.workspace.toLowerCase()} inside Fikirtive. It does not replace your Brand context.`}
         initialValue={workspaceName}
         placeholder="Set your shop name"
         autoComplete="organization"

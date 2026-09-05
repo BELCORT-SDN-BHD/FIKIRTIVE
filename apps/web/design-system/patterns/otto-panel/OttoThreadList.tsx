@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { ChatThreadDTO } from "@/lib/types";
 import { isCanvasThread } from "@/lib/otto-thread-surface";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import {
   OTTO_NAV_PROJECT_LIMIT,
   OTTO_NAV_THREAD_LIMIT,
@@ -148,7 +149,7 @@ export function OttoThreadList({
                     size="icon"
                     className={`size-[20px] shrink-0 rounded-lg text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/project:opacity-100 group-focus-within/project:opacity-100 data-[state=open]:opacity-100 ${projectPinned ? "opacity-100" : ""}`}
                     aria-label={`${project.name} controls`}
-                    title="Project controls"
+                    title={`${PRODUCT_VOCABULARY.canvas} controls`}
                   >
                     <MoreHorizontal className="size-3.5" aria-hidden />
                   </Button>
@@ -156,15 +157,15 @@ export function OttoThreadList({
                 <DropdownMenuContent align="end" className="min-w-44">
                   <DropdownMenuItem onSelect={() => onSetProjectPinned(project.id, !projectPinned)}>
                     <Pin className="size-3.5" fill={projectPinned ? "currentColor" : "none"} aria-hidden />
-                    {projectPinned ? "Unpin project" : "Pin project"}
+                    {projectPinned ? `Unpin ${PRODUCT_VOCABULARY.canvas}` : `Pin ${PRODUCT_VOCABULARY.canvas}`}
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => onRenameProject(project.id)}>
                     <Pencil className="size-3.5" aria-hidden />
-                    Rename project
+                    {`Rename ${PRODUCT_VOCABULARY.canvas}`}
                   </DropdownMenuItem>
                   <DropdownMenuItem variant="destructive" onSelect={() => onDeleteProject(project.id)}>
                     <Trash2 className="size-3.5" aria-hidden />
-                    Delete project
+                    {`Delete ${PRODUCT_VOCABULARY.canvas}`}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

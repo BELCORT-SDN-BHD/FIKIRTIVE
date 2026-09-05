@@ -51,6 +51,7 @@ import {
 } from "@/lib/actions";
 import { nextActiveThreadId } from "@/lib/thread-list";
 import { isCanvasThread, isPanelThread } from "@/lib/otto-thread-surface";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import { OttoConfirmDialog, OttoRenameDialog } from "@/components/otto/OttoPromptDialog";
 import type { OttoPanelConversationState, PendingFirst } from "./OttoPanelConversation";
 import { OttoPanelShell, useOttoPanelControls } from "./OttoPanelShell";
@@ -326,14 +327,14 @@ export function OttoPanelHost({
       // 画布名从种子里那份项目清单取(那是这个商家自己的项目,已经按 ownerId 查出来过);
       // 取不到名字就只写 `Canvas` —— 不编一个名字,也不去多查一次库。
       return {
-        label: formatPanelScope("Canvas", seed?.projects.find((p) => p.id === active.projectId)?.name),
+        label: formatPanelScope(PRODUCT_VOCABULARY.canvas, seed?.projects.find((p) => p.id === active.projectId)?.name),
         hint: "This conversation belongs to a canvas.",
       };
     }
     if (!isPanelThread(active.surface)) return undefined;
     const subject = panelContextSubject(location);
     return {
-      label: formatPanelScope("Workspace", subject?.kind === "page" ? subject.label : null),
+      label: formatPanelScope(PRODUCT_VOCABULARY.workspace, subject?.kind === "page" ? subject.label : null),
       hint: "This conversation belongs to the workspace, not to a canvas.",
     };
   }, [activeThreadId, threads, seed, location]);
@@ -547,7 +548,7 @@ export function OttoPanelHost({
       );
       return null;
     } catch {
-      throw new Error("The project rename response was lost.");
+      throw new Error(`The ${PRODUCT_VOCABULARY.canvas} rename response was lost.`);
     }
   }, []);
 
@@ -558,7 +559,7 @@ export function OttoPanelHost({
       await reloadSeed();
       return null;
     } catch {
-      throw new Error("The project deletion response was lost.");
+      throw new Error(`The ${PRODUCT_VOCABULARY.canvas} deletion response was lost.`);
     }
   }, [reloadSeed]);
 
@@ -707,8 +708,8 @@ export function OttoPanelHost({
         description={deleteThreadTarget ? `Otto will delete "${deleteThreadTarget.title}" and its messages.` : ""}
         impacts={[
           "The conversation and its messages are permanently deleted.",
-          "Canvas nodes and generated media are detached from this conversation.",
-          "Generated library assets stay available.",
+          `${PRODUCT_VOCABULARY.canvas} nodes and generated media are detached from this conversation.`,
+          `Anything already saved in your ${PRODUCT_VOCABULARY.library} stays available.`,
         ]}
         confirmText={deleteThreadTarget?.title}
         confirmLabel="Delete conversation"
@@ -722,9 +723,9 @@ export function OttoPanelHost({
       <OttoRenameDialog
         open={!!renameProjectTarget}
         onOpenChange={(open) => { if (!open) setRenameProjectTarget(null); }}
-        title="Rename project"
-        description="This only changes the sidebar name. Your chats, canvas, and assets stay where they are."
-        label="Project name"
+        title={`Rename ${PRODUCT_VOCABULARY.canvas}`}
+        description="This only changes the sidebar name. Your chats, nodes, and media stay where they are."
+        label={`${PRODUCT_VOCABULARY.canvas} name`}
         initialValue={renameProjectTarget?.name ?? ""}
         onSubmit={async (name) => {
           if (!renameProjectTarget) return null;
@@ -734,15 +735,15 @@ export function OttoPanelHost({
       <OttoConfirmDialog
         open={!!deleteProjectTarget}
         onOpenChange={(open) => { if (!open) setDeleteProjectTarget(null); }}
-        title="Permanently delete project?"
-        description={deleteProjectTarget ? `Otto will delete "${deleteProjectTarget.name}" and its project-scoped work.` : ""}
+        title={`Permanently delete ${PRODUCT_VOCABULARY.canvas}?`}
+        description={deleteProjectTarget ? `Otto will delete "${deleteProjectTarget.name}" and everything scoped to that ${PRODUCT_VOCABULARY.canvas}.` : ""}
         impacts={[
-          "The project record is permanently deleted.",
-          "Its chats, canvas nodes, jobs, and project media records are deleted.",
-          "Global library assets and credit ledger rows are not deleted here.",
+          `The ${PRODUCT_VOCABULARY.canvas} record is permanently deleted.`,
+          `Its chats, nodes, jobs, and ${PRODUCT_VOCABULARY.canvas}-scoped media records are deleted.`,
+          `Everything already saved in your ${PRODUCT_VOCABULARY.library}, and your credit history, are not deleted here.`,
         ]}
         confirmText={deleteProjectTarget?.name}
-        confirmLabel="Delete project"
+        confirmLabel={`Delete ${PRODUCT_VOCABULARY.canvas}`}
         confirmingLabel="Deleting…"
         tone="danger"
         onConfirm={async () => {
