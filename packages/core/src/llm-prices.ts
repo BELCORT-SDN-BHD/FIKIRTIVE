@@ -1,7 +1,13 @@
 /**
  * LLM token price registry (Task 1.7 Part A+B).
- * Per-token USD prices for the models Otto uses. Unknown models fall back to
- * sonnet pricing — NEVER zero (zero = a metering hole).
+ * Per-token USD prices for the models Otto uses.
+ *
+ * **ENGINE-A5(Otto 引擎 S2 §7.2①,Founder 2026-09-04 批准):价目 fail closed。**
+ * 从前这张表的查询是「猜」的:精确匹配不中就按子串猜(含 "opus" → opus 价),再不中一律
+ * 落 sonnet 价。于是把一个更贵的型号写进 manifest 时,代码不会红、不会报,只会按 sonnet
+ * 的价收钱 —— 少收的那一截由我们自己吃,而且仓库里没有任何一处会响。猜价与漏价是同一族
+ * 事故,方向都不是 fail closed,所以整段删掉:**表里没有的型号一律抛错**(llmPricesFor);
+ * 需要自己判定的调用方(开机检查、组合期自检)用 llmPricesOrNull。
  *
  * Part B: OTTO_LLM_MARGIN_DEFAULT is the v1 margin; a per-category admin knob
  * is deferred to OPT-6.
@@ -20,28 +26,57 @@ export interface LlmPrices {
 // $/1M ÷ 1e6 = $/token
 // Opus 4.8:   $5 in / $25 out / ~$0.50 cached / $6.25 cache-write (1.25×)
 // Sonnet 4.6: $3 in / $15 out / ~$0.30 cached / $3.75 cache-write (1.25×)
+// Sonnet 4.5: 同 sonnet 档价($3 in / $15 out)。它是 OTTO_FALLBACK_MODEL —— 只在 529 过载时
+//   同档接管(packages/otto/src/model.ts:22)。以前它靠子串猜价才拿到 sonnet 价;猜价删掉
+//   之后,**同档不等于免登记**:一个真的会被跑到的型号必须有自己的一行,否则开机就被拒绝。
 const TABLE: Record<string, LlmPrices> = {
   "claude-opus-4-8":   { inputPerToken: 5e-6,  outputPerToken: 25e-6, cachedInputPerToken: 0.5e-6, cacheWriteInputPerToken: 6.25e-6 },
   "claude-sonnet-4-6": { inputPerToken: 3e-6,  outputPerToken: 15e-6, cachedInputPerToken: 0.3e-6, cacheWriteInputPerToken: 3.75e-6 },
+  "claude-sonnet-4-5": { inputPerToken: 3e-6,  outputPerToken: 15e-6, cachedInputPerToken: 0.3e-6, cacheWriteInputPerToken: 3.75e-6 },
 };
 
-/** Unknown model → sonnet pricing. NEVER returns zero prices. */
-const DEFAULT: LlmPrices = TABLE["claude-sonnet-4-6"]!;
+/** 今天有价的型号 id。判词用它告诉运维「合法取值是哪几个」。 */
+export const PRICED_MODEL_IDS: readonly string[] = Object.freeze(Object.keys(TABLE));
 
 /**
- * Resolve LLM prices for a model string.
- * Tries exact match, then substring: "opus" → opus rates, else sonnet rates.
- * This handles both canonical ids ("claude-sonnet-4-6") and provider-prefixed
- * ids ("anthropic/claude-sonnet-4.5") without a zero-price fallthrough.
+ * Otto 计价用的型号 id —— **唯一源**(ENGINE-A5 第三刀)。
+ *
+ * 从前有两份真相:`packages/otto/src/model.ts` 的 OTTO_PRIMARY_MODEL / OTTO_DEFAULT_MODEL,
+ * 与 `packages/otto/src/skills/propose-research.helpers.ts` 里抄的一份裸字符串
+ * (`RESEARCH_METER_MODEL`)。抄的理由是真的:那个 helpers 模块贴着客户端,不能把 Agents /
+ * AI-SDK 的值图(`aisdk(...)`)拖进 bundle。但「不能 import 那个模块」不等于「必须抄一份」
+ * —— 一个纯字符串常量放在这里,两边同取一源,bundle 里什么都没多。
+ *
+ * 放在价目表这个文件里,是因为它与这张表是同一件事:**计价用的那个型号**。改一个忘了改
+ * 另一个,开机就被 env-contract 的「型号必须已定价」检查点名(fail closed,warn 免疫)。
+ */
+export const OTTO_BILLABLE_MODEL_ID = "claude-sonnet-4-6";
+
+/**
+ * Resolve LLM prices for a model string, or **null** when it is not in the table.
+ *
+ * 给需要自己判定的调用方用(env-contract 的开机检查、model.ts 的组合期自检)。要拿价钱
+ * 一律用 llmPricesFor —— 它替调用方把「查不到」变成一条能照着修的错误,而不是一个默默
+ * 按别人价钱收的数。
+ */
+export function llmPricesOrNull(model: string): LlmPrices | null {
+  return TABLE[model] ?? null;
+}
+
+/**
+ * Resolve LLM prices for a model string. **查不到即抛**(ENGINE-A5)。
+ *
+ * 只做精确匹配:没有子串猜测,没有默认档。判词带型号名与两条出路(加进价目表 / 改回已
+ * 定价型号),因为这两条正是运维当场能做的全部选择。
  */
 export function llmPricesFor(model: string): LlmPrices {
-  // Exact match (fastest path — Agents SDK uses the canonical id)
-  if (TABLE[model]) return TABLE[model]!;
-  // Substring match — e.g. "anthropic/claude-opus-4-8" contains "opus"
-  const lower = model.toLowerCase();
-  if (lower.includes("opus")) return TABLE["claude-opus-4-8"]!;
-  // All others (including "sonnet" substrings and complete unknowns) → sonnet
-  return DEFAULT;
+  const prices = TABLE[model];
+  if (prices) return prices;
+  throw new Error(
+    `LLM price table has no entry for model "${model}" — 未定价的型号一律拒绝计价:` +
+      `把它加进价目表(packages/core/src/llm-prices.ts 的 TABLE),或改回已定价型号。` +
+      `Priced today: ${PRICED_MODEL_IDS.join(", ")}.`,
+  );
 }
 
 // ── Margin (Part B) ──────────────────────────────────────────────────────────
