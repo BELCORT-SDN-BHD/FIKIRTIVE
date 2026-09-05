@@ -14,11 +14,136 @@
  * 而它自己碰不到数据库,也不决定谁有资格拿到这条链(那是调用方的 `requireOwner`)。
  */
 
-/** 与 share-preview 一致的 10 分钟:签名链是「现在给你看一眼」,不是永久地址。 */
+/** 与 share-preview 一致的 10 分钟:签名链是「现在给你看一眼」,不是永久地址。
+ *  Founder 2026-09-05 裁决「同意,但是加上可以自由设定时间」之后,它仍是**默认**档 ——
+ *  没人挑时间时铸的就是它,share-preview 那一头行为一个字没变。 */
 export const PUBLIC_MEDIA_TTL_MS = 10 * 60 * 1000;
 
-/** 说给商家听的那句时长 —— 与上面那个数字同源,免得屏幕上写 10 分钟、链子活 5 分钟。 */
-export const PUBLIC_MEDIA_TTL_MINUTES = PUBLIC_MEDIA_TTL_MS / 60_000;
+/** 挑得动的四档。屏幕上的字由 `publicMediaTtlLabel` 现算,这里只放毫秒数。 */
+export const PUBLIC_MEDIA_TTL_PRESETS_MS: readonly number[] = [
+  PUBLIC_MEDIA_TTL_MS,
+  60 * 60 * 1000,
+  24 * 60 * 60 * 1000,
+  7 * 24 * 60 * 60 * 1000,
+];
+
+/** 下限。低于一分钟的链子等于「复制完就打不开」,那是另一种假成功。 */
+export const PUBLIC_MEDIA_MIN_TTL_MS = 60 * 1000;
+
+/**
+ * 服务端硬上限 30 天。**越界一律拒绝铸链,不静默夹到上限** —— 商家填了 90 天、屏幕上却
+ * 不吭声地给一条 30 天的链子,那正是这条线上要消灭的那种「以为成功了」。
+ * 时间是签在令牌里的(`signMediaToken` 的 `exp`),客户端改不动;这个上限所以只需要在
+ * 铸链那一处成立,而铸链只有 `media-link-actions.ts` 一个地方。
+ */
+export const PUBLIC_MEDIA_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** 自定义那一格的单位 —— 只有分钟与小时(天数已经有 7 天那一档,再多一个单位没人用)。 */
+export type PublicMediaTtlUnit = "minutes" | "hours";
+
+/** 自定义输入 → 毫秒。看不懂的输入回 `NaN`,由 `publicMediaTtlProblem` 统一出那句话。 */
+export function publicMediaTtlFromCustom(raw: string, unit: PublicMediaTtlUnit): number {
+  const n = Number(raw.trim());
+  if (raw.trim() === "" || !Number.isFinite(n)) return NaN;
+  return Math.round(n * (unit === "hours" ? 60 * 60 * 1000 : 60 * 1000));
+}
+
+/**
+ * 毫秒 → 自定义那两格(`publicMediaTtlFromCustom` 的**逆**)。整小时说小时,其余说分钟。
+ * 两个方向必须待在同一处:面板重开时要把存着的毫秒数还原回商家看得懂的「2 / Hours」,
+ * 换算写在面板里就成了第二个源头 —— 哪天单位多一格,只改一边就会两边打架(§7.3)。
+ */
+export function publicMediaTtlToCustom(ttlMs: number): { value: string; unit: PublicMediaTtlUnit } {
+  const wholeHours = ttlMs % (60 * 60 * 1000) === 0;
+  return {
+    value: String(ttlMs / (wholeHours ? 60 * 60 * 1000 : 60 * 1000)),
+    unit: wholeHours ? "hours" : "minutes",
+  };
+}
+
+/**
+ * 这个时长能不能用 —— 能用回 `null`,不能用回**说给商家听的那一句**。
+ * UI 与服务端动作读同一个函数:屏幕上先拦一次是体验,服务端再拦一次才是闸(fail closed)。
+ */
+export function publicMediaTtlProblem(ttlMs: number): string | null {
+  if (!Number.isFinite(ttlMs) || !Number.isInteger(ttlMs) || ttlMs % 60_000 !== 0) {
+    return "Enter how long the link should work, in whole minutes or hours.";
+  }
+  if (ttlMs < PUBLIC_MEDIA_MIN_TTL_MS) {
+    return `A link has to work for at least ${publicMediaTtlLabel(PUBLIC_MEDIA_MIN_TTL_MS)}.`;
+  }
+  if (ttlMs > PUBLIC_MEDIA_MAX_TTL_MS) {
+    return `A link can work for at most ${publicMediaTtlLabel(PUBLIC_MEDIA_MAX_TTL_MS)}.`;
+  }
+  return null;
+}
+
+/**
+ * 说给商家听的那句时长 —— 与铸链用的毫秒数同源,免得屏幕上写 24 小时、链子活 10 分钟。
+ * 满两天才说「天」:一天那一档商家自己是按「24 小时」想的(预设那一档就叫 24 hours),
+ * 硬翻成「1 day」等于替他换了一个说法。其余整小时说小时,再其余说分钟(输入只到分钟)。
+ */
+export function publicMediaTtlLabel(ttlMs: number): string {
+  const minutes = Math.round(ttlMs / 60_000);
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  if (minutes % (60 * 24) === 0 && minutes >= 2 * 60 * 24) return plural(minutes / (60 * 24), "day");
+  if (minutes % 60 === 0) return plural(minutes / 60, "hour");
+  return plural(minutes, "minute");
+}
+
+/**
+ * 「上次挑的那个时长」记在哪里,由这个文件说了算,所以说给商家听的那句话也放在这里 ——
+ * 与变体那一格(`lib/result-pick.ts` 的 `PICK_SCOPE_NOTE`)同一个口径:今天它确实只在这台
+ * 浏览器上,措辞不得暗示跨设备同步。升级成账号级要新的持久化列,另立规格。
+ */
+export const PUBLIC_MEDIA_TTL_SCOPE_NOTE = "Link duration is saved on this browser only.";
+
+const TTL_PICK_KEY = "otto:link-ttl";
+
+/**
+ * 上次挑的那一格。除了毫秒数还要记住**它是从哪一格来的**:自定义填了正好等于某个预设的
+ * 数(60 分钟＝1 hour 那一档),只存毫秒的话重开面板会跳回预设档 —— 商家会以为自己填的
+ * 那一格没保住。所以来源与数字一起存。
+ */
+export type PublicMediaTtlPick = { ttlMs: number; source: "preset" | "custom" };
+
+/**
+ * 读上次挑的那一格;没有、坏了、或者越界(上限哪天调小了)一律回 `null` ⇒ 用默认档。
+ *
+ * localStorage 本身也会**直接抛**:浏览器隐私设置里把站点存储关掉、iframe 里的第三方
+ * cookie 拦截、无痕模式配额为零 —— 这时连 `getItem` 都是异常。这一格只是个方便,绝不能
+ * 让整个素材面板打不开,所以抛了就当「没挑过」,按默认档渲染。
+ */
+export function readTtlPick(): PublicMediaTtlPick | null {
+  if (typeof window === "undefined") return null;
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(TTL_PICK_KEY);
+  } catch {
+    return null;
+  }
+  if (raw === null) return null;
+  const [source, ms] = raw.split(":");
+  if (source !== "preset" && source !== "custom") return null;
+  const n = Number(ms);
+  if (publicMediaTtlProblem(n) !== null) return null;
+  return { ttlMs: n, source };
+}
+
+/**
+ * 记下这次挑的那一格。只在通过校验时写 —— 存一个用不了的值等于下次开面板就报错。
+ * 写不进去(存储被禁 / 配额满)同样不是商家要处理的事:这次挑的时长照常生效,只是下次
+ * 不记得,所以吞掉,绝不让它炸到面板上。
+ */
+export function writeTtlPick(pick: PublicMediaTtlPick): void {
+  if (typeof window === "undefined") return;
+  if (publicMediaTtlProblem(pick.ttlMs) !== null) return;
+  try {
+    window.localStorage.setItem(TTL_PICK_KEY, `${pick.source}:${pick.ttlMs}`);
+  } catch {
+    // 记不住比打不开好。
+  }
+}
 
 /**
  * 铸一条签名公共地址(站内相对路径)。`token` 进路径段,所以必须编码。

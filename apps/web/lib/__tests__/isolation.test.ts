@@ -156,13 +156,79 @@ describe("2-org isolation — org B can never read org A", () => {
       const minted = await mediaLink.getPublicMediaLink(aGenerationId);
       if ("error" in minted) throw new Error(`control minted nothing: ${minted.error}`);
       expect(minted.path.startsWith("/api/media/pub/")).toBe(true);
-      expect(minted.expiresInMinutes).toBe(10);
+      // 不挑时间就是默认那 10 分钟 —— Founder 2026-09-05 加了「可自设有效期」之后,
+      // 默认档必须一格没动(share-preview 那一头也照旧读它)。
+      expect(minted.expiresInMs).toBe(10 * 60 * 1000);
       // 令牌里签着的 owner 与 key 都必须是 A 的 —— 签名换成别处的 ownerId 会在这里红。
       const token = decodeURIComponent(minted.path.slice("/api/media/pub/".length));
       const claims = verifyMediaToken(token, MEDIA_SECRET);
       expect(claims?.ownerId).toBe(orgA);
       expect(claims?.key).toBe(storageKey(orgA, aAssetHash, "png"));
     });
+    // ── Founder 2026-09-05 裁决:「同意,但是加上可以自由设定时间」──────────────────
+    // 时长从客户端上来,所以这几条钉的是**服务端**:签进令牌的到期时刻真的是商家挑的那个;
+    // 越界一律拒绝铸链,不静默夹到上限;下限同理。挑时间不改租户闸的答案。
+    /** 令牌里签着的到期时刻 —— 屏幕说什么不算数,这个才是链子真正的寿命。 */
+    async function mintedExpiry(genId: string, ttlMs: number) {
+      const before = Date.now();
+      const minted = await mediaLink.getPublicMediaLink(genId, ttlMs);
+      const after = Date.now();
+      if ("error" in minted) throw new Error(`expected a link, got: ${minted.error}`);
+      const token = decodeURIComponent(minted.path.slice("/api/media/pub/".length));
+      const claims = verifyMediaToken(token, MEDIA_SECRET);
+      return { minted, claims, before, after };
+    }
+
+    it("FRONT-A12 link duration: a preset (24 hours) is the expiry actually signed into the token", async () => {
+      await asUser(A_EMAIL);
+      const ttl = 24 * 60 * 60 * 1000;
+      const { minted, claims, before, after } = await mintedExpiry(aGenerationId, ttl);
+      expect(minted.expiresInMs).toBe(ttl);
+      expect(claims?.ownerId).toBe(orgA);
+      expect(claims!.exp).toBeGreaterThanOrEqual(before + ttl);
+      expect(claims!.exp).toBeLessThanOrEqual(after + ttl);
+    });
+
+    it("FRONT-A12 link duration: a custom value (90 minutes) is the expiry actually signed into the token", async () => {
+      await asUser(A_EMAIL);
+      const ttl = 90 * 60 * 1000;
+      const { minted, claims, before, after } = await mintedExpiry(aGenerationId, ttl);
+      expect(minted.expiresInMs).toBe(ttl);
+      expect(claims!.exp).toBeGreaterThanOrEqual(before + ttl);
+      expect(claims!.exp).toBeLessThanOrEqual(after + ttl);
+    });
+
+    it("FRONT-A12 link duration: past the 30-day ceiling is refused outright, never quietly clamped", async () => {
+      await asUser(A_EMAIL);
+      const overCeiling = await mediaLink.getPublicMediaLink(aGenerationId, 31 * 24 * 60 * 60 * 1000);
+      // 夹到 30 天再发一条链子＝商家以为拿到 31 天的链子,那正是「假成功」。
+      expect(overCeiling).toEqual({ error: "A link can work for at most 30 days." });
+      expect("path" in overCeiling).toBe(false);
+    });
+
+    it("FRONT-A12 link duration: under the 1-minute floor is refused, and so is a value that is not whole minutes", async () => {
+      await asUser(A_EMAIL);
+      // 0 分钟(自定义框里填 0)是整分钟,所以它撞的是**下限**那一条,不是「填法看不懂」。
+      expect(await mediaLink.getPublicMediaLink(aGenerationId, 0)).toEqual({
+        error: "A link has to work for at least 1 minute.",
+      });
+      // 半分钟这类不足一格的值走另一句 —— 输入只到分钟这一格。
+      expect(await mediaLink.getPublicMediaLink(aGenerationId, 30 * 1000)).toEqual({
+        error: "Enter how long the link should work, in whole minutes or hours.",
+      });
+      expect(await mediaLink.getPublicMediaLink(aGenerationId, Number.NaN)).toEqual({
+        error: "Enter how long the link should work, in whole minutes or hours.",
+      });
+    });
+
+    it("FRONT-A12 link duration: B picking any duration on A's id still answers exactly like a nonexistent id", async () => {
+      await asUser(B_EMAIL);
+      const crossTenant = await mediaLink.getPublicMediaLink(aGenerationId, 7 * 24 * 60 * 60 * 1000);
+      const nonexistent = await mediaLink.getPublicMediaLink(`gen_${randomUUID()}`, 7 * 24 * 60 * 60 * 1000);
+      expect(crossTenant).toEqual({ error: "Not found." });
+      expect(crossTenant).toEqual(nonexistent);
+    });
+
     it("FRONT-A12 public link: no MEDIA_PROXY_SECRET ⇒ fail closed, never a link", async () => {
       await asUser(A_EMAIL);
       delete process.env.MEDIA_PROXY_SECRET;
