@@ -19,6 +19,9 @@ import {
   OTTO_PRIMARY_MODEL,
   OTTO_FALLBACK_MODEL,
   OTTO_DEFAULT_MODEL,
+  OTTO_SUMMARY_MODEL,
+  ottoModel,
+  ottoSummaryModel,
 } from "./model.js";
 
 /**
@@ -50,6 +53,17 @@ describe("ENGINE-A5 型号与价目 fail closed(manifest 组合期)", () => {
         ["OTTO_FALLBACK_MODEL", "claude-not-in-the-table"],
       ]),
     ).toThrow();
+  });
+
+  it("ENGINE-A6:折叠型号也在组合期查价名单里,manifest 把它作为 summaryBinding 带下去", () => {
+    // §7.2④「摘要本身是一次便宜的小调用」—— 折叠跑哪个型号是 manifest 上的一个决定,
+    // 不是 foldRollingSummary 里写死的一行。今天它等于主力型号:价目表里没有更便宜的一档。
+    expect(llmPricesOrNull(OTTO_SUMMARY_MODEL)).not.toBeNull();
+    expect(ottoModelRuntime.summaryBinding).toBe(ottoSummaryModel);
+    expect(ottoModelRuntime.binding).toBe(ottoModel);
+    expect(() => assertOttoModelsPriced([["OTTO_SUMMARY_MODEL", "claude-not-in-the-table"]])).toThrow(
+      /OTTO_SUMMARY_MODEL/,
+    );
   });
 
   it("ENGINE-A5:计价型号是单一源 —— 主力型号逐字取自 @fikirtive/core 的常量", () => {

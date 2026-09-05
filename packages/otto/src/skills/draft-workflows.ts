@@ -190,6 +190,9 @@ export const draftWorkflowsSkill = defineOttoSkill({
   cost: "free",
   effect: "write",
   reach: "internal",
+  // ENGINE-A4:validateWorkflowRules 只把规则源编译一遍报错在哪(customer-workflow-service.ts
+  // 的 `compile`,事务里零写入),不存任何 revision —— 反复校验不算交付。
+  readOnlyActions: { field: "operation", actions: ["validateWorkflowRules"] },
   description:
     "Create a custom Workflow definition, validate or save its readable rule source, publish one immutable revision " +
     "as the definition pointer, or create a Routine DRAFT through the one authenticated, owner-scoped service, not a " +

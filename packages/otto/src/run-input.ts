@@ -142,21 +142,32 @@ export async function tryRestoreRunStateWithContext<TContext, TAgent extends Age
 export const OTTO_HISTORY_BUDGET_TOKENS = OTTO_CONTEXT_CAP_TOKENS;
 
 /**
+ * 一个 CJK 字算多少 token。
+ *
+ * 取值依据(全部是**假设**,不是实测):Claude 的 BPE 词表把常用汉字/假名/谚文各收成 1 个
+ * token,生僻字与部分符号回退成 2–3 个字节片。所以真值在 1.0 上下浮动,长文本的均值贴近 1;
+ * 1.3 是在 1.0 之上留的那点余量(方向仍是高估 ⇒ 早裁 ⇒ 不会有意外账单),同时把旧值 2.0 那
+ * 一倍的虚高去掉。
+ *
+ * **未实测**:钉死它需要一次真的 `count_tokens` 调用(与 ENGINE-A1 基线同一把钥匙、同一趟)。
+ * 这个数只决定「留哪些历史」,永远不决定收多少钱 —— 钱一律按 provider 报回来的实际用量算
+ * (meter.ts)。
+ */
+export const CJK_TOKENS_PER_CHAR = 1.3;
+
+/**
  * A deliberately crude token estimate — this gate decides WHAT TO KEEP, it never decides what
  * to charge (the charge is always the provider's reported usage, meter.ts). Cheap, synchronous,
  * no tokenizer dependency.
  *
- * CJK is counted at ~2 tokens per character and everything else at ~4 characters per token.
+ * CJK is counted at `CJK_TOKENS_PER_CHAR` tokens per character and everything else at ~4
+ * characters per token.
  *
- * 判官落修 A6-P2-3 —— the 2-tokens-per-character figure is a DELIBERATELY CONSERVATIVE bound, not
- * a measured truth: it is an over-estimate against Claude's actual Chinese tokenization, so a
- * 华语 conversation starts folding somewhat earlier than the 12,000 budget literally implies. The
- * direction is chosen on purpose (over-estimate ⇒ trim earlier ⇒ never a surprise bill); the
- * price is paid in product, not money — a long Chinese thread leans on its summary sooner. The
- * alternative direction is worse: a single latin-only ratio would under-count the same
- * conversation several-fold and trim far too late, which is the direction that costs the merchant
- * money. Registered in the spec's §5 so re-pinning it against a real `count_tokens` run stays on
- * the list.
+ * 判官落修 A6-P2-3(⑤⑥⑦尾巴轮重钉)—— the old figure was 2 tokens per CJK character, which is
+ * about DOUBLE the truth and had a product price attached: a 华语 thread hit the 12,000-token
+ * history budget at roughly half the conversation an English one does, and started leaning on the
+ * rolling summary (i.e. losing verbatim context) twice as early. See `CJK_TOKENS_PER_CHAR` for
+ * the value now used and the assumption behind it.
  */
 export function estimateTextTokens(text: string): number {
   let cjk = 0;
@@ -167,7 +178,7 @@ export function estimateTextTokens(text: string): number {
     if ((c >= 0x3000 && c <= 0x9fff) || (c >= 0xac00 && c <= 0xd7af) || (c >= 0xf900 && c <= 0xfaff)) cjk += 1;
     else other += 1;
   }
-  return Math.ceil(cjk * 2 + other / 4);
+  return Math.ceil(cjk * CJK_TOKENS_PER_CHAR + other / 4);
 }
 
 /** Estimate one history item by the text it will actually travel as (its JSON form). */

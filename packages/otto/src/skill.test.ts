@@ -91,6 +91,29 @@ describe("defineOttoSkill enforcement", () => {
     ).toThrow(/requires field/i);
   });
 
+  it("ENGINE-A4:readOnlyActions 的判别键必须是 parameters 的一个 key(定义期就拦)", () => {
+    expect(() =>
+      defineOttoSkill({
+        name: "badreadonly", description: "d", cost: "free", effect: "write", reach: "internal",
+        parameters: z.object({ x: z.string() }),
+        readOnlyActions: { field: "action", actions: ["view"] },
+        execute: noop,
+      }),
+    ).toThrow(/readOnlyActions/);
+  });
+
+  it("ENGINE-A4:readOnlyActions 原样挂在 OttoSkill 上(未声明则为 null)", () => {
+    const plain = defineOttoSkill({ ...base, name: "noreadonly", cost: "free", effect: "write", reach: "internal" });
+    expect(plain.readOnlyActions).toBeNull();
+    const declared = defineOttoSkill({
+      name: "withreadonly", description: "d", cost: "free", effect: "write", reach: "internal",
+      parameters: z.object({ action: z.enum(["view", "place"]) }),
+      readOnlyActions: { field: "action", actions: ["view"] },
+      execute: noop,
+    });
+    expect(declared.readOnlyActions).toEqual({ field: "action", actions: ["view"] });
+  });
+
   it("exposes requires on the built OttoSkill (empty array when omitted)", () => {
     const s = defineOttoSkill({ ...base, name: "noreq", cost: "free", effect: "write", reach: "internal" });
     expect(s.requires).toEqual([]);

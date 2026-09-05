@@ -34,4 +34,4 @@
 
 - 57 个 action 总表:`src/skills/CATALOG.md`(生成物,`pnpm --filter @fikirtive/otto run catalog` 重生成,勿手改)。
 - 提示词现状快照:`src/__snapshots__/otto-core.golden.txt`(常驻薄层,字节冻结)与 `otto-knowledge-cabinet.golden.txt`(柜子的形状:哪几份、书脊标签、装载关键词)。按需装载的正文不再逐字节冻结,由评测分数把关。
-- 评测集:`evals/`(engine 线 10 题骨架已在,`pnpm --filter @fikirtive/otto run evals` 真跑一趟;基线档案 `evals/baselines/engine.json` 待 Founder 换一把有效 Anthropic 钥匙后才跑得出来——规格 §5 2026-09-05 登记)。
+- 评测集:`evals/`(engine 线 10 题,`pnpm --filter @fikirtive/otto run evals` 真跑一趟)。基线档案 `evals/baselines/engine.json` **已入档**(commit `003cebbe`:10 题、总分 65.0%、花费 $0.4617、对应代码 `2cb54e2d`),`evals:check` 从此有比较对象。仍未转正的是 ENGINE-A7 那一句「⑥段之后重跑、总分不低于基线」的**对比跑**——规格 §5 2026-09-05 登记。
