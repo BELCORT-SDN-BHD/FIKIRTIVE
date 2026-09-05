@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Field,
@@ -36,6 +37,7 @@ function NameField({
   placeholder,
   autoComplete,
   onSave,
+  children,
 }: {
   label: string;
   hint: string;
@@ -43,6 +45,9 @@ function NameField({
   placeholder: string;
   autoComplete: string;
   onSave: (value: string) => Promise<SaveResult>;
+  /** 同一张表单里跟在这个字段后面、但自己不保存的只读字段(Profile 的 Email)。
+   *  夹具的 Profile 是「Display name → Email → Save changes」一张表,不是两块。 */
+  children?: React.ReactNode;
 }) {
   const [saved, setSaved] = useState(initialValue);
   const [draft, setDraft] = useState(initialValue);
@@ -81,39 +86,52 @@ function NameField({
     <form onSubmit={submit} className="w-full">
       <Field data-invalid={status === "error"}>
         <FieldLabel htmlFor={inputId}>{label}</FieldLabel>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
-          <Input
-            id={inputId}
-            className="sm:flex-1"
-            value={draft}
-            maxLength={MAX_NAME_LENGTH}
-            placeholder={placeholder}
-            autoComplete={autoComplete}
-            aria-invalid={status === "error" ? true : undefined}
-            onChange={(event) => {
-              setDraft(event.target.value);
-              setStatus(null);
-              setErrorMsg(null);
-            }}
-          />
-          <Button
-            type="submit"
-            variant="secondary"
-            className="sm:min-w-24"
-            disabled={!dirty || !valid || status === "saving"}
-          >
-            {status === "saving" && <Spinner data-icon="inline-start" />}
-            {status === "saving" ? "Saving…" : "Save"}
-          </Button>
-        </div>
+        <Input
+          id={inputId}
+          value={draft}
+          maxLength={MAX_NAME_LENGTH}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          aria-invalid={status === "error" ? true : undefined}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setStatus(null);
+            setErrorMsg(null);
+          }}
+        />
         {status === "error" ? (
           <FieldError errors={[{ message: errorMsg ?? "Could not save. Try again." }]} />
         ) : (
-          <FieldDescription role="status" aria-live="polite">
-            {status === "saved" ? "Saved" : hint}
-          </FieldDescription>
+          <FieldDescription>{hint}</FieldDescription>
         )}
       </Field>
+      {children}
+      {/* 已冻结的 Settings pattern §3.4:多字段 form 只有一个明确的 `Save changes`,
+          结果就在原位置说,不靠 toast 冒充完成(§3.5)。夹具的动作行长这样:
+          一条上边框、`pt-5`、按钮与保存回执同排。 */}
+      <div className="mt-7 flex items-center gap-4 border-t border-border pt-5">
+        <Button type="submit" size="sm" disabled={!dirty || !valid || status === "saving"}>
+          {status === "saving" && <Spinner data-icon="inline-start" />}
+          {status === "saving" ? "Saving…" : "Save changes"}
+        </Button>
+        {/* 判官 [P2-1]:live region 必须**常驻**。挂载它的同时才把字放进去,读屏往往
+            什么都不报 —— 区域是在这一帧才出现的,变化发生在它存在之前。主干原本就是
+            常驻的(`<FieldDescription role="status" aria-live="polite">` 一直在,只有
+            children 在 hint 与 "Saved" 之间换),换皮不该把这条性质弄丢。所以这里只换
+            children:容器一直在,保存成功那一刻变的是它装的东西。 */}
+        <span
+          role="status"
+          aria-live="polite"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-success"
+        >
+          {status === "saved" ? (
+            <>
+              <Check className="size-4" aria-hidden />
+              Saved
+            </>
+          ) : null}
+        </span>
+      </div>
     </form>
   );
 }
@@ -122,8 +140,8 @@ export function ProfileNames({ displayName, workspaceName }: { displayName: stri
   return (
     <FieldGroup>
       <NameField
-        label="Your name"
-        hint="How Otto greets you."
+        label="Display name"
+        hint="This is how your name appears across Fikirtive."
         initialValue={displayName}
         placeholder="Your name"
         autoComplete="name"
@@ -133,8 +151,8 @@ export function ProfileNames({ displayName, workspaceName }: { displayName: stri
           sign-ins never ask), this field is EMPTY and the placeholder asks for it. It used to
           arrive pre-filled with their email address, which read as an answer they had given. */}
       <NameField
-        label="Workspace"
-        hint="Your shop name — shown across Fikirtive."
+        label="Workspace name"
+        hint="This name identifies the workspace inside Fikirtive. It does not replace your Brand context."
         initialValue={workspaceName}
         placeholder="Set your shop name"
         autoComplete="organization"
@@ -144,17 +162,25 @@ export function ProfileNames({ displayName, workspaceName }: { displayName: stri
   );
 }
 
-export function DisplayNameField({ displayName }: { displayName: string }) {
+export function DisplayNameField({
+  displayName,
+  children,
+}: {
+  displayName: string;
+  children?: React.ReactNode;
+}) {
   return (
     <FieldGroup>
       <NameField
-        label="Your name"
-        hint="How Otto greets you."
+        label="Display name"
+        hint="This is how your name appears across Fikirtive."
         initialValue={displayName}
         placeholder="Your name"
         autoComplete="name"
         onSave={updateDisplayName}
-      />
+      >
+        {children}
+      </NameField>
     </FieldGroup>
   );
 }
@@ -163,8 +189,8 @@ export function WorkspaceNameField({ workspaceName }: { workspaceName: string })
   return (
     <FieldGroup>
       <NameField
-        label="Workspace"
-        hint="Your shop name — shown across Fikirtive."
+        label="Workspace name"
+        hint="This name identifies the workspace inside Fikirtive. It does not replace your Brand context."
         initialValue={workspaceName}
         placeholder="Set your shop name"
         autoComplete="organization"

@@ -28,14 +28,14 @@
 | `/library` 仍组合旧 `OttoStuff`；approved Library fixture 已完成，但 Collection、cross-object Favorite、Clothes 与 Official Avatar production contracts 尚未存在 | Library uses Generation history / Uploads / Favorites / Collections / Elements | 先由 backend 落实 [`patterns/library/backend-handoff-contract.md`](../patterns/library/backend-handoff-contract.md)；再用已批准 components 完成 production convergence，不使用 fake persistence |
 | `/brand` 仍组合旧 `OttoMemory`；五个 section 的 approved pattern 已完成 | Brand uses five route-backed Jasper-IQ-style child views | 等待 Founder 指定的 Otto IQ engine contract，再使用已批准 pattern 接入正式 routes；不重做设计，不伪造 ingestion / provenance / versioning |
 | Otto composer 尚未接入完整 Reference picker | `@` uses Recent + type entry + universal typed search | Phase 5 review fixture 已于 2026-09-02 获 Founder 视觉与交互验收；production 接入继续等待统一 typed search / resolver / provenance contracts，不使用 fixture data |
-| Home customization 只有已批准 pattern，没有 workspace persistence / `Manage home` capability | Home layout is workspace-wide truth | 建立 owner-scoped persistence action 与 capability 后才开放 production save |
+| ~~Home customization 只有已批准 pattern，没有 workspace persistence / `Manage home` capability~~ **已接通（2026-09-05 回写）** | Home layout is workspace-wide truth | 已落地：`apps/web/lib/home-layout-actions.ts` ＋ `apps/web/lib/home-layout-store.ts`（`canManageHome()` 读 `workspace.manage_home`）＋ `OrgHomeLayout`（`packages/db/prisma/schema.prisma:1369`）＋ 迁移 `20260903120000_org_home_layout`；跨刷新由 `e2e/journeys/15-home-layout-persists.spec.ts:35` 守。本行原文是 2026-08-31 当时的观察，已不再是有效停放 |
 | Home / Analysis 的 Otto handoff 会打开 panel，但 server 不消费 page context | Handoff must show truthful removable context | 先接通真实 context reader，再启用现有 context-chip UI；不能只画 chip |
-| Current Home adapter 只能提供 Meta-only partial evidence | Full `ready` needs a real multi-source aggregate with freshness | 保留完整 ready frontend contract；后端 aggregate 接通前不显示完整 marketing-health claims |
+| Current Home adapter 只能提供 Meta-only partial evidence | Full `ready` needs a real multi-source aggregate with freshness | 保留完整 ready frontend contract；后端 aggregate 接通前不显示完整 marketing-health claims。**2026-09-05 回写**：读模型今天仍只产出 not-configured / unavailable / insufficient / partial 四态，ready 整支不可达（`apps/web/lib/home-marketing-health.ts:133-161`）；按 Meta 单源版面接真的 PR #1192 在飞（分支 `claude/home-meta-single-source`，状态 OPEN，未合并），合入前本行照旧成立 |
 | 正式 Auth routes 与未登录 journey 已获 Founder 视觉验收；本地环境仍未接可用账号数据库与邮件服务 | [`patterns/auth/access-journey-spec.md`](../patterns/auth/access-journey-spec.md) 已获 Founder 批准并冻结；Auth 是 merchant shell 外的独立 access journey | 建立 local test-auth journey，验证真实 code email、verification / reset link、provider callback 与 authenticated return；最后进行各正式 authenticated route 的视觉与键盘验收 |
 
 ## Recommended sequencing
 
-1. Home fixture visual 已接受；Home persistence / capability、Otto context reader 与正式 authenticated QA 保持为已命名 closure seams。
+1. Home fixture visual 已接受；Otto context reader 与正式 authenticated QA 保持为已命名 closure seams。**2026-09-05 回写**：Home persistence / capability 这一条已接通，不再是 seam（证据见上表 Home 行与 Phase 2 acceptance ledger #8 / #9）。
 2. Phase 3 Create / Canvas frontend scope 已实现，fixture 方向获 Founder 接受；两条 closure seams 见对应 acceptance ledger。
 3. Auth shared shell、正式 routes 与未登录 browser QA 已完成并获 Founder 视觉验收；local test-auth 与 authenticated cross-surface QA 保留为后端环境接缝，不在 UI fixture 中伪造。
 4. Library 设计与 interaction fixture 已完成；production convergence 等待已记录的 backend handoff contract，不在 UIUX session 伪造 persistence。
@@ -52,7 +52,7 @@
 | Library：以已批准界面替换旧页面，并接通 views、筛选、详情与整理动作 | 上述 Library handoff contract 可用 | `app/library/page.tsx` 仍渲染 `OttoStuff`；`patterns/library/backend-handoff-contract.md` |
 | Brand：把已批准的五个 section 接到正式页面 | Otto IQ engine 提供有类型的内容、状态与来源接口 | `app/brand/page.tsx` 仍渲染 `OttoMemory`；`patterns/brand/README.md` 的 engine 边界 |
 | ~~Reference picker：接入两处正式 Otto composer，传递准确 reference IDs~~ —— 2026-09-04 已接入（规格 `docs/specs/frontend-baseline.md` §7.3③ 第①②刀）。剩余：把类型化引用 ID 存进消息并可回链（第③刀） | Phase 5 第 5 节 search / resolver / provenance gate 满足 | 两处 composer 与画布编辑器同走 `components/reference-picker/ReferencePickerMenu.tsx`（`components/otto/OttoFrontDoor.tsx`、`components/otto/OttoChatStream.tsx`、`components/MentionInput.tsx`）；服务端一次查询 `lib/reference-search.ts`。原先这一格点名的 `components/otto/OttoMentionPopover.tsx` 已随收口删除，不再存在 |
-| Home：接通 Customize home 保存与 Otto page context；验证完整 ready 数据 | workspace persistence / capability、context reader 与多来源 aggregate | `components/home/HomeEntry.tsx`、`lib/home-marketing-health.ts`；Phase 2 acceptance ledger |
+| Home：~~接通 Customize home 保存~~（**2026-09-05 回写：已接通**）与 Otto page context；验证完整 ready 数据 | context reader 与多来源 aggregate（workspace persistence / capability 已不再是前置条件） | `components/home/HomeEntry.tsx`、`lib/home-marketing-health.ts`；Phase 2 acceptance ledger |
 | 正式页面联合验收：登录后走通 Home、Create / Canvas、Library、Brand、Settings 和返回流程 | 可用的非生产测试账号环境；需付费 / 权限证明的行为由对应 backend 测试支持 | 各 phase acceptance ledger；Auth `access-journey-spec.md` |
 
 Create / Canvas、Settings、Auth 在本次定向核查中未发现额外的界面施工缺口；这不等于正式登录流程、全部浏览器尺寸或完整 web suite 已验收。

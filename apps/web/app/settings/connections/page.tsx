@@ -28,10 +28,17 @@ export default async function ConnectionsRoutePage() {
     <SettingsShell
       active="connections"
       title="Connections"
-      description="Connect the services Fikirtive can use across this workspace."
-      scopeNote="Connections are shared by everyone in this workspace."
+      description="Connect the services Fikirtive uses across this workspace."
+      scopeNote="Changes affect everyone in this workspace."
     >
-      <OttoConnections embedded />
+      {/* 第⑦段只换外壳。连接列表本体住在 `components/otto/OttoConnections.tsx`(本段写集
+          之外),所以这里只把它放进夹具的内容列几何:整宽、`py-8`。真实厂牌 logo
+          (`public/integrations/*.svg` —— 夹具的 `ConnectionLogo` 用的就是这三个文件)
+          要替掉那份 lucide 占位图标,只能在那个组件里改;已在 PR 描述里列为需要 Otto 段
+          配合的一项。 */}
+      <div className="w-full py-8">
+        <OttoConnections embedded />
+      </div>
     </SettingsShell>
   );
 }
