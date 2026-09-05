@@ -1676,8 +1676,10 @@ export async function finalizeOttoRun({
  *
  * 无明文围栏是**类型层**的:入参 `OttoTurnTraceFacts` 上没有任何自由文本字段(动作名已在
  * 引擎侧折过注册表白名单,文件名来自文件柜清单),所以这个函数拿不到 prompt、消息正文或
- * 工具参数,也就无从写进去。这里再补一条:落库时**逐字段挑选**而不是把 facts 摊开写,
- * 于是将来给 facts 加一个字段,也必须有人来这里显式加一行,才会进库。
+ * 工具参数,也就无从写进去。落库时**逐字段挑选**而不是把 facts 摊开写,是同一条围栏的
+ * 收尾;但真正拦住「悄悄多写一列明文」的是引擎侧的类型与封闭集走查
+ * (packages/otto/src/runtime-turn-trace.test.ts),不是这里的挑选写法 —— 下面那条
+ * 列集测试钉住的是**当前入库列集**,不是「加字段必须来这里改」这句更强的话。
  *
  * `settledInternal` 在这里读,不在引擎里读:它是账本的事实,引擎包不直连 prisma(与
  * `ctx` 上其他 port 同一条规矩)。读法与流式路由的 `settledTurnCost` 同源 —— 必须先有
@@ -1709,8 +1711,11 @@ export async function recordOttoTurnTrace(facts: OttoTurnTraceFacts): Promise<vo
 }
 
 /** 这一轮结算掉的 internal credits,或 null(账本还没有终结行 / 读失败 / 免费轮)。
- *  与 apps/web/app/api/otto/stream/route.ts 的 settledTurnCost 同一条口径,差别只有单位:
- *  那一处给商家看显示面值,这一处进档案存 internal。 */
+ *  与 apps/web/app/api/otto/stream/route.ts 的 settledTurnCost 同一条口径,但有两处差别:
+ *  (1) 单位 —— 那一处给商家看显示面值,这一处进档案存 internal;
+ *  (2) 整笔退款那一轮(reserve+refund 净变 0)这里存 0 而不是 null(stream route 的
+ *      `chargedInternal <= 0 → null` 是给商家的显示口径)。档案要能区分「退过、净收 0」
+ *      与「还没结、根本没有终结行」,所以 0 与 null 在这里是两件事。 */
 async function settledTurnInternal(orgId: string, refId: string): Promise<number | null> {
   try {
     const rows = await prisma.creditLedger.findMany({

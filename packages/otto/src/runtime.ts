@@ -338,13 +338,19 @@ export function collectTurnTraceFacts(
 }
 
 /** Hand the facts to the sink. A trace is DIAGNOSTIC: it must never be able to fail a turn the
- *  merchant already paid for, so every throw stops here with one log line. */
-async function emitTurnTrace(facts: OttoTurnTraceFacts, sink: OttoTurnTraceSink): Promise<void> {
+ *  merchant already paid for, so every throw stops here with one log line. The facts arrive as a
+ *  thunk on purpose: collecting them walks SDK-shaped state, so that walk has to sit INSIDE this
+ *  try too — otherwise a collector throw would surface out of an already-settled turn. */
+async function emitTurnTrace(
+  collect: () => OttoTurnTraceFacts,
+  sink: OttoTurnTraceSink,
+  refId: string,
+): Promise<void> {
   try {
-    await sink(facts);
+    await sink(collect());
   } catch (e) {
     console.error(
-      `[otto:trace] sink failed for ${facts.refId} (category=${e instanceof Error ? e.name : typeof e})`,
+      `[otto:trace] failed for ${refId} (category=${e instanceof Error ? e.name : typeof e})`,
     );
   }
 }
@@ -479,7 +485,8 @@ function assertResumedStateCarriesLiveContext(input: OttoTurnRequest["input"], c
  *  - it runs on BOTH exits. A truncated turn (MaxTurnsExceededError, which withLlmBudget
  *    settles and rethrows) is exactly the turn worth looking at, so its facts are read off the
  *    error's own state and emitted before the error propagates unchanged;
- *  - it can only observe. The sink's throw is swallowed (emitTurnTrace), nothing here touches
+ *  - it can only observe. Collecting the facts AND the sink's throw are both swallowed
+ *    (emitTurnTrace takes the collector as a thunk), nothing here touches
  *    the reserve/settle/refund parameters, and the runner's return value and thrown errors are
  *    byte-identical to before with or without a port.
  */
@@ -520,8 +527,9 @@ export async function runOttoTurn(
     );
     if (port) {
       await emitTurnTrace(
-        collectTurnTraceFacts(result?.state, runtime, port, request, false),
+        () => collectTurnTraceFacts(result?.state, runtime, port, request, false),
         port.sink,
+        request.refId,
       );
     }
     return result;
@@ -530,7 +538,11 @@ export async function runOttoTurn(
     // are no facts and no row — only a turn that actually ran gets an archive entry.
     if (port && e instanceof MaxTurnsError) {
       const state = (e as { state?: unknown }).state;
-      await emitTurnTrace(collectTurnTraceFacts(state, runtime, port, request, true), port.sink);
+      await emitTurnTrace(
+        () => collectTurnTraceFacts(state, runtime, port, request, true),
+        port.sink,
+        request.refId,
+      );
     }
     throw e;
   }

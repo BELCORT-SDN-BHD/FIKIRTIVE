@@ -4786,8 +4786,9 @@ describe("ENGINE-A2 —— recordOttoTurnTrace 只写白名单列", () => {
       update: Record<string, unknown>;
     };
     expect(call.where).toEqual({ refId: "otto-stream:msg_a2" });
-    // 这份名单就是围栏本身:将来给 facts 加一个字段,必须有人来这里显式加一行才会进库,
-    // 所以「悄悄多写了一列明文」这件事不可能发生在无人察觉之下。
+    // 这条钉的是**当前入库列集**:改了写入口的列,这里就红。它不等于「加一个 facts 字段
+    // 必然会红」—— 真正的无明文围栏在引擎侧(packages/otto/src/runtime-turn-trace.test.ts
+    // 的类型层与封闭集走查),这条只是它在入口这一侧的对账。
     expect(Object.keys(call.create).sort()).toEqual(
       ["modelId", "orgId", "refId", "settledInternal", "skillFiles", "steps", "surface", "threadId", "toolCalls", "truncated"],
     );

@@ -77,7 +77,9 @@ function fixtureModelRuntime(binding: Model): OttoModelRuntime {
     resolvedModelPolicy: Object.freeze({ primaryModelId: "fixture", fallbackModelId: null, failover: "none" as const }),
     mapUsage: mapOttoUsage,
     cacheCapabilities: Object.freeze({ promptCache: false }),
-    pricing: llmPricesFor,
+    // ENGINE-A5(①段,已在主干):价目查不到即抛,而 "fixture-no-charge" 不在价目表里。
+    // 夹具自带 pricing —— 与 runtime.test.ts 的同名夹具逐字同形。
+    pricing: () => llmPricesFor("claude-sonnet-4-6"),
   });
 }
 
@@ -334,6 +336,28 @@ describe("ENGINE-A2 — 档案是诊断,永远不承重", () => {
     expect(result.state).toBeDefined();
   });
 
+  it("ENGINE-A2: 连「收集事实」这一步抛错也不承重(收集在同一个 try 之内)", async () => {
+    const base = createOttoRuntime(
+      { modelRuntime: fixtureModelRuntime(toolThenTextModel("echoBrand", { q: "hi" }, "done")), skills: [echoSkill()] },
+      "interactive",
+    );
+    // 手搭一台 runtime,它的 actionNames 一读就抛。产线上构造不出这种东西(唯一构造点是
+    // createOttoRuntime,它必给 actionNames),所以这条钉的不是缺陷,而是那条硬化本身:
+    // 收集事实与交给 sink 必须在同一个 try 里,否则收集抛错会从一轮已经结算完的成功回合里冒出来。
+    const exploding = Object.create(base) as typeof base;
+    Object.defineProperty(exploding, "actionNames", {
+      get() { throw new Error("registry blew up"); },
+    });
+    const { port, seen } = recordingPort();
+    const result = await runOttoTurn(
+      { orgId: "org_t", refId: "otto-turn:msg_collect_boom", input: "hello", trace: port },
+      baseCtx,
+      exploding,
+    );
+    expect(result.state).toBeDefined();
+    expect(seen).toHaveLength(0);
+  });
+
   it("ENGINE-A2: 没接 trace 端口的调用方与本改动之前逐字相同(不读、不写、不落档案)", async () => {
     const runtime = createOttoRuntime(
       { modelRuntime: fixtureModelRuntime(toolThenTextModel("echoBrand", { q: "hi" }, "done")), skills: [echoSkill()] },
@@ -364,25 +388,4 @@ describe("ENGINE-A2 — 档案是诊断,永远不承重", () => {
     ).rejects.toBe(refused);
     expect(seen).toHaveLength(0);
   });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// S2 其余六段的 M3 占位(**不是本段的验收**)
-//
-// M3 闸读的是被引用规格里**全部**的验收编号(scripts/ci/process-gates.sh:308 的
-// `git show "$BASE_SHA:$spec" | grep -oE '…-A[0-9]+'`),所以任何一个引用
-// docs/specs/otto-engine.md 的产品 PR 都要求 ENGINE-A1–A7 七个编号在测试树里各有落点。
-// 闸本身给的办法就是这个:「S4 早期可先 it.todo("<编号> …") 占位」。
-//
-// 每一条都标着它属于哪一段(§7.1 切段表)。**那一段落地时,由那一段把这里对应的一行删掉**,
-// 换成它自己的真测试 —— 占位是欠条,不是覆盖。ENGINE-A1 已有落点
-// (packages/core/src/creation-acceptance-map.test.ts),故不在此列。
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("Otto S2 —— 其余各段的验收占位(欠条,不是覆盖)", () => {
-  it.todo("ENGINE-A3(§7.2⑦ 画布输入即对话):商家在画布输入框发消息 → 得到 Otto 对话回复,花钱动作仍走卡片确认");
-  it.todo("ENGINE-A4(§7.2⑤ 截断轮退款):被截断且零交付的一轮全额退款,消费历史可见退款行");
-  it.todo("ENGINE-A5(§7.2① 型号与价目 fail closed):manifest 指到价目表没有的型号 → 拒绝启动并报明原因");
-  it.todo("ENGINE-A6(§7.2④ 长对话摘要与预算闸):旧轮被摘要收拢,新一轮成本不随历史无限上涨");
-  it.todo("ENGINE-A7(§7.2⑥ 技能文件柜替换单体):拆柜后重跑评测,总分不低于基线");
 });
