@@ -5,7 +5,8 @@
  * 而已经铺满整棵 Otto/canvas 树的 onBalanceRefresh 结算事件更新的是 OttoApp 自己的
  * state —— 那个 state 现在没人渲染。信号断了,商家整场看着旧余额(S2/S6:滞后 DB 84s+,
  * 直到整页重载)。这个模块把「钱动了」的事件从任意扣费点送到任意余额显示点,
- * 不新增轮询(#544 已批评现存的 4s thread-activity 轮询)。
+ * 不新增轮询(#544 的纪律;它当年点名的那条 4s thread-activity 轮询今天已经不在了,
+ * 纪律留下来了)。
  */
 import { describe, expect, it, vi } from "vitest";
 import {
