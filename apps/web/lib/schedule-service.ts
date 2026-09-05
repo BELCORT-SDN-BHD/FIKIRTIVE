@@ -1,4 +1,5 @@
 import "server-only";
+import { SAVE_FAILED } from "./save-failed-copy";
 import { prisma } from "@fikirtive/db";
 import { newId, validateScheduleDraft, type ScheduleDraftInput } from "@fikirtive/core";
 
@@ -74,6 +75,6 @@ export async function draftScheduledPost(
     });
     return { ok: true, id };
   } catch {
-    return { error: "Couldn't save that — please try again." };
+    return { error: SAVE_FAILED };
   }
 }

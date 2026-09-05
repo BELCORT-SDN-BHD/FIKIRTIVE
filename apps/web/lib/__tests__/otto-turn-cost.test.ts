@@ -85,7 +85,6 @@ describe("the conversation-charge disclosure is one sentence in three places", (
   function renderFrontDoor(): string {
     return renderToStaticMarkup(createElement(OttoFrontDoor, {
       projectId: "proj_1",
-      entities: [],
       userName: "Siti",
       onThreadStarted: vi.fn(),
       onStreamStart: vi.fn(),
