@@ -19,6 +19,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { getCoworkBrief, setCoworkBrief } from "@/lib/cowork-actions";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import { cn } from "@/lib/utils";
 
 const MAX_FIELD = 200;
@@ -116,9 +117,10 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
       {open && (
         <Card size="sm" className="mt-3 shadow-none">
           <CardHeader>
-            <CardTitle>Project direction</CardTitle>
+            <CardTitle>{`${PRODUCT_VOCABULARY.canvas} direction`}</CardTitle>
             <CardDescription>
-              Add the offer, audience, channel, and budget for this project. Shop-wide facts stay in Brand memory.
+              Add the offer, audience, channel, and budget for this {PRODUCT_VOCABULARY.canvas}. Shop-wide facts stay in
+              Brand memory.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -128,8 +130,8 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
                   like an empty brief. */}
               {current.state === "loading" ? (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Spinner aria-label="Checking project brief" />
-                  Checking this project&apos;s brief…
+                  <Spinner aria-label={`Checking ${PRODUCT_VOCABULARY.canvas} brief`} />
+                  Checking this {PRODUCT_VOCABULARY.canvas}&apos;s brief…
                 </div>
               ) : current.state === "unreadable" ? (
                 <Alert role="alert" variant="destructive">
@@ -144,12 +146,12 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
                   </AlertDescription>
                 </Alert>
               ) : (
-                <p className="text-xs text-muted-foreground">No brief yet for this project.</p>
+                <p className="text-xs text-muted-foreground">{`No brief yet for this ${PRODUCT_VOCABULARY.canvas}.`}</p>
               )}
 
               <FieldGroup className="gap-4">
                 <Field className="gap-1.5">
-                  <FieldLabel htmlFor="qb-offer">Offer for this project</FieldLabel>
+                  <FieldLabel htmlFor="qb-offer">{`Offer for this ${PRODUCT_VOCABULARY.canvas}`}</FieldLabel>
                   <Input
                     id="qb-offer"
                     type="text"
@@ -160,7 +162,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
                   />
                 </Field>
                 <Field className="gap-1.5">
-                  <FieldLabel htmlFor="qb-audience">Audience for this project</FieldLabel>
+                  <FieldLabel htmlFor="qb-audience">{`Audience for this ${PRODUCT_VOCABULARY.canvas}`}</FieldLabel>
                   <Input
                     id="qb-audience"
                     type="text"
@@ -171,7 +173,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
                   />
                 </Field>
                 <Field className="gap-1.5">
-                  <FieldLabel htmlFor="qb-platform">Where this project will run</FieldLabel>
+                  <FieldLabel htmlFor="qb-platform">{`Where this ${PRODUCT_VOCABULARY.canvas} will run`}</FieldLabel>
                   <Input
                     id="qb-platform"
                     type="text"
@@ -182,7 +184,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
                   />
                 </Field>
                 <Field className="gap-1.5">
-                  <FieldLabel htmlFor="qb-budget">Budget for this project</FieldLabel>
+                  <FieldLabel htmlFor="qb-budget">{`Budget for this ${PRODUCT_VOCABULARY.canvas}`}</FieldLabel>
                   <Input
                     id="qb-budget"
                     type="text"
@@ -213,7 +215,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
                   {saved ? (
                     <Check data-icon="inline-start" aria-hidden="true" />
                   ) : saving ? (
-                    <Spinner data-icon="inline-start" aria-label="Saving project brief" />
+                    <Spinner data-icon="inline-start" aria-label={`Saving ${PRODUCT_VOCABULARY.canvas} brief`} />
                   ) : null}
                   {saved ? "Saved" : saving ? "Saving…" : "Save brief"}
                 </Button>

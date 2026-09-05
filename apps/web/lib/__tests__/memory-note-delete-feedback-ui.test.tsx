@@ -111,8 +111,8 @@ describe("Brand memory loose-note removal", () => {
 
     const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
     expect(dialog?.textContent).toContain("This removes the note from Brand memory.");
-    expect(dialog?.textContent).toContain("Otto will stop using this note in future projects.");
-    expect(dialog?.textContent).toContain("Existing projects and generated assets stay unchanged.");
+    expect(dialog?.textContent).toContain("Otto will stop using this note in future Canvases.");
+    expect(dialog?.textContent).toContain("Existing Canvases and generated assets stay unchanged.");
 
     await click(button("Keep note"));
     expect(remove).not.toHaveBeenCalled();

@@ -1,60 +1,138 @@
 /**
- * product-vocabulary-fence.test.ts —— beta 六面的**旧产品名围栏**（`FRONT-A14`）。
+ * product-vocabulary-fence.test.ts —— 商家读得到的**产品名词围栏**（`FRONT-A14`）。
  *
- * FRONT-A14 是 Founder 走 Home → Create / Canvas → Library → Brand → Settings 六面、
- * 逐面对已批准设计。词汇不一致正是那趟走查最容易撞上、又最容易被下一个 PR 撞回去的一
- * 类差异——`Canvas` 那一个词在 2026-09-04 才刚收成单源（`canvas-title.ts`），而 Otto
- * 面板的重命名／删除对话到今天还在对商家说 "project"。人走一趟能发现它，机器每次都能。
+ * FRONT-A14 是 Founder 走 Home → Create / Canvas → Library → Brand → Settings → Auth
+ * 六面、逐面对已批准设计。词汇不一致正是那趟走查最容易撞上、又最容易被下一个 PR 撞回去
+ * 的一类差异——`Canvas` 那一个词在 2026-09-04 才刚收成单源（`canvas-title.ts`），而 Otto
+ * 前门的 `QuickBrief` 到今天还在对商家说 "project"。人走一趟能发现它，机器每次都能。
  *
- * **这道围栏拦什么**：`lib/product-vocabulary.ts` 里 `RETIRED_PRODUCT_WORDS` 那几个
- * 被 Founder 裁掉的旧产品名，出现在 beta 六面的**界面文案**里。判据是「商家读得到的
- * 字」——字符串字面量、模板串、JSX 文本；注释与标识符（`projectId`、`activeProject`、
- * `AssetLineage`）都不算，所以整词匹配之外还先剥注释。
+ * 两道判据，同一套「商家读得到的字」提取器：
+ *   ① **旧词**（`RETIRED_PRODUCT_WORDS`）不许出现在界面文案里；
+ *   ② **五个现行产品名**不许以裸字面量出现——要从 `lib/product-vocabulary.ts` 取词，
+ *      否则「单源」这条性质没有任何机器在守（判官 #1251 P1-2）。
+ *
+ * **扫描范围＝面的真实渲染树，不是同名目录**（判官 #1251 P1-1：按目录划面时，Otto 面板
+ * 与 Brand 两面渲染的组件住在 `components/otto/` 上层，扫不到，围栏名不副实还长绿）：
+ *   · Otto 面板：`OttoPanelConversation` 在无活动对话时渲染 `components/otto/OttoFrontDoor`，
+ *     前门再渲染 `components/otto/QuickBrief` —— 所以整个 `components/otto/` 都要扫；
+ *   · Brand：`/brand/records` 渲染 `components/otto/OttoMemory` 与 `components/otto/memory/*`。
+ *   · `components/otto/panel` 与 `components/brand` 是**软链**（分别指向
+ *     `design-system/patterns/otto-panel` 与 `design-system/brand/components`）。目录遍历
+ *     因此按 `statSync` 判目录（`Dirent.isDirectory()` 对软链返回 false，会把整棵 panel
+ *     子树静静漏掉），并按 inode 去重防环。
  *
  * **这道围栏不拦什么**（写下来，免得下一个人以为是漏网）：
  *   · 普通名词。`asset`（一件素材）、`campaign`（商家自己在 Meta／TikTok 上跑的广告）
- *     都是真实存在的词，IA 裁掉的是「一个 Assets 面」「一个 Campaign 产品对象」，
- *     不是这两个字本身。
- *   · 六面之外。`components/otto/stuff/StuffLibrary.tsx`（旧壳素材库）今天还留着同一句
- *     "show up in projects" —— 它不在 beta 六面里，本轮不动，登记在
+ *     都是真实存在的词，IA 裁掉的是「一个 Assets 面」「一个 Campaign 产品对象」。
+ *   · 注释、`className`、`${…}` 插值里的字：不是商家读到的字。
+ *   · `console.*(…)` 那一行：开发者日志，不是界面文案。
+ *   · **全小写的单词片段**（`"project"`、`"canvas"`）：判别式常量、query 参数、路由片段。
+ *     首字母大写的单词片段（`Assets`、`Library`）照扫——那正是面名标签的形状
+ *     （判官 #1251 P2-3：一律跳过没有空格的片段，等于让 `<h2>Projects</h2>` 永远漏网）。
+ *   · **剩下的盲点**（今天没有已知实例，但写在这里）：跨行的 JSX 文本节点只在整行都是
+ *     散文时才认得出（见 `merchantCopySegments`），一句话被拆成「半行 JSX + 半行文字」
+ *     时会漏；数据库里的商家自填文本本围栏也管不到。
+ *   · `components/otto/stuff/`（旧壳素材库）本轮整棵不扫，登记在
  *     `docs/specs/frontend-baseline.md` §5。
- *   · 路由、query 参数、数据库列名里的 `project`：那是 `Project` 模型的真名，冻结非目标
- *     写明不改（`canvas-title.ts` 抬头）。它们不是字面量文案，本围栏本来就扫不到。
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   PRODUCT_VOCABULARY,
   RETIRED_PRODUCT_WORDS,
+  productWordLiteralsIn,
   retiredProductWordsIn,
 } from "@/lib/product-vocabulary";
 
 const WEB_ROOT = join(__dirname, "..", "..");
 
-/** beta 六面的源码树（Home / Create / Library / Brand / Settings / Otto 面板）。 */
-const SURFACES_IN_BETA: readonly { readonly surface: string; readonly roots: readonly string[] }[] = [
+/**
+ * FRONT-A14 原文的六面（Home / Create·Canvas / Library / Brand / Settings / Auth），
+ * 外加 **Otto 面板** —— 它不在 FRONT-A14 那一行里，但它是旧词的重灾区，而且和那六面
+ * 共用同一批组件，所以一并扫（判官 #1251 P2-2：别让测试名说得比守得住的多）。
+ */
+const SCANNED_SURFACES: readonly { readonly surface: string; readonly roots: readonly string[] }[] = [
   { surface: "Home", roots: ["app/(home)", "components/home"] },
   { surface: "Create / Canvas", roots: ["app/create", "components/start-something", "components/canvas"] },
   { surface: "Library", roots: ["app/library", "components/library"] },
-  { surface: "Brand", roots: ["app/brand", "components/brand"] },
+  // Brand 的编辑入口今天是 `/brand/records` → `components/otto/OttoMemory` 与 `memory/*`。
+  { surface: "Brand", roots: ["app/brand", "components/brand", "components/otto/memory"] },
   { surface: "Settings", roots: ["app/settings", "app/profile", "app/billing", "components/settings", "components/billing"] },
-  { surface: "Otto 面板", roots: ["components/otto/panel"] },
+  { surface: "Auth", roots: ["app/login", "app/signup", "app/forgot-password", "app/reset-password", "app/verify-email"] },
+  // Otto 面板的真实渲染树:面板软链 + 前门 + 前门底下的卡片,全在 `components/otto/` 里。
+  { surface: "Otto 面板", roots: ["components/otto"] },
 ];
 
-function sourceFilesUnder(dir: string, out: string[] = []): string[] {
-  let entries: import("node:fs").Dirent[];
+/** 本轮整棵不扫的子树（每一条都要在 §5 有登记，否则它就是个后门）。 */
+const UNSCANNED_SUBTREES: readonly string[] = [
+  // 旧壳素材库,不在 beta 六面;登记在 docs/specs/frontend-baseline.md §5。
+  "components/otto/stuff",
+];
+
+/**
+ * 「旧词零出现」的**具名豁免**：整句列在这里，改一个字就不再豁免（所以它挡不住漂移，
+ * 只挡这一句）。今天只有一条，理由是两条 Founder 裁决撞了车，归 Founder 裁，不由围栏自决。
+ */
+const RETIRED_WORD_EXEMPT_COPY: readonly { readonly file: string; readonly copy: string; readonly why: string }[] = [
+  {
+    file: "components/otto/OttoMemory.tsx",
+    copy: "What Otto remembers about your brand — Otto uses it in every project.",
+    why: "#682（Founder 2026-08-08 人称裁决）的逐处钉板按源码字面钉着这一整句（otto-pronoun-consistency.test.ts:525），brand-route.test.ts:406 又按 DOM 文本钉一次，那一段抬头写着「规格书 §4.4 的原话，一个字不许改」；与 IA 2026-08-30 的 Project → Canvas 冲突，已登记 docs/specs/frontend-baseline.md §5 等 Founder 裁。",
+  },
+];
+
+/**
+ * 「五个现行产品名不许写裸字面量」的豁免文件。只有一个理由站得住：那一句被别的围栏
+ * **按源码字面**钉在设计系统夹具上，而夹具对所有段只读（`frontend-baseline.md` §7.4 裁决九），
+ * 改成 `${PRODUCT_VOCABULARY.canvas}` 会让那道围栏红。
+ */
+const SINGLE_SOURCE_EXEMPT_FILES: readonly { readonly file: string; readonly why: string }[] = [
+  {
+    file: "components/start-something/CreateWorkspace.tsx",
+    why: "`Canvas history` 那一行被 create-design-parity.test.tsx:139 逐字比对夹具 CreateWorkspaceReference.tsx，另有 create-design-system / create-route-rename 两道 toContain。",
+  },
+  {
+    file: "components/canvas/NorthstarHome.tsx",
+    why: "CreateWorkspace 的成对实现（create-route-rename.test.ts 抬头写明「NorthstarHome pair」），两边文案保持逐字相同才比得下去。",
+  },
+];
+
+function sourceFilesUnder(dir: string, seen: Set<string>, out: string[]): string[] {
+  let stat: import("node:fs").Stats;
   try {
-    entries = readdirSync(dir, { withFileTypes: true });
+    stat = statSync(dir);
   } catch {
     return out;
   }
-  for (const entry of entries) {
+  if (!stat.isDirectory()) return out;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) sourceFilesUnder(full, out);
-    else if (/\.tsx?$/.test(entry.name) && !/\.test\./.test(entry.name)) out.push(full);
+    let entryStat: import("node:fs").Stats;
+    try {
+      entryStat = statSync(full); // 软链要跟过去:panel/ 与 brand/ 都是软链目录。
+    } catch {
+      continue;
+    }
+    if (entryStat.isDirectory()) {
+      const identity = `${entryStat.dev}:${entryStat.ino}`;
+      if (seen.has(identity)) continue; // 防环,也防同一棵树被两条软链扫两遍。
+      seen.add(identity);
+      sourceFilesUnder(full, seen, out);
+    } else if (/\.tsx?$/.test(entry.name) && !/\.test\./.test(entry.name)) {
+      out.push(full);
+    }
   }
   return out;
+}
+
+function filesOfSurface(roots: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const files = roots.flatMap((root) => sourceFilesUnder(join(WEB_ROOT, root), seen, []));
+  return files.filter((file) => {
+    const rel = file.slice(WEB_ROOT.length + 1);
+    return !UNSCANNED_SUBTREES.some((subtree) => rel.startsWith(`${subtree}/`));
+  });
 }
 
 /** 注释里的字不是商家读到的字。剥掉时保留行数与列数，报错才报得准行号。 */
@@ -65,68 +143,129 @@ function stripComments(source: string): string {
 }
 
 /**
- * 一行里商家读得到的片段：字符串字面量 / 模板串 / JSX 文本。
+ * 一行里商家读得到的片段：字符串字面量 / 同行的 JSX 文本 / 整行都是散文的 JSX 文本行。
  *
- * 三处刻意的排除，每一处都对应一类**不是文案**的字符串——留着它们，围栏就会逼人把
- * 变量名和样式类改成假话（判官口径：误报比漏报更贵，因为它会把人训练成绕过围栏）：
- *   · `className` / `class` 的值：Tailwind 的 `group/project`、`group-hover/project:` 是
- *     样式作用域名，不是给人读的字；
- *   · `${…}` 插值：里面是表达式（`${project.name}`），商家读到的是它的**值**，不是这段源码；
- *   · 单个词、没有空格的片段：`"project"` 这种是判别式常量、query 参数名或路由片段，
- *     商家读到的文案至少是一个词组。
+ * 每一处排除都对应一类**不是文案**的字符串——留着它们，围栏就会逼人把变量名和样式类
+ * 改成假话（误报比漏报更贵：它把人训练成绕过围栏）：
+ *   · `className` / `class` 的值是样式作用域名（Tailwind 的 `group/project`）；
+ *   · `${…}` 插值里是表达式，商家读到的是它的**值**；
+ *   · `console.*` 是开发者日志；
+ *   · 全小写、没有空格的单词片段是标识符／query 参数／路由片段。
+ *
+ * 「整行散文」那一条补的是最常见的一个漏：多行 JSX 里，一句 `<AlertDescription>` 的正文
+ * 独占一行，同行既没有 `>` 也没有 `<`，按同行规则永远抓不到（`FactSection.tsx` 的删除
+ * 影响句就是这样藏了下来）。判据取得很紧：整行没有 `<>{}=();[]`、至少三个词。
  */
 function merchantCopySegments(line: string): string[] {
+  if (/\bconsole\.\w+\(/.test(line)) return [];
   const withoutStyles = line.replace(/\b(?:className|class)=(?:\{[^}]*\}|"[^"]*"|'[^']*')/g, " ");
   const literals = [...withoutStyles.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|`([^`\\]*(?:\\.[^`\\]*)*)`/g)]
     .map((match) => match[1] ?? match[2] ?? match[3] ?? "");
   const jsxText = [...withoutStyles.matchAll(/>([^<>{}]+)</g)].map((match) => match[1]);
-  return [...literals, ...jsxText]
+  const proseOnly = withoutStyles.replace(/&[a-z]+;/g, "").trim();
+  const proseLine =
+    proseOnly && !/[<>{}=();[\]]/.test(proseOnly) && proseOnly.split(/\s+/).length >= 3 ? [proseOnly] : [];
+  return [...literals, ...jsxText, ...proseLine]
     .map((segment) => segment.replace(/\$\{[^}]*\}/g, " "))
-    .filter((segment) => /\s/.test(segment.trim()));
+    .filter((segment) => /\s/.test(segment.trim()) || /^[A-Z]/.test(segment.trim()));
 }
 
-function retiredWordHits(files: readonly string[]): string[] {
-  const hits: string[] = [];
+function scan(files: readonly string[], find: (copy: string) => readonly string[], label: string): string[] {
+  const hits = new Set<string>();
   for (const file of files) {
     const raw = readFileSync(file, "utf8");
     const rawLines = raw.split("\n");
     stripComments(raw).split("\n").forEach((line, index) => {
       for (const segment of merchantCopySegments(line)) {
-        for (const retired of retiredProductWordsIn(segment)) {
-          hits.push(`${file.slice(WEB_ROOT.length + 1)}:${index + 1} 旧词「${retired}」 → ${rawLines[index].trim()}`);
+        for (const found of find(segment)) {
+          hits.add(`${file.slice(WEB_ROOT.length + 1)}:${index + 1} ${label}「${found}」 → ${rawLines[index].trim()}`);
         }
       }
     });
   }
-  return hits;
+  return [...hits];
 }
 
-describe("FRONT-A14 词汇围栏:beta 六面的界面文案不再出现被裁掉的旧产品名", () => {
-  it.each(SURFACES_IN_BETA.map((s) => [s.surface, s.roots] as const))(
-    "FRONT-A14 %s 面的界面文案零旧产品名",
-    (_surface, roots) => {
-      const files = roots.flatMap((root) => sourceFilesUnder(join(WEB_ROOT, root)));
-      expect(files.length, `写集里的目录一个都没扫到,围栏形同虚设:${roots.join(", ")}`).toBeGreaterThan(0);
-      const hits = retiredWordHits(files);
-      expect(
-        hits,
-        `这些界面文案还在用被裁掉的旧产品名。改法:从 lib/product-vocabulary.ts 取词。\n${hits.join("\n")}`,
-      ).toEqual([]);
-    },
-  );
+const SURFACE_CASES = SCANNED_SURFACES.map((s) => [s.surface, s.roots] as const);
 
-  it("FRONT-A14 围栏自己抓得住:把旧词塞回一句文案里,它必须命中", () => {
-    // 一句自证 —— 围栏最坏的失败方式是「什么都没扫到，于是永远绿」。
-    expect(retiredProductWordsIn('This moves it out of your projects.')).toContain("Project");
-    expect(retiredProductWordsIn('Brand IQ remembers this.')).toContain("Brand IQ");
-    expect(retiredProductWordsIn('Assets')).toContain("Assets（作为面／分区的名字）");
+describe("FRONT-A14 词汇围栏:界面文案不再出现被裁掉的旧产品名", () => {
+  it.each(SURFACE_CASES)("FRONT-A14 %s 面的界面文案零旧产品名", (_surface, roots) => {
+    const files = filesOfSurface(roots);
+    expect(files.length, `这一面的目录一个都没扫到,围栏形同虚设:${roots.join(", ")}`).toBeGreaterThan(0);
+    const hits = scan(files, retiredProductWordsIn, "旧词").filter(
+      (hit) => !RETIRED_WORD_EXEMPT_COPY.some((e) => hit.includes(e.file) && hit.includes(e.copy)),
+    );
+    expect(
+      hits,
+      `这些界面文案还在用被裁掉的旧产品名。改法:从 lib/product-vocabulary.ts 取词。\n${hits.join("\n")}`,
+    ).toEqual([]);
+  });
+});
+
+describe("FRONT-A14 词汇围栏:五个产品名只在 lib/product-vocabulary.ts 定义一次", () => {
+  it.each(SURFACE_CASES)("FRONT-A14 %s 面不写产品名的裸字面量", (_surface, roots) => {
+    const exempt = new Set(SINGLE_SOURCE_EXEMPT_FILES.map((e) => e.file));
+    const files = filesOfSurface(roots).filter((file) => !exempt.has(file.slice(WEB_ROOT.length + 1)));
+    const hits = scan(files, productWordLiteralsIn, "裸字面量");
+    expect(
+      hits,
+      `这些文案手抄了产品名。改法:引用 PRODUCT_VOCABULARY（显示的字一个不变）。\n${hits.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("FRONT-A14 单源豁免只有夹具逐字比对这一个理由,且每条都写明是哪一道围栏在钉", () => {
+    for (const { file, why } of SINGLE_SOURCE_EXEMPT_FILES) {
+      expect(statSync(join(WEB_ROOT, file)).isFile(), `${file} 已不存在,豁免该删了`).toBe(true);
+      expect(why, `${file} 的豁免没写清是哪道围栏在钉`).toMatch(/test\.tsx?|parity|rename/);
+    }
+  });
+
+  it("FRONT-A14 旧词豁免逐句核对:那一句必须还在原文件里,一改字就该把豁免删掉", () => {
+    // 豁免最容易腐坏的方式是「那句话早改了,豁免还留着,于是替一整类旧词开了后门」。
+    for (const { file, copy, why } of RETIRED_WORD_EXEMPT_COPY) {
+      expect(readFileSync(join(WEB_ROOT, file), "utf8"), `${file} 里已经没有这一句,豁免该删了`).toContain(copy);
+      expect(why, `${file} 的豁免没写清是谁在钉、去哪儿裁`).toMatch(/§5/);
+    }
+  });
+});
+
+describe("FRONT-A14 词汇围栏自证", () => {
+  it("FRONT-A14 围栏抓得住:把旧词与裸产品名塞回一句文案,它必须命中", () => {
+    // 围栏最坏的失败方式是「什么都没扫到,于是永远绿」。
+    expect(retiredProductWordsIn("This moves it out of your projects.")).toContain("Project");
+    expect(retiredProductWordsIn("Brand IQ remembers this.")).toContain("Brand IQ");
+    expect(retiredProductWordsIn("Assets")).toContain("Assets（作为面／分区的名字）");
+    expect(productWordLiteralsIn("It lands in your Library.")).toContain("Library");
+    expect(productWordLiteralsIn("Canvas")).toContain("Canvas");
     // 反面:普通名词与标识符不许误伤,否则围栏会逼着人把真话改成假话。
     expect(retiredProductWordsIn("This asset is not ready for details yet.")).toEqual([]);
     expect(retiredProductWordsIn("projectId")).toEqual([]);
-    expect(retiredProductWordsIn("activeProject")).toEqual([]);
+    expect(productWordLiteralsIn("canvasHistory")).toEqual([]);
   });
 
-  it("FRONT-A14 五个产品名词的拼写以本文件为准,且每条旧词都指向其中一个", () => {
+  it("FRONT-A14 提取器认得整行散文的 JSX 文本,也认得首字母大写的单词标签", () => {
+    // 两条都是判官 #1251 点名的漏:前者藏住了 FactSection 的删除影响句,后者藏住了面名标签。
+    expect(merchantCopySegments("              Otto will stop using this detail in future projects.")).toEqual([
+      "Otto will stop using this detail in future projects.",
+    ]);
+    expect(merchantCopySegments("<h2>Projects</h2>")).toContain("Projects");
+    // 反面:标识符、样式类、日志、插值都不算文案。
+    expect(merchantCopySegments('const key = "project";')).toEqual([]);
+    expect(merchantCopySegments('<div className="group/project flex items-center">')).toEqual([]);
+    expect(merchantCopySegments('console.warn("canvas recovery will place its card");')).toEqual([]);
+    expect(merchantCopySegments("<span>{project.name}</span>")).toEqual([]);
+  });
+
+  it("FRONT-A14 目录遍历跟得过软链:panel 与 brand 两棵软链子树真的被扫到了", () => {
+    // `Dirent.isDirectory()` 对软链返回 false —— 上一版围栏就是这样把整棵 panel 漏掉的。
+    const ottoPanelFiles = filesOfSurface(["components/otto"]).map((f) => f.slice(WEB_ROOT.length + 1));
+    expect(ottoPanelFiles).toContain("components/otto/panel/OttoPanelHost.tsx");
+    expect(ottoPanelFiles).toContain("components/otto/QuickBrief.tsx");
+    expect(ottoPanelFiles.some((f) => f.startsWith("components/otto/stuff/"))).toBe(false);
+    expect(filesOfSurface(["components/brand"]).length).toBeGreaterThan(0);
+  });
+
+  it("FRONT-A14 五个产品名词的拼写以 lib/product-vocabulary.ts 为准,且每条旧词都指向其中一个", () => {
     // 词本身是 Founder 裁的（IA README §6 与 2026-08-22 的 Brand → Otto IQ），
     // 这一条钉的是「代码里的拼写没有被谁顺手改掉」。
     expect(PRODUCT_VOCABULARY).toEqual({

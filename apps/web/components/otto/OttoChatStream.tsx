@@ -122,6 +122,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 // Re-export the mapping seam so callers/tests can import it from the component too.
 export { threadToUiMessages } from "@/lib/otto-ui-messages";
@@ -1180,7 +1181,7 @@ export function OttoChatStream({
               variant="outline"
               size="sm"
               onClick={onNewConversation}
-              title="Start a new conversation in this Canvas"
+              title={`Start a new conversation in this ${PRODUCT_VOCABULARY.canvas}`}
               aria-label="New conversation"
               className="shrink-0"
             >
@@ -1989,7 +1990,7 @@ export function OttoChatStream({
                         </DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => setLibraryPickerOpen(true)}>
                           <ImagesIcon aria-hidden="true" />
-                          Choose from Library
+                          {`Choose from ${PRODUCT_VOCABULARY.library}`}
                         </DropdownMenuItem>
                       </DropdownMenuGroup>
                     </DropdownMenuContent>

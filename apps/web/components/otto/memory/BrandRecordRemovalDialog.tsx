@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 type RemovalKind = "customer group" | "offer";
 
@@ -28,7 +29,7 @@ const COPY: Record<RemovalKind, {
   "customer group": {
     title: "Remove this customer group?",
     description: "This removes the group from Brand memory.",
-    impact: "Otto will stop using this audience profile in future projects. Existing projects and generated assets stay unchanged.",
+    impact: `Otto will stop using this audience profile in future ${PRODUCT_VOCABULARY.canvas}es. Existing ${PRODUCT_VOCABULARY.canvas}es and generated assets stay unchanged.`,
     errorTitle: "Customer group wasn't removed",
     cancelLabel: "Keep group",
     confirmLabel: "Remove group",
@@ -37,7 +38,7 @@ const COPY: Record<RemovalKind, {
   offer: {
     title: "Remove this offer?",
     description: "This removes the offer from Brand memory.",
-    impact: "Otto will stop using this offer in future projects. Existing projects and generated assets stay unchanged.",
+    impact: `Otto will stop using this offer in future ${PRODUCT_VOCABULARY.canvas}es. Existing ${PRODUCT_VOCABULARY.canvas}es and generated assets stay unchanged.`,
     errorTitle: "Offer wasn't removed",
     cancelLabel: "Keep offer",
     confirmLabel: "Remove offer",

@@ -327,7 +327,7 @@ export function StartSomething() {
                       </DropdownMenuItem>
                       <DropdownMenuItem onSelect={() => setLibraryOpen(true)}>
                         <ImagesIcon aria-hidden="true" />
-                        Choose from Library
+                        {`Choose from ${PRODUCT_VOCABULARY.library}`}
                       </DropdownMenuItem>
                     </DropdownMenuGroup>
                   </DropdownMenuContent>

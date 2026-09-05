@@ -84,6 +84,19 @@ export const RETIRED_PRODUCT_WORDS: readonly {
   },
 ];
 
+/**
+ * 一段界面文案里手抄的**现行产品名**（围栏用；命中零条就是干净的）。
+ *
+ * 这一条守的是「五个词只在一处定义」本身：文案里出现 `Canvas`／`Library` 这几个字
+ * 时，必须是从 `PRODUCT_VOCABULARY` 取的（插值在围栏里已经被抹掉），手抄的字面量会
+ * 被抓出来。整词、区分大小写——`canvasHistory`、`libraryItemTitle` 这类标识符不命中。
+ */
+export function productWordLiteralsIn(copy: string): readonly string[] {
+  return Object.values(PRODUCT_VOCABULARY).filter((word) =>
+    new RegExp(`\\b${word.replace(/\s+/g, "\\s+")}\\b`).test(copy),
+  );
+}
+
 /** 一段界面文案里命中的旧词（围栏用；命中零条就是干净的）。 */
 export function retiredProductWordsIn(copy: string): readonly string[] {
   return RETIRED_PRODUCT_WORDS.filter((word) => word.pattern.test(copy)).map((word) => word.retired);

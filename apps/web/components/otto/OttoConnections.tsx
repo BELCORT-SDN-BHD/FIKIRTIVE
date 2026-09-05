@@ -51,6 +51,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 type MetaState =
   | { phase: "loading" }
@@ -411,7 +412,7 @@ export default function OttoConnections({ embedded = false }: { embedded?: boole
 
                 <div className="border-y border-border">
                   <div className="grid gap-2 border-b border-border py-5 sm:grid-cols-[180px_minmax(0,1fr)]">
-                    <h3 className="text-sm font-semibold">Workspace access</h3>
+                    <h3 className="text-sm font-semibold">{`${PRODUCT_VOCABULARY.workspace} access`}</h3>
                     <p className="text-sm text-muted-foreground">Available to everyone in this workspace.</p>
                   </div>
                   <div className="grid gap-2 border-b border-border py-5 sm:grid-cols-[180px_minmax(0,1fr)]">

@@ -709,7 +709,7 @@ export function OttoPanelHost({
         impacts={[
           "The conversation and its messages are permanently deleted.",
           `${PRODUCT_VOCABULARY.canvas} nodes and generated media are detached from this conversation.`,
-          `Anything already saved in your ${PRODUCT_VOCABULARY.library} stays available.`,
+          "Generated library assets stay available.",
         ]}
         confirmText={deleteThreadTarget?.title}
         confirmLabel="Delete conversation"
@@ -724,7 +724,7 @@ export function OttoPanelHost({
         open={!!renameProjectTarget}
         onOpenChange={(open) => { if (!open) setRenameProjectTarget(null); }}
         title={`Rename ${PRODUCT_VOCABULARY.canvas}`}
-        description="This only changes the sidebar name. Your chats, nodes, and media stay where they are."
+        description="This only changes the sidebar name. Your chats, canvas, and assets stay where they are."
         label={`${PRODUCT_VOCABULARY.canvas} name`}
         initialValue={renameProjectTarget?.name ?? ""}
         onSubmit={async (name) => {
@@ -740,7 +740,7 @@ export function OttoPanelHost({
         impacts={[
           `The ${PRODUCT_VOCABULARY.canvas} record is permanently deleted.`,
           `Its chats, nodes, jobs, and ${PRODUCT_VOCABULARY.canvas}-scoped media records are deleted.`,
-          `Everything already saved in your ${PRODUCT_VOCABULARY.library}, and your credit history, are not deleted here.`,
+          "Global library assets and credit ledger rows are not deleted here.",
         ]}
         confirmText={deleteProjectTarget?.name}
         confirmLabel={`Delete ${PRODUCT_VOCABULARY.canvas}`}

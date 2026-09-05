@@ -92,6 +92,7 @@ import {
 } from "@/lib/canvas-fit-padding";
 import { isTerminalCardStatus } from "@/lib/canvas-card-status";
 import { sameOriginDownloadUrl } from "@/lib/download-url";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import {
   CANVAS_OTTO_CHAT_REQUIRED,
   canvasComposerReferenceForNode,
@@ -1754,7 +1755,7 @@ export default function FlowCanvas({
       {boardStatus === "unavailable" && (
         <div className="absolute inset-x-0 top-4 z-10 flex justify-center px-4">
           <Alert role="alert" variant="destructive" density="compact" className="max-w-md">
-            <AlertTitle>Couldn&apos;t refresh Canvas</AlertTitle>
+            <AlertTitle>{`Couldn't refresh ${PRODUCT_VOCABULARY.canvas}`}</AlertTitle>
             <AlertDescription>
               <span>Nothing on your board was changed. Retry to check for newer work.</span>
               <Button type="button" variant="outline" size="xs" onClick={requestReload}>
@@ -1933,7 +1934,7 @@ export default function FlowCanvas({
               .cv-toolbar has no fixed width (sized by content), but the canvas pane can
               shrink below its natural row width (#513/#522) — maxWidth + flexWrap wrap it to
               a second row instead of letting the host's overflow:hidden clip it. */}
-          <div className="cv-toolbar max-w-full flex-wrap justify-center" role="toolbar" aria-label="Canvas tools">
+          <div className="cv-toolbar max-w-full flex-wrap justify-center" role="toolbar" aria-label={`${PRODUCT_VOCABULARY.canvas} tools`}>
             {/* ENGINE-A3(§7.2⑦):这一排从前的第一颗是 `Generate image` —— 掀开直出 composer、
                 按下就扣钱。它已退役:画布上要出图,跟 Otto 说,确认在对话的审批卡上完成。
                 余下两颗都不是直出 —— Video 先开确认框(「No charge until you confirm」),
@@ -1972,7 +1973,7 @@ export default function FlowCanvas({
             className="cv-toolbar cv-mode-rail rounded-[var(--radius-card)]"
             value={panMode ? "hand" : "select"}
             onValueChange={(value) => value && setPanMode(value === "hand")}
-            aria-label="Canvas interaction mode"
+            aria-label={`${PRODUCT_VOCABULARY.canvas} interaction mode`}
           >
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1995,7 +1996,7 @@ export default function FlowCanvas({
               `bottom-4 right-4`, zoom out / reset / zoom in). Undo and redo sit in that
               cluster in the design and are NOT added here: this canvas has no undo to wire
               them to, and a button that only apologises is worse than no button. */}
-          <div className="cv-toolbar cv-zoom-cluster" role="toolbar" aria-label="Canvas zoom">
+          <div className="cv-toolbar cv-zoom-cluster" role="toolbar" aria-label={`${PRODUCT_VOCABULARY.canvas} zoom`}>
             <TooltipButton
               label="Zoom out"
               type="button"
@@ -2032,7 +2033,7 @@ export default function FlowCanvas({
             <AlertDialogTitle>{pendingDeletePaid ? "Still generating — remove anyway?" : "Remove from canvas?"}</AlertDialogTitle>
             <AlertDialogDescription>
               {pendingDeletePaid
-                ? "This one is still being made and you've already been charged for it. Removing it won't refund the credits, and it will still finish and land in your Library. If you remove it and generate again, you'll be charged a second time."
+                ? `This one is still being made and you've already been charged for it. Removing it won't refund the credits, and it will still finish and land in your ${PRODUCT_VOCABULARY.library}. If you remove it and generate again, you'll be charged a second time.`
                 : "This takes the card off your board. Any generated image or video stays saved in your library."}
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -38,6 +38,7 @@ import { AddAssetDialog } from "./stuff/AddAssetDialog";
 import { ElementVariantsDialog } from "./stuff/ElementVariantsDialog";
 import { useRouter } from "next/navigation";
 import DetailPanel from "@/components/asset/DetailPanel";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 // Kept as a public export — lib/stuff-items imports this type-only.
 export interface AdTile {
@@ -323,10 +324,10 @@ export function OttoStuff({
         <div className="mb-6 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <div>
             <h1 className="m-0 text-[1.5rem] font-semibold tracking-[-0.025em] text-foreground">
-              Library
+              {PRODUCT_VOCABULARY.library}
             </h1>
             <p className="mb-0 mt-1 max-w-[620px] text-[0.875rem] leading-5 text-muted-foreground">
-              Everything you and Otto have made or saved across every project.
+              Everything you and Otto have made or saved across every {PRODUCT_VOCABULARY.canvas}.
               <span aria-hidden className="mx-1.5">·</span>
               <span className="font-mono text-xs tabular-nums">
                 {items.length} {items.length === 1 ? "item" : "items"}

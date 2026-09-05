@@ -534,7 +534,7 @@ function ElementsView({
                     onClick={() => { setRemoveError(null); setRemoveTarget(selected); }}
                   >
                     <Trash2 aria-hidden />
-                    Remove from Library
+                    {`Remove from ${PRODUCT_VOCABULARY.library}`}
                   </Button>
                 </DialogFooter>
               ) : null}

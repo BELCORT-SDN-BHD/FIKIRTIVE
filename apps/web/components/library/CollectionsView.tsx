@@ -60,6 +60,7 @@ import {
   collectionUpdatedLabel,
 } from "@/lib/library-collections-model";
 import { libraryItemTitle } from "@/lib/library-view-model";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import type {
   LibraryCollectionDetail,
   LibraryCollectionSummary,
@@ -348,7 +349,7 @@ export function CollectionsView({
               <AlertDialogTitle>Delete this collection?</AlertDialogTitle>
               <AlertDialogDescription>
                 {detail
-                  ? `“${detail.name}” goes away. The ${collectionItemCountLabel(detail.itemCount)} inside stay in your Library — a collection only holds links.`
+                  ? `“${detail.name}” goes away. The ${collectionItemCountLabel(detail.itemCount)} inside stay in your ${PRODUCT_VOCABULARY.library} — a collection only holds links.`
                   : null}
               </AlertDialogDescription>
             </AlertDialogHeader>

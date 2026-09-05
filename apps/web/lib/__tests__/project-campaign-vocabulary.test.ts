@@ -108,10 +108,15 @@ describe("#546 F-06 — the per-project brief is a Project brief, not a brand br
     expect(audience).toBeTruthy();
     expect(platform).toBeTruthy();
     expect(budget).toBeTruthy();
-    expect(dom.textContent).toContain("Offer for this project");
-    expect(dom.textContent).toContain("Audience for this project");
-    expect(dom.textContent).toContain("Where this project will run");
-    expect(dom.textContent).toContain("Budget for this project");
+    // 词汇本身在 2026-09-06 由 FRONT-A14 词汇围栏统一到 `lib/product-vocabulary.ts`:
+    // 商家面前 Project 一律说 Canvas(IA README §6,Founder 2026-08-30)。这条断言守的
+    // 仍是 F-06 原意 —— 这四格问的是**这一件作品**的 offer/audience/channel/budget,
+    // 不是店铺层面的常量事实(那些在 Brand memory)。
+    expect(dom.textContent).toContain("Offer for this Canvas");
+    expect(dom.textContent).toContain("Audience for this Canvas");
+    expect(dom.textContent).toContain("Where this Canvas will run");
+    expect(dom.textContent).toContain("Budget for this Canvas");
+    expect(dom.textContent).not.toContain("for this project");
     expect(dom.textContent).not.toContain("What you sell / offer");
 
     await typeInto(offer!, "The summer collection");

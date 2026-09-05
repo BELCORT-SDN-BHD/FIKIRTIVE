@@ -75,6 +75,7 @@ import { OfferList } from "./memory/OfferList";
 import { UndoBar } from "./memory/UndoBar";
 import { OttoMarkdown } from "./parts/OttoMarkdown";
 import type { StuffItem } from "@/lib/stuff-items";
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 type ChatBubble = {
   id: string;
@@ -113,7 +114,7 @@ const SECTION_META: Record<SectionKey, {
   icon: React.ComponentType<{ "aria-hidden"?: boolean }>;
 }> = {
   about: {
-    description: "The durable story, positioning, and truths Otto should carry into every project.",
+    description: `The durable story, positioning, and truths Otto should carry into every ${PRODUCT_VOCABULARY.canvas}.`,
     icon: BookOpen,
   },
   look: {
@@ -125,7 +126,7 @@ const SECTION_META: Record<SectionKey, {
     icon: Users,
   },
   products: {
-    description: "The products Otto can describe, recommend, and connect to reusable Library assets.",
+    description: `The products Otto can describe, recommend, and connect to reusable ${PRODUCT_VOCABULARY.library} assets.`,
     icon: Package,
   },
   offers: {
@@ -536,6 +537,11 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
               Brand memory
             </h1>
             <p className="mb-0 mt-1 max-w-[680px] text-sm leading-5 text-muted-foreground">
+              {/* 这一句被 #682 的逐处钉板(otto-pronoun-consistency.test.ts:525,按源码字面)与
+                  brand-route.test.ts:406(按 DOM 文本)一起钉死,brand-route 那一段抬头写着
+                  「规格书 §4.4 的原话,一个字不许改」。它与 IA 2026-08-30 的 Project → Canvas
+                  撞了车 —— 两条都是 Founder 的裁决,归他裁,不由本轮自决:已登记在
+                  docs/specs/frontend-baseline.md §5,词汇围栏里对应一条具名豁免。 */}
               What Otto remembers about your brand — Otto uses it in every project.
             </p>
           </div>
