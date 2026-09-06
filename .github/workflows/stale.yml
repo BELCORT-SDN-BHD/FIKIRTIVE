@@ -1,0 +1,38 @@
+# 票据保鲜：60 天没动的 issue 打 stale 标签并提醒；再过 14 天没人回应就关闭（加 archived-auto 标签）。
+# 例外：#359 台账、带 launch-path / decision-needed / 规格票（spec）标签的永不自动关。
+# PR 不自动处理（分支合并后由 GitHub 自动删分支）。
+#
+# 版本：actions/stale 的当前大版本是 v11（2026-09-06 用 `gh api repos/actions/stale/releases/latest`
+# 实查 = v11.0.0；草稿里的 v9 已过时）。下面用到的六个输入名在 v11 的 action.yml 里逐一核对存在。
+#
+# 豁免标签必须真的存在并贴上，否则这个闸等于没有：
+# launch-path / decision-needed 是仓库既有标签；ledger（贴 #359）与 spec（贴 #1099 #1101 #1128）
+# 于 2026-09-06 随本 PR 一并建好贴上。
+name: stale-issues
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/stale@v11
+        with:
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+          # 负数 = 完全不处理 PR（v11 的 action.yml 口径）。
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          stale-issue-label: stale
+          close-issue-label: archived-auto
+          exempt-issue-labels: launch-path,decision-needed,spec,ledger
+          stale-issue-message: "60 days without activity. It closes in 14 days unless someone comments or removes the stale label."
+          close-issue-message: "Closed automatically after 74 days without activity. Reopen if it is still needed; long-term items belong in the deferred-commitments ledger (#359)."
+          operations-per-run: 200
