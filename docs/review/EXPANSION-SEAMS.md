@@ -2,13 +2,13 @@
 
 # FIKIRTIVE 扩展缝隙总清单 — The Expansion Seams (2026-07-02)
 
-> How new features plug into the city without breaking it. For each seam: what it connects, the exact recipe (with a worked example already in the repo), and what breaks if you go around it. Paths are repo-relative. Worktree ≈ origin/main @ 00bc499 (includes #99 storyboard). Companion deep-dive: `docs/review/CODEBASE-MAP-2026-07-02.md` + `docs/review/REVIEWER-PLAYBOOK.md`.
+> How new features plug into the city without breaking it. For each seam: what it connects, the exact recipe (with a worked example already in the repo), and what breaks if you go around it. Paths are repo-relative. Worktree ≈ origin/main @ 00bc499 (includes #99 storyboard). Companion deep-dive: `docs/archive/review/CODEBASE-MAP-2026-07-02.md` + `docs/review/REVIEWER-PLAYBOOK.md`.
 
 ## The city's traffic laws (apply to every seam)
 
 1. **Identity comes from the session, never the client/model.** Every action opens with `requireOwner()` (`apps/web/lib/auth-guard.ts`) and uses `gate.ownerId`. Spend + mutations additionally check `isImpersonating()`. (Reading boundary: the invariant is "identity from a session gate", not the literal function name — tenant-facing actions open with `requireOwner`; admin surfaces gate with `requireRole`; spend paths gate with `requireSession`/`requireOwner`, never `requireRole`. See the playbook's Admin/Auth checklist.)
 2. **Validate-before-spend.** Typed zod contracts (`.strict()` + `superRefine`) reject anything a provider would mischarge for — BEFORE a job row or reservation exists.
-3. **Money exactly-once = DB partial-unique indexes,** never app-level checks alone. All 10 raw-SQL partial/expression indexes are inventoried in `docs/review/CODEBASE-MAP-2026-07-02.md` §5 (they are invisible to `prisma migrate diff` — schema comments are the only in-schema record).
+3. **Money exactly-once = DB partial-unique indexes,** never app-level checks alone. All 10 raw-SQL partial/expression indexes are inventoried in `docs/archive/review/CODEBASE-MAP-2026-07-02.md` §5 (they are invisible to `prisma migrate diff` — schema comments are the only in-schema record).
 4. **Fail closed.** Missing classification → most dangerous value (skills); no session → error, never a default org; misconfigured provider → $0 mock, never silent real spend.
 5. **Typed tables are the capability truth.** Admin overlays/config can only NARROW (disable), never widen.
 
@@ -248,4 +248,4 @@
 ## Seam 9 — Parity Manifest(第九缝,2026-07-03 入宪)
 > **状态(2026-08-08 核实):这道缝今天没有机器闸。** harness reset #626(6b6c537c,2026-08-04)删掉了 `packages/otto/src/parity-manifest.ts`(386 行)与 `scripts/check-parity.sh`,`pnpm lint:parity` 这个命令在仓库里不存在。下面这段是原设计,保留作为重建时的配方与审查时的人工口径,**但不要引用它来声称 CI 会拦**。
 
-原设计(施工配方在 `docs/design/2026-07-03-harmony-02-parity-manifest.md`):每个新 server action / 页面数据读取,出生即在 `packages/otto/src/parity-manifest.ts` 登记(配对 skill、四类封闭豁免之一,或 rollout 期明确 `todoSkill` 债务);扫描器 `scripts/check-parity.sh` 经 `pnpm lint:parity` 硬拦漏登记/僵尸登记/未知 skill/未知豁免。豁免四类:ADMIN / VISUAL / MONEY_IN / ACCOUNT_SECURITY —— 新增类别 = 修宪。
+原设计(施工配方在 `docs/archive/design/2026-07-03-harmony-02-parity-manifest.md`):每个新 server action / 页面数据读取,出生即在 `packages/otto/src/parity-manifest.ts` 登记(配对 skill、四类封闭豁免之一,或 rollout 期明确 `todoSkill` 债务);扫描器 `scripts/check-parity.sh` 经 `pnpm lint:parity` 硬拦漏登记/僵尸登记/未知 skill/未知豁免。豁免四类:ADMIN / VISUAL / MONEY_IN / ACCOUNT_SECURITY —— 新增类别 = 修宪。

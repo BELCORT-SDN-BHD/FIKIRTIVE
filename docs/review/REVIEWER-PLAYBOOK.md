@@ -7,7 +7,7 @@
 > 产品方向或 current-status 真源。** 主体生成于 2026-07-02(6-agent 全库测绘,基线 =
 > main 合并 #99 后);条目必须结合当前代码与当前任务复核。项目入口/权限/合并纪律以根
 > `AGENTS.md` 指向的现行项目法为准;本手册只能收窄审查,不能自行扩大权限。
-> 历史全库测绘见 [CODEBASE-MAP-2026-07-02.md](CODEBASE-MAP-2026-07-02.md)。
+> 历史全库测绘见 [CODEBASE-MAP-2026-07-02.md](../archive/review/CODEBASE-MAP-2026-07-02.md)。
 
 ## 审查角色与边界
 
@@ -209,7 +209,7 @@
 
 # 历史增补(2026-07-07 北极星原型流程;2026-07-16 降级)
 
-> `docs/northstar/{PROGRAM,PAGE-INVENTORY,APPROVALS}.md` 现为历史设计证据,不再是作业队列、
+> `docs/archive/northstar/{PROGRAM,PAGE-INVENTORY,APPROVALS}.md` 现为历史设计证据,不再是作业队列、
 > 双重批准真源或 current-status 台账。`APPROVALS.md` 为空,不能据此推导任何页面已批准。
 > 当前 UIUX 范围与验收以 Blueprint、GitHub #334 的 Founder 决定和已对齐的 Route-B 计划为准。
 

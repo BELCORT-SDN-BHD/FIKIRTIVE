@@ -20,7 +20,7 @@
 | ⚠️ 该常数的性质 | fal 时代基数,注释明写「left at 0.04 pending the founder's actual Ark per-image rate」 | `packages/core/src/gen.ts:86-88` |
 | 实测 token 消耗 | **16,384 output_tokens / 张(2048²)**,billed 1 张(usage: generated_images=1) | PR #92 评论(付费验证,founder 批准);`docs/superpowers/specs/2026-06-29-phase2-byteplus-migration-design.md:27-29` |
 | 按预付包价推算成本 | 【推算】16,384 × $3.30/M ≈ **$0.054/张** | token 数见上;$3.30/M 见 1d |
-| 审计口径 | F39:image ≈ $0.05(记账 $0.04 反而略低估) | `docs/audit-2026-07-02-full.md:309` |
+| 审计口径 | F39:image ≈ $0.05(记账 $0.04 反而略低估) | `docs/archive/audits-2026-h1/audit-2026-07-02-full.md:309` |
 | 真实 Ark 图像单价 | **未知**(console PAYG 价未读到;若 >$0.10/张 需重估) | 缺口 §4-2;`docs/superpowers/specs/2026-06-29-phase2-byteplus-migration-design.md:108` |
 | Ark 模型 id | `seedream-5-0-260128` | `packages/generation/src/byteplus.ts:6` |
 
@@ -34,7 +34,7 @@
 | 实测 token 消耗(普通 gen) | **108,900 tokens / 5s / 720p / 24fps**(t2v 与 i2v token 数相同;墙钟 ≈ 87–92s) | `docs/superpowers/specs/2026-06-29-phase2-byteplus-migration-design.md:40-42`(真实 API 实测) |
 | 扣费系数(deduction) | i2v = ×1.0;t2v ≈ ×1.6("Without Video Input") | 同上 `:54` |
 | 按预付包价换算 | 720p i2v = **$0.36**;720p t2v = **$0.58**;1080p i2v ≈ $0.81(est);1080p t2v ≈ $1.29(est) | 同上 `:45-52`(1080p token ≈245,000 为 2.25× 估算,**未实测**) |
-| 审计口径 | F39:记账基数与 BytePlus 实价错位(曾记 fal $0.2419/s,本分支已改 $0.03/s 估值)——记账仍非账单事实 | `docs/audit-2026-07-02-full.md:306-313` |
+| 审计口径 | F39:记账基数与 BytePlus 实价错位(曾记 fal $0.2419/s,本分支已改 $0.03/s 估值)——记账仍非账单事实 | `docs/archive/audits-2026-h1/audit-2026-07-02-full.md:306-313` |
 | Ark 模型 id | `dreamina-seedance-2-0-fast-260128` | `packages/generation/src/byteplus.ts:7` |
 | 时长上限(护 COGS) | `GEN_VIDEO_SECONDS = 5`;批量上限 `MAX_GEN_COUNT = 4` | `packages/core/src/gen.ts:78, 75` |
 
@@ -143,7 +143,7 @@ internal_credits = ceil( [ (input−cached)×inputPerToken
 | 项 | 数值 | 出处 |
 |---|---|---|
 | 新 org 一次性赠送 | **20 显示 cr**(= 200 internal = $2 名义)(`SIGNUP_GRANT_CREDITS = 20 × INTERNAL_PER_DISPLAY`;幂等 key `signup:<orgId>`;#543 从旧 100 下调为验证后入账的欢迎赠金) | `packages/core/src/spend.ts`;发放点 `apps/web/lib/auth-guard.ts` |
-| MYR credit 包(live Stripe) | **Starter RM25 → 50cr(RM0.50/cr)· Standard RM100 → 220cr(RM0.4545/cr,+10%)· Pro RM250 → 600cr(RM0.4167/cr,+20%)** | `docs/superpowers/plans/2026-06-29-monetization-phase1-stripe-packs.md:17,50`;`docs/review/LIVE-SURFACE-2026-07-02.md:102`;`docs/review/DECISION-INVENTORY-2026-07-02.md:126` |
+| MYR credit 包(live Stripe) | **Starter RM25 → 50cr(RM0.50/cr)· Standard RM100 → 220cr(RM0.4545/cr,+10%)· Pro RM250 → 600cr(RM0.4167/cr,+20%)** | `docs/superpowers/plans/2026-06-29-monetization-phase1-stripe-packs.md:17,50`;`docs/archive/review/LIVE-SURFACE-2026-07-02.md:102`;`docs/archive/review/DECISION-INVENTORY-2026-07-02.md:126` |
 | 包的实现位置 | 包 = Stripe 上带 `metadata.credits` 的 active Price,代码只读不存(改包不用重新部署);**live priceIds 只存在于 Stripe 后台,repo 里没有** | `apps/web/lib/billing-actions.ts:5-30`;缺口 §4-9 |
 | 包毛利底线(设计值) | 全图 ≈3×;最差全 1080p 视频 ≈ **1.56×**(基于估算成本) | `docs/superpowers/specs/2026-06-29-monetization-credit-packs-byteplus-design.md:37` |
 | 单条完整 campaign 单位经济 | ≈ **16–19 cr ≈ RM8–9.5**(省 ~12 / 话痨 ~30) | 同上 `:41` |
@@ -153,21 +153,21 @@ internal_credits = ceil( [ (input−cached)×inputPerToken
 
 ## ③ 竞品价位对照表(只收价格点;详情以各研究文档为准)
 
-> 信源 = `docs/research/2026-07-03-*.md`(研究日期 2026-07-03;各文档内已标注未核实项)。汇总全景另见 `docs/research/GRILL-WORKSHEET-2026-07-03.md:203-215`。
+> 信源 = `docs/archive/research/2026-07-03-*.md`(研究日期 2026-07-03;各文档内已标注未核实项)。汇总全景另见 `docs/archive/research/GRILL-WORKSHEET-2026-07-03.md:203-215`。
 
 | 产品 | 价格阶梯 | credits/用量含量 | 出处 |
 |---|---|---|---|
-| **Higgsfield** | Free $0;Starter **$15**;Plus **$49**(年付 $39);Ultra **$129**(年付 $99);Business $89/席(年付 $62);另有一来源提到 Basic $5(未核实) | Free ~10cr/天带水印;$15→200cr(部分模型、无 Veo3 系);$49→1,000cr 全模型;$129→3,000cr(可扩 9,000)+365 天 unlimited pass;Business 1,500cr/席共享池;**credits 当月清零**;补充包 ~$5/100cr、90 天过期(未核实);agent 对话也烧 credits、生成前报价须批准 | `docs/research/2026-07-03-higgsfield.md:15-32` |
-| **LTX Studio** | Free $0;Lite **$15/月**;Standard **$35/月**;Pro **$125/月**;Enterprise 定制;年付 8 折 | Free 一次性 800cr;Lite 8,000cr/月(**仅个人用途**);Standard 28,000cr/月(**商用授权从这档起**);Pro 110,000cr/月;credits 按输出秒扣、模型越贵扣越多、每模型费率不公开;14 天内用量 ≤1,200cr 可退 | `docs/research/2026-07-03-ltx-studio.md:13-25,133` |
-| **Canva** | Free $0;Pro **US$15/月**(US$120/年);Business US$20/人/月;AI Pass **US$100/人/月**;Enterprise 询价(第三方估 $20k–50k/年);**MY 本地价:Pro ≈ RM250/年**(涨价前 RM249.90),支持 FPX/GrabPay | Free 基础 AI(Magic Media 视频**终身 5 个** credit);Pro 约 500 AI credits/月(全 AI 共享一池,视频 credit 每月约 50 个、每段 4 秒);AI Pass 放大 40×(Pro)/20×(Business) | `docs/research/2026-07-03-canva.md:14-21` |
-| **respond.io** | Starter **$79/月**;Growth **$159/月**;Advanced **$279/月**(年付基准;月付贵约 20%) | Starter 5 席+无限 MAC 但无自动化/无 AI Agents;Growth 10 席 + 1,000 MAC 起 + AI Agents;MAC 超额 $12/100(Growth)、$15/100(Advanced);加席 $12/$20/$24 每人;AI credits fair-use 内含(如 Growth 5,000 MAC 档含 50,000 AI credits;客服型 1cr/条、销售型 2cr/条);WhatsApp 会话费零加价直传 | `docs/research/2026-07-03-respond-io.md:15-28` |
-| **Buffer** | Free $0;Essentials **$5/月/频道**(年付 $60/频道);Team **$10/月/频道**(年付 $120/频道);>10 频道量级折扣(第三方称第 11–25 个约 $3.33/月/频道,未核实) | Free 3 频道、每频道 10 条待发帖;付费墙只卡量不卡能力面;**AI 功能全免费无限**;不数坐席(Team 档无限成员) | `docs/research/2026-07-03-buffer.md:13-19` |
-| **GoHighLevel** | Starter **$97/月**;Unlimited **$297/月**;Agency Pro **$497/月**(年付 $970/$2,970/$4,970) | $97 档功能几乎全开(3 sub-accounts、无限 contacts/users);档位卖规模+转售权;通信/AI 按成本价计量(GHL 只在 carrier 费抽 5%),$497 档可加价转售;add-on:AI Employee $50/$97 每月每 sub-account、White Label App $497/月、HIPAA $297/月 | `docs/research/2026-07-03-gohighlevel.md:15-52` |
-| **Metricool** | Free $0;Starter 5 brands ≈ **€16–20/月**(年付;月付 $25);10 brands ≈ €29–36;Advanced 15 brands ≈ $53–67、25 ≈ $85、50 ≈ $159–210;Custom(50+ brands、White Label)面谈 | 按 Brand 计价、团队成员免费;AI credits per brand/月:Free 5 / Starter 20 / Advanced 35;X 连接 add-on ~$5/月/账号(未核实);Hashtag Tracker **€25/天/网络** 纯按天买 | `docs/research/2026-07-03-metricool.md:15-26,109` |
-| **ManyChat** | Free $0(25 contacts);Essential **$14**;Pro **$29**(500 contacts 起约 $15,随量爬);Business **$69**;Advanced/Elite **$139 起** | 按 active contacts:Essential 250 / Pro 2,500 / Business 7,500 / Advanced 25,000+;**AI 是 $29/月 add-on,任何档不含**;超额 Essential/Pro ~$0.10/contact、Business ~$0.018–0.025;10k contacts+AI 真实月费 ≈ $94–98(含消息费可达 $130–260) | `docs/research/2026-07-03-manychat.md:13-32` |
-| **Klaviyo** | Free $0;Email 计划:**$20/月@500 profiles → $30@1k → $60@2.5k → $100@5k → $150@10k → $720@50k → $1,380@100k → ~$2,300@250k**;涨档有 25% 涨幅上限 | 全档功能一样、价格纯随名单涨;Free 250 profiles/500 邮件/150 SMS credits;SMS 包 $15/月 1,250cr 起(美国 ~$0.009/cr,WhatsApp 同池);add-on:Reviews $25/月@250 订单起、Marketing Analytics $100/月起、Advanced KDP $500/月起、Customer Hub $30/月起、Customer Agent 按解决对话数($75/月含 75 次促销 $50;另一来源 $200/月+$0.70/次,互斥未核实) | `docs/research/2026-07-03-klaviyo.md:15-25` |
+| **Higgsfield** | Free $0;Starter **$15**;Plus **$49**(年付 $39);Ultra **$129**(年付 $99);Business $89/席(年付 $62);另有一来源提到 Basic $5(未核实) | Free ~10cr/天带水印;$15→200cr(部分模型、无 Veo3 系);$49→1,000cr 全模型;$129→3,000cr(可扩 9,000)+365 天 unlimited pass;Business 1,500cr/席共享池;**credits 当月清零**;补充包 ~$5/100cr、90 天过期(未核实);agent 对话也烧 credits、生成前报价须批准 | `docs/archive/research/2026-07-03-higgsfield.md:15-32` |
+| **LTX Studio** | Free $0;Lite **$15/月**;Standard **$35/月**;Pro **$125/月**;Enterprise 定制;年付 8 折 | Free 一次性 800cr;Lite 8,000cr/月(**仅个人用途**);Standard 28,000cr/月(**商用授权从这档起**);Pro 110,000cr/月;credits 按输出秒扣、模型越贵扣越多、每模型费率不公开;14 天内用量 ≤1,200cr 可退 | `docs/archive/research/2026-07-03-ltx-studio.md:13-25,133` |
+| **Canva** | Free $0;Pro **US$15/月**(US$120/年);Business US$20/人/月;AI Pass **US$100/人/月**;Enterprise 询价(第三方估 $20k–50k/年);**MY 本地价:Pro ≈ RM250/年**(涨价前 RM249.90),支持 FPX/GrabPay | Free 基础 AI(Magic Media 视频**终身 5 个** credit);Pro 约 500 AI credits/月(全 AI 共享一池,视频 credit 每月约 50 个、每段 4 秒);AI Pass 放大 40×(Pro)/20×(Business) | `docs/archive/research/2026-07-03-canva.md:14-21` |
+| **respond.io** | Starter **$79/月**;Growth **$159/月**;Advanced **$279/月**(年付基准;月付贵约 20%) | Starter 5 席+无限 MAC 但无自动化/无 AI Agents;Growth 10 席 + 1,000 MAC 起 + AI Agents;MAC 超额 $12/100(Growth)、$15/100(Advanced);加席 $12/$20/$24 每人;AI credits fair-use 内含(如 Growth 5,000 MAC 档含 50,000 AI credits;客服型 1cr/条、销售型 2cr/条);WhatsApp 会话费零加价直传 | `docs/archive/research/2026-07-03-respond-io.md:15-28` |
+| **Buffer** | Free $0;Essentials **$5/月/频道**(年付 $60/频道);Team **$10/月/频道**(年付 $120/频道);>10 频道量级折扣(第三方称第 11–25 个约 $3.33/月/频道,未核实) | Free 3 频道、每频道 10 条待发帖;付费墙只卡量不卡能力面;**AI 功能全免费无限**;不数坐席(Team 档无限成员) | `docs/archive/research/2026-07-03-buffer.md:13-19` |
+| **GoHighLevel** | Starter **$97/月**;Unlimited **$297/月**;Agency Pro **$497/月**(年付 $970/$2,970/$4,970) | $97 档功能几乎全开(3 sub-accounts、无限 contacts/users);档位卖规模+转售权;通信/AI 按成本价计量(GHL 只在 carrier 费抽 5%),$497 档可加价转售;add-on:AI Employee $50/$97 每月每 sub-account、White Label App $497/月、HIPAA $297/月 | `docs/archive/research/2026-07-03-gohighlevel.md:15-52` |
+| **Metricool** | Free $0;Starter 5 brands ≈ **€16–20/月**(年付;月付 $25);10 brands ≈ €29–36;Advanced 15 brands ≈ $53–67、25 ≈ $85、50 ≈ $159–210;Custom(50+ brands、White Label)面谈 | 按 Brand 计价、团队成员免费;AI credits per brand/月:Free 5 / Starter 20 / Advanced 35;X 连接 add-on ~$5/月/账号(未核实);Hashtag Tracker **€25/天/网络** 纯按天买 | `docs/archive/research/2026-07-03-metricool.md:15-26,109` |
+| **ManyChat** | Free $0(25 contacts);Essential **$14**;Pro **$29**(500 contacts 起约 $15,随量爬);Business **$69**;Advanced/Elite **$139 起** | 按 active contacts:Essential 250 / Pro 2,500 / Business 7,500 / Advanced 25,000+;**AI 是 $29/月 add-on,任何档不含**;超额 Essential/Pro ~$0.10/contact、Business ~$0.018–0.025;10k contacts+AI 真实月费 ≈ $94–98(含消息费可达 $130–260) | `docs/archive/research/2026-07-03-manychat.md:13-32` |
+| **Klaviyo** | Free $0;Email 计划:**$20/月@500 profiles → $30@1k → $60@2.5k → $100@5k → $150@10k → $720@50k → $1,380@100k → ~$2,300@250k**;涨档有 25% 涨幅上限 | 全档功能一样、价格纯随名单涨;Free 250 profiles/500 邮件/150 SMS credits;SMS 包 $15/月 1,250cr 起(美国 ~$0.009/cr,WhatsApp 同池);add-on:Reviews $25/月@250 订单起、Marketing Analytics $100/月起、Advanced KDP $500/月起、Customer Hub $30/月起、Customer Agent 按解决对话数($75/月含 75 次促销 $50;另一来源 $200/月+$0.70/次,互斥未核实) | `docs/archive/research/2026-07-03-klaviyo.md:15-25` |
 
-企业级参照(单行,只记价):HubSpot Free 2 席 / Starter $7–20/席 / Marketing Pro $800/月+$3k onboarding,Breeze Customer Agent **$0.50/解决一次(=50 credits)**(`docs/research/2026-07-03-hubspot-crm-sales.md:177`、`2026-07-03-hubspot-service-ops.md:120`);Salesforce $25→$330/席、Marketing Cloud $1,250–1,500/月起;Adobe GenStudio 无公开价(估年费六位数 USD,未核实)(`docs/research/GRILL-WORKSHEET-2026-07-03.md:210-214`)。
+企业级参照(单行,只记价):HubSpot Free 2 席 / Starter $7–20/席 / Marketing Pro $800/月+$3k onboarding,Breeze Customer Agent **$0.50/解决一次(=50 credits)**(`docs/archive/research/2026-07-03-hubspot-crm-sales.md:177`、`2026-07-03-hubspot-service-ops.md:120`);Salesforce $25→$330/席、Marketing Cloud $1,250–1,500/月起;Adobe GenStudio 无公开价(估年费六位数 USD,未核实)(`docs/archive/research/GRILL-WORKSHEET-2026-07-03.md:210-214`)。
 
 ---
 
@@ -175,7 +175,7 @@ internal_credits = ceil( [ (input−cached)×inputPerToken
 
 | # | 缺什么 | 为什么挡定价 | 现状/依据 |
 |---|---|---|---|
-| 1 | **Ark 账单单价($/M token)+ 各场景扣费系数**(普通 t2v/i2v、reference_video 是否 1:1) | 视频与参考视频的真实 COGS 全系于此;PR #97 的 324,900 tokens 只有对上发票才知道 7cr 收费是赚是亏(按 $3.30/M 推算 ≈$1.07 > $0.70 收费) | = 审计 F39;`docs/audit-2026-07-02-full.md:306-313`;PR #97 评论 |
+| 1 | **Ark 账单单价($/M token)+ 各场景扣费系数**(普通 t2v/i2v、reference_video 是否 1:1) | 视频与参考视频的真实 COGS 全系于此;PR #97 的 324,900 tokens 只有对上发票才知道 7cr 收费是赚是亏(按 $3.30/M 推算 ≈$1.07 > $0.70 收费) | = 审计 F39;`docs/archive/audits-2026-h1/audit-2026-07-02-full.md:306-313`;PR #97 评论 |
 | 2 | **Ark Seedream 图像单价**(PAYG console 价) | `GEN_PRICE_USD_PER_IMAGE=0.04` 仍是 fal 基数;若真实 >$0.10/张,1cr 收费就亏 | `packages/core/src/gen.ts:86-89`;phase2 设计 `:108` |
 | 3 | **1080p Seedance 真实 token 数**(现为 2.25× 估算 ≈245,000) | 16cr@1080p 的毛利判断建立在估算上 | phase2 设计 `:109` |
 | 4 | **Anthropic 实际账单费率**(cache-write 溢价、实际发票 vs 代码硬编码表) | Otto 1.5× margin 是否真覆盖 cache-write/overhead 只有发票能证 | `packages/core/src/llm-prices.ts:19-22,45-48` |
