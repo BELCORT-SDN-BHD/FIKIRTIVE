@@ -266,7 +266,7 @@ This gives the redesign 8 meaningful areas instead of 11 mixed-era links.
 
 - `docs/BLUEPRINT.md`: 市政厅 v2, tenant/accounting transparency, team/approval future.
 - `docs/research/GRILL-VERDICTS-2026-07-03.md`: X-02 through X-05 decisions and credit consumption detail.
-- `docs/review/DECISION-INVENTORY-2026-07-02.md`: `COWORK_PROVIDER` superseded, BytePlus live, Cowork/Agents transition.
+- `docs/archive/review/DECISION-INVENTORY-2026-07-02.md`: `COWORK_PROVIDER` superseded, BytePlus live, Cowork/Agents transition.
 - `packages/core/src/roles.ts`: current roles, sections, and `SECTION_MATRIX`.
 - `apps/web/app/admin/layout.tsx`: current 11-entry admin nav and `/admin` shell.
 - `apps/web/components/admin/*.tsx`: current implementation details for Settings, Cost, Credits, Content, Conversations, Team, System, Audit.

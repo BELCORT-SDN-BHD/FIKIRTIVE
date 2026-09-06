@@ -20,7 +20,7 @@ palette moves. This is completion, not redesign.
 
 1. **Current authority comes first.** Use the current GitHub task, Founder provenance and aligned plan to establish scope and acceptance. This document explains the dated v3 design package; it does not approve work by itself.
 2. **Rendered facts come from code.** `apps/web/app/globals.css` (the `.gb` block) and the components show what the product actually renders. A disagreement with this document is drift to report and adjudicate, not a reason to silently choose either side.
-3. **External design artifacts are provenance, not a second control plane.** The claude.ai design project (`0abf8563`, historical label "FIKIRTIVE — Grok-bright") and `docs/design/handoff/` may be consulted read-only when a task explicitly needs them. Neither is automatically current or a mandatory write target.
+3. **External design artifacts are provenance, not a second control plane.** The claude.ai design project (`0abf8563`, historical label "FIKIRTIVE — Grok-bright") and `docs/archive/design/handoff/` may be consulted read-only when a task explicitly needs them. Neither is automatically current or a mandatory write target.
 
 **Agent workflow — which chapter for which task.** Always read §1–§2 (direction + colour) first; they gate everything. Then:
 
@@ -196,7 +196,7 @@ Rules: animate transform/opacity, never layout properties; nothing over 200ms ex
 
 ## 7. OTTO (mascot)
 
-- Mascot: flat coral cloud, **two eyes, NO mouth**. Never a boxed robot, never gradients. Reactions change only eyes, tilt and subtle glow (`OttoAvatar.tsx` is the reference implementation; mood art locked by `docs/design/2026-07-06-otto-mascot-reactions.md`).
+- Mascot: flat coral cloud, **two eyes, NO mouth**. Never a boxed robot, never gradients. Reactions change only eyes, tilt and subtle glow (`OttoAvatar.tsx` is the reference implementation; mood art locked by `docs/archive/design/2026-07-06-otto-mascot-reactions.md`).
 - 8 moods: `idle · thinking · helpful · success · warning · error · waiting · approving`. `thinking` = coral glow + 1.4s bob; state glows use the matching semantic colour at low alpha.
 - Coral in the UI means "Otto did / is doing this" — the same law as §2.
 - Otto is an **ever-present companion** (constitution v2.6): every screen carries the persistent Otto dock — spec in §8d, buildable detail in §O6. Where Otto may appear, in what mood, and how much coral a screen carries: §O.
@@ -280,7 +280,7 @@ Forbidden in this dated design package (review-enforced; no dedicated design gre
 
 **T5. The three-place rule.** A new token is not done until it exists in all three: ① `.gb` light value ② `.gb.dark` real dark value ③ `@theme inline` registration `--color-{name}: var(--{name})` — skipping ③ makes the utility **silently no-op** (Tailwind v4 generates nothing). Live drift today: `text-success`/`bg-success`/`bg-error` are consumed but `--color-success/error/info` are unregistered — backfill. Non-colour tokens skip ③ and are consumed as `var(--…)`.
 
-**T6. Legacy tiers — frozen, not deleted** (strangler rule; read-only, migrate on touch): Vapor `:root` (serves the un-migrated dark Studio; name collisions resolved by scope — under `.gb` the `.gb` value wins) · fk tokens in `otto-theme.css` (being dismantled; map: `docs/ui-rework/fk-to-gb-token-map.md`) · `docs/design/handoff/` ramps (pre-pivot slate/Hanken export — historical, never import; `grep -rn "design/handoff" apps/web` → must be empty).
+**T6. Legacy tiers — frozen, not deleted** (strangler rule; read-only, migrate on touch): Vapor `:root` (serves the un-migrated dark Studio; name collisions resolved by scope — under `.gb` the `.gb` value wins) · fk tokens in `otto-theme.css` (being dismantled; map: `docs/ui-rework/fk-to-gb-token-map.md`) · `docs/archive/design/handoff/` ramps (pre-pivot slate/Hanken export — historical, never import; `grep -rn "design/handoff" apps/web` → must be empty).
 
 ## L. Layout & grid
 
@@ -619,5 +619,5 @@ v3 merged ten domain sections onto the v2 base. The list below records the choic
 6. **Analytics kit off-grid values** (KPI padding 15, panel radius 16): founder-locked pixel-matched kit → **pinned exception**; new data surfaces use 16 / 18; quantise when the founder refreshes the kit.
 7. **`--warning-soft-foreground` light** fails AA by 0.05 → the doc records the shipped value `#B45309` (`globals.css` is implementation truth). No replacement token is approved here; any change requires a current task and Founder review where applicable (§A1.8).
 8. **Ring alpha + disabled opacity locks:** §F2's 40% / 0.4 supersede the stock-shadcn 50% / 0.5 scatter across textarea/select/checkbox/switch.
-9. **Tracked evidence location:** token-architecture cited `docs/design/handoff/` (a pre-pivot export); the v3 package was recorded under **`docs/design-system/`** (rules + cards, landed 2026-07-07). Neither location is current authority by itself.
+9. **Tracked evidence location:** token-architecture cited `docs/archive/design/handoff/` (a pre-pivot export); the v3 package was recorded under **`docs/design-system/`** (rules + cards, landed 2026-07-07). Neither location is current authority by itself.
 10. **Historical drift evidence:** prior per-section gap tables have left the active tree and remain in Git history only. They are never an authorized work queue; a current GitHub task must independently verify and adopt any surviving gap.

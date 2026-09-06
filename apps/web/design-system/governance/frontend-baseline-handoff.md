@@ -22,7 +22,7 @@
 - 接手者整合较新 backend 时，逐项保留其权限、幂等、schema 和业务动作修复，同时保留本基线的 UI owner。不能整目录覆盖 main，也不能用某一边的 lockfile 解决所有冲突；依赖冲突按实际 manifest 重新生成并验证。
 - 多个旧目录被迁成相对 symlink，不是意外丢失源码。必须同时接收 canonical owner 和 alias；不要把 alias 改成复制目录。可执行核对是 `design-system-source-of-truth.test.ts`。
 - 工作树暂保留供溯源。本交付不删除其他任务文件或自动清理 worktree；清理须另行验证干净、合并状态与是否仍被使用。
-- 根 `design-qa.md` 与其引用的 artifact 图像是历史迭代证据，含已取代方向；不是当前 spec。正式设计来源仍集中在本 design-system 目录，不能从旧截图反推新的批准。
+- `docs/archive/design-qa-2026-09/design-qa.md` 与其引用的 artifact 图像（原在仓库根 `design-qa.md` 与 `artifacts/`，2026-09-06 归档）是历史迭代证据，含已取代方向；不是当前 spec。正式设计来源仍集中在本 design-system 目录，不能从旧截图反推新的批准。
 - 打包时保留完整的已引用证据目录；41 个未引用的本地 audit／截图文件未纳入 PR、未删除，包括 `apps/web/artifacts/design-audit/`、`apps/web/artifacts/frontend-completion-audit-2026-08-31/`、`artifacts/canvas-creation-flow-audit/`、`artifacts/founder-home/` 和少量未引用的 root 截图。它们不是运行依赖；工作树因此仍可显示 untracked files。
 
 ## 3. 本次包含什么，后续从哪里接
