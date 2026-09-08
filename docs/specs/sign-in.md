@@ -1,7 +1,7 @@
 # 登录门（照 Linear 模型）规格书（S1）
 
-> 状态: 草稿
-> 批准: （冻结时填）https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1260 Founder 评论「S1 批准 sign-in.md」(YYYY-MM-DD)
+> 状态: 已冻结 · v1
+> 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1260 Founder 评论「S1 批准 sign-in.md」(2026-09-08)
 > 规格前缀: SIGNIN（验收编号 = SIGNIN-A1、A2…，全仓不得与其他规格撞前缀）
 
 ## 0. 一句话
