@@ -25,6 +25,7 @@ import {
   referenceUnavailableMessage,
   referenceUnavailableSentence,
 } from "./gen-failure.js";
+import { MIN_REFERENCE_IMAGE_WIDTH } from "./generation-reference.js";
 import { redactProviderNames } from "./provider-secrecy.js";
 
 /** The exact body the engine returned, straight from the recorded run. */
@@ -495,6 +496,20 @@ describe("referenceUnavailableSentence — CREATE-A2: 一份白名单,不是 pas
     // 与另外那两句「拿错类型」也分得开 —— 它说的不是图片当片子,而是这个格式根本当不了引用。
     expect(sentence).not.toBe(referenceUnavailableMessage("videoAsImage"));
     expect(sentence).not.toBe(referenceUnavailableMessage("imageAsVideo"));
+  });
+
+  // FSE-001(探针实测 2026-09-08):视频端在建任务之前就查参考图宽度,275×183 零花费被弹回。
+  // 那道闸落在我们**预扣之后**,所以商家会先付钱、再失败、再退款,而读到的只是一句
+  // 「没成功」—— 真正能修好它的动作(换一张大一点的图)一个字都没说。这句话必须说出尺寸,
+  // 而且那个数字只能来自闸本身的那一个常量。
+  it("FSE-001 / CREATE-A2: tooSmall 说的是尺寸,数字来自那一个常量,并点名要换掉它", () => {
+    const sentence = referenceUnavailableMessage("tooSmall");
+    expect(sentence).toContain(String(MIN_REFERENCE_IMAGE_WIDTH));
+    expect(sentence).toMatch(/too small/i);
+    expect(sentence).toMatch(/swap/i);
+    expect(sentence).not.toMatch(/isn't available any more/i);
+    expect(sentence).not.toBe(referenceUnavailableMessage("notFound"));
+    expect(sentence).not.toBe(referenceUnavailableMessage("unsupportedFormat"));
   });
 
   it("CREATE-A2: 两个原因一个不落 —— 表里每一句都认得出,且认回它自己", () => {

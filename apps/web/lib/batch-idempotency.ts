@@ -27,12 +27,26 @@ export interface FactoryAttemptKey {
   logicalPrefix: string;
 }
 
-export interface FactoryVideoOptions extends Record<string, string | number | boolean> {
+export interface FactoryVideoOptions
+  extends Record<string, string | number | boolean | string[] | undefined> {
   seconds: number;
   resolution: string;
   aspectRatio: string;
   fps: number;
   audio: boolean;
+  /**
+   * FSE-001 —— 商家挂进这条**纯文生视频**的商品图,次序即引擎收到的次序。
+   *
+   * 与图片侧那一格(`FactoryImageOptions.referenceGenerationIds`)完全同一条纪律,包括
+   * 为什么住在这一格而不是 `GenJob` 上一列自己的列:那要动 prisma schema 与迁移,而这一趟
+   * 的授权范围里没有它。`videoOptions` 正是「这一单视频作业在入队那一刻冻结的规格快照」,
+   * worker 已经从它读时长、画质、画幅 —— 参考图是同一类事实,同一个读者。
+   *
+   * **只在非空时出现**:写一格空数组进去,库里每一条既有的视频任务(它们的快照只有那五格)
+   * 就都会与新算出来的材料对不上,商家的合法重放当场被判成「换了内容」。
+   * 进材料 = 换了参考图就是换了内容。
+   */
+  referenceGenerationIds?: string[];
 }
 
 /** #642: the image shape frozen at enqueue — mirrors FactoryVideoOptions. */
@@ -99,8 +113,10 @@ export interface FactoryMaterialInput {
   audio?: boolean | null;
   /** #777:这 `count` 张是一组要连贯的图。image-only(视频侧没有这个能力)。 */
   coherentSet?: boolean | null;
-  /** CRE-STG-P1-003:第一张之外的图片参考(image-only)。来源只有一处 —— 服务端读出来的
-   *  那张持久化卡(`startCoworkGen`),调用方提交的同名字段永远到不了这里。 */
+  /** CRE-STG-P1-003 / FSE-001:商家挂的图片参考 —— image 侧是「第一张之外的」(第一张是
+   *  编辑底图,走 `sourceGenerationId` 那一列),video 侧(纯文生视频)是整份。来源只有
+   *  一处 —— 服务端读出来的那张持久化卡(`startCoworkGen`),调用方提交的同名字段永远
+   *  到不了这里。 */
   referenceGenerationIds?: string[] | null;
 }
 
@@ -218,6 +234,12 @@ export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMa
       aspectRatio: input.aspectRatio ?? (anchoredToClip ? VIDEO_ASPECT_ADAPTIVE : defaults.aspectRatio),
       fps: input.fps ?? defaults.fps,
       audio: input.audio ?? defaults.audio,
+      // FSE-001 —— 与图片侧那一格同一条「只在有内容时出现」的纪律(见 FactoryVideoOptions
+      // 的注释):库里每一条既有视频行的快照只有上面那五格,写一格空数组进去会把它们的
+      // 合法重放全判成「换了内容」。
+      ...(input.referenceGenerationIds?.length
+        ? { referenceGenerationIds: [...input.referenceGenerationIds] }
+        : {}),
     };
   })();
 

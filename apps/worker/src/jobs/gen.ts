@@ -24,6 +24,8 @@ import {
   imageDefaults,
   conditioningCap,
   attachedImageCap,
+  // FSE-001 —— 视频侧挂图名额:卡面、`conditioningCap` 与这里共用同一个函数。
+  videoAttachedCap,
   withReferenceMap,
   approvedEntityMap,
   type ReferenceSlot,
@@ -166,6 +168,59 @@ function jobAttachedImageIds(job: {
   // 一次迁移、一个将来的入队点都可能塞进比上限更多的 id,而这里再往下就是掏钱调引擎了。
   // 名额的算法只有一份 —— 与卡面、与 `conditioningCap` 读的是同一个函数。
   return out.slice(0, attachedImageCap(out.length));
+}
+
+/**
+ * FSE-001 —— 这一单**视频**作业带着商家挂的哪几张商品图,次序即引擎收到的次序。
+ *
+ * 与图片侧那一份(`jobAttachedImageIds`)完全同形,只是读的快照列不同:视频侧的规格快照
+ * 是 `GenJob.videoOptions`(时长/画质/画幅已经住在那里)。空 = 这一单是既有的三种视频形状
+ * 之一(纯文生、i2v 首帧、整段参考片),行为与这条修改之前逐字相同。
+ *
+ * **不含首帧**:首帧走 `GenJob.sourceGenerationId` 那条独立的路,它是帧不是参考照;而按
+ * `videoAttachmentRole` 的判据,一张挂图不可能同时是这两样 —— 有演员就是参考图(卡上不写
+ * `sourceGenerationId`),没演员就是首帧(卡上不写 `referenceGenerationIds`)。
+ *
+ * 名额由 `videoAttachedCap` 划(与卡面、与 `conditioningCap` 同一个函数)。IMAGE 作业恒空。
+ * 纯函数,不读库、不定价。
+ */
+function jobVideoReferenceIds(
+  job: {
+    kind: string;
+    sourceGenerationId: string | null;
+    tailGenerationId: string | null;
+    referenceVideoGenerationId: string | null;
+    shotId: string | null;
+    videoOptions: unknown;
+  },
+  /** FSE-001 判官 r2 —— 这一单 @ 到的元素有几个(每个在名额里预留 1 格,不分类型)。 */
+  mentionedElementCount: number,
+): string[] {
+  if (job.kind !== "VIDEO") return [];
+  const vo = job.videoOptions as { referenceGenerationIds?: unknown } | null;
+  const ids = Array.isArray(vo?.referenceGenerationIds)
+    ? vo.referenceGenerationIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+    : [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  // 纵深防御,与图片侧那一刀同一条理由:名额只有一份算法,而这份快照是一列 JSON。
+  // 场景布尔照写不省 —— 带首帧/末帧/参考片的形状 `videoAttachedCap` 恒为 0,所以一份
+  // 手写的、把两种形状混在一起的快照在这里被切成空,而不是掏钱送进引擎。
+  return out.slice(
+    0,
+    videoAttachedCap({
+      attachedImageCount: out.length,
+      mentionedElementCount,
+      hasVideoStartFrame: !!(job.sourceGenerationId || job.shotId),
+      hasVideoTailFrame: !!job.tailGenerationId,
+      hasReferenceVideo: !!job.referenceVideoGenerationId,
+    }),
+  );
 }
 
 /**
@@ -1243,12 +1298,28 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // 挂 0/1 张 ⇒ 扣 0 格 ⇒ 与从前逐字相同。数字从 `attachedImageIds`(下面那一份冻结快照)
       // 来,卡面读的是同一个 `conditioningCap` —— 说的和送的仍然只有一份答案。
       const attachedImageIds = jobAttachedImageIds(job);
+      // FSE-001 —— 视频这一支的同一件事:商家挂的商品图与 @元素的参考照坐在同一批
+      // `image_url` 名额里,所以它们先划走名额,元素照拿剩下的。两支的入参因此合成一个数,
+      // 而 `conditioningCap` 按 kind 各用各的算法(image:第 2 张起扣格;video:整份扣格)。
+      //
+      // FSE-001 判官 r1 P2 —— 名额里**每个在场的元素先占 1 格**。数的是这一趟已经解析过、
+      // 活着且属于他自己的那几个元素(`entityMeta`,与 `perEntity` 逐项同序、同长),所以它
+      // 与铸卡那一刻数出来的是同一个数。没有这一格,商家挂满 9 张商品图时挂图会占满全部
+      // `image_url` 名额,`refCap` 算出 0,演员一张照片都不进付费请求 —— 而卡上列着她的名字。
+      //
+      // 判官 r2 —— 数的是**全部元素**,不是只数 CHARACTER。下面发格的 round-robin 按
+      // `entityIds` 原序给每个元素发第一张:只按演员数预留时,「先 @ 商品元素、再 @ 演员」
+      // 那一趟的唯一那格会被排在前面的商品元素拿走,演员仍旧 0 张。预留基数与发格次序
+      // 必须同一个口径。
+      const mentionedElementCount = entityMeta.length;
+      const videoReferenceIds = jobVideoReferenceIds(job, mentionedElementCount);
       const refCap = conditioningCap({
         kind: job.kind === "VIDEO" ? "video" : "image",
         hasVideoStartFrame: !!(job.sourceGenerationId || job.shotId),
         hasVideoTailFrame: !!job.tailGenerationId,
         hasReferenceVideo: !!job.referenceVideoGenerationId,
-        attachedImageCount: attachedImageIds.length,
+        attachedImageCount: attachedImageIds.length + videoReferenceIds.length,
+        mentionedElementCount,
       });
       // #774 U2:每张上车的图连它属于哪个 @元素一起记 —— 编号(`<Image_N>`)就是从这里
       // 长出来的,与 `inputImageUrls` 同一趟循环、同一个下标,所以两者不可能各说各话。
@@ -1432,6 +1503,46 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             throw new Error(REFERENCE_ASSET_UNREACHABLE);
           }
         }
+        // ── FSE-001 —— 商家挂的商品图,作 `role:"reference_image"` 直接上车 ─────────────
+        //
+        // 这是 Founder 2026-09-08 裁决之后的**正路**:演员原图与商品图各作一张参考图,
+        // 纯文生视频,不先合成首帧(合成那条路被规格 §5「血统信任 / 像素完整性铁律」
+        // 判定必拒,staging 上真的被拒过一次并退款)。同日两场探针实测跑通。
+        //
+        // 规矩逐条照抄图片侧那个循环(它修的是同一类病):
+        //   · 归属只走 `generationReferenceScope(job.ownerId, …)` —— 租户那一格不松;
+        //   · 行找不到 ⇒ fail-closed 退款(永久错误,重试也长不出那一行);
+        //   · 行在但取不到文件 ⇒ 抛 `REFERENCE_ASSET_UNREACHABLE`(可重试);
+        //   两者都在**付费调用之前**。少一张就不发 —— 商家批的是 N 张参考,发 N-1 张
+        //   就是交付另一样东西。
+        //
+        // 次序:元素照(演员)在前、商家挂的商品图在后,与探针里那份成功的请求形状一致
+        // (`probe-fse-001-two-references/t1-request-redacted.json`)。像素完整性:presign
+        // 的是**原件**,一个字节都不动。
+        const videoReferenceUrls: string[] = [];
+        for (const referenceId of videoReferenceIds) {
+          const ref = await prisma.generation.findFirst({
+            where: { id: referenceId, ...generationReferenceScope(job.ownerId, REFERENCE_IMAGE_EXTS) },
+            include: { asset: true },
+          });
+          if (!ref) {
+            await failClosedWithRefund(job, "a reference image on this card isn't available for this account");
+            return;
+          }
+          const refUrl = (await storage.presignedGet(storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext), 3600)) ?? "";
+          if (provider.name !== "mock" && !refUrl) {
+            // Codex QA-CRE-007 —— 落库的是商家读得懂的那一句,诊断只进日志。
+            console.error(`[gen] ${job.id}: video reference image unreachable — refusing to spend`);
+            throw new Error(REFERENCE_ASSET_UNREACHABLE);
+          }
+          if (refUrl) {
+            videoReferenceUrls.push(refUrl);
+            // `refSlots` 与真送出去的那个数组逐项同步(与图片侧同一条纪律)。商品图是一张
+            // **参考图**,不是「正在被编辑的那张」,所以槽位是 `attachedReference`。
+            refSlots.push({ kind: "attachedReference" });
+          }
+        }
+        if (videoReferenceUrls.length > 0) inputImageUrls.push(...videoReferenceUrls);
         // per-model controls chosen in the composer (resolved + stored at enqueue);
         // fall back to the legacy fixed duration if an older job has none.
         const vo = job.videoOptions as { seconds?: number; resolution?: string; aspectRatio?: string; fps?: number; audio?: boolean } | null;

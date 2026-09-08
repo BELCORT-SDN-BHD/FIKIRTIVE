@@ -56,6 +56,21 @@ export type ReferenceBudgetInput = VideoReferenceShape & {
    * 名额由 `attachedImageCap` 划,超出的那几张卡面必须说出来。
    */
   attachedImageCount: number;
+  /**
+   * FSE-001 判官 r2 —— 这一轮 @ 到、且确属商家自己的**元素**有几个(不分类型)。
+   *
+   * 每一个先预留一个 `image_url` 名额(`videoAttachedCap`),所以挂满 9 张商品图时被 @ 到的
+   * 每个元素都还上得了一张照片 —— 卡上列着 `Aisyah (person)`、引擎却一张她的照片都没收到,
+   * 那种卡结构上不再造得出来。缺省 0 ⇒ 与这条修改之前逐字相同;图片那一支不读它。
+   *
+   * 为什么数**全部元素**而不是只数 CHARACTER(判官 r2 的反例):发格的 round-robin
+   * (下面 `referenceBudget`、worker 的 `cappedRefs` 循环)按 `entityIds` **原序**给每个元素
+   * 发第一张。只按演员数预留 1 格时,「先 @ 一个商品元素、再 @ 演员」的那一趟里,唯一那格
+   * 会被排在前面的商品元素拿走,演员照旧 0 张 —— 而披露句还在说「the cast you @mentioned
+   * keeps a reference photo」。预留基数与发格次序必须同一个口径:每个在场元素至少 1 格,
+   * 第 0 轮就一定发得完,谁都饿不死。
+   */
+  mentionedElementCount?: number;
 };
 
 /**
@@ -127,6 +142,109 @@ export function videoReferencesRide(shape: VideoReferenceShape): boolean {
   return !shape.hasVideoStartFrame && !shape.hasVideoTailFrame && !shape.hasReferenceVideo;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FSE-001 —— 一张挂进来的 Generation,在**视频**计划里是首帧还是参考图
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 视频计划里,商家挂的那张(几张)图扮演什么。`null` = 他一张都没挂。
+ *
+ * · `startFrame` —— 图生视频(i2v):那张图是第一帧,片子从它开始动。
+ * · `reference`  —— 纯文生视频(t2v):那些图是 `role:"reference_image"`,片子不从任何
+ *   一张图开始,引擎只是照着它们认人认物。
+ *
+ * ── 为什么需要这个判据(staging E2E 2026-09-08,FSE-001)────────────────────────
+ * 在这之前判据只有一句「视频计划里有挂图 ⇒ i2v 首帧」。于是「@官方演员 + 我的商品图,
+ * 让她拿着拍 5 秒」这条最主流的请求走成了:商品图当首帧、演员被清空(i2v 那一档名额 0),
+ * 于是产品只好建议商家**先把演员和商品合成一张首帧**再拍 —— 而那条路被规格 §5
+ * 2026-08-30「血统信任 / 像素完整性铁律」判定必拒(视频端 400
+ * `InputImageSensitiveContentDetected.PrivacyInformation`,退款一次)。
+ * Founder 2026-09-08 裁:「合成 first frame 的 idea 可以移除了,没有必要」。
+ *
+ * 正路是同日实测跑通的那一条(USD 0.21 + USD 0.18 两场探针,`succeeded`):演员原件与
+ * 商品图**各作一张 `reference_image`**、纯文生视频、不合成。
+ *
+ * ── 判据本身 ────────────────────────────────────────────────────────────────
+ * 分岔只有一格:**这个计划里有没有官方/商家的角色元素(CHARACTER)**。
+ *   · 有 ⇒ 那些挂图是参考图。演员的身份住在他的参考照里,而参考照只有 t2v 那一档带得上
+ *     (`videoReferencesRide`);把商品图当首帧就等于把演员整个丢掉 —— 商家 @ 了他,却
+ *     一张他的照片都不上车。
+ *   · 没有 ⇒ 逐字维持既有行为:第一张挂图是首帧(「把这张图动起来」那条路一格不动)。
+ *
+ * 刻意**不**读商家的措辞:措辞含糊时读错的代价是一次付费运行做出另一样东西,而
+ * 「他 @ 了一位演员」是一个服务端自己数得出来的结构事实,不是猜测。
+ *
+ * 整段参考片(`hasReferenceVideo`)那一档一格不动:挂图在那条路上今天就不上车,
+ * 这里照旧回 `null`。
+ */
+export type VideoAttachmentRole = "startFrame" | "reference";
+
+export function videoAttachmentRole(input: {
+  /** 这个计划挂了几张图(去重后)。 */
+  attachedImageCount: number;
+  /**
+   * 这一轮商家 @ 到、且确属他自己的 CHARACTER 元素有几个。
+   *
+   * 判官 r2 —— 刻意**只数演员**,与名额预留那个数(`mentionedElementCount`,数全部元素)
+   * 是两件事,所以现在是两个名字。分岔的理由写在上面那段:演员的身份住在他的参考照里,
+   * 而参考照只有纯文生视频那一档带得上。@ 的只是商品/场景/标志时这里数出 0 ⇒ 首帧那一档
+   * (「把这张图动起来」)逐字不动。
+   */
+  mentionedCastCount: number;
+  /** 这个计划挂着一整段参考片吗。 */
+  hasReferenceVideo: boolean;
+}): VideoAttachmentRole | null {
+  if (input.attachedImageCount <= 0) return null;
+  if (input.hasReferenceVideo) return null;
+  return input.mentionedCastCount > 0 ? "reference" : "startFrame";
+}
+
+/** 这一单的首帧/末帧各占一个 `image_url` 名额 —— 名额减法只有这一处口径。 */
+function frameSlots(shape: VideoReferenceShape): number {
+  return (shape.hasVideoStartFrame ? 1 : 0) + (shape.hasVideoTailFrame ? 1 : 0);
+}
+
+/**
+ * 视频这一趟,商家挂的图**真会上车几张**(FSE-001)。
+ *
+ * 它们与元素参考照坐在**同一批** `image_url` 名额里(`MAX_VIDEO_IMAGE_PARTS`),所以这里
+ * 先划走商家自己挂的那几张,元素照拿剩下的 —— 商家亲手挂的东西比引擎替他找的照片更该
+ * 上车。不是纯文生视频的那几档(首帧/末帧/整段参考片)恒为 0:那几档挂图走的是首帧那条
+ * 独立的路,或者根本不上车,与这条修改之前逐字相同。
+ *
+ * ── FSE-001 判官 r1 P2 —— 元素的名额是**预留**出来的,不是抢剩下的 ─────────────────
+ * 上一版这里只有 `min(挂图数, 9)`。商家挂满 9 张商品图时挂图把 9 个名额全占了,
+ * `conditioningCap` 于是算出 0 —— 而卡上 `approvedEntities` 仍然列着 `Aisyah (person)`、
+ * 披露句仍然只说「9 of your 12」。商家批的是「Aisyah 拿着我的杯子」,付了钱,引擎却
+ * **一张她的照片都没收到**:做出来的是一个陌生人拿着杯子。那正是这个模块存在的理由
+ * (「说的与做的失同步」)的最贵一种形态 —— 卡上写了名字,请求里没有那个人。
+ *
+ * 所以在场的每一个**元素**先预留 1 格,挂图只能拿剩下的。为什么是结构性的:名额相减
+ * 这一步只有这一个函数,卡面(`referenceBudget`)、铸卡时截挂图的那一刀
+ * (`cardVideoReferenceIds`)与 worker 的选片(`jobVideoReferenceIds` / `conditioningCap`)
+ * 读的都是它 —— 不可能出现「这里留了、那里没留」。
+ *
+ * ── FSE-001 判官 r2 —— 预留基数是「在场元素数」,不是「在场演员数」 ────────────────────
+ * 上一版按演员数预留。发格的 round-robin 却按 `entityIds` **原序**给每个元素发第一张,
+ * 所以「先 @ 一个商品元素、再 @ 演员 + 挂满 9 张商品图」那一趟里,唯一那格被排在前面的
+ * 商品元素拿走 —— 演员照旧一张都不上车,而卡上的披露句还在说「so the cast you @mentioned
+ * keeps a reference photo」:同一种最贵的病(卡上有名字、请求里没有那个人)换了个入口,
+ * 外加一句假话。预留基数与发格次序现在同一个口径,第 0 轮一定发得完。
+ *
+ * 预留只保证**至少一张**:任何元素的第 2 张往后仍一起走 round-robin。超出名额的商品图按
+ * 既有「truncated」口径在批准前逐字说出来(`buildReferenceBudgetNotes`),不静默。
+ *
+ * `mentionedElementCount` 缺省 = 0 ⇒ 与这条修改之前逐字相同(既有每一条路一格不动)。
+ */
+export function videoAttachedCap(
+  input: VideoReferenceShape & { attachedImageCount?: number; mentionedElementCount?: number },
+): number {
+  if (!videoReferencesRide(input)) return 0;
+  const free = Math.max(0, MAX_VIDEO_IMAGE_PARTS - frameSlots(input));
+  const reservedForElements = Math.min(Math.max(0, input.mentionedElementCount ?? 0), free);
+  return Math.max(0, Math.min(input.attachedImageCount ?? 0, free - reservedForElements));
+}
+
 /**
  * 这一趟 round-robin 选片的**聚合上限**。
  *
@@ -142,7 +260,12 @@ export function videoReferencesRide(shape: VideoReferenceShape): boolean {
  * 不可能分家。
  */
 export function conditioningCap(
-  input: VideoReferenceShape & { kind: "image" | "video"; attachedImageCount?: number },
+  input: VideoReferenceShape & {
+    kind: "image" | "video";
+    attachedImageCount?: number;
+    /** FSE-001 —— 这一轮 @ 到、且确属商家自己的元素有几个(每个预留 1 格,不分类型)。 */
+    mentionedElementCount?: number;
+  },
 ): number {
   if (input.kind !== "video") {
     // Codex staging CRE-STG-P1-003 —— 商家挂的第 2 张起,每一张从 @元素的名额里扣一格。
@@ -152,8 +275,11 @@ export function conditioningCap(
   }
   if (!videoElementReferencesHonoured()) return 0;
   if (!videoReferencesRide(input)) return 0;
-  const frames = (input.hasVideoStartFrame ? 1 : 0) + (input.hasVideoTailFrame ? 1 : 0);
-  return Math.max(0, MAX_VIDEO_IMAGE_PARTS - frames);
+  const frames = frameSlots(input);
+  // FSE-001 —— 商家自己挂的商品图与元素参考照共用这 9 个 `image_url` 名额,所以先划走
+  // 他挂的那几张。今天每一条既有路上这个数都是 0(带首帧/末帧/参考片的档 `videoAttachedCap`
+  // 恒为 0,纯文生视频那一档在这条修改之前根本不带挂图),所以既有行为逐字不变。
+  return Math.max(0, MAX_VIDEO_IMAGE_PARTS - frames - videoAttachedCap(input));
 }
 
 export function referenceBudget(input: ReferenceBudgetInput): ReferenceBudget {
@@ -177,10 +303,20 @@ export function referenceBudget(input: ReferenceBudgetInput): ReferenceBudget {
 
   if (input.kind === "video") {
     // 视频这一支没有「编辑底图」这回事:首帧走 `sourceGenerationId` 那条独立的路,它是
-    // **帧**不是参考照,卡面另有一句话说它(`videoAspectChip`)。所以 total 只数元素照。
-    // 带帧的档 cap=0 ⇒ used=0、truncated=(商家给了照片却一张都上不了车)—— 卡面于是照实
-    // 说出来,而不是像 #785 之前那样连数字都不给。
-    return { used: taken, total: elementTotal, truncated: taken < elementTotal };
+    // **帧**不是参考照,卡面另有一句话说它(`videoAspectChip`)。带帧的档 cap=0 ⇒ used=0、
+    // truncated=(商家给了照片却一张都上不了车)—— 卡面于是照实说出来,而不是像 #785 之前
+    // 那样连数字都不给。
+    //
+    // FSE-001 —— 纯文生视频那一档多了一类参考照:商家自己挂的商品图。它们是**参考照**
+    // (`role:"reference_image"`),所以进 used / total;不是纯文生视频的那几档
+    // `videoAttachedCap` 恒为 0,那几条既有路上的三个数一格没动。
+    const attachedRiding = videoAttachedCap(input);
+    const attachedTotal = attachedRiding > 0 ? input.attachedImageCount : 0;
+    return {
+      used: taken + attachedRiding,
+      total: elementTotal + attachedTotal,
+      truncated: taken < elementTotal || attachedRiding < attachedTotal,
+    };
   }
 
   // 第一张(编辑底图)是 unshift 进去的,不占元素的上限名额;第 2 张起已经在
