@@ -1343,7 +1343,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
          * 判据在这里取,因为这里是**服务端从自有 id 解析出来的那一行**(D19),不是任何
          * 客户端说法。
          */
-        let personRefFromPlatform = false;
+        let lineageHasCastMember = false;
         if (job.sourceGenerationId) {
           const src = await prisma.generation.findFirst({
             where: { id: job.sourceGenerationId, ...generationReferenceScope(job.ownerId, REFERENCE_IMAGE_EXTS) },
@@ -1354,7 +1354,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             return;
           }
           sourceAsset = src.asset;
-          personRefFromPlatform = lineageCarriesOfficialActor(src.entitySnapshot);
+          lineageHasCastMember = lineageCarriesOfficialActor(src.entitySnapshot);
         } else if (job.shotId) {
           const sourceGen = await prisma.generation.findFirst({
             where: { shotId: job.shotId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
@@ -1367,7 +1367,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             return;
           }
           sourceAsset = sourceGen.asset;
-          personRefFromPlatform = lineageCarriesOfficialActor(sourceGen.entitySnapshot);
+          lineageHasCastMember = lineageCarriesOfficialActor(sourceGen.entitySnapshot);
         }
         if (sourceAsset) {
           imageUrl = (await storage.presignedGet(storageKey(sourceAsset.ownerId, sourceAsset.contentHash, sourceAsset.ext), 3600)) ?? "";
@@ -1453,7 +1453,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           // 是**真送出去的那几张**,不是名额外被截掉的。两支合起来才是完整的「他已经从
           // Library 挑过演员」—— 只决定拒绝时读哪一句,不参与选型、报价或计费。
           castMemberInReferences:
-            personRefFromPlatform || refSlots.some((s) => s.kind === "entity" && s.type === "CHARACTER"),
+            lineageHasCastMember || refSlots.some((s) => s.kind === "entity" && s.type === "CHARACTER"),
           durationSeconds: vo?.seconds ?? videoDefaults(job.model as GenVideoModel).seconds,
           resolution: vo?.resolution, aspectRatio: vo?.aspectRatio, fps: vo?.fps, audio: vo?.audio,
           model: job.model,

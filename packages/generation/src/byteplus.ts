@@ -251,9 +251,9 @@ export class BytePlusProvider implements GenerationProvider {
       // measured (2026-08-08, 4 refusals of 4 face shapes). The image endpoint has never been
       // seen to return it, and a refusal we invented would be worse than a generic one.
       //
-      // FSE-001(staging E2E 2026-09-08)—— **同一条拒绝,两种来路**。被拒的那张图本来就是
-      // 我们给的(本站生成的合成图、演员参考照)时,原来那句「去 Library 挑一个演员」把已经
-      // 用了官方演员的商家打发回他刚来的地方 —— 照做一遍,同一句拒绝。选哪一句的判据由
+      // FSE-001(staging E2E 2026-09-08)—— **同一条拒绝,两种来路**。被拒的那张图血统里带
+      // 官方演员(CHARACTER 元素照)时,原来那句「去 Library 挑一个演员」把已经用了官方演员的
+      // 商家打发回他刚来的地方 —— 照做一遍,同一句拒绝。选哪一句的判据由
       // worker 随请求带下来(它才是从自有 id 解析引用的那一层),句子本身仍然只有
       // `@fikirtive/core/gen-failure` 一份白名单。
       if (what === "video submit" && referenceImagePersonRejected(detail)) {
