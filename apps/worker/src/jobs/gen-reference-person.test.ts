@@ -28,6 +28,8 @@ const m = vi.hoisted(() => {
   const projectFindFirst = vi.fn();
   const generationFindFirst = vi.fn();
   const entityFindMany = vi.fn();
+  const entityFindFirst = vi.fn();
+  const referenceImageFindMany = vi.fn();
   const chatMessageFindFirst = vi.fn();
   const chatMessageCreate = vi.fn();
   const creditLedgerFindFirst = vi.fn();
@@ -42,14 +44,16 @@ const m = vi.hoisted(() => {
     genJob: { findUnique: genJobFindUnique, update: genJobUpdate, updateMany: genJobUpdateMany },
     project: { findFirst: projectFindFirst },
     generation: { findFirst: generationFindFirst },
-    entity: { findMany: entityFindMany },
+    entity: { findMany: entityFindMany, findFirst: entityFindFirst },
+    referenceImage: { findMany: referenceImageFindMany },
     chatMessage: { findFirst: chatMessageFindFirst, create: chatMessageCreate },
     creditLedger: { findFirst: creditLedgerFindFirst },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
   };
   return {
     prisma, genJobFindUnique, genJobUpdate, genJobUpdateMany, projectFindFirst, generationFindFirst,
-    entityFindMany, chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst,
+    entityFindMany, entityFindFirst, referenceImageFindMany,
+    chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst,
     refundReservation, settleCredits, generateVideo, generateImages, storage,
   };
 });
@@ -89,6 +93,8 @@ beforeEach(() => {
   m.projectFindFirst.mockResolvedValue({ id: "p1" });
   m.genJobUpdateMany.mockResolvedValue({ count: 1 }); // wins every conditional write
   m.entityFindMany.mockResolvedValue([]);
+  m.entityFindFirst.mockResolvedValue(null);
+  m.referenceImageFindMany.mockResolvedValue([]);
   m.chatMessageFindFirst.mockResolvedValue({ seq: 1 });
   m.chatMessageCreate.mockResolvedValue({ id: "msg1" });
   m.creditLedgerFindFirst.mockResolvedValue(null);
@@ -200,5 +206,63 @@ describe("#765 the engine refuses a reference image showing a real person", () =
     // The whitelist is what keeps an internal error string out of a merchant's view: this job's
     // persisted error is an engine status line, and it must never be offered as advice.
     expect(text).not.toContain("429");
+  });
+});
+
+/**
+ * FSE-001(`docs/audits/fullstack-staging-2026-09-08/findings-catalog.md`)—— **来路是这里取的。**
+ *
+ * 拒绝文案分岔的判据不能来自客户端,也不能在适配器里靠猜:只有这一层刚从自有 id 把每一个
+ * 引用解析出来(D19),它知道那张含人像的图是本站生成的、还是商家自己上传的。这一组钉的
+ * 就是那一格布尔量真的从解析结果长出来,并且真的随请求送到适配器手上。
+ *
+ * 钱、重试、退款一格不动:这一格只决定商家读哪一句。
+ */
+describe("FSE-001 the person-refusal copy forks on where the picture came from", () => {
+  /** 这一趟真正发给适配器的 VideoRequest。 */
+  const videoRequest = () => m.generateVideo.mock.calls[0]![0];
+
+  it("FSE-001 / CREATE-A9: a start frame this platform generated is flagged as ours", async () => {
+    // staging E2E 的原局面:官方演员 + 商品图先合成一张首帧,再拿它去出片。
+    m.genJobFindUnique.mockResolvedValue({ ...ottoJob });
+    m.generationFindFirst.mockResolvedValue({
+      id: "gen_src", source: "GENERATED",
+      asset: { ownerId: "o1", contentHash: "a".repeat(64), ext: "png" },
+    });
+
+    await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
+
+    expect(videoRequest().personReferenceFromPlatform).toBe(true);
+  });
+
+  it("FSE-001 / CREATE-A9: a picture the merchant uploaded keeps the cast-library way out", async () => {
+    // 上传的真人照仍然是 CREATE-A9 的原局面 —— 那句「去 Library 挑一个演员」在这里是真出路。
+    m.genJobFindUnique.mockResolvedValue({ ...ottoJob });
+    m.generationFindFirst.mockResolvedValue({
+      id: "gen_src", source: "UPLOAD",
+      asset: { ownerId: "o1", contentHash: "b".repeat(64), ext: "png" },
+    });
+
+    await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
+
+    expect(videoRequest().personReferenceFromPlatform).toBe(false);
+    // 这一支落库的仍然是原来那句 —— CREATE-A9 的出路在这里是真出路。
+    expect(terminalWrite()!.data.error).toBe(REFERENCE_IMAGE_PERSON_REJECTED);
+  });
+
+  it("FSE-001 / CREATE-A2: a cast member's own reference photo riding into a text-to-video clip counts too", async () => {
+    // 没有首帧的那一档,元素照真的进引擎(`videoElementReferencesHonoured`)——
+    // 被拒的那张图于是也可能是演员库的原件。
+    m.genJobFindUnique.mockResolvedValue({ ...ottoJob, sourceGenerationId: null, entityIds: ["e1"] });
+    m.entityFindFirst.mockResolvedValue({ id: "e1", type: "CHARACTER" });
+    m.referenceImageFindMany.mockResolvedValue([
+      { id: "r1", variantId: null, asset: { ownerId: "o1", contentHash: "c".repeat(64), ext: "png" } },
+    ]);
+    m.entityFindMany.mockResolvedValue([{ id: "e1", name: "Aisyah", type: "CHARACTER", referenceImages: [] }]);
+
+    await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
+
+    expect(videoRequest().refImageUrls).toHaveLength(1);
+    expect(videoRequest().personReferenceFromPlatform).toBe(true);
   });
 });

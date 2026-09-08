@@ -195,6 +195,18 @@ export interface VideoRequest {
    *  A provider that has no such mechanism simply ignores it and returns no
    *  `lastFrame` — never an error, because nothing was promised or billed. */
   returnLastFrame?: boolean;
+  /**
+   * FSE-001 —— 这一趟送进去的**含人像的图是我们给的**(本站生成的图当首帧,或演员参考照
+   * 真的上车),而不是商家上传的一张真人照片。
+   *
+   * 只有一个用处:引擎以「参考图里有可辨真人」拒收时,商家读到哪一句
+   * (`personRejectionSentence`)。上传的真人照 ⇒ 出路是演员库;我们给的那张 ⇒ 那句「去
+   * Library 挑一个演员」是死路,他用的就是演员库里的人(staging E2E 2026-09-08 实录)。
+   *
+   * 缺席 = 来路未知 ⇒ 回落到原来那句(fail safe:不替一条我们证不出来的来路编话)。
+   * 不参与选型、报价、预扣,也从不出现在发给引擎的请求体里。
+   */
+  personReferenceFromPlatform?: boolean;
 }
 
 /** One generated clip, already downloaded by the provider. */

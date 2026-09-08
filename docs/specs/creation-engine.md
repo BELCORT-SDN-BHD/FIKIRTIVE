@@ -159,6 +159,8 @@
 | 2026-09-06 | 台账 #359 搬入：Q2 未测格:锚定措辞 + 显式非 adaptive 比例(被 gen.ts 付费 schema 拒死),触发=#922 缺口 B 若放开 ratio/duration 先批 1 次引擎调用测掉。触发=#922 缺口 B 若放开 ratio/duration 先批 1 次引擎调用测掉。来源：https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5289353470 | |
 | 2026-09-06 | 台账 #359 搬入：延期登记(#1001 判官 P3-2):createUnderstandingProvider 在缺引擎配置的生产上仍静默返回 MockUnderstandingProvider,应在图片理解管道修根 PR #1005 合并后顺同族形状收口(照 createGenerationProvider 的样子在缺配置时直接拒绝)。触发条件：原登记未注明;见来源评论。来源：https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5329432342 | |
 | 2026-09-06 | 台账 #359 搬入：部署窗口核验:生产 worker 的 GENERATION_PROVIDER 实际值不得为 mock/遗留 fal。触发条件：原登记未注明;见来源评论。来源：https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5352199023 | |
+| 2026-09-08 | staging E2E Round 1 · FSE-006 落地（Founder 2026-09-08 裁「现在修」）：Otto 知识文件 `packages/otto/knowledge/craft/prompting.md` 那句「改图只会出方图，不管挂的是什么画幅」是 2026-09-04 已修的「说明书 1:1」残留，与执行层声明（`EXECUTED_SPEC.image.aspectHonoured=true`、适配器真发确切 WxH）相反；商家要 3:4、卡片与产物都真是 3:4，Otto 却在付款前发明了一条卡片没有的限制。修法＝改那句 + 重跑知识生成 + 加围栏测试「柜文不得声称执行层声明之外的画幅限制」。证据：`docs/audits/fullstack-staging-2026-09-08/findings-catalog.md` FSE-006。验收：CREATE-A2 / CREATE-A1 | 2026-09-08 |
+| 2026-09-08 | staging E2E Round 1 · FSE-001 止血（Founder 2026-09-08 裁「合成 first frame 的 idea 可以移除了，没有必要」）：①撤掉 Otto 知识里「要人物就先做一张合成首帧再动画」的建议——合成图是图生图产物，视频端按 §1 血统信任必拒（HTTP 400），而元素照本来就直接进纯文生视频（CREATE-A10 三场景 3/3）；商家自己点名「把这张图动起来」的普通 i2v 一格不动。②拒绝文案按被拒输入的真实来路分岔：来自本站生成图或官方演员（CHARACTER）参考照时改说真话（这张图不能当片子里的人；直接把演员与商品作参考），不再把已经用了官方演员的人打发回 Library；上传真人照那一支仍是 CREATE-A9 原文案。**未做**＝正路本身（把商品 Generation 放开为视频参考、改参考名额）另片；供应商为何不认合成图的根因仍未定位。验收：CREATE-A9 / CREATE-A2 | 2026-09-08 |
 
 ## 6. 改签记录
 

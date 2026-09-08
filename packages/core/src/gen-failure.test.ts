@@ -11,10 +11,12 @@ import { describe, it, expect } from "vitest";
 import {
   GEN_FAILURE_REASONS,
   GENERATION_DID_NOT_GO_THROUGH,
+  PLATFORM_IMAGE_PERSON_REJECTED,
   REFERENCE_ASSET_UNREACHABLE,
   REFERENCE_IMAGE_PERSON_REJECTED,
   REFERENCE_UNAVAILABLE_REASONS,
   isGenFailureReason,
+  personRejectionSentence,
   merchantGenFailureCopy,
   merchantGenFailureExplanation,
   merchantGenFailureMessage,
@@ -130,10 +132,14 @@ describe("REFERENCE_IMAGE_PERSON_REJECTED — what the merchant actually reads",
     expect(REFERENCE_IMAGE_PERSON_REJECTED.length).toBeLessThanOrEqual(300);
   });
 
-  it("CREATE-A9: says what is wrong, points at the cast library, and that no money moved", () => {
+  it("CREATE-A9 / FSE-001: the UPLOADED-photo branch says what is wrong, points at the cast library, and that no money moved", () => {
     // 规格 docs/specs/creation-engine.md 验收表 CREATE-A9 —— 「人话提示 + 出路指向演员库」。
     // 逐字钉住,因为这两句是**出路本身**:商家的 Library 在注册时就已经播好了五位演员
     // (apps/web/lib/actor-library-seed.ts),这句话指的是他屏幕上已经有的东西。
+    //
+    // FSE-001(2026-09-08 staging E2E)—— 这句话现在有了**适用范围**:它是「商家自己上传了
+    // 一张真人照片」那一支的出路。被拒的图本来就来自演员库或本站合成时,这句话把已经用了
+    // 官方演员的人再打发回 Library,所以那一支走下面 `PLATFORM_IMAGE_PERSON_REJECTED`。
     expect(REFERENCE_IMAGE_PERSON_REJECTED).toContain(
       "Real human faces aren't supported yet. Pick a cast member from your Library instead.",
     );
@@ -141,6 +147,63 @@ describe("REFERENCE_IMAGE_PERSON_REJECTED — what the merchant actually reads",
     // 拒的是**这是谁的脸**,不是脸怎么取景 —— 教商家换个角度重拍等于教他重试一件做不到的事。
     expect(REFERENCE_IMAGE_PERSON_REJECTED).not.toContain("Try one where the face isn't visible");
     expect(REFERENCE_IMAGE_PERSON_REJECTED).toContain("You weren't charged.");
+  });
+});
+
+/**
+ * FSE-001(`docs/audits/fullstack-staging-2026-09-08/findings-catalog.md`)——
+ * **同一个拒绝,两种来路,不能只有一句话。**
+ *
+ * 商家选了官方演员 Aisyah + 自己的商品图,按当时的建议先出了一张合成首帧,再拿它去出片:
+ * 视频端 HTTP 400 免费拒收(合成图是图生图产物,规格 §1「血统信任」说得清清楚楚),而他读到
+ * 的却是「Pick a cast member from your Library」—— 他用的**就是**演员库里的人。那句话在这一支
+ * 上不是出路,是死路:照它做一遍,结果一模一样。
+ *
+ * 所以拒绝文案按**被拒的那张图从哪来**分岔。分岔点只有一个纯函数
+ * (`personRejectionSentence`),句子仍然只有那一张白名单表 —— 卡面、Otto、toast 读的还是
+ * 同一份字节。
+ */
+describe("FSE-001 · PLATFORM_IMAGE_PERSON_REJECTED — 被拒的图本来就是我们给的那一支", () => {
+  it("FSE-001 / CREATE-A9: 不再把已经用了官方演员的人打发回 Library", () => {
+    expect(PLATFORM_IMAGE_PERSON_REJECTED).not.toContain("Pick a cast member from your Library");
+    expect(PLATFORM_IMAGE_PERSON_REJECTED).not.toContain("Real human faces aren't supported yet");
+  });
+
+  it("FSE-001 / CREATE-A2: 说的是真话——这张图不能当片子里的人,并给一条真的走得通的下一步", () => {
+    // 「花钱前诚实」(CREATE-A2)在失败面上的同一条规矩:说得出来的才说。
+    // 走得通的那条 = 元素照直接进纯文生视频(`videoElementReferencesHonoured`,规格 CREATE-A10
+    // 三场景 3/3 实证),而不是再做一张合成图重试一次同样会被拒的事。
+    expect(PLATFORM_IMAGE_PERSON_REJECTED).toContain("can't be used as the person in a clip");
+    expect(PLATFORM_IMAGE_PERSON_REJECTED).toContain("references");
+    expect(PLATFORM_IMAGE_PERSON_REJECTED).toContain("You weren't charged.");
+  });
+
+  it("FSE-001 / CREATE-A9: 白标——不点名引擎、型号或供应商,且逐字挺过脱敏器", () => {
+    for (const secret of ["seedance", "seedream", "byteplus", "bytedance", "dreamina", "ark", "jimeng"]) {
+      expect(PLATFORM_IMAGE_PERSON_REJECTED.toLowerCase()).not.toContain(secret);
+    }
+    expect(redactProviderNames(PLATFORM_IMAGE_PERSON_REJECTED)).toBe(PLATFORM_IMAGE_PERSON_REJECTED);
+  });
+
+  it("FSE-001 / CREATE-A9: 装得进落库那 300 字符的上限", () => {
+    expect(PLATFORM_IMAGE_PERSON_REJECTED.length).toBeLessThanOrEqual(300);
+  });
+
+  it("FSE-001 / CREATE-A9: 两句是两个理由名,卡面读回来分得清是哪一支", () => {
+    // 同一个理由名装两句话 = 卡上显示的与 worker 落库的可能不是同一句,这正是 #765 关掉的病。
+    expect(PLATFORM_IMAGE_PERSON_REJECTED).not.toBe(REFERENCE_IMAGE_PERSON_REJECTED);
+    expect(merchantGenFailureReason(PLATFORM_IMAGE_PERSON_REJECTED)).toBe("platformImagePerson");
+    expect(merchantGenFailureReason(REFERENCE_IMAGE_PERSON_REJECTED)).toBe("referenceImagePerson");
+    expect(merchantGenFailureExplanation("platformImagePerson")).toBe(PLATFORM_IMAGE_PERSON_REJECTED);
+    expect(merchantGenFailureMessage(PLATFORM_IMAGE_PERSON_REJECTED)).toBe(PLATFORM_IMAGE_PERSON_REJECTED);
+    expect(isGenFailureReason("platformImagePerson")).toBe(true);
+  });
+
+  it("FSE-001 / CREATE-A2: 分岔只有一处,判据是「这张图是不是我们给的」", () => {
+    expect(personRejectionSentence(true)).toBe(PLATFORM_IMAGE_PERSON_REJECTED);
+    expect(personRejectionSentence(false)).toBe(REFERENCE_IMAGE_PERSON_REJECTED);
+    // 不知道来路 ⇒ 回到原来那句。少说一句话,好过对着一个我们没证据的来路编一句。
+    expect(personRejectionSentence(undefined)).toBe(REFERENCE_IMAGE_PERSON_REJECTED);
   });
 });
 

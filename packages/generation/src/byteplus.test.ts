@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { EXECUTED_SPEC, REFERENCE_IMAGE_PERSON_REJECTED } from "@fikirtive/core";
+import { EXECUTED_SPEC, PLATFORM_IMAGE_PERSON_REJECTED, REFERENCE_IMAGE_PERSON_REJECTED } from "@fikirtive/core";
 import {
   BytePlusProvider,
   IMAGE_MODEL_MAP,
@@ -629,6 +629,24 @@ describe("generateVideo (Seedance, async)", () => {
       expect(err.permanent).toBe(true);
       // 仍然是创建阶段被拒 ⇒ 可证明没花钱 ⇒ 绝不能标 charged(标了就会给一笔没发生的
       // 支出记 spentUsd,污染账)。
+      expect(err.charged).toBeFalsy();
+    });
+
+    it("FSE-001 / CREATE-A9 被拒的是我们给的那张图:换成不再把人打发回 Library 的那一句", async () => {
+      // staging E2E 2026-09-08 —— 商家用的**就是**官方演员,却被告知去 Library 挑一个演员。
+      // 判据由 worker 从已解析的引用来路给出(`personReferenceFromPlatform`),适配器只按它
+      // 选句子:一个分岔点、一份白名单,卡面与 Otto 仍然是同一份字节。
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? { ok: false, status: 400, text: async () => MEASURED_PERSON_REJECTION }
+        : jsonRes({ status: "running" }));
+      const err = await rejection(() => new BytePlusProvider("ark-test").generateVideo({
+        prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini",
+        personReferenceFromPlatform: true,
+      }));
+      expect(err.message).toBe(PLATFORM_IMAGE_PERSON_REJECTED);
+      expect(err.message).not.toContain("Pick a cast member from your Library");
+      // 钱与重试的口径一格不动:同一个 4xx、同一条创建阶段免费拒收。
+      expect(err.permanent).toBe(true);
       expect(err.charged).toBeFalsy();
     });
 

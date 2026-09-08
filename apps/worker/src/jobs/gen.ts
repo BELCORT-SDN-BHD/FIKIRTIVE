@@ -1303,6 +1303,16 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // The source is always resolved server-side from an owned id (D19).
         let imageUrl = "";
         let sourceAsset: { ownerId: string; contentHash: string; ext: string } | null = null;
+        /**
+         * FSE-001(staging E2E 2026-09-08)—— 这张首帧**是不是我们自己产的**。
+         *
+         * 只在一个地方用得上:引擎因为「参考图里有可辨真人」拒收时,商家读哪一句。图是他
+         * 上传的真人照 ⇒ 出路是演员库;图是本站生成的合成图(或演员参考照)⇒ 那句「去
+         * Library 挑一个演员」是死路 —— 他用的就是演员库里的人。判据在这里取,因为这里
+         * 是**服务端从自有 id 解析出来的那一行**(D19),不是任何客户端说法。
+         * `AssetSource.GENERATED` = 引擎产物;上传 / 裁剪等 $0 摄取路径是别的枚举值。
+         */
+        let personRefFromPlatform = false;
         if (job.sourceGenerationId) {
           const src = await prisma.generation.findFirst({
             where: { id: job.sourceGenerationId, ...generationReferenceScope(job.ownerId, REFERENCE_IMAGE_EXTS) },
@@ -1313,6 +1323,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             return;
           }
           sourceAsset = src.asset;
+          personRefFromPlatform = src.source === "GENERATED";
         } else if (job.shotId) {
           const sourceGen = await prisma.generation.findFirst({
             where: { shotId: job.shotId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
@@ -1325,6 +1336,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             return;
           }
           sourceAsset = sourceGen.asset;
+          personRefFromPlatform = sourceGen.source === "GENERATED";
         }
         if (sourceAsset) {
           imageUrl = (await storage.presignedGet(storageKey(sourceAsset.ownerId, sourceAsset.contentHash, sourceAsset.ext), 3600)) ?? "";
@@ -1405,6 +1417,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           prompt: sentPrompt, imageUrl, tailImageUrl: tailImageUrl || undefined,
           refVideoUrl: refVideoUrl || undefined,
           ...(inputImageUrls.length > 0 ? { refImageUrls: inputImageUrls } : {}),
+          // FSE-001 —— 含人像的输入是不是我们给的:首帧是本站生成图,或真上车的元素照里有
+          // 演员(CHARACTER)。`refSlots` 与 `inputImageUrls` 逐项同步,所以数的是**真送出去
+          // 的那几张**,不是名额外被截掉的。只决定拒绝时读哪一句,不参与选型、报价或计费。
+          personReferenceFromPlatform:
+            personRefFromPlatform || refSlots.some((s) => s.kind === "entity" && s.type === "CHARACTER"),
           durationSeconds: vo?.seconds ?? videoDefaults(job.model as GenVideoModel).seconds,
           resolution: vo?.resolution, aspectRatio: vo?.aspectRatio, fps: vo?.fps, audio: vo?.audio,
           model: job.model,
