@@ -186,6 +186,16 @@ export async function POST(req: NextRequest): Promise<Response> {
       if (picked.unresolved > 0) {
         return Response.json({ error: referenceUnavailableMessage("notFound") }, { status: 400 });
       }
+      // FSE-002 复修轮(判官 2026-09-08 P1-1)—— 商家**自己的**、还活着的文件,只是它的格式
+      // 当不了生成引用(gif / avif / mkv 与全部音频都上传得了)。整轮照旧不发(花钱之前显式
+      // 拒绝,CREATE-A2),但说的是**原因**:「isn't available any more」对一个就摆在他 Library
+      // 里的文件是一句他一查就知道是假的话。
+      if (picked.unusableFormat > 0) {
+        return Response.json(
+          { error: referenceUnavailableMessage("unsupportedFormat") },
+          { status: 400 },
+        );
+      }
 
       const refs = await validateOttoTurnReferences({
         ownerId,

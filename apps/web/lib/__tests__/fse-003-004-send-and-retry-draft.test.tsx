@@ -28,17 +28,28 @@ const mocks = vi.hoisted(() => ({
     status: "ready" as "ready" | "submitted" | "streaming" | "error",
     error: null as Error | null,
     messages: [] as Array<Record<string, unknown>>,
+    /**
+     * FSE-004 复修轮:`useChat` 的 `onData` —— **直播**那一刻的唯一信使。
+     *
+     * 上一版这个替身把 options 整份丢掉,于是这个文件只演得出「刷新之后」那一种形状,
+     * 而判官 P1-2 点的正是它演不到的那一种:商家坐在屏幕前看着这一轮失败(没刷新)。
+     * 真实运行时那一刻只有 `onData` 在说话,所以替身必须把它接出来。
+     */
+    onData: null as ((part: unknown) => void) | null,
   },
 }));
 vi.mock("@/components/otto/plan-approval", () => ({ runPlanApproval: mocks.runPlanApproval }));
 vi.mock("@ai-sdk/react", () => ({
-  useChat: () => ({
-    messages: mocks.chat.messages,
-    setMessages: vi.fn(),
-    sendMessage: mocks.sendMessage,
-    status: mocks.chat.status,
-    error: mocks.chat.error,
-  }),
+  useChat: (opts?: { onData?: (part: unknown) => void }) => {
+    mocks.chat.onData = opts?.onData ?? null;
+    return {
+      messages: mocks.chat.messages,
+      setMessages: vi.fn(),
+      sendMessage: mocks.sendMessage,
+      status: mocks.chat.status,
+      error: mocks.chat.error,
+    };
+  },
 }));
 vi.mock("ai", () => ({ DefaultChatTransport: class { constructor(_opts: unknown) { void _opts; } } }));
 vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: vi.fn() }));
@@ -170,6 +181,34 @@ async function refuseTurn(sentence: string): Promise<void> {
   await act(async () => { await Promise.resolve(); });
 }
 
+/**
+ * 直播那一刻服务端把这一轮判死:一个 `data-error` 从流里到达(**没有**刷新)。
+ * 落库那条 USER 消息此刻还不在手上 —— 手上那条是 `sendMessage({text})` 的乐观回显。
+ */
+async function liveFailure(sentText: string): Promise<void> {
+  // 送出去 → 流开着（`submitted`/`streaming`）→ 一个 data-error 到达 → 回到 `ready`。
+  // 这一串状态位不能省：送出那道闸（`submitLockRef`）正是靠 `isBusy` 落下来又抬起来的。
+  mocks.chat.messages = [
+    { id: "echo_1", role: "user", parts: [{ type: "text", text: sentText }] },
+  ];
+  mocks.chat.status = "streaming";
+  await act(async () => { root!.render(streamElement()); });
+  await act(async () => {
+    mocks.chat.onData?.({ type: "data-error", data: { kind: "error", text: SNAG } });
+  });
+  mocks.chat.messages = [
+    { id: "echo_1", role: "user", parts: [{ type: "text", text: sentText }] },
+    liveError(),
+  ];
+  mocks.chat.status = "ready";
+  await act(async () => { root!.render(streamElement()); });
+  await act(async () => { await Promise.resolve(); });
+}
+
+/** 画布上那张卡本体 —— 抽屉里那张告示不算数(画布形态下它是折起的)。 */
+const canvasCard = (): HTMLElement =>
+  container!.querySelector('[aria-label="Otto current turn"]') as HTMLElement;
+
 async function click(el: Element): Promise<void> {
   await act(async () => {
     el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
@@ -206,6 +245,7 @@ beforeEach(() => {
   mocks.chat.status = "ready";
   mocks.chat.error = null;
   mocks.chat.messages = [];
+  mocks.chat.onData = null;
 });
 
 afterEach(() => {
@@ -375,5 +415,55 @@ describe("FSE-004 / FRONT-A12 —— 重试草稿 = 那句话 ＋ typed refs ＋
 
     expect(mocks.sendMessage).not.toHaveBeenCalled();
     expect(mocks.runPlanApproval, "重试草稿这条路一次都不该碰批准动作").not.toHaveBeenCalled();
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 复修轮（判官 2026-09-08 P1-2）—— **直播**那一种失败：商家坐在屏幕前看着它失败，没刷新。
+  //
+  // 那一刻手上那条 USER 消息只是 `sendMessage({text})` 的乐观回显：只有 `parts`，`metadata`
+  // 一格都没有。上一版画布那颗 Edit and retry 只读消息，于是引用一件都不回来，而屏幕上一个字
+  // 都不说 ——「带回来了」与「没带回来」长得一模一样，下一次送出就是一次无条件生成。
+  // ───────────────────────────────────────────────────────────────────────────
+  /** 先真送出一轮带引用的（走确认卡那条路），再让它在直播里失败。 */
+  async function liveFailedTurnAfterSend(): Promise<HTMLElement> {
+    mocks.chat.messages = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "make me a hero shot" }] },
+      genCardMessage(),
+    ];
+    const host = await mountCanvas();
+    await click(buttonByText(host, "Change"));
+    const note = host.querySelector('[data-slot="card-change-form"] textarea') as HTMLTextAreaElement;
+    await typeInto(note, "add the exact product photo");
+    await click(buttonByText(host, CHANGE_FORM_SEND));
+    const sentText = (mocks.sendMessage.mock.calls[0]![0] as { text: string }).text;
+    await liveFailure(sentText);
+    return host;
+  }
+
+  it("FSE-004 / FRONT-A12 直播失败（没刷新）⇒ 画布那颗 Edit and retry 把原引用一起放回", async () => {
+    await liveFailedTurnAfterSend();
+
+    const retry = buttonByText(canvasCard(), EDIT_AND_RETRY_LABEL);
+    expect(retry, "画布卡上没有 Edit and retry —— 直播失败这一幕根本没演到").toBeTruthy();
+    await click(retry);
+
+    expect(composer().value).toContain("add the exact product photo");
+    const line = container!.querySelector('[data-slot="restored-references"]');
+    expect(line, "引用一件都没回来，而屏幕上一个字都不说 —— 正是 FSE-004 的病灶").toBeTruthy();
+    expect(line!.textContent).toContain("Aisyah");
+  });
+
+  it("FSE-004 / CREATE-A2 直播失败后改完再送 ⇒ 同一张源图与同一位演员照旧上路（不是无条件生成）", async () => {
+    await liveFailedTurnAfterSend();
+    await click(buttonByText(canvasCard(), EDIT_AND_RETRY_LABEL));
+    await typeInto(composer(), "add the exact product photo, brighter");
+    await click(buttonByText(container!, "Send"));
+
+    // 第一次是确认卡那一轮（失败的那一轮），第二次才是这次重试 —— 不钉住次数，
+    // 「第二次根本没送出去」会被 `at(-1)` 读成第一次的请求体，测试就假绿了。
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2);
+    const body = lastBody();
+    expect(body["sourceGenerationIds"]).toEqual([PRODUCT_GENERATION_ID]);
+    expect(body["entityIds"]).toEqual([AVATAR_ID]);
   });
 });

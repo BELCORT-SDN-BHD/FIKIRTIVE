@@ -91,10 +91,27 @@ export interface ResolvedTurnReferences {
    * number, never which — see NON-LEAKAGE above.
    */
   unresolved: number;
+  /**
+   * FSE-002 复修轮(判官 2026-09-08 P1-1)—— 解析**成功**、确属这家店、还活着,但它的格式
+   * 当不了生成引用(上传允许 gif/avif/mkv 与全部音频,参考只吃 `REFERENCE_IMAGE_EXTS` /
+   * `REFERENCE_VIDEO_EXTS`)。
+   *
+   * 它与 `unresolved` 分家,因为商家读到的那句话必须不一样:那个文件就在他的 Library 里,
+   * 用「isn't available any more」回答他是一句一查就穿帮的话(`gen-failure.ts` 里逐字写着
+   * 这条纪律)。这里也不能悄悄少一件 —— 那正是 FSE-002 的病灶 —— 所以它照旧上链(回链、
+   * 芯片都在),只是不进 `media`,由写入侧凭这个数整轮显式拒绝并说出原因。
+   */
+  unusableFormat: number;
 }
 
 /** Everything a resolved ref renders as. Names come from the DB, never from the client. */
-type Resolved = { link: ReferenceLink; ref: ReferenceRef; media?: ResolvedMediaReference };
+type Resolved = {
+  link: ReferenceLink;
+  ref: ReferenceRef;
+  media?: ResolvedMediaReference;
+  /** 行读到了、归属对、还活着,只是这个扩展名当不了引用(见 `unusableFormat`)。 */
+  unusableFormat?: boolean;
+};
 
 const IMAGE_EXT_SET = new Set<string>(REFERENCE_IMAGE_EXTS);
 const VIDEO_EXT_SET = new Set<string>(REFERENCE_VIDEO_EXTS);
@@ -212,10 +229,11 @@ async function resolveMediaRefs(ownerId: string, refs: ReferenceRef[]): Promise<
     if (ref.type !== "generation" && ref.type !== "upload") continue;
     const row = ref.type === "generation" ? generationById.get(ref.id) : uploadByAssetId.get(ref.id);
     if (!row) continue;
-    // FSE-002:读不出族别的行不算解析成功。它落进 `unresolved`,调用方整轮拒绝并说出那一句 ——
-    // 从前这种行会照旧发出一个能点的 chip,而挂上路的引用里没有它。
+    // FSE-002 复修轮:读不出族别的行**仍然算解析成功** —— 它是商家自己的、还活着的文件,
+    // 回链与芯片照旧(读路径 `resolveReferenceLinks` 走的就是这里,历史消息不能因此掉链)。
+    // 它只是进不了媒体槽:写入侧凭 `unusableFormat` 整轮拒绝,并说出「格式当不了引用」那一句,
+    // 而不是那句「isn't available any more」——后者对一个就在 Library 里的文件是谎话。
     const mediaKind = mediaKindOfExt(row.asset.ext);
-    if (!mediaKind) continue;
     const filename = row.asset.originalFilename;
     const name =
       ref.type === "upload"
@@ -224,7 +242,7 @@ async function resolveMediaRefs(ownerId: string, refs: ReferenceRef[]): Promise<
     out.push({
       ref,
       // 稳定身份是**这一行 Generation 的 id**,不是 wire 上那一个:`upload:` 带的是 Asset id。
-      media: { generationId: row.id, kind: mediaKind },
+      ...(mediaKind ? { media: { generationId: row.id, kind: mediaKind } } : { unusableFormat: true }),
       link: {
         type: ref.type,
         id: ref.id,
@@ -268,7 +286,10 @@ export async function resolveOwnedReferenceRefs(
   const overflow = all.length - submitted.length;
   const parsed = parseReferenceRefs(submitted);
   if (parsed.length === 0) {
-    return { refs: [], wire: [], links: [], entityIds: [], media: [], unresolved: malformed + overflow };
+    return {
+      refs: [], wire: [], links: [], entityIds: [], media: [],
+      unresolved: malformed + overflow, unusableFormat: 0,
+    };
   }
   const [entityHits, mediaHits] = await Promise.all([
     resolveEntityRefs(ownerId, parsed),
@@ -281,6 +302,7 @@ export async function resolveOwnedReferenceRefs(
   const links: ReferenceLink[] = [];
   const entityIds: string[] = [];
   const media: ResolvedMediaReference[] = [];
+  let unusableFormat = 0;
   const seenGenerationIds = new Set<string>();
   for (const ref of parsed) {
     const hit = byKey.get(formatReferenceRef(ref));
@@ -295,6 +317,10 @@ export async function resolveOwnedReferenceRefs(
         seenGenerationIds.add(hit.media.generationId);
         media.push(hit.media);
       }
+    } else if (hit.unusableFormat) {
+      // 媒体行,可是格式当不了引用。不进 `media`,更**不能**掉进 `entityIds`(那会把一件
+      // 素材当成一个元素递给铸卡层,正是 FSE-002 那条静默错配)。它只被数一次。
+      unusableFormat += 1;
     } else {
       entityIds.push(hit.ref.id);
     }
@@ -306,6 +332,7 @@ export async function resolveOwnedReferenceRefs(
     entityIds,
     media,
     unresolved: malformed + overflow + (parsed.length - refs.length),
+    unusableFormat,
   };
 }
 

@@ -401,7 +401,7 @@ describe("referenceUnavailableSentence — CREATE-A2: 一份白名单,不是 pas
   // notFound 那句「isn't available any more」:片子就在 Library 里,他一看就知道是假的,
   // 而且那句话指着一个从未发生过的删除,他永远修不好。四个原因是四件不同的事,所以必须
   // 是四句不同的话 —— 任何一句被换回另一句的措辞,这里当场红。
-  it("CREATE-A2: 四个原因四句话,没有两个原因共用同一句", () => {
+  it("FSE-002 / CREATE-A2: 一个原因一句话,没有两个原因共用同一句", () => {
     const sentences = REFERENCE_UNAVAILABLE_REASONS.map((r) => referenceUnavailableMessage(r));
     expect(new Set(sentences).size).toBe(REFERENCE_UNAVAILABLE_REASONS.length);
   });
@@ -417,6 +417,21 @@ describe("referenceUnavailableSentence — CREATE-A2: 一份白名单,不是 pas
     expect(asVideo).toMatch(/image/i);
     expect(asVideo).toMatch(/swap/i);
     expect(asVideo).not.toMatch(/isn't available any more/i);
+  });
+
+  // FSE-002 复修轮(判官 2026-09-08 P1-1):商家自己的、还活着的文件,只是格式当不了引用
+  // (上传允许 gif/avif/mkv 与全部音频,参考只吃 png/jpg/jpeg/webp 与 mp4/mov/webm)。
+  // 用 notFound 那句回答它,与 videoAsImage 那一天犯的是同一个错:那个文件就摆在他的
+  // Library 里,他一看就知道那句话是假的,而且会去找一次从没发生过的删除。
+  it("FSE-002 / CREATE-A2: unsupportedFormat 说的是格式,不是那句「消失了」,并点名要换掉它", () => {
+    const sentence = referenceUnavailableMessage("unsupportedFormat");
+    expect(sentence).toMatch(/file type/i);
+    expect(sentence).toMatch(/swap/i);
+    expect(sentence).not.toMatch(/isn't available any more/i);
+    expect(sentence).not.toBe(referenceUnavailableMessage("notFound"));
+    // 与另外那两句「拿错类型」也分得开 —— 它说的不是图片当片子,而是这个格式根本当不了引用。
+    expect(sentence).not.toBe(referenceUnavailableMessage("videoAsImage"));
+    expect(sentence).not.toBe(referenceUnavailableMessage("imageAsVideo"));
   });
 
   it("CREATE-A2: 两个原因一个不落 —— 表里每一句都认得出,且认回它自己", () => {

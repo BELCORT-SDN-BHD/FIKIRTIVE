@@ -1458,27 +1458,44 @@ describe("FRONT-A10 —— 流式落库路把类型化引用写进 ChatMessage",
     expect(call?.sourceGenerationIds ?? []).not.toContain("gen_clip");
   });
 
-  it("FSE-002 / CREATE-A2 读不出族别的行 ⇒ 整轮显式拒绝（不悄悄少一件引用）", async () => {
-    mocks.entityFindMany.mockResolvedValue([]);
-    mocks.generationFindMany.mockResolvedValue([
-      {
-        id: "gen_odd", assetId: "ast_odd", source: "GENERATED",
-        promptText: "?", projectId: "proj_stream",
-        project: { name: "Raya launch" }, asset: { originalFilename: "thing.psd", ext: "psd" },
-      },
-    ]);
-    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+  // 复修轮（判官 2026-09-08 P1-1）：整轮拒绝这一半没变（花钱之前显式拒绝，CREATE-A2），
+  // 换掉的是**那句话**。gif／avif／mkv／音频都上传得了，而 `@` 选单对上传行不做扩展名过滤，
+  // 所以商家真挑得到；用「isn't available any more」回答他，他一翻 Library 就知道是假的，
+  // 而且会去找一次从没发生过的删除。
+  it.each([
+    ["thing.psd", "psd"],
+    ["loop.gif", "gif"],
+    ["cut.mkv", "mkv"],
+    ["jingle.mp3", "mp3"],
+  ])(
+    "FSE-002 / CREATE-A2 格式当不了引用的 %s ⇒ 整轮显式拒绝，而且说的是原因不是「消失了」",
+    async (filename, ext) => {
+      mocks.entityFindMany.mockResolvedValue([]);
+      mocks.generationFindMany.mockResolvedValue([
+        {
+          id: "gen_odd", assetId: "ast_odd", source: "GENERATED",
+          promptText: "?", projectId: "proj_stream",
+          project: { name: "Raya launch" }, asset: { originalFilename: filename, ext },
+        },
+      ]);
+      mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
 
-    const res = await POST(req({
-      projectId: "proj_stream",
-      text: "use this",
-      references: ["generation:gen_odd"],
-    }));
+      const res = await POST(req({
+        projectId: "proj_stream",
+        text: "use this",
+        references: ["generation:gen_odd"],
+      }));
 
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: referenceUnavailableMessage("notFound") });
-    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
-  });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe(referenceUnavailableMessage("unsupportedFormat"));
+      // 那句谎话不许再出现在这条路上。
+      expect(body.error).not.toBe(referenceUnavailableMessage("notFound"));
+      expect(body.error).not.toMatch(/isn't available any more/i);
+      expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+      expect(mocks.run).not.toHaveBeenCalled();
+    },
+  );
 
   it("FRONT-A10 一件都没 @ 的一轮,那一列是空表而不是缺了那一格", async () => {
     mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));

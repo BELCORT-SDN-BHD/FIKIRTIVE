@@ -171,7 +171,11 @@ describe("FSE-002 / CREATE-A2 —— 对不上的四种，一律显式未解析"
     expect(generationFindMany.mock.calls[0]![0].where).toMatchObject({ ownerId: OWNER, deletedAt: null });
   });
 
-  it("FSE-002 / CREATE-A2 族别读不出的行 ⇒ 未解析（不当成图，也不当成片）", async () => {
+  // 复修轮（判官 2026-09-08 P1-1）：上一版把这种行记成 `unresolved`，于是商家自己的、就摆在
+  // Library 里的 gif／音频被整轮 400 拒绝，读到的还是那句「isn't available any more」——
+  // 一句他一查就知道是假的话。这一族现在**解析成功**（回链、芯片照旧），只是不进媒体槽，
+  // 单独记一个数，由写入侧说出真正的原因。
+  it("FSE-002 / CREATE-A2 格式当不了引用的行 ⇒ 照旧解析成功（回链在），只是不进媒体槽", async () => {
     generationFindMany.mockResolvedValue([
       { ...imageGenerationRow(), asset: { originalFilename: "thing.psd", ext: "psd" } },
     ]);
@@ -179,13 +183,60 @@ describe("FSE-002 / CREATE-A2 —— 对不上的四种，一律显式未解析"
     const out = await resolveOwnedReferenceRefs(OWNER, [`generation:${PRODUCT_GENERATION_ID}`]);
 
     expect(out.media).toEqual([]);
-    expect(out.unresolved).toBe(1);
+    // 它是商家自己的、还活着的行 —— 「消失了」是假的，所以它不算未解析。
+    expect(out.unresolved).toBe(0);
+    expect(out.unusableFormat).toBe(1);
+    // 回链那一半照旧在：读路径（历史消息上的芯片）走的就是这里。
+    expect(out.wire).toEqual([`generation:${PRODUCT_GENERATION_ID}`]);
+    expect(out.links).toHaveLength(1);
+    // 而且它**不能**掉进 `entityIds` —— 那会把一件素材当成一个元素递给铸卡层。
+    expect(out.entityIds).toEqual([]);
+  });
+
+  // 商家上传得了、却当不了参考的那几族（`UPLOAD_EXTS` ⊃ `REFERENCE_*_EXTS`）：gif／avif／mkv
+  // 与全部音频。`@` 选单对上传行不做扩展名过滤，所以这几件是真挑得到的。
+  it.each([
+    ["gif", "loop.gif"],
+    ["avif", "hero.avif"],
+    ["mkv", "cut.mkv"],
+    ["mp3", "jingle.mp3"],
+  ])(
+    "FSE-002 / CREATE-A2 自有上传的 %s ⇒ 不是「消失了」，而是「格式当不了引用」",
+    async (ext, filename) => {
+      generationFindMany.mockResolvedValue([
+        { ...uploadGenerationRow(), asset: { originalFilename: filename, ext } },
+      ]);
+
+      const out = await resolveOwnedReferenceRefs(OWNER, [`upload:${UPLOAD_ASSET_ID}`]);
+
+      expect(out.unresolved).toBe(0);
+      expect(out.unusableFormat).toBe(1);
+      expect(out.media).toEqual([]);
+      expect(out.entityIds).toEqual([]);
+    },
+  );
+
+  it("FSE-002 / CREATE-A2 一件能用一件不能用 ⇒ 能用的照旧上路，不能用的单独记数", async () => {
+    entityFindMany.mockResolvedValue([]);
+    generationFindMany.mockResolvedValue([
+      imageGenerationRow(),
+      { ...uploadGenerationRow(), asset: { originalFilename: "loop.gif", ext: "gif" } },
+    ]);
+
+    const out = await resolveOwnedReferenceRefs(OWNER, [
+      `generation:${PRODUCT_GENERATION_ID}`,
+      `upload:${UPLOAD_ASSET_ID}`,
+    ]);
+
+    expect(out.media).toEqual([{ generationId: PRODUCT_GENERATION_ID, kind: "image" }]);
+    expect(out.unresolved).toBe(0);
+    expect(out.unusableFormat).toBe(1);
   });
 
   it("FSE-002 / CREATE-A2 一件都没挂的一轮 ⇒ 两半都是空表，连库都不问", async () => {
     const out = await resolveOwnedReferenceRefs(OWNER, []);
 
-    expect(out).toMatchObject({ entityIds: [], media: [], wire: [], unresolved: 0 });
+    expect(out).toMatchObject({ entityIds: [], media: [], wire: [], unresolved: 0, unusableFormat: 0 });
     expect(entityFindMany).not.toHaveBeenCalled();
     expect(generationFindMany).not.toHaveBeenCalled();
   });

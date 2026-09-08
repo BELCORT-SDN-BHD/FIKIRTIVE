@@ -215,6 +215,33 @@ export function turnReferenceDraftFromMessage(
 }
 
 /**
+ * FSE-004 复修轮（判官 2026-09-08 P1-2）—— 同一轮的**两份**草稿里，带得动引用的那一份赢。
+ *
+ * 为什么会有两份：一轮失败时客户端手上可能有两个来源，而它们各自只在一种时刻是齐全的。
+ *
+ *   · 落库那条 USER 消息（`turnReferenceDraftFromMessage`）—— **刷新之后**唯一的权威：
+ *     服务端解析过的 typed refs ＋ 这一轮真正挂上路的媒体，两格齐全。
+ *   · 刚送出去那一份（`lastSentDraftRef`）—— **直播那一刻**唯一的权威：`sendMessage({text})`
+ *     的乐观回显只有 `parts`，`metadata` 一格都没有，所以从消息里读出来的草稿是「那句话
+ *     ＋ 零引用」。
+ *
+ * 上一版画布上那颗 Edit and retry 只读消息那一份，于是商家坐在屏幕前看着这一轮失败（没刷新）
+ * 点下去，引用一件都不回来，而屏幕上一个字都不说 ——「带回来了」与「没带回来」长得一模一样，
+ * 下一次送出就是一次无条件生成。那正是 FSE-004 自己定义的病灶。
+ *
+ * 规则只有一条，不看时序、不猜状态：**谁带得动引用谁上**。两份都带得动时落库那一份优先
+ * （它经过服务端解析，名字与类型都是真的）；两份都空时也回落库那一份（刷新之后它才是权威）。
+ */
+export function richerTurnReferenceDraft(
+  fromMessage: TurnReferenceDraft | null,
+  live: TurnReferenceDraft | null,
+): TurnReferenceDraft | null {
+  if (fromMessage && hasTurnReferences(fromMessage.refs)) return fromMessage;
+  if (live && hasTurnReferences(live.refs)) return live;
+  return fromMessage ?? live;
+}
+
+/**
  * 输入框上方那一行 —— 「这些引用跟着回来了」。
  *
  * 有名字就念名字（`@` 到的那几件解析时带回了真名）；只有 id 的那几件（手动挂的附件）没有

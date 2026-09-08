@@ -1881,6 +1881,11 @@ export async function ottoTurn(raw: unknown): Promise<
       // FSE-002:与流式那扇门逐字同一个顺序 —— 先按类型解析,媒体那一半再并进下面的槽。
       const picked = await resolveOwnedReferenceRefs(ownerId, parsed.data.references);
       if (picked.unresolved > 0) return { error: referenceUnavailableMessage("notFound") };
+      // FSE-002 复修轮:格式当不了引用的那一件 —— 同样整轮不发,同样说得出原因(理由与措辞
+      // 的出处见 `app/api/otto/stream/route.ts` 与 `gen-failure.ts`,这里不写第二份口径)。
+      if (picked.unusableFormat > 0) {
+        return { error: referenceUnavailableMessage("unsupportedFormat") };
+      }
 
       const refs = await validateOttoTurnReferences({
         ownerId,

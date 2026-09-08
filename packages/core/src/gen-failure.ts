@@ -386,6 +386,7 @@ export const REFERENCE_UNAVAILABLE_REASONS = [
   "fileMissing",
   "videoAsImage",
   "imageAsVideo",
+  "unsupportedFormat",
 ] as const;
 
 export type ReferenceUnavailableReason = (typeof REFERENCE_UNAVAILABLE_REASONS)[number];
@@ -416,6 +417,15 @@ export type ReferenceUnavailableReason = (typeof REFERENCE_UNAVAILABLE_REASONS)[
  * (Codex E2E-CRE-PAV-005): the request cannot succeed by pressing retry alone, only by removing
  * the attachment first, and "ask again" names what happens after that fix rather than reading as
  * permission to skip it.
+ *
+ * ── 第五句:格式撑不起一件引用(FSE-002 复修轮,判官 2026-09-08 P1-1)─────────────────
+ *
+ * `unsupportedFormat` 与上面那两句同一族:商家**自己的**、还活着的文件,只是它的格式当不了
+ * 生成引用 —— 上传允许 gif/avif/mkv 与全部音频,而参考只吃 png/jpg/jpeg/webp 与 mp4/mov/webm
+ * (`generation-reference.ts` 的两张表)。用 `notFound` 那句「isn't available any more」回答它
+ * 同样是一句商家一查就知道是假的话:那个文件就在他的 Library 里,而他会去找一次从没发生过的
+ * 删除。原因是**知道**的(那一行读出来了,还在他自己的 owner 域内,只有扩展名对不上),所以
+ * 就说出来,并点名那个真能修好它的动作 —— 换一件图或片。
  */
 const REFERENCE_UNAVAILABLE_SENTENCES: Readonly<Record<ReferenceUnavailableReason, string>> = {
   notFound:
@@ -429,6 +439,10 @@ const REFERENCE_UNAVAILABLE_SENTENCES: Readonly<Record<ReferenceUnavailableReaso
     "A video can't be used as a reference for an image. Swap it for an image and ask again — nothing was sent.",
   imageAsVideo:
     "An image can't be used as a reference clip. Swap it for a video and ask again — nothing was sent.",
+  // 「用不了」的原因是格式,不是消失 —— 所以这一句说的是格式,而不是那句会被当场戳穿的
+  // 「isn't available any more」。结尾同一条纪律:先点名换掉它,再说 ask again。
+  unsupportedFormat:
+    "One of your references is a file type that can't be used as a reference. Swap it for an image or video and ask again — nothing was sent.",
 };
 
 /** The sentence a merchant reads for an unusable attachment. One table, no second mapping. */

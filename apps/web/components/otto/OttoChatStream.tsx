@@ -118,6 +118,7 @@ import {
   hasTurnReferences,
   mergeTurnReferences,
   restoredReferencesNote,
+  richerTurnReferenceDraft,
   turnReferenceBody,
   turnReferenceDraftFromMessage,
   turnReferencesFromComposerPayload,
@@ -1133,9 +1134,14 @@ export function OttoChatStream({
   const turnTerminal = latestTurnTerminal(messages, transportTurnError);
   // 失败那一轮的出路:能重试的那一种(`error`)才给键,商家原来打的那句话就是这一轮开头
   // 那条 user 消息 —— 与抽屉里那张告示同一条判据,不靠任何只活一瞬的 ref。
+  // FSE-004 复修轮(判官 2026-09-08 P1-2):**两个**来源,带得动引用的那一份赢。
+  // 直播那一刻手上那条 USER 消息只是 `sendMessage({text})` 的乐观回显(没有 metadata),
+  // 所以只读它的话,「没刷新就点 Edit and retry」会一件引用都不带回来 —— 而画布形态下抽屉
+  // 是折起的,那张会说话的告示商家根本看不见,于是下一次送出就是一次无条件生成。
+  // 齐全的那一份一直就在 `lastSentDraftRef`(经 `retryDraft` state),这里把它接上。
   const canvasRetryDraft =
     turnTerminal?.outcome === "failed" && turnTerminal.error?.kind === "error"
-      ? retryDraftFrom(messages)
+      ? richerTurnReferenceDraft(retryDraftFrom(messages), retryDraft)
       : null;
   // 出路按**类型**分岔(#1225 判官残留):充值那一种给 Top up、上限那一种给 Open Billing &
   // credits、供应商侧那一档一个键都不给。判据与抽屉里那张告示逐字同一个,卡自己不解析措辞。
@@ -1811,7 +1817,17 @@ export function OttoChatStream({
                   {showPartError && (
                     <OttoStreamErrorNotice
                       error={partError}
-                      retryDraft={partError.kind === "error" ? retryDraftFrom(messages.slice(0, mi + 1)) : null}
+                      // FSE-004 复修轮:与画布那颗键同一条规矩 —— 带得动引用的那一份赢。
+                      // 直播那一份(`retryDraft`)只属于**最后**那一轮,所以只在最后一条上兜底;
+                      // 拿它去补一条更早的失败,补进去的就是别人那一轮的引用。
+                      retryDraft={
+                        partError.kind === "error"
+                          ? richerTurnReferenceDraft(
+                              retryDraftFrom(messages.slice(0, mi + 1)),
+                              mi === messages.length - 1 ? retryDraft : null,
+                            )
+                          : null
+                      }
                       onRetry={restoreDraft}
                     />
                   )}
