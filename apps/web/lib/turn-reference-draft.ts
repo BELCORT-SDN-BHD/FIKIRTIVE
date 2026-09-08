@@ -241,22 +241,58 @@ export function richerTurnReferenceDraft(
   return fromMessage ?? live;
 }
 
+/** 一件 typed 引用（`"<type>:<id>"`）里那个 id。没有冒号就是它自己。 */
+function bareReferenceId(ref: string): string {
+  const colon = ref.indexOf(":");
+  return colon === -1 ? ref : ref.slice(colon + 1);
+}
+
+/**
+ * 这份引用里**互不相同**的那几件东西的 id。
+ *
+ * 同一件东西会同时走两条道：`@` 到一张图 ⇒ `references` 里有 `generation:g1`，而那一轮真正
+ * 挂上路的 `sourceGenerationIds` 里也有 `g1`。按四条道相加去数它，一件就数成两件。
+ */
+export function distinctReferenceIds(refs: TurnReferences): string[] {
+  return uniq([
+    ...refs.entityIds,
+    ...refs.references.map(bareReferenceId),
+    ...refs.sourceGenerationIds,
+    ...refs.referenceVideoGenerationIds,
+  ]);
+}
+
 /**
  * 输入框上方那一行 —— 「这些引用跟着回来了」。
  *
  * 有名字就念名字（`@` 到的那几件解析时带回了真名）；只有 id 的那几件（手动挂的附件）没有
  * 名字可念，所以只报个数 —— 编一个名字出来比不报更糟。一件都没有就一个字都不说。
+ *
+ * 复修轮四（判官 2026-09-08 P1）—— 数的口径与 `hasTurnReferences` **逐条相同**：`references`
+ * 也算一件。从前这个数漏掉了它，于是「只 `@` 了一件 gif」那一轮被格式那句 400 退回之后，
+ * `restoredDraft` 明明设上了，这一行却算出 0 而返回 null：屏幕上既没有「References kept: …」
+ * 也没有 Remove references，而那件引用会跟着**之后每一次**送出（`submit()` 每次都合并
+ * `restoredDraft.refs`）—— 商家被锁在同一条 400 里，直到他刷新页面。
+ *
+ * `alreadyVisible` 是此刻**已经在附件条上看得见**的那几件（id 与名字）。同一件既在这份草稿里
+ * 又是一枚芯片时，这一行不再数第二遍 —— 屏幕上一件东西说两次，商家会以为它上了两次车。
  */
-export function restoredReferencesNote(draft: {
-  refs: TurnReferences;
-  labels: string[];
-}): string | null {
-  const named = draft.labels.filter(Boolean);
-  const total =
-    draft.refs.entityIds.length +
-    draft.refs.sourceGenerationIds.length +
-    draft.refs.referenceVideoGenerationIds.length;
-  if (named.length === 0 && total === 0) return null;
+export function restoredReferencesNote(
+  draft: {
+    refs: TurnReferences;
+    labels: string[];
+  },
+  alreadyVisible: { ids?: readonly string[]; labels?: readonly string[] } = {},
+): string | null {
+  const hiddenIds = new Set(alreadyVisible.ids ?? []);
+  const hiddenLabels = new Set(alreadyVisible.labels ?? []);
+  const all = distinctReferenceIds(draft.refs);
+  const ids = all.filter((id) => !hiddenIds.has(id));
+  // 这份草稿带着的每一件都已经在屏幕上（附件条）—— 这一行再说一遍就是同一件东西说两次。
+  // 名字对不上 id（labels 与四条道不是一一对应），所以判据是 id，名字只做第二道筛。
+  if (all.length > 0 && ids.length === 0) return null;
+  const named = uniq(draft.labels).filter((name) => !hiddenLabels.has(name));
+  if (named.length === 0 && ids.length === 0) return null;
   if (named.length > 0) return `References kept: ${named.join(", ")}`;
-  return total === 1 ? "1 reference kept" : `${total} references kept`;
+  return `References kept: ${ids.length === 1 ? "1 reference" : `${ids.length} references`}`;
 }

@@ -57,7 +57,7 @@ function renderNotice(
 ): string {
   // FSE-004:重试草稿是**那句话加上那一轮的原引用**（`TurnReferenceDraft`）。这个文件钉的是
   // 告示的脸，所以这里只把那句话包成最小的一份草稿；引用那一半由
-  // `front-a12-canvas-turn-failure` 与 `fse-004-retry-draft-references` 钉。
+  // `front-a12-canvas-turn-failure` 与 `fse-003-004-send-and-retry-draft` 钉。
   const draft = retryDraft
     ? { text: retryDraft, refs: EMPTY_TURN_REFERENCES, labels: [], sourceMessageId: null }
     : undefined;

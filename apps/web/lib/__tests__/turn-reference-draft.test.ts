@@ -102,7 +102,44 @@ describe("FSE-004 / FRONT-A12 —— 落库消息 → 重试草稿", () => {
         refs: { ...EMPTY_TURN_REFERENCES, sourceGenerationIds: [IMAGE, CLIP] },
         labels: [],
       }),
-    ).toBe("2 references kept");
+    ).toBe("References kept: 2 references");
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 复修轮四（判官 2026-09-08 P1）—— 这一行的数与 `hasTurnReferences` 是同一个口径。
+  // 漏掉 `references` 的后果不是「少说一句」：那一轮**没有**任何 Remove references 可按，
+  // 而这份草稿跟着之后每一次送出，商家被锁在同一条 400 里直到刷新。
+  // ───────────────────────────────────────────────────────────────────────────
+  it("FSE-004 / FRONT-A12 只有 `@` 到的那一件（references）也要数进来 —— 口径与 hasTurnReferences 一致", () => {
+    const refs = { ...EMPTY_TURN_REFERENCES, references: ["upload:upl_gif"] };
+    expect(hasTurnReferences(refs), "这份草稿本来就算「带着引用」").toBe(true);
+    expect(restoredReferencesNote({ refs, labels: [] })).toBe("References kept: 1 reference");
+  });
+
+  it("FSE-004 / FRONT-A12 同一件走两条道 ⇒ 只数一次（`generation:g` 与 sourceGenerationIds 是同一张图）", () => {
+    expect(
+      restoredReferencesNote({
+        refs: {
+          entityIds: [AVATAR],
+          references: [`official-avatar:${AVATAR}`, `generation:${IMAGE}`],
+          sourceGenerationIds: [IMAGE],
+          referenceVideoGenerationIds: [],
+        },
+        labels: [],
+      }),
+    ).toBe("References kept: 2 references");
+  });
+
+  it("FSE-004 / FRONT-A12 已经在附件条上看得见的那一件不在这一行里再说一遍", () => {
+    const draft = {
+      refs: { ...EMPTY_TURN_REFERENCES, references: [`generation:${IMAGE}`] },
+      labels: ["Coral travel mug"],
+    };
+    expect(restoredReferencesNote(draft)).toBe("References kept: Coral travel mug");
+    expect(
+      restoredReferencesNote(draft, { ids: [IMAGE], labels: ["Coral travel mug"] }),
+      "同一张图既是芯片又在这一行里 —— 商家会以为它上了两次车",
+    ).toBeNull();
   });
 });
 

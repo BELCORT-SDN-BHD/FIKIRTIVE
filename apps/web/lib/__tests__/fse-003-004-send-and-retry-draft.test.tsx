@@ -24,6 +24,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   runPlanApproval: vi.fn(),
   sendMessage: vi.fn(),
+  /** `@` 菜单背后那一次真的服务端搜索 —— 这个文件里它只答一件东西:一张 gif。 */
+  searchReferencesAction: vi.fn(),
   chat: {
     status: "ready" as "ready" | "submitted" | "streaming" | "error",
     error: null as Error | null,
@@ -53,6 +55,7 @@ vi.mock("@ai-sdk/react", () => ({
 }));
 vi.mock("ai", () => ({ DefaultChatTransport: class { constructor(_opts: unknown) { void _opts; } } }));
 vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: vi.fn() }));
+vi.mock("@/lib/reference-search-actions", () => ({ searchReferencesAction: mocks.searchReferencesAction }));
 vi.mock("@/lib/upload-actions", () => ({ finalizeCandidateUploads: vi.fn() }));
 vi.mock("@/lib/direct-upload", () => ({ uploadFilesDirect: vi.fn() }));
 vi.mock("@/lib/otto-client-actions", () => ({
@@ -63,12 +66,18 @@ vi.mock("@/lib/otto-client-actions", () => ({
   setAdsAutonomy: vi.fn(),
 }));
 
-const { OttoChatStream } = await import("@/components/otto/OttoChatStream");
+const { OttoChatStream, COMPOSER_BUSY_NOTICE } = await import("@/components/otto/OttoChatStream");
 const { CHANGE_FORM_SEND } = await import("@/components/otto/CardOptionControls");
 const { EDIT_AND_RETRY_LABEL } = await import("@/components/otto/OttoStreamErrorNotice");
 const { referenceUnavailableMessage } = await import("@fikirtive/core/gen-failure");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+// `@` 菜单靠它定位;jsdom 不带,缺了它菜单一行都渲染不出来,而这条测试的前提正是那一行。
+globalThis.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as unknown as typeof ResizeObserver;
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -78,6 +87,23 @@ const CARD_ID = "card_1";
 const AVATAR_ID = "ent_aisyah";
 const PRODUCT_GENERATION_ID = "gen_coral_mug";
 const SNAG = "Otto hit a snag — please try again. Reference: OTTO-4F2A9C31";
+
+/**
+ * 复修轮四(判官 2026-09-08 P1)—— 商家 `@` 到的那一件 gif。
+ *
+ * `upload` 不是实体类型(`ENTITY_REFERENCE_TYPES` 里没有它),所以这一轮唯一带的是
+ * `references` 那一格:`entityIds` / `sourceGenerationIds` / `referenceVideoGenerationIds`
+ * 三格全空 —— 正是那条计数漏算的形状。gif 上传允许、当引用不行,服务端回的是
+ * `unsupportedFormat` 那一句 400(`lib/reference-search.ts` 的 `@` 搜索不按扩展名过滤)。
+ */
+const GIF_ROW = {
+  type: "upload" as const,
+  id: "upl_party_gif",
+  name: "party.gif",
+  source: "Uploads",
+  thumbUrl: null,
+};
+const GIF_REF = `upload:${GIF_ROW.id}`;
 
 /** 一张服务端今天真会铸出来的图片卡，带演员与商品图两件引用回执。 */
 function cardPayload() {
@@ -257,6 +283,8 @@ beforeEach(() => {
   mocks.chat.error = null;
   mocks.chat.messages = [];
   mocks.chat.onData = null;
+  mocks.searchReferencesAction.mockReset();
+  mocks.searchReferencesAction.mockResolvedValue({ items: [GIF_ROW], nextCursor: null });
 });
 
 afterEach(() => {
@@ -348,7 +376,7 @@ describe("FSE-003 / CREATE-A1 —— 「Send to Otto」按字面真发送", () =
     expect(composer().value, "卡上那颗 Send 把商家打了一半的那句话无声清空了").toBe("and then a video for Raya");
   });
 
-  it("FSE-003 / CREATE-A1 上一轮还在飞 ⇒ 不发送，但草稿回到输入框（不是「按了没反应」）", async () => {
+  async function busyChangeForm(): Promise<HTMLElement> {
     mocks.chat.messages = [
       { id: "u1", role: "user", parts: [{ type: "text", text: "make me a hero shot" }] },
       genCardMessage(),
@@ -356,6 +384,11 @@ describe("FSE-003 / CREATE-A1 —— 「Send to Otto」按字面真发送", () =
     mocks.chat.status = "streaming";
     const host = await mountCanvas();
     await click(buttonByText(host, "Change"));
+    return host;
+  }
+
+  it("FSE-003 / CREATE-A1 上一轮还在飞、输入框是空的 ⇒ 不发送，草稿回到输入框（不是「按了没反应」）", async () => {
+    const host = await busyChangeForm();
     const note = host.querySelector('[data-slot="card-change-form"] textarea') as HTMLTextAreaElement;
     await typeInto(note, "add the exact product photo");
     await click(buttonByText(host, CHANGE_FORM_SEND));
@@ -363,6 +396,28 @@ describe("FSE-003 / CREATE-A1 —— 「Send to Otto」按字面真发送", () =
     expect(mocks.sendMessage).not.toHaveBeenCalled();
     expect(composer().value).toContain("add the exact product photo");
     // 引用也留着 —— 商家自己按下去时它们照旧跟着走。
+    expect(host.querySelector('[data-slot="restored-references"]')?.textContent).toContain("Aisyah");
+    // 输入框本来就是空的，那句话真的放回去了 —— 不必再多说一句。
+    expect(host.querySelector('[data-slot="composer-busy-notice"]')).toBeNull();
+  });
+
+  // 复修轮四（判官 2026-09-08 P2）—— 同一颗键，输入框里有字的那一半。
+  // `restoreDraft` 从前**无条件** `seedComposer`：商家一边打下一句、一边在卡上按 Send 被闸
+  // 挡下，他打了一半的那句话当场被卡的原话换掉，而屏幕上一个字都不说它去哪了。
+  it("FSE-003 / CREATE-A1 上一轮还在飞、输入框有字 ⇒ 不覆盖商家正在打的那句话，改成说出没送出去", async () => {
+    const host = await busyChangeForm();
+    await typeInto(composer(), "and then a video for Raya");
+    const note = host.querySelector('[data-slot="card-change-form"] textarea') as HTMLTextAreaElement;
+    await typeInto(note, "add the exact product photo");
+    await click(buttonByText(host, CHANGE_FORM_SEND));
+
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    expect(composer().value, "商家正在打的那句话被卡的原话覆盖了").toBe("and then a video for Raya");
+    // 「按了没反应」是走查的原病灶：没送出去这件事必须有人说出口。
+    const notice = host.querySelector('[data-slot="composer-busy-notice"]');
+    expect(notice, "那颗键没送出去，屏幕上一个字都不说").toBeTruthy();
+    expect(notice!.textContent).toBe(COMPOSER_BUSY_NOTICE);
+    // 引用照旧留着 —— 它们不占输入框。
     expect(host.querySelector('[data-slot="restored-references"]')?.textContent).toContain("Aisyah");
   });
 });
@@ -382,6 +437,21 @@ describe("FSE-004 / FRONT-A12 —— 重试草稿 = 那句话 ＋ typed refs ＋
 
     expect(composer().value).toBe("make another take with the mug");
     expect(mocks.sendMessage, "Edit and retry 绝不自己发送 —— 商家要先改").not.toHaveBeenCalled();
+  });
+
+  // 复修轮四（判官 2026-09-08 P3）—— 商家按下 Edit and retry 之后**改过**那句话，再按一次
+  // （或者另一条恢复路径到达）时，从前会把他改的字换回原话，而屏幕上一处都不说。
+  it("FSE-004 / FRONT-A12 商家改过那句话之后 ⇒ 再恢复一次不把他改的字换回原话", async () => {
+    const host = await failedTurn();
+    await click(buttonByText(host, EDIT_AND_RETRY_LABEL));
+    expect(composer().value).toBe("make another take with the mug");
+
+    await typeInto(composer(), "same shot but no mug at all");
+    await click(buttonByText(host, EDIT_AND_RETRY_LABEL));
+
+    expect(composer().value, "商家改过的那句话被原话换回去了").toBe("same shot but no mug at all");
+    // 引用照旧回来 —— 它们不占输入框。
+    expect(host.querySelector('[data-slot="restored-references"]')?.textContent).toContain("Aisyah");
   });
 
   it("FSE-004 / FRONT-A12 原引用跟着回来，而且商家看得见它们回来了", async () => {
@@ -578,6 +648,109 @@ describe("FSE-004 / FRONT-A12 —— 重试草稿 = 那句话 ＋ typed refs ＋
     expect(line, "再点一次 Edit and retry 把刚放回来的引用抹掉了").toBeTruthy();
     expect(line!.textContent).toContain("Aisyah");
     expect(line!.textContent).toContain("Coral travel mug");
+    consoleError.mockRestore();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 复修轮四（判官 2026-09-08 P1）—— 一轮**只有** `@` 到的引用（`references` 一格）被退回。
+//
+// 走查形状：商家 `@` 一件 gif（`@` 搜索不按扩展名过滤，gif 挑得到），送出去被
+// `unsupportedFormat` 那句 400 整轮退回。`restoredDraft` 设上了，可那一行的计数只加
+// entityIds ＋ sourceGenerationIds ＋ referenceVideoGenerationIds —— 漏掉 `references`，
+// 于是它算出 0 而返回 null：屏幕上没有「References kept: …」，也就没有 Remove references。
+// 而 `submit()` 每一次都合并 `restoredDraft.refs`，那件 gif 跟着之后**每一次**送出，
+// 商家被锁在同一条 400 里，除了刷新页面没有第二条出路。
+// ─────────────────────────────────────────────────────────────────────────────
+describe("FSE-004 / FRONT-A12 —— 只 `@` 到一件的那一轮被退回后，商家有得可移", () => {
+  /** 真的打一个 `@`、真的从菜单里选中那一行 —— 走的是真 `useReferencePicker`。 */
+  async function mentionGif(): Promise<void> {
+    const el = composer();
+    const value = "@party";
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(el, value);
+      el.setSelectionRange(value.length, value.length);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // 选择器的防抖是 120ms，这里用真时钟等它连同那次搜索一起落地。
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
+    const row = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find((option) => option.textContent?.includes(GIF_ROW.name));
+    expect(row, "`@` 菜单里没有那件 gif —— 这条测试后面的话就都不算数").toBeTruthy();
+    await act(async () => {
+      row!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  async function pressEnter(): Promise<void> {
+    await act(async () => {
+      composer().dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }),
+      );
+    });
+  }
+
+  /**
+   * 一轮真的**在飞**过之后才被退回。这一串状态位不能省：送出那道闸（`submitLockRef`）
+   * 靠 `isBusy` 落下来又抬起来，省掉它下一次送出会被自己的闸挡住，测试就演不到复现路径。
+   */
+  async function flyThenRefuse(sentence: string): Promise<void> {
+    mocks.chat.status = "submitted";
+    await act(async () => { root!.render(streamElement()); });
+    await refuseTurn(sentence);
+  }
+
+  /** `@` 一件 gif → 送出 → 被格式那一句 400 退回。 */
+  async function refusedGifTurn(): Promise<HTMLElement> {
+    const host = await mountCanvas();
+    await mentionGif();
+    await pressEnter();
+    expect(mocks.sendMessage, "这一幕的前提是真的送出了一轮").toHaveBeenCalledTimes(1);
+    expect(lastBody()["references"], "送出去的那一轮没带那件 gif").toEqual([GIF_REF]);
+    // 那一轮**只有** `references` 一格 —— 正是漏算的那个形状。
+    expect(lastBody()["entityIds"]).toBeUndefined();
+    expect(lastBody()["sourceGenerationIds"]).toBeUndefined();
+    await flyThenRefuse(referenceUnavailableMessage("unsupportedFormat"));
+    return host;
+  }
+
+  it("FSE-004 / FRONT-A12 只 `@` 到一件的那一轮被退回 ⇒ 屏幕上说得出它还在，也给得出 Remove", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const host = await refusedGifTurn();
+
+    // 那句「换一件再问」上屏了 —— 商家读到的就是「有一件参考用不了」。
+    expect(host.textContent).toContain(referenceUnavailableMessage("unsupportedFormat"));
+    const line = container!.querySelector('[data-slot="restored-references"]');
+    expect(line, "引用还跟着这一份草稿，屏幕上却一个字都不说 —— 唯一的清除入口也就没有了").toBeTruthy();
+    expect(line!.textContent).toContain("References kept: 1 reference");
+    expect(buttonByText(container!, "Remove references"), "没有 Remove references 可按").toBeTruthy();
+    consoleError.mockRestore();
+  });
+
+  it("FSE-004 / FRONT-A12 按下 Remove references ⇒ 下一次送出真的不再带它", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    await refusedGifTurn();
+    await click(buttonByText(container!, "Remove references"));
+    expect(container!.querySelector('[data-slot="restored-references"]')).toBeNull();
+
+    await typeInto(composer(), "just a plain poster");
+    await click(buttonByText(container!, "Send"));
+
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2);
+    expect(lastBody()["references"], "移掉了那件 gif，它还是爬回了请求体").toBeUndefined();
+    consoleError.mockRestore();
+  });
+
+  it("FSE-004 / FRONT-A12 不按 Remove 直接再送 ⇒ 它照旧跟着（那一句要的就是重选，不是静默丢弃）", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    await refusedGifTurn();
+
+    await typeInto(composer(), "make it a poster with that clip");
+    await click(buttonByText(container!, "Send"));
+
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2);
+    expect(lastBody()["references"]).toEqual([GIF_REF]);
     consoleError.mockRestore();
   });
 });

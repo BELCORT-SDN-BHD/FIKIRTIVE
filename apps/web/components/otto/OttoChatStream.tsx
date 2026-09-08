@@ -245,6 +245,14 @@ function errorBodyText(message: string | undefined): string | null {
  */
 const TRANSPORT_FAILURE_TEXT = OTTO_TRANSIENT_FAILURE_SENTENCE;
 
+/**
+ * FSE-003 复修轮四（判官 2026-09-08 P2）—— 卡上那颗 Send 被「上一轮还在飞」挡下，而输入框里
+ * 商家正打着下一句。从前这一刻把卡的原话直接塞进输入框，他打的字无声消失；现在输入框原样
+ * 不动，由这一句说出那颗键为什么没反应，并点名那个真能修好它的动作（等这一轮跑完再按一次）。
+ */
+export const COMPOSER_BUSY_NOTICE =
+  "Otto is still working on the last one — ask for that change again once it's done.";
+
 /** The latest user message — the one this turn started from. */
 function latestUserMessage(messages: OttoUiMessage[]): OttoUiMessage | null {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -342,6 +350,11 @@ export function OttoChatStream({
   const [uploading, setUploading] = useState(false);
   /** Upload error message shown near the attach button; clears on next successful attach. */
   const [attachError, setAttachError] = useState<string | null>(null);
+  /**
+   * FSE-003 复修轮四：卡上那颗 Send 被「上一轮还在飞」挡下，而输入框里商家正在打字 ——
+   * 那句话不能被覆盖，所以这一行代它说出「为什么没送出去」。下一次真送出时清掉。
+   */
+  const [composerBusyNotice, setComposerBusyNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastSubmittedTextRef = useRef("");
   /** FSE-004:刚送出去那一轮的整份草稿 —— 直播失败时它就是重试草稿(文字 ＋ 引用)。 */
@@ -877,6 +890,7 @@ export function OttoChatStream({
     setStreamErrorKind(null);
     setRetryDraft(null);
     setAttachError(null);
+    setComposerBusyNotice(null);
     // A new turn may queue a new generation — re-arm polling.
     rearmGenerationPoll();
     // Capture and clear attachments before send. The local preview blob URLs are NOT revoked
@@ -1161,10 +1175,19 @@ export function OttoChatStream({
    * FSE-004 —— 「Edit and retry」：那句话回输入框，原引用留在 `restoredDraft` 等着一起上路。
    *
    * 刻意**不**发送：商家按这颗键就是因为上一次没成，他要先改。发送在他自己按下之后。
+   *
+   * 复修轮四（判官 2026-09-08 P3）——「回输入框」只在输入框**是空的**时候发生，与那条 400
+   * 放回文字的口径逐字相同（`setText(current => current.trim() ? current : draft.text)`）。
+   * 商家按下这颗键之后改过的那句话（或者他此刻正在打的下一句）不是任何一条恢复路径的空地：
+   * 覆盖回原话，屏幕上没有一处说过他改的字去哪了。引用照旧回来 —— 它们不占输入框。
+   *
+   * 返回值＝那句话有没有真的放回去，调用处据此决定要不要另外说一句。
    */
-  function restoreDraft(draft: TurnReferenceDraft) {
-    seedComposer(draft.text);
+  function restoreDraft(draft: TurnReferenceDraft): boolean {
+    const seeded = !text.trim();
+    if (seeded) seedComposer(draft.text);
     setRestoredDraft(hasTurnReferences(draft.refs) ? draft : null);
+    return seeded;
   }
 
   /**
@@ -1179,7 +1202,11 @@ export function OttoChatStream({
     // 没送出去只有两种原因。上一轮还在飞（`composerBusy`）——那是商家看得见的状态，草稿交还
     // 给他，他自己按下去。另一种是双击的第二下：闸还锁着，而第一下**已经送出去了** ——
     // 那一下什么都不做，不然一次双击既送出一轮、又把同一段字塞进输入框（判官 P2 的另一半）。
-    if (composerBusy) restoreDraft(draft);
+    if (!composerBusy) return;
+    // 复修轮四（判官 2026-09-08 P2）：交还草稿从前是**无条件**往输入框里塞 —— 商家一边打
+    // 下一句、一边在卡上按 Send 被闸挡下，他打了一半的那句话当场被卡的原话换掉，而屏幕上一个
+    // 字都不说。输入框有字就不动它，改成说出那颗键为什么没送出去；引用照旧留在 `restoredDraft`。
+    if (!restoreDraft(draft)) setComposerBusyNotice(COMPOSER_BUSY_NOTICE);
   }
 
   // The index of the message that holds the actively-streaming assistant text, so
@@ -1224,7 +1251,14 @@ export function OttoChatStream({
     turnTerminal?.outcome === "failed" ? turnTerminal.error?.kind ?? null : null;
   const canvasLayout = layout === "canvas";
   // FSE-004:输入框上方那一行(「References kept: …」)。没有恢复回来的引用就一个字都不说。
-  const restoredNote = restoredDraft ? restoredReferencesNote(restoredDraft) : null;
+  // 复修轮四:附件条上已经看得见的那几件不在这一行里再数一遍 —— 一件东西在屏幕上说两次,
+  // 商家会以为它上了两次车(而请求体里 `mergeTurnReferences` 早就把它收敛成一件)。
+  const restoredNote = restoredDraft
+    ? restoredReferencesNote(restoredDraft, {
+        ids: attachedRefs.map((ref) => ref.generationId),
+        labels: attachedRefs.map((ref) => ref.label),
+      })
+    : null;
 
   // ── 画布卡这一刻的脸(走查 P0-3 / P0-4)────────────────────────────────────────
   // 每一张 GEN_CARD 的运行态,与抽屉里那张卡读的是同一个 `deriveCardState`。
@@ -2098,6 +2132,18 @@ export function OttoChatStream({
                   {uploading ? "Attaching…" : "Use this frame"}
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* FSE-003 复修轮四 —— 卡上那颗 Send 被「上一轮还在飞」挡下,而输入框里商家正打着
+              下一句:那句话原样留着,没送出去这件事由这一行说出口(从前它无声无息)。 */}
+          {composerBusyNotice && (
+            <div
+              data-slot="composer-busy-notice"
+              role="status"
+              className="mb-2 text-[0.75rem] text-muted-foreground"
+            >
+              {composerBusyNotice}
             </div>
           )}
 
