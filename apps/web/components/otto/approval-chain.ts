@@ -27,7 +27,7 @@
  */
 import type { OttoUiMessage } from "@/lib/otto-ui-messages";
 import type { ChatThreadDTO } from "@/lib/types";
-import { appendChainedNarrations, appendDurableResults, appendMissingCards, syncCardJobIds } from "@/lib/otto-inject-helpers";
+import { appendCanvasActionRequests, appendChainedNarrations, appendDurableResults, appendMissingCards, syncCardJobIds } from "@/lib/otto-inject-helpers";
 
 /** A resume that parked again: the still-pending card ids, the server's localized
  *  receipt (null when the model narrated its own text), and — when the model DID
@@ -208,7 +208,10 @@ export async function runPackApprovalLoop<C extends { cardId: string; pendingApp
  *  append worker results (GEN_RESULT / TURN_ERROR), append any card-kind
  *  durables missing from the list — a chained park's new GEN_CARDs arrive via a
  *  server action (no live stream), so without this they never render until a
- *  reload — and (#498 round-5 P2c) append the chained park's model narration
+ *  reload — append (FSE-005) the USER request line of a canvas node action, the
+ *  one durable row `appendMissingCards` cannot carry (its card arrives, the
+ *  sentence the merchant pressed does not) — and (#498 round-5 P2c) append the
+ *  chained park's model narration
  *  TEXTs identified by `narrationMessageIds`. All helpers dedupe by durableId;
  *  no OTHER text is ever re-injected (streamed replies already rendered) —
  *  deliberately NOT `backfillMissingAssistantText` (P2-1) here: this poll runs
@@ -225,7 +228,10 @@ export function mergeDurableIntoLive(
   narrationMessageIds?: readonly string[],
 ): OttoUiMessage[] {
   return appendChainedNarrations(
-    appendMissingCards(appendDurableResults(syncCardJobIds(messages, fresh), fresh), fresh),
+    appendCanvasActionRequests(
+      appendMissingCards(appendDurableResults(syncCardJobIds(messages, fresh), fresh), fresh),
+      fresh,
+    ),
     fresh,
     narrationMessageIds,
   );
