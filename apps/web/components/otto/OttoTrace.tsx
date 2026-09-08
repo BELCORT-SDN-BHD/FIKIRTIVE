@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import type { OttoStepKind } from "@/lib/otto-stream-bridge";
 
 /**
  * OTTO's live step-trace — the agent narrating what it's doing, Grok-style but in
@@ -22,6 +23,8 @@ export interface TraceStep {
   status: TraceStepStatus;
   /** Optional mono detail, e.g. "cozy · warm". */
   detail?: string;
+  /** 这一步是哪一类动作（`data-step` 带来的）——面板抬头据此说话。 */
+  kind?: OttoStepKind;
 }
 
 const CORAL_INK = "#9A3A1A"; // OTTO's dark-coral text — reads on coral-soft in both skins
@@ -33,6 +36,37 @@ export const TRACE_WAITING_HINT = "Nothing is running yet — confirm on the car
 
 /** 一轮以终态收尾但步骤没跑完时的面板措辞 —— 停了就说停了，不再转圈假装在跑。 */
 export const TRACE_STOPPED_TITLE = "Otto stopped partway";
+
+/**
+ * 抬头：**这一轮真的在做的那件事**（FSE-013）。
+ *
+ * 从前这里只有一句写死的「Otto is making it」。2026-09-08 staging 走查里，商家只问了一句
+ * Instagram 尺寸、没有要任何生成，屏幕上照旧写着 Otto 在 making it —— 而那一轮的 trace 是
+ * 4 步、researchWeb ×3、零 GenJob、零 hold。一句「正在给你做」配一件根本没做的事，是最贵的
+ * 那一种不实：商家会以为钱正在花出去。
+ *
+ * 现在抬头由步骤自己带的 `kind` 决定，而 `kind` 来自**真的被调用的工具**
+ * （`TOOL_STEPS`，`lib/otto-stream-bridge.ts`）。四句话就住在这里，与上面两句同一处。
+ */
+export const TRACE_HEADING_BY_KIND: Record<OttoStepKind, string> = {
+  research: "Otto is looking things up",
+  planning: "Otto is thinking it through",
+  making: "Otto is making it",
+  working: "Otto is working on it",
+};
+
+/** 一步都不带 `kind` 时的抬头（手写步骤／老数据）—— 保持从前那一句，不另造一句。 */
+export const TRACE_DEFAULT_TITLE = "Otto is making it";
+
+/**
+ * 该显示哪一句抬头：优先说**此刻正在跑**的那一步（最后一个 active）；它没有类别就退到最后一个
+ * 带类别的步骤（刚做完的那件事）。一个都没有 ⇒ null，由调用方兜底。纯函数，单测直接钉。
+ */
+export function traceHeadingOf(steps: readonly TraceStep[]): string | null {
+  const running = [...steps].reverse().find((s) => s.status === "active" && s.kind);
+  const latest = running ?? [...steps].reverse().find((s) => s.kind);
+  return latest?.kind ? TRACE_HEADING_BY_KIND[latest.kind] : null;
+}
 
 function OttoGlyph({ size = 17 }: { size?: number }) {
   const h = Math.round((size * 22) / 24);
@@ -164,7 +198,15 @@ export function OttoTrace({ steps, title }: { steps: TraceStep[]; title?: string
   const activeIdx = steps.findIndex((s) => s.status === "active");
   const doneCount = steps.filter((s) => s.status === "done").length;
   const allDone = doneCount === total;
-  const heading = title ?? (awaiting ? TRACE_WAITING_TITLE : stopped ? TRACE_STOPPED_TITLE : "Otto is making it");
+  // FSE-013：抬头不再写死。跑着的时候说的是这一轮真的在做的那一类动作（查资料／想方案／出片／
+  // 杂务），由步骤自己带的 `kind` 决定；一步都没带类别时才退回从前那一句。
+  const heading =
+    title ??
+    (awaiting
+      ? TRACE_WAITING_TITLE
+      : stopped
+      ? TRACE_STOPPED_TITLE
+      : traceHeadingOf(steps) ?? TRACE_DEFAULT_TITLE);
   const counter = awaiting
     ? "waiting for you"
     : stopped
