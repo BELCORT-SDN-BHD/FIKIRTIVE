@@ -2403,10 +2403,66 @@ describe("FSE-001 —— 演员 + 商品图 = 一步出片", () => {
     expect(cardPayload.entityIds).toEqual([]);
   });
 
-  it("FSE-001 / CREATE-A9: 别家店的商品图混进来 ⇒ 整轮拒绝,一张卡都不铸(既有同族)", () => {
+  // ── FSE-001 判官 r1 P2 —— 挂满 9 张商品图时,卡上冻的商品图只有 8 件 ──────────────
+  //
+  // 名额里演员先占 1 格,所以铸卡这一刀切到 8。切在这里而不是 worker 里,是因为卡上冻的
+  // 那一列**就是**付费请求要送的那一列 —— 卡列 9 件、请求送 8 件,就又是「说的与做的
+  // 失同步」。
+  it("FSE-001 / CREATE-A9: 演员 + 挂 9 张商品图 ⇒ 卡上冻 8 件商品图(第 9 件不上车)", () => {
+    const mugIds = Array.from({ length: 9 }, (_, i) => `gen_mug_${i}`);
+    const ctx = makeCtx({
+      sourceGenerationId: mugIds[0]!,
+      sourceGenerationIds: mugIds,
+      mediaReferences: mugIds.map((id) => ({ ...MUG_RECEIPT, generationId: id })),
+    });
+
+    const { cardPayload, mentionedCharacterCount } = buildProposeCard(
+      videoInput([AISYAH.id]),
+      ctx,
+      [AISYAH],
+    );
+
+    expect(mentionedCharacterCount).toBe(1);
+    expect(cardPayload.referenceGenerationIds).toEqual(mugIds.slice(0, 8));
+    // 首帧那一格照旧是空的,演员照旧留在卡上。
+    expect(cardPayload.sourceGenerationId).toBeUndefined();
+    expect(cardPayload.entityIds).toEqual([AISYAH.id]);
+  });
+
+  // 判官 r1 P3 —— 这一条测的是**别家店的演员**(一个 `Entity` id 不在归属集里),
+  // 不是商品图。旧名字写着「商品图」,读的人会以为跨租户的 `Generation` 在这一层被挡住,
+  // 而挡它的是另一层(见下一条)。名字与它证明的事必须是同一件。
+  it("FSE-001 / CREATE-A9: 别家店的演员混进来 ⇒ 整轮拒绝,一张卡都不铸(既有同族)", () => {
     expect(() =>
       buildProposeCard(videoInput([AISYAH.id, "entity-someone-else"]), withMug(), [AISYAH]),
     ).toThrow(ProposeRefusal);
+  });
+
+  // ── 跨租户的 **Generation**(商品图)挡在哪一层 ────────────────────────────────
+  //
+  // 挡它的是解析那一步(`validateOttoTurnReferences` → `resolveGenerationRefs`,
+  // `apps/web/lib/otto-actions.ts`):别家店的 id 解不出来 ⇒ `unavailable: notFound`
+  // ⇒ 两个发送入口整轮拒绝,一条 USER 消息都不落库。那一层有它自己的真库用例
+  // (`apps/web/lib/__tests__/creation-cross-canvas-reference.test.ts`,
+  // 「CREATE-A2 乙店的 generation id 被甲店引用」)。
+  //
+  // 铸卡这一层因此**永远看不到**一个没解析过的 id 带着回执进来。这里钉的是它的下半句:
+  // 万一有一个 id 绕过解析走到铸卡(手写调用、将来的新入口),卡上不会替它编一份回执 ——
+  // 没有回执的 id 由 `planCardGate` 判成不可批准,所以它不可能变成一次付费。
+  it("FSE-001 / CREATE-A2: 没经解析的 Generation id ⇒ 卡上零回执(不许替它编一份)", () => {
+    const ctx = makeCtx({
+      sourceGenerationId: "gen_from_another_shop",
+      sourceGenerationIds: ["gen_from_another_shop"],
+      // 解析结果里没有它 —— 正是跨租户 id 走到这里时的形状。
+      mediaReferences: [],
+    });
+
+    const { cardPayload } = buildProposeCard(videoInput([AISYAH.id]), ctx, [AISYAH]);
+
+    // 一份都没有(空 = 这一格根本不写进 payload),而 id 仍留在卡上 ——
+    // 「有 id 没回执」正是 `planCardGate` 判不可批准的那个形状。
+    expect(cardPayload.mediaReferences).toBeUndefined();
+    expect(cardPayload.referenceGenerationIds).toEqual(["gen_from_another_shop"]);
   });
 });
 
@@ -2511,6 +2567,48 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
 
     expect(out).toHaveProperty("cardId");
     expect(mockPrisma.chatMessage.create).toHaveBeenCalledTimes(1);
+  });
+
+  // ── FSE-001 判官 r1 P2 —— 被截掉的是商品图,而卡面必须点名说出来 ──────────────────
+  //
+  // 只报「9 of your 10」时商家无从知道少的是他的杯子还是那位演员。演员少一张 = 买回来
+  // 一个陌生人;商品图少一张 = 少一个角度。分量不同,所以这一句必须点名。
+  it("FSE-001 / CREATE-A9: 挂 9 张商品图 ⇒ 披露句点名商品图被截、演员的照片保住", async () => {
+    const mugIds = Array.from({ length: 9 }, (_, i) => `gen_mug_${i}`);
+    mockPrisma.generation.findMany.mockResolvedValue(mugIds.map(() => ({ asset: { width: 550 } })));
+
+    const out = await executePropose(input, {
+      context: makeCtx({
+        sourceGenerationId: mugIds[0]!,
+        sourceGenerationIds: mugIds,
+        mediaReferences: mugIds.map((id) => ({ ...MUG_RECEIPT, generationId: id })),
+      }),
+    });
+
+    expect(out).toHaveProperty("cardId");
+    const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    }).data.payload;
+    // 卡上冻的商品图是 8 件 —— 演员那 1 格保住了。
+    expect(payload["referenceGenerationIds"]).toEqual(mugIds.slice(0, 8));
+    // 张数照旧只有一个出处(1 张演员照 + 8 张商品图 = 9,商家一共给了 10)。
+    expect(payload["downgradeNote"]).toContain("This run will use 9 of your 10 reference photos.");
+    // 点名:被截的是挂上来的图,演员的照片保住了。
+    expect(payload["downgradeNote"]).toContain(
+      "You attached 9 images — only the first 8 go to the engine, so the cast you @mentioned keeps a reference photo.",
+    );
+  });
+
+  it("FSE-001 / CREATE-A2: 挂图没占满名额时不许编那句「被截」(既有那一档一句不多)", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 550 } }]);
+
+    await executePropose(input, runContext());
+
+    const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    }).data.payload;
+    expect(payload["downgraded"]).toBe(false);
+    expect(payload["downgradeNote"]).toBeUndefined();
   });
 
   it("FSE-001 / CREATE-A2: 没有商品图的纯文生视频根本不查尺寸(既有那一条路一格不动)", async () => {

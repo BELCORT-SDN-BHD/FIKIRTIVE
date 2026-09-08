@@ -96,7 +96,8 @@ export async function executePropose(
     if (e instanceof ProposeRefusal) return { error: e.message };
     throw e;
   }
-  const { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel } = built;
+  const { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel, mentionedCharacterCount } =
+    built;
 
   // #619 E-5：截断与「只用第一张挂图」都必须在**批准前**出现在卡面上，不是事后在
   // 详情页解释。
@@ -123,7 +124,14 @@ export async function executePropose(
     attachedImageCount,
     hasVideoStartFrame,
     hasReferenceVideo,
+    // FSE-001 判官 r1 P2 —— 名额里每位在场的演员先占 1 格。铸卡时截挂图的那一刀读的是
+    // 同一个数(`buildProposeCard` 里那份 `mentionedCharacterCount`),所以卡上说的张数
+    // 与卡上真列出来的那几件不可能分家。
+    mentionedCharacterCount,
   });
+  /** FSE-001 —— 这张视频卡真会带上路的商品图张数 = 卡上那一列的长度(已按名额截过)。 */
+  const videoAttachedRiding =
+    cardPayload.kind === "video" ? (cardPayload.referenceGenerationIds?.length ?? 0) : undefined;
   const finalPayload = withVideoReferenceChip(
     withReferenceBudget(
       cardPayload,
@@ -134,6 +142,7 @@ export async function executePropose(
         attachedImageCount,
         usesAttachedImage,
         videoShape: { hasStartFrame: hasVideoStartFrame, hasReferenceVideo },
+        videoAttachedRiding,
       }),
     ),
     budget.used,

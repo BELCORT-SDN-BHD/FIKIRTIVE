@@ -56,6 +56,14 @@ export type ReferenceBudgetInput = VideoReferenceShape & {
    * 名额由 `attachedImageCap` 划,超出的那几张卡面必须说出来。
    */
   attachedImageCount: number;
+  /**
+   * FSE-001 判官 r1 P2 —— 这一轮 @ 到、且确属商家自己的 **CHARACTER** 有几个。
+   *
+   * 每一位先预留一个 `image_url` 名额(`videoAttachedCap`),所以挂满 9 张商品图时演员的
+   * 照片仍然上得了车 —— 卡上列着 `Aisyah (person)`、引擎却一张她的照片都没收到,那种卡
+   * 结构上不再造得出来。缺省 0 ⇒ 与这条修改之前逐字相同;图片那一支不读它。
+   */
+  mentionedCharacterCount?: number;
 };
 
 /**
@@ -177,6 +185,11 @@ export function videoAttachmentRole(input: {
   return input.mentionedCharacterCount > 0 ? "reference" : "startFrame";
 }
 
+/** 这一单的首帧/末帧各占一个 `image_url` 名额 —— 名额减法只有这一处口径。 */
+function frameSlots(shape: VideoReferenceShape): number {
+  return (shape.hasVideoStartFrame ? 1 : 0) + (shape.hasVideoTailFrame ? 1 : 0);
+}
+
 /**
  * 视频这一趟,商家挂的图**真会上车几张**(FSE-001)。
  *
@@ -184,12 +197,31 @@ export function videoAttachmentRole(input: {
  * 先划走商家自己挂的那几张,元素照拿剩下的 —— 商家亲手挂的东西比引擎替他找的照片更该
  * 上车。不是纯文生视频的那几档(首帧/末帧/整段参考片)恒为 0:那几档挂图走的是首帧那条
  * 独立的路,或者根本不上车,与这条修改之前逐字相同。
+ *
+ * ── FSE-001 判官 r1 P2 —— 演员的名额是**预留**出来的,不是抢剩下的 ─────────────────
+ * 上一版这里只有 `min(挂图数, 9)`。商家挂满 9 张商品图时挂图把 9 个名额全占了,
+ * `conditioningCap` 于是算出 0 —— 而卡上 `approvedEntities` 仍然列着 `Aisyah (person)`、
+ * 披露句仍然只说「9 of your 12」。商家批的是「Aisyah 拿着我的杯子」,付了钱,引擎却
+ * **一张她的照片都没收到**:做出来的是一个陌生人拿着杯子。那正是这个模块存在的理由
+ * (「说的与做的失同步」)的最贵一种形态 —— 卡上写了名字,请求里没有那个人。
+ *
+ * 所以在场的每一位 CHARACTER 先预留 1 格,挂图只能拿剩下的。为什么是结构性的:名额相减
+ * 这一步只有这一个函数,卡面(`referenceBudget`)、铸卡时截挂图的那一刀
+ * (`cardVideoReferenceIds`)与 worker 的选片(`jobVideoReferenceIds` / `conditioningCap`)
+ * 读的都是它 —— 不可能出现「这里留了、那里没留」。
+ *
+ * 预留只保证**至少一张**:演员的第 2 张往后仍与别的元素照一起走 round-robin。超出名额的
+ * 商品图按既有「truncated」口径在批准前逐字说出来(`buildReferenceBudgetNotes`),不静默。
+ *
+ * `mentionedCharacterCount` 缺省 = 0 ⇒ 与这条修改之前逐字相同(既有每一条路一格不动)。
  */
 export function videoAttachedCap(
-  input: VideoReferenceShape & { attachedImageCount?: number },
+  input: VideoReferenceShape & { attachedImageCount?: number; mentionedCharacterCount?: number },
 ): number {
   if (!videoReferencesRide(input)) return 0;
-  return Math.max(0, Math.min(input.attachedImageCount ?? 0, MAX_VIDEO_IMAGE_PARTS));
+  const free = Math.max(0, MAX_VIDEO_IMAGE_PARTS - frameSlots(input));
+  const reservedForCharacters = Math.min(Math.max(0, input.mentionedCharacterCount ?? 0), free);
+  return Math.max(0, Math.min(input.attachedImageCount ?? 0, free - reservedForCharacters));
 }
 
 /**
@@ -207,7 +239,12 @@ export function videoAttachedCap(
  * 不可能分家。
  */
 export function conditioningCap(
-  input: VideoReferenceShape & { kind: "image" | "video"; attachedImageCount?: number },
+  input: VideoReferenceShape & {
+    kind: "image" | "video";
+    attachedImageCount?: number;
+    /** FSE-001 —— 这一轮 @ 到、且确属商家自己的 CHARACTER 有几个(每位预留 1 格)。 */
+    mentionedCharacterCount?: number;
+  },
 ): number {
   if (input.kind !== "video") {
     // Codex staging CRE-STG-P1-003 —— 商家挂的第 2 张起,每一张从 @元素的名额里扣一格。
@@ -217,7 +254,7 @@ export function conditioningCap(
   }
   if (!videoElementReferencesHonoured()) return 0;
   if (!videoReferencesRide(input)) return 0;
-  const frames = (input.hasVideoStartFrame ? 1 : 0) + (input.hasVideoTailFrame ? 1 : 0);
+  const frames = frameSlots(input);
   // FSE-001 —— 商家自己挂的商品图与元素参考照共用这 9 个 `image_url` 名额,所以先划走
   // 他挂的那几张。今天每一条既有路上这个数都是 0(带首帧/末帧/参考片的档 `videoAttachedCap`
   // 恒为 0,纯文生视频那一档在这条修改之前根本不带挂图),所以既有行为逐字不变。

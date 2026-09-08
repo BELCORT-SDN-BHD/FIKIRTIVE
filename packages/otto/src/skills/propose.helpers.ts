@@ -276,6 +276,14 @@ export type ProposeCardResult = {
    */
   mentionedEntityIds: string[];
   mentionedVariantSel: Record<string, string>;
+  /**
+   * FSE-001 判官 r1 P2 —— 这一轮 @ 到、且确属商家自己的 **CHARACTER** 有几个。
+   *
+   * 交出去是为了让 `referenceBudget` 与铸卡时截挂图的那一刀读到**同一个数**:名额里
+   * 每位演员预留 1 格,而卡上那句「这一趟会用你几张」必须跟着同一份预留算。两处各数一遍
+   * 就是「说的与做的失同步」的老病。不参与选型、报价、预扣。
+   */
+  mentionedCharacterCount: number;
 };
 
 /**
@@ -676,6 +684,12 @@ export function buildReferenceBudgetNotes(input: {
   /** #979:这一趟视频的形状 —— 决定「一张元素照都不上车」这句话背后**真正的理由**,
    *  也决定卡面要不要先把真会用上的那样东西说出来。图片卡不传。 */
   videoShape?: { hasStartFrame?: boolean; hasReferenceVideo?: boolean };
+  /**
+   * FSE-001 —— 这张**视频**卡真会带上路的商品图张数(= `cardPayload.referenceGenerationIds`
+   * 的长度,已由 `videoAttachedCap` 截过)。`undefined` / 0 = 不是「纯文生视频带参考图」
+   * 那一档(图片卡、i2v 首帧、整段参考片),这一句不出现 —— 那几档另有各自的话。
+   */
+  videoAttachedRiding?: number;
 }): string[] {
   const notes: string[] = [];
   if (input.budget.truncated) {
@@ -694,6 +708,25 @@ export function buildReferenceBudgetNotes(input: {
       input.budget.used === 0
         ? zeroElementReferenceNote(input.budget.total, input.videoShape)
         : `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
+    );
+  }
+  // ── FSE-001 判官 r1 P2 —— 视频这一档:被截掉的是**商品图**,演员的照片保住了 ──────
+  //
+  // 上面那句 `This run will use N of your M reference photos.` 只报数,不说被截的是哪一半。
+  // 名额里每位在场的演员先预留 1 格(`videoAttachedCap`),所以挂满 9 张商品图时被挤掉的
+  // 一定是商品图 —— 而商家读到「9 of your 12」时无从知道少的是他的杯子还是那位演员。
+  // 演员少一张 = 买回来一个陌生人;商品图少一张 = 少一个角度。两件事的分量不同,所以这
+  // 一句必须点名。
+  //
+  // 数字不在这里算:`videoAttachedRiding` 就是卡上那一列 `referenceGenerationIds` 的长度
+  // (已由 `videoAttachedCap` 截过),所以卡说的与请求里送的不可能分家。
+  if (
+    input.videoAttachedRiding !== undefined &&
+    input.videoAttachedRiding > 0 &&
+    input.videoAttachedRiding < input.attachedImageCount
+  ) {
+    notes.push(
+      `You attached ${input.attachedImageCount} images — only the first ${input.videoAttachedRiding} go to the engine, so the cast you @mentioned keeps a reference photo.`,
     );
   }
   if (input.usesAttachedImage && input.attachedImageCount > 1) {
@@ -1355,7 +1388,10 @@ export function buildProposeCard(
   /** FSE-001 —— 这张视频卡真会带上路的商品图,已按视频侧名额截断。次序即引擎收到的次序。 */
   const cardVideoReferenceIds = usesVideoImageReferences
     ? orderedUniqueRefIds([ctx.sourceGenerationId, ...(ctx.sourceGenerationIds ?? [])])
-        .slice(0, videoAttachedCap({ attachedImageCount }))
+        // FSE-001 判官 r1 P2 —— 名额里每位在场的演员先占 1 格,所以挂满 9 张商品图时
+        // 这一刀切到 8:演员的照片保住,超出的商品图在下面 `buildReferenceBudgetNotes`
+        // 里逐字说出来。数与 `referenceBudget`、与 worker 读的是同一个函数。
+        .slice(0, videoAttachedCap({ attachedImageCount, mentionedCharacterCount }))
     : [];
   const cardMediaIds: { id: string; role: CardReferenceRole }[] = [
     ...(isI2V ? [{ id: ctx.sourceGenerationId!, role: "startFrame" as const }] : []),
@@ -1428,5 +1464,5 @@ export function buildProposeCard(
   // Step 6: the credit amount Otto may mention in chat = the real charge (estimatedCredits).
   const shownPriceDisplay = estimatedCredits;
 
-  return { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel };
+  return { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel, mentionedCharacterCount };
 }

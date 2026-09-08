@@ -109,8 +109,62 @@ describe("FSE-001 —— 卡面数字:两件引用都要数进去", () => {
     ).toEqual({ used: 2, total: 2, truncated: false });
   });
 
-  it("FSE-001 / CREATE-A10: 挂图把名额填满时,被挤掉的元素照必须在卡面上说出来", () => {
-    // 挂 9 张 ⇒ image_url 名额全被商家自己的图占满 ⇒ 元素照一张都上不了车,卡面 truncated。
+  // ── FSE-001 判官 r1 P2 —— 挂满 9 张商品图时,演员的照片必须还上得了车 ────────────
+  //
+  // 上一版:挂图先占满 9 个 `image_url` 名额 ⇒ `conditioningCap` 算出 0 ⇒ 演员一张照片
+  // 都不上车,而卡上 `approvedEntities` 仍然列着 `Aisyah (person)`。商家批了「Aisyah 拿着
+  // 我的杯子」、付了钱,买回来的是一个陌生人拿着杯子。现在每位在场的 CHARACTER 先预留
+  // 1 格,超出的商品图按既有 truncated 口径在批准前说出来。
+  it("FSE-001 / CREATE-A9: 演员 + 挂满 9 张商品图 ⇒ 演员的照片保住 1 格,商品图上 8 张", () => {
+    expect(
+      referenceBudget({
+        kind: "video",
+        perEntityLiveCounts: [3],
+        hasBaseImage: false,
+        attachedImageCount: MAX_VIDEO_IMAGE_PARTS,
+        mentionedCharacterCount: 1,
+      }),
+    ).toEqual({
+      // 1 张演员照 + 8 张商品图 = 9 个名额,一格不多不少。
+      used: MAX_VIDEO_IMAGE_PARTS,
+      total: MAX_VIDEO_IMAGE_PARTS + 3,
+      truncated: true,
+    });
+    // 名额的两半各自钉死 —— 只钉合计的话,「演员 0 + 商品 9」也能凑出同一个 9。
+    expect(
+      videoAttachedCap({ attachedImageCount: MAX_VIDEO_IMAGE_PARTS, mentionedCharacterCount: 1 }),
+    ).toBe(MAX_VIDEO_IMAGE_PARTS - 1);
+    expect(
+      conditioningCap({
+        kind: "video",
+        attachedImageCount: MAX_VIDEO_IMAGE_PARTS,
+        mentionedCharacterCount: 1,
+      }),
+    ).toBe(1);
+  });
+
+  it("FSE-001 / CREATE-A9: 两位演员 + 挂满 9 张 ⇒ 各预留 1 格,商品图上 7 张", () => {
+    expect(
+      videoAttachedCap({ attachedImageCount: MAX_VIDEO_IMAGE_PARTS, mentionedCharacterCount: 2 }),
+    ).toBe(MAX_VIDEO_IMAGE_PARTS - 2);
+    expect(
+      referenceBudget({
+        kind: "video",
+        perEntityLiveCounts: [1, 1],
+        hasBaseImage: false,
+        attachedImageCount: MAX_VIDEO_IMAGE_PARTS,
+        mentionedCharacterCount: 2,
+      }),
+    ).toEqual({
+      used: MAX_VIDEO_IMAGE_PARTS,
+      total: MAX_VIDEO_IMAGE_PARTS + 2,
+      truncated: true,
+    });
+  });
+
+  it("FSE-001 / CREATE-A10: 没有演员、挂满 9 张 ⇒ 与这条修改之前逐字相同(元素照 0 张,卡面 truncated)", () => {
+    // 分岔判据只认 CHARACTER(`videoAttachmentRole`),所以没有演员的那一档一格不动:
+    // 挂图占满 9 格、被挤掉的元素照照旧在批准前说出来。
     expect(
       referenceBudget({
         kind: "video",
@@ -119,6 +173,21 @@ describe("FSE-001 —— 卡面数字:两件引用都要数进去", () => {
         attachedImageCount: MAX_VIDEO_IMAGE_PARTS,
       }),
     ).toEqual({ used: MAX_VIDEO_IMAGE_PARTS, total: MAX_VIDEO_IMAGE_PARTS + 3, truncated: true });
+    expect(conditioningCap({ kind: "video", attachedImageCount: MAX_VIDEO_IMAGE_PARTS })).toBe(0);
+  });
+
+  it("FSE-001 / CREATE-A2: 演员 + 挂图没占满名额时,预留一格都不吃(既有那一档不变)", () => {
+    // 名额够用 ⇒ 挂图一张不少、演员的照片也一张不少,预留只在真的抢名额时才生效。
+    expect(videoAttachedCap({ attachedImageCount: 2, mentionedCharacterCount: 1 })).toBe(2);
+    expect(
+      referenceBudget({
+        kind: "video",
+        perEntityLiveCounts: [1],
+        hasBaseImage: false,
+        attachedImageCount: 1,
+        mentionedCharacterCount: 1,
+      }),
+    ).toEqual({ used: 2, total: 2, truncated: false });
   });
 
   it("FSE-001 / CREATE-A2: 带首帧那一档的三个数与这条修改之前逐字相同(挂图不算参考照)", () => {

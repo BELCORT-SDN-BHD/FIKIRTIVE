@@ -760,6 +760,58 @@ describe("FSE-001 —— 演员照 + 商品图两张参考,一趟送进视频引
     expect(call?.castMemberInReferences).toBe(true);
   });
 
+  // ── FSE-001 判官 r1 P2 —— 挂满 9 张商品图时,演员的照片必须真的进付费请求 ──────────
+  //
+  // 上一版名额是「挂图先占,元素照拿剩下的」。商家挂满 9 张商品图 ⇒ `conditioningCap`
+  // 算出 0 ⇒ 引擎收到 9 张杯子、**一张 Aisyah 都没有**,而卡上列着 `Aisyah (person)`、
+  // 披露句只说「9 of your 12」。这条测试钉的就是那一张:演员照必须在 `refImageUrls` 里。
+  it("FSE-001 / CREATE-A9: 演员 + 挂满 9 张商品图 ⇒ 演员照真进付费请求,商品图只上 8 张", async () => {
+    // 演员的 3 张定妆照。类型必须是 CHARACTER —— 名额的预留就是按它数出来的。
+    m.referenceImageFindMany.mockImplementation(async () => refsFor(0, 3));
+    m.entityFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id, type: "CHARACTER", name: `LIVE-${where.id}`,
+    }));
+    // 9 张各不相同的商品图 —— 每一行一个自己的 hash,否则「上了几张」用 URL 数不出来。
+    const mugIds = Array.from({ length: MAX_VIDEO_IMAGE_PARTS }, (_, i) => `gen_mug_${i}`);
+    const mugHash = (i: number) => hexHash(90100 + i);
+    m.generationFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => {
+      const i = mugIds.indexOf(where.id);
+      return i < 0 ? null : { id: where.id, asset: { ownerId: "o1", contentHash: mugHash(i), ext: "png" } };
+    });
+
+    const call = await paidVideoCall({
+      ...videoJob,
+      entityIds: ["e0"],
+      videoOptions: { seconds: 5, resolution: "480p", aspectRatio: "16:9", fps: 24, audio: false, referenceGenerationIds: mugIds },
+    });
+
+    // ① 9 个 `image_url` 名额:1 张演员照 + 8 张商品图,次序是演员在前。
+    expect(call?.refImageUrls).toEqual([
+      elementUrl(0, 0),
+      ...Array.from({ length: MAX_VIDEO_IMAGE_PARTS - 1 }, (_, i) => urlOf(mugHash(i))),
+    ]);
+    expect(call?.refImageUrls).toHaveLength(MAX_VIDEO_IMAGE_PARTS);
+    // ② 演员那一张必须在里面 —— 这是这条修复的全部意义(没有它就是陌生人拿着杯子)。
+    expect(call?.refImageUrls).toContain(elementUrl(0, 0));
+    expect(call?.castMemberInReferences).toBe(true);
+    // ③ 被挤掉的是第 9 张商品图,不是演员。
+    expect(call?.refImageUrls).not.toContain(urlOf(mugHash(MAX_VIDEO_IMAGE_PARTS - 1)));
+    // ④ 卡面在批准前说的那三个数,与真送出去的这一份对得上(同一个 `referenceBudget`)。
+    const disclosed = referenceBudget({
+      kind: "video",
+      perEntityLiveCounts: [3],
+      hasBaseImage: false,
+      attachedImageCount: MAX_VIDEO_IMAGE_PARTS,
+      mentionedCharacterCount: 1,
+    });
+    expect(call?.refImageUrls?.length).toBe(disclosed.used);
+    expect(disclosed).toEqual({
+      used: MAX_VIDEO_IMAGE_PARTS,
+      total: MAX_VIDEO_IMAGE_PARTS + 3,
+      truncated: true,
+    });
+  });
+
   it("FSE-001 / CREATE-A2: 快照里没有那一格 ⇒ 与这条修改之前逐字相同(既有视频任务一格不动)", async () => {
     m.referenceImageFindMany.mockImplementation(async () => refsFor(0, 2));
 
