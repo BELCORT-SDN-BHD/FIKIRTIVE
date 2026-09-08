@@ -11,6 +11,10 @@ const db = {
 vi.mock("@fikirtive/db", () => ({ prisma: db }));
 const mockBootstrap = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ bootstrapPersonalOrg: mockBootstrap }));
+/** FSE-008 —— founder 分支现在也播演员库。这里 mock 掉它:本文件是纯单元测试(prisma 是
+ *  上面那个假的),真正跑通数据库的那条在 `actor-library-seed.test.ts`。 */
+const mockSeedActorLibrary = vi.fn(async () => ({ seeded: [], skipped: [], failed: [] }));
+vi.mock("@/lib/actor-library-seed", () => ({ seedActorLibrary: mockSeedActorLibrary }));
 
 beforeEach(() => {
   Object.values(db).forEach((m) => Object.values(m).forEach((f) => (f as Mock).mockReset?.()));
@@ -32,6 +36,7 @@ beforeEach(() => {
   );
   db.membership.upsert.mockResolvedValue({ id: "membership-founder" });
   mockBootstrap.mockReset();
+  mockSeedActorLibrary.mockClear();
   process.env.FOUNDER_ADMIN_EMAILS = "founder@x.test";
 });
 
@@ -121,6 +126,30 @@ describe("convergeIdentity", () => {
       expect.objectContaining({ where: { email: "founder@x.test" }, data: { role: "super-admin" } })
     );
   });
+  /** FSE-008(2026-09-08 staging E2E)—— founder 从不走 `bootstrapPersonalOrg`,而演员库的
+   *  播种原本只挂在那里,所以 founder 登录进去 Official avatars 是空的。落点必须是 founder
+   *  自己的 org("founder"),而且这条路上一分钱都不能写(founder 分支不发开户赠额)。 */
+  it("FSE-008 / CREATE-A10: founder 分支给 founder org 播演员库,且不走开户赠额那条路", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    db.user.findUnique.mockResolvedValue({ id: "usr_f", email: "founder@x.test", emailVerified: new Date(), role: "super-admin" });
+
+    await convergeIdentity({ email: "founder@x.test", emailVerified: true });
+
+    expect(mockSeedActorLibrary).toHaveBeenCalledWith("founder");
+    expect(mockBootstrap).not.toHaveBeenCalled(); // 赠额只在 bootstrapPersonalOrg 里发
+  });
+
+  it("FSE-008 / CREATE-A10: 播种失败不会把一次 founder 登录变成失败", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    db.user.findUnique.mockResolvedValue({ id: "usr_f", email: "founder@x.test", emailVerified: new Date(), role: "super-admin" });
+    // 真实现永不抛(见 actor-library-seed.ts「绝不抛」);这里假设它有一天抛了 ——
+    // 身份收敛仍然不能因为一张图读不到而失败。
+    mockSeedActorLibrary.mockRejectedValueOnce(new Error("assets missing"));
+
+    await expect(convergeIdentity({ email: "founder@x.test", emailVerified: true })).resolves.toBeUndefined();
+    expect(db.membership.upsert).toHaveBeenCalled(); // 身份那半边照样落地
+  });
+
   it("does not write ba_user.role when the canonical User.role write fails", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     // Founder is already verified, so the #544 emailVerified stamp is skipped and the ONLY
