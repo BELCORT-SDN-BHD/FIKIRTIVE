@@ -71,6 +71,78 @@ export const REFERENCE_IMAGE_PERSON_REJECTED =
   + "You weren't charged.";
 
 /**
+ * The sentence a merchant reads when THE SAME refusal lands on a picture whose PERSON CAME FROM
+ * THE OFFICIAL CAST LIBRARY — a cast member's own reference photo, or a picture made here with
+ * that cast member as a reference — rather than a photo of a real person the merchant supplied.
+ *
+ * ── WHY THIS BRANCH EXISTS (FSE-001, staging E2E 2026-09-08) ──
+ *
+ * A merchant picked the official cast member Aisyah, attached their own product photo, followed
+ * the plan the product itself offered — make a combined still first, then animate it — and the
+ * video was refused. What they were shown was the sentence above: "Pick a cast member from your
+ * Library instead." They had. Following that advice sends them around the same loop to the same
+ * refusal, which is the exact failure #765 exists to stop, one layer further in.
+ *
+ * The refusal itself is not a defect: `docs/specs/creation-engine.md` §1 (血统信任, measured
+ * 2026-08-29/30) says the video engine trusts only pure text-to-image output as a person
+ * reference, and a combined still is an image-to-image product. So the honest thing to say is
+ * that THIS PICTURE cannot be the person in a clip — and to name the route that is measured to
+ * work: send the cast member and the product as references and let the clip be made from the
+ * prompt (`EXECUTED_SPEC.video.elementReferencesHonoured`, CREATE-A10, 3 of 3 scenes).
+ *
+ * The advice this file must never give is the advice that produced FSE-001: "make a picture of
+ * them together first". Building the recommended route into the product is a separate piece of
+ * work (registered in the spec's §5, 2026-09-08) — this sentence only stops sending merchants
+ * down the road that is known to end here.
+ *
+ * ── AND IT MUST NOT BE SAID TO ANYONE ELSE (judge P2, 2026-09-08) ──
+ *
+ * "Send the cast member … as references" is only an instruction someone can follow if there IS a
+ * cast member in play. A merchant who uploaded a photo of a real person and edited it here once
+ * has never picked one, so this sentence would name a route they cannot take while hiding the
+ * one they can. That is why the fork's criterion is the cast member in the picture's lineage,
+ * not "this platform rendered the pixels" — see `personRejectionSentence` below.
+ *
+ * "You weren't charged" is safe for the same reason as the sentence above and no other: this is
+ * an HTTP 4xx at task creation, the hold is refunded and no spend is recorded.
+ *
+ * WHITE LABEL, like every sentence here: no engine, no model, no vendor.
+ */
+export const PLATFORM_IMAGE_PERSON_REJECTED =
+  "This picture can't be used as the person in a clip. Send the cast member and your product "
+  + "as references instead, and the clip is made from your description. You weren't charged.";
+
+/**
+ * WHICH of the two person-refusal sentences this refusal gets — the ONE fork, so the decision
+ * cannot be made twice and differently.
+ *
+ * The input is the only thing that separates them, and it is ONE question: is there an OFFICIAL
+ * CAST MEMBER in the refused picture — riding in as an element reference on this very trip, or
+ * frozen into the lineage of the still we sent as the first frame? Only then has the merchant
+ * already done the thing the original sentence tells them to go do. The caller that knows is the
+ * worker, which resolved every reference from an owned id moments earlier; it hands the answer
+ * down with the request.
+ *
+ * "We rendered those pixels" is NOT the question, and answering that one instead was the bug the
+ * first cut of this fork shipped (judge P2, 2026-09-08): a merchant's own photo of a real person,
+ * edited once here, comes back as a generated row and would have been told to send a cast member
+ * they never chose.
+ *
+ * UNKNOWN FALLS BACK to the uploaded-photo sentence. A caller that cannot prove provenance —
+ * an older job, a path that never set the flag — must not have a claim about the merchant's own
+ * cast library invented on its behalf; the original sentence is the one that has always been
+ * shown there, and it is the safe half of the fork: the cast library is a real way out for
+ * everyone except the person who is already standing in it.
+ *
+ * Pure: no lookup, no I/O.
+ */
+export function personRejectionSentence(officialActorInPersonReference: boolean | undefined): string {
+  return officialActorInPersonReference === true
+    ? PLATFORM_IMAGE_PERSON_REJECTED
+    : REFERENCE_IMAGE_PERSON_REJECTED;
+}
+
+/**
  * The sentence a merchant reads when THIS DEPLOY HAS NO ENGINE WIRED UP.
  *
  * Not a refusal of anything they sent: the generation never reached an engine because this
@@ -176,13 +248,19 @@ export const REFERENCE_ASSET_UNREACHABLE =
  * the same algebra rather than the fallback of a missing field.
  *
  * ADDING ONE IS DELIBERATELY NOISY. A new name has to be placed in `MERCHANT_GEN_FAILURE_SENTENCES`
- * below (a `Record` over the union, so `tsc` refuses an unhandled member) and in the card copy
- * table `apps/web/lib/canvas-terminal-copy.ts` (the same trick). That is the closed algebra doing
- * its job: a reason nobody wrote copy for cannot ship as a blank card.
+ * below — a `Record` over the union, so `tsc` refuses an unhandled member. That is the closed
+ * algebra doing its job: a reason nobody wrote copy for cannot ship as a blank card. The card
+ * needs no second entry of its own: `terminalCardCopy` (`apps/web/lib/canvas-terminal-copy.ts`)
+ * reads its detail line straight out of the table below, so there is only ever one sentence per
+ * name and it is the same bytes on every surface.
  */
 export const GEN_FAILURE_REASONS = [
   "unexplained",
   "referenceImagePerson",
+  /** FSE-001 —— 同一次拒绝的另一支:被拒的那张图是**我们给的**(演员参考照 / 本站生成图)。
+   *  独立的理由名,不是同名两句:一个名字只能对应一句话,否则卡面显示的与 worker 落库的
+   *  可以是两句(#765 关掉的那个病)。 */
+  "platformImagePerson",
   "engineUnavailable",
   "referenceAssetUnreachable",
 ] as const;
@@ -207,6 +285,7 @@ export type ExplainedGenFailureReason = Exclude<GenFailureReason, "unexplained">
  */
 const MERCHANT_GEN_FAILURE_SENTENCES: Readonly<Record<ExplainedGenFailureReason, string>> = {
   referenceImagePerson: REFERENCE_IMAGE_PERSON_REJECTED,
+  platformImagePerson: PLATFORM_IMAGE_PERSON_REJECTED,
   engineUnavailable: GENERATION_ENGINE_UNAVAILABLE,
   referenceAssetUnreachable: REFERENCE_ASSET_UNREACHABLE,
 };
