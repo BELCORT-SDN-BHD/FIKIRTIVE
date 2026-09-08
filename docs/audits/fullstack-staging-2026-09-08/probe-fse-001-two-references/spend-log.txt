@@ -1,0 +1,4 @@
+[P0] 2026-09-08 pricing 查询失败(SSO 过期,控制面不可用) → 改用仓库钉点表 packages/core/src/cost-pins.ts(2026-08-29 arkcli 实查牌价)作为估价来源。
+[P1] image seedream-5-0-260128 1 张 = 钉点 image:seedream-lite:per-image $0.035/张 → 本次估价 $0.035;累计估价 $0.035 / 上限 $3.00
+[P2/T1] video dreamina-seedance-2-0-mini-260615 480p 5s no-audio;估价 = 钉点 video:seedance-2-mini:t2v-per-mtoken $3.50/M × 480p 最差比例 10,044 tok/s × 5s = 50,220 tok → $0.176;累计估价 $0.211 / 上限 $3.00
+[P2/T1 结果] task cgt-20260908181047-6cwsv succeeded;usage.total_tokens=50638 → 牌价实收 $0.1772;累计牌价实收 $0.2122 / 上限 $3.00;T2/T3 未跑(T1 已定论)

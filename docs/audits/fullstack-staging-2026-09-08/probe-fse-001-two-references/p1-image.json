@@ -1,0 +1,15 @@
+{
+  "created": 1788862203,
+  "data": [
+    {
+      "size": "1920x1920",
+      "url": "<signed-download-url-redacted; expired 24h>"
+    }
+  ],
+  "model": "seedream-5-0-260128",
+  "usage": {
+    "generated_images": 1,
+    "output_tokens": 14400,
+    "total_tokens": 14400
+  }
+}
