@@ -182,6 +182,17 @@ async function refuseTurn(sentence: string): Promise<void> {
 }
 
 /**
+ * 流**还没打开**就断了的那一种（网络断／解析炸）：`useChat` 只把它挂在 `status` 与 `error` 上，
+ * 消息上一个部件都没有，body 也不是白名单认得出的那一句。
+ */
+async function transportFailure(): Promise<void> {
+  mocks.chat.status = "error";
+  mocks.chat.error = new Error("Failed to fetch");
+  await act(async () => { root!.render(streamElement()); });
+  await act(async () => { await Promise.resolve(); });
+}
+
+/**
  * 直播那一刻服务端把这一轮判死:一个 `data-error` 从流里到达(**没有**刷新)。
  * 落库那条 USER 消息此刻还不在手上 —— 手上那条是 `sendMessage({text})` 的乐观回显。
  */
@@ -305,10 +316,36 @@ describe("FSE-003 / CREATE-A1 —— 「Send to Otto」按字面真发送", () =
     const note = host.querySelector('[data-slot="card-change-form"] textarea') as HTMLTextAreaElement;
     await typeInto(note, "add the exact product photo");
     const send = buttonByText(host, CHANGE_FORM_SEND);
-    await click(send);
-    await click(send);
+
+    // 判官 2026-09-08 P3：上一版这两下分两个 `act` 点，第一下就把表单卸载了，第二下点在一颗
+    // **脱离 DOM** 的按钮上 —— 那道闸一次都没被考过，测试是空转的。真的双击发生在同一帧里：
+    // 第一下送出去的那个 promise 还没 resolve、React 还没把表单收起来，第二下就到了。
+    let secondHitLiveButton = false;
+    await act(async () => {
+      send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      secondHitLiveButton = send.isConnected;
+      send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(secondHitLiveButton, "第二下点在已经脱离 DOM 的按钮上 —— 这条测试没考到那道闸").toBe(true);
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+    // 被闸挡下的那一下什么都不做：一次双击不该既送出一轮，又把同一段字塞回输入框。
+    expect(composer().value, "双击的第二下把已经送出去的那段字塞回了输入框").toBe("");
+  });
+
+  it("FSE-003 / CREATE-A1 按 Send 时输入框里打了一半的字 ⇒ 原样留着（卡走的是独立通道）", async () => {
+    const host = await openChangeForm();
+    // 商家一边在主输入框里打下一句，一边在卡上按 Send —— 走查之后这是完全正常的一幕。
+    await typeInto(composer(), "and then a video for Raya");
+    const note = host.querySelector('[data-slot="card-change-form"] textarea') as HTMLTextAreaElement;
+    await typeInto(note, "add the exact product photo");
+    await click(buttonByText(host, CHANGE_FORM_SEND));
 
     expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+    expect((mocks.sendMessage.mock.calls[0]![0] as { text: string }).text).toContain("add the exact product photo");
+    // 判官 2026-09-08 P2：卡上那颗 Send 从前借输入框那条路走，于是送出的一瞬把商家打了一半
+    // 的那句话无声清空 —— 屏幕上没有任何一处说过它去哪了。
+    expect(composer().value, "卡上那颗 Send 把商家打了一半的那句话无声清空了").toBe("and then a video for Raya");
   });
 
   it("FSE-003 / CREATE-A1 上一轮还在飞 ⇒ 不发送，但草稿回到输入框（不是「按了没反应」）", async () => {
@@ -424,8 +461,12 @@ describe("FSE-004 / FRONT-A12 —— 重试草稿 = 那句话 ＋ typed refs ＋
   // 一格都没有。上一版画布那颗 Edit and retry 只读消息，于是引用一件都不回来，而屏幕上一个字
   // 都不说 ——「带回来了」与「没带回来」长得一模一样，下一次送出就是一次无条件生成。
   // ───────────────────────────────────────────────────────────────────────────
-  /** 先真送出一轮带引用的（走确认卡那条路），再让它在直播里失败。 */
-  async function liveFailedTurnAfterSend(): Promise<HTMLElement> {
+  /**
+   * 真送出一轮**带引用**的（走确认卡那条路）。这一刻手上那条最新的 USER 消息还是挂载时
+   * 那条白板（`u1`，没有 metadata）—— 与真实运行时「没刷新」那一刻的形状逐字相同：
+   * 从消息里读不出任何引用，能说话的只有这一轮送出时留下的现场记录。
+   */
+  async function sendChangeRequestTurn(): Promise<HTMLElement> {
     mocks.chat.messages = [
       { id: "u1", role: "user", parts: [{ type: "text", text: "make me a hero shot" }] },
       genCardMessage(),
@@ -435,6 +476,12 @@ describe("FSE-004 / FRONT-A12 —— 重试草稿 = 那句话 ＋ typed refs ＋
     const note = host.querySelector('[data-slot="card-change-form"] textarea') as HTMLTextAreaElement;
     await typeInto(note, "add the exact product photo");
     await click(buttonByText(host, CHANGE_FORM_SEND));
+    return host;
+  }
+
+  /** 先真送出一轮带引用的（走确认卡那条路），再让它在直播里失败。 */
+  async function liveFailedTurnAfterSend(): Promise<HTMLElement> {
+    const host = await sendChangeRequestTurn();
     const sentText = (mocks.sendMessage.mock.calls[0]![0] as { text: string }).text;
     await liveFailure(sentText);
     return host;
@@ -465,5 +512,72 @@ describe("FSE-004 / FRONT-A12 —— 重试草稿 = 那句话 ＋ typed refs ＋
     const body = lastBody();
     expect(body["sourceGenerationIds"]).toEqual([PRODUCT_GENERATION_ID]);
     expect(body["entityIds"]).toEqual([AVATAR_ID]);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 复修轮三（判官 2026-09-08 P1）—— **传输级**那一种失败：流还没打开就断了。
+  //
+  // 上一轮只修好了 `data-error` 那一半。`status === "error"` 这一条路从不设 `retryDraft`，
+  // 于是画布那颗 Edit and retry 只读得到落库消息那一份 —— 而这一刻手上那条 USER 消息只是
+  // `sendMessage({text})` 的乐观回显，引用一件都没有。放回去的就是「那句话 ＋ 零引用」。
+  // ───────────────────────────────────────────────────────────────────────────
+  /**
+   * 真送出一轮**带引用**的（Edit and retry → 改一句 → Send），然后把手上的消息摆成
+   * 「送出去了但还没刷新」那一刻的形状：useChat 追加的是一条**乐观回显**（只有 parts，
+   * `metadata` 一格都没有）。从这一刻的消息里读得出的引用是零 —— 能说话的只有这一轮
+   * 送出时留下的现场记录。
+   */
+  const RETRY_SENT_TEXT = "make another take with the mug, brighter";
+  async function sentTurnWithRefsNoRefresh(): Promise<HTMLElement> {
+    const host = await failedTurn();
+    await click(buttonByText(host, EDIT_AND_RETRY_LABEL));
+    await typeInto(composer(), RETRY_SENT_TEXT);
+    await click(buttonByText(host, "Send"));
+    expect(mocks.sendMessage, "这一幕的前提是真的送出了一轮带引用的").toHaveBeenCalledTimes(1);
+    mocks.chat.messages = [
+      failedUserMessage(),
+      liveError(),
+      { id: "echo_2", role: "user", parts: [{ type: "text", text: RETRY_SENT_TEXT }] },
+    ];
+    await act(async () => { root!.render(streamElement()); });
+    return host;
+  }
+
+  it("FSE-004 / FRONT-A12 传输级失败（流还没打开就断了）⇒ Edit and retry 也把原引用一起放回", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    await sentTurnWithRefsNoRefresh();
+    await transportFailure();
+
+    const retry = buttonByText(canvasCard(), EDIT_AND_RETRY_LABEL);
+    expect(retry, "传输级失败之后画布卡上没有 Edit and retry —— 这一幕根本没演到").toBeTruthy();
+    await click(retry);
+
+    expect(composer().value).toContain(RETRY_SENT_TEXT);
+    const line = container!.querySelector('[data-slot="restored-references"]');
+    expect(line, "传输级失败从不设重试草稿 —— 引用一件都没回来，而屏幕上一个字都不说").toBeTruthy();
+    expect(line!.textContent).toContain("Aisyah");
+    expect(line!.textContent).toContain("Coral travel mug");
+    consoleError.mockRestore();
+  });
+
+  it("FSE-004 / FRONT-A12 「有一件参考取不到」退回之后再点 Edit and retry ⇒ 已放回的引用不被抹掉", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    await sentTurnWithRefsNoRefresh();
+    await refuseTurn(referenceUnavailableMessage("notFound"));
+
+    // 那条 400 已经把引用放回来了，屏幕上也说了「References kept: …」。
+    const restored = container!.querySelector('[data-slot="restored-references"]');
+    expect(restored, "被退回的那一轮把引用悄悄丢了").toBeTruthy();
+    expect(restored!.textContent).toContain("Aisyah");
+
+    // 同一张卡上还挂着 Edit and retry。它读的重试草稿要是空的，这一按就把刚放回来的
+    // 那几件**抹掉** —— 商家读到的是「移掉那一件再试」，而系统连剩下的也一起丢了。
+    await click(buttonByText(canvasCard(), EDIT_AND_RETRY_LABEL));
+
+    const line = container!.querySelector('[data-slot="restored-references"]');
+    expect(line, "再点一次 Edit and retry 把刚放回来的引用抹掉了").toBeTruthy();
+    expect(line!.textContent).toContain("Aisyah");
+    expect(line!.textContent).toContain("Coral travel mug");
+    consoleError.mockRestore();
   });
 });

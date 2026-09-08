@@ -490,14 +490,7 @@ export function OttoChatStream({
         setStreamError(e.text);
         setStreamErrorKind(e.kind);
         // FSE-004:重试草稿是**整份**的 —— 只把文字放回去,再送一次就是一次无条件生成。
-        setRetryDraft(
-          e.kind === "error"
-            ? lastSentDraftRef.current ??
-                (lastSubmittedTextRef.current
-                  ? { text: lastSubmittedTextRef.current, refs: EMPTY_TURN_REFERENCES, labels: [], sourceMessageId: null }
-                  : null)
-            : null,
-        );
+        setRetryDraft(e.kind === "error" ? liveRetryDraft(lastSentDraftRef.current) : null);
         return;
       }
       // data-tool-propose: a card tool (propose / proposePack / propose-meta-action /
@@ -558,6 +551,29 @@ export function OttoChatStream({
   }
 
   /**
+   * FSE-004 复修轮三(判官 2026-09-08 P1)—— **直播那一刻**那份重试草稿,一个作者两条失败路。
+   *
+   * 一轮可以死在两个地方,而从前只有一个地方给得出重试草稿:
+   *
+   *   · 流开着时服务端判死(`data-error`)—— 这条路早就设 `retryDraft`;
+   *   · 流**还没打开**就断了(`status === "error"`:网络断、解析炸,以及本片自己新造的
+   *     「有一件参考取不到」那条 400)—— 这条路一次都不设。
+   *
+   * 于是画布那颗 Edit and retry 在传输级失败之后只读得到落库消息那一份,而直播那一刻手上
+   * 那条 USER 消息只是 `sendMessage({text})` 的乐观回显(`metadata` 一格都没有)——
+   * 放回去的就是「那句话 ＋ 零引用」,而屏幕上一个字都不说。下一次送出就是一次无条件生成。
+   *
+   * `source` 是这一轮**真正带了什么**的现场记录:传输级那两条路各自给的不一样(见下面
+   * 那个 effect),所以判断留在调用处,这里只负责「没有现场记录时也别把文字弄丢」。
+   */
+  function liveRetryDraft(source: TurnReferenceDraft | null): TurnReferenceDraft | null {
+    if (source) return source;
+    return lastSubmittedTextRef.current
+      ? { text: lastSubmittedTextRef.current, refs: EMPTY_TURN_REFERENCES, labels: [], sourceMessageId: null }
+      : null;
+  }
+
+  /**
    * 这一次被退回的整轮,白名单认得出的那句**具体**话（认不出来就是 null）。
    *
    * 判一次,两处用（#1225 判官残留）：输入框旁那条附件错误，与画布上那张始终可见的状态卡。
@@ -573,16 +589,24 @@ export function OttoChatStream({
     if (!error) return;
     console.error("[OttoChatStream] transport error:", error);
     const sentence = transportRefusalSentence;
+    const draft = lastSubmittedRef.current;
     if (!sentence) {
       releaseSubmitted();
+      // FSE-004 复修轮三:附件的芯片跟着 `releaseSubmitted` 一起没了(blob 预览已撤销),
+      // 所以这一路的重试草稿是**合过附件的整份**(`lastSentDraftRef`)—— 输入框里此刻
+      // 一件引用都没有,不整份放回去就是少了。
+      setRetryDraft(liveRetryDraft(lastSentDraftRef.current));
       return;
     }
-    const draft = lastSubmittedRef.current;
     lastSubmittedRef.current = null;
     // 与卡上那个计时器同一条写法(`OttoPlanCard` 的 `queueMicrotask(() => setElapsed(0))`):
     // 在 effect 里同步 setState 会把这一帧再渲染一遍,而这里三个更新本来就属于同一次「放回去」。
     queueMicrotask(() => {
       setAttachError(sentence);
+      // FSE-004 复修轮三:这一路的附件**已经原样回到附件条**,所以重试草稿只取附件之外
+      // 那一份(`draft.turn`)。放合过附件的那一份进去,商家移掉取不到的那件芯片之后再送,
+      // 它还会从这份草稿里悄悄爬回请求体 —— 那正是这颗键该拦的事。
+      setRetryDraft(liveRetryDraft(draft?.turn ?? null));
       if (!draft) return;
       setText((current) => (current.trim() ? current : draft.text));
       setAttachedRefs((current) => (current.length ? current : draft.refs));
@@ -784,21 +808,32 @@ export function OttoChatStream({
    *
    * **双击不重复**：`submitLockRef` 与 `composerBusy` 是同一道闸，三个入口共用它 —— 所以
    * 「Send 按两下」与「Enter 按两下」在这里是同一件事，只送一轮。
+   *
+   * **`composerOwned`（判官 2026-09-08 P2）**：这一轮是不是从输入框开出来的。
+   * 输入框那一份状态（那句半成品、`@` 挑好的对象、附件条、恢复回来的引用）属于**商家此刻
+   * 正在打的下一句**，不属于这一轮。确认卡那颗 Send 走的是自己的一份草稿（卡上冻着的引用
+   * 与卡的原话），它既不读也不清输入框 —— 从前它照着输入框那条路走，于是商家一边打字一边
+   * 按下卡上的 Send，打了一半的那句话**无声消失**，附件也跟着被这一轮吃掉。
    */
-  function sendTurn(draft: {
-    text: string;
-    refs: TurnReferences;
-    /** 商家读得懂的名字（有就带上）—— 只用于失败之后那一行「References kept: …」。 */
-    labels?: string[];
-    sourceMessageId?: string | null;
-  }): boolean {
+  function sendTurn(
+    draft: {
+      text: string;
+      refs: TurnReferences;
+      /** 商家读得懂的名字（有就带上）—— 只用于失败之后那一行「References kept: …」。 */
+      labels?: string[];
+      sourceMessageId?: string | null;
+    },
+    composerOwned = true,
+  ): boolean {
     const trimmed = draft.text.trim();
     if (!trimmed || composerBusy || submitLockRef.current) return false;
     submitLockRef.current = true;
     lastSubmittedTextRef.current = trimmed;
-    setText(""); // clear the composer immediately; sendMessage echoes the user msg
-    picker.clearPicked();
-    setRestoredDraft(null);
+    if (composerOwned) {
+      setText(""); // clear the composer immediately; sendMessage echoes the user msg
+      picker.clearPicked();
+      setRestoredDraft(null);
+    }
     // Reset ephemeral stream state for the new turn.
     setLiveStatus(null);
     setStepEvents([]);
@@ -813,7 +848,8 @@ export function OttoChatStream({
     // these references is gone, and the chips have to go back into the composer intact. They are
     // revoked the moment the turn is known to have been accepted (onFinish) or to have failed for
     // any other reason — `releaseSubmitted()`.
-    const attachedNow = attachedRefs;
+    // 附件条也属于输入框（判官 P2）：卡上那颗 Send 不吃商家挂着等下一句用的那几件。
+    const attachedNow = composerOwned ? attachedRefs : [];
     const carried: TurnReferenceDraft = {
       text: trimmed,
       refs: draft.refs,
@@ -821,7 +857,7 @@ export function OttoChatStream({
       sourceMessageId: draft.sourceMessageId ?? null,
     };
     lastSubmittedRef.current = { text: trimmed, refs: attachedNow, turn: carried };
-    setAttachedRefs([]);
+    if (composerOwned) setAttachedRefs([]);
     // 附件那一份的作者仍是 `composerReferencePayload`；这里只是把它并进同一份形状，
     // 不是拿它去覆盖 —— 覆盖正是「@ 的图与挂的图只剩一份」那一类缺陷的做法。
     const refs = mergeTurnReferences(
@@ -1103,8 +1139,11 @@ export function OttoChatStream({
    * 他看得见的状态，不是又一次「按了没反应」。
    */
   function sendChangeRequest(draft: TurnReferenceDraft) {
-    if (sendTurn(draft)) return;
-    restoreDraft(draft);
+    if (sendTurn(draft, false)) return;
+    // 没送出去只有两种原因。上一轮还在飞（`composerBusy`）——那是商家看得见的状态，草稿交还
+    // 给他，他自己按下去。另一种是双击的第二下：闸还锁着，而第一下**已经送出去了** ——
+    // 那一下什么都不做，不然一次双击既送出一轮、又把同一段字塞进输入框（判官 P2 的另一半）。
+    if (composerBusy) restoreDraft(draft);
   }
 
   // The index of the message that holds the actively-streaming assistant text, so
