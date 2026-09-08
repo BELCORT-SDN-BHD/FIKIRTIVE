@@ -18,6 +18,13 @@ describe("sanitizeCallbackURL", () => {
     expect(sanitizeCallbackURL("/\\/evil.com")).toBe("/");
   });
 
+  it("rejects control-character smuggled protocol-relative forms", () => {
+    expect(sanitizeCallbackURL("/\t/evil.com")).toBe("/");
+    expect(sanitizeCallbackURL("/\n/evil.com")).toBe("/");
+    expect(sanitizeCallbackURL("/\r/evil.com")).toBe("/");
+    expect(sanitizeCallbackURL("/ /evil.com")).toBe("/");
+  });
+
   it("rejects absolute URLs with a scheme", () => {
     expect(sanitizeCallbackURL("https://evil.com")).toBe("/");
     expect(sanitizeCallbackURL("javascript:alert(1)")).toBe("/");
