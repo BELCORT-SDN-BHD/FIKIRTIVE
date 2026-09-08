@@ -1,0 +1,13 @@
+[P0] 2026-09-08 pricing 查询失败(SSO 过期,控制面不可用) → 改用仓库钉点表 packages/core/src/cost-pins.ts(2026-08-29 arkcli 实查牌价)作为估价来源。
+[P1] image seedream-5-0-260128 1 张 = 钉点 image:seedream-lite:per-image $0.035/张 → 本次估价 $0.035;累计估价 $0.035 / 上限 $3.00
+[P2/T1] video dreamina-seedance-2-0-mini-260615 480p 5s no-audio;估价 = 钉点 video:seedance-2-mini:t2v-per-mtoken $3.50/M × 480p 最差比例 10,044 tok/s × 5s = 50,220 tok → $0.176;累计估价 $0.211 / 上限 $3.00
+[P2/T1 结果] task cgt-20260908181047-6cwsv succeeded;usage.total_tokens=50638 → 牌价实收 $0.1772;累计牌价实收 $0.2122 / 上限 $3.00;T2/T3 未跑(T1 已定论)
+
+--- 第二场:真实照片参考图探针 2026-09-08 晚 ---
+[R0] 预算:本次上限 $0.60,最多 2 次付费视频调用,0 次付费图片调用。开场累计(上一场)= $0.2122 牌价实收。
+[R1/T2 估价] video dreamina-seedance-2-0-mini-260615 480p 5s generate_audio=false;估价 = 钉点 video:seedance-2-mini:t2v-per-mtoken $3.50/M(2026-09-08 复查 packages/core/src/cost-pins.ts:81 逐字确认 value=3.5)× 480p 最差比例 10,044 tok/s × 5s = 50,220 tok → $0.176。开跑前累计估价将变 $0.387 / 总上限 $3.00,本次分配 $0.176 / $0.60。
+[R1/T2 第一次提交 = 未建任务、零花费] 供应商在建任务前作尺寸校验并拒:"expected the width to be at least 300px, but received a 275x183px image instead"(Request id 021788864152659fdccfc102ca12157f94275e78054dc3baee6f5)。无 task id、无 usage → 不计费。改用 2 倍 lanczos 放大件 shoe-real-2x.jpg 重投,该次才是本次唯一付费视频调用。
+[R1/T2 已建任务] task id cgt-20260908184304-7x42n(提交被接收 = 输入图审核闸未拒)。估价 $0.176 计入。累计估价 $0.387 / 总上限 $3.00;本次 $0.176 / $0.60;付费视频调用 1 / 2。
+[R1/T2 结果] task cgt-20260908184304-7x42n succeeded(约 75-90 秒);usage.total_tokens=50638 → 牌价实收 50638/1e6 × $3.50 = $0.1772(账号折后价 $1.40/M 则 ≈ $0.0709)。
+[R2/T3] 未跑 —— T3 的触发条件是「T2 被拒且错误码指向人像」,T2 成功,故按预算纪律不跑。付费视频调用最终 1 / 2,本次花费 $0.1772 / $0.60。
+[累计] 两场牌价实收合计 = $0.2122(上一场) + $0.1772(本场) = $0.3894 / 总上限 $3.00;剩余 ≈ $2.61。

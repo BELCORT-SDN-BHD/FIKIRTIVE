@@ -1,0 +1,27 @@
+{
+  "model": "dreamina-seedance-2-0-mini-260615",
+  "content": [
+    {
+      "type": "image_url",
+      "image_url": {
+        "url": "<base64 A1-aisyah-closeup.jpg>"
+      },
+      "role": "reference_image"
+    },
+    {
+      "type": "image_url",
+      "image_url": {
+        "url": "<base64 shoe-real-2x.jpg (Founder 真实鞋照 275x183 经 ffmpeg lanczos 2x 放大至 550x366;无脸,含真人小腿与袜子)>"
+      },
+      "role": "reference_image"
+    },
+    {
+      "type": "text",
+      "text": "The woman holds up the white running shoe with the orange sole to show it to the camera, smiling, soft studio light, static camera"
+    }
+  ],
+  "resolution": "480p",
+  "duration": 5,
+  "generate_audio": false,
+  "watermark": false
+}
