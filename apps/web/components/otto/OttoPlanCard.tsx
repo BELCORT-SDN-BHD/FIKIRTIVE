@@ -15,7 +15,8 @@ import { CardApprovalRef } from "./CardApprovalRef";
 // 抄成两份必有一份先烂(改了什么、按什么价,两处会各说各的)。
 // 清单 A5(P2-013)—— 「Change something」那张小表单与它送回对话的那句话,同住一处
 // (哪一格能就地改的判据只有一份)。
-import { CardChangeForm, CardOptionControls, cardSpecChips, changeRequestSeed } from "./CardOptionControls";
+import { CardChangeForm, CardOptionControls, cardSpecChips, changeRequestDraft } from "./CardOptionControls";
+import type { TurnReferenceDraft } from "@/lib/turn-reference-draft";
 import { runStateOfCard, type OttoRunState } from "@/lib/otto-status-helpers";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -60,10 +61,19 @@ export interface OttoPlanCardProps {
   /**
    * 「Change something」那张小表单按下 Send 之后走的那一条路（清单 A5 / P2-013）。
    *
-   * 收到的是**商家写的那句话连同这张卡的原话**（`changeRequestSeed` 拼的那一份），
-   * 调用方照旧把它放进输入框 —— 仍是从前那**一条**对话路，没有第二条。
+   * FSE-003（Founder 2026-09-08 裁「Send 按字面真发送」）：收到的是 `changeRequestDraft`
+   * 拼好的那**一整份** —— 商家写的那句 ＋ 这张卡的原话 ＋ 卡上冻着的引用 ＋ 这张卡的消息 id。
+   * 调用方**真的把它送出去**：走查里按下 Send 之后一条新消息都没有，商家只能改用主输入框
+   * 重打一遍，而键上写的就是 Send。
    */
-  onChangeSomething: (seed: string) => void;
+  onChangeSomething: (draft: TurnReferenceDraft) => void;
+  /**
+   * 读不懂 / 读不全的那种卡上那颗「Ask again」—— 它只把卡的原话放回输入框，**不发送**。
+   *
+   * 与上面那条刻意分家：那张卡连一句「要改什么」都没有（表单不在那种卡上），送出去等于替
+   * 商家发明一个请求。他自己在输入框里说清楚再送。
+   */
+  onSeedComposer?: (seed: string) => void;
   /**
    * 商家在这张卡上改完三格之后，服务端重铸出来的**整张卡**（复审 r1 P1-1）。
    *
@@ -108,6 +118,7 @@ export function OttoPlanCard({
   pendingApproval,
   onApproved,
   onChangeSomething,
+  onSeedComposer,
   onOptionsChanged,
   onRetry,
   onCancelled,
@@ -302,15 +313,15 @@ export function OttoPlanCard({
     setChangeOpenFor((open) => (open === runState ? null : runState));
   }
 
-  /** 表单按下 Send:商家那句话连同这张卡的原话,走**既有**那一条对话路。 */
+  /** 表单按下 Send:FSE-003 —— 真送出去,带着卡的原话与卡上冻着的引用。 */
   function submitChange(note: string) {
     setChangeOpenFor(null);
-    onChangeSomething(changeRequestSeed(note, p));
+    onChangeSomething(changeRequestDraft(note, p, cardId));
   }
 
-  /** 读不懂 / 读不全的卡上那颗「Ask again」—— 那种卡没有可改的一格,照旧把原话送回去。 */
+  /** 读不懂 / 读不全的卡上那颗「Ask again」—— 那种卡没有可改的一格,照旧把原话放回输入框。 */
   function handleAskAgain() {
-    onChangeSomething(p.structuredPrompt ?? "");
+    onSeedComposer?.(p.structuredPrompt ?? "");
   }
 
   // A payload we can't read (or can't price) is disclosed as such. It never renders as a

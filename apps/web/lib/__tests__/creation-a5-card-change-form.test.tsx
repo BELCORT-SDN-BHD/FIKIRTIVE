@@ -24,6 +24,7 @@ import { act, createElement, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OttoPlanCardPayload } from "@/components/otto/plan-card-contract";
+import type { TurnReferenceDraft } from "@/lib/turn-reference-draft";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -107,7 +108,7 @@ function CardHost({
   cardState = "idle",
 }: {
   initial: OttoPlanCardPayload;
-  seeds: string[];
+  seeds: TurnReferenceDraft[];
   cardState?: "idle" | "working" | "failed";
 }) {
   const [payload, setPayload] = useState<unknown>(initial);
@@ -122,14 +123,14 @@ function CardHost({
     cardState,
     pendingApproval: true,
     onApproved: vi.fn(),
-    onChangeSomething: (seed: string) => { seeds.push(seed); },
+    onChangeSomething: (draft: TurnReferenceDraft) => { seeds.push(draft); },
     onOptionsChanged: (_cardId: string, next: unknown) => setPayload(next),
   });
 }
 
 function mount(payload: OttoPlanCardPayload): {
   host: HTMLElement;
-  seeds: string[];
+  seeds: TurnReferenceDraft[];
   /** 同一棵树上换 `cardState` —— 卡不卸载，正是生产里按下 Generate 之后那一刻。 */
   setCardState: (next: "idle" | "working" | "failed") => void;
 } {
@@ -137,7 +138,7 @@ function mount(payload: OttoPlanCardPayload): {
   document.body.appendChild(host);
   const root = createRoot(host);
   roots.push([root, host]);
-  const seeds: string[] = [];
+  const seeds: TurnReferenceDraft[] = [];
   act(() => { root.render(createElement(CardHost, { initial: payload, seeds })); });
   return {
     host,
@@ -148,12 +149,12 @@ function mount(payload: OttoPlanCardPayload): {
   };
 }
 
-function mountCanvas(payload: OttoPlanCardPayload): { host: HTMLElement; seeds: string[] } {
+function mountCanvas(payload: OttoPlanCardPayload): { host: HTMLElement; seeds: TurnReferenceDraft[] } {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
   roots.push([root, host]);
-  const seeds: string[] = [];
+  const seeds: TurnReferenceDraft[] = [];
   act(() => {
     root.render(
       createElement(OttoTurnCard, {
@@ -162,7 +163,7 @@ function mountCanvas(payload: OttoPlanCardPayload): { host: HTMLElement; seeds: 
         streaming: false,
         confirmCards: [{ cardId: "card_1", threadId: "thread_1", payload, pendingApproval: true }],
         onApproved: vi.fn(),
-        onChangeSomething: (seed: string) => { seeds.push(seed); },
+        onChangeSomething: (draft: TurnReferenceDraft) => { seeds.push(draft); },
         onOptionsChanged: vi.fn(),
       }),
     );
@@ -281,12 +282,34 @@ describe("CREATE-A1 确认卡的「Change something」= 一张小表单，不是
     expect(seeds).toEqual([]);
   });
 
-  it("CREATE-A1 人话提交 ⇒ 他写的那句连同这张卡的原话回到对话，走的是既有那一条路", async () => {
-    const { host, seeds } = mount(imageCard());
+  it("FSE-003 / CREATE-A1 人话提交 ⇒ 那句话连同卡的原话、卡上的引用与卡的消息 id 一起交出去", async () => {
+    // 这条从前只钉「送出去的那一串字」。FSE-003 之后交出去的是一份**草稿**：
+    // 文字照旧逐字相同(拼句子的口径没动),另外还带着这张卡冻着的引用与它自己的消息 id ——
+    // 少了引用那一半,Otto 就得在没有原引用的前提下重出一份计划,新卡照样缺图。
+    const card = imageCard({
+      approvedEntities: [{ id: "ent_aisyah", name: "Aisyah", type: "CHARACTER" }],
+      mediaReferences: [
+        {
+          generationId: "gen_product",
+          kind: "image",
+          label: "Coral travel mug",
+          sourceProjectId: "proj_1",
+          sourceProjectName: "Raya launch",
+          sameCanvas: true,
+          previewUrl: "/files/a/b.png",
+          role: "baseImage",
+        },
+      ],
+    });
+    const { host, seeds } = mount(card);
     await click(buttonByText(host, "Change something"));
     await type(noteBox(host)!, "  make it 4:5 and warmer  ");
     await click(buttonByText(host, CHANGE_FORM_SEND));
-    expect(seeds).toEqual([`make it 4:5 and warmer\n\nThe plan to change: ${PROMPT}`]);
+    expect(seeds).toHaveLength(1);
+    expect(seeds[0]!.text).toBe(`make it 4:5 and warmer\n\nThe plan to change: ${PROMPT}`);
+    expect(seeds[0]!.refs.entityIds).toEqual(["ent_aisyah"]);
+    expect(seeds[0]!.refs.sourceGenerationIds).toEqual(["gen_product"]);
+    expect(seeds[0]!.sourceMessageId).toBe("card_1");
     // 送完表单收起 —— 商家的下一眼回到「要不要买」。
     expect(noteBox(host)).toBeNull();
   });
@@ -349,13 +372,15 @@ describe("CREATE-A1 确认卡的「Change something」= 一张小表单，不是
     expect(askOttoNote(videoCard())).toContain("I can't change length and sound on this card");
   });
 
-  it("CREATE-A1 画布上那张卡的 Change 打开的是同一份表单（两处不可能说出两件事）", async () => {
+  it("FSE-003 / CREATE-A1 画布上那张卡的 Change 打开的是同一份表单，交出去的也是同一份草稿", async () => {
     const { host, seeds } = mountCanvas(imageCard());
     expect(noteBox(host)).toBeNull();
     await click(buttonByText(host, "Change"));
     await type(noteBox(host)!, "drop the blue cup");
     await click(buttonByText(host, CHANGE_FORM_SEND));
-    expect(seeds).toEqual([`drop the blue cup\n\nThe plan to change: ${PROMPT}`]);
+    expect(seeds).toHaveLength(1);
+    expect(seeds[0]!.text).toBe(`drop the blue cup\n\nThe plan to change: ${PROMPT}`);
+    expect(seeds[0]!.sourceMessageId).toBe("card_1");
   });
 
   it("CREATE-A1 `changeRequestSeed` 纯函数：读不懂原话的老卡只送商家自己那句", () => {

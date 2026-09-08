@@ -63,6 +63,8 @@ const {
   TOP_UP_LABEL,
 } = await import("@/components/otto/OttoStreamErrorNotice");
 const { referenceUnavailableMessage } = await import("@fikirtive/core/gen-failure");
+const { EMPTY_TURN_REFERENCES } = await import("@/lib/turn-reference-draft");
+type TurnReferenceDraft = import("@/lib/turn-reference-draft").TurnReferenceDraft;
 const { OttoChatStream } = await import("@/components/otto/OttoChatStream");
 const CANVAS_CARD = '[aria-label="Otto current turn"]';
 
@@ -118,7 +120,7 @@ function card(
   opts: {
     isBusy?: boolean;
     liveError?: { kind: "error" | "insufficient_credits" | "spend_cap" | "provider_unavailable"; text: string } | null;
-    retryDraft?: string | null;
+    retryDraft?: TurnReferenceDraft | null;
   } = {},
 ) {
   const list = messages as Parameters<typeof latestTurnTerminal>[0];
@@ -134,6 +136,7 @@ function card(
       retryDraft={opts.retryDraft ?? null}
       onApproved={() => {}}
       onChangeSomething={() => {}}
+      onEditAndRetry={() => {}}
       onOptionsChanged={() => {}}
     />,
   );
@@ -217,8 +220,22 @@ describe("FRONT-A12 ⑥ 画布状态卡：这一轮失败了就当场说出口",
     expect(durable).toBe(live);
   });
 
-  it("FRONT-A12: 失败的出路就在卡上 —— Edit and retry 把商家原话交回输入框", () => {
-    const seeded: string[] = [];
+  it("FSE-004 / FRONT-A12: 失败的出路就在卡上 —— Edit and retry 把那句话**连同原引用**交回", () => {
+    // 这条从前只钉「商家自己那句话放回输入框」。FRONT-A12 的口径 2026-09-08 放宽为
+    // 「那句话＋原引用一起放回」(frontend-baseline.md §5),而且这颗键不再与「Send to Otto」
+    // 共用一个回调 —— 它交出的是**草稿**(`onEditAndRetry`),Send 那一颗才是发送。
+    const seeded: TurnReferenceDraft[] = [];
+    const draft: TurnReferenceDraft = {
+      text: "make it 1080p",
+      refs: {
+        entityIds: ["ent_aisyah"],
+        references: ["official-avatar:ent_aisyah", "generation:gen_product"],
+        sourceGenerationIds: ["gen_product"],
+        referenceVideoGenerationIds: [],
+      },
+      labels: ["Aisyah", "Coral travel mug"],
+      sourceMessageId: "msg_failed_turn",
+    };
     const messages = [asked("make it 1080p"), liveErrorMessage(SNAG)];
     const list = messages as Parameters<typeof latestTurnTerminal>[0];
     const el = render(
@@ -227,16 +244,21 @@ describe("FRONT-A12 ⑥ 画布状态卡：这一轮失败了就当场说出口",
         text={canvasTurnText(list)}
         streaming={false}
         confirmCards={[]}
-        retryDraft="make it 1080p"
+        retryDraft={draft}
         onApproved={() => {}}
-        onChangeSomething={(seed) => seeded.push(seed)}
+        onChangeSomething={() => { throw new Error("Edit and retry 绝不发送 —— 它只放回草稿"); }}
+        onEditAndRetry={(d) => seeded.push(d)}
         onOptionsChanged={() => {}}
       />,
     );
     const button = [...el.querySelectorAll("button")].find((b) => b.textContent === EDIT_AND_RETRY_LABEL);
     expect(button, "失败卡上没有那颗 Edit and retry").toBeTruthy();
     act(() => { button!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(seeded).toEqual(["make it 1080p"]);
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0]!.text).toBe("make it 1080p");
+    expect(seeded[0]!.refs.sourceGenerationIds).toEqual(["gen_product"]);
+    expect(seeded[0]!.refs.entityIds).toEqual(["ent_aisyah"]);
+    expect(seeded[0]!.sourceMessageId).toBe("msg_failed_turn");
   });
 
   it("FRONT-A12: 能不能重试是按失败的类型判的，不是按措辞", () => {
@@ -297,9 +319,10 @@ describe("FRONT-A12 ⑥ 画布状态卡：这一轮失败了就当场说出口",
         text={canvasTurnText(list)}
         streaming={false}
         confirmCards={[]}
-        retryDraft="make it 1080p"
+        retryDraft={{ text: "make it 1080p", refs: EMPTY_TURN_REFERENCES, labels: [], sourceMessageId: null }}
         onApproved={() => {}}
         onChangeSomething={() => {}}
+        onEditAndRetry={() => {}}
         onOptionsChanged={() => {}}
       />,
     );
@@ -338,7 +361,7 @@ describe("FRONT-A12 ⑥ 画布状态卡：这一轮失败了就当场说出口",
   it("FRONT-A12: 供应商侧那一档，就算把商家原话递到卡上也不给重试键", () => {
     const el = card(
       [asked("make it 1080p"), liveErrorMessage("Otto is unavailable right now on our side.", "provider_unavailable")],
-      { retryDraft: "make it 1080p" },
+      { retryDraft: { text: "make it 1080p", refs: EMPTY_TURN_REFERENCES, labels: [], sourceMessageId: null } },
     );
     expect(el.textContent).toContain("Failed");
     expect(
@@ -350,7 +373,7 @@ describe("FRONT-A12 ⑥ 画布状态卡：这一轮失败了就当场说出口",
   it("FRONT-A12: 充值与抬上限那两档同样不因为有原话就冒出重试键", () => {
     for (const kind of ["insufficient_credits", "spend_cap"] as const) {
       const el = card([asked("a"), liveErrorMessage("You have 3.9 credits; this turn holds 11.", kind)], {
-        retryDraft: "a",
+        retryDraft: { text: "a", refs: EMPTY_TURN_REFERENCES, labels: [], sourceMessageId: null },
       });
       expect([...el.querySelectorAll("button")].some((b) => b.textContent === EDIT_AND_RETRY_LABEL)).toBe(false);
       act(() => { root?.unmount(); });

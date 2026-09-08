@@ -25,6 +25,11 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ottoUpdateGenCardOptions } from "@/lib/otto-client-actions";
+import {
+  cardReferenceLabels,
+  turnReferencesFromCard,
+  type TurnReferenceDraft,
+} from "@/lib/turn-reference-draft";
 import type { OttoPlanCardPayload } from "./plan-card-contract";
 
 /** 精修那一格旁边那句话 —— 它会改价，所以这件事必须写在开关旁边，而不是等按下去才知道。 */
@@ -311,6 +316,30 @@ export function changeRequestSeed(note: string, payload: OttoPlanCardPayload): s
   if (!current) return wanted;
   if (!wanted) return current;
   return `${wanted}\n\nThe plan to change: ${current}`;
+}
+
+/**
+ * FSE-003（Founder 2026-09-08 裁「Send 按字面真发送」）—— 那颗键**送出去的整份东西**。
+ *
+ * 走查里按下「Send to Otto」之后什么都没发生：调用链末端只往输入框里塞了一段字。改成真发送
+ * 之后还差一半 —— 只送一句话，Otto 就得在**没有原引用**的前提下重出一份计划，于是新卡照样
+ * 缺图（与 FSE-002 同一种缺）。所以送出去的是这一份：他写的那句 ＋ 卡的原话 ＋ 卡上冻着的
+ * 那几件引用 ＋ 这张卡自己的消息 id（作为 `replyToMessageId` 上路，说得出改的是哪一张）。
+ *
+ * 拼句子的口径仍然只有 `changeRequestSeed` 一份；引用的形状仍然只有 `turnReferencesFromCard`
+ * 一份。这里只是把两者摆在一起，不新造第三份。
+ */
+export function changeRequestDraft(
+  note: string,
+  payload: OttoPlanCardPayload,
+  cardMessageId: string,
+): TurnReferenceDraft {
+  return {
+    text: changeRequestSeed(note, payload),
+    refs: turnReferencesFromCard(payload),
+    labels: cardReferenceLabels(payload),
+    sourceMessageId: cardMessageId,
+  };
 }
 
 export interface CardChangeFormProps {

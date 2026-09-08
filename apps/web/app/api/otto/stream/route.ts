@@ -174,13 +174,39 @@ export async function POST(req: NextRequest): Promise<Response> {
       const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
       if (!project) return Response.json({ error: "Project not found." }, { status: 404 });
 
+      // FRONT-A10(§7.3③ 第③刀):`@` 到的对象在**落库之前**按当前 principal 的 ownerId 解析
+      // 一遍(判官 P2-1 的收口位)。一件解不出来,这一轮整轮不发,而且是一个流打开**之前**的
+      // 普通 400,所以 composer 拿到的是一句可读的话。那句话对「别人的」和「自己删掉的」
+      // 说得一模一样 —— 它不会变成存在性问答机。
+      //
+      // FSE-002:这一步挪到媒体校验**之前**。它现在不只产出回链,还按类型把这一轮 `@` 到的
+      // 东西拆成两半(元素 / 媒体),而媒体那一半正是下面要挂上路的引用 —— 顺序反过来的话,
+      // 这一轮的媒体槽就得在知道商家 `@` 了什么之前先定下来。
+      picked = await resolveOwnedReferenceRefs(ownerId, parsed.data.references);
+      if (picked.unresolved > 0) {
+        return Response.json({ error: referenceUnavailableMessage("notFound") }, { status: 400 });
+      }
+
       const refs = await validateOttoTurnReferences({
         ownerId,
         projectId,
         sourceGenerationId,
-        sourceGenerationIds,
+        // FSE-002 ——「`@` 到的」与「挂上来的」进的是**同一组槽**。
+        //
+        // 走查里商家在 `@` 菜单里点了官方演员 + 一张真实商品图:两件都进了
+        // `ChatMessage.referenceRefs`(所以回链是对的),可只有演员影响得了铸卡 —— 那张图
+        // 从来没进过这一轮的媒体槽,于是确认卡上没有 sourceGenerationId,商家为一张不含
+        // 他指定商品的素材付钱。改用 Library 附件才恢复双绑定,是因为那条路走的正是下面
+        // 这两个入参。两条路现在合流:同一份已解析结构,同一组槽,同一张卡。
+        sourceGenerationIds: [...new Set([
+          ...(sourceGenerationIds ?? []),
+          ...picked.media.filter((m) => m.kind === "image").map((m) => m.generationId),
+        ])],
         referenceVideoGenerationId,
-        referenceVideoGenerationIds,
+        referenceVideoGenerationIds: [...new Set([
+          ...(referenceVideoGenerationIds ?? []),
+          ...picked.media.filter((m) => m.kind === "video").map((m) => m.generationId),
+        ])],
       });
       // Codex QA-CRE-FE9-013 —— **静默丢弃到此为止**。挂上来的引用有一件取不到,这一轮就
       // 整轮不发:不建对话、不落 USER 消息、不开 SSE、不进 Otto、不铸卡、不预扣。它是一个
@@ -189,15 +215,6 @@ export async function POST(req: NextRequest): Promise<Response> {
       // 参考」的前提铸卡、商家为一张不含指定产品的素材付了钱。
       if (refs.unavailable.length > 0) {
         return Response.json({ error: unavailableReferenceMessage(refs.unavailable) }, { status: 400 });
-      }
-
-      // FRONT-A10(§7.3③ 第③刀):`@` 到的对象在**落库之前**按当前 principal 的 ownerId 解析
-      // 一遍(判官 P2-1 的收口位)。与上面媒体引用同一条纪律:一件解不出来,这一轮整轮不发,
-      // 而且是一个流打开**之前**的普通 400,所以 composer 拿到的是一句可读的话。那句话对
-      // 「别人的」和「自己删掉的」说得一模一样 —— 它不会变成存在性问答机。
-      picked = await resolveOwnedReferenceRefs(ownerId, parsed.data.references);
-      if (picked.unresolved > 0) {
-        return Response.json({ error: referenceUnavailableMessage("notFound") }, { status: 400 });
       }
 
       // Resolve thread: new vs existing-owned-and-in-project
@@ -263,7 +280,15 @@ export async function POST(req: NextRequest): Promise<Response> {
           kind: "TEXT",
           seq: ++seq,
           text,
-          payload: { entityIds, variantSel, sourceGenerationIds: refs.sourceGenerationIds, referenceVideoGenerationIds: refs.referenceVideoGenerationIds },
+          // FSE-002:落库的这一份就是**已解析的那一份** —— 元素来自服务端解析(客户端上报的
+          // 那一列只是它的一个子集),媒体来自上面同一次校验。重试草稿以后从这一行恢复,
+          // 所以「卡上挂的」与「历史里记的」不可能是两份。
+          payload: {
+            entityIds: [...new Set([...(entityIds ?? []), ...picked.entityIds])],
+            variantSel,
+            sourceGenerationIds: refs.sourceGenerationIds,
+            referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
+          },
           // FRONT-A10:这条消息**提到了谁**,类型化 ID,服务端解析过的那一份。
           referenceRefs: picked.wire,
           replyToMessageId: validReplyId,

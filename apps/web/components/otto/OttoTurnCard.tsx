@@ -45,7 +45,8 @@ import { runPlanApproval } from "./plan-approval";
 // Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修),与抽屉里那张卡共用一份。
 // 清单 A5(P2-013)—— 「Change」打开的那张小表单同样共用那一份(措辞、哪一格改得动、
 // 送回对话的那句话,两处不可能说出两件事)。
-import { CardChangeForm, CardOptionControls, cardSpecChips, changeRequestSeed } from "./CardOptionControls";
+import { CardChangeForm, CardOptionControls, cardSpecChips, changeRequestDraft } from "./CardOptionControls";
+import type { TurnReferenceDraft } from "@/lib/turn-reference-draft";
 import {
   CAP_EXIT_HREF,
   CAP_EXIT_LABEL,
@@ -76,20 +77,32 @@ export interface OttoTurnCardProps {
   confirmCards: readonly CanvasConfirmCard[];
   onApproved: (outcome: PlanApproveOutcome) => void;
   /**
-   * 「Change」那张小表单按下 Send 之后走的那一条路（清单 A5 / P2-013）：商家写的那句话
-   * 连同这张卡的原话回到输入框。失败那一轮的「Edit and retry」走的也是它（送商家自己
-   * 打的那句原话）—— 一条路，两个入口。
+   * 「Change」那张小表单按下 Send 之后走的那一条路（清单 A5 / P2-013）。
+   *
+   * FSE-003（Founder 2026-09-08 裁「Send 按字面真发送」）：这条路从前只把一段字塞回输入框，
+   * 而键上写着 Send to Otto —— 商家按下去没有新消息、没有回复，只能改用主输入框重打一遍。
+   * 现在它**真的送出去**，带着这张卡的原话与卡上冻着的那几件引用（`changeRequestDraft`）。
+   *
+   * 「Edit and retry」不再走这一条：那一颗是把草稿放回输入框，不是发送（见 `onEditAndRetry`）。
+   * 两件事共用一个回调，就是「按 Send 只得到一段草稿」这个缺陷当初的形状。
    */
-  onChangeSomething: (seed: string) => void;
+  onChangeSomething: (draft: TurnReferenceDraft) => void;
   /** 改完三格之后服务端重铸的那张卡,原样交回父组件 —— 抽屉里那张卡下一帧读到的是同一份
    *  (复审 r1 P1-1:两处各留一份就是「卡上一个数、预扣另一个数」)。 */
   onOptionsChanged: (cardId: string, payload: unknown) => void;
   /**
-   * 这一轮失败时，商家原来打的那句话 —— 有它才出「Edit and retry」（2026-09-05 走查修复一）。
+   * FSE-004:失败那一轮的**重试草稿** —— 商家原来打的那句话 ＋ 那一轮的原引用 ＋ 源任务标识。
+   *
+   * FRONT-A12 的口径 2026-09-08 放宽为「那句话＋原引用一起放回」（frontend-baseline.md §5）：
+   * 走查里点 Edit and retry 只回来一段扩写过的提示词，参考图一张都没有 —— 照它再送一次就是
+   * 一次**无条件生成**，而商家以为自己在重试同一件事。
+   *
    * 只有能重试的那一种失败给得出（充值 / 抬上限那两种的出路不在这里），判据在调用方，
    * 与抽屉里那张 `OttoStreamErrorNotice` 是同一个。
    */
-  retryDraft?: string | null;
+  retryDraft?: TurnReferenceDraft | null;
+  /** FSE-004:把上面那份草稿放回输入框（**不**发送 —— 商家要先改）。 */
+  onEditAndRetry?: (draft: TurnReferenceDraft) => void;
   /**
    * 这一轮失败的**类型**（#1225 判官残留）——「类型决定出路，而不是措辞」的另一半。
    *
@@ -111,6 +124,7 @@ export function OttoTurnCard({
   onChangeSomething,
   onOptionsChanged,
   retryDraft,
+  onEditAndRetry,
   errorKind,
 }: OttoTurnCardProps) {
   const failed = status.phase === "failed";
@@ -129,7 +143,7 @@ export function OttoTurnCard({
    * 充值与抬上限那两档各有自己的那颗键，供应商侧那一档确实没有出路 —— 一个键都不给。
    */
   const retryableKind = errorKind == null || errorKind === "error";
-  const showRetry = failed && !!retryDraft && retryableKind;
+  const showRetry = failed && !!retryDraft && !!onEditAndRetry && retryableKind;
   return (
     <div
       aria-label="Otto current turn"
@@ -162,7 +176,8 @@ export function OttoTurnCard({
           )}
         </div>
         {/* 商家的下一个动作就摆在这句话旁边 —— 与抽屉里那张告示同一颗键、同一份措辞。
-            按下去把他原来那句话放回输入框(`onChangeSomething` 就是那条路),改了再送。
+            FSE-004:按下去把他原来那句话**连同那一轮的原引用**放回输入框(`onEditAndRetry`),
+            改了再送 —— 少了引用那一半,再送一次就是一次他没要过的无条件生成。
             充值与抬上限那两种的出路是一条真能点的链接(同一份地址与字,#1225 判官残留):
             画布形态下抽屉是折起的,那两颗键在里面商家看不见,而他已经决定要付钱/要改上限了。
             供应商侧那一档(`provider_unavailable`)在这里一个键都没有 —— 它确实没有出路。 */}
@@ -183,7 +198,7 @@ export function OttoTurnCard({
                 type="button"
                 size="xs"
                 variant="outline"
-                onClick={() => onChangeSomething(retryDraft!)}
+                onClick={() => onEditAndRetry!(retryDraft!)}
               >
                 {EDIT_AND_RETRY_LABEL}
               </Button>
@@ -228,7 +243,7 @@ function CanvasConfirmRow({
 }: {
   card: CanvasConfirmCard;
   onApproved: (outcome: PlanApproveOutcome) => void;
-  onChangeSomething: (seed: string) => void;
+  onChangeSomething: (draft: TurnReferenceDraft) => void;
   onOptionsChanged: (cardId: string, payload: unknown) => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -320,7 +335,9 @@ function CanvasConfirmRow({
           disabled={busy}
           onSubmit={(note) => {
             setChangeOpen(false);
-            onChangeSomething(changeRequestSeed(note, p));
+            // FSE-003:真发送,而且带着这张卡的原话与卡上冻着的引用(`changeRequestDraft`)。
+            // `card.cardId` 就是这张 GEN_CARD 的落库消息 id —— 它作为源任务标识随这一轮上路。
+            onChangeSomething(changeRequestDraft(note, p, card.cardId));
           }}
         />
       )}

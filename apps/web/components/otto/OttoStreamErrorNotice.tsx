@@ -5,6 +5,7 @@ import { SETTINGS_SECTIONS } from "@fikirtive/core/navigation";
 import type { OttoErrorData } from "@/lib/otto-stream-bridge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import type { TurnReferenceDraft } from "@/lib/turn-reference-draft";
 
 /** 花费上限住在哪一面 —— 名字与地址都来自导航 registry(`SETTINGS_SECTIONS`)。 */
 const CAP_SECTION = SETTINGS_SECTIONS.find((section) => section.key === "billing")!;
@@ -38,8 +39,15 @@ export const CAP_EXIT_HREF: string = CAP_SECTION.href;
 
 export interface OttoStreamErrorNoticeProps {
   error: OttoErrorData;
-  retryDraft?: string | null;
-  onRetry?: (draft: string) => void;
+  /**
+   * FSE-004 —— 重试草稿是**那句话加上那一轮的原引用**,不是一段孤零零的字。
+   *
+   * FRONT-A12 的口径 2026-09-08 放宽为「那句话＋原引用一起放回」(frontend-baseline.md §5):
+   * 只放回文字,商家照它再送一次拿到的是一次无条件生成 —— 与他以为的「重试同一件事」
+   * 是两回事,而屏幕上看不出差别。
+   */
+  retryDraft?: TurnReferenceDraft | null;
+  onRetry?: (draft: TurnReferenceDraft) => void;
   style?: CSSProperties;
 }
 

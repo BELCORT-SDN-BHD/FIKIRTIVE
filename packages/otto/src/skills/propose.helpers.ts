@@ -543,6 +543,33 @@ export class ReferenceKindUnavailableError extends ProposeRefusal {
 }
 
 /**
+ * FSE-002(staging 2026-09-08,Founder 当日裁「一片修完」)—— **`entityIds` 里有一个不是这家
+ * 店的元素**。
+ *
+ * 走查现场:商家 `@` 了官方演员和一张真实商品图。图片是一行 `Generation`,不是 `Entity`,
+ * 于是它作为「元素 id」进来时一条都对不上;上一版在这里 `filter(ownedSet.has)` 把它**静默**
+ * 滤掉,照旧铸出一张只绑演员的卡 —— 商家在卡上看不出少了商品,批准之后为一张不含他商品的
+ * 素材付了钱。他要求纠正,模型又把上一张 GEN_CARD 的**消息 id** 当商品 id 递进来,同一条静默
+ * 过滤再吃掉一次,连着三张卡都是错的。
+ *
+ * 静默过滤对**两种**输入长得一模一样:模型编出来的 id,和商家真指着、只是类型拿错了的东西。
+ * 这一族拒绝把它们都变成一句话:$0、零 GEN_CARD、零预扣,模型收到这句话之后可以改用正确的
+ * 引用重来 —— 而不是把一张少了东西的卡摆到付款按钮旁边。
+ *
+ * 归属仍由 `ownedEntities` 那一趟读定(与冻在卡上的名字同一趟),所以这句话对「别人的」和
+ * 「自己删掉的」说得一模一样,不会变成存在性问答机。
+ */
+export class EntityReferenceUnavailableError extends ProposeRefusal {
+  constructor() {
+    super(
+      "I couldn't match one of the references for that plan to something in your Library. " +
+        "Tell me which product or cast member you mean and I'll set it up — nothing was made.",
+    );
+    this.name = "EntityReferenceUnavailableError";
+  }
+}
+
+/**
  * 商家点名的画幅**这台引擎做得到**,只是这一趟没落到卡上(判官 2026-09-04 P1-1)。
  *
  * 为什么必须与 `ImageAspectUnavailableError` 分家:那句话的第一个字是「做不到」,而
@@ -885,14 +912,19 @@ export function buildProposeCard(
     }
   }
 
-  // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently.
+  // Step 2: entityId scoping — every id must be one of THIS merchant's live elements.
+  //
+  // FSE-002:这里从前是 `filter(ownedSet.has)` ——「drop foreign ones silently」。静默丢弃是
+  // 那三张错卡的共同来源(理由写在 `EntityReferenceUnavailableError` 的注释里):对不上就抛,
+  // 一张 GEN_CARD 都不落库、一分钱都不动。
   // #785 判官 r1 P1:归属过滤挪到了 i2v 清空**之前**(原本是「先清空、再跳过过滤」)。
   // 卡面产物一个字节都没变(清空后的卡照旧是空的),换来的是下面那一份「商家真 @ 了谁」
   // 还留着 —— 披露要数的是它,不是清空后的卡(见 ProposeCardResult.mentionedEntityIds)。
   // #774:归属集从 `ownedEntities` 取 —— 与冻在卡上的名字**同一趟**读出来的那一份,
   // 所以「谁算他的」与「他批的是哪个名字」不可能来自两次不同的读。
   const ownedSet = new Set(ownedEntities.map((e) => e.id));
-  let entityIds = input.entityIds.filter((id) => ownedSet.has(id));
+  if (input.entityIds.some((id) => !ownedSet.has(id))) throw new EntityReferenceUnavailableError();
+  let entityIds = [...input.entityIds];
   const ownedVarSel: Record<string, string> = {};
   for (const [k, v] of Object.entries(input.variantSel)) {
     if (ownedSet.has(k)) ownedVarSel[k] = v;
