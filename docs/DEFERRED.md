@@ -90,3 +90,11 @@
 | D-084 | 缺失面登记(beta 不做):Tags 分组原语(触发=商家横切检索真实诉求)、Listening、Link in bio、Ads 投放面(触发=广告账户)、回收站与数据隐私面(随 Settings 全侧栏排期) | 触发=商家横切检索真实诉求)、Listening、Link in bio、Ads 投放面(触发=广告账户)、回收站与数据隐私面(随 Settings 全侧栏排期) | [#359 评论](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5408346066) | 2026-09-06 |
 | D-085 | staging 与 production 共用同一 R2 桶 artlio 待改:staging 换成独立桶(如 belcort-media-staging),换桶时权限/CORS 需一并配;触发=上线闸之前 或 第一次在 staging 跑真供应商批量测试之前 | 触发=上线闸之前 或 第一次在 staging 跑真供应商批量测试之前 | [#359 评论](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5520125121) | 2026-09-06 |
 | D-086 | staging 同日临时改动需验完改回:worker GENERATION_PROVIDER mock→byteplus;web AUTH_ALLOWED_EMAILS 加两个e2e测试邮箱;web+worker FIKIRTIVE_ENV_CONTRACT=warn(缺SENTRY_DSN的逃生门,长期应补DSN) | 原登记未注明;见来源评论 | [#359 评论](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5520125121) | 2026-09-06 |
+| D-087 | 登出所有设备 + 会话时长显式配置(expiresIn/updateAge/freshAge、按 createdAt 的绝对上限、过期行清理);今天 7 天滑动无上限,改凭据不踢会话 | 第一个真实商家上线,或首次出现账号被盗报告;可与登录门规格(sign-in.md)后的会话规格合并 | 2026-09-08 登录逻辑审计（sign-in.md §6 改签记录） | 2026-09-08 |
+| D-088 | 撤销后的每请求名单复查(better-auth 层 onRequest/session.update hook;改 proxy.ts 无效,它不跑在 /api/better-auth/*) | sign-in.md A7 落地后仍有「撤销→旧 cookie 可换 Google token」窗口时 | 2026-09-08 登录逻辑审计（sign-in.md §6 改签记录） | 2026-09-08 |
+| D-089 | 验证码门:陌生人的请求预算与地址所有者的发信预算分开;猜错次数绑定 (identifier, caller) 而非只按邮箱——否则一小时 8 个请求可定向锁死某商家 | 第一个真实商家开始用验证码门(届时升 P1) | 2026-09-08 登录逻辑审计（sign-in.md §6 改签记录） | 2026-09-08 |
+| D-090 | 限流计数器不可达时验证码被静默吞掉而页面仍说已发送:degraded 走 Sentry 告警 + 与地址无关的对外文案;顺带修 X-Retry-After: 0 | 首次出现静默吞码事故,或会话规格同批 | 2026-09-08 登录逻辑审计（sign-in.md §6 改签记录） | 2026-09-08 |
+| D-091 | BETTER_AUTH_SECRET 弱值只警告不拦截;env contract 加长度/熵规则并删两处「已守 ≥32 字符」假注释 | 任何 env 契约改动同批 | 2026-09-08 登录逻辑审计（sign-in.md §6 改签记录） | 2026-09-08 |
+| D-092 | 验证码请求门是 server action,绕开秒级限流且每请求开行锁事务:加进程内令牌桶前置泄洪 | 公测开放、/login 承接公网流量 | 2026-09-08 登录逻辑审计（sign-in.md §6 改签记录） | 2026-09-08 |
+| D-093 | 人机验证(Cloudflare Turnstile)挡刷号:sign-in.md A17 只做幂等键归一化与全站每小时上限 | A17 的每小时上限被真实流量撞到,或供应商账单异常 | 2026-09-08 登录逻辑审计（sign-in.md §6 改签记录） | 2026-09-08 |
+| D-094 | #980 pre-hijack 的登记缺口:原票称「触发条件登记 #359」但从未迁入本台账;处置改为密码整体下线(sign-in.md),交付后关 #980 | sign-in.md 交付 | 2026-09-08 登录逻辑审计（sign-in.md §6 改签记录） | 2026-09-08 |
