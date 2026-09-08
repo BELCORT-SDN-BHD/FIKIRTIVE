@@ -57,13 +57,20 @@ export type ReferenceBudgetInput = VideoReferenceShape & {
    */
   attachedImageCount: number;
   /**
-   * FSE-001 判官 r1 P2 —— 这一轮 @ 到、且确属商家自己的 **CHARACTER** 有几个。
+   * FSE-001 判官 r2 —— 这一轮 @ 到、且确属商家自己的**元素**有几个(不分类型)。
    *
-   * 每一位先预留一个 `image_url` 名额(`videoAttachedCap`),所以挂满 9 张商品图时演员的
-   * 照片仍然上得了车 —— 卡上列着 `Aisyah (person)`、引擎却一张她的照片都没收到,那种卡
-   * 结构上不再造得出来。缺省 0 ⇒ 与这条修改之前逐字相同;图片那一支不读它。
+   * 每一个先预留一个 `image_url` 名额(`videoAttachedCap`),所以挂满 9 张商品图时被 @ 到的
+   * 每个元素都还上得了一张照片 —— 卡上列着 `Aisyah (person)`、引擎却一张她的照片都没收到,
+   * 那种卡结构上不再造得出来。缺省 0 ⇒ 与这条修改之前逐字相同;图片那一支不读它。
+   *
+   * 为什么数**全部元素**而不是只数 CHARACTER(判官 r2 的反例):发格的 round-robin
+   * (下面 `referenceBudget`、worker 的 `cappedRefs` 循环)按 `entityIds` **原序**给每个元素
+   * 发第一张。只按演员数预留 1 格时,「先 @ 一个商品元素、再 @ 演员」的那一趟里,唯一那格
+   * 会被排在前面的商品元素拿走,演员照旧 0 张 —— 而披露句还在说「the cast you @mentioned
+   * keeps a reference photo」。预留基数与发格次序必须同一个口径:每个在场元素至少 1 格,
+   * 第 0 轮就一定发得完,谁都饿不死。
    */
-  mentionedCharacterCount?: number;
+  mentionedElementCount?: number;
 };
 
 /**
@@ -175,14 +182,21 @@ export type VideoAttachmentRole = "startFrame" | "reference";
 export function videoAttachmentRole(input: {
   /** 这个计划挂了几张图(去重后)。 */
   attachedImageCount: number;
-  /** 这一轮商家 @ 到、且确属他自己的 CHARACTER 元素有几个。 */
-  mentionedCharacterCount: number;
+  /**
+   * 这一轮商家 @ 到、且确属他自己的 CHARACTER 元素有几个。
+   *
+   * 判官 r2 —— 刻意**只数演员**,与名额预留那个数(`mentionedElementCount`,数全部元素)
+   * 是两件事,所以现在是两个名字。分岔的理由写在上面那段:演员的身份住在他的参考照里,
+   * 而参考照只有纯文生视频那一档带得上。@ 的只是商品/场景/标志时这里数出 0 ⇒ 首帧那一档
+   * (「把这张图动起来」)逐字不动。
+   */
+  mentionedCastCount: number;
   /** 这个计划挂着一整段参考片吗。 */
   hasReferenceVideo: boolean;
 }): VideoAttachmentRole | null {
   if (input.attachedImageCount <= 0) return null;
   if (input.hasReferenceVideo) return null;
-  return input.mentionedCharacterCount > 0 ? "reference" : "startFrame";
+  return input.mentionedCastCount > 0 ? "reference" : "startFrame";
 }
 
 /** 这一单的首帧/末帧各占一个 `image_url` 名额 —— 名额减法只有这一处口径。 */
@@ -198,30 +212,37 @@ function frameSlots(shape: VideoReferenceShape): number {
  * 上车。不是纯文生视频的那几档(首帧/末帧/整段参考片)恒为 0:那几档挂图走的是首帧那条
  * 独立的路,或者根本不上车,与这条修改之前逐字相同。
  *
- * ── FSE-001 判官 r1 P2 —— 演员的名额是**预留**出来的,不是抢剩下的 ─────────────────
+ * ── FSE-001 判官 r1 P2 —— 元素的名额是**预留**出来的,不是抢剩下的 ─────────────────
  * 上一版这里只有 `min(挂图数, 9)`。商家挂满 9 张商品图时挂图把 9 个名额全占了,
  * `conditioningCap` 于是算出 0 —— 而卡上 `approvedEntities` 仍然列着 `Aisyah (person)`、
  * 披露句仍然只说「9 of your 12」。商家批的是「Aisyah 拿着我的杯子」,付了钱,引擎却
  * **一张她的照片都没收到**:做出来的是一个陌生人拿着杯子。那正是这个模块存在的理由
  * (「说的与做的失同步」)的最贵一种形态 —— 卡上写了名字,请求里没有那个人。
  *
- * 所以在场的每一位 CHARACTER 先预留 1 格,挂图只能拿剩下的。为什么是结构性的:名额相减
+ * 所以在场的每一个**元素**先预留 1 格,挂图只能拿剩下的。为什么是结构性的:名额相减
  * 这一步只有这一个函数,卡面(`referenceBudget`)、铸卡时截挂图的那一刀
  * (`cardVideoReferenceIds`)与 worker 的选片(`jobVideoReferenceIds` / `conditioningCap`)
  * 读的都是它 —— 不可能出现「这里留了、那里没留」。
  *
- * 预留只保证**至少一张**:演员的第 2 张往后仍与别的元素照一起走 round-robin。超出名额的
- * 商品图按既有「truncated」口径在批准前逐字说出来(`buildReferenceBudgetNotes`),不静默。
+ * ── FSE-001 判官 r2 —— 预留基数是「在场元素数」,不是「在场演员数」 ────────────────────
+ * 上一版按演员数预留。发格的 round-robin 却按 `entityIds` **原序**给每个元素发第一张,
+ * 所以「先 @ 一个商品元素、再 @ 演员 + 挂满 9 张商品图」那一趟里,唯一那格被排在前面的
+ * 商品元素拿走 —— 演员照旧一张都不上车,而卡上的披露句还在说「so the cast you @mentioned
+ * keeps a reference photo」:同一种最贵的病(卡上有名字、请求里没有那个人)换了个入口,
+ * 外加一句假话。预留基数与发格次序现在同一个口径,第 0 轮一定发得完。
  *
- * `mentionedCharacterCount` 缺省 = 0 ⇒ 与这条修改之前逐字相同(既有每一条路一格不动)。
+ * 预留只保证**至少一张**:任何元素的第 2 张往后仍一起走 round-robin。超出名额的商品图按
+ * 既有「truncated」口径在批准前逐字说出来(`buildReferenceBudgetNotes`),不静默。
+ *
+ * `mentionedElementCount` 缺省 = 0 ⇒ 与这条修改之前逐字相同(既有每一条路一格不动)。
  */
 export function videoAttachedCap(
-  input: VideoReferenceShape & { attachedImageCount?: number; mentionedCharacterCount?: number },
+  input: VideoReferenceShape & { attachedImageCount?: number; mentionedElementCount?: number },
 ): number {
   if (!videoReferencesRide(input)) return 0;
   const free = Math.max(0, MAX_VIDEO_IMAGE_PARTS - frameSlots(input));
-  const reservedForCharacters = Math.min(Math.max(0, input.mentionedCharacterCount ?? 0), free);
-  return Math.max(0, Math.min(input.attachedImageCount ?? 0, free - reservedForCharacters));
+  const reservedForElements = Math.min(Math.max(0, input.mentionedElementCount ?? 0), free);
+  return Math.max(0, Math.min(input.attachedImageCount ?? 0, free - reservedForElements));
 }
 
 /**
@@ -242,8 +263,8 @@ export function conditioningCap(
   input: VideoReferenceShape & {
     kind: "image" | "video";
     attachedImageCount?: number;
-    /** FSE-001 —— 这一轮 @ 到、且确属商家自己的 CHARACTER 有几个(每位预留 1 格)。 */
-    mentionedCharacterCount?: number;
+    /** FSE-001 —— 这一轮 @ 到、且确属商家自己的元素有几个(每个预留 1 格,不分类型)。 */
+    mentionedElementCount?: number;
   },
 ): number {
   if (input.kind !== "video") {

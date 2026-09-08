@@ -277,13 +277,16 @@ export type ProposeCardResult = {
   mentionedEntityIds: string[];
   mentionedVariantSel: Record<string, string>;
   /**
-   * FSE-001 判官 r1 P2 —— 这一轮 @ 到、且确属商家自己的 **CHARACTER** 有几个。
+   * FSE-001 判官 r2 —— 这一轮 @ 到、且确属商家自己的**元素**有几个(不分类型)。
    *
    * 交出去是为了让 `referenceBudget` 与铸卡时截挂图的那一刀读到**同一个数**:名额里
-   * 每位演员预留 1 格,而卡上那句「这一趟会用你几张」必须跟着同一份预留算。两处各数一遍
-   * 就是「说的与做的失同步」的老病。不参与选型、报价、预扣。
+   * 每个在场元素预留 1 格,而卡上那句「这一趟会用你几张」必须跟着同一份预留算。两处各数
+   * 一遍就是「说的与做的失同步」的老病。不参与选型、报价、预扣。
+   *
+   * 与首帧/参考图那个分岔用的数(只数 CHARACTER)刻意是两个数、两个名字:分岔问的是
+   * 「有没有演员」,预留问的是「有几个元素要各留一格」。
    */
-  mentionedCharacterCount: number;
+  mentionedElementCount: number;
 };
 
 /**
@@ -710,10 +713,10 @@ export function buildReferenceBudgetNotes(input: {
         : `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
     );
   }
-  // ── FSE-001 判官 r1 P2 —— 视频这一档:被截掉的是**商品图**,演员的照片保住了 ──────
+  // ── FSE-001 判官 r1 P2 —— 视频这一档:被截掉的是**商品图**,元素的照片保住了 ──────
   //
   // 上面那句 `This run will use N of your M reference photos.` 只报数,不说被截的是哪一半。
-  // 名额里每位在场的演员先预留 1 格(`videoAttachedCap`),所以挂满 9 张商品图时被挤掉的
+  // 名额里每个在场的元素先预留 1 格(`videoAttachedCap`),所以挂满 9 张商品图时被挤掉的
   // 一定是商品图 —— 而商家读到「9 of your 12」时无从知道少的是他的杯子还是那位演员。
   // 演员少一张 = 买回来一个陌生人;商品图少一张 = 少一个角度。两件事的分量不同,所以这
   // 一句必须点名。
@@ -725,8 +728,13 @@ export function buildReferenceBudgetNotes(input: {
     input.videoAttachedRiding > 0 &&
     input.videoAttachedRiding < input.attachedImageCount
   ) {
+    // 判官 r2 P3 —— 只剩 1 格时(@ 满 8 个元素)上一版出的是「only the first 1 go」。
+    // 单数那一档改写成「only the first one goes」:同一件事、同一个数(仍然只来自
+    // `videoAttachedRiding`),只是说得像人话。
     notes.push(
-      `You attached ${input.attachedImageCount} images — only the first ${input.videoAttachedRiding} go to the engine, so the cast you @mentioned keeps a reference photo.`,
+      input.videoAttachedRiding === 1
+        ? `You attached ${input.attachedImageCount} images — only the first one goes to the engine, so the cast you @mentioned keeps a reference photo.`
+        : `You attached ${input.attachedImageCount} images — only the first ${input.videoAttachedRiding} go to the engine, so the cast you @mentioned keeps a reference photo.`,
     );
   }
   if (input.usesAttachedImage && input.attachedImageCount > 1) {
@@ -878,16 +886,25 @@ export function buildProposeCard(
    * 所以这里数出来的永远是他真有的那几个。
    */
   const ownedTypeById = new Map(ownedEntities.map((e) => [e.id, e.type]));
-  const mentionedCharacterCount = input.entityIds.filter(
+  const mentionedCastCount = input.entityIds.filter(
     (id) => ownedTypeById.get(id) === "CHARACTER",
   ).length;
+  /**
+   * FSE-001 判官 r2 —— 名额预留的基数:这一轮 @ 到、且确属他自己的**元素**有几个。
+   *
+   * 与上面那个数刻意分开:分岔(首帧还是参考图)问的是「有没有演员」,预留问的是
+   * 「有几个元素要各留一格」。worker 的 round-robin 按 `entityIds` 原序给**每个元素**发
+   * 第一张,所以预留基数必须是元素数 —— 否则「先 @ 商品元素、再 @ 演员」那一趟里唯一那格
+   * 会被排在前面的元素拿走,演员仍旧一张不上车。
+   */
+  const mentionedElementCount = input.entityIds.filter((id) => ownedTypeById.has(id)).length;
   /**
    * FSE-001 —— 这个视频计划里,挂图是首帧还是参考图。判据只有一份(`@fikirtive/core`),
    * 名额计算、卡面披露与 worker 的选片读的都是从它派生出来的同一组布尔。
    */
   const videoAttachment =
     kind === "video"
-      ? videoAttachmentRole({ attachedImageCount, mentionedCharacterCount, hasReferenceVideo: isRefVideo })
+      ? videoAttachmentRole({ attachedImageCount, mentionedCastCount, hasReferenceVideo: isRefVideo })
       : null;
   const isI2V = videoAttachment === "startFrame";
   /** FSE-001 正路:纯文生视频,演员原图与商家的商品图各作一张 `reference_image`。 */
@@ -1388,10 +1405,13 @@ export function buildProposeCard(
   /** FSE-001 —— 这张视频卡真会带上路的商品图,已按视频侧名额截断。次序即引擎收到的次序。 */
   const cardVideoReferenceIds = usesVideoImageReferences
     ? orderedUniqueRefIds([ctx.sourceGenerationId, ...(ctx.sourceGenerationIds ?? [])])
-        // FSE-001 判官 r1 P2 —— 名额里每位在场的演员先占 1 格,所以挂满 9 张商品图时
-        // 这一刀切到 8:演员的照片保住,超出的商品图在下面 `buildReferenceBudgetNotes`
-        // 里逐字说出来。数与 `referenceBudget`、与 worker 读的是同一个函数。
-        .slice(0, videoAttachedCap({ attachedImageCount, mentionedCharacterCount }))
+        // FSE-001 判官 r1 P2 —— 名额里每个在场的元素先占 1 格,所以 @ 一位演员、挂满
+        // 9 张商品图时这一刀切到 8:演员的照片保住,超出的商品图在下面
+        // `buildReferenceBudgetNotes` 里逐字说出来。判官 r2:预留基数是**元素数**,与
+        // worker 的 round-robin(按 `entityIds` 原序发第一张)同一个口径,所以排在演员
+        // 前面的商品元素不会把那唯一一格拿走。数与 `referenceBudget`、与 worker 读的是
+        // 同一个函数。
+        .slice(0, videoAttachedCap({ attachedImageCount, mentionedElementCount }))
     : [];
   const cardMediaIds: { id: string; role: CardReferenceRole }[] = [
     ...(isI2V ? [{ id: ctx.sourceGenerationId!, role: "startFrame" as const }] : []),
@@ -1464,5 +1484,5 @@ export function buildProposeCard(
   // Step 6: the credit amount Otto may mention in chat = the real charge (estimatedCredits).
   const shownPriceDisplay = estimatedCredits;
 
-  return { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel, mentionedCharacterCount };
+  return { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel, mentionedElementCount };
 }

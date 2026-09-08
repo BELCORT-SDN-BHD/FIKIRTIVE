@@ -9,7 +9,7 @@ import {
 } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import {
-  buildProposeCard, buildSpecChips, EXECUTED_SPEC, ImageAspectMismatchError,
+  buildProposeCard, buildReferenceBudgetNotes, buildSpecChips, EXECUTED_SPEC, ImageAspectMismatchError,
   ImageAspectUnavailableError, ProposeRefusal, VideoTierUnavailableError, proposeInput,
 } from "./propose.helpers.js";
 // Founder 2026-09-05「加进确认卡」—— 三格菜单的唯一来源,测试与生产读同一个函数。
@@ -2416,17 +2416,79 @@ describe("FSE-001 —— 演员 + 商品图 = 一步出片", () => {
       mediaReferences: mugIds.map((id) => ({ ...MUG_RECEIPT, generationId: id })),
     });
 
-    const { cardPayload, mentionedCharacterCount } = buildProposeCard(
+    const { cardPayload, mentionedElementCount } = buildProposeCard(
       videoInput([AISYAH.id]),
       ctx,
       [AISYAH],
     );
 
-    expect(mentionedCharacterCount).toBe(1);
+    expect(mentionedElementCount).toBe(1);
     expect(cardPayload.referenceGenerationIds).toEqual(mugIds.slice(0, 8));
     // 首帧那一格照旧是空的,演员照旧留在卡上。
     expect(cardPayload.sourceGenerationId).toBeUndefined();
     expect(cardPayload.entityIds).toEqual([AISYAH.id]);
+  });
+
+  // ── FSE-001 判官 r2 —— 预留基数是「在场元素数」,不是「在场演员数」 ────────────────
+  //
+  // 发格的 round-robin(worker 的 `cappedRefs` 循环、卡面的 `referenceBudget`)按
+  // `entityIds` **原序**给每个元素发第一张。只按演员数预留 1 格时,「先 @ 商品元素、
+  // 再 @ 演员」那一趟的唯一那格会被排在前面的商品元素拿走,演员仍旧一张都不上车 ——
+  // 而披露句还在说「the cast you @mentioned keeps a reference photo」,那是假话。
+  // 真送出去的那一份由 `apps/worker/src/jobs/gen-reference-budget.test.ts` 的同名反例
+  // 拿真 `handleGen` 对表;这里钉的是卡上冻的那一列。
+  it("FSE-001 / CREATE-A2: 先 @ 商品元素、再 @ 演员 + 挂 9 张商品图 ⇒ 卡上只冻 7 件(两个元素各留 1 格)", () => {
+    const MUG_ENTITY = { id: "entity-mug", type: "PRODUCT" as const, name: "the coral mug" };
+    const mugIds = Array.from({ length: 9 }, (_, i) => `gen_mug_${i}`);
+    const ctx = makeCtx({
+      sourceGenerationId: mugIds[0]!,
+      sourceGenerationIds: mugIds,
+      mediaReferences: mugIds.map((id) => ({ ...MUG_RECEIPT, generationId: id })),
+    });
+
+    const { cardPayload, mentionedElementCount } = buildProposeCard(
+      videoInput([MUG_ENTITY.id, AISYAH.id]),
+      ctx,
+      [MUG_ENTITY, AISYAH],
+    );
+
+    expect(mentionedElementCount).toBe(2);
+    expect(cardPayload.referenceGenerationIds).toEqual(mugIds.slice(0, 7));
+    // 演员照旧留在卡上,首帧那一格照旧是空的(分岔仍然只认 CHARACTER)。
+    expect(cardPayload.sourceGenerationId).toBeUndefined();
+    expect(cardPayload.entityIds).toEqual([MUG_ENTITY.id, AISYAH.id]);
+  });
+
+  // 判官 r2 P3 —— 只剩 1 格那一档的语病(@ 满 8 个元素时 `videoAttachedRiding` = 1)。
+  // 「only the first 1 go」既不是英文也读着像 bug;数字不变,只把那一句说成人话。
+  it("FSE-001 / CREATE-A2: 名额只剩 1 格时,披露句是单数(不出「only the first 1 go」)", () => {
+    const notes = buildReferenceBudgetNotes({
+      budget: { used: 9, total: 12, truncated: true },
+      attachedImageCount: 4,
+      usesAttachedImage: false,
+      videoShape: { hasStartFrame: false, hasReferenceVideo: false },
+      videoAttachedRiding: 1,
+    });
+
+    expect(notes).toContain(
+      "You attached 4 images — only the first one goes to the engine, so the cast you @mentioned keeps a reference photo.",
+    );
+    expect(notes.join(" ")).not.toContain("only the first 1 go");
+  });
+
+  // 2 张往上照旧是复数那一句(既有那一档一个字没动)。
+  it("FSE-001 / CREATE-A2: 名额剩 2 格往上时,披露句照旧是复数(既有措辞逐字不变)", () => {
+    const notes = buildReferenceBudgetNotes({
+      budget: { used: 9, total: 12, truncated: true },
+      attachedImageCount: 9,
+      usesAttachedImage: false,
+      videoShape: { hasStartFrame: false, hasReferenceVideo: false },
+      videoAttachedRiding: 8,
+    });
+
+    expect(notes).toContain(
+      "You attached 9 images — only the first 8 go to the engine, so the cast you @mentioned keeps a reference photo.",
+    );
   });
 
   // 判官 r1 P3 —— 这一条测的是**别家店的演员**(一个 `Entity` id 不在归属集里),

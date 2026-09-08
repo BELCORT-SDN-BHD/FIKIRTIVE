@@ -766,7 +766,7 @@ describe("FSE-001 —— 演员照 + 商品图两张参考,一趟送进视频引
   // 算出 0 ⇒ 引擎收到 9 张杯子、**一张 Aisyah 都没有**,而卡上列着 `Aisyah (person)`、
   // 披露句只说「9 of your 12」。这条测试钉的就是那一张:演员照必须在 `refImageUrls` 里。
   it("FSE-001 / CREATE-A9: 演员 + 挂满 9 张商品图 ⇒ 演员照真进付费请求,商品图只上 8 张", async () => {
-    // 演员的 3 张定妆照。类型必须是 CHARACTER —— 名额的预留就是按它数出来的。
+    // 演员的 3 张定妆照。名额的预留按**在场元素数**算,这一趟只有他一个 ⇒ 留 1 格。
     m.referenceImageFindMany.mockImplementation(async () => refsFor(0, 3));
     m.entityFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => ({
       id: where.id, type: "CHARACTER", name: `LIVE-${where.id}`,
@@ -802,12 +802,82 @@ describe("FSE-001 —— 演员照 + 商品图两张参考,一趟送进视频引
       perEntityLiveCounts: [3],
       hasBaseImage: false,
       attachedImageCount: MAX_VIDEO_IMAGE_PARTS,
-      mentionedCharacterCount: 1,
+      mentionedElementCount: 1,
     });
     expect(call?.refImageUrls?.length).toBe(disclosed.used);
     expect(disclosed).toEqual({
       used: MAX_VIDEO_IMAGE_PARTS,
       total: MAX_VIDEO_IMAGE_PARTS + 3,
+      truncated: true,
+    });
+  });
+
+  // ── FSE-001 判官 r2 —— 预留的名额必须真的落到**演员**头上,不是落到排在他前面的元素 ──
+  //
+  // 上一版预留的格数按「在场 CHARACTER 数」算(1 格),而发格的 round-robin 按 `entityIds`
+  // 原序走:商家先 @ 了自己的杯子、再 @ Aisyah,那唯一一格于是被杯子拿走 —— 演员照旧
+  // 一张都不上车,而披露句还在说「so the cast you @mentioned keeps a reference photo」。
+  // 卡上写着她的名字、请求里没有那个人,披露句是假话:同一种最贵的病换了个入口。
+  //
+  // 所以预留基数改成「在场元素数」——每个在场元素至少 1 格,round-robin 的第 0 轮于是
+  // 一定发得完,谁都饿不死。
+  it("FSE-001 / CREATE-A2: 先 @ 商品元素、再 @ 演员 + 挂满 9 张商品图 ⇒ 两个元素各上 1 张照片,商品图只上 7 张", async () => {
+    // e0 = 商品元素(排在前面),e1 = 演员。两个各 3 张活图。
+    const byEntity = new Map([
+      ["e0", refsFor(0, 3)],
+      ["e1", refsFor(1, 3)],
+    ]);
+    m.referenceImageFindMany.mockImplementation(async ({ where }: { where: { entityId: string } }) =>
+      byEntity.get(where.entityId) ?? [],
+    );
+    m.entityFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      type: where.id === "e1" ? "CHARACTER" : "PRODUCT",
+      name: `LIVE-${where.id}`,
+    }));
+    const mugIds = Array.from({ length: MAX_VIDEO_IMAGE_PARTS }, (_, i) => `gen_mug_${i}`);
+    const mugHash = (i: number) => hexHash(90200 + i);
+    m.generationFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => {
+      const i = mugIds.indexOf(where.id);
+      return i < 0 ? null : { id: where.id, asset: { ownerId: "o1", contentHash: mugHash(i), ext: "png" } };
+    });
+
+    const call = await paidVideoCall({
+      ...videoJob,
+      entityIds: ["e0", "e1"],
+      videoOptions: { seconds: 5, resolution: "480p", aspectRatio: "16:9", fps: 24, audio: false, referenceGenerationIds: mugIds },
+    });
+
+    // ① 9 个 `image_url` 名额:商品元素 1 张 + 演员 1 张 + 商品图 7 张,次序即引擎收到的次序。
+    expect(call?.refImageUrls).toEqual([
+      elementUrl(0, 0),
+      elementUrl(1, 0),
+      ...Array.from({ length: MAX_VIDEO_IMAGE_PARTS - 2 }, (_, i) => urlOf(mugHash(i))),
+    ]);
+    // ② 演员那一张必须在里面 —— 没有它,商家批的「Aisyah 拿着我的杯子」买回来的是陌生人。
+    expect(call?.refImageUrls).toContain(elementUrl(1, 0));
+    // ③ 排在前面的商品元素也没被预留挤掉。
+    expect(call?.refImageUrls).toContain(elementUrl(0, 0));
+    // ④ 披露句那半句(「the cast you @mentioned keeps a reference photo」)在这一趟为真。
+    expect(call?.castMemberInReferences).toBe(true);
+    // ⑤ 商品图正好 7 张,被挤掉的是第 8、9 张商品图,不是任何一个元素的照片。
+    const allMugUrls = new Set(mugIds.map((_, i) => urlOf(mugHash(i))));
+    expect((call?.refImageUrls ?? []).filter((u) => allMugUrls.has(u))).toHaveLength(
+      MAX_VIDEO_IMAGE_PARTS - 2,
+    );
+    expect(call?.refImageUrls).not.toContain(urlOf(mugHash(MAX_VIDEO_IMAGE_PARTS - 2)));
+    // ⑥ 卡面在批准前说的那三个数,与真送出去的这一份对得上(同一个 `referenceBudget`)。
+    const disclosed = referenceBudget({
+      kind: "video",
+      perEntityLiveCounts: [3, 3],
+      hasBaseImage: false,
+      attachedImageCount: MAX_VIDEO_IMAGE_PARTS,
+      mentionedElementCount: 2,
+    });
+    expect(call?.refImageUrls?.length).toBe(disclosed.used);
+    expect(disclosed).toEqual({
+      used: MAX_VIDEO_IMAGE_PARTS,
+      total: MAX_VIDEO_IMAGE_PARTS + 6,
       truncated: true,
     });
   });

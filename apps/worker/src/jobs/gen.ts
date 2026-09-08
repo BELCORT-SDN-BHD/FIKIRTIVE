@@ -193,8 +193,8 @@ function jobVideoReferenceIds(
     shotId: string | null;
     videoOptions: unknown;
   },
-  /** FSE-001 判官 r1 P2 —— 这一单 @ 到的 CHARACTER 有几个(每位在名额里预留 1 格)。 */
-  mentionedCharacterCount: number,
+  /** FSE-001 判官 r2 —— 这一单 @ 到的元素有几个(每个在名额里预留 1 格,不分类型)。 */
+  mentionedElementCount: number,
 ): string[] {
   if (job.kind !== "VIDEO") return [];
   const vo = job.videoOptions as { referenceGenerationIds?: unknown } | null;
@@ -215,7 +215,7 @@ function jobVideoReferenceIds(
     0,
     videoAttachedCap({
       attachedImageCount: out.length,
-      mentionedCharacterCount,
+      mentionedElementCount,
       hasVideoStartFrame: !!(job.sourceGenerationId || job.shotId),
       hasVideoTailFrame: !!job.tailGenerationId,
       hasReferenceVideo: !!job.referenceVideoGenerationId,
@@ -1302,20 +1302,24 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // `image_url` 名额里,所以它们先划走名额,元素照拿剩下的。两支的入参因此合成一个数,
       // 而 `conditioningCap` 按 kind 各用各的算法(image:第 2 张起扣格;video:整份扣格)。
       //
-      // FSE-001 判官 r1 P2 —— 名额里**每位在场的演员先占 1 格**。数的是这一趟已经解析过、
-      // 活着且属于他自己的那几个元素(`entityMeta`,类型来自审批快照),所以它与铸卡那一刻
-      // 数出来的是同一个数 —— `approvedEntityDrift` 那道闸保证类型批准后没被改过。
-      // 没有这一格,商家挂满 9 张商品图时挂图会占满全部 `image_url` 名额,`refCap` 算出 0,
-      // 演员一张照片都不进付费请求 —— 而卡上列着她的名字。
-      const mentionedCharacterCount = entityMeta.filter((m) => m.type === "CHARACTER").length;
-      const videoReferenceIds = jobVideoReferenceIds(job, mentionedCharacterCount);
+      // FSE-001 判官 r1 P2 —— 名额里**每个在场的元素先占 1 格**。数的是这一趟已经解析过、
+      // 活着且属于他自己的那几个元素(`entityMeta`,与 `perEntity` 逐项同序、同长),所以它
+      // 与铸卡那一刻数出来的是同一个数。没有这一格,商家挂满 9 张商品图时挂图会占满全部
+      // `image_url` 名额,`refCap` 算出 0,演员一张照片都不进付费请求 —— 而卡上列着她的名字。
+      //
+      // 判官 r2 —— 数的是**全部元素**,不是只数 CHARACTER。下面发格的 round-robin 按
+      // `entityIds` 原序给每个元素发第一张:只按演员数预留时,「先 @ 商品元素、再 @ 演员」
+      // 那一趟的唯一那格会被排在前面的商品元素拿走,演员仍旧 0 张。预留基数与发格次序
+      // 必须同一个口径。
+      const mentionedElementCount = entityMeta.length;
+      const videoReferenceIds = jobVideoReferenceIds(job, mentionedElementCount);
       const refCap = conditioningCap({
         kind: job.kind === "VIDEO" ? "video" : "image",
         hasVideoStartFrame: !!(job.sourceGenerationId || job.shotId),
         hasVideoTailFrame: !!job.tailGenerationId,
         hasReferenceVideo: !!job.referenceVideoGenerationId,
         attachedImageCount: attachedImageIds.length + videoReferenceIds.length,
-        mentionedCharacterCount,
+        mentionedElementCount,
       });
       // #774 U2:每张上车的图连它属于哪个 @元素一起记 —— 编号(`<Image_N>`)就是从这里
       // 长出来的,与 `inputImageUrls` 同一趟循环、同一个下标,所以两者不可能各说各话。

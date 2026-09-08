@@ -22,7 +22,7 @@ describe("FSE-001 —— 挂图在视频计划里是首帧还是参考图", () =
     expect(
       videoAttachmentRole({
         attachedImageCount: 1,
-        mentionedCharacterCount: 1,
+        mentionedCastCount: 1,
         hasReferenceVideo: false,
       }),
     ).toBe("reference");
@@ -32,7 +32,7 @@ describe("FSE-001 —— 挂图在视频计划里是首帧还是参考图", () =
     expect(
       videoAttachmentRole({
         attachedImageCount: 1,
-        mentionedCharacterCount: 0,
+        mentionedCastCount: 0,
         hasReferenceVideo: false,
       }),
     ).toBe("startFrame");
@@ -42,7 +42,7 @@ describe("FSE-001 —— 挂图在视频计划里是首帧还是参考图", () =
     expect(
       videoAttachmentRole({
         attachedImageCount: 0,
-        mentionedCharacterCount: 1,
+        mentionedCastCount: 1,
         hasReferenceVideo: false,
       }),
     ).toBeNull();
@@ -52,7 +52,7 @@ describe("FSE-001 —— 挂图在视频计划里是首帧还是参考图", () =
     expect(
       videoAttachmentRole({
         attachedImageCount: 2,
-        mentionedCharacterCount: 1,
+        mentionedCastCount: 1,
         hasReferenceVideo: true,
       }),
     ).toBeNull();
@@ -64,7 +64,7 @@ describe("FSE-001 —— 挂图在视频计划里是首帧还是参考图", () =
     expect(
       videoAttachmentRole({
         attachedImageCount: 1,
-        mentionedCharacterCount: 0,
+        mentionedCastCount: 0,
         hasReferenceVideo: false,
       }),
     ).toBe("startFrame");
@@ -113,7 +113,7 @@ describe("FSE-001 —— 卡面数字:两件引用都要数进去", () => {
   //
   // 上一版:挂图先占满 9 个 `image_url` 名额 ⇒ `conditioningCap` 算出 0 ⇒ 演员一张照片
   // 都不上车,而卡上 `approvedEntities` 仍然列着 `Aisyah (person)`。商家批了「Aisyah 拿着
-  // 我的杯子」、付了钱,买回来的是一个陌生人拿着杯子。现在每位在场的 CHARACTER 先预留
+  // 我的杯子」、付了钱,买回来的是一个陌生人拿着杯子。现在每个在场的**元素**先预留
   // 1 格,超出的商品图按既有 truncated 口径在批准前说出来。
   it("FSE-001 / CREATE-A9: 演员 + 挂满 9 张商品图 ⇒ 演员的照片保住 1 格,商品图上 8 张", () => {
     expect(
@@ -122,7 +122,7 @@ describe("FSE-001 —— 卡面数字:两件引用都要数进去", () => {
         perEntityLiveCounts: [3],
         hasBaseImage: false,
         attachedImageCount: MAX_VIDEO_IMAGE_PARTS,
-        mentionedCharacterCount: 1,
+        mentionedElementCount: 1,
       }),
     ).toEqual({
       // 1 张演员照 + 8 张商品图 = 9 个名额,一格不多不少。
@@ -132,20 +132,25 @@ describe("FSE-001 —— 卡面数字:两件引用都要数进去", () => {
     });
     // 名额的两半各自钉死 —— 只钉合计的话,「演员 0 + 商品 9」也能凑出同一个 9。
     expect(
-      videoAttachedCap({ attachedImageCount: MAX_VIDEO_IMAGE_PARTS, mentionedCharacterCount: 1 }),
+      videoAttachedCap({ attachedImageCount: MAX_VIDEO_IMAGE_PARTS, mentionedElementCount: 1 }),
     ).toBe(MAX_VIDEO_IMAGE_PARTS - 1);
     expect(
       conditioningCap({
         kind: "video",
         attachedImageCount: MAX_VIDEO_IMAGE_PARTS,
-        mentionedCharacterCount: 1,
+        mentionedElementCount: 1,
       }),
     ).toBe(1);
   });
 
-  it("FSE-001 / CREATE-A9: 两位演员 + 挂满 9 张 ⇒ 各预留 1 格,商品图上 7 张", () => {
+  // 判官 r2 —— 预留基数是「在场元素数」,不是「在场演员数」:发格的 round-robin 按
+  // `entityIds` 原序给每个元素发第一张,所以「先 @ 商品元素、再 @ 演员」那一趟里,只按
+  // 演员数预留出来的那唯一一格会被排在前面的商品元素拿走,演员仍旧 0 张。两个在场元素
+  // ⇒ 留 2 格,与下面 worker 侧那条真 `handleGen` 的反例(gen-reference-budget.test.ts)
+  // 是同一个数。
+  it("FSE-001 / CREATE-A9: 两个在场元素(演员 + 商品元素或两位演员)+ 挂满 9 张 ⇒ 各预留 1 格,商品图上 7 张", () => {
     expect(
-      videoAttachedCap({ attachedImageCount: MAX_VIDEO_IMAGE_PARTS, mentionedCharacterCount: 2 }),
+      videoAttachedCap({ attachedImageCount: MAX_VIDEO_IMAGE_PARTS, mentionedElementCount: 2 }),
     ).toBe(MAX_VIDEO_IMAGE_PARTS - 2);
     expect(
       referenceBudget({
@@ -153,7 +158,7 @@ describe("FSE-001 —— 卡面数字:两件引用都要数进去", () => {
         perEntityLiveCounts: [1, 1],
         hasBaseImage: false,
         attachedImageCount: MAX_VIDEO_IMAGE_PARTS,
-        mentionedCharacterCount: 2,
+        mentionedElementCount: 2,
       }),
     ).toEqual({
       used: MAX_VIDEO_IMAGE_PARTS,
@@ -178,14 +183,14 @@ describe("FSE-001 —— 卡面数字:两件引用都要数进去", () => {
 
   it("FSE-001 / CREATE-A2: 演员 + 挂图没占满名额时,预留一格都不吃(既有那一档不变)", () => {
     // 名额够用 ⇒ 挂图一张不少、演员的照片也一张不少,预留只在真的抢名额时才生效。
-    expect(videoAttachedCap({ attachedImageCount: 2, mentionedCharacterCount: 1 })).toBe(2);
+    expect(videoAttachedCap({ attachedImageCount: 2, mentionedElementCount: 1 })).toBe(2);
     expect(
       referenceBudget({
         kind: "video",
         perEntityLiveCounts: [1],
         hasBaseImage: false,
         attachedImageCount: 1,
-        mentionedCharacterCount: 1,
+        mentionedElementCount: 1,
       }),
     ).toEqual({ used: 2, total: 2, truncated: false });
   });
