@@ -657,3 +657,133 @@ describe("#785 —— 视频卡说的张数 = worker 真正发给视频引擎的
     expect(actual).toEqual([0, 1, 2, 3, 4].map((i) => elementUrl(0, i)));
   });
 });
+
+// ---------------------------------------------------------------------------
+// FSE-001 —— 商家的商品图作 `role:"reference_image"` 真的进视频引擎
+// (staging E2E 2026-09-08;规格 docs/specs/creation-engine.md §5 FSE-001 行)
+//
+// 卡上冻的是「演员的照片 + 这张商品图,一起送」。这里跑真 `handleGen`,拿它真正交给
+// `provider.generateVideo` 的那一份对表:张数、次序、以及首帧那一格必须是空的 ——
+// 首帧一旦有值,这一趟就变回了被视频端拒收、并且真的退过一次款的那条合成路。
+//
+// 商品图的来源是 `GenJob.videoOptions.referenceGenerationIds`(入队时冻下的规格快照),
+// 归属由 `generationReferenceScope(job.ownerId, …)` 定 —— 租户那一格一点没松。
+// ---------------------------------------------------------------------------
+describe("FSE-001 —— 演员照 + 商品图两张参考,一趟送进视频引擎", () => {
+  const videoJob = { ...imageJob, kind: "VIDEO", model: "seedance-2-mini" };
+  /** 商家挂的那张商品图(一行 `Generation`)。 */
+  const MUG_HASH = hexHash(90001);
+  const MUG_URL = urlOf(MUG_HASH);
+
+  async function paidVideoCall(job: Record<string, unknown>) {
+    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    m.genJobFindUnique.mockResolvedValue(job);
+    await handleGen({ genJobId: "g1" }, 0);
+    return m.generateVideo.mock.calls[0]?.[0] as
+      | { imageUrl: string; refImageUrls?: string[]; castMemberInReferences?: boolean }
+      | undefined;
+  }
+
+  beforeEach(() => {
+    // 商品图那一行:`generation.findFirst` 在视频分支被用来解析它。
+    m.generationFindFirst.mockResolvedValue({
+      id: "gen_mug",
+      asset: { ownerId: "o1", contentHash: MUG_HASH, ext: "png" },
+    });
+  });
+
+  it("FSE-001 / CREATE-A9: 演员 1 张 + 商品图 1 张 ⇒ 引擎收到 2 张,次序是演员在前;首帧为空", async () => {
+    m.referenceImageFindMany.mockImplementation(async () => refsFor(0, 1));
+
+    const call = await paidVideoCall({
+      ...videoJob,
+      entityIds: ["e0"],
+      videoOptions: { seconds: 5, resolution: "480p", aspectRatio: "16:9", fps: 24, audio: false, referenceGenerationIds: ["gen_mug"] },
+    });
+
+    expect(call?.refImageUrls).toEqual([elementUrl(0, 0), MUG_URL]);
+    // 首帧那一格必须是空字符串 —— 有值就等于把商品图当第一帧,那正是被拒的那条路。
+    expect(call?.imageUrl).toBe("");
+    // 卡面说的张数 = 引擎真收到的张数(同一个 `referenceBudget`)。
+    const disclosed = referenceBudget({
+      kind: "video",
+      perEntityLiveCounts: [1],
+      hasBaseImage: false,
+      attachedImageCount: 1,
+    });
+    expect(call?.refImageUrls?.length).toBe(disclosed.used);
+    expect(disclosed).toEqual({ used: 2, total: 2, truncated: false });
+  });
+
+  it("FSE-001 / CREATE-A10: 商品图只在这个租户的范围里解析(ownerId 来自 job,不从卡收)", async () => {
+    m.referenceImageFindMany.mockImplementation(async () => refsFor(0, 1));
+
+    await paidVideoCall({
+      ...videoJob,
+      entityIds: ["e0"],
+      videoOptions: { seconds: 5, resolution: "480p", aspectRatio: "16:9", fps: 24, audio: false, referenceGenerationIds: ["gen_mug"] },
+    });
+
+    expect(m.generationFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "gen_mug", ownerId: "o1", deletedAt: null }),
+    }));
+  });
+
+  it("FSE-001 / CREATE-A9: 商品图那一行不是这家店的(读不出来)⇒ 退款、零付费调用", async () => {
+    m.referenceImageFindMany.mockImplementation(async () => refsFor(0, 1));
+    m.generationFindFirst.mockResolvedValue(null);
+
+    const call = await paidVideoCall({
+      ...videoJob,
+      entityIds: ["e0"],
+      videoOptions: { seconds: 5, resolution: "480p", aspectRatio: "16:9", fps: 24, audio: false, referenceGenerationIds: ["gen_mug"] },
+    });
+
+    expect(call).toBeUndefined();
+    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.refundReservation).toHaveBeenCalled();
+    expect(m.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("FSE-001 / CREATE-A10: 演员在场的这一趟,`castMemberInReferences` 为真(拒绝文案据此分岔)", async () => {
+    m.referenceImageFindMany.mockImplementation(async () => refsFor(0, 1));
+    m.entityFindFirst.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id, type: "CHARACTER", name: `LIVE-${where.id}`,
+    }));
+
+    const call = await paidVideoCall({
+      ...videoJob,
+      entityIds: ["e0"],
+      videoOptions: { seconds: 5, resolution: "480p", aspectRatio: "16:9", fps: 24, audio: false, referenceGenerationIds: ["gen_mug"] },
+    });
+
+    expect(call?.castMemberInReferences).toBe(true);
+  });
+
+  it("FSE-001 / CREATE-A2: 快照里没有那一格 ⇒ 与这条修改之前逐字相同(既有视频任务一格不动)", async () => {
+    m.referenceImageFindMany.mockImplementation(async () => refsFor(0, 2));
+
+    const call = await paidVideoCall({
+      ...videoJob,
+      entityIds: ["e0"],
+      videoOptions: { seconds: 5, resolution: "480p", aspectRatio: "16:9", fps: 24, audio: false },
+    });
+
+    expect(call?.refImageUrls).toEqual([elementUrl(0, 0), elementUrl(0, 1)]);
+    expect(call?.imageUrl).toBe("");
+  });
+
+  it("FSE-001 / CREATE-A2: 一份把首帧与商品图混在一起的畸形快照 ⇒ 商品图一张都不送(纵深防御)", async () => {
+    m.referenceImageFindMany.mockImplementation(async () => []);
+    // 带首帧的形状:`videoAttachedCap` 恒为 0,所以这一格被切成空,而不是掏钱送进引擎。
+    const call = await paidVideoCall({
+      ...videoJob,
+      entityIds: [],
+      sourceGenerationId: "gen_src",
+      videoOptions: { seconds: 5, resolution: "480p", aspectRatio: "16:9", fps: 24, audio: false, referenceGenerationIds: ["gen_mug"] },
+    });
+
+    expect(call?.refImageUrls).toBeUndefined();
+    expect(call?.imageUrl).toBe(MUG_URL); // 首帧走它自己那条路(这里 mock 的就是同一行)
+  });
+});

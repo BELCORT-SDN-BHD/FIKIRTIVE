@@ -1473,3 +1473,64 @@ describe("CREATE-A4 图片适配器:pro 收不下的画幅**不 POST**", () => {
     expect(body.size).toBe("2880x1620");
   });
 });
+
+// ---------------------------------------------------------------------------
+// FSE-001 —— 正路那一趟请求的形状,与探针脱敏件逐格对表
+//
+// 权威是一份真的跑通过的请求:`docs/audits/fullstack-staging-2026-09-08/
+// probe-fse-001-two-references/t1-request-redacted.json`(演员原件 + 商品图各一张
+// `role:"reference_image"`,加一段 text,480p / 5s / 无音频、无首帧 ⇒ succeeded)。
+// 这里不手抄一个「应该长这样」的期望值,而是把那份脱敏件的形状逐格钉住 —— 适配器
+// 哪天开始少写一个 role、或者把商品图塞进 first_frame,这条当场红。
+// ---------------------------------------------------------------------------
+describe("FSE-001 —— 演员 + 商品图两张参考直接出片的请求形状", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("FSE-001 / CREATE-A9: 两张 reference_image + text,没有首帧、没有一个缺 role 的图片部件", async () => {
+    let submitBody: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
+        submitBody = JSON.parse(init.body); return jsonRes({ id: "cgt-fse001" });
+      }
+      if (url.includes("/contents/generations/tasks/cgt-fse001")) {
+        return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
+      }
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({
+      prompt: "The woman holds the coral travel mug and smiles at the camera, soft studio light, static camera",
+      // 纯文生视频:没有首帧、没有末帧、没有参考片。
+      imageUrl: "",
+      refImageUrls: ["https://r2/aisyah-closeup.jpg", "https://r2/product-mug.jpeg"],
+      durationSeconds: 5,
+      model: "seedance-2-mini",
+      resolution: "480p",
+      audio: false,
+    });
+    await vi.runAllTimersAsync();
+    await promise;
+
+    // 三个部件,次序 = worker 交出来的次序(演员在前、商品在后),与脱敏件逐格相同。
+    expect(submitBody.content).toHaveLength(3);
+    expect(submitBody.content[0]).toEqual({
+      type: "image_url", image_url: { url: "https://r2/aisyah-closeup.jpg" }, role: "reference_image",
+    });
+    expect(submitBody.content[1]).toEqual({
+      type: "image_url", image_url: { url: "https://r2/product-mug.jpeg" }, role: "reference_image",
+    });
+    expect(submitBody.content[2]).toEqual({
+      type: "text",
+      text: "The woman holds the coral travel mug and smiles at the camera, soft studio light, static camera",
+    });
+    // 没有首帧:任何一个 `first_frame`、或一个**缺 role** 的图片部件(引擎把它读成首帧)
+    // 都会把这一趟变回被拒的那条合成路。
+    const imageParts = (submitBody.content as any[]).filter((p) => p.type === "image_url");
+    expect(imageParts.every((p) => p.role === "reference_image")).toBe(true);
+    expect(JSON.stringify(submitBody)).not.toContain("first_frame");
+    // 顶层控件与探针那一趟相同。
+    expect(submitBody.resolution).toBe("480p");
+    expect(submitBody.duration).toBe(5);
+    expect(submitBody.generate_audio).toBe(false);
+  });
+});

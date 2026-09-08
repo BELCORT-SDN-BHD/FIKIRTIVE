@@ -127,6 +127,71 @@ export function videoReferencesRide(shape: VideoReferenceShape): boolean {
   return !shape.hasVideoStartFrame && !shape.hasVideoTailFrame && !shape.hasReferenceVideo;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FSE-001 —— 一张挂进来的 Generation,在**视频**计划里是首帧还是参考图
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 视频计划里,商家挂的那张(几张)图扮演什么。`null` = 他一张都没挂。
+ *
+ * · `startFrame` —— 图生视频(i2v):那张图是第一帧,片子从它开始动。
+ * · `reference`  —— 纯文生视频(t2v):那些图是 `role:"reference_image"`,片子不从任何
+ *   一张图开始,引擎只是照着它们认人认物。
+ *
+ * ── 为什么需要这个判据(staging E2E 2026-09-08,FSE-001)────────────────────────
+ * 在这之前判据只有一句「视频计划里有挂图 ⇒ i2v 首帧」。于是「@官方演员 + 我的商品图,
+ * 让她拿着拍 5 秒」这条最主流的请求走成了:商品图当首帧、演员被清空(i2v 那一档名额 0),
+ * 于是产品只好建议商家**先把演员和商品合成一张首帧**再拍 —— 而那条路被规格 §5
+ * 2026-08-30「血统信任 / 像素完整性铁律」判定必拒(视频端 400
+ * `InputImageSensitiveContentDetected.PrivacyInformation`,退款一次)。
+ * Founder 2026-09-08 裁:「合成 first frame 的 idea 可以移除了,没有必要」。
+ *
+ * 正路是同日实测跑通的那一条(USD 0.21 + USD 0.18 两场探针,`succeeded`):演员原件与
+ * 商品图**各作一张 `reference_image`**、纯文生视频、不合成。
+ *
+ * ── 判据本身 ────────────────────────────────────────────────────────────────
+ * 分岔只有一格:**这个计划里有没有官方/商家的角色元素(CHARACTER)**。
+ *   · 有 ⇒ 那些挂图是参考图。演员的身份住在他的参考照里,而参考照只有 t2v 那一档带得上
+ *     (`videoReferencesRide`);把商品图当首帧就等于把演员整个丢掉 —— 商家 @ 了他,却
+ *     一张他的照片都不上车。
+ *   · 没有 ⇒ 逐字维持既有行为:第一张挂图是首帧(「把这张图动起来」那条路一格不动)。
+ *
+ * 刻意**不**读商家的措辞:措辞含糊时读错的代价是一次付费运行做出另一样东西,而
+ * 「他 @ 了一位演员」是一个服务端自己数得出来的结构事实,不是猜测。
+ *
+ * 整段参考片(`hasReferenceVideo`)那一档一格不动:挂图在那条路上今天就不上车,
+ * 这里照旧回 `null`。
+ */
+export type VideoAttachmentRole = "startFrame" | "reference";
+
+export function videoAttachmentRole(input: {
+  /** 这个计划挂了几张图(去重后)。 */
+  attachedImageCount: number;
+  /** 这一轮商家 @ 到、且确属他自己的 CHARACTER 元素有几个。 */
+  mentionedCharacterCount: number;
+  /** 这个计划挂着一整段参考片吗。 */
+  hasReferenceVideo: boolean;
+}): VideoAttachmentRole | null {
+  if (input.attachedImageCount <= 0) return null;
+  if (input.hasReferenceVideo) return null;
+  return input.mentionedCharacterCount > 0 ? "reference" : "startFrame";
+}
+
+/**
+ * 视频这一趟,商家挂的图**真会上车几张**(FSE-001)。
+ *
+ * 它们与元素参考照坐在**同一批** `image_url` 名额里(`MAX_VIDEO_IMAGE_PARTS`),所以这里
+ * 先划走商家自己挂的那几张,元素照拿剩下的 —— 商家亲手挂的东西比引擎替他找的照片更该
+ * 上车。不是纯文生视频的那几档(首帧/末帧/整段参考片)恒为 0:那几档挂图走的是首帧那条
+ * 独立的路,或者根本不上车,与这条修改之前逐字相同。
+ */
+export function videoAttachedCap(
+  input: VideoReferenceShape & { attachedImageCount?: number },
+): number {
+  if (!videoReferencesRide(input)) return 0;
+  return Math.max(0, Math.min(input.attachedImageCount ?? 0, MAX_VIDEO_IMAGE_PARTS));
+}
+
 /**
  * 这一趟 round-robin 选片的**聚合上限**。
  *
@@ -153,7 +218,10 @@ export function conditioningCap(
   if (!videoElementReferencesHonoured()) return 0;
   if (!videoReferencesRide(input)) return 0;
   const frames = (input.hasVideoStartFrame ? 1 : 0) + (input.hasVideoTailFrame ? 1 : 0);
-  return Math.max(0, MAX_VIDEO_IMAGE_PARTS - frames);
+  // FSE-001 —— 商家自己挂的商品图与元素参考照共用这 9 个 `image_url` 名额,所以先划走
+  // 他挂的那几张。今天每一条既有路上这个数都是 0(带首帧/末帧/参考片的档 `videoAttachedCap`
+  // 恒为 0,纯文生视频那一档在这条修改之前根本不带挂图),所以既有行为逐字不变。
+  return Math.max(0, MAX_VIDEO_IMAGE_PARTS - frames - videoAttachedCap(input));
 }
 
 export function referenceBudget(input: ReferenceBudgetInput): ReferenceBudget {
@@ -177,10 +245,20 @@ export function referenceBudget(input: ReferenceBudgetInput): ReferenceBudget {
 
   if (input.kind === "video") {
     // 视频这一支没有「编辑底图」这回事:首帧走 `sourceGenerationId` 那条独立的路,它是
-    // **帧**不是参考照,卡面另有一句话说它(`videoAspectChip`)。所以 total 只数元素照。
-    // 带帧的档 cap=0 ⇒ used=0、truncated=(商家给了照片却一张都上不了车)—— 卡面于是照实
-    // 说出来,而不是像 #785 之前那样连数字都不给。
-    return { used: taken, total: elementTotal, truncated: taken < elementTotal };
+    // **帧**不是参考照,卡面另有一句话说它(`videoAspectChip`)。带帧的档 cap=0 ⇒ used=0、
+    // truncated=(商家给了照片却一张都上不了车)—— 卡面于是照实说出来,而不是像 #785 之前
+    // 那样连数字都不给。
+    //
+    // FSE-001 —— 纯文生视频那一档多了一类参考照:商家自己挂的商品图。它们是**参考照**
+    // (`role:"reference_image"`),所以进 used / total;不是纯文生视频的那几档
+    // `videoAttachedCap` 恒为 0,那几条既有路上的三个数一格没动。
+    const attachedRiding = videoAttachedCap(input);
+    const attachedTotal = attachedRiding > 0 ? input.attachedImageCount : 0;
+    return {
+      used: taken + attachedRiding,
+      total: elementTotal + attachedTotal,
+      truncated: taken < elementTotal || attachedRiding < attachedTotal,
+    };
   }
 
   // 第一张(编辑底图)是 unshift 进去的,不占元素的上限名额;第 2 张起已经在

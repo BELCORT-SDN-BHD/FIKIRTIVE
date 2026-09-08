@@ -36,6 +36,7 @@
  */
 
 import { MAX_TURN_REFERENCES } from "./reference-ref.js";
+import { MIN_REFERENCE_IMAGE_WIDTH } from "./generation-reference.js";
 
 /**
  * The sentence a merchant reads when the engine refused their reference image because it shows
@@ -466,6 +467,7 @@ export const REFERENCE_UNAVAILABLE_REASONS = [
   "videoAsImage",
   "imageAsVideo",
   "unsupportedFormat",
+  "tooSmall",
 ] as const;
 
 export type ReferenceUnavailableReason = (typeof REFERENCE_UNAVAILABLE_REASONS)[number];
@@ -522,6 +524,13 @@ const REFERENCE_UNAVAILABLE_SENTENCES: Readonly<Record<ReferenceUnavailableReaso
   // 「isn't available any more」。结尾同一条纪律:先点名换掉它,再说 ask again。
   unsupportedFormat:
     "One of your references is a file type that can't be used as a reference. Swap it for an image or video and ask again — nothing was sent.",
+  // FSE-001(2026-09-08 探针实测)—— 视频端在**建任务之前**就要求参考图宽度 ≥300px,
+  // 275×183 的原件零花费被弹回。这一句与上面几句同一族:商家**自己的**、还活着的、格式
+  // 也对的文件,只是尺寸撑不起这一个用途,所以说的就是尺寸,而不是那句一查就知道是假的
+  // 「isn't available any more」。数字读的是 `MIN_REFERENCE_IMAGE_WIDTH` 那一个常量,
+  // 所以闸一改这句话跟着改。结尾同一条纪律:先点名换掉它,再说 ask again。
+  tooSmall:
+    `One of your references is too small to use in a video — it needs to be at least ${MIN_REFERENCE_IMAGE_WIDTH} pixels wide. Swap it for a larger one and ask again — nothing was sent.`,
 };
 
 /** The sentence a merchant reads for an unusable attachment. One table, no second mapping. */

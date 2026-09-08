@@ -34,6 +34,10 @@ import {
   normalizeImageAspect,
   EXECUTED_SPEC,
   attachedImageCap,
+  // FSE-001 —— 「挂图在视频计划里是首帧还是参考图」与「视频侧的挂图名额」,判据都在 core,
+  // 与 `conditioningCap`、卡面披露、worker 的选片共用同一份。
+  videoAttachmentRole,
+  videoAttachedCap,
   // CRE-STG-P0-001:「挂错了类型」那句话的唯一出处 —— 发送前那道闸与这里共用一份。
   referenceUnavailableMessage,
   type CardReferenceRole,
@@ -827,7 +831,34 @@ export function buildProposeCard(
   // （图片方案照旧保留商家 @ 的元素，参考图与元素图一起进引擎）。
   let kind = input.kind;
   const isRefVideo = kind === "video" && !!ctx.referenceVideoGenerationId;
-  const isI2V = kind === "video" && !!ctx.sourceGenerationId && !isRefVideo;
+  /** 这一轮解析出来的挂图总数 —— 与 `propose.ts` 喂给 `referenceBudget` 的是同一个数。 */
+  const attachedImageCount = orderedUniqueRefIds([
+    ctx.sourceGenerationId,
+    ...(ctx.sourceGenerationIds ?? []),
+  ]).length;
+  /**
+   * FSE-001 —— 商家这一轮 @ 到、且确属他自己的**角色元素**有几个。
+   *
+   * 归属由 `ownedEntities` 定(调用方与冻结名字同一趟读出来的那一份)。数它是因为
+   * 「有没有演员」正是首帧与参考图的分岔(见 `videoAttachmentRole`),而这是服务端自己
+   * 数得出来的结构事实,不是从措辞里猜的。名单对不上的那一档在 Step 2 会整轮拒绝,
+   * 所以这里数出来的永远是他真有的那几个。
+   */
+  const ownedTypeById = new Map(ownedEntities.map((e) => [e.id, e.type]));
+  const mentionedCharacterCount = input.entityIds.filter(
+    (id) => ownedTypeById.get(id) === "CHARACTER",
+  ).length;
+  /**
+   * FSE-001 —— 这个视频计划里,挂图是首帧还是参考图。判据只有一份(`@fikirtive/core`),
+   * 名额计算、卡面披露与 worker 的选片读的都是从它派生出来的同一组布尔。
+   */
+  const videoAttachment =
+    kind === "video"
+      ? videoAttachmentRole({ attachedImageCount, mentionedCharacterCount, hasReferenceVideo: isRefVideo })
+      : null;
+  const isI2V = videoAttachment === "startFrame";
+  /** FSE-001 正路:纯文生视频,演员原图与商家的商品图各作一张 `reference_image`。 */
+  const usesVideoImageReferences = videoAttachment === "reference";
   const hasSourceImage = isI2V;
   /** 图片方案带着商家挂的那张图（付费请求的编辑底图）。 */
   const usesAttachedImage = kind === "image" && !!ctx.sourceGenerationId;
@@ -844,11 +875,6 @@ export function buildProposeCard(
   if (kind === "image" && !!ctx.referenceVideoGenerationId) {
     throw new ReferenceKindUnavailableError("videoAsImage");
   }
-  /** 这一轮解析出来的挂图总数 —— 与 `propose.ts` 喂给 `referenceBudget` 的是同一个数。 */
-  const attachedImageCount = orderedUniqueRefIds([
-    ctx.sourceGenerationId,
-    ...(ctx.sourceGenerationIds ?? []),
-  ]).length;
 
   /**
    * #775 判官 r1 P1-1 / P1-2 —— **这张卡是能力表上的哪一个动作**,在这里定,一次。
@@ -1310,8 +1336,12 @@ export function buildProposeCard(
   // 名额由 `attachedImageCap` 划(引擎输入张数上限,与 `conditioningCap` 同一份),超出的
   // 那几张在下面 `buildReferenceBudgetNotes` 里逐字说出来 —— 不许沉默。
   //
-  // 视频那一支一格没动:i2v 只有一张**首帧**(它是帧,不是参考照),整段参考片只有一条。
-  // 把挂图算进视频卡就是承诺一件引擎不会做的事(`videoReferencesRide` 的那条互斥)。
+  // 视频那一支:i2v 只有一张**首帧**(它是帧,不是参考照),整段参考片只有一条。
+  //
+  // FSE-001 起多了第三种视频形状 —— 纯文生视频带参考图(`usesVideoImageReferences`)。
+  // 那一档挂图逐张上车,与元素参考照坐在同一批 `image_url` 名额里,所以名额由
+  // `videoAttachedCap` 划(与 `conditioningCap`、与 worker 读的是同一个函数)。它不是
+  // 首帧,所以卡上不写 `sourceGenerationId`,角色写的是 `Reference`。
   //
   // 回执由服务端解析器一次产出(`validateOttoTurnReferences`),这里只按 id 取,不自己编名字:
   // 取不到就宁可少一行(与 `approvedEntities` 同样的安全降级),而 `planCardGate` 会因为
@@ -1322,12 +1352,18 @@ export function buildProposeCard(
     ? orderedUniqueRefIds([ctx.sourceGenerationId, ...(ctx.sourceGenerationIds ?? [])])
         .slice(0, attachedImageCap(attachedImageCount))
     : [];
+  /** FSE-001 —— 这张视频卡真会带上路的商品图,已按视频侧名额截断。次序即引擎收到的次序。 */
+  const cardVideoReferenceIds = usesVideoImageReferences
+    ? orderedUniqueRefIds([ctx.sourceGenerationId, ...(ctx.sourceGenerationIds ?? [])])
+        .slice(0, videoAttachedCap({ attachedImageCount }))
+    : [];
   const cardMediaIds: { id: string; role: CardReferenceRole }[] = [
     ...(isI2V ? [{ id: ctx.sourceGenerationId!, role: "startFrame" as const }] : []),
     ...cardAttachedImageIds.map((id, index) => ({
       id,
       role: (index === 0 ? "baseImage" : "reference") as CardReferenceRole,
     })),
+    ...cardVideoReferenceIds.map((id) => ({ id, role: "reference" as CardReferenceRole })),
     ...(isRefVideo ? [{ id: ctx.referenceVideoGenerationId!, role: "referenceClip" as const }] : []),
   ];
   const mediaReferences = cardMediaIds
@@ -1336,8 +1372,15 @@ export function buildProposeCard(
       return receipt ? { ...receipt, role } : null;
     })
     .filter((r): r is CardMediaReference => !!r);
-  /** 第一张之外的那几张 —— 卡上带走它们,付费请求照它们送参考图(见 `startCoworkGen`)。 */
-  const extraReferenceIds = cardAttachedImageIds.slice(1);
+  /**
+   * 卡上带走、付费请求照它们送参考图的那几件(见 `startCoworkGen`)。
+   *
+   * · image —— 第一张是编辑底图(走 `sourceGenerationId` 那一列),所以这里只有第 2 张起;
+   * · video(FSE-001)—— 没有编辑底图这回事,每一张都是参考图,所以整份都在这里。
+   */
+  const extraReferenceIds = usesVideoImageReferences
+    ? cardVideoReferenceIds
+    : cardAttachedImageIds.slice(1);
 
   // Step 5: cardPayload (mirror coworkTurn 401–406)
   const cardPayload: CardPayload = {

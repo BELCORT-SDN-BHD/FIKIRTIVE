@@ -35,6 +35,10 @@ vi.mock("@fikirtive/db", () => ({
     referenceImage: {
       count: vi.fn(),
     },
+    // FSE-001: the pre-spend reference-image width gate (read-only)
+    generation: {
+      findMany: vi.fn(),
+    },
     // must NEVER be called — no GenJob creation in propose
     genJob: {
       create: vi.fn(),
@@ -448,14 +452,31 @@ describe("buildProposeCard — pure helper", () => {
       ).toThrow(ProposeRefusal);
     });
 
-    it("an i2v plan drops its elements → no identities to approve", () => {
+    // FSE-001(2026-09-08 Founder 裁决)—— 这条断言换了一半:带着**演员**的那一档不再是
+    // i2v。那张挂图现在是参考图,演员因此留在卡上(见文末 FSE-001 那两组)。i2v 本身
+    // 一格没动 —— 只是「什么算 i2v」的判据从「有挂图」收窄成「有挂图且没有演员」,
+    // 而清空元素这件事照旧只发生在 i2v 那一档。
+    it("FSE-001 / CREATE-A2 an i2v plan drops its elements → no identities to approve", () => {
+      const { cardPayload } = buildProposeCard(
+        { ...base, kind: "video", entityIds: ["e1"] },
+        makeCtx({ sourceGenerationId: "gen-abc123" }),
+        [{ id: "e1", type: "PRODUCT", name: "Mia's bottle" }],
+      );
+      expect(cardPayload.sourceGenerationId).toBe("gen-abc123");
+      expect(cardPayload.entityIds).toEqual([]);
+      expect(cardPayload.approvedEntities).toBeUndefined();
+    });
+
+    it("FSE-001 / CREATE-A9 演员在场时那张挂图是参考图,所以身份快照留着(正路)", () => {
       const { cardPayload } = buildProposeCard(
         { ...base, kind: "video", entityIds: ["e1"] },
         makeCtx({ sourceGenerationId: "gen-abc123" }),
         [{ id: "e1", type: "CHARACTER", name: "Mia" }],
       );
-      expect(cardPayload.entityIds).toEqual([]);
-      expect(cardPayload.approvedEntities).toBeUndefined();
+      expect(cardPayload.sourceGenerationId).toBeUndefined();
+      expect(cardPayload.referenceGenerationIds).toEqual(["gen-abc123"]);
+      expect(cardPayload.entityIds).toEqual(["e1"]);
+      expect(cardPayload.approvedEntities).toEqual([{ id: "e1", type: "CHARACTER", name: "Mia" }]);
     });
 
     it("no elements → the field is absent, not an empty array (old-card shape)", () => {
@@ -503,6 +524,7 @@ describe("executePropose — mock DB", () => {
     entity: { findMany: ReturnType<typeof vi.fn> };
     chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
     referenceImage: { count: ReturnType<typeof vi.fn> };
+    generation: { findMany: ReturnType<typeof vi.fn> };
     genJob: { create: ReturnType<typeof vi.fn> };
   };
 
@@ -516,6 +538,8 @@ describe("executePropose — mock DB", () => {
     (mockPrisma.chatMessage.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({ seq: 5 });
     (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
     (mockPrisma.referenceImage.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+    // FSE-001:尺寸闸默认读不到宽度(本站生成的资产就是这一档)⇒ 放行。
+    (mockPrisma.generation.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   });
 
   // Test 6: execute persists GEN_CARD with correct shape, returns cardId + shownPriceDisplay
@@ -2291,5 +2315,208 @@ describe("ENGINE-A3 商家在对话里点名精修档", () => {
         fineDetail: "yes",
       }).success,
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FSE-001 —— 正路:官方演员 + 商家商品图,两张原件各作参考图直接出片
+// (staging E2E 2026-09-08;规格 docs/specs/creation-engine.md §5 FSE-001 行)
+//
+// 走查那一天的病:商家 @ 了官方演员、附上自己的商品图,系统把商品图当**首帧**、把演员
+// 整个清空(i2v 那一档元素参考名额是 0),于是产品建议他先把两者合成一张首帧再拍片 ——
+// 而合成图按规格 §5 2026-08-30「血统信任 / 像素完整性铁律」必被视频端拒收
+// (staging 上真的被拒了一次并退款)。Founder 当日裁:「合成 first frame 的 idea 可以
+// 移除了,没有必要」。
+//
+// 正路是同日两场探针实测跑通的那一条:演员原件与商品图**各作一张 `reference_image`**、
+// 纯文生视频、不合成。这一组钉铸卡那一段;真送出去的那一份由
+// `apps/worker/src/jobs/gen-reference-budget.test.ts` 拿真 `handleGen` 对表。
+// ---------------------------------------------------------------------------
+describe("FSE-001 —— 演员 + 商品图 = 一步出片", () => {
+  /** 官方演员库那位 —— 参考照是 Seedream 纯文生原件(血统信任)。 */
+  const AISYAH = { id: "entity-aisyah", type: "CHARACTER" as const, name: "Aisyah" };
+  /** 商家自己的商品图(本站生成或上传),一行 `Generation`,不是 `Entity`。 */
+  const MUG_RECEIPT = {
+    generationId: "gen_mug",
+    kind: "image" as const,
+    label: "A coral travel mug on a linen cloth",
+    sourceProjectId: "proj-library",
+    sourceProjectName: "Product shots",
+    sameCanvas: false,
+    previewUrl: "/files/mug.png",
+  };
+
+  const withMug = () =>
+    makeCtx({
+      sourceGenerationId: MUG_RECEIPT.generationId,
+      sourceGenerationIds: [MUG_RECEIPT.generationId],
+      mediaReferences: [MUG_RECEIPT],
+    });
+
+  const videoInput = (entityIds: string[]) => ({
+    kind: "video" as const,
+    structuredPrompt: "The woman holds the coral travel mug and smiles at the camera, static camera",
+    entityIds,
+    variantSel: {} as Record<string, string>,
+  });
+
+  it("FSE-001 / CREATE-A9: 演员 + 商品图 ⇒ 商品图是参考图,不是首帧;演员一个都没被清空", () => {
+    const { cardPayload } = buildProposeCard(videoInput([AISYAH.id]), withMug(), [AISYAH]);
+
+    // 首帧那一格必须是空的 —— 卡上写了它,worker 就会走 i2v,演员的照片一张都上不了车。
+    expect(cardPayload.sourceGenerationId).toBeUndefined();
+    expect(cardPayload.specChips as string[]).not.toContain(VIDEO_START_FRAME_CHIP);
+    // 商品图作为参考图冻在卡上(付费请求照它送 `role:"reference_image"`)。
+    expect(cardPayload.referenceGenerationIds).toEqual([MUG_RECEIPT.generationId]);
+    // 演员留在卡上,身份快照也在 —— 引擎认人那几句指令里的名字批准前看得见。
+    expect(cardPayload.entityIds).toEqual([AISYAH.id]);
+    expect(cardPayload.approvedEntities).toEqual([AISYAH]);
+  });
+
+  it("FSE-001 / CREATE-A2: 两件引用都在确认卡上,商品图那一件读到的角色是 Reference", () => {
+    const { cardPayload } = buildProposeCard(videoInput([AISYAH.id]), withMug(), [AISYAH]);
+    expect(cardPayload.mediaReferences).toEqual([{ ...MUG_RECEIPT, role: "reference" }]);
+  });
+
+  it("FSE-001 / CREATE-A2: 没有演员时,那张图照旧是首帧(「把这张图动起来」一格不动)", () => {
+    const { cardPayload } = buildProposeCard(videoInput([]), withMug(), []);
+
+    expect(cardPayload.sourceGenerationId).toBe(MUG_RECEIPT.generationId);
+    expect(cardPayload.referenceGenerationIds).toBeUndefined();
+    expect(cardPayload.mediaReferences).toEqual([{ ...MUG_RECEIPT, role: "startFrame" }]);
+  });
+
+  it("FSE-001 / CREATE-A10: 只 @ 了演员、一张图都没挂 ⇒ 纯文生视频,卡的形状与从前逐字相同", () => {
+    const { cardPayload } = buildProposeCard(videoInput([AISYAH.id]), makeCtx(), [AISYAH]);
+
+    expect(cardPayload.sourceGenerationId).toBeUndefined();
+    expect(cardPayload.referenceGenerationIds).toBeUndefined();
+    expect(cardPayload.entityIds).toEqual([AISYAH.id]);
+  });
+
+  it("FSE-001 / CREATE-A2: @ 的是产品元素而不是演员 ⇒ 挂图仍是首帧(判据只认 CHARACTER)", () => {
+    const { cardPayload } = buildProposeCard(videoInput([OWNED_ENTITY_1.id]), withMug(), [OWNED_ENTITY_1]);
+
+    expect(cardPayload.sourceGenerationId).toBe(MUG_RECEIPT.generationId);
+    expect(cardPayload.referenceGenerationIds).toBeUndefined();
+    // 首帧那一档照旧清空 @元素 —— 这一条是既有行为,本片没有碰它。
+    expect(cardPayload.entityIds).toEqual([]);
+  });
+
+  it("FSE-001 / CREATE-A9: 别家店的商品图混进来 ⇒ 整轮拒绝,一张卡都不铸(既有同族)", () => {
+    expect(() =>
+      buildProposeCard(videoInput([AISYAH.id, "entity-someone-else"]), withMug(), [AISYAH]),
+    ).toThrow(ProposeRefusal);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FSE-001 —— 付费前的参考图尺寸闸
+//
+// 探针实测(2026-09-08,USD 0.18):视频端在**建任务之前**就要求参考图宽度 ≥300px,
+// 一张 275×183 的原件零花费被弹回。那道闸在供应商那边不花钱,但它落在我们**预扣之后**
+// —— 商家会先看到一张报了价的卡、按下 Generate、预扣、失败、退款,读到的只是一句
+// 「没成功」。所以查在铸卡之前:$0、零 GEN_CARD、零 GenJob、账本零新增行。
+// ---------------------------------------------------------------------------
+describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
+  let mockPrisma: {
+    entity: { findMany: ReturnType<typeof vi.fn> };
+    chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    referenceImage: { count: ReturnType<typeof vi.fn> };
+    generation: { findMany: ReturnType<typeof vi.fn> };
+    genJob: { create: ReturnType<typeof vi.fn> };
+  };
+
+  const AISYAH = { id: "entity-aisyah", type: "CHARACTER" as const, name: "Aisyah" };
+  const MUG_RECEIPT = {
+    generationId: "gen_mug",
+    kind: "image" as const,
+    label: "A coral travel mug",
+    sourceProjectId: "proj-library",
+    sourceProjectName: "Product shots",
+    sameCanvas: false,
+    previewUrl: "/files/mug.png",
+  };
+
+  const runContext = () => ({
+    context: makeCtx({
+      sourceGenerationId: MUG_RECEIPT.generationId,
+      sourceGenerationIds: [MUG_RECEIPT.generationId],
+      mediaReferences: [MUG_RECEIPT],
+    }),
+  });
+
+  const input = {
+    kind: "video" as const,
+    structuredPrompt: "The woman holds the coral travel mug and smiles at the camera",
+    entityIds: [AISYAH.id],
+    variantSel: {} as Record<string, string>,
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const db = await import("@fikirtive/db");
+    mockPrisma = db.prisma as unknown as typeof mockPrisma;
+    mockPrisma.entity.findMany.mockResolvedValue([AISYAH]);
+    mockPrisma.chatMessage.findFirst.mockResolvedValue({ seq: 5 });
+    mockPrisma.chatMessage.create.mockResolvedValue({});
+    mockPrisma.referenceImage.count.mockResolvedValue(1);
+  });
+
+  it("FSE-001 / CREATE-A2: 商品图宽 275 ⇒ 一句话拒绝、零 GEN_CARD、零 GenJob", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 275 } }]);
+
+    const out = await executePropose(input, runContext());
+
+    expect(out).toEqual({ error: referenceUnavailableMessage("tooSmall") });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+    expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+  });
+
+  it("FSE-001 / CREATE-A2: 尺寸闸只在这个租户的范围里查(ownerId 来自 ctx,不从模型收)", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 550 } }]);
+
+    await executePropose(input, runContext());
+
+    expect(mockPrisma.generation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: { in: [MUG_RECEIPT.generationId] },
+          ownerId: "org-test",
+          deletedAt: null,
+        }),
+      }),
+    );
+  });
+
+  it("FSE-001 / CREATE-A9: 商品图宽 550 ⇒ 照铸(与探针成功的那一趟同一档)", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 550 } }]);
+
+    const out = await executePropose(input, runContext());
+
+    expect(out).toHaveProperty("cardId");
+    expect(mockPrisma.chatMessage.create).toHaveBeenCalledTimes(1);
+    const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    }).data.payload;
+    expect(payload["referenceGenerationIds"]).toEqual([MUG_RECEIPT.generationId]);
+    expect(payload["sourceGenerationId"]).toBeUndefined();
+    expect(payload["entityIds"]).toEqual([AISYAH.id]);
+  });
+
+  it("FSE-001 / CREATE-A9: 读不到宽度(本站生成的资产)⇒ 放行,不许把「不知道」读成「太小」", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: null } }]);
+
+    const out = await executePropose(input, runContext());
+
+    expect(out).toHaveProperty("cardId");
+    expect(mockPrisma.chatMessage.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("FSE-001 / CREATE-A2: 没有商品图的纯文生视频根本不查尺寸(既有那一条路一格不动)", async () => {
+    const out = await executePropose(input, { context: makeCtx() });
+
+    expect(out).toHaveProperty("cardId");
+    expect(mockPrisma.generation.findMany).not.toHaveBeenCalled();
   });
 });

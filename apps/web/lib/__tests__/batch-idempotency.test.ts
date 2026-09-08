@@ -521,3 +521,44 @@ describe("#777 组图进材料绑定(imageOptions.coherentSet)", () => {
     }).imageOptions).toEqual({ aspectRatio: "1:1", coherentSet: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// FSE-001 —— 商品图进**视频**材料绑定(videoOptions.referenceGenerationIds)
+//
+// 与图片侧那一格同一条纪律:换了参考图就是换了内容,所以它进材料;而它**只在非空时出现**
+// —— 写一格空数组进去,库里每一条既有视频行(它们的快照只有那五格)的合法重放就会被判成
+// 「换了内容」,那是一次幂等回归,而幂等回归落在钱路上。
+// ---------------------------------------------------------------------------
+describe("FSE-001 商品图进视频材料绑定(videoOptions.referenceGenerationIds)", () => {
+  const base = { prompt: "she holds the mug and smiles", model: "seedance-2-mini", kind: "video" as const, count: 1 };
+
+  it("FSE-001 / CREATE-A9: 挂了商品图 ⇒ 那一格进快照,次序原样保留", () => {
+    expect(normalizeFactoryMaterial({ ...base, referenceGenerationIds: ["gen_mug", "gen_bag"] }).videoOptions)
+      .toEqual(expect.objectContaining({ referenceGenerationIds: ["gen_mug", "gen_bag"] }));
+  });
+
+  it("FSE-001 / CREATE-A2: 没挂商品图 ⇒ 快照与这条修改之前逐字相同(既有每一条视频路)", () => {
+    for (const input of [base, { ...base, referenceGenerationIds: [] }, { ...base, referenceGenerationIds: null }]) {
+      const vo = normalizeFactoryMaterial(input).videoOptions;
+      expect(vo).not.toBeNull();
+      expect(Object.keys(vo!).sort()).toEqual(["aspectRatio", "audio", "fps", "resolution", "seconds"]);
+    }
+  });
+
+  it("FSE-001 / CREATE-A2: 换掉商品图 = 材料冲突,不是静默复用(两个方向都要成立)", () => {
+    const withMug = normalizeFactoryMaterial({ ...base, referenceGenerationIds: ["gen_mug"] });
+    const withBag = normalizeFactoryMaterial({ ...base, referenceGenerationIds: ["gen_bag"] });
+    expect(factoryMaterialMatches({ id: "job-1", ...withMug }, withMug)).toBe(true);
+    expect(factoryMaterialMatches({ id: "job-1", ...withMug }, withBag)).toBe(false);
+    expect(factoryMaterialMatches({ id: "job-1", ...withBag }, withMug)).toBe(false);
+  });
+
+  it("FSE-001 / CREATE-A2: 图片不落这一格到 videoOptions(两条路互不串台)", () => {
+    const i = normalizeFactoryMaterial({
+      prompt: "the mug on marble", model: "seedream", kind: "image", count: 1,
+      referenceGenerationIds: ["gen_mug"],
+    });
+    expect(i.videoOptions).toBeNull();
+    expect(i.imageOptions).toEqual({ aspectRatio: "1:1", referenceGenerationIds: ["gen_mug"] });
+  });
+});

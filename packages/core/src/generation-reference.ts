@@ -49,3 +49,39 @@ export function generationReferenceScope(
 ): GenerationReferenceScope {
   return { ownerId, deletedAt: null, asset: { ext: { in: [...exts] } } };
 }
+
+// ---------------------------------------------------------------------------
+// FSE-001 —— 供应商在**建任务之前**就查参考图的宽度
+// ---------------------------------------------------------------------------
+
+/**
+ * 一张图能当**视频参考**的最小宽度(像素)。
+ *
+ * 来源是一手实测,不是文档:2026-09-08 第二场探针把一张 275×183 的原件当
+ * `role:"reference_image"` 直喂视频端,供应商在**建任务前**就弹回
+ * `expected the width to be at least 300px`(零花费、任务未创建);同一张图放大到
+ * 550×366 之后同一趟请求 succeeded。证据
+ * `docs/audits/fullstack-staging-2026-09-08/probe-fse-001-two-references/probe-real-photo-2026-09-08.md`。
+ *
+ * 为什么我方也要查一遍:那道闸在供应商那边确实不花钱,但它发生在我们**预扣之后** ——
+ * 预扣、失败、退款走一遍,商家读到的只是一句「没成功」,而真正能修好它的动作
+ * (换一张大一点的图)一个字都没说。查在预扣之前 ⇒ $0、零 GenJob、账本零新增行,
+ * 并且说出那个真能修好它的动作。
+ *
+ * **不自动放大**:放大是像素级再处理,而规格 §5 2026-08-30「像素完整性铁律」把一切
+ * 未实测的像素再处理判为「未验先禁」。放大留作登记项。
+ */
+export const MIN_REFERENCE_IMAGE_WIDTH = 300;
+
+/**
+ * 这张图的宽度撑不撑得起一次视频参考。
+ *
+ * **不知道就放行**(`null` / 非有限数 ⇒ false)。宽度只有 `UPLOAD` 资产才由 ingest 的
+ * ffprobe 填得上(`apps/worker/src/jobs/ingest.ts` 只给 UPLOAD 派 ingest),本站生成的
+ * 资产那一格一律是空的 —— 把「不知道」当成「太小」会拒掉每一张本站生成的商品图,而那
+ * 正是这条正路最主要的输入。同一条降级纪律在参考视频时长那一格已经用着
+ * (`apps/worker/src/jobs/gen.ts` 的 `refDur != null && …`)。
+ */
+export function referenceImageTooSmall(width: number | null | undefined): boolean {
+  return typeof width === "number" && Number.isFinite(width) && width < MIN_REFERENCE_IMAGE_WIDTH;
+}

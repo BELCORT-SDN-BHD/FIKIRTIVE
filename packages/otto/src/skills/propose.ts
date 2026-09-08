@@ -9,7 +9,16 @@
  */
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
-import { newId, referenceBudget, type ApprovedEntity } from "@fikirtive/core";
+import {
+  newId,
+  referenceBudget,
+  // FSE-001 —— 付费前的参考图尺寸闸:判据、租户 scope 与措辞各只有一处。
+  generationReferenceScope,
+  referenceImageTooSmall,
+  referenceUnavailableMessage,
+  REFERENCE_IMAGE_EXTS,
+  type ApprovedEntity,
+} from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 import {
@@ -129,6 +138,38 @@ export async function executePropose(
     ),
     budget.used,
   );
+
+  // FSE-001 —— **付费前的尺寸闸**(staging 探针 2026-09-08 实测)。
+  //
+  // 视频端在**建任务之前**就要求参考图宽度 ≥300px:一张 275×183 的原件零花费被弹回
+  // (`expected the width to be at least 300px`),放大到 550×366 就过。那道闸在供应商
+  // 那边不花钱,但它落在我们**预扣之后** —— 商家会先看到一张报了价的卡、按下 Generate、
+  // 预扣、失败、退款,读到的只是一句「没成功」,而真正能修好它的动作(换一张大一点的图)
+  // 一个字都没说。
+  //
+  // 所以查在这里:`buildProposeCard` 已经回来了,但 GEN_CARD 还一行没落库、预扣还没发生
+  // ⇒ 拒绝 = $0、零 GEN_CARD、零 GenJob、账本零新增行。
+  //
+  // 判据与措辞都不在这里手写:`referenceImageTooSmall` / `referenceUnavailableMessage`
+  // 各只有一处。**不自动放大** —— 放大是像素级再处理,规格 §5 2026-08-30「像素完整性
+  // 铁律」把未实测的像素再处理判为「未验先禁」(登记待裁)。
+  //
+  // 只查商家挂的那几张商品图:演员的参考照由播种脚本保证尺寸(演员库定妆照一律 Seedream
+  // 原件),而且它们根本不经这条挂图的路。
+  const videoReferenceIds =
+    finalPayload.kind === "video" ? (finalPayload.referenceGenerationIds ?? []) : [];
+  if (videoReferenceIds.length > 0) {
+    const rows = await prisma.generation.findMany({
+      where: {
+        id: { in: videoReferenceIds },
+        ...generationReferenceScope(ctx.orgId, REFERENCE_IMAGE_EXTS),
+      },
+      select: { asset: { select: { width: true } } },
+    });
+    if (rows.some((r) => referenceImageTooSmall(r.asset.width))) {
+      return { error: referenceUnavailableMessage("tooSmall") };
+    }
+  }
 
   // Persist GEN_CARD (match coworkTurn row shape)
   const last = await prisma.chatMessage.findFirst({
