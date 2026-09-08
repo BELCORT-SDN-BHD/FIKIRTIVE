@@ -79,6 +79,36 @@ export async function convergeIdentity(input: { email: string; name?: string | n
             update: {},
           });
         });
+        // 2b. FSE-008 —— 演员库五人也要站在 founder 自己的 Library 里(CREATE-A10;
+        //     规格 docs/specs/creation-engine.md §5 2026-09-02「每租户播种」)。
+        //
+        //     播种唯一的自动挂点是 `bootstrapPersonalOrg`(auth-guard.ts),而 founder
+        //     **从不**走那条路:他的 org 是迁移里就种好的那一行 `FOUNDER_OWNER_ID`,不需要
+        //     再开一个个人 org。于是那句 `seedActorLibrary(orgId)` 对 founder 永远到不了,
+        //     他登录进去看到的是一个空的 Official avatars(2026-09-08 staging E2E:
+        //     founder Entity 总数 = 0,同一时刻普通新用户是 5 位)。补的就是这一句。
+        //
+        //     范围刻意窄:落点是 founder 自己的 org,不新建 org、不碰租户边界,更不走
+        //     `bootstrapPersonalOrg` 的开户赠额那条路 —— founder 分支一行钱都不写。
+        //     `seedActorLibrary` 幂等且永不抛(见该模块头「幂等」「绝不抛」),所以每次
+        //     登录重跑既不会把库播成十个人,也不会把一次登录变成失败;上次没播成的那几位
+        //     下次登录补齐。**在事务之外**、提交之后 —— 与非 founder 那条路同一个理由:
+        //     它要读磁盘上的定妆原件,不该把文件 IO 塞进一笔身份事务里。
+        //     动态 import 与下面 auth-guard 那处同理,避免把 storage/文件系统这一段拖进
+        //     better-auth 的静态模块图。
+        //
+        //     判官 P2(2026-09-08)—— best-effort 要自己兜住:`seedActorLibrary` 承诺永不抛,
+        //     但那是它的承诺,不是这里的保证(动态 import 本身也会 reject:文件被删、构建产物
+        //     缺失)。没有这层 try/catch,任何一次 reject 都直穿到下面 172 行的外层 catch,
+        //     把第 4 步的 auth.signin 审计写整个跳过 —— 一次真实登录从审计流里消失。演员库
+        //     少五张脸不该有这种代价,所以照非 founder 那条路(:103)的写法就地降级成 warn。
+        //     #575 日志纪律:固定分类 + 常量,邮箱这类用户内容不进日志行。
+        try {
+          const { seedActorLibrary } = await import("@/lib/actor-library-seed");
+          await seedActorLibrary(FOUNDER_OWNER_ID);
+        } catch (e) {
+          console.warn("[better-auth] converge founder actor-library seed failed (non-fatal):", e instanceof Error ? e.message : e);
+        }
       } else {
         // 3. Non-founder personal-org convergence (best-effort; requireOwner re-bootstraps on demand).
         try {

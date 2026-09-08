@@ -24,13 +24,21 @@ vi.mock("@/lib/better-auth/compat", () => ({
   auth: mockAuth,
   isImpersonating: vi.fn(async () => false),
 }));
+/** FSE-008 —— founder 分支曾经**没有**用例:这个 mock 写死 `isFounderAdmin=false`,
+ *  于是 convergeIdentity 里那条 founder 路径一行都没被跑过。改成一个可点名的名单,
+ *  默认仍是空的(所有既有用例的行为一字不变),只有下面 FSE-008 那两条会往里加人。 */
+const founderEmails = vi.hoisted(() => new Set<string>());
 vi.mock("@/lib/allowlist", () => {
   function allowed(email: string | null | undefined): boolean {
     if (!email) return false;
     const list = `${process.env.AUTH_ALLOWED_EMAILS ?? ""}`.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
     return list.includes(email.toLowerCase());
   }
-  return { allowed, isFounderAdmin: () => false, isAllowedEmail: allowed };
+  return {
+    allowed,
+    isFounderAdmin: (email: string | null | undefined) => !!email && founderEmails.has(email.toLowerCase()),
+    isAllowedEmail: allowed,
+  };
 });
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../queue", () => ({
@@ -48,6 +56,7 @@ const { storage } = await import("@/lib/storage");
 const {
   ACTOR_LIBRARY,
   ACTOR_LIBRARY_ASSET_DIR,
+  FOUNDER_OWNER_ID,
   displayCredits,
   pricedGenCredits,
   storageKey,
@@ -217,6 +226,59 @@ describe("CREATE-A10 —— 真的登录路径(convergeIdentity)也播得出来"
 
     await convergeIdentity({ email, emailVerified: true });
     expect(await libraryOf(ownerC)).toHaveLength(5);
+  }, 120_000);
+});
+
+/**
+ * **FSE-008 —— founder 账号的 Library 也不能是空的**(2026-09-08 staging E2E Round 1;
+ * Founder 当日裁决「现在修」)。
+ *
+ * 上面那一条走的是**非 founder** 分支:`convergeIdentity` 调 `bootstrapPersonalOrg`,
+ * 播种挂在它里面。founder 分支(`converge.ts` 的 `isFounderAdmin(email)`)从来不调
+ * `bootstrapPersonalOrg` —— founder 的 org 是迁移里就种好的那一行 `"founder"`,不需要
+ * 再开一个个人 org —— 所以 `auth-guard.ts` 里那句 `seedActorLibrary(orgId)` 永远到不了,
+ * founder 登录进去看到的是一个空的 Official avatars(审计 Entity 总数 = 0)。
+ *
+ * 这两条把 founder 分支钉住:播得出来、且再登一次既不重复播种也不多一分钱。
+ * 播种的落点是 `FOUNDER_OWNER_ID` 这个 org 本身 —— 不新建 org、不动租户边界、
+ * 不走开户赠额那条路(founder 分支根本不碰 `grantCreditsTx`)。
+ */
+describe("FSE-008 —— founder 账号也有官方演员", () => {
+  const founderEmail = `actor-founder-${randomUUID()}@fikirtive.test`;
+
+  it("FSE-008 / CREATE-A10: founder 登录收敛完,founder org 的 Library 里站着五个人", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    founderEmails.add(founderEmail);
+    process.env.AUTH_ALLOWED_EMAILS = `${process.env.AUTH_ALLOWED_EMAILS},${founderEmail}`;
+
+    // Better Auth 的 session-create 钩子传的就是这些格(server.ts:387)。
+    await convergeIdentity({ email: founderEmail, emailVerified: true });
+
+    const library = await libraryOf(FOUNDER_OWNER_ID);
+    expect(library, "founder 的 Official avatars 是空的 —— founder 分支没有播种").toHaveLength(5);
+    expect(library.map((e) => e.name).sort()).toEqual([...ACTOR_LIBRARY].map((a) => a.name).sort());
+    // 每一行都是 founder org 自己的 —— 不借任何别的租户的素材。
+    for (const entity of library) {
+      expect(entity.referenceImages[0]!.asset.ownerId).toBe(FOUNDER_OWNER_ID);
+    }
+    // 租户边界没动:founder 仍然只落在那一行 `"founder"` 上,没有顺手多开一个个人 org。
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: founderEmail }, select: { id: true } });
+    expect(await prisma.organization.findUnique({ where: { id: `org_${user.id}` }, select: { id: true } })).toBeNull();
+  }, 120_000);
+
+  it("FSE-008 / CREATE-A10: founder 再登一次不重复播种、也不重复发赠额", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    const ledgerBefore = await prisma.creditLedger.count({ where: { orgId: FOUNDER_OWNER_ID } });
+
+    await convergeIdentity({ email: founderEmail, emailVerified: true });
+
+    expect(await libraryOf(FOUNDER_OWNER_ID)).toHaveLength(5);
+    // 钱一分没动:founder 分支不走 `bootstrapPersonalOrg`,所以既没有 signup 赠额,
+    // 也不会因为多跑一次播种而多出任何一行账。
+    expect(await prisma.creditLedger.count({ where: { orgId: FOUNDER_OWNER_ID } })).toBe(ledgerBefore);
+    expect(
+      await prisma.creditLedger.count({ where: { orgId: FOUNDER_OWNER_ID, idempotencyKey: { startsWith: "signup:" } } }),
+    ).toBe(0);
   }, 120_000);
 });
 
