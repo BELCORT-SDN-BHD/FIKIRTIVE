@@ -32,6 +32,7 @@ export function CanvasOttoOverlay({
   onComposerReferencesConsumed,
   onBalanceRefresh,
   onGenerationActivityChange,
+  canvasJobActive,
 }: {
   projectId: string;
   entities: EntityDTO[];
@@ -46,6 +47,8 @@ export function CanvasOttoOverlay({
   onBalanceRefresh: () => void | Promise<void>;
   /** 这条对话此刻有没有付费生成在跑 —— 画板据此重读自己的板(走查 P0-1)。 */
   onGenerationActivityChange: (active: boolean) => void;
+  /** 反方向那一句(FSE-005):画板上有画布直接动作在跑 —— 对话据此立刻回库里读。 */
+  canvasJobActive?: boolean;
 }) {
   if (!activeThread) {
     return (
@@ -83,6 +86,7 @@ export function CanvasOttoOverlay({
       composerReferences={composerReferences}
       onComposerReferencesConsumed={onComposerReferencesConsumed}
       onGenerationActivityChange={onGenerationActivityChange}
+      canvasJobActive={canvasJobActive}
     />
   );
 }

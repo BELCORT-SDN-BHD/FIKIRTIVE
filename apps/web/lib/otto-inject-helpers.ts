@@ -374,6 +374,46 @@ export function appendDurableResults(
 }
 
 /**
+ * FSE-005 —— 画布节点级付费动作那一行 **USER 请求句**，补进直播列表。
+ *
+ * 服务端在钱事务里为这种动作写两行（`lib/canvas-thread-log.ts`）：商家按下的那句话
+ * （USER TEXT），紧接着是已经批过的那张卡（GEN_CARD，payload 带 `canvasAction`）。卡由
+ * `appendMissingCards` 接住；那句话从前谁都不补，于是不刷新的对话里那张卡凭空出现，
+ * 商家看不到自己按的是什么 —— 走查录到的「Conversation 计数刷新才对得上」就是这一半。
+ *
+ * 「绝不重新注入 TEXT」那条护栏（防止已经流过的回复叠第二遍）在这里不放宽一格：可补的
+ * 只有**画布回执卡自己的那一行请求** —— 判据是服务端写的形状（同一条线程里 seq 相邻、
+ * 卡 payload 上带 `canvasAction`，与 `otto-actions.ts` 认画布回执用的是同一格），直播路
+ * 铸出来的卡永远没有这一格（`gen-actions.ts` 把带 `canvasAction` 的卡挡在对话付费入口外），
+ * 所以商家自己打字送出的那条 USER 消息不可能被它捞进来叠一遍。按 durableId 去重。
+ */
+export function appendCanvasActionRequests(
+  messages: OttoUiMessage[],
+  fresh: ChatThreadDTO,
+): OttoUiMessage[] {
+  const bySeq = new Map<number, ChatThreadDTO["messages"][number]>();
+  for (const m of fresh.messages) bySeq.set(m.seq, m);
+  const requestIds = new Set<string>();
+  for (const m of fresh.messages) {
+    if (m.kind !== "GEN_CARD") continue;
+    const payload = m.payload as { canvasAction?: unknown } | null;
+    if (!payload || typeof payload !== "object" || typeof payload.canvasAction !== "string") continue;
+    const request = bySeq.get(m.seq - 1);
+    if (request && request.role === "USER" && request.kind === "TEXT") requestIds.add(request.id);
+  }
+  if (requestIds.size === 0) return messages;
+  const present = new Set(
+    messages.map((m) => m.metadata?.durableId).filter((id): id is string => !!id),
+  );
+  const additions = threadToUiMessages(fresh).filter((u) => {
+    const id = u.metadata?.durableId;
+    return !!id && requestIds.has(id) && !present.has(id);
+  });
+  if (additions.length === 0) return messages;
+  return [...messages, ...additions];
+}
+
+/**
  * Append completed research reports after a RESEARCH_CARD's status poll observes
  * `done`. Research reports are async worker output too, but they are intentionally
  * separate from appendDurableResults so the generation poll keeps its narrow
