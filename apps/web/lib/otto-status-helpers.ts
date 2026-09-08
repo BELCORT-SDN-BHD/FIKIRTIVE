@@ -4,7 +4,7 @@
  *
  * Pure (no React, no I/O) so they are unit-testable in the node harness.
  */
-import type { OttoStatusData, OttoErrorData, OttoStepData, OttoCostData } from "./otto-stream-bridge";
+import type { OttoStatusData, OttoErrorData, OttoStepData, OttoStepKind, OttoCostData } from "./otto-stream-bridge";
 import type { CardState } from "./otto-inject-helpers";
 
 /** Minimal shape of what a data-* part looks like at runtime. */
@@ -227,6 +227,8 @@ export function runStateOfCard(cardState: CardState): OttoRunState {
 export interface TraceStepView {
   label: string;
   status: "done" | "active" | "pending" | "waiting" | "stopped";
+  /** 这一步是哪一类动作(FSE-013)——面板抬头据此说话。老的手写步骤没有它,抬头照旧兜底。 */
+  kind?: OttoStepKind;
 }
 
 /**
@@ -251,7 +253,7 @@ export function deriveTraceSteps(
   for (const ev of events) {
     let s = byId.get(ev.id);
     if (!s) {
-      s = { label: ev.label, status: "active" };
+      s = ev.kind ? { label: ev.label, status: "active", kind: ev.kind } : { label: ev.label, status: "active" };
       byId.set(ev.id, s);
       order.push(ev.id);
     }
