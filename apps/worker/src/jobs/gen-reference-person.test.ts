@@ -19,7 +19,11 @@
  * charge, and a refund that always happens is what makes "You weren't charged" true.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { REFERENCE_IMAGE_PERSON_REJECTED } from "@fikirtive/core";
+import {
+  PLATFORM_IMAGE_PERSON_REJECTED,
+  personRejectionSentence,
+  REFERENCE_IMAGE_PERSON_REJECTED,
+} from "@fikirtive/core";
 
 const m = vi.hoisted(() => {
   const genJobFindUnique = vi.fn();
@@ -210,43 +214,80 @@ describe("#765 the engine refuses a reference image showing a real person", () =
 });
 
 /**
- * FSE-001(`docs/audits/fullstack-staging-2026-09-08/findings-catalog.md`)—— **来路是这里取的。**
- *
+ * FSE-001(`docs/audits/fullstack-staging-2026-09-08/findings-catalog.md`)—— **判据是这里取的。**
+
  * 拒绝文案分岔的判据不能来自客户端,也不能在适配器里靠猜:只有这一层刚从自有 id 把每一个
- * 引用解析出来(D19),它知道那张含人像的图是本站生成的、还是商家自己上传的。这一组钉的
- * 就是那一格布尔量真的从解析结果长出来,并且真的随请求送到适配器手上。
+ * 引用解析出来(D19),它知道这一趟送出去的图里有没有官方演员 —— 元素照真的上车,或首帧
+ * 那张图的血统(`Generation.entitySnapshot`)里冻着一位。这一组钉的就是那一格布尔量真的
+ * 从解析结果长出来,并且真的换掉了商家最后读到的那一句。
+ *
+ * 判官 P2(2026-09-08)—— 判据一度写成「这一行是不是本站生成」。那是另一个问题:商家上传
+ * 一张有真人的照片、在本站改一次图,它就变成本站生成的行,而他从没挑过演员。下面第三条
+ * 就是那个反例,它在改判据之前是红的。
  *
  * 钱、重试、退款一格不动:这一格只决定商家读哪一句。
  */
-describe("FSE-001 the person-refusal copy forks on where the picture came from", () => {
+describe("FSE-001 the person-refusal copy forks on whether a cast member is in the picture", () => {
   /** 这一趟真正发给适配器的 VideoRequest。 */
   const videoRequest = () => m.generateVideo.mock.calls[0]![0];
 
-  it("FSE-001 / CREATE-A9: a start frame this platform generated is flagged as ours", async () => {
+  beforeEach(() => {
+    // 适配器就是这样选句子的(`byteplus.ts` 的 `paidPost(..., personRejectionSentence(...))`),
+    // 所以这里连同**商家最后读到的那一句**一起钉,而不是只钉一格布尔量。
+    m.generateVideo.mockImplementation(async (req: { castMemberInReferences?: boolean }) => {
+      throw Object.assign(new Error(personRejectionSentence(req.castMemberInReferences)), { permanent: true as const });
+    });
+  });
+
+  it("FSE-001 / CREATE-A9: a still whose lineage holds an official cast member gets the honest sentence", async () => {
     // staging E2E 的原局面:官方演员 + 商品图先合成一张首帧,再拿它去出片。
     m.genJobFindUnique.mockResolvedValue({ ...ottoJob });
     m.generationFindFirst.mockResolvedValue({
       id: "gen_src", source: "GENERATED",
+      entitySnapshot: { entities: [{ id: "e1", name: "Aisyah", type: "CHARACTER", variantId: null, refHashes: [] }] },
       asset: { ownerId: "o1", contentHash: "a".repeat(64), ext: "png" },
     });
 
     await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
 
-    expect(videoRequest().personReferenceFromPlatform).toBe(true);
+    expect(videoRequest().castMemberInReferences).toBe(true);
+    // 他已经从 Library 挑了演员 —— 再叫他去挑一个是死路。
+    expect(terminalWrite()!.data.error).toBe(PLATFORM_IMAGE_PERSON_REJECTED);
   });
 
   it("FSE-001 / CREATE-A9: a picture the merchant uploaded keeps the cast-library way out", async () => {
     // 上传的真人照仍然是 CREATE-A9 的原局面 —— 那句「去 Library 挑一个演员」在这里是真出路。
     m.genJobFindUnique.mockResolvedValue({ ...ottoJob });
     m.generationFindFirst.mockResolvedValue({
-      id: "gen_src", source: "UPLOAD",
+      id: "gen_src", source: "UPLOAD", entitySnapshot: { entities: [] },
       asset: { ownerId: "o1", contentHash: "b".repeat(64), ext: "png" },
     });
 
     await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
 
-    expect(videoRequest().personReferenceFromPlatform).toBe(false);
-    // 这一支落库的仍然是原来那句 —— CREATE-A9 的出路在这里是真出路。
+    expect(videoRequest().castMemberInReferences).toBe(false);
+    expect(terminalWrite()!.data.error).toBe(REFERENCE_IMAGE_PERSON_REJECTED);
+  });
+
+  /**
+   * 判官 P2 的反例 —— **改判据之前这一条是红的。**
+   *
+   * 商家上传一张有真人的照片(`UPLOAD`),在本站改一次图:`gen.ts` 每次引擎出图都写
+   * `GENERATED`(裁剪与上传写 `UPLOAD`,`apps/web/lib/asset-actions.ts:295/319`),于是这张
+   * 改图产物按旧判据就成了「我们给的」。他从没打开过 Library,却会被告诉「把演员和商品
+   * 一起作参考」—— 那句话对他不成立,而他真正的出路(去挑一个演员)被那句话盖掉了。
+   */
+  it("FSE-001 / CREATE-A9: an uploaded real-person photo edited once here is NOT a cast member", async () => {
+    m.genJobFindUnique.mockResolvedValue({ ...ottoJob });
+    m.generationFindFirst.mockResolvedValue({
+      id: "gen_src", source: "GENERATED", entitySnapshot: { entities: [] },
+      asset: { ownerId: "o1", contentHash: "d".repeat(64), ext: "png" },
+    });
+
+    await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
+
+    expect(videoRequest().castMemberInReferences).toBe(false);
+    // 他没挑过演员 ⇒ 演员库是真出路,读的必须是原来那句。
     expect(terminalWrite()!.data.error).toBe(REFERENCE_IMAGE_PERSON_REJECTED);
   });
 
@@ -263,6 +304,7 @@ describe("FSE-001 the person-refusal copy forks on where the picture came from",
     await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
 
     expect(videoRequest().refImageUrls).toHaveLength(1);
-    expect(videoRequest().personReferenceFromPlatform).toBe(true);
+    expect(videoRequest().castMemberInReferences).toBe(true);
+    expect(terminalWrite()!.data.error).toBe(PLATFORM_IMAGE_PERSON_REJECTED);
   });
 });

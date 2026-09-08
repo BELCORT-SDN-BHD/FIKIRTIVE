@@ -168,6 +168,28 @@ function jobAttachedImageIds(job: {
   return out.slice(0, attachedImageCap(out.length));
 }
 
+/**
+ * FSE-001 —— **这张图的血统里有没有官方演员。**
+ *
+ * `Generation.entitySnapshot` 是出图那一刻按 `job.entityIds` 冻下来的引用链
+ * (`{ entities: [{ id, name, type, variantId, refHashes }] }`,本文件出图处构造;上传路
+ * 由 `apps/web/lib/upload-actions.ts` 的 `buildEntitySnapshot` 写同样的形状)。演员是
+ * `type === "CHARACTER"` 的 Entity,所以「他从 Library 挑过演员」在库里就是这一格。
+ *
+ * 只用来选拒绝时读哪一句(`personRejectionSentence`),不参与选型、报价、预扣或计费。
+ *
+ * 形状不对(老行、`{}`、手写脏数据)一律当作**没有演员** —— 与其替一条证不出来的血统
+ * 编话,不如回落到原来那句,那一句在「他没选过演员」时才是真出路。
+ *
+ * 只看这一行自己的快照,不递归上溯:Generation 没有指向上一张图的列,追链要另建来源边
+ * (已在规格 §5 的 typed refs 那条里)。少认一次 ⇒ 回落到原句,是安全的那一半。
+ */
+function lineageCarriesOfficialActor(entitySnapshot: unknown): boolean {
+  const entities = (entitySnapshot as { entities?: unknown } | null)?.entities;
+  if (!Array.isArray(entities)) return false;
+  return entities.some((e) => (e as { type?: unknown } | null)?.type === "CHARACTER");
+}
+
 function jobBilledUnits(outputs: { receipt?: GenerationReceipt }[]): number | null {
   if (outputs.length === 0) return null;
   let total = 0;
@@ -1304,13 +1326,22 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         let imageUrl = "";
         let sourceAsset: { ownerId: string; contentHash: string; ext: string } | null = null;
         /**
-         * FSE-001(staging E2E 2026-09-08)—— 这张首帧**是不是我们自己产的**。
+         * FSE-001(staging E2E 2026-09-08)—— 这张首帧的**血统里有没有官方演员**。
          *
-         * 只在一个地方用得上:引擎因为「参考图里有可辨真人」拒收时,商家读哪一句。图是他
-         * 上传的真人照 ⇒ 出路是演员库;图是本站生成的合成图(或演员参考照)⇒ 那句「去
-         * Library 挑一个演员」是死路 —— 他用的就是演员库里的人。判据在这里取,因为这里
-         * 是**服务端从自有 id 解析出来的那一行**(D19),不是任何客户端说法。
-         * `AssetSource.GENERATED` = 引擎产物;上传 / 裁剪等 $0 摄取路径是别的枚举值。
+         * 只在一个地方用得上:引擎因为「参考图里有可辨真人」拒收时,商家读哪一句。他已经
+         * 从 Library 挑了演员(演员进了这张图的血统)⇒ 再叫他「去 Library 挑一个演员」是
+         * 死路,他刚从那里来;除此之外的每一种来路 ⇒ 演员库仍然是**真出路**,读原来那句。
+         *
+         * ── 判据为什么不是 `source === "GENERATED"`(判官 P2,2026-09-08)──────────────
+         * 「本站生成」≠「不是商家自己的真人照」。商家上传一张有真人的照片,在本站改一次图
+         * (`gen.ts` 每次引擎出图都写 `GENERATED`;裁剪与上传写 `UPLOAD`,见
+         * `apps/web/lib/asset-actions.ts:295/319`),再拿它去动画被拒 —— 他从没选过演员,
+         * 却会读到「把演员和商品一起作参考」,那句话对他不成立。所以数的是**演员本身**:
+         * 这一行 `entitySnapshot` 是 worker 出图那一刻按 `job.entityIds` 冻下来的引用链
+         * (同文件 `entitySnapshot` 的构造处),里面出现 `type === "CHARACTER"` 才算。
+         *
+         * 判据在这里取,因为这里是**服务端从自有 id 解析出来的那一行**(D19),不是任何
+         * 客户端说法。
          */
         let personRefFromPlatform = false;
         if (job.sourceGenerationId) {
@@ -1323,7 +1354,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             return;
           }
           sourceAsset = src.asset;
-          personRefFromPlatform = src.source === "GENERATED";
+          personRefFromPlatform = lineageCarriesOfficialActor(src.entitySnapshot);
         } else if (job.shotId) {
           const sourceGen = await prisma.generation.findFirst({
             where: { shotId: job.shotId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
@@ -1336,7 +1367,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             return;
           }
           sourceAsset = sourceGen.asset;
-          personRefFromPlatform = sourceGen.source === "GENERATED";
+          personRefFromPlatform = lineageCarriesOfficialActor(sourceGen.entitySnapshot);
         }
         if (sourceAsset) {
           imageUrl = (await storage.presignedGet(storageKey(sourceAsset.ownerId, sourceAsset.contentHash, sourceAsset.ext), 3600)) ?? "";
@@ -1417,10 +1448,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           prompt: sentPrompt, imageUrl, tailImageUrl: tailImageUrl || undefined,
           refVideoUrl: refVideoUrl || undefined,
           ...(inputImageUrls.length > 0 ? { refImageUrls: inputImageUrls } : {}),
-          // FSE-001 —— 含人像的输入是不是我们给的:首帧是本站生成图,或真上车的元素照里有
-          // 演员(CHARACTER)。`refSlots` 与 `inputImageUrls` 逐项同步,所以数的是**真送出去
-          // 的那几张**,不是名额外被截掉的。只决定拒绝时读哪一句,不参与选型、报价或计费。
-          personReferenceFromPlatform:
+          // FSE-001 —— 这一趟送进去的图里**有没有官方演员**:首帧的血统里有演员,或真上车
+          // 的元素照里有演员(CHARACTER)。`refSlots` 与 `inputImageUrls` 逐项同步,所以数的
+          // 是**真送出去的那几张**,不是名额外被截掉的。两支合起来才是完整的「他已经从
+          // Library 挑过演员」—— 只决定拒绝时读哪一句,不参与选型、报价或计费。
+          castMemberInReferences:
             personRefFromPlatform || refSlots.some((s) => s.kind === "entity" && s.type === "CHARACTER"),
           durationSeconds: vo?.seconds ?? videoDefaults(job.model as GenVideoModel).seconds,
           resolution: vo?.resolution, aspectRatio: vo?.aspectRatio, fps: vo?.fps, audio: vo?.audio,

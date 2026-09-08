@@ -534,7 +534,7 @@ export class BytePlusProvider implements GenerationProvider {
       watermark: false,
       // F06 reconciliation window, below. 3600s is the engine's minimum.
       execution_expires_after: 3600,
-    }, personRejectionSentence(req.personReferenceFromPlatform));
+    }, personRejectionSentence(req.castMemberInReferences));
     // submit returned 2xx ⇒ the engine ACCEPTED the order. From here on we can no longer prove
     // the task was never created, so an unreadable receipt is "outcome unknown", not "nothing
     // happened" (#657). PLAIN here would requeue and submit a SECOND task against the same

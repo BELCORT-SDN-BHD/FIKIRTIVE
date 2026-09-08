@@ -71,9 +71,9 @@ export const REFERENCE_IMAGE_PERSON_REJECTED =
   + "You weren't charged.";
 
 /**
- * The sentence a merchant reads when THE SAME refusal lands on a picture THIS PLATFORM supplied
- * — a cast member's own reference photo, or a picture generated here — rather than a photo of a
- * real person they uploaded.
+ * The sentence a merchant reads when THE SAME refusal lands on a picture whose PERSON CAME FROM
+ * THE OFFICIAL CAST LIBRARY — a cast member's own reference photo, or a picture made here with
+ * that cast member as a reference — rather than a photo of a real person the merchant supplied.
  *
  * ── WHY THIS BRANCH EXISTS (FSE-001, staging E2E 2026-09-08) ──
  *
@@ -95,6 +95,14 @@ export const REFERENCE_IMAGE_PERSON_REJECTED =
  * work (registered in the spec's §5, 2026-09-08) — this sentence only stops sending merchants
  * down the road that is known to end here.
  *
+ * ── AND IT MUST NOT BE SAID TO ANYONE ELSE (judge P2, 2026-09-08) ──
+ *
+ * "Send the cast member … as references" is only an instruction someone can follow if there IS a
+ * cast member in play. A merchant who uploaded a photo of a real person and edited it here once
+ * has never picked one, so this sentence would name a route they cannot take while hiding the
+ * one they can. That is why the fork's criterion is the cast member in the picture's lineage,
+ * not "this platform rendered the pixels" — see `personRejectionSentence` below.
+ *
  * "You weren't charged" is safe for the same reason as the sentence above and no other: this is
  * an HTTP 4xx at task creation, the hold is refunded and no spend is recorded.
  *
@@ -108,20 +116,28 @@ export const PLATFORM_IMAGE_PERSON_REJECTED =
  * WHICH of the two person-refusal sentences this refusal gets — the ONE fork, so the decision
  * cannot be made twice and differently.
  *
- * The input is the only thing that separates them: was the person-bearing picture we sent one
- * this platform supplied (a cast member's reference photo, or a picture generated here), or a
- * photo the merchant uploaded? The caller that knows is the worker, which resolved every
- * reference from an owned id moments earlier; it hands the answer down with the request.
+ * The input is the only thing that separates them, and it is ONE question: is there an OFFICIAL
+ * CAST MEMBER in the refused picture — riding in as an element reference on this very trip, or
+ * frozen into the lineage of the still we sent as the first frame? Only then has the merchant
+ * already done the thing the original sentence tells them to go do. The caller that knows is the
+ * worker, which resolved every reference from an owned id moments earlier; it hands the answer
+ * down with the request.
+ *
+ * "We rendered those pixels" is NOT the question, and answering that one instead was the bug the
+ * first cut of this fork shipped (judge P2, 2026-09-08): a merchant's own photo of a real person,
+ * edited once here, comes back as a generated row and would have been told to send a cast member
+ * they never chose.
  *
  * UNKNOWN FALLS BACK to the uploaded-photo sentence. A caller that cannot prove provenance —
  * an older job, a path that never set the flag — must not have a claim about the merchant's own
  * cast library invented on its behalf; the original sentence is the one that has always been
- * shown there, and it is the safe half of the fork.
+ * shown there, and it is the safe half of the fork: the cast library is a real way out for
+ * everyone except the person who is already standing in it.
  *
  * Pure: no lookup, no I/O.
  */
-export function personRejectionSentence(personReferenceFromPlatform: boolean | undefined): string {
-  return personReferenceFromPlatform === true
+export function personRejectionSentence(officialActorInPersonReference: boolean | undefined): string {
+  return officialActorInPersonReference === true
     ? PLATFORM_IMAGE_PERSON_REJECTED
     : REFERENCE_IMAGE_PERSON_REJECTED;
 }
