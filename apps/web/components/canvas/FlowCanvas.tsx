@@ -168,6 +168,14 @@ type FlowCanvasProps = {
   skin?: "gb";
   onBalanceRefresh?: () => void | Promise<void>;
   onActivityRefresh?: () => void | Promise<void>;
+  /**
+   * 这条对话此刻有没有**画布直接动作**的付费生成在跑（FSE-005）。
+   *
+   * `activity` 是反方向那一句（Otto 那边在跑 → 画板重读自己）。这一句补上另一半：画布节点级
+   * 动作那张卡是服务端在钱事务里写的，对话那边本地列表读不到，于是它那扇观察窗永远开不了。
+   * 板上有一张属于这条对话、还在飞的付费卡，就是「钱已经花出去、终局还没到」这件事本身。
+   */
+  onCanvasJobActivityChange?: (active: boolean) => void;
   onReferenceInChat?: (refs: Omit<OttoComposerReference, "requestId">[]) => void;
 };
 
@@ -274,6 +282,7 @@ export default function FlowCanvas({
   skin,
   onBalanceRefresh,
   onActivityRefresh,
+  onCanvasJobActivityChange,
   onReferenceInChat,
 }: FlowCanvasProps) {
   const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
@@ -1367,6 +1376,17 @@ export default function FlowCanvas({
 
   /** 这条对话此刻有没有 Otto 那边的付费生成在跑。 */
   const ottoWorkActive = !!(activeThreadId && activity?.has(activeThreadId));
+
+  // FSE-005:板上属于**这条对话**的在飞付费卡 —— 报给对话那边,它那扇观察窗才开得起来。
+  // 只报事实,不碰对话的任何状态(与上面 `activity` 那一句同一条纪律,方向相反)。
+  const canvasJobActive = !!activeThreadId && nodes.some((n) => n.threadId === activeThreadId && isInFlightPaidGen({
+    type: n.type ?? "",
+    status: n.data?.status as string | undefined,
+    url: n.data?.url as string | null | undefined,
+  }));
+  useEffect(() => {
+    onCanvasJobActivityChange?.(canvasJobActive);
+  }, [canvasJobActive, onCanvasJobActivityChange]);
 
   // A direct canvas generation can finish after the original client poll was
   // interrupted. While a paid image/video card is still unresolved, keep asking
