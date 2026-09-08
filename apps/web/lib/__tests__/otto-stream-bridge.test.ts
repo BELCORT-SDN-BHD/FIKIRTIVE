@@ -193,16 +193,20 @@ describe("stepEventOf — agent step narration (the live trace)", () => {
   it("maps tool_called to a start step with a friendly label + the call id", () => {
     expect(stepEventOf(toolCalledEvent("researchWeb"))).toEqual({
       id: "call_1",
-      label: "Researching your brand",
+      // FSE-013:标签说的是**这个工具做的事**(网页检索),不是「在研究你的品牌」——
+      // 商家问 Instagram 尺寸的那一轮,后者是一句与他无关的话。
+      label: "Searching the web",
       phase: "start",
+      kind: "research",
     });
   });
 
   it("maps tool_output to a done step with the SAME id (pairs start↔done)", () => {
     expect(stepEventOf(toolOutputEvent("researchWeb", { ok: true }))).toEqual({
       id: "call_1",
-      label: "Researching your brand",
+      label: "Searching the web",
       phase: "done",
+      kind: "research",
     });
   });
 
@@ -223,11 +227,13 @@ describe("stepEventOf — agent step narration (the live trace)", () => {
       id: "call_1",
       label: "Organizing your projects",
       phase: "start",
+      kind: "working",
     });
     expect(stepEventOf(toolOutputEvent("manageProjects", { ok: true }))).toEqual({
       id: "call_1",
       label: "Organizing your projects",
       phase: "done",
+      kind: "working",
     });
   });
 
@@ -261,7 +267,7 @@ describe("stepEventOf — agent step narration (the live trace)", () => {
   });
 
   it("labelForTool maps known tools and returns null for the rest", () => {
-    expect(labelForTool("researchWeb")).toBe("Researching your brand");
+    expect(labelForTool("researchWeb")).toBe("Searching the web");
     expect(labelForTool("setTitle")).toBeNull();
     expect(labelForTool(undefined)).toBeNull();
   });
