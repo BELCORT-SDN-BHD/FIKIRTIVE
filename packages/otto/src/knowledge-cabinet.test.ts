@@ -8,6 +8,7 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
+import { imageAspectHonoured, videoElementReferencesHonoured } from "@fikirtive/core";
 import {
   CORE_PATH,
   keywordHits,
@@ -312,5 +313,74 @@ describe("ENGINE-A7 × ENGINE-A6 · 裁剪之后装载集不许中途缩水", ()
     const files = instructionsForTurn(turn, { priorSummary: summary, dropped: [] }).files;
     expect(files).toContain(TOPIC_FILE); // 摘要点了名
     expect(files).not.toContain("product-map/creating.md"); // 但那条 system 上下文没被读进来
+  });
+});
+
+/**
+ * 柜里的每一句都是**花钱之前**说给商家听的话（`docs/specs/creation-engine.md` CREATE-A2），
+ * 所以柜文说的能力必须与执行层真会做的事同源。这一组钉的是两句被 2026-09-08 staging E2E
+ * 抓到的假话（`docs/audits/fullstack-staging-2026-09-08/findings-catalog.md`）：
+ *
+ *   · FSE-006 —— 柜文说「改图只会出方图」，而 `imageAspectHonoured()` 为真、适配器真发确切
+ *     WxH（`packages/core/src/executed-spec.ts` · `packages/generation/src/byteplus.ts`）。
+ *     商家要 3:4、卡片与产物都真是 3:4，Otto 却在付款前凭空发明了一条卡片没有的限制。
+ *   · FSE-001 —— 柜文说「要人物就先做一张首帧，视频不吃元素照」，而
+ *     `videoElementReferencesHonoured()` 为真：纯文生视频那一档元素照真的进引擎。那条建议
+ *     把商家推去先做一张合成图，而合成图作人物参考会被视频端免费拒收（血统信任，规格 §1）。
+ *
+ * 判据不是「这两句消失了」——那只钉住这一次。判据是**柜里任何一句都不得声称执行层声明
+ * 之外的限制**：`imageAspectHonoured()` / `videoElementReferencesHonoured()` 哪天真变假，
+ * 该说的话回来说，这组测试自己会让路。
+ */
+describe("FSE-006 / FSE-001 · 柜文不得发明执行层没有的限制（staging E2E 2026-09-08）", () => {
+  const cabinetText = (): { path: string; text: string }[] =>
+    KNOWLEDGE_CABINET.map((f) => ({ path: f.path, text: f.text }));
+
+  it("FSE-006 / CREATE-A2:兑现画幅的这一趟里,柜里没有一句声称出图只能是方图", () => {
+    // 兑现画幅 = 执行层的声明（`EXECUTED_SPEC.image.aspectHonoured`）。它为假时「只能方图」
+    // 才是真话，那时这条断言该让路而不是逼人写假话。
+    if (!imageAspectHonoured()) return;
+    const invented = [
+      /comes? back (as )?an? square/i,
+      /square (image|picture)s? for now/i,
+      /always (comes? back )?square/i,
+      /only (ever )?(be |comes? back )?square/i,
+      /whatever shape (was|you|they) (attached|sent|gave)/i,
+      /\b1:1 only\b/i,
+    ];
+    for (const { path, text } of cabinetText()) {
+      for (const re of invented) {
+        expect(text, `${path} 里有一句声称出图画幅被写死`).not.toMatch(re);
+      }
+    }
+  });
+
+  it("FSE-006 / CREATE-A1:假话删掉了,真规矩还在 —— 柜里仍然教 desiredAspect 那条硬规格", () => {
+    const joined = cabinetText().map((f) => f.text).join("\n");
+    expect(joined).toContain("desiredAspect");
+    expect(joined).toContain("shape is a hard spec");
+  });
+
+  it("FSE-001 / CREATE-A9:柜里不再教「要人物就先做一张首帧」", () => {
+    // 元素照真的进纯文生视频（执行层声明），所以「video conditions on a source frame, not on
+    // entity refs」既是假话，也正是把商家推向被拒合成图的那一句。
+    if (!videoElementReferencesHonoured()) return;
+    const invented = [
+      /make an IMAGE keyframe first/i,
+      /not on entity refs/i,
+      /video conditions on a source frame/i,
+    ];
+    for (const { path, text } of cabinetText()) {
+      for (const re of invented) {
+        expect(text, `${path} 里还留着「先做首帧」那条建议`).not.toMatch(re);
+      }
+    }
+  });
+
+  it("FSE-001 / CREATE-A2:普通的「把这张图动起来」那条路一格没动", () => {
+    // 撤掉的是**替商家发明一张合成首帧**，不是商家自己点名要动的那张图。
+    const joined = cabinetText().map((f) => f.text).join("\n");
+    expect(joined).toContain("the attached image becomes the video's start frame");
+    expect(joined).toContain("forVideo");
   });
 });

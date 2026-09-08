@@ -2,6 +2,7 @@ import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoReques
 import {
   imageOutputSizeForModel,
   MAX_VIDEO_IMAGE_PARTS,
+  personRejectionSentence,
   REFERENCE_IMAGE_PERSON_REJECTED,
   referenceImagePersonRejected,
   videoReferencesRide,
@@ -199,7 +200,15 @@ export class BytePlusProvider implements GenerationProvider {
    *  bills on completion), but what a FAILED POST can PROVE is identical on both, so
    *  one yardstick serves both. Callers must not re-inspect the status: the
    *  classification lives here and nowhere else. */
-  private async paidPost(what: "image request" | "video submit", url: string, model: string, body: unknown): Promise<Response> {
+  private async paidPost(
+    what: "image request" | "video submit",
+    url: string,
+    model: string,
+    body: unknown,
+    /** FSE-001 —— 「参考图里有可辨真人」这一条拒绝要说的那句话。缺席 ⇒ 上传真人照那一句
+     *  (`personRejectionSentence(undefined)`)。别的 4xx 一格不受它影响。 */
+    personRejectionCopy?: string,
+  ): Promise<Response> {
     const res = await fetch(url, {
       method: "POST",
       headers: this.headers(),
@@ -241,8 +250,14 @@ export class BytePlusProvider implements GenerationProvider {
       // submit is asked, because the video task-create endpoint is where that shape was
       // measured (2026-08-08, 4 refusals of 4 face shapes). The image endpoint has never been
       // seen to return it, and a refusal we invented would be worse than a generic one.
+      //
+      // FSE-001(staging E2E 2026-09-08)—— **同一条拒绝,两种来路**。被拒的那张图血统里带
+      // 官方演员(CHARACTER 元素照)时,原来那句「去 Library 挑一个演员」把已经用了官方演员的
+      // 商家打发回他刚来的地方 —— 照做一遍,同一句拒绝。选哪一句的判据由
+      // worker 随请求带下来(它才是从自有 id 解析引用的那一层),句子本身仍然只有
+      // `@fikirtive/core/gen-failure` 一份白名单。
       if (what === "video submit" && referenceImagePersonRejected(detail)) {
-        throw permanentInputError(REFERENCE_IMAGE_PERSON_REJECTED);
+        throw permanentInputError(personRejectionCopy ?? REFERENCE_IMAGE_PERSON_REJECTED);
       }
       throw new Error(`generation provider ${what} failed (${res.status})`);
     }
@@ -519,7 +534,7 @@ export class BytePlusProvider implements GenerationProvider {
       watermark: false,
       // F06 reconciliation window, below. 3600s is the engine's minimum.
       execution_expires_after: 3600,
-    });
+    }, personRejectionSentence(req.castMemberInReferences));
     // submit returned 2xx ⇒ the engine ACCEPTED the order. From here on we can no longer prove
     // the task was never created, so an unreadable receipt is "outcome unknown", not "nothing
     // happened" (#657). PLAIN here would requeue and submit a SECOND task against the same
