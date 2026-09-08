@@ -77,8 +77,23 @@ export const OTTO_TRANSIENT_FAILURE_SENTENCE = "Otto hit a snag — please try a
 /** Payload for the `data-tool-propose` stream part (the propose tool's return value). */
 export type OttoProposeData = unknown;
 
+/**
+ * 一个步骤**是哪一类动作** —— 进度抬头据此说话(FSE-013)。
+ *
+ * 从前抬头是写死的一句「Otto is making it」,不管这一轮到底做了什么:2026-09-08 staging 走查里
+ * 商家只问了一句 Instagram 尺寸、没有要任何生成,屏幕上照旧写着 Otto 在「making it」,而这一轮
+ * 的 trace 是 4 步、researchWeb ×3、零 GenJob、零 hold。这个类型让抬头由**真的被调用的工具**
+ * 决定,而不是由顺序占位文案决定。
+ *
+ *   research  查资料 / 读数据(researchWeb、Meta 读数、翻素材库)
+ *   planning  想方案 / 出卡片(propose 家族、写提示词)
+ *   making    真的在出片(generate、renderVideo)—— 只有这一类才配说 "making it"
+ *   working   落库式杂务(整理、保存、导入、改日程)
+ */
+export type OttoStepKind = "research" | "planning" | "making" | "working";
+
 /** Payload for the `data-step` stream part — one agent step (a tool call), display-only. */
-export type OttoStepData = { id: string; label: string; phase: "start" | "done" };
+export type OttoStepData = { id: string; label: string; phase: "start" | "done"; kind?: OttoStepKind };
 
 /** Payload for the `data-cost` stream part — what THIS turn actually cost, in DISPLAYED
  *  credits, read from the ledger AFTER the turn settled (#555). Display-only: the number is
@@ -201,57 +216,63 @@ export function bridgeEvent(event: unknown): OttoStreamPart | null {
 // bridgeEvent's contract/tests are untouched.
 // ---------------------------------------------------------------------------
 
-/** Tool name → friendly, sentence-case step label. Unlisted tools stay silent.
- *  Keys are the EXACT tool names from packages/otto/src/skills/*.ts (mixed casing). */
-const TOOL_STEP_LABELS: Record<string, string> = {
-  researchWeb: "Researching your brand",
-  rememberBrandFact: "Saving a brand note",
-  updateBrief: "Updating the brief",
-  describeRefs: "Looking at your references",
-  propose: "Planning the campaign",
-  proposePack: "Planning the ad pack",
-  proposeStoryboard: "Laying out the storyboard",
-  editStoryboard: "Editing the storyboard",
-  seedreamPrompt: "Crafting the image prompt",
-  seedancePrompt: "Crafting the video prompt",
-  generate: "Making a visual",
-  "meta-insights": "Reading your ad performance",
-  "meta-list-objects": "Checking your Meta account",
-  "list-meta-pages": "Finding your Pages",
-  "propose-meta-action": "Planning a Meta change",
-  "propose-ad-build": "Planning the campaign build",
-  "meta-ad-performance": "Reading your per-ad performance",
-  "meta-expert": "Diagnosing your ad performance",
-  proposeResearch: "Planning the research",
+/** Tool name → friendly, sentence-case step label + what kind of action it is.
+ *  Unlisted tools stay silent. Keys are the EXACT tool names from
+ *  packages/otto/src/skills/*.ts (mixed casing).
+ *
+ *  标签与类别住在**同一条记录**里(FSE-013):新工具加进来就必须同时表态「它到底在做什么」,
+ *  抬头才不会再回到写死一句的老路。 */
+const TOOL_STEPS: Record<string, { label: string; kind: OttoStepKind }> = {
+  // 「Searching the web」而不是从前的「Researching your brand」:这个工具做的是网页检索,
+  // 商家问的可能与他的品牌毫无关系(走查里问的是 Instagram 尺寸)。步骤说的是动作本身。
+  researchWeb: { label: "Searching the web", kind: "research" },
+  rememberBrandFact: { label: "Saving a brand note", kind: "working" },
+  updateBrief: { label: "Updating the brief", kind: "working" },
+  describeRefs: { label: "Looking at your references", kind: "research" },
+  propose: { label: "Planning the campaign", kind: "planning" },
+  proposePack: { label: "Planning the ad pack", kind: "planning" },
+  proposeStoryboard: { label: "Laying out the storyboard", kind: "planning" },
+  editStoryboard: { label: "Editing the storyboard", kind: "planning" },
+  seedreamPrompt: { label: "Crafting the image prompt", kind: "planning" },
+  seedancePrompt: { label: "Crafting the video prompt", kind: "planning" },
+  generate: { label: "Making a visual", kind: "making" },
+  "meta-insights": { label: "Reading your ad performance", kind: "research" },
+  "meta-list-objects": { label: "Checking your Meta account", kind: "research" },
+  "list-meta-pages": { label: "Finding your Pages", kind: "research" },
+  "propose-meta-action": { label: "Planning a Meta change", kind: "planning" },
+  "propose-ad-build": { label: "Planning the campaign build", kind: "planning" },
+  "meta-ad-performance": { label: "Reading your per-ad performance", kind: "research" },
+  "meta-expert": { label: "Diagnosing your ad performance", kind: "research" },
+  proposeResearch: { label: "Planning the research", kind: "planning" },
   // B4 debt-70~74 (schedule five-action parity):
-  approveScheduledPost: "Asking you to approve a post",
-  cancelScheduledPost: "Canceling a scheduled post",
-  editScheduledPost: "Editing a scheduled post",
-  listScheduledPosts: "Checking your schedule",
-  listPublishTargets: "Finding your connected accounts",
+  approveScheduledPost: { label: "Asking you to approve a post", kind: "working" },
+  cancelScheduledPost: { label: "Canceling a scheduled post", kind: "working" },
+  editScheduledPost: { label: "Editing a scheduled post", kind: "working" },
+  listScheduledPosts: { label: "Checking your schedule", kind: "research" },
+  listPublishTargets: { label: "Finding your connected accounts", kind: "research" },
   // B0-103 / B0-28 (new schedule reads/shares):
-  suggestPostTimes: "Finding good times to post",
-  sharePostPreview: "Making a share link",
-  manageCanvas: "Working on your canvas",
+  suggestPostTimes: { label: "Finding good times to post", kind: "planning" },
+  sharePostPreview: { label: "Making a share link", kind: "working" },
+  manageCanvas: { label: "Working on your canvas", kind: "working" },
   // W-B3-B (media-editor / asset-viewer $0):
-  manageMedia: "Organizing your media",
+  manageMedia: { label: "Organizing your media", kind: "working" },
   // #780 — the skill no longer only exports: it also puts clips together, captions them and
   // lays music under them, so the line the merchant reads while it runs can't say "exporting".
-  renderVideo: "Working on your video",
-  importMedia: "Importing media",
+  renderVideo: { label: "Working on your video", kind: "making" },
+  importMedia: { label: "Importing media", kind: "working" },
   // W-B3-D (home/ideas/library/brand debt):
-  manageProjects: "Organizing your projects",
-  manageEntities: "Updating your elements",
-  manageLibrary: "Looking through your saved media",
-  manageBrandMemory: "Updating your brand memory",
-  proposeIdeas: "Thinking up ideas",
+  manageProjects: { label: "Organizing your projects", kind: "working" },
+  manageEntities: { label: "Updating your elements", kind: "working" },
+  manageLibrary: { label: "Looking through your saved media", kind: "research" },
+  manageBrandMemory: { label: "Updating your brand memory", kind: "working" },
+  proposeIdeas: { label: "Thinking up ideas", kind: "planning" },
   // setTitle stays silent (internal housekeeping).
 };
 
 /** Friendly step label for a tool, or null for tools that shouldn't surface a step. */
 export function labelForTool(name: string | undefined): string | null {
   if (!name) return null;
-  return TOOL_STEP_LABELS[name] ?? null;
+  return TOOL_STEPS[name]?.label ?? null;
 }
 
 /** Read a stable call id off a run_item event's item (pairs start↔done). */
@@ -274,9 +295,11 @@ export function stepEventOf(event: unknown): OttoStepData | null {
   if (e.type !== "run_item_stream_event") return null;
   const phase = e.name === "tool_called" ? "start" : e.name === "tool_output" ? "done" : null;
   if (!phase) return null;
-  const label = labelForTool(toolNameOf(e.item));
-  if (!label) return null;
+  const tool = toolNameOf(e.item);
+  const step = tool ? TOOL_STEPS[tool] : undefined;
+  if (!step) return null;
   const id = callIdOf(e.item);
   if (!id) return null;
-  return { id, label, phase };
+  // `kind` 一起发出去 —— 抬头(OttoTrace)据此说这一轮真的在做什么,而不是写死一句。
+  return { id, label: step.label, phase, kind: step.kind };
 }
