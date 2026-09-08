@@ -15,6 +15,7 @@ import { OttoStreamErrorNotice, TOP_UP_HREF, CAP_EXIT_HREF } from "@/components/
 import { toChatMessageDTO } from "@/lib/dto";
 import { persistedStreamErrorOf } from "@/lib/otto-status-helpers";
 import { threadToUiMessages } from "@/lib/otto-ui-messages";
+import { EMPTY_TURN_REFERENCES } from "@/lib/turn-reference-draft";
 import type { OttoErrorData } from "@/lib/otto-stream-bridge";
 import type { ChatThreadDTO } from "@/lib/types";
 
@@ -54,10 +55,16 @@ function renderNotice(
   error: OttoErrorData,
   retryDraft?: string,
 ): string {
+  // FSE-004:重试草稿是**那句话加上那一轮的原引用**（`TurnReferenceDraft`）。这个文件钉的是
+  // 告示的脸，所以这里只把那句话包成最小的一份草稿；引用那一半由
+  // `front-a12-canvas-turn-failure` 与 `fse-003-004-send-and-retry-draft` 钉。
+  const draft = retryDraft
+    ? { text: retryDraft, refs: EMPTY_TURN_REFERENCES, labels: [], sourceMessageId: null }
+    : undefined;
   return renderToStaticMarkup(createElement(OttoStreamErrorNotice, {
     error,
-    retryDraft,
-    onRetry: retryDraft ? vi.fn() : undefined,
+    retryDraft: draft,
+    onRetry: draft ? vi.fn() : undefined,
   }));
 }
 

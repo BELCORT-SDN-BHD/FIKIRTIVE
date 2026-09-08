@@ -182,14 +182,19 @@ describe("executeProposePack — mock DB", () => {
     expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
   });
 
-  it("entity-ownership guard: non-owned entity ids are dropped (same as propose)", async () => {
+  /**
+   * FSE-002 / CREATE-A2(Founder 2026-09-08 裁「显式报错替代静默丢弃」)——
+   * 这条从前钉的是「non-owned entity ids are dropped」。整包与单张走同一条纪律:一件引用
+   * 对不上,**整包一张都不落库**,交回一句话。半截包里每一张都是点得下去的付费卡。
+   */
+  it("FSE-002 / CREATE-A2 entity-ownership guard：对不上的 id ⇒ 整包回一句话，零卡落库", async () => {
     // Only "owned-entity" is owned; "foreign-entity" is not.
     (mockPrisma.entity.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "owned-entity" }]);
 
     const ctx = makeCtx();
     const runContext = { context: ctx };
 
-    await executeProposePack(
+    const out = await executeProposePack(
       {
         packTitle: "Ownership Guard Pack",
         items: [
@@ -204,14 +209,9 @@ describe("executeProposePack — mock DB", () => {
       runContext,
     );
 
-    const createArg = (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
-      data: Record<string, unknown>;
-    };
-    const payload = createArg.data["payload"] as Record<string, unknown>;
-
-    // Only owned entity remains; foreign one dropped silently
-    expect(payload["entityIds"]).toEqual(["owned-entity"]);
-    expect((payload["variantSel"] as Record<string, string>)["foreign-entity"]).toBeUndefined();
+    expect(out).toHaveProperty("error");
+    expect((out as { error: string }).error).toContain("couldn't match one of the references");
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
   });
 
   it("single-item pack returns one cardId and the shared packId", async () => {

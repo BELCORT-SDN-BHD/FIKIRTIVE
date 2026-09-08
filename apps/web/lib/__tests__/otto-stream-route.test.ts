@@ -1344,7 +1344,9 @@ describe("FRONT-A10 —— 流式落库路把类型化引用写进 ChatMessage",
   const UPLOAD_ASSET_ID = "ast_stream_one";
   const THREE_TYPES = [`product:${PRODUCT_ID}`, `generation:${GENERATION_ID}`, `upload:${UPLOAD_ASSET_ID}`];
 
-  /** org_stream 自己的三行:一件实体、一件生成、一件上传。 */
+  /** org_stream 自己的三行:一件实体、一件生成、一件上传。
+   *  FSE-002:`asset.ext` 是新加的一格 —— 解析器按**行上的真实扩展名**决定这件媒体进图片槽
+   *  还是参考片槽。少了它就等于「读不出族别」,那一轮会被整轮显式拒绝(而不是悄悄少一件)。 */
   function ownRowsResolve() {
     mocks.entityFindMany.mockResolvedValue([
       { id: PRODUCT_ID, name: "Kopi cendol tin", type: "PRODUCT", catalogKey: null },
@@ -1353,12 +1355,12 @@ describe("FRONT-A10 —— 流式落库路把类型化引用写进 ChatMessage",
       {
         id: GENERATION_ID, assetId: "ast_gen", source: "GENERATED",
         promptText: "Cendol hero shot", projectId: "proj_stream",
-        project: { name: "Raya launch" }, asset: { originalFilename: "out.png" },
+        project: { name: "Raya launch" }, asset: { originalFilename: "out.png", ext: "png" },
       },
       {
         id: "gen_from_upload", assetId: UPLOAD_ASSET_ID, source: "UPLOAD",
         promptText: "", projectId: "proj_stream",
-        project: { name: "Raya launch" }, asset: { originalFilename: "cendol-shelf.png" },
+        project: { name: "Raya launch" }, asset: { originalFilename: "cendol-shelf.png", ext: "jpg" },
       },
     ]);
   }
@@ -1381,9 +1383,119 @@ describe("FRONT-A10 —— 流式落库路把类型化引用写进 ChatMessage",
     const created = persistedUserMessage();
     // 逐字相等,不是「包含」:少写一型、写成裸 id、或整格没写,这一条当场红。
     expect(created?.data.referenceRefs).toEqual(THREE_TYPES);
-    // `payload.entityIds`(生成条件)是另一条路,不因为这一格而改样。
-    expect((created?.data.payload as { entityIds?: unknown }).entityIds).toEqual([]);
+    // FSE-002:`payload.entityIds` 落的是**已解析的那一份** —— 客户端上报的那一列只是它的
+    // 一个子集。从前这里期望的是空表,而那正是「`@` 到的与真正带上路的」分成两份的形状。
+    expect((created?.data.payload as { entityIds?: unknown }).entityIds).toEqual([PRODUCT_ID]);
   });
+
+  /**
+   * FSE-002 / CREATE-A2 / FRONT-A10（Founder 2026-09-08 裁「一片修完」）——
+   * **`@` 双引用与 Library 附件两条路得到等价绑定**。
+   *
+   * 走查现场：`@` 菜单里点了官方演员 + 一张真实商品图，两件都进了 `referenceRefs`（回链是对的），
+   * 可只有演员影响得了铸卡 —— 那张图从来没进过这一轮的媒体槽，于是确认卡上没有
+   * `sourceGenerationId`，商家为一张不含他指定商品的素材付了钱。改用 Choose from Library 才
+   * 恢复双绑定，因为那条路走的正是 `sourceGenerationIds` 这个入参。
+   *
+   * 这两条钉的就是「两条路同一组槽」：`@` 的那一份必须原样出现在校验器的入参里，而且与手动
+   * 挂上来的那一份合流、去重。
+   */
+  it("FSE-002 / CREATE-A2 `@` 到的图片进这一轮的媒体槽（与 Library 附件同一组入参）", async () => {
+    ownRowsResolve();
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+
+    await POST(req({
+      projectId: "proj_stream",
+      text: "@Kopi cendol tin with this shot",
+      references: [`product:${PRODUCT_ID}`, `generation:${GENERATION_ID}`],
+    }));
+
+    const call = mocks.validateOttoTurnReferences.mock.calls.at(-1)?.[0] as {
+      sourceGenerationIds?: string[];
+      referenceVideoGenerationIds?: string[];
+    };
+    expect(call?.sourceGenerationIds).toContain(GENERATION_ID);
+    expect(call?.referenceVideoGenerationIds ?? []).not.toContain(GENERATION_ID);
+  });
+
+  it("FSE-002 / CREATE-A2 同一张图既 `@` 了又挂了 ⇒ 只上一次车（两条路合流，不是两份）", async () => {
+    ownRowsResolve();
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+
+    await POST(req({
+      projectId: "proj_stream",
+      text: "with this shot",
+      references: [`generation:${GENERATION_ID}`],
+      sourceGenerationIds: [GENERATION_ID],
+    }));
+
+    const call = mocks.validateOttoTurnReferences.mock.calls.at(-1)?.[0] as { sourceGenerationIds?: string[] };
+    expect(call?.sourceGenerationIds?.filter((id) => id === GENERATION_ID)).toHaveLength(1);
+  });
+
+  it("FSE-002 / CREATE-A2 `@` 到的片子进的是参考片那一格（按行上的扩展名分族，不靠猜）", async () => {
+    mocks.entityFindMany.mockResolvedValue([]);
+    mocks.generationFindMany.mockResolvedValue([
+      {
+        id: "gen_clip", assetId: "ast_clip", source: "GENERATED",
+        promptText: "A slow push-in", projectId: "proj_stream",
+        project: { name: "Raya launch" }, asset: { originalFilename: "clip.mp4", ext: "mp4" },
+      },
+    ]);
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+
+    await POST(req({
+      projectId: "proj_stream",
+      text: "carry this on",
+      references: ["generation:gen_clip"],
+    }));
+
+    const call = mocks.validateOttoTurnReferences.mock.calls.at(-1)?.[0] as {
+      sourceGenerationIds?: string[];
+      referenceVideoGenerationIds?: string[];
+    };
+    expect(call?.referenceVideoGenerationIds).toContain("gen_clip");
+    expect(call?.sourceGenerationIds ?? []).not.toContain("gen_clip");
+  });
+
+  // 复修轮（判官 2026-09-08 P1-1）：整轮拒绝这一半没变（花钱之前显式拒绝，CREATE-A2），
+  // 换掉的是**那句话**。gif／avif／mkv／音频都上传得了，而 `@` 选单对上传行不做扩展名过滤，
+  // 所以商家真挑得到；用「isn't available any more」回答他，他一翻 Library 就知道是假的，
+  // 而且会去找一次从没发生过的删除。
+  it.each([
+    ["thing.psd", "psd"],
+    ["loop.gif", "gif"],
+    ["cut.mkv", "mkv"],
+    ["jingle.mp3", "mp3"],
+  ])(
+    "FSE-002 / CREATE-A2 格式当不了引用的 %s ⇒ 整轮显式拒绝，而且说的是原因不是「消失了」",
+    async (filename, ext) => {
+      mocks.entityFindMany.mockResolvedValue([]);
+      mocks.generationFindMany.mockResolvedValue([
+        {
+          id: "gen_odd", assetId: "ast_odd", source: "GENERATED",
+          promptText: "?", projectId: "proj_stream",
+          project: { name: "Raya launch" }, asset: { originalFilename: filename, ext },
+        },
+      ]);
+      mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+
+      const res = await POST(req({
+        projectId: "proj_stream",
+        text: "use this",
+        references: ["generation:gen_odd"],
+      }));
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe(referenceUnavailableMessage("unsupportedFormat"));
+      // 那句谎话不许再出现在这条路上。
+      expect(body.error).not.toBe(referenceUnavailableMessage("notFound"));
+      expect(body.error).not.toMatch(/isn't available any more/i);
+      expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+      expect(mocks.run).not.toHaveBeenCalled();
+    },
+  );
 
   it("FRONT-A10 一件都没 @ 的一轮,那一列是空表而不是缺了那一格", async () => {
     mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));

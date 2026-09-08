@@ -1873,13 +1873,34 @@ export async function ottoTurn(raw: unknown): Promise<
       const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
       if (!project) return { error: "Project not found." };
 
+      // FRONT-A10(§7.3③ 第③刀):`@` 到的对象在**落库之前**按当前 principal 的 ownerId 解析
+      // 一遍(判官 P2-1 的收口位)。一件解不出来 —— 别家的、已删的、形状不对的 —— 这一轮就
+      // 整轮不发,读到的是那一句:它对「别人的」和「自己删掉的」说得一模一样,所以它不会
+      // 变成一个「这个 id 在别家存在吗」的问答机。
+      //
+      // FSE-002:与流式那扇门逐字同一个顺序 —— 先按类型解析,媒体那一半再并进下面的槽。
+      const picked = await resolveOwnedReferenceRefs(ownerId, parsed.data.references);
+      if (picked.unresolved > 0) return { error: referenceUnavailableMessage("notFound") };
+      // FSE-002 复修轮:格式当不了引用的那一件 —— 同样整轮不发,同样说得出原因(理由与措辞
+      // 的出处见 `app/api/otto/stream/route.ts` 与 `gen-failure.ts`,这里不写第二份口径)。
+      if (picked.unusableFormat > 0) {
+        return { error: referenceUnavailableMessage("unsupportedFormat") };
+      }
+
       const refs = await validateOttoTurnReferences({
         ownerId,
         projectId,
         sourceGenerationId,
-        sourceGenerationIds,
+        // FSE-002:`@` 到的媒体与手动挂的媒体进同一组槽(理由见 `app/api/otto/stream/route.ts`)。
+        sourceGenerationIds: [...new Set([
+          ...(sourceGenerationIds ?? []),
+          ...picked.media.filter((m) => m.kind === "image").map((m) => m.generationId),
+        ])],
         referenceVideoGenerationId,
-        referenceVideoGenerationIds,
+        referenceVideoGenerationIds: [...new Set([
+          ...(referenceVideoGenerationIds ?? []),
+          ...picked.media.filter((m) => m.kind === "video").map((m) => m.generationId),
+        ])],
       });
       // Codex QA-CRE-FE9-013 —— **静默丢弃到此为止**。商家挂上来的引用只要有一件取不到,
       // 这一轮就整轮不发:不建对话、不落 USER 消息、不进 Otto、不铸卡、不预扣。他读到的是
@@ -1887,13 +1908,6 @@ export async function ottoTurn(raw: unknown): Promise<
       // 上一版在这里把它滤成空数组继续跑,于是 Otto 按「没有产品参考」的前提铸卡、商家批准
       // 并为一张不含他指定产品的素材付了钱。
       if (refs.unavailable.length > 0) return { error: unavailableReferenceMessage(refs.unavailable) };
-
-      // FRONT-A10(§7.3③ 第③刀):`@` 到的对象在**落库之前**按当前 principal 的 ownerId 解析
-      // 一遍(判官 P2-1 的收口位)。一件解不出来 —— 别家的、已删的、形状不对的 —— 这一轮就
-      // 整轮不发,与上面媒体引用同一条纪律,读到的也是同一句话:那句话对「别人的」和「自己
-      // 删掉的」说得一模一样,所以它不会变成一个「这个 id 在别家存在吗」的问答机。
-      const picked = await resolveOwnedReferenceRefs(ownerId, parsed.data.references);
-      if (picked.unresolved > 0) return { error: referenceUnavailableMessage("notFound") };
 
       // Resolve thread: new vs existing-owned-and-in-project
       const isNew = !parsed.data.threadId;
@@ -1961,7 +1975,13 @@ export async function ottoTurn(raw: unknown): Promise<
           kind: "TEXT",
           seq: ++seq,
           text,
-          payload: { entityIds, variantSel, sourceGenerationIds: refs.sourceGenerationIds, referenceVideoGenerationIds: refs.referenceVideoGenerationIds },
+          // FSE-002:落库的这一份就是已解析的那一份(理由见流式那扇门的同一行)。
+          payload: {
+            entityIds: orderedUniqueIds([...(entityIds ?? []), ...picked.entityIds]),
+            variantSel,
+            sourceGenerationIds: refs.sourceGenerationIds,
+            referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
+          },
           // FRONT-A10:这条消息**提到了谁**,类型化 ID,服务端解析过的那一份(不是客户端上报
           // 的那一份)。`payload.entityIds` 是另一件事(生成条件),两格并存、互不取代。
           referenceRefs: picked.wire,

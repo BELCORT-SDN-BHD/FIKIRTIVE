@@ -370,8 +370,13 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.videoStep).toBeUndefined();
   });
 
-  // Test 5: entityId scoping — foreign ids are dropped silently
-  it("entityId scoping: foreign ids dropped, variantSel for dropped ids removed", () => {
+  // Test 5: entityId scoping — 对不上的 id 是**显式拒绝**，不是悄悄少一个
+  //
+  // FSE-002 / CREATE-A2（Founder 2026-09-08 裁「一片修完；按类型解析，错类型或不可用引用
+  // 显式报错替代静默丢弃」）。这条从前钉的是相反的语义（"foreign ids dropped silently"）——
+  // 而那正是 staging 走查里三张错卡的共同来源：商家 `@` 的真实商品图作为「元素 id」进来、
+  // 被静默滤掉，卡上只剩演员，他却看不出少了什么就按下了付款。
+  it("FSE-002 / CREATE-A2 entityId scoping：对不上的 id ⇒ 抛 ProposeRefusal，一张卡都不铸", () => {
     const ctx = makeCtx();
     const input = {
       kind: "image" as const,
@@ -382,11 +387,31 @@ describe("buildProposeCard — pure helper", () => {
     // foreign2 not in owned set
     const ownedEntities = [{ id: "owned1", type: "PRODUCT" as const, name: "Owned one" }];
 
-    const { cardPayload } = buildProposeCard(input, ctx, ownedEntities);
+    expect(() => buildProposeCard(input, ctx, ownedEntities)).toThrow(ProposeRefusal);
+    // 那句话点得出「有一件引用对不上」，并且说清楚什么都没做出来（$0、零 GEN_CARD）。
+    try {
+      buildProposeCard(input, ctx, ownedEntities);
+      expect.unreachable("对不上的 id 必须抛");
+    } catch (e) {
+      expect((e as Error).message).toContain("couldn't match one of the references");
+      expect((e as Error).message).toContain("nothing was made");
+    }
+  });
 
+  it("FSE-002 / CREATE-A2 全部对得上时照旧铸卡（归属过滤本身一个字节没变）", () => {
+    const { cardPayload } = buildProposeCard(
+      {
+        kind: "image" as const,
+        structuredPrompt: "Brand shoot",
+        entityIds: ["owned1"],
+        variantSel: { "owned1": "var-a", "stray": "var-b" },
+      },
+      makeCtx(),
+      [{ id: "owned1", type: "PRODUCT" as const, name: "Owned one" }],
+    );
     expect(cardPayload.entityIds).toEqual(["owned1"]);
+    // `variantSel` 里那个没被 `@` 的键照旧不上卡 —— 它不是一件引用，只是一格没人要的选择。
     expect(cardPayload.variantSel).toEqual({ "owned1": "var-a" });
-    expect((cardPayload.variantSel as Record<string, string>)["foreign2"]).toBeUndefined();
   });
 
   // ── #774 判官 r2 P1 —— 卡上冻结引擎会被告知的那几个名字 ────────────────────
@@ -411,13 +436,16 @@ describe("buildProposeCard — pure helper", () => {
       ]);
     });
 
-    it("a foreign id never gets an identity on the card", () => {
-      const { cardPayload } = buildProposeCard(
-        { ...base, entityIds: ["owned1", "foreign2"] },
-        ctx(),
-        [{ id: "owned1", type: "PRODUCT", name: "Owned one" }],
-      );
-      expect(cardPayload.approvedEntities).toEqual([{ id: "owned1", type: "PRODUCT", name: "Owned one" }]);
+    // FSE-002 / CREATE-A2:「对不上的 id 拿不到身份」现在的形状是**整张卡都不出生**。
+    // 一张少了一件引用的卡与一张完整的卡在商家眼里长得一样,而它旁边有一颗付款按钮。
+    it("FSE-002 / CREATE-A2 对不上的 id ⇒ 没有身份，也没有卡（不是「少一个身份的卡」）", () => {
+      expect(() =>
+        buildProposeCard(
+          { ...base, entityIds: ["owned1", "foreign2"] },
+          ctx(),
+          [{ id: "owned1", type: "PRODUCT", name: "Owned one" }],
+        ),
+      ).toThrow(ProposeRefusal);
     });
 
     it("an i2v plan drops its elements → no identities to approve", () => {
@@ -724,11 +752,11 @@ describe("executePropose — mock DB", () => {
 
   // 归属过滤仍然排在披露前面:别人的元素不许进这句话的分母(也不许被数)。
   it("#785: the i2v sentence counts only the merchant's own @elements", async () => {
-    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]); // "foreign" 不属于这个 org
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
     mockPrisma.referenceImage.count.mockResolvedValue(4);
 
     await executePropose(
-      { kind: "video", structuredPrompt: "make her walk", entityIds: ["e1", "foreign"], variantSel: { foreign: "var-x" } },
+      { kind: "video", structuredPrompt: "make her walk", entityIds: ["e1"], variantSel: {} },
       { context: makeCtx({ orgId: "org-cap", sourceGenerationId: "gen_img" }) },
     );
 
@@ -739,6 +767,56 @@ describe("executePropose — mock DB", () => {
     expect(persistedPayload()["downgradeNote"]).toContain(
       "The picture on this card becomes the clip's first frame — your 4 saved reference photos aren't sent alongside it.",
     );
+  });
+
+  /**
+   * FSE-002 / CREATE-A2 —— 那一趟里混进一个别家的 / 已删的 / 类型拿错的 id 时,
+   * `executePropose` 交回的是**一句话**,而不是一张少了东西的卡。
+   *
+   * 三件都要:零 GEN_CARD 落库、零参考照统计(连数都不数,因为这一轮的形状还没确定),
+   * 以及那句话本身 —— 模型读得到它,于是它可以问清楚再重来。
+   */
+  it("FSE-002 / CREATE-A2 executePropose：混进对不上的 id ⇒ 回一句话、零 GEN_CARD 落库", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]); // "foreign" 不属于这个 org
+    const out = await executePropose(
+      { kind: "image", structuredPrompt: "hero shot", entityIds: ["e1", "foreign"], variantSel: { foreign: "var-x" } },
+      { context: makeCtx({ orgId: "org-cap" }) },
+    );
+    expect(out).toHaveProperty("error");
+    expect((out as { error: string }).error).toContain("couldn't match one of the references");
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+    expect(mockPrisma.referenceImage.count).not.toHaveBeenCalled();
+  });
+
+  /**
+   * FSE-002 / CREATE-A2 —— 走查里那一幕的逐字复刻:商家要求纠正之后,模型把上一张
+   * GEN_CARD 的**消息 id** 当成商品 id 递了进来。消息 id 不是 Entity,所以这一趟一条都
+   * 对不上 —— 从前它被静默滤掉、又铸出第三张缺图的卡。
+   */
+  /**
+   * FSE-002 / CREATE-A2 —— 走查里那一幕的第三拍：商家只回了一句「显示卡片」这种短回复,
+   * 模型沿用上一轮的元素 id 再铸一张。那件元素这时已经不在了(删了 / 从来不属于这家店),
+   * 而短回复本身带不出任何新的引用 —— 从前这一趟静默滤掉它,照旧铸出一张「无条件生成」的卡,
+   * 商家从卡面上完全看不出来。
+   */
+  it("FSE-002 / CREATE-A2 后续短回复沿用已不存在的元素 ⇒ 显式拒绝，不静默降成无条件生成", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([]); // 上一轮那件元素已经不在了
+    const out = await executePropose(
+      { kind: "image", structuredPrompt: "show the card again", entityIds: ["e1"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap" }) },
+    );
+    expect(out).toHaveProperty("error");
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("FSE-002 / CREATE-A2 把 GEN_CARD 消息 id 当商品 id ⇒ 显式拒绝，不再铸一张缺图的卡", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([]); // 消息 id 在 Entity 表里一条都查不到
+    const out = await executePropose(
+      { kind: "image", structuredPrompt: "with the product", entityIds: ["01M1ZS6Z94N92QE2JHD5QT8DV8"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap" }) },
+    );
+    expect(out).toHaveProperty("error");
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
   });
 
   // 反面:i2v 但商家一个元素都没 @ ⇒ 没有什么可披露的,不许编一句提醒。

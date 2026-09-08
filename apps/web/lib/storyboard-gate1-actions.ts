@@ -33,7 +33,7 @@
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
 import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, normalizeImageAspect, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel, type ApprovedEntity } from "@fikirtive/core";
-import { buildProposeCard } from "@fikirtive/otto";
+import { buildProposeCard, ProposeRefusal } from "@fikirtive/otto";
 import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
@@ -173,6 +173,25 @@ function firstFrameChildMatches(
  *  否则同一件事迟早在四个地方说出四种话。 */
 const VIDEO_UNAVAILABLE: Err = { error: generationUnavailableMessage("video") };
 const IMAGE_UNAVAILABLE: Err = { error: generationUnavailableMessage("image") };
+
+/**
+ * FSE-002 复修轮(判官 2026-09-08 P1-3)—— 铸卡层的**拒绝**在这条路上有人接。
+ *
+ * `buildProposeCard` 的拒绝一族(`ProposeRefusal`:引擎被关、画幅做不到、镜头点名的元素
+ * 对不上这家店)从前在闸① 里没有任何接住它的地方:一个镜头引用了已被删除／已不属于本店的
+ * 元素,server action 直接把异常扔出去,商家读到的是一个通用崩溃,而不是这一轮口径承诺的
+ * 「显式报错」。
+ *
+ * 钱一直是安全的(异常在 `prisma.$transaction` 内抛出 ⇒ 整份回滚 ⇒ 零写入、零预扣),缺的
+ * 只是那句话。这里把它翻成商家读得懂的一句;措辞的产地仍在 `packages/otto`(每一族拒绝自带
+ * 自己的那句),这里一个字都不改写。
+ *
+ * 别的异常**原样抛出去** —— 吞掉一个不认识的错误只是把静默丢弃搬了个家。
+ */
+function proposeRefusalAsError(e: unknown): Err {
+  if (e instanceof ProposeRefusal) return { error: e.message };
+  throw e;
+}
 
 /**
  * #647 T6:这一类创作现在还有没有引擎。null = 有,照常走;Err = 没有,调用方原样返回。
@@ -381,7 +400,9 @@ export async function prepareStoryboardFirstFrames(
     let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
     let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
 
-    await prisma.$transaction(async (tx) => {
+    // FSE-002 复修轮:铸卡层的拒绝(这个镜头点名的元素对不上这家店等)在这里落成一句人话。
+    // 抛出时事务已经整份回滚,所以到这一行为止写入是零 —— 见 `proposeRefusalAsError`。
+    const refusal = await prisma.$transaction(async (tx) => {
       await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
       // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
       const fresh = await tx.chatMessage.findFirst({
@@ -501,8 +522,9 @@ export async function prepareStoryboardFirstFrames(
           data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
         });
       }
-    });
+    }).then((): Err | null => null).catch(proposeRefusalAsError);
 
+    if (refusal) return refusal; // FSE-002: 铸卡层拒绝 ⇒ 零写入 + 那一族自己的那句话
     if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
     if (unavailable) return unavailable; // #647 T6 fail-closed surface
     const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
@@ -547,7 +569,8 @@ export async function regenShotFirstFrameCard(
     let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
     let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
 
-    await prisma.$transaction(async (tx) => {
+    // FSE-002 复修轮:与 prepare 那扇门同一条接法 —— 铸卡层的拒绝落成一句人话,零写入。
+    const refusal = await prisma.$transaction(async (tx) => {
       await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
       const fresh = await tx.chatMessage.findFirst({
         where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
@@ -656,8 +679,9 @@ export async function regenShotFirstFrameCard(
         where: { id: card.id },
         data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
       });
-    });
+    }).then((): Err | null => null).catch(proposeRefusalAsError);
 
+    if (refusal) return refusal; // FSE-002: 铸卡层拒绝 ⇒ 零写入 + 那一族自己的那句话
     if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
     if (unavailable) return unavailable; // #647 T6 fail-closed surface
     if (!child) return { error: "That shot no longer exists." };

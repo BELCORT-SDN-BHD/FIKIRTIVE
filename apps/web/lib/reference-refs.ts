@@ -6,6 +6,8 @@ import {
   MAX_TURN_REFERENCES,
   parseReferenceRef,
   parseReferenceRefs,
+  REFERENCE_IMAGE_EXTS,
+  REFERENCE_VIDEO_EXTS,
   type ReferenceRef,
   type ReferenceType,
 } from "@fikirtive/core";
@@ -53,6 +55,14 @@ function isEntityBacked(type: ReferenceType): type is EntityBackedType {
   return type in ENTITY_TYPE_BY_REFERENCE;
 }
 
+/**
+ * FSE-002 —— 一件媒体引用**解析之后**的样子：稳定身份（`Generation.id`）加上它到底是哪一种
+ * 媒体。`upload:` 的 wire id 是 `Asset.id`（契约 §4 的规范身份），而这一轮真正要挂上路的是
+ * 摄取它的那一行 Generation —— 两者不是同一个 id，所以「按类型解析」这件事只能发生在读过
+ * 那一行之后，不可能由客户端或调用方自己拼。
+ */
+export type ResolvedMediaReference = { generationId: string; kind: "image" | "video" };
+
 export interface ResolvedTurnReferences {
   /** Every ref that resolved to a live object owned by this merchant, in the order given. */
   refs: ReferenceRef[];
@@ -61,14 +71,58 @@ export interface ResolvedTurnReferences {
   /** Rows the merchant can be shown, with a link back to the object. */
   links: ReferenceLink[];
   /**
+   * FSE-002 —— entity 那几型解析出来的 `Entity.id`，顺序照商家 `@` 的顺序。
+   *
+   * 这一格与 `media` 是**同一次解析**的两半：从前调用方拿到的只有 `wire`（回链用），于是
+   * 「这一轮提到了谁」与「这一轮真正挂了什么」被迫由客户端分两条路各报一遍 —— 而那正是
+   * FSE-002 的形状（`@` 了一张真实商品图，它进了 `referenceRefs`，却从来没进过生成条件）。
+   */
+  entityIds: string[];
+  /**
+   * FSE-002 —— `generation:` / `upload:` 那两型解析出来的媒体，按**行上的真实扩展名**分族。
+   *
+   * 调用方把它并进这一轮的媒体槽（`validateOttoTurnReferences` 的两个入参），所以确认卡、
+   * 付费任务读到的引用与商家 `@` 的那一份不可能分家。类型认不出来的行不在这里 —— 它被
+   * 记成 `unresolved`，整轮显式拒绝，而不是悄悄少一件。
+   */
+  media: ResolvedMediaReference[];
+  /**
    * How many of the submitted refs did NOT resolve: malformed, deleted, or another shop's. One
    * number, never which — see NON-LEAKAGE above.
    */
   unresolved: number;
+  /**
+   * FSE-002 复修轮(判官 2026-09-08 P1-1)—— 解析**成功**、确属这家店、还活着,但它的格式
+   * 当不了生成引用(上传允许 gif/avif/mkv 与全部音频,参考只吃 `REFERENCE_IMAGE_EXTS` /
+   * `REFERENCE_VIDEO_EXTS`)。
+   *
+   * 它与 `unresolved` 分家,因为商家读到的那句话必须不一样:那个文件就在他的 Library 里,
+   * 用「isn't available any more」回答他是一句一查就穿帮的话(`gen-failure.ts` 里逐字写着
+   * 这条纪律)。这里也不能悄悄少一件 —— 那正是 FSE-002 的病灶 —— 所以它照旧上链(回链、
+   * 芯片都在),只是不进 `media`,由写入侧凭这个数整轮显式拒绝并说出原因。
+   */
+  unusableFormat: number;
 }
 
 /** Everything a resolved ref renders as. Names come from the DB, never from the client. */
-type Resolved = { link: ReferenceLink; ref: ReferenceRef };
+type Resolved = {
+  link: ReferenceLink;
+  ref: ReferenceRef;
+  media?: ResolvedMediaReference;
+  /** 行读到了、归属对、还活着,只是这个扩展名当不了引用(见 `unusableFormat`)。 */
+  unusableFormat?: boolean;
+};
+
+const IMAGE_EXT_SET = new Set<string>(REFERENCE_IMAGE_EXTS);
+const VIDEO_EXT_SET = new Set<string>(REFERENCE_VIDEO_EXTS);
+
+/** `null` = 这一行的扩展名不属于任何一族 ⇒ 它算不上一件可用的引用（显式未解析，不静默丢）。 */
+function mediaKindOfExt(ext: string | null | undefined): "image" | "video" | null {
+  const normalized = (ext ?? "").replace(/^\./, "").toLowerCase();
+  if (IMAGE_EXT_SET.has(normalized)) return "image";
+  if (VIDEO_EXT_SET.has(normalized)) return "video";
+  return null;
+}
 
 /** The Library address that shows this object. */
 function entityHref(kind: ReturnType<typeof libraryElementKind>): string {
@@ -157,7 +211,9 @@ async function resolveMediaRefs(ownerId: string, refs: ReferenceRef[]): Promise<
       promptText: true,
       projectId: true,
       project: { select: { name: true } },
-      asset: { select: { originalFilename: true } },
+      // FSE-002:扩展名与名字**同一趟**读出来 —— 「它是图还是片」不能靠第二次查询,更不能
+      // 靠 id 形状去猜(猜错的代价是把一支片子挂进图片槽,而那要到供应商拒绝时才会发作)。
+      asset: { select: { originalFilename: true, ext: true } },
     },
   });
   const generationById = new Map(rows.filter((row) => row.source !== "UPLOAD").map((row) => [row.id, row]));
@@ -173,6 +229,11 @@ async function resolveMediaRefs(ownerId: string, refs: ReferenceRef[]): Promise<
     if (ref.type !== "generation" && ref.type !== "upload") continue;
     const row = ref.type === "generation" ? generationById.get(ref.id) : uploadByAssetId.get(ref.id);
     if (!row) continue;
+    // FSE-002 复修轮:读不出族别的行**仍然算解析成功** —— 它是商家自己的、还活着的文件,
+    // 回链与芯片照旧(读路径 `resolveReferenceLinks` 走的就是这里,历史消息不能因此掉链)。
+    // 它只是进不了媒体槽:写入侧凭 `unusableFormat` 整轮拒绝,并说出「格式当不了引用」那一句,
+    // 而不是那句「isn't available any more」——后者对一个就在 Library 里的文件是谎话。
+    const mediaKind = mediaKindOfExt(row.asset.ext);
     const filename = row.asset.originalFilename;
     const name =
       ref.type === "upload"
@@ -180,6 +241,8 @@ async function resolveMediaRefs(ownerId: string, refs: ReferenceRef[]): Promise<
         : generationName(row.promptText, filename);
     out.push({
       ref,
+      // 稳定身份是**这一行 Generation 的 id**,不是 wire 上那一个:`upload:` 带的是 Asset id。
+      ...(mediaKind ? { media: { generationId: row.id, kind: mediaKind } } : { unusableFormat: true }),
       link: {
         type: ref.type,
         id: ref.id,
@@ -223,28 +286,53 @@ export async function resolveOwnedReferenceRefs(
   const overflow = all.length - submitted.length;
   const parsed = parseReferenceRefs(submitted);
   if (parsed.length === 0) {
-    return { refs: [], wire: [], links: [], unresolved: malformed + overflow };
+    return {
+      refs: [], wire: [], links: [], entityIds: [], media: [],
+      unresolved: malformed + overflow, unusableFormat: 0,
+    };
   }
-  const [entities, media] = await Promise.all([
+  const [entityHits, mediaHits] = await Promise.all([
     resolveEntityRefs(ownerId, parsed),
     resolveMediaRefs(ownerId, parsed),
   ]);
   const byKey = new Map<string, Resolved>();
-  for (const item of [...entities, ...media]) byKey.set(formatReferenceRef(item.ref), item);
+  for (const item of [...entityHits, ...mediaHits]) byKey.set(formatReferenceRef(item.ref), item);
 
   const refs: ReferenceRef[] = [];
   const links: ReferenceLink[] = [];
+  const entityIds: string[] = [];
+  const media: ResolvedMediaReference[] = [];
+  let unusableFormat = 0;
+  const seenGenerationIds = new Set<string>();
   for (const ref of parsed) {
     const hit = byKey.get(formatReferenceRef(ref));
     if (!hit) continue;
     refs.push(hit.ref);
     links.push(hit.link);
+    // FSE-002:同一次解析的两半。类型决定去哪一半 —— 一个 id 永远不会同时被当成元素和媒体,
+    // 而「猜一个类型」正是这条链上每一处静默丢弃的起点。
+    if (hit.media) {
+      // 两条 wire(`generation:` 与它的 `upload:` 兄弟)可能指向同一行 —— 一件引用只上一次车。
+      if (!seenGenerationIds.has(hit.media.generationId)) {
+        seenGenerationIds.add(hit.media.generationId);
+        media.push(hit.media);
+      }
+    } else if (hit.unusableFormat) {
+      // 媒体行,可是格式当不了引用。不进 `media`,更**不能**掉进 `entityIds`(那会把一件
+      // 素材当成一个元素递给铸卡层,正是 FSE-002 那条静默错配)。它只被数一次。
+      unusableFormat += 1;
+    } else {
+      entityIds.push(hit.ref.id);
+    }
   }
   return {
     refs,
     wire: refs.map(formatReferenceRef),
     links,
+    entityIds,
+    media,
     unresolved: malformed + overflow + (parsed.length - refs.length),
+    unusableFormat,
   };
 }
 

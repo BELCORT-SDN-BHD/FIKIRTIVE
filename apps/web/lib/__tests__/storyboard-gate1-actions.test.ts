@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GEN_VIDEO_MODEL_OPTIONS, pricedGenCredits, displayCredits } from "@fikirtive/core";
+// FSE-002 复修轮:铸卡层拒绝的**基类** —— 入口接的一直是它(`packages/otto/src/index.ts` 的
+// 注释逐字写着这条纪律),所以这里演的拒绝也用它,而不是某一族的具体子类。
+import { ProposeRefusal } from "@fikirtive/otto";
 import type { StoryboardCardPayload } from "@fikirtive/otto";
 // 卡面侧的纯读判据。闸③ 写下的判词只有经过它才变成商家看得见的东西,所以「判词自清洁」
 // 这一类断言在这里直接用它来收口,不再另写一份平行的解读。
@@ -669,6 +672,68 @@ describe("首帧图形状(#643 T2)", () => {
 
     expect(mockChatCreate).toHaveBeenCalledTimes(1); // 只重出这一个镜头
     for (const input of mintInputs()) expect(input.desiredAspect).toBe("16:9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FSE-002 复修轮(判官 2026-09-08 P1-3)—— 铸卡层的拒绝在闸① 有人接
+// ---------------------------------------------------------------------------
+//
+// `buildProposeCard` 从「静默滤掉对不上的 entityId」改成抛 `ProposeRefusal` 之后,首帧这条
+// 路上没有任何接住它的地方:镜头引用了一件已被删除／已不属于本店的元素时,server action 直接
+// 把异常扔出去,商家读到的是一个通用崩溃,而不是这一轮口径承诺的「显式报错」。
+//
+// 这不是理论路径:锁后重读 owned 集本来就是为了接住「等锁期间 an entity created/deleted」,
+// 而集合变小的那一半正是这里。钱一直是安全的(异常在事务内抛出 ⇒ 整份回滚),缺的只是那句话。
+describe("FSE-002 / CREATE-A2 —— 闸① 接得住铸卡层的拒绝", () => {
+  const REFUSAL = "I couldn't match one of the references for that plan to something in your Library.";
+
+  function refuseMint(): void {
+    mockBuildProposeCard.mockImplementation(() => {
+      throw new ProposeRefusal(REFUSAL);
+    });
+  }
+
+  it("FSE-002 / CREATE-A2 prepare:镜头点名的元素对不上 ⇒ 那一族自己的那句话,不是通用崩溃", async () => {
+    wireLoads(card(payload3()));
+    refuseMint();
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+
+    expect(res).toEqual({ error: REFUSAL });
+  });
+
+  it("FSE-002 / CREATE-A2 prepare:拒绝那一轮零写入 —— 子卡一张不落,父卡一格不改", async () => {
+    wireLoads(card(payload3()));
+    refuseMint();
+
+    await prepareStoryboardFirstFrames({ cardId: "card-1" });
+
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    // 事务里连暂存写都没发生过 —— 拒绝抛在第一次写之前。
+    expect(mockTxChatCreate).not.toHaveBeenCalled();
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+  });
+
+  it("FSE-002 / CREATE-A2 regen:同一条接法 ⇒ 同样是一句人话 + 零写入", async () => {
+    wireLoads(card(payload3()));
+    refuseMint();
+
+    const res = await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s0" });
+
+    expect(res).toEqual({ error: REFUSAL });
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+  });
+
+  it("FSE-002 / CREATE-A2 不是拒绝的异常照旧抛出去 —— 吞掉一个不认识的错误只是换个地方静默", async () => {
+    wireLoads(card(payload3()));
+    mockBuildProposeCard.mockImplementation(() => {
+      throw new Error("boom");
+    });
+
+    await expect(prepareStoryboardFirstFrames({ cardId: "card-1" })).rejects.toThrow("boom");
   });
 });
 
