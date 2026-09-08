@@ -418,6 +418,21 @@ describe("FSE-005 · 合并那一步：画布回执的请求句补得进来，�
     expect(mergeDurableIntoLive(merged, fresh)).toBe(merged);
   });
 
+  it("FSE-005 / CREATE-A1 · 一次轮询同时读到请求句＋卡＋终态时，合并后仍按库里的先后排 —— 终态不会被挤到商家那句话前面", async () => {
+    const { mergeDurableIntoLive } = await import("@/components/otto/approval-chain");
+    const { latestTurnTerminal } = await import("@/lib/otto-canvas-turn");
+    // 断网那一格正是这个形状：第一次读被拒，直播列表还空着，下一格一次把三行都读回来。
+    const fresh = thread([...canvasActionPair(), TERMINALS.失败()]);
+
+    const merged = mergeDurableIntoLive([], fresh);
+    expect(
+      merged.map((m) => m.metadata?.durableId),
+      "补进来的几行按 durable seq 排，否则 currentTurnStartIndex 会落在数组末尾",
+    ).toEqual(["msg-canvas-request", "card-canvas", "res-failed"]);
+    // 后果就在这一行：顺序倒了，这一轮扫不到任何终局，卡回落成绿色的 Ready。
+    expect(latestTurnTerminal(merged)?.outcome, "这一轮的终局必须读得到").toBe("failed");
+  });
+
   it("FSE-005 / CREATE-A1 · 商家自己打字那一条永远不补 —— 判据是卡上的画布回执，不是「像不像」", async () => {
     const { mergeDurableIntoLive } = await import("@/components/otto/approval-chain");
     // 直播路：商家打字 → Otto 铸卡。那张卡没有 `canvasAction`（`gen-actions.ts` 把带这一格的
