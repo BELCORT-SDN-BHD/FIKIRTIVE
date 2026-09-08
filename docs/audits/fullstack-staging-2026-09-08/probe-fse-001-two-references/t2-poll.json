@@ -1,0 +1,34 @@
+{
+  "content": {
+    "file_url": "",
+    "last_frame_url": "",
+    "video_url": "<signed-download-url-redacted>"
+  },
+  "created_at": 1788864186,
+  "draft": false,
+  "duration": 5,
+  "execution_expires_after": 172800,
+  "frames": null,
+  "framespersecond": 24,
+  "generate_audio": false,
+  "id": "cgt-20260908184304-7x42n",
+  "model": "dreamina-seedance-2-0-mini-260615",
+  "priority": 0,
+  "ratio": "9:16",
+  "resolution": "480p",
+  "seed": 77940,
+  "service_tier": "default",
+  "status": "succeeded",
+  "updated_at": 1788864265,
+  "usage": {
+    "completion_tokens": 50638,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 0,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 50638
+  }
+}
