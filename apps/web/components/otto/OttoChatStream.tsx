@@ -166,6 +166,20 @@ export interface OttoChatStreamProps {
    * 只报事实,不带画板状态,不新起第二套机制。
    */
   onGenerationActivityChange?: (active: boolean) => void;
+  /**
+   * 反方向的那一句（FSE-005）：**画板上此刻有没有画布直接动作的付费生成在跑**。
+   *
+   * 上面那条回调把「Otto 这边在跑」告诉画板，2026-09-04「P0-1」修的是那一半；这一格是
+   * 另一半。画布节点级动作那张 GEN_CARD 是服务端在钱事务里写的（`lib/canvas-thread-log.ts`），
+   * 本地 `messages` 里没有 —— 而下面那扇观察窗的开关（`hasWorkingJob`）恰恰要求本地先有
+   * 一张带 genJobId 的卡才启动。「要 refetch 才有的东西」被「有了才 refetch」挡住，于是
+   * 商家在画布上按下 Create variations，节点都失败了，这边还写着上一轮的 Done，刷新才诚实。
+   *
+   * 这一格只报事实（板上有在飞的付费卡），不带任何画板状态：它翻 true 就立刻回库读一次
+   * 并把观察窗重新上膛，翻 false（终态到了）再读一次 —— 同一扇窗、同一套档位，不新起
+   * 第二只计时器。
+   */
+  canvasJobActive?: boolean;
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
    *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
    *  so the route's existing-thread branch handles it. */
@@ -275,6 +289,7 @@ export function OttoChatStream({
   onThreadUpdate,
   onBalanceRefresh,
   onGenerationActivityChange,
+  canvasJobActive = false,
   pendingFirst,
   onPendingFirstSent,
   composerReferences,
@@ -677,7 +692,9 @@ export function OttoChatStream({
   // A cancel and a failure land on the SAME durable message kind, so the card needs this second
   // set to tell them apart after a reload (#602 T3).
   const jobsCancelled = durablyCancelledJobIds(messages);
-  const hasWorkingJob = computeHasWorkingJob(messages, cancelledJobIds);
+  // FSE-005：本地列表说的「有活在跑」，与画板说的那一句，是同一个判据的两个来源。画布
+  // 直接动作的卡还没被读回来之前，只有画板知道钱已经花出去了。
+  const hasWorkingJob = computeHasWorkingJob(messages, cancelledJobIds) || canvasJobActive;
 
   // Map genJobId → cardId so GEN_RESULT widgets can pass sourceCardId to OttoResult
   // for "Make another" (coworkVaryCard needs the card, not the job).
@@ -760,11 +777,30 @@ export function OttoChatStream({
         }));
         return;
       }
-      void pollAndInjectResults();
+      // 断网时这一读会被拒（服务端动作打不通）。窗不因此熄火：下一格照问，网回来的那一格
+      // 自己收敛（FSE-005 的第四态）。
+      void pollAndInjectResults().catch(() => undefined);
     }, gear.intervalMs);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasWorkingJob, thread.id, pollGear, pollNonce]);
+
+  // FSE-005 —— 画布直接动作那条路的开跑与收工，就是这一句话的两端。
+  //
+  // 翻 true：钱已经在服务端的那笔事务里花掉了，USER 请求句与那张已批准的卡也已经落库，
+  // 而本地列表一无所知 —— 立刻读一次把它们接回来（读回来之后 `hasWorkingJob` 就由消息
+  // 自己接手）。翻 false：终态到了 —— 再读一次，结果／失败／退款那一条与余额一起落地。
+  // 两端都把观察窗重新上膛（免得上一轮用剩的额度被这一次继承，与送出那一刻同一句话），
+  // 走的都是**已有**的那一条路（`pollAndInjectResults` → `mergeDurableIntoLive`）：
+  // 不新起第二只计时器，也不用整页刷新掩盖。
+  const prevCanvasJobActiveRef = useRef(false);
+  useEffect(() => {
+    if (prevCanvasJobActiveRef.current === canvasJobActive) return;
+    prevCanvasJobActiveRef.current = canvasJobActive;
+    rearmGenerationPoll();
+    void pollAndInjectResults().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasJobActive, thread.id]);
 
   // Streaming front door: auto-send the first message ONCE into the empty thread.
   // The per-mount ref guards against double-send; onPendingFirstSent clears the

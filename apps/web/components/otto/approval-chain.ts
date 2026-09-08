@@ -27,7 +27,7 @@
  */
 import type { OttoUiMessage } from "@/lib/otto-ui-messages";
 import type { ChatThreadDTO } from "@/lib/types";
-import { appendChainedNarrations, appendDurableResults, appendMissingCards, syncCardJobIds } from "@/lib/otto-inject-helpers";
+import { appendCanvasActionRequests, appendChainedNarrations, appendDurableResults, appendMissingCards, syncCardJobIds } from "@/lib/otto-inject-helpers";
 
 /** A resume that parked again: the still-pending card ids, the server's localized
  *  receipt (null when the model narrated its own text), and — when the model DID
@@ -208,7 +208,10 @@ export async function runPackApprovalLoop<C extends { cardId: string; pendingApp
  *  append worker results (GEN_RESULT / TURN_ERROR), append any card-kind
  *  durables missing from the list — a chained park's new GEN_CARDs arrive via a
  *  server action (no live stream), so without this they never render until a
- *  reload — and (#498 round-5 P2c) append the chained park's model narration
+ *  reload — append (FSE-005) the USER request line of a canvas node action, the
+ *  one durable row `appendMissingCards` cannot carry (its card arrives, the
+ *  sentence the merchant pressed does not) — and (#498 round-5 P2c) append the
+ *  chained park's model narration
  *  TEXTs identified by `narrationMessageIds`. All helpers dedupe by durableId;
  *  no OTHER text is ever re-injected (streamed replies already rendered) —
  *  deliberately NOT `backfillMissingAssistantText` (P2-1) here: this poll runs
@@ -224,9 +227,51 @@ export function mergeDurableIntoLive(
   fresh: ChatThreadDTO,
   narrationMessageIds?: readonly string[],
 ): OttoUiMessage[] {
-  return appendChainedNarrations(
-    appendMissingCards(appendDurableResults(syncCardJobIds(messages, fresh), fresh), fresh),
+  const merged = appendChainedNarrations(
+    appendCanvasActionRequests(
+      appendMissingCards(appendDurableResults(syncCardJobIds(messages, fresh), fresh), fresh),
+      fresh,
+    ),
     fresh,
     narrationMessageIds,
   );
+  return orderAppendedBySeq(messages, merged, fresh);
+}
+
+/**
+ * FSE-005 复修 —— 把这一次合并**新补进来**的那几行，按库里的先后（durable `seq`）排。
+ *
+ * 上面那串 append 是按**种类**分层跑的（终局 → 卡 → 画布请求句 → 叙述），每层各自追加到
+ * 末尾。一格轮询只读到一种时看不出问题；一格里三种一起到（第一次读被拒、下一格一次读回
+ * 「请求句＋卡＋终态」——本轮「断网」那一态正是这个形状），合并出来的顺序就整个倒过来：
+ * 终态排在商家那句话**前面**。后果不是排版难看：`currentTurnStartIndex`
+ * （`lib/otto-canvas-turn.ts`）取的是最后一条 user 之后，倒序时它落在数组长度上，
+ * `latestTurnTerminal` 的循环一次都不跑、返回 null，画布那张 Current turn 卡于是回落到
+ * `phase="ready"` —— 一次失败并退款的画布动作，商家看到的仍是绿色的「Ready」，只有整页刷新
+ * 才诚实，正是这一片要修掉的那类现象。
+ *
+ * 只动**这一次追加的那一段**：`messages` 那截前缀原样保留（上面每个 helper 都只在末尾追加，
+ * `syncCardJobIds` 只就地改 metadata、不改长度也不改次序），所以直播里已经画出来的顺序不受
+ * 影响。库里没有的行（理论上不会有）按原相对次序留在最后；排序对同 seq 稳定。没有东西可排
+ * 就原样返回同一个引用，幂等那条断言（同一份库再合一次 `toBe` 原数组）照旧成立。
+ */
+function orderAppendedBySeq(
+  before: OttoUiMessage[],
+  merged: OttoUiMessage[],
+  fresh: ChatThreadDTO,
+): OttoUiMessage[] {
+  if (merged.length - before.length < 2) return merged;
+  const seqOf = new Map<string, number>();
+  for (const m of fresh.messages) seqOf.set(m.id, m.seq);
+  const tail = merged.slice(before.length);
+  const ordered = tail
+    .map((m, i) => ({
+      m,
+      i,
+      seq: seqOf.get(m.metadata?.durableId ?? "") ?? Number.MAX_SAFE_INTEGER,
+    }))
+    .sort((a, b) => (a.seq - b.seq) || (a.i - b.i))
+    .map((x) => x.m);
+  if (ordered.every((m, i) => m === tail[i])) return merged;
+  return [...merged.slice(0, before.length), ...ordered];
 }
