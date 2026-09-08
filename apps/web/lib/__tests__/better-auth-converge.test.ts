@@ -139,15 +139,27 @@ describe("convergeIdentity", () => {
     expect(mockBootstrap).not.toHaveBeenCalled(); // 赠额只在 bootstrapPersonalOrg 里发
   });
 
-  it("FSE-008 / CREATE-A10: 播种失败不会把一次 founder 登录变成失败", async () => {
+  /** 判官 P3(2026-09-08)—— 这条原本不带 sessionId,于是「不变成失败」在没有 try/catch 的
+   *  代码上也绿:异常穿到外层 catch 被吞掉,convergeIdentity 照样 resolve。真正被跳过的是
+   *  它后面第 4 步的审计写 —— 带上 sessionId 才看得见。 */
+  it("FSE-008 / CREATE-A10: 播种失败不会把一次 founder 登录变成失败,审计仍然落地", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     db.user.findUnique.mockResolvedValue({ id: "usr_f", email: "founder@x.test", emailVerified: new Date(), role: "super-admin" });
     // 真实现永不抛(见 actor-library-seed.ts「绝不抛」);这里假设它有一天抛了 ——
     // 身份收敛仍然不能因为一张图读不到而失败。
     mockSeedActorLibrary.mockRejectedValueOnce(new Error("assets missing"));
 
-    await expect(convergeIdentity({ email: "founder@x.test", emailVerified: true })).resolves.toBeUndefined();
+    await expect(
+      convergeIdentity({ email: "founder@x.test", emailVerified: true, sessionId: "ba_sess_founder" }),
+    ).resolves.toBeUndefined();
     expect(db.membership.upsert).toHaveBeenCalled(); // 身份那半边照样落地
+    // 播种是 best-effort 的枝节,不能把这次登录从审计流里抹掉。
+    expect(db.actionEvent.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skipDuplicates: true,
+        data: [expect.objectContaining({ id: "signin:ba_sess_founder", type: "auth.signin" })],
+      }),
+    );
   });
 
   it("does not write ba_user.role when the canonical User.role write fails", async () => {

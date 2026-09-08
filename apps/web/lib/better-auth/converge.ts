@@ -96,8 +96,19 @@ export async function convergeIdentity(input: { email: string; name?: string | n
         //     它要读磁盘上的定妆原件,不该把文件 IO 塞进一笔身份事务里。
         //     动态 import 与下面 auth-guard 那处同理,避免把 storage/文件系统这一段拖进
         //     better-auth 的静态模块图。
-        const { seedActorLibrary } = await import("@/lib/actor-library-seed");
-        await seedActorLibrary(FOUNDER_OWNER_ID);
+        //
+        //     判官 P2(2026-09-08)—— best-effort 要自己兜住:`seedActorLibrary` 承诺永不抛,
+        //     但那是它的承诺,不是这里的保证(动态 import 本身也会 reject:文件被删、构建产物
+        //     缺失)。没有这层 try/catch,任何一次 reject 都直穿到下面 172 行的外层 catch,
+        //     把第 4 步的 auth.signin 审计写整个跳过 —— 一次真实登录从审计流里消失。演员库
+        //     少五张脸不该有这种代价,所以照非 founder 那条路(:103)的写法就地降级成 warn。
+        //     #575 日志纪律:固定分类 + 常量,邮箱这类用户内容不进日志行。
+        try {
+          const { seedActorLibrary } = await import("@/lib/actor-library-seed");
+          await seedActorLibrary(FOUNDER_OWNER_ID);
+        } catch (e) {
+          console.warn("[better-auth] converge founder actor-library seed failed (non-fatal):", e instanceof Error ? e.message : e);
+        }
       } else {
         // 3. Non-founder personal-org convergence (best-effort; requireOwner re-bootstraps on demand).
         try {
