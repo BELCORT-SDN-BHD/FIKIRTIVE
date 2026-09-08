@@ -80,6 +80,16 @@ export function NorthstarCanvasWorkspace({
    * 产出把占位卡换掉。这里只是把那句话接上,没有第二套机制、没有任何钱路变化。
    */
   const [busyThreadIds, setBusyThreadIds] = useState<Set<string>>(() => new Set());
+  /**
+   * 反方向的那一句（FSE-005）：**画板上此刻有没有画布直接动作的付费生成在跑**。
+   *
+   * 上面那一格接的是「Otto 批准了 → 画板重读」。走查 2026-09-08 录到的是另一半没接：商家
+   * 在画布上直接按 Create variations，卡由服务端在钱事务里写进这条对话（`canvas-thread-log.ts`），
+   * 对话那边本地列表里没有它，而它那扇观察窗恰恰要本地先有卡才开 —— 于是节点已经失败了，
+   * 左边还写着上一轮的 Done，刷新才诚实。这个文件仍是唯一同时挂着两块的地方，所以这句话
+   * 也只能在这里转达：画板报事实，对话自己去库里读，没有第二套机制、没有整页刷新。
+   */
+  const [canvasJobActive, setCanvasJobActive] = useState(false);
   const activeCanvas = runtimeContext.projects.find((project) => project.id === runtimeContext.activeProjectId);
 
   /**
@@ -196,6 +206,7 @@ export function NorthstarCanvasWorkspace({
           activity={busyThreadIds}
           skin="gb"
           onBalanceRefresh={refreshBalance}
+          onCanvasJobActivityChange={setCanvasJobActive}
           onReferenceInChat={activeThread ? addComposerReferences : undefined}
         />
         <CanvasOttoOverlay
@@ -215,6 +226,7 @@ export function NorthstarCanvasWorkspace({
             setComposerReferences((current) => current.filter((ref) => !ref.requestId || !requestIds.includes(ref.requestId)));
           }}
           onBalanceRefresh={refreshBalance}
+          canvasJobActive={canvasJobActive}
           onGenerationActivityChange={(active) => {
             const threadId = activeThread?.id;
             if (threadId) setThreadGenerationActivity(threadId, active);
