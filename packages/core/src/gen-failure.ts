@@ -36,7 +36,7 @@
  */
 
 import { MAX_TURN_REFERENCES } from "./reference-ref.js";
-import { MIN_REFERENCE_IMAGE_WIDTH } from "./generation-reference.js";
+import { MIN_REFERENCE_IMAGE_SIDE } from "./generation-reference.js";
 
 /**
  * The sentence a merchant reads when the engine refused their reference image because it shows
@@ -524,13 +524,22 @@ const REFERENCE_UNAVAILABLE_SENTENCES: Readonly<Record<ReferenceUnavailableReaso
   // 「isn't available any more」。结尾同一条纪律:先点名换掉它,再说 ask again。
   unsupportedFormat:
     "One of your references is a file type that can't be used as a reference. Swap it for an image or video and ask again — nothing was sent.",
-  // FSE-001(2026-09-08 探针实测)—— 视频端在**建任务之前**就要求参考图宽度 ≥300px,
-  // 275×183 的原件零花费被弹回。这一句与上面几句同一族:商家**自己的**、还活着的、格式
-  // 也对的文件,只是尺寸撑不起这一个用途,所以说的就是尺寸,而不是那句一查就知道是假的
-  // 「isn't available any more」。数字读的是 `MIN_REFERENCE_IMAGE_WIDTH` 那一个常量,
-  // 所以闸一改这句话跟着改。结尾同一条纪律:先点名换掉它,再说 ask again。
+  // FSE-001(2026-09-08 / 09-09 探针实测)—— 视频端在**建任务之前**就查参考图尺寸,而闸是
+  // **宽与高各 ≥300px**(第三场逐字回执:`expected the height to be at least 300px, but
+  // received a 300x200px image instead`)。这一句与上面几句同一族:商家**自己的**、还活着
+  // 的、格式也对的文件,只是尺寸撑不起这一个用途,所以说的就是尺寸,而不是那句一查就知道
+  // 是假的「isn't available any more」。
+  //
+  // 说的是**短边**,不是宽度:400×200 的图宽度够、高度不够,旧那句「at least 300 pixels
+  // wide」会让商家以为自己的图已经合格。
+  //
+  // 数字读的是 `MIN_REFERENCE_IMAGE_SIDE` 那一个常量,所以闸一改这句话跟着改。为什么不写
+  // 那条更宽松的自动放大下限(`MIN_UPSCALABLE_REFERENCE_SIDE`,100):商家读到这句话时,
+  // 我们**没有**替他放大 —— 要么这张图小到没法放大,要么它带演员血统不许动像素(规格 §5
+  // 「像素完整性铁律」)。300 在两档里都是真的、都是那个能一次修好它的目标;100 只在其中
+  // 一档成立,说出来另一档就是假话。结尾同一条纪律:先点名换掉它,再说 ask again。
   tooSmall:
-    `One of your references is too small to use in a video — it needs to be at least ${MIN_REFERENCE_IMAGE_WIDTH} pixels wide. Swap it for a larger one and ask again — nothing was sent.`,
+    `One of your references is too small to use in a video — it needs to be at least ${MIN_REFERENCE_IMAGE_SIDE} pixels on its shortest side. Swap it for a larger one and ask again — nothing was sent.`,
 };
 
 /** The sentence a merchant reads for an unusable attachment. One table, no second mapping. */
