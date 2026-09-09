@@ -909,3 +909,44 @@ describe("FSE-001 —— 演员照 + 商品图两张参考,一趟送进视频引
     expect(call?.imageUrl).toBe(MUG_URL); // 首帧走它自己那条路(这里 mock 的就是同一行)
   });
 });
+
+// ---------------------------------------------------------------------------
+// FSE-001 同族 —— 旧 Shot 那条 i2v 路的租户收口
+// ---------------------------------------------------------------------------
+//
+// 视频作业解析起始帧有两条路:`job.sourceGenerationId`(Otto/分镜那一条,归属由
+// `generationReferenceScope(job.ownerId, …)` 定)与 `job.shotId`(遗留 CoworkPlan 的
+// Shot 那一条)。后者的 where 里从前没有 `ownerId` —— 今天不越界(Shot 与 Generation
+// 都由同一条 job.ownerId 的链子建出来),但同一件事在相邻两行有两种写法,正是越界迟早
+// 发生的形状。身份只能来自已认证的 server principal,所以每一条读都把它写出来。
+// ---------------------------------------------------------------------------
+describe("FSE-001 同族 —— 起始帧的每一条读都带 ownerId", () => {
+  const videoJob = { ...imageJob, kind: "VIDEO", model: "seedance-2-mini" };
+
+  it("FSE-001 / CREATE-A10: shot 那条 i2v 路按 (shotId, ownerId) 解析起始帧", async () => {
+    // 这条遗留路会碰 `prisma.shot`(存在性核查 + 事后 attach),别处的用例都不走它,
+    // 所以替身只在这一条里补上 —— 两个动作都对本条断言无关,给最省的返回值即可。
+    (m.prisma as { shot?: unknown }).shot = {
+      findFirst: vi.fn(async () => ({ id: "shot-1" })),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    };
+    m.prisma.generation.update = vi.fn(async () => ({}));
+    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    m.generationFindFirst.mockResolvedValue({
+      id: "gen_shot_frame",
+      asset: { ownerId: "o1", contentHash: BASE_HASH, ext: "png" },
+    });
+    m.genJobFindUnique.mockResolvedValue({
+      ...videoJob,
+      entityIds: [],
+      shotId: "shot-1",
+      videoOptions: { seconds: 5, resolution: "480p", aspectRatio: "16:9", fps: 24, audio: false },
+    });
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    expect(m.generationFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ shotId: "shot-1", ownerId: "o1", deletedAt: null }),
+    }));
+  });
+});

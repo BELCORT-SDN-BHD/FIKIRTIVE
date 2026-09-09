@@ -38,7 +38,7 @@ import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
-import { shotsNeedingMintedFirstFrame } from "./storyboard-card";
+import { shotsNeedingMintedFirstFrame, shotsDirectToVideo } from "./storyboard-card";
 // #782 r11(判官 r10):卡面的状态词表就是**这里**回传的那一份 —— 两侧共用同一组类型,
 // 客户端不再有第二套「从 payload 形状推断服务端真相」的规则。类型只在编译期存在,
 // 不构成 "use server" 的运行时导出(严禁再导出子句 —— 见 #741 的构建事故)。
@@ -96,6 +96,34 @@ async function ownedEntitiesFor(tx: PrismaTx, ownerId: string, entityIds: string
     select: { id: true, type: true, name: true },
   });
 }
+
+/**
+ * FSE-001 同族(Founder 2026-09-09 裁)—— 这一张分镜卡上,哪几镜**直接出片**。
+ *
+ * 一趟读、一处算:`ownedEntitiesFor` 已经把这一卡上全部 @ 到、且确属这家店的元素连类型
+ * 一起读出来了(owner-scoped,锁内)。演员 = `type === "CHARACTER"`;一镜 @ 到至少一个演员
+ * ⇒ 它不出首帧,演员参考照与商品照各作一张 `role:"reference_image"` 直接出片(判据与理由
+ * 见 `shotsDirectToVideo`)。
+ *
+ * 跨租户的 id 根本进不了 `owned`(那趟查询带 ownerId),所以它在这里数出 0 —— 那一镜照旧走
+ * 首帧那条路,并在铸卡层被整轮拒绝(FSE-002 口径),零卡零预扣。
+ */
+function directToVideoShotIds(
+  shots: readonly StoryboardCardPayload["shots"][number][],
+  owned: ApprovedEntity[],
+): Set<string> {
+  const cast = new Set(owned.filter((e) => e.type === "CHARACTER").map((e) => e.id));
+  return new Set(shotsDirectToVideo(shots, cast).map((s) => s.shotId));
+}
+
+/**
+ * FSE-001 同族 —— 这一镜的视频要带上路的元素。
+ *
+ * 直接出片那一档非空(演员 + 这一镜 @ 到的商品),首帧那一档恒为空:带首帧的形状按
+ * `videoReferencesRide` 一张元素照都不上车,写进去只会让卡面承诺一件引擎不做的事。
+ */
+type ShotVideoCast = { entityIds: string[]; owned: ApprovedEntity[] };
+const NO_VIDEO_CAST: ShotVideoCast = { entityIds: [], owned: [] };
 
 /** buildProposeCard 需要的最小 OttoContext(它只读 orgId/threadId/disabledModels 及两个 source 字段)。
  *  source/referenceVideo 留 undefined —— 子卡是纯 image 计划,不带起始帧/参考视频。 */
@@ -324,25 +352,30 @@ async function mintChild(
 /** 铸一张"视频子 GEN_CARD"($0):镜像 mintChild,但走 kind:"video" —— 定价/模型/时长吸附
  *  全交给 buildProposeCard(与普通 i2v propose 同一条路)。ctx 带 per-shot sourceGenerationId
  *  = 该镜头首帧 generationId(i2v 起始帧);desiredDuration = shot.durationSeconds。
- *  payload 加 storyboardCardId+shotId 回链;genJobId 不写(null)。 */
+ *  payload 加 storyboardCardId+shotId 回链;genJobId 不写(null)。
+ *
+ *  FSE-001 同族:直接出片那一档改由 `cast` 带元素上路(ctx 那一格没有首帧),于是演员与
+ *  商品的参考照各作一张 `role:"reference_image"` 走纯文生视频。首帧那一档 `cast` 恒为
+ *  `NO_VIDEO_CAST` ⇒ 与这条修改之前逐字相同。 */
 async function mintVideoChild(
   tx: PrismaTx,
   parent: { id: string; threadId: string },
   shot: Shot,
   ownerId: string,
   ctx: OttoContext,
+  cast: ShotVideoCast = NO_VIDEO_CAST,
 ): Promise<ChildFrameCard> {
   const { cardPayload } = buildProposeCard(
     {
       kind: "video",
       structuredPrompt: shot.videoPrompt,
-      entityIds: [],
+      entityIds: cast.entityIds,
       variantSel: {},
       count: 1,
       desiredDuration: shot.durationSeconds,
     },
     ctx,
-    [],
+    cast.owned,
   );
 
   const payload = { ...cardPayload, storyboardCardId: parent.id, shotId: shot.shotId };
@@ -448,8 +481,17 @@ export async function prepareStoryboardFirstFrames(
       // the previous clip really ended on, so minting one would charge the merchant for a
       // picture the storyboard is about to throw away. Derived from the FRESH in-lock payload,
       // like everything else that drives a write here (R4①).
+      //
+      // FSE-001 同族(Founder 2026-09-09 裁)—— 带演员的镜头**一张首帧都不铸**:它走的是
+      // 「演员参考照 + 商品照两张参考直接出片」那条正路,首帧那一步整个不存在。以前铸的
+      // 那张图是图生图产物,按血统信任送进视频端必被拒收 —— 商家为一张必然作废的图付过钱。
+      // 判据与卡面共读一份(`shotsDirectToVideo`),数据来自上面那趟锁内的 owner-scoped 读。
       const mintable = new Set(
-        shotsNeedingMintedFirstFrame(payload.shots, payload.continuity === true).map((s) => s.shotId),
+        shotsNeedingMintedFirstFrame(
+          payload.shots,
+          payload.continuity === true,
+          directToVideoShotIds(payload.shots, ownedEntities),
+        ).map((s) => s.shotId),
       );
 
       for (const shot of payload.shots) {
@@ -568,6 +610,7 @@ export async function regenShotFirstFrameCard(
     let child: ChildFrameCard | null = null;
     let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
     let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
+    let directToVideoShot = false; // FSE-001 同族:这一镜没有首帧这一步
 
     // FSE-002 复修轮:与 prepare 那扇门同一条接法 —— 铸卡层的拒绝落成一句人话,零写入。
     const refusal = await prisma.$transaction(async (tx) => {
@@ -608,6 +651,13 @@ export async function regenShotFirstFrameCard(
       // built on the SAME in-lock owned-entity read. Single source of truth for the reuse
       // comparison: prompt AND the frozen shape (#656 P2).
       const ownedAll = await ownedEntitiesFor(tx, ownerId, target.entityIds ?? []);
+      // FSE-001 同族 —— 这一镜 @ 到了演员 ⇒ 它没有首帧这一步。单镜重出在这里是**拒绝**,
+      // 不是「再铸一张」:那一张必然是图生图产物,按血统信任送进视频端必被拒收,商家为它
+      // 付的每一分钱都注定作废。零写入(整份事务此后什么都不做),调用方端出下面那句话。
+      if (directToVideoShotIds([target], ownedAll).has(target.shotId)) {
+        directToVideoShot = true;
+        return;
+      }
       const { cardPayload: wouldBe } = buildProposeCard(
         {
           kind: "image",
@@ -684,6 +734,14 @@ export async function regenShotFirstFrameCard(
     if (refusal) return refusal; // FSE-002: 铸卡层拒绝 ⇒ 零写入 + 那一族自己的那句话
     if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
     if (unavailable) return unavailable; // #647 T6 fail-closed surface
+    // FSE-001 同族:这一镜直接出片,没有首帧可重出 —— 说清楚它为什么没有,而不是端一句
+    // 「做不了」。措辞是 English sentence case,与卡面其余句子同一把尺。
+    if (directToVideoShot) {
+      return {
+        error:
+          "This shot goes straight to video — the cast and product photos are its references, so there is no first frame to make.",
+      };
+    }
     if (!child) return { error: "That shot no longer exists." };
     return { child };
   });
@@ -815,6 +873,9 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
     // 结果,不会叠加出幽灵。
     let frameSamples = new Map<string, ChildJobSample>();
     let videoSamples = new Map<string, ChildJobSample>();
+    // FSE-001 同族 —— 哪几镜直接出片。卡面读不到 `Entity.type`,所以这件事跟每一格媒体状态
+    // 走同一条通道:服务端说,卡面只用(见 `ShotMediaSyncReport.directToVideo`)。
+    let directShotIds = new Set<string>();
     const payload = await prisma.$transaction(async (tx) => {
       // Same card-writer serialization: a sync (frame-replace CASCADE drops video keys)
       // racing a prepare/regen RMW could clobber a just-written — possibly already
@@ -831,6 +892,14 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
       // The caller surfaces "Card not found.".
       if (!fresh?.payload) return null;
       const p = fresh.payload as unknown as StoryboardCardPayload;
+
+      // FSE-001 同族 —— 一趟 owner-scoped 元素读($0),两个用途:接续那一段不再往「直接
+      // 出片」的镜头上塞一张它用不着的首帧,以及把这份答案原样报给卡面。
+      const directIds = directToVideoShotIds(
+        p.shots,
+        await ownedEntitiesFor(tx, ownerId, [...new Set(p.shots.flatMap((s) => s.entityIds ?? []))]),
+      );
+      directShotIds = directIds;
 
       // Collect finished writes from the FRESH (post-lock) payload. Candidate rules are
       // identical in shape for the two media classes (≤8 shots, so the per-shot lookups are
@@ -918,6 +987,9 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
           const from = ordered[i]!;
           const to = ordered[i + 1]!;
           if (to.firstFrameGenerationId || frameWrites[to.shotId]) continue; // 已有首帧 → 绝不覆盖
+          // FSE-001 同族:这一镜直接出片 —— 它没有首帧这一步,接一张过来只会在库里多出
+          // 一件谁都不会用的东西($0,但仍是噪音),而它的片子照旧从文字起步。
+          if (directIds.has(to.shotId)) continue;
           // 上一镜的片子必须**真的出完**(videoWrites 是这一轮刚落的,videoGenerationId 是
           // 之前落的;两者任一成立都算出完)。没出完就等下一轮,不猜。
           if (!videoWrites[from.shotId] && !from.videoGenerationId) continue;
@@ -1029,6 +1101,9 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
       shotId: shot.shotId,
       frame: mediaReport(shot.firstFrameGenerationId, shot.firstFrameCardId, frameSamples.get(shot.shotId), refOf),
       video: mediaReport(shot.videoGenerationId, shot.videoCardId, videoSamples.get(shot.shotId), refOf),
+      // FSE-001 同族:这一镜直接出片吗 —— 卡面据此不再为它数一张首帧、也不再让商家等一个
+      // 永远不会出现的交棒。判据在服务端(要读 `Entity.type`),这里只是把答案带出去。
+      directToVideo: directShotIds.has(shot.shotId),
     }));
 
     return { payload, shots };
@@ -1131,7 +1206,9 @@ export async function prepareStoryboardVideos(
     let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
     let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
 
-    await prisma.$transaction(async (tx) => {
+    // FSE-001 同族:直接出片那一档带元素上路,所以铸卡层的拒绝(点名的元素对不上这家店)
+    // 现在在这扇门后面也可能发生 —— 与闸① 同一条接法:一句人话,零写入(抛出时整份回滚)。
+    const refusal = await prisma.$transaction(async (tx) => {
       await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
       // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
       const fresh = await tx.chatMessage.findFirst({
@@ -1150,8 +1227,8 @@ export async function prepareStoryboardVideos(
       const payload = fresh.payload as unknown as StoryboardCardPayload;
 
       // R4① dataflow rule: model config derived AFTER the lock (nothing computed pre-lock
-      // flows into a write). Video children are i2v (no entity refs) — no owned-entity lookup;
-      // the per-shot ctx below is built from the FRESH thread id + this in-lock config.
+      // flows into a write). The per-shot ctx below is built from the FRESH thread id + this
+      // in-lock config; the owned-entity read (FSE-001 同族) runs in-lock too.
       // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
       // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
       const registry = await resolveDisabledModels();
@@ -1161,21 +1238,36 @@ export async function prepareStoryboardVideos(
       unavailable = unavailableFor("video", disabledModels);
       if (unavailable) return;
       const parent = { id: card.id, threadId: fresh.threadId };
+      // FSE-001 同族 —— 哪几镜直接出片(@ 到了演员)。一趟 owner-scoped 读,锁内,与闸① 同法。
+      const allEntityIds = [...new Set(payload.shots.flatMap((s) => s.entityIds ?? []))];
+      const ownedEntities = await ownedEntitiesFor(tx, ownerId, allEntityIds);
+      const direct = directToVideoShotIds(payload.shots, ownedEntities);
 
       // Build the next shots array, mutating ONLY videoCardId on target shots.
       const nextShots: Shot[] = [];
       let changed = false;
 
       for (const shot of payload.shots) {
+        // FSE-001 同族:直接出片的这一镜**不需要首帧**就有资格 —— 它的参考是演员照与商品照,
+        // 片子从文字起步。其余镜头的资格判据一格没动。
+        const isDirect = direct.has(shot.shotId);
         // Not eligible: no first frame (frameless — skip silently), or already has a video.
-        if (!shot.firstFrameGenerationId || shot.videoGenerationId) {
+        if ((!shot.firstFrameGenerationId && !isDirect) || shot.videoGenerationId) {
           nextShots.push(shot);
           continue;
         }
 
         // Per-shot ctx: the shot's first frame is the i2v source for THIS video.
+        // FSE-001 同族:直接出片那一档**不写首帧** —— 写了就等于把某一张图当第一帧,
+        // 那正是被视频端拒收、并且真的退过一次款的那条路。
         const ctx = minimalCtx(ownerId, parent.threadId, disabledModels);
-        ctx.sourceGenerationId = shot.firstFrameGenerationId;
+        if (!isDirect) ctx.sourceGenerationId = shot.firstFrameGenerationId;
+        const cast: ShotVideoCast = isDirect
+          ? {
+              entityIds: shot.entityIds ?? [],
+              owned: ownedEntities.filter((e) => (shot.entityIds ?? []).includes(e.id)),
+            }
+          : NO_VIDEO_CAST;
 
         // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
         // call minting uses (mintVideoChild). This is the single source of truth for the reuse
@@ -1188,13 +1280,13 @@ export async function prepareStoryboardVideos(
           {
             kind: "video",
             structuredPrompt: shot.videoPrompt,
-            entityIds: [],
+            entityIds: cast.entityIds,
             variantSel: {},
             count: 1,
             desiredDuration: shot.durationSeconds,
           },
           ctx,
-          [],
+          cast.owned,
         );
 
         // Already points at a video child → try to reuse it.
@@ -1244,7 +1336,7 @@ export async function prepareStoryboardVideos(
         }
 
         // Mint a fresh video child for this shot (no child, or a real mismatch).
-        const child = await mintVideoChild(tx, parent, shot, ownerId, ctx);
+        const child = await mintVideoChild(tx, parent, shot, ownerId, ctx, cast);
         children.push(child);
         // Replace videoCardId ONLY. NEVER touch videoGenerationId — the old video (if any)
         // stays valid until sync overwrites the genId when the new clip is DONE.
@@ -1258,8 +1350,9 @@ export async function prepareStoryboardVideos(
           data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
         });
       }
-    });
+    }).then((): Err | null => null).catch(proposeRefusalAsError);
 
+    if (refusal) return refusal; // FSE-001 同族:铸卡层拒绝 ⇒ 零写入 + 那一族自己的那句话
     if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
     if (unavailable) return unavailable; // #647 T6 fail-closed surface
     const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
@@ -1304,16 +1397,16 @@ export async function regenShotVideoCard(
     const cur = (card.payload ?? {}) as StoryboardCardPayload;
     const target0 = cur.shots.find((s) => s.shotId === parsed.data.shotId);
     if (!target0) return { error: "That shot no longer exists." };
-    // A video needs a source frame — refuse a frameless shot (no i2v source), no write.
-    if (!target0.firstFrameGenerationId) {
-      return { error: "This shot needs a first frame before you can make a video." };
-    }
+    // FSE-001 同族:「这一镜要不要首帧」现在要读元素类型(演员在场 ⇒ 直接出片,不要首帧),
+    // 而那是一次 owner-scoped 的库读 —— 所以这道闸搬进锁内、按 FRESH payload 判(下面的
+    // `needsFrame`)。锁前只留「这一镜还在不在」这种不读库的预检,拒绝路径照旧零写入。
 
     let child: ChildFrameCard | null = null;
     let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
     let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
+    let needsFrame = false; // FSE-001 同族:不带演员、又没有首帧 ⇒ 这一镜还出不了片
 
-    await prisma.$transaction(async (tx) => {
+    const refusal = await prisma.$transaction(async (tx) => {
       await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
       const fresh = await tx.chatMessage.findFirst({
         where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
@@ -1343,12 +1436,25 @@ export async function regenShotVideoCard(
       const parent = { id: card.id, threadId: fresh.threadId };
 
       const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
-      // Vanished OR lost its frame mid-flight → no writes; caller returns error below.
-      if (!target || !target.firstFrameGenerationId) return;
+      // Vanished mid-flight → no writes; caller returns error below.
+      if (!target) return;
+
+      // FSE-001 同族 —— 这一镜直接出片吗(@ 到了演员)。owner-scoped、锁内,与两扇 prepare
+      // 同一个判据函数。是 ⇒ 不要首帧,演员照与商品照各作一张参考;不是 ⇒ 照旧要首帧。
+      const ownedAll = await ownedEntitiesFor(tx, ownerId, target.entityIds ?? []);
+      const isDirect = directToVideoShotIds([target], ownedAll).has(target.shotId);
+      if (!isDirect && !target.firstFrameGenerationId) {
+        needsFrame = true; // 零写入;调用方端出那句「先出一张首帧」。
+        return;
+      }
 
       // Per-shot ctx: the shot's first frame is the i2v source for THIS video.
+      // FSE-001 同族:直接出片那一档不写首帧(见 prepareStoryboardVideos 同一段)。
       const ctx = minimalCtx(ownerId, parent.threadId, disabledModels);
-      ctx.sourceGenerationId = target.firstFrameGenerationId;
+      if (!isDirect) ctx.sourceGenerationId = target.firstFrameGenerationId;
+      const cast: ShotVideoCast = isDirect
+        ? { entityIds: target.entityIds ?? [], owned: ownedAll }
+        : NO_VIDEO_CAST;
 
       // The WOULD-BE-MINTED card — computed via the SAME pure buildProposeCard call minting
       // uses (mintVideoChild). Single source of truth for the reuse comparison; its
@@ -1357,13 +1463,13 @@ export async function regenShotVideoCard(
         {
           kind: "video",
           structuredPrompt: target.videoPrompt,
-          entityIds: [],
+          entityIds: cast.entityIds,
           variantSel: {},
           count: 1,
           desiredDuration: target.durationSeconds,
         },
         ctx,
-        [],
+        cast.owned,
       );
 
       // Reuse-if-fresh: an existing UNSPENT child that still matches the would-be card → reuse
@@ -1407,7 +1513,7 @@ export async function regenShotVideoCard(
         // missing / mismatch → fall through to mint.
       }
 
-      child = await mintVideoChild(tx, parent, target, ownerId, ctx);
+      child = await mintVideoChild(tx, parent, target, ownerId, ctx, cast);
       const newChildId = child.childCardId;
 
       const nextShots = payload.shots.map((s) => {
@@ -1421,10 +1527,13 @@ export async function regenShotVideoCard(
         where: { id: card.id },
         data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
       });
-    });
+    }).then((): Err | null => null).catch(proposeRefusalAsError);
 
+    if (refusal) return refusal; // FSE-001 同族:铸卡层拒绝 ⇒ 零写入 + 那一族自己的那句话
     if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
     if (unavailable) return unavailable; // #647 T6 fail-closed surface
+    // A video needs a source frame — unless this shot goes straight to video (FSE-001 同族).
+    if (needsFrame) return { error: "This shot needs a first frame before you can make a video." };
     if (!child) return { error: "That shot no longer exists." };
     return { child };
   });

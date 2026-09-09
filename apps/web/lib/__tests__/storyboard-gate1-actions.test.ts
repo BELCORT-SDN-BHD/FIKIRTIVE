@@ -536,7 +536,9 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
     await new Promise((r) => setTimeout(r, 0)); // let prepare park on the lock
 
     // e1 becomes owned DURING the lock wait
-    ownedRows = [{ id: "e0", type: "PRODUCT", name: "Bottle" }, { id: "e1", type: "CHARACTER", name: "Mia" }];
+    // FSE-001 同族:这里的类型刻意**不是** CHARACTER —— 演员在场的镜头根本不铸首帧
+    // (它直接出片),那条规则有自己的一组测试。这一条测的是「锁后派生」,与类型无关。
+    ownedRows = [{ id: "e0", type: "PRODUCT", name: "Bottle" }, { id: "e1", type: "LOCATION", name: "Beach" }];
     releaseLock();
 
     const res = await prepP;
@@ -549,7 +551,7 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
     const ownedArg = mockBuildProposeCard.mock.calls[0][2];
     expect(ownedArg).toEqual([
       { id: "e0", type: "PRODUCT", name: "Bottle" },
-      { id: "e1", type: "CHARACTER", name: "Mia" },
+      { id: "e1", type: "LOCATION", name: "Beach" },
     ]);
     expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 throughout
   });
@@ -3605,5 +3607,188 @@ describe("#782 r11 sync 权威状态:五个枚举 + 显式替换语义", () => {
     expect("videoCardId" in res.payload.shots[0]).toBe(false);
     expect(videoKind(res, "s0")).toBe("absent");
     expect(reportOf(res, "s0").video.previous).toBeUndefined();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FSE-001 同族(Founder 2026-09-09 裁)—— 带演员的镜头不出首帧,两张参考直接出片
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 规格 §5 2026-09-08「FSE-001 同族」那一行钉出的死路:分镜对每一镜都先出一张**付费**首帧,
+// 带 @演员的镜头把演员 id 放进那张首帧的 entityIds(图生图)—— 而按 §1 的血统信任,一张带
+// 演员的图生图产物送进视频端必被拒收(staging 实测 400 + 退款一次)。商家先为一张必然作废
+// 的图付一次钱,再为一条注定失败的片子付一次预扣。
+//
+// 新规矩一句话:**这一镜 @ 到了演员 ⇒ 它不出首帧**,演员参考照原件与这一镜 @ 到的商品照
+// 各作一张 `role:"reference_image"`,走纯文生视频(正路,PR #1273 已落地)。
+// 不带演员的镜头一格没动(首帧 → 出片,两步照旧)。
+//
+// 这一组测的是**钱**:哪一步不该铸卡、哪一步不该报价、哪一步的付费请求里必须没有首帧。
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 演员 + 商品各一,归属都在本店 —— 服务端读得出类型的那一份(`ownedEntitiesFor` 的 select)。 */
+function castOwned() {
+  mockEntityFindMany.mockResolvedValue([
+    { id: "actor-1", type: "CHARACTER", name: "Aisyah" },
+    { id: "mug", type: "PRODUCT", name: "Mug" },
+  ]);
+}
+
+/** s0 带演员(直接出片)、s1 不带(照旧两步)。两镜都还什么都没做过。 */
+function castPayload2(): StoryboardCardPayload {
+  return {
+    storyboardTitle: "Ad",
+    shots: [
+      { shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "vp0", entityIds: ["actor-1", "mug"], durationSeconds: 5 },
+      { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "vp1", durationSeconds: 5 },
+    ],
+  };
+}
+
+describe("FSE-001 同族 · 闸① —— 带演员的镜头一分首帧钱都不收", () => {
+  it("FSE-001 / CREATE-A9: 带演员的镜头不铸首帧子卡、不进报价;不带演员的照旧", async () => {
+    castOwned();
+    wireLoads(card(castPayload2()));
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    // 只有 s1 铸了一张首帧子卡 —— s0 那一步整个不存在。
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(res.children.map((c) => c.shotId)).toEqual(["s1"]);
+    // 报价 = 一张图,不是两张。带演员那一镜少的正是这一步的钱。
+    expect(res.totalCredits).toBe(5);
+
+    // 父卡只给 s1 写了指针;s0 一格没动(没有 firstFrameCardId)。
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].firstFrameCardId).toBeUndefined();
+    expect(updShots[1].firstFrameCardId).toBeTruthy();
+  });
+
+  it("FSE-001 / CREATE-A10: 演员 id 不属于这家店 ⇒ 不认作演员,铸卡层整轮拒绝、零卡零预扣", async () => {
+    // 跨租户:这一趟读不出任何元素(别家店的 id 在 owner-scoped 查询里根本不存在)。
+    mockEntityFindMany.mockResolvedValue([]);
+    mockBuildProposeCard.mockImplementation(() => {
+      throw new ProposeRefusal("Those elements aren't in your library.");
+    });
+    wireLoads(card(castPayload2()));
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    expect(res).toEqual({ error: "Those elements aren't in your library." });
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+  });
+
+  it("FSE-001 / CREATE-A9: 单镜重出首帧对带演员的镜头是**拒绝**,不是再铸一张必被拒的图", async () => {
+    castOwned();
+    wireLoads(card(castPayload2()));
+
+    const res = await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s0" });
+    expect("error" in res).toBe(true);
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("FSE-001 同族 · 闸② —— 演员照 + 商品照两张参考,直接出片", () => {
+  it("FSE-001 / CREATE-A2: 带演员的镜头没有首帧也能出片,付费请求不带首帧、带着两个元素", async () => {
+    castOwned();
+    mockVideoProposeCard();
+    wireLoads(card(castPayload2()));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    // s0(带演员、无首帧)铸了一张视频子卡;s1(不带演员、无首帧)照旧跳过。
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(res.children.map((c) => c.shotId)).toEqual(["s0"]);
+
+    const [propInput, propCtx, propOwned] = mockBuildProposeCard.mock.calls[0];
+    expect(propInput.kind).toBe("video");
+    expect(propInput.structuredPrompt).toBe("vp0");
+    // 演员与商品都随这张卡上路(它们的参考照就是引擎收到的那两张 reference_image)。
+    expect(propInput.entityIds).toEqual(["actor-1", "mug"]);
+    expect(propOwned.map((e: { id: string }) => e.id)).toEqual(["actor-1", "mug"]);
+    // 首帧那一格必须是空的 —— 有值就等于把某一张图当第一帧,那正是被拒的那条路。
+    expect(propCtx.sourceGenerationId).toBeUndefined();
+
+    const data = mockChatCreate.mock.calls[0][0].data;
+    expect(data.payload.sourceGenerationId).toBeUndefined();
+    expect(data.payload.entityIds).toEqual(["actor-1", "mug"]);
+    expect(data.payload.shotId).toBe("s0");
+    // 卡上的 entityIds 就是客户端发起生成时带走的那一份(ChildFrameCard.entityIds)。
+    expect(res.children[0].entityIds).toEqual(["actor-1", "mug"]);
+  });
+
+  it("FSE-001 / CREATE-A2: 不带演员的镜头逐字不变 —— 首帧作 i2v 起点,不带元素", async () => {
+    castOwned();
+    mockVideoProposeCard();
+    const p = castPayload2();
+    p.shots[1].firstFrameGenerationId = "ffgen1"; // s1 已经有首帧(它走两步那条老路)
+    wireLoads(card(p));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    expect(res.children.map((c) => c.shotId)).toEqual(["s0", "s1"]);
+    const s1Call = mockBuildProposeCard.mock.calls.find((c) => c[0].structuredPrompt === "vp1")!;
+    expect(s1Call[0].entityIds).toEqual([]);
+    expect(s1Call[1].sourceGenerationId).toBe("ffgen1");
+  });
+
+  it("FSE-001 / CREATE-A9: 混合分镜的总报价 = 一镜两步 + 一镜一步", async () => {
+    castOwned();
+    wireLoads(card(castPayload2()));
+    // 闸①:只有不带演员的那一镜要出首帧(5 credits)。
+    const frames = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in frames)) throw new Error("expected children");
+    expect(frames.totalCredits).toBe(5);
+
+    vi.clearAllMocks();
+    mockResolvedDefaults();
+    castOwned();
+    mockVideoProposeCard();
+    wireLoads(card(castPayload2()));
+    // 闸②:带演员的那一镜此刻就能出片(5 credits);另一镜要等它自己的首帧。
+    const videos = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in videos)) throw new Error("expected children");
+    expect(videos.totalCredits).toBe(5);
+    expect(videos.children.map((c) => c.shotId)).toEqual(["s0"]);
+  });
+
+  it("FSE-001 / CREATE-A2: 闸② 接得住铸卡层的拒绝 —— 一句人话,零写入", async () => {
+    castOwned();
+    mockBuildProposeCard.mockImplementation(() => {
+      throw new ProposeRefusal("Those elements aren't in your library.");
+    });
+    wireLoads(card(castPayload2()));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    expect(res).toEqual({ error: "Those elements aren't in your library." });
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+  });
+
+  it("FSE-001 / CREATE-A10: 单镜重出视频对带演员的镜头不再要求首帧", async () => {
+    castOwned();
+    mockVideoProposeCard();
+    wireLoads(card(castPayload2()));
+
+    const res = await regenShotVideoCard({ cardId: "card-1", shotId: "s0" });
+    if (!("child" in res)) throw new Error(`expected child, got ${JSON.stringify(res)}`);
+    expect(res.child.shotId).toBe("s0");
+    expect(mockBuildProposeCard.mock.calls[0][1].sourceGenerationId).toBeUndefined();
+  });
+});
+
+describe("FSE-001 同族 · 闸③ —— sync 把「哪几镜直接出片」如实报给卡面", () => {
+  it("FSE-001 / CREATE-A2: 带演员的镜头在答复里标着 directToVideo,其余为假", async () => {
+    castOwned();
+    wireLoads(card(castPayload2()));
+
+    const res = await syncStoryboardMedia({ cardId: "card-1" });
+    if (!("shots" in res)) throw new Error("expected shots");
+    expect(reportOf(res, "s0").directToVideo).toBe(true);
+    expect(reportOf(res, "s1").directToVideo).toBe(false);
   });
 });
