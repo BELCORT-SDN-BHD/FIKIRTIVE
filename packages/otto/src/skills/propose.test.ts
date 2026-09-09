@@ -2606,7 +2606,9 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
       data: { payload: Record<string, unknown> };
     }).data.payload;
     expect(payload["downgraded"]).toBe(true);
-    expect(payload["downgradeNote"]).toContain("1 of your product reference photo is smaller");
+    expect(payload["downgradeNote"]).toContain(
+      "One of your product reference photos is smaller than the engine's minimum",
+    );
     expect(payload["downgradeNote"]).toContain("your original stays untouched");
   });
 

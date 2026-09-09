@@ -769,8 +769,12 @@ export function buildReferenceBudgetNotes(input: {
  * (`apps/worker/src/jobs/gen.ts` 的商品参考图循环)。
  */
 export function referenceUpscaleNote(count: number): string {
-  const photos = count === 1 ? "photo" : "photos";
-  return `${count} of your product reference ${photos} ${count === 1 ? "is" : "are"} smaller than the engine's minimum, so we enlarge ${count === 1 ? "it" : "them"} before sending — your original stays untouched.`;
+  // 单复数照实说(与 `zeroElementReferenceNote` 同一条纪律):数字 1 那一档写 "One of…",
+  // 不写 "1 of your product reference photo" —— 那句话读起来像机器算出来的,而它要传达的
+  // 恰恰是「有人替你做了一个决定」。
+  return count === 1
+    ? "One of your product reference photos is smaller than the engine's minimum, so we enlarge it before sending — your original stays untouched."
+    : `${count} of your product reference photos are smaller than the engine's minimum, so we enlarge them before sending — your originals stay untouched.`;
 }
 
 /**
