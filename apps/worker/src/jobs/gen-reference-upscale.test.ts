@@ -275,7 +275,7 @@ describe("FSE-001 —— 无人像商品参考图自动放大", () => {
 
   // 放大在**付费调用之前**。它失败时必须落成那句商家读得懂的、可重试的话,
   // 而不是让一个图像库的异常裸奔到通用失败文案 —— 并且这一趟一分钱都不能花。
-  it("FSE-001 / CREATE-A2: 放大失败 ⇒ 零付费调用、退款,不留半条已付费的失败", async () => {
+  it("FSE-001 / CREATE-A2: 放大失败 ⇒ 零付费调用、可重试、不留半条已付费的失败", async () => {
     m.generationFindFirst.mockResolvedValue(productRow());
     m.storageGet.mockRejectedValue(new Error("r2 unreachable"));
 
