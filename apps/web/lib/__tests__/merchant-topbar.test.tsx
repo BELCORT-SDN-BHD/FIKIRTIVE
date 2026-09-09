@@ -3,7 +3,7 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 // Next 自己的 redirect 错误构造器:成功登出那一路的拒因就是它做出来的东西(见下面 P1-1 那条)。
 import { getRedirectError } from "next/dist/client/components/redirect";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { OTTO_ASSISTANT, SHELL_ROUTES } from "@fikirtive/core/navigation";
 import {
@@ -16,6 +16,13 @@ import { toast } from "@/components/ui/toast";
 vi.mock("@/components/ui/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() },
 }));
+
+// 同 otto-panel-flow-reference.test.tsx:整套 apps/web 共用一个 globalThis,往 navigator 上
+// 钉的 clipboard 替身不收走就会活到后面的文件里,并在那里炸成 Uncaught Exception。
+const hadClipboard = "clipboard" in navigator;
+afterAll(() => {
+  if (!hadClipboard) delete (navigator as { clipboard?: unknown }).clipboard;
+});
 
 class ResizeObserverStub {
   observe() {}
