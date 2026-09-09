@@ -1,14 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeftIcon, MailIcon, RefreshCwIcon } from "lucide-react";
 
 import { AuthStepCard } from "@/components/auth/AuthStepCard";
-import { PasswordInput } from "@/components/auth/PasswordInput";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel, FieldSeparator } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
@@ -26,7 +24,6 @@ import {
 } from "@/lib/better-auth/signin-code-contract";
 import {
   authDestination,
-  authRouteHref,
   loginStepHref,
   parseLoginStep,
   type LoginStep,
@@ -36,7 +33,7 @@ import { requestSignInCode } from "./actions";
 
 type LoginFormError =
   | ({ source: "sign_in_code" } & SignInCodeFailure)
-  | { source: "password" | "social" | "code_entry"; message: string };
+  | { source: "social" | "code_entry"; message: string };
 
 /** FRONT-A2/A12 —— 「送码这件事失败了」的标题，一句话、一个来源。
  *
@@ -96,9 +93,8 @@ export function LoginForm({
   const routeStep = parseLoginStep(searchParams.get("step"));
   const step = routeStep === "hub" && initialStep !== "hub" ? initialStep : routeStep;
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [busy, setBusy] = useState<"code" | "google" | "password" | "verify" | null>(null);
+  const [busy, setBusy] = useState<"code" | "google" | "verify" | null>(null);
   const [error, setError] = useState<LoginFormError | null>(
     initialError ? { source: "social", message: initialError } : null,
   );
@@ -190,23 +186,6 @@ export function LoginForm({
     window.location.assign(callbackURL);
   }
 
-  async function signInWithPassword(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email.trim() || !password || busy) return;
-    setBusy("password");
-    setError(null);
-    const { error: signInError } = await authClient.signIn.email({
-      email: email.trim(),
-      password,
-    });
-    setBusy(null);
-    if (signInError) {
-      setError({ source: "password", message: "Wrong email or password." });
-      return;
-    }
-    window.location.assign(callbackURL);
-  }
-
   async function signInWithGoogle() {
     if (busy) return;
     setBusy("google");
@@ -223,14 +202,13 @@ export function LoginForm({
 
   function useDifferentEmail() {
     setEmail("");
-    setPassword("");
     setCode("");
     setError(null);
     focusEmailAfterReset.current = true;
     go("email");
   }
 
-  if (step === "email" || ((step === "code" || step === "password") && !email)) {
+  if (step === "email" || (step === "code" && !email)) {
     // FRONT-A12 —— 寄不出信的部署不许在这一步许下一个它做不到的承诺。夹具那句
     // 「We'll send a temporary login code.」是能寄信时说的话;寄不出去时这一步改说环境本身
     // (措辞只提部署、不提这个邮箱,FRONT-A2),商家在**输入邮箱这一步**就读到,而不是翻到
@@ -246,12 +224,10 @@ export function LoginForm({
         footer={<BackToLogin onClick={() => go("hub")} />}
       >
         {/* FRONT-A12 —— 「这个地址不对」在这一步只有一个声音(判官 #1237 P2-3)。
-            两条路都到得了「地址无效」:提交(`Continue with email` / 输入框里按 Enter)与
-            `Use password instead`(type="button",浏览器的原生校验碰不到它)。后者早就走
-            `SIGN_IN_CODE_INVALID_EMAIL_MESSAGE`,前者却被 `type="email" required` 的原生气泡
-            先接走 —— 同一个问题两种措辞、两种样式、还随浏览器与系统语言变,商家读到哪一句
-            全看他按了哪颗键。`noValidate` 把提交这一路交回给 `sendSignInCode` 里那道同样的
-            检查,于是两条路读到逐字相同的一句。
+            提交(`Continue with email` / 输入框里按 Enter)本来会被 `type="email" required` 的
+            原生气泡先接走 —— 措辞与样式随浏览器和系统语言变,和产品自己那一句对不上。
+            `noValidate` 把提交这一路交回给 `sendSignInCode` 里的检查,于是无论怎么触发,商家
+            读到的都是 `SIGN_IN_CODE_INVALID_EMAIL_MESSAGE` 那一句。
             `type="email"` 与 `required` 都留着:它们仍然管键盘形态与无障碍语义,只是不再另开
             一个错误产地。围栏在 `__tests__/login-code-resend.test.tsx` 第四组。 */}
         <form noValidate onSubmit={sendSignInCode}>
@@ -261,9 +237,9 @@ export function LoginForm({
                 {/* FRONT-A14 —— 邮箱步的错误标题按已批准的 Auth pattern 分成两种。
 
                     夹具(design-system/patterns/auth/AuthAccessJourneyReference.tsx:136)在这一步
-                    只有一个错误态:商家还没给出可用的邮箱就按「Use password instead」,标题写
-                    「Email needed」。生产走的是同一条路 —— 那颗按钮是 type="button",浏览器的
-                    原生 required 不拦它,所以这一态在生产**可达**,标题必须与夹具逐字一致。
+                    只有一个错误态:商家还没给出可用的邮箱就往下走,标题写「Email needed」。生产
+                    走的是同一条路 —— `noValidate` 让空的/写坏的地址交给 `sendSignInCode` 自己
+                    判,所以这一态在生产**可达**,标题必须与夹具逐字一致。
 
                     另一种是服务端故障(reason "unknown",signin-code-contract.ts 两种 reason 之一),
                     夹具没有这一态。按 Founder 裁决②,生产必需而设计没有的错误态沿用设计的样式呈现,
@@ -298,26 +274,6 @@ export function LoginForm({
             <Button type="submit" disabled={!!busy || !signInCodesAvailable} className="w-full">
               {busy === "code" && <Spinner data-icon="inline-start" />}
               {busy === "code" ? "Sending…" : "Continue with email"}
-            </Button>
-            <Button
-              type="button"
-              variant="link"
-              size="sm"
-              onClick={() => {
-                if (!normalizeSignInEmail(email)) {
-                  setError({
-                    source: "sign_in_code",
-                    status: "error",
-                    reason: "invalid_email",
-                    message: SIGN_IN_CODE_INVALID_EMAIL_MESSAGE,
-                  });
-                  emailInputRef.current?.focus();
-                  return;
-                }
-                go("password");
-              }}
-            >
-              Use password instead
             </Button>
           </FieldGroup>
         </form>
@@ -419,91 +375,15 @@ export function LoginForm({
     );
   }
 
-  if (step === "password") {
-    return (
-      <AuthStepCard
-        title="Enter your password"
-        description={
-          <>
-            Continue as <span className="font-medium text-foreground">{email}</span>.
-          </>
-        }
-        footer={<BackToLogin onClick={() => go("hub")} />}
-      >
-        <form onSubmit={signInWithPassword}>
-          <FieldGroup className="gap-5">
-            {error ? (
-              <Alert role="alert" variant="destructive">
-                {/* FRONT-A14:已批准的 Auth pattern 在密码这一步写的是「Password not accepted」
-                    (design-system/patterns/auth/AuthAccessJourneyReference.tsx 的 password 步)。
-                    主干这里写的是「Sign-in failed」—— 同一句在 hub 上是对的(社交登录失败与
-                    密码无关),在密码步上它比设计稿模糊。只改这一步的标题,不动下面那句
-                    「Wrong email or password.」:中性、不泄露邮箱是否存在,是 FRONT-A2 要的口径。 */}
-                <AlertTitle>Password not accepted</AlertTitle>
-                <AlertDescription>{error.message}</AlertDescription>
-              </Alert>
-            ) : null}
-            <Field data-invalid={error?.source === "password" ? true : undefined}>
-              <FieldLabel htmlFor="password">Password</FieldLabel>
-              <PasswordInput
-                id="password"
-                name="password"
-                aria-label="Password"
-                required
-                autoFocus
-                placeholder="Enter your password"
-                autoComplete="current-password"
-                aria-invalid={error?.source === "password" ? true : undefined}
-                value={password}
-                onChange={(event) => {
-                  setPassword(event.target.value);
-                  setError(null);
-                }}
-              />
-            </Field>
-            <Button type="submit" disabled={!!busy} className="w-full">
-              {busy === "password" && <Spinner data-icon="inline-start" />}
-              {busy === "password" ? "Signing in…" : "Log in"}
-            </Button>
-            <div className="flex items-center justify-center gap-2">
-              <Link
-                href={authRouteHref("/forgot-password", callbackURL)}
-                className={buttonVariants({ variant: "link", size: "xs" })}
-              >
-                Forgot password?
-              </Link>
-              {signInCodesAvailable ? (
-                <>
-                  <span aria-hidden className="text-border">
-                    ·
-                  </span>
-                  {/* FRONT-A12 —— 寄不出信的部署上这条入口不画:按下去只会得到一句
-                      「Password not accepted」加一段与密码无关的解释,指错地方。 */}
-                  <Button type="button" variant="link" size="xs" onClick={() => sendSignInCode()}>
-                    Use a login code
-                  </Button>
-                </>
-              ) : null}
-            </div>
-          </FieldGroup>
-        </form>
-      </AuthStepCard>
-    );
-  }
-
   return (
     <AuthStepCard
       title="Log in to Fikirtive"
       description="Choose how you want to continue."
+      /* SIGNIN-A4 —— 没有第二个注册页,所以 hub 上也没有通往它的那句话。陌生人和老用户按的
+         是同一颗按钮,第一次来就开好账号(docs/specs/sign-in.md §1 第 1 问)。 */
       footer={
         <p className="text-sm text-muted-foreground">
-          Don&apos;t have an account?{" "}
-          <Link
-            href={authRouteHref("/signup", callbackURL)}
-            className="font-semibold text-foreground underline underline-offset-4"
-          >
-            Create an account
-          </Link>
+          New here? Continue with your email — we&apos;ll set your workspace up on the way in.
         </p>
       }
     >

@@ -57,19 +57,26 @@ describe("#791-8 对外文案不再称 beta", () => {
 // 三项全部从活的计价权威读。但那条测试证明不了它算的就是**注册页真正承诺的那句
 // 话** —— 页面上多写一件、或者把数字打死成 "25 free credits",价目表那侧一无所知。
 // 这里补上另一半:页面的数字必须是算出来的,承诺的必须正好是被算过价的那三件。
-describe("#810 P3-2 注册页承诺不许自己长出数字或第四件东西", () => {
-  const signupPage = readCopy("app/signup/page.tsx");
-  const signupForm = readCopy("app/signup/SignupForm.tsx");
+// SIGNIN-A4 —— 注册页退役（docs/specs/sign-in.md，已冻结 · v1）。这一段原本钉的是**注册页上
+// 那句赠额承诺**：数字必须算出来、承诺的正好是被算过价的那三件。页面没了，那句话也没了，
+// 所以这一段改成钉「这句话真的没有搬到别处去」——「N free/starter credits」这种打死的数字不
+// 许出现在任何一个没登录的人读得到的面上。数字与价目表一致那一半仍然由
+// packages/core 的 spend.test.ts 守着。
+describe("SIGNIN-A4 · 赠额承诺不许在公开面上被写死", () => {
+  const publicSurfaces = ["app/signup/page.tsx", "app/login/page.tsx", "app/login/LoginForm.tsx"];
 
-  it("数字是从赠额常量算出来的,不是打上去的", () => {
-    expect(signupPage).toContain("displayCredits(SIGNUP_GRANT_CREDITS)");
-    expect(signupPage).toContain("starterCredits={starterCredits}");
-    expect(signupForm).toContain("{starterCredits} starter credits");
-    expect(`${signupPage}\n${signupForm}`).not.toMatch(/\d+\s*(?:free|starter) credits/i);
+  it("SIGNIN-A4 —— 注册页只剩一句转向，赠额承诺随它一起退役", () => {
+    const signupPage = readCopy("app/signup/page.tsx");
+    expect(signupPage).toContain('permanentRedirect("/login")');
+    expect(signupPage).not.toMatch(/starter credits/i);
   });
 
-  it("minimal Auth 不再把赠额扩写成额外能力承诺", () => {
-    expect(signupForm).not.toMatch(/enough for a full run|conversation with Otto|short video/i);
+  it("SIGNIN-A4 —— 没有哪个公开面把赠额写成一个打死的数字", () => {
+    for (const surface of publicSurfaces) {
+      expect(readCopy(surface), `${surface} 把赠额写死了`).not.toMatch(
+        /\d+\s*(?:free|starter) credits/i,
+      );
+    }
   });
 });
 
@@ -91,20 +98,18 @@ describe("#805 对外主话术:先说把活干完", () => {
    *  守的。没登录的人读得到的就是登录页与注册页 —— 名单缩了,这两族禁令就等于对着一面
    *  空墙执行。所以两面连同各自的表单组件一起回来:文案今天住在表单里(`LoginForm` /
    *  `SignupForm`),只读 `page.tsx` 会漏掉商家真正看到的那些字。 */
+  // SIGNIN-A4 —— 注册页与注册表单退役,清单跟着缩。没登录的人今天读得到的 Auth 面只剩登录
+  // 那一族(`/signup` 只是一句转向,上面一个字都没有)。
   const SURFACES: ReadonlyArray<[string, string]> = [
     ["登录页", "app/login/page.tsx"],
     ["登录表单", "app/login/LoginForm.tsx"],
-    ["注册页", "app/signup/page.tsx"],
-    ["注册表单", "app/signup/SignupForm.tsx"],
     ["Otto 进门", "components/otto/OttoFrontDoor.tsx"],
   ];
 
   describe("Auth surfaces", () => {
-    const login = readCopy("app/login/page.tsx");
-    const signup = readCopy("app/signup/page.tsx");
-
-    it("登录与注册不再兼任 marketing landing page", () => {
-      for (const authCopy of [login, signup]) {
+    it("登录页不再兼任 marketing landing page", () => {
+      // SIGNIN-A4 —— 注册页从这里退场：它今天只有一句 `permanentRedirect`,没有文案可查。
+      for (const authCopy of [readCopy("app/login/page.tsx"), readCopy("app/login/LoginForm.tsx")]) {
         expect(authCopy).not.toMatch(/Otto gets the|work done|campaign|where the money went/i);
         expect(authCopy).not.toMatch(/\btrusted by\b|without becoming a/i);
       }

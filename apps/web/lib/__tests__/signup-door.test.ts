@@ -1,14 +1,19 @@
 /**
- * signup-door.test.ts — #543 merchant self-service signup door (integration).
+ * signup-door.test.ts — 自助注册那扇门，今天的答案是「关着」(integration)。
  *
- * Runs the REAL Better Auth instance against the REAL local test Postgres, so the
- * assertions cover the whole door: the open `/sign-up/email` path, the pause switch,
- * the revoked-email fail-closed case, email verification, the welcome grant, and the
- * regressions that must NOT move (the sign-in code stays invite-only; existing accounts and
- * the deny-by-default session gate are untouched).
+ * SIGNIN-A4 —— #543 曾经在 `/sign-up/email` 上开了一扇自助注册门（邮箱 + 密码 + 店名），这个
+ * 文件当时钉的是它开着时的全部性质。docs/specs/sign-in.md（已冻结 · v1）把密码整体退役之后，
+ * 那扇门连同它的验证信、欢迎赠金落点、以及「注册即邀请」的写入一起没了：路径在 router 层
+ * 404（`CLOSED_PASSWORD_PATHS`）。
  *
- * Money: the welcome grant is a CreditLedger write. The exactly-once proof lives in
- * signup-grant-exactly-once.test.ts; here we only assert the happy path lands once.
+ * 文件留在原地，主语换成现在这一件事 —— 这扇门是**怎么关的**，以及关掉之后哪些性质必须原样
+ * 不动。删掉它会连带删掉后面三段仍然为真、而且没有第二个地方看着的围栏：
+ *   · 退役页面不在登录墙后面（旧链接进得来，才转得到 /login）；
+ *   · 码门仍然是 invite-only —— 陌生地址拿不到码，也不会因此得到一行 AllowedEmail；
+ *   · 三道公开门的每小时闸各自一个桶，且不在 BA 的 customRules 里。
+ *
+ * 「暂停开关」那一段留下的是它**纯函数**的那一半（`signupsPaused()` 的取值口径）：开关本身
+ * 由登录门④（SIGNIN-A6）接手，那时它要管的是码门与 Google 门，不再是密码注册。
  */
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -49,10 +54,12 @@ beforeEach(() => {
   __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
 });
 
+/** 探针用的一份「像样的」密码：这扇门已经不看它了，写出来只是为了让请求长得和当年一样。 */
 const PASSWORD = "correct-horse-battery-staple";
+/** 一个没人用过的地址。退役之后它唯一的用途是证明「打这扇门什么都不会发生」。 */
 const newEmail = () => `merchant-${randomUUID()}@fikirtive.test`;
 
-/** POST the public sign-up endpoint exactly as the browser form does. */
+/** 公网怎么打这扇门：和浏览器当年一模一样的一次 POST，经过整个 router。 */
 async function postSignUp(body: { email: string; password: string; name: string }) {
   const res = await auth.handler(
     new Request("http://localhost:3100/api/better-auth/sign-up/email", {
@@ -61,119 +68,49 @@ async function postSignUp(body: { email: string; password: string; name: string 
       body: JSON.stringify(body),
     }),
   );
-  // #678 — the verification email is handed to a background queue and delivered off the request
-  // path, so the inbox below is only readable once that queue has settled. (Before the queue
-  // existed this happened to work because the rest of the signup flow awaited enough for the
-  // send to slip in; that was luck, not a guarantee.)
+  // 队列 settle 一次再看收件箱：寄信在请求路径之外（#678），不等它就会拿一个还没发生的空箱
+  // 当作「什么都没寄」。
   await authEmailQueueSettled();
   return res;
 }
 
-/** The verification token Better Auth put in the email it just "sent". */
-function verificationTokenFromInbox(email: string): string {
-  const msg = [...sent].reverse().find((m) => m.to === email && m.subject.toLowerCase().includes("verify"));
-  if (!msg) throw new Error(`no verification email for ${email}; inbox=${JSON.stringify(sent)}`);
-  const url = new URL((msg.devPreview ?? msg.text ?? "").match(/https?:\/\/\S+/)?.[0] ?? "");
-  const token = url.searchParams.get("token");
-  if (!token) throw new Error(`no token in verification URL ${url.toString()}`);
-  return token;
-}
-
-async function verifyEmail(token: string) {
-  return auth.handler(
-    new Request(`http://localhost:3100/api/better-auth/verify-email?token=${encodeURIComponent(token)}`, {
-      method: "GET",
-      headers: { origin: "http://localhost:3100" },
-    }),
-  );
-}
-
-describe("#543 · the door opens — a stranger can register with email + password + shop name", () => {
-  it("creates the account, admits the email, and sends a verification email — with NO session and NO credits yet", async () => {
+describe("SIGNIN-A4 · 这扇门关了 —— 打它什么都不会发生", () => {
+  it("SIGNIN-A4 —— /sign-up/email 回 404，而且一行都没写", async () => {
     const email = newEmail();
     const res = await postSignUp({ email, password: PASSWORD, name: "Kopi Corner" });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
 
-    // The account exists but is unverified.
-    const baUser = await prisma.betterAuthUser.findUnique({ where: { email } });
-    expect(baUser).not.toBeNull();
-    expect(baUser?.emailVerified).toBe(false);
-    expect(baUser?.name).toBe("Kopi Corner");
-
-    // Registration IS the invite: the email admits itself so every existing
-    // deny-by-default gate keeps working unchanged.
-    const admitted = await prisma.allowedEmail.findUnique({ where: { email } });
-    expect(admitted?.status).toBe("active");
-    expect(admitted?.invitedBy).toBe("self-signup");
-
-    // Unverified ⇒ no tenant graph and no money.
+    // 不建号、不发邀请、不寄信、不建租户 —— 这四件事以前是这扇门开着时的全部产物。
+    expect(await prisma.betterAuthUser.findUnique({ where: { email } })).toBeNull();
+    expect(await prisma.allowedEmail.findUnique({ where: { email } })).toBeNull();
     expect(await prisma.user.findUnique({ where: { email } })).toBeNull();
-    expect(sent.some((m) => m.to === email && m.subject.toLowerCase().includes("verify"))).toBe(true);
+    expect(sent.filter((m) => m.to === email)).toHaveLength(0);
   });
 
-  it("verification lands the workspace named after the shop and the 25-credit welcome grant", async () => {
+  it("SIGNIN-A4 —— 关掉的是这扇门本身，不是「零用户 = 没人注册过」", async () => {
+    // 一个已经存在的地址走同一扇门，答案必须还是 404 —— 也就是说 404 来自路由，而不是来自
+    // 「这个地址我们不认识」。后者会是一个新的枚举面。
     const email = newEmail();
-    await postSignUp({ email, password: PASSWORD, name: "Nasi Lemak Ibu" });
-    const res = await verifyEmail(verificationTokenFromInbox(email));
-    expect(res.status).toBeLessThan(400);
-
-    const baUser = await prisma.betterAuthUser.findUnique({ where: { email } });
-    expect(baUser?.emailVerified).toBe(true);
-
-    const user = await prisma.user.findUnique({ where: { email } });
-    expect(user).not.toBeNull();
-    // #544 — the CANONICAL User row must also record the verification, not just the ba_user
-    // mirror. The canonical column is a DateTime? (next-auth convention): "verified" = a
-    // non-null timestamp, null = never verified. A null here would leave the tenant graph
-    // unable to tell a verified merchant from an unverified one.
-    expect(user!.emailVerified).toBeInstanceOf(Date);
-    const orgId = `org_${user!.id}`;
-
-    const org = await prisma.organization.findUnique({ where: { id: orgId } });
-    expect(org?.name).toBe("Nasi Lemak Ibu"); // first screen shows the merchant's own shop name
-
-    const membership = await prisma.membership.findUnique({ where: { userId_orgId: { userId: user!.id, orgId } } });
-    expect(membership?.role).toBe("owner");
-
-    const account = await prisma.creditAccount.findUnique({ where: { orgId } });
-    expect(account?.balance).toBe(SIGNUP_GRANT_CREDITS);
-    expect(SIGNUP_GRANT_CREDITS).toBe(250);
-
-    const grants = await prisma.creditLedger.findMany({ where: { orgId, kind: "GRANT" } });
-    expect(grants).toHaveLength(1);
-    expect(grants[0]!.balanceDelta).toBe(SIGNUP_GRANT_CREDITS);
-    expect(grants[0]!.idempotencyKey).toBe(`signup:${orgId}`);
-    expect(grants[0]!.createdBy).toBe("auth:bootstrap-personal-org");
+    await prisma.betterAuthUser.create({
+      data: { id: randomUUID(), name: "Existing", email, emailVerified: true },
+    });
+    const res = await postSignUp({ email, password: PASSWORD, name: "Kopi Corner" });
+    expect(res.status).toBe(404);
+    await prisma.betterAuthUser.delete({ where: { email } });
   });
 
-  it("a verified self-registered merchant can then sign in with their password", async () => {
-    const email = newEmail();
-    await postSignUp({ email, password: PASSWORD, name: "Warung Sedap" });
-    await verifyEmail(verificationTokenFromInbox(email));
-
-    const res = await auth.handler(
-      new Request("http://localhost:3100/api/better-auth/sign-in/email", {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: "http://localhost:3100" },
-        body: JSON.stringify({ email, password: PASSWORD }),
-      }),
-    );
-    expect(res.status).toBe(200);
+  it("SIGNIN-A4 —— 欢迎赠金的落点没有跟着这扇门一起消失", async () => {
+    // 赠金本身归首登副作用（`bootstrapPersonalOrg`），与走哪扇门无关；这里只钉那个常量还在，
+    // 免得「注册门没了」被读成「新商家不再有开机赠金」。真正的一次性证明在
+    // signup-grant-exactly-once.test.ts。
+    expect(SIGNUP_GRANT_CREDITS).toBeGreaterThan(0);
   });
 });
 
 describe("#543 · the pause switch — fail-closed, honest", () => {
-  it("SIGNUPS_PAUSED refuses the sign-up endpoint and writes nothing", async () => {
-    process.env.SIGNUPS_PAUSED = "1";
-    const email = newEmail();
-
-    const res = await postSignUp({ email, password: PASSWORD, name: "Too Late Cafe" });
-    expect(res.status).toBeGreaterThanOrEqual(400);
-
-    expect(await prisma.betterAuthUser.findUnique({ where: { email } })).toBeNull();
-    expect(await prisma.allowedEmail.findUnique({ where: { email } })).toBeNull();
-    expect(sent.filter((m) => m.to === email)).toHaveLength(0);
-  });
+  // SIGNIN-A4 —— 「开关拦住注册端点」那一条随密码注册一起退役：端点先 404，开关根本轮不到
+  // 说话。开关本身要管的下一件事是码门与 Google 门（SIGNIN-A6，登录门④），到那时它会有自己的
+  // 行为测试。这里留下的是它今天仍然为真的那一半：取值口径 fail-closed。
 
   it("treats any unrecognised value as PAUSED (fail-closed), and only explicit off values as open", async () => {
     const { signupsPaused } = await import("@/lib/signup-gate");
@@ -191,26 +128,21 @@ describe("#543 · the pause switch — fail-closed, honest", () => {
 });
 
 describe("#543 · what must NOT open", () => {
-  it("a REVOKED email cannot re-register itself back in", async () => {
+  it("SIGNIN-A4 —— 一个被撤销的地址仍然一条路都没有（撤销是绝对的）", async () => {
     const email = newEmail();
     await prisma.allowedEmail.create({ data: { email, status: "revoked", invitedBy: "operator@fikirtive.test" } });
 
-    const res = await postSignUp({ email, password: PASSWORD, name: "Banned Shop" });
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    // 注册门 404。
+    expect((await postSignUp({ email, password: PASSWORD, name: "Banned Shop" })).status).toBe(404);
+    // 码门那一侧：被撤销的地址拿不到码，也不会被复活成 active。
+    enqueueAuthEmail({ purpose: "sign-in-code", email, overBudget: false });
+    await authEmailQueueSettled();
+    expect(sent.filter((m) => m.to === email)).toHaveLength(0);
 
     const row = await prisma.allowedEmail.findUnique({ where: { email } });
     expect(row?.status).toBe("revoked"); // never resurrected
     expect(row?.invitedBy).toBe("operator@fikirtive.test");
     expect(await prisma.betterAuthUser.findUnique({ where: { email } })).toBeNull();
-  });
-
-  it("a REJECTED signup admits nothing — no account means no AllowedEmail row to walk in with later", async () => {
-    const email = newEmail();
-    const res = await postSignUp({ email, password: "short", name: "Weak Password Shop" });
-    expect(res.status).toBeGreaterThanOrEqual(400);
-
-    expect(await prisma.betterAuthUser.findUnique({ where: { email } })).toBeNull();
-    expect(await prisma.allowedEmail.findUnique({ where: { email } })).toBeNull();
   });
 
   it("the sign-in code stays invite-only — an unknown email gets no code, and registers nothing", async () => {
@@ -228,7 +160,7 @@ describe("#543 · what must NOT open", () => {
     expect(await prisma.betterAuthUser.findUnique({ where: { email } })).toBeNull();
   });
 
-  it("password sign-in for a never-registered email still answers with the generic credential error", async () => {
+  it("SIGNIN-A4 —— 密码登录门也没了：它答 404，不再答「凭据错误」", async () => {
     const res = await auth.handler(
       new Request("http://localhost:3100/api/better-auth/sign-in/email", {
         method: "POST",
@@ -236,13 +168,12 @@ describe("#543 · what must NOT open", () => {
         body: JSON.stringify({ email: newEmail(), password: PASSWORD }),
       }),
     );
-    expect(res.status).toBe(401);
-    await expect(res.json()).resolves.toMatchObject({ code: "INVALID_EMAIL_OR_PASSWORD" });
+    expect(res.status).toBe(404);
   });
 });
 
-describe("#543 · the signup pages are reachable without a session", () => {
-  it("the auth wall exempts /signup, /forgot-password and /reset-password", async () => {
+describe("SIGNIN-A4 · 退役的三个地址不在登录墙后面 —— 进得来才转得到 /login", () => {
+  it("SIGNIN-A4 —— the auth wall exempts /signup, /forgot-password and /reset-password", async () => {
     const { config } = await import("@/proxy");
     const matcher = new RegExp(`^${config.matcher[0]!}$`);
     for (const walled of ["/", "/otto", "/settings"]) expect(matcher.test(walled)).toBe(true);
