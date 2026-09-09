@@ -1,7 +1,7 @@
 # Brand 产品身份 规格书（S1）
 
-> 状态: 草稿
-> 批准: （冻结时填）https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1313 Founder 评论「S1 批准 brand-product-identity.md」(YYYY-MM-DD)
+> 状态: 已冻结 · v1
+> 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1313 Founder 评论「S1 批准 brand-product-identity.md」(2026-09-09)
 > 规格前缀: PRODID（验收编号 = PRODID-A1、A2…，全仓不得与其他规格撞前缀）
 
 <!--
