@@ -36,6 +36,14 @@
 6. 验收只认冻结版验收表；表外不满登记后走下一循环。S5 打回一条验收时，在功能 issue 评论独立成行写「S5 打回 <编号>」（自毁开关据此计数）。阶段性 commit + push，任何时刻 GitHub 上都有副本。
 7. 其余机器闸的可操作口径：验收编号必须逐字出现在测试里（M3，`it.todo` 可占位）；新引入 `BETA_*`／`*_ENABLED` 开关必须在 PR 描述带「保留理由: + 失效日期: YYYY-MM-DD」（M4）；`docs/specs/` 平铺、prisma 迁移守形状、`docs/superpowers/` 冻结（M5）；改闸门文件本身要在 PR 描述自报一行「闸门改动: <理由>」。开场自动打出的规格状态清单来自 SessionStart hook（`scripts/tools/spec-status.sh`，只读注入，不是被禁的 orchestration overlay）。
 
+## 里程碑制（Founder 2026-09-09 裁定；决策记录 = 整理地图 https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1285 及其子票）
+
+1. 一个版本 = 一个 GitHub 里程碑，顺序固定：里程碑场（`/mattpocock-skills:wayfinder` 出决定票，逐票拍板；开场先把 `idea` 票与到期延后项摆上桌让 Founder 下注）→ 出规格 → 拆票 → agent 施工 → S5 验收 → 收版。本仓库的两处接缝：`to-spec` = 写 `docs/specs/<名>.md` 按 TEMPLATE，不发 issue，冻结照上节第 4 条；`to-tickets` = 每票带 `Spec:` 行、覆盖的验收编号、当前里程碑、`ready-for-agent`，无规格的整理票改写一行 `轻改:` 句。
+2. 人管五样，其余归 agent 与机器闸：方向（`docs/BLUEPRINT.md`、`docs/adr/`、`CONTEXT.md`）、规格签名、下注、验收、规矩（本文件）。要动这五样先问 Founder。
+3. 版本号在里程碑场按本轮范围定，agent 推荐一档、Founder 拍板：补丁 = 修补与小功能；小版 = 大节点或新面；大版 = 商业模式级。收版 = 里程碑票全关 + S5 全勾 → `git tag vX.Y.Z` + GitHub Release + `CHANGELOG.md` 一版一节（交付的规格、关掉的票、链接）。package.json 版本号不动。
+4. 不属于任何已冻结规格的中途想法进三个柜子（属于某规格的照上节第 5 条进其变更登记）：`idea` 标签 = 还没决定做不做，不挂里程碑、不标可派，最少三行（一句话构思 / 商家场景 / 来源），idea 场 = 短 grilling 出一张票、不施工；`docs/DEFERRED.md` = 已决定做、等触发条件；`polish` 标签 = 已有功能的打磨，不排期。
+5. 交接：有地图或里程碑 issue 的场，那张 issue 就是交接书；记忆库只存指针（工件指针 / 环境陷阱 / Founder 常令），历史现场移出索引。
+
 ## 前端接线与设计变更
 
 涉及后端接入 UI、新增／修改前端组件、页面／流程变更或将验收版本接入正式路由时，必须先完整阅读 `apps/web/design-system/governance/frontend-integration-handoff.md`，再按其中指针核对本次设计来源与批准。它规定接线方法，不授予新功能、重设计或发布权限。
