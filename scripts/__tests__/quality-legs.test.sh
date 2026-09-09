@@ -356,6 +356,9 @@ expected_gates=(
   "checks|otto knowledge cabinet freshness"
   "checks|margin-floor gate self-test"
   "checks|margin floor"
+  # scripts/tools/mint-r2-token.mjs 的纯函数单元测试。scripts/ 不在任何 workspace 里，
+  # `pnpm -r test` 覆盖不到它，所以它自己占一条 gate。
+  "checks|mint-r2-token plan tests"
   "checks,tests|prisma migrate deploy"
   "checks|prisma schema drift"
   "tests|tests"

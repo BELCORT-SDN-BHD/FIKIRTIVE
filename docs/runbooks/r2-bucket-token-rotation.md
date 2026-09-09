@@ -43,7 +43,7 @@
 | 令牌名 | 权限 | 去处 | 谁来铸 |
 | --- | --- | --- | --- |
 | `fikirtive-staging-web` | `fikirtive-staging` 桶级读写 | Railway staging 的 `web` + `worker` | `--mint staging` |
-| `fikirtive-production-web` | `fikirtive-production` 桶级读写 | Railway production 的 `web` + `worker` | `--mint production --yes-production`,**等 Founder 说「切」** |
+| `fikirtive-production-web` | `fikirtive-production` 桶级读写 | Railway production 的 `web` + `worker` | `I_UNDERSTAND_THIS_TOUCHES_PROD=yes … --mint production --yes-production`,**等 Founder 说「切」** |
 | `fikirtive-migration-temp` | 源桶只读 ＋ 目标桶可写 | **哪儿都不去** —— 只在 `--copy` 进程内存里活着,跑完在 `finally` 里删掉 | `--copy` 自己铸自己删 |
 
 ## 四步(顺序不能颠倒)
@@ -55,8 +55,9 @@ node scripts/tools/mint-r2-token.mjs --copy staging --exclude-prefix backups/
 node scripts/tools/mint-r2-token.mjs --mint staging
 node scripts/tools/mint-r2-token.mjs --copy production --dry-run
 node scripts/tools/mint-r2-token.mjs --copy production
-#  ↑ 到这里都不影响线上。下面这条等 Founder 明说「切」:
-node scripts/tools/mint-r2-token.mjs --mint production --yes-production --expect-objects <上一步的源对象数>
+#  ↑ 到这里都不影响线上。下面这条等 Founder 明说「切」,并且要带碰生产确认锁:
+I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
+  node scripts/tools/mint-r2-token.mjs --mint production --yes-production --expect-objects <上一步的源对象数>
 ```
 
 ### 第 1 步 · `--check` 体检(只读)
@@ -94,7 +95,15 @@ staging 不该拿到它 —— 又占地方,又等于把生产数据复制进一
 
 ### 第 4 步 · production 切换 · **等 Founder 明说「切」**
 
-不带 `--yes-production` 会直接被拒。**这个旗标就是「Founder 说过切了」的唯一凭据,agent 不得自己加。**
+两道人闸,缺一不可:
+
+- **碰生产确认锁** `I_UNDERSTAND_THIS_TOUCHES_PROD=yes` —— 全仓碰生产脚本统一那把
+  (`scripts/tools/_interlock.mjs`)。没设就在**读钥匙串之前**退出:一个秘密都不会被读出来,
+  也不会发出任何网络请求。屏幕上会直接告诉你要设哪个变量。
+- **`--yes-production` 旗标** —— **就是「Founder 说过切了」的唯一凭据,agent 不得自己加。**
+
+前者证明「跑的人知道自己在碰生产」,后者证明「Founder 说过切」;`--check` / `--copy` /
+`--mint staging` 都不受这把锁影响。
 
 它比 staging 多一道闸:铸完令牌之后、写 Railway 之前,用新令牌数一遍目标桶的对象数。
 
@@ -220,6 +229,10 @@ R2 没开版本控制,盖掉就没了。那个旗标只在「已经看过 confli
 - **账号级 `POST /accounts/{account_id}/tokens` 可用**(没有退到 `/user/tokens` 的用户级令牌路径)。
   账号级令牌不跟着人走,人被移出账号也不会失效 —— 这是想要的形态。
 
+**注意:** 这次实跑时**还没有**第 4 步那把 `I_UNDERSTAND_THIS_TOUCHES_PROD` 碰生产锁
+(它是 2026-09-09 收尾时补上的);当时只有 `--yes-production` 与 `--expect-objects` 两道闸。
+按本文档现在的写法重跑,production 那一步必须多带这个环境变量。
+
 **遗留:** 老桶 `artlio` 的退役(观察期后删桶)与旧宽权限令牌的最终吊销另行处理,不在本脚本范围内。
 
 ## 单元测试
@@ -229,9 +242,12 @@ node --check scripts/tools/mint-r2-token.mjs
 node --test scripts/tools/mint-r2-token.plan.test.mjs
 ```
 
+`node --test` 这条**已经进了 CI 的 gate 列表**(`scripts/ci/quality.sh` 的 `checks` 腿,
+gate 名 `mint-r2-token plan tests`;腿→gate 对照表在 `scripts/__tests__/quality-legs.test.sh`)。
+`node --check` 仍是手动的。
+
 覆盖纯函数:环境计划表、桶资源键、policy 构造、复制三态决策、前缀汇总与前缀排除、`expires_on` 格式。
 测试只 `import` 脚本,不触发主流程(脚本里有 `invokedDirectly` 守卫),不发网络、不碰钥匙串、不动 Railway。
-这两条**不在 CI 的 gate 列表里**,改脚本时自己跑。
 
 ## 引用的 Cloudflare 文档
 
