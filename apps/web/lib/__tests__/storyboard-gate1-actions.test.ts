@@ -3690,6 +3690,28 @@ describe("FSE-001 同族 · 闸① —— 带演员的镜头一分首帧钱都�
   });
 });
 
+/** 直接出片的这一镜**身上已经有一张付过钱的首帧**(旧分镜留下的,或商家在新规矩之前
+ *  出过的)。守卫钉的正是这一格:有首帧也绝不写进 `ctx.sourceGenerationId` —— 写了就等于
+ *  把那张图当第一帧,而带演员的图生图产物送进视频端必被拒收(退过一次款的那条路)。
+ *  castPayload2 的 s0 没有首帧,那里的 `toBeUndefined()` 无论守卫在不在都为真;这个夹具
+ *  把首帧摆上去,守卫一拆测试就红。 */
+function castPayloadFramedDirect(): StoryboardCardPayload {
+  return {
+    storyboardTitle: "Ad",
+    shots: [
+      {
+        shotId: "s0",
+        index: 0,
+        firstFramePrompt: "ff0",
+        videoPrompt: "vp0",
+        entityIds: ["actor-1", "mug"],
+        firstFrameGenerationId: "ffgen0",
+        durationSeconds: 5,
+      },
+    ],
+  };
+}
+
 describe("FSE-001 同族 · 闸② —— 演员照 + 商品照两张参考,直接出片", () => {
   it("FSE-001 / CREATE-A2: 带演员的镜头没有首帧也能出片,付费请求不带首帧、带着两个元素", async () => {
     castOwned();
@@ -3778,6 +3800,37 @@ describe("FSE-001 同族 · 闸② —— 演员照 + 商品照两张参考,直�
     if (!("child" in res)) throw new Error(`expected child, got ${JSON.stringify(res)}`);
     expect(res.child.shotId).toBe("s0");
     expect(mockBuildProposeCard.mock.calls[0][1].sourceGenerationId).toBeUndefined();
+  });
+
+  it("FSE-001 / CREATE-A2: 闸② 直接出片的镜头**身上有付过钱的首帧**也不写 sourceGenerationId", async () => {
+    castOwned();
+    mockVideoProposeCard();
+    wireLoads(card(castPayloadFramedDirect()));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+    expect(res.children.map((c) => c.shotId)).toEqual(["s0"]);
+
+    // 首帧 id 就摆在这一镜身上("ffgen0"),守卫要保证它一格都不流进付费请求。
+    expect(mockBuildProposeCard.mock.calls[0][1].sourceGenerationId).toBeUndefined();
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatCreate.mock.calls[0][0].data.payload.sourceGenerationId).toBeUndefined();
+    // 走的仍是两张参考那条正路(演员 + 商品),不是 i2v。
+    expect(mockBuildProposeCard.mock.calls[0][0].entityIds).toEqual(["actor-1", "mug"]);
+  });
+
+  it("FSE-001 / CREATE-A2: 单镜重出视频同法 —— 有首帧的直接出片镜头照样不写 sourceGenerationId", async () => {
+    castOwned();
+    mockVideoProposeCard();
+    wireLoads(card(castPayloadFramedDirect()));
+
+    const res = await regenShotVideoCard({ cardId: "card-1", shotId: "s0" });
+    if (!("child" in res)) throw new Error(`expected child, got ${JSON.stringify(res)}`);
+    expect(res.child.shotId).toBe("s0");
+    expect(mockBuildProposeCard.mock.calls[0][1].sourceGenerationId).toBeUndefined();
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatCreate.mock.calls[0][0].data.payload.sourceGenerationId).toBeUndefined();
+    expect(mockBuildProposeCard.mock.calls[0][0].entityIds).toEqual(["actor-1", "mug"]);
   });
 });
 
