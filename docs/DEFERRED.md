@@ -100,3 +100,4 @@
 | D-094 | #980 pre-hijack 的登记缺口:原票称「触发条件登记 #359」但从未迁入本台账;处置改为密码整体下线(sign-in.md),交付后关 #980 | sign-in.md 交付 | 2026-09-08 登录逻辑审计（sign-in.md §6 改签记录） | 2026-09-08 |
 | D-095 | 老桶 `artlio` 退役:切换后观察期满删桶,并由 Founder 确认旧的宽权限 R2 令牌已在 Cloudflare 后台吊销 | 2026-10-09 之后由 Founder 决定 | docs/runbooks/r2-bucket-token-rotation.md | 2026-09-09 |
 | D-096 | 把 `scripts/ci/quality.sh` 与 `scripts/__tests__/quality-legs.test.sh` 纳入 process-gates 的 `GATE_FILES_RE`,让「闸门改动:」自报行对 quality 闸也机器强制 | 下次改闸门文件时 | PR #1283 判官 | 2026-09-09 |
+| D-097 | 媒体对象跨区／跨桶复制（#871 后半；最小层 = R2 versioning + 一次真实恢复演练 已裁进下一版） | GA 前 | [#1290 分流第三轮](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1290) Founder 2026-09-09 拍板 | 2026-09-09 |
