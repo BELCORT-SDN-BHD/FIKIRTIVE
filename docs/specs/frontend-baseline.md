@@ -199,8 +199,8 @@ Founder 2026-09-02 裁决（本对话原话要旨）：「做 UIUX 时完全按�
 | 2026-09-06 | 台账 #359 搬入：部署窗口核验:生产 web 是否启用 NEXT_PUBLIC_SENTRY_DSN,及 Sentry 侧对查询参数 t 的净化。触发条件：原登记未注明;见来源评论。来源：https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5352199023 | |
 | 2026-09-06 | 台账 #359 搬入：部署窗口核验:Railway 是否覆写入站 X-Real-IP(否则公开媒体限流可被自选桶放大)。触发条件：原登记未注明;见来源评论。来源：https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5352199023 | |
 | 2026-09-08 | **staging 全栈 E2E Round 1（Codex，报告 `docs/audits/fullstack-staging-2026-09-08/`）FSE-004：「Edit and retry」只把商家那句话放回输入框，原参考图 chip 没回来**。FRONT-A12 测试（`front-a12-canvas-turn-failure.test.tsx:418`）钉的是「那句话」；「连引用一起放回」从未被规定。 | **2026-09-08 Founder 裁**：与 creation-engine.md §5 同日「引用链 FSE-002／003／004」行一片修完。口径（拟）：FRONT-A12 放宽为「那句话＋原引用一起放回，引用不可用则要求重选」；验收行文字下次 S5 改写，冻结正文本场不动。 落地（PR #1270 → 16d1e9b6）：那句话＋原引用一起放回，引用不可用时显示「References kept」并要求重选；输入框非空时不覆盖商家正在打的字。A12 验收行文字待下次 S5 改写。 |
-| 2026-09-08 | **E2E Round 1 FSE-010：全局侧栏余额跨标签页陈旧**（侧栏 18.4、Billing 正文 14.8、DB 14.8）。`apps/web/lib/balance-refresh.ts` 的监听集是模块态、只在本标签页内；Billing 正文是服务端读。`#544` 定过「不新增 timer」纪律，改跨标签页同步要 Founder 知情。最小修法＝BroadcastChannel 广播 `notifyBalanceRefresh`，或 Billing 正文同订阅。 | |
-| 2026-09-08 | **E2E Round 1 FSE-011：Profile 邮箱字段 disabled 且 value 为空，DB 两张身份表邮箱非空**。当前码找不到能让邮箱变空的路径（`apps/web/lib/profile-names.ts` 返回 `gate.email`，`app/profile/page.tsx:39` 绑定 `names.email`，`ui/input.tsx` 原样透传）；需一次带 DOM 快照的复现再定修法。 | |
+| 2026-09-08 | **E2E Round 1 FSE-010：全局侧栏余额跨标签页陈旧**（侧栏 18.4、Billing 正文 14.8、DB 14.8）。`apps/web/lib/balance-refresh.ts` 的监听集是模块态、只在本标签页内；Billing 正文是服务端读。`#544` 定过「不新增 timer」纪律，改跨标签页同步要 Founder 知情。最小修法＝BroadcastChannel 广播 `notifyBalanceRefresh`，或 Billing 正文同订阅。 | 2026-09-10 Founder 裁（#1307）：标签页广播（BroadcastChannel）同步余额，不新增定时器（守 #544）；进 v0.1.1。 |
+| 2026-09-08 | **E2E Round 1 FSE-011：Profile 邮箱字段 disabled 且 value 为空，DB 两张身份表邮箱非空**。当前码找不到能让邮箱变空的路径（`apps/web/lib/profile-names.ts` 返回 `gate.email`，`app/profile/page.tsx:39` 绑定 `names.email`，`ui/input.tsx` 原样透传）；需一次带 DOM 快照的复现再定修法。 | 2026-09-10 Founder 裁：先做一次带 DOM 快照的复现，Round 2 再定修法。 |
 
 ## 6. 改签记录
 
