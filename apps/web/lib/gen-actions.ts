@@ -842,7 +842,9 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // commit (a CHARACTER with no refs, a deleted @mention, a cross-project i2v
     // frame). Fail-OPEN — checkCast returns null on its own faults — and additive
     // only: it never loosens the existing gate.
-    const block = await checkCast({ ownerId, projectId, entityIds, variantSel: effectiveVariantSel, sourceGenerationId, tailGenerationId, model, kind });
+    // creation §5 :162⑤ —— 挂上路的那几张原件也进这道守卫(`videoOptions.referenceGenerationIds`
+    // = 上面那条进程内可信通道读出来的那张持久化卡上的快照)。判据与首帧/末帧同一份 scope。
+    const block = await checkCast({ ownerId, projectId, entityIds, variantSel: effectiveVariantSel, sourceGenerationId, tailGenerationId, referenceGenerationIds: videoOptions?.referenceGenerationIds, model, kind });
     if (block) {
       try {
         await prisma.actionEvent.create({ data: { id: newId(), ownerId, projectId, type: "gen.guardian-block", payload: { findings: block.report.findings } } });

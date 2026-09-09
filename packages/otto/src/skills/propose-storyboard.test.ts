@@ -178,3 +178,40 @@ describe("#782 continuity", () => {
     expect(proposeStoryboardSkill.description).toContain("continuity:true");
   });
 });
+
+// ---------------------------------------------------------------------------
+// creation §5 :172⑤ —— firstFramePrompt 按镜头类型条件可选
+// ---------------------------------------------------------------------------
+//
+// 带 @元素的镜头(演员在场时它走「两张参考直接出片」)根本没有首帧这一步,从前却被 schema
+// 逼着写一段谁都不读的文字。不带 @元素的镜头一格没动:两步还是两步,所以那一段仍然必填 ——
+// 少了它,闸① 就要拿一段空文字去铸一张可扣费的卡。
+describe("creation §5 :172⑤ —— firstFramePrompt 只对没有 @元素的镜头必填", () => {
+  const castShot = { videoPrompt: "she lifts the mug", entityIds: ["ent-actor"] };
+
+  it("creation §5 :172⑤ / CREATE-A2: 带 @元素的镜头可以没有 firstFramePrompt", () => {
+    const r = storyboardCardInput.safeParse({ storyboardTitle: "x", shots: [castShot] });
+    expect(r.success).toBe(true);
+  });
+
+  it("creation §5 :172⑤ / CREATE-A2: 不带 @元素的镜头**仍然**必填 —— 两步那一档逐字不变", () => {
+    const r = storyboardCardInput.safeParse({ storyboardTitle: "x", shots: [{ videoPrompt: "the cat stretches" }] });
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.issues[0]?.path).toEqual(["shots", 0, "firstFramePrompt"]);
+  });
+
+  it("creation §5 :172⑤ / CREATE-A2: 没写就不落这一格,写了照旧原样落库", () => {
+    const bare = buildStoryboardPayload(storyboardCardInput.parse({ storyboardTitle: "x", shots: [castShot] }));
+    expect("firstFramePrompt" in bare.shots[0]!).toBe(false);
+    const withFrame = buildStoryboardPayload(
+      storyboardCardInput.parse({ storyboardTitle: "x", shots: [{ ...castShot, firstFramePrompt: "a cat on a sofa" }] }),
+    );
+    expect(withFrame.shots[0]!.firstFramePrompt).toBe("a cat on a sofa");
+  });
+
+  it("creation §5 :172⑤ / CREATE-A2: skill 说明照实说这条规矩(Otto 只读得到这段话)", () => {
+    expect(proposeStoryboardSkill.description).toContain("needs no firstFramePrompt");
+    expect(proposeStoryboardSkill.description).toContain("must carry a firstFramePrompt");
+  });
+});

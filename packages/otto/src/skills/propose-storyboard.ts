@@ -52,8 +52,10 @@ export const proposeStoryboardSkill = defineOttoSkill({
   reach: "internal",
   description:
     "Lay out an ordered STORYBOARD for a video/ad the user can review and edit before anything is generated. " +
-    "Provide storyboardTitle and shots (1–8), each with firstFramePrompt + videoPrompt. Build each shot's prompts " +
+    "Provide storyboardTitle and shots (1–8), each with a videoPrompt. Build each shot's prompts " +
     "by calling seedreamPrompt (first frame) and seedancePrompt (video) FIRST — do not hand-write them. " +
+    "A shot that @mentions an element (its entityIds) is made in ONE paid step and needs no firstFramePrompt; " +
+    "a shot with no @mentioned element is still made in two steps, so it must carry a firstFramePrompt. " +
     "Set continuity:true when the shots are one unbroken take — the same scene, the same subject, the camera or the " +
     "action simply carrying on — so each shot starts exactly where the one before it stopped. Leave it off when the " +
     "shots are separate moments (different places, a cut between scenes), which is the common case for a product ad. " +

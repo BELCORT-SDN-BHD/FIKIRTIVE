@@ -3845,3 +3845,157 @@ describe("FSE-001 同族 · 闸③ —— sync 把「哪几镜直接出片」如
     expect(reportOf(res, "s1").directToVideo).toBe(false);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// creation §5 :172④ —— 直接出片的镜头 @ 到已删/非本店的非演员元素:整卡 fail closed
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 登记那一条钉的是**代价**:整卡零写入(同卡其余镜头也铸不出)。这一组把它变成测试,并且
+// 把那句话本身也钉住 —— 一张分镜卡上八个镜头,通用的「有一个引用对不上」让商家没法知道该去
+// 改哪一格,而 fail closed 的代价正是其余镜头一起铸不出来。
+//
+// 钱的三条线一起断言:零子卡(ChatMessage)、零 GenJob、零账本行。后两条在这一层的形状是
+// 「这个文件从头到尾就不该碰 genJob.create」—— 铸卡是 $0 的,预扣与账本发生在客户端确认之后
+// 的 coworkGenerate 那一趟,而拒绝这一路根本走不到那里(连子卡都没有,点不出那一次确认)。
+/** s0 = 直接出片(演员 + 商品),带标题;s1 = 普通两步镜头 —— 用来证明「同卡其余镜头也铸不出」。 */
+function directShotWithDeadElement(): StoryboardCardPayload {
+  return {
+    storyboardTitle: "Ad",
+    shots: [
+      {
+        shotId: "s0",
+        index: 0,
+        title: "Opening",
+        firstFramePrompt: "ff0",
+        videoPrompt: "vp0",
+        entityIds: ["actor-1", "mug"],
+        durationSeconds: 5,
+      },
+      { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "vp1", firstFrameGenerationId: "ffgen1", durationSeconds: 5 },
+    ],
+  };
+}
+
+/** 演员还在,商品**已被这家店删掉**:owner-scoped 的活元素查询读不出它,而按 id 点名时
+ *  名字还查得到(软删)—— 拒绝那句话就是靠这一趟把「哪个元素」说出来的。 */
+function actorLiveMugDeleted() {
+  mockEntityFindMany.mockImplementation(async (args: { where: { deletedAt?: null; ownerId: string } }) => {
+    if (args.where.ownerId !== OWNER) return [];
+    // 活元素查询(ownedEntitiesFor)带 deletedAt:null ⇒ 只剩演员。
+    if (args.where.deletedAt === null) return [{ id: "actor-1", type: "CHARACTER", name: "Aisyah" }];
+    // 拒绝那一路的点名查询(不带 deletedAt)⇒ 软删的商品名字还在。
+    return [{ name: "Mug" }];
+  });
+}
+
+describe("creation §5 :172④ —— 直接出片镜头 @ 到不可用元素 ⇒ 整卡零写入", () => {
+  it("creation §5 :172④ / CREATE-A10: 闸② 整卡 fail closed —— 零子卡、零 GenJob、零账本行,一句话点名是哪一镜哪个元素", async () => {
+    actorLiveMugDeleted();
+    mockVideoProposeCard();
+    wireLoads(card(directShotWithDeadElement()));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+
+    expect(res).toEqual({
+      error:
+        'Shot 1 "Opening" uses "Mug", which isn\'t in your Library any more — take it out of that shot, or pick another one. Nothing was made and nothing was charged.',
+    });
+    // 零写入:提交的、以及事务里**试着**写的,都是零(拒绝抛在第一次写之前)。
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockTxChatCreate).not.toHaveBeenCalled();
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    // 零 GenJob ⇒ 零预扣 ⇒ 零账本行(这一层根本不建作业,建作业的那一趟点不出来)。
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+    // 代价照登记那一行:同卡另一镜(s1,自己一格问题都没有)也没铸出子卡。
+    expect(mockBuildProposeCard).not.toHaveBeenCalledWith(
+      expect.objectContaining({ structuredPrompt: "vp1" }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("creation §5 :172④ / CREATE-A10: 双租户 —— 别家店的元素 id 在这家店数出 0,同样整卡拒绝且不泄露对方的名字", async () => {
+    // 真库里 "mug" 那一行属于 owner-2。这家店的每一趟读都带自己的 ownerId ⇒ 一律读不出来。
+    mockEntityFindMany.mockImplementation(async (args: { where: { deletedAt?: null; ownerId: string } }) => {
+      if (args.where.ownerId === "owner-2") return [{ id: "mug", type: "PRODUCT", name: "Other shop mug" }];
+      return args.where.deletedAt === null ? [{ id: "actor-1", type: "CHARACTER", name: "Aisyah" }] : [];
+    });
+    mockVideoProposeCard();
+    wireLoads(card(directShotWithDeadElement()));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+
+    expect(res).toEqual({
+      error:
+        'Shot 1 "Opening" uses an element that isn\'t in your Library any more — take it out of that shot, or pick another one. Nothing was made and nothing was charged.',
+    });
+    // 别家的名字一个字都不出现 —— 这句话不是存在性问答机。
+    expect(JSON.stringify(res)).not.toContain("Other shop mug");
+    // 每一趟元素读都带这家店的 ownerId。
+    for (const call of mockEntityFindMany.mock.calls) expect(call[0].where.ownerId).toBe(OWNER);
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :172④ / CREATE-A10: 单镜重出走同一条口径 —— 一句点名的话,零写入", async () => {
+    actorLiveMugDeleted();
+    mockVideoProposeCard();
+    wireLoads(card(directShotWithDeadElement()));
+
+    const res = await regenShotVideoCard({ cardId: "card-1", shotId: "s0" });
+
+    expect(res).toEqual({
+      error:
+        'Shot 1 "Opening" uses "Mug", which isn\'t in your Library any more — take it out of that shot, or pick another one. Nothing was made and nothing was charged.',
+    });
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// creation §5 :172⑤ —— firstFramePrompt 对带元素的镜头不再必填
+// ═══════════════════════════════════════════════════════════════════════════
+describe("creation §5 :172⑤ —— 没有 firstFramePrompt 的镜头", () => {
+  it("creation §5 :172⑤ / CREATE-A2: 带演员的镜头没有首帧文字也照样直接出片(那一步整个不存在)", async () => {
+    castOwned();
+    mockVideoProposeCard();
+    wireLoads(
+      card({
+        storyboardTitle: "Ad",
+        shots: [
+          { shotId: "s0", index: 0, videoPrompt: "vp0", entityIds: ["actor-1", "mug"], durationSeconds: 5 },
+        ],
+      }),
+    );
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error(`expected children, got ${JSON.stringify(res)}`);
+    expect(res.children.map((c) => c.shotId)).toEqual(["s0"]);
+    expect(mockBuildProposeCard.mock.calls[0][0].entityIds).toEqual(["actor-1", "mug"]);
+  });
+
+  it("creation §5 :172⑤ / CREATE-A10: 演员离场后这一镜要走两步却没有首帧文字 ⇒ 点名拒绝,绝不铸一张空提示词的可扣费卡", async () => {
+    // 只 @ 了一件商品(没有演员)⇒ 这一镜走两步,而它身上没有首帧文字。
+    mockEntityFindMany.mockResolvedValue([{ id: "mug", type: "PRODUCT", name: "Mug" }]);
+    wireLoads(
+      card({
+        storyboardTitle: "Ad",
+        shots: [{ shotId: "s0", index: 0, title: "Opening", videoPrompt: "vp0", entityIds: ["mug"] }],
+      }),
+    );
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+
+    expect(res).toEqual({
+      error:
+        'Shot 1 "Opening" has no opening-frame description yet — ask me to write one for it. Nothing was made and nothing was charged.',
+    });
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+});

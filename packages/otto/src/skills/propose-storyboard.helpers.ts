@@ -8,7 +8,17 @@ export const MAX_STORYBOARD_SHOTS = 8;
  *  entityIds = 该镜头的 @引用实体 id（可选）——纯数据管道,F4 铸子卡时才透传到模型,此前无人消费。 */
 export const storyboardShot = z.object({
   title: z.string().trim().max(120).optional(),
-  firstFramePrompt: z.string().trim().min(1).max(2000),
+  /**
+   * creation §5 :172⑤ —— **按镜头类型条件可选**。
+   *
+   * 带 @元素的镜头(演员在场时它走「演员参考照 + 商品照直接出片」那一步,首帧那一步整个
+   * 不存在)不再被 schema 逼着写一段用不上的文字:模型从前必须编一段首帧描述,而它既不
+   * 出现在任何请求里,也没有人读 —— 一段谁都不用的必填文字只会让模型多编一次。
+   *
+   * 不带 @元素的镜头**逐字不变**:两步(首帧 → 视频)还是那两步,所以这一段仍然必填 ——
+   * 由 `storyboardCardInput` 的 superRefine 判(镜头类型这件事只在整份输入上才看得全)。
+   */
+  firstFramePrompt: z.string().trim().min(1).max(2000).optional(),
   videoPrompt: z.string().trim().min(1).max(2000),
   // 形状对齐花钱侧 coworkProposalSchema 的 entityIds(gen.ts)——F4 铸子卡时零转换透传。
   entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).optional(),
@@ -26,6 +36,19 @@ export const storyboardCardInput = z.object({
    *  true ⇒ 每个镜头的起点 = 上一个镜头**真实停住的那一帧**(引擎免费附送的末帧),
    *  而不是另外画一张首帧图。默认 false = 各镜头彼此独立(可并行、各画各的首帧)。 */
   continuity: z.boolean().optional(),
+}).superRefine((val, ctx) => {
+  // creation §5 :172⑤ —— 首帧文字只对**没有 @元素**的镜头必填(那一档还是两步:首帧 → 视频)。
+  // 判在这里而不是镜头 schema 里:条件读的是同一个镜头的另一格,而 zod 的字段级校验看不见兄弟格。
+  // 这道闸是 $0 的:整份输入被拒 ⇒ 一张卡都不落库。
+  val.shots.forEach((shot, i) => {
+    if (!shot.firstFramePrompt && !shot.entityIds?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["shots", i, "firstFramePrompt"],
+        message: "a shot with no @mentioned element is still made in two steps — give it a firstFramePrompt",
+      });
+    }
+  });
 });
 export type StoryboardCardInput = z.infer<typeof storyboardCardInput>;
 
@@ -43,7 +66,8 @@ export type StoryboardCardPayload = {
     shotId: string;
     index: number;
     title?: string;
-    firstFramePrompt: string;
+    /** creation §5 :172⑤ —— 带 @元素的镜头可以没有这一格(它不出首帧);没有 @元素的镜头一定有。 */
+    firstFramePrompt?: string;
     videoPrompt: string;
     entityIds?: string[];
     /** 该镜头视频时长(用户在卡上选/Otto 建议)——入库仅存数字,校验交给下游模型吸附(G 闸②)。 */
@@ -86,7 +110,8 @@ export function buildStoryboardPayload(
       shotId: mintId(),
       index,
       ...(s.title ? { title: s.title } : {}),
-      firstFramePrompt: s.firstFramePrompt,
+      // creation §5 :172⑤ —— 没写就不落这一格(与 continuity 同一条「只在有内容时出现」的纪律)。
+      ...(s.firstFramePrompt ? { firstFramePrompt: s.firstFramePrompt } : {}),
       videoPrompt: s.videoPrompt,
       ...(s.entityIds ? { entityIds: s.entityIds } : {}),
       ...(s.durationSeconds !== undefined ? { durationSeconds: s.durationSeconds } : {}),
