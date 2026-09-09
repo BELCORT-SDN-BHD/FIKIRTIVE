@@ -19,15 +19,58 @@
  *
  * Client-side only by construction — the listener set is module state, so it is
  * meaningful only inside the browser bundle where the nav and the spend sites share it.
+ *
+ * FSE-010（frontend-baseline.md §5 :202，Founder 2026-09-10 裁）——「模块态」这句话正是
+ * 走查里那个数字的病根：商家开着两个标签页，在一个里花掉 credits，另一个的侧栏还写着花之前
+ * 那个数（走查：侧栏 18.4、Billing 正文 14.8、库里 14.8），因为那一页的监听集是它自己那份。
+ * 修法是 `BroadcastChannel`：花钱那一刻**同时**在本页派送与向同源的别的标签页广播一声，
+ * 收到的那一页照它自己那条既有的路重读一次。**不新增计时器**（#544 的纪律）——广播是浏览器
+ * 推过来的一件事，不是我们每隔几秒去问一次。
  */
 
 type BalanceRefreshListener = () => void;
 
 const listeners = new Set<BalanceRefreshListener>();
 
+/**
+ * 频道名。两个标签页只靠这一个字符串认出彼此，所以它只能有一份（换掉它 = 换一条频道，
+ * 旧标签页从此听不见新标签页）。
+ */
+const BALANCE_REFRESH_CHANNEL = "fikirtive:balance-refresh";
+
+let channel: BroadcastChannel | null = null;
+let channelOpened = false;
+
+/**
+ * 打开（或取回）这一页的那条频道。**静默降级**：`BroadcastChannel` 不在（服务端渲染、老浏览器、
+ * 被隐私模式挡掉）就返回 null，本页照旧只在本页派送——跨页同步是加分项，不是余额显示的前提，
+ * 一次拿不到频道绝不能让花钱那条路上冒出一个错。
+ */
+function openBalanceChannel(): BroadcastChannel | null {
+  if (channelOpened) return channel;
+  channelOpened = true;
+  const Ctor = (globalThis as { BroadcastChannel?: typeof BroadcastChannel }).BroadcastChannel;
+  if (typeof Ctor !== "function") return null;
+  try {
+    const opened = new Ctor(BALANCE_REFRESH_CHANNEL);
+    // 别的标签页广播过来 —— 只在本页派送，**绝不转播**：转播会让两页互相回声成一个不停的环，
+    // 而这条路上没有任何计时器能给它踩刹车。
+    opened.onmessage = () => {
+      deliverLocally();
+    };
+    channel = opened;
+  } catch {
+    channel = null;
+  }
+  return channel;
+}
+
 /** Register a balance display. Returns the unsubscribe for the effect's teardown. */
 export function subscribeBalanceRefresh(listener: BalanceRefreshListener): () => void {
   listeners.add(listener);
+  // 订阅的那一刻就把收听端打开 —— 一页只显示余额、自己从不花钱时，它听得见别页那一声，
+  // 靠的全是这一行。
+  openBalanceChannel();
   return () => {
     listeners.delete(listener);
   };
@@ -52,16 +95,29 @@ export function createLatestReadGate(): () => () => boolean {
   };
 }
 
-/** Announce that a charge settled and any displayed balance is now stale. Iterates a
- *  snapshot so a listener that subscribes/unsubscribes during delivery cannot change
- *  who this round reaches, and one throwing listener cannot swallow the rest — a
- *  display bug must never surface as a failure on a spend path. */
-export function notifyBalanceRefresh(): void {
+/** Deliver to this tab's own displays. Iterates a snapshot so a listener that
+ *  subscribes/unsubscribes during delivery cannot change who this round reaches, and one
+ *  throwing listener cannot swallow the rest — a display bug must never surface as a
+ *  failure on a spend path. */
+function deliverLocally(): void {
   for (const listener of [...listeners]) {
     try {
       listener();
     } catch (error) {
       console.warn("balance-refresh listener failed (non-fatal):", error);
     }
+  }
+}
+
+/** Announce that a charge settled and any displayed balance is now stale — in this tab
+ *  and, FSE-010, in whatever other tabs the merchant left open on the same origin. The
+ *  broadcast is best-effort by design: it goes out AFTER this tab's own displays have been
+ *  told, and a channel that is missing or refuses the message changes nothing here. */
+export function notifyBalanceRefresh(): void {
+  deliverLocally();
+  try {
+    openBalanceChannel()?.postMessage(BALANCE_REFRESH_CHANNEL);
+  } catch (error) {
+    console.warn("balance-refresh broadcast failed (non-fatal):", error);
   }
 }
