@@ -131,6 +131,12 @@ const NON_DEPLOY_ENV: Readonly<Record<string, string>> = {
     "apps/web/scripts/create-credit-packs.mjs 的第二道确认:拿 live Stripe key 跑必须显式 ALLOW_LIVE=1。",
   I_UNDERSTAND_THIS_SPENDS: "scripts/tools/_interlock.mjs 的花钱确认锁。",
   I_UNDERSTAND_THIS_TOUCHES_PROD: "scripts/tools/_interlock.mjs 的碰生产确认锁。",
+  RAILWAY_LINKED_DIR:
+    "scripts/tools/mint-r2-token.mjs 在哪个目录里跑 railway CLI(railway 按目录记项目绑定)。" +
+    "默认 process.cwd();只有开发者本机的 R2 换桶换钥匙操作会读它,部署进程一个都不读。",
+  USER:
+    "scripts/tools/mint-r2-token.mjs 用它定位 macOS 钥匙串条目(security find-generic-password -a $USER)。" +
+    "这是本机登录名,由 shell 注入,不是可配置的部署变量。",
 };
 
 /** .env.example 里出现的变量名(`NAME=` 或注释掉的 `# NAME=`)。 */
