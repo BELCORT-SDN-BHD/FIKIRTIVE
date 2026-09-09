@@ -1,6 +1,6 @@
 import { toNextJsHandler } from "better-auth/next-js";
 import { auth } from "@/lib/better-auth/server";
-import { consumePasswordDoor, consumePublicAuthDoor } from "@/lib/rate-limit-gates";
+import { consumePublicAuthDoor } from "@/lib/rate-limit-gates";
 import { withCallerIdentityHeader } from "@/lib/caller-identity";
 import { HOURLY_PUBLIC_DOORS } from "@/lib/public-auth-doors";
 
@@ -23,7 +23,6 @@ const forward = {
 
 export const GET = forward.GET;
 
-const PASSWORD_SIGN_IN_PATH = "/sign-in/email";
 const SIGN_IN_CODE_VERIFY_PATH = "/sign-in/email-otp";
 
 /** Better Auth's own 429, byte for byte (api/rate-limiter/index.ts), so a caller cannot tell
@@ -58,27 +57,18 @@ function invalidSignInCode(): Response {
  * login page asks for a code through a server action (app/login/actions.ts), which runs the same
  * four-step request path the interception used to.
  *
- * What is left here is the two HOURLY caps that Better Auth cannot express (see below). Every
- * other Better Auth endpoint is untouched and goes straight to its own handler.
+ * What is left here is the HOURLY cap that Better Auth cannot express (see below), plus the
+ * sign-in-code door's one-refusal normalisation. Every other Better Auth endpoint is untouched
+ * and goes straight to its own handler.
  */
 export async function POST(request: Request): Promise<Response> {
   const pathname = new URL(request.url).pathname;
 
-  // #795 — the PATIENT half of the password door's protection.
-  //
-  // Better Auth caps /sign-in/* at 3 per 10 seconds, which ends a fast credential-stuffing run
-  // and leaves the slow one completely unbounded: 3 every 10 seconds is over a thousand attempts
-  // an hour from one address, forever. The hourly cap has to live HERE rather than in Better
-  // Auth's `customRules`, because a rule there REPLACES the burst rule instead of adding to it —
-  // writing the hourly cap in that map would have deleted the burst cap it was meant to reinforce.
-  //
-  // Counted on the CALLING ADDRESS ONLY, never on the submitted email: a 429 must never be
-  // readable as "that account exists".
-  if (pathname.endsWith(PASSWORD_SIGN_IN_PATH)) {
-    const retryAfterMs = await consumePasswordDoor(request.headers);
-    if (retryAfterMs !== null) return tooManyRequests(retryAfterMs);
-    return forward.POST(request);
-  }
+  // SIGNIN-A4 —— 这里以前的第一段是密码门（`/sign-in/email`）的每小时闸：#795 用它补 Better
+  // Auth「10 秒 3 次」挡不住的那种耐心型撞库。密码整体退役之后（docs/specs/sign-in.md 已冻结
+  // · v1）那条路径在 router 层就 404，闸没有门可守；更要紧的是闸跑在转发之前，留着它会让第
+  // 31 次请求拿到 429 而不是验收 A4 要的「一律 404」，等于给一个已退役的端点留一个可探测的
+  // 回声。所以闸随门一起撤（`consumePasswordDoor` 也一并删掉，仓库里不留一个没人调的门）。
 
   // ── THE SIGN-IN-CODE DOOR ANSWERS ONE REFUSAL, WHATEVER WENT WRONG ──────────────────────────
   //
@@ -106,7 +96,7 @@ export async function POST(request: Request): Promise<Response> {
   //     correct six digits, which only ever went to that address's inbox.
   //   · 429 — the rate limiter's own refusal. It is counted on the CALLING ADDRESS and the path,
   //     never on the submitted email (Better Auth's `createRateLimitKey(ip, path)`), so it says
-  //     nothing about the account — the same reasoning the password door above already runs on.
+  //     nothing about the account — the same reasoning every other door here runs on.
   //
   // WHAT THIS DOES NOT CLOSE, stated rather than implied: the two branches still do different
   // amounts of DATABASE work (a row that exists is consumed and re-written with an incremented
@@ -121,8 +111,8 @@ export async function POST(request: Request): Promise<Response> {
     return invalidSignInCode();
   }
 
-  // The hourly half of the three public doors — see HOURLY_PUBLIC_DOORS. Each door counts into
-  // its own bucket, so spending the registration budget never closes password reset.
+  // The hourly half of the public doors — see HOURLY_PUBLIC_DOORS. Each door counts into its own
+  // bucket, so spending one door's budget never closes another.
   const hourlyDoor = HOURLY_PUBLIC_DOORS.find((door) => pathname.endsWith(door));
   if (hourlyDoor) {
     const retryAfterMs = await consumePublicAuthDoor(hourlyDoor, request.headers);
@@ -130,8 +120,8 @@ export async function POST(request: Request): Promise<Response> {
     return forward.POST(request);
   }
 
-  // THE SIGN-IN-CODE DOOR GETS NO HOURLY BUCKET OF ITS OWN, unlike the password door above, and
-  // that is a decision rather than an oversight.
+  // THE SIGN-IN-CODE DOOR GETS NO HOURLY BUCKET OF ITS OWN, and that is a decision rather than
+  // an oversight.
   //
   // The patient attack an hourly cap exists to stop is guessing, and guessing is already bounded
   // where it cannot be routed around: a wrong code spends one of three attempts recorded ON THE

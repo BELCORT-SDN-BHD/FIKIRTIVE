@@ -184,7 +184,7 @@ describe("SIGNIN-A4 · 退役的三个地址不在登录墙后面 —— 进得�
 });
 
 /**
- * #543 + #795 r3 —— 三道公开门的限流,现在是**两层**,这个 describe 断言的是各自的真实位置。
+ * #543 + #795 r3 —— 公开门的限流,现在是**两层**,这个 describe 断言的是各自的真实位置。
  *
  * 这里原本断言三道门在 Better Auth 的 `customRules` 里各有一条每小时规则。#795 把那三条撤了,
  * 原因是库执行不出来:`storage: "database"` 时它按 `max(全局 window, 自带特殊规则窗口)` = 60 秒
@@ -198,16 +198,17 @@ describe("#543 · the newly public endpoints carry a rate-limit fail-safe", () =
   // r5/r7 —— 门的清单不在这里手抄一份,而是从**唯一那份清单**读出来。r7 把它从路由文件搬到
   // lib/public-auth-doors.ts:路由是请求入口,不是别处读数据的地方(搬家的完整理由,以及
   // 「多一个导出会炸 next build」这个说法为什么在本 app 上不成立,都写在那个文件里)。
-  // 第三道门(验证信重发)从清单里消失时,下面的断言会立刻红,而不是安静地少测一道门。
+  //
+  // SIGNIN-A4 —— 清单原本三道:注册、重置密码、验证信重发。前两道随密码退役(规格 §1.4 明写
+  // 「`HOURLY_PUBLIC_DOORS` 里的密码门一并撤下」),今天只剩验证信重发这一道;它们变成 404 之后
+  // 的性质由 better-auth-route.test.ts 的 SIGNIN-A4 那一组钉。
   let PUBLIC_DOORS: readonly string[] = [];
   beforeAll(async () => {
     ({ HOURLY_PUBLIC_DOORS: PUBLIC_DOORS } = await import("@/lib/public-auth-doors"));
   });
 
-  it("路由清单就是这三道门 —— 少一道就是少一道闸", () => {
-    expect([...PUBLIC_DOORS].sort()).toEqual(
-      ["/request-password-reset", "/send-verification-email", "/sign-up/email"].sort(),
-    );
+  it("SIGNIN-A4 —— 路由清单只剩验证信重发这一道,密码那两道随门撤下", () => {
+    expect([...PUBLIC_DOORS]).toEqual(["/send-verification-email"]);
   });
 
   beforeEach(async () => {
@@ -233,17 +234,17 @@ describe("#543 · the newly public endpoints carry a rate-limit fail-safe", () =
   });
 
   it("行为上:同一个出口地址把每小时闸打满之后,公开门回 429", async () => {
-    // 走的是真实请求路径(路由包装层),不是配置断言。用密码重置这道门:它不建账号、不发信
-    // (地址不在名单上),所以这条用例只花计数,不留下别的痕迹。
+    // 走的是真实请求路径(路由包装层),不是配置断言。用验证信重发这道门:地址不在名单上,
+    // 它不建账号、不发信,所以这条用例只花计数,不留下别的痕迹。
     // 注:BA 自己的限流器在测试环境是关的(它默认只在生产开),所以这里量到的就是我们这一层。
     const { POST } = await import("@/app/api/better-auth/[...all]/route");
     const { PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR } = await import("@/lib/rate-limit-gates");
     const press = () =>
       POST(
-        new Request("http://localhost:3100/api/better-auth/request-password-reset", {
+        new Request("http://localhost:3100/api/better-auth/send-verification-email", {
           method: "POST",
           headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.77" },
-          body: JSON.stringify({ email: newEmail(), redirectTo: "/" }),
+          body: JSON.stringify({ email: newEmail(), callbackURL: "/" }),
         }),
       );
 
@@ -255,21 +256,25 @@ describe("#543 · the newly public endpoints carry a rate-limit fail-safe", () =
     expect(Number(refused.headers.get("X-Retry-After"))).toBeGreaterThan(0);
   }, 120_000);
 
-  it("每道门各有各的桶 —— 打满其中一道,另外每一道都还是满额(逐门实测)", async () => {
+  it("每道门各有各的桶 —— 打满一道,同一个地址在别的门上还是满额", async () => {
+    // SIGNIN-A4 —— 清单今天只剩一道门,所以「另一道」拿产品里另一个真实的 authdoor 主体来比:
+    // 桶是按**门的路径**分的(`authdoor:<door>:<caller>`),这一条钉的正是那个分法。上一版靠
+    // 清单里恰好有三道门来验,门一撤这条就无从跑起 —— 换成直接对着分桶规则验,它不随清单长短
+    // 失效。
     const { consumePublicAuthDoor, PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR } = await import("@/lib/rate-limit-gates");
     const headers = new Headers({ "x-forwarded-for": "203.0.113.78" });
 
-    // 打满第一道。
-    const [spent, ...others] = PUBLIC_DOORS;
-    for (let i = 0; i < PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR; i += 1) {
-      expect(await consumePublicAuthDoor(spent!, headers)).toBeNull();
+    // 打满清单里的每一道门。
+    for (const spent of PUBLIC_DOORS) {
+      for (let i = 0; i < PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR; i += 1) {
+        expect(await consumePublicAuthDoor(spent, headers)).toBeNull();
+      }
+      expect(await consumePublicAuthDoor(spent, headers)).toBeGreaterThan(0);
     }
-    expect(await consumePublicAuthDoor(spent!, headers)).toBeGreaterThan(0);
 
-    // 其余每一道都必须还是满额 —— r5:上一版只验了一道,第三道门(验证信重发)没人看着。
-    expect(others.length).toBeGreaterThan(1);
-    for (const door of others) {
-      expect(await consumePublicAuthDoor(door, headers), `${door} 不该被 ${spent} 的预算连累`).toBeNull();
-    }
+    // 同一个出口地址在另一条门路径上仍然是满额 —— 预算跟着门走,不跟着地址走。
+    const other = "/a-different-public-door";
+    expect([...PUBLIC_DOORS]).not.toContain(other);
+    expect(await consumePublicAuthDoor(other, headers), `${other} 不该被别的门的预算连累`).toBeNull();
   }, 120_000);
 });
