@@ -203,4 +203,8 @@ docker compose exec postgres psql -U fikirtive -d restore_drill \
   把实测 RTO 回填上表 + 观察备份连续 7 天绿 = P0-1 验收(MASTERPLAN)。
 - 凭据轮换(旧的共用钥匙在隔离 token 生效后是否收回)。
 - 媒体(R2 内容对象)的备份策略仍是空白 —— 债 #2 点名过,本票只覆盖数据库,另立票。
-- prod R2 bucket `artlio→fikirtive` 对象迁移(B0-84,founder 排期,与本备份独立)。
+- ~~prod R2 bucket `artlio→fikirtive` 对象迁移(B0-84,founder 排期,与本备份独立)。~~
+  **✅ 2026-09-09 已完成**:换成 `fikirtive-staging` / `fikirtive-production` 两个桶,
+  每个环境一把只管自己那个桶的令牌,四个服务(staging/production × web/worker)都已换钥匙。
+  做法、幂等、半成品与回滚见 `docs/runbooks/r2-bucket-token-rotation.md`。
+  备份的 `backups/` 前缀随 production 那次搬运一起进了 `fikirtive-production`。
