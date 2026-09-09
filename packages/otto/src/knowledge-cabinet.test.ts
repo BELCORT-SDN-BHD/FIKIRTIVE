@@ -377,6 +377,27 @@ describe("FSE-006 / FSE-001 · 柜文不得发明执行层没有的限制（stag
     }
   });
 
+  // ── FSE-001 同族(Founder 2026-09-09 裁)—— 分镜手册不得再教「每镜先出首帧」 ─────────
+  //
+  // 判官 2026-09-08 抓到的同族缺陷:止血片撤掉了 Otto 对话里那条建议,分镜手册却仍然教
+  // 「每一镜先用 seedreamPrompt 出 firstFramePrompt,带演员的镜头把演员 id 放进
+  // entityIds,再拍视频」—— 带演员的首帧是图生图产物,按血统信任必被视频端拒收。
+  // 现在服务端**结构上**不为这种镜头铸首帧了(apps/web/lib/storyboard-gate1-actions.ts),
+  // 手册也必须说同一句话,否则说明书与执行层又一次分家。
+  it("FSE-001 同族 / CREATE-A9:分镜手册说清「带演员的镜头一步做完、不出首帧」", () => {
+    if (!videoElementReferencesHonoured()) return;
+    const storyboards = cabinetText().find((f) => f.path.endsWith("playbooks/storyboards.md"));
+    expect(storyboards, "分镜手册不在柜里").toBeTruthy();
+    expect(storyboards!.text).toMatch(/ONE paid step, not two/i);
+    expect(storyboards!.text).toMatch(/it gets no first frame at all/i);
+  });
+
+  it("FSE-001 同族 / CREATE-A2:不带演员的镜头,手册仍然教两步(能力一格没少)", () => {
+    const storyboards = cabinetText().find((f) => f.path.endsWith("playbooks/storyboards.md"))!;
+    expect(storyboards.text).toMatch(/Shots with no cast member are unchanged/i);
+    expect(storyboards.text).toContain("seedreamPrompt");
+  });
+
   it("FSE-001 / CREATE-A2:普通的「把这张图动起来」那条路一格没动", () => {
     // 撤掉的是**替商家发明一张合成首帧**，不是商家自己点名要动的那张图。
     const joined = cabinetText().map((f) => f.text).join("\n");
