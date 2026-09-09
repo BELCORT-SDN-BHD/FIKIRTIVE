@@ -369,11 +369,16 @@ describe("CREATE-A10 —— 像素完整性:入库的就是仓库里那串字节
   it("CREATE-A10: 生成路径上一个图像处理库都没有 —— 缩放/裁剪/转格式未验先禁", () => {
     // 像素完整性铁律的机械形态。裁剪过的图 2026-08-30 实测被拒「may contain real person」,
     // 所以这条链上不许出现任何能改像素的东西:引入 sharp/jimp/canvas 就是把那条路重新打开。
+    //
+    // ── 2026-09-09:`apps/worker/src/jobs/gen.ts` 从这张全禁名单里挪出去 ────────────────
+    // Founder 2026-09-09 裁决(规格 §5 该日「商品照自动放大」行)开了**一格**:无人像的
+    // 商品参考图可以按整数倍放大到供应商的 300px 下限。全禁的名单因此对那一个文件不再成立,
+    // 但**禁令没有变松** —— 它换成了下一条更窄、更硬的用例:那个文件里 jimp/canvas 仍旧
+    // 一个都不许有,sharp 只许住在唯一那一个函数里,而那个函数的第一句必须是演员血统闸。
     const targets = [
       ...readdirSync(path.join(REPO_ROOT, "packages/generation/src"), { recursive: true })
         .map((f) => path.join("packages/generation/src", String(f)))
         .filter((f) => f.endsWith(".ts") && statSync(path.join(REPO_ROOT, f)).isFile()),
-      "apps/worker/src/jobs/gen.ts",
       "apps/web/lib/actions.ts",
       "apps/web/lib/actor-library-seed.ts",
     ];
@@ -383,6 +388,50 @@ describe("CREATE-A10 —— 像素完整性:入库的就是仓库里那串字节
       expect(readFileSync(path.join(REPO_ROOT, file), "utf8"), `${file} 引入了图像处理库`).not.toMatch(imageLib);
     }
     expect(targets.length).toBeGreaterThan(3); // 目录真的被走到了,不是空集合空过
+  });
+
+  /**
+   * FSE-001 / CREATE-A10 —— worker 上那**唯一**一格像素再处理,不许再长出第二格。
+   *
+   * Founder 2026-09-09 裁决的原文是「允许自动放大,**仅限无人像的商品照**（演员图与任何含
+   * 人像的图一律不动）」。这一条把那句话钉成源码层面的三件事:
+   *   ① jimp / canvas 仍旧一个都不许有 —— 开的是一格,不是一扇门;
+   *   ② `sharp(` 只许出现在 `upscaledProductReferenceDataUrl` 这一个函数体内。别处出现一次,
+   *      就意味着有人在另一条路上开始改像素,而那条路上可能站着演员;
+   *   ③ 那个函数的**第一句**必须是演员血统闸。写在别的位置就意味着「先动像素、再判断」,
+   *      而那个顺序在 2026-08-30 的实测里等于把图送去被拒。
+   *
+   * 这是源码层的围栏,不是行为证明。真正跑起来「演员照一个字节都没经过 sharp」的证明在
+   * `apps/worker/src/jobs/gen-reference-upscale.test.ts`(对 sharp 的调用逐次录音)。两条一起
+   * 才完整:那一条证明今天的行为对,这一条挡住明天有人把它悄悄扩大。
+   */
+  it("FSE-001 / CREATE-A10: worker 唯一一格像素再处理只对无人像商品图开,演员那条路一格没开", () => {
+    const gen = readFileSync(path.join(REPO_ROOT, "apps/worker/src/jobs/gen.ts"), "utf8");
+
+    // ① 开的是一格,不是一扇门。
+    const otherImageLibs = /(?:^|\n)\s*(?:import[^\n]*from\s*["'](?:jimp|canvas)["']|import\s+["'](?:jimp|canvas)["']|(?:const|let|var)[^\n]*=\s*require\(["'](?:jimp|canvas)["']\))/;
+    expect(gen, "worker 引入了裁决之外的图像处理库").not.toMatch(otherImageLibs);
+
+    // ② `sharp(` 只许住在那一个函数里。
+    const start = gen.indexOf("async function upscaledProductReferenceDataUrl(");
+    expect(start, "放大函数被改名或删掉了 —— 这条围栏就失去了它守的东西").toBeGreaterThan(-1);
+    const end = gen.indexOf("\n}\n", start);
+    expect(end).toBeGreaterThan(start);
+    const fn = gen.slice(start, end);
+    const outside = gen.slice(0, start) + gen.slice(end);
+    expect(fn, "放大函数里没有真的调用 sharp —— 这条围栏在守一个空壳").toMatch(/\bsharp\s*\(/);
+    expect(outside, "gen.ts 在那一个函数之外又调了一次 sharp:第二条改像素的路").not.toMatch(/\bsharp\s*\(/);
+
+    // ③ 先判血统,再读字节、再动像素 —— 顺序本身就是那道闸。断言的是**位置关系**而不是
+    //    「必须是第几行」,所以改格式不会误报,而把闸挪到 sharp 之后一定会红。
+    const guard = fn.indexOf("lineageCarriesOfficialActor(entitySnapshot)");
+    expect(guard, "放大函数里根本没有演员血统闸").toBeGreaterThan(-1);
+    expect(guard, "血统闸排在读原件字节之后 —— 演员的图会先被读进内存").toBeLessThan(
+      fn.indexOf("storage.get("),
+    );
+    expect(guard, "血统闸排在 sharp 之后 —— 那就是「先动像素再判断」").toBeLessThan(
+      fn.search(/\bsharp\s*\(/),
+    );
   });
 });
 

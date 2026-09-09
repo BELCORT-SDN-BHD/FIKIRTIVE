@@ -25,7 +25,7 @@ import {
   referenceUnavailableMessage,
   referenceUnavailableSentence,
 } from "./gen-failure.js";
-import { MIN_REFERENCE_IMAGE_WIDTH } from "./generation-reference.js";
+import { MIN_REFERENCE_IMAGE_SIDE } from "./generation-reference.js";
 import { redactProviderNames } from "./provider-secrecy.js";
 
 /** The exact body the engine returned, straight from the recorded run. */
@@ -498,18 +498,27 @@ describe("referenceUnavailableSentence — CREATE-A2: 一份白名单,不是 pas
     expect(sentence).not.toBe(referenceUnavailableMessage("imageAsVideo"));
   });
 
-  // FSE-001(探针实测 2026-09-08):视频端在建任务之前就查参考图宽度,275×183 零花费被弹回。
-  // 那道闸落在我们**预扣之后**,所以商家会先付钱、再失败、再退款,而读到的只是一句
-  // 「没成功」—— 真正能修好它的动作(换一张大一点的图)一个字都没说。这句话必须说出尺寸,
-  // 而且那个数字只能来自闸本身的那一个常量。
+  // FSE-001(探针实测 2026-09-08 / 09-09):视频端在建任务之前就查参考图尺寸,而闸是**宽与高
+  // 各 ≥300px**(275×183 与 300×200 各被零花费弹回一次)。那道闸落在我们**预扣之后**,所以
+  // 商家会先付钱、再失败、再退款,而读到的只是一句「没成功」—— 真正能修好它的动作(换一张
+  // 大一点的图)一个字都没说。这句话必须说出尺寸,而且那个数字只能来自闸本身的那一个常量。
   it("FSE-001 / CREATE-A2: tooSmall 说的是尺寸,数字来自那一个常量,并点名要换掉它", () => {
     const sentence = referenceUnavailableMessage("tooSmall");
-    expect(sentence).toContain(String(MIN_REFERENCE_IMAGE_WIDTH));
+    expect(sentence).toContain(String(MIN_REFERENCE_IMAGE_SIDE));
     expect(sentence).toMatch(/too small/i);
     expect(sentence).toMatch(/swap/i);
     expect(sentence).not.toMatch(/isn't available any more/i);
     expect(sentence).not.toBe(referenceUnavailableMessage("notFound"));
     expect(sentence).not.toBe(referenceUnavailableMessage("unsupportedFormat"));
+  });
+
+  // FSE-001(第三场探针逐字回执:`expected the height to be at least 300px, but received a
+  // 300x200px image instead`)—— 闸是宽**与**高,所以旧那句「at least 300 pixels wide」会让
+  // 一位拿着 400×200 图的商家以为自己已经合格,换来的下一张仍然被弹回。说**短边**。
+  it("FSE-001 / CREATE-A2: tooSmall 说的是短边,不是宽度(400×200 那一类不能被误导)", () => {
+    const sentence = referenceUnavailableMessage("tooSmall");
+    expect(sentence).toMatch(/shortest side/i);
+    expect(sentence).not.toMatch(/pixels wide/i);
   });
 
   it("CREATE-A2: 两个原因一个不落 —— 表里每一句都认得出,且认回它自己", () => {
