@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   shotsNeedingMintedFirstFrame,
+  shotsDirectToVideo,
   shotsStuckWithoutInheritedFrame,
   nextSyncPhase,
   deriveShotMediaStates,
@@ -180,6 +181,57 @@ describe("#782 shotsNeedingMintedFirstFrame —— 卡面与服务端共读的�
   it("空分镜 → 空集合(不抛)", () => {
     expect(shotsNeedingMintedFirstFrame([], true)).toEqual([]);
     expect(shotsNeedingMintedFirstFrame([], false)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FSE-001 同族(Founder 2026-09-09 裁)—— 带演员的镜头不出首帧,直接出片
+//
+// 规格 §5 2026-09-08「FSE-001 同族」那一行:分镜以前对每一镜都先出一张付费首帧,带
+// @演员的镜头把演员 id 放进首帧的 entityIds(图生图)。那张首帧按血统信任必被视频端
+// 拒收 —— 商家先为一张必然作废的图付了钱,再为那条注定失败的片子付一次预扣。
+//
+// 新规矩只有一句:**这一镜 @ 到了演员,它就不出首帧**。演员的照片与商品图各作一张
+// `role:"reference_image"`,走纯文生视频。判据住在这里一次,服务端(闸①/闸②)与卡面
+// 同读,所以「卡上说要出几张」与「服务端真的会出几张」不可能分家。
+// ---------------------------------------------------------------------------
+describe("FSE-001 同族 · 带演员的镜头直接出片 —— 卡面与服务端共读的同一条规则", () => {
+  const cast = new Set(["actor-1"]);
+
+  it("FSE-001 / CREATE-A2: @ 到演员的镜头进「直接出片」集合,只 @ 商品的不进", () => {
+    const shots = [
+      { index: 0, shotId: "s0", entityIds: ["actor-1", "mug"] },
+      { index: 1, shotId: "s1", entityIds: ["mug"] },
+      { index: 2, shotId: "s2" },
+    ];
+    expect(shotsDirectToVideo(shots, cast).map((s) => s.shotId)).toEqual(["s0"]);
+  });
+
+  it("FSE-001 / CREATE-A9: 直接出片的镜头不进「要铸首帧」名单(那一步的钱不该收)", () => {
+    const shots = [
+      { index: 0, shotId: "s0", entityIds: ["actor-1"] },
+      { index: 1, shotId: "s1", entityIds: ["mug"] },
+    ];
+    const direct = new Set(shotsDirectToVideo(shots, cast).map((s) => s.shotId));
+    expect(shotsNeedingMintedFirstFrame(shots, false, direct).map((s) => s.shotId)).toEqual(["s1"]);
+  });
+
+  it("FSE-001 / CREATE-A9: 接续开且第一镜带演员 ⇒ 一张首帧都不铸", () => {
+    const shots = [
+      { index: 0, shotId: "s0", entityIds: ["actor-1"] },
+      { index: 1, shotId: "s1" },
+    ];
+    const direct = new Set(["s0"]);
+    expect(shotsNeedingMintedFirstFrame(shots, true, direct)).toEqual([]);
+  });
+
+  it("FSE-001 / CREATE-A2: 不传直接出片集合 ⇒ 与这条修改之前逐字相同", () => {
+    const shots = [
+      { index: 0, shotId: "s0", entityIds: ["actor-1"] },
+      { index: 1, shotId: "s1", entityIds: ["mug"] },
+    ];
+    expect(shotsNeedingMintedFirstFrame(shots, false).map((s) => s.shotId)).toEqual(["s0", "s1"]);
+    expect(shotsDirectToVideo(shots, new Set<string>())).toEqual([]);
   });
 });
 

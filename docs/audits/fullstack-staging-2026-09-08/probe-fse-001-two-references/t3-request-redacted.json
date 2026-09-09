@@ -1,0 +1,27 @@
+{
+  "model": "dreamina-seedance-2-0-mini-260615",
+  "content": [
+    {
+      "type": "image_url",
+      "image_url": {
+        "url": "<base64 A1-aisyah-closeup.jpg>"
+      },
+      "role": "reference_image"
+    },
+    {
+      "type": "image_url",
+      "image_url": {
+        "url": "<base64 t3-mug-400.jpg (AI 商品照 product-mug.jpeg 1920x1920 先 lanczos 缩到 200x200 再 lanczos 2x 放大到 400x400)>"
+      },
+      "role": "reference_image"
+    },
+    {
+      "type": "text",
+      "text": "The woman holds the coral travel mug and smiles at the camera, soft studio light, static camera"
+    }
+  ],
+  "resolution": "480p",
+  "duration": 5,
+  "generate_audio": false,
+  "watermark": false
+}

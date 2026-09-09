@@ -1464,7 +1464,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           lineageHasCastMember = lineageCarriesOfficialActor(src.entitySnapshot);
         } else if (job.shotId) {
           const sourceGen = await prisma.generation.findFirst({
-            where: { shotId: job.shotId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+            // FSE-001 同族 —— 租户那一格补上,与它上面那条(`generationReferenceScope`)同形。
+            // 这一条路今天不越界(Shot 与 Generation 都由 job.ownerId 那条链子建出来),但
+            // 「同一件事在相邻两行有两种写法」正是越界迟早发生的形状:身份只能来自
+            // 已认证的 server principal(`job.ownerId`),每一条读都写出来。
+            where: { shotId: job.shotId, ownerId: job.ownerId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
             orderBy: { version: "desc" }, include: { asset: true },
           });
           if (!sourceGen) {

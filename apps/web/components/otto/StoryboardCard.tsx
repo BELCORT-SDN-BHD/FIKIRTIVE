@@ -727,11 +727,19 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   }
 
   const shots = view.shots;
+  // FSE-001 同族(Founder 2026-09-09 裁)—— 哪几镜**直接出片**:它们 @ 到了演员,所以演员
+  // 参考照与商品照各作一张参考、片子从文字起步,首帧那一步整个不存在(不铸卡、不收钱)。
+  // 判据要读 `Entity.type`,只有服务端做得到 —— 这里读的是它的答案,不自己推。还没问过
+  // 服务端(挂载那一瞬,reports=null)时是空集合:卡面顶多多说一张,而闸① 那一边无论如何
+  // 都不会为这一镜铸首帧,所以永远不会多收一次钱。挂载即发一次 sync,这个开场最多活一个来回。
+  const directShotIds = new Set(
+    (reports ?? []).filter((r) => r.directToVideo).map((r) => r.shotId),
+  );
   // #782: how many first frames gate① would actually MAKE (and charge for) — the one shared
   // rule, so the button never promises a number the server wouldn't mint. With continuous
   // shots on that is the first shot alone; the rest inherit the frame the previous clip
   // ended on, for free.
-  const missingCount = shotsNeedingMintedFirstFrame(shots, view.continuity).length;
+  const missingCount = shotsNeedingMintedFirstFrame(shots, view.continuity, directShotIds).length;
   // #782 r3 (判官 r2 P1-a/P1-b): shots gate③ has RULED cannot inherit (it tried on the shot
   // before them and that clip has no usable closing frame) are STUCK, not waiting — they're
   // part of `missingCount` above and get their own honest per-shot message below. The ruling
@@ -743,7 +751,16 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   // than missing something the merchant has to make.
   const inheritingShotIds = new Set(
     view.continuity
-      ? shots.filter((s, i) => i > 0 && !s.firstFrameGenerationId && !stuckShotIds.has(s.shotId)).map((s) => s.shotId)
+      ? shots
+          .filter(
+            (s, i) =>
+              i > 0 &&
+              !s.firstFrameGenerationId &&
+              !stuckShotIds.has(s.shotId) &&
+              // FSE-001 同族:直接出片的镜头不等任何人交棒 —— 它没有首帧这一步。
+              !directShotIds.has(s.shotId),
+          )
+          .map((s) => s.shotId)
       : [],
   );
   const bal = balanceUsd ?? 0;
@@ -755,9 +772,14 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const showGenerateAll = missingCount > 0 && idleForAffordance;
 
   // Gate②: "Make all videos" is visible when ≥1 shot has a frame and no video yet.
-  const videoEligibleCount = shots.filter((s) => s.firstFrameGenerationId && !s.videoGenerationId).length;
+  // FSE-001 同族:直接出片的镜头**没有首帧也算数** —— 它此刻就做得出来。
+  const videoEligibleCount = shots.filter(
+    (s) => (s.firstFrameGenerationId || directShotIds.has(s.shotId)) && !s.videoGenerationId,
+  ).length;
   // Shots with a first frame still missing (would need one before their video can be made).
-  const videoBlockedCount = shots.filter((s) => !s.firstFrameGenerationId).length;
+  const videoBlockedCount = shots.filter(
+    (s) => !s.firstFrameGenerationId && !directShotIds.has(s.shotId),
+  ).length;
   // In continuous mode those shots are not blocked ON THE MERCHANT — they are waiting for the
   // clip before them to finish, which then hands them its closing frame. Say that instead.
   const videoWaitingCount = inheritingShotIds.size;
@@ -830,6 +852,8 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
               // needs its OWN first frame (via Generate all below), it won't continue from
               // the shot before it.
               const isStuck = stuckShotIds.has(shot.shotId);
+              // FSE-001 同族:这一镜 @ 到了演员 —— 它直接出片,没有首帧这一步。
+              const isDirectToVideo = directShotIds.has(shot.shotId);
               // Any per-shot confirm currently open (either gate) suppresses the OTHER shots'
               // action buttons — clone gate①'s "only one regen at a time" rule, extended to videos.
               const anyRegenOpen = regenShotId !== null || regenVideoShotId !== null;
@@ -870,17 +894,22 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                   {isEditing ? (
                     <div className="mt-1 flex flex-col gap-3">
                       <FieldGroup className="gap-3">
-                        <Field data-disabled={busy}>
-                          <FieldLabel htmlFor={`frame-prompt-${shot.shotId}`}>First frame</FieldLabel>
-                          <Textarea
-                            id={`frame-prompt-${shot.shotId}`}
-                            value={draftFf}
-                            onChange={(e) => setDraftFf(e.target.value)}
-                            rows={2}
-                            disabled={busy}
-                            className="field-sizing-fixed min-h-0"
-                          />
-                        </Field>
+                        {/* FSE-001 同族:直接出片的镜头没有首帧这一步,所以这里不摆那一格 ——
+                            它已有的那段文字原样保留(保存时照旧带走 draftFf),万一日后这一镜
+                            不再点名演员,它立刻又派得上用场。 */}
+                        {!isDirectToVideo && (
+                          <Field data-disabled={busy}>
+                            <FieldLabel htmlFor={`frame-prompt-${shot.shotId}`}>First frame</FieldLabel>
+                            <Textarea
+                              id={`frame-prompt-${shot.shotId}`}
+                              value={draftFf}
+                              onChange={(e) => setDraftFf(e.target.value)}
+                              rows={2}
+                              disabled={busy}
+                              className="field-sizing-fixed min-h-0"
+                            />
+                          </Field>
+                        )}
                         <Field data-disabled={busy}>
                           <FieldLabel htmlFor={`video-prompt-${shot.shotId}`}>Video</FieldLabel>
                           <Textarea
@@ -903,15 +932,26 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                     </div>
                   ) : (
                     <>
-                      <div className="text-[0.75rem] text-muted-foreground">
-                        <span className="font-semibold text-foreground">First frame · </span>{shot.firstFramePrompt}
-                      </div>
+                      {/* FSE-001 同族:直接出片的镜头没有首帧这一步,所以连那句提示词都不
+                          该摆在商家眼前 —— 摆着它,商家读到的就是一件不会发生的事。 */}
+                      {!isDirectToVideo && (
+                        <div className="text-[0.75rem] text-muted-foreground">
+                          <span className="font-semibold text-foreground">First frame · </span>{shot.firstFramePrompt}
+                        </div>
+                      )}
                       <div className="text-[0.75rem] text-muted-foreground">
                         <span className="font-semibold text-foreground">Video · </span>{shot.videoPrompt}
                       </div>
+                      {/* FSE-001 同族 —— 这一镜为什么少了一步,以及少的那一步的钱。 */}
+                      {isDirectToVideo && (
+                        <div className="text-[0.75rem] text-muted-foreground">
+                          Goes straight to video — the cast and product photos are its references, so there is no
+                          first frame to make or pay for.
+                        </div>
+                      )}
 
                       {/* First-frame: image, status or nothing — ONE derived state decides. */}
-                      <FrameSlot state={frameState} shotIndex={shot.index} />
+                      {!isDirectToVideo && <FrameSlot state={frameState} shotIndex={shot.index} />}
                       {/* #782: this shot has nothing to make — it opens on the closing moment of
                           the shot before it, once that one is done. */}
                       {isInheriting && frameState.kind !== "in-progress" && (
@@ -964,8 +1004,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                         )
                       )}
 
-                      {/* --- Video block (only for shots that HAVE a first frame) --- */}
-                      {hasFrame && (
+                      {/* --- Video block (only for shots that HAVE a first frame — or, FSE-001
+                           同族, that go straight to video and need none) --- */}
+                      {(hasFrame || isDirectToVideo) && (
                         <div className="mt-1 flex flex-col gap-2">
                           <Separator />
                           {/* Duration select (model-driven options; editing-class → disabled while generating). */}

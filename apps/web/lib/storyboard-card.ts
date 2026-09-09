@@ -34,6 +34,9 @@ export interface StoryboardCardView {
   shots: StoryboardShotView[];
 }
 
+/** 缺省的空集合 —— 一个常量,免得每次调用都造一个新的 Set。 */
+const EMPTY_SHOT_IDS: ReadonlySet<string> = new Set<string>();
+
 /**
  * #782 —— 闸① 到底会为**哪些**镜头铸(要花钱的)首帧图子卡。**唯一权威**,服务端动作层与
  * 卡面同读这一条,所以「卡上说要出几张」和「服务端真的会出几张」不可能分家。
@@ -56,17 +59,62 @@ export interface StoryboardCardView {
 export function shotsNeedingMintedFirstFrame<
   T extends {
     index: number;
+    shotId?: string;
     firstFrameGenerationId?: string;
     videoCardId?: string;
     inheritBlockedByVideoCardId?: string;
   },
->(shots: readonly T[], continuity: boolean): T[] {
-  const missing = [...shots].sort((a, b) => a.index - b.index).filter((s) => !s.firstFrameGenerationId);
+>(
+  shots: readonly T[],
+  continuity: boolean,
+  /**
+   * FSE-001 同族(Founder 2026-09-09 裁)—— 这一趟**直接出片**的那几镜的 shotId。
+   *
+   * 它们一张首帧都不要:演员的照片与商品图各作一张参考图,片子从文字起步(见
+   * `shotsDirectToVideo`)。缺省空集合 ⇒ 与这条修改之前逐字相同。
+   *
+   * 收的是 **shotId**,不是元素 id:判断「哪几个元素是演员」要读 `Entity.type`,只有
+   * 服务端做得到;卡面读的是服务端算好的那份答案(sync 回传),两边因此不可能各算各的。
+   */
+  directToVideoShotIds: ReadonlySet<string> = EMPTY_SHOT_IDS,
+): T[] {
+  const notDirect = (s: T): boolean => !(s.shotId !== undefined && directToVideoShotIds.has(s.shotId));
+  const missing = [...shots]
+    .sort((a, b) => a.index - b.index)
+    .filter((s) => !s.firstFrameGenerationId && notDirect(s));
   if (!continuity) return missing;
   const first = [...shots].sort((a, b) => a.index - b.index)[0];
   const eligible = first && !first.firstFrameGenerationId ? [first] : [];
   for (const shot of shotsStuckWithoutInheritedFrame(shots, continuity)) eligible.push(shot);
-  return eligible.sort((a, b) => a.index - b.index);
+  return eligible.filter(notDirect).sort((a, b) => a.index - b.index);
+}
+
+/**
+ * FSE-001 同族(Founder 2026-09-09 裁)—— 哪几镜**直接出片**。
+ *
+ * 判据只有一句:**这一镜 @ 到了至少一个演员(CHARACTER 元素)**。
+ *
+ * ── 为什么(规格 §5 2026-09-08「FSE-001 同族」那一行)──────────────────────────
+ * 分镜此前对每一镜都先出一张付费首帧,带演员的镜头把演员 id 放进那张首帧的 entityIds
+ * (图生图)。而按规格 §1 的血统信任,一张带演员的图生图产物送进视频端必被拒收
+ * (staging 实测:HTTP 400 `InputImageSensitiveContentDetected.PrivacyInformation`,
+ * 退款一次)。于是商家先为一张必然作废的图付一次钱,再为一条注定失败的片子付一次预扣。
+ *
+ * 正路是同一份规格里已经落地的那一条(PR #1273):演员参考照的**原件**与这一镜 @ 到的
+ * 商品照各作一张 `role:"reference_image"`,走**纯文生视频** —— 不合成、不做首帧。
+ * 所以这几镜的首帧那一步整个不存在:不铸卡、不报价、不收钱。
+ *
+ * 不带演员的镜头一格没动(首帧 → 出片,两步照旧)。
+ *
+ * 归属由调用方给的 `castEntityIds` 定,而那一份只能来自服务端按 ownerId 读出来的元素
+ * (`Entity.type === "CHARACTER"`)—— 别家店的演员 id 根本不会出现在里面,所以跨租户的
+ * id 在这里数出 0,那一镜照旧走首帧那条路,并在铸卡层被整轮拒绝(FSE-002 那条口径)。
+ */
+export function shotsDirectToVideo<T extends { shotId: string; entityIds?: string[] }>(
+  shots: readonly T[],
+  castEntityIds: ReadonlySet<string>,
+): T[] {
+  return shots.filter((s) => (s.entityIds ?? []).some((id) => castEntityIds.has(id)));
 }
 
 /**
@@ -218,6 +266,14 @@ export interface ShotMediaSyncReport {
   shotId: string;
   frame: ShotMediaReport;
   video: ShotMediaReport;
+  /**
+   * FSE-001 同族 —— 这一镜**直接出片**(它 @ 到了演员,见 `shotsDirectToVideo`)。
+   *
+   * 判据要读 `Entity.type`,只有服务端做得到,所以它跟每一格媒体状态走同一条通道:
+   * 服务端说,卡面只用。缺席(老答复、还没问过)= 未知 ⇒ 卡面按「照旧两步」渲染,
+   * 而闸① 那一边无论如何都不会为这一镜铸首帧 —— 少说一句话,永远不会多收一次钱。
+   */
+  directToVideo?: boolean;
 }
 
 /** 一个镜头**一类媒体**此刻的渲染态,穷举无遗漏。渲染与按钮只读它,switch 必须穷尽
