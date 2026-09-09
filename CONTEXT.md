@@ -41,7 +41,10 @@ Reading the table below:
 - **Otto IQ** (营销知识真源) — The canonical marketing knowledge layer for one Brand: its voice,
   audiences, **Brand Kit** (visual identity), product catalog, approved knowledge and rules. It may
   link to CRM, commerce and Library records by stable identity, but does not copy their raw contacts,
-  consent, inventory, orders or media. Otto reads Otto IQ so every surface uses the same marketing
+  consent, inventory, orders or media. A **Product's identity** (name, main image) is the Library
+  Element (`Entity` of type PRODUCT); the catalog entry holds marketing facts (price, selling angle,
+  category) and links to that Element by id — one product, one identity (Founder 2026-09-10,
+  `docs/specs/brand-product-identity.md`). Otto reads Otto IQ so every surface uses the same marketing
   facts. _Avoid:_ Brand Brain, profile, memory, knowledge base (one subsection), universal database.
 
 - **Otto IQ engine** (营销知识生命周期引擎 / internal) — The future internal capability that manages
@@ -182,7 +185,9 @@ Reading the table below:
 
 - **Entity** (实体) — A reusable cast member that recurs across shots: a Character, Location,
   Product, or Brandmark. Owner-scoped, not project-scoped (the same Entity appears in many
-  projects). _Avoid:_ asset, reference, character (CHARACTER is one *type* of Entity, not a synonym).
+  projects). For Products, the Entity **is** the product's identity; Brand-page marketing facts
+  attach to it by id (see Otto IQ). _Avoid:_ asset, reference, character (CHARACTER is one *type*
+  of Entity, not a synonym).
 
 - **Element** (元素) — The **user-facing UI label for an Entity**. Same thing; the screen says
   "Elements", the code says "Entity". Keep this mapping 1:1 — never invent a third word.
@@ -355,4 +360,7 @@ Reading the table below:
 - **Library** (资产库) — The owner-global truth for Generation history, Uploads, Favorites,
   Collections and reusable Elements across all Canvases. Favorites and Collections are links, not
   copies. Deleting from the Library explicitly removes the saved item
-  from Library views; deleting a Canvas card does not. _Avoid:_ My Stuff, project library.
+  from Library views; deleting a Canvas card does not. The Library **shows, organises and reuses**;
+  any paid edit (variation, regenerate, crop-to-new-image) happens on the Canvas with the item
+  attached — one entry, one money path (Founder 2026-09-10, DESIGN-001). _Avoid:_ My Stuff,
+  project library.
