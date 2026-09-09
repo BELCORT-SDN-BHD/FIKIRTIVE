@@ -45,6 +45,10 @@ import {
   // 扩展名对得上)。这里的四处解析从前各写一份 where、四份都多写了一格 `projectId`,
   // 于是跨画布引用哪怕过了前面所有的门,也会在这里 fail-closed 退款。
   generationReferenceScope,
+  // FSE-001(Founder 2026-09-09)—— 商品参考图自动放大:计划与「哪些图一格不许动像素」的
+  // 判据都在 core,铸卡侧(`packages/otto/src/skills/propose.ts`)读的是同一对函数。
+  referenceUpscalePlan,
+  lineageCarriesOfficialActor,
   REFERENCE_IMAGE_EXTS,
   REFERENCE_VIDEO_EXTS,
   type GenJobData,
@@ -53,6 +57,10 @@ import {
   type GenerationReceipt,
 } from "@fikirtive/core";
 import { storage } from "../storage.js";
+// FSE-001(Founder 2026-09-09)—— 商品参考图放大用的唯一图像库。仓库里本来就有它
+// (`next` 的 optionalDependency),这里把它提成 worker 的直接依赖,免得放大逻辑靠一条
+// 传递依赖活着。不引第二个图像库:视频那条路的 ffmpeg 是外部二进制,与这里无关。
+import sharp from "sharp";
 import { captureMoneyPathError, founderAlert } from "../alerting.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
@@ -224,25 +232,53 @@ function jobVideoReferenceIds(
 }
 
 /**
- * FSE-001 —— **这张图的血统里有没有官方演员。**
+ * FSE-001(Founder 2026-09-09)—— 一张**商品**参考图,该原样送还是先放大。
  *
- * `Generation.entitySnapshot` 是出图那一刻按 `job.entityIds` 冻下来的引用链
- * (`{ entities: [{ id, name, type, variantId, refHashes }] }`,本文件出图处构造;上传路
- * 由 `apps/web/lib/upload-actions.ts` 的 `buildEntitySnapshot` 写同样的形状)。演员是
- * `type === "CHARACTER"` 的 Entity,所以「他从 Library 挑过演员」在库里就是这一格。
+ * 返回一条 `data:` URL(放大产物)或 `null`(什么都不做,调用方照旧走原件的签名 URL)。
  *
- * 只用来选拒绝时读哪一句(`personRejectionSentence`),不参与选型、报价、预扣或计费。
+ * ── 三道闸,顺序就是它们的理由 ──────────────────────────────────────────────────
+ * ① **带演员血统的图一格不动**(裁决原文「仅限无人像的商品照,演员图与任何含人像的图一律
+ *    不动」)。放大是像素级再处理,而规格 §5 2026-08-30「像素完整性铁律」的实证正是:对已
+ *    过门的文生图做再处理 ⇒ 视频端当作真人拒收。所以这一档连字节都不读。
+ * ② **只有元数据说「要放大」才读字节**。别的每一档(够大 / 读不出尺寸)都原路返回 `null`,
+ *    走的是与这条修改之前**逐字相同**的签名 URL 路 —— 零额外 R2 读、零额外延迟。
+ *    读不出尺寸那一档为什么可以就这么放过:本站生成的图短边最小 1344px
+ *    (`GEN_IMAGE_SIZES`,@fikirtive/core),不可能小于 300;而宽高恰恰只有本站生成的资产
+ *    才是空的(ingest 只给 UPLOAD 派 ffprobe)。**已知的缺口**:一张上传图在 ingest 还没
+ *    量完就被拿去生成 ⇒ 这一趟不放大,与今天逐字相同(供应商弹回、退款)。
+ * ③ 读到字节之后**以 sharp 量到的真实尺寸重算一次计划** —— 元数据是二手的,像素是一手的。
+ *    真实尺寸算下来不需要放大 ⇒ 同样回 `null`,一个字节都不改。
  *
- * 形状不对(老行、`{}`、手写脏数据)一律当作**没有演员** —— 与其替一条证不出来的血统
- * 编话,不如回落到原来那句,那一句在「他没选过演员」时才是真出路。
+ * 两侧同一份口径:铸卡侧(`packages/otto/src/skills/propose.ts`)按同一个
+ * `referenceUpscalePlan` 读同一对元数据决定要不要说那句披露,所以「卡上说放大了 N 张」与
+ * 「worker 真放大了 N 张」不可能分家。
  *
- * 只看这一行自己的快照,不递归上溯:Generation 没有指向上一张图的列,追链要另建来源边
- * (已在规格 §5 的 typed refs 那条里)。少认一次 ⇒ 回落到原句,是安全的那一半。
+ * 像素完整性:读的是原件、写的是一份**只活在这一次请求里**的副本。不落库、不写 R2、不碰
+ * `Asset` 行,所以原件的 sha256 一个 bit 都不会变。
+ *
+ * 为什么产物走 `data:` URL 而不是先传上去再签名:传上去就等于落库(内容寻址的 put 会新建
+ * 一行 Asset),那正是铁律禁止的「回流生成路径」;而供应商实测收 `data:image/...;base64,`
+ * (三场探针的每一张参考图都是这样送的,`t3-request-redacted.json` / `build_params.py`)。
+ * 代价说清楚:请求体变大(放大后的 JPEG,几百 KB 量级),换来的是原件永不被替换。
  */
-function lineageCarriesOfficialActor(entitySnapshot: unknown): boolean {
-  const entities = (entitySnapshot as { entities?: unknown } | null)?.entities;
-  if (!Array.isArray(entities)) return false;
-  return entities.some((e) => (e as { type?: unknown } | null)?.type === "CHARACTER");
+async function upscaledProductReferenceDataUrl(
+  asset: { ownerId: string; contentHash: string; ext: string; width: number | null; height: number | null },
+  entitySnapshot: unknown,
+): Promise<string | null> {
+  if (lineageCarriesOfficialActor(entitySnapshot)) return null;
+  if (referenceUpscalePlan(asset).action !== "upscale") return null;
+  const bytes = await storage.get(storageKey(asset.ownerId, asset.contentHash, asset.ext));
+  const meta = await sharp(bytes).metadata();
+  const plan = referenceUpscalePlan({ width: meta.width, height: meta.height });
+  if (plan.action !== "upscale") return null;
+  // 格式照原件走:PNG 的透明通道转成 JPEG 会被填成黑底,那是**改构图**,不是放大。
+  const format = meta.format === "png" ? "png" : meta.format === "webp" ? "webp" : "jpeg";
+  const out = await sharp(bytes)
+    // lanczos3 = 探针里 ffmpeg `flags=lanczos` 的同一族核。整数倍同乘 ⇒ `fill` 不产生形变。
+    .resize(plan.width, plan.height, { kernel: "lanczos3", fit: "fill" })
+    .toFormat(format)
+    .toBuffer();
+  return `data:image/${format};base64,${Buffer.from(out).toString("base64")}`;
 }
 
 function jobBilledUnits(outputs: { receipt?: GenerationReceipt }[]): number | null {
@@ -1529,7 +1565,25 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             await failClosedWithRefund(job, "a reference image on this card isn't available for this account");
             return;
           }
-          const refUrl = (await storage.presignedGet(storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext), 3600)) ?? "";
+          // FSE-001(Founder 2026-09-09「允许自动放大,仅限无人像的商品照」)—— 供应商在
+          // 建任务前查参考图**宽与高各 ≥300px**;短边落在 [100, 300) 的商品照在这里按整数倍
+          // 放大到刚好过门,产物只进这一次请求。够大、或不许动像素的那几档回 `null`,走的
+          // 就是下面那条与本次修改之前逐字相同的签名 URL 路。
+          //
+          // 放大失败不许把它变成一次「已经付了钱的失败」:这里还在付费调用**之前**,所以
+          // 一律回落成 `REFERENCE_ASSET_UNREACHABLE`(与同一循环里取不到文件那一档同一句、
+          // 同一条重试语义),而不是让一个 sharp 的异常裸奔到通用失败文案。
+          let upscaledDataUrl: string | null;
+          try {
+            upscaledDataUrl = await upscaledProductReferenceDataUrl(ref.asset, ref.entitySnapshot);
+          } catch (e) {
+            console.error(`[gen] ${job.id}: video reference image could not be enlarged — refusing to spend — ${sanitizeError(e)}`);
+            throw new Error(REFERENCE_ASSET_UNREACHABLE);
+          }
+          const refUrl =
+            upscaledDataUrl ??
+            (await storage.presignedGet(storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext), 3600)) ??
+            "";
           if (provider.name !== "mock" && !refUrl) {
             // Codex QA-CRE-007 —— 落库的是商家读得懂的那一句,诊断只进日志。
             console.error(`[gen] ${job.id}: video reference image unreachable — refusing to spend`);

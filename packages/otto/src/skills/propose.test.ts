@@ -4,7 +4,7 @@ import {
   REFERENCE_VIDEO_MODEL,
   DEFAULT_IMAGE_MODEL, PRO_IMAGE_MODEL,
   activeVideoModel, buildGenRequestFromCard, displayCredits, pricedGenCredits, redactProviderNames,
-  referenceUnavailableMessage,
+  referenceUnavailableMessage, REFERENCE_IMAGE_EXTS,
   routeVideoModel, videoDefaults, VIDEO_EDIT_OPENING, type GenVideoModel,
 } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
@@ -2529,12 +2529,13 @@ describe("FSE-001 —— 演员 + 商品图 = 一步出片", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FSE-001 —— 付费前的参考图尺寸闸
+// FSE-001 —— 付费前的参考图尺寸闸(宽高双查)与自动放大披露
 //
-// 探针实测(2026-09-08,USD 0.18):视频端在**建任务之前**就要求参考图宽度 ≥300px,
-// 一张 275×183 的原件零花费被弹回。那道闸在供应商那边不花钱,但它落在我们**预扣之后**
-// —— 商家会先看到一张报了价的卡、按下 Generate、预扣、失败、退款,读到的只是一句
-// 「没成功」。所以查在铸卡之前:$0、零 GEN_CARD、零 GenJob、账本零新增行。
+// 探针实测三场(2026-09-08 ×2、09-09 ×1,USD 0.74):视频端在**建任务之前**就查参考图
+// 尺寸,闸是**宽与高各 ≥300px**;短边落在 [100, 300) 时整数倍放大后收,出片可辨。
+// 那道闸在供应商那边不花钱,但它落在我们**预扣之后** —— 商家会先看到一张报了价的卡、
+// 按下 Generate、预扣、失败、退款,读到的只是一句「没成功」。所以判在铸卡之前:
+// 能放大的就放大并在卡上说出来,放不了的 $0、零 GEN_CARD、零 GenJob、账本零新增行。
 // ---------------------------------------------------------------------------
 describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
   let mockPrisma: {
@@ -2581,8 +2582,66 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
     mockPrisma.referenceImage.count.mockResolvedValue(1);
   });
 
-  it("FSE-001 / CREATE-A2: 商品图宽 275 ⇒ 一句话拒绝、零 GEN_CARD、零 GenJob", async () => {
-    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 275 } }]);
+  // 短边 99 —— 低于可放大下限(100),放大到过门要 4× 以上,而我们只在 2×／3× 两格有实证。
+  // 拒在铸卡之前 ⇒ 零卡、零 GenJob、账本零新增行。
+  it("FSE-001 / CREATE-A2: 商品图短边 99 ⇒ 一句话拒绝、零 GEN_CARD、零 GenJob", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 99, height: 500 } }]);
+
+    const out = await executePropose(input, runContext());
+
+    expect(out).toEqual({ error: referenceUnavailableMessage("tooSmall") });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+    expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+  });
+
+  // 旧口径只查宽度,所以这一张过我们的闸、到供应商才被高度弹回 —— 而那时钱已经预扣。
+  // 现在它在铸卡时就被认出来,并且是「放大」而不是「拒绝」。
+  it("FSE-001 / CREATE-A2: 商品图 400×200(宽够高不够)⇒ 放行 + 放大披露,不再漏到预扣之后", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 400, height: 200 } }]);
+
+    const out = await executePropose(input, runContext());
+
+    expect(out).toHaveProperty("cardId");
+    const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    }).data.payload;
+    expect(payload["downgraded"]).toBe(true);
+    expect(payload["downgradeNote"]).toContain("1 of your product reference photo is smaller");
+    expect(payload["downgradeNote"]).toContain("your original stays untouched");
+  });
+
+  // 探针 T2 的那张真实鞋照(275×183)。Founder 2026-09-09 裁决之前它是拒绝,现在是放大。
+  it("FSE-001 / CREATE-A2: 商品图 275×183 ⇒ 放行、卡上说出放大,张数只有一个出处", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([
+      { asset: { width: 275, height: 183 } },
+      { asset: { width: 200, height: 200 } },
+    ]);
+
+    const out = await executePropose(input, {
+      context: makeCtx({
+        sourceGenerationId: MUG_RECEIPT.generationId,
+        sourceGenerationIds: [MUG_RECEIPT.generationId, "gen_shoe"],
+        mediaReferences: [MUG_RECEIPT, { ...MUG_RECEIPT, generationId: "gen_shoe" }],
+      }),
+    });
+
+    expect(out).toHaveProperty("cardId");
+    const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    }).data.payload;
+    expect(payload["downgradeNote"]).toContain("2 of your product reference photos are smaller");
+  });
+
+  // Founder 2026-09-09 裁决的边界:「仅限无人像的商品照,演员图与任何含人像的图一律不动」。
+  // 机器可查的那一半 = 演员血统。带演员血统的小图不放大(像素铁律),所以它撑不起这次引用
+  // ⇒ 花钱前诚实拒绝,而不是替它动像素再去赌供应商的人像审核。
+  it("FSE-001 / CREATE-A10: 带演员血统的小图一格不动像素 ⇒ 拒绝而不是放大", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([
+      {
+        asset: { width: 200, height: 200 },
+        entitySnapshot: { entities: [{ id: AISYAH.id, type: "CHARACTER", name: AISYAH.name }] },
+      },
+    ]);
 
     const out = await executePropose(input, runContext());
 
@@ -2592,7 +2651,7 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
   });
 
   it("FSE-001 / CREATE-A2: 尺寸闸只在这个租户的范围里查(ownerId 来自 ctx,不从模型收)", async () => {
-    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 550 } }]);
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 550, height: 366 } }]);
 
     await executePropose(input, runContext());
 
@@ -2602,13 +2661,15 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
           id: { in: [MUG_RECEIPT.generationId] },
           ownerId: "org-test",
           deletedAt: null,
+          // 别家店的 id 混进这一列也读不出行 ⇒ 它拿不到放大、也拿不到披露。
+          asset: { ext: { in: [...REFERENCE_IMAGE_EXTS] } },
         }),
       }),
     );
   });
 
   it("FSE-001 / CREATE-A9: 商品图宽 550 ⇒ 照铸(与探针成功的那一趟同一档)", async () => {
-    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 550 } }]);
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 550, height: 366 } }]);
 
     const out = await executePropose(input, runContext());
 
@@ -2622,13 +2683,21 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
     expect(payload["entityIds"]).toEqual([AISYAH.id]);
   });
 
-  it("FSE-001 / CREATE-A9: 读不到宽度(本站生成的资产)⇒ 放行,不许把「不知道」读成「太小」", async () => {
-    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: null } }]);
+  // 本站生成的资产没有宽高那两格(`gen.ts` 出图时不写)。把「不知道」读成「太小」会拒掉
+  // 每一张本站生成的商品图 —— 而那正是这条正路最主要的输入。也不许替它编一句放大披露:
+  // 铸卡时量不到就不说,worker 手里有真字节,量到小图仍会放大。
+  it("FSE-001 / CREATE-A9: 读不到尺寸(本站生成的资产)⇒ 放行且不编披露句", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: null, height: null } }]);
 
     const out = await executePropose(input, runContext());
 
     expect(out).toHaveProperty("cardId");
     expect(mockPrisma.chatMessage.create).toHaveBeenCalledTimes(1);
+    const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    }).data.payload;
+    expect(payload["downgraded"]).toBe(false);
+    expect(payload["downgradeNote"]).toBeUndefined();
   });
 
   // ── FSE-001 判官 r1 P2 —— 被截掉的是商品图,而卡面必须点名说出来 ──────────────────
@@ -2637,7 +2706,7 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
   // 一个陌生人;商品图少一张 = 少一个角度。分量不同,所以这一句必须点名。
   it("FSE-001 / CREATE-A9: 挂 9 张商品图 ⇒ 披露句点名商品图被截、演员的照片保住", async () => {
     const mugIds = Array.from({ length: 9 }, (_, i) => `gen_mug_${i}`);
-    mockPrisma.generation.findMany.mockResolvedValue(mugIds.map(() => ({ asset: { width: 550 } })));
+    mockPrisma.generation.findMany.mockResolvedValue(mugIds.map(() => ({ asset: { width: 550, height: 366 } })));
 
     const out = await executePropose(input, {
       context: makeCtx({
@@ -2662,7 +2731,7 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
   });
 
   it("FSE-001 / CREATE-A2: 挂图没占满名额时不许编那句「被截」(既有那一档一句不多)", async () => {
-    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 550 } }]);
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 550, height: 366 } }]);
 
     await executePropose(input, runContext());
 

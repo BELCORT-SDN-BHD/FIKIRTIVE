@@ -753,6 +753,27 @@ export function buildReferenceBudgetNotes(input: {
 }
 
 /**
+ * FSE-001(Founder 2026-09-09 裁决「允许自动放大,仅限无人像的商品照」)—— 卡面那句
+ * 「我们替你放大了几张」。
+ *
+ * 为什么必须说出来:放大是我们**替商家动了他的素材**。他批准的是「用我这张杯子的照片」,
+ * 而真送进引擎的是一张按整数倍重采样过的副本。不说,就是替他做了一个他不知道的决定;
+ * 说出来,他至少知道成片里的细节可能不如原件锐利,并且可以选择换一张大图再来。
+ *
+ * 走的是与参考照名额同一条披露路(`withReferenceBudget` 把话并进 `downgradeNote`),所以
+ * 卡面只有一处会说这类话。代价说清楚:这会把卡标成 `downgraded` —— 那一格的语义本来就是
+ * 「实际会做的事与你给的东西不完全一致」,放大正是这样一件事,所以借它不算撒谎;但它确实
+ * 与「引擎名额截了你的图」共用一个视觉,两者在卡上只能靠句子本身区分。
+ *
+ * 原件一个字节都不动:放大产物只进那一次供应商请求,不落库、不写存储、不替换 asset
+ * (`apps/worker/src/jobs/gen.ts` 的商品参考图循环)。
+ */
+export function referenceUpscaleNote(count: number): string {
+  const photos = count === 1 ? "photo" : "photos";
+  return `${count} of your product reference ${photos} ${count === 1 ? "is" : "are"} smaller than the engine's minimum, so we enlarge ${count === 1 ? "it" : "them"} before sending — your original stays untouched.`;
+}
+
+/**
  * #785 —— 视频卡上「这一趟真会用上你几张参考照」那一格。
  *
  * 为什么要在卡铸好之后补一次:张数要查库(每个 @元素当下有几张活图),而 `buildProposeCard`
