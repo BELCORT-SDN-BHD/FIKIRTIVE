@@ -293,7 +293,20 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   }
 
   async function saveEdit(index: number) {
-    const ok = await run(() => editShotPrompt({ cardId, index, firstFramePrompt: draftFf, videoPrompt: draftV }));
+    // creation §5 :172⑤ —— 这一镜现在**可能根本没有**首帧文字(schema 上条件可选:@ 到元素
+    // 的镜头直接出片,首帧那一步不存在)。这里过去无条件同发 draftFf,而它对那种镜头是空串 ——
+    // 服务端那格是 `.min(1)`,于是整次编辑被判「That edit isn't valid.」:商家连改一句视频
+    // 文字都存不下去。本来就没有那一格 ⇒ 不发这个键(服务端读「没传」= 没改,见 editStaleness)。
+    // 本来有、被商家清空 ⇒ 照旧原样发出去,由服务端拒 —— 那是一次真实的编辑意图,不该被吞掉。
+    const hadFramePrompt = Boolean(view.shots[index]?.firstFramePrompt);
+    const ok = await run(() =>
+      editShotPrompt({
+        cardId,
+        index,
+        ...(draftFf || hadFramePrompt ? { firstFramePrompt: draftFf } : {}),
+        videoPrompt: draftV,
+      }),
+    );
     if (ok) setEditing(null);
   }
 

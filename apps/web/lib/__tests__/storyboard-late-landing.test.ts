@@ -1162,3 +1162,93 @@ describe("#782 r17 (判官 r16 P2-1) 同 epoch 的两次 sync:后发先回之后
     expect(text(dom)).not.toContain("Generating video");
   });
 });
+
+// ---------------------------------------------------------------------------
+// creation §5 :172⑤ —— 没有首帧文字的那种镜头,编辑还存得下去
+// ---------------------------------------------------------------------------
+//
+// :172⑤ 把 `firstFramePrompt` 改成按镜头类型条件可选:@ 到元素的镜头直接出片,首帧那一步
+// 整个不存在,所以那段文字也不必写。于是 `startEdit` 装进草稿的是**空串**,而保存过去无条件
+// 同发它 —— 服务端那格是 `.min(1)`,整次编辑被判「That edit isn't valid.」:商家连改一句
+// 视频文字都存不下去。(刚铺开的卡上一次 sync 都还没发生,卡面还不知道哪几镜直接出片,所以
+// 首帧那一格照旧摆着,只是空的 —— 这正是商家最先碰到的那一格。)
+//
+// 这一条按本文件的方言钉:真渲染、真按钮、真的编辑语义 —— 断言落在**真的发出去的参数**上。
+describe("creation §5 :172⑤ —— 没有首帧文字的镜头也能改视频文字", () => {
+  const shot = { shotId: "s0", index: 0, title: "Hero", videoPrompt: "v-0", entityIds: ["ent-actor"], durationSeconds: 5 };
+  const payload = { storyboardTitle: "Raya launch", shots: [shot] };
+
+  /** 捕获真实发出去的那一组参数;答复走真的纯变换,发错了什么会如实塌下来。 */
+  function stubEdit(base: Record<string, unknown>): { sent: () => Record<string, unknown> | null } {
+    let sentArgs: Record<string, unknown> | null = null;
+    mocks.editShotPrompt.mockImplementation(async (args: { index: number; firstFramePrompt?: string; videoPrompt?: string; durationSeconds?: number }) => {
+      sentArgs = args as unknown as Record<string, unknown>;
+      return {
+        payload: applyEditShotPrompt(base as StoryboardCardPayload, args.index, {
+          firstFramePrompt: args.firstFramePrompt,
+          videoPrompt: args.videoPrompt,
+          durationSeconds: args.durationSeconds,
+        }),
+      };
+    });
+    return { sent: () => sentArgs };
+  }
+
+  it("creation §5 :172⑤ / CREATE-A2: 本来就没有那一格 ⇒ 保存时不发这个键,服务端不会把整次编辑判无效", async () => {
+    mocks.syncStoryboardMedia.mockResolvedValue({ payload, shots: [{ shotId: "s0", frame: absent, video: absent }] });
+    const edit = stubEdit(payload);
+
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
+    await act(async () => { (dom.querySelector('button[aria-label="Edit shot"]') as HTMLButtonElement).click(); });
+    // 首帧那一格是空的(这一镜没有它),商家一个字也没往里打。
+    expect((dom.querySelectorAll("textarea")[0] as HTMLTextAreaElement).value).toBe("");
+    await act(async () => {
+      setTextarea(dom.querySelectorAll("textarea")[1] as HTMLTextAreaElement, "v-0 (new)");
+    });
+    await clickByText(dom, "Save");
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mocks.editShotPrompt).toHaveBeenCalledTimes(1);
+    // 关键:`firstFramePrompt` 这个键**不出现** —— 空串会被服务端 `.min(1)` 判整次编辑无效。
+    expect(edit.sent()).toEqual({ cardId: "sb_1", index: 0, videoPrompt: "v-0 (new)" });
+  });
+
+  it("creation §5 :172⑤ / CREATE-A2: 本来有那一格 ⇒ 逐字不变,照旧原样回发", async () => {
+    const twoStep = { shotId: "s0", index: 0, title: "Hero", firstFramePrompt: "ff-0", videoPrompt: "v-0", durationSeconds: 5 };
+    const twoStepPayload = { storyboardTitle: "Raya launch", shots: [twoStep] };
+    mocks.syncStoryboardMedia.mockResolvedValue({ payload: twoStepPayload, shots: [{ shotId: "s0", frame: absent, video: absent }] });
+    const edit = stubEdit(twoStepPayload);
+
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: twoStepPayload, balanceUsd: 10 }));
+    await act(async () => { (dom.querySelector('button[aria-label="Edit shot"]') as HTMLButtonElement).click(); });
+    await act(async () => {
+      setTextarea(dom.querySelectorAll("textarea")[1] as HTMLTextAreaElement, "v-0 (new)");
+    });
+    await clickByText(dom, "Save");
+    await act(async () => { await Promise.resolve(); });
+
+    expect(edit.sent()).toEqual({ cardId: "sb_1", index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0 (new)" });
+  });
+
+  it("creation §5 :172⑤ / CREATE-A2: 本来有那一格、被商家清空 ⇒ 照旧发空串,由服务端拒(不吞掉这次意图)", async () => {
+    const twoStep = { shotId: "s0", index: 0, title: "Hero", firstFramePrompt: "ff-0", videoPrompt: "v-0", durationSeconds: 5 };
+    const twoStepPayload = { storyboardTitle: "Raya launch", shots: [twoStep] };
+    mocks.syncStoryboardMedia.mockResolvedValue({ payload: twoStepPayload, shots: [{ shotId: "s0", frame: absent, video: absent }] });
+    let sentArgs: Record<string, unknown> | null = null;
+    mocks.editShotPrompt.mockImplementation(async (args: Record<string, unknown>) => {
+      sentArgs = args;
+      return { error: "That edit isn't valid." };
+    });
+
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: twoStepPayload, balanceUsd: 10 }));
+    await act(async () => { (dom.querySelector('button[aria-label="Edit shot"]') as HTMLButtonElement).click(); });
+    await act(async () => {
+      setTextarea(dom.querySelectorAll("textarea")[0] as HTMLTextAreaElement, "");
+    });
+    await clickByText(dom, "Save");
+    await act(async () => { await Promise.resolve(); });
+
+    expect(sentArgs).toEqual({ cardId: "sb_1", index: 0, firstFramePrompt: "", videoPrompt: "v-0" });
+    expect(text(dom)).toContain("That edit isn't valid.");
+  });
+});
