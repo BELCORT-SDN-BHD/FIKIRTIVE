@@ -115,13 +115,11 @@ describe("PRODID-A1 在 Brand 页新增产品 → Library Products 出现同一�
 
     // Library Products 那一栏读的是 Entity —— 同一张卡、同一 id,没有第二份。
     const elements = await getLibraryElements();
-    expect(Array.isArray(elements)).toBe(true);
-    const cards = (elements as Awaited<ReturnType<typeof getLibraryElements>> & unknown[]).filter(
-      (e: { name: string }) => e.name === name,
-    );
+    if (!Array.isArray(elements)) throw new Error(elements.error);
+    const cards = elements.filter((e) => e.name === name);
     expect(cards).toHaveLength(1);
     expect(cards[0]).toMatchObject({ id: record.entityId, kind: "products", name });
-    expect((cards[0] as { coverUrl: string | null }).coverUrl).toBeTruthy();
+    expect(cards[0]!.coverUrl).toBeTruthy();
   }, 60_000);
 });
 
