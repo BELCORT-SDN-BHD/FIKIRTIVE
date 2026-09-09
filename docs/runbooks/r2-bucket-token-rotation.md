@@ -55,7 +55,9 @@ node scripts/tools/mint-r2-token.mjs --copy staging --exclude-prefix backups/
 node scripts/tools/mint-r2-token.mjs --mint staging
 node scripts/tools/mint-r2-token.mjs --copy production --dry-run
 node scripts/tools/mint-r2-token.mjs --copy production
-#  ↑ 到这里都不影响线上。下面这条等 Founder 明说「切」,并且要带碰生产确认锁:
+#  ↑ 这四步写的是新桶;2026-09-09 切换前不影响线上,
+#    切换后重跑时 --copy production 与 --mint production 都要带碰生产锁。
+#    下面这条等 Founder 明说「切」,并且要带碰生产确认锁:
 I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
   node scripts/tools/mint-r2-token.mjs --mint production --yes-production --expect-objects <上一步的源对象数>
 ```
@@ -102,8 +104,10 @@ staging 不该拿到它 —— 又占地方,又等于把生产数据复制进一
   也不会发出任何网络请求。屏幕上会直接告诉你要设哪个变量。
 - **`--yes-production` 旗标** —— **就是「Founder 说过切了」的唯一凭据,agent 不得自己加。**
 
-前者证明「跑的人知道自己在碰生产」,后者证明「Founder 说过切」;`--check` / `--copy` /
-`--mint staging` 都不受这把锁影响。
+前者证明「跑的人知道自己在碰生产」,后者证明「Founder 说过切」。
+碰生产锁的范围:`--mint production` 与 `--copy production`(含 `--dry-run`)都受锁 ——
+2026-09-09 切换完成后 `fikirtive-production` 就是线上正在读的桶,往里写对象等于碰生产。
+`--check` / `--copy staging` / `--mint staging` 不受这把锁影响。
 
 它比 staging 多一道闸:铸完令牌之后、写 Railway 之前,用新令牌数一遍目标桶的对象数。
 
