@@ -1,7 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { SAVE_FAILED } from "./save-failed-copy";
-import { prisma, Prisma } from "@fikirtive/db";
+import { prisma, Prisma, createProduct } from "@fikirtive/db";
 import {
   newId, RECORD_KINDS, recordSchemaFor, recordName, normalizeNameKey, type RecordKind,
 } from "@fikirtive/core";
@@ -102,17 +102,37 @@ export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: str
       select: { id: true },
     });
     if (existing) return saveBrandRecord({ ...(raw as object), id: existing.id });
-    const id = newId();
-    await prisma.brandRecord.create({
-      data: {
-        id, ownerId: gate.ownerId, brandId: null,
-        kind: input.kind, nameKey, data: input.data as unknown as Prisma.InputJsonObject,
+    let id: string;
+    if (input.kind === "product") {
+      // 产品有身份那一半:Entity(PRODUCT) 与这条价签在同一个事务里一起出生,所以这条入口
+      // 不自己 create,而是走共享动作(规格 §1.4;PRODID-A1)。人工 UI 与 Otto 同一层。
+      const made = await createProduct({
+        ownerId: gate.ownerId, brandId: null,
+        data: input.data,
+        source: "user",
         status: input.status ?? "active",
-        startsAt: input.startsAt ?? null, endsAt: input.endsAt ?? null,
-        source: "user", pinned: false,
         updatedById: actor.userId,
-      },
-    });
+      });
+      // 上面的 findFirst 到这里之间,另一条同名行刚落地(双击、另一个 tab、Otto 同时在写):
+      // 结果与 existing 分支一样 —— 转成对那一行的 update,不造第二件同名产品。
+      if (!made.created) {
+        if (!made.existingId) return { error: SAVE_FAILED };
+        return saveBrandRecord({ ...(raw as object), id: made.existingId });
+      }
+      id = made.id;
+    } else {
+      id = newId();
+      await prisma.brandRecord.create({
+        data: {
+          id, ownerId: gate.ownerId, brandId: null,
+          kind: input.kind, nameKey, data: input.data as unknown as Prisma.InputJsonObject,
+          status: input.status ?? "active",
+          startsAt: input.startsAt ?? null, endsAt: input.endsAt ?? null,
+          source: "user", pinned: false,
+          updatedById: actor.userId,
+        },
+      });
+    }
     await recordBrandRevision({
       ownerId: gate.ownerId, targetKind: "record", targetId: id, action: "created",
       stamp: await stampOf(gate.ownerId, id, "record"), actor, summary: "Added this record.",

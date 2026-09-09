@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma, refundReservation } from "@fikirtive/db";
+import { prisma, refundReservation, createProduct } from "@fikirtive/db";
 import {
   fikirtiveEdit,
   captionCue,
@@ -444,11 +444,10 @@ export async function createEntity(formData: FormData) {
       return { error: "Couldn't upload those images. Please try again." };
     }
 
-    const entityId = newId();
+    let entityId = newId();
+    let nameTaken = false;
     try {
       await prisma.$transaction(async (tx) => {
-        await tx.entity.create({ data: { id: entityId, ownerId, name, type: type as EntityType } });
-        let firstAssetId: string | null = null;
         // content-addressed upload dedups identical files to ONE Asset, so the same image
         // picked twice would attach that asset twice — the live-uniqueness index
         // (ReferenceImage_live_entity_asset_variant_key) rejects the dup with P2002, and
@@ -457,20 +456,33 @@ export async function createEntity(formData: FormData) {
         // front instead of letting the database raise: a post-hoc P2002 swallow cannot help
         // inside a transaction, which is why this path skips BEFORE the insert.
         const attached = new Set<string>();
+        const assetIds: string[] = [];
         for (const item of ingested) {
           const asset = await assetUpsert(tx, ownerId, item);
-          firstAssetId ??= asset.id;
           if (attached.has(asset.id)) continue;
-          await tx.referenceImage.create({
-            data: { id: newId(), ownerId, entityId, assetId: asset.id, position: attached.size },
-          });
           attached.add(asset.id);
+          assetIds.push(asset.id);
+        }
+        if (type === "PRODUCT") {
+          // Library「新建元素 → 产品」建的也是一件产品:身份与价签(价格、卖点待填)同事务
+          // 出生,所以这条入口不自己建 Entity,而是走共享动作(规格
+          // docs/specs/brand-product-identity.md §1.4;PRODID-A3)。
+          const made = await createProduct({ ownerId, data: { name }, source: "user", assetIds }, tx);
+          if (!made.created) { nameTaken = true; return; }
+          entityId = made.entityId;
+          return;
+        }
+        await tx.entity.create({ data: { id: entityId, ownerId, name, type: type as EntityType } });
+        for (let i = 0; i < assetIds.length; i++) {
+          await tx.referenceImage.create({
+            data: { id: newId(), ownerId, entityId, assetId: assetIds[i]!, position: i },
+          });
         }
         // the first reference becomes the locked base (same invariant as the migration backfill)
-        if (firstAssetId) {
+        if (assetIds[0]) {
           await tx.entity.update({
             where: { id_ownerId: { id: entityId, ownerId } },
-            data: { baseAssetId: firstAssetId },
+            data: { baseAssetId: assetIds[0] },
           });
         }
       });
@@ -478,6 +490,8 @@ export async function createEntity(formData: FormData) {
       console.error("[entity.create] persist failed:", e instanceof Error ? e.message : e);
       return { error: "Couldn't add this to your library. Please try again." };
     }
+    // 同名产品不自动合并(规格 §3):报出来,让商家自己决定改名还是去 Brand 页编辑那一件。
+    if (nameTaken) return { error: "You already have a product with that name." };
     await logAction(ownerId, "entity.create", null, { entityId, name, type, refCount: files.length });
     revalidatePath("/", "layout");
     return { id: entityId };

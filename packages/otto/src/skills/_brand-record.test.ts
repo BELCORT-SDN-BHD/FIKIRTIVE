@@ -10,6 +10,9 @@ vi.mock("@fikirtive/db", () => ({
     brandRecord: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     genJob: { create: vi.fn() }, // must never be called — these are $0 skills
   },
+  // 产品走共享动作(身份 ＋ 价签同事务),不再由这个文件自己 create —— 规格
+  // docs/specs/brand-product-identity.md §1.4。segment / offer 仍走上面那条。
+  createProduct: vi.fn(),
 }));
 vi.mock("@fikirtive/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fikirtive/core")>()),
@@ -32,6 +35,7 @@ let db: {
     };
     genJob: { create: ReturnType<typeof vi.fn> };
   };
+  createProduct: ReturnType<typeof vi.fn>;
 };
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -41,17 +45,20 @@ beforeEach(async () => {
 describe("upsertBrandRecordFromOtto", () => {
   it("creates when no live row matches nameKey (source otto, ownerId from ctx)", async () => {
     db.prisma.brandRecord.findFirst.mockResolvedValue(null);
-    db.prisma.brandRecord.create.mockResolvedValue({});
+    db.createProduct.mockResolvedValue({ created: true, id: "rec-id-1", entityId: "ent-id-1" });
     const res = await upsertBrandRecordFromOtto(
       { kind: "product", fields: { name: "Latte Blend", price: "RM 49" } },
       { context: makeCtx() },
     );
     expect(res).toEqual({ ok: true, id: "rec-id-1", updated: false });
-    expect(db.prisma.brandRecord.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        ownerId: "org-test", kind: "product", nameKey: "latte blend", source: "otto", status: "active",
+    // 建产品只有一条写路:共享动作。这个文件自己的 create 分支只服务 segment / offer。
+    expect(db.createProduct).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerId: "org-test", brandId: null, source: "otto", status: "active",
+        data: expect.objectContaining({ name: "Latte Blend", price: "RM 49" }),
       }),
-    });
+    );
+    expect(db.prisma.brandRecord.create).not.toHaveBeenCalled();
     expect(db.prisma.genJob.create).not.toHaveBeenCalled();
   });
 
@@ -114,13 +121,13 @@ describe("upsertBrandRecordFromOtto", () => {
 
   it("saveProduct threads category into data", async () => {
     db.prisma.brandRecord.findFirst.mockResolvedValue(null);
-    db.prisma.brandRecord.create.mockResolvedValue({});
+    db.createProduct.mockResolvedValue({ created: true, id: "rec-id-1", entityId: "ent-id-1" });
     await upsertBrandRecordFromOtto(
       { kind: "product", fields: { name: "Latte Blend", category: "Coffee" } },
       { context: makeCtx() },
     );
-    const arg = db.prisma.brandRecord.create.mock.calls[0]![0] as { data: { data: Record<string, unknown> } };
-    expect(arg.data.data.category).toBe("Coffee");
+    const arg = db.createProduct.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(arg.data.category).toBe("Coffee");
   });
   it("OTTO update without category preserves the existing one (merge)", async () => {
     db.prisma.brandRecord.findFirst.mockResolvedValue({ id: "r1", data: { name: "Latte Blend", category: "Coffee" } });

@@ -79,7 +79,7 @@
  * 先花三分之一分钱判一次,再决定要不要花第二次 —— 菜单最常见的形态就是一张照片,
  * 而给每张产品照都跑一遍 doc-extract 是纯浪费。
  */
-import { InsufficientCredits, OrgSuspended, prisma, refundReservation, reserveCredits, settleCredits } from "@fikirtive/db";
+import { InsufficientCredits, OrgSuspended, createProduct, prisma, refundReservation, reserveCredits, settleCredits } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   UNDERSTAND_QUEUE,
@@ -1065,27 +1065,15 @@ async function upsertProductRecord(
     await tx.brandRecord.update({ where: { id: existing.id }, data: { data: data as never, source: "otto" } });
     return true;
   }
-  // `createMany({ skipDuplicates })` 而不是 create+catch —— 和 caption 那一步同一个理由:
-  // 在交互式事务里捕获 P2002 是**假的**保护,唯一冲突已经让 Postgres 把整个事务标成 aborted,
-  // 之后连 settle 都提交不了。ON CONFLICT DO NOTHING 让「同一轮里菜单出现两次同名」不产生
+  // 产品有身份那一半(Entity(PRODUCT)):建产品的唯一一条写路是共享动作 `createProduct`
+  // (规格 docs/specs/brand-product-identity.md §1.4;票 #1321),四个写入口都从那里过。
+  // **tx 照旧传进去**:这些行和 settle 在同一个事务里(MONEY-A9 不变量②)。
+  // 共享动作内部仍然是 `createMany({ skipDuplicates })` 而不是 create+catch —— 和 caption
+  // 那一步同一个理由:在交互式事务里捕获 P2002 是**假的**保护,唯一冲突已经让 Postgres 把
+  // 整个事务标成 aborted,之后连 settle 都提交不了。「同一轮里菜单出现两次同名」于是不产生
   // 错误(赢家已经写好了),而其它任何 DB 错误照常抛出去回滚 + 让队列重试。
-  const { count } = await tx.brandRecord.createMany({
-    data: [
-      {
-        id: newId(),
-        ownerId,
-        brandId: null,
-        kind: "product",
-        nameKey,
-        data: data as never,
-        status: "active",
-        source: "otto",
-        pinned: false,
-      },
-    ],
-    skipDuplicates: true,
-  });
-  return count === 1;
+  const made = await createProduct({ ownerId, data, source: "otto" }, tx);
+  return made.created;
 }
 
 function stripUndefined(o: Record<string, unknown>): Record<string, unknown> {

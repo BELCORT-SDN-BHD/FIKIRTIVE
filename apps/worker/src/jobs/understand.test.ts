@@ -34,9 +34,12 @@ const mocks = vi.hoisted(() => {
   const asset = { findMany: vi.fn(), findFirst: vi.fn() };
   /** 平台花费计量器(累加,按 UTC 日分桶)—— 预算闸读它,每次付费调用写它。 */
   const understandingSpendDay = { findUnique: vi.fn(), upsert: vi.fn() };
-  // `createMany` 而不是 `create`:产品行现在写在 settle 那个事务**里面**,而在交互式事务里
-  // 捕获 P2002 是假的保护(唯一冲突已经把整个事务标成 aborted)。同 caption 建 doc 行那一步。
+  // 合并那一半仍走这里(findFirst → update)。**建**那一半已经搬去共享动作 `createProduct`
+  // (规格 docs/specs/brand-product-identity.md §1.4):产品有身份那一半,Entity 与价签必须
+  // 同事务出生。`createMany({skipDuplicates})` 的纪律跟着搬进了那条动作里。
   const brandRecord = { findFirst: vi.fn(), createMany: vi.fn(), update: vi.fn() };
+  /** 建一件产品的唯一一条写路。收 tx —— 产品行仍写在 settle 那个事务**里面**。 */
+  const createProduct = vi.fn();
   const memory = { findFirst: vi.fn(), create: vi.fn() };
   /** 台账。恢复协议问的就是它:这一行的这一个回合,已经 SETTLE / REFUND / 还挂着? */
   const creditLedger = { findFirst: vi.fn() };
@@ -93,7 +96,7 @@ const mocks = vi.hoisted(() => {
   return {
     prisma,
     assetUnderstanding, asset, brandRecord, memory, understandingSpendDay, creditLedger, actionEvent,
-    reserveCredits, settleCredits, refundReservation, InsufficientCredits, OrgSuspended,
+    reserveCredits, settleCredits, refundReservation, InsufficientCredits, OrgSuspended, createProduct,
     presignedGet, understand, captureException, founderAlert, captureMoneyPathError,
   };
 });
@@ -105,6 +108,7 @@ vi.mock("@fikirtive/db", () => ({
   refundReservation: mocks.refundReservation,
   InsufficientCredits: mocks.InsufficientCredits,
   OrgSuspended: mocks.OrgSuspended,
+  createProduct: mocks.createProduct,
 }));
 
 vi.mock("../alerting.js", () => ({
@@ -209,7 +213,7 @@ beforeEach(() => {
   });
   mocks.asset.findMany.mockResolvedValue([]);
   mocks.brandRecord.findFirst.mockResolvedValue(null);
-  mocks.brandRecord.createMany.mockResolvedValue({ count: 1 });
+  mocks.createProduct.mockResolvedValue({ created: true, id: "br-new", entityId: "ent-new" });
   mocks.memory.findFirst.mockResolvedValue(null);
   mocks.memory.create.mockResolvedValue({});
   mocks.presignedGet.mockResolvedValue("https://r2.example/obj?sig=x");
@@ -591,9 +595,9 @@ describe("MONEY-A9 理解计费:reserve-first / settle 同事务 / 三崩溃窗�
       text: JSON.stringify({ products: [{ name: "Nasi Lemak", price: "RM 8.50" }] }),
       usage: { inputTokens: 3_000, outputTokens: 300 },
     });
-    mocks.brandRecord.createMany.mockImplementation(async () => {
+    mocks.createProduct.mockImplementation(async () => {
       t.at("product");
-      return { count: 1 };
+      return { created: true, id: "br-new", entityId: "ent-new" };
     });
     mocks.settleCredits.mockImplementation(async () => t.at("settle"));
     mocks.assetUnderstanding.updateMany.mockImplementation(async (args: any) => {
@@ -612,9 +616,9 @@ describe("MONEY-A9 理解计费:reserve-first / settle 同事务 / 三崩溃窗�
       text: JSON.stringify({ products: [{ name: "Nasi Lemak" }] }),
       usage: { inputTokens: 3_000, outputTokens: 300 },
     });
-    mocks.brandRecord.createMany.mockImplementation(async () => {
+    mocks.createProduct.mockImplementation(async () => {
       t.at("product");
-      return { count: 1 };
+      return { created: true, id: "br-new", entityId: "ent-new" };
     });
     mocks.settleCredits.mockRejectedValue(new Error("connection lost mid-settle"));
 
@@ -899,7 +903,7 @@ describe("不重复读(幂等)", () => {
     mocks.assetUnderstanding.updateMany.mockResolvedValue({ count: 0 });
     await handleUnderstand({ understandingId: "u-1" }, 1, port);
     expect(mocks.understand).not.toHaveBeenCalled();
-    expect(mocks.brandRecord.createMany).not.toHaveBeenCalled();
+    expect(mocks.createProduct).not.toHaveBeenCalled();
     expect(mocks.memory.create).not.toHaveBeenCalled();
     expectNoCreditCalls();
   });
@@ -1498,13 +1502,12 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
       usage: { inputTokens: 3000, outputTokens: 300 },
     });
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    expect(mocks.brandRecord.createMany).toHaveBeenCalledTimes(1);
-    const created = mocks.brandRecord.createMany.mock.calls[0]![0].data[0];
-    expect(created).toMatchObject({ ownerId: OWNER, kind: "product", nameKey: "nasi lemak", source: "otto" });
+    expect(mocks.createProduct).toHaveBeenCalledTimes(1);
+    const [created, tx] = mocks.createProduct.mock.calls[0]!;
+    expect(created).toMatchObject({ ownerId: OWNER, source: "otto" });
     expect(created.data).toMatchObject({ name: "Nasi Lemak", price: "RM 8.50" });
-    // ON CONFLICT DO NOTHING,不是一个吞掉一切的 catch —— 同一轮里菜单出现两次同名时,
-    // catch 会把「事务已经 aborted」也一起吞掉,连后面的 settle 都提交不了。
-    expect(mocks.brandRecord.createMany.mock.calls[0]![0].skipDuplicates).toBe(true);
+    // tx 必须传下去 —— 产品行和 settle 在同一个事务里(MONEY-A9 不变量②)。
+    expect(tx).toBe(mocks.prisma);
   });
 
   it("同名产品**合并**,不再造一份(同一张菜单读第二次也一样)", async () => {
@@ -1514,7 +1517,7 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
       usage: { inputTokens: 3000, outputTokens: 300 },
     });
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    expect(mocks.brandRecord.createMany).not.toHaveBeenCalled();
+    expect(mocks.createProduct).not.toHaveBeenCalled();
     expect(mocks.brandRecord.update).toHaveBeenCalledTimes(1);
     // 商家自己写过的字段保住了
     expect(mocks.brandRecord.update.mock.calls[0]![0].data.data).toMatchObject({
@@ -1526,7 +1529,7 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
     mocks.understand.mockResolvedValue({ text: "Sorry, the photo is too blurry.", usage: { inputTokens: 3000, outputTokens: 20 } });
     // 重试额度用完的那一次:落 PAUSED,不是 FAILED —— 档位修好之后这张菜单还会被读到
     await expect(handleUnderstand({ understandingId: "u-1" }, 2, port)).resolves.toBeNull();
-    expect(mocks.brandRecord.createMany).not.toHaveBeenCalled();
+    expect(mocks.createProduct).not.toHaveBeenCalled();
     expect(mocks.brandRecord.update).not.toHaveBeenCalled();
     const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
     expect(last.data.status).toBe("PAUSED");
@@ -1537,7 +1540,7 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
   it("空清单是合法结果(读不出来就不猜)—— DONE,零产品行", async () => {
     mocks.understand.mockResolvedValue({ text: JSON.stringify({ products: [] }), usage: { inputTokens: 3000, outputTokens: 10 } });
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    expect(mocks.brandRecord.createMany).not.toHaveBeenCalled();
+    expect(mocks.createProduct).not.toHaveBeenCalled();
     const last = mocks.assetUnderstanding.updateMany.mock.calls.at(-1)![0];
     expect(last.data.status).toBe("DONE");
     expect(String(last.data.summary)).toMatch(/no readable items/i);
@@ -1549,8 +1552,8 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
       usage: { inputTokens: 3000, outputTokens: 100 },
     });
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
-    expect(mocks.brandRecord.createMany).toHaveBeenCalledTimes(1);
-    expect(mocks.brandRecord.createMany.mock.calls[0]![0].data[0].nameKey).toBe("teh tarik");
+    expect(mocks.createProduct).toHaveBeenCalledTimes(1);
+    expect(mocks.createProduct.mock.calls[0]![0].data.name).toBe("Teh Tarik");
   });
 });
 
@@ -1743,7 +1746,7 @@ describe("租户", () => {
     }
     expect(mocks.asset.findFirst.mock.calls[0]![0].where.ownerId).toBe(OWNER);
     expect(mocks.brandRecord.findFirst.mock.calls[0]![0].where.ownerId).toBe(OWNER);
-    expect(mocks.brandRecord.createMany.mock.calls[0]![0].data[0].ownerId).toBe(OWNER);
+    expect(mocks.createProduct.mock.calls[0]![0].ownerId).toBe(OWNER);
   });
 
   it("presign 用的是这一行自己的租户目录", async () => {

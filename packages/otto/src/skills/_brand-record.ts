@@ -4,7 +4,7 @@
  * Upsert-by-name: find live row (ownerId+kind+nameKey) → merge-update; else create.
  */
 import type { RunContext } from "@openai/agents";
-import { prisma, Prisma } from "@fikirtive/db";
+import { prisma, Prisma, createProduct } from "@fikirtive/db";
 import {
   newId, recordSchemaFor, recordName, normalizeNameKey, type RecordKind,
 } from "@fikirtive/core";
@@ -63,6 +63,23 @@ export async function upsertBrandRecordFromOtto(
       data: { data, nameKey, source: "otto", ...(status ? { status } : {}), ...dates },
     });
     return { ok: true, id: existing.id, updated: true };
+  }
+
+  if (input.kind === "product") {
+    // 产品有身份那一半:Entity(PRODUCT) 与价签同事务出生。Otto 与人工 UI 走同一条共享动作
+    // (规格 docs/specs/brand-product-identity.md §1.4)。product 从来没有 offer 的起止日期。
+    const made = await createProduct({
+      ownerId: ctx.orgId, brandId: null, data: parsed.data as Record<string, unknown>,
+      source: "otto", status: status ?? "active",
+    });
+    if (made.created) return { ok: true, id: made.id, updated: false };
+    // 撞名 —— 与下面 create 分支的那次重试同一个语义:另一条同名活跃行赢了,转成 update。
+    if (!made.existingId) throw new Error(`Couldn't save that ${input.kind}.`);
+    await prisma.brandRecord.update({
+      where: { id: made.existingId },
+      data: { data, nameKey, source: "otto", ...(status ? { status } : {}) },
+    });
+    return { ok: true, id: made.existingId, updated: true };
   }
 
   const id = newId();
