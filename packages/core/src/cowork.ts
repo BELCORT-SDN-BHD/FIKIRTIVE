@@ -140,6 +140,10 @@ export const coworkGenerateRequest = z.object({
   resolution: z.string().max(12).optional(),
   durationSeconds: z.number().int().min(1).max(60).optional(),
   audio: z.boolean().optional(),
+  // FSE-012 —— 商家**按下按钮那一刻看到的那份报价**是哪一版(`cardQuoteVersion`)。
+  // 它不是钱的授权:报价与预扣照旧只从持久化的卡来。它只回答一个问题 —— 他看到的那一版
+  // 还是不是库里这一版;不是就拒绝并把新报价交回去。缺席 = 老客户端 / 非卡入口,照旧放行。
+  quoteVersion: z.string().min(1).max(64).optional(),
 }).strict();
 export type CoworkGenerateRequest = z.infer<typeof coworkGenerateRequest>;
 

@@ -93,6 +93,7 @@ import { spendCapRefusal, approvedToolCostInternal, approvedGenerateCostInternal
 import { consumeOttoTurnGate, OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
 import { resolveDisabledModels } from "./model-registry";
 import { startCoworkGen } from "./gen-actions";
+import { staleQuoteRefusal } from "./card-quote-version";
 import { runVariantBatch, runBulkGrid } from "./factory-actions";
 import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
@@ -2283,7 +2284,7 @@ export async function ottoApprove(raw: unknown): Promise<
   | { ok: true; genJobId: string; status: string } // double-approve: existing job
   | { ok: true; alreadyResolved: true; resolution: ApprovalCardResolution } // consumed/expired card: idempotent refusal
   // Codex staging CRE-STG-P2-004 —— `ref` 只在真正未知的那一支出现(见文末 catch)。
-  | { error: string; ref?: string | null }
+  | { error: string; ref?: string | null; quote?: unknown }
 > {
   // Inline validation (no zod dep in apps/web) — mirror brief schema
   if (
@@ -2299,6 +2300,9 @@ export async function ottoApprove(raw: unknown): Promise<
     return { error: "Invalid approval request." };
   }
   const { threadId, cardId } = raw as { threadId: string; cardId: string };
+  // FSE-012 —— 商家按下的那份报价是哪一版。校验在下面(读得到卡才比对);这里只把它从
+  // 请求里取出来,取不到就是没带,照旧放行。
+  const submittedQuoteVersion = (raw as Record<string, unknown>).quoteVersion;
 
   // Tenant scope: identity from requireOwner only, never from input
   const gate = await requireOwner();
@@ -2312,7 +2316,7 @@ export async function ottoApprove(raw: unknown): Promise<
     | { ok: true; genJobId: string; status: string } // double-approve: existing job
     | { ok: true; alreadyResolved: true; resolution: ApprovalCardResolution } // consumed/expired card: idempotent refusal
     // Codex staging CRE-STG-P2-004 —— `ref` 只在真正未知的那一支出现(见文末 catch)。
-    | { error: string; ref?: string | null }
+    | { error: string; ref?: string | null; quote?: unknown }
   > => {
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
     const { ownerId } = gate;
@@ -2330,6 +2334,12 @@ export async function ottoApprove(raw: unknown): Promise<
     let claimedPayload: ApprovalCardPayload | null = null;
 
     try {
+      // FSE-012 —— 两条批准路共用的那一道报价版本闸(`card-quote-version.ts`),排在这条路
+      // 做任何事之前:拒绝时什么都没恢复、什么都没消费、账本零新增行。这张卡若不是一张
+      // GEN_CARD(非生成类的 APPROVAL_CARD 走同一个 cardId 空间),闸自己不作声。
+      const stale = await staleQuoteRefusal(ownerId, cardId, submittedQuoteVersion);
+      if (stale) return stale;
+
       // Load thread owner-scoped (cross-tenant rejected)
       const thread = await prisma.chatThread.findFirst({
         where: { id: threadId, ownerId, deletedAt: null },

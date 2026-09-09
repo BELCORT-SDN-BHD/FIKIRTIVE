@@ -100,6 +100,10 @@
       "types": "./dist/provider-secrecy.d.ts",
       "default": "./dist/provider-secrecy.js"
     },
+    "./quote-version": {
+      "types": "./dist/quote-version.d.ts",
+      "default": "./dist/quote-version.js"
+    },
     "./reference-budget": {
       "types": "./dist/reference-budget.d.ts",
       "default": "./dist/reference-budget.js"

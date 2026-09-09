@@ -24,6 +24,7 @@ import {
 import { getEnhanceDirective } from "./cowork-knowledge";
 import { resolveDisabledModels } from "./model-registry";
 import { startCoworkGen } from "./gen-actions";
+import { staleQuoteRefusal } from "./card-quote-version";
 import { bindMerchantPrompt } from "./merchant-prompt-provenance";
 import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
@@ -44,7 +45,7 @@ import { familyHasPromptSkill } from "@fikirtive/otto";
  * 写成外壳而不是在原函数里包一层 try:原函数整段是钱路,重排它的缩进会让下一次复审读的是
  * 一份看不出改了什么的 diff。外壳只多一层,身体一个字节没动。
  */
-export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { error: string; ref?: string | null }> {
+export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { error: string; ref?: string | null; quote?: unknown }> {
   const cardId = typeof (raw as { cardId?: unknown } | null)?.cardId === "string"
     ? (raw as { cardId: string }).cardId
     : null;
@@ -59,14 +60,14 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   }
 }
 
-async function coworkGenerateInner(raw: unknown): Promise<{ id: string } | { error: string }> {
+async function coworkGenerateInner(raw: unknown): Promise<{ id: string } | { error: string; quote?: unknown }> {
   const parsed = coworkGenerateRequest.safeParse(raw);
   if (!parsed.success) return { error: "That card can't be generated." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
-  return runAsUser(principal, async (): Promise<{ id: string } | { error: string }> => {
+  return runAsUser(principal, async (): Promise<{ id: string } | { error: string; quote?: unknown }> => {
     const { ownerId } = gate;
-    const { cardId, prompt, entityIds, variantSel, model: modelOverride, count: countOverride, aspectRatio: aspectOverride, resolution: resolutionOverride, durationSeconds: durationOverride, audio: audioOverride } = parsed.data;
+    const { cardId, prompt, entityIds, variantSel, model: modelOverride, count: countOverride, aspectRatio: aspectOverride, resolution: resolutionOverride, durationSeconds: durationOverride, audio: audioOverride, quoteVersion } = parsed.data;
 
     // Load the GEN_CARD server-side — threadId + projectId + the trusted model/params
     // come from the PERSISTED card, never from the client (anti-spoof).
@@ -92,6 +93,13 @@ async function coworkGenerateInner(raw: unknown): Promise<{ id: string } | { err
       select: { id: true },
     });
     if (existingJob) return { id: existingJob.id };
+
+    // FSE-012 —— 商家按下的那份报价还是不是库里这一份。排在再花钱守卫**之后**是有意的:
+    // 同一张卡的第二次点击是幂等地取回那一行任务,不是一次新的报价,拿版本去拦它反而会
+    // 把一次已经成交的动作说成失败。排在下面每一步之前:拒在 create/reserve 之前 ⇒ 零建
+    // 任务、零预扣、账本零新增行。
+    const stale = await staleQuoteRefusal(ownerId, cardId, quoteVersion);
+    if (stale) return stale;
 
     // re-validate the persisted proposal subset; the model/kind/params are server-trusted
     const p = (card.payload ?? {}) as Record<string, unknown>;

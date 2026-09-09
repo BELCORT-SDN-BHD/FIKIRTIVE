@@ -287,6 +287,9 @@ function CanvasConfirmRow({
     if (!outcome.ok) {
       setError(outcome.error);
       setErrorRef(outcome.ref);
+      // FSE-012 —— 报价版本对不上那一支带回了**刷新后的那张卡**:立刻换掉卡面(与抽屉里
+      // 那张卡同一条路 `onOptionsChanged`),商家看到的是新价再决定。控件不锁。
+      if (outcome.refreshedPayload) onOptionsChanged(card.cardId, outcome.refreshedPayload);
       return;
     }
     onApproved({ cardId: card.cardId, chained: outcome.chained });

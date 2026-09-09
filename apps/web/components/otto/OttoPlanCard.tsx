@@ -269,6 +269,9 @@ export function OttoPlanCard({
     if (!outcome.ok) {
       setError(outcome.error);
       setErrorRef(outcome.ref);
+      // FSE-012 —— 报价版本对不上那一支带回了**刷新后的那张卡**:立刻换掉卡面,商家因此
+      // 看到的是新价再决定。走的是改三格那条同一条路(`onOptionsChanged`),不新造第二条。
+      if (outcome.refreshedPayload) onOptionsChanged(cardId, outcome.refreshedPayload);
       return;
     }
     // #498 P1b (round-4): an ottoApprove resume can park AGAIN on further
