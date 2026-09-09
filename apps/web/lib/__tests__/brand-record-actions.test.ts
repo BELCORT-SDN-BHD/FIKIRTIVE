@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockRequireOwner, mockFindMany, mockFindFirst, mockCreate, mockUpdateMany } = vi.hoisted(() => ({
+const { mockRequireOwner, mockFindMany, mockFindFirst, mockCreate, mockUpdateMany, mockCreateProduct } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockFindMany: vi.fn(),
   mockFindFirst: vi.fn(),
   mockCreate: vi.fn(),
   mockUpdateMany: vi.fn(),
+  mockCreateProduct: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
@@ -17,6 +18,9 @@ vi.mock("@fikirtive/db", () => ({
     memory: { findFirst: vi.fn().mockResolvedValue(null) },
     user: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
   },
+  // #1321:建产品走共享动作(身份 Entity ＋ 价签 BrandRecord 同事务),不再走 brandRecord.create。
+  // segment / offer 没有身份那一半,仍走 create —— 下面两条测试就是这条分界线。
+  createProduct: mockCreateProduct,
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -30,15 +34,17 @@ beforeEach(() => {
 describe("saveBrandRecord — create", () => {
   it("creates an owner-scoped product with nameKey and source user", async () => {
     mockFindFirst.mockResolvedValue(null);
-    mockCreate.mockResolvedValue({});
+    mockCreateProduct.mockResolvedValue({ created: true, id: "r-new", entityId: "e-new" });
     const res = await saveBrandRecord({ kind: "product", data: { name: "Latte  Blend", price: "RM 49" } });
-    expect(res).toHaveProperty("ok", true);
-    expect(mockCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        ownerId: "o1", kind: "product", nameKey: "latte blend", source: "user", status: "active",
+    expect(res).toEqual({ ok: true, id: "r-new" });
+    expect(mockCreateProduct).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerId: "o1", brandId: null, source: "user", status: "active",
         data: { name: "Latte  Blend", price: "RM 49" },
       }),
-    });
+    );
+    // 产品只有共享动作这一条写路 —— 这个文件自己的 create 分支只服务 segment / offer。
+    expect(mockCreate).not.toHaveBeenCalled();
   });
   it("rejects invalid data (segment without who)", async () => {
     const res = await saveBrandRecord({ kind: "segment", data: { name: "Moms" } });
