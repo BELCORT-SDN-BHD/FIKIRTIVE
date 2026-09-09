@@ -21,7 +21,15 @@ process.env.STORAGE_DRIVER = "r2";
 process.env.R2_ENDPOINT ??= "http://localhost:9000";
 process.env.R2_ACCESS_KEY_ID ??= "minioadmin";
 process.env.R2_SECRET_ACCESS_KEY ??= "minioadmin";
-process.env.R2_BUCKET ??= "artlio"; // prod bucket still carries the pre-pivot name — flip after the MASTERPLAN P0 bucket migration
+// Never default a developer tracer to the production bucket. Buckets and per-bucket
+// keys: docs/runbooks/r2-bucket-token-rotation.md (staging=fikirtive-staging,
+// production=fikirtive-production; the old shared `artlio` is frozen read-only).
+// Local MinIO has no such bucket until you create it -- create it once, matching
+// the name above, before running this tracer:
+//   mc alias set local http://localhost:9000 minioadmin minioadmin \
+//     && mc mb local/fikirtive-staging
+// (credentials are docker-compose.yml's MINIO_ROOT_USER / MINIO_ROOT_PASSWORD)
+process.env.R2_BUCKET ??= "fikirtive-staging";
 const storage = createStorage("/tmp/unused");
 const step = (m) => console.log(`✓ ${m}`);
 const OWNER = "founder";

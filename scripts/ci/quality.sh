@@ -999,6 +999,10 @@ gate checks "otto CATALOG.md freshness" pnpm --filter @fikirtive/otto catalog:ch
 gate checks "otto knowledge cabinet freshness" pnpm --filter @fikirtive/otto knowledge:check
 gate checks "margin-floor gate self-test" node scripts/__tests__/check-margin-floor.test.mjs
 gate checks "margin floor" node scripts/check-margin-floor.mjs
+# 铸 R2 桶级钥匙的纯函数（桶资源键、policy 构造、复制三态、expires_on 格式）。脚本本身
+# 只在开发者本机手跑，所以没有别的套件覆盖它：`pnpm -r test` 只跑各 package 的 vitest，
+# scripts/ 不在任何 workspace 里。一条 node --test，不需要 build，不发网络、不碰钥匙串。
+gate checks "mint-r2-token plan tests" node --test scripts/tools/mint-r2-token.plan.test.mjs
 
 # 5. Schema truth: the migrations must deploy and must fully describe schema.prisma.
 #    The deploy is on two legs on purpose: it is a gate on `checks` (a migration that

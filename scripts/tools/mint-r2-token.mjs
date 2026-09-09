@@ -18,6 +18,8 @@ import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
+import { interlock } from "./_interlock.mjs";
+
 // ───────────────────────────── 常量 ─────────────────────────────
 
 /**
@@ -1734,7 +1736,7 @@ railway CLI 在 ${RAILWAY_LINKED_DIR} 里跑（环境变量 RAILWAY_LINKED_DIR�
       读 staging 与 production 四个服务的 R2_* 指纹并校验 endpoint 归属。全程不发 S3 请求。
 
   node scripts/tools/mint-r2-token.mjs --copy staging [--dry-run] [--exclude-prefix <前缀>]…
-  node scripts/tools/mint-r2-token.mjs --copy production [--dry-run] [--exclude-prefix <前缀>]…
+  I_UNDERSTAND_THIS_TOUCHES_PROD=yes node scripts/tools/mint-r2-token.mjs --copy production [--dry-run] […]
       把 ${SOURCE_BUCKET} 的对象搬进目标桶。临时铸一把只在进程内用的搬运令牌
       （名字 ${MIGRATION_TOKEN_NAME}，源桶只读 + 目标桶可写），跑完在 finally 里删掉。
       逐对象 Get→Put；--dry-run 只列清单不写。清点时先按第一段路径打一份体积汇总。
@@ -1745,12 +1747,16 @@ railway CLI 在 ${RAILWAY_LINKED_DIR} 里跑（环境变量 RAILWAY_LINKED_DIR�
       搬完按 key 集合比对：源桶的每个 key 都必须出现在目标桶，缺一个就 FAIL 并 exit 1。
       单对象上限 256 MiB（整块读进内存的路子），超限的对象按 failed 计并落屏，请单独处理。
       搬运令牌带一小时 expires_on：进程被 Ctrl-C／被杀时 finally 不跑，靠它兜底自动到期。
+      **--copy production 也要带 I_UNDERSTAND_THIS_TOUCHES_PROD=yes**：2026-09-09 切换完成后
+      fikirtive-production 就是线上正在读的桶，往里写对象＝碰生产（--dry-run 一样要，路径同一条）。
 
   node scripts/tools/mint-r2-token.mjs --mint staging
-  node scripts/tools/mint-r2-token.mjs --mint production --yes-production
+  I_UNDERSTAND_THIS_TOUCHES_PROD=yes node scripts/tools/mint-r2-token.mjs --mint production --yes-production
       给目标桶铸一把只管这一个桶的 R2 钥匙，实测后写进 Railway 对应环境的 web + worker。
       写入的键：R2_BUCKET / R2_ENDPOINT / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY。
       production 必须带 --yes-production（Founder 明说「切」之后才加），
+      而且必须带环境变量 I_UNDERSTAND_THIS_TOUCHES_PROD=yes（全仓统一的碰生产确认锁，
+      scripts/tools/_interlock.mjs）—— 缺它在读钥匙串之前就退出，不发任何请求；
       而且目标桶对象数为 0 时直接 FAIL —— 先跑 --copy production。
       可选 --expect-objects <n>：把 --copy production 汇总行里的源对象数填进来，
       对不上就回收令牌并 FAIL，不再靠肉眼对数字。
@@ -1773,8 +1779,9 @@ railway CLI 在 ${RAILWAY_LINKED_DIR} 里跑（环境变量 RAILWAY_LINKED_DIR�
   打印的只有 HTTP 状态、权限组名字与 id、桶名、服务名、对象 key 与大小、
   sha256 指纹前 12 位、AKID 前 6 位。
 
-顺序：--check → --copy staging --exclude-prefix backups/ → --mint staging → --copy production（不排除）
-     →（Founder 说「切」）→ --mint production --yes-production --expect-objects <n>
+顺序：--check → --copy staging --exclude-prefix backups/ → --mint staging
+     → I_UNDERSTAND_THIS_TOUCHES_PROD=yes … --copy production（不排除）
+     →（Founder 说「切」）→ I_UNDERSTAND_THIS_TOUCHES_PROD=yes … --mint production --yes-production --expect-objects <n>
 文档依据见 docs/runbooks/r2-bucket-token-rotation.md。
 `;
 
@@ -1854,6 +1861,21 @@ async function main() {
   }
   if (expectObjects != null && !(mode === "mint" && env === "production")) {
     throw new Fatal("--expect-objects 只对 --mint production 有效。");
+  }
+
+  // 碰生产确认锁（scripts/tools/_interlock.mjs 的统一约定，与 prod-* 脚本同一把）。
+  // --mint production 会改 Railway production 上 web 与 worker 的 R2 凭据 —— 真正的切换动作。
+  // --copy production 也在锁内：2026-09-09 切换完成之后，fikirtive-production 就是活生产桶，
+  // 再跑 --copy production 是往线上正在读的桶里写对象（--dry-run 也一样要锁，路径同一条）。
+  // --yes-production 证明「Founder 说过切」，这道锁证明「跑的人知道自己在碰生产」，两者都要。
+  // 位置在读钥匙串之前：缺锁时一个秘密都不会被读出来，也不会发出任何请求。
+  if (env === "production" && (mode === "mint" || mode === "copy")) {
+    interlock({
+      prod:
+        mode === "mint"
+          ? "Railway production 的 web 与 worker 的 R2 凭据（写完线上就用新桶新钥匙）"
+          : "fikirtive-production 桶（切换完成后线上正在读的那个桶）",
+    });
   }
 
   const target = env ? `${env}（桶 ${planFor(env).bucket}）` : "staging + production";
