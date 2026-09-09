@@ -260,13 +260,12 @@ export const auth = betterAuth({
     // Better Auth calls those and honours whatever window they return, so a function that returns
     // 61 seconds walks straight back into the trap and no static check could see it coming.
     customRules: {
-      // NOTE (#795): there is deliberately NO rule for "/sign-in/email" here either, and that is
-      // the OPPOSITE of leaving the password door unguarded. Better Auth's built-in special rule
-      // already caps every /sign-in path at 3 per 10 seconds, and `customRules` REPLACES a rule
-      // rather than adding to it — an hourly rule written here would delete that burst cap. The
-      // password door needs both (a burst cap stops credential stuffing at speed; an hourly cap
-      // stops the patient version), so the hourly one is layered in front of this handler instead,
-      // in app/api/better-auth/[...all]/route.ts. Nothing here is loosened; a cap is added.
+      // NOTE (SIGNIN-A4): #795 的这一格原本解释「为什么不给 `/sign-in/email` 写每小时规则」——
+      // 那是密码门。密码退役之后它在 router 层就 404（`CLOSED_PASSWORD_PATHS`），限流器根本
+      // 见不到它，所以那条理由连同门一起作废。它留下的那条规则仍然成立并且仍然在用：
+      // `customRules` 是**替换**而不是叠加，写一条每小时规则会把 Better Auth 自带的突发上限
+      // 删掉，所以我们自己的每小时闸一律层叠在 app/api/better-auth/[...all]/route.ts 里，
+      // 不写进这张表。
       //
       // NOTE (#678 r3): there is deliberately NO rule for the sign-in-code doors here either.
       // The one that MINTS a code is not a public door at all — it is in `disabledPaths`, and its
