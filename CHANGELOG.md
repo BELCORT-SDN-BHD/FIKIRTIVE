@@ -8,7 +8,7 @@
 
 无
 
-## [0.1.0] - 待收版日期
+## [0.1.0] - 2026-09-09
 
 0.1.0 = 现在线上的东西得到名字；本版为里程碑制第一次试跑（仓库整理）。
 
@@ -20,4 +20,5 @@
 - worktree 回收 11→7（[#1293](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1293)）
 - 17 张开放票分流（[#1290](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1290)）：5 留作记录、1 关、11 进下一版挂里程碑「下一版（编号待里程碑场定）」
 - 延后台账 D-097（PR [#1294](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1294)）
+- 就绪演练三条判据全过（[#1299](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1299)）；S5 勾表与收版记录（[#1300](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1300)）
 - 决策记录 = 整理地图 [#1285](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1285)
