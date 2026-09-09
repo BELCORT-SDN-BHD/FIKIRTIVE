@@ -29,7 +29,7 @@ GitHub shares one number space across issues and PRs, so a bare `#42` may be eit
 
 ## When a skill says "publish to the issue tracker"
 
-Create a GitHub issue.
+Create a GitHub issue — **except** `to-spec`: in this repo a spec is a `docs/specs/<name>.md` file written per `docs/specs/TEMPLATE.md`, never an issue (house rule: `AGENTS.md`「里程碑制」第 1 条). `to-tickets` issues must carry a `Spec:` line, the acceptance IDs they cover, the current milestone and `ready-for-agent`; spec-less tidy-up tickets carry a `轻改:` line instead.
 
 ## When a skill says "fetch the relevant ticket"
 
