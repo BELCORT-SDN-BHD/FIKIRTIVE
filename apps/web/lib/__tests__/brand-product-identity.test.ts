@@ -204,6 +204,19 @@ describe("PRODID-A9 跨租户:找不到,写入被拒", () => {
   }, 60_000);
 });
 
+/**
+ * 读路改接(@ 菜单、Library / Brand 双向同步、删除恢复同步、理解草稿门)是 Brand②③ 的活
+ * (票 #1322 / #1330)。占位在这里,好让验收表这五行有落点,S5 前由那两票转正 ——
+ * 空着不写比写一条假绿的测试更诚实(M3 明确允许 it.todo 占位)。
+ */
+describe("PRODID-A2/A4/A5/A6/A7 读路与同步(Brand②③,票 #1322 / #1330)", () => {
+  it.todo("PRODID-A2 @ 菜单来源标签为「Product」,选入确认卡后谱系指向同一个 Entity id");
+  it.todo("PRODID-A4 Library 与 Brand 页任一边改名换主图,另一边同步显示(同一行 Entity)");
+  it.todo("PRODID-A5 Library 元素页没有价格、卖点、分类的编辑入口");
+  it.todo("PRODID-A6 Brand 页删除产品,Library 随之消失;任一边恢复,另一边跟着回来");
+  it.todo("PRODID-A7 Otto「记下产品 X」两边出现;理解提取的草稿在确认前不进 Library 与 @ 菜单");
+});
+
 describe("PRODID-A10 建、改、删产品各一次:余额不变,账本零新行", () => {
   it("PRODID-A10 建改删三次动作之后,账本行数与余额逐字不变", async () => {
     await signInAs(EMAIL_A);
