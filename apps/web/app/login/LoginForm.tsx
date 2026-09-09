@@ -379,13 +379,10 @@ export function LoginForm({
     <AuthStepCard
       title="Log in to Fikirtive"
       description="Choose how you want to continue."
-      /* SIGNIN-A4 —— 没有第二个注册页,所以 hub 上也没有通往它的那句话。陌生人和老用户按的
-         是同一颗按钮,第一次来就开好账号(docs/specs/sign-in.md §1 第 1 问)。 */
-      footer={
-        <p className="text-sm text-muted-foreground">
-          New here? Continue with your email — we&apos;ll set your workspace up on the way in.
-        </p>
-      }
+      /* SIGNIN-A4 —— hub 上没有 footer,而且这里刻意**不**补一句「第一次来也按这颗」。
+         没有第二个注册页(规格 §1 第 1 问),所以通往它的那句「Create an account」撤掉;换一句
+         「新来的也走这扇门」则是在替登录门②(SIGNIN-A1,码门对陌生人开放)先说话 —— 今天码门
+         仍然只放行名单内的地址,那句话会是假的。门开了那一片再补文案。 */
     >
       <FieldGroup className="gap-4">
         {error ? (

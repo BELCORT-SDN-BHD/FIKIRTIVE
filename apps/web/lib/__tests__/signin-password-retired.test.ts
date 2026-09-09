@@ -270,7 +270,10 @@ describe("SIGNIN-A11 —— 没有任何途径能建立密码", () => {
     }
   });
 
-  it("SIGNIN-A11 —— #980 的 pre-hijack 顺序不再存在：没有未验证密码凭据可翻真", async () => {
+  it("SIGNIN-A11 / GATE-A8 —— #980 的 pre-hijack 顺序不再存在：没有未验证密码凭据可翻真", async () => {
+    // GATE-A8（docs/specs/beta-gate.md 的上线闸）与 #980 是同一条攻击顺序，sign-in.md 的 A11
+    // 行点名了它。这一条同时是它俩的落点。
+    //
     // #980 的路径是：攻击者用受害者邮箱注册并设密码（emailVerified=false）→ 受害者用码登录 →
     // emailOTP 插件把 emailVerified 翻真 → requireEmailVerification 不再挡住那份密码。
     // 第一步现在打不通（/sign-up/email 404），而且**没有任何端点**能写出一份 credential 凭据 ——
