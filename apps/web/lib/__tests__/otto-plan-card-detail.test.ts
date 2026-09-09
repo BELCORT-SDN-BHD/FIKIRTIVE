@@ -681,7 +681,13 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
     const host = mountCard({ pendingApproval: true, onApproved });
     await approveThroughTheUi(host);
 
-    expect(ottoApproveMock).toHaveBeenCalledWith({ threadId: "thread_1", cardId: "card_1" });
+    // FSE-012 —— 批准这一趟还带着「他按下的是哪一版报价」(`cardQuoteVersion`,creation §5 :170)。
+    // 这里只钉它在场且是一串:那一串本身算得对不对,由 quote-version 自己那份单测钉。
+    expect(ottoApproveMock).toHaveBeenCalledWith({
+      threadId: "thread_1",
+      cardId: "card_1",
+      quoteVersion: expect.any(String),
+    });
     expect(coworkGenerateMock).not.toHaveBeenCalled();
     expect(onApproved).toHaveBeenCalledWith({
       cardId: "card_1",
