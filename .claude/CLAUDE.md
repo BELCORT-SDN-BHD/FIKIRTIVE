@@ -1,1 +1,70 @@
-@../AGENTS.md
+# FIKIRTIVE 项目指南
+
+> 本文件只记录这个产品独有、每次开发都必须知道的事实。它不是编排系统、审批系统或项目状态数据库。
+
+## 开始工作
+
+1. 先遵守当前用户指令与运行环境。
+2. 阅读 `docs/BLUEPRINT.md`，理解长期产品方向。
+3. 只加载与当前任务直接相关的代码、ADR、spec 和 `docs/references/` 资料。
+4. 用 live Git、当前代码、数据库和测试确认事实；旧计划、报告、handoff 与 issue 只作参考。
+
+## 产品基础
+
+- **Money exactly-once**：付费动作必须有稳定幂等键；reserve、settle、refund 与 ledger 保持单一权威并 fail closed。用数据库唯一约束和行为测试证明，不能靠文档声明。
+- **Tenant isolation**：tenant 身份只能来自已认证的 server principal；不得相信客户端传入的 `ownerId`、`orgId` 或角色。查询和关系必须带 tenant 约束，并有双租户测试。
+- **Permission-based access**：授权检查具体 capability 与 resource scope。一个人可以拥有多个角色；角色只是权限组合，不能因角色名称本身制造禁止。
+- **Database safety**：schema 变化必须有 migration、约束与 fresh-database 验证。现有数据需要转换时，迁移必须可解释、可测试，并在生产执行前另行确认备份与恢复方案。
+- **Shared actions**：人工 UI 与 Otto 操作同一业务动作层；不要复制第二套业务实现。
+- **Pricing truth**：价格集中配置并满足产品毛利底线；不要把价格字面量散落在业务或 UI 中。
+
+## 工作方式
+
+- 不直接 push 到 `main`；通过分支与 PR 交付。
+- 只修改当前目标所需内容，优先使用真实行为测试、类型检查和 production build 验证。
+- required CI 绿色才代表当前提交通过自动验证；CI 不可用不等于绿色。
+- 产品方向、身份、用户行为和验收改变由 Founder 决定。实现细节在不改变这些决定时由开发者按最简单可靠方案处理。
+- specs 与工程文档使用华语；UI copy 使用 English sentence case。
+
+## 开发流程（Founder 2026-08-28 批准《开发作业手册》；机器闸在 `.github/workflows/process-gates.yml`）
+
+1. 产品改动先查 `docs/specs/` 对应规格；没有已冻结的 S1 不写产品代码——第一动作是 grill Founder 产出规格草案（模板 `docs/specs/TEMPLATE.md`）。轻挡除外：零商家可见行为变化的改动，在 PR 描述写一行 `轻改: <勾选句>`；钱路／迁移／登录租户／新路由无论自报什么挡，一律要规格引用（M1 路径地板）。「已交付 · 归档」的规格只能作轻改引用（PR 同时带 `轻改:` 句，用于交付后零行为变化的维护）；要改行为须新冻结规格（Founder 2026-09-02 裁决，触发＝#1127 被 M1 拦）。
+2. 一个 session 只推进一个功能的一个阶段（签 S1、批 S2、或勾 S5），做完即收。
+3. 产出物只存 `docs/specs/` 对应文件，规格只在主干上有效——长期分支先把规格以 docs-only PR 合进主干再开工。聊天记录、临时目录、会话记忆都不是权威。
+4. 冻结三步：① Founder 本人（GitHub 账号 `nicksgan-belcort`）在功能 issue 评论「S1 批准 <规格文件名>」（签名必须点名文件；agent 代记无效，机器闸校验作者与文件名）；② 规格状态行改「已冻结 · v1」；③「批准:」行填该 issue 完整链接。状态词只有三个：草稿／已冻结 · v<n>／已交付 · 归档。
+5. Founder 中途新想法只有三个出口：登记进规格「变更登记」节（默认）／明示取消（报废物清单＋旧实现同 PR 删除）／做完再转。禁止任务悄悄变形；方向级推翻须隔夜＋四行推翻单（推翻什么／为什么／报废约多少行／受影响围栏清单）。
+6. 验收只认冻结版验收表；表外不满登记后走下一循环。S5 打回一条验收时，在功能 issue 评论独立成行写「S5 打回 <编号>」（自毁开关据此计数）。阶段性 commit + push，任何时刻 GitHub 上都有副本。
+7. 其余机器闸的可操作口径：验收编号必须逐字出现在测试里（M3，`it.todo` 可占位）；新引入 `BETA_*`／`*_ENABLED` 开关必须在 PR 描述带「保留理由: + 失效日期: YYYY-MM-DD」（M4）；`docs/specs/` 平铺、prisma 迁移守形状、`docs/superpowers/` 冻结（M5）；改闸门文件本身要在 PR 描述自报一行「闸门改动: <理由>」。开场自动打出的规格状态清单来自 SessionStart hook（`scripts/tools/spec-status.sh`，只读注入，不是被禁的 orchestration overlay）。
+
+## 里程碑制（Founder 2026-09-09 裁定；决策记录 = 整理地图 https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1285 及其子票）
+
+1. 一个版本 = 一个 GitHub 里程碑，顺序固定：里程碑场（`/mattpocock-skills:wayfinder` 出决定票，逐票拍板；开场先把 `idea` 票与到期延后项摆上桌让 Founder 下注）→ 出规格 → 拆票 → agent 施工 → S5 验收 → 收版。本仓库的两处接缝：`to-spec` = 写 `docs/specs/<名>.md` 按 TEMPLATE，不发 issue，冻结照上节第 4 条；`to-tickets` = 每票带 `Spec:` 行、覆盖的验收编号、当前里程碑、`ready-for-agent`，无规格的整理票改写一行 `轻改:` 句。
+2. 人管五样，其余归 agent 与机器闸：方向（`docs/BLUEPRINT.md`、`docs/adr/`、`CONTEXT.md`）、规格签名、下注、验收、规矩（本文件）。要动这五样先问 Founder。
+3. 版本号在里程碑场按本轮范围定，agent 推荐一档、Founder 拍板：补丁 = 修补与小功能；小版 = 大节点或新面；大版 = 商业模式级。收版 = 里程碑票全关 + S5 全勾 → `git tag vX.Y.Z` + GitHub Release + `CHANGELOG.md` 一版一节（交付的规格、关掉的票、链接）。package.json 版本号不动。
+4. 不属于任何已冻结规格的中途想法进三个柜子（属于某规格的照上节第 5 条进其变更登记）：`idea` 标签 = 还没决定做不做，不挂里程碑、不标可派，最少三行（一句话构思 / 商家场景 / 来源），idea 场 = 短 grilling 出一张票、不施工；`docs/DEFERRED.md` = 已决定做、等触发条件；`polish` 标签 = 已有功能的打磨，不排期。
+5. 交接：有地图或里程碑 issue 的场，那张 issue 就是交接书；记忆库只存指针（工件指针 / 环境陷阱 / Founder 常令），历史现场移出索引。
+
+## 前端接线与设计变更
+
+涉及后端接入 UI、新增／修改前端组件、页面／流程变更或将验收版本接入正式路由时，必须先完整阅读 `apps/web/design-system/governance/frontend-integration-handoff.md`，再按其中指针核对本次设计来源与批准。它规定接线方法，不授予新功能、重设计或发布权限。
+
+## 代码地图（CodeGraph）
+
+- 唯一持图树是主检出 `/Users/winnin/Desktop/FIKIRTIVE`。orchestrator 做全局调查时在主检出上 CodeGraph-first。
+- 主检出会落后 `origin/main`。查图前先核对它的 HEAD，落后就 `git -C <主检出> pull --ff-only`（它历来零本地提交，watcher 随后自动跟上索引）。树新鲜与图新鲜要一起验，缺一不可。
+- 查图前必须先跑 `codegraph status` 验明地图身份：输出带 worktree 警告或不是 fresh，就不得用图。嵌在主检出目录内的 worktree（`.claude/worktrees/*`）里，`query` 与 `callers` 会零警告返回主检出的结果。
+- worker 与判官在自己的 worktree 一律诚实回退到 `rg` 与直接读文件；不跑 `codegraph init`，不借主检出的图。
+- 主检出以外的目录出现 `.codegraph/` 就是错误，就地删除。
+- lock、watchdog 或 sync 报错之后必须重新 `codegraph status` 才能声称 fresh；daemon 还在不等于图是新的。
+- 适用调查的交接带一行回执：`CodeGraph: used — query: "<query>"; index: <status>; fallback reads: <files or none>.`；没用图就写 `not used` 加原因。
+- CodeGraph 只是辅助调查能力；Git、当前文件和行为测试仍是事实权威。
+
+## 外部边界
+
+未经 Founder 对该次动作明确授权，不部署、不修改生产数据或凭据、不发布外部内容、不删除远端或云端状态。
+
+## 保持简单
+
+- Agent 编排使用运行环境提供的能力；仓库内不建立 orchestration overlay、task claim、model identity、reviewer topology 或 merge-executor harness。
+- GitHub issue、PR、worktree、cache、memory 和本地 session 都是工作载体，不是产品或执行权威。唯一例外：Founder 本人在功能 issue 下的「S1 批准」评论，是规格冻结的批准记录（见「开发流程」第 4 条）。
+- `docs/references/` 保存产品洞察，但不自动授予范围、优先级或批准。
