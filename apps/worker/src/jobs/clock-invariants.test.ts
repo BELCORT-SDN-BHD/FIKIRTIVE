@@ -23,7 +23,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { GEN_QUEUE_POLICY, REFGEN_QUEUE_POLICY, RESEARCH_QUEUE_POLICY, PUBLISH_QUEUE_POLICY, PUBLISH_EXECUTION_DEADLINE_MS } from "@fikirtive/core";
-import { VIDEO_POLL_TIMEOUT_MS } from "@fikirtive/generation";
+import { VIDEO_POLL_TIMEOUT_MS, ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS } from "@fikirtive/generation";
 import { GEN_STALE_MS, GEN_REAP_MS, GEN_QUEUED_REAP_MS, GEN_DONE_EMPTY_GRACE_MS } from "./gen.js";
 import { REFGEN_STALE_MS, REFGEN_REAP_MS, REFGEN_QUEUED_REAP_MS } from "./refgen.js";
 
@@ -52,6 +52,15 @@ describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () 
     // expire must cover the provider call itself PLUS the download+store tail after it.
     expect(genExpireMs).toBeGreaterThan(VIDEO_POLL_TIMEOUT_MS);
     expect(genExpireMs - VIDEO_POLL_TIMEOUT_MS).toBeGreaterThanOrEqual(5 * MINUTE);
+  });
+
+  // creation §5 :177 —— 图片那条路也有它自己的第一环,而且此前**没人守**。
+  // 图片是同步渲染:POST 的时长就是出图时长(视频那条是「建任务 60s + 轮询 15m」)。
+  // 这一环同样必须落在 stale 之前,否则一次正常的慢出图会被判成「卡死」并误杀退款;
+  // 一次尝试的最坏在途 = 渲染 5m + 结果下载 5m,仍在 18m stale 之内。
+  it("一次正常的慢出图不会被 stale 判定误伤", () => {
+    expect(ARK_IMAGE_TIMEOUT_MS).toBeLessThan(GEN_STALE_MS);
+    expect(ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS).toBeLessThan(GEN_STALE_MS);
   });
 
   it("四个数字就是现行值(改任何一个都必须回到这里重新论证)", () => {

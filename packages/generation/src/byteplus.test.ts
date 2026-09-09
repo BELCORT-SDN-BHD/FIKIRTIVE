@@ -6,6 +6,8 @@ import {
   VIDEO_MODEL_MAP,
   ARK_CONTROL_TIMEOUT_MS,
   ARK_DOWNLOAD_TIMEOUT_MS,
+  ARK_IMAGE_TIMEOUT_MS,
+  arkPostTimeoutMs,
   LAST_FRAME_FETCH_TIMEOUT_MS,
 } from "./byteplus.js";
 
@@ -1399,6 +1401,55 @@ describe("#795 出网截止时间", () => {
     expect(ARK_CONTROL_TIMEOUT_MS).toBe(60_000);
     expect(ARK_DOWNLOAD_TIMEOUT_MS).toBe(5 * 60_000);
     expect(ARK_DOWNLOAD_TIMEOUT_MS).toBeGreaterThan(ARK_CONTROL_TIMEOUT_MS);
+  });
+
+  // ── creation §5 :177 —— 渲染面自己的尺寸(门槛 A3 / FL-04 的根因) ────────────────
+  //
+  // 复现(2026-09-10,本文件下面第一条用例):图片 POST 此前拿的是 60s 控制面尺寸,而
+  // `/images/generations` 的那次连接里模型正在画图,连接时长 = 出图时长。staging 那单变体
+  // 因此在第 60.704 秒被 abort(`05:39:42.124Z` → `05:40:42.828Z`),落库
+  // `generation provider returned only 0/1 usable images` + spent=true —— 商家没图、我们照付。
+  // 同一轮**成功**的图片作业整单 27.6s–41.4s,60s 只有 1.5 倍余量。
+  it("creation §5 :177 variation 根因 —— 图片同步渲染 POST 用渲染面尺寸,不是控制面的 60s（CREATE-A1）", async () => {
+    const seen: Array<{ url: string; ms: number }> = [];
+    const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+    let pending: number | undefined;
+    const spy = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => { pending = ms; return realTimeout(ms); });
+    try {
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        seen.push({ url: String(url), ms: pending as number });
+        return String(url).endsWith("/images/generations")
+          ? jsonRes({ data: [{ url: "https://tos/i.png" }] })
+          : bytesRes();
+      }));
+      await new BytePlusProvider("ark-test").generate({
+        prompt: "p", model: "seedream", count: 1, inputImageUrls: ["https://r2/source.png"],
+      } as never);
+    } finally {
+      spy.mockRestore();
+    }
+    const post = seen.find((c) => c.url.endsWith("/images/generations"));
+    expect(post?.ms).toBe(ARK_IMAGE_TIMEOUT_MS);
+    expect(ARK_IMAGE_TIMEOUT_MS).toBe(5 * 60_000);
+    // 反向钉板:视频 submit **不**渲染(它只建任务),那一格仍旧是控制面的 60s。
+    expect(arkPostTimeoutMs("video submit")).toBe(ARK_CONTROL_TIMEOUT_MS);
+    expect(arkPostTimeoutMs("image request")).toBeGreaterThan(ARK_CONTROL_TIMEOUT_MS);
+  });
+
+  it("creation §5 :177 variation 复现 —— 渲染 POST 被 abort 时商家读到的正是 staging 那句话（CREATE-A1）", async () => {
+    // 这条不是「新行为」,是把走查现场固定下来:abort ⇒ charged ⇒ 批级包装成
+    // `returned only 0/1 usable images`。修法只改等多久,这条链路一格未动 —— 所以它必须继续绿。
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).endsWith("/images/generations")) {
+        throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+      }
+      return bytesRes();
+    }));
+    const err = await new BytePlusProvider("ark-test").generate({
+      prompt: "p", model: "seedream", count: 1, inputImageUrls: ["https://r2/source.png"],
+    } as never).catch((e: unknown) => e) as Error & { charged?: boolean };
+    expect(err.message).toBe("generation provider returned only 0/1 usable images");
+    expect(err.charged).toBe(true);
   });
 
   it("超时中止 = 「结果未知,按已计费处理」,不是可重试的普通失败", async () => {
