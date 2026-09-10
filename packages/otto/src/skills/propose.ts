@@ -210,11 +210,12 @@ export async function executePropose(
     // `referenceUpscalePlan` + 同一对元数据,所以「卡上说放大了 N 张」与「worker 真放大了
     // N 张」仍然只有一份口径。
     //
-    // 说不出来的那一档(`unknown`)两边一起沉默。规格 §5 :162① 落地之后,本站生成的资产
-    // **不再**落在这一档:`apps/worker/src/jobs/gen.ts` 出图处按 ingest 同一套 ffprobe 量真
-    // 字节写 `Asset.width/height`,所以本站生成的小图从此在花钱之前就被认出来。剩下的唯一
-    // 一档是「上传图 ingest 还没量完就被拿去生成」,那一趟与今天逐字相同(供应商弹回、退款),
-    // 已登记。
+    // 说不出来的那一档(`unknown`)两边一起沉默。规格 §5 :162① 落地之后,本站生成的**图片**
+    // 不再落在这一档:`apps/worker/src/jobs/gen.ts` 出图处读文件头量真字节写
+    // `Asset.width/height`(与 ingest 的 ffprobe 数字逐张对住),所以本站生成的小图从此在
+    // 花钱之前就被认出来。剩下的两档已登记:①上传图 ingest 还没量完就被拿去生成;
+    // ②末帧资产(`storeLastFrameBestEffort`)未量——它是 ≥720p 的视频静帧,永远够大。
+    // 两档都与今天逐字相同。
     finalPayload = withReferenceUpscaleNote(finalPayload, upscaleCount);
   }
 

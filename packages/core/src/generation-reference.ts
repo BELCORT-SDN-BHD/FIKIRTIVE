@@ -93,9 +93,11 @@ export const MIN_UPSCALABLE_REFERENCE_SIDE = 100;
  *   · `unknown`  —— 宽或高读不出来。
  *
  * ── `unknown` 为什么不能当成 `refuse`(这一格是钱路)───────────────────────────────
- * 宽高只有 `UPLOAD` 资产才由 ingest 的 ffprobe 填得上(`apps/worker/src/jobs/ingest.ts` 只给
- * UPLOAD 派 ingest);**本站生成的资产那两格一律是 null**(`gen.ts` 出图时不写宽高)。把
- * 「不知道」读成「太小」会拒掉每一张本站生成的商品图,而那正是这条正路最主要的输入。
+ * 上传资产的宽高由 ingest 的 ffprobe 填(`apps/worker/src/jobs/ingest.ts` 只给 UPLOAD 派
+ * ingest);本站生成的**图片**从规格 §5 :162① 落地起也有真尺寸(`gen.ts` 出图处读文件头量
+ * 真字节)。所以今天读到 `unknown` 只剩三档:视频资产(mp4 未解帧宽高,不经这道闸)、上传
+ * 图 ingest 还没量完就被引用、末帧资产未量——都已登记。
+ * 判据仍然不把「不知道」读成「太小」:那会拒掉一整类其实够大的图,而这一格是钱路。
  * 所以判据只说「读不出来」,由调用方各自决定怎么处理:
  *   · 铸卡侧(付费前)—— 放行,与这条修改之前逐字相同;
  *   · worker 侧 —— 同样按元数据短路,`unknown` ⇒ 不读字节、不放大(见 `gen.ts` 的放大函数)。
