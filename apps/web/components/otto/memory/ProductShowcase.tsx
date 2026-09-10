@@ -144,7 +144,16 @@ export function ProductShowcase({
   looseNotes: MemoryRow[];
   freshIds: Set<string>;
   stuffItems?: StuffItem[];
-  onSave: (id: string | undefined, data: Record<string, unknown>) => Promise<string | null>;
+  /**
+   * `identity` = 这一次提交里**真的被编辑过**的身份格(名字、主图)。判据是「这一格有没有
+   * 被提交上来」,而这张表单是唯一答得出这句话的地方 —— 所以由它交,不由上游从 `data` 里猜
+   * (规格 §5 PRODID-R6;票 #1323)。整格不给 = 这一趟不碰身份。
+   */
+  onSave: (
+    id: string | undefined,
+    data: Record<string, unknown>,
+    identity?: { name?: string; imageAssetId?: string | null },
+  ) => Promise<string | null>;
   onArchive: (id: string, data: Record<string, unknown>, status: "active" | "archived") => Promise<string | null>;
   onNoteSave: (id: string, content: string) => Promise<string | null>;
   onNoteDelete: (id: string) => Promise<string | null>;
@@ -467,7 +476,12 @@ export function ProductShowcase({
                     // prodSetImage delete-the-key discipline). Only `category`.
                     const merged = { ...d, ...data };
                     if (!("category" in data)) delete merged.category;
-                    return onSave(r.id, merged);
+                    // 这张表单有 Name 栏,**没有**主图栏(换/清封面是卡片菜单上那两颗键)。
+                    // 所以这一趟只交名字这一格 —— `merged.imageAssetId` 是读路补进来的客户端
+                    // 快照,顺手递上去等于让「改个价」把商家刚在 Library 换过的封面打回去。
+                    return onSave(r.id, merged, {
+                      name: typeof data.name === "string" ? data.name : "",
+                    });
                   }}
                 /></CardContent>
               </Card>
