@@ -214,21 +214,117 @@ describe("PRODID-A8 回填迁移", () => {
     ).resolves.toBe(0);
   }, 60_000);
 
-  it("PRODID-A8 预检对同租户同名冲突报错,且整条迁移不落库", async () => {
+  /**
+   * 预检②(**Founder 2026-09-10 裁,#1321 评论**):同名不再一律拒绝,而是**一次性链接**。
+   *
+   * 为什么破例:这条预检在开发库上 100% 命中 —— 存量 Library 产品卡与 Brand 价签本来就是同一件
+   * 东西被记了两处,一律拒绝等于这份迁移永远上不了线。裁决只覆盖**这一次迁移**:运行时新增同名
+   * 仍然不自动合并(规格 §3 不变,`createProduct` 撞名照旧返回 `{ created:false, existingId }`)。
+   *
+   * 三种情况各一例。
+   */
+  it("PRODID-A8 同名一次性链接:没有同名的 Library 卡 → 照旧新建身份", async () => {
     await loosenConstraints();
-    // 商家已经在 Library 里自己建过一件同名的产品元素 —— 是不是同一件,回填不猜(规格 §3)。
+    // 同租户有一张 PRODUCT 卡,但名字不同;另一个租户有一张同名的 —— 两张都不该被认领。
     await prisma.entity.create({
-      data: { id: `ent_${randomUUID()}`, ownerId: orgId, type: "PRODUCT", name: "  Kopi   Ais " },
+      data: { id: `ent_${randomUUID()}`, ownerId: orgId, type: "PRODUCT", name: "Teh o ais" },
     });
+    await prisma.entity.create({
+      data: { id: `ent_${randomUUID()}`, ownerId: otherOrgId, type: "PRODUCT", name: "Kopi ais" },
+    });
+    const recordId = await seedLegacyProduct(orgId, "Kopi ais");
+
+    await runMigration();
+
+    const row = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: recordId, ownerId: orgId }, select: { entityId: true },
+    });
+    expect(row.entityId).toBe(`prodid_${recordId}`);
+  }, 60_000);
+
+  it("PRODID-A8 同名一次性链接:恰有一张同名活跃 Library 卡 → 指向它、不新建身份、主图挂上去", async () => {
+    await loosenConstraints();
+    const assetId = await seedAsset(orgId);
+    // 商家自己在 Library 建的那张卡 —— 名字带多余空白,归一化之后与价签的 nameKey 相同。
+    const cardId = `ent_${randomUUID()}`;
+    await prisma.entity.create({
+      data: { id: cardId, ownerId: orgId, type: "PRODUCT", name: "  Kopi   Ais " },
+    });
+    // 同名的价签(带主图)+ 一条没有同名卡的价签,用来对照「没同名的照旧新建」。
+    const linkedId = await seedLegacyProduct(orgId, "Kopi ais", { imageAssetId: assetId });
+    const freshId = await seedLegacyProduct(orgId, "Teh tarik");
+    // 一条软删的同名价签:它不参与链接(链接只给活跃价签),照旧各建各的身份。
+    const deletedId = await seedLegacyProduct(orgId, "Kopi ais", { deletedAt: new Date() });
+
+    const liveTagsBefore = await prisma.brandRecord.count({
+      where: { ownerId: orgId, kind: "product", deletedAt: null },
+    });
+    await runMigration();
+
+    // ① 价签指向的是**商家那张卡**,不是回填新造的身份。
+    const linked = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: linkedId, ownerId: orgId }, select: { entityId: true },
+    });
+    expect(linked.entityId).toBe(cardId);
+    // ② 没有同名卡的那条照旧新建;软删那条也照旧各建各的。
+    await expect(
+      prisma.brandRecord.findFirstOrThrow({ where: { id: freshId, ownerId: orgId }, select: { entityId: true } }),
+    ).resolves.toEqual({ entityId: `prodid_${freshId}` });
+    await expect(
+      prisma.brandRecord.findFirstOrThrow({ where: { id: deletedId, ownerId: orgId }, select: { entityId: true } }),
+    ).resolves.toEqual({ entityId: `prodid_${deletedId}` });
+    // 复用的那条**没有**新造身份 —— 这正是「不新建」的凭据。
+    await expect(
+      prisma.entity.count({ where: { ownerId: orgId, id: `prodid_${linkedId}` } }),
+    ).resolves.toBe(0);
+
+    // ③ 价签的主图挂到了那张卡上(它自己原本没有主图),而且有一条真的 ReferenceImage ——
+    //    只写 baseAssetId 这条软指针的话,那张图会在下一次清扫里被当成孤儿。
+    const card = await prisma.entity.findFirstOrThrow({
+      where: { id: cardId, ownerId: orgId }, select: { name: true, baseAssetId: true },
+    });
+    expect(card).toEqual({ name: "  Kopi   Ais ", baseAssetId: assetId }); // 名字一个字节没动
+    await expect(
+      prisma.referenceImage.count({
+        where: { ownerId: orgId, entityId: cardId, assetId, deletedAt: null },
+      }),
+    ).resolves.toBe(1);
+
+    // ④ 身份计数口径(Founder 裁的那一句):每条活跃价签 entityId 非空,而且
+    //    活跃 PRODUCT Entity 数 ≥ 迁移前活跃价签数 − 复用数。
+    const liveTags = await prisma.brandRecord.findMany({
+      where: { ownerId: orgId, kind: "product", deletedAt: null },
+      select: { entityId: true },
+    });
+    expect(liveTags.every((r) => !!r.entityId)).toBe(true);
+    const liveEntities = await prisma.entity.count({
+      where: { ownerId: orgId, type: "PRODUCT", deletedAt: null },
+    });
+    expect(liveEntities).toBeGreaterThanOrEqual(liveTagsBefore - 1); // 复用数 = 1
+  }, 60_000);
+
+  it("PRODID-A8 同名一次性链接:两张同名 Library 卡 → 拒绝并报出,整条迁移零落库", async () => {
+    await loosenConstraints();
+    for (const name of ["  Kopi   Ais ", "KOPI AIS"]) {
+      await prisma.entity.create({
+        data: { id: `ent_${randomUUID()}`, ownerId: orgId, type: "PRODUCT", name },
+      });
+    }
     const clashId = await seedLegacyProduct(orgId, "Kopi ais");
+    // 同一批里还有一条本来没问题的行 —— 用它证明「不落库」是整条,不是只跳过坏的那一条。
+    const goodId = await seedLegacyProduct(orgId, "Nasi lemak");
 
     await expect(runMigration()).rejects.toThrow(/预检②失败/);
 
-    const row = await prisma.brandRecord.findFirstOrThrow({
-      where: { id: clashId, ownerId: orgId },
-      select: { entityId: true },
+    const rows = await prisma.brandRecord.findMany({
+      where: { ownerId: orgId, kind: "product" }, select: { id: true, entityId: true },
     });
-    expect(row.entityId).toBeNull();
+    expect(rows.find((r) => r.id === clashId)!.entityId).toBeNull();
+    expect(rows.find((r) => r.id === goodId)!.entityId).toBeNull();
+    // 一条身份都没造出来(商家原有的两张卡照旧在,回填的一条都没有)。
+    await expect(
+      prisma.entity.count({ where: { ownerId: orgId, id: { startsWith: "prodid_" } } }),
+    ).resolves.toBe(0);
   }, 60_000);
 
   it("PRODID-A8 fresh DB:空库上跑迁移无错,外键与 CHECK 都在位", async () => {
@@ -304,16 +400,55 @@ describe("判官 P1 回滚演练:被商家用过的回填身份不挡回滚", ()
     );
     expect(cols).toHaveLength(0);
 
-    // 回滚之后**直接**重上会被预检②挡住 —— 留下来的那两条身份此刻与它们的价签同名,而
-    // 「同名旧产品自动合并」是规格 §3 的非目标。fail closed(一个字节都不落库),人工处理:
-    // 要么商家自己在 Library 删掉那两条留下来的元素,要么运维手工把 entityId 接回去。
-    await expect(runMigration()).rejects.toThrow(/预检②失败/);
-
-    // 冲突清掉之后重上就通了(生产上「回滚 → 处理那几条 → 重上」就是这条路径)。这一步同时
-    // 把库的形状还回去 —— 上面那次失败的重上是整份回滚的,列此刻不在,而后面的测试文件还要用它。
-    await prisma.$executeRawUnsafe(
-      `TRUNCATE "CreditLedger", "CreditAccount", "Organization" RESTART IDENTITY CASCADE`,
-    );
+    // 回滚之后**直接**重上:留下来的那两条身份与它们的价签同名,而 Founder 2026-09-10 裁的
+    // 一次性链接(#1321 评论)正是「恰有一张同名活跃卡就认回去」—— 所以价签指回原来那两条,
+    // 不再新建第二份身份。这条裁决之前这里是 fail closed(预检②一律拒绝、人工处理),
+    // 「回滚 → 重上」因此曾经是一条死路;现在它自己走得通。
     await expect(runMigration()).resolves.toBeUndefined();
+    const back = await prisma.brandRecord.findMany({
+      where: { ownerId: orgId, kind: "product" },
+      select: { id: true, entityId: true },
+    });
+    expect(back.find((r) => r.id === usedInShot)!.entityId).toBe(`prodid_${usedInShot}`);
+    expect(back.find((r) => r.id === extraPhoto)!.entityId).toBe(`prodid_${extraPhoto}`);
+    // 没有同名卡剩下的那一条照旧新建。
+    expect(back.find((r) => r.id === untouched)!.entityId).toBe(`prodid_${untouched}`);
+    // 身份数没有翻倍 —— 认回去的两条不会被再造一次。
+    await expect(
+      prisma.entity.count({ where: { ownerId: orgId, type: "PRODUCT", deletedAt: null } }),
+    ).resolves.toBe(3);
+  }, 60_000);
+});
+
+/**
+ * 判官第 3 轮 P1-2(PR #1337):`migrate deploy` 预检失败之后,库里**一个字节都没变** ——
+ * 列不存在、约束不存在。而上一版 rollback.sql 第 44 行是一句裸的
+ * `UPDATE "BrandRecord" SET "entityId" = NULL ...`,在那种状态下自己会报 42703
+ * undefined_column,整份回滚一句都不落地 —— 也就是说,**最需要它的那一刻它跑不了**。
+ *
+ * 而这一刻恰好还叠着 P3009:`_prisma_migrations` 里留着一行 started_at 有值、finished_at
+ * 为 NULL 的失败记录,之后任何 migrate deploy 都直接被拒。恢复顺序写在 rollback.sql 的文件头
+ * (resolve --rolled-back → 跑 rollback.sql → 处理数据 → 重上),真机演练的命令与输出在 PR 描述里。
+ * 这个用例钉住的是其中可以自动化的那一半:**任何状态下 rollback.sql 都跑得完**。
+ */
+describe("判官 P1-2 回滚幂等:迁移一个字节都没落时,rollback 也跑得完", () => {
+  it("PRODID-A8 回滚幂等:列/约束都不存在时 rollback.sql 照样跑完,连跑两次也一样", async () => {
+    // 「这份迁移从来没成功过」的库形状:列不在,外键与 CHECK 跟着列一起没了。
+    await prisma.$executeRawUnsafe(`ALTER TABLE "BrandRecord" DROP COLUMN IF EXISTS "entityId"`);
+    const before = await prisma.$queryRawUnsafe<{ column_name: string }[]>(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'BrandRecord' AND column_name = 'entityId'`,
+    );
+    expect(before).toHaveLength(0);
+
+    // 上一版在这里报 42703。现在每一步都自己判断「那东西在不在」。
+    await expect(runRollback()).resolves.toBeUndefined();
+    await expect(runRollback()).resolves.toBeUndefined();
+
+    // 回滚跑得完,重上也就通了 —— 这正是恢复步骤 ④。同时把库的形状还给后面的测试文件。
+    await expect(runMigration()).resolves.toBeUndefined();
+    const after = await prisma.$queryRawUnsafe<{ column_name: string }[]>(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'BrandRecord' AND column_name = 'entityId'`,
+    );
+    expect(after).toHaveLength(1);
   }, 60_000);
 });

@@ -3,8 +3,10 @@
 -- ── 这份迁移改了什么 ─────────────────────────────────────────────────────────
 -- ① `BrandRecord` 加一列 `entityId`,以**复合外键** (entityId, ownerId) → Entity(id, ownerId)
 --    指向身份(ADR 0002 第五条:两端都带 ownerId,PostgreSQL 直接拒绝跨租户连线)。
--- ② 一次性回填:每条 `BrandRecord(kind='product')` 建一条 `Entity(type='PRODUCT')`,把
---    `data.imageAssetId` 挂成主图(baseAssetId ＋ 一条 ReferenceImage),再把 entityId 写回去。
+-- ② 一次性回填:每条 `BrandRecord(kind='product')` 都要有身份。本租户已经有**恰好一张**同名的
+--    活跃 Library 产品卡时**复用它**(Founder 2026-09-10 裁,#1321 评论;见下面预检②);否则
+--    建一条 `Entity(type='PRODUCT')`,把 `data.imageAssetId` 挂成主图(baseAssetId ＋ 一条
+--    ReferenceImage),再把 entityId 写回去。
 -- ③ CHECK `BrandRecord_product_needs_entity`:product 行没有 entityId 就进不了库 ——
 --    「一处建、处处可用」从此由数据库保证,不靠调用处记得写。唯一的口子是**草稿**
 --    (`contextStatus = 'Draft'`):规格 §1.9 与验收 PRODID-A7 明写「理解 worker 提取的产品
@@ -23,9 +25,15 @@
 -- 整份文件包在一个事务里,两条预检任何一条报错,ADD COLUMN 与回填一起回滚,库里一个字节
 -- 都没变(规格 §4 的第一风险对策)。
 --   预检①跨租户:已有的 entityId 必须指向**同一 ownerId** 的 Entity。
---   预检②同名冲突:一条待回填的活跃 product 行,若本租户已经有一条同名的活跃
---                  Entity(PRODUCT),就不猜「是不是同一件」——规格 §3 明写「同名旧产品
---                  自动合并」是非目标,回填只负责报出来,人工处理。
+--   预检②同名链接(**Founder 2026-09-10 裁,#1321 评论**):一条待回填的活跃 product 价签,
+--                  若本租户已经有**恰好一张**同名的活跃 Library 产品卡(Entity type=PRODUCT,
+--                  deletedAt IS NULL),就**直接指向它**、不新建身份,并把价签的主图挂到那张卡
+--                  上(仅当它自己还没有主图)。**两张以上**同名才拒绝并报出来,整条迁移不落库。
+--                  没有同名的照旧新建。
+--                  为什么破例:开发库上这条预检 100% 命中 —— 存量 Library 产品卡与 Brand 价签
+--                  本来就是同一件东西被记了两处,一律拒绝等于这份迁移永远上不了线。
+--                  只在**这一次迁移**这样做:运行时新增同名仍然不自动合并(规格 §3 不变,
+--                  createProduct 撞名照旧返回 { created:false, existingId })。
 -- 名字归一化与 @fikirtive/core 的 normalizeNameKey 逐字一致(trim → lower → 空白折叠);
 -- 记录那一侧直接用它自己算好的 `nameKey`,不重算。
 --
@@ -57,31 +65,68 @@ BEGIN
   END IF;
 END $$;
 
--- 预检②:同租户同名冲突(规格 §3「同名旧产品自动合并」是非目标)。
+-- 预检②:同名一次性链接(Founder 2026-09-10 裁,#1321 评论)。
+--   先把「每条待回填的活跃 product 价签 → 本租户同名活跃身份有几张、是哪一张」算成一张临时表,
+--   预检与回填共用同一份判断 —— 两处各算一次同名,迟早会算出两个答案。
+CREATE TEMP TABLE "prodid_backfill_link" ON COMMIT DROP AS
+SELECT
+  r."id"      AS record_id,
+  r."ownerId" AS owner_id,
+  cand.same_name_count,
+  cand.entity_id
+FROM "BrandRecord" r
+CROSS JOIN LATERAL (
+  SELECT count(*) AS same_name_count, min(e."id") AS entity_id
+  FROM "Entity" e
+  WHERE e."ownerId" = r."ownerId"
+    AND e."type" = 'PRODUCT'
+    AND e."deletedAt" IS NULL
+    AND lower(btrim(regexp_replace(e."name", '\s+', ' ', 'g'))) = r."nameKey"
+) cand
+WHERE r."kind" = 'product' AND r."entityId" IS NULL AND r."deletedAt" IS NULL;
+
 DO $$
 DECLARE bad_count INT;
 BEGIN
+  -- ② a:两张以上同名 —— 不猜是哪一张,报出来人工处理(Founder 裁的那句「两张以上才拒绝」)。
+  SELECT count(*) INTO bad_count FROM "prodid_backfill_link" WHERE same_name_count > 1;
+  IF bad_count > 0 THEN
+    RAISE EXCEPTION
+      'brand-product-identity 预检②失败:% 条活跃 BrandRecord(product) 在本租户有**两张以上**同名的活跃 Library 产品卡,链接哪一张只有人知道。整条迁移不落库,请先把重复的卡合并或改名。',
+      bad_count;
+  END IF;
+
+  -- ② b:两条价签抢同一张卡(同名但分属不同 brandId 时可能发生)。一张身份配一条价签是这份
+  --      规格的全部意思,所以宁可停下来报出来,也不留下两条价签共用一个身份的库。
+  SELECT count(*) INTO bad_count FROM (
+    SELECT entity_id FROM "prodid_backfill_link"
+    WHERE same_name_count = 1 GROUP BY entity_id HAVING count(*) > 1
+  ) dup;
+  IF bad_count > 0 THEN
+    RAISE EXCEPTION
+      'brand-product-identity 预检②失败:% 张 Library 产品卡同时被两条以上活跃价签认领。整条迁移不落库,请先把重复的价签合并或改名。',
+      bad_count;
+  END IF;
+
+  -- ② c:要复用的那张卡已经有价签指着了(重跑到一半、或历史数据)。同上,停下来报出来。
   SELECT count(*) INTO bad_count
-  FROM "BrandRecord" r
-  WHERE r."kind" = 'product'
-    AND r."entityId" IS NULL
-    AND r."deletedAt" IS NULL
+  FROM "prodid_backfill_link" l
+  WHERE l.same_name_count = 1
     AND EXISTS (
-      SELECT 1 FROM "Entity" e
-      WHERE e."ownerId" = r."ownerId"
-        AND e."type" = 'PRODUCT'
-        AND e."deletedAt" IS NULL
-        AND lower(btrim(regexp_replace(e."name", '\s+', ' ', 'g'))) = r."nameKey"
+      SELECT 1 FROM "BrandRecord" b
+      WHERE b."entityId" = l.entity_id AND b."ownerId" = l.owner_id AND b."deletedAt" IS NULL
     );
   IF bad_count > 0 THEN
     RAISE EXCEPTION
-      'brand-product-identity 预检②失败:% 条活跃 BrandRecord(product) 与本租户既有的活跃 Entity(PRODUCT) 同名。整条迁移不落库,请人工确认是不是同一件产品。',
+      'brand-product-identity 预检②失败:% 条活跃价签要链接的 Library 产品卡上已经挂着另一条价签。整条迁移不落库,请先人工确认。',
       bad_count;
   END IF;
 END $$;
 
 -- ② 回填 a:身份行。id 由记录 id 推导 —— 重跑得到同一个 id,回滚也就删得干净。
 --    时间戳与 deletedAt 照抄记录:身份和它的价签同生同灭。
+--    `NOT EXISTS(prodid_backfill_link …)` = 要复用现成那张卡的行不在这里建新身份
+--    (Founder 2026-09-10 裁)。软删的价签不在那张临时表里,所以它们照旧各建各的身份。
 INSERT INTO "Entity" ("id", "ownerId", "type", "name", "brandId", "createdAt", "updatedAt", "deletedAt", "baseAssetId")
 SELECT
   'prodid_' || r."id",
@@ -95,12 +140,17 @@ SELECT
   a."id"
 FROM "BrandRecord" r
 LEFT JOIN "Asset" a
-  ON a."id" = (r."data"->>'imageAssetId') AND a."ownerId" = r."ownerId"
+  ON a."id" = (r."data"->>'imageAssetId') AND a."ownerId" = r."ownerId" AND a."deletedAt" IS NULL
 WHERE r."kind" = 'product' AND r."entityId" IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM "prodid_backfill_link" l WHERE l.record_id = r."id" AND l.same_name_count = 1
+  )
 ON CONFLICT ("id") DO NOTHING;
 
--- ② 回填 b:主图。只有资产**真的存在且属于同一租户**时才挂 —— 挂不上就诚实留空,
---    不编一张图(上一句的 LEFT JOIN 已经让 baseAssetId 在这种情况下是 NULL)。
+-- ② 回填 b:主图。只有资产**真的存在、属于同一租户、而且还活着**时才挂 —— 挂不上就诚实
+--    留空,不编一张图(上一句的 LEFT JOIN 已经让 baseAssetId 在这种情况下是 NULL)。
+--    判官第 3 轮 P2-b:`a."deletedAt" IS NULL` 少不得 —— 已删的 Asset 是墓碑,它的字节随时
+--    会被 30 天清扫真删走,把活的 ReferenceImage 挂上去等于给商家造一张永远坏掉的封面。
 INSERT INTO "ReferenceImage" ("id", "ownerId", "entityId", "assetId", "position", "brandId", "createdAt", "deletedAt")
 SELECT
   'prodidimg_' || r."id",
@@ -113,13 +163,55 @@ SELECT
   r."deletedAt"
 FROM "BrandRecord" r
 JOIN "Asset" a
-  ON a."id" = (r."data"->>'imageAssetId') AND a."ownerId" = r."ownerId"
+  ON a."id" = (r."data"->>'imageAssetId') AND a."ownerId" = r."ownerId" AND a."deletedAt" IS NULL
 WHERE r."kind" = 'product' AND r."entityId" IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM "prodid_backfill_link" l WHERE l.record_id = r."id" AND l.same_name_count = 1
+  )
 ON CONFLICT ("id") DO NOTHING;
 
--- ② 回填 c:把身份写回价签。
+-- ② 回填 b2:复用那一支的主图(Founder 2026-09-10 裁,#1321 评论)。只有那张 Library 卡
+--    **自己还没有主图**时才挂 —— 商家在 Library 亲手挑过的封面,回填不许盖掉。
+--    先插 ReferenceImage 再改 baseAssetId:反过来的话,下面那句的 `baseAssetId IS NULL`
+--    已经被自己上一句写没了,ReferenceImage 就永远插不进去(而没有硬引用的图会被清扫当孤儿)。
+INSERT INTO "ReferenceImage" ("id", "ownerId", "entityId", "assetId", "position", "brandId", "createdAt")
+SELECT
+  'prodidimg_' || r."id",
+  r."ownerId",
+  l.entity_id,
+  a."id",
+  0,
+  r."brandId",
+  r."createdAt"
+FROM "prodid_backfill_link" l
+JOIN "BrandRecord" r ON r."id" = l.record_id
+JOIN "Entity" e ON e."id" = l.entity_id AND e."ownerId" = l.owner_id AND e."baseAssetId" IS NULL
+JOIN "Asset" a
+  ON a."id" = (r."data"->>'imageAssetId') AND a."ownerId" = r."ownerId" AND a."deletedAt" IS NULL
+WHERE l.same_name_count = 1
+  -- live 唯一索引 (entityId, assetId, COALESCE(variantId,'')):这张图已经挂着就不重挂。
+  AND NOT EXISTS (
+    SELECT 1 FROM "ReferenceImage" ri
+    WHERE ri."entityId" = l.entity_id AND ri."assetId" = a."id"
+      AND ri."variantId" IS NULL AND ri."deletedAt" IS NULL
+  )
+ON CONFLICT ("id") DO NOTHING;
+
+UPDATE "Entity" e
+SET "baseAssetId" = a."id"
+FROM "prodid_backfill_link" l
+JOIN "BrandRecord" r ON r."id" = l.record_id
+JOIN "Asset" a
+  ON a."id" = (r."data"->>'imageAssetId') AND a."ownerId" = r."ownerId" AND a."deletedAt" IS NULL
+WHERE l.same_name_count = 1
+  AND e."id" = l.entity_id AND e."ownerId" = l.owner_id AND e."baseAssetId" IS NULL;
+
+-- ② 回填 c:把身份写回价签 —— 复用的指现成那张卡,其余指自己刚建出来的那条。
 UPDATE "BrandRecord" r
-SET "entityId" = 'prodid_' || r."id"
+SET "entityId" = COALESCE(
+  (SELECT l.entity_id FROM "prodid_backfill_link" l WHERE l.record_id = r."id" AND l.same_name_count = 1),
+  'prodid_' || r."id"
+)
 WHERE r."kind" = 'product' AND r."entityId" IS NULL;
 
 -- ③ 外键、索引、CHECK。名字逐字照 Prisma 对 schema.prisma 的命名规则,否则 schema drift 闸会红。
