@@ -154,7 +154,16 @@ async function ledgerRows(ownerId: string) {
  */
 let capturedResumeCtx: { approvedQuoteVersion?: { cardId: string; version: string } } | null = null;
 
-async function armApprovalResume(world: World, cardId: string) {
+async function armApprovalResume(
+  world: World,
+  cardId: string,
+  /**
+   * 判官第 4 轮 P1 —— 在**恢复轮跑着的时候**发生的事（商家在另一处又改了一格）。
+   * 它跑在 metered 的那一段里面，也就是恢复轮里 `generate` 技能读卡的那个位置，
+   * 所以这一钩子布置出来的正是那道迟到的闸要面对的那一刻。
+   */
+  duringResume?: () => Promise<void>,
+) {
   capturedResumeCtx = null;
   await prisma.chatThread.updateMany({
     where: { id: world.threadId, ownerId: world.ownerId },
@@ -173,10 +182,13 @@ async function armApprovalResume(world: World, cardId: string) {
       // 恢复轮真正拿到的那份 ctx —— `generate` 技能在这一份上读「他批的是哪一版报价」。
       capturedResumeCtx = ctx as unknown as { approvedQuoteVersion?: { cardId: string; version: string } };
       // 生产的 `withLlmBudget`（`ottoApprove` 自己传进来的那一个），生产的预算参数。
-      return execution.meter(ottoBudgetArgsFor(runtime, request, ctx), async () => ({
-        result: { finalOutput: "", state: {} },
-        usage: { inputTokens: 0, outputTokens: 0 },
-      }));
+      return execution.meter(ottoBudgetArgsFor(runtime, request, ctx), async () => {
+        if (duringResume) await duringResume();
+        return {
+          result: { finalOutput: "", state: {} },
+          usage: { inputTokens: 0, outputTokens: 0 },
+        };
+      });
     },
   );
   return { approve };
@@ -443,6 +455,86 @@ describe("creation §5 :170 FSE-012 第二条批准路(ottoApprove)共用同一�
     await ottoApprove({ threadId: world.threadId, cardId: card.cardId, quoteVersion: approved });
 
     expect(capturedResumeCtx?.approvedQuoteVersion).toEqual({ cardId: card.cardId, version: approved });
+  });
+
+  /**
+   * 判官第 4 轮 P1 —— **恢复轮里那道迟到的拒绝，不许被外层说成一次成功的批准。**
+   *
+   * 上面那条钉的是「批的那一版带进去了」，`packages/otto/src/skills/generate.test.ts` 钉的是
+   * 「带进去之后 `startGen` 一次都没被调用」。中间还剩一段没人钉：那道闸拒绝之后，工具的
+   * 拒绝只回到模型（`skill.ts` 原样返回、不中止恢复轮），恢复轮照样跑完 —— 从前 `ottoApprove`
+   * 一律返回 `{ ok: true, status: "done" }`，`plan-approval.ts` 读不到 `error`，`OttoPlanCard`
+   * 于是调 `onApproved`：**商家被告知批准成功，而什么都没生成。**
+   *
+   * 这一条布置的就是那一刻：门口那道闸放行（按下按钮时卡还是他看的那一版），卡在**恢复轮
+   * 跑着的时候**被改，恢复轮结束时这张卡没有任何任务行。断言分两半：
+   *   · 交回商家的必须是那句拒绝 ＋ 刷新后的那张卡（与另一条批准路同一个形状）；
+   *   · 生成那一笔真的没花（零任务行、零生成预扣），而这一轮的**对话花费**照旧发生 ——
+   *     恢复轮真的跑过，这道闸不假装它没跑（PR「未做」里写的就是这一条）。
+   */
+  it("creation §5 :170 FSE-012 恢复轮跑着的时候卡被改:那一趟不许被说成批准成功,交回拒绝与刷新后的报价", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+    const approved = cardQuoteVersion(card.payload);
+    // 门口那道闸放行(按下按钮那一刻卡没变);改档发生在**恢复轮里面**。
+    await armApprovalResume(world, card.cardId, async () => {
+      const rebuilt = await ottoUpdateGenCardOptions({ threadId: world.threadId, cardId: card.cardId, count: 2 });
+      if ("error" in rebuilt) throw new Error(`恢复轮里改档被拒:${rebuilt.error}`);
+    });
+
+    const res = await ottoApprove({ threadId: world.threadId, cardId: card.cardId, quoteVersion: approved });
+
+    // 恢复轮**真的跑过** —— 这一条与门口那道闸的用例正好相反,拒绝是迟到的那一种。
+    expect(mockRunOttoTurn).toHaveBeenCalledTimes(1);
+    // 不许再说 ok:true。交回的是那句拒绝 ＋ 刷新后的那张卡。
+    expect(res).toMatchObject({ error: QUOTE_VERSION_STALE });
+    expect(res).not.toMatchObject({ ok: true });
+    const quote = (res as { quote?: unknown }).quote as CardPayload;
+    expect(quote.params.count).toBe(2);
+    expect(quote.estimatedCredits).toBe((await persistedCard(world, card.cardId)).estimatedCredits);
+    // 交回浏览器那一份走的是同一条剥离:零型号(provider 保密)。
+    expect((quote as unknown as Record<string, unknown>).model).toBeUndefined();
+    // 生成那一笔真的没花:零任务行。
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
+    // 诚实边界:这一轮的对话花费**确实发生了**(恢复轮跑过),这道闸不假装它没跑。
+    expect(resumeReserveRows(await ledgerRows(world.ownerId), world, card.cardId)).toHaveLength(1);
+  });
+
+  /**
+   * 上一条的反面 —— 迟到那道闸**不许拦下一次已经成交的批准**。恢复轮里生成真的建了任务行
+   * （同一个幂等键 `cowork:<cardId>`），那一趟花过钱、拿到了东西，说成「价变了」就是把一次
+   * 成功说成失败。
+   *
+   * 卡上那份报价的漂移在这里是**直接改库造出来的**，而不是走 `ottoUpdateGenCardOptions`：
+   * 那条产品路在卡挂上任务行之后自己就会拒绝（"This one's already under way"，实测），所以
+   * 今天没有一条商家能走的路能造出这个状态。直接改库是为了把这道闸的判据本身钉住 ——
+   * 将来若有第二条重铸路绕过那句拒绝，一次**已经付过钱**的批准也不许被翻译成「价变了」。
+   */
+  it("creation §5 :170 FSE-012 恢复轮真的建了任务行:即使卡上那份报价漂了,那一趟照旧是一次成功的批准", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+    const approved = cardQuoteVersion(card.payload);
+    await armApprovalResume(world, card.cardId, async () => {
+      // 恢复轮里那一步真的花了钱、建了任务行(同一个幂等键 `cowork:<cardId>`)。
+      const started = await pressGenerate(world, card.cardId, card.payload, approved);
+      if ("error" in started) throw new Error(`恢复轮里的生成被拒:${started.error}`);
+      // 报价漂移(见上面的文注:今天只有直接改库造得出来)。
+      const persisted = (await persistedCard(world, card.cardId)) as unknown as Record<string, unknown>;
+      const drifted = {
+        ...persisted,
+        params: { ...(persisted.params as Record<string, unknown>), count: 2 },
+        estimatedCredits: (persisted.estimatedCredits as number) * 2,
+      };
+      await prisma.chatMessage.update({ where: { id: card.cardId }, data: { payload: drifted as object } });
+      expect(cardQuoteVersion(drifted)).not.toBe(approved);
+    });
+
+    const res = await ottoApprove({ threadId: world.threadId, cardId: card.cardId, quoteVersion: approved });
+
+    expect(res).not.toMatchObject({ error: QUOTE_VERSION_STALE });
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    expect((res as { genJobId?: string }).genJobId).toBeTruthy();
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(1);
   });
 
   it("creation §5 :170 FSE-012 ottoApprove 不带版本:恢复轮拿到的 ctx 上没有这一格(缺席＝放行,与从前逐字相同)", async () => {

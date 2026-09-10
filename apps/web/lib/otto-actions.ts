@@ -2957,6 +2957,28 @@ export async function ottoApprove(raw: unknown): Promise<
       });
 
       revalidatePath("/", "layout");
+      // FSE-012（判官第 4 轮 P1）—— **恢复轮里那道迟到的拒绝，不许被外层说成一次成功的批准。**
+      //
+      // 门口那道闸拦掉的是「按下按钮那一刻卡就已经变了」。剩下那个窗口在恢复轮**里面**：
+      // `generate` 技能按它自己读到的卡再比一次（`skills/generate.ts` Step 3b），对不上就在
+      // `ctx.startGen` 之前返回一句拒绝 —— 而工具的拒绝只回到模型（`skill.ts`），恢复轮照样
+      // 跑完，于是这里从前一律返回 `{ ok: true, status: "done" }`，客户端据此调 `onApproved`：
+      // **商家被告知批准成功，而什么都没生成。**
+      //
+      // 判据只有一份（`card-quote-version.ts`，§7.3），这里第二次问同一道闸：这一趟没留下
+      // 任务行（生成那一笔从未发生），而卡上那份报价已经不是他按下去的那一版 ⇒ 那就是恢复轮
+      // 里被拒的那一支。照两条批准路**同一个形状**交回去（一句 `QUOTE_VERSION_STALE` ＋
+      // 刷新后的那张卡），`plan-approval.ts` 那一支据此换掉卡面报价、不锁控件。
+      //
+      // 诚实边界，两条都写在这里：① 这一轮的**对话花费**（恢复轮的 LLM 预扣/结算）已经发生
+      // 且不退 —— 恢复轮真的跑过；这道闸在这里保证的是**生成那一笔没花**（零任务行、零生成
+      // 预扣），以及商家听到的是拒绝而不是「已批准」。② 那张停下来等批准的卡已经被这一轮
+      // 消费掉了，所以刷新之后再批准走的是**提议卡那条路**（`coworkGenerate`，同一个幂等键
+      // `cowork:<cardId>`），不是再一次 `ottoApprove`。
+      if (!genJob) {
+        const lateStale = await staleQuoteRefusal(ownerId, cardId, submittedQuoteVersion);
+        if (lateStale) return lateStale;
+      }
       return {
         ok: true,
         status: "done",
