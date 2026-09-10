@@ -13,7 +13,7 @@
  * 老形状怎么造：全新库已经把这张表建好了，所以每条用例先把它 DROP 掉，插入「升级前」的行
  * （既有 org ＋ `signup:<orgId>` 那笔赠金，没有任何 claim 行），再让迁移自己把表建回来并回填。
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -76,6 +76,13 @@ beforeEach(async () => {
   await prisma.$executeRawUnsafe(`TRUNCATE "signup_grant_claim"`);
   await prisma.$executeRawUnsafe(`TRUNCATE "User" CASCADE`);
   await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "signup_grant_claim"`);
+});
+
+// 这个文件把表 DROP 了又建回来。同一个 vitest 进程里后面还有别的文件（packages/db 是
+// singleFork 串行），所以无论这里成功还是失败，走的时候都必须把表按迁移原样留下。
+afterAll(async () => {
+  await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "signup_grant_claim"`);
+  await runMigration();
 });
 
 describe("SIGNIN-A17 —— signup_grant_claim 的回填", () => {
