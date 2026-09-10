@@ -55,6 +55,66 @@ export function netChargedInternalCredits(
 }
 
 /**
+ * FSE-009 —— 一件**上传**素材背后那些自动理解任务折出来的费用（显示 credits），按
+ * generation id 归拢。
+ *
+ * **两个界面共用这一份读路**：画布卡片信息面（`loadCanvasNodeLineages`，本文件）与
+ * Library 资产详情的血缘节（`actions.getGenerationLineage`）。同一件上传在两处必须说出
+ * 同一个数——从前两处各自写死 0，走查（FSE-009）在资产详情那一面看见「Cost: no credits
+ * charged」而 Billing 里明明有一行 Understanding -0.1。费用从哪里折出来只此一处（家规 §7.3）。
+ *
+ * 链条只有两跳，两跳都带 ownerId：generation → 它的素材 → 那件素材上的 `AssetUnderstanding`
+ * 行 → 那些行**当前这一回合**的 `moneyRefId` → 账本。为什么认 `moneyRefId` 而不是按
+ * `understanding:<行 id>` 前缀去捞全部回合：退款过的旧回合净额恒为 0（RESERVE + REFUND 相抵），
+ * 折进来与不折进来是同一个数，而前缀匹配要为每一行各写一条 `startsWith` 谓词。
+ *
+ * 折出 0（一行理解都没有，或那一笔被退过款）与「没有记录」不是一回事：上传本身确实免费，
+ * 所以 0 是事实，卡面照旧说 "no credits charged"。没有条目的 generation 一律当 0 读。
+ *
+ * 没有上传卡 ⇒ 一条语句都不发。纯读：不预扣、不结算、不退款。
+ */
+export async function loadUploadUnderstandingCredits(
+  ownerId: string,
+  uploaded: ReadonlyArray<{ id: string; assetId: string }>,
+): Promise<Map<string, number>> {
+  const byGeneration = new Map<string, number>();
+  const assetIds = [...new Set(uploaded.map((generation) => generation.assetId))];
+  if (!assetIds.length) return byGeneration;
+
+  const understandings = await prisma.assetUnderstanding.findMany({
+    where: { ownerId, assetId: { in: assetIds }, moneyRefId: { not: null } },
+    select: { assetId: true, moneyRefId: true },
+  });
+  const refIds = [...new Set(understandings.map((row) => row.moneyRefId).filter((id): id is string => !!id))];
+  if (!refIds.length) return byGeneration;
+
+  const rows = await prisma.creditLedger.findMany({
+    where: { orgId: ownerId, refId: { in: refIds } },
+    select: { refId: true, balanceDelta: true },
+  });
+  const rowsByRefId = new Map<string, { balanceDelta: number }[]>();
+  for (const row of rows) {
+    if (!row.refId) continue;
+    const group = rowsByRefId.get(row.refId) ?? [];
+    group.push({ balanceDelta: row.balanceDelta });
+    rowsByRefId.set(row.refId, group);
+  }
+  const rowsByAsset = new Map<string, { balanceDelta: number }[]>();
+  for (const understanding of understandings) {
+    const group = rowsByAsset.get(understanding.assetId) ?? [];
+    group.push(...(rowsByRefId.get(understanding.moneyRefId!) ?? []));
+    rowsByAsset.set(understanding.assetId, group);
+  }
+  // 同一件素材可能挂着好几张卡(同一张图放上画布两次)——每张卡说的都是这件素材上真实
+  // 发生过的那笔理解费,不是各自分摊一份:费用行回答的是「这张卡背后花了多少」。
+  for (const generation of uploaded) {
+    const group = rowsByAsset.get(generation.assetId);
+    if (group?.length) byGeneration.set(generation.id, displayCredits(netChargedInternalCredits(group)));
+  }
+  return byGeneration;
+}
+
+/**
  * Lineage for every supplied card, keyed by card id.
  *
  * Three extra owner-scoped reads for the whole board (jobs, generations, ledger rows) — not
@@ -89,7 +149,9 @@ export async function loadCanvasNodeLineages(
     generationIds.length
       ? prisma.generation.findMany({
         where: { id: { in: generationIds }, ownerId, projectId, deletedAt: null },
-        select: { id: true, createdAt: true, source: true },
+        // FSE-009:`assetId` 是「这张上传的图后来被自动读过没有」那条链的第一环 ——
+        // 理解任务的账本行挂在**素材**上,不在任何 GenJob 上。
+        select: { id: true, createdAt: true, source: true, assetId: true },
       })
       : Promise.resolve([]),
     jobIds.length
@@ -102,11 +164,15 @@ export async function loadCanvasNodeLineages(
 
   const jobById = new Map(jobs.map((job) => [job.id, job]));
   const madeAtByGeneration = new Map(generations.map((generation) => [generation.id, generation.createdAt]));
-  // An image the merchant dropped onto the board was never generated, so it cost nothing —
-  // saying "cost not recorded" there would look like a missing record instead of a free card.
-  const uploadedGenerations = new Set(
-    generations.filter((generation) => generation.source === "UPLOAD").map((generation) => generation.id),
-  );
+  // An image the merchant dropped onto the board was never generated, so the upload itself cost
+  // nothing — saying "cost not recorded" there would look like a missing record instead of a free
+  // card. FSE-009 是这句话的另一半:上传本身免费,但**自动理解**这件事是收费的(MONEY-A9,
+  // Founder 2026-08-31「就是用户使用照算」),商家从没点过「分析」,所以那 0.1 credit 只可能
+  // 在这张卡的费用行上被看见 —— 从前这里写死 0,卡面于是说「no credits charged」而 Billing 里
+  // 明明有一行。
+  const uploaded = generations.filter((generation) => generation.source === "UPLOAD");
+  const uploadedGenerations = new Set(uploaded.map((generation) => generation.id));
+  const uploadCreditsByGeneration = await loadUploadUnderstandingCredits(ownerId, uploaded);
   const ledgerByJob = new Map<string, { balanceDelta: number }[]>();
   for (const row of ledgerRows) {
     if (!row.refId) continue;
@@ -143,7 +209,12 @@ export async function loadCanvasNodeLineages(
         : EMPTY_SETTINGS,
       costCredits: rows
         ? displayCredits(netChargedInternalCredits(rows))
-        : (!node.genJobId && node.generationId && uploadedGenerations.has(node.generationId) ? 0 : null),
+        : (!node.genJobId && node.generationId && uploadedGenerations.has(node.generationId)
+          // FSE-009(Founder 2026-09-10 裁:**只显示合计,不拆行**)—— 上传那一格的费用 =
+          // 这件素材上那些自动理解任务的账本行折出来的净额,与资产详情那一面同一个函数。
+          // 一行都没有 ⇒ 0 ⇒ 卡面照旧说 "no credits charged",与从前逐字相同。
+          ? (uploadCreditsByGeneration.get(node.generationId) ?? 0)
+          : null),
       batchSize,
       batchPosition: index >= 0 ? index + 1 : null,
     };

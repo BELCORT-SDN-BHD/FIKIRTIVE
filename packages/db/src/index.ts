@@ -36,6 +36,8 @@ export * from "./consent-fold.js";
 export * from "./consent-runtime.js";
 // #803: the sole upgrade path from a merchant-entered identity to a channel-verified one.
 export * from "./contact-identity.js";
+// #1321: 建一件产品的唯一一条写路(身份 ＋ 价签同事务)。四个写入口都从这里过。
+export * from "./create-product.js";
 export * from "./send-eligibility.js";
 // #795 — the cross-instance rate limiter is DELIBERATELY NOT re-exported here. It lives behind
 // its own entry point (`@fikirtive/db/rate-limit`) so a gate imports counting and nothing else:
