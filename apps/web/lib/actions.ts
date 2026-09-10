@@ -38,7 +38,7 @@ import { runAsUser } from "@fikirtive/db/principal";
 import { purgeOrphanedReferenceAssets, purgeAssetStorage } from "./asset-purge";
 // 血缘节的成本那一格与画布卡片信息面折的是**同一个**函数 —— 两处各写一份,同一件素材
 // 就会被报出两个价(`lib/canvas-lineage-data.ts` 的文件头说的正是这件事)。
-import { netChargedInternalCredits } from "./canvas-lineage-data";
+import { loadUploadUnderstandingCredits, netChargedInternalCredits } from "./canvas-lineage-data";
 
 /**
  * M0 server actions. Conventions:
@@ -1077,8 +1077,13 @@ export async function restoreGeneration(generationId: string): Promise<{ ok: tru
  *     不破历史)。刻意读快照而不是现读 `Entity`:现读会让一次改名把历史记录也改掉;
  *   · **成本** —— 产出它那一单的**账本行**,`netChargedInternalCredits`(与画布卡片信息面
  *     同一个函数,`lib/canvas-lineage-data.ts`)折出净扣费,再按 `displayCredits` 换成
- *     商家看的单位。没有账本行 = 这一行不是付费产物(上传、裁剪)⇒ 显示 0;
- *     有任务但一条账本行都没有 = 未知 ⇒ null,面板如实说不知道;
+ *     商家看的单位。有任务但一条账本行都没有 = 未知 ⇒ null,面板如实说不知道;
+ *     没有任务 = 这一件不是付费**生成**的产物(上传、裁剪)⇒ 上传另算一笔:那件素材上的
+ *     **自动理解**是收费的(MONEY-A9),商家从没点过「分析」,而从前这里写死 0,面上于是说
+ *     「Cost: no credits charged」而 Billing 里明明有一行(走查 FSE-009)。理解费从哪里折出来
+ *     只有一处 —— `loadUploadUnderstandingCredits`,与画布卡片信息面同一个函数,同一件上传
+ *     两处说同一个数。没有理解行(裁剪存下的那件新素材、别的无任务来路)⇒ 折出 0,与从前
+ *     逐字相同;
  *   · **状态** —— `GenJob.status`(QUEUED/GENERATING/DONE/FAILED)翻成商家的话;没有任务的
  *     行按 `Generation.source` 说它是上传还是我们存下来的;
  *   · **用途** —— 这一行**已经记在自己身上**的两处去向:挂在哪个分镜(`shotId`)、属于哪个
@@ -1118,6 +1123,9 @@ export async function getGenerationLineage(
       campaignId: true,
       source: true,
       entitySnapshot: true,
+      // FSE-009:`assetId` 是「这张上传的图后来被自动读过没有」那条链的第一环 ——
+      // 理解任务的账本行挂在**素材**上,不在任何 GenJob 上。
+      assetId: true,
     },
   });
   if (!gen) return { error: "Not found." };
@@ -1127,7 +1135,7 @@ export async function getGenerationLineage(
     select: { id: true, status: true },
   });
 
-  const [project, thread, shot, campaign, ledgerRows] = await Promise.all([
+  const [project, thread, shot, campaign, ledgerRows, uploadCredits] = await Promise.all([
     prisma.project.findFirst({ where: { id: gen.projectId, ownerId }, select: { name: true } }),
     gen.threadId
       ? prisma.chatThread.findFirst({ where: { id: gen.threadId, ownerId }, select: { title: true } })
@@ -1144,6 +1152,9 @@ export async function getGenerationLineage(
           select: { balanceDelta: true },
         })
       : Promise.resolve([] as { balanceDelta: number }[]),
+    gen.source === "UPLOAD"
+      ? loadUploadUnderstandingCredits(ownerId, [{ id: generationId, assetId: gen.assetId }])
+      : Promise.resolve(new Map<string, number>()),
   ]);
 
   const usedIn: string[] = [];
@@ -1156,7 +1167,9 @@ export async function getGenerationLineage(
     references: entitySnapshotNames(gen.entitySnapshot),
     costCredits: job
       ? (ledgerRows.length ? displayCredits(netChargedInternalCredits(ledgerRows)) : null)
-      : 0,
+      // FSE-009(Founder 2026-09-10 裁:只显示含理解费的合计,不拆行)。一行理解都没有、
+      // 或那一笔被退过款 ⇒ 0 ⇒ 面上照旧说 "no credits charged",与从前逐字相同。
+      : (uploadCredits.get(generationId) ?? 0),
     status: lineageStatus(job?.status ?? null, gen.source),
     usedIn,
   };

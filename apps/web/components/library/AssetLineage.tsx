@@ -14,8 +14,9 @@ import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
  * (`lib/actions.getGenerationLineage`),一个都不现算:出处画布/对话来自
  * `Generation.projectId` / `threadId`(两条都能点回去)、参考来自生成那一刻冻结的元素名
  * 快照、成本折的是产出它那一单的**账本行**(与画布卡片信息面同一个
- * `netChargedInternalCredits`)、状态来自 `GenJob.status`、用途来自这一行自己身上的
- * `shotId` / `campaignId`。
+ * `netChargedInternalCredits`;上传那一路没有任务,折的是那件素材上**自动理解**任务的账本行
+ * —— 同样与画布卡片信息面同一个 `loadUploadUnderstandingCredits`,FSE-009)、状态来自
+ * `GenJob.status`、用途来自这一行自己身上的 `shotId` / `campaignId`。
  *
  * 每一行**没有记录就不出现**:没有引用就不写 "None"、成本未知就不写一个 0。整块拿不到
  * 记录时调用方连这个组件都不挂 —— 与详情面另外三块回执同一条纪律(有则显示、无则整行
