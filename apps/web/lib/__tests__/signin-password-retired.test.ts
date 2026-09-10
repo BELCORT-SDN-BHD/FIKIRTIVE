@@ -68,6 +68,98 @@ const RETIRED_ADMIN_PASSWORD_ENDPOINTS = [
   "/admin/create-user",
 ] as const;
 
+/**
+ * A11 的源码围栏：**能让一份 `providerId="credential"` 的行出现**的调用形状，逐条写在这里。
+ * 成员调用与裸调用都查（裸调用的放行只有下面那一份具名白名单）。
+ *
+ * 这张表与它下面那两组样本住在模块作用域，不在某一条 `it` 里面 —— 因为负例测试必须打**同一份**
+ * 正则（单一源）：另抄一份的话，「负例会红」证明的是那份抄件，不是围栏本身。
+ */
+const PASSWORD_CALL_PATTERNS: readonly RegExp[] = [
+  /(?:\.\s*|\b)setPassword\s*\(/,
+  /(?:\.\s*|\b)changePassword\s*\(/,
+  /(?:\.\s*|\b)resetPassword\s*\(/,
+  /(?:\.\s*|\b)requestPasswordReset\s*\(/,
+  /(?:\.\s*|\b)forgetPassword\s*\(/,
+  /(?:\.\s*|\b)setUserPassword\s*\(/,
+  /\bsignUp\s*\.\s*email\s*\(/,
+  /\bsignIn\s*\.\s*email\s*\(/,
+  // ↓ 判官 r4 P2-③：上面八条查的都是「名字里带 password 的那几个口」，而下面这三种形状一样能
+  // 让一行 credential 出现，一条都不经过它们。
+  //
+  // admin 插件的 `createUser` 接受 `password`，收到就 `createAccount({ providerId: "credential" })`
+  // （`better-auth@1.6.20 dist/plugins/admin/routes.mjs:198-204`）。端点那道 404 只挡公网。
+  /(?:\.\s*|\b)createUser\s*\(/,
+  // emailOTP 插件的重置口叫 `resetPasswordEmailOTP`：名字后面跟的是 `EmailOTP` 不是 `(`，
+  // 所以上面那条 `resetPassword\s*\(` 看不见它。
+  /(?:\.\s*|\b)resetPasswordEmailOTP\s*\(/,
+  // 最后一层：绕开所有具名 API，直接往 `ba_account` 写一行 —— 经 better-auth 的 internalAdapter、
+  // 经 Prisma、或者裸 SQL。这三条钉的是**写**的形状（含表名/适配器名），不是「提到 credential」，
+  // 否则 A9 那几条 `count({ where: { providerId: "credential" } })` 会被自己的围栏判成违规。
+  /(?:createAccount|linkAccount)\s*\([\s\S]{0,400}?providerId\s*:\s*["'`]credential["'`]/,
+  /betterAuthAccount\s*\.\s*(?:create|createMany|upsert|update|updateMany)\s*\([\s\S]{0,400}?providerId\s*:\s*["'`]credential["'`]/,
+  /(?:INSERT\s+INTO|UPDATE)\s+"?ba_account"?[\s\S]{0,400}?credential/i,
+];
+
+/** 注释里提一句「密码曾经在这里」是允许的，能建立密码的只有真的调用。 */
+function codeOnly(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+}
+
+/**
+ * 围栏的正例（必须被拦下的写法）。这一组是围栏的**规格**：正则表拦不拦得住一种写法，由这里
+ * 逐条钉死，而不是靠「今天全仓恰好没人这么写」—— 后者在仓库干净的时候永远绿，围栏漏一条也绿。
+ */
+const FENCE_MUST_CATCH: readonly { readonly label: string; readonly code: string }[] = [
+  { label: "auth.api.setPassword", code: `await auth.api.setPassword({ body: { newPassword } });` },
+  { label: "auth.api.changePassword", code: `await auth.api.changePassword({ body: { newPassword, currentPassword } });` },
+  { label: "authClient.emailOtp.resetPassword", code: `await authClient.emailOtp.resetPassword({ email, otp, password });` },
+  { label: "auth.api.requestPasswordReset", code: `await auth.api.requestPasswordReset({ body: { email } });` },
+  { label: "auth.api.forgetPassword", code: `await auth.api.forgetPassword({ body: { email } });` },
+  { label: "auth.api.setUserPassword", code: `await auth.api.setUserPassword({ body: { userId, newPassword } });` },
+  { label: "auth.api.signUp.email", code: `await auth.api.signUp.email({ body: { email, password, name } });` },
+  { label: "authClient.signIn.email", code: `await authClient.signIn.email({ email, password });` },
+  // 判官 r4 P2-③ 点名补的三种形状 ↓ 原来那八条正则一条都拦不住它们。
+  {
+    label: "auth.api.createUser（admin 插件：带 password 就直接写出一行 credential）",
+    code: `await auth.api.createUser({ body: { email, password, name, role: "user" } });`,
+  },
+  {
+    label: "auth.api.resetPasswordEmailOTP（emailOTP 插件自带的重置口，名字后面不是括号）",
+    code: `await auth.api.resetPasswordEmailOTP({ body: { email, otp, password } });`,
+  },
+  {
+    label: `internalAdapter.createAccount / linkAccount 直接写 providerId: "credential"`,
+    code: `await ctx.context.internalAdapter.createAccount({\n  userId,\n  providerId: "credential",\n  password: hash,\n});`,
+  },
+  {
+    label: "prisma.betterAuthAccount 直接写一行 credential",
+    code: `await prisma.betterAuthAccount.create({\n  data: { id, accountId: userId, userId, providerId: "credential", password: hash },\n});`,
+  },
+  {
+    label: "绕开 Prisma 的裸 SQL 写 ba_account",
+    code: `await prisma.$executeRawUnsafe('INSERT INTO "ba_account" (id, "providerId", password) VALUES ($1, \\'credential\\', $2)', id, hash);`,
+  },
+];
+
+/**
+ * 围栏的负例（**不许**被拦下的写法）。写太宽和写太窄一样坏：宽到把「数一数还有没有 credential
+ * 行」也判成违规，下一个人就会去放宽正则，而不是去看那行代码。
+ */
+const FENCE_MUST_NOT_CATCH: readonly { readonly label: string; readonly code: string }[] = [
+  {
+    label: "只读不写：数 credential 行（本文件 A9 那几条就是这么写的）",
+    code: `expect(await prisma.betterAuthAccount.count({ where: { providerId: "credential" } })).toBe(0);`,
+  },
+  { label: "名字撞头但不是同一个调用", code: `await createUserProfile({ orgId, name });` },
+  { label: "行注释里的历史记录", code: `// 这里以前有一行 auth.api.setPassword(...)，随 #1316 退役` },
+  { label: `块注释里的历史记录`, code: `/* createAccount({ providerId: "credential", password }) 曾经在这里 */` },
+];
+
 describe("SIGNIN-A4 —— /signup、/forgot-password、/reset-password 都回到 /login，登录页没有密码框", () => {
   // Next 的 `permanentRedirect()` 是靠**抛异常**工作的：它扔一个带 digest
   // `NEXT_REDIRECT;replace;<目的地>;308;` 的错误，由框架接住并写成 308。所以「这一页转到哪里」
@@ -294,7 +386,7 @@ describe("SIGNIN-A11 —— 没有任何途径能建立密码", () => {
      * 唯一放行的文件，具名写在这里（判官 r3 要求把这条放行从「模式故意写松」改成显式白名单）。
      *
      * `design-system/patterns/auth/AuthAccessJourneyReference.tsx` 是**已批准的设计夹具**，不是
-     * 生产代码：它里面那三处 `setPassword(...)` 全是 React `useState` 的 setter
+     * 生产代码：它里面那两处 `setPassword(...)` 调用（`:228` 与 `:310`）全是 React `useState` 的 setter
      * （`const [password, setPassword] = useState("")`），一行都碰不到 Better Auth。夹具画着密码
      * 那一屏是设计侧治理的事（见 app/login/__tests__/auth-design-system.test.ts 的具名反向断言），
      * 不在本切片的写集内。放行它，才能把裸调用也纳入扫描 —— 否则这条围栏只能查成员调用，
@@ -305,17 +397,6 @@ describe("SIGNIN-A11 —— 没有任何途径能建立密码", () => {
     ]);
 
     const offenders: string[] = [];
-    // 成员调用与裸调用都查（裸调用的放行只有上面那一份白名单）。
-    const callPatterns = [
-      /(?:\.\s*|\b)setPassword\s*\(/,
-      /(?:\.\s*|\b)changePassword\s*\(/,
-      /(?:\.\s*|\b)resetPassword\s*\(/,
-      /(?:\.\s*|\b)requestPasswordReset\s*\(/,
-      /(?:\.\s*|\b)forgetPassword\s*\(/,
-      /(?:\.\s*|\b)setUserPassword\s*\(/,
-      /\bsignUp\s*\.\s*email\s*\(/,
-      /\bsignIn\s*\.\s*email\s*\(/,
-    ];
 
     function walk(dir: string) {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -329,14 +410,8 @@ describe("SIGNIN-A11 —— 没有任何途径能建立密码", () => {
         const full = path.join(dir, entry.name);
         const rel = path.relative(REPO_ROOT, full);
         if (ALLOWED_FILES.has(rel)) continue;
-        const src = readFileSync(full, "utf8");
-        // 注释里提一句「密码曾经在这里」是允许的，能建立密码的只有真的调用。
-        const code = src
-          .replace(/\/\*[\s\S]*?\*\//g, "")
-          .split("\n")
-          .filter((line) => !line.trimStart().startsWith("//"))
-          .join("\n");
-        for (const pattern of callPatterns) {
+        const code = codeOnly(readFileSync(full, "utf8"));
+        for (const pattern of PASSWORD_CALL_PATTERNS) {
           if (pattern.test(code)) offenders.push(`${rel} — ${pattern}`);
         }
       }
@@ -351,6 +426,19 @@ describe("SIGNIN-A11 —— 没有任何途径能建立密码", () => {
     // 扫描面本身也要证明它真的走到了那些新加的树：只数「违规为 0」的话，roots 写错成一个空
     // 目录同样是 0。
     expect(offenders, `还有能建立/使用密码的调用：\n${offenders.join("\n")}`).toEqual([]);
+  });
+
+  it("SIGNIN-A11 —— 上一条那张正则表，每一种能建立密码的写法都真的会被它拦下（负例）", () => {
+    // 「全仓扫描 0 违规」这句话的强度，等于那张正则表的强度：表里少一条形状，扫描照样绿。
+    // 所以每一种形状都在这里被真的打一遍 —— 正例必须命中，负例必须不命中。
+    for (const { label, code } of FENCE_MUST_CATCH) {
+      const hits = PASSWORD_CALL_PATTERNS.filter((pattern) => pattern.test(codeOnly(code)));
+      expect(hits.length, `围栏漏了这种写法：${label}\n${code}`).toBeGreaterThan(0);
+    }
+    for (const { label, code } of FENCE_MUST_NOT_CATCH) {
+      const hits = PASSWORD_CALL_PATTERNS.filter((pattern) => pattern.test(codeOnly(code)));
+      expect(hits, `围栏误伤了这种写法：${label}\n${code}`).toEqual([]);
+    }
   });
 
   it("SIGNIN-A11 —— 上一条的扫描面真的覆盖 apps/web 全树、apps/worker 与 packages/*", () => {

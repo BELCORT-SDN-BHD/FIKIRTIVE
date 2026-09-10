@@ -98,11 +98,20 @@ describe("SIGNIN-A4 · 这扇门关了 —— 打它什么都不会发生", () =
     expect(res.status).toBe(404);
     await prisma.betterAuthUser.delete({ where: { email } });
   });
+});
 
-  it("SIGNIN-A4 —— 欢迎赠金的落点没有跟着这扇门一起消失", async () => {
-    // 赠金本身归首登副作用（`bootstrapPersonalOrg`），与走哪扇门无关；这里只钉那个常量还在，
-    // 免得「注册门没了」被读成「新商家不再有开机赠金」。真正的一次性证明在
-    // signup-grant-exactly-once.test.ts。
+/**
+ * 这一条**不挂验收编号**，连 describe 名也不挂 —— 编号住在 describe 上和住在 it 上一样是署名
+ * （测试全名 = describe > it，M3 闸也是逐字 grep 整棵测试树）。
+ *
+ * 它证明不了任何一条验收：赠金本身归首登副作用（`bootstrapPersonalOrg`），与走哪扇门无关，
+ * 而这里只读了一个常量为正。挂 A4（三个地址退役）是借号；挂 A10（两扇门各恰好一笔赠金）同样
+ * 是借号 —— A10 要两扇门真的建两个账号，那是登录门②③④的事，落点占位在
+ * signin-acceptance-map.test.ts。留着这一条只为一件事：免得「注册门没了」被下一个人读成
+ * 「新商家不再有开机赠金」。真正的一次性证明在 signup-grant-exactly-once.test.ts。
+ */
+describe("赠金常量 —— 不属于任何一条验收，只是一条防误读的钉子", () => {
+  it("欢迎赠金的常量没有跟着这扇门一起消失", () => {
     expect(SIGNUP_GRANT_CREDITS).toBeGreaterThan(0);
   });
 });
