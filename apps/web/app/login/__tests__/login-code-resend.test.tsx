@@ -367,32 +367,30 @@ describe("FRONT-A12 — an invalid address on the email step speaks with one voi
     expect(email.required).toBe(true);
   });
 
-  it("FRONT-A12: submitting a bad address and asking for the password path give the SAME single sentence", async () => {
+  // SIGNIN-A4 —— 这一条原本比的是两条路(提交 与 `Use password instead`)说不说同一句话。
+  // 密码退役之后这一步只剩一条路,所以它改成钉那条路本身:同一句、只说一次、不推去下一屏、
+  // 而且服务端一次都没被问。比较两个产地的那一半随第二条路一起退役,不是被放宽。
+  it("SIGNIN-A4/FRONT-A12: a bad address on the only path gets one sentence and asks the server nothing", async () => {
     const el = await render(emailStepTree());
     const email = el.querySelector<HTMLInputElement>('input[type="email"]')!;
     await act(async () => {
       setReactInputValue(email, "not-an-address");
     });
 
-    const said: string[] = [];
-
-    // 路一:提交。
     await act(async () => {
       el.querySelector("form")!.dispatchEvent(
         new Event("submit", { bubbles: true, cancelable: true }),
       );
     });
-    said.push(el.querySelector('[role="alert"]')!.textContent ?? "");
+
+    const alerts = el.querySelectorAll('[role="alert"]');
+    expect(alerts.length, "同一个问题只许有一个产地").toBe(1);
+    expect(alerts[0].textContent).toContain("Enter a valid email address.");
     // 地址都没解析过,服务端一次都不该被问 —— 少了这条,一个「先送出去再说」的实现也能绿。
     expect(requestSignInCodeMock).not.toHaveBeenCalled();
-
-    // 路二:`Use password instead`(type="button",原生校验碰不到它)。
-    await act(async () => buttonByText(el, "Use password instead").click());
-    said.push(el.querySelector('[role="alert"]')!.textContent ?? "");
-
-    expect(said[0]).toContain("Enter a valid email address.");
-    expect(new Set(said).size, `两条路说了两句不同的话:${said.join(" / ")}`).toBe(1);
-    // 两条路都留在邮箱步,没有一条把商家推去下一屏。
+    // 留在邮箱步,没有把商家推去下一屏。
     expect(el.textContent).toContain("your email address?");
+    // 而且这一步再也没有第二条路可走了。
+    expect(el.textContent).not.toContain("Use password instead");
   });
 });

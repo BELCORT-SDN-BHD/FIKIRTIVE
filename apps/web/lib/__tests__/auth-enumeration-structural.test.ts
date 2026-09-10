@@ -118,7 +118,6 @@ const UNKNOWN = `p678-unknown-${randomUUID()}@fikirtive.test`;   // one query, a
 const PASSWORD_ACCOUNT = `p678-pw-${randomUUID()}@fikirtive.test`;
 const PASSWORD_UNKNOWN = `p678-pw-stranger-${randomUUID()}@fikirtive.test`;
 // A real account with a real credential that is on NO list — the fail-closed gate's subject.
-const PASSWORD_UNLISTED = `p678-pw-unlisted-${randomUUID()}@fikirtive.test`;
 const REAL_PASSWORD = "the-actual-password-9f2a";
 const WRONG_PASSWORD = "not-the-password";
 
@@ -527,82 +526,84 @@ describe("#678 r3 ⑥ — submitting a code cannot be used to ask whether an add
   });
 });
 
-// ── ⑤ the password door compares a REAL account against an unknown one ───────────────────────
-describe("#678 r3 ⑤ — a real account with a wrong password and an unknown address answer alike", () => {
+// ── ⑤ 密码门退役，连同它的枚举面（SIGNIN-A4）─────────────────────────────────────────────
+/**
+ * 这一段原本比较的是「真账号 + 错密码」与「根本没有的地址」两个答案必须逐字相同 —— 密码门
+ * 那条路上的枚举面。docs/specs/sign-in.md（已冻结 · v1）把密码整体退役之后，那两个答案都不
+ * 存在了：门在 router 层就 404。
+ *
+ * 所以这一段不是被删掉，而是换成钉「它真的没了」。留一段空白会让下一个人以为这条性质从来
+ * 没人管过；留一条 404 断言，才说得清它是怎么消失的。
+ *
+ * 这里也不再建任何 `providerId = "credential"` 的行 —— 建了就会和 SIGNIN-A9（这张表里一份
+ * 密码凭据都没有）在同一轮里互相打架。但**用户行**要建：不建的话 `PASSWORD_ACCOUNT` 就是一个
+ * 库里根本不存在的地址，下面那条「服务端也拒」会因为「查无此人」而恒绿，与密码配置无关（判官
+ * r2 的变异实验证到过：把 `emailAndPassword.enabled` 改回 true，那一条照样过）。
+ */
+describe("SIGNIN-A4 ⑤ — 密码门与它的两种答案一起退役", () => {
   beforeAll(async () => {
-    // Genuine BetterAuthUsers with genuine credential accounts. The previous version of this
-    // file only put the address on an environment list, so BOTH sides of the comparison were
-    // unknown users taking Better Auth's dummy-hash branch — the case that actually matters
-    // ("real account, wrong password" → password.verify) was never exercised.
-    const ctx = await auth.$context;
-    for (const email of [PASSWORD_ACCOUNT, PASSWORD_UNLISTED]) {
-      const id = randomUUID();
-      createdUserIds.push(id);
-      await prisma.betterAuthUser.create({
-        data: { id, name: "Password Door", email, emailVerified: true },
-      });
-      await prisma.betterAuthAccount.create({
-        data: {
-          id: randomUUID(),
-          accountId: id,
-          providerId: "credential",
-          userId: id,
-          password: await ctx.password.hash(REAL_PASSWORD),
-        },
-      });
-    }
+    // 一个**真的存在**的账号，只有用户行，没有 credential 行 —— 这正是密码退役之后库里应有的
+    // 形状，也让下面的「拒」不能靠「查无此人」蒙混过去。
+    const user = await prisma.betterAuthUser.create({
+      // `id` 在 schema 里是无默认值的 `@id String`（better-auth 自己生成），所以这里要给。
+      data: { id: randomUUID(), email: PASSWORD_ACCOUNT, name: "p678 password door", emailVerified: true },
+    });
+    createdUserIds.push(user.id);
   });
 
-  const refusal = (email: string, password: string) =>
-    auth.api
-      .signInEmail({
-        body: { email, password },
-        headers: new Headers({ origin: "http://localhost:3100" }),
-      })
-      .then(() => "unexpected-success")
-      .catch((e: { status?: string; body?: { code?: string; message?: string } }) =>
-        JSON.stringify({ status: e.status, code: e.body?.code, message: e.body?.message }),
-      );
-
-  it("takes verify for the real account and hash for the unknown one — and answers the same", async () => {
-    const ctx = await auth.$context;
-    const hash = vi.spyOn(ctx.password, "hash");
-    const verify = vi.spyOn(ctx.password, "verify");
-
-    const real = await refusal(PASSWORD_ACCOUNT, WRONG_PASSWORD);
-    expect(verify).toHaveBeenCalledTimes(1); // a stored hash existed, so it was compared
-    expect(hash).not.toHaveBeenCalled();
-
-    verify.mockClear();
-    hash.mockClear();
-    const stranger = await refusal(PASSWORD_UNKNOWN, WRONG_PASSWORD);
-    // Better Auth hashes the submitted password when it finds no user, precisely so the missing
-    // case costs what the wrong-password case costs. Our own before-hook used to skip that.
-    expect(hash).toHaveBeenCalledTimes(1);
-    expect(hash).toHaveBeenCalledWith(WRONG_PASSWORD);
-    expect(verify).not.toHaveBeenCalled();
-
-    expect(real).toBe(stranger);
-    expect(real).toContain("INVALID_EMAIL_OR_PASSWORD");
-
-    hash.mockRestore();
-    verify.mockRestore();
+  it("SIGNIN-A4 —— /sign-in/email 对公网 404：没有两种答案可比，也就没有枚举面", async () => {
+    const res = await auth.handler(
+      new Request("http://localhost:3100/api/better-auth/sign-in/email", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost:3100" },
+        body: JSON.stringify({ email: PASSWORD_UNKNOWN, password: WRONG_PASSWORD }),
+      }),
+    );
+    expect(res.status).toBe(404);
   });
 
-  it("refuses a session for a real credential that is on no list, even with the RIGHT password", async () => {
-    // The gate the ticket must not loosen. PASSWORD_UNLISTED is a real account with a real,
-    // correct password — the door Better Auth would happily open — and it is on no allowlist.
-    // databaseHooks.session.create.before (assertAllowedForUserId) is what stops it, and it is
-    // still fail-closed after everything this round moved.
+  it("SIGNIN-A11 —— 配置层也关着：构造出来的实例上 `emailAndPassword.enabled` 是 false", async () => {
+    // 编号是 A11 不是 A4：A4 判的是「公网请求那七条路径答 404」，而这一句判的是「本产品没有
+    // 密码这件事在配置层就成立」——`enabled: false` 连 `auth.api.*` 那一侧的建密码入口一起关，
+    // 那是 A11「没有任何途径能建立密码」的话，不是 A4 的话。router 那道闸只挡公网，配置层才是
+    // 单一源；两层各答一个问题，缺一条这段就只证明了一半。
+    //
+    // 这一句是从**构造出来的实例**上读的，不是从源码文本上扫的：把
+    // apps/web/lib/better-auth/server.ts 的 `emailAndPassword: { enabled: false }` 改成 true，
+    // 这一行立刻红。**这是整个文件里唯一能感知那次变异的断言**（判官 r2 的变异实验测过；
+    // 判官 r3 又指出下面那半感知不到它，所以两半在这里拆成两条，各自只署名它真的证明的东西）。
+    expect(auth.options.emailAndPassword?.enabled ?? false).toBe(false);
+  });
+
+  it("SIGNIN-A9 —— 没有 credential 行，`auth.api.signInEmail` 连拒的对象都没有", async () => {
+    // 诚实说明这一条**不**证明什么：它感知不到 `emailAndPassword.enabled`。一个只有用户行、
+    // 没有 credential 行的地址，better-auth 无论开关开着还是关着都抛
+    // `INVALID_EMAIL_OR_PASSWORD`（`dist/api/routes/sign-in.mjs` 找不到 credential 账号就抛）。
+    // 那个开关的感知点是上面那一条，不是这一条 —— 判官 r3 打回的正是「用 A4 的名字挂一条恒真
+    // 的行为断言」。
+    //
+    // 它证明的是 SIGNIN-A9 的不变量落到行为上的样子：库里没有一行 `providerId = 'credential'`
+    // （下面第一句），所以哪怕这个地址在库里**真的有一个用户**（见本段 beforeAll，不是「查无
+    // 此人」），密码这条路也换不到一个 session。
+    expect(await prisma.betterAuthAccount.count({ where: { providerId: "credential" } })).toBe(0);
+    expect(await prisma.betterAuthUser.count({ where: { email: PASSWORD_ACCOUNT } })).toBe(1);
     const outcome = await auth.api
       .signInEmail({
-        body: { email: PASSWORD_UNLISTED, password: REAL_PASSWORD },
+        body: { email: PASSWORD_ACCOUNT, password: REAL_PASSWORD },
         headers: new Headers({ origin: "http://localhost:3100" }),
       })
       .then((r) => (r && "token" in r ? "session-issued" : "no-session"))
       .catch(() => "refused");
     expect(outcome).toBe("refused");
+    // `in: []` 恒为 0，所以先钉住这个 where 不是空的 —— 上一版就是栽在这里。
+    expect(createdUserIds.length).toBeGreaterThan(0);
     expect(await prisma.betterAuthSession.count({ where: { userId: { in: createdUserIds } } })).toBe(0);
+  });
+
+  it("SIGNIN-A9 —— 库里一份密码凭据都没有，所以连「真账号错密码」这个前提都不成立", async () => {
+    // 同上：`providerId = 'credential'` 的行数是 A9 的判定，不是 A4 的。它留在这一段里，是因为
+    // 「没有两种答案可比」这条性质的前提就是它——但编号只署它真的证明的那一条。
+    expect(await prisma.betterAuthAccount.count({ where: { providerId: "credential" } })).toBe(0);
   });
 });
 
@@ -614,7 +615,6 @@ afterAll(async () => {
     UNKNOWN,
     PASSWORD_ACCOUNT,
     PASSWORD_UNKNOWN,
-    PASSWORD_UNLISTED,
   ];
   try {
     // The address lives in `identifier` (`sign-in-otp-<email>`), not in `value` — see rowsFor.

@@ -33,12 +33,14 @@ describe("LoginForm", () => {
     expect(markup).toContain("Log in to Fikirtive");
     expect(markup).toContain("Continue with email");
     expect(markup).toContain("Continue with Google");
-    expect(markup).toContain("Create an account");
+    // SIGNIN-A4 —— 没有第二个注册页,所以 hub 上也没有通往它的入口。
+    expect(markup).not.toContain("Create an account");
+    expect(markup).not.toContain("/signup");
     expect(markup).not.toContain('type="password"');
     expect(markup).not.toContain('type="email"');
   });
 
-  it("renders email as its own step with code first and password second", () => {
+  it("renders email as its own step, with the code as the only way on", () => {
     const markup = renderToStaticMarkup(
       createElement(LoginForm, {
         from: "/create",
@@ -51,16 +53,20 @@ describe("LoginForm", () => {
     expect(markup).toContain('type="email"');
     expect(markup).toContain("required");
     expect(markup).toContain("Continue with email");
-    expect(markup).toContain("Use password instead");
+    // SIGNIN-A4 —— 邮箱步以前在这里分岔去密码那一屏。密码退役之后这一步只通向码。
+    expect(markup).not.toContain("Use password instead");
     expect(markup).not.toContain('type="password"');
   });
 
-  it("keeps password recovery and destination in the password branch", async () => {
+  it("SIGNIN-A4 — keeps no password branch at all, not even behind ?step=", async () => {
     const source = await readFile(new URL("../LoginForm.tsx", import.meta.url), "utf8");
 
-    expect(source).toContain('authRouteHref("/forgot-password", callbackURL)');
-    expect(source).toContain("Forgot password?");
-    expect(source).toContain("authClient.signIn.email");
+    expect(source).not.toContain("/forgot-password");
+    expect(source).not.toContain("Forgot password");
+    expect(source).not.toContain("authClient.signIn.email(");
+    expect(source).not.toContain("PasswordInput");
+    // 深链 `?step=password` 不再有对应的分支,落回 hub。
+    expect(source).not.toContain('step === "password"');
     expect(source).toContain("window.location.assign(callbackURL)");
   });
 
@@ -70,7 +76,6 @@ describe("LoginForm", () => {
 
     expect(handler).toBeDefined();
     expect(handler).toContain('setEmail("")');
-    expect(handler).toContain('setPassword("")');
     expect(handler).toContain('setCode("")');
     expect(handler).toContain("focusEmailAfterReset.current = true");
     expect(handler).toContain('go("email")');

@@ -35,22 +35,15 @@ export { callerKey } from "@/lib/caller-identity";
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
-/**
- * Password sign-in, per calling address, per hour.
- *
- * Better Auth's burst rule is deliberately left in place underneath this (see the note in
- * lib/better-auth/server.ts): `customRules` REPLACES a rule, so writing an hourly rule there
- * would have deleted the 3-per-10-seconds cap. Two different attacks, two caps.
- *
- * 30 is chosen against the worst honest hour we can name: a shared office or cafe address where
- * several people each mistype a password a few times. A credential-stuffing run wants thousands.
- * Keyed on the ADDRESS ONLY, never on the submitted email — a refusal must never be readable as
- * "that account exists" (the same rule the sign-in-code door is built around).
+/*
+ * SIGNIN-A4 —— 这里以前还有一条 `PASSWORD_DOOR_PER_CALLER_PER_HOUR = 30`（密码登录门的每小时
+ * 闸，#795）。密码整体退役之后（docs/specs/sign-in.md 已冻结 · v1）`/sign-in/email` 在 router
+ * 层就 404，那道闸没有门可守，而且它跑在转发之前，会把验收 A4 要的「一律 404」变成第 31 次
+ * 的 429。闸与 `consumePasswordDoor` 一起删掉，而不是留一个没人调用的导出。
  */
-export const PASSWORD_DOOR_PER_CALLER_PER_HOUR = 30;
 
 /**
- * #795 r2 — the three PUBLIC Better Auth doors, per calling address, per hour.
+ * #795 r2 — the PUBLIC Better Auth doors, per calling address, per hour.
  *
  * These used to be `rateLimit.customRules` entries with a 3600-second window, and moving Better
  * Auth's storage to the database silently broke them. Its database backend prunes with a cutoff
@@ -146,17 +139,9 @@ export const MEDIA_PROXY_PER_CALLER_PER_10_MIN = 600;
  */
 export const SHARE_PREVIEW_PER_CALLER_PER_HOUR = 120;
 
-/** The password door. Returns the retry hint (ms) when refused, or null when allowed through. */
-export async function consumePasswordDoor(requestHeaders: Headers): Promise<number | null> {
-  const verdict = await consumeRateLimit([
-    { key: `pw:${callerKey(requestHeaders)}`, max: PASSWORD_DOOR_PER_CALLER_PER_HOUR, windowMs: HOUR },
-  ]);
-  return verdict.granted ? null : verdict.retryAfterMs;
-}
-
 /**
- * The three public Better Auth doors (registration, password reset, verification resend), each
- * with its OWN hourly bucket so one door being spent never closes another.
+ * The public Better Auth doors (today: verification resend — see HOURLY_PUBLIC_DOORS), each with
+ * its OWN hourly bucket so one door being spent never closes another.
  * Returns the retry hint (ms) when refused, or null when allowed through.
  */
 export async function consumePublicAuthDoor(door: string, requestHeaders: Headers): Promise<number | null> {

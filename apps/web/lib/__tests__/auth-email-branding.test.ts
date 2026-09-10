@@ -4,7 +4,7 @@
  * lib/email/__tests__/auth-email-template.test.ts).
  *
  * Two call sites build the AuthEmailJob → sendAuthEmail(...) → emailPort.send(...) chain:
- *   1. runAuthEmailJob's password-reset/verify-email branch (lib/better-auth/sender.ts).
+ *   1. runAuthEmailJob's verify-email branch (lib/better-auth/sender.ts).
  *   2. the emailOTP plugin's `sendVerificationOTP` hook (lib/better-auth/server.ts) — reached
  *      only through the REAL Better Auth instance, so this file constructs it exactly like
  *      signup-door.test.ts / auth-email-queue-executor.test.ts do, against the real local
@@ -34,11 +34,7 @@ process.env.GOOGLE_CLIENT_ID = "test-client-id";
 process.env.GOOGLE_CLIENT_SECRET = "test-secret";
 
 const SIGNIN_ADDR = `p939-signin-${randomUUID()}@fikirtive.test`;
-// password-reset re-checks the allowlist (unlike verify-email, which is the one path a
-// brand-new self-service account walks before it is on any list — see sender.ts's
-// runAuthEmailJob), so its test address must be allowed too, or the send is suppressed.
-const RESET_ADDR = `p939-reset-${randomUUID()}@fikirtive.test`;
-process.env.AUTH_ALLOWED_EMAILS = [SIGNIN_ADDR, RESET_ADDR].join(",");
+process.env.AUTH_ALLOWED_EMAILS = [SIGNIN_ADDR].join(",");
 
 // Constructs the real `auth` object, which registers the emailOTP plugin's sendVerificationOTP
 // hook — sender.ts's own `runOneJob` dynamic-imports this same module path when a
@@ -93,20 +89,9 @@ describe("#939 — auth emails carry branded html + text at the real send call s
     expect(msg!.text).toContain("This link is valid for 1 hour.");
   });
 
-  it("password-reset — runAuthEmailJob's queue branch passes html+text with a 1-hour validity line", async () => {
-    const url = "https://x.test/reset-password?token=def456";
-
-    enqueueAuthEmail({ purpose: "password-reset", email: RESET_ADDR, url });
-    await authEmailQueueSettled();
-
-    const msg = sent.find((m) => m.to === RESET_ADDR);
-    expect(msg).toBeDefined();
-    expect(msg!.html).toBeTruthy();
-    expect(msg!.text).toBeTruthy();
-    expect(msg!.text).toContain(url);
-    expect(hrefsIn(msg!.html!)).toContain(url);
-    expect(msg!.html).toContain("This link is valid for 1 hour.");
-  });
+  // SIGNIN-A4 —— 这里原本还有一条 `password-reset` 用例。那个 purpose 随密码退役
+  // （docs/specs/sign-in.md，已冻结 · v1）从 `AuthEmailJob` 里删掉了，用例跟着删：它测的是一个
+  // 不再存在的分支，留着只能证明测试自己还能构造它。
 
   it("sign-in-code — the REAL emailOTP plugin's sendVerificationOTP hook (server.ts) passes html+text with the true 15-minute validity, not the other purposes' 1 hour", async () => {
     enqueueAuthEmail({ purpose: "sign-in-code", email: SIGNIN_ADDR, overBudget: false });

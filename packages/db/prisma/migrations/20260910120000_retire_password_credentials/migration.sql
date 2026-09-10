@@ -1,0 +1,24 @@
+-- DESTRUCTIVE-OK: SIGNIN-A9 —— 密码凭据退役（docs/specs/sign-in.md §1.4「密码凭据退役」，
+-- 冻结 v1 / issue #1260；执行票 #1316）。Founder 2026-08-01「未公测零用户」：这些行只可能属于
+-- 测试账号，正式商家一个都没有。
+--
+-- 删的是什么：`ba_account` 里 `providerId = 'credential'` 的行。这是 better-auth 给邮箱密码凭据
+-- 的固定标记（better-auth 1.6.20 `dist/api/routes/password.mjs`），一行 = 一份密码哈希。Google
+-- 那些行的 providerId 是 'google'，不在这条语句的范围内。
+--
+-- 为什么是删行而不是删 `password` 列：列还留着，是因为 better-auth 的 adapter 仍然按它自己的
+-- 模型读写 `ba_account`；删列会让库和它的模型对不上，而这次退役要的是「一份密码凭据都不存在」，
+-- 不是「表结构里没有密码这个概念」。schema.prisma 因此不动，这是一条纯数据迁移。
+--
+-- 不可逆：删掉的密码哈希无法从任何地方重建。
+--
+-- **合并即执行 —— 这后面没有第二道闸。** 本仓库推 main 会自动部署，容器每次启动都在 serve 之前
+-- 跑一次 `prisma migrate deploy`（apps/web/Dockerfile:55-65 → apps/web/scripts/boot.mjs 的
+-- runMigrations），仓库里也没有任何 deploy workflow 或 environment required reviewer
+-- （`.github/workflows/` 只有 ci / e2e / post-merge / process-gates / process-heartbeat / stale）。
+-- 所以「merge → deploy → boot → DELETE」中间没有一步等人：**Founder 对这一次删除的明确同意，
+-- 必须发生在合并之前，否则永远不会发生**（全局 CLAUDE.md §6、项目 CLAUDE.md「Database safety」）。
+-- 顶上这行 `DESTRUCTIVE-OK` 只让 CI 那道扫描闸放行（scripts/check-destructive-migrations.sh:20
+-- 只查标记存在），它不是 Founder 的批准。备份与恢复路径见同目录 rollback.sql。
+
+DELETE FROM "ba_account" WHERE "providerId" = 'credential';

@@ -99,9 +99,20 @@ describe("前端基线:后续各段的验收落点(§7.1;S5 前逐条转正)", (
   //      上传入口价目小字、聊天搜索成本提示)在新壳上还在**并且还挂着**。
   // 六条钱旅程的存在由同一份文件看着;浏览器那一侧由
   // e2e/journeys/07-money-surfaces-agree.spec.ts 认领。
-  // FRONT-A2 已转正:占位改成指向真身的断言(尾巴清单 F3)。四条旅程各有真落点 ——
-  //   注册 + 验证 + `?from=` 回跳 → e2e/journeys/21-register-and-return.spec.ts
-  //   忘记密码 + 重置 + 新密码登录 → e2e/journeys/22-reset-password.spec.ts
+  // FRONT-A2 已转正:占位改成指向真身的断言(尾巴清单 F3)。
+  //
+  // SIGNIN-A4 —— 这条验收的两条旅程随密码退役改写(docs/specs/sign-in.md,已冻结 · v1)。
+  // frontend-baseline.md §1 把「邮箱密码、忘记/重置」列为既有 Auth 能力,FRONT-A2 的原旅程含
+  // 密码注册与重置;sign-in.md §1 第 8 问已明写这一条会作废,并要求**实现 PR 自己**在
+  // frontend-baseline.md §5「变更登记」写一行。那一行已写(2026-09-10 那条,指向本规格)。
+  // 判官 #1336 P1 更正:本文件先前写着「实现 PR 不改 docs/specs/ —— M5 闸」,这句是假的 ——
+  // M5 对 docs/specs/ 只判形状(平铺的 .md/.txt,scripts/ci/process-gates.sh:377),改
+  // frontend-baseline.md 完全放行。冻结正文不动,FRONT-A2 下一次 S5 按 sign-in.md 的
+  // A1/A4 改写。
+  //
+  // 今天的四条真落点 ——
+  //   码门进来 + `?from=` 回跳 → e2e/journeys/21-sign-in-and-return.spec.ts
+  //   密码那三扇门退役 + 端点 404 → e2e/journeys/22-password-doors-retired.spec.ts
   //   验证码那条门 → e2e/journeys/01-wall-and-sign-in.spec.ts(早就在)
   //   「提示不泄露邮箱是否存在」的单元侧 → app/login/__tests__/signin-code-action.test.ts
   // 两条新旅程用的是明写的假投递通道(`AUTH_EMAIL_TRANSPORT=stub`,e2e/support/env.ts):
@@ -109,18 +120,18 @@ describe("前端基线:后续各段的验收落点(§7.1;S5 前逐条转正)", (
   // 「收到真实验证码邮件」在这里的诚实读法是「产品真的把信交给了它的投递通道,旅程读的是
   // 那条通道的产物」——最后一公里(Resend 真发信)只有配了钥匙的部署才谈得上,S5 由 Founder
   // 在真环境走一次;这一条钉的是它之前的全部环节。
-  it("FRONT-A2 §7.1⑥ — 注册/验证码/回跳/重置旅程有真旅程文件,不是占位", () => {
+  it("FRONT-A2 §7.1⑥/SIGNIN-A4 — 进门/回跳/退役旅程有真旅程文件,不是占位", () => {
     const journeys = path.resolve(__dirname, "../../../../e2e/journeys");
     const required = {
-      "21-register-and-return.spec.ts": [
-        "/signup?from=/create", // 注册,带目的地
-        "linkFromInbox", // 产品真的寄了一封,旅程读的是它
-        "signInWithPassword", // 回跳:从 /login?from=/create 进去落回 /create
+      "21-sign-in-and-return.spec.ts": [
+        "/create", // 墙记下的目的地
+        "codeFromInbox", // 产品真的铸了一份码,旅程读的是它
+        "signIn(page, ws", // 回跳:从 /login?from=/create 进去落回 /create
       ],
-      "22-reset-password.spec.ts": [
-        "/forgot-password?from=/create",
-        "Save new password", // 重置真的走完
-        "countResetTokens", // 同一句话,背后一次真铸一次没铸 —— 不泄露存在性
+      "22-password-doors-retired.spec.ts": [
+        "/forgot-password", // 旧地址还答话
+        "/login", // 而且答的是唯一那扇门
+        "/sign-up/email", // 端点那一半:密码门对公网 404
       ],
     } as const;
 

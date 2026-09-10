@@ -3,7 +3,7 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { emailOTP, admin } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import { createAuthMiddleware } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
 import { enqueueAuthEmail, sendAuthEmail, AUTH_EMAIL_CODE_TTL_SECONDS } from "./sender";
 import { toVerifyLandingUrl } from "./verify-landing-url";
@@ -13,16 +13,64 @@ import { signinSessionId } from "./signin-session";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
 import { ac, superAdminRole } from "./access";
 import { googleSignInConfigured } from "./social-config";
-import { isAllowedEmail, isRevokedEmail } from "@/lib/allowlist";
-import { admitSelfSignup, signupsPaused, SIGNUPS_PAUSED_MESSAGE } from "@/lib/signup-gate";
+import { isAllowedEmail } from "@/lib/allowlist";
 
-/** #543 — the one Better Auth path that self-service registration owns. Anything that is not
- *  EXACTLY this path keeps the deny-by-default allowlist gate; an absent/unknown path (the
- *  database hooks receive a nullable endpoint context) therefore fails closed. */
-const SELF_SIGNUP_PATH = "/sign-up/email";
-function isSelfSignupPath(path: string | undefined | null): boolean {
-  return path === SELF_SIGNUP_PATH;
-}
+/**
+ * SIGNIN-A4 / SIGNIN-A11 —— 密码整体退役（docs/specs/sign-in.md §1.4「密码凭据退役」）。
+ *
+ * `emailAndPassword.enabled: false`（下面）已经让 Better Auth 自己拒绝密码注册与密码登录，
+ * 但它拒的方式是 400，路由仍然挂着 —— 一个还在的端点会继续吸引扫描器、继续出现在 OpenAPI
+ * 里、也继续给「这里以前有一扇门」留一条可探测的痕迹。验收 A4 要的是 404，所以这些路径和
+ * `CLOSED_EMAIL_OTP_PATHS` 走同一条闸：`disabledPaths` 在 ROUTER 层（`router.onRequest`）
+ * 直接 404，公网彻底失去这些端点。
+ *
+ * 逐条为什么在这里：
+ *   · `/sign-up/email` `/sign-in/email` —— 密码注册与密码登录本体。
+ *   · `/request-password-reset` `/reset-password` —— 忘记密码这条链。
+ *   · `/change-password` —— 已登录商家改密码。
+ *   · `/forget-password` `/set-password` —— better-auth 1.6.20 里前者没有核心路由、后者是
+ *     `createAuthEndpoint.serverOnly`（只走 `auth.api.*`），今天本来就 404。写进来是把
+ *     「不可达」从版本细节变成本仓库的显式决定：将来任一版本把它们挂上公网，这条闸已经在。
+ *   · `/verify-password` —— 拿密码换一个「对不对」的答案，同样是密码凭据的入口面。
+ *   · `/admin/set-user-password` `/admin/create-user` —— admin 插件（下面 `plugins` 里装着）
+ *     自己挂的两条公网路由，都会**直接写出**一行 `providerId = "credential"`：
+ *     `better-auth@1.6.20 dist/plugins/admin/routes.mjs:829-836` 的 `createAccount({ providerId:
+ *     "credential", password })`，与同文件 `:198-204` 的 `linkAccount({ providerId: "credential",
+ *     password })`。它们答的是 401/403（未登录／无权限），不是 404 —— 也就是说密码这条路还留着
+ *     一个「有权限就能重新写出密码」的入口，与 A11「没有任何途径能建立密码」正面冲突。仓库里
+ *     没有任何调用者（`createUser` / `setUserPassword` / `admin/create-user` /
+ *     `admin/set-user-password` 全仓零命中），所以关掉不改变任何现有功能。
+ *
+ * `auth.api.*`（服务端可信代码）不受影响，这也正是这一层对的原因：公网失去端点，内部调用
+ * 还在。本仓库今天没有任何 `auth.api.setPassword` / `changePassword` 调用，围栏见
+ * `lib/__tests__/signin-password-retired.test.ts`（SIGNIN-A11）。
+ */
+const CLOSED_PASSWORD_PATHS = [
+  "/sign-up/email",
+  "/sign-in/email",
+  "/forget-password",
+  "/reset-password",
+  "/change-password",
+  "/set-password",
+  "/request-password-reset",
+  "/verify-password",
+  "/admin/set-user-password",
+  "/admin/create-user",
+] as const;
+
+/**
+ * SIGNIN-A4 —— 退役密码门里**带路径参数**的那一条：`/reset-password/:token`
+ * （`better-auth@1.6.20 dist/api/routes/password.mjs:83`，GET，验一下 token 再把它转给
+ * callbackURL）。
+ *
+ * 它进不了 `disabledPaths`：那道闸是**逐字比对实际路径**的（`dist/api/index.mjs:164-166`，
+ * `disabledPaths.includes(normalizedPath)`），而这条路由的实际路径每次都不一样
+ * （`/reset-password/abc123`）—— 写 `"/reset-password/:token"` 进去永远匹配不到，而清单里已有的
+ * `"/reset-password"` 只 404 那条不带参数的 POST。所以这条前缀由我们自己的 route handler 在转发
+ * 之前 404（`app/api/better-auth/[...all]/route.ts`），答的字节与 better-auth 自己那道闸一模一样
+ * （`"Not Found"` / 404），公网分不出是哪一层拒的。
+ */
+export const CLOSED_PASSWORD_PATH_PREFIXES = ["/reset-password/"] as const;
 
 /**
  * EVERY HTTP ENDPOINT THE emailOTP PLUGIN MOUNTS EXCEPT THE ONE THIS PRODUCT USES.
@@ -123,19 +171,14 @@ export const auth = betterAuth({
     encryptOAuthTokens: true,
   },
   verification: { modelName: "BetterAuthVerification" },
-  emailAndPassword: {
-    enabled: true,
-    // NON-REMOVABLE: better-auth's default is OFF; without this an unverified email+password signup mints a session → account takeover via convergeIdentity. Keep true.
-    requireEmailVerification: true,
-    sendResetPassword: async ({ user, url }) => {
-      // Keep Better Auth's neutral reset response for removed users while still suppressing the
-      // email (F17). Session creation independently re-checks access and remains fail-closed.
-      // #678 — the access lookup AND the delivery both live on the background side: this hook
-      // queues and returns, so the reset response time cannot encode whether the address still
-      // has access or whether the mail provider is healthy.
-      enqueueAuthEmail({ purpose: "password-reset", email: user.email, url });
-    },
-  },
+  // SIGNIN-A4 / SIGNIN-A11 —— 密码凭据退役。这一行是「本产品没有密码」的单一源：
+  // better-auth 在 `sign-in.mjs` 与 `sign-up.mjs` 里各自读它，读到 false 就拒；上面的
+  // `CLOSED_PASSWORD_PATHS` 再把这些端点从公网拿掉（拒 → 404）。两层都在，是因为它们答的
+  // 是两个问题：这一行答「产品支持不支持」，那条闸答「公网够不够得着」。
+  //
+  // 写成显式 `false` 而不是整块删掉，是为了让下一个读这个文件的人看见这是一次**决定**，
+  // 而不是有人忘了配（better-auth 的默认本来就是关）。规格：docs/specs/sign-in.md §1.4。
+  emailAndPassword: { enabled: false },
   emailVerification: {
     sendVerificationEmail: async ({ user, url }) => {
       // Same handover as every other auth email (#678): the signup response must not wait on the
@@ -198,7 +241,7 @@ export const auth = betterAuth({
   advanced: { ipAddress: { ipAddressHeaders: [CALLER_IP_HEADER] } },
   // See CLOSED_EMAIL_OTP_PATHS. Spread rather than inlined so the list has one home and the tests
   // can assert against the same array the router is handed.
-  disabledPaths: [...CLOSED_EMAIL_OTP_PATHS],
+  disabledPaths: [...CLOSED_EMAIL_OTP_PATHS, ...CLOSED_PASSWORD_PATHS],
   rateLimit: {
     // #795 — THE fix for "the gate is a number nobody can trust". Better Auth's limiter defaults
     // to PROCESS MEMORY, so every one of the rules below was per-instance: a second web replica
@@ -241,13 +284,12 @@ export const auth = betterAuth({
     // Better Auth calls those and honours whatever window they return, so a function that returns
     // 61 seconds walks straight back into the trap and no static check could see it coming.
     customRules: {
-      // NOTE (#795): there is deliberately NO rule for "/sign-in/email" here either, and that is
-      // the OPPOSITE of leaving the password door unguarded. Better Auth's built-in special rule
-      // already caps every /sign-in path at 3 per 10 seconds, and `customRules` REPLACES a rule
-      // rather than adding to it — an hourly rule written here would delete that burst cap. The
-      // password door needs both (a burst cap stops credential stuffing at speed; an hourly cap
-      // stops the patient version), so the hourly one is layered in front of this handler instead,
-      // in app/api/better-auth/[...all]/route.ts. Nothing here is loosened; a cap is added.
+      // NOTE (SIGNIN-A4): #795 的这一格原本解释「为什么不给 `/sign-in/email` 写每小时规则」——
+      // 那是密码门。密码退役之后它在 router 层就 404（`CLOSED_PASSWORD_PATHS`），限流器根本
+      // 见不到它，所以那条理由连同门一起作废。它留下的那条规则仍然成立并且仍然在用：
+      // `customRules` 是**替换**而不是叠加，写一条每小时规则会把 Better Auth 自带的突发上限
+      // 删掉，所以我们自己的每小时闸一律层叠在 app/api/better-auth/[...all]/route.ts 里，
+      // 不写进这张表。
       //
       // NOTE (#678 r3): there is deliberately NO rule for the sign-in-code doors here either.
       // The one that MINTS a code is not a public door at all — it is in `disabledPaths`, and its
@@ -266,42 +308,28 @@ export const auth = betterAuth({
     before: createAuthMiddleware(async (ctx) => {
       const email: string | undefined = (ctx.body as Record<string, unknown> | undefined)?.email as string | undefined;
       if (!email) return;
-      if (isSelfSignupPath(ctx.path)) {
-        // #543 — the ONE open door: self-service registration with email + password. The
-        // allowlist is NOT the gate here (that is the whole point of the ticket); the pause
-        // switch and the revocation check in databaseHooks.user.create.before are. Nothing
-        // else opens: the sign-in code, Google and password sign-in keep their existing gates.
-        if (signupsPaused()) throw new APIError("FORBIDDEN", { message: SIGNUPS_PAUSED_MESSAGE });
-        return;
-      }
-      if (ctx.path === SIGN_IN_CODE_VERIFY_PATH || ctx.path === "/sign-in/email") {
-        // #678 — DELIBERATELY NO ALLOWLIST DECISION HERE, for both doors. Deciding at the door
-        // is what made the ANSWER a function of whether the address has an account:
+      if (ctx.path === SIGN_IN_CODE_VERIFY_PATH) {
+        // #678 — DELIBERATELY NO ALLOWLIST DECISION HERE. Deciding at the door is what made the
+        // ANSWER a function of whether the address has an account: an allowlist refusal here is a
+        // 403 saying so, while every other submission gets Better Auth's "Invalid OTP". Anyone
+        // could then type six random digits at an address and read which of the two came back —
+        // an account-existence oracle on a door that needs no credential to knock on. (The magic
+        // link this replaced had the same defect in its timing rather than its wording: an
+        // address without access returned after ONE allowlist query while an address with access
+        // went on to mint a token and wait on the email network.)
         //
-        //   sign-in code — an allowlist refusal here is a 403 saying so, while every other
-        //     submission gets Better Auth's "Invalid OTP". Anyone could then type six random
-        //     digits at an address and read which of the two came back: an account-existence
-        //     oracle on a door that needs no credential to knock on. (The magic link this
-        //     replaced had the same defect in its timing rather than its wording — an address
-        //     without access returned after ONE allowlist query while an address with access
-        //     went on to mint a token and wait on the email network.)
-        //   password — an address without access was refused here, skipping Better Auth's own
-        //     dummy password hash (sign-in.mjs hashes the submitted password when no user is
-        //     found, precisely so the two cases cost the same). Our shortcut walked around the
-        //     constant-time path it was imitating.
-        //
-        // Where the access decision lives now: for the sign-in code, on the background side
-        // BEFORE the code is minted (lib/better-auth/sender.ts) and again in the send hook — so a
-        // code only ever reaches an address that already passed it; for the password door, inside
-        // Better Auth's own credential check, which is constant-time by construction.
+        // Where the access decision lives instead: on the background side BEFORE the code is
+        // minted (lib/better-auth/sender.ts) and again in the send hook — so a code only ever
+        // reaches an address that already passed it.
         //
         // NOTHING IS LOOSENED. Redeeming a code is still refused twice over —
         // databaseHooks.user.create.before (assertAllowedEmail) and
         // databaseHooks.session.create.before (assertAllowedForUserId) both stay fail-closed —
         // and reaching either of them requires the correct six digits first.
-        // A password sign-in for an address without access still ends in Better Auth's own
-        // INVALID_EMAIL_OR_PASSWORD unless the credential is genuinely correct, in which case
-        // session.create.before refuses the session.
+        //
+        // SIGNIN-A4 —— 这里以前还挂着 `/sign-in/email`(密码门)和 `/sign-up/email`(密码注册)
+        // 两条分支。两条路径现在都在 `CLOSED_PASSWORD_PATHS` 里,router 层就 404,永远到不了
+        // 这个中间件,所以分支跟着密码一起退役,而不是留在这里假装还在守什么。
         return;
       }
       if (ctx.path?.startsWith("/sign-in") || ctx.path?.startsWith("/sign-up")) {
@@ -310,7 +338,7 @@ export const auth = betterAuth({
     }),
   },
   // Deny-by-default allowlist gates in databaseHooks — covers ALL methods including OAuth callbacks.
-  // Throwing APIError here aborts the operation and propagates a 403 to the caller.
+  // Throwing an APIError here aborts the operation and propagates a 403 to the caller.
   databaseHooks: {
     /*
      * #795 r3 — THERE IS DELIBERATELY NO `account` HOOK HERE, and the reason is a correction.
@@ -344,25 +372,17 @@ export const auth = betterAuth({
     user: {
       create: {
         // Gate 1: prevents any non-allowlisted email from getting a ba_user row (first sign-up, any method).
-        // #543 carves out EXACTLY one path — self-service `/sign-up/email` — where the allowlist is
-        // no longer the gate. That path is still fail-closed on the two things that must hold:
-        // signups must be open, and a REVOKED address can never re-register its way back in. Every
-        // other method (the sign-in code, Google, and a null endpoint context) keeps the allowlist gate.
-        before: async (user, ctx) => {
-          if (isSelfSignupPath(ctx?.path)) {
-            if (signupsPaused()) throw new APIError("FORBIDDEN", { message: SIGNUPS_PAUSED_MESSAGE });
-            if (await isRevokedEmail(user.email)) {
-              throw new APIError("FORBIDDEN", { message: "This email can't be used to create an account." });
-            }
-            return;
-          }
+        //
+        // SIGNIN-A4 —— #543 曾在这里为自助密码注册(`/sign-up/email`)开一个口子:那条路上名单
+        // 不是闸,暂停开关与撤销检查才是。密码注册退役之后那条路径 404,口子永远不会被走到,
+        // 所以它跟着密码一起撤掉,名单闸重新是**唯一**的一道。
+        //
+        // 码门与 Google 门对陌生人开放(规格 §1.6 的三步判定)属于登录门②③,不在本切片内:
+        // 今天这两扇门仍然只放行名单内的地址,与本次改动之前一模一样。
+        before: async (user) => {
           await assertAllowedEmail(user.email);
         },
-        after: async (u, ctx) => {
-          // Registration IS the invite — but only once the account actually exists. Writing this
-          // from the request body instead would let a refused or abandoned signup pre-stock an
-          // address that could still walk in later (e.g. after signups are paused).
-          if (isSelfSignupPath(ctx?.path)) await admitSelfSignup(u.email);
+        after: async (u) => {
           await convergeIdentity({ email: u.email, name: u.name, image: u.image, emailVerified: u.emailVerified });
         },
       },
@@ -370,7 +390,7 @@ export const auth = betterAuth({
     session: {
       create: {
         // Gate 2: prevents a session being issued for any non-allowlisted email — covers repeat sign-ins
-        // and revocation. Runs on every session creation regardless of method (OAuth, sign-in code, password).
+        // and revocation. Runs on every session creation regardless of method (OAuth, sign-in code).
         before: async (session) => {
           await assertAllowedForUserId(session.userId);
         },
