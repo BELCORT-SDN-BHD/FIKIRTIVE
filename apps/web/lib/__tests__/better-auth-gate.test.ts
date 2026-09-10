@@ -79,7 +79,28 @@ describe("assertSignInDoor (user.create.before gate)", () => {
 
   it("allows an email in AUTH_ALLOWED_EMAILS env list", async () => {
     process.env.AUTH_ALLOWED_EMAILS = "merchant@fikirtive.test";
+    mockFindUnique.mockResolvedValueOnce(null); // 名单里点了名，但库里还没有他那一行
     await expect(assertSignInDoor("merchant@fikirtive.test")).resolves.toBeUndefined();
+    // 库照读 —— 环境名单回答的是「他算不算老人」，不是「他不可撤」（见下一条）。
+    expect(mockFindUnique).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * SIGNIN-A7 —— 环境名单命中**不再短路**撤销那一步。
+   *
+   * RED before this slice：`lookupAddress` 在 `AUTH_ALLOWED_EMAILS` 命中时直接
+   * `return { known: true, revoked: false }`，数据库根本不读，于是操作员把这个地址撤了
+   * 等于没撤。规格 §1.6 写的是「撤销仍然绝对」，那条捷径让它对整整一个名单不成立。
+   */
+  it("SIGNIN-A7 —— 环境变量名单命中仍然查撤销：AUTH_ALLOWED_EMAILS 里的地址被撤销后照样被拒", async () => {
+    process.env.AUTH_ALLOWED_EMAILS = "merchant@fikirtive.test";
+    mockFindUnique.mockResolvedValueOnce({ status: "revoked" });
+    await expect(assertSignInDoor("merchant@fikirtive.test")).rejects.toBeInstanceOf(APIError);
+  });
+
+  /** FOUNDER_ADMIN_EMAILS 是破窗锤，仍然先于数据库 —— 一行记录不该把部署者锁在产品外面。 */
+  it("keeps the founder break-glass ahead of the database", async () => {
+    await expect(assertSignInDoor(ALLOWED_EMAIL)).resolves.toBeUndefined();
     expect(mockFindUnique).not.toHaveBeenCalled();
   });
 

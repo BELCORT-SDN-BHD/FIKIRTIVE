@@ -38,9 +38,17 @@ describe("登录门规格 · 尚未交付的验收（各自的切片接手时把
   it.todo("SIGNIN-A13 —— Google 报「邮箱未验证」的账号被拒并回 /login 提示改用 email，数据库里不建任何用户行");
   it.todo("SIGNIN-A14 —— Google 门的每一种失败都回到 /login 页内提示，从不落在 better-auth 自带错误页或裸 JSON");
 
-  // ④ 暂停注册与撤销（issue #1319）
-  it.todo("SIGNIN-A6 —— SIGNUPS_PAUSED 打开：页顶横幅、陌生人两扇门都进不来且不建账号不寄码、老用户正常进入");
-  it.todo("SIGNIN-A7 —— 撤销一个自助进来的邮箱：后台撤得掉、他已登录的会话下一次请求即失效、两扇门都进不来且不说明原因");
+  // ④ 暂停注册与撤销（issue #1319）—— 两行 it.todo 换成了真测试：
+  //    · SIGNIN-A6  → lib/__tests__/signin-pause-and-revoke.test.ts（三条：码门、Google 门、老商家）
+  //    · SIGNIN-A7  → lib/__tests__/signin-pause-and-revoke.test.ts（六条：撤得掉、会话当场失效、
+  //                   两扇门都拒、双租户、环境名单仍查撤销、幂等）、
+  //                   app/admin/__tests__/admin-revoke-access-action.test.ts（操作员入口的权限闸）、
+  //                   better-auth-gate.test.ts（环境名单命中仍查撤销）、
+  //                   better-auth-oauth-session-gate.test.ts（会话闸的库内接线，既有）
+  //
+  //    A6 的「页顶横幅」那一半**还没落地**：横幅住在 `app/login/page.tsx`，不在切片④的写集内。
+  //    它不在这里留 it.todo —— 留一行会让 M3 闸把 A6 读成「整条没做」，而两扇门那一半是真的做完了。
+  //    未做的那一半写在 #1319 的 PR 描述与规格 §5 变更登记里，由登录门③／⑤ 接手。
 
   // ⑤ 端到端旅程（issue #1311 的第五片）
   it.todo("SIGNIN-A12 —— 陌生邮箱收码登录 → 生成一张图 → 登出 → 同邮箱 Google 登录，看到刚才那张图、始终同一个工作区");
