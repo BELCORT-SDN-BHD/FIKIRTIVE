@@ -58,9 +58,20 @@ process.env.AUTH_ALLOWED_EMAILS = "";
 
 const { auth } = await import("@/lib/better-auth/server");
 const { prisma } = await import("@fikirtive/db");
+const { SIGN_IN_REFUSED_REVOKED } = await import("@/lib/better-auth/signin-refusal");
 
 const BASE_URL = process.env.BETTER_AUTH_URL as string;
-const GATE_MESSAGE = "This email can't sign in.";
+/**
+ * SIGNIN-A14 —— 拒绝的 message 从一句英文换成了一个机器键，理由写在
+ * `lib/better-auth/signin-refusal.ts`：Better Auth 在 OAuth 回调的**建号**那条路上把
+ * `e.message` 当成 `?error=` 的键用（`oauth2/link-account.mjs:107-111` →
+ * `api/routes/callback.mjs:156-158` 的 `split(" ").join("_")`），而在**建会话**那条路上读的是
+ * `e.body.code`。两条路要给出同一个键，message 就不能是一句带空格的话。
+ *
+ * 这不是把话说给商家听的地方：商家读到的那一句在 `app/login/page.tsx`，四种拒绝共用一句
+ * （规格 §1.3 防枚举）。这里是 API 的 body，读它的只有机器。
+ */
+const GATE_MESSAGE = SIGN_IN_REFUSED_REVOKED;
 
 /**
  * SIGNIN-A7 —— 这个测试对象换了身份，而换的理由是产品变了，不是断言被放宽。
