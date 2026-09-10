@@ -303,7 +303,8 @@ async function upscaledProductReferenceDataUrl(
  *    「免费末帧不许拖着 DONE」的 8 秒预算当场红)。
  * ③ **数字是同一个**:PNG/JPEG/WebP 的宽高就写在文件头里,ffprobe 读的也是同一处。
  *    `gen-output-dimensions.test.ts` 拿同一串字节对着 ingest 的 `probeFile` 逐张比,两者
- *    不一致当场红 —— 「同一套尺子」是被证明的,不是被声明的。
+ *    不一致当场红 —— 「同一套尺子」是被证明的,不是被声明的(那一条在装不到 ffprobe 的
+ *    机器上跳过,CI runner 就是;「量得对不对」另有一条无条件的断言守着)。
  *
  * 认不出的格式(今天:视频那条路的 mp4)一律回 `null`,落库照旧写 null —— 那正是这条修改
  * 之前的行为,一格没退。视频帧宽高**未做**,已在规格 §5 登记。
