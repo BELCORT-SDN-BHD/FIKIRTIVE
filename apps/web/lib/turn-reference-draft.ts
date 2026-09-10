@@ -293,6 +293,38 @@ export function restoredReferencesNote(
   if (all.length > 0 && ids.length === 0) return null;
   const named = uniq(draft.labels).filter((name) => !hiddenLabels.has(name));
   if (named.length === 0 && ids.length === 0) return null;
-  if (named.length > 0) return `References kept: ${named.join(", ")}`;
+  if (named.length > 0) {
+    // §5 :163③ —— 有名字的那几件念名字，**没有**名字的那几件照旧报个数（「+ N more」）。
+    // 从前只要有一个名字可念，这一行就只念名字：手动挂的那几件（没有 label）在屏幕上整个
+    // 消失，而它们跟着下一次送出。少报一件与多报一件同样糟 —— 商家按下去才发现车上多了东西。
+    // 名字与四条道不是一一对应（labels 只有 typed refs 带得回来），所以这个差数是**下界**：
+    // 宁可少报一件，也不编一个名字或一个数出来。
+    const unnamed = Math.max(0, ids.length - named.length);
+    return `References kept: ${named.join(", ")}${unnamed > 0 ? ` + ${unnamed} more` : ""}`;
+  }
   return `References kept: ${ids.length === 1 ? "1 reference" : `${ids.length} references`}`;
+}
+
+/** 那句话在屏幕上最多占这么长，超了就截断加省略号。 */
+const RETRY_SOURCE_QUOTE_MAX = 48;
+
+/**
+ * §5 :163② —— 输入框上方那一行：**这一轮是对哪条消息的重试**。
+ *
+ * `sourceMessageId` 从前只在请求体里当 `replyToMessageId` 上路，屏幕上一个字都不说。于是
+ * 商家点了 Edit and retry、又改了主意去打一句全新的话，送出去的那一轮在记录里仍然是「那一轮
+ * 的重来」——他看不见，也没有一处能取消。这一行把它说出口，旁边那颗 Remove 只清这一格
+ * （引用不受影响），清掉之后这一轮就是一条普通的新消息。
+ *
+ * 念得出原话就念原话（哪一条一目了然）；念不出（消息已经不在手上）只说是「更早的一条」——
+ * 编一句原话出来比不念更糟。
+ */
+export function retrySourceNote(quote: string | null | undefined): string {
+  const line = (quote ?? "").replace(/\s+/g, " ").trim();
+  if (!line) return "Retrying an earlier message";
+  const short =
+    line.length > RETRY_SOURCE_QUOTE_MAX
+      ? `${line.slice(0, RETRY_SOURCE_QUOTE_MAX - 1).trimEnd()}…`
+      : line;
+  return `Retrying: "${short}"`;
 }
