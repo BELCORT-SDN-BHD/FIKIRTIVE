@@ -280,7 +280,8 @@ async function run(
  * check alone excludes it, no delete attempt at all.
  *
  * 2026-09-03 判官第二轮复审(P2 顺手记录,登记 issue #359)——判据故意比 asset-purge.ts 的
- * 单一权威(`purgeOrphanedReferenceAssets`:无活 ReferenceImage + 无 Generation)更宽:这里
+ * 单一权威(`purgeOrphanedReferenceAssets`:无活 ReferenceImage + 无 Generation + 无活
+ * BrandRecord.data.imageAssetId 软指针)更宽:这里
  * 只看 `Asset.deletedAt IS NOT NULL`,不重新核验「无引用/无 Generation」。这是刻意的,不是
  * 疏漏——deletedAt 本身就是那条判据算完之后才会被打上的墓碑(唯一的写手是
  * purgeOrphanedReferenceAssets 那次 updateMany),这条重扫信的是"这行已经被判过一次独占",

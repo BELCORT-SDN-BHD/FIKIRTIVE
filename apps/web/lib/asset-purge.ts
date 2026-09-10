@@ -12,6 +12,18 @@ import { storage } from "./storage";
  * 真删对象),当且仅当没有任何东西还指着它 ——
  *   · 没有任何**活的** ReferenceImage 行(不分哪个 entity / variant)—— 同一张照片被去重
  *     挂在两个实体上,或者又被设成某个变体的照片,删掉其中一处不能带走另一处还在用的字节;
+ *   · 没有任何**活的** `BrandRecord.data.imageAssetId` 软指针指着它 —— Brand 页的产品卡
+ *     (以及 segment / offer 的配图)把主图记成 `data` 里的一个 assetId,那是一条 JSON 软
+ *     指针,没有外键。判官第 1 轮 P0(PR #1337):`createProduct` 之后同一张主图**同时**是
+ *     Entity 的 ReferenceImage 与价签的 `data.imageAssetId`,只看前者的话,商家在 Library
+ *     删掉那张产品卡就会把 Brand 页价签还指着的字节真删出存储桶,而价签本身还活着 ——
+ *     一条谁都没声明过的不可逆删数据路径。软指针在这条判据里与硬引用同权。
+ *     窗口的诚实话:软指针没有外键,所以 `FOR UPDATE` 那把锁挡不住一笔并发的
+ *     `brandRecord.update` 把 `data.imageAssetId` 指过来(硬引用有 FK,Postgres 的
+ *     `FOR KEY SHARE` 会替我们挡住)。今天唯一会这么写的两处(OttoStuff / OttoMemory 的
+ *     换图)先 `assetUpsert` 再写 data,而 `assetUpsert` 会复活 `deletedAt` —— 于是
+ *     `purgeAssetStorage` 真删字节前的那次重读会看见 `deletedAt = null` 而跳过。窗口小
+ *     但没有完全关死,关死它要给这条软指针一张真表,那是另一票的活。
  *   · 没有任何 Generation 行,不分 deletedAt —— Generation 的合同是「不可变，永不物理删」
  *     (schema.prisma:345「生成历史：不可变（永不物理删）」),Asset 行本身就是为了这条合同
  *     才活成墓碑(schema.prisma:178「Generation FK Restrict 使行删除永不可行——这是设计而非
@@ -71,7 +83,7 @@ export async function purgeOrphanedReferenceAssets(
   if (locked.length === 0) return [];
   const lockedIds = locked.map((r) => r.id);
 
-  const [stillReferenced, everGenerated] = await Promise.all([
+  const [stillReferenced, everGenerated, brandPinned] = await Promise.all([
     tx.referenceImage.findMany({
       where: { assetId: { in: lockedIds }, ownerId, deletedAt: null },
       select: { assetId: true },
@@ -80,10 +92,18 @@ export async function purgeOrphanedReferenceAssets(
       where: { assetId: { in: lockedIds }, ownerId },
       select: { assetId: true },
     }),
+    // 软指针那一条(见文件顶部判据第一段)。Prisma 的 JSON 过滤没有「path 值 IN 一批」这个
+    // 形状,所以和上面那把锁一样直接写 SQL,租户靠显式 `"ownerId" = ${ownerId}` 字面量兜住。
+    tx.$queryRaw<{ assetId: string }[]>`
+      SELECT DISTINCT "data"->>'imageAssetId' AS "assetId" FROM "BrandRecord"
+      WHERE "ownerId" = ${ownerId} AND "deletedAt" IS NULL
+        AND "data"->>'imageAssetId' = ANY(${lockedIds}::text[])
+    `,
   ]);
   const shared = new Set<string>([
     ...stillReferenced.map((r) => r.assetId),
     ...everGenerated.map((g) => g.assetId),
+    ...brandPinned.map((b) => b.assetId),
   ]);
   const exclusiveIds = lockedIds.filter((id) => !shared.has(id));
   if (exclusiveIds.length === 0) return [];

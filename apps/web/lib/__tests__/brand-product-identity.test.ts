@@ -30,11 +30,12 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const { requireOwner } = await import("@/lib/auth-guard");
 const { saveBrandRecord, listBrandRecords, deleteBrandRecord } = await import("@/lib/brand-record-actions");
-const { createEntity } = await import("@/lib/actions");
+const { createEntity, softDeleteEntity, softDeleteReferenceImage } = await import("@/lib/actions");
 const { getLibraryElements } = await import("@/lib/library-elements");
+const { searchReferences } = await import("@/lib/reference-search");
 const { storage } = await import("@/lib/storage");
-const { prisma } = await import("@fikirtive/db");
-const { newId } = await import("@fikirtive/core");
+const { prisma, createProduct } = await import("@fikirtive/db");
+const { newId, storageKey } = await import("@fikirtive/core");
 
 const REPO_ROOT = path.join(process.cwd(), "..", "..");
 const EMAIL_A = `prodid-a-${randomUUID()}@fikirtive.test`;
@@ -62,6 +63,15 @@ async function seedAsset(ownerId: string, label: string): Promise<string> {
     },
   });
   return asset.id;
+}
+
+/** 这张图的字节此刻还在不在存储桶里(真读,不看数据库那一行)。 */
+async function bytesExist(ownerId: string, assetId: string): Promise<boolean> {
+  const a = await prisma.asset.findFirstOrThrow({
+    where: { id: assetId, ownerId },
+    select: { ownerId: true, contentHash: true, ext: true },
+  });
+  return storage.exists(storageKey(a.ownerId, a.contentHash, a.ext.toLowerCase()));
 }
 
 async function ledgerRows(ownerId: string): Promise<number> {
@@ -199,12 +209,60 @@ describe("PRODID-A9 跨租户:找不到,写入被拒", () => {
         },
       }),
     ).rejects.toThrow();
+
+    // CHECK 上唯一的口子是草稿(规格 §1.9 / PRODID-A7)—— 而且**只有**草稿:上面那一条
+    // 同样没有身份、只差 contextStatus,它进不了库。
+    await expect(
+      prisma.brandRecord.create({
+        data: {
+          id: newId(), ownerId: ownerA, brandId: null, kind: "product",
+          nameKey: `draft ${randomUUID().slice(0, 8)}`, contextStatus: "Draft",
+          data: { name: "Draft" }, status: "active", source: "otto", pinned: false,
+        },
+      }),
+    ).resolves.toBeTruthy();
   }, 60_000);
 });
 
 /**
- * 读路改接(@ 菜单、Library / Brand 双向同步、删除恢复同步、理解草稿门)是 Brand②③ 的活
- * (票 #1322 / #1330)。占位在这里,好让验收表这五行有落点,S5 前由那两票转正 ——
+ * PRODID-A7 的后半句(理解提取的草稿在确认前不进 Library 与 @ 菜单)在第 1 轮修复里落地了 ——
+ * 判官指出把理解入口直接接到 `createProduct` 会让「AI 猜出来、商家没确认过的产品」当场进
+ * Library 与 @ 菜单,那是把这条验收的结论**反着**实现。做法见 `packages/db/src/create-product.ts`
+ * 顶部「草稿」一段:草稿那一刻根本没有身份,所以「不出现」由数据本身保证,而不是靠每一条读路
+ * 各自记得过滤。前半句(Otto「记下产品 X」→ 两边出现)与确认转正那一步仍归 Brand②③。
+ */
+describe("PRODID-A7 理解提取的产品先落草稿:确认前不进 Library 与 @ 菜单", () => {
+  it("PRODID-A7 理解提取的产品只落价签、不建身份,Library 与 @ 菜单都找不到它", async () => {
+    await signInAs(EMAIL_A);
+    const name = `Mee goreng ${randomUUID().slice(0, 8)}`;
+    // 理解 worker 那条入口逐字的调用形状(apps/worker/src/jobs/understand.ts)。
+    const made = await createProduct({
+      ownerId: ownerA, data: { name, price: "RM 8.00" }, source: "otto", contextStatus: "Draft",
+    });
+    expect(made).toMatchObject({ created: true, entityId: null });
+
+    const row = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: (made as { id: string }).id, ownerId: ownerA },
+      select: { entityId: true, contextStatus: true, kind: true },
+    });
+    expect(row).toMatchObject({ kind: "product", contextStatus: "Draft", entityId: null });
+    // 身份那一半一条都没有 —— 「不出现」不是靠读路过滤,是根本没有可显示的行。
+    await expect(
+      prisma.entity.count({ where: { ownerId: ownerA, type: "PRODUCT", name } }),
+    ).resolves.toBe(0);
+
+    const elements = await getLibraryElements();
+    if (!Array.isArray(elements)) throw new Error(elements.error);
+    expect(elements.some((e) => e.name === name)).toBe(false);
+
+    const menu = await searchReferences(ownerA, { query: name });
+    expect(menu.items.some((i) => i.name === name)).toBe(false);
+  }, 60_000);
+});
+
+/**
+ * 读路改接(@ 菜单、Library / Brand 双向同步、删除恢复同步)是 Brand②③ 的活
+ * (票 #1322 / #1330)。占位在这里,好让验收表这几行有落点,S5 前由那两票转正 ——
  * 空着不写比写一条假绿的测试更诚实(M3 明确允许 it.todo 占位)。
  */
 describe("PRODID-A2/A4/A5/A6/A7 读路与同步(Brand②③,票 #1322 / #1330)", () => {
@@ -212,7 +270,65 @@ describe("PRODID-A2/A4/A5/A6/A7 读路与同步(Brand②③,票 #1322 / #1330)",
   it.todo("PRODID-A4 Library 与 Brand 页任一边改名换主图,另一边同步显示(同一行 Entity)");
   it.todo("PRODID-A5 Library 元素页没有价格、卖点、分类的编辑入口");
   it.todo("PRODID-A6 Brand 页删除产品,Library 随之消失;任一边恢复,另一边跟着回来");
-  it.todo("PRODID-A7 Otto「记下产品 X」两边出现;理解提取的草稿在确认前不进 Library 与 @ 菜单");
+  it.todo("PRODID-A7 Otto「记下产品 X」两边出现;草稿在 Brand 页确认后才建身份");
+});
+
+/**
+ * 判官第 1 轮 P0(PR #1337)。这一条不是验收表上的一行,是本 PR **新开**的一条不可逆删数据
+ * 路径的回归测试:产品的主图从此同时是 Entity 的 ReferenceImage(硬引用)与价签的
+ * `data.imageAssetId`(软指针)。资产「独占」判据(`apps/web/lib/asset-purge.ts`,7.3 单一
+ * 权威)原本只认硬引用,于是商家在 Library 删掉那张产品卡、或只删掉那张照片,Brand 页价签
+ * 还指着的字节就会被真删出存储桶,而价签本身还活着 —— 商家看到一张永远坏掉的图,且无法恢复。
+ */
+describe("判官 P0 回归:Library 删除不得毁掉 Brand 页价签还在用的主图字节", () => {
+  it("判官 P0 Library 删掉产品卡:Brand 页价签还在,主图字节也还在", async () => {
+    await signInAs(EMAIL_A);
+    const assetId = await seedAsset(ownerA, `p0-entity-${randomUUID().slice(0, 8)}`);
+    const name = `Roti bakar ${randomUUID().slice(0, 8)}`;
+    const saved = (await saveBrandRecord({
+      kind: "product", data: { name, imageAssetId: assetId },
+    })) as { ok: true; id: string };
+    const record = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    });
+    expect(await bytesExist(ownerA, assetId)).toBe(true);
+
+    await expect(softDeleteEntity(record.entityId!)).resolves.toMatchObject({ ok: true });
+
+    // 价签还活着,还指着这张图 —— 所以这张图的字节不是孤儿。
+    const after = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { data: true, deletedAt: true },
+    });
+    expect(after.deletedAt).toBeNull();
+    expect((after.data as { imageAssetId?: string }).imageAssetId).toBe(assetId);
+    await expect(
+      prisma.asset.count({ where: { id: assetId, ownerId: ownerA, deletedAt: null } }),
+    ).resolves.toBe(1);
+    expect(await bytesExist(ownerA, assetId)).toBe(true);
+  }, 60_000);
+
+  it("判官 P0 Library 删掉那张唯一的照片:Brand 页价签还在,主图字节也还在", async () => {
+    await signInAs(EMAIL_A);
+    const assetId = await seedAsset(ownerA, `p0-ref-${randomUUID().slice(0, 8)}`);
+    const name = `Cendol ${randomUUID().slice(0, 8)}`;
+    const saved = (await saveBrandRecord({
+      kind: "product", data: { name, imageAssetId: assetId },
+    })) as { ok: true; id: string };
+    const record = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    });
+    const ref = await prisma.referenceImage.findFirstOrThrow({
+      where: { entityId: record.entityId!, ownerId: ownerA, assetId, deletedAt: null },
+      select: { id: true },
+    });
+
+    await expect(softDeleteReferenceImage(ref.id)).resolves.toMatchObject({ ok: true });
+
+    await expect(
+      prisma.asset.count({ where: { id: assetId, ownerId: ownerA, deletedAt: null } }),
+    ).resolves.toBe(1);
+    expect(await bytesExist(ownerA, assetId)).toBe(true);
+  }, 60_000);
 });
 
 describe("PRODID-A10 建、改、删产品各一次:余额不变,账本零新行", () => {
