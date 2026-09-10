@@ -36,10 +36,14 @@ test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Librar
 
   // ── PRODID-A1 在 Brand 页新增产品 ────────────────────────────────────────────
   await page.getByRole("button", { name: "Add product" }).first().click();
-  await page.getByLabel("Name *").fill(name);
-  await page.getByLabel("Price").fill("RM 12.90");
+  // 这张表单的 `FieldLabel` 没有绑到输入框上(它不是 `<label for>`),所以定位走 placeholder ——
+  // 那是这两个控件今天真的对外可见的名字。旅程不替产品修 a11y,只如实按屏幕上的样子驱动它。
+  await page.getByPlaceholder("Latte Blend").fill(name);
+  await page.getByPlaceholder("RM 49").fill("RM 12.90");
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("heading", { name, exact: true })).toBeVisible({ timeout: 60_000 });
+  // 卡片标题不是 heading(`CardTitle` 是 div),所以拿那颗每张卡都有、名字逐字在里面的
+  // 操作键当锚点 —— 它同时证明这张卡真的画出来了。
+  await expect(page.getByRole("button", { name: `Actions for ${name}` })).toBeVisible({ timeout: 60_000 });
 
   // 身份就是 Library 那张卡:价签的 `entityId` 与 `Entity` 的 id 是同一个值,
   // 而且名字与主图只住在身份那一行(价签的 data 里连这两个键都没有)。
@@ -113,9 +117,9 @@ test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Librar
   await page.goto("/brand/records?tab=products");
   await page.getByRole("button", { name: `Actions for ${name}` }).click();
   await page.getByRole("menuitem", { name: "Edit" }).click();
-  await page.getByLabel("Name *").fill(renamed);
+  await page.getByPlaceholder("Latte Blend").fill(renamed);
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("heading", { name: renamed, exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("button", { name: `Actions for ${renamed}` })).toBeVisible({ timeout: 60_000 });
 
   await page.goto("/library?view=elements&element=products");
   await expect(page.getByRole("button", { name: `Open ${renamed}` })).toBeVisible({ timeout: 60_000 });
@@ -134,7 +138,7 @@ test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Librar
   await expect(page.getByRole("button", { name: `Open ${renamed}` })).toHaveCount(0, { timeout: 60_000 });
 
   await page.goto("/brand/records?tab=products");
-  await expect(page.getByRole("heading", { name: renamed, exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: `Actions for ${renamed}` })).toHaveCount(0);
   // 两边同一个 `deletedAt` —— 恢复那一半按它把两行一起接回来(动作层 `restoreBrandRecord`)。
   const dead = await prisma.brandRecord.findFirstOrThrow({
     where: { id: record.id, ownerId: ws.orgId }, select: { deletedAt: true },
