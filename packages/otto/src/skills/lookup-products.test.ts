@@ -8,7 +8,11 @@ vi.mock("@fikirtive/db", () => ({
 
 const ctx = { context: { orgId: "org-1" } as unknown as OttoContext };
 const row = (name: string, extra: Record<string, unknown> = {}) => ({
+  kind: "product",
   data: { name, ...extra }, status: "active", pinned: false, updatedAt: new Date(),
+  // 名字与主图的唯一源是身份(PRODID-A4)。价签的 `data` 里本来就没有这两格,这个夹具留着
+  // 一份只是为了写得像存量行 —— 「残留值盖不过身份」那一格由下面那条用例单独钉。
+  entity: { name, baseAssetId: null as string | null },
 });
 
 let db: { prisma: { brandRecord: { findMany: ReturnType<typeof vi.fn> } } };
@@ -35,6 +39,27 @@ describe("executeLookupProducts", () => {
     expect(db.prisma.brandRecord.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ ownerId: "org-1", kind: "product", deletedAt: null, status: "active" }),
     }));
+  });
+  it("PRODID-A7 lookupProducts 只取 Ready:确认前的草稿不进 Otto 的事实", async () => {
+    // 规格 §1.9 第三句「Otto 在确认前不把草稿当事实」。判官第 2 轮 P1(PR #1337):这条读路
+    // 读的是 BrandRecord(不是 Entity),所以「草稿没有身份」这条数据保证在这里不成立 ——
+    // 必须显式过滤,否则理解 worker 猜出来的产品会被 Otto 拿去命名、定价、写文案。
+    db.prisma.brandRecord.findMany.mockResolvedValue([row("Latte Blend")]);
+    await executeLookupProducts({ query: "latte" }, ctx);
+    expect(db.prisma.brandRecord.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ contextStatus: "Ready" }),
+    }));
+  });
+  it("PRODID-A4 名字以身份为准:价签里残留的旧名字盖不过身份,Otto 说的是身份上那个名字", async () => {
+    // 判官第 5 轮(PR #1337):写路已经不再往 `data` 里写名字,所以这条读路钉的是**兜底** ——
+    // 存量行、或任何绕过共享动作的直写留下的旧名字,都不许变成 Otto 嘴里的产品名,否则他给
+    // 商家一个商家自己认不出来的名字。
+    db.prisma.brandRecord.findMany.mockResolvedValue([
+      { ...row("Stale cached name"), entity: { name: "Latte Blend", baseAssetId: "as_9" } },
+    ]);
+    const res = await executeLookupProducts({ query: "latte" }, ctx);
+    expect(res.matches.map((m) => m.name)).toEqual(["Latte Blend"]);
+    expect(res.matches[0]!.imageAssetId).toBe("as_9");
   });
   it("returns empty matches for no hit", async () => {
     db.prisma.brandRecord.findMany.mockResolvedValue([row("Mug")]);
