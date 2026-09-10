@@ -83,6 +83,15 @@ const ROWS: Row[] = [
   { id: "gen-theirs", assetId: "asset-theirs", source: "GENERATION", ownerId: "owner-2", ext: "png" },
 ];
 
+/**
+ * creation §5 :178(判官 r4 P1)—— 已被**删出 Library** 的那几行。
+ *
+ * `deleteGeneration` 是软删:它只给 Generation 那一行盖 `deletedAt`,分镜卡上挂着的那份清单
+ * 一格不动。解析器的 where 带 `deletedAt: null`,所以这些行在它眼里等于不存在 —— 真库那一趟
+ * 的行为,这里如实复刻。
+ */
+const DELETED = new Set<string>();
+
 function wireGenerationReads() {
   mockGenerationFindMany.mockImplementation(
     async (args: { where: { ownerId: string; OR?: { id?: { in: string[] }; assetId?: { in: string[] } }[] } }) => {
@@ -91,6 +100,7 @@ function wireGenerationReads() {
       return ROWS.filter(
         (r) =>
           r.ownerId === args.where.ownerId &&
+          !DELETED.has(r.id) &&
           (wantedGenIds.has(r.id) || (r.source === "UPLOAD" && wantedAssetIds.has(r.assetId))),
       ).map((r) => ({
         id: r.id,
@@ -111,6 +121,7 @@ function savedShots(): StoryboardCardPayload["shots"] {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  DELETED.clear();
   mockOwner.mockResolvedValue({ ownerId: OWNER });
   mockUpdate.mockResolvedValue({});
   mockExecuteRaw.mockResolvedValue(1);
@@ -342,5 +353,72 @@ describe("creation §5 :178 —— 挂上上传图之后还加得了、取得下
 
     expect("payload" in res).toBe(true);
     expect(savedShots()[0]!.referenceGenerationIds).toEqual(["gen-upload"]);
+  });
+});
+
+/**
+ * creation §5 :178(判官 r4 P1)—— 挂着的图**被删出 Library 之后,照旧取得下来**。
+ *
+ * 第 4 轮只放宽了写入闸(`referenceRideBlock`)那一半:它现在认得「新清单里没有一张是新的」。
+ * 可是同一个终态从**解析器**那一半照旧造得出来 —— 卡面唯一的取下入口是逐张的 X,它交出的是
+ * 「减掉这一张」的**整份剩余清单**,而 `resolveOwnedReferenceRefs` 的 where 带 `deletedAt:
+ * null`:剩下那几张里只要有一张已经被删出 Library,整次编辑就被判 unresolved、零写入。
+ * 于是这一镜「挂着图、又拿不下来」,而闸①/闸② 同时对整张卡 fail closed —— 同卡别的镜头也
+ * 出不了片,拒绝句给的两条出路在卡面上一条都走不通。
+ *
+ * 判据:清单里的每一格都是这一镜**此刻就挂着**的规范身份 ⇒ 归属早在它被挂上那一刻查过,而
+ * 归属不会随删除改变。只要多出一张新的,整份照旧走解析器(下面第三条是这道围栏)。
+ */
+describe("creation §5 :178 —— 图被删出 Library 之后还取得下来", () => {
+  it("creation §5 :178: 挂着的两张都被删出 Library ⇒ 逐张取下照旧写得进去", async () => {
+    DELETED.add("gen-mine");
+    DELETED.add("gen-upload");
+    const p = payload2();
+    p.shots[0]!.referenceGenerationIds = ["gen-mine", "gen-upload"];
+    mockFindFirst.mockImplementation(async (args: { where?: { kind?: string } }) =>
+      args?.where?.kind === "STORYBOARD_CARD" ? card(p) : null,
+    );
+
+    // 点 gen-mine 的 X ⇒ 交出去的是剩下那一张(它自己也已经被删掉了)。
+    const res = await setShotReferences({ cardId: "card-1", index: 0, refs: ["generation:gen-upload"] });
+
+    expect("payload" in res).toBe(true);
+    expect(savedShots()[0]!.referenceGenerationIds).toEqual(["gen-upload"]);
+  });
+
+  it("creation §5 :178: 演员也没了、图也没了 ⇒ 再点一次 X 就清空,这一镜有出路", async () => {
+    DELETED.add("gen-mine");
+    DELETED.add("gen-upload");
+    mockEntityFindFirst.mockResolvedValue(null); // 演员也被删出 Library
+    const p = payload2();
+    p.shots[0]!.referenceGenerationIds = ["gen-upload"];
+    mockFindFirst.mockImplementation(async (args: { where?: { kind?: string } }) =>
+      args?.where?.kind === "STORYBOARD_CARD" ? card(p) : null,
+    );
+
+    const res = await setShotReferences({ cardId: "card-1", index: 0, refs: [] });
+
+    expect("payload" in res).toBe(true);
+    expect("referenceGenerationIds" in savedShots()[0]!).toBe(false);
+  });
+
+  it("creation §5 :178: 只减不增才免解析 —— 同一趟里混一张别家店的图仍旧整次拒绝、零写入", async () => {
+    DELETED.add("gen-mine");
+    const p = payload2();
+    p.shots[0]!.referenceGenerationIds = ["gen-mine"];
+    mockFindFirst.mockImplementation(async (args: { where?: { kind?: string } }) =>
+      args?.where?.kind === "STORYBOARD_CARD" ? card(p) : null,
+    );
+
+    const res = await setShotReferences({
+      cardId: "card-1",
+      index: 0,
+      refs: ["generation:gen-mine", "generation:gen-theirs"],
+    });
+
+    expect(res).toEqual({
+      error: "One of those isn't one of your images any more — pick another. Nothing was changed.",
+    });
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });

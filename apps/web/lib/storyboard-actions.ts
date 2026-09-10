@@ -12,7 +12,9 @@
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
-import { newId, MAX_TURN_REFERENCES } from "@fikirtive/core";
+// `parseReferenceRef` —— typed refs 的 wire 形状只有一份口径(`generation:<id>` / `upload:<id>`),
+// 这里读它是为了认出「原样带回来的那几张」,绝不在本文件再抄一遍前缀。
+import { newId, MAX_TURN_REFERENCES, parseReferenceRef } from "@fikirtive/core";
 import { MAX_STORYBOARD_SHOTS } from "@fikirtive/otto";
 // creation §5 :178 —— @ 选进来的 typed refs 在这里解析成规范身份(Generation.id)。
 // 与聊天那一轮**同一个**解析器:owner 判据、格式判据、去重口径不可能各写一份。
@@ -147,25 +149,49 @@ export async function setShotReferences(raw: unknown): Promise<Ok | Err> {
   return runAsUser(principal, async (): Promise<Ok | Err> => {
     const { cardId, index, refs } = parsed.data;
     const ownerId = gate.ownerId;
-    const resolved = await resolveOwnedReferenceRefs(ownerId, refs);
-    if (resolved.unresolved > 0) {
-      return { error: "One of those isn't one of your images any more — pick another. Nothing was changed." };
-    }
-    if (resolved.unusableFormat > 0) {
-      return { error: "One of those files can't be used as a reference — pick an image instead. Nothing was changed." };
-    }
-    // 元素(`@产品`/`@演员`)走的是 `entityIds` 那条既有通道,不是这一格。混进来就整次拒绝,
-    // 免得商家以为自己给这一镜挂上了一件其实走了另一条路的东西。
-    if (resolved.entityIds.length > 0) {
-      return { error: "Pick images from your Library here — a product or a person goes in the shot's description instead. Nothing was changed." };
-    }
-    const videos = resolved.media.filter((m) => m.kind === "video");
-    if (videos.length > 0) {
-      return { error: "A clip can't be a reference photo for a shot — pick an image instead. Nothing was changed." };
-    }
-    const referenceGenerationIds = resolved.media.map((m) => m.generationId);
     const card = await loadCard(cardId, ownerId);
     if (!card) return { error: "Card not found." };
+    /**
+     * creation §5 :178(判官 r4 P1)—— **只减不增的那一趟不再解析一次。**
+     *
+     * 卡面唯一的取下入口是逐张的 X,它交出的是「减掉这一张」的**整份剩余清单**;而解析器的
+     * where 带 `deletedAt: null`(`reference-refs.ts`)。于是剩下那几张里只要有一张已经被删出
+     * Library(`deleteGeneration` 是软删,分镜卡上挂着的清单一格不动),整次编辑就在这里被判
+     * unresolved、零写入 —— 这一镜「挂着图、又拿不下来」,而闸①/闸② 同时对整张卡 fail closed,
+     * 同卡别的镜头也出不了片,拒绝句给的两条出路在卡面上一条都走不通。
+     *
+     * 判据与写入闸 `referenceRideBlock` 那一格**同形**:拦的只有新增/换图。清单里的每一格都是
+     * 这一镜此刻就挂着的规范身份 ⇒ 归属早在它被挂上那一刻按 ownerId 查过,而归属不会随删除
+     * 改变;别家店的 id 进不了这份清单(它当初就被拒过),所以这条捷径不是一道租户口子。
+     * 只要多出一张新的,整份照旧走解析器 —— 归属、格式、跨租户三道判据一格没动。
+     */
+    const attached = new Set(
+      (card.payload as StoryboardCardPayload | null)?.shots?.[index]?.referenceGenerationIds ?? [],
+    );
+    const keptIds = refs.map((ref) => parseReferenceRef(ref)).map((ref) => (ref?.type === "generation" ? ref.id : null));
+    let referenceGenerationIds: string[];
+    if (keptIds.every((id) => id !== null && attached.has(id))) {
+      // 只减不增(逐张取下、一次全取下、原样重发、重排)——一格都不必再问数据库。
+      referenceGenerationIds = [...new Set(keptIds as string[])];
+    } else {
+      const resolved = await resolveOwnedReferenceRefs(ownerId, refs);
+      if (resolved.unresolved > 0) {
+        return { error: "One of those isn't one of your images any more — pick another. Nothing was changed." };
+      }
+      if (resolved.unusableFormat > 0) {
+        return { error: "One of those files can't be used as a reference — pick an image instead. Nothing was changed." };
+      }
+      // 元素(`@产品`/`@演员`)走的是 `entityIds` 那条既有通道,不是这一格。混进来就整次拒绝,
+      // 免得商家以为自己给这一镜挂上了一件其实走了另一条路的东西。
+      if (resolved.entityIds.length > 0) {
+        return { error: "Pick images from your Library here — a product or a person goes in the shot's description instead. Nothing was changed." };
+      }
+      const videos = resolved.media.filter((m) => m.kind === "video");
+      if (videos.length > 0) {
+        return { error: "A clip can't be a reference photo for a shot — pick an image instead. Nothing was changed." };
+      }
+      referenceGenerationIds = resolved.media.map((m) => m.generationId);
+    }
     // 与 editShotPrompt 同一笔带卡锁的事务:换掉挂图会删掉已付费的视频子卡指针(陈旧级联),
     // 所以判定与删指针必须在同一笔事务里(#782 r15 的那一条,逐字同法)。
     let out: Ok | Err = { error: "Card not found." };
