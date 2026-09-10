@@ -277,14 +277,9 @@ describe("PRODID-A7 理解提取的产品先落草稿:确认前不进 Library �
 });
 
 /**
- * 剩下的两条读路(@ 菜单的来源标签与谱系、Library 元素页不给价签入口)仍是 Brand②③ 的活
- * (票 #1322 / #1330)。占位在这里,好让验收表这两行有落点 —— 空着不写比写一条假绿的测试
- * 更诚实(M3 明确允许 it.todo 占位)。A4 与 A6 已在本票落地,见下面两节。
+ * 读路那三条(PRODID-A2 / A5 / A7 的读路半边)在票 #1322 落地,住在
+ * `apps/web/lib/__tests__/brand-read-paths.test.ts` —— 那份文件是「读」,这一份是「写与身份」。
  */
-describe("PRODID-A2/A5 读路(Brand②③,票 #1322 / #1330)", () => {
-  it.todo("PRODID-A2 @ 菜单来源标签为「Product」,选入确认卡后谱系指向同一个 Entity id");
-  it.todo("PRODID-A5 Library 元素页没有价格、卖点、分类的编辑入口");
-});
 
 /**
  * PRODID-A4 —— 判官第 5 轮(PR #1337)拔的根:第 1–4 轮把名字与主图**同时**存在两处
@@ -314,6 +309,9 @@ describe("PRODID-A4 改名换图:名字与主图的唯一源是身份,两边同�
       saveBrandRecord({
         id: saved.id, kind: "product",
         data: { name: newName, price: "RM 5.00", imageAssetId: secondAsset },
+        // Brand 页的产品表单同时编辑名字与主图,所以它交 `identity`(票 #1322):
+        // 身份的写只认这一次提交,不认 `data` 里那份读路补进去的快照。
+        identity: { name: newName, imageAssetId: secondAsset },
       }),
     ).resolves.toEqual({ ok: true, id: saved.id });
 
@@ -398,7 +396,11 @@ describe("PRODID-A4 改名换图:名字与主图的唯一源是身份,两边同�
     const before = (await listBrandRecords()).find((r) => r.id === saved.id)!;
     expect(before.data).toMatchObject({ imageAssetId: picked });
     await expect(
-      saveBrandRecord({ id: saved.id, kind: "product", data: { ...before.data, price: "RM 9.00" } }),
+      saveBrandRecord({
+        id: saved.id, kind: "product", data: { ...before.data, price: "RM 9.00" },
+        // 表单交的是它自己那两格的现值(名字栏、主图栏);两格都没被商家动过,所以身份不变。
+        identity: { name: before.data.name as string, imageAssetId: before.data.imageAssetId as string },
+      }),
     ).resolves.toEqual({ ok: true, id: saved.id });
 
     // 封面没有回滚到旧的那张,两边看到的是同一张图。
@@ -410,11 +412,12 @@ describe("PRODID-A4 改名换图:名字与主图的唯一源是身份,两边同�
     });
   }, 60_000);
 
-  it("PRODID-A4 /brand 那一面也以身份为准:价签里残留的旧名字盖不过 Library 卡上的名字", async () => {
+  it("PRODID-A4 /brand 那一面也以身份为准:价签根本存不下第二份名字,四条读路叫的是同一个", async () => {
     await signInAs(EMAIL_A);
-    // `loadBrandSections`(`/brand`)是四条展示读路里最后一条 join 身份的。这一条钉的是
-    // **兜底**:哪怕某一行的 `data` 里还留着一个旧名字(迁移前的存量行、绕过共享动作的直写、
-    // 或者将来某条新写路忘了剥),商家看到的仍然只有身份上那一个名字。
+    // 上一版这里靠一句直写往价签的 `data` 里塞一个旧名字,再证明读路盖得过它。
+    // 票 #1322 把那个洞从数据库这一层封死了(CHECK `BrandRecord_product_data_has_no_identity`,
+    // 迁移 20260910140000):非草稿的 product 价签里根本**存不下** `name` / `imageAssetId`。
+    // 所以这一条现在钉两句:① 那种行写不进去;② 改名之后四条读路叫的是同一个名字。
     const cardName = `Mee   goreng ${randomUUID().slice(0, 8)}`;
     const stale = `Mee goreng ${randomUUID().slice(0, 8)}`;
     const saved = (await saveBrandRecord({
@@ -423,23 +426,32 @@ describe("PRODID-A4 改名换图:名字与主图的唯一源是身份,两边同�
     const entityId = (await prisma.brandRecord.findFirstOrThrow({
       where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
     })).entityId!;
-    // 逐字复刻存量行的形状:身份上是商家自己写的名字,价签的 data 里塞着一个过期的名字。
+
+    // ① 存量行那个形状(价签里塞一个旧名字)现在进不了库 —— 机器闸,不是「写路记得剥」。
+    await expect(
+      prisma.brandRecord.updateMany({
+        where: { id: saved.id, ownerId: ownerA },
+        data: { data: { name: stale, price: "RM 5.50" } },
+      }),
+    ).rejects.toThrow();
+
+    // ② 名字只在身份上改一处(Library 那条入口),四条读路跟着走。
     await prisma.entity.updateMany({
       where: { id: entityId, ownerId: ownerA }, data: { name: cardName },
     });
-    await prisma.brandRecord.updateMany({
-      where: { id: saved.id, ownerId: ownerA },
-      data: { data: { name: stale, price: "RM 5.50" } },
-    });
-
     const sections = await loadBrandSections(ownerA);
     const entry = sections.flatMap((sec) => sec.entries).find((e) => e.id === saved.id);
     expect(entry?.name).toBe(cardName);
-    // 对照:同一件产品在 Library 与 /brand/records 上叫的也是这一个名字 —— 一件东西一个名字。
     const elements = await getLibraryElements();
     if (!Array.isArray(elements)) throw new Error(elements.error);
     expect(elements.find((e) => e.id === entityId)?.name).toBe(cardName);
     expect((await listBrandRecords()).find((r) => r.id === saved.id)?.data).toMatchObject({ name: cardName });
+    // 价签落库的那一份仍然只有价签字段 —— 拒绝是整笔的,没写进去半个键。
+    await expect(
+      prisma.brandRecord.findFirstOrThrow({
+        where: { id: saved.id, ownerId: ownerA }, select: { data: true },
+      }),
+    ).resolves.toEqual({ data: { price: "RM 5.50" } });
   }, 60_000);
 
   it("PRODID-A4 Library 改成另一件活着的同名产品:整笔拒绝,两边都不动(规格 §3)", async () => {
@@ -461,7 +473,10 @@ describe("PRODID-A4 改名换图:名字与主图的唯一源是身份,两边同�
     ).resolves.toEqual({ name: mine });
   }, 60_000);
 
-  it("PRODID-A1 底下挂着价签的产品卡不许改类型:改了就是「Brand 页有这件产品、Library 里它不是产品」", async () => {
+  // PRODID-R1(规格 §5 登记;票 #1322 判官 P2-c 改准借号):这一条证的是 `updateEntity` 的
+  // 类型守卫,不是 A1「Brand 页建产品 → Library 出现同一张卡」。借着 A1 的号会让 M3 映射表
+  // 上多出一条其实没证 A1 的落点,S5 逐条验收时对不上。
+  it("PRODID-R1 底下挂着价签的产品卡不许改类型:改了就是「Brand 页有这件产品、Library 里它不是产品」", async () => {
     await signInAs(EMAIL_A);
     // 数据库的 CHECK 只管「product 价签有没有 entityId」,管不到那一行是什么 `type`。这一行
     // 一旦不再是 PRODUCT,Brand 页照样列着这件产品(价签还活着),Library 的 Products 分区
@@ -621,7 +636,10 @@ describe("PRODID-A6 删除与恢复:一处删两边消失,可一起恢复", () =
     ).resolves.toBe(2);
   }, 60_000);
 
-  it("PRODID-A6 删掉又建了同名产品之后再恢复旧的:说得出为什么,不吞掉唯一冲突,也不堆卡", async () => {
+  // PRODID-R8(规格 §5 登记;票 #1322 判官 P2-c 改准借号):A6 说的是「一处删两边消失、
+  // 一处恢复两边回来」;这一条证的是**名字槽位已经被新的那件占了**时,恢复给的是一句人话
+  // 而不是一次被 catch 吞掉的 P2002。是同一片区的另一件事,不该顶着 A6 的号。
+  it("PRODID-R8 删掉又建了同名产品之后再恢复旧的:说得出为什么,不吞掉唯一冲突,也不堆卡", async () => {
     await signInAs(EMAIL_A);
     const name = `Ais kacang ${randomUUID().slice(0, 8)}`;
     const first = (await saveBrandRecord({ kind: "product", data: { name } })) as { ok: true; id: string };

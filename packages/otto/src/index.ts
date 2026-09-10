@@ -63,6 +63,11 @@ export type { CardPayload, ProposeCardResult } from "./skills/propose.js";
 // 角色的闭集本身在 `@fikirtive/core/reference-budget`,前端从那条子路径读。
 export type { CardMediaReference } from "./skills/propose.helpers.js";
 export { sanitizeRefDescription } from "./skills/describe-refs.js";
+// executeLookupProducts —— Otto 那条产品读路本身(票 #1322)。导出它只为一件事:让
+// `apps/web/lib/__tests__/brand-read-paths.test.ts` 拿**真数据库**跑一遍验收 PRODID-A7 的
+// 「草稿在 Library / @ / Otto 三条读路里都看不到,确认之后三条一起出现」—— 三条读路各自
+// mock 一次,证不出「同一条草稿在三处的结果一致」这句话。
+export { executeLookupProducts } from "./skills/lookup-products.js";
 export type { OttoContext, OttoMediaReference, OttoSearchSlots, EntityType, LibraryItemView, LibraryHistoryView } from "./context.js";
 export { buildUserTurn, stripHistoryImages, sanitizeHistory, tryRestoreRunState, tryRestoreRunStateWithContext } from "./run-input.js";
 // ENGINE-A6 (spec §7.2④): the pair-aware history trimmer, its budget, and the re-injection

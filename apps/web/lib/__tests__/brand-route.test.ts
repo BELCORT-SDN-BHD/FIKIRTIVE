@@ -547,11 +547,15 @@ describe("W2-2 ② 手搓图片弹窗退场,换成 ui/dialog(规格书 §5.6 ①
     const tile = dialog.querySelector<HTMLButtonElement>('button[aria-label="Choose Nasi lemak plate"]');
     expect(tile, "弹窗里没有可点的图").toBeTruthy();
     await act(async () => { tile!.click(); });
+    // 换封面是一次**只改主图**的动作(票 #1322):新主图走 `identity`,名字一格都不递 ——
+    // 手里那份 `data` 是读路补出来的客户端快照,拿它去改名字就是把过期值写回权威。
     expect(saveBrandRecord).toHaveBeenCalledWith(expect.objectContaining({
       id: "rec_1",
       kind: "product",
-      data: expect.objectContaining({ name: "Sambal bottle", imageAssetId: "asset_1" }),
+      identity: { imageAssetId: "asset_1" },
     }));
+    const sent = vi.mocked(saveBrandRecord).mock.calls[0][0] as { identity: Record<string, unknown> };
+    expect("name" in sent.identity).toBe(false);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 });

@@ -91,7 +91,10 @@ describe("saveBrandRecord — update by id", () => {
   it("PRODID-A4 改产品走共享动作:名字与主图的意图显式递给身份,不是这个文件自己的 updateMany", async () => {
     mockUpdateProductRecord.mockResolvedValue({ ok: true, id: "r1", entityId: "e1" });
     const res = await saveBrandRecord({
-      id: "r1", kind: "product", data: { name: "Latte Blend", price: "RM 55", imageAssetId: "as_1" },
+      id: "r1", kind: "product",
+      data: { name: "Latte Blend", price: "RM 55", imageAssetId: "as_1" },
+      // 整张产品表单是唯一同时编辑名字与主图的界面,所以它、也只有它交 `identity`。
+      identity: { name: "Latte Blend", imageAssetId: "as_1" },
     });
     expect(res).toEqual({ ok: true, id: "r1" });
     // 这一面是商家亲手填的整张表单,所以两个意图都**显式**递下去 —— 共享动作不猜。
@@ -105,10 +108,45 @@ describe("saveBrandRecord — update by id", () => {
 
   it("PRODID-A4 Brand 页把主图栏空着 = 清空主图(显式 null,不是「这次不碰」)", async () => {
     mockUpdateProductRecord.mockResolvedValue({ ok: true, id: "r1", entityId: "e1" });
-    await saveBrandRecord({ id: "r1", kind: "product", data: { name: "Latte Blend", price: "RM 55" } });
+    await saveBrandRecord({
+      id: "r1", kind: "product", data: { name: "Latte Blend", price: "RM 55" },
+      identity: { name: "Latte Blend", imageAssetId: null },
+    });
     expect(mockUpdateProductRecord).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Latte Blend", imageAssetId: null }),
     );
+  });
+
+  /**
+   * PRODID-R6(规格 §5 登记)—— 判官 P2(PR #1337 → 票 #1322):归档、换封面、撤销一次 Otto
+   * 改动这三条路,手里那份 `data` 是**读路补进去的客户端快照**(`withProductIdentity` 把身份的
+   * 名字与主图盖进 `data` 才交给界面)。上一版无条件把 `data.name` 当改名意图递下去,于是
+   * 「归档一件产品」会把一个可能已经过期的名字写回权威。判据改成「这一格有没有被提交」。
+   */
+  it("PRODID-R6 归档不交 identity:名字与主图两格一个都不递给共享动作(换封面不改名同理)", async () => {
+    mockUpdateProductRecord.mockResolvedValue({ ok: true, id: "r1", entityId: "e1" });
+    // 归档:界面把它读到的整行原样交回来(其中的 name 来自读路的身份 join),但不交 identity。
+    await saveBrandRecord({
+      id: "r1", kind: "product",
+      data: { name: "过期的名字", price: "RM 55", imageAssetId: "as_stale" },
+      status: "archived",
+    });
+    const call = mockUpdateProductRecord.mock.calls[0][0];
+    expect(call).toMatchObject({ ownerId: "o1", id: "r1", status: "archived" });
+    expect("name" in call).toBe(false);
+    expect("imageAssetId" in call).toBe(false);
+  });
+
+  it("PRODID-R6 换封面只交主图这一格:改的是主图,名字一个字都不递", async () => {
+    mockUpdateProductRecord.mockResolvedValue({ ok: true, id: "r1", entityId: "e1" });
+    await saveBrandRecord({
+      id: "r1", kind: "product",
+      data: { name: "过期的名字", price: "RM 55" },
+      identity: { imageAssetId: "as_new" },
+    });
+    const call = mockUpdateProductRecord.mock.calls[0][0];
+    expect(call.imageAssetId).toBe("as_new");
+    expect("name" in call).toBe(false);
   });
   it("updates data/nameKey owner-scoped and flips source to user(segment 仍走本文件的 updateMany)", async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
