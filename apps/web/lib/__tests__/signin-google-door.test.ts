@@ -313,7 +313,7 @@ describe("Google 门 —— 未验证的邮箱一行都写不下", () => {
  * `message` 与 `code` 定成同一个不含空格的常量。下面两条用例各走其中一条路，键必须一样。
  *
  * 页面文案不在这里分岔：`app/login/page.tsx` 对**任何**键都只说同一句（规格 §1.3 防枚举），
- * 围栏在 `app/login/__tests__/login-google-door-errors.test.ts`。
+ * 围栏在 `app/login/__tests__/login-google-door-errors.test.tsx`。
  */
 describe("Google 门 —— 每一种失败都回登录页", () => {
   function expectsLandsOnLogin(res: Response, error: string) {
