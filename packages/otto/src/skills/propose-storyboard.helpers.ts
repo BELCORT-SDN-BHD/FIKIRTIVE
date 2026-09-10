@@ -84,6 +84,23 @@ export type StoryboardCardPayload = {
     firstFramePrompt?: string;
     videoPrompt: string;
     entityIds?: string[];
+    /**
+     * creation §5 :178 —— 这一镜挂上的 **Library 图**(`Generation.id`,商家 @ 选的现成图)。
+     *
+     * **服务端写字段**,与 `firstFrameCardId` 同一条纪律:不进 `storyboardShot` 输入 schema,
+     * 所以模型永远不会自己编一个 id 出来 —— 它看得见图(input_image 部件),看不见 id。
+     * 写它的只有两个执行器:人工卡面的 `setShotReferences`(商家 @ 选,服务端按 typed refs
+     * 解析成 Generation id)与 Otto 的 `editStoryboard op:"setShotReferences"`(取这一轮
+     * 服务端已校验的挂图)。两处都按 ownerId 解析,别家店的图根本变不成这里的一个 id。
+     *
+     * 存的是 `Generation.id` 而不是 wire 形状(`upload:<Asset.id>`):上传件的规范身份是
+     * Asset,而真会上路的是摄取它的那一行 Generation —— 那一步映射只有读过行才做得到
+     * (`resolveOwnedReferenceRefs`),所以在**写入那一刻**做完,下游一路不必再猜。
+     * 名额与计价沿「直接出片」口径(`videoAttachedCap` / `referenceBudget`),铸卡时经
+     * `ctx.sourceGenerationIds` 进 `cardPayload.referenceGenerationIds`,付费时落
+     * `GenJob.videoOptions.referenceGenerationIds`。
+     */
+    referenceGenerationIds?: string[];
     /** 该镜头视频时长(用户在卡上选/Otto 建议)——入库仅存数字,校验交给下游模型吸附(G 闸②)。 */
     durationSeconds?: number;
     /** 该镜头"当前子 GEN_CARD"的 id(闸① 铸卡时写)——显式追踪;改文字/重出时替换或清空。 */

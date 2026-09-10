@@ -32,8 +32,8 @@
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
-import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, normalizeImageAspect, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel, type ApprovedEntity } from "@fikirtive/core";
-import { buildProposeCard, ProposeRefusal } from "@fikirtive/otto";
+import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, normalizeImageAspect, generationReferenceScope, REFERENCE_IMAGE_EXTS, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel, type ApprovedEntity } from "@fikirtive/core";
+import { buildProposeCard, ProposeRefusal, mediaReferenceReceipt } from "@fikirtive/otto";
 import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
@@ -163,6 +163,97 @@ async function assertShotCastResolvable(
 }
 
 /**
+ * creation §5 :178 —— 这一镜挂了哪几张 Library 图(去掉空值、去重,次序即引擎收到的次序)。
+ *
+ * 老卡没有这一格 ⇒ 空表 ⇒ 下面每一处与这条修改之前逐字相同。
+ */
+function shotLibraryImageIds(shot: Shot): string[] {
+  const raw = Array.isArray(shot.referenceGenerationIds) ? shot.referenceGenerationIds : [];
+  return [...new Set(raw.filter((id): id is string => typeof id === "string" && id.length > 0))];
+}
+
+/**
+ * creation §5 :178 —— 挂图**上不了这一镜的车**时,停在这里。
+ *
+ * 参考图只有**纯文生视频**那一档带得上(判据 `videoReferencesRide`,@fikirtive/core:引擎把
+ * 首帧 / 首+末帧 / 整段参考片当互斥场景)。分镜里走纯文生视频的只有「直接出片」那几镜 ——
+ * @ 到了演员的那几镜。两步镜头的第一步是一张图,第二步是 i2v:两步都收不下这几张参考图。
+ *
+ * 所以一镜挂着图、却不直接出片(演员后来被删出 Library、或那一镜从来就没 @ 过演员),诚实的
+ * 出路只有一条:**在花钱之前点名说清楚**(CREATE-A2)。悄悄不带上路 = 商家批的是「用我这只
+ * 蓝杯子」,买回来的是一支没有蓝杯子的片子,而全程没有一个字提过 —— 那正是 FSE-001/002 那条
+ * 静默丢弃的形状。整卡 fail closed 与 `assertShotCastResolvable` / `firstFramePromptOf` 同法:
+ * 异常在事务里抛 ⇒ 整份回滚 ⇒ 零子卡、零 GenJob、零账本行。
+ */
+function assertShotLibraryImagesRide(shot: Shot, isDirect: boolean): void {
+  if (isDirect || shotLibraryImageIds(shot).length === 0) return;
+  throw new ProposeRefusal(
+    `${shotLabel(shot)} has Library images on it, but no cast member — a reference photo only rides along on a shot ` +
+      "that @mentions someone from your Library. Take those images off that shot, or @mention a cast member. " +
+      "Nothing was made and nothing was charged.",
+  );
+}
+
+/**
+ * creation §5 :178 —— 把这一镜挂的 Library 图装进这一趟的 ctx(**锁内、按 ownerId 重读**)。
+ *
+ * 为什么要在这里再读一次:写入那一刻(`setShotReferences`)确实按 ownerId 解析过,但那是过去
+ * 的一次判定。图可以在两次之间被删掉、被换主,而这一趟马上就要报价、马上就要花钱 —— 付费前
+ * 的每一个事实都必须是**此刻**的事实。判据只有一份 `generationReferenceScope`(同一 owner、
+ * 活着、扩展名对得上;画布不是权限边界),六个读者共用它。
+ *
+ * 跨租户:这一趟 where 带 ownerId ⇒ 别家店的那一行读不出来 ⇒ 走「有一件取不到 ⇒ 点名拒绝、
+ * 零写入」,与元素那一条(`assertShotCastResolvable`)同一条口径,而回答不区分「别人家的」
+ * 与「你自己删掉的」,所以它当不了存在性问答机。
+ *
+ * 回执与 id 同一趟读出来:`planCardGate` 把「卡上有 id 却没有回执」判成不可批准,所以铸卡
+ * 入口必须两样都造。造回执的口径只有一份(`mediaReferenceReceipt`,@fikirtive/otto)。
+ */
+async function attachShotLibraryImages(
+  tx: PrismaTx,
+  ownerId: string,
+  shot: Shot,
+  ctx: OttoContext,
+): Promise<void> {
+  const ids = shotLibraryImageIds(shot);
+  if (ids.length === 0) return;
+  const rows = await tx.generation.findMany({
+    where: { id: { in: ids }, ...generationReferenceScope(ownerId, [...REFERENCE_IMAGE_EXTS]) },
+    select: {
+      id: true,
+      projectId: true,
+      promptText: true,
+      asset: { select: { ownerId: true, contentHash: true, ext: true } },
+      project: { select: { name: true } },
+    },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  if (byId.size !== ids.length) {
+    throw new ProposeRefusal(
+      `${shotLabel(shot)} uses an image that isn't in your Library any more — take it off that shot, or pick another one. ` +
+        "Nothing was made and nothing was charged.",
+    );
+  }
+  // 次序照商家挂的次序(`ids`),不是数据库回行的次序 —— 那就是引擎收到参考图的次序。
+  const ordered = ids.map((id) => byId.get(id)!);
+  ctx.sourceGenerationIds = ordered.map((r) => r.id);
+  ctx.mediaReferences = ordered.map((r) =>
+    mediaReferenceReceipt({
+      generationId: r.id,
+      kind: "image",
+      prompt: r.promptText ?? "",
+      sourceProjectId: r.projectId,
+      sourceProjectName: r.project?.name ?? null,
+      // 分镜子卡没有「商家此刻这一块画布」这回事(`minimalCtx` 的 projectId 是空的),所以
+      // 回执一律**点名它出生的那块画布**,而不是说一句「就是这一块」。少一句方便话,不多
+      // 一句可能不成立的话。
+      sameCanvas: r.projectId === ctx.projectId,
+      asset: r.asset,
+    }),
+  );
+}
+
+/**
  * creation §5 :172⑤ —— 要铸首帧的这一镜,必须有首帧文字。
  *
  * `firstFramePrompt` 现在按镜头类型条件可选,而免写的只有**@ 到演员的镜头**(它直接出片,
@@ -182,7 +273,10 @@ function firstFramePromptOf(shot: Shot): string {
 }
 
 /** buildProposeCard 需要的最小 OttoContext(它只读 orgId/threadId/disabledModels 及两个 source 字段)。
- *  source/referenceVideo 留 undefined —— 子卡是纯 image 计划,不带起始帧/参考视频。 */
+ *  source/referenceVideo 留 undefined —— 缺省形状不带起始帧/参考视频。
+ *  两处调用方按这一镜的形状往上写:两步镜头的视频那一步写 `sourceGenerationId`(i2v 首帧);
+ *  直接出片那一镜写 `sourceGenerationIds` + `mediaReferences`(creation §5 :178 的 Library 图,
+ *  见 `attachShotLibraryImages`)。首帧那一档两样都不写,与这条修改之前逐字相同。 */
 function minimalCtx(ownerId: string, threadId: string, disabledModels: string[]): OttoContext {
   return {
     orgId: ownerId,
@@ -202,8 +296,15 @@ type ExistingVideoChild = {
   model?: unknown;
   params?: { durationSeconds?: unknown };
   entityIds?: string[];
+  /** creation §5 :178 —— 这张卡冻结的挂图(`buildProposeCard` 写的那一列)。 */
+  referenceGenerationIds?: unknown;
   estimatedCredits?: number;
 };
+
+/** 两串 id 逐位相同吗(次序算数 —— 它就是引擎收到参考图的次序)。 */
+function sameRefIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
 
 /** MONEY-CRITICAL reuse rule (SINGLE SOURCE for prepare AND regen): an existing video child
  *  matches the would-be-minted card iff ALL of structuredPrompt + sourceGenerationId +
@@ -213,13 +314,23 @@ type ExistingVideoChild = {
  *  comparison never touches the raw shot field (P2: no snap-mismatch churn). */
 function videoChildMatches(
   existing: ExistingVideoChild,
-  wouldBe: { structuredPrompt: string; sourceGenerationId?: string; model: string; params: { durationSeconds?: number } },
+  wouldBe: { structuredPrompt: string; sourceGenerationId?: string; model: string; params: { durationSeconds?: number }; referenceGenerationIds?: string[] },
 ): boolean {
   return (
     existing.structuredPrompt === wouldBe.structuredPrompt &&
     existing.sourceGenerationId === wouldBe.sourceGenerationId &&
     existing.params?.durationSeconds === wouldBe.params?.durationSeconds &&
-    existing.model === wouldBe.model
+    existing.model === wouldBe.model &&
+    // creation §5 :178 —— 挂图也是这一单的**材料**:换了它,引擎收到的东西就变了,而价钱、
+    // 提示词、时长、模型可以一格没动。漏在比对外面,换完挂图再 prepare 一次就会复用那张按
+    // 旧图铸的卡 —— 卡面写着新的一组参考,批准之后送出去的是旧的一组。纵深第二道(第一道是
+    // `applyEditShotPrompt` 的陈旧级联:换挂图直接把视频子卡指针清掉)。
+    sameRefIds(
+      Array.isArray(existing.referenceGenerationIds)
+        ? existing.referenceGenerationIds.filter((id): id is string => typeof id === "string")
+        : [],
+      wouldBe.referenceGenerationIds ?? [],
+    )
   );
 }
 
@@ -560,6 +671,10 @@ export async function prepareStoryboardFirstFrames(
           continue;
         }
 
+        // creation §5 :178 —— 走到这里的镜头一定**不**直接出片(直接出片那几镜已被
+        // `mintable` 排除),所以它挂着的 Library 图一张都上不了车:点名拒绝、零写入。
+        assertShotLibraryImagesRide(shot, false);
+
         // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
         // call minting uses (mintChild), so the reuse comparison is against what a fresh mint
         // would really produce (prompt AND the frozen shape). buildProposeCard is pure ($0) —
@@ -714,6 +829,8 @@ export async function regenShotFirstFrameCard(
         directToVideoShot = true;
         return;
       }
+      // creation §5 :178 —— 走到这里的这一镜不直接出片,它挂着的 Library 图一张都上不了车。
+      assertShotLibraryImagesRide(target, false);
       const { cardPayload: wouldBe } = buildProposeCard(
         {
           kind: "image",
@@ -1140,6 +1257,9 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
     for (const shot of payload.shots) {
       if (shot.firstFrameGenerationId) genIds.push(shot.firstFrameGenerationId);
       if (shot.videoGenerationId) genIds.push(shot.videoGenerationId);
+      // creation §5 :178 —— 挂图走同一趟 owner-scoped 解析:同一条 where(ownerId + 活着),
+      // 所以卡面画得出来的那几张,一定是这家店此刻真的还有的那几张。
+      for (const id of shotLibraryImageIds(shot)) genIds.push(id);
     }
     for (const sample of [...frameSamples.values(), ...videoSamples.values()]) {
       if (sample.producedGenerationId) genIds.push(sample.producedGenerationId);
@@ -1160,6 +1280,9 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
       // FSE-001 同族:这一镜直接出片吗 —— 卡面据此不再为它数一张首帧、也不再让商家等一个
       // 永远不会出现的交棒。判据在服务端(要读 `Entity.type`),这里只是把答案带出去。
       directToVideo: directShotIds.has(shot.shotId),
+      // creation §5 :178 —— 这一镜挂着的 Library 图。地址取不到就只回 id(与 `refOf` 同一条
+      // 降级:那一件仍然是商家挂上去的,卡面欠他一格可以取下它的入口,不是一句「没有」)。
+      libraryImages: shotLibraryImageIds(shot).map(refOf),
     }));
 
     return { payload, shots };
@@ -1328,6 +1451,11 @@ export async function prepareStoryboardVideos(
         // 元素:整卡 fail closed(异常 ⇒ 整份回滚),那句话点名是哪一镜。判在铸卡之前,所以
         // 连暂存写都不会发生。
         if (isDirect) await assertShotCastResolvable(tx, ownerId, shot, cast.owned);
+        // creation §5 :178 —— 这一镜挂的 Library 图:直接出片那一档装进 ctx(它们与演员照
+        // 坐在同一批 `image_url` 名额里,名额与计价沿 `videoAttachedCap` / `referenceBudget`
+        // 那份既有口径);不直接出片那一档带不上,点名拒绝、零写入。
+        assertShotLibraryImagesRide(shot, isDirect);
+        if (isDirect) await attachShotLibraryImages(tx, ownerId, shot, ctx);
 
         // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
         // call minting uses (mintVideoChild). This is the single source of truth for the reuse
@@ -1517,6 +1645,9 @@ export async function regenShotVideoCard(
         : NO_VIDEO_CAST;
       // creation §5 :172④ —— 同 prepare 那条:点名的元素对不上 ⇒ 零写入 + 点名是哪一镜。
       if (isDirect) await assertShotCastResolvable(tx, ownerId, target, cast.owned);
+      // creation §5 :178 —— 同 prepare 那条:直接出片才带得上挂图,带不上就点名拒绝。
+      assertShotLibraryImagesRide(target, isDirect);
+      if (isDirect) await attachShotLibraryImages(tx, ownerId, target, ctx);
 
       // The WOULD-BE-MINTED card — computed via the SAME pure buildProposeCard call minting
       // uses (mintVideoChild). Single source of truth for the reuse comparison; its

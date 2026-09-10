@@ -1,11 +1,12 @@
 "use client";
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Film, Pencil, Trash2, Plus, ChevronUp, ChevronDown, RotateCw } from "lucide-react";
+import React, { useState, useEffect, useId, useRef, useCallback } from "react";
+import { Film, Pencil, Trash2, Plus, ChevronUp, ChevronDown, RotateCw, ImagePlus, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
@@ -28,9 +29,15 @@ import {
   type ShotMediaState,
   type ShotMediaStates,
   type ShotMediaSyncReport,
+  type MediaRef,
   type SyncPhase,
 } from "@/lib/storyboard-card";
-import { editShotPrompt, addShot, deleteShot, reorderShots, setStoryboardContinuity } from "@/lib/storyboard-actions";
+import { editShotPrompt, addShot, deleteShot, reorderShots, setStoryboardContinuity, setShotReferences } from "@/lib/storyboard-actions";
+// creation §5 :178 —— @ 菜单的**同一个**服务端搜索与**同一个**已批准的行组件(见
+// ShotLibraryPicker 的说明:第二份实现就是第二种租户判据)。
+import { searchReferencesAction } from "@/lib/reference-search-actions";
+import { REFERENCE_PAGE_LIMIT, type ReferenceResult } from "@/lib/reference-search-model";
+import { ReferencePickerMenu, type ReferencePickerRow } from "@/components/reference-picker/ReferencePickerMenu";
 import {
   prepareStoryboardFirstFrames,
   regenShotFirstFrameCard,
@@ -173,6 +180,121 @@ function VideoSlot({ state }: { state: ShotMediaState }) {
   );
 }
 
+/**
+ * creation §5 :178 —— 一镜的「挂 Library 图」入口。
+ *
+ * 只做两件事:让商家从**自己**的 Library 里挑一张图,以及把已经挂上的取下来。搜索走的是
+ * `@` 菜单那**同一个**服务端动作(`searchReferencesAction`:租户从已认证的 principal 来,
+ * 客户端连一个 owner 字段都提交不了),行的样子走那**同一个**已批准的菜单组件 —— 所以
+ * 「别家店的图会不会出现在这份清单里」这个问题在这里根本问不出来:它问的是那一处。
+ *
+ * 只列 Media 两型(`generation` / `upload`):挂到这一镜上的必须是一张**图**。元素(@产品、
+ * @演员)走的是镜头文字里的 `entityIds` 那条既有通道,混进来只会让商家以为自己给这一镜挂了
+ * 一件其实走了另一条路的东西(服务端那一面也照这条口径整次拒绝)。
+ */
+function ShotLibraryPicker({
+  disabled,
+  onPick,
+}: {
+  disabled: boolean;
+  onPick: (generationId: string) => void;
+}) {
+  const listId = useId();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [items, setItems] = useState<ReferenceResult[]>([]);
+  const [pending, setPending] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const seq = useRef(0);
+
+  useEffect(() => {
+    if (!open) return;
+    const mine = ++seq.current;
+    setPending(true);
+    const timer = setTimeout(() => {
+      void searchReferencesAction({ query, types: ["generation", "upload"], limit: REFERENCE_PAGE_LIMIT })
+        .then((page) => {
+          // 慢的那一答回来时已经有更新的一问 → 整份丢掉(同 `@` 菜单的 requestSeq 纪律)。
+          if (mine !== seq.current) return;
+          setItems(page.items);
+          setHighlight(0);
+        })
+        .finally(() => {
+          if (mine === seq.current) setPending(false);
+        });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [open, query]);
+
+  const rows: ReferencePickerRow[] = items.map((item) => ({
+    key: `${item.type}:${item.id}`,
+    kind: "reference" as const,
+    name: item.name,
+    source: item.source,
+    thumbUrl: item.thumbUrl,
+    type: item.type,
+  }));
+
+  function dismiss() {
+    setOpen(false);
+    setQuery("");
+    setItems([]);
+  }
+
+  function select(index: number) {
+    const item = items[index];
+    if (!item) return;
+    dismiss();
+    // wire 形状(`generation:<id>` / `upload:<Asset.id>`)—— 规范身份的映射由服务端做,
+    // 客户端不猜:上传件的 wire 带的是 Asset id,而真会上路的是摄取它的那一行 Generation。
+    onPick(`${item.type}:${item.id}`);
+  }
+
+  return (
+    <ReferencePickerMenu
+      open={open}
+      listId={listId}
+      rows={rows}
+      pending={pending}
+      highlightedIndex={highlight}
+      title="Library images"
+      subtitle="Pick an image this shot should use as a reference"
+      onHighlightChange={setHighlight}
+      onSelect={select}
+      onDismiss={dismiss}
+    >
+      <span className="inline-flex items-center gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={disabled}
+          onClick={() => setOpen((prev) => !prev)}
+        >
+          <ImagePlus aria-hidden="true" />
+          Add image
+        </Button>
+        {open && (
+          <Input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search your Library"
+            aria-label="Search your Library"
+            className="h-8 w-48"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") { e.preventDefault(); dismiss(); }
+              if (e.key === "ArrowDown") { e.preventDefault(); setHighlight((h) => Math.min(h + 1, rows.length - 1)); }
+              if (e.key === "ArrowUp") { e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)); }
+              if (e.key === "Enter") { e.preventDefault(); select(highlight); }
+            }}
+          />
+        )}
+      </span>
+    </ReferencePickerMenu>
+  );
+}
+
 /** Otto 的分镜卡(F3:可逐帧编辑,$0)+ 闸①(首帧图)+ 闸②(make all videos)。
  *  本地 state 持 payload;编辑动作成功后用返回 payload 更新。闸②:每镜头选时长(model-driven,
  *  editShotPrompt 级联清视频键)→ prepare($0)→ 确认 → 逐子卡 coworkGenerate(花钱)→ 统一 sync
@@ -283,6 +405,17 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     setVideoConfirming(false);
     setRegenVideoShotId(null);
     setRegenVideoChild(null);
+  }
+
+  /**
+   * creation §5 :178 —— 挂一张 Library 图 / 取下一张。
+   *
+   * 服务端收的是**整份新清单**(不是「加这一件」),所以两端不会对「现在挂着哪几张」有两种
+   * 说法。当前那一份从服务端上一次的答复取(`libraryImagesByShot`)—— 不是从本地某个自己
+   * 记着的集合:那正是 #782 r10 那一轮的病根(客户端自己记状态,记错了没人发现)。
+   */
+  async function changeShotReferences(shot: StoryboardShotView, next: string[]) {
+    await run(() => setShotReferences({ cardId, index: shot.index, refs: next }));
   }
 
   function startEdit(shot: StoryboardShotView) {
@@ -748,6 +881,11 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const directShotIds = new Set(
     (reports ?? []).filter((r) => r.directToVideo).map((r) => r.shotId),
   );
+  // creation §5 :178 —— 这一镜挂着的 Library 图,配上服务端此刻取得到的地址。同一条通道:
+  // 服务端说,卡面只用(payload 上只有 id,缩略图与「这一件还在不在」都要读库)。
+  const libraryImagesByShot = new Map(
+    (reports ?? []).map((r) => [r.shotId, r.libraryImages ?? []] as const),
+  );
   // #782: how many first frames gate① would actually MAKE (and charge for) — the one shared
   // rule, so the button never promises a number the server wouldn't mint. With continuous
   // shots on that is the first shot alone; the rest inherit the frame the previous clip
@@ -963,6 +1101,68 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                         <span className="font-semibold text-foreground">Video · </span>{shot.videoPrompt}
                       </div>
                       {/* FSE-001 同族 —— 这一镜为什么少了一步,以及少的那一步的钱。 */}
+                      {/* creation §5 :178 —— 这一镜挂着的 Library 图。
+
+                          入口只摆在**直接出片**的镜头上,而且这不是界面上的偏好:参考图只有
+                          纯文生视频那一档带得上(`videoReferencesRide`,引擎把首帧 / 首+末帧 /
+                          整段参考片当互斥场景),而分镜里走纯文生视频的只有 @ 到演员的那几镜。
+                          在两步镜头上摆一个「挂图」按钮,就是端出一件按下去必然被拒的能力。
+
+                          已经挂上的那几张**照旧列出来**(不管这一镜此刻还直不直接出片):演员
+                          后来被删出 Library 的那一镜会失去入口,而商家仍然欠一格「把它取下来」
+                          的路 —— 没有内容也没有出路的终态,这张卡上一个都不许有。 */}
+                      {(isDirectToVideo || (libraryImagesByShot.get(shot.shotId)?.length ?? 0) > 0) && (
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[0.75rem] font-semibold text-foreground">Library images</span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {(libraryImagesByShot.get(shot.shotId) ?? []).map((ref: MediaRef) => (
+                              <span
+                                key={ref.generationId}
+                                className="relative inline-flex size-12 items-center justify-center overflow-hidden rounded-[var(--radius)] border border-border bg-muted"
+                              >
+                                {ref.url ? (
+                                  // 与菜单行的缩略图同一种画法(存储 URL,服务端解析出来的)。
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={ref.url} alt="" className="size-full object-cover" />
+                                ) : (
+                                  <ImagePlus aria-hidden="true" className="size-4 text-muted-foreground" />
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  aria-label="Remove image"
+                                  disabled={busy || editLocked}
+                                  className="absolute right-0 top-0 bg-background/80"
+                                  onClick={() =>
+                                    void changeShotReferences(
+                                      shot,
+                                      (libraryImagesByShot.get(shot.shotId) ?? [])
+                                        .filter((r: MediaRef) => r.generationId !== ref.generationId)
+                                        .map((r: MediaRef) => `generation:${r.generationId}`),
+                                    )
+                                  }
+                                >
+                                  <X aria-hidden="true" />
+                                </Button>
+                              </span>
+                            ))}
+                            {isDirectToVideo && (
+                              <ShotLibraryPicker
+                                disabled={busy || editLocked}
+                                onPick={(wire) =>
+                                  void changeShotReferences(shot, [
+                                    ...(libraryImagesByShot.get(shot.shotId) ?? []).map(
+                                      (r: MediaRef) => `generation:${r.generationId}`,
+                                    ),
+                                    wire,
+                                  ])
+                                }
+                              />
+                            )}
+                          </div>
+                        </div>
+                      )}
                       {isDirectToVideo && (
                         <div className="text-[0.75rem] text-muted-foreground">
                           Goes straight to video — the cast and product photos are its references, so there is no
