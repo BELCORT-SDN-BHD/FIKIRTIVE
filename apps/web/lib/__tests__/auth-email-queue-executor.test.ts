@@ -333,7 +333,12 @@ describe("#678 — one stuck delivery does not become every tenant's stuck deliv
     );
 
     __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0, jobTimeoutMs: 50 });
-    enqueueAuthEmail({ purpose: "password-reset", email: LATE, url: "https://x.test/late" });
+    // SIGNIN-A4 —— 这一条原本排的是一个 `password-reset` job，因为那个分支会 await
+    // `isAllowedEmail`（本文件把它按地址挂起，好让 deadline 确定性地先烧完）。那个 purpose 随
+    // 密码退役从 `AuthEmailJob` 里删了，剩下**唯一**还 await 访问检查的分支是 sign-in-code，
+    // 所以换成它。这一条测的是 deadline，不是 purpose：换完之后走的仍然是「访问检查挂住 →
+    // 超时 → 槽位归还 → 后面那次投递不许开始」这条路。
+    enqueueAuthEmail({ purpose: "sign-in-code", email: LATE, overBudget: false });
 
     expect(
       await waitUntil(() => log.mock.calls.some((c) => c.join(" ").includes("timeout"))),

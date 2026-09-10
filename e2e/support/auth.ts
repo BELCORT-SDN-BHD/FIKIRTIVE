@@ -86,18 +86,19 @@ export async function codeFromInbox(email: string): Promise<string> {
 }
 
 /**
- * The two auth emails that carry a LINK rather than six digits — signup verification and the
- * password reset — read out of the stub transport's one-slot outbox.
+ * The auth email that carries a LINK rather than six digits — email verification — read out of the
+ * stub transport's one-slot outbox.
  *
- * WHY NOT THE DATABASE, when `codeFromInbox` above reads the database. Because for these two the
- * database is not where the credential is. The signup verification token is a SIGNED JWT, minted
- * and handed straight to the send hook (better-auth `createEmailVerificationToken`); no row is
- * ever written, so there is nothing to read back. The reset token IS stored
- * (`reset-password:<token>`), but what the merchant clicks is the URL Better Auth built around it,
- * and rebuilding that URL here would be this suite inventing the mail it is supposed to be
- * reading. The stub transport (apps/web/lib/email/stub-adapter.ts, opted into with
- * `AUTH_EMAIL_TRANSPORT=stub` in support/env.ts) writes exactly what would have been mailed, so
- * this is the smallest honest stand-in for an inbox: the product's own outbox, unmodified.
+ * SIGNIN-A4 —— 这里以前是「两封」：验证信与密码重置信。密码退役之后只剩验证信这一封
+ * (docs/specs/sign-in.md，已冻结 · v1)。
+ *
+ * WHY NOT THE DATABASE, when `codeFromInbox` above reads the database. Because for this one the
+ * database is not where the credential is. The verification token is a SIGNED JWT, minted and
+ * handed straight to the send hook (better-auth `createEmailVerificationToken`); no row is ever
+ * written, so there is nothing to read back. The stub transport
+ * (apps/web/lib/email/stub-adapter.ts, opted into with `AUTH_EMAIL_TRANSPORT=stub` in
+ * support/env.ts) writes exactly what would have been mailed, so this is the smallest honest
+ * stand-in for an inbox: the product's own outbox, unmodified.
  *
  * ONE SLOT, SO CLEAR IT FIRST. The file is overwritten by every send and carries no address, so a
  * read is only meaningful after `clearMailOutbox()` and the action that triggers the send. That is
@@ -186,33 +187,6 @@ export async function signIn(page: Page, ws: Workspace, callbackURL = "/"): Prom
   const code = await requestSignInCode(page, ws.email, callbackURL);
   await page.getByLabel("Login code").fill(code);
   await page.getByRole("button", { name: "Continue with login code" }).click();
-  await expect(page).toHaveURL(new URL(callbackURL, E2E_BASE_URL).toString());
-  await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
-}
-
-/**
- * The OTHER front door: email + password, walked exactly as the login page lays it out.
- *
- * FRONT-A2 asks for the round trip through `?from=`, so the landing is asserted whole here for the
- * same reason `signIn` asserts it (see above): a refused password leaves the merchant on /login,
- * and a journey that carried on from there would report an empty page as a product fact.
- */
-export async function signInWithPassword(
-  page: Page,
-  email: string,
-  password: string,
-  callbackURL = "/",
-): Promise<void> {
-  await clearAuthRateLimitCounters();
-  await page.goto(`/login?from=${encodeURIComponent(callbackURL)}`);
-  await page.getByRole("button", { name: "Continue with email" }).click();
-  await page.getByLabel("Email", { exact: true }).fill(email);
-  await page.getByRole("button", { name: "Use password instead" }).click();
-  // `exact` is load-bearing: the field's own visibility toggle is labelled "Show password", and
-  // getByLabel matches on a case-insensitive SUBSTRING, so the loose form resolves to two nodes
-  // and fails strict mode on a page that is in fact correct.
-  await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Log in" }).click();
   await expect(page).toHaveURL(new URL(callbackURL, E2E_BASE_URL).toString());
   await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
 }
