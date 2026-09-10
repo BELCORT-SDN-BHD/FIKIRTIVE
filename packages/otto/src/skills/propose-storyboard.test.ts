@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { storyboardCardInput, buildStoryboardPayload, MAX_STORYBOARD_SHOTS } from "./propose-storyboard.helpers.js";
+import {
+  storyboardCardInput,
+  buildStoryboardPayload,
+  shotsMissingFirstFramePrompt,
+  MAX_STORYBOARD_SHOTS,
+} from "./propose-storyboard.helpers.js";
 import { executeProposeStoryboard, proposeStoryboardSkill } from "./propose-storyboard.js";
 import type { OttoContext } from "../context.js";
 
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     chatMessage: { findFirst: vi.fn(), create: vi.fn() },
+    entity: { findMany: vi.fn() },
     genJob: { create: vi.fn() }, // must NEVER be called
   },
 }));
@@ -105,13 +111,20 @@ describe("buildStoryboardPayload", () => {
   });
 });
 
+type PrismaStub = {
+  chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+  entity: { findMany: ReturnType<typeof vi.fn> };
+  genJob: { create: ReturnType<typeof vi.fn> };
+};
+
 describe("executeProposeStoryboard — mock DB", () => {
-  let m: { chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> }; genJob: { create: ReturnType<typeof vi.fn> } };
+  let m: PrismaStub;
   beforeEach(async () => {
     vi.clearAllMocks();
-    m = (await import("@fikirtive/db")).prisma as unknown as typeof m;
+    m = (await import("@fikirtive/db")).prisma as unknown as PrismaStub;
     m.chatMessage.findFirst.mockResolvedValue({ seq: 4 });
     m.chatMessage.create.mockResolvedValue({});
+    m.entity.findMany.mockResolvedValue([]);
   });
 
   it("persists a STORYBOARD_CARD with ordered shots, ownerId+threadId from ctx, seq=last+1", async () => {
@@ -136,7 +149,7 @@ describe("executeProposeStoryboard — mock DB", () => {
     expect(payload.shots.map((s) => s.index)).toEqual([0, 1]);
     // 服务端为每镜头铸了稳定 shotId(F4 付费写回按它定位)。
     expect(payload.shots.every((s) => typeof s.shotId === "string" && s.shotId.length > 0)).toBe(true);
-    expect(res.cardId).toEqual(expect.any(String));
+    expect("cardId" in res && res.cardId).toEqual(expect.any(String));
   });
 
   it("never creates a GenJob ($0)", async () => {
@@ -178,3 +191,132 @@ describe("#782 continuity", () => {
     expect(proposeStoryboardSkill.description).toContain("continuity:true");
   });
 });
+
+// ---------------------------------------------------------------------------
+// creation §5 :172⑤ —— firstFramePrompt 按镜头类型条件可选
+// ---------------------------------------------------------------------------
+//
+// 免写的**只有 @ 到演员的镜头**(它走「两张参考直接出片」,首帧那一步不存在)。判据必须与
+// 卡面/铸卡侧的「直接出片」逐字同一条(有没有 CHARACTER)—— 一旦放宽成「有没有 @元素」,
+// 只 @ 了商品的特写镜就会既不直接出片、又没有首帧文字地落库,然后在闸① 把**整张卡**的
+// 首帧一起拒掉。演员这件事只有服务端读得到,所以这道闸住在 execute($0、落库之前)。
+describe("creation §5 :172⑤ —— firstFramePrompt 只对没有演员的镜头必填", () => {
+  const castShot = { videoPrompt: "she lifts the mug", entityIds: ["ent-actor"] };
+
+  it("creation §5 :172⑤ / CREATE-A2: 没写就不落这一格,写了照旧原样落库", () => {
+    const bare = buildStoryboardPayload(storyboardCardInput.parse({ storyboardTitle: "x", shots: [castShot] }));
+    expect("firstFramePrompt" in bare.shots[0]!).toBe(false);
+    const withFrame = buildStoryboardPayload(
+      storyboardCardInput.parse({ storyboardTitle: "x", shots: [{ ...castShot, firstFramePrompt: "a cat on a sofa" }] }),
+    );
+    expect(withFrame.shots[0]!.firstFramePrompt).toBe("a cat on a sofa");
+  });
+
+  it("creation §5 :172⑤ / CREATE-A2: 判据是纯函数,与「直接出片」同一句 —— 只 @ 商品的镜头照旧必填", () => {
+    const shots = [
+      { videoPrompt: "a", entityIds: ["actor-1"] },            // 有演员 ⇒ 免写
+      { videoPrompt: "b", entityIds: ["prod-mug"] },           // 只有商品 ⇒ 必填
+      { videoPrompt: "c" },                                     // 没有 @元素 ⇒ 必填
+      { videoPrompt: "d", firstFramePrompt: "写了" },           // 写了就无所谓
+    ];
+    expect(shotsMissingFirstFramePrompt(shots, new Set(["actor-1"]))).toEqual([1, 2]);
+    // 跨租户/已删的演员 id 进不了这个集合 ⇒ 那一镜照旧算「要首帧文字」。
+    expect(shotsMissingFirstFramePrompt(shots, new Set())).toEqual([0, 1, 2]);
+  });
+
+  it("creation §5 :172⑤ / CREATE-A2: skill 说明照实说这条规矩(Otto 只读得到这段话)", () => {
+    expect(proposeStoryboardSkill.description).toContain("@mentions a CAST MEMBER");
+    expect(proposeStoryboardSkill.description).toContain("needs no firstFramePrompt");
+    expect(proposeStoryboardSkill.description).toContain("@mentions only products");
+    expect(proposeStoryboardSkill.description).toContain("must carry a firstFramePrompt");
+  });
+});
+
+describe("creation §5 :172⑤ —— 落库前那一道($0)", () => {
+  let m: PrismaStub;
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    m = (await import("@fikirtive/db")).prisma as unknown as PrismaStub;
+    m.chatMessage.findFirst.mockResolvedValue({ seq: 4 });
+    m.chatMessage.create.mockResolvedValue({});
+    m.entity.findMany.mockResolvedValue([]);
+  });
+
+  it("creation §5 :172⑤ / CREATE-A10: 只 @ 了商品、没有首帧文字的镜头 ⇒ 点名拒绝,零写入", async () => {
+    m.entity.findMany.mockResolvedValue([{ id: "prod-mug", type: "PRODUCT" }]);
+
+    const res = await executeProposeStoryboard(
+      {
+        storyboardTitle: "Mug ad",
+        shots: [
+          { title: "Opening", videoPrompt: "the mug steams on a table", entityIds: ["prod-mug"] },
+          { videoPrompt: "hands lift it", firstFramePrompt: "hands near the mug" },
+        ],
+      },
+      { context: makeCtx() },
+    );
+
+    expect(res).toEqual({
+      error:
+        'Shot 1 "Opening": no cast member in there, so that shot is still made in two steps (opening still, then '
+        + "the clip) — write the opening still with seedreamPrompt, put it in each of those shots' firstFramePrompt, "
+        + "and lay the storyboard out again. Nothing was made and nothing was charged.",
+    });
+    expect(m.chatMessage.create).not.toHaveBeenCalled();
+    expect(m.genJob.create).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :172⑤ / CREATE-A10: 一个 @元素都没有、也没有首帧文字 ⇒ 同样拒(两步那一档逐字不变)", async () => {
+    const res = await executeProposeStoryboard(
+      { storyboardTitle: "x", shots: [{ videoPrompt: "the cat stretches" }] },
+      { context: makeCtx() },
+    );
+    expect("error" in res).toBe(true);
+    expect(m.chatMessage.create).not.toHaveBeenCalled();
+    // @元素一个都没有 ⇒ 连那一趟元素读都不发。
+    expect(m.entity.findMany).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :172⑤ / CREATE-A2: @ 到演员的镜头没有首帧文字照样落库", async () => {
+    m.entity.findMany.mockResolvedValue([{ id: "ent-actor", type: "CHARACTER" }]);
+
+    const res = await executeProposeStoryboard(
+      { storyboardTitle: "Raya ad", shots: [castShotInput()] },
+      { context: makeCtx() },
+    );
+
+    expect("cardId" in res).toBe(true);
+    expect(m.chatMessage.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("creation §5 :172⑤ / CREATE-A10: 双租户 —— 演员 id 属于别家店 ⇒ 读不出来 ⇒ 照旧要首帧文字,拒", async () => {
+    // 真库里那一行属于 org-other;这一趟查的是 ctx.orgId 的 scope,所以读回空表。
+    m.entity.findMany.mockImplementation(async (args: { where: { ownerId: string } }) =>
+      args.where.ownerId === "org-other" ? [{ id: "ent-actor", type: "CHARACTER" }] : [],
+    );
+
+    const res = await executeProposeStoryboard(
+      { storyboardTitle: "x", shots: [castShotInput()] },
+      { context: makeCtx({ orgId: "org-mine" }) },
+    );
+
+    expect("error" in res).toBe(true);
+    expect(m.entity.findMany.mock.calls[0]![0].where.ownerId).toBe("org-mine");
+    expect(m.entity.findMany.mock.calls[0]![0].where.deletedAt).toBeNull();
+    expect(m.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :172⑤ / CREATE-A2: 每一镜都写了首帧文字 ⇒ 一次多余的元素读都不发", async () => {
+    const res = await executeProposeStoryboard(
+      { storyboardTitle: "x", shots: [{ videoPrompt: "b", firstFramePrompt: "a", entityIds: ["prod-mug"] }] },
+      { context: makeCtx() },
+    );
+    expect("cardId" in res).toBe(true);
+    expect(m.entity.findMany).not.toHaveBeenCalled();
+  });
+});
+
+/** @ 到一位演员、没有首帧文字的那一镜(上面几例共用)。 */
+function castShotInput(): { videoPrompt: string; entityIds: string[] } {
+  return { videoPrompt: "she lifts the mug", entityIds: ["ent-actor"] };
+}

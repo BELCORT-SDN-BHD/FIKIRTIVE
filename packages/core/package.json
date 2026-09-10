@@ -132,6 +132,10 @@
       "types": "./dist/storage-key.d.ts",
       "default": "./dist/storage-key.js"
     },
+    "./storyboard-shot": {
+      "types": "./dist/storyboard-shot.d.ts",
+      "default": "./dist/storyboard-shot.js"
+    },
     "./templates": {
       "types": "./dist/templates.d.ts",
       "default": "./dist/templates.js"
