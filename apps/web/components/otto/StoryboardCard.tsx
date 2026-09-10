@@ -38,6 +38,8 @@ import { editShotPrompt, addShot, deleteShot, reorderShots, setStoryboardContinu
 import { searchReferencesAction } from "@/lib/reference-search-actions";
 import { REFERENCE_PAGE_LIMIT, type ReferenceResult } from "@/lib/reference-search-model";
 import { ReferencePickerMenu, type ReferencePickerRow } from "@/components/reference-picker/ReferencePickerMenu";
+// FRONT-A14 词汇围栏:`Library` 是产品专有名词,只能从单一源头取,不许手抄。
+import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import {
   prepareStoryboardFirstFrames,
   regenShotFirstFrameCard,
@@ -215,8 +217,11 @@ function ShotLibraryPicker({
   useEffect(() => {
     if (!open) return;
     const mine = ++seq.current;
-    setPending(true);
+    // 「正在查」这一格在**定时器里**才置起来:同步写在 effect 体里会触发级联渲染
+    // (`react-hooks/set-state-in-effect`),而且商家在防抖窗口内接着打字时,那一格本来
+    // 也不该先闪一下「查询中」。
     const timer = setTimeout(() => {
+      setPending(true);
       void searchReferencesAction({ query, types: ["generation", "upload"], limit: REFERENCE_PAGE_LIMIT })
         .then((page) => {
           // 慢的那一答回来时已经有更新的一问 → 整份丢掉(同 `@` 菜单的 requestSeq 纪律)。
@@ -262,7 +267,7 @@ function ShotLibraryPicker({
       rows={rows}
       pending={pending}
       highlightedIndex={highlight}
-      title="Library images"
+      title={`${PRODUCT_VOCABULARY.library} images`}
       subtitle="Pick an image this shot should use as a reference"
       onHighlightChange={setHighlight}
       onSelect={select}
@@ -284,8 +289,8 @@ function ShotLibraryPicker({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search your Library"
-            aria-label="Search your Library"
+            placeholder={`Search your ${PRODUCT_VOCABULARY.library}`}
+            aria-label={`Search your ${PRODUCT_VOCABULARY.library}`}
             className="h-8 w-48"
             onKeyDown={(e) => {
               if (e.key === "Escape") { e.preventDefault(); dismiss(); }
@@ -1205,7 +1210,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                           的路 —— 没有内容也没有出路的终态,这张卡上一个都不许有。 */}
                       {(isDirectToVideo || (libraryImagesByShot.get(shot.shotId)?.length ?? 0) > 0) && (
                         <div className="flex flex-col gap-1.5">
-                          <span className="text-[0.75rem] font-semibold text-foreground">Library images</span>
+                          <span className="text-[0.75rem] font-semibold text-foreground">{PRODUCT_VOCABULARY.library} images</span>
                           <div className="flex flex-wrap items-center gap-2">
                             {(libraryImagesByShot.get(shot.shotId) ?? []).map((ref: MediaRef) => (
                               <span
