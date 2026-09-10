@@ -293,8 +293,9 @@ async function upscaledProductReferenceDataUrl(
  * 「猜着放行」变成「知道了再决定」。
  *
  * ── 为什么是读文件头,不是 sharp、也不是 ffprobe ──────────────────────────────────
- * ① **不许是 sharp**:CREATE-A10 那条围栏把 `sharp(` 钉死在 `upscaledProductReferenceDataUrl`
- *    一个函数体内(`apps/web/lib/__tests__/actor-library-seed.test.ts`)。那一格是 Founder
+ * ① **不许是 sharp**:CREATE-A10 那条围栏把对它的调用钉死在 `upscaledProductReferenceDataUrl`
+ *    一个函数体内(`apps/web/lib/__tests__/actor-library-seed.test.ts`;那条围栏按字面匹配,
+ *    所以这段说明里也不许出现那个调用的写法)。那一格是 Founder
  *    2026-09-09 为「无人像商品照放大」开的**一格**,不是一扇门 —— 量个尺寸不该借它。
  * ② **不该是 ffprobe**:ingest 那条路量的是**已经落盘、已经交付**的上传文件,慢一点没人
  *    等;这里站在**已经付过钱**的字节和商家的 DONE 之间,每多一次进程外调用就是给每一次

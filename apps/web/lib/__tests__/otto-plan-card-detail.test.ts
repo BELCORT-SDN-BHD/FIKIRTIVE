@@ -110,6 +110,8 @@ const SERVER_PAYLOAD_KEYS = {
   // ENGINE-A3(Founder 2026-09-05「加进确认卡」):商家勾的精修那一格,与三格控件的菜单。
   fineDetail: true,
   options: true,
+  // 规格 §5 :176④:「已放大」披露自己一格,与 downgradeNote 并列(两行可同时出现)。
+  referenceUpscaleNote: true,
 } satisfies Record<keyof Required<ServerCardPayload>, true>;
 
 const CARD_PAYLOAD_KEYS = {
@@ -138,6 +140,8 @@ const CARD_PAYLOAD_KEYS = {
   // ENGINE-A3(Founder 2026-09-05「加进确认卡」):商家勾的精修那一格,与三格控件的菜单。
   fineDetail: true,
   options: true,
+  // 规格 §5 :176④:「已放大」披露自己一格,与 downgradeNote 并列(两行可同时出现)。
+  referenceUpscaleNote: true,
 } satisfies Record<keyof Required<OttoPlanCardPayload>, true>;
 
 describe("#580 P1-1 卡面 payload 类型 = 服务端契约", () => {
