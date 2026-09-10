@@ -32,6 +32,14 @@ import { isAllowedEmail } from "@/lib/allowlist";
  *     `createAuthEndpoint.serverOnly`（只走 `auth.api.*`），今天本来就 404。写进来是把
  *     「不可达」从版本细节变成本仓库的显式决定：将来任一版本把它们挂上公网，这条闸已经在。
  *   · `/verify-password` —— 拿密码换一个「对不对」的答案，同样是密码凭据的入口面。
+ *   · `/admin/set-user-password` `/admin/create-user` —— admin 插件（下面 `plugins` 里装着）
+ *     自己挂的两条公网路由，都会**直接写出**一行 `providerId = "credential"`：
+ *     `better-auth@1.6.20 dist/plugins/admin/routes.mjs:829-836` 的 `createAccount({ providerId:
+ *     "credential", password })`，与同文件 `:198-204` 的 `linkAccount({ providerId: "credential",
+ *     password })`。它们答的是 401/403（未登录／无权限），不是 404 —— 也就是说密码这条路还留着
+ *     一个「有权限就能重新写出密码」的入口，与 A11「没有任何途径能建立密码」正面冲突。仓库里
+ *     没有任何调用者（`createUser` / `setUserPassword` / `admin/create-user` /
+ *     `admin/set-user-password` 全仓零命中），所以关掉不改变任何现有功能。
  *
  * `auth.api.*`（服务端可信代码）不受影响，这也正是这一层对的原因：公网失去端点，内部调用
  * 还在。本仓库今天没有任何 `auth.api.setPassword` / `changePassword` 调用，围栏见
@@ -46,7 +54,23 @@ const CLOSED_PASSWORD_PATHS = [
   "/set-password",
   "/request-password-reset",
   "/verify-password",
+  "/admin/set-user-password",
+  "/admin/create-user",
 ] as const;
+
+/**
+ * SIGNIN-A4 —— 退役密码门里**带路径参数**的那一条：`/reset-password/:token`
+ * （`better-auth@1.6.20 dist/api/routes/password.mjs:83`，GET，验一下 token 再把它转给
+ * callbackURL）。
+ *
+ * 它进不了 `disabledPaths`：那道闸是**逐字比对实际路径**的（`dist/api/index.mjs:164-166`，
+ * `disabledPaths.includes(normalizedPath)`），而这条路由的实际路径每次都不一样
+ * （`/reset-password/abc123`）—— 写 `"/reset-password/:token"` 进去永远匹配不到，而清单里已有的
+ * `"/reset-password"` 只 404 那条不带参数的 POST。所以这条前缀由我们自己的 route handler 在转发
+ * 之前 404（`app/api/better-auth/[...all]/route.ts`），答的字节与 better-auth 自己那道闸一模一样
+ * （`"Not Found"` / 404），公网分不出是哪一层拒的。
+ */
+export const CLOSED_PASSWORD_PATH_PREFIXES = ["/reset-password/"] as const;
 
 /**
  * EVERY HTTP ENDPOINT THE emailOTP PLUGIN MOUNTS EXCEPT THE ONE THIS PRODUCT USES.

@@ -1,5 +1,5 @@
 import { toNextJsHandler } from "better-auth/next-js";
-import { auth } from "@/lib/better-auth/server";
+import { auth, CLOSED_PASSWORD_PATH_PREFIXES } from "@/lib/better-auth/server";
 import { consumePublicAuthDoor } from "@/lib/rate-limit-gates";
 import { withCallerIdentityHeader } from "@/lib/caller-identity";
 import { HOURLY_PUBLIC_DOORS } from "@/lib/public-auth-doors";
@@ -21,7 +21,30 @@ const forward = {
   POST: (request: Request) => handlers.POST(withCallerIdentityHeader(request)),
 };
 
-export const GET = forward.GET;
+/** Better Auth 自己给 `disabledPaths` 的答案，字节一致（`dist/api/index.mjs:166`）—— 两道闸
+ *  必须长得一样，否则「哪一层拒的」本身就是一条可读的信息。 */
+const notFound = () => new Response("Not Found", { status: 404 });
+
+/**
+ * SIGNIN-A4 —— `/reset-password/:token` 这条**带路径参数**的密码门。
+ *
+ * 为什么不在 `disabledPaths` 里、为什么必须在这里：见 lib/better-auth/server.ts 的
+ * `CLOSED_PASSWORD_PATH_PREFIXES` 注释（那道闸逐字比对实际路径，参数路由永远匹配不到）。
+ * 这里比对的是**去掉挂载前缀之后**的路径，而不是整条 URL 做子串包含 —— 后者会把任何带
+ * `/reset-password/` 字样的路径也一起 404，闸的范围要写死在它该管的那一段上。
+ */
+const AUTH_BASE_PATH = "/api/better-auth";
+
+function isRetiredPasswordPath(request: Request): boolean {
+  const pathname = new URL(request.url).pathname;
+  const authPath = pathname.startsWith(AUTH_BASE_PATH)
+    ? pathname.slice(AUTH_BASE_PATH.length)
+    : pathname;
+  return CLOSED_PASSWORD_PATH_PREFIXES.some((prefix) => authPath.startsWith(prefix));
+}
+
+export const GET = (request: Request): Promise<Response> | Response =>
+  isRetiredPasswordPath(request) ? notFound() : forward.GET(request);
 
 const SIGN_IN_CODE_VERIFY_PATH = "/sign-in/email-otp";
 
@@ -63,6 +86,10 @@ function invalidSignInCode(): Response {
  */
 export async function POST(request: Request): Promise<Response> {
   const pathname = new URL(request.url).pathname;
+
+  // SIGNIN-A4 —— 参数化的密码门先答 404，和 GET 那一侧同一条闸（这条路由本身只挂 GET，
+  // 但「一律 404」要对每个动词都成立，否则 405 与 404 的差别本身就是一条回声）。
+  if (isRetiredPasswordPath(request)) return notFound();
 
   // SIGNIN-A4 —— 这里以前的第一段是密码门（`/sign-in/email`）的每小时闸：#795 用它补 Better
   // Auth「10 秒 3 次」挡不住的那种耐心型撞库。密码整体退役之后（docs/specs/sign-in.md 已冻结

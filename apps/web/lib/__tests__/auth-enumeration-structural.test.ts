@@ -562,17 +562,30 @@ describe("SIGNIN-A4 ⑤ — 密码门与它的两种答案一起退役", () => {
     expect(res.status).toBe(404);
   });
 
-  it("SIGNIN-A4 —— 服务端那一层也拒：`auth.api.signInEmail` 不是绕过 404 的后门", async () => {
-    // router 那道闸只挡公网。配置层（`emailAndPassword.enabled: false`）才是「本产品没有密码」
-    // 的单一源 —— 两层各答一个问题，缺一条这段就只证明了一半。
+  it("SIGNIN-A11 —— 配置层也关着：构造出来的实例上 `emailAndPassword.enabled` 是 false", async () => {
+    // 编号是 A11 不是 A4：A4 判的是「公网请求那七条路径答 404」，而这一句判的是「本产品没有
+    // 密码这件事在配置层就成立」——`enabled: false` 连 `auth.api.*` 那一侧的建密码入口一起关，
+    // 那是 A11「没有任何途径能建立密码」的话，不是 A4 的话。router 那道闸只挡公网，配置层才是
+    // 单一源；两层各答一个问题，缺一条这段就只证明了一半。
     //
-    // 配置层这一句是从**构造出来的实例**上读的，不是从源码文本上扫的：把
+    // 这一句是从**构造出来的实例**上读的，不是从源码文本上扫的：把
     // apps/web/lib/better-auth/server.ts 的 `emailAndPassword: { enabled: false }` 改成 true，
-    // 这一行立刻红。（判官 r2 指出上一版没有任何断言能感知那次变异 —— 这一行是补上的那个感知点。）
+    // 这一行立刻红。**这是整个文件里唯一能感知那次变异的断言**（判官 r2 的变异实验测过；
+    // 判官 r3 又指出下面那半感知不到它，所以两半在这里拆成两条，各自只署名它真的证明的东西）。
     expect(auth.options.emailAndPassword?.enabled ?? false).toBe(false);
+  });
 
-    // 而下面这半是行为：这个地址在库里**真的有一个用户**（见本段 beforeAll），所以 `signInEmail`
-    // 拒掉它，不是「查无此人」的副作用；而且拒完之后它名下一个 session 都没有。
+  it("SIGNIN-A9 —— 没有 credential 行，`auth.api.signInEmail` 连拒的对象都没有", async () => {
+    // 诚实说明这一条**不**证明什么：它感知不到 `emailAndPassword.enabled`。一个只有用户行、
+    // 没有 credential 行的地址，better-auth 无论开关开着还是关着都抛
+    // `INVALID_EMAIL_OR_PASSWORD`（`dist/api/routes/sign-in.mjs` 找不到 credential 账号就抛）。
+    // 那个开关的感知点是上面那一条，不是这一条 —— 判官 r3 打回的正是「用 A4 的名字挂一条恒真
+    // 的行为断言」。
+    //
+    // 它证明的是 SIGNIN-A9 的不变量落到行为上的样子：库里没有一行 `providerId = 'credential'`
+    // （下面第一句），所以哪怕这个地址在库里**真的有一个用户**（见本段 beforeAll，不是「查无
+    // 此人」），密码这条路也换不到一个 session。
+    expect(await prisma.betterAuthAccount.count({ where: { providerId: "credential" } })).toBe(0);
     expect(await prisma.betterAuthUser.count({ where: { email: PASSWORD_ACCOUNT } })).toBe(1);
     const outcome = await auth.api
       .signInEmail({
@@ -587,7 +600,9 @@ describe("SIGNIN-A4 ⑤ — 密码门与它的两种答案一起退役", () => {
     expect(await prisma.betterAuthSession.count({ where: { userId: { in: createdUserIds } } })).toBe(0);
   });
 
-  it("SIGNIN-A4 —— 库里一份密码凭据都没有，所以连「真账号错密码」这个前提都不成立", async () => {
+  it("SIGNIN-A9 —— 库里一份密码凭据都没有，所以连「真账号错密码」这个前提都不成立", async () => {
+    // 同上：`providerId = 'credential'` 的行数是 A9 的判定，不是 A4 的。它留在这一段里，是因为
+    // 「没有两种答案可比」这条性质的前提就是它——但编号只署它真的证明的那一条。
     expect(await prisma.betterAuthAccount.count({ where: { providerId: "credential" } })).toBe(0);
   });
 });
