@@ -150,6 +150,40 @@ describe("#543 signup grant — exactly-once", () => {
     expect(grantRows).toBe(1);
   });
 
+  /**
+   * SIGNIN-A17 —— `googlemail.com` 与 `gmail.com` 是同一个收件箱（判官 r1 P1，2026-09-11）。
+   *
+   * 判官在干净测试库上投了四个地址：`X@gmail.com` / `X@googlemail.com` / 去点变体 / `+tag` 变体，
+   * 四封信全部落进同一个 Google 收件箱，却拿到 **2** 笔赠金 —— 折域漏了。这一条把那次探针钉进围栏。
+   *
+   * RED before：`grantRows` 是 2（gmail 一笔、googlemail 一笔）。
+   */
+  it("SIGNIN-A17 —— googlemail.com 的变体与 gmail.com 是同一个收件箱，合起来只领一笔赠金", async () => {
+    const stem = `a17gm${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const variants = [
+      `${stem}@gmail.com`,
+      `${stem}@googlemail.com`,
+      `${stem.slice(0, 4)}.${stem.slice(4)}@googlemail.com`,
+      `${stem}+ops@googlemail.com`,
+    ];
+    const orgs: string[] = [];
+    for (const email of variants) {
+      const user = await prisma.user.create({
+        data: { id: `usr_${randomUUID()}`, email },
+        select: { id: true, email: true },
+      });
+      orgs.push((await bootstrapPersonalOrg(user.id, user.email))!);
+    }
+
+    // 四个账号都建得出来（A17 明写号照建，被归一的只有赠金）。
+    expect(new Set(orgs).size).toBe(variants.length);
+
+    const grantRows = await prisma.creditLedger.count({
+      where: { orgId: { in: orgs }, kind: "GRANT" },
+    });
+    expect(grantRows).toBe(1);
+  });
+
   /** 不同域的同名 local part 不是同一个人：去点只对 Gmail 自己的域做，否则会把两个真实的人
    *  合并成一个，反而扣掉其中一个的开户赠金。 */
   it("SIGNIN-A17 —— 非 gmail 域不做去点归一：两个真实的人各拿一笔赠金", async () => {
