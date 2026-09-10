@@ -20,6 +20,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+// FSE-012(creation-engine.md §5 :170)—— 成组卡的每一张也带上「他按下的是哪一版报价」。
+// 这里用**同一个函数**算期望值,而不是放宽成 `any(String)`:放宽等于这条断言不再看那一格。
+import { cardQuoteVersion } from "@fikirtive/core/quote-version";
 
 const mocks = vi.hoisted(() => ({
   ottoApprove: vi.fn(),
@@ -191,6 +194,8 @@ describe("#786 PackCard's second way out", () => {
     expect(mocks.ottoApprove, "the per-item approve fired nothing").toHaveBeenCalledWith({
       threadId: "thr_1",
       cardId: "c1",
+      // FSE-012:这一张卡此刻那份报价的版本(服务端拿库里那张卡再算一次,对不上就拒绝)。
+      quoteVersion: cardQuoteVersion(priced("c1", 5).payload),
     });
     expect(mocks.coworkGenerate, "a parked card must resume, never re-generate").not.toHaveBeenCalled();
     expect(onApproved, "the parent never learned this item started").toHaveBeenCalled();
@@ -226,6 +231,7 @@ describe("#786 PackCard's second way out", () => {
     expect(mocks.ottoApprove, "the merchant's press did not reach the metered action").toHaveBeenCalledWith({
       threadId: "thr_1",
       cardId: "c1",
+      quoteVersion: cardQuoteVersion(priced("c1", 5).payload),
     });
   });
 

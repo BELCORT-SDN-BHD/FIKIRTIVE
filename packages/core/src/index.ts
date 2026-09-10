@@ -109,7 +109,8 @@ export * from "./model-config.js";
 export {
   RECORD_KINDS, productRecordData, segmentRecordData, offerRecordData,
   recordSchemaFor, recordName, normalizeNameKey, offerPhase,
-  categoryKey, distinctCategories,
+  categoryKey, distinctCategories, withProductIdentity, stripProductIdentity,
+  PRODUCT_IDENTITY_KEYS,
 } from "./brand-records.js";
 export type {
   RecordKind, ProductRecordData, SegmentRecordData, OfferRecordData, OfferPhase,
@@ -188,6 +189,9 @@ export * from "./gen-job-state.js";
 // 是因为读者有三个 —— 适配器(判断)、worker(落盘)、web 与 Otto(取回给商家看),文案抄成
 // 三份就一定会有一份先烂掉(#765)。
 export * from "./gen-failure.js";
+// FSE-012:确认卡那份报价的稳定指纹。铸造(服务端)与校验(服务端)同一份口径,客户端
+// 走子路径 `@fikirtive/core/quote-version` 引它 —— 包根会把 node:crypto 拖进客户端包。
+export * from "./quote-version.js";
 // 演员库 v1:人物卡与九套造型 preset 的单一来源。读者有三个 —— Otto 写提示词、UI 画角色卡、
 // 播种脚本建实体(Founder 2026-08-30「一卡三用」),抄成三份就一定有一份先烂掉。
 export * from "./actor-library.js";

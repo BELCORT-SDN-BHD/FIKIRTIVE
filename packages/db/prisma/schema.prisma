@@ -108,6 +108,9 @@ model Entity {
   referenceImages ReferenceImage[]
   variants        EntityVariant[]
   shotRefs        ShotEntityRef[]
+  // 产品身份的价签那一半(docs/specs/brand-product-identity.md §1.4)。一条 Entity(PRODUCT)
+  // 对应一条 BrandRecord(kind='product');其它 type 的 Entity 这个数组永远是空的。
+  brandRecords    BrandRecord[]
 
   @@unique([id, ownerId])
   @@unique([ownerId, catalogKey])
@@ -1157,6 +1160,12 @@ model BrandRecord {
   kind         String    // 'product' | 'segment' | 'offer' (code-validated, not a PG enum — house style)
   nameKey      String    // normalized name/title — upsert key (see @fikirtive/core brand-records)
   data         Json      // zod-validated per-kind payload; offer dates live in the columns below, NOT here
+  // 产品身份(docs/specs/brand-product-identity.md §1.4)。kind='product' 的行必须指向一条
+  // Entity(PRODUCT) —— 那是「这是哪一件产品」的唯一权威,名字与主图只存在那里;这一行只存
+  // 价格、卖点、分类这些价签。约束在迁移里(BrandRecord_product_needs_entity CHECK):
+  // 一条 product 行没有 entityId 就进不了库,两套真相从写入那一刻起不可能出现。
+  // segment / offer 永远是 null —— 它们没有身份那一半。
+  entityId     String?
   status       String    @default("active") // 'active' | 'archived'
   startsAt     DateTime? // offers only
   endsAt       DateTime? // offers only — drives read-time expiry (never a background job)
@@ -1172,9 +1181,14 @@ model BrandRecord {
   originDetail  String?
   updatedById   String?
 
+  // 复合外键(ADR 0002 第五条):两端都带 ownerId,PostgreSQL 直接拒绝跨租户连线 ——
+  // 租户隔离不靠调用处记得加 where。onDelete: Restrict —— 身份还被价签指着就删不掉。
+  entity Entity? @relation(fields: [entityId, ownerId], references: [id, ownerId], onDelete: Restrict)
+
   // A raw partial UNIQUE INDEX on (ownerId, COALESCE(brandId,''), kind, nameKey) WHERE deletedAt IS NULL
   // lives in the accompanying migration (same pattern as BrandKit F5) — Prisma can't model partial indexes.
   @@index([ownerId, brandId, kind, deletedAt])
+  @@index([entityId])
 }
 
 /// Brand context revision log (FRONT-A8「每条显示谁改的、何时改的」的历史那一半)。

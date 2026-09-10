@@ -79,7 +79,10 @@
  * 先花三分之一分钱判一次,再决定要不要花第二次 —— 菜单最常见的形态就是一张照片,
  * 而给每张产品照都跑一遍 doc-extract 是纯浪费。
  */
-import { InsufficientCredits, OrgSuspended, prisma, refundReservation, reserveCredits, settleCredits } from "@fikirtive/db";
+import {
+  InsufficientCredits, OrgSuspended, createProduct, prisma, refundReservation, reserveCredits,
+  settleCredits, updateProductRecord,
+} from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   UNDERSTAND_QUEUE,
@@ -1062,30 +1065,33 @@ async function upsertProductRecord(
 
   const data = parsed.data as unknown as Record<string, unknown>;
   if (existing) {
-    await tx.brandRecord.update({ where: { id: existing.id }, data: { data: data as never, source: "otto" } });
-    return true;
+    // 改也走共享动作(规格 §1.4;PRODID-A4)。tx 照旧传下去(MONEY-A9 不变量②)。
+    //
+    // 判官第 5 轮(PR #1337):这里**不递** `name`、也不递 `imageAssetId` —— 商家可能已经在
+    // Library 把这件产品改了名、换了封面,而理解 worker 只是把同一个网站/菜单再读了一遍。
+    // 重读一遍不是改名,更不是换图。共享动作只在调用方**显式**递这两个字段时才碰身份,
+    // 所以这一条路只更新价签字段(价格、描述、分类),商家改过的名字与主图原样留着。
+    // (只有**第一次**建草稿时才带名字,那时这件产品还不存在,名字只能由这里给。)
+    const done = await updateProductRecord({ ownerId, id: existing.id, data, source: "otto" }, tx);
+    return done.ok;
   }
-  // `createMany({ skipDuplicates })` 而不是 create+catch —— 和 caption 那一步同一个理由:
-  // 在交互式事务里捕获 P2002 是**假的**保护,唯一冲突已经让 Postgres 把整个事务标成 aborted,
-  // 之后连 settle 都提交不了。ON CONFLICT DO NOTHING 让「同一轮里菜单出现两次同名」不产生
+  // 产品有身份那一半(Entity(PRODUCT)):建产品的唯一一条写路是共享动作 `createProduct`
+  // (规格 docs/specs/brand-product-identity.md §1.4;票 #1321),四个写入口都从那里过。
+  // **tx 照旧传进去**:这些行和 settle 在同一个事务里(MONEY-A9 不变量②)。
+  // 共享动作内部仍然是 `createMany({ skipDuplicates })` 而不是 create+catch —— 和 caption
+  // 那一步同一个理由:在交互式事务里捕获 P2002 是**假的**保护,唯一冲突已经让 Postgres 把
+  // 整个事务标成 aborted,之后连 settle 都提交不了。「同一轮里菜单出现两次同名」于是不产生
   // 错误(赢家已经写好了),而其它任何 DB 错误照常抛出去回滚 + 让队列重试。
-  const { count } = await tx.brandRecord.createMany({
-    data: [
-      {
-        id: newId(),
-        ownerId,
-        brandId: null,
-        kind: "product",
-        nameKey,
-        data: data as never,
-        status: "active",
-        source: "otto",
-        pinned: false,
-      },
-    ],
-    skipDuplicates: true,
-  });
-  return count === 1;
+  //
+  // **草稿,不是身份**(规格 §1.2 / §1.9,验收 PRODID-A7):理解 worker 提取的产品是模型猜出来
+  // 的,商家还没点过头,所以它此刻只有价签、没有身份 —— `contextStatus: "Draft"` 让共享动作
+  // 只落 BrandRecord。没有 Entity 就没有 Library 卡、没有 @ 菜单项,「确认前不出现」于是由
+  // 数据本身保证,不靠每一条读路各自记得过滤。确认那一步(建身份、抬 Ready)是共享动作
+  // `confirmProductDraft`:商家在 Brand 页按 Save context、在 Brand 页新增同名产品、或者对
+  // Otto 说「记下产品 X」,三条路都落到它(判官第 2 轮 P0,PR #1337 —— 没有转正路径的草稿
+  // 是一条没有出口的死路,而且它还占住那个活跃唯一的名字槽位)。
+  const made = await createProduct({ ownerId, data, source: "otto", contextStatus: "Draft" }, tx);
+  return made.created;
 }
 
 function stripUndefined(o: Record<string, unknown>): Record<string, unknown> {
