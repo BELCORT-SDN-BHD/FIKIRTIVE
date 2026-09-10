@@ -131,7 +131,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.assetUnderstanding.deleteMany({ where: { ownerId: OWNER } });
+  // #1321:提取出来的产品现在是「身份 ＋ 价签」两行 —— 价签(BrandRecord)指着身份(Entity),
+  // 外键是 Restrict,所以价签必须先走;身份又指着 Asset(主图),所以身份必须走在 Asset 前面。
   await prisma.brandRecord.deleteMany({ where: { ownerId: OWNER } });
+  await prisma.referenceImage.deleteMany({ where: { ownerId: OWNER } });
+  await prisma.entity.deleteMany({ where: { ownerId: OWNER } });
   await prisma.memory.deleteMany({ where: { ownerId: OWNER } });
   await prisma.asset.deleteMany({ where: { ownerId: OWNER } });
   await prisma.creditAccount.deleteMany({ where: { orgId: OWNER } }); // FK:必须在 org 之前

@@ -4,7 +4,7 @@ import { SAVE_FAILED } from "./save-failed-copy";
 import { prisma } from "@fikirtive/db";
 import {
   newId, sectionForCategory, offerPhase, distinctCategories,
-  isBrandSectionKey, isBrandContextOrigin,
+  isBrandSectionKey, isBrandContextOrigin, withProductIdentity,
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { resolveActor, recordBrandRevision, stampOf, actorStamp } from "./brand-revision";
@@ -210,7 +210,7 @@ async function compileBrandContext(
     ? { OR: [{ contextStatus: "Ready" }, { id: includeDraftId }] }
     : READY_ONLY;
 
-  const [rows, kit, rules, records] = await Promise.all([
+  const [rows, kit, rules, recordRows] = await Promise.all([
     prisma.memory.findMany({
       where: { ownerId, brandId: brandId ?? null, deletedAt: null, ...memoryStatus },
       orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
@@ -229,9 +229,19 @@ async function compileBrandContext(
     prisma.brandRecord.findMany({
       where: { ownerId, brandId: brandId ?? null, deletedAt: null, ...READY_ONLY },
       orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
-      select: { kind: true, data: true, status: true, startsAt: true, endsAt: true, pinned: true },
+      // 产品的名字以**身份**为准(规格 §1.4;PRODID-A4)—— Otto 上下文里那句产品名和商家在
+      // Library 看到的必须是同一个,否则他会拿着一个 Otto 不认识的名字来问。
+      select: {
+        kind: true, data: true, status: true, startsAt: true, endsAt: true, pinned: true,
+        entity: { select: { name: true, baseAssetId: true } },
+      },
     }),
   ]);
+
+  const records = recordRows.map(({ entity, ...r }) => ({
+    ...r,
+    data: withProductIdentity(r.kind, r.data as Record<string, unknown>, entity),
+  }));
 
   // Per-section budgets (chars). Rules are assembled FIRST so they can never be
   // truncated by other sections growing (the old global slice(0,3000) cut them first).

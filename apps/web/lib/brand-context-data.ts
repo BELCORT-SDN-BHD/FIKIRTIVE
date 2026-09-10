@@ -6,6 +6,7 @@ import {
   brandSectionForRecordKind,
   brandSectionLabel,
   recordName,
+  withProductIdentity,
   OTTO_AUTHOR_LABEL,
   type BrandSectionKey,
   type BrandContextStatus,
@@ -98,6 +99,13 @@ export async function loadBrandSections(ownerId: string): Promise<BrandSectionVi
         id: true, kind: true, data: true, contextStatus: true,
         origin: true, originDetail: true, source: true,
         updatedAt: true, updatedById: true, deletedAt: true,
+        // 产品的名字与主图以**身份**为准(规格 `docs/specs/brand-product-identity.md` §1.4;
+        // 验收 PRODID-A4)。判官第 4 轮 P1(PR #1337):`/brand` 这一面是最后一条没 join 身份
+        // 的展示读路 —— 一次性链接把价签指向商家自己那张 Library 卡之后,卡的名字与价签
+        // `data.name` 本来就是两个字符串(迁移只写 entityId,不动 data),于是同一件产品在
+        // `/brand` 叫一个名字、在 `/library` 与 `/brand/records` 叫另一个。A4 说的那一面就是
+        // 这一面,少了这一句,验收在它自己点名的界面上不成立。
+        entity: { select: { name: true, baseAssetId: true } },
       },
     }),
   ]);
@@ -130,14 +138,17 @@ export async function loadBrandSections(ownerId: string): Promise<BrandSectionVi
   }
 
   for (const r of records) {
+    // 缓存被身份盖掉之后再渲染 —— 与 `listBrandRecords` / `compileBrandContext` /
+    // `lookupProducts` 共用同一份判断(7.3 单一权威)。
+    const data = withProductIdentity(r.kind, r.data as Record<string, unknown>, r.entity);
     entries.push({
       id: r.id,
       kind: "record",
       section: brandSectionForRecordKind(r.kind),
-      name: recordTitle(r.kind, r.data),
+      name: recordTitle(r.kind, data),
       // 结构化记录的名字来自它自己的 data,不是兜底来的。
       named: true,
-      content: recordSummary(r.data),
+      content: recordSummary(data),
       status: (r.contextStatus as BrandContextStatus) ?? "Ready",
       origin: r.origin ?? "manual",
       originDetail: r.originDetail,
