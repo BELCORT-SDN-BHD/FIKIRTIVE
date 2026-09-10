@@ -855,6 +855,24 @@ model AllowedEmail {
   updatedAt DateTime @updatedAt
 }
 
+// SIGNIN-A17 —— 开户赠金「一个真实收件箱一次」的唯一约束（docs/specs/sign-in.md 已冻结 · v1 §1.5）。
+//
+// 为什么需要它自己一张表：赠金写在 CreditLedger 上，它的唯一约束是 (orgId, idempotencyKey)。
+// `me+001@` 与 `me+002@` 是两个用户、两个 org，所以**任何**写在 idempotencyKey 里的字符串都拦不住
+// 第二笔 —— 约束的另一半 orgId 已经不同了。要让「同一个真实收件箱只领一次」成为数据库保证，
+// 去重的键必须自己就是主键。
+//
+// canonicalEmail 由 `@fikirtive/core` 的 `canonicalGrantEmail` 计算（去 +tag、gmail 去点），
+// 在开户那笔事务里 INSERT … ON CONFLICT DO NOTHING：抢到这一行的 org 发赠金，没抢到的不发。
+// 它只管赠金，不管身份：账号、租户、名单一律仍然按完整地址走。
+model SignupGrantClaim {
+  canonicalEmail String   @id
+  orgId          String // 抢到这一行、因而拿到赠金的那个工作区（审计用，无 FK：它比 org 活得久）
+  createdAt      DateTime @default(now())
+
+  @@map("signup_grant_claim")
+}
+
 // ── Credits ledger (closed-beta foundation P2) — the per-org spend cap (M1) ────────
 // CreditAccount = hot mutable counters (Int INTERNAL credits, 1 = $0.01); balance can
 // never go negative (the reserve is a conditional UPDATE). CreditLedger = append-only

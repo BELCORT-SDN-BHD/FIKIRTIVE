@@ -19,6 +19,7 @@ import {
   SIGN_IN_CODE_UNAVAILABLE_MESSAGE,
   SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE,
   normalizeSignInEmail,
+  parseSignInCodeFragment,
   type SignInCodeFailure,
   type SignInCodeRequestResult,
 } from "@/lib/better-auth/signin-code-contract";
@@ -44,6 +45,13 @@ type LoginFormError =
  *  邮箱步的「Continue with email」与 code 步的「Send again」走的是同一个函数、同一个错误源
  *  （`source: "sign_in_code"`），所以共用这一句，而不是在 code 步另写一份措辞。 */
 const SIGN_IN_CODE_FAILED_TITLE = "Email could not be continued";
+
+/** SIGNIN-A8 —— 一小时内第 6 次要码时那条 Alert 的标题。
+ *
+ *  与「送不出去」分开写，因为它们要商家做的事不同：一个是「再试一次」，一个是「等一小时，
+ *  别再按了」。共用一句会让商家对着一颗按不动的按钮反复按。措辞与 `SIGN_IN_CODE_RATE_LIMITED_MESSAGE`
+ *  同源，同样只谈次数与时间，不谈这个邮箱有没有账号。 */
+const SIGN_IN_CODE_RATE_LIMITED_TITLE = "Too many codes requested";
 
 function GoogleMark() {
   return (
@@ -92,8 +100,17 @@ export function LoginForm({
   const callbackURL = authDestination(from);
   const routeStep = parseLoginStep(searchParams.get("step"));
   const step = routeStep === "hub" && initialStep !== "hub" ? initialStep : routeStep;
-  const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
+  // SIGNIN-A5 —— 邮件里的 Log in 按钮落地时，邮箱与码从 URL **片段**里读回来预填，商家按一次
+  // Continue 就登录。片段（`#`）不会被浏览器送给服务器，所以码不进 access log、不随 Referer
+  // 外泄 —— 这也是为什么它必须在客户端读：服务端根本看不见它。
+  //
+  // `useState` 的惰性初始化而不是 `useEffect`：预填要在**第一帧**就到位。放在 effect 里，商家会
+  // 看到一个空的码框闪一下再被填上，而且那一帧里按下 Continue 会拿空值提交。
+  // `parseSignInCodeFragment` 只接受形状对的值（片段是任何人都能写的地方），而且预填只是**填
+  // 输入框**：真正的授权仍然是提交那一步、由服务器验码。
+  const prefill = useState(() => (typeof window === "undefined" ? null : parseSignInCodeFragment(window.location.hash)))[0];
+  const [email, setEmail] = useState(prefill?.email ?? "");
+  const [code, setCode] = useState(prefill?.code.slice(0, SIGN_IN_CODE_LENGTH) ?? "");
   const [busy, setBusy] = useState<"code" | "google" | "verify" | null>(null);
   const [error, setError] = useState<LoginFormError | null>(
     initialError ? { source: "social", message: initialError } : null,
@@ -247,7 +264,9 @@ export function LoginForm({
                 <AlertTitle>
                   {error.source === "sign_in_code" && error.reason === "invalid_email"
                     ? "Email needed"
-                    : SIGN_IN_CODE_FAILED_TITLE}
+                    : error.source === "sign_in_code" && error.reason === "rate_limited"
+                      ? SIGN_IN_CODE_RATE_LIMITED_TITLE
+                      : SIGN_IN_CODE_FAILED_TITLE}
                 </AlertTitle>
                 <AlertDescription>{error.message}</AlertDescription>
               </Alert>
@@ -307,7 +326,11 @@ export function LoginForm({
                     再怎么检查手上那六位数也没用,写「Code not accepted」是指错地方。这一态
                     与邮箱步的送码失败同源,共用同一句标题。 */}
                 <AlertTitle>
-                  {error.source === "sign_in_code" ? SIGN_IN_CODE_FAILED_TITLE : "Code not accepted"}
+                  {error.source !== "sign_in_code"
+                    ? "Code not accepted"
+                    : error.reason === "rate_limited"
+                      ? SIGN_IN_CODE_RATE_LIMITED_TITLE
+                      : SIGN_IN_CODE_FAILED_TITLE}
                 </AlertTitle>
                 <AlertDescription>{error.message}</AlertDescription>
               </Alert>

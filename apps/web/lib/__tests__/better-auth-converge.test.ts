@@ -6,6 +6,10 @@ const db = {
   membershipRole: { upsert: vi.fn() },
   betterAuthUser: { updateMany: vi.fn() },
   actionEvent: { createMany: vi.fn() },
+  // SIGNIN-A1/A10 —— 「注册即邀请」那一行：convergence 的第 0 步把邮箱写进 AllowedEmail
+  // （status active，invitedBy = 来源门）。它必须在这里，否则整段 convergence 在第一句就抛，
+  // 而这个文件的 try/catch 会把它吞成 non-fatal —— 每一条断言都会读到「什么都没发生」。
+  allowedEmail: { createMany: vi.fn() },
   $transaction: vi.fn(),
 };
 vi.mock("@fikirtive/db", () => ({ prisma: db }));

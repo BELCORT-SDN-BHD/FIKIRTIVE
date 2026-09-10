@@ -61,16 +61,21 @@ import { callerKey } from "@/lib/rate-limit-gates";
 
 const WINDOW_MS = 60 * 60 * 1000;
 
-/** One caller + one address. Sized to a real merchant's worst hour: mistyped once, tried twice
- *  more, then asked for a fresh code. Beyond it the answer is unchanged and the job is dropped
- *  on the background side.
+/**
+ * SIGNIN-A8 —— 一个**邮箱**一小时能被要走几个码。规格：「同一邮箱一小时内要 6 次码 → 第 6 次
+ * 被拒并提示一小时后再试」，所以允许 5 次、第 6 次拒。
  *
- *  It is also half of what bounds guessing a code: a caller can only cause five codes an hour to
- *  be issued for one address, and Better Auth allows three guesses per code before locking the
- *  identifier (`allowedAttempts`, lib/better-auth/server.ts). Fifteen tries an hour against a
- *  six-digit space is the real ceiling on brute force, and it is set here and there — not by a
- *  limiter on the door where the code is typed. */
-export const MAX_PER_CALLER_PER_ADDRESS = 5;
+ * 它以前是 `(caller, address)` 的桶，而规格要的是 `address` 的桶 —— 这是一处**修根**：按
+ * (来访者+地址) 计数的规则里，换一个出口地址就买回一份新的五次，所以「同一邮箱一小时 5 封」
+ * 从来不是这道闸在执行的数字（真正在执行它的是寄信队列里那个按地址计的闸，
+ * `sender.ts` 的 `MAX_PER_ADDRESS_PER_WINDOW`，但它跑在背景，说不出话）。规则搬到门上、
+ * 按邮箱计，于是**公布的数字与执行的数字第一次是同一个**，而且拒绝可以当场说出来。
+ *
+ * 它也是限制猜码的那一半：一个地址一小时最多被发五个码，Better Auth 每个码允许三次猜
+ * （`allowedAttempts`，lib/better-auth/server.ts）。一小时十五次对六位数空间 —— 这才是暴力
+ * 破解的真实天花板，它设在这里和那里，不在「输码」那道门上。
+ */
+export const MAX_PER_ADDRESS = 5;
 
 /**
  * One caller, all addresses. This is the anti-enumeration bound, and it is deliberately loose
@@ -91,12 +96,20 @@ export const MAX_PER_CALLER = 60;
 
 /** Namespaced so this door's counters can never collide with another gate's (#795). */
 const CALLER_BUCKET = (caller: string) => `signincode:${caller}`;
-const ADDRESS_BUCKET = (caller: string, email: string) => `signincode:${caller}|${email}`;
+const ADDRESS_BUCKET = (email: string) => `signincode:addr|${email}`;
 
-/** The only two outcomes a caller may see. Being over the throttle is NOT one of them: it is
- *  swallowed here on purpose, so no caller — and no future edit to a caller — can turn it into
- *  a distinguishable answer. */
-export type SignInCodeRequestOutcome = "accepted" | "invalid_email";
+/**
+ * SIGNIN-A8 —— 三个结果，而「超额」现在是**说得出口**的那一个。
+ *
+ * 以前它刻意不是：码门只放行名单内的地址，所以「你被限流了」等于「这个地址有账号」，一条不需要
+ * 凭据就能读到的账号存在性探针。码门对陌生人打开之后那个等号消失了 —— 每个地址都会被寄码，
+ * 计数桶对有账号的和没账号的地址一模一样地存在，而且桶里的数字完全由**发问的人自己**造成。
+ * 于是可以照规格 §1.3 把话说清楚，而不是让商家对着一个永远「已寄出」却收不到信的页面猜。
+ *
+ * 仍然说不出口的是另外两件事，它们还在背景里静静地被丢掉（`sender.ts`）：地址被撤销、暂停期的
+ * 陌生人。那两件事**是**关于地址本身的，规格 §1.3 明写它们的页面反应必须与「码错」一模一样。
+ */
+export type SignInCodeRequestOutcome = "accepted" | "invalid_email" | "rate_limited";
 
 export async function acceptSignInCodeRequest(input: {
   email: unknown;
@@ -116,7 +129,7 @@ export async function acceptSignInCodeRequest(input: {
   const caller = callerKey(input.requestHeaders);
   const verdict = await consumeRateLimit([
     { key: CALLER_BUCKET(caller), max: MAX_PER_CALLER, windowMs: WINDOW_MS },
-    { key: ADDRESS_BUCKET(caller, email), max: MAX_PER_CALLER_PER_ADDRESS, windowMs: WINDOW_MS },
+    { key: ADDRESS_BUCKET(email), max: MAX_PER_ADDRESS, windowMs: WINDOW_MS },
   ]);
 
   // ③ hand over an opaque job — ALWAYS, and always after the same work. The verdict travels
@@ -127,13 +140,12 @@ export async function acceptSignInCodeRequest(input: {
   //    caller-supplied value.
   enqueueAuthEmail({ purpose: "sign-in-code", email, overBudget: !verdict.granted });
 
-  // ④ one answer.
+  // ④ the answer.
   //
-  // THE HONEST COST, stated plainly: a merchant who is over the throttle is told a code is on
-  // its way and no code arrives. That is the price of an answer that cannot be read as "this
-  // address exists" — the alternative is a distinct over-the-limit answer, which is only ever
-  // reachable by someone who kept pressing, and a prober can keep pressing too.
-  return "accepted";
+  // SIGNIN-A8 —— 超额现在**说出来**，而步骤③仍然照跑：不是为了掩饰答案（答案已经不同了），
+  // 是为了让「超额」与「正常」这两条路做的事一模一样，被撤销／暂停期陌生人那两种**仍然沉默**
+  // 的拒绝因此也测不出时间差 —— 它们走的正是这条「已寄出」的路，只是背景把信丢掉了。
+  return verdict.granted ? "accepted" : "rate_limited";
 }
 
 /** TEST ONLY. The buckets have an hour-long window; a test that wants a fresh budget cannot wait
