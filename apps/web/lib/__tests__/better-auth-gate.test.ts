@@ -79,8 +79,36 @@ describe("assertSignInDoor (user.create.before gate)", () => {
 
   it("allows an email in AUTH_ALLOWED_EMAILS env list", async () => {
     process.env.AUTH_ALLOWED_EMAILS = "merchant@fikirtive.test";
+    mockFindUnique.mockResolvedValueOnce(null); // 名单里没有这一行，环境名单说它「来过」
     await expect(assertSignInDoor("merchant@fikirtive.test")).resolves.toBeUndefined();
-    expect(mockFindUnique).not.toHaveBeenCalled();
+  });
+
+  /**
+   * SIGNIN-A7 —— 撤销是绝对的：`AUTH_ALLOWED_EMAILS` 也压不过它（判官 r1 P1，2026-09-11）。
+   *
+   * RED before：命中 `AUTH_ALLOWED_EMAILS` 的地址**直接短路返回放行**，一次数据库读都不做，
+   * 于是操作员在后台撤销过的邮箱只要还留在那份环境名单里就照样进得来 —— 规格 §1.6「撤销 →
+   * 拒」与验收 A7「两扇门都进不来」在这条路上从来没有执行过。环境名单能回答的问题只有
+   * 「这个地址来过吗」（暂停开关那一步要用），回答不了「它有没有被撤销」——那件事只写在库里。
+   */
+  it("SIGNIN-A7 —— 撤销压得过 AUTH_ALLOWED_EMAILS：环境名单里的地址被撤销后仍然进不来", async () => {
+    process.env.AUTH_ALLOWED_EMAILS = "revoked-but-listed@fikirtive.test";
+    mockFindUnique.mockResolvedValueOnce({ status: "revoked" });
+    const err = await assertSignInDoor("revoked-but-listed@fikirtive.test").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect((err as APIError).status).toBe("FORBIDDEN");
+    // 撤销这件事只有库知道 —— 所以这条路上必须真的去问库。
+    expect(mockFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { email: "revoked-but-listed@fikirtive.test" } }),
+    );
+  });
+
+  /** 环境名单仍然管它该管的那一件事：暂停期里，名单点名的地址算「来过」，照常进得来。 */
+  it("SIGNIN-A7 —— 环境名单仍然让暂停期的老地址进得来（它答的是「来过吗」，不是「撤了吗」）", async () => {
+    process.env.SIGNUPS_PAUSED = "1";
+    process.env.AUTH_ALLOWED_EMAILS = "listed@fikirtive.test";
+    mockFindUnique.mockResolvedValueOnce(null);
+    await expect(assertSignInDoor("listed@fikirtive.test")).resolves.toBeUndefined();
   });
 
   it("allows an email with an active DB row", async () => {

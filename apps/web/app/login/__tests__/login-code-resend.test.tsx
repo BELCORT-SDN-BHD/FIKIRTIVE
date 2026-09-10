@@ -448,6 +448,31 @@ describe("SIGNIN-A5 — the mailed Log in link lands with the address and the co
     });
   });
 
+  /**
+   * #1317（判官 r1 P1，2026-09-11）—— 读完就把片段从地址栏抹掉。
+   *
+   * 片段里装的是一份**可以直接登录的凭据**（邮箱 ＋ 那六位一次性码）。它读进输入框之后，
+   * 留在 `location.href` 里只剩下坏处：浏览器历史、书签、分享截图、以及任何拿 `location.href`
+   * 的第三方 SDK（上报通道那一侧另有 `scrubUrlFragments` 兜底）都会跟着带上它。
+   *
+   * `replaceState` 不是 `push`：不新增一条历史记录，商家按返回键仍然回到上一页。
+   *
+   * RED before：渲染之后 `window.location.hash` 原封不动。
+   */
+  it("#1317 —— 片段读进输入框之后立刻从地址栏抹掉（码还有效，别留在 URL 里）", async () => {
+    await withHash(HASH, async () => {
+      nav.search = new URLSearchParams("step=code");
+      const el = await render(
+        createElement(LoginForm, { from: "/create", googleEnabled: false, initialStep: "code" as const }),
+      );
+
+      // 预填照旧（抹掉的是地址栏，不是输入框）……
+      expect(el.querySelector<HTMLInputElement>('input[autocomplete="one-time-code"]')!.value).toBe("246810");
+      // ……而地址栏里已经没有那份凭据了。
+      expect(window.location.hash).toBe("");
+    });
+  });
+
   it("SIGNIN-A5 —— 片段写坏了就当没有：不预填，也不把坏值送去提交", async () => {
     await withHash("#email=not-an-address&code=abcdef", async () => {
       nav.search = new URLSearchParams();

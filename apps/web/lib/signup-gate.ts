@@ -43,19 +43,27 @@ export type SignInDoorDecision = "allow" | "paused" | "revoked";
 /**
  * 这个地址「以前来过」吗 —— 暂停开关唯一要问的那个问题。
  *
- * 「来过」＝ 环境名单点名（founder / AUTH_ALLOWED_EMAILS，这两条永远算数，数据库不能把
- * founder 锁在外面），或者 `AllowedEmail` 里**有一行**（任何状态）。两扇门第一次成功登录都会
- * 写一行 active（`admitSelfSignup`），所以「有行」正是规格里那句「从未登录过」的反面。
+ * 「来过」＝ 环境名单点名（founder / AUTH_ALLOWED_EMAILS），或者 `AllowedEmail` 里**有一行**
+ * （任何状态）。两扇门第一次成功登录都会写一行 active（`admitSelfSignup`），所以「有行」正是
+ * 规格里那句「从未登录过」的反面。
  *
- * 固定成本、无分支：两次纯字符串比对加**恰好一次**数据库读，对任何地址都一样 —— 这条路上的
- * 耗时不许随答案变化（#678 那一族缺陷的根）。数据库读不到就 fail closed。
+ * SIGNIN-A7 —— 环境名单只回答「来过吗」，**回答不了「撤了吗」**（判官 r1 P1，2026-09-11）。
+ * 它以前命中即短路返回放行，于是一个被操作员撤销掉的地址只要还留在 `AUTH_ALLOWED_EMAILS` 里
+ * 就照样进得来 —— 规格 §1.6「撤销 → 拒」在那条路上从来没执行过。撤销这件事只写在库里，所以
+ * 除 founder 外的每一个地址都必须真的去问库，两件事各归各的来源（修根不修表）。
+ *
+ * `FOUNDER_ADMIN_EMAILS` 是**唯一**的短路，而且是刻意的破窗：数据库不能把 founder 锁在外面
+ * （撤销了自己就再没有路回来）。它是运维凭据，不是商家地址。
+ *
+ * 固定成本、无分支：一次纯字符串比对加**恰好一次**数据库读，对任何非 founder 地址都一样 ——
+ * 这条路上的耗时不许随答案变化（#678 那一族缺陷的根）。数据库读不到就 fail closed。
  */
 async function lookupAddress(email: string): Promise<{ known: boolean; revoked: boolean } | null> {
   if (envList(process.env.FOUNDER_ADMIN_EMAILS).includes(email)) return { known: true, revoked: false };
-  if (envList(process.env.AUTH_ALLOWED_EMAILS).includes(email)) return { known: true, revoked: false };
+  const listed = envList(process.env.AUTH_ALLOWED_EMAILS).includes(email);
   try {
     const row = await prisma.allowedEmail.findUnique({ where: { email }, select: { status: true } });
-    return { known: !!row, revoked: row?.status === "revoked" };
+    return { known: listed || !!row, revoked: row?.status === "revoked" };
   } catch {
     return null; // DB outage → fail closed at the caller
   }

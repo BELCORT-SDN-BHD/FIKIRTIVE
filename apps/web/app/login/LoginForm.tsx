@@ -120,6 +120,20 @@ export function LoginForm({
   const codeInputRef = useRef<HTMLInputElement>(null);
   const focusEmailAfterReset = useRef(false);
 
+  // #1317（判官 r1 P1，2026-09-11）—— 片段读完就从地址栏抹掉。
+  //
+  // 上面那一行读进来的是一份**可以直接登录的凭据**（邮箱 ＋ 六位一次性码）。预填之后它留在
+  // `location.href` 里只剩下坏处：浏览器历史、书签、分享出去的截图，以及任何拿 `location.href`
+  // 的第三方 SDK 都会跟着带上它（上报通道那一侧另有 `lib/sentry-browser.ts` 的
+  // `scrubUrlFragments` 兜底；这里是源头）。码的一次性与 15 分钟是**码**的属性，不等于
+  // 「它躺在地址栏里也没关系」。
+  //
+  // `replaceState` 而不是 `push`：不新增一条历史记录，商家按返回键仍然回到上一页。
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.location.hash) return;
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+  }, []);
+
   useEffect(() => {
     if (step === "email" && focusEmailAfterReset.current) {
       focusEmailAfterReset.current = false;
