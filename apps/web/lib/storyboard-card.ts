@@ -133,6 +133,25 @@ export function shotsDirectToVideo<T extends { shotId: string; entityIds?: strin
 }
 
 /**
+ * creation §5 :178(判官 r2 的两条 P1)—— 这张卡**必须**先问服务端一趟才画得对吗。
+ *
+ * 「这一镜直接出片吗」要读 `Entity.type`,只有服务端答得出;而挂图入口、那句
+ * "Goes straight to video…"、以及首帧要铸几张,全挂在这一格上。卡面此前只在**媒体需要
+ * 重载**时才开口问(`needsRefreshEntrance`),于是 Otto 刚交出、一分钱还没花过的那张卡
+ * (每格 `absent`)一次都不问 —— 商家看到的是一张没有挂图入口的卡,而验收口径那句
+ * 「分镜卡镜头可 @ 选 Library 里的图作参考」正是在这个主状态下不成立。
+ *
+ * 判据只有一句:**这一镜 @ 到了至少一个元素**。一个元素都没 @ 的镜头在
+ * `shotGoesDirectToVideo` 里恒为假(它按 `entityIds` 与本店演员求交集),所以那张卡的答案
+ * 不可能是「直接出片」——不必为它多发一趟。这一条只决定**问不问**,答案仍旧只有服务端说了算。
+ */
+export function needsDirectToVideoAnswer<T extends { entityIds?: string[] }>(
+  shots: readonly T[],
+): boolean {
+  return shots.some((s) => (s.entityIds ?? []).length > 0);
+}
+
+/**
  * #782 r3(判官 r2 的两条 P1)—— 哪些镜头「卡死」了。
  *
  * 这条判据只回答一个问题:**这一镜还有没有免费的帧在路上?** 有 → 什么都别做(等着);

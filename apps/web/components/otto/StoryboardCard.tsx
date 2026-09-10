@@ -21,6 +21,7 @@ import {
   hasPendingMedia,
   resolveSyncAnswer,
   needsRefreshEntrance,
+  needsDirectToVideoAnswer,
   assertNever,
   nextSyncPhase,
   MAX_STORYBOARD_SHOTS,
@@ -351,6 +352,15 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   // live/dead id sets and "replacing" boolean sets: the card no longer holds any state that could
   // disagree with the server, so there is nothing left to keep in sync, clear, or forget.
   const [reports, setReports] = useState<ShotMediaSyncReport[] | null>(null);
+  // creation §5 :178(判官 r2 的两条 P1)—— 「哪几镜直接出片」是**它自己的一格**,不再从
+  // 媒体答案里现derive。两件事分家的理由,判官各钉了一次:
+  //   • 媒体答案只在**媒体需要重载**时才去问(mount 那道 `needsRefreshEntrance`),而这一格
+  //     决定挂图入口画不画 —— 草稿卡因此永远没有入口。现在 mount 的判据多了一条(见下)。
+  //   • 每一次编辑成功都会 `setReports(null)`(那份媒体答案描述的是编辑前的世界),而这一格
+  //     描述的是镜头的 `entityIds`,那一格**根本不由卡面编辑改动**(编辑面拒收元素引用,
+  //     见 storyboard-actions.ts:157)。跟着一起清掉,入口就会在每次编辑后闪一下不见。
+  // 权威仍旧只有服务端一处:这里只存它上一次说过的那句话,按 shotId 记。
+  const [directShotIds, setDirectShotIds] = useState<ReadonlySet<string>>(() => new Set<string>());
 
   const pollTriesRef = useRef(0);
   // #782 r15 (judge r14 P2-N1): the version of the world this card is showing. Bumped the moment
@@ -533,6 +543,8 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       if (!answer.apply) return answer.stillPending; // stale → apply nothing, conclude nothing
       setView(nextView);
       setReports(res.shots);
+      // creation §5 :178 —— 服务端刚说过的那句「哪几镜直接出片」,存进它自己那一格。
+      setDirectShotIds(new Set(res.shots.filter((r) => r.directToVideo).map((r) => r.shotId)));
       return answer.stillPending;
     } catch {
       return giveUpUnlessStale();
@@ -618,7 +630,13 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     if (didMountSyncRef.current) return;
     didMountSyncRef.current = true;
     const initial = deriveShotMediaStates({ shots: view.shots, reports: null, phase: "off" });
-    if (!needsRefreshEntrance(initial, false)) return;
+    // creation §5 :178(判官 r2 的两条 P1)—— 挂载时要问的是**两个**问题,以前只问了一个。
+    // 第二个:「这几镜里哪几镜直接出片」。它只有服务端答得出(要读 `Entity.type`),而挂图
+    // 入口就挂在那一格上 —— 只按媒体判要不要问,Otto 刚交出、每格 `absent` 的那张卡一次都
+    // 不问,商家于是必须先做一次与挂图无关的编辑(或先花一次钱)入口才冒出来。
+    // `needsDirectToVideoAnswer` 把范围收到「真有可能是直接出片」的那些卡:一个元素都没
+    // @ 的分镜答案恒为「不是」,不为它多发一趟。
+    if (!needsRefreshEntrance(initial, false) && !needsDirectToVideoAnswer(view.shots)) return;
     // Async on purpose: the state this settles comes back from the server, so nothing is set
     // synchronously in the effect body.
     void (async () => { await reconcileOnce(); })();
@@ -966,12 +984,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const shots = view.shots;
   // FSE-001 同族(Founder 2026-09-09 裁)—— 哪几镜**直接出片**:它们 @ 到了演员,所以演员
   // 参考照与商品照各作一张参考、片子从文字起步,首帧那一步整个不存在(不铸卡、不收钱)。
-  // 判据要读 `Entity.type`,只有服务端做得到 —— 这里读的是它的答案,不自己推。还没问过
-  // 服务端(挂载那一瞬,reports=null)时是空集合:卡面顶多多说一张,而闸① 那一边无论如何
-  // 都不会为这一镜铸首帧,所以永远不会多收一次钱。挂载即发一次 sync,这个开场最多活一个来回。
-  const directShotIds = new Set(
-    (reports ?? []).filter((r) => r.directToVideo).map((r) => r.shotId),
-  );
+  // 判据要读 `Entity.type`,只有服务端做得到 —— 这里读的是它上一次说过的那句话(见
+  // `directShotIds` 那一格的说明),不自己推。一次都还没答上来时是空集合:卡面顶多多说一张,
+  // 而闸① 那一边无论如何都不会为这一镜铸首帧,所以永远不会多收一次钱。
   // creation §5 :178(判官 r1 P1-④)—— 这一镜挂着哪几张图,**id 只认 payload**。
   //
   // 上一版这一份整个从 sync 回执取,而草稿态分镜卡挂载时根本不发 sync(`needsRefreshEntrance`

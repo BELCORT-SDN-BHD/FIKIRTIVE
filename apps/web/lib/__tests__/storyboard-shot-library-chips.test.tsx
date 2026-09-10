@@ -2,13 +2,13 @@
 /**
  * creation §5 :178(判官 r1 P1-④)—— 卡面上「这一镜挂着哪几张图」的**权威是 payload**。
  *
- * 走查现场(判官钉的时序):商家给一镜挂了 A,关掉标签页再打开 —— 草稿态分镜卡挂载时**不发**
- * sync(`needsRefreshEntrance` 对每格 `absent` 的卡为假),而上一版的清单整个从 sync 回执取,
+ * 走查现场(判官钉的时序):商家给一镜挂了 A,关掉标签页再打开 —— 上一版的清单整个从 sync
+ * 回执取,而那一趟回执拿不到(草稿卡当时根本不问;判官 r2 之后会问,但那一问一样可能失败),
  * 于是卡面一张都画不出来;他接着挂 B,服务端收到的整份新清单只有 [B],A 无声消失。挂图正是
  * 验收行「进入报价材料」的那份材料,所以这是「批准的东西与付费的东西分家」的形状。
  *
  * 这一份用真组件、真点击,钉两件事:
- *   ① 一次 sync 都没发生时,payload 上挂着的那几张照旧画得出来、也取得下来;
+ *   ① 一份回执都没拿到时,payload 上挂着的那几张照旧画得出来、也取得下来;
  *   ② 取下一张之后交给服务端的是**payload 那份清单减掉这一张**,不是从回执拼出来的空清单。
  *
  * 纯前端:Server Action 全是替身,这里不预扣、不结算、不调 provider。
@@ -130,11 +130,13 @@ afterEach(async () => {
 });
 
 describe("creation §5 :178 —— 卡面挂图清单以 payload 为权威", () => {
-  it("creation §5 :178: 一次 sync 都没发生,挂着的两张照旧画得出来、取得下来", async () => {
+  it("creation §5 :178: 一份 sync 回执都没拿到,挂着的两张照旧画得出来、取得下来", async () => {
+    // 服务端一时答不出来(判官 r2 之后草稿卡挂载会问一趟,但那一问可能失败)——回执为空
+    // 正是上一版清单画不出来的那个状态,而 id 的权威在 payload,所以它照旧画得出来。
+    mocks.syncStoryboardMedia.mockResolvedValue({ error: "boom" });
+
     await renderCard(payloadWithImages());
 
-    // 草稿态分镜卡挂载时不发 sync —— 这一条正是上一版清单为空的原因。
-    expect(mocks.syncStoryboardMedia).not.toHaveBeenCalled();
     expect(removeButtons()).toHaveLength(2);
   });
 
