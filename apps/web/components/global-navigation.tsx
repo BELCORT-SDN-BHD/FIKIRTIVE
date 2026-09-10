@@ -208,7 +208,11 @@ export function MerchantShellContent({
       if (document.visibilityState === "visible") load();
     };
     load();
-    const unsubscribe = subscribeBalanceRefresh(load);
+    // 宣告走 `loadIfVisible` 而不是 `load` —— FSE-010 之后这一声可能来自**别的标签页**，
+    // 而看不见的那一页读回来的数字没有人在看。让它等回到前台时那一下 visibilitychange
+    // 再读（下一行那条已经在了），后台标签页就不必为每一次别处的花钱发一次已认证请求。
+    // 走查那个场景照样成立：两页都开着、都可见时，`loadIfVisible` 就是 `load`。
+    const unsubscribe = subscribeBalanceRefresh(loadIfVisible);
     document.addEventListener("visibilitychange", loadIfVisible);
     return () => {
       alive = false;
