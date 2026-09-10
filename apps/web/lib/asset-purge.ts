@@ -12,6 +12,29 @@ import { storage } from "./storage";
  * 真删对象),当且仅当没有任何东西还指着它 ——
  *   · 没有任何**活的** ReferenceImage 行(不分哪个 entity / variant)—— 同一张照片被去重
  *     挂在两个实体上,或者又被设成某个变体的照片,删掉其中一处不能带走另一处还在用的字节;
+ *   · 没有任何 `BrandRecord.data.imageAssetId` 软指针指着它,**软删的行也算**(理由见下一段)
+ *     —— Brand 页的产品卡
+ *     (以及 segment / offer 的配图)把主图记成 `data` 里的一个 assetId,那是一条 JSON 软
+ *     指针,没有外键。判官第 1 轮 P0(PR #1337):`createProduct` 之后同一张主图**同时**是
+ *     Entity 的 ReferenceImage 与价签的 `data.imageAssetId`,只看前者的话,商家在 Library
+ *     删掉那张产品卡就会把 Brand 页价签还指着的字节真删出存储桶,而价签本身还活着 ——
+ *     一条谁都没声明过的不可逆删数据路径。软指针在这条判据里与硬引用同权。
+ *     判官第 2 轮 P1(PR #1337)——「活的」这个限定词要去掉:`deleteBrandRecord` 只软删价签,
+ *     而 `restoreBrandRecord` 会把 `data.imageAssetId` 一个字节不改地带回来。于是「先在 Brand 页
+ *     删产品、再去 Library 删掉那张残留卡」这条顺序里,判据会认为没人指着它、把字节**不可逆**地
+ *     真删掉,而商家随后一按恢复,拿回来的是一条指着空气的价签。行是可恢复的,字节不是 ——
+ *     所以这里认账软删的软指针:代价是商家删掉的产品卡还占着字节(可恢复、可另行清理),
+ *     换的是「恢复之后图还在」。fail open,不 fail closed。
+ *   · 没有任何 `Entity(type='PRODUCT').baseAssetId` 指着它,**软删的身份也算**(判官第 5 轮,
+ *     PR #1337)—— 产品的主图从此只住在身份上(价签不再承载 `imageAssetId`),而 `baseAssetId`
+ *     同样是一条没有外键的软指针。软删的产品身份可以被 `restoreBrandRecord` 原样接回来,
+ *     所以它指着的字节不能在这时候真删。同一条 fail-open 立场。
+ *     窗口的诚实话:软指针没有外键,所以 `FOR UPDATE` 那把锁挡不住一笔并发的
+ *     `brandRecord.update` 把 `data.imageAssetId` 指过来(硬引用有 FK,Postgres 的
+ *     `FOR KEY SHARE` 会替我们挡住)。今天唯一会这么写的两处(OttoStuff / OttoMemory 的
+ *     换图)先 `assetUpsert` 再写 data,而 `assetUpsert` 会复活 `deletedAt` —— 于是
+ *     `purgeAssetStorage` 真删字节前的那次重读会看见 `deletedAt = null` 而跳过。窗口小
+ *     但没有完全关死,关死它要给这条软指针一张真表,那是另一票的活。
  *   · 没有任何 Generation 行,不分 deletedAt —— Generation 的合同是「不可变，永不物理删」
  *     (schema.prisma:345「生成历史：不可变（永不物理删）」),Asset 行本身就是为了这条合同
  *     才活成墓碑(schema.prisma:178「Generation FK Restrict 使行删除永不可行——这是设计而非
@@ -71,7 +94,7 @@ export async function purgeOrphanedReferenceAssets(
   if (locked.length === 0) return [];
   const lockedIds = locked.map((r) => r.id);
 
-  const [stillReferenced, everGenerated] = await Promise.all([
+  const [stillReferenced, everGenerated, brandPinned, productCovers] = await Promise.all([
     tx.referenceImage.findMany({
       where: { assetId: { in: lockedIds }, ownerId, deletedAt: null },
       select: { assetId: true },
@@ -80,10 +103,32 @@ export async function purgeOrphanedReferenceAssets(
       where: { assetId: { in: lockedIds }, ownerId },
       select: { assetId: true },
     }),
+    // 软指针那一条(见文件顶部判据第一段)。Prisma 的 JSON 过滤没有「path 值 IN 一批」这个
+    // 形状,所以和上面那把锁一样直接写 SQL,租户靠显式 `"ownerId" = ${ownerId}` 字面量兜住。
+    // 判官第 5 轮(PR #1337)之后,活跃产品的价签里**已经没有** `imageAssetId` 这一格 ——
+    // 这一句从此只捞得到**草稿**(`contextStatus='Draft'`,此刻还没有身份,主图只有这一处
+    // 记法)与任何绕过共享动作写进来的历史行。两者都要认账,理由与下一条相同。
+    tx.$queryRaw<{ assetId: string }[]>`
+      SELECT DISTINCT "data"->>'imageAssetId' AS "assetId" FROM "BrandRecord"
+      WHERE "ownerId" = ${ownerId}
+        AND "data"->>'imageAssetId' = ANY(${lockedIds}::text[])
+    `,
+    // 身份那一条(判官第 5 轮,PR #1337):产品的主图从此**只**记在 `Entity.baseAssetId` 上,
+    // 而那也是一条没有外键的软指针。`deletedAt` 不设条件 —— 软删的产品身份是**可恢复**的
+    // (`restoreBrandRecord` 按同一个 `deletedAt` 把价签、身份、照片一起接回来),而字节删了
+    // 接不回来。行可恢复、字节不可恢复,所以这里 fail open:宁可多留字节,不做不可逆的删。
+    tx.$queryRaw<{ assetId: string }[]>`
+      SELECT DISTINCT e."baseAssetId" AS "assetId" FROM "Entity" e
+      WHERE e."ownerId" = ${ownerId}
+        AND e."type" = 'PRODUCT'
+        AND e."baseAssetId" = ANY(${lockedIds}::text[])
+    `,
   ]);
   const shared = new Set<string>([
     ...stillReferenced.map((r) => r.assetId),
     ...everGenerated.map((g) => g.assetId),
+    ...brandPinned.map((b) => b.assetId),
+    ...productCovers.map((p) => p.assetId),
   ]);
   const exclusiveIds = lockedIds.filter((id) => !shared.has(id));
   if (exclusiveIds.length === 0) return [];
