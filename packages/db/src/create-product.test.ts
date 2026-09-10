@@ -40,12 +40,12 @@ describe("createProduct", () => {
     expect(record).toEqual({ kind: "product", nameKey: "kopi ais", entityId: made.entityId, source: "user" });
 
     const entity = await prisma.entity.findFirstOrThrow({
-      where: { id: made.entityId, ownerId: orgId },
+      where: { id: made.entityId!, ownerId: orgId },
       select: { type: true, name: true, baseAssetId: true },
     });
     expect(entity).toEqual({ type: "PRODUCT", name: "Kopi ais", baseAssetId: asset.id });
     await expect(
-      prisma.referenceImage.count({ where: { ownerId: orgId, entityId: made.entityId, deletedAt: null } }),
+      prisma.referenceImage.count({ where: { ownerId: orgId, entityId: made.entityId!, deletedAt: null } }),
     ).resolves.toBe(1);
   }, 60_000);
 
@@ -63,6 +63,23 @@ describe("createProduct", () => {
     await expect(
       prisma.entity.count({ where: { ownerId: orgId, type: "PRODUCT", deletedAt: null } }),
     ).resolves.toBe(1);
+  }, 60_000);
+
+  it("PRODID-A7 草稿只落价签,不建身份(理解 worker 提取的产品在确认前没有身份)", async () => {
+    const made = await createProduct({
+      ownerId: orgId, data: { name: "Mee goreng", price: "RM 8.00" }, source: "otto", contextStatus: "Draft",
+    });
+    expect(made).toMatchObject({ created: true, entityId: null });
+    if (!made.created) return;
+
+    const record = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: made.id, ownerId: orgId },
+      select: { kind: true, entityId: true, contextStatus: true },
+    });
+    expect(record).toEqual({ kind: "product", entityId: null, contextStatus: "Draft" });
+    // 没有身份,就没有 Library 卡、没有 @ 菜单项 —— 「确认前不出现」由数据本身保证。
+    await expect(prisma.entity.count({ where: { ownerId: orgId, type: "PRODUCT" } })).resolves.toBe(0);
+    await expect(prisma.referenceImage.count({ where: { ownerId: orgId } })).resolves.toBe(0);
   }, 60_000);
 
   it("PRODID-A1 形状不对就不落库:没有名字的产品建不出来", async () => {

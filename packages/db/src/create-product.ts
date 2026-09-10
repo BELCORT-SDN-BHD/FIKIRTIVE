@@ -10,7 +10,14 @@
  * 围栏:除了这个文件,仓库里任何地方都不许 `brandRecord.create(kind='product')`
  * (源码扫描测试 packages/db/src/__tests__/create-product-fence.test.ts)。数据库那一半是
  * CHECK `BrandRecord_product_needs_entity` —— 就算绕过围栏,没有 entityId 的 product 行也
- * 进不了库。
+ * 进不了库(唯一的口子是草稿,见下一段)。
+ *
+ * 草稿(`contextStatus: "Draft"`):规格 §1.2 / §1.9 与验收 PRODID-A7 要的是「网站／素材理解
+ * 自动提取**先进草稿**,商家在 Brand 页确认后才建身份」——「确认前不出现在 Library 与 @ 菜单」
+ * 只有一种做法不靠每一条读路各自记得过滤:草稿这一刻**根本没有身份**。所以 Draft 只落价签
+ * (`entityId` 为 null,`entityId` 是 null 时那条复合外键按 MATCH SIMPLE 不检查),身份留给
+ * 确认那一步(Brand②③,票 #1322 / #1330)。数据库那一半的 CHECK 因此写成
+ * 「product 要么是 Draft,要么有 entityId」。
  *
  * 钱:一分不碰(PRODID-A10)。没有 reserve / settle / ledger,没有 GenJob。
  * 租户:`ownerId` 只能是调用方从服务端 principal 拿到的那一个;复合外键
@@ -44,7 +51,11 @@ export type CreateProductInput = {
   data: Record<string, unknown>;
   source: "otto" | "user";
   status?: "active" | "archived";
-  contextStatus?: string;
+  /**
+   * 价签的上下文状态。`"Draft"` = 草稿:只落价签、**不建身份**(见文件顶部「草稿」一段;
+   * 规格 §1.9 / PRODID-A7)。省略即 `"Ready"`,身份与价签同事务一起出生。
+   */
+  contextStatus?: "Ready" | "Draft";
   origin?: string;
   originDetail?: string | null;
   updatedById?: string | null;
@@ -56,7 +67,8 @@ export type CreateProductInput = {
 };
 
 export type CreateProductOutcome =
-  | { created: true; id: string; entityId: string }
+  /** `entityId` 只有草稿是 null —— 草稿的身份要等商家确认(规格 §1.9)。 */
+  | { created: true; id: string; entityId: string | null }
   | { created: false; existingId: string | null };
 
 /**
@@ -96,21 +108,25 @@ async function createProductIn(tx: Tx, input: CreateProductInput): Promise<Creat
     : new Set<string>();
   const assetIds = wanted.filter((id) => owned.has(id));
 
-  const entityId = newId();
-  await tx.entity.create({
-    data: {
-      id: entityId,
-      ownerId,
-      type: "PRODUCT",
-      name: data.name.slice(0, 120),
-      brandId,
-      baseAssetId: assetIds[0] ?? null,
-    },
-  });
-  for (let i = 0; i < assetIds.length; i++) {
-    await tx.referenceImage.create({
-      data: { id: newId(), ownerId, entityId, assetId: assetIds[i]!, position: i, brandId },
+  // 草稿不建身份(规格 §1.9 / PRODID-A7)。主图仍然只以 `data.imageAssetId` 这条软指针存在,
+  // 而那条软指针现在也被 asset-purge 的「独占」判据认账,所以它不会被别处的删除带走字节。
+  const entityId = input.contextStatus === "Draft" ? null : newId();
+  if (entityId) {
+    await tx.entity.create({
+      data: {
+        id: entityId,
+        ownerId,
+        type: "PRODUCT",
+        name: data.name.slice(0, 120),
+        brandId,
+        baseAssetId: assetIds[0] ?? null,
+      },
     });
+    for (let i = 0; i < assetIds.length; i++) {
+      await tx.referenceImage.create({
+        data: { id: newId(), ownerId, entityId, assetId: assetIds[i]!, position: i, brandId },
+      });
+    }
   }
 
   const id = newId();
@@ -143,8 +159,11 @@ async function createProductIn(tx: Tx, input: CreateProductInput): Promise<Creat
 
   // 撞名了:把刚建出来的身份原样收回。这两句是普通 DELETE,不会让事务 abort,所以调用方
   // (以及理解 worker 那条与 settle 同事务的路径)还能继续走自己的 update 分支。
-  await tx.referenceImage.deleteMany({ where: { entityId, ownerId } });
-  await tx.entity.delete({ where: { id_ownerId: { id: entityId, ownerId } } });
+  // 草稿这一刻没有身份可收(entityId 为 null),直接跳过。
+  if (entityId) {
+    await tx.referenceImage.deleteMany({ where: { entityId, ownerId } });
+    await tx.entity.delete({ where: { id_ownerId: { id: entityId, ownerId } } });
+  }
   const existing = await tx.brandRecord.findFirst({
     where: { ownerId, brandId, kind: "product", nameKey, deletedAt: null },
     select: { id: true },

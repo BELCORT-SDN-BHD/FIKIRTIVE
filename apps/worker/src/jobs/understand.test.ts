@@ -1496,6 +1496,17 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
     mocks.assetUnderstanding.findUnique.mockResolvedValue(row("doc-extract"));
   });
 
+  it("PRODID-A7 读出来的产品只落草稿价签(contextStatus Draft),不当场建身份", async () => {
+    mocks.understand.mockResolvedValue({
+      text: JSON.stringify({ products: [{ name: "Nasi Lemak", price: "RM 8.50" }] }),
+      usage: { inputTokens: 3000, outputTokens: 300 },
+    });
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    // 规格 §1.2 / §1.9:AI 猜出来、商家没确认过的产品在确认前不该出现在 Library 与 @ 菜单。
+    // 共享动作收到 Draft 就只落价签、不建 Entity —— 「不出现」由数据本身保证。
+    expect(mocks.createProduct.mock.calls[0]![0]).toMatchObject({ contextStatus: "Draft" });
+  });
+
   it("读出来的产品行落进 BrandRecord,来源标 otto", async () => {
     mocks.understand.mockResolvedValue({
       text: JSON.stringify({ products: [{ name: "Nasi Lemak", price: "RM 8.50", category: "mains" }] }),

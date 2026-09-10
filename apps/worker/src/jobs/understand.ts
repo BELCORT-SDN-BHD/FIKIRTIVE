@@ -1072,7 +1072,13 @@ async function upsertProductRecord(
   // 那一步同一个理由:在交互式事务里捕获 P2002 是**假的**保护,唯一冲突已经让 Postgres 把
   // 整个事务标成 aborted,之后连 settle 都提交不了。「同一轮里菜单出现两次同名」于是不产生
   // 错误(赢家已经写好了),而其它任何 DB 错误照常抛出去回滚 + 让队列重试。
-  const made = await createProduct({ ownerId, data, source: "otto" }, tx);
+  //
+  // **草稿,不是身份**(规格 §1.2 / §1.9,验收 PRODID-A7):理解 worker 提取的产品是模型猜出来
+  // 的,商家还没点过头,所以它此刻只有价签、没有身份 —— `contextStatus: "Draft"` 让共享动作
+  // 只落 BrandRecord。没有 Entity 就没有 Library 卡、没有 @ 菜单项,「确认前不出现」于是由
+  // 数据本身保证,不靠每一条读路各自记得过滤。确认那一步(建身份)是 Brand②③ 的活
+  // (票 #1322 / #1330)。
+  const made = await createProduct({ ownerId, data, source: "otto", contextStatus: "Draft" }, tx);
   return made.created;
 }
 

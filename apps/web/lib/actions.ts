@@ -469,6 +469,8 @@ export async function createEntity(formData: FormData) {
           // docs/specs/brand-product-identity.md §1.4;PRODID-A3)。
           const made = await createProduct({ ownerId, data: { name }, source: "user", assetIds }, tx);
           if (!made.created) { nameTaken = true; return; }
+          // `entityId` 只有草稿是 null(规格 §1.9,理解 worker 那条入口),这一条不是草稿。
+          if (!made.entityId) throw new Error("createProduct returned no identity for a Library element.");
           entityId = made.entityId;
           return;
         }

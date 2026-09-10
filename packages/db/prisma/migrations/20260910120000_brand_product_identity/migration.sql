@@ -6,7 +6,10 @@
 -- ② 一次性回填:每条 `BrandRecord(kind='product')` 建一条 `Entity(type='PRODUCT')`,把
 --    `data.imageAssetId` 挂成主图(baseAssetId ＋ 一条 ReferenceImage),再把 entityId 写回去。
 -- ③ CHECK `BrandRecord_product_needs_entity`:product 行没有 entityId 就进不了库 ——
---    「一处建、处处可用」从此由数据库保证,不靠调用处记得写。
+--    「一处建、处处可用」从此由数据库保证,不靠调用处记得写。唯一的口子是**草稿**
+--    (`contextStatus = 'Draft'`):规格 §1.9 与验收 PRODID-A7 明写「理解 worker 提取的产品
+--    先落草稿,商家在 Brand 页确认后才建身份」,而「确认前不出现在 Library 与 @ 菜单」最硬的
+--    做法就是那一刻根本没有身份。草稿转正(建身份)是 Brand②③ 的活。
 --
 -- ── 为什么连软删的 product 行也回填 ──────────────────────────────────────────
 -- 规格 §1.4 说的是「每条**活跃** BrandRecord(product) 建 Entity」,而验收 PRODID-A8 要的是
@@ -131,6 +134,6 @@ ALTER TABLE "BrandRecord" ADD CONSTRAINT "BrandRecord_entityId_ownerId_fkey"
 -- 只有 product 有身份那一半,而「product 必须有」由下面这条 CHECK 说死。
 ALTER TABLE "BrandRecord" DROP CONSTRAINT IF EXISTS "BrandRecord_product_needs_entity";
 ALTER TABLE "BrandRecord" ADD CONSTRAINT "BrandRecord_product_needs_entity"
-  CHECK ("kind" <> 'product' OR "entityId" IS NOT NULL);
+  CHECK ("kind" <> 'product' OR "contextStatus" = 'Draft' OR "entityId" IS NOT NULL);
 
 COMMIT;
