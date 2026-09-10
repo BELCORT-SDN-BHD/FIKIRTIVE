@@ -140,6 +140,12 @@ export type RevokeAccessOutcome = "revoked" | "already_revoked" | "unknown";
  *
  * 这个函数不做授权：它是领域动作，权限由调用它的 server action 上的 `requireRole` 把守
  * （`app/admin/access-actions.ts`）。
+ *
+ * 边界（说清楚，不假装覆盖）：**没有 `AllowedEmail` 行的地址答 `unknown`，不新建一行黑名单。**
+ * 今天唯一能进门却没有行的，是只被 `AUTH_ALLOWED_EMAILS` 点过名、还一次都没登录过的地址——
+ * 它的授予在环境变量里，收回也在那里（登录过一次就会有行，那时这个函数管得着，A7 的负例用例
+ * 正是这一条）。要让撤销覆盖到「从没来过的陌生地址」得先决定「预先拉黑」是不是一个产品动作，
+ * 那是规格问题，不是这一层能自己决定的。
  */
 export async function revokeEmailAccess(email: string): Promise<RevokeAccessOutcome> {
   const normalized = email.trim().toLowerCase();
