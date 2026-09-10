@@ -12,12 +12,19 @@ import { storage } from "./storage";
  * 真删对象),当且仅当没有任何东西还指着它 ——
  *   · 没有任何**活的** ReferenceImage 行(不分哪个 entity / variant)—— 同一张照片被去重
  *     挂在两个实体上,或者又被设成某个变体的照片,删掉其中一处不能带走另一处还在用的字节;
- *   · 没有任何**活的** `BrandRecord.data.imageAssetId` 软指针指着它 —— Brand 页的产品卡
+ *   · 没有任何 `BrandRecord.data.imageAssetId` 软指针指着它,**软删的行也算**(理由见下一段)
+ *     —— Brand 页的产品卡
  *     (以及 segment / offer 的配图)把主图记成 `data` 里的一个 assetId,那是一条 JSON 软
  *     指针,没有外键。判官第 1 轮 P0(PR #1337):`createProduct` 之后同一张主图**同时**是
  *     Entity 的 ReferenceImage 与价签的 `data.imageAssetId`,只看前者的话,商家在 Library
  *     删掉那张产品卡就会把 Brand 页价签还指着的字节真删出存储桶,而价签本身还活着 ——
  *     一条谁都没声明过的不可逆删数据路径。软指针在这条判据里与硬引用同权。
+ *     判官第 2 轮 P1(PR #1337)——「活的」这个限定词要去掉:`deleteBrandRecord` 只软删价签,
+ *     而 `restoreBrandRecord` 会把 `data.imageAssetId` 一个字节不改地带回来。于是「先在 Brand 页
+ *     删产品、再去 Library 删掉那张残留卡」这条顺序里,判据会认为没人指着它、把字节**不可逆**地
+ *     真删掉,而商家随后一按恢复,拿回来的是一条指着空气的价签。行是可恢复的,字节不是 ——
+ *     所以这里认账软删的软指针:代价是商家删掉的产品卡还占着字节(可恢复、可另行清理),
+ *     换的是「恢复之后图还在」。fail open,不 fail closed。
  *     窗口的诚实话:软指针没有外键,所以 `FOR UPDATE` 那把锁挡不住一笔并发的
  *     `brandRecord.update` 把 `data.imageAssetId` 指过来(硬引用有 FK,Postgres 的
  *     `FOR KEY SHARE` 会替我们挡住)。今天唯一会这么写的两处(OttoStuff / OttoMemory 的
@@ -96,7 +103,7 @@ export async function purgeOrphanedReferenceAssets(
     // 形状,所以和上面那把锁一样直接写 SQL,租户靠显式 `"ownerId" = ${ownerId}` 字面量兜住。
     tx.$queryRaw<{ assetId: string }[]>`
       SELECT DISTINCT "data"->>'imageAssetId' AS "assetId" FROM "BrandRecord"
-      WHERE "ownerId" = ${ownerId} AND "deletedAt" IS NULL
+      WHERE "ownerId" = ${ownerId}
         AND "data"->>'imageAssetId' = ANY(${lockedIds}::text[])
     `,
   ]);
