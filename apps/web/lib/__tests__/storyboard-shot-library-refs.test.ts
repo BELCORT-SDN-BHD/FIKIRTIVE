@@ -271,6 +271,38 @@ describe("creation §5 :178 —— 没 @ 演员的镜头挂不上图", () => {
     expect("payload" in res).toBe(true);
     expect("referenceGenerationIds" in savedShots()[1]!).toBe(false);
   });
+
+  // 判官 r3 P1 —— 「取下」不只有「一次全取下」那一档。卡面上的取下入口是**逐张**的 X
+  // (StoryboardCard 交出的是「减掉这一张」的整份清单),所以挂着两张的那一镜取下一张之后
+  // 清单**非空**。旧判据只放行空清单,于是演员被删之后这一镜变成「挂着图、又拿不下来」——
+  // 而闸①/闸② 同时对整张卡 fail closed,连别的镜头都出不了片。判据只拦「新增/换图」。
+  it("creation §5 :178: 演员没了,两张里逐张取下也放行(减掉之后的清单非空)", async () => {
+    mockEntityFindFirst.mockResolvedValue(null); // 演员已被删出 Library
+    const p = payload2();
+    p.shots[0]!.referenceGenerationIds = ["gen-mine", "gen-upload"];
+    mockFindFirst.mockImplementation(async (args: { where?: { kind?: string } }) =>
+      args?.where?.kind === "STORYBOARD_CARD" ? card(p) : null,
+    );
+
+    const res = await setShotReferences({ cardId: "card-1", index: 0, refs: ["generation:gen-mine"] });
+
+    expect("payload" in res).toBe(true);
+    expect(savedShots()[0]!.referenceGenerationIds).toEqual(["gen-mine"]);
+  });
+
+  it("creation §5 :178: 演员没了,换一张新的仍旧拒绝(取下一张、再挂一张新的不算取下)", async () => {
+    mockEntityFindFirst.mockResolvedValue(null);
+    const p = payload2();
+    p.shots[0]!.referenceGenerationIds = ["gen-mine"];
+    mockFindFirst.mockImplementation(async (args: { where?: { kind?: string } }) =>
+      args?.where?.kind === "STORYBOARD_CARD" ? card(p) : null,
+    );
+
+    const res = await setShotReferences({ cardId: "card-1", index: 0, refs: ["generation:gen-upload"] });
+
+    expect(res).toEqual({ error: NO_CAST_FOR_REFERENCES_BLOCK });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
 });
 
 /**

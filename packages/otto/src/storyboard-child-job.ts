@@ -224,8 +224,12 @@ export const NO_CAST_FOR_REFERENCES_BLOCK =
  * 判据与闸② 同一条(`Entity.type === "CHARACTER"` 且是这家店活着的元素),owner-scope 由传入的
  * ownerId 承担 —— 别家店的演员 id 在这里读不出来,那一镜照旧算「没 @ 演员」。
  *
- * **取下图永远放行**:空清单不进这道闸。否则演员后来被删出 Library 的那一镜会变成「挂着图、
- * 又拿不下来」的终态 —— 没有内容也没有出路的那种,这张卡上一个都不许有。
+ * **取下图永远放行**——判据是「新清单里没有一张是新的」,不是「新清单是空的」(判官 r3 P1)。
+ * 卡面唯一的取下入口是**逐张**的 X(`StoryboardCard` 交出的是「减掉这一张」的整份清单),所以
+ * 挂着两张的那一镜取下一张之后清单非空。只放行空清单,等于演员被删出 Library 之后这一镜变成
+ * 「挂着图、又拿不下来」的终态:闸①/闸② 同时对**整张卡** fail closed(别的镜头也出不了片),
+ * 而拒绝句给的两条出路(取下图 / 补 @ 演员)在卡面上都走不通(编辑面拒收元素引用)。
+ * 这道闸要拦的只有**新增/换图** —— 让这一镜真会送进引擎的材料多出一张它带不上的东西。
  * 不碰挂图这一格的编辑(改文字 / 时长)同样一格不动:patch 上没有这个键就直接放行。
  */
 export async function referenceRideBlock(
@@ -235,6 +239,9 @@ export async function referenceRideBlock(
   patch: ShotPromptPatch,
 ): Promise<string | null> {
   if (!patch.referenceGenerationIds?.length) return null;
+  // 新清单里每一张都已经挂在这一镜上 ⇒ 这次只减不增(逐张取下 / 原样重发),放行。
+  const attached = new Set(shot.referenceGenerationIds ?? []);
+  if (patch.referenceGenerationIds.every((id) => attached.has(id))) return null;
   const entityIds = shot.entityIds ?? [];
   if (entityIds.length === 0) return NO_CAST_FOR_REFERENCES_BLOCK;
   const cast = await tx.entity.findFirst({
