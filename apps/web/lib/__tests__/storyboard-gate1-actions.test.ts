@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GEN_VIDEO_MODEL_OPTIONS, pricedGenCredits, displayCredits } from "@fikirtive/core";
+import { GEN_VIDEO_MODEL_OPTIONS, pricedGenCredits, displayCredits, cardQuoteVersion } from "@fikirtive/core";
 // FSE-002 复修轮:铸卡层拒绝的**基类** —— 入口接的一直是它(`packages/otto/src/index.ts` 的
 // 注释逐字写着这条纪律),所以这里演的拒绝也用它,而不是某一族的具体子类。
 import { ProposeRefusal } from "@fikirtive/otto";
@@ -3843,6 +3843,84 @@ describe("FSE-001 同族 · 闸③ —— sync 把「哪几镜直接出片」如
     if (!("shots" in res)) throw new Error("expected shots");
     expect(reportOf(res, "s0").directToVideo).toBe(true);
     expect(reportOf(res, "s1").directToVideo).toBe(false);
+  });
+});
+
+/**
+ * FSE-012（`docs/specs/creation-engine.md` §5 :170，Founder 2026-09-10 裁 #1307）——
+ * 分镜确认框也是一张确认卡，它的每一处付费点都要交回「商家按下的是哪一版报价」。
+ *
+ * 与抽屉里那张卡不同的是：**子卡的完整 payload 从不下发给浏览器**（`model` 是供应商机密），
+ * 所以浏览器无从自己算这一串，只能由服务端**铸卡的那一刻**算好随子卡交上去。这一族钉的正是
+ * 「交上去的那一串，算的是刚写进库的那一份 payload」——算错了对象，服务端拿库里那张卡再算
+ * 一次必然对不上，商家会被一道本该放行的闸挡在门外。
+ *
+ * 追溯落在变更登记行 §5 :170 上，不认领任何 CREATE- 编号（理由与本片其余测试同一把尺子，
+ * 见 PR #1333 描述）。
+ */
+describe("creation §5 :170 FSE-012 分镜子卡的报价版本", () => {
+  it("creation §5 :170 FSE-012 铸出来的子卡:交上去那一串算的是**刚写进库的那一份 payload**", async () => {
+    wireLoads(card(payload3()));
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error(`expected children, got ${JSON.stringify(res)}`);
+
+    // 铸了两张(s0/s2)。逐张把「交上去的那一串」与「那一次 chatMessage.create 写进库的 payload」对签。
+    expect(mockChatCreate).toHaveBeenCalledTimes(2);
+    const writtenByCardId = new Map<string, unknown>(
+      mockChatCreate.mock.calls.map((c) => [c[0].data.id as string, c[0].data.payload]),
+    );
+    expect(res.children).toHaveLength(2);
+    for (const child of res.children) {
+      const written = writtenByCardId.get(child.childCardId);
+      expect(written, `子卡 ${child.childCardId} 没有对应的入库写入`).toBeTruthy();
+      expect(child.quoteVersion).toBe(cardQuoteVersion(written));
+    }
+    // 这一串描述的是**那份报价**,不是「这是哪一张卡」:两镜的价钱那几格一模一样(同 kind、
+    // 同张数、同形状、同 5 credits),所以两串本来就该相同。「批的是哪一张」由 cardId 那一格
+    // 管 —— 服务端两处判据都是「拿**这个 cardId 的那张卡**再算一次」(`card-quote-version.ts`
+    // 按 id 读卡;`generate.ts` 那一步还额外要求 `approvedQuoteVersion.cardId === input.cardId`),
+    // 版本串从来不用来认卡。把这条写下来,是免得日后有人误以为它是一枚身份令牌。
+    expect(new Set(res.children.map((c) => c.quoteVersion)).size).toBe(1);
+  });
+
+  it("creation §5 :170 FSE-012 复用的那一张:版本从**库里那份 payload** 算,不是另铸一份", async () => {
+    const p = payload3();
+    p.shots[0].firstFrameCardId = "child-0";
+    p.shots[2].firstFrameGenerationId = "gen2"; // 只留 s0 这一支,断言干净
+    const stored = { structuredPrompt: "ff0", entityIds: ["e0"], estimatedCredits: 5, model: "seedream", params: { count: 1 } };
+    wireLoads(card(p), { "child-0": { payload: stored, genJobId: null } });
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error(`expected children, got ${JSON.stringify(res)}`);
+
+    expect(mockChatCreate).not.toHaveBeenCalled(); // 复用,没铸新
+    expect(res.children).toHaveLength(1);
+    expect(res.children[0].childCardId).toBe("child-0");
+    expect(res.children[0].quoteVersion).toBe(cardQuoteVersion(stored));
+  });
+
+  it("creation §5 :170 FSE-012 卡上改了一格价钱相关的:交上去那一串跟着换(不是一个常数)", async () => {
+    // 同一镜、同一条铸卡路,只把「视频那一格的形状」换掉 —— 铸出来的首帧形状跟着换,
+    // 而 aspectRatio 是决定价格的那几格之一,所以版本必须换一串。
+    useVideoShape("1:1");
+    wireLoads(card(payload3()));
+    const square = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in square)) throw new Error("expected children");
+    const squareVersion = square.children.find((c) => c.shotId === "s0")!.quoteVersion;
+
+    vi.clearAllMocks();
+    idCounter = 0;
+    cardLocks.clear();
+    mockOwner.mockResolvedValue({ ownerId: OWNER });
+    mockResolvedDefaults();
+    useVideoShape("9:16");
+    wireLoads(card(payload3()));
+    const tall = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in tall)) throw new Error("expected children");
+    const tallVersion = tall.children.find((c) => c.shotId === "s0")!.quoteVersion;
+
+    expect(tallVersion).not.toBe(squareVersion);
   });
 });
 

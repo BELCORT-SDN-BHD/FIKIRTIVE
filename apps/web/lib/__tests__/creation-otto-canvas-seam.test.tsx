@@ -128,7 +128,8 @@ describe("CREATE-A1 · 确认卡在始终可见的 Otto 卡片里（走查 P0-3�
       cardId: "card-9",
       pendingApproval: true,
     });
-    expect(approved).toHaveBeenCalledWith({ cardId: "card-9", chained: null });
+    // FSE-012（判官第 6 轮 P1）—— 多的那一格「这一次成交了没有」，两张卡逐字同形。
+    expect(approved).toHaveBeenCalledWith({ cardId: "card-9", chained: null, approved: true });
   });
 
   it("CREATE-A1 · 报不出价的卡在可见卡里不给按钮（与抽屉里同一个门）", () => {

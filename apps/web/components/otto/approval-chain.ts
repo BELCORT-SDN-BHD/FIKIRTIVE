@@ -25,6 +25,9 @@
  * Mirrors the pack-credit-math.ts pattern (pure module beside the components,
  * unit-tested in apps/web/lib/__tests__/approval-chain.test.ts).
  */
+// FSE-012 —— 报价版本对不上时服务端那一句。措辞只有这一份(子路径:包根会把 node:crypto
+// 拖进客户端包,与 plan-approval.ts 同一条理由)。
+import { QUOTE_VERSION_STALE } from "@fikirtive/core/quote-version";
 import type { OttoUiMessage } from "@/lib/otto-ui-messages";
 import type { ChatThreadDTO } from "@/lib/types";
 import { appendCanvasActionRequests, appendChainedNarrations, appendDurableResults, appendMissingCards, syncCardJobIds } from "@/lib/otto-inject-helpers";
@@ -71,6 +74,26 @@ export function chainedApprovalOf(res: unknown): ChainedApproval | null {
   };
 }
 
+/**
+ * FSE-012（验收 R2）—— 这一次答复是不是「你按的那份报价过期了，这是它现在的报价」。
+ *
+ * 服务端把这件事说在两处，因为它们是两种局面，不是两套规则：
+ *   · 单张卡被拒 ⇒ `{ error: QUOTE_VERSION_STALE, quote }`；
+ *   · 恢复轮停在**别的**批准上、而这一张被拒 ⇒ `{ ok:true, status:"needs_approval", …, staleQuote }`
+ *     （链上那些卡照旧要在 `pendingCardIds` 里说清楚，两件事一起说）。
+ *
+ * 读法只有这一份：一叠卡的批量循环、单张卡的 `plan-approval`，都从这里问同一个问题 ——
+ * 否则一处认 `error`、另一处认 `staleQuote`，同一个拒绝在两个入口上有两种结局（§7.3）。
+ * `quote` 可以是 null（那张卡刚好被删了）：那就只有话，没有新价，卡面照旧。
+ */
+export function quoteRefusalOf(res: unknown): { quote: unknown } | null {
+  if (!res || typeof res !== "object") return null;
+  const r = res as { error?: unknown; quote?: unknown; staleQuote?: { error?: unknown; quote?: unknown } };
+  if (r.error === QUOTE_VERSION_STALE) return { quote: r.quote ?? null };
+  if (r.staleQuote && r.staleQuote.error === QUOTE_VERSION_STALE) return { quote: r.staleQuote.quote ?? null };
+  return null;
+}
+
 /** Next pending-approval set after an approve. When the response parked again
  *  (`chainedPendingCardIds` present) that array is the server's COMPLETE set
  *  (ChainedApproval.pendingCardIds contract) and REPLACES the local set — an id
@@ -115,6 +138,14 @@ export type PackApprovalOutcome = {
   narrationMessageIds: string[];
   /** Set when a card errored/threw; the loop stopped at that card. */
   failure: { index: number; message: string | null } | null;
+  /**
+   * FSE-012（验收 R2）—— 这一趟里**换了价**的那几张卡，按点下去的次序。
+   *
+   * 它们既没成交也不算失败：服务端拒了那份过期报价、交回了新的一份，整批照跑（后面那些
+   * 没漂的照常生成）。调用方拿这一格告诉商家「哪几张换了价」，并让它们保住自己的批准闸
+   * （不进 `firedCardIds`、不打 ✓、pending 一格不动）。
+   */
+  quoteRefreshedCardIds: string[];
 };
 
 /** Run the pack's sequential fire loop over `cards` with ONE authoritative
@@ -144,9 +175,13 @@ export async function runPackApprovalLoop<C extends { cardId: string; pendingApp
   /** UI hook: card got a successful response; `cleared=false` when the server
    *  re-reported it pending (its approve gate must survive). */
   onCardSettled?: (cardId: string, cleared: boolean) => void;
+  /** FSE-012（验收 R2）UI hook：这张卡的报价过期了，`quote` 是它**现在**那一份（已过
+   *  服务端那条剥离）。调用方把它写回卡面 —— 「拒绝并刷新」的后半句在批量入口上也要成立。 */
+  onQuoteRefreshed?: (cardId: string, quote: unknown) => void;
 }): Promise<PackApprovalOutcome> {
   const pending = new Set(opts.cards.filter((c) => c.pendingApproval).map((c) => c.cardId));
   const firedCardIds: string[] = [];
+  const quoteRefreshedCardIds: string[] = [];
   const narrationMessageIds: string[] = [];
   let fallbackReply: string | null = null;
   let pendingFromServer = false;
@@ -158,6 +193,7 @@ export async function runPackApprovalLoop<C extends { cardId: string; pendingApp
     fallbackReply,
     narrationMessageIds,
     failure,
+    quoteRefreshedCardIds,
   });
 
   for (let i = 0; i < opts.cards.length; i++) {
@@ -169,7 +205,16 @@ export async function runPackApprovalLoop<C extends { cardId: string; pendingApp
     } catch {
       return outcome({ index: i, message: null });
     }
-    if (res && typeof res === "object" && "error" in res) {
+    // FSE-012（验收 R2）—— 「你按的那份报价过期了」不是这一批的失败，是**这一张**的刷新。
+    // 从前它走下面那条 `error` 出口：整批当场停在这里，后面那些**一格都没漂**的卡跟着一起
+    // 不跑，而商家眼前那张卡还写着旧价 —— 一颗按下去只会停住整批、数字永远不变的按钮。
+    // 现在逐卡处理：交回来的新报价写回卡面，这一张保住它自己的批准闸，循环照走。
+    const refusal = quoteRefusalOf(res);
+    if (refusal) {
+      if (refusal.quote) opts.onQuoteRefreshed?.(card.cardId, refusal.quote);
+      quoteRefreshedCardIds.push(card.cardId);
+    }
+    if (!refusal && res && typeof res === "object" && "error" in res) {
       const message = (res as { error?: unknown }).error;
       return outcome({ index: i, message: typeof message === "string" ? message : null });
     }
@@ -193,11 +238,14 @@ export async function runPackApprovalLoop<C extends { cardId: string; pendingApp
       // later cards route to the generate channel, never a doomed ottoApprove.
       pending.clear();
       pendingFromServer = true;
-    } else {
+    } else if (!refusal) {
       // No set information (coworkGenerate ok / already-resolved / degraded /
       // stale): the fired card's park is consumed; nothing else moves.
       pending.delete(card.cardId);
     }
+    // 换了价的那一张**什么都没成交**：不进 firedCardIds（父层据此才不会把它当成已批准的
+    // 一张），不打 ✓，它那道批准闸原样留着 —— 商家看着新价再决定按不按。
+    if (refusal) continue;
     firedCardIds.push(card.cardId);
     opts.onCardSettled?.(card.cardId, !pending.has(card.cardId));
   }

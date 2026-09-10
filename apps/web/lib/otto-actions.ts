@@ -45,6 +45,8 @@ import {
   diagnosticRef,
   // 「行在、文件在不在」那一问。取不到的引用要在 reserve 之前拦住,而不是等 worker 退款。
   storageKey,
+  // FSE-012 —— 报价版本对不上时商家读到的那一句。措辞只有这一份(卡面与两条批准路共用)。
+  QUOTE_VERSION_STALE,
   type ReferenceUnavailableReason,
   type SegmentRuleGroup,
 } from "@fikirtive/core";
@@ -93,6 +95,7 @@ import { spendCapRefusal, approvedToolCostInternal, approvedGenerateCostInternal
 import { consumeOttoTurnGate, OTTO_TURN_RATE_LIMIT_MESSAGE } from "@/lib/rate-limit-gates";
 import { resolveDisabledModels } from "./model-registry";
 import { startCoworkGen } from "./gen-actions";
+import { staleQuoteRefusal, refreshedQuoteFor, type StaleQuote } from "./card-quote-version";
 import { runVariantBatch, runBulkGrid } from "./factory-actions";
 import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
@@ -2277,13 +2280,24 @@ export async function ottoUpdateGenCardOptions(raw: unknown): Promise<
 
 export async function ottoApprove(raw: unknown): Promise<
   | { ok: true; status: "done"; reply: string; genJobId?: string }
-  | { ok: true; status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null; narrationMessageId: string | null }
+  | {
+      ok: true;
+      status: "needs_approval";
+      pendingCardIds: string[];
+      fallbackReply: string | null;
+      narrationMessageId: string | null;
+      /** FSE-012(判官第 5 轮 P2-b)—— 这一趟**停在别的批准上**,而**这一张**在恢复轮里被
+       *  报价版本闸拒了。从前这一支一律 `ok:true`,父层照旧把这张卡标成已批准 —— 一次假成功。
+       *  两件事分开说:`pendingCardIds` 照带(链上那些卡确实还等着),这一格说的是「你按的
+       *  这一张没成,这是它现在的报价」。缺席 ⇒ 这张卡没被拒,与这道闸出现之前逐字相同。 */
+      staleQuote?: StaleQuote;
+    }
   | { ok: true; status: "degraded" }
   | { ok: true; status: "stale" }
   | { ok: true; genJobId: string; status: string } // double-approve: existing job
   | { ok: true; alreadyResolved: true; resolution: ApprovalCardResolution } // consumed/expired card: idempotent refusal
   // Codex staging CRE-STG-P2-004 —— `ref` 只在真正未知的那一支出现(见文末 catch)。
-  | { error: string; ref?: string | null }
+  | { error: string; ref?: string | null; quote?: unknown }
 > {
   // Inline validation (no zod dep in apps/web) — mirror brief schema
   if (
@@ -2299,6 +2313,9 @@ export async function ottoApprove(raw: unknown): Promise<
     return { error: "Invalid approval request." };
   }
   const { threadId, cardId } = raw as { threadId: string; cardId: string };
+  // FSE-012 —— 商家按下的那份报价是哪一版。校验在下面(读得到卡才比对);这里只把它从
+  // 请求里取出来,取不到就是没带,照旧放行。
+  const submittedQuoteVersion = (raw as Record<string, unknown>).quoteVersion;
 
   // Tenant scope: identity from requireOwner only, never from input
   const gate = await requireOwner();
@@ -2306,13 +2323,24 @@ export async function ottoApprove(raw: unknown): Promise<
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<
     | { ok: true; status: "done"; reply: string; genJobId?: string }
-    | { ok: true; status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null; narrationMessageId: string | null }
+    | {
+      ok: true;
+      status: "needs_approval";
+      pendingCardIds: string[];
+      fallbackReply: string | null;
+      narrationMessageId: string | null;
+      /** FSE-012(判官第 5 轮 P2-b)—— 这一趟**停在别的批准上**,而**这一张**在恢复轮里被
+       *  报价版本闸拒了。从前这一支一律 `ok:true`,父层照旧把这张卡标成已批准 —— 一次假成功。
+       *  两件事分开说:`pendingCardIds` 照带(链上那些卡确实还等着),这一格说的是「你按的
+       *  这一张没成,这是它现在的报价」。缺席 ⇒ 这张卡没被拒,与这道闸出现之前逐字相同。 */
+      staleQuote?: StaleQuote;
+    }
     | { ok: true; status: "degraded" }
     | { ok: true; status: "stale" }
     | { ok: true; genJobId: string; status: string } // double-approve: existing job
     | { ok: true; alreadyResolved: true; resolution: ApprovalCardResolution } // consumed/expired card: idempotent refusal
     // Codex staging CRE-STG-P2-004 —— `ref` 只在真正未知的那一支出现(见文末 catch)。
-    | { error: string; ref?: string | null }
+    | { error: string; ref?: string | null; quote?: unknown }
   > => {
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
     const { ownerId } = gate;
@@ -2330,6 +2358,12 @@ export async function ottoApprove(raw: unknown): Promise<
     let claimedPayload: ApprovalCardPayload | null = null;
 
     try {
+      // FSE-012 —— 两条批准路共用的那一道报价版本闸(`card-quote-version.ts`),排在这条路
+      // 做任何事之前:拒绝时什么都没恢复、什么都没消费、账本零新增行。这张卡若不是一张
+      // GEN_CARD(非生成类的 APPROVAL_CARD 走同一个 cardId 空间),闸自己不作声。
+      const stale = await staleQuoteRefusal(ownerId, cardId, submittedQuoteVersion);
+      if (stale) return stale;
+
       // Load thread owner-scoped (cross-tenant rejected)
       const thread = await prisma.chatThread.findFirst({
         where: { id: threadId, ownerId, deletedAt: null },
@@ -2615,6 +2649,13 @@ export async function ottoApprove(raw: unknown): Promise<
       //  - runFactoryBatch: rebuilt so its closure carries the consumed APPROVAL_CARD.id. Still never
       //    from model args; a non-factory approve keeps the attemptId-less (refusing) port.
       ctx.approvalConsent = approvalConsent;
+      // FSE-012（判官第 3 轮 P2-b）—— 门口那道闸只证明了**按下按钮那一刻**卡还是他看的那一版;
+      // 恢复轮里 `generate` 技能会把整份请求按**它自己那次读到的卡**重新拼一遍,中间那一段
+      // 时间里卡还可以被改。所以把「他批的是哪一版」随 ctx 一路带进去,由那一步与它自己读出来
+      // 的那张卡再比一次 —— 校验的卡与执行的卡因此是同一份。带 cardId:这一版只批准了这一张。
+      ctx.approvedQuoteVersion = typeof submittedQuoteVersion === "string" && submittedQuoteVersion.length > 0
+        ? { cardId, version: submittedQuoteVersion }
+        : undefined;
       if (factoryAttemptId) ctx.runFactoryBatch = makeFactoryBatchPort(factoryAttemptId);
 
       // Resume the run, metered (LLM cost of this resume turn); refId is bound above.
@@ -2734,6 +2775,12 @@ export async function ottoApprove(raw: unknown): Promise<
           // 尾巴组十一(#1218 判官 P2-3):从前这里只凭那面旗就说「没收钱」,与下面第 5 支
           // 「PROVEN, not assumed」的规定正好相反 —— 恢复轮是**先跑完被批准的那件工具**再撞上
           // 步数上限的,那笔生成可能已经付过钱了。现在两门同一个判据:要账本证据才说。
+          // FSE-012（判官第 6 轮 P1）—— 这一趟里那道报价版本闸拒过这张卡没有。**同一个事实、
+          // 同一处判据**，与下面那两个终局出口读的是同一格（`generate` 技能自己报上来的）。
+          // 从前只有「跑完」与「又停在别的批准上」两个出口读它，撞上步数上限的这一支直接
+          // `ok:true, status:"degraded"` 就走了 —— `plan-approval.ts` 把 degraded 当成功，
+          // 一张什么都没生成的卡被父层标成已批准，商家再按同一颗按钮还会被告知不在等批准。
+          const quoteRefusedInDegrade = ctx.approvedQuoteVersion?.refused === true;
           const degradeText = ottoDegradeText(await chargedNothingProven(ownerId, refundedRefId));
           // Persist the degrade message so the user actually sees it (parity with ottoTurn),
           // plus the partial RunState if the SDK attached one.
@@ -2754,13 +2801,21 @@ export async function ottoApprove(raw: unknown): Promise<
             },
           });
           const errState = (e as { state?: { toString(): string } }).state;
-          if (errState) {
+          // 被拒时**不写**那份截断状态：它会把「这张卡还停在等批准」那个停车位盖掉，而
+          // 「拒绝并刷新」的后半句（Founder 裁决原文，规格 §5 :170）要的正是那颗按钮再按
+          // 一次就成交。生成那一笔本来就零任务行、零预扣，所以留着停车位不会让任何东西
+          // 被收两次（`cowork:<cardId>` 那把幂等键仍是最后一道）。
+          if (errState && !quoteRefusedInDegrade) {
             await prisma.chatThread.update({
               where: { id: threadId },
               data: { ottoState: errState.toString(), updatedAt: new Date() },
             });
           }
           revalidatePath("/", "layout");
+          if (quoteRefusedInDegrade) {
+            const refreshed = await refreshedQuoteFor(ownerId, cardId);
+            return refreshed ?? { error: QUOTE_VERSION_STALE };
+          }
           return { ok: true, status: "degraded" };
         }
 
@@ -2800,6 +2855,14 @@ export async function ottoApprove(raw: unknown): Promise<
       const finalization = finalizeOttoTurn(result, ottoApprovalResumeRuntime);
       const newOttoState = finalization.newOttoState;
 
+      // FSE-012（验收 R1 / 判官第 5 轮 P2-a）—— 这一趟里那道报价版本闸**到底有没有拒这一张卡**。
+      //
+      // 事实由闸自己报上来（`generate` 技能在 `ctx.startGen` 之前置的那一格），不是外层猜的。
+      // 从前的判据是「这一趟有没有留下任务行」：同一轮恢复里模型生成了**别的**卡时，这一张
+      // 当然没有任务行 —— 于是一次与报价毫无关系的恢复轮被说成「价变了」，`onApproved` 也不
+      // 再调用。判据换成事实之后，那一类误报连发生的位置都没有了。
+      const quoteRefusedInResume = ctx.approvedQuoteVersion?.refused === true;
+
       // (Universal card already consumed pending→approved BEFORE the resume — AR1 处方2 CAS.)
 
       // Handle another interruption (chained approval needed)
@@ -2827,6 +2890,13 @@ export async function ottoApprove(raw: unknown): Promise<
           // terminal exit of this action leaving evidence in the thread.
           await persistAgentNote(threadId, ownerId, APPROVE_STALE_INTERRUPTED_NOTE);
           revalidatePath("/", "layout");
+          // FSE-012（判官第 6 轮 P1）—— CAS 输了不等于这张卡成功了。那道闸拒过它的话，
+          // 这一支从前一律 `ok:true, status:"stale"`，而 `plan-approval.ts` 把 stale 也
+          // 当成功：又是一张什么都没生成的卡被标成已批准。拒绝优先说，刷新后的报价随它回去。
+          if (quoteRefusedInResume) {
+            const refreshed = await refreshedQuoteFor(ownerId, cardId);
+            return refreshed ?? { error: QUOTE_VERSION_STALE };
+          }
           return { ok: true, status: "stale" };
         }
 
@@ -2895,11 +2965,44 @@ export async function ottoApprove(raw: unknown): Promise<
         }
 
         revalidatePath("/", "layout");
-        return { ok: true, status: "needs_approval", pendingCardIds, fallbackReply, narrationMessageId };
+        // FSE-012（判官第 5 轮 P2-b）—— 停在别的批准上，**而这一张被拒了**：两件事一起说。
+        // 链上那些卡的 id 一个不少（上面那份契约不变），这一格另说「你按的这一张没成」，
+        // 并带上它现在的报价 —— 父层因此不会把一张什么都没生成的卡标成已批准。
+        const staleQuote = quoteRefusedInResume ? await refreshedQuoteFor(ownerId, cardId) : null;
+        return {
+          ok: true,
+          status: "needs_approval",
+          pendingCardIds,
+          fallbackReply,
+          narrationMessageId,
+          ...(quoteRefusedInResume ? { staleQuote: staleQuote ?? { error: QUOTE_VERSION_STALE, quote: null } } : {}),
+        };
       }
 
       // Completed — persist Otto's reply + updated ottoState (CAS guard)
       const replyText = finalization.text;
+
+      // ── FSE-012 验收 R1 —— 「旧报价提交即**拒绝并刷新**」的后半句就在这里 ──────────────
+      //
+      // 恢复轮里那道迟到的拒绝(`generate` 技能在 `ctx.startGen` 之前拒的)之后，商家按下
+      // **同一颗按钮**再提交一次，从前得到的是 `That card isn't awaiting approval.`：那张停着
+      // 等批准的卡被这一趟消费掉了 —— 停车位没了，「刷新」于是等于「这条路走不通了」。
+      //
+      // 所以这一支在**任何会改卡状态的动作之前**返回：下面那次 CAS 会把线程的 `ottoState`
+      // 换成恢复轮之后的那一版，而那正是「停车位」本身。不写它 ⇒ 线程仍停在这张卡的 generate
+      // 上 ⇒ 商家看到新价、按同一颗按钮再提交一次，走的还是这条 `ottoApprove`，这一次成交。
+      //
+      // 代价与边界，两条都写在这里：① 这一轮的**对话花费**(恢复轮的 LLM 预扣/结算)已经发生
+      // 且不退 —— 恢复轮真的跑过；这里保证的是**生成那一笔没花**(零任务行、零生成预扣)，
+      // 以及商家听到的是拒绝而不是「已批准」。② 这一轮模型说的那句话不落库：它讲的是一次
+      // 没有发生的生成，而卡还停在原地等着被批准 —— 留着它只会在卡上方立一句假回执。
+      // (模型在同一轮里生成的**别的**卡不受影响：那些任务行与它们的钱都已经落地，
+      // 而重批时 `cowork:<cardId>` 那把幂等键让它们不会被第二次收钱。)
+      if (quoteRefusedInResume) {
+        const refreshed = await refreshedQuoteFor(ownerId, cardId);
+        revalidatePath("/", "layout");
+        return refreshed ?? { error: QUOTE_VERSION_STALE };
+      }
 
       // Look up the GenJob created by the resumed generate (best-effort, for UI)
       const genJob = await prisma.genJob.findFirst({
