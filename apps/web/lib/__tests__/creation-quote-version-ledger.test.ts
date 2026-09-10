@@ -66,7 +66,10 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
   };
 });
 
-const { ottoBudgetArgsFor, executeGenerate } = await import("@fikirtive/otto");
+const { ottoBudgetArgsFor, executeGenerate, MaxTurnsExceededError } = await import("@fikirtive/otto");
+// 判官第 6 轮 P1 —— 「闸读卡之后、钱事务之前」那一格窗口的把手：守望者这一步就在窗口里
+// （`gen-actions.ts` 把 checkCast 排在 `prisma.$transaction` 之前），所以并发重铸演在这里。
+const { checkCast } = await import("../cowork-guardian");
 const { coworkGenerate } = await import("../cowork-actions");
 const { ottoUpdateGenCardOptions, ottoApprove } = await import("../otto-actions");
 const { toChatMessageDTO } = await import("../dto");
@@ -178,6 +181,11 @@ async function armApprovalResume(
      * 传进来的是那一张仍停着的卡的 id：finalizer 从这一格读出「还有人在等批准」。
      */
     parkAgainOnCardId?: string;
+    /**
+     * 判官第 6 轮 P1 —— 恢复轮**跑完那一步之后**炸掉（步数上限那一支）。返回要抛的那个
+     * 错，让用例自己决定它是哪一种（`MaxTurnsExceededError` 走 degraded 那个终局出口）。
+     */
+    throwAfterGenerate?: () => Error;
   },
 ) {
   capturedResumeCtx = null;
@@ -207,6 +215,7 @@ async function armApprovalResume(
       return execution.meter(ottoBudgetArgsFor(runtime, request, ctx), async () => {
         if (opts?.duringResume) await opts.duringResume();
         if (opts?.runGenerate) await executeGenerate({ cardId }, { context: ctx } as never);
+        if (opts?.throwAfterGenerate) throw opts.throwAfterGenerate();
         return {
           result: {
             finalOutput: "",
@@ -787,5 +796,134 @@ describe("creation §5 :170 FSE-012 交回浏览器那一份的剥离只有一�
     expect(src).toMatch(/genCardPayloadDTO\(card\.payload\)/);
     // 原样交回库里那份的写法(任何形式的 `quote: card.payload`)不许出现。
     expect(src).not.toMatch(/quote:\s*card\.payload/);
+  });
+});
+
+/**
+ * 判官第 6 轮的四条，都在同一处根因上：**那道闸报上来的判决，外层读得全不全。**
+ *
+ * 第 5 轮把「这一趟到底发生了什么」从推断改成事实（`ctx.approvedQuoteVersion.refused`），
+ * 但那一格只**置**不**清**、只覆盖闸自己那一次比对、而且只有两个终局分支去读它。于是同一
+ * 个事实在三个地方各说各话：
+ *   · 同一趟里「先被拒、随后同一张卡真的生成成功」⇒ 仍按被拒返回，而任务行与预扣已经落地；
+ *   · 拒绝发生在**下游**（`startGen` 事务里那次逐字复读）⇒ 一格都没置，那一趟被说成成功；
+ *   · 恢复轮撞上步数上限／CAS 输了 ⇒ 两个出口都在读那一格之前就 `ok:true` 走了。
+ */
+describe("creation §5 :170 FSE-012 判官第 6 轮:那道闸的判决,三个出口读的是同一个事实", () => {
+  it("creation §5 :170 FSE-012 同一趟恢复里先被拒、随后同一张卡真的生成成功:不许再按被拒返回", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+    const approved = cardQuoteVersion(card.payload);
+    let played = false;
+    await armApprovalResume(world, card.cardId, {
+      // 恢复轮里模型对工具错误重试一次:同一轮里第二次调用 `generate`。
+      // 商家在这中间把那一格改回去（不锁控件 ⇒ 他改得动），版本于是重新对上。
+      duringResume: async () => {
+        if (played) return;
+        played = true;
+        const ctx = capturedResumeCtx as never;
+        const up = await ottoUpdateGenCardOptions({ threadId: world.threadId, cardId: card.cardId, count: 2 });
+        if ("error" in up) throw new Error(`改档被拒:${up.error}`);
+        const first = await executeGenerate({ cardId: card.cardId }, { context: ctx } as never);
+        expect(first).toMatchObject({ error: QUOTE_VERSION_STALE });
+        const back = await ottoUpdateGenCardOptions({ threadId: world.threadId, cardId: card.cardId, count: 1 });
+        if ("error" in back) throw new Error(`改回去被拒:${back.error}`);
+        expect(cardQuoteVersion(await persistedCard(world, card.cardId))).toBe(approved);
+        const second = await executeGenerate({ cardId: card.cardId }, { context: ctx } as never);
+        expect(second).toMatchObject({ status: "queued" });
+      },
+    });
+
+    const res = await ottoApprove({ threadId: world.threadId, cardId: card.cardId, quoteVersion: approved });
+
+    // 生成真的发生了(一行任务、一笔生成预扣) —— 这一趟不许被说成「价变了、什么都没生成」。
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(1);
+    expect(res).not.toMatchObject({ error: QUOTE_VERSION_STALE });
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    expect((res as { genJobId?: string }).genJobId).toBeTruthy();
+  });
+
+  it("creation §5 :170 FSE-012 拒绝发生在下游那次逐字复读(卡在闸与钱事务之间被改):那一趟也不许被说成成功", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+    const approved = cardQuoteVersion(card.payload);
+    // 那道闸读卡之后、钱事务之前的那一格窗口:守望者这一步就在窗口里(`gen-actions.ts`
+    // 的 checkCast 排在 `prisma.$transaction` 之前),用它把并发重铸演到那一刻。
+    (checkCast as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      const rebuilt = await ottoUpdateGenCardOptions({ threadId: world.threadId, cardId: card.cardId, count: 2 });
+      if ("error" in rebuilt) throw new Error(`窗口里改档被拒:${rebuilt.error}`);
+      return null;
+    });
+    await armApprovalResume(world, card.cardId, { runGenerate: true });
+
+    const res = await ottoApprove({ threadId: world.threadId, cardId: card.cardId, quoteVersion: approved });
+
+    // 钱事务在 create/reserve 之前就拒了:零任务行。
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
+    // 而商家听到的必须是那句拒绝 ＋ 刷新后的那张卡,不是 `status:"done"`。
+    expect(res).toMatchObject({ error: QUOTE_VERSION_STALE });
+    expect(res).not.toMatchObject({ ok: true });
+    expect(((res as { quote?: { params?: { count?: number } } }).quote?.params)?.count).toBe(2);
+  });
+
+  it("creation §5 :170 FSE-012 恢复轮撞上步数上限:被拒的那一张不许被 degraded 吞成成功,停车位还在", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+    const approved = cardQuoteVersion(card.payload);
+    let drifted = false;
+    await armApprovalResume(world, card.cardId, {
+      runGenerate: true,
+      duringResume: async () => {
+        if (drifted) return;
+        drifted = true;
+        const rebuilt = await ottoUpdateGenCardOptions({ threadId: world.threadId, cardId: card.cardId, count: 2 });
+        if ("error" in rebuilt) throw new Error(`恢复轮里改档被拒:${rebuilt.error}`);
+      },
+      // 被拒之后模型继续兜圈子,撞上步数上限 —— 那一支从前直接 `ok:true, status:"degraded"`。
+      throwAfterGenerate: () => {
+        const e = new MaxTurnsExceededError("Max turns exceeded");
+        (e as unknown as { state: { toString(): string } }).state = { toString: () => "{after-resume}" };
+        return e;
+      },
+    });
+
+    const res = await ottoApprove({ threadId: world.threadId, cardId: card.cardId, quoteVersion: approved });
+
+    expect(res).toMatchObject({ error: QUOTE_VERSION_STALE });
+    expect(res).not.toMatchObject({ ok: true });
+    expect(((res as { quote?: { params?: { count?: number } } }).quote?.params)?.count).toBe(2);
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
+    // 「拒绝并刷新」的后半句在这一支也要成立:停车位没被那份截断状态盖掉,同一颗按钮再按一次就成交。
+    const parked = await prisma.chatThread.findFirstOrThrow({ where: { id: world.threadId, ownerId: world.ownerId } });
+    expect(parked.ottoState).toBe(PAUSED_STATE);
+  });
+
+  it("creation §5 :170 FSE-012 恢复轮又停在别的批准上而 CAS 输了:被拒的那一张不许被 stale 吞成成功", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+    const nextCard = await mintImageCard(world);
+    const approved = cardQuoteVersion(card.payload);
+    let drifted = false;
+    await armApprovalResume(world, card.cardId, {
+      runGenerate: true,
+      parkAgainOnCardId: nextCard.cardId,
+      duringResume: async () => {
+        if (drifted) return;
+        drifted = true;
+        const rebuilt = await ottoUpdateGenCardOptions({ threadId: world.threadId, cardId: card.cardId, count: 2 });
+        if ("error" in rebuilt) throw new Error(`恢复轮里改档被拒:${rebuilt.error}`);
+        // 另一趟对话在同一条线程上写了新状态 ⇒ 下面那次 CAS 一定输。
+        await prisma.chatThread.updateMany({
+          where: { id: world.threadId, ownerId: world.ownerId },
+          data: { ottoState: "{moved-by-another-turn}" },
+        });
+      },
+    });
+
+    const res = await ottoApprove({ threadId: world.threadId, cardId: card.cardId, quoteVersion: approved });
+
+    expect(res).toMatchObject({ error: QUOTE_VERSION_STALE });
+    expect(res).not.toMatchObject({ ok: true });
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
   });
 });

@@ -217,7 +217,15 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
     // outcome up even when a later card failed, so their paid results still
     // surface (don't strand them). Nothing fired ⇒ nothing changed ⇒ no call
     // (the pending set can only move on a server response).
-    if (outcome.firedCardIds.length > 0) onApproved(outcome);
+    //
+    // FSE-012（判官第 6 轮 P1）——「一张都没成交」不等于「什么都没发生」。整批都被报价拒了、
+    // 而其中一次答复带着服务端那份**完整待批集**（恢复轮又停在别的批准上）时，那几张新卡与
+    // 模型那句叙述已经落库：不交上去，父层就要等整页刷新才看得见（零生成 ⇒ 轮询不会启动），
+    // 而被拒的这几张还赖在待批集里，下一次点击注定被服务端回绝。判据是**服务端说过话**
+    // （`pendingFromServer` / 有叙述 id），不是「有没有成交」。
+    if (outcome.firedCardIds.length > 0 || outcome.pendingFromServer || outcome.narrationMessageIds.length > 0) {
+      onApproved(outcome);
+    }
   }
 
   /** The batch. Fails closed on the footer's own gate: no guaranteed pack total ⇒ no

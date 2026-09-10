@@ -42,6 +42,15 @@ export interface PlanApproveOutcome {
   /** The resume parked again (chained needs_approval) and this is the server's COMPLETE
    *  still-pending set; null when this resume ran to completion. */
   chained: ChainedApproval | null;
+  /**
+   * FSE-012（判官第 6 轮 P1）—— 这一次点击**成交了没有**。
+   *
+   * false = 这张卡的报价过期、被服务端拒了，但同一趟恢复轮仍留下了必须落到父层的事实
+   * （链上还等着的那几张卡、模型那句叙述）。父层据此照旧换上服务端那份待批集、重开轮询
+   * 并注入叙述，但**不**把这张卡标成已提交 —— 它什么都没生成。
+   * 省略 ⇒ true（成交），与这一格出现之前逐字相同。
+   */
+  approved?: boolean;
 }
 
 export interface OttoPlanCardProps {
@@ -272,6 +281,14 @@ export function OttoPlanCard({
       // FSE-012 —— 报价版本对不上那一支带回了**刷新后的那张卡**:立刻换掉卡面,商家因此
       // 看到的是新价再决定。走的是改三格那条同一条路(`onOptionsChanged`),不新造第二条。
       if (outcome.refreshedPayload) onOptionsChanged(cardId, outcome.refreshedPayload);
+      // 判官第 6 轮 P1 —— 拒绝的那一趟里恢复轮**又停在别的批准上**:那几张卡与那句叙述
+      // 已经落库,父层不知道就只有整页刷新才看得见(零生成时轮询根本不会启动)。两件事
+      // 一起交上去,`approved:false` 让父层不把这张什么都没生成的卡标成已提交 —— 它同时
+      // 会随服务端那份待批集离开待批状态,于是下一次点击走的是提议卡那条路,真的成交。
+      if (outcome.chained) {
+        setChainedReceipt(outcome.chained.fallbackReply);
+        onApproved({ cardId, chained: outcome.chained, approved: false });
+      }
       return;
     }
     // #498 P1b (round-4): an ottoApprove resume can park AGAIN on further
@@ -286,7 +303,7 @@ export function OttoPlanCard({
     // (derived from `chained` right here), not from a module-level broadcast that
     // hid every waiting panel on the page.
     if (outcome.chained) setChainedReceipt(outcome.chained.fallbackReply);
-    onApproved({ cardId, chained: outcome.chained });
+    onApproved({ cardId, chained: outcome.chained, approved: true });
   }
 
   function handleCopy() {

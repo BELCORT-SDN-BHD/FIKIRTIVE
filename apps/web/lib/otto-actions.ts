@@ -2775,6 +2775,12 @@ export async function ottoApprove(raw: unknown): Promise<
           // 尾巴组十一(#1218 判官 P2-3):从前这里只凭那面旗就说「没收钱」,与下面第 5 支
           // 「PROVEN, not assumed」的规定正好相反 —— 恢复轮是**先跑完被批准的那件工具**再撞上
           // 步数上限的,那笔生成可能已经付过钱了。现在两门同一个判据:要账本证据才说。
+          // FSE-012（判官第 6 轮 P1）—— 这一趟里那道报价版本闸拒过这张卡没有。**同一个事实、
+          // 同一处判据**，与下面那两个终局出口读的是同一格（`generate` 技能自己报上来的）。
+          // 从前只有「跑完」与「又停在别的批准上」两个出口读它，撞上步数上限的这一支直接
+          // `ok:true, status:"degraded"` 就走了 —— `plan-approval.ts` 把 degraded 当成功，
+          // 一张什么都没生成的卡被父层标成已批准，商家再按同一颗按钮还会被告知不在等批准。
+          const quoteRefusedInDegrade = ctx.approvedQuoteVersion?.refused === true;
           const degradeText = ottoDegradeText(await chargedNothingProven(ownerId, refundedRefId));
           // Persist the degrade message so the user actually sees it (parity with ottoTurn),
           // plus the partial RunState if the SDK attached one.
@@ -2795,13 +2801,21 @@ export async function ottoApprove(raw: unknown): Promise<
             },
           });
           const errState = (e as { state?: { toString(): string } }).state;
-          if (errState) {
+          // 被拒时**不写**那份截断状态：它会把「这张卡还停在等批准」那个停车位盖掉，而
+          // 「拒绝并刷新」的后半句（Founder 裁决原文，规格 §5 :170）要的正是那颗按钮再按
+          // 一次就成交。生成那一笔本来就零任务行、零预扣，所以留着停车位不会让任何东西
+          // 被收两次（`cowork:<cardId>` 那把幂等键仍是最后一道）。
+          if (errState && !quoteRefusedInDegrade) {
             await prisma.chatThread.update({
               where: { id: threadId },
               data: { ottoState: errState.toString(), updatedAt: new Date() },
             });
           }
           revalidatePath("/", "layout");
+          if (quoteRefusedInDegrade) {
+            const refreshed = await refreshedQuoteFor(ownerId, cardId);
+            return refreshed ?? { error: QUOTE_VERSION_STALE };
+          }
           return { ok: true, status: "degraded" };
         }
 
@@ -2876,6 +2890,13 @@ export async function ottoApprove(raw: unknown): Promise<
           // terminal exit of this action leaving evidence in the thread.
           await persistAgentNote(threadId, ownerId, APPROVE_STALE_INTERRUPTED_NOTE);
           revalidatePath("/", "layout");
+          // FSE-012（判官第 6 轮 P1）—— CAS 输了不等于这张卡成功了。那道闸拒过它的话，
+          // 这一支从前一律 `ok:true, status:"stale"`，而 `plan-approval.ts` 把 stale 也
+          // 当成功：又是一张什么都没生成的卡被标成已批准。拒绝优先说，刷新后的报价随它回去。
+          if (quoteRefusedInResume) {
+            const refreshed = await refreshedQuoteFor(ownerId, cardId);
+            return refreshed ?? { error: QUOTE_VERSION_STALE };
+          }
           return { ok: true, status: "stale" };
         }
 

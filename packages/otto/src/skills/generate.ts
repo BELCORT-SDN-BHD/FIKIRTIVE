@@ -107,17 +107,21 @@ export async function executeGenerate(
   // 排在再花钱守卫之后:已经成交的那张卡第二次点击是幂等取回,不是一次新的报价。
   // 拒在 `ctx.startGen` 之前 ⇒ 零建任务、零预扣、账本零新增行。缺席 ⇒ 放行(老客户端 /
   // 非确认卡入口),与这条闸出现之前逐字相同。
-  if (
-    ctx.approvedQuoteVersion
-    && ctx.approvedQuoteVersion.cardId === input.cardId
-    && cardQuoteVersion(card.payload) !== ctx.approvedQuoteVersion.version
-  ) {
-    // 判官第 5 轮 P2-a —— 把这个判决**报上去**。工具的拒绝只回到模型(`skill.ts`),恢复轮照样
-    // 跑完,外层从前只能靠「这张卡有没有任务行」猜这一趟发生了什么 —— 同一轮里模型生成了
-    // 别的卡时那个判据就说谎。ctx 是外层注入的同一个对象(RunState 按引用持着它),所以这一格
-    // 是这道闸自己说的话:**这一张卡,这一趟,被我拒了。**
-    ctx.approvedQuoteVersion.refused = true;
-    return { error: QUOTE_VERSION_STALE };
+  if (ctx.approvedQuoteVersion && ctx.approvedQuoteVersion.cardId === input.cardId) {
+    if (cardQuoteVersion(card.payload) !== ctx.approvedQuoteVersion.version) {
+      // 判官第 5 轮 P2-a —— 把这个判决**报上去**。工具的拒绝只回到模型(`skill.ts`),恢复轮照样
+      // 跑完,外层从前只能靠「这张卡有没有任务行」猜这一趟发生了什么 —— 同一轮里模型生成了
+      // 别的卡时那个判据就说谎。ctx 是外层注入的同一个对象(RunState 按引用持着它),所以这一格
+      // 是这道闸自己说的话:**这一张卡,这一趟,被我拒了。**
+      ctx.approvedQuoteVersion.refused = true;
+      return { error: QUOTE_VERSION_STALE };
+    }
+    // 判官第 6 轮 P1 —— 这一格只置不清,就不是事实,是一次会过期的记忆。恢复轮里模型对
+    // 工具错误重试一次(同一轮第二次调用本技能)、而商家在这中间把那一格改了回去(控件不锁,
+    // 他改得动)时,版本重新对得上、生成真的开跑并预扣了 —— 外层却仍读到「被拒」,于是商家
+    // 听到「价变了,什么都没生成」而钱已经花出去、线程状态被丢弃。判据与上面那一支同一条
+    // (同一张卡、同一串版本):这一次看的结果推翻上一次的判决,那就把判决收回。
+    ctx.approvedQuoteVersion.refused = false;
   }
 
   // Step 4: disabled-model check (mirror coworkGenerate — a card built before a disable must not spend)
@@ -151,7 +155,27 @@ export async function executeGenerate(
 
   // Step 6: spend via the injected port — the ONLY spend path
   const res = await ctx.startGen(built.req);
-  if ("error" in res) return res;
+  if ("error" in res) {
+    // 判官第 6 轮 P1 —— 报价拒绝的**第二个发生地**:钱事务里那次逐字复读(`gen-actions.ts`
+    // 的 `cardFingerprint` 对签)。卡在上面那次读之后、create/reserve 之前被重铸时,拒绝在
+    // 那一步发生,而这一格从前一次都没置 ⇒ 外层把那一趟读成一次正常结束的恢复轮,`onApproved`
+    // 照常被调用,商家的卡被标成已批准而什么都没生成。
+    //
+    // 判据仍是同一条(§7.3),不是那句错误文案:**库里这张卡此刻还是不是他批的那一版**。
+    // 文案会改、会本地化、会有第二处写法;版本比对只有一份口径。只在这条闸带着版本进来时
+    // 多读这一次(错误路径,一次按 id 的读)。
+    if (ctx.approvedQuoteVersion && ctx.approvedQuoteVersion.cardId === input.cardId) {
+      const fresh = await prisma.chatMessage.findFirst({
+        where: { id: input.cardId, ownerId: ctx.orgId, kind: "GEN_CARD", deletedAt: null },
+        select: { payload: true },
+      });
+      if (fresh && cardQuoteVersion(fresh.payload) !== ctx.approvedQuoteVersion.version) {
+        ctx.approvedQuoteVersion.refused = true;
+        return { error: QUOTE_VERSION_STALE };
+      }
+    }
+    return res;
+  }
 
   // Step 7: best-effort mark card→job (UI reload-disable only — NOT the spend guard)
   try {

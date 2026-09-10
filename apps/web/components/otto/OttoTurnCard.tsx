@@ -290,9 +290,12 @@ function CanvasConfirmRow({
       // FSE-012 —— 报价版本对不上那一支带回了**刷新后的那张卡**:立刻换掉卡面(与抽屉里
       // 那张卡同一条路 `onOptionsChanged`),商家看到的是新价再决定。控件不锁。
       if (outcome.refreshedPayload) onOptionsChanged(card.cardId, outcome.refreshedPayload);
+      // 判官第 6 轮 P1 —— 与抽屉里那张卡逐字同一条善后:被拒的这一趟若还带着「恢复轮又停在
+      // 别的批准上」这件事实,链上那几张卡与那句叙述照样交上去,只是这一张不算已提交。
+      if (outcome.chained) onApproved({ cardId: card.cardId, chained: outcome.chained, approved: false });
       return;
     }
-    onApproved({ cardId: card.cardId, chained: outcome.chained });
+    onApproved({ cardId: card.cardId, chained: outcome.chained, approved: true });
   }
 
   return (

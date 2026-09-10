@@ -197,8 +197,16 @@ describe("creation §5 :170 FSE-012 拒绝之后的另一半:卡面换成新价"
 
     await click(generateButton(host));
 
-    // ① 这一张没成:父层一次都不许被告知「已批准」。
-    expect(onApproved).not.toHaveBeenCalled();
+    // ① 这一张没成:交上去的那一份必须说清楚「没成交」(`approved:false`),父层据此**不**把
+    // 它标成已提交。判官第 6 轮 P1:同一趟里恢复轮又停在别的批准上,那几张卡与那句叙述已经
+    // 落库 —— 一起交上去,否则整页刷新之前它们根本不渲染(零生成 ⇒ 轮询不会启动),
+    // 而这张被拒的卡还赖在待批集里,下一次点击注定被服务端回绝。
+    expect(onApproved).toHaveBeenCalledTimes(1);
+    expect(onApproved.mock.calls[0]?.[0]).toMatchObject({
+      cardId: "card_1",
+      approved: false,
+      chained: { pendingCardIds: ["card_2"] },
+    });
     // ② 卡面换成服务端交回来的那一版,那句拒绝也在卡上。
     const after = generateButton(host);
     expect(after.textContent).toContain("2 credits");
@@ -284,6 +292,39 @@ describe("creation §5 :170 FSE-012 验收 R2 一叠卡:拒绝逐卡处理,整�
     const outcome = onApproved.mock.calls[0]?.[0] as { firedCardIds: string[]; quoteRefreshedCardIds: string[] };
     expect(outcome.firedCardIds).toEqual(["card_2"]);
     expect(outcome.quoteRefreshedCardIds).toEqual(["card_1"]);
+  });
+
+  it("creation §5 :170 FSE-012 R2 整批都被拒、而恢复轮又停在别的批准上:那份待批集照样交上去", async () => {
+    // 判官第 6 轮 P1（批量入口同形）—— 从前的判据是「有没有成交」:一张都没成交 ⇒ 一个字都
+    // 不交上去。可是服务端在这一趟里说了话（链上还等着的那几张卡、模型那句叙述都落库了），
+    // 父层收不到就只有整页刷新才看得见。判据换成**服务端说过话**。
+    ottoApproveMock.mockResolvedValue({
+      ok: true,
+      status: "needs_approval",
+      pendingCardIds: ["card_9"],
+      fallbackReply: "Two more need your go-ahead.",
+      narrationMessageId: "msg_narr",
+      staleQuote: { error: QUOTE_VERSION_STALE, quote: REFRESHED_QUOTE },
+    });
+    const onApproved = vi.fn();
+    const host = mountPack([{ ...packItem("card_1", oneImage()), pendingApproval: true }], onApproved);
+
+    await click(makeAllButton(host));
+
+    expect(onApproved).toHaveBeenCalledTimes(1);
+    const outcome = onApproved.mock.calls[0]?.[0] as {
+      firedCardIds: string[];
+      quoteRefreshedCardIds: string[];
+      pendingCardIds: string[];
+      pendingFromServer: boolean;
+      narrationMessageIds: string[];
+    };
+    // 一张都没成交,但服务端那份完整待批集与那句叙述照样交上去。
+    expect(outcome.firedCardIds).toEqual([]);
+    expect(outcome.quoteRefreshedCardIds).toEqual(["card_1"]);
+    expect(outcome.pendingCardIds).toEqual(["card_9"]);
+    expect(outcome.pendingFromServer).toBe(true);
+    expect(outcome.narrationMessageIds).toEqual(["msg_narr"]);
   });
 
   it("creation §5 :170 FSE-012 R2 换过价之后再按一次:交回去的是新那一版的报价版本", async () => {

@@ -667,7 +667,9 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
 
     expect(coworkGenerateMock).toHaveBeenCalledTimes(1);
     expect(ottoApproveMock).not.toHaveBeenCalled();
-    expect(onApproved).toHaveBeenCalledWith({ cardId: "card_1", chained: null });
+    // FSE-012（判官第 6 轮 P1）—— 回调多了一格「这一次成交了没有」：成交那一支是 true，
+    // 报价被拒但恢复轮留下链上事实的那一支是 false（父层据此不把卡标成已提交）。
+    expect(onApproved).toHaveBeenCalledWith({ cardId: "card_1", chained: null, approved: true });
   });
 
   it("挂起的卡:走 ottoApprove,再次挂起时把服务端的完整待批集合原样带上去", async () => {
@@ -691,6 +693,7 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
     expect(coworkGenerateMock).not.toHaveBeenCalled();
     expect(onApproved).toHaveBeenCalledWith({
       cardId: "card_1",
+      approved: true,
       chained: {
         pendingCardIds: ["card_2", "card_3"],
         fallbackReply: "One more to confirm.",

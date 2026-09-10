@@ -539,8 +539,9 @@ describe("creation §5 :170 FSE-012 —— 批准那一版之后卡被改掉,执
 
     expect(result).not.toHaveProperty("error");
     expect(ctx.startGen as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
-    // 没拒 ⇒ 那一格不许被置上（外层看见它就会把一次成功的批准说成「价变了」）。
-    expect(ctx.approvedQuoteVersion?.refused).toBeUndefined();
+    // 没拒 ⇒ 那一格说的必须是「没拒」（外层读到 true 就会把一次成功的批准说成「价变了」）。
+    // 判官第 6 轮 P1：这道闸放行时**写下**这个判决，而不是把上一次的判决留在那里。
+    expect(ctx.approvedQuoteVersion?.refused).toBe(false);
   });
 
   it("creation §5 :170 FSE-012 这一版只批准了这一张卡:同一轮里生成别的卡不受它约束", async () => {
@@ -576,5 +577,75 @@ describe("creation §5 :170 FSE-012 —— 批准那一版之后卡被改掉,执
 
     expect(result).toEqual({ genJobId: "job-existing", status: "DONE" });
     expect(ctx.startGen as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+  /**
+   * 判官第 6 轮 P1（其一）——「先被拒、随后同一张卡真的生成成功」。
+   *
+   * 恢复轮里模型对工具错误重试一次，就会在**同一轮**里第二次调用这个技能；商家在这中间把
+   * 那一格改了回去（控件不锁，他改得动），版本于是重新对得上。那一格只置不清的话，外层读到
+   * 的仍是「被拒」——商家听到「价变了，什么都没生成」，而任务行与生成预扣**已经落地**。
+   */
+  it("creation §5 :170 FSE-012 同一轮里先拒后放行:判决被收回,不许把一次真的生成说成价变了", async () => {
+    const { cardQuoteVersion, QUOTE_VERSION_STALE } = await import("@fikirtive/core");
+    const p = await getPrisma();
+    const approvedVersion = cardQuoteVersion(makeImageCardPayload({ params: { count: 1 }, estimatedCredits: 1 }));
+    const ctx = makeCtx({ approvedQuoteVersion: { cardId: CARD_ID, version: approvedVersion } });
+
+    // ① 卡被改成 2 张 ⇒ 拒。
+    p.chatMessage.findFirst.mockResolvedValue(makeCard({ params: { count: 2 }, estimatedCredits: 2 }));
+    expect(await executeGenerate({ cardId: CARD_ID }, { context: ctx })).toEqual({ error: QUOTE_VERSION_STALE });
+    expect(ctx.approvedQuoteVersion?.refused).toBe(true);
+
+    // ② 商家改了回去 ⇒ 同一轮第二次调用真的成交。
+    p.chatMessage.findFirst.mockResolvedValue(makeCard({ params: { count: 1 }, estimatedCredits: 1 }));
+    const second = await executeGenerate({ cardId: CARD_ID }, { context: ctx });
+
+    expect(second).not.toHaveProperty("error");
+    expect(ctx.startGen as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    // 判决被收回 ⇒ 外层交回的是「成交」，不是「价变了」。
+    expect(ctx.approvedQuoteVersion?.refused).toBe(false);
+  });
+
+  /**
+   * 判官第 6 轮 P1（其二）—— 报价拒绝的**第二个发生地**：钱事务里那次逐字复读
+   * （`gen-actions.ts` 的 `cardFingerprint` 对签）。卡在本步读卡之后、create/reserve 之前
+   * 被重铸时，拒绝由 `startGen` 报出来，而这一格从前一次都没置 ⇒ 外层把那一趟读成一次
+   * 正常结束的恢复轮，`onApproved` 照常被调用。判据不是那句错误文案（措辞会改、会本地化），
+   * 是同一条：库里这张卡此刻还是不是他批的那一版。
+   */
+  it("creation §5 :170 FSE-012 下游拒绝且卡此刻已漂:按报价拒绝上报,交回同一句话", async () => {
+    const { cardQuoteVersion, QUOTE_VERSION_STALE } = await import("@fikirtive/core");
+    const p = await getPrisma();
+    const approvedVersion = cardQuoteVersion(makeImageCardPayload({ params: { count: 1 }, estimatedCredits: 1 }));
+    // 第一次读(闸比对)对得上;错误路径那次重读读到的已经是改过的那一版。
+    p.chatMessage.findFirst
+      .mockResolvedValueOnce(makeCard({ params: { count: 1 }, estimatedCredits: 1 }))
+      .mockResolvedValueOnce(makeCard({ params: { count: 2 }, estimatedCredits: 2 }));
+    const ctx = makeCtx({
+      approvedQuoteVersion: { cardId: CARD_ID, version: approvedVersion },
+      startGen: vi.fn().mockResolvedValue({ error: "This card changed while you were approving it — review it once more, then generate." }),
+    });
+
+    const result = await executeGenerate({ cardId: CARD_ID }, { context: ctx });
+
+    expect(result).toEqual({ error: QUOTE_VERSION_STALE });
+    expect(ctx.approvedQuoteVersion?.refused).toBe(true);
+  });
+
+  it("creation §5 :170 FSE-012 下游拒绝但卡一格没漂:原样交回那句话,不许被翻译成价变了", async () => {
+    const { cardQuoteVersion, QUOTE_VERSION_STALE } = await import("@fikirtive/core");
+    const p = await getPrisma();
+    const approvedVersion = cardQuoteVersion(makeImageCardPayload({ params: { count: 1 }, estimatedCredits: 1 }));
+    p.chatMessage.findFirst.mockResolvedValue(makeCard({ params: { count: 1 }, estimatedCredits: 1 }));
+    const ctx = makeCtx({
+      approvedQuoteVersion: { cardId: CARD_ID, version: approvedVersion },
+      startGen: vi.fn().mockResolvedValue({ error: "You don't have enough credits for this." }),
+    });
+
+    const result = await executeGenerate({ cardId: CARD_ID }, { context: ctx });
+
+    expect(result).toEqual({ error: "You don't have enough credits for this." });
+    expect(result).not.toEqual({ error: QUOTE_VERSION_STALE });
+    expect(ctx.approvedQuoteVersion?.refused).toBe(false);
   });
 });
