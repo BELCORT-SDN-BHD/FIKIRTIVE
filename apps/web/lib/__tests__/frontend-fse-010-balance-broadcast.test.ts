@@ -35,6 +35,21 @@ class FakeBroadcastChannel {
   }
 }
 
+/**
+ * `BroadcastChannel` 在 Node 22 里是**真全局**,而整套 apps/web 的 vitest 是 singleThread、
+ * 共用同一个 globalThis(见 `asset-detail-write-failures.test.ts` 里同一段说明)。把它换成假件
+ * 之后必须**还原**而不是 delete —— delete 会把 Node 那个内建全局对后面几百个文件永久摘掉。
+ */
+const originalBroadcastChannel = Object.getOwnPropertyDescriptor(globalThis, "BroadcastChannel");
+
+function restoreBroadcastChannel(): void {
+  if (originalBroadcastChannel) {
+    Object.defineProperty(globalThis, "BroadcastChannel", originalBroadcastChannel);
+  } else {
+    delete (globalThis as { BroadcastChannel?: unknown }).BroadcastChannel;
+  }
+}
+
 type BalanceRefreshModule = typeof import("../balance-refresh");
 
 /** 开一个新「标签页」：一份全新的模块实例，带着它自己那份监听集。 */
@@ -50,7 +65,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  delete (globalThis as { BroadcastChannel?: unknown }).BroadcastChannel;
+  restoreBroadcastChannel();
   vi.restoreAllMocks();
 });
 
