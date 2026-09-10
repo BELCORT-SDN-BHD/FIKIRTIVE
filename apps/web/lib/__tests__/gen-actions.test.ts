@@ -321,6 +321,62 @@ describe("startGen", () => {
     });
   });
 
+  /**
+   * creation §5 :162⑤ —— 付费前守卫必须看见**这一单挂上路的全部原件**。
+   *
+   * 守卫自己那一层(取原件的 where、拒不拒)由 cowork-guardian-reference-generations.test.ts
+   * 钉住;这里钉的是**接线**。判官第 1 轮 P1:登记那一行说的是「付费前检查未覆盖
+   * referenceGenerationIds」,没限定 kind,而先前只接了视频那一格 —— 图片侧的多参考作业
+   * (CRE-STG-P1-003,`imageOptions.referenceGenerationIds`)照旧走到 worker 才 fail closed:
+   * 钱先预扣、事后退。两种 kind 由同一个规范化器按 kind 各写一格,所以守卫这一行两格都取。
+   *
+   * 编号(判官第 2 轮 P2-①订正):这一条钉的是**引用原件的归属围栏在付费之前生效**,属
+   * CREATE-A10;它**不**证明 MONEY-A11(卡面冻结价 ≠ 现算价即拒)—— 那条由本文件里那几条
+   * 报价绑定用例自己钉着,r1 冠错了号。下面那条只证「没挂原件时一格没动」,它谁都不证明,
+   * 所以只带登记编号,不冠任何验收号。
+   */
+  it("creation §5 :162⑤ / CREATE-A10: 图片侧挂上路的原件也在花钱之前进守卫", async () => {
+    db.chatMessageFindFirst.mockResolvedValue({
+      threadId: "thread-1",
+      payload: { estimatedCredits: 1, referenceGenerationIds: ["gen-a", "gen-b"] },
+      thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+    });
+
+    const result = await startCoworkGen({
+      projectId: "p1",
+      threadId: "thread-1",
+      prompt: "approved card",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cowork:card-1",
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(mockCheckCast).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "image",
+      referenceGenerationIds: ["gen-a", "gen-b"],
+    }));
+    // 落库那一格与守卫看的是同一份(卡上的快照 → imageOptions → worker)。
+    const data = db.genJobCreate.mock.calls[0]![0].data as { imageOptions?: { referenceGenerationIds?: string[] } };
+    expect(data.imageOptions?.referenceGenerationIds).toEqual(["gen-a", "gen-b"]);
+  });
+
+  it("creation §5 :162⑤: 没挂原件的那一趟一格没动(守卫收到 undefined)", async () => {
+    await startCoworkGen({
+      projectId: "p1",
+      threadId: "thread-1",
+      prompt: "approved card",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cowork:card-1",
+    });
+    expect(mockCheckCast).toHaveBeenCalledWith(expect.objectContaining({ referenceGenerationIds: undefined }));
+  });
+
   it.each([
     { approved: 2, count: 1, current: 1 },
     { approved: 1, count: 2, current: 2 },

@@ -33,6 +33,8 @@
  * · 蓄意绕过(连快照一起改)同样由复审把关:快照 diff 让这种改动**无所遁形**,
  *   这正是设计意图 —— 不是把它挡在测试里,是把它摆到复审桌上。
  */
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import {
   displayCredits,
@@ -975,5 +977,34 @@ describe("ottoInstructions — #555 credits and spending", () => {
   });
   it("says plainly what to do when the read fails, instead of guessing", () => {
     expect(ottoInstructions).toMatch(/Never fill the gap with a guess/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// creation §5 :162④ —— 说明书里不再提议「先出首帧再动画」
+// ---------------------------------------------------------------------------
+//
+// 规格 §5 那一行记的是:止血片(PR #1267)撤掉了柜里的建议,但 `instructions.ts` 没动,实跑
+// 若仍提议两步属**说明书层**。ENGINE-A7 之后这个文件已经只剩装配器(占位符 + 拼装),一句
+// 商家会读到的手艺话都没有 —— 这道源码扫描把那件事**钉住**:谁把首帧那段话搬回装配器,
+// 这里当场红。柜里的正文由下面第二条正向断言守着(那句禁令必须在整柜说明书里)。
+describe("creation §5 :162④ —— 装配器里没有首帧手艺话,柜里留着那条禁令", () => {
+  const ASSEMBLER_SRC = readFileSync(
+    fileURLToPath(new URL("./instructions.ts", import.meta.url)),
+    "utf8",
+  );
+
+  it("creation §5 :162④ / CREATE-A2: instructions.ts 只是装配器 —— 里面没有任何「先出首帧再动画」的说明文字", () => {
+    for (const banned of [/first frame/i, /firstFrame/, /首帧/, /then animate/i]) {
+      expect(ASSEMBLER_SRC, `instructions.ts 又出现了首帧那段说明(${banned})`).not.toMatch(banned);
+    }
+  });
+
+  it("creation §5 :162④ / CREATE-A2: 整柜说明书里那条禁令还在 —— 演员 + 商品绝不先合成一张首帧再动画", () => {
+    expect(ottoInstructions).toContain(
+      "Never offer to build a combined still of a cast member and a product first and then animate it",
+    );
+    // 分镜那一支的同一条:@ 到演员的镜头一张首帧都不出。
+    expect(ottoInstructions).toContain("it gets no first frame at all");
   });
 });
