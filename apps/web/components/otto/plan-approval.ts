@@ -24,7 +24,10 @@ import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 // Codex staging CRE-STG-P2-004 —— 失败那一句与那个短号,措辞与算法都只有这一份
 // (`@fikirtive/core/gen-failure`)。子路径而不是包根:包根会把 node:crypto 拖进客户端包。
 import { GENERATION_START_FAILED, diagnosticRef } from "@fikirtive/core/gen-failure";
-import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
+// FSE-012 —— 「他按下的是哪一版报价」。同样走**子路径**(理由同上一行:包根带 node:crypto)。
+// 铸造与校验的口径只有这一个函数,服务端拿库里那张卡再算一次。
+import { cardQuoteVersion, QUOTE_VERSION_STALE } from "@fikirtive/core/quote-version";
+import { chainedApprovalOf, quoteRefusalOf, type ChainedApproval } from "./approval-chain";
 import type { OttoPlanCardPayload } from "./plan-card-contract";
 
 /** 这一次批准的结局。`error` 是给商家看的一句话，不是异常。 */
@@ -37,7 +40,28 @@ export type PlanApprovalResult =
    * (`diagnosticRef`)。句子里一个 id、URL、路径、堆栈都不许有 —— 那些是日志的活;
    * 短号单独一格,由卡面渲染在句子旁边。
    */
-  | { ok: false; error: string; ref: string | null };
+  | {
+    ok: false;
+    error: string;
+    ref: string | null;
+    /**
+     * FSE-012 —— 服务端拒绝时交回来的**刷新后的那张卡**（报价版本对不上那一支才有）。
+     * 调用方拿它换掉卡面，商家因此**看得到新价**再决定，而不是对着一个旧数字重按一次。
+     * null = 这一次拒绝与报价无关（余额不足、供应商关停…），卡面照旧。
+     */
+    refreshedPayload: unknown;
+    /**
+     * FSE-012（判官第 6 轮 P1）—— 拒绝的那一趟里，恢复轮**又停在别的批准上**这件事。
+     *
+     * 这张卡没成交，但那一趟真的跑过：链上其余的批准已经落库，模型那句话也已经落库。
+     * 从前这一支整体当拒绝返回、把它们一起丢掉，于是那几张新卡在整页刷新之前根本不渲染
+     * （轮询要有在跑的任务才启动，零生成时不会启动），而这张被拒的卡仍留在待批集里 ——
+     * 商家再按同一颗按钮走的还是 `ottoApprove`，得到「That card isn't awaiting approval.」。
+     * 两件事一起交上去，调用方据此把链上事实落到父层，而**不**把这张卡标成已批准。
+     * null = 这一次拒绝里没有链上事实（门口就被拒、或与报价无关的拒绝）。
+     */
+    chained: ChainedApproval | null;
+  };
 
 export interface RunPlanApprovalInput {
   threadId: string;
@@ -56,19 +80,48 @@ export async function runPlanApproval(input: RunPlanApprovalInput): Promise<Plan
     // ottoApprove 续跑；否则这是一张刚被**提议**的卡，直接用 coworkGenerate 派发。
     // （对提议卡调 ottoApprove 会得到「That card isn't awaiting approval」，生成根本
     // 不会开始 —— 这就是这两条路必须分清的原因。）
+    // FSE-012 —— 两条路都带上「他眼前这一版」。服务端拿库里那张卡再算一次:对不上就拒绝
+    // 并把新报价交回来。**不锁控件**(2026-09-06 A4 那一轮的决定不推翻):旧报价照旧点得动,
+    // 只是点下去会被诚实地拒绝。
+    const quoteVersion = cardQuoteVersion(payload);
     const res = pendingApproval
-      ? await ottoApprove({ threadId, cardId })
+      ? await ottoApprove({ threadId, cardId, quoteVersion })
       : await coworkGenerate({
           cardId,
           prompt: payload.structuredPrompt ?? "",
           entityIds: Array.isArray(payload.entityIds) ? payload.entityIds : [],
           variantSel: payload.variantSel && typeof payload.variantSel === "object" ? payload.variantSel : {},
+          quoteVersion,
         });
+    // FSE-012（判官第 5 轮 P2-b）—— 恢复轮**停在别的批准上**，而这一张被报价版本闸拒了。
+    // 服务端把两件事分开说（`ok:true, status:"needs_approval"` ＋ `staleQuote`），因为链上
+    // 那些卡确实还等着；只看 `error` 在不在的读法会把这一支读成一次成功的批准，于是
+    // `onApproved` 被调用、这张什么都没生成的卡被父层标成已批准。这一支照拒绝处理：卡面
+    // 换成交回来的那一版，控件不锁。（链上那些卡的 id 随这一支丢掉了 —— 它们已经落库，
+    // 由批准后的那次轮询补上；见 PR 描述「未做」。）
+    // 「这一次答复是不是一次报价拒绝」只有一份读法(`quoteRefusalOf`,一叠卡的批量循环
+    // 读的是同一个函数)。这里只管它的 `staleQuote` 那一形:另一形(`error` + `quote`)由
+    // 下面那条既有的错误出口原样处理,措辞与短号都不变。
+    const chainedRefusal = res && typeof res === "object" && !("error" in res) ? quoteRefusalOf(res) : null;
+    if (chainedRefusal) {
+      // 判官第 6 轮 P1 —— 链上那几张卡的 id 与那句叙述**随拒绝一起**交上去（服务端本来就
+      // 两件事都说了：`pendingCardIds` ＋ `staleQuote`）。丢掉它们，商家就得靠整页刷新
+      // 才看得见那几张新卡，而这张被拒的卡还赖在待批集里、下一次点击注定被服务端回绝。
+      return {
+        ok: false,
+        error: QUOTE_VERSION_STALE,
+        ref: diagnosticRef(cardId),
+        refreshedPayload: chainedRefusal.quote,
+        chained: chainedApprovalOf(res),
+      };
+    }
     if (res && "error" in res) {
       // 服务端已经说清楚了 —— 原样传上去,泛化句不许盖掉它。短号优先跟着服务端那一份
       // (它与那一行日志同源);服务端没给的分支由卡的身份算一个,算法是同一个函数。
       const serverRef = typeof (res as { ref?: unknown }).ref === "string" ? (res as { ref: string }).ref : null;
-      return { ok: false, error: res.error, ref: serverRef ?? diagnosticRef(cardId) };
+      // 报价版本对不上那一支带着**刷新后的那张卡**回来 —— 原样交给调用方,让卡面换成新价。
+      const refreshedPayload = (res as { quote?: unknown }).quote ?? null;
+      return { ok: false, error: res.error, ref: serverRef ?? diagnosticRef(cardId), refreshedPayload, chained: null };
     }
     return { ok: true, chained: chainedApprovalOf(res) };
   } catch {
@@ -79,7 +132,7 @@ export async function runPlanApproval(input: RunPlanApprovalInput): Promise<Plan
     // 起来的东西不存在。现在句子来自单一措辞源,短号来自这张卡自己的身份,服务端在日志里
     // 写的是同一串。泛化句**只**留给这一支(真正未知的错误);已知的拒绝走上面那条路,
     // 原样把服务端那句话交给商家。
-    return { ok: false, error: GENERATION_START_FAILED, ref: diagnosticRef(cardId) };
+    return { ok: false, error: GENERATION_START_FAILED, ref: diagnosticRef(cardId), refreshedPayload: null, chained: null };
   } finally {
     // 扣费的那一刻：两条路都会预扣（ottoApprove 续跑一次已停住的付费生成，
     // coworkGenerate 派发一次新的）。放在 finally 里是因为**失败的响应从不证明零花费**（#550）。

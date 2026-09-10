@@ -32,7 +32,7 @@
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
-import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, normalizeImageAspect, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel, type ApprovedEntity } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, normalizeImageAspect, cardQuoteVersion, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel, type ApprovedEntity } from "@fikirtive/core";
 import { buildProposeCard, ProposeRefusal } from "@fikirtive/otto";
 import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { runAsUser } from "@fikirtive/db/principal";
@@ -63,6 +63,11 @@ export type ChildFrameCard = {
   estimatedCredits: number;
   structuredPrompt: string;
   entityIds: string[];
+  /** FSE-012(creation-engine.md §5 :170)—— 这张子卡此刻那份报价的版本(`cardQuoteVersion`)。
+   *  分镜确认框也是一张确认卡:商家按下 "Generate all" 时把它交回去,服务端拿库里那张卡再算
+   *  一次,对不上就拒绝并交回新报价。子卡的完整 payload 从不下发给浏览器(型号是供应商机密),
+   *  所以这一串只能在**服务端铸卡的这一刻**算好、随子卡一起交上去。 */
+  quoteVersion: string;
   /** 子卡是否已"花过钱":已有 genJobId,或已存在其 cowork:<id> 幂等 job。UI 据此跳过已扣费的。 */
   spent: boolean;
 };
@@ -401,6 +406,8 @@ async function mintChild(
     estimatedCredits: cardPayload.estimatedCredits,
     structuredPrompt: cardPayload.structuredPrompt,
     entityIds: cardPayload.entityIds,
+    // FSE-012 —— 交上去的是**刚写进库的这一份 payload** 的版本,不是别处重算的一份。
+    quoteVersion: cardQuoteVersion(payload),
     spent: false,
   };
 }
@@ -462,6 +469,8 @@ async function mintVideoChild(
     estimatedCredits: cardPayload.estimatedCredits,
     structuredPrompt: cardPayload.structuredPrompt,
     entityIds: cardPayload.entityIds,
+    // FSE-012 —— 交上去的是**刚写进库的这一份 payload** 的版本,不是别处重算的一份。
+    quoteVersion: cardQuoteVersion(payload),
     spent: false,
   };
 }
@@ -598,6 +607,8 @@ export async function prepareStoryboardFirstFrames(
                 estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
                 structuredPrompt: typeof p.structuredPrompt === "string" ? p.structuredPrompt : firstFramePromptOf(shot),
                 entityIds: Array.isArray(p.entityIds) ? p.entityIds : (shot.entityIds ?? []),
+                // FSE-012 —— 复用的这一张也要带版本,不然一叠里少一张就是一个「缺席＝放行」的洞。
+                quoteVersion: cardQuoteVersion(existing.payload),
                 spent,
               });
               nextShots.push(shot);
@@ -748,6 +759,8 @@ export async function regenShotFirstFrameCard(
             structuredPrompt:
               typeof p.structuredPrompt === "string" ? p.structuredPrompt : firstFramePromptOf(target),
             entityIds: Array.isArray(p.entityIds) ? p.entityIds : (target.entityIds ?? []),
+            // FSE-012 —— 复用那一张的版本同样从**库里那份 payload** 算,与铸卡那一支同一个函数。
+            quoteVersion: cardQuoteVersion(existing.payload),
             spent,
           });
           const job = await childJobFor(tx, existing.id, ownerId);
@@ -1385,6 +1398,8 @@ export async function prepareStoryboardVideos(
                 estimatedCredits: typeof ep.estimatedCredits === "number" ? ep.estimatedCredits : 0,
                 structuredPrompt: typeof ep.structuredPrompt === "string" ? ep.structuredPrompt : shot.videoPrompt,
                 entityIds: Array.isArray(ep.entityIds) ? ep.entityIds : [],
+                // FSE-012 —— 同上。
+                quoteVersion: cardQuoteVersion(existing.payload),
                 spent,
               });
               nextShots.push(shot);
@@ -1551,6 +1566,8 @@ export async function regenShotVideoCard(
             structuredPrompt:
               typeof ep.structuredPrompt === "string" ? ep.structuredPrompt : target.videoPrompt,
             entityIds: Array.isArray(ep.entityIds) ? ep.entityIds : [],
+            // FSE-012 —— 同上:复用那一张的版本也只从库里那份 payload 算。
+            quoteVersion: cardQuoteVersion(existing.payload),
             spent,
           });
           const job = await childJobFor(tx, existing.id, ownerId);
