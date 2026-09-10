@@ -125,6 +125,62 @@ function directToVideoShotIds(
 type ShotVideoCast = { entityIds: string[]; owned: ApprovedEntity[] };
 const NO_VIDEO_CAST: ShotVideoCast = { entityIds: [], owned: [] };
 
+/** 拒绝那句话里的**镜头名**。`index` 是 0 基的内部序号,商家数的是第几个镜头,所以 +1。 */
+function shotLabel(shot: Pick<Shot, "index" | "title">): string {
+  return shot.title ? `Shot ${shot.index + 1} "${shot.title}"` : `Shot ${shot.index + 1}`;
+}
+
+/**
+ * creation §5 :172④ —— 直接出片这一镜 @ 到的元素**不是这家店活着的元素**时的那句话。
+ *
+ * 钱一直是安全的:`buildProposeCard` 见到对不上的 id 就抛(FSE-002 口径),异常在事务里抛
+ * ⇒ 整份回滚 ⇒ 零子卡、零 GenJob、零账本行。缺的是**说清楚是哪一镜** —— 一张分镜卡上八个
+ * 镜头,通用那一句「有一个引用对不上」让商家没法知道该去改哪一格,而整卡 fail closed 的
+ * 代价正是其余镜头也一起铸不出来。
+ *
+ * 点名那件元素只点**这家店自己的**:多读的那一趟仍然带 `ownerId`,所以别人家的行读不出来,
+ * 这句话不会变成存在性问答机(同 `EntityReferenceUnavailableError` 的注释)。商家自己删掉的
+ * 那件元素名字还在,点出来他才知道该去改哪一格;跨租户/不存在的 id 回落到「一件元素」。
+ * 这一趟读**只发生在拒绝那一路**,正路一次多余的查询都没有。
+ */
+async function assertShotCastResolvable(
+  tx: PrismaTx,
+  ownerId: string,
+  shot: Shot,
+  owned: ApprovedEntity[],
+): Promise<void> {
+  const ownedIds = new Set(owned.map((e) => e.id));
+  const missing = (shot.entityIds ?? []).filter((id) => !ownedIds.has(id));
+  if (missing.length === 0) return;
+  const named = await tx.entity.findMany({ where: { id: { in: missing }, ownerId }, select: { name: true } });
+  const what = named.length
+    ? `${named.map((e) => `"${e.name}"`).join(", ")}, which isn't in your Library any more`
+    : "an element that isn't in your Library any more";
+  throw new ProposeRefusal(
+    `${shotLabel(shot)} uses ${what} — take it out of that shot, or pick another one. ` +
+      "Nothing was made and nothing was charged.",
+  );
+}
+
+/**
+ * creation §5 :172⑤ —— 要铸首帧的这一镜,必须有首帧文字。
+ *
+ * `firstFramePrompt` 现在按镜头类型条件可选,而免写的只有**@ 到演员的镜头**(它直接出片,
+ * 首帧那一步不存在;落库那一刻由 `executeProposeStoryboard` 按 `Entity.type` 判死,只 @ 了
+ * 商品的镜头照旧必填)。走到铸首帧这一步却没有文字,只可能是「那一镜的演员后来离开了」——
+ * 被删出 Library、或改成了别的元素:它现在要走两步,而两步的第一步没有稿子。铸一张空提示词
+ * 的可扣费卡是这条路上最不能做的事,所以按 FSE-002 同一条口径整卡 fail closed —— 一句点名
+ * 的人话,零写入。
+ */
+function firstFramePromptOf(shot: Shot): string {
+  const prompt = shot.firstFramePrompt?.trim();
+  if (prompt) return prompt;
+  throw new ProposeRefusal(
+    `${shotLabel(shot)} has no opening-frame description yet — ask me to write one for it. ` +
+      "Nothing was made and nothing was charged.",
+  );
+}
+
 /** buildProposeCard 需要的最小 OttoContext(它只读 orgId/threadId/disabledModels 及两个 source 字段)。
  *  source/referenceVideo 留 undefined —— 子卡是纯 image 计划,不带起始帧/参考视频。 */
 function minimalCtx(ownerId: string, threadId: string, disabledModels: string[]): OttoContext {
@@ -306,7 +362,7 @@ async function mintChild(
   const { cardPayload } = buildProposeCard(
     {
       kind: "image",
-      structuredPrompt: shot.firstFramePrompt,
+      structuredPrompt: firstFramePromptOf(shot),
       entityIds: shot.entityIds ?? [],
       variantSel: {},
       count: 1,
@@ -512,7 +568,7 @@ export async function prepareStoryboardFirstFrames(
         const { cardPayload: wouldBe } = buildProposeCard(
           {
             kind: "image",
-            structuredPrompt: shot.firstFramePrompt,
+            structuredPrompt: firstFramePromptOf(shot),
             entityIds: shot.entityIds ?? [],
             variantSel: {},
             count: 1,
@@ -540,7 +596,7 @@ export async function prepareStoryboardFirstFrames(
                 shotId: shot.shotId,
                 childCardId: existing.id,
                 estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
-                structuredPrompt: typeof p.structuredPrompt === "string" ? p.structuredPrompt : shot.firstFramePrompt,
+                structuredPrompt: typeof p.structuredPrompt === "string" ? p.structuredPrompt : firstFramePromptOf(shot),
                 entityIds: Array.isArray(p.entityIds) ? p.entityIds : (shot.entityIds ?? []),
                 spent,
               });
@@ -661,7 +717,7 @@ export async function regenShotFirstFrameCard(
       const { cardPayload: wouldBe } = buildProposeCard(
         {
           kind: "image",
-          structuredPrompt: target.firstFramePrompt,
+          structuredPrompt: firstFramePromptOf(target),
           entityIds: target.entityIds ?? [],
           variantSel: {},
           count: 1,
@@ -690,7 +746,7 @@ export async function regenShotFirstFrameCard(
             childCardId: existing.id,
             estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
             structuredPrompt:
-              typeof p.structuredPrompt === "string" ? p.structuredPrompt : target.firstFramePrompt,
+              typeof p.structuredPrompt === "string" ? p.structuredPrompt : firstFramePromptOf(target),
             entityIds: Array.isArray(p.entityIds) ? p.entityIds : (target.entityIds ?? []),
             spent,
           });
@@ -1268,6 +1324,10 @@ export async function prepareStoryboardVideos(
               owned: ownedEntities.filter((e) => (shot.entityIds ?? []).includes(e.id)),
             }
           : NO_VIDEO_CAST;
+        // creation §5 :172④ —— 这一镜带元素上路,而它 @ 到的东西里有一件不是这家店活着的
+        // 元素:整卡 fail closed(异常 ⇒ 整份回滚),那句话点名是哪一镜。判在铸卡之前,所以
+        // 连暂存写都不会发生。
+        if (isDirect) await assertShotCastResolvable(tx, ownerId, shot, cast.owned);
 
         // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
         // call minting uses (mintVideoChild). This is the single source of truth for the reuse
@@ -1455,6 +1515,8 @@ export async function regenShotVideoCard(
       const cast: ShotVideoCast = isDirect
         ? { entityIds: target.entityIds ?? [], owned: ownedAll }
         : NO_VIDEO_CAST;
+      // creation §5 :172④ —— 同 prepare 那条:点名的元素对不上 ⇒ 零写入 + 点名是哪一镜。
+      if (isDirect) await assertShotCastResolvable(tx, ownerId, target, cast.owned);
 
       // The WOULD-BE-MINTED card — computed via the SAME pure buildProposeCard call minting
       // uses (mintVideoChild). Single source of truth for the reuse comparison; its
