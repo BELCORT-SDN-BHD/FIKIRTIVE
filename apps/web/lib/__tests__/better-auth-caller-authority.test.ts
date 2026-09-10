@@ -53,10 +53,17 @@ vi.mock("@/lib/better-auth/server", async (importOriginal) => {
   };
 });
 
-const SIGN_IN = "http://localhost:3100/api/better-auth/sign-in/email";
+/**
+ * SIGNIN-A4 —— 这个文件原本敲的是密码门 `/sign-in/email`。密码退役之后那条路径在 router 层
+ * 就 404(server.ts 的 `CLOSED_PASSWORD_PATHS`),永远到不了限流器,量不出任何桶。
+ *
+ * 换成码门 `/sign-in/email-otp`:它同样是一条 `/sign-in` 路径,吃的是 BA **同一条**自带特殊
+ * 规则(10 秒 3 次),而且它是今天真正对公网开着的那一扇 —— 也就是取址错了会整站连坐的那一扇。
+ * 这个文件要证的事(桶按我们那一个权威地址分)一个字没变，换的只是敲哪扇门。
+ */
+const SIGN_IN = "http://localhost:3100/api/better-auth/sign-in/email-otp";
 /** BA 自带的特殊规则:每条 /sign-in 路径 10 秒 3 次。 */
 const BURST_MAX = 3;
-const PASSWORD = "correct-horse-battery-staple";
 
 beforeAll(() => {
   // 生产形态,正是取址出问题的那一个。
@@ -70,7 +77,7 @@ afterAll(() => {
 
 beforeEach(async () => {
   await prisma.betterAuthRateLimit.deleteMany({});
-  await prisma.rateLimitCounter.deleteMany({}); // 我们那道每小时密码门也在这条路上(30/小时)
+  await prisma.rateLimitCounter.deleteMany({}); // 我们自己那些每小时桶也一起清,免得跨文件串味
 });
 
 /** 走**真实路由导出**。盖章是路由的活,所以这里绝不自己盖。 */
@@ -80,7 +87,9 @@ async function press(headers: Record<string, string>) {
     new Request(SIGN_IN, {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
-      body: JSON.stringify({ email: `nobody-${randomUUID()}@fikirtive.test`, password: PASSWORD }),
+      // 六位数字,故意是错的:这个文件量的是**限流**,不是登录。错码走完整条路径然后被拒,
+      // 正好把桶花掉一格而不会留下任何账号或会话。
+      body: JSON.stringify({ email: `nobody-${randomUUID()}@fikirtive.test`, otp: "000000" }),
     }),
   );
 }
@@ -90,7 +99,8 @@ describe("#795 r7 · BA 的短窗闸跟着同一个权威地址走(经真实路�
     for (let i = 0; i < BURST_MAX; i += 1) {
       expect((await press({ "x-real-ip": "203.0.113.90" })).status, `第 ${i + 1} 次`).not.toBe(429);
     }
-    // 第一个人用完了自己那 3 次(我们的每小时密码门是 30 次,还远没到,所以这一下是 BA 的)。
+    // 第一个人用完了自己那 3 次 —— 码门没有我们自己的每小时桶(理由写在 route.ts 末尾),
+    // 所以这一下 429 只可能来自 BA 那条 10 秒 3 次。
     expect((await press({ "x-real-ip": "203.0.113.90" })).status).toBe(429);
     // 第二个人一点都没被连累 —— 这正是取址错了会整站连坐的那一格。
     expect((await press({ "x-real-ip": "198.51.100.90" })).status).not.toBe(429);

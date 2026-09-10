@@ -2,8 +2,11 @@
  * #795 —— 产品自己那四道闸(打真库)。
  *
  * Better Auth 守它自己的端点;这四道门它一概不知道,而且此前**一个数字都没有**:
- *   · 密码门 —— BA 的内建规则只有「10 秒 3 次」,挡得住快的,对慢的完全无效
- *     (3 次/10 秒 = 一个地址一小时 1080 次,永远);
+ *   · 公开 auth 门 —— BA 的内建规则窗口最长 60 秒,挡得住快的,对慢的完全无效;每小时那一半
+ *     在我们自己的计数器上(`consumePublicAuthDoor`,清单见 lib/public-auth-doors.ts)。
+ *     SIGNIN-A4 —— 这一格原本写的是**密码门**。密码整体退役之后(docs/specs/sign-in.md 已冻结
+ *     · v1)`/sign-in/email` 在 router 层就 404,那道闸连同 `consumePasswordDoor` 一起撤了,
+ *     所以这里改钉仍然开着的那类公开门;
  *   · 生成 —— 付费派发口。额度管得住**花多少钱**,管不住一个卡死的客户端循环在花光之前
  *     能造出多少 job、多少行、多少队列消息;
  *   · 上传 —— 每调用一次就签出一个进我们自己桶的 URL,没有任何东西在数;
@@ -16,14 +19,14 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { prisma } from "@fikirtive/db";
 import {
   callerKey,
-  consumePasswordDoor,
+  consumePublicAuthDoor,
   consumeGenerationGate,
   consumeOttoTurnGate,
   consumeUploadGate,
   consumeMediaProxyGate,
   consumeSharePreviewDoor,
   SHARE_PREVIEW_PER_CALLER_PER_HOUR,
-  PASSWORD_DOOR_PER_CALLER_PER_HOUR,
+  PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR,
   GENERATION_PER_TENANT_PER_HOUR,
   OTTO_TURN_PER_TENANT_PER_HOUR,
   OTTO_TURN_RATE_LIMIT_MESSAGE,
@@ -32,6 +35,8 @@ import {
 } from "@/lib/rate-limit-gates";
 
 const from = (ip: string) => new Headers({ "x-forwarded-for": ip });
+/** 今天仍然开着的那道公开门(lib/public-auth-doors.ts 的唯一一条)。 */
+const DOOR = "/send-verification-email";
 
 beforeEach(async () => {
   await prisma.rateLimitCounter.deleteMany({});
@@ -42,19 +47,19 @@ beforeEach(async () => {
 describe("#795 r2 闸门用的是同一个可信调用方身份", () => {
   it("单段转发头 = 那一段;伪造的左侧前缀改不了桶", async () => {
     expect(callerKey(new Headers({ "x-forwarded-for": "203.0.113.9" }))).toBe("203.0.113.9");
-    await consumePasswordDoor(new Headers({ "x-forwarded-for": "1.1.1.1, 203.0.113.9" }));
+    await consumePublicAuthDoor(DOOR, new Headers({ "x-forwarded-for": "1.1.1.1, 203.0.113.9" }));
     const keys = (await prisma.rateLimitCounter.findMany({ select: { key: true } })).map((r) => r.key);
-    expect(keys).toEqual(["pw:203.0.113.9"]);
+    expect(keys).toEqual([`authdoor:${DOOR}:203.0.113.9`]);
   });
 });
 
-describe("#795 密码门(耐心型攻击那一半)", () => {
-  it("一小时给一个出口地址三十次,第三十一次拒,并给出重试时刻", async () => {
+describe("#795 公开 auth 门(耐心型攻击那一半)", () => {
+  it("一小时给一个出口地址五次,第六次拒,并给出重试时刻", async () => {
     const ip = "203.0.113.20";
-    for (let i = 0; i < PASSWORD_DOOR_PER_CALLER_PER_HOUR; i += 1) {
-      expect(await consumePasswordDoor(from(ip)), `第 ${i + 1} 次应放行`).toBeNull();
+    for (let i = 0; i < PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR; i += 1) {
+      expect(await consumePublicAuthDoor(DOOR, from(ip)), `第 ${i + 1} 次应放行`).toBeNull();
     }
-    const refused = await consumePasswordDoor(from(ip));
+    const refused = await consumePublicAuthDoor(DOOR, from(ip));
     expect(refused).not.toBeNull();
     expect(refused).toBeGreaterThan(0);
     expect(refused).toBeLessThanOrEqual(60 * 60 * 1000);
@@ -62,14 +67,16 @@ describe("#795 密码门(耐心型攻击那一半)", () => {
 
   it("换一个出口地址预算是自己的 —— 不因为别人被拒就连坐", async () => {
     const ip = "203.0.113.21";
-    for (let i = 0; i < PASSWORD_DOOR_PER_CALLER_PER_HOUR + 1; i += 1) await consumePasswordDoor(from(ip));
-    expect(await consumePasswordDoor(from("203.0.113.22"))).toBeNull();
+    for (let i = 0; i < PUBLIC_AUTH_DOOR_PER_CALLER_PER_HOUR + 1; i += 1) {
+      await consumePublicAuthDoor(DOOR, from(ip));
+    }
+    expect(await consumePublicAuthDoor(DOOR, from("203.0.113.22"))).toBeNull();
   }, 60_000);
 
   it("计数键里没有邮箱 —— 429 绝不能被读成「这个账号存在」", async () => {
-    await consumePasswordDoor(from("203.0.113.23"));
+    await consumePublicAuthDoor(DOOR, from("203.0.113.23"));
     const keys = (await prisma.rateLimitCounter.findMany({ select: { key: true } })).map((r) => r.key);
-    expect(keys).toEqual(["pw:203.0.113.23"]);
+    expect(keys).toEqual([`authdoor:${DOOR}:203.0.113.23`]);
     for (const key of keys) expect(key).not.toContain("@");
   });
 });
@@ -220,7 +227,7 @@ describe("B0-28 分享预览门(免登录公开页)", () => {
 
 describe("#795 每道闸各数各的", () => {
   it("键前缀两两不同 —— 一道门的流量不许花掉另一道门的预算", async () => {
-    await consumePasswordDoor(from("203.0.113.30"));
+    await consumePublicAuthDoor(DOOR, from("203.0.113.30"));
     await consumeGenerationGate("203.0.113.30");
     await consumeOttoTurnGate("203.0.113.30");
     await consumeUploadGate("203.0.113.30");
@@ -231,7 +238,7 @@ describe("#795 每道闸各数各的", () => {
     expect(rows).toHaveLength(6);
     expect(new Set(rows.map((r) => r.count))).toEqual(new Set([1]));
     expect(new Set(rows.map((r) => r.key.split(":")[0]))).toEqual(
-      new Set(["pw", "gen", "otto", "upload", "media", "sharepv"]),
+      new Set(["authdoor", "gen", "otto", "upload", "media", "sharepv"]),
     );
   });
 });

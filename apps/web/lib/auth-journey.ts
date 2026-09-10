@@ -2,7 +2,10 @@ import { sanitizeCallbackURL } from "@/lib/safe-redirect";
 
 export const DEFAULT_AUTH_DESTINATION = "/";
 
-export type LoginStep = "hub" | "email" | "code" | "password";
+/** SIGNIN-A4 —— 密码那一步随密码退役（docs/specs/sign-in.md 已冻结 · v1）：`"password"` 从这里
+ *  拿掉之后，`/login?step=password` 这种旧链接由 `parseLoginStep` 归到 hub，而不是走到一个
+ *  再也没有人渲染的分支。 */
+export type LoginStep = "hub" | "email" | "code";
 
 export function authDestination(from: string | undefined | null): string {
   return sanitizeCallbackURL(from) || DEFAULT_AUTH_DESTINATION;
@@ -26,5 +29,5 @@ export function loginStepHref(step: LoginStep, from: string | undefined | null):
 }
 
 export function parseLoginStep(value: string | undefined | null): LoginStep {
-  return value === "email" || value === "code" || value === "password" ? value : "hub";
+  return value === "email" || value === "code" ? value : "hub";
 }
