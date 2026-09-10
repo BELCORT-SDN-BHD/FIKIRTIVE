@@ -14,7 +14,13 @@ export async function executeLookupProducts(
   const ctx = runContext.context as OttoContext;
   const q = input.query.trim().toLowerCase();
   const rows = await prisma.brandRecord.findMany({
-    where: { ownerId: ctx.orgId, brandId: null, kind: "product", deletedAt: null, status: "active" },
+    // `contextStatus: "Ready"` —— 规格 §1.9 第三句「Otto 在确认前不把草稿当事实」。理解 worker
+    // 猜出来、商家从没确认过的草稿产品不是商家的在售商品,不能拿去命名、定价、写文案
+    // (判官第 2 轮 P1,PR #1337)。同 memory-actions 的 compileBrandContext 那条 READY_ONLY。
+    where: {
+      ownerId: ctx.orgId, brandId: null, kind: "product",
+      deletedAt: null, status: "active", contextStatus: "Ready",
+    },
     orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
     select: { data: true },
     take: 200, // catalog design bound (founder decision 6); substring match in app code
