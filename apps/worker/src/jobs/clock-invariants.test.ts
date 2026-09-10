@@ -23,7 +23,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { GEN_QUEUE_POLICY, REFGEN_QUEUE_POLICY, RESEARCH_QUEUE_POLICY, PUBLISH_QUEUE_POLICY, PUBLISH_EXECUTION_DEADLINE_MS, GEN_QUEUE, REFGEN_QUEUE, UNDERSTAND_QUEUE, MAX_GEN_COUNT, MAX_REFGEN_COUNT } from "@fikirtive/core";
-import { VIDEO_POLL_TIMEOUT_MS, ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS, PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT } from "@fikirtive/generation";
+import { VIDEO_POLL_TIMEOUT_MS, ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS, PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT, PROVIDER_MAX_CONCURRENT_REQUESTS_ENV, providerRequestLimit } from "@fikirtive/generation";
 import { workerPlan } from "../plan.js";
 import { GEN_STALE_MS, GEN_REAP_MS, GEN_QUEUED_REAP_MS, GEN_DONE_EMPTY_GRACE_MS } from "./gen.js";
 import { REFGEN_STALE_MS, REFGEN_REAP_MS, REFGEN_QUEUED_REAP_MS } from "./refgen.js";
@@ -72,14 +72,21 @@ describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () 
   // 要按最坏排几轮算,而轮数由这个进程能同时推到闸前多少个请求决定:
   //
   //     闸前需求 = 任务槽位 × 每个任务的付费请求扇出(一张图 = 一个付费 POST)
-  //     最坏排队 = (ceil(需求 / 6 格) - 1) 轮 × 一轮最慢 5m
+  //     最坏排队 = (ceil(需求 / 闸位) - 1) 轮 × 一轮最慢 5m
   //
-  // 下面两条按**角色**分开钉:默认角色(不设 `WORKER_ROLE`)装得下,是不变式;
-  // `WORKER_ROLE=wait` 装不下,是登记的缺口 —— 而且那一格是**本片收窄的**,见那条注释。
+  // 三个数都从真源现读:槽位 `workerPlan(env)`、扇出 `MAX_GEN_COUNT` / `MAX_REFGEN_COUNT`、
+  // **闸位 `providerRequestLimit(env)`**。闸位尤其不能写死默认 6 —— 运维手册要求多副本时自己再除
+  // (`replicas × PROVIDER_MAX_CONCURRENT_REQUESTS ≤ 8`),而它正是决定答案的除数。
+  //
+  // 下面三条钉的是:默认角色**在单副本闸位(6)下**装得下,是不变式;闸位降到 6 以下(手册允许的
+  // 2 副本 = 4 格)默认角色也装不下;`WORKER_ROLE=wait` 更装不下 —— 后两格都是**本片收窄的**,
+  // 是登记的缺口,不是不变式。
   const IMAGE_ATTEMPT_MS = ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS;
   const GEN_QUEUE_ALLOWANCE_MS = GEN_STALE_MS - IMAGE_ATTEMPT_MS;
   /** 修法前图片 POST 占的那把尺(控制面 60s)。只用来回答「这一格是不是本片收窄的」。 */
   const PRE_FIX_IMAGE_POST_MS = 60_000;
+  /** 修法前留给排队的余量(12m)。同上,只用于「本片收窄没收窄」的对照。 */
+  const PRE_FIX_ALLOWANCE_MS = GEN_STALE_MS - (PRE_FIX_IMAGE_POST_MS + ARK_DOWNLOAD_TIMEOUT_MS);
 
   /** 一个 worker 进程最坏能同时推到闸前多少个付费请求 = 槽位 × 每个任务的请求扇出。 */
   function paidRequestDemand(env: NodeJS.ProcessEnv): number {
@@ -90,26 +97,61 @@ describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () 
       (concurrency[UNDERSTAND_QUEUE] ?? 0) // 理解一次一个请求,但花的是同一个账户额度
     );
   }
-  /** 最坏排队 = 前面还要清掉几轮 × 一轮最慢(一个图片 POST 打满它的截止时间)。 */
-  const worstQueueWaitMs = (demand: number, roundMs: number): number =>
-    (Math.ceil(demand / PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT) - 1) * roundMs;
+  /**
+   * 最坏排队 = 前面还要清掉几轮 × 一轮最慢(一个图片 POST 打满它的截止时间)。
+   *
+   * 闸门宽度**从真源现读**(`providerRequestLimit(env)`,读 `PROVIDER_MAX_CONCURRENT_REQUESTS`),
+   * 不写死 `PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT`:那个数是运维可调的,而下面「装不装得下」
+   * 的答案正是被它除出来的。写死会让答案在多副本配置下永远算成单副本的样子 —— 断言绿着,
+   * 商家那边照样被误杀。槽位与扇出已经从 `workerPlan()` / `MAX_*_COUNT` 现读,除数不能例外。
+   */
+  const worstQueueWaitMs = (env: NodeJS.ProcessEnv, roundMs: number): number =>
+    (Math.ceil(paidRequestDemand(env) / providerRequestLimit(env)) - 1) * roundMs;
 
   it("一次正常的慢出图不会被 stale 判定误伤", () => {
     expect(ARK_IMAGE_TIMEOUT_MS).toBeLessThan(GEN_STALE_MS);
     expect(IMAGE_ATTEMPT_MS).toBeLessThan(GEN_STALE_MS);
   });
 
-  it("并发闸的排队时间也在被量的窗口里 —— 默认角色最坏排一轮 5m,装得进 8m 余量", () => {
+  it("并发闸的排队时间也在被量的窗口里 —— 默认角色 + 单副本闸位最坏排一轮 5m,装得进 8m 余量", () => {
     expect(IMAGE_ATTEMPT_MS).toBe(10 * MINUTE);
     expect(GEN_QUEUE_ALLOWANCE_MS).toBe(8 * MINUTE);
     // 不设 `WORKER_ROLE` = 默认 `all`:等待型队列各 1 格 ⇒ 闸前最多 4(gen) + 6(refgen) + 1(understand)。
     const demand = paidRequestDemand({});
     expect(demand).toBe(MAX_GEN_COUNT + MAX_REFGEN_COUNT + 1);
+    // 不设 `PROVIDER_MAX_CONCURRENT_REQUESTS` = 默认 6 格 = 运维手册的**单副本**配置
+    // (`docs/ops/worker-services.md`:`replicas × PROVIDER_MAX_CONCURRENT_REQUESTS ≤ 8`)。
+    expect(providerRequestLimit({})).toBe(PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT);
     // 11 个请求、6 格 ⇒ 排在最后的那个前面只有一轮要清。
-    const wait = worstQueueWaitMs(demand, ARK_IMAGE_TIMEOUT_MS);
+    const wait = worstQueueWaitMs({}, ARK_IMAGE_TIMEOUT_MS);
     expect(wait).toBe(ARK_IMAGE_TIMEOUT_MS);
     expect(wait).toBeLessThan(GEN_QUEUE_ALLOWANCE_MS);
     expect(wait + IMAGE_ATTEMPT_MS).toBeLessThan(GEN_STALE_MS);
+  });
+
+  it("已知缺口钉板:闸位调到 6 以下(手册允许的 2 副本 = 4 格)默认角色也装不下(本片收窄的正是这一格)", () => {
+    // 上一条的绿只对**单副本**成立,而运维手册明写多副本要自己再除:
+    // `replicas × PROVIDER_MAX_CONCURRENT_REQUESTS ≤ 8`(账户额度 10 减 2 的余量)。
+    // 2 副本 ⇒ 每副本 4 格。此时**默认角色**(不设 `WORKER_ROLE`)的 11 个请求要清 2 轮 = 10m,
+    // 大过 8m 余量 ⇒ 一次健康的慢出图整趟 20m,撞穿 stale 18m,被判「卡死」失败 + 退款。
+    const twoReplicas = { [PROVIDER_MAX_CONCURRENT_REQUESTS_ENV]: "4" };
+    expect(providerRequestLimit(twoReplicas)).toBe(4);
+    expect(paidRequestDemand(twoReplicas)).toBe(MAX_GEN_COUNT + MAX_REFGEN_COUNT + 1);
+    const wait = worstQueueWaitMs(twoReplicas, ARK_IMAGE_TIMEOUT_MS);
+    expect(wait).toBe(2 * ARK_IMAGE_TIMEOUT_MS);
+    expect(wait).toBeGreaterThan(GEN_QUEUE_ALLOWANCE_MS);
+    expect(wait + IMAGE_ATTEMPT_MS).toBeGreaterThanOrEqual(GEN_STALE_MS);
+
+    // 而修法前同样 2 轮只要 2×60s = 2m,装得进当时 12m 的余量 ⇒ 这一格**是本片收窄的**。
+    expect(worstQueueWaitMs(twoReplicas, PRE_FIX_IMAGE_POST_MS)).toBeLessThan(PRE_FIX_ALLOWANCE_MS);
+
+    // 边界钉死:默认角色现在**只有**闸位 ≥ 6(= 单副本)才装得下。改宽 `ARK_IMAGE_TIMEOUT_MS`
+    // 或改窄 stale 会把这个门槛推高,那时必须回到这里重新论证,而不是让上一条继续绿着。
+    const fitsAt = (limit: number): boolean =>
+      worstQueueWaitMs({ [PROVIDER_MAX_CONCURRENT_REQUESTS_ENV]: String(limit) }, ARK_IMAGE_TIMEOUT_MS) <
+      GEN_QUEUE_ALLOWANCE_MS;
+    expect([1, 2, 3, 4, 5].map(fitsAt)).toEqual([false, false, false, false, false]);
+    expect(fitsAt(6)).toBe(true);
   });
 
   it("已知缺口钉板:WORKER_ROLE=wait 的槽位把最坏排队推过余量(本片收窄的正是这一格)", () => {
@@ -118,14 +160,12 @@ describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () 
     // 最坏还要清 4 轮 = 20m,大过 8m 余量。
     const demand = paidRequestDemand({ WORKER_ROLE: "wait" });
     expect(demand).toBe(4 * MAX_GEN_COUNT + 2 * MAX_REFGEN_COUNT + 2);
-    expect(worstQueueWaitMs(demand, ARK_IMAGE_TIMEOUT_MS)).toBeGreaterThan(GEN_QUEUE_ALLOWANCE_MS);
+    expect(worstQueueWaitMs({ WORKER_ROLE: "wait" }, ARK_IMAGE_TIMEOUT_MS)).toBeGreaterThan(GEN_QUEUE_ALLOWANCE_MS);
     // 而修法前同样 4 轮只要 4×60s = 4m,装得进当时 12m 的余量 —— 所以这一格**是本片收窄的**,
     // 不像下面那条视频的先于本片存在。开大闸位补不上:账户并发硬顶 10,还小于需求 30,
     // 把闸开大只是把排队换成撞供应商。真要关它得给排队加截止、或把 stale 的起点挪到闸后,
     // 两者都动别的规格线。处置:登记在 PR #1332 描述「未做」栏,S5 裁是修还是续登。
-    expect(worstQueueWaitMs(demand, PRE_FIX_IMAGE_POST_MS)).toBeLessThan(
-      GEN_STALE_MS - (PRE_FIX_IMAGE_POST_MS + ARK_DOWNLOAD_TIMEOUT_MS),
-    );
+    expect(worstQueueWaitMs({ WORKER_ROLE: "wait" }, PRE_FIX_IMAGE_POST_MS)).toBeLessThan(PRE_FIX_ALLOWANCE_MS);
   });
 
   it("已知缺口钉板:一个视频任务的闸位就吃光图片那条路的排队余量(先于本片存在)", () => {
