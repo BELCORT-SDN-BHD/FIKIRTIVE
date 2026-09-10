@@ -50,7 +50,12 @@ import {
   saveBrandDraft,
   updateMemory,
 } from "@/lib/memory-actions";
-import { deleteBrandRecord, restoreBrandRecord } from "@/lib/brand-record-actions";
+import {
+  confirmBrandRecordDraft,
+  deleteBrandRecord,
+  discardBrandRecordDraft,
+  restoreBrandRecord,
+} from "@/lib/brand-record-actions";
 import { listBrandRevisionsAction } from "@/lib/brand-revision-actions";
 import { repackBrandContent } from "@/lib/brand-context-format";
 import type { BrandContextEntry, BrandSectionView } from "@/lib/brand-context-data";
@@ -602,7 +607,13 @@ export function BrandWorkspace({
                 {/* 草稿态最多四个动作,而右侧还有 Otto 面板在占宽 —— 不给它 shrink-0 与
                     flex-wrap,标题会被挤到按钮底下去(实测 1440px 带 Otto 面板时就已经撞上)。 */}
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                  {selected.status === "Draft" ? (
+                  {/* 草稿的三个动作**按 kind 分流**(判官第 2 轮 P1,PR #1337):自由文本草稿走
+                      Memory 那三条,结构化记录草稿(理解 worker 读出来的产品)走 BrandRecord 那两条。
+                      少了这一分流,记录草稿点哪个都报「That draft is no longer here.」—— 那三个
+                      动作只认 `prisma.memory`。「Preview effect」只对 Memory 出现:预览的是
+                      `compileBrandContext(draftId)`,而那条编译只认 Memory 草稿;与其画一颗按不动的
+                      按钮,不如不画。 */}
+                  {selected.status === "Draft" && selected.kind === "memory" ? (
                     <>
                       <Button variant="secondary" size="sm" onClick={() => openPreview(selected)}>
                         <Eye aria-hidden />
@@ -616,6 +627,25 @@ export function BrandWorkspace({
                         size="sm"
                         disabled={pending}
                         onClick={() => run(() => discardBrandDraft({ id: selected.id }), "Draft discarded.")}
+                      >
+                        Discard
+                      </Button>
+                    </>
+                  ) : null}
+                  {selected.status === "Draft" && selected.kind === "record" ? (
+                    <>
+                      <Button
+                        size="sm"
+                        disabled={pending}
+                        onClick={() => run(() => confirmBrandRecordDraft({ id: selected.id }), "Saved for Otto.")}
+                      >
+                        Save context
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={pending}
+                        onClick={() => run(() => discardBrandRecordDraft({ id: selected.id }), "Draft discarded.")}
                       >
                         Discard
                       </Button>
