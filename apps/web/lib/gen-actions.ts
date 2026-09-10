@@ -842,9 +842,16 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // commit (a CHARACTER with no refs, a deleted @mention, a cross-project i2v
     // frame). Fail-OPEN — checkCast returns null on its own faults — and additive
     // only: it never loosens the existing gate.
-    // creation §5 :162⑤ —— 挂上路的那几张原件也进这道守卫(`videoOptions.referenceGenerationIds`
-    // = 上面那条进程内可信通道读出来的那张持久化卡上的快照)。判据与首帧/末帧同一份 scope。
-    const block = await checkCast({ ownerId, projectId, entityIds, variantSel: effectiveVariantSel, sourceGenerationId, tailGenerationId, referenceGenerationIds: videoOptions?.referenceGenerationIds, model, kind });
+    // creation §5 :162⑤ —— 挂上路的那几张原件也进这道守卫(= 上面那条进程内可信通道读出来的
+    // 那张持久化卡上的快照)。判据与首帧/末帧同一份 scope。
+    //
+    // 两种 kind 各有自己的一格,两格都要查:视频侧是 `videoOptions.referenceGenerationIds`
+    // (FSE-001 的演员照 + 商品照),图片侧是 `imageOptions.referenceGenerationIds`
+    // (CRE-STG-P1-003 的第一张之外的挂图)。同一个规范化器按 kind 只写其中一格,所以这里
+    // 取哪一格有值就是哪一格 —— 少查图片那一格,多参考图片作业就照旧走到 worker 才 fail
+    // closed:钱先预扣、事后退,正是这条登记要消掉的那种伤害。
+    const referenceGenerationIds = videoOptions?.referenceGenerationIds ?? imageOptions?.referenceGenerationIds;
+    const block = await checkCast({ ownerId, projectId, entityIds, variantSel: effectiveVariantSel, sourceGenerationId, tailGenerationId, referenceGenerationIds, model, kind });
     if (block) {
       try {
         await prisma.actionEvent.create({ data: { id: newId(), ownerId, projectId, type: "gen.guardian-block", payload: { findings: block.report.findings } } });

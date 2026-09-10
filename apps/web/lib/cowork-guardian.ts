@@ -28,8 +28,10 @@ export async function checkCast(req: {
   sourceGenerationId?: string | null;
   tailGenerationId?: string | null;
   /**
-   * creation §5 :162⑤ —— 这一单**额外挂上路的原件**(`GenJob.videoOptions.referenceGenerationIds`,
-   * PR #1273 的正路:演员参考照 + 商品图各作一张 `role:"reference_image"`)。
+   * creation §5 :162⑤ —— 这一单**额外挂上路的原件**。视频侧是
+   * `GenJob.videoOptions.referenceGenerationIds`(PR #1273 的正路:演员参考照 + 商品图各作
+   * 一张 `role:"reference_image"`),图片侧是 `GenJob.imageOptions.referenceGenerationIds`
+   * (CRE-STG-P1-003:第一张之外的挂图)——两种 kind 同一条判据,调用方按 kind 传那一格。
    *
    * 从前这道守卫只查首帧/末帧那两张,于是「商品图已被删除 / 已不属于这家店」这一趟走到
    * worker 才 fail closed:钱已经预扣、事后退回。判据与首帧那两张同一份 `generationReferenceScope`
