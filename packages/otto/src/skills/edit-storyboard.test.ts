@@ -510,3 +510,110 @@ describe("#782 r17 editShot —— 帧判定不看键在不在", () => {
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// creation §5 :178 —— Otto 那一面的「挂 Library 图」(与人工面同一个动作层)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 规矩:模型永远不填 id。它看得见图(input_image 部件),看不见 id —— 让它填就是请它编一个。
+// 真会上车的那几张只从 `ctx.sourceGenerationIds` 取,而那一份是服务端这一轮按 ownerId 校验
+// 过的(`validateOttoTurnReferences`)。所以「跨租户不可选」在这一面是**结构性**的:那条路
+// 上根本没有一个能让别家店 id 进来的入口。
+describe("creation §5 :178 —— Otto 面 op=setShotReferences", () => {
+  function route(p: StoryboardCardPayload) {
+    mockFindFirst.mockImplementation(async (args: { where: Record<string, unknown> }) => {
+      const w = args.where;
+      if (w.kind === "STORYBOARD_CARD") return card(p);
+      if (w.kind === "GEN_CARD") return { genJobId: null };
+      return null;
+    });
+  }
+
+  it("creation §5 :178 / CREATE-A2: 把这一轮挂上来的图挂到那一镜 —— 走的是人工面同一个纯变换", async () => {
+    route(payload3());
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setShotReferences", index: 1, useTurnImages: true },
+      { context: makeCtx({ sourceGenerationIds: ["gen-a", "gen-b"] }) },
+    );
+
+    expect(res).toEqual({ cardId: "card-1", shotCount: 3 });
+    const written = mockUpdate.mock.calls[0]![0] as { data: { payload: StoryboardCardPayload } };
+    expect(written.data.payload.shots[1]!.referenceGenerationIds).toEqual(["gen-a", "gen-b"]);
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0
+  });
+
+  it("creation §5 :178 / CREATE-A10: 模型交不出 id —— schema 上没有这个格子", () => {
+    const parsed = editStoryboardInput.safeParse({
+      cardId: "c",
+      op: "setShotReferences",
+      index: 0,
+      useTurnImages: true,
+      referenceGenerationIds: ["gen-of-another-shop"],
+    });
+    expect(parsed.success).toBe(true);
+    expect("referenceGenerationIds" in (parsed.success ? parsed.data : {})).toBe(false);
+  });
+
+  it("creation §5 :178: useTurnImages=false 把这一镜挂的图全部取下", async () => {
+    const p = payload3();
+    p.shots[1]!.referenceGenerationIds = ["gen-a"];
+    route(p);
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setShotReferences", index: 1, useTurnImages: false },
+      { context: makeCtx() },
+    );
+
+    expect(res).toEqual({ cardId: "card-1", shotCount: 3 });
+    const written = mockUpdate.mock.calls[0]![0] as { data: { payload: StoryboardCardPayload } };
+    expect("referenceGenerationIds" in written.data.payload.shots[1]!).toBe(false);
+  });
+
+  it("creation §5 :178 / CREATE-A2: 这一轮一张图都没挂 ⇒ 说清楚该做什么,零写入", async () => {
+    route(payload3());
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setShotReferences", index: 1, useTurnImages: true },
+      { context: makeCtx() },
+    );
+
+    expect(res).toEqual({
+      error:
+        "There are no images attached to this message — ask the user to attach the Library image they want on that shot, then try again.",
+    });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :178 / CREATE-A2: 这一镜的片子还在跑 ⇒ 与人工面同一句话、同一道闸,零写入", async () => {
+    route(payload3()); // s0 身上有 videoCardId=vc0
+    mockGenJobFindFirst.mockResolvedValue({
+      id: "j1",
+      status: "GENERATING",
+      generationIds: [],
+      lastFrameAssetId: null,
+      projectId: "p",
+      threadId: "t-1",
+    });
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setShotReferences", index: 0, useTurnImages: true },
+      { context: makeCtx({ sourceGenerationIds: ["gen-a"] }) },
+    );
+
+    expect(res).toEqual({ error: "That video is still being made — wait for it to finish, then edit this shot." });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :178: 少了 useTurnImages ⇒ 拒绝,零写入(不猜商家的意思)", async () => {
+    route(payload3());
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setShotReferences", index: 1 },
+      { context: makeCtx({ sourceGenerationIds: ["gen-a"] }) },
+    );
+
+    expect(res).toEqual({ error: "setShotReferences needs useTurnImages true or false." });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+});

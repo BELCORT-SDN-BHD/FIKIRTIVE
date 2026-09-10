@@ -4061,3 +4061,165 @@ describe("creation §5 :172⑤ —— 没有 firstFramePrompt 的镜头", () => 
     expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// creation §5 :178(Founder 2026-09-10 裁)—— 分镜「挂 Library 图」通道
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 验收口径逐字:「分镜卡镜头可 @ 选 Library 里的图作参考并**进入报价材料**,跨租户不可选」。
+// 名额与计价沿「直接出片」那一档(FSE-001 正路)——所以这一组钉的是三件事:
+//   ① 挂图真的进了报价材料(ctx → buildProposeCard → 冻在子卡上 → 付费时的 videoOptions);
+//   ② 跨租户读不出来 ⇒ 花钱之前点名拒绝、零卡零预扣(CREATE-A10 归属围栏 + CREATE-A2 诚实拒绝);
+//   ③ 带不上车的形状(不直接出片的镜头)同样是花钱之前的点名拒绝,不是悄悄不带上路。
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 这家店真有的几张 Library 图 —— `attachShotLibraryImages` 那一趟 owner-scoped 读的回行。 */
+function libraryImagesOwned(ids: string[] = ["lib-1", "lib-2"]) {
+  mockGenerationFindMany.mockImplementation(async (args: { where: { ownerId?: string; id?: { in?: string[] } } }) => {
+    // 跨租户:查询里带的 ownerId 不是本店 ⇒ 一行都读不出来(真库的行为,这里如实复刻)。
+    if (args.where.ownerId !== OWNER) return [];
+    const wanted = args.where.id?.in ?? [];
+    return wanted
+      .filter((id: string) => ids.includes(id))
+      .map((id: string) => ({
+        id,
+        projectId: "p-src",
+        promptText: `prompt ${id}`,
+        asset: { ownerId: OWNER, contentHash: HASH, ext: "png" },
+        project: { name: "Canvas A" },
+      }));
+  });
+}
+
+/** s0 带演员(直接出片)并挂了两张 Library 图;s1 不带演员(两步),什么都没挂。 */
+function libraryPayload(): StoryboardCardPayload {
+  const p = castPayload2();
+  p.shots[0]!.referenceGenerationIds = ["lib-1", "lib-2"];
+  return p;
+}
+
+describe("creation §5 :178 —— 分镜挂 Library 图,进报价材料", () => {
+  it("creation §5 :178 / CREATE-A2: 挂上的 Library 图进这一镜的报价材料,并冻在子卡上", async () => {
+    castOwned();
+    libraryImagesOwned();
+    mockVideoProposeCard();
+    wireLoads(card(libraryPayload()));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    const [, propCtx] = mockBuildProposeCard.mock.calls[0];
+    // 次序 = 商家挂的次序,也就是引擎收到参考图的次序。
+    expect(propCtx.sourceGenerationIds).toEqual(["lib-1", "lib-2"]);
+    // 回执与 id 同一趟读出来 —— 卡上有 id 却没有回执时 planCardGate 判这张卡不可批准。
+    expect(propCtx.mediaReferences.map((r: { generationId: string }) => r.generationId)).toEqual(["lib-1", "lib-2"]);
+    // 首帧那一格仍然是空的:挂图是参考照,不是第一帧(FSE-001 正路)。
+    expect(propCtx.sourceGenerationId).toBeUndefined();
+  });
+
+  it("creation §5 :178 / CREATE-A10: 别家店的那张图在这家店读不出来 ⇒ 花钱之前点名拒绝,零卡零预扣", async () => {
+    castOwned();
+    // 本店只有 lib-1;payload 上那张 lib-of-owner-2 属于别家店 —— owner-scoped 读回不来。
+    libraryImagesOwned(["lib-1"]);
+    mockVideoProposeCard();
+    const p = castPayload2();
+    p.shots[0]!.referenceGenerationIds = ["lib-1", "lib-of-owner-2"];
+    wireLoads(card(p));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    expect("error" in res && res.error).toContain("isn't in your Library any more");
+    expect("error" in res && res.error).toContain("Shot 1");
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+    // 那一趟读带着本店的 ownerId —— 归属围栏就在这一格上(它当不了存在性问答机)。
+    const call = mockGenerationFindMany.mock.calls.find(
+      (c) => (c[0] as { where?: { id?: { in?: string[] } } }).where?.id?.in?.includes("lib-of-owner-2"),
+    );
+    expect((call![0] as { where: { ownerId: string } }).where.ownerId).toBe(OWNER);
+  });
+
+  it("creation §5 :178 / CREATE-A2: 不直接出片的镜头挂着图 ⇒ 花钱之前点名拒绝,不悄悄不带上路", async () => {
+    castOwned();
+    libraryImagesOwned();
+    mockVideoProposeCard();
+    const p = castPayload2();
+    p.shots[1]!.firstFrameGenerationId = "ffgen1"; // s1 走两步:它的视频是 i2v,参考照上不了车
+    p.shots[1]!.referenceGenerationIds = ["lib-1"];
+    wireLoads(card(p));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    expect("error" in res && res.error).toContain("no cast member");
+    expect("error" in res && res.error).toContain("Shot 2");
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :178 / CREATE-A2: 单镜重出视频同法 —— 挂图照样进材料", async () => {
+    castOwned();
+    libraryImagesOwned();
+    mockVideoProposeCard();
+    wireLoads(card(libraryPayload()));
+
+    const res = await regenShotVideoCard({ cardId: "card-1", shotId: "s0" });
+    expect("child" in res).toBe(true);
+    const [, propCtx] = mockBuildProposeCard.mock.calls[0];
+    expect(propCtx.sourceGenerationIds).toEqual(["lib-1", "lib-2"]);
+  });
+
+  it("creation §5 :178 / CREATE-A2: 没挂图的分镜一格没动 —— 那一趟读一次都不发", async () => {
+    castOwned();
+    libraryImagesOwned();
+    mockVideoProposeCard();
+    wireLoads(card(castPayload2()));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+    const [, propCtx] = mockBuildProposeCard.mock.calls[0];
+    expect(propCtx.sourceGenerationIds).toBeUndefined();
+    expect(propCtx.mediaReferences).toBeUndefined();
+    expect(mockGenerationFindMany).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :178 / CREATE-A2: 换掉挂图 ⇒ 旧的视频子卡不算同一张,不许复用", async () => {
+    castOwned();
+    libraryImagesOwned();
+    mockVideoProposeCard();
+    const p = libraryPayload();
+    p.shots[0]!.videoCardId = "old-video-child";
+    wireLoads(card(p), {
+      "old-video-child": {
+        // 这张旧卡按**另一组**挂图铸的:其余每一格(话/时长/模型/首帧)都一样。
+        payload: {
+          structuredPrompt: "vp0",
+          model: "seedance-2-mini",
+          params: { durationSeconds: 5 },
+          entityIds: ["actor-1", "mug"],
+          referenceGenerationIds: ["lib-9"],
+          estimatedCredits: 5,
+        },
+        genJobId: null,
+      },
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+    // 复用会把旧卡端回去;这里必须是一张新铸的卡,而且父卡指针换了。
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(res.children[0]!.childCardId).not.toBe("old-video-child");
+  });
+
+  it("creation §5 :178: sync 把这一镜挂着的图如实报给卡面(取不到地址就只回 id)", async () => {
+    castOwned();
+    libraryImagesOwned(["lib-1"]); // lib-2 这一刻取不到(删了 / 读不回来)
+    wireLoads(card(libraryPayload()));
+
+    const res = await syncStoryboardMedia({ cardId: "card-1" });
+    if (!("shots" in res)) throw new Error("expected shots");
+    const imgs = reportOf(res, "s0").libraryImages!;
+    expect(imgs.map((r) => r.generationId)).toEqual(["lib-1", "lib-2"]);
+    expect(imgs[0]!.url).toBeTruthy();
+    expect(imgs[1]!.url).toBeUndefined();
+    expect(reportOf(res, "s1").libraryImages).toEqual([]);
+  });
+});
