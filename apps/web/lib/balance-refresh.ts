@@ -17,8 +17,12 @@
  * /api/otto/thread-activity today; the panel's expand signal asks it exactly once per
  * visit, `lib/otto-panel-activity.ts`). "No new timer" still governs both.
  *
- * Client-side only by construction — the listener set is module state, so it is
- * meaningful only inside the browser bundle where the nav and the spend sites share it.
+ * Browser-only in effect — the listener set is module state, so it is meaningful only
+ * inside the browser bundle where the nav and the spend sites share it. The module still
+ * LOADS on the server (the nav is a client component inside a server-rendered tree), so the
+ * cross-tab channel below opens only where a `window` exists: on the server there is no
+ * second tab to reach, and Node's own built-in BroadcastChannel would hand back a live
+ * handle nobody in that process ever closes.
  *
  * FSE-010（frontend-baseline.md §5 :202，Founder 2026-09-10 裁）——「模块态」这句话正是
  * 走查里那个数字的病根：商家开着两个标签页，在一个里花掉 credits，另一个的侧栏还写着花之前
@@ -49,6 +53,11 @@ let channelOpened = false;
 function openBalanceChannel(): BroadcastChannel | null {
   if (channelOpened) return channel;
   channelOpened = true;
+  // 只在浏览器里开。Node 22 自己也带一个真的 `BroadcastChannel`，所以「构造器在不在」这个判据
+  // 在服务端渲染与测试进程里一样成立 —— 而那儿根本没有第二个标签页可同步，开出来的
+  // 只是一个挂着 `onmessage` 的活句柄，而这个模块的关闭路径只在页面里走得到。
+  // 跨页同步本就是浏览器那一侧的事，判据就写成浏览器。
+  if (typeof window === "undefined") return null;
   const Ctor = (globalThis as { BroadcastChannel?: typeof BroadcastChannel }).BroadcastChannel;
   if (typeof Ctor !== "function") return null;
   try {
@@ -65,6 +74,23 @@ function openBalanceChannel(): BroadcastChannel | null {
   return channel;
 }
 
+/**
+ * 关掉这一页那条频道。**唯一的关闭时机是最后一个余额显示退订**：在那之后这一页没有人还
+ * 听得见广播，留着的只是一个还挂着 `onmessage` 的活对象。把 `channelOpened` 一并放回 false，
+ * 下一次订阅照原样再开一条 —— 这个模块从头到尾只维持一条频道（惰性单例）。
+ */
+function closeBalanceChannel(): void {
+  const opened = channel;
+  channel = null;
+  channelOpened = false;
+  if (!opened) return;
+  try {
+    opened.close();
+  } catch {
+    // 关不上也无所谓：这一页已经没有人在听了。
+  }
+}
+
 /** Register a balance display. Returns the unsubscribe for the effect's teardown. */
 export function subscribeBalanceRefresh(listener: BalanceRefreshListener): () => void {
   listeners.add(listener);
@@ -73,6 +99,8 @@ export function subscribeBalanceRefresh(listener: BalanceRefreshListener): () =>
   openBalanceChannel();
   return () => {
     listeners.delete(listener);
+    // 最后一个显示卸载了就把频道还回去（见 `closeBalanceChannel`）。
+    if (listeners.size === 0) closeBalanceChannel();
   };
 }
 
