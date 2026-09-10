@@ -30,6 +30,12 @@ const INVALID = {
   reason: "invalid_email",
   message: "Enter a valid email address.",
 };
+/** SIGNIN-A8 —— 规格 §1.3 逐字。它谈次数与时间，从不谈这个邮箱有没有账号。 */
+const RATE_LIMITED = {
+  status: "error",
+  reason: "rate_limited",
+  message: "Too many codes requested. Try again in an hour.",
+};
 
 beforeEach(async () => {
   queued.length = 0;
@@ -53,21 +59,35 @@ describe("requestSignInCode", () => {
     ]);
   });
 
-  it("answers the same for an address with access, one without, and one over the throttle", async () => {
-    const answers: unknown[] = [];
-    answers.push(await requestSignInCode({ email: "owner@example.com" }));
-    answers.push(await requestSignInCode({ email: "stranger@example.com" }));
-    for (let i = 0; i < 6; i++) {
-      answers.push(await requestSignInCode({ email: "owner@example.com" }));
-    }
-    for (const answer of answers) expect(answer).toEqual(NEUTRAL);
+  /**
+   * SIGNIN-A8 —— 「对陌生邮箱与老邮箱的响应时间与文案一致」，加上「第 6 次被拒并提示一小时
+   * 后再试」。这两句现在同时成立，而这正是这一片的产品变化。
+   *
+   * 一致的是**地址之间**：一个从没出现过的地址与一个老商家走同一条预算、拿同一串答案。
+   * 不一致的是**次数之间**：第 6 次说出来。后者不构成账号存在性探针，因为桶里的数字完全由
+   * 发问的人自己造成（`signin-code-request.ts` 的 `SignInCodeRequestOutcome` 写了全部理由）。
+   */
+  it("SIGNIN-A8 —— 陌生与老邮箱答案逐字相同；同一邮箱第 6 次要码答「一小时后再试」", async () => {
+    const walk = async (email: string) => {
+      const answers: unknown[] = [];
+      for (let i = 0; i < 7; i++) answers.push(await requestSignInCode({ email }));
+      return answers;
+    };
+    const stranger = await walk("stranger@example.com");
+    const owner = await walk("owner@example.com");
+
+    // 陌生与老邮箱：逐字相同。
+    expect(stranger).toEqual(owner);
+    expect(owner.slice(0, 5)).toEqual([NEUTRAL, NEUTRAL, NEUTRAL, NEUTRAL, NEUTRAL]);
+    expect(owner.slice(5)).toEqual([RATE_LIMITED, RATE_LIMITED]);
+
     // Every press handed over a job — r4: an over-budget press that skipped the hand-over did
-    // less work than one inside its budget, which is a clock.
-    expect(queued).toHaveLength(8);
-    // …and the throttle really did bite, so the sameness above is not vacuous.
-    const owner = queued.filter((j) => j.email === "owner@example.com");
-    expect(owner.filter((j) => j.overBudget === false)).toHaveLength(5);
-    expect(owner.filter((j) => j.overBudget === true)).toHaveLength(2);
+    // less work than one inside its budget, which is a clock. 超额现在**说得出口**，但做的事
+    // 还是一样：被撤销的地址与暂停期的陌生人走的正是这条「已寄出」的路。
+    expect(queued).toHaveLength(14);
+    const ownerJobs = queued.filter((j) => j.email === "owner@example.com");
+    expect(ownerJobs.filter((j) => j.overBudget === false)).toHaveLength(5);
+    expect(ownerJobs.filter((j) => j.overBudget === true)).toHaveLength(2);
   });
 });
 
@@ -123,12 +143,22 @@ describe("FRONT-A12 — a deployment with no mail transport says so instead of c
 });
 
 describe("#678 — the action's whole answer vocabulary is existence-independent", () => {
+  /**
+   * SIGNIN-A8 —— `rate_limited` 从这张禁用清单里**拿掉了**，而且是一次改判，不是放宽。
+   *
+   * #678 当时禁它的理由写得很清楚：码门只放行名单内的地址，所以「你被限流了」等于「这个地址
+   * 有账号」。规格（已冻结 · v1 §1.6）把码门对陌生人打开，那个等号不成立了 —— 每个地址都会被
+   * 寄码，计数桶一视同仁，桶里的数字完全由发问的人自己造成。
+   *
+   * 清单上其余每一条仍然禁着，而且理由一个字没变：它们要么是关于**这个地址**的
+   * （`delivery_failed` —— 只有有权限的地址才会被交给邮件商），要么是本该发生在背景的工作
+   * （铸码、问名单、碰数据库）。
+   */
   it("keeps no branch a future edit could lean on", async () => {
     const source = await import("node:fs/promises").then((fs) =>
       fs.readFile(new URL("../actions.ts", import.meta.url), "utf8"),
     );
     for (const forbidden of [
-      "rate_limited",
       "delivery_failed",
       "Too many sign-in",
       "EmailSendError",
@@ -147,6 +177,10 @@ describe("#678 — the action's whole answer vocabulary is existence-independent
     expect(Object.keys(contract).sort()).toEqual([
       "SIGN_IN_CODE_INVALID_EMAIL_MESSAGE",
       "SIGN_IN_CODE_LENGTH",
+      // SIGNIN-A8 —— 「一小时内第 6 次」。它谈的是**次数**，不是地址：桶对每个地址一样存在，
+      // 里面的数字完全由发问的人自己造成（码门对陌生人打开之后，那个「限流 = 有账号」的等号
+      // 不成立了）。所以它与其它几条一样是 existence-independent 的。
+      "SIGN_IN_CODE_RATE_LIMITED_MESSAGE",
       "SIGN_IN_CODE_REJECTED_MESSAGE",
       "SIGN_IN_CODE_SUCCESS_MESSAGE",
       // Founder 2026-09-05 裁决①。它说的是**部署**(这里有没有邮件通道),不是地址:一次
@@ -155,6 +189,9 @@ describe("#678 — the action's whole answer vocabulary is existence-independent
       "SIGN_IN_CODE_UNAVAILABLE_MESSAGE",
       "SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE",
       "normalizeSignInEmail",
+      // SIGNIN-A5 —— 邮件链接落地时读片段的那个纯函数。它住在这份客户端／服务端共用的契约里，
+      // 因为片段只有浏览器看得见（链接的**构造**在 signin-code-login-url.ts，那边读 env）。
+      "parseSignInCodeFragment",
     ]);
   });
 

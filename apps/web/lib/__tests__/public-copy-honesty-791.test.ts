@@ -71,7 +71,14 @@ describe("SIGNIN-A4 · 赠额承诺不许在公开面上被写死", () => {
     expect(signupPage).not.toMatch(/starter credits/i);
   });
 
-  it("SIGNIN-A4 —— 没有哪个公开面把赠额写成一个打死的数字", () => {
+  // #791 —— 这一条**不带验收编号**，而这是刻意改的（登录门① 判官 P2，执行票 #1317）。
+  //
+  // 它以前挂着 SIGNIN-A4。A4 证的是「/signup、/forgot-password、/reset-password 都回 /login，
+  // 登录页没有密码框，那七条公网端点 404」——「赠额不许写死」一个字都不在里面。借来的编号让
+  // M3 闸看见一条它证明不了的验收（借号＝P1，项目 CLAUDE.md 开发流程第 7 条），所以把号去掉：
+  // 它是 #791 的话术围栏，本来就不属于任何一条登录门验收。上一条留着 A4，因为它钉的正是
+  // 「/signup 只剩一句转向」，A4 第一格逐字要的那件事。
+  it("#791 —— 没有哪个公开面把赠额写成一个打死的数字", () => {
     for (const surface of publicSurfaces) {
       expect(readCopy(surface), `${surface} 把赠额写死了`).not.toMatch(
         /\d+\s*(?:free|starter) credits/i,

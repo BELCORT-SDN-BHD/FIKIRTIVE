@@ -394,3 +394,120 @@ describe("FRONT-A12 — an invalid address on the email step speaks with one voi
     expect(el.textContent).not.toContain("Use password instead");
   });
 });
+
+/**
+ * SIGNIN-A5 —— 邮件里那颗 **Log in** 按钮的落地这一侧（规格 docs/specs/sign-in.md 已冻结 · v1
+ * §1.2）：「登录页打开、码已填好，按一次 Continue 即登录」。
+ *
+ * 链接的**构造**在 `lib/__tests__/signin-code-door.test.ts`（真库、真邮件），这里钉的是页面：
+ * 邮箱与码从 URL **片段**里读回来，而且是在**第一帧**就到位 —— 晚一帧的话，商家会看到空框
+ * 闪一下，而那一帧里按下 Continue 会拿空值提交。
+ */
+describe("SIGNIN-A5 — the mailed Log in link lands with the address and the code already filled in", () => {
+  const HASH = "#email=owner%40example.com&code=246810";
+
+  async function withHash(hash: string, run: () => Promise<void>) {
+    const original = window.location.hash;
+    window.location.hash = hash;
+    try {
+      await run();
+    } finally {
+      window.location.hash = original;
+    }
+  }
+
+  it("SIGNIN-A5 —— 片段里的邮箱与码在第一帧就填好，按一次 Continue 即提交", async () => {
+    const { authClient } = await import("@/lib/better-auth/client");
+    vi.mocked(authClient.signIn.emailOtp).mockResolvedValue({ error: null } as never);
+
+    await withHash(HASH, async () => {
+      nav.search = new URLSearchParams("step=code");
+      const el = await render(
+        createElement(LoginForm, { from: "/create", googleEnabled: false, initialStep: "code" as const }),
+      );
+
+      // 第一帧就在 code 步，而且已经知道是寄给谁的 —— 没有「空框闪一下」那一帧。
+      expect(el.textContent).toContain("Check your email");
+      expect(el.textContent).toContain("owner@example.com");
+      const otp = el.querySelector<HTMLInputElement>('input[autocomplete="one-time-code"]')!;
+      expect(otp.value).toBe("246810");
+
+      // 「按一次 Continue 即登录」：一次提交，一次验码调用，带的正是片段里那两样。
+      await act(async () => {
+        el.querySelector("form")!.dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        );
+      });
+      expect(authClient.signIn.emailOtp).toHaveBeenCalledTimes(1);
+      expect(authClient.signIn.emailOtp).toHaveBeenCalledWith({
+        email: "owner@example.com",
+        otp: "246810",
+      });
+      // 送码那一趟一次都没跑：链接带来的码就是要用的那个，不该顺手再要一个新的。
+      expect(requestSignInCodeMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it("SIGNIN-A5 —— 片段写坏了就当没有：不预填，也不把坏值送去提交", async () => {
+    await withHash("#email=not-an-address&code=abcdef", async () => {
+      nav.search = new URLSearchParams();
+      const el = await render(
+        createElement(LoginForm, { from: "/create", googleEnabled: false, initialStep: "email" as const }),
+      );
+      // 片段是任何人都能写的地方，读进来的东西只用于预填 —— 形状不对就一个字都不填。
+      const email = el.querySelector<HTMLInputElement>('input[type="email"]')!;
+      expect(email.value).toBe("");
+    });
+  });
+});
+
+/**
+ * SIGNIN-A8 —— 一小时内第 6 次要码，页面把话说出来（规格 §1.3 逐字：「Too many codes
+ * requested. Try again in an hour.」）。
+ *
+ * 它以前不许被说出来（#678：码门只放行名单内的地址，所以「你被限流了」等于「这个地址有账号」）。
+ * 码门对陌生人打开之后那个等号消失了，验收 A8 要求把话说清楚 —— 否则商家对着一个永远
+ * 「已寄出」却收不到信的页面猜。
+ */
+describe("SIGNIN-A8 — the sixth code request of the hour says so, in its own words", () => {
+  const RATE_LIMITED = {
+    status: "error" as const,
+    reason: "rate_limited" as const,
+    message: "Too many codes requested. Try again in an hour.",
+  };
+
+  it("SIGNIN-A8 —— 第 6 次要码：页面显示「一小时后再试」，而且不翻去「已寄出」那一屏", async () => {
+    requestSignInCodeMock.mockResolvedValueOnce(RATE_LIMITED);
+    const el = await render(
+      createElement(LoginForm, { from: "/create", googleEnabled: false, initialStep: "email" as const }),
+    );
+    const email = el.querySelector<HTMLInputElement>('input[type="email"]')!;
+    await act(async () => setReactInputValue(email, "owner@example.com"));
+    await act(async () => {
+      el.querySelector("form")!.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    const alert = el.querySelector('[role="alert"]')!;
+    expect(alert.textContent).toContain("Too many codes requested. Try again in an hour.");
+    // 标题与「送不出去」分开：它们要商家做的事不同（等一小时 vs 再试一次）。
+    expect(alert.textContent).toContain("Too many codes requested");
+    // 留在邮箱步 —— 一句假的「We sent a temporary login code to …」正是这条要挡的东西。
+    expect(el.textContent).toContain("your email address?");
+    expect(el.textContent).not.toContain("Check your email");
+  });
+
+  it("SIGNIN-A8 —— code 步按「Send again」被限流：说出原因，且不报「已重发」", async () => {
+    const el = await reachCodeStep();
+    requestSignInCodeMock.mockResolvedValueOnce(RATE_LIMITED);
+    await act(async () => {
+      buttonByText(el, "Send again").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(el.querySelector('[role="alert"]')!.textContent).toContain(
+      "Too many codes requested. Try again in an hour.",
+    );
+    expect(el.textContent).not.toContain("A new login code was sent.");
+  });
+});
