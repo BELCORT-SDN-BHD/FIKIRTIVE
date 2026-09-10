@@ -16,7 +16,7 @@
  * 自动提取**先进草稿**,商家在 Brand 页确认后才建身份」——「确认前不出现在 Library 与 @ 菜单」
  * 只有一种做法不靠每一条读路各自记得过滤:草稿这一刻**根本没有身份**。所以 Draft 只落价签
  * (`entityId` 为 null,`entityId` 是 null 时那条复合外键按 MATCH SIMPLE 不检查),身份留给
- * 确认那一步(Brand②③,票 #1322 / #1330)。数据库那一半的 CHECK 因此写成
+ * 确认那一步 —— 同一个文件里的 {@link confirmProductDraft}。数据库那一半的 CHECK 因此写成
  * 「product 要么是 Draft,要么有 entityId」。
  *
  * 钱:一分不碰(PRODID-A10)。没有 reserve / settle / ledger,没有 GenJob。
@@ -97,37 +97,14 @@ async function createProductIn(tx: Tx, input: CreateProductInput): Promise<Creat
   const { ownerId } = input;
   const brandId = input.brandId ?? null;
 
-  // 主图在最前,其余按传入顺序;去重后**逐一回库核对归属**。挂一张别人的图会被
-  // ReferenceImage 的复合外键当场拒绝,而那个拒绝会炸掉整个事务(理解 worker 里连
-  // settle 都提交不了)。所以先问清楚,不存在或不是自己的就诚实不挂,而不是编一张图。
-  const wanted = [...new Set([data.imageAssetId, ...(input.assetIds ?? [])].filter((v): v is string => !!v))];
-  const owned = wanted.length
-    ? new Set(
-        (await tx.asset.findMany({ where: { id: { in: wanted }, ownerId }, select: { id: true } })).map((a) => a.id),
-      )
-    : new Set<string>();
-  const assetIds = wanted.filter((id) => owned.has(id));
+  const assetIds = await ownedAssetIds(tx, ownerId, [data.imageAssetId, ...(input.assetIds ?? [])]);
 
   // 草稿不建身份(规格 §1.9 / PRODID-A7)。主图仍然只以 `data.imageAssetId` 这条软指针存在,
   // 而那条软指针现在也被 asset-purge 的「独占」判据认账,所以它不会被别处的删除带走字节。
-  const entityId = input.contextStatus === "Draft" ? null : newId();
-  if (entityId) {
-    await tx.entity.create({
-      data: {
-        id: entityId,
-        ownerId,
-        type: "PRODUCT",
-        name: data.name.slice(0, 120),
-        brandId,
-        baseAssetId: assetIds[0] ?? null,
-      },
-    });
-    for (let i = 0; i < assetIds.length; i++) {
-      await tx.referenceImage.create({
-        data: { id: newId(), ownerId, entityId, assetId: assetIds[i]!, position: i, brandId },
-      });
-    }
-  }
+  const entityId =
+    input.contextStatus === "Draft"
+      ? null
+      : await createProductIdentity(tx, { ownerId, brandId, name: data.name, assetIds });
 
   const id = newId();
   // `createMany({ skipDuplicates })` 而不是 create + catch(P2002):在交互式事务里捕获唯一
@@ -169,4 +146,132 @@ async function createProductIn(tx: Tx, input: CreateProductInput): Promise<Creat
     select: { id: true },
   });
   return { created: false, existingId: existing?.id ?? null };
+}
+
+/**
+ * 想挂的图 → 真属于这个 org 的那几张(主图永远排第一)。挂一张别人的图会被 ReferenceImage
+ * 的复合外键当场拒绝,而那个拒绝会炸掉整个事务(理解 worker 里连 settle 都提交不了)。
+ * 所以先问清楚,不存在或不是自己的就诚实不挂,而不是编一张图。
+ */
+async function ownedAssetIds(tx: Tx, ownerId: string, wantedRaw: (string | undefined)[]): Promise<string[]> {
+  const wanted = [...new Set(wantedRaw.filter((v): v is string => !!v))];
+  if (!wanted.length) return [];
+  const owned = new Set(
+    (await tx.asset.findMany({ where: { id: { in: wanted }, ownerId }, select: { id: true } })).map((a) => a.id),
+  );
+  return wanted.filter((id) => owned.has(id));
+}
+
+/** 身份那一半出生的**唯一**一处(建产品与确认草稿共用,7.3 单一权威)。 */
+async function createProductIdentity(
+  tx: Tx,
+  args: { ownerId: string; brandId: string | null; name: string; assetIds: string[] },
+): Promise<string> {
+  const { ownerId, brandId, assetIds } = args;
+  const entityId = newId();
+  await tx.entity.create({
+    data: {
+      id: entityId,
+      ownerId,
+      type: "PRODUCT",
+      name: args.name.slice(0, 120),
+      brandId,
+      baseAssetId: assetIds[0] ?? null,
+    },
+  });
+  for (let i = 0; i < assetIds.length; i++) {
+    await tx.referenceImage.create({
+      data: { id: newId(), ownerId, entityId, assetId: assetIds[i]!, position: i, brandId },
+    });
+  }
+  return entityId;
+}
+
+export type ConfirmProductDraftInput = {
+  /** 只来自已认证的服务端 principal。 */
+  ownerId: string;
+  /** 要确认的那条草稿价签的 id。 */
+  id: string;
+  /** 确认这一刻商家(或 Otto)带来的新字段,覆盖草稿里模型猜的那几个。省略即照草稿原样转正。 */
+  data?: Record<string, unknown>;
+  source?: "otto" | "user";
+  updatedById?: string | null;
+  /** 确认这一刻额外挂到身份上的图(Library「新建元素 → 产品」一次可以传多张),同 createProduct。 */
+  assetIds?: string[];
+};
+
+export type ConfirmProductDraftOutcome =
+  | { ok: true; id: string; entityId: string }
+  /** `not-draft` = 这个 id 下没有一条活着的 product 草稿(已经转正、已删、或根本不是自己的)。 */
+  | { ok: false; reason: "not-draft" | "invalid" };
+
+/**
+ * `confirmProductDraft` —— 草稿转正的**唯一**一条写路(规格 §1.9;验收 PRODID-A7 后半句)。
+ *
+ * 草稿(理解 worker 从网站/菜单里读出来的产品)此刻只有价签、没有身份。确认这一步在一个
+ * 事务里补上身份(`Entity(PRODUCT)` + `ReferenceImage`)并把价签抬成 `contextStatus:"Ready"`
+ * —— 从这一刻起它才进 Library、@ 菜单、Otto 的品牌上下文与产品列表。
+ *
+ * 判官第 2 轮 P0(PR #1337):没有这一条,草稿就是一条**没有出口的死路** —— 它占住
+ * `(ownerId, brandId, kind, nameKey)` 这个活跃唯一名字槽位,商家之后在 Brand 页亲手新增
+ * 同名产品会被查重转成对它的 update,于是「保存成功」但身份始终不存在。所以四条会撞上
+ * 草稿的写路(Brand 页新增、Brand 页确认按钮、Otto saveProduct、createProduct 撞名回退)
+ * 全部落到这里,而不是各自写一份 update。
+ *
+ * **不动 `nameKey`**:走到这一步的每条路都是按 nameKey 撞上这条草稿的(名字本来就相同),
+ * 而改 nameKey 会去碰那条活跃唯一索引 —— 在交互式事务里撞唯一约束会把整个事务标成
+ * aborted。确认就是确认,不是改名;改名走 Brand 页/Library 的改名入口。
+ *
+ * 钱:一分不碰(PRODID-A10)。租户:`ownerId` 进每一句 where,复合外键让跨租户连线在数据库
+ * 层不可能(ADR 0002)。
+ */
+export async function confirmProductDraft(
+  input: ConfirmProductDraftInput,
+  db?: Tx,
+): Promise<ConfirmProductDraftOutcome> {
+  if (db) return confirmProductDraftIn(db, input);
+  return prisma.$transaction((tx) => confirmProductDraftIn(tx, input));
+}
+
+async function confirmProductDraftIn(tx: Tx, input: ConfirmProductDraftInput): Promise<ConfirmProductDraftOutcome> {
+  const { ownerId } = input;
+  const draft = await tx.brandRecord.findFirst({
+    where: { id: input.id, ownerId, kind: "product", contextStatus: "Draft", deletedAt: null },
+    select: { id: true, brandId: true, data: true },
+  });
+  if (!draft) return { ok: false, reason: "not-draft" };
+
+  const patch = Object.fromEntries(
+    Object.entries(input.data ?? {}).filter(([, v]) => v !== undefined),
+  );
+  const parsed = productRecordData.safeParse({ ...(draft.data as Record<string, unknown>), ...patch });
+  if (!parsed.success) return { ok: false, reason: "invalid" };
+  const data = parsed.data;
+
+  const assetIds = await ownedAssetIds(tx, ownerId, [data.imageAssetId, ...(input.assetIds ?? [])]);
+  const entityId = await createProductIdentity(tx, {
+    ownerId, brandId: draft.brandId, name: data.name, assetIds,
+  });
+
+  // `updateMany` 而不是 `update`:where 里必须带 `ownerId`(tenant-guard 拒绝没有租户过滤的
+  // 单行 update),而 `contextStatus: "Draft"` 这一条让「读到草稿」与「把它抬成 Ready」之间
+  // 那段窗口里另一条并发确认不会被写第二次 —— 赢家 count=1,输家 count=0。
+  const { count } = await tx.brandRecord.updateMany({
+    where: { id: draft.id, ownerId, kind: "product", contextStatus: "Draft", deletedAt: null },
+    data: {
+      entityId,
+      contextStatus: "Ready",
+      data: data as unknown as Prisma.InputJsonObject,
+      ...(input.source !== undefined ? { source: input.source } : {}),
+      ...(input.updatedById !== undefined ? { updatedById: input.updatedById } : {}),
+    },
+  });
+  if (count !== 1) {
+    // 输给了并发的那次确认:把刚建出来的身份原样收回(普通 DELETE,不会让事务 abort),
+    // 免得留下一个谁都不指着的 Entity 挂在商家的 Library 里。
+    await tx.referenceImage.deleteMany({ where: { entityId, ownerId } });
+    await tx.entity.delete({ where: { id_ownerId: { id: entityId, ownerId } } });
+    return { ok: false, reason: "not-draft" };
+  }
+  return { ok: true, id: draft.id, entityId };
 }

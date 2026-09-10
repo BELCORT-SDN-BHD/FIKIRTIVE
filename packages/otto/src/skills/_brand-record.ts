@@ -4,7 +4,7 @@
  * Upsert-by-name: find live row (ownerId+kind+nameKey) → merge-update; else create.
  */
 import type { RunContext } from "@openai/agents";
-import { prisma, Prisma, createProduct } from "@fikirtive/db";
+import { prisma, Prisma, createProduct, confirmProductDraft } from "@fikirtive/db";
 import {
   newId, recordSchemaFor, recordName, normalizeNameKey, type RecordKind,
 } from "@fikirtive/core";
@@ -41,7 +41,7 @@ export async function upsertBrandRecordFromOtto(
 
   const existing = await prisma.brandRecord.findFirst({
     where: { ownerId: ctx.orgId, brandId: null, kind: input.kind, nameKey, deletedAt: null },
-    select: { id: true, data: true },
+    select: { id: true, data: true, contextStatus: true },
   });
 
   // Merge (update) or take as-is (create), then validate the FULL shape.
@@ -58,6 +58,17 @@ export async function upsertBrandRecordFromOtto(
   const status = input.status;
 
   if (existing) {
+    // 撞上的是一条**草稿产品**(理解 worker 从菜单里读出来的那种):商家现在开口说「记下产品 X」
+    // 就是在确认它 —— 走共享动作补身份、抬 Ready(规格 §1.9;PRODID-A7 前半句「两边出现」)。
+    // 判官第 2 轮 P0(PR #1337):少了这一步,Otto 回「saved」,但不建身份、不进 Library/@ 菜单,
+    // 也不进 Otto 自己那条只读 Ready 的上下文 —— 它事后连自己说保存过的产品都读不到。
+    if (input.kind === "product" && existing.contextStatus === "Draft") {
+      const done = await confirmProductDraft({
+        ownerId: ctx.orgId, id: existing.id, data: parsed.data as Record<string, unknown>, source: "otto",
+      });
+      if (!done.ok) throw new Error(`Couldn't save that ${input.kind}.`);
+      return { ok: true, id: existing.id, updated: true };
+    }
     await prisma.brandRecord.update({
       where: { id: existing.id },
       data: { data, nameKey, source: "otto", ...(status ? { status } : {}), ...dates },

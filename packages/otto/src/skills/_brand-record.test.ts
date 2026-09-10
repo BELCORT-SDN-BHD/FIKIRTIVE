@@ -13,6 +13,8 @@ vi.mock("@fikirtive/db", () => ({
   // 产品走共享动作(身份 ＋ 价签同事务),不再由这个文件自己 create —— 规格
   // docs/specs/brand-product-identity.md §1.4。segment / offer 仍走上面那条。
   createProduct: vi.fn(),
+  // 撞上一条草稿产品时,Otto 说的「记下产品 X」就是确认它 —— 共享动作补身份、抬 Ready。
+  confirmProductDraft: vi.fn(),
 }));
 vi.mock("@fikirtive/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fikirtive/core")>()),
@@ -36,6 +38,7 @@ let db: {
     genJob: { create: ReturnType<typeof vi.fn> };
   };
   createProduct: ReturnType<typeof vi.fn>;
+  confirmProductDraft: ReturnType<typeof vi.fn>;
 };
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -60,6 +63,38 @@ describe("upsertBrandRecordFromOtto", () => {
     );
     expect(db.prisma.brandRecord.create).not.toHaveBeenCalled();
     expect(db.prisma.genJob.create).not.toHaveBeenCalled();
+  });
+
+  it("PRODID-A7 撞上同名草稿产品:走共享动作确认转正,不是往草稿上写 data", async () => {
+    // 判官第 2 轮 P0(PR #1337):少了这一分流,Otto 回「saved」但身份不存在 —— Library 没有卡、
+    // @ 菜单没有项,Otto 自己那条只读 Ready 的上下文也读不到它刚说保存过的产品。
+    db.prisma.brandRecord.findFirst.mockResolvedValue({
+      id: "r-draft", data: { name: "Kopi ais", price: "RM 3" }, contextStatus: "Draft",
+    });
+    db.confirmProductDraft.mockResolvedValue({ ok: true, id: "r-draft", entityId: "ent-draft-1" });
+    const res = await upsertBrandRecordFromOtto(
+      { kind: "product", fields: { name: "Kopi ais", price: "RM 4" } },
+      { context: makeCtx() },
+    );
+    expect(res).toEqual({ ok: true, id: "r-draft", updated: true });
+    expect(db.confirmProductDraft).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: "org-test", id: "r-draft", source: "otto",
+      data: expect.objectContaining({ name: "Kopi ais", price: "RM 4" }),
+    }));
+    expect(db.prisma.brandRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("PRODID-A7 撞上同名 Ready 产品:照旧 update,不重复建身份", async () => {
+    db.prisma.brandRecord.findFirst.mockResolvedValue({
+      id: "r-ready", data: { name: "Kopi ais", price: "RM 3" }, contextStatus: "Ready",
+    });
+    db.prisma.brandRecord.update.mockResolvedValue({});
+    await upsertBrandRecordFromOtto(
+      { kind: "product", fields: { name: "Kopi ais", price: "RM 4" } },
+      { context: makeCtx() },
+    );
+    expect(db.confirmProductDraft).not.toHaveBeenCalled();
+    expect(db.prisma.brandRecord.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "r-ready" } }));
   });
 
   it("merges fields into existing data on update (does not wipe unspecified fields)", async () => {

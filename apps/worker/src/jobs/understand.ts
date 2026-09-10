@@ -1076,8 +1076,10 @@ async function upsertProductRecord(
   // **草稿,不是身份**(规格 §1.2 / §1.9,验收 PRODID-A7):理解 worker 提取的产品是模型猜出来
   // 的,商家还没点过头,所以它此刻只有价签、没有身份 —— `contextStatus: "Draft"` 让共享动作
   // 只落 BrandRecord。没有 Entity 就没有 Library 卡、没有 @ 菜单项,「确认前不出现」于是由
-  // 数据本身保证,不靠每一条读路各自记得过滤。确认那一步(建身份)是 Brand②③ 的活
-  // (票 #1322 / #1330)。
+  // 数据本身保证,不靠每一条读路各自记得过滤。确认那一步(建身份、抬 Ready)是共享动作
+  // `confirmProductDraft`:商家在 Brand 页按 Save context、在 Brand 页新增同名产品、或者对
+  // Otto 说「记下产品 X」,三条路都落到它(判官第 2 轮 P0,PR #1337 —— 没有转正路径的草稿
+  // 是一条没有出口的死路,而且它还占住那个活跃唯一的名字槽位)。
   const made = await createProduct({ ownerId, data, source: "otto", contextStatus: "Draft" }, tx);
   return made.created;
 }

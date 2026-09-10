@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma, refundReservation, createProduct } from "@fikirtive/db";
+import { prisma, refundReservation, createProduct, confirmProductDraft } from "@fikirtive/db";
 import {
   fikirtiveEdit,
   captionCue,
@@ -468,7 +468,18 @@ export async function createEntity(formData: FormData) {
           // 出生,所以这条入口不自己建 Entity,而是走共享动作(规格
           // docs/specs/brand-product-identity.md §1.4;PRODID-A3)。
           const made = await createProduct({ ownerId, data: { name }, source: "user", assetIds }, tx);
-          if (!made.created) { nameTaken = true; return; }
+          if (!made.created) {
+            // 撞上的那一行可能是一条**草稿**(理解 worker 从菜单里读出来的那种):它占住这个
+            // 名字,却没有身份 —— 商家在 Library 里根本看不到它。这时候「新建同名产品」就是
+            // 在确认它(判官第 2 轮 P1,PR #1337:否则商家得到的是「You already have a product
+            // with that name.」,而 Library 里查无此物)。不是草稿才是真撞名。
+            const confirmed = made.existingId
+              ? await confirmProductDraft({ ownerId, id: made.existingId, source: "user", assetIds }, tx)
+              : ({ ok: false, reason: "not-draft" } as const);
+            if (!confirmed.ok) { nameTaken = true; return; }
+            entityId = confirmed.entityId;
+            return;
+          }
           // `entityId` 只有草稿是 null(规格 §1.9,理解 worker 那条入口),这一条不是草稿。
           if (!made.entityId) throw new Error("createProduct returned no identity for a Library element.");
           entityId = made.entityId;

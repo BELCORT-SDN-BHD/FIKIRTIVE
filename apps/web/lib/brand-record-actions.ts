@@ -1,7 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { SAVE_FAILED } from "./save-failed-copy";
-import { prisma, Prisma, createProduct } from "@fikirtive/db";
+import { prisma, Prisma, createProduct, confirmProductDraft } from "@fikirtive/db";
 import {
   newId, RECORD_KINDS, recordSchemaFor, recordName, normalizeNameKey, type RecordKind,
 } from "@fikirtive/core";
@@ -67,6 +67,35 @@ function parseInput(raw: unknown):
   };
 }
 
+/**
+ * 撞上的那条同名活跃行是一条**草稿产品**时,商家这次「新增产品」就是在确认它 —— 把身份补上、
+ * 把价签抬成 Ready,而不是往一条永远没有身份的行上写 data。
+ *
+ * 判官第 2 轮 P0(PR #1337):理解 worker 现在把菜单读出来的产品落成草稿,而草稿占住
+ * `(ownerId, brandId, kind, nameKey)` 这个活跃唯一名字槽位。少了这一步,商家在 Brand 页
+ * 新增同名产品会静默变成对草稿的 update:返回 ok,但 Library 没有卡、@ 菜单没有项,
+ * `/brand/records` 也看不到它(那条列表只认 Ready)—— PRODID-A1 在这条路径上不成立。
+ *
+ * 不是草稿(或不是产品)时返回 null,调用方照旧走 update 分支。
+ */
+async function promoteDraftProduct(
+  id: string,
+  kind: RecordKind,
+  data: Record<string, unknown>,
+  ownerId: string,
+  actor: Awaited<ReturnType<typeof resolveActor>>,
+): Promise<{ ok: true; id: string } | { error: string } | null> {
+  if (kind !== "product") return null;
+  const done = await confirmProductDraft({ ownerId, id, data, source: "user", updatedById: actor.userId });
+  if (!done.ok) return done.reason === "invalid" ? { error: SAVE_FAILED } : null;
+  await recordBrandRevision({
+    ownerId, targetKind: "record", targetId: id, action: "confirmed",
+    stamp: await stampOf(ownerId, id, "record"), actor, summary: "Saved this context for Otto.",
+  });
+  revalidatePath("/", "layout");
+  return { ok: true, id };
+}
+
 /** Create (no id) or full-data update (id). User writes stamp source:"user". */
 export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: string } | { error: string }> {
   const input = parseInput(raw);
@@ -101,7 +130,11 @@ export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: str
       where: { ownerId: gate.ownerId, brandId: null, kind: input.kind, nameKey, deletedAt: null },
       select: { id: true },
     });
-    if (existing) return saveBrandRecord({ ...(raw as object), id: existing.id });
+    if (existing) {
+      const promoted = await promoteDraftProduct(existing.id, input.kind, input.data, gate.ownerId, actor);
+      if (promoted) return promoted;
+      return saveBrandRecord({ ...(raw as object), id: existing.id });
+    }
     let id: string;
     if (input.kind === "product") {
       // 产品有身份那一半:Entity(PRODUCT) 与这条价签在同一个事务里一起出生,所以这条入口
@@ -117,6 +150,8 @@ export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: str
       // 结果与 existing 分支一样 —— 转成对那一行的 update,不造第二件同名产品。
       if (!made.created) {
         if (!made.existingId) return { error: SAVE_FAILED };
+        const promoted = await promoteDraftProduct(made.existingId, input.kind, input.data, gate.ownerId, actor);
+        if (promoted) return promoted;
         return saveBrandRecord({ ...(raw as object), id: made.existingId });
       }
       id = made.id;
@@ -209,6 +244,88 @@ export async function restoreBrandRecord(raw: unknown): Promise<{ ok: true } | {
       stamp: await stampOf(gate.ownerId, r.id, "record"), actor, summary: "Brought this record back.",
     });
   }
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/**
+ * 确认一条**记录**草稿(今天只有产品会是草稿:理解 worker 从网站/菜单里读出来的那些)。
+ *
+ * 判官第 2 轮 P1(PR #1337):Brand 页对任何 `status === "Draft"` 的条目都渲染 Save context /
+ * Discard,而那两个动作原先只认 Memory 表 —— 记录草稿点下去一律报「That draft is no longer
+ * here.」,草稿既转不了正也放弃不掉。这一条与下面的 discard 是记录这一半的落点;
+ * 界面按 `kind` 分流(`apps/web/app/brand/BrandWorkspace.tsx`)。
+ *
+ * 产品的转正 = 补身份 + 抬 Ready,走共享动作 `confirmProductDraft`(7.3 单一权威,
+ * 与 Brand 页新增同名产品那条路同一处)。
+ */
+export async function confirmBrandRecordDraft(raw: unknown): Promise<{ ok: true } | { error: string }> {
+  const r = raw as { id?: unknown };
+  if (typeof r?.id !== "string") return { error: "Invalid request." };
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const actor = await resolveActor(gate.email);
+  let confirmed = false;
+  try {
+    const row = await prisma.brandRecord.findFirst({
+      where: { id: r.id, ownerId: gate.ownerId, deletedAt: null },
+      select: { kind: true, contextStatus: true },
+    });
+    if (!row) return { error: "That draft is no longer here." };
+    // 已经是 Ready:重发的确认,结果仍然是「已保存」,不是错误,也不该再写一行历史
+    // (与 memory 那条 confirmBrandDraft 同一口径)。
+    if (row.contextStatus === "Draft") {
+      if (row.kind === "product") {
+        const done = await confirmProductDraft({
+          ownerId: gate.ownerId, id: r.id, source: "user", updatedById: actor.userId,
+        });
+        if (!done.ok) {
+          return done.reason === "invalid"
+            ? { error: "That record is missing something — please fill in the required fields." }
+            : { error: "That draft is no longer here." };
+        }
+        confirmed = true;
+      } else {
+        const { count } = await prisma.brandRecord.updateMany({
+          where: { id: r.id, ownerId: gate.ownerId, deletedAt: null, contextStatus: "Draft" },
+          data: { contextStatus: "Ready", ...actorStamp(actor) },
+        });
+        confirmed = count > 0;
+      }
+    }
+  } catch { return { error: SAVE_FAILED }; }
+  if (confirmed) {
+    await recordBrandRevision({
+      ownerId: gate.ownerId, targetKind: "record", targetId: r.id, action: "confirmed",
+      stamp: await stampOf(gate.ownerId, r.id, "record"), actor,
+      summary: "Saved this context for Otto.",
+    });
+  }
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** 放弃一条记录草稿。软删除,不是硬删 —— 与这一面其他删除同一个语义,还留着后悔的余地。 */
+export async function discardBrandRecordDraft(raw: unknown): Promise<{ ok: true } | { error: string }> {
+  const r = raw as { id?: unknown };
+  if (typeof r?.id !== "string") return { error: "Invalid request." };
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const actor = await resolveActor(gate.email);
+  try {
+    const { count } = await prisma.brandRecord.updateMany({
+      // `deletedAt: null` 少不得:已经放弃过的行还留着 Draft 状态,少了它重复调用会把
+      // `deletedAt` 一次次盖成新时间,幂等键(含 updatedAt)跟着变,一次放弃被讲成三次。
+      where: { id: r.id, ownerId: gate.ownerId, contextStatus: "Draft", deletedAt: null },
+      data: { deletedAt: new Date(), ...actorStamp(actor) },
+    });
+    if (!count) return { error: "That draft is no longer here." };
+  } catch { return { error: "Couldn't discard that — please try again." }; }
+  await recordBrandRevision({
+    ownerId: gate.ownerId, targetKind: "record", targetId: r.id, action: "discarded",
+    stamp: await stampOf(gate.ownerId, r.id, "record"), actor,
+    summary: "Discarded this draft.",
+  });
   revalidatePath("/", "layout");
   return { ok: true };
 }
