@@ -244,7 +244,7 @@ describe("S1 $0 sub-journey: draft → edit script → save (never spends)", () 
     });
 
     const ctx = makeCtx();
-    const { cardId } = await executeProposeStoryboard(
+    const proposed = await executeProposeStoryboard(
       {
         storyboardTitle: "Festive launch ad",
         goal: "drive store visits",
@@ -255,6 +255,10 @@ describe("S1 $0 sub-journey: draft → edit script → save (never spends)", () 
       },
       { context: ctx },
     );
+    // creation §5 :172⑤ —— execute 现在也可能返回一句拒绝(没有演员又没有首帧文字);这一份
+    // 每镜都写了首帧文字,所以走的是落库那一路。
+    if (!("cardId" in proposed)) throw new Error(`expected a card, got ${JSON.stringify(proposed)}`);
+    const { cardId } = proposed;
     expect(persisted!.payload.shots).toHaveLength(2);
 
     // 改脚本: rewrite shot 2's video prompt

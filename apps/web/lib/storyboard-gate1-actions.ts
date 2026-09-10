@@ -165,10 +165,12 @@ async function assertShotCastResolvable(
 /**
  * creation §5 :172⑤ —— 要铸首帧的这一镜,必须有首帧文字。
  *
- * `firstFramePrompt` 现在按镜头类型条件可选(带 @元素的镜头不出首帧,不必写)。走到铸首帧
- * 这一步却没有文字,只可能是「那一镜的演员后来离开了」这一种:它现在要走两步,而两步的第一
- * 步没有稿子。铸一张空提示词的可扣费卡是这条路上最不能做的事,所以按 FSE-002 同一条口径
- * 整卡 fail closed —— 一句点名的人话,零写入。
+ * `firstFramePrompt` 现在按镜头类型条件可选,而免写的只有**@ 到演员的镜头**(它直接出片,
+ * 首帧那一步不存在;落库那一刻由 `executeProposeStoryboard` 按 `Entity.type` 判死,只 @ 了
+ * 商品的镜头照旧必填)。走到铸首帧这一步却没有文字,只可能是「那一镜的演员后来离开了」——
+ * 被删出 Library、或改成了别的元素:它现在要走两步,而两步的第一步没有稿子。铸一张空提示词
+ * 的可扣费卡是这条路上最不能做的事,所以按 FSE-002 同一条口径整卡 fail closed —— 一句点名
+ * 的人话,零写入。
  */
 function firstFramePromptOf(shot: Shot): string {
   const prompt = shot.firstFramePrompt?.trim();

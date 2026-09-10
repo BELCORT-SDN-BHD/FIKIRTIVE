@@ -11,12 +11,15 @@ export const storyboardShot = z.object({
   /**
    * creation §5 :172⑤ —— **按镜头类型条件可选**。
    *
-   * 带 @元素的镜头(演员在场时它走「演员参考照 + 商品照直接出片」那一步,首帧那一步整个
-   * 不存在)不再被 schema 逼着写一段用不上的文字:模型从前必须编一段首帧描述,而它既不
-   * 出现在任何请求里,也没有人读 —— 一段谁都不用的必填文字只会让模型多编一次。
+   * 免写这一段的只有**@ 到演员(CHARACTER)的镜头**:它走「演员参考照 + 商品照直接出片」
+   * 那一条,首帧那一步整个不存在,所以从前那段必填文字既不出现在任何请求里也没有人读 ——
+   * 一段谁都不用的必填文字只会让模型多编一次。
    *
-   * 不带 @元素的镜头**逐字不变**:两步(首帧 → 视频)还是那两步,所以这一段仍然必填 ——
-   * 由 `storyboardCardInput` 的 superRefine 判(镜头类型这件事只在整份输入上才看得全)。
+   * 其余全部镜头**逐字不变**(不带 @元素的,以及**只 @ 了商品**的):两步(首帧 → 视频)
+   * 还是那两步,所以这一段仍然必填。判据必须与「直接出片」那一条同一句话(`shotsDirectToVideo`
+   * 判的是有没有演员)—— 分了家,就会有一种既不直接出片、又没有首帧文字的镜头合法落库,
+   * 而它在闸① 会把**整张卡**的首帧一起拒掉。演员这件事要读 `Entity.type`,schema 看不见,
+   * 所以这道闸住在 `executeProposeStoryboard`($0、落库之前),判词由下面那个纯函数给。
    */
   firstFramePrompt: z.string().trim().min(1).max(2000).optional(),
   videoPrompt: z.string().trim().min(1).max(2000),
@@ -36,21 +39,32 @@ export const storyboardCardInput = z.object({
    *  true ⇒ 每个镜头的起点 = 上一个镜头**真实停住的那一帧**(引擎免费附送的末帧),
    *  而不是另外画一张首帧图。默认 false = 各镜头彼此独立(可并行、各画各的首帧)。 */
   continuity: z.boolean().optional(),
-}).superRefine((val, ctx) => {
-  // creation §5 :172⑤ —— 首帧文字只对**没有 @元素**的镜头必填(那一档还是两步:首帧 → 视频)。
-  // 判在这里而不是镜头 schema 里:条件读的是同一个镜头的另一格,而 zod 的字段级校验看不见兄弟格。
-  // 这道闸是 $0 的:整份输入被拒 ⇒ 一张卡都不落库。
-  val.shots.forEach((shot, i) => {
-    if (!shot.firstFramePrompt && !shot.entityIds?.length) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["shots", i, "firstFramePrompt"],
-        message: "a shot with no @mentioned element is still made in two steps — give it a firstFramePrompt",
-      });
-    }
-  });
 });
 export type StoryboardCardInput = z.infer<typeof storyboardCardInput>;
+
+/**
+ * creation §5 :172⑤ —— 这一份输入里,哪几镜**必须**带首帧文字却没带(0 基序号)。
+ *
+ * 判据只有一句,与卡面/铸卡侧的 `shotsDirectToVideo`(apps/web/lib/storyboard-card.ts)
+ * **逐字同一条**:@ 到至少一个演员(CHARACTER)⇒ 直接出片 ⇒ 首帧那一步不存在 ⇒ 不必写。
+ * 其余全部镜头(不带 @元素的、以及只 @ 了商品的特写镜)都是两步,第一步要有稿子。
+ *
+ * 为什么不能像先前那样按「有没有 @元素」判:那放行的类别严格大于登记的类别 —— 只 @ 了
+ * 商品的镜头会被判**不**直接出片,却又没有首帧文字,于是闸① 走到 `firstFramePromptOf`
+ * 抛拒绝,**整张卡**(含其余全部镜头)的首帧一并铸不出来。
+ *
+ * 纯函数、无 DB:演员那一份集合由调用方按 ownerId 读出来(跨租户 id 根本进不了集合,
+ * 因此在这里数出 0 —— 那一镜照旧要首帧文字)。
+ */
+export function shotsMissingFirstFramePrompt<
+  T extends { firstFramePrompt?: string; entityIds?: string[] },
+>(shots: readonly T[], castEntityIds: ReadonlySet<string>): number[] {
+  return shots.flatMap((shot, i) =>
+    !shot.firstFramePrompt?.trim() && !(shot.entityIds ?? []).some((id) => castEntityIds.has(id))
+      ? [i]
+      : [],
+  );
+}
 
 /** 持久化进 STORYBOARD_CARD 的 payload —— 有序（每镜头带 index），首帧图 id 由 F4 写回。
  *  shotId = 服务端铸造的稳定镜头 id（index 每次编辑都重编，付费重出/异步写回按 shotId 定位）。
@@ -66,7 +80,7 @@ export type StoryboardCardPayload = {
     shotId: string;
     index: number;
     title?: string;
-    /** creation §5 :172⑤ —— 带 @元素的镜头可以没有这一格(它不出首帧);没有 @元素的镜头一定有。 */
+    /** creation §5 :172⑤ —— @ 到演员的镜头可以没有这一格(它不出首帧);其余镜头一定有。 */
     firstFramePrompt?: string;
     videoPrompt: string;
     entityIds?: string[];

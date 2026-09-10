@@ -3979,12 +3979,19 @@ describe("creation §5 :172⑤ —— 没有 firstFramePrompt 的镜头", () => 
   });
 
   it("creation §5 :172⑤ / CREATE-A10: 演员离场后这一镜要走两步却没有首帧文字 ⇒ 点名拒绝,绝不铸一张空提示词的可扣费卡", async () => {
-    // 只 @ 了一件商品(没有演员)⇒ 这一镜走两步,而它身上没有首帧文字。
-    mockEntityFindMany.mockResolvedValue([{ id: "mug", type: "PRODUCT", name: "Mug" }]);
+    // 「演员离场」的真实形状:这一镜 @ 的是演员 actor-1(所以 Otto 当初免写首帧文字),
+    // 而商家后来把这位演员从 Library 删了 —— owner-scoped 的活元素查询读不出它,这一镜
+    // 于是不再直接出片、回落成两步,而两步的第一步没有稿子。
+    //
+    // 判官第 1 轮 P1:这里从前用的是「只 @ 了一件商品」,那种形状按 :172⑤ 的**登记口径**
+    // 根本不该落库(Otto 交稿那一刻就被 executeProposeStoryboard 拒了,见
+    // packages/otto/src/skills/propose-storyboard.ts),拿它当「罕见回退」是把常规路径
+    // 写成了边缘情形。
+    mockEntityFindMany.mockResolvedValue([]);
     wireLoads(
       card({
         storyboardTitle: "Ad",
-        shots: [{ shotId: "s0", index: 0, title: "Opening", videoPrompt: "vp0", entityIds: ["mug"] }],
+        shots: [{ shotId: "s0", index: 0, title: "Opening", videoPrompt: "vp0", entityIds: ["actor-1"] }],
       }),
     );
 
