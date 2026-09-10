@@ -20,24 +20,34 @@ import { Client } from "pg";
 import { prisma } from "../index.js";
 import { seedOrg } from "../../test/setup.js";
 
-const MIGRATION = resolve(
+const MIGRATION_DIR = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  "../../prisma/migrations/20260910120000_brand_product_identity/migration.sql",
+  "../../prisma/migrations/20260910120000_brand_product_identity",
 );
-const MIGRATION_SQL = readFileSync(MIGRATION, "utf8");
+const MIGRATION_SQL = readFileSync(resolve(MIGRATION_DIR, "migration.sql"), "utf8");
+const ROLLBACK_SQL = readFileSync(resolve(MIGRATION_DIR, "rollback.sql"), "utf8");
 
 /**
  * 整份迁移一次送进去。用 `pg` 的简单查询协议而不是 Prisma —— 迁移是多语句 ＋ 显式
  * BEGIN/COMMIT ＋ DO $$ 块,`$executeRawUnsafe` 送不了这种东西。
  */
-async function runMigration(): Promise<void> {
+async function runSql(sql: string): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query(MIGRATION_SQL);
+    await client.query(sql);
   } finally {
     await client.end();
   }
+}
+
+async function runMigration(): Promise<void> {
+  await runSql(MIGRATION_SQL);
+}
+
+/** 同目录的 rollback.sql,同样原样读出来执行 —— 改了那份 SQL 而没有改这里,这里就红。 */
+async function runRollback(): Promise<void> {
+  await runSql(ROLLBACK_SQL);
 }
 
 /** 把迁移最后装上的两条约束松开,好让老形状(product 行没有 entityId)插得进去。 */
@@ -231,5 +241,79 @@ describe("PRODID-A8 回填迁移", () => {
     const names = constraints.map((c) => c.conname);
     expect(names).toContain("BrandRecord_entityId_ownerId_fkey");
     expect(names).toContain("BrandRecord_product_needs_entity");
+  }, 60_000);
+});
+
+/**
+ * 判官第 1 轮 P1(PR #1337):rollback.sql 的安全网在**真实生产状态**下成立吗?
+ *
+ * 这份迁移正是把存量产品第一次送进 Library 与 @ 菜单,所以「回填出来的身份被商家用过」是上线
+ * 之后的常态:@ 进一个镜头(ShotEntityRef)、在 Library 补第二张照片(普通 ULID 的
+ * ReferenceImage,`prodidimg\_%` 删不到)。这两条都是必填 ＋ RESTRICT 的外键,原来的
+ * `DELETE FROM "Entity" WHERE "id" LIKE 'prodid\_%'` 会被数据库拒绝,而整份回滚包在一个事务
+ * 里 —— 一条挡住就一句都不落地。这个用例把那一格造出来,证明回滚现在跑得完。
+ */
+describe("判官 P1 回滚演练:被商家用过的回填身份不挡回滚", () => {
+  it("PRODID-A8 回滚:被 @ 进镜头 / 补过照片的回填身份原样留下,其余删净,整份跑得完", async () => {
+    await loosenConstraints();
+    const assetId = await seedAsset(orgId);
+    const usedInShot = await seedLegacyProduct(orgId, "Kopi ais", { imageAssetId: assetId });
+    const extraPhoto = await seedLegacyProduct(orgId, "Teh tarik", { imageAssetId: assetId });
+    const untouched = await seedLegacyProduct(orgId, "Nasi lemak", { imageAssetId: assetId });
+
+    await runMigration();
+
+    // ① 一条被 @ 进镜头(ShotEntityRef)。
+    const projectId = `prj_${randomUUID()}`;
+    const shotId = `sht_${randomUUID()}`;
+    await prisma.project.create({ data: { id: projectId, ownerId: orgId, name: "Raya" } });
+    await prisma.shot.create({ data: { id: shotId, ownerId: orgId, projectId, number: 1 } });
+    await prisma.shotEntityRef.create({
+      data: { shotId, ownerId: orgId, entityId: `prodid_${usedInShot}` },
+    });
+    // ② 一条在 Library 补了第二张照片(普通 ULID —— rollback 的 prodidimg_ 前缀删不到)。
+    const second = await seedAsset(orgId);
+    await prisma.referenceImage.create({
+      data: {
+        id: `rimg_${randomUUID()}`, ownerId: orgId, entityId: `prodid_${extraPhoto}`,
+        assetId: second, position: 1,
+      },
+    });
+
+    await expect(runRollback()).resolves.toBeUndefined();
+
+    // 用过的两条原样留下(商家自己看得见、可以自己删);没人用的那条删净。
+    const left = await prisma.entity.findMany({
+      where: { ownerId: orgId, type: "PRODUCT" },
+      select: { id: true },
+      orderBy: { id: "asc" },
+    });
+    expect(left.map((e) => e.id).sort()).toEqual([`prodid_${extraPhoto}`, `prodid_${usedInShot}`].sort());
+    // 留下的身份连它那张回填主图一起留(否则商家看到一条没有封面的孤儿元素)。
+    await expect(
+      prisma.referenceImage.count({ where: { ownerId: orgId, id: `prodidimg_${usedInShot}` } }),
+    ).resolves.toBe(1);
+    await expect(
+      prisma.referenceImage.count({ where: { ownerId: orgId, id: `prodidimg_${untouched}` } }),
+    ).resolves.toBe(0);
+
+    // 价签一条不少,列已经退回去了。
+    await expect(prisma.brandRecord.count({ where: { ownerId: orgId, kind: "product" } })).resolves.toBe(3);
+    const cols = await prisma.$queryRawUnsafe<{ column_name: string }[]>(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'BrandRecord' AND column_name = 'entityId'`,
+    );
+    expect(cols).toHaveLength(0);
+
+    // 回滚之后**直接**重上会被预检②挡住 —— 留下来的那两条身份此刻与它们的价签同名,而
+    // 「同名旧产品自动合并」是规格 §3 的非目标。fail closed(一个字节都不落库),人工处理:
+    // 要么商家自己在 Library 删掉那两条留下来的元素,要么运维手工把 entityId 接回去。
+    await expect(runMigration()).rejects.toThrow(/预检②失败/);
+
+    // 冲突清掉之后重上就通了(生产上「回滚 → 处理那几条 → 重上」就是这条路径)。这一步同时
+    // 把库的形状还回去 —— 上面那次失败的重上是整份回滚的,列此刻不在,而后面的测试文件还要用它。
+    await prisma.$executeRawUnsafe(
+      `TRUNCATE "CreditLedger", "CreditAccount", "Organization" RESTART IDENTITY CASCADE`,
+    );
+    await expect(runMigration()).resolves.toBeUndefined();
   }, 60_000);
 });
