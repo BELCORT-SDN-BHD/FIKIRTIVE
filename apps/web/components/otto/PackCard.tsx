@@ -81,6 +81,12 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
    *  a per-item run fires a SUBSET, so an index would point at the wrong row (#786). */
   const [currentCardId, setCurrentCardId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** FSE-012（验收 R2）—— 这一趟里服务端交回来的**新报价**，按卡 id。卡面从这里读，
+   *  所以「拒绝并刷新」的后半句在一叠卡上也是真的：商家看到的是新价，不是旧数字。
+   *  （父层持着的是库里那一版；下一次轮询会把同一份带下来，这一格只负责当场。） */
+  const [refreshedPayloads, setRefreshedPayloads] = useState<Record<string, unknown>>({});
+  /** 「哪几张换了价」那一句。不是失败 —— 它有自己的位置，不与红色的失败框抢话。 */
+  const [priceNotice, setPriceNotice] = useState<string | null>(null);
 
   // Track which cards finished in this session so we can show per-row feedback.
   const [doneCardIds, setDoneCardIds] = useState<Set<string>>(new Set());
@@ -92,7 +98,8 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
   // One gate per card — the same one OttoPlanCard uses. `p` is the PARSED payload
   // (malformed fields dropped and accounted for), `credits` is guaranteed or null.
   const parsedCards = cards.map((c) => {
-    const gate = planCardGate(c.payload);
+    // 换过价的那一张读**服务端刚交回来的那一份**（走的是同一个门、同一份契约解析）。
+    const gate = planCardGate(refreshedPayloads[c.cardId] ?? c.payload);
     return { ...c, p: gate.value, credits: gate.credits, approvable: gate.approvable };
   });
 
@@ -125,7 +132,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
   // F11: "failed" cards are non-idle too, so allSubmitted alone would show a green success footer
   // even when every card failed. Count only the non-failed (actually started) ones.
   const startedCount = parsedCards.filter((c) => c.cardState !== "failed").length;
-  const showFooter = !allSubmitted || startedCount > 0 || Boolean(chainedReceipt) || Boolean(error);
+  const showFooter = !allSubmitted || startedCount > 0 || Boolean(chainedReceipt) || Boolean(error) || Boolean(priceNotice);
 
   /** Fire `targets` through the pack loop. ONE body for both ways in — "Make all" hands it
    *  every idle card, a per-item approve hands it exactly one (#786) — so the two cannot
@@ -138,6 +145,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
     if (targets.some((c) => !c.approvable || c.credits === null)) return;
     setRunning(true);
     setError(null);
+    setPriceNotice(null);
 
     // #498 round-5: the loop itself is the pure runPackApprovalLoop — ONE
     // authoritative pending set (seeded from pendingApproval, updated only from
@@ -158,6 +166,9 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
               variantSel: c.p.variantSel && typeof c.p.variantSel === "object" ? c.p.variantSel : {},
               quoteVersion: cardQuoteVersion(c.p),
             }),
+      // FSE-012（验收 R2）—— 一张卡的报价过期了：把服务端交回的那一份写回卡面，**整批不停**。
+      // 后面那些一格没漂的卡照常生成；这一张保住它自己的批准闸，商家看着新价再决定。
+      onQuoteRefreshed: (cardId, quote) => setRefreshedPayloads((prev) => ({ ...prev, [cardId]: quote })),
       onCardStart: (i) => setCurrentCardId(targets[i].cardId),
       onCardSettled: (cardId, cleared) => {
         // A re-reported-pending card gets no ✓ — it still needs its approval.
@@ -184,6 +195,20 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
           : where
           ? `${where} failed — please try again.`
           : "That one didn't start — please try again.",
+      );
+    }
+    // FSE-012（验收 R2）—— 换了价的那几张，说清楚是**哪几张**：卡面已经换成新价了，
+    // 商家要知道该回头看哪一行。位置用商家看得见的次序（这一趟点下去的第几张）。
+    if (outcome.quoteRefreshedCardIds.length > 0) {
+      const positions = outcome.quoteRefreshedCardIds
+        .map((id) => targets.findIndex((c) => c.cardId === id) + 1)
+        .filter((n) => n > 0);
+      setPriceNotice(
+        targets.length === 1 || positions.length === 0
+          ? "The price changed — check the updated quote above, then start it again."
+          : positions.length === 1
+            ? `Card ${positions[0]} changed price — check the updated quote above, then start it again.`
+            : `Cards ${positions.join(", ")} changed price — check the updated quotes above, then start them again.`,
       );
     }
     // The receipt only makes sense while something is still awaiting approval.
@@ -367,6 +392,14 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
           {chainedReceipt && (
             <Alert density="compact">
               <AlertDescription>{chainedReceipt}</AlertDescription>
+            </Alert>
+          )}
+
+          {/* FSE-012（验收 R2）—— 「哪几张换了价」。不是失败:这一批照跑完了,只是那几张
+              要商家看着新价再决定,所以它不进红色的失败框。 */}
+          {priceNotice && (
+            <Alert role="status" density="compact">
+              <AlertDescription>{priceNotice}</AlertDescription>
             </Alert>
           )}
 

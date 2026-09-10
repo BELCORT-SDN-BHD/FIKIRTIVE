@@ -112,6 +112,11 @@ export async function executeGenerate(
     && ctx.approvedQuoteVersion.cardId === input.cardId
     && cardQuoteVersion(card.payload) !== ctx.approvedQuoteVersion.version
   ) {
+    // 判官第 5 轮 P2-a —— 把这个判决**报上去**。工具的拒绝只回到模型(`skill.ts`),恢复轮照样
+    // 跑完,外层从前只能靠「这张卡有没有任务行」猜这一趟发生了什么 —— 同一轮里模型生成了
+    // 别的卡时那个判据就说谎。ctx 是外层注入的同一个对象(RunState 按引用持着它),所以这一格
+    // 是这道闸自己说的话:**这一张卡,这一趟,被我拒了。**
+    ctx.approvedQuoteVersion.refused = true;
     return { error: QUOTE_VERSION_STALE };
   }
 

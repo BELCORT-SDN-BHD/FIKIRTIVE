@@ -46,6 +46,11 @@ import { QUEUE_WAIT_NOTE } from "@/lib/progress-format";
 import { TopUpNotice } from "@/components/exits/Exits";
 import { canAffordPack } from "./pack-credit-math";
 import { SpendConfirmation, SpendProgress } from "./spend-state";
+// FSE-012（验收 R2）—— 「这一次答复是不是一次报价拒绝」与「这一版报价的指纹」，两处读法
+// 都只有一份：批量循环、单张卡、一叠卡读的是同一个 `quoteRefusalOf` / `cardQuoteVersion`
+// （子路径引 core：包根会把 node:crypto 拖进客户端包）。
+import { quoteRefusalOf } from "./approval-chain";
+import { cardQuoteVersion } from "@fikirtive/core/quote-version";
 
 export interface StoryboardCardProps {
   cardId: string;
@@ -181,6 +186,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const [view, setView] = useState<StoryboardCardView>(() => parseStoryboardCardPayload(payload));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** FSE-012（验收 R2）—— 「哪几镜换了价」。不是失败：那一趟里没漂的照常跑了，漂了的
+   *  换成了新价还等着商家看一眼，所以它有自己的位置，不进红色的失败框。 */
+  const [priceNotice, setPriceNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [draftFf, setDraftFf] = useState("");
   const [draftV, setDraftV] = useState("");
@@ -530,6 +538,32 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     }
   }
 
+  /**
+   * FSE-012（验收 R2）—— 服务端拒了那份过期报价，并把这张子卡**现在**的报价交了回来：
+   * 把它写回这一张子卡（价 ＋ 版本）。指纹用同一个函数现算 —— 交回来的那一份已经走过
+   * 服务端那条剥离（无型号），而 `cardQuoteVersion` 正是为「两边都留得住的那几格」写的，
+   * 所以浏览器这一次算出来的，与服务端拿库里那张卡算出来的是同一串。
+   */
+  function refreshedChild(c: ChildFrameCard, quote: unknown): ChildFrameCard {
+    const credits = (quote as { estimatedCredits?: unknown } | null)?.estimatedCredits;
+    return {
+      ...c,
+      estimatedCredits: typeof credits === "number" ? credits : c.estimatedCredits,
+      quoteVersion: cardQuoteVersion(quote),
+    };
+  }
+
+  /** 换了价的是**哪几个**。一句话，English sentence case；`what` 是商家看得见的那个词
+   *  （frame / video），位置按这一趟点下去的次序。 */
+  function priceChangedNote(positions: number[], what: "Frame" | "Video", total: number): string {
+    if (total === 1 || positions.length === 0) {
+      return "The price changed — check the updated quote above, then confirm again.";
+    }
+    return positions.length === 1
+      ? `${what} ${positions[0]} changed price — check the updated quote above, then confirm again.`
+      : `${what}s ${positions.join(", ")} changed price — check the updated quotes above, then confirm again.`;
+  }
+
   // Spend EXACTLY the server-returned children from THIS confirm interaction. (SPEND SITE 1/4)
   async function confirmGenerateAll() {
     if (generating || !children) return;
@@ -540,12 +574,23 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     setConfirming(false);
     setGenerating(true);
     setError(null);
+    setPriceNotice(null);
 
     let anyStarted = false;
+    // FSE-012（验收 R2）—— 报价过期的那几镜。它们既没成交也不是这一趟的失败：服务端交回了
+    // 它们**现在**的报价，整批照跑（没漂的那几镜照常生成），这几张换成新价回到确认框里。
+    const refreshed: ChildFrameCard[] = [];
+    const refreshedPositions: number[] = [];
     for (let i = 0; i < toSpend.length; i++) {
       const c = toSpend[i];
       try {
         const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {}, quoteVersion: c.quoteVersion });
+        const refusal = quoteRefusalOf(res);
+        if (refusal) {
+          refreshed.push(refusal.quote ? refreshedChild(c, refusal.quote) : c);
+          refreshedPositions.push(i + 1);
+          continue;
+        }
         if (res && "error" in res) { setError(`Frame ${i + 1} of ${toSpend.length}: ${res.error}`); continue; }
         anyStarted = true;
       } catch {
@@ -553,8 +598,17 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       }
     }
 
-    // Consumed: force a re-prepare before any further spend.
-    setChildren(null);
+    if (refreshed.length > 0) {
+      // 换了价的那几张留在确认框里、写着新价（每一张的报价都是服务端刚交回来的那一份，
+      // 不是本地攒的旧账）。其余的照旧被消费掉：任何进一步的花费仍要先重新 prepare。
+      setChildren(refreshed);
+      setTotalCredits(refreshed.reduce((n, c) => n + c.estimatedCredits, 0));
+      setConfirming(true);
+      setPriceNotice(priceChangedNote(refreshedPositions, "Frame", toSpend.length));
+    } else {
+      // Consumed: force a re-prepare before any further spend.
+      setChildren(null);
+    }
     onBalanceRefresh?.();
     if (anyStarted || alreadySpent > 0) {
       startPolling();
@@ -598,10 +652,18 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     setRegenChild(null);
     setGenerating(true);
     setError(null);
+    setPriceNotice(null);
     let started = false;
     try {
       const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {}, quoteVersion: c.quoteVersion });
-      if (res && "error" in res) setError(res.error);
+      const refusal = quoteRefusalOf(res);
+      if (refusal) {
+        // FSE-012（验收 R2）—— 报价过期：把这一镜的确认框原样打回来，写着**新价**。
+        // 不锁控件、不当成失败 —— 商家看着新价再决定按不按。
+        setRegenChild(refusal.quote ? refreshedChild(c, refusal.quote) : c);
+        setRegenShotId(c.shotId);
+        setPriceNotice(priceChangedNote([], "Frame", 1));
+      } else if (res && "error" in res) setError(res.error);
       else started = true;
     } catch {
       setError("Couldn't regenerate — please try again.");
@@ -653,12 +715,22 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     setVideoConfirming(false);
     setGenerating(true);
     setError(null);
+    setPriceNotice(null);
 
     let anyStarted = false;
+    // FSE-012（验收 R2）—— 与首帧那一批同一条路：报价过期的逐张换新价回到确认框，整批不停。
+    const refreshed: ChildFrameCard[] = [];
+    const refreshedPositions: number[] = [];
     for (let i = 0; i < toSpend.length; i++) {
       const c = toSpend[i];
       try {
         const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {}, quoteVersion: c.quoteVersion });
+        const refusal = quoteRefusalOf(res);
+        if (refusal) {
+          refreshed.push(refusal.quote ? refreshedChild(c, refusal.quote) : c);
+          refreshedPositions.push(i + 1);
+          continue;
+        }
         if (res && "error" in res) { setError(`Video ${i + 1} of ${toSpend.length}: ${res.error}`); continue; }
         anyStarted = true;
       } catch {
@@ -666,7 +738,14 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       }
     }
 
-    setVideoChildren(null);
+    if (refreshed.length > 0) {
+      setVideoChildren(refreshed);
+      setVideoTotalCredits(refreshed.reduce((n, c) => n + c.estimatedCredits, 0));
+      setVideoConfirming(true);
+      setPriceNotice(priceChangedNote(refreshedPositions, "Video", toSpend.length));
+    } else {
+      setVideoChildren(null);
+    }
     onBalanceRefresh?.();
     if (anyStarted || alreadySpent > 0) {
       startPolling();
@@ -708,10 +787,17 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     setRegenVideoChild(null);
     setGenerating(true);
     setError(null);
+    setPriceNotice(null);
     let started = false;
     try {
       const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {}, quoteVersion: c.quoteVersion });
-      if (res && "error" in res) setError(res.error);
+      const refusal = quoteRefusalOf(res);
+      if (refusal) {
+        // 与首帧那一镜同一条路（FSE-012 验收 R2）。
+        setRegenVideoChild(refusal.quote ? refreshedChild(c, refusal.quote) : c);
+        setRegenVideoShotId(c.shotId);
+        setPriceNotice(priceChangedNote([], "Video", 1));
+      } else if (res && "error" in res) setError(res.error);
       else started = true;
     } catch {
       setError("Couldn't remake — please try again.");
@@ -769,7 +855,12 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
 
   // Gate①: show "Generate all frames" only when idle (not editing, not confirming any regen).
   const idleForAffordance = editing === null && regenShotId === null && regenVideoShotId === null && !generating;
-  const showGenerateAll = missingCount > 0 && idleForAffordance;
+  // FSE-012（验收 R2）—— 报价换过价之后**仍开着的那个确认框**，在这一批还跑着的时候也要
+  // 看得见：否则那句「check the updated quote above」上面什么都没有，商家读到的是一句
+  // 指向空处的话。放宽的只是**看得见**——它的 Confirm 键照旧由 `generating` 自己锁着，
+  // 所以这一批跑完之前一分钱也花不出去（编辑中／某一镜正在重出时照旧让位，与从前相同）。
+  const stagedSpendVisible = editing === null && regenShotId === null && regenVideoShotId === null;
+  const showGenerateAll = missingCount > 0 && (idleForAffordance || (confirming && children !== null && stagedSpendVisible));
 
   // Gate②: "Make all videos" is visible when ≥1 shot has a frame and no video yet.
   // FSE-001 同族:直接出片的镜头**没有首帧也算数** —— 它此刻就做得出来。
@@ -783,7 +874,8 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   // In continuous mode those shots are not blocked ON THE MERCHANT — they are waiting for the
   // clip before them to finish, which then hands them its closing frame. Say that instead.
   const videoWaitingCount = inheritingShotIds.size;
-  const showMakeVideos = videoEligibleCount > 0 && idleForAffordance;
+  const showMakeVideos = videoEligibleCount > 0
+    && (idleForAffordance || (videoConfirming && videoChildren !== null && stagedSpendVisible));
 
   return (
     <Card size="sm" className="gb w-full max-w-[480px] leading-[1.65]">
@@ -1211,6 +1303,14 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
             title="Working"
             description={`${QUEUE_WAIT_NOTE}…`}
           />
+        )}
+
+        {/* FSE-012（验收 R2）—— 「哪几镜换了价」。这一趟没漂的照常跑了，所以它不是失败，
+            也就不进红色的框：商家看一眼新价，再决定要不要确认。 */}
+        {priceNotice && (
+          <Alert role="status" density="compact">
+            <AlertDescription>{priceNotice}</AlertDescription>
+          </Alert>
         )}
 
         {error && (

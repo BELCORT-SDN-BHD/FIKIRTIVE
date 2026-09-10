@@ -26,6 +26,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QUOTE_VERSION_STALE, cardQuoteVersion } from "@fikirtive/core/quote-version";
 
 const mocks = vi.hoisted(() => ({
   syncStoryboardMedia: vi.fn(),
@@ -235,6 +236,90 @@ describe("creation §5 :170 FSE-012 分镜卡的付费点交回报价版本", ()
 
     expect(mocks.coworkGenerate).toHaveBeenCalledTimes(1);
     expect(mocks.coworkGenerate.mock.calls[0][0].quoteVersion).toBeUndefined();
+  });
+});
+
+/**
+ * 验收 R2 —— 分镜卡的批准键上，「拒绝并刷新」的**后半句**。
+ *
+ * 从前这个入口只做到「拒绝」：那一句被当成第 n 帧的失败写进红框，而卡面上那一镜仍写着旧价，
+ * 商家除了对着同一个旧数字再按一次之外无路可走。这一条钉的是另一半：服务端交回来的新报价
+ * 当场回到确认框里（价 ＋ 那一串版本），没漂的那几镜照常生成，整批不中止，并且商家被告知
+ * 换价的是**哪几镜**。
+ */
+describe("creation §5 :170 FSE-012 验收 R2 分镜卡:拒绝逐镜刷新,整批不中止", () => {
+  /** 服务端拒绝时交回的那一份（已过 `genCardPayloadDTO` 剥离:无型号、无 reason）。 */
+  const REFRESHED_FRAME_QUOTE = {
+    kind: "image",
+    params: { aspectRatio: "1:1", count: 1 },
+    structuredPrompt: "a pandan kaya jar on marble",
+    entityIds: [],
+    variantSel: {},
+    estimatedCredits: 9,
+  };
+
+  it("creation §5 :170 FSE-012 R2 两镜里一镜报价过期:另一镜照常生成,过期那一镜换成新价并说清是哪一镜", async () => {
+    const twoShots = {
+      storyboardTitle: "Kaya jar launch",
+      continuity: false,
+      shots: [
+        { shotId: "shot-1", index: 0, firstFramePrompt: "a", videoPrompt: "v1", entityIds: [] },
+        { shotId: "shot-2", index: 1, firstFramePrompt: "b", videoPrompt: "v2", entityIds: [] },
+      ],
+    };
+    mocks.syncStoryboardMedia.mockResolvedValue({
+      payload: twoShots,
+      shots: [
+        { shotId: "shot-1", frame: { status: { kind: "absent" } }, video: { status: { kind: "absent" } } },
+        { shotId: "shot-2", frame: { status: { kind: "absent" } }, video: { status: { kind: "absent" } } },
+      ],
+    });
+    mocks.prepareStoryboardFirstFrames.mockResolvedValue({
+      children: [
+        { shotId: "shot-1", childCardId: "child-1", estimatedCredits: 5, structuredPrompt: "a", entityIds: [], quoteVersion: "qv-stale", spent: false },
+        { shotId: "shot-2", childCardId: "child-2", estimatedCredits: 5, structuredPrompt: "b", entityIds: [], quoteVersion: "qv-fresh", spent: false },
+      ],
+      totalCredits: 10,
+    });
+    mocks.coworkGenerate
+      .mockResolvedValueOnce({ error: QUOTE_VERSION_STALE, quote: REFRESHED_FRAME_QUOTE })
+      .mockResolvedValueOnce({ id: "job-2" });
+    await renderCard(twoShots);
+
+    await click("Generate all first frames");
+    await click("Confirm —");
+
+    // ① 整批没有停在第一镜:第二镜真的被送出去了。
+    expect(mocks.coworkGenerate).toHaveBeenCalledTimes(2);
+    expect(mocks.coworkGenerate.mock.calls[1][0]).toMatchObject({ cardId: "child-2" });
+    // ② 换价那一镜回到确认框里,写着**新价**(5 → 9 credits),而且只剩它一张。
+    expect(container!.textContent).toContain("Confirm — 1 frame");
+    expect(container!.textContent).toContain("9 credits");
+    // ③ 商家被告知是哪一镜换了价,而且这不是红色的失败框。
+    expect(container!.textContent).toContain("Frame 1 changed price");
+    expect(container!.textContent).not.toContain("Action wasn't completed");
+  });
+
+  it("creation §5 :170 FSE-012 R2 换过价之后再确认一次:交回去的是新那一版的报价版本", async () => {
+    mocks.prepareStoryboardFirstFrames.mockResolvedValue({
+      children: [
+        { shotId: SHOT_ID, childCardId: "child-frame-1", estimatedCredits: 5, structuredPrompt: "a pandan kaya jar on marble", entityIds: [], quoteVersion: "qv-stale", spent: false },
+      ],
+      totalCredits: 5,
+    });
+    mocks.coworkGenerate
+      .mockResolvedValueOnce({ error: QUOTE_VERSION_STALE, quote: REFRESHED_FRAME_QUOTE })
+      .mockResolvedValueOnce({ id: "job-1" });
+    await renderCard(framelessPayload());
+
+    await click("Generate all first frames");
+    await click("Confirm —");
+    await click("Confirm —");
+
+    expect(mocks.coworkGenerate).toHaveBeenCalledTimes(2);
+    expect(mocks.coworkGenerate.mock.calls[0][0].quoteVersion).toBe("qv-stale");
+    // 第二次交回去的是**服务端刚交回来的那一份**算出来的那一串 —— 不是刚被拒的那一串。
+    expect(mocks.coworkGenerate.mock.calls[1][0].quoteVersion).toBe(cardQuoteVersion(REFRESHED_FRAME_QUOTE));
   });
 });
 

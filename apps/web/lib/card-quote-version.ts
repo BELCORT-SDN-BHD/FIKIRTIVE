@@ -56,7 +56,33 @@ export function staleQuoteRefusalFor(
   // 交回浏览器的那一份必须走**与刷新那条读路同一条剥离**（`genCardPayloadDTO`）：库里的
   // 原始 payload 上带着 `model` 与 `reason`，原样交回去就是把供应商型号名送上商家的屏幕
   // （Founder 常令：provider 保密）。判官第 3 轮 P2-c 抓的正是这一条。
+  return staleQuoteOf(card);
+}
+
+/**
+ * 交回商家的那一份，**不再比对**：一句 `QUOTE_VERSION_STALE` ＋ 走同一条剥离
+ * （`genCardPayloadDTO`）的那张卡。剥离是承重的 —— 库里的原始 payload 带着 `model` 与
+ * `reason`，原样交回去就是把供应商型号名送上商家的屏幕（Founder 常令：provider 保密）。
+ */
+function staleQuoteOf(card: QuoteGateCard): StaleQuote {
   return { error: QUOTE_VERSION_STALE, quote: genCardPayloadDTO(card.payload) };
+}
+
+/**
+ * 「刷新」那一半（验收 R1）—— **拒绝已经是既成事实**，这里只负责去库里取回那张卡此刻
+ * 的报价，按交回浏览器的形状。
+ *
+ * 为什么不复用上面那条比对：恢复轮里那道迟到的拒绝，是 `generate` 技能自己报上来的事实
+ * （`ctx.approvedQuoteVersion.refused`）。到这里再比一次版本，就是拿一个**推断**去覆盖一个
+ * 已知的事实 —— 比如商家在拒绝之后又把那一格改了回去，版本于是重新对得上，而那一趟确实
+ * 什么都没生成：再比一次会把它说成一次成功的批准。判决只作一次，在闸那里。
+ */
+export async function refreshedQuoteFor(ownerId: string, cardId: string): Promise<StaleQuote | null> {
+  const card = await prisma.chatMessage.findFirst({
+    where: { id: cardId, ownerId, kind: "GEN_CARD", deletedAt: null },
+    select: { payload: true, genJobId: true },
+  });
+  return card ? staleQuoteOf(card) : null;
 }
 
 /** 调用方手上还没有卡时的那一支：读一次（owner scoped），再走上面那个判据。 */

@@ -26,8 +26,8 @@ import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { GENERATION_START_FAILED, diagnosticRef } from "@fikirtive/core/gen-failure";
 // FSE-012 —— 「他按下的是哪一版报价」。同样走**子路径**(理由同上一行:包根带 node:crypto)。
 // 铸造与校验的口径只有这一个函数,服务端拿库里那张卡再算一次。
-import { cardQuoteVersion } from "@fikirtive/core/quote-version";
-import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
+import { cardQuoteVersion, QUOTE_VERSION_STALE } from "@fikirtive/core/quote-version";
+import { chainedApprovalOf, quoteRefusalOf, type ChainedApproval } from "./approval-chain";
 import type { OttoPlanCardPayload } from "./plan-card-contract";
 
 /** 这一次批准的结局。`error` 是给商家看的一句话，不是异常。 */
@@ -82,6 +82,19 @@ export async function runPlanApproval(input: RunPlanApprovalInput): Promise<Plan
           variantSel: payload.variantSel && typeof payload.variantSel === "object" ? payload.variantSel : {},
           quoteVersion,
         });
+    // FSE-012（判官第 5 轮 P2-b）—— 恢复轮**停在别的批准上**，而这一张被报价版本闸拒了。
+    // 服务端把两件事分开说（`ok:true, status:"needs_approval"` ＋ `staleQuote`），因为链上
+    // 那些卡确实还等着；只看 `error` 在不在的读法会把这一支读成一次成功的批准，于是
+    // `onApproved` 被调用、这张什么都没生成的卡被父层标成已批准。这一支照拒绝处理：卡面
+    // 换成交回来的那一版，控件不锁。（链上那些卡的 id 随这一支丢掉了 —— 它们已经落库，
+    // 由批准后的那次轮询补上；见 PR 描述「未做」。）
+    // 「这一次答复是不是一次报价拒绝」只有一份读法(`quoteRefusalOf`,一叠卡的批量循环
+    // 读的是同一个函数)。这里只管它的 `staleQuote` 那一形:另一形(`error` + `quote`)由
+    // 下面那条既有的错误出口原样处理,措辞与短号都不变。
+    const chainedRefusal = res && typeof res === "object" && !("error" in res) ? quoteRefusalOf(res) : null;
+    if (chainedRefusal) {
+      return { ok: false, error: QUOTE_VERSION_STALE, ref: diagnosticRef(cardId), refreshedPayload: chainedRefusal.quote };
+    }
     if (res && "error" in res) {
       // 服务端已经说清楚了 —— 原样传上去,泛化句不许盖掉它。短号优先跟着服务端那一份
       // (它与那一行日志同源);服务端没给的分支由卡的身份算一个,算法是同一个函数。

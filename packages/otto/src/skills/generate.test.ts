@@ -523,6 +523,9 @@ describe("creation §5 :170 FSE-012 —— 批准那一版之后卡被改掉,执
     expect(ctx.startGen as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
     // 也没有把任何东西写回那张卡 —— 拒绝不是一次写。
     expect(p.chatMessage.update).not.toHaveBeenCalled();
+    // 判官第 5 轮 P2-a —— 这道闸把判决**报上去**：外层（`ottoApprove`）据此知道这一趟
+    // 到底发生了什么，而不是靠「这张卡有没有任务行」猜（同一轮生成了别的卡时那个判据会说谎）。
+    expect(ctx.approvedQuoteVersion?.refused).toBe(true);
   });
 
   it("creation §5 :170 FSE-012 卡没被动过:版本对得上,照常走到 startGen", async () => {
@@ -536,6 +539,8 @@ describe("creation §5 :170 FSE-012 —— 批准那一版之后卡被改掉,执
 
     expect(result).not.toHaveProperty("error");
     expect(ctx.startGen as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    // 没拒 ⇒ 那一格不许被置上（外层看见它就会把一次成功的批准说成「价变了」）。
+    expect(ctx.approvedQuoteVersion?.refused).toBeUndefined();
   });
 
   it("creation §5 :170 FSE-012 这一版只批准了这一张卡:同一轮里生成别的卡不受它约束", async () => {
