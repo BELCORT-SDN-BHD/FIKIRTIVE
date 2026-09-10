@@ -47,6 +47,7 @@ const prismaStub = {
 };
 
 import { listMyBrandRecords, saveBrandRecord, deleteBrandRecord, restoreBrandRecord } from "../brand-record-actions";
+import { productFormIdentityIntent } from "../brand-product-form-identity";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -93,11 +94,12 @@ describe("saveBrandRecord — update by id", () => {
     const res = await saveBrandRecord({
       id: "r1", kind: "product",
       data: { name: "Latte Blend", price: "RM 55", imageAssetId: "as_1" },
-      // 整张产品表单是唯一同时编辑名字与主图的界面,所以它、也只有它交 `identity`。
+      // 两格都递上来时两格都写下去 —— 这一条钉的是**这个文件**怎么转交意图,不是哪个界面
+      // 会这么递(今天没有一个界面同时编辑这两格,见下面 PRODID-R9)。
       identity: { name: "Latte Blend", imageAssetId: "as_1" },
     });
     expect(res).toEqual({ ok: true, id: "r1" });
-    // 这一面是商家亲手填的整张表单,所以两个意图都**显式**递下去 —— 共享动作不猜。
+    // 递上来的每一格都**显式**转交下去 —— 共享动作不猜。
     expect(mockUpdateProductRecord).toHaveBeenCalledWith(
       expect.objectContaining({
         ownerId: "o1", id: "r1", source: "user", name: "Latte Blend", imageAssetId: "as_1",
@@ -106,15 +108,18 @@ describe("saveBrandRecord — update by id", () => {
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("PRODID-A4 Brand 页把主图栏空着 = 清空主图(显式 null,不是「这次不碰」)", async () => {
+  it("PRODID-A4 卡片上的「Remove image」= 清空主图(显式 null,不是「这次不碰」)", async () => {
     mockUpdateProductRecord.mockResolvedValue({ ok: true, id: "r1", entityId: "e1" });
+    // 清封面从卡片上那颗按钮走(`ProductShowcase.tsx` 的 `removeImage` → `prodSetImage(rec, null)`),
+    // 不是表单里某一格空着 —— 那张表单没有主图那一格。
     await saveBrandRecord({
       id: "r1", kind: "product", data: { name: "Latte Blend", price: "RM 55" },
-      identity: { name: "Latte Blend", imageAssetId: null },
+      identity: { imageAssetId: null },
     });
     expect(mockUpdateProductRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Latte Blend", imageAssetId: null }),
+      expect.objectContaining({ imageAssetId: null }),
     );
+    expect("name" in mockUpdateProductRecord.mock.calls[0][0]).toBe(false);
   });
 
   /**
@@ -148,6 +153,25 @@ describe("saveBrandRecord — update by id", () => {
     expect(call.imageAssetId).toBe("as_new");
     expect("name" in call).toBe(false);
   });
+  /**
+   * PRODID-R9(规格 §5 登记)—— 判官第 2 轮 P1(PR #1343):Brand 页那张产品表单没有主图栏
+   * (`ProductShowcase.tsx` 的 `ProdForm`),它手里那格 `imageAssetId` 是读路
+   * `withProductIdentity` 补进去的**客户端快照**。所以表单交上来的意图由
+   * `productFormIdentityIntent` 一处说了算,而且只交名字这一格。
+   */
+  it("PRODID-R9 Brand 页产品表单存回整行:名字递下去,读路补进来的主图快照一格不递", async () => {
+    mockUpdateProductRecord.mockResolvedValue({ ok: true, id: "r1", entityId: "e1" });
+    // 商家在 /brand 拿到的那一屏(`imageAssetId` 是读路补的),他只改了价格。
+    const edited = { name: "Latte Blend", price: "RM 59", imageAssetId: "as_stale" };
+    await saveBrandRecord({
+      id: "r1", kind: "product", data: edited, identity: productFormIdentityIntent(edited),
+    });
+    const call = mockUpdateProductRecord.mock.calls[0][0];
+    expect(call.name).toBe("Latte Blend");
+    // `undefined` 与 `null` 在写路那边是两个意思,所以这个键必须**根本不出现**。
+    expect("imageAssetId" in call).toBe(false);
+  });
+
   it("updates data/nameKey owner-scoped and flips source to user(segment 仍走本文件的 updateMany)", async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await saveBrandRecord({

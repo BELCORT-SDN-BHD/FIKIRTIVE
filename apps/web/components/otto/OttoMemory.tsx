@@ -56,6 +56,7 @@ import {
   saveBrandRecord, deleteBrandRecord, restoreBrandRecord, listMyBrandRecords,
   type BrandRecordRow,
 } from "@/lib/brand-record-actions";
+import { productFormIdentityIntent } from "@/lib/brand-product-form-identity";
 import { ingestProductFromUrl } from "@/lib/product-ingest-actions";
 import {
   sectionForCategory, diffRows, FACT_SECTION_KEYS, SECTIONS, sectionsTouched,
@@ -493,14 +494,12 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
   // ── Product handlers ──
   // 产品的名字与主图住在身份(`Entity`)上,不在价签里。哪一个动作真的在改这两格,就由它自己
   // 把 `identity` 交上来(票 #1322;`lib/brand-record-actions.ts` 的 `ProductIdentityIntent`)。
-  // 整张产品表单是唯一同时编辑这两格的界面:名字栏里那一个就是商家要的名字,主图栏空着就是
-  // 他要清掉主图。归档与撤销不交 —— 它们与名字无关,手里那份 `data` 只是一张客户端快照。
+  // 表单编辑名字那一格,所以只交名字(形状的唯一源是 `productFormIdentityIntent`,PRODID-R9);
+  // 主图只从下面的 `prodSetImage` 走。归档与撤销一格都不交 —— 它们与这两格无关,手里那份
+  // `data` 只是读路补进去的客户端快照。
   const prodSave = async (id: string | undefined, data: Record<string, unknown>) => saveAndRefreshBrandRecord({
     ...(id ? { id } : {}), kind: "product", data,
-    identity: {
-      name: typeof data.name === "string" ? data.name : "",
-      imageAssetId: typeof data.imageAssetId === "string" && data.imageAssetId ? data.imageAssetId : null,
-    },
+    identity: productFormIdentityIntent(data),
   });
   const prodArchive = async (id: string, data: Record<string, unknown>, status: "active" | "archived") =>
     saveAndRefreshBrandRecord({ id, kind: "product", data, status });
