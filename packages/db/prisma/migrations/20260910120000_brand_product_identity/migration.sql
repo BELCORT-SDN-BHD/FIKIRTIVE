@@ -13,6 +13,13 @@
 --    先落草稿,商家在 Brand 页确认后才建身份」,而「确认前不出现在 Library 与 @ 菜单」最硬的
 --    做法就是那一刻根本没有身份。草稿转正(建身份)是 Brand②③ 的活。
 --
+-- ── 草稿不回填 ───────────────────────────────────────────────────────────────
+-- `contextStatus = 'Draft'` 的 product 行(理解 worker 从菜单/网站里读出来、商家还没确认的)
+-- **就该**没有身份 —— 规格 §1.9 / 验收 PRODID-A7 的「确认前不出现在 Library 与 @ 菜单」靠的
+-- 正是这一点。上线那一刻库里还没有草稿(这个状态是本票引入的),但「回滚 → 重上」会在有草稿
+-- 的库上再跑一次这份文件:少了这条过滤,那些草稿会被当场建身份、甚至去认领商家的 Library 卡,
+-- 商家等于被替他确认了一批 AI 猜出来的产品。所以下面每一步都带 `contextStatus <> 'Draft'`。
+--
 -- ── 为什么连软删的 product 行也回填 ──────────────────────────────────────────
 -- 规格 §1.4 说的是「每条**活跃** BrandRecord(product) 建 Entity」,而验收 PRODID-A8 要的是
 -- 「**每条** BrandRecord(product).entityId 非空」。两句话都要满足,只有一种做法:软删的行
@@ -83,7 +90,8 @@ CROSS JOIN LATERAL (
     AND e."deletedAt" IS NULL
     AND lower(btrim(regexp_replace(e."name", '\s+', ' ', 'g'))) = r."nameKey"
 ) cand
-WHERE r."kind" = 'product' AND r."entityId" IS NULL AND r."deletedAt" IS NULL;
+WHERE r."kind" = 'product' AND r."entityId" IS NULL AND r."deletedAt" IS NULL
+  AND r."contextStatus" <> 'Draft';
 
 DO $$
 DECLARE bad_count INT;
@@ -142,6 +150,7 @@ FROM "BrandRecord" r
 LEFT JOIN "Asset" a
   ON a."id" = (r."data"->>'imageAssetId') AND a."ownerId" = r."ownerId" AND a."deletedAt" IS NULL
 WHERE r."kind" = 'product' AND r."entityId" IS NULL
+  AND r."contextStatus" <> 'Draft'
   AND NOT EXISTS (
     SELECT 1 FROM "prodid_backfill_link" l WHERE l.record_id = r."id" AND l.same_name_count = 1
   )
@@ -165,6 +174,7 @@ FROM "BrandRecord" r
 JOIN "Asset" a
   ON a."id" = (r."data"->>'imageAssetId') AND a."ownerId" = r."ownerId" AND a."deletedAt" IS NULL
 WHERE r."kind" = 'product' AND r."entityId" IS NULL
+  AND r."contextStatus" <> 'Draft'
   AND NOT EXISTS (
     SELECT 1 FROM "prodid_backfill_link" l WHERE l.record_id = r."id" AND l.same_name_count = 1
   )
@@ -212,7 +222,7 @@ SET "entityId" = COALESCE(
   (SELECT l.entity_id FROM "prodid_backfill_link" l WHERE l.record_id = r."id" AND l.same_name_count = 1),
   'prodid_' || r."id"
 )
-WHERE r."kind" = 'product' AND r."entityId" IS NULL;
+WHERE r."kind" = 'product' AND r."entityId" IS NULL AND r."contextStatus" <> 'Draft';
 
 -- ③ 外键、索引、CHECK。名字逐字照 Prisma 对 schema.prisma 的命名规则,否则 schema drift 闸会红。
 CREATE INDEX IF NOT EXISTS "BrandRecord_entityId_idx" ON "BrandRecord"("entityId");

@@ -1,18 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockRequireOwner, mockFindMany, mockFindFirst, mockCreate, mockUpdateMany, mockCreateProduct } = vi.hoisted(() => ({
+const {
+  mockRequireOwner, mockFindMany, mockFindFirst, mockCreate, mockUpdateMany,
+  mockCreateProduct, mockUpdateProductRecord, mockEntityUpdateMany, mockRefFindMany, mockRefUpdateMany,
+} = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockFindMany: vi.fn(),
   mockFindFirst: vi.fn(),
   mockCreate: vi.fn(),
   mockUpdateMany: vi.fn(),
   mockCreateProduct: vi.fn(),
+  mockUpdateProductRecord: vi.fn(),
+  mockEntityUpdateMany: vi.fn(),
+  mockRefFindMany: vi.fn(),
+  mockRefUpdateMany: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
+    // #1321 判官第 3 轮:删除与恢复现在一个事务里动价签与身份两张表(PRODID-A6)。
+    // 假件把 tx 就当成 prisma 本身 —— 这个文件验的是「写了哪一句」,不是事务语义。
+    $transaction: (fn: (tx: unknown) => unknown) => fn(prismaStub),
     brandRecord: { findMany: mockFindMany, findFirst: mockFindFirst, create: mockCreate, updateMany: mockUpdateMany },
+    entity: { updateMany: mockEntityUpdateMany },
+    referenceImage: { findMany: mockRefFindMany, findFirst: vi.fn().mockResolvedValue(null), updateMany: mockRefUpdateMany },
     // FRONT-A8:写路径现在还会读 User(「谁改的」)与写 BrandContextRevision(改动史)。
     brandContextRevision: { create: vi.fn().mockResolvedValue({}) },
     memory: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -21,14 +33,28 @@ vi.mock("@fikirtive/db", () => ({
   // #1321:建产品走共享动作(身份 Entity ＋ 价签 BrandRecord 同事务),不再走 brandRecord.create。
   // segment / offer 没有身份那一半,仍走 create —— 下面两条测试就是这条分界线。
   createProduct: mockCreateProduct,
+  confirmProductDraft: vi.fn(),
+  // 改产品也走共享动作(名字与主图的权威是身份,PRODID-A4)。
+  updateProductRecord: mockUpdateProductRecord,
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+
+/** `$transaction(fn)` 收到的 tx —— 与上面 `prisma` 的形状逐字相同。 */
+const prismaStub = {
+  brandRecord: { findMany: mockFindMany, findFirst: mockFindFirst, create: mockCreate, updateMany: mockUpdateMany },
+  entity: { updateMany: mockEntityUpdateMany },
+  referenceImage: { findMany: mockRefFindMany, findFirst: vi.fn().mockResolvedValue(null), updateMany: mockRefUpdateMany },
+};
 
 import { listMyBrandRecords, saveBrandRecord, deleteBrandRecord, restoreBrandRecord } from "../brand-record-actions";
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireOwner.mockResolvedValue({ ownerId: "o1", email: "merchant@fikirtive.test" });
+  mockFindFirst.mockResolvedValue(null);
+  mockRefFindMany.mockResolvedValue([]);
+  mockEntityUpdateMany.mockResolvedValue({ count: 0 });
+  mockRefUpdateMany.mockResolvedValue({ count: 0 });
 });
 
 describe("saveBrandRecord — create", () => {
@@ -62,17 +88,28 @@ describe("saveBrandRecord — create", () => {
 });
 
 describe("saveBrandRecord — update by id", () => {
-  it("updates data/nameKey owner-scoped and flips source to user", async () => {
-    mockUpdateMany.mockResolvedValue({ count: 1 });
+  it("PRODID-A4 改产品走共享动作:名字与主图的权威是身份,不是这个文件自己的 updateMany", async () => {
+    mockUpdateProductRecord.mockResolvedValue({ ok: true, id: "r1", entityId: "e1" });
     const res = await saveBrandRecord({ id: "r1", kind: "product", data: { name: "Latte Blend", price: "RM 55" } });
+    expect(res).toEqual({ ok: true, id: "r1" });
+    expect(mockUpdateProductRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerId: "o1", id: "r1", source: "user" }),
+    );
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+  it("updates data/nameKey owner-scoped and flips source to user(segment 仍走本文件的 updateMany)", async () => {
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await saveBrandRecord({
+      id: "r1", kind: "segment", data: { name: "Office crowd", who: "Office workers nearby" },
+    });
     expect(res).toEqual({ ok: true, id: "r1" });
     expect(mockUpdateMany).toHaveBeenCalledWith({
       where: { id: "r1", ownerId: "o1", deletedAt: null },
-      data: expect.objectContaining({ nameKey: "latte blend", source: "user" }),
+      data: expect.objectContaining({ nameKey: "office crowd", source: "user" }),
     });
   });
   it("errors when not found", async () => {
-    mockUpdateMany.mockResolvedValue({ count: 0 });
+    mockUpdateProductRecord.mockResolvedValue({ ok: false, reason: "not-found" });
     expect(await saveBrandRecord({ id: "nope", kind: "product", data: { name: "X" } })).toHaveProperty("error");
   });
 });
@@ -80,6 +117,8 @@ describe("saveBrandRecord — update by id", () => {
 describe("delete / restore", () => {
   it("FRONT-A8 soft-deletes owner-scoped", async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
+    // 回查这一行是什么 kind —— segment 就不去动身份那张表(PRODID-A6 只管产品)。
+    mockFindFirst.mockResolvedValue({ kind: "segment", entityId: null });
     expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenCalledWith({
       // 判官 P2-1:只有还在的行才删 —— 已经删掉的行不再被写第二次,改动史里就不会
@@ -92,7 +131,10 @@ describe("delete / restore", () => {
   });
   it("FRONT-A8 soft-delete is safe to repeat after an uncertain response", async () => {
     mockUpdateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
-    mockFindFirst.mockResolvedValue({ id: "r1" });   // 回查:它已经在删除态了
+    // 第一趟:回查 kind(segment,不动身份);第二趟:回查「它已经在删除态了」。
+    mockFindFirst
+      .mockResolvedValueOnce({ kind: "segment", entityId: null })
+      .mockResolvedValue({ id: "r1" });
     expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(await deleteBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockFindFirst).toHaveBeenCalledWith(expect.objectContaining({
@@ -101,6 +143,10 @@ describe("delete / restore", () => {
   });
   it("FRONT-A8 restore clears deletedAt", async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
+    // 恢复先读这一行的 kind / nameKey / deletedAt,再确认名字槽位没被别人占走。
+    mockFindFirst
+      .mockResolvedValueOnce({ kind: "segment", brandId: null, nameKey: "x", entityId: null, deletedAt: new Date() })
+      .mockResolvedValueOnce(null);
     expect(await restoreBrandRecord({ id: "r1" })).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenCalledWith({
       // 判官 P2-1:镜像的那一半 —— 只有还在删除态的行才恢复。

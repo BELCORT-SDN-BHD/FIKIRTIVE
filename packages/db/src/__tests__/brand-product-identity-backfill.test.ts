@@ -327,6 +327,47 @@ describe("PRODID-A8 回填迁移", () => {
     ).resolves.toBe(0);
   }, 60_000);
 
+  /**
+   * 「回滚 → 重上」会在一个**已经有草稿**的库上再跑一次这份文件(草稿是本票引入的状态,
+   * 上线那一刻还没有,但回滚之后就有了)。草稿此刻就该没有身份 —— 规格 §1.9 与验收
+   * PRODID-A7 的「确认前不出现在 Library 与 @ 菜单」靠的正是这一点。少了过滤,回填会替商家
+   * 确认一批 AI 猜出来的产品,甚至让草稿去认领商家自己那张 Library 卡。
+   */
+  it("PRODID-A7 重上时草稿不回填:不建身份、也不认领同名的 Library 卡", async () => {
+    await loosenConstraints();
+    // 商家自己那张卡(同名)—— 活跃、恰好一张,正是一次性链接会认领的形状。
+    const cardId = `ent_${randomUUID()}`;
+    await prisma.entity.create({
+      data: { id: cardId, ownerId: orgId, type: "PRODUCT", name: "Kopi ais" },
+    });
+    const draftId = `brc_${randomUUID()}`;
+    await prisma.brandRecord.create({
+      data: {
+        id: draftId, ownerId: orgId, brandId: null, kind: "product", nameKey: "kopi ais",
+        data: { name: "Kopi ais" }, status: "active", source: "otto", pinned: false,
+        contextStatus: "Draft",
+      },
+    });
+
+    await runMigration();
+
+    const draft = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: draftId, ownerId: orgId },
+      select: { entityId: true, contextStatus: true },
+    });
+    expect(draft).toEqual({ entityId: null, contextStatus: "Draft" });
+    // 商家那张卡一个字节没动(没被认领、没被挂图)。
+    await expect(
+      prisma.entity.findFirstOrThrow({
+        where: { id: cardId, ownerId: orgId }, select: { baseAssetId: true, deletedAt: true },
+      }),
+    ).resolves.toEqual({ baseAssetId: null, deletedAt: null });
+    // 也没有替它新造一条身份。
+    await expect(
+      prisma.entity.count({ where: { ownerId: orgId, id: `prodid_${draftId}` } }),
+    ).resolves.toBe(0);
+  }, 60_000);
+
   it("PRODID-A8 fresh DB:空库上跑迁移无错,外键与 CHECK 都在位", async () => {
     // beforeEach 已经跑过一次 —— 再跑一次证明它可重跑(生产回滚后重上就是这个路径)。
     await expect(runMigration()).resolves.toBeUndefined();
