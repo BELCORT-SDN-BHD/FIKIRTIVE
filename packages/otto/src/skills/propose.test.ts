@@ -2726,6 +2726,40 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
   });
 
   /**
+   * 规格 §5 :176⑥ / CREATE-A10 —— 「演员血统 ∩ 短边 < 100」这一格(第 2 轮判官打回)。
+   *
+   * 两个条件都成立时,句子说的门槛必须是 300:这张图我们**永远**不会替他放大(像素铁律),
+   * 100 那条线只对「我们能替它放大」的商品照成立。从前分岔挂在 `plan.action` 上,`refuse`
+   * 那一档先返回,血统判断轮不到 —— 于是这一格说 100,商家照着换一张 150px 的同族图回来,
+   * 第二次仍旧被拒(这次说 300)。⑥ 要消灭的正是这类假话,过松与过严一样是假话。
+   */
+  it.each([
+    [99, 400],
+    [80, 500],
+  ])(
+    "creation §5 :176⑥ / CREATE-A10: 演员血统 ∩ 短边<100(%i×%i)⇒ 门槛说的是 300,不是 100",
+    async (width, height) => {
+      mockPrisma.generation.findMany.mockResolvedValue([
+        {
+          asset: { width, height },
+          entitySnapshot: { entities: [{ id: AISYAH.id, type: "CHARACTER", name: AISYAH.name }] },
+        },
+      ]);
+
+      const out = await executePropose(input, runContext());
+
+      expect(out).toEqual({
+        error: tooSmallReferenceSentence({ width, height, minSide: minimumUsableReferenceSide(false) }),
+      });
+      expect(out).toEqual({ error: expect.stringContaining(`${width}×${height}`) });
+      expect(out).toEqual({ error: expect.stringContaining("at least 300 pixels") });
+      expect(out).not.toEqual({ error: expect.stringContaining("at least 100") });
+      expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+      expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+    },
+  );
+
+  /**
    * 规格 §5 :176④ / CREATE-A10 —— 「已放大」那一格只可能来自**真的放大过**。
    *
    * 带演员血统的图一格不动像素,所以它这一趟根本不会被放大;它撑不起这次引用 ⇒ 整轮拒绝、

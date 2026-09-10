@@ -187,10 +187,17 @@ export async function executePropose(
       const plan = referenceUpscalePlan(row.asset);
       if (plan.action === "asIs" || plan.action === "unknown") continue; // 与这条修改之前逐字相同
       // 规格 §5 :176⑥ —— 拒绝那一句说**这一张**图有多大、以及**这一张**图要多大。
-      // 门槛按「我们能不能替它放大」分岔:能放大 ⇒ 100(越过就由我们补到 300);带演员血统
-      // 不许动像素 ⇒ 300(供应商的硬闸本身)。`row.asset` 的宽高在这两档里一定读得出来 ——
-      // 读不出来的那一档是上面的 `unknown`,已经先走掉了。
-      const refuse = (canUpscale: boolean) => ({
+      //
+      // 门槛只有一条分岔:**我们能不能替这一张动像素**。带官方演员血统的图一格不动(像素
+      // 完整性铁律),所以对它成立的门槛永远是供应商那道 300;其余的商品照我们会补到 300,
+      // 所以对它成立的门槛是 100。分岔挂在血统上,不挂在 `plan.action` 上 —— 挂错了会在
+      // 「血统 ∩ 短边<100」这一格说出 100 这个对他不成立的数,他换一张 150px 的同族图回来
+      // 还是被拒(那时才说 300)。过松与过严一样是假话,⑥ 要消灭的是两者。
+      //
+      // `row.asset` 的宽高在这两档里一定读得出来 —— 读不出来的那一档是上面的 `unknown`,
+      // 已经先走掉了。
+      const canUpscale = !lineageCarriesOfficialActor(row.entitySnapshot);
+      const refuse = () => ({
         error: tooSmallReferenceSentence({
           width: row.asset.width as number,
           height: row.asset.height as number,
@@ -198,11 +205,9 @@ export async function executePropose(
         }),
       });
       // 短边 < 100:放大到过门要 4× 以上,而我们只在 2×／3× 两格有实证 —— 诚实拒绝。
-      // 他换一张短边 ≥100 的图就走得通,所以这一句说的门槛是 100。
-      if (plan.action === "refuse") return refuse(true);
-      // 带演员血统 ⇒ 一格不动像素 ⇒ 它撑不起这一次引用,花钱前说出来。这一档我们不会替他
-      // 放大,所以门槛就是供应商那道 300。
-      if (lineageCarriesOfficialActor(row.entitySnapshot)) return refuse(false);
+      if (plan.action === "refuse") return refuse();
+      // 带演员血统 ⇒ 一格不动像素 ⇒ 它撑不起这一次引用,花钱前说出来。
+      if (!canUpscale) return refuse();
       upscaleCount++;
     }
     // 披露句走卡面自己那一格(`referenceUpscaleNote`,规格 §5 :176④),不再借名额截图的
