@@ -103,9 +103,12 @@ describe("前端基线:后续各段的验收落点(§7.1;S5 前逐条转正)", (
   //
   // SIGNIN-A4 —— 这条验收的两条旅程随密码退役改写(docs/specs/sign-in.md,已冻结 · v1)。
   // frontend-baseline.md §1 把「邮箱密码、忘记/重置」列为既有 Auth 能力,FRONT-A2 的原旅程含
-  // 密码注册与重置;sign-in.md §1 第 8 问已明写这一条会作废,并要求在 frontend-baseline.md §5
-  // 「变更登记」写一行(登记由编排者执行,实现 PR 不改 docs/specs/ —— M5 闸)。冻结正文不动,
-  // FRONT-A2 下一次 S5 按 sign-in.md 的 A1/A4 改写。
+  // 密码注册与重置;sign-in.md §1 第 8 问已明写这一条会作废,并要求**实现 PR 自己**在
+  // frontend-baseline.md §5「变更登记」写一行。那一行已写(2026-09-10 那条,指向本规格)。
+  // 判官 #1336 P1 更正:本文件先前写着「实现 PR 不改 docs/specs/ —— M5 闸」,这句是假的 ——
+  // M5 对 docs/specs/ 只判形状(平铺的 .md/.txt,scripts/ci/process-gates.sh:377),改
+  // frontend-baseline.md 完全放行。冻结正文不动,FRONT-A2 下一次 S5 按 sign-in.md 的
+  // A1/A4 改写。
   //
   // 今天的四条真落点 ——
   //   码门进来 + `?from=` 回跳 → e2e/journeys/21-sign-in-and-return.spec.ts

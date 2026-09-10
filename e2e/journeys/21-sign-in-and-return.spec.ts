@@ -87,7 +87,16 @@ test("SIGNIN-A4 — A wrong code reads the same whether or not the address has a
     await page.getByLabel("Login code").fill("000000");
     await page.getByRole("button", { name: "Continue with login code" }).click();
 
-    const alert = page.getByRole("alert");
+    // 判官 #1336 P1:`page.getByRole("alert")` 没有作用域会连 Next 的路由播报器一起命中,
+    // Playwright strict mode 直接报错。播报器是 `<next-route-announcer>` —— <body> 的直接
+    // 子元素,影子根里挂着 `#__next-route-announcer__`(自带 role="alert"),`getByRole` 会
+    // 穿进开放影子根,所以它跑不掉;它的内容由 `router.push`(LoginForm 每次换步都调)喂,
+    // 于是 toBeVisible 时只有一条、读 textContent 时变成两条 —— 竞态,本地绿、CI 红。
+    // 修法是把范围收进登录卡片(AuthStepCard → ui/card 的 data-slot="card"):播报器挂在
+    // <body> 上、不在卡里(实测 `closest('[data-slot="card"]')` 为 null),而卡里每一步只有
+    // 一条 Alert。刻意**不**按文案 filter:这条验收要比的就是「读到的那句话」,先按文案筛
+    // 会把两种世界的差异一起筛掉。
+    const alert = page.locator('[data-slot="card"]').getByRole("alert");
     await expect(alert).toBeVisible();
     answers.push(((await alert.textContent()) ?? "").trim());
     await expect(page).toHaveURL(/\/login/);
