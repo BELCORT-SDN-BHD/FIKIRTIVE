@@ -5,7 +5,11 @@
  * 门槛 A3「variation 至少一次真实可用交付」当时 FAIL（`docs/audits/fullstack-staging-2026-09-08/
  * report-round1.md:391`、同目录 `coverage-matrix.md:28` FL-04）。Founder 2026-09-10 裁（#1307）：
  * 进 v0.1.1，先复现再修；**验收口径 = 对一张已生成图做 variation，产出可打开、可下载、账本
- * 只有一次收费**。验收编号沿用 **CREATE-A1**（2026-09-04 裁决把变体这条路判进 A1，不发明新号）。
+ * 只有一次收费**。
+ *
+ * **挂哪个编号**：只挂登记编号 `creation §5 :177 variation`，不挂 CREATE 验收号。冻结版
+ * CREATE-A1 判的是「花钱前先见增强稿预览、前置报价一致」——这一份一个字都没证明它，挂上去
+ * 就是借号（判官 2026-09-10 P2②）。等 S5 为「variation 真实交付」冻一条自己的验收行，再回来挂。
  *
  * ── 走查那天到底断在哪一格（复现记录）────────────────────────────────────────────
  * job `01M1ZRF0D1JWSCZGHN8EX6YCNJ`：`05:39:42.124Z` 创建、`05:40:42.828Z` FAILED，
@@ -201,7 +205,7 @@ beforeEach(() => {
 
 describe("creation §5 :177 variation 真实交付（门槛 A3 / FL-04）", () => {
   it(
-    "creation §5 :177 variation 对一张已生成图做变体 ⇒ 产出可打开、可下载，账本恰一次 SETTLE、无重复预扣（CREATE-A1）",
+    "creation §5 :177 variation 对一张已生成图做变体 ⇒ 产出可打开、可下载，账本恰一次 SETTLE、无重复预扣",
     async () => {
       const ownerId = await seedOrg(1000);
       mockRequireOwner.mockResolvedValue({ ownerId, email: "variation@fikirtive.test" });
@@ -265,7 +269,7 @@ describe("creation §5 :177 variation 真实交付（门槛 A3 / FL-04）", () =
   );
 
   it(
-    "creation §5 :177 variation 别的租户拿着同一把 key 也下载不到（CREATE-A1）",
+    "creation §5 :177 variation 别的租户拿着同一把 key 也下载不到",
     async () => {
       // 交付这件事只有在「交付给对的人」时才成立。少了这一条，上面那个 200 也可能是一条
       // 谁都能拖的链接 —— 那不是交付，那是泄露。

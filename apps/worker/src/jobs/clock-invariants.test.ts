@@ -54,13 +54,45 @@ describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () 
     expect(genExpireMs - VIDEO_POLL_TIMEOUT_MS).toBeGreaterThanOrEqual(5 * MINUTE);
   });
 
-  // creation §5 :177 —— 图片那条路也有它自己的第一环,而且此前**没人守**。
+  // ── creation §5 :177 —— 图片那条路也有它自己的第一环,而且此前**没人守** ──────────
+  //
   // 图片是同步渲染:POST 的时长就是出图时长(视频那条是「建任务 60s + 轮询 15m」)。
-  // 这一环同样必须落在 stale 之前,否则一次正常的慢出图会被判成「卡死」并误杀退款;
-  // 一次尝试的最坏在途 = 渲染 5m + 结果下载 5m,仍在 18m stale 之内。
+  // 这一环同样必须落在 stale 之前,否则一次正常的慢出图会被判成「卡死」并误杀退款。
+  //
+  // 但「渲染 5m + 下载 5m < 18m」**不是全部账**(判官 P2 点名的漏项)。stale 量的起点是
+  // `startedAt` —— QUEUED→GENERATING 那一刻写下的(本目录 `gen.ts` 的 claim),而付费 POST 在那
+  // 之后还要先在 `providerRequestGate`(默认 6 格,进程内 gen / refgen / understand 共用同一个
+  // 账户额度)**排队**。排队时间落在被量的窗口**里面**,所以真正的账是:
+  //
+  //     排队 + 渲染 5m + 下载 5m  <  stale 18m   ⇒   留给排队的余量 = 8m
+  //
+  // 本片把图片 POST 的占位从 60s 抬到 5m,余量因此从 12m 收窄到 8m。8m 仍然够**同类**争用:
+  // 闸满时排在你前面的其它图片 POST,最慢的一整轮就是 5m(6 格同时到顶、同时释放),
+  // 5m < 8m,还剩 3m。下面第二条把这笔账钉成断言。
+  const IMAGE_ATTEMPT_MS = ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS;
+  const GEN_QUEUE_ALLOWANCE_MS = GEN_STALE_MS - IMAGE_ATTEMPT_MS;
+
   it("一次正常的慢出图不会被 stale 判定误伤", () => {
     expect(ARK_IMAGE_TIMEOUT_MS).toBeLessThan(GEN_STALE_MS);
-    expect(ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS).toBeLessThan(GEN_STALE_MS);
+    expect(IMAGE_ATTEMPT_MS).toBeLessThan(GEN_STALE_MS);
+  });
+
+  it("并发闸的排队时间也在被量的窗口里 —— 余量 8m,够前面整整一轮同类请求", () => {
+    expect(IMAGE_ATTEMPT_MS).toBe(10 * MINUTE);
+    expect(GEN_QUEUE_ALLOWANCE_MS).toBe(8 * MINUTE);
+    // 排在前面的同类请求最慢一轮 = 一个图片 POST 的上限。它必须装得进余量,
+    // 否则「闸前排一轮」就能把一次健康的出图推过 stale。
+    expect(ARK_IMAGE_TIMEOUT_MS).toBeLessThan(GEN_QUEUE_ALLOWANCE_MS);
+  });
+
+  it("已知缺口钉板:一个视频任务的闸位就吃光图片那条路的排队余量(先于本片存在)", () => {
+    // 这条**不是**不变式,是把一笔已知的账钉在明面上。视频任务占的是**整条任务**的位
+    // (提交 + 轮询,`byteplus.ts` 的 `generateVideo` 在最外层 acquire),最长 60s + 15m ——
+    // 一格就大过 8m 余量。它不是本片引入的:修法前余量 12m,同样小于它 —— 第二条断言就是这个。
+    // 处置:登记在 PR #1332 描述「未做」栏,不靠这里假装安全;真要关它得动
+    // stale/expire/reap 整条链或给视频单独一把闸,那是另一条规格线的活。
+    expect(VIDEO_POLL_TIMEOUT_MS).toBeGreaterThan(GEN_QUEUE_ALLOWANCE_MS);
+    expect(VIDEO_POLL_TIMEOUT_MS).toBeGreaterThan(GEN_STALE_MS - (60_000 + ARK_DOWNLOAD_TIMEOUT_MS));
   });
 
   it("四个数字就是现行值(改任何一个都必须回到这里重新论证)", () => {
