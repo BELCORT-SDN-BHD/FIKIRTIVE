@@ -5,6 +5,7 @@ import {
   DEFAULT_IMAGE_MODEL, PRO_IMAGE_MODEL,
   activeVideoModel, buildGenRequestFromCard, displayCredits, pricedGenCredits, redactProviderNames,
   referenceUnavailableMessage, REFERENCE_IMAGE_EXTS,
+  minimumUsableReferenceSide, tooSmallReferenceSentence,
   routeVideoModel, videoDefaults, VIDEO_EDIT_OPENING, type GenVideoModel,
 } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
@@ -2584,19 +2585,53 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
 
   // 短边 99 —— 低于可放大下限(100),放大到过门要 4× 以上,而我们只在 2×／3× 两格有实证。
   // 拒在铸卡之前 ⇒ 零卡、零 GenJob、账本零新增行。
-  it("FSE-001 / CREATE-A2: 商品图短边 99 ⇒ 一句话拒绝、零 GEN_CARD、零 GenJob", async () => {
+  //
+  // 规格 §5 :162① —— 这一行的 99×500 从此**可能是一张本站生成的图**:出图处量真字节写
+  // `Asset.width/height` 之后,尺寸闸对本站生成的资产不再读 unknown 放行。
+  it("creation §5 :162①: 本站生成的商品图短边 99 ⇒ 付费前一句话拒绝、零 GEN_CARD、零 GenJob", async () => {
     mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 99, height: 500 } }]);
 
     const out = await executePropose(input, runContext());
 
-    expect(out).toEqual({ error: referenceUnavailableMessage("tooSmall") });
+    // 规格 §5 :176⑥ —— 说出他这张图现在多大,门槛按「能不能替他放大」说 100(不是 300)。
+    expect(out).toEqual({
+      error: tooSmallReferenceSentence({ width: 99, height: 500, minSide: minimumUsableReferenceSide(true) }),
+    });
+    expect(out).toEqual({ error: expect.stringContaining("99×500") });
+    expect(out).toEqual({ error: expect.stringContaining("at least 100 pixels") });
     expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
     expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
   });
 
+  // 规格 §5 :162① 的另外两档 —— 量到尺寸之后,本站生成的图与上传图走同一条判据。
+  it("creation §5 :162①: 本站生成的商品图 100≤短边<300 ⇒ 走放大;短边 ≥300 ⇒ 原样,两档都照铸", async () => {
+    for (const [size, upscaled] of [
+      [{ width: 100, height: 1344 }, true],
+      [{ width: 299, height: 1344 }, true],
+      [{ width: 300, height: 1344 }, false],
+      [{ width: 1344, height: 1344 }, false],
+    ] as const) {
+      vi.clearAllMocks();
+      mockPrisma.entity.findMany.mockResolvedValue([AISYAH]);
+      mockPrisma.chatMessage.findFirst.mockResolvedValue({ seq: 5 });
+      mockPrisma.chatMessage.create.mockResolvedValue({});
+      mockPrisma.referenceImage.count.mockResolvedValue(1);
+      mockPrisma.generation.findMany.mockResolvedValue([{ asset: size }]);
+
+      const out = await executePropose(input, runContext());
+
+      expect(out, JSON.stringify(size)).toHaveProperty("cardId");
+      const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+        data: { payload: Record<string, unknown> };
+      }).data.payload;
+      // 放大那两档说出来,原样那两档一个字都不说。
+      expect(typeof payload["referenceUpscaleNote"] === "string", JSON.stringify(size)).toBe(upscaled);
+    }
+  });
+
   // 旧口径只查宽度,所以这一张过我们的闸、到供应商才被高度弹回 —— 而那时钱已经预扣。
   // 现在它在铸卡时就被认出来,并且是「放大」而不是「拒绝」。
-  it("FSE-001 / CREATE-A2: 商品图 400×200(宽够高不够)⇒ 放行 + 放大披露,不再漏到预扣之后", async () => {
+  it("creation §5 :176④: 商品图 400×200(宽够高不够)⇒ 放行 + 放大披露走自己那一格,不再借降级那一格", async () => {
     mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 400, height: 200 } }]);
 
     const out = await executePropose(input, runContext());
@@ -2605,11 +2640,43 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
     const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
       data: { payload: Record<string, unknown> };
     }).data.payload;
-    expect(payload["downgraded"]).toBe(true);
-    expect(payload["downgradeNote"]).toContain(
+    expect(payload["referenceUpscaleNote"]).toContain(
       "One of your product reference photos is smaller than the engine's minimum",
     );
-    expect(payload["downgradeNote"]).toContain("your original stays untouched");
+    expect(payload["referenceUpscaleNote"]).toContain("your original stays untouched");
+    // 商家要的东西一格没少 —— 只是我们替他补了像素,所以这张卡**不是**降级卡。
+    expect(payload["downgraded"]).toBe(false);
+    expect(payload["downgradeNote"]).toBeUndefined();
+  });
+
+  /**
+   * 规格 §5 :176④ —— 名额截图与「已放大」是两件事,卡上两行、可以同时出现。
+   *
+   * 从前两者共用 `downgradeNote` 一格:9 张挂图只有 3 张上车、其中 2 张还被放大,商家读到的
+   * 是一段把两件事黏在一起的话,分不清哪半句说的是哪一件。
+   */
+  it("creation §5 :176④: 名额截图与已放大同时发生 ⇒ 两格各说各的,互不覆盖", async () => {
+    const many = Array.from({ length: 9 }, (_, i) => `gen_${i}`);
+    mockPrisma.generation.findMany.mockResolvedValue(many.map(() => ({ asset: { width: 200, height: 200 } })));
+
+    const out = await executePropose(input, {
+      context: makeCtx({
+        sourceGenerationId: MUG_RECEIPT.generationId,
+        sourceGenerationIds: many,
+        mediaReferences: many.map((id) => ({ ...MUG_RECEIPT, generationId: id })),
+      }),
+    });
+
+    expect(out).toHaveProperty("cardId");
+    const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    }).data.payload;
+    // 名额那一格照旧是降级披露。
+    expect(payload["downgraded"]).toBe(true);
+    expect(typeof payload["downgradeNote"]).toBe("string");
+    // 放大那一格独立存在,而且没有被并进上面那一段。
+    expect(payload["referenceUpscaleNote"]).toContain("product reference photos");
+    expect(payload["downgradeNote"]).not.toContain("product reference photos are smaller");
   });
 
   // 探针 T2 的那张真实鞋照(275×183)。Founder 2026-09-09 裁决之前它是拒绝,现在是放大。
@@ -2631,13 +2698,40 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
     const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
       data: { payload: Record<string, unknown> };
     }).data.payload;
-    expect(payload["downgradeNote"]).toContain("2 of your product reference photos are smaller");
+    expect(payload["referenceUpscaleNote"]).toContain("2 of your product reference photos are smaller");
   });
 
   // Founder 2026-09-09 裁决的边界:「仅限无人像的商品照,演员图与任何含人像的图一律不动」。
   // 机器可查的那一半 = 演员血统。带演员血统的小图不放大(像素铁律),所以它撑不起这次引用
   // ⇒ 花钱前诚实拒绝,而不是替它动像素再去赌供应商的人像审核。
-  it("FSE-001 / CREATE-A10: 带演员血统的小图一格不动像素 ⇒ 拒绝而不是放大", async () => {
+  it("creation §5 :176⑥ / CREATE-A10: 带演员血统的小图一格不动像素 ⇒ 拒绝,且门槛说 300 不说 100", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([
+      {
+        asset: { width: 299, height: 400 },
+        entitySnapshot: { entities: [{ id: AISYAH.id, type: "CHARACTER", name: AISYAH.name }] },
+      },
+    ]);
+
+    const out = await executePropose(input, runContext());
+
+    // 这一档我们不会替他放大(像素完整性铁律),所以对他真正成立的门槛是供应商那道 300。
+    expect(out).toEqual({
+      error: tooSmallReferenceSentence({ width: 299, height: 400, minSide: minimumUsableReferenceSide(false) }),
+    });
+    expect(out).toEqual({ error: expect.stringContaining("299×400") });
+    expect(out).toEqual({ error: expect.stringContaining("at least 300 pixels") });
+    expect(out).not.toEqual({ error: expect.stringContaining("at least 100") });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+    expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 规格 §5 :176④ / CREATE-A10 —— 「已放大」那一格只可能来自**真的放大过**。
+   *
+   * 带演员血统的图一格不动像素,所以它这一趟根本不会被放大;它撑不起这次引用 ⇒ 整轮拒绝、
+   * 一张卡都不铸,自然也不存在一句「我们替你放大了」。这条钉的就是那句话不会凭空长出来。
+   */
+  it("creation §5 :176④ / CREATE-A10: 演员血统那一档不放大 ⇒ 卡都不铸,更不会说「已放大」", async () => {
     mockPrisma.generation.findMany.mockResolvedValue([
       {
         asset: { width: 200, height: 200 },
@@ -2647,9 +2741,8 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
 
     const out = await executePropose(input, runContext());
 
-    expect(out).toEqual({ error: referenceUnavailableMessage("tooSmall") });
+    expect(out).toHaveProperty("error");
     expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
-    expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
   });
 
   it("FSE-001 / CREATE-A2: 尺寸闸只在这个租户的范围里查(ownerId 来自 ctx,不从模型收)", async () => {

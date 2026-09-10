@@ -432,6 +432,43 @@ describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () 
     expect(markup).not.toContain(DOWNGRADE_FALLBACK_NOTE);
   });
 
+  /**
+   * 规格 §5 :176④ —— 「已放大」披露自己一格,不再与名额截图共用 `downgradeNote`。
+   *
+   * 共用那一格的代价在走查里是真的:9 张挂图只有 3 张上车、其中 2 张还被放大,商家读到的
+   * 是一段把两件事黏在一起的话。分开之后卡面两行并存,各说各的。
+   */
+  it("creation §5 :176④: 已放大与名额截图两行同时出现,互不覆盖", () => {
+    const markup = renderCard({
+      ...VIDEO_PAYLOAD,
+      referenceUpscaleNote:
+        "2 of your product reference photos are smaller than the engine's minimum, so we enlarge them before sending — your originals stay untouched.",
+    });
+    // 名额那一格照旧(降级披露)。
+    expect(markup).toContain("You asked for 10s — this will be 5s.");
+    // 放大那一格独立出现。
+    expect(markup).toContain("2 of your product reference photos are smaller than the engine's minimum");
+  });
+
+  it("creation §5 :176④: 放大披露不依赖 downgraded —— 一张没降级的卡照样说得出这句话", () => {
+    const markup = renderCard({
+      ...VIDEO_PAYLOAD,
+      downgraded: false,
+      downgradeNote: undefined,
+      referenceUpscaleNote:
+        "One of your product reference photos is smaller than the engine's minimum, so we enlarge it before sending — your original stays untouched.",
+    });
+    expect(markup).toContain("so we enlarge it before sending");
+    // 没有降级就一个字都不说降级 —— 放大不许把卡染成降级卡。
+    expect(markup).not.toContain(DOWNGRADE_FALLBACK_NOTE);
+    expect(markup).not.toContain("You asked for");
+  });
+
+  it("creation §5 :176④: 没有放大就一个字都不说(老卡缺这一格,照旧渲染)", () => {
+    const markup = renderCard({ ...VIDEO_PAYLOAD, referenceUpscaleNote: undefined });
+    expect(markup).not.toContain("we enlarge");
+  });
+
   it("老卡没有 specChips 就不显示规格 —— 宁可不说,不许猜", () => {
     const markup = renderCard({ kind: "video", params: { aspectRatio: "9:16", count: 1 }, estimatedCredits: 8 });
     expect(markup).not.toContain("9:16");

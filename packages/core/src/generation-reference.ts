@@ -108,6 +108,21 @@ export type ReferenceUpscalePlan =
   | { action: "refuse" }
   | { action: "unknown" };
 
+/**
+ * 规格 §5 :176⑥ —— **这一张**图的短边至少得是多少,才撑得起这一次引用。
+ *
+ * 拒绝文案从前统一写 300,而 300 只在其中一档是真的:一张 99×500 的商品照,商家把它换成
+ * 100×500 就走得通(我们会替他放大),被要求「至少 300」等于替他关掉一条真开着的门 ——
+ * 他会去找一张根本不必找的大图,或者干脆放弃这一次创作。
+ *
+ * 所以门槛按「我们**能不能**替它放大」分岔,而这条分岔只有这一个产地:
+ *   · 能放大(无人像的商品照)⇒ 100,越过这条线我们自己补到 300;
+ *   · 不能放大(带演员血统 / 任何不许动像素的图)⇒ 300,那是供应商的硬闸本身。
+ */
+export function minimumUsableReferenceSide(canUpscale: boolean): number {
+  return canUpscale ? MIN_UPSCALABLE_REFERENCE_SIDE : MIN_REFERENCE_IMAGE_SIDE;
+}
+
 export function referenceUpscalePlan(size: {
   width?: number | null;
   height?: number | null;

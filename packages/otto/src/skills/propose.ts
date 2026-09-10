@@ -16,7 +16,8 @@ import {
   generationReferenceScope,
   lineageCarriesOfficialActor,
   referenceUpscalePlan,
-  referenceUnavailableMessage,
+  minimumUsableReferenceSide,
+  tooSmallReferenceSentence,
   REFERENCE_IMAGE_EXTS,
   type ApprovedEntity,
 } from "@fikirtive/core";
@@ -26,8 +27,8 @@ import {
   proposeInput,
   buildProposeCard,
   buildReferenceBudgetNotes,
-  referenceUpscaleNote,
   withReferenceBudget,
+  withReferenceUpscaleNote,
   withVideoReferenceChip,
   GenerationUnavailableError,
   ProposeRefusal,
@@ -184,25 +185,37 @@ export async function executePropose(
     let upscaleCount = 0;
     for (const row of rows) {
       const plan = referenceUpscalePlan(row.asset);
-      if (plan.action === "refuse") return { error: referenceUnavailableMessage("tooSmall") };
-      if (plan.action !== "upscale") continue; // asIs / unknown —— 与这条修改之前逐字相同
-      // 带演员血统 ⇒ 一格不动像素 ⇒ 它撑不起这一次引用,花钱前说出来。
-      if (lineageCarriesOfficialActor(row.entitySnapshot)) {
-        return { error: referenceUnavailableMessage("tooSmall") };
-      }
+      if (plan.action === "asIs" || plan.action === "unknown") continue; // 与这条修改之前逐字相同
+      // 规格 §5 :176⑥ —— 拒绝那一句说**这一张**图有多大、以及**这一张**图要多大。
+      // 门槛按「我们能不能替它放大」分岔:能放大 ⇒ 100(越过就由我们补到 300);带演员血统
+      // 不许动像素 ⇒ 300(供应商的硬闸本身)。`row.asset` 的宽高在这两档里一定读得出来 ——
+      // 读不出来的那一档是上面的 `unknown`,已经先走掉了。
+      const refuse = (canUpscale: boolean) => ({
+        error: tooSmallReferenceSentence({
+          width: row.asset.width as number,
+          height: row.asset.height as number,
+          minSide: minimumUsableReferenceSide(canUpscale),
+        }),
+      });
+      // 短边 < 100:放大到过门要 4× 以上,而我们只在 2×／3× 两格有实证 —— 诚实拒绝。
+      // 他换一张短边 ≥100 的图就走得通,所以这一句说的门槛是 100。
+      if (plan.action === "refuse") return refuse(true);
+      // 带演员血统 ⇒ 一格不动像素 ⇒ 它撑不起这一次引用,花钱前说出来。这一档我们不会替他
+      // 放大,所以门槛就是供应商那道 300。
+      if (lineageCarriesOfficialActor(row.entitySnapshot)) return refuse(false);
       upscaleCount++;
     }
-    // 披露句走的是既有那条路(`withReferenceBudget` 把话并进卡面),所以卡上说的与 worker
-    // 真做的只有一份口径。数字不在这里编:它就是上面这一趟数出来的张数。
+    // 披露句走卡面自己那一格(`referenceUpscaleNote`,规格 §5 :176④),不再借名额截图的
+    // `downgradeNote`。数字不在这里编:它就是上面这一趟数出来的张数,而 worker 读的是同一个
+    // `referenceUpscalePlan` + 同一对元数据,所以「卡上说放大了 N 张」与「worker 真放大了
+    // N 张」仍然只有一份口径。
     //
-    // 说不出来的那一档(`unknown`)两边一起沉默:worker 读的是同一对元数据,量不到就不放大,
-    // 所以卡上不说、worker 不做,口径仍然只有一份。本站生成的资产落在这一档,而本站出图短边
-    // 最小 1344px(`GEN_IMAGE_SIZES`),不可能需要放大;真正的缺口只有「上传图 ingest 还没
-    // 量完就被拿去生成」,那一趟与今天逐字相同。补齐它要生成路把出图尺寸写进
-    // `Asset.width/height`(规格 §5 FSE-001 残留①)。
-    if (upscaleCount > 0) {
-      finalPayload = withReferenceBudget(finalPayload, [referenceUpscaleNote(upscaleCount)]);
-    }
+    // 说不出来的那一档(`unknown`)两边一起沉默。规格 §5 :162① 落地之后,本站生成的资产
+    // **不再**落在这一档:`apps/worker/src/jobs/gen.ts` 出图处按 ingest 同一套 ffprobe 量真
+    // 字节写 `Asset.width/height`,所以本站生成的小图从此在花钱之前就被认出来。剩下的唯一
+    // 一档是「上传图 ingest 还没量完就被拿去生成」,那一趟与今天逐字相同(供应商弹回、退款),
+    // 已登记。
+    finalPayload = withReferenceUpscaleNote(finalPayload, upscaleCount);
   }
 
   // Persist GEN_CARD (match coworkTurn row shape)

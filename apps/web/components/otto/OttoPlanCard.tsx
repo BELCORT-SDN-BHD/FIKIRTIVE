@@ -429,6 +429,17 @@ export function OttoPlanCard({
           </div>
         )}
 
+        {/* FSE-001 / 规格 §5 :176④ — enlarging a product reference is disclosed in its OWN line,
+            not merged into the downgrade note above. Two different things happened, so the card
+            says them separately and can say both at once: the note above is "part of what you gave
+            me doesn't ride"; this one is "everything rides, we just added pixels to a few of them".
+            Not gated on `downgraded` — nothing the merchant asked for was cut. */}
+        {p.referenceUpscaleNote && (
+          <div className="mt-[9px] text-[0.75rem] text-muted-foreground">
+            {p.referenceUpscaleNote}
+          </div>
+        )}
+
         {/* Founder 2026-09-05「加进确认卡」—— 张数／形状／精修就长在这里,**批准之前**可以改。
             ⑦段退役直出 composer 之后这三格无处可选,而这张卡是唯一的花钱入口。改一格 = 服务端
             重铸这张卡($0),新的价随新卡回来 —— 界面一分钱都不自己算,所以卡面那个数与真正

@@ -24,8 +24,9 @@ import {
   referenceImagePersonRejected,
   referenceUnavailableMessage,
   referenceUnavailableSentence,
+  tooSmallReferenceSentence,
 } from "./gen-failure.js";
-import { MIN_REFERENCE_IMAGE_SIDE } from "./generation-reference.js";
+import { MIN_REFERENCE_IMAGE_SIDE, minimumUsableReferenceSide } from "./generation-reference.js";
 import { redactProviderNames } from "./provider-secrecy.js";
 
 /** The exact body the engine returned, straight from the recorded run. */
@@ -498,27 +499,84 @@ describe("referenceUnavailableSentence — CREATE-A2: 一份白名单,不是 pas
     expect(sentence).not.toBe(referenceUnavailableMessage("imageAsVideo"));
   });
 
-  // FSE-001(探针实测 2026-09-08 / 09-09):视频端在建任务之前就查参考图尺寸,而闸是**宽与高
-  // 各 ≥300px**(275×183 与 300×200 各被零花费弹回一次)。那道闸落在我们**预扣之后**,所以
-  // 商家会先付钱、再失败、再退款,而读到的只是一句「没成功」—— 真正能修好它的动作(换一张
-  // 大一点的图)一个字都没说。这句话必须说出尺寸,而且那个数字只能来自闸本身的那一个常量。
-  it("FSE-001 / CREATE-A2: tooSmall 说的是尺寸,数字来自那一个常量,并点名要换掉它", () => {
-    const sentence = referenceUnavailableMessage("tooSmall");
-    expect(sentence).toContain(String(MIN_REFERENCE_IMAGE_SIDE));
-    expect(sentence).toMatch(/too small/i);
+  /**
+   * 规格 §5 :176⑥ —— 「太小」那一句从**定文**改成按这一张图现说。
+   *
+   * 上一版统一写 300。对一半的商家那是过严的假话:短边 99 的商品照只要换成 100 就走得通
+   * (我们会替他整数倍放大到 300),而他读到的是「至少 300」—— 于是他去找一张不必找的大图,
+   * 或者干脆放弃这一次创作。这里钉两档:99 说 100、299(带演员血统、不许动像素)说 300,
+   * 而且两句都说出**他这张图现在多大**,他读完就知道差多少。
+   */
+  it("creation §5 :176⑥ / CREATE-A2: 短边 99 那一档说的门槛是 100,不再统一写 300", () => {
+    const sentence = tooSmallReferenceSentence({
+      width: 99,
+      height: 500,
+      minSide: minimumUsableReferenceSide(true),
+    });
+    // 说出他这张图现在多大 —— 从前一个字都没有。
+    expect(sentence).toContain("99×500");
+    expect(sentence).toContain("at least 100 pixels");
+    // 过严的那个数不许再出现在这一档。
+    expect(sentence).not.toContain("300");
+    expect(sentence).toMatch(/shortest side/i);
     expect(sentence).toMatch(/swap/i);
     expect(sentence).not.toMatch(/isn't available any more/i);
-    expect(sentence).not.toBe(referenceUnavailableMessage("notFound"));
-    expect(sentence).not.toBe(referenceUnavailableMessage("unsupportedFormat"));
+  });
+
+  it("creation §5 :176⑥ / CREATE-A10: 短边 299 带演员血统(一格不动像素)⇒ 门槛就是供应商那道 300", () => {
+    const sentence = tooSmallReferenceSentence({
+      width: 299,
+      height: 400,
+      minSide: minimumUsableReferenceSide(false),
+    });
+    expect(sentence).toContain("299×400");
+    expect(sentence).toContain(`at least ${MIN_REFERENCE_IMAGE_SIDE} pixels`);
+    // 这一档不许说 100:我们不会替演员血统的图放大,说 100 就是假话。
+    expect(sentence).not.toContain("at least 100");
   });
 
   // FSE-001(第三场探针逐字回执:`expected the height to be at least 300px, but received a
   // 300x200px image instead`)—— 闸是宽**与**高,所以旧那句「at least 300 pixels wide」会让
   // 一位拿着 400×200 图的商家以为自己已经合格,换来的下一张仍然被弹回。说**短边**。
-  it("FSE-001 / CREATE-A2: tooSmall 说的是短边,不是宽度(400×200 那一类不能被误导)", () => {
-    const sentence = referenceUnavailableMessage("tooSmall");
+  it("creation §5 :176⑥ / CREATE-A2: 说的是短边,不是宽度(400×200 那一类不能被误导)", () => {
+    const sentence = tooSmallReferenceSentence({ width: 400, height: 200, minSide: 300 });
     expect(sentence).toMatch(/shortest side/i);
     expect(sentence).not.toMatch(/pixels wide/i);
+  });
+
+  // 这一句带数字,所以白名单认不出「定文」——它认的是**重建得出来**的那一句。仍旧是白名单:
+  // 尾巴上挂个 id、前面加了字、换了措辞的一律重建不出来。
+  it("creation §5 :176⑥ / CREATE-A2: 带数字的那一句也进白名单,而且仍旧不是 passthrough", () => {
+    for (const size of [
+      { width: 99, height: 500, minSide: 100 },
+      { width: 299, height: 400, minSide: 300 },
+      { width: 1, height: 1, minSide: 100 },
+    ]) {
+      const sentence = tooSmallReferenceSentence(size);
+      expect(referenceUnavailableSentence(sentence), JSON.stringify(size)).toBe(sentence);
+      expect(referenceUnavailableSentence(`  ${sentence}\n`)).toBe(sentence);
+    }
+    const sentence = tooSmallReferenceSentence({ width: 99, height: 500, minSide: 100 });
+    for (const nearMiss of [
+      `${sentence} (gen_01H8XYZ)`,
+      `Otto says: ${sentence}`,
+      sentence.replace("99×500", "99x500"),
+      sentence.replace("at least 100", "at least one hundred"),
+      sentence.slice(0, -1),
+    ]) {
+      expect(referenceUnavailableSentence(nearMiss), JSON.stringify(nearMiss)).toBeNull();
+    }
+  });
+
+  // 与表里那几句同一条纪律:不说「Try again」(重试永远修不好尺寸)、不带 id/URL/厂商名。
+  it("creation §5 :176⑥ / CREATE-A2: 结尾说 ask again 而不是 Try again,句子本身也干净", () => {
+    const sentence = tooSmallReferenceSentence({ width: 99, height: 500, minSide: 100 });
+    expect(sentence).not.toContain("Try again");
+    expect(sentence).not.toContain("try again");
+    expect(sentence).toContain("ask again");
+    expect(sentence).not.toMatch(/https?:\/\//);
+    expect(sentence).not.toContain("/");
+    expect(redactProviderNames(sentence)).toBe(sentence);
   });
 
   it("CREATE-A2: 两个原因一个不落 —— 表里每一句都认得出,且认回它自己", () => {
