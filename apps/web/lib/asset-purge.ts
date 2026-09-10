@@ -25,6 +25,10 @@ import { storage } from "./storage";
  *     真删掉,而商家随后一按恢复,拿回来的是一条指着空气的价签。行是可恢复的,字节不是 ——
  *     所以这里认账软删的软指针:代价是商家删掉的产品卡还占着字节(可恢复、可另行清理),
  *     换的是「恢复之后图还在」。fail open,不 fail closed。
+ *   · 没有任何 `Entity(type='PRODUCT').baseAssetId` 指着它,**软删的身份也算**(判官第 5 轮,
+ *     PR #1337)—— 产品的主图从此只住在身份上(价签不再承载 `imageAssetId`),而 `baseAssetId`
+ *     同样是一条没有外键的软指针。软删的产品身份可以被 `restoreBrandRecord` 原样接回来,
+ *     所以它指着的字节不能在这时候真删。同一条 fail-open 立场。
  *     窗口的诚实话:软指针没有外键,所以 `FOR UPDATE` 那把锁挡不住一笔并发的
  *     `brandRecord.update` 把 `data.imageAssetId` 指过来(硬引用有 FK,Postgres 的
  *     `FOR KEY SHARE` 会替我们挡住)。今天唯一会这么写的两处(OttoStuff / OttoMemory 的
@@ -90,7 +94,7 @@ export async function purgeOrphanedReferenceAssets(
   if (locked.length === 0) return [];
   const lockedIds = locked.map((r) => r.id);
 
-  const [stillReferenced, everGenerated, brandPinned] = await Promise.all([
+  const [stillReferenced, everGenerated, brandPinned, productCovers] = await Promise.all([
     tx.referenceImage.findMany({
       where: { assetId: { in: lockedIds }, ownerId, deletedAt: null },
       select: { assetId: true },
@@ -101,16 +105,30 @@ export async function purgeOrphanedReferenceAssets(
     }),
     // 软指针那一条(见文件顶部判据第一段)。Prisma 的 JSON 过滤没有「path 值 IN 一批」这个
     // 形状,所以和上面那把锁一样直接写 SQL,租户靠显式 `"ownerId" = ${ownerId}` 字面量兜住。
+    // 判官第 5 轮(PR #1337)之后,活跃产品的价签里**已经没有** `imageAssetId` 这一格 ——
+    // 这一句从此只捞得到**草稿**(`contextStatus='Draft'`,此刻还没有身份,主图只有这一处
+    // 记法)与任何绕过共享动作写进来的历史行。两者都要认账,理由与下一条相同。
     tx.$queryRaw<{ assetId: string }[]>`
       SELECT DISTINCT "data"->>'imageAssetId' AS "assetId" FROM "BrandRecord"
       WHERE "ownerId" = ${ownerId}
         AND "data"->>'imageAssetId' = ANY(${lockedIds}::text[])
+    `,
+    // 身份那一条(判官第 5 轮,PR #1337):产品的主图从此**只**记在 `Entity.baseAssetId` 上,
+    // 而那也是一条没有外键的软指针。`deletedAt` 不设条件 —— 软删的产品身份是**可恢复**的
+    // (`restoreBrandRecord` 按同一个 `deletedAt` 把价签、身份、照片一起接回来),而字节删了
+    // 接不回来。行可恢复、字节不可恢复,所以这里 fail open:宁可多留字节,不做不可逆的删。
+    tx.$queryRaw<{ assetId: string }[]>`
+      SELECT DISTINCT e."baseAssetId" AS "assetId" FROM "Entity" e
+      WHERE e."ownerId" = ${ownerId}
+        AND e."type" = 'PRODUCT'
+        AND e."baseAssetId" = ANY(${lockedIds}::text[])
     `,
   ]);
   const shared = new Set<string>([
     ...stillReferenced.map((r) => r.assetId),
     ...everGenerated.map((g) => g.assetId),
     ...brandPinned.map((b) => b.assetId),
+    ...productCovers.map((p) => p.assetId),
   ]);
   const exclusiveIds = lockedIds.filter((id) => !shared.has(id));
   if (exclusiveIds.length === 0) return [];

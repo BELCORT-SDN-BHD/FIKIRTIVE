@@ -70,8 +70,10 @@ export async function upsertBrandRecordFromOtto(
       return { ok: true, id: existing.id, updated: true };
     }
     if (input.kind === "product") {
-      // 名字与主图的权威是身份(规格 §1.4;PRODID-A4)。Otto 面改产品也走共享动作,一个事务
-      // 同时写身份与价签 —— 否则 Otto 改个名字,Library 那张卡还是旧名字(判官第 3 轮 P1-1)。
+      // 名字与主图的唯一源是身份(规格 §1.4;PRODID-A4)。Otto 面改产品也走共享动作。
+      // 判官第 5 轮(PR #1337):这里**不递** `name` / `imageAssetId` —— Otto 是按名字找到这一
+      // 行的,它不是在改名;主图从来就不归 Otto 管(`productRecordData.imageAssetId` 自陈
+      // UI-managed)。不递 = 不动身份,商家在 Library 改过的名字与封面于是永远盖不掉。
       const done = await updateProductRecord({
         ownerId: ctx.orgId, id: existing.id, data: parsed.data as Record<string, unknown>,
         source: "otto", ...(status ? { status } : {}),
@@ -110,6 +112,7 @@ export async function upsertBrandRecordFromOtto(
       if (!promoted.ok) throw new Error(`Couldn't save that ${input.kind}.`);
       return { ok: true, id: made.existingId, updated: true };
     }
+    // 同上:撞名回退也只写价签字段,不碰身份。
     const done = await updateProductRecord({
       ownerId: ctx.orgId, id: made.existingId, data: parsed.data as Record<string, unknown>,
       source: "otto", ...(status ? { status } : {}),

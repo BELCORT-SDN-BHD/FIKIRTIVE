@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "./index.js";
-import { createProduct, CreateProductError, updateProductRecord } from "./create-product.js";
+import { createProduct, CreateProductError, updateProductRecord, confirmProductDraft } from "./create-product.js";
 import { seedOrg } from "../test/setup.js";
 
 let orgId: string;
@@ -121,15 +121,24 @@ describe("createProduct", () => {
     ).resolves.toBe(1);
   }, 60_000);
 
-  it("PRODID-A4 改名换图写的是身份:价签里那两格只是缓存,同事务被追平", async () => {
+  it("PRODID-A4 改名换图写的是身份:价签落库之后连这两个键都没有", async () => {
     const first = await seedAssetRow();
     const second = await seedAssetRow();
     const made = (await createProduct({
       ownerId: orgId, data: { name: "Kopi ais", imageAssetId: first }, source: "user",
     })) as { created: true; id: string; entityId: string };
 
+    // 出生那一刻价签里就没有这两个键(判官第 5 轮:根不是「缓存写歪了」,是缓存本身存在)。
+    const born = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: made.id, ownerId: orgId }, select: { data: true },
+    });
+    expect(Object.keys(born.data as Record<string, unknown>)).not.toContain("name");
+    expect(Object.keys(born.data as Record<string, unknown>)).not.toContain("imageAssetId");
+
+    // 改名换图的意图**显式**递给共享动作 —— 不从 data 里猜。
     const done = await updateProductRecord({
-      ownerId: orgId, id: made.id, data: { name: "Kopi O kosong", imageAssetId: second }, source: "user",
+      ownerId: orgId, id: made.id, data: { price: "RM 3" },
+      name: "Kopi O kosong", imageAssetId: second, source: "user",
     });
     expect(done).toMatchObject({ ok: true });
 
@@ -143,12 +152,13 @@ describe("createProduct", () => {
       prisma.referenceImage.count({ where: { ownerId: orgId, entityId: made.entityId, assetId: second, deletedAt: null } }),
     ).resolves.toBe(1);
 
-    // 缓存那一边:同一个事务里追平,连 nameKey(幂等键)一起。
+    // 价签那一边:只剩价签字段。`nameKey` 这一列留着当活跃唯一去重索引,值等于身份名字的
+    // 归一化 —— 同一个事务里同步,所以它永远不会指向一个身份上没有的名字。
     const row = await prisma.brandRecord.findFirstOrThrow({
       where: { id: made.id, ownerId: orgId }, select: { data: true, nameKey: true },
     });
     expect(row.nameKey).toBe("kopi o kosong");
-    expect(row.data).toMatchObject({ name: "Kopi O kosong", imageAssetId: second });
+    expect(row.data).toEqual({ price: "RM 3" });
   }, 60_000);
 
   it("PRODID-A4 改成另一件活着的同名产品:整笔拒绝,两边都不动(规格 §3 不自动合并)", async () => {
@@ -157,7 +167,7 @@ describe("createProduct", () => {
     };
     await createProduct({ ownerId: orgId, data: { name: "Teh o" }, source: "user" });
 
-    const done = await updateProductRecord({ ownerId: orgId, id: a.id, data: { name: "Teh O" }, source: "user" });
+    const done = await updateProductRecord({ ownerId: orgId, id: a.id, data: {}, name: "Teh O", source: "user" });
     expect(done).toEqual({ ok: false, reason: "name-taken" });
 
     // 身份没被改名 —— 拒绝是整笔的,不是「身份改了、价签没改」这种半拉子。
@@ -169,74 +179,62 @@ describe("createProduct", () => {
     ).resolves.toEqual({ nameKey: "teh tarik" });
   }, 60_000);
 
-  it("PRODID-A4 Library 换过封面之后,一次不碰图的写入不许把旧封面写回身份", async () => {
-    // 判官第 4 轮 P1(PR #1337):Library → Brand 这个方向上一版是反的 —— 被明确降级成
-    // 「缓存」的 `data.imageAssetId` 反过来盖掉了权威 `Entity.baseAssetId`,商家在 Library
-    // 挑的封面在 Otto 改一次价格之后静默回滚,而且没有任何撤销入口。
+  it("PRODID-A4 理解 worker / Otto 那种写法:不递名字与主图 ⇒ 商家改过的两样原样留着", async () => {
+    // 判官第 5 轮(PR #1337)拔的根:第 1–4 轮把名字与主图**同时**存在身份与价签两处,于是
+    // 「这次写入到底想不想换图」只能靠比对两处来猜。猜错的代价是商家自己挑的封面静默消失,
+    // 而且没有撤销入口。现在价签里根本没有这两格,意图只能**显式**递 —— 不递就是不碰。
     const first = await seedAssetRow();
     const second = await seedAssetRow();
     const made = (await createProduct({
       ownerId: orgId, data: { name: "Nasi lemak", imageAssetId: first }, source: "user",
     })) as { created: true; id: string; entityId: string };
 
-    // 商家在 Library 换封面。逐字复刻 `setBaseAsset`(apps/web/lib/refgen-actions.ts):
-    // 先有一条本实体的 live ReferenceImage,再把 `baseAssetId` 指过去 —— 它只写权威,
-    // 不追平缓存(缓存此刻仍然是 first)。
+    // 商家在 Library 改名换封面。逐字复刻 `setBaseAsset`(apps/web/lib/refgen-actions.ts):
+    // 先有一条本实体的 live ReferenceImage,再把 `baseAssetId` 指过去。
     await prisma.referenceImage.create({
       data: { id: `ri_${randomUUID()}`, ownerId: orgId, entityId: made.entityId, assetId: second, position: 1 },
     });
     await prisma.entity.updateMany({
-      where: { id: made.entityId, ownerId: orgId }, data: { baseAssetId: second },
+      where: { id: made.entityId, ownerId: orgId },
+      data: { baseAssetId: second, name: "Nasi lemak bungkus" },
     });
 
-    // Otto 技能与理解 worker 的写法:原样读 `data`,合上自己那几格,交给共享动作。
-    // 它们递进来的 `imageAssetId` 是缓存里那个旧值,不是一次换图意图。
+    // Otto 技能与理解 worker 的写法:原样读 `data`、合上自己那几格,交给共享动作。它们既不递
+    // `name` 也不递 `imageAssetId`,所以这一次写入连碰都碰不到身份。
     const raw = await prisma.brandRecord.findFirstOrThrow({
       where: { id: made.id, ownerId: orgId }, select: { data: true },
     });
-    const merged = { ...(raw.data as Record<string, unknown>), price: "RM 12" };
-    expect((raw.data as { imageAssetId?: string }).imageAssetId).toBe(first);
+    const merged = { ...(raw.data as Record<string, unknown>), name: "Nasi lemak", price: "RM 12" };
     await expect(
       updateProductRecord({ ownerId: orgId, id: made.id, data: merged, source: "otto" }),
     ).resolves.toMatchObject({ ok: true });
 
-    // 权威没动:商家挑的封面还是 second。
+    // 身份没动:商家改的名字与挑的封面都还在。就算调用方在 `data` 里带了一个旧名字,
+    // 那一格在入库前被剥掉,永远盖不回身份。
     await expect(
       prisma.entity.findFirstOrThrow({
-        where: { id: made.entityId, ownerId: orgId }, select: { baseAssetId: true },
+        where: { id: made.entityId, ownerId: orgId }, select: { name: true, baseAssetId: true },
       }),
-    ).resolves.toEqual({ baseAssetId: second });
-    // 而缓存被这次写入追平成权威 —— 它是权威的影子,不会再有第二份真相。
+    ).resolves.toEqual({ name: "Nasi lemak bungkus", baseAssetId: second });
     const after = await prisma.brandRecord.findFirstOrThrow({
-      where: { id: made.id, ownerId: orgId }, select: { data: true },
+      where: { id: made.id, ownerId: orgId }, select: { data: true, nameKey: true },
     });
-    expect(after.data).toMatchObject({ imageAssetId: second, price: "RM 12" });
+    expect(after.data).toEqual({ price: "RM 12" });
+    // `nameKey` 也跟着身份走,不跟着调用方递来的那个旧名字走。
+    expect(after.nameKey).toBe("nasi lemak bungkus");
   }, 60_000);
 
-  it("PRODID-A4 价签缓存里没有主图那一格时,一次改价不许把封面抹掉", async () => {
-    // 判官第 4 轮 P1 的第二条:`writeProductIdentity` 把「入参没有 imageAssetId」当成
-    // 「清空主图」。而从 Library 出生的产品,价签里本来就没有这一格(那条入口只递
-    // `{ name }` + `assetIds`)—— 于是商家对 Otto 说一句改价,自己挑的封面就消失了。
+  it("PRODID-A4 从 Library 出生的产品(data 里从来没有主图):一次改价不许把封面抹掉", async () => {
+    // Library 那条入口只递 `{ name }` + `assetIds`,价签里从来没有 `imageAssetId`。上一版把
+    // 「入参没有这一格」当成「清空主图」,于是商家对 Otto 说一句改价,自己挑的封面就消失了。
     const cover = await seedAssetRow();
     const made = (await createProduct({
       ownerId: orgId, data: { name: "Roti canai" }, source: "user", assetIds: [cover],
     })) as { created: true; id: string; entityId: string };
 
-    // 缓存从出生起就等于权威(修法的第一半)。
-    await expect(
-      prisma.brandRecord.findFirstOrThrow({
-        where: { id: made.id, ownerId: orgId }, select: { data: true },
-      }),
-    ).resolves.toMatchObject({ data: { imageAssetId: cover } });
-
-    // 修法的第二半:就算缓存那一格是空的(存量行、或者绕过共享动作的写入),
-    // 一次不带图的写入也只是**不碰**主图,而不是把它抹成 null。
-    await prisma.brandRecord.updateMany({
-      where: { id: made.id, ownerId: orgId }, data: { data: { name: "Roti canai" } },
-    });
     await expect(
       updateProductRecord({
-        ownerId: orgId, id: made.id, data: { name: "Roti canai", price: "RM 2" }, source: "otto",
+        ownerId: orgId, id: made.id, data: { price: "RM 2" }, source: "otto",
       }),
     ).resolves.toMatchObject({ ok: true });
     await expect(
@@ -244,33 +242,53 @@ describe("createProduct", () => {
         where: { id: made.entityId, ownerId: orgId }, select: { baseAssetId: true },
       }),
     ).resolves.toEqual({ baseAssetId: cover });
-    await expect(
-      prisma.brandRecord.findFirstOrThrow({
-        where: { id: made.id, ownerId: orgId }, select: { data: true },
-      }),
-    ).resolves.toMatchObject({ data: { imageAssetId: cover, price: "RM 2" } });
   }, 60_000);
 
-  it("PRODID-A4 商家在 Brand 页清掉主图:这一次是真意图,身份上的封面跟着没", async () => {
-    // 上面两条的反面对照 —— 「不碰图」不能变成「永远改不了图」。Web 读路发的是身份上那个
-    // 值(withProductIdentity),所以清图时递进来的 undefined ≠ 缓存里的那一格 = 真意图。
+  it("PRODID-A4 商家在 Brand 页清掉主图(显式递 null):身份上的封面跟着没", async () => {
+    // 上面两条的反面对照 —— 「不递就是不碰」不能变成「永远清不掉」。清空是一个**显式**的
+    // `imageAssetId: null`,而 Brand 页的表单空着那一栏时递的正是它。
     const cover = await seedAssetRow();
     const made = (await createProduct({
       ownerId: orgId, data: { name: "Kuih lapis", imageAssetId: cover }, source: "user",
     })) as { created: true; id: string; entityId: string };
 
     await expect(
-      updateProductRecord({ ownerId: orgId, id: made.id, data: { name: "Kuih lapis" }, source: "user" }),
+      updateProductRecord({
+        ownerId: orgId, id: made.id, data: {}, imageAssetId: null, source: "user",
+      }),
     ).resolves.toMatchObject({ ok: true });
     await expect(
       prisma.entity.findFirstOrThrow({
         where: { id: made.entityId, ownerId: orgId }, select: { baseAssetId: true },
       }),
     ).resolves.toEqual({ baseAssetId: null });
-    const after = await prisma.brandRecord.findFirstOrThrow({
-      where: { id: made.id, ownerId: orgId }, select: { data: true },
+  }, 60_000);
+
+  it("PRODID-A4 草稿转正:名字与主图从 data 搬到身份上,价签只剩价签字段", async () => {
+    // 草稿此刻**没有身份**,它的名字与主图只有 `data` 这一处记法 —— 一处不是两处,所以草稿
+    // 不剥。确认建出身份的同一个事务里,这两格才搬走(规格 §1.9)。
+    const cover = await seedAssetRow();
+    const draft = (await createProduct({
+      ownerId: orgId, data: { name: "Cendol durian", imageAssetId: cover, price: "RM 8" },
+      source: "otto", contextStatus: "Draft",
+    })) as { created: true; id: string; entityId: null };
+    const before = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: draft.id, ownerId: orgId }, select: { data: true },
     });
-    expect((after.data as { imageAssetId?: string }).imageAssetId).toBeUndefined();
+    expect(before.data).toMatchObject({ name: "Cendol durian", imageAssetId: cover });
+
+    const done = await confirmProductDraft({ ownerId: orgId, id: draft.id, source: "user" });
+    expect(done).toMatchObject({ ok: true });
+    if (!done.ok) return;
+    await expect(
+      prisma.entity.findFirstOrThrow({
+        where: { id: done.entityId, ownerId: orgId }, select: { type: true, name: true, baseAssetId: true },
+      }),
+    ).resolves.toEqual({ type: "PRODUCT", name: "Cendol durian", baseAssetId: cover });
+    const after = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: draft.id, ownerId: orgId }, select: { data: true },
+    });
+    expect(after.data).toEqual({ price: "RM 8" });
   }, 60_000);
 
   it("PRODID-A1 已删的 Asset 挂不上主图(墓碑的字节随时会被清扫真删走)", async () => {

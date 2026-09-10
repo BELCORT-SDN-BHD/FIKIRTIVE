@@ -104,6 +104,13 @@ async function promoteDraftProduct(
   return { ok: true, id };
 }
 
+/** 名字槽位被占时那一句人话,按 `kind` 分。UI copy: English sentence case。 */
+const NAME_TAKEN_COPY: Record<RecordKind, string> = {
+  product: "You already have a product with that name — rename that one first.",
+  segment: "You already have an audience with that name — rename that one first.",
+  offer: "You already have an offer with that name — rename that one first.",
+};
+
 /** Create (no id) or full-data update (id). User writes stamp source:"user". */
 export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: string } | { error: string }> {
   const input = parseInput(raw);
@@ -117,11 +124,18 @@ export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: str
   try {
     if (input.id) {
       if (input.kind === "product") {
-        // 名字与主图的权威是身份(`Entity`),价签里那两格只是缓存 —— 所以产品的改也走共享
-        // 动作,一个事务同时写两边(规格 §1.4;验收 PRODID-A4)。判官第 3 轮 P1-1(PR #1337):
-        // 这条 updateMany 原先只写价签,于是 Brand 页改完名字,Library 那张卡还是旧名字。
+        // 名字与主图的唯一源是身份(`Entity`),价签里根本没有这两格 —— 所以产品的改走共享
+        // 动作,一个事务同时写两边(规格 §1.4;验收 PRODID-A4)。
+        // 判官第 5 轮(PR #1337):意图**显式**递,不让共享动作去猜。这一面是商家亲手填的
+        // 整张表单:名字栏里那一个就是他要的名字,主图栏空着就是他要清掉主图(反面对照的
+        // 那条用例钉的就是这一句)。Otto 与理解 worker 不递这两个字段,于是它们永远动不了
+        // 商家改过的名字与封面。
         const done = await updateProductRecord({
           ownerId: gate.ownerId, id: input.id, data: input.data,
+          name: recordName("product", input.data),
+          imageAssetId: typeof input.data.imageAssetId === "string" && input.data.imageAssetId
+            ? input.data.imageAssetId
+            : null,
           source: "user", updatedById: actor.userId,
           ...(input.status !== undefined ? { status: input.status } : {}),
         });
@@ -271,6 +285,7 @@ export async function restoreBrandRecord(raw: unknown): Promise<{ ok: true } | {
   const actor = await resolveActor(gate.email);
   let broughtBack = false;
   let nameTaken = false;
+  let nameTakenCopy = NAME_TAKEN_COPY.product;
   try {
     // 恢复也是两边一起(验收 PRODID-A6 的后半句)。判官第 3 轮 P1-3:删的时候一个
     // `deletedAt` 盖了价签、身份、照片三张表,所以恢复按**同一个时间戳**把它们一起接回来 ——
@@ -291,7 +306,9 @@ export async function restoreBrandRecord(raw: unknown): Promise<{ ok: true } | {
         },
         select: { id: true },
       });
-      if (clash) { nameTaken = true; return 0; }
+      // 判官第 5 轮:文案按 `kind` 通用 —— 这条恢复动作对 segment / offer 一样跑得到,
+      // 而「product」那个词在那两种记录上是错的。
+      if (clash) { nameTaken = true; nameTakenCopy = NAME_TAKEN_COPY[target.kind as RecordKind] ?? NAME_TAKEN_COPY.product; return 0; }
       const { count: hit } = await tx.brandRecord.updateMany({
         // 判官 P2-1:镜像的那一半 —— 只有还在删除态的行才需要恢复。
         where: { id: recordId, ownerId: gate.ownerId, deletedAt: { not: null } },
@@ -328,7 +345,7 @@ export async function restoreBrandRecord(raw: unknown): Promise<{ ok: true } | {
       return hit;
     });
     broughtBack = count > 0;
-    if (nameTaken) return { error: "You already have a product with that name — rename that one first." };
+    if (nameTaken) return { error: nameTakenCopy };
     if (!broughtBack) {
       const already = await prisma.brandRecord.findFirst({
         where: { id: recordId, ownerId: gate.ownerId, deletedAt: null },

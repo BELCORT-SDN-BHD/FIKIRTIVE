@@ -60,6 +60,7 @@
 | 2026-09-10 | PR #1337：回填只做「价签 → 身份」一个方向，存量 Library 里已有的 PRODUCT 元素（商家自己建的）没有价签，Brand 页看不到它们，待裁 | |
 | 2026-09-10 | PR #1337：迁移预检②（同租户同名活跃 Entity）在开发库上 100% 命中 —— 同名的 Library 产品与 Brand 价签要不要一次性链接，待 Founder 裁 | **Founder 2026-09-10 裁（#1321 评论）：一次性链接**。同店（同 ownerId）且 nameKey 相同的活跃 Library 产品卡恰有一张时，价签直接指向它、不新建身份，价签主图挂到该卡（仅当它自己没有主图）；两张以上同名才拒绝并报出（整条迁移不落库）；没有同名的照旧新建。只限这次迁移，运行时新增同名仍不自动合并（§3 不变）。落地 PR #1337（`packages/db/prisma/migrations/20260910120000_brand_product_identity/migration.sql` 预检②；验收 PRODID-A8 三例） |
 | 2026-09-10 | PR #1337 判官第 4 轮：产品的**两个删除方向都不再清扫封面字节**（`deleteBrandRecord` 原本就不清扫，本轮 `softDeleteEntity` 也跟上）——理由是 `restoreBrandRecord` 能把行接回来，而字节删了接不回来（fail open）。代价：商家删掉的产品卡仍占着存储字节。「两边都删了才清扫」要不要做、什么时候做，待裁 | |
+| 2026-09-10 | PR #1337 第五轮：`BrandRecord.data` 不再承载 `name` / `imageAssetId`，身份（`Entity`）成为名字与主图的**唯一源**（写路入库前剥掉这两个键，读路一律 `withProductIdentity` 从身份取，`nameKey` 列保留作去重索引、值取自 `Entity.name` 归一化）；回填把这两格搬进身份，同名一次性链接照 Founder 2026-09-10 裁（#1321）；两个方向的删除均**不清扫**封面字节（fail open），「两边都删才清扫」待 S5 裁 | |
 
 ## 6. 改签记录
 

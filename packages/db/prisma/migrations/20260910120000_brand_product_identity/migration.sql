@@ -6,7 +6,9 @@
 -- ② 一次性回填:每条 `BrandRecord(kind='product')` 都要有身份。本租户已经有**恰好一张**同名的
 --    活跃 Library 产品卡时**复用它**(Founder 2026-09-10 裁,#1321 评论;见下面预检②);否则
 --    建一条 `Entity(type='PRODUCT')`,把 `data.imageAssetId` 挂成主图(baseAssetId ＋ 一条
---    ReferenceImage),再把 entityId 写回去。
+--    ReferenceImage),再把 entityId 写回去。最后一步(② d)把 `data.name` 与
+--    `data.imageAssetId` 两个键**从价签里删掉** —— 名字与主图从此只住在身份上(判官第 5 轮,
+--    PR #1337:同一个事实两处写得动,正是前四轮每一条 P1 的共同根)。
 -- ③ CHECK `BrandRecord_product_needs_entity`:product 行没有 entityId 就进不了库 ——
 --    「一处建、处处可用」从此由数据库保证,不靠调用处记得写。唯一的口子是**草稿**
 --    (`contextStatus = 'Draft'`):规格 §1.9 与验收 PRODID-A7 明写「理解 worker 提取的产品
@@ -180,22 +182,29 @@ WHERE r."kind" = 'product' AND r."entityId" IS NULL
   )
 ON CONFLICT ("id") DO NOTHING;
 
--- ② 回填 b2:复用那一支的主图(Founder 2026-09-10 裁,#1321 评论)。只有那张 Library 卡
---    **自己还没有主图**时才挂 —— 商家在 Library 亲手挑过的封面,回填不许盖掉。
+-- ② 回填 b2:复用那一支的主图(Founder 2026-09-10 裁,#1321 评论)。价签上记的那张图
+--    **一律挂成一条 ReferenceImage**(判官第 5 轮,PR #1337):价签从此不再承载 imageAssetId
+--    (见下面 ② d),所以那张图在库里的唯一凭据就是这条硬引用 —— 不挂的话它没有任何东西
+--    指着,下一次资产清扫会把字节当孤儿。位置排在这张卡现有照片的后面。
+--    封面(baseAssetId)只在那张卡**自己还没有主图**时才写(下一句)—— 商家在 Library
+--    亲手挑过的封面,回填不许盖掉。于是卡已有封面时,价签的图成为一张**额外**的参考照。
 --    先插 ReferenceImage 再改 baseAssetId:反过来的话,下面那句的 `baseAssetId IS NULL`
---    已经被自己上一句写没了,ReferenceImage 就永远插不进去(而没有硬引用的图会被清扫当孤儿)。
+--    已经被自己上一句写没了,ReferenceImage 就永远插不进去。
 INSERT INTO "ReferenceImage" ("id", "ownerId", "entityId", "assetId", "position", "brandId", "createdAt")
 SELECT
   'prodidimg_' || r."id",
   r."ownerId",
   l.entity_id,
   a."id",
-  0,
+  COALESCE((
+    SELECT max(ri2."position") + 1 FROM "ReferenceImage" ri2
+    WHERE ri2."entityId" = l.entity_id AND ri2."deletedAt" IS NULL
+  ), 0),
   r."brandId",
   r."createdAt"
 FROM "prodid_backfill_link" l
 JOIN "BrandRecord" r ON r."id" = l.record_id
-JOIN "Entity" e ON e."id" = l.entity_id AND e."ownerId" = l.owner_id AND e."baseAssetId" IS NULL
+JOIN "Entity" e ON e."id" = l.entity_id AND e."ownerId" = l.owner_id
 JOIN "Asset" a
   ON a."id" = (r."data"->>'imageAssetId') AND a."ownerId" = r."ownerId" AND a."deletedAt" IS NULL
 WHERE l.same_name_count = 1
@@ -224,22 +233,19 @@ SET "entityId" = COALESCE(
 )
 WHERE r."kind" = 'product' AND r."entityId" IS NULL AND r."contextStatus" <> 'Draft';
 
--- ② 回填 d:缓存追平权威(判官第 4 轮 P1,PR #1337)。价签 `data.imageAssetId` 从这一刻起
---    逐字等于身份上的 `baseAssetId` —— 一次性链接指向的是商家自己那张 Library 卡,而那张卡
---    上的封面可能跟价签里记的不是同一张(回填不许盖掉商家亲手挑过的封面,见 b2)。缓存留着
---    旧值有两个后果:① 共享动作判「有没有换图意图」时会把这次原样带过来的旧值当成意图
---    (packages/db/src/create-product.ts 的 writeProductIdentity);② asset-purge 认账的那条
---    软指针指着一张早就不是封面的图。两条都以缓存 = 权威一次性抹平。
---    草稿没有身份,它的 `data.imageAssetId` 就是主图的唯一记法,不碰。
+-- ② 回填 d:**把身份那两格从价签里剥掉**(判官第 5 轮,PR #1337)。
+--    第 1–4 轮把 `data.name` / `data.imageAssetId` 留着当「缓存」,于是同一个事实有两处写得动
+--    的存放点 —— 四轮里每一条 P1 都是这个根长出来的枝。上面 a/b/b2/c 已经把这两格搬进身份
+--    (新建的身份直接取自它们;链接到商家自己那张卡时,名字与封面以卡为准,价签的图成为一张
+--    额外的 ReferenceImage)。这一句把 `data` 里那两个键删干净:从此产品的名字与主图**只**在
+--    `Entity` 上,读路一律 `withProductIdentity` 从身份取。
+--    草稿没有身份(`contextStatus='Draft'`),它的名字与主图只有 `data` 这一处记法 —— 一处
+--    不是两处,所以草稿这两格原样留着,确认(confirmProductDraft)那一步才搬走。
 UPDATE "BrandRecord" r
-SET "data" = CASE
-      WHEN e."baseAssetId" IS NULL THEN r."data" - 'imageAssetId'
-      ELSE jsonb_set(r."data", '{imageAssetId}', to_jsonb(e."baseAssetId"), true)
-    END
-FROM "Entity" e
-WHERE e."id" = r."entityId" AND e."ownerId" = r."ownerId"
-  AND r."kind" = 'product' AND r."contextStatus" <> 'Draft'
-  AND (r."data"->>'imageAssetId') IS DISTINCT FROM e."baseAssetId";
+SET "data" = (r."data" - 'name') - 'imageAssetId'
+WHERE r."kind" = 'product' AND r."contextStatus" <> 'Draft'
+  AND r."entityId" IS NOT NULL
+  AND (r."data" ? 'name' OR r."data" ? 'imageAssetId');
 
 -- ③ 外键、索引、CHECK。名字逐字照 Prisma 对 schema.prisma 的命名规则,否则 schema drift 闸会红。
 CREATE INDEX IF NOT EXISTS "BrandRecord_entityId_idx" ON "BrandRecord"("entityId");

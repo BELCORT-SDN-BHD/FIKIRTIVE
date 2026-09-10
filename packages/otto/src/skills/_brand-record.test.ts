@@ -15,8 +15,8 @@ vi.mock("@fikirtive/db", () => ({
   createProduct: vi.fn(),
   // 撞上一条草稿产品时,Otto 说的「记下产品 X」就是确认它 —— 共享动作补身份、抬 Ready。
   confirmProductDraft: vi.fn(),
-  // 改产品也走共享动作:名字与主图的权威是身份,价签里那两格是缓存,同事务一起写
-  // (规格 §1.4;PRODID-A4;判官第 3 轮 P1-1)。
+  // 改产品也走共享动作:名字与主图的唯一源是身份,价签里根本没有这两格
+  // (规格 §1.4;PRODID-A4;判官第 5 轮)。
   updateProductRecord: vi.fn(),
 }));
 vi.mock("@fikirtive/core", async (importOriginal) => ({
@@ -98,11 +98,16 @@ describe("upsertBrandRecordFromOtto", () => {
       { context: makeCtx() },
     );
     expect(db.confirmProductDraft).not.toHaveBeenCalled();
-    // 判官第 3 轮 P1-1:改产品走共享动作,而不是这个文件自己 update 一条价签 —— 否则 Otto
-    // 改完名字,Library 那张卡还是旧名字(名字的权威是身份)。
+    // 改产品走共享动作,而不是这个文件自己 update 一条价签。
     expect(db.updateProductRecord).toHaveBeenCalledWith(
       expect.objectContaining({ ownerId: "org-test", id: "r-ready", source: "otto" }),
     );
+    // 判官第 5 轮(PR #1337):Otto 是**按名字**找到这一行的,它不是在改名;主图从来不归它管
+    // (`productRecordData.imageAssetId` 自陈 UI-managed)。两个字段都不递 = 碰不到身份,
+    // 商家在 Library 改过的名字与封面于是永远盖不掉。
+    const passed = db.updateProductRecord.mock.calls[0]![0] as Record<string, unknown>;
+    expect(Object.keys(passed)).not.toContain("name");
+    expect(Object.keys(passed)).not.toContain("imageAssetId");
     expect(db.prisma.brandRecord.update).not.toHaveBeenCalled();
   });
 

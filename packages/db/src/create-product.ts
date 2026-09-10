@@ -27,7 +27,7 @@
  * 撞上同名活跃行时不猜、不合并(规格 §3「同名旧产品自动合并」是非目标),把身份原样收回,
  * 返回 `{ created: false, existingId }`,由调用方按自己那一面的语义决定转 update 还是报错。
  */
-import { newId, normalizeNameKey, productRecordData } from "@fikirtive/core";
+import { newId, normalizeNameKey, productRecordData, stripProductIdentity } from "@fikirtive/core";
 import { Prisma } from "../generated/prisma/client.js";
 import { prisma } from "./client.js";
 
@@ -107,19 +107,14 @@ async function createProductIn(tx: Tx, input: CreateProductInput): Promise<Creat
       : await createProductIdentity(tx, { ownerId, brandId, name: data.name, assetIds });
 
   const id = newId();
-  // 判官第 4 轮 P1(PR #1337):缓存从**出生**起就等于权威。上一版把调用方递来的 `data`
-  // 原样落库,而 Library 那条入口只递 `{ name }` + `assetIds` —— 于是从 Library 出生的产品,
-  // 价签里 `imageAssetId` 这一格是空的,而身份上明明挂着封面。两个后果都咬在商家身上:
-  //   · 「有没有换图意图」的判据(见 writeProductIdentity)少了一半 —— 一次不带这一格的
-  //     写入会被当成「清空封面」,商家自己挑的封面当场消失;
-  //   · asset-purge 认账的那条软指针不存在 —— 在 Library 删掉这张卡时,封面的字节会被当成
-  //     孤儿**不可逆**真删走,而那条价签明明还可以恢复。
-  // 草稿此刻没有身份,`data.imageAssetId` 就是它主图的唯一记法,照原样留着。
-  const persisted: Record<string, unknown> = { ...(data as unknown as Record<string, unknown>) };
-  if (entityId) {
-    if (assetIds[0]) persisted.imageAssetId = assetIds[0];
-    else delete persisted.imageAssetId;
-  }
+  // 判官第 5 轮(PR #1337):价签**不承载**名字与主图。第 1–4 轮把这两格留在 `data` 里当
+  // 「缓存」,于是同一个事实有两处写得动的存放点 —— 四轮里每一条 P1 都是这个根长出来的。
+  // 现在入库前直接剥掉(`stripProductIdentity`),名字与主图只写身份那一行;读路一律
+  // `withProductIdentity` 从身份取。草稿此刻**没有身份**,它的名字与主图只有 `data` 这一处
+  // 记法(一处不是两处),所以草稿不剥 —— 确认那一步(confirmProductDraft)才剥。
+  const persisted: Record<string, unknown> = entityId
+    ? stripProductIdentity(data as unknown as Record<string, unknown>)
+    : { ...(data as unknown as Record<string, unknown>) };
   // `createMany({ skipDuplicates })` 而不是 create + catch(P2002):在交互式事务里捕获唯一
   // 冲突是**假的**保护 —— 冲突已经让 Postgres 把整个事务标成 aborted,之后连别的写入都提交
   // 不了(理解 worker 的原注释,20260818 那一版)。ON CONFLICT DO NOTHING 让「同名活跃行已
@@ -258,28 +253,31 @@ async function confirmProductDraftIn(tx: Tx, input: ConfirmProductDraftInput): P
   const { ownerId } = input;
   const draft = await tx.brandRecord.findFirst({
     where: { id: input.id, ownerId, kind: "product", contextStatus: "Draft", deletedAt: null },
-    select: { id: true, brandId: true, data: true },
+    select: { id: true, brandId: true, data: true, nameKey: true },
   });
   if (!draft) return { ok: false, reason: "not-draft" };
 
+  const draftData = draft.data as Record<string, unknown>;
   const patch = Object.fromEntries(
     Object.entries(input.data ?? {}).filter(([, v]) => v !== undefined),
   );
-  const parsed = productRecordData.safeParse({ ...(draft.data as Record<string, unknown>), ...patch });
+  const parsed = productRecordData.safeParse({ ...draftData, ...patch });
   if (!parsed.success) return { ok: false, reason: "invalid" };
   const data = parsed.data;
 
+  // 确认就是确认,**不是改名**(改名走 Brand 页/Library 的改名入口)。走到这一步的每条路都是
+  // 按 nameKey 撞上这条草稿的,所以 patch 里的名字与草稿的名字归一化后本来就相同 —— 万一不同
+  // (调用方绕过了查重),以草稿自己的名字为准,`nameKey` 那一列于是永远等于身份名字的归一化。
+  const wantedName = typeof patch.name === "string" ? patch.name : (draftData.name as string);
+  const name = normalizeNameKey(wantedName) === draft.nameKey ? wantedName : (draftData.name as string);
   const assetIds = await ownedAssetIds(tx, ownerId, [data.imageAssetId, ...(input.assetIds ?? [])]);
   const entityId = await createProductIdentity(tx, {
-    ownerId, brandId: draft.brandId, name: data.name, assetIds,
+    ownerId, brandId: draft.brandId, name, assetIds,
   });
 
-  // 缓存追平权威(同 createProduct):身份刚出生,`baseAssetId` 就是 `assetIds[0]`。少了这一句,
-  // 「Library 新建同名产品 → 确认了一条草稿」这条路生出来的价签,缓存里没有 `imageAssetId`,
-  // 于是又落回判官第 4 轮那两个坑(封面被下一次写入抹掉 / 删卡时字节被当孤儿真删)。
-  const persisted: Record<string, unknown> = { ...(data as unknown as Record<string, unknown>) };
-  if (assetIds[0]) persisted.imageAssetId = assetIds[0];
-  else delete persisted.imageAssetId;
+  // 身份出生的这一刻,名字与主图从 `data` 里**消失**(判官第 5 轮):草稿只有一处记法是因为
+  // 它没有身份;现在有了,那一处就搬到身份上,价签只剩价签字段。
+  const persisted: Record<string, unknown> = stripProductIdentity(data as unknown as Record<string, unknown>);
 
   // `updateMany` 而不是 `update`:where 里必须带 `ownerId`(tenant-guard 拒绝没有租户过滤的
   // 单行 update),而 `contextStatus: "Draft"` 这一条让「读到草稿」与「把它抬成 Ready」之间
@@ -305,48 +303,42 @@ async function confirmProductDraftIn(tx: Tx, input: ConfirmProductDraftInput): P
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 身份是名字与主图的**单一源**(规格 §0 / §1.4;验收 PRODID-A4)
+// 身份是名字与主图的**唯一源**(规格 §0 / §1.4;验收 PRODID-A4)
 //
-// 判官第 3 轮 P1-1(PR #1337):第 1、2 轮之后,`BrandRecord.data` 里仍然留着 `name` 与
-// `imageAssetId`,而 Brand 页的编辑入口只写这一份 —— 于是同一件产品在 Library 叫一个名字、
-// 在 Brand 页叫另一个,两套真相正是这条规格要关掉的口子。
+// 判官第 5 轮(PR #1337)拔的是根。第 1–4 轮的立场是「`Entity` 是权威、`BrandRecord.data`
+// 里那两格是缓存」—— 可是缓存也**写得动**,于是同一个事实仍然有两处存放点,四轮里的每一条
+// P1(换图意图判据、缓存反写权威、rollback 不还原 data、理解 worker 覆盖商家改的名字)都是
+// 从这一个根上长出来的枝。
 //
-// 立场:**身份(`Entity`)是名字与主图的唯一权威**。`BrandRecord.data` 里那两格降级成
-// **缓存**,由下面这两条动作在**同一个事务**里跟着写,读路再 join 一次身份把它盖掉
-// (`withProductIdentity`)—— 缓存哪怕被别处写歪,商家看到的仍然是身份上的那一份。
-// 为什么不干脆从 data 里删掉:`productRecordData` 的 `name` 是必填,而 Otto 的技能、
-// 理解 worker、草稿(此刻**没有**身份)都还要靠 data 自带名字才能落库。删列是另一票的活。
+// 现在的立场:**价签不承载名字与主图**。所有写路在入库前 `stripProductIdentity` 把这两个键
+// 删掉,名字与主图只写 `Entity`(同一个事务);所有读路 `withProductIdentity` 从身份取。
+// `nameKey` 那一列保留作活跃唯一去重索引,值来自 `Entity.name` 的归一化(同事务同步)。
+//
+// 唯一的例外是**草稿**(`contextStatus: "Draft"`,规格 §1.9):它此刻没有身份,名字与主图只有
+// `data` 这一处记法 —— 一处不是两处。确认(confirmProductDraft)建出身份的同一个事务里,
+// 这两格就从 `data` 里搬走。
+//
+// 意图是**显式**的,不推断(判官第 5 轮点名):`name` 未给 = 不动名字;`imageAssetId` 未给
+// (`undefined`)= 不动主图;`imageAssetId: null` = 清空主图。上一版靠「递进来的值 ≠ 缓存里
+// 那一格」猜意图 —— 猜对猜错都是猜,而猜错的代价是商家自己挑的封面静默消失。
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** 换图意图。整个字段省略 = 这次不碰主图;`{ assetId: null }` = 清空主图。 */
+export type ProductImageIntent = { assetId: string | null };
+
 /**
- * 名字与主图的写:身份先改,缓存跟着改 —— 一个事务,两边不可能分叉。
- * 返回身份**写完之后**那一份权威(名字 + 主图),调用方拿它去追平缓存。
- *
- * ── 判官第 4 轮 P1(PR #1337):主图只在调用方**真的表达了换图意图**时才动 ──
- * 上一版无条件 `patch.baseAssetId = assetId ?? null`,把递进来的那一格当成意图。可是四条
- * 写路里有两条的写法是 `{ ...existing.data, ...新字段 }`(`packages/otto/src/skills/
- * _brand-record.ts`、`apps/worker/src/jobs/understand.ts`)—— 它们递进来的 `imageAssetId`
- * 是**缓存里那一格的旧值**,甚至根本没有这一格。于是两条商家可见的静默丢数据:
- *   ① 商家在 Library 换了封面(`setBaseAsset` 只写权威,缓存没人追平)→ Otto 改一次价格,
- *      旧封面被写回权威,商家亲手挑的封面**静默回滚**;
- *   ② 缓存里本来就没有这一格 → 那次写入被当成「清空封面」,封面直接消失。
- * 两条都没有撤销入口,而这个文件自己立的规矩是「身份是主图的唯一权威」——
- * 缓存反过来盖掉权威,正是这条规格要关掉的口子。
- *
- * 意图的判据放在调用方(`updateProductRecord`):递进来的值 ≠ **这一行缓存里现在存着的**
- * 那一格,才是意图。相等就是原样带过来的,一律不动权威。Web 读路发的是身份上的值
- * (`withProductIdentity`),所以商家在 Brand 页换图/清图仍然是真意图;Otto 与理解 worker
- * 发的是缓存原值,于是它们永远动不了封面 —— 它们本来也不该动(`productRecordData` 的
- * `imageAssetId` 注释:UI-managed,OTTO skills never accept it)。
+ * 名字与主图的写:只写身份那一行 —— 价签里根本没有这两格可写。
+ * 返回身份**写完之后**那一份权威,调用方拿名字去算 `nameKey`。
  */
 async function writeProductIdentity(
   tx: Tx,
   args: {
     ownerId: string;
     entityId: string;
-    name: string;
-    /** 有这一格才是换图意图;`assetId: undefined` = 清空封面。整格省略 = 这次不碰主图。 */
-    image?: { assetId: string | undefined };
+    /** 给了才改名;不给 = 这次不碰名字(理解 worker、Otto 技能都不该改商家写的名字)。 */
+    name?: string;
+    /** 给了才碰主图;`assetId: null` = 清空。 */
+    image?: ProductImageIntent;
   },
 ): Promise<{ name: string; baseAssetId: string | null } | null> {
   const { ownerId, entityId } = args;
@@ -355,16 +347,20 @@ async function writeProductIdentity(
     select: { name: true, baseAssetId: true, brandId: true },
   });
   if (!entity) return null; // 身份已被删(A6 会把价签一起带走);没有可写的权威,不凭空造一条
-  const name = args.name.slice(0, 120);
+  let name = entity.name;
   let baseAssetId = entity.baseAssetId ?? null;
 
   const patch: { name?: string; baseAssetId?: string | null } = {};
-  if (entity.name !== name) patch.name = name;
-  if (args.image) {
+  if (args.name !== undefined) {
+    const wanted = args.name.slice(0, 120);
+    if (wanted !== entity.name) patch.name = wanted;
+    name = wanted;
+  }
+  if (args.image !== undefined) {
     const wanted = args.image.assetId;
     // 指名的那张图不是自己的、或者已经是墓碑 ⇒ `ownedAssetIds` 诚实留空。这一刻的意图是
     // 「换成这一张」而不是「清空」,所以挂不上就保持原样,不拿一次挂不上的换图去删封面。
-    const [owned] = await ownedAssetIds(tx, ownerId, [wanted]);
+    const [owned] = await ownedAssetIds(tx, ownerId, [wanted ?? undefined]);
     const next = wanted ? (owned ?? baseAssetId) : null;
     if (next !== baseAssetId) {
       patch.baseAssetId = next;
@@ -396,8 +392,16 @@ export type UpdateProductRecordInput = {
   ownerId: string;
   /** 要改的那条价签行。 */
   id: string;
-  /** 价签的完整 data(调用方已经按 kind 校过一次;这里再 zod 一次,fail closed)。 */
+  /**
+   * **价签字段**(价格、卖点、分类、链接、描述)。里面若还带着 `name` / `imageAssetId`
+   * (调用方用 `{ ...existing.data, ... }` 原样带过来的那种),一律剥掉 —— 身份的写要走下面
+   * 两个显式字段,不从 data 里猜(判官第 5 轮)。
+   */
   data: Record<string, unknown>;
+  /** 改名意图:给了就改身份上的名字,不给 = 这次不碰名字。 */
+  name?: string;
+  /** 换图意图:字符串 = 换成这张;`null` = 清空主图;不给(undefined)= 这次不碰主图。 */
+  imageAssetId?: string | null;
   source?: "otto" | "user";
   status?: "active" | "archived";
   updatedById?: string | null;
@@ -428,14 +432,28 @@ async function updateProductRecordIn(tx: Tx, input: UpdateProductRecordInput): P
   const { ownerId } = input;
   const row = await tx.brandRecord.findFirst({
     where: { id: input.id, ownerId, kind: "product", deletedAt: null },
-    select: { id: true, brandId: true, entityId: true, nameKey: true, data: true },
+    select: { id: true, brandId: true, entityId: true, nameKey: true, data: true, contextStatus: true },
   });
   if (!row) return { ok: false, reason: "not-found" };
 
-  const parsed = productRecordData.safeParse(input.data);
+  // 名字的权威:有身份就是 `Entity.name`,没有身份(草稿)就是它 `data` 里那一格。
+  // 调用方不给 `name` 就照权威原样带过去 —— 于是「理解 worker 重读一次网站」永远改不掉
+  // 商家在 Library 改过的名字(判官第 5 轮点名的那一条)。
+  const identity = row.entityId
+    ? await tx.entity.findFirst({
+        where: { id: row.entityId, ownerId, deletedAt: null },
+        select: { name: true, baseAssetId: true },
+      })
+    : null;
+  const currentName = identity?.name ?? ((row.data as Record<string, unknown> | null)?.name as string | undefined);
+  const nextName = input.name ?? currentName;
+  if (typeof nextName !== "string") return { ok: false, reason: "invalid" };
+
+  // 价签字段先剥身份、再补一份名字进去过 zod(`productRecordData.name` 是必填)。
+  const fields = stripProductIdentity(input.data);
+  const parsed = productRecordData.safeParse({ ...fields, name: nextName });
   if (!parsed.success) return { ok: false, reason: "invalid" };
-  const data = parsed.data;
-  const nameKey = normalizeNameKey(data.name);
+  const nameKey = normalizeNameKey(parsed.data.name);
   if (!nameKey) return { ok: false, reason: "invalid" };
 
   // 改名撞上另一件活着的同名产品:先查后拒。在交互式事务里让唯一索引抛 P2002 是**假的**
@@ -448,29 +466,22 @@ async function updateProductRecordIn(tx: Tx, input: UpdateProductRecordInput): P
     if (clash) return { ok: false, reason: "name-taken" };
   }
 
-  // 身份先写(它是权威),缓存跟着写 —— 同一个事务,不可能只落一半。
-  //
-  // 判官第 4 轮 P1(PR #1337):`imageAssetId` 这一格递进来的值等于**这一行缓存里现在存着的**
-  // 那一格时,它是被 `{ ...existing.data, ... }` 原样带过来的,不是一次换图意图 —— 拿它去写
-  // 权威就会把商家在 Library 挑的封面写回旧值(或者在缓存本来就空时直接抹成 null)。
-  // 详见 writeProductIdentity 的注释。
-  const cachedRaw = (row.data as Record<string, unknown> | null)?.imageAssetId;
-  const cachedImage = typeof cachedRaw === "string" && cachedRaw ? cachedRaw : undefined;
-  const imageIntent = data.imageAssetId !== cachedImage;
-
-  let persisted: Record<string, unknown> = data as unknown as Record<string, unknown>;
+  // 身份先写(它是唯一源),价签只留价签字段 —— 同一个事务,不可能只落一半。
+  let persisted: Record<string, unknown> = stripProductIdentity(parsed.data as unknown as Record<string, unknown>);
   if (row.entityId) {
-    const identity = await writeProductIdentity(tx, {
-      ownerId, entityId: row.entityId, name: data.name,
-      ...(imageIntent ? { image: { assetId: data.imageAssetId } } : {}),
+    const written = await writeProductIdentity(tx, {
+      ownerId, entityId: row.entityId,
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.imageAssetId !== undefined ? { image: { assetId: input.imageAssetId } } : {}),
     });
-    // 缓存追平权威:这一行的 name / imageAssetId 从此逐字等于身份上那一份。缓存永远是
-    // 权威的影子,不可能反过来当事实(读路的 `withProductIdentity` 是同一条判断的兜底)。
-    if (identity) {
-      persisted = { ...persisted, name: identity.name };
-      if (identity.baseAssetId) persisted.imageAssetId = identity.baseAssetId;
-      else delete persisted.imageAssetId;
-    }
+    if (!written) return { ok: false, reason: "not-found" }; // 身份已被删,价签也该已经被带走
+  } else {
+    // 草稿:没有身份,名字与主图仍然只有 `data` 这一处记法(规格 §1.9)。
+    persisted = { ...persisted, name: parsed.data.name };
+    const draftImage = input.imageAssetId !== undefined
+      ? input.imageAssetId
+      : ((row.data as Record<string, unknown> | null)?.imageAssetId as string | undefined) ?? null;
+    if (draftImage) persisted.imageAssetId = draftImage;
   }
   await tx.brandRecord.updateMany({
     where: { id: row.id, ownerId, deletedAt: null },
@@ -489,7 +500,8 @@ export type RenameProductIdentityOutcome = { ok: true } | { ok: false; reason: "
 
 /**
  * 反方向:商家在 Library 改了这件产品的名字。身份那一行由调用方自己写(Library 那条入口还要
- * 同时改 notes / type 等等),这里只负责把**价签缓存**同事务追平 —— 名字的权威仍然是 Entity。
+ * 同时改 notes / type 等等),这里只负责把价签的 **`nameKey` 去重列**同事务追平 —— 名字本身
+ * 已经不在价签里了(判官第 5 轮),所以这一条不再写 `data`,只写那一列。
  *
  * 验收 PRODID-A4 的另一半:改 Library 名字 → Brand 页同名。
  */
@@ -508,23 +520,21 @@ async function renameProductIdentityIn(
   const { ownerId, entityId } = input;
   const record = await tx.brandRecord.findFirst({
     where: { ownerId, entityId, kind: "product", deletedAt: null },
-    select: { id: true, brandId: true, data: true, nameKey: true },
+    select: { id: true, brandId: true, nameKey: true },
   });
   if (!record) return { ok: true }; // 不是产品身份(演员、场景…),没有价签要追平
 
   const nameKey = normalizeNameKey(input.name);
   if (!nameKey) return { ok: true }; // 空名字在上游就被拒了;这里不越权改写
-  if (nameKey !== record.nameKey) {
-    const clash = await tx.brandRecord.findFirst({
-      where: { ownerId, brandId: record.brandId, kind: "product", nameKey, deletedAt: null, id: { not: record.id } },
-      select: { id: true },
-    });
-    if (clash) return { ok: false, reason: "name-taken" };
-  }
-  const data = { ...(record.data as Record<string, unknown>), name: input.name.slice(0, 120) };
+  if (nameKey === record.nameKey) return { ok: true };
+  const clash = await tx.brandRecord.findFirst({
+    where: { ownerId, brandId: record.brandId, kind: "product", nameKey, deletedAt: null, id: { not: record.id } },
+    select: { id: true },
+  });
+  if (clash) return { ok: false, reason: "name-taken" };
   await tx.brandRecord.updateMany({
     where: { id: record.id, ownerId, deletedAt: null },
-    data: { data: data as unknown as Prisma.InputJsonObject, nameKey },
+    data: { nameKey },
   });
   return { ok: true };
 }

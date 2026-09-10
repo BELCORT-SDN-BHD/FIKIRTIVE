@@ -303,49 +303,162 @@ describe("PRODID-A8 回填迁移", () => {
     expect(liveEntities).toBeGreaterThanOrEqual(liveTagsBefore - 1); // 复用数 = 1
   }, 60_000);
 
-  it("PRODID-A8 回填之后缓存追平权威:价签的 imageAssetId 逐字等于卡上的 baseAssetId", async () => {
+  it("PRODID-A8 回填之后价签不再承载名字与主图:两个键都被剥掉,身份成为唯一源", async () => {
     await loosenConstraints();
-    // 判官第 4 轮 P1(PR #1337):一次性链接指向的是商家自己那张卡,而回填**不许**盖掉
-    // 商家亲手挑过的封面 —— 于是链接完成的那一刻,价签缓存里记的和卡上挂的可以是两张不同
-    // 的图。缓存留着旧值,共享动作判「有没有换图意图」时会把它当成意图,asset-purge 认账的
-    // 那条软指针也指着一张早就不是封面的图。所以回填最后一步把缓存一次性抹平成权威。
+    // 判官第 5 轮(PR #1337)拔的根:前四轮把 `data.name` / `data.imageAssetId` 留着当「缓存」,
+    // 于是同一个事实有两处写得动的存放点。这一步把这两个键从价签里删干净 —— 名字与主图从此
+    // 只在 `Entity` 上,读路一律 `withProductIdentity` 从身份取。
     const cardCover = await seedAsset(orgId);
     const tagCover = await seedAsset(orgId);
     const cardId = `ent_${randomUUID()}`;
     await prisma.entity.create({
       data: { id: cardId, ownerId: orgId, type: "PRODUCT", name: "Kopi ais", baseAssetId: cardCover },
     });
-    // ① 卡上已经有封面 → 链接不动它,价签缓存里那张要被抹平成卡上的那张。
+    // ① 卡上已经有封面 → 链接不动它;价签那张图挂成一条**额外**的 ReferenceImage(不覆盖封面)。
     const linkedId = await seedLegacyProduct(orgId, "Kopi ais", { imageAssetId: tagCover });
-    // ② 没有同名卡 → 新建身份,封面来自缓存,两边本来就一致。
+    // ② 没有同名卡 → 新建身份,封面来自价签那一格。
     const freshId = await seedLegacyProduct(orgId, "Teh tarik", { imageAssetId: tagCover });
-    // ③ 缓存指着一张已经被删的 Asset(墓碑)→ 身份挂不上,缓存那一格也得清掉。
+    // ③ 价签指着一张已经被删的 Asset(墓碑)→ 身份挂不上,那一格照样被剥掉。
     const dead = await seedAsset(orgId);
     await prisma.asset.updateMany({ where: { id: dead, ownerId: orgId }, data: { deletedAt: new Date() } });
     const deadId = await seedLegacyProduct(orgId, "Cendol", { imageAssetId: dead });
 
     await runMigration();
 
-    // 商家亲手挑的封面没被盖掉(这条不变),而缓存现在逐字等于它。
+    // 商家亲手挑的封面没被盖掉(这条不变),价签那张图以一条硬引用留在卡上 —— 不挂的话它
+    // 没有任何东西指着,下一次资产清扫会把字节当孤儿。
     await expect(
       prisma.entity.findFirstOrThrow({ where: { id: cardId, ownerId: orgId }, select: { baseAssetId: true } }),
     ).resolves.toEqual({ baseAssetId: cardCover });
-    const linked = await prisma.brandRecord.findFirstOrThrow({
-      where: { id: linkedId, ownerId: orgId }, select: { data: true },
-    });
-    expect((linked.data as { imageAssetId?: string }).imageAssetId).toBe(cardCover);
+    await expect(
+      prisma.referenceImage.count({
+        where: { ownerId: orgId, entityId: cardId, assetId: tagCover, deletedAt: null },
+      }),
+    ).resolves.toBe(1);
 
-    const fresh = await prisma.brandRecord.findFirstOrThrow({
-      where: { id: freshId, ownerId: orgId }, select: { data: true },
-    });
-    expect((fresh.data as { imageAssetId?: string }).imageAssetId).toBe(tagCover);
+    // 三条价签的 `data` 里都没有这两个键了。
+    for (const id of [linkedId, freshId, deadId]) {
+      const row = await prisma.brandRecord.findFirstOrThrow({
+        where: { id, ownerId: orgId }, select: { data: true },
+      });
+      const keys = Object.keys(row.data as Record<string, unknown>);
+      expect(keys).not.toContain("name");
+      expect(keys).not.toContain("imageAssetId");
+    }
+    // 新建身份那一条:名字与封面都搬到了身份上,一个字节没丢。
+    await expect(
+      prisma.entity.findFirstOrThrow({
+        where: { id: `prodid_${freshId}`, ownerId: orgId }, select: { name: true, baseAssetId: true },
+      }),
+    ).resolves.toEqual({ name: "Teh tarik", baseAssetId: tagCover });
+  }, 60_000);
 
-    const deadRow = await prisma.brandRecord.findFirstOrThrow({
-      where: { id: deadId, ownerId: orgId }, select: { data: true },
+  it("PRODID-A8 up → rollback:价签的 data 与迁移前逐键相等", async () => {
+    await loosenConstraints();
+    // 判官第 5 轮(PR #1337):up 把 `data.name` / `data.imageAssetId` 删掉了,所以回滚必须把
+    // 这两格**精确**还回去。能还得精确正是因为身份是唯一源 —— 名字取 `Entity.name`,主图取
+    // `Entity.baseAssetId`。这一条对**新建**的身份与**链接**上的商家自己那张卡都要成立。
+    const tagCover = await seedAsset(orgId);
+    const cardId = `ent_${randomUUID()}`;
+    await prisma.entity.create({
+      data: { id: cardId, ownerId: orgId, type: "PRODUCT", name: "Kopi ais" },
     });
-    expect((deadRow.data as { imageAssetId?: string }).imageAssetId).toBeUndefined();
-    // 名字那一格一个字节没动 —— 这一步只抹平主图缓存。
-    expect((linked.data as { name?: string }).name).toBe("Kopi ais");
+    const linkedId = await seedLegacyProduct(orgId, "Kopi ais", { imageAssetId: tagCover });
+    const freshId = await seedLegacyProduct(orgId, "Teh tarik", { imageAssetId: tagCover });
+    const bareId = await seedLegacyProduct(orgId, "Nasi lemak");
+    // 第四条:链接到一张**本来就有封面**的卡。up 不许盖掉商家亲手挑过的封面,所以卡上的
+    // 封面与价签原来记的不是同一张 —— 回滚只看 `Entity.baseAssetId` 就会把价签还成卡的封面,
+    // 而它原来那张图从此没有任何东西指着(下一次清扫当孤儿删字节)。凭据是迁移自己插的
+    // 那条 `prodidimg_<记录 id>` 引用,rollback.sql ①.5 先读它、再退回封面。
+    const cardCover = await seedAsset(orgId);
+    const tagCover2 = await seedAsset(orgId);
+    const coveredCardId = `ent_${randomUUID()}`;
+    await prisma.entity.create({
+      data: { id: coveredCardId, ownerId: orgId, type: "PRODUCT", name: "Roti canai", baseAssetId: cardCover },
+    });
+    const coveredId = await seedLegacyProduct(orgId, "Roti canai", { imageAssetId: tagCover2 });
+
+    const ids = [linkedId, freshId, bareId, coveredId];
+    const before = new Map<string, unknown>();
+    for (const id of ids) {
+      const row = await prisma.brandRecord.findFirstOrThrow({
+        where: { id, ownerId: orgId }, select: { data: true },
+      });
+      before.set(id, row.data);
+    }
+
+    await runMigration();
+    // 链接确实发生了(不然「逐键相等」证不到那条不对称的路)。
+    await expect(
+      prisma.brandRecord.findFirstOrThrow({ where: { id: coveredId, ownerId: orgId }, select: { entityId: true } }),
+    ).resolves.toEqual({ entityId: coveredCardId });
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: coveredCardId, ownerId: orgId }, select: { baseAssetId: true } }),
+    ).resolves.toEqual({ baseAssetId: cardCover }); // 商家挑的封面没被盖掉
+    // up 之后确实没有这两个键了(不然下面的「相等」是废的)。
+    for (const id of ids) {
+      const row = await prisma.brandRecord.findFirstOrThrow({
+        where: { id, ownerId: orgId }, select: { data: true },
+      });
+      expect(Object.keys(row.data as Record<string, unknown>)).not.toContain("name");
+    }
+
+    await runRollback();
+
+    // 逐键相等 —— 不是 toMatchObject,是整份对象。上面四条的卡名与价签名逐字相同,所以
+    // 还回来的就是原样。
+    for (const id of ids) {
+      const row = await prisma.brandRecord.findFirstOrThrow({
+        where: { id, ownerId: orgId }, select: { data: true },
+      });
+      expect(row.data).toEqual(before.get(id));
+    }
+
+    // 唯一一处**说得清**的不对称,写在测试里而不是只写在注释里:一次性链接(Founder
+    // 2026-09-10 裁 #1321)之后价签跟着卡走,所以卡名与价签名只是**归一化后相同**(多余空白、
+    // 大小写)时,回滚还回来的是**卡上**那个写法。链接的前提就是 nameKey 相同,所以这条差异
+    // 的上界逐字就是「空白与大小写」——不可能变成另一个产品的名字。主图与其余每一个键仍然
+    // 逐字相等(主图靠迁移自己插的 `prodidimg_` 那条凭据还原,不靠卡上的封面)。
+    // 上一步的回滚已经把 `entityId` 列丢掉了 —— 先把 schema 装回来,再造这一格的老形状。
+    await runMigration();
+    await loosenConstraints();
+    const spacedCardId = `ent_${randomUUID()}`;
+    await prisma.entity.create({
+      data: { id: spacedCardId, ownerId: orgId, type: "PRODUCT", name: "  Mee   Goreng " },
+    });
+    const spacedTagCover = await seedAsset(orgId);
+    const spacedId = await seedLegacyProduct(orgId, "Mee goreng", { imageAssetId: spacedTagCover });
+    const spacedBefore = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: spacedId, ownerId: orgId }, select: { data: true },
+    })).data as Record<string, unknown>;
+
+    await runMigration();
+    await expect(
+      prisma.brandRecord.findFirstOrThrow({ where: { id: spacedId, ownerId: orgId }, select: { entityId: true } }),
+    ).resolves.toEqual({ entityId: spacedCardId }); // 真的链接上了
+    await runRollback();
+
+    const spacedAfter = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: spacedId, ownerId: orgId }, select: { data: true },
+    })).data as Record<string, unknown>;
+    const norm = (v: unknown) => String(v).trim().toLowerCase().replace(/\s+/g, " ");
+    expect(norm(spacedAfter.name)).toBe(norm(spacedBefore.name)); // 归一化后相同 = 同一件产品
+    expect(spacedAfter.name).toBe("  Mee   Goreng ");             // 还回来的是卡上那个写法
+    expect(spacedAfter.imageAssetId).toBe(spacedBefore.imageAssetId); // 主图逐字相等
+    const strip = (o: Record<string, unknown>) => {
+      const { name: _n, imageAssetId: _i, ...rest } = o;
+      return rest;
+    };
+    expect(strip(spacedAfter)).toEqual(strip(spacedBefore));      // 其余每一个键逐字相等
+
+    // 列与约束也真的没了(回滚跑完整份,不是只跑了这一半)。
+    const cols = await prisma.$queryRawUnsafe<{ column_name: string }[]>(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = current_schema() AND table_name = 'BrandRecord' AND column_name = 'entityId'`,
+    );
+    expect(cols).toEqual([]);
+    // 回滚跑完之后把 schema 装回去,别把下一条用例连坐。
+    await runMigration();
   }, 60_000);
 
   it("PRODID-A8 同名一次性链接:两张同名 Library 卡 → 拒绝并报出,整条迁移零落库", async () => {

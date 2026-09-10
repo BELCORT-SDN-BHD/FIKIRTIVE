@@ -287,14 +287,15 @@ describe("PRODID-A2/A5 读路(Brand②③,票 #1322 / #1330)", () => {
 });
 
 /**
- * PRODID-A4 —— 判官第 3 轮 P1-1(PR #1337):第 1、2 轮之后,`BrandRecord.data` 里仍然存着
- * `name` 与 `imageAssetId`,而 Brand 页的编辑入口只写这一份 —— 于是同一件产品在 Library 叫
- * 一个名字、在 Brand 页叫另一个,两套真相正是这条规格要关掉的口子。
+ * PRODID-A4 —— 判官第 5 轮(PR #1337)拔的根:第 1–4 轮把名字与主图**同时**存在两处
+ * (`Entity` 与 `BrandRecord.data` 的「缓存」),两处都有写路,于是四轮里每一条 P1(换图意图
+ * 判据、缓存反写权威、回滚不还原 data、理解 worker 覆盖商家改名)都是从这一个根上长出来的枝。
  *
- * 立场:**身份(`Entity`)是名字与主图的唯一权威**,`data` 里那两格降级成缓存,由共享动作在
- * 同一个事务里跟着写,读路再 join 一次身份把它盖掉。下面两条把两个方向各钉一次。
+ * 现在的立场:**价签根本不承载名字与主图**。写路入库前把这两个键剥掉,名字与主图只写
+ * `Entity`(同一个事务);读路一律 `withProductIdentity` 从身份取。下面几条把两个方向、
+ * 「不递就是不碰」与「显式清空仍然生效」各钉一次。
  */
-describe("PRODID-A4 改名换图:名字与主图的单一源是身份,两边同步", () => {
+describe("PRODID-A4 改名换图:名字与主图的唯一源是身份,两边同步", () => {
   it("PRODID-A4 Brand 页改名换主图 → Library 那张卡同名同图(同一行 Entity)", async () => {
     await signInAs(EMAIL_A);
     const firstAsset = await seedAsset(ownerA, `a4-one-${randomUUID().slice(0, 8)}`);
@@ -334,9 +335,20 @@ describe("PRODID-A4 改名换图:名字与主图的单一源是身份,两边同�
     if (!Array.isArray(elements)) throw new Error(elements.error);
     expect(elements.filter((e) => e.name === newName).map((e) => e.id)).toEqual([entityId]);
     expect(elements.some((e) => e.name === oldName)).toBe(false);
+
+    // 价签那一边:落库的 `data` 里连这两个键都没有(判官第 5 轮的根)。Brand 页看到的名字与
+    // 主图是读路从身份补进来的,所以不可能有第二份写得动的真相。
+    const stored = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { data: true, nameKey: true },
+    });
+    expect(Object.keys(stored.data as Record<string, unknown>).sort()).toEqual(["price"]);
+    expect(stored.nameKey).toBe(newName.trim().toLowerCase());
+    expect((await listBrandRecords()).find((r) => r.id === saved.id)?.data).toMatchObject({
+      name: newName, imageAssetId: secondAsset, price: "RM 5.00",
+    });
   }, 60_000);
 
-  it("PRODID-A4 Library 改名 → Brand 页产品同名(读路以身份为准,缓存同事务追平)", async () => {
+  it("PRODID-A4 Library 改名 → Brand 页产品同名(名字只住在身份上,nameKey 同事务追平)", async () => {
     await signInAs(EMAIL_A);
     const oldName = `Bandung ${randomUUID().slice(0, 8)}`;
     const newName = `Bandung special ${randomUUID().slice(0, 8)}`;
@@ -353,12 +365,13 @@ describe("PRODID-A4 改名换图:名字与主图的单一源是身份,两边同�
     const records = await listBrandRecords();
     const row = records.find((r) => r.id === saved.id)!;
     expect(row.data).toMatchObject({ name: newName, price: "RM 4.00" });
-    // 缓存(以及 nameKey 这个幂等键)也在同一个事务里追平了 —— 不是只有读路盖住了它。
+    // 价签里没有第二份名字可以分叉;要在同一个事务里追平的只有 `nameKey` 这条活跃唯一
+    // 去重索引 —— 它的值必须等于身份名字的归一化,否则「同店同名只许一件」会认错人。
     const stored = await prisma.brandRecord.findFirstOrThrow({
       where: { id: saved.id, ownerId: ownerA }, select: { data: true, nameKey: true },
     });
     expect(stored.nameKey).toBe(newName.trim().toLowerCase());
-    expect((stored.data as { name?: string }).name).toBe(newName);
+    expect(Object.keys(stored.data as Record<string, unknown>)).not.toContain("name");
   }, 60_000);
 
   it("PRODID-A4 Library 换封面之后在 Brand 页改价:商家挑的封面不回滚", async () => {
@@ -397,22 +410,26 @@ describe("PRODID-A4 改名换图:名字与主图的单一源是身份,两边同�
     });
   }, 60_000);
 
-  it("PRODID-A4 /brand 那一面也以身份为准:价签缓存里的旧名字盖不过 Library 卡上的名字", async () => {
+  it("PRODID-A4 /brand 那一面也以身份为准:价签里残留的旧名字盖不过 Library 卡上的名字", async () => {
     await signInAs(EMAIL_A);
-    // 判官第 4 轮 P1(PR #1337):`loadBrandSections`(`/brand`)是最后一条没 join 身份的展示
-    // 读路。一次性链接把价签指向商家自己那张 Library 卡时只写 `entityId`、不动 `data`,
-    // 所以卡的名字与缓存里的名字**按设计**就是两个字符串 —— A4 点名的那一面正是这一面。
+    // `loadBrandSections`(`/brand`)是四条展示读路里最后一条 join 身份的。这一条钉的是
+    // **兜底**:哪怕某一行的 `data` 里还留着一个旧名字(迁移前的存量行、绕过共享动作的直写、
+    // 或者将来某条新写路忘了剥),商家看到的仍然只有身份上那一个名字。
     const cardName = `Mee   goreng ${randomUUID().slice(0, 8)}`;
-    const cachedName = `Mee goreng ${randomUUID().slice(0, 8)}`;
+    const stale = `Mee goreng ${randomUUID().slice(0, 8)}`;
     const saved = (await saveBrandRecord({
-      kind: "product", data: { name: cachedName, price: "RM 5.50" },
+      kind: "product", data: { name: stale, price: "RM 5.50" },
     })) as { ok: true; id: string };
     const entityId = (await prisma.brandRecord.findFirstOrThrow({
       where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
     })).entityId!;
-    // 逐字复刻迁移那一刻的形状:身份上是商家自己写的名字,价签的 data 一个字节没动。
+    // 逐字复刻存量行的形状:身份上是商家自己写的名字,价签的 data 里塞着一个过期的名字。
     await prisma.entity.updateMany({
       where: { id: entityId, ownerId: ownerA }, data: { name: cardName },
+    });
+    await prisma.brandRecord.updateMany({
+      where: { id: saved.id, ownerId: ownerA },
+      data: { data: { name: stale, price: "RM 5.50" } },
     });
 
     const sections = await loadBrandSections(ownerA);
@@ -442,6 +459,38 @@ describe("PRODID-A4 改名换图:名字与主图的单一源是身份,两边同�
     await expect(
       prisma.entity.findFirstOrThrow({ where: { id: entityId, ownerId: ownerA }, select: { name: true } }),
     ).resolves.toEqual({ name: mine });
+  }, 60_000);
+
+  it("PRODID-A1 底下挂着价签的产品卡不许改类型:改了就是「Brand 页有这件产品、Library 里它不是产品」", async () => {
+    await signInAs(EMAIL_A);
+    // 数据库的 CHECK 只管「product 价签有没有 entityId」,管不到那一行是什么 `type`。这一行
+    // 一旦不再是 PRODUCT,Brand 页照样列着这件产品(价签还活着),Library 的 Products 分区
+    // 却查无此卡 —— 同一件东西两个身份,正是这条规格要关掉的口子。
+    const name = `Satay ${randomUUID().slice(0, 8)}`;
+    const saved = (await saveBrandRecord({ kind: "product", data: { name, price: "RM 1.20" } })) as {
+      ok: true; id: string;
+    };
+    const entityId = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    })).entityId!;
+
+    await expect(updateEntity(entityId, { type: "LOCATION" })).resolves.toEqual({
+      error: "This product has price details on the Brand page — remove that product first, then change the type.",
+    });
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: entityId, ownerId: ownerA }, select: { type: true } }),
+    ).resolves.toEqual({ type: "PRODUCT" });
+
+    // 对照:一张**没有价签**的产品卡照旧改得动 —— 那一格没有第二边要对齐。存量库里就有这种卡
+    // (商家在这条规格上线之前自己建的产品元素,回填不给它们补价签,见 PR 的「未做」节)。
+    const bareId = newId();
+    await prisma.entity.create({
+      data: { id: bareId, ownerId: ownerA, type: "PRODUCT", name: `Bare ${randomUUID().slice(0, 8)}` },
+    });
+    await expect(updateEntity(bareId, { type: "LOCATION" })).resolves.toEqual({ ok: true });
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: bareId, ownerId: ownerA }, select: { type: true } }),
+    ).resolves.toEqual({ type: "LOCATION" });
   }, 60_000);
 });
 
@@ -490,7 +539,10 @@ describe("PRODID-A6 删除与恢复:一处删两边消失,可一起恢复", () =
     expect(menu.items.some((i) => i.id === entityId)).toBe(true);
   }, 60_000);
 
-  it("PRODID-A6 Library 删产品卡:Brand 页价签随之消失,恢复之后两边一起回来", async () => {
+  // 判官第 5 轮(PR #1337):这条用例原来的名字写着「恢复之后两边一起回来」,可它全程没调过
+  // `restoreBrandRecord` —— 它证的其实是「随之消失 ＋ 名字槽位让出来」。用例名不许承诺它没做
+  // 的事,所以按它真正证的那句话改名;恢复那一半由下面那条真的调 `restoreBrandRecord` 的用例证。
+  it("PRODID-A6 Library 删产品卡:Brand 页价签随之消失,名字槽位让出来", async () => {
     await signInAs(EMAIL_A);
     const name = `Rojak ${randomUUID().slice(0, 8)}`;
     const saved = (await saveBrandRecord({
@@ -751,10 +803,18 @@ describe("判官 P1 回归:软删的价签也算指针,恢复之后主图还在"
 
     await expect(restoreBrandRecord({ id: saved.id })).resolves.toEqual({ ok: true });
     const back = await prisma.brandRecord.findFirstOrThrow({
-      where: { id: saved.id, ownerId: ownerA }, select: { data: true, deletedAt: true },
+      where: { id: saved.id, ownerId: ownerA }, select: { deletedAt: true },
     });
     expect(back.deletedAt).toBeNull();
-    expect((back.data as { imageAssetId?: string }).imageAssetId).toBe(assetId);
+    // 主图指得到 —— 判官第 5 轮之后它只住在身份上,读路把它补进 Brand 页看到的那份 data。
+    await expect(
+      prisma.entity.findFirstOrThrow({
+        where: { id: record.entityId!, ownerId: ownerA }, select: { baseAssetId: true },
+      }),
+    ).resolves.toEqual({ baseAssetId: assetId });
+    expect((await listBrandRecords()).find((r) => r.id === saved.id)?.data).toMatchObject({
+      imageAssetId: assetId,
+    });
     expect(await bytesExist(ownerA, assetId)).toBe(true);
   }, 60_000);
 });
@@ -781,14 +841,18 @@ describe("判官 P0 回归:Library 删除不得毁掉 Brand 页价签还在用�
 
     await expect(softDeleteEntity(record.entityId!)).resolves.toMatchObject({ ok: true });
 
-    // 判官第 3 轮 P1-3 之后,价签跟着身份一起进删除态(A6)—— 但它**还在**,`data.imageAssetId`
-    // 原样指着这张图,而软删的软指针照样算指针(判官第 2 轮 P1)。所以字节不是孤儿:行随时
-    // 恢复得回来,字节恢复不回来。这一条守的始终是后半句。
+    // 判官第 3 轮 P1-3 之后,价签跟着身份一起进删除态(A6)—— 但两边都**还在**:软删的身份
+    // 上 `baseAssetId` 原样指着这张图,而软删的软指针照样算指针(判官第 2 / 第 5 轮)。
+    // 所以字节不是孤儿:行随时恢复得回来,字节恢复不回来。这一条守的始终是后半句。
     const after = await prisma.brandRecord.findFirstOrThrow({
-      where: { id: saved.id, ownerId: ownerA }, select: { data: true, deletedAt: true },
+      where: { id: saved.id, ownerId: ownerA }, select: { deletedAt: true },
     });
     expect(after.deletedAt).not.toBeNull();
-    expect((after.data as { imageAssetId?: string }).imageAssetId).toBe(assetId);
+    await expect(
+      prisma.entity.findFirstOrThrow({
+        where: { id: record.entityId!, ownerId: ownerA }, select: { baseAssetId: true },
+      }),
+    ).resolves.toEqual({ baseAssetId: assetId });
     await expect(
       prisma.asset.count({ where: { id: assetId, ownerId: ownerA, deletedAt: null } }),
     ).resolves.toBe(1);
@@ -803,8 +867,19 @@ describe("判官 P0 回归:Library 删除不得毁掉 Brand 页价签还在用�
     ).resolves.toBe(1);
   }, 60_000);
 
-  it("判官 P0 Library 删掉那张唯一的照片:Brand 页价签还在,主图字节也还在", async () => {
+  it("判官 P0 Library 删掉那张唯一的照片:两边一起没有封面,不留一条指着空气的指针", async () => {
     await signInAs(EMAIL_A);
+    // 判官第 5 轮(PR #1337)把根拔掉之后,这一条的**结论翻了个面**,而且是往对的方向翻 ——
+    // 这是一处会被商家看到的行为改变,写在这里不藏着(PR 描述「行为改变」一节同文)。
+    //   · 第 1 轮的复现:价签的 `data.imageAssetId` 与 Entity 的 ReferenceImage 是同一张图的
+    //     两条指针。删掉照片会把字节真删走,而价签那条软指针原样留着 —— 商家看到一张永远
+    //     坏掉的封面,没有入口修得好。当时的修法是「字节别删」(fail open)。
+    //   · 现在:价签里**根本没有**那条指针。删掉产品唯一的那张照片,`softDeleteReferenceImage`
+    //     把封面(唯一的记法)一起清掉,两个面同时变成「这件产品没有封面」—— 没有任何东西
+    //     指着那张图了,它是真的孤儿。于是字节照 2026-09-03 那条 Founder 裁决真删
+    //     (「商家删掉一张参考照,存储桶里的字节也必须真的没了」),与演员、场景一个口径。
+    //   · 两条路的分界线是**有没有恢复入口**:删整件产品有(`restoreBrandRecord`,所以 fail
+    //     open、字节留着);删一张照片没有(和演员那边一样),而且它是商家逐张点下去的明示动作。
     const assetId = await seedAsset(ownerA, `p0-ref-${randomUUID().slice(0, 8)}`);
     const name = `Cendol ${randomUUID().slice(0, 8)}`;
     const saved = (await saveBrandRecord({
@@ -820,10 +895,71 @@ describe("判官 P0 回归:Library 删除不得毁掉 Brand 页价签还在用�
 
     await expect(softDeleteReferenceImage(ref.id)).resolves.toMatchObject({ ok: true });
 
+    // 两个面一起没有封面 —— 这才是「一件东西一份真相」的样子。
     await expect(
-      prisma.asset.count({ where: { id: assetId, ownerId: ownerA, deletedAt: null } }),
+      prisma.entity.findFirstOrThrow({
+        where: { id: record.entityId!, ownerId: ownerA }, select: { baseAssetId: true },
+      }),
+    ).resolves.toEqual({ baseAssetId: null });
+    const row = (await listBrandRecords()).find((r) => r.id === saved.id)!;
+    expect(row.data).toMatchObject({ name });
+    expect((row.data as { imageAssetId?: string }).imageAssetId).toBeUndefined();
+    // 价签的 data 里也没有残留的指针 —— 「指着空气的封面」这条老路从此造不出来。
+    const stored = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { data: true },
+    });
+    expect(Object.keys(stored.data as Record<string, unknown>)).not.toContain("imageAssetId");
+    // 商家亲手删的那张照片,字节真的没了(2026-09-03 裁决,与演员/场景同一口径)。
+    expect(await bytesExist(ownerA, assetId)).toBe(false);
+  }, 60_000);
+
+  it("判官 P0 同一张照片挂在两个元素上:删掉另一个元素,可恢复的产品封面字节不许被带走", async () => {
+    await signInAs(EMAIL_A);
+    // 判官第 5 轮(PR #1337):主图从此**只**住在 `Entity.baseAssetId` 上(价签不再承载
+    // `imageAssetId`),而 `baseAssetId` 是一条没有外键的软指针 —— 「独占」判据必须认它,
+    // 连软删的身份也要认:软删的产品可以被 `restoreBrandRecord` 原样接回来,字节接不回来。
+    // 复现的顺序就是共享照片的日常形状:同一张门面照既是店的场景图,又是招牌菜的封面。
+    const shared = await seedAsset(ownerA, `p0-shared-${randomUUID().slice(0, 8)}`);
+    const name = `Kopi peng ${randomUUID().slice(0, 8)}`;
+    const saved = (await saveBrandRecord({
+      kind: "product", data: { name, imageAssetId: shared },
+    })) as { ok: true; id: string };
+    const productEntityId = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    })).entityId!;
+
+    // 另一个元素(场景)也挂着同一张照片,而且它是那个元素唯一的一张。
+    const sceneId = newId();
+    await prisma.entity.create({
+      data: {
+        id: sceneId, ownerId: ownerA, type: "LOCATION",
+        name: `Shopfront ${randomUUID().slice(0, 8)}`, baseAssetId: shared,
+      },
+    });
+    await prisma.referenceImage.create({
+      data: { id: newId(), ownerId: ownerA, entityId: sceneId, assetId: shared, position: 0 },
+    });
+
+    // ① 商家先在 Library 删掉那件产品:价签与身份一起进删除态,照片的硬引用也跟着软删,
+    //    但身份上的 `baseAssetId` 原样留着(恢复要靠它)。这一步不跑清扫(带走了价签)。
+    await expect(softDeleteEntity(productEntityId)).resolves.toMatchObject({ ok: true });
+    // ② 再删那个场景。这一步**会**跑清扫,而此刻这张 Asset 已经没有任何活的硬引用、
+    //    价签里也没有 `imageAssetId` 那一格 —— 只剩软删身份上的那条软指针拦着它。
+    await expect(softDeleteEntity(sceneId)).resolves.toMatchObject({ ok: true });
+
+    await expect(
+      prisma.asset.count({ where: { id: shared, ownerId: ownerA, deletedAt: null } }),
     ).resolves.toBe(1);
-    expect(await bytesExist(ownerA, assetId)).toBe(true);
+    expect(await bytesExist(ownerA, shared)).toBe(true);
+
+    // ③ 商家按恢复:产品卡、价签、封面一起回来,而且封面不是一张指着空气的坏图。
+    await expect(restoreBrandRecord({ id: saved.id })).resolves.toEqual({ ok: true });
+    await expect(
+      prisma.entity.findFirstOrThrow({
+        where: { id: productEntityId, ownerId: ownerA }, select: { baseAssetId: true, deletedAt: true },
+      }),
+    ).resolves.toEqual({ baseAssetId: shared, deletedAt: null });
+    expect(await bytesExist(ownerA, shared)).toBe(true);
   }, 60_000);
 });
 

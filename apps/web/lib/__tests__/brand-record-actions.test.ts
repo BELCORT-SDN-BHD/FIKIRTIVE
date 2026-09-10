@@ -34,7 +34,7 @@ vi.mock("@fikirtive/db", () => ({
   // segment / offer 没有身份那一半,仍走 create —— 下面两条测试就是这条分界线。
   createProduct: mockCreateProduct,
   confirmProductDraft: vi.fn(),
-  // 改产品也走共享动作(名字与主图的权威是身份,PRODID-A4)。
+  // 改产品也走共享动作(名字与主图的唯一源是身份,PRODID-A4)。
   updateProductRecord: mockUpdateProductRecord,
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -88,14 +88,27 @@ describe("saveBrandRecord — create", () => {
 });
 
 describe("saveBrandRecord — update by id", () => {
-  it("PRODID-A4 改产品走共享动作:名字与主图的权威是身份,不是这个文件自己的 updateMany", async () => {
+  it("PRODID-A4 改产品走共享动作:名字与主图的意图显式递给身份,不是这个文件自己的 updateMany", async () => {
     mockUpdateProductRecord.mockResolvedValue({ ok: true, id: "r1", entityId: "e1" });
-    const res = await saveBrandRecord({ id: "r1", kind: "product", data: { name: "Latte Blend", price: "RM 55" } });
+    const res = await saveBrandRecord({
+      id: "r1", kind: "product", data: { name: "Latte Blend", price: "RM 55", imageAssetId: "as_1" },
+    });
     expect(res).toEqual({ ok: true, id: "r1" });
+    // 这一面是商家亲手填的整张表单,所以两个意图都**显式**递下去 —— 共享动作不猜。
     expect(mockUpdateProductRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ ownerId: "o1", id: "r1", source: "user" }),
+      expect.objectContaining({
+        ownerId: "o1", id: "r1", source: "user", name: "Latte Blend", imageAssetId: "as_1",
+      }),
     );
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("PRODID-A4 Brand 页把主图栏空着 = 清空主图(显式 null,不是「这次不碰」)", async () => {
+    mockUpdateProductRecord.mockResolvedValue({ ok: true, id: "r1", entityId: "e1" });
+    await saveBrandRecord({ id: "r1", kind: "product", data: { name: "Latte Blend", price: "RM 55" } });
+    expect(mockUpdateProductRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Latte Blend", imageAssetId: null }),
+    );
   });
   it("updates data/nameKey owner-scoped and flips source to user(segment 仍走本文件的 updateMany)", async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
@@ -154,6 +167,24 @@ describe("delete / restore", () => {
       // FRONT-A8:删除/恢复也是一次「谁动的」。判官 P2-4:认得出人才写 —— 这一份的
       // fixture 查不到 User 行(userId 为 null),写进去等于把这一行已知的作者抹掉。
       data: { deletedAt: null },
+    });
+  });
+  it("PRODID-A6 名字槽位被占时那一句人话按 kind 走:audience 不会被叫成 product", async () => {
+    // 判官第 5 轮(PR #1337):这条恢复动作对 segment / offer 一样跑得到,而上一版无论恢复
+    // 的是什么都回「You already have a product with that name」—— 商家读到的是一句关于
+    // 另一种东西的话。
+    mockFindFirst
+      .mockResolvedValueOnce({ kind: "segment", brandId: null, nameKey: "x", entityId: null, deletedAt: new Date() })
+      .mockResolvedValueOnce({ id: "r-other" });
+    expect(await restoreBrandRecord({ id: "r1" })).toEqual({
+      error: "You already have an audience with that name — rename that one first.",
+    });
+    mockFindFirst.mockReset();
+    mockFindFirst
+      .mockResolvedValueOnce({ kind: "product", brandId: null, nameKey: "x", entityId: null, deletedAt: new Date() })
+      .mockResolvedValueOnce({ id: "r-other" });
+    expect(await restoreBrandRecord({ id: "r1" })).toEqual({
+      error: "You already have a product with that name — rename that one first.",
     });
   });
 });

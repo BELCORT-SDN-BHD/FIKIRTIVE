@@ -604,15 +604,31 @@ export async function updateEntity(
             return { error: "A generation using this is still running — wait for it to finish, then change the type." };
           }
         }
+        // ── PRODUCT 改成别的类型:底下挂着价签就不许改(判官第 5 轮,PR #1337)──────
+        // 身份是产品名字与主图的**唯一源**(规格 §1.4)。这一行一旦不再是 PRODUCT,那条
+        // `BrandRecord(kind='product')` 就挂在一个「不是产品」的身份上:Brand 页照样列出
+        // 这件产品(价签还活着),Library 里它却变成了一个场景/角色,而数据库的 CHECK
+        // 只管「product 行有没有 entityId」,管不到那一行是什么 type。没有价签的产品卡
+        // (商家自己在 Library 建的、还没填价格的)照旧改得动 —— 那一格没有第二边要对齐。
+        if (current.type === "PRODUCT") {
+          const tagged = await prisma.brandRecord.findFirst({
+            where: { ownerId, entityId, kind: "product", deletedAt: null },
+            select: { id: true },
+          });
+          if (tagged) {
+            return { error: "This product has price details on the Brand page — remove that product first, then change the type." };
+          }
+        }
         data.type = fields.type as EntityType;
         typeFrom = current.type;
       }
     }
     if (Object.keys(data).length === 0) return { ok: true };
-    // 身份是名字的**单一源**(规格 docs/specs/brand-product-identity.md §1.4;PRODID-A4):
-    // 这一行改完名字,产品价签里那份缓存必须在**同一个事务**里追平,否则 Brand 页还挂着旧
-    // 名字 —— 两套真相(判官第 3 轮 P1-1,PR #1337)。改成另一件活着的同名产品是规格 §3 的
-    // 非目标(同名不自动合并),所以整笔回滚、如实报出来。
+    // 身份是名字的**唯一源**(规格 docs/specs/brand-product-identity.md §1.4;PRODID-A4):
+    // 名字本身只住在这一行,Brand 页读的就是它(withProductIdentity),所以没有第二份要写。
+    // 要在**同一个事务**里追平的只剩价签那一列 `nameKey` —— 它是「同店同名产品只许一件」
+    // 的活跃唯一去重索引,值必须等于身份名字的归一化。改成另一件活着的同名产品是规格 §3
+    // 的非目标(同名不自动合并),所以整笔回滚、如实报出来。
     let nameTaken = false;
     const count = await prisma.$transaction(async (tx) => {
       const updated = await tx.entity.updateMany({ where: { id: entityId, ownerId, deletedAt: null }, data });

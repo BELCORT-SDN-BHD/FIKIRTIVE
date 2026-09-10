@@ -1534,14 +1534,30 @@ describe("doc-extract(beta:必须有解析失败兜底)", () => {
     });
     await handleUnderstand({ understandingId: "u-1" }, 0, port);
     expect(mocks.createProduct).not.toHaveBeenCalled();
-    // 合并那一半也走共享动作 —— 它写的 data 里带着 name,而名字的权威是身份(PRODID-A4,
-    // 判官第 3 轮 P1-1)。tx 照旧传下去:产品行与 settle 同事务(MONEY-A9 不变量②)。
+    // 合并那一半也走共享动作。tx 照旧传下去:产品行与 settle 同事务(MONEY-A9 不变量②)。
     expect(mocks.updateProductRecord).toHaveBeenCalledTimes(1);
     expect(mocks.updateProductRecord.mock.calls[0]![1]).toBe(mocks.prisma);
     // 商家自己写过的字段保住了
     expect(mocks.updateProductRecord.mock.calls[0]![0].data).toMatchObject({
       name: "Nasi Lemak", price: "RM 8.50", sellingAngle: "our best",
     });
+  });
+
+  it("PRODID-A4 重读同一张菜单不递名字与主图:商家在 Library 改过的两样动不了", async () => {
+    // 判官第 5 轮(PR #1337)点名的那一条:理解 worker 只是把同一个网站/菜单再读了一遍 ——
+    // 重读一遍不是改名,更不是换图。共享动作只在调用方**显式**递 `name` / `imageAssetId` 时
+    // 才碰身份,所以这条路一格都不许递,商家改过的名字与封面于是永远盖不掉。
+    mocks.brandRecord.findFirst.mockResolvedValue({ id: "br-1", data: { price: "RM 8.00" } });
+    mocks.understand.mockResolvedValue({
+      text: JSON.stringify({ products: [{ name: "Nasi Lemak", price: "RM 8.50" }] }),
+      usage: { inputTokens: 3000, outputTokens: 300 },
+    });
+    await handleUnderstand({ understandingId: "u-1" }, 0, port);
+    const [input] = mocks.updateProductRecord.mock.calls[0]!;
+    expect(Object.keys(input)).not.toContain("name");
+    expect(Object.keys(input)).not.toContain("imageAssetId");
+    // 价签字段照旧更新 —— 这条路该做的就是这一件事。
+    expect(input.data).toMatchObject({ price: "RM 8.50" });
   });
 
   it("**解析失败兜底**:读不出来 ⇒ 一行 BrandRecord 都不写,且不判这张菜单的死刑", async () => {

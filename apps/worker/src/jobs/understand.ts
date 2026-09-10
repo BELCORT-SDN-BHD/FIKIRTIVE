@@ -1065,9 +1065,13 @@ async function upsertProductRecord(
 
   const data = parsed.data as unknown as Record<string, unknown>;
   if (existing) {
-    // 改也走共享动作(规格 §1.4;PRODID-A4;判官第 3 轮 P1-1):这一句写的 `data` 里带着
-    // `name`,而名字的权威是身份(`Entity`)。裸 update 会让同一件产品在 Library 与 Brand 页
-    // 各叫各的名字 —— 两套真相正是这条规格要关掉的口子。tx 照旧传下去(MONEY-A9 不变量②)。
+    // 改也走共享动作(规格 §1.4;PRODID-A4)。tx 照旧传下去(MONEY-A9 不变量②)。
+    //
+    // 判官第 5 轮(PR #1337):这里**不递** `name`、也不递 `imageAssetId` —— 商家可能已经在
+    // Library 把这件产品改了名、换了封面,而理解 worker 只是把同一个网站/菜单再读了一遍。
+    // 重读一遍不是改名,更不是换图。共享动作只在调用方**显式**递这两个字段时才碰身份,
+    // 所以这一条路只更新价签字段(价格、描述、分类),商家改过的名字与主图原样留着。
+    // (只有**第一次**建草稿时才带名字,那时这件产品还不存在,名字只能由这里给。)
     const done = await updateProductRecord({ ownerId, id: existing.id, data, source: "otto" }, tx);
     return done.ok;
   }

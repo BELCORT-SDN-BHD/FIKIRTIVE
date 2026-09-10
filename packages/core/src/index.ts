@@ -108,7 +108,8 @@ export * from "./model-config.js";
 export {
   RECORD_KINDS, productRecordData, segmentRecordData, offerRecordData,
   recordSchemaFor, recordName, normalizeNameKey, offerPhase,
-  categoryKey, distinctCategories, withProductIdentity,
+  categoryKey, distinctCategories, withProductIdentity, stripProductIdentity,
+  PRODUCT_IDENTITY_KEYS,
 } from "./brand-records.js";
 export type {
   RecordKind, ProductRecordData, SegmentRecordData, OfferRecordData, OfferPhase,

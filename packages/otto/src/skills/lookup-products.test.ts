@@ -10,8 +10,8 @@ const ctx = { context: { orgId: "org-1" } as unknown as OttoContext };
 const row = (name: string, extra: Record<string, unknown> = {}) => ({
   kind: "product",
   data: { name, ...extra }, status: "active", pinned: false, updatedAt: new Date(),
-  // 名字与主图的权威是身份(PRODID-A4)。这个夹具让身份与缓存一致 —— 不一致那一格由下面
-  // 「身份赢」那条用例单独钉。
+  // 名字与主图的唯一源是身份(PRODID-A4)。价签的 `data` 里本来就没有这两格,这个夹具留着
+  // 一份只是为了写得像存量行 —— 「残留值盖不过身份」那一格由下面那条用例单独钉。
   entity: { name, baseAssetId: null as string | null },
 });
 
@@ -50,9 +50,10 @@ describe("executeLookupProducts", () => {
       where: expect.objectContaining({ contextStatus: "Ready" }),
     }));
   });
-  it("PRODID-A4 名字以身份为准:价签缓存跟身份不一致时,Otto 说的是身份上那个名字", async () => {
-    // 判官第 3 轮 P1-1(PR #1337):`BrandRecord.data.name` 只是缓存。商家在 Library 改了名字,
-    // Otto 嘴里说的必须是同一个 —— 否则他给商家一个商家自己认不出来的产品名。
+  it("PRODID-A4 名字以身份为准:价签里残留的旧名字盖不过身份,Otto 说的是身份上那个名字", async () => {
+    // 判官第 5 轮(PR #1337):写路已经不再往 `data` 里写名字,所以这条读路钉的是**兜底** ——
+    // 存量行、或任何绕过共享动作的直写留下的旧名字,都不许变成 Otto 嘴里的产品名,否则他给
+    // 商家一个商家自己认不出来的名字。
     db.prisma.brandRecord.findMany.mockResolvedValue([
       { ...row("Stale cached name"), entity: { name: "Latte Blend", baseAssetId: "as_9" } },
     ]);
