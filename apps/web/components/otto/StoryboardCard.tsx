@@ -972,11 +972,23 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const directShotIds = new Set(
     (reports ?? []).filter((r) => r.directToVideo).map((r) => r.shotId),
   );
-  // creation §5 :178 —— 这一镜挂着的 Library 图,配上服务端此刻取得到的地址。同一条通道:
-  // 服务端说,卡面只用(payload 上只有 id,缩略图与「这一件还在不在」都要读库)。
-  const libraryImagesByShot = new Map(
-    (reports ?? []).map((r) => [r.shotId, r.libraryImages ?? []] as const),
+  // creation §5 :178(判官 r1 P1-④)—— 这一镜挂着哪几张图,**id 只认 payload**。
+  //
+  // 上一版这一份整个从 sync 回执取,而草稿态分镜卡挂载时根本不发 sync(`needsRefreshEntrance`
+  // 对每格 `absent` 的卡为假)。于是重开页面后已挂的图既画不出来、又会在下一次挂图时被静默
+  // 顶掉 —— 服务端收的是**整份新清单**,而卡面拼出来的那份是空的。同一根因的第二个触发点是
+  // 每次成功编辑后 `setReports(null)` 到下一次 sync 回来之间那几百毫秒。
+  //
+  // 现在 id 只从服务端刚返回的那份 payload 读(编辑动作的返回值直接更新它,不必等 sync),
+  // 回执只补**地址**(缩略图);补不到就画占位格 —— 少一张缩略图,不少一件商家挂上去的东西。
+  const libraryImageUrlById = new Map(
+    (reports ?? []).flatMap((r) => (r.libraryImages ?? []).map((m) => [m.generationId, m.url] as const)),
   );
+  const libraryImagesOf = (shot: StoryboardShotView): MediaRef[] =>
+    (shot.referenceGenerationIds ?? []).map((generationId) => {
+      const url = libraryImageUrlById.get(generationId);
+      return { generationId, ...(url ? { url } : {}) };
+    });
   // #782: how many first frames gate① would actually MAKE (and charge for) — the one shared
   // rule, so the button never promises a number the server wouldn't mint. With continuous
   // shots on that is the first shot alone; the rest inherit the frame the previous clip
@@ -1208,11 +1220,11 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                           已经挂上的那几张**照旧列出来**(不管这一镜此刻还直不直接出片):演员
                           后来被删出 Library 的那一镜会失去入口,而商家仍然欠一格「把它取下来」
                           的路 —— 没有内容也没有出路的终态,这张卡上一个都不许有。 */}
-                      {(isDirectToVideo || (libraryImagesByShot.get(shot.shotId)?.length ?? 0) > 0) && (
+                      {(isDirectToVideo || libraryImagesOf(shot).length > 0) && (
                         <div className="flex flex-col gap-1.5">
                           <span className="text-[0.75rem] font-semibold text-foreground">{PRODUCT_VOCABULARY.library} images</span>
                           <div className="flex flex-wrap items-center gap-2">
-                            {(libraryImagesByShot.get(shot.shotId) ?? []).map((ref: MediaRef) => (
+                            {libraryImagesOf(shot).map((ref: MediaRef) => (
                               <span
                                 key={ref.generationId}
                                 className="relative inline-flex size-12 items-center justify-center overflow-hidden rounded-[var(--radius)] border border-border bg-muted"
@@ -1234,9 +1246,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                                   onClick={() =>
                                     void changeShotReferences(
                                       shot,
-                                      (libraryImagesByShot.get(shot.shotId) ?? [])
-                                        .filter((r: MediaRef) => r.generationId !== ref.generationId)
-                                        .map((r: MediaRef) => `generation:${r.generationId}`),
+                                      (shot.referenceGenerationIds ?? [])
+                                        .filter((id) => id !== ref.generationId)
+                                        .map((id) => `generation:${id}`),
                                     )
                                   }
                                 >
@@ -1249,9 +1261,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                                 disabled={busy || editLocked}
                                 onPick={(wire) =>
                                   void changeShotReferences(shot, [
-                                    ...(libraryImagesByShot.get(shot.shotId) ?? []).map(
-                                      (r: MediaRef) => `generation:${r.generationId}`,
-                                    ),
+                                    ...(shot.referenceGenerationIds ?? []).map((id) => `generation:${id}`),
                                     wire,
                                   ])
                                 }

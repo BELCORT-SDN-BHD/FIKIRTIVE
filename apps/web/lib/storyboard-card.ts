@@ -29,6 +29,15 @@ export interface StoryboardShotView {
   videoGenerationId?: string;
   /** #782 r3 闸③ 判词:上一镜的哪一张视频子卡已经确定交不出末帧(见 shotsStuckWithoutInheritedFrame)。 */
   inheritBlockedByVideoCardId?: string;
+  /**
+   * creation §5 :178(判官 r1 P1-④)—— 这一镜挂着的 Library 图(`Generation.id`)。
+   *
+   * **这一份是 payload 说的,不是 sync 回执说的**。卡面上一版只从回执读它,而草稿态分镜卡
+   * 挂载时根本不发 sync —— 重开页面后已挂的图既画不出来、又会在下一次挂图时被静默顶掉
+   * (服务端收的是整份新清单)。id 的权威因此只有一处:服务端刚返回的这份 payload。
+   * 回执(`ShotMediaSyncReport.libraryImages`)只补地址,补不到就画占位。
+   */
+  referenceGenerationIds?: string[];
 }
 
 export interface StoryboardCardView {
@@ -496,6 +505,12 @@ export function parseStoryboardCardPayload(payload: unknown): StoryboardCardView
           : {}),
         ...(typeof shot.inheritBlockedByVideoCardId === "string"
           ? { inheritBlockedByVideoCardId: shot.inheritBlockedByVideoCardId }
+          : {}),
+        // creation §5 :178 —— 挂图 id 与 entityIds 同一条防御口径:整份不是字符串数组就当没挂。
+        ...(Array.isArray(shot.referenceGenerationIds) &&
+        shot.referenceGenerationIds.length > 0 &&
+        shot.referenceGenerationIds.every((id) => typeof id === "string" && id)
+          ? { referenceGenerationIds: shot.referenceGenerationIds as string[] }
           : {}),
       };
     })

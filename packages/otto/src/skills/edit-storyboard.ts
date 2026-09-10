@@ -30,7 +30,7 @@ import {
 } from "../storyboard-edit.js";
 // #782 r15(判官 r14 P1):editShot 会删掉「已经花掉的钱」与这一镜之间的唯一连线,所以它
 // 在删之前必须问一次「那条作业还在途吗」——与人工动作层**同一份**判定、同一句话。
-import { lockCardTx, inFlightPointerBlock } from "../storyboard-child-job.js";
+import { lockCardTx, inFlightPointerBlock, referenceRideBlock } from "../storyboard-child-job.js";
 
 export const editStoryboardInput = z.object({
   cardId: z.string().min(1).describe("The STORYBOARD_CARD id being edited (from the storyboard card in this conversation)."),
@@ -136,6 +136,10 @@ export async function executeEditStoryboard(
       if (index >= locked.shots.length) { out = { error: "That shot no longer exists." }; return; }
       const blocked = await inFlightPointerBlock(tx, ctx.orgId, locked.shots[index]!, patch);
       if (blocked) { out = { error: blocked }; return; }
+      // creation §5 :178 —— 带不上参考图的镜头连挂都不许挂上去。与人工面同一道闸、同一句话:
+      // 这条 skill 的说明里写着「只有 @ 到演员的镜头带得上」,而说了做不到就是个假承诺。
+      const cantRide = await referenceRideBlock(tx, ctx.orgId, locked.shots[index]!, patch);
+      if (cantRide) { out = { error: cantRide }; return; }
       const edited = applyEditShotPrompt(locked, index, patch);
       await tx.chatMessage.update({
         where: { id: card.id },

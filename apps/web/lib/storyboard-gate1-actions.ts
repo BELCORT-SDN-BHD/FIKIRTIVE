@@ -200,6 +200,45 @@ function assertShotLibraryImagesRide(shot: Shot, isDirect: boolean): void {
 }
 
 /**
+ * creation §5 :178(判官 r1 P1-②③⑤)—— 挂的图**没能全部上车**时,停在这里。
+ *
+ * 引擎的 `image_url` 名额一共只有 9 个(`MAX_VIDEO_IMAGE_PARTS`),而这一镜 @ 到的每个元素先
+ * 占 1 格(`videoAttachedCap`)。于是 @ 一位演员 + 一件商品的镜头挂到第 8 张起,`buildProposeCard`
+ * 会**默默切掉**多出来的那几张(propose.helpers.ts 的 `cardVideoReferenceIds`)。
+ *
+ * 聊天那一面这一刀是**说出来**的:`buildReferenceBudgetNotes` 在批准前逐字讲「你挂了 N 张,
+ * 只有前 M 张会上路」,而那句话由 `propose.ts` 经 `withReferenceBudget` 并进卡面。分镜铸卡这条
+ * 路从不经过那一层 —— 商家在镜头上看着 8 个缩略图、按下 Confirm、付了钱,引擎收到 7 张,卡面
+ * 与确认框一个字都没说。那正是 FSE-001/002 那条静默丢弃的形状,只是换了个入口。
+ *
+ * 分镜这一面没有「卡面披露」这一格可用(子卡的 notes 不下发到分镜卡上),所以诚实的出路只剩
+ * 一条:**花钱之前点名拒绝**(CREATE-A2),并说清可以怎么改。判据不在这里另算一份 —— 读的就是
+ * `buildProposeCard` 铸出来的那张卡自己那一列(`referenceGenerationIds`),所以「卡上说的」与
+ * 「引擎真收的」不可能分家。整卡 fail closed:异常在事务里抛 ⇒ 整份回滚 ⇒ 零子卡、零 GenJob、
+ * 零账本行。
+ */
+function assertShotLibraryImagesAllRide(
+  shot: Shot,
+  attached: readonly string[],
+  riding: readonly string[],
+): void {
+  if (attached.length === 0 || riding.length >= attached.length) return;
+  const extra = attached.length - riding.length;
+  const images = attached.length === 1 ? "1 Library image" : `${attached.length} Library images`;
+  const fit =
+    riding.length === 0
+      ? "none of them fit"
+      : riding.length === 1
+        ? "only 1 of them fits"
+        : `only ${riding.length} of them fit`;
+  throw new ProposeRefusal(
+    `${shotLabel(shot)} has ${images} on it, but ${fit} alongside the cast and products you @mentioned on it. ` +
+      `Take ${extra === 1 ? "one" : extra} off that shot, or @mention fewer people and products on it. ` +
+      "Nothing was made and nothing was charged.",
+  );
+}
+
+/**
  * creation §5 :178 —— 把这一镜挂的 Library 图装进这一趟的 ctx(**锁内、按 ownerId 重读**)。
  *
  * 为什么要在这里再读一次:写入那一刻(`setShotReferences`)确实按 ownerId 解析过,但那是过去
@@ -1489,6 +1528,10 @@ export async function prepareStoryboardVideos(
           ctx,
           cast.owned,
         );
+        // creation §5 :178 —— 卡上真会上路的那几张少于商家挂的那几张 ⇒ 花钱之前点名拒绝。
+        // 判在**复用比对之前**:比对读的是同一张被截过的卡,放在后面就会复用一张悄悄少带
+        // 图的旧卡,而拒绝一次都不会发生。
+        assertShotLibraryImagesAllRide(shot, ctx.sourceGenerationIds ?? [], wouldBe.referenceGenerationIds ?? []);
 
         // Already points at a video child → try to reuse it.
         if (shot.videoCardId) {
@@ -1679,6 +1722,8 @@ export async function regenShotVideoCard(
         ctx,
         cast.owned,
       );
+      // creation §5 :178 —— 同 prepare 那条:带不全就不铸卡,理由与出路一起说出来。
+      assertShotLibraryImagesAllRide(target, ctx.sourceGenerationIds ?? [], wouldBe.referenceGenerationIds ?? []);
 
       // Reuse-if-fresh: an existing UNSPENT child that still matches the would-be card → reuse
       // it, do NOT mint (repeated open/cancel would otherwise orphan $0 cards). A spent or

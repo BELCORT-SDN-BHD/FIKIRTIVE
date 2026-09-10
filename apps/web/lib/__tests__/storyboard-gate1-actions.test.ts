@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GEN_VIDEO_MODEL_OPTIONS, pricedGenCredits, displayCredits, cardQuoteVersion } from "@fikirtive/core";
+import { GEN_VIDEO_MODEL_OPTIONS, pricedGenCredits, displayCredits, cardQuoteVersion, videoAttachedCap } from "@fikirtive/core";
 // FSE-002 复修轮:铸卡层拒绝的**基类** —— 入口接的一直是它(`packages/otto/src/index.ts` 的
 // 注释逐字写着这条纪律),所以这里演的拒绝也用它,而不是某一族的具体子类。
 import { ProposeRefusal } from "@fikirtive/otto";
@@ -1626,23 +1626,34 @@ function mockVideoProposeCard() {
   mockBuildProposeCard.mockImplementation(
     (
       input: { structuredPrompt: string; entityIds: string[]; desiredDuration?: number },
-      ctx: { sourceGenerationId?: string },
-    ) => ({
-      cardPayload: {
-        kind: "video",
-        model: "seedance-2-mini",
-        params: { count: 1, durationSeconds: snapDuration(input.desiredDuration) },
-        structuredPrompt: input.structuredPrompt,
-        entityIds: input.entityIds,
-        estimatedCredits: 5,
-        estimatedPriceUsd: 0.35,
-        reason: "",
-        downgraded: false,
-        variantSel: {},
-        ...(ctx.sourceGenerationId ? { sourceGenerationId: ctx.sourceGenerationId } : {}),
-      },
-      shownPriceDisplay: 5,
-    }),
+      ctx: { sourceGenerationId?: string; sourceGenerationIds?: string[] },
+    ) => {
+      // creation §5 :178(判官 r1 P1-②③⑤)—— 真 `buildProposeCard` 会**按名额截断**挂图
+      // (propose.helpers.ts:1431-1439),而这个替身从前不截,于是「挂多了会被悄悄丢掉」这件
+      // 事在测试里根本不存在。名额读的是 core 里那**同一个**函数,所以这里演的与真卡一致。
+      const attached = ctx.sourceGenerationIds ?? [];
+      const riding = attached.slice(
+        0,
+        videoAttachedCap({ attachedImageCount: attached.length, mentionedElementCount: input.entityIds.length }),
+      );
+      return {
+        cardPayload: {
+          kind: "video",
+          model: "seedance-2-mini",
+          params: { count: 1, durationSeconds: snapDuration(input.desiredDuration) },
+          structuredPrompt: input.structuredPrompt,
+          entityIds: input.entityIds,
+          estimatedCredits: 5,
+          estimatedPriceUsd: 0.35,
+          reason: "",
+          downgraded: false,
+          variantSel: {},
+          ...(ctx.sourceGenerationId ? { sourceGenerationId: ctx.sourceGenerationId } : {}),
+          ...(riding.length ? { referenceGenerationIds: riding } : {}),
+        },
+        shownPriceDisplay: 5,
+      };
+    },
   );
 }
 
@@ -4299,5 +4310,71 @@ describe("creation §5 :178 —— 分镜挂 Library 图,进报价材料", () =>
     expect(imgs[0]!.url).toBeTruthy();
     expect(imgs[1]!.url).toBeUndefined();
     expect(reportOf(res, "s1").libraryImages).toEqual([]);
+  });
+});
+
+/**
+ * creation §5 :178(判官 r1 P1-②③⑤)—— 挂多了**不许悄悄丢**。
+ *
+ * 引擎的 `image_url` 名额只有 9 个,而这一镜 @ 到的每个元素先占 1 格(`videoAttachedCap`)。
+ * 聊天那一面挂多了会在卡面上逐字说出来(`buildReferenceBudgetNotes`:「You attached N images —
+ * only the first M go to the engine…」),分镜铸卡这条路却从不经过那一层:商家在镜头上看着 8 个
+ * 缩略图、批准、付费,引擎收到 7 张,卡面与确认框零提示。
+ *
+ * 这一组钉的是那一刀现在**停在花钱之前**:卡上真会上路的少于商家挂的 ⇒ 点名拒绝、零卡零预扣。
+ * 判据不在这里另算一份 —— 读的就是 `buildProposeCard` 铸出来的那张卡自己那一列,所以「卡上说的」
+ * 与「引擎真收的」不可能分家。
+ */
+describe("creation §5 :178 —— 挂图带不全就不许开工", () => {
+  /** 这一镜 @ 了 2 个元素 ⇒ 名额 9−2=7;挂 8 张 ⇒ 第 8 张上不了车。 */
+  function overCapPayload(): StoryboardCardPayload {
+    const p = castPayload2();
+    p.shots[0]!.referenceGenerationIds = ["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8"];
+    return p;
+  }
+
+  it("creation §5 :178 / CREATE-A2: 挂 8 张只带得上 7 张 ⇒ 花钱之前点名拒绝,零卡零预扣", async () => {
+    castOwned();
+    libraryImagesOwned(["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8"]);
+    mockVideoProposeCard();
+    wireLoads(card(overCapPayload()));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+
+    expect("error" in res && res.error).toContain("Shot 1");
+    expect("error" in res && res.error).toContain("8 Library images");
+    expect("error" in res && res.error).toContain("only 7 of them fit");
+    expect("error" in res && res.error).toContain("Nothing was made and nothing was charged");
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :178 / CREATE-A2: 单镜重出同法 —— 带不全就不铸卡", async () => {
+    castOwned();
+    libraryImagesOwned(["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8"]);
+    mockVideoProposeCard();
+    wireLoads(card(overCapPayload()));
+
+    const res = await regenShotVideoCard({ cardId: "card-1", shotId: "s0" });
+
+    expect("error" in res && res.error).toContain("Shot 1");
+    expect("error" in res && res.error).toContain("only 7 of them fit");
+    expect(mockChatCreate).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :178 / CREATE-A2: 名额刚好装得下 ⇒ 照常铸卡,一张不少地进材料", async () => {
+    castOwned();
+    libraryImagesOwned(["l1", "l2", "l3", "l4", "l5", "l6", "l7"]);
+    mockVideoProposeCard();
+    const p = castPayload2();
+    p.shots[0]!.referenceGenerationIds = ["l1", "l2", "l3", "l4", "l5", "l6", "l7"];
+    wireLoads(card(p));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+
+    if (!("children" in res)) throw new Error("expected children");
+    const [, propCtx] = mockBuildProposeCard.mock.calls[0];
+    expect(propCtx.sourceGenerationIds).toHaveLength(7);
   });
 });

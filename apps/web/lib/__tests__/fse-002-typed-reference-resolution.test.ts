@@ -241,3 +241,39 @@ describe("FSE-002 / CREATE-A2 —— 对不上的四种，一律显式未解析"
     expect(generationFindMany).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * creation §5 :178(判官 r1 P1-①)—— 解析器要认得**自己的产物**。
+ *
+ * 分镜卡把这一镜挂着的图存成规范身份(`Generation.id`),商家再加一张 / 取下一张时,卡面发回
+ * 的是**整份新清单** —— 里面那几张已经挂着的只能以 `generation:<id>` 的形状回来。而上传件落
+ * 下的那一行 Generation 的 `source` 正是 UPLOAD:从前 `generation:` 那一支明写着「source 不是
+ * UPLOAD」,于是整次编辑被判 unresolved、整份拒绝,商家读到的是一句关于他自己那个文件的假话
+ * (「isn't one of your images any more」),而那个文件就在 Library 里。
+ *
+ * 归属那一格一格没动:这一趟查询照旧带 ownerId,别家店的行照旧读不出来。
+ */
+describe("creation §5 :178 —— 解析器认得自己的产物(上传件那一行)", () => {
+  it("creation §5 :178: 上传件解析出来的规范身份,原样发回来时读得出来(不是「这文件没了」)", async () => {
+    generationFindMany.mockResolvedValue([uploadGenerationRow()]);
+
+    const out = await resolveOwnedReferenceRefs(OWNER, [`generation:${UPLOAD_GENERATION_ID}`]);
+
+    expect(out.unresolved).toBe(0);
+    expect(out.media).toEqual([{ generationId: UPLOAD_GENERATION_ID, kind: "image" }]);
+    // 归属仍然是那一趟查询的事 —— 这一格没动。
+    expect(generationFindMany.mock.calls[0]![0].where.ownerId).toBe(OWNER);
+  });
+
+  it("creation §5 :178: 挂着的上传件 + 新挂的一张 ⇒ 两张都在,一张都不丢", async () => {
+    generationFindMany.mockResolvedValue([uploadGenerationRow(), imageGenerationRow()]);
+
+    const out = await resolveOwnedReferenceRefs(OWNER, [
+      `generation:${UPLOAD_GENERATION_ID}`,
+      `generation:${PRODUCT_GENERATION_ID}`,
+    ]);
+
+    expect(out.unresolved).toBe(0);
+    expect(out.media.map((m) => m.generationId)).toEqual([UPLOAD_GENERATION_ID, PRODUCT_GENERATION_ID]);
+  });
+});

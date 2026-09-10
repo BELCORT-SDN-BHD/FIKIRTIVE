@@ -112,6 +112,9 @@ export {
   isExhausted,
   isUnconsumedInFlight,
   inFlightPointerBlock,
+  // creation §5 :178 —— 「这一镜带不上参考图」这道写入闸,两面共用。
+  referenceRideBlock,
+  NO_CAST_FOR_REFERENCES_BLOCK,
   JOB_DEAD_STATUSES,
   JOB_LIVE_STATUSES,
   VIDEO_IN_FLIGHT_EDIT_BLOCK,

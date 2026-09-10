@@ -205,6 +205,45 @@ export const FRAME_IN_FLIGHT_EDIT_BLOCK =
  * 删指针分成两步跑,就等于给「作业在两步之间落账」留一个窗口。传进来的 shot 必须是**锁内重读**
  * 的那一份 —— 「改没改」是拿父卡当前值比出来的,比错了对象就等于没比。
  */
+/** 商家看得懂、而且能照做的那一句(白标、English sentence case)。两个执行器共用同一句话。 */
+export const NO_CAST_FOR_REFERENCES_BLOCK =
+  "A reference photo only rides along on a shot that @mentions a cast member from your Library — " +
+  "@mention one on that shot first, then attach the image. Nothing was changed.";
+
+/**
+ * creation §5 :178(判官 r1 P1-⑥)—— 这一镜**带不上**参考图时,连挂都不许挂上去。
+ *
+ * 参考图只有纯文生视频那一档带得上(`videoReferencesRide`:引擎把首帧 / 首+末帧 / 整段参考片
+ * 当互斥场景),而分镜里走那一档的只有 @ 到演员的那几镜(`shotGoesDirectToVideo`)。
+ *
+ * 上一版让任何一镜都挂得上,再到闸② 铸卡时点名拒绝。中间那一段是个真窟窿:两步镜头的首帧
+ * 报价可以先铸出来(那时它还没挂图),商家再给它挂图 —— 挂图只作废**视频**指针,首帧那张旧卡
+ * 照旧付得出去。于是「两步镜头挂着图 = 花钱之前点名拒绝」这句自述在那条时序上不成立:钱先花
+ * 了,拒绝到下一次 prepare 才来。判提前到写入这一刻,那条时序就不存在了($0、零写入)。
+ *
+ * 判据与闸② 同一条(`Entity.type === "CHARACTER"` 且是这家店活着的元素),owner-scope 由传入的
+ * ownerId 承担 —— 别家店的演员 id 在这里读不出来,那一镜照旧算「没 @ 演员」。
+ *
+ * **取下图永远放行**:空清单不进这道闸。否则演员后来被删出 Library 的那一镜会变成「挂着图、
+ * 又拿不下来」的终态 —— 没有内容也没有出路的那种,这张卡上一个都不许有。
+ * 不碰挂图这一格的编辑(改文字 / 时长)同样一格不动:patch 上没有这个键就直接放行。
+ */
+export async function referenceRideBlock(
+  tx: PrismaTx,
+  ownerId: string,
+  shot: StoryboardCardPayload["shots"][number],
+  patch: ShotPromptPatch,
+): Promise<string | null> {
+  if (!patch.referenceGenerationIds?.length) return null;
+  const entityIds = shot.entityIds ?? [];
+  if (entityIds.length === 0) return NO_CAST_FOR_REFERENCES_BLOCK;
+  const cast = await tx.entity.findFirst({
+    where: { id: { in: entityIds }, ownerId, deletedAt: null, type: "CHARACTER" },
+    select: { id: true },
+  });
+  return cast ? null : NO_CAST_FOR_REFERENCES_BLOCK;
+}
+
 export async function inFlightPointerBlock(
   tx: PrismaTx,
   ownerId: string,

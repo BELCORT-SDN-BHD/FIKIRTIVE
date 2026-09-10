@@ -30,7 +30,7 @@ import {
 // #782 r15(判官 r14 P1):闸① 早就有「这张子卡此刻算不算在途」的正确判定,编辑路径缺的
 // 就是它。人工这一面与 Otto 那一面共用同一份判定、同一句话 —— 只关一扇门等于没关。
 // 见 packages/otto/src/storyboard-child-job.ts 的模块说明。
-import { lockCardTx, inFlightPointerBlock } from "@fikirtive/otto";
+import { lockCardTx, inFlightPointerBlock, referenceRideBlock } from "@fikirtive/otto";
 
 type Ok = { payload: StoryboardCardPayload };
 type Err = { error: string };
@@ -180,6 +180,10 @@ export async function setShotReferences(raw: unknown): Promise<Ok | Err> {
       if (index >= cur.shots.length) { out = { error: "That shot no longer exists." }; return; }
       const blocked = await inFlightPointerBlock(tx, ownerId, cur.shots[index]!, { referenceGenerationIds });
       if (blocked) { out = { error: blocked }; return; }
+      // creation §5 :178 —— 带不上参考图的镜头连挂都不许挂上去(两面共用这一道闸,理由与出路
+      // 都写在 `referenceRideBlock` 里)。取下图永远放行。
+      const cantRide = await referenceRideBlock(tx, ownerId, cur.shots[index]!, { referenceGenerationIds });
+      if (cantRide) { out = { error: cantRide }; return; }
       const next = applyEditShotPrompt(cur, index, { referenceGenerationIds });
       await tx.chatMessage.update({
         where: { id: cardId },

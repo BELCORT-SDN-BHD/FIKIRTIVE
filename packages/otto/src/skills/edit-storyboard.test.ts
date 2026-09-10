@@ -3,15 +3,20 @@ import { editStoryboardInput, executeEditStoryboard, editStoryboardSkill } from 
 import { executeProposeStoryboard } from "./propose-storyboard.js";
 import { MAX_STORYBOARD_SHOTS, type StoryboardCardPayload } from "./propose-storyboard.helpers.js";
 import type { OttoContext } from "../context.js";
+// creation §5 :178 —— 「没 @ 演员的镜头挂不上图」那句话只有一份(人工面读的是同一个常量)。
+import { NO_CAST_FOR_REFERENCES_BLOCK } from "../storyboard-child-job.js";
 
-const { mockFindFirst, mockUpdate, mockCreate, mockGenJobCreate, mockGenJobFindFirst, mockExecuteRaw } = vi.hoisted(() => ({
-  mockFindFirst: vi.fn(),
-  mockUpdate: vi.fn(),
-  mockCreate: vi.fn(),
-  mockGenJobCreate: vi.fn(), // must NEVER be called — this skill is $0
-  mockGenJobFindFirst: vi.fn(),
-  mockExecuteRaw: vi.fn(),
-}));
+const { mockFindFirst, mockUpdate, mockCreate, mockGenJobCreate, mockGenJobFindFirst, mockExecuteRaw, mockEntityFindFirst } =
+  vi.hoisted(() => ({
+    mockFindFirst: vi.fn(),
+    mockUpdate: vi.fn(),
+    mockCreate: vi.fn(),
+    mockGenJobCreate: vi.fn(), // must NEVER be called — this skill is $0
+    mockGenJobFindFirst: vi.fn(),
+    mockExecuteRaw: vi.fn(),
+    // creation §5 :178 —— 挂图那一刻问的那一趟:这一镜 @ 到本店的演员了吗(referenceRideBlock)。
+    mockEntityFindFirst: vi.fn(),
+  }));
 
 // #782 r15:editShot 变成「卡锁 + 锁内重读 + 在途闸 + 写」的一笔事务,所以替身多了
 // $transaction / $executeRaw / genJob.findFirst。tx 与顶层共用同一组 mock。
@@ -19,6 +24,7 @@ vi.mock("@fikirtive/db", () => {
   const client = {
     chatMessage: { findFirst: mockFindFirst, update: mockUpdate, create: mockCreate },
     genJob: { create: mockGenJobCreate, findFirst: mockGenJobFindFirst },
+    entity: { findFirst: mockEntityFindFirst },
     $executeRaw: mockExecuteRaw,
   };
   return {
@@ -62,6 +68,7 @@ beforeEach(() => {
   mockUpdate.mockResolvedValue({});
   mockExecuteRaw.mockResolvedValue(1);
   mockGenJobFindFirst.mockResolvedValue(null); // 默认:子卡背后没有任何作业
+  mockEntityFindFirst.mockResolvedValue({ id: "actor-1" }); // 默认:@ 到的那位是本店活着的演员
 });
 
 describe("editStoryboardInput schema", () => {
@@ -520,6 +527,13 @@ describe("#782 r17 editShot —— 帧判定不看键在不在", () => {
 // 过的(`validateOttoTurnReferences`)。所以「跨租户不可选」在这一面是**结构性**的:那条路
 // 上根本没有一个能让别家店 id 进来的入口。
 describe("creation §5 :178 —— Otto 面 op=setShotReferences", () => {
+  /** 带得上参考图的分镜:每一镜都 @ 到了一位演员(判官 r1 P1-⑥ 之后这是挂图的前提)。 */
+  function castPayload3(): StoryboardCardPayload {
+    const p = payload3();
+    for (const shot of p.shots) shot.entityIds = ["actor-1"];
+    return p;
+  }
+
   function route(p: StoryboardCardPayload) {
     mockFindFirst.mockImplementation(async (args: { where: Record<string, unknown> }) => {
       const w = args.where;
@@ -530,7 +544,7 @@ describe("creation §5 :178 —— Otto 面 op=setShotReferences", () => {
   }
 
   it("creation §5 :178 / CREATE-A2: 把这一轮挂上来的图挂到那一镜 —— 走的是人工面同一个纯变换", async () => {
-    route(payload3());
+    route(castPayload3());
 
     const res = await executeEditStoryboard(
       { cardId: "card-1", op: "setShotReferences", index: 1, useTurnImages: true },
@@ -556,7 +570,7 @@ describe("creation §5 :178 —— Otto 面 op=setShotReferences", () => {
   });
 
   it("creation §5 :178: useTurnImages=false 把这一镜挂的图全部取下", async () => {
-    const p = payload3();
+    const p = castPayload3();
     p.shots[1]!.referenceGenerationIds = ["gen-a"];
     route(p);
 
@@ -571,7 +585,7 @@ describe("creation §5 :178 —— Otto 面 op=setShotReferences", () => {
   });
 
   it("creation §5 :178 / CREATE-A2: 这一轮一张图都没挂 ⇒ 说清楚该做什么,零写入", async () => {
-    route(payload3());
+    route(castPayload3());
 
     const res = await executeEditStoryboard(
       { cardId: "card-1", op: "setShotReferences", index: 1, useTurnImages: true },
@@ -586,7 +600,7 @@ describe("creation §5 :178 —— Otto 面 op=setShotReferences", () => {
   });
 
   it("creation §5 :178 / CREATE-A2: 这一镜的片子还在跑 ⇒ 与人工面同一句话、同一道闸,零写入", async () => {
-    route(payload3()); // s0 身上有 videoCardId=vc0
+    route(castPayload3()); // s0 身上有 videoCardId=vc0
     mockGenJobFindFirst.mockResolvedValue({
       id: "j1",
       status: "GENERATING",
@@ -606,7 +620,7 @@ describe("creation §5 :178 —— Otto 面 op=setShotReferences", () => {
   });
 
   it("creation §5 :178: 少了 useTurnImages ⇒ 拒绝,零写入(不猜商家的意思)", async () => {
-    route(payload3());
+    route(castPayload3());
 
     const res = await executeEditStoryboard(
       { cardId: "card-1", op: "setShotReferences", index: 1 },
@@ -615,5 +629,78 @@ describe("creation §5 :178 —— Otto 面 op=setShotReferences", () => {
 
     expect(res).toEqual({ error: "setShotReferences needs useTurnImages true or false." });
     expect(mockUpdate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * creation §5 :178(判官 r1 P1-⑥)—— 这条 skill 的说明里写着「只有 @ 到演员的镜头带得上参考图」,
+ * 而上一版**任何**一镜都挂得上,拒绝要等到闸② 铸卡才来。说了做不到就是个假承诺,而且它还开着
+ * 一条真窟窿:两步镜头的首帧报价先铸出来,再挂图 —— 挂图只作废视频指针,那张旧首帧卡照旧付得
+ * 出去。所以判提前到写入这一刻,与人工面同一道闸、同一句话。
+ */
+describe("creation §5 :178 —— 没 @ 演员的镜头,Otto 也挂不上图", () => {
+  function route(p: StoryboardCardPayload) {
+    mockFindFirst.mockImplementation(async (args: { where: Record<string, unknown> }) => {
+      const w = args.where;
+      if (w.kind === "STORYBOARD_CARD") return card(p);
+      if (w.kind === "GEN_CARD") return { genJobId: null };
+      return null;
+    });
+  }
+
+  it("creation §5 :178 / CREATE-A2: 这一镜一个元素都没 @ ⇒ 拒绝并说清怎么做,零写入", async () => {
+    route(payload3()); // 三镜都没 @ 任何元素
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setShotReferences", index: 1, useTurnImages: true },
+      { context: makeCtx({ sourceGenerationIds: ["gen-a"] }) },
+    );
+
+    expect(res).toEqual({ error: NO_CAST_FOR_REFERENCES_BLOCK });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :178 / CREATE-A2: @ 的只是商品(读不到演员那一行)⇒ 同一句话,零写入", async () => {
+    mockEntityFindFirst.mockResolvedValue(null);
+    const p = payload3();
+    p.shots[1]!.entityIds = ["mug"];
+    route(p);
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setShotReferences", index: 1, useTurnImages: true },
+      { context: makeCtx({ sourceGenerationIds: ["gen-a"] }) },
+    );
+
+    expect(res).toEqual({ error: NO_CAST_FOR_REFERENCES_BLOCK });
+    expect(mockUpdate).not.toHaveBeenCalled();
+    // 归属:按 CHARACTER、带本轮 ctx 的 orgId 查 —— 别家店的演员在这里读不出来。
+    expect(mockEntityFindFirst.mock.calls[0]![0].where).toMatchObject({ ownerId: OWNER, type: "CHARACTER" });
+  });
+
+  it("creation §5 :178: 取下图不进这道闸 —— 演员没了也拿得下来", async () => {
+    const p = payload3();
+    p.shots[1]!.referenceGenerationIds = ["gen-a"];
+    route(p);
+    mockEntityFindFirst.mockResolvedValue(null);
+
+    const res = await executeEditStoryboard(
+      { cardId: "card-1", op: "setShotReferences", index: 1, useTurnImages: false },
+      { context: makeCtx() },
+    );
+
+    expect(res).toEqual({ cardId: "card-1", shotCount: 3 });
+    const written = mockUpdate.mock.calls[0]![0] as { data: { payload: StoryboardCardPayload } };
+    expect("referenceGenerationIds" in written.data.payload.shots[1]!).toBe(false);
+  });
+
+  it("creation §5 :178: 改文字的编辑一趟都不问演员(这道闸只管挂图)", async () => {
+    route(payload3());
+
+    await executeEditStoryboard(
+      { cardId: "card-1", op: "editShot", index: 1, videoPrompt: "NEW" },
+      { context: makeCtx() },
+    );
+
+    expect(mockEntityFindFirst).not.toHaveBeenCalled();
   });
 });
