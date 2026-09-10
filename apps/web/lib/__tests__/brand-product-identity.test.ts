@@ -35,6 +35,8 @@ const {
 } = await import("@/lib/brand-record-actions");
 const { createEntity, updateEntity, softDeleteEntity, softDeleteReferenceImage } = await import("@/lib/actions");
 const { getLibraryElements } = await import("@/lib/library-elements");
+const { loadBrandSections } = await import("@/lib/brand-context-data");
+const { setBaseAsset } = await import("@/lib/refgen-actions");
 const { searchReferences } = await import("@/lib/reference-search");
 const { storage } = await import("@/lib/storage");
 const { prisma, createProduct } = await import("@fikirtive/db");
@@ -359,6 +361,70 @@ describe("PRODID-A4 改名换图:名字与主图的单一源是身份,两边同�
     expect((stored.data as { name?: string }).name).toBe(newName);
   }, 60_000);
 
+  it("PRODID-A4 Library 换封面之后在 Brand 页改价:商家挑的封面不回滚", async () => {
+    await signInAs(EMAIL_A);
+    // 判官第 4 轮 P1(PR #1337):A4 的「换主图」在 Library → Brand 这个方向上一版是反的。
+    // 这一条走整条真路:真 `setBaseAsset`、真 `saveBrandRecord`、真库。
+    const name = `Laksa ${randomUUID().slice(0, 8)}`;
+    const cover = await seedAsset(ownerA, `a4-cover-${randomUUID().slice(0, 8)}`);
+    const picked = await seedAsset(ownerA, `a4-picked-${randomUUID().slice(0, 8)}`);
+    const saved = (await saveBrandRecord({
+      kind: "product", data: { name, price: "RM 7.00", imageAssetId: cover },
+    })) as { ok: true; id: string };
+    const entityId = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    })).entityId!;
+
+    // 商家在 Library 把另一张照片设成封面(`setBaseAsset` 只接受本实体已有的 live 参考图)。
+    await prisma.referenceImage.create({
+      data: { id: newId(), ownerId: ownerA, entityId, assetId: picked, position: 1 },
+    });
+    await expect(setBaseAsset(entityId, picked)).resolves.toEqual({ ok: true });
+
+    // Brand 页拿到的就是身份上那张(读路以身份为准),改个价、不碰图,原样存回去。
+    const before = (await listBrandRecords()).find((r) => r.id === saved.id)!;
+    expect(before.data).toMatchObject({ imageAssetId: picked });
+    await expect(
+      saveBrandRecord({ id: saved.id, kind: "product", data: { ...before.data, price: "RM 9.00" } }),
+    ).resolves.toEqual({ ok: true, id: saved.id });
+
+    // 封面没有回滚到旧的那张,两边看到的是同一张图。
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: entityId, ownerId: ownerA }, select: { baseAssetId: true } }),
+    ).resolves.toEqual({ baseAssetId: picked });
+    expect((await listBrandRecords()).find((r) => r.id === saved.id)?.data).toMatchObject({
+      imageAssetId: picked, price: "RM 9.00",
+    });
+  }, 60_000);
+
+  it("PRODID-A4 /brand 那一面也以身份为准:价签缓存里的旧名字盖不过 Library 卡上的名字", async () => {
+    await signInAs(EMAIL_A);
+    // 判官第 4 轮 P1(PR #1337):`loadBrandSections`(`/brand`)是最后一条没 join 身份的展示
+    // 读路。一次性链接把价签指向商家自己那张 Library 卡时只写 `entityId`、不动 `data`,
+    // 所以卡的名字与缓存里的名字**按设计**就是两个字符串 —— A4 点名的那一面正是这一面。
+    const cardName = `Mee   goreng ${randomUUID().slice(0, 8)}`;
+    const cachedName = `Mee goreng ${randomUUID().slice(0, 8)}`;
+    const saved = (await saveBrandRecord({
+      kind: "product", data: { name: cachedName, price: "RM 5.50" },
+    })) as { ok: true; id: string };
+    const entityId = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    })).entityId!;
+    // 逐字复刻迁移那一刻的形状:身份上是商家自己写的名字,价签的 data 一个字节没动。
+    await prisma.entity.updateMany({
+      where: { id: entityId, ownerId: ownerA }, data: { name: cardName },
+    });
+
+    const sections = await loadBrandSections(ownerA);
+    const entry = sections.flatMap((sec) => sec.entries).find((e) => e.id === saved.id);
+    expect(entry?.name).toBe(cardName);
+    // 对照:同一件产品在 Library 与 /brand/records 上叫的也是这一个名字 —— 一件东西一个名字。
+    const elements = await getLibraryElements();
+    if (!Array.isArray(elements)) throw new Error(elements.error);
+    expect(elements.find((e) => e.id === entityId)?.name).toBe(cardName);
+    expect((await listBrandRecords()).find((r) => r.id === saved.id)?.data).toMatchObject({ name: cardName });
+  }, 60_000);
+
   it("PRODID-A4 Library 改成另一件活着的同名产品:整笔拒绝,两边都不动(规格 §3)", async () => {
     await signInAs(EMAIL_A);
     const taken = `Milo dinosaur ${randomUUID().slice(0, 8)}`;
@@ -447,6 +513,60 @@ describe("PRODID-A6 删除与恢复:一处删两边消失,可一起恢复", () =
     expect(fresh.contextStatus).toBe("Ready");
     expect(fresh.entityId).toBeTruthy();
     expect(fresh.entityId).not.toBe(entityId);
+  }, 60_000);
+
+  it("PRODID-A6 Library 删产品卡之后按恢复:价签、卡、封面的字节一起回来", async () => {
+    await signInAs(EMAIL_A);
+    // 判官第 4 轮 P1(PR #1337):上一条用例的名字里写着「恢复之后两边一起回来」,却一次都
+    // 没调过 `restoreBrandRecord` —— 恰恰是出问题的那一半零覆盖。这一条把它补齐,并且钉住
+    // 真正会不可逆丢数据的那一格:**字节**。`softDeleteEntity` 原先在软删身份的同一个事务里
+    // 跑资产清扫,而从 Library 出生的产品价签里没有 `data.imageAssetId` 那条软指针,于是
+    // 判据认定这张封面是孤儿、把字节真删出存储桶;商家随后按下 Undo,拿回来的是一张指着
+    // 空气的卡,没有任何入口修得好。
+    const assetId = await seedAsset(ownerA, `a6-restore-${randomUUID().slice(0, 8)}`);
+    // 第二张照片:它**不是**封面,所以连价签缓存那条软指针都没有 —— 少了「带走了价签就
+    // 不清扫」这一条,它的字节会被当成孤儿真删,而恢复只会把行接回来。
+    const extraId = await seedAsset(ownerA, `a6-restore2-${randomUUID().slice(0, 8)}`);
+    const name = `Char kuey teow ${randomUUID().slice(0, 8)}`;
+    // **从 Library 出生**的产品 —— `createEntity(type:"PRODUCT")` 递给共享动作的正是这个形状:
+    // `data` 里只有名字,照片走 `assetIds`。判官的复现就在这条路上:价签里没有那条软指针。
+    const made = (await createProduct({
+      ownerId: ownerA, data: { name }, source: "user", assetIds: [assetId, extraId],
+    })) as { created: true; id: string; entityId: string };
+    const saved = { id: made.id };
+    const entityId = made.entityId;
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: entityId, ownerId: ownerA }, select: { baseAssetId: true } }),
+    ).resolves.toEqual({ baseAssetId: assetId });
+
+    await expect(softDeleteEntity(entityId)).resolves.toMatchObject({ ok: true });
+    expect((await listBrandRecords()).some((r) => r.id === saved.id)).toBe(false);
+    // 字节没被带走(与 Brand 页删那个方向同一口径:行可恢复,字节不可恢复 ⇒ fail open)。
+    expect(await bytesExist(ownerA, assetId)).toBe(true);
+    expect(await bytesExist(ownerA, extraId)).toBe(true);
+    await expect(
+      prisma.asset.findFirstOrThrow({ where: { id: assetId, ownerId: ownerA }, select: { deletedAt: true } }),
+    ).resolves.toEqual({ deletedAt: null });
+
+    await expect(restoreBrandRecord({ id: saved.id })).resolves.toEqual({ ok: true });
+
+    // 两边一起回来:Library 卡、Brand 页价签、@ 菜单,以及封面那条硬引用。
+    const back = await getLibraryElements();
+    if (!Array.isArray(back)) throw new Error(back.error);
+    expect(back.filter((e) => e.id === entityId).map((e) => e.name)).toEqual([name]);
+    const rows = await listBrandRecords();
+    expect(rows.find((r) => r.id === saved.id)?.data).toMatchObject({ name, imageAssetId: assetId });
+    const menu = await searchReferences(ownerA, { query: name });
+    expect(menu.items.some((i) => i.id === entityId)).toBe(true);
+    await expect(
+      prisma.referenceImage.count({ where: { ownerId: ownerA, entityId, assetId, deletedAt: null } }),
+    ).resolves.toBe(1);
+    // 恢复出来的照片不是坏图 —— 两张的字节此刻都还在存储桶里。
+    expect(await bytesExist(ownerA, assetId)).toBe(true);
+    expect(await bytesExist(ownerA, extraId)).toBe(true);
+    await expect(
+      prisma.referenceImage.count({ where: { ownerId: ownerA, entityId, deletedAt: null } }),
+    ).resolves.toBe(2);
   }, 60_000);
 
   it("PRODID-A6 删掉又建了同名产品之后再恢复旧的:说得出为什么,不吞掉唯一冲突,也不堆卡", async () => {

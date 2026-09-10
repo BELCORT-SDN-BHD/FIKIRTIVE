@@ -756,7 +756,7 @@ export async function softDeleteEntity(entityId: string): Promise<{ ok: true; sh
       // 判官第 3 轮 P1-3(PR #1337):少了这一句,Library 卡没了而 Brand 页价签还活着,它还
       // 占着 `(ownerId, brandId, kind, nameKey)` 那个活跃唯一名字槽位 —— 商家再建一件同名
       // 产品会被查重撞上这条孤儿价签、静默转成 update,那张卡于是**永远回不来**。
-      await tx.brandRecord.updateMany({
+      const { count: tagsRemoved } = await tx.brandRecord.updateMany({
         where: { ownerId, entityId, deletedAt: null },
         data: { deletedAt },
       });
@@ -768,6 +768,14 @@ export async function softDeleteEntity(entityId: string): Promise<{ ok: true; sh
         where: { entityId, ownerId, deletedAt: null },
         data: { deletedAt },
       });
+      // 判官第 4 轮 P1(PR #1337):这一次删除带走了一条价签 ⇒ 商家在 Brand 页按一下 Remove
+      // 底下的 Undo 就能把它连同这些照片一起接回来(`restoreBrandRecord` 按同一个 `deletedAt`
+      // 复活 Entity + ReferenceImage)。行是可恢复的,**字节不是** —— 在这里跑清扫,恢复出来
+      // 的就是一张指着已被真删字节的卡,而商家没有任何入口修得好它。
+      // 所以这个方向与 `deleteBrandRecord` 那个方向同一口径:两边都删的产品,字节留着
+      // (fail open,可另行清扫;登记在规格 §5)。非产品实体(演员、场景)没有价签、没有恢复
+      // 入口,照旧清扫 —— 「商家的 data 商家的权利」那条 2026-09-03 裁决在那边一字不改。
+      if (tagsRemoved > 0) return [];
       return purgeOrphanedReferenceAssets(tx, ownerId, liveRefs.map((r) => r.assetId));
     });
     if (purged === null) return { error: "Entity not found." };

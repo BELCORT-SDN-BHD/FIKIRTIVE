@@ -107,6 +107,19 @@ async function createProductIn(tx: Tx, input: CreateProductInput): Promise<Creat
       : await createProductIdentity(tx, { ownerId, brandId, name: data.name, assetIds });
 
   const id = newId();
+  // 判官第 4 轮 P1(PR #1337):缓存从**出生**起就等于权威。上一版把调用方递来的 `data`
+  // 原样落库,而 Library 那条入口只递 `{ name }` + `assetIds` —— 于是从 Library 出生的产品,
+  // 价签里 `imageAssetId` 这一格是空的,而身份上明明挂着封面。两个后果都咬在商家身上:
+  //   · 「有没有换图意图」的判据(见 writeProductIdentity)少了一半 —— 一次不带这一格的
+  //     写入会被当成「清空封面」,商家自己挑的封面当场消失;
+  //   · asset-purge 认账的那条软指针不存在 —— 在 Library 删掉这张卡时,封面的字节会被当成
+  //     孤儿**不可逆**真删走,而那条价签明明还可以恢复。
+  // 草稿此刻没有身份,`data.imageAssetId` 就是它主图的唯一记法,照原样留着。
+  const persisted: Record<string, unknown> = { ...(data as unknown as Record<string, unknown>) };
+  if (entityId) {
+    if (assetIds[0]) persisted.imageAssetId = assetIds[0];
+    else delete persisted.imageAssetId;
+  }
   // `createMany({ skipDuplicates })` 而不是 create + catch(P2002):在交互式事务里捕获唯一
   // 冲突是**假的**保护 —— 冲突已经让 Postgres 把整个事务标成 aborted,之后连别的写入都提交
   // 不了(理解 worker 的原注释,20260818 那一版)。ON CONFLICT DO NOTHING 让「同名活跃行已
@@ -120,7 +133,7 @@ async function createProductIn(tx: Tx, input: CreateProductInput): Promise<Creat
         kind: "product",
         nameKey,
         entityId,
-        data: data as unknown as Prisma.InputJsonObject,
+        data: persisted as unknown as Prisma.InputJsonObject,
         status: input.status ?? "active",
         source: input.source,
         pinned: false,
@@ -261,6 +274,13 @@ async function confirmProductDraftIn(tx: Tx, input: ConfirmProductDraftInput): P
     ownerId, brandId: draft.brandId, name: data.name, assetIds,
   });
 
+  // 缓存追平权威(同 createProduct):身份刚出生,`baseAssetId` 就是 `assetIds[0]`。少了这一句,
+  // 「Library 新建同名产品 → 确认了一条草稿」这条路生出来的价签,缓存里没有 `imageAssetId`,
+  // 于是又落回判官第 4 轮那两个坑(封面被下一次写入抹掉 / 删卡时字节被当孤儿真删)。
+  const persisted: Record<string, unknown> = { ...(data as unknown as Record<string, unknown>) };
+  if (assetIds[0]) persisted.imageAssetId = assetIds[0];
+  else delete persisted.imageAssetId;
+
   // `updateMany` 而不是 `update`:where 里必须带 `ownerId`(tenant-guard 拒绝没有租户过滤的
   // 单行 update),而 `contextStatus: "Draft"` 这一条让「读到草稿」与「把它抬成 Ready」之间
   // 那段窗口里另一条并发确认不会被写第二次 —— 赢家 count=1,输家 count=0。
@@ -269,7 +289,7 @@ async function confirmProductDraftIn(tx: Tx, input: ConfirmProductDraftInput): P
     data: {
       entityId,
       contextStatus: "Ready",
-      data: data as unknown as Prisma.InputJsonObject,
+      data: persisted as unknown as Prisma.InputJsonObject,
       ...(input.source !== undefined ? { source: input.source } : {}),
       ...(input.updatedById !== undefined ? { updatedById: input.updatedById } : {}),
     },
@@ -298,23 +318,59 @@ async function confirmProductDraftIn(tx: Tx, input: ConfirmProductDraftInput): P
 // 理解 worker、草稿(此刻**没有**身份)都还要靠 data 自带名字才能落库。删列是另一票的活。
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 名字与主图的写:身份先改,缓存跟着改 —— 一个事务,两边不可能分叉。 */
+/**
+ * 名字与主图的写:身份先改,缓存跟着改 —— 一个事务,两边不可能分叉。
+ * 返回身份**写完之后**那一份权威(名字 + 主图),调用方拿它去追平缓存。
+ *
+ * ── 判官第 4 轮 P1(PR #1337):主图只在调用方**真的表达了换图意图**时才动 ──
+ * 上一版无条件 `patch.baseAssetId = assetId ?? null`,把递进来的那一格当成意图。可是四条
+ * 写路里有两条的写法是 `{ ...existing.data, ...新字段 }`(`packages/otto/src/skills/
+ * _brand-record.ts`、`apps/worker/src/jobs/understand.ts`)—— 它们递进来的 `imageAssetId`
+ * 是**缓存里那一格的旧值**,甚至根本没有这一格。于是两条商家可见的静默丢数据:
+ *   ① 商家在 Library 换了封面(`setBaseAsset` 只写权威,缓存没人追平)→ Otto 改一次价格,
+ *      旧封面被写回权威,商家亲手挑的封面**静默回滚**;
+ *   ② 缓存里本来就没有这一格 → 那次写入被当成「清空封面」,封面直接消失。
+ * 两条都没有撤销入口,而这个文件自己立的规矩是「身份是主图的唯一权威」——
+ * 缓存反过来盖掉权威,正是这条规格要关掉的口子。
+ *
+ * 意图的判据放在调用方(`updateProductRecord`):递进来的值 ≠ **这一行缓存里现在存着的**
+ * 那一格,才是意图。相等就是原样带过来的,一律不动权威。Web 读路发的是身份上的值
+ * (`withProductIdentity`),所以商家在 Brand 页换图/清图仍然是真意图;Otto 与理解 worker
+ * 发的是缓存原值,于是它们永远动不了封面 —— 它们本来也不该动(`productRecordData` 的
+ * `imageAssetId` 注释:UI-managed,OTTO skills never accept it)。
+ */
 async function writeProductIdentity(
   tx: Tx,
-  args: { ownerId: string; entityId: string; name: string; imageAssetId?: string },
-): Promise<void> {
+  args: {
+    ownerId: string;
+    entityId: string;
+    name: string;
+    /** 有这一格才是换图意图;`assetId: undefined` = 清空封面。整格省略 = 这次不碰主图。 */
+    image?: { assetId: string | undefined };
+  },
+): Promise<{ name: string; baseAssetId: string | null } | null> {
   const { ownerId, entityId } = args;
   const entity = await tx.entity.findFirst({
     where: { id: entityId, ownerId, deletedAt: null },
     select: { name: true, baseAssetId: true, brandId: true },
   });
-  if (!entity) return; // 身份已被删(A6 会把价签一起带走);没有可写的权威,不凭空造一条
-  const [assetId] = await ownedAssetIds(tx, ownerId, [args.imageAssetId]);
+  if (!entity) return null; // 身份已被删(A6 会把价签一起带走);没有可写的权威,不凭空造一条
   const name = args.name.slice(0, 120);
+  let baseAssetId = entity.baseAssetId ?? null;
 
   const patch: { name?: string; baseAssetId?: string | null } = {};
   if (entity.name !== name) patch.name = name;
-  if ((entity.baseAssetId ?? null) !== (assetId ?? null)) patch.baseAssetId = assetId ?? null;
+  if (args.image) {
+    const wanted = args.image.assetId;
+    // 指名的那张图不是自己的、或者已经是墓碑 ⇒ `ownedAssetIds` 诚实留空。这一刻的意图是
+    // 「换成这一张」而不是「清空」,所以挂不上就保持原样,不拿一次挂不上的换图去删封面。
+    const [owned] = await ownedAssetIds(tx, ownerId, [wanted]);
+    const next = wanted ? (owned ?? baseAssetId) : null;
+    if (next !== baseAssetId) {
+      patch.baseAssetId = next;
+      baseAssetId = next;
+    }
+  }
   if (Object.keys(patch).length) {
     await tx.entity.updateMany({ where: { id: entityId, ownerId, deletedAt: null }, data: patch });
   }
@@ -326,12 +382,13 @@ async function writeProductIdentity(
   // 里(MONEY-A9 不变量②),而 live 唯一索引 (entityId, assetId, COALESCE(variantId,''))
   // 撞上 P2002 会把整个事务标成 aborted —— 连 settle 都提交不了,商家被扣了钱账却结不上。
   // ON CONFLICT DO NOTHING 把「这张图已经挂着了」变成 count=0 这个不出错的结果。
-  if (assetId && (entity.baseAssetId ?? null) !== assetId) {
+  if (patch.baseAssetId) {
     await tx.referenceImage.createMany({
-      data: [{ id: newId(), ownerId, entityId, assetId, position: 0, brandId: entity.brandId }],
+      data: [{ id: newId(), ownerId, entityId, assetId: patch.baseAssetId, position: 0, brandId: entity.brandId }],
       skipDuplicates: true,
     });
   }
+  return { name, baseAssetId };
 }
 
 export type UpdateProductRecordInput = {
@@ -371,7 +428,7 @@ async function updateProductRecordIn(tx: Tx, input: UpdateProductRecordInput): P
   const { ownerId } = input;
   const row = await tx.brandRecord.findFirst({
     where: { id: input.id, ownerId, kind: "product", deletedAt: null },
-    select: { id: true, brandId: true, entityId: true, nameKey: true },
+    select: { id: true, brandId: true, entityId: true, nameKey: true, data: true },
   });
   if (!row) return { ok: false, reason: "not-found" };
 
@@ -392,15 +449,33 @@ async function updateProductRecordIn(tx: Tx, input: UpdateProductRecordInput): P
   }
 
   // 身份先写(它是权威),缓存跟着写 —— 同一个事务,不可能只落一半。
+  //
+  // 判官第 4 轮 P1(PR #1337):`imageAssetId` 这一格递进来的值等于**这一行缓存里现在存着的**
+  // 那一格时,它是被 `{ ...existing.data, ... }` 原样带过来的,不是一次换图意图 —— 拿它去写
+  // 权威就会把商家在 Library 挑的封面写回旧值(或者在缓存本来就空时直接抹成 null)。
+  // 详见 writeProductIdentity 的注释。
+  const cachedRaw = (row.data as Record<string, unknown> | null)?.imageAssetId;
+  const cachedImage = typeof cachedRaw === "string" && cachedRaw ? cachedRaw : undefined;
+  const imageIntent = data.imageAssetId !== cachedImage;
+
+  let persisted: Record<string, unknown> = data as unknown as Record<string, unknown>;
   if (row.entityId) {
-    await writeProductIdentity(tx, {
-      ownerId, entityId: row.entityId, name: data.name, imageAssetId: data.imageAssetId,
+    const identity = await writeProductIdentity(tx, {
+      ownerId, entityId: row.entityId, name: data.name,
+      ...(imageIntent ? { image: { assetId: data.imageAssetId } } : {}),
     });
+    // 缓存追平权威:这一行的 name / imageAssetId 从此逐字等于身份上那一份。缓存永远是
+    // 权威的影子,不可能反过来当事实(读路的 `withProductIdentity` 是同一条判断的兜底)。
+    if (identity) {
+      persisted = { ...persisted, name: identity.name };
+      if (identity.baseAssetId) persisted.imageAssetId = identity.baseAssetId;
+      else delete persisted.imageAssetId;
+    }
   }
   await tx.brandRecord.updateMany({
     where: { id: row.id, ownerId, deletedAt: null },
     data: {
-      data: data as unknown as Prisma.InputJsonObject,
+      data: persisted as unknown as Prisma.InputJsonObject,
       nameKey,
       ...(input.source !== undefined ? { source: input.source } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),

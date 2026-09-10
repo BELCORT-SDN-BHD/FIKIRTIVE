@@ -224,6 +224,23 @@ SET "entityId" = COALESCE(
 )
 WHERE r."kind" = 'product' AND r."entityId" IS NULL AND r."contextStatus" <> 'Draft';
 
+-- ② 回填 d:缓存追平权威(判官第 4 轮 P1,PR #1337)。价签 `data.imageAssetId` 从这一刻起
+--    逐字等于身份上的 `baseAssetId` —— 一次性链接指向的是商家自己那张 Library 卡,而那张卡
+--    上的封面可能跟价签里记的不是同一张(回填不许盖掉商家亲手挑过的封面,见 b2)。缓存留着
+--    旧值有两个后果:① 共享动作判「有没有换图意图」时会把这次原样带过来的旧值当成意图
+--    (packages/db/src/create-product.ts 的 writeProductIdentity);② asset-purge 认账的那条
+--    软指针指着一张早就不是封面的图。两条都以缓存 = 权威一次性抹平。
+--    草稿没有身份,它的 `data.imageAssetId` 就是主图的唯一记法,不碰。
+UPDATE "BrandRecord" r
+SET "data" = CASE
+      WHEN e."baseAssetId" IS NULL THEN r."data" - 'imageAssetId'
+      ELSE jsonb_set(r."data", '{imageAssetId}', to_jsonb(e."baseAssetId"), true)
+    END
+FROM "Entity" e
+WHERE e."id" = r."entityId" AND e."ownerId" = r."ownerId"
+  AND r."kind" = 'product' AND r."contextStatus" <> 'Draft'
+  AND (r."data"->>'imageAssetId') IS DISTINCT FROM e."baseAssetId";
+
 -- ③ 外键、索引、CHECK。名字逐字照 Prisma 对 schema.prisma 的命名规则,否则 schema drift 闸会红。
 CREATE INDEX IF NOT EXISTS "BrandRecord_entityId_idx" ON "BrandRecord"("entityId");
 

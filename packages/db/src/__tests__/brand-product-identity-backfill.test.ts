@@ -303,6 +303,51 @@ describe("PRODID-A8 回填迁移", () => {
     expect(liveEntities).toBeGreaterThanOrEqual(liveTagsBefore - 1); // 复用数 = 1
   }, 60_000);
 
+  it("PRODID-A8 回填之后缓存追平权威:价签的 imageAssetId 逐字等于卡上的 baseAssetId", async () => {
+    await loosenConstraints();
+    // 判官第 4 轮 P1(PR #1337):一次性链接指向的是商家自己那张卡,而回填**不许**盖掉
+    // 商家亲手挑过的封面 —— 于是链接完成的那一刻,价签缓存里记的和卡上挂的可以是两张不同
+    // 的图。缓存留着旧值,共享动作判「有没有换图意图」时会把它当成意图,asset-purge 认账的
+    // 那条软指针也指着一张早就不是封面的图。所以回填最后一步把缓存一次性抹平成权威。
+    const cardCover = await seedAsset(orgId);
+    const tagCover = await seedAsset(orgId);
+    const cardId = `ent_${randomUUID()}`;
+    await prisma.entity.create({
+      data: { id: cardId, ownerId: orgId, type: "PRODUCT", name: "Kopi ais", baseAssetId: cardCover },
+    });
+    // ① 卡上已经有封面 → 链接不动它,价签缓存里那张要被抹平成卡上的那张。
+    const linkedId = await seedLegacyProduct(orgId, "Kopi ais", { imageAssetId: tagCover });
+    // ② 没有同名卡 → 新建身份,封面来自缓存,两边本来就一致。
+    const freshId = await seedLegacyProduct(orgId, "Teh tarik", { imageAssetId: tagCover });
+    // ③ 缓存指着一张已经被删的 Asset(墓碑)→ 身份挂不上,缓存那一格也得清掉。
+    const dead = await seedAsset(orgId);
+    await prisma.asset.updateMany({ where: { id: dead, ownerId: orgId }, data: { deletedAt: new Date() } });
+    const deadId = await seedLegacyProduct(orgId, "Cendol", { imageAssetId: dead });
+
+    await runMigration();
+
+    // 商家亲手挑的封面没被盖掉(这条不变),而缓存现在逐字等于它。
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: cardId, ownerId: orgId }, select: { baseAssetId: true } }),
+    ).resolves.toEqual({ baseAssetId: cardCover });
+    const linked = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: linkedId, ownerId: orgId }, select: { data: true },
+    });
+    expect((linked.data as { imageAssetId?: string }).imageAssetId).toBe(cardCover);
+
+    const fresh = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: freshId, ownerId: orgId }, select: { data: true },
+    });
+    expect((fresh.data as { imageAssetId?: string }).imageAssetId).toBe(tagCover);
+
+    const deadRow = await prisma.brandRecord.findFirstOrThrow({
+      where: { id: deadId, ownerId: orgId }, select: { data: true },
+    });
+    expect((deadRow.data as { imageAssetId?: string }).imageAssetId).toBeUndefined();
+    // 名字那一格一个字节没动 —— 这一步只抹平主图缓存。
+    expect((linked.data as { name?: string }).name).toBe("Kopi ais");
+  }, 60_000);
+
   it("PRODID-A8 同名一次性链接:两张同名 Library 卡 → 拒绝并报出,整条迁移零落库", async () => {
     await loosenConstraints();
     for (const name of ["  Kopi   Ais ", "KOPI AIS"]) {
