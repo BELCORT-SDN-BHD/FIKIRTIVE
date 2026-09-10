@@ -70,6 +70,7 @@ export * from "./upload.js";
 export * from "./media-sniff.js";
 export * from "./refgen.js";
 export * from "./reference-budget.js";
+export * from "./storyboard-shot.js";
 export * from "./ref-config.js";
 export * from "./gen.js";
 export * from "./spend.js";

@@ -27,6 +27,18 @@ export async function checkCast(req: {
   variantSel?: Record<string, string>;
   sourceGenerationId?: string | null;
   tailGenerationId?: string | null;
+  /**
+   * creation §5 :162⑤ —— 这一单**额外挂上路的原件**。视频侧是
+   * `GenJob.videoOptions.referenceGenerationIds`(PR #1273 的正路:演员参考照 + 商品图各作
+   * 一张 `role:"reference_image"`),图片侧是 `GenJob.imageOptions.referenceGenerationIds`
+   * (CRE-STG-P1-003:第一张之外的挂图)——两种 kind 同一条判据,调用方按 kind 传那一格。
+   *
+   * 从前这道守卫只查首帧/末帧那两张,于是「商品图已被删除 / 已不属于这家店」这一趟走到
+   * worker 才 fail closed:钱已经预扣、事后退回。判据与首帧那两张同一份 `generationReferenceScope`
+   * (同 owner、活着、图片扩展名 —— 画布是出处,不是权限边界),所以这里只是把同一条既有
+   * 规矩铺到同一批部件的其余几张上,一格都没松。
+   */
+  referenceGenerationIds?: string[] | null;
   model: string;
   kind: "image" | "video";
 }): Promise<{ error: string; report: { findings: CastFinding[] } } | null> {
@@ -96,6 +108,17 @@ export async function checkCast(req: {
         });
         if (!gen) findings.push({ kind: "missing-source", message: `The ${label} image isn't one of your images any more — pick another.` });
       }
+    }
+
+    // creation §5 :162⑤ —— 挂上路的那几张原件,与首帧/末帧同一条判据、同一趟 owner scope。
+    // 取不到原件(删了 / 不是这家店的 / 不是图片扩展名)⇒ 在 create+reserve 之前拒,零卡零账本行。
+    // worker 侧仍旧 fail closed(纵深防御);这里只是把同一句话挪到花钱之前说。
+    for (const id of req.referenceGenerationIds ?? []) {
+      const gen = await prisma.generation.findFirst({
+        where: { id, ...generationReferenceScope(req.ownerId, REFERENCE_IMAGE_EXTS) },
+        select: { id: true },
+      });
+      if (!gen) findings.push({ kind: "missing-source", message: "One of the reference images isn't one of your images any more — pick another." });
     }
 
     if (findings.length) return { error: findings[0]!.message, report: { findings } };

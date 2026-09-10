@@ -12,7 +12,7 @@ import {
   conditioningCap,
   referenceBudget,
 } from "./reference-budget.js";
-import { MAX_VIDEO_IMAGE_PARTS } from "./gen.js";
+import { MAX_GEN_ENTITIES, MAX_VIDEO_IMAGE_PARTS } from "./gen.js";
 
 describe("FSE-001 —— 挂图在视频计划里是首帧还是参考图", () => {
   // 走查那一天的病:商家 @ 官方演员 + 挂商品图,系统把商品图当首帧、把演员清空,于是
@@ -216,5 +216,28 @@ describe("FSE-001 —— 卡面数字:两件引用都要数进去", () => {
         attachedImageCount: 0,
       }),
     ).toEqual({ used: 9, total: 9, truncated: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// creation §5 :162⑤ —— 名额预留背后那条**隐含依赖**,现在有断言钉着
+// ---------------------------------------------------------------------------
+//
+// `videoAttachedCap` 给在场的每一个 @元素先留 1 格(理由见该函数的注释:卡上写了名字、
+// 请求里却没有那个人,是这条路最贵的一种病)。这条预留只有在「元素数**恒小于** image_url
+// 名额总数」时才留得下东西 —— 元素数的上限是 `MAX_GEN_ENTITIES`(付费 schema 的 `.max()`),
+// 名额总数是 `MAX_VIDEO_IMAGE_PARTS`。两个常量住在同一个文件里,却从来没有一行代码说过
+// 它们之间有关系:哪天有人把元素上限提到 9,预留会吃光全部名额,商家挂的商品图一张都上
+// 不了车,而没有任何一个既有测试会红。
+//
+// 断言写在测试里(不写模块加载期):两个都是编译期常量,让 core 在生产环境为一次静态比较
+// 抛异常没有收益,而 CI 里红一次就够拦住那次改动。
+describe("creation §5 :162⑤ —— 元素上限与 image_url 名额的隐含依赖", () => {
+  it("creation §5 :162⑤ / CREATE-A10: MAX_GEN_ENTITIES(8) < MAX_VIDEO_IMAGE_PARTS(9) —— 满编元素也留得下至少一格给挂图", () => {
+    expect(MAX_GEN_ENTITIES).toBeLessThan(MAX_VIDEO_IMAGE_PARTS);
+    // 不等式的行为面:满编 @ 元素时,挂图仍拿得到名额。
+    expect(
+      videoAttachedCap({ attachedImageCount: 1, mentionedElementCount: MAX_GEN_ENTITIES }),
+    ).toBe(MAX_VIDEO_IMAGE_PARTS - MAX_GEN_ENTITIES);
   });
 });
