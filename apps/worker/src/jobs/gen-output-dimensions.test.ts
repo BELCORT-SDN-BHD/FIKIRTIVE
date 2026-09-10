@@ -79,6 +79,7 @@ vi.mock("sharp", async (importOriginal) => {
   };
 });
 
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -118,6 +119,24 @@ async function imageOf(
   return (kind === "png" ? img.png() : kind === "jpeg" ? img.jpeg() : img.webp()).toBuffer();
 }
 const pngOf = (width: number, height: number) => imageOf(width, height, "png");
+
+/** 三种出图格式各一张,外加一张短边不到 300 的 —— 两条尺寸断言读同一份用例。 */
+const CROSS_CHECK_CASES = [
+  [1344, 768, "png"],
+  [200, 99, "png"],
+  [275, 183, "jpeg"],
+  [512, 512, "webp"],
+] as const;
+
+/** 这台机器上有没有 ffprobe。CI runner 没有(worker 的镜像有),所以交叉核对那条按它跳过。 */
+const HAS_FFPROBE = (() => {
+  try {
+    execFileSync("ffprobe", ["-version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -168,29 +187,42 @@ describe("规格 §5 :162① —— 本站生成的资产落库时写真宽高",
    * 为什么不直接在生成路上用 ffprobe:那条路站在已经付过钱的字节和商家的 DONE 之间,多一次
    * 进程外调用就是多一次可能卡住的等待(实证:`gen-last-frame.test.ts` 那条 8 秒预算当场红)。
    */
-  it("creation §5 :162①: 读文件头量出来的数,与 ingest 那把 ffprobe 尺子逐张相同", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "fikirtive-dim-cross-"));
-    try {
-      for (const [w, h, kind] of [
-        [1344, 768, "png"],
-        [200, 99, "png"],
-        [275, 183, "jpeg"],
-        [512, 512, "webp"],
-      ] as const) {
-        const bytes = await imageOf(w, h, kind);
-        const file = path.join(dir, `x.${kind}`);
-        await writeFile(file, bytes);
-        const byProbe = await probeFile(file);
-        expect(measuredOutputSize(bytes), `${w}×${h} ${kind}`).toEqual({
-          width: byProbe.width,
-          height: byProbe.height,
-        });
-        expect(measuredOutputSize(bytes)).toEqual({ width: w, height: h });
-      }
-    } finally {
-      await rm(dir, { recursive: true, force: true });
+  it("creation §5 :162①: 三种出图格式(png / jpeg / webp)都量得到,量出来就是它真实的宽高", async () => {
+    for (const [w, h, kind] of CROSS_CHECK_CASES) {
+      const bytes = await imageOf(w, h, kind);
+      // 裁判是 sharp:图是照 w×h 铸出来的,所以「量出来等于 w×h」不是自证。
+      expect(measuredOutputSize(bytes), `${w}×${h} ${kind}`).toEqual({ width: w, height: h });
     }
   });
+
+  /**
+   * 「同一套尺子」是**被证明的**,不是被声明的:同一串字节,一边读文件头、一边真的跑 ingest
+   * 那个 ffprobe(`probeFile`),两边不一致当场红。
+   *
+   * 装不到 ffprobe 的机器上跳过而不是红:CI runner 没有 ffmpeg(worker 的镜像有,
+   * `apps/worker/Dockerfile` 第 5 行 apt 装的),而上面那条无条件的断言已经把「量得对不对」
+   * 独立守住了 —— 这一条守的是另一件事:我们的数与 ingest 的数是同一个。
+   */
+  it.skipIf(!HAS_FFPROBE)(
+    "creation §5 :162①: 读文件头量出来的数,与 ingest 那把 ffprobe 尺子逐张相同",
+    async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "fikirtive-dim-cross-"));
+      try {
+        for (const [w, h, kind] of CROSS_CHECK_CASES) {
+          const bytes = await imageOf(w, h, kind);
+          const file = path.join(dir, `x.${kind}`);
+          await writeFile(file, bytes);
+          const byProbe = await probeFile(file);
+          expect(measuredOutputSize(bytes), `${w}×${h} ${kind}`).toEqual({
+            width: byProbe.width,
+            height: byProbe.height,
+          });
+        }
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("creation §5 :162①: 认不出的格式(视频那条路的 mp4)⇒ null,登记未做而不是猜一个", () => {
     // ftyp/isom 的文件头 —— 一段 mp4 的开头长这样。帧宽高住在 moov 里,今天不解析。
