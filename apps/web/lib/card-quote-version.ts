@@ -17,12 +17,22 @@ import "server-only";
  * **零写入、零花费。** 它只读一张 GEN_CARD 的 payload，拒绝时调用方在 create/reserve 之前
  * 返回 —— 账本零新增行。指纹本身不是授权：`cardQuoteVersion` 那个文件头写清了为什么伪造它
  * 的收益是零。
+ *
+ * **两种用法，一个判据（判官第 3 轮 P2-b）：**
+ *   · `staleQuoteRefusalFor(card, …)` —— 调用方**已经把卡读出来了**，就拿那一次读的结果比对。
+ *     校验的那份卡与执行用的那份卡因此是同一份，中间不留第二次读的窗口；
+ *   · `staleQuoteRefusal(ownerId, cardId, …)` —— 调用方手上还没有卡（`ottoApprove` 的门口），
+ *     由它读一次再交给上面那个函数。
  */
 import { prisma } from "@fikirtive/db";
 import { cardQuoteVersion, QUOTE_VERSION_STALE } from "@fikirtive/core";
+import { genCardPayloadDTO } from "./dto";
 
 /** 对不上时交回商家的那一份：一句话 ＋ **刷新后的那张卡**（界面据此换掉卡面报价）。 */
 export type StaleQuote = { error: string; quote: unknown };
+
+/** 这道闸比对时用得着的那两格 —— 调用方读卡时顺手 select 到的就是这两格。 */
+export type QuoteGateCard = { payload: unknown; genJobId: string | null };
 
 /**
  * 对不上 ⇒ 返回拒绝；对得上、或这一趟根本没带版本 ⇒ 返回 null（调用方照旧往下走）。
@@ -30,6 +40,26 @@ export type StaleQuote = { error: string; quote: unknown };
  * 带不带版本由客户端决定，而这是有意的降级面：老客户端、非确认卡的入口（画布、资产详情）
  * 从来不带这一格，它们的报价窗口也不是这道闸要治的那一个。带了就必须对得上。
  */
+export function staleQuoteRefusalFor(
+  card: QuoteGateCard | null,
+  submittedVersion: unknown,
+): StaleQuote | null {
+  if (typeof submittedVersion !== "string" || submittedVersion.length === 0) return null;
+  // 读不到这张卡不是这道闸的事（调用方各自有「卡不存在」的说法，措辞也各自不同）——
+  // 这里只在**读得到**的时候比对，绝不替调用方发明第二句「找不到」。
+  if (!card) return null;
+  // 已经挂着任务行的卡 = 一次**已经成交**的批准。它的第二次点击是幂等地取回那一行，
+  // 不是一次新的报价；拿版本去拦它，只会把一次成功说成「价变了」。两条路上的再花钱守卫
+  // 各自拦得住重复扣费，这道闸在这里让开。
+  if (card.genJobId) return null;
+  if (cardQuoteVersion(card.payload) === submittedVersion) return null;
+  // 交回浏览器的那一份必须走**与刷新那条读路同一条剥离**（`genCardPayloadDTO`）：库里的
+  // 原始 payload 上带着 `model` 与 `reason`，原样交回去就是把供应商型号名送上商家的屏幕
+  // （Founder 常令：provider 保密）。判官第 3 轮 P2-c 抓的正是这一条。
+  return { error: QUOTE_VERSION_STALE, quote: genCardPayloadDTO(card.payload) };
+}
+
+/** 调用方手上还没有卡时的那一支：读一次（owner scoped），再走上面那个判据。 */
 export async function staleQuoteRefusal(
   ownerId: string,
   cardId: string,
@@ -40,13 +70,5 @@ export async function staleQuoteRefusal(
     where: { id: cardId, ownerId, kind: "GEN_CARD", deletedAt: null },
     select: { payload: true, genJobId: true },
   });
-  // 读不到这张卡不是这道闸的事（调用方各自有「卡不存在」的说法，措辞也各自不同）——
-  // 这里只在**读得到**的时候比对，绝不替调用方发明第二句「找不到」。
-  if (!card) return null;
-  // 已经挂着任务行的卡 = 一次**已经成交**的批准。它的第二次点击是幂等地取回那一行，
-  // 不是一次新的报价；拿版本去拦它，只会把一次成功说成「价变了」。两条路上的再花钱守卫
-  // 各自拦得住重复扣费，这道闸在这里让开。
-  if (card.genJobId) return null;
-  if (cardQuoteVersion(card.payload) === submittedVersion) return null;
-  return { error: QUOTE_VERSION_STALE, quote: card.payload };
+  return staleQuoteRefusalFor(card, submittedVersion);
 }

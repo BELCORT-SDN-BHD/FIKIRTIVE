@@ -24,7 +24,7 @@ import {
 import { getEnhanceDirective } from "./cowork-knowledge";
 import { resolveDisabledModels } from "./model-registry";
 import { startCoworkGen } from "./gen-actions";
-import { staleQuoteRefusal } from "./card-quote-version";
+import { staleQuoteRefusalFor } from "./card-quote-version";
 import { bindMerchantPrompt } from "./merchant-prompt-provenance";
 import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
@@ -98,7 +98,12 @@ async function coworkGenerateInner(raw: unknown): Promise<{ id: string } | { err
     // 同一张卡的第二次点击是幂等地取回那一行任务,不是一次新的报价,拿版本去拦它反而会
     // 把一次已经成交的动作说成失败。排在下面每一步之前:拒在 create/reserve 之前 ⇒ 零建
     // 任务、零预扣、账本零新增行。
-    const stale = await staleQuoteRefusal(ownerId, cardId, quoteVersion);
+    //
+    // 判官第 3 轮 P2-b:比对的是**上面那一次读出来的这张卡**,不是再读一次。再读一次意味着
+    // 校验的那份卡与下面拿去拼装请求的那份卡可以是两份 —— 一道闸校验了一份从未被执行的卡,
+    // 就不是一道闸。(这一次读之后到钱事务之间的窗口由既有的两道守卫封住:`startCoworkGen`
+    // 的「卡面价 vs 现算价对签」与事务内的 `cardFingerprint` 逐字复读。)
+    const stale = staleQuoteRefusalFor(card, quoteVersion);
     if (stale) return stale;
 
     // re-validate the persisted proposal subset; the model/kind/params are server-trusted

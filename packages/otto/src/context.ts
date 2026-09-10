@@ -831,6 +831,15 @@ export interface OttoContext {
    *  Absent on every other path — the skill fails closed without it. */
   approvalConsent?: { scheduledPostId: string; expectedUpdatedAt: string };
 
+  /** FSE-012（creation-engine.md §5 :170）—— 商家按下批准那一刻，**他眼前那张卡的报价版本**。
+   *  只由 `ottoApprove` 在恢复轮之前注入（与 approvalConsent 同一条纪律：绝不来自模型参数、
+   *  绝不来自浏览器以外的任何推断）。`generate` 技能拿它与**它自己读出来的那张卡**逐串比对：
+   *  对不上就是「批的是 A、要执行的是 B」，在花钱之前拒绝。
+   *  带 `cardId` 是因为一次恢复轮可以生成不止一张卡：这一版报价只批准了**这一张**，
+   *  别的卡不受它约束（拿它去比对别的卡等于凭空拦下一次合法生成）。
+   *  其他路径上缺席 ⇒ 照旧放行，与这条闸出现之前逐字相同。 */
+  approvedQuoteVersion?: { cardId: string; version: string };
+
   /** Product-ingest port (P1-01) — injected by the web caller. Fetches a URL (SSRF-hardened)
    *  and runs the deterministic Layer-1 extractor, returning a product DRAFT plus the page text.
    *  Otto fills any gaps itself from `text` (no separate LLM call) — that is this path's Layer 2.

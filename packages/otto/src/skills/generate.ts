@@ -27,7 +27,7 @@
 import { z } from "zod";
 import type { RunContext } from "@openai/agents";
 import { defineOttoSkill } from "../skill.js";
-import { isModelDisabled, buildGenRequestFromCard } from "@fikirtive/core";
+import { isModelDisabled, buildGenRequestFromCard, cardQuoteVersion, QUOTE_VERSION_STALE } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 
@@ -95,6 +95,25 @@ export async function executeGenerate(
     select: { id: true, status: true },
   });
   if (existing) return { genJobId: existing.id, status: existing.status };
+
+  // Step 3b: FSE-012 (creation-engine.md §5 :170) —— 「批的是哪一版报价」。
+  //
+  // `ottoApprove` 门口那道闸只证明了**按下按钮那一刻**卡还是商家看的那一版;这一步之前
+  // 商家还可以在别处改一格,而这条路会把整份请求按**当前**这张卡重新拼一遍(下面 Step 5),
+  // 价钱因此自洽在新的那一版上,两道价格对签谁也拦不住 —— 批 A 收 B 就是这么发生的
+  // (判官第 3 轮 P2-b)。所以把批准那一刻的版本随 ctx 带进来,在这里与**这一次读出来的、
+  // 马上要拿去拼装请求的那张卡**逐串比对。
+  //
+  // 排在再花钱守卫之后:已经成交的那张卡第二次点击是幂等取回,不是一次新的报价。
+  // 拒在 `ctx.startGen` 之前 ⇒ 零建任务、零预扣、账本零新增行。缺席 ⇒ 放行(老客户端 /
+  // 非确认卡入口),与这条闸出现之前逐字相同。
+  if (
+    ctx.approvedQuoteVersion
+    && ctx.approvedQuoteVersion.cardId === input.cardId
+    && cardQuoteVersion(card.payload) !== ctx.approvedQuoteVersion.version
+  ) {
+    return { error: QUOTE_VERSION_STALE };
+  }
 
   // Step 4: disabled-model check (mirror coworkGenerate — a card built before a disable must not spend)
   const p = (card.payload ?? {}) as Record<string, unknown>;

@@ -21,6 +21,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { INTERNAL_PER_DISPLAY, cardQuoteVersion, QUOTE_VERSION_STALE } from "@fikirtive/core";
 import { buildProposeCard, type CardPayload, type OttoContext } from "@fikirtive/otto";
 
@@ -151,7 +152,10 @@ async function ledgerRows(ownerId: string) {
  * 线程上有一份暂停的 RunState，那份状态停在绑着这张卡的 `generate` 上，恢复轮进到 metered
  * 的那一步。布置完之后，这条路上唯一还没定的事就是「他按下的是哪一版报价」。
  */
+let capturedResumeCtx: { approvedQuoteVersion?: { cardId: string; version: string } } | null = null;
+
 async function armApprovalResume(world: World, cardId: string) {
+  capturedResumeCtx = null;
   await prisma.chatThread.updateMany({
     where: { id: world.threadId, ownerId: world.ownerId },
     data: { ottoState: "{paused}" },
@@ -165,12 +169,15 @@ async function armApprovalResume(world: World, cardId: string) {
       ctx: Parameters<typeof ottoBudgetArgsFor>[2],
       runtime: Parameters<typeof ottoBudgetArgsFor>[0],
       execution: { meter: (args: unknown, fn: () => Promise<unknown>) => Promise<unknown> },
-    ) =>
+    ) => {
+      // 恢复轮真正拿到的那份 ctx —— `generate` 技能在这一份上读「他批的是哪一版报价」。
+      capturedResumeCtx = ctx as unknown as { approvedQuoteVersion?: { cardId: string; version: string } };
       // 生产的 `withLlmBudget`（`ottoApprove` 自己传进来的那一个），生产的预算参数。
-      execution.meter(ottoBudgetArgsFor(runtime, request, ctx), async () => ({
+      return execution.meter(ottoBudgetArgsFor(runtime, request, ctx), async () => ({
         result: { finalOutput: "", state: {} },
         usage: { inputTokens: 0, outputTokens: 0 },
-      })),
+      }));
+    },
   );
   return { approve };
 }
@@ -211,6 +218,36 @@ describe("creation §5 :170 FSE-012 服务器校验报价版本", () => {
     expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(0);
     // 卡本身一个字节没动 —— 拒绝不是一次写。
     expect((await persistedCard(world, card.cardId)).params.count).toBe(2);
+  });
+
+  /**
+   * 判官第 3 轮 P2-c —— 拒绝时交回浏览器的那张卡,上一版是**库里那份原始 payload 原样**,
+   * 上面带着 `model`(供应商型号名)与 `reason`。商家可见的任何 JSON 里都不许有型号
+   * (Founder 常令:provider 保密),而刷新那条正路(`toChatMessageDTO`)一直在剥它 ——
+   * 这道闸等于开了第二条不剥的路。现在两条路共用同一个函数(`genCardPayloadDTO`)。
+   */
+  it("creation §5 :170 FSE-012 拒绝时交回的那张卡走刷新那条同一条剥离:型号与理由不随它回到浏览器", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+    const staleVersion = cardQuoteVersion(card.payload);
+    await ottoUpdateGenCardOptions({ threadId: world.threadId, cardId: card.cardId, count: 2 });
+
+    // 库里那张卡上**确实**带着型号 —— 下面那几句因此不是「本来就没有」。
+    const persisted = (await persistedCard(world, card.cardId)) as unknown as Record<string, unknown>;
+    const modelInDb = persisted.model;
+    expect(typeof modelInDb).toBe("string");
+
+    const res = await pressGenerate(world, card.cardId, card.payload, staleVersion);
+
+    expect(res).toMatchObject({ error: QUOTE_VERSION_STALE });
+    const quote = (res as { quote?: unknown }).quote as Record<string, unknown>;
+    expect(quote.model).toBeUndefined();
+    expect(quote.reason).toBeUndefined();
+    // 整份 JSON 扫一遍:型号名不许以任何一格的身份混在里面。
+    expect(JSON.stringify(quote)).not.toContain(modelInDb as string);
+    // 剥完仍然是一张画得出来的卡 —— 剥离不能把刷新这件事本身弄坏。
+    expect(parsePlanCardPayload(quote)).not.toBeNull();
+    expect(quote.estimatedCredits).toBe(persisted.estimatedCredits);
   });
 
   it("creation §5 :170 FSE-012 刷新后按新报价版本再提交:照常建任务行、预扣一次", async () => {
@@ -327,6 +364,9 @@ describe("creation §5 :170 FSE-012 第二条批准路(ottoApprove)共用同一�
     const quote = (res as { quote?: unknown }).quote as CardPayload;
     expect(quote.estimatedCredits).toBe(rebuilt.payload.estimatedCredits);
     expect(quote.params.count).toBe(2);
+    // 判官第 3 轮 P2-c —— 第二条路交回的那张卡走的也是刷新那条同一条剥离:零型号、零理由。
+    expect((quote as unknown as Record<string, unknown>).model).toBeUndefined();
+    expect((quote as unknown as Record<string, unknown>).reason).toBeUndefined();
     // **拒在花钱之前**:metered 的恢复轮一次都没进过,账本零行、零任务行。
     expect(mockRunOttoTurn).not.toHaveBeenCalled();
     expect(await ledgerRows(world.ownerId)).toHaveLength(0);
@@ -378,6 +418,54 @@ describe("creation §5 :170 FSE-012 第二条批准路(ottoApprove)共用同一�
     const again = await ottoApprove({ threadId: world.threadId, cardId: card.cardId, quoteVersion: "not-a-real-version" });
 
     expect(again).not.toMatchObject({ error: QUOTE_VERSION_STALE });
-    expect((await ledgerRows(world.ownerId)).filter((r) => r.kind === "RESERVE" && r.refId === `reserve:${first.id}`)).toHaveLength(0);
+    // 判官第 3 轮 P1 —— 上一版这里写的是 `refId === \`reserve:${first.id}\``,而 `reserveCredits`
+    // 写进账本那一行的 refId **就是传进去的那一个**(任务行 id),`reserve:<refId>` 是它的
+    // 幂等键、从来不进 refId 这一格。于是那个 filter 恒为空集、断言恒真,什么也没证明。
+    // 真断言按真实形状写:这张卡背后那一笔生成费**有且只有一笔**,任务行也只有一行。
+    const rows = await ledgerRows(world.ownerId);
+    expect(rows.filter((r) => r.refId === first.id)).toHaveLength(1);
+    expect(await prisma.genJob.count({ where: { ownerId: world.ownerId } })).toBe(1);
+  });
+
+  /**
+   * 门口那道闸只能证明**按下按钮那一刻**卡还是他看的那一版。恢复轮里 `generate` 技能会按
+   * 它自己那次读到的卡把整份请求重拼一遍(价钱因此自洽在**新**的那一版上,两道价格对签谁
+   * 也拦不住)—— 所以「他批的是哪一版」必须**一路带进去**,由那一步再比一次(判官第 3 轮 P2-b)。
+   * 这一条钉的是「带进去了」;「带进去之后真的拦得住」由 `packages/otto/src/skills/generate.test.ts`
+   * 那两条钉住(那里 `ctx.startGen` 是唯一花钱的出口,断言它一次都没被调用)。
+   */
+  it("creation §5 :170 FSE-012 ottoApprove 把商家批的那一版随 ctx 交进恢复轮(执行那一步据此再比一次)", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+    await armApprovalResume(world, card.cardId);
+    const approved = cardQuoteVersion(card.payload);
+
+    await ottoApprove({ threadId: world.threadId, cardId: card.cardId, quoteVersion: approved });
+
+    expect(capturedResumeCtx?.approvedQuoteVersion).toEqual({ cardId: card.cardId, version: approved });
+  });
+
+  it("creation §5 :170 FSE-012 ottoApprove 不带版本:恢复轮拿到的 ctx 上没有这一格(缺席＝放行,与从前逐字相同)", async () => {
+    const world = await seedWorld(500);
+    const card = await mintImageCard(world);
+    await armApprovalResume(world, card.cardId);
+
+    await ottoApprove({ threadId: world.threadId, cardId: card.cardId });
+
+    expect(capturedResumeCtx?.approvedQuoteVersion).toBeUndefined();
+  });
+});
+
+/**
+ * 判官第 3 轮 P2-c 的第二道:行为用例证明**今天**交回去的那份是干净的,这一条证明**明天**
+ * 没人能悄悄把它换回原始 payload —— 商家可见 JSON 里出现型号名是家规级事故(provider 保密),
+ * 而它离「少写一个函数调用」只有一步。
+ */
+describe("creation §5 :170 FSE-012 交回浏览器那一份的剥离只有一条路(源码闸)", () => {
+  it("creation §5 :170 FSE-012 `card-quote-version.ts` 交回的 quote 必须过 genCardPayloadDTO,不许原样吐 payload", () => {
+    const src = readFileSync(new URL("../card-quote-version.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/genCardPayloadDTO\(card\.payload\)/);
+    // 原样交回库里那份的写法(任何形式的 `quote: card.payload`)不许出现。
+    expect(src).not.toMatch(/quote:\s*card\.payload/);
   });
 });

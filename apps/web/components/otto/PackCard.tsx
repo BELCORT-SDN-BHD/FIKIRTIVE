@@ -20,6 +20,9 @@ import { packTotalCredits, canAffordPack } from "./pack-credit-math";
 // price from the record-only USD estimate, so a pack could offer "Make all" on a total
 // the server never quoted.
 import { planCardGate } from "./plan-card-contract";
+// FSE-012 —— 「他按下的是哪一版报价」。**子路径**引它:包根会把 node:crypto 拖进客户端包
+// (与 plan-approval.ts 同一条理由)。铸造与校验同一个函数,服务端拿库里那张卡再算一次。
+import { cardQuoteVersion } from "@fikirtive/core/quote-version";
 import { SpendConfirmation, SpendProgress } from "./spend-state";
 import { cn } from "@/lib/utils";
 // #996 (W2-9): 面板最窄 320px。清单行在窄版折成两行(尾段整行下沉),
@@ -143,14 +146,17 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
     // component only wires the real server actions and maps outcome → state.
     const outcome = await runPackApprovalLoop({
       cards: targets,
+      // FSE-012 —— 一叠卡里的每一张也是一张确认卡:各自带上**这一张**卡此刻那份报价的版本。
+      // 服务端拿库里那张卡再算一次,对不上就拒绝(零预扣),对得上照旧成交。控件不锁。
       fire: (c, pendingApproval) =>
         pendingApproval
-          ? ottoApprove({ threadId: c.threadId, cardId: c.cardId })
+          ? ottoApprove({ threadId: c.threadId, cardId: c.cardId, quoteVersion: cardQuoteVersion(c.p) })
           : coworkGenerate({
               cardId: c.cardId,
               prompt: c.p.structuredPrompt ?? "",
               entityIds: Array.isArray(c.p.entityIds) ? c.p.entityIds : [],
               variantSel: c.p.variantSel && typeof c.p.variantSel === "object" ? c.p.variantSel : {},
+              quoteVersion: cardQuoteVersion(c.p),
             }),
       onCardStart: (i) => setCurrentCardId(targets[i].cardId),
       onCardSettled: (cardId, cleared) => {

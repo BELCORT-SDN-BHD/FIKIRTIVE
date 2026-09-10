@@ -2625,6 +2625,13 @@ export async function ottoApprove(raw: unknown): Promise<
       //  - runFactoryBatch: rebuilt so its closure carries the consumed APPROVAL_CARD.id. Still never
       //    from model args; a non-factory approve keeps the attemptId-less (refusing) port.
       ctx.approvalConsent = approvalConsent;
+      // FSE-012（判官第 3 轮 P2-b）—— 门口那道闸只证明了**按下按钮那一刻**卡还是他看的那一版;
+      // 恢复轮里 `generate` 技能会把整份请求按**它自己那次读到的卡**重新拼一遍,中间那一段
+      // 时间里卡还可以被改。所以把「他批的是哪一版」随 ctx 一路带进去,由那一步与它自己读出来
+      // 的那张卡再比一次 —— 校验的卡与执行的卡因此是同一份。带 cardId:这一版只批准了这一张。
+      ctx.approvedQuoteVersion = typeof submittedQuoteVersion === "string" && submittedQuoteVersion.length > 0
+        ? { cardId, version: submittedQuoteVersion }
+        : undefined;
       if (factoryAttemptId) ctx.runFactoryBatch = makeFactoryBatchPort(factoryAttemptId);
 
       // Resume the run, metered (LLM cost of this resume turn); refId is bound above.

@@ -545,7 +545,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     for (let i = 0; i < toSpend.length; i++) {
       const c = toSpend[i];
       try {
-        const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {} });
+        const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {}, quoteVersion: c.quoteVersion });
         if (res && "error" in res) { setError(`Frame ${i + 1} of ${toSpend.length}: ${res.error}`); continue; }
         anyStarted = true;
       } catch {
@@ -600,7 +600,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     setError(null);
     let started = false;
     try {
-      const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {} });
+      const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {}, quoteVersion: c.quoteVersion });
       if (res && "error" in res) setError(res.error);
       else started = true;
     } catch {
@@ -658,7 +658,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     for (let i = 0; i < toSpend.length; i++) {
       const c = toSpend[i];
       try {
-        const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {} });
+        const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {}, quoteVersion: c.quoteVersion });
         if (res && "error" in res) { setError(`Video ${i + 1} of ${toSpend.length}: ${res.error}`); continue; }
         anyStarted = true;
       } catch {
@@ -710,7 +710,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     setError(null);
     let started = false;
     try {
-      const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {} });
+      const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {}, quoteVersion: c.quoteVersion });
       if (res && "error" in res) setError(res.error);
       else started = true;
     } catch {
