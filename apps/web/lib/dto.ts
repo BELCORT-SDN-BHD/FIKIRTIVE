@@ -88,6 +88,40 @@ function cardParamsDTO(raw: unknown): { params?: Record<string, unknown> } {
   };
 }
 
+/**
+ * 一张 GEN_CARD 的持久化 payload → **商家可见的那一份**。
+ *
+ * 供应商保密是家规（Founder 常令）：`model` 与 `reason` 只活在服务端，`params` 只留白名单
+ * 那五格。这条剥离从前只长在 `toChatMessageDTO` 的 GEN_CARD 那一支里，于是任何**第二条**
+ * 把卡交回浏览器的路（FSE-012 那道报价版本闸拒绝时交回的「刷新后的那张卡」就是一条）都得
+ * 各自记得再剥一次 —— 忘一次，型号名就随一次拒绝上了商家的屏幕。所以它现在是一个函数，
+ * 两条路共用（家规 §7.3）。
+ *
+ * 读不成一份提案的 payload ⇒ `null`（调用方按「这张卡没法渲染」处理，与从前逐字相同）。
+ */
+export function genCardPayloadDTO(rawPayload: unknown): unknown | null {
+  if (!rawPayload) return null;
+  const p = rawPayload as Record<string, unknown>;
+  const proposal = coworkProposalSchema.safeParse({
+    kind: p.kind,
+    desiredAspect: p.desiredAspect,
+    desiredDuration: p.desiredDuration,
+    desiredAudio: p.desiredAudio,
+    structuredPrompt: p.structuredPrompt,
+    entityIds: p.entityIds ?? [],
+    variantSel: p.variantSel ?? {},
+  });
+  // malformed → render as plain text (no card)
+  if (!proposal.success) return null;
+  const {
+    model: _model,
+    params: rawParams,
+    reason: _reason,
+    ...publicPayload
+  } = p;
+  return { ...publicPayload, ...cardParamsDTO(rawParams), ...proposal.data };
+}
+
 export function toChatMessageDTO(
   m: ChatThreadWithMessages["messages"][number],
   urlsByJob: Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>,
@@ -100,26 +134,7 @@ export function toChatMessageDTO(
 ): ChatMessageDTO {
   let payload: unknown | null = null;
   if (m.kind === "GEN_CARD" && m.payload) {
-    const p = m.payload as Record<string, unknown>;
-    const proposal = coworkProposalSchema.safeParse({
-      kind: p.kind,
-      desiredAspect: p.desiredAspect,
-      desiredDuration: p.desiredDuration,
-      desiredAudio: p.desiredAudio,
-      structuredPrompt: p.structuredPrompt,
-      entityIds: p.entityIds ?? [],
-      variantSel: p.variantSel ?? {},
-    });
-    // malformed → render as plain text (no card)
-    if (proposal.success) {
-      const {
-        model: _model,
-        params: rawParams,
-        reason: _reason,
-        ...publicPayload
-      } = p;
-      payload = { ...publicPayload, ...cardParamsDTO(rawParams), ...proposal.data };
-    }
+    payload = genCardPayloadDTO(m.payload);
   } else if (m.kind === "GEN_RESULT") {
     const p = (m.payload ?? {}) as { kind?: string; costCredits?: number };
     const resolved = m.genJobId ? urlsByJob.get(m.genJobId) : undefined;
