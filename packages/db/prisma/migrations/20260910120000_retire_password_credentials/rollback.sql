@@ -1,0 +1,25 @@
+-- Manual rollback for 20260910120000_retire_password_credentials (NOT run by Prisma).
+--
+-- 这条迁移**不可逆**，这份文件说清楚为什么，而不是假装能撤。
+--
+-- 迁移删的是 `ba_account` 里 `providerId = 'credential'` 的行，每一行带着一份 bcrypt/scrypt
+-- 密码哈希。哈希不是从别处推导出来的，库里也没有第二份副本，所以「反向 SQL」不存在：能把行
+-- 变回来的只有一次数据库恢复。
+--
+-- 真正的回滚路径（须 Founder 先确认备份存在）：
+--   1. 从执行迁移前的备份里取出那些行（Neon PITR 或一份 pg_dump），例如：
+--        \copy (SELECT * FROM "ba_account" WHERE "providerId" = 'credential') TO 'credential-rows.csv' CSV HEADER
+--      —— 这一句要在**恢复出来的旧库**上跑，不是在生产上跑。
+--   2. 灌回生产：
+--        \copy "ba_account" FROM 'credential-rows.csv' CSV HEADER
+--   3. 删掉迁移记录，这份 migration.sql 才能被干净地重跑：
+--        DELETE FROM "_prisma_migrations" WHERE migration_name = '20260910120000_retire_password_credentials';
+--
+-- 但把行灌回来并**不会**让密码登录复活：`emailAndPassword.enabled` 已是 false，全部密码端点
+-- 在 router 层 404（apps/web/lib/better-auth/server.ts 的 CLOSED_PASSWORD_PATHS）。要真正回到
+-- 有密码的产品，得先推翻 docs/specs/sign-in.md（已冻结 · v1）。
+--
+-- 前置条件必须在**合并之前**确认，不是「生产执行前」：推 main 会自动部署，容器启动时
+-- `prisma migrate deploy` 当场把 DELETE 跑掉（apps/web/Dockerfile:55-65 →
+-- apps/web/scripts/boot.mjs），仓库里没有任何部署闸能拦下这一步。要确认的两件事：备份存在、
+-- 恢复方案演练过。依据：Founder 2026-08-01「未公测零用户」—— 今天这些行只属于测试账号。

@@ -101,6 +101,9 @@
 
 | 日期 | 想法 | 裁决（留空待 S5） |
 |---|---|---|
+| 2026-09-10 | **PR #1336：密码退役之后 `SIGNUPS_PAUSED` 成了一个没人调的开关**。`apps/web/lib/signup-gate.ts` 的 `signupsPaused()` 与 `admitSelfSignup()` 今天全仓零调用点——它们原来只挂在密码注册那扇门上（`lib/better-auth/server.ts` 的 `isSelfSignupPath`，逐字比对 `/sign-up/email`；外加 `/signup` 页顶的暂停横幅），门退役，钩子随之删除。验收 A6 描述的行为因此暂时无处落地，登录门④（#1319）会把它重新接到两扇活门（码门与 Google 门）上。同一段时间里**没有自助注册路径**：`admitSelfSignup` 不再被调用，能建账号的只剩名单内邮箱（`AUTH_ALLOWED_EMAILS` / `FOUNDER_ADMIN_EMAILS` / `AllowedEmail` 里的 active 行），登录门②（#1318）开码门之后恢复。这两件事都是切片顺序造成的中间态，不是行为裁决，写在这里让下一个人不用重新推一遍。 |  |
+| 2026-09-10 | **PR #1336：A9 那条删行迁移在本仓库是「合并即执行」**。推 `main` 自动部署，容器每次启动在 serve 之前跑一次 `prisma migrate deploy`（`apps/web/Dockerfile` → `apps/web/scripts/boot.mjs` 的 `runMigrations`），`.github/workflows/` 里没有任何 deploy workflow，也没有 environment required reviewer。链条是 merge → deploy → boot → `DELETE`，中间没有一步等人——所以**Founder 对这一次删除的确认必须发生在合并之前**，否则永远不会发生。`DESTRUCTIVE-OK` 只让 `scripts/check-destructive-migrations.sh` 放行，它过的是 CI 扫描闸，不是批准。 |  |
+| 2026-09-10 | **PR #1336：Auth 设计夹具仍含密码屏，生产已退役**。`apps/web/design-system/patterns/auth/AuthAccessJourneyReference.tsx` 还画着密码屏、「Use password instead」「Forgot password?」与「Create an account」，生产侧这三样已随本 PR 退役，夹具与生产因此分歧。夹具改动归设计治理（`apps/web/design-system/governance/frontend-integration-handoff.md`），不在本切片的写集内，待下次设计侧同步；它在 A11 源码围栏里是具名白名单（那两处 `setPassword(...)` 调用全是 React `useState` 的 setter，一行都碰不到 Better Auth）。 |  |
 
 ## 6. 改签记录
 

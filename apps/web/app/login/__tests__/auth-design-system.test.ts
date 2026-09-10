@@ -8,11 +8,25 @@ function readWeb(relativePath: string): string {
   return readFileSync(path.join(WEB_ROOT, relativePath), "utf8");
 }
 
+/**
+ * SIGNIN-A4 —— 已批准的 Auth 夹具（`design-system/patterns/auth/AuthAccessJourneyReference.tsx`）
+ * 仍然画着密码那一屏与忘记密码入口，而生产已经按 docs/specs/sign-in.md（已冻结 · v1）把密码整体
+ * 退役了。夹具是设计权威，改它属于设计侧治理，不在本切片的写集内 —— 所以这里的做法是：把
+ * 「夹具有、生产不该有」的每一句**具名列出**并反向断言，而不是把 FRONT-A14 的逐句对照关掉。
+ *
+ * 具名的代价是：夹具哪天跟上了，这份清单会当场变红，提醒下一个人把它删掉。这正是想要的。
+ */
+const RETIRED_BY_SIGNIN_A4 = new Set([
+  "Use password instead",
+  "Enter your password",
+  "Password not accepted",
+  "Forgot password?",
+  "Use a login code",
+]);
+
 describe("auth design system", () => {
   const loginPage = readWeb("app/login/page.tsx");
   const loginForm = readWeb("app/login/LoginForm.tsx");
-  const signupPage = readWeb("app/signup/page.tsx");
-  const signupForm = readWeb("app/signup/SignupForm.tsx");
   const authShell = readWeb("components/auth/AuthPageShell.tsx");
   const authStepCard = readWeb("components/auth/AuthStepCard.tsx");
   const reviewFixture = readWeb("design-system/patterns/auth/AuthAccessJourneyReference.tsx");
@@ -23,33 +37,30 @@ describe("auth design system", () => {
     expect(authShell).not.toContain("OttoMark");
     expect(authStepCard).toContain("<Card");
 
-    for (const source of [loginPage, signupPage]) {
-      expect(source).toContain("<AuthPageShell>");
-      expect(source).not.toContain("<main");
-      expect(source).not.toContain("<svg");
-    }
+    expect(loginPage).toContain("<AuthPageShell>");
+    expect(loginPage).not.toContain("<main");
+    expect(loginPage).not.toContain("<svg");
     expect(reviewFixture).toContain('AuthStepCard as StepCard');
     expect(reviewFixture).toContain("<AuthPageShell>");
   });
 
-  it("composes production forms from canonical controls", () => {
-    for (const source of [loginForm, signupForm]) {
-      expect(source).toContain("<AuthStepCard");
-      expect(source).toContain("<FieldGroup");
-      expect(source).toContain("<Field");
-      expect(source).toContain("<FieldLabel");
-      expect(source).toContain("<Alert");
-      expect(source).toContain("<Spinner");
-      expect(source).not.toContain("<label");
-      expect(source).not.toContain("<svg");
-      expect(source).not.toContain("style={{");
-    }
+  it("composes the production form from canonical controls", () => {
+    expect(loginForm).toContain("<AuthStepCard");
+    expect(loginForm).toContain("<FieldGroup");
+    expect(loginForm).toContain("<Field");
+    expect(loginForm).toContain("<FieldLabel");
+    expect(loginForm).toContain("<Alert");
+    expect(loginForm).toContain("<Spinner");
+    expect(loginForm).not.toContain("<label");
+    expect(loginForm).not.toContain("<svg");
+    expect(loginForm).not.toContain("style={{");
 
     expect(loginForm).toContain("<FieldSeparator>or</FieldSeparator>");
     expect(loginForm).toContain("<InputOTP");
     expect(loginForm).toContain("<InputOTPGroup>");
     expect(loginForm).toContain("<InputOTPSlot");
-    expect(signupForm).toContain("<PasswordInput");
+    // SIGNIN-A4 —— 生产不再有任何密码控件。
+    expect(loginForm).not.toContain("<PasswordInput");
   });
 
   it("keeps the OTP primitive aligned with the light-only design system", () => {
@@ -66,27 +77,31 @@ describe("auth design system", () => {
     for (const line of [
       "Log in to Fikirtive",
       "Choose how you want to continue.",
-      "Create an account",
       "Continue with email",
       "What's your email address?",
       "We'll send a temporary login code.",
       "Email needed",
-      "Use password instead",
       "Check your email",
       "We sent a temporary login code to",
       "Code not accepted",
       "Continue with login code",
       "Send again",
       "Use another email",
-      "Enter your password",
-      "Password not accepted",
-      "Forgot password?",
-      "Use a login code",
       "Back to login",
+      // SIGNIN-A4 —— 夹具里的密码那几句不在这张清单上,它们由下面那条反向断言看着。
+      ...RETIRED_BY_SIGNIN_A4,
     ]) {
       expect(reviewFixture).toContain(line);
+      if (RETIRED_BY_SIGNIN_A4.has(line)) {
+        expect(loginForm, `${line} 已随密码退役,生产不该再有`).not.toContain(line);
+        continue;
+      }
       expect(loginForm).toContain(line);
     }
+
+    // SIGNIN-A4 —— 「Create an account」是夹具与生产**都**该没有的一句:没有第二个注册页。
+    // 夹具今天还留着它,所以这里只对生产断言,并把夹具那一侧写进上面的说明里。
+    expect(loginForm).not.toContain("Create an account");
   });
 
   // FRONT-A14 —— 错误标题不再靠手挑。上一轮漏掉「Email needed」的病根就是「清单里写了
@@ -95,7 +110,9 @@ describe("auth design system", () => {
   it("FRONT-A14 carries every alert title the approved Auth pattern defines", () => {
     // 夹具专有:这块牌子是给走查者看的,告诉他这一步不会真的打开 Google 窗口。
     // 生产在这一步真的跳转,没有、也不该有它。
-    const FIXTURE_ONLY = new Set(["Provider handoff preview"]);
+    // SIGNIN-A4 —— 「Password not accepted」加进来的理由与 RETIRED_BY_SIGNIN_A4 同一条:
+    // 密码那一屏在生产已经不存在,夹具还画着。
+    const FIXTURE_ONLY = new Set(["Provider handoff preview", "Password not accepted"]);
 
     const fixtureTitles = [
       ...new Set(
@@ -128,8 +145,9 @@ describe("auth design system", () => {
     expect(reviewFixture).toContain("if (!email.trim()) {");
     expect(reviewFixture).toContain('<AlertTitle>Email needed</AlertTitle>');
 
-    // 生产同一条路可达 —— 那颗按钮是 type="button",原生 required 拦不住它,
-    // 所以它命中 invalid_email 这条 reason,标题必须是夹具那一句。
+    // 生产同一态可达 —— 夹具靠「Use password instead」触发它,生产那颗按钮随密码退役
+    // (SIGNIN-A4),但同一条 reason 仍然走得到:表单是 noValidate,空的/写坏的地址交给
+    // `sendSignInCode` 自己判,命中 invalid_email,标题必须是夹具那一句。
     expect(loginForm).toContain('reason: "invalid_email"');
 
     // 三条互不依赖格式的断言,一起证明「两种错误态、两个标题」这件事。
@@ -154,22 +172,18 @@ describe("auth design system", () => {
     expect(reviewFixture).not.toContain("Email could not be continued");
   });
 
-  it("FRONT-A14 leaves 'Sign-in failed' on the hub only — the password step follows the fixture", () => {
-    // 密码步从前也写「Sign-in failed」,与夹具的「Password not accepted」不同。hub 上那一句
-    // 是对的(社交登录失败与密码无关),所以它只剩一处。
+  it("FRONT-A14 leaves 'Sign-in failed' on the hub only", () => {
+    // 密码步从前也写「Sign-in failed」。那一步随密码退役(SIGNIN-A4),hub 上那一句仍然是对的
+    // (社交登录失败与密码无关),所以它只剩一处 —— 数字不变,原因换了。
     expect(loginForm.match(/<AlertTitle>Sign-in failed<\/AlertTitle>/g) ?? []).toHaveLength(1);
-    expect(loginForm).toContain("<AlertTitle>Password not accepted</AlertTitle>");
     expect(reviewFixture).not.toContain("Sign-in failed");
   });
 
-  it("FRONT-A2 keeps the password refusal existence-neutral", () => {
-    // 标题跟设计稿走,但那句中性拒绝不许被改成「该邮箱不存在 / 密码错误」两句话。
-    expect(loginForm).toContain('message: "Wrong email or password."');
+  it("SIGNIN-A4 keeps the code refusal existence-neutral", () => {
+    // 「Wrong email or password.」随密码退役。同一条性质(拒绝不许泄露这个邮箱有没有账号)
+    // 现在由码门那一句扛:错、过期、次数用尽合成同一句,而且不提那个地址。
+    expect(loginForm).toContain("SIGN_IN_CODE_REJECTED_MESSAGE");
+    expect(loginForm).not.toContain("Wrong email or password.");
     expect(loginForm).not.toContain("signInError.message");
-  });
-
-  it("keeps signup refusal copy existence-neutral", () => {
-    expect(signupForm).toContain('setError("We couldn\'t create the account. Try again.")');
-    expect(signupForm).not.toContain("signUpError.message");
   });
 });

@@ -2,7 +2,7 @@
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   OttoPanelFlowReference,
@@ -11,6 +11,16 @@ import {
 import { OTTO_PANEL_STORAGE_KEY } from "@/components/otto/panel/panel-state";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// 整套 apps/web 的 vitest 跑在**同一个** globalThis 上(单线程一个 worker),所以往
+// `navigator` 上钉的替身会活到后面几百个文件里 —— 而它的 `writeText` 被 vitest 的 mock
+// 清理重置成「返回 undefined」之后,任何一个照着 `if (navigator.clipboard)` 判活的组件都会
+// 在 `.then` 上炸(实测:整套跑到 otto-plan-card-detail 时 Uncaught Exception,整趟红)。
+// 装完自己收走,和 asset-detail-write-failures.test.ts 同一条纪律。
+const hadClipboard = "clipboard" in navigator;
+afterAll(() => {
+  if (!hadClipboard) delete (navigator as { clipboard?: unknown }).clipboard;
+});
 
 const RECOMMENDED_PROMPT = "Should I increase the Sales Aug 2026 campaign budget?";
 

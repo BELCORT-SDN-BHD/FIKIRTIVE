@@ -7,9 +7,10 @@ import { renderAuthCodeEmail, renderAuthEmail } from "@/lib/email/auth-email-tem
 import { isAllowedEmail } from "@/lib/allowlist";
 
 /**
- * #939 — Better Auth's own default token lifetime for password-reset and email-verification:
- * 3600 seconds, applied by better-auth itself (`resetPasswordTokenExpiresIn` /
- * `emailVerification.expiresIn`) because server.ts leaves both unconfigured. Unlike the
+ * #939 — Better Auth's own default token lifetime for email-verification: 3600 seconds, applied
+ * by better-auth itself (`emailVerification.expiresIn`) because server.ts leaves it
+ * unconfigured. (It used to cover password-reset too; that purpose retired with passwords —
+ * docs/specs/sign-in.md, SIGNIN-A4.) Unlike the
  * email-OTP plugin — which pins its own lifetime to AUTH_EMAIL_CODE_TTL_SECONDS below — this
  * number is not ours to derive from a local constant; it is stated here only so the email copy
  * can say something true. If server.ts ever configures either option explicitly, this constant
@@ -70,10 +71,16 @@ async function consumeAddressCap(email: string): Promise<boolean> {
  * should land, because clicking it navigated. A code does not navigate: the merchant is still on
  * the login page, and the page redirects itself once the code is accepted. So `callbackURL` left
  * the job, the queue and the mail — one fewer caller-supplied value on the path.
+ *
+ * SIGNIN-A4 —— 这个联合类型原本还有第三个成员：`{ purpose: "password-reset" }`。密码整体退役
+ * 之后（docs/specs/sign-in.md，已冻结 · v1）它一个生产调用点都没有了 —— `sendResetPassword`
+ * 钩子随 `emailAndPassword` 一起撤，`/request-password-reset` 与 `/reset-password` 在 router 层
+ * 404。留着一个没人排的队，下一个人只要 `enqueueAuthEmail({ purpose: "password-reset", ... })`
+ * 一行就能把重置信重新发出去，而端点那道 404 拦不住它（这条队走的是 `auth.api.*` 那一侧）。
+ * 所以它连同只为它存在的测试一起删掉。
  */
 export type AuthEmailJob =
   | { purpose: "sign-in-code"; email: string; overBudget: boolean }
-  | { purpose: "password-reset"; email: string; url: string }
   | { purpose: "verify-email"; email: string; url: string };
 
 const isDiscardable = (job: AuthEmailJob): boolean =>
@@ -501,22 +508,22 @@ async function runAuthEmailJob(job: AuthEmailJob): Promise<void> {
     return;
   }
 
-  // Password reset re-checks access; verification email is the ONE path a brand-new
-  // self-service account walks before it is on any list (#543), so it does not. That difference
-  // is between PURPOSES, which the caller states openly — it says nothing about the address, so
-  // it is not an oracle. Within a purpose the work is identical, for the reason above.
-  const allowed = job.purpose === "password-reset" ? await isAllowedEmail(job.email) : true;
+  // The only purpose left down here is verify-email: the ONE path a brand-new self-service
+  // account walks before it is on any list (#543), so it does NOT re-check access. (The other
+  // branch that used to live here, password-reset, did re-check — that purpose retired with
+  // passwords, SIGNIN-A4. The difference was between PURPOSES, which the caller states openly,
+  // so it never was an oracle about an address; with one purpose left there is no difference at
+  // all.) The cap is still read, and still read the same way for every address.
   const withinCap = await consumeAddressCap(job.email);
-  if (!allowed) return;
   if (!withinCap) {
     console.warn("[better-auth] auth email suppressed: per-address hourly cap reached");
     return;
   }
   await sendAuthEmail({
     to: job.email,
-    subject: job.purpose === "password-reset" ? "Reset your Fikirtive password" : "Verify your Fikirtive email",
+    subject: "Verify your Fikirtive email",
     url: job.url,
-    intro: job.purpose === "password-reset" ? "Reset your password" : "Verify your email",
+    intro: "Verify your email",
     validitySeconds: AUTH_EMAIL_DEFAULT_TOKEN_TTL_SECONDS,
   });
 }

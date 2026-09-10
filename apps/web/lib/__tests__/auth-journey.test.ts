@@ -18,13 +18,14 @@ describe("Auth journey routing", () => {
   it("keeps login steps in browser history without duplicating the default destination", () => {
     expect(loginStepHref("hub", "/")).toBe("/login");
     expect(loginStepHref("email", "/create")).toBe("/login?step=email&from=%2Fcreate");
-    expect(loginStepHref("password", "javascript:alert(1)")).toBe("/login?step=password");
+    expect(loginStepHref("code", "javascript:alert(1)")).toBe("/login?step=code");
   });
 
   it("accepts only production login steps", () => {
     expect(parseLoginStep("email")).toBe("email");
     expect(parseLoginStep("code")).toBe("code");
-    expect(parseLoginStep("password")).toBe("password");
+    // SIGNIN-A4 —— 密码那一步退役了，旧链接 `?step=password` 归 hub，不再是一个可进的步骤。
+    expect(parseLoginStep("password")).toBe("hub");
     expect(parseLoginStep("provider")).toBe("hub");
     expect(parseLoginStep(undefined)).toBe("hub");
   });
