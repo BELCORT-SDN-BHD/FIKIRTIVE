@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { newId, MAX_GEN_ENTITIES } from "@fikirtive/core";
+import { newId, MAX_GEN_ENTITIES, shotGoesDirectToVideo } from "@fikirtive/core";
 
 /** 一条分镜最多几个镜头（对齐遗留 CoworkPlan 每场 8 shot 的上限，防跑飞）。 */
 export const MAX_STORYBOARD_SHOTS = 8;
@@ -46,7 +46,9 @@ export type StoryboardCardInput = z.infer<typeof storyboardCardInput>;
  * creation §5 :172⑤ —— 这一份输入里,哪几镜**必须**带首帧文字却没带(0 基序号)。
  *
  * 判据只有一句,与卡面/铸卡侧的 `shotsDirectToVideo`(apps/web/lib/storyboard-card.ts)
- * **逐字同一条**:@ 到至少一个演员(CHARACTER)⇒ 直接出片 ⇒ 首帧那一步不存在 ⇒ 不必写。
+ * **同一个函数**(`shotGoesDirectToVideo`,住在 `@fikirtive/core/storyboard-shot`;判官第 2
+ * 轮 P2-⑤ 之前两处各写一遍):@ 到至少一个演员(CHARACTER)⇒ 直接出片 ⇒ 首帧那一步不存在
+ * ⇒ 不必写。
  * 其余全部镜头(不带 @元素的、以及只 @ 了商品的特写镜)都是两步,第一步要有稿子。
  *
  * 为什么不能像先前那样按「有没有 @元素」判:那放行的类别严格大于登记的类别 —— 只 @ 了
@@ -60,9 +62,7 @@ export function shotsMissingFirstFramePrompt<
   T extends { firstFramePrompt?: string; entityIds?: string[] },
 >(shots: readonly T[], castEntityIds: ReadonlySet<string>): number[] {
   return shots.flatMap((shot, i) =>
-    !shot.firstFramePrompt?.trim() && !(shot.entityIds ?? []).some((id) => castEntityIds.has(id))
-      ? [i]
-      : [],
+    !shot.firstFramePrompt?.trim() && !shotGoesDirectToVideo(shot, castEntityIds) ? [i] : [],
   );
 }
 

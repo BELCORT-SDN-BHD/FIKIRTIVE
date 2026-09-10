@@ -329,8 +329,13 @@ describe("startGen", () => {
    * referenceGenerationIds」,没限定 kind,而先前只接了视频那一格 —— 图片侧的多参考作业
    * (CRE-STG-P1-003,`imageOptions.referenceGenerationIds`)照旧走到 worker 才 fail closed:
    * 钱先预扣、事后退。两种 kind 由同一个规范化器按 kind 各写一格,所以守卫这一行两格都取。
+   *
+   * 编号(判官第 2 轮 P2-①订正):这一条钉的是**引用原件的归属围栏在付费之前生效**,属
+   * CREATE-A10;它**不**证明 MONEY-A11(卡面冻结价 ≠ 现算价即拒)—— 那条由本文件里那几条
+   * 报价绑定用例自己钉着,r1 冠错了号。下面那条只证「没挂原件时一格没动」,它谁都不证明,
+   * 所以只带登记编号,不冠任何验收号。
    */
-  it("creation §5 :162⑤ / MONEY-A11: 图片侧挂上路的原件也在花钱之前进守卫", async () => {
+  it("creation §5 :162⑤ / CREATE-A10: 图片侧挂上路的原件也在花钱之前进守卫", async () => {
     db.chatMessageFindFirst.mockResolvedValue({
       threadId: "thread-1",
       payload: { estimatedCredits: 1, referenceGenerationIds: ["gen-a", "gen-b"] },
@@ -358,7 +363,7 @@ describe("startGen", () => {
     expect(data.imageOptions?.referenceGenerationIds).toEqual(["gen-a", "gen-b"]);
   });
 
-  it("creation §5 :162⑤ / MONEY-A11: 没挂原件的那一趟一格没动(守卫收到 undefined)", async () => {
+  it("creation §5 :162⑤: 没挂原件的那一趟一格没动(守卫收到 undefined)", async () => {
     await startCoworkGen({
       projectId: "p1",
       threadId: "thread-1",

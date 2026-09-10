@@ -1252,3 +1252,35 @@ describe("creation §5 :172⑤ —— 没有首帧文字的镜头也能改视频
     expect(text(dom)).toContain("That edit isn't valid.");
   });
 });
+
+// ---------------------------------------------------------------------------
+// creation §5 :172⑤ —— 没有首帧文字时,不摆一个空的 "First frame ·" 标签
+// ---------------------------------------------------------------------------
+//
+// 判官第 2 轮 P2-④。`directToVideo` 只有服务端算得出(要读 Entity.type),所以在第一次
+// sync 回来之前,卡面对每一镜都按「照旧两步」渲染 —— 而 :172⑤ 之后这一镜本来就可以没有
+// 首帧文字。旧写法无条件摆那一行,商家读到的是一个后面什么都没有的标签。
+describe("creation §5 :172⑤ —— 没有首帧文字的镜头不摆空标签", () => {
+  const bare = { shotId: "s0", index: 0, title: "Hero", videoPrompt: "v-0", entityIds: ["ent-actor"], durationSeconds: 5 };
+
+  it("creation §5 :172⑤ / CREATE-A2: 这一镜没有首帧文字 ⇒ 那一行整行不出现(视频那一行照旧)", async () => {
+    const payload = { storyboardTitle: "Raya launch", shots: [bare] };
+    // 还没问过服务端的那一拍:sync 不回 directToVideo(老答复/还没算出来),卡面按两步渲染。
+    mocks.syncStoryboardMedia.mockResolvedValue({ payload, shots: [{ shotId: "s0", frame: absent, video: absent }] });
+
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
+
+    expect(text(dom)).not.toContain("First frame ·");
+    expect(text(dom)).toContain("Video · v-0");
+  });
+
+  it("creation §5 :172⑤ / CREATE-A2: 有首帧文字的镜头逐字照旧摆出来", async () => {
+    const twoStep = { shotId: "s0", index: 0, title: "Hero", firstFramePrompt: "ff-0", videoPrompt: "v-0", durationSeconds: 5 };
+    const payload = { storyboardTitle: "Raya launch", shots: [twoStep] };
+    mocks.syncStoryboardMedia.mockResolvedValue({ payload, shots: [{ shotId: "s0", frame: absent, video: absent }] });
+
+    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
+
+    expect(text(dom)).toContain("First frame · ff-0");
+  });
+});

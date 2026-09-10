@@ -3939,6 +3939,61 @@ describe("creation §5 :172④ —— 直接出片镜头 @ 到不可用元素 �
     expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 
+  /** s0 直接出片、一格问题都没有(会先铸出一张视频子卡);s1 也直接出片,但它 @ 的那件
+   *  商品已被这家店删掉 —— 出事的是**第二镜**。 */
+  function secondShotHasDeadElement(): StoryboardCardPayload {
+    return {
+      storyboardTitle: "Ad",
+      shots: [
+        { shotId: "s0", index: 0, title: "Opening", firstFramePrompt: "ff0", videoPrompt: "vp0", entityIds: ["actor-1", "mug"], durationSeconds: 5 },
+        { shotId: "s1", index: 1, title: "Close", firstFramePrompt: "ff1", videoPrompt: "vp1", entityIds: ["actor-1", "ghost"], durationSeconds: 5 },
+      ],
+    };
+  }
+
+  it("creation §5 :172④ / CREATE-A10: 出事的是第二镜 —— 第一镜已经写进事务里了,回滚之后照样零卡、零 GenJob、零账本行", async () => {
+    // 判官第 2 轮 P2-⑥:上面那三条的第一镜就是出事那一镜,于是「零写入」也可能只是
+    // 「还没走到第一次写」——次序依赖的假强证据。这一条把出事的镜头挪到第二个:
+    // s0 先真的把一张视频子卡**暂存**进事务($0 铸卡),s1 才抛。于是断言分成两半:
+    //   • 事务里**试着**写过(mockTxChatCreate 有记录)—— 证明我们真的越过了第一次写;
+    //   • 提交出去的是零(mockChatCreate / mockChatUpdate 一次都没有)—— 回滚是真的。
+    // 这个 $transaction 替身是带缓冲的:写只在回调 resolve 之后才回放到 committed 那两个
+    // 替身上,抛出即丢弃缓冲(见文件头注释),所以这两半合起来才是「整卡零写入」的真证据。
+    mockEntityFindMany.mockImplementation(async (args: { where: { deletedAt?: null; ownerId: string } }) => {
+      if (args.where.ownerId !== OWNER) return [];
+      // 活元素:演员与 mug 都在;ghost 不在(商家已经把它删了)。
+      if (args.where.deletedAt === null) {
+        return [
+          { id: "actor-1", type: "CHARACTER", name: "Aisyah" },
+          { id: "mug", type: "PRODUCT", name: "Mug" },
+        ];
+      }
+      // 拒绝那一路的点名查询(不带 deletedAt)⇒ 软删的那件东西名字还在。
+      return [{ name: "Ghost tote" }];
+    });
+    mockVideoProposeCard();
+    wireLoads(card(secondShotHasDeadElement()));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+
+    expect(res).toEqual({
+      error:
+        'Shot 2 "Close" uses "Ghost tote", which isn\'t in your Library any more — take it out of that shot, or pick another one. Nothing was made and nothing was charged.',
+    });
+    // 前半:第一镜确实已经把一张子卡暂存进了这次事务(不是「还没走到第一次写」)。
+    expect(mockTxChatCreate).toHaveBeenCalled();
+    expect(mockBuildProposeCard).toHaveBeenCalledWith(
+      expect.objectContaining({ structuredPrompt: "vp0" }),
+      expect.anything(),
+      expect.anything(),
+    );
+    // 后半:提交出去的是零 —— 零子卡、零父卡指针改动。
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    // 零 GenJob ⇒ 零预扣 ⇒ 零账本行(这一层根本不建作业,而建作业的那一趟点不出来)。
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+
   it("creation §5 :172④ / CREATE-A10: 单镜重出走同一条口径 —— 一句点名的话,零写入", async () => {
     actorLiveMugDeleted();
     mockVideoProposeCard();

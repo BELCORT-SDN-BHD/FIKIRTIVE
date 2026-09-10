@@ -4,6 +4,10 @@
  * 编辑(F3)/ 首帧图(F4)按 index 定位镜头,故这里稳定按 index 排序。
  */
 import type { StoryboardCardPayload } from "@fikirtive/otto";
+// creation §5 :172⑤(判官第 2 轮 P2-⑤)——「有演员＝直接出片」这句话的唯一判据。
+// 走子路径而不是 `@fikirtive/core` 桶文件:桶会把 node:crypto 拖进客户端包(同
+// OttoChatStream.tsx 的做法)。Otto 侧的 shotsMissingFirstFramePrompt 读的是同一个函数。
+import { shotGoesDirectToVideo } from "@fikirtive/core/storyboard-shot";
 
 /** 镜头数上限（client-safe 常量）。权威值在 @fikirtive/otto 的
  *  MAX_STORYBOARD_SHOTS；此处保留一份纯值副本，好让 "use client" 的
@@ -92,7 +96,9 @@ export function shotsNeedingMintedFirstFrame<
 /**
  * FSE-001 同族(Founder 2026-09-09 裁)—— 哪几镜**直接出片**。
  *
- * 判据只有一句:**这一镜 @ 到了至少一个演员(CHARACTER 元素)**。
+ * 判据只有一句:**这一镜 @ 到了至少一个演员(CHARACTER 元素)**——判词本身住在
+ * `@fikirtive/core/storyboard-shot` 的 `shotGoesDirectToVideo`,Otto 交稿侧那道闸
+ * (`shotsMissingFirstFramePrompt`)读的是同一个函数,两处不可能各说各话。
  *
  * ── 为什么(规格 §5 2026-09-08「FSE-001 同族」那一行)──────────────────────────
  * 分镜此前对每一镜都先出一张付费首帧,带演员的镜头把演员 id 放进那张首帧的 entityIds
@@ -114,7 +120,7 @@ export function shotsDirectToVideo<T extends { shotId: string; entityIds?: strin
   shots: readonly T[],
   castEntityIds: ReadonlySet<string>,
 ): T[] {
-  return shots.filter((s) => (s.entityIds ?? []).some((id) => castEntityIds.has(id)));
+  return shots.filter((s) => shotGoesDirectToVideo(s, castEntityIds));
 }
 
 /**

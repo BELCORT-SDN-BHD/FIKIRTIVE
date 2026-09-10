@@ -946,8 +946,15 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                   ) : (
                     <>
                       {/* FSE-001 同族:直接出片的镜头没有首帧这一步,所以连那句提示词都不
-                          该摆在商家眼前 —— 摆着它,商家读到的就是一件不会发生的事。 */}
-                      {!isDirectToVideo && (
+                          该摆在商家眼前 —— 摆着它,商家读到的就是一件不会发生的事。
+
+                          creation §5 :172⑤(判官第 2 轮 P2-④):**空的那一格也不摆**。
+                          `directToVideo` 只有服务端算得出,一次 sync 都还没回来时卡面按
+                          「照旧两步」渲染 —— 而这一镜从 :172⑤ 起本来就可以没有首帧文字,
+                          于是商家看到一个光秃秃的 "First frame ·" 标签,后面什么都没有。
+                          有文字才摆这一行;没有就整行不出现(那一步的真相由下面那句
+                          "Goes straight to video…" 或第一次 sync 回来后的卡面说)。 */}
+                      {!isDirectToVideo && shot.firstFramePrompt !== "" && (
                         <div className="text-[0.75rem] text-muted-foreground">
                           <span className="font-semibold text-foreground">First frame · </span>{shot.firstFramePrompt}
                         </div>
