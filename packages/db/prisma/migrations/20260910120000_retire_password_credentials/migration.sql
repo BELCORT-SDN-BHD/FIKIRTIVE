@@ -10,7 +10,15 @@
 -- 模型读写 `ba_account`；删列会让库和它的模型对不上，而这次退役要的是「一份密码凭据都不存在」，
 -- 不是「表结构里没有密码这个概念」。schema.prisma 因此不动，这是一条纯数据迁移。
 --
--- 不可逆：删掉的密码哈希无法从任何地方重建。生产执行前须由 Founder 另行确认备份与恢复方案
--- （见同目录 rollback.sql）。
+-- 不可逆：删掉的密码哈希无法从任何地方重建。
+--
+-- **合并即执行 —— 这后面没有第二道闸。** 本仓库推 main 会自动部署，容器每次启动都在 serve 之前
+-- 跑一次 `prisma migrate deploy`（apps/web/Dockerfile:55-65 → apps/web/scripts/boot.mjs 的
+-- runMigrations），仓库里也没有任何 deploy workflow 或 environment required reviewer
+-- （`.github/workflows/` 只有 ci / e2e / post-merge / process-gates / process-heartbeat / stale）。
+-- 所以「merge → deploy → boot → DELETE」中间没有一步等人：**Founder 对这一次删除的明确同意，
+-- 必须发生在合并之前，否则永远不会发生**（全局 CLAUDE.md §6、项目 CLAUDE.md「Database safety」）。
+-- 顶上这行 `DESTRUCTIVE-OK` 只让 CI 那道扫描闸放行（scripts/check-destructive-migrations.sh:20
+-- 只查标记存在），它不是 Founder 的批准。备份与恢复路径见同目录 rollback.sql。
 
 DELETE FROM "ba_account" WHERE "providerId" = 'credential';

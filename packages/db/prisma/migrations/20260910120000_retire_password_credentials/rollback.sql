@@ -19,5 +19,7 @@
 -- 在 router 层 404（apps/web/lib/better-auth/server.ts 的 CLOSED_PASSWORD_PATHS）。要真正回到
 -- 有密码的产品，得先推翻 docs/specs/sign-in.md（已冻结 · v1）。
 --
--- 生产执行前的前置条件（Founder 另行确认，本 PR 不代办）：备份存在、恢复方案演练过。
--- 依据：Founder 2026-08-01「未公测零用户」—— 今天这些行只属于测试账号。
+-- 前置条件必须在**合并之前**确认，不是「生产执行前」：推 main 会自动部署，容器启动时
+-- `prisma migrate deploy` 当场把 DELETE 跑掉（apps/web/Dockerfile:55-65 →
+-- apps/web/scripts/boot.mjs），仓库里没有任何部署闸能拦下这一步。要确认的两件事：备份存在、
+-- 恢复方案演练过。依据：Founder 2026-08-01「未公测零用户」—— 今天这些行只属于测试账号。

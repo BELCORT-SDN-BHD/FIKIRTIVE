@@ -536,9 +536,21 @@ describe("#678 r3 ⑥ — submitting a code cannot be used to ask whether an add
  * 没人管过；留一条 404 断言，才说得清它是怎么消失的。
  *
  * 这里也不再建任何 `providerId = "credential"` 的行 —— 建了就会和 SIGNIN-A9（这张表里一份
- * 密码凭据都没有）在同一轮里互相打架。
+ * 密码凭据都没有）在同一轮里互相打架。但**用户行**要建：不建的话 `PASSWORD_ACCOUNT` 就是一个
+ * 库里根本不存在的地址，下面那条「服务端也拒」会因为「查无此人」而恒绿，与密码配置无关（判官
+ * r2 的变异实验证到过：把 `emailAndPassword.enabled` 改回 true，那一条照样过）。
  */
 describe("SIGNIN-A4 ⑤ — 密码门与它的两种答案一起退役", () => {
+  beforeAll(async () => {
+    // 一个**真的存在**的账号，只有用户行，没有 credential 行 —— 这正是密码退役之后库里应有的
+    // 形状，也让下面的「拒」不能靠「查无此人」蒙混过去。
+    const user = await prisma.betterAuthUser.create({
+      // `id` 在 schema 里是无默认值的 `@id String`（better-auth 自己生成），所以这里要给。
+      data: { id: randomUUID(), email: PASSWORD_ACCOUNT, name: "p678 password door", emailVerified: true },
+    });
+    createdUserIds.push(user.id);
+  });
+
   it("SIGNIN-A4 —— /sign-in/email 对公网 404：没有两种答案可比，也就没有枚举面", async () => {
     const res = await auth.handler(
       new Request("http://localhost:3100/api/better-auth/sign-in/email", {
@@ -552,7 +564,16 @@ describe("SIGNIN-A4 ⑤ — 密码门与它的两种答案一起退役", () => {
 
   it("SIGNIN-A4 —— 服务端那一层也拒：`auth.api.signInEmail` 不是绕过 404 的后门", async () => {
     // router 那道闸只挡公网。配置层（`emailAndPassword.enabled: false`）才是「本产品没有密码」
-    // 的单一源，这一条量的就是它 —— 两层各答一个问题，缺一条这段就只证明了一半。
+    // 的单一源 —— 两层各答一个问题，缺一条这段就只证明了一半。
+    //
+    // 配置层这一句是从**构造出来的实例**上读的，不是从源码文本上扫的：把
+    // apps/web/lib/better-auth/server.ts 的 `emailAndPassword: { enabled: false }` 改成 true，
+    // 这一行立刻红。（判官 r2 指出上一版没有任何断言能感知那次变异 —— 这一行是补上的那个感知点。）
+    expect(auth.options.emailAndPassword?.enabled ?? false).toBe(false);
+
+    // 而下面这半是行为：这个地址在库里**真的有一个用户**（见本段 beforeAll），所以 `signInEmail`
+    // 拒掉它，不是「查无此人」的副作用；而且拒完之后它名下一个 session 都没有。
+    expect(await prisma.betterAuthUser.count({ where: { email: PASSWORD_ACCOUNT } })).toBe(1);
     const outcome = await auth.api
       .signInEmail({
         body: { email: PASSWORD_ACCOUNT, password: REAL_PASSWORD },
@@ -561,6 +582,8 @@ describe("SIGNIN-A4 ⑤ — 密码门与它的两种答案一起退役", () => {
       .then((r) => (r && "token" in r ? "session-issued" : "no-session"))
       .catch(() => "refused");
     expect(outcome).toBe("refused");
+    // `in: []` 恒为 0，所以先钉住这个 where 不是空的 —— 上一版就是栽在这里。
+    expect(createdUserIds.length).toBeGreaterThan(0);
     expect(await prisma.betterAuthSession.count({ where: { userId: { in: createdUserIds } } })).toBe(0);
   });
 
