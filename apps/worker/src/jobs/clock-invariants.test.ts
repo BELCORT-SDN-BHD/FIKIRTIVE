@@ -22,8 +22,9 @@
  * 队列过期就得覆盖 max(batch) 而不是 max(job) —— 这是不采用那个形状的第二个理由。)
  */
 import { describe, it, expect } from "vitest";
-import { GEN_QUEUE_POLICY, REFGEN_QUEUE_POLICY, RESEARCH_QUEUE_POLICY, PUBLISH_QUEUE_POLICY, PUBLISH_EXECUTION_DEADLINE_MS } from "@fikirtive/core";
-import { VIDEO_POLL_TIMEOUT_MS, ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS } from "@fikirtive/generation";
+import { GEN_QUEUE_POLICY, REFGEN_QUEUE_POLICY, RESEARCH_QUEUE_POLICY, PUBLISH_QUEUE_POLICY, PUBLISH_EXECUTION_DEADLINE_MS, GEN_QUEUE, REFGEN_QUEUE, UNDERSTAND_QUEUE, MAX_GEN_COUNT, MAX_REFGEN_COUNT } from "@fikirtive/core";
+import { VIDEO_POLL_TIMEOUT_MS, ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS, PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT } from "@fikirtive/generation";
+import { workerPlan } from "../plan.js";
 import { GEN_STALE_MS, GEN_REAP_MS, GEN_QUEUED_REAP_MS, GEN_DONE_EMPTY_GRACE_MS } from "./gen.js";
 import { REFGEN_STALE_MS, REFGEN_REAP_MS, REFGEN_QUEUED_REAP_MS } from "./refgen.js";
 
@@ -61,38 +62,80 @@ describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () 
   //
   // 但「渲染 5m + 下载 5m < 18m」**不是全部账**(判官 P2 点名的漏项)。stale 量的起点是
   // `startedAt` —— QUEUED→GENERATING 那一刻写下的(本目录 `gen.ts` 的 claim),而付费 POST 在那
-  // 之后还要先在 `providerRequestGate`(默认 6 格,进程内 gen / refgen / understand 共用同一个
-  // 账户额度)**排队**。排队时间落在被量的窗口**里面**,所以真正的账是:
+  // 之后还要先在 `providerRequestGate`(进程内唯一,默认 6 格,gen / refgen / understand 共用同
+  // 一个账户额度)**排队**。排队时间落在被量的窗口**里面**,所以真正的账是:
   //
   //     排队 + 渲染 5m + 下载 5m  <  stale 18m   ⇒   留给排队的余量 = 8m
   //
-  // 本片把图片 POST 的占位从 60s 抬到 5m,余量因此从 12m 收窄到 8m。8m 仍然够**同类**争用:
-  // 闸满时排在你前面的其它图片 POST,最慢的一整轮就是 5m(6 格同时到顶、同时释放),
-  // 5m < 8m,还剩 3m。下面第二条把这笔账钉成断言。
+  // 本片把图片 POST 的占位从 60s 抬到 5m:余量从 12m 收窄到 8m,而且**一轮排队的价钱也从
+  // 60s 变成了 5m**。所以「够不够」不能只答「够一轮」(第 2 轮的论据停在这里,不准) ——
+  // 要按最坏排几轮算,而轮数由这个进程能同时推到闸前多少个请求决定:
+  //
+  //     闸前需求 = 任务槽位 × 每个任务的付费请求扇出(一张图 = 一个付费 POST)
+  //     最坏排队 = (ceil(需求 / 6 格) - 1) 轮 × 一轮最慢 5m
+  //
+  // 下面两条按**角色**分开钉:默认角色(不设 `WORKER_ROLE`)装得下,是不变式;
+  // `WORKER_ROLE=wait` 装不下,是登记的缺口 —— 而且那一格是**本片收窄的**,见那条注释。
   const IMAGE_ATTEMPT_MS = ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS;
   const GEN_QUEUE_ALLOWANCE_MS = GEN_STALE_MS - IMAGE_ATTEMPT_MS;
+  /** 修法前图片 POST 占的那把尺(控制面 60s)。只用来回答「这一格是不是本片收窄的」。 */
+  const PRE_FIX_IMAGE_POST_MS = 60_000;
+
+  /** 一个 worker 进程最坏能同时推到闸前多少个付费请求 = 槽位 × 每个任务的请求扇出。 */
+  function paidRequestDemand(env: NodeJS.ProcessEnv): number {
+    const { concurrency } = workerPlan(env);
+    return (
+      (concurrency[GEN_QUEUE] ?? 0) * MAX_GEN_COUNT + // 散图路:count 张图 = count 个付费 POST
+      (concurrency[REFGEN_QUEUE] ?? 0) * MAX_REFGEN_COUNT +
+      (concurrency[UNDERSTAND_QUEUE] ?? 0) // 理解一次一个请求,但花的是同一个账户额度
+    );
+  }
+  /** 最坏排队 = 前面还要清掉几轮 × 一轮最慢(一个图片 POST 打满它的截止时间)。 */
+  const worstQueueWaitMs = (demand: number, roundMs: number): number =>
+    (Math.ceil(demand / PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT) - 1) * roundMs;
 
   it("一次正常的慢出图不会被 stale 判定误伤", () => {
     expect(ARK_IMAGE_TIMEOUT_MS).toBeLessThan(GEN_STALE_MS);
     expect(IMAGE_ATTEMPT_MS).toBeLessThan(GEN_STALE_MS);
   });
 
-  it("并发闸的排队时间也在被量的窗口里 —— 余量 8m,够前面整整一轮同类请求", () => {
+  it("并发闸的排队时间也在被量的窗口里 —— 默认角色最坏排一轮 5m,装得进 8m 余量", () => {
     expect(IMAGE_ATTEMPT_MS).toBe(10 * MINUTE);
     expect(GEN_QUEUE_ALLOWANCE_MS).toBe(8 * MINUTE);
-    // 排在前面的同类请求最慢一轮 = 一个图片 POST 的上限。它必须装得进余量,
-    // 否则「闸前排一轮」就能把一次健康的出图推过 stale。
-    expect(ARK_IMAGE_TIMEOUT_MS).toBeLessThan(GEN_QUEUE_ALLOWANCE_MS);
+    // 不设 `WORKER_ROLE` = 默认 `all`:等待型队列各 1 格 ⇒ 闸前最多 4(gen) + 6(refgen) + 1(understand)。
+    const demand = paidRequestDemand({});
+    expect(demand).toBe(MAX_GEN_COUNT + MAX_REFGEN_COUNT + 1);
+    // 11 个请求、6 格 ⇒ 排在最后的那个前面只有一轮要清。
+    const wait = worstQueueWaitMs(demand, ARK_IMAGE_TIMEOUT_MS);
+    expect(wait).toBe(ARK_IMAGE_TIMEOUT_MS);
+    expect(wait).toBeLessThan(GEN_QUEUE_ALLOWANCE_MS);
+    expect(wait + IMAGE_ATTEMPT_MS).toBeLessThan(GEN_STALE_MS);
+  });
+
+  it("已知缺口钉板:WORKER_ROLE=wait 的槽位把最坏排队推过余量(本片收窄的正是这一格)", () => {
+    // 这条**不是**不变式,是把一笔账钉在明面上。`wait` 角色要人显式写 `WORKER_ROLE=wait`
+    // 才生效(`plan.ts`,判官 r1 P0 定案),默认部署不走它;一旦设了,闸前需求 30、6 格 ⇒
+    // 最坏还要清 4 轮 = 20m,大过 8m 余量。
+    const demand = paidRequestDemand({ WORKER_ROLE: "wait" });
+    expect(demand).toBe(4 * MAX_GEN_COUNT + 2 * MAX_REFGEN_COUNT + 2);
+    expect(worstQueueWaitMs(demand, ARK_IMAGE_TIMEOUT_MS)).toBeGreaterThan(GEN_QUEUE_ALLOWANCE_MS);
+    // 而修法前同样 4 轮只要 4×60s = 4m,装得进当时 12m 的余量 —— 所以这一格**是本片收窄的**,
+    // 不像下面那条视频的先于本片存在。开大闸位补不上:账户并发硬顶 10,还小于需求 30,
+    // 把闸开大只是把排队换成撞供应商。真要关它得给排队加截止、或把 stale 的起点挪到闸后,
+    // 两者都动别的规格线。处置:登记在 PR #1332 描述「未做」栏,S5 裁是修还是续登。
+    expect(worstQueueWaitMs(demand, PRE_FIX_IMAGE_POST_MS)).toBeLessThan(
+      GEN_STALE_MS - (PRE_FIX_IMAGE_POST_MS + ARK_DOWNLOAD_TIMEOUT_MS),
+    );
   });
 
   it("已知缺口钉板:一个视频任务的闸位就吃光图片那条路的排队余量(先于本片存在)", () => {
-    // 这条**不是**不变式,是把一笔已知的账钉在明面上。视频任务占的是**整条任务**的位
-    // (提交 + 轮询,`byteplus.ts` 的 `generateVideo` 在最外层 acquire),最长 60s + 15m ——
-    // 一格就大过 8m 余量。它不是本片引入的:修法前余量 12m,同样小于它 —— 第二条断言就是这个。
-    // 处置:登记在 PR #1332 描述「未做」栏,不靠这里假装安全;真要关它得动
-    // stale/expire/reap 整条链或给视频单独一把闸,那是另一条规格线的活。
+    // 视频任务占的是**整条任务**的位(提交 + 轮询,`byteplus.ts` 的 `generateVideo` 在最外层
+    // acquire),最长 60s + 15m —— 一格就大过 8m 余量。它不是本片引入的:修法前余量 12m,
+    // 同样小于它(下面第二条断言)。同上登记在 PR #1332「未做」栏。
     expect(VIDEO_POLL_TIMEOUT_MS).toBeGreaterThan(GEN_QUEUE_ALLOWANCE_MS);
-    expect(VIDEO_POLL_TIMEOUT_MS).toBeGreaterThan(GEN_STALE_MS - (60_000 + ARK_DOWNLOAD_TIMEOUT_MS));
+    expect(VIDEO_POLL_TIMEOUT_MS).toBeGreaterThan(
+      GEN_STALE_MS - (PRE_FIX_IMAGE_POST_MS + ARK_DOWNLOAD_TIMEOUT_MS),
+    );
   });
 
   it("四个数字就是现行值(改任何一个都必须回到这里重新论证)", () => {
