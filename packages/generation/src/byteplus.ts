@@ -142,9 +142,11 @@ export const VIDEO_MODEL_MAP: Record<string, string> = {
  * still "in flight". The deadline is what turns "hung forever, silently" into "failed, and the
  * charge boundary above decides what that costs".
  *
- * TWO SIZES, because two different things are being waited for:
- *   · CONTROL (submit, poll) — a request the engine answers from its own queue state. 60s is
- *     already ~20× the measured p99; past it the connection is not slow, it is gone.
+ * THREE SIZES, because three different things are being waited for:
+ *   · CONTROL (video submit, video poll) — a request the engine answers from its own queue
+ *     state, WITHOUT rendering anything inside it. 60s is already ~20× the measured p99;
+ *     past it the connection is not slow, it is gone.
+ *   · RENDER (the image POST) — see `ARK_IMAGE_TIMEOUT_MS` below.
  *   · TRANSFER (image/video download) — bytes over the wire from object storage. A 15-minute
  *     720p clip is tens of megabytes, so this one has to tolerate a genuinely slow pipe; 5 min
  *     is generous for that and still far inside the worker's own 20-minute message expiry.
@@ -156,6 +158,43 @@ export const VIDEO_MODEL_MAP: Record<string, string> = {
  */
 export const ARK_CONTROL_TIMEOUT_MS = 60_000;
 export const ARK_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * Creation §5 :177 —— **图片那一次 POST 不是控制面调用,它就是渲染本身**。
+ *
+ * `/images/generations` 是同步端点:请求发出去之后连接一直开着,模型在里面画图,画完了图
+ * 才随响应回来。所以这条调用的时长 = **出图时长**,不是「引擎回一句队列状态要多久」。
+ * #795 当时把它和视频 submit 一起塞进 `ARK_CONTROL_TIMEOUT_MS`(60s)—— 那是按后者
+ * (任务创建,不渲染)量出来的尺寸,套在前者身上是量错了东西。
+ *
+ * 这个量错在 staging E2E Round 1 变成了**门槛 A3 的 FAIL**:商家对一张已生成图点
+ * `Create variations`,job `01M1ZRF0D1JWSCZGHN8EX6YCNJ` 于 `05:39:42.124Z` 创建、
+ * `05:40:42.828Z` FAILED —— **60.704 秒**,而这条路上只有一个 60 秒的钟。60s 一到,
+ * fetch 被 abort ⇒ 走「结果不明 ⇒ 按已计费」那条(它是对的,别动)⇒ 终态失败 + 退款,
+ * 落库的正是 `generation provider returned only 0/1 usable images`、spent=true、
+ * spentUsd=USD0.035、billedUnits=null(证据 `docs/audits/fullstack-staging-2026-09-08/
+ * backend-evidence.md:110`、`report-round1.md:198`)。商家一张图没拿到,毛利照烧。
+ *
+ * 60s 从来就不宽裕:同一轮走查里**成功**的图片作业整单耗时 27.6s / 28.9s / 31.6s,带参考图
+ * 合成的那单 41.4s(`backend-evidence.md:31,82,154,188`)—— 60s 只有它的 1.5 倍,一次比平常
+ * 慢的渲染就越线。5 分钟与下载面同尺寸:够一次真慢的出图,又远在 worker 自己那条钟链之内
+ * (供应商超时 < stale 18m < 队列过期 20m < 清道夫 25m,由
+ * `apps/worker/src/jobs/clock-invariants.test.ts` 守着)。
+ *
+ * 钱路语义一格没动:超时仍然是 charged,仍然终态、仍然退款。变的只是**在判它死之前愿意等
+ * 多久** —— 等到了,商家拿到他已经付过钱的那张图。
+ */
+export const ARK_IMAGE_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * 一次付费 POST 该配哪一把尺 —— 判据只有一条:**这次连接里有没有在渲染**。
+ *
+ * 导出成函数(而不是在调用点各写各的)是为了让「图片 POST 用的是渲染面的尺寸」这件事
+ * 可以被直接断言,而不是靠读 `paidPost` 的实现推。
+ */
+export function arkPostTimeoutMs(what: "image request" | "video submit"): number {
+  return what === "image request" ? ARK_IMAGE_TIMEOUT_MS : ARK_CONTROL_TIMEOUT_MS;
+}
 
 /**
  * How long this client keeps polling one video task before it gives up (F06 — the full
@@ -216,7 +255,10 @@ export class BytePlusProvider implements GenerationProvider {
       // #795 — a submit that never answers holds the only generation seat open. An abort
       // surfaces here as a rejected fetch, which is already the "outcome unknown ⇒ billed"
       // branch below: the deadline changes how long we wait, never who pays.
-      signal: AbortSignal.timeout(ARK_CONTROL_TIMEOUT_MS),
+      //
+      // Creation §5 :177 —— 尺寸按**这次连接里有没有在渲染**分:图片 POST 是同步渲染
+      // (`ARK_IMAGE_TIMEOUT_MS`),视频 submit 只是建任务(`ARK_CONTROL_TIMEOUT_MS`)。
+      signal: AbortSignal.timeout(arkPostTimeoutMs(what)),
     }).catch((e: unknown) => {
       // No response at all (connection reset, DNS, socket closed mid-flight). The
       // request may already have reached the engine — and been billed (image) or
