@@ -296,16 +296,17 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
       // 抢占式、在同一笔事务里：INSERT … ON CONFLICT DO NOTHING 之后回读，这一行是不是我的。
       // 是 → 发赠金；不是 → 这个真实收件箱已经领过了，跳过（账号、工作区、成员身份照建，
       // 验收 A17 明写 30 个号都进得来）。事务保证「抢到了却没发」和「发了却没抢到」都不可能。
-      const canonical = canonicalGrantEmail(email);
-      await tx.signupGrantClaim.createMany({
-        data: [{ canonicalEmail: canonical, orgId }],
+      // **一条语句**：`INSERT … ON CONFLICT DO NOTHING` 返回的行数就是答案 —— 1 = 这一行是我
+      // 插的，发赠金；0 = 已经有人占着，跳过。不回读一次，因为那次回读除了在一笔只有 5 秒预算
+      // 的事务里多一趟往返之外，答不出这条语句没答的事。
+      //
+      // 0 的两种来源都指向同一个正确动作：同一个真实收件箱的另一个地址变体先到了（不该发第二
+      // 笔），或者这是同一个 org 的重跑（那一笔已经在 `signup:<orgId>` 那条键下了）。
+      const claimed = await tx.signupGrantClaim.createMany({
+        data: [{ canonicalEmail: canonicalGrantEmail(email), orgId }],
         skipDuplicates: true,
       });
-      const claim = await tx.signupGrantClaim.findUnique({
-        where: { canonicalEmail: canonical },
-        select: { orgId: true },
-      });
-      if (claim?.orgId !== orgId) return; // 同一个收件箱的另一个变体先到了：不发第二笔赠金
+      if (claimed.count === 0) return; // 这个真实收件箱已经领过开户赠金了
       await grantCreditsTx(tx, {
         orgId,
         amount: SIGNUP_GRANT_CREDITS,
