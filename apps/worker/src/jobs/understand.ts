@@ -79,7 +79,10 @@
  * 先花三分之一分钱判一次,再决定要不要花第二次 —— 菜单最常见的形态就是一张照片,
  * 而给每张产品照都跑一遍 doc-extract 是纯浪费。
  */
-import { InsufficientCredits, OrgSuspended, createProduct, prisma, refundReservation, reserveCredits, settleCredits } from "@fikirtive/db";
+import {
+  InsufficientCredits, OrgSuspended, createProduct, prisma, refundReservation, reserveCredits,
+  settleCredits, updateProductRecord,
+} from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   UNDERSTAND_QUEUE,
@@ -1062,8 +1065,11 @@ async function upsertProductRecord(
 
   const data = parsed.data as unknown as Record<string, unknown>;
   if (existing) {
-    await tx.brandRecord.update({ where: { id: existing.id }, data: { data: data as never, source: "otto" } });
-    return true;
+    // 改也走共享动作(规格 §1.4;PRODID-A4;判官第 3 轮 P1-1):这一句写的 `data` 里带着
+    // `name`,而名字的权威是身份(`Entity`)。裸 update 会让同一件产品在 Library 与 Brand 页
+    // 各叫各的名字 —— 两套真相正是这条规格要关掉的口子。tx 照旧传下去(MONEY-A9 不变量②)。
+    const done = await updateProductRecord({ ownerId, id: existing.id, data, source: "otto" }, tx);
+    return done.ok;
   }
   // 产品有身份那一半(Entity(PRODUCT)):建产品的唯一一条写路是共享动作 `createProduct`
   // (规格 docs/specs/brand-product-identity.md §1.4;票 #1321),四个写入口都从那里过。

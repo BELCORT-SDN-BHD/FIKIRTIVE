@@ -80,3 +80,29 @@ export function distinctCategories(
   }
   return [...seen.values()];
 }
+
+/**
+ * 读路那一半:把身份(`Entity`)上的名字与主图盖回价签的 `data`
+ * (规格 `docs/specs/brand-product-identity.md` §1.4;验收 PRODID-A4)。
+ *
+ * 名字与主图的**单一源是身份**,`data` 里那两格是缓存,由 `@fikirtive/db` 的
+ * `createProduct` / `confirmProductDraft` / `updateProductRecord` / `renameProductIdentity`
+ * 在同一个事务里跟着写。这一层是**兜底**:存量行、回填行、以及任何绕过共享动作的写入,
+ * 都不会让商家在 Brand 页看到一个跟 Library 不一样的名字。
+ *
+ * 住在 core 而不是 db,因为它是纯函数 —— 三条读路(Brand 页 `listBrandRecords`、Otto 上下文
+ * `compileBrandContext`、Otto 技能 `lookupProducts`)共用同一份判断,谁都不必先要一个数据库。
+ *
+ * 草稿此刻没有身份(`entity` 为 null),照原样返回。
+ */
+export function withProductIdentity<T extends Record<string, unknown>>(
+  kind: string,
+  data: T,
+  entity: { name: string; baseAssetId: string | null } | null | undefined,
+): T {
+  if (kind !== "product" || !entity) return data;
+  const out: Record<string, unknown> = { ...data, name: entity.name };
+  if (entity.baseAssetId) out.imageAssetId = entity.baseAssetId;
+  else delete out.imageAssetId; // 身份上没有主图 = 这件产品没有主图,缓存里那一格是过期的
+  return out as T;
+}

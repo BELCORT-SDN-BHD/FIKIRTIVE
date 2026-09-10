@@ -4,7 +4,7 @@
  * Upsert-by-name: find live row (ownerId+kind+nameKey) → merge-update; else create.
  */
 import type { RunContext } from "@openai/agents";
-import { prisma, Prisma, createProduct, confirmProductDraft } from "@fikirtive/db";
+import { prisma, Prisma, createProduct, confirmProductDraft, updateProductRecord } from "@fikirtive/db";
 import {
   newId, recordSchemaFor, recordName, normalizeNameKey, type RecordKind,
 } from "@fikirtive/core";
@@ -69,6 +69,16 @@ export async function upsertBrandRecordFromOtto(
       if (!done.ok) throw new Error(`Couldn't save that ${input.kind}.`);
       return { ok: true, id: existing.id, updated: true };
     }
+    if (input.kind === "product") {
+      // 名字与主图的权威是身份(规格 §1.4;PRODID-A4)。Otto 面改产品也走共享动作,一个事务
+      // 同时写身份与价签 —— 否则 Otto 改个名字,Library 那张卡还是旧名字(判官第 3 轮 P1-1)。
+      const done = await updateProductRecord({
+        ownerId: ctx.orgId, id: existing.id, data: parsed.data as Record<string, unknown>,
+        source: "otto", ...(status ? { status } : {}),
+      });
+      if (!done.ok) throw new Error(`Couldn't save that ${input.kind}.`);
+      return { ok: true, id: existing.id, updated: true };
+    }
     await prisma.brandRecord.update({
       where: { id: existing.id },
       data: { data, nameKey, source: "otto", ...(status ? { status } : {}), ...dates },
@@ -85,11 +95,26 @@ export async function upsertBrandRecordFromOtto(
     });
     if (made.created) return { ok: true, id: made.id, updated: false };
     // 撞名 —— 与下面 create 分支的那次重试同一个语义:另一条同名活跃行赢了,转成 update。
+    // 判官第 3 轮 P2-d:这条回退原先直接 update,而赢下名字槽位的那一行**可能是一条草稿**
+    // (理解 worker 从菜单里读出来的那种)—— 那就跟上面 `existing` 那一支同一个分流:
+    // 草稿要**转正**(补身份、抬 Ready),不是往一条永远没有身份的行上写 data。
     if (!made.existingId) throw new Error(`Couldn't save that ${input.kind}.`);
-    await prisma.brandRecord.update({
-      where: { id: made.existingId },
-      data: { data, nameKey, source: "otto", ...(status ? { status } : {}) },
+    const raced = await prisma.brandRecord.findFirst({
+      where: { id: made.existingId, ownerId: ctx.orgId, deletedAt: null },
+      select: { contextStatus: true },
     });
+    if (raced?.contextStatus === "Draft") {
+      const promoted = await confirmProductDraft({
+        ownerId: ctx.orgId, id: made.existingId, data: parsed.data as Record<string, unknown>, source: "otto",
+      });
+      if (!promoted.ok) throw new Error(`Couldn't save that ${input.kind}.`);
+      return { ok: true, id: made.existingId, updated: true };
+    }
+    const done = await updateProductRecord({
+      ownerId: ctx.orgId, id: made.existingId, data: parsed.data as Record<string, unknown>,
+      source: "otto", ...(status ? { status } : {}),
+    });
+    if (!done.ok) throw new Error(`Couldn't save that ${input.kind}.`);
     return { ok: true, id: made.existingId, updated: true };
   }
 

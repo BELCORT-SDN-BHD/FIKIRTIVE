@@ -8,7 +8,11 @@ vi.mock("@fikirtive/db", () => ({
 
 const ctx = { context: { orgId: "org-1" } as unknown as OttoContext };
 const row = (name: string, extra: Record<string, unknown> = {}) => ({
+  kind: "product",
   data: { name, ...extra }, status: "active", pinned: false, updatedAt: new Date(),
+  // 名字与主图的权威是身份(PRODID-A4)。这个夹具让身份与缓存一致 —— 不一致那一格由下面
+  // 「身份赢」那条用例单独钉。
+  entity: { name, baseAssetId: null as string | null },
 });
 
 let db: { prisma: { brandRecord: { findMany: ReturnType<typeof vi.fn> } } };
@@ -45,6 +49,16 @@ describe("executeLookupProducts", () => {
     expect(db.prisma.brandRecord.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ contextStatus: "Ready" }),
     }));
+  });
+  it("PRODID-A4 名字以身份为准:价签缓存跟身份不一致时,Otto 说的是身份上那个名字", async () => {
+    // 判官第 3 轮 P1-1(PR #1337):`BrandRecord.data.name` 只是缓存。商家在 Library 改了名字,
+    // Otto 嘴里说的必须是同一个 —— 否则他给商家一个商家自己认不出来的产品名。
+    db.prisma.brandRecord.findMany.mockResolvedValue([
+      { ...row("Stale cached name"), entity: { name: "Latte Blend", baseAssetId: "as_9" } },
+    ]);
+    const res = await executeLookupProducts({ query: "latte" }, ctx);
+    expect(res.matches.map((m) => m.name)).toEqual(["Latte Blend"]);
+    expect(res.matches[0]!.imageAssetId).toBe("as_9");
   });
   it("returns empty matches for no hit", async () => {
     db.prisma.brandRecord.findMany.mockResolvedValue([row("Mug")]);

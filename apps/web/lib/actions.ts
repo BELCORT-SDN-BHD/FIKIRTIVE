@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma, refundReservation, createProduct, confirmProductDraft } from "@fikirtive/db";
+import {
+  prisma, refundReservation, createProduct, confirmProductDraft, renameProductIdentity,
+} from "@fikirtive/db";
 import {
   fikirtiveEdit,
   captionCue,
@@ -511,6 +513,9 @@ export async function createEntity(formData: FormData) {
   });
 }
 
+/** 只用来把上面那个改名事务整笔回滚 —— 撞上另一件活着的同名产品时(规格 §3)。 */
+class RollbackRename extends Error {}
+
 export async function updateEntity(
   entityId: string,
   fields: { name?: string; notes?: string; negativeConstraints?: string; type?: string },
@@ -604,7 +609,21 @@ export async function updateEntity(
       }
     }
     if (Object.keys(data).length === 0) return { ok: true };
-    const { count } = await prisma.entity.updateMany({ where: { id: entityId, ownerId, deletedAt: null }, data });
+    // 身份是名字的**单一源**(规格 docs/specs/brand-product-identity.md §1.4;PRODID-A4):
+    // 这一行改完名字,产品价签里那份缓存必须在**同一个事务**里追平,否则 Brand 页还挂着旧
+    // 名字 —— 两套真相(判官第 3 轮 P1-1,PR #1337)。改成另一件活着的同名产品是规格 §3 的
+    // 非目标(同名不自动合并),所以整笔回滚、如实报出来。
+    let nameTaken = false;
+    const count = await prisma.$transaction(async (tx) => {
+      const updated = await tx.entity.updateMany({ where: { id: entityId, ownerId, deletedAt: null }, data });
+      if (updated.count === 0) return 0;
+      if (data.name !== undefined) {
+        const synced = await renameProductIdentity({ ownerId, entityId, name: data.name }, tx);
+        if (!synced.ok) { nameTaken = true; throw new RollbackRename(); }
+      }
+      return updated.count;
+    }).catch((e) => { if (e instanceof RollbackRename) return 0; throw e; });
+    if (nameTaken) return { error: "You already have a product with that name." };
     if (count === 0) return { error: "Entity not found." };
     await logAction(ownerId, "entity.update", null, {
       entityId,
@@ -725,18 +744,29 @@ export async function softDeleteEntity(entityId: string): Promise<{ ok: true; sh
     if (!entityCapabilities(target).deleteEntity) return { error: OFFICIAL_CATALOG_REFUSAL };
     const refCount = await prisma.shotEntityRef.count({ where: { entityId } });
     const purged = await prisma.$transaction(async (tx) => {
+      // 一个时间戳,三张表。同一个 `deletedAt` 是**恢复**那一半的凭据:哪些行是被这一次删除
+      // 带走的,只有它答得出来(restoreBrandRecord 按它把三边一起接回来)。
+      const deletedAt = new Date();
       const { count } = await tx.entity.updateMany({
         where: { id: entityId, ownerId, deletedAt: null },
-        data: { deletedAt: new Date() },
+        data: { deletedAt },
       });
       if (count === 0) return null; // not found — signal to the caller below
+      // 身份被删,指着它的价签必须一起走(规格 §1.4 的删除半边,验收 PRODID-A6)。
+      // 判官第 3 轮 P1-3(PR #1337):少了这一句,Library 卡没了而 Brand 页价签还活着,它还
+      // 占着 `(ownerId, brandId, kind, nameKey)` 那个活跃唯一名字槽位 —— 商家再建一件同名
+      // 产品会被查重撞上这条孤儿价签、静默转成 update,那张卡于是**永远回不来**。
+      await tx.brandRecord.updateMany({
+        where: { ownerId, entityId, deletedAt: null },
+        data: { deletedAt },
+      });
       const liveRefs = await tx.referenceImage.findMany({
         where: { entityId, ownerId, deletedAt: null },
         select: { assetId: true },
       });
       await tx.referenceImage.updateMany({
         where: { entityId, ownerId, deletedAt: null },
-        data: { deletedAt: new Date() },
+        data: { deletedAt },
       });
       return purgeOrphanedReferenceAssets(tx, ownerId, liveRefs.map((r) => r.assetId));
     });

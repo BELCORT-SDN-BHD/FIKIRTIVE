@@ -15,6 +15,9 @@ vi.mock("@fikirtive/db", () => ({
   createProduct: vi.fn(),
   // 撞上一条草稿产品时,Otto 说的「记下产品 X」就是确认它 —— 共享动作补身份、抬 Ready。
   confirmProductDraft: vi.fn(),
+  // 改产品也走共享动作:名字与主图的权威是身份,价签里那两格是缓存,同事务一起写
+  // (规格 §1.4;PRODID-A4;判官第 3 轮 P1-1)。
+  updateProductRecord: vi.fn(),
 }));
 vi.mock("@fikirtive/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fikirtive/core")>()),
@@ -39,10 +42,12 @@ let db: {
   };
   createProduct: ReturnType<typeof vi.fn>;
   confirmProductDraft: ReturnType<typeof vi.fn>;
+  updateProductRecord: ReturnType<typeof vi.fn>;
 };
 beforeEach(async () => {
   vi.clearAllMocks();
   db = (await import("@fikirtive/db")) as unknown as typeof db;
+  db.updateProductRecord.mockResolvedValue({ ok: true, id: "r-any", entityId: "ent-any" });
 });
 
 describe("upsertBrandRecordFromOtto", () => {
@@ -84,17 +89,60 @@ describe("upsertBrandRecordFromOtto", () => {
     expect(db.prisma.brandRecord.update).not.toHaveBeenCalled();
   });
 
-  it("PRODID-A7 撞上同名 Ready 产品:照旧 update,不重复建身份", async () => {
+  it("PRODID-A7 撞上同名 Ready 产品:照旧改,不重复建身份", async () => {
     db.prisma.brandRecord.findFirst.mockResolvedValue({
       id: "r-ready", data: { name: "Kopi ais", price: "RM 3" }, contextStatus: "Ready",
     });
-    db.prisma.brandRecord.update.mockResolvedValue({});
     await upsertBrandRecordFromOtto(
       { kind: "product", fields: { name: "Kopi ais", price: "RM 4" } },
       { context: makeCtx() },
     );
     expect(db.confirmProductDraft).not.toHaveBeenCalled();
-    expect(db.prisma.brandRecord.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "r-ready" } }));
+    // 判官第 3 轮 P1-1:改产品走共享动作,而不是这个文件自己 update 一条价签 —— 否则 Otto
+    // 改完名字,Library 那张卡还是旧名字(名字的权威是身份)。
+    expect(db.updateProductRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerId: "org-test", id: "r-ready", source: "otto" }),
+    );
+    expect(db.prisma.brandRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("PRODID-A7 撞名回退撞上的是草稿:同样走确认转正,不是往草稿上写 data", async () => {
+    // 判官第 3 轮 P2-d(PR #1337):`findFirst` 那一刻还没有同名行,`createProduct` 回来才发现
+    // 输了名字槽位 —— 而赢家可能正是一条草稿(理解 worker 刚从菜单里读出来的)。这条回退路径
+    // 原先直接 update,于是又回到「Otto 说 saved,身份却始终不存在」那个 P0。
+    db.prisma.brandRecord.findFirst
+      .mockResolvedValueOnce(null)                                   // ① 查重:此刻没有同名行
+      .mockResolvedValueOnce({ contextStatus: "Draft" });            // ② 回退时回查:赢家是草稿
+    db.createProduct.mockResolvedValue({ created: false, existingId: "r-raced-draft" });
+    db.confirmProductDraft.mockResolvedValue({ ok: true, id: "r-raced-draft", entityId: "ent-raced" });
+
+    const res = await upsertBrandRecordFromOtto(
+      { kind: "product", fields: { name: "Kopi ais", price: "RM 4" } },
+      { context: makeCtx() },
+    );
+    expect(res).toEqual({ ok: true, id: "r-raced-draft", updated: true });
+    expect(db.confirmProductDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerId: "org-test", id: "r-raced-draft", source: "otto" }),
+    );
+    expect(db.updateProductRecord).not.toHaveBeenCalled();
+    expect(db.prisma.brandRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("PRODID-A7 撞名回退撞上的是 Ready 行:走共享动作改,身份与价签一起写", async () => {
+    db.prisma.brandRecord.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ contextStatus: "Ready" });
+    db.createProduct.mockResolvedValue({ created: false, existingId: "r-raced-ready" });
+
+    await upsertBrandRecordFromOtto(
+      { kind: "product", fields: { name: "Kopi ais", price: "RM 4" } },
+      { context: makeCtx() },
+    );
+    expect(db.confirmProductDraft).not.toHaveBeenCalled();
+    expect(db.updateProductRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerId: "org-test", id: "r-raced-ready", source: "otto" }),
+    );
+    expect(db.prisma.brandRecord.update).not.toHaveBeenCalled();
   });
 
   it("merges fields into existing data on update (does not wipe unspecified fields)", async () => {
@@ -140,18 +188,18 @@ describe("upsertBrandRecordFromOtto", () => {
   it("preserves UI-set imageAssetId when OTTO updates a product (merge keeps unknown-to-skill fields)", async () => {
     db.prisma.brandRecord.findFirst.mockResolvedValue({
       id: "r-img", data: { name: "Latte Blend", price: "RM 49", imageAssetId: "as_777" },
+      contextStatus: "Ready",
     });
-    db.prisma.brandRecord.update.mockResolvedValue({});
     await upsertBrandRecordFromOtto(
       { kind: "product", fields: { name: "Latte Blend", price: "RM 55" } },
       { context: makeCtx() },
     );
-    expect(db.prisma.brandRecord.update).toHaveBeenCalledWith({
-      where: { id: "r-img" },
-      data: expect.objectContaining({
+    expect(db.updateProductRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "r-img",
         data: expect.objectContaining({ imageAssetId: "as_777", price: "RM 55" }),
       }),
-    });
+    );
   });
 
   it("saveProduct threads category into data", async () => {
@@ -165,16 +213,18 @@ describe("upsertBrandRecordFromOtto", () => {
     expect(arg.data.category).toBe("Coffee");
   });
   it("OTTO update without category preserves the existing one (merge)", async () => {
-    db.prisma.brandRecord.findFirst.mockResolvedValue({ id: "r1", data: { name: "Latte Blend", category: "Coffee" } });
-    db.prisma.brandRecord.update.mockResolvedValue({});
+    db.prisma.brandRecord.findFirst.mockResolvedValue({
+      id: "r1", data: { name: "Latte Blend", category: "Coffee" }, contextStatus: "Ready",
+    });
     await upsertBrandRecordFromOtto(
       { kind: "product", fields: { name: "Latte Blend", price: "RM 55" } },
       { context: makeCtx() },
     );
-    expect(db.prisma.brandRecord.update).toHaveBeenCalledWith({
-      where: { id: "r1" },
-      data: expect.objectContaining({ data: expect.objectContaining({ category: "Coffee", price: "RM 55" }) }),
-    });
+    expect(db.updateProductRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "r1", data: expect.objectContaining({ category: "Coffee", price: "RM 55" }),
+      }),
+    );
   });
 });
 

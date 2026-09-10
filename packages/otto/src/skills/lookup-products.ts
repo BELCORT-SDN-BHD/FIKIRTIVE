@@ -3,6 +3,7 @@ import type { RunContext } from "@openai/agents";
 import { defineOttoSkill } from "../skill.js";
 import { z } from "zod";
 import { prisma } from "@fikirtive/db";
+import { withProductIdentity } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
 
 const params = z.object({ query: z.string().min(1).max(80) });
@@ -22,7 +23,9 @@ export async function executeLookupProducts(
       deletedAt: null, status: "active", contextStatus: "Ready",
     },
     orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
-    select: { data: true },
+    // 名字与主图的权威是身份(规格 §1.4;PRODID-A4)。Otto 说出口的产品名必须和商家在
+    // Library 看到的那一个逐字相同,所以这里 join 身份把 data 里的缓存盖掉。
+    select: { kind: true, data: true, entity: { select: { name: true, baseAssetId: true } } },
     take: 200, // catalog design bound (founder decision 6); substring match in app code
   });
   const hit = (d: Record<string, unknown>): boolean => {
@@ -30,7 +33,10 @@ export async function executeLookupProducts(
       .filter((v): v is string => typeof v === "string").join(" ").toLowerCase();
     return hay.includes(q);
   };
-  const matches = rows.map((r) => r.data as Record<string, unknown>).filter(hit).slice(0, 5);
+  const matches = rows
+    .map((r) => withProductIdentity(r.kind, r.data as Record<string, unknown>, r.entity))
+    .filter(hit)
+    .slice(0, 5);
   return { matches };
 }
 
