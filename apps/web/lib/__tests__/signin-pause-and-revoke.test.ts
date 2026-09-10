@@ -153,8 +153,10 @@ describe("SIGNIN-A6 —— 暂停新注册", () => {
   /**
    * 「陌生人两扇门都进不来、不建账号、不寄码」的**码门**那一半。
    *
-   * RED before this slice: `SIGNUPS_PAUSED` 在密码退役之后没有任何调用点（规格 §5 登记，
-   * PR #1336），开关拨到 1 也照寄照建 —— 这条用例正是那句登记的反面。
+   * 诚实标注：这一条与下面两条 A6 用例在本片开工时**就是绿的** —— 接线是登录门②（#1317）
+   * 做的（`signInDoorDecision` 的第①步），本片交付的是证明而不是接线。规格 §5 登记的那句
+   * 「密码退役之后 `SIGNUPS_PAUSED` 成了一个没人调的开关」到 #1336 为止成立，②之后不再成立，
+   * 而在那之前与之后**都没有测试**说得出这句话现在是真是假 —— 这三条就是补上的那张嘴。
    */
   it("SIGNIN-A6 —— 暂停期间陌生邮箱按 Continue with email：一封信都不寄，也不建账号", async () => {
     const stranger = newAddress("paused-code");
@@ -277,7 +279,9 @@ describe("SIGNIN-A7 —— 撤销一个自助进来的邮箱", () => {
    * 判官在登录门② 抓到的那一刀，钉在这里：`AUTH_ALLOWED_EMAILS` 命中以前会**短路**掉撤销那一步
    * （`return { known: true, revoked: false }`），于是写在那个变量里的地址撤了等于没撤。
    *
-   * RED before this slice：下面四条断言里，两扇门那两条与 `isAllowedEmail` 那条都会绿成「进得来」。
+   * RED before this slice：下面四条断言里，两扇门那两条与 `isAllowedEmail` 那条都会绿成「进得来」
+   * （同一处短路的单测面已实测：把 `signup-gate.ts` 与 `allowlist.ts` 两个改动 stash 之后单跑
+   * `better-auth-gate.test.ts` → 2 failed / 15 passed，pop 之后 17 passed）。
    */
   it("SIGNIN-A7 —— 环境变量名单命中仍然查撤销：AUTH_ALLOWED_EMAILS 里的地址被撤销后照样进不来", async () => {
     const merchant = newAddress("revoke-envlisted");
