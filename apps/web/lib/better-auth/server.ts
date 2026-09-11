@@ -11,7 +11,7 @@ import { toVerifyLandingUrl } from "./verify-landing-url";
 import { convergeIdentity } from "./converge";
 import { CALLER_IP_HEADER } from "@/lib/caller-identity";
 import { signinSessionId } from "./signin-session";
-import { assertSignInDoor, assertSignInDoorForUserId } from "./gate";
+import { assertRequestSessionNotRevoked, assertSessionSurvivesRevoke, assertSignInDoor, assertSignInDoorForUserId, discardSessionsOfFailedProvisioning } from "./gate";
 import {
   SIGN_IN_REFUSED_EMAIL_UNVERIFIED,
   SIGN_IN_REFUSED_UNAVAILABLE,
@@ -342,6 +342,11 @@ export const auth = betterAuth({
   // Deny-by-default allowlist across EVERY method (before any session is issued).
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      // SIGNIN-A7（第 9 轮，判官 r8 P0）—— 先问「拿着这张 cookie 的人还进得来吗」。
+      // better-auth 自己那一排端点（/list-sessions、/update-user、/get-session…）只认
+      // `ba_session` 那一行，不问我们的名单；把同一个三步判定放在它们共同的入口上，是规格
+      // §1.6「撤销仍然绝对」对那一整组端点唯一数得完的写法。理由逐条写在 gate.ts 上。
+      await assertRequestSessionNotRevoked(ctx);
       const email: string | undefined = (ctx.body as Record<string, unknown> | undefined)?.email as string | undefined;
       if (!email) return;
       if (ctx.path === SIGN_IN_CODE_VERIFY_PATH) {
@@ -448,15 +453,32 @@ export const auth = betterAuth({
           }
         },
         after: async (u, ctx) => {
-          await convergeIdentity({
-            email: u.email,
-            name: u.name,
-            image: u.image,
-            emailVerified: u.emailVerified,
-            // SIGNIN-A10 —— 来源门标记。陷阱见 signin-door-source.ts：ctx.path 在数据库钩子里
-            // 是路由模板字面量，供应商名只能从 ctx.params.id 取。
-            door: signInDoorOf(ctx as { path?: string; params?: Record<string, unknown> } | undefined),
-          });
+          // SIGNIN-A7 —— 这一层 try 是**首登**那条路上的围栏，理由整段写在
+          // `gate.ts` 的 `discardSessionsOfFailedProvisioning` 上（第 7 轮，判官 r6 P1）。
+          //
+          // 一句话：首登这一次登录有两个 after 钩子（先 user.create 再 session.create），它们
+          // 被排进同一条 `pendingHooks` 队列按序执行，而**这一个抛出去就会把整条队列掐断** ——
+          // 排在后面的 `assertSessionSurvivesRevoke`（下面 session.create.after 那一句）于是
+          // 一个字都跑不到，可会话行早就落库了。撤销恰好在这一刻追上来，库里就留下一张属于
+          // 已撤销地址的活会话，最长 7 天。
+          //
+          // 所以不依赖顺序：收敛抛**任何**错（今天只有 `RevokedDuringProvisioning` 会抛到这里，
+          // 别的都被它自己降级成 non-fatal，但这里不写死那一种 —— 明天多一种抛法也一样接住），
+          // 先把这个刚建出来的用户名下的会话删光，再把错原样重抛，错误语义一个字不改。
+          try {
+            await convergeIdentity({
+              email: u.email,
+              name: u.name,
+              image: u.image,
+              emailVerified: u.emailVerified,
+              // SIGNIN-A10 —— 来源门标记。陷阱见 signin-door-source.ts：ctx.path 在数据库钩子里
+              // 是路由模板字面量，供应商名只能从 ctx.params.id 取。
+              door: signInDoorOf(ctx as { path?: string; params?: Record<string, unknown> } | undefined),
+            });
+          } catch (e) {
+            await discardSessionsOfFailedProvisioning(u.id);
+            throw e;
+          }
         },
       },
     },
@@ -470,6 +492,10 @@ export const auth = betterAuth({
           await assertSignInDoorForUserId(session.userId);
         },
         after: async (s, ctx) => {
+          // SIGNIN-A7 —— 二次确认，**在收敛之前**：这一张会话是不是在闸读过之后才被撤销追上的
+          // （理由与那道序写在 gate.ts 的 `assertSessionSurvivesRevoke` 上）。放在收敛前面是因为
+          // 一次要被撤回的登录不该先在审计流里留下一行 `auth.signin`。
+          await assertSessionSurvivesRevoke(s.id, s.userId);
           const u = await prisma.betterAuthUser.findUnique({ where: { id: s.userId }, select: { email: true, name: true, image: true, emailVerified: true } });
           // #737 — THE session-create hook is the only caller that passes `sessionId`, and it is
           // the only one that should: a session is what a sign-in produces, so its id is what

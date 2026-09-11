@@ -40,9 +40,29 @@ describe("登录门规格 · 尚未交付的验收（各自的切片接手时把
   //                   app/login/__tests__/login-google-door-errors.test.tsx（页面：errorCallbackURL
   //                   真的传了、每个键都读同一句）
 
-  // ④ 暂停注册与撤销（issue #1319）
-  it.todo("SIGNIN-A6 —— SIGNUPS_PAUSED 打开：页顶横幅、陌生人两扇门都进不来且不建账号不寄码、老用户正常进入");
-  it.todo("SIGNIN-A7 —— 撤销一个自助进来的邮箱：后台撤得掉、他已登录的会话下一次请求即失效、两扇门都进不来且不说明原因");
+  // ④ 暂停注册与撤销（issue #1319）—— 两行 it.todo 换成了真测试：
+  //    · SIGNIN-A6  → lib/__tests__/signin-pause-and-revoke.test.ts（五条：码门、Google 门、
+  //                   只有一张邀请的、只写在环境名单里的、老商家）、
+  //                   app/login/__tests__/login-paused-banner.test.tsx（页顶横幅那一半，第 2 轮补齐）
+  //    · SIGNIN-A7  → lib/__tests__/signin-pause-and-revoke.test.ts（十九条：撤得掉、会话当场失效、
+  //                   两扇门都拒、双租户、环境名单仍查撤销、founder 名单盖不过撤销、founder 地址撤
+  //                   不动、闸读过之后才提交的撤销、没有撤销时不动会话、撤销后走真码门、幂等，外加
+  //                   第 5 轮两条握锁的并发用例（after 钩子的接线、那一次读真的是 FOR SHARE）、第 6
+  //                   轮那条「等不到就超时、fail closed」、第 7 轮那条「首登时撤销追上
+  //                   user.create.after，收敛抛错也不留会话」，与第 8 轮三条（删失败留下的会话行是
+  //                   惰性的；首登竞态的两条反证时序：撤销提前到登录前、推迟到登录后），
+  //                   与第 9 轮那条「撤销后那张 cookie 打 better-auth 自带端点：list-sessions /
+  //                   update-user / get-session 一律拒」）、
+  //                   lib/__tests__/admin-revoke-access-action.test.ts（操作员那个动作，真库；
+  //                   含「旧动作回 No pending invite、新动作撤得掉」的对照；第 9 轮多一条
+  //                   「告警通道自己炸掉时：撤销照样算数」）、
+  //                   lib/__tests__/admin-tenant-invite-ui.test.ts（后台按钮真的调到它）、
+  //                   better-auth-gate.test.ts（十四条：环境名单命中仍查撤销、founder 名单也不短路、
+  //                   环境名单不等于登录过，二次确认删会话失败时的告警两条，第 6 轮两条
+  //                   fail-closed 分支（FOR SHARE 那次读失败、读不到 ba_user 邮箱行），外加第 8 轮
+  //                   七条故障注入（告警自己抛错时两条调用路各自抛的仍是原来那个错、删失败重试一次
+  //                   的四条读数、首登兜底那处 tag 的告警与不告警各一条））、
+  //                   better-auth-oauth-session-gate.test.ts（会话闸的库内接线，既有）
 
   // ⑤ 端到端旅程（issue #1311 的第五片）
   it.todo("SIGNIN-A12 —— 陌生邮箱收码登录 → 生成一张图 → 登出 → 同邮箱 Google 登录，看到刚才那张图、始终同一个工作区");

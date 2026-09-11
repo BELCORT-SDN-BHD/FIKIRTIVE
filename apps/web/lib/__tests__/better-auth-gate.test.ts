@@ -5,6 +5,13 @@
  * 「未撤销＋未暂停即放行」，所以这里断言的东西整个换了一面：**陌生邮箱现在必须放行**
  * （SIGNIN-A1 的前提），撤销与暂停期陌生人仍然绝对拒绝（A6/A7 由它们自己的切片验收，这里只钉
  * 判定函数本身）。
+ *
+ * 第 2 轮判官打回之后，这个文件的两个被测事实换了口径，所以 mock 也跟着换成**两个**：
+ *   · 「从未登录过」= `ba_user` 里没有他那一行（真的登录过一次才会有），不再是
+ *     「环境名单点过名，或者 `AllowedEmail` 里有任何一行」；
+ *   · 「撤销」对**每一个**地址都由 `AllowedEmail` 那一行拍板，founder 也不例外。
+ * 两张表因此必须能分别答话 —— 上一版一个 `mockFindUnique` 同时冒充两张表，新口径下读不出
+ * 「有账号但没有名单行」这种真实状态。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { APIError } from "better-auth/api";
@@ -12,21 +19,78 @@ import { APIError } from "better-auth/api";
 // ---------------------------------------------------------------------------
 // Mock @fikirtive/db prisma BEFORE importing anything that uses it
 // ---------------------------------------------------------------------------
-const mockFindUnique = vi.fn();
+/** `AllowedEmail` 里那一行（撤销住在这里）。key = 小写地址。 */
+const allowedRows = new Map<string, { status: string }>();
+/** `ba_user` 里那一行（「来过」住在这里）。key = 小写地址，value = 它的 id。 */
+const accounts = new Map<string, string>();
+/** 下一次读库要不要炸（fail-closed 那两条用例）。 */
+let dbDown = false;
+
+const mockAllowedEmailFindUnique = vi.fn(async ({ where }: { where: { email: string } }) => {
+  if (dbDown) throw new Error("db down");
+  return allowedRows.get(where.email) ?? null;
+});
+const mockBaUserFindUnique = vi.fn(async ({ where }: { where: { email?: string; id?: string } }) => {
+  if (dbDown) throw new Error("db down");
+  if (where.id !== undefined) {
+    // `assertSignInDoorForUserId` 的那一次读：id → 地址。
+    for (const [email, id] of accounts) if (id === where.id) return { id, email };
+    return null;
+  }
+  const id = accounts.get(where.email ?? "");
+  return id ? { id } : null;
+});
+
+/** 二次确认那两次调用（`assertSessionSurvivesRevoke`）：一次 `FOR SHARE` 读，一次删会话。
+ *  真库那一侧的围栏在 `signin-pause-and-revoke.test.ts`（含两条握锁的并发用例）；这里只钉
+ *  **删不掉时怎么办** —— 那一条在真库上没法诚实地造出来（deleteMany 不会按需失败）。 */
+const mockAllowedEmailRawStatus = vi.fn(async (): Promise<{ status: string }[]> => []);
+const mockSessionDeleteMany = vi.fn(async () => ({ count: 1 }));
+
+/** `SET LOCAL lock_timeout` 那一句（第 6 轮）。只记调用，超时本身在真库上验（见
+ *  signin-pause-and-revoke.test.ts 那条握锁不放的用例）。 */
+const mockExecuteRawUnsafe = vi.fn(async (_sql: string) => 0);
+
 vi.mock("@fikirtive/db", () => ({
   prisma: {
-    betterAuthUser: { findUnique: mockFindUnique },
-    allowedEmail: { findUnique: mockFindUnique },
+    betterAuthUser: { findUnique: mockBaUserFindUnique },
+    allowedEmail: { findUnique: mockAllowedEmailFindUnique },
+    betterAuthSession: { deleteMany: mockSessionDeleteMany },
+    // 那一次 `FOR SHARE` 现在跑在一笔交互式事务里（`SET LOCAL lock_timeout` 需要它）。替身照着
+    // 同一个形状：把回调喂给它，回调里那两句照旧落到上面两个 mock 上。
+    $transaction: (fn: (tx: { $executeRawUnsafe: typeof mockExecuteRawUnsafe; $queryRaw: (...a: unknown[]) => Promise<{ status: string }[]> }) => unknown) =>
+      Promise.resolve().then(() =>
+        fn({ $executeRawUnsafe: mockExecuteRawUnsafe, $queryRaw: (..._args: unknown[]) => mockAllowedEmailRawStatus() }),
+      ),
   },
+}));
+
+/** 告警通道换成一个能问话的替身，Sentry 其余部分原样（与 admin-revoke-access-action.test.ts 同款）。 */
+const captureMessage = vi.fn();
+vi.mock("@sentry/node", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@sentry/node")>()),
+  captureMessage,
 }));
 
 // ---------------------------------------------------------------------------
 // Import the REAL gate functions AFTER mocks are in place.
 // ---------------------------------------------------------------------------
-const { assertSignInDoor, assertSignInDoorForUserId } = await import("@/lib/better-auth/gate");
+const {
+  assertSignInDoor,
+  assertSignInDoorForUserId,
+  assertSessionSurvivesRevoke,
+  discardSessionsOfFailedProvisioning,
+} = await import("@/lib/better-auth/gate");
+const { SIGN_IN_REFUSED_REVOKED } = await import("@/lib/better-auth/signin-refusal");
 
-const ALLOWED_EMAIL = "founder@fikirtive.test";
+const FOUNDER_EMAIL = "founder@fikirtive.test";
 const STRANGER_EMAIL = "stranger@example.com";
+
+/** 「这个地址真的登录过」—— 这才是暂停开关要问的那件事。 */
+function withAccount(email: string, id = `ba-${email}`): string {
+  accounts.set(email, id);
+  return id;
+}
 
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -34,10 +98,20 @@ beforeEach(() => {
   savedEnv.FOUNDER_ADMIN_EMAILS = process.env.FOUNDER_ADMIN_EMAILS;
   savedEnv.AUTH_ALLOWED_EMAILS = process.env.AUTH_ALLOWED_EMAILS;
   savedEnv.SIGNUPS_PAUSED = process.env.SIGNUPS_PAUSED;
-  process.env.FOUNDER_ADMIN_EMAILS = ALLOWED_EMAIL;
+  process.env.FOUNDER_ADMIN_EMAILS = FOUNDER_EMAIL;
   process.env.AUTH_ALLOWED_EMAILS = "";
   delete process.env.SIGNUPS_PAUSED;
-  mockFindUnique.mockReset();
+  allowedRows.clear();
+  accounts.clear();
+  dbDown = false;
+  mockAllowedEmailFindUnique.mockClear();
+  mockBaUserFindUnique.mockClear();
+  mockAllowedEmailRawStatus.mockReset();
+  mockAllowedEmailRawStatus.mockResolvedValue([]);
+  mockExecuteRawUnsafe.mockClear();
+  mockSessionDeleteMany.mockReset();
+  mockSessionDeleteMany.mockResolvedValue({ count: 1 });
+  captureMessage.mockReset();
 });
 
 afterEach(() => {
@@ -52,20 +126,14 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("assertSignInDoor (user.create.before gate)", () => {
-  it("resolves without throwing for an allowlisted email", async () => {
-    await expect(assertSignInDoor(ALLOWED_EMAIL)).resolves.toBeUndefined();
-    expect(mockFindUnique).not.toHaveBeenCalled(); // founder short-circuits DB
-  });
-
   /**
    * SIGNIN-A1 —— 「陌生邮箱走码门直接进产品且建号」的**门这一侧**。
    *
-   * RED 在这次改动之前：那时这里断言的正好相反（`rejects.toBeInstanceOf(APIError)`），因为门问
+   * RED 在登录门② 之前：那时这里断言的正好相反（`rejects.toBeInstanceOf(APIError)`），因为门问
    * 的是「在不在名单里」。规格 §1.6 把它换成三步判定之后，一个从没出现过的地址在开关没打开、
    * 没有撤销行的情况下必须放行 —— 否则码门验完码也建不出账号。
    */
   it("SIGNIN-A1 —— 一个从未出现过的邮箱：没有暂停、没有撤销，门放行（建账号的前提）", async () => {
-    mockFindUnique.mockResolvedValueOnce(null); // AllowedEmail 里没有这一行
     await expect(assertSignInDoor(STRANGER_EMAIL)).resolves.toBeUndefined();
   });
 
@@ -77,47 +145,92 @@ describe("assertSignInDoor (user.create.before gate)", () => {
     await expect(assertSignInDoor(undefined)).rejects.toBeInstanceOf(APIError);
   });
 
-  it("allows an email in AUTH_ALLOWED_EMAILS env list", async () => {
+  it("allows an email in AUTH_ALLOWED_EMAILS env list while signups are open", async () => {
     process.env.AUTH_ALLOWED_EMAILS = "merchant@fikirtive.test";
-    mockFindUnique.mockResolvedValueOnce(null); // 名单里没有这一行，环境名单说它「来过」
     await expect(assertSignInDoor("merchant@fikirtive.test")).resolves.toBeUndefined();
   });
 
   /**
-   * SIGNIN-A7 —— 撤销是绝对的：`AUTH_ALLOWED_EMAILS` 也压不过它（判官 r1 P1，2026-09-11）。
+   * SIGNIN-A7 —— 撤销是绝对的：`AUTH_ALLOWED_EMAILS` 也压不过它（判官 r1 P1，2026-09-11；
+   * 主干 #1347 带来，本轮合并原样保留，只把 mock 换成本文件的两张表）。
    *
    * RED before：命中 `AUTH_ALLOWED_EMAILS` 的地址**直接短路返回放行**，一次数据库读都不做，
    * 于是操作员在后台撤销过的邮箱只要还留在那份环境名单里就照样进得来 —— 规格 §1.6「撤销 →
-   * 拒」与验收 A7「两扇门都进不来」在这条路上从来没有执行过。环境名单能回答的问题只有
-   * 「这个地址来过吗」（暂停开关那一步要用），回答不了「它有没有被撤销」——那件事只写在库里。
+   * 拒」与验收 A7「两扇门都进不来」在这条路上从来没有执行过。这一条比上面那条多钉两件事：
+   * 拒绝的 `status` 是 FORBIDDEN，以及这条路上**真的**去问了库。
    */
   it("SIGNIN-A7 —— 撤销压得过 AUTH_ALLOWED_EMAILS：环境名单里的地址被撤销后仍然进不来", async () => {
     process.env.AUTH_ALLOWED_EMAILS = "revoked-but-listed@fikirtive.test";
-    mockFindUnique.mockResolvedValueOnce({ status: "revoked" });
+    allowedRows.set("revoked-but-listed@fikirtive.test", { status: "revoked" });
     const err = await assertSignInDoor("revoked-but-listed@fikirtive.test").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(APIError);
     expect((err as APIError).status).toBe("FORBIDDEN");
     // 撤销这件事只有库知道 —— 所以这条路上必须真的去问库。
-    expect(mockFindUnique).toHaveBeenCalledWith(
+    expect(mockAllowedEmailFindUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { email: "revoked-but-listed@fikirtive.test" } }),
     );
   });
 
-  /** 环境名单仍然管它该管的那一件事：暂停期里，名单点名的地址算「来过」，照常进得来。 */
-  it("SIGNIN-A7 —— 环境名单仍然让暂停期的老地址进得来（它答的是「来过吗」，不是「撤了吗」）", async () => {
+  /**
+   * SIGNIN-A6/A7 —— 环境名单在门上**不等于「登录过」**（第 5 轮合并裁定，2026-09-11）。
+   *
+   * 主干 #1347 上这条测试原来断言的是反面（「环境名单仍然让暂停期的老地址进得来」），它配的是
+   * 主干那版 `known = listed || !!row`。规格 §1.6 ① 写的是「`SIGNUPS_PAUSED` 打开且邮箱
+   * **从未登录过** → 拒」，而「写进一个环境变量」一次请求都不用发就成立 —— 那条口径于是让
+   * 「暂停期先把地址写进变量再让他进来」成为一条绕过开关的现成的路（第 2 轮判官 P0）。所以这
+   * 条测试按 §1.6 ① 改写，不是删掉：门上「登录过」只有一个来源 —— `ba_user` 里有他那一行。
+   *
+   * 一条测试钉两半，因为它们是同一句话的两面：名单点名但从没登录过 → 暂停期被拒；真的登录过
+   * → 暂停期照常进。
+   */
+  it("SIGNIN-A6 —— 暂停期里环境名单不算「登录过」：名单里没登录过的被拒，登录过的照进", async () => {
     process.env.SIGNUPS_PAUSED = "1";
-    process.env.AUTH_ALLOWED_EMAILS = "listed@fikirtive.test";
-    mockFindUnique.mockResolvedValueOnce(null);
-    await expect(assertSignInDoor("listed@fikirtive.test")).resolves.toBeUndefined();
+    process.env.AUTH_ALLOWED_EMAILS = "listed@fikirtive.test, returning@fikirtive.test";
+    // ① 只写在变量里、一次都没登录过 —— 暂停期进不来。
+    await expect(assertSignInDoor("listed@fikirtive.test")).rejects.toBeInstanceOf(APIError);
+    // ② 真的登录过（`ba_user` 里有行）—— 暂停期照常进。
+    withAccount("returning@fikirtive.test");
+    await expect(assertSignInDoor("returning@fikirtive.test")).resolves.toBeUndefined();
   });
 
-  it("allows an email with an active DB row", async () => {
-    mockFindUnique.mockResolvedValueOnce({ status: "active" });
+  /**
+   * SIGNIN-A7 —— 环境名单命中**不再短路**撤销那一步。
+   *
+   * RED before 登录门②：`lookupAddress` 在 `AUTH_ALLOWED_EMAILS` 命中时直接
+   * `return { known: true, revoked: false }`，数据库根本不读，于是操作员把这个地址撤了
+   * 等于没撤。规格 §1.6 写的是「撤销仍然绝对」，那条捷径让它对整整一个名单不成立。
+   */
+  it("SIGNIN-A7 —— 环境变量名单命中仍然查撤销：AUTH_ALLOWED_EMAILS 里的地址被撤销后照样被拒", async () => {
+    process.env.AUTH_ALLOWED_EMAILS = "merchant@fikirtive.test";
+    allowedRows.set("merchant@fikirtive.test", { status: "revoked" });
+    await expect(assertSignInDoor("merchant@fikirtive.test")).rejects.toBeInstanceOf(APIError);
+  });
+
+  /**
+   * SIGNIN-A7 —— **founder 名单也不短路撤销**（第 2 轮判官 P0）。
+   *
+   * RED before 第 2 轮：`lookupAddress` 的第一行是
+   * `if (envList(FOUNDER_ADMIN_EMAILS).includes(email)) return { known: true, revoked: false }`，
+   * 一次库都不读，所以 founder 那一行被标 `revoked` 之后照样进得来 —— 规格 §1.6 的「撤销仍然
+   * 绝对」对整整一个环境变量不成立。破窗锤改由**写侧**保住：`revokeEmailAccess` 不肯撤一个
+   * 还挂在 `FOUNDER_ADMIN_EMAILS` 上的地址（见 signup-gate.ts 与
+   * admin-revoke-access-action.test.ts），所以门上不再需要例外。
+   */
+  it("SIGNIN-A7 —— founder 名单里的地址被撤销之后同样进不来（门上没有环境例外）", async () => {
+    allowedRows.set(FOUNDER_EMAIL, { status: "revoked" });
+    await expect(assertSignInDoor(FOUNDER_EMAIL)).rejects.toBeInstanceOf(APIError);
+    expect(mockAllowedEmailFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { email: FOUNDER_EMAIL } }),
+    );
+  });
+
+  it("allows an email whose AllowedEmail row is active", async () => {
+    allowedRows.set("invited@fikirtive.test", { status: "active" });
     await expect(assertSignInDoor("invited@fikirtive.test")).resolves.toBeUndefined();
   });
 
   it("throws for an email with a revoked DB row", async () => {
-    mockFindUnique.mockResolvedValueOnce({ status: "revoked" });
+    allowedRows.set("revoked@fikirtive.test", { status: "revoked" });
     const err = await assertSignInDoor("revoked@fikirtive.test").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(APIError);
     expect((err as APIError).status).toBe("FORBIDDEN");
@@ -126,58 +239,338 @@ describe("assertSignInDoor (user.create.before gate)", () => {
   /** 撤销是绝对的：暂停开关的状态改变不了它，反之亦然。 */
   it("throws for a revoked row even while signups are paused", async () => {
     process.env.SIGNUPS_PAUSED = "1";
-    mockFindUnique.mockResolvedValueOnce({ status: "revoked" });
+    allowedRows.set("revoked@fikirtive.test", { status: "revoked" });
     await expect(assertSignInDoor("revoked@fikirtive.test")).rejects.toBeInstanceOf(APIError);
   });
 
-  it("throws for a never-seen email while signups are paused, and still admits a known one", async () => {
+  /**
+   * SIGNIN-A6 —— 暂停期唯一放行的是「**真的登录过**」的地址，判据是 `ba_user` 里有他那一行。
+   *
+   * 老商家可能连 `AllowedEmail` 行都没有（`admitSelfSignup` 存在之前进来的那批），所以判据不能
+   * 是名单行；反过来，名单行也不证明他来过（下面三条 RED 用例说的正是这件事）。
+   */
+  it("SIGNIN-A6 —— 暂停期间：没有账号的地址被拒，登录过的地址照常进", async () => {
     process.env.SIGNUPS_PAUSED = "1";
-    mockFindUnique.mockResolvedValueOnce(null); // 从未登录过
     await expect(assertSignInDoor(STRANGER_EMAIL)).rejects.toBeInstanceOf(APIError);
-    mockFindUnique.mockResolvedValueOnce({ status: "active" }); // 老商家
+
+    withAccount("regular@fikirtive.test");
     await expect(assertSignInDoor("regular@fikirtive.test")).resolves.toBeUndefined();
   });
 
-  /** fail closed：计数器/库读不到就当拒绝，不当放行。 */
-  it("throws when the AllowedEmail lookup itself fails", async () => {
-    mockFindUnique.mockRejectedValueOnce(new Error("db down"));
+  /**
+   * SIGNIN-A6 —— **一张还没被用掉的邀请不是「登录过」**（第 2 轮判官 P0）。
+   *
+   * RED before 第 2 轮：`known` 的定义是 `namedByEnv || !!row`，而 `inviteTenant`
+   * （`lib/tenant-actions.ts`）在任何人登录之前就能写下一行 `invited` —— 于是暂停期间
+   * 「先邀请、再让他进来」变成一条绕过开关的路。规格 §1.6 ① 写的是「邮箱从未登录过 → 拒」，
+   * 没有给邀请留例外。
+   */
+  it("SIGNIN-A6 —— 暂停期间：只有一行 invited、从没登录过的地址仍然被拒", async () => {
+    process.env.SIGNUPS_PAUSED = "1";
+    allowedRows.set("pending@fikirtive.test", { status: "invited" });
+    await expect(assertSignInDoor("pending@fikirtive.test")).rejects.toBeInstanceOf(APIError);
+  });
+
+  /** 同一条缺陷的另一半：环境名单点名也不是「登录过」。 */
+  it("SIGNIN-A6 —— 暂停期间：只写在 AUTH_ALLOWED_EMAILS 里、从没登录过的地址仍然被拒", async () => {
+    process.env.SIGNUPS_PAUSED = "1";
+    process.env.AUTH_ALLOWED_EMAILS = "envonly@fikirtive.test";
+    await expect(assertSignInDoor("envonly@fikirtive.test")).rejects.toBeInstanceOf(APIError);
+  });
+
+  /** 第三半：founder 名单同样不是「登录过」—— 门上一个环境例外都不留。 */
+  it("SIGNIN-A6 —— 暂停期间：从没登录过的 founder 地址也被拒（先关开关，不是先开后门）", async () => {
+    process.env.SIGNUPS_PAUSED = "1";
+    await expect(assertSignInDoor(FOUNDER_EMAIL)).rejects.toBeInstanceOf(APIError);
+  });
+
+  /** fail closed：库读不到就当拒绝，不当放行。 */
+  it("throws when the lookup itself fails", async () => {
+    dbDown = true;
     await expect(assertSignInDoor(STRANGER_EMAIL)).rejects.toBeInstanceOf(APIError);
+  });
+
+  /** 同上，对 founder 也一样 —— 它不再有一条「不读库就放行」的捷径。 */
+  it("throws for a founder email too when the lookup itself fails", async () => {
+    dbDown = true;
+    await expect(assertSignInDoor(FOUNDER_EMAIL)).rejects.toBeInstanceOf(APIError);
   });
 
   /** SIGNIN-A16 —— 判定之前归一化：撤销写在小写那一行，大小写变体不许绕过去。 */
   it("SIGNIN-A16 —— 判定前先 trim+lowercase，所以大小写变体读的是同一行", async () => {
-    mockFindUnique.mockResolvedValueOnce({ status: "revoked" });
+    allowedRows.set("revoked@fikirtive.test", { status: "revoked" });
     await expect(assertSignInDoor("  Revoked@Fikirtive.TEST ")).rejects.toBeInstanceOf(APIError);
-    expect(mockFindUnique).toHaveBeenCalledWith(
+    expect(mockAllowedEmailFindUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { email: "revoked@fikirtive.test" } }),
     );
   });
 });
 
 describe("assertSignInDoorForUserId (session.create.before gate)", () => {
-  it("resolves for an allowlisted userId", async () => {
-    // betterAuthUser.findUnique returns the user row
-    mockFindUnique.mockResolvedValueOnce({ email: ALLOWED_EMAIL });
-    await expect(assertSignInDoorForUserId("user-123")).resolves.toBeUndefined();
+  it("resolves for a userId whose address is not revoked", async () => {
+    const id = withAccount(FOUNDER_EMAIL);
+    await expect(assertSignInDoorForUserId(id)).resolves.toBeUndefined();
   });
 
   it("throws FORBIDDEN when userId does not resolve to a user row", async () => {
-    mockFindUnique.mockResolvedValueOnce(null); // betterAuthUser lookup: no user
     const err = await assertSignInDoorForUserId("ghost-789").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(APIError);
     expect((err as APIError).status).toBe("FORBIDDEN");
   });
 
   it("throws for a userId whose email was revoked", async () => {
-    mockFindUnique.mockResolvedValueOnce({ email: "revoked@fikirtive.test" }); // betterAuthUser
-    mockFindUnique.mockResolvedValueOnce({ status: "revoked" }); // allowedEmail DB check
-    await expect(assertSignInDoorForUserId("user-revoked")).rejects.toBeInstanceOf(APIError);
+    const id = withAccount("revoked@fikirtive.test");
+    allowedRows.set("revoked@fikirtive.test", { status: "revoked" });
+    await expect(assertSignInDoorForUserId(id)).rejects.toBeInstanceOf(APIError);
   });
 
   /** 重复登录：一个自助进来、名单里有 active 行的老商家，会话闸不该再拦他。 */
   it("resolves for a self-service account on its repeat sign-in", async () => {
-    mockFindUnique.mockResolvedValueOnce({ email: "selfserve@fikirtive.test" }); // betterAuthUser
-    mockFindUnique.mockResolvedValueOnce({ status: "active" }); // allowedEmail
-    await expect(assertSignInDoorForUserId("user-self")).resolves.toBeUndefined();
+    const id = withAccount("selfserve@fikirtive.test");
+    allowedRows.set("selfserve@fikirtive.test", { status: "active" });
+    await expect(assertSignInDoorForUserId(id)).resolves.toBeUndefined();
+  });
+
+  /** 暂停期间的重复登录：他有账号，所以开关不该碰他。 */
+  it("SIGNIN-A6 —— 暂停期间老商家的会话闸照样放行", async () => {
+    process.env.SIGNUPS_PAUSED = "1";
+    const id = withAccount("selfserve@fikirtive.test");
+    allowedRows.set("selfserve@fikirtive.test", { status: "active" });
+    await expect(assertSignInDoorForUserId(id)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * SIGNIN-A7 —— 二次确认**删不掉那张会话**的时候（第 5 轮，判官 r4 P2 ④）。
+ *
+ * 这条分支在真库上造不出来（`deleteMany` 不会按需失败），所以它住在这个 mock 了 Prisma 的文件里；
+ * 这道确认其余的行为由 `signin-pause-and-revoke.test.ts` 在真库上钉住，含两条第二条连接握锁的
+ * 并发用例。
+ *
+ * RED before 本轮：那一句是 `.catch(() => {})`。删失败于是完全无声 —— 拒绝照抛（商家进不来），
+ * 但 `ba_session` 里留着一张属于已撤销地址的活 cookie，最长 7 天，而没有任何人会知道。
+ */
+describe("assertSessionSurvivesRevoke —— 删会话失败不再无声", () => {
+  const SESSION_ID = "bas_leftover";
+  const USER_ID = "ba-revoked@fikirtive.test";
+
+  beforeEach(() => {
+    withAccount("revoked@fikirtive.test", USER_ID);
+    mockAllowedEmailRawStatus.mockResolvedValue([{ status: "revoked" }]);
+  });
+
+  it("SIGNIN-A7 —— 删不掉也照样拒绝，而且发一条不带邮箱、不带会话 id 的告警", async () => {
+    const failure = Object.assign(new Error("deadlock detected"), {
+      name: "PrismaClientKnownRequestError",
+      code: "P2034",
+    });
+    mockSessionDeleteMany.mockRejectedValue(failure);
+
+    const err = await assertSessionSurvivesRevoke(SESSION_ID, USER_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect((err as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
+
+    expect(captureMessage).toHaveBeenCalledTimes(1);
+    const [text, options] = captureMessage.mock.calls[0] as [
+      string,
+      { level?: string; tags?: Record<string, string>; extra?: Record<string, unknown> },
+    ];
+    expect(options.level).toBe("error");
+    expect(options.tags).toMatchObject({ area: "auth", gate: "session-survives-revoke" });
+    // 分类够团队建一条规则，细节只到「哪一类失败」。
+    expect(options.extra).toEqual({ errorName: "PrismaClientKnownRequestError", errorCode: "P2034" });
+    // #575 —— 整条告警里不许出现邮箱、会话 id，或者 Prisma 那句会把调用参数渲染进去的原始消息。
+    const payload = JSON.stringify([text, options]);
+    expect(payload).not.toContain("revoked@fikirtive.test");
+    expect(payload).not.toContain(SESSION_ID);
+    expect(payload).not.toContain("deadlock detected");
+  });
+
+  it("SIGNIN-A7 —— 删得掉的正常那条路上一条告警都不发", async () => {
+    await expect(assertSessionSurvivesRevoke(SESSION_ID, USER_ID)).rejects.toBeInstanceOf(APIError);
+    expect(mockSessionDeleteMany).toHaveBeenCalledWith({ where: { id: SESSION_ID } });
+    expect(captureMessage).not.toHaveBeenCalled();
+    // 那一次 FOR SHARE 读之前**先**给这笔事务上了等待上限（第 6 轮；超时真的生效由真库那条
+    // 握锁不放的用例证明）。
+    expect(mockExecuteRawUnsafe).toHaveBeenCalledWith("SET LOCAL lock_timeout = '3s'");
+  });
+});
+
+/**
+ * SIGNIN-A7 —— 二次确认那两条 **fail-closed** 分支（第 6 轮，判官 r5 P2 ③）。
+ *
+ * `assertSessionSurvivesRevoke` 的正常路读两次库：先按 userId 读 `ba_user` 拿邮箱，再用那个邮箱
+ * 做一次 `SELECT … FOR SHARE`。两次读**各自**都可能答不上来，而这两种「答不上来」在这道确认里
+ * 必须与「读到 revoked」同一个下场：删掉刚建的那张会话，再按门的统一话术拒绝。
+ *
+ * 为什么住在这个 mock 文件里：真库那一侧（`signin-pause-and-revoke.test.ts`）造不出「这一次读
+ * 恰好失败」和「用户行恰好不见了」——正如「删不掉会话」也造不出来。
+ *
+ * 这两条分支之前一条测试都没有：`.catch(() => false)` 改成 `.catch(() => true)`、或者 `if (email)`
+ * 那一段改成 `if (!email) return;`，整套用例都照样绿。本轮两条变异都真跑过，输出贴在 PR 描述里。
+ */
+describe("assertSessionSurvivesRevoke —— 两条 fail-closed 分支", () => {
+  const SESSION_ID = "bas_failclosed";
+  const USER_ID = "ba-failclosed@fikirtive.test";
+
+  /**
+   * (a) `FOR SHARE` 那一次读**失败**（库挂了、连接断了、将来的锁超时）。
+   *
+   * 读不出名单状态时唯一安全的假设是「他可能已经被撤销了」。放行等于把一张可能属于已撤销地址的
+   * 活会话留在库里 —— 这道确认存在的全部理由就是不许那张会话存在。
+   *
+   * 变异：`gate.ts` 的 `.catch(() => false)` → `.catch(() => true)`，这条必须红。
+   */
+  it("SIGNIN-A7 —— FOR SHARE 那一次读失败：删掉会话并拒绝（不许当作放行）", async () => {
+    withAccount("failclosed@fikirtive.test", USER_ID);
+    mockAllowedEmailRawStatus.mockRejectedValue(new Error("db down"));
+
+    const err = await assertSessionSurvivesRevoke(SESSION_ID, USER_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect((err as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
+    expect(mockSessionDeleteMany).toHaveBeenCalledWith({ where: { id: SESSION_ID } });
+  });
+
+  /**
+   * (b) 读不到 `ba_user` 的邮箱行 —— 行不见了，或者那一次读自己失败（`.catch(() => "")`）。
+   *
+   * 没有邮箱就问不了名单，问不了就不知道他有没有被撤销，所以同样收回会话、同样拒绝。顺带钉住
+   * 它**没有**拿着空邮箱去查名单：那一次查在真库上会全表扫一个永远查不到的空串。
+   *
+   * 变异：`gate.ts` 的 `if (email) { … }` 改成 `if (!email) return;`（读不到就放行），这条必须红。
+   */
+  it("SIGNIN-A7 —— 读不到 ba_user 的邮箱行：删掉会话并拒绝，且不拿空邮箱去查名单", async () => {
+    // 这个 userId 在 `accounts` 里一行都没有 —— `withAccount` 故意不调。
+    const err = await assertSessionSurvivesRevoke(SESSION_ID, "ba-ghost").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect((err as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
+    expect(mockSessionDeleteMany).toHaveBeenCalledWith({ where: { id: SESSION_ID } });
+    expect(mockAllowedEmailRawStatus).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SIGNIN-A7 —— 删会话这件事的**故障注入**（第 8 轮，判官 r7 P1 ①／P3 ①）。
+ *
+ * 判官这一轮把上面那条「删不掉也照样拒绝」往下多推了一层，问出两个真的洞：
+ *
+ *   ① **告警本身抛错**时，抛出去的错被换了一个。`Sentry.captureMessage` 不是纯函数：transport
+ *      没初始化、DSN 配错、序列化 `extra` 时炸掉，它都会抛。上一版那一句直接写在 `.catch()` 的
+ *      回调里，于是告警的错顺着 `deleteSessionsOrAlert` 冒出去 —— 首登那条路上
+ *      （`server.ts` 的 `catch (e) { await discardSessionsOfFailedProvisioning(u.id); throw e; }`）
+ *      它盖掉的正是那个 `RevokedDuringProvisioning`：商家仍然进不来，但日志、审计和上层拿到的
+ *      是「sentry transport down」，那次撤销为什么发生再也看不出来。二次确认那一侧同理：抛出去
+ *      的不再是带 `sign_in_revoked` 的 APIError。所以告警从今天起**包一层 try/catch**：它是个
+ *      通知，不是控制流。
+ *   ② **一次都不重试**。删会话失败最常见的形状是 P2034（死锁）与连接被掐断这类**瞬时**失败 ——
+ *      而这条路上的代价不对称：重试一次只多一条 DELETE，不重试留下的是一张属于已撤销地址的活
+ *      会话，最长 7 天。所以现在删两次才告警；第一次就成功的那条正常路一次都不多删。
+ *
+ * ③（P3）告警的另一处 tag —— 首登兜底 `provisioning-aborted-session-sweep` —— 此前一条测试都
+ *    没有。照上面 `session-survives-revoke` 那两条同款钉住。
+ */
+describe("deleteSessionsOrAlert —— 故障注入：告警不许换掉原来的错，删失败先重试一次", () => {
+  const SESSION_ID = "bas_injected";
+  const USER_ID = "ba-injected@fikirtive.test";
+  /** 删会话失败的那个形状（Prisma 的已知错误；名字与 code 是告警里唯一放行的两个细节）。 */
+  const deleteFailure = Object.assign(new Error("deadlock detected"), {
+    name: "PrismaClientKnownRequestError",
+    code: "P2034",
+  });
+
+  beforeEach(() => {
+    withAccount("injected@fikirtive.test", USER_ID);
+    mockAllowedEmailRawStatus.mockResolvedValue([{ status: "revoked" }]);
+  });
+
+  /** (a) 二次确认那一侧：告警炸了，抛出去的仍然是门的那句拒绝。 */
+  it("SIGNIN-A7 —— 告警自己抛错时，二次确认抛的仍是 sign_in_revoked 那个 APIError", async () => {
+    mockSessionDeleteMany.mockRejectedValue(deleteFailure);
+    captureMessage.mockImplementation(() => {
+      throw new Error("sentry transport down");
+    });
+
+    const err = await assertSessionSurvivesRevoke(SESSION_ID, USER_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect((err as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
+    expect((err as Error).message).not.toContain("sentry transport down");
+  });
+
+  /** (b) 首登兜底那一侧：告警炸了，调用者手上那个原始拒绝**原样**抛出去（server.ts 的形状）。 */
+  it("SIGNIN-A7 —— 告警自己抛错时，首登兜底不改写调用者的原始错误", async () => {
+    mockSessionDeleteMany.mockRejectedValue(deleteFailure);
+    captureMessage.mockImplementation(() => {
+      throw new Error("sentry transport down");
+    });
+
+    // `server.ts` 的 `user.create.after` 逐字就是这个形状：收敛抛错 → 先把会话删光 → 原样重抛。
+    const original = Object.assign(new Error("provisioning refused: address revoked during signup"), {
+      name: "RevokedDuringProvisioning",
+    });
+    const thrown = await (async () => {
+      try {
+        throw original;
+      } catch (e) {
+        await discardSessionsOfFailedProvisioning(USER_ID);
+        throw e;
+      }
+    })().catch((e: unknown) => e);
+
+    expect(thrown).toBe(original);
+    expect((thrown as Error).name).toBe("RevokedDuringProvisioning");
+  });
+
+  /** (c) 瞬时失败：第一次删不掉就再删一次，成了就当没事发生 —— 一条告警都不发。 */
+  it("SIGNIN-A7 —— 删会话第一次失败、第二次成功：不留会话，也不发告警", async () => {
+    mockSessionDeleteMany.mockRejectedValueOnce(deleteFailure).mockResolvedValue({ count: 1 });
+
+    const err = await assertSessionSurvivesRevoke(SESSION_ID, USER_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect(mockSessionDeleteMany).toHaveBeenCalledTimes(2);
+    expect(mockSessionDeleteMany).toHaveBeenNthCalledWith(2, { where: { id: SESSION_ID } });
+    expect(captureMessage).not.toHaveBeenCalled();
+  });
+
+  /** (d) 两次都失败才告警，而且只告警一次（不是每次重试各发一条）。 */
+  it("SIGNIN-A7 —— 删会话两次都失败：告警恰好一条", async () => {
+    mockSessionDeleteMany.mockRejectedValue(deleteFailure);
+
+    await expect(assertSessionSurvivesRevoke(SESSION_ID, USER_ID)).rejects.toBeInstanceOf(APIError);
+    expect(mockSessionDeleteMany).toHaveBeenCalledTimes(2);
+    expect(captureMessage).toHaveBeenCalledTimes(1);
+  });
+
+  /** (e) 正常路一次就删掉：不许多删一次（多的那一次是一条没有必要的 DELETE）。 */
+  it("SIGNIN-A7 —— 删得掉的正常路只删一次", async () => {
+    await expect(assertSessionSurvivesRevoke(SESSION_ID, USER_ID)).rejects.toBeInstanceOf(APIError);
+    expect(mockSessionDeleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  /** (f) P3 —— 首登兜底那一处 tag/message，照 `session-survives-revoke` 那两条同款钉住。 */
+  it("SIGNIN-A7 —— 首登兜底删不掉时：按 userId 删，发一条 provisioning-aborted-session-sweep 告警", async () => {
+    mockSessionDeleteMany.mockRejectedValue(deleteFailure);
+
+    await expect(discardSessionsOfFailedProvisioning(USER_ID)).resolves.toBeUndefined();
+    expect(mockSessionDeleteMany).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+
+    expect(captureMessage).toHaveBeenCalledTimes(1);
+    const [text, options] = captureMessage.mock.calls[0] as [
+      string,
+      { level?: string; tags?: Record<string, string>; extra?: Record<string, unknown> },
+    ];
+    expect(options.level).toBe("error");
+    expect(options.tags).toMatchObject({ area: "auth", gate: "provisioning-aborted-session-sweep" });
+    expect(options.extra).toEqual({ errorName: "PrismaClientKnownRequestError", errorCode: "P2034" });
+    // #575 —— userId 与 Prisma 那句会把调用参数渲染进去的原始消息都不许进告警文本。
+    const payload = JSON.stringify([text, options]);
+    expect(payload).not.toContain(USER_ID);
+    expect(payload).not.toContain("deadlock detected");
+  });
+
+  /** (g) 首登兜底的正常路：删得掉就一条告警都不发。 */
+  it("SIGNIN-A7 —— 首登兜底删得掉时一条告警都不发", async () => {
+    await expect(discardSessionsOfFailedProvisioning(USER_ID)).resolves.toBeUndefined();
+    expect(mockSessionDeleteMany).toHaveBeenCalledTimes(1);
+    expect(captureMessage).not.toHaveBeenCalled();
   });
 });

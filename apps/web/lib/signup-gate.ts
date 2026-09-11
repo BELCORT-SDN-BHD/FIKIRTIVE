@@ -1,9 +1,12 @@
 import "server-only";
 import { prisma } from "@fikirtive/db";
+import { isFounderAdmin } from "./allowlist";
 
-/** Shown on the signup page and returned by the API when new signups are paused.
- *  Honest: it says the door is shut, and does not promise a date. */
-export const SIGNUPS_PAUSED_MESSAGE = "New signups are paused right now.";
+/** SIGNIN-A6 —— 登录页顶那条横幅的原文，逐字取自规格 §1.3（docs/specs/sign-in.md 已冻结 · v1）。
+ *  两句都必须在：第一句说门关了，第二句说老商家照常进得来 —— 少了第二句，一个已经有账号的
+ *  商家会以为产品对他也关了。诚实：不承诺日期。唯一消费者是 `app/login/page.tsx`。 */
+export const SIGNUPS_PAUSED_MESSAGE =
+  "New signups are paused right now. Existing accounts can still log in.";
 
 /**
  * #543 — the emergency "pause new signups" switch (`SIGNUPS_PAUSED`).
@@ -18,10 +21,6 @@ export function signupsPaused(): boolean {
   const raw = (process.env.SIGNUPS_PAUSED ?? "").trim().toLowerCase();
   if (raw === "") return false;
   return !["0", "false", "off", "no"].includes(raw);
-}
-
-function envList(s: string | undefined): string[] {
-  return (s ?? "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
 }
 
 /**
@@ -41,29 +40,34 @@ function envList(s: string | undefined): string[] {
 export type SignInDoorDecision = "allow" | "paused" | "revoked";
 
 /**
- * 这个地址「以前来过」吗 —— 暂停开关唯一要问的那个问题。
+ * 门要问的两件事，一次问完：这个地址**登录过吗**，以及它**被撤销了吗**。
  *
- * 「来过」＝ 环境名单点名（founder / AUTH_ALLOWED_EMAILS），或者 `AllowedEmail` 里**有一行**
- * （任何状态）。两扇门第一次成功登录都会写一行 active（`admitSelfSignup`），所以「有行」正是
- * 规格里那句「从未登录过」的反面。
+ * 「登录过」＝ `ba_user` 里有他那一行。两扇门都只在身份证明完成之后才建这一行（码门在验码那
+ * 一刻，Google 门在回调里），所以「有账号」逐字就是规格 §1.6 ① 那句「从未登录过」的反面 ——
+ * 而且它对**开关存在之前**进来的老商家同样成立（那批人可能连 `AllowedEmail` 行都没有）。
  *
- * SIGNIN-A7 —— 环境名单只回答「来过吗」，**回答不了「撤了吗」**（判官 r1 P1，2026-09-11）。
- * 它以前命中即短路返回放行，于是一个被操作员撤销掉的地址只要还留在 `AUTH_ALLOWED_EMAILS` 里
- * 就照样进得来 —— 规格 §1.6「撤销 → 拒」在那条路上从来没执行过。撤销这件事只写在库里，所以
- * 除 founder 外的每一个地址都必须真的去问库，两件事各归各的来源（修根不修表）。
+ * 这里原来问的是另一件事：「环境名单点过名 ‖ `AllowedEmail` 里有任何一行」。两个都不是「登录
+ * 过」：`inviteTenant` 在任何人登录之前就写得下一行 `invited`，`AUTH_ALLOWED_EMAILS` 里写一个
+ * 地址更是一次请求都不用发 —— 于是暂停期间「先邀请（或先写进变量），再让他进来」是一条绕过
+ * 开关的现成的路（第 2 轮判官 P0）。
  *
- * `FOUNDER_ADMIN_EMAILS` 是**唯一**的短路，而且是刻意的破窗：数据库不能把 founder 锁在外面
- * （撤销了自己就再没有路回来）。它是运维凭据，不是商家地址。
+ * SIGNIN-A7 —— **门上一个环境例外都不留**。`AUTH_ALLOWED_EMAILS` 与 `FOUNDER_ADMIN_EMAILS`
+ * 先后都曾在这里 `return { known: true, revoked: false }`，数据库根本不读，于是写在那两个变量
+ * 里的地址撤了等于没撤；规格 §1.6 写的是「撤销仍然绝对」，那条捷径让它对整整一个名单不成立。
+ * founder 的破窗锤没有丢，只是换了落点：**写侧**的 `revokeEmailAccess` 不肯撤一个还挂在
+ * `FOUNDER_ADMIN_EMAILS` 上的地址，所以「一行数据库记录锁死部署者」这件事从一开始就发生不了，
+ * 恢复路径也不经数据库（把地址从那个变量里拿掉，再撤）。
  *
- * 固定成本、无分支：一次纯字符串比对加**恰好一次**数据库读，对任何非 founder 地址都一样 ——
- * 这条路上的耗时不许随答案变化（#678 那一族缺陷的根）。数据库读不到就 fail closed。
+ * 固定成本、无分支：**恰好两次**数据库读，对每一个地址都一样 —— 这条路上的耗时不许随答案变化
+ * （#678 那一族缺陷的根）。任何一次读不到就 fail closed。
  */
 async function lookupAddress(email: string): Promise<{ known: boolean; revoked: boolean } | null> {
-  if (envList(process.env.FOUNDER_ADMIN_EMAILS).includes(email)) return { known: true, revoked: false };
-  const listed = envList(process.env.AUTH_ALLOWED_EMAILS).includes(email);
   try {
-    const row = await prisma.allowedEmail.findUnique({ where: { email }, select: { status: true } });
-    return { known: listed || !!row, revoked: row?.status === "revoked" };
+    const [row, account] = await Promise.all([
+      prisma.allowedEmail.findUnique({ where: { email }, select: { status: true } }),
+      prisma.betterAuthUser.findUnique({ where: { email }, select: { id: true } }),
+    ]);
+    return { known: !!account, revoked: row?.status === "revoked" };
   } catch {
     return null; // DB outage → fail closed at the caller
   }
@@ -84,6 +88,41 @@ export async function signInDoorDecision(email: string | null | undefined): Prom
   if (found.revoked) return "revoked";
   // ③ 其余放行并（必要时）建账号。
   return "allow";
+}
+
+/**
+ * SIGNIN-A7 —— **前门专用**的那一次名单判定，三种结果分开（第 10 轮，判官 opus P1）。
+ *
+ * 为什么不能沿用 `signInDoorDecision`：那个函数答的是门上那句「可不可以进来（必要时开户）」，
+ * 它把「读不到答案」压进 `revoked` 是**对的** —— 一次登录尝试判不出就别放进来，代价是那个人
+ * 重试一次。可前门面对的是**已经在里面的人**：第 9 轮把同一个函数接上去之后，一次数据库抖动
+ * 读到的 `revoked` 会让前门把一个名单上完全正常的在线商家**所有设备上的会话全部删掉**，再回
+ * 他一次 500 —— 一次读失败换来一次全局登出，两件事完全不成比例。
+ *
+ * 所以前门要的是一个能说「我判不出」的出口，而不是把 `signInDoorDecision` 的三步语义改掉
+ * （那三步是两扇门与建会话共用的，改它等于动规格 §1.6）。这个函数因此只问一件事 ——
+ * **这个地址被撤销了吗** —— 并如实交代读没读到：
+ *   · `revoked`：读到了，上面写着撤销 → 调用方删光会话并拒。
+ *   · `ok`：读到了，没被撤销 → 放行。`paused` 不在这里出现，前门本来就不管它
+ *     （规格 §1.3「老商家照常进」，手上有会话的人按定义已经登录过）。
+ *   · `unavailable`：没读到（库挂了、连接池打满、地址是空的）→ 调用方只拒**这一次请求**，
+ *     一张会话都不许删。
+ *
+ * 读的是同一个 `lookupAddress`，所以「三处名单检查同一函数」那条口径（§1.6）对第四处仍然成立
+ * ——同一次读、同一张表、同一个归一化，差别只在「读不到」时把答案交给调用方而不是替它决定。
+ */
+export type SessionRevocationVerdict = "revoked" | "ok" | "unavailable";
+
+export async function sessionRevocationLookup(
+  email: string | null | undefined,
+): Promise<SessionRevocationVerdict> {
+  const normalized = (email ?? "").trim().toLowerCase();
+  // 会话上没有地址就判不出（`ba_user.email` 是必填，所以这是一条防御分支）：拒这一次请求，
+  // 但绝不按「撤销」去删他的会话 —— 我们手上没有任何一行写着他被撤销。
+  if (!normalized) return "unavailable";
+  const found = await lookupAddress(normalized);
+  if (!found) return "unavailable";
+  return found.revoked ? "revoked" : "ok";
 }
 
 /**
@@ -110,5 +149,64 @@ export async function admitSelfSignup(email: string, door: string = "self-signup
   await prisma.allowedEmail.createMany({
     data: [{ email: normalized, status: "active", invitedBy: door }],
     skipDuplicates: true,
+  });
+}
+
+/** What `revokeEmailAccess` did — the operator-facing answer, and the only thing a caller may
+ *  branch on. `unknown` means «this address has no access to take away», NOT «no pending invite»:
+ *  the invite reading is what made a self-served merchant un-revokable (规格 §1.6，审计 [6]).
+ *  `protected` means «this address is the deployer's break-glass key» — see below. */
+export type RevokeAccessOutcome = "revoked" | "already_revoked" | "unknown" | "protected";
+
+/**
+ * SIGNIN-A7 —— 撤销，一个动作两件事：**名单那一行翻成 revoked，他手上的会话在同一笔事务里
+ * 消失**（docs/specs/sign-in.md 已冻结 · v1 §1.6「撤销」那一段，照 tenant-actions.ts 的写法）。
+ *
+ * 为什么必须是同一笔事务：这两件事分开做，中间那一瞬间就是一个「已经撤销、但旧 cookie 还能用」
+ * 的窗口，而审计 [5] 记的正是今天那个窗口——撤销只删名单不删会话，旧 cookie 还能打
+ * `/api/better-auth/*` 最长 7 天。一笔事务让「撤销生效」与「他被踢出去」是同一个时刻。
+ *
+ * 会话删掉之后**每一次请求都会重新问库**：Better Auth 这边没有配 cookie 缓存（server.ts 的
+ * `session` 只映射表名），所以 `getSession` 每次都读 `ba_session` 那一行，行没了 = 会话没了；
+ * 产品这边的 `requireSession` / `requireRole` / `requireOwner` 又各自把地址再过一次 `allowed()`。
+ * 「不等 cookie 过期」因此有两道，而不是一道。
+ *
+ * 状态谓词是 `status ≠ revoked`，不是 `status = "invited"`：两扇门写进名单的都是 active
+ * （`admitSelfSignup`），只认 invited 的那条谓词让**自助进来的地址永远撤不掉**（审计 [6]）。
+ * 已经是 revoked 的行原样不动（`revoked` 行永不复活，也不该被重写 updatedAt 掩盖第一次撤销的
+ * 时间），但会话照样清一遍——重复撤销必须是幂等的，而不是「第二次点没反应」。
+ *
+ * 这个函数不做授权：它是领域动作，权限由调用它的 server action 上的 `requireRole` 把守
+ * （`lib/tenant-actions.ts` 的 `revokeMerchantAccess`，后台那颗「Revoke access」按的就是它）。
+ *
+ * 破窗锤（第 2 轮把它从门上搬到了这里）：**还挂在 `FOUNDER_ADMIN_EMAILS` 上的地址撤不动，答
+ * `protected`。** 门那一侧从本轮起对每一个地址一视同仁地查撤销（founder 也不例外，否则 §1.6
+ * 的「撤销仍然绝对」对整整一个环境变量不成立），所以「一行数据库记录不该把部署者锁在自己的
+ * 产品外面」只能在写侧保住：那一行根本写不下去。恢复路径因此不经数据库 —— 先把地址从
+ * `FOUNDER_ADMIN_EMAILS` 里拿掉，再撤。
+ *
+ * 边界（说清楚，不假装覆盖）：**没有 `AllowedEmail` 行的地址答 `unknown`，不新建一行黑名单。**
+ * 今天唯一能进门却没有行的，是只被 `AUTH_ALLOWED_EMAILS` 点过名、还一次都没登录过的地址——
+ * 它的授予在环境变量里，收回也在那里（登录过一次就会有行，那时这个函数管得着，A7 的负例用例
+ * 正是这一条）。要让撤销覆盖到「从没来过的陌生地址」得先决定「预先拉黑」是不是一个产品动作，
+ * 那是规格问题，不是这一层能自己决定的。
+ */
+export async function revokeEmailAccess(email: string): Promise<RevokeAccessOutcome> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return "unknown";
+  if (isFounderAdmin(normalized)) return "protected";
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.allowedEmail.findUnique({ where: { email: normalized }, select: { status: true } });
+    if (!row) return "unknown";
+    if (row.status !== "revoked") {
+      await tx.allowedEmail.update({ where: { email: normalized }, data: { status: "revoked" } });
+    }
+    // 两个用户表按邮箱相连；会话挂在 BetterAuthUser 上。地址在 `ba_user` 里是登录时归一化过的
+    // 小写，所以这里用同一个小写值比对（Postgres 的 = 区分大小写）。
+    const baUsers = await tx.betterAuthUser.findMany({ where: { email: normalized }, select: { id: true } });
+    if (baUsers.length > 0) {
+      await tx.betterAuthSession.deleteMany({ where: { userId: { in: baUsers.map((u) => u.id) } } });
+    }
+    return row.status === "revoked" ? "already_revoked" : "revoked";
   });
 }
