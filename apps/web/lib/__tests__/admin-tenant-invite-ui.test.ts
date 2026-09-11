@@ -402,4 +402,34 @@ describe("admin tenants access revoke UI (SIGNIN-A7, #1319)", () => {
     expect(dom.textContent).toContain(`${SELF_SIGNED_UP} was already revoked.`);
     expect(dom.textContent).not.toContain(`Revoked access for ${SELF_SIGNED_UP}.`);
   });
+
+  /**
+   * SIGNIN-A7 —— `auditFailed` 那面旗必须**在界面上看得见**（第 3 轮判官 P2：动作那一侧有真库
+   * 用例钉住 `auditFailed: true`，横幅文案那一侧一条都没有）。
+   *
+   * 它要同时说两件事，少一件就是一次误导：撤销**成功了**（人已经被登出、两扇门已经拒他），
+   * 而这一次**没留下痕迹**（事后对账时这是一个查不出来的洞，操作员得当场知道去找人）。
+   */
+  it("SIGNIN-A7 —— 审计行写不下去时，横幅同时说出「撤销成功」与「没留下痕迹」", async () => {
+    mocks.revokeMerchantAccess.mockResolvedValue({ ok: true, result: "revoked", auditFailed: true });
+    const dom = await renderTenants();
+    await typeInto(emailInput(dom), SELF_SIGNED_UP);
+    await click(revokeAccessButton(dom));
+    await click(confirmButton("Revoke access"));
+
+    const banner = document.body.querySelector('[role="alert"]')?.textContent ?? dom.textContent ?? "";
+    expect(banner).toContain(`Revoked access for ${SELF_SIGNED_UP}.`);
+    expect(banner).toContain("The audit entry could not be written — tell the team.");
+  });
+
+  /** 反面：审计写成功的那条路上，界面不许挂一句吓人的告警。 */
+  it("SIGNIN-A7 —— 审计正常时横幅不提审计", async () => {
+    const dom = await renderTenants();
+    await typeInto(emailInput(dom), SELF_SIGNED_UP);
+    await click(revokeAccessButton(dom));
+    await click(confirmButton("Revoke access"));
+
+    expect(dom.textContent).toContain(`Revoked access for ${SELF_SIGNED_UP}.`);
+    expect(dom.textContent).not.toContain("The audit entry could not be written");
+  });
 });

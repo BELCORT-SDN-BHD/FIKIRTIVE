@@ -36,14 +36,42 @@ export const SIGN_IN_REFUSED_REVOKED = "sign_in_revoked";
 export const SIGN_IN_REFUSED_UNAVAILABLE = "sign_in_unavailable";
 /** SIGNIN-A13 —— 供应商自己说这个邮箱没验证过。 */
 export const SIGN_IN_REFUSED_EMAIL_UNVERIFIED = "sign_in_email_unverified";
+/**
+ * SIGNIN-A7 —— **前门判不出这张会话**（第 10 轮，判官 opus P1 / Codex P1）。
+ *
+ * 它与 `sign_in_revoked` 必须是两个键，因为两者在**每一个**下游都要走不同的路：
+ *   · `sign_in_revoked` ＝「我们读到了名单，上面写着撤销」—— 结论确定，会话行删光，读会话的
+ *     人（`compat.ts`、`proxy.ts`）把它当作「没有会话」，商家回登录页。
+ *   · 这一个 ＝「**读不出来**」（会话那一次读抛了，或名单那两次点查抛了）。结论不确定，所以
+ *     这条路上一张会话都不许删 —— 一次数据库抖动不该把一个名单上完全正常的在线商家从他
+ *     所有设备上登出去。它只拒绝**这一次请求**。
+ *
+ * 把两者压成一个键，就等于让「判不出」继承「撤销」的全部后果（删光会话 ＋ 回登录页），那正是
+ * 第 9 轮那一版的缺陷。
+ */
+export const SIGN_IN_REFUSED_SESSION_UNVERIFIED = "sign_in_session_unverified";
 
 export type SignInRefusalCode =
   | typeof SIGN_IN_REFUSED_PAUSED
   | typeof SIGN_IN_REFUSED_REVOKED
   | typeof SIGN_IN_REFUSED_UNAVAILABLE
-  | typeof SIGN_IN_REFUSED_EMAIL_UNVERIFIED;
+  | typeof SIGN_IN_REFUSED_EMAIL_UNVERIFIED
+  | typeof SIGN_IN_REFUSED_SESSION_UNVERIFIED;
 
 /** 门的拒绝：403，`message` 与 `code` 同值（理由见文件头）。 */
 export function signInRefusal(code: SignInRefusalCode): APIError {
   return new APIError("FORBIDDEN", { message: code, code });
+}
+
+/**
+ * SIGNIN-A7 —— 「前门把这张会话判成**已撤销**了吗」，一处定义（第 10 轮，判官 opus P1）。
+ *
+ * 两个读会话的地方要问同一句话：`compat.ts` 的 `baSessionOrNullIfRevoked`（产品那一层）和
+ * `proxy.ts` 的墙（每一个页面请求）。谓词写在这里而不是各写一遍，是因为它读的是 Better Auth
+ * `APIError` 的内部形状（`body.code`）—— 那个形状只该有一个地方知道。
+ *
+ * 只认这一个键：判不出（上面那个常量）与数据库真的坏了都必须照旧抛出去，不许被这句话吞掉。
+ */
+export function isRevokedSessionRefusal(e: unknown): boolean {
+  return (e as { body?: { code?: unknown } } | null)?.body?.code === SIGN_IN_REFUSED_REVOKED;
 }

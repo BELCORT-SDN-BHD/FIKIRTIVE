@@ -118,6 +118,7 @@ import {
   hasTurnReferences,
   mergeTurnReferences,
   restoredReferencesNote,
+  retrySourceNote,
   richerTurnReferenceDraft,
   turnReferenceBody,
   turnReferenceDraftFromMessage,
@@ -252,6 +253,17 @@ const TRANSPORT_FAILURE_TEXT = OTTO_TRANSIENT_FAILURE_SENTENCE;
  */
 export const COMPOSER_BUSY_NOTICE =
   "Otto is still working on the last one — ask for that change again once it's done.";
+
+/**
+ * §5 :163① —— 「Edit and retry」按下去而输入框里**已经有字**：那句话没有放回去。
+ *
+ * `restoreDraft` 早就不再覆盖商家正在打的字（复修轮四），可四处 onRetry 一律丢掉它的返回值，
+ * 于是这一刻屏幕上一个字都不说：商家按了一颗写着 Edit and retry 的键，输入框纹丝不动，看上去
+ * 就是「按了没反应」——走查里那个原病灶的同一种形状。引用照旧回来（它们不占输入框），所以这
+ * 一句只说文字那一半，并点名那个真能修好它的动作。
+ */
+export const RETRY_DRAFT_KEPT_NOTICE =
+  "Kept what you're typing — that earlier message wasn't put back. Clear the box and press Edit and retry again.";
 
 /** The latest user message — the one this turn started from. */
 function latestUserMessage(messages: OttoUiMessage[]): OttoUiMessage | null {
@@ -1191,6 +1203,28 @@ export function OttoChatStream({
   }
 
   /**
+   * §5 :163① —— 「Edit and retry」那四处入口共用的一层：那句话**没**放回去时说出口。
+   *
+   * `restoreDraft` 的返回值从前四处全丢，商家按下去只看见输入框纹丝不动。这里把它接上，
+   * 复用输入框上方那一格（`composer-busy-notice`）——同一格说的一直是「那颗键为什么没做到
+   * 你以为的事」，不为这一句另开第二处告示。放回去成功的那一次顺手把它清掉：上一条已经不
+   * 成立了，留在屏幕上就是一句过期的话。
+   */
+  function editAndRetry(draft: TurnReferenceDraft) {
+    setComposerBusyNotice(restoreDraft(draft) ? null : RETRY_DRAFT_KEPT_NOTICE);
+  }
+
+  /**
+   * §5 :163② —— 只把「这一轮是那一轮的重来」这一格清掉，引用一件不动。
+   *
+   * 清掉之后这一轮就是一条普通的新消息（请求体里不再有 `replyToMessageId`）；旁边那颗
+   * Remove references 管的是另一件事，两颗键各清各的，不互相牵连。
+   */
+  function clearRetrySource() {
+    setRestoredDraft((cur) => (cur ? { ...cur, sourceMessageId: null } : null));
+  }
+
+  /**
    * FSE-003 —— 确认卡那张小表单按下「Send to Otto」：**真发送**。
    *
    * 走查里这颗键只往输入框里塞了一段字，没有新消息、没有回复，而键上写着 Send。送不出去时
@@ -1258,6 +1292,17 @@ export function OttoChatStream({
         ids: attachedRefs.map((ref) => ref.generationId),
         labels: attachedRefs.map((ref) => ref.label),
       })
+    : null;
+  // §5 :163② —— 「这一轮是对哪条消息的重试」。那条消息此刻可能在两个地方：useChat 手上的
+  // 那一份（直播那一刻）或线程 DTO（刷新之后），两处读法与恢复草稿时逐字相同，取得到就念
+  // 原话、取不到就只说是更早的一条。
+  const retrySourceId = restoredDraft?.sourceMessageId ?? null;
+  const retrySourceLine = retrySourceId
+    ? retrySourceNote(
+        messageText(
+          messages.find((m) => (m.metadata?.durableId ?? m.id) === retrySourceId) ?? null,
+        ) || (thread.messages.find((m) => m.id === retrySourceId)?.text ?? ""),
+      )
     : null;
 
   // ── 画布卡这一刻的脸(走查 P0-3 / P0-4)────────────────────────────────────────
@@ -1409,7 +1454,7 @@ export function OttoChatStream({
             );
           }}
           onChangeSomething={sendChangeRequest}
-          onEditAndRetry={restoreDraft}
+          onEditAndRetry={editAndRetry}
           onOptionsChanged={applyRemintedCard}
         />
       ) : null}
@@ -1813,7 +1858,7 @@ export function OttoChatStream({
                   <OttoStreamErrorNotice
                     error={durableError}
                     retryDraft={durableRetryDraft}
-                    onRetry={restoreDraft}
+                    onRetry={editAndRetry}
                   />
                 </ConversationItem>
               );
@@ -1941,7 +1986,7 @@ export function OttoChatStream({
                             )
                           : null
                       }
-                      onRetry={restoreDraft}
+                      onRetry={editAndRetry}
                     />
                   )}
                 </MessageGroup>
@@ -2030,7 +2075,7 @@ export function OttoChatStream({
                 error={{ kind: streamErrorKind ?? "error", text: streamError }}
                 retryDraft={retryDraft}
                 onRetry={(draft) => {
-                  restoreDraft(draft);
+                  editAndRetry(draft);
                   setStreamError(null);
                   setStreamErrorKind(null);
                   setRetryDraft(null);
@@ -2168,6 +2213,28 @@ export function OttoChatStream({
                 onClick={() => setRestoredDraft(null)}
               >
                 Remove references
+              </Button>
+            </div>
+          )}
+
+          {/* §5 :163② —— 「这一轮是对哪条消息的重试」。这一格从前只活在请求体里
+              (`replyToMessageId`)：商家点了 Edit and retry 又改主意去打一句全新的话，送出去的
+              那一轮在记录里仍然挂在旧那一轮名下,而屏幕上一个字都不说、也没有一处能取消。
+              旁边那颗 Remove 只清这一格,引用不受影响 —— 清掉之后就是一条普通的新消息。 */}
+          {retrySourceLine && (
+            <div
+              data-slot="retry-source"
+              className="mb-2 flex items-center gap-2 text-[0.75rem] text-muted-foreground"
+            >
+              <span className="min-w-0 truncate">{retrySourceLine}</span>
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                className="shrink-0"
+                onClick={clearRetrySource}
+              >
+                Remove
               </Button>
             </div>
           )}

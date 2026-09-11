@@ -35,6 +35,7 @@ const {
 } = await import("@/lib/brand-record-actions");
 const { createEntity, updateEntity, softDeleteEntity, softDeleteReferenceImage } = await import("@/lib/actions");
 const { getLibraryElements } = await import("@/lib/library-elements");
+const { getGenerationHistory } = await import("@/lib/library-actions");
 const { loadBrandSections } = await import("@/lib/brand-context-data");
 const { setBaseAsset } = await import("@/lib/refgen-actions");
 const { searchReferences } = await import("@/lib/reference-search");
@@ -707,6 +708,84 @@ describe("PRODID-A6 删除与恢复:一处删两边消失,可一起恢复", () =
     await expect(
       prisma.referenceImage.count({ where: { ownerId: ownerA, entityId, deletedAt: null } }),
     ).resolves.toBe(2);
+  }, 60_000);
+
+  /**
+   * A6 的第三句「已生成的成片不动」—— 票 #1323 补的那半句真测试。
+   *
+   * 前两句(两边一起消失、可一起恢复)各有用例;第三句此前只有 `softDeleteEntity` 尾巴上
+   * 那行注释「History stays intact (snapshots)」在担保,没有任何断言压着它。而这一句是删除
+   * 这条路上**唯一不可逆**的那一格:行可以恢复,已经交付给商家的成片被级联删掉、字节被当成
+   * 孤儿清扫走,就再也回不来了。
+   *
+   * 两个删除方向各走一遍,两条断言:成片那一行还活着、还读得出来(Library 的生成历史里还在),
+   * 以及它的字节还在存储桶里。刻意让成片的输出资产**就是**这件产品的封面 —— 共享一张资产是
+   * 清扫判据最容易踩空的形状。
+   */
+  it("PRODID-A6 两个方向删产品:已生成的成片一行不动、字节不动,恢复之后依旧", async () => {
+    await signInAs(EMAIL_A);
+    const assetId = await seedAsset(ownerA, `a6-gen-${randomUUID().slice(0, 8)}`);
+    const name = `Laksa ${randomUUID().slice(0, 8)}`;
+    const saved = (await saveBrandRecord({
+      kind: "product", data: { name, imageAssetId: assetId },
+    })) as { ok: true; id: string };
+    const entityId = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    })).entityId!;
+
+    // 一件已经交付的成片:它引用了这件产品(镜头引用 + 谱系快照),输出的就是同一张资产。
+    const project = await prisma.project.create({
+      data: { id: newId(), ownerId: ownerA, name: `Raya ${randomUUID().slice(0, 8)}` },
+    });
+    const shot = await prisma.shot.create({
+      data: { id: newId(), ownerId: ownerA, projectId: project.id, number: 1 },
+    });
+    await prisma.shotEntityRef.create({ data: { shotId: shot.id, entityId, ownerId: ownerA } });
+    const generation = await prisma.generation.create({
+      data: {
+        id: newId(), ownerId: ownerA, projectId: project.id, shotId: shot.id,
+        assetId, source: "GENERATED", promptText: `A poster for ${name}`,
+        entitySnapshot: { entities: [{ id: entityId, name, type: "PRODUCT" }] },
+      },
+    });
+
+    async function generationStillOpens(): Promise<boolean> {
+      const page = await getGenerationHistory({ projectId: project.id, take: 20 });
+      if ("error" in page) throw new Error(page.error);
+      return page.items.some((row) => row.id === generation.id);
+    }
+
+    // ① Brand 页那个方向。
+    await expect(deleteBrandRecord({ id: saved.id })).resolves.toEqual({ ok: true });
+    expect(await generationStillOpens()).toBe(true);
+    expect(await bytesExist(ownerA, assetId)).toBe(true);
+    // 镜头引用与谱系快照都是历史,不跟着产品走。
+    await expect(
+      prisma.shotEntityRef.count({ where: { ownerId: ownerA, entityId, shotId: shot.id } }),
+    ).resolves.toBe(1);
+    await expect(
+      prisma.generation.findFirstOrThrow({
+        where: { id: generation.id, ownerId: ownerA }, select: { deletedAt: true, assetId: true },
+      }),
+    ).resolves.toEqual({ deletedAt: null, assetId });
+
+    await expect(restoreBrandRecord({ id: saved.id })).resolves.toEqual({ ok: true });
+    expect(await generationStillOpens()).toBe(true);
+
+    // ② Library 那个方向 —— 这一边会跑资产清扫,所以它才是真正会把字节删走的那条路。
+    await expect(softDeleteEntity(entityId)).resolves.toMatchObject({ ok: true });
+    expect(await generationStillOpens()).toBe(true);
+    expect(await bytesExist(ownerA, assetId)).toBe(true);
+    await expect(
+      prisma.generation.findFirstOrThrow({
+        where: { id: generation.id, ownerId: ownerA }, select: { deletedAt: true },
+      }),
+    ).resolves.toEqual({ deletedAt: null });
+    await expect(
+      prisma.asset.findFirstOrThrow({
+        where: { id: assetId, ownerId: ownerA }, select: { deletedAt: true },
+      }),
+    ).resolves.toEqual({ deletedAt: null });
   }, 60_000);
 
   // PRODID-R8(规格 §5 登记;票 #1322 判官 P2-c 改准借号):A6 说的是「一处删两边消失、

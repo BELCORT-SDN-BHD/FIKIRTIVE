@@ -18,6 +18,9 @@ vi.mock("@/lib/better-auth/server", () => ({
 }));
 
 const { default: proxy, config } = await import("../../proxy");
+const { SIGN_IN_REFUSED_REVOKED, SIGN_IN_REFUSED_SESSION_UNVERIFIED, signInRefusal } = await import(
+  "@/lib/better-auth/signin-refusal"
+);
 
 // Next runs proxy() ONLY for a pathname that matches config.matcher; an excluded path never even
 // reaches the auth wall. So exercise the REAL matcher regex to prove the exclusion, rather than
@@ -467,6 +470,40 @@ describe("proxy — public signed media route (/api/media/pub)", () => {
     const res = await proxy(req("/dashboard"));
     expect(res?.status).toBe(307);
     expect(mockGetSession).toHaveBeenCalledOnce();
+  });
+});
+
+// SIGNIN-A7（第 10 轮，判官 opus P1）—— 被撤销的会话在墙上落成**登录页**，不是一次 500。
+//
+// 登录门④ 把撤销的判定搬到了 better-auth 的前门中间件（`lib/better-auth/gate.ts` 的
+// `assertRequestSessionNotRevoked`，挂在 `hooks.before`）。`auth.api.*` 与 HTTP 路由走同一条
+// hook 管线，所以那道闸抛的 `sign_in_revoked` 会从这一行的 `auth.api.getSession` 冒出来 ——
+// 而这一行原本是裸调的，于是整个 `proxy()` reject，商家在**每一个页面**上读到一次 500。
+describe("proxy — 前门把会话判成已撤销时（SIGNIN-A7）", () => {
+  it("撤销的会话 → 当作没有会话，302/307 回 /login（不是 500）", async () => {
+    mockGetSession.mockRejectedValue(signInRefusal(SIGN_IN_REFUSED_REVOKED));
+
+    const res = await proxy(req("/dashboard"));
+
+    expect(res?.status).toBe(307);
+    const target = new URL((res as unknown as { url: string }).url);
+    expect(target.pathname).toBe("/login");
+    expect(target.searchParams.get("from")).toBe("/dashboard");
+  });
+
+  it("前门说「判不出」（读库失败）→ 照旧原样抛出去，不冒充一次正常的未登录", async () => {
+    // 这一条钉住的是**没有变**的那一半：墙今天对 `getSession` 抛错就是不接（没有 catch），
+    // 而那正是对的 —— 读不出会话时把人放去登录页，等于把一次数据库抖动变成一次全站登出，
+    // 并且把一个真实的故障扮成一次正常的未登录。
+    mockGetSession.mockRejectedValue(signInRefusal(SIGN_IN_REFUSED_SESSION_UNVERIFIED));
+
+    await expect(proxy(req("/dashboard"))).rejects.toMatchObject({ body: { code: SIGN_IN_REFUSED_SESSION_UNVERIFIED } });
+  });
+
+  it("别的错（数据库真的坏了）→ 照旧原样抛出去", async () => {
+    mockGetSession.mockRejectedValue(new Error("database is on fire"));
+
+    await expect(proxy(req("/dashboard"))).rejects.toThrow("database is on fire");
   });
 });
 

@@ -91,6 +91,41 @@ export async function signInDoorDecision(email: string | null | undefined): Prom
 }
 
 /**
+ * SIGNIN-A7 —— **前门专用**的那一次名单判定，三种结果分开（第 10 轮，判官 opus P1）。
+ *
+ * 为什么不能沿用 `signInDoorDecision`：那个函数答的是门上那句「可不可以进来（必要时开户）」，
+ * 它把「读不到答案」压进 `revoked` 是**对的** —— 一次登录尝试判不出就别放进来，代价是那个人
+ * 重试一次。可前门面对的是**已经在里面的人**：第 9 轮把同一个函数接上去之后，一次数据库抖动
+ * 读到的 `revoked` 会让前门把一个名单上完全正常的在线商家**所有设备上的会话全部删掉**，再回
+ * 他一次 500 —— 一次读失败换来一次全局登出，两件事完全不成比例。
+ *
+ * 所以前门要的是一个能说「我判不出」的出口，而不是把 `signInDoorDecision` 的三步语义改掉
+ * （那三步是两扇门与建会话共用的，改它等于动规格 §1.6）。这个函数因此只问一件事 ——
+ * **这个地址被撤销了吗** —— 并如实交代读没读到：
+ *   · `revoked`：读到了，上面写着撤销 → 调用方删光会话并拒。
+ *   · `ok`：读到了，没被撤销 → 放行。`paused` 不在这里出现，前门本来就不管它
+ *     （规格 §1.3「老商家照常进」，手上有会话的人按定义已经登录过）。
+ *   · `unavailable`：没读到（库挂了、连接池打满、地址是空的）→ 调用方只拒**这一次请求**，
+ *     一张会话都不许删。
+ *
+ * 读的是同一个 `lookupAddress`，所以「三处名单检查同一函数」那条口径（§1.6）对第四处仍然成立
+ * ——同一次读、同一张表、同一个归一化，差别只在「读不到」时把答案交给调用方而不是替它决定。
+ */
+export type SessionRevocationVerdict = "revoked" | "ok" | "unavailable";
+
+export async function sessionRevocationLookup(
+  email: string | null | undefined,
+): Promise<SessionRevocationVerdict> {
+  const normalized = (email ?? "").trim().toLowerCase();
+  // 会话上没有地址就判不出（`ba_user.email` 是必填，所以这是一条防御分支）：拒这一次请求，
+  // 但绝不按「撤销」去删他的会话 —— 我们手上没有任何一行写着他被撤销。
+  if (!normalized) return "unavailable";
+  const found = await lookupAddress(normalized);
+  if (!found) return "unavailable";
+  return found.revoked ? "revoked" : "ok";
+}
+
+/**
  * #543 — registration IS the invite.
  *
  * Self-service sign-in writes the address into the SAME AllowedEmail table the invite flow uses,

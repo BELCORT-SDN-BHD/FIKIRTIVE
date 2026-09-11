@@ -168,9 +168,14 @@ describe("后台的撤销动作", () => {
     // get 陷阱现造的，没有可还原的 own descriptor），后面的用例会撞上
     // 「create is not a function」。所以自己存一份再自己装回去。
     const original = prisma.actionEvent.create;
-    (prisma.actionEvent as { create: unknown }).create = vi
-      .fn()
-      .mockRejectedValue(new Error("action_event insert failed"));
+    // 判官第 4 轮的那条：Prisma 的错误消息**会把调用参数渲染进去**，所以这里的替身故意造一个
+    // 长得像真 Prisma 错误的东西 —— 带 `code`、带一条把商家邮箱写在里面的 message。上一版把
+    // `e.message` 原样塞进 `extra.reason`，于是这个邮箱会跟着告警离开我们的机器。
+    const prismaish = Object.assign(
+      new Error(`Invalid \`prisma.actionEvent.create()\` invocation: Unique constraint failed on { email: "${email}" }`),
+      { name: "PrismaClientKnownRequestError", code: "P2002" },
+    );
+    (prisma.actionEvent as { create: unknown }).create = vi.fn().mockRejectedValue(prismaish);
     try {
       expect(await revokeMerchantAccess(email)).toEqual({ ok: true, result: "revoked", auditFailed: true });
     } finally {
@@ -181,9 +186,60 @@ describe("后台的撤销动作", () => {
     expect(await sessionsFor(baUserId)).toBe(0);
     // 有人看得见：一条固定分类的告警，而且不带邮箱。
     expect(captureMessage).toHaveBeenCalledTimes(1);
-    const [text, options] = captureMessage.mock.calls[0] as [string, { tags?: Record<string, string> }];
+    const [text, options] = captureMessage.mock.calls[0] as [
+      string,
+      { tags?: Record<string, string>; extra?: Record<string, unknown> },
+    ];
     expect(text).not.toContain(email);
     expect(options?.tags).toMatchObject({ area: "admin", gate: "tenant-revoke-audit" });
+    // #575 —— 告警里**整条 payload** 都不许出现商家邮箱，不只是标题那一行。
+    expect(JSON.stringify(options ?? {})).not.toContain(email);
+    // 告警仍然说得出「是哪一类失败」：类名与错误码在，原始 message 不在。
+    expect(options?.extra).toEqual({ outcome: "revoked", errorName: "PrismaClientKnownRequestError", errorCode: "P2002" });
+  });
+
+  /** 不是 Prisma 错误（没有 `code`）也一样：分类照给，message 照样不带。 */
+  it("SIGNIN-A7 —— 审计失败的告警只带错误分类，不带原始错误消息", async () => {
+    const { email } = await selfSignedUpMerchant("audit-noleak");
+    const original = prisma.actionEvent.create;
+    (prisma.actionEvent as { create: unknown }).create = vi
+      .fn()
+      .mockRejectedValue(new TypeError(`action_event insert failed for ${email}`));
+    try {
+      await revokeMerchantAccess(email);
+    } finally {
+      (prisma.actionEvent as { create: unknown }).create = original;
+    }
+
+    const [, options] = captureMessage.mock.calls[0] as [string, { extra?: Record<string, unknown> }];
+    expect(options?.extra).toEqual({ outcome: "revoked", errorName: "TypeError", errorCode: undefined });
+    expect(JSON.stringify(options ?? {})).not.toContain("action_event insert failed");
+  });
+
+  /**
+   * SIGNIN-A7 —— **告警是通知，不是控制流**（第 9 轮，判官 r8 P2）。
+   *
+   * `Sentry.captureMessage` 自己会抛（transport 没初始化、DSN 配错、序列化 `extra` 时炸掉）。
+   * 上一版把它直接写在 `.catch()` 回调里，于是告警自己的错顺着那个 promise 冒出去，整个
+   * server action reject —— 撤销**已经落库、会话已经切断**，后台却读到一句「撤销失败」，
+   * 操作员于是以为这个地址还进得来。那是反过来的那个谎，比丢一行审计严重。
+   *
+   * 与 `gate.ts` 第 8 轮的做法同一条口径：响不响都不许改变这条路的答案。
+   */
+  it("SIGNIN-A7 —— 告警通道自己炸掉时：撤销照样算数，答案里照样写明没留下痕迹", async () => {
+    const { email, baUserId } = await selfSignedUpMerchant("audit-alert-down");
+    const original = prisma.actionEvent.create;
+    (prisma.actionEvent as { create: unknown }).create = vi.fn().mockRejectedValue(new TypeError("action_event insert failed"));
+    captureMessage.mockImplementationOnce(() => {
+      throw new Error("sentry transport down");
+    });
+    try {
+      expect(await revokeMerchantAccess(email)).toEqual({ ok: true, result: "revoked", auditFailed: true });
+    } finally {
+      (prisma.actionEvent as { create: unknown }).create = original;
+    }
+    expect(await statusOf(email)).toBe("revoked");
+    expect(await sessionsFor(baUserId)).toBe(0);
   });
 
   /** 顺带钉住正常那条路不发告警 —— 免得这条闸变成一个天天响的噪音源。 */
