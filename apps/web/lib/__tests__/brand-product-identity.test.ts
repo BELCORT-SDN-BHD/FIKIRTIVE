@@ -39,6 +39,7 @@ const { getGenerationHistory } = await import("@/lib/library-actions");
 const { loadBrandSections } = await import("@/lib/brand-context-data");
 const { setBaseAsset } = await import("@/lib/refgen-actions");
 const { searchReferences } = await import("@/lib/reference-search");
+const { productFormIdentityIntent } = await import("@/lib/brand-product-form-identity");
 const { storage } = await import("@/lib/storage");
 const { prisma, createProduct } = await import("@fikirtive/db");
 const { newId, storageKey } = await import("@fikirtive/core");
@@ -399,8 +400,9 @@ describe("PRODID-A4 改名换图:名字与主图的唯一源是身份,两边同�
     await expect(
       saveBrandRecord({
         id: saved.id, kind: "product", data: { ...before.data, price: "RM 9.00" },
-        // 表单交的是它自己那两格的现值(名字栏、主图栏);两格都没被商家动过,所以身份不变。
-        identity: { name: before.data.name as string, imageAssetId: before.data.imageAssetId as string },
+        // 表单交什么由表单那一处说了算 —— 这里**调用生产代码**,不在测试里另抄一份形状,
+        // 否则测试与实现同形,实现怎么变测试都绿(判官第 2 轮 P1,票 #1322)。
+        identity: productFormIdentityIntent({ ...before.data, price: "RM 9.00" }),
       }),
     ).resolves.toEqual({ ok: true, id: saved.id });
 
@@ -411,6 +413,77 @@ describe("PRODID-A4 改名换图:名字与主图的唯一源是身份,两边同�
     expect((await listBrandRecords()).find((r) => r.id === saved.id)?.data).toMatchObject({
       imageAssetId: picked, price: "RM 9.00",
     });
+  }, 60_000);
+
+  /**
+   * PRODID-R9(规格 §5 登记)—— 判官第 2 轮 P1(PR #1343):PRODID-R6 的判据(「这一格有没有被
+   * **提交上来**,不是 `data` 里那份读路补进去的客户端快照」)在 Brand 页产品表单这个调用点上
+   * 对 `imageAssetId` 不成立:那张表单根本没有主图栏(`ProductShowcase.tsx` 的 `ProdForm` 只有
+   * Name* / Price / Description / Selling angle / Link / Tags / Category 七格),它手里那格主图是读路
+   * `withProductIdentity` 补进去的快照。下面两条走整条真路,证的是「表单不交主图这一格」。
+   */
+  it("PRODID-R9 Brand 页只改价格:另一处刚换的封面不被表单手里那份过期快照写回去", async () => {
+    await signInAs(EMAIL_A);
+    const name = `Nasi lemak ${randomUUID().slice(0, 8)}`;
+    const first = await seedAsset(ownerA, `r9-first-${randomUUID().slice(0, 8)}`);
+    const later = await seedAsset(ownerA, `r9-later-${randomUUID().slice(0, 8)}`);
+    const saved = (await saveBrandRecord({
+      kind: "product", data: { name, price: "RM 7.00", imageAssetId: first },
+    })) as { ok: true; id: string };
+    const entityId = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    })).entityId!;
+
+    // ① 商家打开 /brand,这一屏拿到的快照里封面是第一张。
+    const snapshot = (await listBrandRecords()).find((r) => r.id === saved.id)!.data;
+    expect(snapshot).toMatchObject({ imageAssetId: first });
+
+    // ② 这一屏还开着的时候,封面在别处被换掉了(另一个标签页、或 Otto 的 `linkProductImage`)。
+    await prisma.referenceImage.create({
+      data: { id: newId(), ownerId: ownerA, entityId, assetId: later, position: 1 },
+    });
+    await expect(setBaseAsset(entityId, later)).resolves.toEqual({ ok: true });
+
+    // ③ 商家回到那一屏,只改价格就保存 —— 表单里连主图那一格都没有,他没有表达任何封面意图。
+    const edited = { ...snapshot, price: "RM 9.00" };
+    await expect(
+      saveBrandRecord({
+        id: saved.id, kind: "product", data: edited,
+        identity: productFormIdentityIntent(edited),
+      }),
+    ).resolves.toEqual({ ok: true, id: saved.id });
+
+    // 刚挑的那张还在:一次「只改价格」不许把封面静默倒回上一屏看到的那张。
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: entityId, ownerId: ownerA }, select: { baseAssetId: true } }),
+    ).resolves.toEqual({ baseAssetId: later });
+    expect((await listBrandRecords()).find((r) => r.id === saved.id)?.data).toMatchObject({
+      imageAssetId: later, price: "RM 9.00",
+    });
+  }, 60_000);
+
+  it("PRODID-R9 新增撞上同名的已有产品:那件产品的封面不被这一趟清成空", async () => {
+    await signInAs(EMAIL_A);
+    // 无 id 新增撞名时,`saveBrandRecord` 递归成对那一行的 update(见该文件 existing 分支),
+    // 表单交的 identity 原样跟着走。新增表单里主图那一格是空的,若把「空」当意图递下去,
+    // 等于显式清掉一件已有产品的封面 —— 商家做的只是又敲了一遍同一个名字。
+    const name = `Teh tarik ${randomUUID().slice(0, 8)}`;
+    const cover = await seedAsset(ownerA, `r9-dup-${randomUUID().slice(0, 8)}`);
+    const saved = (await saveBrandRecord({
+      kind: "product", data: { name, price: "RM 3.00", imageAssetId: cover },
+    })) as { ok: true; id: string };
+    const entityId = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    })).entityId!;
+
+    const fresh = { name, price: "RM 3.50" };   // 新增表单交出来的整张表(没有主图那一格)
+    await expect(
+      saveBrandRecord({ kind: "product", data: fresh, identity: productFormIdentityIntent(fresh) }),
+    ).resolves.toEqual({ ok: true, id: saved.id });
+
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: entityId, ownerId: ownerA }, select: { baseAssetId: true } }),
+    ).resolves.toEqual({ baseAssetId: cover });
   }, 60_000);
 
   it("PRODID-A4 /brand 那一面也以身份为准:价签根本存不下第二份名字,四条读路叫的是同一个", async () => {
@@ -453,58 +526,6 @@ describe("PRODID-A4 改名换图:名字与主图的唯一源是身份,两边同�
         where: { id: saved.id, ownerId: ownerA }, select: { data: true },
       }),
     ).resolves.toEqual({ data: { price: "RM 5.50" } });
-  }, 60_000);
-
-  /**
-   * 票 #1323 的收口:四个写入口逐条核对「只在这一格被提交时才写身份」之后,剩下的唯一一格
-   * 是 **Brand 页的产品表单本身没有主图栏**。它的字段是 Name / Price / Description /
-   * Selling angle / Link / Tags / Category(`components/otto/memory/ProductShowcase.tsx`
-   * 的 `ProdForm`);换封面与清封面是卡片菜单上那两颗独立的键。
-   *
-   * 上一版的 `prodSave` 无条件把 `data.imageAssetId` 当主图意图递下去,而 `data` 里那一格
-   * 是读路 `withProductIdentity` 补进去的**客户端快照** —— 商家在 Library 换过封面之后,
-   * 回到 Brand 页改一次价,就能把旧封面写回权威。这条用例钉的是修好之后的形状:只交名字
-   * 这一格,主图原样不动。
-   */
-  it("PRODID-A4 Brand 页表单没有主图栏:保存只交名字,商家在 Library 换过的封面不回滚", async () => {
-    await signInAs(EMAIL_A);
-    const stale = await seedAsset(ownerA, `a4-noimg-stale-${randomUUID().slice(0, 8)}`);
-    const chosen = await seedAsset(ownerA, `a4-noimg-chosen-${randomUUID().slice(0, 8)}`);
-    const name = `Nasi lemak ${randomUUID().slice(0, 8)}`;
-    const saved = (await saveBrandRecord({
-      kind: "product", data: { name, imageAssetId: stale },
-    })) as { ok: true; id: string };
-    const entityId = (await prisma.brandRecord.findFirstOrThrow({
-      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
-    })).entityId!;
-
-    // 商家在 Library 那一面换了封面(另一个标签页、或者刚刚)。
-    await prisma.referenceImage.create({
-      data: { id: newId(), ownerId: ownerA, entityId, assetId: chosen, position: 1 },
-    });
-    await expect(setBaseAsset(entityId, chosen)).resolves.toEqual({ ok: true });
-
-    // Brand 页那张表单手里攥着**加载那一刻**的快照(imageAssetId 还是旧的那张),
-    // 而它交上来的身份意图里只有名字这一格 —— 主图这一格根本没被编辑过。
-    const editedName = `${name} v2`;
-    await expect(saveBrandRecord({
-      id: saved.id, kind: "product",
-      data: { name: editedName, price: "RM 12.00", imageAssetId: stale },
-      identity: { name: editedName },
-    })).resolves.toEqual({ ok: true, id: saved.id });
-
-    // 名字改了,封面还是商家自己挑的那张。
-    await expect(
-      prisma.entity.findFirstOrThrow({
-        where: { id: entityId, ownerId: ownerA }, select: { name: true, baseAssetId: true },
-      }),
-    ).resolves.toEqual({ name: editedName, baseAssetId: chosen });
-    // 两边读到的都是同一张:Library 与 Brand 页没有第二份主图。
-    const elements = await getLibraryElements();
-    if (!Array.isArray(elements)) throw new Error(elements.error);
-    expect(elements.find((e) => e.id === entityId)?.name).toBe(editedName);
-    expect((await listBrandRecords()).find((r) => r.id === saved.id)?.data)
-      .toMatchObject({ name: editedName, imageAssetId: chosen });
   }, 60_000);
 
   it("PRODID-A4 Library 改成另一件活着的同名产品:整笔拒绝,两边都不动(规格 §3)", async () => {

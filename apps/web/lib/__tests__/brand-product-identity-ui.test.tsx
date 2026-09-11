@@ -1,23 +1,29 @@
 // @vitest-environment jsdom
 
 /**
- * Brand 页产品表单交上来的**身份意图**(规格 `docs/specs/brand-product-identity.md`
- * §1.4 与 §5 PRODID-R6;票 #1323)。
+ * Brand 页产品**卡片**这一面交出来的身份意图(规格 `docs/specs/brand-product-identity.md`
+ * §5 PRODID-R6 / PRODID-R9;票 #1323)。
  *
- * R6 定的判据是「这一格有没有被提交上来」。答得出这句话的只有那张真的画着输入框的界面 ——
- * 所以这份文件在 jsdom 里把 `ProductShowcase` 渲染出来、按下 Edit、按下 Save,看它究竟把
- * 哪几格交给了上游。
+ * R6 定的判据是「这一格有没有被**提交上来**」,R9 更正了它的一句前提:那张产品表单有 Name 栏、
+ * **没有主图栏**(`ProdForm`:Name / Price / Description / Selling angle / Link / Tags / Category),
+ * 换封面与清封面是卡片菜单上那两颗独立的键。修法住在 PR #1343:表单交什么由一处说了算
+ * (`lib/brand-product-form-identity.ts` 的 `productFormIdentityIntent`)。
  *
- * 要钉的那一格:这张表单有 Name 栏,**没有主图栏**(换/清封面是卡片菜单上那两颗独立的键)。
- * 上一版由 `OttoMemory.prodSave` 替它猜,把 `data.imageAssetId` 当主图意图无条件递下去 ——
- * 而那一格的值是读路 `withProductIdentity` 补进 `data` 的客户端快照。后果是商家在 Library
- * 换过封面之后,回到 Brand 页改一次价就把旧封面写回权威。
+ * #1343 那条 PRODID-R9 走的是 **Add product** 那条路(`brand-route.test.ts`)。这份文件补的是
+ * 票 #1323 自己那半边 —— **编辑**已有产品那条路,以及清封面那颗键:
+ * ① 卡片菜单 Edit → 改名 → Save:整条链路(表单交出来的 `data` → `productFormIdentityIntent`)
+ *   最后递出去的身份意图里只有名字,`imageAssetId` 这个键根本不出现(`undefined` = 不碰,
+ *   `null` = 清空,两个意思);
+ * ② 「Remove from product」不经过表单,走的是 `onSetImage`。
+ *
+ * 这里**调用生产代码**算意图,不在测试里另抄一份形状 —— 否则实现怎么变测试都绿。
  */
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ProductShowcase } from "@/components/otto/memory/ProductShowcase";
+import { productFormIdentityIntent } from "@/lib/brand-product-form-identity";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 
 class ResizeObserverStub {
@@ -39,7 +45,7 @@ if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => 
 /**
  * 读路交给界面的那一行:`data` 里的 `name` 与 `imageAssetId` 都是身份 join 上来的**缓存**
  * (`withProductIdentity`),不是价签自己存的。这份 fixture 刻意带上 `imageAssetId`,
- * 因为那正是上一版顺手递下去的那一格。
+ * 因为那正是「顺手递下去就出事」的那一格。
  */
 const PRODUCT: BrandRecordRow = {
   id: "product-1",
@@ -99,11 +105,7 @@ async function chooseMenuItem(recordLabel: string, itemLabel: string): Promise<v
   await click(item);
 }
 
-type SaveFn = (
-  id: string | undefined,
-  data: Record<string, unknown>,
-  identity?: { name?: string; imageAssetId?: string | null },
-) => Promise<string | null>;
+type SaveFn = (id: string | undefined, data: Record<string, unknown>) => Promise<string | null>;
 
 function harness(save: SaveFn, setImage: (rec: BrandRecordRow, assetId: string | null) => Promise<string | null>) {
   return (
@@ -122,11 +124,16 @@ function harness(save: SaveFn, setImage: (rec: BrandRecordRow, assetId: string |
   );
 }
 
-describe("PRODID-A4 Brand 页产品表单交上来的身份意图", () => {
-  it("PRODID-A4 Brand 页表单没有主图栏:保存只交名字这一格,不交主图", async () => {
+describe("PRODID-R9 Brand 页产品卡片交出来的身份意图(编辑那条路)", () => {
+  it("PRODID-R9 编辑已有产品改名按 Save:身份意图只有名字,主图那一格根本不出现", async () => {
     const save = vi.fn<SaveFn>().mockResolvedValue(null);
     await render(harness(save, async () => null));
     await chooseMenuItem("Morning blend", "Edit");
+
+    // 表单里一个主图控件都不该有 —— 下面那句断言的前提就是这一句。
+    const controls = Array.from(document.body.querySelectorAll("input, textarea, select"));
+    const labels = controls.map((el) => el.getAttribute("placeholder") ?? el.getAttribute("aria-label") ?? "");
+    expect(labels.join("|").toLowerCase()).not.toContain("image");
 
     // 商家改的是名字(表单上真有这一栏)。
     const nameInput = Array.from(document.body.querySelectorAll<HTMLInputElement>("input"))
@@ -141,16 +148,18 @@ describe("PRODID-A4 Brand 页产品表单交上来的身份意图", () => {
     await click(button("Save"));
 
     expect(save).toHaveBeenCalledTimes(1);
-    const [id, data, identity] = save.mock.calls[0];
+    const [id, data] = save.mock.calls[0];
     expect(id).toBe("product-1");
-    // 名字这一格交了,而且交的是**这一次提交**里那个值。
-    expect(identity).toEqual({ name: "Morning blend v2" });
-    // 主图那一格一个字都没交 —— 表单上根本没有它,它在 `data` 里只是一张客户端快照。
-    expect(identity && "imageAssetId" in identity).toBe(false);
+    // 表单手里那份 `data` 仍然带着读路补进来的封面快照 —— 它是画缩略图用的,不是意图。
     expect(data).toMatchObject({ name: "Morning blend v2", imageAssetId: "as_stale_snapshot" });
+
+    // 真正递给写路的意图,由生产代码那一处算出来:只有名字这一格。
+    const identity = productFormIdentityIntent(data);
+    expect(identity).toEqual({ name: "Morning blend v2" });
+    expect("imageAssetId" in identity).toBe(false);
   });
 
-  it("PRODID-A4 换封面走的是它自己那颗键:只交主图这一格,不经过表单", async () => {
+  it("PRODID-R9 清封面走的是它自己那颗键:整张表单那条路一次都没被走过", async () => {
     const save = vi.fn<SaveFn>().mockResolvedValue(null);
     const setImage = vi.fn<(rec: BrandRecordRow, assetId: string | null) => Promise<string | null>>()
       .mockResolvedValue(null);
@@ -160,7 +169,6 @@ describe("PRODID-A4 Brand 页产品表单交上来的身份意图", () => {
     await chooseMenuItem("Morning blend", "Remove from product");
 
     expect(setImage).toHaveBeenCalledWith(expect.objectContaining({ id: "product-1" }), null);
-    // 清封面不是改名 —— 整张表单那条路一次都没被走过。
     expect(save).not.toHaveBeenCalled();
   });
 });
