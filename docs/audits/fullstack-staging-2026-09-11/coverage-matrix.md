@@ -75,7 +75,7 @@
 | R2-12 | §5 :163② | **PARTIAL（根因已定位）** | 全页查无 `[data-slot="retry-source"]`，见 FSE-205 | ✅ backend §7：链条闭合 —— `liveRetryDraft`(OttoChatStream.tsx:610-613) 把 `sourceMessageId` 写死 null，`richerTurnReferenceDraft`(turn-reference-draft.ts:239-241) 只比「有没有引用」⇒ 未刷新就重试时选中直播那份 ⇒ 那一行永不渲染（`retrySourceNote` 本身永不返回空串）。**可证伪复现路：先刷新再点 Edit and retry，应当出现** |
 | R2-12 | §5 :163③ | **NOT RUN** | 未构造「有名字 + 无名件」混合引用 | — |
 | R2-12 | §5 :170（FSE-012） | **NOT RUN** | 数量 1→2 的竞态提交在工具限制下无法可靠构造 | — |
-| R2-12 | CREATE-A1 | **PARTIAL** | 每一次生成都先出确认卡、卡上有价、`No charge until you confirm`（variation 弹窗逐字）；「两条提交路前置报价数字相同」未对照 | ✅ backend §3.5：四张卡 `estimatedCredits` 与账本 RESERVE 逐张零偏差（1↔−10、11↔−110、1↔−10、11↔−110）⇒ 报价＝实扣成立；「两条提交路数字相同」仍未对照 |
+| R2-12 | CREATE-A1 | **PARTIAL** | 每一次生成都先出确认卡、卡上有价、`No charge until you confirm`（variation 弹窗逐字）；「两条提交路前置报价数字相同」未对照 | ✅ backend §3.5：四张卡 `estimatedCredits` 与账本 RESERVE 逐张零偏差（1↔−10、11↔−110、1↔−10、11↔−110）⇒ 报价＝账本预扣（RESERVE）零偏差成立（实扣＝结算／退款见 report §7.3）；「两条提交路数字相同」仍未对照 |
 | R2-12 | CREATE-A12 | **PARTIAL（逐字那半句 PASS）** | variation 弹窗把 `sentPromptText` 整句摊开；未按 Regenerate | ✅/❌ backend §3.5：两张卡 `structuredPrompt = sentPromptText` **整串相等**（608/608、1060/1060）；图生图那张卡的 477 字**原封不动出现在送出稿第 102 字起**（多出的 101 字是机器加的 `<Image_N>` 图位声明）⇒ 逐字一致成立。**但 `routeReason` 在本轮 4 条 Generation 上全为 NULL、`finalPromptText` 全空 ⇒ 「routeReason 有值」这一格不成立**；Regenerate 仍未按 |
 | R2-13 | §5 :164 / :173（FSE-005） | **PARTIAL**（**W3 第 4 轮改判**） | **已做**：失败任务出现时节点与 Otto 行**同时自动**转 Failed（`That didn't finish / You weren't charged.`），无需手动刷新；成功任务同理。**未做**：plan §3.5 这一行的口径是两句，第二句「**合成后原商品节点仍在**」（:173 第二症状）本轮**无合成路样本**、一次没触发；:164 裁决口径里的「两入口 × 成功／失败／退款／断网四态」也只覆盖到成功与失败两态 ⇒ 不能整行判 PASS | 「合成后原商品节点消失」那一症状本轮无合成路样本 |
 | R2-13 | §5 fb:202（FSE-010） | **FAIL 一格** | 侧栏广播通；**同屏正文余额不同步（差 1 credit）** → FSE-202 | ✅ backend §6：按账本累进还原，读数时刻库里真值＝**9,999,885.7**（reserved 10 internal＝1 credit）⇒ **侧栏是对的，Billing 正文 9,999,886.7 是陈旧值**；正文 `On hold 11 credits held` 错得更远（那 110 internal 早在 12:43:46 清掉）。修哪一边已无歧义：正文（含 On hold／Spend history）没订阅广播 |
@@ -90,7 +90,7 @@
 | R2-17 | §5 cap 多入口与并发 | **PARTIAL** | 两个入口（Library 动作、画布确认卡）都**明确拒绝且零扣费**，文案逐字含所需与上限；Otto 主动／分镜两个入口与并发未做 | ✅ backend §3.7：13:06:13.798Z→13:15:34.390Z 之间账本**零行**、13:00:06 之后**零新 GenJob** ⇒ 被 cap 拦下＝零扣费机器闭合；`Organization('founder').settings.spendCapCredits = 0` ⇒ 还原已落库。两个入口＋并发仍未做 |
 | R2-18 | §5 完整下载字节 | **PARTIAL**（**W3 第 6 轮改判**） | plan.md:158 这一行的口径主语是「**下载得到的文件**真实存在且字节可校验」，而本轮**从未落盘**过任何文件。**已做**：三个产物都在**页面内实拉字节**核过 —— MP4 3,228,579 字节（`ftypisom`，5.04s，720×1280）、JPEG 161,363 / 146,870 字节（`ff d8 ff e0`，1728×2304），magic 数、尺寸、时长逐项核过（`ledger §R2-18`），plan 要的「不是只触发了 download 事件」这一点满足。**未做**：点 `Download` 后**本地落盘**（浏览器面板沙箱禁止下载，工具侧限制）。按本表「**缺主张 → 降判定**」的自立口径（与 `R2-22`／`R2-06 FRONT-A2` 同一把尺）⇒ 整行由 PASS 降 **PARTIAL** | — |
 | R2-19 | §5 :172④ | **FAIL（性质已澄清）** | 跨租户深链被**静默换成新画布**、无提示、有写入（无泄漏）→ FSE-207 | ✅ backend §5.2：租户 A 的 `Project.updatedAt = 12:35:31.204 ＝ createdAt`（深链 13:18 之后**零更新**）；访问者那边确实新建 `Project 01M289WJEE…`（ownerId＝租户 F、name `New canvas`、13:18:07.823Z）并留下 `ActionEvent project.create` ⇒ **无越权读、有一次归属正确的多余写入＋零告知**，不是隔离破口 |
-| R2-19 | FRONT-A12 | **PARTIAL** | ①五个夹具地址**已登录**下全 404、未登录 302→`/login`（PASS）；②六面夹具串**零命中**（PASS）；③「写入失败有反馈不假成功」**NOT RUN** | — |
+| R2-19 | FRONT-A12 | **PARTIAL** | ①五个夹具地址**已登录**下全 404、未登录跟随重定向落在 `/login`（跳转状态码未记；PASS）；②六面夹具串**零命中**（PASS）；③「写入失败有反馈不假成功」**NOT RUN** | — |
 | R2-20 | §5 :162④ | **PARTIAL**（W3 改判，原 PASS（带演员）） | 带演员镜头一步到位、明说要两步时被劝退；**无人物镜头仍提议两步** → FSE-208（口径待 Founder 裁） | — |
 | R2-21 | §5 :172⑥（接续＋直接出片同开） | **NOT RUN** | 未跑（时间；预算尚余 83%） | — |
 | R2-22 | §5 :162 残留③ | **PARTIAL**（**W3 第 4 轮改判**） | **已做**：产品面发不出「首帧＋演员」组合 —— Otto 逐字劝退、**零卡、零 GenJob、零生成账本行**；按 plan §1.1 不下供应商接受度结论。**未做／不成立**：plan §3.5 这一行的口径是三句 —— ②「**名额仍为 0**」本轮**没有取证**（`run-ledger.md` 原话是「留给 W2 或代码取证」，backend 未查）；③「零账本行」这句**全称不成立**，那一轮仍有对话那一笔 `settledInternal=22` internal ＝ 2.2 credits（第 2 轮只更正了措辞、判定没跟着改，第 4 轮补上） | ✅ backend §3.6：那一轮 `OttoTurnTrace.toolCalls = []`、无 GEN_CARD、无 GenJob、账本只有对话那一笔 ⇒ 「发不出这个组合」有机器证据 |
@@ -123,7 +123,7 @@
 
 **现行计数（全文唯一一套）**：**65 行判定 —— PASS 9／PARTIAL 29／FAIL 5／NOT RUN 22**（2026-09-11 W3 第 6 轮重跑 `count-verdicts.py`）。
 
-> **另一把尺子（第 4 轮新增，第 5 轮按判官 P1 修好）**：`audit-pass-rows.py` 逐行打印每个 PASS 行的「编号／验收原文（逐字取自 `origin/main` 的规格）／`plan.md` 判定口径／本轮证据指针」，供人逐分句核。第 4 轮跑出 14 行、人工判完降 3 行；第 5 轮再降 1 行（`FRONT-A2` 退役行），现在重跑是 **10 行**。
+> **另一把尺子（第 4 轮新增，第 5 轮按判官 P1 修好）**：`audit-pass-rows.py` 逐行打印每个 PASS 行的「编号／验收原文（逐字取自 `origin/main` 的规格）／`plan.md` 判定口径／本轮证据指针」，供人逐分句核。第 4 轮跑出 14 行、人工判完降 3 行；第 5 轮再降 1 行（`FRONT-A2` 退役行），第 5 轮当时重跑是 **10 行**；第 6 轮再降 1 行（`R2-18`），现在重跑是 **9 行**。
 >
 > **第 5 轮修了脚本本身的三处漏看**（判官 P1）：①验收原文原先被**静默**截到 1200 字符 → 现在不截，真要截会打出`…[截断：原文共 N 字符]`；②无编号／无登记行的行（`R2-15 variation`、`R2-18 完整下载字节`）原先在 `plan.md` 里配不到口径、那一栏一片空白 → 现在回退按 `R2-xx` 条目号匹配并标明是回退；③矩阵每行**最后一列**（「待查（W2）」／后端证据）原先根本没打印 → 现在判定列之后每一列都打。取消截断后还暴露出一个老毛病：编号是裸子串匹配，`SIGNIN-A1` 会吃掉 `SIGNIN-A10..A17`，一并按数字边界修好。
 

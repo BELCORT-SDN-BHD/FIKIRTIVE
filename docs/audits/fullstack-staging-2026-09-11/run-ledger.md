@@ -150,7 +150,7 @@ UTC 2026-09-11T12:15。命令与原文回执：
 - `SIGNIN-A9` 前半（`BetterAuthAccount.providerId='credential'` 行数为 0）→ **PARTIAL（待后端取证）**：要 W2 跑 `SELECT count(*) FROM "BetterAuthAccount" WHERE "providerId"='credential';`，期望 0。
 - `frontend-baseline §5 2026-09-10（FRONT-A2 退役）`的 `?from=/create` 落点：用 `/login?from=/create` 走码门 → 登录后**落在 `/create`**（实测，见下条 R2-03 记录）→ **PASS**。
 
-> **更正（第 5 轮，2026-09-11 W3 追加；上面那一句原文一字不改）**：那一句里的「见下条 R2-03 记录」**指不到东西** —— 本文件 `§R2-02 / R2-03` 那一节记的是 Google 门与码门进同一账号，**没有任何一句写到 `?from=/create` 的落点**；全目录也没有第二处现场记录（可复跑：`/usr/bin/grep -rn 'from=/create' .`，只命中判定行与引用，**没有一条现场回执**）。也就是说这个落点**只有一句断言，没有可核的现场**：既没抄回登录后的地址栏原文，也没有页面文本或截图。按「证据不足就往下改判、不往上凑」的规矩，`R2-06 §5 2026-09-10（FRONT-A2 退役）`整行由 **PASS 降 PARTIAL** —— **已做**：三个地址各 302→`/login`、七端点 GET/POST 全 404、`credential` 计数 0（本节上面三条都有逐字回执）；**未做／无回执**：`?from=/create` 登录后的落点。判定与计数见 `coverage-matrix.md` 该行与「汇总计数」节、`report-round2.md` §2／§3／§11.4。**下一轮补法**：用 `/login?from=/create` 走一次码门，把登录后**地址栏原文**抄进本文件。
+> **更正（第 5 轮，2026-09-11 W3 追加；上面那一句原文一字不改）**：那一句里的「见下条 R2-03 记录」**指不到东西** —— 本文件 `§R2-02 / R2-03` 那一节记的是 Google 门与码门进同一账号，**没有任何一句写到 `?from=/create` 的落点**；全目录也没有第二处现场记录（可复跑：`/usr/bin/grep -rn 'from=/create' .`，只命中判定行与引用，**没有一条现场回执**）。也就是说这个落点**只有一句断言，没有可核的现场**：既没抄回登录后的地址栏原文，也没有页面文本或截图。按「证据不足就往下改判、不往上凑」的规矩，`R2-06 §5 2026-09-10（FRONT-A2 退役）`整行由 **PASS 降 PARTIAL** —— **已做**：三个地址各跟随一次重定向落在 `/login`（跳转状态码未记）、七端点 GET/POST 全 404、`credential` 计数 0（本节上面三条都有逐字回执）；**未做／无回执**：`?from=/create` 登录后的落点。判定与计数见 `coverage-matrix.md` 该行与「汇总计数」节、`report-round2.md` §2／§3／§11.4。**下一轮补法**：用 `/login?from=/create` 走一次码门，把登录后**地址栏原文**抄进本文件。
 
 ---
 
@@ -285,6 +285,7 @@ UTC 2026-09-11T12:46。对上面那张商品图点 `Create variations` → 弹�
 
 **① 夹具地址不可达**（同一部署 commit 2a96750e，staging 是 `next build` 产物）：
 - 未登录（curl `-L`）：五个地址 **全部 302 → `/login?from=…`**。
+  - 更正（第 7 轮，编排者收口）：回执是 `curl -L` 只记最终态，跳转状态码未记；能证的是五个地址各跟随重定向落在 `/login?from=…`。
 - **已登录**（在页面内用同一会话 `fetch`，跟随重定向）：`/product-patterns`、`/product-patterns/canvas`、`/design-system`、`/design-system/patterns`、`/design-system/tokens` —— **五个全是 HTTP 404**，正文是 `This page could not be found`，无一渲染出夹具页。
 **② 商家面无夹具数据**：从 `apps/web/design-system/patterns/*/fixtures.ts` 抄出 12 个特征串（`Aisyah`、`Rizal`、`Sales Aug 2026`、`Six-second lookbook`、`Weekend tea launch`、`Workshop carousel`、`Cordial bottle reference`、`Storefront walkthrough`、`Coffee ritual video`、`Brand guideline v4`、`Warm family gathering scene`、`Storefront location reference`），逐串在 `/`、`/create`、`/library`、`/brand`、`/settings`、`/billing`、`/profile` 七面搜 → **唯一命中是 `/library` 里的 `Aisyah`**，而 `Aisyah` 是**官方演员库真人物**（`packages/core/src/actor-library.ts`、`gen-failure.ts` 都以她为例），不是夹具泄漏 ⇒ **零夹具命中**。
 **③ 写入失败有反馈、不假成功**：安排在 R2-09（同名占位恢复那条路）一起做。
