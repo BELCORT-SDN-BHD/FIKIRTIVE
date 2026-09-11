@@ -667,7 +667,9 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
 
     expect(coworkGenerateMock).toHaveBeenCalledTimes(1);
     expect(ottoApproveMock).not.toHaveBeenCalled();
-    expect(onApproved).toHaveBeenCalledWith({ cardId: "card_1", chained: null });
+    // FSE-012（判官第 6 轮 P1）—— 回调多了一格「这一次成交了没有」：成交那一支是 true，
+    // 报价被拒但恢复轮留下链上事实的那一支是 false（父层据此不把卡标成已提交）。
+    expect(onApproved).toHaveBeenCalledWith({ cardId: "card_1", chained: null, approved: true });
   });
 
   it("挂起的卡:走 ottoApprove,再次挂起时把服务端的完整待批集合原样带上去", async () => {
@@ -681,10 +683,17 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
     const host = mountCard({ pendingApproval: true, onApproved });
     await approveThroughTheUi(host);
 
-    expect(ottoApproveMock).toHaveBeenCalledWith({ threadId: "thread_1", cardId: "card_1" });
+    // FSE-012 —— 批准这一趟还带着「他按下的是哪一版报价」(`cardQuoteVersion`,creation §5 :170)。
+    // 这里只钉它在场且是一串:那一串本身算得对不对,由 quote-version 自己那份单测钉。
+    expect(ottoApproveMock).toHaveBeenCalledWith({
+      threadId: "thread_1",
+      cardId: "card_1",
+      quoteVersion: expect.any(String),
+    });
     expect(coworkGenerateMock).not.toHaveBeenCalled();
     expect(onApproved).toHaveBeenCalledWith({
       cardId: "card_1",
+      approved: true,
       chained: {
         pendingCardIds: ["card_2", "card_3"],
         fallbackReply: "One more to confirm.",

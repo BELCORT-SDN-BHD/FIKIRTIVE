@@ -1437,14 +1437,16 @@ export function OttoChatStream({
           confirmCards={confirmCards}
           retryDraft={canvasRetryDraft}
           errorKind={canvasErrorKind}
-          onApproved={({ cardId: approvedCardId, chained }) => {
+          onApproved={({ cardId: approvedCardId, chained, approved = true }) => {
             // 与抽屉里那张卡按下去之后**逐字相同**的善后:同一份 pending 集合合并规矩、
             // 同一次轮询重装、同一条注入路径。两个按钮,一套状态机。
-            if (!chained?.pendingCardIds.includes(approvedCardId)) {
+            // FSE-012（判官第 6 轮 P1）:`approved:false` = 报价被拒的那一趟。链上事实照落,
+            // 但这张卡什么都没生成 —— 标成已提交会让它显示成「在跑」并埋掉它自己的按钮。
+            if (approved && !chained?.pendingCardIds.includes(approvedCardId)) {
               setSubmittedCardIds((cur) => new Set(cur).add(approvedCardId));
             }
             setPendingApprovalCardIds((cur) =>
-              nextPendingApprovalCardIds(cur, [approvedCardId], chained?.pendingCardIds),
+              nextPendingApprovalCardIds(cur, approved ? [approvedCardId] : [], chained?.pendingCardIds),
             );
             rearmGenerationPoll();
             void pollAndInjectResults(
@@ -1691,12 +1693,14 @@ export function OttoChatStream({
                       cancelled: jobsCancelled,
                     })}
                     pendingApproval={pendingApprovalCardIds.has(durableId)}
-                    onApproved={({ cardId: approvedCardId, chained }) => {
+                    onApproved={({ cardId: approvedCardId, chained, approved = true }) => {
                       // The card hands up WHICH card this was and the SERVER's result —
                       // both facts come from the response, not from this closure (P1-4).
                       // Record submission so the card flips to queued optimistically —
                       // unless the server reports THIS card as still pending (chained).
-                      if (!chained?.pendingCardIds.includes(approvedCardId)) {
+                      // FSE-012（判官第 6 轮 P1）:报价被拒的那一趟也会走到这里(它带着链上
+                      // 事实),那时 `approved` 是 false —— 什么都没生成的卡不许被标成已提交。
+                      if (approved && !chained?.pendingCardIds.includes(approvedCardId)) {
                         setSubmittedCardIds((cur) => new Set(cur).add(approvedCardId));
                       }
                       // A chained response's COMPLETE set replaces ours; otherwise only
@@ -1710,7 +1714,7 @@ export function OttoChatStream({
                       // a prior job hit the give-up cap; the poll also appends the
                       // chained cards themselves — see pollAndInjectResults).
                       setPendingApprovalCardIds((cur) =>
-                        nextPendingApprovalCardIds(cur, [approvedCardId], chained?.pendingCardIds),
+                        nextPendingApprovalCardIds(cur, approved ? [approvedCardId] : [], chained?.pendingCardIds),
                       );
                       rearmGenerationPoll();
                       // No balance announcement here: OttoPlanCard.approve() already makes it

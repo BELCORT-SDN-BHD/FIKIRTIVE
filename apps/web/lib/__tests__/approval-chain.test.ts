@@ -37,6 +37,7 @@ import {
   mergeDurableIntoLive,
   runPackApprovalLoop,
 } from "@/components/otto/approval-chain";
+import { QUOTE_VERSION_STALE } from "@fikirtive/core/quote-version";
 import { threadToUiMessages } from "@/lib/otto-ui-messages";
 import type { ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
 
@@ -259,6 +260,67 @@ describe("runPackApprovalLoop (#498 round-5)", () => {
     expect(calls.map((c) => c.cardId)).toEqual(["card_a", "card_b"]);
   });
 
+  /**
+   * FSE-012（creation-engine.md §5 :170，验收 R2）—— 报价过期**不是这一批的失败**。
+   *
+   * 它从前走上面那条 `error` 出口：整批当场停在那一张，后面一格没漂的卡跟着一起不跑，
+   * 而卡面还写着旧价。逐卡处理之后：这一张交回它现在的报价（调用方写回卡面）、保住它自己
+   * 的批准闸（不进 firedCardIds、不打 ✓、pending 一格不动），循环照走。
+   */
+  it("creation §5 :170 FSE-012 R2 报价过期只停这一张:整批照跑,新报价交给调用方,这一张不算已开跑", async () => {
+    const refreshed: Array<{ cardId: string; quote: unknown }> = [];
+    const settled: string[] = [];
+    const { fire, calls } = scriptedFire({
+      card_a: [{ error: QUOTE_VERSION_STALE, quote: { estimatedCredits: 2 } }],
+      card_b: [{ ok: true }],
+    });
+    const outcome = await runPackApprovalLoop({
+      cards: [
+        { cardId: "card_a", pendingApproval: true },
+        { cardId: "card_b", pendingApproval: false },
+      ],
+      fire,
+      onQuoteRefreshed: (cardId, quote) => refreshed.push({ cardId, quote }),
+      onCardSettled: (cardId) => settled.push(cardId),
+    });
+    // 整批没停:后面那张真的被送出去了。
+    expect(calls.map((c) => c.cardId)).toEqual(["card_a", "card_b"]);
+    expect(outcome.failure).toBeNull();
+    // 换了价的那一张:交回新报价、记在名单里、既没开跑也没打 ✓。
+    expect(refreshed).toEqual([{ cardId: "card_a", quote: { estimatedCredits: 2 } }]);
+    expect(outcome.quoteRefreshedCardIds).toEqual(["card_a"]);
+    expect(outcome.firedCardIds).toEqual(["card_b"]);
+    expect(settled).toEqual(["card_b"]);
+    // 它那道批准闸原样留着 —— 仍在等它自己的批准。
+    expect(outcome.pendingCardIds).toEqual(["card_a"]);
+  });
+
+  it("creation §5 :170 FSE-012 R2 恢复轮停在别的批准上、这一张被拒:待批集照服务端那一份换,这一张仍不算已开跑", async () => {
+    const refreshed: Array<{ cardId: string; quote: unknown }> = [];
+    const { fire } = scriptedFire({
+      card_a: [{
+        ok: true,
+        status: "needs_approval",
+        pendingCardIds: ["card_x"],
+        fallbackReply: null,
+        narrationMessageId: null,
+        staleQuote: { error: QUOTE_VERSION_STALE, quote: { estimatedCredits: 3 } },
+      }],
+    });
+    const outcome = await runPackApprovalLoop({
+      cards: [{ cardId: "card_a", pendingApproval: true }],
+      fire,
+      onQuoteRefreshed: (cardId, quote) => refreshed.push({ cardId, quote }),
+    });
+    expect(refreshed).toEqual([{ cardId: "card_a", quote: { estimatedCredits: 3 } }]);
+    expect(outcome.quoteRefreshedCardIds).toEqual(["card_a"]);
+    // 这一张什么都没成交:父层不得把它当成已批准的一张。
+    expect(outcome.firedCardIds).toEqual([]);
+    // 链上那些卡照服务端那一份整体替换(既有契约不变)。
+    expect(outcome.pendingCardIds).toEqual(["card_x"]);
+    expect(outcome.pendingFromServer).toBe(true);
+  });
+
   it("a thrown fire() reports failure with a null message (generic copy) and preserves the seed pending state", async () => {
     const fire = vi.fn(async () => {
       throw new Error("network down");
@@ -269,6 +331,7 @@ describe("runPackApprovalLoop (#498 round-5)", () => {
     });
     expect(outcome).toEqual({
       firedCardIds: [],
+      quoteRefreshedCardIds: [],
       pendingCardIds: ["card_a"],
       pendingFromServer: false,
       fallbackReply: null,
