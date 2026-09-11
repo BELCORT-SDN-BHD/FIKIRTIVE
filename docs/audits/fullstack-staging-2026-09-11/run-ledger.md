@@ -219,3 +219,68 @@ staging 配置改动（Founder 2026-09-11 当次授权，改动与还原全记�
 4. **Google 门那半边（陌生 Google 账号在暂停期被拒）**：本机只有 `tools@belcort.com` 一个 Google 身份且它是老账号 → **NOT RUN（无陌生 Google 夹具）**。
 
 ### SIGNIN-A7 后台撤销 —— 待做（安排在登录门收尾时用一个一次性账号，不用夹具 A，避免把第二租户弄坏）
+
+---
+
+## 夹具调整与账号说明（Creation 系列改在 `tools@belcort.com` 上跑）
+
+夹具 A 余额 0（见「重大现象 A」），跑不了真引擎。Creation 全部条目改用 `tools@belcort.com`（测试号，起始余额 **9,999,903.2 credits**）。跨租户条目用夹具 A 当第二租户。
+浏览器面板只有一个 cookie jar ⇒ **两个账号不能同时在线**；跨租户条目安排在最后统一做。
+
+## R2-07 产品身份正路（PRODID-A1 / A2 / A5 + FRONT-A10）
+
+UTC 2026-09-11T12:33–12:40。
+
+- **Brand 侧的产品编辑器在 `/brand/records`**（`/brand` 五节页没有产品分区；`/brand/records` 的文件头自己写明这是过渡页，由 Knowledge base / Audiences 指过来）。该页 `Your products` 分区 → `Add product` 表单字段：`Name *`、`Price`、`Description`、`Selling angle`、`Link`、`Tags`、`Category` —— **表单里没有主图一格**，主图是建完之后卡上的 `Add image · from Library`。规格 PRODID-A1 的动作写的是「名字、主图、价格」，主图这一格因此是**建后补**，不是同一张表单，照实记。
+- 建了 `R2 Coral Tumbler 20260911 / RM 79` → 卡上出现 `You added / Updated Sep 11`。
+- **Library → Elements → Products** 立刻出现同一件：`R2 Coral Tumbler 20260911 · 0 linked images`。→ PRODID-A1 商家可见半边 **PASS**；`BrandRecord.entityId = Entity.id` 待 W2 查表（**PARTIAL**）。
+- **PRODID-A5**：Library 元素详情面板全文只有 `R2 Coral Tumbler 20260911 / Products · 0 linked images / No image saved for this element yet. / Remove from Library / Close` —— **价格、卖点、分类三个编辑入口一个都没有** → **PASS**。
+- **PRODID-A2 前半**：画布输入 `@R2` → 菜单 `References / Results for "R2" / R2 Coral Tumbler 20260911 / **Product**` —— 来源标签逐字是 `Product` → **PASS**；`approvedEntities` 指同一 Entity id 待 W2（**PARTIAL**）。
+- **FRONT-A10（前两句 + 改判后的第三句）**：空 `@` 菜单原文＝`Recent / Recently updated in your workspace / <生成结果> Generation · / <画布> / R2 Coral Tumbler 20260911 Product / Xinyi Official avatar · Read only / Rahman Official avatar · Read only / Arjun Official avatar · Read only / BROWSE BY TYPE Products Characters Official avatars Locations Media`。三类来源（生成结果 / 产品 / 官方演员）都在、都来自服务器；Official avatar 条目**能被真正选入并送进引擎**（见 R2-11 的确认卡逐字写出 `Xinyi (person)`）⇒ 不是假条目。**PASS**（`referenceRefs` 存真实 id 待 W2）。
+
+## R2-11 FL-03 官方演员 + 商品 → 视频（正路）—— 关键证据
+
+UTC 2026-09-11T12:38–12:45。账号 `tools@belcort.com`。
+
+1. 先在同一张画布上生成一张商品图（`@R2 Coral Tumbler 20260911` + 一句话）：确认卡原文 `🪸 1 image 1728 × 2304 · 3:4 · 1 image` / `1 credit` / `Generate · 1 credit` → 批准 → **约 10 秒出图**，节点自动变成 `Image … v1`，Otto 收尾句 `Made 1 image · 1 credit.`（**无需手动刷新**）。Generation id `01M287HQC2P1E33C6CDKJXJV04`。
+2. 再 `@Xinyi`（官方演员）+ `@` 选上一步那张**生成图**，一句话要 5 秒 720p 无声视频。Otto 回话逐字：
+
+   > `Since @Xinyi is a cast member, her reference photos and the tumbler's entity reference go straight to the video engine — no starting picture needed. One step!`
+
+   → **没有「先合成首帧再动画」那一步**（R2-20 / :162④ 的正面证据）。
+3. 确认卡逐字：`🎬 1 video` / `9:16 · 5s · 720p · No sound · Uses 3 of your reference photos` / `11 credits` / `Reference names sent to the engine: Xinyi (person). R2 Coral Tumbler reusable travel mug, standing upright, c…` / `Generate · 11 credits`。→ **两张参考直接进引擎**、卡上点名了引用来源。
+4. 批准（12:41:27Z）→ 节点 `Video Rendering… / Otto is making this — you can keep working / Billed only when it finishes` → **约 3 分钟**后 `Video … v1`、Otto 收尾句 `Made 1 video · 11 credits.`（**无需手动刷新**）。Generation id `01M287S996PCX2FEGWHTDGJP95`。
+5. 产物真伪（在页面内取字节，**不记录任何签名链接**）：
+   - 视频：HTTP 200、`content-type: video/mp4`、**3,228,579 字节**、magic `00 00 00 20 66 74 79 70 69 73 6f 6d`（`ftypisom` ＝ 合法 MP4）、`videoWidth×videoHeight = 720×1280`、`duration = 5.041667` 秒 —— 与卡面「5s · 720p · 9:16」一致。
+   - 商品图：HTTP 200、`image/jpeg`、**161,363 字节**、magic `ff d8 ff e0 … JFIF`、`1728×2304` —— 与卡面「1728 × 2304 · 3:4」一致。
+6. 钱路（商家可见）：批准前 9,999,897.7 → 预扣后 Billing 正文 `On hold 11 credits held`、可用 9,999,886.7 → 完成后 `Made 1 video · 11 credits`。**一次预扣、一次结算**，金额与卡面一致。ledger 三行（reserve/settle、无残留 hold）待 W2 查表。
+
+判定：`§5 :162（FSE-001 正路）` **PASS**（商家可见面）；`CREATE-A10` 第一场景 **PASS**（不触发人脸拦截、引用落盘可查待 W2）；第二场景与自动放大／拒绝文案两张小图见后（时间与预算允许时补）。
+
+## R2-15 variation 真实交付（上轮门槛 A3）—— PASS（商家可见面）
+
+UTC 2026-09-11T12:46。对上面那张商品图点 `Create variations` → 弹窗逐字：`Make another one like this? Cost: 1 credit. No charge until you confirm.` + `Images 1` + `Shape 3:4` + `From <完整的 sentPromptText 原文>` → `Generate · 1 credit` → **约 1 分钟内**出新节点 `01M2882PXJX2DYTZNRTH4KD6ZZ`，Otto 收尾 `Made 1 image · 1 credit.`
+产物字节：HTTP 200、`image/jpeg`、**146,870 字节**、magic `ff d8 ff e0`、`1728×2304`。
+→ **拿到可用产物**。账本 reserve/settle 各一行待 W2。
+
+## R2-18 完整下载字节 —— PASS（字节层面）
+
+三个产物都在页面内实拉字节核过（见上）：MP4 3,228,579 字节可解析出 5.04 秒 / 720×1280；两张 JPEG 161,363 / 146,870 字节、1728×2304。**不是只触发了 download 事件**。
+（`Download` 按钮本身的落盘行为：浏览器面板沙箱禁止下载，按钮点击无法在本机产出文件 —— 这是工具侧限制，不作应用判定。）
+
+## R2-13 余额广播（FSE-010）—— FAIL 一格（登记 FSE-202，P2）
+
+两个标签页同一账号：tab-1 画布、tab-2 停在 `/billing` 不再手动刷新。
+- tab-1 花掉 1 credit（variation 预扣）后：tab-2 处于**后台隐藏**状态时数字不动（12:46:44、12:47:20 两次读都是 9,999,886.7）；
+- 把 tab-2 **切到前台**后 6 秒内，**侧栏余额自动变成 9,999,885.7**（与 tab-1 一致）⇒ 广播这一半**是通的**，不需手动刷新。
+- **但同一屏上**：`Available balance` 正文仍是 **9,999,886.7 credits**、`On hold` 仍写 `11 credits held`（那笔 11 credits 的视频早已结算）、`Spend history` 仍是 `Video Held … -11`、`46 entries` 没变。
+- 即：**同一个 Billing 页面上，侧栏与正文给出两个不同的余额（9,999,885.7 vs 9,999,886.7）**。规格 fb:202 的原话是「侧栏余额……即与 **Billing 正文**、DB 一致」——这一格**不成立**。
+- 登记 **FSE-202**（P2）。
+
+## R2-19 · FRONT-A12 第①②段 —— PASS
+
+**① 夹具地址不可达**（同一部署 commit 2a96750e，staging 是 `next build` 产物）：
+- 未登录（curl `-L`）：五个地址 **全部 302 → `/login?from=…`**。
+- **已登录**（在页面内用同一会话 `fetch`，跟随重定向）：`/product-patterns`、`/product-patterns/canvas`、`/design-system`、`/design-system/patterns`、`/design-system/tokens` —— **五个全是 HTTP 404**，正文是 `This page could not be found`，无一渲染出夹具页。
+**② 商家面无夹具数据**：从 `apps/web/design-system/patterns/*/fixtures.ts` 抄出 12 个特征串（`Aisyah`、`Rizal`、`Sales Aug 2026`、`Six-second lookbook`、`Weekend tea launch`、`Workshop carousel`、`Cordial bottle reference`、`Storefront walkthrough`、`Coffee ritual video`、`Brand guideline v4`、`Warm family gathering scene`、`Storefront location reference`），逐串在 `/`、`/create`、`/library`、`/brand`、`/settings`、`/billing`、`/profile` 七面搜 → **唯一命中是 `/library` 里的 `Aisyah`**，而 `Aisyah` 是**官方演员库真人物**（`packages/core/src/actor-library.ts`、`gen-failure.ts` 都以她为例），不是夹具泄漏 ⇒ **零夹具命中**。
+**③ 写入失败有反馈、不假成功**：安排在 R2-09（同名占位恢复那条路）一起做。
