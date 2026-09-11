@@ -9,14 +9,16 @@
  * 换封面与清封面是卡片菜单上那两颗独立的键。修法住在 PR #1343:表单交什么由一处说了算
  * (`lib/brand-product-form-identity.ts` 的 `productFormIdentityIntent`)。
  *
- * #1343 那条 PRODID-R9 走的是 **Add product** 那条路(`brand-route.test.ts`)。这份文件补的是
- * 票 #1323 自己那半边 —— **编辑**已有产品那条路,以及清封面那颗键:
- * ① 卡片菜单 Edit → 改名 → Save:整条链路(表单交出来的 `data` → `productFormIdentityIntent`)
- *   最后递出去的身份意图里只有名字,`imageAssetId` 这个键根本不出现(`undefined` = 不碰,
- *   `null` = 清空,两个意思);
+ * 接线那一段(表单 → `OttoMemory.prodSave` → `saveBrandRecord`)由 #1343 那条 PRODID-R9 钉住,
+ * 走的是 **Add product** 那条路(`brand-route.test.ts` 的「真表单按 Save」);两条路共用同一个
+ * `onSave`,所以接线只需要钉一次。这份文件补的是票 #1323 自己那半边 —— **编辑**已有产品那条路
+ * 上,表单自己交出来的东西:
+ * ① 卡片菜单 Edit → 改名 → Save:这张表单上一个主图控件都没有,而它交上去的那份 `data` 里仍然
+ *   带着读路补进来的封面快照;把这份 `data` 喂给生产代码那一处,算出来的身份意图里只有名字,
+ *   `imageAssetId` 这个键根本不出现(`undefined` = 不碰,`null` = 清空,两个意思);
  * ② 「Remove from product」不经过表单,走的是 `onSetImage`。
  *
- * 这里**调用生产代码**算意图,不在测试里另抄一份形状 —— 否则实现怎么变测试都绿。
+ * 意图一律**调用生产代码**算,不在测试里另抄一份形状 —— 否则实现怎么变测试都绿。
  */
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -153,7 +155,7 @@ describe("PRODID-R9 Brand 页产品卡片交出来的身份意图(编辑那条�
     // 表单手里那份 `data` 仍然带着读路补进来的封面快照 —— 它是画缩略图用的,不是意图。
     expect(data).toMatchObject({ name: "Morning blend v2", imageAssetId: "as_stale_snapshot" });
 
-    // 真正递给写路的意图,由生产代码那一处算出来:只有名字这一格。
+    // 把这份 `data` 喂给生产代码那一处(`prodSave` 递给写路时走的就是它):只有名字这一格。
     const identity = productFormIdentityIntent(data);
     expect(identity).toEqual({ name: "Morning blend v2" });
     expect("imageAssetId" in identity).toBe(false);
