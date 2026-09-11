@@ -278,6 +278,30 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     summary: "Google OAuth app secret.",
   },
   {
+    // SIGNIN-A12 —— E2E 跑道上那条 Google 门替身的武装开关(docs/specs/sign-in.md 已冻结 · v1)。
+    //
+    // 跑道上没有 Google 也永远不该有,而 A12 的旅程必须真的走一次 Google 门。替身换掉的只有
+    // Google 那个签名(`packages/core/src/e2e-google-door-stub.ts` 逐条写了边界):
+    // 逐字 "1" 才武装,且替身 token 还必须带一个 BETTER_AUTH_SECRET 算出来的 HMAC —— 能算出
+    // 它的人手上已经有签任意会话 cookie 的那把密钥,所以这条路不产生新的攻击面。
+    //
+    // productionValues 是空数组:**任何**值在生产上都不对。与 AUTH_EMAIL_TRANSPORT=stub 同一个
+    // 口径(不打 moneyInvariant,所以 FIKIRTIVE_ENV_CONTRACT=warn 的逃生门够得着它)。
+    name: "E2E_GOOGLE_DOOR_STUB",
+    surface: "web",
+    readBy: "code",
+    requirement: "optional",
+    format: "enum",
+    values: ["1"],
+    productionValues: [],
+    productionReason:
+      "it arms an E2E-only stand-in for Google's own id-token signature check — a production deployment has the real Google to check against and must never accept a locally minted identity assertion",
+    secret: false,
+    shared: false,
+    summary:
+      "E2E only. Set to 1 to arm the Google-door stand-in the resident journey suite signs in through; unset everywhere else. Production refuses any value by default.",
+  },
+  {
     name: "AUTH_ALLOWED_EMAILS",
     surface: "web",
     readBy: "code",

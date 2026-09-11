@@ -1,0 +1,79 @@
+/**
+ * Google 门 E2E 替身的两把锁（SIGNIN-A12；`packages/core/src/e2e-google-door-stub.ts`）。
+ *
+ * 这个模块存在的全部理由，是让 A12 的旅程在一台没有 Google 的机器上走完第二扇门。它因此也是
+ * 这个产品里**唯一**一段「在对的条件下接受一个不是 Google 签的身份断言」的代码，所以它的两把锁
+ * 必须自己有测试 —— 一个替身如果在没武装时也说是，或者对任何字符串都说是，那么 A12 那条绿旅程
+ * 证明的只是「这个套件能给自己发会话」。
+ *
+ * 四件事逐条钉住：默认（不设开关）什么都不挂；武装了才验签；签名不对一律拒；短密钥一律拒。
+ */
+import { describe, it, expect } from "vitest";
+import {
+  E2E_GOOGLE_DOOR_STUB_ENV,
+  e2eGoogleDoorStubArmed,
+  e2eGoogleDoorStubProviderOptions,
+  mintE2eGoogleIdToken,
+  verifyE2eGoogleIdToken,
+} from "@fikirtive/core/e2e-google-door-stub";
+
+const SECRET = "e2e-google-door-stub-test-secret-long-enough";
+const ARMED = { [E2E_GOOGLE_DOOR_STUB_ENV]: "1", BETTER_AUTH_SECRET: SECRET };
+
+const claims = { iss: "https://accounts.google.com", email: "aisha@example.com", email_verified: true };
+
+describe("SIGNIN-A12 —— Google 门 E2E 替身的两把锁", () => {
+  it("SIGNIN-A12 —— 没武装时供应商配置里一个字都不多（生产上这段代码不存在）", () => {
+    expect(e2eGoogleDoorStubArmed({})).toBe(false);
+    expect(e2eGoogleDoorStubProviderOptions({})).toEqual({});
+    // 「差不多是开」的值一律算没开：放宽的开关必须 fail closed。
+    for (const value of ["", " ", "0", "true", "yes", "on", "2"]) {
+      expect(
+        e2eGoogleDoorStubArmed({ [E2E_GOOGLE_DOOR_STUB_ENV]: value }),
+        `"${value}" 不该武装替身`,
+      ).toBe(false);
+    }
+    expect(e2eGoogleDoorStubArmed({ [E2E_GOOGLE_DOOR_STUB_ENV]: "1" })).toBe(true);
+  });
+
+  it("SIGNIN-A12 —— 没武装时，连一个签得对的 token 也不认", () => {
+    const token = mintE2eGoogleIdToken(claims, SECRET);
+    expect(verifyE2eGoogleIdToken(token, { BETTER_AUTH_SECRET: SECRET })).toBe(false);
+    expect(verifyE2eGoogleIdToken(token, ARMED)).toBe(true);
+  });
+
+  it("SIGNIN-A12 —— 武装之后仍然是一道检查：签名不对、密钥不对、形状不对都进不来", () => {
+    const token = mintE2eGoogleIdToken(claims, SECRET);
+    const [header, payload] = token.split(".");
+
+    // 另一把密钥签的 —— 这正是「开关误开也不产生新攻击面」那句话的落点。
+    expect(
+      verifyE2eGoogleIdToken(mintE2eGoogleIdToken(claims, `${SECRET}-someone-else`), ARMED),
+    ).toBe(false);
+    // 载荷被改过（签名还是原来那一份）：同一个 token 换一个邮箱就能冒充别人，是这道锁要挡的。
+    const tamperedPayload = Buffer.from(
+      JSON.stringify({ ...claims, email: "victim@example.com" }),
+    ).toString("base64url");
+    expect(verifyE2eGoogleIdToken(`${header}.${tamperedPayload}.${token.split(".")[2]}`, ARMED)).toBe(false);
+    // 一段随手写的字符串。
+    expect(verifyE2eGoogleIdToken(`${header}.${payload}.not-a-signature`, ARMED)).toBe(false);
+    expect(verifyE2eGoogleIdToken("not-a-jwt", ARMED)).toBe(false);
+    expect(verifyE2eGoogleIdToken("", ARMED)).toBe(false);
+  });
+
+  it("SIGNIN-A12 —— 密钥短于 32 位一律拒（与 server.ts 顶上那道警戒线同一个门槛）", () => {
+    const short = "too-short";
+    const token = mintE2eGoogleIdToken(claims, short);
+    expect(
+      verifyE2eGoogleIdToken(token, { [E2E_GOOGLE_DOOR_STUB_ENV]: "1", BETTER_AUTH_SECRET: short }),
+    ).toBe(false);
+    expect(verifyE2eGoogleIdToken(token, { [E2E_GOOGLE_DOOR_STUB_ENV]: "1" })).toBe(false);
+  });
+
+  it("SIGNIN-A12 —— 武装之后挂上去的正是库要用的那个钩子", async () => {
+    const options = e2eGoogleDoorStubProviderOptions(ARMED);
+    expect(typeof options.verifyIdToken).toBe("function");
+    await expect(options.verifyIdToken!(mintE2eGoogleIdToken(claims, SECRET))).resolves.toBe(true);
+    await expect(options.verifyIdToken!("forged")).resolves.toBe(false);
+  });
+});

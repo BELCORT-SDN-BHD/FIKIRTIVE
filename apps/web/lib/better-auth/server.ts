@@ -19,6 +19,7 @@ import {
 } from "./signin-refusal";
 import { ac, superAdminRole } from "./access";
 import { googleSignInConfigured } from "./social-config";
+import { e2eGoogleDoorStubProviderOptions } from "@fikirtive/core/e2e-google-door-stub";
 import { signInDoorDecision } from "@/lib/signup-gate";
 import { consumeNewAccountGate, NEW_ACCOUNTS_PER_HOUR } from "@/lib/rate-limit-gates";
 import { signInDoorOf } from "./signin-door-source";
@@ -227,9 +228,18 @@ export const auth = betterAuth({
   // call died deep inside the OAuth handshake as a 500 for what is purely a missing setting.
   // Same predicate the login page uses to decide whether to show the button, so the offer and
   // the capability cannot disagree. Configured deployments are unaffected.
+  //
+  // SIGNIN-A12 —— `e2eGoogleDoorStubProviderOptions()` 在没有武装时返回**空对象**，所以这一行
+  // 在任何真实部署上与展开之前逐字等价。武装（`E2E_GOOGLE_DOOR_STUB=1`，env 契约里标着生产
+  // 不许出现）时它只多挂一个 `verifyIdToken` 覆写，让 E2E 跑道上那条「Google One Tap」入口收
+  // 一个用 BETTER_AUTH_SECRET 签的替身 id_token。理由与边界逐条写在 `e2e-google-door-stub.ts`。
   socialProviders: googleSignInConfigured()
     ? {
-        google: { clientId: process.env.GOOGLE_CLIENT_ID!, clientSecret: process.env.GOOGLE_CLIENT_SECRET! },
+        google: {
+          clientId: process.env.GOOGLE_CLIENT_ID!,
+          clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+          ...e2eGoogleDoorStubProviderOptions(),
+        },
       }
     : {},
   // #543 — basic abuse control on the newly public endpoints, using Better Auth's own

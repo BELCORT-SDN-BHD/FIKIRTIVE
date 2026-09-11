@@ -34,6 +34,10 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { symmetricDecrypt } from "../../apps/web/node_modules/better-auth/dist/crypto/index.mjs";
+// 替身 token 的形状只有一份。产品那一侧用同一个模块**验**它（`server.ts` 把
+// `verifyE2eGoogleIdToken` 挂成 google 供应商的 `verifyIdToken`），所以这里 import 的是
+// 同一个函数的兄弟，而不是把 HMAC 的写法在套件里再抄一遍——抄一遍就是两份会各自漂移的真相。
+import { mintE2eGoogleIdToken } from "../../packages/core/dist/e2e-google-door-stub.js";
 import { prisma } from "./db.js";
 import { E2E_AUTH_SECRET, E2E_BASE_URL } from "./env.js";
 import type { Workspace } from "./seed.js";
@@ -189,4 +193,58 @@ export async function signIn(page: Page, ws: Workspace, callbackURL = "/"): Prom
   await page.getByRole("button", { name: "Continue with login code" }).click();
   await expect(page).toHaveURL(new URL(callbackURL, E2E_BASE_URL).toString());
   await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
+}
+
+/** 跑道上那个假 Google app 的 client id —— 与 `support/env.ts` 交给应用的那一个是同一份。
+ *  `aud` 对不对今天没有人检查（替身换掉的正是那一步），写对只是为了这个 token 读起来不说谎。 */
+const E2E_GOOGLE_AUDIENCE = "fikirtive-e2e-google-client-id-not-a-real-app";
+
+/**
+ * 第二扇门：**Continue with Google**，在一台没有 Google 的机器上（SIGNIN-A12）。
+ *
+ * 走的是 Better Auth 自己的第二条 Google 入口 —— `/sign-in/social` 带 `idToken`（Google One Tap
+ * 那条，`api/routes/sign-in.mjs:76-126`）。被替掉的只有 Google 那个签名：跑道上的
+ * `verifyIdToken` 收一个用 `BETTER_AUTH_SECRET` 签的替身 token
+ * （`packages/core/src/e2e-google-door-stub.ts`，两把锁逐条写在那里）。
+ *
+ * 它之后的每一步都是产品自己的，而且正是 A12 要问的那几步：`handleOAuthUserInfo` 按**已验证的
+ * 邮箱**把这次登录折进既有用户（A3/A12 成立的机制）、`user.create.before` 的三步判定、
+ * `session.create.before` 的复查、身份收敛、会话 cookie。
+ *
+ * 为什么是浏览器自己发这个请求，而不是套件从 Node 发：会话 cookie 必须落在这个 page 的
+ * cookie jar 里，不然接下来那一步「打开 /library 看那张图」就不是这个商家在看。`fetch` 同源、
+ * 默认带 credentials，所以响应里的 Set-Cookie 就是浏览器自己收下的。
+ *
+ * 返回 HTTP 状态，让调用方自己断言「进来了」还是「被拒了」——A12 要的是前者，但拒绝也必须是
+ * 这条路能表达的答案，否则这个替身就成了一个永远说是的橡皮图章。
+ */
+export async function signInWithGoogle(
+  page: Page,
+  email: string,
+  opts: { name?: string; emailVerified?: boolean; sub?: string } = {},
+): Promise<{ status: number }> {
+  await clearAuthRateLimitCounters();
+  // 同源才算数：cookie 是按 origin 收的。先站到登录页上，再从那一页发这个请求。
+  await page.goto("/login");
+  const idToken = mintE2eGoogleIdToken(
+    {
+      iss: "https://accounts.google.com",
+      aud: E2E_GOOGLE_AUDIENCE,
+      sub: opts.sub ?? `e2e-google-sub-${email}`,
+      email,
+      email_verified: opts.emailVerified ?? true,
+      name: opts.name ?? "",
+      picture: "",
+    },
+    E2E_AUTH_SECRET,
+  );
+  return page.evaluate(async (token: string) => {
+    const res = await fetch("/api/better-auth/sign-in/social", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ provider: "google", idToken: { token }, callbackURL: "/" }),
+    });
+    return { status: res.status };
+  }, idToken);
 }

@@ -127,6 +127,21 @@ export function appEnv(): Record<string, string> {
     // same pair would be a silent outage. The fence is a default, not a lock — whoever opens the
     // hatch owns that.
     AUTH_EMAIL_TRANSPORT: "stub",
+    // SIGNIN-A12 —— 第二扇门也得在跑道上存在。
+    //
+    // 这两个凭据是**假的**，而且刻意是假的：`googleSignInConfigured()`（#681）是登录页决定要不
+    // 要画「Continue with Google」那颗按钮的唯一依据，也是 Better Auth 决定要不要注册 google
+    // 供应商的唯一依据。没有它们，这个产品在跑道上只有一扇门，A12 的后半段无从走起。值本身
+    // 从来不离开这台机器：真 Google 那一段网络由下面那个替身整段换掉，这两个字符串因此只会
+    // 进一个永远不会被发出的 token 请求体。它们不在 OFF_MACHINE_CREDENTIAL_NAMES 里不是漏，
+    // 是因为「打不出这台机器」的事实由替身保证，而不是由「没有凭据」保证。
+    GOOGLE_CLIENT_ID: "fikirtive-e2e-google-client-id-not-a-real-app",
+    GOOGLE_CLIENT_SECRET: "fikirtive-e2e-google-client-secret-not-a-real-app",
+    // 替身的武装开关（`packages/core/src/e2e-google-door-stub.ts`）。名字刻意不是
+    // `BETA_*` / `*_ENABLED`：它不是一个等着上线的功能开关，而是一条只有测试跑道才存在的路，
+    // 生产上任何值都被开机检查拒绝（`packages/core/src/env-contract.ts` 的 productionValues 空
+    // 数组）。它替掉的只有 Google 自己那个签名，我们的每一道闸照跑 —— 逐条理由在那个模块头。
+    E2E_GOOGLE_DOOR_STUB: "1",
     NEXT_TELEMETRY_DISABLED: "1",
     // GENERATION_PROVIDER is deliberately absent — see OFF_MACHINE_CREDENTIAL_NAMES above.
   };
