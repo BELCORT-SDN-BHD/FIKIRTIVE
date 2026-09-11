@@ -44,6 +44,80 @@ export async function assertSignInDoorForUserId(userId: string): Promise<void> {
 const FOR_SHARE_LOCK_TIMEOUT = "3s";
 
 /**
+ * SIGNIN-A7 —— 那一笔只读事务的两个上限，写死而不是吃 Prisma 的默认值（第 7 轮，判官 r6 P2 ①）。
+ *
+ * 上面那句 `lock_timeout` 只管「等行锁」这一段；这一笔交互式事务另有两个上限，而在它们之前
+ * 是**默认值**在管：`maxWait` 2 秒（从连接池里拿到一条连接最多等多久）、`timeout` 5 秒（事务
+ * 开始之后最多活多久）。默认值不是我们选的，下一次升级 Prisma 就可能换一个数，而这两个数与
+ * 上面那 3 秒是一组的 —— 所以它们必须写在这里，和它们的理由一起：
+ *   · `timeout` 必须**大于** `lock_timeout`，否则先到点的是事务上限，55P03 那条路（等锁等超时）
+ *     永远走不到，读者也再看不出那 3 秒是干什么用的。5 s 给 3 s 留了足够的余量。
+ *   · `maxWait` 等的是连接，不是锁。连接池打满（`DB_POOL_MAX` 默认 10）时它是这次登录愿意
+ *     排队的时间；2 秒够正常那条路用，超过就按「读不到答案」fail closed —— 与读库失败同口径。
+ * 三个数都在规格 §5 登记着等 S5 裁（它们决定的是「商家在什么情形下读到一次 500」的触发面）。
+ */
+const FOR_SHARE_TX_MAX_WAIT_MS = 2_000;
+const FOR_SHARE_TX_TIMEOUT_MS = 5_000;
+
+/**
+ * 删会话这件事只有一种做法：**删不掉就告警，绝不无声**。
+ *
+ * 它是这条路上最坏的那个结果 —— 拒绝照抛（商家进不来），但那张会话还躺在 `ba_session` 里，
+ * 一张属于已撤销地址的活 cookie，最长 7 天。两个调用点共用这一个函数（二次确认按会话 id 删
+ * 一张；首登兜底按 userId 删光），所以那个最坏结果在**哪条路上**都一样会响，不会因为下一个
+ * 人只改了其中一处而变成半个无声。
+ *
+ * 照 `tenant-actions.ts` 的撤销审计告警同一个形状：固定分类的 tag 让它能被建成一条规则，
+ * extra 里只放错误的**类名与错误码**。#575 日志纪律：邮箱、会话 id、userId 这类能指认到人的
+ * 值一个都不进告警文本（会话 id 直接指向那一行，写进去等于把「哪一张 cookie 还活着」也一起
+ * 送出我们的机器）。
+ */
+async function deleteSessionsOrAlert(
+  where: { id: string } | { userId: string },
+  gate: string,
+  message: string,
+): Promise<void> {
+  await prisma.betterAuthSession.deleteMany({ where }).catch((e: unknown) => {
+    const code = (e as { code?: unknown } | null)?.code;
+    Sentry.captureMessage(message, {
+      level: "error",
+      tags: { area: "auth", gate },
+      extra: {
+        errorName: e instanceof Error ? e.name : typeof e,
+        errorCode: typeof code === "string" ? code : undefined,
+      },
+    });
+  });
+}
+
+/**
+ * SIGNIN-A7 —— **首登**那条路上的兜底：开户失败之后，这个 ba_user 名下一张会话都不留
+ * （第 7 轮，判官 r6 P1）。
+ *
+ * 下面那道二次确认挂在 `session.create.after` 上，而首登那次登录有**两个** after 钩子：码门
+ * 在验码成功那一刻先 `createUser` 再 `createSession`，两个钩子都被 `queueAfterTransactionHook`
+ * 排进同一条队列，handler 返回之后按序执行（`@better-auth/core` 的 `runWithAdapter`：
+ * `for (const hook of pendingHooks) await hook()`）。排在前面的 `user.create.after` 跑收敛，
+ * 它遇上「开户中途被撤销」时会按 #538 的 carve-out 抛 `RevokedDuringProvisioning` —— 那个
+ * `await hook()` 一抛，**整条队列就此中断**，排在后面的二次确认一个字都跑不到，而会话行早已
+ * 落库。响应是非 2xx、cookie 也没送出去，但库里留着一张属于已撤销地址的活会话。
+ *
+ * 修法不是给两个钩子重新排序（那个顺序是库的，不是我们的，下一次升级就可能再变），而是让
+ * 「撤销地址不得留下会话行」**不依赖顺序**：收敛抛任何错，这一句先把这个用户名下的会话删光，
+ * 再把错原样重抛。删的范围是 userId 而不是某一张会话 id —— 这条路上根本拿不到那张会话的 id
+ * （它是后一个钩子的参数），而一个**刚刚建出来**的用户名下除了这次登录那一张之外没有别的会话。
+ *
+ * fail closed 的方向与门的其余部分一致：删不掉就告警（上面那个共用函数），不吞。
+ */
+export async function discardSessionsOfFailedProvisioning(userId: string): Promise<void> {
+  await deleteSessionsOrAlert(
+    { userId },
+    "provisioning-aborted-session-sweep",
+    "Sign-in provisioning aborted but its session rows could not be deleted",
+  );
+}
+
+/**
  * SIGNIN-A7 —— 撤销与建会话**并发**时的那一张漏网会话（第 4 轮判官，Codex）。
  *
  * 上面那道闸（`session.create.before`）只**读**，撤销（`revokeEmailAccess`）在它自己的事务里
@@ -101,25 +175,16 @@ export async function assertSessionSurvivesRevoke(sessionId: string, userId: str
         await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${FOR_SHARE_LOCK_TIMEOUT}'`);
         const rows = await tx.$queryRaw<{ status: string }[]>`SELECT "status" FROM "AllowedEmail" WHERE "email" = ${email} FOR SHARE`;
         return rows[0]?.status !== "revoked";
-      })
+      }, { maxWait: FOR_SHARE_TX_MAX_WAIT_MS, timeout: FOR_SHARE_TX_TIMEOUT_MS })
       .catch(() => false);
     if (stillAllowed) return;
   }
-  await prisma.betterAuthSession.deleteMany({ where: { id: sessionId } }).catch((e: unknown) => {
-    // 删不掉是这条路上最坏的那个结果：拒绝照样抛（商家进不来），但那张会话还躺在 `ba_session`
-    // 里 —— 一张属于已撤销地址的活 cookie，最长 7 天。所以它绝不许是无声的。照 `tenant-actions.ts`
-    // 的撤销审计告警同一个形状：固定分类的 tag 让它能被建成一条规则，extra 里只放错误的**类名与
-    // 错误码**。#575 日志纪律：邮箱、会话 id 这类能指认到人的值一个都不进告警文本（`sessionId`
-    // 直接指向那一行，写进去等于把「哪一张 cookie 还活着」也一起送出我们的机器）。
-    const code = (e as { code?: unknown } | null)?.code;
-    Sentry.captureMessage("Sign-in refused after revocation but its session row could not be deleted", {
-      level: "error",
-      tags: { area: "auth", gate: "session-survives-revoke" },
-      extra: {
-        errorName: e instanceof Error ? e.name : typeof e,
-        errorCode: typeof code === "string" ? code : undefined,
-      },
-    });
-  });
+  // 删不掉是这条路上最坏的那个结果（理由与告警的形状写在 `deleteSessionsOrAlert` 上）：拒绝
+  // 照样抛，但那张会话还躺在 `ba_session` 里 —— 所以它绝不许是无声的。
+  await deleteSessionsOrAlert(
+    { id: sessionId },
+    "session-survives-revoke",
+    "Sign-in refused after revocation but its session row could not be deleted",
+  );
   throw signInRefusal(SIGN_IN_REFUSED_REVOKED);
 }

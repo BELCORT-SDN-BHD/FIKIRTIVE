@@ -11,7 +11,7 @@ import { toVerifyLandingUrl } from "./verify-landing-url";
 import { convergeIdentity } from "./converge";
 import { CALLER_IP_HEADER } from "@/lib/caller-identity";
 import { signinSessionId } from "./signin-session";
-import { assertSessionSurvivesRevoke, assertSignInDoor, assertSignInDoorForUserId } from "./gate";
+import { assertSessionSurvivesRevoke, assertSignInDoor, assertSignInDoorForUserId, discardSessionsOfFailedProvisioning } from "./gate";
 import {
   SIGN_IN_REFUSED_EMAIL_UNVERIFIED,
   SIGN_IN_REFUSED_UNAVAILABLE,
@@ -448,15 +448,32 @@ export const auth = betterAuth({
           }
         },
         after: async (u, ctx) => {
-          await convergeIdentity({
-            email: u.email,
-            name: u.name,
-            image: u.image,
-            emailVerified: u.emailVerified,
-            // SIGNIN-A10 —— 来源门标记。陷阱见 signin-door-source.ts：ctx.path 在数据库钩子里
-            // 是路由模板字面量，供应商名只能从 ctx.params.id 取。
-            door: signInDoorOf(ctx as { path?: string; params?: Record<string, unknown> } | undefined),
-          });
+          // SIGNIN-A7 —— 这一层 try 是**首登**那条路上的围栏，理由整段写在
+          // `gate.ts` 的 `discardSessionsOfFailedProvisioning` 上（第 7 轮，判官 r6 P1）。
+          //
+          // 一句话：首登这一次登录有两个 after 钩子（先 user.create 再 session.create），它们
+          // 被排进同一条 `pendingHooks` 队列按序执行，而**这一个抛出去就会把整条队列掐断** ——
+          // 排在后面的 `assertSessionSurvivesRevoke`（下面 session.create.after 那一句）于是
+          // 一个字都跑不到，可会话行早就落库了。撤销恰好在这一刻追上来，库里就留下一张属于
+          // 已撤销地址的活会话，最长 7 天。
+          //
+          // 所以不依赖顺序：收敛抛**任何**错（今天只有 `RevokedDuringProvisioning` 会抛到这里，
+          // 别的都被它自己降级成 non-fatal，但这里不写死那一种 —— 明天多一种抛法也一样接住），
+          // 先把这个刚建出来的用户名下的会话删光，再把错原样重抛，错误语义一个字不改。
+          try {
+            await convergeIdentity({
+              email: u.email,
+              name: u.name,
+              image: u.image,
+              emailVerified: u.emailVerified,
+              // SIGNIN-A10 —— 来源门标记。陷阱见 signin-door-source.ts：ctx.path 在数据库钩子里
+              // 是路由模板字面量，供应商名只能从 ctx.params.id 取。
+              door: signInDoorOf(ctx as { path?: string; params?: Record<string, unknown> } | undefined),
+            });
+          } catch (e) {
+            await discardSessionsOfFailedProvisioning(u.id);
+            throw e;
+          }
         },
       },
     },

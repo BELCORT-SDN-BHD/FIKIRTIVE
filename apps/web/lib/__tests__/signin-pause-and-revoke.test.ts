@@ -113,12 +113,21 @@ async function signInThroughCodeDoor(email: string): Promise<string> {
  *   · 放手做成幂等的一个动作，两个名字 —— `commit()` 是用例里那个有意的提交（事务真的失败要
  *     照抛，绝不吞），`release()` 是用例 `finally` 里的兜底（吞掉结局，不许把一条红断言换成
  *     另一个错误）。先 commit 后 release 也没事：第二次调用只是等同一个已经落定的 promise。
+ *
+ * 第 7 轮（判官 r6 P3 ③）—— **拿锁本身失败也必须有一个结局**。上一版的 `locked` 只在 `held()`
+ * 那一行被 resolve，而 `held()` 排在那条 `UPDATE` 后面：连接超时、行不存在、UPDATE 报错，
+ * 那一行就永远走不到，`await locked` 于是挂到 vitest 的用例超时为止 —— 一条「20 秒没反应」
+ * 盖住真正的原因（那个原始错误此刻正安静地躺在 `txError` 里）。所以现在事务的 `.catch` 同时
+ * 把 `locked` **reject 掉并把原始错误原样带上去**：拿不到锁的用例当场红在真正的那句话上。
+ * （`held()` 已经 resolve 之后再 reject 是无声的 no-op，所以提交阶段的失败仍然只走 `commit()`
+ * 那条路，语义一个字没变。）
  */
 async function holdRevokeUncommitted(email: string): Promise<{ commit: () => Promise<void>; release: () => Promise<void> }> {
   let openGate!: () => void;
   const gate = new Promise<void>((r) => { openGate = r; });
   let held!: () => void;
-  const locked = new Promise<void>((r) => { held = r; });
+  let neverHeld!: (e: unknown) => void;
+  const locked = new Promise<void>((resolve, reject) => { held = resolve; neverHeld = reject; });
   let txError: unknown;
   const tx = prisma
     .$transaction(
@@ -129,7 +138,7 @@ async function holdRevokeUncommitted(email: string): Promise<{ commit: () => Pro
       },
       { timeout: 8_000, maxWait: 5_000 },
     )
-    .catch((e: unknown) => { txError = e; });
+    .catch((e: unknown) => { txError = e; neverHeld(e); });
   let letGo = false;
   const openOnce = () => { if (!letGo) { letGo = true; openGate(); } };
   await locked;
@@ -683,6 +692,73 @@ describe("SIGNIN-A7 —— 二次确认的接线与 FOR SHARE（并发，第二�
       // 真的等了（不是当场就答），又真的有上限（不是等到那笔 8 秒的事务被中断）。
       expect(waited).toBeGreaterThanOrEqual(2_500);
       expect(waited).toBeLessThan(6_000);
+    } finally {
+      await hold.release();
+    }
+  });
+
+  /**
+   * ④ **首登**那条路上，钩子顺序不许成为围栏（第 7 轮，判官 r6 P1）。
+   *
+   * 上面三条走的都是「老用户再登录」：`user.create` 不触发，`session.create.after` 是这次登录
+   * 唯一的 after 钩子，所以二次确认必然跑得到。首登不是这样 —— 码门在验码成功那一刻先
+   * `createUser` 再 `createSession`，两个 after 钩子被 `queueAfterTransactionHook` 排进同一条
+   * 队列，handler 返回之后按序执行（`@better-auth/core` 的 `runWithAdapter`：
+   * `for (const hook of pendingHooks) await hook()`）。于是：
+   *
+   *   ① `user.create.after` 先跑 `convergeIdentity`；
+   *   ② 此刻这个地址恰好被撤销 → `bootstrapPersonalOrg` 按 #538 的两阶段协议整笔回滚并抛
+   *      `RevokedDuringProvisioning`，收敛照 #538 的 carve-out 原样重抛；
+   *   ③ 那个 `await hook()` 抛出来，**整条 pendingHooks 队列就此中断** —— 排在后面的
+   *      `session.create.after` 一个字都没跑到，二次确认（`assertSessionSurvivesRevoke`）根本
+   *      没有机会收回那张会话。
+   *
+   * RED before 第 7 轮：响应确实是非 2xx、cookie 也确实没送出去，但 `ba_session` 里留着一张
+   * 属于**已撤销地址**的活会话行，最长 7 天 —— 第 4 轮那道序要堵的那个洞，换一扇门又回来了。
+   * 修根不修表：不是把两个钩子重新排序（那个顺序是库的，不是我们的），而是让「撤销地址不得
+   * 留下会话行」不依赖顺序 —— `user.create.after` 自己兜住：收敛抛任何错都先按 userId 把会话
+   * 删光再原样重抛（`discardSessionsOfFailedProvisioning`，gate.ts）。
+   *
+   * 造法：这个地址**从未登录过**（`ba_user` 零行，§1.6 的 `known=false`），操作员手上只有一张
+   * invited 邀请 —— 那一行也正是第二条连接唯一能握住的东西（一个从没进来过的地址在
+   * `AllowedEmail` 里本来没有行）。它不改变门的答案：§1.6 的「登录过」判据是 `ba_user` 有没有
+   * 行、不是这张邀请（同一件事上面那条 A6 用例已经钉住）。
+   */
+  it("SIGNIN-A7 —— 首登时撤销追上 user.create.after：收敛抛错也不许留下那张会话", async () => {
+    const stranger = newAddress("first-login-revoke");
+    await prisma.allowedEmail.create({
+      data: { email: stranger, status: "invited", invitedBy: "operator@fikirtive.test" },
+    });
+    expect(await usersFor(stranger)).toBe(0); // 「从未登录过」：下面这一次是他的第一次
+
+    const code = await requestCode(stranger);
+    expect(code).toMatch(/^\d{6}$/);
+
+    // 撤销开始飞：`AllowedEmail` 那一行的行锁到手，还没提交 —— 两道只读的闸（建号前、建会话前）
+    // 读到的都是旧的已提交版本（invited），所以它们都放行，用户行与会话行都会落库。
+    const hold = await holdRevokeUncommitted(stranger);
+    try {
+      const pending = submitCode(stranger, code!).then(
+        (res) => ({ kind: "response" as const, res }),
+        (e: unknown) => ({ kind: "thrown" as const, e }),
+      );
+      // 这次登录会停在 `bootstrapPersonalOrg` 那笔事务的第一条 UPDATE 上（它要等这把锁）。
+      await sleep(400);
+      await hold.commit();
+      const outcome = await pending;
+
+      // 商家进不来：要么整个 handler 抛（after 钩子在端点错误映射之外），要么一份 ≥400 的响应。
+      // 两种都行 —— 这条用例钉的不是**怎么**拒绝，而是拒绝之后库里留下了什么。
+      if (outcome.kind === "response") {
+        expect(outcome.res.status).toBeGreaterThanOrEqual(400);
+        expect(outcome.res.headers.get("set-cookie") ?? "").not.toContain("session_token");
+      }
+      // 名单那一行确实翻了面：证明这次撞上的是撤销，不是别的什么失败。
+      expect(await statusOf(stranger)).toBe("revoked");
+      // ★ 这条用例的全部要害：一张属于已撤销地址的活会话，一行都不许留。
+      expect(await sessionsFor(stranger)).toBe(0);
+      // 收敛在第 0 步之后就抛了，`auth.signin` 那一行写在它最后一步，所以一行都不该有。
+      expect(await signinRows(stranger)).toBe(0);
     } finally {
       await hold.release();
     }
