@@ -125,9 +125,10 @@ export type EnvVarSpec = {
    * 才跑得起 SIGNIN-A12,而这条围栏又必须**不可降级**——两件事只有靠一个「这个进程确实不是
    * 生产」的**结构性**事实才能同时成立,而不是靠再开一个可以被误设的开关。
    *
-   * 今天唯一的谓词是 `pointsAtThrowawayTestDatabase`:库名以 `_test` 结尾。一个指着用完就扔的
-   * `_test` 库的进程按定义就不服务任何商家(e2e 套件开跑前 TRUNCATE 每一张表,`quality.sh` 与
-   * `e2e/support/env.ts` 用的是同一个形状),所以豁免它不放宽任何真部署。
+   * 今天唯一的谓词是 `pointsAtThrowawayTestDatabase`:这个进程配上的**每一个**数据库地址的
+   * 库名都以 `_test` 结尾。一个指着用完就扔的 `_test` 库的进程按定义就不服务任何商家(e2e 套件
+   * 开跑前 TRUNCATE 每一张表,`quality.sh` 与 `e2e/support/env.ts` 用的是同一个形状),所以
+   * 豁免它不放宽任何真部署。
    */
   productionExemptWhen?: (env: EnvRecord) => boolean;
   /**
@@ -195,23 +196,46 @@ const providerIs = (want: string) => (env: EnvRecord) => (env.GENERATION_PROVIDE
 const storageIsR2 = (env: EnvRecord) => (env.STORAGE_DRIVER ?? "") === "r2";
 
 /**
+ * 一个进程**可能**连上的每一个数据库地址的变量名。
+ *
+ * 两个都要看,理由不是谨慎,是这两个变量的优先级在本仓库**正好相反**:web 侧
+ * (`packages/db/src/client.ts:35`、`apps/web/lib/queue.ts:25`)是
+ * `DATABASE_URL_POOLED || DATABASE_URL`,worker 与备份(`apps/worker/src/index.ts:84`、
+ * `apps/worker/src/db-backup.ts:334`)是 `DATABASE_URL || DATABASE_URL_POOLED`。哪一个先
+ * 生效取决于这是哪个进程,而一条围栏不该知道自己长在哪个进程上。
+ */
+const DATABASE_URL_NAMES = ["DATABASE_URL", "DATABASE_URL_POOLED"] as const;
+
+/** 单个连接串的库名形状。解析失败一律 false —— 认不出就当它是生产,fail closed。 */
+function isThrowawayTestDatabaseUrl(url: string): boolean {
+  try {
+    return /^[a-z0-9_]+_test$/.test(new URL(url.trim()).pathname.replace(/^\//, ""));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 这个进程指着一个**用完就扔的测试库**吗(库名 `^[a-z0-9_]+_test$`)。
  *
  * 「不是生产」这件事在本仓库唯一**结构性**的证据就是它:`e2e/support/env.ts` 靠同一个形状
  * 决定敢不敢 TRUNCATE 每一张表,`scripts/ci/quality.sh` 靠它决定敢不敢建库删库。一个指着
  * `_test` 库的进程按定义不服务任何商家的数据。
  *
- * 写在 core 而不是各处再抄一遍:它现在是一条**围栏的判据**(`productionExemptWhen`),抄两遍
- * 就是两份会各自漂移的真相。URL 解析失败一律 false —— 认不出就当它是生产,fail closed。
+ * 判据是「**配上的每一个**地址都指着 `_test` 库」,不是「DATABASE_URL 指着 `_test` 库」
+ * (判官 #1349 P1)。只看 DATABASE_URL 会漏掉正式的池化地址:一个
+ * `DATABASE_URL=…/throwaway_test` 配 `DATABASE_URL_POOLED=…/merchant_live` 的 web 进程,
+ * 实际连的是后者,却会被判成测试库,于是围栏在一个服务真商家的进程上自己让开。
+ * 「每一个都是」是唯一与上面那两种相反优先级都无关、又 fail closed 的读法:多配一个指着
+ * 真库的地址只会让豁免消失,不会让它凭空出现。一个都没配同样 false。
+ *
+ * 写在 core 而不是各处再抄一遍:它现在是一条**围栏的判据**(`productionExemptWhen`,以及
+ * `e2e-google-door-stub.ts` 里武装替身的前提),抄两遍就是两份会各自漂移的真相。
  */
 export function pointsAtThrowawayTestDatabase(env: EnvRecord): boolean {
-  const url = env.DATABASE_URL;
-  if (!isSet(url)) return false;
-  try {
-    return /^[a-z0-9_]+_test$/.test(new URL(url.trim()).pathname.replace(/^\//, ""));
-  } catch {
-    return false;
-  }
+  const urls = DATABASE_URL_NAMES.map((name) => env[name]).filter(isSet);
+  if (urls.length === 0) return false;
+  return urls.every(isThrowawayTestDatabaseUrl);
 }
 
 /**

@@ -91,6 +91,13 @@ export function appEnv(): Record<string, string> {
   return {
     PORT: String(E2E_PORT),
     DATABASE_URL: e2eDatabaseUrl(),
+    // 说出来的空值，不是遗漏。Playwright 起 webServer 时把这张表**叠在 process.env 上面**
+    // （`playwright/lib/runner/index.js`：`{...DEFAULT_ENVIRONMENT_VARIABLES, ...process.env,
+    // ...options.env}`），而 apps/web 那侧优先用池化地址（`DATABASE_URL_POOLED || DATABASE_URL`，
+    // `packages/db/src/client.ts:35`）。开发机 shell 里留着的一个池化地址会就这样越过上面这行，
+    // 让跑道上那个 `next start` 连到别的库去。空字符串在消费方的 `||` 下直接落回 DATABASE_URL，
+    // 也让 `pointsAtThrowawayTestDatabase`（Google 门替身的武装前提）看到的地址只有这一个。
+    DATABASE_URL_POOLED: "",
     BETTER_AUTH_SECRET: E2E_AUTH_SECRET,
     BETTER_AUTH_URL: E2E_BASE_URL,
     NEXT_PUBLIC_BETTER_AUTH_URL: E2E_BASE_URL,

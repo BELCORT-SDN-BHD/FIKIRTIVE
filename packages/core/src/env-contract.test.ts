@@ -888,6 +888,56 @@ describe("bootEnvDecision", () => {
       ).toBe(true);
     });
 
+    /**
+     * 判官 #1349 P1 —— 豁免认的是这个进程**可能连上的每一个**地址,不是 DATABASE_URL 一个。
+     *
+     * web 侧优先用池化地址(`packages/db/src/client.ts:35` 的
+     * `DATABASE_URL_POOLED || DATABASE_URL`),worker 侧优先用直连。只看直连的话,一个直连指着
+     * throwaway_test、池化指着真库的 web 进程实际服务的是真商家,却拿得到豁免 —— 围栏在最该
+     * 拦的那一格上自己让开。
+     */
+    it("SIGNIN-A12: 池化地址指着真库 → 不豁免(直连那条是 _test 也不行)", () => {
+      const d = bootEnvDecision(
+        {
+          ...prodArmed,
+          DATABASE_URL: "postgresql://u:p@127.0.0.1:5432/throwaway_test",
+          DATABASE_URL_POOLED: "postgresql://u:p@ep-x-pooler.neon.tech/merchant_live",
+        },
+        { surface: "web", production: true },
+      );
+      expect(d.action).toBe("exit");
+      expect(d.action === "exit" && d.report).toContain("E2E_GOOGLE_DOOR_STUB");
+    });
+
+    it("SIGNIN-A12: 配上的每一个地址都是 _test 才算(空值＝没配)", () => {
+      // 两个都是 _test:跑道上多配一个池化地址照样跑得起来。
+      expect(
+        pointsAtThrowawayTestDatabase({
+          DATABASE_URL: "postgresql://u:p@h:5432/fikirtive_e2e_test",
+          DATABASE_URL_POOLED: "postgresql://u:p@h:6432/fikirtive_e2e_test",
+        }),
+      ).toBe(true);
+      // 只配了池化地址的 web 进程:它读的本来就只有这一个。
+      expect(
+        pointsAtThrowawayTestDatabase({ DATABASE_URL_POOLED: "postgresql://u:p@h:6432/x_test" }),
+      ).toBe(true);
+      // 池化地址打错了认不出 → fail closed,不猜。
+      expect(
+        pointsAtThrowawayTestDatabase({
+          DATABASE_URL: "postgresql://u:p@h:5432/x_test",
+          DATABASE_URL_POOLED: "not-a-url",
+        }),
+      ).toBe(false);
+      // 空字符串＝没配 —— 跑道正是这么把开发机 shell 里继承来的池化地址压掉的
+      // (`e2e/support/env.ts` 的 appEnv,Playwright 把它叠在 process.env 上面)。
+      expect(
+        pointsAtThrowawayTestDatabase({
+          DATABASE_URL: "postgresql://u:p@h:5432/x_test",
+          DATABASE_URL_POOLED: "",
+        }),
+      ).toBe(true);
+    });
+
     it("不可降级名单是**具名**的,不是「所有 productionValues 空数组的变量」—— 今天只有它", () => {
       expect(ENV_CONTRACT.filter((s) => s.warnImmune).map((s) => s.name)).toEqual([
         "E2E_GOOGLE_DOOR_STUB",
