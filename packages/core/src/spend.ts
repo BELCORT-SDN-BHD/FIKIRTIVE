@@ -582,6 +582,47 @@ export function displayCredits(internal: number): number {
 export const SIGNUP_GRANT_CREDITS = 25 * INTERNAL_PER_DISPLAY;
 
 /**
+ * SIGNIN-A17 —— 开户赠金的幂等**身份**：把一堆落进同一个真实收件箱的写法归一成一个字符串。
+ *
+ * 为什么需要它（docs/specs/sign-in.md 已冻结 · v1 §1.5）：码门对陌生人打开之后，
+ * `me+001@gmail.com`、`me+002@gmail.com`、`m.e@gmail.com` 是三个不同的账号，但收信的是同一个人
+ * ——三笔赠金，三份真实供应商成本。规格算过：一千个号约 25,000 显示点、约 875 美元。
+ *
+ * 两条归一，各有依据，都只做**已知会合并**的那一类，不做「看起来像」的猜测（修根不修表，不加
+ * 启发式）：
+ *   · `+tag` —— RFC 5233 的 subaddressing，Gmail / Outlook / Fastmail / Proton 一律把
+ *     `local+任何东西` 投给 `local`。所有域一起做。
+ *   · **去点＋折域** —— 只对 Gmail 自己的域（`gmail.com` / `googlemail.com`）。这是 Google 自己
+ *     写在帮助中心里的规则（`m.e@gmail.com` = `me@gmail.com`，且 `googlemail.com` 与 `gmail.com`
+ *     是同一个收件箱的两个域名），**不是**通用邮箱规则：在别家域上去点会把两个真实的不同人合并
+ *     成一个，反而扣掉其中一个人的开户赠金。两半必须一起做 —— 只去点不折域，
+ *     `me@gmail.com` 与 `me@googlemail.com` 仍然是两个键。
+ *
+ * 它只用于**赠金去重**，绝不用于身份：账号仍然按完整地址各自成立（验收 A17 明写 30 个号都建得
+ * 出来，只有赠金归一），登录、租户、名单一律用完整地址。
+ */
+export function canonicalGrantEmail(email: string): string {
+  const normalized = email.trim().toLowerCase();
+  const at = normalized.lastIndexOf("@");
+  if (at <= 0) return normalized; // 不成形的地址原样返回：这里不是校验的地方
+  let local = normalized.slice(0, at);
+  let domain = normalized.slice(at + 1);
+  const plus = local.indexOf("+");
+  if (plus >= 0) local = local.slice(0, plus);
+  if (domain === "gmail.com" || domain === "googlemail.com") {
+    local = local.split(".").join("");
+    // `googlemail.com` **是** `gmail.com` —— Google 给同一个收件箱的第二个域名
+    // （帮助中心 answer/10313）。折域和去点是同一条事实的两半：只做去点而留着域，
+    // `me@gmail.com` 与 `me@googlemail.com` 仍是两个键、两笔赠金，§1.5 那笔账只被砍掉一半。
+    domain = "gmail.com";
+  }
+  // `+tag` 去掉之后可能什么都不剩（`+tag@x.com`）——那时保留原本的 local，宁可少归一，
+  // 也不要把一群互不相干的地址合并成同一个空字符串。
+  if (!local) return normalized;
+  return `${local}@${domain}`;
+}
+
+/**
  * 一条「默认视频」的显示 credits —— 商家不改任何选项、开口就说「做条视频」时的价钱
  * (菜单上的视频引擎 + 它自己声明的默认时长/分辨率)。
  *

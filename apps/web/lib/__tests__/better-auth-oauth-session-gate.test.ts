@@ -13,12 +13,12 @@ import { APIError } from "better-auth/api";
 //     → internalAdapter.createSession
 //     → createWithHooks("session")
 //     → databaseHooks.session.create.before
-//     → assertAllowedForUserId  → throws APIError("FORBIDDEN")
+//     → assertSignInDoorForUserId  → throws APIError("FORBIDDEN")
 //     → 403 response, no Set-Cookie, no ba_session row
 //
 // WHY NOT the email+password sign-in endpoint? server.ts ALSO mounts a
 // front-door middleware (hooks.before / createAuthMiddleware) that calls
-// assertAllowedEmail on any "/sign-in*" or "/sign-up*" request carrying an
+// assertSignInDoor on any "/sign-in*" or "/sign-up*" request carrying an
 // email — so that path is blocked BEFORE session.create.before ever runs and
 // would not exercise the wiring under test. The OAuth callback ("/callback/
 // :provider") has no email in its body and its path does not start with
@@ -35,7 +35,7 @@ import { APIError } from "better-auth/api";
 // It bypasses the front door too, and that is not an accident of routing: its
 // path DOES start with "/sign-in" and it DOES carry an email, so the middleware
 // would have refused it — server.ts carves it out on purpose, because deciding
-// the allowlist at that door turns "wrong code" and "no such merchant" into two
+// access at that door turns "wrong code" and "no such merchant" into two
 // visibly different answers (an account-existence oracle, #678). This test is
 // therefore the proof that the carve-out costs nothing: the deny-by-default
 // guarantee for the code door rests SOLELY on session.create.before, exactly as
@@ -51,22 +51,42 @@ process.env.BETTER_AUTH_SECRET ||= "x".repeat(40);
 process.env.BETTER_AUTH_URL ||= "http://localhost:3100";
 process.env.GOOGLE_CLIENT_ID ||= "test-client-id";
 process.env.GOOGLE_CLIENT_SECRET ||= "test-secret";
-// Deny-by-default allowlist: a founder that is NOT our test subject, and an
-// empty env allowlist. The blocked email (below) is therefore in NONE of
-// FOUNDER_ADMIN_EMAILS, AUTH_ALLOWED_EMAILS, or the AllowedEmail table.
+// A founder that is NOT our test subject, and an empty env allowlist, so the blocked address
+// below owes its refusal to ONE thing: the operator revoked it.
 process.env.FOUNDER_ADMIN_EMAILS = "founder@fikirtive.test";
 process.env.AUTH_ALLOWED_EMAILS = "";
 
 const { auth } = await import("@/lib/better-auth/server");
 const { prisma } = await import("@fikirtive/db");
+const { SIGN_IN_REFUSED_REVOKED } = await import("@/lib/better-auth/signin-refusal");
 
 const BASE_URL = process.env.BETTER_AUTH_URL as string;
-const GATE_MESSAGE = "This email isn't on the allowlist.";
+/**
+ * SIGNIN-A14 —— 拒绝的 message 从一句英文换成了一个机器键，理由写在
+ * `lib/better-auth/signin-refusal.ts`：Better Auth 在 OAuth 回调的**建号**那条路上把
+ * `e.message` 当成 `?error=` 的键用（`oauth2/link-account.mjs:107-111` →
+ * `api/routes/callback.mjs:156-158` 的 `split(" ").join("_")`），而在**建会话**那条路上读的是
+ * `e.body.code`。两条路要给出同一个键，message 就不能是一句带空格的话。
+ *
+ * 这不是把话说给商家听的地方：商家读到的那一句在 `app/login/page.tsx`，四种拒绝共用一句
+ * （规格 §1.3 防枚举）。这里是 API 的 body，读它的只有机器。
+ */
+const GATE_MESSAGE = SIGN_IN_REFUSED_REVOKED;
 
-// A non-allowlisted, email-verified user that ALREADY EXISTS in ba_user.
-// Seeded via raw Prisma so databaseHooks.user.create.before is bypassed — we
-// are simulating a repeat sign-in / pre-existing OAuth identity, the exact
-// case session.create.before is designed to catch.
+/**
+ * SIGNIN-A7 —— 这个测试对象换了身份，而换的理由是产品变了，不是断言被放宽。
+ *
+ * 它以前是「一个**不在名单里**的、已验证的既有用户」。规格 §1.6 把门的判定收窄成三步之后，
+ * 「不在名单里」根本不再是拒绝的理由（陌生人本来就该进得来，SIGNIN-A1），所以拿它当被拒的
+ * 主体会让这条围栏永远绿不了 —— 也永远证不了任何事。
+ *
+ * 现在的主体是**被撤销的**地址：这是这条路上仅存的绝对拒绝，也正是 `session.create.before`
+ * 存在的全部理由 —— 撤销之后，一个已经存在的身份（OAuth 回调、重复登录）不许再拿到会话。
+ *
+ * Seeded via raw Prisma so databaseHooks.user.create.before is bypassed — we are simulating a
+ * repeat sign-in / pre-existing OAuth identity, the exact case session.create.before is designed
+ * to catch.
+ */
 const blockedEmail = `blocked-${randomUUID()}@example.com`;
 const userId = `bau_${randomUUID()}`;
 
@@ -82,6 +102,12 @@ beforeAll(async () => {
   await prisma.betterAuthUser.create({
     data: { id: userId, email: blockedEmail, name: "Blocked Tester", emailVerified: true },
   });
+  // SIGNIN-A7 —— 操作员撤销了这个地址。这是这条路上唯一还成立的绝对拒绝。
+  await prisma.allowedEmail.upsert({
+    where: { email: blockedEmail },
+    create: { email: blockedEmail, status: "revoked", invitedBy: "operator@fikirtive.test" },
+    update: { status: "revoked" },
+  });
 });
 
 afterAll(async () => {
@@ -93,10 +119,11 @@ afterAll(async () => {
   await prisma.betterAuthVerification.deleteMany({
     where: { identifier: { contains: blockedEmail } },
   });
+  await prisma.allowedEmail.deleteMany({ where: { email: blockedEmail } });
 });
 
-describe("Better Auth allowlist gate — session.create.before library wiring (integration)", () => {
-  it("blocks a non-allowlisted user on a front-door-bypassing session path (sign-in code, like the OAuth callback): 403, no session cookie, no ba_session row", async () => {
+describe("Better Auth sign-in door — session.create.before library wiring (integration)", () => {
+  it("SIGNIN-A7 —— blocks a REVOKED user on a front-door-bypassing session path (sign-in code, like the OAuth callback): 403, no session cookie, no ba_session row", async () => {
     const otp = await mintSignInCode(blockedEmail);
 
     const res = await auth.handler(
@@ -107,8 +134,8 @@ describe("Better Auth allowlist gate — session.create.before library wiring (i
       }),
     );
 
-    // (3) 403 FORBIDDEN — and specifically the ALLOWLIST gate. Asserting the
-    // gate's exact message pins the 403 to assertAllowedForUserId (fired from
+    // (3) 403 FORBIDDEN — and specifically the DOOR. Asserting the
+    // gate's exact message pins the 403 to assertSignInDoorForUserId (fired from
     // session.create.before), proving the wiring under test ran.
     expect(res.status).toBe(403);
     const body = (await res.json()) as { message?: string };

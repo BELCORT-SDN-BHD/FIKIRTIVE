@@ -12,6 +12,17 @@
  *     difference, the same defect rebuilt inside its own fix),
  *   · and its own bookkeeping cannot be turned into a weapon.
  *
+ * SIGNIN-A8 —— 规格（docs/specs/sign-in.md 已冻结 · v1）改了其中一件事，而且是**修根**：
+ *
+ *   ① 地址那只桶从 `(来访者, 地址)` 改成 `(地址)`。验收 A8 说的是「同一**邮箱**一小时 6 次码上限」，
+ *      而按 (来访者+地址) 计数的规则里，换一个出口地址就买回一份新的五次 —— 公布的数字从来不是
+ *      执行的数字。这个文件里那条「keeps one caller's spending off another caller's budget」因此
+ *      整个翻面：地址的预算跟着**地址**走。
+ *   ② 超额现在**说得出口**（返回 "rate_limited"）。以前不许说，理由是码门只放行名单内的地址，
+ *      所以「你被限流了」等于「这个地址有账号」。码门对陌生人打开之后那个等号消失了。
+ *      仍然沉默的是关于地址本身的拒绝（撤销、暂停期陌生人），它们在背景里被丢掉 —— 也正是
+ *      「a refused request still hands over a fully-formed job」那一组还在的原因。
+ *
  * #795 — WHAT MOVED, AND WHAT THIS FILE NOW OWNS.
  *
  * The buckets were a `Map` in this process, which made the published cap a fiction as soon as a
@@ -35,7 +46,7 @@ vi.mock("@/lib/better-auth/sender", () => ({
   },
 }));
 
-const { acceptSignInCodeRequest, __resetSignInCodeThrottleForTests, MAX_PER_CALLER, MAX_PER_CALLER_PER_ADDRESS } =
+const { acceptSignInCodeRequest, __resetSignInCodeThrottleForTests, MAX_PER_CALLER, MAX_PER_ADDRESS } =
   await import("@/lib/better-auth/signin-code-request");
 
 /** The throttle's window. Not exported from the module — a test that wants to step over it has
@@ -53,10 +64,13 @@ beforeEach(async () => {
   await __resetSignInCodeThrottleForTests();
 });
 
-describe("the caller-and-address budget", () => {
-  it("marks five presses for one address deliverable, and the rest over budget", async () => {
-    for (let i = 0; i < 6; i++) expect(await press("owner@shop.test")).toBe("accepted");
-    expect(deliverable()).toHaveLength(MAX_PER_CALLER_PER_ADDRESS);
+describe("the per-address budget", () => {
+  /** SIGNIN-A8 —— 验收表逐字：「同一邮箱一小时内要 6 次码 → 第 6 次被拒并提示一小时后再试」。 */
+  it("SIGNIN-A8 —— 同一邮箱一小时内第 6 次要码被拒，前五次照送", async () => {
+    for (let i = 0; i < MAX_PER_ADDRESS; i++) expect(await press("owner@shop.test")).toBe("accepted");
+    // RED before：第 6 次以前也答 "accepted"，商家对着一个永远「已寄出」却收不到信的页面猜。
+    expect(await press("owner@shop.test")).toBe("rate_limited");
+    expect(deliverable()).toHaveLength(MAX_PER_ADDRESS);
   });
 
   it("gives every case and whitespace variant of one address the SAME budget", async () => {
@@ -66,10 +80,11 @@ describe("the caller-and-address budget", () => {
       "owner@SHOP.test",
       "Owner@Shop.Test",
       "  owner@shop.test  ",
-      "OWNER@SHOP.TEST",
     ];
     for (const email of variants) expect(await press(email)).toBe("accepted");
-    // RED without normalisation: six keys, six deliverable jobs.
+    // RED without normalisation: five keys, and a sixth press in a sixth casing would be granted
+    // too — flipping one letter's case bought a fresh budget.
+    expect(await press("OWNER@SHOP.TEST")).toBe("rate_limited");
     expect(deliverable()).toHaveLength(5);
     expect(new Set(queued.map((j) => j.email))).toEqual(new Set(["owner@shop.test"]));
   });
@@ -87,15 +102,26 @@ describe("the shared-egress bound", () => {
   it("lets sixty distinct addresses through one egress address in an hour, and stops the next", async () => {
     for (let i = 0; i < MAX_PER_CALLER; i++) await press(`merchant-${i}@shop.test`);
     expect(deliverable()).toHaveLength(MAX_PER_CALLER);
-    expect(await press("merchant-60@shop.test")).toBe("accepted");
+    expect(await press("merchant-60@shop.test")).toBe("rate_limited");
     expect(deliverable()).toHaveLength(MAX_PER_CALLER); // bounded — this is the anti-enumeration half
   });
 
-  it("keeps one caller's spending off another caller's budget", async () => {
-    for (let i = 0; i < 6; i++) await press("owner@shop.test", "203.0.113.10");
+  /**
+   * SIGNIN-A8 —— 这一条整个翻面，而且翻面就是这次的修根。
+   *
+   * 它以前断言「换一个来访地址，同一个邮箱拿回一份新的五次」——那正是「同一邮箱一小时 5 封」
+   * 从来没被这道闸执行过的原因（真正在执行它的是寄信队列里那个按地址计的闸，但它跑在背景、
+   * 说不出话）。验收 A8 说的是**邮箱**的上限，所以预算跟着邮箱走：换出口地址买不回额度。
+   *
+   * 来访者那只桶（60 个不同地址／小时）没有变，它管的是另一件事 —— 一个出口能探多少个**不同**
+   * 地址，见上一条。
+   */
+  it("SIGNIN-A8 —— 换一个来访地址买不回同一个邮箱的额度（预算跟着邮箱走）", async () => {
+    for (let i = 0; i < MAX_PER_ADDRESS; i++) await press("owner@shop.test", "203.0.113.10");
     queued.length = 0;
-    expect(await press("owner@shop.test", "198.51.100.7")).toBe("accepted");
-    expect(deliverable()).toHaveLength(1);
+    // RED before：这里答 "accepted" 并且真的又送出一封 —— 五封的上限用两个出口地址就变成十封。
+    expect(await press("owner@shop.test", "198.51.100.7")).toBe("rate_limited");
+    expect(deliverable()).toHaveLength(0);
   });
 
   it("puts every unidentifiable caller in ONE bucket — never a fresh budget each (#795 r3)", async () => {
@@ -108,18 +134,23 @@ describe("the shared-egress bound", () => {
     const unidentifiable = () =>
       acceptSignInCodeRequest({ email: "owner@shop.test", requestHeaders: new Headers() });
 
-    for (let i = 0; i < MAX_PER_CALLER_PER_ADDRESS; i++) expect(await unidentifiable()).toBe("accepted");
-    expect(deliverable()).toHaveLength(MAX_PER_CALLER_PER_ADDRESS);
+    for (let i = 0; i < MAX_PER_ADDRESS; i++) expect(await unidentifiable()).toBe("accepted");
+    expect(deliverable()).toHaveLength(MAX_PER_ADDRESS);
 
     // A second unidentifiable request does NOT get its own five — same bucket, already spent.
     queued.length = 0;
-    await unidentifiable();
+    expect(await unidentifiable()).toBe("rate_limited");
     expect(deliverable()).toHaveLength(0);
   });
 });
 
 // ── r4 P1-1: refusing costs exactly what accepting costs ─────────────────────────────────────
 describe("#678 r4 — an over-budget request does the SAME work as one inside its budget", () => {
+  /**
+   * 超额现在答得不一样（SIGNIN-A8），但**做的事**必须还是一样，而且理由没变、只是换了受益人：
+   * 被撤销的地址与暂停期的陌生人走的正是这条「已寄出」的路（背景把信丢掉），所以这条路上的
+   * 任何工作量差异，都会变成关于**那两种地址**的时间探针。
+   */
   it("hands over a job every single time, in the same shape", async () => {
     // RED before r4: the enqueue was inside `if (roomForCaller && roomForPair)`, so an
     // over-budget press skipped the job construction, the push and the timer — strictly less
@@ -127,14 +158,17 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
     const answers: string[] = [];
     for (let i = 0; i < 8; i++) answers.push(await press("owner@shop.test", "203.0.113.99"));
 
-    expect(new Set(answers)).toEqual(new Set(["accepted"]));
+    expect(answers).toEqual([
+      "accepted", "accepted", "accepted", "accepted", "accepted",
+      "rate_limited", "rate_limited", "rate_limited",
+    ]);
     expect(queued).toHaveLength(8);
     // Every job is fully formed, not only the ones that will be delivered.
     for (const job of queued) {
       expect(job.purpose).toBe("sign-in-code");
       expect(job.email).toBe("owner@shop.test");
     }
-    // The only thing that differs is the verdict riding along, which no caller can read.
+    // The only thing that differs is the verdict riding along.
     expect(queued.map((j) => j.overBudget)).toEqual([
       false, false, false, false, false, true, true, true,
     ]);
@@ -219,7 +253,7 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
       // The merchant at the next table, who has never pressed anything.
       expect(await press("neighbour@shop.test", cafe)).toBe("accepted");
       // RED before r2: the 100 refused retries had spent the shared budget, so the neighbour was
-      // silently over budget — accepted words, no link.
+      // refused too — for something they never did.
       expect(deliverable()).toHaveLength(1);
     }, 60_000);
 
@@ -279,11 +313,28 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
 });
 
 describe("what the caller is allowed to learn", () => {
-  it("answers a throttled press exactly like an accepted one", async () => {
-    const answers: string[] = [];
-    for (let i = 0; i < 8; i++) answers.push(await press("owner@shop.test"));
-    expect(new Set(answers)).toEqual(new Set(["accepted"]));
-    expect(deliverable()).toHaveLength(5);
+  /**
+   * SIGNIN-A8 —— 「陌生邮箱与老邮箱的响应一致」，而这一条现在**不需要**沉默来成立。
+   *
+   * 三个地址：环境名单里的、数据库名单里的、从没出现过的。它们拿到的答案与预算逐字相同 ——
+   * 因为码门对陌生人打开之后，这道闸根本不问「你是谁」，它只数「这个字符串这一小时被要过几次」。
+   * 这也是「说出超额」不再是账号存在性探针的全部理由。
+   */
+  it("SIGNIN-A8 —— 陌生邮箱与老邮箱走同一条预算，答案逐字相同", async () => {
+    const walk = async (email: string) => {
+      const answers: string[] = [];
+      for (let i = 0; i < 7; i++) answers.push(await press(email, "203.0.113.77"));
+      return answers;
+    };
+    const stranger = await walk("nobody-has-ever-heard-of-me@shop.test");
+    await __resetSignInCodeThrottleForTests();
+    const regular = await walk("owner@shop.test");
+
+    expect(stranger).toEqual(regular);
+    expect(stranger).toEqual([
+      "accepted", "accepted", "accepted", "accepted", "accepted",
+      "rate_limited", "rate_limited",
+    ]);
   });
 
   it("refuses a malformed address before it touches a budget at all", async () => {
@@ -322,7 +373,7 @@ describe("#795 — the budget is one budget, not one per process", () => {
         email: "shared@shop.test",
         requestHeaders: from(ip),
       }),
-    ).toBe("accepted");
+    ).toBe("rate_limited");
     expect(deliverable()).toHaveLength(0);
     vi.resetModules();
   });

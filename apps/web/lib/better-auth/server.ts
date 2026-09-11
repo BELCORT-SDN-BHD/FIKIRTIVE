@@ -1,4 +1,5 @@
 import "server-only";
+import * as Sentry from "@sentry/node";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { emailOTP, admin } from "better-auth/plugins";
@@ -10,10 +11,18 @@ import { toVerifyLandingUrl } from "./verify-landing-url";
 import { convergeIdentity } from "./converge";
 import { CALLER_IP_HEADER } from "@/lib/caller-identity";
 import { signinSessionId } from "./signin-session";
-import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
+import { assertSignInDoor, assertSignInDoorForUserId } from "./gate";
+import {
+  SIGN_IN_REFUSED_EMAIL_UNVERIFIED,
+  SIGN_IN_REFUSED_UNAVAILABLE,
+  signInRefusal,
+} from "./signin-refusal";
 import { ac, superAdminRole } from "./access";
 import { googleSignInConfigured } from "./social-config";
-import { isAllowedEmail } from "@/lib/allowlist";
+import { signInDoorDecision } from "@/lib/signup-gate";
+import { consumeNewAccountGate, NEW_ACCOUNTS_PER_HOUR } from "@/lib/rate-limit-gates";
+import { signInDoorOf } from "./signin-door-source";
+import { signInCodeLoginUrl } from "./signin-code-login-url";
 
 /**
  * SIGNIN-A4 / SIGNIN-A11 —— 密码整体退役（docs/specs/sign-in.md §1.4「密码凭据退役」）。
@@ -128,14 +137,19 @@ export const auth = betterAuth({
   // Map BA's four models to the dormant ba_* tables (Task 3).
   user: { modelName: "BetterAuthUser" },
   session: { modelName: "BetterAuthSession" },
-  // Account linking: only fold an OAuth identity onto an existing local account when the
-  // provider's email is trustworthy (Google's email_verified) AND the local credential is
-  // itself verified — never link onto an unverified local email (account-takeover vector).
+  // SIGNIN-A3 / SIGNIN-A13 —— 账号合并：同一个邮箱，两扇门进的是同一个账号。
+  //
+  // 合并成立的机制（`better-auth/dist/oauth2/link-account.mjs:17-40`）：码门建的用户
+  // `emailVerified = true`，所以同邮箱之后按 Google 会被折进同一个用户行，而不是另开一个。
+  //
+  // `trustedProviders` 里以前写着 `"google"`，旁边一句注释说「Google 的 email_verified 可信」。
+  // 那句注释把事情说反了：`trustedProviders` 的作用是让库**跳过** `userInfo.emailVerified` 的
+  // 检查（link-account.mjs:20-22），也就是说那一行的效果恰恰是「不看 Google 的声明」。规格
+  // §1.4 因此要求把它拿掉 —— 名单空了，库才真的会读那个声明，A13 的拒绝才有第一道落点。
   account: {
     modelName: "BetterAuthAccount",
     accountLinking: {
       enabled: true,
-      trustedProviders: ["google"],     // Google's email_verified claim is trustworthy
       requireLocalEmailVerified: true,  // never link onto an unverified local credential
     },
     // #795 — Google's OAuth tokens were the ONE credential this product stored in the clear.
@@ -218,6 +232,28 @@ export const auth = betterAuth({
         google: { clientId: process.env.GOOGLE_CLIENT_ID!, clientSecret: process.env.GOOGLE_CLIENT_SECRET! },
       }
     : {},
+  // SIGNIN-A14 —— 「Google 门的任何失败都回到 /login 页内提示，从不落在 better-auth 自带错误页」
+  // 的**地板**（规格 docs/specs/sign-in.md §1.4）。
+  //
+  // LoginForm 每次按下 Continue with Google 都会传 `errorCallbackURL: "/login"`，但那个值只存进
+  // state 里（`dist/oauth2/state.mjs:14` 的 `errorURL: c.body?.errorCallbackURL`）。有一整族失败
+  // 发生在 state 解开**之前**，那时候库拿不到它：
+  //   · 商家在回调页刷新或后退 —— state 行在第一趟已被消费（`dist/state.mjs:124`
+  //     `deleteVerificationByIdentifier`），第二趟 `state_mismatch`；
+  //   · state 过了十分钟（`dist/state.mjs:126`）；
+  //   · 有人直接打 `/api/better-auth/callback/google`，压根没有 state（`state_not_found`）。
+  // 这些路上 `parseState` 用的 errorURL 是 `options.onAPIError?.errorURL || ${baseURL}/error`
+  // （`dist/oauth2/state.mjs:33`）—— 没有这一行，它就是库自带的那张无品牌 `<title>Error</title>`
+  // 页面，A14 在 state_not_found / state_mismatch / state_invalid / state_generation_error /
+  // internal_server_error 五个键上全是假的。实测围栏：`lib/__tests__/signin-google-door.test.ts`
+  // 的「state 解不开」四条。
+  //
+  // 同一行还把自带错误页那个端点本身变成一次 302 回 /login（`dist/api/routes/error.mjs:371-375`），
+  // 所以将来任何一条我们没数到的路转到它，落点也仍然是登录页。
+  //
+  // 只给 `errorURL`：`onAPIError` 另外两个字段（`throw`、`onError`）会改变 API 错误的抛法，
+  // 这里不碰。
+  onAPIError: { errorURL: "/login" },
   // #543 — basic abuse control on the newly public endpoints, using Better Auth's own
   // per-IP limiter (no bespoke machinery). The outbound-email limiter in sender.ts
   // (5 per address per hour) still caps mail volume per victim address on top of this.
@@ -323,8 +359,8 @@ export const auth = betterAuth({
         // reaches an address that already passed it.
         //
         // NOTHING IS LOOSENED. Redeeming a code is still refused twice over —
-        // databaseHooks.user.create.before (assertAllowedEmail) and
-        // databaseHooks.session.create.before (assertAllowedForUserId) both stay fail-closed —
+        // databaseHooks.user.create.before (assertSignInDoor) and
+        // databaseHooks.session.create.before (assertSignInDoorForUserId) both stay fail-closed —
         // and reaching either of them requires the correct six digits first.
         //
         // SIGNIN-A4 —— 这里以前还挂着 `/sign-in/email`(密码门)和 `/sign-up/email`(密码注册)
@@ -333,12 +369,12 @@ export const auth = betterAuth({
         return;
       }
       if (ctx.path?.startsWith("/sign-in") || ctx.path?.startsWith("/sign-up")) {
-        await assertAllowedEmail(email);
+        await assertSignInDoor(email);
       }
     }),
   },
-  // Deny-by-default allowlist gates in databaseHooks — covers ALL methods including OAuth callbacks.
-  // Throwing an APIError here aborts the operation and propagates a 403 to the caller.
+  // The three-step door decision (spec §1.6) in databaseHooks — covers ALL methods including
+  // OAuth callbacks. Throwing an APIError here aborts the operation and propagates a 403.
   databaseHooks: {
     /*
      * #795 r3 — THERE IS DELIBERATELY NO `account` HOOK HERE, and the reason is a correction.
@@ -371,28 +407,67 @@ export const auth = betterAuth({
      */
     user: {
       create: {
-        // Gate 1: prevents any non-allowlisted email from getting a ba_user row (first sign-up, any method).
+        // Gate 1 —— 建号那一刻的门（SIGNIN-A1/A6/A7）。
         //
-        // SIGNIN-A4 —— #543 曾在这里为自助密码注册(`/sign-up/email`)开一个口子:那条路上名单
-        // 不是闸,暂停开关与撤销检查才是。密码注册退役之后那条路径 404,口子永远不会被走到,
-        // 所以它跟着密码一起撤掉,名单闸重新是**唯一**的一道。
+        // 判定从「在不在名单里」换成规格 §1.6 的三步（`assertSignInDoor`）：撤销 → 拒；暂停期
+        // 的陌生人 → 拒；其余放行**并建账号**。这一行就是「陌生邮箱走码门直接进产品且建号」
+        // 的落点：Better Auth 的 emailOTP 插件本来就会在验码成功那一刻为陌生邮箱建用户
+        // （`disableSignUp` 我们没设），以前拦住他的正是这里的名单断言。
         //
-        // 码门与 Google 门对陌生人开放(规格 §1.6 的三步判定)属于登录门②③,不在本切片内:
-        // 今天这两扇门仍然只放行名单内的地址,与本次改动之前一模一样。
+        // 两扇门共用这一道，不是巧合：规格 §1.6 明写「两扇门一致，三处名单检查同一函数」。
+        //
+        // SIGNIN-A17 —— 门后面紧跟着**全站每小时新账号上限**，而且刻意在这里而不是在请求路径
+        // 上：它数的是「真的开出了一个新账号」这件事，重复登录、验码失败、被上面那一步拒掉的
+        // 请求都不该占用额度（验收 A17 的「老用户登录不受影响」）。撞满就 fail closed 并告警。
         before: async (user) => {
-          await assertAllowedEmail(user.email);
+          await assertSignInDoor(user.email);
+          // SIGNIN-A13 —— 一个**没被证明过的邮箱永远不会变成一行用户**。
+          //
+          // 具体要挡的是「Google 报 email_verified: false」（规格 §1.4）：那种账号按现码会建出
+          // 一个 emailVerified=false、没有租户、也收不到验证信的孤儿用户 —— `converge.ts` 的第
+          // 一行就早退，`emailVerification.sendOnSignUp` 我们没配。库自己**不**会在建号那条路上
+          // 看这个声明：`link-account.mjs` 只在**合并**到既有用户时检查它（:20-22），新建那一支
+          // （:80-96）一个字都不问。所以这道闸只能在这里。
+          //
+          // 写成「必须为 true」而不是「Google 且为 false 时拒」，是因为这条不变量不该随供应商
+          // 增减而重写：本产品的每一扇门都在证明邮箱之后才建号（码门验码成功那一刻写
+          // `emailVerified: true`，`email-otp/routes.mjs:409`），密码注册已经退役，所以「未验证
+          // 的新用户」在今天没有任何合法产地。fail closed：认不出的将来供应商也一样挡。
+          if (user.emailVerified !== true) throw signInRefusal(SIGN_IN_REFUSED_EMAIL_UNVERIFIED);
+          if (!(await consumeNewAccountGate())) {
+            // 一个要人看一眼的信号：未公测、零商家，一小时 50 个新账号是异常。
+            // #575 日志纪律：固定分类 + 常量，邮箱这类用户内容不进告警文本。
+            Sentry.captureMessage("New accounts per hour ceiling reached — sign-ups refused", {
+              level: "warning",
+              tags: { area: "auth", gate: "new-account-hourly-ceiling" },
+              extra: { limit: NEW_ACCOUNTS_PER_HOUR },
+            });
+            // 与门的两种拒绝在**页面上**同一句话：商家分不出「暂停」「撤销」「限流」（规格
+            // §1.3 防枚举）。键不同只为服务端分辨得出（signin-refusal.ts）。
+            throw signInRefusal(SIGN_IN_REFUSED_UNAVAILABLE);
+          }
         },
-        after: async (u) => {
-          await convergeIdentity({ email: u.email, name: u.name, image: u.image, emailVerified: u.emailVerified });
+        after: async (u, ctx) => {
+          await convergeIdentity({
+            email: u.email,
+            name: u.name,
+            image: u.image,
+            emailVerified: u.emailVerified,
+            // SIGNIN-A10 —— 来源门标记。陷阱见 signin-door-source.ts：ctx.path 在数据库钩子里
+            // 是路由模板字面量，供应商名只能从 ctx.params.id 取。
+            door: signInDoorOf(ctx as { path?: string; params?: Record<string, unknown> } | undefined),
+          });
         },
       },
     },
     session: {
       create: {
-        // Gate 2: prevents a session being issued for any non-allowlisted email — covers repeat sign-ins
-        // and revocation. Runs on every session creation regardless of method (OAuth, sign-in code).
+        // Gate 2 (SIGNIN-A7): no session for an address the door refuses — covers REPEAT sign-ins
+        // and revocation. Runs on every session creation regardless of method (OAuth, sign-in
+        // code), and it is the same three-step decision Gate 1 makes, so a revoked address cannot
+        // walk back in with a session while a brand-new one is admitted.
         before: async (session) => {
-          await assertAllowedForUserId(session.userId);
+          await assertSignInDoorForUserId(session.userId);
         },
         after: async (s, ctx) => {
           const u = await prisma.betterAuthUser.findUnique({ where: { id: s.userId }, select: { email: true, name: true, image: true, emailVerified: true } });
@@ -410,6 +485,7 @@ export const auth = betterAuth({
               image: u.image,
               emailVerified: u.emailVerified,
               sessionId: signinSessionId(s, ctx),
+              door: signInDoorOf(ctx as { path?: string; params?: Record<string, unknown> } | undefined),
             });
           }
         },
@@ -497,9 +573,10 @@ export const auth = betterAuth({
        * `disableSignUp` is left at its default too, which means this door can create an account
        * for an address that does not have one — exactly as the magic link it replaces did, and
        * gated by exactly the same two fail-closed hooks: `databaseHooks.user.create.before`
-       * (assertAllowedEmail) and `databaseHooks.session.create.before` (assertAllowedForUserId).
-       * Turning it on would ALSO put a user-existence branch inside the send endpoint, which is
-       * the shape #678 spent three rounds removing.
+       * (assertSignInDoor) and `databaseHooks.session.create.before` (assertSignInDoorForUserId).
+       * SIGNIN-A1 —— 这正是「陌生邮箱走码门直接进产品且建号」所依赖的那一行默认值：门的三步
+       * 判定放行之后，建号由插件自己完成。Turning it on would ALSO put a user-existence branch
+       * inside the send endpoint, which is the shape #678 spent three rounds removing.
        */
       sendVerificationOTP: async ({ email, otp }) => {
         // #678 r3 — this hook is BACKGROUND-ONLY. The single caller of the endpoint that runs it
@@ -512,7 +589,10 @@ export const auth = betterAuth({
         // `auth.api.sendVerificationOTP` — of ANY type, including the password-reset and
         // change-email flows this plugin also mounts — can mail an address nobody invited. Its
         // cost is invisible: it is a background query behind an answer the merchant already has.
-        if (!(await isAllowedEmail(email))) return;
+        //
+        // SIGNIN-A1 —— 它现在问的是**门**（三步判定）而不是名单：陌生邮箱在这里要放行，否则
+        // 「陌生邮箱按 Continue with email，收邮件」的第一步就不成立。撤销与暂停仍然在这里拦下。
+        if ((await signInDoorDecision(email)) !== "allow") return;
         // #939 — this purpose's real lifetime, not Better Auth's default: AUTH_EMAIL_CODE_TTL_SECONDS
         // (15 minutes) is what `expiresIn` above actually configures, so it is also what the
         // "valid for" line in the email must say.
@@ -520,6 +600,10 @@ export const auth = betterAuth({
           to: email,
           subject: "Your Fikirtive sign-in code",
           code: otp,
+          // SIGNIN-A5 —— 邮件里的 Log in 按钮。链接只是**把码带到登录页**：码在 URL 片段里
+          // （`#`，不进服务器日志、不随 Referer 外泄），商家按一次 Continue 才登录。见
+          // `signInCodeLoginUrl` 的注释：为什么不是「点开即登录」。
+          url: signInCodeLoginUrl({ email, code: otp }),
           intro: "Sign in to Fikirtive",
           validitySeconds: AUTH_EMAIL_CODE_TTL_SECONDS,
         });
