@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@fikirtive/db";
+import { isFounderAdmin } from "./allowlist";
 
 /** SIGNIN-A6 —— 登录页顶那条横幅的原文，逐字取自规格 §1.3（docs/specs/sign-in.md 已冻结 · v1）。
  *  两句都必须在：第一句说门关了，第二句说老商家照常进得来 —— 少了第二句，一个已经有账号的
@@ -22,10 +23,6 @@ export function signupsPaused(): boolean {
   return !["0", "false", "off", "no"].includes(raw);
 }
 
-function envList(s: string | undefined): string[] {
-  return (s ?? "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
-}
-
 /**
  * SIGNIN-A1 / SIGNIN-A6 / SIGNIN-A7 —— 门的三步判定，一个函数（docs/specs/sign-in.md 已冻结 · v1
  * §1.6「门的判定顺序（两扇门一致，三处名单检查同一函数）」）。
@@ -43,31 +40,34 @@ function envList(s: string | undefined): string[] {
 export type SignInDoorDecision = "allow" | "paused" | "revoked";
 
 /**
- * 这个地址「以前来过」吗 —— 暂停开关唯一要问的那个问题。
+ * 门要问的两件事，一次问完：这个地址**登录过吗**，以及它**被撤销了吗**。
  *
- * 「来过」＝ 环境名单点名（founder / AUTH_ALLOWED_EMAILS），或者 `AllowedEmail` 里**有一行**
- * （任何状态）。两扇门第一次成功登录都会写一行 active（`admitSelfSignup`），所以「有行」正是
- * 规格里那句「从未登录过」的反面。
+ * 「登录过」＝ `ba_user` 里有他那一行。两扇门都只在身份证明完成之后才建这一行（码门在验码那
+ * 一刻，Google 门在回调里），所以「有账号」逐字就是规格 §1.6 ① 那句「从未登录过」的反面 ——
+ * 而且它对**开关存在之前**进来的老商家同样成立（那批人可能连 `AllowedEmail` 行都没有）。
  *
- * SIGNIN-A7 —— **环境名单命中不再短路撤销那一步**。`AUTH_ALLOWED_EMAILS` 以前在这里直接
- * `return { known: true, revoked: false }`，于是一个写在那个变量里的地址被操作员撤销之后照样
- * 进得来：规格 §1.6 写的是「撤销仍然绝对」，而那条捷径让它对整整一个名单不成立。环境名单现在
- * 只回答**第一个**问题（「来过吗」，暂停开关要问的那个），撤销与否一律由 `AllowedEmail` 那一行
- * 答 —— 名单是「谁算老人」，不是「谁不可撤」。
+ * 这里原来问的是另一件事：「环境名单点过名 ‖ `AllowedEmail` 里有任何一行」。两个都不是「登录
+ * 过」：`inviteTenant` 在任何人登录之前就写得下一行 `invited`，`AUTH_ALLOWED_EMAILS` 里写一个
+ * 地址更是一次请求都不用发 —— 于是暂停期间「先邀请（或先写进变量），再让他进来」是一条绕过
+ * 开关的现成的路（第 2 轮判官 P0）。
  *
- * FOUNDER_ADMIN_EMAILS 是唯一的例外，而且是**破窗锤**：它是部署者手上那把钥匙，一行数据库记录
- * 不该能把他自己锁在产品外面（这条例外自 #543 起就在，本片没有改它，只是把它从「整个环境名单」
- * 收回到 founder 这一条）。它与规格 §1.6「撤销仍然绝对」的张力已登记进规格 §5，等 S5 裁决。
+ * SIGNIN-A7 —— **门上一个环境例外都不留**。`AUTH_ALLOWED_EMAILS` 与 `FOUNDER_ADMIN_EMAILS`
+ * 先后都曾在这里 `return { known: true, revoked: false }`，数据库根本不读，于是写在那两个变量
+ * 里的地址撤了等于没撤；规格 §1.6 写的是「撤销仍然绝对」，那条捷径让它对整整一个名单不成立。
+ * founder 的破窗锤没有丢，只是换了落点：**写侧**的 `revokeEmailAccess` 不肯撤一个还挂在
+ * `FOUNDER_ADMIN_EMAILS` 上的地址，所以「一行数据库记录锁死部署者」这件事从一开始就发生不了，
+ * 恢复路径也不经数据库（把地址从那个变量里拿掉，再撤）。
  *
- * 固定成本、无分支：一次纯字符串比对加**恰好一次**数据库读，对任何非 founder 地址都一样 ——
- * 这条路上的耗时不许随答案变化（#678 那一族缺陷的根）。数据库读不到就 fail closed。
+ * 固定成本、无分支：**恰好两次**数据库读，对每一个地址都一样 —— 这条路上的耗时不许随答案变化
+ * （#678 那一族缺陷的根）。任何一次读不到就 fail closed。
  */
 async function lookupAddress(email: string): Promise<{ known: boolean; revoked: boolean } | null> {
-  if (envList(process.env.FOUNDER_ADMIN_EMAILS).includes(email)) return { known: true, revoked: false };
-  const namedByEnv = envList(process.env.AUTH_ALLOWED_EMAILS).includes(email);
   try {
-    const row = await prisma.allowedEmail.findUnique({ where: { email }, select: { status: true } });
-    return { known: namedByEnv || !!row, revoked: row?.status === "revoked" };
+    const [row, account] = await Promise.all([
+      prisma.allowedEmail.findUnique({ where: { email }, select: { status: true } }),
+      prisma.betterAuthUser.findUnique({ where: { email }, select: { id: true } }),
+    ]);
+    return { known: !!account, revoked: row?.status === "revoked" };
   } catch {
     return null; // DB outage → fail closed at the caller
   }
@@ -119,8 +119,9 @@ export async function admitSelfSignup(email: string, door: string = "self-signup
 
 /** What `revokeEmailAccess` did — the operator-facing answer, and the only thing a caller may
  *  branch on. `unknown` means «this address has no access to take away», NOT «no pending invite»:
- *  the invite reading is what made a self-served merchant un-revokable (规格 §1.6，审计 [6]). */
-export type RevokeAccessOutcome = "revoked" | "already_revoked" | "unknown";
+ *  the invite reading is what made a self-served merchant un-revokable (规格 §1.6，审计 [6]).
+ *  `protected` means «this address is the deployer's break-glass key» — see below. */
+export type RevokeAccessOutcome = "revoked" | "already_revoked" | "unknown" | "protected";
 
 /**
  * SIGNIN-A7 —— 撤销，一个动作两件事：**名单那一行翻成 revoked，他手上的会话在同一笔事务里
@@ -143,6 +144,12 @@ export type RevokeAccessOutcome = "revoked" | "already_revoked" | "unknown";
  * 这个函数不做授权：它是领域动作，权限由调用它的 server action 上的 `requireRole` 把守
  * （`lib/tenant-actions.ts` 的 `revokeMerchantAccess`，后台那颗「Revoke access」按的就是它）。
  *
+ * 破窗锤（第 2 轮把它从门上搬到了这里）：**还挂在 `FOUNDER_ADMIN_EMAILS` 上的地址撤不动，答
+ * `protected`。** 门那一侧从本轮起对每一个地址一视同仁地查撤销（founder 也不例外，否则 §1.6
+ * 的「撤销仍然绝对」对整整一个环境变量不成立），所以「一行数据库记录不该把部署者锁在自己的
+ * 产品外面」只能在写侧保住：那一行根本写不下去。恢复路径因此不经数据库 —— 先把地址从
+ * `FOUNDER_ADMIN_EMAILS` 里拿掉，再撤。
+ *
  * 边界（说清楚，不假装覆盖）：**没有 `AllowedEmail` 行的地址答 `unknown`，不新建一行黑名单。**
  * 今天唯一能进门却没有行的，是只被 `AUTH_ALLOWED_EMAILS` 点过名、还一次都没登录过的地址——
  * 它的授予在环境变量里，收回也在那里（登录过一次就会有行，那时这个函数管得着，A7 的负例用例
@@ -152,6 +159,7 @@ export type RevokeAccessOutcome = "revoked" | "already_revoked" | "unknown";
 export async function revokeEmailAccess(email: string): Promise<RevokeAccessOutcome> {
   const normalized = email.trim().toLowerCase();
   if (!normalized) return "unknown";
+  if (isFounderAdmin(normalized)) return "protected";
   return prisma.$transaction(async (tx) => {
     const row = await tx.allowedEmail.findUnique({ where: { email: normalized }, select: { status: true } });
     if (!row) return "unknown";

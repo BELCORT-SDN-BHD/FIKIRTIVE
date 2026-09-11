@@ -5,28 +5,32 @@ function envList(s: string | undefined): string[] {
   return (s ?? "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
 }
 
-/** env ∪ DB allowlist. Only the FOUNDER list wins ahead of the database (the break-glass key:
- *  one row must not be able to lock the deployer out of his own product). Everyone else is
- *  answered by `AllowedEmail`, where a `revoked` row is denied.
+/** env ∪ DB allowlist. Both env lists only ADD an address; NEITHER overrides a revocation —
+ *  `AllowedEmail` has the last word on every address there is.
  *
- *  SIGNIN-A7 —— `AUTH_ALLOWED_EMAILS` used to return true here BEFORE the database was consulted,
- *  so revoking an address named in that variable took its `AllowedEmail` row away and left its
- *  access untouched: this is the per-request re-assertion every gated action runs
- *  (`requireSession` / `requireRole` / `requireOwner` in auth-guard.ts), so the revoked merchant
- *  kept working until the cookie itself expired. The env list now only ADDS an address to the
- *  allowlist; it never overrides a revocation. Same correction, same reason, as the door's own
- *  three-step decision (`lib/signup-gate.ts`). */
+ *  SIGNIN-A7 —— `AUTH_ALLOWED_EMAILS`, and then `FOUNDER_ADMIN_EMAILS`, used to return true here
+ *  BEFORE the database was consulted, so revoking an address named in either variable took its
+ *  `AllowedEmail` row away and left its access untouched: this is the per-request re-assertion
+ *  every gated action runs (`requireSession` / `requireRole` / `requireOwner` in auth-guard.ts),
+ *  so the revoked merchant kept working until the cookie itself expired. The founder list was the
+ *  last one standing, and it fell for the same reason: a rule with an exception the size of an
+ *  environment variable is not the rule 规格 §1.6 wrote down («撤销仍然绝对»).
+ *
+ *  The break-glass survives, on the WRITE side: `revokeEmailAccess` (lib/signup-gate.ts) refuses
+ *  to revoke an address still named in `FOUNDER_ADMIN_EMAILS`, so no row can lock the deployer
+ *  out of his own product in the first place, and the way back does not go through the database.
+ *  Same correction, same reason, as the door's own decision (`lib/signup-gate.ts`). */
 export async function isAllowedEmail(email: string | null | undefined): Promise<boolean> {
   if (!email) return false;
   const e = email.toLowerCase();
-  if (envList(process.env.FOUNDER_ADMIN_EMAILS).includes(e)) return true;
-  const namedByEnv = envList(process.env.AUTH_ALLOWED_EMAILS).includes(e);
+  const namedByEnv =
+    envList(process.env.FOUNDER_ADMIN_EMAILS).includes(e) || envList(process.env.AUTH_ALLOWED_EMAILS).includes(e);
   try {
     const row = await prisma.allowedEmail.findUnique({ where: { email: e }, select: { status: true } });
     if (row?.status === "revoked") return false;
     return namedByEnv || !!row;
   } catch {
-    return false; // DB outage → fail closed (founder check already passed above)
+    return false; // DB outage → fail closed, founder included
   }
 }
 
