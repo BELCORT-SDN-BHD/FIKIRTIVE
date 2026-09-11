@@ -441,6 +441,25 @@ describe("buildProposeCard — pure helper", () => {
       ]);
     });
 
+    /**
+     * PRODID-A2 的后半句(规格 `docs/specs/brand-product-identity.md`;票 #1322):
+     * 「选入确认卡后,生成结果谱系的 `approvedEntities` 指向同一个 Entity id」。
+     *
+     * 前半句(@ 菜单那一行的 id 就是 `Entity.id`,类型化 ID 解析回同一行)在真库上钉在
+     * `apps/web/lib/__tests__/brand-read-paths.test.ts`。这一条接的是链条最后一段:卡上冻结的
+     * 那个 id 逐字就是解析出来的 `entityIds`,不是另抄一份产品身份。
+     */
+    it("PRODID-A2 产品的谱系 id 逐字就是 entityIds 里那一个 —— 卡不另造一份产品身份", () => {
+      const productEntityId = "ent_kopi_tumbler";
+      const { cardPayload } = buildProposeCard(
+        { ...base, entityIds: [productEntityId] },
+        ctx(),
+        [{ id: productEntityId, type: "PRODUCT", name: "Kopi tumbler" }],
+      );
+      expect(cardPayload.entityIds).toEqual([productEntityId]);
+      expect(cardPayload.approvedEntities?.map((e) => e.id)).toEqual([productEntityId]);
+    });
+
     // FSE-002 / CREATE-A2:「对不上的 id 拿不到身份」现在的形状是**整张卡都不出生**。
     // 一张少了一件引用的卡与一张完整的卡在商家眼里长得一样,而它旁边有一颗付款按钮。
     it("FSE-002 / CREATE-A2 对不上的 id ⇒ 没有身份，也没有卡（不是「少一个身份的卡」）", () => {

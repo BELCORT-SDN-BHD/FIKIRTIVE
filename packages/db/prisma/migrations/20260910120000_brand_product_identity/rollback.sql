@@ -16,6 +16,9 @@
 --        psql -h 127.0.0.1 "$DATABASE_URL" -v ON_ERROR_STOP=1 \
 --          -f packages/db/prisma/migrations/20260910120000_brand_product_identity/migration.sql
 --      这一跑同样什么都不落库(整份文件一个事务,失败即 ROLLBACK)。
+--   ⓪.5 库里已经上了 20260910140000_brand_product_data_identity_gate(价签不承载身份的 CHECK)
+--      时,**先跑那一份的 rollback.sql** —— 下面 ①.5 会把 `name` / `imageAssetId` 写回价签,
+--      那条 CHECK 还在就会把这一整份挡下来。迁移按时间正序上,回滚按时间倒序下。
 --   ① 再销账,把 P3009 解掉(必须在 ② 之前:② 会把这一行整条删掉,那时 resolve 找不到它):
 --        pnpm --filter @fikirtive/db exec prisma migrate resolve --rolled-back 20260910120000_brand_product_identity
 --   ② 再跑这份 rollback.sql,把可能落了一半的东西擦干净(预检失败那种情况下它是个空操作,
@@ -152,13 +155,34 @@ WHERE e."id" LIKE 'prodid\_%' AND e."type" = 'PRODUCT'
 -- ③ 前置:复用那一支(Founder 2026-09-10 裁,#1321 评论)把价签的主图写进了**商家自己的**那张
 --    Library 卡(只在它原本没有主图时写的,凭据就是那条 `prodidimg_` 引用)。先把它擦回 NULL,
 --    再删引用 —— 反过来会留下一张指着「没有硬引用的资产」的封面,下一次清扫就把字节当孤儿。
+--
+--    判据收紧(判官 P2,PR #1337 → 票 #1322):只看 `e."baseAssetId" = ri."assetId"` 判不出
+--    「这一格是不是本迁移写的」。反例:卡在 up 之前就把这张图当封面,而那条硬引用已经被软删
+--    ——那时 up 既插得进 `prodidimg_`(它只避开**活着**的同一张引用),又不会碰封面(它只写
+--    `baseAssetId IS NULL` 的卡);回滚照旧判据就会把**商家自己挑的**封面擦成 NULL,而那是一次
+--    删了接不回来的意图。
+--
+--    加的那一句是精确的,不是保守估计:今天所有写 `Entity.baseAssetId` 的路径都要求这张图先
+--    是这张卡的一条 `ReferenceImage`(`setBaseAsset` 先查 live 引用才写;`createProduct` /
+--    `writeProductIdentity` / `createEntity` 都是同事务插引用再写封面)。所以「这张卡除了
+--    本迁移那一条之外,从来没有过指向这张图的引用行(哪怕已软删)」⇔「up 之前它不可能把这张图
+--    当封面」⇔「现在这一格是 up 写的」。
+--
+--    还剩一种够不着的:up 之后、回滚之前,商家自己把封面换成了这张图。回滚本来就会丢掉
+--    up 之后的改动,这一格与别的一样,写在这里不假装它不存在。
 UPDATE "Entity" e
 SET "baseAssetId" = NULL
 FROM "ReferenceImage" ri
 WHERE ri."entityId" = e."id"
   AND ri."id" LIKE 'prodidimg\_%'
   AND e."id" NOT LIKE 'prodid\_%'
-  AND e."baseAssetId" = ri."assetId";
+  AND e."baseAssetId" = ri."assetId"
+  AND NOT EXISTS (
+    SELECT 1 FROM "ReferenceImage" prev
+    WHERE prev."entityId" = e."id"
+      AND prev."assetId" = ri."assetId"
+      AND prev."id" <> ri."id"
+  );
 
 -- 顺序:先图后身份(ReferenceImage → Entity 是 RESTRICT)。留下来的身份连它那张主图一起留,
 -- 否则商家会看到一条没有封面的孤儿元素。

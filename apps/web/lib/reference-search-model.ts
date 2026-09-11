@@ -23,7 +23,7 @@ export interface ReferenceResult {
   type: ReferenceType;
   id: string;
   name: string;
-  /** The one-line disambiguation under the name (contract §3), e.g. `Product · Otto IQ`. */
+  /** The one-line disambiguation under the name (contract §3), e.g. `Character · Library`. */
   source: string;
   thumbUrl: string | null;
 }
@@ -70,7 +70,11 @@ export function referenceTypeLabel(type: ReferenceType): string {
  */
 export function referenceSourceLine(type: ReferenceType, detail?: string | null): string {
   if (type === "official-avatar") return "Official avatar · Read only";
-  if (type === "product") return `Product · ${PRODUCT_VOCABULARY.ottoIq}`;
+  // 产品的来源标签是光秃秃的 `Product`(规格 `docs/specs/brand-product-identity.md` §1.4 末句,
+  // 验收 PRODID-A2)。改前写的是 `Product · Otto IQ` —— 那句话把商家往「产品住在 Otto IQ 里」
+  // 引,而这条规格立的正是相反的事实:产品的身份就是 Library 那张卡(`Entity`),Otto IQ 上挂的
+  // 是它的价格卖点。第二段既不指向来源、也不指向可去的地方,不如没有。
+  if (type === "product") return "Product";
   const trimmed = detail?.trim();
   return `${TYPE_LABELS[type]} · ${trimmed || PRODUCT_VOCABULARY.library}`;
 }

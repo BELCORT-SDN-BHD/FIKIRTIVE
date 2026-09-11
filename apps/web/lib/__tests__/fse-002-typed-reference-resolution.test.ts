@@ -68,16 +68,53 @@ function uploadGenerationRow() {
   };
 }
 
+type Row = Record<string, unknown>;
+
+/**
+ * 判官 r5 P1 —— 替身要**读 where**,否则它证明不了任何一条 where 上的判据。
+ *
+ * 从前这里是 `generationFindMany.mockResolvedValue([…])`:不管解析器问什么,行都无条件回来。
+ * 于是「`generation:` 认得上传件那一行」这条主张没有围栏 —— 把 where 改回 `source: { not:
+ * "UPLOAD" }`(正是被修掉的那个 bug),这个文件照样全绿。下面这个替身把这一趟查询当查询来
+ * 答:先按 where 过滤这家店库里摆着的那几行,再返回。`orderBy` / `select` 不建模(解析器不
+ * 依赖排序,字段直接取行上的),但**每一个条件都必须认得** —— 遇到没建模的操作符就抛,免得
+ * 下一次有人往 where 里加一格,替身继续无条件放行。
+ *
+ * 库里这几行一律是**这家店的、还活着的**(`ownerId` / `deletedAt` 补在过滤那一侧,不补进返回
+ * 的行 —— 返回的形状照旧只有 select 取的那几格),所以换一位商家来问同样一趟,答案是空。
+ */
+function generationRowsInDb(...rows: Row[]) {
+  generationFindMany.mockImplementation(async (args: { where: Row }) =>
+    rows.filter((row) => matchesWhere({ ownerId: OWNER, deletedAt: null, ...row }, args.where)),
+  );
+}
+
+function matchesWhere(row: Row, where: Row): boolean {
+  return Object.entries(where).every(([field, condition]) => {
+    if (field === "OR") return (condition as Row[]).some((branch) => matchesWhere(row, branch));
+    return matchesField(row[field] ?? null, condition);
+  });
+}
+
+function matchesField(value: unknown, condition: unknown): boolean {
+  if (condition === null || typeof condition !== "object") return value === condition;
+  const operator = condition as Record<string, unknown>;
+  if ("in" in operator) return (operator.in as unknown[]).includes(value);
+  if ("equals" in operator) return value === operator.equals;
+  if ("not" in operator) return value !== operator.not;
+  throw new Error(`FSE-002 替身没建模这个 where 条件:${JSON.stringify(condition)}`);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   entityFindMany.mockResolvedValue([]);
-  generationFindMany.mockResolvedValue([]);
+  generationRowsInDb();
 });
 
 describe("FSE-002 / CREATE-A2 —— 一次解析，两半产出", () => {
   it("FSE-002 / CREATE-A2 / FRONT-A10 演员＋商品图一起 @ ⇒ 元素与媒体各归各位，一件都不丢", async () => {
     entityFindMany.mockResolvedValue([officialAvatarRow()]);
-    generationFindMany.mockResolvedValue([imageGenerationRow()]);
+    generationRowsInDb(imageGenerationRow());
 
     const out = await resolveOwnedReferenceRefs(OWNER, [
       `official-avatar:${AVATAR_ID}`,
@@ -95,7 +132,7 @@ describe("FSE-002 / CREATE-A2 —— 一次解析，两半产出", () => {
   it("FSE-002 / CREATE-A2 `upload:` 解析成**摄取它的那一行 Generation**（wire 上是 Asset id）", async () => {
     // 契约 §4 说 upload 的规范身份是 Asset；可这一轮真正挂上路的是 Generation ——
     // 两者不是同一个 id，所以这一步只能发生在读过那一行之后。
-    generationFindMany.mockResolvedValue([uploadGenerationRow()]);
+    generationRowsInDb(uploadGenerationRow());
 
     const out = await resolveOwnedReferenceRefs(OWNER, [`upload:${UPLOAD_ASSET_ID}`]);
 
@@ -106,9 +143,9 @@ describe("FSE-002 / CREATE-A2 —— 一次解析，两半产出", () => {
   });
 
   it("FSE-002 / CREATE-A2 片子按行上的扩展名进参考片那一族（不靠 id 形状猜）", async () => {
-    generationFindMany.mockResolvedValue([
+    generationRowsInDb(
       { ...imageGenerationRow(), id: "gen_clip", asset: { originalFilename: "clip.mp4", ext: "mp4" } },
-    ]);
+    );
 
     const out = await resolveOwnedReferenceRefs(OWNER, ["generation:gen_clip"]);
 
@@ -116,7 +153,7 @@ describe("FSE-002 / CREATE-A2 —— 一次解析，两半产出", () => {
   });
 
   it("FSE-002 / CREATE-A2 同一行被两条 wire 指到 ⇒ 只上一次车", async () => {
-    generationFindMany.mockResolvedValue([uploadGenerationRow()]);
+    generationRowsInDb(uploadGenerationRow());
 
     const out = await resolveOwnedReferenceRefs(OWNER, [
       `upload:${UPLOAD_ASSET_ID}`,
@@ -176,9 +213,9 @@ describe("FSE-002 / CREATE-A2 —— 对不上的四种，一律显式未解析"
   // 一句他一查就知道是假的话。这一族现在**解析成功**（回链、芯片照旧），只是不进媒体槽，
   // 单独记一个数，由写入侧说出真正的原因。
   it("FSE-002 / CREATE-A2 格式当不了引用的行 ⇒ 照旧解析成功（回链在），只是不进媒体槽", async () => {
-    generationFindMany.mockResolvedValue([
+    generationRowsInDb(
       { ...imageGenerationRow(), asset: { originalFilename: "thing.psd", ext: "psd" } },
-    ]);
+    );
 
     const out = await resolveOwnedReferenceRefs(OWNER, [`generation:${PRODUCT_GENERATION_ID}`]);
 
@@ -203,9 +240,9 @@ describe("FSE-002 / CREATE-A2 —— 对不上的四种，一律显式未解析"
   ])(
     "FSE-002 / CREATE-A2 自有上传的 %s ⇒ 不是「消失了」，而是「格式当不了引用」",
     async (ext, filename) => {
-      generationFindMany.mockResolvedValue([
+      generationRowsInDb(
         { ...uploadGenerationRow(), asset: { originalFilename: filename, ext } },
-      ]);
+      );
 
       const out = await resolveOwnedReferenceRefs(OWNER, [`upload:${UPLOAD_ASSET_ID}`]);
 
@@ -218,10 +255,10 @@ describe("FSE-002 / CREATE-A2 —— 对不上的四种，一律显式未解析"
 
   it("FSE-002 / CREATE-A2 一件能用一件不能用 ⇒ 能用的照旧上路，不能用的单独记数", async () => {
     entityFindMany.mockResolvedValue([]);
-    generationFindMany.mockResolvedValue([
+    generationRowsInDb(
       imageGenerationRow(),
       { ...uploadGenerationRow(), asset: { originalFilename: "loop.gif", ext: "gif" } },
-    ]);
+    );
 
     const out = await resolveOwnedReferenceRefs(OWNER, [
       `generation:${PRODUCT_GENERATION_ID}`,
@@ -239,5 +276,41 @@ describe("FSE-002 / CREATE-A2 —— 对不上的四种，一律显式未解析"
     expect(out).toMatchObject({ entityIds: [], media: [], wire: [], unresolved: 0, unusableFormat: 0 });
     expect(entityFindMany).not.toHaveBeenCalled();
     expect(generationFindMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * creation §5 :178(判官 r1 P1-①)—— 解析器要认得**自己的产物**。
+ *
+ * 分镜卡把这一镜挂着的图存成规范身份(`Generation.id`),商家再加一张 / 取下一张时,卡面发回
+ * 的是**整份新清单** —— 里面那几张已经挂着的只能以 `generation:<id>` 的形状回来。而上传件落
+ * 下的那一行 Generation 的 `source` 正是 UPLOAD:从前 `generation:` 那一支明写着「source 不是
+ * UPLOAD」,于是整次编辑被判 unresolved、整份拒绝,商家读到的是一句关于他自己那个文件的假话
+ * (「isn't one of your images any more」),而那个文件就在 Library 里。
+ *
+ * 归属那一格一格没动:这一趟查询照旧带 ownerId,别家店的行照旧读不出来。
+ */
+describe("creation §5 :178 —— 解析器认得自己的产物(上传件那一行)", () => {
+  it("creation §5 :178: 上传件解析出来的规范身份,原样发回来时读得出来(不是「这文件没了」)", async () => {
+    generationRowsInDb(uploadGenerationRow());
+
+    const out = await resolveOwnedReferenceRefs(OWNER, [`generation:${UPLOAD_GENERATION_ID}`]);
+
+    expect(out.unresolved).toBe(0);
+    expect(out.media).toEqual([{ generationId: UPLOAD_GENERATION_ID, kind: "image" }]);
+    // 归属仍然是那一趟查询的事 —— 这一格没动。
+    expect(generationFindMany.mock.calls[0]![0].where.ownerId).toBe(OWNER);
+  });
+
+  it("creation §5 :178: 挂着的上传件 + 新挂的一张 ⇒ 两张都在,一张都不丢", async () => {
+    generationRowsInDb(uploadGenerationRow(), imageGenerationRow());
+
+    const out = await resolveOwnedReferenceRefs(OWNER, [
+      `generation:${UPLOAD_GENERATION_ID}`,
+      `generation:${PRODUCT_GENERATION_ID}`,
+    ]);
+
+    expect(out.unresolved).toBe(0);
+    expect(out.media.map((m) => m.generationId)).toEqual([UPLOAD_GENERATION_ID, PRODUCT_GENERATION_ID]);
   });
 });
