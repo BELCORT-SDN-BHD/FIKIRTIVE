@@ -41,14 +41,18 @@ describe("登录门规格 · 尚未交付的验收（各自的切片接手时把
   //                   真的传了、每个键都读同一句）
 
   // ④ 暂停注册与撤销（issue #1319）—— 两行 it.todo 换成了真测试：
-  //    · SIGNIN-A6  → lib/__tests__/signin-pause-and-revoke.test.ts（三条：码门、Google 门、老商家）、
+  //    · SIGNIN-A6  → lib/__tests__/signin-pause-and-revoke.test.ts（五条：码门、Google 门、
+  //                   只有一张邀请的、只写在环境名单里的、老商家）、
   //                   app/login/__tests__/login-paused-banner.test.tsx（页顶横幅那一半，第 2 轮补齐）
-  //    · SIGNIN-A7  → lib/__tests__/signin-pause-and-revoke.test.ts（六条：撤得掉、会话当场失效、
-  //                   两扇门都拒、双租户、环境名单仍查撤销、幂等）、
+  //    · SIGNIN-A7  → lib/__tests__/signin-pause-and-revoke.test.ts（十三条：撤得掉、会话当场失效、
+  //                   两扇门都拒、双租户、环境名单仍查撤销、founder 名单盖不过撤销、founder 地址撤
+  //                   不动、闸读过之后才提交的撤销、没有撤销时不动会话、撤销后走真码门、幂等，外加
+  //                   第 5 轮两条握锁的并发用例：after 钩子的接线与那一次读真的是 FOR SHARE）、
   //                   lib/__tests__/admin-revoke-access-action.test.ts（操作员那个动作，真库；
   //                   含「旧动作回 No pending invite、新动作撤得掉」的对照）、
   //                   lib/__tests__/admin-tenant-invite-ui.test.ts（后台按钮真的调到它）、
-  //                   better-auth-gate.test.ts（环境名单命中仍查撤销）、
+  //                   better-auth-gate.test.ts（五条：环境名单命中仍查撤销、founder 名单也不短路、
+  //                   环境名单不等于登录过，外加二次确认删会话失败时的告警两条）、
   //                   better-auth-oauth-session-gate.test.ts（会话闸的库内接线，既有）
 
   // ⑤ 端到端旅程（issue #1311 的第五片）

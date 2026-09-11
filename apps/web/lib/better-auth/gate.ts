@@ -1,4 +1,5 @@
 import "server-only";
+import * as Sentry from "@sentry/node";
 import { prisma } from "@fikirtive/db";
 import { signInDoorDecision } from "@/lib/signup-gate";
 import { SIGN_IN_REFUSED_PAUSED, SIGN_IN_REFUSED_REVOKED, signInRefusal } from "./signin-refusal";
@@ -54,6 +55,8 @@ export async function assertSignInDoorForUserId(userId: string): Promise<void> {
  * 错」读起来一模一样）。撤销那一侧一行都不用改，它照旧只管自己那笔事务。
  *
  * Fail closed：读不到用户行、读库失败，一律按「不许留下这张会话」处理 —— 与门的其余部分同口径。
+ * 连**删不掉**那张会话也一样：拒绝照抛，但那是这条路上最坏的结果（一张属于已撤销地址的活
+ * cookie 留在库里），所以它同时发一条固定分类的告警，不再 `.catch(() => {})` 咽下去。
  *
  * 拒绝用的是 `signin-refusal.ts` 的 `SIGN_IN_REFUSED_REVOKED`，不是一句英文（第 5 轮合主干，
  * 判官 r4 P2）：这道确认挂在 `session.create.after`，Google 回调那条路会把 APIError 的
@@ -74,6 +77,21 @@ export async function assertSessionSurvivesRevoke(sessionId: string, userId: str
       .catch(() => false);
     if (stillAllowed) return;
   }
-  await prisma.betterAuthSession.deleteMany({ where: { id: sessionId } }).catch(() => {});
+  await prisma.betterAuthSession.deleteMany({ where: { id: sessionId } }).catch((e: unknown) => {
+    // 删不掉是这条路上最坏的那个结果：拒绝照样抛（商家进不来），但那张会话还躺在 `ba_session`
+    // 里 —— 一张属于已撤销地址的活 cookie，最长 7 天。所以它绝不许是无声的。照 `tenant-actions.ts`
+    // 的撤销审计告警同一个形状：固定分类的 tag 让它能被建成一条规则，extra 里只放错误的**类名与
+    // 错误码**。#575 日志纪律：邮箱、会话 id 这类能指认到人的值一个都不进告警文本（`sessionId`
+    // 直接指向那一行，写进去等于把「哪一张 cookie 还活着」也一起送出我们的机器）。
+    const code = (e as { code?: unknown } | null)?.code;
+    Sentry.captureMessage("Sign-in refused after revocation but its session row could not be deleted", {
+      level: "error",
+      tags: { area: "auth", gate: "session-survives-revoke" },
+      extra: {
+        errorName: e instanceof Error ? e.name : typeof e,
+        errorCode: typeof code === "string" ? code : undefined,
+      },
+    });
+  });
   throw signInRefusal(SIGN_IN_REFUSED_REVOKED);
 }

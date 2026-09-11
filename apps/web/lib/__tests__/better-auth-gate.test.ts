@@ -41,17 +41,35 @@ const mockBaUserFindUnique = vi.fn(async ({ where }: { where: { email?: string; 
   return id ? { id } : null;
 });
 
+/** 二次确认那两次调用（`assertSessionSurvivesRevoke`）：一次 `FOR SHARE` 读，一次删会话。
+ *  真库那一侧的围栏在 `signin-pause-and-revoke.test.ts`（含两条握锁的并发用例）；这里只钉
+ *  **删不掉时怎么办** —— 那一条在真库上没法诚实地造出来（deleteMany 不会按需失败）。 */
+const mockAllowedEmailRawStatus = vi.fn(async (): Promise<{ status: string }[]> => []);
+const mockSessionDeleteMany = vi.fn(async () => ({ count: 1 }));
+
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     betterAuthUser: { findUnique: mockBaUserFindUnique },
     allowedEmail: { findUnique: mockAllowedEmailFindUnique },
+    betterAuthSession: { deleteMany: mockSessionDeleteMany },
+    $queryRaw: (..._args: unknown[]) => mockAllowedEmailRawStatus(),
   },
+}));
+
+/** 告警通道换成一个能问话的替身，Sentry 其余部分原样（与 admin-revoke-access-action.test.ts 同款）。 */
+const captureMessage = vi.fn();
+vi.mock("@sentry/node", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@sentry/node")>()),
+  captureMessage,
 }));
 
 // ---------------------------------------------------------------------------
 // Import the REAL gate functions AFTER mocks are in place.
 // ---------------------------------------------------------------------------
-const { assertSignInDoor, assertSignInDoorForUserId } = await import("@/lib/better-auth/gate");
+const { assertSignInDoor, assertSignInDoorForUserId, assertSessionSurvivesRevoke } = await import(
+  "@/lib/better-auth/gate"
+);
+const { SIGN_IN_REFUSED_REVOKED } = await import("@/lib/better-auth/signin-refusal");
 
 const FOUNDER_EMAIL = "founder@fikirtive.test";
 const STRANGER_EMAIL = "stranger@example.com";
@@ -76,6 +94,11 @@ beforeEach(() => {
   dbDown = false;
   mockAllowedEmailFindUnique.mockClear();
   mockBaUserFindUnique.mockClear();
+  mockAllowedEmailRawStatus.mockReset();
+  mockAllowedEmailRawStatus.mockResolvedValue([]);
+  mockSessionDeleteMany.mockReset();
+  mockSessionDeleteMany.mockResolvedValue({ count: 1 });
+  captureMessage.mockReset();
 });
 
 afterEach(() => {
@@ -301,5 +324,58 @@ describe("assertSignInDoorForUserId (session.create.before gate)", () => {
     const id = withAccount("selfserve@fikirtive.test");
     allowedRows.set("selfserve@fikirtive.test", { status: "active" });
     await expect(assertSignInDoorForUserId(id)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * SIGNIN-A7 —— 二次确认**删不掉那张会话**的时候（第 5 轮，判官 r4 P2 ④）。
+ *
+ * 这条分支在真库上造不出来（`deleteMany` 不会按需失败），所以它住在这个 mock 了 Prisma 的文件里；
+ * 这道确认其余的行为由 `signin-pause-and-revoke.test.ts` 在真库上钉住，含两条第二条连接握锁的
+ * 并发用例。
+ *
+ * RED before 本轮：那一句是 `.catch(() => {})`。删失败于是完全无声 —— 拒绝照抛（商家进不来），
+ * 但 `ba_session` 里留着一张属于已撤销地址的活 cookie，最长 7 天，而没有任何人会知道。
+ */
+describe("assertSessionSurvivesRevoke —— 删会话失败不再无声", () => {
+  const SESSION_ID = "bas_leftover";
+  const USER_ID = "ba-revoked@fikirtive.test";
+
+  beforeEach(() => {
+    withAccount("revoked@fikirtive.test", USER_ID);
+    mockAllowedEmailRawStatus.mockResolvedValue([{ status: "revoked" }]);
+  });
+
+  it("SIGNIN-A7 —— 删不掉也照样拒绝，而且发一条不带邮箱、不带会话 id 的告警", async () => {
+    const failure = Object.assign(new Error("deadlock detected"), {
+      name: "PrismaClientKnownRequestError",
+      code: "P2034",
+    });
+    mockSessionDeleteMany.mockRejectedValue(failure);
+
+    const err = await assertSessionSurvivesRevoke(SESSION_ID, USER_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect((err as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
+
+    expect(captureMessage).toHaveBeenCalledTimes(1);
+    const [text, options] = captureMessage.mock.calls[0] as [
+      string,
+      { level?: string; tags?: Record<string, string>; extra?: Record<string, unknown> },
+    ];
+    expect(options.level).toBe("error");
+    expect(options.tags).toMatchObject({ area: "auth", gate: "session-survives-revoke" });
+    // 分类够团队建一条规则，细节只到「哪一类失败」。
+    expect(options.extra).toEqual({ errorName: "PrismaClientKnownRequestError", errorCode: "P2034" });
+    // #575 —— 整条告警里不许出现邮箱、会话 id，或者 Prisma 那句会把调用参数渲染进去的原始消息。
+    const payload = JSON.stringify([text, options]);
+    expect(payload).not.toContain("revoked@fikirtive.test");
+    expect(payload).not.toContain(SESSION_ID);
+    expect(payload).not.toContain("deadlock detected");
+  });
+
+  it("SIGNIN-A7 —— 删得掉的正常那条路上一条告警都不发", async () => {
+    await expect(assertSessionSurvivesRevoke(SESSION_ID, USER_ID)).rejects.toBeInstanceOf(APIError);
+    expect(mockSessionDeleteMany).toHaveBeenCalledWith({ where: { id: SESSION_ID } });
+    expect(captureMessage).not.toHaveBeenCalled();
   });
 });
