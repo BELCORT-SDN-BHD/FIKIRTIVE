@@ -547,12 +547,61 @@ describe("W2-2 ② 手搓图片弹窗退场,换成 ui/dialog(规格书 §5.6 ①
     const tile = dialog.querySelector<HTMLButtonElement>('button[aria-label="Choose Nasi lemak plate"]');
     expect(tile, "弹窗里没有可点的图").toBeTruthy();
     await act(async () => { tile!.click(); });
+    // 换封面是一次**只改主图**的动作(票 #1322):新主图走 `identity`,名字一格都不递 ——
+    // 手里那份 `data` 是读路补出来的客户端快照,拿它去改名字就是把过期值写回权威。
     expect(saveBrandRecord).toHaveBeenCalledWith(expect.objectContaining({
       id: "rec_1",
       kind: "product",
-      data: expect.objectContaining({ name: "Sambal bottle", imageAssetId: "asset_1" }),
+      identity: { imageAssetId: "asset_1" },
     }));
+    const sent = vi.mocked(saveBrandRecord).mock.calls[0][0] as { identity: Record<string, unknown> };
+    expect("name" in sent.identity).toBe(false);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
+/**
+ * PRODID-R9(规格 §5 登记)—— 判官第 2 轮 P1(PR #1343)。
+ *
+ * 这一条不看源码、不抄形状:它把真表单挂起来、真敲一遍、真按 Save,只问一句
+ * 「递到服务端动作那一层的 `identity` 里,有没有主图这一格」。表单里没有主图栏
+ * (Name* / Price / Description / Selling angle / Link / Tags / Category 七格),
+ * 所以答案必须是「没有」—— 有的话,别处刚换的封面会被这一趟静默写回。
+ */
+describe("PRODID-R9 Brand 页产品表单交出来的身份意图", () => {
+  it("PRODID-R9 真表单按 Save:只递名字这一格,主图那一格根本不出现", async () => {
+    const { saveBrandRecord } = await import("@/lib/brand-record-actions");
+    vi.mocked(saveBrandRecord).mockResolvedValue({ ok: true, id: "rec_new" });
+    const dom = await mountBrand({ tab: "products" });
+
+    const add = buttonWithText(dom, "Add product");
+    expect(add, "产品页签上没有「Add product」入口").toBeTruthy();
+    await act(async () => { add!.click(); });
+
+    // 表单里一个主图控件都不该有 —— 下面那句断言的前提就是这一句。
+    const fields = Array.from(dom.querySelectorAll("input, textarea, select"));
+    const labels = fields.map((el) => el.getAttribute("placeholder") ?? el.getAttribute("aria-label") ?? "");
+    expect(labels.join("|").toLowerCase()).not.toContain("image");
+
+    const name = dom.querySelector<HTMLInputElement>('input[placeholder="Latte Blend"]');
+    expect(name, "产品表单里没有名字那一格").toBeTruthy();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name!, "Sambal bottle");
+      name!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const save = buttonWithText(dom, "Save");
+    expect(save, "产品表单里没有 Save").toBeTruthy();
+    await act(async () => { save!.click(); });
+
+    expect(saveBrandRecord).toHaveBeenCalledTimes(1);
+    const sent = vi.mocked(saveBrandRecord).mock.calls[0][0] as {
+      kind: string; identity: Record<string, unknown>;
+    };
+    expect(sent.kind).toBe("product");
+    expect(sent.identity.name).toBe("Sambal bottle");
+    // `undefined` 与 `null` 在写路那边是两个意思(不碰 / 清空),所以这个键必须**根本不出现**。
+    expect("imageAssetId" in sent.identity).toBe(false);
   });
 });
 

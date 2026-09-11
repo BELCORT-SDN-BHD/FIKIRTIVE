@@ -28,6 +28,18 @@ const MIGRATION_SQL = readFileSync(resolve(MIGRATION_DIR, "migration.sql"), "utf
 const ROLLBACK_SQL = readFileSync(resolve(MIGRATION_DIR, "rollback.sql"), "utf8");
 
 /**
+ * 紧跟其后的那一份(票 #1322):价签不承载身份的 CHECK。它与上面这一份是同一件事的两半 ——
+ * 回填把两格搬进身份,这条 CHECK 让它们再也回不去 —— 所以这里成对地上、倒序地下,
+ * 与生产上 `migrate deploy` 的顺序逐字相同。
+ */
+const GATE_DIR = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../prisma/migrations/20260910140000_brand_product_data_identity_gate",
+);
+const GATE_SQL = readFileSync(resolve(GATE_DIR, "migration.sql"), "utf8");
+const GATE_ROLLBACK_SQL = readFileSync(resolve(GATE_DIR, "rollback.sql"), "utf8");
+
+/**
  * 整份迁移一次送进去。用 `pg` 的简单查询协议而不是 Prisma —— 迁移是多语句 ＋ 显式
  * BEGIN/COMMIT ＋ DO $$ 块,`$executeRawUnsafe` 送不了这种东西。
  */
@@ -43,20 +55,29 @@ async function runSql(sql: string): Promise<void> {
 
 async function runMigration(): Promise<void> {
   await runSql(MIGRATION_SQL);
+  await runSql(GATE_SQL);
 }
 
-/** 同目录的 rollback.sql,同样原样读出来执行 —— 改了那份 SQL 而没有改这里,这里就红。 */
+/**
+ * 两份 rollback,**时间倒序** —— 先丢掉那条 CHECK,再跑回填的回滚。顺序反过来的话,
+ * 回填回滚的 ①.5 要把 `name` / `imageAssetId` 写回价签,CHECK 当场把整份挡下来。
+ * 这条顺序在两份 rollback.sql 的文件头都逐字写着;这里跑的就是那两个文件本身。
+ */
 async function runRollback(): Promise<void> {
+  await runSql(GATE_ROLLBACK_SQL);
   await runSql(ROLLBACK_SQL);
 }
 
-/** 把迁移最后装上的两条约束松开,好让老形状(product 行没有 entityId)插得进去。 */
+/** 把迁移最后装上的约束松开,好让老形状(product 行没有 entityId、data 里还带着名字)插得进去。 */
 async function loosenConstraints(): Promise<void> {
   await prisma.$executeRawUnsafe(
     `ALTER TABLE "BrandRecord" DROP CONSTRAINT IF EXISTS "BrandRecord_product_needs_entity"`,
   );
   await prisma.$executeRawUnsafe(
     `ALTER TABLE "BrandRecord" DROP CONSTRAINT IF EXISTS "BrandRecord_entityId_ownerId_fkey"`,
+  );
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE "BrandRecord" DROP CONSTRAINT IF EXISTS "BrandRecord_product_data_has_no_identity"`,
   );
 }
 
@@ -649,5 +670,163 @@ describe("判官 P1-2 回滚幂等:迁移一个字节都没落时,rollback 也�
       `SELECT column_name FROM information_schema.columns WHERE table_name = 'BrandRecord' AND column_name = 'entityId'`,
     );
     expect(after).toHaveLength(1);
+  }, 60_000);
+});
+
+/**
+ * PRODID-R5(规格 §5 登记;票 #1322)—— 核心不变量「非草稿的 product 价签不承载 name /
+ * imageAssetId」的**机器闸**:`20260910140000_brand_product_data_identity_gate` 那条 CHECK。
+ *
+ * 为什么要有它:回填把这两格搬进身份之后,「不承载」这件事是靠**六条写路各自记得剥**维持的。
+ * 再多一条写路,同一个事实就又有了第二处存放点 —— 而那正是这份规格前五轮每一条 P1 的共同根。
+ * 判据落在数据库上,新写路想绕都绕不开。草稿是唯一的口子(规格 §1.9:它此刻没有身份,名字与
+ * 主图只有 `data` 这一处记法),边界与 `BrandRecord_product_needs_entity` 逐字相同。
+ */
+describe("PRODID-R5 价签不承载身份:数据库自己拒绝", () => {
+  it("PRODID-R5 往活着的 product 价签里塞 name 或 imageAssetId:数据库拒绝,草稿放行", async () => {
+    const assetId = await seedAsset(orgId);
+    const cardId = `ent_${randomUUID()}`;
+    await prisma.entity.create({
+      data: { id: cardId, ownerId: orgId, type: "PRODUCT", name: "Kopi ais" },
+    });
+    const legal = `brc_${randomUUID()}`;
+    // 合法形状:价签只有价签字段,身份那两格一个都没有。
+    await prisma.brandRecord.create({
+      data: {
+        id: legal, ownerId: orgId, brandId: null, kind: "product", nameKey: `kopi ais ${randomUUID().slice(0, 8)}`,
+        entityId: cardId, data: { price: "RM 6.50" },
+        status: "active", source: "user", pinned: false,
+      },
+    });
+
+    // ① 塞名字:23514。
+    await expect(
+      prisma.brandRecord.update({
+        where: { id: legal, ownerId: orgId },
+        data: { data: { price: "RM 6.50", name: "Kopi ais" } },
+      }),
+    ).rejects.toThrow();
+    // ② 塞主图:同样拒绝。
+    await expect(
+      prisma.brandRecord.update({
+        where: { id: legal, ownerId: orgId },
+        data: { data: { price: "RM 6.50", imageAssetId: assetId } },
+      }),
+    ).rejects.toThrow();
+    // ③ 建的那一刻就带着,照样进不了库。
+    await expect(
+      prisma.brandRecord.create({
+        data: {
+          id: `brc_${randomUUID()}`, ownerId: orgId, brandId: null, kind: "product",
+          nameKey: `teh tarik ${randomUUID().slice(0, 8)}`, entityId: cardId,
+          data: { name: "Teh tarik" },
+          status: "active", source: "user", pinned: false,
+        },
+      }),
+    ).rejects.toThrow();
+    // ④ 库里那一行一个字节没变 —— 拒绝是整笔的。
+    await expect(
+      prisma.brandRecord.findFirstOrThrow({ where: { id: legal, ownerId: orgId }, select: { data: true } }),
+    ).resolves.toEqual({ data: { price: "RM 6.50" } });
+
+    // ⑤ 草稿是唯一的口子:它此刻没有身份,名字与主图只有 data 这一处记法。
+    await expect(
+      prisma.brandRecord.create({
+        data: {
+          id: `brc_${randomUUID()}`, ownerId: orgId, brandId: null, kind: "product",
+          nameKey: `draft ${randomUUID().slice(0, 8)}`, contextStatus: "Draft",
+          data: { name: "Draft nasi lemak", imageAssetId: assetId },
+          status: "active", source: "otto", pinned: false,
+        },
+      }),
+    ).resolves.toBeTruthy();
+    // ⑥ 别的 kind 一个字都不管 —— segment / offer 的名字本来就住在 data 里。
+    await expect(
+      prisma.brandRecord.create({
+        data: {
+          id: `brc_${randomUUID()}`, ownerId: orgId, brandId: null, kind: "segment",
+          nameKey: `office ${randomUUID().slice(0, 8)}`,
+          data: { name: "Office crowd", who: "Office workers nearby" },
+          status: "active", source: "user", pinned: false,
+        },
+      }),
+    ).resolves.toBeTruthy();
+  }, 60_000);
+});
+
+/**
+ * PRODID-R7(规格 §5 登记;票 #1322)—— 回滚 ③ 前置那一句的判据收紧(判官 P2,PR #1337)。
+ *
+ * 反例:商家自己那张卡在 up **之前**就把这张图当封面,而那条硬引用已经被软删。那时 up 照样
+ * 插得进 `prodidimg_` 引用(它只避开**活着**的同一张引用),又不会碰封面(它只写
+ * `baseAssetId IS NULL` 的卡)。旧判据 `e.baseAssetId = ri.assetId` 于是把**商家自己挑的**
+ * 封面擦成 NULL —— 一次删了接不回来的意图。
+ */
+describe("PRODID-R7 回滚不擦掉商家自己挑的封面", () => {
+  it("PRODID-R7 卡在 up 之前就把这张图当封面(硬引用已软删):回滚之后封面还在", async () => {
+    await loosenConstraints();
+    const assetId = await seedAsset(orgId);
+    const cardId = `ent_${randomUUID()}`;
+    // 商家的卡:封面就是这张图,而那条硬引用已经被软删(旧行留下的形状)。
+    await prisma.entity.create({
+      data: { id: cardId, ownerId: orgId, type: "PRODUCT", name: "Kopi ais", baseAssetId: assetId },
+    });
+    await prisma.referenceImage.create({
+      data: {
+        id: `ri_${randomUUID()}`, ownerId: orgId, entityId: cardId, assetId,
+        position: 0, deletedAt: new Date(),
+      },
+    });
+    // 同名价签,带着同一张图 → 一次性链接会指到这张卡上。
+    const tagId = await seedLegacyProduct(orgId, "Kopi ais", { imageAssetId: assetId });
+
+    await runMigration();
+    await expect(
+      prisma.brandRecord.findFirstOrThrow({ where: { id: tagId, ownerId: orgId }, select: { entityId: true } }),
+    ).resolves.toEqual({ entityId: cardId });
+    // up 插了一条 prodidimg_ 引用(活着的那一条本来就没有),封面一个字节没动。
+    await expect(
+      prisma.referenceImage.count({ where: { id: `prodidimg_${tagId}`, ownerId: orgId } }),
+    ).resolves.toBe(1);
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: cardId, ownerId: orgId }, select: { baseAssetId: true } }),
+    ).resolves.toEqual({ baseAssetId: assetId });
+
+    await runRollback();
+
+    // 商家自己挑的封面还在 —— 旧判据会把这一格擦成 NULL。
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: cardId, ownerId: orgId }, select: { baseAssetId: true } }),
+    ).resolves.toEqual({ baseAssetId: assetId });
+    // 价签的那一格也照旧还原(回滚 ①.5)。
+    await expect(
+      prisma.brandRecord.findFirstOrThrow({ where: { id: tagId, ownerId: orgId }, select: { data: true } }),
+    ).resolves.toMatchObject({ data: { imageAssetId: assetId } });
+
+    // 把库的形状还给后面的测试文件。
+    await runMigration();
+  }, 60_000);
+
+  it("PRODID-R7 卡在 up 之前没有封面:回滚照旧把 up 写上去的那一格擦回 NULL", async () => {
+    await loosenConstraints();
+    const assetId = await seedAsset(orgId);
+    const cardId = `ent_${randomUUID()}`;
+    // 对照组:卡本来没有封面,也从来没有过指向这张图的引用 —— 这一格就是 up 自己写的。
+    await prisma.entity.create({
+      data: { id: cardId, ownerId: orgId, type: "PRODUCT", name: "Teh tarik" },
+    });
+    const tagId = await seedLegacyProduct(orgId, "Teh tarik", { imageAssetId: assetId });
+
+    await runMigration();
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: cardId, ownerId: orgId }, select: { baseAssetId: true } }),
+    ).resolves.toEqual({ baseAssetId: assetId });
+
+    await runRollback();
+    await expect(
+      prisma.entity.findFirstOrThrow({ where: { id: cardId, ownerId: orgId }, select: { baseAssetId: true } }),
+    ).resolves.toEqual({ baseAssetId: null });
+
+    await runMigration();
   }, 60_000);
 });
