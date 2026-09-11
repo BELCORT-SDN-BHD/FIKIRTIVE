@@ -115,6 +115,49 @@ describe("assertSignInDoor (user.create.before gate)", () => {
   });
 
   /**
+   * SIGNIN-A7 —— 撤销是绝对的：`AUTH_ALLOWED_EMAILS` 也压不过它（判官 r1 P1，2026-09-11；
+   * 主干 #1347 带来，本轮合并原样保留，只把 mock 换成本文件的两张表）。
+   *
+   * RED before：命中 `AUTH_ALLOWED_EMAILS` 的地址**直接短路返回放行**，一次数据库读都不做，
+   * 于是操作员在后台撤销过的邮箱只要还留在那份环境名单里就照样进得来 —— 规格 §1.6「撤销 →
+   * 拒」与验收 A7「两扇门都进不来」在这条路上从来没有执行过。这一条比上面那条多钉两件事：
+   * 拒绝的 `status` 是 FORBIDDEN，以及这条路上**真的**去问了库。
+   */
+  it("SIGNIN-A7 —— 撤销压得过 AUTH_ALLOWED_EMAILS：环境名单里的地址被撤销后仍然进不来", async () => {
+    process.env.AUTH_ALLOWED_EMAILS = "revoked-but-listed@fikirtive.test";
+    allowedRows.set("revoked-but-listed@fikirtive.test", { status: "revoked" });
+    const err = await assertSignInDoor("revoked-but-listed@fikirtive.test").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect((err as APIError).status).toBe("FORBIDDEN");
+    // 撤销这件事只有库知道 —— 所以这条路上必须真的去问库。
+    expect(mockAllowedEmailFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { email: "revoked-but-listed@fikirtive.test" } }),
+    );
+  });
+
+  /**
+   * SIGNIN-A6/A7 —— 环境名单在门上**不等于「登录过」**（第 5 轮合并裁定，2026-09-11）。
+   *
+   * 主干 #1347 上这条测试原来断言的是反面（「环境名单仍然让暂停期的老地址进得来」），它配的是
+   * 主干那版 `known = listed || !!row`。规格 §1.6 ① 写的是「`SIGNUPS_PAUSED` 打开且邮箱
+   * **从未登录过** → 拒」，而「写进一个环境变量」一次请求都不用发就成立 —— 那条口径于是让
+   * 「暂停期先把地址写进变量再让他进来」成为一条绕过开关的现成的路（第 2 轮判官 P0）。所以这
+   * 条测试按 §1.6 ① 改写，不是删掉：门上「登录过」只有一个来源 —— `ba_user` 里有他那一行。
+   *
+   * 一条测试钉两半，因为它们是同一句话的两面：名单点名但从没登录过 → 暂停期被拒；真的登录过
+   * → 暂停期照常进。
+   */
+  it("SIGNIN-A6 —— 暂停期里环境名单不算「登录过」：名单里没登录过的被拒，登录过的照进", async () => {
+    process.env.SIGNUPS_PAUSED = "1";
+    process.env.AUTH_ALLOWED_EMAILS = "listed@fikirtive.test, returning@fikirtive.test";
+    // ① 只写在变量里、一次都没登录过 —— 暂停期进不来。
+    await expect(assertSignInDoor("listed@fikirtive.test")).rejects.toBeInstanceOf(APIError);
+    // ② 真的登录过（`ba_user` 里有行）—— 暂停期照常进。
+    withAccount("returning@fikirtive.test");
+    await expect(assertSignInDoor("returning@fikirtive.test")).resolves.toBeUndefined();
+  });
+
+  /**
    * SIGNIN-A7 —— 环境名单命中**不再短路**撤销那一步。
    *
    * RED before 登录门②：`lookupAddress` 在 `AUTH_ALLOWED_EMAILS` 命中时直接

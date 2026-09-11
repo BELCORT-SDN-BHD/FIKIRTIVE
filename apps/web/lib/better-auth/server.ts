@@ -1,7 +1,6 @@
 import "server-only";
 import * as Sentry from "@sentry/node";
 import { betterAuth } from "better-auth";
-import { APIError } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { emailOTP, admin } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
@@ -13,6 +12,11 @@ import { convergeIdentity } from "./converge";
 import { CALLER_IP_HEADER } from "@/lib/caller-identity";
 import { signinSessionId } from "./signin-session";
 import { assertSessionSurvivesRevoke, assertSignInDoor, assertSignInDoorForUserId } from "./gate";
+import {
+  SIGN_IN_REFUSED_EMAIL_UNVERIFIED,
+  SIGN_IN_REFUSED_UNAVAILABLE,
+  signInRefusal,
+} from "./signin-refusal";
 import { ac, superAdminRole } from "./access";
 import { googleSignInConfigured } from "./social-config";
 import { signInDoorDecision } from "@/lib/signup-gate";
@@ -133,14 +137,19 @@ export const auth = betterAuth({
   // Map BA's four models to the dormant ba_* tables (Task 3).
   user: { modelName: "BetterAuthUser" },
   session: { modelName: "BetterAuthSession" },
-  // Account linking: only fold an OAuth identity onto an existing local account when the
-  // provider's email is trustworthy (Google's email_verified) AND the local credential is
-  // itself verified — never link onto an unverified local email (account-takeover vector).
+  // SIGNIN-A3 / SIGNIN-A13 —— 账号合并：同一个邮箱，两扇门进的是同一个账号。
+  //
+  // 合并成立的机制（`better-auth/dist/oauth2/link-account.mjs:17-40`）：码门建的用户
+  // `emailVerified = true`，所以同邮箱之后按 Google 会被折进同一个用户行，而不是另开一个。
+  //
+  // `trustedProviders` 里以前写着 `"google"`，旁边一句注释说「Google 的 email_verified 可信」。
+  // 那句注释把事情说反了：`trustedProviders` 的作用是让库**跳过** `userInfo.emailVerified` 的
+  // 检查（link-account.mjs:20-22），也就是说那一行的效果恰恰是「不看 Google 的声明」。规格
+  // §1.4 因此要求把它拿掉 —— 名单空了，库才真的会读那个声明，A13 的拒绝才有第一道落点。
   account: {
     modelName: "BetterAuthAccount",
     accountLinking: {
       enabled: true,
-      trustedProviders: ["google"],     // Google's email_verified claim is trustworthy
       requireLocalEmailVerified: true,  // never link onto an unverified local credential
     },
     // #795 — Google's OAuth tokens were the ONE credential this product stored in the clear.
@@ -223,6 +232,28 @@ export const auth = betterAuth({
         google: { clientId: process.env.GOOGLE_CLIENT_ID!, clientSecret: process.env.GOOGLE_CLIENT_SECRET! },
       }
     : {},
+  // SIGNIN-A14 —— 「Google 门的任何失败都回到 /login 页内提示，从不落在 better-auth 自带错误页」
+  // 的**地板**（规格 docs/specs/sign-in.md §1.4）。
+  //
+  // LoginForm 每次按下 Continue with Google 都会传 `errorCallbackURL: "/login"`，但那个值只存进
+  // state 里（`dist/oauth2/state.mjs:14` 的 `errorURL: c.body?.errorCallbackURL`）。有一整族失败
+  // 发生在 state 解开**之前**，那时候库拿不到它：
+  //   · 商家在回调页刷新或后退 —— state 行在第一趟已被消费（`dist/state.mjs:124`
+  //     `deleteVerificationByIdentifier`），第二趟 `state_mismatch`；
+  //   · state 过了十分钟（`dist/state.mjs:126`）；
+  //   · 有人直接打 `/api/better-auth/callback/google`，压根没有 state（`state_not_found`）。
+  // 这些路上 `parseState` 用的 errorURL 是 `options.onAPIError?.errorURL || ${baseURL}/error`
+  // （`dist/oauth2/state.mjs:33`）—— 没有这一行，它就是库自带的那张无品牌 `<title>Error</title>`
+  // 页面，A14 在 state_not_found / state_mismatch / state_invalid / state_generation_error /
+  // internal_server_error 五个键上全是假的。实测围栏：`lib/__tests__/signin-google-door.test.ts`
+  // 的「state 解不开」四条。
+  //
+  // 同一行还把自带错误页那个端点本身变成一次 302 回 /login（`dist/api/routes/error.mjs:371-375`），
+  // 所以将来任何一条我们没数到的路转到它，落点也仍然是登录页。
+  //
+  // 只给 `errorURL`：`onAPIError` 另外两个字段（`throw`、`onError`）会改变 API 错误的抛法，
+  // 这里不碰。
+  onAPIError: { errorURL: "/login" },
   // #543 — basic abuse control on the newly public endpoints, using Better Auth's own
   // per-IP limiter (no bespoke machinery). The outbound-email limiter in sender.ts
   // (5 per address per hour) still caps mail volume per victim address on top of this.
@@ -390,6 +421,19 @@ export const auth = betterAuth({
         // 请求都不该占用额度（验收 A17 的「老用户登录不受影响」）。撞满就 fail closed 并告警。
         before: async (user) => {
           await assertSignInDoor(user.email);
+          // SIGNIN-A13 —— 一个**没被证明过的邮箱永远不会变成一行用户**。
+          //
+          // 具体要挡的是「Google 报 email_verified: false」（规格 §1.4）：那种账号按现码会建出
+          // 一个 emailVerified=false、没有租户、也收不到验证信的孤儿用户 —— `converge.ts` 的第
+          // 一行就早退，`emailVerification.sendOnSignUp` 我们没配。库自己**不**会在建号那条路上
+          // 看这个声明：`link-account.mjs` 只在**合并**到既有用户时检查它（:20-22），新建那一支
+          // （:80-96）一个字都不问。所以这道闸只能在这里。
+          //
+          // 写成「必须为 true」而不是「Google 且为 false 时拒」，是因为这条不变量不该随供应商
+          // 增减而重写：本产品的每一扇门都在证明邮箱之后才建号（码门验码成功那一刻写
+          // `emailVerified: true`，`email-otp/routes.mjs:409`），密码注册已经退役，所以「未验证
+          // 的新用户」在今天没有任何合法产地。fail closed：认不出的将来供应商也一样挡。
+          if (user.emailVerified !== true) throw signInRefusal(SIGN_IN_REFUSED_EMAIL_UNVERIFIED);
           if (!(await consumeNewAccountGate())) {
             // 一个要人看一眼的信号：未公测、零商家，一小时 50 个新账号是异常。
             // #575 日志纪律：固定分类 + 常量，邮箱这类用户内容不进告警文本。
@@ -398,8 +442,9 @@ export const auth = betterAuth({
               tags: { area: "auth", gate: "new-account-hourly-ceiling" },
               extra: { limit: NEW_ACCOUNTS_PER_HOUR },
             });
-            // 与门的两种拒绝同一句话：页面上分不出「暂停」「撤销」「限流」（规格 §1.3 防枚举）。
-            throw new APIError("FORBIDDEN", { message: "This email can't sign in." });
+            // 与门的两种拒绝在**页面上**同一句话：商家分不出「暂停」「撤销」「限流」（规格
+            // §1.3 防枚举）。键不同只为服务端分辨得出（signin-refusal.ts）。
+            throw signInRefusal(SIGN_IN_REFUSED_UNAVAILABLE);
           }
         },
         after: async (u, ctx) => {

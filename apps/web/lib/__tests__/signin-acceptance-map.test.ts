@@ -2,10 +2,10 @@
  * signin-acceptance-map.test.ts —— 登录门规格（docs/specs/sign-in.md，已冻结 · v1）17 条验收
  * 的落点地图。
  *
- * 规格按 issue #1311 的裁决切成五片。已交付：第①片（密码退役，SIGNIN-A4/A9/A11，issue #1316）
- * 与第②片（邮箱码门与限流，SIGNIN-A1/A5/A8/A10/A15/A16/A17，issue #1317）。剩下 7 条属于
- * ③④⑤片，今天**还没有**真测试 —— 这个文件把这件事写成机器看得见的形状，而不是让它躺在
- * 某个人的记忆里：
+ * 规格按 issue #1311 的裁决切成五片。已交付：第①片（密码退役，SIGNIN-A4/A9/A11，issue #1316）、
+ * 第②片（邮箱码门与限流，SIGNIN-A1/A5/A8/A10/A15/A16/A17，issue #1317）、第③片（Google 门，
+ * SIGNIN-A2/A3/A13/A14，issue #1318）。剩下 3 条属于④⑤片，今天**还没有**真测试 —— 这个文件
+ * 把这件事写成机器看得见的形状，而不是让它躺在某个人的记忆里：
  *
  *   · 已交付的三条不在这里，它们有真行为测试（signin-password-retired.test.ts）；
  *   · 未交付的每一条是一行 `it.todo`，逐字带编号、点名它属于哪一片、由哪张票接手。
@@ -32,11 +32,13 @@ describe("登录门规格 · 尚未交付的验收（各自的切片接手时把
   //    · SIGNIN-A16 → lib/__tests__/signin-code-door.test.ts、better-auth-gate.test.ts
   //    · SIGNIN-A17 → lib/__tests__/signup-grant-exactly-once.test.ts、signup-hourly-ceiling.test.ts
 
-  // ③ Google 门（issue #1318）
-  it.todo("SIGNIN-A2 —— 陌生 Google 账号按 Continue with Google 直接进产品，账号与工作区已建立");
-  it.todo("SIGNIN-A3 —— 同一邮箱先码门后 Google（再反过来）进的是同一个账号、同一个工作区，库里只有一个用户");
-  it.todo("SIGNIN-A13 —— Google 报「邮箱未验证」的账号被拒并回 /login 提示改用 email，数据库里不建任何用户行");
-  it.todo("SIGNIN-A14 —— Google 门的每一种失败都回到 /login 页内提示，从不落在 better-auth 自带错误页或裸 JSON");
+  // ③ Google 门（issue #1318）—— 已交付，四行 it.todo 换成了真测试：
+  //    · SIGNIN-A2  → lib/__tests__/signin-google-door.test.ts
+  //    · SIGNIN-A3  → lib/__tests__/signin-google-door.test.ts（码门先／Google 先各一条）
+  //    · SIGNIN-A13 → lib/__tests__/signin-google-door.test.ts
+  //    · SIGNIN-A14 → lib/__tests__/signin-google-door.test.ts（服务端：真的转到 /login、键是什么）、
+  //                   app/login/__tests__/login-google-door-errors.test.tsx（页面：errorCallbackURL
+  //                   真的传了、每个键都读同一句）
 
   // ④ 暂停注册与撤销（issue #1319）—— 两行 it.todo 换成了真测试：
   //    · SIGNIN-A6  → lib/__tests__/signin-pause-and-revoke.test.ts（三条：码门、Google 门、老商家）、

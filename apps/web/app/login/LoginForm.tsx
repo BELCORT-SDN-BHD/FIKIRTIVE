@@ -120,6 +120,20 @@ export function LoginForm({
   const codeInputRef = useRef<HTMLInputElement>(null);
   const focusEmailAfterReset = useRef(false);
 
+  // #1317（判官 r1 P1，2026-09-11）—— 片段读完就从地址栏抹掉。
+  //
+  // 上面那一行读进来的是一份**可以直接登录的凭据**（邮箱 ＋ 六位一次性码）。预填之后它留在
+  // `location.href` 里只剩下坏处：浏览器历史、书签、分享出去的截图，以及任何拿 `location.href`
+  // 的第三方 SDK 都会跟着带上它（上报通道那一侧另有 `lib/sentry-browser.ts` 的
+  // `scrubUrlFragments` 兜底；这里是源头）。码的一次性与 15 分钟是**码**的属性，不等于
+  // 「它躺在地址栏里也没关系」。
+  //
+  // `replaceState` 而不是 `push`：不新增一条历史记录，商家按返回键仍然回到上一页。
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.location.hash) return;
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+  }, []);
+
   useEffect(() => {
     if (step === "email" && focusEmailAfterReset.current) {
       focusEmailAfterReset.current = false;
@@ -210,6 +224,17 @@ export function LoginForm({
     const { error: signInError } = await authClient.signIn.social({
       provider: "google",
       callbackURL,
+      // SIGNIN-A14 —— Google 门的任何失败都必须回到**这一页**（规格 §1.4）。
+      //
+      // 这一份进的是 state（`oauth2/state.mjs` 的 `generateState`），管的是 state 解得开时的
+      // 落点。解不开的那一族（回调被刷新／后退重放、state 过期、有人直接打回调地址）读不到它，
+      // 由 `lib/better-auth/server.ts` 的 `onAPIError: { errorURL: "/login" }` 兜住 —— 两层都在，
+      // 商家才不会落在库自带的那张错误页上，或者，当拒绝发生在建会话那一刻，落在一份没有
+      // Location 的 403 JSON 上。两种都在规格 §1.4 里被逐字点名为今天的缺陷。
+      //
+      // 值是 `/login` 而不是带 `from` 的深链：失败之后要回的是登录页本身，商家在这一页重试
+      // 或改用 email；`from` 那个目的地在下一次成功登录时由 `callbackURL` 重新带上。
+      errorCallbackURL: "/login",
     });
     if (signInError) {
       setBusy(null);

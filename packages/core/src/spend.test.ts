@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { genSpentUsd, refgenSpentUsd, pricedGenCredits, pricedRefgenCredits, displayCredits, CREDITS_PER_USD, INTERNAL_PER_DISPLAY, SIGNUP_GRANT_CREDITS } from "./spend.js";
+import { genSpentUsd, refgenSpentUsd, pricedGenCredits, pricedRefgenCredits, displayCredits, CREDITS_PER_USD, INTERNAL_PER_DISPLAY, SIGNUP_GRANT_CREDITS, canonicalGrantEmail } from "./spend.js";
 // #810 P3-2:一轮对话真正会冻结的额度 —— 挡住商家的就是这个数,所以它是「一场对话
 // 花多少」的活权威,不是注释里抄来的实测值。
 import { OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "./otto-budget.js";
@@ -272,5 +272,43 @@ describe("margin floor — every sellable video combo keeps ≥45% gross margin 
         }
       }
     }
+  });
+});
+
+/**
+ * SIGNIN-A17 —— 赠金去重键的归一化本身（docs/specs/sign-in.md 已冻结 · v1 §1.5）。
+ *
+ * 纯字符串，没有库，所以它值得被穷举：这个函数返回的字符串**就是** `signup_grant_claim` 的
+ * 主键，两个写法算出两个键，就是同一个真实收件箱领两笔赠金。
+ */
+describe("SIGNIN-A17 —— canonicalGrantEmail（赠金去重键）", () => {
+  /**
+   * 判官 r1 P1（2026-09-11）：`googlemail.com` 是 Google 给 `gmail.com` 的**同一个收件箱**的
+   * 第二个域名（Google 帮助中心 answer/10313）。去点那一支已经点名了它，却没有把域本身折过去，
+   * 于是 `me@gmail.com` 与 `me@googlemail.com` 是两个键、两笔赠金 —— §1.5 算的那笔账（1000 号
+   * 约 875 美元）只被砍掉一半。
+   *
+   * RED before：`canonicalGrantEmail("m.e+ops@googlemail.com")` 返回 `me@googlemail.com`。
+   */
+  it("SIGNIN-A17 —— googlemail.com 与 gmail.com 是同一个收件箱，归一成同一个键", () => {
+    expect(canonicalGrantEmail("me@googlemail.com")).toBe("me@gmail.com");
+    expect(canonicalGrantEmail("m.e+ops@googlemail.com")).toBe("me@gmail.com");
+    expect(canonicalGrantEmail("M.E+001@GoogleMail.com")).toBe("me@gmail.com");
+    expect(canonicalGrantEmail("m.e+002@gmail.com")).toBe("me@gmail.com");
+  });
+
+  /** 归一只做已知会合并的那两类；别家域的点是两个真实的人，不许合并（合并等于扣掉一个人的赠金）。 */
+  it("SIGNIN-A17 —— +tag 各域都去，去点只对 Google 自己的两个域", () => {
+    expect(canonicalGrantEmail("aisha+ops@shop.test")).toBe("aisha@shop.test");
+    expect(canonicalGrantEmail("a.isha@shop.test")).toBe("a.isha@shop.test");
+    expect(canonicalGrantEmail("  Aisha@Shop.Test ")).toBe("aisha@shop.test");
+  });
+
+  /** 不成形的地址与「+tag 去完什么都不剩」都原样返回：宁可少归一，也不要把一群互不相干的地址
+   *  合并成同一个键（那会让第二个真实商家永远领不到赠金）。 */
+  it("SIGNIN-A17 —— 空 local 与不成形地址原样返回，绝不合并成同一个键", () => {
+    expect(canonicalGrantEmail("+tag@gmail.com")).toBe("+tag@gmail.com");
+    expect(canonicalGrantEmail("+other@gmail.com")).toBe("+other@gmail.com");
+    expect(canonicalGrantEmail("not-an-email")).toBe("not-an-email");
   });
 });
