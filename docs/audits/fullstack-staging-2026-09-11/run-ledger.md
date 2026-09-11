@@ -178,3 +178,44 @@ UTC 2026-09-11T12:15–12:17。
 ## 环境观察（顺手撞见，非本轮判定）
 
 Gmail 收件箱里有 Railway 告警：`Deployment crashed for worker in FIKIRTIVE!`（19:40 MYT ＝ 11:40 UTC）与 `Deployment crashed for web in FIKIRTIVE!`（19:45 MYT ＝ 11:45 UTC），时间点正好在本次 staging 部署（11:39:15Z）之后。当前 `/api/health` 与 `/api/ready` 都健康、`railway deployment list` 两服务都 SUCCESS，说明**崩溃后已恢复**。登记为观察项，供后端 worker 在日志里核一眼是否留下影响（是否有请求在那两分钟内失败）。
+
+---
+
+## R2-05 暂停新注册 / 限流（SIGNIN-A6 / A8；A7 撤销见后）
+
+### SIGNIN-A8 限流 —— PARTIAL（两句通过，一句不兑现）
+
+**① 第 6 次被拒并提示一小时后再试 —— 通过。** 用一个全新邮箱 `tools+r2rl20260911@belcort.com`，`Continue with email` 一次 + `Send again` 五次：
+- 第 2–5 次：页面每次都出 `A new login code was sent.`
+- **第 6 次**：`Too many codes requested` / `Too many codes requested. Try again in an hour.` （逐字）
+
+**② 对陌生邮箱与老邮箱的响应时间与文案一致 —— 通过。** 同一段脚本里连测两个地址，测的是「点下去 → 页面出现 Check your email」的真实耗时（每 50ms 轮询 DOM）：
+- 陌生 `tools+r2x20260911@belcort.com`：**1304 ms**
+- 已有账号 `tools+r2a20260911@belcort.com`：**1142 ms**
+- 两句文案逐字同形：`We sent a temporary login code to <邮箱>.`
+差 162 ms、同一量级，页面无任何「这个邮箱存在／不存在」的线索。
+
+**③ 第 4 次要求重新发码 —— 不兑现（登记 FSE-201，P2）。** 对夹具 A 连续输 4 个错码：
+- 第 1、2、3、4 次**同一句**：`Code not accepted` / `That code didn't work. Check it and try again, or send it again.`
+- 第 4 次之后再输**那封邮件里真正的码** → 仍被拒（同一句话）。说明**服务端确实在 4 次之后把这个码作废了**，但**页面从头到尾没有改口**：商家看到的仍是「你可能打错了，检查一下」，而真相是「这个码已经死了，必须重发」。
+- 点 `Send again` 拿新码 → 一次即进（恢复路径本身是通的）。
+- 判定：机器行为对、**商家可见的那句话不对**；规格 A8 写的是「第 4 次**要求重新发码**」。
+
+### SIGNIN-A6 暂停新注册 —— PASS（Google 半边受夹具限制）
+
+staging 配置改动（Founder 2026-09-11 当次授权，改动与还原全记在此）：
+
+| 时间(UTC) | 动作 | 命令 | 结果 |
+|---|---|---|---|
+| 12:22:17 | 新增 `SIGNUPS_PAUSED=1`（原值形状：**该键此前不存在**） | `railway variable set SIGNUPS_PAUSED=1 -p … -e staging -s web` | `{"keys":["SIGNUPS_PAUSED"],"set":true}`；触发重新部署，12:23:02 一度 502，12:23:11 恢复 `ok:true`，`build.sha` 仍 `2a96750e` |
+| 12:25:57 | **删除** `SIGNUPS_PAUSED`（还原成原值形状＝不存在） | `railway variable delete SIGNUPS_PAUSED -p … -e staging -s web` | `{"deleted":true,"key":"SIGNUPS_PAUSED"}` |
+| 12:29:08 | 删除**不会**自动重启容器（横幅在删后 3 分钟仍在），故手动重放同一次部署 | `railway redeploy -p … -e staging -s web -y` | 部署 `5418e589-eabf-4b16-b572-fe1d1513164a`；12:30:04 起横幅消失、`ok:true`、`build.sha=2a96750e` |
+| 12:30 | 还原核对 | `railway variables … --json` | `SIGNUPS_PAUSED present: False`，变量总数回到 **51**（与改动前一致）；截图 `04-login-banner-restored.png` 与改动前的 `01` 同尺寸同内容 |
+
+观察到的行为（暂停期间）：
+1. **页顶横幅**（截图 `03-login-paused-banner.png`），逐字：`New signups are paused right now. Existing accounts can still log in.` —— 两句都在（关门 + 老商家照进）。
+2. **陌生人码门**：输 `tools+r2p20260911@belcort.com` → 页面照样显示 `We sent a temporary login code to …`（**刻意与正常路径长得一样，防枚举**），但 **Gmail 里搜 `to:tools+r2p20260911@belcort.com` 零结果 ⇒ 真的没寄码**；随后输任意码 → `Code not accepted`，会话为 `null` ⇒ **进不来、不建账号**。
+3. **老用户**：同一时刻用夹具 A（已有账号）走码门 → 收到码（20:24 那封）→ 一次即进 `Home · Fikirtive`，会话 `email=tools+r2a20260911@belcort.com` ⇒ **老用户不受影响**。
+4. **Google 门那半边（陌生 Google 账号在暂停期被拒）**：本机只有 `tools@belcort.com` 一个 Google 身份且它是老账号 → **NOT RUN（无陌生 Google 夹具）**。
+
+### SIGNIN-A7 后台撤销 —— 待做（安排在登录门收尾时用一个一次性账号，不用夹具 A，避免把第二租户弄坏）
