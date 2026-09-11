@@ -30,11 +30,11 @@ import {
 } from "../storyboard-edit.js";
 // #782 r15(判官 r14 P1):editShot 会删掉「已经花掉的钱」与这一镜之间的唯一连线,所以它
 // 在删之前必须问一次「那条作业还在途吗」——与人工动作层**同一份**判定、同一句话。
-import { lockCardTx, inFlightPointerBlock } from "../storyboard-child-job.js";
+import { lockCardTx, inFlightPointerBlock, referenceRideBlock } from "../storyboard-child-job.js";
 
 export const editStoryboardInput = z.object({
   cardId: z.string().min(1).describe("The STORYBOARD_CARD id being edited (from the storyboard card in this conversation)."),
-  op: z.enum(["editShot", "addShot", "deleteShot", "reorderShots", "setContinuity"]),
+  op: z.enum(["editShot", "addShot", "deleteShot", "reorderShots", "setContinuity", "setShotReferences"]),
   /** editShot / deleteShot:0-based shot index(卡片镜头列表里的当前位置). */
   index: z.number().int().min(0).optional(),
   /** editShot(至少给一项)/ addShot(必给):镜头文字与时长. */
@@ -47,6 +47,15 @@ export const editStoryboardInput = z.object({
   order: z.array(z.number().int().min(0)).optional(),
   /** setContinuity(#782):镜头是否一镜接一镜(下一镜从上一镜真实停住的那一帧起步). */
   continuity: z.boolean().optional(),
+  /**
+   * creation §5 :178 —— setShotReferences:true = 把**这一轮商家挂上来的那几张图**挂到这一镜
+   * 当参考;false = 把这一镜已挂的图全部取下。
+   *
+   * 刻意**不**收 id:模型看得见图(input_image 部件),看不见 id —— 让它填 id 就是请它编一个。
+   * 真正上车的那几张只从 `ctx.sourceGenerationIds` 取,而那一份是服务端这一轮自己按 ownerId
+   * 校验过的(`validateOttoTurnReferences`),别家店的图进不去。
+   */
+  useTurnImages: z.boolean().optional(),
 });
 
 export type EditStoryboardInput = z.infer<typeof editStoryboardInput>;
@@ -77,15 +86,39 @@ export async function executeEditStoryboard(
   //
   // 其余四个 op(add / delete / reorder / setContinuity)一格不删已付费指针,照旧走下面的
   // last-write-wins 写回,一个字没改。
-  if (input.op === "editShot") {
-    if (input.index === undefined) return { error: "editShot needs a shot index." };
-    if (
+  //
+  // creation §5 :178 —— 换掉一镜的挂图**也**是删付费指针的那一类编辑(挂图 = 这一镜真会送进
+  // 引擎的材料,换了它片子就过期,`editStaleness` 因此把它算进 video 那一格)。所以它走的是
+  // 与 editShot **同一笔**带卡锁的事务、同一道在途闸、同一个纯变换 —— 另开一条路就等于把
+  // 那两道已经付过学费的防线各漏一次。
+  if (input.op === "editShot" || input.op === "setShotReferences") {
+    if (input.index === undefined) return { error: `${input.op} needs a shot index.` };
+    if (input.op === "editShot" && (
       input.firstFramePrompt === undefined &&
       input.videoPrompt === undefined &&
       input.durationSeconds === undefined
-    ) {
+    )) {
       return { error: "editShot needs at least one of firstFramePrompt, videoPrompt or durationSeconds." };
     }
+    if (input.op === "setShotReferences" && input.useTurnImages === undefined) {
+      return { error: "setShotReferences needs useTurnImages true or false." };
+    }
+    // 这一轮真会上路的那几张 —— 只从服务端已校验的那一份取(见 `useTurnImages` 的说明)。
+    const turnImages = ctx.sourceGenerationIds ?? [];
+    if (input.op === "setShotReferences" && input.useTurnImages === true && turnImages.length === 0) {
+      return {
+        error:
+          "There are no images attached to this message — ask the user to attach the Library image they want on that shot, then try again.",
+      };
+    }
+    const patch =
+      input.op === "editShot"
+        ? {
+            firstFramePrompt: input.firstFramePrompt,
+            videoPrompt: input.videoPrompt,
+            durationSeconds: input.durationSeconds,
+          }
+        : { referenceGenerationIds: input.useTurnImages === true ? [...turnImages] : [] };
     const index = input.index;
     let out: EditResult = { error: "Card not found." };
     await prisma.$transaction(async (tx) => {
@@ -101,17 +134,13 @@ export async function executeEditStoryboard(
       if (!fresh?.payload) { out = { error: "Card not found." }; return; }
       const locked = fresh.payload as unknown as StoryboardCardPayload;
       if (index >= locked.shots.length) { out = { error: "That shot no longer exists." }; return; }
-      const blocked = await inFlightPointerBlock(tx, ctx.orgId, locked.shots[index]!, {
-        firstFramePrompt: input.firstFramePrompt,
-        videoPrompt: input.videoPrompt,
-        durationSeconds: input.durationSeconds,
-      });
+      const blocked = await inFlightPointerBlock(tx, ctx.orgId, locked.shots[index]!, patch);
       if (blocked) { out = { error: blocked }; return; }
-      const edited = applyEditShotPrompt(locked, index, {
-        firstFramePrompt: input.firstFramePrompt,
-        videoPrompt: input.videoPrompt,
-        durationSeconds: input.durationSeconds,
-      });
+      // creation §5 :178 —— 带不上参考图的镜头连挂都不许挂上去。与人工面同一道闸、同一句话:
+      // 这条 skill 的说明里写着「只有 @ 到演员的镜头带得上」,而说了做不到就是个假承诺。
+      const cantRide = await referenceRideBlock(tx, ctx.orgId, locked.shots[index]!, patch);
+      if (cantRide) { out = { error: cantRide }; return; }
+      const edited = applyEditShotPrompt(locked, index, patch);
       await tx.chatMessage.update({
         where: { id: card.id },
         data: { payload: edited as unknown as Prisma.InputJsonObject },
@@ -182,6 +211,10 @@ export const editStoryboardSkill = defineOttoSkill({
     "reorder shots (op=reorderShots with the full new order, e.g. [2,0,1]), " +
     "or turn continuous shots on/off (op=setContinuity with continuity true/false) when the user says the shots " +
     "should flow as one unbroken take, or should be separate moments instead. " +
+    "When the user attaches an image from their Library and says it belongs to a shot, put it on that shot with " +
+    "op=setShotReferences, that shot's index, and useTurnImages=true — it becomes a reference photo for that " +
+    "shot's clip. useTurnImages=false takes every attached image off that shot again. Only a shot that @mentions " +
+    "a cast member can carry them, because a reference photo only rides along on a clip made straight from text. " +
     "$0: this only rewrites the draft storyboard; it never generates or re-generates any image/video.",
   parameters: editStoryboardInput,
   execute: executeEditStoryboard,

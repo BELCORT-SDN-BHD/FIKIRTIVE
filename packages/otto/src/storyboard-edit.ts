@@ -18,6 +18,15 @@ export interface ShotPromptPatch {
   firstFramePrompt?: string;
   videoPrompt?: string;
   durationSeconds?: number;
+  /**
+   * creation §5 :178 —— 这一镜挂上的 Library 图(`Generation.id`,已由写入侧按 ownerId 解析)。
+   *
+   * 走**同一个** patch 的理由是承重的:换掉挂图 = 换掉这一镜真会送进引擎的材料,与改一句
+   * videoPrompt 是同一类事。走同一条路,它就自动继承了那条路上已经付过学费的两件事 ——
+   * 陈旧级联(下面 `editStaleness`:片子过期)与在途闸(`inFlightPointerBlock`:付过钱还在跑
+   * 的作业不许被编辑变成孤儿)。另开一条路 = 那两件事各要再实现一遍,而漏掉任何一件都是钱。
+   */
+  referenceGenerationIds?: string[];
 }
 
 export interface NewShotInput {
@@ -58,13 +67,23 @@ export interface EditStaleness {
  * 保存也会作废一条已付费的片子。现在它同样只在**真的**有东西变了时才过期。
  */
 export function editStaleness(
-  shot: Pick<Shot, "firstFramePrompt" | "videoPrompt" | "durationSeconds">,
+  shot: Pick<Shot, "firstFramePrompt" | "videoPrompt" | "durationSeconds" | "referenceGenerationIds">,
   patch: ShotPromptPatch,
 ): EditStaleness {
   const frame = patch.firstFramePrompt !== undefined && patch.firstFramePrompt !== shot.firstFramePrompt;
   const videoText = patch.videoPrompt !== undefined && patch.videoPrompt !== shot.videoPrompt;
   const duration = patch.durationSeconds !== undefined && patch.durationSeconds !== shot.durationSeconds;
-  return { frame, video: frame || videoText || duration }; // 帧过期 ⇒ 视频过期(视频以首帧为源)
+  // creation §5 :178 —— 挂图**真的换了**才算数(同 #782 r17 那一条:判「变了没有」,不判
+  // 「传了没有」)。次序也算变化:它就是引擎收到参考图的次序,重排一次 = 另一份材料。
+  const refs =
+    patch.referenceGenerationIds !== undefined &&
+    !sameIds(patch.referenceGenerationIds, shot.referenceGenerationIds ?? []);
+  return { frame, video: frame || videoText || duration || refs }; // 帧过期 ⇒ 视频过期(视频以首帧为源)
+}
+
+/** 两串 id 逐位相同吗(次序算数 —— 它就是引擎收到参考图的次序)。 */
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
 /** 改某镜头文字/时长 + 陈旧级联(视频以首帧为源)。越界 index → 原样返回。
@@ -89,11 +108,17 @@ export function applyEditShotPrompt(
       delete rest.firstFrameCardId;
       delete rest.firstFrameGenerationId;
     }
+    // creation §5 :178 —— 挂图清空就把这一格**整个删掉**(与 continuity / firstFramePrompt
+    // 同一条「只在有内容时出现」的纪律):没挂图的镜头与这条修改之前逐字节同形。
+    if (patch.referenceGenerationIds !== undefined) delete rest.referenceGenerationIds;
     return {
       ...rest,
       ...(patch.firstFramePrompt !== undefined ? { firstFramePrompt: patch.firstFramePrompt } : {}),
       ...(patch.videoPrompt !== undefined ? { videoPrompt: patch.videoPrompt } : {}),
       ...(patch.durationSeconds !== undefined ? { durationSeconds: patch.durationSeconds } : {}),
+      ...(patch.referenceGenerationIds?.length
+        ? { referenceGenerationIds: [...patch.referenceGenerationIds] }
+        : {}),
     };
   });
   return { ...payload, shots: restamp(shots) };

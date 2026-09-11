@@ -363,6 +363,45 @@ describe("startGen", () => {
     expect(data.imageOptions?.referenceGenerationIds).toEqual(["gen-a", "gen-b"]);
   });
 
+  /**
+   * creation §5 :162⑤ / :178 —— **视频那一格**也真的接上了守卫。
+   *
+   * Creation③ 判官留下的 P2:图片那一格有测试钉着(上面那条),视频那一格
+   * (`videoOptions.referenceGenerationIds`)只有代码,没有测试 —— 而分镜的「挂 Library 图」
+   * (§5 :178)正是从这一格上路的。把 `gen-actions.ts` 里 `videoOptions?.referenceGenerationIds ??`
+   * 那一段删掉,这条必须变红:守卫会收到 undefined,而落库那一格照旧写着几张挂图 ——
+   * 「说的」与「查的」分家,商品图删掉之后那一趟走到 worker 才 fail closed,钱先预扣、事后退。
+   */
+  it("creation §5 :162⑤ / CREATE-A10: 视频侧挂上路的原件也在花钱之前进守卫", async () => {
+    db.chatMessageFindFirst.mockResolvedValue({
+      threadId: "thread-1",
+      payload: { estimatedCredits: 11, referenceGenerationIds: ["gen-cast", "gen-product"] },
+      thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+    });
+
+    const result = await startCoworkGen({
+      projectId: "p1",
+      threadId: "thread-1",
+      prompt: "she holds the cup",
+      entityIds: [],
+      count: 1,
+      kind: "video",
+      model: "seedance-2-mini",
+      durationSeconds: 5,
+      resolution: "720p",
+      idempotencyKey: "cowork:card-1",
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(mockCheckCast).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "video",
+      referenceGenerationIds: ["gen-cast", "gen-product"],
+    }));
+    // 落库那一格与守卫看的是同一份(卡上的快照 → videoOptions → worker)。
+    const data = db.genJobCreate.mock.calls[0]![0].data as { videoOptions?: { referenceGenerationIds?: string[] } };
+    expect(data.videoOptions?.referenceGenerationIds).toEqual(["gen-cast", "gen-product"]);
+  });
+
   it("creation §5 :162⑤: 没挂原件的那一趟一格没动(守卫收到 undefined)", async () => {
     await startCoworkGen({
       projectId: "p1",
