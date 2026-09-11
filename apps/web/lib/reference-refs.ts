@@ -188,18 +188,26 @@ async function resolveMediaRefs(ownerId: string, refs: ReferenceRef[]): Promise<
   // An upload's canonical object is its Asset (contract §4), but the Library panel opens on a
   // Generation — so an upload ref is resolved through the row that ingested it.
   //
-  // Both source filters are spelled in Prisma's explicit operator form (`{ equals }` / `{ not }`)
-  // rather than the bare `source: "UPLOAD"` shorthand. That shorthand is the exact shape of a
-  // `create({ data: … })` upload WRITE, and the MONEY-A9 disclosure census (`lib/__tests__/
-  // understanding-disclosure.test.ts`) reads it as one — which would enrol this read-only module,
-  // and every function it exports, into the list of billable upload entry points. The operator
-  // form is identical to Prisma and can never be mistaken for a write payload.
+  // ── creation §5 :178 判官 r1 P1-① —— `generation:` 认**任何一行**这家店的 Generation ──────
+  // 上一版这一支明写着「source 不是 UPLOAD」,理由是「上传件的规范身份是 Asset」。那句话说的
+  // 是**该发哪一种 wire**(composer 发上传件一律发 `upload:`),不是**读得出哪一行**;把它写
+  // 进 where 之后,这个解析器就认不得自己的产物了 —— 它把 `upload:` 解析成一行 Generation 的
+  // id(下面 `media.generationId`),而那个 id 再以 `generation:` 的形状回来时读不出来。分镜卡
+  // 的挂图清单正是这样往返的(整份新清单里,已挂的那几张只有 id),于是「挂过一张上传图之后
+  // 这一镜的清单就改不动了」,而商家读到的是一句关于他自己那个文件的假话。
+  // 归属与格式两道判据一格没动:where 照旧带 ownerId,族别照旧按行上的扩展名判。
+  //
+  // upload 那一支的 source 过滤仍在,并且仍然写成 Prisma 的显式操作符形式(`{ equals }`)而不是
+  // `source: "UPLOAD"` 那种简写。简写正是 `create({ data: … })` 一次上传 WRITE 的形状,而 MONEY-A9
+  // 的披露普查(`lib/__tests__/understanding-disclosure.test.ts`)会照那个形状把这个只读模块、
+  // 连同它导出的每一个函数,一起编进「会花钱的上传入口」名单。操作符形式与 Prisma 等价,不可能
+  // 被误读成写入负载。
   const rows = await prisma.generation.findMany({
     where: {
       ownerId,
       deletedAt: null,
       OR: [
-        ...(generationIds.length ? [{ id: { in: generationIds }, source: { not: "UPLOAD" as const } }] : []),
+        ...(generationIds.length ? [{ id: { in: generationIds } }] : []),
         ...(assetIds.length ? [{ assetId: { in: assetIds }, source: { equals: "UPLOAD" as const } }] : []),
       ],
     },
@@ -216,7 +224,8 @@ async function resolveMediaRefs(ownerId: string, refs: ReferenceRef[]): Promise<
       asset: { select: { originalFilename: true, ext: true } },
     },
   });
-  const generationById = new Map(rows.filter((row) => row.source !== "UPLOAD").map((row) => [row.id, row]));
+  // `generation:` 按行 id 认人(上传件那一行也在内,见上面那段)。`upload:` 仍然只认 UPLOAD 行。
+  const generationById = new Map(rows.map((row) => [row.id, row]));
   const uploadByAssetId = new Map<string, (typeof rows)[number]>();
   // Re-uploading the same bytes reuses one Asset and writes a second Generation; the newest row
   // wins so the link opens the panel the merchant would find in Library.

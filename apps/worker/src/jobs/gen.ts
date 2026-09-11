@@ -281,6 +281,106 @@ async function upscaledProductReferenceDataUrl(
   return `data:image/${format};base64,${Buffer.from(out).toString("base64")}`;
 }
 
+/**
+ * FSE-001 残留①(规格 §5 :162①,Founder 2026-09-10 裁进 v0.1.1)—— **出图处量真字节的宽高。**
+ *
+ * ── 它修的是什么 ─────────────────────────────────────────────────────────────────
+ * 本站生成的资产从前 `Asset.width/height` 恒为 null:ingest(唯一量尺寸的地方)只派给
+ * `source: "UPLOAD"` 的资产。于是付费前那道参考图尺寸闸(`referenceUpscalePlan`)对每一张
+ * 本站生成的图都读到 `unknown` ⇒ 放行。放行在当时是对的(把「不知道」读成「太小」会拒掉
+ * 这条正路最主要的输入),但它是**猜**:小图照样进供应商、照样被建任务前弹回、照样退款,
+ * 而商家读到的只是一句「没成功」。量出来之后,闸对本站生成的资产从此有真尺寸,那一档由
+ * 「猜着放行」变成「知道了再决定」。
+ *
+ * ── 为什么是读文件头,不是 sharp、也不是 ffprobe ──────────────────────────────────
+ * ① **不许是 sharp**:CREATE-A10 那条围栏把对它的调用钉死在 `upscaledProductReferenceDataUrl`
+ *    一个函数体内(`apps/web/lib/__tests__/actor-library-seed.test.ts`;那条围栏按字面匹配,
+ *    所以这段说明里也不许出现那个调用的写法)。那一格是 Founder
+ *    2026-09-09 为「无人像商品照放大」开的**一格**,不是一扇门 —— 量个尺寸不该借它。
+ * ② **不该是 ffprobe**:ingest 那条路量的是**已经落盘、已经交付**的上传文件,慢一点没人
+ *    等;这里站在**已经付过钱**的字节和商家的 DONE 之间,每多一次进程外调用就是给每一次
+ *    交付加一次可能卡住的等待(实证:把 ffprobe 放进这条路,`gen-last-frame.test.ts` 那条
+ *    「免费末帧不许拖着 DONE」的 8 秒预算当场红)。
+ * ③ **数字是同一个**:PNG/JPEG/WebP 的宽高就写在文件头里,ffprobe 读的也是同一处。
+ *    `gen-output-dimensions.test.ts` 拿同一串字节对着 ingest 的 `probeFile` 逐张比,两者
+ *    不一致当场红 —— 「同一套尺子」是被证明的,不是被声明的(那一条在装不到 ffprobe 的
+ *    机器上跳过,CI runner 就是;「量得对不对」另有一条无条件的断言守着)。
+ *
+ * 认不出的格式(今天:视频那条路的 mp4)一律回 `null`,落库照旧写 null —— 那正是这条修改
+ * 之前的行为,一格没退。视频帧宽高**未做**,已在规格 §5 登记。
+ *
+ * 纯函数:不碰像素、不落盘、不起进程、不抛。
+ */
+export function measuredOutputSize(bytes: Uint8Array): { width: number; height: number } | null {
+  try {
+    const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const size = pngSize(b) ?? jpegSize(b) ?? webpSize(b);
+    if (!size) return null;
+    if (!(size.width > 0) || !(size.height > 0)) return null;
+    return size;
+  } catch {
+    // 认不出就是认不出 —— 量尺寸永远没有否决交付的权力。
+    return null;
+  }
+}
+
+/** PNG:签名 8 字节 + IHDR,宽高是紧接其后的两个 big-endian uint32。 */
+function pngSize(b: Buffer): { width: number; height: number } | null {
+  if (b.length < 24) return null;
+  if (b.readUInt32BE(0) !== 0x89504e47 || b.readUInt32BE(4) !== 0x0d0a1a0a) return null;
+  if (b.toString("latin1", 12, 16) !== "IHDR") return null;
+  return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+}
+
+/**
+ * JPEG:没有固定偏移,宽高住在 SOFn 段里,所以按段长一段一段跳过去找。
+ * 只认真正的 SOFn(0xC0–0xCF 里去掉 C4/C8/CC 三个不是帧头的),别的段一律按长度跳过。
+ */
+function jpegSize(b: Buffer): { width: number; height: number } | null {
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
+  let i = 2;
+  while (i + 3 < b.length) {
+    if (b[i] !== 0xff) return null; // 段边界对不上 = 这不是一份读得懂的 JPEG
+    const marker = b[i + 1]!;
+    if (marker === 0xff) { i++; continue; } // 填充字节
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
+    if (marker === 0xd9 || marker === 0xda) return null; // 到了图像数据还没见过 SOFn
+    const len = b.readUInt16BE(i + 2);
+    if (len < 2) return null;
+    const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isSof) {
+      if (i + 9 > b.length) return null;
+      return { width: b.readUInt16BE(i + 7), height: b.readUInt16BE(i + 5) };
+    }
+    i += 2 + len;
+  }
+  return null;
+}
+
+/** WebP:RIFF 容器里三种块头各写各的宽高(VP8 有损 / VP8L 无损 / VP8X 扩展)。 */
+function webpSize(b: Buffer): { width: number; height: number } | null {
+  if (b.length < 30) return null;
+  if (b.toString("latin1", 0, 4) !== "RIFF" || b.toString("latin1", 8, 12) !== "WEBP") return null;
+  const chunk = b.toString("latin1", 12, 16);
+  if (chunk === "VP8 ") {
+    // 关键帧起始码 0x9d012a 之后是两个 14 位的宽高(小端)。
+    if (b[23] !== 0x9d || b[24] !== 0x01 || b[25] !== 0x2a) return null;
+    return { width: b.readUInt16LE(26) & 0x3fff, height: b.readUInt16LE(28) & 0x3fff };
+  }
+  if (chunk === "VP8L") {
+    if (b[20] !== 0x2f) return null;
+    const bits = b.readUInt32LE(21);
+    return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+  }
+  if (chunk === "VP8X") {
+    // 24 位小端,存的是「宽高各减一」。
+    const w = b[24]! | (b[25]! << 8) | (b[26]! << 16);
+    const h = b[27]! | (b[28]! << 8) | (b[29]! << 16);
+    return { width: w + 1, height: h + 1 };
+  }
+  return null;
+}
+
 function jobBilledUnits(outputs: { receipt?: GenerationReceipt }[]): number | null {
   if (outputs.length === 0) return null;
   let total = 0;
@@ -1750,21 +1850,31 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // 找回来。但它**不进**下面这笔事务:落库在事务提交之后单独补写
       // (recordGenerationReceipts),所以记账字段永远没有否决交付与结算的权力。声明提到循环
       // 外,只是为了提交后还读得到它;每次重试照旧从零重建(内容寻址 put 幂等,哈希不变)。
-      let stored: { contentHash: string; ext: string; size: number; receipt?: GenerationReceipt }[] = [];
+      let stored: {
+        contentHash: string; ext: string; size: number; receipt?: GenerationReceipt;
+        dims?: { width: number; height: number };
+      }[] = [];
       for (let attempt = 1; ; attempt++) {
         try {
           stored = [];
           for (const img of outputs) {
             const { contentHash } = await storage.put(job.ownerId, img.bytes, img.ext);
-            stored.push({ contentHash, ext: img.ext, size: img.bytes.byteLength, ...(img.receipt ? { receipt: img.receipt } : {}) });
+            // 规格 §5 :162① —— 宽高在这里量,趁字节还在手上(与 `storage.put` 同一趟)。
+            // `measuredOutputSize` 永不抛:量不到就是 `undefined`,落库照旧写 null。
+            const dims = measuredOutputSize(img.bytes);
+            stored.push({ contentHash, ext: img.ext, size: img.bytes.byteLength, ...(img.receipt ? { receipt: img.receipt } : {}), ...(dims ? { dims } : {}) });
           }
           generationIds = await prisma.$transaction(async (tx) => {
             const ids: string[] = [];
             for (const s of stored) {
               const asset = await tx.asset.upsert({
                 where: { ownerId_contentHash: { ownerId: job.ownerId, contentHash: s.contentHash } },
-                update: { deletedAt: null },
-                create: { id: newId(), ownerId: job.ownerId, contentHash: s.contentHash, ext: s.ext, mime: mimeForExt(s.ext), sizeBytes: BigInt(s.size), originalFilename: `gen-${job.id}.${s.ext}`, source: "GENERATED" },
+                // 规格 §5 :162① —— 量到了才写。量不到就一格不碰:内容寻址的 upsert 会撞上
+                // **同一串字节**的既有行(重试、同哈希再生成),把一个已经量好的宽高覆盖成
+                // null 是把信息弄丢,而这一列正是尺寸闸的输入。反过来,量到了就顺手补上 ——
+                // 这条修改之前落库的那些 null 行,下一次撞到同一串字节时自己补齐。
+                update: { deletedAt: null, ...(s.dims ?? {}) },
+                create: { id: newId(), ownerId: job.ownerId, contentHash: s.contentHash, ext: s.ext, mime: mimeForExt(s.ext), sizeBytes: BigInt(s.size), originalFilename: `gen-${job.id}.${s.ext}`, source: "GENERATED", ...(s.dims ?? {}) },
               });
               const gen = await tx.generation.create({
                 data: {

@@ -223,3 +223,57 @@ describe("#782 r17 applyEditShotPrompt —— 级联读的就是那份答案", (
     expect(r.shots[0]).toEqual(b.shots[0]);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// creation §5 :178 —— 挂图走的是**同一个** patch,所以它自动继承陈旧级联
+// ═══════════════════════════════════════════════════════════════════════════
+describe("creation §5 :178 —— 一镜的挂图换了,这一镜的片子就过期", () => {
+  it("creation §5 :178 / CREATE-A2: 挂图真的换了 ⇒ 视频过期(首帧一格不动)", () => {
+    const p = base();
+    p.shots[0]!.referenceGenerationIds = ["lib-1"];
+    expect(editStaleness(p.shots[0]!, { referenceGenerationIds: ["lib-2"] })).toEqual({
+      frame: false,
+      video: true,
+    });
+    const next = applyEditShotPrompt(p, 0, { referenceGenerationIds: ["lib-2"] });
+    expect(next.shots[0]!.referenceGenerationIds).toEqual(["lib-2"]);
+    // 已付费的首帧两键保住;视频两键被清掉(那条片子已经不是这一镜会做出来的东西)。
+    expect(next.shots[0]!.firstFrameCardId).toBe("fc0");
+    expect(next.shots[0]!.firstFrameGenerationId).toBe("gen0");
+    expect(next.shots[0]!.videoCardId).toBeUndefined();
+    expect(next.shots[0]!.videoGenerationId).toBeUndefined();
+  });
+
+  it("creation §5 :178 / CREATE-A2: 原样再发一次同一组挂图 ⇒ 什么都没过期(已付费的片子保住)", () => {
+    const p = base();
+    p.shots[0]!.referenceGenerationIds = ["lib-1", "lib-2"];
+    expect(editStaleness(p.shots[0]!, { referenceGenerationIds: ["lib-1", "lib-2"] })).toEqual({
+      frame: false,
+      video: false,
+    });
+    const next = applyEditShotPrompt(p, 0, { referenceGenerationIds: ["lib-1", "lib-2"] });
+    expect(next.shots[0]!.videoCardId).toBe("vc0");
+    expect(next.shots[0]!.videoGenerationId).toBe("vg0");
+  });
+
+  it("creation §5 :178 / CREATE-A2: 只是重排次序也算换了 —— 那就是引擎收到参考图的次序", () => {
+    const p = base();
+    p.shots[0]!.referenceGenerationIds = ["lib-1", "lib-2"];
+    expect(editStaleness(p.shots[0]!, { referenceGenerationIds: ["lib-2", "lib-1"] }).video).toBe(true);
+  });
+
+  it("creation §5 :178: 清空挂图 ⇒ 这一格整个不出现(没挂图的镜头与从前逐字节同形)", () => {
+    const p = base();
+    p.shots[0]!.referenceGenerationIds = ["lib-1"];
+    const next = applyEditShotPrompt(p, 0, { referenceGenerationIds: [] });
+    expect("referenceGenerationIds" in next.shots[0]!).toBe(false);
+    expect(next.shots[0]!.videoCardId).toBeUndefined(); // 清空也是一次真实的更换
+  });
+
+  it("creation §5 :178: 不传这个键的编辑一格不动它(改一句视频文字不该碰挂图)", () => {
+    const p = base();
+    p.shots[0]!.referenceGenerationIds = ["lib-1"];
+    const next = applyEditShotPrompt(p, 0, { videoPrompt: "another line" });
+    expect(next.shots[0]!.referenceGenerationIds).toEqual(["lib-1"]);
+  });
+});
