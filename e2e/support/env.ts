@@ -91,6 +91,13 @@ export function appEnv(): Record<string, string> {
   return {
     PORT: String(E2E_PORT),
     DATABASE_URL: e2eDatabaseUrl(),
+    // 说出来的空值，不是遗漏。Playwright 起 webServer 时把这张表**叠在 process.env 上面**
+    // （`playwright/lib/runner/index.js`：`{...DEFAULT_ENVIRONMENT_VARIABLES, ...process.env,
+    // ...options.env}`），而 apps/web 那侧优先用池化地址（`DATABASE_URL_POOLED || DATABASE_URL`，
+    // `packages/db/src/client.ts:35`）。开发机 shell 里留着的一个池化地址会就这样越过上面这行，
+    // 让跑道上那个 `next start` 连到别的库去。空字符串在消费方的 `||` 下直接落回 DATABASE_URL，
+    // 也让 `pointsAtThrowawayTestDatabase`（Google 门替身的武装前提）看到的地址只有这一个。
+    DATABASE_URL_POOLED: "",
     BETTER_AUTH_SECRET: E2E_AUTH_SECRET,
     BETTER_AUTH_URL: E2E_BASE_URL,
     NEXT_PUBLIC_BETTER_AUTH_URL: E2E_BASE_URL,
@@ -127,6 +134,24 @@ export function appEnv(): Record<string, string> {
     // same pair would be a silent outage. The fence is a default, not a lock — whoever opens the
     // hatch owns that.
     AUTH_EMAIL_TRANSPORT: "stub",
+    // SIGNIN-A12 —— 第二扇门也得在跑道上存在。
+    //
+    // 这两个凭据是**假的**，而且刻意是假的：`googleSignInConfigured()`（#681）是登录页决定要不
+    // 要画「Continue with Google」那颗按钮的唯一依据，也是 Better Auth 决定要不要注册 google
+    // 供应商的唯一依据。没有它们，这个产品在跑道上只有一扇门，A12 的后半段无从走起。值本身
+    // 从来不离开这台机器：真 Google 那一段网络由下面那个替身整段换掉，这两个字符串因此只会
+    // 进一个永远不会被发出的 token 请求体。它们不在 OFF_MACHINE_CREDENTIAL_NAMES 里不是漏，
+    // 是因为「打不出这台机器」的事实由替身保证，而不是由「没有凭据」保证。
+    GOOGLE_CLIENT_ID: "fikirtive-e2e-google-client-id-not-a-real-app",
+    GOOGLE_CLIENT_SECRET: "fikirtive-e2e-google-client-secret-not-a-real-app",
+    // 替身的武装开关（`packages/core/src/e2e-google-door-stub.ts`）。名字刻意不是
+    // `BETA_*` / `*_ENABLED`：它不是一个等着上线的功能开关，而是一条只有测试跑道才存在的路，
+    // 生产上任何值都被开机检查拒绝，而且**不可降级**（`packages/core/src/env-contract.ts` 的
+    // productionValues 空数组 + `warnImmune`：`FIKIRTIVE_ENV_CONTRACT=warn` 也降不了它）。
+    // 这个进程起得来，靠的不是逃生门，是它指着一个 `_test` 库（`e2eDatabaseUrl()` 保证）——
+    // 契约里那条豁免 `pointsAtThrowawayTestDatabase` 认的正是这个事实。
+    // 它替掉的只有 Google 自己那个签名，我们的每一道闸照跑 —— 逐条理由在那个模块头。
+    E2E_GOOGLE_DOOR_STUB: "1",
     NEXT_TELEMETRY_DISABLED: "1",
     // GENERATION_PROVIDER is deliberately absent — see OFF_MACHINE_CREDENTIAL_NAMES above.
   };
