@@ -308,7 +308,10 @@ describe("Product link and image feedback", () => {
     const webRoot = path.resolve(__dirname, "../..");
     const memory = fs.readFileSync(path.join(webRoot, "components/otto/OttoMemory.tsx"), "utf8");
 
-    expect(memory).toContain("return saveAndRefreshBrandRecord({ id: rec.id, kind: \"product\", data });");
+    // 票 #1322:换/清封面现在只交主图那一格(`identity`),名字不递 —— 但仍然走同一条
+    // 认结果的父级 helper,失败照旧能把那句话说给商家听(这条用例上面几格验的就是它)。
+    expect(memory).toContain("saveAndRefreshBrandRecord({");
+    expect(memory).toContain("identity: { imageAssetId: assetId },");
     expect(memory).toContain("<ProductImagePickerDialog");
     expect(memory).toContain("onSetImage={(product, assetId) => prodSetImage(product, assetId)}");
   });

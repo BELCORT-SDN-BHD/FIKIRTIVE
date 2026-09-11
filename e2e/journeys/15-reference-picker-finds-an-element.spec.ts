@@ -74,7 +74,11 @@ test("FRONT-A10 — @ in Otto finds this workspace's own element and the keyboar
   await composer.pressSequentially("Pandan");
   const row = menu.getByRole("option", { name: new RegExp(elementName) });
   await expect(row).toBeVisible();
-  await expect(row).toContainText("Product · Otto IQ");
+  // PRODID-A2(规格 docs/specs/brand-product-identity.md §1.4 末句;票 #1322):产品那一行的
+  // 来源标签由 `Product · Otto IQ` 改为 `Product` —— 产品的身份就是 Library 那张卡,
+  // Otto IQ 上挂的是它的价格卖点,第二段既不指向来源也不指向可去的地方。
+  await expect(row).toContainText("Product");
+  await expect(row).not.toContainText("Otto IQ");
 
   // Keyboard only, from here to the token.
   await composer.press("ArrowDown");
