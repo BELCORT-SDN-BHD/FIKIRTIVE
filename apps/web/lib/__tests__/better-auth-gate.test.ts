@@ -75,9 +75,12 @@ vi.mock("@sentry/node", async (importOriginal) => ({
 // ---------------------------------------------------------------------------
 // Import the REAL gate functions AFTER mocks are in place.
 // ---------------------------------------------------------------------------
-const { assertSignInDoor, assertSignInDoorForUserId, assertSessionSurvivesRevoke } = await import(
-  "@/lib/better-auth/gate"
-);
+const {
+  assertSignInDoor,
+  assertSignInDoorForUserId,
+  assertSessionSurvivesRevoke,
+  discardSessionsOfFailedProvisioning,
+} = await import("@/lib/better-auth/gate");
 const { SIGN_IN_REFUSED_REVOKED } = await import("@/lib/better-auth/signin-refusal");
 
 const FOUNDER_EMAIL = "founder@fikirtive.test";
@@ -443,5 +446,131 @@ describe("assertSessionSurvivesRevoke —— 两条 fail-closed 分支", () => {
     expect((err as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
     expect(mockSessionDeleteMany).toHaveBeenCalledWith({ where: { id: SESSION_ID } });
     expect(mockAllowedEmailRawStatus).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SIGNIN-A7 —— 删会话这件事的**故障注入**（第 8 轮，判官 r7 P1 ①／P3 ①）。
+ *
+ * 判官这一轮把上面那条「删不掉也照样拒绝」往下多推了一层，问出两个真的洞：
+ *
+ *   ① **告警本身抛错**时，抛出去的错被换了一个。`Sentry.captureMessage` 不是纯函数：transport
+ *      没初始化、DSN 配错、序列化 `extra` 时炸掉，它都会抛。上一版那一句直接写在 `.catch()` 的
+ *      回调里，于是告警的错顺着 `deleteSessionsOrAlert` 冒出去 —— 首登那条路上
+ *      （`server.ts` 的 `catch (e) { await discardSessionsOfFailedProvisioning(u.id); throw e; }`）
+ *      它盖掉的正是那个 `RevokedDuringProvisioning`：商家仍然进不来，但日志、审计和上层拿到的
+ *      是「sentry transport down」，那次撤销为什么发生再也看不出来。二次确认那一侧同理：抛出去
+ *      的不再是带 `sign_in_revoked` 的 APIError。所以告警从今天起**包一层 try/catch**：它是个
+ *      通知，不是控制流。
+ *   ② **一次都不重试**。删会话失败最常见的形状是 P2034（死锁）与连接被掐断这类**瞬时**失败 ——
+ *      而这条路上的代价不对称：重试一次只多一条 DELETE，不重试留下的是一张属于已撤销地址的活
+ *      会话，最长 7 天。所以现在删两次才告警；第一次就成功的那条正常路一次都不多删。
+ *
+ * ③（P3）告警的另一处 tag —— 首登兜底 `provisioning-aborted-session-sweep` —— 此前一条测试都
+ *    没有。照上面 `session-survives-revoke` 那两条同款钉住。
+ */
+describe("deleteSessionsOrAlert —— 故障注入：告警不许换掉原来的错，删失败先重试一次", () => {
+  const SESSION_ID = "bas_injected";
+  const USER_ID = "ba-injected@fikirtive.test";
+  /** 删会话失败的那个形状（Prisma 的已知错误；名字与 code 是告警里唯一放行的两个细节）。 */
+  const deleteFailure = Object.assign(new Error("deadlock detected"), {
+    name: "PrismaClientKnownRequestError",
+    code: "P2034",
+  });
+
+  beforeEach(() => {
+    withAccount("injected@fikirtive.test", USER_ID);
+    mockAllowedEmailRawStatus.mockResolvedValue([{ status: "revoked" }]);
+  });
+
+  /** (a) 二次确认那一侧：告警炸了，抛出去的仍然是门的那句拒绝。 */
+  it("SIGNIN-A7 —— 告警自己抛错时，二次确认抛的仍是 sign_in_revoked 那个 APIError", async () => {
+    mockSessionDeleteMany.mockRejectedValue(deleteFailure);
+    captureMessage.mockImplementation(() => {
+      throw new Error("sentry transport down");
+    });
+
+    const err = await assertSessionSurvivesRevoke(SESSION_ID, USER_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect((err as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
+    expect((err as Error).message).not.toContain("sentry transport down");
+  });
+
+  /** (b) 首登兜底那一侧：告警炸了，调用者手上那个原始拒绝**原样**抛出去（server.ts 的形状）。 */
+  it("SIGNIN-A7 —— 告警自己抛错时，首登兜底不改写调用者的原始错误", async () => {
+    mockSessionDeleteMany.mockRejectedValue(deleteFailure);
+    captureMessage.mockImplementation(() => {
+      throw new Error("sentry transport down");
+    });
+
+    // `server.ts` 的 `user.create.after` 逐字就是这个形状：收敛抛错 → 先把会话删光 → 原样重抛。
+    const original = Object.assign(new Error("provisioning refused: address revoked during signup"), {
+      name: "RevokedDuringProvisioning",
+    });
+    const thrown = await (async () => {
+      try {
+        throw original;
+      } catch (e) {
+        await discardSessionsOfFailedProvisioning(USER_ID);
+        throw e;
+      }
+    })().catch((e: unknown) => e);
+
+    expect(thrown).toBe(original);
+    expect((thrown as Error).name).toBe("RevokedDuringProvisioning");
+  });
+
+  /** (c) 瞬时失败：第一次删不掉就再删一次，成了就当没事发生 —— 一条告警都不发。 */
+  it("SIGNIN-A7 —— 删会话第一次失败、第二次成功：不留会话，也不发告警", async () => {
+    mockSessionDeleteMany.mockRejectedValueOnce(deleteFailure).mockResolvedValue({ count: 1 });
+
+    const err = await assertSessionSurvivesRevoke(SESSION_ID, USER_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect(mockSessionDeleteMany).toHaveBeenCalledTimes(2);
+    expect(mockSessionDeleteMany).toHaveBeenNthCalledWith(2, { where: { id: SESSION_ID } });
+    expect(captureMessage).not.toHaveBeenCalled();
+  });
+
+  /** (d) 两次都失败才告警，而且只告警一次（不是每次重试各发一条）。 */
+  it("SIGNIN-A7 —— 删会话两次都失败：告警恰好一条", async () => {
+    mockSessionDeleteMany.mockRejectedValue(deleteFailure);
+
+    await expect(assertSessionSurvivesRevoke(SESSION_ID, USER_ID)).rejects.toBeInstanceOf(APIError);
+    expect(mockSessionDeleteMany).toHaveBeenCalledTimes(2);
+    expect(captureMessage).toHaveBeenCalledTimes(1);
+  });
+
+  /** (e) 正常路一次就删掉：不许多删一次（多的那一次是一条没有必要的 DELETE）。 */
+  it("SIGNIN-A7 —— 删得掉的正常路只删一次", async () => {
+    await expect(assertSessionSurvivesRevoke(SESSION_ID, USER_ID)).rejects.toBeInstanceOf(APIError);
+    expect(mockSessionDeleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  /** (f) P3 —— 首登兜底那一处 tag/message，照 `session-survives-revoke` 那两条同款钉住。 */
+  it("SIGNIN-A7 —— 首登兜底删不掉时：按 userId 删，发一条 provisioning-aborted-session-sweep 告警", async () => {
+    mockSessionDeleteMany.mockRejectedValue(deleteFailure);
+
+    await expect(discardSessionsOfFailedProvisioning(USER_ID)).resolves.toBeUndefined();
+    expect(mockSessionDeleteMany).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+
+    expect(captureMessage).toHaveBeenCalledTimes(1);
+    const [text, options] = captureMessage.mock.calls[0] as [
+      string,
+      { level?: string; tags?: Record<string, string>; extra?: Record<string, unknown> },
+    ];
+    expect(options.level).toBe("error");
+    expect(options.tags).toMatchObject({ area: "auth", gate: "provisioning-aborted-session-sweep" });
+    expect(options.extra).toEqual({ errorName: "PrismaClientKnownRequestError", errorCode: "P2034" });
+    // #575 —— userId 与 Prisma 那句会把调用参数渲染进去的原始消息都不许进告警文本。
+    const payload = JSON.stringify([text, options]);
+    expect(payload).not.toContain(USER_ID);
+    expect(payload).not.toContain("deadlock detected");
+  });
+
+  /** (g) 首登兜底的正常路：删得掉就一条告警都不发。 */
+  it("SIGNIN-A7 —— 首登兜底删得掉时一条告警都不发", async () => {
+    await expect(discardSessionsOfFailedProvisioning(USER_ID)).resolves.toBeUndefined();
+    expect(mockSessionDeleteMany).toHaveBeenCalledTimes(1);
+    expect(captureMessage).not.toHaveBeenCalled();
   });
 });

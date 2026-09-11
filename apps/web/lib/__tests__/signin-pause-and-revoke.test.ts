@@ -24,6 +24,55 @@ import { APIError } from "better-auth/api";
 type SentEmail = { to: string; subject: string; text?: string; html?: string; devPreview?: string };
 const inbox: SentEmail[] = [];
 
+/**
+ * 每个请求都过的那道再断言（`requireSession` → `allowed`）要读 cookie，而 `next/headers` 只在
+ * Next 自己的请求上下文里有。这里把它换成一个测试能填值的信箱：填进去的仍然是**真码门发出来
+ * 的那张 cookie**，不是伪造的 session。
+ */
+let requestCookie = "";
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers(requestCookie ? { cookie: requestCookie } : {}),
+}));
+
+/**
+ * 首登那条竞态用例的两个**探针**（第 8 轮，判官 r7 P1 ②）。
+ *
+ * 判官指出上一版那条用例可能是假阳性：它只断言「会话零行、用户行没留下会话」，而**没有击中
+ * 目标窗口**的时序（撤销在登录开始之前就提交了）同样能让每一条断言成立 —— 门在建用户之前就
+ * 拒绝，什么都没发生，用例照绿。所以现在用例必须自证击中了窗口：收敛真的抛了
+ * `RevokedDuringProvisioning`，而且首登兜底真的以那个 userId 被调用过。
+ *
+ * 两个探针都是**包一层**，不是替身：里面调的是原实现，只把「抛了什么」「以什么参数被调过」
+ * 记下来。行为一个字不改，所以它们不会把被测的那条路变成另一条路。
+ */
+const convergeThrew: string[] = [];
+vi.mock("@/lib/better-auth/converge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/better-auth/converge")>();
+  return {
+    ...actual,
+    convergeIdentity: async (input: Parameters<typeof actual.convergeIdentity>[0]) => {
+      try {
+        return await actual.convergeIdentity(input);
+      } catch (e) {
+        convergeThrew.push(e instanceof Error ? e.name : String(e));
+        throw e;
+      }
+    },
+  };
+});
+
+const discardedUserIds: string[] = [];
+vi.mock("@/lib/better-auth/gate", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/better-auth/gate")>();
+  return {
+    ...actual,
+    discardSessionsOfFailedProvisioning: async (userId: string) => {
+      discardedUserIds.push(userId);
+      return actual.discardSessionsOfFailedProvisioning(userId);
+    },
+  };
+});
+
 vi.mock("@/lib/email", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/email")>();
   return {
@@ -46,6 +95,7 @@ const { isAllowedEmail } = await import("@/lib/allowlist");
 const { revokeEmailAccess } = await import("@/lib/signup-gate");
 const { assertSignInDoorForUserId, assertSessionSurvivesRevoke } = await import("@/lib/better-auth/gate");
 const { SIGN_IN_REFUSED_REVOKED } = await import("@/lib/better-auth/signin-refusal");
+const { requireSession } = await import("@/lib/auth-guard");
 const {
   enqueueAuthEmail,
   authEmailQueueSettled,
@@ -176,6 +226,8 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  convergeThrew.length = 0;
+  discardedUserIds.length = 0;
   inbox.length = 0;
   delete process.env.SIGNUPS_PAUSED;
   process.env.AUTH_ALLOWED_EMAILS = "";
@@ -327,6 +379,63 @@ describe("SIGNIN-A7 —— 撤销一个自助进来的邮箱", () => {
     expect(await auth.api.getSession({ headers: new Headers({ cookie }) })).toBeNull();
     // ② 产品这一侧每个请求还会再问一次名单（requireSession / requireRole / requireOwner）。
     expect(await isAllowedEmail(merchant)).toBe(false);
+  });
+
+  /**
+   * SIGNIN-A7 —— **删失败留下的那张会话行是死的**（第 8 轮，判官 r7 P1 ①）。
+   *
+   * 判官这一轮的论点是「零残留才安全」：删会话那一步失败时，`ba_session` 里躺着一张属于已撤销
+   * 地址的会话行，所以那道确认没有真的 fail closed。这条用例把那个最坏结果**在真库上原样造出
+   * 来**，然后问它到底能换到什么 —— 答案决定上面那句话该怎么写。
+   *
+   * 造法（不是伪造一张 session，是把真的那一行原样放回去）：真码门登录 → 记下那一行的 id、
+   * token、到期时间 → 撤销（撤销自己那笔事务会把它删掉）→ 逐字重建同一行。这就是「`deleteMany`
+   * 失败、行没被删掉」在库里留下的东西，一个字节不差；那张 cookie 也还是登录时发出来的那张。
+   *
+   * 断言分两层，而要害在第二层：
+   *   ① better-auth 那一层**确实**还能把它读成一张会话（所以它不是一张坏行、不是「反正读不出
+   *      来」）；
+   *   ② 可是每个受保护的动作在做事之前都要再过一次 `requireSession` → `allowed` → `isAllowedEmail`
+   *      （`lib/allowlist.ts`：那一次读 `AllowedEmail` 当场按库判定，`revoked` 一律 false，env
+   *      名单也翻不了它），所以这张会话换不到任何一个动作。
+   *
+   * 结论写进 `gate.ts`、PR 描述与规格 §5：删失败留下的会话行**不可用**——每个请求都按库重查
+   * 撤销状态。所以那条路的口径是「残留惰性 ＋ 必定告警」，不是「零残留才安全」。它仍然是这条
+   * 路上最坏的结果（一张还能被 better-auth 读出来的行、一条要人处理的告警），但它不是一个
+   * 能进产品的活口。
+   */
+  it("SIGNIN-A7 —— 删失败留下的那张会话行是惰性的：每个请求按库重查撤销，照样拒", async () => {
+    const merchant = newAddress("leftover-session");
+    const cookie = await signInThroughCodeDoor(merchant);
+    const row = await prisma.betterAuthSession.findFirstOrThrow({ where: { user: { email: merchant } } });
+
+    // 先证明这条路本来是通的 —— 否则下面那个「拒」可能只是因为这条路压根没接上。
+    requestCookie = cookie;
+    expect(await requireSession()).toEqual({ email: merchant });
+
+    await revokeEmailAccess(merchant);
+    expect(await sessionsFor(merchant)).toBe(0);
+
+    // 「删不掉」那个最坏结果：把那一行逐字放回去。
+    await prisma.betterAuthSession.create({
+      data: {
+        id: row.id,
+        userId: row.userId,
+        token: row.token,
+        expiresAt: row.expiresAt,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        ipAddress: row.ipAddress,
+        userAgent: row.userAgent,
+      },
+    });
+    expect(await sessionsFor(merchant)).toBe(1);
+
+    // ① 这一行是真的活行：better-auth 拿那张 cookie 读得出来。
+    expect((await auth.api.getSession({ headers: new Headers({ cookie }) }))?.user?.email).toBe(merchant);
+    // ② 但每个受保护动作的第一句话按库重查名单 —— 撤销之后它一律拒。
+    expect(await requireSession()).toEqual({ error: "Not authorized." });
+    requestCookie = "";
   });
 
   it("SIGNIN-A7 —— 撤销之后两扇门都拒，而且不重新建号", async () => {
@@ -755,6 +864,19 @@ describe("SIGNIN-A7 —— 二次确认的接线与 FOR SHARE（并发，第二�
       }
       // 名单那一行确实翻了面：证明这次撞上的是撤销，不是别的什么失败。
       expect(await statusOf(stranger)).toBe("revoked");
+
+      // ── 先证明**这一次真的击中了目标窗口**（第 8 轮，判官 r7 P1 ②）───────────────────────
+      // 上一版到这里就去数会话了，而「撤销早在登录之前就提交」那种**没有击中窗口**的时序同样
+      // 会让下面每一条成立（门在建用户前就拒，什么都没发生）。所以窗口本身要有断言：
+      //   · 用户行**已经建出来**了 —— 两道只读的闸都读到旧的已提交版本，所以这次登录确实走进
+      //     了钩子队列（没击中窗口时这里是 0，见下面那条反证用例）；
+      //   · 收敛真的抛了 `RevokedDuringProvisioning`（#538 的 carve-out，`converge.ts`）；
+      //   · 首登兜底真的以**这个** userId 被调用过（`server.ts` 的 catch → gate.ts）。
+      expect(await usersFor(stranger)).toBe(1);
+      const baUser = await prisma.betterAuthUser.findUniqueOrThrow({ where: { email: stranger }, select: { id: true } });
+      expect(convergeThrew).toEqual(["RevokedDuringProvisioning"]);
+      expect(discardedUserIds).toEqual([baUser.id]);
+
       // ★ 这条用例的全部要害：一张属于已撤销地址的活会话，一行都不许留。
       expect(await sessionsFor(stranger)).toBe(0);
       // 收敛在第 0 步之后就抛了，`auth.signin` 那一行写在它最后一步，所以一行都不该有。
@@ -762,5 +884,61 @@ describe("SIGNIN-A7 —— 二次确认的接线与 FOR SHARE（并发，第二�
     } finally {
       await hold.release();
     }
+  });
+
+  /**
+   * ④-反证 A —— **撤销在登录之前就提交**：窗口没击中，上面那三条窗口断言必须全部不成立。
+   *
+   * 这条用例存在的唯一理由是让上面那条用例「会红」有据可查：同样的地址、同样的撤销、同样的
+   * 码门，只把撤销挪到 `submitCode` **之前**提交。门（`user.create.before`）当场读到 revoked，
+   * 于是：用户行 0（不是 1）、收敛一次都没跑到（探针空）、首登兜底一次都没被调（探针空）。
+   * 换句话说：把上面那条用例的时序改成这一条，它会红在 `expect(await usersFor(stranger)).toBe(1)`
+   * ——「没击中窗口也能过」那个假阳性被这三条断言堵死了。（真跑的变异输出贴在 PR 描述里。）
+   */
+  it("SIGNIN-A7 —— 反证：撤销在登录之前就提交 → 门在建用户前就拒，收敛与兜底都没跑", async () => {
+    const stranger = newAddress("first-login-revoke-early");
+    await prisma.allowedEmail.create({
+      data: { email: stranger, status: "invited", invitedBy: "operator@fikirtive.test" },
+    });
+    const code = await requestCode(stranger);
+    expect(code).toMatch(/^\d{6}$/);
+
+    // 撤销整笔提交，然后才递码 —— 没有任何窗口可击中。
+    expect(await revokeEmailAccess(stranger)).toBe("revoked");
+
+    const res = await submitCode(stranger, code!);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    // 窗口三问，三条都是「没发生」：
+    expect(await usersFor(stranger)).toBe(0); // 上面那条用例这里是 1
+    expect(convergeThrew).toEqual([]);
+    expect(discardedUserIds).toEqual([]);
+    // 结果面与上面那条一样（会话零行）—— 正是这一点让上一版的断言分不出两种时序。
+    expect(await sessionsFor(stranger)).toBe(0);
+    expect(await signinRows(stranger)).toBe(0);
+  });
+
+  /**
+   * ④-反证 B —— **撤销推迟到登录之后**：首登照常成功，两个探针同样都是空的。
+   *
+   * 另一头的反例。它钉住的是「探针不是随便什么失败都会响」：正常首登里收敛不抛、兜底不调，
+   * 会话实实在在留着一张。三条窗口断言在三种时序下读数各不相同，所以它们是真的在分辨时序，
+   * 不是恒真的装饰。
+   */
+  it("SIGNIN-A7 —— 反证：撤销推迟到登录之后 → 首登成功，收敛与兜底都不响", async () => {
+    const stranger = newAddress("first-login-revoke-late");
+    await prisma.allowedEmail.create({
+      data: { email: stranger, status: "invited", invitedBy: "operator@fikirtive.test" },
+    });
+
+    await signInThroughCodeDoor(stranger);
+
+    expect(await usersFor(stranger)).toBe(1);
+    expect(convergeThrew).toEqual([]);
+    expect(discardedUserIds).toEqual([]);
+    expect(await sessionsFor(stranger)).toBe(1);
+
+    // 撤销这才发生：会话被撤销自己那笔事务删掉（与本文件上面那条 A7 用例同一条路）。
+    expect(await revokeEmailAccess(stranger)).toBe("revoked");
+    expect(await sessionsFor(stranger)).toBe(0);
   });
 });
