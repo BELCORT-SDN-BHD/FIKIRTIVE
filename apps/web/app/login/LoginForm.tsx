@@ -224,6 +224,17 @@ export function LoginForm({
     const { error: signInError } = await authClient.signIn.social({
       provider: "google",
       callbackURL,
+      // SIGNIN-A14 —— Google 门的任何失败都必须回到**这一页**（规格 §1.4）。
+      //
+      // 这一份进的是 state（`oauth2/state.mjs` 的 `generateState`），管的是 state 解得开时的
+      // 落点。解不开的那一族（回调被刷新／后退重放、state 过期、有人直接打回调地址）读不到它，
+      // 由 `lib/better-auth/server.ts` 的 `onAPIError: { errorURL: "/login" }` 兜住 —— 两层都在，
+      // 商家才不会落在库自带的那张错误页上，或者，当拒绝发生在建会话那一刻，落在一份没有
+      // Location 的 403 JSON 上。两种都在规格 §1.4 里被逐字点名为今天的缺陷。
+      //
+      // 值是 `/login` 而不是带 `from` 的深链：失败之后要回的是登录页本身，商家在这一页重试
+      // 或改用 email；`from` 那个目的地在下一次成功登录时由 `callbackURL` 重新带上。
+      errorCallbackURL: "/login",
     });
     if (signInError) {
       setBusy(null);
