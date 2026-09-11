@@ -64,20 +64,31 @@ vi.mock("@/lib/email", async (importOriginal) => {
 });
 
 /** Addresses whose access check is held open until the test resolves it. Everything else goes to
- *  the real allowlist, so the rest of this file still exercises the genuine lookup. */
+ *  the real door, so the rest of this file still exercises the genuine lookup.
+ *
+ *  SIGNIN-A1 —— 挂的钩子从 `@/lib/allowlist` 的 `isAllowedEmail` 换成 `@/lib/signup-gate` 的
+ *  `signInDoorDecision`：队列问的已经不是「在不在名单里」，而是规格 §1.6 的三步判定
+ *  （`lib/better-auth/sender.ts`）。钩子挂错地方不会让断言变红，只会让它测不到东西 ——
+ *  这四条用例正是这样一起变红的，所以钩子跟着被测的那个函数走。 */
 const heldAccessChecks = new Map<string, Promise<boolean>>();
 
-vi.mock("@/lib/allowlist", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/allowlist")>();
+vi.mock("@/lib/signup-gate", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/signup-gate")>();
   return {
     ...actual,
-    isAllowedEmail: async (email: string | null | undefined) =>
-      (email && heldAccessChecks.get(email)) || actual.isAllowedEmail(email),
+    signInDoorDecision: async (email: string | null | undefined) => {
+      const held = email ? heldAccessChecks.get(email) : undefined;
+      if (held) return (await held) ? "allow" : "revoked";
+      return actual.signInDoorDecision(email);
+    },
   };
 });
 
 const TARGET_ALLOWED = `p678-target-allowed-${randomUUID()}@fikirtive.test`;
-const TARGET_UNKNOWN = `p678-target-unknown-${randomUUID()}@fikirtive.test`;
+/** SIGNIN-A7 —— 被**撤销**的地址。它以前只是「不在名单里」，而码门对陌生人打开之后那不再是
+ *  拒绝的理由（SIGNIN-A1）—— 拿它当被拒的分支会让这一族用例测不到任何东西。撤销是这条路上
+ *  仅存的绝对拒绝，所以分支 A 换成它。 */
+const TARGET_UNKNOWN = `p678-target-revoked-${randomUUID()}@fikirtive.test`;
 const TARGET_SPENT = `p678-target-spent-${randomUUID()}@fikirtive.test`;
 const CANARY = `p678-canary-${randomUUID()}@fikirtive.test`;
 const SLOW = `p678-slow-${randomUUID()}@fikirtive.test`;
@@ -146,6 +157,12 @@ beforeAll(async () => {
     create: { email: DB_ALLOWED, status: "active", invitedBy: "p678-test@fikirtive.test" },
     update: { status: "active" },
   });
+  // SIGNIN-A7 —— 分支 A 的主体：一个被操作员撤销的地址。
+  await prisma.allowedEmail.upsert({
+    where: { email: TARGET_UNKNOWN },
+    create: { email: TARGET_UNKNOWN, status: "revoked", invitedBy: "operator@fikirtive.test" },
+    update: { status: "revoked" },
+  });
   const warmup = `p678-warmup-${randomUUID()}@fikirtive.test`;
   process.env.AUTH_ALLOWED_EMAILS = `${process.env.AUTH_ALLOWED_EMAILS},${warmup}`;
   enqueueAuthEmail({ purpose: "sign-in-code", email: warmup, overBudget: false });
@@ -209,11 +226,11 @@ describe("#678 — the worker slot comes back at the same moment whichever branc
     return elapsed;
   }
 
-  it("hides an allowlist miss, a spent budget and a full mint-and-send behind one floor", async () => {
+  it("hides a REVOKED address, a spent budget and a full mint-and-send behind one floor", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    // Branch A — no access at all: the job returns at the allowlist check in a millisecond.
+    // Branch A — the operator revoked this address: the job returns at the door in a millisecond.
     await __resetAuthEmailCapsForTests();
     const unknown = await canaryDelayAfter(TARGET_UNKNOWN, false);
 
@@ -671,7 +688,7 @@ afterAll(async () => {
         ],
       },
     });
-    await prisma.allowedEmail.deleteMany({ where: { email: DB_ALLOWED } });
+    await prisma.allowedEmail.deleteMany({ where: { email: { in: [DB_ALLOWED, TARGET_UNKNOWN] } } });
   } catch {
     /* best-effort cleanup */
   }

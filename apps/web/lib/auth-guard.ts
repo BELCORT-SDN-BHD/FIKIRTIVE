@@ -8,6 +8,7 @@ import {
   newId,
   FOUNDER_OWNER_ID,
   SIGNUP_GRANT_CREDITS,
+  canonicalGrantEmail,
   rolesAllow,
   primaryPlatformRole,
   effectiveOrgRoles,
@@ -245,15 +246,16 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
       // address the operator just locked out. Rolling back here also unwinds the
       // welcome grant below, so a revoked address is never granted credits.
       if (admission?.status === "revoked") throw new RevokedDuringProvisioning();
-      const owner = await tx.user.findUnique({ where: { id: userId }, select: { name: true } });
-      // #680 — NO shop name collected (sign-in code / invite / OAuth) means the workspace has no
-      // name yet, and that is what gets stored: an empty name. It used to fall back to the
-      // merchant's email address, which /profile then showed back to them under "Your shop name
-      // — shown across Fikirtive." An address is not a shop name, and writing one here made the
-      // product state a fact about the merchant that the merchant never said. Empty is the
-      // truthful value, and it is what makes /profile's "Set your shop name" placeholder show.
-      // (Organization.name is `String @default("")` — no schema change is involved.)
-      const workspaceName = (owner?.name ?? "").trim();
+      // SIGNIN-A10 —— 两扇门首登的工作区名一律为空（docs/specs/sign-in.md 已冻结 · v1 §1.4
+      // 最后一段，Founder 2026-09-08 的取舍）。
+      //
+      // #680 立的规矩是「没收集店铺名的门，工作区就没有名字」，实现方式是读 `User.name`——对码门
+      // 那是空串，所以它一直看起来是对的。Google 门会把**个人姓名**带进 `User.name`，于是同一段
+      // 代码给同一件事写出两种结果：码门的工作区没有名字，Google 的工作区叫「Aisha Rahman」。
+      // 店铺名不是人名（规格 §4 那条异议逐字写着这个取舍），所以这里不再读那个字段：空字符串是
+      // 唯一诚实的值，也是让 /profile 显示「Set your shop name」占位的那个值。
+      // （`Organization.name` 是 `String @default("")`，不涉及 schema 变化。）
+      const workspaceName = "";
       await tx.organization.upsert({ where: { id: orgId }, create: { id: orgId, name: workspaceName }, update: {} });
       const membership = await tx.membership.upsert({
         where: { userId_orgId: { userId, orgId } },
@@ -282,6 +284,28 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
       // not dedupe against the rows already written, so every existing org would be granted a
       // SECOND time on its next sign-in. `orgId` is `org_<userId>` and a User row is unique per
       // email forever, so this key is already once-per-merchant-for-life.
+      //
+      // SIGNIN-A17 —— 「一个真实收件箱只领一次」的那一格（规格 §1.5）。
+      //
+      // 上面那条 `signup:<orgId>` 键管的是「同一个工作区不重复领」，它靠的是
+      // `CreditLedger` 的 (orgId, idempotencyKey) 唯一约束 —— 而 `me+001@gmail.com` 与
+      // `me+002@gmail.com` 是两个用户、两个 org，那条约束的另一半已经不同了，所以**任何**
+      // 写进 idempotencyKey 的字符串都拦不住第二笔。归一化的键必须自己就是主键，这就是
+      // `SignupGrantClaim` 存在的全部理由。
+      //
+      // 抢占式、在同一笔事务里、**一条语句**：`INSERT … ON CONFLICT DO NOTHING` 返回的行数
+      // 就是答案 —— 1 = 这一行是我插的，发赠金；0 = 已经有人占着，跳过（账号、工作区、成员
+      // 身份照建，验收 A17 明写 30 个号都进得来）。不回读一次确认，因为那趟往返除了在一笔只有
+      // 5 秒预算的事务里多一次数据库调用之外，答不出这条语句没答的事。
+      // 事务保证「抢到了却没发」和「发了却没抢到」都不可能。
+      //
+      // 0 的两种来源都指向同一个正确动作：同一个真实收件箱的另一个地址变体先到了（不该发第二
+      // 笔），或者这是同一个 org 的重跑（那一笔已经在 `signup:<orgId>` 那条键下了）。
+      const claimed = await tx.signupGrantClaim.createMany({
+        data: [{ canonicalEmail: canonicalGrantEmail(email), orgId }],
+        skipDuplicates: true,
+      });
+      if (claimed.count === 0) return; // 这个真实收件箱已经领过开户赠金了
       await grantCreditsTx(tx, {
         orgId,
         amount: SIGNUP_GRANT_CREDITS,

@@ -154,17 +154,27 @@ describe("#543 · what must NOT open", () => {
     expect(await prisma.betterAuthUser.findUnique({ where: { email } })).toBeNull();
   });
 
-  it("the sign-in code stays invite-only — an unknown email gets no code, and registers nothing", async () => {
+  /**
+   * SIGNIN-A1 —— 码门对陌生人开了，而**要码本身仍然不是注册**。
+   *
+   * RED before：这一条断言的是「陌生地址一封码都收不到」（那时它叫 "stays invite-only"）。
+   * 规格 §1.6 把门的判定收窄成三步，陌生地址在开关没打开、没有撤销行的时候必须收到码 ——
+   * 否则「陌生邮箱按 Continue with email，收邮件」的第一步就不成立。
+   *
+   * 没有跟着变的那一半才是这一条现在的价值：收到码 ≠ 有账号。`AllowedEmail` 那一行与
+   * `BetterAuthUser` 那一行都要等到他**真的验完码**才写（convergence 里那一步），所以一个
+   * 从没验过码的地址仍然什么都留不下来。
+   */
+  it("SIGNIN-A1 —— 陌生地址收得到码，但「要码」不写下任何账号或名单行", async () => {
     const email = newEmail();
     // Straight at the queue, because that is the only way in: the HTTP endpoint that mints a
     // code is in `disabledPaths` (see auth-enumeration-structural.test.ts for that half). This
-    // is the background side's own gate — the one that decides whether an address that reached
-    // the queue is allowed to be mailed at all.
+    // is the background side's own gate — the three-step door decision.
     enqueueAuthEmail({ purpose: "sign-in-code", email, overBudget: false });
     await authEmailQueueSettled();
 
-    expect(sent.filter((m) => m.to === email)).toHaveLength(0);
-    // Asking for a code is not registration: an unknown address gets no invite row out of it.
+    expect(sent.filter((m) => m.to === email)).toHaveLength(1);
+    // 要码不是注册：验完码之前，名单与账号都还没有他这一行。
     expect(await prisma.allowedEmail.findUnique({ where: { email } })).toBeNull();
     expect(await prisma.betterAuthUser.findUnique({ where: { email } })).toBeNull();
   });

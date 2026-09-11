@@ -35,6 +35,63 @@ const WEB_ROOT = path.resolve(__dirname, "../..");
 const REPO_ROOT = path.resolve(WEB_ROOT, "../..");
 const readWeb = (rel: string) => readFileSync(path.join(WEB_ROOT, rel), "utf8");
 
+/**
+ * SIGNIN-A11 —— 「围栏扫哪些文件」，**一份**实现。
+ *
+ * 判官（登录门①，执行票 #1317）点名的问题：证明「扫描面真的覆盖那些树」的那条用例，以前自己
+ * 抄了一遍遍历（同一套 skipDirs、同一套后缀规则，各写一份）。抄件与本尊长得越像，它给出的
+ * 保证越假 —— 本尊多一条 skip、少一棵树，抄件照样绿，而它存在的全部理由就是替本尊作证。
+ *
+ * 所以遍历只有这一份：真正的扫描按它给出的清单逐个读文件，覆盖面那条用例按同一份清单点名。
+ * 两条用例从此不可能对「扫了什么」有两种看法。
+ *
+ * 产物目录与依赖不是「会跑的代码」的来源（它们由源码生成），测试自己也不是。
+ */
+const SCAN_SKIP_DIRS = new Set([
+  "node_modules",
+  "__tests__",
+  ".next",
+  ".turbo",
+  "dist",
+  "build",
+  "coverage",
+  "generated",
+  "playwright-report",
+  "test-results",
+]);
+
+/** 扫描面：**整个 apps/web**（不再只是 app/lib/components/design-system 四棵树 —— 那样
+ *  proxy.ts、instrumentation*.ts、apps/web/scripts/ 都在围栏外，而它们跑的是同一个进程里的
+ *  服务端可信代码）、apps/worker，以及 packages/* 的每一个包。 */
+function scanRoots(): string[] {
+  return [
+    WEB_ROOT,
+    path.join(REPO_ROOT, "apps/worker"),
+    ...readdirSync(path.join(REPO_ROOT, "packages"), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name !== "node_modules")
+      .map((entry) => path.join(REPO_ROOT, "packages", entry.name)),
+  ];
+}
+
+/** 会跑的源码文件，仓库相对路径，排好序。测试文件不在内（它们不是会跑的代码）。 */
+function scannedSourceFiles(): string[] {
+  const found: string[] = [];
+  function walk(dir: string) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (SCAN_SKIP_DIRS.has(entry.name)) continue;
+        walk(path.join(dir, entry.name));
+        continue;
+      }
+      if (!/\.(tsx?|mjs|cjs|js)$/.test(entry.name)) continue;
+      if (/\.test\.(tsx?|mjs|cjs|js)$/.test(entry.name)) continue;
+      found.push(path.relative(REPO_ROOT, path.join(dir, entry.name)));
+    }
+  }
+  for (const root of scanRoots()) walk(root);
+  return found.sort();
+}
+
 /** 公网怎么打这些端点：和浏览器一模一样的一次 POST，经过整个 router。 */
 async function postPublic(endpointPath: string, body: Record<string, unknown>): Promise<Response> {
   return auth.handler(
@@ -358,30 +415,8 @@ describe("SIGNIN-A11 —— 没有任何途径能建立密码", () => {
     // 端点 404 只挡公网；`auth.api.*` 是服务端可信代码，router 那道闸对它无效。所以这一条查的
     // 是**调用点**，不是端点。扫的是会跑的代码，不含测试自己与文档。
     //
-    // 扫描面：**整个 apps/web**（不再只是 app/lib/components/design-system 四棵树 —— 那样
-    // proxy.ts、instrumentation*.ts、apps/web/scripts/ 都在围栏外，而它们跑的是同一个进程里的
-    // 服务端可信代码）、apps/worker，以及 packages/* 的每一个包。判官 r3 点名的正是这个缺口。
-    const scanRoots = [
-      WEB_ROOT,
-      path.join(REPO_ROOT, "apps/worker"),
-      ...readdirSync(path.join(REPO_ROOT, "packages"), { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => path.join(REPO_ROOT, "packages", entry.name)),
-    ];
-    // 产物目录与依赖不是「会跑的代码」的来源（它们由源码生成），测试自己也不是。
-    const skipDirs = new Set([
-      "node_modules",
-      "__tests__",
-      ".next",
-      ".turbo",
-      "dist",
-      "build",
-      "coverage",
-      "generated",
-      "playwright-report",
-      "test-results",
-    ]);
-
+    // 扫描面由 `scannedSourceFiles()` 给出（文件顶部，唯一一份遍历），下面那条覆盖面用例点名的
+    // 是**同一份清单** —— 判官 r3 之后又一次的 P2：抄一份长得一样的遍历来给本尊作证，等于没作证。
     /**
      * 唯一放行的文件，具名写在这里（判官 r3 要求把这条放行从「模式故意写松」改成显式白名单）。
      *
@@ -397,26 +432,13 @@ describe("SIGNIN-A11 —— 没有任何途径能建立密码", () => {
     ]);
 
     const offenders: string[] = [];
-
-    function walk(dir: string) {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.isDirectory()) {
-          if (skipDirs.has(entry.name)) continue;
-          walk(path.join(dir, entry.name));
-          continue;
-        }
-        if (!/\.(tsx?|mjs|cjs|js)$/.test(entry.name)) continue;
-        if (/\.test\.(tsx?|mjs|cjs|js)$/.test(entry.name)) continue;
-        const full = path.join(dir, entry.name);
-        const rel = path.relative(REPO_ROOT, full);
-        if (ALLOWED_FILES.has(rel)) continue;
-        const code = codeOnly(readFileSync(full, "utf8"));
-        for (const pattern of PASSWORD_CALL_PATTERNS) {
-          if (pattern.test(code)) offenders.push(`${rel} — ${pattern}`);
-        }
+    for (const rel of scannedSourceFiles()) {
+      if (ALLOWED_FILES.has(rel)) continue;
+      const code = codeOnly(readFileSync(path.join(REPO_ROOT, rel), "utf8"));
+      for (const pattern of PASSWORD_CALL_PATTERNS) {
+        if (pattern.test(code)) offenders.push(`${rel} — ${pattern}`);
       }
     }
-    for (const root of scanRoots) walk(root);
 
     // 白名单是一条放行，不是一句话：它指向的文件必须真的存在，否则这条围栏会在文件改名之后
     // 悄悄变成「放行一个不存在的路径」，而扫描面看起来还是满的。
@@ -444,37 +466,11 @@ describe("SIGNIN-A11 —— 没有任何途径能建立密码", () => {
   it("SIGNIN-A11 —— 上一条的扫描面真的覆盖 apps/web 全树、apps/worker 与 packages/*", () => {
     // 判官 r3 的病根是「扫描面漏了树」，而漏树不会让断言变红 —— 它让断言变得更容易过。所以
     // 扫描面自己要有一条独立的证据：这些文件必须在扫的那个集合里。
-    const scanned: string[] = [];
-    const skipDirs = new Set([
-      "node_modules",
-      "__tests__",
-      ".next",
-      ".turbo",
-      "dist",
-      "build",
-      "coverage",
-      "generated",
-      "playwright-report",
-      "test-results",
-    ]);
-    function collect(dir: string) {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.isDirectory()) {
-          if (skipDirs.has(entry.name)) continue;
-          collect(path.join(dir, entry.name));
-          continue;
-        }
-        if (!/\.(tsx?|mjs|cjs|js)$/.test(entry.name)) continue;
-        scanned.push(path.relative(REPO_ROOT, path.join(dir, entry.name)));
-      }
-    }
-    collect(WEB_ROOT);
-    collect(path.join(REPO_ROOT, "apps/worker"));
-    for (const entry of readdirSync(path.join(REPO_ROOT, "packages"), { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name !== "node_modules") {
-        collect(path.join(REPO_ROOT, "packages", entry.name));
-      }
-    }
+    //
+    // 判官 P2（登录门①，执行票 #1317）：这里以前**抄了一遍**遍历。抄件与本尊各写一份 skipDirs、
+    // 各写一份后缀规则，于是它作证的是「抄件走到了那些文件」，而不是「上一条真的扫了它们」——
+    // 本尊少一棵树，这条照样绿。现在两条读的是同一个函数的返回值。
+    const scanned = scannedSourceFiles();
 
     // 四棵老树之外，逐条点名判官说漏掉的那些落点。
     for (const witness of [

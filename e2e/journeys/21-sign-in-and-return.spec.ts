@@ -14,7 +14,58 @@
  */
 import { test, expect } from "@playwright/test";
 import { seedWorkspace } from "../support/seed.js";
+import { prisma } from "../support/db.js";
 import { clearAuthRateLimitCounters, codeFromInbox, signIn } from "../support/auth.js";
+
+/**
+ * SIGNIN-A1 —— 一个从未出现过的邮箱，走码门直接进产品并且开好账号
+ * （docs/specs/sign-in.md 已冻结 · v1，验收表第 1 格逐字）。
+ *
+ * 这是这一片真正的产品变化，所以它值一条自己的旅程：没有种子、没有名单行、没有邀请 ——
+ * 只有一个谁都没听说过的地址，按 Continue with email、收码、输码，然后落在首页里。
+ * 「全程没有出现第二个页面叫注册」由第二条旅程（`/signup` → `/login`，没有 Create an account）
+ * 一起守着。
+ */
+test("SIGNIN-A1 — A merchant nobody has ever heard of asks for a code and lands inside, with an account", async ({
+  page,
+}) => {
+  const email = `newcomer-${Date.now()}@e2e.test`;
+
+  // 开工前：库里一个字都没有他 —— 这条旅程真的在开新号，不是在登录一个种子账号。
+  expect(await prisma.betterAuthUser.count({ where: { email } })).toBe(0);
+  expect(await prisma.allowedEmail.count({ where: { email } })).toBe(0);
+
+  await clearAuthRateLimitCounters();
+  await page.goto("/login?from=/create");
+  await page.getByRole("button", { name: "Continue with email" }).click();
+  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByRole("button", { name: "Continue with email" }).click();
+
+  // 「We sent a temporary login code to …」—— 陌生人与老商家读到的是同一句。
+  await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
+  const code = await codeFromInbox(email);
+  await page.getByLabel("Login code").fill(code);
+  await page.getByRole("button", { name: "Continue with login code" }).click();
+
+  // 直接进产品，落在他本来要去的地方。
+  await expect(page).toHaveURL(/\/create/);
+  await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
+
+  // SIGNIN-A10 —— 账号与工作区已建立：工作区名为空、邮箱已验证、名单行记着来源门。
+  const user = await prisma.user.findUnique({ where: { email } });
+  expect(user, "首登没有建出账号").not.toBeNull();
+  const org = await prisma.organization.findUnique({ where: { id: `org_${user!.id}` } });
+  expect(org, "首登没有建出工作区").not.toBeNull();
+  expect(org!.name).toBe("");
+  expect((await prisma.betterAuthUser.findUnique({ where: { email } }))!.emailVerified).toBe(true);
+  const admitted = await prisma.allowedEmail.findUnique({ where: { email } });
+  expect(admitted?.status).toBe("active");
+  expect(admitted?.invitedBy).toBe("sign-in-code");
+  // 赠金恰好一笔。金额由 packages/core 的常量决定，这里只钉「一笔」。
+  expect(
+    await prisma.creditLedger.count({ where: { orgId: `org_${user!.id}`, kind: "GRANT" } }),
+  ).toBe(1);
+});
 
 test("SIGNIN-A4 — A merchant comes in through the one door and lands where they were headed", async ({
   page,
@@ -58,16 +109,24 @@ test("SIGNIN-A4 — The login page offers no password anywhere, and no second si
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
 });
 
-test("SIGNIN-A4 — A wrong code reads the same whether or not the address has an account", async ({
+test("SIGNIN-A4/A7 — A wrong code reads the same for a merchant, a newcomer and a revoked address", async ({
   page,
 }) => {
   // 旧旅程用密码钉这一条（「Wrong email or password.」对两种地址逐字相同）。密码退役之后，同一
-  // 条性质要由码门扛：一个真商家与一个从来没有过的地址，输错码读到的必须是同一句话。
+  // 条性质由码门扛。
+  //
+  // SIGNIN-A1 之后这条要多走一个地址：码门对陌生人打开之后，「真商家 vs 陌生人」两个世界在
+  // 门这边已经**一样**了（两个都会拿到码），所以只比这两个已经证明不了什么。真正还剩下的那条
+  // 差异是**被撤销的**地址——它一个码都拿不到，规格 §1.3 要求它的页面反应与「码错」完全一致。
   const ws = await seedWorkspace({
     slug: "neutral",
     workspaceName: "Neutral Cafe",
     personName: "Kaia",
     openingGrant: 0,
+  });
+  const revoked = `revoked-${Date.now()}@e2e.test`;
+  await prisma.allowedEmail.create({
+    data: { email: revoked, status: "revoked", invitedBy: "e2e-operator" },
   });
   // 真商家先拿一份真的码，好让「码存在但输错了」与「这个地址根本没有码」两种世界都被走到。
   await clearAuthRateLimitCounters();
@@ -78,7 +137,7 @@ test("SIGNIN-A4 — A wrong code reads the same whether or not the address has a
   await codeFromInbox(ws.email);
 
   const answers: string[] = [];
-  for (const email of [ws.email, "nobody-here@e2e.test"]) {
+  for (const email of [ws.email, `nobody-here-${Date.now()}@e2e.test`, revoked]) {
     await clearAuthRateLimitCounters();
     await page.goto("/login?from=/create");
     await page.getByRole("button", { name: "Continue with email" }).click();
@@ -102,8 +161,10 @@ test("SIGNIN-A4 — A wrong code reads the same whether or not the address has a
     await expect(page).toHaveURL(/\/login/);
   }
 
-  expect(answers[0]).toBe(answers[1]);
+  expect(answers[1]).toBe(answers[0]);
+  expect(answers[2]).toBe(answers[0]);
   // 不只是相同，而且相同**并且**不提那个地址本身。
   expect(answers[0]).not.toContain(ws.email);
-  expect(answers[0]).not.toMatch(/no account|not found|doesn't exist|unknown/i);
+  expect(answers[0]).not.toContain(revoked);
+  expect(answers[0]).not.toMatch(/no account|not found|doesn't exist|unknown|revoked|paused/i);
 });
