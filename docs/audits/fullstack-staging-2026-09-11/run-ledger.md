@@ -327,3 +327,155 @@ UTC 2026-09-11T12:56–13:02。素材：`r2-20260911-tiny-80px.jpg`，**短边 8
 
 对照 plan §2.3 的判定口径（:162 残留①、:176⑥）：短边 <100 的图应当在**付费前**被诚实拒绝，且**拒绝文案要说出这张图现在多大**（门槛按能否放大分岔 100 / 300）。本轮在两个入口上都**没有出现任何拒绝或披露**。
 未验到的另一半：短边 100–300 的「自动放大 + 独立一行披露句」（:176④）。因为路①路②都没触发任何披露句，下一步应先弄清尺寸闸到底挂在哪条入口上（可能只挂「商品参考进视频」而不挂「起始帧」与「图生图」）—— 这需要后端取证（哪条路调用了 `reference-budget` / 尺寸闸），故 **FSE-204 先标「假说待后端确认」**，严重度候选 P1（「付费前尺寸闸唯一一份、没有一条入口绕得过去」是本条验收的正文）。
+
+---
+
+## R2-12 编辑 / retry（:163①②③、CREATE-A12 片段）
+
+UTC 2026-09-11T13:03–13:06。素材＝上一条那次**真实失败**的视频任务（80px 起始帧被供应商弹回）。
+
+**失败态本身（顺带证 FSE-005）**：节点自动变成 `Video / That didn't finish / You weren't charged.`，Otto 那一行同时变成 `Failed / That generation didn't go through — you can try again.` + 一个 `Edit and retry` 按钮 —— **不需手动刷新**，Current turn 与 Conversation 同步。
+
+**:163①（输入框非空时点 Edit and retry）—— PASS**
+- 先在输入框打 `half typed sentence I do not want to lose`，再点 `Edit and retry`：
+  - 输入框内容**一字未动**（前后逐字相同）；
+  - 屏幕上出现逐字提示：`Kept what you're typing — that earlier message wasn't put back. Clear the box and press Edit and retry again.`
+- 清空输入框再点一次：原消息**连同引用芯片**一起放回 —— `@r2-20260911-tiny-80px.jpg Make a 5 second 720p video, no audio, of this product rotating slowly on a white table.`，上一句提示**自动消失**。
+
+**:163②（`retry-source` 一行 + 独立 Remove）—— 未复现（登记 FSE-205，P2）**
+- 恢复出草稿后，全页搜 `[data-slot="retry-source"]` **找不到该元素**；页面上也没有任何「Retrying: "…"」字样；输入框旁只有引用芯片自己的 `Remove image`。
+- 代码侧（部署版本内）`OttoChatStream.tsx:1299` 的渲染条件是 `restoredDraft?.sourceMessageId`；本轮走的是**失败卡上的 Edit and retry**，若该路径不带 `sourceMessageId`，这一行就永远不出现。**这是假说，须后端／代码取证**（W2 或下一轮）。判 **PARTIAL（未复现，路径待确认）**，不直接判 FAIL。
+
+**:163③（`References kept: … + N more`）—— NOT RUN**：需要同时挂「有名字的」与「手动挂的无名件」两种引用；本轮引用件数不足以构造，未执行。
+
+**CREATE-A12 片段**：variation 弹窗里把 `sentPromptText` **整句摊开给商家看**（见 R2-15 记录），与卡面批准的稿子是同一串；`Regenerate` 按钮在资产详情页存在（`Regenerate · 1 credit`），本轮未按（避免重复花钱）。逐字一致与 `routeReason` 有值须 W2 查表 ⇒ **PARTIAL**。
+
+**:170（FSE-012 报价版本）—— NOT RUN**：需要在同一张卡上「数量 1→2 期间抢提交旧报价」，要两个标签页对同一张卡做竞态；本轮工具侧点击限制下无法可靠构造，未执行。
+
+---
+
+## R2-17 花费上限 cap（多入口）—— PASS 两个入口，PARTIAL（四缺二 + 并发未做）
+
+staging 设置改动（商家自己的设置，不是环境变量；改动与还原都记在此）：
+
+| 时间(UTC) | 动作 | 结果 |
+|---|---|---|
+| 13:08 | Billing → `Set a cap` → 填 `1` → `Save` | 服务器端 `spendCapCredits: 1`（刷新后输入框仍显示 1） |
+| 13:12 | 还原：输入框改 `0` → 按钮变 `Remove cap` → **二次确认弹窗** `Remove Otto's spend cap? / Actions above 1 credits are currently refused before charging.` → 弹窗里再按一次 `Remove cap` | 服务器端 `spendCapCredits: 0`、页面回到 `No cap set` ⇒ **已还原** |
+
+（记一笔：第一次我只点了外层 `Remove cap` 就去读结果，误以为「移除无效」。实为**两步确认**设计，`SettingsPage.tsx:208` 的 AlertDialog。不是缺陷。）
+
+cap=1 时的两个入口：
+1. **Library 动作**（资产详情 `Animate · 11 credits`）→ 逐字：`Couldn't complete this action` / `Paused by your spend cap — this needs 11 credits and your cap is 1 credit per action. Raise the cap in Billing & credits to run it.`；余额 `9,999,875.5` **前后一字不差**（零扣费）。
+2. **画布确认卡**（`Generate · 11 credits`）→ 同一句逐字提示贴在卡上；余额 `9,999,872.2` **前后一字不差**（零扣费）。
+- 未做：**Otto 主动提议**、**分镜**两个入口，以及**并发两次提交**（工具侧点击限制 + 时间）⇒ 整条标 **PARTIAL**。
+- 小观察（不当 bug）：Library 那颗按钮被 cap 拒绝后，标签变成 `Failed — retry?` —— 「被自己的上限挡下」被显示成「失败」，措辞可议，留 S5。
+
+---
+
+## R2-22 盯项③「先合成首帧再动画」—— 现象取证完成（零花费生成，零账本行）
+
+UTC 2026-09-11T13:14。在真实对话里**明说**要两步：`First make me one composite first frame of Xinyi holding the coral tumbler, then use that frame to animate a 5s video. Do it in those two steps.`
+
+Otto 的回应逐字（关键段）：
+
+> `Actually, I'd steer you away from that plan — here's why: a composite image made here can't be used as a person in a video. The video engine would treat it as a product reference, not as Xinyi, and her identity would drift or be ignored. You'd pay for the picture and still not get the result you want.`
+> `The good news: @Xinyi + the tumbler in one video step is exactly what our engine is built for.`
+
+结果：**没有出卡、没有 GenJob、没有任何生成类账本行**（只有这一轮对话本身的 2.2 credits）。⇒ 「产品面发不出这个组合」这一现象**成立**。首帧即参考名额是否仍为 0 属代码常量（`packages/core/src/reference-budget.ts`），由 W2 或代码取证。**按 plan §1.1 不下供应商接受度结论。**
+
+---
+
+## R2-20 盯项①—— PASS（带演员的镜头），附一条必须让 Founder 看见的现象
+
+- 带演员的请求：Otto 逐字说 `no starting picture needed. One step!`（R2-11）。
+- 商家明说要两步时：Otto **劝退并解释**（R2-22）。
+- **但是**：在**分镜**里，对一个**纯商品、没有人物**的镜头，Otto 的计划仍然写：`Shot 2 needs a starting picture first, then animates — two steps, but the storyboard handles it.`，分镜卡上也确实有 `Generate all first frames (1)` 这颗按钮。
+  → 「先合成首帧再动画」这条路**在无人物镜头上仍然存在且被主动提议**。Founder 2026-09-08 的原话是「合成 first frame 的 idea 可以移除了，没有必要」——这句话是只针对**带演员**的场景，还是针对全部场景，**本轮不替 Founder 解释**：现象照录，留 S5 裁（登记 FSE-208，严重度暂记 P2 / 待裁）。
+
+---
+
+## R2-19 刷新 / 深链 —— 刷新 PASS；跨租户深链**静默新建**（登记 FSE-207）
+
+- **刷新**：画布刷新后 5 个节点、余额、失败节点状态全部保留（`nodes 5 → 5`）。小观察：`Conversation` 计数从 34 变成 29（直播态计数与持久化计数口径不同），不影响内容。
+- **跨租户深链（:172④）**：用**第二租户**（`tools+r2f20260911@belcort.com`，新建于 13:17）打开租户 A 的画布地址 `…/create/canvas?project=canvas_c878814e-493e-4e03-9119-6a430ebcde11`
+  → 地址被**静默换成一个全新的 project**（`…?project=01M289WJEET9N9H30NB2ENYPW6`），页面是一张**空白新画布**，**没有任何拒绝提示**。
+  → 好消息：**没有泄漏**（租户 A 的节点、提示词、余额一个字都没出现）。
+  → 坏消息：规格 :172④ 要的是「整卡 **fail closed**、**零写入**、**不静默回退造新对象**」—— 现状是**静默造了一个新对象**。登记 **FSE-207**。
+
+## R2-10 租户隔离（PRODID-A9 读路）—— PASS（读路），写路 PARTIAL
+
+第二租户登录后逐面查：
+- `/library`（生成历史与上传）：**查无**租户 A 的任何字样（`R2 Coral Tumbler` / `tiny-80px` / `upload-normal` 三串全 0 命中）
+- `/library?view=elements`：**查无** `R2 Coral Tumbler`
+- `/brand/records`：**查无** `R2 Coral Tumbler`
+- 直接构造指向 A 的 `entityId` 写入（A9 后半）：**未执行**（需绕过产品面构造 server action）⇒ **PARTIAL**，建议 W2 用只读查表 + 代码取证补。
+
+## SIGNIN-A16 大小写归一 —— PASS（商家可见半边）
+
+在登录页输入 `Tools+R2F20260911@Belcort.com`（混合大小写）→ 页面回执与随后会话里的邮箱都是**全小写** `tools+r2f20260911@belcort.com`，账号 `id=AFturvzxL31tPie07geeH5sZMFpObTqv`。
+`AllowedEmail` 是否**只有一行小写**、两次登录是否同一 `userId` ⇒ W2 查表（本轮只登录了一次大小写混写的形态）⇒ 整条标 **PARTIAL**。
+
+## R2-08 / R2-09 产品编辑与删除矩阵
+
+- **PRODID-A4（Brand → Library 方向）PASS**：Brand 页 `Actions → Edit` 把名字改成 `R2 Coral Tumbler RENAMED` → Library `Elements → Products` **同步显示新名字**，**只有一行**（没有第二份）。
+- **PRODID-A4（Library → Brand 方向）NOT RUN**：Library 元素详情面板**没有改名入口**（只有 `Remove from Library` / `Close`），本轮无法从 Library 侧改名。换主图方向同理未做（Brand 侧是 `Add image · from Library`，Library 侧无对应编辑）。
+- **PRODID-A6 四格**：
+  - ① **Brand 删 → Library 消失**：**做不了** —— Brand 页产品菜单只有 `Edit / Choose image / Archive`，**没有删除**。
+  - ①′ **Archive 的现象（新发现）**：归档后 Brand 页写 `Archived (1) — hidden from Otto`，但 **Library Elements 仍然列着它**，而且**画布 `@` 菜单仍然搜得到、仍可选入**（`@RENAM` → `R2 Coral Tumbler RENAMED / Product`）。「hidden from Otto」这句话与实际不符 ⇒ 登记 **FSE-206**。（已 `Unarchive` 还原。）
+  - ② / ④ **恢复方向**：**没有恢复入口**（Library 删除后既无 Undo 提示，也没有回收站视图）⇒ 本轮 **NOT RUN（无入口）**。
+  - ③ **Library 删 → Brand 消失**：**PASS**。Library 元素面板 `Remove from Library` → 二次确认逐字 `Remove from library? / This moves "R2 Coral Tumbler RENAMED" out of Library. It won't show up on a Canvas, in pickers, or in search anymore.` → 确认后 Library 变 `No products yet`，**同时 Brand 页也查无此物**。
+  - **已生成的成片不动**：删除后画布上的三张图与两段视频节点仍在（刷新后仍在）⇒ 符合规格。
+- **PRODID-R2 / R8 / R6 / R9、删整件产品的字节保留**：本轮未逐条构造（无封面图、无同名占位冲突）⇒ **NOT RUN**。
+- **FRONT-A12 第③段（写入失败有反馈、不假成功）**：原计划靠 PRODID-R8 那条同名占位路取证，因未构造 ⇒ **NOT RUN**。
+
+## R2-16 取消语义 —— PARTIAL（未见取消入口）
+
+三次真实的长任务（两段视频、一次 variation）渲染期间，节点上的控件逐字只有：`Otto is making this — you can keep working` / `Billed only when it finishes` / `Check again` —— **没有 Stop / Cancel 控件**。按 plan 口径「产品面无 Stop 控件就照实记『无取消入口』，不写成功能失败」⇒ 记 **无取消入口**（PARTIAL，待 Founder 裁是否要做）。
+
+## R2-03 两扇门合并 —— 最后重查后仍 NOT RUN
+
+13:20 重查：PR **#1349 仍 OPEN**、issue **#1320 仍 OPEN**，`/api/health` 的 `build.sha` 仍是 `2a96750e`（未变）。
+- `SIGNIN-A12`（端到端旅程）⇒ **NOT RUN（未部署 + 无陌生 Google 夹具）**。
+- `SIGNIN-A3` 的商家可见半边已在 R2-02 段取证（同一邮箱两扇门进同一账号、同一工作区）⇒ **PARTIAL**（库里「只有一个用户、一个工作区、两条 provider 同 userId」待 W2）。
+
+---
+
+## 本轮上传的素材清单（Founder 令：前缀 `r2-20260911-`、走完列清单、不删）
+
+| 文件名 | 尺寸 | 落点 | 备注 |
+|---|---|---|---|
+| `r2-20260911-upload-normal.jpg` | 1200×1600 | 租户 `tools@belcort.com` 的 Library Uploads | 上传了**两次**（第一次是探路），两份都保留 |
+| `r2-20260911-tiny-80px.jpg` | 80×107 | 同上 | R2-23 尺寸闸用 |
+
+另外本轮**生成**的资产（未删除）：商品图 `01M287HQC2P1E33C6CDKJXJV04`、视频 `01M287S996PCX2FEGWHTDGJP95`、variation 图 `01M2882PXJX2DYTZNRTH4KD6ZZ`、白底编辑图（`Replace background.`）、一条失败的视频任务（未产出、未收费）。
+本轮**新建**的账号：`tools+r2a20260911@belcort.com`（夹具 A）、`tools+r2f20260911@belcort.com`（第二租户）；另有两个只收过码、**没有建成账号**的地址：`tools+r2rl20260911@belcort.com`（限流用）、`tools+r2x20260911@belcort.com`、`tools+r2p20260911@belcort.com`（暂停期用）。产品记录 `R2 Coral Tumbler RENAMED` 已在 R2-09 的③格里被删除（那是验收动作本身）。
+
+---
+
+## §4 预算表 —— 逐笔登记（替代文首的空表，以此表为准）
+
+换算式（常量名见文首）：`USD = displayed × INTERNAL_PER_DISPLAY / CREDITS_PER_USD`。账号 `tools@belcort.com` 起始余额 **9,999,903.2**，收尾余额 **9,999,870.0**。
+
+| # | 时间(UTC) | 条目 | 动作 | 入口 | 产物 / GenJob | 报价(displayed) | 实扣(displayed) | 结果 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 12:35 | R2-07 | Otto 对话（问比例） | 画布 | — | ≤4 预扣 | 2.3 | 用 2.3 退 1.7 |
+| 2 | 12:37 | R2-07 | Otto 对话（确认 3:4）＋铸卡 | 画布 | — | ≤4 预扣 | 0.8 | 用 0.8 退 3.2 |
+| 3 | 12:37 | R2-07/11 | **生成商品图** | 确认卡 | `01M287HQC2P1E33C6CDKJXJV04` | 1 | 1 | 成功，`Made 1 image · 1 credit.` |
+| 4 | 12:40 | R2-11 | Otto 对话（演员+商品铸卡） | 画布 | — | ≤4 预扣 | 1.4 | 用 1.4 退 2.6 |
+| 5 | 12:41–12:45 | R2-11 | **生成视频 5s/720p** | 确认卡 | `01M287S996PCX2FEGWHTDGJP95` | 11 | 11 | 成功；`On hold 11 credits held` → 结算 |
+| 6 | 12:46 | R2-15 | **variation 出图** | 节点 `Create variations` | `01M2882PXJX2DYTZNRTH4KD6ZZ` | 1 | 1 | 成功 |
+| 7 | 12:50 | R2-24 | Otto 对话（3 镜分镜） | 画布 | — | ≤4 预扣 | 3.4 | 用 3.4 退 0.6 |
+| 8 | 12:54 | R2-14 | 自动理解（上传） | 上传 | — | 0.1 | 0.1 | Billing 行 `Understanding — -0.1` |
+| 9 | 12:57 | R2-23 | Otto 对话（80px 图生图铸卡） | 画布 | — | ≤4 预扣 | ~1.8 | — |
+| 10 | 12:58 | R2-23 | **生成白底图（80px 参考）** | 确认卡 | `Replace background.` 节点 | 1 | 1 | 成功（**没有触发尺寸闸**） |
+| 11 | 13:00 | R2-23 | Otto 对话（80px 起始帧视频铸卡） | 画布 | — | ≤4 预扣 | ~1.6 | — |
+| 12 | 13:01–13:04 | R2-23 | **视频（80px 起始帧）** | 确认卡 | 失败任务 | 11 | **0** | `That didn't finish / You weren't charged.` **全额不收费** |
+| 13 | 13:10 | R2-17 | Otto 对话（大理石桌视频铸卡） | 画布 | — | ≤4 预扣 | ~2.2 | — |
+| 14 | 13:11 | R2-17 | 触发 cap 拒绝 ×2（Library / 画布） | 两处 | — | 11 | **0** | 两次都零扣费 |
+| 15 | 13:14 | R2-22 | Otto 对话（明说要两步） | 画布 | — | ≤4 预扣 | 2.2 | 被劝退，**零 GenJob** |
+
+**合计（商家侧扣费）**：`9,999,903.2 − 9,999,870.0 = 33.2 displayed credits`
+**换算**：`33.2 × INTERNAL_PER_DISPLAY / CREDITS_PER_USD = USD 3.32`
+**占 Founder 批准额度（USD 20）**：**16.6%** —— 远低于 80% 停手线。
+**供应商成本快照（`spentUsd`）**：应用侧记录，本轮**未取**（属后端只读取证，W2 在 `backend-evidence.md` 补；退款不等于供应商账单为零 —— 第 12 行那次失败的视频，商家侧为 0，供应商侧是否产生成本必须另查）。
