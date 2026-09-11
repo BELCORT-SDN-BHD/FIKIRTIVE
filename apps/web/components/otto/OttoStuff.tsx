@@ -312,8 +312,14 @@ export function OttoStuff({
   const failedJobs = visibleAdJobs.filter((j) => j.status === "failed");
 
   async function linkProductImage(rec: BrandRecordRow, assetId: string) {
-    const data = { ...(rec.data as Record<string, unknown>), imageAssetId: assetId };
-    await saveBrandRecord({ id: rec.id, kind: "product", data });
+    // 换封面只交主图这一格(票 #1322):名字住在身份上,而这里手里的 `rec.data` 只是一张
+    // 客户端快照 —— 顺手把它的名字递上去,等于让「挂一张图」把一个可能已经过期的名字
+    // 写回权威。
+    await saveBrandRecord({
+      id: rec.id, kind: "product",
+      data: rec.data as Record<string, unknown>,
+      identity: { imageAssetId: assetId },
+    });
     setChooseProductFor(null);
     router.refresh();
   }

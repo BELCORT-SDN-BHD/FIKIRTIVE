@@ -56,6 +56,7 @@ import {
   saveBrandRecord, deleteBrandRecord, restoreBrandRecord, listMyBrandRecords,
   type BrandRecordRow,
 } from "@/lib/brand-record-actions";
+import { productFormIdentityIntent } from "@/lib/brand-product-form-identity";
 import { ingestProductFromUrl } from "@/lib/product-ingest-actions";
 import {
   sectionForCategory, diffRows, FACT_SECTION_KEYS, SECTIONS, sectionsTouched,
@@ -491,18 +492,23 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
     saveAndRefreshBrandRecord({ id, kind: "segment", data, status });
 
   // ── Product handlers ──
+  // 产品的名字与主图住在身份(`Entity`)上,不在价签里。哪一个动作真的在改这两格,就由它自己
+  // 把 `identity` 交上来(票 #1322;`lib/brand-record-actions.ts` 的 `ProductIdentityIntent`)。
+  // 表单编辑名字那一格,所以只交名字(形状的唯一源是 `productFormIdentityIntent`,PRODID-R9);
+  // 主图只从下面的 `prodSetImage` 走。归档与撤销一格都不交 —— 它们与这两格无关,手里那份
+  // `data` 只是读路补进去的客户端快照。
   const prodSave = async (id: string | undefined, data: Record<string, unknown>) => saveAndRefreshBrandRecord({
     ...(id ? { id } : {}), kind: "product", data,
+    identity: productFormIdentityIntent(data),
   });
   const prodArchive = async (id: string, data: Record<string, unknown>, status: "active" | "archived") =>
     saveAndRefreshBrandRecord({ id, kind: "product", data, status });
-  // Set/clear a product's showcase image. null clears by OMITTING the key.
-  const prodSetImage = async (rec: BrandRecordRow, assetId: string | null) => {
-    const rest = { ...(rec.data as Record<string, unknown>) };
-    delete rest.imageAssetId;
-    const data = assetId ? { ...rest, imageAssetId: assetId } : rest;
-    return saveAndRefreshBrandRecord({ id: rec.id, kind: "product", data });
-  };
+  // Set/clear a product's showcase image. `null` clears the identity's cover.
+  const prodSetImage = async (rec: BrandRecordRow, assetId: string | null) =>
+    saveAndRefreshBrandRecord({
+      id: rec.id, kind: "product", data: rec.data,
+      identity: { imageAssetId: assetId },   // 只这一格 —— 换封面不是改名
+    });
 
   const openProductImagePicker = (record: BrandRecordRow) => setPickerFor(record);
 

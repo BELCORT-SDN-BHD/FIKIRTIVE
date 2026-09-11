@@ -34,8 +34,9 @@
 
 - thumbnail 或稳定的 type icon；
 - primary name；
-- 一行 disambiguation，例如 `Product · Otto IQ`、`Official avatar · Read only`、
-  `Generation · Merdeka launch`；
+- 一行 disambiguation，例如 `Product`、`Official avatar · Read only`、
+  `Generation · Merdeka launch`；产品那一行由 `Product · Otto IQ` 改为 `Product`
+  （规格 `docs/specs/brand-product-identity.md` §1.4 末句，验收 PRODID-A2；票 #1322）；
 - 右侧 type icon；
 - keyboard / pointer selection state。
 
