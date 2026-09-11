@@ -16,6 +16,7 @@ import {
   MIN_REFERENCE_IMAGE_SIDE,
   MIN_UPSCALABLE_REFERENCE_SIDE,
   lineageCarriesOfficialActor,
+  minimumUsableReferenceSide,
   referenceUpscalePlan,
 } from "./generation-reference.js";
 
@@ -98,6 +99,40 @@ describe("FSE-001 —— 参考图尺寸闸(宽高双查)与放大计划", () =>
         MIN_REFERENCE_IMAGE_SIDE,
       );
     }
+  });
+
+  /**
+   * 规格 §5 :162① —— 本站生成的资产从此**有真尺寸**(`apps/worker/src/jobs/gen.ts` 出图处按
+   * ingest 同一套 ffprobe 量真字节)。所以尺寸闸对它不再读 `unknown`,而是三档各归各位。
+   *
+   * 这一条钉的是**闸的答案**,不是量法本身:量法由 `apps/worker/src/jobs/gen-output-dimensions.test.ts`
+   * 用真字节证明。两条一起,「本站生成的小图付费前就被拦下」才算证完。
+   */
+  it("creation §5 :162①: 本站生成的资产量到宽高之后,尺寸闸三档各归各位(不再是 unknown 放行)", () => {
+    // 短边 <100 —— 付费前拒绝(放大到过门要 4× 以上,我们只在 2×／3× 有实证)。
+    expect(referenceUpscalePlan({ width: 99, height: 1344 }).action).toBe("refuse");
+    // 100 ≤ 短边 <300 —— 走放大。
+    expect(referenceUpscalePlan({ width: 100, height: 1344 }).action).toBe("upscale");
+    expect(referenceUpscalePlan({ width: 299, height: 1344 }).action).toBe("upscale");
+    // 短边 ≥300 —— 原样。本站出图短边最小 1344px,正常出图永远落在这一档。
+    expect(referenceUpscalePlan({ width: 300, height: 1344 }).action).toBe("asIs");
+    expect(referenceUpscalePlan({ width: 1344, height: 1344 }).action).toBe("asIs");
+    // 「尺寸未知＝放行」从此只剩一档:上传图 ingest 还没量完就被引用(已登记)。
+    expect(referenceUpscalePlan({ width: null, height: null }).action).toBe("unknown");
+  });
+
+  /**
+   * 规格 §5 :176⑥ —— 拒绝文案的门槛不再统一写 300。
+   *
+   * 门槛按「我们能不能替它放大」分岔,而这条分岔只有 `minimumUsableReferenceSide` 一个产地:
+   * 拒绝那一句读它,别处不许再算第二遍。
+   */
+  it("creation §5 :176⑥ / CREATE-A10: 能放大 ⇒ 门槛 100;不许动像素(演员血统)⇒ 门槛就是供应商那道 300", () => {
+    expect(minimumUsableReferenceSide(true)).toBe(MIN_UPSCALABLE_REFERENCE_SIDE);
+    expect(minimumUsableReferenceSide(true)).toBe(100);
+    // 演员血统那一档我们一格不动像素(像素完整性铁律),所以对商家真正成立的门槛是 300。
+    expect(minimumUsableReferenceSide(false)).toBe(MIN_REFERENCE_IMAGE_SIDE);
+    expect(minimumUsableReferenceSide(false)).toBe(300);
   });
 });
 

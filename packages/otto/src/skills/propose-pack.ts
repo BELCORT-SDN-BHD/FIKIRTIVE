@@ -21,6 +21,7 @@ import { newId, type ApprovedEntity } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 import { proposeInput, buildProposeCard, ProposeRefusal, type ProposeInput, type CardPayload } from "./propose.helpers.js";
+import { applyReferenceUpscaleGate } from "./reference-upscale-gate.js";
 import { VARIANT_AXES, checkVariantSet } from "./variant-policy.js";
 import { z } from "zod";
 
@@ -90,7 +91,18 @@ export async function executeProposePack(
     throw e;
   }
 
+  // FSE-001 —— 付费前的参考图尺寸闸(`executePropose` 读的同一个函数,规格 §5 :176④/:176⑥)。
+  // 判官第 3 轮实证:整包这一面从前整条绕过它 —— 同一份 ctx、同一张付费卡,商家点下去照旧是
+  // 预扣 → 供应商 300px 闸弹回 → 退款。查在这里,与「先全部造完再落库」是同一条性质:一张
+  // 撑不起,整包一张都不落库,把那句话交回给商家(半截包里每一张都是点得下去的付费卡)。
+  const gatedPayloads: CardPayload[] = [];
   for (const cardPayload of payloads) {
+    const gated = await applyReferenceUpscaleGate(cardPayload, ctx.orgId);
+    if ("error" in gated) return gated;
+    gatedPayloads.push(gated.payload);
+  }
+
+  for (const cardPayload of gatedPayloads) {
     // Stamp the pack grouping onto the payload (minimally extended).
     const packedPayload = {
       ...cardPayload,
