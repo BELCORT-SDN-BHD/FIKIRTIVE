@@ -29,6 +29,15 @@ export interface StoryboardShotView {
   videoGenerationId?: string;
   /** #782 r3 闸③ 判词:上一镜的哪一张视频子卡已经确定交不出末帧(见 shotsStuckWithoutInheritedFrame)。 */
   inheritBlockedByVideoCardId?: string;
+  /**
+   * creation §5 :178(判官 r1 P1-④)—— 这一镜挂着的 Library 图(`Generation.id`)。
+   *
+   * **这一份是 payload 说的,不是 sync 回执说的**。卡面上一版只从回执读它,而草稿态分镜卡
+   * 挂载时根本不发 sync —— 重开页面后已挂的图既画不出来、又会在下一次挂图时被静默顶掉
+   * (服务端收的是整份新清单)。id 的权威因此只有一处:服务端刚返回的这份 payload。
+   * 回执(`ShotMediaSyncReport.libraryImages`)只补地址,补不到就画占位。
+   */
+  referenceGenerationIds?: string[];
 }
 
 export interface StoryboardCardView {
@@ -121,6 +130,25 @@ export function shotsDirectToVideo<T extends { shotId: string; entityIds?: strin
   castEntityIds: ReadonlySet<string>,
 ): T[] {
   return shots.filter((s) => shotGoesDirectToVideo(s, castEntityIds));
+}
+
+/**
+ * creation §5 :178(判官 r2 的两条 P1)—— 这张卡**必须**先问服务端一趟才画得对吗。
+ *
+ * 「这一镜直接出片吗」要读 `Entity.type`,只有服务端答得出;而挂图入口、那句
+ * "Goes straight to video…"、以及首帧要铸几张,全挂在这一格上。卡面此前只在**媒体需要
+ * 重载**时才开口问(`needsRefreshEntrance`),于是 Otto 刚交出、一分钱还没花过的那张卡
+ * (每格 `absent`)一次都不问 —— 商家看到的是一张没有挂图入口的卡,而验收口径那句
+ * 「分镜卡镜头可 @ 选 Library 里的图作参考」正是在这个主状态下不成立。
+ *
+ * 判据只有一句:**这一镜 @ 到了至少一个元素**。一个元素都没 @ 的镜头在
+ * `shotGoesDirectToVideo` 里恒为假(它按 `entityIds` 与本店演员求交集),所以那张卡的答案
+ * 不可能是「直接出片」——不必为它多发一趟。这一条只决定**问不问**,答案仍旧只有服务端说了算。
+ */
+export function needsDirectToVideoAnswer<T extends { entityIds?: string[] }>(
+  shots: readonly T[],
+): boolean {
+  return shots.some((s) => (s.entityIds ?? []).length > 0);
 }
 
 /**
@@ -280,6 +308,15 @@ export interface ShotMediaSyncReport {
    * 而闸① 那一边无论如何都不会为这一镜铸首帧 —— 少说一句话,永远不会多收一次钱。
    */
   directToVideo?: boolean;
+  /**
+   * creation §5 :178 —— 这一镜挂着的 Library 图,配上此刻取得到的地址。
+   *
+   * payload 上只有 `Generation.id`(规范身份)。缩略图与「这一件此刻还在不在」都要读库,
+   * 所以它跟 `directToVideo` 与每一格媒体状态走**同一条通道**:服务端说,卡面只用 ——
+   * 卡面不另开一条自己的解析路,也就不可能出现「卡面画着一张服务端早就取不到的图」。
+   * 缺席(老答复、还没问过)= 卡面按「没挂图」渲染,少画一格永远比多承诺一件安全。
+   */
+  libraryImages?: MediaRef[];
 }
 
 /** 一个镜头**一类媒体**此刻的渲染态,穷举无遗漏。渲染与按钮只读它,switch 必须穷尽
@@ -487,6 +524,12 @@ export function parseStoryboardCardPayload(payload: unknown): StoryboardCardView
           : {}),
         ...(typeof shot.inheritBlockedByVideoCardId === "string"
           ? { inheritBlockedByVideoCardId: shot.inheritBlockedByVideoCardId }
+          : {}),
+        // creation §5 :178 —— 挂图 id 与 entityIds 同一条防御口径:整份不是字符串数组就当没挂。
+        ...(Array.isArray(shot.referenceGenerationIds) &&
+        shot.referenceGenerationIds.length > 0 &&
+        shot.referenceGenerationIds.every((id) => typeof id === "string" && id)
+          ? { referenceGenerationIds: shot.referenceGenerationIds as string[] }
           : {}),
       };
     })
