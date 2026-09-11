@@ -36,7 +36,6 @@
  */
 
 import { MAX_TURN_REFERENCES } from "./reference-ref.js";
-import { MIN_REFERENCE_IMAGE_SIDE } from "./generation-reference.js";
 
 /**
  * The sentence a merchant reads when the engine refused their reference image because it shows
@@ -467,7 +466,6 @@ export const REFERENCE_UNAVAILABLE_REASONS = [
   "videoAsImage",
   "imageAsVideo",
   "unsupportedFormat",
-  "tooSmall",
 ] as const;
 
 export type ReferenceUnavailableReason = (typeof REFERENCE_UNAVAILABLE_REASONS)[number];
@@ -524,27 +522,57 @@ const REFERENCE_UNAVAILABLE_SENTENCES: Readonly<Record<ReferenceUnavailableReaso
   // 「isn't available any more」。结尾同一条纪律:先点名换掉它,再说 ask again。
   unsupportedFormat:
     "One of your references is a file type that can't be used as a reference. Swap it for an image or video and ask again — nothing was sent.",
-  // FSE-001(2026-09-08 / 09-09 探针实测)—— 视频端在**建任务之前**就查参考图尺寸,而闸是
-  // **宽与高各 ≥300px**(第三场逐字回执:`expected the height to be at least 300px, but
-  // received a 300x200px image instead`)。这一句与上面几句同一族:商家**自己的**、还活着
-  // 的、格式也对的文件,只是尺寸撑不起这一个用途,所以说的就是尺寸,而不是那句一查就知道
-  // 是假的「isn't available any more」。
-  //
-  // 说的是**短边**,不是宽度:400×200 的图宽度够、高度不够,旧那句「at least 300 pixels
-  // wide」会让商家以为自己的图已经合格。
-  //
-  // 数字读的是 `MIN_REFERENCE_IMAGE_SIDE` 那一个常量,所以闸一改这句话跟着改。为什么不写
-  // 那条更宽松的自动放大下限(`MIN_UPSCALABLE_REFERENCE_SIDE`,100):商家读到这句话时,
-  // 我们**没有**替他放大 —— 要么这张图小到没法放大,要么它带演员血统不许动像素(规格 §5
-  // 「像素完整性铁律」)。300 在两档里都是真的、都是那个能一次修好它的目标;100 只在其中
-  // 一档成立,说出来另一档就是假话。结尾同一条纪律:先点名换掉它,再说 ask again。
-  tooSmall:
-    `One of your references is too small to use in a video — it needs to be at least ${MIN_REFERENCE_IMAGE_SIDE} pixels on its shortest side. Swap it for a larger one and ask again — nothing was sent.`,
 };
 
 /** The sentence a merchant reads for an unusable attachment. One table, no second mapping. */
 export function referenceUnavailableMessage(reason: ReferenceUnavailableReason): string {
   return REFERENCE_UNAVAILABLE_SENTENCES[reason];
+}
+
+/**
+ * FSE-001 —— 「这张参考图太小」那一句。**它不在上面那张表里**,因为它不是一句定文:
+ * 它说的是**这一张**图有多大、以及**这一张**图要多大才走得通(规格 §5 :176⑥)。
+ *
+ * ── 为什么必须动态(残留⑥)───────────────────────────────────────────────────────
+ * 上一版是表里一句定文,数字统一写 300。那句话对一半的商家是**过严**的假话:短边 99 的
+ * 商品照只要换成 100 就走得通(我们会替他整数倍放大到 300),而他读到的是「至少 300」,
+ * 于是他要么去找一张不必找的大图,要么放弃这一次创作。另一半(带演员血统、不许动像素)
+ * 才真的需要 300。一句话说两档,只能靠牺牲其中一档的真实性。
+ *
+ * 所以门槛由调用方按 `minimumUsableReferenceSide(canUpscale)`(core 里唯一一份判据)算出来
+ * 再传进来,句子本身只负责把「你的图是多大」和「要多大」并排说清楚 —— 商家读完就知道
+ * 差多少,而不是读完还得自己猜。
+ *
+ * 尺寸从哪来:铸卡侧读的是 `Asset.width/height`(本站生成的资产由 `apps/worker/src/jobs/gen.ts`
+ * 出图处量真字节写入,上传资产由 ingest 的 ffprobe 写入)—— 所以句子里那两个数字就是我们
+ * 真的据以拒绝的那两个数字,不是另算的第二份。
+ *
+ * 结尾与表里那几句同一条纪律:先点名那个真能修好它的动作(换一张大一点的图),再说
+ * 「ask again」——「Try again」在这里会读成「再按一次就行」,而重试永远修不好尺寸。
+ */
+export function tooSmallReferenceSentence(size: {
+  width: number;
+  height: number;
+  minSide: number;
+}): string {
+  return `One of your references is only ${size.width}×${size.height} pixels — it needs to be at least ${size.minSide} pixels on its shortest side. Swap it for a larger one and ask again — nothing was sent.`;
+}
+
+/**
+ * 白名单怎么认出一句**带数字**的话:把数字读出来,用同一个模板**重建**一遍,逐字相同才放行。
+ *
+ * 这仍然是白名单而不是 passthrough —— 放行的那一句永远是我们这个文件生成的那一句,尾巴上
+ * 挂了 id、前面加了字、换了措辞的一律重建不出来、一律回 null。
+ */
+function rebuiltTooSmallSentence(written: string): string | null {
+  const m = /only (\d{1,6})×(\d{1,6}) pixels .* at least (\d{1,6}) pixels/.exec(written);
+  if (!m) return null;
+  const rebuilt = tooSmallReferenceSentence({
+    width: Number(m[1]),
+    height: Number(m[2]),
+    minSide: Number(m[3]),
+  });
+  return rebuilt === written ? rebuilt : null;
 }
 
 /**
@@ -580,7 +608,9 @@ export function referenceUnavailableSentence(text: string | null | undefined): s
   for (const sentence of [...Object.values(REFERENCE_UNAVAILABLE_SENTENCES), TOO_MANY_REFERENCES_SENTENCE]) {
     if (sentence.trim() === written) return sentence;
   }
-  return null;
+  // 「太小」那一句带着这一张图的真实尺寸,所以它认不出「定文」,只认得出**重建得出来的**
+  // 那一句(规格 §5 :176⑥)。重建口径与生成口径是同一个模板,所以两者不可能分家。
+  return rebuiltTooSmallSentence(written);
 }
 
 // ---------------------------------------------------------------------------

@@ -686,3 +686,36 @@ describe("#782 r17 resolveSyncAnswer —— 同一个世界里问了两次", () 
     expect(resolveSyncAnswer({ askedAtEpoch: 1, currentEpoch: 1, requestSeq: 3, latestSeq: 3, derivedPending: true }).apply).toBe(true);
   });
 });
+
+/**
+ * creation §5 :178(判官 r1 P1-④)—— 这一镜挂着哪几张图,**卡面从 payload 读**。
+ *
+ * 上一版卡面只从 sync 回执(`reports`)读这一份清单,而草稿态分镜卡挂载时根本不发 sync
+ * (`needsRefreshEntrance` 对每格 `absent` 的卡为假)。于是重开页面后已挂的图既画不出来、
+ * 又会在下一次挂图时被静默顶掉 —— 服务端收的是**整份新清单**,而卡面拼出来的那份是空的。
+ *
+ * id 的权威只有一处:服务端刚返回的那份 payload。回执只补地址(缩略图),补不到就画占位。
+ */
+describe("creation §5 :178 —— 镜头挂着的 Library 图从 payload 解析", () => {
+  it("creation §5 :178: payload 上的挂图 id 进视图(不必等 sync)", () => {
+    const view = parseStoryboardCardPayload({
+      storyboardTitle: "Ad",
+      shots: [
+        { shotId: "s0", index: 0, videoPrompt: "v0", referenceGenerationIds: ["lib-1", "lib-2"] },
+        { shotId: "s1", index: 1, videoPrompt: "v1" },
+      ],
+    });
+
+    expect(view.shots[0]!.referenceGenerationIds).toEqual(["lib-1", "lib-2"]);
+    // 没挂图的镜头不长出这个键(与老卡逐字节同形)。
+    expect("referenceGenerationIds" in view.shots[1]!).toBe(false);
+  });
+
+  it("creation §5 :178: 脏值(不是字符串数组)当没挂 —— 卡面少画一格,永远不多承诺一件", () => {
+    const view = parseStoryboardCardPayload({
+      shots: [{ shotId: "s0", index: 0, videoPrompt: "v0", referenceGenerationIds: ["lib-1", 7] }],
+    });
+
+    expect("referenceGenerationIds" in view.shots[0]!).toBe(false);
+  });
+});

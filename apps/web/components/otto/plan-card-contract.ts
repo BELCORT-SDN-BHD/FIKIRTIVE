@@ -122,6 +122,9 @@ export function parsePlanCardPayload(raw: unknown): ParsedPlanCardPayload | null
   take("referenceVideoGenerationId", str, (v) => v as string);
   take("downgradeNote", str, (v) => v as string);
   take("downgraded", (v) => typeof v === "boolean", (v) => v as boolean);
+  // FSE-001 / 规格 §5 :176④ —— 「已放大」披露自己一格,与 downgradeNote 并列。老卡没有这一
+  // 格(缺席 = 那一趟没放大),所以缺席不是畸形;带了但不是字符串才是。
+  take("referenceUpscaleNote", str, (v) => v as string);
   take("estimatedPriceUsd", num, (v) => v as number);
   take("estimatedCredits", num, (v) => v as number);
   take("entityIds", (v) => Array.isArray(v) && v.every(str), (v) => v as string[]);
