@@ -143,6 +143,8 @@ UTC 2026-09-11T12:15。命令与原文回执：
 ```
 
 - 三个地址各 **302 → `/login`**；七个公网 auth 端点 **GET 与 POST 都 404**。
+
+> **更正（第 6 轮，2026-09-11 W3 追加；上面那一句原文一字不改）**：那一句里的「**302**」**超出本节回执** —— 上面代码块里记下来的是**最终状态 200** 加 `redirects=1`（`/signup 200 -> …/login (redirects=1)`，另两条同形），**跳转本身的状态码没有记**（301／302／307／308 分不出来）。本轮能证的是：**三个地址各跟随一次重定向、落在 `/login`**。判定不受影响（`SIGNIN-A4` 的验收句要的是「三个地址都回到 `/login`」，这一点有逐字回执），但引用处的措辞已按这个口径改：见 `coverage-matrix.md` 的 `SIGNIN-A4` 行与 `R2-06 FRONT-A2` 行。**下一轮补法**：`curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' <url>`（不跟随重定向），把第一跳的状态码抄进本节。
 - 登录页全貌见 `01-login-page-no-password.png`：没有密码框、没有 Forgot password、没有任何「设置密码」入口。
 - `SIGNIN-A4` → **PASS**；`SIGNIN-A11` 前半（任何方式都建不起密码）→ **PASS**。
 - `SIGNIN-A9` 前半（`BetterAuthAccount.providerId='credential'` 行数为 0）→ **PARTIAL（待后端取证）**：要 W2 跑 `SELECT count(*) FROM "BetterAuthAccount" WHERE "providerId"='credential';`，期望 0。

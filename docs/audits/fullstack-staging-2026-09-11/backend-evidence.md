@@ -267,6 +267,8 @@ generation provider video submit failed: { status: 400,
   | `01M288TQE27AF4SP7QF1895BAP` | video | 11 | −110 |
 
   ⇒ 四张卡**零偏差**（`INTERNAL_PER_DISPLAY` 一致）。
+
+  > **更正（第 6 轮，2026-09-11 W3 追加；上面那条小标题「报价 = 实扣」原句一字不改）**：这张表逐张核的是**卡面 `estimatedCredits` 对账本 `RESERVE`（预扣）**，**不是实扣**。「**实扣**」＝ `SETTLE`（结算）与 `REFUND`（退款）之后真正落在商家头上的数，那一面在 `§1` 的账本全量与 `§3.5`／`§3.7` 的逐笔里，本表不替它背书。引用处的措辞已按这个口径改：见 `report-round2.md` §0 钱路那一行（「报价＝账本预扣（RESERVE）零偏差；实扣＝结算／退款见 §7.3」）。
 - **CREATE-A12「`sentPromptText` 与批准稿逐字一致」**：
   - 两张卡**整串完全相等**（`card.structuredPrompt = Generation.sentPromptText`，608/608 与 1060/1060，SQL 等值判定为 true）。
   - 第三张（图生图卡）不等长（卡 477 → 送出 578）：但卡上那 477 字**原封不动地整段出现在送出稿里**（`position()` 判定：从第 **102** 个字符起完全一致）。多出来的 101 字是机器加的图位声明前缀 `<Image_1> is the image being edited. <Image_2> is a reference image. <Image_3> is a reference image.`。variation 那条同形（源稿从第 **38** 字起逐字保留）。
