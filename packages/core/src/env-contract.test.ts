@@ -24,6 +24,7 @@ import {
   configFingerprint,
   documentedVars,
   formatEnvProblems,
+  pointsAtThrowawayTestDatabase,
   renderEnvExampleLines,
   shortSha,
 } from "./env-contract.js";
@@ -809,6 +810,92 @@ describe("bootEnvDecision", () => {
       );
       expect(d.action).toBe("warn");
       expect(d.action === "warn" && d.report).toContain("AUTH_EMAIL_TRANSPORT");
+    });
+  });
+
+  /**
+   * SIGNIN-A12 —— **Google 门替身的生产围栏不可降级**(判官 #1349 P2)。
+   *
+   * 它与上面那一族(AUTH_EMAIL_TRANSPORT=stub)长得一样、结论相反,所以两族必须挨着放:
+   * 寄不出信是**可用性**,逃生门够得着;武装 Google 门替身是**这个部署会接受一个不是
+   * Google 签的身份断言**,一个为了让服务起来而打开的开关不该顺手把身份门拆掉。
+   *
+   * 三格钉住:默认拒绝、warn 模式下照旧拒绝(免疫)、非生产只 warn(dev 不砖)。第二条是
+   * 这一族的全部理由——摘掉 spec 上的 `warnImmune` 它当场红。
+   */
+  describe("E2E_GOOGLE_DOOR_STUB 的生产围栏不可降级(warn 免疫)", () => {
+    const prodArmed = { ...goodProd, E2E_GOOGLE_DOOR_STUB: "1" };
+
+    it("SIGNIN-A12: a serving production process refuses to boot with the Google-door stub armed", () => {
+      const d = bootEnvDecision(prodArmed, { surface: "web", production: true });
+      expect(d.action).toBe("exit");
+      expect(d.action === "exit" && d.report).toContain("E2E_GOOGLE_DOOR_STUB");
+    });
+
+    it("SIGNIN-A12: FIKIRTIVE_ENV_CONTRACT=warn does NOT downgrade it — the fence is a lock, not a default", () => {
+      const d = bootEnvDecision(
+        { ...prodArmed, FIKIRTIVE_ENV_CONTRACT: "warn" },
+        { surface: "web", production: true },
+      );
+      expect(d.action).toBe("exit");
+      expect(d.action === "exit" && d.report).toContain("E2E_GOOGLE_DOOR_STUB");
+      // 判词必须说清楚「逃生门救不了它」,否则运维只会以为逃生门坏了。
+      expect(d.action === "exit" && d.report).toContain("免疫");
+    });
+
+    it("SIGNIN-A12: 同一份 env、只是没武装 → 逃生门照常好用(上一条的 exit 只能归给这个变量)", () => {
+      const d = bootEnvDecision(
+        { ...goodProd, AUTH_EMAIL_TRANSPORT: "stub", FIKIRTIVE_ENV_CONTRACT: "warn" },
+        { surface: "web", production: true },
+      );
+      expect(d.action).toBe("warn");
+    });
+
+    it("SIGNIN-A12: 非生产 + 武装 → ok(免疫收紧的只是生产那一格)", () => {
+      const d = bootEnvDecision({ E2E_GOOGLE_DOOR_STUB: "1" }, { surface: "web", production: false });
+      expect(d.action).toBe("ok");
+    });
+
+    /**
+     * 唯一的豁免 —— 指着一个用完就扔的 `_test` 库的进程。
+     *
+     * 这一格不是方便，是这条围栏能写成「不可降级」的前提：`next start` 自己把 NODE_ENV 设成
+     * production，E2E 跑道上那个进程在开机检查眼里与真部署长得一模一样。没有这一格，上面那条
+     * 免疫会把 SIGNIN-A12 的旅程套件本身钉死在开机那一步。
+     */
+    it("SIGNIN-A12: 指着 _test 库的进程可以武装 —— 跑道正是这么跑的", () => {
+      const d = bootEnvDecision(
+        { ...prodArmed, DATABASE_URL: "postgresql://u:p@127.0.0.1:5432/fikirtive_e2e_test" },
+        { surface: "web", production: true },
+      );
+      expect(d.action).toBe("ok");
+    });
+
+    it("SIGNIN-A12: 豁免只认库名形状 —— 真库名照旧拒(哪怕连接串里别处出现 _test)", () => {
+      const d = bootEnvDecision(
+        { ...prodArmed, DATABASE_URL: "postgresql://u:p@db_test.example.com:5432/fikirtive" },
+        { surface: "web", production: true },
+      );
+      expect(d.action).toBe("exit");
+      expect(d.action === "exit" && d.report).toContain("E2E_GOOGLE_DOOR_STUB");
+    });
+
+    it("SIGNIN-A12: 认不出的连接串当生产处理(fail closed)", () => {
+      expect(pointsAtThrowawayTestDatabase({ DATABASE_URL: "not-a-url" })).toBe(false);
+      expect(pointsAtThrowawayTestDatabase({})).toBe(false);
+      expect(
+        pointsAtThrowawayTestDatabase({ DATABASE_URL: "postgresql://u:p@h:5432/fikirtive_e2e_test" }),
+      ).toBe(true);
+    });
+
+    it("不可降级名单是**具名**的,不是「所有 productionValues 空数组的变量」—— 今天只有它", () => {
+      expect(ENV_CONTRACT.filter((s) => s.warnImmune).map((s) => s.name)).toEqual([
+        "E2E_GOOGLE_DOOR_STUB",
+      ]);
+      // 打了标记就必须真有一道生产围栏可降级,否则标记退化成装饰。
+      for (const spec of ENV_CONTRACT.filter((s) => s.warnImmune)) {
+        expect(Boolean(spec.productionValues), `${spec.name}`).toBe(true);
+      }
     });
   });
 });

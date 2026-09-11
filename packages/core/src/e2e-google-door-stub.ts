@@ -18,11 +18,22 @@
  * 两把锁，缺一不开：
  *   ① `E2E_GOOGLE_DOOR_STUB` 必须逐字等于 `"1"`。默认不设＝这个模块什么都不做，供应商配置与
  *      今天**逐字相同**（`server.ts` 里那一处是展开一个空对象）。它在 env 契约里登记为
- *      「生产不许出现」（`packages/core/src/env-contract.ts`），与 `AUTH_EMAIL_TRANSPORT=stub`
- *      同一个口径：一个 serving 的生产进程带着它会被开机检查拦下。
- *   ② 替身 token 必须带一个用 `BETTER_AUTH_SECRET` 算出来的 HMAC。这一条让第一把锁即使被
- *      误开也不产生**新的**攻击面：能算出这个 HMAC 的人，手上已经有签任意会话 cookie 的密钥
- *      （`secret` 就是 Better Auth 签会话用的那一把），他不需要这条路。
+ *      「生产不许出现」（`packages/core/src/env-contract.ts`，`productionValues` 空数组），
+ *      而且那条围栏打了 `warnImmune`：**不可降级** —— 带着它的 serving 生产进程一律拒绝启动，
+ *      `FIKIRTIVE_ENV_CONTRACT=warn` 的逃生门也降不了它。这一格与 `AUTH_EMAIL_TRANSPORT=stub`
+ *      分道扬镳：那一条是「这个部署寄不出信」，可用性，逃生门够得着。
+ *      唯一的豁免是 `productionExemptWhen`：**指着一个用完就扔的 `_test` 库的进程**。它不是一个
+ *      新开关（新开关会变成新的误设面），是一个结构性事实——`next start` 自己把 NODE_ENV 设成
+ *      production，跑道那个进程在开机检查眼里与真部署一模一样，靠这一条才分得开。
+ *   ② 替身 token 必须带一个用 `BETTER_AUTH_SECRET` 算出来的 HMAC。
+ *
+ * 围栏到底靠什么成立，说准，别说过头。② **不是**「反正也不产生新攻击面」：武装之后，
+ * `BETTER_AUTH_SECRET` **单独一把**就能换到一个属于任意邮箱的会话——它本来也是签会话 cookie
+ * 的那把密钥，但那条路要求先有一个会话可签，这条路不要求，只要一个 HMAC 和一个邮箱。所以真正
+ * 的围栏只有两条，两条都在上面①那一格与运维纪律里：**生产上不许武装**（不可降级的开机检查），
+ * 以及**这把密钥保密**。②在跑道上的作用是别的：它让替身不是一个谁都能敲的门（同机器上跑着的
+ * 别的进程、浏览器里的页面脚本都递不出一个能过的 token），也让「签名不对就是拒绝」在旅程里
+ * 证得出来。
  *
  * NODE_ENV 不在锁里是刻意的，不是漏了：`next start`（e2e 跑的正是它）自己把 NODE_ENV 设成
  * production，所以「非生产」在这个进程里根本不是一个观察得到的事实（同一个理由逐字写在

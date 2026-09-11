@@ -126,35 +126,35 @@ test("SIGNIN-A12 — 陌生邮箱收码登录、生成一张图、登出，再�
  * SIGNIN-A12 的**证据本身**要立得住：上面那一趟绿，只有在替身真的是一道检查、而不是一个永远
  * 说是的橡皮图章时才有意义。
  *
- * 所以这一条反着走一遍：同样的形状、同样的邮箱、只有签名是错的。它必须进不来 —— 否则上面那条
- * 旅程证明的只是「这个套件能给自己发会话」。
+ * 所以这一条反着走一遍，而且是**同一个载荷、只差一个 HMAC** 的两态对照（判官 #1349 P2）：
+ *   · 签名不对 → 401，而且是替身**验签失败**那一步拒的（库对 `verifyIdToken` 返回 false 的
+ *     判词逐字是 `INVALID_TOKEN`，`api/routes/sign-in.mjs:82-85`）。不查这个码，401 可能来自
+ *     另外五个地方（供应商不认、拿不到用户信息、载荷里没邮箱、合并失败……），这条反证就证不到
+ *     它要证的那一步。
+ *   · 同一个邮箱、同一份载荷，签名换回对的 → 200 并且真的开出了那一行。少了这一半，「401」也
+ *     可能只是说明这条路对**任何**替身 token 都说不。
+ *
+ * 「一行都没留下」查的必须是被拒那个 token **自己声称**的邮箱 —— 查别的邮箱是一句恒真的话。
  */
-test("SIGNIN-A12 — 替身不是橡皮图章：签名不对的 Google 身份一样进不来", async ({ page }) => {
+test("SIGNIN-A12 — 替身不是橡皮图章：同一份载荷，只把签名改掉就进不来", async ({ page }) => {
   const email = `forged-google-${Date.now()}@e2e.test`;
-  await clearAuthRateLimitCounters();
-  await page.goto("/login");
+  expect(await prisma.betterAuthUser.count({ where: { email } })).toBe(0);
 
-  const forged = await page.evaluate(async () => {
-    const part = (o: unknown) =>
-      btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    const token = `${part({ alg: "HS256", typ: "JWT" })}.${part({
-      iss: "https://accounts.google.com",
-      sub: "forged-sub",
-      email: "placeholder@e2e.test",
-      email_verified: true,
-    })}.not-the-right-signature`;
-    const res = await fetch("/api/better-auth/sign-in/social", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({ provider: "google", idToken: { token }, callbackURL: "/" }),
-    });
-    return res.status;
-  });
-  expect(forged, "一个签名不对的 id_token 换到了会话").toBe(401);
+  const forged = await signInWithGoogle(page, email, { forgeSignature: true });
+  expect(forged.status, "一个签名不对的 id_token 换到了会话").toBe(401);
+  expect(forged.code, "拒是拒了，但不是替身验签那一步拒的 —— 这条反证没证到它要证的地方").toBe(
+    "INVALID_TOKEN",
+  );
 
-  // 没有会话，也没有留下任何一行。
+  // 没有会话，也没有为**这个 token 声称的那个邮箱**留下任何一行。
   await page.goto("/library");
   await expect(page).toHaveURL(/\/login/);
   expect(await prisma.betterAuthUser.count({ where: { email } })).toBe(0);
+  expect(await prisma.user.count({ where: { email } })).toBe(0);
+
+  // 只把签名换回对的：同一个邮箱这一次进得来。两次之间只差一个 HMAC，所以上面那个 401
+  // 只能归给验签。
+  const honest = await signInWithGoogle(page, email);
+  expect(honest.status, "签得对的替身 token 也进不来 —— 那上面那条 401 就说明不了任何事").toBe(200);
+  expect(await prisma.betterAuthUser.count({ where: { email } })).toBe(1);
 });

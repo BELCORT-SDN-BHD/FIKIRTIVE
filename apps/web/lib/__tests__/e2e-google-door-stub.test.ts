@@ -46,7 +46,9 @@ describe("SIGNIN-A12 —— Google 门 E2E 替身的两把锁", () => {
     const token = mintE2eGoogleIdToken(claims, SECRET);
     const [header, payload] = token.split(".");
 
-    // 另一把密钥签的 —— 这正是「开关误开也不产生新攻击面」那句话的落点。
+    // 另一把密钥签的 —— 替身认的是**这个部署自己那把** BETTER_AUTH_SECRET，别人的签名不算数。
+    // （这一条不等于「误开也无害」：武装之后那把密钥单独一把就能换到会话，所以围栏是生产禁武装
+    //   ＋密钥保密，逐条写在 `packages/core/src/e2e-google-door-stub.ts` 头上。）
     expect(
       verifyE2eGoogleIdToken(mintE2eGoogleIdToken(claims, `${SECRET}-someone-else`), ARMED),
     ).toBe(false);

@@ -215,18 +215,22 @@ const E2E_GOOGLE_AUDIENCE = "fikirtive-e2e-google-client-id-not-a-real-app";
  * cookie jar 里，不然接下来那一步「打开 /library 看那张图」就不是这个商家在看。`fetch` 同源、
  * 默认带 credentials，所以响应里的 Set-Cookie 就是浏览器自己收下的。
  *
- * 返回 HTTP 状态，让调用方自己断言「进来了」还是「被拒了」——A12 要的是前者，但拒绝也必须是
- * 这条路能表达的答案，否则这个替身就成了一个永远说是的橡皮图章。
+ * 返回 HTTP 状态与被拒时的错误码，让调用方自己断言「进来了」还是「被拒了」——A12 要的是前者，
+ * 但拒绝也必须是这条路能表达的答案，否则这个替身就成了一个永远说是的橡皮图章。
+ *
+ * `forgeSignature` 就是那条反证用的旋钮：**只**把最后一段签名换掉，header 与载荷逐字不动。
+ * 这样「被拒」只能归给验签那一步，而不是归给「这个邮箱不认识」「这个请求形状不对」之类别的
+ * 原因——同一份载荷换回对的签名必须 200，两次之间只差一个 HMAC。
  */
 export async function signInWithGoogle(
   page: Page,
   email: string,
-  opts: { name?: string; emailVerified?: boolean; sub?: string } = {},
-): Promise<{ status: number }> {
+  opts: { name?: string; emailVerified?: boolean; sub?: string; forgeSignature?: boolean } = {},
+): Promise<{ status: number; code?: string }> {
   await clearAuthRateLimitCounters();
   // 同源才算数：cookie 是按 origin 收的。先站到登录页上，再从那一页发这个请求。
   await page.goto("/login");
-  const idToken = mintE2eGoogleIdToken(
+  const minted = mintE2eGoogleIdToken(
     {
       iss: "https://accounts.google.com",
       aud: E2E_GOOGLE_AUDIENCE,
@@ -238,6 +242,9 @@ export async function signInWithGoogle(
     },
     E2E_AUTH_SECRET,
   );
+  const idToken = opts.forgeSignature
+    ? `${minted.slice(0, minted.lastIndexOf("."))}.not-the-right-signature`
+    : minted;
   return page.evaluate(async (token: string) => {
     const res = await fetch("/api/better-auth/sign-in/social", {
       method: "POST",
@@ -245,6 +252,9 @@ export async function signInWithGoogle(
       credentials: "same-origin",
       body: JSON.stringify({ provider: "google", idToken: { token }, callbackURL: "/" }),
     });
-    return { status: res.status };
+    // 被拒时库回的是 `{ message, code }`（`APIError.from`）。取 code 而不是取 message：
+    // 调用方要分辨的是「哪一步拒的」，而 message 是人话，会随库版本改写。
+    const body = (await res.json().catch(() => ({}))) as { code?: string };
+    return { status: res.status, code: body.code };
   }, idToken);
 }

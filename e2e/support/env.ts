@@ -139,8 +139,11 @@ export function appEnv(): Record<string, string> {
     GOOGLE_CLIENT_SECRET: "fikirtive-e2e-google-client-secret-not-a-real-app",
     // 替身的武装开关（`packages/core/src/e2e-google-door-stub.ts`）。名字刻意不是
     // `BETA_*` / `*_ENABLED`：它不是一个等着上线的功能开关，而是一条只有测试跑道才存在的路，
-    // 生产上任何值都被开机检查拒绝（`packages/core/src/env-contract.ts` 的 productionValues 空
-    // 数组）。它替掉的只有 Google 自己那个签名，我们的每一道闸照跑 —— 逐条理由在那个模块头。
+    // 生产上任何值都被开机检查拒绝，而且**不可降级**（`packages/core/src/env-contract.ts` 的
+    // productionValues 空数组 + `warnImmune`：`FIKIRTIVE_ENV_CONTRACT=warn` 也降不了它）。
+    // 这个进程起得来，靠的不是逃生门，是它指着一个 `_test` 库（`e2eDatabaseUrl()` 保证）——
+    // 契约里那条豁免 `pointsAtThrowawayTestDatabase` 认的正是这个事实。
+    // 它替掉的只有 Google 自己那个签名，我们的每一道闸照跑 —— 逐条理由在那个模块头。
     E2E_GOOGLE_DOOR_STUB: "1",
     NEXT_TELEMETRY_DISABLED: "1",
     // GENERATION_PROVIDER is deliberately absent — see OFF_MACHINE_CREDENTIAL_NAMES above.
