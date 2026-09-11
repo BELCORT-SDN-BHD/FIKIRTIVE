@@ -109,6 +109,11 @@ export interface AuthCodeEmailContent {
   action: string;
   /** The one-time code, digits only. Injected verbatim: this function only presents it. */
   code: string;
+  /** SIGNIN-A5 —— the optional **Log in** link: it opens `/login` with the address and the code
+   *  prefilled (the code rides in the URL fragment), and the merchant presses Continue once.
+   *  Optional so a purpose that genuinely has nowhere to send anybody can still use this layout;
+   *  when it is absent the card is exactly the code-only card it always was. */
+  loginUrl?: string;
   /** How long the code stays live, in seconds — the real number the plugin was configured with,
    *  not a restated guess. */
   validitySeconds: number;
@@ -117,29 +122,47 @@ export interface AuthCodeEmailContent {
 /**
  * The code variant of the branded auth email.
  *
- * NO LINK ANYWHERE, and that is the point of the shape rather than an omission. The merchant is
- * already sitting on the page that asked for the code, so an email that carries nothing clickable
- * gives a phisher nothing to imitate and gives the merchant nothing to click by mistake. The code
- * is displayed large and letter-spaced because it is going to be read off a phone and typed into
- * a laptop.
+ * THE CODE IS THE CREDENTIAL; THE LINK ONLY CARRIES IT (SIGNIN-A5, spec §1.2 / §4). This card
+ * used to have no link at all — the anti-phishing argument for that was "the merchant is already
+ * on the page that asked, so give them nothing to click". The frozen spec chose the Linear shape
+ * instead, and the compromise it names is what is built here: the button opens OUR login page
+ * with the code prefilled in the URL FRAGMENT and the merchant still presses Continue. So
+ * clicking it is not a sign-in — a mail scanner that pre-opens the link consumes nothing — and
+ * there is still exactly ONE credential with ONE lifetime, the six digits printed below it.
+ *
+ * The code is displayed large and letter-spaced because it is going to be read off a phone and
+ * typed into a laptop; that path is unchanged and is still the whole product on its own.
  */
-export function renderAuthCodeEmail({ action, code, validitySeconds }: AuthCodeEmailContent): {
+export function renderAuthCodeEmail({ action, code, loginUrl, validitySeconds }: AuthCodeEmailContent): {
   html: string;
   text: string;
 } {
   const validity = formatValidity(validitySeconds);
   const safeCode = escapeHtml(code);
   const safeAction = escapeHtml(action);
+  const safeUrl = loginUrl ? escapeHtml(loginUrl) : null;
 
   const text = [
     `${action} with the code below.`,
     "",
     code,
+    ...(loginUrl
+      ? ["", "Or open this link — the code will already be filled in, just press Continue:", "", loginUrl]
+      : []),
     "",
     `This code is valid for ${validity}. If you didn't request this, you can safely ignore this email.`,
     "",
     "— The Fikirtive team",
   ].join("\n");
+
+  const linkBlock = safeUrl
+    ? `<tr><td align="center" style="padding:24px 32px 0 32px;">
+<a href="${safeUrl}" style="display:inline-block;background-color:#111827;color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:12px 28px;border-radius:6px;font-family:${FONT_STACK};">Log in</a>
+</td></tr>
+<tr><td style="padding:16px 32px 0 32px;font-family:${FONT_STACK};">
+<p style="margin:0;font-size:13px;line-height:1.6;color:#6b7280;">The button opens Fikirtive with this code already filled in — press Continue to finish.</p>
+</td></tr>`
+    : "";
 
   const html = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f5;padding:32px 16px;">
 <tr><td align="center">
@@ -153,6 +176,7 @@ export function renderAuthCodeEmail({ action, code, validitySeconds }: AuthCodeE
 <tr><td align="center" style="padding:24px 32px 0 32px;">
 <div style="display:inline-block;background-color:#f4f4f5;border-radius:6px;padding:16px 28px;font-family:${FONT_STACK};font-size:30px;font-weight:700;letter-spacing:0.22em;color:#111827;">${safeCode}</div>
 </td></tr>
+${linkBlock}
 <tr><td style="padding:24px 32px 0 32px;font-family:${FONT_STACK};">
 <p style="margin:0;font-size:13px;line-height:1.6;color:#6b7280;">This code is valid for ${validity}. If you didn't request this, you can safely ignore this email.</p>
 </td></tr>

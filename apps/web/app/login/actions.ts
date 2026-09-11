@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import {
   SIGN_IN_CODE_INVALID_EMAIL_MESSAGE,
+  SIGN_IN_CODE_RATE_LIMITED_MESSAGE,
   SIGN_IN_CODE_SUCCESS_MESSAGE,
   SIGN_IN_CODE_UNAVAILABLE_MESSAGE,
   type SignInCodeRequestResult,
@@ -46,7 +47,13 @@ export async function requestSignInCode(input: { email: string }): Promise<SignI
     requestHeaders: await headers(),
   });
 
-  return outcome === "invalid_email"
-    ? { status: "error", reason: "invalid_email", message: SIGN_IN_CODE_INVALID_EMAIL_MESSAGE }
-    : { status: "success", message: SIGN_IN_CODE_SUCCESS_MESSAGE };
+  if (outcome === "invalid_email") {
+    return { status: "error", reason: "invalid_email", message: SIGN_IN_CODE_INVALID_EMAIL_MESSAGE };
+  }
+  // SIGNIN-A8 —— 第 6 次要码：说出来。见 signin-code-request.ts 的 `SignInCodeRequestOutcome`
+  // 为什么这一句在码门对陌生人打开之后不再是账号存在性探针。
+  if (outcome === "rate_limited") {
+    return { status: "error", reason: "rate_limited", message: SIGN_IN_CODE_RATE_LIMITED_MESSAGE };
+  }
+  return { status: "success", message: SIGN_IN_CODE_SUCCESS_MESSAGE };
 }

@@ -118,6 +118,19 @@ export const ORG_SCOPED_TENANT_GUARD_EXEMPT: Record<string, string> = {
     "takes it from the verified session principal (apps/web/lib/otto-actions.ts recordOttoTurnTrace), " +
     "and the only reader is the ops script scripts/ops/otto-turn-trace.ts. Two-tenant test: " +
     "packages/db/src/otto-turn-trace-tenant.test.ts.",
+  // SIGNIN-A17（规格 docs/specs/sign-in.md 已冻结 · v1 §1.5）：开户赠金「一个真实收件箱只领
+  // 一次」的唯一约束。它的 `orgId` 不是租户列，是一条**审计脚注** —— 记「哪个工作区抢到了这一
+  // 行」。这张表本身没有任何按租户读的路径：它的主键是归一化后的邮箱，唯一的读写是开户事务里
+  // 那一句 `INSERT … ON CONFLICT DO NOTHING`（apps/web/lib/auth-guard.ts 的
+  // bootstrapPersonalOrg），返回的行数就是全部答案，从来不按 orgId 查。
+  SignupGrantClaim:
+    "orgId-scoped, not ownerId — same mechanism blocker (the guard injects the literal `ownerId`). " +
+    "And the column is an audit footnote rather than a tenant key: the row is keyed by the " +
+    "NORMALISED EMAIL (its primary key), which is deliberately cross-tenant — that is the whole " +
+    "point, one real inbox must not collect a second signup grant through a second workspace. " +
+    "There is no owner-scoped read of this table at all: the only statement against it is the " +
+    "INSERT … ON CONFLICT DO NOTHING inside bootstrapPersonalOrg, whose returned row count is the " +
+    "entire answer. Tests: apps/web/lib/__tests__/signup-grant-exactly-once.test.ts (SIGNIN-A17).",
 };
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.

@@ -140,6 +140,31 @@ export const MEDIA_PROXY_PER_CALLER_PER_10_MIN = 600;
 export const SHARE_PREVIEW_PER_CALLER_PER_HOUR = 120;
 
 /**
+ * SIGNIN-A17 —— 全站每小时能开出多少个新账号（docs/specs/sign-in.md 已冻结 · v1 §1.5）。
+ *
+ * 这是**反刷号**那一刀，不是反滥用的通用闸。码门对陌生人打开之后，开户不再需要任何邀请，
+ * 而每一个新工作区都会拿到一笔 `SIGNUP_GRANT_CREDITS` 的真实供应商成本。归一化的赠金幂等键
+ * （`packages/core` 的 `canonicalGrantEmail`）挡掉了 `me+001@` / `m.e@` 这一类同一个真实收件箱
+ * 的变体；这条闸挡的是另一半 —— 一千个**互不相同**的真实地址。
+ *
+ * WHY 50 —— 规格写死的默认值。未公测、零商家（记忆库 `launch-status-no-users`，2026-08-01），
+ * 一小时里出现 50 个真人新注册在今天是**异常**而不是繁荣，所以撞到它本身就是要人看一眼的
+ * 信号（下面的 Sentry 告警）。它按小时滑动，不是终身上限：撞满之后下一小时自动恢复。
+ *
+ * 它只挡**开户**，不挡登录：计数发生在 `databaseHooks.user.create.before`，老商家的会话与
+ * 重复登录根本不经过这里（验收 A17 的「老用户登录不受影响」）。
+ */
+export const NEW_ACCOUNTS_PER_HOUR = 50;
+
+/** SIGNIN-A17 —— 一个全站共享的桶。key 是常量：数的是「新账号」这件事本身，不是谁在开。 */
+export async function consumeNewAccountGate(): Promise<boolean> {
+  const verdict = await consumeRateLimit([
+    { key: "signup:site", max: NEW_ACCOUNTS_PER_HOUR, windowMs: HOUR },
+  ]);
+  return verdict.granted;
+}
+
+/**
  * The public Better Auth doors (today: verification resend — see HOURLY_PUBLIC_DOORS), each with
  * its OWN hourly bucket so one door being spent never closes another.
  * Returns the retry hint (ms) when refused, or null when allowed through.

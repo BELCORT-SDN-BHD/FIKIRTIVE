@@ -22,10 +22,21 @@ export const SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE =
 export const SIGN_IN_CODE_UNAVAILABLE_MESSAGE =
   "Sign-in codes aren't available in this environment yet.";
 
-/** #678 — TWO reasons, and the omissions are the point.
+/**
+ * SIGNIN-A8 —— 商家一小时内第 6 次要码时读到的那一句（规格 §1.3 逐字）。
  *
- *  No "rate_limited": being over the per-address hourly cap is reachable only for an address
- *  that has access, so a distinct answer for it IS an account-existence oracle.
+ * 它说的是「太多了」和「一小时后」，不说这个邮箱有没有账号 —— 它也做不到：码门对陌生人打开
+ * 之后，这个计数桶对任何地址都存在，桶里的数字完全由发问的人自己造成。
+ */
+export const SIGN_IN_CODE_RATE_LIMITED_MESSAGE =
+  "Too many codes requested. Try again in an hour.";
+
+/** #678 / SIGNIN-A8 — THREE reasons, and the omission is still the point.
+ *
+ *  "rate_limited" 是这一片新加的，而且是**改判**：#678 当时不许它存在，理由是码门只放行名单内
+ *  的地址，所以「你被限流了」等于「这个地址有账号」。规格（已冻结 · v1）把码门对陌生人打开，
+ *  那个等号不成立了 —— 每个地址都会被寄码，计数桶一视同仁 —— 而验收 A8 要求把话说出来。
+ *  仍然不许存在的是关于**地址本身**的拒绝（撤销、暂停期陌生人），它们在背景里静静丢掉。
  *
  *  No "delivery_failed" either (r2): the same argument applies one step further out. Only an
  *  address with access was ever handed to the mail provider, so "the provider said 429" was
@@ -39,6 +50,7 @@ export const SIGN_IN_CODE_UNAVAILABLE_MESSAGE =
  *  lookup, and a genuine server fault that lands the same way for every address. */
 export type SignInCodeFailureReason =
   | "invalid_email"
+  | "rate_limited"
   | "unknown";
 
 export type SignInCodeFailure = {
@@ -50,6 +62,32 @@ export type SignInCodeFailure = {
 export type SignInCodeRequestResult =
   | { status: "success"; message: string }
   | SignInCodeFailure;
+
+/**
+ * SIGNIN-A5 —— 邮件里的 Log in 按钮落地时，`/login` 从 URL **片段**里读回来的两样东西。
+ *
+ * 纯函数、无 env、无 server-only：登录页那个客户端组件要用它（片段根本不会送到服务器，只有浏览器
+ * 看得见），所以它住在这份客户端／服务端共用的契约里，而链接的**构造**在
+ * `signin-code-login-url.ts` —— 那边读 `BETTER_AUTH_URL`，不该被打进浏览器包。
+ *
+ * 只接受形状对的值：码必须是数字，邮箱必须像个邮箱。片段是**任何人**都能写的地方，所以读进来的
+ * 东西只用来预填输入框，不构成任何授权 —— 真正的判定仍然是提交之后服务器验那六位数。
+ */
+export function parseSignInCodeFragment(hash: string): { email: string; code: string } | null {
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (!raw) return null;
+  let params: URLSearchParams;
+  try {
+    params = new URLSearchParams(raw);
+  } catch {
+    return null;
+  }
+  const email = normalizeSignInEmail(params.get("email"));
+  const code = (params.get("code") ?? "").trim();
+  if (!email) return null;
+  if (!/^\d{4,10}$/.test(code)) return null;
+  return { email, code };
+}
 
 export function normalizeSignInEmail(value: unknown): string | null {
   if (typeof value !== "string") return null;
