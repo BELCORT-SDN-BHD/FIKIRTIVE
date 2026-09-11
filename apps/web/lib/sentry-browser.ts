@@ -8,6 +8,38 @@
  * 不含 server-only:这是要被打进浏览器包的。
  */
 
+/** 事件里我们会动到的那几块。SDK 的事件类型比这大得多,这里只声明「要洗的那几个字段」——
+ *  多声明一个字段,就是多一个下次 SDK 升级会对不上的形状。 */
+export type ScrubbableEvent = {
+  request?: { url?: string };
+  breadcrumbs?: { data?: { from?: string; to?: string } | undefined }[];
+};
+
+/**
+ * #1317 —— 上报出去的 URL 一律不带**片段**(判官 r1 P1,2026-09-11)。
+ *
+ * 为什么这条一刀切:片段(`#` 之后那一段)在这个产品里正是放**凭据**的地方 —— 邮件里那颗
+ * Log in 按钮把邮箱与六位一次性码放在片段里带到 `/login`(SIGNIN-A5,规格 §4:片段不会被送去
+ * 服务器)。而 SDK 的 HttpContext 默认集成把 `location.href` **原样**写进
+ * `event.request.url`,导航面包屑也把带片段的 href 记进 `data.from` / `data.to`。于是码还有效
+ * 的那 15 分钟里,浏览器上任何一个错误都会把一份可以直接登录的凭据送去第三方 —— 与
+ * `sendDefaultPii: false` 无关,片段本来就在 URL 里。
+ *
+ * 切整段而不是维护一份「敏感参数名」名单:名单永远漏下一个,而我们没有任何一条诊断信息
+ * 是**只在**片段里的。修根不修表 —— 不在登录页贴一块补丁,而是让这个通道再也带不出片段。
+ */
+export function scrubUrlFragments<T extends ScrubbableEvent>(event: T): T {
+  const cut = (u: string | undefined): string | undefined =>
+    typeof u === "string" && u.includes("#") ? u.slice(0, u.indexOf("#")) : u;
+  if (event.request?.url !== undefined) event.request.url = cut(event.request.url);
+  for (const crumb of event.breadcrumbs ?? []) {
+    if (!crumb?.data) continue;
+    if (crumb.data.from !== undefined) crumb.data.from = cut(crumb.data.from);
+    if (crumb.data.to !== undefined) crumb.data.to = cut(crumb.data.to);
+  }
+  return event;
+}
+
 /** Sentry 浏览器端 init 参数。字段是我们真正决定的那几个,不是 SDK 的全集。 */
 export type BrowserSentryOptions = {
   dsn: string;
@@ -20,6 +52,8 @@ export type BrowserSentryOptions = {
    * 这是 SDK 的默认值,写出来是为了让它变成一条会被 review 的决定,而不是一个默认值。
    */
   sendDefaultPii: false;
+  /** #1317 —— 每一条事件送出去之前先洗掉 URL 片段(见 `scrubUrlFragments`)。 */
+  beforeSend: <T extends ScrubbableEvent>(event: T) => T;
 };
 
 /**
@@ -41,6 +75,7 @@ export function browserSentryOptions(
     environment: nodeEnv || "development",
     tracesSampleRate: 0,
     sendDefaultPii: false,
+    beforeSend: scrubUrlFragments,
   };
 }
 

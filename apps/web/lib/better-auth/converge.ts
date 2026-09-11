@@ -3,6 +3,8 @@ import { prisma } from "@fikirtive/db";
 import { runAsSystem } from "@fikirtive/db/principal";
 import { newId, FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { isFounderAdmin } from "@/lib/allowlist";
+import { admitSelfSignup } from "@/lib/signup-gate";
+import { SIGN_IN_DOOR_UNKNOWN } from "./signin-door-source";
 
 /** #538 — is this the deliberate "revoked mid-provisioning" refusal thrown by
  *  bootstrapPersonalOrg? Matched by NAME, not `instanceof`: auth-guard is loaded through a
@@ -31,11 +33,25 @@ function isProvisioningRefusal(e: unknown): boolean {
  *  unverified identity still performs zero work), and the idempotency / founder-atomicity /
  *  allowlist-ordering constraints are all unchanged. (#538 narrowed never-throw to the single
  *  carve-out documented above; every other failure is still swallowed as non-fatal.) */
-export async function convergeIdentity(input: { email: string; name?: string | null; image?: string | null; emailVerified?: boolean; sessionId?: string | null }): Promise<void> {
+export async function convergeIdentity(input: { email: string; name?: string | null; image?: string | null; emailVerified?: boolean; sessionId?: string | null; door?: string }): Promise<void> {
   if (!input.emailVerified) return; // never converge (esp. founder super-admin promote) on an unverified identity
-  const email = input.email.toLowerCase();
+  // SIGNIN-A16 —— 一处归一化，全程用它。`AllowedEmail.email` 没有大小写不敏感的唯一约束
+  // （#578），所以 `Aisha@Example.com` 与 `aisha@example.com` 只有在每个写侧都先小写时才会落到
+  // 同一行、同一个账号上。
+  const email = input.email.trim().toLowerCase();
   await runAsSystem("auth:converge-identity", async () => {
     try {
+      // 0. SIGNIN-A1/A10 —— 「注册即邀请」（#543）。第一次成功登录（两扇门都算）把邮箱写进
+      //    `AllowedEmail`：status active，`invitedBy` 记来源门。它必须发生在下面的
+      //    `bootstrapPersonalOrg` **之前** —— 那笔事务会读这一行来决定「操作员是不是在开户
+      //    中途撤销了这个地址」（#538 的两阶段协议）。
+      //
+      //    这一行是码门对陌生人打开之后，**唯一**把「他证明了自己拥有这个邮箱」写下来的地方：
+      //    从此每一个已有的 deny-by-default 再断言（`isAllowedEmail`、`requireSession`、
+      //    `requireOwner`、后台的那几处）继续照旧工作 —— 门开了，墙没有动。
+      //
+      //    `skipDuplicates` 让它永不复活一行 `revoked`（那正是撤销要绝对的原因）。
+      await admitSelfSignup(email, input.door ?? SIGN_IN_DOOR_UNKNOWN);
       // 1. Ensure the canonical User row exists (BA identities reconnect to the tenant graph by email).
       //    #544 — mirror emailVerified onto the canonical row. We only reach here when
       //    input.emailVerified is true (the early return above), so a create stamps the

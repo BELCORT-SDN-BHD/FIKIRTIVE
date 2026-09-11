@@ -113,6 +113,8 @@ vi.mock("next/headers", () => ({
 const ENV_ALLOWED = `p678-env-${randomUUID()}@fikirtive.test`;   // answered from a string list
 const DB_ALLOWED = `p678-db-${randomUUID()}@fikirtive.test`;     // one query, a hit
 const UNKNOWN = `p678-unknown-${randomUUID()}@fikirtive.test`;   // one query, a miss
+/** SIGNIN-A1/A7 —— 沉默那一半换了对象：码门开了之后，静静收不到信的是**被撤销的**地址。 */
+const REVOKED = `p678-revoked-${randomUUID()}@fikirtive.test`;
 
 // The password door needs a REAL account with a REAL credential (see ⑤).
 const PASSWORD_ACCOUNT = `p678-pw-${randomUUID()}@fikirtive.test`;
@@ -144,6 +146,13 @@ const NEUTRAL = {
   message: "If this email has access, a sign-in code is on its way — check your inbox.",
 };
 
+/** SIGNIN-A8 —— 规格 §1.3 逐字的那一句。它谈次数与时间，从不谈这个邮箱有没有账号。 */
+const RATE_LIMITED = {
+  status: "error",
+  reason: "rate_limited",
+  message: "Too many codes requested. Try again in an hour.",
+};
+
 const CALLER = new Headers({ origin: "http://localhost:3100", "x-forwarded-for": "203.0.113.10" });
 
 /** Rows minted for one address. The ADDRESS lives in `identifier` (the email-OTP plugin writes
@@ -158,6 +167,11 @@ beforeAll(async () => {
     where: { email: DB_ALLOWED },
     create: { email: DB_ALLOWED, status: "active", invitedBy: "p678-test@fikirtive.test" },
     update: { status: "active" },
+  });
+  await prisma.allowedEmail.upsert({
+    where: { email: REVOKED },
+    create: { email: REVOKED, status: "revoked", invitedBy: "operator@fikirtive.test" },
+    update: { status: "revoked" },
   });
 });
 
@@ -233,13 +247,18 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
     // r4 — the throttle's own verdict used to change the amount of work: an over-budget request
     // skipped the sanitise, the job, the push and the timer, and returned the same words. That
     // is the same defect one layer in, so it gets the same assertion.
+    //
+    // SIGNIN-A8 —— 超额现在**说得出口**（"rate_limited"，规格 §1.3 那句「Too many codes
+    // requested.」），所以这一条不再断言两种答案相同 —— 它断言的是两种路径**做的事**相同。
+    // 那仍然是必须的：被撤销的地址与暂停期的陌生人走的正是这条「已寄出」的路（背景把信丢掉），
+    // 所以这条路上任何工作量差异都会变成关于**那两种地址**的时间探针。
     const inBudget: string[][] = [];
     const overBudget: string[][] = [];
     for (let i = 0; i < 8; i++) {
       trace.length = 0;
       const answer = await requestSignInCode({ email: ENV_ALLOWED });
       (i < 5 ? inBudget : overBudget).push([...trace]);
-      expect(answer).toEqual(NEUTRAL);
+      expect(answer).toEqual(i < 5 ? NEUTRAL : RATE_LIMITED);
       await authEmailQueueSettled();
     }
 
@@ -252,31 +271,59 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
     expect(mockSend).toHaveBeenCalledTimes(5);
   });
 
-  it("still delivers to exactly the two addresses that have access, silently", async () => {
-    for (const email of [ENV_ALLOWED, DB_ALLOWED, UNKNOWN]) {
-      await requestSignInCode({ email });
+  /**
+   * SIGNIN-A1 —— 这一条翻面了，而翻面本身就是这一片的产品变化。
+   *
+   * 它以前叫「still delivers to exactly the two addresses that have access, silently」：三个地址
+   * 里只有两个收得到信，第三个（谁都没听说过的那个）静静地被丢掉，而三个人读到的话一模一样。
+   * 规格 §1.6 把门的判定收窄成三步之后，第三个地址也有权收到码 —— 这正是 A1 的第一步。
+   *
+   * 沉默那一半没有消失，只是换了对象：现在被静静丢掉的是**被撤销的**地址（`revoked`），而它
+   * 与另外三个地址读到的话仍然逐字相同。这才是防枚举真正要守的东西。
+   */
+  it("SIGNIN-A1 —— 三种地址都收得到码；被撤销的那个静静地收不到，四种答案逐字相同", async () => {
+    const answers = [];
+    for (const email of [ENV_ALLOWED, DB_ALLOWED, UNKNOWN, REVOKED]) {
+      answers.push(await requestSignInCode({ email }));
       await authEmailQueueSettled();
     }
     const written = mockSend.mock.calls.map((c) => (c[0] as { to: string }).to).sort();
-    expect(written).toEqual([DB_ALLOWED, ENV_ALLOWED].sort());
+    expect(written).toEqual([DB_ALLOWED, ENV_ALLOWED, UNKNOWN].sort());
+    // 撤销的那个一封都没有，而他读到的话与另外三个一模一样。
+    expect(written).not.toContain(REVOKED);
+    for (const answer of answers) expect(answer).toEqual(NEUTRAL);
   });
 });
 
-// ── ② an address without access never causes a verification row ──────────────────────────────
-describe("#678 r3 ② — anonymous requests do not grow the verification table", () => {
-  it("writes nothing for ten unknown addresses, and exactly one for an address with access", async () => {
+// ── ② 门开了之后，还有谁不许长出一行 verification ──────────────────────────────────────────
+/**
+ * SIGNIN-A1/A7 —— 这一段整个换了主语。
+ *
+ * 它以前叫「anonymous requests do not grow the verification table」：任何没被邀请的地址都不许
+ * 让我们写下一行 verification（#678 的对外寄信面防线）。规格 §1.6 把码门对陌生人打开，那条
+ * 防线的**主语**因此从「没被邀请的」缩到「被撤销的」——陌生人现在有权拿到码，这是 A1 的第一步。
+ *
+ * 没变的是「一次要码只写一行」这件事，以及**撤销之后一行都不许再写**：撤销是绝对的，而且它
+ * 与陌生人的区别一个字都不许从答案里读出来（上面那条用例）。
+ */
+describe("#678 r3 ② — 撤销之后，一行 verification 都不许再长出来", () => {
+  it("SIGNIN-A7 —— 十个被撤销的地址写不出一行；一个正常地址写出恰好一行", async () => {
     const before = await prisma.betterAuthVerification.count();
-    const strangers = Array.from({ length: 10 }, () => `p678-swarm-${randomUUID()}@fikirtive.test`);
-    for (const email of strangers) await requestSignInCode({ email });
+    const banned = Array.from({ length: 10 }, () => `p678-swarm-${randomUUID()}@fikirtive.test`);
+    await prisma.allowedEmail.createMany({
+      data: banned.map((email) => ({ email, status: "revoked", invitedBy: "operator@fikirtive.test" })),
+      skipDuplicates: true,
+    });
+    for (const email of banned) await requestSignInCode({ email });
     await authEmailQueueSettled();
 
-    // The token is minted AFTER the access check now, so an address nobody invited never
-    // reaches Better Auth at all.
+    // The token is minted AFTER the door decision, so a revoked address never reaches Better
+    // Auth at all.
     expect(await prisma.betterAuthVerification.count()).toBe(before);
-    for (const email of strangers) expect(await rowsFor(email)).toBe(0);
+    for (const email of banned) expect(await rowsFor(email)).toBe(0);
 
-    // Control: a press from an address that DOES have access mints one, so the zero above is
-    // the gate working and not the door being nailed shut.
+    // Control: a press from an address the door admits mints one, so the zero above is the gate
+    // working and not the door being nailed shut.
     //
     // The outstanding code is cleared first because a live one is REUSED rather than replaced
     // (server.ts, `resendStrategy: "reuse"`): without this the control would press, correctly
@@ -470,10 +517,12 @@ describe("#678 r3 ⑥ — submitting a code cannot be used to ask whether an add
     // fourth guess returned 403 TOO_MANY_ATTEMPTS for the merchant (the row's budget is spent)
     // and 400 INVALID_OTP for the stranger (there is no row to spend).
     await prisma.betterAuthVerification.deleteMany({
-      where: { identifier: { contains: ENV_ALLOWED } },
+      where: { OR: [{ identifier: { contains: ENV_ALLOWED } }, { identifier: { contains: UNKNOWN } }] },
     });
     await auth.api.createVerificationOTP({ body: { email: ENV_ALLOWED, type: "sign-in" } });
     expect(await rowsFor(ENV_ALLOWED)).toBe(1);
+    // 陌生地址在码门开放之后**也**能拿到码（SIGNIN-A1），所以这一格要的是「此刻他手上没有」
+    // 而不是「他永远不会有」：这条用例比的是「有一个活码」与「一个码都没有」两种状态的答案。
     expect(await rowsFor(UNKNOWN)).toBe(0);
 
     for (const otp of WRONG) {

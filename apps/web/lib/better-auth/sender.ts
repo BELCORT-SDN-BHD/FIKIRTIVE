@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { consumeRateLimit, clearRateLimitCounters } from "@fikirtive/db/rate-limit";
 import { emailPort } from "@/lib/email";
 import { renderAuthCodeEmail, renderAuthEmail } from "@/lib/email/auth-email-template";
-import { isAllowedEmail } from "@/lib/allowlist";
+import { signInDoorDecision } from "@/lib/signup-gate";
 
 /**
  * #939 — Better Auth's own default token lifetime for email-verification: 3600 seconds, applied
@@ -361,7 +361,16 @@ const outstanding = (): number => pendingCount + refused.length + inFlight.size;
  * enforces. A process that dies between the hand-over and the send loses that email — the
  * merchant presses the button again.
  */
-export function enqueueAuthEmail(job: AuthEmailJob): void {
+export function enqueueAuthEmail(rawJob: AuthEmailJob): void {
+  // SIGNIN-A16 —— 归一化在**进队列这一刻**，一次，对所有调用者。
+  //
+  // 以前它靠每个调用者自己先小写（`acceptSignInCodeRequest` 确实做了），而队列下游有三处读这个
+  // 地址、各自归一：地址预算（`addressKey` 自己 trim+lowercase）、门的判定、以及交给 Better Auth
+  // 去铸码的那一次调用。最后那一处 **不归一** —— emailOTP 的寄码路由按原样写 verification 的
+  // identifier，而验码路由自己 `toLowerCase()`，于是一个大写地址会铸出一个永远验不掉的码。
+  // 一个没人能用的凭据，而且三处读同一个值却各有各的口径，正是「同一件事有三份真相」的形状。
+  // 队列的入口是它们共同的上游，所以归一化落在这里，下游读到的地址从此只有一种写法。
+  const job: AuthEmailJob = { ...rawJob, email: rawJob.email.trim().toLowerCase() };
   if (outstanding() >= maxQueued) {
     // Make room by dropping a job the throttle already refused — those were never going to be
     // delivered, so they are the cheapest thing in the queue to lose. If there are none, the
@@ -485,7 +494,10 @@ async function runOneJob(job: AuthEmailJob): Promise<void> {
  */
 async function runAuthEmailJob(job: AuthEmailJob): Promise<void> {
   if (job.purpose === "sign-in-code") {
-    const allowed = await isAllowedEmail(job.email);
+    // SIGNIN-A1/A6/A7 —— 规格 §1.6 的三步判定，与前门中间件、寄码钩子同一个函数。它取代了
+    // 「在不在名单里」：陌生邮箱在这里放行（否则码门对陌生人根本不会寄出第一封信），被撤销的
+    // 与暂停期的陌生人仍然在这里静静地被丢掉 —— 商家那一端读到的话与正常送出完全一样。
+    const allowed = (await signInDoorDecision(job.email)) === "allow";
     const withinCap = await consumeAddressCap(job.email);
     if (!allowed) return;
     if (!withinCap) {
@@ -563,11 +575,16 @@ function idempotencyKeyFor(message: { to: string; subject: string; secret: strin
 }
 
 /**
- * What the envelope carries: a LINK the merchant clicks, or a CODE they type back. Exactly one of
- * the two, enforced by the type rather than by a runtime check — an auth email with neither is a
- * blank card, and one with both is two ways in for one credential.
+ * What the envelope carries: a LINK the merchant clicks, or a CODE they type back — never
+ * neither, which would be a blank card. Enforced by the type rather than by a runtime check.
+ *
+ * SIGNIN-A5 —— 码那一支现在**可以**同时带一条链接，而这不是「一个凭据两个入口」：链接不登录，
+ * 它只是把同一个码搬到登录页的输入框里（`signin-code-login-url.ts` 写清了为什么）。凭据仍然是
+ * 那六位数，生命周期仍然只有一份。链接那一支保持互斥，它带的 URL 本身就是凭据。
  */
-export type AuthEmailPayload = { url: string; code?: never } | { code: string; url?: never };
+export type AuthEmailPayload =
+  | { url: string; code?: never }
+  | { code: string; url?: string };
 
 /**
  * Write one auth email. AWAITED — but only ever from the background side above, or from the
@@ -604,23 +621,30 @@ export async function sendAuthEmail(
   // `secret` is the credential itself, carried alongside: it is what the dev transport writes to
   // a file (how a local sign-in is completed with no mail provider configured) and what the
   // idempotency key is derived from.
+  //
+  // WHICH BUILDER: the CODE decides, not the URL (SIGNIN-A5). A code email may now also carry a
+  // link that prefills that same code, so "has a url" no longer means "is a link email" — asking
+  // the url first would have silently re-rendered every sign-in code as a link card with no code
+  // in it. The credential (`secret`, what the dev transport writes out and what the idempotency
+  // key is derived from) is likewise the code whenever there is one.
   const { html, text, secret } =
-    message.url !== undefined
+    message.code !== undefined
       ? {
+          ...renderAuthCodeEmail({
+            action: message.intro,
+            code: message.code,
+            loginUrl: message.url,
+            validitySeconds: message.validitySeconds,
+          }),
+          secret: message.code,
+        }
+      : {
           ...renderAuthEmail({
             action: message.intro,
             url: message.url,
             validitySeconds: message.validitySeconds,
           }),
           secret: message.url,
-        }
-      : {
-          ...renderAuthCodeEmail({
-            action: message.intro,
-            code: message.code,
-            validitySeconds: message.validitySeconds,
-          }),
-          secret: message.code,
         };
   try {
     await emailPort.send({

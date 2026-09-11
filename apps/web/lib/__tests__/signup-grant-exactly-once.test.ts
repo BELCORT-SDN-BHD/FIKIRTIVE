@@ -87,6 +87,121 @@ describe("#543 signup grant — exactly-once", () => {
     expect(balance).toBe(SIGNUP_GRANT_CREDITS);
   });
 
+  /**
+   * SIGNIN-A17 —— 「赠金只发给第一个（幂等键按去掉 `+tag` 与点号变体后的邮箱算）」。
+   *
+   * 这是钱路，所以它是**数据库唯一约束**证出来的，不是一次查询的运气：`signup_grant_claim` 的
+   * 主键就是归一化后的邮箱，在开户那笔事务里 INSERT … ON CONFLICT DO NOTHING。
+   *
+   * RED before：三个变体是三个 org，`CreditLedger` 的 (orgId, idempotencyKey) 唯一约束对它们
+   * 一个都拦不住 —— 三笔赠金，三份真实供应商成本。规格 §1.5 算过：一千个号约 875 美元。
+   */
+  it("SIGNIN-A17 —— 同一个真实收件箱的 +tag 与去点变体只领一笔赠金，账号照建", async () => {
+    const stem = `a17${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const variants = [
+      `${stem}@gmail.com`,
+      `${stem}+001@gmail.com`,
+      `${stem.slice(0, 4)}.${stem.slice(4)}@gmail.com`, // gmail 去点
+    ];
+    const orgs: string[] = [];
+    for (const email of variants) {
+      const user = await prisma.user.create({
+        data: { id: `usr_${randomUUID()}`, email },
+        select: { id: true, email: true },
+      });
+      orgs.push((await bootstrapPersonalOrg(user.id, user.email))!);
+    }
+
+    // 账号与工作区都建出来了 —— A17 明写 30 个号都进得来，被归一的只有赠金。
+    expect(new Set(orgs).size).toBe(variants.length);
+    for (const orgId of orgs) {
+      expect(await prisma.membership.count({ where: { orgId } })).toBe(1);
+    }
+
+    // 赠金只有一笔，落在先到的那个工作区。
+    const granted: string[] = [];
+    for (const orgId of orgs) {
+      const rows = await prisma.creditLedger.findMany({ where: { orgId, kind: "GRANT" } });
+      if (rows.length) granted.push(orgId);
+      expect(rows.length).toBeLessThanOrEqual(1);
+    }
+    expect(granted).toEqual([orgs[0]]);
+  });
+
+  /** SIGNIN-A17 —— 两个变体同时开户（两个标签页、两台机器）也只可能有一个拿到赠金：
+   *  去重键是主键，并发插入只有一个赢。 */
+  it("SIGNIN-A17 —— 两个变体并发开户，赠金仍然恰好一笔", async () => {
+    const stem = `a17race${randomUUID().replace(/-/g, "")}`;
+    const pair = [`${stem}@gmail.com`, `${stem}+two@gmail.com`];
+    const users = [];
+    for (const email of pair) {
+      users.push(
+        await prisma.user.create({
+          data: { id: `usr_${randomUUID()}`, email },
+          select: { id: true, email: true },
+        }),
+      );
+    }
+    const orgs = await Promise.all(users.map((u) => bootstrapPersonalOrg(u.id, u.email)));
+
+    const grantRows = await prisma.creditLedger.count({
+      where: { orgId: { in: orgs.filter(Boolean) as string[] }, kind: "GRANT" },
+    });
+    expect(grantRows).toBe(1);
+  });
+
+  /**
+   * SIGNIN-A17 —— `googlemail.com` 与 `gmail.com` 是同一个收件箱（判官 r1 P1，2026-09-11）。
+   *
+   * 判官在干净测试库上投了四个地址：`X@gmail.com` / `X@googlemail.com` / 去点变体 / `+tag` 变体，
+   * 四封信全部落进同一个 Google 收件箱，却拿到 **2** 笔赠金 —— 折域漏了。这一条把那次探针钉进围栏。
+   *
+   * RED before：`grantRows` 是 2（gmail 一笔、googlemail 一笔）。
+   */
+  it("SIGNIN-A17 —— googlemail.com 的变体与 gmail.com 是同一个收件箱，合起来只领一笔赠金", async () => {
+    const stem = `a17gm${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const variants = [
+      `${stem}@gmail.com`,
+      `${stem}@googlemail.com`,
+      `${stem.slice(0, 4)}.${stem.slice(4)}@googlemail.com`,
+      `${stem}+ops@googlemail.com`,
+    ];
+    const orgs: string[] = [];
+    for (const email of variants) {
+      const user = await prisma.user.create({
+        data: { id: `usr_${randomUUID()}`, email },
+        select: { id: true, email: true },
+      });
+      orgs.push((await bootstrapPersonalOrg(user.id, user.email))!);
+    }
+
+    // 四个账号都建得出来（A17 明写号照建，被归一的只有赠金）。
+    expect(new Set(orgs).size).toBe(variants.length);
+
+    const grantRows = await prisma.creditLedger.count({
+      where: { orgId: { in: orgs }, kind: "GRANT" },
+    });
+    expect(grantRows).toBe(1);
+  });
+
+  /** 不同域的同名 local part 不是同一个人：去点只对 Gmail 自己的域做，否则会把两个真实的人
+   *  合并成一个，反而扣掉其中一个的开户赠金。 */
+  it("SIGNIN-A17 —— 非 gmail 域不做去点归一：两个真实的人各拿一笔赠金", async () => {
+    const stem = `a17dots${randomUUID().replace(/-/g, "")}`;
+    const pair = [`${stem}@shop.test`, `${stem.slice(0, 4)}.${stem.slice(4)}@shop.test`];
+    const orgs: string[] = [];
+    for (const email of pair) {
+      const user = await prisma.user.create({
+        data: { id: `usr_${randomUUID()}`, email },
+        select: { id: true, email: true },
+      });
+      orgs.push((await bootstrapPersonalOrg(user.id, user.email))!);
+    }
+    for (const orgId of orgs) {
+      expect(await prisma.creditLedger.count({ where: { orgId, kind: "GRANT" } })).toBe(1);
+    }
+  });
+
   it("an UNVERIFIED identity converges nothing — no user row, no org, no money", async () => {
     const email = `unverified-${randomUUID()}@fikirtive.test`;
     await convergeIdentity({ email, name: "Not Verified Yet", emailVerified: false });
@@ -108,24 +223,30 @@ describe("#543 signup grant — exactly-once", () => {
     expect(again?.emailVerified?.getTime()).toBe(firstStamp.getTime());
   });
 
-  it("names the workspace after the shop, and leaves it unset when no shop name was given", async () => {
-    const named = await freshUser("Kedai Kopi Aman");
+  /**
+   * SIGNIN-A10 —— 「工作区名都为空（等商家在设置页填店铺名）」，两扇门一律如此。
+   *
+   * RED before：这一条断言的正好相反 —— 带了 `User.name` 的账号会拿到一个以那个名字命名的
+   * 工作区。#680 立的规矩是「没收集店铺名的门，工作区就没有名字」，实现方式是读 `User.name`；
+   * 对码门那是空串，所以它一直看起来是对的，直到 Google 门把**个人姓名**写进那个字段，同一段
+   * 代码给同一件事写出两种结果。规格 §1.4 拍板：店铺名不是人名，两扇门都留空。
+   */
+  it("SIGNIN-A10 —— 首登的工作区名一律为空，即使身份带着一个人名", async () => {
+    const named = await freshUser("Aisha Rahman");
     const namedOrg = (await bootstrapPersonalOrg(named.id, named.email))!;
-    expect((await prisma.organization.findUnique({ where: { id: namedOrg } }))?.name).toBe("Kedai Kopi Aman");
+    expect((await prisma.organization.findUnique({ where: { id: namedOrg } }))?.name).toBe("");
 
-    // #680 — the magic-link/invite door never asks for a shop name, so there is nothing to
-    // write. This used to fall back to the merchant's email address, which /profile then showed
-    // back to them as "Your shop name". Unset is the truthful state; /profile asks for it.
     const anonymous = await freshUser();
     const anonymousOrg = (await bootstrapPersonalOrg(anonymous.id, anonymous.email))!;
     expect((await prisma.organization.findUnique({ where: { id: anonymousOrg } }))?.name).toBe("");
   });
 
   it("never RENAMES an existing workspace on a later bootstrap", async () => {
-    const user = await freshUser("Original Name");
+    const user = await freshUser();
     const orgId = (await bootstrapPersonalOrg(user.id, user.email))!;
-    await prisma.user.update({ where: { id: user.id }, data: { name: "Renamed Later" } });
+    // 商家在设置页填了店铺名之后，再登录一次不许把它擦掉。
+    await prisma.organization.update({ where: { id: orgId }, data: { name: "Kedai Kopi Aman" } });
     await bootstrapPersonalOrg(user.id, user.email);
-    expect((await prisma.organization.findUnique({ where: { id: orgId } }))?.name).toBe("Original Name");
+    expect((await prisma.organization.findUnique({ where: { id: orgId } }))?.name).toBe("Kedai Kopi Aman");
   });
 });

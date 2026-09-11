@@ -122,9 +122,20 @@ describe("#939 — auth emails carry branded html + text at the real send call s
     });
     expect(row?.value).not.toContain(code);
 
-    // NOTHING TO CLICK. A code email with a link in it is the shape phishing copies.
-    expect(hrefsIn(msg!.html!)).toEqual([]);
-    expect(msg!.text).not.toMatch(/https?:\/\//);
+    // SIGNIN-A5 —— 一颗 Log in 按钮，指向**我们自己的登录页**，码在片段里。
+    //
+    // 这一格以前断言的是「一个链接都没有」（防钓鱼：能点的东西就是钓鱼要仿的形状）。规格
+    // §1.2 选了 Linear 的形状，而 §4 记下的折中正是这里在验的：链接不登录，它只是把同一个码
+    // 带到输入框里，商家仍然要按一次 Continue。于是能点的东西只有一个、指向只有一处，而且
+    // **码不进查询串**（片段不会被浏览器送到服务器，不进 access log、不随 Referer 外泄）。
+    const hrefs = hrefsIn(msg!.html!);
+    expect(hrefs).toHaveLength(1);
+    const link = new URL(hrefs[0]!);
+    expect(link.pathname).toBe("/login");
+    expect(link.searchParams.get("step")).toBe("code");
+    expect(link.search).not.toContain(code!); // 码只在片段里
+    expect(new URLSearchParams(link.hash.slice(1)).get("code")).toBe(code);
+    expect(new URLSearchParams(link.hash.slice(1)).get("email")).toBe(SIGNIN_ADDR);
 
     expect(msg!.html).toContain("This code is valid for 15 minutes.");
     expect(msg!.text).toContain("This code is valid for 15 minutes.");

@@ -69,8 +69,11 @@ beforeAll(async () => {
   const magicUser = await ensureUser(MAGIC_LINK_EMAIL);
   magicOrg = (await bootstrapPersonalOrg(magicUser.id, MAGIC_LINK_EMAIL))!;
 
-  // The door that asks: /signup carries the shop name on the account name.
-  const signupUser = await ensureUser(SIGNUP_EMAIL, "Bunga Bakery");
+  // SIGNIN-A10 —— 以前这里是「问过店铺名的那扇门」（`/signup` 把店铺名写在 `User.name` 上，
+  // bootstrap 读它来命名工作区）。密码注册退役、两扇门都不问店铺名之后，`User.name` 上剩下的
+  // 只可能是**个人姓名**（Google 门带进来的），而店铺名不是人名 —— 规格 §1.4 因此拍板两扇门
+  // 首登的工作区名一律为空。所以这个身份现在带的是一个人名，用来钉「它不会变成工作区名」。
+  const signupUser = await ensureUser(SIGNUP_EMAIL, "Aisha Rahman");
   signupOrg = (await bootstrapPersonalOrg(signupUser.id, SIGNUP_EMAIL))!;
 
   // A workspace created BEFORE this fix, still carrying the address bootstrap used to write.
@@ -78,8 +81,11 @@ beforeAll(async () => {
   legacyOrg = (await bootstrapPersonalOrg(legacyUser.id, LEGACY_EMAIL))!;
   await prisma.organization.update({ where: { id: legacyOrg }, data: { name: LEGACY_EMAIL } });
 
+  // 隔壁那位:他在设置页把店铺名填成了「Kopi Corner」(SIGNIN-A10 之后这是唯一的填法),
+  // 所以租户边界那条用例比的是一个**真的被设过**的名字。`User.name` 是他自己的显示名。
   const neighbourUser = await ensureUser(NEIGHBOUR_EMAIL, "Kopi Corner");
   neighbourOrg = (await bootstrapPersonalOrg(neighbourUser.id, NEIGHBOUR_EMAIL))!;
+  await prisma.organization.update({ where: { id: neighbourOrg }, data: { name: "Kopi Corner" } });
 });
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -89,8 +95,19 @@ describe("#680 — a workspace is never named after the merchant's address", () 
     expect(await orgName(magicOrg)).toBe("");
   });
 
-  it("the signup door still names the workspace after the shop the merchant typed", async () => {
-    expect(await orgName(signupOrg)).toBe("Bunga Bakery");
+  /**
+   * SIGNIN-A10 —— 这一条翻面了，而翻面正是这一片的产品裁决。
+   *
+   * 它以前钉的是「问过店铺名的那扇门，工作区就叫那个名字」（`/signup` 把商家输入的店铺名放在
+   * `User.name` 上，bootstrap 读它）。密码注册退役之后**没有一扇门再问店铺名**，`User.name`
+   * 上剩下的只可能是 Google 带进来的**个人姓名** —— 同一段代码于是给同一件事写出两种结果：
+   * 码门的工作区没有名字，Google 的工作区叫「Aisha Rahman」。
+   *
+   * 规格（docs/specs/sign-in.md 已冻结 · v1 §1.4 最后一段）拍板：两扇门首登的工作区名一律为空，
+   * 商家在设置页填店铺名。所以这一条现在钉的是「人名不会被拿去当店铺名」。
+   */
+  it("SIGNIN-A10 —— 身份带着一个人名，工作区仍然没有名字（店铺名不是人名）", async () => {
+    expect(await orgName(signupOrg)).toBe("");
   });
 
   it("/profile shows an unset workspace as empty, so its placeholder asks for the shop name", async () => {
