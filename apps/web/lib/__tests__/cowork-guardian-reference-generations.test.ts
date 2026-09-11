@@ -86,7 +86,9 @@ describe("creation §5 :162⑤ —— 付费前守卫覆盖 referenceGenerationI
     expect(mockGenerationFindFirst.mock.calls[0]![0].where.ownerId).toBe(OWNER);
   });
 
-  it("creation §5 :162⑤ / CREATE-A2: 没有挂原件的那一趟一格没动 —— 一次多余的查询都不发", async () => {
+  // 编号(Creation③ 判官 P2)——这一条只证「没挂原件时一格没动」:它不证明任何一条验收,
+  // 所以只带登记编号,不冠验收号。CREATE-A2 说的是「花钱前诚实拒绝」,而这一条**不拒绝**。
+  it("creation §5 :162⑤: 没有挂原件的那一趟一格没动 —— 一次多余的查询都不发", async () => {
     expect(await checkCast(req())).toBeNull();
     expect(await checkCast(req({ referenceGenerationIds: [] }))).toBeNull();
     expect(mockGenerationFindFirst).not.toHaveBeenCalled();
