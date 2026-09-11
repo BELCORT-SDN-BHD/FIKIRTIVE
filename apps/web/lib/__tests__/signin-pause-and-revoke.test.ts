@@ -73,6 +73,32 @@ vi.mock("@/lib/better-auth/gate", async (importOriginal) => {
   };
 });
 
+/**
+ * 第 10 轮（判官 Codex P1）—— **前门读会话那一次失败**的注入开关。
+ *
+ * 注入点必须恰好是前门自己那一次读，不能是「整个 better-auth 读不到会话」：这条用例要证明的
+ * 正是两者的**差别** —— 前门读失败、端点自己读成功。`gate.ts` 从 `better-auth/api` 这个包
+ * 入口 import `getSession`，而库内部（`sessionMiddleware` → `getSessionFromCtx`）走的是它自己
+ * 的相对路径 `./routes/session.mjs`，所以在包入口上包一层只会拦到前门那一次。
+ *
+ * 包一层而不是替身：开关关着时调的是原实现，行为一个字不改。
+ */
+let frontDoorSessionReadThrows = false;
+vi.mock("better-auth/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("better-auth/api")>();
+  return {
+    ...actual,
+    getSession: (...args: Parameters<typeof actual.getSession>) => {
+      const endpoint = actual.getSession(...args);
+      const wrapped = (ctx: Parameters<typeof endpoint>[0]) => {
+        if (frontDoorSessionReadThrows) throw new Error("front-door session read blew up");
+        return endpoint(ctx);
+      };
+      return Object.assign(wrapped, endpoint) as typeof endpoint;
+    },
+  };
+});
+
 vi.mock("@/lib/email", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/email")>();
   return {
@@ -270,6 +296,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  frontDoorSessionReadThrows = false;
   convergeThrew.length = 0;
   discardedUserIds.length = 0;
   inbox.length = 0;
@@ -531,6 +558,154 @@ describe("SIGNIN-A7 —— 撤销一个自助进来的邮箱", () => {
       nameAfter: nameBefore,
       rowsLeft: [0, 0, 0],
     });
+  });
+
+  /**
+   * SIGNIN-A7 —— **前门读不出会话时拒这一次请求，而不是当「没有会话」放行**
+   * （第 10 轮，判官 Codex P1）。
+   *
+   * 第 9 轮那一版调 `getSessionFromCtx`，而库在它内部写着 `.catch(() => { return null; })`
+   * （`better-auth@1.6.20` `dist/api/routes/session.mjs`）—— 读会话时数据库抖一下，前门读到的
+   * 是 `null`，于是它按「这个请求没有会话」提前 return 放行；紧接着端点自己的
+   * `sessionMiddleware` **再读一次**，这一次成功，于是一个已被撤销的人照样改得了资料。闸在那里
+   * 站着，被一次瞬时失败整个绕过。
+   *
+   * 这条用例把那个差别原样造出来：只让**前门那一次读**抛（注入点是包入口的 `getSession`，库内部
+   * 走相对路径，拦不到），端点自己那一次读照旧成功。所以它问的是一句很具体的话 —— 前门读不出来
+   * 的时候，端点到底跑没跑。
+   *
+   * 用一个**名单上完全正常**的地址来问：这条路不关撤销的事，它问的是「判不出」。
+   */
+  it("SIGNIN-A7 —— 前门读会话那一次抛错：请求被拒，端点一个字都没跑（不当「无会话」放行）", async () => {
+    const merchant = newAddress("front-door-session-read-throws");
+    const cookie = await signInThroughCodeDoor(merchant);
+    const userId = (await prisma.betterAuthSession.findFirstOrThrow({ where: { user: { email: merchant } } })).userId;
+    const nameBefore = (await prisma.betterAuthUser.findUniqueOrThrow({ where: { id: userId }, select: { name: true } })).name;
+
+    frontDoorSessionReadThrows = true;
+    const status = (await baRequest("POST", "update-user", cookie, { name: "Renamed while the door was blind" })).status;
+    frontDoorSessionReadThrows = false;
+
+    const nameAfter = (await prisma.betterAuthUser.findUniqueOrThrow({ where: { id: userId }, select: { name: true } })).name;
+    // 会话行一张不少：读不出来 ≠ 被撤销，这条路上不许删任何东西。
+    expect({ status, nameAfter, rowsLeft: await sessionsFor(merchant), listStatus: await statusOf(merchant) }).toEqual({
+      status: 403,
+      nameAfter: nameBefore,
+      rowsLeft: 1,
+      listStatus: "active",
+    });
+  });
+
+  /**
+   * SIGNIN-A7 —— **名单读不出来时只拒这一次请求，一张会话都不许删**（第 10 轮，判官 opus P1）。
+   *
+   * 第 9 轮前门走的是 `signInDoorDecision`，而那个函数把「读不到答案」一律答成 `revoked`
+   * （`lookupAddress` 的 `catch → null`，`signup-gate.ts`）。那个口径**对门是对的**（一次登录
+   * 尝试判不出就别放进来，重试一次即可），对前门是灾难：一次数据库抖动会让前门把一个名单上
+   * `active` 的在线商家**所有设备上的会话全部删掉**，再回他一次 500 —— 一次读失败换来一次全局
+   * 登出，两件事完全不成比例。
+   *
+   * 所以前门改用 `sessionRevocationLookup`（`revoked` / `ok` / `unavailable` 三分），这条用例
+   * 钉住第三种：名单那次点查失败 → 403 拒这一次，`ba_session` 行数不变、名单那一行不变。
+   */
+  it("SIGNIN-A7 —— 名单点查失败：只拒这一次请求，在线商家的会话行一张不少（不当撤销处理）", async () => {
+    const merchant = newAddress("front-door-allowlist-unavailable");
+    const cookie = await signInThroughCodeDoor(merchant);
+    const userId = (await prisma.betterAuthSession.findFirstOrThrow({ where: { user: { email: merchant } } })).userId;
+    const nameBefore = (await prisma.betterAuthUser.findUniqueOrThrow({ where: { id: userId }, select: { name: true } })).name;
+    expect(await sessionsFor(merchant)).toBe(1);
+
+    // 前门在这个请求里的第一次 `AllowedEmail` 点查就是名单那一次（读会话不碰这张表）。
+    //
+    // 为什么是直接换掉那个方法而不是 `vi.spyOn`：`prisma.allowedEmail` 是同一个对象（实测
+    // `prisma.allowedEmail === prisma.allowedEmail` 为 true），但 `findUnique` 不是它的自有
+    // 属性，`spy.mockRestore()` 于是把它**删成 undefined** —— 本轮实测代价是这一条之后每条
+    // 用例都红在 `prisma.allowedEmail.findUnique is not a function`。存原值、`finally` 放回去。
+    const delegate = prisma.allowedEmail as unknown as Record<string, unknown>;
+    const originalFindUnique = delegate.findUnique;
+    delegate.findUnique = () => Promise.reject(new Error("allowlist read blew up"));
+    let status: number;
+    try {
+      status = (await baRequest("POST", "update-user", cookie, { name: "Renamed while the list was unreadable" })).status;
+    } finally {
+      delegate.findUnique = originalFindUnique;
+    }
+
+    const nameAfter = (await prisma.betterAuthUser.findUniqueOrThrow({ where: { id: userId }, select: { name: true } })).name;
+    expect({ status, nameAfter, rowsLeft: await sessionsFor(merchant), listStatus: await statusOf(merchant) }).toEqual({
+      status: 403,
+      nameAfter: nameBefore,
+      rowsLeft: 1,
+      listStatus: "active",
+    });
+  });
+
+  /**
+   * SIGNIN-A7 —— **滚动续期的那张 `Set-Cookie` 还在**（第 10 轮，判官 Codex P2）。
+   *
+   * 前门与端点共用同一个 `ctx.context`（`dist/api/dispatch.mjs` 的 `dispatchAuthEndpoint`：
+   * `internalContext` 建一次，`runBeforeHooks` 与 `endpoint()` 收到同一个 `.context`）。第 9 轮
+   * 前门那次 `getSessionFromCtx` 既**做掉了续期**、又把结果写回 `ctx.context.session`，于是端点
+   * 第一句 `if (ctx.context.session) return ctx.context.session` 直接复用，自己不再续期、不再发
+   * cookie；而 `dispatch.mjs` 随后一句 `internalContext.context.responseHeaders = result.headers`
+   * 会把 before 阶段累积的响应头整个覆盖掉 —— 续期落了库，`Set-Cookie` 没到浏览器。表现是会话
+   * 到期时间在库里一直往后走，商家浏览器那张却永远不更新。
+   *
+   * 造法：把这张会话的 `expiresAt` 调到刚好越过 `updateAge` 那条线（两个数都从 better-auth 自己
+   * 的 `sessionConfig` 读，不写死），然后打一次 `/get-session`，问响应里有没有那张续期 cookie。
+   */
+  it("SIGNIN-A7 —— 临近续期窗口的会话打 /get-session：续期 Set-Cookie 仍然发得出（闸不抢续期）", async () => {
+    const merchant = newAddress("front-door-keeps-refresh-cookie");
+    const cookie = await signInThroughCodeDoor(merchant);
+    const row = await prisma.betterAuthSession.findFirstOrThrow({ where: { user: { email: merchant } } });
+
+    // `shouldBeUpdated = expiresAt - expiresIn + updateAge <= now`（`dist/api/routes/session.mjs`）。
+    // 减掉一分钟让这张会话刚好落在窗口里面，而不是压在边界上。
+    const { sessionConfig } = await auth.$context;
+    const nearRefresh = new Date(Date.now() + sessionConfig.expiresIn * 1000 - sessionConfig.updateAge * 1000 - 60_000);
+    await prisma.betterAuthSession.update({ where: { id: row.id }, data: { expiresAt: nearRefresh } });
+
+    const res = await baRequest("GET", "get-session", cookie);
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    const after = await prisma.betterAuthSession.findUniqueOrThrow({ where: { id: row.id }, select: { expiresAt: true } });
+
+    expect({
+      status: res.status,
+      refreshedCookie: setCookie.includes("session_token"),
+      rowMovedForward: after.expiresAt.getTime() > nearRefresh.getTime(),
+    }).toEqual({ status: 200, refreshedCookie: true, rowMovedForward: true });
+  });
+
+  /**
+   * SIGNIN-A7 —— 同一件事的**另一半**：挂 `sessionMiddleware` 的端点也要自己续期
+   * （第 10 轮，判官 Codex P2）。
+   *
+   * `/get-session` 那条路（上一条）证明的是「闸不抢续期」（`disableRefresh: true`）。可 better-auth
+   * 一整排端点走的是另一条路：`sessionMiddleware` → `getSessionFromCtx`，而那个函数第一句就是
+   * `if (ctx.context.session) return ctx.context.session;` —— 闸在 `before` 里把读到的会话写进
+   * 那个共享的 `ctx.context`（`dispatch.mjs` 里前门与端点是同一个 `.context` 对象），端点就直接
+   * 拿闸那份缓存，**自己一次都不读**，于是滚动续期在这一整排端点上整个消失：库里那张会话的
+   * `expiresAt` 永远停在原地，直到 7 天后过期把商家踢出去。
+   *
+   * 所以闸读完必须把 `ctx.context.session` 恢复原样。这条用例打的是 `/list-sessions`（`sessionMiddleware`
+   * 那条路上最普通的一个），问的就是那张会话的 `expiresAt` 有没有往前走。
+   */
+  it("SIGNIN-A7 —— 临近续期窗口的会话打 /list-sessions：端点自己续期（闸读完不留缓存）", async () => {
+    const merchant = newAddress("front-door-restores-session-cache");
+    const cookie = await signInThroughCodeDoor(merchant);
+    const row = await prisma.betterAuthSession.findFirstOrThrow({ where: { user: { email: merchant } } });
+
+    const { sessionConfig } = await auth.$context;
+    const nearRefresh = new Date(Date.now() + sessionConfig.expiresIn * 1000 - sessionConfig.updateAge * 1000 - 60_000);
+    await prisma.betterAuthSession.update({ where: { id: row.id }, data: { expiresAt: nearRefresh } });
+
+    const res = await baRequest("GET", "list-sessions", cookie);
+    const after = await prisma.betterAuthSession.findUniqueOrThrow({ where: { id: row.id }, select: { expiresAt: true } });
+
+    expect({
+      status: res.status,
+      rowMovedForward: after.expiresAt.getTime() > nearRefresh.getTime(),
+    }).toEqual({ status: 200, rowMovedForward: true });
   });
 
   it("SIGNIN-A7 —— 撤销之后两扇门都拒，而且不重新建号", async () => {

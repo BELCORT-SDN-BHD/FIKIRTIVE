@@ -1,9 +1,15 @@
 import "server-only";
 import * as Sentry from "@sentry/node";
-import { getSessionFromCtx } from "better-auth/api";
+import { getSession } from "better-auth/api";
+import type { getSessionFromCtx } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
-import { signInDoorDecision } from "@/lib/signup-gate";
-import { SIGN_IN_REFUSED_PAUSED, SIGN_IN_REFUSED_REVOKED, signInRefusal } from "./signin-refusal";
+import { sessionRevocationLookup, signInDoorDecision } from "@/lib/signup-gate";
+import {
+  SIGN_IN_REFUSED_PAUSED,
+  SIGN_IN_REFUSED_REVOKED,
+  SIGN_IN_REFUSED_SESSION_UNVERIFIED,
+  signInRefusal,
+} from "./signin-refusal";
 
 /**
  * SIGNIN-A1/A6/A7 —— 门上的那一句「可以进吗」，规格 §1.6 的三步判定（`signInDoorDecision`）。
@@ -147,46 +153,123 @@ async function deleteSessionsOrAlert(
  * 组端点不成立，而那一组端点我们一行代码都没写过，也永远数不完。
  *
  * 所以修的是根而不是端点：判定挂在**前门中间件**（`server.ts` 的 `hooks.before`，规格 §1.4 点名
- * 的那道前门）上，对**每一个**带会话的请求跑同一个 `signInDoorDecision` —— 与建号那一刻、建会话
- * 那一刻同一个函数，规格 §1.6「三处名单检查同一函数」因此对第四处也成立。名单一行、端点无穷，
- * 只有把闸放在它们共同的入口上，下一个被加进来的端点才不用被重新数一遍。
+ * 的那道前门）上，对**每一个**带会话的请求查同一张名单、走同一次 `lookupAddress`，规格 §1.6
+ * 「三处名单检查同一函数」因此对第四处也成立。名单一行、端点无穷，只有把闸放在它们共同的入口
+ * 上，下一个被加进来的端点才不用被重新数一遍。
+ *
+ * **第 10 轮（判官 opus P1 / Codex P1、P2）把这道闸的形状改对了三处**，下面逐条写的是**今天**
+ * 的行为；第 9 轮那一版在这三处都是错的，更正一并登记在规格 §5。
  *
  * 逐条为什么这么写：
  *
+ *   · **三种结果分开处理，绝不混**。读会话抛错 → 拒这一次请求（第 9 轮被吞成 `null` 提前放行，
+ *     端点自己第二次读成功，闸等于没有）；名单读到 `revoked` → 删光会话 ＋ 拒；名单**判不出**
+ *     （库挂、连接池满）→ 只拒这一次请求，**一张会话都不许删**。判定出口是 `signup-gate.ts` 的
+ *     `sessionRevocationLookup`（`revoked` / `ok` / `unavailable`），它是**给前门用的**，不动
+ *     `signInDoorDecision` 那三步 —— 那三步是两扇门与建会话共用的，把「读不到 ＝ revoked」从
+ *     那里拆掉等于动规格 §1.6。
  *   · **只在已经解析到会话时才查**。没有会话的请求（登录页那些公开门、`/ok`、`/error`）本来就
  *     换不到任何身份，给它们加一次名单读只是给每个匿名请求加两次数据库往返。
  *   · **登录门本身不走这道闸**（下面那张 exempt 表）。那几条路各自已经有自己的三步判定
  *     （`user.create.before` / `session.create.before` / `session.create.after`），而且它们的
  *     拒绝要按 §1.4 落成登录页的 `?error=`；从前门再抛一次只会把那条映射踩掉。`/sign-out` 也在
  *     表里：它唯一能做的事是**收回**权限，拦下它只会让浏览器留着一张已经死掉的 cookie。
- *   · **`disableCookieCache: true`**：读的是库里那一行，不是 cookie 里自带的副本。这个部署今天
- *     没开 cookie 缓存（`session` 只映射表名），所以它今天是个空动作 —— 写在这里是因为哪天有人
- *     开了缓存，一张被撤销的会话就会从缓存里读出来放行，而那时没有人会想起要回来改这一行。
- *     `disableRefresh` 刻意**不**传：滚动续期是 better-auth 自己的行为，这道闸只判「可不可以」，
- *     不改「会话活多久」。
+ *   · **续期不归这道闸管**（`disableRefresh: true` ＋ 读完恢复 `ctx.context.session`）。理由与
+ *     库里的证据写在下面 `readSessionForFrontDoor` 上：闸抢着续期会让 `/get-session` 的响应丢掉
+ *     那张续期 `Set-Cookie`。
  *   · **`paused` 照旧放行**。暂停开关管的是新注册，规格 §1.3 明写「老商家照常进」；一个手上有
  *     会话的人按定义已经登录过，把他按 paused 踢出去就是那句话的反面。
- *   · **fail closed**：读不到名单时 `signInDoorDecision` 自己返回 `revoked`（`lookupAddress`
- *     catch → null），所以库读失败走的是拒绝这一条。代价是一次数据库抖动会把当时在线的人请回
- *     登录页 —— 相对「一个被撤销的地址继续改 profile」，这是我们愿意付的那一边。
  *   · **性能**：每个带会话的 better-auth 请求多两次带索引的点查（`AllowedEmail.email` 唯一键、
- *     `ba_user.email` 唯一键）。会话那一次读不是新增的 —— `getSessionFromCtx` 把结果写回
- *     `ctx.context.session`，端点自己的 `sessionMiddleware` 直接复用，不会读第二次。
+ *     `ba_user.email` 唯一键），外加**一次多读的会话**（前门一次、端点一次）—— 第 9 轮靠共用
+ *     `ctx.context.session` 省掉了后者，代价是那张续期 `Set-Cookie`，见下。
  *   · **不发新 cookie**：拒绝是从 `before` 抛出去的，端点根本没跑，所以没有任何 `Set-Cookie`。
- *     主动**清**浏览器那张 cookie 会更体面，但前门抛错这条路上够不着响应头；会话行已经删光，
- *     那张 cookie 从此换不到东西，所以留着它只是难看，不是一个活口。
+ *     主动**清**浏览器那张 cookie 会更体面，但前门抛错这条路上够不着响应头；撤销那条路上会话行
+ *     已经删光，那张 cookie 从此换不到东西，所以留着它只是难看，不是一个活口。
  */
 const SESSION_GATE_EXEMPT_PATHS = ["/sign-in", "/sign-up", "/sign-out", "/callback", "/oauth2/callback"] as const;
 
-export async function assertRequestSessionNotRevoked(
-  ctx: Parameters<typeof getSessionFromCtx>[0],
-): Promise<void> {
+type FrontDoorCtx = Parameters<typeof getSessionFromCtx>[0];
+type FrontDoorSession = { session?: { userId?: string | null } | null; user?: { email?: string | null } | null } | null;
+
+/**
+ * 前门读会话的那一次：**自己读、读不出来就说读不出来、读完不留痕**（第 10 轮，判官 Codex P1/P2）。
+ *
+ * 第 9 轮这里调的是 `getSessionFromCtx`，那一个调用同时踩了两颗雷，两颗都在库的源码里写着：
+ *
+ *   ① **它把错吞成 `null`**（`better-auth@1.6.20` `dist/api/routes/session.mjs` 的
+ *      `getSessionFromCtx`：`await getSession()({...}).catch(() => { return null; })`）。于是
+ *      「读会话时数据库抖了一下」与「这个请求根本没有会话」在前门看起来一模一样 —— 前门按
+ *      「没有会话」提前 return 放行，而端点自己的 `sessionMiddleware` 紧接着**再读一次**、这
+ *      一次成功，于是一个已被撤销的人照样改得了资料、列得出账号、撤得掉别人的会话。闸看起来
+ *      在那里，实际上被一次瞬时失败整个绕过。所以这一次读必须由我们自己发起，让错**抛出来**。
+ *   ② **它把读到的会话写回 `ctx.context.session`**，而前门与端点共用同一个 `ctx.context`
+ *      （`dist/api/dispatch.mjs` 的 `dispatchAuthEndpoint`：`internalContext` 建一次，
+ *      `runBeforeHooks` 与 `endpoint()` 收到的是同一个 `.context` 对象）。端点的
+ *      `getSessionFromCtx` 第一句是 `if (ctx.context.session) return ctx.context.session;`，
+ *      所以它拿到的是前门那份缓存 —— 滚动续期（`updateAge` 到了就把 `expiresAt` 推后并
+ *      `Set-Cookie`）于是由**前门**在 `before` 里做掉了，而 `dispatch.mjs` 随后一句
+ *      `internalContext.context.responseHeaders = result.headers ?? void 0` 会把 before 阶段
+ *      累积的响应头整个覆盖掉：续期落了库，`Set-Cookie` 却没到浏览器。下一次请求带的还是旧
+ *      cookie —— 表现为「会话到期时间在库里一直往后走，浏览器那张却不会更新」。
+ *
+ * 两颗雷一起拆：
+ *   · 直接调 `getSession()` 这个端点本身（和 `getSessionFromCtx` 内部调的是同一个），错照抛；
+ *   · `disableRefresh: true` —— 这道闸只判「可不可以」，**续期不归它管**，交还给端点自己的
+ *     `sessionMiddleware`；
+ *   · 读完把 `ctx.context.session` 恢复原样（`getSession` 的 handler 自己也会写它一次，所以
+ *     恢复放在 `finally` 里而不是「不调那个包装函数就没事」），端点因此照常自己读、自己续期、
+ *     自己发 `Set-Cookie`。
+ *   · `disableCookieCache: true`：读的是库里那一行，不是 cookie 里自带的副本。这个部署今天没开
+ *     cookie 缓存（`session` 只映射表名），所以它今天是个空动作 —— 写在这里是因为哪天有人开了
+ *     缓存，一张被撤销的会话就会从缓存里读出来放行，而那时没有人会想起要回来改这一行。
+ *
+ * 代价（老实写下来）：每个带会话的 better-auth 请求现在**读两次会话**（前门一次、端点一次），
+ * 而第 9 轮那一版是一次。这是买那张 `Set-Cookie` 的价钱 —— 共用缓存就必然由先读的那个人决定
+ * 续不续期，而先读的那个人是一道只该回答「可不可以」的闸。
+ */
+async function readSessionForFrontDoor(ctx: FrontDoorCtx): Promise<FrontDoorSession> {
+  const restore = ctx.context.session;
+  try {
+    return (await getSession()({
+      ...ctx,
+      method: "GET",
+      asResponse: false,
+      returnHeaders: false,
+      returnStatus: false,
+      // `getSession` 是 `requireHeaders: true` 的端点，`ctx.headers` 在类型上可以是 undefined
+      // （虚拟调用）。拷一份而不是原样传：没有头就是一个空 Headers —— 没有 cookie 就没有会话，
+      // 这条路上答 null 是对的，不该让端点为此抛一次「缺 headers」。
+      headers: new Headers(ctx.headers),
+      query: { disableCookieCache: true, disableRefresh: true },
+    })) as FrontDoorSession;
+  } finally {
+    ctx.context.session = restore;
+  }
+}
+
+export async function assertRequestSessionNotRevoked(ctx: FrontDoorCtx): Promise<void> {
   const path = ctx.path ?? "";
   if (SESSION_GATE_EXEMPT_PATHS.some((p) => path === p || path.startsWith(`${p}/`))) return;
-  const session = await getSessionFromCtx(ctx, { disableCookieCache: true });
+
+  // 读会话。抛了就是**判不出**：既不能当「没有会话」放行（那是第 9 轮那颗雷），也不能当
+  // 「撤销」去删人家的会话（我们手上没有任何一行这么写）。只拒这一次请求。
+  let session: FrontDoorSession;
+  try {
+    session = await readSessionForFrontDoor(ctx);
+  } catch {
+    throw signInRefusal(SIGN_IN_REFUSED_SESSION_UNVERIFIED);
+  }
   const userId = session?.session?.userId;
+  // 没有会话的请求（登录页那些公开门、`/ok`、`/error`）本来就换不到任何身份，给它们加一次
+  // 名单读只是给每个匿名请求加两次数据库往返。
   if (!userId) return;
-  if ((await signInDoorDecision(session?.user?.email as string | undefined)) !== "revoked") return;
+
+  const verdict = await sessionRevocationLookup(session?.user?.email);
+  if (verdict === "ok") return;
+  // 名单读不出来 —— 同上：只拒这一次请求。第 9 轮这里走的是 `signInDoorDecision`，它把读库
+  // 失败一律答成 `revoked`，于是一次数据库抖动会把一个名单上 active 的在线商家在**所有设备
+  // 上**登出、再回他一次 500（判官 opus P1）。删会话是不可逆的，判不出就不许删。
+  if (verdict === "unavailable") throw signInRefusal(SIGN_IN_REFUSED_SESSION_UNVERIFIED);
   // 撤销是绝对的：这张 cookie 背后的会话行一张都不留（删不掉的理由与告警形状见上面那个函数）。
   await deleteSessionsOrAlert(
     { userId },

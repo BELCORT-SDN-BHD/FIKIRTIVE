@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import type { Role } from "@fikirtive/core";
 import { auth as baAuth } from "./server";
 import { roleForEmail } from "./session-role";
-import { SIGN_IN_REFUSED_REVOKED } from "./signin-refusal";
+import { isRevokedSessionRefusal } from "./signin-refusal";
 
 /**
  * SIGNIN-A7（第 9 轮，判官 r8 P0）—— 前门把这张会话判成「已撤销」时，产品这一层读到的必须是
@@ -14,12 +14,15 @@ import { SIGN_IN_REFUSED_REVOKED } from "./signin-refusal";
  * 冒出来。`requireSession` / `requireRole` / `requireOwner` 的契约是「没会话或不在名单 → 返回
  * 一句 `Not authorized.`」——让这个拒绝穿过去，商家读到的会是一张报错页而不是登录页，而答案
  * 本身（进不来）一个字都没变。所以这里只把**门自己的这一种拒绝**翻译成 null，别的错照抛：
- * 数据库真的坏了仍然要响，不许被这一句吞掉。
+ * 数据库真的坏了仍然要响，不许被这一句吞掉 —— 前门那个「判不出」的拒绝
+ * （`sign_in_session_unverified`）也在「别的错」里，它说的正是「这次读不出来」。
+ *
+ * 第 10 轮（判官 opus P1）：同一句翻译，`proxy.ts` 的墙也要。谓词因此搬到 `signin-refusal.ts`
+ * 的 `isRevokedSessionRefusal`，两处共用一处定义。
  */
 async function baSessionOrNullIfRevoked(): Promise<Awaited<ReturnType<typeof baAuth.api.getSession>>> {
   return baAuth.api.getSession({ headers: await headers() }).catch((e: unknown) => {
-    const code = (e as { body?: { code?: unknown } } | null)?.body?.code;
-    if (code === SIGN_IN_REFUSED_REVOKED) return null;
+    if (isRevokedSessionRefusal(e)) return null;
     throw e;
   });
 }

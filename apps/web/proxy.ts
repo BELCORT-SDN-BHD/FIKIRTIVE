@@ -1,4 +1,5 @@
 import { auth } from "@/lib/better-auth/server";
+import { isRevokedSessionRefusal } from "@/lib/better-auth/signin-refusal";
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
@@ -26,7 +27,22 @@ export default async function proxy(req: NextRequest) {
       ? process.env.AUTH_ENABLED !== "false"
       : process.env.AUTH_ENABLED === "true";
   if (!enabled) return;
-  const session = await auth.api.getSession({ headers: req.headers });
+  // SIGNIN-A7（第 10 轮，判官 opus P1）—— 被撤销的会话在这里必须落成**登录页**，不是一张 500。
+  //
+  // 前门（`lib/better-auth/gate.ts` 的 `assertRequestSessionNotRevoked`）挂在 `hooks.before`
+  // 上，而 `auth.api.*` 与 HTTP 路由走同一条 hook 管线，所以它抛的 `sign_in_revoked` 会直接从
+  // 这一行冒出来 —— 裸调的话整个 `proxy()` reject，商家在**每一个页面**上读到的是一次 500，而
+  // 正确答案（他进不来，请回登录页）恰恰是这个函数下面那三行已经写好的。产品那一层
+  // （`lib/better-auth/compat.ts`）早就在做同一句翻译，谓词现在两处共用一个定义。
+  //
+  // **只翻译这一种**。前门的「判不出」（`sign_in_session_unverified`）与任何别的错照旧原样抛
+  // 出去 —— 这一行今天对 `getSession` 抛错就是这么处理的（没有 catch），而那正是对的：读不出
+  // 会话时把人放去登录页等于把一次数据库抖动变成一次全站登出，而且它会把一个真实的故障扮成
+  // 一次正常的未登录。
+  const session = await auth.api.getSession({ headers: req.headers }).catch((e: unknown) => {
+    if (isRevokedSessionRefusal(e)) return null;
+    throw e;
+  });
   if (!session) {
     const login = new URL("/login", req.nextUrl);
     // F42: keep the query string too, so a deep link (e.g. ?project=…&thread=…) survives the
