@@ -284,3 +284,46 @@ UTC 2026-09-11T12:46。对上面那张商品图点 `Create variations` → 弹�
 - **已登录**（在页面内用同一会话 `fetch`，跟随重定向）：`/product-patterns`、`/product-patterns/canvas`、`/design-system`、`/design-system/patterns`、`/design-system/tokens` —— **五个全是 HTTP 404**，正文是 `This page could not be found`，无一渲染出夹具页。
 **② 商家面无夹具数据**：从 `apps/web/design-system/patterns/*/fixtures.ts` 抄出 12 个特征串（`Aisyah`、`Rizal`、`Sales Aug 2026`、`Six-second lookbook`、`Weekend tea launch`、`Workshop carousel`、`Cordial bottle reference`、`Storefront walkthrough`、`Coffee ritual video`、`Brand guideline v4`、`Warm family gathering scene`、`Storefront location reference`），逐串在 `/`、`/create`、`/library`、`/brand`、`/settings`、`/billing`、`/profile` 七面搜 → **唯一命中是 `/library` 里的 `Aisyah`**，而 `Aisyah` 是**官方演员库真人物**（`packages/core/src/actor-library.ts`、`gen-failure.ts` 都以她为例），不是夹具泄漏 ⇒ **零夹具命中**。
 **③ 写入失败有反馈、不假成功**：安排在 R2-09（同名占位恢复那条路）一起做。
+
+---
+
+## R2-24 Creation⑥ 分镜挂 Library 图 —— ① PASS，②③⑤ BLOCKED（工具限制）
+
+UTC 2026-09-11T12:50–12:56。让 Otto 出一张 3 镜分镜（两镜带演员直接出片、一镜纯商品）。
+
+Otto 的计划原文（关键两句）：
+
+> `Shots 1 & 3 are made in one step each (Xinyi's reference photos go straight to the video).`
+> `Shot 2 needs a starting picture first, then animates — two steps, but the storyboard handles it.`
+
+分镜卡（**Otto 刚交出、一分钱没花过的草稿卡**）上的按钮逐个抄下：每镜 `Move up / Move down / Edit shot / Delete shot`，另有 `Add shot`、`Generate all first frames (1)`、`Make all videos (2 clips)`。
+- **`Add image` 只出现在第 1、3 镜**（两个直接出片的镜头）；第 2 镜（纯商品、要先合成首帧的那一镜）**没有** `Add image`。
+- 第 1 镜那一格的说明逐字：`Library images` / `Add image` / `Goes straight to video — the cast and product photos are its references, so there is no first frame to make or pay for.`
+→ **R2-24 ①「入口第一手就在」PASS**；**④「带不上车即拒」的商家可见半边**＝根本不给入口（比「写入即拒」更靠前的 fail closed），**PASS（UI 层）**；服务端 `setShotReferences` 的点名拒绝与跨租户拒绝（⑤）**未测**。
+- 点 `Add image` → 弹出 `Library images / Pick an image this shot should use as a reference`，列出 8 个候选（生成结果与上传，各带来源标签 `Generation · <画布名>`、`Upload · Library`）。**选取这一步做不下去**：浏览器面板的合成点击落不到弹层选项上（JS `.click()`、完整 pointer 序列、键盘 ArrowDown/Enter 四种方式都试过，弹层关闭但没有芯片落到镜头上）。同一套 JS 点击在**普通按钮**上一直有效（`Generate`、`Create variations`、`Add image` 本身都点得动），所以这是**弹层选项的工具侧限制**，不是应用缺陷 —— 判 **BLOCKED**，不判 FAIL。
+- 因此 ②（挂图进报价材料）、③（逐张取下）、⑤（跨租户构造）**BLOCKED**，建议下一轮用真实鼠标或自动化旅程补。
+
+## R2-14 上传 / 理解费用（FSE-009 / :169）—— PASS，附一条时序观察
+
+UTC 2026-09-11T12:52–12:56。用画布 composer 的图片引用入口上传（文件名照 Founder 令加前缀）：
+- `r2-20260911-upload-normal.jpg`（1200×1600，两次）
+- `r2-20260911-tiny-80px.jpg`（80×107）
+
+Library → Uploads 立刻出现，几十秒后卡片标题从文件名变成**自动理解出来的描述**（`A plain white vertical rectangle centered against a gradient background` / `A plain vertical white oval shape centered against a gradient background`）⇒ 自动理解真的跑了。
+
+费用行（资产详情 `Where this came from` 那一段）：
+- **理解还没结算时**：`Cost: no credits charged`
+- **理解结算之后**（重新打开同一张）：`Cost: 0.1 credits`（**一行合计、不拆行**）
+- Billing 正文对应行：`Understanding — Sep 11, 8:54 PM -0.1`
+→ `:169（FSE-009）` **PASS**。
+**时序观察（不当 bug，登记备查）**：上传后到理解结算之间那几十秒，详情页写的仍是 `no credits charged`，而这笔钱随后一定会收 —— 商家在这个窗口看到的是「免费」。建议 S5 裁是否改成「正在理解，费用稍后结算」。
+
+## R2-23 Creation① 尺寸闸 —— 两条路都**没有**在付费前拒绝（登记 FSE-204，P1 候选）
+
+UTC 2026-09-11T12:56–13:02。素材：`r2-20260911-tiny-80px.jpg`，**短边 80 px（<100）**。
+
+**路 ①（图生图 / 编辑）**：`@tiny` + 「用这张参考做一张白底商品图」→ 确认卡逐字 `1 image 1728 × 2304 · 3:4 · 1 image · Uses your attached image` / `1 credit` / `Image Base image / Image Reference` / `Generate · 1 credit` —— **卡上没有任何尺寸提醒**。批准 → **生成成功**、`Made 1 image · 1 credit.`、真扣 1 credit。
+**路 ②（视频起始帧）**：同一张 80×107 图 + 「5 秒 720p 无声、商品旋转」→ 确认卡逐字 `1 video 9:16 · 5s · 720p · No sound · **Starts from your image**` / `11 credits` / `Image Starting frame` / `Generate · 11 credits` —— 同样**没有尺寸提醒、没有放大披露、没有拒绝**。批准 → 进入 `Rendering…`（结果见下条补记）。
+
+对照 plan §2.3 的判定口径（:162 残留①、:176⑥）：短边 <100 的图应当在**付费前**被诚实拒绝，且**拒绝文案要说出这张图现在多大**（门槛按能否放大分岔 100 / 300）。本轮在两个入口上都**没有出现任何拒绝或披露**。
+未验到的另一半：短边 100–300 的「自动放大 + 独立一行披露句」（:176④）。因为路①路②都没触发任何披露句，下一步应先弄清尺寸闸到底挂在哪条入口上（可能只挂「商品参考进视频」而不挂「起始帧」与「图生图」）—— 这需要后端取证（哪条路调用了 `reference-budget` / 尺寸闸），故 **FSE-204 先标「假说待后端确认」**，严重度候选 P1（「付费前尺寸闸唯一一份、没有一条入口绕得过去」是本条验收的正文）。
