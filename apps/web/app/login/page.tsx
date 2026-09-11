@@ -15,8 +15,9 @@ export const metadata = { title: "Log in · Fikirtive" };
 /**
  * SIGNIN-A14 —— Google 门失败时，登录页上那一句（规格 docs/specs/sign-in.md §1.3 逐字）。
  *
- * 这一页的 `?error=` 只有一个产地：Better Auth 的 OAuth 回调
- * （`oauth2/errors.mjs` 的 `redirectOnError`，转向我们用 `errorCallbackURL` 交给它的 `/login`）。
+ * 这一页的 `?error=` 只有一个产地：Better Auth 的 OAuth 回调（`oauth2/errors.mjs` 的
+ * `redirectOnError`，转向 `/login` —— state 解得开时用 LoginForm 传下去的 `errorCallbackURL`，
+ * 解不开时用 `lib/better-auth/server.ts` 里 `onAPIError.errorURL` 那道地板）。
  * 全仓没有第二处往 `/login` 写 `error=`（围栏在 `__tests__/login-google-door-errors.test.tsx`）。
  *
  * 所以**每一个键都读这同一句**，而不是一张 键→不同文案 的表：

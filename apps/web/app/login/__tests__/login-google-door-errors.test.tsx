@@ -6,7 +6,8 @@
 //
 // 两件事在这里被钉住：
 //   ① LoginForm 按下 Continue with Google 时**必须**把 `errorCallbackURL` 交给 Better Auth。
-//      不传，拒绝就落在库自带的 `/api/better-auth/error` 上（那条反向围栏在服务端那一份里）。
+//      它是「state 解得开」那条路上的落点来源；解不开的那条路由 `lib/better-auth/server.ts` 的
+//      `onAPIError: { errorURL: "/login" }` 兜底（两条路的围栏都在服务端那一份里）。
 //   ② 登录页对**每一个**库真的会发出的键都读同一句。不是一张会分岔的表：规格 §1.3 要求
 //      「取消授权」「被撤销」「暂停期陌生人」「邮箱未验证」在页面上读起来完全一样。
 import { act, createElement, type ReactElement } from "react";
@@ -40,8 +41,11 @@ vi.mock("@/lib/better-auth/compat", () => ({ auth: vi.fn(async () => null) }));
 
 /**
  * 被核对过的错误键清单 —— better-auth 1.6.20（本仓库 `node_modules` 里的 dist），逐条带出处。
- * 键最终都由 `oauth2/errors.mjs` 的 `redirectOnError` 写成 `?error=<键>`，转向的目标就是
- * LoginForm 传下去的 `errorCallbackURL`。
+ * 键最终都由 `oauth2/errors.mjs` 的 `redirectOnError` 写成 `?error=<键>`；转向的目标是
+ * LoginForm 传下去的 `errorCallbackURL`，而下面第 ③ 组那五个 `state_*` 键发生在 state 解开
+ * **之前** —— 那时候 `errorCallbackURL` 还在解不开的 state 里，落点来自 `lib/better-auth/
+ * server.ts` 的 `onAPIError.errorURL`。两条路真的都转到 `/login` 的实证在
+ * `lib/__tests__/signin-google-door.test.ts`（本文件只管「到了登录页之后读到哪一句」）。
  */
 const VERIFIED_ERROR_KEYS: Array<[string, string]> = [
   // ① Google 自己带回来的 error 参数，原样当键（api/routes/callback.mjs:56）。
