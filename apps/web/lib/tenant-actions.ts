@@ -211,14 +211,25 @@ export async function revokeMerchantAccess(
   // 审计是 best-effort，但**失败不许是无声的**：撤销已经落库、会话已经切断，把整个动作报成失败
   // 会是反过来的那个谎；所以两件事一起说出口 —— 答案里带一面旗（操作员看得见），外加一条固定
   // 分类的告警（团队看得见）。#575 日志纪律：邮箱这类用户内容不进告警文本。
+  //
+  // 第 4 轮判官（Codex）：那条纪律原来只守住了**标题**，`extra.reason` 里放的是原始错误消息，
+  // 而 Prisma 的错误消息会把调用参数渲染进去 —— 一次唯一键冲突或连接错误就会把**商家邮箱**
+  // 送进 Sentry。告警要的是「哪一类失败」，不是「失败时手上拿着谁的数据」，所以这里只上报
+  // 错误的**类名与错误码**（`PrismaClientKnownRequestError` / `P2002` 之类），一个字的 message
+  // 都不带。要看完整堆栈的场合是日志与数据库，不是这条给人看一眼的告警。
   const audited = await prisma.actionEvent
     .create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.revoke", payload: { email, via: gate.email, outcome } } })
     .then(() => true)
     .catch((e: unknown) => {
+      const code = (e as { code?: unknown } | null)?.code;
       Sentry.captureMessage("Merchant access revoked but its audit entry could not be written", {
         level: "error",
         tags: { area: "admin", gate: "tenant-revoke-audit" },
-        extra: { outcome, reason: e instanceof Error ? e.message : String(e) },
+        extra: {
+          outcome,
+          errorName: e instanceof Error ? e.name : typeof e,
+          errorCode: typeof code === "string" ? code : undefined,
+        },
       });
       return false;
     });

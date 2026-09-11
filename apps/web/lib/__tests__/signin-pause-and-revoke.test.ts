@@ -44,6 +44,7 @@ const { prisma } = await import("@fikirtive/db");
 const { auth } = await import("@/lib/better-auth/server");
 const { isAllowedEmail } = await import("@/lib/allowlist");
 const { revokeEmailAccess } = await import("@/lib/signup-gate");
+const { assertSignInDoorForUserId, assertSessionSurvivesRevoke } = await import("@/lib/better-auth/gate");
 const {
   enqueueAuthEmail,
   authEmailQueueSettled,
@@ -375,6 +376,77 @@ describe("SIGNIN-A7 —— 撤销一个自助进来的邮箱", () => {
   });
 
   /** 重复撤销是幂等的：第二次不改那一行的时间戳，也不该报错。 */
+  /**
+   * SIGNIN-A7 —— **撤销与建会话并发**：闸读过之后才提交的那一次撤销（第 4 轮判官，Codex）。
+   *
+   * 这一条把判官记下的那道序**手工摆出来**（真库、真行、真事务，只是由测试决定谁先谁后）：
+   *   ① `session.create.before` 那道闸读名单 —— 此刻还是 active，放行；
+   *   ② 撤销整笔提交 —— 名单翻成 revoked，`deleteMany` 把**此刻存在的**会话删光（待建的那一
+   *      张还不存在，所以它删不到）；
+   *   ③ 待建的那一张这才 INSERT 进 `ba_session`。
+   *
+   * RED before 本轮：③ 之后 `ba_session` 里躺着一张属于已撤销地址的活会话，谁都没做错事。
+   * 本轮的二次确认（`assertSessionSurvivesRevoke`，挂在 `session.create.after` 上）必须把它
+   * 收回去，并且照门的统一话术拒绝。
+   */
+  it("SIGNIN-A7 —— 闸读过之后才提交的撤销：随后落库的那张会话被当场收回，不留活口", async () => {
+    const merchant = newAddress("revoke-race");
+    await signInThroughCodeDoor(merchant);
+    const baUser = await prisma.betterAuthUser.findUniqueOrThrow({ where: { email: merchant }, select: { id: true } });
+
+    // ① 闸先读：此刻放行（这就是「闸只读」那一步）。
+    await expect(assertSignInDoorForUserId(baUser.id)).resolves.toBeUndefined();
+
+    // ② 撤销整笔提交：名单翻面、当下的会话全没。
+    expect(await revokeEmailAccess(merchant)).toBe("revoked");
+    expect(await sessionsFor(merchant)).toBe(0);
+
+    // ③ 待建的那一张现在才落库。
+    const sessionId = `bas_${randomUUID()}`;
+    await prisma.betterAuthSession.create({
+      data: {
+        id: sessionId,
+        userId: baUser.id,
+        token: randomUUID(),
+        expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+    expect(await sessionsFor(merchant)).toBe(1);
+
+    // 二次确认：收回那一张，并按门的统一话术拒绝（§1.3 防枚举，与「码输错」一模一样）。
+    await expect(assertSessionSurvivesRevoke(sessionId, baUser.id)).rejects.toBeInstanceOf(APIError);
+    expect(await sessionsFor(merchant)).toBe(0);
+  });
+
+  /** 正常那条路不许被这道确认碰到 —— 否则它会变成「每次登录都把自己登出」。 */
+  it("SIGNIN-A7 —— 没有撤销时，二次确认放行且一张会话都不动", async () => {
+    const merchant = newAddress("revoke-race-clean");
+    await signInThroughCodeDoor(merchant);
+    const session = await prisma.betterAuthSession.findFirstOrThrow({
+      where: { user: { email: merchant } },
+      select: { id: true, userId: true },
+    });
+
+    await expect(assertSessionSurvivesRevoke(session.id, session.userId)).resolves.toBeUndefined();
+    expect(await sessionsFor(merchant)).toBe(1);
+  });
+
+  /** 撤销之后**整条真路**再走一遍：闸在 before 就拒，会话一张都建不出来（确认没有把序改坏）。 */
+  it("SIGNIN-A7 —— 撤销之后走真码门：连一张会话都落不了库", async () => {
+    const merchant = newAddress("revoke-race-door");
+    await signInThroughCodeDoor(merchant);
+    await __resetAuthEmailCapsForTests();
+    const liveCode = await requestCode(merchant);
+    expect(liveCode).toMatch(/^\d{6}$/);
+
+    await revokeEmailAccess(merchant);
+
+    expect((await submitCode(merchant, liveCode!)).status).toBeGreaterThanOrEqual(400);
+    expect(await sessionsFor(merchant)).toBe(0);
+  });
+
   it("SIGNIN-A7 —— 再撤一次答 already_revoked，从没进来过的地址答 unknown", async () => {
     const merchant = newAddress("revoke-twice");
     await signInThroughCodeDoor(merchant);

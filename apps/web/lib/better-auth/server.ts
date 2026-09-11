@@ -12,7 +12,7 @@ import { toVerifyLandingUrl } from "./verify-landing-url";
 import { convergeIdentity } from "./converge";
 import { CALLER_IP_HEADER } from "@/lib/caller-identity";
 import { signinSessionId } from "./signin-session";
-import { assertSignInDoor, assertSignInDoorForUserId } from "./gate";
+import { assertSessionSurvivesRevoke, assertSignInDoor, assertSignInDoorForUserId } from "./gate";
 import { ac, superAdminRole } from "./access";
 import { googleSignInConfigured } from "./social-config";
 import { signInDoorDecision } from "@/lib/signup-gate";
@@ -425,6 +425,10 @@ export const auth = betterAuth({
           await assertSignInDoorForUserId(session.userId);
         },
         after: async (s, ctx) => {
+          // SIGNIN-A7 —— 二次确认，**在收敛之前**：这一张会话是不是在闸读过之后才被撤销追上的
+          // （理由与那道序写在 gate.ts 的 `assertSessionSurvivesRevoke` 上）。放在收敛前面是因为
+          // 一次要被撤回的登录不该先在审计流里留下一行 `auth.signin`。
+          await assertSessionSurvivesRevoke(s.id, s.userId);
           const u = await prisma.betterAuthUser.findUnique({ where: { id: s.userId }, select: { email: true, name: true, image: true, emailVerified: true } });
           // #737 — THE session-create hook is the only caller that passes `sessionId`, and it is
           // the only one that should: a session is what a sign-in produces, so its id is what
