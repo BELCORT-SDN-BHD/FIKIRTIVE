@@ -11,7 +11,7 @@ import { toVerifyLandingUrl } from "./verify-landing-url";
 import { convergeIdentity } from "./converge";
 import { CALLER_IP_HEADER } from "@/lib/caller-identity";
 import { signinSessionId } from "./signin-session";
-import { assertSessionSurvivesRevoke, assertSignInDoor, assertSignInDoorForUserId, discardSessionsOfFailedProvisioning } from "./gate";
+import { assertRequestSessionNotRevoked, assertSessionSurvivesRevoke, assertSignInDoor, assertSignInDoorForUserId, discardSessionsOfFailedProvisioning } from "./gate";
 import {
   SIGN_IN_REFUSED_EMAIL_UNVERIFIED,
   SIGN_IN_REFUSED_UNAVAILABLE,
@@ -342,6 +342,11 @@ export const auth = betterAuth({
   // Deny-by-default allowlist across EVERY method (before any session is issued).
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      // SIGNIN-A7（第 9 轮，判官 r8 P0）—— 先问「拿着这张 cookie 的人还进得来吗」。
+      // better-auth 自己那一排端点（/list-sessions、/update-user、/get-session…）只认
+      // `ba_session` 那一行，不问我们的名单；把同一个三步判定放在它们共同的入口上，是规格
+      // §1.6「撤销仍然绝对」对那一整组端点唯一数得完的写法。理由逐条写在 gate.ts 上。
+      await assertRequestSessionNotRevoked(ctx);
       const email: string | undefined = (ctx.body as Record<string, unknown> | undefined)?.email as string | undefined;
       if (!email) return;
       if (ctx.path === SIGN_IN_CODE_VERIFY_PATH) {

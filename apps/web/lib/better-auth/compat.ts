@@ -3,13 +3,33 @@ import { headers } from "next/headers";
 import type { Role } from "@fikirtive/core";
 import { auth as baAuth } from "./server";
 import { roleForEmail } from "./session-role";
+import { SIGN_IN_REFUSED_REVOKED } from "./signin-refusal";
+
+/**
+ * SIGNIN-A7（第 9 轮，判官 r8 P0）—— 前门把这张会话判成「已撤销」时，产品这一层读到的必须是
+ * **没有会话**，不是一次异常。
+ *
+ * 前门（`gate.ts` 的 `assertRequestSessionNotRevoked`）挂在 `hooks.before` 上，而 `auth.api.*`
+ * 与 HTTP 路由走同一条 hook 管线，所以它抛的 `sign_in_revoked` 会直接从这里的 `getSession`
+ * 冒出来。`requireSession` / `requireRole` / `requireOwner` 的契约是「没会话或不在名单 → 返回
+ * 一句 `Not authorized.`」——让这个拒绝穿过去，商家读到的会是一张报错页而不是登录页，而答案
+ * 本身（进不来）一个字都没变。所以这里只把**门自己的这一种拒绝**翻译成 null，别的错照抛：
+ * 数据库真的坏了仍然要响，不许被这一句吞掉。
+ */
+async function baSessionOrNullIfRevoked(): Promise<Awaited<ReturnType<typeof baAuth.api.getSession>>> {
+  return baAuth.api.getSession({ headers: await headers() }).catch((e: unknown) => {
+    const code = (e as { body?: { code?: unknown } } | null)?.body?.code;
+    if (code === SIGN_IN_REFUSED_REVOKED) return null;
+    throw e;
+  });
+}
 
 type NextAuthShapedSession = { user: { email: string | null; name: string | null; image: string | null; role: Role } } | null;
 
 /** Cutover drop-in for the NextAuth `auth()` consumed by auth-guard.ts. Returns the
  *  exact session.user shape (email/name/image/role, role defaulting to "viewer"). DORMANT. */
 export async function auth(): Promise<NextAuthShapedSession> {
-  const session = await baAuth.api.getSession({ headers: await headers() });
+  const session = await baSessionOrNullIfRevoked();
   if (!session?.user) return null;
   const email = session.user.email ?? null;
   return {
@@ -34,7 +54,7 @@ export async function auth(): Promise<NextAuthShapedSession> {
 export type ImpersonationPrincipals = { operatorBaUserId: string; subjectBaUserId: string | null };
 
 export async function currentImpersonation(): Promise<ImpersonationPrincipals | null> {
-  const session = await baAuth.api.getSession({ headers: await headers() });
+  const session = await baSessionOrNullIfRevoked();
   const raw = session?.session as { impersonatedBy?: string | null; userId?: string | null } | undefined;
   const operatorBaUserId = raw?.impersonatedBy;
   if (!operatorBaUserId) return null;

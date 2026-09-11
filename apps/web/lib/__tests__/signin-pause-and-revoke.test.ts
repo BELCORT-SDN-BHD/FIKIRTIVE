@@ -133,6 +133,50 @@ function submitCode(email: string, otp: string): Promise<Response> {
   );
 }
 
+/**
+ * 第 9 轮（判官 r8 P0）—— 打 better-auth **自带**端点的那一把。
+ *
+ * 码门那个 `submitCode` 是「没有会话的人来敲门」；这一个是「手上已经有一张 cookie 的人去调
+ * better-auth 自己的路由」（`/list-sessions`、`/update-user`、`/get-session`）。两者必须分开
+ * 写：前者证明门，后者证明门**后面**那些我们没写过一行代码的端点也归同一张名单管。
+ */
+function baRequest(method: "GET" | "POST", path: string, cookie: string, body?: unknown): Promise<Response> {
+  return auth.handler(
+    new Request(`${ORIGIN}/api/better-auth/${path}`, {
+      method,
+      headers: body === undefined
+        ? { cookie, origin: ORIGIN }
+        : { cookie, origin: ORIGIN, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }),
+  );
+}
+
+/**
+ * 「`deleteMany` 失败、那一行没被删掉」在库里留下的东西，一个字节不差地放回去。
+ *
+ * `upsert` 而不是 `create`：下面那条用例要连打三个端点，每打一个之前都放一次行。闸真的生效时
+ * 前一次调用已经把行删光（`create` 也行），**闸被注释掉做变异验证时行还在** —— 那时 `create`
+ * 会先撞唯一键抛 P2002，用例红在一句 Prisma 错误上而不是红在三个端点的状态码上，而后者才是
+ * 变异要看的东西。
+ */
+async function restoreSessionRow(row: {
+  id: string; userId: string; token: string; expiresAt: Date; createdAt: Date; updatedAt: Date;
+  ipAddress: string | null; userAgent: string | null;
+}): Promise<void> {
+  const data = {
+    id: row.id,
+    userId: row.userId,
+    token: row.token,
+    expiresAt: row.expiresAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    ipAddress: row.ipAddress,
+    userAgent: row.userAgent,
+  };
+  await prisma.betterAuthSession.upsert({ where: { id: row.id }, create: data, update: data });
+}
+
 /** Walk a stranger all the way in through the code door, and hand back their session cookie. */
 async function signInThroughCodeDoor(email: string): Promise<string> {
   const code = await requestCode(email);
@@ -400,9 +444,13 @@ describe("SIGNIN-A7 —— 撤销一个自助进来的邮箱", () => {
    *      名单也翻不了它），所以这张会话换不到任何一个动作。
    *
    * 结论写进 `gate.ts`、PR 描述与规格 §5：删失败留下的会话行**不可用**——每个请求都按库重查
-   * 撤销状态。所以那条路的口径是「残留惰性 ＋ 必定告警」，不是「零残留才安全」。它仍然是这条
-   * 路上最坏的结果（一张还能被 better-auth 读出来的行、一条要人处理的告警），但它不是一个
-   * 能进产品的活口。
+   * 撤销状态。所以那条路的口径是「残留惰性 ＋ **尽力**告警」（第 9 轮判官 r8 P2 更正「必定」
+   * 二字：`Sentry.captureMessage` 自己会抛，抛了被吞掉），不是「零残留才安全」。
+   *
+   * 第 9 轮（判官 r8 P0）之后这条用例的**前半句也变了**：前门
+   * （`gate.ts` 的 `assertRequestSessionNotRevoked`）对任何带会话的请求重查名单，所以那一行
+   * 连 better-auth 自己的端点都换不到东西了，断言 ① 从「读得出来」改成「当场被拒并被删光」。
+   * 下面那条「打 better-auth 自带端点」的用例是同一件事的完整一半。
    */
   it("SIGNIN-A7 —— 删失败留下的那张会话行是惰性的：每个请求按库重查撤销，照样拒", async () => {
     const merchant = newAddress("leftover-session");
@@ -417,25 +465,72 @@ describe("SIGNIN-A7 —— 撤销一个自助进来的邮箱", () => {
     expect(await sessionsFor(merchant)).toBe(0);
 
     // 「删不掉」那个最坏结果：把那一行逐字放回去。
-    await prisma.betterAuthSession.create({
-      data: {
-        id: row.id,
-        userId: row.userId,
-        token: row.token,
-        expiresAt: row.expiresAt,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-        ipAddress: row.ipAddress,
-        userAgent: row.userAgent,
-      },
-    });
+    await restoreSessionRow(row);
     expect(await sessionsFor(merchant)).toBe(1);
 
-    // ① 这一行是真的活行：better-auth 拿那张 cookie 读得出来。
-    expect((await auth.api.getSession({ headers: new Headers({ cookie }) }))?.user?.email).toBe(merchant);
-    // ② 但每个受保护动作的第一句话按库重查名单 —— 撤销之后它一律拒。
+    // ① 前门（`assertRequestSessionNotRevoked`）当场把它判成已撤销：better-auth 自己那次
+    //    `getSession` 抛门的拒绝，而不是把它读成一张会话；那一行同时被删光。
+    await expect(auth.api.getSession({ headers: new Headers({ cookie }) })).rejects.toMatchObject({
+      body: { code: SIGN_IN_REFUSED_REVOKED },
+    });
+    expect(await sessionsFor(merchant)).toBe(0);
+    // ② 产品这一层读到的是「没有会话」而不是一次 500 —— 而且是在**那一行还在**的时候：行放回去
+    //    再问一次，`requireSession` 照旧答同一句拒绝，不把前门的拒绝当成一个异常冒到页面上。
+    await restoreSessionRow(row);
     expect(await requireSession()).toEqual({ error: "Not authorized." });
     requestCookie = "";
+  });
+
+  /**
+   * SIGNIN-A7 —— **better-auth 自带的端点也归这张名单管**（第 9 轮，判官 r8 P0）。
+   *
+   * 第 8 轮那条「残留会话行是惰性的」只对**我们自己**的那一层成立：产品每个动作的第一句话是
+   * `requireSession` → `allowed` → `isAllowedEmail`，那一次读当场按库判定。可 better-auth 把
+   * 一整排自己的路由也挂在 `/api/better-auth/*` 上（`toNextJsHandler`），而那些路由只认
+   * `ba_session` 那一行，从来不问我们的名单 —— 判官 r8 用同一张真 cookie 打
+   * `/list-sessions` 与 `/update-user` 都拿到 200，`/update-user` 还真的把 `name` 写进了库。
+   *
+   * 修根按规格 §1.6「三处名单检查同一函数」「撤销仍然绝对」：判定搬进 `server.ts` 的前门中间件
+   * （`hooks.before` → `assertRequestSessionNotRevoked`），对**任何带会话的请求**跑同一个
+   * `signInDoorDecision`。所以这条用例不逐个端点写策略，它只问一句话：同一张 cookie，三个
+   * 端点，是不是都换不到东西。
+   *
+   * 每打一个端点之前都把那一行重新放回去 —— 否则第一次拒绝把行删光之后，后面两个端点是「没有
+   * 会话」而不是「会话被名单拒了」，用例会变成一条假绿。
+   */
+  it("SIGNIN-A7 —— 撤销后那张 cookie 打 better-auth 自带端点：list-sessions / update-user / get-session 一律拒，profile 不变，行被删光", async () => {
+    const merchant = newAddress("leftover-ba-endpoints");
+    const cookie = await signInThroughCodeDoor(merchant);
+    const row = await prisma.betterAuthSession.findFirstOrThrow({ where: { user: { email: merchant } } });
+    const nameBefore = (await prisma.betterAuthUser.findUniqueOrThrow({ where: { id: row.userId }, select: { name: true } })).name;
+
+    await revokeEmailAccess(merchant);
+    expect(await sessionsFor(merchant)).toBe(0);
+
+    // ① 「这张 cookie 手上有几个会话」—— 一张能列出会话的端点也是一条出口。
+    await restoreSessionRow(row);
+    const listStatus = (await baRequest("GET", "list-sessions", cookie)).status;
+    const rowsAfterList = await sessionsFor(merchant);
+
+    // ② 真的会**写库**的那一个：判官 r8 抓到的正是这一条（改名 200 且落库）。
+    await restoreSessionRow(row);
+    const updateStatus = (await baRequest("POST", "update-user", cookie, { name: "Renamed by a revoked cookie" })).status;
+    const nameAfter = (await prisma.betterAuthUser.findUniqueOrThrow({ where: { id: row.userId }, select: { name: true } })).name;
+    const rowsAfterUpdate = await sessionsFor(merchant);
+
+    // ③ 读侧那一个：它答的是「你是谁」，泄的是 profile。
+    await restoreSessionRow(row);
+    const getStatus = (await baRequest("GET", "get-session", cookie)).status;
+    const rowsAfterGet = await sessionsFor(merchant);
+
+    // 一次断言、一张 diff：闸被拿掉时三个端点必须同时显形，而不是只红在第一个上。
+    expect({ listStatus, updateStatus, getStatus, nameAfter, rowsLeft: [rowsAfterList, rowsAfterUpdate, rowsAfterGet] }).toEqual({
+      listStatus: 403,
+      updateStatus: 403,
+      getStatus: 403,
+      nameAfter: nameBefore,
+      rowsLeft: [0, 0, 0],
+    });
   });
 
   it("SIGNIN-A7 —— 撤销之后两扇门都拒，而且不重新建号", async () => {

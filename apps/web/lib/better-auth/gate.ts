@@ -1,5 +1,6 @@
 import "server-only";
 import * as Sentry from "@sentry/node";
+import { getSessionFromCtx } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
 import { signInDoorDecision } from "@/lib/signup-gate";
 import { SIGN_IN_REFUSED_PAUSED, SIGN_IN_REFUSED_REVOKED, signInRefusal } from "./signin-refusal";
@@ -67,7 +68,9 @@ const FOR_SHARE_TX_TIMEOUT_MS = 5_000;
  * 结果在**哪条路上**都一样会响，不会因为下一个人只改了其中一处而变成半个无声。
  *
  * **那张删不掉的会话行是惰性的**（第 8 轮实测，判官 r7 P1 ① 的「零残留才安全」由此更正为
- * 「残留惰性 ＋ 必定告警」）。真库用例
+ * 「残留惰性 ＋ **尽力**告警」—— 第 9 轮判官 r8 P2 指出「必定」是假的：下面那段自己写着
+ * `Sentry.captureMessage` 会抛、抛了就被吞掉，所以告警是**尽力**的，它掉了不影响这条路照样拒）。
+ * 真库用例
  * `lib/__tests__/signin-pause-and-revoke.test.ts`「删失败留下的那张会话行是惰性的」把那个最坏
  * 结果原样造出来（真码门登录 → 撤销 → 把被删掉的那一行逐字放回去）并问它能换到什么：
  * better-auth 那一层**确实**还能把它读成一张会话，但每个受保护动作的第一句话是
@@ -77,6 +80,11 @@ const FOR_SHARE_TX_TIMEOUT_MS = 5_000;
  * 那条用例当场红（`expected { Object (email) } to deeply equal { error: 'Not authorized.' }`）。
  * 结论：残留仍然要告警、要人处理（它是一张还能被 better-auth 读出来的行），但它不是一个能进
  * 产品的活口。
+ *
+ * 第 9 轮更正（判官 r8 P0）——「better-auth 那一层确实还能把它读成一张会话」这句话今天**不再
+ * 成立**：前门（下面的 `assertRequestSessionNotRevoked`）对任何带会话的请求重查名单，撤销之后
+ * 那一行连 better-auth 自己的端点都换不到东西，而且会当场被删掉。上面那段留着，是因为它记录的
+ * 是第 8 轮**实测到的**事实与那次实测把结论改成什么；这一段记录它后来又被什么取代。
  *
  * 照 `tenant-actions.ts` 的撤销审计告警同一个形状：固定分类的 tag 让它能被建成一条规则，
  * extra 里只放错误的**类名与错误码**。#575 日志纪律：邮箱、会话 id、userId 这类能指认到人的
@@ -126,6 +134,66 @@ async function deleteSessionsOrAlert(
       }
     }
   }
+}
+
+/**
+ * SIGNIN-A7 —— **前门那一道：任何带会话的 better-auth 请求都重查名单**（第 9 轮，判官 r8 P0）。
+ *
+ * 第 8 轮的结论「残留会话行是惰性的」只对**我们自己写的那一层**成立：产品每个动作的第一句话是
+ * `requireSession` → `allowed` → `isAllowedEmail`，那一次读当场按库判定。可 `toNextJsHandler`
+ * 把 better-auth **一整排自己的路由**也挂在 `/api/better-auth/*` 上，而那些路由只认 `ba_session`
+ * 那一行，从来不问我们的名单。判官用同一张真 cookie 打 `/list-sessions` 与 `/update-user`，两个
+ * 都 200，`/update-user` 还真的把 `name` 写进了库 —— 于是「撤销仍然绝对」（规格 §1.6）对整整一
+ * 组端点不成立，而那一组端点我们一行代码都没写过，也永远数不完。
+ *
+ * 所以修的是根而不是端点：判定挂在**前门中间件**（`server.ts` 的 `hooks.before`，规格 §1.4 点名
+ * 的那道前门）上，对**每一个**带会话的请求跑同一个 `signInDoorDecision` —— 与建号那一刻、建会话
+ * 那一刻同一个函数，规格 §1.6「三处名单检查同一函数」因此对第四处也成立。名单一行、端点无穷，
+ * 只有把闸放在它们共同的入口上，下一个被加进来的端点才不用被重新数一遍。
+ *
+ * 逐条为什么这么写：
+ *
+ *   · **只在已经解析到会话时才查**。没有会话的请求（登录页那些公开门、`/ok`、`/error`）本来就
+ *     换不到任何身份，给它们加一次名单读只是给每个匿名请求加两次数据库往返。
+ *   · **登录门本身不走这道闸**（下面那张 exempt 表）。那几条路各自已经有自己的三步判定
+ *     （`user.create.before` / `session.create.before` / `session.create.after`），而且它们的
+ *     拒绝要按 §1.4 落成登录页的 `?error=`；从前门再抛一次只会把那条映射踩掉。`/sign-out` 也在
+ *     表里：它唯一能做的事是**收回**权限，拦下它只会让浏览器留着一张已经死掉的 cookie。
+ *   · **`disableCookieCache: true`**：读的是库里那一行，不是 cookie 里自带的副本。这个部署今天
+ *     没开 cookie 缓存（`session` 只映射表名），所以它今天是个空动作 —— 写在这里是因为哪天有人
+ *     开了缓存，一张被撤销的会话就会从缓存里读出来放行，而那时没有人会想起要回来改这一行。
+ *     `disableRefresh` 刻意**不**传：滚动续期是 better-auth 自己的行为，这道闸只判「可不可以」，
+ *     不改「会话活多久」。
+ *   · **`paused` 照旧放行**。暂停开关管的是新注册，规格 §1.3 明写「老商家照常进」；一个手上有
+ *     会话的人按定义已经登录过，把他按 paused 踢出去就是那句话的反面。
+ *   · **fail closed**：读不到名单时 `signInDoorDecision` 自己返回 `revoked`（`lookupAddress`
+ *     catch → null），所以库读失败走的是拒绝这一条。代价是一次数据库抖动会把当时在线的人请回
+ *     登录页 —— 相对「一个被撤销的地址继续改 profile」，这是我们愿意付的那一边。
+ *   · **性能**：每个带会话的 better-auth 请求多两次带索引的点查（`AllowedEmail.email` 唯一键、
+ *     `ba_user.email` 唯一键）。会话那一次读不是新增的 —— `getSessionFromCtx` 把结果写回
+ *     `ctx.context.session`，端点自己的 `sessionMiddleware` 直接复用，不会读第二次。
+ *   · **不发新 cookie**：拒绝是从 `before` 抛出去的，端点根本没跑，所以没有任何 `Set-Cookie`。
+ *     主动**清**浏览器那张 cookie 会更体面，但前门抛错这条路上够不着响应头；会话行已经删光，
+ *     那张 cookie 从此换不到东西，所以留着它只是难看，不是一个活口。
+ */
+const SESSION_GATE_EXEMPT_PATHS = ["/sign-in", "/sign-up", "/sign-out", "/callback", "/oauth2/callback"] as const;
+
+export async function assertRequestSessionNotRevoked(
+  ctx: Parameters<typeof getSessionFromCtx>[0],
+): Promise<void> {
+  const path = ctx.path ?? "";
+  if (SESSION_GATE_EXEMPT_PATHS.some((p) => path === p || path.startsWith(`${p}/`))) return;
+  const session = await getSessionFromCtx(ctx, { disableCookieCache: true });
+  const userId = session?.session?.userId;
+  if (!userId) return;
+  if ((await signInDoorDecision(session?.user?.email as string | undefined)) !== "revoked") return;
+  // 撤销是绝对的：这张 cookie 背后的会话行一张都不留（删不掉的理由与告警形状见上面那个函数）。
+  await deleteSessionsOrAlert(
+    { userId },
+    "revoked-session-front-door",
+    "A revoked address reached a Better Auth endpoint but its session rows could not be deleted",
+  );
+  throw signInRefusal(SIGN_IN_REFUSED_REVOKED);
 }
 
 /**

@@ -209,8 +209,16 @@ export async function revokeMerchantAccess(
   // 话要说到操作员能自己走完下一步，否则他只会读到一句「不行」然后来问人。
   if (outcome === "protected") return { error: FOUNDER_ADDRESS_PROTECTED };
   // 审计是 best-effort，但**失败不许是无声的**：撤销已经落库、会话已经切断，把整个动作报成失败
-  // 会是反过来的那个谎；所以两件事一起说出口 —— 答案里带一面旗（操作员看得见），外加一条固定
-  // 分类的告警（团队看得见）。#575 日志纪律：邮箱这类用户内容不进告警文本。
+  // 会是反过来的那个谎；所以两件事一起说出口 —— 答案里带一面旗（操作员看得见），外加一条**尽力
+  // 的**告警（团队看得见）。#575 日志纪律：邮箱这类用户内容不进告警文本。
+  //
+  // 第 9 轮（判官 r8 P2）——「必定告警」这句话是假的，改成「尽力告警」并且把话说全：
+  // `Sentry.captureMessage` 自己会抛（transport 没初始化、DSN 配错、序列化 `extra` 时炸掉），
+  // 而上一版把它裸写在 `.catch()` 回调里，于是告警自己的错顺着这个 promise 冒出去、整个 server
+  // action reject —— 撤销已经生效，后台却读到「撤销失败」。所以告警整个包在 try/catch 里
+  // （与 `lib/better-auth/gate.ts` 第 8 轮同一条口径）：**响不响都不许改变这条路的答案**。
+  // 告警自己掉了这一条是可以接受的损失（它本来就是 best-effort 的通知），把一次成功的撤销报
+  // 成失败不是。
   //
   // 第 4 轮判官（Codex）：那条纪律原来只守住了**标题**，`extra.reason` 里放的是原始错误消息，
   // 而 Prisma 的错误消息会把调用参数渲染进去 —— 一次唯一键冲突或连接错误就会把**商家邮箱**
@@ -222,15 +230,20 @@ export async function revokeMerchantAccess(
     .then(() => true)
     .catch((e: unknown) => {
       const code = (e as { code?: unknown } | null)?.code;
-      Sentry.captureMessage("Merchant access revoked but its audit entry could not be written", {
-        level: "error",
-        tags: { area: "admin", gate: "tenant-revoke-audit" },
-        extra: {
-          outcome,
-          errorName: e instanceof Error ? e.name : typeof e,
-          errorCode: typeof code === "string" ? code : undefined,
-        },
-      });
+      try {
+        Sentry.captureMessage("Merchant access revoked but its audit entry could not be written", {
+          level: "error",
+          tags: { area: "admin", gate: "tenant-revoke-audit" },
+          extra: {
+            outcome,
+            errorName: e instanceof Error ? e.name : typeof e,
+            errorCode: typeof code === "string" ? code : undefined,
+          },
+        });
+      } catch {
+        // 告警通道自己炸了。咽下去是这里唯一正确的答案（理由写在上面）：撤销已经生效，答案里
+        // 那面 `auditFailed` 旗仍然会打出去，操作员看得见「这一次没留下痕迹」。
+      }
       return false;
     });
   revalidatePath("/admin/tenants");

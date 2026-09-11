@@ -216,6 +216,32 @@ describe("后台的撤销动作", () => {
     expect(JSON.stringify(options ?? {})).not.toContain("action_event insert failed");
   });
 
+  /**
+   * SIGNIN-A7 —— **告警是通知，不是控制流**（第 9 轮，判官 r8 P2）。
+   *
+   * `Sentry.captureMessage` 自己会抛（transport 没初始化、DSN 配错、序列化 `extra` 时炸掉）。
+   * 上一版把它直接写在 `.catch()` 回调里，于是告警自己的错顺着那个 promise 冒出去，整个
+   * server action reject —— 撤销**已经落库、会话已经切断**，后台却读到一句「撤销失败」，
+   * 操作员于是以为这个地址还进得来。那是反过来的那个谎，比丢一行审计严重。
+   *
+   * 与 `gate.ts` 第 8 轮的做法同一条口径：响不响都不许改变这条路的答案。
+   */
+  it("SIGNIN-A7 —— 告警通道自己炸掉时：撤销照样算数，答案里照样写明没留下痕迹", async () => {
+    const { email, baUserId } = await selfSignedUpMerchant("audit-alert-down");
+    const original = prisma.actionEvent.create;
+    (prisma.actionEvent as { create: unknown }).create = vi.fn().mockRejectedValue(new TypeError("action_event insert failed"));
+    captureMessage.mockImplementationOnce(() => {
+      throw new Error("sentry transport down");
+    });
+    try {
+      expect(await revokeMerchantAccess(email)).toEqual({ ok: true, result: "revoked", auditFailed: true });
+    } finally {
+      (prisma.actionEvent as { create: unknown }).create = original;
+    }
+    expect(await statusOf(email)).toBe("revoked");
+    expect(await sessionsFor(baUserId)).toBe(0);
+  });
+
   /** 顺带钉住正常那条路不发告警 —— 免得这条闸变成一个天天响的噪音源。 */
   it("SIGNIN-A7 —— 审计写成功时不发任何告警", async () => {
     const { email } = await selfSignedUpMerchant("audit-quiet");
