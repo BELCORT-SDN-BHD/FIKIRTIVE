@@ -44,12 +44,12 @@
 | R2-20 | 盯项①：`instructions.ts` 两步提议（先合成首帧再动画）不再出现 | #1307 第一批；`creation-engine.md` §5 :162④ |
 | R2-21 | 盯项②：接续（continuity）与直接出片同开，跑真引擎 | #1307「Round 2 再看」；`creation-engine.md` §5 :172⑥ |
 | R2-22 | 盯项③：「首帧＋演员」混合形态供应商是否接受、名额仍为 0 | #1307「Round 2 再看」；`creation-engine.md` §5 :162 残留③ |
-| R2-23 | Creation①：付费前尺寸闸唯一一份（整包入口不绕过）＋ 本站生成资产写宽高 | 本轮新合并 [PR #1341](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1341)；`creation-engine.md` §5 :162 残留① |
-| R2-24 | Creation⑥：分镜镜头挂 Library 图（选、取下、跨租户拒、带不上车拒） | 本轮新合并 [PR #1342](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1342)；`creation-engine.md` §5 :178 |
+| R2-23 | Creation①：付费前尺寸闸唯一一份（整包入口不绕过）＋ 本站生成资产写宽高 | 第一轮之后合并 [PR #1341](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1341)；`creation-engine.md` §5 :162 残留① |
+| R2-24 | Creation⑥：分镜镜头挂 Library 图（选、取下、跨租户拒、带不上车拒） | 第一轮之后合并 [PR #1342](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1342)；`creation-engine.md` §5 :178 |
 
-### 1.1 「Round 2 再看」四条的落点（#1307 第二批逐条，不留默认漏项）
+### 1.1 #1307 逐条落点（第二批「Round 2 再看」四条 + 第一批两条轻改，不留默认漏项）
 
-#1307 第二批评论点名「Round 2 再看」的是**四条**。本表逐条给落点；**不测的当场写明理由**。
+#1307 第二批评论点名「Round 2 再看」的是**四条**；第一批里另有**两条轻改**（:162⑤、:172⑤）没有商家可见面。本表六条逐条给落点；**不测／不挂走查的当场写明理由**。
 
 | #1307 原文点名 | 本计划落点 | 测 / 不测 |
 |---|---|---|
@@ -57,21 +57,26 @@
 | :173 FSE-005 第二症状（合成后原商品节点消失） | R2-13 | 测 |
 | :172⑥ 接续＋直接出片同开 | R2-21 | 测 |
 | fb:203 FSE-011（Profile 邮箱空白，先复现） | R2-14 | 测（只复现＋登记，本轮不修） |
+| :162⑤ `MAX_GEN_ENTITIES(8) < MAX_VIDEO_IMAGE_PARTS(9)` 无断言钉住；`cowork-guardian` 付费前检查未覆盖 `referenceGenerationIds`（#1307 第一批轻改） | 无 | **不挂走查**。两件都在代码内部：一个是 core 常量之间的隐含依赖断言，一个是付费前守卫的接线，商家面看不出任何差别（既没有新按钮，也没有新文案、新拒绝句）。取证方式是单元／行为测试，由 CI 每个 PR 跑，staging 上点不出来 —— 真要人手验只能靠越过产品面直接构造入参，那属探针不属走查。走查中若顺手撞见「名额算错」或「挂图绕过付费前守卫」的现象，按 FSE-2xx 登记 |
+| :172⑤ `firstFramePrompt` 仍必填，带演员镜头那段文字不使用（#1307 第一批轻改） | 无 | **不挂走查**。这是 addShot 输入 schema 的一格冗余字段：多写了、但不被使用，商家面既看不到这格也感觉不到差别（带演员的镜头照旧直接出片，R2-21／R2-24 走的就是这条路）。字段是否必填由 schema 测试在 CI 钉住；本轮不为一个不可见的字段安排步骤。走查中若看到带演员的镜头仍冒出首帧那一步，那属 R2-20／R2-21 的判定，不是这条 |
 
-### 1.2 本轮新合并的面 → 走查条目
+### 1.2 第一轮之后合并或待合并的施工票 → 走查条目
 
-第一轮走查之后合并进主干的施工票，本轮必须复走它们改动的**商家可见**面。preflight 第 2 条管总：**未随本次 staging 部署上线的，对应条目一律 `NOT RUN（未部署）`**，不得按 PR 已合并推定通过。
+第一轮走查之后**已合并或仍待合并**的施工票，本轮必须复走它们改动的**商家可见**面。下表「状态」列是 **2026-09-11 用 `gh pr view` 现查的当时状态**，不是承诺：写这份计划时它可能已经变。两条硬口径：
 
-| 施工面 | PR | 改到的商家可见行为 | 本轮条目 |
-|---|---|---|---|
-| Creation① | [#1341](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1341) | 本站生成资产落库写宽高（极小的本站生成商品图改为**付费前**被拒）；付费前尺寸闸收成唯一一份、整包入口不再绕过；「已放大」披露句独立一格、卡不再被标 `downgraded`（:176④）；拒绝文案按实际短边动态生成（:176⑥） | R2-23、R2-11 |
-| Creation② | [#1340](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1340) | Edit and retry 输入框非空时有提示（:163①）；`retry-source` 一行＋独立 Remove（:163②）；`References kept:` 有名字时仍报「+ N more」（:163③） | R2-12 |
-| Creation⑥ | [#1342](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1342) | 分镜镜头 @ 挂 Library 图、逐张取下、跨租户点名拒、「带不上车」写入即拒 | R2-24 |
-| Brand② | [#1343](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1343) | @ 菜单与确认卡同一个 Entity id、来源标签「Product」、Library 元素页无价格／卖点／分类入口 | R2-07、R2-08 |
-| Brand③ | [#1346](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1346) | 编辑与删除同步收口（两个删除方向「已生成的成片不动」）；自动化旅程 `e2e/journeys/23-brand-product-identity.spec.ts` | R2-08、R2-09 |
-| 登录门③ | [#1347](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1347) | Google 门陌生人直接进、同邮箱合并、未验证一律拒、**每种**失败都回 `/login` 页内提示（含 state 解不开那一族：无 state、state 过期、回调重放） | R2-02、R2-03 |
-| 登录门④ | [#1345](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1345) | 登录页顶暂停横幅；后台「Invite a merchant」面板新增 **Revoke access** 按钮，撤销与会话失效同一笔事务 | R2-05 |
-| 登录门⑤ | [#1349](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1349) | 两扇门一个工作区的端到端旅程；Google 门 E2E 替身只在测试跑道启用（`E2E_GOOGLE_DOOR_STUB`，`productionValues` 为空数组，生产上任何值都被开机检查拒绝） | R2-03 |
+- `OPEN` 的 PR，若在走查开跑前仍未合并并随本次 staging 部署上线，对应条目一律标 `NOT RUN（未部署）`；
+- `MERGED` 也不等于上线 —— preflight 第 2 条管总：**未随本次 staging 部署上线的，对应条目同样标 `NOT RUN（未部署）`**，不得按 PR 已合并推定通过。
+
+| 施工面 | PR | 状态（2026-09-11 现查） | 改到的商家可见行为 | 本轮条目 |
+|---|---|---|---|---|
+| Creation① | [#1341](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1341) | MERGED | 本站生成资产落库写宽高（极小的本站生成商品图改为**付费前**被拒）；付费前尺寸闸收成唯一一份、整包入口不再绕过；「已放大」披露句独立一格、卡不再被标 `downgraded`（:176④）；拒绝文案按实际短边动态生成（:176⑥） | R2-23、R2-11 |
+| Creation② | [#1340](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1340) | OPEN | Edit and retry 输入框非空时有提示（:163①）；`retry-source` 一行＋独立 Remove（:163②）；`References kept:` 有名字时仍报「+ N more」（:163③） | R2-12 |
+| Creation⑥ | [#1342](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1342) | MERGED | 分镜镜头 @ 挂 Library 图、逐张取下、跨租户点名拒、「带不上车」写入即拒 | R2-24 |
+| Brand② | [#1343](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1343) | MERGED | @ 菜单与确认卡同一个 Entity id、来源标签「Product」、Library 元素页无价格／卖点／分类入口 | R2-07、R2-08 |
+| Brand③ | [#1346](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1346) | MERGED | 编辑与删除同步收口（两个删除方向「已生成的成片不动」）；自动化旅程 `e2e/journeys/23-brand-product-identity.spec.ts` | R2-08、R2-09 |
+| 登录门③ | [#1347](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1347) | MERGED | Google 门陌生人直接进、同邮箱合并、未验证一律拒、**每种**失败都回 `/login` 页内提示（含 state 解不开那一族：无 state、state 过期、回调重放） | R2-02、R2-03 |
+| 登录门④ | [#1345](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1345) | OPEN | 登录页顶暂停横幅；后台「Invite a merchant」面板新增 **Revoke access** 按钮，撤销与会话失效同一笔事务 | R2-05 |
+| 登录门⑤ | [#1349](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1349) | OPEN | 两扇门一个工作区的端到端旅程；Google 门 E2E 替身只在测试跑道启用（`E2E_GOOGLE_DOOR_STUB`，`productionValues` 为空数组，生产上任何值都被开机检查拒绝） | R2-03 |
 
 两条口径：
 
@@ -138,9 +143,9 @@ PRODID-A8 逐字全文：「活跃 `Entity(PRODUCT)` 数 ≥ 迁移前活跃 `Br
 | R2-11 | §5 登记行 2026-09-09（商品照自动放大） | 短边偏小的真实商品照不再被供应商「宽与高各 ≥300px」硬闸零花费弹回；100 ≤ 短边 <300 的无人像商品照整数倍放大后收，原件字节不变 |
 | R2-11 | §5 登记行 :176④（PR #1341 落地） | 「已放大」披露句走卡面自己的一格（`CardPayload.referenceUpscaleNote`），**独立一行**：不再并进 `downgradeNote`、卡也不再被标成 `downgraded`；名额截断披露与自动放大披露卡面两行并存、各说各的 |
 | R2-11 | §5 登记行 :176⑥（PR #1341 落地） | 图太小的拒绝文案**按实际短边动态生成**，说出这张图现在多大；门槛按能否放大分岔 —— 能放大 ⇒ 100（短边 99 的商家不再被过严要求），带官方演员血统不许动像素 ⇒ 300 |
-| R2-12 | §5 登记行 2026-09-08 :163①（PR #1340 落地） | 输入框**非空**时点 Edit and retry：不覆盖商家正在打的字，并在 `composer-busy-notice` 那一格说出「那句话没有放回去」；放回去成功的那一次这句自动清掉。引用照旧回来 |
-| R2-12 | §5 登记行 2026-09-08 :163②（PR #1340 落地） | 输入框上方有 `retry-source` 一行，念得出源消息原话（截断到 48 字）、念不出就说是更早的一条；旁边 `Remove` **只清这一格**，引用一件不动，清后送出的是一条普通新消息 |
-| R2-12 | §5 登记行 2026-09-08 :163③（PR #1340 落地） | `References kept: …` 在有名字可念时，**仍报**没名字那几件的件数（「+ N more」，差数取下界）|
+| R2-12 | §5 登记行 2026-09-08 :163①（PR #1340，2026-09-11 现查仍 OPEN；未合并并部署即 `NOT RUN（未部署）`） | 输入框**非空**时点 Edit and retry：不覆盖商家正在打的字，并在 `composer-busy-notice` 那一格说出「那句话没有放回去」；放回去成功的那一次这句自动清掉。引用照旧回来 |
+| R2-12 | §5 登记行 2026-09-08 :163②（PR #1340，2026-09-11 现查仍 OPEN；未合并并部署即 `NOT RUN（未部署）`） | 输入框上方有 `retry-source` 一行，念得出源消息原话（截断到 48 字）、念不出就说是更早的一条；旁边 `Remove` **只清这一格**，引用一件不动，清后送出的是一条普通新消息 |
+| R2-12 | §5 登记行 2026-09-08 :163③（PR #1340，2026-09-11 现查仍 OPEN；未合并并部署即 `NOT RUN（未部署）`） | `References kept: …` 在有名字可念时，**仍报**没名字那几件的件数（「+ N more」，差数取下界）|
 | R2-12 | §5 登记行 2026-09-08 :170（FSE-012；Founder 口径＝服务器校验报价版本） | 报价数量 1→2 期间提交旧报价 → **服务器拒绝并刷新**；不是锁控件 |
 | R2-12 | CREATE-A1 | 逐字全文：「花钱前先见增强稿预览，可编辑可直接用；同一条人话走增强预览提交与直接提交，前置报价数字相同（otto-engine.md 的画布对话验收落地后，画布路径的判定落在 Otto 确认卡片上）」 |
 | R2-12 | CREATE-A12 | 逐字全文：「`sentPromptText` 与商家批准的增强稿逐字一致（Regenerate 重发同一串）；路由理由字段有值可读」。操作＝任取一次走增强路径的生成，并对该资产按一次 Regenerate |
@@ -156,7 +161,7 @@ PRODID-A8 逐字全文：「活跃 `Entity(PRODUCT)` 数 ≥ 迁移前活跃 `Br
 | R2-21 | §5 登记行 2026-09-08 :172⑥ | 接续（continuity）与直接出片**同时开启**跑一次真引擎：卡面与扣费一致、不铸多余首帧子卡、产物人物与商品都在 |
 | R2-22 | §5 登记行 2026-09-08 :162 残留③ | 本轮**不下供应商接受度结论**（理由见 §1.1）。只取证两件现象：产品面发不出「首帧＋演员」这个组合（没有入口）、首帧即参考名额仍为 0；两件都登记，不当 bug 报 |
 | R2-23 | §5 登记行 :162 残留①（PR #1341 落地） | 本站生成的资产落库带真宽高；用一张**极小的本站生成图**作商品参考提交 → 在**付费前**被诚实拒绝（或按 100–300 档放大后通过），不再是付费后被供应商弹回再退款；同一道尺寸闸对**整包**入口生效，没有一条入口绕得过去 |
-| R2-24 | §5 登记行 :178（PR #1342 落地）；验收 CREATE-A2／CREATE-A10 | 分镜卡里**直接出片**的镜头能 @ 选 Library 的图作参考并进入报价材料；逐张取下与一次全取下都放行；不直接出片的镜头挂图＝**花钱前点名拒绝**（点名哪一镜、整卡 fail closed、零卡零预扣）；跨租户的图不可选、写入侧与铸卡侧各拒一次 |
+| R2-24 | §5 登记行 :178（PR #1342 落地）；验收 CREATE-A2 | 分镜卡里**直接出片**的镜头能 @ 选 Library 的图作参考并进入报价材料；逐张取下与一次全取下都放行；不直接出片的镜头挂图＝**花钱前点名拒绝**（点名哪一镜、整卡 fail closed、零卡零预扣）；跨租户的图不可选、写入侧与铸卡侧各拒一次。**只挂 CREATE-A2**：规格 §5 :178 那一行写的是「验收＝CREATE-A2／A10」，但 A10 判的是演员库角色跨场景出片不触发人脸拦截，与「镜头挂 Library 图」无关 —— A10 由 R2-11 证，本条不借 |
 
 ### 2.4 前端基线（`docs/specs/frontend-baseline.md` §2 / §5）
 
@@ -262,7 +267,7 @@ FRONT-A1／A3／A4／A8／A9／A11／A13／A14 本轮**不作为必测**：A1 �
 | PRODID-A7 | R2-07 对 Otto 说一次 ＋ 理解提取不确认 | 前者两边出现；后者确认前在 Library 与 `@` 菜单都查无此物 |
 | PRODID-A4 | R2-08 两个方向各改一次 | 另一边同步、无第二份名字或图 |
 | PRODID-A5 | R2-08 Library 元素页翻一遍 | 三格编辑入口一个都没有（截图） |
-| PRODID-R6 / R9 | R2-08「与名字无关的操作」 | 只改价格／归档／换封面／撤销 Otto 改动后，另一处刚改的名字与封面不被写回 |
+| PRODID-R6 ／ PRODID-R9 | R2-08「与名字无关的操作」 | 只改价格／归档／换封面／撤销 Otto 改动后，另一处刚改的名字与封面不被写回 |
 | PRODID-A6 | R2-09 四格删除恢复矩阵 ＋ 成片核对 | 每格刷新后成立；两个方向都确认已生成的成片一行不动、字节不动 |
 | PRODID-R8 | R2-09 名字槽位被占时恢复 | 一句按 `kind` 分的人话，不是「请重试」 |
 | PRODID-R2 | R2-09 删唯一一张照片 | 两面同时变「没有封面」、字节真删 |
@@ -294,6 +299,7 @@ FRONT-A1／A3／A4／A8／A9／A11／A13／A14 本轮**不作为必测**：A1 �
 | §5 :172⑥ | R2-21 | 卡面步骤数、无多余首帧子卡、扣费与卡面一致、人物与商品都在 |
 | §5 :162 残留③ | R2-22 | 产品面发不出该组合、名额仍为 0；零 `GenJob` 零账本行 |
 | §5 :162 残留① | R2-23 ①②③ | `Asset.width/height` 有真值；极小图**付费前**被拒；四个入口无一绕过 |
+| CREATE-A2 | R2-24 ④「带不上车即拒」＋ ⑤ 跨租户 | 不直接出片的镜头挂图在**写入那一刻**就点名拒绝（点名哪一镜、整卡 fail closed）；跨租户构造的 `setShotReferences` 被拒；两次都查 `CreditLedger` 零新行、零新 `GenJob`（＝「花钱前诚实拒绝、ledger 零新增行」） |
 | §5 :178 | R2-24 ①–⑤ | 草稿卡入口第一手就在、挂图进报价材料、逐张取下放行、带不上车写入即拒、跨租户被拒 |
 | FRONT-A5 | R2-14 搜索／筛选／收藏 | 结果来自服务器、收藏后刷新仍在 |
 | FRONT-A6 | R2-14 collection 增删 | 每步刷新后成立、夹具 F 看不到、删除后成员对象仍在 |
