@@ -20,7 +20,7 @@
 |---|---|---|---|---|
 | R2-01 | SIGNIN-A1 | **PASS** | ledger §R2-01①；截图 `01-login-page-no-password.png`；会话 `Cw7acC6L…`、`emailVerified=true`、`name=""` | ✅ backend §2.1：`ba_user` 1 行（`Cw7acC6L…`，`emailVerified=t`，`name` 空）、canonical `User` 1 行、`Organization`＋`Membership` 各 1 套（owner/active） |
 | R2-01 | SIGNIN-A5 | **PARTIAL** | 预填＋一次即进 PASS（截图 `02-magic-link-code-prefilled.png`）；同链接第二次点 PASS（`Code not accepted`）；**15 分钟过期未测** | backend §8-6：`ba_verification` 窗口内 0 行（码用完即清），过期路径库里无痕可查 ⇒ 维持未测，不推定 |
-| R2-01 | SIGNIN-A16 | **PASS**（改判，backend §2.3） | 混合大小写 `Tools+R2F20260911@Belcort.com` 登录 → 全程小写、建号成功（ledger §SIGNIN-A16） | ✅ backend §2.3：`AllowedEmail` 恰好 1 行全小写 active；`ba_user` 与 `AllowedEmail` **全表** `email <> lower(email)` 计数均为 **0** ⇒ 造第二行的风险已排除。未做：同邮箱换大小写再登一次 |
+| R2-01 | SIGNIN-A16 | **PARTIAL**（**W3 第 2 轮改判，撤销 W2 的 PASS**） | 混合大小写 `Tools+R2F20260911@Belcort.com` 登录 → 全程小写、建号成功（ledger §SIGNIN-A16）。**规格 `sign-in.md`:77 要求「两种大小写**各登录一次** → 同一个账号」；本轮只登了一次** ⇒ 「同一个账号」那半句**从未执行**，按 plan §2「一条只挂它真正证明的那一条，借号即 P1」不能整条判 PASS | ✅ backend §2.3：`AllowedEmail` 恰好 1 行全小写 active；`ba_user` 与 `AllowedEmail` **全表** `email <> lower(email)` 计数均为 **0** ⇒ **归一化在写入路径上生效、造第二行的风险已排除**（这半句成立）。❌ 未做：同邮箱换另一种大小写**再登一次**验同一 `userId`（backend §2.3 原话：「本轮只登了一次」）—— 快照里没有重复行**不能**替代那次没做的登录 |
 | R2-02 | SIGNIN-A2 | **NOT RUN** | 无陌生 Google 账号（Founder 未提供夹具 B，禁止自建账号） | — |
 | R2-02 | SIGNIN-A14 | **NOT RUN** | 三种失败 + state 族三次都需要 Google 门可反复操作；本机只有一个已授权 Google 身份，取消授权／撤销后无法复原 | — |
 | R2-02 | SIGNIN-A13 | **NOT RUN** | staging 造不出「Google 报邮箱未验证」的账号（plan 已预告大概率如此） | — |
@@ -33,8 +33,8 @@
 | R2-05 | SIGNIN-A7 | **NOT RUN** | 后台 Revoke access 未执行（为不破坏第二租户，计划放收尾，时间不足） | — |
 | R2-05 | SIGNIN-A8 | **PARTIAL** | 第 6 次 `Try again in an hour.` PASS；陌生 1304ms vs 老 1142ms、文案同形 PASS；**第 4 次那句不兑现 → FSE-201** | backend §2.7：`rate_limit_counter` 里 `signincode:addr|<邮箱>`＝5、`authmail:<邮箱>`＝5 两把独立计数器都在 ⇒ **FSE-201 是纯文案缺陷**（机器确已作废该码），不是限流机制缺失 |
 | R2-06 | SIGNIN-A10 | **PARTIAL** | 工作区名为空 PASS、`emailVerified=true` PASS；**赠金一笔无法用 `+tag` 夹具验证**（归一化键判定同一收件箱已领，属 A17 正确行为） | backend §2.6／§2.8：`AllowedEmail` status=active ✅、工作区名空 ✅；两个新 org **零 `CreditLedger` 行**（赠金仍无法验，夹具归一化撞键）；登录审计**行数对**（窗口内 8 行、每次登录一行）但 **`ownerId` 全库写死 `founder`（26/26）⇒ 新发现 FSE-209 候选（审计租户归属错，非泄漏）** |
-| R2-06 | SIGNIN-A17 | **PARTIAL** | 反向正面证据：`tools+r2a…` 与 `tools+r2f…` 两个新号都**没有**拿到赠金（归一化后同一收件箱），说明幂等键按去 `+tag` 算 —— 与规格一致；**上限 50／第 51 个／Sentry 告警未测**（未授权批量开号） | ✅ backend §2.6：`signup_grant_claim` 全表 4 行，`canonicalEmail='tools@belcort.com'` 那把键早在 **2026-09-08 05:49:25Z** 被 `org_cmts923…` 占住 ⇒ 归一化幂等键得到机器证据；告警半句另受限于 **staging 无 `SENTRY_DSN`**（backend §0） |
-| R2-06 | SIGNIN-A15 | **NOT RUN** | 需人为制造建号中途失败（断库连接），未获授权也未执行 | — |
+| R2-06 | SIGNIN-A17 | **PARTIAL** | 反向正面证据：`tools+r2a…` 与 `tools+r2f…` 两个新号都**没有**拿到赠金（归一化后同一收件箱），说明幂等键按去 `+tag` 算 —— 与规格一致；**上限 50／第 51 个／Sentry 告警未测**（**理由更正**：批量开号已获 Founder #1330 第 4 条授权，未做是时间与取舍；Sentry 那半句另受 staging 无 `SENTRY_DSN` 所限，属环境不可验） | ✅ backend §2.6：`signup_grant_claim` 全表 4 行，`canonicalEmail='tools@belcort.com'` 那把键早在 **2026-09-08 05:49:25Z** 被 `org_cmts923…` 占住 ⇒ 归一化幂等键得到机器证据；告警半句另受限于 **staging 无 `SENTRY_DSN`**（backend §0） |
+| R2-06 | SIGNIN-A15 | **NOT RUN** | 需人为制造建号中途失败（断库连接）。**理由更正（W3 第 2 轮）**：Founder 在 [#1330](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1330) 评论第 4 条已逐字授权「A15／A17 的人为失败注入亦授权」⇒ **本条未执行是时间与取舍，不是没有批准**。上一版写的「未获授权」不属实（`run-ledger.md` §NOT RUN 清单同字样，一并更正） | — |
 
 ## 产品身份（`docs/specs/brand-product-identity.md`）
 
@@ -86,12 +86,12 @@
 | R2-18 | §5 完整下载字节 | **PASS（字节层面）** | MP4 3,228,579 字节（`ftypisom`，5.04s，720×1280）、JPEG 161,363 / 146,870 字节（`ff d8 ff e0`，1728×2304）。`Download` 按钮落盘受浏览器沙箱限制未验 | — |
 | R2-19 | §5 :172④ | **FAIL（性质已澄清）** | 跨租户深链被**静默换成新画布**、无提示、有写入（无泄漏）→ FSE-207 | ✅ backend §5.2：租户 A 的 `Project.updatedAt = 12:35:31.204 ＝ createdAt`（深链 13:18 之后**零更新**）；访问者那边确实新建 `Project 01M289WJEE…`（ownerId＝租户 F、name `New canvas`、13:18:07.823Z）并留下 `ActionEvent project.create` ⇒ **无越权读、有一次归属正确的多余写入＋零告知**，不是隔离破口 |
 | R2-19 | FRONT-A12 | **PARTIAL** | ①五个夹具地址**已登录**下全 404、未登录 302→`/login`（PASS）；②六面夹具串**零命中**（PASS）；③「写入失败有反馈不假成功」**NOT RUN** | — |
-| R2-20 | §5 :162④ | **PASS（带演员）** | 带演员镜头一步到位、明说要两步时被劝退；**无人物镜头仍提议两步** → FSE-208（口径待 Founder 裁） | — |
+| R2-20 | §5 :162④ | **PARTIAL**（W3 改判，原 PASS（带演员）） | 带演员镜头一步到位、明说要两步时被劝退；**无人物镜头仍提议两步** → FSE-208（口径待 Founder 裁） | — |
 | R2-21 | §5 :172⑥（接续＋直接出片同开） | **NOT RUN** | 未跑（时间；预算尚余 83%） | — |
-| R2-22 | §5 :162 残留③ | **PASS（机器闭合）** | 产品面发不出「首帧＋演员」组合：Otto 逐字劝退、**零卡零 GenJob 零账本行**；按 plan §1.1 不下供应商接受度结论 | ✅ backend §3.6：那一轮 `OttoTurnTrace.toolCalls = []`、无 GEN_CARD、无 GenJob、账本只有对话那一笔 ⇒ 「发不出这个组合」有机器证据 |
+| R2-22 | §5 :162 残留③ | **PASS（机器闭合）** | 产品面发不出「首帧＋演员」组合：Otto 逐字劝退、**零卡、零 GenJob、零生成账本行**（**W3 第 2 轮更正措辞**：那一轮仍有对话那一笔 `settledInternal=22` internal ＝ 2.2 credits，原写「零账本行」不属实）；按 plan §1.1 不下供应商接受度结论 | ✅ backend §3.6：那一轮 `OttoTurnTrace.toolCalls = []`、无 GEN_CARD、无 GenJob、账本只有对话那一笔 ⇒ 「发不出这个组合」有机器证据 |
 | R2-23 | §5 :162 残留① | **FAIL（现象）／根因待确认** | 80px 图在「图生图 base」与「视频 starting frame」两个入口都**未在付费前被拒**；图生图**成功并扣 1 credit**，视频走到供应商才失败（全额不收费、失败文案不说原因）→ FSE-204 | ✅ backend §3.2／§3.3／§3.4：① 本站生成图 `Asset.width/height` **有真值 1728×2304**（第一轮的 null 已修；视频资产仍 null）；② 闸只挂一条路，两个入口都绕过（根因见 §3.3）；③ 供应商原话 `expected the width to be at least 300px, but received a 80x107px image` **只活在日志里**，落库的 `GenJob.error` 是 `generation provider video submit failed (400)` ⇒ 失败文案不说原因的根因；④ **同一条永久性输入错误被重投 3 次**（attempts=3），商家 spent=false 但供应商侧成本本轮无法证明为零 |
 | R2-24 | CREATE-A2 | **PARTIAL** | 「不直接出片的镜头」**根本没有 Add image 入口**（比写入即拒更早的 fail closed，PASS）；服务端点名拒绝与跨租户 `setShotReferences` **未测** | ✅ backend §3.8：窗口内 **`Shot` 表 0 行**、`GenJob.shotId` 全空 ⇒ 那几格确实**零写入零扣费**；⑤ 只有代码形状证据（`storyboard-actions.ts:144` 起：`requireOwner()` 取服务端 principal → `loadCard(cardId, ownerId)` → 新增 id 必过 `resolveOwnedReferenceRefs`），**不能替代真实越权尝试** |
-| R2-24 | §5 :178 | **PARTIAL** | ① 草稿卡上 `Add image` 第一手就在（两个直接出片镜头都有）**PASS**；②③⑤ **BLOCKED**（浏览器面板合成点击落不到弹层选项，四种方式均试过） | ✅ backend §3.8：草稿卡尚未落成 `Shot` 行（窗口内该表 0 行），故 `Shot.promptDoc.referenceGenerationIds` 与 `GenJob.videoOptions.referenceGenerationIds` 本轮**没有现场值可查**；同时机器证明这三格**零写入、零账本行** ⇒ 维持 BLOCKED |
+| R2-24 | §5 :178 | **PARTIAL** | ① 草稿卡上 `Add image` 第一手就在（两个直接出片镜头都有）**PASS**；②③⑤ **BLOCKED**（浏览器面板合成点击落不到弹层选项，四种方式均试过） | ✅ backend §3.8：草稿卡尚未落成 `Shot` 行（窗口内该表 0 行），故 `Shot.promptDoc.referenceGenerationIds` 与 `GenJob.videoOptions.referenceGenerationIds` 本轮**没有现场值可查**；同时机器证明这三格**零写入、零生成账本行**（**W3 第 2 轮加限定**：铸分镜那轮的 Otto 对话费另计） ⇒ 维持 BLOCKED |
 
 ## 前端基线（`docs/specs/frontend-baseline.md`）
 
@@ -100,23 +100,46 @@
 | R2-06 | §5 2026-09-10（FRONT-A2 密码半段退役） | **PASS** | 七端点 404 + 登录页无密码入口；`/login?from=/create` 登录后**落点正确**（进 `/create`） |
 | R2-19 | FRONT-A12 | 见上表 | — |
 | R2-13 | §5 fb:202 | 见上表（FAIL 一格） | — |
-| R2-14 | §5 fb:203 | **NOT RUN** | — |
+| R2-14 | §5 fb:203 | 见上表（**NOT RUN**） | 与 Creation 表 `R2-14 §5 fb:203` **同一条**，不重复计数 |
 
-## 汇总计数（本表 46 行判定）
+## 汇总计数（本表 **65 行**判定 —— 2026-09-11 W3 第 2 轮重数）
 
-| 判定 | W1 走查后 | **W2 后端取证后** |
-|---|---:|---:|
-| PASS | 14 | **19** |
-| PARTIAL | 17 | **12** |
-| FAIL | 4 | **5** |
-| NOT RUN | 10 | **9** |
-| BLOCKED | 1 | **1**（R2-24 ②③⑤，工具侧） |
+> **口径更正（重要）**：上一版写「本表 46 行判定」，**少数了 19 行**。判官逐行点数后 W3 复核确认：本表四张判定表实际是 **65 行**。少报的部分**全在 PARTIAL 与 NOT RUN 两列**（PASS 19 与 FAIL 5 两个数一直是对的），也就是说**上一版把「没跑完」的规模少报了，结论方向（NO-GO）不变、只会更硬**。
+
+**逐表点数（任何人都能自己数一遍）**
+
+| 表 | 行范围 | 行数 | PASS | PARTIAL | FAIL | NOT RUN |
+|---|---|---:|---:|---:|---:|---:|
+| 登录门 | 本文件「登录门」表全部数据行 | 17 | 6 | 5 | 0 | 6 |
+| 产品身份 | 同上「产品身份」表 | 16 | 2 | 6 | 1 | 7 |
+| Creation | 同上「Creation」表 | 31 | 8 | 10 | 4 | 9 |
+| 前端基线 | 表里 4 行，**只有 `FRONT-A2` 是新判定**；`FRONT-A12`／`fb:202`／`fb:203` 三行是对上面两张表同一条的重复引用，已标「见上表」，**不重复计数** | 1 | 1 | 0 | 0 | 0 |
+| **合计** | | **65** | **17** | **21** | **5** | **22** |
+
+**三个阶段的演变（同一套 65 行口径）**
+
+| 判定 | W1 走查后 | W2 后端取证后 | **W3 第 2 轮修订后（现行）** |
+|---|---:|---:|---:|
+| PASS | 14 | 19 | **17** |
+| PARTIAL | 24 | 19 | **21** |
+| FAIL | 4 | 5 | **5** |
+| NOT RUN | 23 | 22 | **22** |
+| 合计 | 65 | 65 | **65** |
+
+**BLOCKED 怎么算**：`R2-24 §5 :178` 那一行的**整行判定是 PARTIAL**（①PASS、②③⑤ BLOCKED），BLOCKED 是这一行**里面的三格**，不是独立的第 66 行。上一版把它单列成「BLOCKED 1」是把行与格混在一起数了，现已并回 PARTIAL。工具侧 BLOCKED 的事实本身没变（说明见该行证据格与 `report-round2.md` §1.2）。
+
+**W3 第 2 轮的两处改判（都是往下改，不是往上凑）**
+
+| 条目 | 改前 | 改后 | 理由 |
+|---|---|---|---|
+| `SIGNIN-A16` | PASS（W2 改判） | **PARTIAL** | 规格要求两种大小写各登一次；本轮只登了一次 ⇒ 「同一个账号」那半句从未执行（判官发现，W3 复核成立） |
+| `R2-20 §5 :162④` | PASS（带演员） | **PARTIAL** | 登记行前半句是全称「不再出现」，无人物那镜出现反例（W3 第 1 轮已改判，本表同步） |
 
 **W2 改判明细（7 条）**
 
 | 条目 | W1 | W2 | 依据 |
 |---|---|---|---|
-| SIGNIN-A16 | PARTIAL | **PASS** | backend §2.3 全表零非小写 ＋ 单行小写 |
+| SIGNIN-A16 | PARTIAL | ~~PASS~~ → **W3 撤回，改回 PARTIAL** | backend §2.3 只证「没造出第二行」；规格要的「两种大小写各登一次 → 同一个账号」本轮只登了一次 |
 | SIGNIN-A3 | PARTIAL | **PASS** | backend §2.4 单 userId／单 org／单 membership（并修正 plan 的「两条 provider 行」口径） |
 | SIGNIN-A9（前半） | PARTIAL | **PASS** | backend §2.2 credential＝0、password 全 NULL |
 | PRODID-A8（中间那句） | PARTIAL | **PASS** | backend §4.2 null entityId＝0、零悬挂 |
@@ -124,12 +147,13 @@
 | PRODID-A10 | NOT RUN | **PARTIAL** | backend §4.1＋§1 建／删两个时刻账本零新增 |
 | **PRODID-A2** | PARTIAL | **FAIL（后半）** | backend §4.5 产品 id 没进卡面与谱系 ⇒ FSE-210 候选 |
 
-**W2 新增的两条后端独有发现（findings-catalog 是否收录由编排者裁）**
+**W2 新增的两条后端独有发现（W3 判：收录，已进 `findings-catalog.md`）**
 
 | 候选编号 | 一句话 | 出处 |
 |---|---|---|
 | **FSE-209** | 登录审计 `ActionEvent.auth.signin` 的 `ownerId` **全库写死 `founder`**（26/26），别的租户查不到自己的登录记录（无泄漏，payload 只有邮箱） | backend §2.8 |
 | **FSE-210** | `@` 选入的**产品**没有进入生成谱系：消息 payload 有 Entity id，确认卡与 `GenJob` 的 `entityIds`／`approvedEntities` 却是空的（演员那条路三格齐全） | backend §4.5 |
+| **FSE-211**（W3 第 2 轮补编号） | `CREATE-A12` 后半句「路由理由字段有值可读」不成立：本轮 4 条 Generation 的 `routeReason` 全 `NULL`、`finalPromptText` 全空（前半句逐字一致那半句**成立**） | backend §3.5 |
 
 **W2 对 `run-ledger.md` 的两处事实修正**（不改 ledger 文件本身）
 
