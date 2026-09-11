@@ -109,7 +109,7 @@ Railway 部署（project `b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d`、environment st
 **② 邮件里的 Log in 按钮（SIGNIN-A5 前半）**
 - 邮件正文原话：`Sign in to Fikirtive with the code below. <6 位码> Log in — The button opens Fikirtive with this code already filled in — press Continue to finish. This code is valid for 15 minutes.`
 - 按钮的 href 形状：`https://web-staging-7901.up.railway.app/login?step=code#email=<urlencoded>&code=<6 位码>`（码走 **URL fragment**，不进服务器请求行）。
-- 在**全新标签页**打开该链接：六格码**已填好**，只有一个 `Continue with login code`（截图 `02-magic-link-code-prefilled.png`）；按一次即登录，进的是同一个 `id=Cw7acC6L…`。读完 hash 后地址栏里的 `#email…&code…` 被**清掉**。
+- 在**全新标签页**打开该链接：六格码**已填好**，只有一个 `Continue with login code`（**第 3 轮更正**：这张截图完整显示了那个六位一次性登录码，已从产出中移除；改用文字记录 —— **邮件链接打开登录页、六格已预填，码值已脱敏不留**）；按一次即登录，进的是同一个 `id=Cw7acC6L…`。读完 hash 后地址栏里的 `#email…&code…` 被**清掉**。
 - 注意（不是缺陷，但记一笔）：在**已经处于码步骤的旧标签页**里换 hash 再打开，码**不会**被填（组件不重挂载）。真实商家从邮件点进来永远是新标签页，故不登记。
 - 判定：**PASS**。
 

@@ -45,7 +45,7 @@
 | **实际** | 理解结算**之后**显示 `Cost: 0.1 credits`（一行合计，**符合规格**）；但在上传成功到理解结算之间那几十秒，详情行写的是 `Cost: no credits charged`，而这笔钱随后一定会收（Billing 出现 `Understanding — -0.1`）。商家在这个窗口看到的是「免费」。 |
 | **证据** | `run-ledger.md` §R2-14：同一张图前后两次打开的逐字回执 + Billing 行 `Understanding — Sep 11, 8:54 PM -0.1`。 |
 | **根因** | **已确认**：费用行读的是已结算的账本行，理解未结算时自然为空，于是落到「no credits charged」这句默认文案。 |
-| **建议与复测口径** | 未结算窗口改成「正在读取这张图，费用稍后结算」之类的诚实中间态。复测＝上传后立刻看详情，**不得**出现「no credits charged」。登记去向：`docs/specs/creation-engine.md` §5。**本条是 :169 的补充观察，不推翻 :169 的 PASS 判定。** |
+| **建议与复测口径** | 未结算窗口改成「正在读取这张图，费用稍后结算」之类的诚实中间态。复测＝上传后立刻看详情，**不得**出现「no credits charged」。登记去向：`docs/specs/creation-engine.md` §5。**口径更新（第 3 轮）**：`:169` 的登记行原文含「**不再写 `no credits charged`**」，而本条逐字记录了它在结算前确实出现过 ⇒ `:169` 已由 PASS **改判 PARTIAL**（`coverage-matrix.md` R2-14 行）。结算**后**那半句（一行合计、不拆行）仍然成立。 |
 
 ---
 
@@ -132,7 +132,7 @@
 |---|---|
 | **复现** | ① 任一非 founder 租户的账号登录一次；② 按该租户的 `ownerId` 查 `ActionEvent` 里 `type='auth.signin'` 的行。 |
 | **预期** | `sign-in.md` SIGNIN-A10 逐字：「登录审计各恰好一行」。审计行要挂在**发生这次登录的那个租户**名下，否则「各恰好一行」在租户维度上无从查起。**口径收紧（第 2 轮修订）**：本条只主张「按租户查审计查不到」，**不主张**商家面有一个可见的登录历史界面 —— 本轮没有取证过这样的界面，那句推断已删。 |
-| **实际** | 行数是对的（取证窗口内 8 行，每次登录一行）；但 `ActionEvent.auth.signin` 的 `ownerId` **全库 26 行全部写死 `founder`**（26/26），包括本轮两个新租户的登录。**没有泄漏** —— payload 里只有邮箱，不含会话、令牌或任何跨租户内容。 |
+| **实际** | 行数是对的（取证窗口内 8 行，每次登录一行）；但 `ActionEvent.auth.signin` 的 `ownerId` **全库 26 行全部写死 `founder`**（26/26），包括本轮两个新租户的登录。payload 逐字只有 `{"email": …}`（`backend §2.8` 原文），**没有会话或令牌**。**但「没有泄漏」是一句整体断言，本轮没有证据支撑，因此不写**：已证的是**写路**把别的租户的登录事件写进了 founder 名下的行；**读路从未取证** —— 本轮没有找到、也没有查过任何按 `ownerId` 读 `ActionEvent` 的 founder 侧界面，所以只能说「**未发现读到别租户内容的暴露面**」，不能说「已证明没有」。 |
 | **证据** | `backend-evidence.md` §2.8：窗口内逐行 ＋ 全表 `auth.signin` 的 `ownerId` 分布（26/26 `founder`）。走查窗口 UTC 2026-09-11T12:00–13:20，部署 `2a96750e`。 |
 | **根因** | **已确认（数据层）**：写审计行时 `ownerId` 没有取当次登录的租户，而是落到了常量／默认值 `founder`。**假说（代码层）**：审计写入点在登录回调里拿不到刚建好的 org id，于是退回默认值 —— 未核实具体写入点，须在 `auth.signin` 的 ActionEvent 写入处确认。 |
 | **建议与复测口径** | 审计行改挂当次登录的租户。复测＝两个不同租户各登录一次，各自按自己的 `ownerId` 查得到且**只查得到自己**那一行。登记去向：`docs/specs/sign-in.md` §5。**反向一面（第 2 轮补写，须一并复测）**：既然 26 行全落 `founder` 名下，**任何按 `ownerId` 读 `ActionEvent` 的 founder 侧界面都会读到别的租户的登录邮箱**。本轮没有找到也没有取证过这样的界面 ⇒ 现状是「未发现暴露面」，**不是「已证明没有暴露面」**；复测时必须同时确认 founder 侧读审计的路径。 |
@@ -145,7 +145,7 @@
 |---|---|
 | **复现** | ① 在画布输入 `@` 加产品名，从菜单选入那件产品（来源标签 `Product`）；② 让它进入一次生成；③ 查确认卡 payload 与 `GenJob` 的 `entityIds`／`approvedEntities`。 |
 | **预期** | `brand-product-identity.md` PRODID-A2 逐字：「选入确认卡后，生成结果谱系的 `approvedEntities` 指向同一个 Entity id」。 |
-| **实际** | 前半句成立（菜单出现、来源标签 `Product`、可选入并进入生成）；**后半句不成立**：那一轮 USER 消息的 `payload.entityIds` **有**产品 Entity id，但确认卡 `entityIds=[]`、`GenJob.entityIds={}`、`approvedEntities=NULL` ⇒ **产品只以提示词文字上路，没有进入生成谱系**。对照组：同一张画布上 `@Xinyi`（官方演员）那一轮，三格齐全。另：该消息 `referenceRefs` 为空 —— 首页 composer 走 `canvas.create-handoff` 那条路会丢 typed ref。 |
+| **实际** | 前半句成立（菜单出现、来源标签 `Product`、可选入并进入生成）；**后半句不成立**：那一轮 USER 消息的 `payload.entityIds` **有**产品 Entity id，但确认卡 `entityIds=[]`、`GenJob.entityIds={}`、`approvedEntities=NULL` ⇒ **产品只以提示词文字上路，没有进入生成谱系**。对照组：同一张画布上 `@Xinyi`（官方演员）那一轮，三格齐全。另：该消息 `referenceRefs` 为空。**「首页 composer 走 `canvas.create-handoff` 那条路会丢 typed ref」是假说，未核实** —— 本轮只有现象（seq 1 空、seq 7/17/21 有），没有核过那条代码路径。 |
 | **证据** | `backend-evidence.md` §4.5（USER 消息 payload、GEN_CARD payload、`GenJob` 三处逐格对照；对照组见 §3.1）。走查窗口 UTC 2026-09-11T12:33–12:40，部署 `2a96750e`。 |
 | **根因** | **已确认（数据层）**：产品 Entity id 在「消息 → 确认卡」这一步就掉了，不是生成时才丢。**假说（代码层，第 2 轮口径收紧）**：`backend-evidence.md` §4.5 的原话只到这里 —— 「服务端**没有**按类型硬过滤（`propose.helpers.ts:942` 的 `=== "CHARACTER"` 只是在**计数**）⇒ 更像是 `propose` 的入参里就没带上产品 id，而不是被服务端丢掉。**这一点未被完全证死**（没有留存那一次 tool 调用的原始入参）」。因此「确认卡铸造时只搬运演员类 typed ref」是**一条未经代码核实的推断**，不是查表结论；`canvas.create-handoff` 丢 `referenceRefs` 同样只有现象（seq 1 空、seq 7/17/21 有）。两处都要在改之前先核实代码位置。 |
 | **建议与复测口径** | 产品与演员走同一条 typed ref 搬运路；`canvas.create-handoff` 保住 `referenceRefs`。复测＝`@` 一件产品出一次片，`GenJob.entityIds` 与 `approvedEntities` 必须指到同一个 Entity id（与 PRODID-A2 逐字一致）；首页 composer 与画布内两条提交路各验一次。登记去向：`docs/specs/brand-product-identity.md` §5（接 `PRODID-R10` 往下排）。**注**：本条直接抵触 Founder「有迹可循」原则，严重度请 Founder 过目。 |
@@ -160,7 +160,7 @@
 |---|---|
 | **复现** | ① 用任意一条路（画布确认卡／Library 动作／variation 弹窗）跑一次生成；② 查那条 `Generation` 的 `routeReason` 与 `finalPromptText` 两列。 |
 | **预期** | `creation-engine.md` CREATE-A12 逐字的后半句：**路由理由字段有值可读**。商家（或支持人员）事后要能看出这一次为什么走了这个模型／这条路。 |
-| **实际** | 本轮 **4 条 Generation 的 `routeReason` 全为 `NULL`、`finalPromptText` 全为空**。前半句（`sentPromptText` 与商家批准的逐字稿一致）**成立且很硬** —— 两张卡整串相等（608/608、1060/1060），图生图那张卡的 477 字原封不动出现在送出稿第 102 字起，多出的 101 字是机器加的 `<Image_N>` 图位声明。缺的只是后半句这两格。 |
+| **实际** | 本轮 **4 条 Generation 的 `routeReason` 全为 `NULL`、`finalPromptText` 全为空**。**本条只主张这一件事**：`CREATE-A12` 被证否的那半句。前半句（`sentPromptText` 与批准稿逐字一致）的判定不在本条范围内，它挂在 `coverage-matrix.md` 的 `CREATE-A12` 行与 `backend §3.5`，本条不扩大到那里。 |
 | **证据** | `backend-evidence.md` §3.5（四条 Generation 逐列取数；同节给出前半句的整串等值判定）。走查窗口 UTC 2026-09-11T12:35–13:04，部署 `2a96750e`。**无截图** —— 这两格是库内字段，商家面不显示（本轮截图缺口的总说明见 `report-round2.md` §3）。 |
 | **根因** | **已确认（数据层）**：这两列在本轮四条记录上确实没有被写入。**未确认（代码层）**：是写入点没写、还是这两列已被废弃而验收表没跟着改 —— 本轮**没有**核实写入点，不下结论。 |
 | **建议与复测口径** | 这是一条**口径题，不是纯修复题**：要么把两格填上（生成时写入路由理由与最终送出稿），要么把「路由理由字段有值可读」从 CREATE-A12 里去掉 —— **两条路都改规格，由 Founder／S5 拍板**。复测＝跑一次生成，按拍板结果验：填的话 `routeReason` 非空且人能读懂；去掉的话验收表里不再有这一格。登记去向：`docs/specs/creation-engine.md` §5。 |
