@@ -399,11 +399,11 @@ describe("SIGNIN-A7 —— 撤销一个自助进来的邮箱", () => {
     await revokeEmailAccess(merchant);
     process.env.FOUNDER_ADMIN_EMAILS = `${merchant},nobody-signin4@fikirtive.test`;
     try {
-        expect(await isAllowedEmail(merchant)).toBe(false);
-        expect(await sessionsFor(merchant)).toBe(0);
-        await __resetAuthEmailCapsForTests();
-        expect(await requestCode(merchant)).toBeUndefined();
-        expect(await googleDoorCreateUser(merchant)).toBeInstanceOf(APIError);
+      expect(await isAllowedEmail(merchant)).toBe(false);
+      expect(await sessionsFor(merchant)).toBe(0);
+      await __resetAuthEmailCapsForTests();
+      expect(await requestCode(merchant)).toBeUndefined();
+      expect(await googleDoorCreateUser(merchant)).toBeInstanceOf(APIError);
     } finally {
       process.env.FOUNDER_ADMIN_EMAILS = "nobody-signin4@fikirtive.test";
     }
@@ -415,9 +415,9 @@ describe("SIGNIN-A7 —— 撤销一个自助进来的邮箱", () => {
     await signInThroughCodeDoor(merchant);
     process.env.FOUNDER_ADMIN_EMAILS = `${merchant},nobody-signin4@fikirtive.test`;
     try {
-        expect(await revokeEmailAccess(merchant)).toBe("protected");
-        expect(await statusOf(merchant)).toBe("active");
-        expect(await sessionsFor(merchant)).toBe(1);
+      expect(await revokeEmailAccess(merchant)).toBe("protected");
+      expect(await statusOf(merchant)).toBe("active");
+      expect(await sessionsFor(merchant)).toBe(1);
     } finally {
       process.env.FOUNDER_ADMIN_EMAILS = "nobody-signin4@fikirtive.test";
     }
