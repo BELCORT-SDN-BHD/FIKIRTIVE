@@ -8,6 +8,7 @@ import {
   FINANCE_PER_ACTION_LIMIT_MESSAGE,
 } from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
+import { revokeEmailAccess } from "./signup-gate";
 import { activeMerchantOrg } from "./tenant-admin";
 import { financeAdjustBlockedMessage } from "./finance-limit-seam";
 import { revalidatePath } from "next/cache";
@@ -169,6 +170,37 @@ export async function revokeTenantInvite(emailRaw: unknown): Promise<{ ok: true 
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.revoke", payload: { email, via: gate.email } } }).catch(() => {});
   revalidatePath("/admin/tenants");
   return { ok: true };
+}
+
+/**
+ * SIGNIN-A7 —— 操作员那一侧的**撤销进门权**（docs/specs/sign-in.md 已冻结 · v1 §1.6「撤销」）。
+ *
+ * 与上面那个动作的分工，一句话：`revokeTenantInvite` 收回**一张还没被用掉的邀请**（谓词
+ * `status = "invited"`，另加「这地址已属于某工作区就别用邀请工具管他」的前置条件）；这一个收回
+ * **一个地址的进门权**（谓词 `status ≠ revoked`），因为两扇门写进名单的是 `active`
+ * （`admitSelfSignup`），只认 invited 的谓词让自助进来的地址永远撤不掉，按下去只会答
+ * 「No pending invite for that address.」——验收表 A7 第一句点名的正是这个答案（审计 [6]）。
+ * 规格 §3 把邀请流列为非目标，所以旧动作原样留着，两条路各说各的话。
+ *
+ * 业务规则只有一份：翻名单那一行 ＋ 在**同一笔事务里**删掉他手上的会话，都在
+ * `lib/signup-gate.ts` 的 `revokeEmailAccess` 里。这一层只做 server action 该做的三件事 ——
+ * 授权（`requireRole("tenants","mutate")`，与本文件其余跨租户写同一道闸）、把入参收成一个
+ * 归一化地址、留下一行审计。
+ */
+export async function revokeMerchantAccess(
+  emailRaw: unknown,
+): Promise<{ ok: true; result: "revoked" | "already_revoked" } | { error: string }> {
+  const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
+  const email = normEmail(emailRaw); if (!email) return { error: "Invalid email." };
+  const outcome = await revokeEmailAccess(email);
+  // 「没有可撤的东西」和「撤掉了」必须是两个答案 —— 不然操作员打错一个字母也会读到成功。
+  if (outcome === "unknown") return { error: "That address has no access to revoke." };
+  // 审计是 best-effort：写不下这一行，也不许把一次真的撤销报成失败。
+  await prisma.actionEvent
+    .create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.revoke", payload: { email, via: gate.email, outcome } } })
+    .catch(() => {});
+  revalidatePath("/admin/tenants");
+  return { ok: true, result: outcome };
 }
 
 /** Resolve an org's first owner to their Better Auth user id (email join, same id-space rule as

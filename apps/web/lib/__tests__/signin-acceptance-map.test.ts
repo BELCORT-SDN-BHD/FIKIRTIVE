@@ -40,9 +40,16 @@ describe("登录门规格 · 尚未交付的验收（各自的切片接手时把
   //                   app/login/__tests__/login-google-door-errors.test.tsx（页面：errorCallbackURL
   //                   真的传了、每个键都读同一句）
 
-  // ④ 暂停注册与撤销（issue #1319）
-  it.todo("SIGNIN-A6 —— SIGNUPS_PAUSED 打开：页顶横幅、陌生人两扇门都进不来且不建账号不寄码、老用户正常进入");
-  it.todo("SIGNIN-A7 —— 撤销一个自助进来的邮箱：后台撤得掉、他已登录的会话下一次请求即失效、两扇门都进不来且不说明原因");
+  // ④ 暂停注册与撤销（issue #1319）—— 两行 it.todo 换成了真测试：
+  //    · SIGNIN-A6  → lib/__tests__/signin-pause-and-revoke.test.ts（三条：码门、Google 门、老商家）、
+  //                   app/login/__tests__/login-paused-banner.test.tsx（页顶横幅那一半，第 2 轮补齐）
+  //    · SIGNIN-A7  → lib/__tests__/signin-pause-and-revoke.test.ts（六条：撤得掉、会话当场失效、
+  //                   两扇门都拒、双租户、环境名单仍查撤销、幂等）、
+  //                   lib/__tests__/admin-revoke-access-action.test.ts（操作员那个动作，真库；
+  //                   含「旧动作回 No pending invite、新动作撤得掉」的对照）、
+  //                   lib/__tests__/admin-tenant-invite-ui.test.ts（后台按钮真的调到它）、
+  //                   better-auth-gate.test.ts（环境名单命中仍查撤销）、
+  //                   better-auth-oauth-session-gate.test.ts（会话闸的库内接线，既有）
 
   // ⑤ 端到端旅程（issue #1311 的第五片）
   it.todo("SIGNIN-A12 —— 陌生邮箱收码登录 → 生成一张图 → 登出 → 同邮箱 Google 登录，看到刚才那张图、始终同一个工作区");

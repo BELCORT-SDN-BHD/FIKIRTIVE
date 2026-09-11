@@ -25,7 +25,7 @@ import {
   seedResearchDirectives,
 } from "@/lib/admin-actions";
 import { grantCreditsAction } from "@/lib/credit-actions";
-import { inviteTenant, revokeTenantInvite } from "@/lib/tenant-actions";
+import { inviteTenant, revokeTenantInvite, revokeMerchantAccess } from "@/lib/tenant-actions";
 import type {
   AdminV2Data,
   AdminV2Section,
@@ -757,6 +757,10 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
   const [inviting, setInviting] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
+  // SIGNIN-A7 —— 「撤销一个已经进来的地址」和「收回一张还没被用掉的邀请」是两件事，所以是两个
+  // target：下面那份待邀清单里只有 `invited` 的行，自助进来的地址（status `active`）根本不在
+  // 清单上，操作员唯一能点名它的地方就是上面这个输入框。
+  const [accessRevokeTarget, setAccessRevokeTarget] = useState<string | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   async function submitInvite(event: FormEvent<HTMLFormElement>) {
@@ -800,13 +804,55 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
     }
   }
 
+  /** SIGNIN-A7 —— 操作员在后台撤销一个**自助进来**的地址（规格 §1.6「撤销」那一段）。
+   *
+   *  这里刻意不走 `revokeTenantInvite`：那个动作的谓词是 `status = "invited"`，而两扇门写进
+   *  名单的是 `active`，所以对一个已经登录过的商家按下去只会得到「No pending invite for that
+   *  address.」——验收表 A7 第一句点名的正是这个答案。`revokeMerchantAccess` 的谓词是
+   *  `status ≠ revoked`，而且名单翻面与切断他手上的会话在同一笔事务里。
+   *
+   *  两条路都留着：收回一张还没被接受的邀请仍然是它自己的动作（规格 §3 非目标：邀请流不改）。 */
+  async function revokeAccess(target: string): Promise<string | null> {
+    if (revoking) return null;
+    setRevoking(target);
+    setMessage(null);
+    try {
+      const result = await revokeMerchantAccess(target).catch(() => null);
+      if (!result) return "Access could not be revoked. Check your connection and try again.";
+      if ("error" in result) return result.error;
+      // 幂等：第二次撤同一个地址不是失败，但也不该报成「刚刚撤掉了」。
+      setMessage({
+        ok: true,
+        text:
+          result.result === "already_revoked"
+            ? `${target} was already revoked. Their sessions were cut again.`
+            : `Revoked access for ${target}. They are signed out and both doors now refuse them.`,
+      });
+      setEmail("");
+      router.refresh();
+      return null;
+    } finally {
+      setRevoking(null);
+    }
+  }
+
+  function openAccessRevoke() {
+    const candidate = email.trim().toLowerCase();
+    if (candidate.length > 254 || !EMAIL_SHAPE.test(candidate)) {
+      setMessage({ ok: false, text: "Enter a valid email." });
+      return;
+    }
+    setMessage(null);
+    setAccessRevokeTarget(candidate);
+  }
+
   return (
     <>
       <Panel
         title="Invite a merchant"
-        subtitle="Admits an email address so it can sign in. Nothing is emailed from here — tell the merchant yourself. The row leaves this list once they sign in and their workspace exists."
+        subtitle="Admits an email address so it can sign in. Nothing is emailed from here — tell the merchant yourself. The row leaves this list once they sign in and their workspace exists. Revoke access takes an address back out — including one that already signed in for itself."
       >
-      <form onSubmit={submitInvite} className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+      <form onSubmit={submitInvite} className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end">
         <label className="grid gap-1.5">
           <span className="text-xs font-medium text-muted-foreground">Merchant email</span>
           <Input
@@ -823,9 +869,21 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
         </label>
         {/* Not "Send invite": inviteTenant writes the AllowedEmail row and nothing else — no
             mail is sent anywhere in this path, so the label must not promise one. */}
-        <Button type="submit" disabled={inviting}>
+        <Button type="submit" disabled={inviting || revoking !== null}>
           <MailPlus className="size-4" />
           {inviting ? "Inviting" : "Invite"}
+        </Button>
+        {/* SIGNIN-A7 —— 撤销的入口必须在这里，不能只在下面那份待邀清单的行上：清单里只有
+            `invited` 的行，而 A7 要撤的地址是**自助进来**的（`active`），它从来不在清单上。
+            `type="button"`：它不提交邀请那张表单，先开确认弹窗。 */}
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={inviting || revoking !== null}
+          onClick={openAccessRevoke}
+        >
+          <Ban data-icon="inline-start" />
+          Revoke access
         </Button>
       </form>
 
@@ -875,11 +933,33 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
         impacts={[
           "Future self-signup with this email is blocked.",
           "No email is sent and no existing workspace data is changed.",
-          "Configured founder or environment allowlists are not overridden here.",
+          // SIGNIN-A7 —— 这一句以前写「founder 或环境名单都不被这里盖过」。环境名单那一半从
+          // 本片起不再成立：`AUTH_ALLOWED_EMAILS` 命中也要查撤销（lib/allowlist.ts）。只剩
+          // founder 那把破窗锤仍然先于数据库，所以只说 founder。
+          "A founder address configured in the environment still gets in — that list is the break-glass key.",
         ]}
         confirmLabel="Revoke invite"
         confirmingLabel="Revoking…"
         onConfirm={() => revokeTarget ? revokeInvite(revokeTarget) : null}
+      />
+
+      {/* SIGNIN-A7 —— 撤销「进门权」和收回「一张邀请」后果完全不同：这一个会把他**当场登出**。
+          确认弹窗因此必须说出那一件事，不能沿用上面那句「只影响将来的自助注册」。 */}
+      <AdminActionConfirmDialog
+        open={accessRevokeTarget !== null}
+        onOpenChange={(open) => { if (!open) setAccessRevokeTarget(null); }}
+        title={accessRevokeTarget ? `Revoke access for ${accessRevokeTarget}?` : "Revoke access?"}
+        description="This takes the address back out of the allowlist, whether it was invited or signed itself in."
+        impactTitle="This signs them out immediately"
+        impacts={[
+          "Every session for this address is deleted, so their next request is signed out.",
+          "Both sign-in doors — Google and email code — refuse this address until it is invited again.",
+          "No workspace data is deleted, and no email is sent.",
+          "A founder address configured in the environment still gets in — that list is the break-glass key.",
+        ]}
+        confirmLabel="Revoke access"
+        confirmingLabel="Revoking…"
+        onConfirm={() => accessRevokeTarget ? revokeAccess(accessRevokeTarget) : null}
       />
     </>
   );

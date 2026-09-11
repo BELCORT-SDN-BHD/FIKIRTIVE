@@ -79,8 +79,10 @@ describe("assertSignInDoor (user.create.before gate)", () => {
 
   it("allows an email in AUTH_ALLOWED_EMAILS env list", async () => {
     process.env.AUTH_ALLOWED_EMAILS = "merchant@fikirtive.test";
-    mockFindUnique.mockResolvedValueOnce(null); // 名单里没有这一行，环境名单说它「来过」
+    mockFindUnique.mockResolvedValueOnce(null); // 名单里点了名，但库里还没有他那一行
     await expect(assertSignInDoor("merchant@fikirtive.test")).resolves.toBeUndefined();
+    // 库照读 —— 环境名单回答的是「他算不算老人」，不是「他不可撤」（见下一条）。
+    expect(mockFindUnique).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -109,6 +111,12 @@ describe("assertSignInDoor (user.create.before gate)", () => {
     process.env.AUTH_ALLOWED_EMAILS = "listed@fikirtive.test";
     mockFindUnique.mockResolvedValueOnce(null);
     await expect(assertSignInDoor("listed@fikirtive.test")).resolves.toBeUndefined();
+  });
+
+  /** FOUNDER_ADMIN_EMAILS 是破窗锤，仍然先于数据库 —— 一行记录不该把部署者锁在产品外面。 */
+  it("keeps the founder break-glass ahead of the database", async () => {
+    await expect(assertSignInDoor(ALLOWED_EMAIL)).resolves.toBeUndefined();
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
   it("allows an email with an active DB row", async () => {

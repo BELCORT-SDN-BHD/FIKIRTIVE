@@ -10,16 +10,24 @@ import type { AdminV2Data } from "@/lib/admin-v2";
 //   1. submitting the form reaches inviteTenant with the typed address;
 //   2. a malformed address never reaches the server action;
 //   3. Revoke opens an AlertDialog first — one stray click must not lock an address out.
+//
+// SIGNIN-A7（#1319 第 2 轮）—— 第四条：撤销一个**自助进来**的地址那条路也在这里钉住。它不能
+// 挂在下面那份待邀清单的行上，因为清单里只有 `invited` 的行，自助进来的地址（`active`）从来
+// 不在上面；操作员唯一能点名它的地方是顶上那个输入框。判官第 1 轮记的正是「新动作全仓零生产
+// 调用点」，所以这里断言的是**按钮真的调到它**，不是它自己的实现（那在
+// `admin-revoke-access-action.test.ts` 的真库用例里）。
 
 const mocks = vi.hoisted(() => ({
   inviteTenant: vi.fn(),
   revokeTenantInvite: vi.fn(),
+  revokeMerchantAccess: vi.fn(),
   refresh: vi.fn(),
 }));
 
 vi.mock("@/lib/tenant-actions", () => ({
   inviteTenant: mocks.inviteTenant,
   revokeTenantInvite: mocks.revokeTenantInvite,
+  revokeMerchantAccess: mocks.revokeMerchantAccess,
 }));
 // The dashboard imports these at module load; they are server actions this test never drives.
 vi.mock("@/lib/admin-actions", () => ({
@@ -56,6 +64,7 @@ let container: HTMLDivElement | null = null;
 beforeEach(() => {
   mocks.inviteTenant.mockResolvedValue({ ok: true, result: "invited" });
   mocks.revokeTenantInvite.mockResolvedValue({ ok: true });
+  mocks.revokeMerchantAccess.mockResolvedValue({ ok: true, result: "revoked" });
 });
 
 afterEach(async () => {
@@ -114,6 +123,23 @@ function revokeButton(dom: HTMLElement): HTMLButtonElement {
   const button = dom.querySelector<HTMLButtonElement>(`button[aria-label="Revoke invite for ${PENDING_EMAIL}"]`);
   expect(button, "each pending invite must expose a Revoke control").toBeTruthy();
   return button!;
+}
+
+/** SIGNIN-A7 —— 顶上那颗「Revoke access」。它按地址走，所以不带 aria-label，靠文案找。 */
+function revokeAccessButton(dom: HTMLElement): HTMLButtonElement {
+  const button = [...dom.querySelectorAll("button")].find((node) => node.textContent?.trim() === "Revoke access");
+  expect(button, "the tenants page must expose a control that revokes an address's access").toBeTruthy();
+  return button as HTMLButtonElement;
+}
+
+/** 页面上那颗按钮和弹窗里的确认按钮文案相同（这是对的：确认按钮该重复它确认的那个动作），
+ *  所以确认必须**在弹窗内**找，否则会点回页面上那一颗。 */
+function confirmButton(label: string): HTMLButtonElement {
+  const dialog = document.querySelector('[role="alertdialog"]');
+  expect(dialog, "the confirmation dialog must be open").toBeTruthy();
+  const button = [...dialog!.querySelectorAll("button")].find((node) => node.textContent?.trim() === label);
+  expect(button, `the confirmation must expose a ${label} button`).toBeTruthy();
+  return button as HTMLButtonElement;
 }
 
 function dialogButton(label: string): HTMLButtonElement {
@@ -290,5 +316,90 @@ describe("admin tenants invite UI (#538)", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain(
       "No pending invite for that address.",
     );
+  });
+});
+
+// ── SIGNIN-A7：撤销一个自助进来的地址 ────────────────────────────────────────────────────
+describe("admin tenants access revoke UI (SIGNIN-A7, #1319)", () => {
+  const SELF_SIGNED_UP = "selfserve@merchant.com";
+
+  it("SIGNIN-A7 —— 后台有一条撤销进门权的路，而且它不在待邀清单的行上（自助进来的地址不在那份清单里）", async () => {
+    const dom = await renderTenants();
+
+    // 这份清单里只有 `invited` 的行；A7 要撤的地址是 `active`，它永远不会出现在这里。
+    expect(dom.textContent).not.toContain(SELF_SIGNED_UP);
+    expect(revokeAccessButton(dom)).toBeTruthy();
+  });
+
+  it("SIGNIN-A7 —— 输入一个自助进来的地址、确认之后，后台调的是 revokeMerchantAccess（不是只认 invited 的旧动作）", async () => {
+    const dom = await renderTenants();
+    const input = emailInput(dom);
+
+    await typeInto(input, `  ${SELF_SIGNED_UP.toUpperCase()}  `);
+    await click(revokeAccessButton(dom));
+    await click(confirmButton("Revoke access"));
+
+    expect(mocks.revokeMerchantAccess).toHaveBeenCalledTimes(1);
+    expect(mocks.revokeMerchantAccess).toHaveBeenCalledWith(SELF_SIGNED_UP);
+    // 旧那条路一次都没被走过 —— 它会回「No pending invite for that address.」。
+    expect(mocks.revokeTenantInvite).not.toHaveBeenCalled();
+    expect(dom.textContent).toContain(`Revoked access for ${SELF_SIGNED_UP}`);
+    expect(mocks.refresh).toHaveBeenCalled();
+  });
+
+  /** 撤销进门权会把人**当场登出**，后果比收回一张邀请重得多，所以确认弹窗必须说出那一件事。 */
+  it("SIGNIN-A7 —— 确认弹窗说清楚会当场登出、两扇门都拒", async () => {
+    const dom = await renderTenants();
+    await typeInto(emailInput(dom), SELF_SIGNED_UP);
+    await click(revokeAccessButton(dom));
+
+    const prompt = document.querySelector('[role="alertdialog"]')?.textContent ?? "";
+    expect(prompt).toContain("Every session for this address is deleted");
+    expect(prompt).toContain("Both sign-in doors");
+    // 邀请那条路的措辞（「只影响将来的自助注册」）在这里是假话，不许出现。
+    expect(prompt).not.toContain("This changes future self-signup only");
+  });
+
+  it("SIGNIN-A7 —— 没确认就不撤：一次误点不该把人踢出去", async () => {
+    const dom = await renderTenants();
+    await typeInto(emailInput(dom), SELF_SIGNED_UP);
+    await click(revokeAccessButton(dom));
+    await click(confirmButton("Cancel"));
+
+    expect(mocks.revokeMerchantAccess).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("SIGNIN-A7 —— 写坏的地址连弹窗都开不出来，更到不了服务端", async () => {
+    const dom = await renderTenants();
+    await typeInto(emailInput(dom), "not-an-email");
+    await click(revokeAccessButton(dom));
+
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(mocks.revokeMerchantAccess).not.toHaveBeenCalled();
+    expect(dom.textContent).toContain("Enter a valid email.");
+  });
+
+  it("SIGNIN-A7 —— 服务端说没有可撤的东西时，界面照说，不冒充成功", async () => {
+    mocks.revokeMerchantAccess.mockResolvedValue({ error: "That address has no access to revoke." });
+    const dom = await renderTenants();
+    await typeInto(emailInput(dom), "ghost@merchant.com");
+    await click(revokeAccessButton(dom));
+    await click(confirmButton("Revoke access"));
+
+    expect(document.body.textContent).toContain("That address has no access to revoke.");
+    expect(document.body.textContent).not.toContain("Revoked access for ghost@merchant.com");
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+  });
+
+  it("SIGNIN-A7 —— 第二次撤同一个地址报的是 already_revoked，不冒充「刚刚撤掉了」", async () => {
+    mocks.revokeMerchantAccess.mockResolvedValue({ ok: true, result: "already_revoked" });
+    const dom = await renderTenants();
+    await typeInto(emailInput(dom), SELF_SIGNED_UP);
+    await click(revokeAccessButton(dom));
+    await click(confirmButton("Revoke access"));
+
+    expect(dom.textContent).toContain(`${SELF_SIGNED_UP} was already revoked.`);
+    expect(dom.textContent).not.toContain(`Revoked access for ${SELF_SIGNED_UP}.`);
   });
 });
