@@ -51,10 +51,44 @@ export async function listBrandRecords(_ownerId?: string, brandId?: string | nul
   })) as unknown as BrandRecordRow[];
 }
 
+/**
+ * 改产品时的**身份意图**(名字与主图)。整个字段不给 = 这一趟不碰身份;给了哪一格才写哪一格,
+ * `imageAssetId: null` = 清空主图(与共享动作 `updateProductRecord` 逐字同一套语义)。
+ *
+ * 为什么不从 `data` 里读(判官 P2,PR #1337 → 票 #1322):读路 `withProductIdentity` 会把身份
+ * 上的名字与主图**补进** `data` 交给界面,于是任何一处「把这一行原样存回去」的调用(归档、
+ * 换封面、撤销一次 Otto 改动)手里都攥着一份**客户端快照**。从 `data` 里读身份,等于让这三个
+ * 与名字无关的动作把一个可能已经过期的名字写回权威 —— 商家在另一个标签页刚改的名字,一次
+ * 归档就被打回去。判据因此是「这一格有没有被提交上来」,而不是「递上来的值和库里那一格一不
+ * 一样」:后者是猜,而猜错的代价是商家自己写的名字静默消失。
+ *
+ * 今天提交它的只有真的在编辑这两格的界面:Brand 页的产品表单(整张表,名字与主图都在里面)、
+ * 换/清封面那两颗键。Otto、理解 worker、归档、撤销都不提交,于是它们永远动不了身份。
+ */
+export type ProductIdentityIntent = { name?: string; imageAssetId?: string | null };
+
+function parseIdentity(raw: unknown): ProductIdentityIntent | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as { name?: unknown; imageAssetId?: unknown };
+  const out: ProductIdentityIntent = {};
+  if (typeof r.name === "string") out.name = r.name;
+  // `null` 与字符串都是意图;`undefined`(键根本没给)才是「不碰」。
+  if (r.imageAssetId === null) out.imageAssetId = null;
+  else if (typeof r.imageAssetId === "string") out.imageAssetId = r.imageAssetId || null;
+  return Object.keys(out).length ? out : undefined;
+}
+
 function parseInput(raw: unknown):
-  | { kind: RecordKind; data: Record<string, unknown>; id?: string; status?: "active" | "archived"; startsAt?: Date | null; endsAt?: Date | null }
+  | {
+      kind: RecordKind; data: Record<string, unknown>; id?: string;
+      status?: "active" | "archived"; startsAt?: Date | null; endsAt?: Date | null;
+      identity?: ProductIdentityIntent;
+    }
   | { error: string } {
-  const r = raw as { id?: unknown; kind?: unknown; data?: unknown; status?: unknown; startsAt?: unknown; endsAt?: unknown };
+  const r = raw as {
+    id?: unknown; kind?: unknown; data?: unknown; status?: unknown;
+    startsAt?: unknown; endsAt?: unknown; identity?: unknown;
+  };
   const kind = r?.kind as RecordKind;
   if (!RECORD_KINDS.includes(kind)) return { error: "Unknown record type." };
   const parsed = recordSchemaFor(kind).safeParse(r.data);
@@ -72,6 +106,7 @@ function parseInput(raw: unknown):
     status: r.status === "archived" ? "archived" : r.status === "active" ? "active" : undefined,
     startsAt: kind === "offer" ? toDate(r.startsAt) : undefined,
     endsAt: kind === "offer" ? toDate(r.endsAt) : undefined,
+    identity: kind === "product" ? parseIdentity(r.identity) : undefined,
   };
 }
 
@@ -126,16 +161,15 @@ export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: str
       if (input.kind === "product") {
         // 名字与主图的唯一源是身份(`Entity`),价签里根本没有这两格 —— 所以产品的改走共享
         // 动作,一个事务同时写两边(规格 §1.4;验收 PRODID-A4)。
-        // 判官第 5 轮(PR #1337):意图**显式**递,不让共享动作去猜。这一面是商家亲手填的
-        // 整张表单:名字栏里那一个就是他要的名字,主图栏空着就是他要清掉主图(反面对照的
-        // 那条用例钉的就是这一句)。Otto 与理解 worker 不递这两个字段,于是它们永远动不了
-        // 商家改过的名字与封面。
+        // 判官第 5 轮(PR #1337):意图**显式**递,不让共享动作去猜。第 6 轮(判官 P2 → 票
+        // #1322):显式的来源也必须是**这一次提交**,不是 `data` 里那份读路补进去的客户端快照
+        // (见 `ProductIdentityIntent`)。递了哪一格才写哪一格;没递 = 这一趟不碰身份。
         const done = await updateProductRecord({
           ownerId: gate.ownerId, id: input.id, data: input.data,
-          name: recordName("product", input.data),
-          imageAssetId: typeof input.data.imageAssetId === "string" && input.data.imageAssetId
-            ? input.data.imageAssetId
-            : null,
+          ...(input.identity?.name !== undefined ? { name: input.identity.name } : {}),
+          ...(input.identity && "imageAssetId" in input.identity
+            ? { imageAssetId: input.identity.imageAssetId }
+            : {}),
           source: "user", updatedById: actor.userId,
           ...(input.status !== undefined ? { status: input.status } : {}),
         });

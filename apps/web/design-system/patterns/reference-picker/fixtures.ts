@@ -12,7 +12,9 @@ const generation = LIBRARY_ASSETS.find((asset) => asset.id === "gift-box-hero")!
 const upload = LIBRARY_ASSETS.find((asset) => asset.id === "jasmine-product")!
 
 export const REFERENCE_FIXTURES: readonly ReferenceItem[] = [
-  { id: "product-jasmine", name: product.name, type: "product", meta: "Product · Otto IQ", image: product.cover },
+  // 产品的来源标签是光秃秃的 `Product`(规格 docs/specs/brand-product-identity.md §1.4 末句,
+  // 验收 PRODID-A2;票 #1322)。生产那一份权威在 lib/reference-search-model.ts。
+  { id: "product-jasmine", name: product.name, type: "product", meta: "Product", image: product.cover },
   { id: "character-aisyah", name: character.name, type: "character", meta: "Character · Library", image: character.cover },
   { id: alya.id, name: alya.name, type: "official-avatar", meta: "Official avatar · Read only", image: alya.portrait },
   { id: mei.id, name: mei.name, type: "official-avatar", meta: "Official avatar · Read only", image: mei.portrait },
