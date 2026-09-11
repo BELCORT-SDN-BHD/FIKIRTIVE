@@ -121,6 +121,7 @@ beforeEach(async () => {
   inbox.length = 0;
   delete process.env.SIGNUPS_PAUSED;
   process.env.AUTH_ALLOWED_EMAILS = "";
+  process.env.FOUNDER_ADMIN_EMAILS = "nobody-signin4@fikirtive.test";
   __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
   await __resetAuthEmailCapsForTests();
   await clearRateLimitCounters("signup:site");
@@ -181,6 +182,38 @@ describe("SIGNIN-A6 —— 暂停新注册", () => {
     expect((err as APIError).status).toBe("FORBIDDEN");
     expect(await usersFor(stranger)).toBe(0);
     expect(await statusOf(stranger)).toBeNull();
+  });
+
+  /**
+   * SIGNIN-A6 —— **一张还没被用掉的邀请不是「登录过」**（第 2 轮判官 P0）。
+   *
+   * RED before 第 2 轮：`lookupAddress` 的 `known` 是「环境名单点过名 ‖ `AllowedEmail` 里有任何
+   * 一行」，而操作员的邀请（`inviteTenant`）在任何人登录之前就写下一行 `invited` —— 于是暂停
+   * 期间「先邀请，再让他进来」是一条绕过开关的现成的路。规格 §1.6 ① 写的是「邮箱从未登录过
+   * → 拒」，没有给邀请留例外。
+   */
+  it("SIGNIN-A6 —— 暂停期间：手上只有一张邀请、从没登录过的地址仍然进不来", async () => {
+    const invited = newAddress("paused-invited");
+    await prisma.allowedEmail.create({ data: { email: invited, status: "invited", invitedBy: "operator@fikirtive.test" } });
+    process.env.SIGNUPS_PAUSED = "1";
+
+    expect(await requestCode(invited)).toBeUndefined();
+    expect(await usersFor(invited)).toBe(0);
+    expect(await googleDoorCreateUser(invited)).toBeInstanceOf(APIError);
+    // 邀请那一行原样留着：门拒绝他，不代表把他的邀请也改掉了。
+    expect(await statusOf(invited)).toBe("invited");
+  });
+
+  /** 同一条缺陷的另一半：写在 `AUTH_ALLOWED_EMAILS` 里也不算「登录过」。 */
+  it("SIGNIN-A6 —— 暂停期间：只写在环境名单里、从没登录过的地址仍然进不来", async () => {
+    const envOnly = newAddress("paused-envonly");
+    process.env.AUTH_ALLOWED_EMAILS = envOnly;
+    process.env.SIGNUPS_PAUSED = "1";
+
+    expect(await requestCode(envOnly)).toBeUndefined();
+    expect(await usersFor(envOnly)).toBe(0);
+    expect(await googleDoorCreateUser(envOnly)).toBeInstanceOf(APIError);
+    expect(await statusOf(envOnly)).toBeNull();
   });
 
   /** 「老用户正常进入」—— 开关只关陌生人这一扇，不关已经在里面的人。 */
@@ -298,6 +331,47 @@ describe("SIGNIN-A7 —— 撤销一个自助进来的邮箱", () => {
     await __resetAuthEmailCapsForTests();
     expect(await requestCode(merchant)).toBeUndefined();
     expect(await googleDoorCreateUser(merchant)).toBeInstanceOf(APIError);
+  });
+
+  /**
+   * SIGNIN-A7 —— **founder 名单同样不短路撤销**（第 2 轮判官 P0）。
+   *
+   * RED before 第 2 轮：`lookupAddress` 的第一行对 founder 地址直接 `return { known: true,
+   * revoked: false }`，一次库都不读，于是 §1.6 的「撤销仍然绝对」对整整一个环境变量不成立。
+   *
+   * 顺序有意如此：先撤销，再把这个地址写进 founder 名单 —— 因为撤销动作本身从本轮起不肯碰一个
+   * 还挂在名单上的地址（破窗锤的新落点，见 `revokeEmailAccess` 与
+   * admin-revoke-access-action.test.ts）。这条用例问的是另一个问题：名单**盖不盖得过**一条已经
+   * 存在的撤销记录。答案必须是盖不过。
+   */
+  it("SIGNIN-A7 —— founder 名单盖不过一条已经写下的撤销：两扇门与再断言全都拒", async () => {
+    const merchant = newAddress("revoke-founder");
+    await signInThroughCodeDoor(merchant);
+    await revokeEmailAccess(merchant);
+    process.env.FOUNDER_ADMIN_EMAILS = `${merchant},nobody-signin4@fikirtive.test`;
+    try {
+      expect(await isAllowedEmail(merchant)).toBe(false);
+      expect(await sessionsFor(merchant)).toBe(0);
+      await __resetAuthEmailCapsForTests();
+      expect(await requestCode(merchant)).toBeUndefined();
+      expect(await googleDoorCreateUser(merchant)).toBeInstanceOf(APIError);
+    } finally {
+      process.env.FOUNDER_ADMIN_EMAILS = "nobody-signin4@fikirtive.test";
+    }
+  });
+
+  /** 破窗锤的新落点：撤销动作不肯撤一个还挂在 `FOUNDER_ADMIN_EMAILS` 上的地址。 */
+  it("SIGNIN-A7 —— founder 名单里的地址撤不动，名单行与会话原样", async () => {
+    const merchant = newAddress("revoke-protected");
+    await signInThroughCodeDoor(merchant);
+    process.env.FOUNDER_ADMIN_EMAILS = `${merchant},nobody-signin4@fikirtive.test`;
+    try {
+      expect(await revokeEmailAccess(merchant)).toBe("protected");
+      expect(await statusOf(merchant)).toBe("active");
+      expect(await sessionsFor(merchant)).toBe(1);
+    } finally {
+      process.env.FOUNDER_ADMIN_EMAILS = "nobody-signin4@fikirtive.test";
+    }
   });
 
   /** 重复撤销是幂等的：第二次不改那一行的时间戳，也不该报错。 */

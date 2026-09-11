@@ -821,12 +821,15 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
       if (!result) return "Access could not be revoked. Check your connection and try again.";
       if ("error" in result) return result.error;
       // 幂等：第二次撤同一个地址不是失败，但也不该报成「刚刚撤掉了」。
+      const done =
+        result.result === "already_revoked"
+          ? `${target} was already revoked. Their sessions were cut again.`
+          : `Revoked access for ${target}. They are signed out and both doors now refuse them.`;
+      // 审计行写不下去不改变「撤销成功」这件事，但操作员必须读得到它 —— 一次没有痕迹的撤销
+      // 在事后对账时是一个查不出来的洞。
       setMessage({
         ok: true,
-        text:
-          result.result === "already_revoked"
-            ? `${target} was already revoked. Their sessions were cut again.`
-            : `Revoked access for ${target}. They are signed out and both doors now refuse them.`,
+        text: result.auditFailed ? `${done} The audit entry could not be written — tell the team.` : done,
       });
       setEmail("");
       router.refresh();
@@ -933,10 +936,11 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
         impacts={[
           "Future self-signup with this email is blocked.",
           "No email is sent and no existing workspace data is changed.",
-          // SIGNIN-A7 —— 这一句以前写「founder 或环境名单都不被这里盖过」。环境名单那一半从
-          // 本片起不再成立：`AUTH_ALLOWED_EMAILS` 命中也要查撤销（lib/allowlist.ts）。只剩
-          // founder 那把破窗锤仍然先于数据库，所以只说 founder。
-          "A founder address configured in the environment still gets in — that list is the break-glass key.",
+          // SIGNIN-A7 —— 这一句改过两次，都是因为它下面的行为改了。第 1 轮：`AUTH_ALLOWED_EMAILS`
+          // 命中也要查撤销，所以「环境名单不被盖过」那半句作废。第 2 轮：founder 名单也不再先于
+          // 数据库（撤销对每个地址都绝对），破窗锤搬到写侧 —— 两条撤销路径都不肯碰一个还挂在
+          // `FOUNDER_ADMIN_EMAILS` 上的地址，所以现在要说的是**这一件**事。
+          "A founder address named in the environment can't be revoked here — take it off that list first.",
         ]}
         confirmLabel="Revoke invite"
         confirmingLabel="Revoking…"
@@ -955,7 +959,7 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
           "Every session for this address is deleted, so their next request is signed out.",
           "Both sign-in doors — Google and email code — refuse this address until it is invited again.",
           "No workspace data is deleted, and no email is sent.",
-          "A founder address configured in the environment still gets in — that list is the break-glass key.",
+          "A founder address named in the environment can't be revoked here — take it off that list first.",
         ]}
         confirmLabel="Revoke access"
         confirmingLabel="Revoking…"

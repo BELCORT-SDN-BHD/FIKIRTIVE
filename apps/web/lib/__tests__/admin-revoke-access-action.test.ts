@@ -19,6 +19,14 @@ const requireRole = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireRole }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
+/** 审计写失败要**有人看得见**，而 `console.error` 不算（见 lib/actor-library-seed.ts 的同款
+ *  论证）：这里只把告警通道换成一个能问话的替身，Sentry 其余部分原样。 */
+const captureMessage = vi.fn();
+vi.mock("@sentry/node", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@sentry/node")>()),
+  captureMessage,
+}));
+
 const { prisma } = await import("@fikirtive/db");
 const { revokeMerchantAccess, revokeTenantInvite } = await import("@/lib/tenant-actions");
 
@@ -60,12 +68,18 @@ function sessionsFor(baUserId: string) {
   return prisma.betterAuthSession.count({ where: { userId: baUserId } });
 }
 
+const savedFounderList = process.env.FOUNDER_ADMIN_EMAILS;
+
 beforeEach(() => {
   requireRole.mockReset();
   requireRole.mockResolvedValue(OPERATOR);
+  captureMessage.mockReset();
+  process.env.FOUNDER_ADMIN_EMAILS = "nobody-signin4-action@fikirtive.test";
 });
 
 afterAll(async () => {
+  if (savedFounderList === undefined) delete process.env.FOUNDER_ADMIN_EMAILS;
+  else process.env.FOUNDER_ADMIN_EMAILS = savedFounderList;
   if (addresses.length === 0) return;
   const baUsers = await prisma.betterAuthUser.findMany({ where: { email: { in: addresses } }, select: { id: true } });
   const ids = baUsers.map((u) => u.id);
@@ -138,5 +152,85 @@ describe("后台的撤销动作", () => {
     const ghost = newAddress("ghost");
     expect(await revokeMerchantAccess(ghost)).toEqual({ error: "That address has no access to revoke." });
     expect(await statusOf(ghost)).toBeNull();
+  });
+
+  /**
+   * SIGNIN-A7 —— 审计写失败不再被悄悄吞掉（第 2 轮判官 P1）。
+   *
+   * RED before 第 2 轮：`.catch(() => {})` 之后照样 `return { ok: true, result }`，于是审计行
+   * 丢了这件事**谁都不知道** —— 操作员读到一句干净的成功，团队那边一条记录都没有。撤销本身
+   * 已经落库并且切断了会话，所以把整个动作报成失败会是反过来的那个谎；正确的答案是「撤销成功
+   * ＋ 这一次没留下痕迹」两件事一起说出口，并且发一条告警（#575 纪律：告警文本里不放邮箱）。
+   */
+  it("SIGNIN-A7 —— 审计行写不下去时：撤销照样算数，但答案里写明没留下痕迹，并且发告警", async () => {
+    const { email, baUserId } = await selfSignedUpMerchant("audit-down");
+    // `vi.spyOn(...).mockRestore()` 在 Prisma 7 的 delegate 上会把方法**删掉**（它是 proxy 的
+    // get 陷阱现造的，没有可还原的 own descriptor），后面的用例会撞上
+    // 「create is not a function」。所以自己存一份再自己装回去。
+    const original = prisma.actionEvent.create;
+    (prisma.actionEvent as { create: unknown }).create = vi
+      .fn()
+      .mockRejectedValue(new Error("action_event insert failed"));
+    try {
+      expect(await revokeMerchantAccess(email)).toEqual({ ok: true, result: "revoked", auditFailed: true });
+    } finally {
+      (prisma.actionEvent as { create: unknown }).create = original;
+    }
+    // 撤销本身是真的：名单翻面、会话没了。
+    expect(await statusOf(email)).toBe("revoked");
+    expect(await sessionsFor(baUserId)).toBe(0);
+    // 有人看得见：一条固定分类的告警，而且不带邮箱。
+    expect(captureMessage).toHaveBeenCalledTimes(1);
+    const [text, options] = captureMessage.mock.calls[0] as [string, { tags?: Record<string, string> }];
+    expect(text).not.toContain(email);
+    expect(options?.tags).toMatchObject({ area: "admin", gate: "tenant-revoke-audit" });
+  });
+
+  /** 顺带钉住正常那条路不发告警 —— 免得这条闸变成一个天天响的噪音源。 */
+  it("SIGNIN-A7 —— 审计写成功时不发任何告警", async () => {
+    const { email } = await selfSignedUpMerchant("audit-quiet");
+    expect(await revokeMerchantAccess(email)).toEqual({ ok: true, result: "revoked" });
+    expect(captureMessage).not.toHaveBeenCalled();
+  });
+
+  /**
+   * SIGNIN-A7 —— 破窗锤改从**写侧**保住（第 2 轮判官 P0 的另一半）。
+   *
+   * 门上原来那条「founder 不查撤销」的捷径已经拆掉（撤销从此对每个地址都绝对），于是「一行
+   * 数据库记录不该把部署者锁在自己的产品外面」需要一个新的落点：这个动作不肯撤一个还挂在
+   * `FOUNDER_ADMIN_EMAILS` 上的地址。恢复路径因此不经数据库 —— 先把它从那个环境变量里拿掉，
+   * 再撤。
+   */
+  it("SIGNIN-A7 —— founder 名单里的地址撤不动：名单行与会话原样，并说清先改哪里", async () => {
+    const { email, baUserId } = await selfSignedUpMerchant("founder");
+    process.env.FOUNDER_ADMIN_EMAILS = `someone-else@fikirtive.test, ${email.toUpperCase()}`;
+
+    expect(await revokeMerchantAccess(email)).toEqual({
+      error: "That address is named in the founder allowlist. Remove it from FOUNDER_ADMIN_EMAILS before revoking.",
+    });
+    expect(await statusOf(email)).toBe("active");
+    expect(await sessionsFor(baUserId)).toBe(1);
+
+    // 从环境变量里拿掉之后，同一个地址就撤得掉了 —— 这就是那条不经数据库的恢复路径。
+    process.env.FOUNDER_ADMIN_EMAILS = "someone-else@fikirtive.test";
+    expect(await revokeMerchantAccess(email)).toEqual({ ok: true, result: "revoked" });
+    expect(await sessionsFor(baUserId)).toBe(0);
+  });
+
+  /**
+   * SIGNIN-A7 —— 邀请那条路也挡：能写下 `revoked` 的动作**都**能把部署者锁在产品外面。
+   *
+   * 门不再给 founder 留例外之后，只守住 Revoke access 那一颗按钮是不够的 —— `revokeTenantInvite`
+   * 的谓词是 `status = "invited"`，一个还没登录过的 founder 地址正好落在它手里。
+   */
+  it("SIGNIN-A7 —— 邀请那颗按钮同样撤不动 founder 地址，那一行还是 invited", async () => {
+    const email = newAddress("founder-invite");
+    await prisma.allowedEmail.create({ data: { email, status: "invited", invitedBy: OPERATOR.email } });
+    process.env.FOUNDER_ADMIN_EMAILS = email;
+
+    expect(await revokeTenantInvite(email)).toEqual({
+      error: "That address is named in the founder allowlist. Remove it from FOUNDER_ADMIN_EMAILS before revoking.",
+    });
+    expect(await statusOf(email)).toBe("invited");
   });
 });

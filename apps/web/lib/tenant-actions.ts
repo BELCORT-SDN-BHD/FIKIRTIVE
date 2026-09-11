@@ -1,4 +1,5 @@
 "use server";
+import * as Sentry from "@sentry/node";
 import { prisma, grantCredits, InsufficientCredits, FinanceAdjustBlocked } from "@fikirtive/db";
 import {
   newId,
@@ -18,6 +19,11 @@ import { isFounderAdmin } from "@/lib/allowlist";
 import { currentImpersonation } from "@/lib/better-auth/compat";
 
 const ORG_STATUS = new Set(["active", "suspended"]);
+
+/** SIGNIN-A7 —— 两条撤销路径拒绝一个 founder 地址时说的同一句话（不导出：`"use server"` 模块
+ *  只许导出 async 函数）。它必须说出下一步，否则操作员只读到一句「不行」。 */
+const FOUNDER_ADDRESS_PROTECTED =
+  "That address is named in the founder allowlist. Remove it from FOUNDER_ADMIN_EMAILS before revoking.";
 
 /** Resolve an org's active members to their Better Auth user ids.
  *  Membership.userId → User.email → BetterAuthUser.id (the two user tables join by email;
@@ -147,6 +153,10 @@ export async function inviteTenant(
 export async function revokeTenantInvite(emailRaw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   const email = normEmail(emailRaw); if (!email) return { error: "Invalid email." };
+  // SIGNIN-A7 —— 破窗锤同样挡在这条路上。门从本轮起对每个地址一视同仁地查撤销（founder 也不
+  // 例外），所以**任何**能写下 `revoked` 的动作都能把部署者锁在产品外面，不只是 Revoke access
+  // 那一个。谓词不同、后果相同的两条路，守的必须是同一条规矩。
+  if (isFounderAdmin(email)) return { error: FOUNDER_ADDRESS_PROTECTED };
   const outcome = await prisma.$transaction(async (tx) => {
     // User.email is stored as typed (not normalized like AllowedEmail.email), so compare
     // case-insensitively — the same both-sides-lowercase rule orgMemberBaUserIds documents.
@@ -189,18 +199,31 @@ export async function revokeTenantInvite(emailRaw: unknown): Promise<{ ok: true 
  */
 export async function revokeMerchantAccess(
   emailRaw: unknown,
-): Promise<{ ok: true; result: "revoked" | "already_revoked" } | { error: string }> {
+): Promise<{ ok: true; result: "revoked" | "already_revoked"; auditFailed?: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   const email = normEmail(emailRaw); if (!email) return { error: "Invalid email." };
   const outcome = await revokeEmailAccess(email);
   // 「没有可撤的东西」和「撤掉了」必须是两个答案 —— 不然操作员打错一个字母也会读到成功。
   if (outcome === "unknown") return { error: "That address has no access to revoke." };
-  // 审计是 best-effort：写不下这一行，也不许把一次真的撤销报成失败。
-  await prisma.actionEvent
+  // 破窗锤：还挂在 FOUNDER_ADMIN_EMAILS 上的地址撤不动（理由写在 `revokeEmailAccess` 上）。
+  // 话要说到操作员能自己走完下一步，否则他只会读到一句「不行」然后来问人。
+  if (outcome === "protected") return { error: FOUNDER_ADDRESS_PROTECTED };
+  // 审计是 best-effort，但**失败不许是无声的**：撤销已经落库、会话已经切断，把整个动作报成失败
+  // 会是反过来的那个谎；所以两件事一起说出口 —— 答案里带一面旗（操作员看得见），外加一条固定
+  // 分类的告警（团队看得见）。#575 日志纪律：邮箱这类用户内容不进告警文本。
+  const audited = await prisma.actionEvent
     .create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.revoke", payload: { email, via: gate.email, outcome } } })
-    .catch(() => {});
+    .then(() => true)
+    .catch((e: unknown) => {
+      Sentry.captureMessage("Merchant access revoked but its audit entry could not be written", {
+        level: "error",
+        tags: { area: "admin", gate: "tenant-revoke-audit" },
+        extra: { outcome, reason: e instanceof Error ? e.message : String(e) },
+      });
+      return false;
+    });
   revalidatePath("/admin/tenants");
-  return { ok: true, result: outcome };
+  return audited ? { ok: true, result: outcome } : { ok: true, result: outcome, auditFailed: true };
 }
 
 /** Resolve an org's first owner to their Better Auth user id (email join, same id-space rule as
