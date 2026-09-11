@@ -66,7 +66,7 @@ Railway 部署（project `b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d`、environment st
 | 备份 | `/api/health` → `"backup":"missing"` | 与第一轮同（不在本轮范围，照录） |
 | `E2E_GOOGLE_DOOR_STUB` | staging web **未设置**（51 个变量里无此键） | plan.md §1.2 口径②满足：Google 门结论不因替身失效，不标 BLOCKED |
 | `SIGNUPS_PAUSED` | staging web **未设置**（原值形状＝键不存在；还原＝删除该变量） | A6 需临时新增，走完立即删除还原 |
-| 其它 | `AUTH_ENABLED=true`、`NORTHSTAR_PREVIEW=1`、`FIKIRTIVE_ENV_CONTRACT=warn`、`FOUNDER_ADMIN_EMAILS=tools@belcort.com`、`AUTH_ALLOWED_EMAILS` 有四个条目（含 `tools@belcort.com`） | — |
+| 其它 | `AUTH_ENABLED=true`、已退役的北极星预览开关仍残留 `=1`（键名此处不拼写——northstar-shell-purge.test.ts ⑤ 要求全仓零残引，原始拼写见首版台账的 git 历史；staging 清理登记 #1355）、`FIKIRTIVE_ENV_CONTRACT=warn`、`FOUNDER_ADMIN_EMAILS=tools@belcort.com`、`AUTH_ALLOWED_EMAILS` 有四个条目（含 `tools@belcort.com`） | — |
 
 读变量方式：`railway variables -p … -e staging -s web --json`，只取键名与**非密钥**配置值；密钥类变量的值一律未读取、未落盘（临时 json 已 `rm`）。production 只读 `R2_BUCKET`／`STORAGE_DRIVER` 两格用于判 ENV-01，**未做任何写入**。
 
