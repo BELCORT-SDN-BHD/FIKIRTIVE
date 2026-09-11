@@ -366,6 +366,16 @@ describe("Google 门 —— 每一种失败都回登录页", () => {
     expect(await prisma.user.count({ where: { email: stranger } })).toBe(0);
   });
 
+  it("SIGNIN-A14 —— Google 报邮箱未验证：同样回 /login，不落在自带错误页、不出现裸 JSON", async () => {
+    // 验收表 A14 的括号里点名了三种失败，这是第四种：A13 那条用例量的是「一行都没写下」，
+    // 这条量的是同一趟的**落点** —— 拒绝发生在建号那一刻（第 ③ 条路，键从 message 来），
+    // 所以它和「暂停期陌生人」共用同一条回家的路，必须同样回到登录页。
+    expectsLandsOnLogin(
+      await googleReturns({ email: newAddress("a14-unverified"), emailVerified: false }),
+      "sign_in_email_unverified",
+    );
+  });
+
   it("SIGNIN-A14 —— 不传 errorCallbackURL 时拒绝会落在 better-auth 自带错误页：这就是 LoginForm 必须传它的理由", async () => {
     // 反向围栏。它证明这条验收靠的是我们传下去的那个字段，而不是某个碰巧的默认值 ——
     // 有人把 LoginForm 里那一行删掉，这条会红。
