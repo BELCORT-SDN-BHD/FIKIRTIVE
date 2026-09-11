@@ -64,14 +64,27 @@ describe("isAllowedEmail", () => {
     expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
-  it("returns true for env allowlist email without hitting DB", async () => {
+  // SIGNIN-A7 —— 这两条原本断言「env 命中不读库」。那个短路正是缺陷本身：写在
+  // AUTH_ALLOWED_EMAILS 里的地址在读 `AllowedEmail` 之前就被答完，于是撤销它对这条路径毫无
+  // 作用 —— 而这条路径正是每个受控动作每次请求都跑的再断言（`requireSession` /
+  // `requireRole` / `requireOwner`）。环境名单从此只「加人」，撤销与否由数据库最后拍板；
+  // 只有 FOUNDER 名单保留先于数据库的答案（破窗锤，见 `lib/allowlist.ts`）。
+  it("returns true for env allowlist email, and still asks the database about revocation", async () => {
     expect(await isAllowedEmail(ENV_EMAIL)).toBe(true);
-    expect(mockFindUnique).not.toHaveBeenCalled();
+    expect(mockFindUnique).toHaveBeenCalledOnce();
   });
 
   it("is case-insensitive for env emails", async () => {
     expect(await isAllowedEmail(ENV_EMAIL.toUpperCase())).toBe(true);
-    expect(mockFindUnique).not.toHaveBeenCalled();
+    expect(mockFindUnique).toHaveBeenCalledWith({
+      where: { email: ENV_EMAIL },
+      select: { status: true },
+    });
+  });
+
+  it("SIGNIN-A7 —— 环境名单里的地址被撤销之后照样答 false（名单只加人，不盖过撤销）", async () => {
+    mockFindUnique.mockResolvedValueOnce({ status: "revoked" });
+    expect(await isAllowedEmail(ENV_EMAIL)).toBe(false);
   });
 
   it("returns true for DB row with status 'invited'", async () => {

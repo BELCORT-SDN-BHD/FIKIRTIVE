@@ -1,9 +1,11 @@
 import "server-only";
 import { prisma } from "@fikirtive/db";
 
-/** Shown on the signup page and returned by the API when new signups are paused.
- *  Honest: it says the door is shut, and does not promise a date. */
-export const SIGNUPS_PAUSED_MESSAGE = "New signups are paused right now.";
+/** SIGNIN-A6 —— 登录页顶那条横幅的原文，逐字取自规格 §1.3（docs/specs/sign-in.md 已冻结 · v1）。
+ *  两句都必须在：第一句说门关了，第二句说老商家照常进得来 —— 少了第二句，一个已经有账号的
+ *  商家会以为产品对他也关了。诚实：不承诺日期。唯一消费者是 `app/login/page.tsx`。 */
+export const SIGNUPS_PAUSED_MESSAGE =
+  "New signups are paused right now. Existing accounts can still log in.";
 
 /**
  * #543 — the emergency "pause new signups" switch (`SIGNUPS_PAUSED`).
@@ -139,7 +141,7 @@ export type RevokeAccessOutcome = "revoked" | "already_revoked" | "unknown";
  * 时间），但会话照样清一遍——重复撤销必须是幂等的，而不是「第二次点没反应」。
  *
  * 这个函数不做授权：它是领域动作，权限由调用它的 server action 上的 `requireRole` 把守
- * （`app/admin/access-actions.ts`）。
+ * （`lib/tenant-actions.ts` 的 `revokeMerchantAccess`，后台那颗「Revoke access」按的就是它）。
  *
  * 边界（说清楚，不假装覆盖）：**没有 `AllowedEmail` 行的地址答 `unknown`，不新建一行黑名单。**
  * 今天唯一能进门却没有行的，是只被 `AUTH_ALLOWED_EMAILS` 点过名、还一次都没登录过的地址——

@@ -12,8 +12,10 @@
  * `internalAdapter.createOAuthUser` —— better-auth 的 `link-account.mjs` 在回调里调的正是它，
  * 而 `databaseHooks.user.create.before`（门）就挂在它下面。
  *
- * ⚠️ 本文件不证明 A6 的「页顶横幅」那一半：横幅落在 `app/login/page.tsx`，不在切片④的写集内
- * （见 PR 描述的未做项）。测试名只挂它真的证明的那部分。
+ * ⚠️ 本文件不证明 A6 的「页顶横幅」那一半，也不证明 A7 的「操作员那条路真的通到撤销」那一半：
+ * 前者在 `app/login/__tests__/login-paused-banner.test.tsx`，后者在
+ * `lib/__tests__/admin-revoke-access-action.test.ts`（动作，真库）与
+ * `lib/__tests__/admin-tenant-invite-ui.test.ts`（按钮）。测试名只挂它真的证明的那部分。
  */
 import { describe, it, expect, afterAll, beforeAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
