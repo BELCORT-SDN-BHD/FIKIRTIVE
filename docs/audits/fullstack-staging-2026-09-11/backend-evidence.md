@@ -172,6 +172,7 @@ SELECT "ownerId", count(*) FROM "ActionEvent" WHERE type='auth.signin' GROUP BY 
 
 `tools+r2a20260911@belcort.com`（org_cmtwwya…）与 `tools+r2f20260911@belcort.com`（org_cmtwze…）的登录审计行，`ownerId` **也写成 `founder`**。
 ⇒ **登录审计的租户归属全库写死为 `founder`**：行数与 payload 正确、**没有数据泄漏**（payload 只有邮箱），但按 tenant 查审计会全部落到 founder 名下、别的租户查自己的登录记录会是空。
+> **更正（第 4 轮）**：上一行「**没有数据泄漏**」是一句**整体断言，本轮没有证据支撑**，按惯例不改原句、只在此更正 —— 已证的只有**写路**（别的租户的登录事件写进了 founder 名下的行）；**读路本轮从未取证**（没有找到、也没有查过任何按 `ownerId` 读 `ActionEvent` 的 founder 侧界面），因此只能说「**未发现读到别租户内容的暴露面**」，不能说「没有泄漏」。这条正是 `report-round2.md` §0 判据 3 被改判为「触发」的依据（`plan.md` §5.2 第 3 条字面＝「读到**或写进**另一个租户的对象」）。
 ⇒ 这是一条 **W1 走查看不见、只有查表才会暴露** 的后端问题，登记为 **FSE-209 候选**（严重度建议 P2：审计可追溯性，非隔离破口）。findings-catalog 由编排者决定是否补条目，W2 不擅自改那份文件。
 
 ---

@@ -49,7 +49,9 @@
 
 ---
 
-## FSE-204 · 短边 80px 的参考图，两个入口都没有在付费前被拦；视频路一直走到供应商才失败 — P1（候选，待后端确认闸门位置）
+## FSE-204 · 短边 80px 的参考图，两个入口都没有在付费前被拦；视频路一直走到供应商才失败 — P1（**根因已确认**，`backend §3.3`）
+
+> **第 4 轮更新**：标题原写「P1（候选，待后端确认闸门位置）」—— 那是 W1 现场写下时的状态。W2 的 `backend-evidence.md §3.3` 已把闸门位置**确认到代码行**（闸只挂「`payload.kind==='video'` × `referenceGenerationIds`」一条路，函数体首两行早退），故本条不再是「候选」。**W1 原句一字未改，保留在下面六格里**，本轮只在标题与根因格补上已确认的那一层。
 
 | 格 | 内容 |
 |---|---|
@@ -57,12 +59,14 @@
 | **预期** | `creation-engine.md` §5 :162 残留① 与 :176⑥：付费前尺寸闸**唯一一份**、**没有一条入口绕得过去**；短边 <100 的图应在**付费前**被诚实拒绝，且**拒绝文案要说出这张图现在多大**（门槛按能否放大分岔 100 / 300）。 |
 | **实际** | 路 A：确认卡逐字 `1 image 1728 × 2304 · 3:4 · 1 image · Uses your attached image` / `1 credit`，**无任何尺寸提醒**；批准后**生成成功并真扣 1 credit**。路 B：确认卡逐字 `1 video 9:16 · 5s · 720p · No sound · Starts from your image` / `11 credits`，同样**无提醒**；批准后进入 `Rendering…`，约 3 分钟后节点变成 `That didn't finish / You weren't charged.`，Otto 只说 `That generation didn't go through — you can try again.` —— **没有说明是图太小**。钱路本身是干净的（全额不收费、余额一字未动）。 |
 | **证据** | `run-ledger.md` §R2-23 与 §4 预算表第 10、12 行。UTC 2026-09-11T12:56–13:04。 |
-| **根因** | **已确认（现象层）**：这两条入口在付费前没有任何尺寸判断或披露；视频那条一直走到供应商才失败，失败原因没有回给商家。**假说（代码层，须后端／代码取证）**：尺寸闸可能只挂在「商品参考进视频」这一条路径上，而「图生图的 base image」与「视频的 starting frame」两条路没有经过同一个闸；也可能闸门读的是 `Asset.width/height`，而这两条路读的是别的字段。**在闸门位置查清前，不把它写成「闸门失效」。** |
+| **根因** | **已确认（现象层）**：这两条入口在付费前没有任何尺寸判断或披露；视频那条一直走到供应商才失败，失败原因没有回给商家。**假说（代码层，须后端／代码取证）**：尺寸闸可能只挂在「商品参考进视频」这一条路径上，而「图生图的 base image」与「视频的 starting frame」两条路没有经过同一个闸；也可能闸门读的是 `Asset.width/height`，而这两条路读的是别的字段。**在闸门位置查清前，不把它写成「闸门失效」。**<br>**已确认（代码层，第 4 轮按 `backend §3.3` 同步；上面 W1 的原句保留不改）**：假说的**第一条成立、第二条不成立** —— 闸只挂「`payload.kind==='video'` × `referenceGenerationIds`」一条路（`reference-upscale-gate.ts` 函数体首两行即早退）；图生图卡是 `kind='image'`、视频起始帧那张图在 `sourceGenerationId` ⇒ **两条路都从未进过闸**。不是「读不出尺寸」那一档：`Asset.width=80/height=107` 早在 12:56:57Z 就落库，**早于**两次付费动作。 |
 | **建议与复测口径** | 先由后端确认这两条路是否经过尺寸闸；若未经过，收成唯一一份。复测＝同一张 80px 图跑**四个入口**（画布确认卡、Library 动作、Otto 主动、分镜挂图），每个入口都必须在**付费前**拒绝并说出实际短边；再补一张短边 100–300 的图验「自动放大 + 独立一行披露句」（:176④）。登记去向：`docs/specs/creation-engine.md` §5。 |
 
 ---
 
-## FSE-205 · 失败卡 `Edit and retry` 恢复草稿后，看不到 `retry-source` 那一行 — P2（未复现，路径待确认）
+## FSE-205 · 失败卡 `Edit and retry` 恢复草稿后，看不到 `retry-source` 那一行 — P2（**根因链已确认**，`backend §7`）
+
+> **第 4 轮更新**：标题原写「P2（未复现，路径待确认）」—— 那是 W1 现场写下时的状态。W2 的 `backend-evidence.md §7` 已把根因链**逐行闭合**并给出一条可证伪的复现路，故不再是「路径待确认」。**W1 原句一字未改，保留在下面六格里。**
 
 | 格 | 内容 |
 |---|---|
@@ -70,7 +74,7 @@
 | **预期** | `creation-engine.md` §5 :163②：输入框上方有 `retry-source` 一行，念得出源消息原话（截断到 48 字）、念不出就说是更早的一条；旁边 `Remove` 只清这一格。 |
 | **实际** | 草稿**正确恢复**（原句 + 引用芯片都回来了），但全页 `[data-slot="retry-source"]` **查无此元素**，屏幕上也没有任何 `Retrying:` 字样；只有引用芯片自己的 `Remove image`。 |
 | **证据** | `run-ledger.md` §R2-12。UTC 2026-09-11T13:05。 |
-| **根因** | **假说**：渲染条件是 `restoredDraft?.sourceMessageId`（`apps/web/components/otto/OttoChatStream.tsx:1299`）；本轮走的是**失败卡上的** `Edit and retry`，该路径若不带 `sourceMessageId`，这一行就永远不出现。也可能这一行只在**聊天消息**的重试路径上出现。**两种可能都没有验证，故不判 FAIL。** |
+| **根因** | **假说**：渲染条件是 `restoredDraft?.sourceMessageId`（`apps/web/components/otto/OttoChatStream.tsx:1299`）；本轮走的是**失败卡上的** `Edit and retry`，该路径若不带 `sourceMessageId`，这一行就永远不出现。也可能这一行只在**聊天消息**的重试路径上出现。**两种可能都没有验证，故不判 FAIL。**<br>**已确认（代码层，第 4 轮按 `backend §7` 同步；上面 W1 的原句保留不改）**：第一种可能成立 —— `liveRetryDraft()`（`OttoChatStream.tsx:610–613`）把 `sourceMessageId` **写死为 `null`**，而 `richerTurnReferenceDraft`（`turn-reference-draft.ts:239–241`）**只比「有没有引用」**，未刷新就重试时选中的正是直播那份 ⇒ `retrySourceId` 为 null、那一行永不渲染（`retrySourceNote()` 本身永不返回空串）。**可证伪的复现路**：先刷新再点 `Edit and retry`，那一行应当出现。 |
 | **建议与复测口径** | 由代码侧确认 `sourceMessageId` 在失败卡重试路径上是否写入；若不写入，要么补上、要么把 :163② 的适用范围写清楚。复测＝两条重试路径（失败卡、聊天消息）各走一次，按规格判该行是否应出现。登记去向：`docs/specs/creation-engine.md` §5。 |
 
 ---
