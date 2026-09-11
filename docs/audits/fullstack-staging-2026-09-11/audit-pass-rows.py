@@ -11,6 +11,15 @@
 
 它**不下判定**。判定由人逐分句做，结论写进 report-round2.md §3「逐 PASS 分句审计」表。
 用法：/usr/bin/python3 audit-pass-rows.py   （须在本目录下跑，须能 git show origin/main）
+
+第 5 轮（跨厂判官 P1）修了三处**会让审计本身漏看东西**的毛病：
+  ① 验收原文原先被**静默**截到 1200 字符 —— 现在默认不截；真要截也打出
+     `…[截断：原文共 N 字符]`，绝不静默吞字。
+  ② 无编号／无登记行的行（如 `R2-15 §5 2026-09-10（variation）`）原先拿整格文字去
+     `plan.md` 里找，必然找不到，「判定口径」栏一片空白 —— 现在回退按该行的 `R2-xx`
+     标签匹配，并在输出里标明这是回退匹配。
+  ③ 矩阵每行的**最后一列**（「待查（W2）」／后端证据）原先根本没打印，逐分句核时
+     看不到后端那一半证据 —— 现在判定列之后的**每一列都打印**。
 """
 import io, os, re, subprocess, sys
 
@@ -25,6 +34,15 @@ PREFIX_SPEC = {
     'FRONT': 'frontend-baseline.md',
 }
 _cache = {}
+LIMIT = None   # None = 不截断（第 5 轮默认）。要截就填字符数，截了会明写出来。
+
+
+def clip(text, limit=None):
+    """截断必须**看得见**：静默截断会让审计员以为验收句就这么长（第 5 轮判官 P1）。"""
+    limit = LIMIT if limit is None else limit
+    if limit is None or len(text) <= limit:
+        return text
+    return text[:limit] + '…[截断：原文共 %d 字符，完整文本请把脚本里的 LIMIT 设回 None]' % len(text)
 
 
 def spec(name):
@@ -62,27 +80,46 @@ def acceptance(label):
     return '（无编号／无行号：本行判定口径以 plan.md 那一行为准，见下）'
 
 
-def plan_rows(label):
-    """plan.md（冻结、一字未改）里点名这一条的行 —— 本轮的判定口径。"""
+def plan_rows(label, rid=''):
+    """plan.md（冻结、一字未改）里点名这一条的行 —— 本轮的判定口径。
+
+    无编号／无登记行的行（如 `§5 2026-09-10（variation 真实交付）`）拿整格文字去找必然落空，
+    回退按该行的 `R2-xx` 条目号匹配（第 5 轮判官 P1）。
+    """
     keys = re.findall(r'(?:SIGNIN|PRODID|CREATE|FRONT)-A\d+', label)
     keys += re.findall(r'fb:\d+', label)
     keys += ['§5 :' + n for n in re.findall(r'§5\s*:(\d+)', label)]
+    fallback = ''
     if not keys:
-        keys = [label.strip('*` ')]
+        m = re.match(r'R2-\d+', rid.strip('*` '))
+        if m:
+            keys = [m.group(0)]
+            fallback = '（无编号／登记行 → 回退按条目号 %s 匹配）' % m.group(0)
+        else:
+            keys = [label.strip('*` ')]
+            fallback = '（无编号／登记行、也取不到条目号 → 按整格文字匹配，通常落空）'
     out = []
+    # 编号要按数字边界配：裸 `k in l` 会让 SIGNIN-A1 吃掉 SIGNIN-A10..A17
+    # （第 5 轮取消 [:4] 截断后暴露出来的老毛病）。
+    pats = [re.compile(re.escape(k) + r'(?!\d)') for k in keys]
     for i, l in enumerate(io.open('plan.md', encoding='utf-8').read().split('\n'), 1):
         if not l.startswith('|'):
             continue
-        for k in keys:
-            if k in l and l not in out:
+        for k in pats:
+            if k.search(l) and l not in out:
                 out.append('plan.md:%d %s' % (i, l.strip()))
                 break
+    if fallback:
+        out = [fallback] + out
+    if not out:
+        out = ['（plan.md 里没有点名这一条的表行）']
     return out
 
 
 def main():
     src = io.open('coverage-matrix.md', encoding='utf-8').read().split('\n')
     sec = idx = None
+    hdr = []
     rows = []
     for l in src:
         if l.startswith('## '):
@@ -91,7 +128,7 @@ def main():
             idx = None; continue
         cells = [x.strip() for x in l.strip().strip('|').split('|')]
         if '判定' in cells:
-            idx = cells.index('判定'); continue
+            idx = cells.index('判定'); hdr = cells; continue
         if idx is None or sec not in SEC:
             continue
         if set(''.join(cells)) <= set('-: '):
@@ -102,21 +139,27 @@ def main():
         m = re.search(r'(NOT RUN|PARTIAL|PASS|FAIL)', v)
         if m.group(1) != 'PASS':
             continue
-        rows.append((sec, cells, idx, v))
+        rows.append((sec, cells, idx, v, hdr))
 
     print('逐 PASS 审计：coverage-matrix.md 里判定为 PASS 的行，共 %d 行' % len(rows))
     print('（判定口径以 plan.md 为准；验收原文逐字取自 origin/main 的规格；本脚本不下判定）')
-    for n, (sec, cells, idx, v) in enumerate(rows, 1):
+    for n, (sec, cells, idx, v, hdr) in enumerate(rows, 1):
         label = cells[1] if len(cells) > 1 else cells[0]
         print('\n' + '=' * 78)
         print('[%d] %s | 条目 %s | 编号/登记行 %s | 判定 %s' % (n, sec, cells[0], label, v))
         print('-- 验收原文 --')
-        print('   ' + acceptance(label)[:1200])
+        print('   ' + clip(acceptance(label)))
         print('-- 本轮判定口径（plan.md，冻结）--')
-        for r in plan_rows(label)[:4]:
-            print('   ' + r[:400])
-        print('-- 本轮证据指针（矩阵证据列）--')
-        print('   ' + (cells[idx + 1] if len(cells) > idx + 1 else '（无）')[:600])
+        for r in plan_rows(label, cells[0]):
+            print('   ' + clip(r))
+        # 判定列之后的每一列都打（矩阵这几张表是「证据指针」＋「待查（W2）／后端证据」两列）
+        for j in range(idx + 1, len(cells)):
+            name = hdr[j] if j < len(hdr) else '第 %d 列' % (j + 1)
+            print('-- 本轮证据指针（矩阵「%s」列）--' % name)
+            print('   ' + clip(cells[j] or '（空）'))
+        if len(cells) <= idx + 1:
+            print('-- 本轮证据指针 --')
+            print('   （该行判定列之后没有任何一列）')
     return 0
 
 

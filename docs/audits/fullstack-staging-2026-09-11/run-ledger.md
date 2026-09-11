@@ -148,6 +148,8 @@ UTC 2026-09-11T12:15。命令与原文回执：
 - `SIGNIN-A9` 前半（`BetterAuthAccount.providerId='credential'` 行数为 0）→ **PARTIAL（待后端取证）**：要 W2 跑 `SELECT count(*) FROM "BetterAuthAccount" WHERE "providerId"='credential';`，期望 0。
 - `frontend-baseline §5 2026-09-10（FRONT-A2 退役）`的 `?from=/create` 落点：用 `/login?from=/create` 走码门 → 登录后**落在 `/create`**（实测，见下条 R2-03 记录）→ **PASS**。
 
+> **更正（第 5 轮，2026-09-11 W3 追加；上面那一句原文一字不改）**：那一句里的「见下条 R2-03 记录」**指不到东西** —— 本文件 `§R2-02 / R2-03` 那一节记的是 Google 门与码门进同一账号，**没有任何一句写到 `?from=/create` 的落点**；全目录也没有第二处现场记录（可复跑：`/usr/bin/grep -rn 'from=/create' .`，只命中判定行与引用，**没有一条现场回执**）。也就是说这个落点**只有一句断言，没有可核的现场**：既没抄回登录后的地址栏原文，也没有页面文本或截图。按「证据不足就往下改判、不往上凑」的规矩，`R2-06 §5 2026-09-10（FRONT-A2 退役）`整行由 **PASS 降 PARTIAL** —— **已做**：三个地址各 302→`/login`、七端点 GET/POST 全 404、`credential` 计数 0（本节上面三条都有逐字回执）；**未做／无回执**：`?from=/create` 登录后的落点。判定与计数见 `coverage-matrix.md` 该行与「汇总计数」节、`report-round2.md` §2／§3／§11.4。**下一轮补法**：用 `/login?from=/create` 走一次码门，把登录后**地址栏原文**抄进本文件。
+
 ---
 
 ## R2-02 / R2-03 Google 门（部分，受账号可用性限制）
