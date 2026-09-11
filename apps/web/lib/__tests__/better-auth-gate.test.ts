@@ -47,12 +47,21 @@ const mockBaUserFindUnique = vi.fn(async ({ where }: { where: { email?: string; 
 const mockAllowedEmailRawStatus = vi.fn(async (): Promise<{ status: string }[]> => []);
 const mockSessionDeleteMany = vi.fn(async () => ({ count: 1 }));
 
+/** `SET LOCAL lock_timeout` 那一句（第 6 轮）。只记调用，超时本身在真库上验（见
+ *  signin-pause-and-revoke.test.ts 那条握锁不放的用例）。 */
+const mockExecuteRawUnsafe = vi.fn(async (_sql: string) => 0);
+
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     betterAuthUser: { findUnique: mockBaUserFindUnique },
     allowedEmail: { findUnique: mockAllowedEmailFindUnique },
     betterAuthSession: { deleteMany: mockSessionDeleteMany },
-    $queryRaw: (..._args: unknown[]) => mockAllowedEmailRawStatus(),
+    // 那一次 `FOR SHARE` 现在跑在一笔交互式事务里（`SET LOCAL lock_timeout` 需要它）。替身照着
+    // 同一个形状：把回调喂给它，回调里那两句照旧落到上面两个 mock 上。
+    $transaction: (fn: (tx: { $executeRawUnsafe: typeof mockExecuteRawUnsafe; $queryRaw: (...a: unknown[]) => Promise<{ status: string }[]> }) => unknown) =>
+      Promise.resolve().then(() =>
+        fn({ $executeRawUnsafe: mockExecuteRawUnsafe, $queryRaw: (..._args: unknown[]) => mockAllowedEmailRawStatus() }),
+      ),
   },
 }));
 
@@ -96,6 +105,7 @@ beforeEach(() => {
   mockBaUserFindUnique.mockClear();
   mockAllowedEmailRawStatus.mockReset();
   mockAllowedEmailRawStatus.mockResolvedValue([]);
+  mockExecuteRawUnsafe.mockClear();
   mockSessionDeleteMany.mockReset();
   mockSessionDeleteMany.mockResolvedValue({ count: 1 });
   captureMessage.mockReset();
@@ -377,5 +387,61 @@ describe("assertSessionSurvivesRevoke —— 删会话失败不再无声", () =>
     await expect(assertSessionSurvivesRevoke(SESSION_ID, USER_ID)).rejects.toBeInstanceOf(APIError);
     expect(mockSessionDeleteMany).toHaveBeenCalledWith({ where: { id: SESSION_ID } });
     expect(captureMessage).not.toHaveBeenCalled();
+    // 那一次 FOR SHARE 读之前**先**给这笔事务上了等待上限（第 6 轮；超时真的生效由真库那条
+    // 握锁不放的用例证明）。
+    expect(mockExecuteRawUnsafe).toHaveBeenCalledWith("SET LOCAL lock_timeout = '3s'");
+  });
+});
+
+/**
+ * SIGNIN-A7 —— 二次确认那两条 **fail-closed** 分支（第 6 轮，判官 r5 P2 ③）。
+ *
+ * `assertSessionSurvivesRevoke` 的正常路读两次库：先按 userId 读 `ba_user` 拿邮箱，再用那个邮箱
+ * 做一次 `SELECT … FOR SHARE`。两次读**各自**都可能答不上来，而这两种「答不上来」在这道确认里
+ * 必须与「读到 revoked」同一个下场：删掉刚建的那张会话，再按门的统一话术拒绝。
+ *
+ * 为什么住在这个 mock 文件里：真库那一侧（`signin-pause-and-revoke.test.ts`）造不出「这一次读
+ * 恰好失败」和「用户行恰好不见了」——正如「删不掉会话」也造不出来。
+ *
+ * 这两条分支之前一条测试都没有：`.catch(() => false)` 改成 `.catch(() => true)`、或者 `if (email)`
+ * 那一段改成 `if (!email) return;`，整套用例都照样绿。本轮两条变异都真跑过，输出贴在 PR 描述里。
+ */
+describe("assertSessionSurvivesRevoke —— 两条 fail-closed 分支", () => {
+  const SESSION_ID = "bas_failclosed";
+  const USER_ID = "ba-failclosed@fikirtive.test";
+
+  /**
+   * (a) `FOR SHARE` 那一次读**失败**（库挂了、连接断了、将来的锁超时）。
+   *
+   * 读不出名单状态时唯一安全的假设是「他可能已经被撤销了」。放行等于把一张可能属于已撤销地址的
+   * 活会话留在库里 —— 这道确认存在的全部理由就是不许那张会话存在。
+   *
+   * 变异：`gate.ts` 的 `.catch(() => false)` → `.catch(() => true)`，这条必须红。
+   */
+  it("SIGNIN-A7 —— FOR SHARE 那一次读失败：删掉会话并拒绝（不许当作放行）", async () => {
+    withAccount("failclosed@fikirtive.test", USER_ID);
+    mockAllowedEmailRawStatus.mockRejectedValue(new Error("db down"));
+
+    const err = await assertSessionSurvivesRevoke(SESSION_ID, USER_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect((err as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
+    expect(mockSessionDeleteMany).toHaveBeenCalledWith({ where: { id: SESSION_ID } });
+  });
+
+  /**
+   * (b) 读不到 `ba_user` 的邮箱行 —— 行不见了，或者那一次读自己失败（`.catch(() => "")`）。
+   *
+   * 没有邮箱就问不了名单，问不了就不知道他有没有被撤销，所以同样收回会话、同样拒绝。顺带钉住
+   * 它**没有**拿着空邮箱去查名单：那一次查在真库上会全表扫一个永远查不到的空串。
+   *
+   * 变异：`gate.ts` 的 `if (email) { … }` 改成 `if (!email) return;`（读不到就放行），这条必须红。
+   */
+  it("SIGNIN-A7 —— 读不到 ba_user 的邮箱行：删掉会话并拒绝，且不拿空邮箱去查名单", async () => {
+    // 这个 userId 在 `accounts` 里一行都没有 —— `withAccount` 故意不调。
+    const err = await assertSessionSurvivesRevoke(SESSION_ID, "ba-ghost").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    expect((err as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
+    expect(mockSessionDeleteMany).toHaveBeenCalledWith({ where: { id: SESSION_ID } });
+    expect(mockAllowedEmailRawStatus).not.toHaveBeenCalled();
   });
 });

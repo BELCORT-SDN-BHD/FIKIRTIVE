@@ -104,22 +104,39 @@ async function signInThroughCodeDoor(email: string): Promise<string> {
  * 再读（revoked）。Prisma 的交互式事务在自己的连接上跑，所以这里握住的是真的行锁，不是模拟。
  *
  * 超时保护：事务 8 秒封顶，两条用例都在 1 秒内放手 —— 锁绝不会把 CI 挂住。
+ *
+ * 第 6 轮（判官 r5 P3 ④）—— 放手这件事必须**不依赖断言走到哪一行**。上一版把
+ * `prisma.$transaction(...)` 的 promise 只在 `commit()` 里 await：握锁与放手之间任何一条断言
+ * 先红，`commit()` 就再也不会被调用，那笔事务于是在 8 秒后以「没有人 await」的姿态 reject ——
+ * 一条 unhandled rejection 盖在真正的失败上面，而那一行锁还多握了 8 秒。所以现在两件事一起做：
+ *   · 事务 promise **创建的那一刻**就挂上 `.catch` 把结局记下来，它永远不会是 unhandled；
+ *   · 放手做成幂等的一个动作，两个名字 —— `commit()` 是用例里那个有意的提交（事务真的失败要
+ *     照抛，绝不吞），`release()` 是用例 `finally` 里的兜底（吞掉结局，不许把一条红断言换成
+ *     另一个错误）。先 commit 后 release 也没事：第二次调用只是等同一个已经落定的 promise。
  */
-async function holdRevokeUncommitted(email: string): Promise<{ commit: () => Promise<void> }> {
-  let release!: () => void;
-  const gate = new Promise<void>((r) => { release = r; });
+async function holdRevokeUncommitted(email: string): Promise<{ commit: () => Promise<void>; release: () => Promise<void> }> {
+  let openGate!: () => void;
+  const gate = new Promise<void>((r) => { openGate = r; });
   let held!: () => void;
   const locked = new Promise<void>((r) => { held = r; });
-  const tx = prisma.$transaction(
-    async (t) => {
-      await t.allowedEmail.update({ where: { email }, data: { status: "revoked" } });
-      held();
-      await gate;
-    },
-    { timeout: 8_000, maxWait: 5_000 },
-  );
+  let txError: unknown;
+  const tx = prisma
+    .$transaction(
+      async (t) => {
+        await t.allowedEmail.update({ where: { email }, data: { status: "revoked" } });
+        held();
+        await gate;
+      },
+      { timeout: 8_000, maxWait: 5_000 },
+    )
+    .catch((e: unknown) => { txError = e; });
+  let letGo = false;
+  const openOnce = () => { if (!letGo) { letGo = true; openGate(); } };
   await locked;
-  return { commit: async () => { release(); await tx; } };
+  return {
+    commit: async () => { openOnce(); await tx; if (txError) throw txError; },
+    release: async () => { openOnce(); await tx; },
+  };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -382,11 +399,11 @@ describe("SIGNIN-A7 —— 撤销一个自助进来的邮箱", () => {
     await revokeEmailAccess(merchant);
     process.env.FOUNDER_ADMIN_EMAILS = `${merchant},nobody-signin4@fikirtive.test`;
     try {
-      expect(await isAllowedEmail(merchant)).toBe(false);
-      expect(await sessionsFor(merchant)).toBe(0);
-      await __resetAuthEmailCapsForTests();
-      expect(await requestCode(merchant)).toBeUndefined();
-      expect(await googleDoorCreateUser(merchant)).toBeInstanceOf(APIError);
+        expect(await isAllowedEmail(merchant)).toBe(false);
+        expect(await sessionsFor(merchant)).toBe(0);
+        await __resetAuthEmailCapsForTests();
+        expect(await requestCode(merchant)).toBeUndefined();
+        expect(await googleDoorCreateUser(merchant)).toBeInstanceOf(APIError);
     } finally {
       process.env.FOUNDER_ADMIN_EMAILS = "nobody-signin4@fikirtive.test";
     }
@@ -398,9 +415,9 @@ describe("SIGNIN-A7 —— 撤销一个自助进来的邮箱", () => {
     await signInThroughCodeDoor(merchant);
     process.env.FOUNDER_ADMIN_EMAILS = `${merchant},nobody-signin4@fikirtive.test`;
     try {
-      expect(await revokeEmailAccess(merchant)).toBe("protected");
-      expect(await statusOf(merchant)).toBe("active");
-      expect(await sessionsFor(merchant)).toBe(1);
+        expect(await revokeEmailAccess(merchant)).toBe("protected");
+        expect(await statusOf(merchant)).toBe("active");
+        expect(await sessionsFor(merchant)).toBe(1);
     } finally {
       process.env.FOUNDER_ADMIN_EMAILS = "nobody-signin4@fikirtive.test";
     }
@@ -519,12 +536,27 @@ describe("SIGNIN-A7 —— 二次确认的接线与 FOR SHARE（并发，第二�
    *   · 拒绝带着 `sign_in_revoked` 这个机器键（§1.3 防枚举 ＋ A14）；
    *   · **它跑在 `convergeIdentity` 之前** —— 一次要被撤回的登录不许在审计流里留下 `auth.signin`。
    *
-   * 变异验证（第 5 轮真跑，输出贴在 PR 描述里）：
-   *   · C：把 `server.ts` 里 `await assertSessionSurvivesRevoke(s.id, s.userId);` 注释掉 → 红：
-   *     抛出来的不再是门的 APIError，而是 `RevokedDuringProvisioning`（收敛自己那道后手）。
-   *   · C2：把那一行挪到 `convergeIdentity` 之后 → 同样红，同样是 `RevokedDuringProvisioning`。
-   *     两次变异一起说清楚了这道确认为什么必须在收敛**之前**：挪到后面，先说话的是收敛那道后手
-   *     ——它把这次登录写进审计流之后才发现撤销，门的统一话术（§1.3）于是也不见了。
+   * 变异验证（第 6 轮复跑，逐字输出在 PR 描述里；上一版这里把 C／C2 写成「收敛有后手兜着」，
+   * 判官 r5 P2 ① 打回，这一段按复跑事实重写）：
+   *   · C：把 `server.ts` 里 `await assertSessionSurvivesRevoke(s.id, s.userId);` 注释掉 → 红在
+   *     `expect(err).toBeInstanceOf(APIError)`。本机 4 次复跑（含把握锁时长从 400ms 拉到 3s 的
+   *     那一次）抛的都是 `RevokedDuringProvisioning`，探针读数每次都是
+   *     `sessionsBefore 1 → sessionsAfter 2`。
+   *   · C2：把那一行挪到 `convergeIdentity` **之后** → 2 次复跑与 C 逐字相同：收敛先抛，挪过去
+   *     的那一行**根本没跑到**，`sessionsBefore 1 → sessionsAfter 2`。
+   *
+   * **删掉这个钩子没有后手。** `RevokedDuringProvisioning` 不是第二道防线，理由有三条，每一条
+   * 都能从上面的读数里看出来：
+   *   ① 它只换了错误的名字 —— 它**从不**删那张已经 INSERT 进 `ba_session` 的会话。两种变异下
+   *      会话数都从 1 涨到 2：一张属于已撤销地址的活会话留在库里，正是这道确认要堵的那个洞。
+   *   ② 它会不会响，取决于谁先赢 `AllowedEmail` 那一行上的等待。收敛第 0 步
+   *      `admitSelfSignup` 是 `INSERT … ON CONFLICT DO NOTHING`（`signup-gate.ts:114`），它撞上
+   *      撤销那笔未提交事务时要等对方落定 —— 本机因此每次都等到撤销提交、`bootstrapPersonalOrg`
+   *      才读到 revoked（`auth-guard.ts:248`）。判官 r5 在他自己的机器上读到的是另一半：收敛读
+   *      到的还是 active，端点回 200、审计照写。同一份代码两种结局，本身就说明它不是围栏。
+   *   ③ 它给不出门的统一话术：抛的不是带 `sign_in_revoked` 的 APIError（§1.3 防枚举 ＋ A14）。
+   *
+   * 所以这条用例钉的不是「少了钩子会红」，而是「少了钩子，撤销过的地址就留着一张活会话」。
    */
   it("SIGNIN-A7 —— 接线：真码门上撤销追上会话时 after 钩子收回它，且跑在收敛之前", async () => {
     const merchant = newAddress("revoke-wire");
@@ -537,33 +569,38 @@ describe("SIGNIN-A7 —— 二次确认的接线与 FOR SHARE（并发，第二�
     const code = await requestCode(merchant);
     expect(code).toMatch(/^\d{6}$/);
 
-    // 撤销开始飞：行锁到手，还没提交。
+    // 撤销开始飞：行锁到手，还没提交。放手写在 finally 里：这中间任何一条断言先红，那一行锁
+    // 也必须当场放掉（第 6 轮，判官 r5 P3 ④）。
     const hold = await holdRevokeUncommitted(merchant);
-    // 这一次登录会停在 after 的那一次 FOR SHARE 上，所以先不 await。
-    const pending = submitCode(merchant, code!).then(
-      (res) => ({ kind: "response" as const, res }),
-      (e: unknown) => ({ kind: "thrown" as const, e }),
-    );
-    await sleep(400);
-    await hold.commit();
-    const outcome = await pending;
+    try {
+      // 这一次登录会停在 after 的那一次 FOR SHARE 上，所以先不 await。
+      const pending = submitCode(merchant, code!).then(
+        (res) => ({ kind: "response" as const, res }),
+        (e: unknown) => ({ kind: "thrown" as const, e }),
+      );
+      await sleep(400);
+      await hold.commit();
+      const outcome = await pending;
 
-    // 这道确认的拒绝**不是**一份 403 响应，而是一个抛出来的 APIError —— 照实钉住，理由在库里：
-    // `session.create.after` 的钩子被 `queueAfterTransactionHook` 排到端点处理完之后才跑
-    // （`@better-auth/core/dist/context/transaction.mjs` 的 `runWithAdapter`：先 `als.run(fn)`
-    // 拿到结果，再 `for (const hook of pendingHooks) await hook()`，然后才 return），所以它抛的
-    // 错落在端点自己那层错误映射**外面**，整个 `auth.handler` 直接 reject。产品后果是这条竞态
-    // 上商家读到的是一次 500 而不是登录页那句话 —— 已登记进规格 §5 等 S5 裁；这里先钉住真的
-    // 发生了什么，绝不写一个更好看但是假的断言。
-    expect(outcome.kind).toBe("thrown");
-    const err = (outcome as { e: unknown }).e;
-    expect(err).toBeInstanceOf(APIError);
-    expect((err as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
-    // fail closed 的那一半仍然成立：刚落库的那一张被收回了（撤销自己那笔事务删不到它 —— 它当时
-    // 还不存在），所以商家手上没有会话，浏览器也拿不到 cookie（响应根本没送出去）。
-    expect(await sessionsFor(merchant)).toBe(sessionsBefore);
-    // 收敛没跑：被撤回的这一次登录在审计流里一行都不留。
-    expect(await signinRows(merchant)).toBe(auditBefore);
+      // 这道确认的拒绝**不是**一份 403 响应，而是一个抛出来的 APIError —— 照实钉住，理由在库里：
+      // `session.create.after` 的钩子被 `queueAfterTransactionHook` 排到端点处理完之后才跑
+      // （`@better-auth/core/dist/context/transaction.mjs` 的 `runWithAdapter`：先 `als.run(fn)`
+      // 拿到结果，再 `for (const hook of pendingHooks) await hook()`，然后才 return），所以它抛的
+      // 错落在端点自己那层错误映射**外面**，整个 `auth.handler` 直接 reject。产品后果是这条竞态
+      // 上商家读到的是一次 500 而不是登录页那句话 —— 已登记进规格 §5 等 S5 裁；这里先钉住真的
+      // 发生了什么，绝不写一个更好看但是假的断言。
+      expect(outcome.kind).toBe("thrown");
+      const err = (outcome as { e: unknown }).e;
+      expect(err).toBeInstanceOf(APIError);
+      expect((err as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
+      // fail closed 的那一半仍然成立：刚落库的那一张被收回了（撤销自己那笔事务删不到它 —— 它当时
+      // 还不存在），所以商家手上没有会话，浏览器也拿不到 cookie（响应根本没送出去）。
+      expect(await sessionsFor(merchant)).toBe(sessionsBefore);
+      // 收敛没跑：被撤回的这一次登录在审计流里一行都不留。
+      expect(await signinRows(merchant)).toBe(auditBefore);
+    } finally {
+      await hold.release();
+    }
   });
 
   /**
@@ -585,23 +622,69 @@ describe("SIGNIN-A7 —— 二次确认的接线与 FOR SHARE（并发，第二�
     });
 
     const hold = await holdRevokeUncommitted(merchant);
+    try {
+      let settledAt = 0;
+      const confirming = assertSessionSurvivesRevoke(session.id, session.userId)
+        .then(() => { settledAt = Date.now(); return "allowed" as const; })
+        .catch((e: unknown) => { settledAt = Date.now(); return e; });
 
-    let settledAt = 0;
-    const confirming = assertSessionSurvivesRevoke(session.id, session.userId)
-      .then(() => { settledAt = Date.now(); return "allowed" as const; })
-      .catch((e: unknown) => { settledAt = Date.now(); return e; });
+      // 锁还在别人手上：这 600ms 里二次确认不许有任何答案。
+      await sleep(600);
+      expect(settledAt).toBe(0);
+      expect(await sessionsFor(merchant)).toBe(1);
 
-    // 锁还在别人手上：这 600ms 里二次确认不许有任何答案。
-    await sleep(600);
-    expect(settledAt).toBe(0);
-    expect(await sessionsFor(merchant)).toBe(1);
+      const committedAt = Date.now();
+      await hold.commit();
+      const outcome = await confirming;
 
-    const committedAt = Date.now();
-    await hold.commit();
-    const outcome = await confirming;
+      expect(outcome).toBeInstanceOf(APIError);
+      expect(settledAt).toBeGreaterThanOrEqual(committedAt);
+      expect(await sessionsFor(merchant)).toBe(0);
+    } finally {
+      await hold.release();
+    }
+  });
 
-    expect(outcome).toBeInstanceOf(APIError);
-    expect(settledAt).toBeGreaterThanOrEqual(committedAt);
-    expect(await sessionsFor(merchant)).toBe(0);
+  /**
+   * ③ 那一次等**有上限**（第 6 轮，判官 r5 P3 ⑤）。
+   *
+   * `FOR SHARE` 会等，而上一版的等没有尽头：握着这一行写锁的人只要不放手（一个挂住的运维事务、
+   * 一笔卡住的撤销），这次登录的 after 钩子就永远回不来 —— 一个请求与一条数据库连接一起悬着。
+   * 现在那一次读跑在一笔带 `SET LOCAL lock_timeout = '3s'` 的事务里：等超过 3 秒，Postgres 抛
+   * 55P03，这道确认按「读库失败」处理 —— 收回会话、拒绝（fail closed，等不到答案 ≠ 可以放行）。
+   *
+   * 这条用例**全程不放手**：握锁的那一方直到断言做完都没有提交，所以它能有答案只可能是超时。
+   * 变异（第 6 轮真跑，输出在 PR 描述里）：把 `gate.ts` 那一句 `SET LOCAL lock_timeout` 删掉 →
+   * 红在 `expected 8020 to be less than 6000` —— 那一次读一直等到握锁的事务自己被 Prisma 的
+   * 8 秒上限中断才回来，也就是「等没有尽头」那个原样。
+   */
+  it("SIGNIN-A7 —— 那一次 FOR SHARE 等不到就超时：3 秒后 fail closed，不无限期挂着", async () => {
+    const merchant = newAddress("lock-timeout");
+    await signInThroughCodeDoor(merchant);
+    const session = await prisma.betterAuthSession.findFirstOrThrow({
+      where: { user: { email: merchant } },
+      select: { id: true, userId: true },
+    });
+
+    const hold = await holdRevokeUncommitted(merchant);
+    try {
+      const startedAt = Date.now();
+      // 握锁的那一方一直不放手；能回来只可能是 lock_timeout 到点。
+      const outcome = await assertSessionSurvivesRevoke(session.id, session.userId).then(
+        () => "allowed" as const,
+        (e: unknown) => e,
+      );
+      const waited = Date.now() - startedAt;
+
+      expect(outcome).toBeInstanceOf(APIError);
+      expect((outcome as APIError).body).toMatchObject({ code: SIGN_IN_REFUSED_REVOKED });
+      // 会话被收回：读不出名单状态时，唯一安全的假设是「他可能已经被撤销了」。
+      expect(await sessionsFor(merchant)).toBe(0);
+      // 真的等了（不是当场就答），又真的有上限（不是等到那笔 8 秒的事务被中断）。
+      expect(waited).toBeGreaterThanOrEqual(2_500);
+      expect(waited).toBeLessThan(6_000);
+    } finally {
+      await hold.release();
+    }
   });
 });

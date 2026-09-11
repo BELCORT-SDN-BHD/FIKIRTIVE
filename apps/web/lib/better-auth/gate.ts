@@ -34,6 +34,16 @@ export async function assertSignInDoorForUserId(userId: string): Promise<void> {
 }
 
 /**
+ * SIGNIN-A7 —— 下面那一次 `FOR SHARE` 最多愿意等多久（第 6 轮，判官 r5 P3 ⑤）。
+ *
+ * 3 秒是「远远够正常那条路用、又绝不会挂住一个请求」的那个刻度：它要等的写者只有两个，
+ * `revokeEmailAccess` 那一笔（一次 UPDATE ＋ 一次 deleteMany，当场提交）和
+ * `bootstrapPersonalOrg` 里 invited→active 那一次，两者都以毫秒计。等超过 3 秒意味着握锁的那
+ * 一方已经不正常了，这时候继续等下去只会把登录请求一起拖住。
+ */
+const FOR_SHARE_LOCK_TIMEOUT = "3s";
+
+/**
  * SIGNIN-A7 —— 撤销与建会话**并发**时的那一张漏网会话（第 4 轮判官，Codex）。
  *
  * 上面那道闸（`session.create.before`）只**读**，撤销（`revokeEmailAccess`）在它自己的事务里
@@ -58,12 +68,21 @@ export async function assertSignInDoorForUserId(userId: string): Promise<void> {
  * 连**删不掉**那张会话也一样：拒绝照抛，但那是这条路上最坏的结果（一张属于已撤销地址的活
  * cookie 留在库里），所以它同时发一条固定分类的告警，不再 `.catch(() => {})` 咽下去。
  *
- * 拒绝用的是 `signin-refusal.ts` 的 `SIGN_IN_REFUSED_REVOKED`，不是一句英文（第 5 轮合主干，
- * 判官 r4 P2）：这道确认挂在 `session.create.after`，Google 回调那条路会把 APIError 的
- * `body.code` 读成登录页地址栏里的 `?error=` 键（`api/routes/callback.mjs:152-155`）。一句带
- * 空格的 message 在那条路上要么变成一个谁也没映射过的键、要么根本不转向 —— 商家于是看见一份
- * 裸 JSON 而不是登录页那句话。用同一个常量，这道确认的拒绝就和门上其余三种拒绝读起来一模一样
- * （§1.3 防枚举），日志那一侧也仍然分得出是撤销生效了。
+ * 拒绝用的是 `signin-refusal.ts` 的 `SIGN_IN_REFUSED_REVOKED`，不是一句英文 —— 但**不是**因为
+ * 今天有哪条路会把它映射成登录页的 `?error=`（第 6 轮更正判官 r5 P2 ②：上一版这里写「Google
+ * 回调 `api/routes/callback.mjs:152-155` 会把 `body.code` 读成 `?error=`」，那句话是假的）。
+ * 真相是这道确认挂在 `session.create.after`，而 Better Auth 把 after 钩子交给
+ * `queueAfterTransactionHook` 排到 **router handler 之外**才跑（`@better-auth/core` 的
+ * `runWithAdapter`：先 `als.run(fn)` 拿到端点结果，再 `for (const hook of pendingHooks)
+ * await hook()`，然后才 return），所以它抛的错落在端点那层错误映射**外面**：callback.mjs 的
+ * 那段映射也好、`onAPIError.errorURL` 也好，一个都够不着它。今天这条竞态上商家读到的是一次
+ * 500，不是登录页那句话 —— 已登记进规格 §5 等 S5 裁（真库用例 `signin-pause-and-revoke.test.ts`
+ * 把这个事实照实钉住，绝不写一个更好看但是假的断言）。
+ *
+ * 那为什么仍然用这个常量：它沿用 `signin-refusal.ts` 的不变量（`message` 与 `code` 同值、里面
+ * 没有空格），于是 ① 日志与审计那一侧读到的键与门上其余三种拒绝同一套，分得出是撤销生效了；
+ * ② 将来真把这条路接上映射（§5 那条待裁的事），不用回头再改这里一次。商家看得见的那句话仍然
+ * 由登录页统一（§1.3 防枚举）。
  */
 export async function assertSessionSurvivesRevoke(sessionId: string, userId: string): Promise<void> {
   const email = await prisma.betterAuthUser
@@ -72,8 +91,17 @@ export async function assertSessionSurvivesRevoke(sessionId: string, userId: str
     .catch(() => "");
   if (email) {
     const stillAllowed = await prisma
-      .$queryRaw<{ status: string }[]>`SELECT "status" FROM "AllowedEmail" WHERE "email" = ${email} FOR SHARE`
-      .then((rows) => rows[0]?.status !== "revoked")
+      .$transaction(async (tx) => {
+        // 那一次 `FOR SHARE` 会**等**，而等待本身没有上限：只要有人握着这一行的写锁不放（一个
+        // 挂住的运维事务、一笔被卡住的撤销），这次登录的 after 钩子就永远回不来 —— 一个 Node
+        // 请求与一条数据库连接一起悬在那里。`SET LOCAL` 只作用于这一笔事务、跟着它一起结束，
+        // 所以它不会像 `SET` 那样把超时留在连接池里的连接上污染下一个查询。
+        // 超时之后 Postgres 抛 55P03（lock_not_available），走下面的 `.catch(() => false)` ——
+        // 与「读库失败」同一个下场，fail closed（等不到答案 ≠ 可以放行）。
+        await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${FOR_SHARE_LOCK_TIMEOUT}'`);
+        const rows = await tx.$queryRaw<{ status: string }[]>`SELECT "status" FROM "AllowedEmail" WHERE "email" = ${email} FOR SHARE`;
+        return rows[0]?.status !== "revoked";
+      })
       .catch(() => false);
     if (stillAllowed) return;
   }
