@@ -226,9 +226,10 @@ export function LoginForm({
       callbackURL,
       // SIGNIN-A14 —— Google 门的任何失败都必须回到**这一页**（规格 §1.4）。
       //
-      // 不传这个字段时，Better Auth 用它自己的默认错误页 `${baseURL}/error`
-      // （`oauth2/state.mjs` 的 `parseState`：`errorURL = onAPIError?.errorURL ?? ${baseURL}/error`），
-      // 商家于是落在一张不是我们的页上 —— 或者，当拒绝发生在建会话那一刻，落在一份没有
+      // 这一份进的是 state（`oauth2/state.mjs` 的 `generateState`），管的是 state 解得开时的
+      // 落点。解不开的那一族（回调被刷新／后退重放、state 过期、有人直接打回调地址）读不到它，
+      // 由 `lib/better-auth/server.ts` 的 `onAPIError: { errorURL: "/login" }` 兜住 —— 两层都在，
+      // 商家才不会落在库自带的那张错误页上，或者，当拒绝发生在建会话那一刻，落在一份没有
       // Location 的 403 JSON 上。两种都在规格 §1.4 里被逐字点名为今天的缺陷。
       //
       // 值是 `/login` 而不是带 `from` 的深链：失败之后要回的是登录页本身，商家在这一页重试

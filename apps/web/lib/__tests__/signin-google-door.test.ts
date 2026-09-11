@@ -117,6 +117,21 @@ async function googleReturns(input: GoogleReturn): Promise<Response> {
   );
 }
 
+/**
+ * 一次**裸的**回调请求：`state` 与 cookie 由调用方自己决定。
+ *
+ * `googleReturns` 每次都先 `beginGoogle` 铸一个新鲜 state，所以它量不到「state 解不开」那一类
+ * 失败（回调被刷新／后退重放、state 过期、有人直接打回调地址）。那一类恰恰是 A14 最容易破的
+ * 一半：state 读不出来的时候，`errorCallbackURL` 还躺在 state 里面，库拿不到它。
+ */
+async function callbackGoogle(query: string, cookie?: string): Promise<Response> {
+  return auth.handler(
+    new Request(`${ORIGIN}/api/better-auth/callback/google?${query}`, {
+      headers: cookie ? { cookie } : {},
+    }),
+  );
+}
+
 /** 码门那一趟，用库自己的服务端端点铸码（值是加密存的，手工塞一行验不过去）。 */
 async function signInWithCode(email: string): Promise<Response> {
   const otp = await auth.api.createVerificationOTP({ body: { email, type: "sign-in" } });
@@ -291,8 +306,13 @@ describe("Google 门 —— 未验证的邮箱一行都写不下", () => {
  * ## 核对过的错误键（better-auth 1.6.20，本仓库 node_modules 里的 dist）
  *
  * 键从三个地方来，全部经 `oauth2/errors.mjs` 的 `redirectOnError(ctx, errorURL, error)` 写成
- * `?error=<键>`，而 `errorURL` 就是我们从 `signIn.social` 传下去的 `errorCallbackURL`
- * （`oauth2/state.mjs` 的 `generateState`/`parseState`）：
+ * `?error=<键>`。`errorURL` 有两个来源，**两个都得在**，否则这条验收有一半是假的：
+ *   · state 解得开时，用 state 里那份 —— 也就是 LoginForm 传下去的 `errorCallbackURL`
+ *     （`oauth2/state.mjs` 的 `generateState`/`parseState`）；
+ *   · state 解**不**开时（下面第 ② 条里的五个 `state_*` 键），那份值就在解不开的 state 里，
+ *     库只能退回 `options.onAPIError?.errorURL || ${baseURL}/error`
+ *     （`dist/oauth2/state.mjs:33`）。所以 `lib/better-auth/server.ts` 配了
+ *     `onAPIError: { errorURL: "/login" }` 当地板，围栏是本文件最后那四条。
  *
  *   ① Google 自己带回来的 `error` 参数，**原样**当键（`api/routes/callback.mjs:56`）。商家在
  *      同意页按取消就是 `access_denied`。
@@ -376,15 +396,82 @@ describe("Google 门 —— 每一种失败都回登录页", () => {
     );
   });
 
-  it("SIGNIN-A14 —— 不传 errorCallbackURL 时拒绝会落在 better-auth 自带错误页：这就是 LoginForm 必须传它的理由", async () => {
-    // 反向围栏。它证明这条验收靠的是我们传下去的那个字段，而不是某个碰巧的默认值 ——
-    // 有人把 LoginForm 里那一行删掉，这条会红。
+  it("SIGNIN-A14 —— 不传 errorCallbackURL 也仍然回 /login：地板是 onAPIError.errorURL，不是 state 里那个字段", async () => {
+    // 这条以前反着写（「不传就落在自带错误页」），量的是缺地板时的现状。地板补上之后它必须
+    // 反过来：`errorCallbackURL` 只是 state 里的一份**副本**，真正兜底的是配置里那一行
+    // （`parseState`：`parsedData.errorURL ||= options.onAPIError?.errorURL || baseURL/error`）。
+    // LoginForm 那一行自己的围栏在 app/login/__tests__/login-google-door-errors.test.tsx 第一条。
     const stranger = newAddress("a14-no-error-url");
     process.env.SIGNUPS_PAUSED = "1";
 
-    const res = await googleReturns({ email: stranger, errorCallbackURL: undefined });
+    expectsLandsOnLogin(
+      await googleReturns({ email: stranger, errorCallbackURL: undefined }),
+      "sign_in_paused",
+    );
+  });
+
+  /**
+   * 以下四条量的是**state 解不开**那一类失败 —— A14 里最容易破的一半。
+   *
+   * 上面每一条都先 `beginGoogle` 铸一个新鲜 state，所以 `errorCallbackURL` 一直读得出来。真实
+   * 旅程里有一整族失败读不出来：商家在回调页刷新或后退（state 行已被消费）、把回调地址收藏了
+   * 下次再打、state 过了十分钟、或者有人裸打 `/api/better-auth/callback/google`。这时候
+   * `errorCallbackURL` 还躺在解不开的那个 state 里面，库只能退回配置里的那一行
+   * （`better-auth@1.6.20 dist/oauth2/state.mjs:33`）—— 没有它，商家看到的就是库自带的、
+   * 没有品牌的 `<title>Error</title>` 页面，验收 A14 那句「从不落在 better-auth 自带错误页」
+   * 在这五个键（state_not_found / state_mismatch / state_invalid / state_generation_error /
+   * internal_server_error）上全是假的。
+   */
+  it("SIGNIN-A14 —— 回调里根本没有 state（有人直接打回调地址）：回 /login，不落在自带错误页", async () => {
+    expectsLandsOnLogin(await callbackGoogle("code=whatever"), "state_not_found");
+  });
+
+  it("SIGNIN-A14 —— state 认不出来（过期／被清）：回 /login，不落在自带错误页", async () => {
+    expectsLandsOnLogin(
+      await callbackGoogle(`state=${encodeURIComponent(`no-such-state-${randomUUID()}`)}&code=whatever`),
+      "state_mismatch",
+    );
+  });
+
+  it("SIGNIN-A14 —— 回调被重放（刷新／后退，同一个 state 第二次）：回 /login，不落在自带错误页", async () => {
+    // 第一趟是**真的成功登录**（state 行在这一趟被消费掉），第二趟才是商家按刷新的那一下。
+    const replayed = newAddress("a14-replay");
+    const { state, cookie } = await beginGoogle("/login");
+    googleTokenPayload = {
+      token_type: "Bearer",
+      access_token: `gat-${randomUUID()}`,
+      expires_in: 3600,
+      scope: "openid email profile",
+      id_token: idToken({
+        iss: "https://accounts.google.com",
+        aud: process.env.GOOGLE_CLIENT_ID,
+        sub: `google-sub-${randomUUID()}`,
+        email: replayed,
+        email_verified: true,
+        name: "Replay Shop",
+        picture: "https://lh3.googleusercontent.com/test",
+      }),
+    };
+    const query = `state=${encodeURIComponent(state)}&code=auth-code-${randomUUID()}`;
+
+    const first = await callbackGoogle(query, cookie);
+    expect(first.status).toBe(302);
+    expect(first.headers.get("location")).toBe("/");
+
+    expectsLandsOnLogin(await callbackGoogle(query, cookie), "state_mismatch");
+  });
+
+  it("SIGNIN-A14 —— 库自带的错误页本身也被弹回 /login：它不再是任何一条路的落点", async () => {
+    // 最后一道。上面三条走的是转向**之前**那一步；这条量的是自带错误页那个端点本身 ——
+    // 将来任何一条我们没数到的路转到它，商家也不会停在 `<title>Error</title>` 上
+    // （`dist/api/routes/error.mjs:371-375`：配了 errorURL 就 302 过去）。
+    const res = await auth.handler(
+      new Request(`${ORIGIN}/api/better-auth/error?error=state_mismatch`),
+    );
 
     expect(res.status).toBe(302);
-    expect(res.headers.get("location") ?? "").toContain("/api/better-auth/error");
+    const location = res.headers.get("location") ?? "";
+    expect(location.startsWith("/login?")).toBe(true);
+    expect(new URL(location, ORIGIN).searchParams.get("error")).toBe("state_mismatch");
   });
 });

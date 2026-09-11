@@ -242,6 +242,28 @@ export const auth = betterAuth({
         },
       }
     : {},
+  // SIGNIN-A14 —— 「Google 门的任何失败都回到 /login 页内提示，从不落在 better-auth 自带错误页」
+  // 的**地板**（规格 docs/specs/sign-in.md §1.4）。
+  //
+  // LoginForm 每次按下 Continue with Google 都会传 `errorCallbackURL: "/login"`，但那个值只存进
+  // state 里（`dist/oauth2/state.mjs:14` 的 `errorURL: c.body?.errorCallbackURL`）。有一整族失败
+  // 发生在 state 解开**之前**，那时候库拿不到它：
+  //   · 商家在回调页刷新或后退 —— state 行在第一趟已被消费（`dist/state.mjs:124`
+  //     `deleteVerificationByIdentifier`），第二趟 `state_mismatch`；
+  //   · state 过了十分钟（`dist/state.mjs:126`）；
+  //   · 有人直接打 `/api/better-auth/callback/google`，压根没有 state（`state_not_found`）。
+  // 这些路上 `parseState` 用的 errorURL 是 `options.onAPIError?.errorURL || ${baseURL}/error`
+  // （`dist/oauth2/state.mjs:33`）—— 没有这一行，它就是库自带的那张无品牌 `<title>Error</title>`
+  // 页面，A14 在 state_not_found / state_mismatch / state_invalid / state_generation_error /
+  // internal_server_error 五个键上全是假的。实测围栏：`lib/__tests__/signin-google-door.test.ts`
+  // 的「state 解不开」四条。
+  //
+  // 同一行还把自带错误页那个端点本身变成一次 302 回 /login（`dist/api/routes/error.mjs:371-375`），
+  // 所以将来任何一条我们没数到的路转到它，落点也仍然是登录页。
+  //
+  // 只给 `errorURL`：`onAPIError` 另外两个字段（`throw`、`onError`）会改变 API 错误的抛法，
+  // 这里不碰。
+  onAPIError: { errorURL: "/login" },
   // #543 — basic abuse control on the newly public endpoints, using Better Auth's own
   // per-IP limiter (no bespoke machinery). The outbound-email limiter in sender.ts
   // (5 per address per hour) still caps mail volume per victim address on top of this.
