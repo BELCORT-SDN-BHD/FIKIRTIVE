@@ -119,3 +119,31 @@
 3. **刷新后 `Conversation` 计数变化**：直播态 34 → 刷新后 29（口径不同，内容无损）。
 4. **Brand 页没有「删除产品」**：只有 `Archive`；真正的删除入口在 Library（`Remove from Library`），且删除后**没有任何恢复入口**（无 Undo、无回收站）。PRODID-A6 的两个「恢复」格因此本轮无从执行。
 5. **Railway 崩溃告警**：Gmail 收到 `Deployment crashed for worker/web in FIKIRTIVE!`（UTC 11:40 / 11:45，紧接本次部署 11:39:15Z），当前两服务均 SUCCESS、健康检查绿。建议后端在日志里核一眼那两分钟是否有请求失败。
+
+---
+
+> **以下两条由 W3 于合成阶段收录**（W2 在 `backend-evidence.md` 里查出、未擅自编号，留给编排者裁）。六格素材全部出自 `backend-evidence.md`，**无新增现场事实**。收录理由与可推翻的口径见 `report-round2.md` §5「W3 的两处处置说明」。
+
+## FSE-209 · 登录审计的租户归属全库写死 `founder`，别的租户查不到自己的登录记录 — P2
+
+| 格 | 内容 |
+|---|---|
+| **复现** | ① 任一非 founder 租户的账号登录一次；② 按该租户的 `ownerId` 查 `ActionEvent` 里 `type='auth.signin'` 的行。 |
+| **预期** | `sign-in.md` SIGNIN-A10 逐字：「登录审计各恰好一行」。审计行要挂在**发生这次登录的那个租户**名下，否则「各恰好一行」在租户维度上无从查起，商家也看不到自己的登录历史。 |
+| **实际** | 行数是对的（取证窗口内 8 行，每次登录一行）；但 `ActionEvent.auth.signin` 的 `ownerId` **全库 26 行全部写死 `founder`**（26/26），包括本轮两个新租户的登录。**没有泄漏** —— payload 里只有邮箱，不含会话、令牌或任何跨租户内容。 |
+| **证据** | `backend-evidence.md` §2.8：窗口内逐行 ＋ 全表 `auth.signin` 的 `ownerId` 分布（26/26 `founder`）。走查窗口 UTC 2026-09-11T12:00–13:20，部署 `2a96750e`。 |
+| **根因** | **已确认（数据层）**：写审计行时 `ownerId` 没有取当次登录的租户，而是落到了常量／默认值 `founder`。**假说（代码层）**：审计写入点在登录回调里拿不到刚建好的 org id，于是退回默认值 —— 未核实具体写入点，须在 `auth.signin` 的 ActionEvent 写入处确认。 |
+| **建议与复测口径** | 审计行改挂当次登录的租户。复测＝两个不同租户各登录一次，各自按自己的 `ownerId` 查得到且**只查得到自己**那一行。登记去向：`docs/specs/sign-in.md` §5。 |
+
+---
+
+## FSE-210 · `@` 选入的**产品**没有进入生成谱系（PRODID-A2 后半不成立） — P2
+
+| 格 | 内容 |
+|---|---|
+| **复现** | ① 在画布输入 `@` 加产品名，从菜单选入那件产品（来源标签 `Product`）；② 让它进入一次生成；③ 查确认卡 payload 与 `GenJob` 的 `entityIds`／`approvedEntities`。 |
+| **预期** | `brand-product-identity.md` PRODID-A2 逐字：「选入确认卡后，生成结果谱系的 `approvedEntities` 指向同一个 Entity id」。 |
+| **实际** | 前半句成立（菜单出现、来源标签 `Product`、可选入并进入生成）；**后半句不成立**：那一轮 USER 消息的 `payload.entityIds` **有**产品 Entity id，但确认卡 `entityIds=[]`、`GenJob.entityIds={}`、`approvedEntities=NULL` ⇒ **产品只以提示词文字上路，没有进入生成谱系**。对照组：同一张画布上 `@Xinyi`（官方演员）那一轮，三格齐全。另：该消息 `referenceRefs` 为空 —— 首页 composer 走 `canvas.create-handoff` 那条路会丢 typed ref。 |
+| **证据** | `backend-evidence.md` §4.5（USER 消息 payload、GEN_CARD payload、`GenJob` 三处逐格对照；对照组见 §3.1）。走查窗口 UTC 2026-09-11T12:33–12:40，部署 `2a96750e`。 |
+| **根因** | **已确认（数据层）**：产品 Entity id 在「消息 → 确认卡」这一步就掉了，不是生成时才丢。**假说（代码层）**：确认卡铸造时只搬运演员类 typed ref，产品类没有对应搬运分支；`canvas.create-handoff` 那条路另有一次 `referenceRefs` 丢失 —— 两处都未核实具体代码位置。 |
+| **建议与复测口径** | 产品与演员走同一条 typed ref 搬运路；`canvas.create-handoff` 保住 `referenceRefs`。复测＝`@` 一件产品出一次片，`GenJob.entityIds` 与 `approvedEntities` 必须指到同一个 Entity id（与 PRODID-A2 逐字一致）；首页 composer 与画布内两条提交路各验一次。登记去向：`docs/specs/brand-product-identity.md` §5（接 `PRODID-R10` 往下排）。**注**：本条直接抵触 Founder「有迹可循」原则，严重度请 Founder 过目。 |
