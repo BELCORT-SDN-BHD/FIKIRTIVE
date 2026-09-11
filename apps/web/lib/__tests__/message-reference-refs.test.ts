@@ -36,6 +36,7 @@ let aAvatarId = "";
 let aLocationId = "";
 let aBrandmarkId = "";
 let aUploadAssetId = "";
+let aUploadGenerationId = "";
 let aGenerationId = "";
 let aDeletedProductId = "";
 let bProductId = "";
@@ -71,12 +72,12 @@ beforeAll(async () => {
     },
   });
   aUploadAssetId = uploadAsset.id;
-  await prisma.generation.create({
+  aUploadGenerationId = (await prisma.generation.create({
     data: {
       id: `gen_${randomUUID()}`, ownerId: orgA, projectId: projectAId, assetId: uploadAsset.id,
       source: "UPLOAD", promptText: "", entitySnapshot: {},
     },
-  });
+  })).id;
 
   const genAsset = await prisma.asset.create({
     data: {
@@ -204,6 +205,42 @@ describe("FRONT-A10 — 消息保存类型化引用 ID(落库前按 owner 校验
     const resolved = await resolveOwnedReferenceRefs(orgA, [ref, ref]);
     expect(resolved.unresolved).toBe(0);
     expect(resolved.wire).toEqual([ref]);
+  });
+});
+
+/**
+ * creation §5 :178(判官 r1 P1-① / r5 P1)—— 解析器要认得**自己的产物**,这一趟由真库作证。
+ *
+ * 上传件的规范身份是 Asset,可真正上路的是摄取它的那一行 Generation —— 解析器自己把 `upload:`
+ * 翻成那个 id。分镜卡把这一镜挂着的图存的就是那个 id,商家加一张 / 取一张时卡面发回整份新清
+ * 单,已挂的那几张只能以 `generation:<id>` 的形状回来。所以这两步必须闭环:同一个 id,出去
+ * 是 `upload:` 解出来的,回来以 `generation:` 读得出来。
+ *
+ * 真库、真 Prisma:这条不依赖任何替身对 where 的建模 —— where 上一旦重新写死「source 不是
+ * UPLOAD」,Postgres 自己就不回这一行,这条立刻红。
+ */
+describe("creation §5 :178 — 解析器认得自己的产物(真库)", () => {
+  it("creation §5 :178 an upload resolves to a Generation id that comes back as generation: on the next edit", async () => {
+    const fromUpload = await resolveOwnedReferenceRefs(orgA, [
+      formatReferenceRef({ type: "upload", id: aUploadAssetId }),
+    ]);
+    // 解析器自己吐出来的那个 id 就是上传件落下的那一行 —— 分镜卡存的正是它。
+    expect(fromUpload.media).toEqual([{ generationId: aUploadGenerationId, kind: "image" }]);
+
+    const resubmitted = await resolveOwnedReferenceRefs(orgA, [
+      formatReferenceRef({ type: "generation", id: aUploadGenerationId }),
+    ]);
+    expect(resubmitted.unresolved).toBe(0);
+    expect(resubmitted.media).toEqual([{ generationId: aUploadGenerationId, kind: "image" }]);
+    expect(resubmitted.links.map((link) => link.name)).toEqual(["cendol-shelf.png"]);
+  });
+
+  it("creation §5 :178 another shop never reads that row by its generation id", async () => {
+    const foreign = await resolveOwnedReferenceRefs(orgB, [
+      formatReferenceRef({ type: "generation", id: aUploadGenerationId }),
+    ]);
+    expect(foreign.media).toEqual([]);
+    expect(foreign.unresolved).toBe(1);
   });
 });
 
