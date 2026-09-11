@@ -813,3 +813,43 @@ export async function countCanvasNodes(ws: Workspace): Promise<number> {
     where: { ownerId: ws.orgId, projectId: ws.projectId, status: { not: "deleted" } },
   });
 }
+
+/**
+ * **产品自己**刚刚开出来的那个工作区，包装成上面那些夹具认得的 `Workspace`（SIGNIN-A12）。
+ *
+ * 与 `seedWorkspace` 恰好相反，而这个相反正是它存在的理由：A12 的商家不是种出来的，他是一个
+ * 谁都没听说过的地址走完码门之后，由 `bootstrapPersonalOrg` 现场开出来的。工作区、Membership、
+ * 赠金、`AllowedEmail` 那一行，全是产品写的 —— 这里一行都不补，只是把它们**读**出来。
+ *
+ * 唯一新建的是一个项目：`bootstrapPersonalOrg` 不建项目（它只建组织、成员、赠金、演员库），
+ * 而 `Generation` 行要挂在一个项目上。这是夹具在补商家自己第一次点「新项目」会做的事，
+ * 不是在替产品补它该做而没做的事。
+ *
+ * 抛而不是返回 null：调用它的旅程都已经断言过「首登建出了账号」，读不到就是上一步的断言在骗人。
+ */
+export async function adoptProductWorkspace(email: string): Promise<Workspace> {
+  const normalized = email.trim().toLowerCase();
+  const user = await prisma.user.findUnique({ where: { email: normalized } });
+  if (!user) throw new Error(`e2e: 产品没有为 ${normalized} 建出 User 行 —— 首登那一步没有真的开号`);
+  const baUser = await prisma.betterAuthUser.findUnique({ where: { email: normalized } });
+  if (!baUser) throw new Error(`e2e: 产品没有为 ${normalized} 建出 BetterAuthUser 行`);
+  const orgId = `org_${user.id}`; // 确定性 org id —— `apps/web/lib/auth-guard.ts` 的同一条规则
+  const org = await prisma.organization.findUnique({ where: { id: orgId } });
+  if (!org) throw new Error(`e2e: 产品没有为 ${normalized} 开出工作区 ${orgId}`);
+  const projectId = id("proj_adopted");
+  await runAsTenant(orgId, () =>
+    prisma.project.create({ data: { id: projectId, ownerId: orgId, name: "Ramadan promo" } }),
+  );
+  let tick = 0;
+  return {
+    slug: normalized,
+    orgId,
+    userId: user.id,
+    baUserId: baUser.id,
+    email: normalized,
+    personName: user.name ?? "",
+    workspaceName: org.name,
+    projectId,
+    next: () => at(++tick),
+  };
+}

@@ -117,6 +117,21 @@ export type EnvVarSpec = {
   /** productionValues 的人话理由,进报错信息。 */
   productionReason?: string;
   /**
+   * `productionValues` 的**豁免**:这个谓词为真时,这一条围栏在生产侧不判。
+   *
+   * 存在的理由只有一个,而且很窄:`next start` 自己把 NODE_ENV 设成 production,所以 E2E 跑道
+   * 上那个进程在开机检查眼里与一个真部署长得一模一样(`apps/web/lib/env-boot.ts` 的
+   * `isServingProduction` 只看得到 NODE_ENV 与 NEXT_PHASE)。跑道需要 E2E_GOOGLE_DOOR_STUB=1
+   * 才跑得起 SIGNIN-A12,而这条围栏又必须**不可降级**——两件事只有靠一个「这个进程确实不是
+   * 生产」的**结构性**事实才能同时成立,而不是靠再开一个可以被误设的开关。
+   *
+   * 今天唯一的谓词是 `pointsAtThrowawayTestDatabase`:这个进程配上的**每一个**数据库地址的
+   * 库名都以 `_test` 结尾。一个指着用完就扔的 `_test` 库的进程按定义就不服务任何商家(e2e 套件
+   * 开跑前 TRUNCATE 每一张表,`quality.sh` 与 `e2e/support/env.ts` 用的是同一个形状),所以
+   * 豁免它不放宽任何真部署。
+   */
+  productionExemptWhen?: (env: EnvRecord) => boolean;
+  /**
    * `format: "number"` 专用的**下限**(闭区间):小于这个数一律判错,dev 与生产一视同仁。
    *
    * 存在的理由与 productionValues 同源,只是换了一种「格式合法但配置是错的」:数字型开关的
@@ -145,6 +160,20 @@ export type EnvVarSpec = {
    * (费率覆盖)。「配错会让某个功能失灵」不算 —— 那是可用性,归常规 warn。
    */
   moneyInvariant?: true;
+  /**
+   * **围栏不可降级**:这个变量的生产围栏对 `FIKIRTIVE_ENV_CONTRACT=warn` 免疫 —— 带着它的
+   * 问题的生产进程照旧拒绝启动,降级逃生门救不了它(见 `bootEnvDecision`)。
+   *
+   * 与 `moneyInvariant` 的关系:钱路不变量是这件事的**一个特例**(那一族有自己的出处
+   * MONEY-A2 与自己的判词),这里是它的一般形式。分成两个标记而不是合成一个,是因为报给
+   * 运维的那句话不一样:钱路要说「一个为可用性开的开关不该顺手把定价闸关掉」,安全围栏要说
+   * 「这条路在生产上根本不该存在」。
+   *
+   * 名单同样要短:只有**开着就等于把一道身份或权限的门拆掉**的变量配得上它 —— 今天只有
+   * `E2E_GOOGLE_DOOR_STUB`(武装之后产品会接受一个不是 Google 签的身份断言)。「配错会让
+   * 某个功能失灵」照旧不算,那是可用性,归常规 warn:逃生门必须还救得了半夜那一类事故。
+   */
+  warnImmune?: true;
   /** 一行说明,渲染进 .env.example 的生成片段。 */
   summary: string;
 };
@@ -165,6 +194,49 @@ const providerIs = (want: string) => (env: EnvRecord) => (env.GENERATION_PROVIDE
 
 /** 对象存储切到 R2:四件套必须齐,少一件 createStorage 直接抛。 */
 const storageIsR2 = (env: EnvRecord) => (env.STORAGE_DRIVER ?? "") === "r2";
+
+/**
+ * 一个进程**可能**连上的每一个数据库地址的变量名。
+ *
+ * 两个都要看,理由不是谨慎,是这两个变量的优先级在本仓库**正好相反**:web 侧
+ * (`packages/db/src/client.ts:35`、`apps/web/lib/queue.ts:25`)是
+ * `DATABASE_URL_POOLED || DATABASE_URL`,worker 与备份(`apps/worker/src/index.ts:84`、
+ * `apps/worker/src/db-backup.ts:334`)是 `DATABASE_URL || DATABASE_URL_POOLED`。哪一个先
+ * 生效取决于这是哪个进程,而一条围栏不该知道自己长在哪个进程上。
+ */
+const DATABASE_URL_NAMES = ["DATABASE_URL", "DATABASE_URL_POOLED"] as const;
+
+/** 单个连接串的库名形状。解析失败一律 false —— 认不出就当它是生产,fail closed。 */
+function isThrowawayTestDatabaseUrl(url: string): boolean {
+  try {
+    return /^[a-z0-9_]+_test$/.test(new URL(url.trim()).pathname.replace(/^\//, ""));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 这个进程指着一个**用完就扔的测试库**吗(库名 `^[a-z0-9_]+_test$`)。
+ *
+ * 「不是生产」这件事在本仓库唯一**结构性**的证据就是它:`e2e/support/env.ts` 靠同一个形状
+ * 决定敢不敢 TRUNCATE 每一张表,`scripts/ci/quality.sh` 靠它决定敢不敢建库删库。一个指着
+ * `_test` 库的进程按定义不服务任何商家的数据。
+ *
+ * 判据是「**配上的每一个**地址都指着 `_test` 库」,不是「DATABASE_URL 指着 `_test` 库」
+ * (判官 #1349 P1)。只看 DATABASE_URL 会漏掉正式的池化地址:一个
+ * `DATABASE_URL=…/throwaway_test` 配 `DATABASE_URL_POOLED=…/merchant_live` 的 web 进程,
+ * 实际连的是后者,却会被判成测试库,于是围栏在一个服务真商家的进程上自己让开。
+ * 「每一个都是」是唯一与上面那两种相反优先级都无关、又 fail closed 的读法:多配一个指着
+ * 真库的地址只会让豁免消失,不会让它凭空出现。一个都没配同样 false。
+ *
+ * 写在 core 而不是各处再抄一遍:它现在是一条**围栏的判据**(`productionExemptWhen`,以及
+ * `e2e-google-door-stub.ts` 里武装替身的前提),抄两遍就是两份会各自漂移的真相。
+ */
+export function pointsAtThrowawayTestDatabase(env: EnvRecord): boolean {
+  const urls = DATABASE_URL_NAMES.map((name) => env[name]).filter(isSet);
+  if (urls.length === 0) return false;
+  return urls.every(isThrowawayTestDatabaseUrl);
+}
 
 /**
  * ENV_CONTRACT — 权威清单。新增任何 env 读取,必须同时在这里登记,否则测试红。
@@ -276,6 +348,42 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     secret: true,
     shared: false,
     summary: "Google OAuth app secret.",
+  },
+  {
+    // SIGNIN-A12 —— E2E 跑道上那条 Google 门替身的武装开关(docs/specs/sign-in.md 已冻结 · v1)。
+    //
+    // 跑道上没有 Google 也永远不该有,而 A12 的旅程必须真的走一次 Google 门。替身换掉的只有
+    // Google 那个签名(`packages/core/src/e2e-google-door-stub.ts` 逐条写了边界):
+    // 逐字 "1" 才武装,且替身 token 还必须带一个 BETTER_AUTH_SECRET 算出来的 HMAC。
+    //
+    // 围栏是什么,说准:武装之后,那把 BETTER_AUTH_SECRET **单独一把**就能换到一个会话
+    // (它本来也是签会话 cookie 的那一把,但那条路要求先有会话;这条路不要求)。所以围栏
+    // 只有两条 —— **生产上不许武装**,以及密钥保密。前者落在下面这三格。
+    //
+    // productionValues 是空数组:**任何**值在生产上都不对。warnImmune 让这条围栏**不可降级**
+    // —— 与 AUTH_EMAIL_TRANSPORT=stub 分道扬镳的正是这一格:那一条是「这个部署寄不出信」,
+    // 可用性问题,逃生门够得着;这一条是「这个部署会接受一个不是 Google 签的身份断言」,
+    // 一个为了让服务起来而打开的开关不该顺手把身份门拆掉(判官 #1349 P2-①)。
+    //
+    // productionExemptWhen 是它唯一的豁免,也是它能被写成「不可降级」的前提:`next start`
+    // 自己把 NODE_ENV 设成 production,跑道上那个进程在开机检查眼里与真部署一模一样,所以
+    // 「跑道跑得起来」与「生产不可降级」只能靠一个结构性事实分开 —— 指着 `_test` 库的进程
+    // 不服务任何商家。豁免的是那一类进程,不是那一个开关。
+    name: "E2E_GOOGLE_DOOR_STUB",
+    surface: "web",
+    readBy: "code",
+    requirement: "optional",
+    format: "enum",
+    values: ["1"],
+    productionValues: [],
+    productionReason:
+      "it arms an E2E-only stand-in for Google's own id-token signature check — a production deployment has the real Google to check against and must never accept a locally minted identity assertion (only a process pointed at a throwaway _test database may arm it, and FIKIRTIVE_ENV_CONTRACT=warn does not downgrade this)",
+    productionExemptWhen: pointsAtThrowawayTestDatabase,
+    warnImmune: true,
+    secret: false,
+    shared: false,
+    summary:
+      "E2E only. Set to 1 to arm the Google-door stand-in the resident journey suite signs in through; unset everywhere else. Only a process pointed at a throwaway _test database may arm it: any other production process refuses to start, and FIKIRTIVE_ENV_CONTRACT=warn does NOT downgrade that refusal.",
   },
   {
     name: "AUTH_ALLOWED_EMAILS",
@@ -1358,7 +1466,12 @@ export function checkEnv(env: EnvRecord, opts: CheckEnvOptions): EnvProblem[] {
 
     // 值合法,但这个档位只在开发机上成立。报的是变量名与允许档位——档位名不是秘密,
     // 而且不说清楚该改成什么,这条错误就没法照着修。
-    if (opts.production && spec.productionValues && !spec.productionValues.includes(raw)) {
+    if (
+      opts.production &&
+      spec.productionValues &&
+      !spec.productionValues.includes(raw) &&
+      !(spec.productionExemptWhen?.(env) ?? false)
+    ) {
       problems.push({
         name: spec.name,
         kind: "not-production-safe",
@@ -1429,6 +1542,9 @@ export type BootEnvDecision =
  *     生产照旧 exit。逃生门是给可用性开的(半夜缺一条监控 DSN 不该钉死发布线),
  *     不是给定价开的:一个为了让服务起来而打开的开关,不该顺手把毛利闸一起关掉。
  *     非生产仍然只 warn(dev 不砖 —— 开发机上配错费率不花任何人的钱)。
+ *   - **同一个例外的一般形式(`warnImmune`,SIGNIN-A12)**:打了这个标记的生产围栏同样
+ *     降不了。今天只有 E2E_GOOGLE_DOOR_STUB —— 武装它的生产进程会接受一个不是 Google 签的
+ *     身份断言,那不是可用性问题,是身份门被拆掉。判词与钱路那条分开写:两者要说的话不一样。
  */
 export function bootEnvDecision(env: EnvRecord, opts: CheckEnvOptions): BootEnvDecision {
   const problems = checkEnv(env, opts);
@@ -1436,15 +1552,24 @@ export function bootEnvDecision(env: EnvRecord, opts: CheckEnvOptions): BootEnvD
   const moneyProblems = problems.filter(
     (p) => p.moneyInvariant === true || ENV_CONTRACT_BY_NAME.get(p.name)?.moneyInvariant === true,
   );
+  const fenceProblems = problems.filter(
+    (p) => !moneyProblems.includes(p) && ENV_CONTRACT_BY_NAME.get(p.name)?.warnImmune === true,
+  );
   const report =
     formatEnvProblems(problems, opts.surface) +
     (moneyProblems.length && opts.production
       ? `\n  ⚠️ 钱路不变量对 FIKIRTIVE_ENV_CONTRACT=warn 免疫(MONEY-A2):` +
         `${moneyProblems.map((p) => p.name).join(", ")} 必须先修好,降级逃生门救不了它。`
+      : "") +
+    (fenceProblems.length && opts.production
+      ? `\n  ⚠️ 这几条生产围栏对 FIKIRTIVE_ENV_CONTRACT=warn 免疫:` +
+        `${fenceProblems.map((p) => p.name).join(", ")} 必须先修好,降级逃生门救不了它。`
       : "");
   const mode = (env.FIKIRTIVE_ENV_CONTRACT ?? "").trim().toLowerCase();
   if (!opts.production) return { action: "warn", report, problems };
-  if (mode === "warn" && moneyProblems.length === 0) return { action: "warn", report, problems };
+  if (mode === "warn" && moneyProblems.length === 0 && fenceProblems.length === 0) {
+    return { action: "warn", report, problems };
+  }
   return { action: "exit", report, problems };
 }
 
