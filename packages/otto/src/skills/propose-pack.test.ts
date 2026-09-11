@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { executeProposePack } from "./propose-pack.js";
 import { proposePackSkill, proposePackInput } from "./propose-pack.js";
 import type { OttoContext } from "../context.js";
+import { minimumUsableReferenceSide, tooSmallReferenceSentence } from "@fikirtive/core";
 
 // ---------------------------------------------------------------------------
 // Mock @fikirtive/db — proposePack must never touch genJob (no spend).
@@ -17,6 +18,10 @@ vi.mock("@fikirtive/db", () => ({
     },
     genJob: {
       create: vi.fn(),
+    },
+    // FSE-001 —— 付费前的尺寸闸也在这一面查商品图宽高(第 3 轮判官打回后接上)。
+    generation: {
+      findMany: vi.fn(),
     },
   },
 }));
@@ -350,5 +355,132 @@ describe("executeProposePack — goal persisted onto every card payload", () => 
     const data = (calls[0]![0] as { data: Record<string, unknown> }).data;
     const payload = data["payload"] as Record<string, unknown>;
     expect(payload).not.toHaveProperty("goal");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FSE-001 —— 整包这一面的付费前尺寸闸(第 3 轮判官打回)
+//
+// 判官实证:`executeProposePack` 用的是同一个 `buildProposeCard`、同一份 ctx(因此同样带
+// `referenceGenerationIds`),却整条绕过尺寸闸 —— 既不拒绝、也不说「已放大」。商家从整包
+// 这一面点下去,照旧是预扣 → 供应商 300px 闸弹回 → 退款,正是 :176⑥ 要消灭的那一次。
+// 闸只有一份口径(`applyReferenceUpscaleGate`),两个入口读的是同一个函数。
+// ---------------------------------------------------------------------------
+describe("executeProposePack —— 付费前的参考图尺寸闸", () => {
+  let mockPrisma: {
+    entity: { findMany: ReturnType<typeof vi.fn> };
+    chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    genJob: { create: ReturnType<typeof vi.fn> };
+    generation: { findMany: ReturnType<typeof vi.fn> };
+  };
+
+  const AISYAH = { id: "entity-aisyah", type: "CHARACTER" as const, name: "Aisyah" };
+  const MUG_RECEIPT = {
+    generationId: "gen_mug",
+    kind: "image" as const,
+    label: "A coral travel mug",
+    sourceProjectId: "proj-library",
+    sourceProjectName: "Product shots",
+    sameCanvas: false,
+    previewUrl: "/files/mug.png",
+  };
+
+  const runContext = () => ({
+    context: makeCtx({
+      sourceGenerationId: MUG_RECEIPT.generationId,
+      sourceGenerationIds: [MUG_RECEIPT.generationId],
+      mediaReferences: [MUG_RECEIPT],
+    }),
+  });
+
+  const videoItem = (prompt: string) => ({
+    kind: "video" as const,
+    structuredPrompt: prompt,
+    entityIds: [AISYAH.id],
+    variantSel: {} as Record<string, string>,
+  });
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const db = await import("@fikirtive/db");
+    mockPrisma = db.prisma as unknown as typeof mockPrisma;
+    mockPrisma.entity.findMany.mockResolvedValue([AISYAH]);
+    mockPrisma.chatMessage.findFirst.mockResolvedValue({ seq: 5 });
+    mockPrisma.chatMessage.create.mockResolvedValue({});
+  });
+
+  it("creation §5 :176⑥: 整包这一面同样在付费前拒绝 —— 短边 99 ⇒ 零 GEN_CARD,句子说出他这张图现在多大", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 99, height: 500 } }]);
+
+    const out = await executeProposePack(
+      { packTitle: "Summer Campaign", items: [videoItem("She lifts the coral mug to camera")] },
+      runContext(),
+    );
+
+    expect(out).toEqual({
+      error: tooSmallReferenceSentence({ width: 99, height: 500, minSide: minimumUsableReferenceSide(true) }),
+    });
+    expect(out).toEqual({ error: expect.stringContaining("99×500") });
+    expect(out).toEqual({ error: expect.stringContaining("at least 100 pixels") });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+    expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :176⑥ / CREATE-A10: 整包这一面,带演员血统的小图门槛也说 300 不说 100", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([
+      {
+        asset: { width: 299, height: 400 },
+        entitySnapshot: { entities: [{ id: AISYAH.id, type: "CHARACTER", name: AISYAH.name }] },
+      },
+    ]);
+
+    const out = await executeProposePack(
+      { packTitle: "Summer Campaign", items: [videoItem("She lifts the coral mug to camera")] },
+      runContext(),
+    );
+
+    expect(out).toEqual({
+      error: tooSmallReferenceSentence({ width: 299, height: 400, minSide: minimumUsableReferenceSide(false) }),
+    });
+    expect(out).toEqual({ error: expect.stringContaining("at least 300 pixels") });
+    expect(out).not.toEqual({ error: expect.stringContaining("at least 100") });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  // 整包的既有硬性质:一张撑不起,整包一张都不落库(半截包里每一张都是点得下去的付费卡)。
+  it("creation §5 :176⑥: 包里第二条撑不起 ⇒ 整包零 GEN_CARD(第一条也不落库)", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 80, height: 500 } }]);
+
+    const out = await executeProposePack(
+      {
+        packTitle: "Summer Campaign",
+        items: [
+          { kind: "image", structuredPrompt: "Product shot on white", entityIds: [], variantSel: {} },
+          videoItem("She lifts the coral mug to camera"),
+        ],
+      },
+      runContext(),
+    );
+
+    expect(out).toHaveProperty("error");
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("creation §5 :176④: 整包这一面也把「已放大」说在卡上(400×200 ⇒ 照铸 + 自己那一格)", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 400, height: 200 } }]);
+
+    const out = await executeProposePack(
+      { packTitle: "Summer Campaign", items: [videoItem("She lifts the coral mug to camera")] },
+      runContext(),
+    );
+
+    expect(minted(out).cardIds).toHaveLength(1);
+    const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    }).data.payload;
+    expect(payload["referenceUpscaleNote"]).toContain("product reference photo");
+    expect(payload["referenceUpscaleNote"]).toContain("your original stays untouched");
+    // 整包那一格照旧在(闸不吃掉 packId)。
+    expect(payload["packId"]).toEqual(expect.any(String));
   });
 });

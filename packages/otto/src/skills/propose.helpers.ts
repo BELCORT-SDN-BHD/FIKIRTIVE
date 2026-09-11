@@ -185,6 +185,20 @@ export type CardPayload = {
   /** 仅当 `downgraded` 为 true 时存在：卡面必须显式展示的一行人话披露
    *  （"You asked for X — this will be Y."）。降级不得静默。 */
   downgradeNote?: string;
+  /**
+   * FSE-001 —— 「我们替你放大了几张商品参考照」那一句,**自己一格**(规格 §5 :176④)。
+   *
+   * 从前它并进 `downgradeNote` 并顺手把卡标成 `downgraded`。代价是两件不同的事共用一格:
+   * 名额截图(「你挂了 9 张,只有 3 张上车」)与自动放大(「你的图小了,我们放大了」)在卡上
+   * 长成同一行同一个视觉,而且一格只放得下一件事的语气 —— 两者同时发生时,商家读到的是
+   * 一段把两件事黏在一起的话,分不清哪一句说的是哪一件。
+   *
+   * 分开之后:名额截图仍旧走 `downgraded` + `downgradeNote`(它确实是「实际会做的与你要的
+   * 不一致」),放大走这一格。放大**不再**把卡标成降级 —— 商家要的东西一格没少,只是我们
+   * 替他补了像素;把它算成降级会让「降级」这个词在卡面上贬值。两格可以同时出现,卡面各说
+   * 各的一行(`apps/web/components/otto/OttoPlanCard.tsx`)。
+   */
+  referenceUpscaleNote?: string;
   structuredPrompt: string;
   entityIds: string[];
   /**
@@ -760,10 +774,9 @@ export function buildReferenceBudgetNotes(input: {
  * 而真送进引擎的是一张按整数倍重采样过的副本。不说,就是替他做了一个他不知道的决定;
  * 说出来,他至少知道成片里的细节可能不如原件锐利,并且可以选择换一张大图再来。
  *
- * 走的是与参考照名额同一条披露路(`withReferenceBudget` 把话并进 `downgradeNote`),所以
- * 卡面只有一处会说这类话。代价说清楚:这会把卡标成 `downgraded` —— 那一格的语义本来就是
- * 「实际会做的事与你给的东西不完全一致」,放大正是这样一件事,所以借它不算撒谎;但它确实
- * 与「引擎名额截了你的图」共用一个视觉,两者在卡上只能靠句子本身区分。
+ * 规格 §5 :176④ 落地:这一句**不再**借 `downgradeNote` 那一格,而是走卡面自己的
+ * `referenceUpscaleNote`(`withReferenceUpscaleNote`)。名额截图与自动放大是两件不同的事,
+ * 从此在卡上是两行、可以同时出现,商家不必从一段黏在一起的话里分辨哪半句说的是哪一件。
  *
  * 原件一个字节都不动:放大产物只进那一次供应商请求,不落库、不写存储、不替换 asset
  * (`apps/worker/src/jobs/gen.ts` 的商品参考图循环)。
@@ -812,6 +825,20 @@ export function withReferenceBudget(payload: CardPayload, notes: string[]): Card
   if (notes.length === 0) return payload;
   const merged = [payload.downgradeNote, ...notes].filter(Boolean).join(" ");
   return { ...payload, downgraded: true, downgradeNote: merged };
+}
+
+/**
+ * FSE-001 / 规格 §5 :176④ —— 把「已放大」那一句放进它**自己**的一格。
+ *
+ * 与 `withReferenceBudget` 并列而不是共用:那一条说的是「你给的东西有一部分没上车」(所以
+ * 它把卡标成降级),这一条说的是「你给的东西全都上车了,只是我们替其中几张补了像素」。
+ * 两件事都必须说出来,但它们不是同一件事,所以不共用一格、也不共用 `downgraded` 那个开关。
+ *
+ * 纯展示:不改价、不改选型、不改 payload 的任何付费字段。零张 ⇒ 一格不动(老卡的形状)。
+ */
+export function withReferenceUpscaleNote(payload: CardPayload, count: number): CardPayload {
+  if (count <= 0) return payload;
+  return { ...payload, referenceUpscaleNote: referenceUpscaleNote(count) };
 }
 
 /** 商家提出的、可能被执行层打折的诉求。 */
