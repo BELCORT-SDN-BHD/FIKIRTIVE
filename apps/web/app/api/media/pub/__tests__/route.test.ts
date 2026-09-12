@@ -73,7 +73,9 @@ describe("/api/media/pub/[token] — signed media proxy (fail-closed)", () => {
     expect(mockReadStream).not.toHaveBeenCalled();
   });
 
-  it("404s a token whose key is in ANOTHER owner's namespace (cross-tenant guard)", async () => {
+  // SHARE-A10 —— 规格的双租户那一行说的就是这条:拿 owner A 的媒体 token 指向 owner B 的 key,
+  // 一律 404。这条测试比规格早,编号是后补的;行为一个字未改。
+  it("SHARE-A10 —— 404s a token whose key is in ANOTHER owner's namespace (cross-tenant guard)", async () => {
     // key belongs to orgB but the token claims orgA → keyOwnerMatches fails → 404
     const token = signMediaToken("orgA", `u/orgB/${HASH}.jpg`, Date.now() + 60_000, SECRET);
     const res = await call(token);
