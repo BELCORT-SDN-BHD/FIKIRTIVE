@@ -86,7 +86,7 @@ vi.mock("@fikirtive/db", () => ({
 const gate = vi.hoisted(() => ({ consumeSharePreviewDoor: vi.fn() }));
 vi.mock("../rate-limit-gates", () => gate);
 
-import { signSharePreviewToken } from "@fikirtive/token-crypto";
+import { signSharePreviewToken, verifyMediaToken } from "@fikirtive/token-crypto";
 import { loadSharePreview } from "../share-preview-view";
 
 const SHARE_SECRET = "share-secret-for-the-read-side";
@@ -205,11 +205,16 @@ describe("every refusal is the same response", () => {
     expect(await loadSharePreview(token, NO_HEADERS)).toEqual(UNAVAILABLE);
   });
 
-  it("a revoked link — the HMAC still verifies, the mint row does not", async () => {
+  it("SHARE-A8(docs/specs/share-preview.md 已冻结 · v1)—— a revoked link, refreshed, is the exact same object as every other refusal — the HMAC still verifies, the mint row does not", async () => {
     db.posts.push(post());
     const token = mintLink(OWNER_A, "post_a");
+    // 商家点 Revoke 之前,这条链接是活的——先证明这一点,再撤销、再刷新,证明的是「撤销之后」
+    // 而不是「反正它从来没活过」。
+    expect(await loadSharePreview(token, NO_HEADERS)).toMatchObject({ state: "post" });
     db.tokens[0]!.revokedAt = new Date(NOW - 1);
+    // 「刷新」= 再调一次同一个函数,拿同一个 token——不是新铸一条链接。
     expect(await loadSharePreview(token, NO_HEADERS)).toEqual(UNAVAILABLE);
+    expect(await loadSharePreview(token, NO_HEADERS)).toEqual(UNAVAILABLE); // 再刷新一次,还是同一句
   });
 
   it("a valid HMAC with NO mint row at all (a token minted by a leaked secret, never recorded)", async () => {
@@ -311,6 +316,19 @@ describe("media", () => {
       expect(item.src).not.toContain(OWNER_A);
     }
     expect(view.mediaWithheld).toBe(false);
+  });
+
+  it("SHARE-A7(docs/specs/share-preview.md 已冻结 · v1)—— every media token names the share row it belongs to, so a revoke can reach it", async () => {
+    process.env.MEDIA_PROXY_SECRET = MEDIA_SECRET;
+    db.posts.push(post({ media: [{ generationId: "gen_1", position: 0 }] }));
+    db.gens.push({ id: "gen_1", ownerId: OWNER_A, deletedAt: null, asset });
+
+    const view = await loadSharePreview(mintLink(OWNER_A, "post_a"), NO_HEADERS);
+    if (view.state !== "post") throw new Error("expected the post");
+    const token = decodeURIComponent(view.media[0]!.src.replace("/api/media/pub/", ""));
+    // mintLink pushed the FIRST row for this test ("row_0", see mintLink above) — the claim
+    // travels with the media token, not looked up separately, so decoding it is the proof.
+    expect(verifyMediaToken(token, MEDIA_SECRET)?.shareRowId).toBe("row_0");
   });
 
   it("skips a generation that is not the attested owner's, and says the images were withheld", async () => {
