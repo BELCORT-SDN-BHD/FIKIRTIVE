@@ -2,7 +2,8 @@
 
 import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { withCanvasLineage } from "./canvas-lineage-data";
 import type { CanvasNodeLineage } from "./canvas-lineage";
 import { CANVAS_NODE_SELECT, freeCanvasRectForNewNode, placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
@@ -68,6 +69,16 @@ async function ownedProject(projectId: string, ownerId: string) {
 export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[] | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  // 租户围栏切片②（规格 docs/specs/tenant-isolation.md，#1377，TENANT-A1/A2）：商家动作面的每个
+  // 入口先建帧,再进数据库——闸认的是帧,不是这一趟碰巧显式过滤了什么。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => listCanvasNodesInFrame(gate, projectId));
+}
+
+async function listCanvasNodesInFrame(
+  gate: { email: string; ownerId: string },
+  projectId: string,
+): Promise<CanvasNodeDTO[] | { error: string }> {
   if (!(await ownedProject(projectId, gate.ownerId))) return { error: "Project not found." };
   const nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: CANVAS_NODE_SELECT });
   // Tombstones are read too — a deleted row is a durable suppression marker, and it keeps
@@ -134,6 +145,14 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
 export async function createCanvasNode(input: CreateNodeInput): Promise<CreatedCanvasNode | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => createCanvasNodeInFrame(gate, input));
+}
+
+async function createCanvasNodeInFrame(
+  gate: { email: string; ownerId: string },
+  input: CreateNodeInput,
+): Promise<CreatedCanvasNode | { error: string }> {
   // THE LAST UNVALIDATED WRITER (#602 T3). This is a server action, so `input.status` is a string
   // the browser chose, and for as long as this action has existed it went to the column unread.
   // Our own callers only ever send "pending" or "done", but "our callers behave" is not a rule the
@@ -215,9 +234,23 @@ export async function createCanvasNode(input: CreateNodeInput): Promise<CreatedC
   return { id, x: rect.x, y: rect.y, w: rect.w, h: rect.h };
 }
 
-export async function moveCanvasNode(projectId: string, id: string, pos: { x: number; y: number; w: number; h: number }) {
+export async function moveCanvasNode(
+  projectId: string,
+  id: string,
+  pos: { x: number; y: number; w: number; h: number },
+): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => moveCanvasNodeInFrame(gate, projectId, id, pos));
+}
+
+async function moveCanvasNodeInFrame(
+  gate: { email: string; ownerId: string },
+  projectId: string,
+  id: string,
+  pos: { x: number; y: number; w: number; h: number },
+): Promise<{ ok: true } | { error: string }> {
   const r = await prisma.canvasNode.updateMany({
     where: { id, ownerId: gate.ownerId, projectId, status: { not: "deleted" } },
     data: pos,
@@ -225,9 +258,23 @@ export async function moveCanvasNode(projectId: string, id: string, pos: { x: nu
   return r.count === 1 ? { ok: true as const } : { error: "Node not found." };
 }
 
-export async function updateTextNode(projectId: string, id: string, text: string) {
+export async function updateTextNode(
+  projectId: string,
+  id: string,
+  text: string,
+): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => updateTextNodeInFrame(gate, projectId, id, text));
+}
+
+async function updateTextNodeInFrame(
+  gate: { email: string; ownerId: string },
+  projectId: string,
+  id: string,
+  text: string,
+): Promise<{ ok: true } | { error: string }> {
   const r = await prisma.canvasNode.updateMany({
     where: { id, ownerId: gate.ownerId, projectId, type: "text", status: { not: "deleted" } },
     data: { text },
@@ -253,6 +300,16 @@ export async function resolveCanvasNode(
 ): Promise<ResolveCanvasNodeResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => resolveCanvasNodeInFrame(gate, projectId, id, input));
+}
+
+async function resolveCanvasNodeInFrame(
+  gate: { email: string; ownerId: string },
+  projectId: string,
+  id: string,
+  input: { status: string; generationId?: string | null },
+): Promise<ResolveCanvasNodeResult> {
   if (!RESOLVE_STATUSES.has(input.status as CanvasNodeResolveStatus)) return { error: "Invalid status." };
   if (input.status === "done" && !input.generationId) return { error: "Generation required." };
   if (input.status !== "done" && input.generationId) return { error: "Generation only allowed for done status." };
@@ -337,9 +394,18 @@ export async function resolveCanvasNode(
   return { ok: true as const, applied: false as const, status: settled?.status ?? "deleted" };
 }
 
-export async function deleteCanvasNode(projectId: string, id: string) {
+export async function deleteCanvasNode(projectId: string, id: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => deleteCanvasNodeInFrame(gate, projectId, id));
+}
+
+async function deleteCanvasNodeInFrame(
+  gate: { email: string; ownerId: string },
+  projectId: string,
+  id: string,
+): Promise<{ ok: true } | { error: string }> {
   // Keep a non-rendered tombstone so periodic Otto/GEN_RESULT recovery cannot recreate the
   // same paid output after the owner deliberately removes its card. Job-linked deletion uses
   // the exact placement lock, so a concurrent browser/bridge writer cannot pass the tombstone.

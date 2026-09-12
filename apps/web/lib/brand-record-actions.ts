@@ -8,7 +8,8 @@ import {
   newId, RECORD_KINDS, recordSchemaFor, recordName, normalizeNameKey, withProductIdentity,
   type RecordKind,
 } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { resolveActor, recordBrandRevision, stampOf, actorStamp } from "./brand-revision";
 
 export type BrandRecordRow = {
@@ -37,6 +38,15 @@ export async function listBrandRecords(_ownerId?: string, brandId?: string | nul
   // SECURITY: "use server" export — owner comes from the SESSION, caller ids ignored (see memory-actions listMemory).
   const gate = await requireOwner();
   if ("error" in gate) return [];
+  // 租户围栏切片②（规格 docs/specs/tenant-isolation.md，#1377，TENANT-A1/A2）。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => listBrandRecordsInFrame(gate, brandId));
+}
+
+async function listBrandRecordsInFrame(
+  gate: { email: string; ownerId: string },
+  brandId?: string | null,
+): Promise<BrandRecordRow[]> {
   const rows = await prisma.brandRecord.findMany({
     // 与 Memory 同一条纪律:只有 Ready 是正式记录(FRONT-A8,规格 §7.3④)。
     where: { ownerId: gate.ownerId, brandId: brandId ?? null, deletedAt: null, contextStatus: "Ready" },
@@ -152,6 +162,15 @@ export async function saveBrandRecord(raw: unknown): Promise<{ ok: true; id: str
   if ("error" in input) return input;
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => saveBrandRecordInFrame(gate, raw, input));
+}
+
+async function saveBrandRecordInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+  input: Exclude<ReturnType<typeof parseInput>, { error: string }>,
+): Promise<{ ok: true; id: string } | { error: string }> {
   const actor = await resolveActor(gate.email);
   const nameKey = normalizeNameKey(recordName(input.kind, input.data));
   if (!nameKey) return { error: "A record needs a name." };
@@ -258,6 +277,14 @@ export async function deleteBrandRecord(raw: unknown): Promise<{ ok: true } | { 
   const recordId = r.id;
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => deleteBrandRecordInFrame(gate, recordId));
+}
+
+async function deleteBrandRecordInFrame(
+  gate: { email: string; ownerId: string },
+  recordId: string,
+): Promise<{ ok: true } | { error: string }> {
   const actor = await resolveActor(gate.email);
   let removed = false;
   try {
@@ -316,6 +343,14 @@ export async function restoreBrandRecord(raw: unknown): Promise<{ ok: true } | {
   const recordId = r.id;
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => restoreBrandRecordInFrame(gate, recordId));
+}
+
+async function restoreBrandRecordInFrame(
+  gate: { email: string; ownerId: string },
+  recordId: string,
+): Promise<{ ok: true } | { error: string }> {
   const actor = await resolveActor(gate.email);
   let broughtBack = false;
   let nameTaken = false;
@@ -414,11 +449,19 @@ export async function confirmBrandRecordDraft(raw: unknown): Promise<{ ok: true 
   if (typeof r?.id !== "string") return { error: "Invalid request." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => confirmBrandRecordDraftInFrame(gate, r.id as string));
+}
+
+async function confirmBrandRecordDraftInFrame(
+  gate: { email: string; ownerId: string },
+  recordId: string,
+): Promise<{ ok: true } | { error: string }> {
   const actor = await resolveActor(gate.email);
   let confirmed = false;
   try {
     const row = await prisma.brandRecord.findFirst({
-      where: { id: r.id, ownerId: gate.ownerId, deletedAt: null },
+      where: { id: recordId, ownerId: gate.ownerId, deletedAt: null },
       select: { kind: true, contextStatus: true },
     });
     if (!row) return { error: "That draft is no longer here." };
@@ -427,7 +470,7 @@ export async function confirmBrandRecordDraft(raw: unknown): Promise<{ ok: true 
     if (row.contextStatus === "Draft") {
       if (row.kind === "product") {
         const done = await confirmProductDraft({
-          ownerId: gate.ownerId, id: r.id, source: "user", updatedById: actor.userId,
+          ownerId: gate.ownerId, id: recordId, source: "user", updatedById: actor.userId,
         });
         if (!done.ok) {
           return done.reason === "invalid"
@@ -437,7 +480,7 @@ export async function confirmBrandRecordDraft(raw: unknown): Promise<{ ok: true 
         confirmed = true;
       } else {
         const { count } = await prisma.brandRecord.updateMany({
-          where: { id: r.id, ownerId: gate.ownerId, deletedAt: null, contextStatus: "Draft" },
+          where: { id: recordId, ownerId: gate.ownerId, deletedAt: null, contextStatus: "Draft" },
           data: { contextStatus: "Ready", ...actorStamp(actor) },
         });
         confirmed = count > 0;
@@ -446,8 +489,8 @@ export async function confirmBrandRecordDraft(raw: unknown): Promise<{ ok: true 
   } catch { return { error: SAVE_FAILED }; }
   if (confirmed) {
     await recordBrandRevision({
-      ownerId: gate.ownerId, targetKind: "record", targetId: r.id, action: "confirmed",
-      stamp: await stampOf(gate.ownerId, r.id, "record"), actor,
+      ownerId: gate.ownerId, targetKind: "record", targetId: recordId, action: "confirmed",
+      stamp: await stampOf(gate.ownerId, recordId, "record"), actor,
       summary: "Saved this context for Otto.",
     });
   }
@@ -459,21 +502,30 @@ export async function confirmBrandRecordDraft(raw: unknown): Promise<{ ok: true 
 export async function discardBrandRecordDraft(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const r = raw as { id?: unknown };
   if (typeof r?.id !== "string") return { error: "Invalid request." };
+  const recordId = r.id;
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => discardBrandRecordDraftInFrame(gate, recordId));
+}
+
+async function discardBrandRecordDraftInFrame(
+  gate: { email: string; ownerId: string },
+  recordId: string,
+): Promise<{ ok: true } | { error: string }> {
   const actor = await resolveActor(gate.email);
   try {
     const { count } = await prisma.brandRecord.updateMany({
       // `deletedAt: null` 少不得:已经放弃过的行还留着 Draft 状态,少了它重复调用会把
       // `deletedAt` 一次次盖成新时间,幂等键(含 updatedAt)跟着变,一次放弃被讲成三次。
-      where: { id: r.id, ownerId: gate.ownerId, contextStatus: "Draft", deletedAt: null },
+      where: { id: recordId, ownerId: gate.ownerId, contextStatus: "Draft", deletedAt: null },
       data: { deletedAt: new Date(), ...actorStamp(actor) },
     });
     if (!count) return { error: "That draft is no longer here." };
   } catch { return { error: "Couldn't discard that — please try again." }; }
   await recordBrandRevision({
-    ownerId: gate.ownerId, targetKind: "record", targetId: r.id, action: "discarded",
-    stamp: await stampOf(gate.ownerId, r.id, "record"), actor,
+    ownerId: gate.ownerId, targetKind: "record", targetId: recordId, action: "discarded",
+    stamp: await stampOf(gate.ownerId, recordId, "record"), actor,
     summary: "Discarded this draft.",
   });
   revalidatePath("/", "layout");
