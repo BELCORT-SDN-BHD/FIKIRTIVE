@@ -547,12 +547,27 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
 export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
   const parsed = genRequest.safeParse(resolveRequestModel(raw));
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { idempotencyKey, projectId, threadId } = parsed.data;
+  const { idempotencyKey, threadId } = parsed.data;
   if (!idempotencyKey?.startsWith("cowork:") || idempotencyKey.length <= "cowork:".length || !threadId) {
     return { error: "That generation request is out of bounds." };
   }
 
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  // 租户围栏切片①（规格 docs/specs/tenant-isolation.md，#1376，TENANT-A1）：这是 Otto 那张卡的
+  // **付费**入口，帧必须在读卡之前就建好 —— 读卡本身就是一次租户读，而下游的 `startGen` 建的是
+  // 它自己那一层帧（同一身份，嵌套是恒等的）。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => startCoworkGenInFrame(raw, gate, parsed.data));
+}
+
+async function startCoworkGenInFrame(
+  raw: unknown,
+  gate: { email: string; ownerId: string },
+  parsedData: ReturnType<(typeof genRequest)["parse"]>,
+): Promise<StartGenResult> {
+  const { projectId, threadId } = parsedData;
+  // 调用方那一侧已经证明过这三样（`cowork:` 前缀 + 非空 threadId），这里只是把值接过来。
+  const idempotencyKey = parsedData.idempotencyKey as string;
   const cardId = idempotencyKey.slice("cowork:".length);
   const card = await prisma.chatMessage.findFirst({
     where: { id: cardId, ownerId: gate.ownerId, kind: "GEN_CARD", deletedAt: null },
@@ -600,11 +615,11 @@ export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
   // 只留这一趟真的 @ 到的那些元素(与 `buildGenRequestFromCard` 同一条口径):卡上有、
   // 这一趟没 @ 的元素不许把名字带进付费提示词。卡上没有这一份(老卡、跨部署)→ 空表 →
   // 字段整个缺席,按既有降级走:worker 照旧编号,只是不写名字。
-  const mentioned = new Set(parsed.data.entityIds);
+  const mentioned = new Set(parsedData.entityIds);
   const cardApprovedEntities = parseApprovedEntities(payload.approvedEntities)
     .filter((e) => mentioned.has(e.id));
   const trustedRequest = {
-    ...parsed.data,
+    ...parsedData,
     approvedEntities: cardApprovedEntities.length ? cardApprovedEntities : undefined,
   };
   // #925 —— 这张卡是不是一张分镜子卡:读服务端持久化的 payload,不由调用方提交。
@@ -1522,7 +1537,12 @@ function imageFineDetailCapability(): ActiveGenModels["imageFineDetail"] {
 /** Poll a gen job + return its produced generations' image URLs when DONE. */
 export async function getGenJob(jobId: string, projectId?: string) {
   const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
-  const { ownerId } = gate;
+  // 切片①（#1376，TENANT-A1）：钱面的读也要带帧 —— 这一趟读的是「这单扣费做出了什么」。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => getGenJobInFrame(gate.ownerId, jobId, projectId));
+}
+
+async function getGenJobInFrame(ownerId: string, jobId: string, projectId?: string) {
   const job = await prisma.genJob.findFirst({
     where: { id: jobId, ownerId, ...(projectId ? { projectId } : {}) },
   });
@@ -1582,7 +1602,12 @@ export async function getGenJob(jobId: string, projectId?: string) {
  *  stay in Assets, but the user expects them in the gen panel too). */
 export async function getRecentGenResults(projectId: string, limit = 12) {
   const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
-  const { ownerId } = gate;
+  // 切片①（#1376，TENANT-A1）：同上，付费产物的读也在帧里发生。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => getRecentGenResultsInFrame(gate.ownerId, projectId, limit));
+}
+
+async function getRecentGenResultsInFrame(ownerId: string, projectId: string, limit: number) {
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true } });
   if (!project) return [];
   const jobs = await prisma.genJob.findMany({

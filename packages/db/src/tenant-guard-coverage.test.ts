@@ -15,14 +15,25 @@
  * (Membership)。它们不是"被豁免了",它们是**结构性看不见**:没有人为它们做过选择,
  * 也没有人会发现没做过。
  *
- * 现在正则认两种列名,`orgId` 那一族对到 ORG_SCOPED_TENANT_GUARD_EXEMPT —— 一份带理由的
- * 明示登记(理由与实测证据写在那个常量的注释里,含"为什么不能直接进 TENANT_MODELS")。
- * 盲区从此是"一个有人签过字的决定",而不是"一个没人看得见的洞"。
+ * 现在正则认两种列名,`orgId` 那一族必须二选一:进 ORG_SCOPED_TENANT_MODELS(运行时守卫),
+ * 或者进 ORG_SCOPED_TENANT_GUARD_EXEMPT(一份带理由的明示登记)。盲区从此是"一个有人签过字
+ * 的决定",而不是"一个没人看得见的洞"。
+ *
+ * ── 2026-09-12(租户围栏切片①,规格 docs/specs/tenant-isolation.md,#1376)────────────
+ * 2026-09-02 时 orgId 那一族**全部**走明示登记 —— 因为守卫注入的是字面 `ownerId`。切片①把
+ * 租户列参数化之后那个障碍没了:CreditAccount / CreditLedger / Membership 已经搬进
+ * ORG_SCOPED_TENANT_MODELS(观察轮走 warn 挡位);留在登记里的是 OttoTurnTrace 与
+ * SignupGrantClaim,各自的理由在那个常量的注释里。
  */
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { TENANT_MODELS, TENANT_GUARD_EXEMPT, ORG_SCOPED_TENANT_GUARD_EXEMPT } from "./tenant-guard.js";
+import {
+  TENANT_MODELS,
+  TENANT_GUARD_EXEMPT,
+  ORG_SCOPED_TENANT_MODELS,
+  ORG_SCOPED_TENANT_GUARD_EXEMPT,
+} from "./tenant-guard.js";
 
 const SCHEMA = path.resolve(__dirname, "../prisma/schema.prisma");
 
@@ -146,9 +157,10 @@ describe("tenant-guard coverage — every ownerId model is guarded or explicitly
  * **orgId 那一族**(钱引擎⑤B,规格 §7.7 欠账⑧)。
  *
  * 上面那组扫的是 `ownerId`。这一组扫 `orgId` —— 同样是租户列,同样必须有人为它做过选择。
- * 它们今天全部走明示登记而不是运行时守卫,理由与实测证据在 ORG_SCOPED_TENANT_GUARD_EXEMPT
- * 的注释里(一句话:守卫**注入**的是 `ownerId` 这个字面列名,直接登记会把这些表打坏,
- * 而不是守住)。
+ * 选择有两种:进运行时守卫(ORG_SCOPED_TENANT_MODELS ——  切片① #1376 之后钱两表与
+ * Membership 在这里,观察轮走 warn 挡位),或者一条带理由的明示登记
+ * (ORG_SCOPED_TENANT_GUARD_EXEMPT —— 今天只剩 OttoTurnTrace 与 SignupGrantClaim,
+ * 理由与实测证据写在那个常量的注释里)。
  */
 describe("tenant-guard coverage — orgId 那一族也必须有人做过选择", () => {
   const models = orgIdModels();
@@ -159,28 +171,38 @@ describe("tenant-guard coverage — orgId 那一族也必须有人做过选择",
     expect(models).toContain("Membership");
   });
 
-  it("每一个 orgId 模型都在 ORG_SCOPED_TENANT_GUARD_EXEMPT 里,而且带着理由", () => {
+  it("每一个 orgId 模型要么在守卫里(ORG_SCOPED_TENANT_MODELS),要么是一条带理由的登记", () => {
     for (const model of models) {
+      const guarded = ORG_SCOPED_TENANT_MODELS.has(model);
       const reason = ORG_SCOPED_TENANT_GUARD_EXEMPT[model];
       expect(
-        typeof reason === "string" && reason.length > 0,
+        guarded || (typeof reason === "string" && reason.length > 0),
         `model "${model}" 的租户列是 orgId,但它既不在运行时守卫里、也没有一条带理由的登记 ` +
-          `(packages/db/src/tenant-guard.ts 的 ORG_SCOPED_TENANT_GUARD_EXEMPT)。` +
+          `(packages/db/src/tenant-guard.ts 的 ORG_SCOPED_TENANT_MODELS / ORG_SCOPED_TENANT_GUARD_EXEMPT)。` +
           `运行时守卫对它做零检查 —— 那必须是一个有人签过字的决定,不是一个没人看得见的洞。`,
       ).toBe(true);
     }
   });
 
-  it("没有过期登记:每一条登记的模型今天仍然带着 orgId", () => {
-    for (const model of Object.keys(ORG_SCOPED_TENANT_GUARD_EXEMPT)) {
+  it("钱表族真的进了守卫(切片① #1376:登记≠有闸,这一条就是那个差别)", () => {
+    for (const model of ["CreditAccount", "CreditLedger", "Membership"]) {
+      expect(ORG_SCOPED_TENANT_MODELS.has(model), `"${model}" 掉出了运行时守卫`).toBe(true);
+    }
+  });
+
+  it("没有过期登记:每一条登记/守卫的模型今天仍然带着 orgId", () => {
+    for (const model of [...ORG_SCOPED_TENANT_MODELS, ...Object.keys(ORG_SCOPED_TENANT_GUARD_EXEMPT)]) {
       expect(models, `"${model}" 登记着,但 schema.prisma 里已经没有 orgId 了(改名/删了?)`).toContain(model);
     }
   });
 
-  it("两份名单不许打架:一个模型不能既受 ownerId 守卫又走 orgId 登记", () => {
-    for (const model of Object.keys(ORG_SCOPED_TENANT_GUARD_EXEMPT)) {
+  it("三份名单不许打架:一个模型只能有一个归宿", () => {
+    for (const model of [...ORG_SCOPED_TENANT_MODELS, ...Object.keys(ORG_SCOPED_TENANT_GUARD_EXEMPT)]) {
       expect(TENANT_MODELS.has(model), `"${model}" 同时在 TENANT_MODELS 里 —— 守卫会注入 ownerId 把它打坏`).toBe(false);
       expect(model in TENANT_GUARD_EXEMPT, `"${model}" 同时在 TENANT_GUARD_EXEMPT 里 —— 两份名单只留一份`).toBe(false);
+    }
+    for (const model of ORG_SCOPED_TENANT_MODELS) {
+      expect(model in ORG_SCOPED_TENANT_GUARD_EXEMPT, `"${model}" 既受守卫又登记着豁免`).toBe(false);
     }
   });
 });
