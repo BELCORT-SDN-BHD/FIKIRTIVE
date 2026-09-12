@@ -1,7 +1,8 @@
 "use server";
 
 import { prisma } from "@fikirtive/db";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { contactConsentTruth } from "./consent-authority";
 import { ownedContactsWhere } from "./crm-contact-scope";
 import { isCrmLifecycleStage, type CrmLifecycleStage } from "./crm-identity";
@@ -259,6 +260,16 @@ async function readContactPage(
 export async function listContacts(raw?: unknown): Promise<CrmContactsResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => listContactsInFrame(gate, raw));
+}
+
+async function listContactsInFrame(
+  gate: { email: string; ownerId: string },
+  raw?: unknown,
+): Promise<CrmContactsResult> {
   const input = (raw ?? {}) as {
     lifecycleStage?: unknown;
     query?: unknown;
@@ -284,6 +295,16 @@ export async function listContacts(raw?: unknown): Promise<CrmContactsResult> {
 export async function getContact(rawId: unknown): Promise<CrmContactResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => getContactInFrame(gate, rawId));
+}
+
+async function getContactInFrame(
+  gate: { email: string; ownerId: string },
+  rawId: unknown,
+): Promise<CrmContactResult> {
   const id = typeof rawId === "string" ? rawId.trim().slice(0, 64) : "";
   if (!id) return { error: "Invalid request." };
   const row = await prisma.contact.findFirst({
@@ -317,6 +338,16 @@ export async function getContact(rawId: unknown): Promise<CrmContactResult> {
 export async function searchContacts(raw: unknown): Promise<CrmContactsResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => searchContactsInFrame(gate, raw));
+}
+
+async function searchContactsInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<CrmContactsResult> {
   const input = typeof raw === "string"
     ? { query: raw, lifecycleStage: undefined, limit: undefined, cursor: undefined }
     : ((raw ?? {}) as {

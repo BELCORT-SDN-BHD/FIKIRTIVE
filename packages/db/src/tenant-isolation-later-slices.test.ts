@@ -8,6 +8,12 @@
  * 与 `apps/web/lib/__tests__/tenant-money-frames-slice1.test.ts`）。切片②（#1377）交付的是
  * TENANT-A2（见 `apps/web/lib/__tests__/tenant-action-cross-tenant-slice2.test.ts`：真实数据库、
  * 真实动作函数 —— renameCollection / getCollection / deleteCanvasNode 各一次改名/读取/删除，
+ * 用 A 的会话打 B 的 id 三次全部失败，B 的行数一字未改，A 自己的同一动作正常成功）。切片③
+ * （#1378，CRM 面）再交付一遍 TENANT-A2 / A1（见
+ * `apps/web/lib/__tests__/tenant-action-cross-tenant-slice3.test.ts`：同样真实数据库、真实动作
+ * 函数 —— updateContact / deleteSegment / getContact 各一次改名/删除/读取，外加一条真正证闸的
+ * 用例：篡改查询的 `where.ownerId` 指向另一家，断言运行时守卫本身抛出 tenant-guard 签名错误，
+ * 不靠动作层自带的显式过滤）。
  * 用 A 的会话打 B 的 id 三次全部失败，B 的行数一字未改，A 自己的同一动作正常成功）。切片④
  * （#1379）交付的是 TENANT-A6（见 `tenant-guard-staff-slice4.test.ts`：staff 帧的结构规则
  * 与双身份对照；`apps/web/lib/__tests__/tenant-actions-staff-frame-slice4.test.ts`：真实数据库、

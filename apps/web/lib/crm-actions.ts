@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { prisma, recordConsentEvent, recordContactDndEvent } from "@fikirtive/db";
 import { newId, MERCHANT_UNVERIFIED_IDENTITY, CHANNEL_VERIFIED_IDENTITY } from "@fikirtive/core";
 import { isImpersonating } from "@/lib/better-auth/compat";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import {
   findContactDuplicateSuggestions,
   isCrmLifecycleStage,
@@ -246,7 +247,16 @@ export async function createContact(raw: unknown): Promise<CreateContactResult> 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => createContactInFrame(gate, raw));
+}
 
+async function createContactInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<CreateContactResult> {
   const input = (raw ?? {}) as Record<string, unknown>;
   if ("identity" in input || "identities" in input) {
     return { error: "Identity editing is not available. Add the contact without attaching an identity." };
@@ -279,7 +289,16 @@ export async function setContactConsent(raw: unknown): Promise<ContactMutationRe
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => setContactConsentInFrame(gate, raw));
+}
 
+async function setContactConsentInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<ContactMutationResult> {
   const input = (raw ?? {}) as Record<string, unknown>;
   const contactId = text(input.contactId, 64);
   const requestId = opaqueRequestId(input.requestId);
@@ -315,7 +334,16 @@ export async function updateContact(raw: unknown): Promise<ContactMutationResult
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => updateContactInFrame(gate, raw));
+}
 
+async function updateContactInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<ContactMutationResult> {
   const input = (raw ?? {}) as { contactId?: unknown; patch?: unknown };
   const contactId = text(input.contactId, 64);
   if (!contactId || !input.patch || typeof input.patch !== "object" || Array.isArray(input.patch)) {
@@ -389,7 +417,17 @@ async function writeDnd(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => writeDndInFrame(gate, raw, sourceKind));
+}
 
+async function writeDndInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+  sourceKind: "crm_ui" | "otto_approved_action",
+): Promise<ContactMutationResult> {
   const input = (raw ?? {}) as Record<string, unknown>;
   const contactId = text(input.contactId, 64);
   const requestId = opaqueRequestId(input.requestId);
@@ -460,13 +498,17 @@ function phoneEntry(value: unknown): { phone: string } | { error: string } {
   return "error" in normalized ? normalized : { phone: normalized.externalId };
 }
 
-async function phoneGate(
+/**
+ * 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：不再自己调
+ * `requireOwner()` 建帧 —— 三个调用方（`writeAddPhone` / `writeUpdatePhone` / `writeRemovePhone`）
+ * 各自的 `prisma.$transaction` 写入紧跟在这次读之后，必须与这次读同处一顶帧内，所以帧改由
+ * 调用方在自己的入口建、`gate` 作为参数传进来（同 campaign-actions.ts 等切片②样板的
+ * 「薄壳 + XxxInFrame」拆法，只是这里 InFrame 部分先做一次共享校验，再各自继续写）。
+ */
+async function phoneGateInFrame(
+  gate: { email: string; ownerId: string },
   raw: unknown,
 ): Promise<{ ownerId: string; contactId: string; input: Record<string, unknown> } | { error: string }> {
-  const gate = await requireOwner();
-  if ("error" in gate) return gate;
-  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
-
   const input = (raw ?? {}) as Record<string, unknown>;
   const contactId = text(input.contactId, 64);
   if (!contactId) return { error: "Invalid request." };
@@ -479,8 +521,32 @@ async function phoneGate(
   return { ownerId: gate.ownerId, contactId, input };
 }
 
+/**
+ * P3-2（判官定向修，PR #1418）：`writeAddPhone` / `writeUpdatePhone` / `writeRemovePhone` 三个
+ * 调用方复制了同一段 5 行帧壳（requireOwner → 先拒 impersonation → resolveUserPrincipal →
+ * runAsUser 包帧）—— 抽成这一个共享壳。各自的 InFrame 部分（`writeAddPhoneInFrame` 等）不动,
+ * 只是被当作回调传进来。
+ */
+async function withPhoneFrame<T>(
+  runInFrame: (owner: { email: string; ownerId: string }) => Promise<T>,
+): Promise<T | { error: string }> {
+  const owner = await requireOwner();
+  if ("error" in owner) return owner;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const principal = await resolveUserPrincipal(owner);
+  return runAsUser(principal, () => runInFrame(owner));
+}
+
 async function writeAddPhone(raw: unknown, surface: PhoneEntrySurface): Promise<ContactPhoneResult> {
-  const gate = await phoneGate(raw);
+  return withPhoneFrame((owner) => writeAddPhoneInFrame(owner, raw, surface));
+}
+
+async function writeAddPhoneInFrame(
+  ownerGate: { email: string; ownerId: string },
+  raw: unknown,
+  surface: PhoneEntrySurface,
+): Promise<ContactPhoneResult> {
+  const gate = await phoneGateInFrame(ownerGate, raw);
   if ("error" in gate) return gate;
   const entry = phoneEntry(gate.input.phone);
   if ("error" in entry) return entry;
@@ -555,7 +621,15 @@ async function writeAddPhone(raw: unknown, surface: PhoneEntrySurface): Promise<
 }
 
 async function writeUpdatePhone(raw: unknown, surface: PhoneEntrySurface): Promise<ContactPhoneResult> {
-  const gate = await phoneGate(raw);
+  return withPhoneFrame((owner) => writeUpdatePhoneInFrame(owner, raw, surface));
+}
+
+async function writeUpdatePhoneInFrame(
+  ownerGate: { email: string; ownerId: string },
+  raw: unknown,
+  surface: PhoneEntrySurface,
+): Promise<ContactPhoneResult> {
+  const gate = await phoneGateInFrame(ownerGate, raw);
   if ("error" in gate) return gate;
   const identityId = text(gate.input.identityId, 64);
   if (!identityId) return { error: "Invalid request." };
@@ -643,7 +717,15 @@ async function writeUpdatePhone(raw: unknown, surface: PhoneEntrySurface): Promi
 }
 
 async function writeRemovePhone(raw: unknown, surface: PhoneEntrySurface): Promise<ContactMutationResult> {
-  const gate = await phoneGate(raw);
+  return withPhoneFrame((owner) => writeRemovePhoneInFrame(owner, raw, surface));
+}
+
+async function writeRemovePhoneInFrame(
+  ownerGate: { email: string; ownerId: string },
+  raw: unknown,
+  surface: PhoneEntrySurface,
+): Promise<ContactMutationResult> {
+  const gate = await phoneGateInFrame(ownerGate, raw);
   if ("error" in gate) return gate;
   const identityId = text(gate.input.identityId, 64);
   if (!identityId) return { error: "Invalid request." };
@@ -867,7 +949,16 @@ export async function importContacts(raw: unknown): Promise<ImportContactsResult
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => importContactsInFrame(gate, raw));
+}
 
+async function importContactsInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<ImportContactsResult> {
   const input = (raw ?? {}) as Record<string, unknown>;
   const csv = typeof input.csv === "string" ? input.csv : "";
   const importId = opaqueRequestId(input.importId);
