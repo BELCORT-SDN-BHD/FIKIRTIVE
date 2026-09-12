@@ -281,6 +281,10 @@ export async function POST(req: NextRequest): Promise<Response> {
         });
       }
       userMessageId = newId();
+      // FSE-210(判官 P1-1)—— 这一轮服务端已核过归属的 entity id,落库与铸卡两处共用同一份,
+      // 不各自算一遍:`payload.entityIds` 与喂进 `buildOttoContext` 的 `turnEntityIds` 必须是
+      // 同一个数组,否则「消息记的」与「卡认的」又会变成两份各自的真相。
+      const turnEntityIds = [...new Set([...(entityIds ?? []), ...picked.entityIds])];
       await prisma.chatMessage.create({
         data: {
           id: userMessageId,
@@ -294,7 +298,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           // 那一列只是它的一个子集),媒体来自上面同一次校验。重试草稿以后从这一行恢复,
           // 所以「卡上挂的」与「历史里记的」不可能是两份。
           payload: {
-            entityIds: [...new Set([...(entityIds ?? []), ...picked.entityIds])],
+            entityIds: turnEntityIds,
             variantSel,
             sourceGenerationIds: refs.sourceGenerationIds,
             referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
@@ -321,6 +325,9 @@ export async function POST(req: NextRequest): Promise<Response> {
         referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
         mediaReferences: refs.mediaReferences,
         turnText: text,
+        // FSE-210(判官 P1-1)—— 铸卡时的服务端兜底:模型的 `@` 候选名单过滤掉了没有参考图的
+        // 元素,商家 `@` 到的这一份不能只靠模型记得带,见 OttoContext.turnEntityIds。
+        turnEntityIds,
         simpleMode: parsed.data.simple,
       });
 

@@ -69,10 +69,17 @@ export async function executePropose(
   // Validate entity ownership (security-critical: owner-scoped query).
   // #774 判官 r2 P1:名字与类型跟归属**同一趟**读出来 —— 卡上冻结的就是这一刻的身份,
   // 引擎认人那几句机器指令以后只认它,不会在付费调用前再读一次活名称。
+  //
+  // FSE-210(判官 P1-1)—— 查询集必须与 `buildProposeCard` 内部并的那份**同一个**集合:模型
+  // 自带的 `input.entityIds` 并上这一轮服务端已核过归属的 `ctx.turnEntityIds`。只按
+  // `input.entityIds` 查会漏查 turnEntityIds 独有的那几个 —— `buildProposeCard` 的归属闸
+  // (`ownedSet`)读不到它们的行,会把一次本该被并集救回来的商家 `@` 误判成「归属不明」而抛
+  // `EntityReferenceUnavailableError`。
+  const wantedEntityIds = [...new Set([...input.entityIds, ...(ctx.turnEntityIds ?? [])])];
   let ownedEntities: ApprovedEntity[] = [];
-  if (input.entityIds.length > 0) {
+  if (wantedEntityIds.length > 0) {
     ownedEntities = await prisma.entity.findMany({
-      where: { id: { in: input.entityIds }, ownerId: ctx.orgId, deletedAt: null },
+      where: { id: { in: wantedEntityIds }, ownerId: ctx.orgId, deletedAt: null },
       select: { id: true, type: true, name: true },
     });
   }

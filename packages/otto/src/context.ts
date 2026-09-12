@@ -410,6 +410,21 @@ export interface OttoContext {
    */
   mediaReferences?: OttoMediaReference[];
   /**
+   * FSE-210(PR #1420 判官 P1-1)—— 这一轮服务端解析器(`resolveOwnedReferenceRefs`)已经
+   * 核过归属的每个 entity id,与模型 propose 工具参数里自己写的 `entityIds` 无关。
+   *
+   * 为什么需要它:模型看到的 `@` 候选名单(`availableRefs`)只列有参考图的元素
+   * (`loadAvailableRefsForAgent` 的过滤),商家 `@` 一件还没挂图的产品时模型的候选名单里
+   * 压根没有它 —— 模型没有任何一条路能把它的 id 主动写进 propose 的参数。`buildProposeCard`
+   * 把这一份与模型自带的那份取并集,铸卡时才不会因为模型「不知道」而把商家明确 `@` 过的
+   * 东西静默漏掉。
+   *
+   * 由服务端解析器一次产出,模型永远碰不到它(与 `mediaReferences`、`turnText` 同一条纪律)。
+   * 缺席(undefined)= 这条调用路径不是一次活的商家轮次(分镜子卡、视频 Step-2 接力等系统
+   * 铸卡),`buildProposeCard` 的并集退化成只有模型那一份,行为不变。
+   */
+  turnEntityIds?: string[];
+  /**
    * #775 判官 r3 P1-2 —— 商家**这一轮自己打的那句话**,由服务端从入站请求原样带进来。
    *
    * 只有一个用途:铸视频卡之前,拿它跟模型自选的动作对一次表(`decideVideoAction` 的

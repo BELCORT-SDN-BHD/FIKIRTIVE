@@ -343,6 +343,7 @@ describe("ImmersiveCanvasEntry", () => {
       entityIds: [],
       sourceGenerationIds: [],
       referenceVideoGenerationIds: [],
+      references: [],
     });
 
     const element = await ImmersiveCanvasEntry({
@@ -390,6 +391,7 @@ describe("ImmersiveCanvasEntry", () => {
       entityIds: ["ent-1"],
       sourceGenerationIds: ["gen-img"],
       referenceVideoGenerationIds: ["gen-vid"],
+      references: ["product:ent-1", "generation:gen-img", "generation:gen-vid"],
     });
 
     const element = await ImmersiveCanvasEntry({
@@ -402,6 +404,9 @@ describe("ImmersiveCanvasEntry", () => {
       entityIds: ["ent-1"],
       sourceGenerationIds: ["gen-img"],
       referenceVideoGenerationIds: ["gen-vid"],
+      // FSE-210 / PRODID-R11:typed wire 引用也要跟着交接过去,不然首轮 `ChatMessage.
+      // referenceRefs` 是空的 —— @ 到的产品/演员从此回不了链。
+      references: ["product:ent-1", "generation:gen-img", "generation:gen-vid"],
     });
   });
 
