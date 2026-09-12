@@ -6,27 +6,8 @@ import { auth } from "@/lib/better-auth/compat";
 import { allowed } from "@/lib/allowlist";
 import { requireOwner } from "@/lib/auth-guard";
 import { DOWNLOAD_FLAG, DOWNLOAD_NAME, safeDownloadFileName } from "@/lib/download-url";
-
-/**
- * 把驱动给的字节迭代器接成响应体 —— 整件东西不进内存,一段视频不再在服务器上摊开。
- * 浏览器中断下载时 `cancel` 会关掉底层流(local 是 fd,r2 是 S3 连接)。
- */
-function toWebStream(source: AsyncIterable<Uint8Array>): ReadableStream<Uint8Array> {
-  const iterator = source[Symbol.asyncIterator]();
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      const { value, done } = await iterator.next();
-      if (done) {
-        controller.close();
-        return;
-      }
-      controller.enqueue(value);
-    },
-    async cancel(reason) {
-      await iterator.return?.(reason);
-    },
-  });
-}
+// SHARE-A1:公开媒体代理也要把流接成响应体,所以这个辅助搬去 lib 与它共用一份(7.3)。
+import { toWebStream } from "@/lib/web-stream";
 
 /**
  * 同源附件下载(走查 P0-2)。内联播放那条老路一个字节没动 —— 这条只在 `?download=1` 时走。

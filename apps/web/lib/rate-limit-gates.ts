@@ -203,9 +203,10 @@ export const OTTO_TURN_RATE_LIMIT_MESSAGE =
 /**
  * The Otto conversation door — both entries (stream route and ottoTurn) go through this.
  *
- * IT STAYS OPEN WHEN THE COUNTER CANNOT BE REACHED (product-lead call, 2026-08-18), which makes
- * it the second gate here to do so, after the media proxy. The reasoning is the same shape as
- * that one's: weigh what a refusal costs against what it protects.
+ * IT STAYS OPEN WHEN THE COUNTER CANNOT BE REACHED (product-lead call, 2026-08-18). It was the
+ * SECOND gate here to do so; since SHARE-A3 (2026-09-12) flipped the media proxy to fail-closed
+ * it is the ONLY one. The reasoning is per-door, not a global switch: weigh what a refusal costs
+ * against what it protects.
  *
  * THE MONEY IS ALREADY PROTECTED WITHOUT THIS GATE. A conversation turn reserves against the
  * merchant's balance before the model is called, and that reserve fails closed on its own — a
@@ -236,32 +237,70 @@ export async function consumeUploadGate(ownerId: string): Promise<boolean> {
   return verdict.granted;
 }
 
+/** What the media proxy's counter said. Three facts, because the route needs all three:
+ *  whether it may serve, how long to tell a refused caller to wait, and whether the counter
+ *  answered at all. `caller` rides along so the route never has to re-derive "who is counted". */
+export type MediaProxyGateVerdict = {
+  allowed: boolean;
+  /** Seconds until the blocking window ends. 0 when allowed, and 0 when `degraded` — there is no
+   *  window to wait out, so the wait is the ROUTE's policy call, not a fact the counter knows. */
+  retryAfterSeconds: number;
+  /** The counter could not be reached. `allowed` is then false: SHARE-A3 made this door
+   *  fail-CLOSED (see below); the grace window and the alert live at the route, in
+   *  `lib/media-proxy-access.ts`. */
+  degraded: boolean;
+  /** The bucket subject — `callerKey(requestHeaders)`. */
+  caller: string;
+};
+
 /**
  * The signed media proxy.
  *
- * The ONE gate that stays open when the counter cannot be reached, and the reason is specific to
- * this route: it is the only one that otherwise touches no database at all (its authorisation is
- * an HMAC the publish worker signed). Every other gate here guards work that needs Postgres
- * anyway, so refusing when Postgres is down costs nothing. Here it would cost something real — a
- * database blip would break a publish the merchant already paid for, and the rate limiter would
- * be the only reason it broke. Authorisation is unaffected either way: a forged, expired or
- * foreign token still 404s regardless of what this returns.
+ * SHARE-A3 —— THIS GATE USED TO STAY OPEN WHEN THE COUNTER COULD NOT BE REACHED, and it no longer
+ * does. The old reasoning was sound for the caller it was written for: this is the only route
+ * that otherwise touches no database, so refusing during a database blip would break a publish
+ * the merchant already paid for, with the rate limiter as the only cause. What changed is the
+ * OTHER caller. B0-28 put a human's browser on this same door (the seat-less share preview), and
+ * after SHARE-A1 the route streams objects of up to 2 GB — so "open while the counter is down"
+ * means anyone holding one valid link may pull as fast as the network allows, for the whole
+ * outage, against our egress bill (#1053 finding 1).
+ *
+ * Founder ruled three pieces ship together (2026-09-12, 场⑦): refuse (here), the short grace
+ * window for a client who is ALREADY looking (SHARE-A4), and the alert that stops a silent
+ * mass-429 (SHARE-A12). The other two are deliberately NOT in this file — they need the founder
+ * alert channels, and this module is inside the import fence of the session-less share-preview
+ * page (`lib/__tests__/share-preview-page.test.ts`). They live with their only caller, in
+ * `lib/media-proxy-access.ts`. The cost of refusing, with eyes open, is in the spec's §4 异议栏.
+ *
+ * Authorisation is unaffected either way: a forged, expired or foreign token still 404s regardless
+ * of what this returns, and it is checked BEFORE this runs.
  */
-export async function consumeMediaProxyGate(requestHeaders: Headers): Promise<boolean> {
+export async function consumeMediaProxyGate(
+  requestHeaders: Headers,
+  options: { now?: number } = {},
+): Promise<MediaProxyGateVerdict> {
+  const caller = callerKey(requestHeaders);
   const verdict = await consumeRateLimit(
-    [{ key: `media:${callerKey(requestHeaders)}`, max: MEDIA_PROXY_PER_CALLER_PER_10_MIN, windowMs: 10 * MINUTE }],
-    { onStorageFailure: "allow" },
+    [{ key: `media:${caller}`, max: MEDIA_PROXY_PER_CALLER_PER_10_MIN, windowMs: 10 * MINUTE }],
+    { now: options.now, onStorageFailure: "deny" },
   );
-  return verdict.granted;
+  return {
+    allowed: verdict.granted,
+    // Whole seconds, and never 0 for a real refusal — 0 reads as "come back now".
+    retryAfterSeconds:
+      verdict.granted || verdict.degraded ? 0 : Math.max(1, Math.ceil(verdict.retryAfterMs / 1000)),
+    degraded: verdict.degraded,
+    caller,
+  };
 }
 
 /**
  * The share-preview page (B0-28), per calling address.
  *
- * FAIL-CLOSED, unlike the media proxy it sits next to, and the difference is not an oversight:
- * this page's authorization needs Postgres anyway (the mint row is the authority layer), so a
- * database that cannot answer this counter cannot authorize the page either. Refusing costs
- * nothing that was not already going to be refused.
+ * FAIL-CLOSED: this page's authorization needs Postgres anyway (the mint row is the authority
+ * layer), so a database that cannot answer this counter cannot authorize the page either.
+ * Refusing costs nothing that was not already going to be refused. (The media proxy next to it
+ * used to be the exception; SHARE-A3 closed it too, for its own reasons written there.)
  */
 export async function consumeSharePreviewDoor(requestHeaders: Headers): Promise<boolean> {
   const verdict = await consumeRateLimit([

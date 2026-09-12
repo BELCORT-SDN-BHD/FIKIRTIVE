@@ -36,6 +36,21 @@ export interface UploadPartReceipt {
   etag: string;
 }
 
+/**
+ * SHARE-A1 —— 一段字节区间,**闭区间**,两端都含(HTTP `Range: bytes=start-end` 的语义,
+ * 也是 `fs.createReadStream({start,end})` 与 S3 `Range` 的语义 —— 三者一致是故意的,
+ * 省掉每个驱动各自 ±1 的换算)。
+ */
+export type ByteRange = { start: number; end: number };
+
+/** 越界的区间是调用方的错,当场抛 —— 悄悄读成整对象正是这个参数要消灭的那件事。 */
+function assertByteRange(range: ByteRange): void {
+  const { start, end } = range;
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
+    throw new Error(`invalid byte range: ${start}-${end}`);
+  }
+}
+
 export interface Storage {
   /** True when the driver can issue browser-direct presigned uploads (r2).
    *  The UI falls back to the server-action upload path when false. */
@@ -62,8 +77,13 @@ export interface Storage {
    *  (D19: claimed sizes are untrusted). */
   sizeOf(key: string): Promise<number | null>;
   /** Bytes as an async stream — the worker's hash re-verification reads this
-   *  (D19: claimed hashes are untrusted). */
-  readStream(key: string): Promise<AsyncIterable<Uint8Array>>;
+   *  (D19: claimed hashes are untrusted).
+   *
+   *  SHARE-A1: pass `range` to read ONE byte span instead of the whole object —
+   *  the public media proxy answers `Range:` with it, so a 2 GB object is never
+   *  pulled through this process to satisfy a 1 MiB request. Omitting it is the
+   *  old behaviour, byte for byte (worker ingest + readBoundedPrefix rely on it). */
+  readStream(key: string, range?: ByteRange): Promise<AsyncIterable<Uint8Array>>;
   /** Remove the object (hash/size-mismatch cleanup). Missing object is a no-op. */
   deleteObject(key: string): Promise<void>;
   /* ---- browser-direct upload (r2 only; local throws — gate on
@@ -175,10 +195,12 @@ export class LocalDiskStorage implements Storage {
     }
   }
 
-  async readStream(key: string): Promise<AsyncIterable<Uint8Array>> {
+  async readStream(key: string, range?: ByteRange): Promise<AsyncIterable<Uint8Array>> {
+    if (range) assertByteRange(range);
     const file = this.fileFor(key);
     await access(file);
-    return createReadStream(file);
+    // `start`/`end` are both INCLUSIVE in fs, which is the same convention ByteRange uses.
+    return range ? createReadStream(file, { start: range.start, end: range.end }) : createReadStream(file);
   }
 
   async deleteObject(key: string): Promise<void> {
@@ -287,9 +309,18 @@ export class R2Storage implements Storage {
     }
   }
 
-  async readStream(key: string): Promise<AsyncIterable<Uint8Array>> {
+  async readStream(key: string, range?: ByteRange): Promise<AsyncIterable<Uint8Array>> {
     parseStorageKey(key);
-    const res = await this.client.send(new GetObjectCommand({ Bucket: this.cfg.bucket, Key: key }));
+    if (range) assertByteRange(range);
+    // S3's `Range` is the HTTP header verbatim, inclusive on both ends — so R2 sends back only
+    // the requested span and the bytes never traverse this process beyond what was asked for.
+    const res = await this.client.send(
+      new GetObjectCommand({
+        Bucket: this.cfg.bucket,
+        Key: key,
+        ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
+      }),
+    );
     if (!res.Body) throw new Error(`empty object: ${key}`);
     return res.Body as unknown as AsyncIterable<Uint8Array>; // Node runtime: Body is a Readable
   }
