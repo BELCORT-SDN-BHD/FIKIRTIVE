@@ -70,6 +70,62 @@ export const TENANT_MODELS = new Set([
   "OrgHomeLayout",
 ]);
 
+/**
+ * 钱表族 —— 租户列叫 `orgId` 的**受守卫**模型（规格 docs/specs/tenant-isolation.md 切片①，#1376）。
+ *
+ * 它们过去在下面的 {@link ORG_SCOPED_TENANT_GUARD_EXEMPT} 里，理由逐字写着「守卫注入的是字面
+ * `ownerId`，直接登记不是守住它们，是打坏它们」—— 那句话在 2026-09-02 是实测出来的事实，而它
+ * 说的其实不是「这些表不该有闸」，是「闸只会写一个列名」。切片①做的正是那条注释点名的后续：
+ * 把租户列**参数化**（{@link tenantColumnFor}），于是同一道闸既能守 `ownerId` 族，也能守这一族。
+ *
+ * 为什么是这三张：`CreditAccount` / `CreditLedger` 是每个商家的钱本身，`Membership` 是暂停权威
+ * （谁还能动这家店）。钱面就是最该有闸的面（Founder 裁定 2026-09-12 场⑦）。
+ *
+ * `OttoTurnTrace` **本片不动**，虽然它的 refId 主键就是账本里 `reserve:<refId>` 的那把钥匙：
+ * 另一份已冻结规格的验收（otto-engine.md §7.2② / ENGINE-A2，测试
+ * `packages/db/src/otto-turn-trace-tenant.test.ts`）逐字断言它在下面那份豁免名单里。改它要先走
+ * otto-engine 规格的变更登记，不由这一片顺手改掉。
+ *
+ * **先建帧后执法**（规格 §1.8 硬顺序）：本片上线时这一族走 warn 挡位 —— 守卫照常算出「落闸会拒
+ * 什么」，但只记一条警告、不改一个字的行为（{@link getOrgScopedGuardMode}）。翻 enforce 是独立
+ * 的一次小提交，可回滚。
+ */
+export const ORG_SCOPED_TENANT_MODELS = new Set([
+  "CreditAccount",
+  "CreditLedger",
+  "Membership",
+]);
+
+/**
+ * 一张表的租户列名。守卫过去把 `"ownerId"` 这五个字硬写在七个函数里 —— 这个类型就是把它
+ * 参数化之后留下的那个洞口（切片①，#1376）。
+ */
+export type TenantColumn = "ownerId" | "orgId";
+
+/** 迁移期挡位的两挡（规格 §1.3 第四态）。 */
+export type TenantGuardMode = "warn" | "enforce";
+
+/**
+ * 钱表族这一面的迁移期挡位。
+ *
+ * `warn`（默认，本片上线值）：守卫把 enforce 会做的判定**算一遍**，命中就 `console.warn` 一条，
+ * 然后原样放行 —— 查询参数一个字不改，无帧不拦，跨租户不拦。观察轮看的就是这些警告。
+ * `enforce`：落闸（值比对 + 注入 + 无帧即拒）。
+ *
+ * 挡位是**进程内常量**，不读环境变量、不读数据库：一个能在生产用配置关掉租户隔离的开关，本身
+ * 就是审计发现（规格 §1.3）。全部切片落地后这整段连同 setter 一起删除（TENANT-A10）。
+ */
+let orgScopedGuardMode: TenantGuardMode = "warn";
+
+export function getOrgScopedGuardMode(): TenantGuardMode {
+  return orgScopedGuardMode;
+}
+
+/** 迁移期挡位的唯一写入口。翻 enforce 是一次独立提交（规格 §1.8）；测试用它演示两挡的行为差。 */
+export function setOrgScopedGuardMode(mode: TenantGuardMode): void {
+  orgScopedGuardMode = mode;
+}
+
 /** Tenant-scoped models whose tenant column is `orgId`, NOT `ownerId` (钱引擎⑤B, 规格 §7.7
  *  「租户兜底闸盲区」欠账⑧).
  *
@@ -89,6 +145,9 @@ export const TENANT_MODELS = new Set([
  *  has no such column. Making it work means parameterising the tenant column through seven
  *  functions in this file — a change to the behaviour of all 40+ currently guarded models, which
  *  does not belong inside a hardening sweep. It is a scoped follow-up, not a line of this PR.
+ *  **那个 scoped follow-up 就是切片①（#1376）**：租户列现在是 {@link TenantColumn} 参数，钱两表
+ *  与 Membership 因此搬进了 {@link ORG_SCOPED_TENANT_MODELS}。下面这段落只对留在名单里的两张
+ *  表仍然成立；它保留原文，因为那是当时实测出来的证据，不是一句主张。
  *
  *  WHAT GUARDS THEM TODAY (measured, not asserted). Instrumenting the guard on 2026-09-02 and
  *  running the money suites (gen-ledger / refund-actions / tenant-actions) recorded **59
@@ -98,26 +157,23 @@ export const TENANT_MODELS = new Set([
  *  required argument, and e2e carries a two-tenant wallet journey in required CI (e2e.yml).
  *  So the boundary holds; what was missing was a place where someone had SAID so. */
 export const ORG_SCOPED_TENANT_GUARD_EXEMPT: Record<string, string> = {
-  CreditAccount:
-    "orgId-scoped, not ownerId — the guard injects the literal `ownerId` and would break every query on it. " +
-    "Scoped by the (orgId) primary key plus every credits.ts entry point taking orgId as a required argument.",
-  CreditLedger:
-    "orgId-scoped, not ownerId — same mechanism blocker. Scoped by the (orgId, refId, kind) and " +
-    "(orgId, idempotencyKey) unique indexes plus the two-tenant wallet journey in required CI.",
-  Membership:
-    "orgId-scoped, not ownerId — same mechanism blocker. It is also the suspension AUTHORITY, read " +
-    "platform-wide by the admin console, so a tenant-pinned read would be wrong for it anyway.",
+  // 切片①（#1376）把 CreditAccount / CreditLedger / Membership 从这里搬进了
+  // ORG_SCOPED_TENANT_MODELS —— 上面那段「机制上做不到」的实测注释说的是**当时**的守卫只会写
+  // 字面 `ownerId`；租户列参数化之后那个障碍不存在了，三张表现在真的有闸（观察轮走 warn 挡位）。
+  // 留在这份豁免名单里的两张：
   // ENGINE-A2 (规格 docs/specs/otto-engine.md §7.2②): Otto 每轮调试档案。它的 refId 主键
-  // 就是账本里 `reserve:<refId>` 的那把钥匙,所以它的租户列跟着账本叫 `orgId` —— 一张
-  // 「按 refId 对得上钱账」的表不能有第二种租户列名。那也正是它进不了 TENANT_MODELS 的
-  // 原因(守卫注入的是字面 `ownerId`,见本常量上方的实测注释)。
+  // 就是账本里 `reserve:<refId>` 的那把钥匙,所以它的租户列跟着账本叫 `orgId`。切片①没有把它
+  // 一起搬进守卫:ENGINE-A2 的验收测试逐字断言它在这份名单里,改归宿要走 otto-engine 规格的
+  // 变更登记(见 ORG_SCOPED_TENANT_MODELS 的注释)。
   OttoTurnTrace:
-    "orgId-scoped, not ownerId — same mechanism blocker (the refId primary key is the ledger's own " +
-    "`reserve:<refId>` key, so the tenant column follows the ledger's name). Scoped by the orgId " +
-    "foreign key (ON DELETE CASCADE) plus every read/write site passing orgId explicitly: the writer " +
-    "takes it from the verified session principal (apps/web/lib/otto-actions.ts recordOttoTurnTrace), " +
-    "and the only reader is the ops script scripts/ops/otto-turn-trace.ts. Two-tenant test: " +
-    "packages/db/src/otto-turn-trace-tenant.test.ts.",
+    "orgId-scoped, not ownerId (the refId primary key is the ledger's own `reserve:<refId>` key, " +
+    "so the tenant column follows the ledger's name). Scoped by the orgId foreign key " +
+    "(ON DELETE CASCADE) plus every read/write site passing orgId explicitly: the writer takes it " +
+    "from the verified session principal (apps/web/lib/otto-actions.ts recordOttoTurnTrace), and " +
+    "the only reader is the ops script scripts/ops/otto-turn-trace.ts. Two-tenant test: " +
+    "packages/db/src/otto-turn-trace-tenant.test.ts. 切片①(#1376) 刻意没搬它 —— ENGINE-A2 的" +
+    "验收测试逐字断言这条登记存在。",
+  // 第二张:租户列**不是**租户列的那一张 ——
   // SIGNIN-A17（规格 docs/specs/sign-in.md 已冻结 · v1 §1.5）：开户赠金「一个真实收件箱只领
   // 一次」的唯一约束。它的 `orgId` 不是租户列，是一条**审计脚注** —— 记「哪个工作区抢到了这一
   // 行」。这张表本身没有任何按租户读的路径：它的主键是归一化后的邮箱，唯一的读写是开户事务里
@@ -199,36 +255,55 @@ const SYSTEM_SCAN_OPS = new Set([
  * named differently and never match, so nothing that used to be refused starts passing except
  * the compound keys that genuinely name their tenant.
  */
-function compoundKeyOwnerIds(where: unknown): string[] {
+function compoundKeyOwnerIds(where: unknown, column: TenantColumn): string[] {
   if (!where || typeof where !== "object" || Array.isArray(where)) return [];
   const found: string[] = [];
   for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
-    if (key === "ownerId" || !key.split("_").includes("ownerId")) continue;
+    if (key === column || !key.split("_").includes(column)) continue;
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const nested = (value as Record<string, unknown>).ownerId;
+    const nested = (value as Record<string, unknown>)[column];
     if (typeof nested === "string" && nested.length > 0) found.push(nested);
   }
   return found;
 }
 
-function whereHasOwnerId(where: unknown): boolean {
+/**
+ * 无帧兜底：这个 where 到底点名了一个租户没有？
+ *
+ * `strict` 是切片①（#1376，验收 TENANT-A3）加的第二档。宽松档（`ownerId` 族，125 个还没建帧的
+ * 老调用点靠它活着）只要求「有一个非 undefined 的值」—— 所以 `{ ownerId: { not: "" } }` 这种
+ * 伪造过滤器照过。严格档（钱表族）只认两种形状：一个非空字符串的等值，或者一个点名了租户列的
+ * 复合唯一键。两档并存是刻意的：把严格档一次铺到所有面，就是规格 §4 异议栏里那个「落闸当天
+ * 全站 500」的形状；钱面已经建了帧，所以钱面先严。
+ */
+function whereHasOwnerId(where: unknown, column: TenantColumn, strict: boolean): boolean {
   if (!where || typeof where !== "object" || Array.isArray(where)) return false;
-  if (compoundKeyOwnerIds(where).length > 0) return true;
-  if (!Object.prototype.hasOwnProperty.call(where, "ownerId")) return false;
-  const ownerFilter = (where as Record<string, unknown>).ownerId;
+  if (compoundKeyOwnerIds(where, column).length > 0) return true;
+  if (!Object.prototype.hasOwnProperty.call(where, column)) return false;
+  const ownerFilter = (where as Record<string, unknown>)[column];
   if (typeof ownerFilter === "string") return ownerFilter.length > 0;
   if (!ownerFilter || typeof ownerFilter !== "object" || Array.isArray(ownerFilter)) {
     return false;
   }
+  if (strict) {
+    const equals = (ownerFilter as Record<string, unknown>).equals;
+    return typeof equals === "string" && equals.length > 0;
+  }
   return Object.values(ownerFilter).some((value) => value !== undefined);
 }
 
-function scopeWhere(args: Record<string, any>, ownerId: string, model: string, operation: string) {
+function scopeWhere(
+  args: Record<string, any>,
+  ownerId: string,
+  model: string,
+  operation: string,
+  column: TenantColumn,
+) {
   const where = args.where && typeof args.where === "object" ? args.where : {};
   if (
-    Object.prototype.hasOwnProperty.call(where, "ownerId") &&
-    where.ownerId !== undefined &&
-    where.ownerId !== ownerId
+    Object.prototype.hasOwnProperty.call(where, column) &&
+    where[column] !== undefined &&
+    where[column] !== ownerId
   ) {
     throw new Error(
       `[tenant-guard] ${model}.${operation} tried to use ownerId outside the active tenant`,
@@ -238,14 +313,14 @@ function scopeWhere(args: Record<string, any>, ownerId: string, model: string, o
   // names a FOREIGN tenant is refused exactly like a foreign top-level ownerId. Without this,
   // injecting the ambient ownerId beside the compound key merely made the lookup MISS, and an
   // upsert then quietly created a row under the caller's own tenant instead of refusing.
-  for (const nested of compoundKeyOwnerIds(where)) {
+  for (const nested of compoundKeyOwnerIds(where, column)) {
     if (nested !== ownerId) {
       throw new Error(
         `[tenant-guard] ${model}.${operation} tried to use ownerId outside the active tenant`,
       );
     }
   }
-  args.where = { ...where, ownerId };
+  args.where = { ...where, [column]: ownerId };
 }
 
 function scopeCreateData(
@@ -253,20 +328,21 @@ function scopeCreateData(
   ownerId: string,
   model: string,
   operation: string,
+  column: TenantColumn,
 ): unknown {
   if (Array.isArray(data)) {
-    return data.map((entry) => scopeCreateData(entry, ownerId, model, operation));
+    return data.map((entry) => scopeCreateData(entry, ownerId, model, operation, column));
   }
   if (!data || typeof data !== "object") {
     throw new Error(`[tenant-guard] ${model}.${operation} has no tenant-owned data`);
   }
   const row = data as Record<string, unknown>;
-  if (row.ownerId !== undefined && row.ownerId !== ownerId) {
+  if (row[column] !== undefined && row[column] !== ownerId) {
     throw new Error(
       `[tenant-guard] ${model}.${operation} tried to create data for another tenant`,
     );
   }
-  return { ...row, ownerId };
+  return { ...row, [column]: ownerId };
 }
 
 function rejectOwnerRewrite(
@@ -274,9 +350,10 @@ function rejectOwnerRewrite(
   ownerId: string,
   model: string,
   operation: string,
+  column: TenantColumn,
 ) {
   if (!data || typeof data !== "object" || Array.isArray(data)) return;
-  const nextOwner = (data as Record<string, unknown>).ownerId;
+  const nextOwner = (data as Record<string, unknown>)[column];
   if (nextOwner !== undefined && nextOwner !== ownerId) {
     throw new Error(
       `[tenant-guard] ${model}.${operation} tried to move data to another tenant`,
@@ -284,18 +361,20 @@ function rejectOwnerRewrite(
   }
 }
 
-function dataHasOwnerId(data: unknown): boolean {
-  if (Array.isArray(data)) return data.length > 0 && data.every(dataHasOwnerId);
+function dataHasOwnerId(data: unknown, column: TenantColumn): boolean {
+  if (Array.isArray(data)) {
+    return data.length > 0 && data.every((entry) => dataHasOwnerId(entry, column));
+  }
   if (!data || typeof data !== "object") return false;
-  return (data as Record<string, unknown>).ownerId !== undefined;
+  return (data as Record<string, unknown>)[column] !== undefined;
 }
 
-function dataRewritesOwner(data: unknown): boolean {
+function dataRewritesOwner(data: unknown, column: TenantColumn): boolean {
   return Boolean(
     data &&
       typeof data === "object" &&
       !Array.isArray(data) &&
-      (data as Record<string, unknown>).ownerId !== undefined,
+      (data as Record<string, unknown>)[column] !== undefined,
   );
 }
 
@@ -373,59 +452,103 @@ export function withTenantGuard<T extends object>(client: T): T {
   return withTenantScope(withReadOnlyFrameGuard(client));
 }
 
+/** 这个模型的租户列叫什么 —— 不在守卫视野里的模型返回 null。 */
+function tenantColumnFor(model: string): TenantColumn | null {
+  if (TENANT_MODELS.has(model)) return "ownerId";
+  if (ORG_SCOPED_TENANT_MODELS.has(model)) return "orgId";
+  return null;
+}
+
+/**
+ * 一次操作的全部租户判定 —— 违规就抛，合规就（在 enforce 挡位下）就地把租户号注进 args。
+ *
+ * 抽成独立函数是 warn 挡位的承重墙：观察轮拿一份 `args` 的浅拷贝跑同一段判定，抛出来的那句话
+ * 就是「落闸之后这里会发生什么」，而真正下发给数据库的 `args` 一个字没动。
+ */
+function applyTenantScope(
+  args: Record<string, any>,
+  model: string,
+  operation: string,
+  column: TenantColumn,
+  strictUnframed: boolean,
+) {
+  const principal = getPrincipal();
+  const activeOwnerId = principal?.ownerId ?? null;
+  if (activeOwnerId) {
+    if (SCOPED_WHERE_OPS.has(operation)) {
+      scopeWhere(args, activeOwnerId, model, operation, column);
+    }
+    if (CREATE_OPS.has(operation)) {
+      args.data = scopeCreateData(args.data, activeOwnerId, model, operation, column);
+    }
+    if (operation === "upsert") {
+      args.create = scopeCreateData(args.create, activeOwnerId, model, operation, column);
+      rejectOwnerRewrite(args.update, activeOwnerId, model, operation, column);
+    } else if (WRITE_OPS.has(operation)) {
+      rejectOwnerRewrite(args.data, activeOwnerId, model, operation, column);
+    }
+  } else if (principal?.kind === "system") {
+    if (!SYSTEM_SCAN_OPS.has(operation)) {
+      throw new Error(
+        `[tenant-guard] ${model}.${operation} requires runAsTenant before system writes`,
+      );
+    }
+  } else {
+    if (
+      SCOPED_WHERE_OPS.has(operation) &&
+      !whereHasOwnerId(args?.where, column, strictUnframed)
+    ) {
+      throw new Error(
+        `[tenant-guard] ${model}.${operation} has no ownerId filter — possible cross-tenant leak`,
+      );
+    }
+    if (CREATE_OPS.has(operation) && !dataHasOwnerId(args?.data, column)) {
+      throw new Error(
+        `[tenant-guard] ${model}.${operation} has no ownerId in created data`,
+      );
+    }
+    if (operation === "upsert" && !dataHasOwnerId(args?.create, column)) {
+      throw new Error(
+        `[tenant-guard] ${model}.${operation} has no ownerId in created data`,
+      );
+    }
+    if (
+      !CREATE_OPS.has(operation) &&
+      WRITE_OPS.has(operation) &&
+      dataRewritesOwner(operation === "upsert" ? args?.update : args?.data, column)
+    ) {
+      throw new Error(
+        `[tenant-guard] ${model}.${operation} cannot rewrite ownerId without an active tenant`,
+      );
+    }
+  }
+}
+
 function withTenantScope<T extends object>(client: T): T {
   return (client as any).$extends({
     query: {
       $allModels: {
         async $allOperations({ model, operation, args, query }: any) {
-          if (!TENANT_MODELS.has(model)) return query(args);
+          const column = tenantColumnFor(model);
+          if (!column) return query(args);
 
-          const principal = getPrincipal();
-          const activeOwnerId = principal?.ownerId ?? null;
-          if (activeOwnerId) {
-            if (SCOPED_WHERE_OPS.has(operation)) {
-              scopeWhere(args, activeOwnerId, model, operation);
-            }
-            if (CREATE_OPS.has(operation)) {
-              args.data = scopeCreateData(args.data, activeOwnerId, model, operation);
-            }
-            if (operation === "upsert") {
-              args.create = scopeCreateData(args.create, activeOwnerId, model, operation);
-              rejectOwnerRewrite(args.update, activeOwnerId, model, operation);
-            } else if (WRITE_OPS.has(operation)) {
-              rejectOwnerRewrite(args.data, activeOwnerId, model, operation);
-            }
-          } else if (principal?.kind === "system") {
-            if (!SYSTEM_SCAN_OPS.has(operation)) {
-              throw new Error(
-                `[tenant-guard] ${model}.${operation} requires runAsTenant before system writes`,
-              );
-            }
-          } else {
-            if (SCOPED_WHERE_OPS.has(operation) && !whereHasOwnerId(args?.where)) {
-              throw new Error(
-                `[tenant-guard] ${model}.${operation} has no ownerId filter — possible cross-tenant leak`,
-              );
-            }
-            if (CREATE_OPS.has(operation) && !dataHasOwnerId(args?.data)) {
-              throw new Error(
-                `[tenant-guard] ${model}.${operation} has no ownerId in created data`,
-              );
-            }
-            if (operation === "upsert" && !dataHasOwnerId(args?.create)) {
-              throw new Error(
-                `[tenant-guard] ${model}.${operation} has no ownerId in created data`,
-              );
-            }
-            if (
-              !CREATE_OPS.has(operation) &&
-              WRITE_OPS.has(operation) &&
-              dataRewritesOwner(operation === "upsert" ? args?.update : args?.data)
-            ) {
-              throw new Error(
-                `[tenant-guard] ${model}.${operation} cannot rewrite ownerId without an active tenant`,
-              );
-            }
+          // `ownerId` 族早就在执法（这一半 2026-09-12 Founder 已裁不重做）；挡位只管钱表族
+          // 那一面（规格 §1.3「每个切片上线时该面先 warn 观察一轮，再翻 enforce」）。
+          const mode: TenantGuardMode = column === "orgId" ? orgScopedGuardMode : "enforce";
+          if (mode === "enforce") {
+            applyTenantScope(args, model, operation, column, column === "orgId");
+            return query(args);
+          }
+
+          // 观察轮。判定跑在**浅拷贝**上：applyTenantScope 只会重新赋值 args 的顶层
+          // `where` / `data` / `create` 三个属性，所以拷贝挡住了全部写入，真正下发的 args 原样。
+          try {
+            applyTenantScope({ ...args }, model, operation, column, column === "orgId");
+          } catch (error) {
+            console.warn(
+              `[tenant-guard][warn] ${(error as Error).message} — 观察轮挡位放行，` +
+                `落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）`,
+            );
           }
           return query(args);
         },
