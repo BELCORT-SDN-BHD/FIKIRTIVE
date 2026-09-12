@@ -130,12 +130,20 @@ export function setOrgScopedGuardMode(mode: TenantGuardMode): void {
  *  「租户兜底闸盲区」欠账⑧).
  *
  *  WHY THEY ARE LISTED AT ALL. The coverage test used to scan schema.prisma for `ownerId` only,
- *  so these three tables — the two that hold every merchant's MONEY — were not "exempt", they
- *  were **structurally invisible**: nobody had ever made a choice about them, and nobody would
+ *  so every orgId table — including the two that hold every merchant's MONEY — was not "exempt",
+ *  it was **structurally invisible**: nobody had ever made a choice about them, and nobody would
  *  have noticed. Listing them turns "invisible" into "a decision with a reason attached", which
  *  is the whole point of the coverage test.
  *
- *  WHY THEY ARE NOT IN TENANT_MODELS. The runtime guard does not merely CHECK a tenant column,
+ *  WHAT IS STILL LISTED HERE TODAY (2026-09-12, 切片① #1376). Only OttoTurnTrace and
+ *  SignupGrantClaim. The three tables the paragraphs below were written about — CreditAccount /
+ *  CreditLedger / Membership — have MOVED INTO the runtime guard
+ *  ({@link ORG_SCOPED_TENANT_MODELS}, warn 挡位观察轮). Read the next two paragraphs as the
+ *  2026-09-02 record they are: they say why the guard could not take an orgId table BEFORE the
+ *  tenant column was parameterised, and they are kept verbatim because that was measured evidence,
+ *  not a claim.
+ *
+ *  WHY THEY WERE NOT IN TENANT_MODELS (2026-09-02). The runtime guard does not merely CHECK a tenant column,
  *  it INJECTS one: `scopeWhere` writes `args.where.ownerId`, `scopeCreateData` writes
  *  `data.ownerId`, and `whereHasOwnerId` / `compoundKeyOwnerIds` / `dataHasOwnerId` /
  *  `dataRewritesOwner` all read that literal name. Registering an `orgId` table as-is therefore
@@ -146,10 +154,9 @@ export function setOrgScopedGuardMode(mode: TenantGuardMode): void {
  *  functions in this file — a change to the behaviour of all 40+ currently guarded models, which
  *  does not belong inside a hardening sweep. It is a scoped follow-up, not a line of this PR.
  *  **那个 scoped follow-up 就是切片①（#1376）**：租户列现在是 {@link TenantColumn} 参数，钱两表
- *  与 Membership 因此搬进了 {@link ORG_SCOPED_TENANT_MODELS}。下面这段落只对留在名单里的两张
- *  表仍然成立；它保留原文，因为那是当时实测出来的证据，不是一句主张。
+ *  与 Membership 因此搬进了 {@link ORG_SCOPED_TENANT_MODELS}。
  *
- *  WHAT GUARDS THEM TODAY (measured, not asserted). Instrumenting the guard on 2026-09-02 and
+ *  WHAT GUARDED THEM ON 2026-09-02, BEFORE THE GUARD DID (measured, not asserted). Instrumenting the guard on 2026-09-02 and
  *  running the money suites (gen-ledger / refund-actions / tenant-actions) recorded **59
  *  operations on these three tables under an active tenant frame and ZERO missing `orgId`** —
  *  every call site already passes it. On top of that: `(orgId, refId, kind)` and

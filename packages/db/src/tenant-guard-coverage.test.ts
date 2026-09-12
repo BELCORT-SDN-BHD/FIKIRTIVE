@@ -15,9 +15,15 @@
  * (Membership)。它们不是"被豁免了",它们是**结构性看不见**:没有人为它们做过选择,
  * 也没有人会发现没做过。
  *
- * 现在正则认两种列名,`orgId` 那一族对到 ORG_SCOPED_TENANT_GUARD_EXEMPT —— 一份带理由的
- * 明示登记(理由与实测证据写在那个常量的注释里,含"为什么不能直接进 TENANT_MODELS")。
- * 盲区从此是"一个有人签过字的决定",而不是"一个没人看得见的洞"。
+ * 现在正则认两种列名,`orgId` 那一族必须二选一:进 ORG_SCOPED_TENANT_MODELS(运行时守卫),
+ * 或者进 ORG_SCOPED_TENANT_GUARD_EXEMPT(一份带理由的明示登记)。盲区从此是"一个有人签过字
+ * 的决定",而不是"一个没人看得见的洞"。
+ *
+ * ── 2026-09-12(租户围栏切片①,规格 docs/specs/tenant-isolation.md,#1376)────────────
+ * 2026-09-02 时 orgId 那一族**全部**走明示登记 —— 因为守卫注入的是字面 `ownerId`。切片①把
+ * 租户列参数化之后那个障碍没了:CreditAccount / CreditLedger / Membership 已经搬进
+ * ORG_SCOPED_TENANT_MODELS(观察轮走 warn 挡位);留在登记里的是 OttoTurnTrace 与
+ * SignupGrantClaim,各自的理由在那个常量的注释里。
  */
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
@@ -151,9 +157,10 @@ describe("tenant-guard coverage — every ownerId model is guarded or explicitly
  * **orgId 那一族**(钱引擎⑤B,规格 §7.7 欠账⑧)。
  *
  * 上面那组扫的是 `ownerId`。这一组扫 `orgId` —— 同样是租户列,同样必须有人为它做过选择。
- * 它们今天全部走明示登记而不是运行时守卫,理由与实测证据在 ORG_SCOPED_TENANT_GUARD_EXEMPT
- * 的注释里(一句话:守卫**注入**的是 `ownerId` 这个字面列名,直接登记会把这些表打坏,
- * 而不是守住)。
+ * 选择有两种:进运行时守卫(ORG_SCOPED_TENANT_MODELS ——  切片① #1376 之后钱两表与
+ * Membership 在这里,观察轮走 warn 挡位),或者一条带理由的明示登记
+ * (ORG_SCOPED_TENANT_GUARD_EXEMPT —— 今天只剩 OttoTurnTrace 与 SignupGrantClaim,
+ * 理由与实测证据写在那个常量的注释里)。
  */
 describe("tenant-guard coverage — orgId 那一族也必须有人做过选择", () => {
   const models = orgIdModels();
