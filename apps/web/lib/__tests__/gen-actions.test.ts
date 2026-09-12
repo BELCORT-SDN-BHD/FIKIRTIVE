@@ -105,6 +105,21 @@ vi.mock("../cowork-guardian", () => ({ checkCast: mockCheckCast }));
 const mockResolveDisabledModels = vi.fn();
 vi.mock("../model-registry", () => ({ resolveDisabledModels: mockResolveDisabledModels }));
 
+// FSE-204 —— `consumeGenerationGate` hits a REAL Postgres row (`@fikirtive/db/rate-limit`,
+// a different module specifier than the `@fikirtive/db` mock above, so that mock never
+// intercepts it). This file's own ~130 cases already call `startGen` well inside the per-hour
+// budget in isolation, but the full apps/web suite shares one `ownerId` ("org_ref") across many
+// files against the SAME test database — every unmocked caller spends from the SAME real
+// counter, and the full-suite total sits close enough to `GENERATION_PER_TENANT_PER_HOUR` that
+// this file's own tests can tip a LATER, unrelated describe block over the edge (observed:
+// the campaign-approval-gate tests near the end of this file failing with the rate-limit
+// message, not their own assertion). Mocked like `otto-actions.test.ts` mocks the same module —
+// partial, via importOriginal, so every other export (constants, other gates) stays real.
+vi.mock("@/lib/rate-limit-gates", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit-gates")>()),
+  consumeGenerationGate: vi.fn(async () => true),
+}));
+
 const {
   getGenJob,
   getRecentGenResults,
