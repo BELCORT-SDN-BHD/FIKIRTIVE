@@ -72,15 +72,25 @@ describe("C1b ① 缺配置的生产部署:拒绝,而不是发假货", () => {
     }
   });
 
-  it("生产 + 显式 mock → 保留 mock(显式选择仍然作数)", () => {
-    // The ticket's own boundary: an explicitly requested stand-in is a choice someone made and
-    // can be read back off the deploy. Only the ABSENT setting is the lie.
+  // RELY-A3 —— 这一条是被**推翻**的那一条。C1b 当初留着「明写 mock 就算数」,理由是
+  // 「有人选的、读得回来」;Founder 2026-09-12(#1359 场②)裁掉了它:商家分不出一个
+  // 留着旧样例值的部署和一个有人故意选了 mock 的部署,两边收到的都是纯色假图与一笔结算。
+  it("RELY-A3:生产 + 明写 GENERATION_PROVIDER=mock → 拒绝端口(不再交付纯色假图)", () => {
     const provider = createGenerationProvider({ NODE_ENV: "production", GENERATION_PROVIDER: "mock" } as NodeJS.ProcessEnv);
-    expect(provider).toBeInstanceOf(MockProvider);
+    expect(provider).toBeInstanceOf(UnconfiguredProvider);
+    expect(provider.name).toBe("unconfigured");
+    expect(provider).not.toBeInstanceOf(MockProvider);
   });
 
-  it("非生产 + 变量缺失 → 仍是 mock(dev/CI 一行配置都不用加)", () => {
-    for (const env of [{}, { NODE_ENV: "development" }, { NODE_ENV: "test" }]) {
+  it("RELY-A5:非生产 + 变量缺失或明写 mock → 仍是 mock(dev/CI 一行配置都不用加)", () => {
+    for (const env of [
+      {},
+      { NODE_ENV: "development" },
+      { NODE_ENV: "test" },
+      { GENERATION_PROVIDER: "mock" },
+      { NODE_ENV: "development", GENERATION_PROVIDER: "mock" },
+      { NODE_ENV: "test", GENERATION_PROVIDER: "mock" },
+    ]) {
       expect(createGenerationProvider(env as NodeJS.ProcessEnv)).toBeInstanceOf(MockProvider);
     }
   });
