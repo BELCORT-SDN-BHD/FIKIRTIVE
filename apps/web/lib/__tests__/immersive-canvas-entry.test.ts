@@ -61,9 +61,11 @@ vi.mock("@/components/canvas/NorthstarCanvasWorkspace", () => ({ NorthstarCanvas
 const {
   ImmersiveCanvasEntry,
   buildImmersiveCanvasCanonicalUrl,
+  isUnresolvedProjectDeepLink,
   selectImmersiveProject,
   selectImmersiveThread,
 } = await import("@/components/canvas/ImmersiveCanvasEntry");
+const { CANVAS_DEEP_LINK_REFUSAL_COPY } = await import("@/components/canvas/CanvasDeepLinkRefused");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -86,22 +88,30 @@ describe("immersive canvas owned runtime selection", () => {
   it("uses an explicitly requested owned project without redirecting", () => {
     expect(selectImmersiveProject(projects, "p-oldest", "p-other")).toEqual({
       activeProjectId: "p-other",
-      shouldRedirect: false,
-    });
-  });
-
-  it("falls back to the first owned project and canonicalizes an invalid project", () => {
-    expect(selectImmersiveProject(projects, "p-oldest", "p-forged")).toEqual({
-      activeProjectId: "p-oldest",
-      shouldRedirect: true,
     });
   });
 
   it("uses the ensured owner project when the project list is momentarily empty", () => {
     expect(selectImmersiveProject([], "p-ensured", undefined)).toEqual({
       activeProjectId: "p-ensured",
-      shouldRedirect: false,
     });
+  });
+
+  /**
+   * FSE-207 —— 「这条 `?project=` 打不开」现在是一道独立的题,在任何写入之前问。
+   * 从前它藏在 `selectImmersiveProject` 的 `shouldRedirect` 里,而那时兜底画布已经建好了。
+   */
+  it("FSE-207 — a project deep link outside the merchant's own canvases is unresolved", () => {
+    expect(isUnresolvedProjectDeepLink(projects, "p-other-tenant")).toBe(true);
+  });
+
+  it("FSE-207 — the merchant's own canvas deep link resolves, so nothing is refused", () => {
+    expect(isUnresolvedProjectDeepLink(projects, "p-other")).toBe(false);
+  });
+
+  it("FSE-207 — no deep link at all is not a refusal: that is the ordinary open", () => {
+    expect(isUnresolvedProjectDeepLink(projects, undefined)).toBe(false);
+    expect(isUnresolvedProjectDeepLink([], undefined)).toBe(false);
   });
 
   const threads = [
@@ -365,7 +375,7 @@ describe("ImmersiveCanvasEntry", () => {
     });
   });
 
-  it("redirects an invalid project and thread to an owned canonical URL", async () => {
+  it("redirects an invalid thread to an owned canonical URL", async () => {
     mocks.getProjects.mockResolvedValue([{ id: "p-oldest", name: "Oldest" }]);
     mocks.getCoworkThreads.mockResolvedValue([
       {
@@ -382,12 +392,68 @@ describe("ImmersiveCanvasEntry", () => {
 
     await expect(ImmersiveCanvasEntry({
       searchParams: Promise.resolve({
-        project: "p-forged",
+        project: "p-oldest",
         thread: "t-forged",
         audience: "audience-1",
       }),
     })).rejects.toThrow(
       "NEXT_REDIRECT:/create/canvas?project=p-oldest&thread=t-new&audience=audience-1",
     );
+  });
+
+  /* ── FSE-207 ─────────────────────────────────────────────────────────────────
+   * 规格 `docs/specs/creation-engine.md` §5(2026-09-11 行,Founder 2026-09-12 #1358
+   * 裁「零写入」为硬口径)。复测句:跨租户打深链——地址不得被改写、不得新建 project、
+   * 必须有一句人话。
+   *
+   * 这一组钉「地址不被改写」与「那一条会建画布的调用根本没发生」;库里真的零新增行由
+   * `canvas-deeplink-cross-tenant-fse207.test.ts` 用真 Postgres 钉。
+   * ────────────────────────────────────────────────────────────────────────── */
+
+  it("FSE-207 — a canvas deep link from another workspace is refused in plain words, and the address is not rewritten", async () => {
+    mocks.getProjects.mockResolvedValue([{ id: "p-mine", name: "Mine" }]);
+
+    const element = await ImmersiveCanvasEntry({
+      searchParams: Promise.resolve({ project: "canvas_someone_else" }),
+    });
+
+    // ① 地址不被改写:一次 redirect 都没有。
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    // ② 一句人话。
+    expect(element.type.name).toBe("CanvasDeepLinkRefused");
+    expect(CANVAS_DEEP_LINK_REFUSAL_COPY.heading).toBe("This canvas isn't in your workspace");
+    expect(CANVAS_DEEP_LINK_REFUSAL_COPY.body).toContain("belongs to a different workspace");
+  });
+
+  it("FSE-207 — refusing a deep link never reaches the call that creates a canvas", async () => {
+    mocks.getProjects.mockResolvedValue([{ id: "p-mine", name: "Mine" }]);
+
+    await ImmersiveCanvasEntry({
+      searchParams: Promise.resolve({ project: "canvas_someone_else" }),
+    });
+
+    // 这是走查里那一行 `Project` ＋ `ActionEvent project.create` 的唯一来源。
+    expect(mocks.getOrCreateDefaultProject).not.toHaveBeenCalled();
+    // 拒绝页之后一个读都不多发:租户的对话、余额、元素都与这条链接无关。
+    expect(mocks.getCoworkThreads).not.toHaveBeenCalled();
+    expect(mocks.getMyAccount).not.toHaveBeenCalled();
+    expect(mocks.getEntities).not.toHaveBeenCalled();
+  });
+
+  it("FSE-207 — a merchant with no canvas yet still gets one bootstrapped when no deep link was given", async () => {
+    // 改动把 `getProjects` 挪到了 bootstrap 前面 —— 第一次进画布的租户(清单为空)照旧
+    // 拿到一张画布,而且它要出现在侧栏清单里,不是只作 activeProjectId。
+    mocks.getProjects
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "p-fresh", name: "New canvas" }]);
+    mocks.getOrCreateDefaultProject.mockResolvedValue({ id: "p-fresh" });
+    mocks.getCoworkThreads.mockResolvedValue([]);
+
+    const element = await ImmersiveCanvasEntry({ searchParams: Promise.resolve({}) });
+
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(mocks.getOrCreateDefaultProject).toHaveBeenCalledTimes(1);
+    expect(element.props.runtimeContext.activeProjectId).toBe("p-fresh");
+    expect(element.props.runtimeContext.projects).toEqual([{ id: "p-fresh", name: "New canvas" }]);
   });
 });
