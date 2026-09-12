@@ -1,7 +1,7 @@
 # 租户隔离落闸（身份帧 + 值比对）规格书（S1）
 
 > 状态: 已冻结 · v1
-> 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1369 Founder 评论「S1 批准 tenant-isolation.md」(2026-09-12，批准于工作会话、经 Founder 豁免由编排者代录——见该票签名代录说明)
+> 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1369 Founder 评论「S1 批准 tenant-isolation.md」(2026-09-12)
 > 规格前缀: TENANT（验收编号 = TENANT-A1、A2…，全仓不得与其他规格撞前缀）
 
 ## 0. 一句话
