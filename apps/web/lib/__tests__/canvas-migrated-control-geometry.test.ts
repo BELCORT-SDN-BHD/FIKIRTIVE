@@ -147,8 +147,11 @@ describe("#840 车4 — 组件默认尺寸不许悄悄落到屏幕上", () => {
 
   it("扫描器真的在扫(regex 塌了不许绿)", () => {
     const all = car4Controls();
-    // 2026-08-14 实测:本车 11 个文件里共 60+ 个 shadcn 控件调用点。
-    expect(all.length).toBeGreaterThanOrEqual(50);
+    // 2026-08-14 实测:本车 11 个文件里共 60+ 个 shadcn 控件调用点(旧地板 50)。
+    // 2026-09-13 FSE-208 分镜首帧合成整段退场,StoryboardCard 里 regen 确认/取消按钮、
+    // continuity 复选框旁的 Button、首帧文字 Textarea 等随之真实删除(实测 47 个,少了 7)。
+    // 不是扫描器塌了——地板下调只为跟上这次合法减控,仍远高于「regex 塌了会给出的 0」。
+    expect(all.length).toBeGreaterThanOrEqual(40);
     // Node remake inputs and the text node moved into shared shadcn recipes; one older control in
     // this migration fence still intentionally bridges inline legacy geometry.
     expect(all.filter((c) => c.text.includes("style={{")).length).toBeGreaterThanOrEqual(1);

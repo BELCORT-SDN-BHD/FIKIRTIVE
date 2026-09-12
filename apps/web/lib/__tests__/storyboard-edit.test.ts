@@ -90,16 +90,19 @@ describe("applyEditShotPrompt — cascade matrix (G-block)", () => {
 });
 
 describe("applyAddShot", () => {
+  // PR #1417 判官 P2-1 —— NewShotInput.firstFramePrompt 随首帧合成活写路径整段报废,
+  // 这里跟进改字面量:新镜头不再携带 firstFramePrompt(字段已从入参类型退场),
+  // 「无 firstFrameGenerationId」的断言语义原样保留 —— 新镜头本来就不该有首帧指针。
   it("追加新镜头并重编 index;新镜头带 shotId、无 firstFrameGenerationId", () => {
-    const r = applyAddShot(base(), { shotId: "sN", firstFramePrompt: "ffN", videoPrompt: "vN" });
+    const r = applyAddShot(base(), { shotId: "sN", videoPrompt: "vN" });
     expect(r.shots).toHaveLength(4);
     expect(r.shots.map((s) => s.index)).toEqual([0, 1, 2, 3]);
     expect(r.shots[3].shotId).toBe("sN");
-    expect(r.shots[3].firstFramePrompt).toBe("ffN");
+    expect(r.shots[3].videoPrompt).toBe("vN");
     expect(r.shots[3].firstFrameGenerationId).toBeUndefined();
   });
   it("带 title", () => {
-    const r = applyAddShot(base(), { shotId: "sN", title: "T", firstFramePrompt: "ffN", videoPrompt: "vN" });
+    const r = applyAddShot(base(), { shotId: "sN", title: "T", videoPrompt: "vN" });
     expect(r.shots[3].title).toBe("T");
   });
 });
