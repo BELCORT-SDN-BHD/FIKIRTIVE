@@ -291,6 +291,11 @@ export async function ImmersiveCanvasEntry({
             ...(handoff.referenceVideoGenerationIds.length
               ? { referenceVideoGenerationIds: handoff.referenceVideoGenerationIds }
               : {}),
+            // FSE-210 / PRODID-R11:typed wire 引用也要跟着交接过去,不然这一轮的
+            // `ChatMessage.referenceRefs` 是空的 —— @ 到的产品/演员从此回不了链,
+            // 与直接在画布里 `@` 的那一轮不再同一形状(判官注记,见 docs/specs/
+            // brand-product-identity.md §5 PRODID-R11)。
+            ...(handoff.references.length ? { references: handoff.references } : {}),
           }
         : null,
   };

@@ -136,6 +136,7 @@ describe("getCanvasConversationHandoff", () => {
       entityIds: [],
       sourceGenerationIds: [],
       referenceVideoGenerationIds: [],
+      references: [],
     });
 
     expect(mocks.eventFindFirst).toHaveBeenCalledWith({
@@ -327,6 +328,8 @@ describe("getCanvasConversationHandoff:引用解形与归属", () => {
       entityIds: ["ent-1"],
       sourceGenerationIds: ["gen-img"],
       referenceVideoGenerationIds: ["gen-vid"],
+      // FSE-210 / PRODID-R11:typed wire 引用与上面三份同一批归属核对,原样带出去。
+      references: ["generation:gen-img", "generation:gen-vid", "product:ent-1"],
     });
   });
 
@@ -345,6 +348,7 @@ describe("getCanvasConversationHandoff:引用解形与归属", () => {
       entityIds: [],
       sourceGenerationIds: [],
       referenceVideoGenerationIds: [],
+      references: [],
     });
     expect(mocks.entityFindMany).toHaveBeenCalledWith({
       where: { id: { in: ["ent-1"] }, ownerId: "owner-1", deletedAt: null },

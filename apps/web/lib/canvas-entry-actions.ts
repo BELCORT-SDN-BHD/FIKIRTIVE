@@ -5,6 +5,7 @@ import { prisma } from "@fikirtive/db";
 import { CREATE_NAV_HREF } from "@fikirtive/core/navigation";
 import {
   dedupeReferenceRefs,
+  formatReferenceRef,
   isEntityReferenceType,
   isReferenceType,
   type ReferenceRef,
@@ -237,6 +238,14 @@ export type CanvasConversationHandoff = {
   sourceGenerationIds: string[];
   /** 影片素材 —— 画布首轮的 `referenceVideoGenerationIds`。 */
   referenceVideoGenerationIds: string[];
+  /**
+   * FSE-210 / PRODID-R11 —— 与直接在画布里 `@` 同一条纪律:类型化 wire 引用（`"<type>:<id>"`），
+   * 落进首轮 `ChatMessage.referenceRefs`(回链用)。此前这里只解出 `entityIds` 三份,typed ref
+   * 本身在交接这一步被丢掉了 —— `canvas.create-handoff` 那张回执上产品/演员的身份从此不可回链,
+   * 与直接在画布里 `@`(`useReferencePicker.referencesForSend`)两条路不再同一形状。
+   * 只收上面三份数组里**已经在**的那些(同一次归属核对,不新开一道判据)。
+   */
+  references: string[];
 };
 
 /** Read-only server seam used by the Canvas entry. It never trusts ids inside the payload. */
@@ -291,11 +300,24 @@ export async function getCanvasConversationHandoff(input: {
     generations.map((generation) => [generation.id, libraryMediaKindForExt(generation.asset.ext)] as const),
   );
 
+  const entityIds = entityRefIds.filter((id) => ownedEntityIds.has(id));
+  const sourceGenerationIds = mediaRefIds.filter((id) => mediaKindById.get(id) === "image");
+  const referenceVideoGenerationIds = mediaRefIds.filter((id) => mediaKindById.get(id) === "video");
+
   return {
     prompt: payload.prompt,
     // 顺序按商家挂的顺序保留:参考的次序在画布那一侧是有意义的(<Image_1>…<Image_N>)。
-    entityIds: entityRefIds.filter((id) => ownedEntityIds.has(id)),
-    sourceGenerationIds: mediaRefIds.filter((id) => mediaKindById.get(id) === "image"),
-    referenceVideoGenerationIds: mediaRefIds.filter((id) => mediaKindById.get(id) === "video"),
+    entityIds,
+    sourceGenerationIds,
+    referenceVideoGenerationIds,
+    // FSE-210 / PRODID-R11:同一批已核过归属的引用,原样铺成 typed wire 形式 —— 只收
+    // 上面三份数组里已经在的那些(同一次归属核对),不新开第二道判据。
+    references: refs
+      .filter((ref) =>
+        isEntityReferenceType(ref.type)
+          ? entityIds.includes(ref.id)
+          : sourceGenerationIds.includes(ref.id) || referenceVideoGenerationIds.includes(ref.id),
+      )
+      .map((ref) => formatReferenceRef(ref)),
   };
 }
