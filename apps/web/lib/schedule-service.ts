@@ -69,7 +69,13 @@ export async function draftScheduledPost(
         source: args.source,
         approvedAt: null,
         media: d.media.length
-          ? { create: d.media.map((generationId, position) => ({ id: newId(), generationId, position })) }
+          ? {
+              create: d.media.map((generationId, position) => ({
+                id: newId(),
+                generationId,
+                position,
+              })),
+            }
           : undefined,
       },
     });

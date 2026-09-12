@@ -25,10 +25,9 @@
  */
 import { it } from "vitest";
 
-// 切片⑤（75 条裸外键回填 + 迁移）
-it.todo(
-  "TENANT-A7 全新数据库跑完全部迁移后，把 A 租户的子行挂到 B 租户的父行被数据库直接拒绝 —— 切片⑤（裸外键回填）交付",
-);
+// 切片⑤（75 条裸外键回填 + 迁移）交付:TENANT-A7 见
+// packages/db/src/tenant-fk-backfill.test.ts —— 机器闸(裸外键剩余数 == 豁免清单长度)+ DB 级
+// 同租户成功/跨租户被拒(P2003)代表用例(ScheduledPostMedia、PublishAttempt)。
 
 // worker 七条队列（规格 §4 异议栏点名单独一片、单独复审）
 it.todo(

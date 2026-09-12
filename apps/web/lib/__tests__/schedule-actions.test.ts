@@ -329,8 +329,8 @@ describe("updateScheduledPost", () => {
     expect(mockMediaDeleteMany).toHaveBeenCalledWith({ where: { scheduledPostId: "p1" } });
     expect(mockMediaCreateMany).toHaveBeenCalledWith({
       data: [
-        { id: "new-1", scheduledPostId: "p1", generationId: "gen-b", position: 0 },
-        { id: "new-2", scheduledPostId: "p1", generationId: "gen-a", position: 1 },
+        { id: "new-1", scheduledPostId: "p1", ownerId: OWNER, generationId: "gen-b", position: 0 },
+        { id: "new-2", scheduledPostId: "p1", ownerId: OWNER, generationId: "gen-a", position: 1 },
       ],
     });
   });
