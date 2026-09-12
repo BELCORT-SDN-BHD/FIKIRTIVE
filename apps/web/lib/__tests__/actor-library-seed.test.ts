@@ -246,6 +246,33 @@ describe("CREATE-A10 —— 真的登录路径(convergeIdentity)也播得出来"
 describe("FSE-008 —— founder 账号也有官方演员", () => {
   const founderEmail = `actor-founder-${randomUUID()}@fikirtive.test`;
 
+  /**
+   * **夹具自洽:founder org 那一行得自己备好**(#1350 / PR #1407)。
+   *
+   * founder org 是迁移种下的平台单例(`20260619120000_org_tenant/migration.sql:35`),而同一个
+   * 测试库上 `packages/db/test/setup.ts:28` 的 `TRUNCATE … "Organization" … CASCADE` 在 packages/db
+   * 的**每个**用例前把它抹掉;`pnpm -r test` 按依赖拓扑先跑完 packages/db 才轮到 apps/web,所以
+   * apps/web 开跑时这一行已经不在了。没有它,`convergeIdentity` 的 founder 分支第一笔事务就撞
+   * `Membership_orgId_fkey`(converge.ts:93),异常被那里的 best-effort catch 吞掉 —— 五位一个都
+   * 没播,库里是空的。
+   *
+   * 它过去能绿,靠的是一个**跨包的巧合**:apps/worker 与 apps/web 共用同一个库时,
+   * `apps/worker/src/jobs/stripe-reconcile-db.test.ts:560` 会顺手把这一行 upsert 回来,而且刚好
+   * 赶在本文件之前。#1350 给 apps/worker 单独建库之后那个巧合就没了,这两条当场确定性转红。
+   *
+   * 修法是本仓库对这件事的既有写法,不是新发明 —— `signin-audit-exactly-once.test.ts:70`、
+   * `signin-audit-tenant-scope.test.ts:67`、`admin-role-authority.test.ts:107`、
+   * `admin-queue-guard-audit.test.ts:51`、`app/api/meta/data-deletion/__tests__/route.test.ts:46`
+   * 全都这么备;本文件是唯一漏掉的那个。
+   */
+  beforeAll(async () => {
+    await prisma.organization.upsert({
+      where: { id: FOUNDER_OWNER_ID },
+      update: {},
+      create: { id: FOUNDER_OWNER_ID, name: "Fikirtive" },
+    });
+  });
+
   it("FSE-008 / CREATE-A10: founder 登录收敛完,founder org 的 Library 里站着五个人", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     founderEmails.add(founderEmail);
