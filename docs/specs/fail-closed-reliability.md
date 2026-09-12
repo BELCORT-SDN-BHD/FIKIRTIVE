@@ -1,7 +1,7 @@
 # 出问题不装没事（引擎 fail-closed ＋ 报警送达确认）规格书（S1）
 
-> 状态: 草稿
-> 批准: （冻结时填）https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/<N> Founder 评论「S1 批准 fail-closed-reliability.md」(YYYY-MM-DD)
+> 状态: 已冻结 · v1
+> 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1371 Founder 评论「S1 批准 fail-closed-reliability.md」(2026-09-12)
 > 规格前缀: RELY（验收编号 = RELY-A1、A2…，全仓不得与其他规格撞前缀）
 
 合并两票：**A** = #1055（引擎缺配置仍编造理解事实并扣钱）、**B** = #1057 剩余五条（报警只「试着发」就记成「已送达」）。**Founder 已裁 2026-09-12（#1359 场②）**：两票本版做，挡 GO；生产上明写 `GENERATION_PROVIDER=mock` 也一律拒绝，离线演示走 staging。下列证据锚点取自 2026-09-12 只读核证员对主干 `368e9094` 的核证。

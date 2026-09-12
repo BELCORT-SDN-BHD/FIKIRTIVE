@@ -1,7 +1,7 @@
 # 客户预览链接（公开面）收口规格书（S1）
 
-> 状态: 草稿
-> 批准: （冻结时填）https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1053 Founder 评论「S1 批准 share-preview.md」(YYYY-MM-DD)
+> 状态: 已冻结 · v1
+> 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1370 Founder 评论「S1 批准 share-preview.md」(2026-09-12)
 > 规格前缀: SHARE（验收编号 = SHARE-A1、A2…，全仓不得与其他规格撞前缀）
 
 ## 0. 一句话
