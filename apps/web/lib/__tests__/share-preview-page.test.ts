@@ -77,6 +77,10 @@ const ALLOWED_MODULES = [
   // share-preview-view.ts 里,再抄一份就是两个地方各定一个 TTL。收进来之后,谁想给这个
   // 文件加一个 import,下面那张边表当场变红 —— 公共页能碰到的东西仍然逐条被钉住。
   "lib/media-public-link.ts",
+  // SHARE-A6(docs/specs/share-preview.md 已冻结 · v1)—— 分享预览 cookie 的名字与作用域路径,
+  // 唯一源头。`app/s/[token]/route.ts`(写)与这张页面(读)必须读同一个常量,不然名字或
+  // 作用域分裂两份就是最安静的那种 bug。零 import、零 I/O,与 media-public-link.ts 同一类。
+  "lib/share-preview-cookie.ts",
   // Presentation only — shadcn primitives and the class merger.
   "components/ui/badge.tsx",
   "components/ui/card.tsx",
@@ -90,9 +94,11 @@ const ALLOWED_MODULES = [
  * times and the page is not one of them.
  */
 const ALLOWED_EXTERNAL_IMPORTS = [
-  // The page itself: the publish-truth authority, and the request headers it reads the token from.
+  // The page itself: the publish-truth authority, the request headers/cookies it reads the token
+  // from, and (SHARE-A6) `redirect()` to forward a legacy `?t=` link through `/s/<token>`.
   `${PAGE} → @fikirtive/core/schedule-draft`,
   `${PAGE} → next/headers`,
+  `${PAGE} → next/navigation`,
   // The data module: the client, the token signer/verifier, the storage-key + channel-label helpers.
   "lib/share-preview-view.ts → @fikirtive/core",
   "lib/share-preview-view.ts → @fikirtive/core/schedule-draft",
@@ -226,9 +232,10 @@ describe("the public share-preview page reaches nothing it does not need", () =>
   });
 
   it("reads its data from exactly one module, so there is one place to review", () => {
-    // 排除的是**碰不到数据的纯函数**:class 合并器、来电地址解析、签名地址的 TTL 与路径模板。
-    // 三个都零数据库、零 session;判定标准是「它能不能读到东西」,不是「它住在 lib/ 下」。
-    const PURE_HELPERS = ["lib/utils.ts", "lib/caller-identity.ts", "lib/media-public-link.ts"];
+    // 排除的是**碰不到数据的纯函数**:class 合并器、来电地址解析、签名地址的 TTL 与路径模板、
+    // 分享 cookie 的名字与作用域常量。四个都零数据库、零 session;判定标准是「它能不能读到
+    // 东西」,不是「它住在 lib/ 下」。
+    const PURE_HELPERS = ["lib/utils.ts", "lib/caller-identity.ts", "lib/media-public-link.ts", "lib/share-preview-cookie.ts"];
     const dataModules = importClosure(PAGE).modules.filter(
       (file) => file.startsWith("lib/") && !PURE_HELPERS.includes(file),
     );

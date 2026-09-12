@@ -2897,3 +2897,201 @@ describe("FSE-001 executePropose —— 付费前的参考图尺寸闸", () => {
     expect(mockPrisma.generation.findMany).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// FSE-204(规格 §5 2026-09-11 行;S5 批量裁决 2026-09-12,#1358;判官 P1-1,2026-09-12)——
+// 视频起始帧(`sourceGenerationId`,kind === "video")进硬闸档;图生图 base
+// (`sourceGenerationId`,kind === "image")与图片卡自己的额外挂图(CRE-STG-P1-003 的
+// `referenceGenerationIds`)进诚实档。
+//
+// 根因(走查 findings-catalog.md FSE-204):尺寸闸从前只挂在「视频卡 × referenceGenerationIds」
+// 这一条路上 —— 一张 80×107 的图在「图生图 base」与「视频起始帧」两个入口都没有在付费前
+// 被拦,批准后一个真扣了钱、一个预扣后白等供应商三分钟才退款,而卡上从头到尾没有一个字
+// 提过尺寸。这里钉的是这两条路现在都进闸。
+//
+// 判官 P1-1(2026-09-12)修正:第一版把「图生图 base」也并进了硬闸档(300),而 staging 实测
+// 同一张走查报告的图在「图生图 base」这条端点一直正常交付、真扣了钱(`run-ledger.md` §4
+// 第 10 行)——供应商在这条端点没有 300px 硬闸,300 那道闸是「视频提交」端点独有的(供应商
+// 逐字回执见 `backend-evidence.md` §3.3)。图生图 base 与图片卡额外挂图改进**诚实档**:
+// worker 同样从不放大(`gen.ts` 直接 presign 原件),但门槛只是「短边 <100 诚实拒绝」的
+// 政策线,[100,300) 原样放行、不算放大、不带披露句。视频起始帧仍进**硬闸档**,门槛写死 300。
+// ---------------------------------------------------------------------------
+describe("FSE-204 executePropose —— 硬闸档(视频起始帧)与诚实档(图生图 base / 图片卡额外挂图)", () => {
+  let mockPrisma: {
+    entity: { findMany: ReturnType<typeof vi.fn> };
+    chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    referenceImage: { count: ReturnType<typeof vi.fn> };
+    generation: { findMany: ReturnType<typeof vi.fn> };
+    genJob: { create: ReturnType<typeof vi.fn> };
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const db = await import("@fikirtive/db");
+    mockPrisma = db.prisma as unknown as typeof mockPrisma;
+    mockPrisma.entity.findMany.mockResolvedValue([]);
+    mockPrisma.chatMessage.findFirst.mockResolvedValue({ seq: 5 });
+    mockPrisma.chatMessage.create.mockResolvedValue({});
+    mockPrisma.referenceImage.count.mockResolvedValue(0);
+  });
+
+  // 图片路(诚实档):worker 从不放大编辑底图,但这条端点没有供应商 300px 硬闸——staging
+  // 实测同一张 80×107 的图在这条路上一直正常交付、真扣了钱(run-ledger.md §4 第 10 行)。
+  // 短边 150 落在 [100,300):原样放行,不算放大、不带披露句。
+  it("FSE-204 / CREATE-A2: 图生图 base 短边 150(诚实档区间 [100,300))⇒ 照铸,不算放大、不带披露句", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 150, height: 400 } }]);
+
+    const out = await executePropose(
+      { kind: "image", structuredPrompt: "swap the background for a beach", entityIds: [], variantSel: {} },
+      { context: makeCtx({ sourceGenerationId: "gen_base" }) },
+    );
+
+    expect(out).toHaveProperty("cardId");
+    const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    }).data.payload;
+    expect(payload["referenceUpscaleNote"]).toBeUndefined();
+    expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+  });
+
+  // 图片路(诚实档)下界:短边 <100 仍然诚实拒绝,门槛写死 100(不是硬闸档的 300)——
+  // 与走查报告那张真实参考图逐字相同(run-ledger.md §R2-23 路①)。
+  it("FSE-204 / CREATE-A2: 图生图 base 短边 80(走查报告那张 80×107,诚实档下界)⇒ 付费前一句话拒绝,门槛写死 100", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 80, height: 107 } }]);
+
+    const out = await executePropose(
+      { kind: "image", structuredPrompt: "swap the background for a beach", entityIds: [], variantSel: {} },
+      { context: makeCtx({ sourceGenerationId: "gen_base" }) },
+    );
+
+    expect(out).toEqual({
+      error: tooSmallReferenceSentence({ width: 80, height: 107, minSide: minimumUsableReferenceSide(true) }),
+    });
+    expect(out).toEqual({ error: expect.stringContaining("80×107") });
+    expect(out).toEqual({ error: expect.stringContaining("at least 100 pixels") });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+    expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+  });
+
+  // staging 走查路 B:「视频起始帧」——没有演员在场,挂的图是 i2v 首帧,80×107 与走查报告
+  // 里那张真实参考图逐字相同。视频提交端点供应商真弹回 300px(backend-evidence.md §3.3),
+  // 硬闸档门槛写死 300,不受诚实档下界收窄影响。
+  it("FSE-204 / CREATE-A2: 视频起始帧短边 80(走查报告那张 80×107)⇒ 付费前一句话拒绝,零 GEN_CARD", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 80, height: 107 } }]);
+
+    const out = await executePropose(
+      { kind: "video", structuredPrompt: "animate this into a 5s clip", entityIds: [], variantSel: {} },
+      { context: makeCtx({ sourceGenerationId: "gen_start_frame" }) },
+    );
+
+    expect(out).toEqual({
+      error: tooSmallReferenceSentence({ width: 80, height: 107, minSide: minimumUsableReferenceSide(false) }),
+    });
+    expect(out).toEqual({ error: expect.stringContaining("80×107") });
+    expect(out).toEqual({ error: expect.stringContaining("at least 300 pixels") });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+    expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+  });
+
+  // 硬闸档不受诚实档下界收窄:与图生图 base 那条「150 放行」用同一个短边对照 —— 视频起始帧
+  // 落在同一个 [100,300) 区间仍然拒绝,门槛说 300 不说 100。
+  it("FSE-204 / CREATE-A2: 视频起始帧短边 150(与图生图 base 那条同一个数对照)⇒ 硬闸档仍然拒绝、门槛说 300", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 150, height: 400 } }]);
+
+    const out = await executePropose(
+      { kind: "video", structuredPrompt: "animate this into a 5s clip", entityIds: [], variantSel: {} },
+      { context: makeCtx({ sourceGenerationId: "gen_start_frame" }) },
+    );
+
+    expect(out).toEqual({
+      error: tooSmallReferenceSentence({ width: 150, height: 400, minSide: minimumUsableReferenceSide(false) }),
+    });
+    expect(out).toEqual({ error: expect.stringContaining("at least 300 pixels") });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+    expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+  });
+
+  // 图片卡自己的额外挂图(CRE-STG-P1-003)—— 第一张(编辑底图)够大,第二张(额外参考)
+  // 短边 <100,诚实档下界同样对它生效。
+  it("FSE-204 / CREATE-A2: 图片卡第二张挂图(CRE-STG-P1-003 的额外参考)短边不足 100 ⇒ 拒绝,说出那一张的实际尺寸", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([
+      { asset: { width: 1344, height: 1344 } }, // 第一张:编辑底图,够大
+      { asset: { width: 80, height: 107 } }, // 第二张:额外参考,短边 <100
+    ]);
+
+    const out = await executePropose(
+      { kind: "image", structuredPrompt: "put the product next to this", entityIds: [], variantSel: {} },
+      { context: makeCtx({ sourceGenerationId: "gen_base", sourceGenerationIds: ["gen_base", "gen_extra"] }) },
+    );
+
+    expect(out).toEqual({
+      error: tooSmallReferenceSentence({ width: 80, height: 107, minSide: minimumUsableReferenceSide(true) }),
+    });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  // 同一张额外挂图落在诚实档区间 [100,300) ⇒ 原样放行,不因为它是「第二张」就走别的判据。
+  it("FSE-204 / CREATE-A2: 图片卡第二张挂图短边 150(诚实档区间)⇒ 照铸,不拒", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([
+      { asset: { width: 1344, height: 1344 } }, // 第一张:编辑底图,够大
+      { asset: { width: 150, height: 400 } }, // 第二张:额外参考,落在 [100,300)
+    ]);
+
+    const out = await executePropose(
+      { kind: "image", structuredPrompt: "put the product next to this", entityIds: [], variantSel: {} },
+      { context: makeCtx({ sourceGenerationId: "gen_base", sourceGenerationIds: ["gen_base", "gen_extra"] }) },
+    );
+
+    expect(out).toHaveProperty("cardId");
+    expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+  });
+
+  // 边界:短边恰好 300 ⇒ 诚实档原样放行(asIs),不编放大披露句(它从不会被放大)。
+  it("FSE-204 / CREATE-A9: 图生图 base 短边恰好 300 ⇒ 照铸,不带放大披露句", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 300, height: 900 } }]);
+
+    const out = await executePropose(
+      { kind: "image", structuredPrompt: "swap the background", entityIds: [], variantSel: {} },
+      { context: makeCtx({ sourceGenerationId: "gen_base" }) },
+    );
+
+    expect(out).toHaveProperty("cardId");
+    const payload = (mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    }).data.payload;
+    expect(payload["referenceUpscaleNote"]).toBeUndefined();
+  });
+
+  // 诚实档同样只在这个租户的范围里查(ownerId 来自 ctx,不从模型收)—— 与 FSE-001 那条
+  // 同族用例(`尺寸闸只在这个租户的范围里查`)逐字同一条纪律,这里钉的是图生图 base 的
+  // sourceGenerationId 那条候选集也走同一个 `generationReferenceScope`。
+  it("FSE-204 / CREATE-A2: 图生图 base 的尺寸闸同样只在这个租户的范围里查", async () => {
+    mockPrisma.generation.findMany.mockResolvedValue([{ asset: { width: 1344, height: 1344 } }]);
+
+    await executePropose(
+      { kind: "image", structuredPrompt: "swap the background", entityIds: [], variantSel: {} },
+      { context: makeCtx({ orgId: "org-tenant-x", sourceGenerationId: "gen_base" }) },
+    );
+
+    expect(mockPrisma.generation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: { in: ["gen_base"] },
+          ownerId: "org-tenant-x",
+          deletedAt: null,
+          asset: { ext: { in: [...REFERENCE_IMAGE_EXTS] } },
+        }),
+      }),
+    );
+  });
+
+  it("FSE-204 / CREATE-A2: 没有挂图的普通图片卡根本不查尺寸(既有那一条路一格不动)", async () => {
+    const out = await executePropose(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
+      { context: makeCtx() },
+    );
+
+    expect(out).toHaveProperty("cardId");
+    expect(mockPrisma.generation.findMany).not.toHaveBeenCalled();
+  });
+});

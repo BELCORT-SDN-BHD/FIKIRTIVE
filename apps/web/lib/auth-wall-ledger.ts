@@ -88,6 +88,18 @@ export const AUTH_WALL_EXEMPTIONS: readonly AuthWallExemption[] = [
     reason: "B0-28 seat-less share link for one scheduled post; its HMAC token plus a live "
       + "SharePreviewToken row (lib/share-preview.ts) is the sole authorization.",
   },
+  // SHARE-A6(docs/specs/share-preview.md 已冻结 · v1)—— 分享预览链接的干净入口。
+  // `sharePostPreview` 现在铸 `/s/<token>`,读它的人按定义没有会话(点开链接正是他们
+  // 没有账号的理由)——`app/s/[token]/route.ts` 唯一的动作是把 token 换成一个 HttpOnly cookie
+  // 再跳去 `schedule/share-preview`(上面那一条,同样在墙外)。收成 subtree 是因为动态段
+  // `[token]` 在磁盘上就是这一整棵子树,没有第二种形状可收。
+  {
+    path: "s",
+    semantics: "subtree",
+    reason: "SHARE-A6 clean share-preview entry `/s/<token>`; its reader is by definition "
+      + "session-less (opening the link IS why they have no account) — the route's only job is "
+      + "converting the token into an HttpOnly cookie before landing on schedule/share-preview.",
+  },
   // 公开法律页。app/terms/ 下只有 page.tsx,没有子页面(privacy 有 BM 版,terms 没有)。
   {
     path: "terms",
