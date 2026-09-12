@@ -603,12 +603,23 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     // false red, because the web service has no reason to carry it.
     surface: "worker",
     readBy: "code",
-    requirement: "optional",
+    // RELY-A4 — 生产必须点名一个引擎。`optional` 的时候,一台丢了这个变量的生产 worker
+    // 照样起得来,然后由运行时逐件拒绝(每一件都要走完重试才停):运维看见的是几千行
+    // PAUSED,而不是开机时那一句「你少配了 GENERATION_PROVIDER」。两层都要有。
+    requirement: "required",
     format: "enum",
     values: ["mock", "byteplus"],
+    // RELY-A4(Founder 2026-09-12,#1359 场②)——**生产合法值只剩 byteplus**。
+    // `mock` 在格式上照旧合法(dev/CI 的正经取值),但在生产上它就是「这台部署会交付
+    // 纯色假图与罐头理解,并且照常结算」的那个开关,而一个留着旧样例值的部署与一个有人
+    // 故意选了它的部署在商家那一侧长得一模一样。没有豁免开关:离线演示跑在一个不被标成
+    // 生产的环境上(docs/specs/fail-closed-reliability.md §3)。
+    productionValues: ["byteplus"],
+    productionReason:
+      "mock delivers stand-in artefacts and canned understanding and still settles the charge — production must name the real engine",
     secret: false,
     shared: false,
-    summary: "mock ($0) | byteplus (the only paid provider, ADR 0003). Unset means mock in dev/CI, and a REFUSAL (job fails, hold refunded) in production — a production deploy with no engine must not sell stand-in artefacts.",
+    summary: "mock ($0, dev/CI only) | byteplus (the only paid provider, ADR 0003, and the ONLY value production accepts). Unset means mock in dev/CI; in production both unset and mock are refused at boot, and any process that starts anyway refuses every job and refunds the hold.",
   },
   {
     name: "BYTEPLUS_API_KEY",
