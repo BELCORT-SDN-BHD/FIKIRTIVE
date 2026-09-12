@@ -28,7 +28,12 @@ import { act, createElement, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
-vi.mock("../auth-guard", () => ({ requireOwner: vi.fn() }));
+// 租户围栏切片③（#1378）：segment-actions.ts 现在从这个模块拿 `resolveUserPrincipal` 建帧；
+// 单测 mock 掉了整个 `../auth-guard`，补上 #464 B1 既有的共享 stub（其它切片同款用法）。
+vi.mock("../auth-guard", async () => ({
+  requireOwner: vi.fn(),
+  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("../better-auth/compat", () => ({ isImpersonating: vi.fn(async () => false) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // r6 — the broadcast page's own action modules. Mocked so the freeze BUTTON can be clicked in a

@@ -10,7 +10,8 @@ import {
   type SegmentRuleGroup,
 } from "@fikirtive/core";
 import { prisma, type Prisma } from "@fikirtive/db";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import {
   consentFact,
   contactChannelFacts,
@@ -375,7 +376,13 @@ function evaluatedSegment(row: SegmentRow, contacts: EvaluatedContact[], evaluat
 export async function listSegments() {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => listSegmentsInFrame(gate));
+}
 
+async function listSegmentsInFrame(gate: { email: string; ownerId: string }) {
   const evaluatedAt = new Date().toISOString();
   const [rows, contacts] = await Promise.all([
     prisma.segment.findMany({
@@ -399,6 +406,13 @@ export async function listSegments() {
 export async function getSegment(rawSegmentId: unknown) {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => getSegmentInFrame(gate, rawSegmentId));
+}
+
+async function getSegmentInFrame(gate: { email: string; ownerId: string }, rawSegmentId: unknown) {
   if (typeof rawSegmentId !== "string" || !ULID_PATTERN.test(rawSegmentId)) {
     return { error: SEGMENT_NOT_FOUND };
   }
@@ -424,7 +438,13 @@ export async function getSegment(rawSegmentId: unknown) {
 export async function previewSegment(rawRules: unknown) {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => previewSegmentInFrame(gate, rawRules));
+}
 
+async function previewSegmentInFrame(gate: { email: string; ownerId: string }, rawRules: unknown) {
   const validated = validateSegmentRuleGroup(rawRules);
   if (!validated.ok) return { error: "Choose valid segment rules." };
   if (!hasExactSpendPrecision(validated.value)) {
@@ -515,7 +535,13 @@ export async function deleteSegment(raw: unknown) {
   if (await isImpersonating()) {
     return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   }
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => deleteSegmentInFrame(gate, raw));
+}
 
+async function deleteSegmentInFrame(gate: { email: string; ownerId: string }, raw: unknown) {
   const segmentId = (raw as { segmentId?: unknown })?.segmentId;
   if (typeof segmentId !== "string" || !ULID_PATTERN.test(segmentId)) {
     return { error: SEGMENT_NOT_FOUND };
@@ -550,7 +576,13 @@ export async function buildSegment(raw: unknown) {
   if (await isImpersonating()) {
     return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   }
+  // 租户围栏切片③（规格 docs/specs/tenant-isolation.md，#1378，TENANT-A1/A2）：CRM 面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => buildSegmentInFrame(gate, raw));
+}
 
+async function buildSegmentInFrame(gate: { email: string; ownerId: string }, raw: unknown) {
   const input = raw as {
     operation?: unknown;
     segmentId?: unknown;

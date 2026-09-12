@@ -32,7 +32,12 @@ const {
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+// 租户围栏切片③（#1378）：crm-actions.ts 现在从这个模块拿 `resolveUserPrincipal` 建帧;
+// 单测 mock 掉了整个 `@/lib/auth-guard`，补上 #464 B1 既有的共享 stub（其它切片同款用法）。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mockRequireOwner,
+  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../crm-identity", () => ({
