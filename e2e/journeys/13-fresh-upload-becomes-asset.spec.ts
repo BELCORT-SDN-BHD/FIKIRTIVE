@@ -12,8 +12,10 @@
  * against a future e2e run against a real R2/MinIO backend where dedup actually executes.
  *
  * COVERAGE BOUNDARY — read this before treating a green run here as an R2/CORS guarantee.
- * `playwright.config.ts`'s "NO NETWORK" rule means the app under test carries no R2 credential
- * (support/env.ts), so `packages/storage`'s `createStorage()` returns `LocalDiskStorage`
+ * `playwright.config.ts`'s "NO NETWORK" rule means the app under test carries no R2 credential —
+ * and since #1052 that is enforced rather than assumed: `support/env.ts` hands the server an
+ * explicit empty `STORAGE_DRIVER` and `R2_*`, and `journeys/00-storage-fence.spec.ts` is what
+ * fails when it stops doing so. So `packages/storage`'s `createStorage()` returns `LocalDiskStorage`
  * (`supportsDirectUpload = false`). Inside `authorizeUpload` (apps/web/lib/upload-actions.ts)
  * the `!storage.supportsDirectUpload` check fires BEFORE the exists/dedup check and
  * unconditionally returns `{kind:"unsupported"}` — so on THIS suite, salted or not, the browser

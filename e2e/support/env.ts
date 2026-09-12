@@ -84,7 +84,38 @@ export const OFF_MACHINE_CREDENTIAL_NAMES = [
   "BRAVE_SEARCH_API_KEY",
   "RESEND_API_KEY",
   "SENTRY_DSN",
+  // 对象存储这一族是「写」这一侧的 reach，而且是唯一一族真的会在别人的资产里留下东西的
+  // （#1052）：`createStorage()` 只看 `STORAGE_DRIVER === "r2"` 就带着下面这四个值去建远端
+  // client（packages/storage/src/index.ts:690-701），于是 journey 13 的那张假图写进的是生产桶。
+  // 桶名与端点也在名单里，不是因为它们是密钥，而是因为「写到哪里」和「拿什么写」一样是远端
+  // 副作用的一半——半配的一份配置照样能指着生产桶。
+  //
+  // 备份那一族（R2_BACKUP_*）同理：它是一把单独铸的、权限更窄但同样打得出去的令牌
+  // （opsR2Config，同文件 :626-665），而 `createOpsBucket()` 在 driver 不是 r2 时就返回 null，
+  // 所以名单挡住上面四个之后备份路径本来就走不通——列出来是为了「半配也要红」，不是重复。
+  //
+  // 不在名单里的是 STORAGE_DRIVER 与 R2_FORCE_PATH_STYLE，这是刻意的：它们是开关不是凭据，
+  // `STORAGE_DRIVER=local` 是开发机完全正当的配置，拿它拒跑是一条误伤的红。压住它们的是
+  // `appEnv()` 里说出来的空值——那条路同时也管 `apps/web/.env.local`，而这份名单看不见那里。
+  "R2_ENDPOINT",
+  "R2_ACCESS_KEY_ID",
+  "R2_SECRET_ACCESS_KEY",
+  "R2_BUCKET",
+  "R2_BACKUP_ACCESS_KEY_ID",
+  "R2_BACKUP_SECRET_ACCESS_KEY",
+  "R2_BACKUP_BUCKET",
+  "R2_BACKUP_ENDPOINT",
 ] as const;
+
+/**
+ * 环境里配着的那些「打得出这台机器」的名字。空数组 = 可以开跑。
+ *
+ * 住在这里而不是 `global-setup.ts` 里，是为了它能被单独测（那个默认导出会 TRUNCATE 整个库，
+ * 没有测试能调用它）。判定口径就一条：名字在名单里、值去掉首尾空白之后非空。
+ */
+export function offMachineCredentialsPresent(env: NodeJS.ProcessEnv): string[] {
+  return OFF_MACHINE_CREDENTIAL_NAMES.filter((name) => (env[name] ?? "").trim() !== "");
+}
 
 /** The environment `next start` is given. Everything the app needs, and nothing that can spend. */
 export function appEnv(): Record<string, string> {
@@ -98,6 +129,24 @@ export function appEnv(): Record<string, string> {
     // 让跑道上那个 `next start` 连到别的库去。空字符串在消费方的 `||` 下直接落回 DATABASE_URL，
     // 也让 `pointsAtThrowawayTestDatabase`（Google 门替身的武装前提）看到的地址只有这一个。
     DATABASE_URL_POOLED: "",
+    // 同一族「说出来的空值」，同一个理由，另一条继承路径（#1052）。
+    //
+    // 上面那份 OFF_MACHINE_CREDENTIAL_NAMES 只看得见 runner 自己的 process.env；`next start`
+    // 还会加载 `apps/web/.env.local`，那份文件里的一行 `STORAGE_DRIVER=r2` 拒跑名单永远看不见。
+    // 而 Playwright 起 webServer 时先起 server、再跑 globalSetup，所以事后校验也来不及。
+    // 唯一在 server 启动那一刻就成立的东西，是这张表里一个明写的空值：.env 加载不覆盖已经存在
+    // 的键，空字符串也是存在。于是 `createStorage()` 读到的 STORAGE_DRIVER 不是 "r2"，
+    // 它落回 LocalDiskStorage —— journey 13 那句「本机没有 R2 凭据」从一句注释变成一条保证。
+    STORAGE_DRIVER: "",
+    R2_ENDPOINT: "",
+    R2_ACCESS_KEY_ID: "",
+    R2_SECRET_ACCESS_KEY: "",
+    R2_BUCKET: "",
+    R2_FORCE_PATH_STYLE: "",
+    R2_BACKUP_ACCESS_KEY_ID: "",
+    R2_BACKUP_SECRET_ACCESS_KEY: "",
+    R2_BACKUP_BUCKET: "",
+    R2_BACKUP_ENDPOINT: "",
     BETTER_AUTH_SECRET: E2E_AUTH_SECRET,
     BETTER_AUTH_URL: E2E_BASE_URL,
     NEXT_PUBLIC_BETTER_AUTH_URL: E2E_BASE_URL,
