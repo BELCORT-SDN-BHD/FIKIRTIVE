@@ -79,3 +79,36 @@ test("#1052 — 环境里带一个真 R2 凭据，套件开跑前就拒跑", () 
   expect(offMachineCredentialsPresent({ STRIPE_SECRET_KEY: "sk_live_x" })).toEqual(["STRIPE_SECRET_KEY"]);
   expect(offMachineCredentialsPresent({})).toEqual([]);
 });
+
+/**
+ * 一台什么都配齐了的开发机，另外七个凭据那一半（判官 P2-2）。
+ *
+ * #1052 修的是同一条根 —— 「拒跑名单看不见 `apps/web/.env.local`」—— 但当初只在存储那一族
+ * 补了说出来的空值。这七个名字走的是同一条路：名单拦得住 shell，拦不住那份文件。
+ */
+const A_MACHINE_WITH_REAL_CREDENTIALS = {
+  BYTEPLUS_API_KEY: "real-byteplus-key",
+  STRIPE_SECRET_KEY: "sk_live_real",
+  ANTHROPIC_API_KEY: "sk-ant-real",
+  TAVILY_API_KEY: "tvly-real",
+  BRAVE_SEARCH_API_KEY: "real-brave-key",
+  RESEND_API_KEY: "re_live_real",
+  SENTRY_DSN: "https://real@o1.ingest.sentry.io/1",
+} as const;
+
+test("#1052 — 拒跑名单上的每个凭据，webServer 收到的也都是空值", () => {
+  const whatTheWebServerGets: Record<string, string | undefined> = {
+    ...process.env,
+    ...A_MACHINE_WITH_REAL_CREDENTIALS,
+    ...appEnv(),
+  };
+
+  for (const name of Object.keys(A_MACHINE_WITH_REAL_CREDENTIALS)) {
+    expect(whatTheWebServerGets[name], `${name} 被原样继承进了 webServer`).toBe("");
+  }
+  // 两份名单要对得上：拒跑名单上的每一个名字，`appEnv()` 都得说出它的空值——少一个，
+  // 就又回到「shell 拦得住、.env.local 拦不住」的那条口子上。
+  for (const name of OFF_MACHINE_CREDENTIAL_NAMES) {
+    expect(appEnv()[name], `${name} 在 appEnv() 里没有说出来的空值`).toBe("");
+  }
+});

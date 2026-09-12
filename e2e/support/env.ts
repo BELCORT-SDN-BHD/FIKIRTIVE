@@ -129,6 +129,24 @@ export function appEnv(): Record<string, string> {
     // 让跑道上那个 `next start` 连到别的库去。空字符串在消费方的 `||` 下直接落回 DATABASE_URL，
     // 也让 `pointsAtThrowawayTestDatabase`（Google 门替身的武装前提）看到的地址只有这一个。
     DATABASE_URL_POOLED: "",
+    // 拒跑名单上那七个「打得出这台机器」的凭据，也各自说出一个空值（判官 P2-2）。
+    //
+    // 名单与空值不是重复的两道，是同一条根的两条继承路径：`offMachineCredentialsPresent()`
+    // 只看得见 runner 自己的 process.env，而 `next start` 还会加载 `apps/web/.env.local` ——
+    // 那份文件里的一行 `RESEND_API_KEY=re_live_…` 拒跑名单永远看不见，只有这里一个说出来的
+    // 空值兜得住（.env 加载不覆盖已存在的键，空字符串也是存在）。#1052 当初只修了存储那一族
+    // 的这半条根；这里把同一条根的另外七个名字补齐。
+    //
+    // webServer 收到这些空值是预期，不是降级：e2e 从不真发信、真扣费、真上报 —— 没有凭据时
+    // `createGenerationProvider()` 返回 mock、research port 不接线、Sentry 是 no-op、Stripe
+    // 货架没钥匙可打，而登录码走的是下面明写的 stub transport。
+    BYTEPLUS_API_KEY: "",
+    STRIPE_SECRET_KEY: "",
+    ANTHROPIC_API_KEY: "",
+    TAVILY_API_KEY: "",
+    BRAVE_SEARCH_API_KEY: "",
+    RESEND_API_KEY: "",
+    SENTRY_DSN: "",
     // 同一族「说出来的空值」，同一个理由，另一条继承路径（#1052）。
     //
     // 上面那份 OFF_MACHINE_CREDENTIAL_NAMES 只看得见 runner 自己的 process.env；`next start`
