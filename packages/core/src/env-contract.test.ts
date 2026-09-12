@@ -304,6 +304,10 @@ const CORE = {
   // 整顿 C1a 起,报警不再是可选装饰:没有 DSN 的生产进程收不到任何错误报警,
   // 所以它属于「最小能用的生产环境」的一部分。
   SENTRY_DSN: "https://key@o1.ingest.sentry.io/2",
+  // RELY-A4:生产 worker 必须点名一个引擎,所以「最小能用的生产环境」从此包含这两个。
+  // (web 面不读它们 —— `appliesTo` 会跳过,所以放进 CORE 对 web 的用例是无害的。)
+  GENERATION_PROVIDER: "byteplus",
+  BYTEPLUS_API_KEY: "ark-test",
 };
 
 describe("checkEnv", () => {
@@ -330,7 +334,11 @@ describe("checkEnv", () => {
   });
 
   it("half-configured generation is caught: byteplus selected with no key", () => {
-    const problems = checkEnv({ ...good, GENERATION_PROVIDER: "byteplus" }, { surface: "worker", production: true });
+    // CORE 自带 key(RELY-A4 之后生产必须有引擎),所以这一条得自己把它拿掉才谈得上「半配」。
+    const problems = checkEnv(
+      { ...good, GENERATION_PROVIDER: "byteplus", BYTEPLUS_API_KEY: undefined },
+      { surface: "worker", production: true },
+    );
     expect(problems.map((p) => p.name)).toContain("BYTEPLUS_API_KEY");
     expect(problems.find((p) => p.name === "BYTEPLUS_API_KEY")?.kind).toBe("conditional-missing");
   });
@@ -414,6 +422,41 @@ describe("STORAGE_DRIVER must be a remote driver in production (#797 r2 P1-2)", 
       { surface: "worker", production: true },
     );
     expect(decision.action).toBe("exit");
+  });
+
+  it("RELY-A4:生产 worker 把 GENERATION_PROVIDER 设成 mock ⇒ 开机拒绝并点名该变量", () => {
+    const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, GENERATION_PROVIDER: "mock" }, { surface: "worker", production: true });
+    const p = problems.find((x) => x.name === "GENERATION_PROVIDER");
+    expect(p, "mock in production must be fatal — it delivers stand-ins and still settles").toBeTruthy();
+    expect(p?.kind).toBe("not-production-safe");
+    // 报错要说清楚该改成什么,否则没法照着修。
+    expect(p?.message).toContain("byteplus");
+    const decision = bootEnvDecision(
+      { ...CORE, ...REMOTE_STORAGE, NODE_ENV: "production", GENERATION_PROVIDER: "mock" },
+      { surface: "worker", production: true },
+    );
+    expect(decision.action).toBe("exit");
+  });
+
+  it("RELY-A4:生产 worker 把 GENERATION_PROVIDER 留空 ⇒ 同样开机拒绝(缺引擎不是一个正常状态)", () => {
+    const { GENERATION_PROVIDER: _unset, BYTEPLUS_API_KEY: _key, ...noEngine } = { ...CORE, ...REMOTE_STORAGE };
+    const problems = checkEnv(noEngine, { surface: "worker", production: true });
+    const p = problems.find((x) => x.name === "GENERATION_PROVIDER");
+    expect(p?.kind).toBe("missing");
+    expect(
+      bootEnvDecision({ ...noEngine, NODE_ENV: "production" }, { surface: "worker", production: true }).action,
+    ).toBe("exit");
+  });
+
+  it("RELY-A4:生产 worker 配齐 byteplus + key ⇒ 绿(这道闸只拦没引擎的部署)", () => {
+    expect(checkEnv({ ...CORE, ...REMOTE_STORAGE }, { surface: "worker", production: true })).toEqual([]);
+  });
+
+  it("RELY-A5:非生产不设 GENERATION_PROVIDER(或设成 mock)⇒ 一个问题都不报", () => {
+    for (const surface of ["web", "worker"] as const) {
+      expect(checkEnv({}, { surface, production: false })).toEqual([]);
+      expect(checkEnv({ GENERATION_PROVIDER: "mock" }, { surface, production: false })).toEqual([]);
+    }
   });
 
   it("the declared production values are a subset of the declared format values", () => {

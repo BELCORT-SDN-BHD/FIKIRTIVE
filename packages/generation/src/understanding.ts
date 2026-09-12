@@ -344,28 +344,67 @@ export class ArkUnderstandingProvider implements UnderstandingProvider {
   }
 }
 
+/* ---------------- 生产上没有引擎时的拒绝端口(RELY-A1 / A3)---------------- */
+
 /**
- * 端口工厂。**默认 mock**:配错的环境不会安静地开始烧钱,开发/测试永远不碰网络。
- * (`createGenerationProvider` 从前是同一条默认,C1b ① 之后已经不是 —— 它在生产上缺配置会
- * 直接拒绝并退款。)
+ * **没有引擎的生产部署读不了商家的文件,于是它就说读不了。**
  *
- * ⚠️ **这条默认的旧理由已经不成立**。上一版写的是「素材理解商家一分钱不付,没有预留可退,
- * 也就没有『悄悄卖假货』这个失败模式」;MONEY-A9(规格 §7.3,2026-09-01)之后理解按件收费,
- * 于是那个失败模式**真的存在了**:生产上 `GENERATION_PROVIDER` 没设成 byteplus 时,这里
- * 回落 mock,handler 会照常 reserve → 拿到假产物 → settle,商家为一段捏造的理解付了钱。
- * 眼下挡住它的只有部署配置本身(生产环境两个变量都设着),不是这段代码 —— 这是一个已知
- * 缺口,收口方式(照 `createGenerationProvider` 的样子在生产缺配置时直接拒绝)属于另一票,
- * 不在 A9 钱路接线的范围内。别把这段注释读成「已经安全」。
+ * 上一版这里回落 mock,那正是 #1055 的病灶:MONEY-A9 之后理解按件收费,于是
+ * reserve → 罐头描述 → settle 一路走通,商家为「A product photo from the owner's library.」
+ * 和「Sample item RM 10」付了钱,而那两句话还会被写进 BrandRecord 与品牌记忆,Otto 之后
+ * 把它们当店铺事实讲出来。挡住它的只有部署配置本身,不是代码。
+ *
+ * 形状照抄生成侧的 `UnconfiguredProvider`,两点刻意不同:
+ *   · 抛的是 **`providerConfigError`**(不是 `permanentInputError`)。handler 的配置类分支
+ *     已经写好了这条路:重试到上限 ⇒ 行落 `PAUSED` + 既有文案 `UNDERSTANDING_PROVIDER_PAUSED`
+ *     + `refundUnderstandingHold`(apps/worker/src/jobs/understand.ts)。**永远不落终态**,
+ *     所以运维把变量配好之后,既有扫描器把这些行捡回 QUEUED,商家一件都不用重传。
+ *     写成永久错误会把商家的好文件判死 —— 文件没问题,是我们没接引擎。
+ *   · 诊断只进 **运维那一侧**(console.error → worker stdout → Sentry)。商家读到的那一句
+ *     由 handler 写死成既有常量,这里一个变量名都递不过去。
+ *
+ * 为什么是「每一次调用拒一次」而不是 import 期抛:理由与生成侧逐字相同 —— worker 正是
+ * 执行退款的那个进程,起不来的 worker 会让每一行都攥着预留没人释放。开机那一层由 env 契约
+ * 单独把守(`GENERATION_PROVIDER` 的 productionValues),两层并存,不是二选一。
+ */
+export class UnconfiguredUnderstandingProvider implements UnderstandingProvider {
+  /** 不叫 "mock":生产路径上一个自称 mock 的端口会让别处的 mock 分支误开。 */
+  readonly name = "unconfigured";
+  constructor(private readonly why: string) {}
+
+  async understand(_req: UnderstandingRequest): Promise<UnderstandingResult> {
+    console.error(
+      `[understanding] REFUSING to read a merchant's file: ${this.why} — no engine is configured, ` +
+        `so this deploy cannot read anything. The row is parked and the merchant's hold is refunded.`,
+    );
+    throw providerConfigError("no understanding engine is configured on this deploy");
+  }
+}
+
+/**
+ * 端口工厂。生产只有一个合法答案(`byteplus`),其余一切 —— 未设、明写 `mock`、拼错 ——
+ * 都拿到拒绝端口;**非生产照旧 mock**,本地与 CI 一行配置都不用加(RELY-A5)。
+ *
+ * 与 `createGenerationProvider` 同一条判据、同一个信号(`NODE_ENV === "production"`),
+ * 这是刻意的:#1055 的根因就是「同一个缺配置,生成拒绝、理解编故事」两条管线各判各的。
+ * 判据分开写在两个文件里是因为两条管线的钱形状不同(那条注释在文件头),但**结论必须同源**。
  *
  * 复用 `GENERATION_PROVIDER=byteplus` 与同一把 key:理解走的是同一个供应商账户,
  * 多开一个开关只会多一种「两个变量对不上」的配置漂移。总开关是产品侧的
  * `ASSET_UNDERSTANDING`(@fikirtive/core),不在这里再造一个。
  */
 export function createUnderstandingProvider(env: NodeJS.ProcessEnv = process.env): UnderstandingProvider {
+  // 逐字比较、不 trim:和生成侧同一条纪律 —— 一个带空格的 " byteplus" 是打字错误,
+  // 不该成为「开始花商家的钱」的那个理由(带空白的值另有开机检查点名拒绝)。
   if (env.GENERATION_PROVIDER === "byteplus") {
     const key = env.BYTEPLUS_API_KEY;
     if (!key) throw new Error("GENERATION_PROVIDER=byteplus but BYTEPLUS_API_KEY is not set");
     return new ArkUnderstandingProvider(key);
+  }
+  if (env.NODE_ENV === "production") {
+    return new UnconfiguredUnderstandingProvider(
+      `GENERATION_PROVIDER is ${env.GENERATION_PROVIDER === undefined ? "unset" : `"${env.GENERATION_PROVIDER}"`}`,
+    );
   }
   return new MockUnderstandingProvider();
 }
