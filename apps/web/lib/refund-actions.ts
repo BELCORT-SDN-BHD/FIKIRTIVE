@@ -61,7 +61,8 @@ import {
   MANUAL_REFUND_REF_PREFIX,
   myrMinorToUsd,
 } from "@fikirtive/core";
-import { requireRole } from "./auth-guard";
+import { requireRole, staffPrincipal } from "./auth-guard";
+import { runAsStaff } from "@fikirtive/db/principal";
 import { activeMerchantOrg } from "./tenant-admin";
 import { financeAdjustBlockedMessage } from "./finance-limit-seam";
 import { stripe } from "./stripe";
@@ -396,6 +397,24 @@ export async function refundCreditsAction(raw: unknown): Promise<RefundCreditsRe
   const entry = await gateOrgAndTicket(v);
   if ("error" in entry) return entry;
   const { orgId, refundId, refId, via } = entry;
+  // #1379（规格 TENANT 切片④，#479 并案裁定）：目标租户已知（entry.orgId）—— 从这里起建
+  // staff 帧再进数据库。权限不因建帧放宽：`gateOrgAndTicket` 里的 requireRole 原样决定放不放行。
+  return runAsStaff(
+    staffPrincipal({ email: via }, orgId),
+    () => refundCreditsActionInFrame(v, orgId, refundId, refId, via),
+  );
+}
+
+async function refundCreditsActionInFrame(
+  v: {
+    orgId?: unknown; displayedAmount?: unknown; paymentIntentId?: unknown;
+    refundId?: unknown; allowPartial?: unknown; reason?: unknown;
+  },
+  orgId: string,
+  refundId: string,
+  refId: string,
+  via: string,
+): Promise<RefundCreditsResult> {
   if (!(await activeMerchantOrg(orgId))) return { error: "Unknown or closed org." };
 
   const displayedAmount = typeof v?.displayedAmount === "number" ? v.displayedAmount : NaN;
@@ -735,7 +754,19 @@ export async function completeManualRefund(raw: unknown): Promise<RefundCreditsR
   const entry = await gateOrgAndTicket(raw as { orgId?: unknown; refundId?: unknown });
   if ("error" in entry) return entry;
   const { orgId, refundId, refId, via } = entry;
+  // #1379：目标租户已知（entry.orgId）—— ownerId=orgId（同 refundCreditsAction）。
+  return runAsStaff(
+    staffPrincipal({ email: via }, orgId),
+    () => completeManualRefundInFrame(orgId, refundId, refId, via),
+  );
+}
 
+async function completeManualRefundInFrame(
+  orgId: string,
+  refundId: string,
+  refId: string,
+  via: string,
+): Promise<RefundCreditsResult> {
   const state = await readLedgerState(orgId, refId);
   if (state.settled) return settledResult(state);
   if (state.released) return { error: "That refund id is already closed (released after a Stripe failure, or abandoned). Start a new refund id." };
@@ -765,7 +796,19 @@ export async function abandonManualRefund(raw: unknown): Promise<RefundCreditsRe
   const entry = await gateOrgAndTicket(raw as { orgId?: unknown; refundId?: unknown });
   if ("error" in entry) return entry;
   const { orgId, refundId, refId, via } = entry;
+  // #1379：目标租户已知（entry.orgId）—— ownerId=orgId（同 refundCreditsAction）。
+  return runAsStaff(
+    staffPrincipal({ email: via }, orgId),
+    () => abandonManualRefundInFrame(orgId, refundId, refId, via),
+  );
+}
 
+async function abandonManualRefundInFrame(
+  orgId: string,
+  refundId: string,
+  refId: string,
+  via: string,
+): Promise<RefundCreditsResult> {
   const state = await readLedgerState(orgId, refId);
   if (state.settled) return settledResult(state);
   if (state.released) return { error: "That refund id is already closed (released after a Stripe failure, or abandoned). Start a new refund id." };

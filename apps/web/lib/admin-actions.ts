@@ -20,7 +20,8 @@ import {
   isRole,
   primaryPlatformRole,
 } from "@fikirtive/core";
-import { requireRole } from "./auth-guard";
+import { requireRole, staffPrincipal } from "./auth-guard";
+import { runAsStaff } from "@fikirtive/db/principal";
 
 /**
  * #755 judge r2, P1 — what a role save is refused with when it was built on an old page.
@@ -44,6 +45,16 @@ export async function saveModelDirective(
 ): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("knowledge", "mutate");
   if ("error" in gate) return gate;
+  // #1379（规格 docs/specs/tenant-isolation.md，TENANT 切片④，#479 并案裁定）：后台动作面的每个
+  // requireRole 入口先建 staff 帧再进数据库。这一动作是平台配置（无单一目标租户），ownerId=null——
+  // 守卫把它当扫描域处理，与 kind:"system" 的空 ownerId 同一条结构规则（§1.6）。
+  return runAsStaff(staffPrincipal(gate, null), () => saveModelDirectiveInFrame(gate, raw));
+}
+
+async function saveModelDirectiveInFrame(
+  gate: { email: string },
+  raw: unknown,
+): Promise<{ ok: true } | { error: string }> {
   const parsed = modelDirectiveInput.safeParse(raw);
   if (!parsed.success) return { error: "That directive is out of bounds." };
   const { family, mode, directive, rules, notes, confidence, enabled, source } = parsed.data;
@@ -80,6 +91,13 @@ export async function saveModelDirective(
 export async function seedResearchDirectives(): Promise<{ ok: true; inserted: number; refreshed: number } | { error: string }> {
   const gate = await requireRole("knowledge", "mutate");
   if ("error" in gate) return gate;
+  // #1379：平台配置，无单一目标租户 —— ownerId=null（同上一条注释）。
+  return runAsStaff(staffPrincipal(gate, null), () => seedResearchDirectivesInFrame(gate));
+}
+
+async function seedResearchDirectivesInFrame(
+  gate: { email: string },
+): Promise<{ ok: true; inserted: number; refreshed: number } | { error: string }> {
   try {
     const res = await prisma.modelDirective.createMany({
       data: DIRECTIVE_SEED.map((c) => ({
@@ -118,6 +136,14 @@ export async function seedResearchDirectives(): Promise<{ ok: true; inserted: nu
 export async function saveRuntimeConfig(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("model", "mutate");
   if ("error" in gate) return gate;
+  // #1379：平台配置，无单一目标租户 —— ownerId=null。
+  return runAsStaff(staffPrincipal(gate, null), () => saveRuntimeConfigInFrame(gate, raw));
+}
+
+async function saveRuntimeConfigInFrame(
+  gate: { email: string },
+  raw: unknown,
+): Promise<{ ok: true } | { error: string }> {
   const parsed = runtimeConfigInput.safeParse(raw);
   if (!parsed.success) return { error: "That setting is out of bounds." };
   const { key, value } = parsed.data;
@@ -147,6 +173,14 @@ export async function saveRuntimeConfig(raw: unknown): Promise<{ ok: true } | { 
 export async function saveModelEnabled(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("model", "mutate");
   if ("error" in gate) return gate;
+  // #1379：平台配置，无单一目标租户 —— ownerId=null。
+  return runAsStaff(staffPrincipal(gate, null), () => saveModelEnabledInFrame(gate, raw));
+}
+
+async function saveModelEnabledInFrame(
+  gate: { email: string },
+  raw: unknown,
+): Promise<{ ok: true } | { error: string }> {
   const v = raw as { modelId?: unknown; enabled?: unknown; notes?: unknown };
   if (typeof v?.modelId !== "string" || !isKnownModelId(v.modelId)) return { error: "Unknown model." };
   if (typeof v?.enabled !== "boolean") return { error: "Invalid toggle." };
@@ -182,6 +216,14 @@ export async function saveModelEnabled(raw: unknown): Promise<{ ok: true } | { e
 export async function saveUserRole(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("team", "mutate");
   if ("error" in gate) return gate;
+  // #1379：平台团队配置，无单一目标租户 —— ownerId=null。
+  return runAsStaff(staffPrincipal(gate, null), () => saveUserRoleInFrame(gate, raw));
+}
+
+async function saveUserRoleInFrame(
+  gate: { email: string },
+  raw: unknown,
+): Promise<{ ok: true } | { error: string }> {
   const v = raw as { userId?: unknown; role?: unknown; roles?: unknown; expectedRoles?: unknown };
   if (typeof v?.userId !== "string" || !v.userId) return { error: "Missing user." };
   const requested = Array.isArray(v.roles) ? v.roles : [v.role];

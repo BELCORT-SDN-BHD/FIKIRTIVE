@@ -14,7 +14,11 @@ const { mockRequireRole, mockFetch } = vi.hoisted(() => ({
   mockFetch: vi.fn(),
 }));
 
-vi.mock("@/lib/auth-guard", () => ({ requireRole: mockRequireRole }));
+// #1379（TENANT 切片④）：/admin/queue 现在从这个模块拿 `staffPrincipal` 建帧。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireRole: mockRequireRole,
+  staffPrincipal: (await import("@/lib/__tests__/__stubs__/staff-principal")).stubStaffPrincipal,
+}));
 
 beforeEach(() => {
   vi.clearAllMocks();

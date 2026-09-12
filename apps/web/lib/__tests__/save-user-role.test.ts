@@ -4,7 +4,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // invariants are pinned — gate-first, self-escalation guard, and ba_user.role mirror.
 
 const mockRequireRole = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireRole: mockRequireRole }));
+// #1379（TENANT 切片④）：admin-actions.ts 现在从这个模块拿 `staffPrincipal` 建帧。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireRole: mockRequireRole,
+  staffPrincipal: (await import("@/lib/__tests__/__stubs__/staff-principal")).stubStaffPrincipal,
+}));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 

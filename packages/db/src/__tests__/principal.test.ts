@@ -13,6 +13,11 @@
  *     before citing it as one. The load-bearing oracle is the gateway sequential case in
  *     apps/web/lib/__tests__/principal-context.test.ts.
  *  5. Frames are frozen, so a reader cannot rewrite the identity every enclosing frame shares.
+ *  6. #1379（TENANT 切片④）：`runAsStaff` builds the third frame kind — a dual-identity check
+ *     pins that a `staff` frame and a `user` frame acting on the SAME `ownerId` are structurally
+ *     distinct (different `kind`, no `subjectUserId`/`orgRole`/`membershipId` axis on staff) even
+ *     though the guard treats their scoped case identically; see `tenant-guard-staff-slice4.test.ts`
+ *     for the DB-level half of that claim (staff acting on org A cannot touch org B).
  *
  * No DB access — but packages/db's vitest setup opens the shared *_test client, so this file
  * runs under the same DATABASE_URL guard as its siblings.
@@ -22,9 +27,11 @@ import { describe, expect, it } from "vitest";
 import {
   getPrincipal,
   runAsSystem,
+  runAsStaff,
   runAsTenant,
   runAsUser,
   type Principal,
+  type StaffPrincipal,
   type UserPrincipal,
 } from "../principal.js";
 
@@ -59,6 +66,16 @@ function userPrincipal(suffix: string): UserPrincipal {
  * ever goes missing — an unstamped frame reads as writable, which is the whole hazard.
  */
 function storedUserFrame(p: UserPrincipal, readOnly = false) {
+  return { ...p, readOnly };
+}
+
+/** A staff (back-office operator) identity, as `auth-guard.staffPrincipal()` builds it. */
+function staffPrincipal(actorEmail: string, ownerId: string | null): StaffPrincipal {
+  return { kind: "staff", actorEmail, ownerId };
+}
+
+/** The frame as STORED, given the identity a caller passed `runAsStaff`. */
+function storedStaffFrame(p: StaffPrincipal, readOnly = false) {
   return { ...p, readOnly };
 }
 
@@ -243,6 +260,83 @@ describe("runAsUser", () => {
     expect(system).toEqual({ kind: "system", reason: "worker-heartbeat", ownerId: null, readOnly: false });
     expect(none).toBeUndefined();
     expect(getPrincipal()).toBeUndefined();
+  });
+});
+
+describe("runAsStaff — #1379 TENANT 切片④，第三类帧", () => {
+  it("carries actorEmail + the named target tenant, and restores the caller's frame", async () => {
+    const p = staffPrincipal("ops@fikirtive.test", "org_a");
+    await runAsStaff(p, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      expect(getPrincipal()).toEqual(storedStaffFrame(p));
+    });
+    expect(getPrincipal()).toBeUndefined();
+  });
+
+  it("ownerId: null is the platform-wide shape (no single tenant — same structure as a system scan)", () => {
+    runAsStaff(staffPrincipal("ops@fikirtive.test", null), () => {
+      expect(getPrincipal()).toEqual({
+        kind: "staff",
+        actorEmail: "ops@fikirtive.test",
+        ownerId: null,
+        readOnly: false,
+      });
+    });
+  });
+
+  it("returns the callback's value", async () => {
+    const seen = await runAsStaff(staffPrincipal("ops@fikirtive.test", "org_a"), async () => getPrincipal()?.ownerId);
+    expect(seen).toBe("org_a");
+  });
+
+  it("is frozen — a reader cannot rewrite the operator or the target tenant", () => {
+    runAsStaff(staffPrincipal("ops@fikirtive.test", "org_a"), () => {
+      const staff = getPrincipal()!;
+      expect(Object.isFrozen(staff)).toBe(true);
+      expect(() => {
+        (staff as { ownerId: string | null }).ownerId = "org_victim";
+      }).toThrow(TypeError);
+      expect(getPrincipal()?.ownerId).toBe("org_a");
+    });
+  });
+
+  /**
+   * 双身份测试（票 #1379 要求）：同一个 `ownerId` 下，一个 `staff` 帧与一个 `user`（商家）帧
+   * 结构上不是同一件事 —— `kind` 不同，staff 帧没有 `subjectUserId` / `orgRole` /
+   * `membershipId` 这条 membership 轴（它本来就不该有：staff 不是这家店的成员），
+   * user 帧也没有 `actorEmail` 这个字段。两种帧絶不会被彼此的读者错认。
+   */
+  it("dual identity: a staff frame and a user frame on the SAME org are structurally distinct", () => {
+    const org = "org_shared";
+    let staffSeen: Principal | undefined;
+    let userSeen: Principal | undefined;
+
+    runAsStaff(staffPrincipal("ops@fikirtive.test", org), () => {
+      staffSeen = getPrincipal();
+    });
+    runAsUser(userPrincipal("a"), () => {
+      // re-point the merchant identity at the SAME org the staff frame just acted on
+      userSeen = { ...getPrincipal()!, ownerId: org } as Principal;
+    });
+
+    expect(staffSeen?.kind).toBe("staff");
+    expect(userSeen?.kind).toBe("user");
+    expect(staffSeen).not.toHaveProperty("subjectUserId");
+    expect(staffSeen).not.toHaveProperty("orgRole");
+    expect(staffSeen).not.toHaveProperty("membershipId");
+    expect(userSeen).not.toHaveProperty("actorEmail");
+    // both name the same tenant, by construction of this test — that is the point: same
+    // `ownerId`, still two irreducibly different identities.
+    expect((staffSeen as { ownerId: string | null } | undefined)?.ownerId).toBe(org);
+    expect((userSeen as { ownerId: string } | undefined)?.ownerId).toBe(org);
+  });
+
+  it("a staff frame nested inside a read-only system frame inherits the restriction (never sheds it)", () => {
+    runAsSystem("admin:platform-read", () => {
+      runAsStaff(staffPrincipal("ops@fikirtive.test", null), () => {
+        expect(getPrincipal()?.readOnly).toBe(true);
+      });
+    });
   });
 });
 

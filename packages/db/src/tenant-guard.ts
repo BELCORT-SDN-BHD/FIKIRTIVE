@@ -421,7 +421,12 @@ function withReadOnlyFrameGuard<T extends object>(client: T): T {
         // inherited by every nested frame including a user frame, so keying on `kind === "system"`
         // would let exactly the frame that inherited it slip through.
         if (!principal?.readOnly) return query(args);
-        const frame = principal.kind === "system" ? principal.reason : `user:${principal.ownerId}`;
+        const frame =
+          principal.kind === "system"
+            ? principal.reason
+            : principal.kind === "staff"
+              ? `staff:${principal.actorEmail}`
+              : `user:${principal.ownerId}`;
         if (model === undefined) {
           throw new Error(
             `[tenant-guard] ${operation} is raw SQL — refused under the read-only frame "${frame}"`,
@@ -494,7 +499,14 @@ function applyTenantScope(
     } else if (WRITE_OPS.has(operation)) {
       rejectOwnerRewrite(args.data, activeOwnerId, model, operation, column);
     }
-  } else if (principal?.kind === "system") {
+  } else if (principal?.kind === "system" || principal?.kind === "staff") {
+    // #1379（TENANT 切片④，规格 §1.6「判定按结构不按名字」）：一个 `staff` 帧只要 `ownerId` 是
+    // null，结构上就是扫描域，和 `system` 帧的扫描域一模一样 —— 判的是「这个帧有没有点名一个
+    // 租户」，不是「这个帧叫 system 还是 staff」。staff 帧因此继承 system 帧同一条写限制：
+    // 没点名租户就不许写任何一张受守卫的表（下面这句抛出），必须先用一个点名了 ownerId 的帧
+    // （见 runAsStaff 的文档：#1379 的 21 个入口都在进数据库前就同步知道目标租户或知道自己没有）。
+    // 这正是「staff 绝不能写什么」的守卫半句答案：写只对「点了名的那家店」放行,不因为帧叫
+    // staff 就多开一个口子。
     if (!SYSTEM_SCAN_OPS.has(operation)) {
       throw new Error(
         `[tenant-guard] ${model}.${operation} requires runAsTenant before system writes`,

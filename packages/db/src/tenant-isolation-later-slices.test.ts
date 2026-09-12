@@ -8,16 +8,16 @@
  * 与 `apps/web/lib/__tests__/tenant-money-frames-slice1.test.ts`）。切片②（#1377）交付的是
  * TENANT-A2（见 `apps/web/lib/__tests__/tenant-action-cross-tenant-slice2.test.ts`：真实数据库、
  * 真实动作函数 —— renameCollection / getCollection / deleteCanvasNode 各一次改名/读取/删除，
- * 用 A 的会话打 B 的 id 三次全部失败，B 的行数一字未改，A 自己的同一动作正常成功）。
+ * 用 A 的会话打 B 的 id 三次全部失败，B 的行数一字未改，A 自己的同一动作正常成功）。切片④
+ * （#1379）交付的是 TENANT-A6（见 `tenant-guard-staff-slice4.test.ts`：staff 帧的结构规则
+ * 与双身份对照；`apps/web/lib/__tests__/tenant-actions-staff-frame-slice4.test.ts`：真实数据库、
+ * 真实动作函数 —— grantTenantCredits / closeReconcileObservation / abandonManualRefund 三次都在
+ * staff 帧内发生，帧的 actorEmail/ownerId 由 `getPrincipal()` 当场证明；grantCreditsAction 的
+ * 跨租户铸币仍要求 requireRole("tenants","mutate") 才放行，帧从未建立）。
  * 这个文件把**其余**编号按它们归属的切片摆在这里，每条一句话写清「哪一片会把它变成真测试」——
  * 一张看得见的欠账表，不是一堆空壳：接手的那一片删掉自己那一行，换成真的行为测试。
  */
 import { it } from "vitest";
-
-// 切片④（后台 staff 帧，#479 并案）
-it.todo(
-  "TENANT-A6 后台员工发积分／退款／对账三次都在 staff 帧内发生，审计行的操作者与目标租户由帧带出 —— 切片④交付",
-);
 
 // 切片⑤（75 条裸外键回填 + 迁移）
 it.todo(

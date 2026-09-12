@@ -224,7 +224,44 @@ export type Principal =
        * during the per-row write segment (see `runAsTenant`).
        */
       ownerId: string | null;
-    } & FramePolicy);
+    } & FramePolicy)
+  | (StaffIdentity & FramePolicy);
+
+/**
+ * The IDENTITY half of a STAFF frame — what a caller builds and hands to {@link runAsStaff}.
+ *
+ * #1379 — TENANT 切片④（规格 docs/specs/tenant-isolation.md §1.6/§2 TENANT-A6，#479 并案裁定）。
+ * The third kind, for the founder-admin back office (`requireRole` sites): an operator acting
+ * NOT as a merchant (no `Membership` axis) and not as an unattended system job (no `SystemReason`
+ * closed vocabulary — a human is at the keyboard).
+ *
+ * **THIS FRAME GRANTS NOTHING.** `requireRole(section, action)` is the ONLY permission check —
+ * it runs BEFORE this frame is ever built, and it runs again unchanged for every capability this
+ * frame's caller needs (cross-tenant credit minting keeps requiring `requireRole("tenants",
+ * "mutate")` — spec §1.6). This type carries identity for the Prisma tenant boundary and for
+ * audit attribution; it is deliberately as thin as {@link SystemReason} is for system frames —
+ * a name, not a credential.
+ *
+ * `ownerId` is the target tenant this action names, exactly like a system frame's `ownerId`
+ * (spec §1.6 "判定按结构不按名字"): `null` is the platform-wide shape (an admin dashboard with no
+ * single tenant to scope to — `tenant-guard.ts` treats it as a scan domain, same as
+ * `kind:"system"`), a set string is one named tenant and every write is value-compared against
+ * it exactly like a user/tenant frame. There is no two-phase pass-through here (unlike
+ * `runAsTenant`'s reaper shape) — every one of #1379's 21 call sites already knows its target
+ * tenant (or knows it has none) synchronously, before any database call.
+ */
+export type StaffIdentity = {
+  kind: "staff";
+  /**
+   * The operator's email — `requireRole()`'s `gate.email`, carried the same way a system frame
+   * carries its `reason`: an audit-only name (spec §1.6 "帧里带操作者与目标租户"), never consulted
+   * by the guard for authorization. `resolveUserPrincipal`'s docblock makes the same point about
+   * `subjectEmail`.
+   */
+  actorEmail: string;
+  /** The target tenant, or `null` for a platform-wide surface with no single tenant. */
+  ownerId: string | null;
+};
 
 /**
  * What {@link runAsUser} ACCEPTS — identity only.
@@ -235,6 +272,10 @@ export type Principal =
  * runner stamps the policy.
  */
 export type UserPrincipal = UserIdentity;
+
+/** What {@link runAsStaff} ACCEPTS — identity only, same shape as the stored frame (staff
+ *  frames carry no fields {@link inheritedReadOnly} needs to strip, unlike `UserPrincipal`). */
+export type StaffPrincipal = StaffIdentity;
 
 /**
  * The store is pinned on `globalThis` under a well-known symbol so that a double module
@@ -390,6 +431,28 @@ export function runAsSystem<T>(reason: SystemReason, fn: () => T): T {
  * through it work, which is the point: a read-only frame is for reading.
  */
 export function runAsUser<T>(principal: UserPrincipal, fn: () => T): T {
+  return enter(Object.freeze({ ...principal, readOnly: inheritedReadOnly(false) }), fn);
+}
+
+/**
+ * Run `fn` under a STAFF identity — #1379, TENANT 切片④.
+ *
+ * Same shape as {@link runAsUser}: a defensive frozen copy is stored (the caller keeps its own
+ * mutable reference), and `readOnly` is INHERITED, never supplied by the caller — see
+ * {@link inheritedReadOnly}. There is no `runAsTenant`-style two-phase pass-through for staff:
+ * every one of #1379's call sites resolves its target tenant (or its absence) synchronously
+ * before the first database call, so nesting a narrower tenant mid-flight is not a shape this
+ * runner needs to support (unlike the reaper's scan-then-per-row-write shape `runAsTenant`
+ * exists for).
+ *
+ * The guard (`packages/db/src/tenant-guard.ts`) reads this frame exactly like a `kind:"system"`
+ * one for the SCAN/SCOPED split (spec §1.6 "判定按结构不按名字") — a `staff` frame with
+ * `ownerId: null` may scan but not write a tenant table, and one with `ownerId` set is
+ * value-compared like any other scoped frame. The KIND stays a distinct third value — never
+ * folded into `"system"` — because {@link StaffIdentity} carries `actorEmail`, an operator name a
+ * `SystemReason` has no field for.
+ */
+export function runAsStaff<T>(principal: StaffPrincipal, fn: () => T): T {
   return enter(Object.freeze({ ...principal, readOnly: inheritedReadOnly(false) }), fn);
 }
 

@@ -8,7 +8,8 @@ import {
   FINANCE_ADJUST_LIMITS,
   FINANCE_PER_ACTION_LIMIT_MESSAGE,
 } from "@fikirtive/core";
-import { requireRole } from "./auth-guard";
+import { requireRole, staffPrincipal } from "./auth-guard";
+import { runAsStaff } from "@fikirtive/db/principal";
 import { revokeEmailAccess } from "./signup-gate";
 import { activeMerchantOrg } from "./tenant-admin";
 import { financeAdjustBlockedMessage } from "./finance-limit-seam";
@@ -42,6 +43,17 @@ async function orgMemberBaUserIds(orgId: string): Promise<string[]> {
 
 export async function setMembershipStatus(orgId: string, status: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
+  // #1379（规格 TENANT 切片④，#479 并案裁定）：目标租户是这个动作的第一个参数,已经同步知道 ——
+  // 从 gate 通过那一刻起建 staff 帧,再进数据库。权限不因建帧放宽:上面那道 requireRole 原样
+  // 决定放不放行。
+  return runAsStaff(staffPrincipal(gate, orgId), () => setMembershipStatusInFrame(gate, orgId, status));
+}
+
+async function setMembershipStatusInFrame(
+  gate: { email: string },
+  orgId: string,
+  status: string,
+): Promise<{ ok: true } | { error: string }> {
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
   if (!ORG_STATUS.has(status)) return { error: "Invalid status." };
   if (!(await activeMerchantOrg(orgId))) return { error: "Unknown or closed org." };
@@ -74,6 +86,14 @@ export async function setMembershipStatus(orgId: string, status: string): Promis
 
 export async function cutTenantSessions(orgId: string): Promise<{ ok: true; cut: number } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
+  // #1379：目标租户已知（参数）—— ownerId=orgId（同上一条注释）。
+  return runAsStaff(staffPrincipal(gate, orgId), () => cutTenantSessionsInFrame(gate, orgId));
+}
+
+async function cutTenantSessionsInFrame(
+  gate: { email: string },
+  orgId: string,
+): Promise<{ ok: true; cut: number } | { error: string }> {
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
   if (!(await activeMerchantOrg(orgId))) return { error: "Unknown or closed org." };
   const baUserIds = await orgMemberBaUserIds(orgId);
@@ -111,6 +131,15 @@ export async function inviteTenant(
   emailRaw: unknown,
 ): Promise<{ ok: true; result: "invited" | "already_invited" | "already_member" } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
+  // #1379：邀请一个地址进门,还没有 Membership、没有目标租户 —— ownerId=null（规格 §1.6，
+  // 同 kind:"system" 的扫描域）。
+  return runAsStaff(staffPrincipal(gate, null), () => inviteTenantInFrame(gate, emailRaw));
+}
+
+async function inviteTenantInFrame(
+  gate: { email: string },
+  emailRaw: unknown,
+): Promise<{ ok: true; result: "invited" | "already_invited" | "already_member" } | { error: string }> {
   const email = normEmail(emailRaw); if (!email) return { error: "Enter a valid email." };
   const existing = await prisma.allowedEmail.findUnique({ where: { email }, select: { status: true } });
   if (existing?.status === "active") return { ok: true, result: "already_member" };
@@ -152,6 +181,14 @@ export async function inviteTenant(
  *  predicate alone would happily revoke. It is a best-effort guard, not the serializer. */
 export async function revokeTenantInvite(emailRaw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
+  // #1379：撤一张邀请,按 email 查、不按目标租户查 —— ownerId=null（同上一条注释）。
+  return runAsStaff(staffPrincipal(gate, null), () => revokeTenantInviteInFrame(gate, emailRaw));
+}
+
+async function revokeTenantInviteInFrame(
+  gate: { email: string },
+  emailRaw: unknown,
+): Promise<{ ok: true } | { error: string }> {
   const email = normEmail(emailRaw); if (!email) return { error: "Invalid email." };
   // SIGNIN-A7 —— 破窗锤同样挡在这条路上。门从本轮起对每个地址一视同仁地查撤销（founder 也不
   // 例外），所以**任何**能写下 `revoked` 的动作都能把部署者锁在产品外面，不只是 Revoke access
@@ -201,6 +238,14 @@ export async function revokeMerchantAccess(
   emailRaw: unknown,
 ): Promise<{ ok: true; result: "revoked" | "already_revoked"; auditFailed?: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
+  // #1379：撤一个地址的进门权,按 email 查、不按目标租户查 —— ownerId=null（同上）。
+  return runAsStaff(staffPrincipal(gate, null), () => revokeMerchantAccessInFrame(gate, emailRaw));
+}
+
+async function revokeMerchantAccessInFrame(
+  gate: { email: string },
+  emailRaw: unknown,
+): Promise<{ ok: true; result: "revoked" | "already_revoked"; auditFailed?: true } | { error: string }> {
   const email = normEmail(emailRaw); if (!email) return { error: "Invalid email." };
   const outcome = await revokeEmailAccess(email);
   // 「没有可撤的东西」和「撤掉了」必须是两个答案 —— 不然操作员打错一个字母也会读到成功。
@@ -265,6 +310,15 @@ async function ownerBaUserId(orgId: string): Promise<string | null> {
  *  impersonating (the 8 web entry-point guards). Audited. */
 export async function impersonateTenant(orgId: string, reasonRaw?: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
+  // #1379：目标租户已知（参数）—— ownerId=orgId。
+  return runAsStaff(staffPrincipal(gate, orgId), () => impersonateTenantInFrame(gate, orgId, reasonRaw));
+}
+
+async function impersonateTenantInFrame(
+  gate: { email: string },
+  orgId: string,
+  reasonRaw?: unknown,
+): Promise<{ ok: true } | { error: string }> {
   if (!isFounderAdmin(gate.email)) return { error: "Only a founder may impersonate." };
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
   const reason = typeof reasonRaw === "string" ? reasonRaw.trim().slice(0, 500) : "";
@@ -328,6 +382,17 @@ export async function grantTenantCredits(raw: unknown): Promise<{ ok: true; dupl
   const v = raw as { orgId?: unknown; displayedAmount?: unknown; reason?: unknown; idempotencyKey?: unknown };
   const orgId = typeof v?.orgId === "string" ? v.orgId : "";
   if (!orgId || orgId === FOUNDER_OWNER_ID) return { error: "Pick a merchant org (founder top-up uses /admin/credits)." };
+  // #1379（跨租户铸币，规格 TENANT 切片④，#1403 点名的「后台铸币入口」——本片处理）：目标租户
+  // 已知（orgId）—— 从这里起建 staff 帧再进数据库。权限不因建帧放宽：上面的 requireRole 原样
+  // 决定这次铸币放不放行。
+  return runAsStaff(staffPrincipal(gate, orgId), () => grantTenantCreditsInFrame(gate, orgId, v));
+}
+
+async function grantTenantCreditsInFrame(
+  gate: { email: string },
+  orgId: string,
+  v: { orgId?: unknown; displayedAmount?: unknown; reason?: unknown; idempotencyKey?: unknown },
+): Promise<{ ok: true; duplicate?: boolean } | { error: string }> {
   const org = await activeMerchantOrg(orgId);
   if (!org) return { error: "Unknown or closed org." }; // NEVER fall back to founder
   const displayedAmount = typeof v?.displayedAmount === "number" ? v.displayedAmount : NaN;
