@@ -24,17 +24,46 @@ import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
  * 纯 markup、零 client hook、零 DB —— server component 直接 return 它即可。
  */
 
-/** 这一页的商家可见文案,单源(global 法 §7.3):组件与测试读同一份。 */
+/**
+ * 这一页的商家可见文案,单源(global 法 §7.3):组件与测试读同一份。
+ *
+ * 拆成 `project` / `thread` 两组(判官 P1-1,PR #1414)——被拒的地址有两种范围:整张画布
+ * (`?project=`)与一条对话(`?thread=`)。两组共用 project 那句话会说假话:商家自己的画布 P
+ * 配一条伪造/别家的 thread id,拒绝页却说「This canvas isn't in your workspace」——指控的是
+ * 他自己那张、确实在他 workspace 里的画布,而他真正点的那条对话才是打不开的那个。
+ * `thread` 组换成说一条对话被拒,`project` 组原文不动(向后兼容)。
+ *
+ * 两组仍然是同一张页面、同一套「或」的措辞、同样不区分「属于别人 / 已经删除」——那道模糊
+ * 防的是同一条扫链攻击面(逐一探测 id 换回不同错误就能反推哪些存在),见组件上方与文件头
+ * 的原因说明,两组不例外。
+ */
 export const CANVAS_DEEP_LINK_REFUSAL_COPY = {
-  heading: "This canvas isn't in your workspace",
-  body:
-    "This link belongs to a different workspace, or the canvas was deleted. " +
-    "Nothing was opened and nothing was created for you.",
-  primaryAction: "Go to your canvas",
-  secondaryAction: "Back to Create",
+  project: {
+    heading: "This canvas isn't in your workspace",
+    body:
+      "This link belongs to a different workspace, or the canvas was deleted. " +
+      "Nothing was opened and nothing was created for you.",
+    primaryAction: "Go to your canvas",
+    secondaryAction: "Back to Create",
+  },
+  thread: {
+    heading: "We can't open this conversation in your workspace",
+    body:
+      "This conversation belongs to a different workspace, or it's been deleted. " +
+      "Nothing was opened and nothing was created for you.",
+    primaryAction: "Go to your canvas",
+    secondaryAction: "Back to Create",
+  },
 } as const;
 
-export function CanvasDeepLinkRefused() {
+export type CanvasDeepLinkRefusalVariant = keyof typeof CANVAS_DEEP_LINK_REFUSAL_COPY;
+
+export function CanvasDeepLinkRefused({
+  variant = "project",
+}: {
+  variant?: CanvasDeepLinkRefusalVariant;
+}) {
+  const copy = CANVAS_DEEP_LINK_REFUSAL_COPY[variant];
   return (
     <main className="min-h-dvh bg-background px-4 py-10 text-foreground sm:px-6">
       <section
@@ -48,17 +77,17 @@ export function CanvasDeepLinkRefused() {
           {PRODUCT_VOCABULARY.canvas}
         </p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-          {CANVAS_DEEP_LINK_REFUSAL_COPY.heading}
+          {copy.heading}
         </h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          {CANVAS_DEEP_LINK_REFUSAL_COPY.body}
+          {copy.body}
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <Button asChild>
-            <Link href={CANVAS_HREF}>{CANVAS_DEEP_LINK_REFUSAL_COPY.primaryAction}</Link>
+            <Link href={CANVAS_HREF}>{copy.primaryAction}</Link>
           </Button>
           <Button asChild variant="secondary">
-            <Link href={CREATE_NAV_HREF}>{CANVAS_DEEP_LINK_REFUSAL_COPY.secondaryAction}</Link>
+            <Link href={CREATE_NAV_HREF}>{copy.secondaryAction}</Link>
           </Button>
         </div>
       </section>
