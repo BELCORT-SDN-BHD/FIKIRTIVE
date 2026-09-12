@@ -51,10 +51,15 @@ function newSessionId(): string {
   return `ba_sess_${randomUUID()}`;
 }
 
-/** The platform-wide sign-in stream, narrowed to one identity via the payload. */
+/** One identity's sign-in rows, wherever they are scoped.
+ *
+ *  FSE-209 (S5 批量裁决 2026-09-12, docs/specs/sign-in.md §5) moved the scope from the founder
+ *  org to the tenant the login happened in, so this file no longer filters on an org at all:
+ *  what it is counting is "how many rows did this login leave", which must not depend on where
+ *  they are hung. WHERE they hang is the subject of signin-audit-tenant-scope.test.ts. */
 async function signinRows(email: string) {
   return prisma.actionEvent.findMany({
-    where: { type: "auth.signin", ownerId: FOUNDER_OWNER_ID, payload: { path: ["email"], equals: email } },
+    where: { type: "auth.signin", payload: { path: ["email"], equals: email } },
     orderBy: { createdAt: "asc" },
     select: { id: true, ownerId: true, payload: true, createdAt: true },
   });
@@ -225,16 +230,24 @@ describe("#737 signinSessionId — session.create is not a synonym for a login",
     expect(await signinRows(b)).toHaveLength(1);
   });
 
-  it("the surviving row still answers WHO signed in, on the platform stream (#735/#568 unchanged)", async () => {
+  it("FSE-209: the surviving row still answers WHO signed in, scoped to that merchant's own tenant", async () => {
     const email = freshEmail();
     const sessionId = newSessionId();
     await convergeIdentity({ email, name: "Attribution Check", emailVerified: true, sessionId });
     await convergeIdentity({ email, name: "Attribution Check", emailVerified: true, sessionId });
 
+    const user = await prisma.user.findUniqueOrThrow({ where: { email }, select: { id: true } });
+    const membership = await prisma.membership.findFirstOrThrow({
+      where: { userId: user.id },
+      select: { orgId: true },
+    });
+
     const [row] = await signinRows(email);
     // ownerId is the event's DATA SCOPE (FK to Organization), never the person; the person is
-    // payload.email. Deduping must not quietly change either.
-    expect(row!.ownerId).toBe(FOUNDER_OWNER_ID);
+    // payload.email. Deduping must not quietly change either — and since FSE-209 that scope is
+    // the tenant this login happened in, not the founder org it used to be hardcoded to.
+    expect(row!.ownerId).toBe(membership.orgId);
+    expect(row!.ownerId).not.toBe(FOUNDER_OWNER_ID);
     expect(row!.payload).toEqual({ email });
   });
 });

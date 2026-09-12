@@ -5,11 +5,22 @@ import { prisma } from "@fikirtive/db";
 import { MEDIA_PROXY_PER_CALLER_PER_10_MIN } from "@/lib/rate-limit-gates";
 
 // The proxy streams real bytes (no session — Meta's servers call it). Mock storage only.
-const mockGet = vi.fn();
+// SHARE-A1: the route reads through `readStream` now, never `storage.get` — the whole-object
+// buffer is gone. `mockReadStream` stands in for the driver's byte iterator.
+const mockReadStream = vi.fn();
+const mockSizeOf = vi.fn();
 vi.mock("@/lib/storage", () => ({
-  storage: { get: (...a: unknown[]) => mockGet(...a) },
+  storage: {
+    readStream: (...a: unknown[]) => mockReadStream(...a),
+    sizeOf: (...a: unknown[]) => mockSizeOf(...a),
+  },
   mimeOf: () => "image/jpeg",
 }));
+
+/** The driver hands back an async iterable of chunks; one chunk is enough for these cases. */
+async function* oneChunk(bytes: Uint8Array): AsyncIterable<Uint8Array> {
+  yield bytes;
+}
 
 const { GET } = await import("@/app/api/media/pub/[token]/route");
 
@@ -31,7 +42,8 @@ const call = (token: string, ip?: string) => GET(req(ip), { params: Promise.reso
 beforeEach(async () => {
   vi.clearAllMocks();
   process.env.MEDIA_PROXY_SECRET = SECRET;
-  mockGet.mockResolvedValue(new Uint8Array([255, 216, 255])); // JPEG SOI-ish
+  mockReadStream.mockImplementation(async () => oneChunk(new Uint8Array([255, 216, 255]))); // JPEG SOI-ish
+  mockSizeOf.mockResolvedValue(3);
   await prisma.rateLimitCounter.deleteMany({});
 });
 
@@ -45,35 +57,37 @@ describe("/api/media/pub/[token] — signed media proxy (fail-closed)", () => {
     const headers = res.headers as unknown as Record<string, string>;
     expect(headers["Content-Type"]).toBe("image/jpeg");
     expect(headers["Cache-Control"]).toContain("no-store");
-    expect(mockGet).toHaveBeenCalledWith(KEY);
+    expect(mockReadStream).toHaveBeenCalledWith(KEY);
   });
 
   it("404s a forged/garbage token (never serves bytes)", async () => {
     const res = await call("garbage.sig");
     expect(res.status).toBe(404);
-    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockReadStream).not.toHaveBeenCalled();
   });
 
   it("404s an expired token", async () => {
     const token = signMediaToken("orgA", KEY, Date.now() - 1000, SECRET);
     const res = await call(token);
     expect(res.status).toBe(404);
-    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockReadStream).not.toHaveBeenCalled();
   });
 
-  it("404s a token whose key is in ANOTHER owner's namespace (cross-tenant guard)", async () => {
+  // SHARE-A10 —— 规格的双租户那一行说的就是这条:拿 owner A 的媒体 token 指向 owner B 的 key,
+  // 一律 404。这条测试比规格早,编号是后补的;行为一个字未改。
+  it("SHARE-A10 —— 404s a token whose key is in ANOTHER owner's namespace (cross-tenant guard)", async () => {
     // key belongs to orgB but the token claims orgA → keyOwnerMatches fails → 404
     const token = signMediaToken("orgA", `u/orgB/${HASH}.jpg`, Date.now() + 60_000, SECRET);
     const res = await call(token);
     expect(res.status).toBe(404);
-    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockReadStream).not.toHaveBeenCalled();
   });
 
   it("404s a token signed with a DIFFERENT secret", async () => {
     const token = signMediaToken("orgA", KEY, Date.now() + 60_000, "attacker-secret");
     const res = await call(token);
     expect(res.status).toBe(404);
-    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockReadStream).not.toHaveBeenCalled();
   });
 
   it("fails closed (404) when MEDIA_PROXY_SECRET is unset", async () => {
@@ -82,11 +96,11 @@ describe("/api/media/pub/[token] — signed media proxy (fail-closed)", () => {
     const token = signMediaToken("orgA", KEY, Date.now() + 60_000, SECRET);
     const res = await call(token);
     expect(res.status).toBe(404);
-    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockReadStream).not.toHaveBeenCalled();
   });
 
   it("404s when the object is missing (storage throws)", async () => {
-    mockGet.mockRejectedValue(new Error("empty object"));
+    mockReadStream.mockRejectedValue(new Error("empty object"));
     const token = signMediaToken("orgA", KEY, Date.now() + 60_000, SECRET);
     const res = await call(token);
     expect(res.status).toBe(404);
@@ -125,6 +139,6 @@ describe("#795 —— 签名媒体代理的外链闸", () => {
     const token = signMediaToken("orgA", KEY, Date.now() + 60_000, SECRET);
     const res = await call(token, ip);
     expect(res.status).toBe(429);
-    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockReadStream).not.toHaveBeenCalled();
   });
 });

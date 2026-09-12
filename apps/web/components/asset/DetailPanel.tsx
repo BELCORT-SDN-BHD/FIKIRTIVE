@@ -21,6 +21,7 @@ import {
   getActiveGenModels,
   type ActiveGenModels,
 } from "@/lib/gen-actions";
+import { assetIntentSlot, beginAssetIntent, endAssetIntent } from "@/lib/asset-action-intent";
 import { readPick, writePick, PICK_SCOPE_NOTE } from "@/lib/result-pick";
 import {
   PUBLIC_MEDIA_TTL_MS,
@@ -459,6 +460,9 @@ export default function DetailPanel({
       // #643 T2：形状是屏幕上正显示的那一格 —— 重做一张不会悄悄换掉形状。
       const aspectRatio = chosenImageAspect || gen.imageAspect || models.imageDefaultAspect;
       // #645 T4(判官 r1 P0-2)：同 Animate —— 屏幕上那个价随请求发出去，服务端重核。
+      // #1375:这一次按下的意图编号。同一次提交的任何重发沿用它(⇒ 同一把键 ⇒ 回到原来
+      // 那一单);商家再按一次时它已经在下面的 finally 里丢掉了,于是那是新的一单、照扣。
+      const intentSlot = assetIntentSlot("regen", generationId);
       const result = await startAssetGen({
         expectedCredits: models.imageCredits,
         projectId: targetProjectId,
@@ -467,12 +471,18 @@ export default function DetailPanel({
         kind: "image",
         model: models.image,
         ...(aspectRatio ? { aspectRatio } : {}),
-        // 幂等键由服务端从「动作 + 这一次锚在哪张图上 + 请求体」算出来(gen-actions 的
-        // startAssetGen)。这一面一个键都不出:带时间戳的键让刷新、第二个标签页、一次双击
-        // 各自变成一次新的付费动作。
+        // 幂等键由服务端从「动作 + 这一次锚在哪张图上 + 请求体 + 上面那个意图编号」算出来
+        // (gen-actions 的 startAssetGen)。这一面一个键都不出。编号只活在**本标签页本次会话**
+        // 的 sessionStorage 里:一次双击、一次断网重发、提交没落地就刷新,都沿用同一个编号
+        // ⇒ 回到原单(ASSET-A5);提交已落地之后再按一次(刷新后也好、第二个标签页也好)编号
+        // 已经丢掉/本来就没有,那是新编号、新的一单、照扣(ASSET-A4)。
         assetOp: "regen",
         assetAnchorGenerationId: generationId,
+        assetIntentId: beginAssetIntent(intentSlot),
       });
+      // 提交**落地**了(服务端给了回答,成功或拒绝)⇒ 丢掉编号:下一次按下是一次新的购买。
+      // 落不了地(抛异常:断网、server action 重发)时编号留着 —— 那一次重发要回到原单。
+      endAssetIntent(intentSlot);
       if ("error" in result) {
         setPaidActionError(result.error);
         setRegenStatus("failed");
@@ -492,9 +502,11 @@ export default function DetailPanel({
         }
         // A timeout means the paid job is STILL RUNNING (the worker settles it late) — keep the
         // "still processing" state so the control never reverts to an inviting "Regenerate" for
-        // work that is already under way. This is honesty, not the money guard: since the key is
-        // derived server-side from the intent, a re-click while that job is active is reused, not
-        // re-charged. done/failed reset to idle (a real failure is refunded, so retrying is safe).
+        // work that is already under way. This one IS a money guard: the intent id was dropped the
+        // moment the submit landed, so a re-click here mints a NEW id, a new key, and a real
+        // second charge for work already under way — which is exactly why `timeout` disables the
+        // control (`apps/web/lib/asset-detail-status.ts` 的 timeout 分支).
+        // done/failed reset to idle (a real failure is refunded, so retrying is safe).
         if (status !== "timeout") {
           setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
         }
@@ -521,6 +533,8 @@ export default function DetailPanel({
       // #645 T4(判官 r1 P0-2)：屏幕上那个价是商家授权的一部分，所以它随请求一起发出去。
       // 服务端自己算一遍，不符就在扣款前拒绝 —— 与 Canvas / Otto 同一套绑定。
       const quoted = videoSpecCredits(models, spec);
+      // #1375:这一次按下的意图编号 —— 见 handleRegen 那一处的注释。
+      const intentSlot = assetIntentSlot("animate", selectedGenId);
       if (quoted == null) {
         if (!cancelledRef.current) {
           setPaidActionError("We could not confirm the video price. Check the selected spec and try again.");
@@ -543,7 +557,9 @@ export default function DetailPanel({
         // 键由服务端算 —— 见 handleRegen 那一处的注释。
         assetOp: "animate",
         assetAnchorGenerationId: selectedGenId,
+        assetIntentId: beginAssetIntent(intentSlot),
       });
+      endAssetIntent(intentSlot);
       if ("error" in result) {
         if (!cancelledRef.current) {
           setPaidActionError(result.error);
@@ -687,6 +703,8 @@ export default function DetailPanel({
       // 这里显式带上是为了让「屏幕上写的」与「引擎收到的」永远是同一个值。
       const aspectRatio = chosenImageAspect || gen.imageAspect || models.imageDefaultAspect;
       // #645 T4(判官 r1 P0-2)：编辑框也显示价格，所以它同样带绑定。
+      // #1375:这一次按下的意图编号 —— 见 handleRegen 那一处的注释。
+      const intentSlot = assetIntentSlot("edit", selectedGenId);
       const result = await startAssetGen({
         expectedCredits: models.imageCredits,
         projectId: targetProjectId,
@@ -704,7 +722,9 @@ export default function DetailPanel({
         // 摘要覆盖了提示词与 @元素,所以它自然拿到另一个键。
         assetOp: "edit",
         assetAnchorGenerationId: selectedGenId,
+        assetIntentId: beginAssetIntent(intentSlot),
       });
+      endAssetIntent(intentSlot);
       if ("error" in result) {
         if (!cancelledRef.current) {
           setPaidActionError(result.error);

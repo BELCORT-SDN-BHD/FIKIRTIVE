@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyMediaToken } from "@fikirtive/token-crypto";
 import { parseStorageKey, keyOwnerMatches } from "@fikirtive/core";
 import { storage, mimeOf } from "@/lib/storage";
-import { consumeMediaProxyGate } from "@/lib/rate-limit-gates";
+import { admitMediaProxyRequest } from "@/lib/media-proxy-access";
+import { parseByteRange } from "@/lib/byte-range";
+import { toWebStream } from "@/lib/web-stream";
 
 /**
  * Signed media proxy (L1 spec §四C, Plan B). IG only fetches media from a PUBLIC URL, but our
@@ -54,26 +56,63 @@ export async function GET(
   //    one it was closing.
   //
   //    Generous by design (see MEDIA_PROXY_PER_CALLER_PER_10_MIN: the intended caller is a
-  //    platform's media-fetch fleet), and OPEN when the counter is unreachable — this is the one
-  //    route that otherwise needs no database, so a database blip must not become the reason a
-  //    publish the merchant already paid for fails. 429, not 404: "too fast" is an honest answer
-  //    to a caller who already proved the link is theirs.
-  if (!(await consumeMediaProxyGate(req.headers))) {
-    return new NextResponse("Too many requests", { status: 429 });
+  //    platform's media-fetch fleet). SHARE-A3/A4/A12: it is now FAIL-CLOSED when the counter is
+  //    unreachable, with a short grace window for a client who is already looking and an alert
+  //    so the outage is not silent — all three at lib/media-proxy-access.ts, where the reasons
+  //    are written. 429, not 404: "too fast" is an honest answer to a caller who already proved
+  //    the link is theirs, and `Retry-After` says how long.
+  const admission = await admitMediaProxyRequest(req.headers);
+  if (!admission.admitted) {
+    return new NextResponse("Too many requests", {
+      status: 429,
+      headers: { "Retry-After": String(admission.retryAfterSeconds) },
+    });
   }
 
   try {
     const { ext } = parseStorageKey(claims.key); // rejects traversal / malformed keys
-    const bytes = await storage.get(claims.key); // whole object — IG images are small; L1 never auto-publishes video
-    return new NextResponse(Buffer.from(bytes), {
-      headers: {
-        "Content-Type": mimeOf(ext),
-        // never cache a signed, tenant-scoped payload; don't let it leak via referrers
-        "Cache-Control": "private, no-store",
-        "X-Content-Type-Options": "nosniff",
-        "Referrer-Policy": "no-referrer",
-      },
-    });
+    // SHARE-A1/A2 — STREAM, never buffer. This used to be `storage.get()` → `Buffer.from(bytes)`,
+    // which parked the WHOLE object in this process: a legitimate request for one 2 GB upload
+    // (the cap in packages/core/src/upload.ts) was enough to exhaust the web process's memory,
+    // and an anonymous caller holding one valid link could ask for it as often as the gate above
+    // allows (#1053 finding 1). Now the bytes flow straight from the driver to the response, and
+    // a `Range:` request reads ONLY the requested span out of storage.
+    const headers: Record<string, string> = {
+      "Content-Type": mimeOf(ext),
+      // never cache a signed, tenant-scoped payload; don't let it leak via referrers
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer",
+      // Say so explicitly: a player that does not see this header will not even try to seek.
+      "Accept-Ranges": "bytes",
+    };
+
+    const rangeHeader = req.headers.get("range");
+    if (rangeHeader) {
+      // The total is only needed to resolve a range (open-ended and suffix forms both need it),
+      // so the plain 200 path below still costs exactly one storage call, as it did before.
+      const total = await storage.sizeOf(claims.key);
+      if (total === null) return new NextResponse("Not found", { status: 404 });
+      const range = parseByteRange(rangeHeader, total);
+      if (range === "unsatisfiable") {
+        return new NextResponse(null, { status: 416, headers: { "Content-Range": `bytes */${total}` } });
+      }
+      if (range) {
+        const body = toWebStream(await storage.readStream(claims.key, range));
+        return new NextResponse(body, {
+          status: 206,
+          headers: {
+            ...headers,
+            "Content-Range": `bytes ${range.start}-${range.end}/${total}`,
+            "Content-Length": String(range.end - range.start + 1),
+          },
+        });
+      }
+      // range === null: a shape we do not serve (multi-range, a unit that is not bytes). RFC 9110
+      // lets us ignore it, and falling through to the full 200 below is what we do.
+    }
+
+    return new NextResponse(toWebStream(await storage.readStream(claims.key)), { headers });
   } catch {
     return new NextResponse("Not found", { status: 404 });
   }

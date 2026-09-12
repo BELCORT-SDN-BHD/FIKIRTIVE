@@ -214,8 +214,18 @@ export class UnconfiguredProvider implements GenerationProvider {
  *   byteplus — the PROD path (Seedream image / Seedance video, needs BYTEPLUS_API_KEY,
  *              real money). ADR 0003: the only paid provider; there is no fallback.
  *   mock     — deterministic solid-colour PNGs, $0, no network. Dev, CI and the tracer
- *              scripts ask for this BY NAME, and that path is untouched.
+ *              scripts ask for this BY NAME, and OUTSIDE PRODUCTION that path is untouched.
  *   neither  — unset, empty, or a typo.
+ *
+ * ── RELY-A3: IN PRODUCTION, "mock" IS NOT A CHOICE EITHER (Founder 2026-09-12, #1359 场②) ──
+ * The C1b pass left one door open on purpose: an explicitly written `GENERATION_PROVIDER=mock`
+ * kept the stand-in even in production, on the argument that somebody had chosen it and could
+ * read it back off the deploy. The Founder closed that door, and the reason is the merchant's
+ * side of it — a deploy carrying the old sample value delivers swatches and settles the charge
+ * whether the value arrived by choice or by copy-paste, and the merchant cannot tell the two
+ * apart. So production now has exactly ONE legal answer, `byteplus`, and everything else —
+ * unset, `mock`, a typo — refuses and refunds. There is deliberately no exemption flag:
+ * an offline demo runs somewhere that is not flagged production (docs/specs/fail-closed-reliability.md §3).
  *
  * ── WHAT "NEITHER" USED TO MEAN, AND WHY IT HAD TO CHANGE ────────────────────────────────
  * It used to mean the mock, and the comment here called that "safe by default so a
@@ -257,12 +267,15 @@ export function createGenerationProvider(env: NodeJS.ProcessEnv = process.env): 
     if (!key) throw new Error("GENERATION_PROVIDER=byteplus but BYTEPLUS_API_KEY is not set");
     return new BytePlusProvider(key);
   }
-  if (env.GENERATION_PROVIDER === "mock") return new MockProvider();
+  // RELY-A3 — the production check now sits ABOVE the mock branch, so `mock` written out in
+  // full is refused exactly like an absent variable. Order is the whole change here.
   if (env.NODE_ENV === "production") {
     return new UnconfiguredProvider(
       `GENERATION_PROVIDER is ${env.GENERATION_PROVIDER === undefined ? "unset" : `"${env.GENERATION_PROVIDER}"`}`,
     );
   }
+  // Non-production: `mock`, unset, and everything else all land on the same stand-in, which is
+  // what dev, CI and the tracer scripts have always got (RELY-A5).
   return new MockProvider();
 }
 
@@ -291,6 +304,7 @@ export {
 export {
   ArkUnderstandingProvider,
   MockUnderstandingProvider,
+  UnconfiguredUnderstandingProvider,
   classifyUnderstandingFailure,
   createUnderstandingProvider,
   emptyUnderstandingResponseError,
