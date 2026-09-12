@@ -17,6 +17,12 @@ vi.mock("@/lib/storage", () => ({
   mimeOf: () => "image/jpeg",
 }));
 
+// SHARE-A7 — the route asks THIS module whether a share row is still live; mocked so the test
+// doesn't need real Organization/ScheduledPost/SharePreviewToken fixtures to exercise the branch
+// (`lib/__tests__/share-preview.test.ts` proves the function itself against the real query shape).
+const mockRowLive = vi.fn();
+vi.mock("@/lib/share-preview", () => ({ isSharePreviewRowLive: (...a: unknown[]) => mockRowLive(...a) }));
+
 /** The driver hands back an async iterable of chunks; one chunk is enough for these cases. */
 async function* oneChunk(bytes: Uint8Array): AsyncIterable<Uint8Array> {
   yield bytes;
@@ -44,7 +50,23 @@ beforeEach(async () => {
   process.env.MEDIA_PROXY_SECRET = SECRET;
   mockReadStream.mockImplementation(async () => oneChunk(new Uint8Array([255, 216, 255]))); // JPEG SOI-ish
   mockSizeOf.mockResolvedValue(3);
+  mockRowLive.mockResolvedValue(true); // default: a share row, when one is named, is live
   await prisma.rateLimitCounter.deleteMany({});
+});
+
+// SHARE-A9(docs/specs/share-preview.md 已冻结 · v1)—— 这条公开路由无会话,任何一个持有链接
+// 的匿名人都能反复拉,所以特别要证明「反复拉」不悄悄写出一行计费。路由代码本身根本不 import
+// creditLedger/creditAccount(读一眼 route.ts 就知道),这条测试证的是**行为**,不是读代码。
+describe("SHARE-A9 —— 匿名连拉同一预览媒体不产生任何计费写入", () => {
+  it("SHARE-A9 —— 100 次连拉（同一 token、同一出口地址）之后，credit 账本与账户表行数一字不变", async () => {
+    const token = signMediaToken("orgA", KEY, Date.now() + 3_600_000, SECRET);
+    const before = { ledger: await prisma.creditLedger.count(), account: await prisma.creditAccount.count() };
+    for (let i = 0; i < 100; i++) {
+      await call(token, "198.51.100.200");
+    }
+    expect(await prisma.creditLedger.count()).toBe(before.ledger);
+    expect(await prisma.creditAccount.count()).toBe(before.account);
+  });
 });
 
 describe("/api/media/pub/[token] — signed media proxy (fail-closed)", () => {
@@ -104,6 +126,37 @@ describe("/api/media/pub/[token] — signed media proxy (fail-closed)", () => {
     const token = signMediaToken("orgA", KEY, Date.now() + 60_000, SECRET);
     const res = await call(token);
     expect(res.status).toBe(404);
+  });
+});
+
+/**
+ * SHARE-A7(docs/specs/share-preview.md 已冻结 · v1)—— 撤销即断,连已经拉到手的媒体地址也一样。
+ * 媒体 token 自己的 HMAC 到期是短且独立的一段(分钟级),这条闸是那段时间之外唯一能让「商家
+ * 点了 Revoke」立刻生效的地方 —— 不带 shareRowId 的 token(发布 worker、素材面板 Copy link)
+ * 完全不受影响,一次都不会调用这个函数。
+ */
+describe("SHARE-A7 —— 带 shareRowId 的媒体 token 撤销即断", () => {
+  it("shareRowId 活着 → 照常放行,并且真的问过那一行", async () => {
+    const token = signMediaToken("orgA", KEY, Date.now() + 60_000, SECRET, "row_1");
+    mockRowLive.mockResolvedValueOnce(true);
+    const res = await call(token);
+    expect(res.status).toBe(200);
+    expect(mockRowLive).toHaveBeenCalledWith("row_1");
+  });
+
+  it("shareRowId 已撤销（或过期、或行不存在）→ 404，不吐一个字节", async () => {
+    const token = signMediaToken("orgA", KEY, Date.now() + 60_000, SECRET, "row_1");
+    mockRowLive.mockResolvedValueOnce(false);
+    const res = await call(token);
+    expect(res.status).toBe(404);
+    expect(mockReadStream).not.toHaveBeenCalled();
+  });
+
+  it("没有 shareRowId 的 token（发布 worker / Copy link）从不触碰这道闸", async () => {
+    const token = signMediaToken("orgA", KEY, Date.now() + 60_000, SECRET); // no shareRowId
+    const res = await call(token);
+    expect(res.status).toBe(200);
+    expect(mockRowLive).not.toHaveBeenCalled();
   });
 });
 

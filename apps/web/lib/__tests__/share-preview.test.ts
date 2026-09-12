@@ -13,7 +13,7 @@ vi.mock("@fikirtive/db", () => ({
   prisma: { sharePreviewToken: { findFirst: mockRowFindFirst } },
 }));
 
-import { verifySharePreview, sharePreviewTokenDigest } from "../share-preview";
+import { verifySharePreview, sharePreviewTokenDigest, isSharePreviewRowLive } from "../share-preview";
 import { signSharePreviewToken } from "@fikirtive/token-crypto";
 
 const SECRET = "share-secret-verify";
@@ -63,5 +63,24 @@ describe("verifySharePreview — two-layer (HMAC ∧ row live)", () => {
     delete process.env.SHARE_PREVIEW_SECRET;
     expect(await verifySharePreview(mint(), NOW)).toBeNull();
     expect(mockRowFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SHARE-A7(docs/specs/share-preview.md 已冻结 · v1)—— 媒体代理路由用它问「这个 share 行现在
+ * 还活着吗」,与 `verifySharePreview` 查的是同一张表,但只按 row id 一个键(路由手上没有
+ * ownerId/postId 这两个 claim,它只从媒体 token 里拿到一个 shareRowId)。
+ */
+describe("isSharePreviewRowLive", () => {
+  it("SHARE-A7 —— 行存在、未撤销、未过期 → true", async () => {
+    mockRowFindFirst.mockResolvedValueOnce({ id: "row-1" });
+    expect(await isSharePreviewRowLive("row-1", NOW)).toBe(true);
+    const where = mockRowFindFirst.mock.calls[0][0].where;
+    expect(where).toEqual({ id: "row-1", revokedAt: null, expiresAt: { gt: new Date(NOW) } });
+  });
+
+  it("SHARE-A7 —— 行被撤销（或已过期、或压根不存在）→ false，商家点 Revoke 之后立刻生效", async () => {
+    mockRowFindFirst.mockResolvedValueOnce(null); // revoked / expired / missing all land here
+    expect(await isSharePreviewRowLive("row-1", NOW)).toBe(false);
   });
 });

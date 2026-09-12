@@ -40,6 +40,38 @@ export function scrubUrlFragments<T extends ScrubbableEvent>(event: T): T {
   return event;
 }
 
+/**
+ * SHARE-A6(docs/specs/share-preview.md 已冻结 · v1,§4「口令搬家」)—— 第二道防线,不是主要
+ * 手段。主要手段是分享 token 从此不再进任何 URL(见 `app/s/[token]/route.ts` 与
+ * `schedule/share-preview/page.tsx`,token 换成一个 HttpOnly cookie);这里只是不去赌那件事
+ * 一定滴水不漏 —— 一次中途出错的重定向、一条商家自己转发出去的旧书签,都可能让上报事件的
+ * `event.request.url` 或导航面包屑里还留着一段本该消失的 token。
+ *
+ * 只切两个已知形状,不切整段 query(那会连累 `?step=code` 这类无害参数,#1317 冻结的测试钉
+ * 着它必须原样通过):
+ *   ① `?t=…` —— 这个产品里只有分享预览的旧入口用过这个参数名(见 grep);
+ *   ② `/api/media/pub/<token>` 与 `/s/<token>` 的路径段 —— 两条门今天仍然把 token 放在路径里
+ *      (媒体代理是产品设计如此,`/s/<token>` 是它转成 cookie前的那一跳)。
+ */
+const TOKEN_QUERY_PARAM = /([?&])t=[^&#]*/g;
+const TOKEN_PATH_SEGMENT = /(\/(?:api\/media\/pub|s)\/)[^/?#]+/g;
+
+function scrubTokenShapes(u: string): string {
+  return u.replace(TOKEN_PATH_SEGMENT, "$1[redacted]").replace(TOKEN_QUERY_PARAM, "$1t=[redacted]");
+}
+
+/** SHARE-A6 —— `scrubUrlFragments` plus the two token shapes above, applied to the same fields. */
+export function scrubShareTokens<T extends ScrubbableEvent>(event: T): T {
+  scrubUrlFragments(event);
+  if (event.request?.url !== undefined) event.request.url = scrubTokenShapes(event.request.url);
+  for (const crumb of event.breadcrumbs ?? []) {
+    if (!crumb?.data) continue;
+    if (crumb.data.from !== undefined) crumb.data.from = scrubTokenShapes(crumb.data.from);
+    if (crumb.data.to !== undefined) crumb.data.to = scrubTokenShapes(crumb.data.to);
+  }
+  return event;
+}
+
 /** Sentry 浏览器端 init 参数。字段是我们真正决定的那几个,不是 SDK 的全集。 */
 export type BrowserSentryOptions = {
   dsn: string;
@@ -52,7 +84,8 @@ export type BrowserSentryOptions = {
    * 这是 SDK 的默认值,写出来是为了让它变成一条会被 review 的决定,而不是一个默认值。
    */
   sendDefaultPii: false;
-  /** #1317 —— 每一条事件送出去之前先洗掉 URL 片段(见 `scrubUrlFragments`)。 */
+  /** #1317 —— 每一条事件送出去之前先洗掉 URL 片段;SHARE-A6 加了 query 里的 `t=` 与媒体/分享
+   *  路径段(见 `scrubShareTokens`,它内部先做 `scrubUrlFragments` 那一步)。 */
   beforeSend: <T extends ScrubbableEvent>(event: T) => T;
 };
 
@@ -75,7 +108,7 @@ export function browserSentryOptions(
     environment: nodeEnv || "development",
     tracesSampleRate: 0,
     sendDefaultPii: false,
-    beforeSend: scrubUrlFragments,
+    beforeSend: scrubShareTokens,
   };
 }
 

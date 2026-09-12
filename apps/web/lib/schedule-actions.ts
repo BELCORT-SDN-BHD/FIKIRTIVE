@@ -622,10 +622,14 @@ export async function sharePostPreview(
   } catch {
     return { error: "Couldn't create that link — please try again." };
   }
+  // SHARE-A6 (docs/specs/share-preview.md 已冻结 · v1): a clean address, no token in the query.
+  // `app/s/[token]/route.ts` is the one place that turns it into an HttpOnly cookie before landing
+  // on the page — a link minted before this shipped still works (the old `?t=` form is still
+  // accepted, `schedule/share-preview/page.tsx` forwards it here on sight).
   const base = process.env.BETTER_AUTH_URL ?? "";
   return {
     token,
-    url: `${base}/schedule/share-preview?t=${encodeURIComponent(token)}`,
+    url: `${base}/s/${encodeURIComponent(token)}`,
     expiresAt: new Date(expMs).toISOString(),
   };
 }

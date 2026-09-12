@@ -54,3 +54,22 @@ export async function verifySharePreview(
   if (!row) return null;
   return { ownerId: claims.ownerId, postId: claims.postId, exp: claims.exp, rowId: row.id };
 }
+
+/**
+ * SHARE-A7 (docs/specs/share-preview.md 已冻结 · v1) — is the share row a media token names
+ * (its `shareRowId` claim, `@fikirtive/token-crypto`'s `signMediaToken`/`verifyMediaToken`) still
+ * live right now?
+ *
+ * The media token itself is time-boxed independently and short (`PUBLIC_MEDIA_TTL_MS`, minutes),
+ * so its own HMAC expiry alone is not what a merchant means by "Revoke": a client who already
+ * loaded the preview page holds a still-unexpired media URL, and revoking must kill it AT ONCE,
+ * not merely stop the media token's own few-minutes clock from being renewed. This is that
+ * immediate check — called from the media proxy route only when the token declares a share row.
+ */
+export async function isSharePreviewRowLive(rowId: string, now: number = Date.now()): Promise<boolean> {
+  const row = await prisma.sharePreviewToken.findFirst({
+    where: { id: rowId, revokedAt: null, expiresAt: { gt: new Date(now) } },
+    select: { id: true },
+  });
+  return row !== null;
+}
