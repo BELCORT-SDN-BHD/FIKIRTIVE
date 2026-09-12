@@ -10,20 +10,31 @@
  *
  * #1350 — TWO independent isolation layers, because `reapExpiredAuthVerifications`'s own
  * `deleteMany` (its whole job) is a full-table sweep with no per-caller scoping, and this suite
- * flaked in CI (#1345 r10, #1349 r2, #1364 r1 — reproduced with zero code changes, so some OTHER
- * concurrent writer, never pinned down, was sweeping this file's fixtures before its assertions
- * ran):
+ * flaked in CI (#1345 r10, #1349 r2, #1364 r1 — reproduced with zero code changes, so it was a
+ * concurrent writer, not a logic bug):
  *   1. TAG-prefixed ids + `survivors()` scoped to `id: { startsWith: TAG }` — every assertion in
  *      this file counts only rows THIS run created, never a table-wide count.
  *   2. ANCHOR: every fixture's `expiresAt` sits near this fixed year-2099 instant instead of real
  *      wall-clock time, and every call this file makes to `reapExpiredAuthVerifications` passes
- *      that same instant explicitly. The production cutoff is `now - 24h`; any OTHER caller uses
- *      the real `now` default (apps/worker's own reaper tick, or whatever the still-unidentified
- *      second caller turns out to be), whose cutoff sits in 2026 — decades before ANCHOR — so it
- *      can never match these rows' `expiresAt` and sweep them early. Only this file's own
- *      ANCHOR-relative calls ever touch them.
- * Layer 2 makes this file's fixtures immune to layer 1 even mattering; layer 1 stays as the
- * belt-and-suspenders the issue asked for, and is what keeps `survivors()` correct regardless.
+ *      that same instant explicitly. The production cutoff is `now - 24h`, decades before ANCHOR.
+ *
+ * The concurrent writer is identified (PR #1407 judge round): better-auth's internal adapter
+ * (node_modules/.pnpm/better-auth@1.6.20.../node_modules/better-auth/dist/db/internal-adapter.mjs:625)
+ * runs a zero-grace-period, WHOLE-TABLE `expiresAt < now` sweep on every `findVerificationValue`
+ * call, and apps/web/lib/better-auth/server.ts:602's `resendStrategy: "reuse"` means every code
+ * request or verify apps/web's own tests make triggers one. `pnpm -r test` runs every workspace's
+ * vitest concurrently, so on a database this file shared with apps/web, that real-`now` sweep was
+ * always live against this table too — layer 2 makes THIS file's ANCHOR-dated fixtures immune to
+ * it (2099 never matches a real-`now` cutoff), but says nothing about the reverse direction: this
+ * file's OWN `reapExpiredAuthVerifications(ANCHOR)` calls are THEMSELVES a whole-table
+ * `expiresAt < 2099` sweep with no per-caller scoping, wide enough to have deleted apps/web's
+ * live, real-dated verification rows on the same shared database. That is why isolation here does
+ * NOT rest on scheduling or on which fixture happens to be table-wide-safe: apps/worker's tests
+ * now run against their OWN database (WORKER_TEST_DATABASE_URL, wired in vitest.config.ts) with no
+ * `ba_verification` table apps/web's tests can see — layers 1 and 2 above are defense in depth
+ * WITHIN that database, not what keeps the two packages apart. Anyone tempted to fold the two
+ * databases back into one: this file's own ANCHOR call is exactly as table-wide-destructive as the
+ * production sweep it is testing, in either direction.
  */
 import { describe, it, expect, afterAll, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
