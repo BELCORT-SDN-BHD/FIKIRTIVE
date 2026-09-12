@@ -471,9 +471,11 @@ export default function DetailPanel({
         kind: "image",
         model: models.image,
         ...(aspectRatio ? { aspectRatio } : {}),
-        // 幂等键由服务端从「动作 + 这一次锚在哪张图上 + 请求体」算出来(gen-actions 的
-        // startAssetGen)。这一面一个键都不出:带时间戳的键让刷新、第二个标签页、一次双击
-        // 各自变成一次新的付费动作。
+        // 幂等键由服务端从「动作 + 这一次锚在哪张图上 + 请求体 + 上面那个意图编号」算出来
+        // (gen-actions 的 startAssetGen)。这一面一个键都不出。编号只活在**本标签页本次会话**
+        // 的 sessionStorage 里:一次双击、一次断网重发、提交没落地就刷新,都沿用同一个编号
+        // ⇒ 回到原单(ASSET-A5);提交已落地之后再按一次(刷新后也好、第二个标签页也好)编号
+        // 已经丢掉/本来就没有,那是新编号、新的一单、照扣(ASSET-A4)。
         assetOp: "regen",
         assetAnchorGenerationId: generationId,
         assetIntentId: beginAssetIntent(intentSlot),
@@ -500,9 +502,11 @@ export default function DetailPanel({
         }
         // A timeout means the paid job is STILL RUNNING (the worker settles it late) — keep the
         // "still processing" state so the control never reverts to an inviting "Regenerate" for
-        // work that is already under way. This is honesty, not the money guard: since the key is
-        // derived server-side from the intent, a re-click while that job is active is reused, not
-        // re-charged. done/failed reset to idle (a real failure is refunded, so retrying is safe).
+        // work that is already under way. This one IS a money guard: the intent id was dropped the
+        // moment the submit landed, so a re-click here mints a NEW id, a new key, and a real
+        // second charge for work already under way — which is exactly why `timeout` disables the
+        // control (`apps/web/lib/asset-detail-status.ts` 的 timeout 分支).
+        // done/failed reset to idle (a real failure is refunded, so retrying is safe).
         if (status !== "timeout") {
           setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
         }

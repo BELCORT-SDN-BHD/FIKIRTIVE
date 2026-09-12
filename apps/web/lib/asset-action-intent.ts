@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * 「这一次商家按下按钮」的**意图编号** —— 资产付费动作(Regenerate / Animate / Edit /
  * Template)防重复扣钱的浏览器一侧(规格 `docs/specs/asset-action-idempotency.md`

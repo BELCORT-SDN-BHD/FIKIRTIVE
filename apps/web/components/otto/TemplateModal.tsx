@@ -289,9 +289,12 @@ export default function TemplateModal({
         // (#783). Templates that don't care leave this off, and the shape is inherited from the
         // uploaded photo exactly as before. One image either way — the price does not move.
         ...(template.aspectRatio ? { aspectRatio: template.aspectRatio } : {}),
-        // 幂等键由服务端从「动作 + 锚点 + 请求体」算出来(startAssetGen)。这一面不再自己出键:
-        // 旧的 `tpl:<templateId>:<runId>` 每开一次弹窗就换一个 runId,所以刷新一次或开第二个
-        // 标签页再按一次,就是两次真扣费。同一张底图 + 同一个模板 + 同一个答案 ⇒ 同一个键。
+        // 幂等键由服务端从「动作 + 锚点 + 请求体 + 上面那个意图编号」算出来(startAssetGen)。
+        // 这一面不再自己出键:旧的 `tpl:<templateId>:<runId>` 每开一次弹窗就换一个 runId,连
+        // 同一次提交的重发都回不到原单。现在编号只活在**本标签页本次会话**的 sessionStorage,
+        // 所以「同一张底图 + 同一个模板 + 同一个答案 + 同一次意图 ⇒ 同一个键」:提交没落地的
+        // 重发回原单(ASSET-A9);落地之后再按一次 —— 刷新后也好、第二个标签页也好 —— 是新
+        // 编号、新的一单、照扣(ASSET-A4)。
         assetOp: "template",
         assetAnchorGenerationId: sourceGenId,
         assetIntentId: beginAssetIntent(intentSlot),

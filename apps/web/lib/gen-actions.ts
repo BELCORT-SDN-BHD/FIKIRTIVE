@@ -865,7 +865,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // partial-unique index on the create below is the race-proof backstop. Factory keys
     // deliberately skip this shortcut: their full material + attempt decision belongs
     // under the existing project advisory transaction lock below.
-    // `asset:` 族在这里不带状态条件(见 `activeOnly` 的注释):终态之后的同键重放也要
+    // `asset:` 族在这里不带状态条件(见 `assetReplayAnyStatus` 的注释):终态之后的同键重放也要
     // 落回原来那一单。
     if (idempotencyKey && !factoryAttempt && !canvasAction && !trustedCoworkRequest) {
       const active = await prisma.genJob.findFirst({
