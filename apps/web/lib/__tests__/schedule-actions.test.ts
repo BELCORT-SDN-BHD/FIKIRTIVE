@@ -178,8 +178,8 @@ describe("createScheduledPost", () => {
     expect(data.scheduledAt).toEqual(new Date(AT));
     // media rows carousel-ordered by position
     expect(data.media.create).toEqual([
-      { id: "new-2", ownerId: OWNER, generationId: "gen-a", position: 0 },
-      { id: "new-3", ownerId: OWNER, generationId: "gen-b", position: 1 },
+      { id: "new-2", generationId: "gen-a", position: 0 },
+      { id: "new-3", generationId: "gen-b", position: 1 },
     ]);
   });
 

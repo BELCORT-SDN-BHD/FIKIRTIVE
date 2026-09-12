@@ -47,26 +47,23 @@ const SCHEMA_PATH = path.resolve(
 
 /** Walks schema.prisma model-by-model and returns "Model.relField" for every
  *  `@relation(fields: [...])` declaration whose `fields:` array has exactly one
- *  column (a "bare" foreign key — no tenant column riding along with the parent id). */
+ *  column (a "bare" foreign key — no tenant column riding along with the parent id).
+ *
+ *  Splits into per-model bodies first, then matches `@relation(` with a multi-line-safe
+ *  `[\s\S]*?` capture (same technique as tenant-guard-coverage.test.ts's
+ *  ownerScopedRelations) — a single-line-only match would silently miss a relation whose
+ *  `@relation(...)` wraps onto its own line(s), letting a new bare FK slip past the gate. */
 function extractBareForeignKeys(schemaText: string): string[] {
-  const lines = schemaText.split("\n");
-  let currentModel: string | null = null;
   const bare: string[] = [];
-  for (const raw of lines) {
-    const modelStart = raw.match(/^model\s+(\w+)\s*\{/);
-    if (modelStart) {
-      currentModel = modelStart[1] ?? null;
-      continue;
-    }
-    if (raw.startsWith("}")) {
-      currentModel = null;
-      continue;
-    }
-    if (!currentModel) continue;
-    if (raw.includes("@relation(") && raw.includes("fields:")) {
-      const fieldNameMatch = raw.match(/^\s*(\w+)\s+\S+/);
-      const relField = fieldNameMatch?.[1] ?? "?";
-      const fieldsMatch = raw.match(/fields:\s*\[([^\]]*)\]/);
+  for (const modelMatch of schemaText.matchAll(/^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm)) {
+    const currentModel = modelMatch[1]!;
+    const body = modelMatch[2] ?? "";
+    for (const relMatch of body.matchAll(
+      /^\s*(\w+)\s+(\w+)(?:\?|\[\])?\s+@relation\(([\s\S]*?)\)/gm,
+    )) {
+      const relField = relMatch[1] ?? "?";
+      const relationArgs = relMatch[3] ?? "";
+      const fieldsMatch = relationArgs.match(/fields:\s*\[([^\]]*)\]/);
       const fieldsList = fieldsMatch
         ? (fieldsMatch[1] ?? "").split(",").map((s) => s.trim()).filter(Boolean)
         : [];
@@ -186,6 +183,41 @@ describe("TENANT-A7 DB 级:ScheduledPostMedia 复合外键", () => {
         data: { id: "spm-cross-tenant", scheduledPostId: POST_A, ownerId: ORG_B, generationId: "gen-y", position: 0 },
       }),
     ).rejects.toMatchObject({ code: "P2003" });
+  });
+});
+
+// ── DB-level proof: 嵌套 create 路径(schedule-service.ts 实际写法)也满足复合外键 —
+// 父行 ScheduledPost.ownerId 自动填到子行 media,调用方不需要(也不能)自己传 ownerId。
+const ORG_NESTED = "tenant-fk-org-nested";
+const POST_NESTED = "tenant-fk-post-nested";
+
+describe("TENANT-A7 DB 级:嵌套 create(schedule-service.ts 形状)自动继承父行 ownerId", () => {
+  it("TENANT-A7: 嵌套 create 建带 2 条 media 的 ScheduledPost,两行 media 的 ownerId 均等于父行", async () => {
+    await prisma.organization.create({ data: { id: ORG_NESTED } });
+    await prisma.scheduledPost.create({
+      data: {
+        id: POST_NESTED,
+        ownerId: ORG_NESTED,
+        projectId: ORG_NESTED,
+        channel: "instagram",
+        caption: "nested create shape",
+        scheduledAt: new Date(),
+        scheduledTz: "UTC",
+        source: "owner",
+        media: {
+          create: [
+            { id: "spm-nested-1", generationId: "gen-nested-1", position: 0 },
+            { id: "spm-nested-2", generationId: "gen-nested-2", position: 1 },
+          ],
+        },
+      },
+    });
+    const rows = await prisma.scheduledPostMedia.findMany({
+      where: { scheduledPostId: POST_NESTED },
+      orderBy: { position: "asc" },
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.ownerId)).toEqual([ORG_NESTED, ORG_NESTED]);
   });
 });
 

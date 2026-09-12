@@ -224,7 +224,7 @@ export const TENANT_GUARD_EXEMPT: Record<string, string> = {
   // candidate to move up into TENANT_MODELS after that sweep, as its own slice.
   ScheduledPostMedia: "just gained ownerId via TENANT 切片⑤'s FK backfill (#1380) — DB-level " +
     "composite-FK protection only; runtime query guarding not yet swept for apps/worker call sites, " +
-    "deliberately deferred to its own slice (see PublishAttempt's entry above for the full reasoning).",
+    "deliberately deferred to its own slice (see the block comment above this pair for the full reasoning).",
   PublishAttempt: "just gained ownerId via TENANT 切片⑤'s FK backfill (#1380) — DB-level " +
     "composite-FK protection only; runtime query guarding not yet swept for apps/worker call sites " +
     "(publish.ts's claim/reconcile/reaper paths), deliberately deferred to its own slice.",

@@ -72,7 +72,6 @@ export async function draftScheduledPost(
           ? {
               create: d.media.map((generationId, position) => ({
                 id: newId(),
-                ownerId: args.ownerId, // TENANT 切片⑤(#1380): composite FK now requires this on every media row
                 generationId,
                 position,
               })),

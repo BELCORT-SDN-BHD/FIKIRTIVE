@@ -951,10 +951,12 @@ export async function reapStalePublishAttempts(): Promise<number> {
         select: { ownerId: true, channel: true, metaTargetId: true, metaPostId: true, status: true },
       });
       if (!post) continue;
-      // #463 per-row phase. PublishAttempt carries NO ownerId column, so the tenant is reached
-      // transitively through the parent post — the schema question is recorded as a non-goal of
-      // #463 (it would be a migration, i.e. Founder-only). Covers reconcile (which calls Meta)
-      // and the CAS transaction below.
+      // #463 per-row phase. PublishAttempt now carries its own ownerId with a composite FK
+      // (TENANT 切片⑤ #1380) — the schema gap #463 deferred is closed. This still builds the
+      // frame from the parent post because the reaper is a system scan-domain entry point (it
+      // walks stale attempts across every tenant, not one caller's own scope), not because the
+      // table lacks a tenant column. Covers reconcile (which calls Meta) and the CAS transaction
+      // below.
       await runAsTenant(post.ownerId, async () => {
         const verdict = await reconcileAttempt(attempt, post);
         if (verdict === "needs_attention") {
