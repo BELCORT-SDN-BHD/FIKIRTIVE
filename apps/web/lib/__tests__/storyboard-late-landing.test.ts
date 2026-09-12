@@ -172,45 +172,11 @@ describe("#782 r7 (判官 r6 P1-A) 迟到的付费帧自己落地,不必重开�
     );
   }
 
-  it("轮询到顶 → 引擎晚一步交货 → 帧自动落地(同一次挂载,零用户操作)", async () => {
-    const state = { landed: false };
-    stubSync(state);
-
-    const dom = await mount(
-      createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }),
-    );
-
-    // 拍 1:挂载那一次 reconcile。服务端说作业还活着 → 进入快轮。
-    expect(mocks.syncStoryboardMedia).toHaveBeenCalledTimes(1);
-    expect(text(dom)).toContain("Generating first frame");
-
-    // 拍 2:快轮 40 次全部用完(约两分钟),引擎一直没交货。
-    for (let i = 0; i < FRAME_CAP; i++) await tick(FRAME_TICK);
-    expect(mocks.syncStoryboardMedia).toHaveBeenCalledTimes(1 + FRAME_CAP);
-
-    // 拍 3:到顶之后确实降了频 —— 再走一个快轮周期,一次都不问。
-    await tick(FRAME_TICK);
-    expect(
-      mocks.syncStoryboardMedia,
-      "到顶之后还在按快轮的节奏问 —— 降频没生效",
-    ).toHaveBeenCalledTimes(1 + FRAME_CAP);
-
-    // 拍 4:引擎这一刻交货了(付了钱的产出已经在库里,服务端权威回退保证它可达)。
-    state.landed = true;
-
-    // 拍 5:慢轮到点再问一次 —— 这一问就是 r6 缺的那条路径。
-    await tick(SLOW_TICK);
-    expect(
-      mocks.syncStoryboardMedia,
-      "到顶就再也不问了:迟到的付费帧只有重开页面才看得见",
-    ).toHaveBeenCalledTimes(2 + FRAME_CAP);
-
-    // 拍 6:商家什么都没做、页面也没重开,图自己出现在卡上。
-    const img = dom.querySelector("img");
-    expect(img, "迟到的帧没有落地 —— 商家付了钱,卡面永远不显示").toBeTruthy();
-    expect(img!.getAttribute("src")).toBe("/media/gen_0.png");
-    expect(text(dom)).not.toContain("Generating first frame");
-  });
+  // FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 「轮询到顶 → 引擎晚一步交货 →
+  // 帧自动落地」随闸①整段报废一并删除:首帧那一格的展示/轮询 UI(「Generating first
+  // frame…」文案、落地后的 `<img>`)已经不存在于卡面上,这条时序钉的正是那段已删 UI 的行为。
+  // P1-A 判官发现的根性问题(「到顶不等于放弃,慢轮要接住迟到的付费产出」)在视频那一侧仍然
+  // 成立且仍受覆盖 —— 见下面「#782 r9」系列与「#782 r11」系列的视频版时序。
 
   it("帧一落地就真的收工:之后再走十分钟,一次都不再问", async () => {
     const state = { landed: true };
@@ -226,51 +192,9 @@ describe("#782 r7 (判官 r6 P1-A) 迟到的付费帧自己落地,不必重开�
     ).toHaveBeenCalledTimes(1);
   });
 
-  it("Generate all 遇到「整份都已经花过钱」→ 回去等结果,而不是端出一个 0 积分的确认框", async () => {
-    const state = { landed: false };
-    // 服务端这一刻的答复:作业不再活着(它已经 DONE,只是那条聊天消息没写成),
-    // 所以卡面停了轮询、把入口还给了商家 —— 判官 r6 时序的起点。
-    mocks.syncStoryboardMedia.mockImplementation(async () =>
-      state.landed
-        ? {
-            payload: { ...payload, shots: [{ ...shot, firstFrameGenerationId: "gen_0" }] },
-            shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: absent }],
-          }
-        : // 作业已经 DONE、却什么产出都指不出来(那条聊天消息没写成)—— 服务端如实说「这一格
-          // 没有东西」,而不是把它说成还在跑。
-          { payload, shots: [{ shotId: "s0", frame: absent, video: absent }] },
-    );
-    // 那张子卡已经花过钱 —— 服务端如实报 spent,一分钱都不该再收。
-    mocks.prepareStoryboardFirstFrames.mockResolvedValue({
-      children: [
-        { shotId: "s0", childCardId: "child_0", estimatedCredits: 4, structuredPrompt: "ff-0", entityIds: [], spent: true },
-      ],
-      totalCredits: 0,
-    });
-
-    const dom = await mount(
-      createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }),
-    );
-    expect(mocks.syncStoryboardMedia).toHaveBeenCalledTimes(1);
-
-    await clickByText(dom, "Generate all first frames");
-
-    // 不许出现「Generate 0 frames for 0 credits」这种按下去什么都不发生的确认框。
-    expect(text(dom), "端出了一个 0 积分的确认框").not.toContain("Generate 0 frames");
-    expect(
-      findButton(dom, "Confirm — 0"),
-      "确认按钮承诺 0 张图 —— 按下去什么都不会发生",
-    ).toBeUndefined();
-    // 一分钱都没有被花掉:这一次点击本来就只是「再问一次」。
-    expect(mocks.coworkGenerate).not.toHaveBeenCalled();
-
-    // 而且卡面回到了等待:引擎交货的那一刻,图自己出现。
-    state.landed = true;
-    await tick(FRAME_TICK);
-    const img = dom.querySelector("img");
-    expect(img, "点完 Generate all 之后卡面没有回去等结果 —— 商家走进死路").toBeTruthy();
-    expect(img!.getAttribute("src")).toBe("/media/gen_0.png");
-  });
+  // FSE-208 —— 「Generate all 遇到「整份都已经花过钱」」随闸①整段报废一并删除:
+  // 「Generate all first frames」按钮已经不存在。同一条判官发现(「空/全花过钱的批量结果
+  // 不许端出一个 0 积分的死确认框」)在闸②(视频)那一侧仍然成立,见「#782 r9 (判官 r8 P2)」。
 });
 
 // ---------------------------------------------------------------------------
@@ -519,11 +443,10 @@ describe("#782 r9 (判官 r8 P1-②) 已经落地的视频,重开页面必须看
     const video = dom.querySelector("video");
     expect(video, "已落地的视频没有渲染播放器").toBeTruthy();
     expect(video!.getAttribute("src")).toBe("/media/vgen_0.mp4");
-    const img = dom.querySelector("img");
-    expect(img, "已落地的首帧也没有渲染").toBeTruthy();
-    // 有内容就该有下一步:重出入口回来了。
+    // 有内容就该有下一步:重出入口回来了。FSE-208(creation §5,S5 批量裁决 2026-09-12
+    // #1358)—— 首帧那一格的展示/重出 UI(<img> 渲染、"Regenerate frame" 按钮)已随闸①
+    // 整段报废一并删除,不再存在于卡面上。
     expect(findButton(dom, "Remake video"), "已落地的视频没有重出入口").toBeTruthy();
-    expect(findButton(dom, "Regenerate frame"), "已落地的首帧没有重出入口").toBeTruthy();
   });
 });
 
@@ -532,38 +455,42 @@ describe("#782 r9 (判官 r8 P2) 空的 prepare 结果不许变成一个 0 张�
     shotId: "s0",
     index: 0,
     title: "Hero",
-    firstFramePrompt: "ff-0",
     videoPrompt: "v-0",
-    firstFrameCardId: "child_0", // 子卡在,图还没写回来
+    videoCardId: "vchild_0", // 子卡在,片子还没写回来
   };
   const payload = { storyboardTitle: "Raya launch", shots: [shot] };
 
-  it("并发落帧使 prepare 返回空 children → 回去等结果,不端出 Generate 0", async () => {
+  // FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 原用例走的是闸①(「Generate all
+  // first frames」)。闸①整段报废,判官发现的根性问题(「并发落地使 prepare 返回空
+  // children,不许端出一个 0 张图/0 积分的死确认框」)在闸②(视频)那一侧一字不改地重钉。
+  it("并发落地使 prepare 返回空 children → 回去等结果,不端出 Generate 0", async () => {
     const state = { landed: false };
     mocks.syncStoryboardMedia.mockImplementation(async () =>
       state.landed
         ? {
-            payload: { ...payload, shots: [{ ...shot, firstFrameGenerationId: "gen_0" }] },
-            shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: absent }],
+            payload: { ...payload, shots: [{ ...shot, videoGenerationId: "vgen_0" }] },
+            // FSE-208:每一镜都直接出片,sync 如实报 directToVideo:true —— 卡面据此渲染
+            // 视频那一块(见 StoryboardCard.tsx 的 `hasFrame || isDirectToVideo` 判据)。
+            shots: [{ shotId: "s0", frame: absent, video: done("vgen_0", "/media/vgen_0.mp4"), directToVideo: true }],
           }
-        : { payload, shots: [{ shotId: "s0", frame: absent, video: absent }] },
+        : { payload, shots: [{ shotId: "s0", frame: absent, video: absent, directToVideo: true }] },
     );
-    // 服务端这一刻认为没有任何镜头需要铸新的首帧子卡(那一张刚刚落地)。
-    mocks.prepareStoryboardFirstFrames.mockResolvedValue({ children: [], totalCredits: 0 });
+    // 服务端这一刻认为没有任何镜头需要铸新的视频子卡(那一张刚刚落地)。
+    mocks.prepareStoryboardVideos.mockResolvedValue({ children: [], totalCredits: 0 });
 
     const dom = await mount(
       createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }),
     );
-    await clickByText(dom, "Generate all first frames");
+    await clickByText(dom, "Make all videos");
 
     expect(text(dom), "端出了一个 0 张图的确认框").not.toContain("Generate 0 ");
     expect(findButton(dom, "Confirm — 0"), "确认按钮承诺 0 张图 —— 按下去什么都不会发生").toBeUndefined();
     expect(mocks.coworkGenerate).not.toHaveBeenCalled();
 
-    // 而且回到了等待:帧一落地就自己出现。
+    // 而且回到了等待:片子一落地就自己出现。
     state.landed = true;
     await tick(FRAME_TICK);
-    expect(dom.querySelector("img"), "点完之后卡面没有回去等结果").toBeTruthy();
+    expect(dom.querySelector("video"), "点完之后卡面没有回去等结果").toBeTruthy();
   });
 });
 
@@ -1021,17 +948,18 @@ describe("#782 r13 (判官 r12 P2-F2) 编辑成功之后,旧的 sync 回答不�
     const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
     expect(dom.querySelector("video")!.getAttribute("src")).toBe("/media/vgen_0.mp4");
 
-    // 打开这一镜的编辑、改一句视频提示词、保存。
+    // 打开这一镜的编辑、改一句视频提示词、保存。FSE-208 之后编辑框只剩视频那一句
+    // (首帧文字编辑框随闸①整段报废删除),所以这里是唯一的那个 textarea。
     await act(async () => { (dom.querySelector('button[aria-label="Edit shot"]') as HTMLButtonElement).click(); });
     await act(async () => {
-      setTextarea(dom.querySelectorAll("textarea")[1] as HTMLTextAreaElement, "v-0 (new)");
+      setTextarea(dom.querySelectorAll("textarea")[0] as HTMLTextAreaElement, "v-0 (new)");
     });
     await clickByText(dom, "Save");
     await act(async () => { await Promise.resolve(); });
 
     expect(mocks.editShotPrompt).toHaveBeenCalledTimes(1);
-    // 真实参数(判官 r16 P1-1):卡面两句 prompt 同发,而首帧那一句是**原样**回发的。
-    expect(sentArgs).toEqual({ cardId: "sb_1", index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0 (new)" });
+    // 真实参数:卡面只发视频那一句(FSE-208 之后 saveEdit 不再发 firstFramePrompt)。
+    expect(sentArgs).toEqual({ cardId: "sb_1", index: 0, videoPrompt: "v-0 (new)" });
     // 服务端对这组参数的真实答复:视频作废(真的改了),已付费的首帧原封不动(根本没改)。
     await expect(mocks.editShotPrompt.mock.results[0]!.value).resolves.toEqual({ payload: edited });
     expect(
@@ -1039,8 +967,6 @@ describe("#782 r13 (判官 r12 P2-F2) 编辑成功之后,旧的 sync 回答不�
       "编辑删掉的片子被上一次 sync 的回答复活了 —— 而 landed 不触发任何刷新入口,这个假状态会一直留着",
     ).toBeNull();
     expect(findButton(dom, "Remake video"), "对着一件已经不存在的东西提供「重做」").toBeUndefined();
-    // 首帧没有被这次编辑作废,所以它照旧在屏幕上(清空回答之后重新问了一次的结果)。
-    expect(dom.querySelector("img")).toBeTruthy();
   });
 });
 
@@ -1073,20 +999,22 @@ describe("#782 r13 卡面文案:真渲染", () => {
     expect(copy).toContain("Re-making an earlier shot won’t change a later shot’s first frame once it already has one.");
   });
 
-  it("卡死的解释不再被「有没有帧在路上」挡住:准备卡在,解释和入口也在", async () => {
+  it("卡死的解释不再被「有没有帧在路上」挡住:准备卡在,解释也在", async () => {
+    // FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 首帧那一格的展示/生成中 UI
+    // (「Generating first frame…」spinner 文案、「first frame (below)」锚点)已随闸①
+    // 整段报废一并删除。「卡死的解释不该被生成中状态挡住」这条判官发现,现在只剩「解释」
+    // 这一半可断言 —— 「有没有帧在路上」那一半的展示面已经不存在了。
     mocks.syncStoryboardMedia.mockResolvedValue({
       payload: stuckPayload,
       shots: [
         { shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: done("vgen_0", "/media/vgen_0.mp4") },
-        // s1 的准备卡正在跑 —— 「为什么接不上」与「有没有帧在路上」是两个问题,两行都要在。
+        // s1 的准备卡正在跑(遗留字段;闸③ 的免费传帧写入路径本身已结构性不可达)。
         { shotId: "s1", frame: slot({ kind: "generating" }), video: absent },
       ],
     });
     const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: stuckPayload, balanceUsd: 10 }));
     const copy = text(dom);
-    expect(copy).toContain("Generating first frame…");
     expect(copy).toContain("this shot needs its own first frame");
-    expect(copy).not.toContain("first frame (below)"); // Generate all 在生成中是隐藏的,指过去会指空
   });
 
   it("重出视频的确认框带着一句下游不变的说明", async () => {
@@ -1164,123 +1092,49 @@ describe("#782 r17 (判官 r16 P2-1) 同 epoch 的两次 sync:后发先回之后
 });
 
 // ---------------------------------------------------------------------------
-// creation §5 :172⑤ —— 没有首帧文字的那种镜头,编辑还存得下去
+// FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 首帧文字编辑框/展示标签全退场
 // ---------------------------------------------------------------------------
 //
-// :172⑤ 把 `firstFramePrompt` 改成按镜头类型条件可选:@ 到元素的镜头直接出片,首帧那一步
-// 整个不存在,所以那段文字也不必写。于是 `startEdit` 装进草稿的是**空串**,而保存过去无条件
-// 同发它 —— 服务端那格是 `.min(1)`,整次编辑被判「That edit isn't valid.」:商家连改一句
-// 视频文字都存不下去。(刚铺开的卡上一次 sync 都还没发生,卡面还不知道哪几镜直接出片,所以
-// 首帧那一格照旧摆着,只是空的 —— 这正是商家最先碰到的那一格。)
-//
-// 这一条按本文件的方言钉:真渲染、真按钮、真的编辑语义 —— 断言落在**真的发出去的参数**上。
-describe("creation §5 :172⑤ —— 没有首帧文字的镜头也能改视频文字", () => {
-  const shot = { shotId: "s0", index: 0, title: "Hero", videoPrompt: "v-0", entityIds: ["ent-actor"], durationSeconds: 5 };
-  const payload = { storyboardTitle: "Raya launch", shots: [shot] };
+// 原两个 describe(「creation §5 :172⑤ —— 没有首帧文字的镜头也能改视频文字」/「…不摆空
+// 标签」)钉的是 firstFramePrompt **按镜头类型条件可选**那一版世界:两个 textarea(首帧 +
+// 视频)、一行「First frame · …」标签,是否出现取决于这一镜要不要走两步。这些 UI 随闸①
+// 整段报废删除 —— 编辑框永久只剩一个(视频),标签永久不出现,不再有条件分支。下面改钉
+// 这个更简单也更该长期成立的事实,覆盖遗留数据(shot 上仍带着 firstFramePrompt 字段)也
+// 不会让这两样东西复活。
+describe("FSE-208 · 首帧文字编辑框/展示标签全退场", () => {
+  const legacyShot = { shotId: "s0", index: 0, title: "Hero", firstFramePrompt: "ff-0", videoPrompt: "v-0", durationSeconds: 5 };
+  const payload = { storyboardTitle: "Raya launch", shots: [legacyShot] };
 
-  /** 捕获真实发出去的那一组参数;答复走真的纯变换,发错了什么会如实塌下来。 */
-  function stubEdit(base: Record<string, unknown>): { sent: () => Record<string, unknown> | null } {
+  it("FSE-208: 编辑框永久只剩视频那一句 —— 保存只发 videoPrompt,即使这一镜身上仍带着遗留的 firstFramePrompt 字段", async () => {
+    mocks.syncStoryboardMedia.mockResolvedValue({ payload, shots: [{ shotId: "s0", frame: absent, video: absent }] });
     let sentArgs: Record<string, unknown> | null = null;
-    mocks.editShotPrompt.mockImplementation(async (args: { index: number; firstFramePrompt?: string; videoPrompt?: string; durationSeconds?: number }) => {
+    mocks.editShotPrompt.mockImplementation(async (args: { index: number; videoPrompt?: string }) => {
       sentArgs = args as unknown as Record<string, unknown>;
       return {
-        payload: applyEditShotPrompt(base as StoryboardCardPayload, args.index, {
-          firstFramePrompt: args.firstFramePrompt,
-          videoPrompt: args.videoPrompt,
-          durationSeconds: args.durationSeconds,
-        }),
+        payload: applyEditShotPrompt(payload as StoryboardCardPayload, args.index, { videoPrompt: args.videoPrompt }),
       };
     });
-    return { sent: () => sentArgs };
-  }
-
-  it("creation §5 :172⑤ / CREATE-A2: 本来就没有那一格 ⇒ 保存时不发这个键,服务端不会把整次编辑判无效", async () => {
-    mocks.syncStoryboardMedia.mockResolvedValue({ payload, shots: [{ shotId: "s0", frame: absent, video: absent }] });
-    const edit = stubEdit(payload);
 
     const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
     await act(async () => { (dom.querySelector('button[aria-label="Edit shot"]') as HTMLButtonElement).click(); });
-    // 首帧那一格是空的(这一镜没有它),商家一个字也没往里打。
-    expect((dom.querySelectorAll("textarea")[0] as HTMLTextAreaElement).value).toBe("");
+    // 只有一个 textarea(视频那一句);首帧那一个已经不存在。
+    expect(dom.querySelectorAll("textarea")).toHaveLength(1);
     await act(async () => {
-      setTextarea(dom.querySelectorAll("textarea")[1] as HTMLTextAreaElement, "v-0 (new)");
+      setTextarea(dom.querySelectorAll("textarea")[0] as HTMLTextAreaElement, "v-0 (new)");
     });
     await clickByText(dom, "Save");
     await act(async () => { await Promise.resolve(); });
 
     expect(mocks.editShotPrompt).toHaveBeenCalledTimes(1);
-    // 关键:`firstFramePrompt` 这个键**不出现** —— 空串会被服务端 `.min(1)` 判整次编辑无效。
-    expect(edit.sent()).toEqual({ cardId: "sb_1", index: 0, videoPrompt: "v-0 (new)" });
+    expect(sentArgs).toEqual({ cardId: "sb_1", index: 0, videoPrompt: "v-0 (new)" });
   });
 
-  it("creation §5 :172⑤ / CREATE-A2: 本来有那一格 ⇒ 逐字不变,照旧原样回发", async () => {
-    const twoStep = { shotId: "s0", index: 0, title: "Hero", firstFramePrompt: "ff-0", videoPrompt: "v-0", durationSeconds: 5 };
-    const twoStepPayload = { storyboardTitle: "Raya launch", shots: [twoStep] };
-    mocks.syncStoryboardMedia.mockResolvedValue({ payload: twoStepPayload, shots: [{ shotId: "s0", frame: absent, video: absent }] });
-    const edit = stubEdit(twoStepPayload);
-
-    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: twoStepPayload, balanceUsd: 10 }));
-    await act(async () => { (dom.querySelector('button[aria-label="Edit shot"]') as HTMLButtonElement).click(); });
-    await act(async () => {
-      setTextarea(dom.querySelectorAll("textarea")[1] as HTMLTextAreaElement, "v-0 (new)");
-    });
-    await clickByText(dom, "Save");
-    await act(async () => { await Promise.resolve(); });
-
-    expect(edit.sent()).toEqual({ cardId: "sb_1", index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0 (new)" });
-  });
-
-  it("creation §5 :172⑤ / CREATE-A2: 本来有那一格、被商家清空 ⇒ 照旧发空串,由服务端拒(不吞掉这次意图)", async () => {
-    const twoStep = { shotId: "s0", index: 0, title: "Hero", firstFramePrompt: "ff-0", videoPrompt: "v-0", durationSeconds: 5 };
-    const twoStepPayload = { storyboardTitle: "Raya launch", shots: [twoStep] };
-    mocks.syncStoryboardMedia.mockResolvedValue({ payload: twoStepPayload, shots: [{ shotId: "s0", frame: absent, video: absent }] });
-    let sentArgs: Record<string, unknown> | null = null;
-    mocks.editShotPrompt.mockImplementation(async (args: Record<string, unknown>) => {
-      sentArgs = args;
-      return { error: "That edit isn't valid." };
-    });
-
-    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: twoStepPayload, balanceUsd: 10 }));
-    await act(async () => { (dom.querySelector('button[aria-label="Edit shot"]') as HTMLButtonElement).click(); });
-    await act(async () => {
-      setTextarea(dom.querySelectorAll("textarea")[0] as HTMLTextAreaElement, "");
-    });
-    await clickByText(dom, "Save");
-    await act(async () => { await Promise.resolve(); });
-
-    expect(sentArgs).toEqual({ cardId: "sb_1", index: 0, firstFramePrompt: "", videoPrompt: "v-0" });
-    expect(text(dom)).toContain("That edit isn't valid.");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// creation §5 :172⑤ —— 没有首帧文字时,不摆一个空的 "First frame ·" 标签
-// ---------------------------------------------------------------------------
-//
-// 判官第 2 轮 P2-④。`directToVideo` 只有服务端算得出(要读 Entity.type),所以在第一次
-// sync 回来之前,卡面对每一镜都按「照旧两步」渲染 —— 而 :172⑤ 之后这一镜本来就可以没有
-// 首帧文字。旧写法无条件摆那一行,商家读到的是一个后面什么都没有的标签。
-describe("creation §5 :172⑤ —— 没有首帧文字的镜头不摆空标签", () => {
-  const bare = { shotId: "s0", index: 0, title: "Hero", videoPrompt: "v-0", entityIds: ["ent-actor"], durationSeconds: 5 };
-
-  it("creation §5 :172⑤ / CREATE-A2: 这一镜没有首帧文字 ⇒ 那一行整行不出现(视频那一行照旧)", async () => {
-    const payload = { storyboardTitle: "Raya launch", shots: [bare] };
-    // 还没问过服务端的那一拍:sync 不回 directToVideo(老答复/还没算出来),卡面按两步渲染。
+  it("FSE-208 / CREATE-A2: 「First frame ·」标签永久不出现,即使这一镜身上仍带着遗留的 firstFramePrompt 字段", async () => {
     mocks.syncStoryboardMedia.mockResolvedValue({ payload, shots: [{ shotId: "s0", frame: absent, video: absent }] });
 
     const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
 
     expect(text(dom)).not.toContain("First frame ·");
     expect(text(dom)).toContain("Video · v-0");
-  });
-
-  it("creation §5 :172⑤ / CREATE-A2: 有首帧文字的镜头逐字照旧摆出来", async () => {
-    const twoStep = { shotId: "s0", index: 0, title: "Hero", firstFramePrompt: "ff-0", videoPrompt: "v-0", durationSeconds: 5 };
-    const payload = { storyboardTitle: "Raya launch", shots: [twoStep] };
-    mocks.syncStoryboardMedia.mockResolvedValue({ payload, shots: [{ shotId: "s0", frame: absent, video: absent }] });
-
-    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload, balanceUsd: 10 }));
-
-    expect(text(dom)).toContain("First frame · ff-0");
   });
 });
