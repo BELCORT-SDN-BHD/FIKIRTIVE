@@ -138,6 +138,13 @@ const NON_DEPLOY_ENV: Readonly<Record<string, string>> = {
   USER:
     "scripts/tools/mint-r2-token.mjs 用它定位 macOS 钥匙串条目(security find-generic-password -a $USER)。" +
     "这是本机登录名,由 shell 注入,不是可配置的部署变量。",
+  WORKER_TEST_DATABASE_URL:
+    "scripts/ci/quality.sh 只在 tests 腿(以及无 --leg 的本机全量跑)给 apps/worker 的测试建一个独立的" +
+    "按次生成数据库,把地址放进这个变量;只有 apps/worker/vitest.config.ts 读它,用来在 vitest 的 " +
+    "test.env 里覆盖那些测试进程自己看到的 DATABASE_URL。部署进程(apps/worker/src/index.ts、" +
+    "apps/worker/src/db-backup.ts)只认 DATABASE_URL / DATABASE_URL_POOLED,永远不读这个名字。" +
+    "#1350 判官 P1:apps/worker 的真实 DB 测试原本与 apps/web 共用 `pnpm -r test` 那一个 DATABASE_URL," +
+    "这个变量就是把它们分开用的接线。",
 };
 
 /** .env.example 里出现的变量名(`NAME=` 或注释掉的 `# NAME=`)。 */
