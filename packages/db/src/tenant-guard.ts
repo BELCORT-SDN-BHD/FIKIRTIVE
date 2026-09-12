@@ -306,7 +306,7 @@ function scopeWhere(
     where[column] !== ownerId
   ) {
     throw new Error(
-      `[tenant-guard] ${model}.${operation} tried to use ownerId outside the active tenant`,
+      `[tenant-guard] ${model}.${operation} tried to use ${column} outside the active tenant`,
     );
   }
   // #698 — reading the tenant out of a compound key must not soften the boundary: a key that
@@ -316,7 +316,7 @@ function scopeWhere(
   for (const nested of compoundKeyOwnerIds(where, column)) {
     if (nested !== ownerId) {
       throw new Error(
-        `[tenant-guard] ${model}.${operation} tried to use ownerId outside the active tenant`,
+        `[tenant-guard] ${model}.${operation} tried to use ${column} outside the active tenant`,
       );
     }
   }
@@ -499,17 +499,17 @@ function applyTenantScope(
       !whereHasOwnerId(args?.where, column, strictUnframed)
     ) {
       throw new Error(
-        `[tenant-guard] ${model}.${operation} has no ownerId filter — possible cross-tenant leak`,
+        `[tenant-guard] ${model}.${operation} has no ${column} filter — possible cross-tenant leak`,
       );
     }
     if (CREATE_OPS.has(operation) && !dataHasOwnerId(args?.data, column)) {
       throw new Error(
-        `[tenant-guard] ${model}.${operation} has no ownerId in created data`,
+        `[tenant-guard] ${model}.${operation} has no ${column} in created data`,
       );
     }
     if (operation === "upsert" && !dataHasOwnerId(args?.create, column)) {
       throw new Error(
-        `[tenant-guard] ${model}.${operation} has no ownerId in created data`,
+        `[tenant-guard] ${model}.${operation} has no ${column} in created data`,
       );
     }
     if (
@@ -518,7 +518,7 @@ function applyTenantScope(
       dataRewritesOwner(operation === "upsert" ? args?.update : args?.data, column)
     ) {
       throw new Error(
-        `[tenant-guard] ${model}.${operation} cannot rewrite ownerId without an active tenant`,
+        `[tenant-guard] ${model}.${operation} cannot rewrite ${column} without an active tenant`,
       );
     }
   }
