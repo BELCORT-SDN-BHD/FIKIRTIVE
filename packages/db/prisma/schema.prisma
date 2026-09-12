@@ -641,9 +641,15 @@ model GenJob {
   ottoVerdictAt      DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
-  // 幂等去重靠迁移里的 PARTIAL UNIQUE 索引（active 键唯一，Prisma 无法在 schema 表达
-  // 条件唯一，故只在 migration.sql 里建）：同一 (owner, project, idempotencyKey) 同时
-  // 只能有一个 QUEUED/GENERATING 任务 → 并发同键提交 DB 层挡住，不会双扣。
+  // 幂等去重靠迁移里的 PARTIAL UNIQUE 索引（Prisma 无法在 schema 表达条件唯一，故只在
+  // migration.sql 里建），一共三条，各管一族：
+  //   · GenJob_active_idempotency_key —— 一般键（分镜 frame:/animate:）：同一
+  //     (owner, project, idempotencyKey) 同时只能有一个 QUEUED/GENERATING 任务 →
+  //     并发同键提交 DB 层挡住，不会双扣；终态之后同一个槽位仍可再生成一次。
+  //   · GenJob_cowork_idempotency_once —— `cowork:%`：全状态唯一（一张卡只生成一次）。
+  //   · GenJob_asset_idempotency_once —— `asset:%`：全状态唯一（#1375）。这一族的键里
+  //     编了浏览器那一次点击的意图编号，所以同一把键只可能是同一次意图的重放；「再来
+  //     一张」是新的编号、新的键。见 docs/specs/asset-action-idempotency.md §1.4 改动三。
 
   @@index([projectId, createdAt])
   @@index([status, updatedAt])

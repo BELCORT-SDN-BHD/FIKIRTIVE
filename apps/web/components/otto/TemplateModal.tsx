@@ -18,6 +18,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import DetailPanel from "@/components/asset/DetailPanel";
 import { startAssetGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
+import { assetIntentSlot, beginAssetIntent, endAssetIntent } from "@/lib/asset-action-intent";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { UPLOAD_FAILURE_COPY } from "@fikirtive/core/upload";
@@ -272,6 +273,10 @@ export default function TemplateModal({
         return;
       }
 
+      // #1375:这一次按下的意图编号(`asset-action-intent.ts`)。同一次提交的重发沿用它
+      // ⇒ 同一把键 ⇒ 回到原来那一单(ASSET-A9);商家再按一次(或重开弹窗再跑一遍)拿到
+      // 新编号 ⇒ 新的一单、照扣一次(ASSET-A4)。
+      const intentSlot = assetIntentSlot("template", sourceGenId);
       const started = await startTemplateJob({
         projectId,
         kind: "image",
@@ -284,16 +289,24 @@ export default function TemplateModal({
         // (#783). Templates that don't care leave this off, and the shape is inherited from the
         // uploaded photo exactly as before. One image either way — the price does not move.
         ...(template.aspectRatio ? { aspectRatio: template.aspectRatio } : {}),
-        // 幂等键由服务端从「动作 + 锚点 + 请求体」算出来(startAssetGen)。这一面不再自己出键:
-        // 旧的 `tpl:<templateId>:<runId>` 每开一次弹窗就换一个 runId,所以刷新一次或开第二个
-        // 标签页再按一次,就是两次真扣费。同一张底图 + 同一个模板 + 同一个答案 ⇒ 同一个键。
+        // 幂等键由服务端从「动作 + 锚点 + 请求体 + 上面那个意图编号」算出来(startAssetGen)。
+        // 这一面不再自己出键:旧的 `tpl:<templateId>:<runId>` 每开一次弹窗就换一个 runId,连
+        // 同一次提交的重发都回不到原单。现在编号只活在**本标签页本次会话**的 sessionStorage,
+        // 所以「同一张底图 + 同一个模板 + 同一个答案 + 同一次意图 ⇒ 同一个键」:提交没落地的
+        // 重发回原单(ASSET-A9);落地之后再按一次 —— 刷新后也好、第二个标签页也好 —— 是新
+        // 编号、新的一单、照扣(ASSET-A4)。
         assetOp: "template",
         assetAnchorGenerationId: sourceGenId,
+        assetIntentId: beginAssetIntent(intentSlot),
         // 屏幕上那个价随请求发出去,服务端重核 —— 与详情页三条付费路同一套绑定。
         // 图片按张计价(pricedGenCredits 的 IMAGE 支只看 count),所以这个数与服务端
         // 用真实机型算出来的那个数恒等,不会因为在产机型换了而误拒。
         expectedCredits: templateRunCredits(),
       });
+      // 提交落地就丢掉编号 —— 但 `unknown` 不算落地:`startTemplateJob` 把抛出的异常
+      // (断网、server action 重发)收成了这一种,那正是「响应丢了」,下一次重发必须沿用
+      // 同一个编号才能回到原单。
+      if (started.kind !== "unknown") endAssetIntent(intentSlot);
       // Announce before branching: an "unknown" start is outcome-unknown, not proven-free
       // — the job may already be reserved (#550).
       notifyBalanceRefresh();

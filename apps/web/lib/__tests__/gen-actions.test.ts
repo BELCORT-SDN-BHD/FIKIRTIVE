@@ -23,6 +23,9 @@ const db = vi.hoisted(() => {
   // 也得有它 —— 少了它,那两行会在这里炸成一个与被测行为无关的 TypeError。
   const chatMessageCreate = vi.fn();
   const chatThreadFindFirst = vi.fn();
+  // #1375:`startAssetGen` 在算键之前查一次锚点归属(ASSET-A1)。这份替身少了它,
+  // 资产那一族的每条用例都会炸成一个与被测行为无关的 TypeError。
+  const generationFindFirst = vi.fn();
   const genJobFindFirst = vi.fn();
   const genJobFindMany = vi.fn();
   const genJobCreate = vi.fn();
@@ -37,6 +40,7 @@ const db = vi.hoisted(() => {
     campaign: { findFirst: campaignFindFirst },
     chatMessage: { findFirst: chatMessageFindFirst, create: chatMessageCreate },
     chatThread: { findFirst: chatThreadFindFirst },
+    generation: { findFirst: generationFindFirst },
     genJob: { findFirst: genJobFindFirst, findMany: genJobFindMany, create: genJobCreate, update: genJobUpdate },
     entity: { findMany: entityFindMany },
     actionEvent: { create: actionEventCreate },
@@ -50,6 +54,7 @@ const db = vi.hoisted(() => {
     chatMessageFindFirst,
     chatMessageCreate,
     chatThreadFindFirst,
+    generationFindFirst,
     genJobFindFirst,
     genJobFindMany,
     genJobCreate,
@@ -126,6 +131,9 @@ function resetStartGenMocks(): void {
     thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
   });
   db.chatThreadFindFirst.mockResolvedValue({ id: "thread-1" });
+  // #1375:默认「锚点在本工作区里查得到」—— 不在的那一路由 ASSET-A1 的真库用例钉
+  // (`asset-action-idempotency.test.ts`),这里只是让既有用例走得下去。
+  db.generationFindFirst.mockResolvedValue({ id: "gen1" });
   db.genJobFindFirst.mockResolvedValue(null);
   db.genJobFindMany.mockResolvedValue([]);
   db.genJobCreate.mockResolvedValue({ id: "job_ref" });
@@ -577,6 +585,9 @@ describe("startGen", () => {
       expectedCredits: 1,
       assetOp: "regen",
       assetAnchorGenerationId: "gen1",
+      // #1375:一次按下一个编号。这一族用例问的是「同一份请求体两次提交」,所以默认
+      // 的编号是固定的 —— 换编号的那一路在 asset-idempotency-ledger / ASSET-A4 里钉。
+      assetIntentId: "intent-1",
       projectId: "p1",
       prompt: "product hero",
       entityIds: [],
@@ -653,6 +664,10 @@ describe("startGen", () => {
         { assetAnchorGenerationId: undefined },
         { assetAnchorGenerationId: "" },
         { assetAnchorGenerationId: "g".repeat(129) },
+        // #1375:意图编号同理 —— 算不出键就不许花钱。
+        { assetIntentId: undefined },
+        { assetIntentId: "" },
+        { assetIntentId: "i".repeat(129) },
       ];
       for (const bad of bads) {
         const req = { ...assetRequest(), ...bad };
@@ -683,6 +698,13 @@ describe("startGen", () => {
       const edit = derivedKey();
       await startAssetGen(assetRequest({ assetAnchorGenerationId: "gen2" }));
       expect(new Set([regen, edit, derivedKey()]).size).toBe(3);
+    });
+
+    it("#1375:换一个意图编号就是「商家又按了一次」⇒ 另一个键(ASSET-A4 在键这一层)", async () => {
+      await startAssetGen(assetRequest());
+      const first = derivedKey();
+      await startAssetGen(assetRequest({ assetIntentId: "intent-2" }));
+      expect(derivedKey()).not.toBe(first);
     });
 
     it("有人拿一个 asset: 形状的键直接调 startGen ⇒ 出界(保留族,与 canvas: 同一条)", async () => {
@@ -2309,7 +2331,7 @@ describe("startGen —— 审批身份在花钱之前定死(且只认卡)", () =
     expect(canvas).toEqual({ error: "That generation request is out of bounds." });
     const asset = await startAssetGen({
       ...bare, expectedCredits: 1, approvedEntities: [FORGED],
-      assetOp: "regen", assetAnchorGenerationId: "g1",
+      assetOp: "regen", assetAnchorGenerationId: "g1", assetIntentId: "intent-1",
     });
     expect(asset).toEqual({ error: "That generation request is out of bounds." });
     expect(db.genJobCreate).not.toHaveBeenCalled();

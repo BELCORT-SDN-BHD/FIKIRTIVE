@@ -864,6 +864,20 @@ export const ASSET_REGEN_UPLOAD_REFUSAL =
   "Uploads can’t be regenerated yet. Try Animate or Edit instead.";
 
 /**
+ * 资产动作的**锚点**(这一次动作作用在哪一张图上)不在当前工作区时,商家看到的那一句
+ * —— **只在这里定义一次**(规格 `docs/specs/asset-action-idempotency.md` §1.3 / ASSET-A1)。
+ *
+ * 为什么是这句话,而不是「不属于你」或「不存在」:后两种都会把「这个编号在别的工作区里
+ * 确实存在」当成事实说出去,等于用一句拒绝话做跨租户探测。这一面唯一该说的只有一件事 ——
+ * 这张图在这里用不了。
+ *
+ * 它与钱无关:拒收发生在算幂等键、进 `startGen`、动账本**之前**,前后都是 $0、零 GenJob。
+ * 住在 core 而不是 `gen-actions.ts`:那个文件是 `"use server"`,只许导出 async 函数。
+ */
+export const ASSET_ANCHOR_NOT_IN_WORKSPACE =
+  "That image isn't available in this workspace.";
+
+/**
  * 上面那张表的**唯一**读法:这个动作 + 这一句提示词,真正该发出去的是哪一句。
  *
  * 空串 / 只有空白 / 缺席 ⇒ 该动作的兜底句(没有兜底的动作回 null,由 `genRequest` 照旧拒 ——

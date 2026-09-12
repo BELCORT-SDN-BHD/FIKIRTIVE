@@ -18,6 +18,12 @@
  * next/cache)—— 与 gen-ledger.test.ts / factory-batch-ledger.test.ts 同一套。零 provider
  * 调用,零真实花费。worker 的成功终态用它自己调的那个函数模拟(settleCredits);这个文件
  * 不碰失败终态,所以没有 refundReservation —— 别照着 gen-ledger.test.ts 的措辞读成两个。
+ *
+ * #1375(规格 `docs/specs/asset-action-idempotency.md`)之后,这个文件里的每一份请求体都
+ * 多带一样东西:**这一次按下的意图编号**。它是「重放」与「商家再按一次」唯一的分界线,
+ * 所以下面凡是断言「落回同一单」的用例都沿用同一个编号,凡是断言「新的一单」的都换一个
+ * ——与商家在面板上的动作一一对应。同一份规格的另一半验收(ASSET-A1/A2/A5…A10)在
+ * `asset-action-idempotency.test.ts`。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -67,6 +73,45 @@ async function seedProject(ownerId: string): Promise<string> {
   await prisma.project.create({ data: { id, ownerId, name: "Asset idempotency test" } });
   return id;
 }
+/**
+ * 商家工作区里**真的有**的那张图 —— 面板上的锚点只能是它(#1375 改动一 / ASSET-A1)。
+ *
+ * 从前这个文件用 `"gen_source_1"` 这种字面量当锚点,那正好是缺口本身的形状:服务端
+ * 不查库,所以一个编造的编号照样能算出一把新键、照样建单、照样预扣。现在锚点必须在
+ * 当前租户里查得到,夹具就得种一张真的。
+ */
+async function seedAnchor(ownerId: string, projectId: string): Promise<string> {
+  const assetId = `ast_${randomUUID()}`;
+  await prisma.asset.create({
+    data: {
+      id: assetId,
+      ownerId,
+      contentHash: randomUUID().replace(/-/g, ""),
+      ext: "jpg",
+      mime: "image/jpeg",
+      sizeBytes: BigInt(100_000),
+      source: "GENERATED",
+    },
+  });
+  const genId = `gen_${randomUUID()}`;
+  await prisma.generation.create({
+    data: {
+      id: genId,
+      ownerId,
+      projectId,
+      shotId: null,
+      assetId,
+      source: "GENERATED",
+      promptText: "our mug on a linen table, morning light",
+      entitySnapshot: { entities: [] },
+    },
+  });
+  return genId;
+}
+/** 浏览器那一次按下出的意图编号(`asset-action-intent.ts` 的 `beginAssetIntent`)。 */
+function newIntentId(): string {
+  return randomUUID();
+}
 async function reserveRows(ownerId: string) {
   return prisma.creditLedger.findMany({ where: { orgId: ownerId, kind: "RESERVE" }, orderBy: { createdAt: "asc" } });
 }
@@ -100,11 +145,18 @@ function idOf(res: Awaited<ReturnType<typeof startAssetGen>>): { id: string; dis
  * 进程内的对象身份上(WeakMap),所以复用同一个对象就等于偷偷帮它去重了。刷新页面、
  * 第二个标签页、断线重发 —— 每一次都是一个新对象,这里必须照实模拟。
  */
-function regenIntent(projectId: string, over: Record<string, unknown> = {}) {
+function regenIntent(
+  projectId: string,
+  anchorGenId: string,
+  intentId: string,
+  over: Record<string, unknown> = {},
+) {
   return {
     expectedCredits: 1,
     assetOp: "regen",
-    assetAnchorGenerationId: "gen_source_1",
+    assetAnchorGenerationId: anchorGenId,
+    // #1375:同一次按下的重发沿用同一个编号;商家再按一次是另一个编号。
+    assetIntentId: intentId,
     projectId,
     prompt: "our mug on a linen table, morning light",
     entityIds: [],
@@ -125,14 +177,17 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
+    const anchor = await seedAnchor(ownerId, projectId);
+    const intentId = newIntentId();
 
     // ① 第一次按下。
-    const first = idOf(await startAssetGen(regenIntent(projectId)));
+    const first = idOf(await startAssetGen(regenIntent(projectId, anchor, intentId)));
     expect(first.disposition).toBe("fresh");
 
-    // ② 完全独立的第二次提交 —— 新对象、没有任何客户端状态可以借力。
-    //    修好之前,这一次会拿到一个带新时间戳的键,于是变成第二单、第二次预扣。
-    const second = idOf(await startAssetGen(regenIntent(projectId)));
+    // ② 完全独立的第二次提交 —— 新对象、没有任何客户端状态可以借力,只有编号是同一个
+    //    (它熬过了刷新:内存 + sessionStorage,提交落地才丢)。修好之前,这一次会拿到一个
+    //    带新时间戳的键,于是变成第二单、第二次预扣。
+    const second = idOf(await startAssetGen(regenIntent(projectId, anchor, intentId)));
 
     expect(second.id, "同一个意图必须落回同一单").toBe(first.id);
     expect(second.disposition).toBe("reused");
@@ -151,7 +206,9 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
 
-    const res = idOf(await startAssetGen(regenIntent(projectId)));
+    const anchor = await seedAnchor(ownerId, projectId);
+
+    const res = idOf(await startAssetGen(regenIntent(projectId, anchor, newIntentId())));
     const [job] = await jobs(ownerId, projectId);
 
     expect(job!.id).toBe(res.id);
@@ -163,12 +220,15 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
 
-    const intent = regenIntent(projectId);
-    // 进摘要的是「请求体」:三个信封字段(价格绑定、动作、锚点)被 startAssetGen 摘出去,
-    // 剩下的原样进 canonicalJson。这里照它的做法复现同一份。
+    const anchor = await seedAnchor(ownerId, projectId);
+    const intentId = newIntentId();
+    const intent = regenIntent(projectId, anchor, intentId);
+    // 进摘要的是「请求体」:四个信封字段(价格绑定、动作、锚点、意图编号)被 startAssetGen
+    // 摘出去,剩下的原样进 canonicalJson。这里照它的做法复现同一份。
     const body: Record<string, unknown> = { ...intent };
-    for (const envelope of ["expectedCredits", "assetOp", "assetAnchorGenerationId"]) delete body[envelope];
-    const anchor = intent.assetAnchorGenerationId;
+    for (const envelope of ["expectedCredits", "assetOp", "assetAnchorGenerationId", "assetIntentId"]) {
+      delete body[envelope];
+    }
 
     expect(idOf(await startAssetGen(intent)).disposition).toBe("fresh");
     const [job] = await jobs(ownerId, projectId);
@@ -180,10 +240,13 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
     // 要到 `startGen` 里才跑。#1029 的留桩说的正是这个形状,这里把它变成机器钉住的话:
     // 哪天摘要改成在解析之后算(模型菜单动态化时就必须这么改),下面第①条(别名体重算的那条)会先红。
     expect(IMAGE_ALIAS).not.toBe(activeImageModel());
-    expect(job!.idempotencyKey).toBe(assetActionKey("regen", anchor, body).key);
+    expect(job!.idempotencyKey).toBe(assetActionKey("regen", anchor, intentId, body).key);
     expect(job!.idempotencyKey).not.toBe(
-      assetActionKey("regen", anchor, { ...body, model: activeImageModel() }).key,
+      assetActionKey("regen", anchor, intentId, { ...body, model: activeImageModel() }).key,
     );
+    // #1375:意图编号真的在摘要里 —— 只换它、其余一字不改,就是另一把键。这一条是
+    // ASSET-A4(再按一次 = 新的一单)在键这一层的证据。
+    expect(job!.idempotencyKey).not.toBe(assetActionKey("regen", anchor, newIntentId(), body).key);
   });
 
   it("并发双击(两个请求同时在飞)⇒ 项目 advisory 锁串行化,仍然只有一单一扣", async () => {
@@ -196,9 +259,11 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
     // 的 `startGen`),拿到锁之后在锁内再读一次同键的活跃单,所以后到的那个请求读到的是先到
     // 者、走 reused。`GenJob_active_idempotency_key` 唯一索引是第二道防线 —— 只在锁没兜住
     // 时用 P2002 兜底。这条用例断言的是两道合起来的结果。
+    const anchor = await seedAnchor(ownerId, projectId);
+    const intentId = newIntentId();
     const [a, b] = await Promise.all([
-      startAssetGen(regenIntent(projectId)),
-      startAssetGen(regenIntent(projectId)),
+      startAssetGen(regenIntent(projectId, anchor, intentId)),
+      startAssetGen(regenIntent(projectId, anchor, intentId)),
     ]);
 
     expect(idOf(a).id).toBe(idOf(b).id);
@@ -211,8 +276,12 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
 
-    const first = idOf(await startAssetGen(regenIntent(projectId)));
-    const changed = idOf(await startAssetGen(regenIntent(projectId, {
+    const anchor = await seedAnchor(ownerId, projectId);
+    const intentId = newIntentId();
+
+    // 同一个编号:改的不是「这是不是同一次意图」,而是内容本身。
+    const first = idOf(await startAssetGen(regenIntent(projectId, anchor, intentId)));
+    const changed = idOf(await startAssetGen(regenIntent(projectId, anchor, intentId, {
       prompt: "our mug on a linen table, evening light",
     })));
 
@@ -228,8 +297,13 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
 
-    const a = idOf(await startAssetGen(regenIntent(projectId)));
-    const b = idOf(await startAssetGen(regenIntent(projectId, { assetAnchorGenerationId: "gen_source_2" })));
+    // 两张都是这个商家自己的图(锚点归属闸只挡别人的图 —— 见 ASSET-A1)。
+    const anchorA = await seedAnchor(ownerId, projectId);
+    const anchorB = await seedAnchor(ownerId, projectId);
+    const intentId = newIntentId();
+
+    const a = idOf(await startAssetGen(regenIntent(projectId, anchorA, intentId)));
+    const b = idOf(await startAssetGen(regenIntent(projectId, anchorB, intentId)));
 
     expect(b.id).not.toBe(a.id);
     expect(await reserveRows(ownerId)).toHaveLength(2);
@@ -240,24 +314,32 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
 
+    const anchor = await seedAnchor(ownerId, projectId);
+    // 三个动作是三次按下,所以三个编号 —— 与商家的动作一一对应。
+    const regenIntentId = newIntentId();
+    const animateIntentId = newIntentId();
+    const editIntentId = newIntentId();
+
     const animate = () => ({
       expectedCredits: 11,
       assetOp: "animate",
-      assetAnchorGenerationId: "gen_source_1",
+      assetAnchorGenerationId: anchor,
+      assetIntentId: animateIntentId,
       projectId,
       prompt: "our mug on a linen table, morning light",
       entityIds: [],
       count: 1,
       kind: "video",
       model: VIDEO_ALIAS,
-      sourceGenerationId: "gen_source_1",
+      sourceGenerationId: anchor,
       durationSeconds: 5,
       resolution: "720p",
     });
     const edit = () => ({
       expectedCredits: 1,
       assetOp: "edit",
-      assetAnchorGenerationId: "gen_source_1",
+      assetAnchorGenerationId: anchor,
+      assetIntentId: editIntentId,
       projectId,
       prompt: "make the mug red",
       entityIds: [],
@@ -265,10 +347,10 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
       kind: "image",
       model: IMAGE_ALIAS,
       aspectRatio: "1:1",
-      sourceGenerationId: "gen_source_1",
+      sourceGenerationId: anchor,
     });
 
-    const regen = idOf(await startAssetGen(regenIntent(projectId)));
+    const regen = idOf(await startAssetGen(regenIntent(projectId, anchor, regenIntentId)));
     const anim1 = idOf(await startAssetGen(animate()));
     const edit1 = idOf(await startAssetGen(edit()));
     // …然后每一条各自被重放一次(刷新 / 第二标签页)。
@@ -285,26 +367,63 @@ describe("资产详情面板:同一个意图提交两次 = 一单一扣", () => 
   });
 });
 
-describe("刻意重试:一单跑完之后,同样的意图是一次新的购买", () => {
-  it("第一单 DONE 之后再按一次同样的 Regenerate ⇒ 新的一单、第二行 RESERVE", async () => {
+/**
+ * 一单跑完之后 —— **旧口径在这里作废**(#1375,规格 §1.4 改动三)。
+ *
+ * 这个位置原先有一条绿测试,断言「第一单 DONE 之后再提交同样的请求体 ⇒ 新的一单、第二行
+ * RESERVE」,理由是「活跃唯一索引与两处复用查询都只认 QUEUED / GENERATING」。那条断言把
+ * **实现的副作用**写成了产品口径,而它同时是 #1045 第二个 P1 的正脸:服务端分不清「响应
+ * 丢了之后的重放」与「商家故意再买一张」,于是默认当成后者 —— 断线重连的那一次自动重发,
+ * 商家就被扣了第二次钱。
+ *
+ * 现在分界线不再是状态,而是**意图编号**:同一次按下的任何重发沿用同一个编号(下面第一
+ * 条),商家真的再按一次会拿到新编号(第二条)。两条从两个方向夹住规格 §4 那条边界。
+ */
+describe("终态之后:同一次按下的重放不再是新购买,商家再按一次才是", () => {
+  it("ASSET-A3 第一单 DONE 之后原样重发同一次提交(同一意图编号)⇒ 拿回原单,不新建 GenJob,账本零新行,余额不变", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
+    const anchor = await seedAnchor(ownerId, projectId);
+    const intentId = newIntentId();
 
-    const first = idOf(await startAssetGen(regenIntent(projectId)));
-    // worker 交付并结算 —— 这一单从此不再活跃。
+    const first = idOf(await startAssetGen(regenIntent(projectId, anchor, intentId)));
+    // worker 交付并结算 —— 这一单进终态,活跃索引与旧的活跃复用查询都不再覆盖它。
+    await workerSettle(ownerId, first.id);
+    const settled = await account(ownerId);
+
+    const replay = idOf(await startAssetGen(regenIntent(projectId, anchor, intentId)));
+
+    expect(replay.id, "同一次提交的重放必须落回原来那一单").toBe(first.id);
+    expect(replay.disposition).toBe("reused");
+    expect(await jobs(ownerId, projectId)).toHaveLength(1);
+    expect(await reserveRows(ownerId)).toHaveLength(1);
+    const after = await account(ownerId);
+    expect(after.balance).toBe(settled.balance);
+    expect(after.reserved).toBe(settled.reserved);
+  });
+
+  it("ASSET-A4 商家在面板上再按一次 Regenerate(同图同提示词、新意图编号)⇒ 新的一单、账本一条新的 RESERVE、余额再扣一次", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const anchor = await seedAnchor(ownerId, projectId);
+
+    const first = idOf(await startAssetGen(regenIntent(projectId, anchor, newIntentId())));
     await workerSettle(ownerId, first.id);
 
-    const retry = idOf(await startAssetGen(regenIntent(projectId)));
+    // 上一次提交已经落地 ⇒ 面板丢掉了那个编号 ⇒ 这一次按下是一个新编号。
+    const again = idOf(await startAssetGen(regenIntent(projectId, anchor, newIntentId())));
 
-    // 键是同一个(意图没变),但活跃唯一索引与两处复用查询都只认 QUEUED / GENERATING,
-    // 所以终态的旧行不挡路:商家「再来一张」是真的再来一张,而且照收一次钱。
     const all = await jobs(ownerId, projectId);
-    expect(retry.id).not.toBe(first.id);
-    expect(retry.disposition).toBe("fresh");
+    expect(again.id).not.toBe(first.id);
+    expect(again.disposition).toBe("fresh");
     expect(all).toHaveLength(2);
-    expect(all[0]!.idempotencyKey).toBe(all[1]!.idempotencyKey);
-    expect(await reserveRows(ownerId)).toHaveLength(2);
+    expect(all[0]!.idempotencyKey, "不同的意图编号 ⇒ 不同的键").not.toBe(all[1]!.idempotencyKey);
+    const rows = await reserveRows(ownerId);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.reservedDelta)).toEqual([IMG, IMG]);
+    expect((await account(ownerId)).balance).toBe(1000 - 2 * IMG);
   });
 });
 
@@ -314,9 +433,11 @@ describe("浏览器不许自己出键", () => {
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
 
+    const anchor = await seedAnchor(ownerId, projectId);
+
     const result = await startAssetGen({
-      ...regenIntent(projectId),
-      idempotencyKey: `regen-gen_source_1-${Date.now()}`,
+      ...regenIntent(projectId, anchor, newIntentId()),
+      idempotencyKey: `regen-${anchor}-${Date.now()}`,
     });
 
     expect(result).toEqual({ error: "That generation request is out of bounds." });
@@ -332,13 +453,16 @@ describe("模板弹窗:同一张底图 + 同一个模板 + 同一个答案 = 一
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
 
+    const anchor = await seedAnchor(ownerId, projectId);
+    const intentId = newIntentId();
     const templateRun = () => ({
       expectedCredits: 1,
       assetOp: "template",
-      assetAnchorGenerationId: "gen_uploaded_photo",
+      assetAnchorGenerationId: anchor,
+      assetIntentId: intentId,
       projectId,
       kind: "image",
-      sourceGenerationId: "gen_uploaded_photo",
+      sourceGenerationId: anchor,
       prompt: "marketplace main image, clean white background",
       entityIds: [],
       count: 1,

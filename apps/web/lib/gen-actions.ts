@@ -12,6 +12,7 @@ import {
   genRequest,
   assetActionPrompt,
   ASSET_REGEN_UPLOAD_REFUSAL,
+  ASSET_ANCHOR_NOT_IN_WORKSPACE,
   newId,
   GEN_QUEUE,
   storageKey,
@@ -320,6 +321,8 @@ const CANVAS_ACTION_ID_MAX_LENGTH = 128;
 /** 资产动作锚点(这一次动作作用在哪一张图上)的长度上限 —— 与画布 actionId 同一个量级。
  *  它只进摘要,不进键面,所以长度不影响键长;设界只是不收一个明显不是 id 的东西。 */
 const ASSET_ANCHOR_ID_MAX_LENGTH = 128;
+/** 意图编号(`asset-action-intent.ts` 出的那一个)的长度上限。同样只进摘要,不进键面。 */
+const ASSET_INTENT_ID_MAX_LENGTH = 128;
 const TRUSTED_CANVAS_REQUESTS = new WeakMap<object, { expectedCredits: number }>();
 /** #645 T4(判官 r1 P0-2):资产详情页那条付费路的价格绑定,与 Canvas/Otto 同一套
  *  「商家看到的数字是授权的一部分」机制,只是各自的补救话术不同。 */
@@ -424,12 +427,23 @@ export async function startCanvasGen(raw: unknown): Promise<StartGenResult> {
  *    不同的身份**:刷新、第二个标签页、一次双击 —— 服务端与数据库的去重都看不见那是重放,
  *    第二次 reserveCredits 照跑,商家为同一件东西付两次钱。挡在中间的只有面板自己的一个
  *    React ref,它随页面一起消失。现在与 `startCanvasGen` 同一条:调用方交出的是**动作
- *    类型 + 锚点 + 请求体**,键由 `assetActionKey` 从这三样算出来 —— 同一个意图 ⇒ 同一个键
- *    ⇒ 落到既有的「活跃键复用」那一支,一分钱不多收;改了提示词 ⇒ 另一个键 ⇒ 新的一单,
- *    照收。
+ *    类型 + 锚点 + 意图编号 + 请求体**,键由 `assetActionKey` 从这四样算出来 —— 同一次
+ *    意图 ⇒ 同一个键 ⇒ 落回原来那一单,一分钱不多收;改了提示词、或商家自己再按一次
+ *    (新的意图编号)⇒ 另一个键 ⇒ 新的一单,照收。
  *
- * 终态之后的重试是**新的一次购买**,而且它自然成立:活跃唯一索引(以及上面那两处复用查询)
- * 只认 QUEUED / GENERATING,DONE / FAILED / CANCELLED 的旧行不挡路。
+ * ③ **锚点必须真的在这个工作区里。**(规格 `docs/specs/asset-action-idempotency.md`
+ *    §1.4 改动一,ASSET-A1)`assetAnchorGenerationId` 是浏览器送来的,而它同时是键材料
+ *    与「这一次动作作用在哪张图上」的说法。从前这里只校验它的类型与长度,一次库都不查:
+ *    换成别人工作区的一个编号,服务端照样算出一把新键、照样建单、照样预扣。所以在**算键、
+ *    进 startGen、动账本之前**,用服务端会话里的 `ownerId` 查一次那张 Generation —— 查不到
+ *    就 fail closed:$0、零 GenJob、零账本行。
+ *
+ * **终态之后的重放不再是「新的一次购买」**(旧口径,#1045 P1,已由规格 §1.4 改动三作废)。
+ * 从前这条路靠「活跃唯一索引与复用查询只认 QUEUED / GENERATING」来区分重放与新购买,而那
+ * 区分不出来:响应丢了、worker 跑到 DONE、客户端重放同一份请求 —— 没有活跃行匹配,索引也
+ * 已不生效,于是第二单与第二次预扣照样提交。现在分界线换成了意图编号(商家自己按第二次才
+ * 有新编号),而 `asset:` 族的复用查询与 `GenJob_asset_idempotency_once` 唯一索引都**跨终态**
+ * 生效:同一把键,任何状态下都只有一单、只扣一次。
  */
 export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -441,7 +455,7 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
   if (Object.prototype.hasOwnProperty.call(record, "idempotencyKey")) {
     return { error: "That generation request is out of bounds." };
   }
-  const { expectedCredits, assetOp, assetAnchorGenerationId, ...request } = record;
+  const { expectedCredits, assetOp, assetAnchorGenerationId, assetIntentId, ...request } = record;
   if (
     typeof expectedCredits !== "number" ||
     !Number.isFinite(expectedCredits) ||
@@ -450,10 +464,35 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
     !(ASSET_ACTION_OPS as readonly string[]).includes(assetOp) ||
     typeof assetAnchorGenerationId !== "string" ||
     assetAnchorGenerationId.length === 0 ||
-    assetAnchorGenerationId.length > ASSET_ANCHOR_ID_MAX_LENGTH
+    assetAnchorGenerationId.length > ASSET_ANCHOR_ID_MAX_LENGTH ||
+    // 意图编号缺席 = 算不出这一族的键。**不许给它一个缺省值**:任何缺省(空串、锚点本身)
+    // 都会让「重放」与「再按一次」重新合流成同一把键,也就是把这条规格修的洞原样还回去。
+    typeof assetIntentId !== "string" ||
+    assetIntentId.length === 0 ||
+    assetIntentId.length > ASSET_INTENT_ID_MAX_LENGTH
   ) {
     return { error: "That generation request is out of bounds." };
   }
+
+  // 改动一(ASSET-A1)—— **锚点归属,在算键与动账之前。**
+  //
+  // 租户身份只来自服务端会话;浏览器送来的任何编号都不作数(`.claude/CLAUDE.md`
+  // 「Tenant isolation」)。这一查是那条边界在这条路上的落地:锚点必须在当前租户里
+  // 查得到,否则这一次动作根本不成立 —— 不是「换个默认锚点继续」,是拒收。
+  //
+  // 位置在这里而不是 `startGen` 里:锚点是**键材料**,一个查不到的锚点会先算出一把
+  // 全新的键,而那把键正是「建单 + 预扣」的通行证。所以必须先于算键。拒在这里 ⇒
+  // $0、零 GenJob、账本零新增行。
+  //
+  // 只按 `ownerId` 查,不按 `projectId`:租户边界是 owner(同一个商家在项目之间搬
+  // 素材是合法动作);越租户才是这道闸要挡的那件事。`startGen` 随后仍会单独核项目归属。
+  const anchorGate = await requireOwner();
+  if ("error" in anchorGate) return anchorGate;
+  const anchor = await prisma.generation.findFirst({
+    where: { id: assetAnchorGenerationId, ownerId: anchorGate.ownerId },
+    select: { id: true },
+  });
+  if (!anchor) return { error: ASSET_ANCHOR_NOT_IN_WORKSPACE };
   // 留桩(#972 P3-2):摘要在这里就算完,而 `resolvePublicModelAlias` 要到 `startGen` 里
   // 才跑,所以键里编进去的是浏览器送来的公开别名(capability-<kind>-N),不是具体引擎名。
   // 今天成立是因为 `GEN_MODELS` / `GEN_VIDEO_MODELS` 是静态常量:别名按下标一一对应引擎,
@@ -492,7 +531,12 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
     : request;
   const trustedRequest = {
     ...promptedRequest,
-    idempotencyKey: assetActionKey(assetOp as AssetActionOp, assetAnchorGenerationId, promptedRequest).key,
+    idempotencyKey: assetActionKey(
+      assetOp as AssetActionOp,
+      assetAnchorGenerationId,
+      assetIntentId,
+      promptedRequest,
+    ).key,
   };
   TRUSTED_ASSET_REQUESTS.set(trustedRequest, { expectedCredits });
   return startGen(trustedRequest);
@@ -653,6 +697,25 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     if ((assetAction !== null) !== (trustedAssetRequest !== undefined)) {
       return { error: "That generation request is out of bounds." };
     }
+    /**
+     * `asset:` 族的复用判据**不看状态**(规格 `docs/specs/asset-action-idempotency.md`
+     * §1.4 改动三,ASSET-A3 / A6;洞的原判定在 #1045 第二个 P1)。
+     *
+     * 一般键(分镜 `frame:` / `animate:`)只在 QUEUED / GENERATING 期间复用,那是对的:
+     * 同一个镜头槽位以后本来就该能再生成一次。资产动作族恰好相反 —— 它的键里已经编进了
+     * 「这一次意图」的编号,所以同一把键天然只代表**一次**购买:再来一张有它自己的编号、
+     * 自己的键。于是终态之后还看得见同一把键,只可能是一次重放(响应丢了、断线重连、
+     * server action 重试),而重放必须拿回原来那一单,不是再买一件。
+     *
+     * 这一行放开的是应用层;与它同生共死的是数据库那一条跨终态唯一索引
+     * (`GenJob_asset_idempotency_once`,谓词 `LIKE 'asset:%'`)—— 读与写不是原子的,
+     * 索引是 TOCTOU 竞态下的兜底,下面的 P2002 分支据它返回原单。
+     *
+     * 写成 `status: … ? undefined : { in: […] }`(而不是把整个条件展开进 where):
+     * Prisma 把 `undefined` 读作「这一列不过滤」,而且这样每一处的 where 仍然由 Prisma
+     * 自己的类型直接约束 —— 展开一个预先算好的对象会丢掉那份约束。
+     */
+    const assetReplayAnyStatus = assetAction !== null;
     const coworkCardId = idempotencyKey?.startsWith("cowork:")
       ? idempotencyKey.slice("cowork:".length)
       : null;
@@ -802,9 +865,14 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // partial-unique index on the create below is the race-proof backstop. Factory keys
     // deliberately skip this shortcut: their full material + attempt decision belongs
     // under the existing project advisory transaction lock below.
+    // `asset:` 族在这里不带状态条件(见 `assetReplayAnyStatus` 的注释):终态之后的同键重放也要
+    // 落回原来那一单。
     if (idempotencyKey && !factoryAttempt && !canvasAction && !trustedCoworkRequest) {
       const active = await prisma.genJob.findFirst({
-        where: { ownerId, projectId, idempotencyKey, status: { in: ["QUEUED", "GENERATING"] } },
+        where: {
+          ownerId, projectId, idempotencyKey,
+          status: assetReplayAnyStatus ? undefined : { in: ["QUEUED", "GENERATING"] },
+        },
         orderBy: { createdAt: "desc" }, select: { id: true },
       });
       if (active) return { id: active.id, disposition: "reused" };
@@ -1066,7 +1134,10 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         // report "Nothing was charged" after the winner had already committed.
         if (idempotencyKey && !factoryAttempt && !canvasAction && !trustedCoworkRequest) {
           const active = await tx.genJob.findFirst({
-            where: { ownerId, projectId, idempotencyKey, status: { in: ["QUEUED", "GENERATING"] } },
+            where: {
+              ownerId, projectId, idempotencyKey,
+              status: assetReplayAnyStatus ? undefined : { in: ["QUEUED", "GENERATING"] },
+            },
             orderBy: { createdAt: "desc" },
             select: { id: true },
           });
@@ -1236,8 +1307,10 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       // a general (shot-frame) key conflicts only while ACTIVE (active-only index), so match
       // active — keeping the original behavior and not masking a future unrelated unique
       // conflict; a cowork:<cardId> key is exactly-once-ever (GenJob_cowork_idempotency_once
-      // is all-status), so match ANY status — a re-insert after the first job is DONE/FAILED
-      // must also return that job, never spend again, never re-throw P2002 to the caller.
+      // is all-status), and so is an asset:<op>:<digest> key since #1375
+      // (GenJob_asset_idempotency_once, same shape), so both match ANY status — a re-insert
+      // after the first job is DONE/FAILED must also return that job, never spend again,
+      // never re-throw P2002 to the caller.
       if (idempotencyKey && typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
         if (canvasAction) {
           const existing = await prisma.genJob.findFirst({
@@ -1272,9 +1345,15 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
           // unrelated P2002 reaches here, refuse safely instead of guessing.
           return { error: "That batch request could not be safely deduplicated — retry it." };
         }
-        const coworkKey = idempotencyKey.startsWith("cowork:");
+        // once-ever 的两族(`cowork:` 与 `asset:`)在这里都要**任何状态**都认:它们各自的
+        // 唯一索引就是全状态的,所以一次「第一单已终态」的并发重放插入被挡下来之后,必须
+        // 拿回那一单,而不是再花一次钱、也不是把 P2002 原样抛给商家。
+        const onceEverKey = idempotencyKey.startsWith("cowork:") || assetReplayAnyStatus;
         const existing = await prisma.genJob.findFirst({
-          where: { ownerId, projectId, idempotencyKey, ...(coworkKey ? {} : { status: { in: ["QUEUED", "GENERATING"] } }) },
+          where: {
+            ownerId, projectId, idempotencyKey,
+            status: onceEverKey ? undefined : { in: ["QUEUED", "GENERATING"] },
+          },
           orderBy: { createdAt: "desc" }, select: { id: true },
         });
         if (existing) return { id: existing.id, disposition: "reused" };
