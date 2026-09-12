@@ -49,6 +49,8 @@ describe("convergeIdentity", () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     db.user.findUnique.mockResolvedValue(null);
     db.user.create.mockResolvedValue({ id: "usr_1", email: "merchant@x.test", emailVerified: new Date(), role: "viewer" });
+    // FSE-209 —— 开户回的就是这次登录的租户，审计行挂的是它。
+    mockBootstrap.mockResolvedValue("org_usr_1");
     await convergeIdentity({ email: "merchant@x.test", name: "M", emailVerified: true, sessionId: "ba_sess_1" });
     // #544 — the canonical create stamps emailVerified (DateTime, next-auth convention).
     expect(db.user.create).toHaveBeenCalledWith(
@@ -58,13 +60,30 @@ describe("convergeIdentity", () => {
     // #737 — the audit write is idempotent like every other step. The key is the SESSION, i.e.
     // the sign-in event itself, plus skipDuplicates: a replay of the same login collides instead
     // of appending, and a second real login (a different session) is never folded into the first.
+    // FSE-209 —— `ownerId` 是这次登录的租户，不再是写死的 founder org（S5 批量裁决
+    // 2026-09-12，docs/specs/sign-in.md §5；真库双租户那条在 signin-audit-tenant-scope.test.ts）。
     expect(db.actionEvent.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
         skipDuplicates: true,
-        data: [expect.objectContaining({ id: "signin:ba_sess_1", type: "auth.signin" })],
+        data: [expect.objectContaining({ id: "signin:ba_sess_1", type: "auth.signin", ownerId: "org_usr_1" })],
       }),
     );
     expect(db.userRole.upsert).not.toHaveBeenCalled();
+  });
+
+  // FSE-209 —— 开户没成（best-effort，`requireOwner` 下一次请求会重建）这一刻**没有租户**，
+  // 所以也没有能拥有这一行的 org。退回 founder org 会把刚刚拿掉的那句谎话装回表里，而且正好
+  // 装在没人看着的那几次上；`ActionEvent.ownerId` 是外键，猜一个 id 只会被数据库退回。
+  it("FSE-209: a login whose bootstrap did not finish writes NO audit row rather than one under the founder org", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    db.user.findUnique.mockResolvedValue(null);
+    db.user.create.mockResolvedValue({ id: "usr_noorg", email: "noorg@x.test", emailVerified: new Date(), role: "viewer" });
+    mockBootstrap.mockResolvedValue(null); // 「没完成，下次重试」，不是安全拒绝
+
+    await convergeIdentity({ email: "noorg@x.test", name: "No Org Yet", emailVerified: true, sessionId: "ba_sess_noorg" });
+
+    expect(mockBootstrap).toHaveBeenCalledWith("usr_noorg", "noorg@x.test");
+    expect(db.actionEvent.createMany).not.toHaveBeenCalled();
   });
 
   // The REAL no-session shape: Better Auth's user-create hook, which fires for a first-time

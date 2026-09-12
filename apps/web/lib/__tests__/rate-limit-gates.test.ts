@@ -156,19 +156,25 @@ describe("#795 上传闸", () => {
 
 describe("#795 外链闸(签名媒体代理)", () => {
   it("按出口地址计数,额度远在任何真实抓取节奏之上", async () => {
-    expect(await consumeMediaProxyGate(from("198.51.100.9"))).toBe(true);
+    expect(await consumeMediaProxyGate(from("198.51.100.9"))).toEqual({
+      allowed: true,
+      retryAfterSeconds: 0,
+      degraded: false,
+      caller: "198.51.100.9",
+    });
     const rows = await prisma.rateLimitCounter.findMany({ where: { key: { startsWith: "media:" } } });
     expect(rows.map((r) => r.key)).toEqual(["media:198.51.100.9"]);
     expect(MEDIA_PROXY_PER_CALLER_PER_10_MIN).toBeGreaterThanOrEqual(300);
   });
 });
 
-// ── 存储故障:对话闸放行,生成与上传照旧拒(产品负责人裁定 2026-08-18)─────────────────────
+// ── 存储故障:对话闸放行,其余照旧拒(产品负责人裁定 2026-08-18;媒体代理 2026-09-12 改判)──
 //
 // 计数器够不到的时候放行还是拒,是逐道门的产品判断,不是一个全局开关。对话这道门放行是安全的:
 // 钱本来就由冻结那一步守着,而冻结自己 fail closed —— 数据库答不了这个计数器,也答不了那笔
 // 冻结,所以放行不可能多花一分钱,只可能多起几轮。拒了却等于「Otto 挂了」。
-describe("计数器够不到的时候:对话闸放行,生成与上传照旧拒", () => {
+// 2026-09-12 起 Otto 是这里**唯一**放行的一道:媒体代理搬去了 fail-closed(SHARE-A3,下方)。
+describe("计数器够不到的时候:对话闸放行,其余照旧拒", () => {
   /** 把表挪走,制造一次**真实**的存储故障(而不是 mock 一个 Error),用完原样挪回来。 */
   async function withCounterTableMissing<T>(fn: () => Promise<T>): Promise<T> {
     await prisma.$executeRawUnsafe(`ALTER TABLE "rate_limit_counter" RENAME TO "rate_limit_counter_gates"`);
@@ -191,13 +197,22 @@ describe("计数器够不到的时候:对话闸放行,生成与上传照旧拒",
     expect(await withCounterTableMissing(() => consumeUploadGate("org-blip"))).toBe(false);
   });
 
-  // B0-28。分享预览门也 fail closed,而它是这几道里唯一一条**免登录**的路,所以这一条必须钉住:
-  // 它长得最像媒体代理(同样没有会话),而媒体代理是故意放行的。两者的区别不在「有没有会话」,
-  // 在「拒了要付什么代价」—— 分享页的授权本来就要 Postgres(铸造行就是权威层),数据库答不了
-  // 这个计数器,也答不了那次授权,所以拒绝一分钱不多花;媒体代理拒了却会打断一次商家已经付过
-  // 钱的发布。少了这一条,以后谁按「跟媒体代理一样」把它改成放行,没有任何东西会红。
-  it("分享预览门照旧 fail closed —— 免登录不等于该跟媒体代理一样放行", async () => {
+  // B0-28。分享预览门也 fail closed,而它是这几道里第一条**免登录**的路,所以这一条必须钉住:
+  // 分享页的授权本来就要 Postgres(铸造行就是权威层),数据库答不了这个计数器,也答不了那次
+  // 授权,所以拒绝一分钱不多花。
+  it("分享预览门照旧 fail closed —— 免登录不等于该放行", async () => {
     expect(await withCounterTableMissing(() => consumeSharePreviewDoor(from("198.51.100.77")))).toBe(false);
+  });
+
+  // SHARE-A3(2026-09-12 冻结)—— 媒体代理**从前是这里唯一放行的那一道**,理由是它本来不碰
+  // 数据库,拒了会打断一次商家已经付过钱的发布。那条理由的前提被 B0-28 改掉了:这条路现在
+  // 还服务客户手上那条免登录预览链接,而 SHARE-A1 之后它是流式的、对象可到 2 GB —— 放行
+  // 等于「谁有一条合法链接,谁就能在整段故障里按网络速度刷我们的出口流量」。拒了要付的代价
+  // 写在规格 §4 异议栏,兜底(SHARE-A4)与报警(SHARE-A12)是同一次裁定的另外两件,住在
+  // lib/media-proxy-access.ts。这一条在这里,是为了让「按老注释把它改回放行」先让测试变红。
+  it("媒体代理闸改成 fail closed —— 计数器够不到就不放行(SHARE-A3)", async () => {
+    const verdict = await withCounterTableMissing(() => consumeMediaProxyGate(from("198.51.100.88")));
+    expect(verdict).toEqual({ allowed: false, retryAfterSeconds: 0, degraded: true, caller: "198.51.100.88" });
   });
 
   it("故障过去之后照常计数 —— 放行不留坏状态", async () => {

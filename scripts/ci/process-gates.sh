@@ -300,7 +300,10 @@ m2() {
 m3() {
   # 验收↔测试映射闸:本 PR 引用的冻结规格,其验收编号必须逐字出现在测试文件里。
   # S4 早期允许 it.todo("XXX-A1 …") 占位——编号在,测试树就认;S5 前转正由验收把关。
-  # 编号只从验收表行(| 开头)提取,说明文字里的示例编号不算数(盲审:模板占位符会被误抓)。
+  # 编号只从验收表首列提取,与 M2 的 bad_col 同一口径:表行内提到别家规格编号是合法交叉
+  # 引用,不算本规格自家编号(#1374,真实案例见 media-durability.md 的 MEDIA-A8 行内提到
+  # GATE-A6——旧口径扫整行,会把 GATE-A6 当成本规格自家编号去索要测试)。首列抽空但表内
+  # 整行扫描仍能抽到编号,判红——堵首列排版不合口径导致静默漏抽的口子(判官 P2-1)。
   need_env PR_BODY_FILE
   resolve_base
   local refs spec id bad=0
@@ -324,6 +327,16 @@ m3() {
   # pathspec 覆盖仓库全部四种测试命名(盲审实测:.test.ts ×625、.spec.ts ×13 全在
   # e2e/journeys/——钱路验收恰恰住在那里,漏掉它闸会把人往弱测试推、.test.sh ×2、.test.mjs ×1)。
   while IFS= read -r spec; do
+    local content firstcol_ids
+    content="$(git show "$BASE_SHA:$spec")" || fail "M3:读不到 $BASE_SHA:$spec"
+    firstcol_ids="$(grep -E '^\|' <<< "$content" | sed -E 's/^\|[[:space:]]*//' | grep -oE '^[A-Z][A-Z0-9]{1,15}-A[0-9]+' | sort -u)"
+    # fail-closed:首列抽空,但表行整行扫描(旧口径)仍能抽到编号——多半是首列加粗/加反引号
+    # 之类的排版把锚定正则挡住了,静默漏抽比误报更危险,判红(判官 P2-1)。
+    if [[ -z "$firstcol_ids" ]] && grep -E '^\|' <<< "$content" | grep -qE '[A-Z][A-Z0-9]{1,15}-A[0-9]+'; then
+      echo "M3 红:$spec 验收表首列排版不合口径(首列抽不到编号但表内存在编号),请把编号放在首列且不加粗不加反引号" >&2
+      bad=1
+      continue
+    fi
     while IFS= read -r id; do
       [[ -n "$id" ]] || continue
       if [[ -f "$ACCEPTANCE_EXEMPT_BOARD" ]] && grep -qE "^$id([[:space:]]|\$)" "$ACCEPTANCE_EXEMPT_BOARD"; then
@@ -335,7 +348,7 @@ m3() {
         echo "  修法:写一条包含字符串 $id 的行为测试(单测或 e2e 旅程都认);S4 早期可先 it.todo(\"$id …\") 占位。" >&2
         bad=1
       fi
-    done < <(git show "$BASE_SHA:$spec" | grep -E '^\|' | grep -oE '[A-Z][A-Z0-9]{1,15}-A[0-9]+' | sort -u)
+    done <<< "$firstcol_ids"
   done <<< "$refs"
   [[ "$bad" -eq 0 ]] || exit 1
   echo "M3 绿:引用规格(主干冻结版)的验收编号全部在测试树里有落点。"
