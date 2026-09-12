@@ -24,6 +24,7 @@ import { signInDoorDecision } from "@/lib/signup-gate";
 import { consumeNewAccountGate, NEW_ACCOUNTS_PER_HOUR } from "@/lib/rate-limit-gates";
 import { signInDoorOf } from "./signin-door-source";
 import { signInCodeLoginUrl } from "./signin-code-login-url";
+import { SIGN_IN_CODE_ALLOWED_ATTEMPTS } from "./signin-code-contract";
 
 /**
  * SIGNIN-A4 / SIGNIN-A11 —— 密码整体退役（docs/specs/sign-in.md §1.4「密码凭据退役」）。
@@ -555,8 +556,12 @@ export const auth = betterAuth({
        *
        * 3 is Better Auth's default and it is written out for the same reason as the length: it is
        * the number the security argument above is made of.
+       *
+       * FSE-201 —— 它同时是登录页数自己那几次错码的那个数，所以它住在共用契约里
+       * (`signin-code-contract.ts` 的 `SIGN_IN_CODE_ALLOWED_ATTEMPTS`)：调这个数而页面不跟，
+       * 商家又会回到「对着一个已经作废的码被劝再检查一次」。
        */
-      allowedAttempts: 3,
+      allowedAttempts: SIGN_IN_CODE_ALLOWED_ATTEMPTS,
       /**
        * THE CODE DOES NOT SIT IN THE DATABASE IN THE CLEAR — and "hashed" would not have fixed
        * that either. `storeOTP: "hashed"` is an unsalted SHA-256, and the input space is a million

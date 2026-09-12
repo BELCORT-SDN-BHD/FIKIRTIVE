@@ -179,10 +179,14 @@ describe("auth design system", () => {
     expect(reviewFixture).not.toContain("Sign-in failed");
   });
 
-  it("SIGNIN-A4 keeps the code refusal existence-neutral", () => {
+  it("SIGNIN-A4/FSE-201 keeps the code refusal existence-neutral", () => {
     // 「Wrong email or password.」随密码退役。同一条性质(拒绝不许泄露这个邮箱有没有账号)
-    // 现在由码门那一句扛:错、过期、次数用尽合成同一句,而且不提那个地址。
+    // 现在由码门那两句扛:错、过期、次数用尽在**服务端答案**这一维上仍然合成同一句,而且
+    // 不提那个地址。FSE-201 加的第二句(`SIGN_IN_CODE_SPENT_MESSAGE`)按**商家自己按了几次**
+    // 挑出来 —— 那个数对每个地址一样,由按的人自己造成,所以它不是探针;「页面不读服务端
+    // 那一版答案」这件事由 signin-code-action.test.ts 的 FSE-201 那条围栏钉住。
     expect(loginForm).toContain("SIGN_IN_CODE_REJECTED_MESSAGE");
+    expect(loginForm).toContain("SIGN_IN_CODE_SPENT_MESSAGE");
     expect(loginForm).not.toContain("Wrong email or password.");
     expect(loginForm).not.toContain("signInError.message");
   });
