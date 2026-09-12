@@ -545,11 +545,12 @@ export async function renameVariant(variantId: string, name: string): Promise<{ 
  *
  *  Same semantics as the port's gate, deliberately: ANY QUEUED/GENERATING job for this variant
  *  blocks, with NO staleness window. A 15-minute abandonment window would be SHORTER than the
- *  worker's own liveness window (REFGEN_STALE_MS 18min / reaper 25min), so a job that was still
- *  genuinely running would be misjudged abandoned and let through — the exact hole this closes. A
- *  count read that fails refuses too (never "couldn't check, delete anyway"). A truly stuck job is
- *  released by the worker's reaper (reapStaleRefGenJobs — FAILED + refunded, ~25min + one 5min
- *  sweep); after that the delete goes through, so nothing is undeletable forever.
+ *  worker's own liveness window (REFGEN_STALE_MS 35min / reaper 45min, #1386 widened both from
+ *  18min/25min), so a job that was still genuinely running would be misjudged abandoned and let
+ *  through — the exact hole this closes. A count read that fails refuses too (never "couldn't
+ *  check, delete anyway"). A truly stuck job is released by the worker's reaper
+ *  (reapStaleRefGenJobs — FAILED + refunded, ~45min + one 5min sweep); after that the delete
+ *  goes through, so nothing is undeletable forever.
  *
  *  #781 r3 P1 — AND THE CHECK IS ATOMIC WITH THE DELETE. A count taken outside the write it guards
  *  is only a guess about the moment the write lands: delete counts zero, a re-run is dispatched and

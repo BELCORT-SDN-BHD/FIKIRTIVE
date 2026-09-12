@@ -1120,7 +1120,7 @@ export async function reapStaleGenJobs(): Promise<number> {
     // worker invariants guarantee outputs ⟹ settle won, but a legacy FAILED row can carry
     // outputs while a REFUND won the finalizer — those stay inert (already terminal; a
     // redelivery that resumes one is caught by the free-delivery guard in the helper).
-    // startedAt < cutoff (25m > queue expiry): any live delivery has finished or hung by
+    // startedAt < cutoff (GEN_REAP_MS 45m > queue expiry 40m, #1386 widened from 25m/20m): any live delivery has finished or hung by
     // then, and a concurrent finisher is safe anyway (every step is idempotent).
     // Per-job try/catch: one bad row must not halt the sweep — it retries next sweep.
     const committedStuck = await prisma.genJob.findMany({
@@ -1926,8 +1926,8 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
               ids.push(gen.id);
             }
             // CONDITIONAL commit: write the resume marker + settle ONLY if we still own the
-            // GENERATING claim. A duplicate delivery that expired our in-flight engine call (>20min
-            // hang) may have already taken the stale-claim branch above → FAILED + refunded this
+            // GENERATING claim. A duplicate delivery that expired our in-flight engine call (>35min
+            // hang, GEN_STALE_MS — #1386 widened from 20min) may have already taken the stale-claim branch above → FAILED + refunded this
             // job. If so this matches 0 rows: THROW to ROLL BACK this whole transaction — the
             // Asset + Generation rows just created are USER-VISIBLE (project media/candidate
             // queries read Generation), so a plain `return` would COMMIT them = a free delivery.

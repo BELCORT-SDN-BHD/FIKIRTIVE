@@ -493,8 +493,8 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       // SETTLE the credit hold atomically with the resume marker — the generation
       // succeeded, so the reserved charge becomes permanent in the same commit.
       // CONDITIONAL commit (mirror gen.ts): write the resume marker + settle ONLY if we still
-      // own the GENERATING claim. A redelivery that expired our in-flight engine call (>20min hang)
-      // may have already taken the stale branch above → FAILED + refunded this job. If so this
+      // own the GENERATING claim. A redelivery that expired our in-flight engine call (>35min hang,
+      // REFGEN_STALE_MS — #1386 widened from 20min) may have already taken the stale branch above → FAILED + refunded this job. If so this
       // matches 0 rows: do NOT settle (the REFUND already won the finalizer index) and do NOT
       // attach/deliver — discard. The stored assets become orphans (content-addressed, reusable,
       // harmless); the founder absorbed the engine cost and the merchant stays refunded (no free

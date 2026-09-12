@@ -112,7 +112,7 @@ describe("reapStaleGenJobs — GENERATING 判据窗口 (#1386 零排队①, spec
 });
 
 describe("reapStaleGenJobs — QUEUED branch (GEN-6 / P0-11)", () => {
-  it("fail-closes + refunds + posts a TURN_ERROR for a stuck QUEUED job older than 25 min", async () => {
+  it("fail-closes + refunds + posts a TURN_ERROR for a stuck QUEUED job older than 45 min", async () => {
     // first findMany = no GENERATING stuck; second findMany = one QUEUED stuck
     m.genJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([stuckQueuedJob]).mockResolvedValue([]);
     m.genJobUpdateMany.mockResolvedValue({ count: 1 }); // conditional claim won
@@ -125,7 +125,7 @@ describe("reapStaleGenJobs — QUEUED branch (GEN-6 / P0-11)", () => {
   });
 
   it("does NOT reap a QUEUED job that still has a live pg-boss message (F07 — serial-queue starvation)", async () => {
-    // A paid job can legitimately wait >25 min behind a burst of long video jobs (serial
+    // A paid job can legitimately wait >45 min behind a burst of long video jobs (serial
     // batchSize:1 queue). If pg-boss still holds a live message for it, it will be delivered —
     // fail-closing it here would spuriously refund a job that's about to run.
     m.genJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([stuckQueuedJob]).mockResolvedValue([]);
@@ -148,7 +148,7 @@ describe("reapStaleGenJobs — QUEUED branch (GEN-6 / P0-11)", () => {
     expect(m.chatMessageCreate).not.toHaveBeenCalled();
   });
 
-  it("does NOT select a QUEUED job newer than 25 min (not returned by findMany)", async () => {
+  it("does NOT select a QUEUED job newer than 45 min (not returned by findMany)", async () => {
     // A fresh QUEUED job is simply not in the result set — the query filters by createdAt.
     // Verify that nothing is reaped when findMany returns empty for both branches.
     m.genJobFindMany.mockResolvedValue([]);

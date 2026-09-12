@@ -96,9 +96,10 @@ export function deriveCardState(args: {
  * 这条轮询从前只有一档：每 2.5 秒问一次，问满 48 次（两分钟）就**不再问了**。而服务端
  * 那一头，一个失败的生成走完它自己的重投序列本来就可能超过两分钟 —— `GEN_QUEUE_POLICY`
  * 允许两次重投，间隔按 pg-boss 的退避公式是 30–60 秒和 60–120 秒，最坏 180 秒纯等待，
- * 每次投递本身还要跑（`expireInSeconds` 给到 20 分钟）。于是 Codex 在真浏览器里录到那一幕：
- * 数据库 03:33:26 已经是 FAILED、1 credit 也已经退回，画布上那张 Otto 卡还写着
- * 「Generating · still working…」，刷新才变成「Failed」。屏幕不是读错了，是**先闭嘴了**。
+ * 每次投递本身还要跑（`expireInSeconds` 给到 40 分钟，见下方 #1386 一节）。于是 Codex 在
+ * 真浏览器里录到那一幕：数据库 03:33:26 已经是 FAILED、1 credit 也已经退回，画布上那张
+ * Otto 卡还写着「Generating · still working…」，刷新才变成「Failed」。屏幕不是读错了，
+ * 是**先闭嘴了**。
  *
  * ## 这条规则不是这里发明的
  *
@@ -106,18 +107,29 @@ export function deriveCardState(args: {
  * 服务端可能还有活作业，所以「**到顶不等于放弃**」—— 降频接着问，慢轮也到顶才真的停。
  * 判词与那条纯函数都在 `storyboard-card.ts` 的 `nextSyncPhase`，这里一个字都不重写，
  * 只把同一套齿轮交给这条一直缺第二档的观察窗：快轮 2.5s × 48（≈2 分钟，原样不动），
- * 慢轮 60s × 30（≈30 分钟）。
+ * 慢轮 60s × 48（≈48 分钟，#1386 从 30 分钟加宽 —— 见下）。
  *
- * 30 分钟这个数不是随手取的：它必须盖过服务端自己对「一个生成一定会有终局」的保证 ——
- * `GEN_QUEUE_POLICY.expireInSeconds`（20 分钟，一次投递最长能活多久）之外还有 worker 的
- * 收尸器兜底。屏幕停止发问的那一刻，必须晚于服务端交出终局的那一刻，否则就是同一个病。
- * 这条不变量由 `__tests__/otto-generation-watch.test.ts` 钉住，改小了会红。
+ * ## #1386（零排队①）—— 慢轮为什么从 30 分钟加宽到 48 分钟
+ *
+ * 这扇窗必须盖过服务端自己对「一个生成一定会有终局」的保证，而那份保证的数字变了：
+ * `GEN_QUEUE_POLICY.expireInSeconds`（apps/worker 与 web 建队列共用的同一份权威）从 20
+ * 分钟加宽到了 40 分钟 —— 因为并发闸让一单健康的慢任务能合法排队近 20 分钟才轮到供应商
+ * 调用，旧的 20 分钟终局窗会把它错判成「卡死」（推导见 packages/core/src/gen.ts 的
+ * `GEN_QUEUE_POLICY` 注释）。真正兜底的 worker 收尸器（`GEN_REAP_MS` /
+ * `GEN_QUEUED_REAP_MS`，apps/worker/src/jobs/gen.ts）比队列过期还晚，是 45 分钟 ——
+ * 这才是服务端出终局最晚的那一刻，这扇窗至少要盖住它，不是只盖队列过期的 40 分钟。
+ * 慢轮 48 分钟 + 快轮 2 分钟 = 50 分钟，比收尸器晚 5 分钟收工，与加宽前同一个安全余量
+ * 量级（原来 32 分钟盖 25 分钟终局窗，多留约 7 分钟）。屏幕停止发问的那一刻，必须晚于
+ * 服务端交出终局的那一刻，否则就是同一个病。这条不变量由
+ * `__tests__/otto-generation-watch.test.ts` 钉住，改小了会红。
  */
 export const GENERATION_WATCH_GEARS = {
   /** 刚花完钱、盯着结果的那一档。原来的唯一一档，数字未动。 */
   fast: { intervalMs: 2500, maxTries: 48 },
-  /** 快轮到顶、服务端还没给终局的那一档 —— 「我们不再盯着看了」不等于「我们不听了」。 */
-  slow: { intervalMs: 60_000, maxTries: 30 },
+  /** 快轮到顶、服务端还没给终局的那一档 —— 「我们不再盯着看了」不等于「我们不听了」。
+   *  #1386:30 → 48（60s 一次 ⇒ 48 分钟），与服务端 GEN_QUEUE_POLICY.expireInSeconds
+   *  20m→40m、GEN_REAP_MS/GEN_QUEUED_REAP_MS 25m→45m 的加宽联动 —— 推导见上方类头注释。 */
+  slow: { intervalMs: 60_000, maxTries: 48 },
 } as const;
 
 /** A job is "working" once its GEN_CARD has a genJobId (it was approved/generated)
