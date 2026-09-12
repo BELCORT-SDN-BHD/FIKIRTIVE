@@ -10,7 +10,7 @@ import { CanvasDeepLinkRefused } from "@/components/canvas/CanvasDeepLinkRefused
 import { getMyAccount } from "@/lib/account-actions";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
-import { getAllCoworkThreadMetas, getCoworkThreadPage, getCoworkThreads, getEntities, getProjects, resolveCoworkResultUrls, resolveCoworkMessageReferences } from "@/lib/data";
+import { findOwnedThreadForDeepLink, getCoworkThreadPage, getCoworkThreads, getEntities, getProjects, resolveCoworkResultUrls, resolveCoworkMessageReferences } from "@/lib/data";
 import { toChatThreadDTO, toEntityDTO } from "@/lib/dto";
 import { getCanvasConversationHandoff } from "@/lib/canvas-entry-actions";
 import { isPanelThread } from "@/lib/otto-thread-surface";
@@ -63,7 +63,7 @@ export function isUnresolvedProjectDeepLink(
 }
 
 /** FSE-207b —— 与 `isUnresolvedProjectDeepLink` 同一判定,标的换成商家自己名下**所有
- *  project 里**的对话(见调用点 `getAllCoworkThreadMetas`,租户全量、非当前 project 范围)。 */
+ *  project 里**的对话(见调用点 `findOwnedThreadForDeepLink`,精确点查,不看当前 project)。 */
 export function isUnresolvedThreadDeepLink(
   threads: readonly { id: string }[],
   requestedThreadId: string | undefined,
@@ -160,16 +160,20 @@ export async function ImmersiveCanvasEntry({
     return <CanvasDeepLinkRefused />;
   }
 
-  // FSE-207b:`getAllCoworkThreadMetas` 是租户全量(不按 project 过滤)的纯读 —— 这里要问的
-  // 是「这条 id 是不是我名下任何一个画布里的对话」,不是「是不是当前这张画布里的」;后者
-  // 仍由下面 `selectImmersiveThread` 的既有归一化处理(同租户、跨 project 的深链正常导航,
-  // 不在本票范围)。只在真带了 `?thread=` 时才多发这一次查询。
+  // FSE-207b(判官 P2-1 修根,PR #1414)—— 这里要问的是「这条 id 是不是我名下任何一个画布
+  // 里的对话」,不是「是不是当前这张画布里的」;后者仍由下面 `selectImmersiveThread` 的既有
+  // 归一化处理。原先借 `getAllCoworkThreadMetas` 的租户全量 `findMany` 来答这道题,而画布
+  // 规范地址天然带 `?thread=`,是每次打开一条对话都要走的热路径,换成一次精确点查
+  // (`findOwnedThreadForDeepLink`,命中 schema 的 `@@unique([id, ownerId])`)。只在真带了
+  // `?thread=` 时才多发这一次查询。
   const requestedThreadId = firstSearchParam(sp.thread);
+  let requestedThreadProjectId: string | undefined;
   if (requestedThreadId !== undefined) {
-    const ownedThreadMetas = await getAllCoworkThreadMetas(owner.ownerId);
-    if (isUnresolvedThreadDeepLink(ownedThreadMetas, requestedThreadId)) {
-      return <CanvasDeepLinkRefused />;
+    const ownedThread = await findOwnedThreadForDeepLink(owner.ownerId, requestedThreadId);
+    if (isUnresolvedThreadDeepLink(ownedThread ? [ownedThread] : [], requestedThreadId)) {
+      return <CanvasDeepLinkRefused variant="thread" />;
     }
+    requestedThreadProjectId = ownedThread?.projectId;
   }
 
   const ensured = await getOrCreateDefaultProject();
@@ -179,6 +183,28 @@ export async function ImmersiveCanvasEntry({
   // 清单才不会比改动之前少一张(这一趟只在「一张都没有」时发生,也就是每个租户的第一次)。
   const projects = ownedProjects.length > 0 ? ownedProjects : await getProjects(owner.ownerId);
   const projectSelection = selectImmersiveProject(projects, ensured.id, requestedProjectId);
+
+  // FSE-207b(判官 P2-2 修根,PR #1414)—— 点查已经把这条 thread 真正挂在哪张画布上带回来
+  // 了(`requestedThreadProjectId`)。它与地址/兜底要打开的画布不一致时(常见形状:
+  // `?project=A&thread=` 其实挂在 B 上),绝不能沿用下面 `selectImmersiveThread` 的既有
+  // 归一化 —— 那条归一化只知道「这条 id 不在当前画布的清单里」,会把商家悄悄换到 A 里**另
+  // 一条**对话上,与他点的链接毫无关系。这里提前把地址纠正成 B 的规范地址(同一条 thread、
+  // 换成它真正所在的 project),与「地址要匹配实际打开的内容」这条既有归一化哲学一致,只是
+  // 提前到发错画布的读之前;本就在正确画布上的合法深链不受影响,原路往下走。
+  if (
+    requestedThreadId !== undefined &&
+    requestedThreadProjectId !== undefined &&
+    requestedThreadProjectId !== projectSelection.activeProjectId
+  ) {
+    redirect(
+      buildImmersiveCanvasCanonicalUrl(sp, {
+        activeProjectId: requestedThreadProjectId,
+        activeThreadId: requestedThreadId,
+        canonicalizeThread: true,
+      }),
+    );
+  }
+
   const [threadRows, accountResult, entityRows] = await Promise.all([
     getCoworkThreads(owner.ownerId, projectSelection.activeProjectId),
     getMyAccount(),

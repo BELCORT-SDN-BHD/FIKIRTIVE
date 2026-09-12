@@ -9,7 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getAllCoworkThreadMetas: vi.fn(),
+  findOwnedThreadForDeepLink: vi.fn(),
   getCoworkThreads: vi.fn(),
   getCoworkThreadPage: vi.fn(),
   resolveCoworkResultUrls: vi.fn(),
@@ -28,7 +28,7 @@ vi.mock("next/navigation", () => ({ notFound: mocks.notFound, redirect: mocks.re
 vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mocks.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("@/lib/actions", () => ({ getOrCreateDefaultProject: mocks.getOrCreateDefaultProject }));
 vi.mock("@/lib/data", () => ({
-  getAllCoworkThreadMetas: mocks.getAllCoworkThreadMetas,
+  findOwnedThreadForDeepLink: mocks.findOwnedThreadForDeepLink,
   getCoworkThreadPage: mocks.getCoworkThreadPage,
   getCoworkThreads: mocks.getCoworkThreads,
   getEntities: mocks.getEntities,
@@ -73,9 +73,9 @@ const { CANVAS_DEEP_LINK_REFUSAL_COPY } = await import("@/components/canvas/Canv
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireOwner.mockResolvedValue({ email: "owner@example.com", ownerId: "owner-1" });
-  // FSE-207b default: no owned threads tenant-wide. Any test that passes a `thread` search
-  // param and expects it to resolve must override this with the ids it owns.
-  mocks.getAllCoworkThreadMetas.mockResolvedValue([]);
+  // FSE-207b default: no owned thread resolves the point lookup. Any test that passes a
+  // `thread` search param and expects it to resolve must override this with a match.
+  mocks.findOwnedThreadForDeepLink.mockResolvedValue(null);
   mocks.getOrCreateDefaultProject.mockResolvedValue({ id: "p-oldest" });
   mocks.getMyAccount.mockResolvedValue({ balance: 42, balanceUsd: 4.2 });
   mocks.getEntities.mockResolvedValue([]);
@@ -123,9 +123,9 @@ describe("immersive canvas owned runtime selection", () => {
   /**
    * FSE-207b —— 同一份 §5 登记行的「未做」①:project 深链(FSE-207,PR #1396)已经改成
    * 「在自己的清单里」判定 ＋ 拒绝页,`thread` 深链走同一个判定(`isUnresolvedDeepLinkId`)。
-   * 这里的清单来自 `getAllCoworkThreadMetas` —— 租户名下**所有** project 里的对话,不是
-   * 当前那张画布的 `getCoworkThreads`(否则「同一 tenant、不同 project」的合法深链会被
-   * 误判成跨租户)。
+   * 这里的清单来自租户名下**所有** project 里的对话(生产码里是 `findOwnedThreadForDeepLink`
+   * 的一次精确点查,判官 P2-1 修根,PR #1414),不是当前那张画布的 `getCoworkThreads`
+   * (否则「同一 tenant、不同 project」的合法深链会被误判成跨租户)。
    */
   it("FSE-207b — a thread deep link outside the merchant's own conversations is unresolved", () => {
     const ownThreadIds = [{ id: "t-mine-1" }, { id: "t-mine-2" }];
@@ -328,7 +328,7 @@ describe("ImmersiveCanvasEntry", () => {
       updatedAt: new Date("2026-07-16T00:00:00.000Z"),
       pinnedAt: null,
     }]);
-    mocks.getAllCoworkThreadMetas.mockResolvedValue([{ id: "t-new" }]);
+    mocks.findOwnedThreadForDeepLink.mockResolvedValue({ id: "t-new", projectId: "p-oldest" });
     mocks.getCoworkThreadPage.mockResolvedValue({
       id: "t-new",
       projectId: "p-oldest",
@@ -375,7 +375,7 @@ describe("ImmersiveCanvasEntry", () => {
       updatedAt: new Date("2026-07-16T00:00:00.000Z"),
       pinnedAt: null,
     }]);
-    mocks.getAllCoworkThreadMetas.mockResolvedValue([{ id: "t-new" }]);
+    mocks.findOwnedThreadForDeepLink.mockResolvedValue({ id: "t-new", projectId: "p-oldest" });
     mocks.getCoworkThreadPage.mockResolvedValue({
       id: "t-new",
       projectId: "p-oldest",
@@ -406,24 +406,19 @@ describe("ImmersiveCanvasEntry", () => {
   });
 
   /**
-   * FSE-207b 之后:一个「不在当前这张画布里」的 thread id 分两种情形——真是别人的/伪造的
-   * (`isUnresolvedThreadDeepLink` 判「否」,交拒绝页,见下方 FSE-207b 组),或者**是商家自己
-   * 名下、只是挂在另一张画布上**的合法对话(照旧归一化重定向,不受本票影响)。这条测试钉的
-   * 是后一种——`t-elsewhere` 出现在 `getAllCoworkThreadMetas`(租户全量)里,只是不在
-   * `getCoworkThreads("p-oldest")`(当前这张画布的范围)里。
+   * FSE-207b 之后(判官 P2-2 修根,PR #1414):一个「不在当前这张画布里」的 thread id 分两种
+   * 情形——真是别人的/伪造的(`isUnresolvedThreadDeepLink` 判「否」,交拒绝页,见下方
+   * FSE-207b 组),或者**是商家自己名下、只是挂在另一张画布上**的合法对话。
+   *
+   * 后一种从前借 `selectImmersiveThread` 的既有归一化处理:那条归一化只知道「这条 id 不在
+   * 当前画布的清单里」,于是把商家悄悄换到当前画布里**另一条**对话上(`t-new`)——与他点的
+   * 链接(`t-elsewhere`)毫无关系,只是顺手把施工者的改名钉成了行为,没人审过这条到底对不
+   * 对。点查(`findOwnedThreadForDeepLink`)已经把这条 thread 真正挂在哪张画布上带回来了,
+   * 现在直接重定向到它自己所在的那张画布——同一条 thread,不换成别的。
    */
-  it("redirects a thread that belongs to another of the merchant's own canvases to an owned canonical URL", async () => {
+  it("redirects a thread that belongs to another of the merchant's own canvases to that canvas's canonical URL", async () => {
     mocks.getProjects.mockResolvedValue([{ id: "p-oldest", name: "Oldest" }]);
-    mocks.getCoworkThreads.mockResolvedValue([
-      {
-        id: "t-new",
-        projectId: "p-oldest",
-        title: "New",
-        updatedAt: new Date("2026-07-16T00:00:00.000Z"),
-        pinnedAt: null,
-      },
-    ]);
-    mocks.getAllCoworkThreadMetas.mockResolvedValue([{ id: "t-new" }, { id: "t-elsewhere" }]);
+    mocks.findOwnedThreadForDeepLink.mockResolvedValue({ id: "t-elsewhere", projectId: "p-other" });
     mocks.redirect.mockImplementation((url: string) => {
       throw new Error(`NEXT_REDIRECT:${url}`);
     });
@@ -435,8 +430,10 @@ describe("ImmersiveCanvasEntry", () => {
         audience: "audience-1",
       }),
     })).rejects.toThrow(
-      "NEXT_REDIRECT:/create/canvas?project=p-oldest&thread=t-new&audience=audience-1",
+      "NEXT_REDIRECT:/create/canvas?project=p-other&thread=t-elsewhere&audience=audience-1",
     );
+    // 纠正发生在读错画布的那次查询之前:p-oldest 的对话列表一次都不该被读。
+    expect(mocks.getCoworkThreads).not.toHaveBeenCalled();
   });
 
   /* ── FSE-207 ─────────────────────────────────────────────────────────────────
@@ -459,8 +456,8 @@ describe("ImmersiveCanvasEntry", () => {
     expect(mocks.redirect).not.toHaveBeenCalled();
     // ② 一句人话。
     expect(element.type.name).toBe("CanvasDeepLinkRefused");
-    expect(CANVAS_DEEP_LINK_REFUSAL_COPY.heading).toBe("This canvas isn't in your workspace");
-    expect(CANVAS_DEEP_LINK_REFUSAL_COPY.body).toContain("belongs to a different workspace");
+    expect(CANVAS_DEEP_LINK_REFUSAL_COPY.project.heading).toBe("This canvas isn't in your workspace");
+    expect(CANVAS_DEEP_LINK_REFUSAL_COPY.project.body).toContain("belongs to a different workspace");
   });
 
   it("FSE-207 — refusing a deep link never reaches the call that creates a canvas", async () => {
@@ -509,7 +506,7 @@ describe("ImmersiveCanvasEntry", () => {
 
   it("FSE-207b — a thread deep link from another workspace is refused in plain words, and the address is not rewritten", async () => {
     mocks.getProjects.mockResolvedValue([{ id: "p-mine", name: "Mine" }]);
-    mocks.getAllCoworkThreadMetas.mockResolvedValue([{ id: "t-mine" }]);
+    mocks.findOwnedThreadForDeepLink.mockResolvedValue(null);
 
     const element = await ImmersiveCanvasEntry({
       searchParams: Promise.resolve({ thread: "thread_someone_else" }),
@@ -517,15 +514,17 @@ describe("ImmersiveCanvasEntry", () => {
 
     // ① 地址不被改写:一次 redirect 都没有。
     expect(mocks.redirect).not.toHaveBeenCalled();
-    // ② 一句人话 —— 与 project 深链共用同一张拒绝页,同一份文案。
+    // ② 一句人话,说的是「对话」不是「画布」(判官 P1-1 修根)—— thread 组自己的文案。
     expect(element.type.name).toBe("CanvasDeepLinkRefused");
-    expect(CANVAS_DEEP_LINK_REFUSAL_COPY.heading).toBe("This canvas isn't in your workspace");
-    expect(CANVAS_DEEP_LINK_REFUSAL_COPY.body).toContain("belongs to a different workspace");
+    expect(CANVAS_DEEP_LINK_REFUSAL_COPY.thread.heading).toBe(
+      "We can't open this conversation in your workspace",
+    );
+    expect(CANVAS_DEEP_LINK_REFUSAL_COPY.thread.body).toContain("belongs to a different workspace");
   });
 
   it("FSE-207b — refusing a thread deep link never reaches the call that creates a canvas", async () => {
     mocks.getProjects.mockResolvedValue([{ id: "p-mine", name: "Mine" }]);
-    mocks.getAllCoworkThreadMetas.mockResolvedValue([{ id: "t-mine" }]);
+    mocks.findOwnedThreadForDeepLink.mockResolvedValue(null);
 
     await ImmersiveCanvasEntry({
       searchParams: Promise.resolve({ thread: "thread_someone_else" }),
@@ -544,7 +543,7 @@ describe("ImmersiveCanvasEntry", () => {
     // 之前先跑到 `getOrCreateDefaultProject()`,凭空多出一张画布。`getProjects` 在这条路径
     // 上应该连问都不问第二次(不需要为 bootstrap 重读)。
     mocks.getProjects.mockResolvedValue([]);
-    mocks.getAllCoworkThreadMetas.mockResolvedValue([]);
+    mocks.findOwnedThreadForDeepLink.mockResolvedValue(null);
 
     const element = await ImmersiveCanvasEntry({
       searchParams: Promise.resolve({ thread: "thread_someone_else" }),
@@ -558,7 +557,7 @@ describe("ImmersiveCanvasEntry", () => {
 
   it("FSE-207b — a merchant's own thread deep link still opens that thread, and still writes nothing", async () => {
     mocks.getProjects.mockResolvedValue([{ id: "p-mine", name: "Mine" }]);
-    mocks.getAllCoworkThreadMetas.mockResolvedValue([{ id: "t-mine" }]);
+    mocks.findOwnedThreadForDeepLink.mockResolvedValue({ id: "t-mine", projectId: "p-mine" });
     mocks.getCoworkThreads.mockResolvedValue([
       {
         id: "t-mine",
