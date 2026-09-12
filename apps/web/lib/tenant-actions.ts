@@ -310,6 +310,9 @@ async function ownerBaUserId(orgId: string): Promise<string | null> {
  *  impersonating (the 8 web entry-point guards). Audited. */
 export async function impersonateTenant(orgId: string, reasonRaw?: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
+  // 帧化施工前车之鉴②：impersonation 相关拒绝在建帧之前判定（同 gen-actions.ts 的既有样板），
+  // 不把「谁可以冒充」这条判断挪进已经建好的帧里。
+  if (!isFounderAdmin(gate.email)) return { error: "Only a founder may impersonate." };
   // #1379：目标租户已知（参数）—— ownerId=orgId。
   return runAsStaff(staffPrincipal(gate, orgId), () => impersonateTenantInFrame(gate, orgId, reasonRaw));
 }
@@ -319,7 +322,6 @@ async function impersonateTenantInFrame(
   orgId: string,
   reasonRaw?: unknown,
 ): Promise<{ ok: true } | { error: string }> {
-  if (!isFounderAdmin(gate.email)) return { error: "Only a founder may impersonate." };
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
   const reason = typeof reasonRaw === "string" ? reasonRaw.trim().slice(0, 500) : "";
   if (reason.length < 8) return { error: "Enter an impersonation reason with at least 8 characters." };
