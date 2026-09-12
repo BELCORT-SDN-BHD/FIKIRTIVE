@@ -155,7 +155,14 @@ describe("TENANT-A2 商家动作面 —— A 的会话把 id 换成 B 的资源�
     // 真正的查询之前插一句 getPrincipal() 探针,查询本身原样转发给保存下来的原始实现。
     const original = prisma.collection.findFirst.bind(prisma.collection) as (...args: unknown[]) => unknown;
     const seen: Array<{ kind: string | undefined; ownerId: string | null }> = [];
-    const spy = vi.spyOn(prisma.collection, "findFirst").mockImplementation(((...args: unknown[]) => {
+    // Manual reassignment, NOT `spy.mockRestore()` — measured against this exact Prisma model
+    // delegate (`prisma.collection`, from the lazy client in @fikirtive/db/client.ts):
+    // `mockRestore()` leaves `prisma.collection.findFirst` `undefined` afterwards instead of
+    // bringing back the real method, while `prisma.collection.findFirst = original` restores it
+    // correctly (verified: a later query through it hits the real tenant-guard again). Assigning
+    // straight back to `original` — captured before the spy — sidesteps whatever about this
+    // delegate's property shape confuses vi's own restore bookkeeping.
+    vi.spyOn(prisma.collection, "findFirst").mockImplementation(((...args: unknown[]) => {
       const principal = getPrincipal();
       seen.push({ kind: principal?.kind, ownerId: (principal as { ownerId?: string } | undefined)?.ownerId ?? null });
       return original(...args);
@@ -167,11 +174,39 @@ describe("TENANT-A2 商家动作面 —— A 的会话把 id 换成 B 的资源�
       mockRequireOwner.mockResolvedValueOnce({ ...GATE_B });
       await getCollection(collectionB);
     } finally {
-      spy.mockRestore();
+      prisma.collection.findFirst = original as never;
     }
 
     expect(seen).toHaveLength(2);
     expect(seen[0]).toEqual({ kind: "user", ownerId: ORG_A });
     expect(seen[1]).toEqual({ kind: "user", ownerId: ORG_B });
+  });
+
+  // P2-1（判官定向修）：上面三条 TENANT-A2 用例拿到的 "Not found." 全部来自
+  // `getCollectionInFrame` / `renameCollection` / `deleteCanvasNode` 里本来就有的显式
+  // `where: { ownerId }` —— 放到 main 上、完全不经过 tenant-guard 也会绿，证不到守卫本身在拦。
+  // 这一条不靠动作自己的显式过滤：用 `vi.spyOn` 拦下真实（已建帧）的 `Collection.findFirst`，
+  // 在真正的查询之前把它的 `where.ownerId` 篡改成 B 的 orgId，再转发给原始实现——模拟「动作层的
+  // 显式过滤万一漏了一处」。Collection 在 TENANT_MODELS（`ownerId` 族，tenant-guard.ts:15-71），
+  // 这一族恒为 enforce（不受钱表族 warn/enforce 挡位影响，tenant-guard.ts:542-543），所以命中
+  // 应该直接抛错，而不是像钱表族那样只 console.warn。
+  it("TENANT-A2 补充证明：篡改查询的 where.ownerId 指向 B，运行时守卫本身直接拒绝（不是动作层显式过滤在顶）", async () => {
+    const original = prisma.collection.findFirst.bind(prisma.collection) as (...args: unknown[]) => unknown;
+    // 同上一条的还原注记：这里也用手动赋值还原，不用 `spy.mockRestore()`。
+    vi.spyOn(prisma.collection, "findFirst").mockImplementation(((...args: unknown[]) => {
+      const [queryArgs] = args as [{ where?: Record<string, unknown> }];
+      if (queryArgs?.where && "ownerId" in queryArgs.where) {
+        queryArgs.where = { ...queryArgs.where, ownerId: ORG_B };
+      }
+      return original(...args);
+    }) as never);
+
+    try {
+      await expect(getCollection(collectionA)).rejects.toThrow(
+        "[tenant-guard] Collection.findFirst tried to use ownerId outside the active tenant",
+      );
+    } finally {
+      prisma.collection.findFirst = original as never;
+    }
   });
 });
