@@ -12,6 +12,7 @@ import {
   genRequest,
   assetActionPrompt,
   ASSET_REGEN_UPLOAD_REFUSAL,
+  ASSET_ANCHOR_NOT_IN_WORKSPACE,
   newId,
   GEN_QUEUE,
   storageKey,
@@ -322,12 +323,6 @@ const CANVAS_ACTION_ID_MAX_LENGTH = 128;
 const ASSET_ANCHOR_ID_MAX_LENGTH = 128;
 /** 意图编号(`asset-action-intent.ts` 出的那一个)的长度上限。同样只进摘要,不进键面。 */
 const ASSET_INTENT_ID_MAX_LENGTH = 128;
-/**
- * 锚点不在本工作区时商家看到的那一句(规格 `docs/specs/asset-action-idempotency.md`
- * §1.3 与 ASSET-A1)。不说「不属于你」也不说「不存在」—— 两者都会把「这个编号在别人
- * 的工作区里存在」当成事实泄露出去;说的是这一面唯一该说的那件事:这张图在这里用不了。
- */
-export const ASSET_ANCHOR_NOT_IN_WORKSPACE = "That image isn't available in this workspace.";
 const TRUSTED_CANVAS_REQUESTS = new WeakMap<object, { expectedCredits: number }>();
 /** #645 T4(判官 r1 P0-2):资产详情页那条付费路的价格绑定,与 Canvas/Otto 同一套
  *  「商家看到的数字是授权的一部分」机制,只是各自的补救话术不同。 */
@@ -715,11 +710,12 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
      * 这一行放开的是应用层;与它同生共死的是数据库那一条跨终态唯一索引
      * (`GenJob_asset_idempotency_once`,谓词 `LIKE 'asset:%'`)—— 读与写不是原子的,
      * 索引是 TOCTOU 竞态下的兜底,下面的 P2002 分支据它返回原单。
+     *
+     * 写成 `status: … ? undefined : { in: […] }`(而不是把整个条件展开进 where):
+     * Prisma 把 `undefined` 读作「这一列不过滤」,而且这样每一处的 where 仍然由 Prisma
+     * 自己的类型直接约束 —— 展开一个预先算好的对象会丢掉那份约束。
      */
     const assetReplayAnyStatus = assetAction !== null;
-    const activeOnly = assetReplayAnyStatus
-      ? {}
-      : { status: { in: ["QUEUED", "GENERATING"] } as const };
     const coworkCardId = idempotencyKey?.startsWith("cowork:")
       ? idempotencyKey.slice("cowork:".length)
       : null;
@@ -873,7 +869,10 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // 落回原来那一单。
     if (idempotencyKey && !factoryAttempt && !canvasAction && !trustedCoworkRequest) {
       const active = await prisma.genJob.findFirst({
-        where: { ownerId, projectId, idempotencyKey, ...activeOnly },
+        where: {
+          ownerId, projectId, idempotencyKey,
+          status: assetReplayAnyStatus ? undefined : { in: ["QUEUED", "GENERATING"] },
+        },
         orderBy: { createdAt: "desc" }, select: { id: true },
       });
       if (active) return { id: active.id, disposition: "reused" };
@@ -1135,7 +1134,10 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         // report "Nothing was charged" after the winner had already committed.
         if (idempotencyKey && !factoryAttempt && !canvasAction && !trustedCoworkRequest) {
           const active = await tx.genJob.findFirst({
-            where: { ownerId, projectId, idempotencyKey, ...activeOnly },
+            where: {
+              ownerId, projectId, idempotencyKey,
+              status: assetReplayAnyStatus ? undefined : { in: ["QUEUED", "GENERATING"] },
+            },
             orderBy: { createdAt: "desc" },
             select: { id: true },
           });
@@ -1346,11 +1348,11 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         // once-ever 的两族(`cowork:` 与 `asset:`)在这里都要**任何状态**都认:它们各自的
         // 唯一索引就是全状态的,所以一次「第一单已终态」的并发重放插入被挡下来之后,必须
         // 拿回那一单,而不是再花一次钱、也不是把 P2002 原样抛给商家。
-        const coworkKey = idempotencyKey.startsWith("cowork:");
+        const onceEverKey = idempotencyKey.startsWith("cowork:") || assetReplayAnyStatus;
         const existing = await prisma.genJob.findFirst({
           where: {
             ownerId, projectId, idempotencyKey,
-            ...(coworkKey || assetAction ? {} : { status: { in: ["QUEUED", "GENERATING"] } }),
+            status: onceEverKey ? undefined : { in: ["QUEUED", "GENERATING"] },
           },
           orderBy: { createdAt: "desc" }, select: { id: true },
         });

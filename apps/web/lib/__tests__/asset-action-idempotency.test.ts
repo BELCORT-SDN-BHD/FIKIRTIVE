@@ -15,7 +15,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
+import { INTERNAL_PER_DISPLAY, ASSET_ANCHOR_NOT_IN_WORKSPACE } from "@fikirtive/core";
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mockRequireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
@@ -29,7 +29,7 @@ vi.mock("../queue", () => ({
 vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
 
-const { startAssetGen, getActiveGenModels, ASSET_ANCHOR_NOT_IN_WORKSPACE } = await import("../gen-actions");
+const { startAssetGen, getActiveGenModels } = await import("../gen-actions");
 const { prisma, settleCredits, refundReservation } = await import("@fikirtive/db");
 
 const IMG = INTERNAL_PER_DISPLAY; // 一张图 = 1 显示 credit = 10 内部
