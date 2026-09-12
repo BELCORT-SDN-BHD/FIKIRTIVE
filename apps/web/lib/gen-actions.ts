@@ -503,7 +503,7 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
 export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
   const parsed = genRequest.safeParse(resolveRequestModel(raw));
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { idempotencyKey, projectId, threadId } = parsed.data;
+  const { idempotencyKey, threadId } = parsed.data;
   if (!idempotencyKey?.startsWith("cowork:") || idempotencyKey.length <= "cowork:".length || !threadId) {
     return { error: "That generation request is out of bounds." };
   }
