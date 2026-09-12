@@ -629,7 +629,9 @@ export async function handlePublish(
     // (one APPLYING per post) makes a second racing worker's insert P2002 → it skips.
     const attemptId = newId();
     try {
-      await prisma.publishAttempt.create({ data: { id: attemptId, scheduledPostId: post.id, state: "APPLYING" } });
+      await prisma.publishAttempt.create({
+        data: { id: attemptId, scheduledPostId: post.id, ownerId: post.ownerId, state: "APPLYING" },
+      });
     } catch (e) {
       if ((e as { code?: string }).code === "P2002") {
         console.log(`[publish] ${post.id}: another worker holds the APPLYING claim — skipping`);
@@ -773,7 +775,15 @@ export async function handlePublish(
           // ours is being given up — but the post is live and, with the row unstamped, nothing yet
           // refuses a second send. Leave the record that does.
           await tx.publishAttempt.create({
-            data: { id: newId(), scheduledPostId: post.id, state: "UNCONFIRMED", metaPostId: externalId, error: claimLostReason, finishedAt: new Date() },
+            data: {
+              id: newId(),
+              scheduledPostId: post.id,
+              ownerId: post.ownerId, // TENANT 切片⑤(#1380): composite FK now requires this
+              state: "UNCONFIRMED",
+              metaPostId: externalId,
+              error: claimLostReason,
+              finishedAt: new Date(),
+            },
           });
           await tx.scheduledPost.updateMany({
             where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null },

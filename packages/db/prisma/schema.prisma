@@ -2562,7 +2562,12 @@ model ScheduledPost {
 model ScheduledPostMedia {
   id              String        @id
   scheduledPostId String
-  post            ScheduledPost @relation(fields: [scheduledPostId], references: [id], onDelete: Cascade)
+  // TENANT 切片⑤(#1380,规格 docs/specs/tenant-isolation.md TENANT-A7):backfilled from
+  // ScheduledPost.ownerId in the accompanying migration. The FK below is composite so a media
+  // row can never attach to a post it doesn't share an owner with — the database refuses it,
+  // not just the application layer.
+  ownerId         String
+  post            ScheduledPost @relation(fields: [scheduledPostId, ownerId], references: [id, ownerId], onDelete: Cascade)
   generationId    String        // reuse of an already-paid Generation; never regenerated
   position        Int           // carousel order 0..9 (single image = 1 row, carousel = 2..10 rows)
 
@@ -2579,7 +2584,13 @@ model ScheduledPostMedia {
 model PublishAttempt {
   id              String        @id
   scheduledPostId String
-  post            ScheduledPost @relation(fields: [scheduledPostId], references: [id], onDelete: Cascade)
+  // TENANT 切片⑤(#1380,规格 docs/specs/tenant-isolation.md TENANT-A7):backfilled from
+  // ScheduledPost.ownerId in the accompanying migration (this is the exact gap the spec's §3
+  // "不做" section named and deferred to this slice). The FK below is composite so an attempt
+  // can never attach to a post it doesn't share an owner with — the database refuses it, not
+  // just the application layer.
+  ownerId         String
+  post            ScheduledPost @relation(fields: [scheduledPostId, ownerId], references: [id, ownerId], onDelete: Cascade)
   state           String        // 'APPLYING' | 'APPLIED' | 'FAILED' | 'UNCONFIRMED' (code-validated String — house style)
   // UNCONFIRMED (D2): an ambiguous publish that MAY have gone live but whose receipt was lost. It is
   // NOT APPLYING (frees the partial-unique) yet NOT a clean FAILED — handlePublish refuses to

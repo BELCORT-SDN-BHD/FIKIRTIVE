@@ -279,7 +279,13 @@ async function updateScheduledPostInFrame(
         await tx.scheduledPostMedia.deleteMany({ where: { scheduledPostId: id } });
         if (nextMedia.length) {
           await tx.scheduledPostMedia.createMany({
-            data: nextMedia.map((generationId, position) => ({ id: newId(), scheduledPostId: id, generationId, position })),
+            data: nextMedia.map((generationId, position) => ({
+              id: newId(),
+              scheduledPostId: id,
+              ownerId: gate.ownerId, // TENANT 切片⑤(#1380): composite FK now requires this on every media row
+              generationId,
+              position,
+            })),
           });
         }
       }

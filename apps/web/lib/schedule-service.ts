@@ -69,7 +69,14 @@ export async function draftScheduledPost(
         source: args.source,
         approvedAt: null,
         media: d.media.length
-          ? { create: d.media.map((generationId, position) => ({ id: newId(), generationId, position })) }
+          ? {
+              create: d.media.map((generationId, position) => ({
+                id: newId(),
+                ownerId: args.ownerId, // TENANT 切片⑤(#1380): composite FK now requires this on every media row
+                generationId,
+                position,
+              })),
+            }
           : undefined,
       },
     });

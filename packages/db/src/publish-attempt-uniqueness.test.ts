@@ -48,7 +48,7 @@ async function seedFixtures(): Promise<void> {
 }
 
 function createAttempt(id: string, scheduledPostId: string, state: string) {
-  return prisma.publishAttempt.create({ data: { id, scheduledPostId, state } });
+  return prisma.publishAttempt.create({ data: { id, scheduledPostId, ownerId: ORG, state } });
 }
 
 beforeEach(async () => {

@@ -209,6 +209,25 @@ export const TENANT_GUARD_EXEMPT: Record<string, string> = {
   ModelRegistryOverlay: "founder model-registry overrides (admin surface, platform-wide)",
   ResearchJob: "worker claims jobs queue-style by id/status (not owner lists); owner scoping lives in research-actions",
   Transcript: "content-addressed cache shared only after the caller proves ownership of identical source bytes",
+  // TENANT 切片⑤ (#1380, 规格 docs/specs/tenant-isolation.md TENANT-A7): both just gained an
+  // ownerId column via the FK-backfill migration (20260912200852_tenant_slice5_fk_backfill).
+  // Cross-tenant ATTACH is now a database-level rejection (the composite FK to
+  // ScheduledPost(id, ownerId) — proven by packages/db/src/tenant-fk-backfill.test.ts), which is
+  // this ticket's whole scope. Runtime QUERY-level guarding (scopeWhere injection / no-frame
+  // rejection) is a SEPARATE decision this ticket deliberately does not make: both models are
+  // read/written from apps/worker's queue jobs (publish.ts), whose full call-site set (including
+  // the reaper/reconcile paths) has not been swept for "does every operation already carry a
+  // frame with the right owner" the way the spec's 先建帧后执法 (frame-before-enforce) ordering
+  // requires before a model may move into TENANT_MODELS — flipping that switch here, in a PR
+  // scoped to schema+migration+tests, would be exactly the "queue judged wrong → the whole batch
+  // 500s that day" risk the spec's own 异议栏 names for worker queues. pending guard review:
+  // candidate to move up into TENANT_MODELS after that sweep, as its own slice.
+  ScheduledPostMedia: "just gained ownerId via TENANT 切片⑤'s FK backfill (#1380) — DB-level " +
+    "composite-FK protection only; runtime query guarding not yet swept for apps/worker call sites, " +
+    "deliberately deferred to its own slice (see PublishAttempt's entry above for the full reasoning).",
+  PublishAttempt: "just gained ownerId via TENANT 切片⑤'s FK backfill (#1380) — DB-level " +
+    "composite-FK protection only; runtime query guarding not yet swept for apps/worker call sites " +
+    "(publish.ts's claim/reconcile/reaper paths), deliberately deferred to its own slice.",
 };
 
 const SCOPED_WHERE_OPS = new Set([
