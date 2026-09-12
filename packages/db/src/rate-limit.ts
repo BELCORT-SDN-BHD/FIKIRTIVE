@@ -86,10 +86,14 @@ export type RateLimitVerdict = {
  * whose work needs the database anyway, so "the database is down" already means the request
  * cannot succeed — refusing at the gate changes nothing except that it refuses cheaply.
  *
- * `allow` exists for the one shape where that reasoning inverts: a path that does NOT otherwise
- * touch the database, serving a request whose authorization was already proven by other means
- * (the signed media proxy). There, a database blip would newly break something that used to work,
- * and the limiter would be the only reason. Every use is named at its call site with why.
+ * `allow` exists for the one shape where that reasoning inverts: a path whose work does NOT
+ * otherwise need the database, where the money is already protected by something that fails
+ * closed on its own (today: the Otto conversation gate — the turn's reserve). There, a database
+ * blip would newly break something that used to work, and the limiter would be the only reason.
+ * Every use is named at its call site with why. The signed media proxy used to be the example
+ * here and no longer is: SHARE-A3 (2026-09-12) moved it to `deny`, because a second caller — a
+ * client's browser on a share-preview link — turned "open while the counter is down" into
+ * unmetered egress against any holder of one valid link.
  */
 export type RateLimitStorageFailure = "deny" | "allow";
 
