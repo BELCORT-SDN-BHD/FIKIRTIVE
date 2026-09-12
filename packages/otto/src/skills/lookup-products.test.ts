@@ -12,7 +12,7 @@ const row = (name: string, extra: Record<string, unknown> = {}) => ({
   data: { name, ...extra }, status: "active", pinned: false, updatedAt: new Date(),
   // 名字与主图的唯一源是身份(PRODID-A4)。价签的 `data` 里本来就没有这两格,这个夹具留着
   // 一份只是为了写得像存量行 —— 「残留值盖不过身份」那一格由下面那条用例单独钉。
-  entity: { name, baseAssetId: null as string | null },
+  entity: { id: `ent_${name.replace(/\s+/g, "_")}`, name, baseAssetId: null as string | null },
 });
 
 let db: { prisma: { brandRecord: { findMany: ReturnType<typeof vi.fn> } } };
@@ -64,6 +64,14 @@ describe("executeLookupProducts", () => {
   it("returns empty matches for no hit", async () => {
     db.prisma.brandRecord.findMany.mockResolvedValue([row("Mug")]);
     expect((await executeLookupProducts({ query: "latte" }, ctx)).matches).toEqual([]);
+  });
+  it("FSE-210(判官 P2-3):每条匹配带 entityId,同一趟 join 读出来的那个身份 id", async () => {
+    // 没挂参考图的产品(`baseAssetId: null`,`row()` 的默认夹具)从 `@` 候选名单
+    // (`loadAvailableRefsForAgent` 的过滤)里被拿掉之后,`lookupProducts` 是 Otto 唯一还找得到
+    // 它身份的路 —— 这里的 entityId 就是喂进 propose `entityIds` 的那个值。
+    db.prisma.brandRecord.findMany.mockResolvedValue([row("Kopi tumbler")]);
+    const res = await executeLookupProducts({ query: "kopi" }, ctx);
+    expect(res.matches).toEqual([expect.objectContaining({ entityId: "ent_Kopi_tumbler" })]);
   });
   it("matches by category (type-to-create categories)", async () => {
     db.prisma.brandRecord.findMany.mockResolvedValue([

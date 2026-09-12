@@ -672,6 +672,7 @@ export async function buildOttoContext({
   referenceVideoGenerationIds,
   mediaReferences,
   turnText,
+  turnEntityIds,
   simpleMode,
   approvalConsent,
   factoryAttemptId,
@@ -689,6 +690,10 @@ export async function buildOttoContext({
   /** #775 判官 r3 P1-2:商家这一轮自己打的那句话,服务端原样带进 ctx。只用于铸视频卡前
    *  与模型自选的动作对一次表(见 OttoContext.turnText)。绝不来自模型入参。 */
   turnText?: string;
+  /** FSE-210(PR #1420 判官 P1-1):这一轮服务端已核过归属的 entity id(`resolveOwnedReferenceRefs`
+   *  同一趟算出来的那份),原样进 ctx,供 `buildProposeCard` 与模型自带的 entityIds 取并集
+   *  (见 OttoContext.turnEntityIds)。缺席 = 这条入口不是一次活的商家轮次。 */
+  turnEntityIds?: string[];
   simpleMode?: boolean;
   /** AR2 处方1: set ONLY by ottoApprove's universal branch — the hash-time updatedAt snapshot. */
   approvalConsent?: { scheduledPostId: string; expectedUpdatedAt: string };
@@ -761,6 +766,9 @@ export async function buildOttoContext({
     // #775 判官 r3 P1-2:商家这一轮的原话。铸视频卡前拿它跟模型自选的动作对一次表 ——
     // 这是「模型选错档」唯一可能被逮住的时刻,而且那一刻还没花一分钱。
     ...(turnText ? { turnText } : {}),
+    // FSE-210(判官 P1-1):这一轮服务端已核过归属的 entity id —— 铸卡时的服务端兜底,
+    // 不依赖模型的 `@` 候选名单里有没有这个元素(它过滤掉了没有参考图的那些)。
+    ...(turnEntityIds?.length ? { turnEntityIds } : {}),
     images,
     startGen: startCoworkGen,
     // W-B3-F-P: factory batch port — routes to the SAME owner-scoped server actions. The model
@@ -1969,6 +1977,9 @@ export async function ottoTurn(raw: unknown): Promise<
         });
       }
       const userMessageId = newId();
+      // FSE-210(判官 P1-1)—— 落库与铸卡共用同一份已核过归属的 entity id(理由见流式那扇门
+      // 的同一行)。
+      const turnEntityIds = orderedUniqueIds([...(entityIds ?? []), ...picked.entityIds]);
       await prisma.chatMessage.create({
         data: {
           id: userMessageId,
@@ -1980,7 +1991,7 @@ export async function ottoTurn(raw: unknown): Promise<
           text,
           // FSE-002:落库的这一份就是已解析的那一份(理由见流式那扇门的同一行)。
           payload: {
-            entityIds: orderedUniqueIds([...(entityIds ?? []), ...picked.entityIds]),
+            entityIds: turnEntityIds,
             variantSel,
             sourceGenerationIds: refs.sourceGenerationIds,
             referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
@@ -2001,6 +2012,8 @@ export async function ottoTurn(raw: unknown): Promise<
         referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
         mediaReferences: refs.mediaReferences,
         turnText: text,
+        // FSE-210(判官 P1-1):铸卡时的服务端兜底,见 OttoContext.turnEntityIds。
+        turnEntityIds,
         simpleMode: parsed.data.simple,
       });
 

@@ -6,13 +6,12 @@ const mocks = vi.hoisted(() => ({
   projectFindFirst: vi.fn(),
   projectCreate: vi.fn(),
   projectUpdate: vi.fn(),
-  entityFindMany: vi.fn(),
-  generationFindMany: vi.fn(),
   threadFindFirst: vi.fn(),
   threadCreate: vi.fn(),
   eventFindFirst: vi.fn(),
   eventCreate: vi.fn(),
   transaction: vi.fn(),
+  resolveOwnedReferenceRefs: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
@@ -25,11 +24,13 @@ vi.mock("@fikirtive/db", () => ({
     project: { findFirst: mocks.projectFindFirst, create: mocks.projectCreate, update: mocks.projectUpdate },
     chatThread: { findFirst: mocks.threadFindFirst, create: mocks.threadCreate },
     actionEvent: { findFirst: mocks.eventFindFirst, create: mocks.eventCreate },
-    entity: { findMany: mocks.entityFindMany },
-    generation: { findMany: mocks.generationFindMany },
     $transaction: mocks.transaction,
   },
 }));
+// 判官 P2-1/P2-2(PR #1420)—— `getCanvasConversationHandoff` 现在把归属核对交给
+// `resolveOwnedReferenceRefs`(与画布内 `@` 同一个判据,单一判据不留第二套)。这里只替身
+// 这一个边界,它自己的类型核对 / upload 解析逻辑由 `reference-refs.ts` 自己的测试钉住。
+vi.mock("@/lib/reference-refs", () => ({ resolveOwnedReferenceRefs: mocks.resolveOwnedReferenceRefs }));
 
 const { createCanvasConversation, ensureCanvasDraft, getCanvasConversationHandoff } = await import("@/lib/canvas-entry-actions");
 
@@ -46,8 +47,9 @@ beforeEach(() => {
   mocks.eventFindFirst.mockResolvedValue(null);
   mocks.projectCreate.mockResolvedValue({ id: PROJECT_ID });
   mocks.projectUpdate.mockResolvedValue({ id: PROJECT_ID });
-  mocks.entityFindMany.mockResolvedValue([]);
-  mocks.generationFindMany.mockResolvedValue([]);
+  mocks.resolveOwnedReferenceRefs.mockResolvedValue({
+    refs: [], wire: [], links: [], entityIds: [], media: [], unresolved: 0, unusableFormat: 0,
+  });
   mocks.threadCreate.mockResolvedValue({ id: THREAD_ID });
   mocks.eventCreate.mockResolvedValue({ id: HANDOFF_ID });
   mocks.transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn({
@@ -311,12 +313,23 @@ describe("getCanvasConversationHandoff:引用解形与归属", () => {
     });
   });
 
-  it("FRONT-A14:实体进 entityIds,图片与影片各进各的那一份", async () => {
-    mocks.entityFindMany.mockResolvedValue([{ id: "ent-1" }]);
-    mocks.generationFindMany.mockResolvedValue([
-      { id: "gen-img", asset: { ext: "PNG" } },
-      { id: "gen-vid", asset: { ext: "mp4" } },
-    ]);
+  it("FRONT-A14:实体进 entityIds,图片与影片各进各的那一份;归属核对交给 resolveOwnedReferenceRefs", async () => {
+    mocks.resolveOwnedReferenceRefs.mockResolvedValue({
+      refs: [
+        { type: "generation", id: "gen-img" },
+        { type: "generation", id: "gen-vid" },
+        { type: "product", id: "ent-1" },
+      ],
+      wire: ["generation:gen-img", "generation:gen-vid", "product:ent-1"],
+      links: [],
+      entityIds: ["ent-1"],
+      media: [
+        { generationId: "gen-img", kind: "image" },
+        { generationId: "gen-vid", kind: "video" },
+      ],
+      unresolved: 0,
+      unusableFormat: 0,
+    });
 
     await expect(getCanvasConversationHandoff({
       ownerId: "owner-1",
@@ -328,15 +341,22 @@ describe("getCanvasConversationHandoff:引用解形与归属", () => {
       entityIds: ["ent-1"],
       sourceGenerationIds: ["gen-img"],
       referenceVideoGenerationIds: ["gen-vid"],
-      // FSE-210 / PRODID-R11:typed wire 引用与上面三份同一批归属核对,原样带出去。
+      // FSE-210 / PRODID-R11:typed wire 引用与上面三份同一次归属核对产出,原样带出去。
       references: ["generation:gen-img", "generation:gen-vid", "product:ent-1"],
     });
+    // 归属核对交给了单一判据 —— 与画布内直接 `@` 同一个函数、同一份 wire 形式。
+    expect(mocks.resolveOwnedReferenceRefs).toHaveBeenCalledWith(
+      "owner-1",
+      ["generation:gen-img", "generation:gen-vid", "product:ent-1"],
+    );
   });
 
-  it("FRONT-A14:不是这个租户的 id 一件都不挂 —— 归属按 ownerId 重查,不信 payload", async () => {
-    // 库里一件都查不到(别人的、或者已经删了)。
-    mocks.entityFindMany.mockResolvedValue([]);
-    mocks.generationFindMany.mockResolvedValue([]);
+  it("FRONT-A14:不是这个租户的 / 类型不匹配的 id 一件都不挂 —— 归属按 ownerId 重查,不信 payload", async () => {
+    // 解析器一件都解不出来(别人的、已经删了、或者声称的 type 跟这一行真实的 type 对不上 ——
+    // 判官 P2-1:从前的实现只核 id + ownerId,不核类型)。
+    mocks.resolveOwnedReferenceRefs.mockResolvedValue({
+      refs: [], wire: [], links: [], entityIds: [], media: [], unresolved: 3, unusableFormat: 0,
+    });
 
     await expect(getCanvasConversationHandoff({
       ownerId: "owner-1",
@@ -350,13 +370,41 @@ describe("getCanvasConversationHandoff:引用解形与归属", () => {
       referenceVideoGenerationIds: [],
       references: [],
     });
-    expect(mocks.entityFindMany).toHaveBeenCalledWith({
-      where: { id: { in: ["ent-1"] }, ownerId: "owner-1", deletedAt: null },
-      select: { id: true },
+  });
+
+  it("FRONT-A14 / 判官 P2-2:upload: 型引用(wire id 是 Asset.id)照样解得出来,不无声掉队", async () => {
+    mocks.eventFindFirst.mockResolvedValue({
+      id: HANDOFF_ID,
+      projectId: PROJECT_ID,
+      payload: {
+        prompt: "Put her in the new hoodie",
+        threadId: THREAD_ID,
+        references: [{ type: "upload", id: "asset-1" }],
+      },
     });
-    expect(mocks.generationFindMany).toHaveBeenCalledWith({
-      where: { id: { in: ["gen-img", "gen-vid"] }, ownerId: "owner-1", deletedAt: null },
-      select: { id: true, asset: { select: { ext: true } } },
+    // `resolveOwnedReferenceRefs` 按 Asset.id 解析 upload,回来的稳定身份是摄取它的那一行
+    // Generation.id(与 wire 上的 asset id 不是同一个 id)。
+    mocks.resolveOwnedReferenceRefs.mockResolvedValue({
+      refs: [{ type: "upload", id: "asset-1" }],
+      wire: ["upload:asset-1"],
+      links: [],
+      entityIds: [],
+      media: [{ generationId: "gen-from-upload", kind: "image" }],
+      unresolved: 0,
+      unusableFormat: 0,
+    });
+
+    await expect(getCanvasConversationHandoff({
+      ownerId: "owner-1",
+      handoffId: HANDOFF_ID,
+      projectId: PROJECT_ID,
+      threadId: THREAD_ID,
+    })).resolves.toEqual({
+      prompt: "Put her in the new hoodie",
+      entityIds: [],
+      sourceGenerationIds: ["gen-from-upload"],
+      referenceVideoGenerationIds: [],
+      references: ["upload:asset-1"],
     });
   });
 });

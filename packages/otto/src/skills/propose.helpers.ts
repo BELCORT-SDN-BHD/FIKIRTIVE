@@ -923,6 +923,21 @@ export function buildProposeCard(
   // `hasSourceImage` 仍然只说 i2v：它驱动选型与 @元素清空，那两件事对图片方案不变
   // （图片方案照旧保留商家 @ 的元素，参考图与元素图一起进引擎）。
   let kind = input.kind;
+  /**
+   * FSE-210(判官指名的服务端兜底,PR #1420 P1-1)—— 模型自己在 `entityIds` 参数里带的那份,
+   * 并上这一轮服务端已经核过归属的那份(`ctx.turnEntityIds`,route.ts / ottoTurn 的
+   * `resolveOwnedReferenceRefs` 同一趟算出来的 `entityIds`)。
+   *
+   * 为什么不能只信模型:模型看到的 `@` 候选名单(`OttoContext.availableRefs`,
+   * `loadAvailableRefsForAgent` 产的)过滤掉了没有参考图的元素 —— 商家 `@` 了一件还没挂图
+   * 的产品,模型的候选名单里压根没有这个名字,于是没有一条路能让模型自己把它的 id 写进
+   * propose 的 `entityIds` 参数。这条并集不依赖模型记得带,它读的是服务端在**这一轮消息**
+   * 落库时已经核过归属的那份解析结果,与模型这次到底填没填是两件事。
+   *
+   * `ctx.turnEntityIds` 缺席(undefined)= 这条调用路径不是一次活的商家轮次(分镜子卡、
+   * Step-2 视频接力等系统铸卡),行为与并集加入之前逐字相同。
+   */
+  const entityIds0 = [...new Set([...input.entityIds, ...(ctx.turnEntityIds ?? [])])];
   const isRefVideo = kind === "video" && !!ctx.referenceVideoGenerationId;
   /** 这一轮解析出来的挂图总数 —— 与 `propose.ts` 喂给 `referenceBudget` 的是同一个数。 */
   const attachedImageCount = orderedUniqueRefIds([
@@ -938,7 +953,7 @@ export function buildProposeCard(
    * 所以这里数出来的永远是他真有的那几个。
    */
   const ownedTypeById = new Map(ownedEntities.map((e) => [e.id, e.type]));
-  const mentionedCastCount = input.entityIds.filter(
+  const mentionedCastCount = entityIds0.filter(
     (id) => ownedTypeById.get(id) === "CHARACTER",
   ).length;
   /**
@@ -949,7 +964,7 @@ export function buildProposeCard(
    * 第一张,所以预留基数必须是元素数 —— 否则「先 @ 商品元素、再 @ 演员」那一趟里唯一那格
    * 会被排在前面的元素拿走,演员仍旧一张不上车。
    */
-  const mentionedElementCount = input.entityIds.filter((id) => ownedTypeById.has(id)).length;
+  const mentionedElementCount = entityIds0.filter((id) => ownedTypeById.has(id)).length;
   /**
    * FSE-001 —— 这个视频计划里,挂图是首帧还是参考图。判据只有一份(`@fikirtive/core`),
    * 名额计算、卡面披露与 worker 的选片读的都是从它派生出来的同一组布尔。
@@ -1059,8 +1074,8 @@ export function buildProposeCard(
   // #774:归属集从 `ownedEntities` 取 —— 与冻在卡上的名字**同一趟**读出来的那一份,
   // 所以「谁算他的」与「他批的是哪个名字」不可能来自两次不同的读。
   const ownedSet = new Set(ownedEntities.map((e) => e.id));
-  if (input.entityIds.some((id) => !ownedSet.has(id))) throw new EntityReferenceUnavailableError();
-  let entityIds = [...input.entityIds];
+  if (entityIds0.some((id) => !ownedSet.has(id))) throw new EntityReferenceUnavailableError();
+  let entityIds = [...entityIds0];
   const ownedVarSel: Record<string, string> = {};
   for (const [k, v] of Object.entries(input.variantSel)) {
     if (ownedSet.has(k)) ownedVarSel[k] = v;

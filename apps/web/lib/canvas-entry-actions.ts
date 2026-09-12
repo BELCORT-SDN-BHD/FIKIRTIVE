@@ -16,7 +16,7 @@ import { newThreadTitle } from "./otto-canned-starters";
 import { MAX_GEN_ENTITIES } from "@fikirtive/core/gen";
 import { MAX_OTTO_COMPOSER_REFERENCES } from "./canvas-chat-reference";
 import { DEFAULT_CANVAS_NAME } from "./canvas-title";
-import { libraryMediaKindForExt } from "./library-types";
+import { resolveOwnedReferenceRefs } from "./reference-refs";
 
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_CANVAS_NAME = 80;
@@ -272,52 +272,31 @@ export async function getCanvasConversationHandoff(input: {
   if (payload?.threadId !== input.threadId || typeof payload.prompt !== "string" || !payload.prompt.trim()) return null;
 
   /**
-   * 归属在**这里**重查,不在写入那一刻信客户端。起步页交上来的 id 只是一个定位参数:
-   * 不是这个租户的、已经删掉的,一律当作不存在 —— 少挂一件参考,好过替商家把别人的东西
-   * 塞进他自己那一轮。形状坏掉(不是我们发的那种)整笔当没带引用。
+   * 归属在**这里**重查,不在写入那一刻信客户端 —— 与直接在画布里 `@`
+   * (`useReferencePicker.referencesForSend`)同一个判据:`resolveOwnedReferenceRefs`
+   * (判官 P2-1/P2-2,PR #1420)。从前这里是一套独立的归属查询,只核 id 与 ownerId、不核
+   * **类型**(商家能把自己的一个角色元素自报成 `product` 混过去,归属查照样过),也没有
+   * `upload:` 那一支(它的 wire id 是 `Asset.id`,按 `Generation.id` 查永远查不到 —— 商家
+   * 在起步页 `@` 一件上传件时这份参考会无声掉队)。单一判据,不留第二套。
+   *
+   * 形状坏掉(不是我们发的那种)整笔当没带引用;不是这个租户的、已经删掉的、类型不匹配的,
+   * 一律当作不存在 —— 少挂一件参考,好过替商家把别人的东西塞进他自己那一轮。
    */
   const refs = parseHandoffReferences(payload.references) ?? [];
-  const entityRefIds = refs.filter((ref) => isEntityReferenceType(ref.type)).map((ref) => ref.id);
-  const mediaRefIds = refs.filter((ref) => !isEntityReferenceType(ref.type)).map((ref) => ref.id);
-  const [entities, generations] = await Promise.all([
-    entityRefIds.length
-      ? prisma.entity.findMany({
-          where: { id: { in: entityRefIds }, ownerId: input.ownerId, deletedAt: null },
-          select: { id: true },
-        })
-      : Promise.resolve([]),
-    mediaRefIds.length
-      ? prisma.generation.findMany({
-          where: { id: { in: mediaRefIds }, ownerId: input.ownerId, deletedAt: null },
-          select: { id: true, asset: { select: { ext: true } } },
-        })
-      : Promise.resolve([]),
-  ]);
-  const ownedEntityIds = new Set(entities.map((entity) => entity.id));
-  // 图片进 `sourceGenerationIds`、影片进 `referenceVideoGenerationIds` —— 分法与素材库
-  // 同一条规则(`lib/library-types.ts` 的 `libraryMediaKindForExt`),不在这里另立一套。
-  const mediaKindById = new Map(
-    generations.map((generation) => [generation.id, libraryMediaKindForExt(generation.asset.ext)] as const),
-  );
-
-  const entityIds = entityRefIds.filter((id) => ownedEntityIds.has(id));
-  const sourceGenerationIds = mediaRefIds.filter((id) => mediaKindById.get(id) === "image");
-  const referenceVideoGenerationIds = mediaRefIds.filter((id) => mediaKindById.get(id) === "video");
+  const resolved = await resolveOwnedReferenceRefs(input.ownerId, refs.map((ref) => formatReferenceRef(ref)));
+  // 图片进 `sourceGenerationIds`、影片进 `referenceVideoGenerationIds` —— 分法与解析器同一条
+  // 规则(`lib/reference-refs.ts` 按行上的真实扩展名判族),不在这里另立一套。
+  const sourceGenerationIds = resolved.media.filter((m) => m.kind === "image").map((m) => m.generationId);
+  const referenceVideoGenerationIds = resolved.media.filter((m) => m.kind === "video").map((m) => m.generationId);
 
   return {
     prompt: payload.prompt,
     // 顺序按商家挂的顺序保留:参考的次序在画布那一侧是有意义的(<Image_1>…<Image_N>)。
-    entityIds,
+    entityIds: resolved.entityIds,
     sourceGenerationIds,
     referenceVideoGenerationIds,
-    // FSE-210 / PRODID-R11:同一批已核过归属的引用,原样铺成 typed wire 形式 —— 只收
-    // 上面三份数组里已经在的那些(同一次归属核对),不新开第二道判据。
-    references: refs
-      .filter((ref) =>
-        isEntityReferenceType(ref.type)
-          ? entityIds.includes(ref.id)
-          : sourceGenerationIds.includes(ref.id) || referenceVideoGenerationIds.includes(ref.id),
-      )
-      .map((ref) => formatReferenceRef(ref)),
+    // FSE-210 / PRODID-R11:同一次归属核对产出的 wire 形式,原样带出去 —— 不再第二次按
+    // 「是否落进上面三份数组」自己过滤(那正是丢 `upload:` 参考的那道第二套判据)。
+    references: resolved.wire,
   };
 }

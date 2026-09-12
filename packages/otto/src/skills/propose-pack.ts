@@ -59,7 +59,15 @@ export async function executeProposePack(
   const ctx = runContext.context as OttoContext;
 
   // Collect all entityIds referenced across all items (de-duped) for a single ownership check.
-  const allEntityIds = [...new Set(input.items.flatMap((item) => item.entityIds))];
+  //
+  // FSE-210(判官 P1-1,与 `propose.ts` 同一条纪律)—— 并上这一轮服务端已核过归属的
+  // `ctx.turnEntityIds`:`buildProposeCard` 内部把它并进每一项自己的 entityIds,查询集与
+  // 下面 `itemOwnedEntities` 的过滤集都必须跟得上,否则归属闸会把并集救回来的那个 id
+  // 误判成「查无此人」。
+  const allEntityIds = [...new Set([
+    ...input.items.flatMap((item) => item.entityIds),
+    ...(ctx.turnEntityIds ?? []),
+  ])];
 
   // #774 判官 r2 P1:名字与类型跟归属同一趟读出来 —— 卡上冻结的就是这一刻的身份。
   let ownedEntities: ApprovedEntity[] = [];
@@ -80,8 +88,11 @@ export async function executeProposePack(
   const payloads: CardPayload[] = [];
   try {
     for (const item of input.items) {
-      // Ownership guard: filter the owned entities to those referenced by this item.
-      const itemOwnedEntities = ownedEntities.filter((e) => item.entityIds.includes(e.id));
+      // Ownership guard: filter the owned entities to those referenced by this item — plus the
+      // turn-resolved set `buildProposeCard` will also merge in (FSE-210 判官 P1-1), so the
+      // ownedSet it builds internally always covers what it itself asks for.
+      const itemEntityIds = new Set([...item.entityIds, ...(ctx.turnEntityIds ?? [])]);
+      const itemOwnedEntities = ownedEntities.filter((e) => itemEntityIds.has(e.id));
       payloads.push(buildProposeCard(item as ProposeInput, ctx, itemOwnedEntities).cardPayload);
     }
   } catch (e) {

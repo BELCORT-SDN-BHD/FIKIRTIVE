@@ -25,7 +25,12 @@ export async function executeLookupProducts(
     orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
     // 名字与主图的权威是身份(规格 §1.4;PRODID-A4)。Otto 说出口的产品名必须和商家在
     // Library 看到的那一个逐字相同,所以这里 join 身份把 data 里的缓存盖掉。
-    select: { kind: true, data: true, entity: { select: { name: true, baseAssetId: true } } },
+    //
+    // FSE-210(判官 P2-3,PR #1420)—— 这一份 select 从前只取了身份的 `name` / `baseAssetId`,
+    // 没有 `id`。查到的每一件产品因此没有一个 id 能让 Otto 把它 `@` 进 propose 的 `entityIds`——
+    // 一件没挂参考图的产品从 `availableRefs`(`loadAvailableRefsForAgent`)的 `@` 候选名单里被
+    // 过滤掉之后,`lookupProducts` 本该是 Otto 唯一还找得到它身份的路,却在这里把 id 漏掉了。
+    select: { kind: true, data: true, entity: { select: { id: true, name: true, baseAssetId: true } } },
     take: 200, // catalog design bound (founder decision 6); substring match in app code
   });
   const hit = (d: Record<string, unknown>): boolean => {
@@ -34,7 +39,11 @@ export async function executeLookupProducts(
     return hay.includes(q);
   };
   const matches = rows
-    .map((r) => withProductIdentity(r.kind, r.data as Record<string, unknown>, r.entity))
+    .map((r) => ({
+      ...withProductIdentity(r.kind, r.data as Record<string, unknown>, r.entity),
+      // FSE-210(判官 P2-3)—— 身份 id,与 name / imageAssetId 同一趟 join 读出来。
+      ...(r.entity?.id ? { entityId: r.entity.id } : {}),
+    }))
     .filter(hit)
     .slice(0, 5);
   return { matches };
@@ -47,7 +56,9 @@ export const lookupProductsSkill = defineOttoSkill({
   reach: "internal",
   description:
     "Look up the user's saved products by name, category, tag or description (returns up to 5 full records). $0. " +
-    "Your context only shows a summary of the catalog — call this BEFORE naming, pricing or featuring a specific product that isn't already in your context.",
+    "Your context only shows a summary of the catalog — call this BEFORE naming, pricing or featuring a specific product that isn't already in your context. " +
+    "Each match carries entityId — pass it in propose's entityIds when the product doesn't have a reference image yet (so it never showed up as an @-able entity), " +
+    "so the generation still conditions on the right product.",
   parameters: params,
   execute: executeLookupProducts,
 });
