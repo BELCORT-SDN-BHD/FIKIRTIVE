@@ -22,7 +22,12 @@ const { mockOwner, mockStorage, assetUpsert } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
+// 租户围栏切片②（#1377）：upload-actions.ts 现在从这个模块拿 `resolveUserPrincipal` 建帧;
+// 补上 #464 B1 既有的共享 stub（其它切片同款用法）。
+vi.mock("../auth-guard", async () => ({
+  requireOwner: mockOwner,
+  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("@/lib/storage", () => ({ storage: mockStorage }));
 vi.mock("@/lib/queue", () => ({ getBoss: vi.fn(async () => ({ send: vi.fn() })) }));
 vi.mock("@/lib/entity-snapshot", () => ({ buildEntitySnapshot: vi.fn(async () => null) }));
