@@ -1,6 +1,7 @@
 "use server";
 import { stripe } from "@/lib/stripe";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { CREDIT_PACKS, CREDIT_PACK_CURRENCY, verifyCreditPackPurchase } from "@fikirtive/core";
 
@@ -37,6 +38,14 @@ export async function listCreditPacks(): Promise<CreditPackShelf> {
   const gate = await requireOwner();
   // Denied at the door: we never got to look at the shelf, so we may not report on it.
   if ("error" in gate) return { unreadable: true };
+  // 租户围栏切片①（规格 docs/specs/tenant-isolation.md，#1376）：钱面的每一个入口都要先报上
+  // 「我是谁、动的是哪家店」。这一个动作今天只问 Stripe、不碰数据库，帧照样要建 —— 闸认的是帧，
+  // 不是这一趟碰巧读了什么（TENANT-A1）。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => listCreditPacksInFrame());
+}
+
+async function listCreditPacksInFrame(): Promise<CreditPackShelf> {
   if (!process.env.STRIPE_SECRET_KEY) {
     if (process.env.NODE_ENV === "production") {
       console.warn("[billing] listCreditPacks unavailable: STRIPE_SECRET_KEY is not set.");
@@ -97,6 +106,17 @@ export async function createTopupCheckout(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to buy credits." };
+  // 切片①（#1376，TENANT-A1）：充值是钱面最前面那一道门,帧在这里建 —— 门后的每一次读写(含
+  // 未来任何一次账本读)从此都带着「谁、哪家店」。冒充已经在上一行拒掉了,所以 `impersonating`
+  // 取默认的 false 就是诚实值。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => createTopupCheckoutInFrame(gate, priceId));
+}
+
+async function createTopupCheckoutInFrame(
+  gate: { email: string; ownerId: string },
+  priceId: string,
+): Promise<{ url: string } | { error: string; contactSupport?: true }> {
   if (typeof priceId !== "string" || !priceId) return { error: "Pick a credit pack." };
 
   let price: Awaited<ReturnType<typeof stripe.prices.retrieve>>;
