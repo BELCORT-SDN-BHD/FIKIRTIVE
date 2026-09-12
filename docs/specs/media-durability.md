@@ -1,7 +1,7 @@
 # 媒体可恢复（最小层）规格书（S1）
 
-> 状态: 草稿
-> 批准: （冻结时填）https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/871 Founder 评论「S1 批准 media-durability.md」(YYYY-MM-DD)
+> 状态: 已冻结 · v1
+> 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1372 Founder 评论「S1 批准 media-durability.md」(2026-09-12，批准于工作会话、经 Founder 豁免由编排者代录——见该票签名代录说明)
 > 规格前缀: MEDIA（验收编号 = MEDIA-A1、A2…，全仓不得与其他规格撞前缀）
 
 ## 0. 一句话
