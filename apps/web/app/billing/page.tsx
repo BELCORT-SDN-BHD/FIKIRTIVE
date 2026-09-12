@@ -23,6 +23,7 @@ import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/
 import { SupportExit } from "@/components/exits/Exits";
 import { SettingsShell } from "@/components/settings/SettingsShell";
 import { SpendCapCard } from "./SpendCapCard";
+import { BillingLiveRefresh } from "./BillingLiveRefresh";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Billing & credits · Fikirtive" };
@@ -68,6 +69,8 @@ export default async function BillingPage({
       description="Review your credit balances, spend cap, top-ups and every credit movement."
       scopeNote="Changes affect everyone in this workspace."
     >
+      {/* FSE-202 —— 正文与侧栏同一份信号、同一个失效时机;渲染 null,不占版面。 */}
+      <BillingLiveRefresh />
       {/* 已冻结的 Settings pattern(夹具 `BillingContent`):一列 `max-w-3xl`,每个 section
           是「图标 + 一行标题 + 一句说明」,内容落进一个带边框的 divide-y 列表,不是一堆
           并排的 marketing card。Founder 2026-09-03 裁决:排版按设计,主干的三条花钱披露
