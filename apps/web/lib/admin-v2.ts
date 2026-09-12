@@ -156,10 +156,16 @@ export type AuditPreview = {
   /**
    * WHICH TENANT'S STREAM this row belongs to — data ownership, never identity.
    *
-   * `ActionEvent.ownerId` is a foreign key to `Organization`, and for every platform-level event
-   * class (`auth.signin`, `rbac.deny`, `rbac.role.set`, `credits.grant`, `impersonate.*`) it is
-   * the constant `FOUNDER_OWNER_ID`. Displaying it in the identity column is what made the audit
-   * page report the founder as the person who was refused at his own admin door ten times.
+   * `ActionEvent.ownerId` is a foreign key to `Organization`. For the operator-driven event
+   * classes (`rbac.deny`, `rbac.role.set`, `impersonate.*`, the `tenant.*` mirror rows) it is the
+   * constant `FOUNDER_OWNER_ID`; since FSE-209 (S5 批量裁决 2026-09-12, `docs/specs/sign-in.md`
+   * §5) `auth.signin` carries the TENANT the login happened in instead, so a merchant can find
+   * their own sign-ins by asking for their own data. Either way it is the stream, not the person
+   * — displaying it in the identity column is what made the audit page report the founder as the
+   * person who was refused at his own admin door ten times.
+   *
+   * This table is not scoped to the founder org (`ownerId: { not: "" }` below), so moving that
+   * one class to the tenant took nothing away from it.
    */
   ownerId: string;
   projectId: string | null;
