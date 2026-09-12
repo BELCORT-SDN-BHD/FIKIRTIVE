@@ -424,6 +424,27 @@ describe("STORAGE_DRIVER must be a remote driver in production (#797 r2 P1-2)", 
     expect(decision.action).toBe("exit");
   });
 
+  it("the declared production values are a subset of the declared format values", () => {
+    for (const spec of ENV_CONTRACT) {
+      if (!spec.productionValues) continue;
+      expect(spec.productionReason, `${spec.name}: productionValues without a reason`).toBeTruthy();
+      if (spec.format === "enum") {
+        for (const v of spec.productionValues) {
+          expect(spec.values ?? [], `${spec.name}: "${v}" is not one of the declared values`).toContain(v);
+        }
+      }
+    }
+  });
+});
+
+/**
+ * RELY-A4 / A5(docs/specs/fail-closed-reliability.md §2)—— **生产必须点名一个引擎**。
+ *
+ * 与 STORAGE_DRIVER 那一族同形:格式合法与生产可用是两件事。`mock` 是 dev/CI 的正经取值,
+ * 在生产上它的意思却是「这台部署交付纯色假图与罐头理解,并且照常结算」。运行时那一层
+ * (packages/generation 的两个工厂)逐件拒绝并退款;这里是开机那一层 —— 两层并存。
+ */
+describe("GENERATION_PROVIDER 在生产只认 byteplus(RELY-A4 / A5)", () => {
   it("RELY-A4:生产 worker 把 GENERATION_PROVIDER 设成 mock ⇒ 开机拒绝并点名该变量", () => {
     const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, GENERATION_PROVIDER: "mock" }, { surface: "worker", production: true });
     const p = problems.find((x) => x.name === "GENERATION_PROVIDER");
@@ -459,17 +480,6 @@ describe("STORAGE_DRIVER must be a remote driver in production (#797 r2 P1-2)", 
     }
   });
 
-  it("the declared production values are a subset of the declared format values", () => {
-    for (const spec of ENV_CONTRACT) {
-      if (!spec.productionValues) continue;
-      expect(spec.productionReason, `${spec.name}: productionValues without a reason`).toBeTruthy();
-      if (spec.format === "enum") {
-        for (const v of spec.productionValues) {
-          expect(spec.values ?? [], `${spec.name}: "${v}" is not one of the declared values`).toContain(v);
-        }
-      }
-    }
-  });
 });
 
 // ── 钱路 M1-c(审计 P1):OTTO_LLM_MARGIN 的下限守卫 ────────────────────────────
