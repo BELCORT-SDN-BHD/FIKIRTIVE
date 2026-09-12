@@ -2,9 +2,23 @@
 
 import Link from "next/link";
 import { CANVAS_HREF } from "@fikirtive/core/navigation";
+import { UNDERSTANDING_PROVIDER_PAUSED, UNDERSTANDING_WAITING_FOR_CREDITS } from "@fikirtive/core";
 import { creditsLabel } from "@/lib/credit-format";
 import type { GenerationLineage } from "@/lib/actions";
 import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
+
+/**
+ * `costPending` 为真时该说哪一句 —— 判官修根 P1-1(PR #1415,FSE-203/205/211)。
+ * PAUSED_BALANCE / PAUSED 都不是「快有结果」,商家该做的事也不一样(充值 vs 什么都不用做),
+ * 混着说成一句「settles shortly」是撒谎。两句权威文案原样搬运(`@fikirtive/core`),
+ * 不在这里另造第三套说法(家规 §7.3 单一源头)。
+ */
+function pendingCostCopy(reason: GenerationLineage["costPendingReason"]): string {
+  if (reason === "waiting_for_credits") return UNDERSTANDING_WAITING_FOR_CREDITS;
+  if (reason === "provider_paused") return UNDERSTANDING_PROVIDER_PAUSED;
+  // QUEUED / RUNNING —— 真的快,原话不动。
+  return "still reading this file — price settles shortly";
+}
 
 /**
  * 血缘节 —— 一件素材的出处、参考、成本、状态、用途(清单 B3 / P1-007;
@@ -57,10 +71,18 @@ export function AssetLineage({ lineage }: { lineage: GenerationLineage }) {
       {lineage.references.length > 0 && (
         <p className="cv-detail-fact-copy">References used: {lineage.references.join(", ")}</p>
       )}
-      {lineage.costCredits != null && (
-        <p className="cv-detail-fact-copy">
-          {lineage.costCredits === 0 ? "Cost: no credits charged" : `Cost: ${creditsLabel(lineage.costCredits)}`}
-        </p>
+      {lineage.costPending ? (
+        // FSE-203 —— 上传成功到自动理解结算之间那几十秒,这一格从前写死 0,于是说出
+        // "Cost: no credits charged" 这句假话(这笔钱随后一定会收)。结算没定论前说诚实
+        // 中间态,绝不能说没花钱。FSE-211 判官修根 P1-1:PAUSED_BALANCE / PAUSED 不是
+        // 「快」,文案按 `costPendingReason` 分岔(见上方 `pendingCostCopy`)。
+        <p className="cv-detail-fact-copy">Cost: {pendingCostCopy(lineage.costPendingReason)}</p>
+      ) : (
+        lineage.costCredits != null && (
+          <p className="cv-detail-fact-copy">
+            {lineage.costCredits === 0 ? "Cost: no credits charged" : `Cost: ${creditsLabel(lineage.costCredits)}`}
+          </p>
+        )
       )}
       <p className="cv-detail-fact-copy">Status: {lineage.status}</p>
       {lineage.usedIn.length > 0 && (

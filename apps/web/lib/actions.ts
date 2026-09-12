@@ -40,7 +40,7 @@ import { runAsUser } from "@fikirtive/db/principal";
 import { purgeOrphanedReferenceAssets, purgeAssetStorage } from "./asset-purge";
 // 血缘节的成本那一格与画布卡片信息面折的是**同一个**函数 —— 两处各写一份,同一件素材
 // 就会被报出两个价(`lib/canvas-lineage-data.ts` 的文件头说的正是这件事)。
-import { loadUploadUnderstandingCredits, netChargedInternalCredits } from "./canvas-lineage-data";
+import { loadUploadUnderstandingCredits, netChargedInternalCredits, type UploadUnderstandingCost } from "./canvas-lineage-data";
 
 /**
  * M0 server actions. Conventions:
@@ -1183,6 +1183,22 @@ export type GenerationLineage = {
   references: string[];
   /** 这一件用掉的 credits(商家单位)。`null` = 未知,`0` = 没花钱(上传/裁剪)。 */
   costCredits: number | null;
+  /**
+   * FSE-203 —— `costCredits` 此刻是不是一个**尚未定论**的 0:这件上传背后的自动理解还没
+   * 结清(建行未结算的那几十秒),不是真的没花钱。`false`(默认)= `costCredits` 就是事实,
+   * 照 §5 :169 的口径显示;`true` = 花钱前诚实中间态,不许说 "no credits charged"。
+   * 只有上传来路(没有付费任务)才可能是 `true` —— 生成任务的结算与产出落盘同一个事务,
+   * 没有这个窗口。
+   */
+  costPending: boolean;
+  /**
+   * FSE-203/211 判官修根 P1-1 —— `costPending` 为真时该用哪一句文案。undefined = 默认的
+   * 「还在读,价格快有定论」够用（不是 pending，或 pending 但状态是 QUEUED/RUNNING）。
+   * 与 `lib/canvas-lineage-data.ts` 的 `UploadUnderstandingCost.stalledReason` 同一份判断,
+   * 原样透传——两句权威文案（`UNDERSTANDING_WAITING_FOR_CREDITS` /
+   * `UNDERSTANDING_PROVIDER_PAUSED`）由渲染那一侧（`AssetLineage.tsx`）去挑,这里只带信号。
+   */
+  costPendingReason?: "waiting_for_credits" | "provider_paused";
   /** 商家话的状态。 */
   status: string;
   /** 这一件今天被用在哪里;空数组 = 还没被用到别处。 */
@@ -1208,6 +1224,10 @@ export async function getGenerationLineage(
       // FSE-009:`assetId` 是「这张上传的图后来被自动读过没有」那条链的第一环 ——
       // 理解任务的账本行挂在**素材**上,不在任何 GenJob 上。
       assetId: true,
+      // FSE-203/211(判官修根 P1-1):`asset.{mime,source,deletedAt,width,height,durationS}`
+      // 用于判「一行理解都还没建时算不算 pending」——与画布卡片信息面
+      // (`loadCanvasNodeLineages`)同一个依据(`wouldBeScannedForUnderstanding`)。
+      asset: { select: { mime: true, source: true, deletedAt: true, width: true, height: true, durationS: true } },
     },
   });
   if (!gen) return { error: "Not found." };
@@ -1235,8 +1255,17 @@ export async function getGenerationLineage(
         })
       : Promise.resolve([] as { balanceDelta: number }[]),
     gen.source === "UPLOAD"
-      ? loadUploadUnderstandingCredits(ownerId, [{ id: generationId, assetId: gen.assetId }])
-      : Promise.resolve(new Map<string, number>()),
+      ? loadUploadUnderstandingCredits(ownerId, [{
+          id: generationId,
+          assetId: gen.assetId,
+          mime: gen.asset?.mime ?? "",
+          source: gen.asset?.source ?? "",
+          deletedAt: gen.asset?.deletedAt ?? null,
+          width: gen.asset?.width ?? null,
+          height: gen.asset?.height ?? null,
+          durationS: gen.asset?.durationS ?? null,
+        }])
+      : Promise.resolve(new Map<string, UploadUnderstandingCost>()),
   ]);
 
   const usedIn: string[] = [];
@@ -1251,7 +1280,11 @@ export async function getGenerationLineage(
       ? (ledgerRows.length ? displayCredits(netChargedInternalCredits(ledgerRows)) : null)
       // FSE-009(Founder 2026-09-10 裁:只显示含理解费的合计,不拆行)。一行理解都没有、
       // 或那一笔被退过款 ⇒ 0 ⇒ 面上照旧说 "no credits charged",与从前逐字相同。
-      : (uploadCredits.get(generationId) ?? 0),
+      : (uploadCredits.get(generationId)?.creditsCharged ?? 0),
+    // FSE-203:只有上传来路才可能是「结算没定论」——付费任务的结算与产出落盘同一个事务,
+    // 没有这个窗口(job 分支恒为 false)。
+    costPending: !job && (uploadCredits.get(generationId)?.pending ?? false),
+    costPendingReason: job ? undefined : uploadCredits.get(generationId)?.stalledReason,
     status: lineageStatus(job?.status ?? null, gen.source),
     usedIn,
   };

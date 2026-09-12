@@ -507,3 +507,50 @@ describe("CREATE-A4 / CREATE-A12 路由理由:worker 建 Generation 行时自己
       .toBe("You asked for a capability only the fine-detail tier can do, so this went there.");
   });
 });
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * FSE-211 —— §5 复测:生成一条后 `Generation.routeReason` 与 `finalPromptText`
+ * 两列非空且可读
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * 先核实(票面要求),不是先补:这一节两列的写入点都**已经在上面两组测试里各自证过**
+ * (`routeReason` —— CREATE-A4/A12 那一组;`finalPromptText` —— 本文件开头「引擎自报的
+ * 提示词落在产出行上」那一组)。两列**同一次生成上都非空**这一句,从未被单独钉过 ——
+ * 这里补的是这条组合断言,不是写入机制本身(机制已经在、已经绿)。
+ *
+ * 两列各自的 null 语义**保持不变**,而且都各自有自己的冻结测试钉着,本票不动它们:
+ *   · `routeReason` 默认槽位是 null —— CREATE-A12「不是编出来的一句话」(上面那组);
+ *   · `finalPromptText` 引擎没报是 null —— 「绝不回落成商家写的那句」(本文件 :169 行)。
+ *     图片的官方响应契约里没有 `revised_prompt`(`packages/generation/src/byteplus.ts`
+ *     `readImageReceipt` 的文档注释),所以图片这条路上这一列**按官方契约恒为未知**——
+ *     这不是缺陷,是「不发明」那条纪律的另一半。走查现场那 4 条 Generation 全为 NULL,
+ *     与「都是默认槽位 / 图片没有 revised_prompt 字段」完全吻合,不是写入点没写。
+ *
+ * 复测因此挑**两列都可能非空的那一种生成**：升到高清档的视频(routeReason 有话可说)、
+ * 且供应商这次报了改写过的提示词(finalPromptText 有值)——这正是 §5 复测句「生成一条后
+ * 两列非空」在不发明任何数据的前提下能够成立的那一种现场。
+ */
+describe("FSE-211 生成一条后 routeReason 与 finalPromptText 两列非空且可读", () => {
+  it("FSE-211 高清视频且供应商回报了改写提示词 ⇒ 这一条 Generation 的 routeReason 与 finalPromptText 两列都非空、人话可读", async () => {
+    m.generateVideo.mockResolvedValue({
+      bytes: new Uint8Array([1]), ext: "mp4",
+      receipt: { finalPrompt: "slow push-in on the product, 1080p", billedUnits: 108_900 },
+    });
+    const { generationRows, receiptPrompts } = await runWorker({
+      ...videoJob,
+      model: "seedance-2-0",
+      videoOptions: { seconds: 5, resolution: "1080p" },
+    });
+
+    expect(generationRows).toHaveLength(1);
+    // routeReason 落在建行那一笔(generation.create 的 data)里,commit 与产出同一次写入。
+    expect(generationRows[0]!.routeReason).toBe("You asked for 1080p, so this went to the HD tier.");
+    expect(generationRows[0]!.routeReason).not.toBeNull();
+    // finalPromptText 落在回执补写那一笔(事务之外)里,同一行 id。
+    expect(receiptPrompts).toHaveLength(1);
+    expect(receiptPrompts[0]!.data.finalPromptText).toBe("slow push-in on the product, 1080p");
+    expect(receiptPrompts[0]!.data.finalPromptText).not.toBeNull();
+    expect(receiptPrompts[0]!.where.id).toBe("gen_out1");
+  });
+});
