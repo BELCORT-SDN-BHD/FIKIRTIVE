@@ -1,5 +1,6 @@
 import { redirect, notFound } from "next/navigation";
-import { requireRole } from "@/lib/auth-guard";
+import { requireRole, staffPrincipal } from "@/lib/auth-guard";
+import { runAsStaff } from "@fikirtive/db/principal";
 import { getTenantDetail } from "@/lib/tenant-admin";
 import { TenantDetail } from "@/components/admin/TenantDetail";
 
@@ -10,7 +11,8 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ o
   const gate = await requireRole("tenants", "read");
   if ("error" in gate) redirect("/login?from=/admin/tenants");
   const { orgId } = await params;
-  const detail = await getTenantDetail(orgId);
+  // #1379：目标租户已知（路径参数）—— ownerId=orgId。
+  const detail = await runAsStaff(staffPrincipal(gate, orgId), () => getTenantDetail(orgId));
   if (!detail) notFound();
   return <TenantDetail detail={detail} />;
 }

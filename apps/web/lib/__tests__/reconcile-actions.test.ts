@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 import { RECONCILE_CLOSED_TYPE, RECONCILE_OBSERVED_TYPE, reconcileClosureId, reconcileObservationId } from "@fikirtive/core";
 
 const requireRole = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireRole }));
+// #1379（TENANT 切片④）：reconcile-actions.ts 现在从这个模块拿 `staffPrincipal` 建帧。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireRole,
+  staffPrincipal: (await import("@/lib/__tests__/__stubs__/staff-principal")).stubStaffPrincipal,
+}));
 // 说不清的那一种要叫人 —— 报警管道注入成假 transport,一个真实外呼都不发。
 const founderAlert = vi.fn();
 vi.mock("@/lib/founder-alert", () => ({ founderAlert }));

@@ -8,7 +8,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
 
 const requireRole = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireRole }));
+// #1379（TENANT 切片④）：refund-actions.ts 现在从这个模块拿 `staffPrincipal` 建帧。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireRole,
+  staffPrincipal: (await import("@/lib/__tests__/__stubs__/staff-principal")).stubStaffPrincipal,
+}));
 
 const revalidatePath = vi.fn();
 vi.mock("next/cache", () => ({ revalidatePath }));

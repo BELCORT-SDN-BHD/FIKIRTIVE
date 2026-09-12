@@ -15,7 +15,8 @@ import {
   FINANCE_ADJUST_LIMITS,
   FINANCE_PER_ACTION_LIMIT_MESSAGE,
 } from "@fikirtive/core";
-import { requireRole } from "./auth-guard";
+import { requireRole, staffPrincipal } from "./auth-guard";
+import { runAsStaff } from "@fikirtive/db/principal";
 import { activeMerchantOrg } from "./tenant-admin";
 import { financeAdjustBlockedMessage } from "./finance-limit-seam";
 
@@ -35,6 +36,18 @@ export async function grantCreditsAction(raw: unknown): Promise<{ ok: true; dupl
     if ("error" in crossTenant) return crossTenant;
     if (!(await activeMerchantOrg(orgId))) return { error: "Unknown or closed org." };
   }
+  // #1379（规格 TENANT 切片④，#1403 点名的「后台铸币入口」——本片处理，见 #1379 票面）：
+  // 两道 requireRole 判过之后,目标租户已经确定(orgId),从这里起建 staff 帧再进数据库。
+  // 权限不因建帧放宽:上面两次 requireRole 的判定原样决定这次调用放不放行,帧只是给已经放行
+  // 的这次铸币一个诚实的身份(操作者 + 目标租户)。
+  return runAsStaff(staffPrincipal(gate, orgId), () => grantCreditsActionInFrame(gate, orgId, v));
+}
+
+async function grantCreditsActionInFrame(
+  gate: { email: string },
+  orgId: string,
+  v: { orgId?: unknown; displayedAmount?: unknown; reason?: unknown; idempotencyKey?: unknown },
+): Promise<{ ok: true; duplicate?: boolean } | { error: string }> {
   // DISPLAYED credits (what merchants see). Signed: positive = grant, negative = adjustment.
   const displayedAmount = typeof v?.displayedAmount === "number" ? v.displayedAmount : NaN;
   if (!Number.isInteger(displayedAmount) || displayedAmount === 0 || Math.abs(displayedAmount) > 1_000_000) {

@@ -2,7 +2,7 @@ import "server-only";
 import { auth } from "@/lib/better-auth/compat";
 import { allowed, isFounderAdmin } from "@/lib/allowlist";
 import { prisma, grantCreditsTx } from "@fikirtive/db";
-import { runAsSystem, type UserPrincipal } from "@fikirtive/db/principal";
+import { runAsSystem, type UserPrincipal, type StaffPrincipal } from "@fikirtive/db/principal";
 import { seedActorLibrary } from "./actor-library-seed";
 import {
   newId,
@@ -161,6 +161,24 @@ export async function resolveUserPrincipal(
     // #463/#464 never carry the impersonator's id — see @fikirtive/db/principal (deferred to ②-D).
     impersonatedByBaUserId: null,
   };
+}
+
+/**
+ * #1379 — TENANT 切片④：把一次成功的 `requireRole()` 判定变成 staff 帧的身份半
+ * (`@fikirtive/db/principal` 的 `StaffPrincipal`，见 `runAsStaff` 的文档)。
+ *
+ * 与 `resolveUserPrincipal` 的分工同一个道理，但更轻：staff 帧不需要额外查一次数据库 ——
+ * `requireRole()` 已经给出了全部要装进帧里的东西（`gate.email`），剩下的只是「这个动作点名了
+ * 哪个租户」，调用方在自己的入参里已经知道（或知道自己没有），所以这是一个纯函数。
+ *
+ * `ownerId` 按规格 §1.6「判定按结构不按名字」传：动作点名了一个具体商家（改状态、铸币、退款…）
+ * 就传那家的 orgId；动作本身是平台范围的（后台配置、队列看板、对账清单…）就传 `null` ——
+ * 守卫把它当扫描域处理，同 `kind:"system"` 的空 `ownerId`。**权限不因建帧放宽**：这个函数不做
+ * 任何授权判断，`requireRole` 的结果原样决定动作放不放行，帧只是给已经放行的那次操作一个诚实
+ * 的身份。
+ */
+export function staffPrincipal(gate: { email: string }, ownerId: string | null): StaffPrincipal {
+  return { kind: "staff", actorEmail: gate.email, ownerId };
 }
 
 /** #538 — thrown to abort provisioning when the operator's revoke won the AllowedEmail row.
