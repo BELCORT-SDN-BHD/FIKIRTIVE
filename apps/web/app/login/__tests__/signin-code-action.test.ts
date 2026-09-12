@@ -175,6 +175,9 @@ describe("#678 — the action's whole answer vocabulary is existence-independent
   it("the contract itself offers only existence-independent reasons", async () => {
     const contract = await import("@/lib/better-auth/signin-code-contract");
     expect(Object.keys(contract).sort()).toEqual([
+      // FSE-201 —— 一个码值几次猜。它是 `allowedAttempts` 与登录页那个计数器共用的那个数，
+      // 是我们自己配的常量，与「这个地址是谁」无关，所以它同样是 existence-independent 的。
+      "SIGN_IN_CODE_ALLOWED_ATTEMPTS",
       "SIGN_IN_CODE_INVALID_EMAIL_MESSAGE",
       "SIGN_IN_CODE_LENGTH",
       // SIGNIN-A8 —— 「一小时内第 6 次」。它谈的是**次数**，不是地址：桶对每个地址一样存在，
@@ -182,6 +185,10 @@ describe("#678 — the action's whole answer vocabulary is existence-independent
       // 不成立了）。所以它与其它几条一样是 existence-independent 的。
       "SIGN_IN_CODE_RATE_LIMITED_MESSAGE",
       "SIGN_IN_CODE_REJECTED_MESSAGE",
+      // FSE-201（S5 批量裁决 2026-09-12，docs/specs/sign-in.md §5）—— 码用尽之后那一句。
+      // 它由**商家自己按了几次**挑出来，不是由服务端的答案挑出来：撤销地址与暂停期的陌生人
+      // 从来没被铸过码，所以按答案分岔会泄露他们是谁（规格 §1.3）。按次数分岔对每个地址一样。
+      "SIGN_IN_CODE_SPENT_MESSAGE",
       "SIGN_IN_CODE_SUCCESS_MESSAGE",
       // Founder 2026-09-05 裁决①。它说的是**部署**(这里有没有邮件通道),不是地址:一次
       // env 读,对每个邮箱同一个答案,在任何地址被看一眼之前就定了 —— 所以它与上面两条
@@ -195,19 +202,28 @@ describe("#678 — the action's whole answer vocabulary is existence-independent
     ]);
   });
 
-  /** The three refusals Better Auth can return when a code is submitted — wrong, expired, out of
-   *  attempts — collapse into ONE sentence on the page. Telling them apart would answer "does a
-   *  live code exist for this address", which is the oracle the whole path avoids. */
-  it("offers exactly one thing to say about a refused code", async () => {
-    const { SIGN_IN_CODE_REJECTED_MESSAGE } = await import(
+  /** The refusals Better Auth can return when a code is submitted — wrong, expired, out of
+   *  attempts — must all read the same on the page. Telling them apart would answer "does a
+   *  live code exist for this address", which is the oracle the whole path avoids.
+   *
+   *  FSE-201 added a SECOND sentence, and this test is what keeps it on the right side of that:
+   *  the page picks it from the merchant's own refusal count, so the page still never looks at
+   *  what came back. Hence the assertion below is now about the WHOLE `signInError` object, not
+   *  only the four error names. */
+  it("FSE-201: what the page says about a refused code never depends on what came back", async () => {
+    const { SIGN_IN_CODE_REJECTED_MESSAGE, SIGN_IN_CODE_SPENT_MESSAGE } = await import(
       "@/lib/better-auth/signin-code-contract"
     );
     const form = await import("node:fs/promises").then((fs) =>
       fs.readFile(new URL("../LoginForm.tsx", import.meta.url), "utf8"),
     );
     expect(SIGN_IN_CODE_REJECTED_MESSAGE).not.toMatch(/expired|attempts/i);
+    expect(SIGN_IN_CODE_SPENT_MESSAGE).not.toMatch(/expired|attempts/i);
     for (const leak of ["OTP_EXPIRED", "TOO_MANY_ATTEMPTS", "INVALID_OTP", "Invalid OTP"]) {
       expect(form, `LoginForm must not branch on ${leak}`).not.toContain(leak);
     }
+    // 连读都不许读:`if (signInError)`「有没有被拒」是唯一用到它的地方,任何 `signInError.<field>`
+    // 都是在拿服务端的答案说话,而那个答案分得出「这个地址被铸过码没有」。
+    expect(form.match(/signInError\./g) ?? [], "LoginForm must not read any field off the refusal").toHaveLength(0);
   });
 });

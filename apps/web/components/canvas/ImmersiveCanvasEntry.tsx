@@ -6,6 +6,7 @@ import {
   type ImmersiveCanvasRuntimeContext,
 } from "@/components/canvas/NorthstarCanvasWorkspace";
 import { CANVAS_HREF } from "@fikirtive/core/navigation";
+import { CanvasDeepLinkRefused } from "@/components/canvas/CanvasDeepLinkRefused";
 import { getMyAccount } from "@/lib/account-actions";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
@@ -26,19 +27,36 @@ function firstSearchParam(value: string | string[] | undefined): string | undefi
   return Array.isArray(value) ? value[0] : value;
 }
 
+/**
+ * FSE-207(规格 §5,Founder 2026-09-12 #1358 裁「零写入」为硬口径)——
+ * 「这条 `?project=` 我们打不开」是一道**在任何写入之前**就要问完的题。
+ *
+ * 从前的答法是「打不开就兜底」:先 `getOrCreateDefaultProject()`(没有画布的租户会被
+ * 建一张)、再把地址改写成兜底那张,于是别的租户的深链在访问者那边**静默**变成一张空白
+ * 新画布 ＋ 一行 `project.create` 审计。判据本身没错(「这个 id 在不在他自己的清单里」),
+ * 错的是它的**位置**和**答完之后干什么**。
+ *
+ * 所以这个纯函数只回答那一题,`ImmersiveCanvasEntry` 在读完自己的画布清单、写任何东西
+ * 之前先问它;答「是」就交拒绝页,零写入、零改写。
+ */
+export function isUnresolvedProjectDeepLink(
+  projects: readonly ProjectChoice[],
+  requestedProjectId: string | undefined,
+): boolean {
+  if (requestedProjectId === undefined) return false;
+  return !projects.some((project) => project.id === requestedProjectId);
+}
+
 export function selectImmersiveProject(
   projects: readonly ProjectChoice[],
   ensuredProjectId: string,
   requestedProjectId: string | undefined,
-): { activeProjectId: string; shouldRedirect: boolean } {
+): { activeProjectId: string } {
   const requested = requestedProjectId
     ? projects.find((project) => project.id === requestedProjectId)
     : undefined;
 
-  return {
-    activeProjectId: requested?.id ?? projects[0]?.id ?? ensuredProjectId,
-    shouldRedirect: requestedProjectId !== undefined && !requested,
-  };
+  return { activeProjectId: requested?.id ?? projects[0]?.id ?? ensuredProjectId };
 }
 
 /**
@@ -104,15 +122,22 @@ export async function ImmersiveCanvasEntry({
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
 
+  // FSE-207:清单先读、拒绝先判,`getOrCreateDefaultProject()` 排在它后面 —— 那一条会
+  // **建**一张画布(`actions.ts` 的 `project.create` ＋ 审计行),所以它一个字节都不许在
+  // 「这条深链我们打不开」这题答完之前执行。打不开就到此为止:不改写地址、不建任何东西。
+  const requestedProjectId = firstSearchParam(sp.project);
+  const ownedProjects = await getProjects(owner.ownerId);
+  if (isUnresolvedProjectDeepLink(ownedProjects, requestedProjectId)) {
+    return <CanvasDeepLinkRefused />;
+  }
+
   const ensured = await getOrCreateDefaultProject();
   if ("error" in ensured) redirect("/login");
 
-  const projects = await getProjects(owner.ownerId);
-  const projectSelection = selectImmersiveProject(
-    projects,
-    ensured.id,
-    firstSearchParam(sp.project),
-  );
+  // 一张画布都还没有的租户:上面那次读发生在 bootstrap 之前,所以这里重读一次,侧栏的画布
+  // 清单才不会比改动之前少一张(这一趟只在「一张都没有」时发生,也就是每个租户的第一次)。
+  const projects = ownedProjects.length > 0 ? ownedProjects : await getProjects(owner.ownerId);
+  const projectSelection = selectImmersiveProject(projects, ensured.id, requestedProjectId);
   const [threadRows, accountResult, entityRows] = await Promise.all([
     getCoworkThreads(owner.ownerId, projectSelection.activeProjectId),
     getMyAccount(),
@@ -125,12 +150,12 @@ export async function ImmersiveCanvasEntry({
     firstSearchParam(sp.thread),
   );
 
-  if (projectSelection.shouldRedirect || threadSelection.shouldRedirect) {
+  if (threadSelection.shouldRedirect) {
     redirect(
       buildImmersiveCanvasCanonicalUrl(sp, {
         activeProjectId: projectSelection.activeProjectId,
         activeThreadId: threadSelection.activeThreadId,
-        canonicalizeThread: threadSelection.shouldRedirect,
+        canonicalizeThread: true,
       }),
     );
   }
