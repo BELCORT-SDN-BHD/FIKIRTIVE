@@ -1,12 +1,6 @@
 import "server-only";
 import { consumeRateLimit } from "@fikirtive/db/rate-limit";
 import { callerKey } from "@/lib/caller-identity";
-import {
-  MEDIA_PROXY_DEGRADED_RETRY_AFTER_SECONDS,
-  alertMediaProxyStoreUnreachable,
-  rememberMediaProxySuccess,
-  withinMediaProxyGrace,
-} from "@/lib/media-proxy-degraded";
 
 export { callerKey } from "@/lib/caller-identity";
 
@@ -243,14 +237,21 @@ export async function consumeUploadGate(ownerId: string): Promise<boolean> {
   return verdict.granted;
 }
 
-/** What the media proxy learned. A refusal always carries the wait, so the route can be honest
- *  about it in `Retry-After` instead of leaving the caller to guess (SHARE-A3). */
-export type MediaProxyGateVerdict = { allowed: true } | { allowed: false; retryAfterSeconds: number };
-
-/** `Retry-After` is whole seconds, and 0 would read as "come back now" — never round down to it. */
-function retryAfterSeconds(retryAfterMs: number): number {
-  return Math.max(1, Math.ceil(retryAfterMs / 1000));
-}
+/** What the media proxy's counter said. Three facts, because the route needs all three:
+ *  whether it may serve, how long to tell a refused caller to wait, and whether the counter
+ *  answered at all. `caller` rides along so the route never has to re-derive "who is counted". */
+export type MediaProxyGateVerdict = {
+  allowed: boolean;
+  /** Seconds until the blocking window ends. 0 when allowed, and 0 when `degraded` — there is no
+   *  window to wait out, so the wait is the ROUTE's policy call, not a fact the counter knows. */
+  retryAfterSeconds: number;
+  /** The counter could not be reached. `allowed` is then false: SHARE-A3 made this door
+   *  fail-CLOSED (see below); the grace window and the alert live at the route, in
+   *  `lib/media-proxy-access.ts`. */
+  degraded: boolean;
+  /** The bucket subject — `callerKey(requestHeaders)`. */
+  caller: string;
+};
 
 /**
  * The signed media proxy.
@@ -264,10 +265,12 @@ function retryAfterSeconds(retryAfterMs: number): number {
  * means anyone holding one valid link may pull as fast as the network allows, for the whole
  * outage, against our egress bill (#1053 finding 1).
  *
- * Founder ruled the three pieces ship together (2026-09-12, 场⑦), and they are all here:
- * refuse (429 + Retry-After), the short grace window that keeps a client who is ALREADY looking
- * from being cut off mid-page (SHARE-A4), and the alert that stops a silent mass-429 (SHARE-A12).
- * The cost of the refusal, with its eyes open, is written in the spec's 异议栏.
+ * Founder ruled three pieces ship together (2026-09-12, 场⑦): refuse (here), the short grace
+ * window for a client who is ALREADY looking (SHARE-A4), and the alert that stops a silent
+ * mass-429 (SHARE-A12). The other two are deliberately NOT in this file — they need the founder
+ * alert channels, and this module is inside the import fence of the session-less share-preview
+ * page (`lib/__tests__/share-preview-page.test.ts`). They live with their only caller, in
+ * `lib/media-proxy-access.ts`. The cost of refusing, with eyes open, is in the spec's §4 异议栏.
  *
  * Authorisation is unaffected either way: a forged, expired or foreign token still 404s regardless
  * of what this returns, and it is checked BEFORE this runs.
@@ -276,23 +279,19 @@ export async function consumeMediaProxyGate(
   requestHeaders: Headers,
   options: { now?: number } = {},
 ): Promise<MediaProxyGateVerdict> {
-  const now = options.now ?? Date.now();
   const caller = callerKey(requestHeaders);
   const verdict = await consumeRateLimit(
     [{ key: `media:${caller}`, max: MEDIA_PROXY_PER_CALLER_PER_10_MIN, windowMs: 10 * MINUTE }],
-    { now, onStorageFailure: "deny" },
+    { now: options.now, onStorageFailure: "deny" },
   );
-
-  if (!verdict.degraded) {
-    if (!verdict.granted) return { allowed: false, retryAfterSeconds: retryAfterSeconds(verdict.retryAfterMs) };
-    rememberMediaProxySuccess(caller, now);
-    return { allowed: true };
-  }
-
-  // The counter is unreachable. Tell a human (throttled, with a delivery receipt), then decide.
-  await alertMediaProxyStoreUnreachable(now);
-  if (withinMediaProxyGrace(caller, now)) return { allowed: true };
-  return { allowed: false, retryAfterSeconds: MEDIA_PROXY_DEGRADED_RETRY_AFTER_SECONDS };
+  return {
+    allowed: verdict.granted,
+    // Whole seconds, and never 0 for a real refusal — 0 reads as "come back now".
+    retryAfterSeconds:
+      verdict.granted || verdict.degraded ? 0 : Math.max(1, Math.ceil(verdict.retryAfterMs / 1000)),
+    degraded: verdict.degraded,
+    caller,
+  };
 }
 
 /**

@@ -156,7 +156,12 @@ describe("#795 上传闸", () => {
 
 describe("#795 外链闸(签名媒体代理)", () => {
   it("按出口地址计数,额度远在任何真实抓取节奏之上", async () => {
-    expect(await consumeMediaProxyGate(from("198.51.100.9"))).toEqual({ allowed: true });
+    expect(await consumeMediaProxyGate(from("198.51.100.9"))).toEqual({
+      allowed: true,
+      retryAfterSeconds: 0,
+      degraded: false,
+      caller: "198.51.100.9",
+    });
     const rows = await prisma.rateLimitCounter.findMany({ where: { key: { startsWith: "media:" } } });
     expect(rows.map((r) => r.key)).toEqual(["media:198.51.100.9"]);
     expect(MEDIA_PROXY_PER_CALLER_PER_10_MIN).toBeGreaterThanOrEqual(300);
@@ -203,12 +208,11 @@ describe("计数器够不到的时候:对话闸放行,其余照旧拒", () => {
   // 数据库,拒了会打断一次商家已经付过钱的发布。那条理由的前提被 B0-28 改掉了:这条路现在
   // 还服务客户手上那条免登录预览链接,而 SHARE-A1 之后它是流式的、对象可到 2 GB —— 放行
   // 等于「谁有一条合法链接,谁就能在整段故障里按网络速度刷我们的出口流量」。拒了要付的代价
-  // 写在规格 §4 异议栏,兜底(SHARE-A4)与报警(SHARE-A12)是同一次裁定的另外两件。
-  // 这一条在这里,是为了让「按老注释把它改回放行」必须先让一条测试变红。
-  it("媒体代理闸改成 fail closed —— 计数器够不到就 429,并给出重试秒数(SHARE-A3)", async () => {
+  // 写在规格 §4 异议栏,兜底(SHARE-A4)与报警(SHARE-A12)是同一次裁定的另外两件,住在
+  // lib/media-proxy-access.ts。这一条在这里,是为了让「按老注释把它改回放行」先让测试变红。
+  it("媒体代理闸改成 fail closed —— 计数器够不到就不放行(SHARE-A3)", async () => {
     const verdict = await withCounterTableMissing(() => consumeMediaProxyGate(from("198.51.100.88")));
-    expect(verdict.allowed).toBe(false);
-    expect(verdict.allowed === false && verdict.retryAfterSeconds).toBeGreaterThan(0);
+    expect(verdict).toEqual({ allowed: false, retryAfterSeconds: 0, degraded: true, caller: "198.51.100.88" });
   });
 
   it("故障过去之后照常计数 —— 放行不留坏状态", async () => {

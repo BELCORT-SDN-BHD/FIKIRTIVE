@@ -1,10 +1,10 @@
 import "server-only";
 import { founderAlert } from "@/lib/founder-alert";
+import { consumeMediaProxyGate } from "@/lib/rate-limit-gates";
 import type { FounderAlertOutcome } from "@fikirtive/core/founder-alert";
 
 /**
- * SHARE-A3 / A4 / A12(docs/specs/share-preview.md 已冻结 · v1)—— 媒体代理限流计数器**够不到**
- * 的时候做什么。
+ * SHARE-A3 / A4 / A12(docs/specs/share-preview.md 已冻结 · v1)—— 公开媒体代理的放行决定。
  *
  * 背景,一句话:这道闸原本 fail-OPEN。理由写在 `rate-limit-gates.ts` 上,当时也成立 —— 这是
  * 唯一一条本来不碰数据库的路,拒了等于让一次计数器抖动打断一次商家已经付过钱的发布。
@@ -18,6 +18,11 @@ import type { FounderAlertOutcome } from "@fikirtive/core/founder-alert";
  *              把**正在看**的客户当场打断(SHARE-A4);
  *   ③ 报警  —— 「限流存储不可用」必须有人知道,而且要有逐通道**送达回执**,
  *              不是只往日志里写一行(SHARE-A12)。
+ *
+ * 为什么后两件不住在 `rate-limit-gates.ts`:那个文件在**免登录分享预览页**的 import 围栏内
+ * (`lib/__tests__/share-preview-page.test.ts` 把那一页能碰到的每个模块与每条外部边都钉死了)。
+ * 报警要 `@sentry/node` 与 Resend / Telegram 通道,那些东西没有理由出现在一个无会话页面的
+ * 依赖图里。所以它们跟唯一的调用方住在一起 —— 媒体代理路由。
  */
 
 /**
@@ -118,6 +123,34 @@ export async function alertMediaProxyStoreUnreachable(now: number): Promise<Foun
     console.error(`[media-proxy] rate-limit store alert NOT delivered — ${receipt}`);
   }
   return outcomes;
+}
+
+/** 放行 = 可以吐字节;拒绝 = 429,`retryAfterSeconds` 就是 `Retry-After` 的值。 */
+export type MediaProxyAdmission = { admitted: true } | { admitted: false; retryAfterSeconds: number };
+
+/**
+ * 这一次请求可以拿到字节吗 —— 上面三件的唯一入口,媒体代理路由只调这一个函数。
+ *
+ * 顺序是有意的:报警先于兜底判断,因为**兜底放行的那一次同样是一次存储故障**。客户没事
+ * 不等于存储没事,而这条报警的全部意义就是别让故障只从商家嘴里知道。
+ */
+export async function admitMediaProxyRequest(
+  requestHeaders: Headers,
+  options: { now?: number } = {},
+): Promise<MediaProxyAdmission> {
+  const now = options.now ?? Date.now();
+  const gate = await consumeMediaProxyGate(requestHeaders, { now });
+
+  if (gate.degraded) {
+    await alertMediaProxyStoreUnreachable(now);
+    if (withinMediaProxyGrace(gate.caller, now)) return { admitted: true }; // SHARE-A4
+    return { admitted: false, retryAfterSeconds: MEDIA_PROXY_DEGRADED_RETRY_AFTER_SECONDS }; // SHARE-A3
+  }
+
+  if (!gate.allowed) return { admitted: false, retryAfterSeconds: gate.retryAfterSeconds };
+
+  rememberMediaProxySuccess(gate.caller, now);
+  return { admitted: true };
 }
 
 /**

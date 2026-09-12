@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyMediaToken } from "@fikirtive/token-crypto";
 import { parseStorageKey, keyOwnerMatches } from "@fikirtive/core";
 import { storage, mimeOf } from "@/lib/storage";
-import { consumeMediaProxyGate } from "@/lib/rate-limit-gates";
+import { admitMediaProxyRequest } from "@/lib/media-proxy-access";
 import { parseByteRange } from "@/lib/byte-range";
 import { toWebStream } from "@/lib/web-stream";
 
@@ -56,15 +56,16 @@ export async function GET(
   //    one it was closing.
   //
   //    Generous by design (see MEDIA_PROXY_PER_CALLER_PER_10_MIN: the intended caller is a
-  //    platform's media-fetch fleet). SHARE-A3: it is now FAIL-CLOSED when the counter is
-  //    unreachable — why that flipped, and the grace window + alert that ship with it, are
-  //    written at consumeMediaProxyGate. 429, not 404: "too fast" is an honest answer to a
-  //    caller who already proved the link is theirs, and `Retry-After` says how long.
-  const gate = await consumeMediaProxyGate(req.headers);
-  if (!gate.allowed) {
+  //    platform's media-fetch fleet). SHARE-A3/A4/A12: it is now FAIL-CLOSED when the counter is
+  //    unreachable, with a short grace window for a client who is already looking and an alert
+  //    so the outage is not silent — all three at lib/media-proxy-access.ts, where the reasons
+  //    are written. 429, not 404: "too fast" is an honest answer to a caller who already proved
+  //    the link is theirs, and `Retry-After` says how long.
+  const admission = await admitMediaProxyRequest(req.headers);
+  if (!admission.admitted) {
     return new NextResponse("Too many requests", {
       status: 429,
-      headers: { "Retry-After": String(gate.retryAfterSeconds) },
+      headers: { "Retry-After": String(admission.retryAfterSeconds) },
     });
   }
 

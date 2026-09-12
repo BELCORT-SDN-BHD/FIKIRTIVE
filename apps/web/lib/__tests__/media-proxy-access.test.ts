@@ -18,7 +18,7 @@ const {
   rememberMediaProxySuccess,
   withinMediaProxyGrace,
   resetMediaProxyDegradedState,
-} = await import("@/lib/media-proxy-degraded");
+} = await import("@/lib/media-proxy-access");
 
 const T0 = 1_800_000_000_000;
 const DELIVERED: FounderAlertOutcome[] = [

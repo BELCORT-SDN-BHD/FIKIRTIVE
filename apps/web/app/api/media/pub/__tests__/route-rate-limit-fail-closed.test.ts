@@ -6,7 +6,9 @@
  * 三件一体(Founder 2026-09-12 场⑦)在这里一次验完:拒绝、兜底、报警。
  *
  * 这道闸从前是 fail-OPEN 的,理由写在 `consumeMediaProxyGate` 上,那条理由的前提已经变了 ——
- * 这条路现在有第二种调用者(客户的浏览器),而且流式之后对象可以到 2 GB。
+ * 这条路现在有第二种调用者(客户的浏览器),而且流式之后对象可以到 2 GB。三件的实现住在
+ * `lib/media-proxy-access.ts`(不在 `rate-limit-gates.ts`:那个文件在免登录分享预览页的
+ * import 围栏内,报警通道没有理由进那张依赖图)。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -34,7 +36,7 @@ vi.mock("@/lib/founder-alert", () => ({ founderAlert: (...a: unknown[]) => mockF
 
 const { GET } = await import("@/app/api/media/pub/[token]/route");
 const { resetMediaProxyDegradedState, MEDIA_PROXY_DEGRADED_GRACE_MS, MEDIA_PROXY_DEGRADED_RETRY_AFTER_SECONDS } =
-  await import("@/lib/media-proxy-degraded");
+  await import("@/lib/media-proxy-access");
 const { MEDIA_PROXY_PER_CALLER_PER_10_MIN } = await import("@/lib/rate-limit-gates");
 
 const SECRET = "media-secret-failclosed";
