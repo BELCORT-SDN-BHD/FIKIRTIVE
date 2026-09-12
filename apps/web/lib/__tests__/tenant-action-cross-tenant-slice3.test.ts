@@ -28,6 +28,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { newId } from "@fikirtive/core";
 import type { Prisma } from "@fikirtive/db";
+import { stubResolveUserPrincipal } from "@/lib/__tests__/__stubs__/resolve-user-principal";
 
 const { mockRequireOwner } = vi.hoisted(() => ({ mockRequireOwner: vi.fn() }));
 
@@ -39,7 +40,7 @@ vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: async () => false 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const { prisma } = await import("@fikirtive/db");
-const { runAsSystem, runAsTenant, getPrincipal } = await import("@fikirtive/db/principal");
+const { runAsSystem, runAsTenant, runAsUser, getPrincipal } = await import("@fikirtive/db/principal");
 const { updateContact } = await import("@/lib/crm-actions");
 const { getContact } = await import("@/lib/crm-view-data");
 const { deleteSegment } = await import("@/lib/segment-actions");
@@ -230,5 +231,79 @@ describe("TENANT-A2 CRM 面 —— A 的会话把 id 换成 B 的资源，改名
     } finally {
       prisma.contact.findFirst = original as never;
     }
+  });
+
+  // P2-1（判官反例，PR #1418）：上一条只给了读路径（findFirst）一个真 oracle。写路径同样不该只
+  // 信动作层自己的 `where:{ownerId}` —— deleteSegmentInFrame 的软删就是 `prisma.segment.updateMany`
+  // 本身，不在 `$transaction` 里（跟 updateContact 不同，下一条另有说明），可以照抄上一条的写法，
+  // 换成 updateMany。
+  //
+  // 一个额外要处理的地方：`deleteSegmentInFrame` 把这次调用包在
+  // `try { … } catch { return { error: GENERIC_UPDATE_ERROR } } ` 里 —— 守卫抛出的签名错误会被
+  // 这层 catch 吞掉，`deleteSegment()` 不会 reject，只会正常 resolve 成通用错误文案。所以这条
+  // 不能直接 `.rejects.toThrow(...)`（那样会误报"没抛"）：spy 里开一个旁路变量，把
+  // `updateMany` 真正抛出的原始错误先记下来再重新抛出（让动作层的 catch 按生产行为原样接住），
+  // 随后分别断言两件事——动作对外的返回值是它自己 catch 之后的通用文案，以及**真正打到数据库
+  // 那一刻**抛出的确实是 tenant-guard 的签名错误，不是别的什么异常撞上了同一句通用文案。
+  it("TENANT-A2 写路径补充证明（deleteSegment）：篡改 updateMany 的 where.ownerId 指向 B，运行时守卫本身直接拒绝（不是动作层显式过滤在顶）", async () => {
+    const original = prisma.segment.updateMany.bind(prisma.segment) as (
+      ...args: unknown[]
+    ) => Promise<unknown>;
+    let rawGuardError: string | null = null;
+    vi.spyOn(prisma.segment, "updateMany").mockImplementation(((...args: unknown[]) => {
+      const [queryArgs] = args as [{ where?: Record<string, unknown> }];
+      if (queryArgs?.where && "ownerId" in queryArgs.where) {
+        queryArgs.where = { ...queryArgs.where, ownerId: ORG_B };
+      }
+      return original(...args).catch((error: unknown) => {
+        rawGuardError = error instanceof Error ? error.message : String(error);
+        throw error;
+      });
+    }) as never);
+
+    try {
+      const result = await deleteSegment({ segmentId: segmentA });
+      expect(result).toEqual({ error: "Couldn't update this segment. Refresh and try again." });
+    } finally {
+      prisma.segment.updateMany = original as never;
+    }
+
+    expect(rawGuardError).toBe(
+      "[tenant-guard] Segment.updateMany tried to use ownerId outside the active tenant",
+    );
+  });
+
+  // P2-1（判官反例，PR #1418，updateContact 一侧）：想照抄上一条——直接
+  // `vi.spyOn(prisma.contact, "updateMany")` 篡改 where.ownerId——但实测是假阳性：
+  // `updateContactInFrame` 的写（`tx.contact.updateMany`）整段跑在
+  // `prisma.$transaction(async (tx) => { … })` 里，而 `tx.contact` 是这一次事务重新生成的委托
+  // 对象，跟顶层 `prisma.contact` 不是同一个引用——包一层顶层方法根本截不到事务内部的调用
+  // （探针实测：`vi.spyOn(prisma.contact, "updateMany")` 之后调用 `updateContact`，spy 从未
+  // 命中，写照常落地成功，返回 `{ok:true}`）。这不是本 PR 新发现——
+  // campaign-lifecycle.test.ts:561-618 已经拿另一个动作的事务测过同一件事，结论一致：`tx` 每次
+  // 事务重新生成，顶层 spy 截不到；`vi.spyOn(prisma, "$transaction")` 更是直接抛
+  // "does not exist"（`prisma` 是 `@fikirtive/db/client.ts` 里的惰性 Proxy，没有自有属性）。
+  //
+  // 所以这一条换一种可达的手法证明同一件事：不经过 `updateContact()` 这层壳，直接照
+  // `updateContactInFrame` 建帧的同一条路径（`resolveUserPrincipal` 产出的身份形状——用测试共享
+  // 桩 `stubResolveUserPrincipal` 复刻——交给 `runAsUser`），在同一种执行形状下
+  // （`prisma.$transaction` 里的 `tx.contact.updateMany`）直接把 `where.ownerId` 写成 B，断言
+  // 运行时守卫本身直接拒绝。证的是 `updateContactInFrame` 的写路径依赖的同一件机制
+  // （enforce 挡位对 `Contact.updateMany` 的检查，在事务内一样生效），不是"动作层显式过滤万一
+  // 漏了一处、动作自己的 catch 能不能兜住"那句话——那件事上面 deleteSegment 那条已经证过。
+  it("TENANT-A2 写路径补充证明（updateContact 依赖的机制）：事务内 Contact.updateMany 的 where.ownerId 指向 B，运行时守卫本身直接拒绝（vi.spyOn 顶层方法截不到事务内部调用，已实测为假阳性，见上方说明）", async () => {
+    const identity = await stubResolveUserPrincipal({ ...GATE_A });
+    await expect(
+      runAsUser(identity, () =>
+        prisma.$transaction((tx) =>
+          tx.contact.updateMany({
+            where: { id: contactA, ownerId: ORG_B },
+            data: { name: "should-not-land" },
+          }),
+        ),
+      ),
+    ).rejects.toThrow(
+      "[tenant-guard] Contact.updateMany tried to use ownerId outside the active tenant",
+    );
   });
 });

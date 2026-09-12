@@ -521,12 +521,24 @@ async function phoneGateInFrame(
   return { ownerId: gate.ownerId, contactId, input };
 }
 
-async function writeAddPhone(raw: unknown, surface: PhoneEntrySurface): Promise<ContactPhoneResult> {
+/**
+ * P3-2（判官定向修，PR #1418）：`writeAddPhone` / `writeUpdatePhone` / `writeRemovePhone` 三个
+ * 调用方复制了同一段 5 行帧壳（requireOwner → 先拒 impersonation → resolveUserPrincipal →
+ * runAsUser 包帧）—— 抽成这一个共享壳。各自的 InFrame 部分（`writeAddPhoneInFrame` 等）不动,
+ * 只是被当作回调传进来。
+ */
+async function withPhoneFrame<T>(
+  runInFrame: (owner: { email: string; ownerId: string }) => Promise<T>,
+): Promise<T | { error: string }> {
   const owner = await requireOwner();
   if ("error" in owner) return owner;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
   const principal = await resolveUserPrincipal(owner);
-  return runAsUser(principal, () => writeAddPhoneInFrame(owner, raw, surface));
+  return runAsUser(principal, () => runInFrame(owner));
+}
+
+async function writeAddPhone(raw: unknown, surface: PhoneEntrySurface): Promise<ContactPhoneResult> {
+  return withPhoneFrame((owner) => writeAddPhoneInFrame(owner, raw, surface));
 }
 
 async function writeAddPhoneInFrame(
@@ -609,11 +621,7 @@ async function writeAddPhoneInFrame(
 }
 
 async function writeUpdatePhone(raw: unknown, surface: PhoneEntrySurface): Promise<ContactPhoneResult> {
-  const owner = await requireOwner();
-  if ("error" in owner) return owner;
-  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
-  const principal = await resolveUserPrincipal(owner);
-  return runAsUser(principal, () => writeUpdatePhoneInFrame(owner, raw, surface));
+  return withPhoneFrame((owner) => writeUpdatePhoneInFrame(owner, raw, surface));
 }
 
 async function writeUpdatePhoneInFrame(
@@ -709,11 +717,7 @@ async function writeUpdatePhoneInFrame(
 }
 
 async function writeRemovePhone(raw: unknown, surface: PhoneEntrySurface): Promise<ContactMutationResult> {
-  const owner = await requireOwner();
-  if ("error" in owner) return owner;
-  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
-  const principal = await resolveUserPrincipal(owner);
-  return runAsUser(principal, () => writeRemovePhoneInFrame(owner, raw, surface));
+  return withPhoneFrame((owner) => writeRemovePhoneInFrame(owner, raw, surface));
 }
 
 async function writeRemovePhoneInFrame(

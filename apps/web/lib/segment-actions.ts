@@ -382,7 +382,15 @@ export async function listSegments() {
   return runAsUser(principal, () => listSegmentsInFrame(gate));
 }
 
-async function listSegmentsInFrame(gate: { email: string; ownerId: string }) {
+async function listSegmentsInFrame(gate: { email: string; ownerId: string }): Promise<{
+  ok: true;
+  evaluatedAt: string;
+  nextSegmentId: string;
+  nextSegmentProof: string;
+  segments: ReturnType<typeof evaluatedSegment>[];
+  totalContactCount: number;
+  unavailableFacts: typeof UNAVAILABLE_FACTS;
+}> {
   const evaluatedAt = new Date().toISOString();
   const [rows, contacts] = await Promise.all([
     prisma.segment.findMany({
@@ -412,7 +420,19 @@ export async function getSegment(rawSegmentId: unknown) {
   return runAsUser(principal, () => getSegmentInFrame(gate, rawSegmentId));
 }
 
-async function getSegmentInFrame(gate: { email: string; ownerId: string }, rawSegmentId: unknown) {
+async function getSegmentInFrame(
+  gate: { email: string; ownerId: string },
+  rawSegmentId: unknown,
+): Promise<
+  | { error: string }
+  | {
+      ok: true;
+      evaluatedAt: string;
+      segment: ReturnType<typeof evaluatedSegment>;
+      totalContactCount: number;
+      unavailableFacts: typeof UNAVAILABLE_FACTS;
+    }
+> {
   if (typeof rawSegmentId !== "string" || !ULID_PATTERN.test(rawSegmentId)) {
     return { error: SEGMENT_NOT_FOUND };
   }
@@ -444,7 +464,20 @@ export async function previewSegment(rawRules: unknown) {
   return runAsUser(principal, () => previewSegmentInFrame(gate, rawRules));
 }
 
-async function previewSegmentInFrame(gate: { email: string; ownerId: string }, rawRules: unknown) {
+async function previewSegmentInFrame(
+  gate: { email: string; ownerId: string },
+  rawRules: unknown,
+): Promise<
+  | { error: string }
+  | ({
+      ok: true;
+      evaluatedAt: string;
+      phrase: string;
+      totalContactCount: number;
+      unavailableFacts: typeof UNAVAILABLE_FACTS;
+    } & ReturnType<typeof countsOf>
+      & ReturnType<typeof previewContactSample>)
+> {
   const validated = validateSegmentRuleGroup(rawRules);
   if (!validated.ok) return { error: "Choose valid segment rules." };
   if (!hasExactSpendPrecision(validated.value)) {
@@ -541,7 +574,10 @@ export async function deleteSegment(raw: unknown) {
   return runAsUser(principal, () => deleteSegmentInFrame(gate, raw));
 }
 
-async function deleteSegmentInFrame(gate: { email: string; ownerId: string }, raw: unknown) {
+async function deleteSegmentInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<{ error: string } | { ok: true; idempotent: boolean }> {
   const segmentId = (raw as { segmentId?: unknown })?.segmentId;
   if (typeof segmentId !== "string" || !ULID_PATTERN.test(segmentId)) {
     return { error: SEGMENT_NOT_FOUND };
@@ -582,7 +618,19 @@ export async function buildSegment(raw: unknown) {
   return runAsUser(principal, () => buildSegmentInFrame(gate, raw));
 }
 
-async function buildSegmentInFrame(gate: { email: string; ownerId: string }, raw: unknown) {
+async function buildSegmentInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<
+  | { error: string }
+  | { ok: true; idempotent: boolean; operation: "update"; segment: ReturnType<typeof publicSegment> }
+  | ({
+      ok: true;
+      idempotent: boolean;
+      operation: "create";
+      segment: ReturnType<typeof publicSegment>;
+    } & ReturnType<typeof issueNextDraft>)
+> {
   const input = raw as {
     operation?: unknown;
     segmentId?: unknown;
