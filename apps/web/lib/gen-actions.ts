@@ -39,6 +39,9 @@ import {
   videoElementReferencesHonoured,
   approvedEntityDrift,
   parseApprovedEntities,
+  // FSE-204(判官 P2-1)—— 分镜 Animate 没有 sourceGenerationId 时,worker 改读镜头最新
+  // 静帧当首帧;付费前终审要用同一份扩展名白名单查同一张静帧,才不漏这条路。
+  REFERENCE_IMAGE_EXTS,
   type ApprovedEntity,
   type GenModel,
   type GenVideoModel,
@@ -937,21 +940,38 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // closed:钱先预扣、事后退,正是这条登记要消掉的那种伤害。
     const referenceGenerationIds = videoOptions?.referenceGenerationIds ?? imageOptions?.referenceGenerationIds;
 
-    // FSE-204(规格 §5 2026-09-11 行;S5 批量裁决 2026-09-12,#1358)—— 付费前尺寸闸,
-    // 唯一一份判定,四个入口(画布确认卡、Library 动作、Otto 主动、分镜挂图)在这里**全部**
-    // 汇合:`startGen` 是它们共同的建单+预扣权威,新增入口只要走 `startGen` 就自动受它保护,
-    // 不必逐个入口记得接线 —— 这正是根因(闸只挂在「视频卡 × referenceGenerationIds」
-    // 一条路上)不会再犯的原因。
+    // FSE-204(规格 §5 2026-09-11 行;S5 批量裁决 2026-09-12,#1358;判官 P1-1/P2-1,
+    // 2026-09-12)—— 付费前尺寸闸,唯一一份判定,四个入口(画布确认卡、Library 动作、
+    // Otto 主动、分镜挂图)在这里**全部**汇合:`startGen` 是它们共同的建单+预扣权威,新增
+    // 入口只要走 `startGen` 就自动受它保护,不必逐个入口记得接线 —— 这正是根因(闸只挂在
+    // 「视频卡 × referenceGenerationIds」一条路上)不会再犯的原因。
     //
-    // 两档候选:`sourceGenerationId`(图生图 base / 视频起始帧,两种 kind 共用同一格)与
-    // 图片卡自己的额外挂图(CRE-STG-P1-003)是「worker 从不放大」的硬闸档,短边 <300 一律拒;
-    // 视频卡的商品参考图是「worker 真会放大」的可放大档,短边 [100,300) 放行(判定与措辞
-    // 全在 `@fikirtive/otto` 的 `assertPrePaymentReferenceSizeGate` 一处,`packages/otto/src
-    // /skills/propose.ts` 铸卡时的早退检查读的是同一个函数)。
+    // 三档候选,分岔是「这条端点供应商到底有没有真硬闸」(判定与措辞全在 `@fikirtive/otto`
+    // 的 `assertPrePaymentReferenceSizeGate` 一处,`packages/otto/src/skills/propose.ts`
+    // 铸卡时的早退检查读的是同一个函数):
+    //   · 硬闸档 —— 视频起始帧(`sourceGenerationId`)、末帧(`tailGenerationId`),以及分镜
+    //     Animate 没带 `sourceGenerationId` 时 worker 改读的那张镜头最新静帧(下面
+    //     `shotAnimateStillId`,与 `apps/worker/src/jobs/gen.ts` 的
+    //     `else if (job.shotId)` 分支同一条 query)—— 都走视频提交那条端点,供应商真弹回
+    //     300px,worker 从不放大,短边 <300 一律拒;
+    //   · 诚实档 —— 图生图 base(`sourceGenerationId`)与图片卡自己的额外挂图
+    //     (CRE-STG-P1-003 的 `referenceGenerationIds`)—— 走图片提交那条端点,worker 同样
+    //     从不放大,但这条端点没有供应商 300px 硬闸(staging 实测 80×107 仍正常交付),只挡
+    //     短边 <100 的诚实拒绝线;
+    //   · 可放大档 —— 视频卡的商品参考图,worker 真会放大,短边 [100,300) 放行。
+    const shotAnimateStillId = kind === "video" && !sourceGenerationId && shotId
+      ? (await prisma.generation.findFirst({
+          // 与 gen.ts `else if (job.shotId)` 分支同形:租户 + 未软删 + 图片扩展名,取最新版本。
+          where: { shotId, ownerId, deletedAt: null, asset: { ext: { in: [...REFERENCE_IMAGE_EXTS] } } },
+          orderBy: { version: "desc" },
+          select: { id: true },
+        }))?.id ?? null
+      : null;
     const sizeGateVerdict = await assertPrePaymentReferenceSizeGate({
       ownerId,
       upscaleEligibleIds: kind === "video" ? (referenceGenerationIds ?? []) : [],
-      hardFloorIds: [sourceGenerationId, ...(kind === "image" ? (referenceGenerationIds ?? []) : [])],
+      hardFloorIds: kind === "video" ? [sourceGenerationId, tailGenerationId, shotAnimateStillId] : [],
+      honestFloorIds: kind === "image" ? [sourceGenerationId, ...(referenceGenerationIds ?? [])] : [],
     });
     if ("error" in sizeGateVerdict) return { error: sizeGateVerdict.error };
 

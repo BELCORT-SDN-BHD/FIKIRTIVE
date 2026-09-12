@@ -115,9 +115,16 @@ vi.mock("../model-registry", () => ({ resolveDisabledModels: mockResolveDisabled
 // the campaign-approval-gate tests near the end of this file failing with the rate-limit
 // message, not their own assertion). Mocked like `otto-actions.test.ts` mocks the same module —
 // partial, via importOriginal, so every other export (constants, other gates) stays real.
+//
+// 判官 P2-2 —— 替身按 `otto-actions.test.ts:345` 注释＋`:5136` wiring case 那条先例,
+// 命名成一个可在测试里断言/改写的 hoisted 引用(不是匿名内联 `vi.fn()`),下面的 wiring
+// 用例(问的是这个租户 / 被拒时零建单零预扣)才拿得到它。
+const { mockConsumeGenerationGate } = vi.hoisted(() => ({
+  mockConsumeGenerationGate: vi.fn(async () => true),
+}));
 vi.mock("@/lib/rate-limit-gates", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/rate-limit-gates")>()),
-  consumeGenerationGate: vi.fn(async () => true),
+  consumeGenerationGate: mockConsumeGenerationGate,
 }));
 
 const {
@@ -178,6 +185,7 @@ function resetStartGenMocks(): void {
   ) => options.id ?? null);
   mockCheckCast.mockResolvedValue(null);
   mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+  mockConsumeGenerationGate.mockResolvedValue(true);
 }
 
 beforeEach(() => {
@@ -450,9 +458,9 @@ describe("startGen", () => {
   });
 
   /**
-   * FSE-204(规格 §5 2026-09-11 行;S5 批量裁决 2026-09-12,#1358)—— 付费前尺寸闸的唯一
-   * 判定接在 `startGen` 这一处,四个入口(画布确认卡、Library 动作、Otto 主动、分镜挂图)
-   * 全部经它建单+预扣的路上走过,不必逐个入口记得接线。
+   * FSE-204(规格 §5 2026-09-11 行;S5 批量裁决 2026-09-12,#1358;判官 P1-1/P2-1,
+   * 2026-09-12)—— 付费前尺寸闸的唯一判定接在 `startGen` 这一处,四个入口(画布确认卡、
+   * Library 动作、Otto 主动、分镜挂图)全部经它建单+预扣的路上走过,不必逐个入口记得接线。
    *
    * 根因(走查 findings-catalog.md FSE-204):这道闸从前只挂在「视频卡 × referenceGenerationIds」
    * 一条路上 ——「图生图 base」与「视频起始帧」两个入口(都走 `sourceGenerationId`)从未进过
@@ -463,6 +471,16 @@ describe("startGen", () => {
    * edit / Regenerate);分镜挂图铸的子卡与普通 Otto 卡走同一条 `startCoworkGen`(见
    * `storyboard-gate1-actions.ts` 的 `mintChild`/`mintVideoChild` 用同一个 `buildProposeCard`,
    * 批准之后同样落在这里),所以这里钉的「图片卡额外挂图」用例同时代表这两个入口。
+   *
+   * 判官 P1-1(2026-09-12)修正:视频提交端点(起始帧 `sourceGenerationId`、末帧
+   * `tailGenerationId`、分镜 Animate 取的镜头静帧)才有供应商 300px 真硬闸
+   * (`backend-evidence.md` §3.3 逐字);图片提交端点(图生图 base 的 `sourceGenerationId`、
+   * 图片卡额外挂图的 `referenceGenerationIds`)没有这道硬闸(staging 实测同一张 80×107 在
+   * 这条端点一直正常交付,`run-ledger.md` §4 第 10 行),门槛只是「短边 <100 诚实拒绝」的
+   * 产品政策线,[100,300) 原样放行。判官 P2-1 同批补齐两条漏网入口:`tailGenerationId`
+   * (末帧)与分镜 Animate 无 `sourceGenerationId` 时 worker 改读的镜头最新静帧
+   * (`apps/worker/src/jobs/gen.ts` 的 `else if (job.shotId)` 分支)——两者都走视频提交
+   * 端点,同样进硬闸档。
    */
   describe("FSE-204 付费前尺寸闸 —— 四入口共用同一次 startGen 终审", () => {
     // staging 走查路 B:「视频起始帧」,80×107 与走查报告里那张真实参考图逐字相同。
@@ -497,9 +515,126 @@ describe("startGen", () => {
       expect(mockBossSend).not.toHaveBeenCalled();
     });
 
-    // staging 走查路 A:「图生图 base」,150×400 落在 FSE-001 商品图会被放大的 [100,300)
-    // 区间 —— 但 worker 对编辑底图从不放大,所以这里仍是拒绝,门槛说 300 不说 100。
-    it("FSE-204 / CREATE-A2: Library 动作(startAssetGen)—— 图生图 base 短边 150 ⇒ 付费前拒绝,门槛写死 300", async () => {
+    // 硬闸档不受诚实档下界收窄:与「图生图 base 150 放行」那条用同一个短边对照 —— 视频
+    // 起始帧落在同一个 [100,300) 区间仍然拒绝,门槛说 300 不说 100。
+    it("FSE-204 / CREATE-A2: Otto 主动 / 画布确认卡(startCoworkGen)—— 视频起始帧短边 150 ⇒ 硬闸档仍然拒绝、门槛写死 300", async () => {
+      db.chatMessageFindFirst.mockResolvedValue({
+        threadId: "thread-1",
+        payload: { estimatedCredits: 11 },
+        thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+      });
+      db.generationFindMany.mockResolvedValue([{ asset: { width: 150, height: 400 }, entitySnapshot: null }]);
+
+      const result = await startCoworkGen({
+        projectId: "p1",
+        threadId: "thread-1",
+        prompt: "animate this into a 5s clip",
+        entityIds: [],
+        count: 1,
+        kind: "video",
+        model: "seedance-2-mini",
+        durationSeconds: 5,
+        resolution: "720p",
+        sourceGenerationId: "gen_start_frame",
+        idempotencyKey: "cowork:card-1",
+      });
+
+      expect(result).toEqual({
+        error: tooSmallReferenceSentence({ width: 150, height: 400, minSide: minimumUsableReferenceSide(false) }),
+      });
+      expect(result).toEqual({ error: expect.stringContaining("at least 300 pixels") });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    // 末帧(tailGenerationId)—— 判官 P2-1:与起始帧同一条视频提交端点,同一个 300 硬闸,
+    // 从前没有进候选集(gen-actions.ts 只解构了它、只喂给 checkCast,没喂给尺寸闸)。
+    // 起始帧本身够大(1344),所以拒绝只可能来自末帧那一张 —— 这才是这条测试真正钉住的事。
+    it("FSE-204 / CREATE-A2(判官 P2-1): Otto 主动 / 画布确认卡(startCoworkGen)—— 末帧短边 80 ⇒ 硬闸档拒绝,门槛写死 300", async () => {
+      db.chatMessageFindFirst.mockResolvedValue({
+        threadId: "thread-1",
+        payload: { estimatedCredits: 11 },
+        thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+      });
+      db.generationFindMany.mockImplementation(async (args: unknown) => {
+        const ids = (args as { where: { id: { in: string[] } } }).where.id.in;
+        return ids.map((id) =>
+          id === "gen_tail_frame"
+            ? { asset: { width: 80, height: 107 }, entitySnapshot: null }
+            : { asset: { width: 1344, height: 1344 }, entitySnapshot: null },
+        );
+      });
+
+      const result = await startCoworkGen({
+        projectId: "p1",
+        threadId: "thread-1",
+        prompt: "animate from start to end frame",
+        entityIds: [],
+        count: 1,
+        kind: "video",
+        model: "seedance-2-mini",
+        durationSeconds: 5,
+        resolution: "720p",
+        sourceGenerationId: "gen_start_frame_ok",
+        tailGenerationId: "gen_tail_frame",
+        idempotencyKey: "cowork:card-1",
+      });
+
+      expect(db.generationFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { in: expect.arrayContaining(["gen_start_frame_ok", "gen_tail_frame"]) },
+          }),
+        }),
+      );
+      expect(result).toEqual({
+        error: tooSmallReferenceSentence({ width: 80, height: 107, minSide: minimumUsableReferenceSide(false) }),
+      });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    // 分镜 Animate 首帧(走 shotId,不带 sourceGenerationId)—— 判官 P2-1:worker
+    // (apps/worker/src/jobs/gen.ts 的 `else if (job.shotId)` 分支)改读这个镜头最新的静帧
+    // 当首帧,从前这条路完全绕过了尺寸闸(候选集只看 sourceGenerationId)。
+    it("FSE-204 / CREATE-A2(判官 P2-1): 分镜 Animate(startCoworkGen,只带 shotId)—— 镜头静帧短边 80 ⇒ 硬闸档拒绝,门槛写死 300", async () => {
+      db.chatMessageFindFirst.mockResolvedValue({
+        threadId: "thread-1",
+        payload: { estimatedCredits: 11 },
+        thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+      });
+      // 与 gen.ts 的 shotId 查询同形:findFirst 取镜头最新静帧的 id。
+      db.generationFindFirst.mockResolvedValue({ id: "gen_shot_still" });
+      db.generationFindMany.mockResolvedValue([{ asset: { width: 80, height: 107 }, entitySnapshot: null }]);
+
+      const result = await startCoworkGen({
+        projectId: "p1",
+        threadId: "thread-1",
+        prompt: "animate this shot",
+        entityIds: [],
+        count: 1,
+        kind: "video",
+        model: "seedance-2-mini",
+        durationSeconds: 5,
+        resolution: "720p",
+        shotId: "shot-1",
+        idempotencyKey: "cowork:card-1",
+      });
+
+      expect(result).toEqual({
+        error: tooSmallReferenceSentence({ width: 80, height: 107, minSide: minimumUsableReferenceSide(false) }),
+      });
+      expect(db.generationFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ id: { in: ["gen_shot_still"] } }) }),
+      );
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    // 图片路(诚实档):worker 从不放大编辑底图,但这条端点没有供应商 300px 硬闸 ——
+    // staging 实测同一张走查报告的图在这条端点一直正常交付、真扣了钱(run-ledger.md §4
+    // 第 10 行)。短边 150 落在 [100,300):照常建单预扣,不再是硬闸档的拒绝。
+    it("FSE-204 / CREATE-A2(判官 P1-1): Library 动作(startAssetGen)—— 图生图 base 短边 150 ⇒ 诚实档放行,照常建单预扣", async () => {
       db.generationFindMany.mockResolvedValue([{ asset: { width: 150, height: 400 }, entitySnapshot: null }]);
 
       const result = await startAssetGen({
@@ -516,23 +651,21 @@ describe("startGen", () => {
         sourceGenerationId: "gen_base",
       });
 
-      expect(result).toEqual({
-        error: tooSmallReferenceSentence({ width: 150, height: 400, minSide: minimumUsableReferenceSide(false) }),
-      });
-      expect(result).toEqual({ error: expect.stringContaining("at least 300 pixels") });
-      expect(db.genJobCreate).not.toHaveBeenCalled();
-      expect(db.reserveCredits).not.toHaveBeenCalled();
+      expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(db.genJobCreate).toHaveBeenCalledTimes(1);
+      expect(db.reserveCredits).toHaveBeenCalledTimes(1);
     });
 
     // 分镜挂图:子卡与普通 Otto 卡走同一条 startCoworkGen,这里用图片卡的额外挂图
     // (CRE-STG-P1-003,creation §5 :178 的 Library 图正是从这一格上路)代表这条入口。
-    it("FSE-204 / CREATE-A2: 分镜挂图(图片卡额外挂图,startCoworkGen)—— 短边 120 ⇒ 同一处被拦", async () => {
+    // 诚实档下界:短边 <100 仍拒,门槛写死 100(不是硬闸档的 300)。
+    it("FSE-204 / CREATE-A2(判官 P1-1): 分镜挂图(图片卡额外挂图,startCoworkGen)—— 短边 80 ⇒ 诚实档拒绝,门槛写死 100", async () => {
       db.chatMessageFindFirst.mockResolvedValue({
         threadId: "thread-1",
         payload: { estimatedCredits: 1, referenceGenerationIds: ["gen-extra"] },
         thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
       });
-      db.generationFindMany.mockResolvedValue([{ asset: { width: 120, height: 500 }, entitySnapshot: null }]);
+      db.generationFindMany.mockResolvedValue([{ asset: { width: 80, height: 107 }, entitySnapshot: null }]);
 
       const result = await startCoworkGen({
         projectId: "p1",
@@ -546,14 +679,15 @@ describe("startGen", () => {
       });
 
       expect(result).toEqual({
-        error: tooSmallReferenceSentence({ width: 120, height: 500, minSide: minimumUsableReferenceSide(false) }),
+        error: tooSmallReferenceSentence({ width: 80, height: 107, minSide: minimumUsableReferenceSide(true) }),
       });
+      expect(result).toEqual({ error: expect.stringContaining("at least 100 pixels") });
       expect(db.genJobCreate).not.toHaveBeenCalled();
       expect(db.reserveCredits).not.toHaveBeenCalled();
     });
 
-    it("FSE-204 / CREATE-A2: 画布确认卡(startCanvasGen)—— 图生图 base 太小 ⇒ 付费前拒绝", async () => {
-      db.generationFindMany.mockResolvedValue([{ asset: { width: 200, height: 200 }, entitySnapshot: null }]);
+    it("FSE-204 / CREATE-A2(判官 P1-1): 画布确认卡(startCanvasGen)—— 图生图 base 短边 80 ⇒ 诚实档拒绝,门槛写死 100", async () => {
+      db.generationFindMany.mockResolvedValue([{ asset: { width: 80, height: 107 }, entitySnapshot: null }]);
 
       const result = await startCanvasGen({
         actionId: "canvas-edit-1",
@@ -568,7 +702,7 @@ describe("startGen", () => {
       });
 
       expect(result).toEqual({
-        error: tooSmallReferenceSentence({ width: 200, height: 200, minSide: minimumUsableReferenceSide(false) }),
+        error: tooSmallReferenceSentence({ width: 80, height: 107, minSide: minimumUsableReferenceSide(true) }),
       });
       expect(db.genJobCreate).not.toHaveBeenCalled();
       expect(db.reserveCredits).not.toHaveBeenCalled();
@@ -629,6 +763,48 @@ describe("startGen", () => {
       expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
       expect(db.genJobCreate).toHaveBeenCalledTimes(1);
       expect(db.reserveCredits).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // 判官 P2-2 —— `consumeGenerationGate` 的替身之前只写死 true(见上方 `vi.mock` 的注释),
+  // 从没钉过「它真被问过」与「被拒时零建单零预扣」。按 `otto-actions.test.ts` 同族 wiring
+  // case 的先例(#795 注释:闸的数字在 rate-limit-gates.test.ts,这里只钉接线)补两条。
+  describe("#795 生成频率闸(consumeGenerationGate)—— wiring", () => {
+    it("asks the gate for THIS tenant before anything is created or reserved", async () => {
+      await startCanvasGen({
+        actionId: "action-gate-wiring",
+        expectedCredits: 1,
+        projectId: "p1",
+        prompt: "product hero",
+        entityIds: [],
+        count: 1,
+        kind: "image",
+        model: "seedream",
+      });
+
+      expect(mockConsumeGenerationGate).toHaveBeenCalledWith("org_ref");
+    });
+
+    it("a refused gate returns the shared sentence and creates/reserves nothing", async () => {
+      mockConsumeGenerationGate.mockResolvedValue(false);
+
+      const result = await startCanvasGen({
+        actionId: "action-gate-refused",
+        expectedCredits: 1,
+        projectId: "p1",
+        prompt: "product hero",
+        entityIds: [],
+        count: 1,
+        kind: "image",
+        model: "seedream",
+      });
+
+      expect(result).toEqual({
+        error: "You've started a lot of generations in the last hour. Try again a little later.",
+      });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+      expect(mockBossSend).not.toHaveBeenCalled();
     });
   });
 

@@ -17,19 +17,30 @@
  * 真扣了钱,或者预扣后干等供应商三分钟才退款,而卡上从头到尾没有一个字提过尺寸。是「闸只挂
  * 了一条路」,不是「闸写错了」。
  *
- * 修法(单一源头,修根不修表):把判定拆成下面 `referenceImageSizeVerdict` 一个函数,按
- * `upscaleEligible` 分两档候选调用:
+ * 修法(单一源头,修根不修表):把判定拆成下面 `referenceImageSizeVerdict` 一个函数,按三档
+ * 候选调用 —— 分岔不是「像不像」,是**这条端点供应商到底有没有真硬闸**(证据各查各的,不
+ * 猜):
  *   · **可放大档**(视频卡的商品参考图,`referenceGenerationIds`,worker 的
  *     `upscaledProductReferenceDataUrl` 真的会放大它)—— 短边 [100,300) 放行 + 披露,
  *     <100 或带演员血统才拒;
- *   · **硬闸档**(`sourceGenerationId` 的图生图 base / 视频起始帧,以及图片卡自己的额外
- *     挂图)—— worker 对这几个角色从不放大(`gen.ts` 直接 presign 原件),所以短边 < 300
- *     一律拒,不分岔:一张 150×100 的编辑底图今天不会被放大成 300×200,放行只会把它原样
- *     送到供应商、白等一轮建任务失败。
+ *   · **硬闸档**(视频起始帧/末帧,以及分镜 Animate 取的镜头静帧 —— 都走视频提交那条端点)
+ *     —— 供应商在**这条端点**真弹回 300px(`backend-evidence.md` §3.3 逐字:
+ *     `expected the width to be at least 300px, but received a 80x107px image instead`),
+ *     worker 对这几个角色从不放大,所以短边 < 300 一律拒;
+ *   · **诚实档**(图生图 base 与图片卡自己的额外挂图,都走图片提交那条端点)—— worker 同样
+ *     从不放大,但**这条端点没有供应商 300px 硬闸**:staging 走查同一张 80×107 的图在这条
+ *     路上投递成功、真扣了钱(`run-ledger.md` §4 预算表第 10 行),门槛只是产品侧「短边
+ *     <100 在付费前诚实拒绝」的政策线(plan §2.3 原话),[100,300) 原样放行 —— 硬闸档那道
+ *     300 是供应商的真闸,套到这条端点上就是「关掉一条本来开着的门」,不是修根。
  *
- * 两个调用方共用这一份判定,不各自查库、不各自写第二套 where:
+ *   (判官 P1-1,2026-09-12:PR #1412 第一版把这三档并成了两档 —— 图生图 base 与视频起始帧
+ *   同挂 `sourceGenerationId`,被一起收进了硬闸档,短边 [100,300) 的图生图 base 因此被新拦
+ *   下,而它在供应商侧一直正常交付。硬闸档现在只收视频提交端点真正用到的那三个角色。)
+ *
+ * 三个调用方共用这一份判定,不各自查库、不各自写第二套 where:
  *   · `applyReferenceUpscaleGate`(下面,铸卡侧,$0 提前拒绝 + 放大披露句 —— 画布确认卡
- *     经 `executePropose`/`executeProposePack` 落在这里);
+ *     经 `executePropose`/`executeProposePack` 落在这里;卡不带末帧与分镜静帧,那两个候选
+ *     只在下面的付费前终审接);
  *   · `gen-actions.ts` 的 `startGen`(付费前终审 —— 画布确认卡、Library 动作
  *     [`startAssetGen`]、Otto 主动与分镜挂图[`startCoworkGen`] **全部**在建单与预扣之前
  *     走到这同一次调用;`startGen` 是这四条路共同的建单+预扣权威,新增入口只要走
@@ -51,18 +62,29 @@ function uniqueIds(ids: readonly (string | null | undefined)[]): string[] {
   return [...new Set(ids.filter((id): id is string => typeof id === "string" && id.length > 0))];
 }
 
+/** 三档候选各自的判定策略 —— 见文件头「修法」。 */
+type SizeGatePolicy =
+  | "upscale" // 视频卡商品参考图:worker 真会放大,100–299 放行+披露,带演员血统一律不动
+  | "hardFloor" // 视频起始帧 / 末帧 / 分镜静帧:供应商这条端点真弹回 300,worker 从不放大
+  | "honestFloor"; // 图生图 base / 图片卡额外挂图:worker 从不放大,这条端点没有 300 硬闸,只挡 <100
+
 /**
  * 逐一跑同一套判据,命中就拒绝并说出**这一张**的实际短边;否则数出能放大的张数
- * (硬闸档永远数不出放大 —— 它压根不会走到「放大」那一支)。
+ * (硬闸档、诚实档永远数不出放大 —— 它们压根不会走到「放大」那一支)。
  *
- * `upscaleEligible=false` 时,`plan.action` 是 `"upscale"` 或 `"refuse"` 都一律拒绝、
+ * `policy === "hardFloor"` 时,`plan.action` 是 `"upscale"` 或 `"refuse"` 都一律拒绝、
  * 门槛写死 300(`minimumUsableReferenceSide(false)`)—— 这一档 worker 从不放大,放行
  * 一张 [100,300) 的图等于替商家送一张我们知道会被供应商弹回的图。
+ *
+ * `policy === "honestFloor"` 时,`plan.action === "upscale"`(短边 [100,300))原样放行
+ * (不计数、不披露 —— worker 同样不会替它动像素,但这条端点的供应商真闸远低于 300,见
+ * `run-ledger.md` §4 第 10 行的 80×107 实测);只有 `"refuse"`(短边 <100)才拒,门槛写
+ * 100(`minimumUsableReferenceSide(true)`)。
  */
 async function referenceImageSizeVerdict(
   candidateIds: readonly (string | null | undefined)[],
   ownerId: string,
-  upscaleEligible: boolean,
+  policy: SizeGatePolicy,
 ): Promise<{ error: string } | { upscaleCount: number }> {
   const ids = uniqueIds(candidateIds);
   if (ids.length === 0) return { upscaleCount: 0 };
@@ -78,18 +100,42 @@ async function referenceImageSizeVerdict(
   for (const row of rows) {
     const plan = referenceUpscalePlan(row.asset);
     if (plan.action === "asIs" || plan.action === "unknown") continue; // 与这条修改之前逐字相同
+
+    if (policy === "hardFloor") {
+      return {
+        error: tooSmallReferenceSentence({
+          width: row.asset.width as number,
+          height: row.asset.height as number,
+          minSide: minimumUsableReferenceSide(false),
+        }),
+      };
+    }
+
+    if (policy === "honestFloor") {
+      if (plan.action === "refuse") {
+        return {
+          error: tooSmallReferenceSentence({
+            width: row.asset.width as number,
+            height: row.asset.height as number,
+            minSide: minimumUsableReferenceSide(true),
+          }),
+        };
+      }
+      continue; // plan.action === "upscale"(短边 [100,300)):这条端点没有 300 硬闸,原样放行
+    }
+
+    // policy === "upscale"。
     // 规格 §5 :176⑥ —— 拒绝那一句说**这一张**图有多大、以及**这一张**图要多大。
     //
     // 门槛只有一条分岔:**我们能不能替这一张动像素**。带官方演员血统的图一格不动(像素
-    // 完整性铁律),所以对它成立的门槛永远是供应商那道 300;硬闸档同理(worker 不会替它
-    // 动像素);其余可放大档的商品照我们会补到 300,所以对它成立的门槛是 100。分岔挂在
-    // 「能不能放大」上,不挂在 `plan.action` 上 —— 挂错了会在「不能放大 ∩ 短边<100」这一格
-    // 说出 100 这个对他不成立的数,他换一张 150px 的同族图回来还是被拒(那时才说 300)。
-    // 过松与过严一样是假话,⑥ 要消灭的是两者。
+    // 完整性铁律),所以对它成立的门槛永远是供应商那道 300;其余可放大档的商品照我们会补
+    // 到 300,所以对它成立的门槛是 100。分岔挂在「能不能放大」上,不挂在 `plan.action` 上
+    // —— 挂错了会在「不能放大 ∩ 短边<100」这一格说出 100 这个对他不成立的数,他换一张
+    // 150px 的同族图回来还是被拒(那时才说 300)。过松与过严一样是假话,⑥ 要消灭的是两者。
     //
-    // `row.asset` 的宽高在这两档里一定读得出来 —— 读不出来的那一档是上面的 `unknown`,
-    // 已经先走掉了。
-    const canUpscale = upscaleEligible && !lineageCarriesOfficialActor(row.entitySnapshot);
+    // `row.asset` 的宽高在这里一定读得出来 —— 读不出来的那一档是上面的 `unknown`,已经
+    // 先走掉了。
+    const canUpscale = !lineageCarriesOfficialActor(row.entitySnapshot);
     if (plan.action === "refuse" || !canUpscale) {
       return {
         error: tooSmallReferenceSentence({
@@ -106,20 +152,25 @@ async function referenceImageSizeVerdict(
 
 /**
  * FSE-204 —— 四个入口(画布确认卡、Library 动作、Otto 主动、分镜挂图)共用的**唯一**
- * 付费前终审。见文件头「修法」——`hardFloorIds` 与 `upscaleEligibleIds` 分别对应两条
- * 分岔,调用方按自己手上的字段分好类,这里不重新猜哪个字段该进哪一档。
+ * 付费前终审。见文件头「修法」——`hardFloorIds`、`honestFloorIds` 与 `upscaleEligibleIds`
+ * 分别对应三条分岔,调用方按自己手上的字段分好类,这里不重新猜哪个字段该进哪一档。
  */
 export async function assertPrePaymentReferenceSizeGate(args: {
   /** 租户身份只来自服务端 ctx / 服务端会话,永远不从模型或浏览器的入参收。 */
   ownerId: string;
   /** worker 真的会放大的那一批(今天只有视频卡的商品参考图)。 */
   upscaleEligibleIds: readonly (string | null | undefined)[];
-  /** worker 从不放大、供应商硬闸原样生效的那一批(图生图 base / 视频起始帧 / 图片卡额外挂图)。 */
+  /** 供应商这条端点真有 300px 硬闸、worker 从不放大的那一批(视频起始帧 / 末帧 / 分镜静帧)。 */
   hardFloorIds: readonly (string | null | undefined)[];
+  /** worker 从不放大、但这条端点没有 300px 硬闸的那一批(图生图 base / 图片卡额外挂图)——
+   *  只挡短边 <100 的诚实拒绝线,[100,300) 原样放行。 */
+  honestFloorIds: readonly (string | null | undefined)[];
 }): Promise<{ error: string } | { upscaleCount: number }> {
-  const hard = await referenceImageSizeVerdict(args.hardFloorIds, args.ownerId, false);
+  const hard = await referenceImageSizeVerdict(args.hardFloorIds, args.ownerId, "hardFloor");
   if ("error" in hard) return hard;
-  const soft = await referenceImageSizeVerdict(args.upscaleEligibleIds, args.ownerId, true);
+  const honest = await referenceImageSizeVerdict(args.honestFloorIds, args.ownerId, "honestFloor");
+  if ("error" in honest) return honest;
+  const soft = await referenceImageSizeVerdict(args.upscaleEligibleIds, args.ownerId, "upscale");
   if ("error" in soft) return soft;
   return { upscaleCount: soft.upscaleCount };
 }
@@ -139,18 +190,21 @@ export async function applyReferenceUpscaleGate(
   // 还没发生 ⇒ 拒绝 = $0、零 GEN_CARD、零 GenJob、账本零新增行。
   //
   // FSE-204 —— 候选集不再只挑「视频卡 × referenceGenerationIds」这一条路:`sourceGenerationId`
-  // 两种 kind 共用(图生图 base / 视频起始帧),图片卡自己的额外挂图也走 `referenceGenerationIds`
-  // (CRE-STG-P1-003)。四个入口铸卡时都在算这几个字段,漏查其中一个就是漏一条路(见文件头)。
+  // 两种 kind 各走各的端点、各查各的门槛(判官 P1-1,见文件头「修法」)——视频卡的
+  // `sourceGenerationId`(起始帧)进硬闸档(供应商这条端点真有 300px 硬闸);图片卡的
+  // `sourceGenerationId`(编辑底图)与它自己的额外挂图(CRE-STG-P1-003 的
+  // `referenceGenerationIds`)一起进诚实档(这条端点没有 300px 硬闸,只挡 <100)。四个
+  // 入口铸卡时都在算这几个字段,漏查其中一个就是漏一条路。
   //
   // 只查商家挂的那几张图:演员的参考照走 Entity 的 `referenceImages`,由播种脚本保证
   // 尺寸(一律 Seedream 原件),根本不经这条挂图的路。
   const verdict = await assertPrePaymentReferenceSizeGate({
     ownerId: orgId,
     upscaleEligibleIds: payload.kind === "video" ? (payload.referenceGenerationIds ?? []) : [],
-    hardFloorIds: [
-      payload.sourceGenerationId,
-      ...(payload.kind === "image" ? (payload.referenceGenerationIds ?? []) : []),
-    ],
+    hardFloorIds: payload.kind === "video" ? [payload.sourceGenerationId] : [],
+    honestFloorIds: payload.kind === "image"
+      ? [payload.sourceGenerationId, ...(payload.referenceGenerationIds ?? [])]
+      : [],
   });
   if ("error" in verdict) return verdict;
   // 披露句走卡面自己那一格(`referenceUpscaleNote`,规格 §5 :176④),不再借名额截图的
