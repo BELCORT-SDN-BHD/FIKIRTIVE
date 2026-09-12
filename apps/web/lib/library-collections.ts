@@ -2,7 +2,8 @@
 
 import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { filterVisibleSubjects, resolveLibrarySubjects } from "./library-subjects";
 import { isLibrarySubjectType, subjectKey } from "./library-types";
 import type {
@@ -46,8 +47,15 @@ export async function listCollections(): Promise<
 > {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  // 租户围栏切片②（规格 docs/specs/tenant-isolation.md，#1377，TENANT-A1/A2）：商家动作面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => listCollectionsInFrame(gate.ownerId));
+}
 
+async function listCollectionsInFrame(
+  ownerId: string,
+): Promise<{ collections: LibraryCollectionSummary[] } | { error: string }> {
   const collections = await prisma.collection.findMany({
     where: { ownerId, deletedAt: null },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
@@ -101,8 +109,14 @@ export async function createCollection(
 ): Promise<{ id: string; name: string } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => createCollectionInFrame(gate.ownerId, name));
+}
 
+async function createCollectionInFrame(
+  ownerId: string,
+  name: string,
+): Promise<{ id: string; name: string } | { error: string }> {
   const clean = cleanName(name ?? "");
   if (!clean) return { error: "Name this collection first." };
 
@@ -117,8 +131,15 @@ export async function renameCollection(
 ): Promise<{ name: string } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => renameCollectionInFrame(gate.ownerId, collectionId, name));
+}
 
+async function renameCollectionInFrame(
+  ownerId: string,
+  collectionId: string,
+  name: string,
+): Promise<{ name: string } | { error: string }> {
   const clean = cleanName(name ?? "");
   if (!clean) return { error: "Name this collection first." };
 
@@ -138,8 +159,14 @@ export async function deleteCollection(
 ): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => deleteCollectionInFrame(gate.ownerId, collectionId));
+}
 
+async function deleteCollectionInFrame(
+  ownerId: string,
+  collectionId: string,
+): Promise<{ ok: true } | { error: string }> {
   const result = await prisma.collection.updateMany({
     where: { id: collectionId, ownerId, deletedAt: null },
     data: { deletedAt: new Date() },
@@ -163,8 +190,15 @@ export async function addToCollection(
 ): Promise<{ added: number; skipped: number; unavailable: number } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => addToCollectionInFrame(gate.ownerId, collectionId, refs));
+}
 
+async function addToCollectionInFrame(
+  ownerId: string,
+  collectionId: string,
+  refs: { subjectType: string; subjectId: string }[],
+): Promise<{ added: number; skipped: number; unavailable: number } | { error: string }> {
   const collection = await prisma.collection.findFirst({
     where: { id: collectionId, ownerId, deletedAt: null },
     select: { id: true },
@@ -209,8 +243,16 @@ export async function removeFromCollection(
 ): Promise<{ removed: number } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => removeFromCollectionInFrame(gate.ownerId, collectionId, subjectType, subjectId));
+}
 
+async function removeFromCollectionInFrame(
+  ownerId: string,
+  collectionId: string,
+  subjectType: string,
+  subjectId: string,
+): Promise<{ removed: number } | { error: string }> {
   if (!isLibrarySubjectType(subjectType) || !subjectId) return { error: "Not found." };
 
   const collection = await prisma.collection.findFirst({
@@ -238,8 +280,15 @@ export async function getCollection(
 ): Promise<{ collection: LibraryCollectionDetail; nextCursor: string | null } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => getCollectionInFrame(gate.ownerId, collectionId, opts));
+}
 
+async function getCollectionInFrame(
+  ownerId: string,
+  collectionId: string,
+  opts?: { cursor?: string | null; take?: number },
+): Promise<{ collection: LibraryCollectionDetail; nextCursor: string | null } | { error: string }> {
   const collection = await prisma.collection.findFirst({
     where: { id: collectionId, ownerId, deletedAt: null },
     select: { id: true, name: true, updatedAt: true },
@@ -308,8 +357,14 @@ export async function listCollectionMemberships(
 ): Promise<{ memberships: Record<string, string[]> } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => listCollectionMembershipsInFrame(gate.ownerId, refs));
+}
 
+async function listCollectionMembershipsInFrame(
+  ownerId: string,
+  refs: { subjectType: string; subjectId: string }[],
+): Promise<{ memberships: Record<string, string[]> } | { error: string }> {
   const wanted = toRefs(refs ?? []);
   if (!wanted.length) return { memberships: {} };
 

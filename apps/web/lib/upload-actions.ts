@@ -42,7 +42,8 @@ import { readBoundedPrefix } from "@fikirtive/storage";
 import { storage } from "@/lib/storage";
 import { getBoss } from "@/lib/queue";
 import { buildEntitySnapshot } from "@/lib/entity-snapshot";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { consumeUploadGate } from "@/lib/rate-limit-gates";
 
 /**
@@ -67,7 +68,15 @@ function reportUndispatchedIngest(assetIds: string[]): void {
 
 export async function authorizeUpload(raw: unknown): Promise<AuthorizeUploadResult | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  // 租户围栏切片②（规格 docs/specs/tenant-isolation.md，#1377，TENANT-A1/A2）。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => authorizeUploadInFrame(gate.ownerId, raw));
+}
+
+async function authorizeUploadInFrame(
+  ownerId: string,
+  raw: unknown,
+): Promise<AuthorizeUploadResult | { error: string }> {
   // #795 — the upload gate, per tenant, per hour. Every call to this action mints a presigned URL
   // into our own bucket, and until now nothing counted them. Placed after the owner is known and
   // before anything is signed, so a refusal hands out no URL and reserves no key. Sized well above
@@ -102,7 +111,14 @@ export async function uploadFileFallback(
   formData: FormData,
 ): Promise<{ ok: FinalizedUpload } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => uploadFileFallbackInFrame(gate.ownerId, formData));
+}
+
+async function uploadFileFallbackInFrame(
+  ownerId: string,
+  formData: FormData,
+): Promise<{ ok: FinalizedUpload } | { error: string }> {
   if (storage.supportsDirectUpload) return { error: "Use direct upload on this storage driver." };
   const file = formData.get("file");
   if (!(file instanceof File)) return { error: "No file in the upload request." };
@@ -127,7 +143,11 @@ export async function uploadFileFallback(
 
 export async function signUploadPart(raw: unknown): Promise<{ url: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => signUploadPartInFrame(gate.ownerId, raw));
+}
+
+async function signUploadPartInFrame(ownerId: string, raw: unknown): Promise<{ url: string } | { error: string }> {
   if (!storage.supportsDirectUpload) return { error: "Direct upload is not available on this storage driver." };
   const parsed = signPartInput.safeParse(raw);
   if (!parsed.success) return { error: "Malformed part-signing request." };
@@ -140,7 +160,11 @@ export async function signUploadPart(raw: unknown): Promise<{ url: string } | { 
 
 export async function abortDirectUpload(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => abortDirectUploadInFrame(gate.ownerId, raw));
+}
+
+async function abortDirectUploadInFrame(ownerId: string, raw: unknown): Promise<{ ok: true } | { error: string }> {
   if (!storage.supportsDirectUpload) return { error: "Direct upload is not available on this storage driver." };
   const parsed = abortUploadInput.safeParse(raw);
   if (!parsed.success) return { error: "Malformed abort request." };
@@ -169,6 +193,14 @@ export async function abortDirectUpload(raw: unknown): Promise<{ ok: true } | { 
  */
 export async function reportDirectUploadFailure(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => reportDirectUploadFailureInFrame(gate, raw));
+}
+
+async function reportDirectUploadFailureInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<{ ok: true } | { error: string }> {
   const parsed = directUploadFailureReport.safeParse(raw);
   if (!parsed.success) return { error: "Malformed upload failure report." };
   const { stage, category, ext, sizeBytes, httpStatus } = parsed.data;
@@ -197,7 +229,17 @@ export async function finalizeCandidateUploads(
   raw: unknown,
 ): Promise<{ ok: true; count: number; failures: { filename: string; reason: string }[]; generationIds: string[] } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => finalizeCandidateUploadsInFrame(gate.ownerId, projectId, promptText, entityIds, raw));
+}
+
+async function finalizeCandidateUploadsInFrame(
+  ownerId: string,
+  projectId: string,
+  promptText: string,
+  entityIds: string[],
+  raw: unknown,
+): Promise<{ ok: true; count: number; failures: { filename: string; reason: string }[]; generationIds: string[] } | { error: string }> {
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId } });
   if (!project) return { error: "Project not found." };
   // Callers (OttoChatStream / TemplateModal) pass the receipts ARRAY; the schema

@@ -10,7 +10,7 @@ import { CanvasDeepLinkRefused } from "@/components/canvas/CanvasDeepLinkRefused
 import { getMyAccount } from "@/lib/account-actions";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
-import { getCoworkThreadPage, getCoworkThreads, getEntities, getProjects, resolveCoworkResultUrls, resolveCoworkMessageReferences } from "@/lib/data";
+import { findOwnedThreadForDeepLink, getCoworkThreadPage, getCoworkThreads, getEntities, getProjects, resolveCoworkResultUrls, resolveCoworkMessageReferences } from "@/lib/data";
 import { toChatThreadDTO, toEntityDTO } from "@/lib/dto";
 import { getCanvasConversationHandoff } from "@/lib/canvas-entry-actions";
 import { isPanelThread } from "@/lib/otto-thread-surface";
@@ -29,22 +29,49 @@ function firstSearchParam(value: string | string[] | undefined): string | undefi
 
 /**
  * FSE-207(规格 §5,Founder 2026-09-12 #1358 裁「零写入」为硬口径)——
- * 「这条 `?project=` 我们打不开」是一道**在任何写入之前**就要问完的题。
+ * 「这条深链我们打不开」是一道**在任何写入之前**就要问完的题。
  *
  * 从前的答法是「打不开就兜底」:先 `getOrCreateDefaultProject()`(没有画布的租户会被
  * 建一张)、再把地址改写成兜底那张,于是别的租户的深链在访问者那边**静默**变成一张空白
  * 新画布 ＋ 一行 `project.create` 审计。判据本身没错(「这个 id 在不在他自己的清单里」),
  * 错的是它的**位置**和**答完之后干什么**。
  *
- * 所以这个纯函数只回答那一题,`ImmersiveCanvasEntry` 在读完自己的画布清单、写任何东西
- * 之前先问它;答「是」就交拒绝页,零写入、零改写。
+ * FSE-207b(同一条 §5 登记行的「未做」①,PR #1396 只裁了 `?project=` 这一支)—— `?thread=`
+ * 走的是同一个坑:解析不了时旧口径按「规范化重定向」处理,地址被悄悄改写、没有一句人话,
+ * 而对一个还没有任何画布的租户,这条路在改写之前会先经过 `getOrCreateDefaultProject()`,
+ * 于是一次访问被伪造/别家的 `?thread=` 就 bootstrap 出一张画布 —— 写入的因头是这次访问,
+ * 但商家看到的效果就是「打一条深链,凭空多了一张画布」,与「零写入」要守住的精神相冲。
+ * 所以 project 与 thread 共用同一个判定(`isUnresolvedDeepLinkId`)和同一张拒绝页:是不是
+ * 「在他自己的清单里」这道题,答案对两种深链同形。
  */
+function isUnresolvedDeepLinkId(
+  ownedIds: readonly string[],
+  requestedId: string | undefined,
+): boolean {
+  if (requestedId === undefined) return false;
+  return !ownedIds.includes(requestedId);
+}
+
 export function isUnresolvedProjectDeepLink(
   projects: readonly ProjectChoice[],
   requestedProjectId: string | undefined,
 ): boolean {
-  if (requestedProjectId === undefined) return false;
-  return !projects.some((project) => project.id === requestedProjectId);
+  return isUnresolvedDeepLinkId(
+    projects.map((project) => project.id),
+    requestedProjectId,
+  );
+}
+
+/** FSE-207b —— 与 `isUnresolvedProjectDeepLink` 同一判定,标的换成商家自己名下**所有
+ *  project 里**的对话(见调用点 `findOwnedThreadForDeepLink`,精确点查,不看当前 project)。 */
+export function isUnresolvedThreadDeepLink(
+  threads: readonly { id: string }[],
+  requestedThreadId: string | undefined,
+): boolean {
+  return isUnresolvedDeepLinkId(
+    threads.map((thread) => thread.id),
+    requestedThreadId,
+  );
 }
 
 export function selectImmersiveProject(
@@ -122,13 +149,31 @@ export async function ImmersiveCanvasEntry({
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
 
-  // FSE-207:清单先读、拒绝先判,`getOrCreateDefaultProject()` 排在它后面 —— 那一条会
-  // **建**一张画布(`actions.ts` 的 `project.create` ＋ 审计行),所以它一个字节都不许在
-  // 「这条深链我们打不开」这题答完之前执行。打不开就到此为止:不改写地址、不建任何东西。
+  // FSE-207 / FSE-207b:清单先读、拒绝先判,`getOrCreateDefaultProject()` 排在它们后面
+  // —— 那一条会**建**一张画布(`actions.ts` 的 `project.create` ＋ 审计行),所以它一个
+  // 字节都不许在「这条深链我们打不开」这题答完之前执行。打不开就到此为止:不改写地址、
+  // 不建任何东西。project 与 thread 两道题都要在这里问完(`?thread=` 单独出现、
+  // `?project=` 不在场时,项目那道题天然放行——照旧只问 thread 那道)。
   const requestedProjectId = firstSearchParam(sp.project);
   const ownedProjects = await getProjects(owner.ownerId);
   if (isUnresolvedProjectDeepLink(ownedProjects, requestedProjectId)) {
     return <CanvasDeepLinkRefused />;
+  }
+
+  // FSE-207b(判官 P2-1 修根,PR #1414)—— 这里要问的是「这条 id 是不是我名下任何一个画布
+  // 里的对话」,不是「是不是当前这张画布里的」;后者仍由下面 `selectImmersiveThread` 的既有
+  // 归一化处理。原先借 `getAllCoworkThreadMetas` 的租户全量 `findMany` 来答这道题,而画布
+  // 规范地址天然带 `?thread=`,是每次打开一条对话都要走的热路径,换成一次精确点查
+  // (`findOwnedThreadForDeepLink`,命中 schema 的 `@@unique([id, ownerId])`)。只在真带了
+  // `?thread=` 时才多发这一次查询。
+  const requestedThreadId = firstSearchParam(sp.thread);
+  let requestedThreadProjectId: string | undefined;
+  if (requestedThreadId !== undefined) {
+    const ownedThread = await findOwnedThreadForDeepLink(owner.ownerId, requestedThreadId);
+    if (isUnresolvedThreadDeepLink(ownedThread ? [ownedThread] : [], requestedThreadId)) {
+      return <CanvasDeepLinkRefused variant="thread" />;
+    }
+    requestedThreadProjectId = ownedThread?.projectId;
   }
 
   const ensured = await getOrCreateDefaultProject();
@@ -138,6 +183,28 @@ export async function ImmersiveCanvasEntry({
   // 清单才不会比改动之前少一张(这一趟只在「一张都没有」时发生,也就是每个租户的第一次)。
   const projects = ownedProjects.length > 0 ? ownedProjects : await getProjects(owner.ownerId);
   const projectSelection = selectImmersiveProject(projects, ensured.id, requestedProjectId);
+
+  // FSE-207b(判官 P2-2 修根,PR #1414)—— 点查已经把这条 thread 真正挂在哪张画布上带回来
+  // 了(`requestedThreadProjectId`)。它与地址/兜底要打开的画布不一致时(常见形状:
+  // `?project=A&thread=` 其实挂在 B 上),绝不能沿用下面 `selectImmersiveThread` 的既有
+  // 归一化 —— 那条归一化只知道「这条 id 不在当前画布的清单里」,会把商家悄悄换到 A 里**另
+  // 一条**对话上,与他点的链接毫无关系。这里提前把地址纠正成 B 的规范地址(同一条 thread、
+  // 换成它真正所在的 project),与「地址要匹配实际打开的内容」这条既有归一化哲学一致,只是
+  // 提前到发错画布的读之前;本就在正确画布上的合法深链不受影响,原路往下走。
+  if (
+    requestedThreadId !== undefined &&
+    requestedThreadProjectId !== undefined &&
+    requestedThreadProjectId !== projectSelection.activeProjectId
+  ) {
+    redirect(
+      buildImmersiveCanvasCanonicalUrl(sp, {
+        activeProjectId: requestedThreadProjectId,
+        activeThreadId: requestedThreadId,
+        canonicalizeThread: true,
+      }),
+    );
+  }
+
   const [threadRows, accountResult, entityRows] = await Promise.all([
     getCoworkThreads(owner.ownerId, projectSelection.activeProjectId),
     getMyAccount(),
@@ -145,10 +212,7 @@ export async function ImmersiveCanvasEntry({
     // them the mention list is empty and "@ to reference your stuff" promises nothing.
     getEntities(owner.ownerId),
   ]);
-  const threadSelection = selectImmersiveThread(
-    threadRows,
-    firstSearchParam(sp.thread),
-  );
+  const threadSelection = selectImmersiveThread(threadRows, requestedThreadId);
 
   if (threadSelection.shouldRedirect) {
     redirect(

@@ -5,16 +5,14 @@
  * ①钱面 → ②商家动作面 → ③CRM 面 → ④后台 staff 帧 → ⑤裸外键回填。
  *
  * 切片①（#1376）交付的是 TENANT-A1 / A3 / A4（见 `tenant-guard-money-slice1.test.ts`
- * 与 `apps/web/lib/__tests__/tenant-money-frames-slice1.test.ts`）。这个文件把**其余**
- * 编号按它们归属的切片摆在这里，每条一句话写清「哪一片会把它变成真测试」——
+ * 与 `apps/web/lib/__tests__/tenant-money-frames-slice1.test.ts`）。切片②（#1377）交付的是
+ * TENANT-A2（见 `apps/web/lib/__tests__/tenant-action-cross-tenant-slice2.test.ts`：真实数据库、
+ * 真实动作函数 —— renameCollection / getCollection / deleteCanvasNode 各一次改名/读取/删除，
+ * 用 A 的会话打 B 的 id 三次全部失败，B 的行数一字未改，A 自己的同一动作正常成功）。
+ * 这个文件把**其余**编号按它们归属的切片摆在这里，每条一句话写清「哪一片会把它变成真测试」——
  * 一张看得见的欠账表，不是一堆空壳：接手的那一片删掉自己那一行，换成真的行为测试。
  */
 import { it } from "vitest";
-
-// 切片②（商家动作面）
-it.todo(
-  "TENANT-A2 用 A 的会话把 id/orgId 换成 B 的资源做改名、删除、读取各一次：三次全失败，B 的行数一字未改 —— 切片②（商家动作面）交付",
-);
 
 // 切片④（后台 staff 帧，#479 并案）
 it.todo(

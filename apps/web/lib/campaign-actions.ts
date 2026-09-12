@@ -6,7 +6,8 @@ import { newId } from "@fikirtive/core";
 import { prisma, Prisma } from "@fikirtive/db";
 import { z } from "zod";
 import { isImpersonating } from "@/lib/better-auth/compat";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { campaignApprovalLockKey } from "./campaign-approval-lock";
 import {
   campaignEntryWasDispatched,
@@ -286,7 +287,18 @@ export async function proposeCampaign(raw: unknown): Promise<
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  // 租户围栏切片②（规格 docs/specs/tenant-isolation.md，#1377，TENANT-A1/A2）：商家动作面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => proposeCampaignInFrame(gate, raw));
+}
 
+async function proposeCampaignInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<
+  { ok: true; idempotent: boolean; campaignId: string; payload: CampaignPlan } | CampaignActionError
+> {
   const parsed = proposeInputSchema.safeParse(raw);
   if (!parsed.success) return { error: refusalMessage(parsed.error, "That campaign plan isn't valid.") };
   const input = parsed.data;
@@ -442,6 +454,16 @@ export async function updateCampaign(raw: unknown): Promise<
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => updateCampaignInFrame(gate, raw));
+}
+
+async function updateCampaignInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<
+  { ok: true; idempotent: boolean; campaign: CampaignSummary } | CampaignActionError
+> {
   const parsed = updateCampaignSchema.safeParse(raw);
   if (!parsed.success) return { error: refusalMessage(parsed.error, "That campaign change isn't valid.") };
   const { campaignId, patch } = parsed.data;
@@ -507,6 +529,16 @@ export async function setCampaignStatus(raw: unknown): Promise<
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => setCampaignStatusInFrame(gate, raw));
+}
+
+async function setCampaignStatusInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<
+  { ok: true; idempotent: boolean; campaign: CampaignSummary } | CampaignActionError
+> {
   const parsed = setStatusSchema.safeParse(raw);
   if (!parsed.success) return { error: "That campaign status isn't valid." };
   const { campaignId, status } = parsed.data;
@@ -555,6 +587,14 @@ export async function deleteCampaign(raw: unknown): Promise<
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => deleteCampaignInFrame(gate, raw));
+}
+
+async function deleteCampaignInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<{ ok: true; idempotent: boolean } | CampaignActionError> {
   const parsed = campaignTargetSchema.safeParse(raw);
   if (!parsed.success) return { error: "That campaign change isn't valid." };
   const { campaignId } = parsed.data;
@@ -707,6 +747,14 @@ export async function proposeCampaignEntry(raw: unknown): Promise<CampaignPlanRe
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => proposeCampaignEntryInFrame(gate, raw));
+}
+
+async function proposeCampaignEntryInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<CampaignPlanResult> {
   const parsed = proposeEntrySchema.safeParse(raw);
   if (!parsed.success) return { error: "That campaign entry isn't valid." };
   if (!validEntryProof(
@@ -745,6 +793,14 @@ export async function updateCampaignEntry(raw: unknown): Promise<CampaignPlanRes
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => updateCampaignEntryInFrame(gate, raw));
+}
+
+async function updateCampaignEntryInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<CampaignPlanResult> {
   const parsed = updateEntrySchema.safeParse(raw);
   if (!parsed.success) return { error: "That campaign change isn't valid." };
 
@@ -784,6 +840,14 @@ export async function removeCampaignEntry(raw: unknown): Promise<CampaignPlanRes
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => removeCampaignEntryInFrame(gate, raw));
+}
+
+async function removeCampaignEntryInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<CampaignPlanResult> {
   const parsed = entryTargetSchema.safeParse(raw);
   if (!parsed.success) return { error: "That campaign change isn't valid." };
 
@@ -808,6 +872,14 @@ export async function approveCampaignEntry(raw: unknown): Promise<CampaignPlanRe
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => approveCampaignEntryInFrame(gate, raw));
+}
+
+async function approveCampaignEntryInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<CampaignPlanResult> {
   const parsed = entryTargetSchema.safeParse(raw);
   if (!parsed.success) return { error: "That campaign change isn't valid." };
 
@@ -839,6 +911,14 @@ export async function unapproveCampaignEntry(raw: unknown): Promise<CampaignPlan
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => unapproveCampaignEntryInFrame(gate, raw));
+}
+
+async function unapproveCampaignEntryInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<CampaignPlanResult> {
   const parsed = entryTargetSchema.safeParse(raw);
   if (!parsed.success) return { error: "That campaign change isn't valid." };
   const { campaignId, entryId } = parsed.data;
@@ -873,6 +953,14 @@ export async function setCampaignGrouping(raw: unknown): Promise<
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => setCampaignGroupingInFrame(gate, raw));
+}
+
+async function setCampaignGroupingInFrame(
+  gate: { email: string; ownerId: string },
+  raw: unknown,
+): Promise<{ ok: true; idempotent: boolean } | CampaignActionError> {
   const parsed = groupingSchema.safeParse(raw);
   if (!parsed.success) return { error: "That campaign grouping isn't valid." };
   const { campaignId, targetId, targetType } = parsed.data;

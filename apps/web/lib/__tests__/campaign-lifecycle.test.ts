@@ -69,8 +69,9 @@ const {
   CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
   CAMPAIGN_PLAN_CHANGED_MID_DISPATCH,
 } = await import("@/lib/campaign-approval-lock");
-const { dispatchedCampaignEntryIds } = await import("@/lib/campaign-dispatch-history");
-const { runAsUser } = await import("@fikirtive/db/principal");
+const campaignDispatchHistoryModule = await import("@/lib/campaign-dispatch-history");
+const { dispatchedCampaignEntryIds } = campaignDispatchHistoryModule;
+const { getPrincipal } = await import("@fikirtive/db/principal");
 
 function asUser(email: string) { mockAuth.mockResolvedValue({ user: { email } }); }
 async function ensureUser(email: string) {
@@ -92,7 +93,9 @@ function testId(): string {
 /** The single refusal both paid-set exits give, because the reason is the same one. */
 const ALREADY_DISPATCHED =
   "This entry has already been sent for generation, so it can't be taken out of the plan. Its generation and credits stay in your history.";
-const CHECK_UNKNOWN =
+/** mutatePaidSetEntry's catch — the lock, the history read, or the write fell over; say the
+ *  outcome is unknown rather than guessing nothing changed (campaign-actions.ts:737-741). */
+const PAID_SET_CHANGE_UNKNOWN =
   "We couldn't check this entry's generation history — nothing was changed. Please retry.";
 
 let orgA: string, orgB: string;
@@ -549,32 +552,100 @@ describe("#744 P2 the dispatch check cannot be dodged by grouping, age, or a bro
       .rejects.toThrow("history read unavailable");
   });
 
-  it("refuses — and changes nothing — when a read inside the guarded transaction throws", async () => {
+  // P1-1 (判官定向修) — the three siblings above never drive mutatePaidSetEntry's OWN catch
+  // (campaign-actions.ts:737-741): the first two walk the read-succeeds path and the third stops
+  // at the dispatchedCampaignEntryIds helper, never through the real action. This is the only
+  // end-to-end proof that a failed transaction (lock, history read, or write) makes BOTH paid-set
+  // exits answer "unknown", not a silent no-op.
+  //
+  // Mechanism note: `mutatePaidSetEntry` calls `prisma.$transaction(async (tx) => {...})` where
+  // `prisma` is the lazy-proxy singleton from `@fikirtive/db/client.ts` — its `get` trap always
+  // forwards to the real client and never exposes an OWN `$transaction` property, so
+  // `vi.spyOn(prisma, "$transaction")` throws "$transaction does not exist" (verified against
+  // this exact client during TDD, see report). What DOES work: `campaignEntryWasDispatched` is a
+  // plain named export that `campaign-actions.ts` imports directly, and Vitest's module registry
+  // makes that a live, spy-able binding — rejecting it makes the SAME transaction throw for the
+  // SAME reason ("its own read inside the transaction failed"), reaching the identical catch.
+  it("mutatePaidSetEntry fails closed when its transaction cannot complete", async () => {
     const entryId = testId();
     const id = await seedCampaign(orgA, { entries: [{ id: entryId, date: "2026-08-25", status: "approved" }] });
 
-    // A real fault, no patching: the call runs inside an ambient tenant frame belonging to
-    // someone else, so the tenant guard throws on the first read the guarded transaction makes.
-    // This is the #738 shape — a call site that reached the database in the wrong context — and
-    // both exits must answer "unknown" and leave the plan untouched rather than sail on.
-    const foreignFrame = {
-      kind: "user" as const,
-      subjectUserId: null,
-      subjectEmail: B_EMAIL,
-      ownerId: orgB,
-      orgRole: null,
-      membershipId: null,
-      impersonating: false,
-      impersonatedByBaUserId: null,
-    };
+    const spy = vi.spyOn(campaignDispatchHistoryModule, "campaignEntryWasDispatched")
+      .mockRejectedValueOnce(new Error("history read unavailable"))
+      .mockRejectedValueOnce(new Error("history read unavailable"));
+    try {
+      expect(await unapproveCampaignEntry({ campaignId: id, entryId })).toEqual({ error: PAID_SET_CHANGE_UNKNOWN });
+      expect(await removeCampaignEntry({ campaignId: id, entryId })).toEqual({ error: PAID_SET_CHANGE_UNKNOWN });
+    } finally {
+      spy.mockRestore();
+    }
 
-    expect(await runAsUser(foreignFrame, () => unapproveCampaignEntry({ campaignId: id, entryId })))
-      .toEqual({ error: CHECK_UNKNOWN });
-    expect(await runAsUser(foreignFrame, () => removeCampaignEntry({ campaignId: id, entryId })))
-      .toEqual({ error: CHECK_UNKNOWN });
-
-    expect(await entryIds(id)).toEqual([entryId]);
+    // Not "the call returned an error" — the plan is untouched, exactly like the sibling tests above.
     expect(entryStatuses((await readCampaign(id, orgA))?.planJson)[entryId]).toBe("approved");
+    expect(await entryIds(id)).toEqual([entryId]);
+  });
+
+  // TENANT-A1 补充证明（切片②，规格 docs/specs/tenant-isolation.md §1.8，#1377）。
+  //
+  // 事实核对（判官 P1-2 定向修，替换此前那条理由已被证伪的用例）：
+  // - `resolveUserPrincipal(gate)` 本身在 `runAsUser` 建的新帧**之外**执行——它是一次 plain
+  //   `await`，跑在调用方当时所在的外层帧里；只有它返回的 principal 被交给 runAsUser 之后，
+  //   新帧才存在。它内部发的 `prisma.membership.findFirst({ where: { orgId: gate.ownerId, … } })`
+  //   因此也在外层帧里执行，不在这两个入口自己建的新帧里。
+  // - Membership 的租户列是 `orgId`（ORG_SCOPED_TENANT_MODELS 族，packages/db/src/tenant-guard.ts
+  //   93-97 行），这一族**默认走 warn 挡位**（同文件 118 行 `orgScopedGuardMode`）：命中「外层帧
+  //   ownerId 与查询的 orgId 不符」只会 `console.warn` 一条、原样放行——不是「走不到守卫面前」，
+  //   是「守卫看见了、按当前挡位选择不拦」。旧注释「foreignFrame 从今往后根本走不到守卫面前」把
+  //   这两件事混为一谈，是错的，已被判官证伪（tenant-guard.ts:309-317 的 ORG_SCOPED 守卫本会拦）。
+  // - #1403 一旦把这一族翻成 enforce：任何在外层帧属于别的租户时调用 `resolveUserPrincipal(gate)`
+  //   都会让这句 `membership.findFirst` 因为 orgId 不符而直接抛错——这是 `resolveUserPrincipal`
+  //   自身已知的行为，写在这里供 #1403 落地时对照，不是本用例断言的不变式。
+  //
+  // 所以这条用例不再用「外层套一个异租户帧」去模拟什么——那只是巧合地在 warn 挡位下不出事，
+  // 不是这两个入口的正防线。真正要证明的新防线：这两个入口在敏感 DB 操作那一刻，自己建的帧
+  // 就是一顶完整的 `kind:"user"`、`ownerId` 与当次会话（A）相符的帧——手法照抄
+  // tenant-action-cross-tenant-slice2.test.ts:149 的 TENANT-A1 补充证明：`vi.spyOn` 包一层
+  // 已经在执行的真实调用，在它执行的那一刻读 `getPrincipal()`，真正的查询原样转发。
+  //
+  // 探针挂在哪：`prisma`（@fikirtive/db/client.ts 的惰性 Proxy）的 `get` 陷阱不暴露任何自有
+  // 属性，`vi.spyOn(prisma, "$transaction")` 会直接抛 "$transaction does not exist"（TDD 阶段
+  // 对着这个真实 client 实测过，见交接报告）；`mutatePaidSetEntry` 的事务体里发的又都是
+  // `tx.campaign.findFirst` 一类——`tx` 是每次事务重新生成的对象，跟顶层 `prisma.campaign` 不是
+  // 同一个引用，包一层顶层方法也截不到事务内部的调用（同样实测过）。能截到的是
+  // `campaignEntryWasDispatched`——`mutatePaidSetEntry` 在事务里第一句就 `await` 它，它是
+  // campaign-actions.ts 直接具名导入的顶层函数，Vitest 的模块登记表让这个绑定可 spy；在事务内
+  // 那一刻它执行时,`getPrincipal()` 读到的就是 `unapproveCampaignEntry` / `removeCampaignEntry`
+  // 自己建的帧。
+  //
+  // #744 P2 真正要的「读故障必须 fail closed、不许把 unknown 讲成 nothing」这条不变式不受影响：
+  // `mutatePaidSetEntry` 的 catch 分支单独有专门用例覆盖（见上方「fails closed」一条），
+  // 其余三条兄弟用例（未取消分组、老式按位置记账、桩客户端读故障）一个字没动。
+  it("unapprove and remove build their own kind:\"user\" frame at the sensitive op (TENANT-A1)", async () => {
+    const entryId = testId();
+    const id = await seedCampaign(orgA, { entries: [{ id: entryId, date: "2026-08-25", status: "approved" }] });
+
+    const original = campaignDispatchHistoryModule.campaignEntryWasDispatched;
+    const seen: Array<{ kind: string | undefined; ownerId: string | null }> = [];
+    const spy = vi.spyOn(campaignDispatchHistoryModule, "campaignEntryWasDispatched")
+      .mockImplementation(((...args: Parameters<typeof original>) => {
+        const principal = getPrincipal();
+        seen.push({ kind: principal?.kind, ownerId: (principal as { ownerId?: string } | undefined)?.ownerId ?? null });
+        return original(...args);
+      }) as typeof original);
+
+    try {
+      expect(await unapproveCampaignEntry({ campaignId: id, entryId })).toMatchObject({ ok: true });
+      expect(entryStatuses((await readCampaign(id, orgA))?.planJson)[entryId]).toBe("proposed");
+      expect(await removeCampaignEntry({ campaignId: id, entryId })).toMatchObject({ ok: true });
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(seen).toHaveLength(2);
+    for (const frame of seen) {
+      expect(frame).toEqual({ kind: "user", ownerId: orgA });
+    }
+    expect(await entryIds(id)).toEqual([]);
   });
 });
 

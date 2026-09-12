@@ -16,7 +16,12 @@ const {
   mockRefUpdateMany: vi.fn(),
 }));
 
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+// 租户围栏切片②（#1377）：brand-record-actions.ts 现在从这个模块拿 `resolveUserPrincipal` 建帧;
+// 补上 #464 B1 既有的共享 stub（其它切片同款用法）。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mockRequireOwner,
+  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     // #1321 判官第 3 轮:删除与恢复现在一个事务里动价签与身份两张表(PRODID-A6)。

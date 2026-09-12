@@ -405,6 +405,24 @@ export async function getAllCoworkThreadMetas(ownerId: string) {
   }
 }
 
+/**
+ * FSE-207b(判官 P2-1 修根,PR #1414)—— 画布深链闸(`ImmersiveCanvasEntry`)只需要回答一道
+ * 题:「这一条 thread id 是不是我的,挂在哪张画布上」。那条闸原先借用了
+ * `getAllCoworkThreadMetas` 来答,而那条查询是为侧栏「全部对话」清单写的:无上限
+ * `findMany` 外加一次 `GenJob` 扇出。画布规范地址天然带 `?thread=`,这是每次打开一条对话
+ * 都要走的热路径,不该背这整表读的成本 —— 换成一次精确点查,命中 schema 的
+ * `@@unique([id, ownerId])`(`packages/db/prisma/schema.prisma`)。
+ *
+ * 顺手把 `projectId` 带出来:同租户、挂在另一张画布上的合法深链据此直接归一化到那张画布
+ * (P2-2,见 `ImmersiveCanvasEntry` 调用点),不必再多问一次。
+ */
+export async function findOwnedThreadForDeepLink(ownerId: string, threadId: string) {
+  return prisma.chatThread.findFirst({
+    where: { id: threadId, ownerId, ...notDeleted },
+    select: { id: true, projectId: true },
+  });
+}
+
 /** One owned, live thread with its messages in seq order (deep-link / refetch). */
 export async function getCoworkThread(ownerId: string, threadId: string) {
   return prisma.chatThread.findFirst({
