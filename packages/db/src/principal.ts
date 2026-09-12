@@ -470,6 +470,15 @@ export function runAsStaff<T>(principal: StaffPrincipal, fn: () => T): T {
  * The principal now drives tenant enforcement, so silently replacing an authenticated user with
  * a system frame would turn an identity mismatch into a cross-tenant escape hatch.
  *
+ * A `kind: "staff"` frame gets the SAME treatment as a user frame, not the system-frame fallback
+ * (#1419 judge r1, P2-3 — spec §1.6 "`reason` 是审计用的名字，不是权限凭据": falling through to
+ * the `system`/`"tenant-direct"` branch below would silently drop `actorEmail` and let a staff
+ * frame's tenant mismatch pass as an unrelated system scan, exactly the degrade-and-launder shape
+ * §1.6 names for user frames). With `ownerId: null` (the scan-domain shape) naming a tenant is a
+ * legitimate narrowing — the staff identity carries through, only `ownerId` is now set. With an
+ * already-named tenant, naming the SAME one passes through unchanged (same as the user-frame
+ * case); naming a DIFFERENT one throws before entering the callback, exactly like a user frame.
+ *
  * A SYNCHRONOUS callback returning a bare `prisma.x.op(…)` used to be a live hazard here — the
  * lazy PrismaPromise escaped the frame and dispatched outside it. {@link enter} now closes that
  * for every runner, so both callback styles carry the frame. Writing `async` and awaiting inside
@@ -489,6 +498,23 @@ export function runAsTenant<T>(ownerId: string, fn: () => T): T {
       throw new Error("[principal] user frame cannot switch tenant");
     }
     return enter(current, fn);
+  }
+  if (current?.kind === "staff") {
+    if (current.ownerId !== null && current.ownerId !== ownerId) {
+      throw new Error("[principal] staff frame cannot switch tenant");
+    }
+    if (current.ownerId === ownerId) {
+      return enter(current, fn);
+    }
+    return enter(
+      Object.freeze({
+        kind: "staff" as const,
+        actorEmail: current.actorEmail,
+        ownerId,
+        readOnly: inheritedReadOnly(false),
+      }),
+      fn,
+    );
   }
   const reason: SystemReason = current?.kind === "system" ? current.reason : "tenant-direct";
   return enter(

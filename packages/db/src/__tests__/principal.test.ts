@@ -377,6 +377,65 @@ describe("runAsUser × runAsTenant nesting", () => {
   });
 });
 
+/**
+ * #1419 判官复审 P2-3 —— `runAsTenant` used to not recognize a `kind: "staff"` outer frame at
+ * all: falling through to the `system`/`"tenant-direct"` branch silently dropped `actorEmail`
+ * AND let a staff frame switch tenants with no check (the `user`-frame mismatch guard above only
+ * ever matched `current?.kind === "user"`). That is exactly the "降级洗白" (degrade-and-launder)
+ * shape spec §1.6 names for user frames — a real identity mismatch reappearing as an unrelated,
+ * unscoped system frame. These pin the same two behaviours `runAsUser × runAsTenant` pins above,
+ * for the staff kind: legitimate narrowing from the scan domain, and rejection of a switch away
+ * from an already-named tenant.
+ */
+describe("runAsStaff × runAsTenant nesting", () => {
+  it("scan domain (ownerId: null) naming a tenant is a legitimate narrowing — actorEmail carries through, kind stays staff", () => {
+    runAsStaff(staffPrincipal("ops@fikirtive.test", null), () => {
+      runAsTenant("org_a", () => {
+        expect(getPrincipal()).toEqual({
+          kind: "staff",
+          actorEmail: "ops@fikirtive.test",
+          ownerId: "org_a",
+          readOnly: false,
+        });
+      });
+      // the scan-domain frame is restored afterwards, still tenant-less
+      expect(getPrincipal()).toEqual({
+        kind: "staff",
+        actorEmail: "ops@fikirtive.test",
+        ownerId: null,
+        readOnly: false,
+      });
+    });
+  });
+
+  it("SAME already-named tenant: the staff frame passes through untouched (attribution preserved)", () => {
+    const p = staffPrincipal("ops@fikirtive.test", "org_a");
+    runAsStaff(p, () => {
+      runAsTenant("org_a", () => {
+        expect(getPrincipal()).toEqual(storedStaffFrame(p));
+        expect(getPrincipal()?.kind).toBe("staff");
+      });
+      expect(getPrincipal()).toEqual(storedStaffFrame(p));
+    });
+  });
+
+  it("DIFFERENT tenant: rejects the switch and preserves the staff frame — same rule as a user frame, not a system-frame fallback", () => {
+    const p = staffPrincipal("ops@fikirtive.test", "org_a");
+    runAsStaff(p, () => {
+      let entered = false;
+      expect(() =>
+        runAsTenant("org_other", () => {
+          entered = true;
+        }),
+      ).toThrow(/staff frame cannot switch tenant/i);
+      expect(entered).toBe(false);
+      // still a staff frame with actorEmail intact — NOT degraded into
+      // { kind: "system", reason: "tenant-direct", ownerId: "org_other" }
+      expect(getPrincipal()).toEqual(storedStaffFrame(p));
+    });
+  });
+});
+
 describe("async isolation", () => {
   it("concurrent chains never observe each other's principal", async () => {
     const observe = async (ownerId: string, delayMs: number): Promise<string | null> => {
