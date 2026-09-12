@@ -13,9 +13,11 @@ import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp
 import { Spinner } from "@/components/ui/spinner";
 import { authClient } from "@/lib/better-auth/client";
 import {
+  SIGN_IN_CODE_ALLOWED_ATTEMPTS,
   SIGN_IN_CODE_INVALID_EMAIL_MESSAGE,
   SIGN_IN_CODE_LENGTH,
   SIGN_IN_CODE_REJECTED_MESSAGE,
+  SIGN_IN_CODE_SPENT_MESSAGE,
   SIGN_IN_CODE_UNAVAILABLE_MESSAGE,
   SIGN_IN_CODE_UNKNOWN_FAILED_MESSAGE,
   normalizeSignInEmail,
@@ -116,6 +118,17 @@ export function LoginForm({
     initialError ? { source: "social", message: initialError } : null,
   );
   const [codeSentAgain, setCodeSentAgain] = useState(false);
+  // FSE-201 —— 这个码已经被拒过几次，数的是**商家自己按了几次**。
+  //
+  // 服务端每个码只值 `SIGN_IN_CODE_ALLOWED_ATTEMPTS` 次猜，之后那个码就被烧掉了（better-auth
+  // 的 `atomicVerifyOTP` 不再重建 verification 行），于是连邮件里那个真码也进不来。这个数字
+  // 让页面在那一刻换一句话（`SIGN_IN_CODE_SPENT_MESSAGE`），而不是继续劝商家「再检查一下」。
+  //
+  // 为什么不读服务端那一版更细的答案：细分的那个答案只有**被铸过码**的地址拿得到，于是它
+  // 会泄露「这个地址没被撤销 / 暂停期里它有账号」——规格 §1.3 要求这两种拒绝与码错一模一样。
+  // 按次数说话对每个地址都一样，理由逐字写在 `SIGN_IN_CODE_SPENT_MESSAGE` 上（那几个错误码
+  // 的名字只出现在契约那一侧：这一份源码里出现一次，就把 signin-code-action 的围栏染红了）。
+  const [refusedCodeAttempts, setRefusedCodeAttempts] = useState(0);
   const emailInputRef = useRef<HTMLInputElement>(null);
   const codeInputRef = useRef<HTMLInputElement>(null);
   const focusEmailAfterReset = useRef(false);
@@ -190,6 +203,9 @@ export function LoginForm({
 
     setEmail(normalizedEmail);
     setCode("");
+    // FSE-201 —— 送出一封信就是这个码的一次新开始。次数用尽之后 `Send again` 铸的是一个**新**
+    // 码（`resendStrategy: "reuse"` 只在还有机会时复用同一个），它有自己的一份预算。
+    setRefusedCodeAttempts(0);
     go("code");
     return true;
   }
@@ -210,7 +226,17 @@ export function LoginForm({
     const { error: signInError } = await authClient.signIn.emailOtp({ email: normalizedEmail, otp });
     setBusy(null);
     if (signInError) {
-      setError({ source: "code_entry", message: SIGN_IN_CODE_REJECTED_MESSAGE });
+      // FSE-201 —— 这一次之后这个码还剩几次机会，只看商家自己按过几次；服务端答了什么
+      // 一个字都不读（见 `refusedCodeAttempts` 与 `SIGN_IN_CODE_SPENT_MESSAGE` 的理由）。
+      const refused = refusedCodeAttempts + 1;
+      setRefusedCodeAttempts(refused);
+      setError({
+        source: "code_entry",
+        message:
+          refused > SIGN_IN_CODE_ALLOWED_ATTEMPTS
+            ? SIGN_IN_CODE_SPENT_MESSAGE
+            : SIGN_IN_CODE_REJECTED_MESSAGE,
+      });
       codeInputRef.current?.focus();
       return;
     }
@@ -246,6 +272,7 @@ export function LoginForm({
     setEmail("");
     setCode("");
     setError(null);
+    setRefusedCodeAttempts(0); // 换一个地址就是换一个码的预算（FSE-201）
     focusEmailAfterReset.current = true;
     go("email");
   }
