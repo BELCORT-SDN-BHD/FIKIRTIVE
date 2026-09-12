@@ -24,6 +24,13 @@
    (配置缺失会退出 1,见下)。
 
 cron 入口(`backup-cron.ts`)的行为:
+- **RELY-A10(issue #1384)—— 开机就查一遍 env 契约**:`backup-cron.ts` 第一行代码就是
+  `assertWorkerEnv(process.env, { process: "backup-cron" })`,与 worker 主进程同一份
+  `packages/core/src/env-contract.ts` 契约,查的是这份 env 里**每一个**必需变量的格式与
+  存在性(不止 R2/DATABASE_URL,也包含 `SENTRY_DSN` 形状是否像真的 DSN 等)。缺了/写错了
+  任何一个,进程**开机就退出 1、点名那个变量**,而不是等 `runBackupOnce` 跑到一半才发现。
+  唯一的例外是 `GENERATION_PROVIDER`(worker 主进程的生产必填项):这个服务从不碰生成引擎,
+  该变量对它标了 `cronExempt`,不会被这份开机检查要求 —— 少配它不会挡住备份服务启动。
 - **只在自己是触发方时才跑**:`BACKUP_TRIGGER` 不是 `cron` 就**拒绝执行、退出 1**
   (单一归属是硬的——两个触发方是配置错误,不是「继续跑就好」)。
 - **不再检查 03:00 窗口**(cron 表达式本身就是窗口,再检查一次会把 founder 的手动补跑
@@ -31,10 +38,12 @@ cron 入口(`backup-cron.ts`)的行为:
 - **原子只写**:上传用 `If-None-Match: *`(put-if-absent),存储层保证当天 key 只会被写一次。
   即使 worker 定时器与 cron 在同一窗口同时触发,先落地的赢,后来的拿到 412、什么都不记 ——
   「双触发不双备份」靠存储原子性,不靠先查后传。
-- **配置缺失=失败**:cron 服务发现自己没有 R2 目标或没有 `DATABASE_URL`,**退出 1**
+- **配置缺失=失败**:过了上面那道开机契约检查之后,cron 服务若仍然发现自己没有 R2 目标或
+  没有 `DATABASE_URL`(例如契约本身允许的边界情况),`runBackupOnce` 一样**退出 1**
   (一个专职备份的服务没配好就是坏了;绿的 run 只能意味着「昨晚备份是好的」)。
 - 手动跑一次确认(见步骤 5):配好时退出码 0、日志出现 `[backup-cron] ok: backups/db/…`;
-  没配好会退出 1 并打印 `[backup-cron] FAILED: not configured …`。
+  env 契约没过会退出 1 并打印 `[env-contract] backup-cron refusing to start …`(点名变量);
+  过了契约但仍缺 R2/DB 会退出 1 并打印 `[backup-cron] FAILED: not configured …`。
 
 ## 跑什么
 - `pg_dump --format=custom --no-owner --no-privileges` → gzip → 上传

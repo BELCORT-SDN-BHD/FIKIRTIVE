@@ -61,7 +61,14 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  m.founderAlert.mockResolvedValue([]);
+  // RELY-A7/A8(issue #1384):默认代表「三条通道都送到了」—— 这是本文件里其它用例真正关心的
+  // 常态(报警确实发出去过一次)。undelivered 的形状(email/telegram 全挂)是它自己的专门用例,
+  // 见下面 describe("RELY-A7/A8 …")。
+  m.founderAlert.mockResolvedValue([
+    { channel: "sentry", status: "sent" },
+    { channel: "email", status: "sent" },
+    { channel: "telegram", status: "sent" },
+  ]);
   m.storagePresignedGet.mockImplementation(async (key: string) => `url:${key}`);
   m.storagePut.mockImplementation(async () => ({ contentHash: randomUUID().replace(/-/g, "").padEnd(64, "0").slice(0, 64) }));
 
@@ -102,6 +109,12 @@ async function moneyTrail(refId = jobId) {
 
 async function jobRow(id = jobId) {
   return prisma.genJob.findFirstOrThrow({ where: { id, ownerId: orgId }, select: { status: true, generationIds: true, error: true, spent: true } });
+}
+
+/** RELY-A7/A8:paid-for-nothing 的送达节流现在按 UTC 日分片(`<jobId>:<日期>`),
+ *  不再是「一辈子一条」的裸 id —— 见 gen.ts 里 alertPaidForNothingConfirmed 的注释。 */
+function todayPaidForNothingMarkerId(id = jobId): string {
+  return `gen_paid_for_nothing:${id}:${new Date().toISOString().slice(0, 10)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,12 +295,80 @@ describe("#782 r13 存量自愈 —— 翻转 FAILED + 退款,exactly-once", () 
       expect(optsFor(jobId)[1]?.repeat, "第二趟仍在发邮件和 Telegram").toBe(true);
       expect(alerts[1]!.context.repeatOfEarlierAlert).toBe(true);
       // 标记落在 ActionEvent 的主键上,所以它是 exactly-once 的,不是 check-then-act。
-      const markers = await prisma.actionEvent.count({ where: { id: `gen_paid_for_nothing:${jobId}` } });
+      const markers = await prisma.actionEvent.count({ where: { id: todayPaidForNothingMarkerId() } });
       expect(markers).toBe(1);
     } finally {
       spy.mockRestore();
     }
   }, DB_CASE_TIMEOUT_MS);
+
+  describe("RELY-A7/A8(issue #1384)— 送达确认 + 当日节流", () => {
+    // 放在「标记写不进去」那条用例**之前**:那条用例用 `vi.spyOn(prisma.actionEvent, "create")`
+    // 注入故障,而这个仓库当前的 Prisma 客户端(懒代理,见 packages/db/src/client.ts)下
+    // `mockRestore()` 不会把 `.create` 还原成可调用函数(已用最小复现脚本证实,属于 vitest
+    // spyOn 与 Prisma 委托对象交互的既有陷阱,不在本票范围)——把这两条放在它之前跑,就不会被
+    // 那个陷阱污染,不需要为了这张票去改另一条用例的实现。
+    it("RELY-A7 §2 — 邮件与 Telegram 双双失败时不写「已喊过」的永久标记,下一趟巡检再试,Sentry 每趟照收", async () => {
+      await seedDoneEmpty({ settled: true });
+      // Sentry 收到了(那是它本来就在做的事),但两条会打扰人的通道都没送到 —— 这正是
+      // 「商家付了钱什么都没拿到」这句求救最容易被消音的那个形状。
+      m.founderAlert.mockResolvedValue([
+        { channel: "sentry", status: "sent" },
+        { channel: "email", status: "failed", reason: "resend 500" },
+        { channel: "telegram", status: "skipped" },
+      ]);
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await reapStaleGenJobs();
+
+        expect(alertsFor(jobId), "一条都没送到人手里,却只喊了一次").toHaveLength(1);
+        expect(optsFor(jobId)[0]?.repeat ?? false, "没送达的第一次不该被算成重复").toBe(false);
+        // 没送达 ⇒ 不焊死「已喊过」的标记 —— claim 被撤回,今天这一格重新是空的。
+        expect(await prisma.actionEvent.count({ where: { id: todayPaidForNothingMarkerId() } })).toBe(0);
+
+        // 下一趟巡检(5 分钟后):这次全渠道都送到了。
+        m.founderAlert.mockResolvedValue([
+          { channel: "sentry", status: "sent" },
+          { channel: "email", status: "sent" },
+          { channel: "telegram", status: "sent" },
+        ]);
+        await reapStaleGenJobs();
+
+        expect(alertsFor(jobId), "Sentry 应该每趟都照收 —— 两趟巡检 = 两条 Sentry 事件").toHaveLength(2);
+        // 两次都是全渠道尝试(repeat:false),不是「已经喊过一次」的降级 —— 因为第一次真的没送到。
+        expect(optsFor(jobId).map((o) => o.repeat ?? false), "两趟都该是全渠道再试一次,不是 repeat").toEqual([false, false]);
+        expect(await prisma.actionEvent.count({ where: { id: todayPaidForNothingMarkerId() } })).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+    }, DB_CASE_TIMEOUT_MS);
+
+    it("RELY-A8 §2 — 送达之后,同一天内再被巡检扫到就只进 Sentry;过了 UTC 日界重新响一次全渠道", async () => {
+      await seedDoneEmpty({ settled: true });
+      // 昨天已经送达并确认过 —— 直接在库里造好这一格(不依赖真的跨天等待)。
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      await prisma.actionEvent.create({
+        data: {
+          id: `gen_paid_for_nothing:${jobId}:${yesterday}`,
+          ownerId: orgId,
+          type: "gen.paid_for_nothing",
+          payload: { genJobId: jobId, day: yesterday, delivered: true, alertedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() },
+        },
+      });
+
+      await reapStaleGenJobs();
+
+      // 今天是新的一天,昨天的回执管不到今天 —— 今天仍然是首发,全渠道喊一次。
+      expect(alertsFor(jobId)).toHaveLength(1);
+      expect(optsFor(jobId)[0]?.repeat ?? false, "昨天的送达回执不该压住今天的第一次").toBe(false);
+      expect(await prisma.actionEvent.count({ where: { id: todayPaidForNothingMarkerId() } })).toBe(1);
+
+      // 同一天内再被扫到 → 只进 Sentry。
+      await reapStaleGenJobs();
+      expect(alertsFor(jobId)).toHaveLength(2);
+      expect(optsFor(jobId)[1]?.repeat, "今天已经送达过,第二趟该降级成 repeat").toBe(true);
+    }, DB_CASE_TIMEOUT_MS);
+  });
 
   it("两个巡检同时扫到同一行 → 只有一个拿到首发权(唯一约束裁决,不是 check-then-act)", async () => {
     await seedDoneEmpty({ settled: true });
@@ -296,7 +377,7 @@ describe("#782 r13 存量自愈 —— 翻转 FAILED + 退款,exactly-once", () 
       await Promise.all([reapStaleGenJobs(), reapStaleGenJobs()]);
       const firsts = optsFor(jobId).filter((o) => !o.repeat);
       expect(firsts, "并发下发了两次完整报警(两封邮件、两条 Telegram)").toHaveLength(1);
-      expect(await prisma.actionEvent.count({ where: { id: `gen_paid_for_nothing:${jobId}` } })).toBe(1);
+      expect(await prisma.actionEvent.count({ where: { id: todayPaidForNothingMarkerId() } })).toBe(1);
     } finally {
       spy.mockRestore();
     }
@@ -314,7 +395,7 @@ describe("#782 r13 存量自愈 —— 翻转 FAILED + 退款,exactly-once", () 
     // 所以只有**确凿的主键冲突(P2002 = 这一行确实已经报过)**才算重复;其它一切
     // 算首发。宁可多发一条,也不让一次 DB 抖动把它关掉。
     await seedDoneEmpty({ settled: true });
-    const markerId = `gen_paid_for_nothing:${jobId}`;
+    const markerId = todayPaidForNothingMarkerId();
     const realCreate = prisma.actionEvent.create.bind(prisma.actionEvent);
     // 只对**这一行**的标记注入故障:巡检是跨租户的,同库里还住着别的用例留下的行,
     // 一个无差别的 mock 会顺手改掉它们的行为。

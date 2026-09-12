@@ -27,16 +27,21 @@
  * 指纹(债 #6 的另一半)见本文件末尾 configFingerprint():web 与 worker 各自算一次,
  * 两边对不上就是「两个进程跑在不同配置上」,admin 亮红。
  *
- * ── 部署进程其实有三个,而 surface 只有两个(C3)────────────────────────────────
+ * ── 部署进程其实有三个,而 surface 只有两个(C3,RELY-A10 后更新)──────────────────
  * 第三个是**夜间备份的 cron 服务**(`apps/worker/src/backup-cron.ts`,#794 ②):同一个 worker
  * 镜像,换一条启动命令,由 Railway 的调度器按点起停。它没有自己的 surface,是刻意的:
  *   - 它读的每一个变量都是 **worker 面的真子集**(DATABASE_URL / DATABASE_URL_POOLED、
  *     STORAGE_DRIVER + R2_*、R2_BACKUP_*、BACKUP_TRIGGER、SENTRY_DSN、NODE_ENV),
- *     所以 `surface: "worker"` 已经把它全覆盖了,一个都不多一个都不少。
- *   - 它**不跑开机检查**(不调用 bootEnvDecision)。它是一次性进程,配置不全时的守卫是
- *     它自己:没有 R2 目标或没有 DATABASE_URL 就 exit 1,让那一次 cron run 在调度器上变红。
- * 换句话说,加第三个 surface 会改到 EnvSurface、appliesTo、CheckEnvOptions 与两个宿主,
- * 却换不来任何一条新的检查——所以这里只把归属写清楚,不动机制。
+ *     所以 `surface: "worker"` 已经把它全覆盖了,一个都不多一个都不少——**除了一个例外**:
+ *     GENERATION_PROVIDER 是 worker 面的必填项(RELY-A4),但 cron 从不碰生成引擎。这一个
+ *     名字打了 `cronExempt` 标记(见该字段注释),`CheckEnvOptions.process` 才是本票新增的
+ *     那一维,不是第三个 surface——加一个真正的第三个 surface 会改到 EnvSurface、appliesTo
+ *     与两个宿主,换不来任何一条新检查;`process` 只多问一句「这是不是 cron」,而这一句问题
+ *     只有 GENERATION_PROVIDER 一个变量在乎答案。
+ *   - 它**现在跑开机检查**了(RELY-A10:`backup-cron.ts` 调用 `assertWorkerEnv(env,
+ *     { process: "backup-cron" })`,与 worker 主进程同一份 bootEnvDecision)。它仍然是一次性
+ *     进程,退出码 1 就是那一次 cron run 在调度器上的红灯——开机检查只是把「配置不全」提到
+ *     runBackupOnce 之前拦,拦到的是同一类事,只是从「跑了才发现缺 R2/DB」变成「一开机就点名」。
  */
 import { createHmac } from "node:crypto";
 import { z } from "zod";
@@ -62,6 +67,7 @@ export type EnvFormat =
   | "hex64"
   | "url"
   | "postgres-url"
+  | "sentry-dsn"
   | "email-list"
   | "integer"
   | "number"
@@ -174,6 +180,21 @@ export type EnvVarSpec = {
    * 某个功能失灵」照旧不算,那是可用性,归常规 warn:逃生门必须还救得了半夜那一类事故。
    */
   warnImmune?: true;
+  /**
+   * **备份 cron 真的不读这个变量**(RELY-A10,issue #1384 判官前瞻雷)。
+   *
+   * 存在的理由是一个具体的假致命:备份 cron(`apps/worker/src/backup-cron.ts`)与 worker 主
+   * 进程共用 `surface: "worker"` 这同一份契约(见文件头 C3 注释),但它读的变量是 worker 面的
+   * **真子集**——GENERATION_PROVIDER 正是那个不在子集里的例外:RELY-A4 把它在生产收成必填,
+   * 而 backup-cron 从不碰生成引擎。字面上「同一份契约」会让生产夜间备份因为缺一个它用不到的
+   * 变量而 exit(1)静默停摆——这正是这张票要消灭的那一族「说的≠做的」,只不过反过来长成了
+   * 「查得太多」。打了这个标记的变量,在 `opts.process === "backup-cron"` 时跳过**存在性**判
+   * 定(格式与 productionValues 判定不受影响——如果 Railway 的共享变量组意外把它也带给了 cron
+   * 服务,一个写错的值仍然会被拦下来,只是"没设"不再算错)。
+   *
+   * 名单要短:只有**cron 进程链路上真的读不到**的变量配得上它——今天只有 GENERATION_PROVIDER。
+   */
+  cronExempt?: true;
   /** 一行说明,渲染进 .env.example 的生成片段。 */
   summary: string;
 };
@@ -617,9 +638,13 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     productionValues: ["byteplus"],
     productionReason:
       "mock delivers stand-in artefacts and canned understanding and still settles the charge — production must name the real engine",
+    // RELY-A10(issue #1384 判官前瞻雷)——备份 cron 是唯一从不碰生成引擎的 worker 面进程,
+    // 见 `cronExempt` 字段自己的注释。少了这一条,给 backup-cron 接上开机契约那天,生产夜间
+    // 备份会因为缺一个用不到的变量而 exit(1),而这正是这张票要防的那件事本身。
+    cronExempt: true,
     secret: false,
     shared: false,
-    summary: "mock ($0, dev/CI only) | byteplus (the only paid provider, ADR 0003, and the ONLY value production accepts). Unset means mock in dev/CI; in production both unset and mock are refused at boot, and any process that starts anyway refuses every job and refunds the hold.",
+    summary: "mock ($0, dev/CI only) | byteplus (the only paid provider, ADR 0003, and the ONLY value production accepts). Unset means mock in dev/CI; in production both unset and mock are refused at boot, and any process that starts anyway refuses every job and refunds the hold. The backup-cron process never reads it (cronExempt) — it does not run the generation engine.",
   },
   {
     name: "BYTEPLUS_API_KEY",
@@ -1076,10 +1101,12 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     surface: "both",
     readBy: "code",
     requirement: "required",
-    format: "url",
+    // RELY-A6 —— 形状正则,不是 `url`(见 SENTRY_DSN_SHAPE 上方注释:`https://example.com`
+    // 是一个完全合法的 URL,却不是任何意义上的 Sentry 地址)。
+    format: "sentry-dsn",
     secret: false,
     shared: false,
-    summary: "Error monitoring, and the archive half of the founder alert pipeline. Required in production: with no DSN every alert is a silent no-op.",
+    summary: "Error monitoring, and the archive half of the founder alert pipeline. Required in production: with no DSN every alert is a silent no-op. Must be shaped like a real DSN (https://<key>@<host>/<projectId>) — format checked, never dialed at boot.",
   },
   {
     name: "NEXT_PUBLIC_SENTRY_DSN",
@@ -1303,6 +1330,15 @@ export function envVarConfigured(env: EnvRecord, name: string): boolean {
 
 const HEX64 = /^[0-9a-fA-F]{64}$/;
 
+/**
+ * RELY-A6 —— Sentry DSN 的**形状**,不是启动探测。`https://<key>@<host>/<projectId>`:公钥
+ * (字母数字,不锁死成十六进制——自托管 Relay 允许自定义 key)、`@` 后的 host(SaaS 与自托管
+ * 都合法,不锁域名)、以及数字 project id。`format: "url"` 会放行 `https://example.com`
+ * 这种毫无 DSN 结构的合法 URL——那正是本票要堵的洞:格式合法 ≠ 是一个 Sentry 地址。
+ * 只校验形状,不外呼(§3 非目标:一次 Sentry 抖动不该把开机可用性押上去)。
+ */
+const SENTRY_DSN_SHAPE = /^https:\/\/[A-Za-z0-9]+@[^/\s@]+\/\d+$/;
+
 /** 每种 format 的 zod 校验器。只在变量「有值」时跑——空值的处理是存在性那一层的事。 */
 function formatSchema(spec: EnvVarSpec): z.ZodType<unknown> {
   switch (spec.format) {
@@ -1326,6 +1362,10 @@ function formatSchema(spec: EnvVarSpec): z.ZodType<unknown> {
           return false;
         }
       }, "must be a postgres:// or postgresql:// URL");
+    case "sentry-dsn":
+      return z
+        .string()
+        .refine((v) => SENTRY_DSN_SHAPE.test(v), "must look like a Sentry DSN (https://<key>@<host>/<projectId>) — a well-formed URL that isn't shaped like one is still rejected");
     case "email-list":
       return z
         .string()
@@ -1393,6 +1433,12 @@ export type CheckEnvOptions = {
    * (要么永远绿,要么永远红),而「warn 免疫」这条验收必须当场演示得出来。
    */
   pricedModelIds?: readonly string[];
+  /**
+   * 哪一个 worker 面进程在查(RELY-A10)。默认 `"worker"`(主进程,一字不变);
+   * `"backup-cron"` 是唯一的第二种取值——备份 cron 复用同一份 `surface: "worker"` 契约,
+   * 但会跳过标了 `cronExempt` 的变量的**存在性**判定(见该字段的注释)。
+   */
+  process?: "worker" | "backup-cron";
 };
 
 const appliesTo = (spec: EnvVarSpec, surface: "web" | "worker") => spec.surface === "both" || spec.surface === surface;
@@ -1415,6 +1461,10 @@ export function checkEnv(env: EnvRecord, opts: CheckEnvOptions): EnvProblem[] {
       // 自己报得更准。写成守卫而不是逐条判断,是为了将来有人把某个 library 变量标成
       // required 时,这条不变量仍然成立。
       if (spec.readBy !== "code") continue;
+      // RELY-A10:备份 cron 查的是它真的会读到的那个子集——标了 cronExempt 的变量它压根不碰,
+      // 「没设」不是配置漏了,是这个进程用不上它。格式与 productionValues 判定不受这条影响,
+      // 只跳过下面的存在性判定。
+      if (opts.process === "backup-cron" && spec.cronExempt) continue;
       // 强度可以逐面覆盖(C3):同一个名字在 web 是硬要求、在 worker 只是兜底,是真实存在的形状。
       const requirement = spec.requirementBySurface?.[opts.surface] ?? spec.requirement;
       if (requirement === "required") {

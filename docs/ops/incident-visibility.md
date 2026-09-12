@@ -28,11 +28,15 @@
   配置生效后才会记录。`SENTRY_DSN` 自整顿 C1a 起是**生产必填**:没有 DSN 时每一次 capture
   都是静默 no-op,而开机检查此前一个字都不说。今天生产缺它 = 进程拒绝启动。
 - **Founder 报警管道**(整顿 C1a,`packages/core/src/founder-alert.ts`)是第三条路,与上面两套
-  并列而不替代:它只承载**需要人来做决定**的钱路事故(今天两条:`gen.paid_for_nothing`、
-  `stripe.paid_session_unusable_metadata`),一条事件同时走 Sentry(归档聚类)、
+  并列而不替代:它承载**需要人来做决定**的钱路事故,最典型的两条是 `gen.paid_for_nothing`
+  与 `stripe.paid_session_unusable_metadata` / `stripe.paid_session_pack_mismatch`(接线与
+  含义见 `docs/ops/telegram-alerts.md`「它会在什么时候响」);完整名单以代码为准(逐个 grep
+  各调用点的 `key: "..."`,不要照抄这里的示例当穷举)。一条事件同时走 Sentry(归档聚类)、
   邮件 tools@belcort.com(离线追人)、Telegram(手机会响;两个 env 未配即静默跳过,
   接线向导 `docs/ops/telegram-alerts.md`)。**「进了 Sentry」不等于「有人被通知」**——
   通知那一半在 Sentry 的 alert rule 上,接线步骤在 `docs/ops/dashboards.md` 第三节。
+  RELY-A7/A9(issue #1384):没有任何一条通道送达时不会把「已经喊过」焊死,worker 侧下一趟
+  巡检(约 5 分钟)、Stripe 侧下一趟 `stripe-reconcile` 周期扫描都会原样再试一次全渠道。
 - 管理面代码包含 `/admin/system`、`/admin/cost`、`/admin/audit`;能否访问及数据是否新鲜必须
   在当前部署和权限下验证。
 - `/admin/queue`(#779)只读生成队列指标库,回答「队列堵没堵」。未配置 `QUEUE_METRICS_QUERY_URL`
