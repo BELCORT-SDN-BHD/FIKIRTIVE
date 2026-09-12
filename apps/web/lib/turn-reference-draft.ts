@@ -46,10 +46,25 @@ export interface TurnReferenceDraft {
    */
   labels: string[];
   /**
-   * 源任务标识：这份草稿是从哪一条消息恢复出来的。它作为 `replyToMessageId` 上路（请求 schema
-   * 早就有这一格），所以「这一轮是那一轮的重来／那张卡的修改」在记录里说得出来，不必新开字段。
+   * 源任务标识：这份草稿是从哪一条消息恢复出来的，也是屏幕上「Retrying: …」那一行认的那个
+   * id（`retrySourceId`）。它在**绝大多数**草稿上同时也是 `replyToMessageId` 该上路的那个
+   * id——两件事恰好是同一个问题的答案，所以从前没必要分成两格。
+   *
+   * 例外只有一处（P2-2 判官修根，PR #1415，FSE-211）：`OttoChatStream.tsx` 的
+   * `liveRetryDraft` 在**直播失败**那一刻会把这一格改写成「此刻最新那条用户消息自己」
+   * （FSE-205——屏幕要认得出「正在重试哪一轮」，答案只能是刚刚回显的那一条，与这份草稿
+   * 原本是回复给谁无关）。这一次改写只对屏幕正确，对请求体是错的——一份卡片的 Change
+   * 请求原本要回复给那张卡，被改写之后请求体反而回复给一个还没落库的乐观回显 id，
+   * 服务端解析不到，`replyToMessageId` 落库退化成 `null`。`replyToMessageId` 就是留给这
+   * 一种分岔的第二个答案：有它就用它（改写过的那份草稿把原本的目标记在这里），没有就退回
+   * `sourceMessageId`（其余每一份草稿，两个问题共用同一个答案）。
    */
   sourceMessageId: string | null;
+  /**
+   * 请求体真正该带的 `replyToMessageId`——只在它和 `sourceMessageId`（屏幕认的那个）
+   * 分道扬镳时才需要设（见上）。`undefined` = 退回 `sourceMessageId`，两者是同一个 id。
+   */
+  replyToMessageId?: string | null;
 }
 
 export const EMPTY_TURN_REFERENCES: TurnReferences = {
