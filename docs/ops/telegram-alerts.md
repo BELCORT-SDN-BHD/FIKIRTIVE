@@ -49,10 +49,13 @@ Telegram 的规矩:**bot 不能主动私信一个从没跟它说过话的人**�
 
 ## 第 3 步 · 取 chat id(约 30 秒)
 
-把下面这行里的 `<TOKEN>` 换成第 1 步的 token,整行粘进终端跑:
+**不要把 token 直接打进 URL 里跑** —— 那样它会原样躺在你的终端历史记录、屏幕录像、
+和后台进程列表里。先把它读进一个只在这个终端会话里存在的变量(下面这条命令不回显、
+也不会把 token 写进 shell 历史),再用变量去发请求:
 
 ```bash
-curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates"
+printf "粘贴第 1 步的 bot token(不会显示在屏幕上): "; read -rs TOKEN; echo
+curl -s "https://api.telegram.org/bot${TOKEN}/getUpdates"
 ```
 
 在输出里找 `"chat":{"id":...}`,那个数字就是 **chat id**。
@@ -87,11 +90,13 @@ Railway → 项目 → **web** 服务 → Variables,加两条;然后在 **worker
 
 ## 第 5 步 · 证明它真的会响
 
-不要靠「变量填了」就当接通了。跑一次真实发送:
+不要靠「变量填了」就当接通了。跑一次真实发送 —— 同上,token 只进变量,不进命令行原文:
 
 ```bash
-curl -s -X POST "https://api.telegram.org/bot<TOKEN>/sendMessage" \
-  -d chat_id="<CHAT_ID>" -d text="Fikirtive alert channel test"
+printf "粘贴 bot token(不会显示在屏幕上): "; read -rs TOKEN; echo
+printf "粘贴第 3 步查到的 chat id: "; read -r CHAT_ID
+curl -s -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+  -d chat_id="${CHAT_ID}" -d text="Fikirtive alert channel test"
 ```
 
 手机上收到这条,才算接通。`"ok":false` 的常见原因:
@@ -106,23 +111,29 @@ curl -s -X POST "https://api.telegram.org/bot<TOKEN>/sendMessage" \
 
 ## 它会在什么时候响
 
-只在**需要人来决定**的钱路事故上响,不是每条错误都响。今天有两类:
+只在**需要人来决定**的钱路事故上响,不是每条错误都响。这份文档只点名**这两条最典型的、
+需要人立刻动手**的事故;`packages/core/src/founder-alert.ts` 之外散落着更多按同一条通道
+发出的告警(钱路对账、账本守恒、限流故障等),完整名单以代码为准(`key: "..."` 逐个 grep)。
 
 - **商家付了钱什么都没拿到**(`gen.paid_for_nothing`)—— 一趟生成收了钱、零产出,
   而且钱已经结算,系统故意不自动退(自动翻成失败会在界面上许下一句「你没被扣钱」的假话)。
   要不要退,是你的决定。
-- **有人付了钱,但我们不知道该给谁**(`stripe.paid_session_unusable_metadata`)——
-  Stripe 说付款成功,但订单信息坏掉,credits 发不出去。要人工去 Stripe 后台找到买家补发。
+- **有人付了钱,但我们不知道该给谁,或对不上任何在售套餐**
+  (`stripe.paid_session_unusable_metadata` / `stripe.paid_session_pack_mismatch`)——
+  Stripe 说付款成功,但订单信息坏掉或金额与套餐对不上,credits 发不出去。
+  要人工去 Stripe 后台找到买家补发。
 
-每条消息都带着足以直接定位那一单的字段,但**两类带的东西不一样**:
+每条消息都带着足以直接定位那一单的字段,但**这两类带的东西不一样**:
 
 - 生成那条:商家 org、实际扣掉的金额、作业 id —— 去后台按作业 id 就能翻到。
-- Stripe 那条:Stripe 的 event id / session id / payment intent、付款金额与币种。它**没有
-  org**,因为「不知道这笔钱该记给谁」正是它要报的那件事;也没有作业 id,那一步还没发生。
-  查法是拿 session id 去 Stripe 后台找买家。
+- Stripe 那两条:Stripe 的 event id / session id / payment intent、付款金额与币种。
+  `stripe.paid_session_unusable_metadata` 没有 org(「不知道这笔钱该记给谁」正是它要报的
+  那件事),`stripe.paid_session_pack_mismatch` 有 org(商家身份是清楚的,对不上的是金额)。
+  两者都没有作业 id,那一步还没发生。查法是拿 session id 去 Stripe 后台找买家。
 
-同一行卡住不会反复轰炸你:第一次发全部三条通道,之后同一行只在 Sentry 里继续计数,
-邮件与 Telegram 不再重复(否则一行卡住就是每天几百条)。
+同一行卡住不会反复轰炸你:今天没送达就下一趟(worker 端约 5 分钟,Stripe 侧靠周期对账)再
+全渠道试一次,送达之后同一天内再被扫到就只在 Sentry 里继续计数,邮件与 Telegram 不再重复
+(否则一行卡住就是每天几百条)。
 
 ---
 

@@ -411,12 +411,15 @@ async function main(): Promise<void> {
     reconciling = true;
     try {
       const r = await reconcileStripePayments();
-      if (r.skipped) console.log(`[worker] stripe reconcile skipped: ${r.skipped}`);
+      // purchaseAlertsRetried(RELY-A9)跑在 Stripe 对账本身之前、与它完全独立(哪怕
+      // STRIPE_SECRET_KEY 没配也照跑,见 stripe-reconcile.ts 里这个字段的注释)——所以每个
+      // 分支都打印它,不只挂在某一条 Stripe 结果的日志上。
+      if (r.skipped) console.log(`[worker] stripe reconcile skipped: ${r.skipped} (${r.purchaseAlertsRetried} purchase alert(s) retried)`);
       // 名单读不到 ⇒ 窗口外的老缺口这一轮没人看。它不是「没跑成」,但也绝不是「一切正常」。
       else if (r.trailUnreadable)
         console.error(
           `[worker] stripe reconcile: the open-gap list was UNREADABLE this sweep — only the 48h Stripe window was checked ` +
-            `(${r.unreconciled} gap(s) there, ${r.alerted} alert(s) sent)`,
+            `(${r.unreconciled} gap(s) there, ${r.alerted} alert(s) sent, ${r.purchaseAlertsRetried} purchase alert(s) retried)`,
         );
       else if (r.unreconciled || r.tracked || r.unverified)
         // 两轮确认制:首见的只是观察(延迟到账的付款长得一模一样),确认过的才是真缺口。
@@ -426,9 +429,13 @@ async function main(): Promise<void> {
           `[worker] stripe reconcile: ${r.unreconciled} PAID session(s) with no ledger entry (of ${r.paid} paid in the last 48h) — ` +
             `${r.firstSeen} first sighting(s) recorded but NOT alerted, ${r.alerted} alert(s) sent, ` +
             `${r.tracked} older gap(s) still open outside the window, ${r.unverified} recorded but NOT judged (ledger unreadable), ` +
-            `${r.closed} observation(s) closed`,
+            `${r.closed} observation(s) closed, ${r.purchaseAlertsRetried} purchase alert(s) retried`,
         );
-      else console.log(`[worker] stripe reconcile: ${r.paid} paid session(s) in the last 48h, all present in the ledger`);
+      else
+        console.log(
+          `[worker] stripe reconcile: ${r.paid} paid session(s) in the last 48h, all present in the ledger ` +
+            `(${r.purchaseAlertsRetried} purchase alert(s) retried)`,
+        );
     } catch (e) {
       // reconcileStripePayments 自己就不抛;这里是最后一道,免得一次意外把 worker 带下去。
       console.error("[worker] stripe reconcile error:", e);
