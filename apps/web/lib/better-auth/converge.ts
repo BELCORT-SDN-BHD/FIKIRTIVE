@@ -40,6 +40,9 @@ export async function convergeIdentity(input: { email: string; name?: string | n
   // 同一行、同一个账号上。
   const email = input.email.trim().toLowerCase();
   await runAsSystem("auth:converge-identity", async () => {
+    // FSE-209 —— 这一次登录发生在哪个租户名下。第 4 步的审计行挂在它上面，所以它在这里
+    // 被记下来，而不是在那一步另外查一次：founder 那一支与商家那一支各自已经知道答案了。
+    let tenantOrgId: string | null = null;
     try {
       // 0. SIGNIN-A1/A10 —— 「注册即邀请」（#543）。第一次成功登录（两扇门都算）把邮箱写进
       //    `AllowedEmail`：status active，`invitedBy` 记来源门。它必须发生在下面的
@@ -73,6 +76,10 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       }
       // 2. Founder super-admin self-heal (promote-only, idempotent).
       if (isFounderAdmin(email)) {
+        // FSE-209 —— founder 的租户**就是** founder org（迁移里种好的那一行，他从不走
+        // `bootstrapPersonalOrg`）。所以他的登录行仍然落在这里，而且现在是因为它是他的
+        // 租户，不是因为那是个写死的常量。
+        tenantOrgId = FOUNDER_OWNER_ID;
         await prisma.$transaction(async (tx) => {
           await tx.user.updateMany({ where: { email, role: { not: "super-admin" } }, data: { role: "super-admin" } });
           await tx.userRole.upsert({
@@ -129,7 +136,8 @@ export async function convergeIdentity(input: { email: string; name?: string | n
         // 3. Non-founder personal-org convergence (best-effort; requireOwner re-bootstraps on demand).
         try {
           const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
-          await bootstrapPersonalOrg(user.id, email);
+          // FSE-209 —— 它回的就是这次登录的租户（`org_<userId>`，确定性的那一个）。
+          tenantOrgId = await bootstrapPersonalOrg(user.id, email);
         } catch (e) {
           // #538 — every bootstrap failure is a retryable hiccup EXCEPT one: the operator's
           // revoke won the AllowedEmail row mid-provisioning and the tx was rolled back on
@@ -147,12 +155,28 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       // 4. Audit.
       //
       // #735 — `ownerId` is the event's DATA SCOPE (a foreign key to Organization), not the
-      // person. A sign-in belongs to the platform-wide stream, hence the founder org; WHO signed
-      // in is `payload.email`, and it comes from the Better Auth identity this function was
-      // handed after the `emailVerified` gate above — never from anything a client supplied.
-      // The bare "founder" literal here is what made the audit page read as though the founder
-      // himself signed in every time a merchant did; it is the shared constant now, so the next
-      // reader sees an org id rather than a name.
+      // person. WHO signed in is `payload.email`, and it comes from the Better Auth identity
+      // this function was handed after the `emailVerified` gate above — never from anything a
+      // client supplied.
+      //
+      // FSE-209 —— THE SCOPE IS THE TENANT THIS LOGIN HAPPENED IN, not a constant. It used to be
+      // `FOUNDER_OWNER_ID` for everyone, on the argument that a sign-in belongs to a
+      // platform-wide stream; staging measured what that costs (走查 2026-09-11,
+      // `docs/audits/fullstack-staging-2026-09-11/backend-evidence.md` §2.8): every `auth.signin`
+      // row in the database, 26 of 26, sat under the founder org, so no merchant could find their
+      // own sign-in by asking for their own data. The row count was right, the ownership was not.
+      // S5 批量裁决 2026-09-12 (`docs/specs/sign-in.md` §5): hang it on the tenant.
+      //
+      // The founder console did not lose anything: its audit read is the whole table
+      // (`lib/admin-v2.ts`, `where: { ownerId: { not: "" } }`), never a founder-org filter — and
+      // the founder's own sign-ins still land on the founder org, because that IS his tenant.
+      //
+      // NO TENANT, NO ROW. `ownerId` is a foreign key to Organization, so a row invented under a
+      // guessed id would simply be rejected by the database and swallowed by the `.catch` below.
+      // The only way to get here without a tenant is a bootstrap that failed (best-effort, step 3
+      // above; `requireOwner` re-bootstraps on the merchant's next request) — and in that state
+      // there is no org to own the row yet. Falling back to the founder org would put the lie
+      // FSE-209 just removed back in the table for exactly the cases nobody is watching.
       //
       // #737 — IDEMPOTENT, like every other step above it. One login calls this function more
       // than once by construction (Better Auth fires it from the user-create hook AND the
@@ -188,10 +212,10 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       // Self-service registration never reached this line even before: it is held at
       // `requireEmailVerification`, so the account exists with emailVerified false and the gate
       // on the FIRST line of this function returns before any of the above runs.
-      if (input.sessionId) {
+      if (input.sessionId && tenantOrgId) {
         await Promise.resolve(
           prisma.actionEvent.createMany({
-            data: [{ id: `signin:${input.sessionId}`, ownerId: FOUNDER_OWNER_ID, type: "auth.signin", payload: { email } }],
+            data: [{ id: `signin:${input.sessionId}`, ownerId: tenantOrgId, type: "auth.signin", payload: { email } }],
             skipDuplicates: true,
           }),
         ).catch(() => {});
