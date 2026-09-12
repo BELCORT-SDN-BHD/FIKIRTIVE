@@ -13,6 +13,7 @@ import {
 import {
   ArkUnderstandingProvider,
   MockUnderstandingProvider,
+  UnconfiguredUnderstandingProvider,
   classifyUnderstandingFailure,
   createUnderstandingProvider,
   isProviderConfigError,
@@ -319,9 +320,15 @@ describe("并发闸门:理解不许把商家的生成挤成 429", () => {
 });
 
 describe("工厂:安全默认", () => {
-  it("未配供应商 → mock,不出网", () => {
+  it("RELY-A5:非生产未配供应商 → mock,不出网", () => {
     expect(createUnderstandingProvider({} as NodeJS.ProcessEnv)).toBeInstanceOf(MockUnderstandingProvider);
     expect(createUnderstandingProvider({ GENERATION_PROVIDER: "mock" } as NodeJS.ProcessEnv)).toBeInstanceOf(MockUnderstandingProvider);
+    for (const NODE_ENV of ["development", "test"]) {
+      expect(createUnderstandingProvider({ NODE_ENV } as NodeJS.ProcessEnv)).toBeInstanceOf(MockUnderstandingProvider);
+      expect(
+        createUnderstandingProvider({ NODE_ENV, GENERATION_PROVIDER: "mock" } as NodeJS.ProcessEnv),
+      ).toBeInstanceOf(MockUnderstandingProvider);
+    }
   });
 
   it("选了供应商却没 key → 抛,不静默降级(配错不许假装在工作)", () => {
@@ -336,6 +343,79 @@ describe("工厂:安全默认", () => {
   it("端口名是白标的", () => {
     const p = createUnderstandingProvider({ GENERATION_PROVIDER: "byteplus", BYTEPLUS_API_KEY: "k" } as NodeJS.ProcessEnv);
     expect(p.name.toLowerCase()).not.toMatch(/byteplus|bytedance|ark\b|seed/);
+  });
+});
+
+/**
+ * RELY A 段(#1055)—— 生产上没有引擎时,理解端口**拒绝**,不再回落 mock。
+ *
+ * 这一族只钉端口本身:工厂交出的是什么、它抛的错是什么类。「行落 PAUSED、预留退回、
+ * 账本净额 0」由 apps/worker/src/jobs/understand-unconfigured-provider-db.test.ts 在真库上钉。
+ */
+describe("RELY A:生产缺引擎 ⇒ 理解拒绝(不再编造理解事实)", () => {
+  const captionReq = { ...IMAGE_REQ };
+
+  it("RELY-A1:生产 + GENERATION_PROVIDER 未设 → 拒绝端口,抛配置类错误", async () => {
+    const p = createUnderstandingProvider({ NODE_ENV: "production" } as NodeJS.ProcessEnv);
+    expect(p).toBeInstanceOf(UnconfiguredUnderstandingProvider);
+    expect(p).not.toBeInstanceOf(MockUnderstandingProvider);
+    // 名字不叫 mock:生产路径上一个自称 mock 的端口会让别处的 mock 分支误开。
+    expect(p.name).toBe("unconfigured");
+
+    const err = await p.understand(captionReq).catch((e: unknown) => e);
+    // **配置类**,不是 unreadable:文件没问题,是我们没接引擎 —— 这一条决定了行永远不落终态。
+    expect(isProviderConfigError(err)).toBe(true);
+    expect(isUnreadableMediaError(err)).toBe(false);
+    // 没打过供应商 ⇒ 没有用量 ⇒ 这一趟可证明地免费。
+    expect(understandingErrorUsage(err)).toBeNull();
+  });
+
+  it("RELY-A1:拒绝端口一个字的罐头理解都不吐(捏造的描述与假商品价没有来源)", async () => {
+    const p = createUnderstandingProvider({ NODE_ENV: "production" } as NodeJS.ProcessEnv);
+    for (const req of [IMAGE_REQ, DOC_REQ, VIDEO_REQ]) {
+      await expect(p.understand(req)).rejects.toThrow();
+    }
+    // 反向对照:同一份请求在 mock 端口上确实会吐出那两句话 —— 所以上面拒掉的不是空气。
+    const mock = new MockUnderstandingProvider();
+    expect((await mock.understand(DOC_REQ)).text).toContain("Sample item");
+  });
+
+  it("RELY-A3:生产 + 明写 GENERATION_PROVIDER=mock → 同样拒绝(没有豁免开关)", async () => {
+    const p = createUnderstandingProvider({ NODE_ENV: "production", GENERATION_PROVIDER: "mock" } as NodeJS.ProcessEnv);
+    expect(p).toBeInstanceOf(UnconfiguredUnderstandingProvider);
+    expect(isProviderConfigError(await p.understand(captionReq).catch((e: unknown) => e))).toBe(true);
+  });
+
+  it("RELY-A3:生产 + 拼错/带空格/大小写不对 → 一律拒绝(近似值不是选择)", () => {
+    for (const value of ["", " byteplus", "byteplu", "fal", "BYTEPLUS", "MOCK"]) {
+      const p = createUnderstandingProvider({ NODE_ENV: "production", GENERATION_PROVIDER: value } as NodeJS.ProcessEnv);
+      expect(p.name, `GENERATION_PROVIDER=${JSON.stringify(value)} must not resolve to an engine or a stand-in`).toBe(
+        "unconfigured",
+      );
+    }
+  });
+
+  it("RELY-A1:生产 + byteplus + key → 照旧真端口(这次改动碰不到付费路)", () => {
+    const p = createUnderstandingProvider({
+      NODE_ENV: "production",
+      GENERATION_PROVIDER: "byteplus",
+      BYTEPLUS_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(p).toBeInstanceOf(ArkUnderstandingProvider);
+  });
+
+  it("RELY-A1:运维那一半说清楚,商家那一半一个变量名都读不到", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const p = createUnderstandingProvider({ NODE_ENV: "production" } as NodeJS.ProcessEnv);
+    const err = await p.understand(captionReq).catch((e: unknown) => e);
+    // 运维:第一条被拒的活就把真实条件写进日志(worker stdout → Sentry)。
+    expect(spy.mock.calls.flat().join(" ")).toContain("GENERATION_PROVIDER");
+    // 商家:落库的那句话由 handler 写死成既有常量,端口抛的这句里没有运维诊断。
+    const shown = String((err as Error).message).toLowerCase();
+    for (const leak of ["generation_provider", "byteplu", "unset", "mock"]) {
+      expect(shown, `refusal message leaked "${leak}"`).not.toContain(leak);
+    }
+    spy.mockRestore();
   });
 });
 

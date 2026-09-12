@@ -164,6 +164,9 @@ fi
 export DB_POOL_MAX="${DB_POOL_MAX:-4}"
 
 local_database=""
+# #1350 (judge P1 on PR #1407): a second per-run database, used only by apps/worker's
+# tests — see the block that creates it, right after $local_database is ready, for why.
+local_worker_database=""
 
 create_local_database() {
   pnpm --filter @fikirtive/db exec node -e '
@@ -202,7 +205,8 @@ create_local_database() {
 quality_drop_timeout_seconds="${QUALITY_DROP_TIMEOUT_SECONDS:-60}"
 
 drop_local_database_now() {
-  FIKIRTIVE_TEST_DB="$local_database" pnpm --filter @fikirtive/db exec node -e '
+  local target_database="${1:-$local_database}"
+  FIKIRTIVE_TEST_DB="$target_database" pnpm --filter @fikirtive/db exec node -e '
     const { Client } = require("pg");
     const target = process.env.FIKIRTIVE_TEST_DB;
     const url = new URL(process.env.DATABASE_URL);
@@ -224,9 +228,10 @@ drop_local_database_now() {
 }
 
 # run_with_timeout lives in the lock library below — defined later in the file,
-# resolved at call time, which is inside the EXIT trap.
+# resolved at call time, which is inside the EXIT trap. An optional db-name argument
+# passes through to drop_local_database_now, for the worker database below.
 drop_local_database() {
-  run_with_timeout "$quality_drop_timeout_seconds" drop_local_database_now
+  run_with_timeout "$quality_drop_timeout_seconds" drop_local_database_now "$@"
 }
 
 # >>> quality-lock library ─────────────────────────────────────────────────────
@@ -896,6 +901,9 @@ cleanup_quality_run() {
   if [[ -n "$local_database" && "${FIKIRTIVE_KEEP_TEST_DB:-}" != "1" ]]; then
     drop_local_database || echo "quality: test-database drop failed or timed out after ${quality_drop_timeout_seconds}s — leaving $local_database behind and releasing the machine anyway" >&2
   fi
+  if [[ -n "$local_worker_database" && "${FIKIRTIVE_KEEP_TEST_DB:-}" != "1" ]]; then
+    drop_local_database "$local_worker_database" || echo "quality: worker test-database drop failed or timed out after ${quality_drop_timeout_seconds}s — leaving $local_worker_database behind and releasing the machine anyway" >&2
+  fi
   # Release only what we can prove is ours. If our lock was already reclaimed —
   # we were judged abandoned and cleared, and someone else now owns the path — a
   # blind `rm -rf` here would delete a live run's lock and put two runs on the
@@ -939,6 +947,36 @@ export DATABASE_URL
 export FIKIRTIVE_TEST_DB="$local_database"
 create_local_database
 echo "quality: using isolated database $local_database"
+
+# #1350 (judge P1 on PR #1407): a SECOND per-run database, for apps/worker's tests only.
+# `pnpm -r test` (the "tests" gate below) runs every workspace's vitest concurrently
+# against ONE exported DATABASE_URL, so apps/worker's real-DB suites used to share
+# $local_database with apps/web's. better-auth's internal adapter
+# (node_modules/.pnpm/better-auth@1.6.20.../node_modules/better-auth/dist/db/internal-adapter.mjs:625)
+# runs a zero-grace-period, whole-table `expiresAt < now` sweep on EVERY
+# findVerificationValue call, and apps/web/lib/better-auth/server.ts:602's
+# `resendStrategy: "reuse"` means every code request/verify triggers one — that sweep
+# deleted apps/worker/src/jobs/auth-verification-reaper.test.ts's fixtures mid-suite
+# (#1345 r10, #1349 r2, #1364 r1). Giving apps/worker its own database removes the
+# shared table the two packages were fighting over, instead of trying to out-schedule
+# each other's sweeps. Only created for the `tests` leg (and the no-`--leg` local
+# default) — no other leg runs `pnpm -r test`.
+if [[ -z "$quality_leg" || "$quality_leg" == "tests" ]]; then
+  local_worker_database="${local_database%_test}_worker_test"
+  FIKIRTIVE_TEST_DB="$local_worker_database" create_local_database
+  WORKER_TEST_DATABASE_URL="$(DATABASE_URL="$base_database_url" FIKIRTIVE_TEST_DB="$local_worker_database" node -e '
+    const url = new URL(process.env.DATABASE_URL);
+    url.pathname = `/${process.env.FIKIRTIVE_TEST_DB}`;
+    process.stdout.write(url.toString());
+  ')"
+  export WORKER_TEST_DATABASE_URL
+  # Same Prisma schema as $local_database's migrate-deploy gate below — applied here as
+  # plain setup, not a second gate: that gate already proves the migrations apply
+  # cleanly, so repeating it here would only prove the same fact twice, on a leg
+  # ("tests") that gate does not need to run again.
+  DATABASE_URL="$WORKER_TEST_DATABASE_URL" pnpm --filter @fikirtive/db exec prisma migrate deploy
+  echo "quality: apps/worker tests use isolated database $local_worker_database"
+fi
 
 # ── gate order ─────────────────────────────────────────────────────────────────
 # Same gates as before, nothing dropped — only reordered so a failure surfaces as
