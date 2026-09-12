@@ -1,9 +1,15 @@
 "use server";
 /**
- * storyboard-gate1-actions — 闸① 的 $0 铸卡层。
+ * storyboard-gate1-actions — 闸②(视频子卡)的 $0 铸卡层 + sync 权威状态回执。
  *
- * 为 STORYBOARD_CARD 的每个"缺首帧图"镜头铸一张子 GEN_CARD(定价走 buildProposeCard,
- * 与普通 propose 同一条路),并把子卡 id 登记回父卡的 shot.firstFrameCardId。
+ * FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 闸①(首帧图那一步:
+ * `prepareStoryboardFirstFrames` / `regenShotFirstFrameCard` / `mintChild`)已随「首帧合成
+ * 全退场」整段报废删除。文件仍叫 gate1-actions 只是历史文件名(见 PR #1394 的报废物清单);
+ * 现在文件里剩的只有闸②(视频子卡铸卡)与 sync —— 每一镜从此**只有一步**:@ 到的元素(演员
+ * /商品)各作一张 `reference_image`,直接铸视频子卡、直接出片,不再为任何镜头合成首帧图。
+ *
+ * 为 STORYBOARD_CARD 的每个"缺视频"镜头铸一张子 GEN_CARD(定价走 buildProposeCard,
+ * 与普通 propose 同一条路),并把子卡 id 登记回父卡的 shot.videoCardId。
  *
  * 花钱不在这里:铸子卡 = $0(ChatMessage,genJobId 不写=null,不建 GenJob,不 reserve/settle)。
  * 用户确认后由客户端逐子卡调现有 coworkGenerate(childCardId)——每子卡自有
@@ -14,10 +20,10 @@
  *
  * 全部 owner-scoped:身份来自 requireOwner 的 session,绝不来自客户端输入。
  *
- * 并发防线(修复轮 v2, NODE-282①):本文件全部五个 RMW 事务(两个 prepare / 两个 regen /
- * sync)在事务内第一步先取卡级 pg_advisory_xact_lock(cowork-actions.ts:180 与
- * gen-actions.ts:118 的同款家法),同一张父卡的写者严格串行 —— 两个并发 prepare 不可能
- * 都看到空指针而各铸一张可扣费子卡;后到者锁后重读到新指针,走复用分支,零双铸。
+ * 并发防线(修复轮 v2, NODE-282①):本文件三个 RMW 事务(prepare / regen / sync)在事务内
+ * 第一步先取卡级 pg_advisory_xact_lock(cowork-actions.ts:180 与 gen-actions.ts:118 的同款
+ * 家法),同一张父卡的写者严格串行 —— 两个并发 prepare 不可能都看到空指针而各铸一张可扣费
+ * 子卡;后到者锁后重读到新指针,走复用分支,零双铸。
  *
  * 数据流规则(微修轮 v5, NODE-282-R4①):锁前计算的任何值不得流入写路径 —— 模型配置
  * (resolveDisabledModels)、owned-entity 集、threadId、OttoContext 一律在取锁之后按锁内
@@ -32,13 +38,13 @@
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
-import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, normalizeImageAspect, cardQuoteVersion, generationReferenceScope, REFERENCE_IMAGE_EXTS, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel, type ApprovedEntity } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, cardQuoteVersion, generationReferenceScope, REFERENCE_IMAGE_EXTS, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel, type ApprovedEntity } from "@fikirtive/core";
 import { buildProposeCard, ProposeRefusal, mediaReferenceReceipt } from "@fikirtive/otto";
 import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
-import { shotsNeedingMintedFirstFrame, shotsDirectToVideo } from "./storyboard-card";
+import { shotsDirectToVideo } from "./storyboard-card";
 // #782 r11(判官 r10):卡面的状态词表就是**这里**回传的那一份 —— 两侧共用同一组类型,
 // 客户端不再有第二套「从 payload 形状推断服务端真相」的规则。类型只在编译期存在,
 // 不构成 "use server" 的运行时导出(严禁再导出子句 —— 见 #741 的构建事故)。
@@ -103,15 +109,14 @@ async function ownedEntitiesFor(tx: PrismaTx, ownerId: string, entityIds: string
 }
 
 /**
- * FSE-001 同族(Founder 2026-09-09 裁)—— 这一张分镜卡上,哪几镜**直接出片**。
+ * FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 这一张分镜卡上,哪几镜**直接出片**。
+ * 现在恒为**全部**(`shotGoesDirectToVideo` 见 `@fikirtive/core/storyboard-shot`):首帧合成
+ * 已对所有镜头退场,不再有「@ 到演员才直接出片,纯商品镜头两步」的区分。
  *
- * 一趟读、一处算:`ownedEntitiesFor` 已经把这一卡上全部 @ 到、且确属这家店的元素连类型
- * 一起读出来了(owner-scoped,锁内)。演员 = `type === "CHARACTER"`;一镜 @ 到至少一个演员
- * ⇒ 它不出首帧,演员参考照与商品照各作一张 `role:"reference_image"` 直接出片(判据与理由
- * 见 `shotsDirectToVideo`)。
- *
- * 跨租户的 id 根本进不了 `owned`(那趟查询带 ownerId),所以它在这里数出 0 —— 那一镜照旧走
- * 首帧那条路,并在铸卡层被整轮拒绝(FSE-002 口径),零卡零预扣。
+ * 这个函数留着(没有内联成 `new Set(shots.map(s => s.shotId))`)只服务 `syncStoryboardMedia`
+ * 一处 —— 继续把 `directToVideo` 答案报给卡面,并驱动接续(continuity)镜头间免费传帧那一段
+ * 的既有判据(那是 #782 自己的机制,FSE-208 未改动它,只是它的输入现在恒为「全部直接出片」,
+ * 详见 PR #1394 报告里登记的这条残留缝隙)。
  */
 function directToVideoShotIds(
   shots: readonly StoryboardCardPayload["shots"][number][],
@@ -121,14 +126,8 @@ function directToVideoShotIds(
   return new Set(shotsDirectToVideo(shots, cast).map((s) => s.shotId));
 }
 
-/**
- * FSE-001 同族 —— 这一镜的视频要带上路的元素。
- *
- * 直接出片那一档非空(演员 + 这一镜 @ 到的商品),首帧那一档恒为空:带首帧的形状按
- * `videoReferencesRide` 一张元素照都不上车,写进去只会让卡面承诺一件引擎不做的事。
- */
+/** FSE-208 —— 这一镜的视频要带上路的元素:@ 到的演员与商品各作一张 `role:"reference_image"`。 */
 type ShotVideoCast = { entityIds: string[]; owned: ApprovedEntity[] };
-const NO_VIDEO_CAST: ShotVideoCast = { entityIds: [], owned: [] };
 
 /** 拒绝那句话里的**镜头名**。`index` 是 0 基的内部序号,商家数的是第几个镜头,所以 +1。 */
 function shotLabel(shot: Pick<Shot, "index" | "title">): string {
@@ -175,28 +174,6 @@ async function assertShotCastResolvable(
 function shotLibraryImageIds(shot: Shot): string[] {
   const raw = Array.isArray(shot.referenceGenerationIds) ? shot.referenceGenerationIds : [];
   return [...new Set(raw.filter((id): id is string => typeof id === "string" && id.length > 0))];
-}
-
-/**
- * creation §5 :178 —— 挂图**上不了这一镜的车**时,停在这里。
- *
- * 参考图只有**纯文生视频**那一档带得上(判据 `videoReferencesRide`,@fikirtive/core:引擎把
- * 首帧 / 首+末帧 / 整段参考片当互斥场景)。分镜里走纯文生视频的只有「直接出片」那几镜 ——
- * @ 到了演员的那几镜。两步镜头的第一步是一张图,第二步是 i2v:两步都收不下这几张参考图。
- *
- * 所以一镜挂着图、却不直接出片(演员后来被删出 Library、或那一镜从来就没 @ 过演员),诚实的
- * 出路只有一条:**在花钱之前点名说清楚**(CREATE-A2)。悄悄不带上路 = 商家批的是「用我这只
- * 蓝杯子」,买回来的是一支没有蓝杯子的片子,而全程没有一个字提过 —— 那正是 FSE-001/002 那条
- * 静默丢弃的形状。整卡 fail closed 与 `assertShotCastResolvable` / `firstFramePromptOf` 同法:
- * 异常在事务里抛 ⇒ 整份回滚 ⇒ 零子卡、零 GenJob、零账本行。
- */
-function assertShotLibraryImagesRide(shot: Shot, isDirect: boolean): void {
-  if (isDirect || shotLibraryImageIds(shot).length === 0) return;
-  throw new ProposeRefusal(
-    `${shotLabel(shot)} has Library images on it, but no cast member — a reference photo only rides along on a shot ` +
-      "that @mentions someone from your Library. Take those images off that shot, or @mention a cast member. " +
-      "Nothing was made and nothing was charged.",
-  );
 }
 
 /**
@@ -297,30 +274,10 @@ async function attachShotLibraryImages(
   );
 }
 
-/**
- * creation §5 :172⑤ —— 要铸首帧的这一镜,必须有首帧文字。
- *
- * `firstFramePrompt` 现在按镜头类型条件可选,而免写的只有**@ 到演员的镜头**(它直接出片,
- * 首帧那一步不存在;落库那一刻由 `executeProposeStoryboard` 按 `Entity.type` 判死,只 @ 了
- * 商品的镜头照旧必填)。走到铸首帧这一步却没有文字,只可能是「那一镜的演员后来离开了」——
- * 被删出 Library、或改成了别的元素:它现在要走两步,而两步的第一步没有稿子。铸一张空提示词
- * 的可扣费卡是这条路上最不能做的事,所以按 FSE-002 同一条口径整卡 fail closed —— 一句点名
- * 的人话,零写入。
- */
-function firstFramePromptOf(shot: Shot): string {
-  const prompt = shot.firstFramePrompt?.trim();
-  if (prompt) return prompt;
-  throw new ProposeRefusal(
-    `${shotLabel(shot)} has no opening-frame description yet — ask me to write one for it. ` +
-      "Nothing was made and nothing was charged.",
-  );
-}
-
 /** buildProposeCard 需要的最小 OttoContext(它只读 orgId/threadId/disabledModels 及两个 source 字段)。
- *  source/referenceVideo 留 undefined —— 缺省形状不带起始帧/参考视频。
- *  两处调用方按这一镜的形状往上写:两步镜头的视频那一步写 `sourceGenerationId`(i2v 首帧);
- *  直接出片那一镜写 `sourceGenerationIds` + `mediaReferences`(creation §5 :178 的 Library 图,
- *  见 `attachShotLibraryImages`)。首帧那一档两样都不写,与这条修改之前逐字相同。 */
+ *  source/referenceVideo 留 undefined —— 缺省形状不带起始帧/参考视频。FSE-208 之后每一镜都
+ *  直接出片:调用方写 `sourceGenerationIds` + `mediaReferences`(creation §5 :178 的 Library 图,
+ *  见 `attachShotLibraryImages`),`sourceGenerationId`(i2v 首帧)那一档不再有人写。 */
 function minimalCtx(ownerId: string, threadId: string, disabledModels: string[]): OttoContext {
   return {
     orgId: ownerId,
@@ -378,40 +335,11 @@ function videoChildMatches(
   );
 }
 
-/** The stored fields of an existing FIRST-FRAME child card, shaped for the reuse comparison. */
-type ExistingFrameChild = {
-  structuredPrompt?: unknown;
-  params?: { aspectRatio?: unknown };
-};
-
-/** MONEY-CRITICAL reuse rule (SINGLE SOURCE for prepare AND regen) —— #656 P2。
- *
- *  一张既有首帧子卡等于「现在会铸出来的那一张」,当且仅当 structuredPrompt **和**冻结的
- *  `params.aspectRatio` 都一致。形状漏在比对外面时,商家把片子从方图改成横版、提示词一个字
- *  没动,分镜上那张方图子卡就照样存活、照样能被批准 —— 卡面写着一个形状,批准之后出的是
- *  另一个(判官 #656 P2)。
- *
- *  `wouldBe` 是铸卡真正用的那次纯 `buildProposeCard` 输出(与视频侧 `videoChildMatches` 同一
- *  手法),所以比的是「现在会铸出来的形状」,而不是任何一处手抄的推导。既有卡上读不到形状
- *  (T2 之前铸的老卡)= 不知道它冻的是什么,不认作同一张 —— 重铸是 $0,认错才要钱。 */
-function firstFrameChildMatches(
-  existing: ExistingFrameChild,
-  wouldBe: { structuredPrompt: string; params: { aspectRatio?: string } },
-): boolean {
-  const frozenAspect =
-    typeof existing.params?.aspectRatio === "string" ? existing.params.aspectRatio : undefined;
-  return (
-    existing.structuredPrompt === wouldBe.structuredPrompt &&
-    frozenAspect === wouldBe.params.aspectRatio
-  );
-}
-
 /** #647 T6:唯一那台引擎被后台关掉时,分镜给商家的那句人话。
  *  措辞的**单一来源**在 @fikirtive/core(`generationUnavailableMessage`)—— 修复轮 P1-1 起,
  *  四个铸卡入口(Otto propose / proposePack / 分镜闸①② / Make another)共用同一份,
  *  否则同一件事迟早在四个地方说出四种话。 */
 const VIDEO_UNAVAILABLE: Err = { error: generationUnavailableMessage("video") };
-const IMAGE_UNAVAILABLE: Err = { error: generationUnavailableMessage("image") };
 
 /**
  * FSE-002 复修轮(判官 2026-09-08 P1-3)—— 铸卡层的**拒绝**在这条路上有人接。
@@ -433,15 +361,16 @@ function proposeRefusalAsError(e: unknown): Err {
 }
 
 /**
- * #647 T6:这一类创作现在还有没有引擎。null = 有,照常走;Err = 没有,调用方原样返回。
+ * #647 T6:视频引擎现在还有没有(FSE-208 之后闸① 退场,这里只剩闸② 一种创作)。
+ * null = 有,照常走;Err = 没有,调用方原样返回。
  *
  * 判据走的是**铸卡内部同一条** `suggestModel` —— 所以「面板说能做」与「铸卡真做得了」
  * 不可能分家。没有这道闸时,后台关掉引擎之后分镜照旧把子卡落进对话里:每一张都写着
  * credits、点得下去,而点下去必然被 spend 闸打回。卡是 $0 铸的,承诺不是。
  */
-function unavailableFor(kind: "image" | "video", disabledModels: string[]): Err | null {
-  if (suggestModel({ kind, disabled: new Set(disabledModels) })) return null;
-  return kind === "video" ? VIDEO_UNAVAILABLE : IMAGE_UNAVAILABLE;
+function unavailableFor(disabledModels: string[]): Err | null {
+  if (suggestModel({ kind: "video", disabled: new Set(disabledModels) })) return null;
+  return VIDEO_UNAVAILABLE;
 }
 
 /** 闸② 铸卡会选定的视频模型 —— 与 buildProposeCard 内部同一条 selectModel 路径
@@ -451,24 +380,6 @@ function unavailableFor(kind: "image" | "video", disabledModels: string[]): Err 
 function selectedVideoModel(disabledModels: string[]): GenVideoModel | null {
   const sm = suggestModel({ kind: "video", disabled: new Set(disabledModels) });
   return sm ? (sm.model as GenVideoModel) : null;
-}
-
-/**
- * #643 T2 —— 首帧图该是什么形状：**这个镜头的片子会是什么形状，首帧就是什么形状**。
- *
- * 在这之前首帧一律是方图，而它接下来要变成的那条片子是横版的 —— 商家为一张会被重新
- * 取景的图付了钱，全程没有一句话解释。形状不写死：走和铸视频子卡**同一条**选型路
- * （suggestModel → 该视频模型的默认形状），所以视频侧换档时首帧自动跟着换。
- *
- * 视频那一格若不在图片菜单上（或该模型压根不暴露形状），`normalizeImageAspect` 返回
- * null，铸卡就回到图片侧的默认形状 —— 不发明一个引擎给不了的值。
- *
- * #647 T6:视频引擎被关掉时同样回 undefined —— 关掉的是片子那一侧,首帧图照铸,
- * 只是它的形状回到图片侧的默认值(没有片子可跟,就别假装跟着一条片子走)。
- */
-function firstFrameAspect(disabledModels: string[]): string | undefined {
-  const sm = suggestModel({ kind: "video", disabled: new Set(disabledModels) });
-  return sm ? normalizeImageAspect(sm.params.aspectRatio) ?? undefined : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -503,80 +414,18 @@ export async function getStoryboardVideoOptions(): Promise<
   });
 }
 
-/** 铸一张子 GEN_CARD($0):定价走 buildProposeCard,payload 加 storyboardCardId+shotId 回链。
- *  seq = 同 thread 最新 +1(propose-pack.ts:46-108 先例)。genJobId 不写(null)。
- *  返回新子卡 id 及其 ChildFrameCard(spent 固定 false —— 刚铸,尚无幂等 job)。 */
-async function mintChild(
-  tx: PrismaTx,
-  parent: { id: string; threadId: string },
-  shot: Shot,
-  ownerId: string,
-  ctx: OttoContext,
-  ownedEntities: ApprovedEntity[],
-): Promise<ChildFrameCard> {
-  const { cardPayload } = buildProposeCard(
-    {
-      kind: "image",
-      structuredPrompt: firstFramePromptOf(shot),
-      entityIds: shot.entityIds ?? [],
-      variantSel: {},
-      count: 1,
-      // #643 T2：首帧的形状 = 这个镜头的片子的形状（见 firstFrameAspect）。
-      desiredAspect: firstFrameAspect(ctx.disabledModels),
-    },
-    ctx,
-    ownedEntities,
-  );
-
-  const payload = { ...cardPayload, storyboardCardId: parent.id, shotId: shot.shotId };
-
-  const last = await tx.chatMessage.findFirst({
-    where: { threadId: parent.threadId, ownerId },
-    orderBy: { seq: "desc" },
-    select: { seq: true },
-  });
-
-  const childCardId = newId();
-  await tx.chatMessage.create({
-    data: {
-      id: childCardId,
-      threadId: parent.threadId,
-      ownerId,
-      role: "AGENT",
-      kind: "GEN_CARD",
-      seq: (last?.seq ?? 0) + 1,
-      text: "",
-      payload: payload as unknown as Prisma.InputJsonObject,
-    },
-  });
-
-  return {
-    shotId: shot.shotId,
-    childCardId,
-    estimatedCredits: cardPayload.estimatedCredits,
-    structuredPrompt: cardPayload.structuredPrompt,
-    entityIds: cardPayload.entityIds,
-    // FSE-012 —— 交上去的是**刚写进库的这一份 payload** 的版本,不是别处重算的一份。
-    quoteVersion: cardQuoteVersion(payload),
-    spent: false,
-  };
-}
-
-/** 铸一张"视频子 GEN_CARD"($0):镜像 mintChild,但走 kind:"video" —— 定价/模型/时长吸附
- *  全交给 buildProposeCard(与普通 i2v propose 同一条路)。ctx 带 per-shot sourceGenerationId
- *  = 该镜头首帧 generationId(i2v 起始帧);desiredDuration = shot.durationSeconds。
+/** 铸一张"视频子 GEN_CARD"($0):定价走 buildProposeCard(与普通 t2v propose 同一条路)。
  *  payload 加 storyboardCardId+shotId 回链;genJobId 不写(null)。
  *
- *  FSE-001 同族:直接出片那一档改由 `cast` 带元素上路(ctx 那一格没有首帧),于是演员与
- *  商品的参考照各作一张 `role:"reference_image"` 走纯文生视频。首帧那一档 `cast` 恒为
- *  `NO_VIDEO_CAST` ⇒ 与这条修改之前逐字相同。 */
+ *  FSE-208(creation §5,S5 批量裁决 #1358):每一镜都直接出片 —— 演员与商品的参考照各作
+ *  一张 `role:"reference_image"`(`cast`)走纯文生视频,不再有「首帧 i2v」那一档。 */
 async function mintVideoChild(
   tx: PrismaTx,
   parent: { id: string; threadId: string },
   shot: Shot,
   ownerId: string,
   ctx: OttoContext,
-  cast: ShotVideoCast = NO_VIDEO_CAST,
+  cast: ShotVideoCast,
 ): Promise<ChildFrameCard> {
   const { cardPayload } = buildProposeCard(
     {
@@ -623,353 +472,6 @@ async function mintVideoChild(
     quoteVersion: cardQuoteVersion(payload),
     spent: false,
   };
-}
-
-// ---------------------------------------------------------------------------
-// prepareStoryboardFirstFrames — idempotent $0 mint of missing first-frame children
-// ---------------------------------------------------------------------------
-
-export async function prepareStoryboardFirstFrames(
-  raw: unknown,
-): Promise<{ children: ChildFrameCard[]; totalCredits: number } | Err> {
-  const parsed = prepareInput.safeParse(raw);
-  if (!parsed.success) return { error: "That request isn't valid." };
-
-  const gate = await requireOwner();
-  if ("error" in gate) return gate;
-  const principal = await resolveUserPrincipal(gate);
-  return runAsUser(principal, async (): Promise<{ children: ChildFrameCard[]; totalCredits: number } | Err> => {
-    const { ownerId } = gate;
-
-    const card = await loadCard(parsed.data.cardId, ownerId);
-    if (!card) return { error: "Card not found." };
-
-    const children: ChildFrameCard[] = [];
-    let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
-    let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
-
-    // FSE-002 复修轮:铸卡层的拒绝(这个镜头点名的元素对不上这家店等)在这里落成一句人话。
-    // 抛出时事务已经整份回滚,所以到这一行为止写入是零 —— 见 `proposeRefusalAsError`。
-    const refusal = await prisma.$transaction(async (tx) => {
-      await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
-      // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
-      const fresh = await tx.chatMessage.findFirst({
-        where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
-        select: { payload: true, threadId: true },
-      });
-      // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
-      // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
-      // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
-      // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
-      // "Card not found.".
-      if (!fresh?.payload) {
-        cardVanished = true;
-        return;
-      }
-      const payload = fresh.payload as unknown as StoryboardCardPayload;
-
-      // R4① dataflow rule: NOTHING computed before the lock may flow into a write. Model
-      // config, the owned-entity set (R4 的点名实例), and the thread id are (re)derived HERE —
-      // after the lock, from the FRESH payload — so a set that changed while we waited for
-      // the lock (an entity created/deleted, an admin model toggle) is picked up, never a
-      // pre-lock snapshot. (Same sourcing as buildOttoContext; entity read runs in-lock.)
-      // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
-      // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
-      const registry = await resolveDisabledModels();
-      if ("error" in registry) { unavailable = registry; return; }
-      const disabledModels = Array.from(registry.disabled);
-      // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
-      unavailable = unavailableFor("image", disabledModels);
-      if (unavailable) return;
-      const allEntityIds = [...new Set(payload.shots.flatMap((s) => s.entityIds ?? []))];
-      const ownedEntities = await ownedEntitiesFor(tx, ownerId, allEntityIds);
-      const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
-      const parent = { id: card.id, threadId: fresh.threadId };
-
-      // Build the next shots array, mutating ONLY firstFrameCardId on target shots.
-      const nextShots: Shot[] = [];
-      let changed = false;
-
-      // #782 — WHICH shots this gate is allowed to mint (= charge) a first frame for, read
-      // from the ONE shared rule (`shotsNeedingMintedFirstFrame`) the card face reads too.
-      // With continuity on that is the FIRST shot alone: every later shot inherits the frame
-      // the previous clip really ended on, so minting one would charge the merchant for a
-      // picture the storyboard is about to throw away. Derived from the FRESH in-lock payload,
-      // like everything else that drives a write here (R4①).
-      //
-      // FSE-001 同族(Founder 2026-09-09 裁)—— 带演员的镜头**一张首帧都不铸**:它走的是
-      // 「演员参考照 + 商品照两张参考直接出片」那条正路,首帧那一步整个不存在。以前铸的
-      // 那张图是图生图产物,按血统信任送进视频端必被拒收 —— 商家为一张必然作废的图付过钱。
-      // 判据与卡面共读一份(`shotsDirectToVideo`),数据来自上面那趟锁内的 owner-scoped 读。
-      const mintable = new Set(
-        shotsNeedingMintedFirstFrame(
-          payload.shots,
-          payload.continuity === true,
-          directToVideoShotIds(payload.shots, ownedEntities),
-        ).map((s) => s.shotId),
-      );
-
-      for (const shot of payload.shots) {
-        // Has an image already → skip entirely (no mint, no change).
-        // Or (continuity) this shot's frame comes from the previous shot's clip → the same
-        // treatment: no child, no charge, no payload change. It is not "missing"; it is
-        // waiting for the shot before it.
-        if (shot.firstFrameGenerationId || !mintable.has(shot.shotId)) {
-          nextShots.push(shot);
-          continue;
-        }
-
-        // creation §5 :178 —— 走到这里的镜头一定**不**直接出片(直接出片那几镜已被
-        // `mintable` 排除),所以它挂着的 Library 图一张都上不了车:点名拒绝、零写入。
-        assertShotLibraryImagesRide(shot, false);
-
-        // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
-        // call minting uses (mintChild), so the reuse comparison is against what a fresh mint
-        // would really produce (prompt AND the frozen shape). buildProposeCard is pure ($0) —
-        // this adds no I/O.
-        const shotOwned = ownedEntities.filter((e) => (shot.entityIds ?? []).includes(e.id));
-        const { cardPayload: wouldBe } = buildProposeCard(
-          {
-            kind: "image",
-            structuredPrompt: firstFramePromptOf(shot),
-            entityIds: shot.entityIds ?? [],
-            variantSel: {},
-            count: 1,
-            desiredAspect: firstFrameAspect(ctx.disabledModels),
-          },
-          ctx,
-          shotOwned,
-        );
-
-        // Already points at a child → try to reuse it.
-        if (shot.firstFrameCardId) {
-          const existing = await tx.chatMessage.findFirst({
-            where: { id: shot.firstFrameCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
-            select: { id: true, payload: true, genJobId: true },
-          });
-          if (existing && firstFrameChildMatches((existing.payload ?? {}) as ExistingFrameChild, wouldBe)) {
-            // Fresh → REUSE, do not mint. Compute spent (genJobId OR idempotency job).
-            // #782 r5 (判官 r4 P1-② 的同类缺口): 这张卡背后的作业死了 = 这张卡用完了
-            // (`isExhausted`)。复用一张用完的卡等于把这一镜永久钉死 —— 落下去往 mint。
-            const job = await childJobFor(tx, existing.id, ownerId);
-            if (!isExhausted(job)) {
-              const spent = existing.genJobId != null || job !== null;
-              const p = (existing.payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; estimatedCredits?: number };
-              children.push({
-                shotId: shot.shotId,
-                childCardId: existing.id,
-                estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
-                structuredPrompt: typeof p.structuredPrompt === "string" ? p.structuredPrompt : firstFramePromptOf(shot),
-                entityIds: Array.isArray(p.entityIds) ? p.entityIds : (shot.entityIds ?? []),
-                // FSE-012 —— 复用的这一张也要带版本,不然一叠里少一张就是一个「缺席＝放行」的洞。
-                quoteVersion: cardQuoteVersion(existing.payload),
-                spent,
-              });
-              nextShots.push(shot);
-              continue;
-            }
-          }
-          // Missing, stale in prompt or in shape, or EXHAUSTED (r5) → mint a replacement.
-        }
-
-        // Mint a fresh child for this shot.
-        const child = await mintChild(tx, parent, shot, ownerId, ctx, shotOwned);
-        children.push(child);
-        nextShots.push({ ...shot, firstFrameCardId: child.childCardId });
-        changed = true;
-      }
-
-      if (changed) {
-        await tx.chatMessage.update({
-          where: { id: card.id },
-          data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
-        });
-      }
-    }).then((): Err | null => null).catch(proposeRefusalAsError);
-
-    if (refusal) return refusal; // FSE-002: 铸卡层拒绝 ⇒ 零写入 + 那一族自己的那句话
-    if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
-    if (unavailable) return unavailable; // #647 T6 fail-closed surface
-    const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
-    return { children, totalCredits };
-  });
-}
-
-// ---------------------------------------------------------------------------
-// regenShotFirstFrameCard — stage a replacement first-frame child for one shot ($0)
-// ---------------------------------------------------------------------------
-//
-// New semantics (Fable): the OLD frame stays valid until the NEW one actually
-// lands. This action ONLY swaps `firstFrameCardId` to the replacement child and
-// NEVER touches `firstFrameGenerationId` — the old image survives until sync
-// overwrites the genId when the new frame is DONE. Cancel (client-side) is a true
-// no-op. Reuse-if-fresh (same rule as prepare) prevents $0 orphan accumulation
-// from repeated open/cancel.
-
-export async function regenShotFirstFrameCard(
-  raw: unknown,
-): Promise<{ child: ChildFrameCard } | Err> {
-  const parsed = regenInput.safeParse(raw);
-  if (!parsed.success) return { error: "That request isn't valid." };
-
-  const gate = await requireOwner();
-  if ("error" in gate) return gate;
-  const principal = await resolveUserPrincipal(gate);
-  return runAsUser(principal, async (): Promise<{ child: ChildFrameCard } | Err> => {
-    const { ownerId } = gate;
-
-    const card = await loadCard(parsed.data.cardId, ownerId);
-    if (!card) return { error: "Card not found." };
-
-    // Read-only pre-check (rejection path writes nothing); the mint path re-finds and
-    // re-validates the target on the FRESH payload inside the lock.
-    const cur = (card.payload ?? {}) as StoryboardCardPayload;
-    if (!cur.shots.some((s) => s.shotId === parsed.data.shotId)) {
-      return { error: "That shot no longer exists." };
-    }
-
-    let child: ChildFrameCard | null = null;
-    let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
-    let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
-    let directToVideoShot = false; // FSE-001 同族:这一镜没有首帧这一步
-
-    // FSE-002 复修轮:与 prepare 那扇门同一条接法 —— 铸卡层的拒绝落成一句人话,零写入。
-    const refusal = await prisma.$transaction(async (tx) => {
-      await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
-      const fresh = await tx.chatMessage.findFirst({
-        where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
-        select: { payload: true, threadId: true },
-      });
-      // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
-      // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
-      // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
-      // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
-      // "Card not found.".
-      if (!fresh?.payload) {
-        cardVanished = true;
-        return;
-      }
-      const payload = fresh.payload as unknown as StoryboardCardPayload;
-
-      // R4① dataflow rule: model config + thread id derived AFTER the lock (nothing computed
-      // pre-lock flows into a write); the owned-entity read below already runs in-lock on the
-      // fresh target's entityIds.
-      // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
-      // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
-      const registry = await resolveDisabledModels();
-      if ("error" in registry) { unavailable = registry; return; }
-      const disabledModels = Array.from(registry.disabled);
-      // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
-      unavailable = unavailableFor("image", disabledModels);
-      if (unavailable) return;
-      const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
-      const parent = { id: card.id, threadId: fresh.threadId };
-
-      const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
-      if (!target) return; // vanished mid-flight → no writes; caller returns error below.
-
-      // The WOULD-BE-MINTED card — the SAME pure buildProposeCard call minting uses (mintChild),
-      // built on the SAME in-lock owned-entity read. Single source of truth for the reuse
-      // comparison: prompt AND the frozen shape (#656 P2).
-      const ownedAll = await ownedEntitiesFor(tx, ownerId, target.entityIds ?? []);
-      // FSE-001 同族 —— 这一镜 @ 到了演员 ⇒ 它没有首帧这一步。单镜重出在这里是**拒绝**,
-      // 不是「再铸一张」:那一张必然是图生图产物,按血统信任送进视频端必被拒收,商家为它
-      // 付的每一分钱都注定作废。零写入(整份事务此后什么都不做),调用方端出下面那句话。
-      if (directToVideoShotIds([target], ownedAll).has(target.shotId)) {
-        directToVideoShot = true;
-        return;
-      }
-      // creation §5 :178 —— 走到这里的这一镜不直接出片,它挂着的 Library 图一张都上不了车。
-      assertShotLibraryImagesRide(target, false);
-      const { cardPayload: wouldBe } = buildProposeCard(
-        {
-          kind: "image",
-          structuredPrompt: firstFramePromptOf(target),
-          entityIds: target.entityIds ?? [],
-          variantSel: {},
-          count: 1,
-          desiredAspect: firstFrameAspect(disabledModels),
-        },
-        ctx,
-        ownedAll,
-      );
-
-      // Reuse-if-fresh: an existing child that still matches the would-be card AND is
-      // unspent → reuse it, do NOT mint (repeated open/cancel would otherwise orphan $0
-      // cards). A spent or stale (prompt- or shape-drifted / missing) child → mint fresh.
-      if (target.firstFrameCardId) {
-        const existing = await tx.chatMessage.findFirst({
-          where: { id: target.firstFrameCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
-          select: { id: true, payload: true, genJobId: true },
-        });
-        if (existing) {
-          const p = (existing.payload ?? {}) as {
-            structuredPrompt?: string;
-            entityIds?: string[];
-            estimatedCredits?: number;
-          };
-          const reuse = (spent: boolean): ChildFrameCard => ({
-            shotId: target.shotId,
-            childCardId: existing.id,
-            estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
-            structuredPrompt:
-              typeof p.structuredPrompt === "string" ? p.structuredPrompt : firstFramePromptOf(target),
-            entityIds: Array.isArray(p.entityIds) ? p.entityIds : (target.entityIds ?? []),
-            // FSE-012 —— 复用那一张的版本同样从**库里那份 payload** 算,与铸卡那一支同一个函数。
-            quoteVersion: cardQuoteVersion(existing.payload),
-            spent,
-          });
-          const job = await childJobFor(tx, existing.id, ownerId);
-          const produced = job?.status === "DONE" ? await firstGenerationIdOf(tx, job, ownerId) : null;
-          // #782 r11 (判官 r10 P1): 这一镜已经有一笔在途的替换 → 不许再铸(= 不许再收一次钱)。
-          // 把在途那一张原样端回去,零写入;卡面据此回去等结果,不开确认框。
-          if (isUnconsumedInFlight(job, produced, target.firstFrameGenerationId)) {
-            child = reuse(true);
-            return;
-          }
-          if (firstFrameChildMatches((existing.payload ?? {}) as ExistingFrameChild, wouldBe)) {
-            const spent = existing.genJobId != null || job !== null;
-            if (!spent) {
-              // Child already registered on the shot; nothing to write. No genId touch.
-              child = reuse(false);
-              return;
-            }
-            // spent (且不在途:作业已死 / 产出已消费) → fall through to mint a fresh replacement.
-          }
-        }
-        // missing / stale prompt or shape → fall through to mint.
-      }
-
-      child = await mintChild(tx, parent, target, ownerId, ctx, ownedAll);
-      const newChildId = child.childCardId;
-
-      const nextShots = payload.shots.map((s) => {
-        if (s.shotId !== parsed.data.shotId) return s;
-        // Replace firstFrameCardId ONLY. NEVER touch firstFrameGenerationId — the old
-        // image stays valid until sync overwrites the genId when the new frame lands.
-        return { ...s, firstFrameCardId: newChildId };
-      });
-
-      await tx.chatMessage.update({
-        where: { id: card.id },
-        data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
-      });
-    }).then((): Err | null => null).catch(proposeRefusalAsError);
-
-    if (refusal) return refusal; // FSE-002: 铸卡层拒绝 ⇒ 零写入 + 那一族自己的那句话
-    if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
-    if (unavailable) return unavailable; // #647 T6 fail-closed surface
-    // FSE-001 同族:这一镜直接出片,没有首帧可重出 —— 说清楚它为什么没有,而不是端一句
-    // 「做不了」。措辞是 English sentence case,与卡面其余句子同一把尺。
-    if (directToVideoShot) {
-      return {
-        error:
-          "This shot goes straight to video — the cast and product photos are its references, so there is no first frame to make.",
-      };
-    }
-    if (!child) return { error: "That shot no longer exists." };
-    return { child };
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1399,13 +901,12 @@ function mediaReport(
 // prepareStoryboardVideos — 闸②:idempotent $0 mint of missing video children
 // ---------------------------------------------------------------------------
 //
-// Mirrors prepareStoryboardFirstFrames exactly (owner-scoping, $transaction RMW,
-// reuse-if-fresh, seq allocation, ChildFrameCard shape, totalCredits = unspent only),
-// with the video-gate differences:
-//  • Eligible = firstFrameGenerationId && !videoGenerationId (partial execution:
-//    frameless shots are silently skipped — the UI hints why).
-//  • Mint via buildProposeCard kind:"video" with a PER-SHOT ctx whose sourceGenerationId
-//    = the shot's first frame (i2v source), and desiredDuration = shot.durationSeconds.
+// FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 闸①(首帧图)已整段报废(见 PR
+// #1394 的报废物清单),每一镜都直接出片:owner-scoping, $transaction RMW, reuse-if-fresh,
+// seq allocation, ChildFrameCard shape, totalCredits = unspent only, plus:
+//  • Eligible = !videoGenerationId(还没出过片的镜头,没有别的前置条件)。
+//  • Mint via buildProposeCard kind:"video" —— @ 到的演员/商品各作一张 `role:"reference_image"`
+//    (cast),纯文生视频,没有 i2v 起始帧那一档。desiredDuration = shot.durationSeconds。
 //  • Parent write swaps ONLY shot.videoCardId (transactional RMW).
 //  • Reuse-if-matches (MONEY-CRITICAL): compute the WOULD-BE-MINTED card via the same pure
 //    buildProposeCard call minting uses, then REUSE the existing videoCardId child REGARDLESS
@@ -1466,48 +967,37 @@ export async function prepareStoryboardVideos(
       if ("error" in registry) { unavailable = registry; return; }
       const disabledModels = Array.from(registry.disabled);
       // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
-      unavailable = unavailableFor("video", disabledModels);
+      unavailable = unavailableFor(disabledModels);
       if (unavailable) return;
       const parent = { id: card.id, threadId: fresh.threadId };
-      // FSE-001 同族 —— 哪几镜直接出片(@ 到了演员)。一趟 owner-scoped 读,锁内,与闸① 同法。
+      // FSE-208 —— 每一镜的视频参考都是 @ 到的元素(演员/商品)。一趟 owner-scoped 读,锁内。
       const allEntityIds = [...new Set(payload.shots.flatMap((s) => s.entityIds ?? []))];
       const ownedEntities = await ownedEntitiesFor(tx, ownerId, allEntityIds);
-      const direct = directToVideoShotIds(payload.shots, ownedEntities);
 
       // Build the next shots array, mutating ONLY videoCardId on target shots.
       const nextShots: Shot[] = [];
       let changed = false;
 
       for (const shot of payload.shots) {
-        // FSE-001 同族:直接出片的这一镜**不需要首帧**就有资格 —— 它的参考是演员照与商品照,
-        // 片子从文字起步。其余镜头的资格判据一格没动。
-        const isDirect = direct.has(shot.shotId);
-        // Not eligible: no first frame (frameless — skip silently), or already has a video.
-        if ((!shot.firstFrameGenerationId && !isDirect) || shot.videoGenerationId) {
+        // Not eligible: already has a video.
+        if (shot.videoGenerationId) {
           nextShots.push(shot);
           continue;
         }
 
-        // Per-shot ctx: the shot's first frame is the i2v source for THIS video.
-        // FSE-001 同族:直接出片那一档**不写首帧** —— 写了就等于把某一张图当第一帧,
-        // 那正是被视频端拒收、并且真的退过一次款的那条路。
+        // Per-shot ctx: no i2v source — every shot goes straight to video (FSE-208).
         const ctx = minimalCtx(ownerId, parent.threadId, disabledModels);
-        if (!isDirect) ctx.sourceGenerationId = shot.firstFrameGenerationId;
-        const cast: ShotVideoCast = isDirect
-          ? {
-              entityIds: shot.entityIds ?? [],
-              owned: ownedEntities.filter((e) => (shot.entityIds ?? []).includes(e.id)),
-            }
-          : NO_VIDEO_CAST;
+        const cast: ShotVideoCast = {
+          entityIds: shot.entityIds ?? [],
+          owned: ownedEntities.filter((e) => (shot.entityIds ?? []).includes(e.id)),
+        };
         // creation §5 :172④ —— 这一镜带元素上路,而它 @ 到的东西里有一件不是这家店活着的
         // 元素:整卡 fail closed(异常 ⇒ 整份回滚),那句话点名是哪一镜。判在铸卡之前,所以
         // 连暂存写都不会发生。
-        if (isDirect) await assertShotCastResolvable(tx, ownerId, shot, cast.owned);
-        // creation §5 :178 —— 这一镜挂的 Library 图:直接出片那一档装进 ctx(它们与演员照
-        // 坐在同一批 `image_url` 名额里,名额与计价沿 `videoAttachedCap` / `referenceBudget`
-        // 那份既有口径);不直接出片那一档带不上,点名拒绝、零写入。
-        assertShotLibraryImagesRide(shot, isDirect);
-        if (isDirect) await attachShotLibraryImages(tx, ownerId, shot, ctx);
+        await assertShotCastResolvable(tx, ownerId, shot, cast.owned);
+        // creation §5 :178 —— 这一镜挂的 Library 图,装进 ctx(它们与演员照坐在同一批
+        // `image_url` 名额里,名额与计价沿 `videoAttachedCap` / `referenceBudget` 那份既有口径)。
+        await attachShotLibraryImages(tx, ownerId, shot, ctx);
 
         // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
         // call minting uses (mintVideoChild). This is the single source of truth for the reuse
@@ -1610,18 +1100,16 @@ export async function prepareStoryboardVideos(
 // regenShotVideoCard — stage a replacement video child for one shot ($0)
 // ---------------------------------------------------------------------------
 //
-// The video analogue of regenShotFirstFrameCard, with I1 semantics: the OLD video
-// stays valid until the NEW one actually lands. This action ONLY swaps `videoCardId`
-// to the replacement child and NEVER touches `videoGenerationId` — the old video
-// survives until sync overwrites the genId when the new clip is DONE. Cancel
-// (client-side) is a true no-op.
+// I1 semantics: the OLD video stays valid until the NEW one actually lands. This
+// action ONLY swaps `videoCardId` to the replacement child and NEVER touches
+// `videoGenerationId` — the old video survives until sync overwrites the genId
+// when the new clip is DONE. Cancel (client-side) is a true no-op.
 //
-// The target shot MUST already have a first frame (`firstFrameGenerationId`) — the
-// i2v source; a frameless shot → {error}, no write. Mint via the SAME mintVideoChild
-// path prepare uses (ctx.sourceGenerationId = the shot's current frame genId,
-// desiredDuration = shot.durationSeconds). Reuse-if-fresh (shared videoChildMatches
-// rule) reuses an UNSPENT matching child so repeated open/cancel can't orphan $0
-// cards; a SPENT child → mint fresh (explicit user redo — gate① regen precedent).
+// FSE-208(creation §5,S5 批量裁决 #1358)—— 没有首帧这个前置条件了:每一镜都直接出片,
+// @ 到的演员/商品各作一张 `role:"reference_image"`。Mint via the SAME mintVideoChild
+// path prepare uses, desiredDuration = shot.durationSeconds. Reuse-if-fresh (shared
+// videoChildMatches rule) reuses an UNSPENT matching child so repeated open/cancel
+// can't orphan $0 cards; a SPENT child → mint fresh (explicit user redo).
 
 export async function regenShotVideoCard(
   raw: unknown,
@@ -1638,19 +1126,15 @@ export async function regenShotVideoCard(
     const card = await loadCard(parsed.data.cardId, ownerId);
     if (!card) return { error: "Card not found." };
 
-    // Read-only pre-checks (rejection paths write nothing); the mint path re-finds and
-    // re-validates the target — incl. its frame — on the FRESH payload inside the lock.
+    // Read-only pre-check (rejection path writes nothing); the mint path re-finds and
+    // re-validates the target on the FRESH payload inside the lock.
     const cur = (card.payload ?? {}) as StoryboardCardPayload;
     const target0 = cur.shots.find((s) => s.shotId === parsed.data.shotId);
     if (!target0) return { error: "That shot no longer exists." };
-    // FSE-001 同族:「这一镜要不要首帧」现在要读元素类型(演员在场 ⇒ 直接出片,不要首帧),
-    // 而那是一次 owner-scoped 的库读 —— 所以这道闸搬进锁内、按 FRESH payload 判(下面的
-    // `needsFrame`)。锁前只留「这一镜还在不在」这种不读库的预检,拒绝路径照旧零写入。
 
     let child: ChildFrameCard | null = null;
     let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
     let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
-    let needsFrame = false; // FSE-001 同族:不带演员、又没有首帧 ⇒ 这一镜还出不了片
 
     const refusal = await prisma.$transaction(async (tx) => {
       await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
@@ -1677,7 +1161,7 @@ export async function regenShotVideoCard(
       if ("error" in registry) { unavailable = registry; return; }
       const disabledModels = Array.from(registry.disabled);
       // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
-      unavailable = unavailableFor("video", disabledModels);
+      unavailable = unavailableFor(disabledModels);
       if (unavailable) return;
       const parent = { id: card.id, threadId: fresh.threadId };
 
@@ -1685,27 +1169,15 @@ export async function regenShotVideoCard(
       // Vanished mid-flight → no writes; caller returns error below.
       if (!target) return;
 
-      // FSE-001 同族 —— 这一镜直接出片吗(@ 到了演员)。owner-scoped、锁内,与两扇 prepare
-      // 同一个判据函数。是 ⇒ 不要首帧,演员照与商品照各作一张参考;不是 ⇒ 照旧要首帧。
+      // FSE-208 —— 这一镜的视频参考 = @ 到的元素(演员/商品)。owner-scoped、锁内,与 prepare
+      // 同一个判据。
       const ownedAll = await ownedEntitiesFor(tx, ownerId, target.entityIds ?? []);
-      const isDirect = directToVideoShotIds([target], ownedAll).has(target.shotId);
-      if (!isDirect && !target.firstFrameGenerationId) {
-        needsFrame = true; // 零写入;调用方端出那句「先出一张首帧」。
-        return;
-      }
-
-      // Per-shot ctx: the shot's first frame is the i2v source for THIS video.
-      // FSE-001 同族:直接出片那一档不写首帧(见 prepareStoryboardVideos 同一段)。
       const ctx = minimalCtx(ownerId, parent.threadId, disabledModels);
-      if (!isDirect) ctx.sourceGenerationId = target.firstFrameGenerationId;
-      const cast: ShotVideoCast = isDirect
-        ? { entityIds: target.entityIds ?? [], owned: ownedAll }
-        : NO_VIDEO_CAST;
+      const cast: ShotVideoCast = { entityIds: target.entityIds ?? [], owned: ownedAll };
       // creation §5 :172④ —— 同 prepare 那条:点名的元素对不上 ⇒ 零写入 + 点名是哪一镜。
-      if (isDirect) await assertShotCastResolvable(tx, ownerId, target, cast.owned);
-      // creation §5 :178 —— 同 prepare 那条:直接出片才带得上挂图,带不上就点名拒绝。
-      assertShotLibraryImagesRide(target, isDirect);
-      if (isDirect) await attachShotLibraryImages(tx, ownerId, target, ctx);
+      await assertShotCastResolvable(tx, ownerId, target, cast.owned);
+      // creation §5 :178 —— 同 prepare 那条:这一镜挂的 Library 图装进 ctx。
+      await attachShotLibraryImages(tx, ownerId, target, ctx);
 
       // The WOULD-BE-MINTED card — computed via the SAME pure buildProposeCard call minting
       // uses (mintVideoChild). Single source of truth for the reuse comparison; its
@@ -1787,8 +1259,6 @@ export async function regenShotVideoCard(
     if (refusal) return refusal; // FSE-001 同族:铸卡层拒绝 ⇒ 零写入 + 那一族自己的那句话
     if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
     if (unavailable) return unavailable; // #647 T6 fail-closed surface
-    // A video needs a source frame — unless this shot goes straight to video (FSE-001 同族).
-    if (needsFrame) return { error: "This shot needs a first frame before you can make a video." };
     if (!child) return { error: "That shot no longer exists." };
     return { child };
   });

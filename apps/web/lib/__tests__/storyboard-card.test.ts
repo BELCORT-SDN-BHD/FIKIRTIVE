@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import {
-  shotsNeedingMintedFirstFrame,
   shotsDirectToVideo,
   shotsStuckWithoutInheritedFrame,
   nextSyncPhase,
@@ -153,85 +152,37 @@ describe("#782 continuity 解析", () => {
   });
 });
 
-describe("#782 shotsNeedingMintedFirstFrame —— 卡面与服务端共读的同一条规则", () => {
-  const shots = [
-    { index: 1, shotId: "s1" },
-    { index: 0, shotId: "s0" },
-    { index: 2, shotId: "s2", firstFrameGenerationId: "have" },
-  ];
-
-  it("接续关:每个缺帧的镜头都要出一张(老行为)", () => {
-    expect(shotsNeedingMintedFirstFrame(shots, false).map((s) => s.shotId)).toEqual(["s0", "s1"]);
-  });
-
-  it("接续开:只有第一镜要出图,其余等上一镜交棒(真省钱)", () => {
-    expect(shotsNeedingMintedFirstFrame(shots, true).map((s) => s.shotId)).toEqual(["s0"]);
-  });
-
-  it("接续开且第一镜已有帧 → 一张都不用出", () => {
-    const withFirst = [{ index: 0, shotId: "s0", firstFrameGenerationId: "have" }, { index: 1, shotId: "s1" }];
-    expect(shotsNeedingMintedFirstFrame(withFirst, true)).toEqual([]);
-  });
-
-  it("按 index 判「第一镜」,不按数组顺序(重排后仍成立)", () => {
-    const shuffled = [{ index: 2, shotId: "s2" }, { index: 0, shotId: "s0" }, { index: 1, shotId: "s1" }];
-    expect(shotsNeedingMintedFirstFrame(shuffled, true).map((s) => s.shotId)).toEqual(["s0"]);
-  });
-
-  it("空分镜 → 空集合(不抛)", () => {
-    expect(shotsNeedingMintedFirstFrame([], true)).toEqual([]);
-    expect(shotsNeedingMintedFirstFrame([], false)).toEqual([]);
-  });
-});
-
 // ---------------------------------------------------------------------------
-// FSE-001 同族(Founder 2026-09-09 裁)—— 带演员的镜头不出首帧,直接出片
+// FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 首帧合成全退场,所有镜头直接出片
 //
 // 规格 §5 2026-09-08「FSE-001 同族」那一行:分镜以前对每一镜都先出一张付费首帧,带
 // @演员的镜头把演员 id 放进首帧的 entityIds(图生图)。那张首帧按血统信任必被视频端
 // 拒收 —— 商家先为一张必然作废的图付了钱,再为那条注定失败的片子付一次预扣。
-//
-// 新规矩只有一句:**这一镜 @ 到了演员,它就不出首帧**。演员的照片与商品图各作一张
-// `role:"reference_image"`,走纯文生视频。判据住在这里一次,服务端(闸①/闸②)与卡面
-// 同读,所以「卡上说要出几张」与「服务端真的会出几张」不可能分家。
+// 2026-09-08 Founder 那句「合成 first frame 的 idea 可以移除了,没有必要」先落地到带演员的
+// 镜头(PR #1273/#1277);2026-09-12 S5 批量裁决(#1358)把范围定成**所有镜头**——纯商品
+// 镜头(此前仍是两步)从此也直接出片。旧的「@ 到演员才直接出片」判据(`shotGoesDirectToVideo`
+// 按 castEntityIds 求交集)已删,现在恒为真,不再区分有没有演员。
 // ---------------------------------------------------------------------------
-describe("FSE-001 同族 · 带演员的镜头直接出片 —— 卡面与服务端共读的同一条规则", () => {
-  const cast = new Set(["actor-1"]);
-
-  it("FSE-001 / CREATE-A2: @ 到演员的镜头进「直接出片」集合,只 @ 商品的不进", () => {
+describe("FSE-208 · 首帧合成全退场,所有镜头直接出片 —— 卡面与服务端共读的同一条规则", () => {
+  it("FSE-208 / CREATE-A2: @ 到演员的镜头、只 @ 商品的镜头、一个元素都没 @ 的镜头,全部进「直接出片」集合", () => {
     const shots = [
       { index: 0, shotId: "s0", entityIds: ["actor-1", "mug"] },
-      { index: 1, shotId: "s1", entityIds: ["mug"] },
-      { index: 2, shotId: "s2" },
+      { index: 1, shotId: "s1", entityIds: ["mug"] }, // 纯商品镜头 —— 这条修改之前不直接出片
+      { index: 2, shotId: "s2" }, // 没 @ 任何元素的镜头 —— 同样不再出首帧
     ];
-    expect(shotsDirectToVideo(shots, cast).map((s) => s.shotId)).toEqual(["s0"]);
+    expect(shotsDirectToVideo(shots, new Set()).map((s) => s.shotId)).toEqual(["s0", "s1", "s2"]);
   });
 
-  it("FSE-001 / CREATE-A9: 直接出片的镜头不进「要铸首帧」名单(那一步的钱不该收)", () => {
+  it("FSE-208: 判据不再读 castEntityIds —— 传一个完全不相干的演员集合,答案不变(恒为全部直接出片)", () => {
     const shots = [
-      { index: 0, shotId: "s0", entityIds: ["actor-1"] },
-      { index: 1, shotId: "s1", entityIds: ["mug"] },
-    ];
-    const direct = new Set(shotsDirectToVideo(shots, cast).map((s) => s.shotId));
-    expect(shotsNeedingMintedFirstFrame(shots, false, direct).map((s) => s.shotId)).toEqual(["s1"]);
-  });
-
-  it("FSE-001 / CREATE-A9: 接续开且第一镜带演员 ⇒ 一张首帧都不铸", () => {
-    const shots = [
-      { index: 0, shotId: "s0", entityIds: ["actor-1"] },
+      { index: 0, shotId: "s0", entityIds: ["mug"] },
       { index: 1, shotId: "s1" },
     ];
-    const direct = new Set(["s0"]);
-    expect(shotsNeedingMintedFirstFrame(shots, true, direct)).toEqual([]);
+    expect(shotsDirectToVideo(shots, new Set(["someone-else"])).map((s) => s.shotId)).toEqual(["s0", "s1"]);
   });
 
-  it("FSE-001 / CREATE-A2: 不传直接出片集合 ⇒ 与这条修改之前逐字相同", () => {
-    const shots = [
-      { index: 0, shotId: "s0", entityIds: ["actor-1"] },
-      { index: 1, shotId: "s1", entityIds: ["mug"] },
-    ];
-    expect(shotsNeedingMintedFirstFrame(shots, false).map((s) => s.shotId)).toEqual(["s0", "s1"]);
-    expect(shotsDirectToVideo(shots, new Set<string>())).toEqual([]);
+  it("FSE-208: 空分镜 → 空集合(不抛)", () => {
+    expect(shotsDirectToVideo([], new Set())).toEqual([]);
   });
 });
 
@@ -312,7 +263,6 @@ describe("#782 r3 shotsStuckWithoutInheritedFrame —— 卡死 vs 还在等", (
         { index: 1, shotId: "s1", inheritBlockedByVideoCardId: "vchild-0", firstFrameCardId: "child-1" },
       ];
       expect(shotsStuckWithoutInheritedFrame(shots, true).map((s) => s.shotId), branch).toEqual(["s1"]);
-      expect(shotsNeedingMintedFirstFrame(shots, true).map((s) => s.shotId), branch).toEqual(["s1"]);
     }
   });
 
@@ -346,44 +296,6 @@ describe("#782 r3 shotsStuckWithoutInheritedFrame —— 卡死 vs 还在等", (
       { index: 1, shotId: "s1", firstFrameGenerationId: "have" },
     ];
     expect(shotsStuckWithoutInheritedFrame(shots, true)).toEqual([]);
-  });
-});
-
-describe("#782 r3 shotsNeedingMintedFirstFrame 并入卡死镜头 —— 恢复入口不是死路", () => {
-  it("卡死的镜头并入需要铸首帧的集合(计入 Generate all,与第一镜一起)", () => {
-    const shots = [
-      { index: 0, shotId: "s0", firstFrameGenerationId: "ffgen0", videoCardId: "vchild-0", videoGenerationId: "vidgen0" },
-      { index: 1, shotId: "s1", inheritBlockedByVideoCardId: "vchild-0" }, // 卡死
-      { index: 2, shotId: "s2" }, // 还在等 s1
-    ];
-    expect(shotsNeedingMintedFirstFrame(shots, true).map((s) => s.shotId)).toEqual(["s1"]);
-  });
-
-  it("第一镜也缺帧 + 中间一镜卡死 → 两者都进集合,按 index 排序", () => {
-    const shots = [
-      { index: 0, shotId: "s0" }, // 第一镜也缺帧
-      { index: 1, shotId: "s1", firstFrameGenerationId: "own", videoCardId: "vchild-1", videoGenerationId: "vidgen1" },
-      { index: 2, shotId: "s2", inheritBlockedByVideoCardId: "vchild-1" }, // 卡死
-    ];
-    expect(shotsNeedingMintedFirstFrame(shots, true).map((s) => s.shotId)).toEqual(["s0", "s2"]);
-  });
-
-  it("没有卡死镜头时行为逐字不变(不引入回归)", () => {
-    const shots = [
-      { index: 1, shotId: "s1" },
-      { index: 0, shotId: "s0" },
-      { index: 2, shotId: "s2", firstFrameGenerationId: "have" },
-    ];
-    expect(shotsNeedingMintedFirstFrame(shots, true).map((s) => s.shotId)).toEqual(["s0"]);
-  });
-
-  it("接续关时判词一律无关(老行为逐字不变:每个缺帧的镜头都要出一张)", () => {
-    const shots = [
-      { index: 0, shotId: "s0", firstFrameGenerationId: "ffgen0", videoCardId: "vchild-0" },
-      { index: 1, shotId: "s1", inheritBlockedByVideoCardId: "vchild-0" },
-      { index: 2, shotId: "s2" },
-    ];
-    expect(shotsNeedingMintedFirstFrame(shots, false).map((s) => s.shotId)).toEqual(["s1", "s2"]);
   });
 });
 

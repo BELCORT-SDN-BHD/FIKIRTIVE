@@ -224,7 +224,10 @@ export async function setShotReferences(raw: unknown): Promise<Ok | Err> {
 const addInput = z.object({
   cardId: cardIdSchema,
   title: z.string().trim().max(120).optional(),
-  firstFramePrompt: z.string().trim().min(1).max(2000),
+  // FSE-208(creation §5,S5 批量裁决 #1358)—— 首帧合成已对所有镜头退场,新镜头不再需要
+  // 首帧文字(每一镜都直接出片)。字段仍留着接受它(不是必填):老 Otto 手艺文件/存量客户端
+  // 若仍发这一格,原样存下不算错;卡面新增镜头的入口已经不再发送它。
+  firstFramePrompt: z.string().trim().min(1).max(2000).optional(),
   videoPrompt: z.string().trim().min(1).max(2000),
 });
 

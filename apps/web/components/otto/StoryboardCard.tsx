@@ -14,7 +14,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   parseStoryboardCardPayload,
-  shotsNeedingMintedFirstFrame,
   shotsStuckWithoutInheritedFrame,
   deriveShotMediaStates,
   ownedMedia,
@@ -42,8 +41,6 @@ import { ReferencePickerMenu, type ReferencePickerRow } from "@/components/refer
 // FRONT-A14 词汇围栏:`Library` 是产品专有名词,只能从单一源头取,不许手抄。
 import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import {
-  prepareStoryboardFirstFrames,
-  regenShotFirstFrameCard,
   prepareStoryboardVideos,
   regenShotVideoCard,
   getStoryboardVideoOptions,
@@ -102,14 +99,17 @@ function Note({ children, busy }: { children: React.ReactNode; busy?: boolean })
   );
 }
 
-/** #782 r11 (judge r10): the words under one media slot, chosen by the derived state ALONE —
+/** #782 r11 (judge r10): the words under the video slot, chosen by the derived state ALONE —
  *  no second opinion from a local boolean. `replacing` is now a property of the state itself
  *  (the server says "this job is running AND you still own the previous result"), which is
  *  exactly the fact r10's P1 had nowhere to live: it was kept in a set outside the enum, and
  *  the set got cleared when the fast watch handed over to the slow one.
- *  `assertNever` closes the union, so a state nobody thought about cannot render silence. */
-function MediaNote({ state, kind }: { state: ShotMediaState; kind: "frame" | "video" }) {
-  const isFrame = kind === "frame";
+ *  `assertNever` closes the union, so a state nobody thought about cannot render silence.
+ *
+ *  FSE-208(creation §5,S5 批量裁决 #1358)—— 这里以前还有一份 `kind: "frame" | "video"`,
+ *  给分镜的首帧图配同一套话术;首帧合成整段报废后,这一格只服务视频(见 PR #1394 报废清单:
+ *  首帧那一份措辞连同 `FrameSlot` 一起删)。 */
+function MediaNote({ state }: { state: ShotMediaState }) {
   const replacing = ownedMedia(state) !== undefined;
   switch (state.kind) {
     case "absent":
@@ -118,59 +118,30 @@ function MediaNote({ state, kind }: { state: ShotMediaState; kind: "frame" | "vi
       return null; // the media itself is the answer
     case "in-progress":
       // A replacement in flight speaks for itself; the shot's existing media stays on screen
-      // above this line (see MediaFrame/MediaVideo).
-      if (replacing) return <Note busy>{isFrame ? "Replacing frame…" : "Replacing video…"}</Note>;
-      return <Note busy>{isFrame ? "Generating first frame…" : "Generating video…"}</Note>;
+      // above this line (see VideoSlot).
+      return <Note busy>{replacing ? "Replacing video…" : "Generating video…"}</Note>;
     case "landed-unloaded":
-      return <Note busy>{isFrame ? "That first frame is ready — loading it." : "That video is ready — loading it."}</Note>;
+      return <Note busy>That video is ready — loading it.</Note>;
     case "dead":
       // #782 r5 (judge r4 P1-②): the job is over and there is nothing to show for it. The hold
       // was released when the job ended, so the merchant paid nothing. r7: the way back is this
       // shot's own retry right below — not the package button. r11: when it was a REPLACEMENT
       // that died, the merchant still owns what he had — say both things.
-      return (
-        <Note>
-          {isFrame
-            ? "That first frame didn’t go through — you weren’t charged."
-            : "That video didn’t go through — you weren’t charged."}
-        </Note>
-      );
+      return <Note>That video didn’t go through — you weren’t charged.</Note>;
     case "stale-unknown":
       // Deliberately NOT "that didn't go through": a clip runs for minutes, and a cap is not
       // evidence about the merchant's money. Only the server's dead-job answer may say that.
-      return (
-        <Note>
-          {isFrame
-            ? "We’ve stopped checking for this frame automatically — check for updates below."
-            : "We’ve stopped checking for this video automatically — check for updates below."}
-        </Note>
-      );
+      return <Note>We’ve stopped checking for this video automatically — check for updates below.</Note>;
     default:
       return assertNever(state);
   }
 }
 
-/** The shot's FIRST FRAME: whatever the merchant owns right now (his own, or the one a running
- *  replacement hasn't superseded yet) plus the one honest line about what is happening. */
-function FrameSlot({ state, shotIndex }: { state: ShotMediaState; shotIndex: number }) {
-  const owned = ownedMedia(state);
-  return (
-    <>
-      {owned?.url && (
-        <img
-          src={owned.url}
-          alt={"Shot " + (shotIndex + 1) + " first frame"}
-          className="w-full max-w-[180px] rounded-lg border border-border"
-        />
-      )}
-      <MediaNote state={state} kind="frame" />
-    </>
-  );
-}
-
-/** The shot's VIDEO, same rule. `landed-unloaded` is the state judge r8's second P1 fell into —
- *  a clip the merchant has already paid for, with no player, no status and no button. It says
- *  what is true and the card's refresh entrance appears (see needsRefreshEntrance). */
+/** The shot's VIDEO: whatever the merchant owns right now (his own, or the one a running
+ *  replacement hasn't superseded yet) plus the one honest line about what is happening.
+ *  `landed-unloaded` is the state judge r8's second P1 fell into — a clip the merchant has
+ *  already paid for, with no player, no status and no button. It says what is true and the
+ *  card's refresh entrance appears (see needsRefreshEntrance). */
 function VideoSlot({ state }: { state: ShotMediaState }) {
   const owned = ownedMedia(state);
   return (
@@ -183,7 +154,7 @@ function VideoSlot({ state }: { state: ShotMediaState }) {
           className="w-full max-w-60 rounded-lg border border-border"
         />
       )}
-      <MediaNote state={state} kind="video" />
+      <MediaNote state={state} />
     </>
   );
 }
@@ -306,10 +277,12 @@ function ShotLibraryPicker({
   );
 }
 
-/** Otto 的分镜卡(F3:可逐帧编辑,$0)+ 闸①(首帧图)+ 闸②(make all videos)。
+/** Otto 的分镜卡(F3:可逐帧编辑,$0)+ 闸②(make all videos)。FSE-208(creation §5,S5
+ *  批量裁决 #1358)—— 闸①(首帧图)已整段报废(报废清单见 PR #1394):每一镜都直接出片,
+ *  不再有「先出首帧再拍视频」那一步。
  *  本地 state 持 payload;编辑动作成功后用返回 payload 更新。闸②:每镜头选时长(model-driven,
  *  editShotPrompt 级联清视频键)→ prepare($0)→ 确认 → 逐子卡 coworkGenerate(花钱)→ 统一 sync
- *  轮询把 frame/video genId 写回 + 取媒体 URL。花钱调用点恰好 4 处,全在显式确认 handler 内。 */
+ *  轮询把 video genId 写回 + 取媒体 URL。花钱调用点恰好 2 处,全在显式确认 handler 内。 */
 export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }: StoryboardCardProps) {
   const [view, setView] = useState<StoryboardCardView>(() => parseStoryboardCardPayload(payload));
   const [busy, setBusy] = useState(false);
@@ -318,23 +291,16 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
    *  换成了新价还等着商家看一眼，所以它有自己的位置，不进红色的失败框。 */
   const [priceNotice, setPriceNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
-  const [draftFf, setDraftFf] = useState("");
   const [draftV, setDraftV] = useState("");
 
   // Model-driven video duration options ($0 read, fetched once on mount).
   const [videoDurations, setVideoDurations] = useState<number[]>([]);
 
-  // Gate① (frames) state.
-  // `children` is the SERVER-returned set from the prepare call made in THIS confirm
-  // interaction. The spend loop derives its work list from THIS array only — never a
-  // stale render — and it's CLEARED on any edit or payload change (forcing a re-prepare).
-  const [children, setChildren] = useState<ChildFrameCard[] | null>(null);
-  const [totalCredits, setTotalCredits] = useState(0);
-  const [confirming, setConfirming] = useState(false);
-  const [regenShotId, setRegenShotId] = useState<string | null>(null); // shotId awaiting per-shot frame-regen confirm
-  const [regenChild, setRegenChild] = useState<ChildFrameCard | null>(null); // the freshly-minted frame child for that shot
-
-  // Gate② (videos) state — parallel to the frame state above, same single-source-of-truth rules.
+  // Gate② (videos) state. `videoChildren` is the SERVER-returned set from the prepare call
+  // made in THIS confirm interaction — the spend loop derives its work list from THIS array
+  // only, never a stale render — and it's CLEARED on any edit or payload change (forcing a
+  // re-prepare). FSE-208(creation §5,S5 批量裁决 #1358):gate①(首帧图)已整段报废(见 PR
+  // #1394 报废物清单)——每一镜直接出片,不再有首帧那一格 state。
   const [videoChildren, setVideoChildren] = useState<ChildFrameCard[] | null>(null);
   const [videoTotalCredits, setVideoTotalCredits] = useState(0);
   const [videoConfirming, setVideoConfirming] = useState(false);
@@ -406,7 +372,6 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       // demoting it to "ready — loading it".
       void reconcileOnce();
       setEditing(null);
-      setDraftFf("");
       setDraftV("");
       return true;
     } catch {
@@ -417,13 +382,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     }
   }
 
-  /** Clear every prepared-but-unspent staging state (both gates) — the single source of truth
+  /** Clear every prepared-but-unspent staging state (gate②) — the single source of truth
    *  for "a confirm may not spend". Called on any edit success and on a fresh payload injection. */
   function resetPrepared() {
-    setChildren(null);
-    setConfirming(false);
-    setRegenShotId(null);
-    setRegenChild(null);
     setVideoChildren(null);
     setVideoConfirming(false);
     setRegenVideoShotId(null);
@@ -443,23 +404,18 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
 
   function startEdit(shot: StoryboardShotView) {
     setEditing(shot.index);
-    setDraftFf(shot.firstFramePrompt);
     setDraftV(shot.videoPrompt);
     setError(null);
   }
 
+  // FSE-208(creation §5,S5 批量裁决 #1358)—— 首帧文字那一格已随首帧合成一并退场:编辑面
+  // 只剩 videoPrompt 一格,不再向 editShotPrompt 发 firstFramePrompt 键(老卡上可能仍存着
+  // 一段旧文字,原样留在 payload 里不动,只是没有入口能再改它 —— 见 PR #1394 报废物清单)。
   async function saveEdit(index: number) {
-    // creation §5 :172⑤ —— 这一镜现在**可能根本没有**首帧文字(schema 上条件可选:@ 到元素
-    // 的镜头直接出片,首帧那一步不存在)。这里过去无条件同发 draftFf,而它对那种镜头是空串 ——
-    // 服务端那格是 `.min(1)`,于是整次编辑被判「That edit isn't valid.」:商家连改一句视频
-    // 文字都存不下去。本来就没有那一格 ⇒ 不发这个键(服务端读「没传」= 没改,见 editStaleness)。
-    // 本来有、被商家清空 ⇒ 照旧原样发出去,由服务端拒 —— 那是一次真实的编辑意图,不该被吞掉。
-    const hadFramePrompt = Boolean(view.shots[index]?.firstFramePrompt);
     const ok = await run(() =>
       editShotPrompt({
         cardId,
         index,
-        ...(draftFf || hadFramePrompt ? { firstFramePrompt: draftFf } : {}),
         videoPrompt: draftV,
       }),
     );
@@ -673,40 +629,6 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     }
   }
 
-  // --- Gate① spend: "Generate all first frames" --------------------------
-  async function prepareAll() {
-    if (busy || generating) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await prepareStoryboardFirstFrames({ cardId });
-      if ("error" in res) { setError(res.error); return; }
-      // #782 r7 (判官 r6 P1-A): nothing here is BUYABLE — there is only something to WAIT for.
-      // r6 opened a confirm reading "Generate 0 frames for 0 credits", and confirming it started
-      // nothing and watched nothing: the merchant's one visible way back from a late-landing
-      // frame was a button that did nothing. Go back to watching instead — whatever exists is
-      // already paid for and reachable.
-      // r9 (judge r8 P2): an EMPTY result is the same situation — a frame that landed between
-      // the render and this click leaves the server with nothing to mint. `every` on an empty
-      // list is true, so dropping r7's `length > 0` guard is the whole fix: both shapes take
-      // the honest branch, and neither can produce a zero-credit dead confirm.
-      if (res.children.every((c) => c.spent)) {
-        setChildren(null);
-        setConfirming(false);
-        setGenerating(true);
-        startPolling();
-        return;
-      }
-      setChildren(res.children);
-      setTotalCredits(res.totalCredits);
-      setConfirming(true);
-    } catch {
-      setError("Couldn't prepare — please try again.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   /**
    * FSE-012（验收 R2）—— 服务端拒了那份过期报价，并把这张子卡**现在**的报价交了回来：
    * 把它写回这一张子卡（价 ＋ 版本）。指纹用同一个函数现算 —— 交回来的那一份已经走过
@@ -731,121 +653,6 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     return positions.length === 1
       ? `${what} ${positions[0]} changed price — check the updated quote above, then confirm again.`
       : `${what}s ${positions.join(", ")} changed price — check the updated quotes above, then confirm again.`;
-  }
-
-  // Spend EXACTLY the server-returned children from THIS confirm interaction. (SPEND SITE 1/4)
-  async function confirmGenerateAll() {
-    if (generating || !children) return;
-    const toSpend = children.filter((c) => !c.spent);
-    // #782 r7 (判官 r6 P1-A): children this confirm may NOT charge again, because they were
-    // charged already. They are still work in flight — so they still have to be watched.
-    const alreadySpent = children.length - toSpend.length;
-    setConfirming(false);
-    setGenerating(true);
-    setError(null);
-    setPriceNotice(null);
-
-    let anyStarted = false;
-    // FSE-012（验收 R2）—— 报价过期的那几镜。它们既没成交也不是这一趟的失败：服务端交回了
-    // 它们**现在**的报价，整批照跑（没漂的那几镜照常生成），这几张换成新价回到确认框里。
-    const refreshed: ChildFrameCard[] = [];
-    const refreshedPositions: number[] = [];
-    for (let i = 0; i < toSpend.length; i++) {
-      const c = toSpend[i];
-      try {
-        const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {}, quoteVersion: c.quoteVersion });
-        const refusal = quoteRefusalOf(res);
-        if (refusal) {
-          refreshed.push(refusal.quote ? refreshedChild(c, refusal.quote) : c);
-          refreshedPositions.push(i + 1);
-          continue;
-        }
-        if (res && "error" in res) { setError(`Frame ${i + 1} of ${toSpend.length}: ${res.error}`); continue; }
-        anyStarted = true;
-      } catch {
-        setError(`Frame ${i + 1} of ${toSpend.length} failed — please try again.`);
-      }
-    }
-
-    if (refreshed.length > 0) {
-      // 换了价的那几张留在确认框里、写着新价（每一张的报价都是服务端刚交回来的那一份，
-      // 不是本地攒的旧账）。其余的照旧被消费掉：任何进一步的花费仍要先重新 prepare。
-      setChildren(refreshed);
-      setTotalCredits(refreshed.reduce((n, c) => n + c.estimatedCredits, 0));
-      setConfirming(true);
-      setPriceNotice(priceChangedNote(refreshedPositions, "Frame", toSpend.length));
-    } else {
-      // Consumed: force a re-prepare before any further spend.
-      setChildren(null);
-    }
-    onBalanceRefresh?.();
-    if (anyStarted || alreadySpent > 0) {
-      startPolling();
-    } else {
-      setGenerating(false); // nothing started and nothing already paid for → nothing to watch
-    }
-  }
-
-  // --- Gate① per-shot frame regenerate -----------------------------------
-  async function prepareRegen(shotId: string) {
-    if (busy || generating) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await regenShotFirstFrameCard({ cardId, shotId });
-      if ("error" in res) { setError(res.error); return; }
-      // #782 r11 (judge r10 P1): the server hands back the replacement ALREADY IN FLIGHT rather
-      // than minting a second one. There is nothing to buy here — only something to wait for, so
-      // never open a confirm that says "this will spend real credits" over a job already paid for.
-      if (res.child.spent) {
-        setGenerating(true);
-        startPolling();
-        return;
-      }
-      // Do NOT clear the local view's genId or thumbnail — the OLD frame stays valid until the
-      // NEW one lands. Just stage the per-shot confirm; Cancel is a true no-op.
-      setRegenShotId(shotId);
-      setRegenChild(res.child);
-    } catch {
-      setError("Couldn't prepare — please try again.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // (SPEND SITE 2/4)
-  async function confirmRegen() {
-    if (generating || !regenChild) return;
-    const c = regenChild;
-    setRegenShotId(null);
-    setRegenChild(null);
-    setGenerating(true);
-    setError(null);
-    setPriceNotice(null);
-    let started = false;
-    try {
-      const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {}, quoteVersion: c.quoteVersion });
-      const refusal = quoteRefusalOf(res);
-      if (refusal) {
-        // FSE-012（验收 R2）—— 报价过期：把这一镜的确认框原样打回来，写着**新价**。
-        // 不锁控件、不当成失败 —— 商家看着新价再决定按不按。
-        setRegenChild(refusal.quote ? refreshedChild(c, refusal.quote) : c);
-        setRegenShotId(c.shotId);
-        setPriceNotice(priceChangedNote([], "Frame", 1));
-      } else if (res && "error" in res) setError(res.error);
-      else started = true;
-    } catch {
-      setError("Couldn't regenerate — please try again.");
-    }
-    onBalanceRefresh?.();
-    if (started) {
-      // The old frame stays on screen and the card says "Replacing frame…" — both come from the
-      // server's next answer (a live job + the result the merchant still owns), which startPolling
-      // asks for immediately. r11 keeps no local record of this replacement at all.
-      startPolling();
-    } else {
-      setGenerating(false);
-    }
   }
 
   // --- Gate② spend: "Make all videos" ------------------------------------
@@ -876,7 +683,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     }
   }
 
-  // Spend EXACTLY the server-returned video children from THIS confirm interaction. (SPEND SITE 3/4)
+  // Spend EXACTLY the server-returned video children from THIS confirm interaction. (SPEND SITE 1/2)
   async function confirmGenerateAllVideos() {
     if (generating || !videoChildren) return;
     const toSpend = videoChildren.filter((c) => !c.spent);
@@ -948,7 +755,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     }
   }
 
-  // (SPEND SITE 4/4)
+  // (SPEND SITE 2/2)
   async function confirmVideoRegen() {
     if (generating || !regenVideoChild) return;
     const c = regenVideoChild;
@@ -1004,17 +811,10 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       const url = libraryImageUrlById.get(generationId);
       return { generationId, ...(url ? { url } : {}) };
     });
-  // #782: how many first frames gate① would actually MAKE (and charge for) — the one shared
-  // rule, so the button never promises a number the server wouldn't mint. With continuous
-  // shots on that is the first shot alone; the rest inherit the frame the previous clip
-  // ended on, for free.
-  const missingCount = shotsNeedingMintedFirstFrame(shots, view.continuity, directShotIds).length;
   // #782 r3 (判官 r2 P1-a/P1-b): shots gate③ has RULED cannot inherit (it tried on the shot
-  // before them and that clip has no usable closing frame) are STUCK, not waiting — they're
-  // part of `missingCount` above and get their own honest per-shot message below. The ruling
-  // lives in the payload precisely so this count never has to guess from pointer shapes: a
-  // prepared-but-unspent child is not "in flight" (the entrance must stay), and an upstream
-  // remake still running is not "over" (no paid frame may be opened while a free one is coming).
+  // before them and that clip has no usable closing frame) are STUCK, not waiting — they get
+  // their own honest per-shot message below. The ruling lives in the payload precisely so this
+  // never has to guess from pointer shapes.
   const stuckShotIds = new Set(shotsStuckWithoutInheritedFrame(shots, view.continuity).map((s) => s.shotId));
   // Shots with no frame that are WAITING for the shot before them (continuous mode) rather
   // than missing something the merchant has to make.
@@ -1033,29 +833,24 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       : [],
   );
   const bal = balanceUsd ?? 0;
-  const affordAll = canAffordPack(totalCredits, bal);
   const affordAllVideos = canAffordPack(videoTotalCredits, bal);
 
-  // Gate①: show "Generate all frames" only when idle (not editing, not confirming any regen).
-  const idleForAffordance = editing === null && regenShotId === null && regenVideoShotId === null && !generating;
+  // Gate②: show "Make all videos" only when idle (not editing, not confirming any regen).
+  const idleForAffordance = editing === null && regenVideoShotId === null && !generating;
   // FSE-012（验收 R2）—— 报价换过价之后**仍开着的那个确认框**，在这一批还跑着的时候也要
   // 看得见：否则那句「check the updated quote above」上面什么都没有，商家读到的是一句
   // 指向空处的话。放宽的只是**看得见**——它的 Confirm 键照旧由 `generating` 自己锁着，
   // 所以这一批跑完之前一分钱也花不出去（编辑中／某一镜正在重出时照旧让位，与从前相同）。
-  const stagedSpendVisible = editing === null && regenShotId === null && regenVideoShotId === null;
-  const showGenerateAll = missingCount > 0 && (idleForAffordance || (confirming && children !== null && stagedSpendVisible));
+  const stagedSpendVisible = editing === null && regenVideoShotId === null;
 
-  // Gate②: "Make all videos" is visible when ≥1 shot has a frame and no video yet.
-  // FSE-001 同族:直接出片的镜头**没有首帧也算数** —— 它此刻就做得出来。
-  const videoEligibleCount = shots.filter(
-    (s) => (s.firstFrameGenerationId || directShotIds.has(s.shotId)) && !s.videoGenerationId,
-  ).length;
-  // Shots with a first frame still missing (would need one before their video can be made).
-  const videoBlockedCount = shots.filter(
-    (s) => !s.firstFrameGenerationId && !directShotIds.has(s.shotId),
-  ).length;
-  // In continuous mode those shots are not blocked ON THE MERCHANT — they are waiting for the
-  // clip before them to finish, which then hands them its closing frame. Say that instead.
+  // Gate②: "Make all videos" is visible when ≥1 shot has no video yet. FSE-208(creation §5,
+  // S5 批量裁决 #1358)—— 每一镜都直接出片,没有「先出首帧」这一档要等,所以这条判据只看
+  // videoGenerationId,不必等服务端先答「哪几镜直接出片」才画得对(那个答案现在恒为「全部」,
+  // 但在挂载后第一次 sync 回来之前 `directShotIds` 还是空集,继续依赖它会让这颗按钮在那个
+  // 空档里短暂读错数字)。
+  const videoEligibleCount = shots.filter((s) => !s.videoGenerationId).length;
+  // In continuous mode a shot with no frame yet is not blocked ON THE MERCHANT — it is waiting
+  // for the clip before it to finish, which then hands it its closing frame. Say that instead.
   const videoWaitingCount = inheritingShotIds.size;
   const showMakeVideos = videoEligibleCount > 0
     && (idleForAffordance || (videoConfirming && videoChildren !== null && stagedSpendVisible));
@@ -1116,7 +911,6 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
               // image hasn't loaded yet, and one whose frame is being replaced right now, since
               // the clip is a separate thing the merchant may already own.
               const hasFrame = ownedMedia(frameState) !== undefined;
-              const isRegenConfirm = regenShotId === shot.shotId;
               const isVideoRegenConfirm = regenVideoShotId === shot.shotId;
               // Is there a clip on screen for this shot right now (its own, or the one a running
               // replacement hasn't superseded yet)? Decides "replace" vs "make" wording only.
@@ -1124,14 +918,16 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
               // #782: waiting for the previous shot's clip to hand over its closing frame.
               const isInheriting = inheritingShotIds.has(shot.shotId);
               // #782 r2b (判官 r1 P1): the hand-off already ran and came up empty — this shot
-              // needs its OWN first frame (via Generate all below), it won't continue from
-              // the shot before it.
+              // needs its own video made from scratch (FSE-208: straight to video, no first
+              // frame), it won't continue from the shot before it.
               const isStuck = stuckShotIds.has(shot.shotId);
-              // FSE-001 同族:这一镜 @ 到了演员 —— 它直接出片,没有首帧这一步。
+              // FSE-208(creation §5,S5 批量裁决 #1358):这一镜直接出片 —— 现在恒为真,这一格
+              // 只是等服务端第一次 sync 把这句话说出口(挂图入口与「Goes straight to video…」
+              // 那句话挂在这一格上)。
               const isDirectToVideo = directShotIds.has(shot.shotId);
-              // Any per-shot confirm currently open (either gate) suppresses the OTHER shots'
-              // action buttons — clone gate①'s "only one regen at a time" rule, extended to videos.
-              const anyRegenOpen = regenShotId !== null || regenVideoShotId !== null;
+              // Any per-shot video-remake confirm currently open suppresses the OTHER shots'
+              // remake buttons — only one at a time.
+              const anyRegenOpen = regenVideoShotId !== null;
               return (
                 <Card key={shot.shotId} size="sm" className="gap-2">
                   {/* Row header: shot number + optional title + controls */}
@@ -1169,22 +965,6 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                   {isEditing ? (
                     <div className="mt-1 flex flex-col gap-3">
                       <FieldGroup className="gap-3">
-                        {/* FSE-001 同族:直接出片的镜头没有首帧这一步,所以这里不摆那一格 ——
-                            它已有的那段文字原样保留(保存时照旧带走 draftFf),万一日后这一镜
-                            不再点名演员,它立刻又派得上用场。 */}
-                        {!isDirectToVideo && (
-                          <Field data-disabled={busy}>
-                            <FieldLabel htmlFor={`frame-prompt-${shot.shotId}`}>First frame</FieldLabel>
-                            <Textarea
-                              id={`frame-prompt-${shot.shotId}`}
-                              value={draftFf}
-                              onChange={(e) => setDraftFf(e.target.value)}
-                              rows={2}
-                              disabled={busy}
-                              className="field-sizing-fixed min-h-0"
-                            />
-                          </Field>
-                        )}
                         <Field data-disabled={busy}>
                           <FieldLabel htmlFor={`video-prompt-${shot.shotId}`}>Video</FieldLabel>
                           <Textarea
@@ -1207,20 +987,6 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                     </div>
                   ) : (
                     <>
-                      {/* FSE-001 同族:直接出片的镜头没有首帧这一步,所以连那句提示词都不
-                          该摆在商家眼前 —— 摆着它,商家读到的就是一件不会发生的事。
-
-                          creation §5 :172⑤(判官第 2 轮 P2-④):**空的那一格也不摆**。
-                          `directToVideo` 只有服务端算得出,一次 sync 都还没回来时卡面按
-                          「照旧两步」渲染 —— 而这一镜从 :172⑤ 起本来就可以没有首帧文字,
-                          于是商家看到一个光秃秃的 "First frame ·" 标签,后面什么都没有。
-                          有文字才摆这一行;没有就整行不出现(那一步的真相由下面那句
-                          "Goes straight to video…" 或第一次 sync 回来后的卡面说)。 */}
-                      {!isDirectToVideo && shot.firstFramePrompt !== "" && (
-                        <div className="text-[0.75rem] text-muted-foreground">
-                          <span className="font-semibold text-foreground">First frame · </span>{shot.firstFramePrompt}
-                        </div>
-                      )}
                       <div className="text-[0.75rem] text-muted-foreground">
                         <span className="font-semibold text-foreground">Video · </span>{shot.videoPrompt}
                       </div>
@@ -1292,8 +1058,6 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                         </div>
                       )}
 
-                      {/* First-frame: image, status or nothing — ONE derived state decides. */}
-                      {!isDirectToVideo && <FrameSlot state={frameState} shotIndex={shot.index} />}
                       {/* #782: this shot has nothing to make — it opens on the closing moment of
                           the shot before it, once that one is done. */}
                       {isInheriting && frameState.kind !== "in-progress" && (
@@ -1315,37 +1079,6 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                           first frame; it won&rsquo;t continue from shot {shot.index}.
                         </div>
                       )}
-                      {/* Per-shot frame regenerate — only for a frame that is actually on screen
-                          and finished (a "landed" state IS the image; see FrameSlot). While a paid
-                          replacement is in flight the state is "in-progress", so this button is
-                          gone — that is judge r10's second-charge entrance, closed at the surface;
-                          the server closes it again underneath (isUnconsumedInFlight). */}
-                      {frameState.kind === "landed" && !generating && editing === null && (
-                        isRegenConfirm && regenChild ? (
-                          <SpendConfirmation
-                            className="mt-1"
-                            title="Confirm credit spend"
-                            description={`Replace this frame — ${creditsLabel(regenChild.estimatedCredits)}? This will spend real credits.`}
-                          >
-                              <Button variant="default" disabled={generating} onClick={() => void confirmRegen()}>
-                                Confirm — replace
-                              </Button>
-                              <Button variant="secondary" disabled={generating} onClick={() => { setRegenShotId(null); setRegenChild(null); }}>
-                                Cancel
-                              </Button>
-                          </SpendConfirmation>
-                        ) : (
-                          !anyRegenOpen && (
-                            <div className="mt-1">
-                              <Button variant="secondary" size="sm" disabled={busy} onClick={() => void prepareRegen(shot.shotId)}>
-                                <RotateCw data-icon="inline-start" aria-hidden="true" />
-                                Regenerate frame
-                              </Button>
-                            </div>
-                          )
-                        )
-                      )}
-
                       {/* --- Video block (only for shots that HAVE a first frame — or, FSE-001
                            同族, that go straight to video and need none) --- */}
                       {(hasFrame || isDirectToVideo) && (
@@ -1459,39 +1192,11 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
         {/* Add shot */}
         <div>
           <Button variant="secondary" size="sm" disabled={busy || editLocked || shots.length >= MAX_STORYBOARD_SHOTS}
-            onClick={() => run(() => addShot({ cardId, firstFramePrompt: "New shot — describe the opening frame", videoPrompt: "New shot — describe the motion" }))}>
+            onClick={() => run(() => addShot({ cardId, videoPrompt: "New shot — describe the motion" }))}>
             <Plus data-icon="inline-start" aria-hidden="true" />
             Add shot
           </Button>
         </div>
-
-        {/* Gate①: generate all first frames */}
-        {showGenerateAll && (
-          <div className="flex flex-col gap-3">
-            <Separator />
-            {confirming && children ? (
-              <div className="flex flex-col gap-3">
-                {!affordAll && <TopUpNotice need="generate these frames" />}
-                <SpendConfirmation
-                  title="Confirm credit spend"
-                  description={`Generate ${children.filter((c) => !c.spent).length} ${children.filter((c) => !c.spent).length === 1 ? "frame" : "frames"} for ${creditsLabel(totalCredits)}? This will spend real credits.`}
-                >
-                  <Button variant="default" size="sm" disabled={!affordAll || generating} onClick={() => void confirmGenerateAll()}>
-                    Confirm — {children.filter((c) => !c.spent).length} {children.filter((c) => !c.spent).length === 1 ? "frame" : "frames"} · {creditsLabel(totalCredits)}
-                  </Button>
-                  <Button variant="secondary" size="sm" disabled={generating} onClick={() => { setConfirming(false); setChildren(null); }}>
-                    Cancel
-                  </Button>
-                </SpendConfirmation>
-              </div>
-            ) : (
-              <Button variant="default" size="sm" disabled={busy} onClick={() => void prepareAll()}>
-                {busy && <Spinner data-icon="inline-start" aria-label="Preparing first frames" />}
-                {busy ? "Preparing first frames…" : `Generate all first frames (${missingCount})`}
-              </Button>
-            )}
-          </div>
-        )}
 
         {/* Gate②: make all videos */}
         {showMakeVideos && (
@@ -1518,15 +1223,11 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                   {busy && <Spinner data-icon="inline-start" aria-label="Preparing videos" />}
                   {busy ? "Preparing videos…" : `Make all videos (${videoEligibleCount} ${videoEligibleCount === 1 ? "clip" : "clips"})`}
                 </Button>
-                {videoWaitingCount > 0 ? (
+                {videoWaitingCount > 0 && (
                   <div className="text-xs text-muted-foreground">
                     {videoWaitingCount} {videoWaitingCount === 1 ? "shot follows on" : "shots follow on"} — each one starts once the shot before it is made.
                   </div>
-                ) : videoBlockedCount > 0 ? (
-                  <div className="text-xs text-muted-foreground">
-                    {videoBlockedCount} {videoBlockedCount === 1 ? "shot needs" : "shots need"} a first frame first.
-                  </div>
-                ) : null}
+                )}
               </div>
             )}
           </div>

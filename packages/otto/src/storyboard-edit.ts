@@ -33,7 +33,9 @@ export interface NewShotInput {
   /** 稳定镜头 id —— ACTION 层铸造(纯层保持确定性,不自己 mint)。 */
   shotId: string;
   title?: string;
-  firstFramePrompt: string;
+  /** FSE-208(creation §5,S5 批量裁决 #1358)—— 首帧合成已对所有镜头退场,新镜头不再需要
+   *  首帧文字。字段留着可选,只服务尚未清完的老写路径;卡面新增镜头的入口不再发它。 */
+  firstFramePrompt?: string;
   videoPrompt: string;
 }
 
@@ -133,7 +135,8 @@ export function applyAddShot(
     shotId: shot.shotId,
     index: payload.shots.length,
     ...(shot.title ? { title: shot.title } : {}),
-    firstFramePrompt: shot.firstFramePrompt,
+    // FSE-208 —— 没写就不落这一格(与 buildStoryboardPayload 同一条「只在有内容时出现」的纪律)。
+    ...(shot.firstFramePrompt ? { firstFramePrompt: shot.firstFramePrompt } : {}),
     videoPrompt: shot.videoPrompt,
   };
   return { ...payload, shots: restamp([...payload.shots, added]) };

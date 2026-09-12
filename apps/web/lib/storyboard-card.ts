@@ -47,83 +47,23 @@ export interface StoryboardCardView {
   shots: StoryboardShotView[];
 }
 
-/** 缺省的空集合 —— 一个常量,免得每次调用都造一个新的 Set。 */
-const EMPTY_SHOT_IDS: ReadonlySet<string> = new Set<string>();
-
 /**
- * #782 —— 闸① 到底会为**哪些**镜头铸(要花钱的)首帧图子卡。**唯一权威**,服务端动作层与
- * 卡面同读这一条,所以「卡上说要出几张」和「服务端真的会出几张」不可能分家。
+ * FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 哪几镜**直接出片**。现在恒为
+ * **全部**:首帧合成已对所有镜头退场,分镜不再为任何镜头铸付费首帧图子卡。
  *
- * 接续关(老行为):每个还没有首帧图的镜头各出一张。
- * 接续开:**只有第一个镜头**要出图。其后每个镜头的首帧 = 上一个镜头出片时引擎免费附送的
- * 末帧(闸③ 写回),所以那些镜头一分钱都不该花在首帧上 —— 真替商家省下的钱,不是话术。
- * 商家想给中间某个镜头换一张自己的首帧:走那个镜头自己的重出按钮(per-shot regen),
- * 那是显式动作,不受这条规则影响 —— 能力一格没少。
+ * 判据(`shotGoesDirectToVideo`,住在 `@fikirtive/core/storyboard-shot`)之所以还留着一个
+ * 函数、没有内联成字面量,是因为它仍是铸卡侧与卡面**共读**的唯一落点 —— 判词日后若再变,
+ * 两边不会走到「各算各的」那条老路(判官第 2 轮 P2-⑤ 钉过这个缝)。
  *
- * 泛型 + 按 index 排序:服务端拿 payload 的镜头、卡面拿视图镜头,两边形状不同但语义同一条。
- *
- * #782 r2b(判官 r1 P1 之一)—— 接续开着时,「等上一镜交棒」和「上一镜交过棒了、但交不出、
- * 永远不会再交」是两件不同的事,以前混成一句。后者(见 `shotsStuckWithoutInheritedFrame`)
- * 一样算「需要铸首帧」——不然供应商键猜错 / 旧 worker 没存末帧 / 下载失败,这一镜就卡进一个
- * 界面上连按钮都没有的死路:Generate all 数不到它、也没有单镜按钮。诚实的出路是让它和普通
- * 缺帧镜头一样,走「花钱铸一张自己的首帧」那条路——不再接上一镜的画面,但至少能往前走。
- * r3(判官 r2)只改了**怎么认定后者**:改读闸③ 的判词,不再从指针形状去猜。
- */
-export function shotsNeedingMintedFirstFrame<
-  T extends {
-    index: number;
-    shotId?: string;
-    firstFrameGenerationId?: string;
-    videoCardId?: string;
-    inheritBlockedByVideoCardId?: string;
-  },
->(
-  shots: readonly T[],
-  continuity: boolean,
-  /**
-   * FSE-001 同族(Founder 2026-09-09 裁)—— 这一趟**直接出片**的那几镜的 shotId。
-   *
-   * 它们一张首帧都不要:演员的照片与商品图各作一张参考图,片子从文字起步(见
-   * `shotsDirectToVideo`)。缺省空集合 ⇒ 与这条修改之前逐字相同。
-   *
-   * 收的是 **shotId**,不是元素 id:判断「哪几个元素是演员」要读 `Entity.type`,只有
-   * 服务端做得到;卡面读的是服务端算好的那份答案(sync 回传),两边因此不可能各算各的。
-   */
-  directToVideoShotIds: ReadonlySet<string> = EMPTY_SHOT_IDS,
-): T[] {
-  const notDirect = (s: T): boolean => !(s.shotId !== undefined && directToVideoShotIds.has(s.shotId));
-  const missing = [...shots]
-    .sort((a, b) => a.index - b.index)
-    .filter((s) => !s.firstFrameGenerationId && notDirect(s));
-  if (!continuity) return missing;
-  const first = [...shots].sort((a, b) => a.index - b.index)[0];
-  const eligible = first && !first.firstFrameGenerationId ? [first] : [];
-  for (const shot of shotsStuckWithoutInheritedFrame(shots, continuity)) eligible.push(shot);
-  return eligible.filter(notDirect).sort((a, b) => a.index - b.index);
-}
-
-/**
- * FSE-001 同族(Founder 2026-09-09 裁)—— 哪几镜**直接出片**。
- *
- * 判据只有一句:**这一镜 @ 到了至少一个演员(CHARACTER 元素)**——判词本身住在
- * `@fikirtive/core/storyboard-shot` 的 `shotGoesDirectToVideo`,Otto 交稿侧那道闸
- * (`shotsMissingFirstFramePrompt`)读的是同一个函数,两处不可能各说各话。
- *
- * ── 为什么(规格 §5 2026-09-08「FSE-001 同族」那一行)──────────────────────────
+ * ── 为什么这条从「@ 到演员才直接出片」变成「全部直接出片」(规格 §5 FSE-208)──────
  * 分镜此前对每一镜都先出一张付费首帧,带演员的镜头把演员 id 放进那张首帧的 entityIds
  * (图生图)。而按规格 §1 的血统信任,一张带演员的图生图产物送进视频端必被拒收
  * (staging 实测:HTTP 400 `InputImageSensitiveContentDetected.PrivacyInformation`,
  * 退款一次)。于是商家先为一张必然作废的图付一次钱,再为一条注定失败的片子付一次预扣。
- *
- * 正路是同一份规格里已经落地的那一条(PR #1273):演员参考照的**原件**与这一镜 @ 到的
- * 商品照各作一张 `role:"reference_image"`,走**纯文生视频** —— 不合成、不做首帧。
- * 所以这几镜的首帧那一步整个不存在:不铸卡、不报价、不收钱。
- *
- * 不带演员的镜头一格没动(首帧 → 出片,两步照旧)。
- *
- * 归属由调用方给的 `castEntityIds` 定,而那一份只能来自服务端按 ownerId 读出来的元素
- * (`Entity.type === "CHARACTER"`)—— 别家店的演员 id 根本不会出现在里面,所以跨租户的
- * id 在这里数出 0,那一镜照旧走首帧那条路,并在铸卡层被整轮拒绝(FSE-002 那条口径)。
+ * 2026-09-08 Founder 裁「合成 first frame 的 idea 可以移除了,没有必要」先落地到带演员的
+ * 镜头(PR #1273/#1277);2026-09-12 S5 批量裁决(#1358)把范围定成**所有镜头**——纯商品
+ * 镜头(此前仍是两步)从此也直接出片:@ 到的元素(演员/商品)各作一张 `role:"reference_image"`,
+ * 走纯文生视频,首帧那一步对每一镜都不存在,不铸卡、不报价、不收钱。
  */
 export function shotsDirectToVideo<T extends { shotId: string; entityIds?: string[] }>(
   shots: readonly T[],
@@ -135,15 +75,16 @@ export function shotsDirectToVideo<T extends { shotId: string; entityIds?: strin
 /**
  * creation §5 :178(判官 r2 的两条 P1)—— 这张卡**必须**先问服务端一趟才画得对吗。
  *
- * 「这一镜直接出片吗」要读 `Entity.type`,只有服务端答得出;而挂图入口、那句
- * "Goes straight to video…"、以及首帧要铸几张,全挂在这一格上。卡面此前只在**媒体需要
- * 重载**时才开口问(`needsRefreshEntrance`),于是 Otto 刚交出、一分钱还没花过的那张卡
- * (每格 `absent`)一次都不问 —— 商家看到的是一张没有挂图入口的卡,而验收口径那句
- * 「分镜卡镜头可 @ 选 Library 里的图作参考」正是在这个主状态下不成立。
+ * 「这一镜直接出片吗」要读 `Entity.type`,只有服务端答得出;而挂图入口与那句
+ * "Goes straight to video…" 挂在这一格上。卡面此前只在**媒体需要重载**时才开口问
+ * (`needsRefreshEntrance`),于是 Otto 刚交出、一分钱还没花过的那张卡(每格 `absent`)
+ * 一次都不问 —— 商家看到的是一张没有挂图入口的卡,而验收口径那句「分镜卡镜头可 @ 选
+ * Library 里的图作参考」正是在这个主状态下不成立。
  *
- * 判据只有一句:**这一镜 @ 到了至少一个元素**。一个元素都没 @ 的镜头在
- * `shotGoesDirectToVideo` 里恒为假(它按 `entityIds` 与本店演员求交集),所以那张卡的答案
- * 不可能是「直接出片」——不必为它多发一趟。这一条只决定**问不问**,答案仍旧只有服务端说了算。
+ * 判据只有一句:**这一镜 @ 到了至少一个元素**。一个元素都没 @ 的镜头没有挂图这件事可言
+ * (@fikirtive/core 的参考名额按 `entityIds` 分配),所以那张卡不必为它多发一趟。FSE-208
+ * 之后「直接出片」本身恒为真(见 `shotsDirectToVideo`),这一条只决定**问不问**——答案
+ * 仍旧只有服务端说了算,不由这里的启发式代替。
  */
 export function needsDirectToVideoAnswer<T extends { entityIds?: string[] }>(
   shots: readonly T[],
