@@ -39,6 +39,10 @@ describe("SHARE-A1 —— Range 头解析", () => {
     expect(parseByteRange("bytes=500-100", 1000)).toBe("unsatisfiable");
   });
 
+  it("SHARE-A1 —— 后缀式 `bytes=-0` 要的是「最后 0 个字节」= 不可满足(RFC 9110 §14.1.2)", () => {
+    expect(parseByteRange("bytes=-0", 1000)).toBe("unsatisfiable");
+  });
+
   it("SHARE-A1 —— 零长度对象上的任何 Range 都不可满足", () => {
     expect(parseByteRange("bytes=0-0", 0)).toBe("unsatisfiable");
   });

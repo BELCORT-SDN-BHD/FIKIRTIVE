@@ -77,7 +77,10 @@ function pruneRecentSuccess(now: number): void {
 export function rememberMediaProxySuccess(caller: string, now: number): void {
   recentSuccessAt.set(caller, now);
   if (recentSuccessAt.size > RECENT_SUCCESS_MAX_ENTRIES) pruneRecentSuccess(now);
+  // 节流位跟 `alertedThisOutage` 一起清:节流只在**同一场**故障里成立。留着上一场的
+  // `lastAlertAt`,「故障→恢复→5 分钟内再故障」的第二场就一条报警都发不出来。
   alertedThisOutage = false;
+  lastAlertAt = null;
 }
 
 /** SHARE-A4 —— 这个调用方在兜底窗口内吗?窗口**不续期**:读它不会把时间戳往后推。 */

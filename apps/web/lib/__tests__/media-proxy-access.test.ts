@@ -124,4 +124,19 @@ describe("SHARE-A12 —— 限流存储不可用的告警与送达回执", () =>
 
     expect((mockFounderAlert.mock.calls[1] as [unknown, { repeat?: boolean }])[1]?.repeat).toBe(false);
   });
+
+  it("SHARE-A12 —— 故障→恢复→节流窗口内再故障:第二场照样报警(节流只在同一场里成立)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await alertMediaProxyStoreUnreachable(T0); // 第一场
+    rememberMediaProxySuccess("198.51.100.6", T0 + 30_000); // 计数器答上话了 = 第一场结束
+
+    // 第二场发生在距上一条报警不到 5 分钟的地方 —— 这正是以前被静音的那一格
+    const secondOutageAt = T0 + 60_000;
+    expect(secondOutageAt - T0).toBeLessThan(MEDIA_PROXY_STORE_ALERT_INTERVAL_MS);
+    const outcomes = await alertMediaProxyStoreUnreachable(secondOutageAt);
+
+    expect(outcomes).toEqual(DELIVERED);
+    expect(mockFounderAlert).toHaveBeenCalledTimes(2);
+    expect((mockFounderAlert.mock.calls[1] as [unknown, { repeat?: boolean }])[1]?.repeat).toBe(false);
+  });
 });

@@ -27,6 +27,9 @@ export function parseByteRange(header: string | null | undefined, totalSize: num
     // (RFC 9110 §14.1.2), not a negative offset.
     const wanted = Number(last);
     if (totalSize === 0) return "unsatisfiable";
+    // `bytes=-0` 要的是「最后 0 个字节」—— RFC 9110 §14.1.2 明说不可满足(416)。
+    // 不在这里拦住,下面算出来的是 { start: totalSize, end: totalSize - 1 } 这种颠倒区间。
+    if (wanted === 0) return "unsatisfiable";
     return { start: Math.max(0, totalSize - wanted), end: totalSize - 1 };
   }
 
