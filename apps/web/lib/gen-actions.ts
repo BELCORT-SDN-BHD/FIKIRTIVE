@@ -47,7 +47,9 @@ import {
 import { getBoss } from "./queue";
 import { checkCast } from "./cowork-guardian";
 // #925 —— 父卡不指着的子卡不许开销:confirm 的同一笔 money tx 内核对父卡当前指针的唯一入口。
-import { assertStoryboardParentPointer } from "@fikirtive/otto";
+// FSE-204 —— 付费前尺寸闸的唯一判定;四个入口(画布确认卡、Library 动作、Otto 主动、
+// 分镜挂图)在 startGen 这里全部汇合,走同一次调用(见下方调用处的注释)。
+import { assertStoryboardParentPointer, assertPrePaymentReferenceSizeGate } from "@fikirtive/otto";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -934,6 +936,25 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // 取哪一格有值就是哪一格 —— 少查图片那一格,多参考图片作业就照旧走到 worker 才 fail
     // closed:钱先预扣、事后退,正是这条登记要消掉的那种伤害。
     const referenceGenerationIds = videoOptions?.referenceGenerationIds ?? imageOptions?.referenceGenerationIds;
+
+    // FSE-204(规格 §5 2026-09-11 行;S5 批量裁决 2026-09-12,#1358)—— 付费前尺寸闸,
+    // 唯一一份判定,四个入口(画布确认卡、Library 动作、Otto 主动、分镜挂图)在这里**全部**
+    // 汇合:`startGen` 是它们共同的建单+预扣权威,新增入口只要走 `startGen` 就自动受它保护,
+    // 不必逐个入口记得接线 —— 这正是根因(闸只挂在「视频卡 × referenceGenerationIds」
+    // 一条路上)不会再犯的原因。
+    //
+    // 两档候选:`sourceGenerationId`(图生图 base / 视频起始帧,两种 kind 共用同一格)与
+    // 图片卡自己的额外挂图(CRE-STG-P1-003)是「worker 从不放大」的硬闸档,短边 <300 一律拒;
+    // 视频卡的商品参考图是「worker 真会放大」的可放大档,短边 [100,300) 放行(判定与措辞
+    // 全在 `@fikirtive/otto` 的 `assertPrePaymentReferenceSizeGate` 一处,`packages/otto/src
+    // /skills/propose.ts` 铸卡时的早退检查读的是同一个函数)。
+    const sizeGateVerdict = await assertPrePaymentReferenceSizeGate({
+      ownerId,
+      upscaleEligibleIds: kind === "video" ? (referenceGenerationIds ?? []) : [],
+      hardFloorIds: [sourceGenerationId, ...(kind === "image" ? (referenceGenerationIds ?? []) : [])],
+    });
+    if ("error" in sizeGateVerdict) return { error: sizeGateVerdict.error };
+
     const block = await checkCast({ ownerId, projectId, entityIds, variantSel: effectiveVariantSel, sourceGenerationId, tailGenerationId, referenceGenerationIds, model, kind });
     if (block) {
       try {

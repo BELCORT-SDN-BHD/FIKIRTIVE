@@ -3,6 +3,8 @@ import {
   INTERNAL_PER_DISPLAY, pricedGenCredits,
   GEN_IMAGE_ASPECTS, GEN_IMAGE_SIZES, imageOutputSize,
   REFERENCE_IMAGE_PERSON_REJECTED,
+  // FSE-204 —— 付费前尺寸闸的措辞唯一出处(核对四入口拒绝话术逐字相同)。
+  tooSmallReferenceSentence, minimumUsableReferenceSide,
 } from "@fikirtive/core";
 import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 
@@ -26,6 +28,10 @@ const db = vi.hoisted(() => {
   // #1375:`startAssetGen` 在算键之前查一次锚点归属(ASSET-A1)。这份替身少了它,
   // 资产那一族的每条用例都会炸成一个与被测行为无关的 TypeError。
   const generationFindFirst = vi.fn();
+  // FSE-204:付费前尺寸闸(`@fikirtive/otto` 的 `assertPrePaymentReferenceSizeGate`)在
+  // `startGen` 里查 `generation.findMany`。这份替身少了它,任何带 `sourceGenerationId` /
+  // `referenceGenerationIds` 的用例都会炸成一个与被测行为无关的 TypeError。
+  const generationFindMany = vi.fn();
   const genJobFindFirst = vi.fn();
   const genJobFindMany = vi.fn();
   const genJobCreate = vi.fn();
@@ -40,7 +46,7 @@ const db = vi.hoisted(() => {
     campaign: { findFirst: campaignFindFirst },
     chatMessage: { findFirst: chatMessageFindFirst, create: chatMessageCreate },
     chatThread: { findFirst: chatThreadFindFirst },
-    generation: { findFirst: generationFindFirst },
+    generation: { findFirst: generationFindFirst, findMany: generationFindMany },
     genJob: { findFirst: genJobFindFirst, findMany: genJobFindMany, create: genJobCreate, update: genJobUpdate },
     entity: { findMany: entityFindMany },
     actionEvent: { create: actionEventCreate },
@@ -55,6 +61,7 @@ const db = vi.hoisted(() => {
     chatMessageCreate,
     chatThreadFindFirst,
     generationFindFirst,
+    generationFindMany,
     genJobFindFirst,
     genJobFindMany,
     genJobCreate,
@@ -134,6 +141,9 @@ function resetStartGenMocks(): void {
   // #1375:默认「锚点在本工作区里查得到」—— 不在的那一路由 ASSET-A1 的真库用例钉
   // (`asset-action-idempotency.test.ts`),这里只是让既有用例走得下去。
   db.generationFindFirst.mockResolvedValue({ id: "gen1" });
+  // FSE-204:尺寸闸默认读不到候选行(既有用例大多没设过这几张图的资产快照)⇒ 放行 —— 与
+  // `packages/otto/src/skills/propose.test.ts` 的默认口径一致(见该文件 beforeEach 的注释)。
+  db.generationFindMany.mockResolvedValue([]);
   db.genJobFindFirst.mockResolvedValue(null);
   db.genJobFindMany.mockResolvedValue([]);
   db.genJobCreate.mockResolvedValue({ id: "job_ref" });
@@ -422,6 +432,189 @@ describe("startGen", () => {
       idempotencyKey: "cowork:card-1",
     });
     expect(mockCheckCast).toHaveBeenCalledWith(expect.objectContaining({ referenceGenerationIds: undefined }));
+  });
+
+  /**
+   * FSE-204(规格 §5 2026-09-11 行;S5 批量裁决 2026-09-12,#1358)—— 付费前尺寸闸的唯一
+   * 判定接在 `startGen` 这一处,四个入口(画布确认卡、Library 动作、Otto 主动、分镜挂图)
+   * 全部经它建单+预扣的路上走过,不必逐个入口记得接线。
+   *
+   * 根因(走查 findings-catalog.md FSE-204):这道闸从前只挂在「视频卡 × referenceGenerationIds」
+   * 一条路上 ——「图生图 base」与「视频起始帧」两个入口(都走 `sourceGenerationId`)从未进过
+   * 闸,商家批准后要么真扣了钱,要么预扣后白等供应商三分钟才退款。这里逐个入口复测:
+   * 画布确认卡与 Otto 主动都收在 `startCoworkGen`(它们共用同一条付费终审 —— Otto 的
+   * `generate` 技能与画布节点级卡都调 `ctx.startGen = startCoworkGen`,见
+   * `apps/web/lib/otto-actions.ts`);Library 动作即 `startAssetGen`(资产详情页 Generate
+   * edit / Regenerate);分镜挂图铸的子卡与普通 Otto 卡走同一条 `startCoworkGen`(见
+   * `storyboard-gate1-actions.ts` 的 `mintChild`/`mintVideoChild` 用同一个 `buildProposeCard`,
+   * 批准之后同样落在这里),所以这里钉的「图片卡额外挂图」用例同时代表这两个入口。
+   */
+  describe("FSE-204 付费前尺寸闸 —— 四入口共用同一次 startGen 终审", () => {
+    // staging 走查路 B:「视频起始帧」,80×107 与走查报告里那张真实参考图逐字相同。
+    // Otto 主动发起与画布确认卡共用同一个入口(startCoworkGen)。
+    it("FSE-204 / CREATE-A2: Otto 主动 / 画布确认卡(startCoworkGen)—— 视频起始帧短边 80 ⇒ 付费前拒绝,说出实际短边,零建任务零预扣", async () => {
+      db.chatMessageFindFirst.mockResolvedValue({
+        threadId: "thread-1",
+        payload: { estimatedCredits: 11 },
+        thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+      });
+      db.generationFindMany.mockResolvedValue([{ asset: { width: 80, height: 107 }, entitySnapshot: null }]);
+
+      const result = await startCoworkGen({
+        projectId: "p1",
+        threadId: "thread-1",
+        prompt: "animate this into a 5s clip",
+        entityIds: [],
+        count: 1,
+        kind: "video",
+        model: "seedance-2-mini",
+        durationSeconds: 5,
+        resolution: "720p",
+        sourceGenerationId: "gen_start_frame",
+        idempotencyKey: "cowork:card-1",
+      });
+
+      expect(result).toEqual({
+        error: tooSmallReferenceSentence({ width: 80, height: 107, minSide: minimumUsableReferenceSide(false) }),
+      });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+      expect(mockBossSend).not.toHaveBeenCalled();
+    });
+
+    // staging 走查路 A:「图生图 base」,150×400 落在 FSE-001 商品图会被放大的 [100,300)
+    // 区间 —— 但 worker 对编辑底图从不放大,所以这里仍是拒绝,门槛说 300 不说 100。
+    it("FSE-204 / CREATE-A2: Library 动作(startAssetGen)—— 图生图 base 短边 150 ⇒ 付费前拒绝,门槛写死 300", async () => {
+      db.generationFindMany.mockResolvedValue([{ asset: { width: 150, height: 400 }, entitySnapshot: null }]);
+
+      const result = await startAssetGen({
+        expectedCredits: 1,
+        assetOp: "edit",
+        assetAnchorGenerationId: "gen1",
+        assetIntentId: "intent-1",
+        projectId: "p1",
+        prompt: "make the background a beach",
+        entityIds: [],
+        count: 1,
+        kind: "image",
+        model: "seedream",
+        sourceGenerationId: "gen_base",
+      });
+
+      expect(result).toEqual({
+        error: tooSmallReferenceSentence({ width: 150, height: 400, minSide: minimumUsableReferenceSide(false) }),
+      });
+      expect(result).toEqual({ error: expect.stringContaining("at least 300 pixels") });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    // 分镜挂图:子卡与普通 Otto 卡走同一条 startCoworkGen,这里用图片卡的额外挂图
+    // (CRE-STG-P1-003,creation §5 :178 的 Library 图正是从这一格上路)代表这条入口。
+    it("FSE-204 / CREATE-A2: 分镜挂图(图片卡额外挂图,startCoworkGen)—— 短边 120 ⇒ 同一处被拦", async () => {
+      db.chatMessageFindFirst.mockResolvedValue({
+        threadId: "thread-1",
+        payload: { estimatedCredits: 1, referenceGenerationIds: ["gen-extra"] },
+        thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+      });
+      db.generationFindMany.mockResolvedValue([{ asset: { width: 120, height: 500 }, entitySnapshot: null }]);
+
+      const result = await startCoworkGen({
+        projectId: "p1",
+        threadId: "thread-1",
+        prompt: "put the product next to this",
+        entityIds: [],
+        count: 1,
+        kind: "image",
+        model: "seedream",
+        idempotencyKey: "cowork:card-1",
+      });
+
+      expect(result).toEqual({
+        error: tooSmallReferenceSentence({ width: 120, height: 500, minSide: minimumUsableReferenceSide(false) }),
+      });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    it("FSE-204 / CREATE-A2: 画布确认卡(startCanvasGen)—— 图生图 base 太小 ⇒ 付费前拒绝", async () => {
+      db.generationFindMany.mockResolvedValue([{ asset: { width: 200, height: 200 }, entitySnapshot: null }]);
+
+      const result = await startCanvasGen({
+        actionId: "canvas-edit-1",
+        expectedCredits: 1,
+        projectId: "p1",
+        prompt: "make it brighter",
+        entityIds: [],
+        count: 1,
+        kind: "image",
+        model: "seedream",
+        sourceGenerationId: "gen_base",
+      });
+
+      expect(result).toEqual({
+        error: tooSmallReferenceSentence({ width: 200, height: 200, minSide: minimumUsableReferenceSide(false) }),
+      });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    // 闸不误伤:够大的源图,四个入口的代表(这里取 Library 动作)照常建单预扣。
+    it("FSE-204 / CREATE-A9: 够大的源图(短边 1344)⇒ 照常建单预扣,不被闸拦下", async () => {
+      db.generationFindMany.mockResolvedValue([{ asset: { width: 1344, height: 1344 }, entitySnapshot: null }]);
+
+      const result = await startAssetGen({
+        expectedCredits: 1,
+        assetOp: "edit",
+        assetAnchorGenerationId: "gen1",
+        assetIntentId: "intent-1",
+        projectId: "p1",
+        prompt: "make the background a beach",
+        entityIds: [],
+        count: 1,
+        kind: "image",
+        model: "seedream",
+        sourceGenerationId: "gen_base",
+      });
+
+      expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(db.genJobCreate).toHaveBeenCalledTimes(1);
+      expect(db.reserveCredits).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * 规格 §5 :176④ 复测 —— 短边 100–300 的商品参考图仍然走「放大」,不因这次重构收窄。
+     *
+     * 与上面几条硬闸用例刻意用同一个短边(150,落在 [100,300) 区间)对照:视频卡自己的商品
+     * 参考图(`referenceGenerationIds`)是 worker 真会放大的那一档,即使这道闸现在接进了
+     * `startGen` 这个新的终审点,这一档的判定仍必须放行、正常建单预扣 —— 不是被新增的硬闸
+     * 逻辑一起收紧。
+     */
+    it("规格 §5 :176④ 复测: 视频卡自己的商品参考图短边 150(与硬闸用例同一个数)⇒ 仍走放大、照常建单预扣", async () => {
+      db.chatMessageFindFirst.mockResolvedValue({
+        threadId: "thread-1",
+        payload: { estimatedCredits: 11, referenceGenerationIds: ["gen-product"] },
+        thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+      });
+      db.generationFindMany.mockResolvedValue([{ asset: { width: 150, height: 400 }, entitySnapshot: null }]);
+
+      const result = await startCoworkGen({
+        projectId: "p1",
+        threadId: "thread-1",
+        prompt: "she holds the cup",
+        entityIds: [],
+        count: 1,
+        kind: "video",
+        model: "seedance-2-mini",
+        durationSeconds: 5,
+        resolution: "720p",
+        idempotencyKey: "cowork:card-1",
+      });
+
+      expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(db.genJobCreate).toHaveBeenCalledTimes(1);
+      expect(db.reserveCredits).toHaveBeenCalledTimes(1);
+    });
   });
 
   it.each([
