@@ -1,19 +1,16 @@
 // @vitest-environment jsdom
 /**
- * creation §5 :178(判官 r2 的两条 P1,同一根因)—— 挂图**入口**在第一手动作上就要在。
+ * PR #1417 判官 P1-B —— 挂图入口不再等服务端确认「这一镜直不直接出片」。
  *
- * 走查现场:Otto 刚交出分镜,每一镜都还没花过一分钱(每格 `absent`)。判官在 PR head 上用
- * 真挂载探针实测:这张卡上 `syncStoryboardMedia` 一次都不发,于是「这一镜直不直接出片」
- * 这一格永远是空的,`Add image` 一个都画不出来 —— 商家必须先做一次**与挂图无关**的编辑
- * (Add shot / 改文字)或先花一次钱,入口才会冒出来,而卡面没有一个字提示这件事。
- * 验收口径那句「分镜卡镜头可 @ 选 Library 里的图作参考」在主状态下因此不成立。
+ * 旧版判据(creation §5 :178,判官 r2 的两条 P1)靠挂载时多问一趟 `syncStoryboardMedia` 才
+ * 敢让 Add image 入口出现,而那一问只在「至少一镜 @ 了元素」时才发
+ * (`needsDirectToVideoAnswer`)。判官在这一轮(PR #1417 P1-B)钉出的反例:全镜头零 @ 的
+ * 分镜(纯文字脚本)挂载时两个「要不要问」判据都是假,sync 从不触发,`directShotIds`
+ * 永远是空集,导致 Add image 入口——连同时长下拉/VideoSlot/Remake——全部不渲染,而卡级
+ * Make all videos 照常收钱,商家在无法选时长的情况下付钱。
  *
- * 根因:「这一镜直接出片吗」要读 `Entity.type`,只有服务端答得出,而卡面**只在媒体需要
- * 重载时**才开口问。这一份钉住修法的三面:
- *   ① @ 到了元素的镜头 ⇒ 挂载就问一次(那一问 $0、只读),答案回来入口就在;
- *   ② 一次编辑之后入口不许闪掉 —— 那份判词不跟着媒体答案一起作废(镜头的 `entityIds`
- *      根本不由卡面编辑改动);
- *   ③ 一个元素都没 @ 的分镜不多问一趟 —— 那张卡的答案不可能是「直接出片」。
+ * FSE-208 之后「这一镜直接出片」对每一镜都恒为真,是卡面一眼就知道的编译期常量,不必再
+ * 读 `Entity.type` 才能确认。这一份钉的是修法:入口第一手就在,不必等、也不必多问一趟。
  *
  * 纯前端:Server Action 全是替身,这里不预扣、不结算、不调 provider。
  */
@@ -24,23 +21,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   syncStoryboardMedia: vi.fn(),
   getStoryboardVideoOptions: vi.fn(),
-  prepareStoryboardFirstFrames: vi.fn(),
-  regenShotFirstFrameCard: vi.fn(),
   prepareStoryboardVideos: vi.fn(),
   regenShotVideoCard: vi.fn(),
   editShotPrompt: vi.fn(),
   addShot: vi.fn(),
   deleteShot: vi.fn(),
   reorderShots: vi.fn(),
-  setStoryboardContinuity: vi.fn(),
   setShotReferences: vi.fn(),
   coworkGenerate: vi.fn(),
   searchReferencesAction: vi.fn(),
 }));
 
 vi.mock("@/lib/storyboard-gate1-actions", () => ({
-  prepareStoryboardFirstFrames: mocks.prepareStoryboardFirstFrames,
-  regenShotFirstFrameCard: mocks.regenShotFirstFrameCard,
   prepareStoryboardVideos: mocks.prepareStoryboardVideos,
   regenShotVideoCard: mocks.regenShotVideoCard,
   getStoryboardVideoOptions: mocks.getStoryboardVideoOptions,
@@ -51,7 +43,6 @@ vi.mock("@/lib/storyboard-actions", () => ({
   addShot: mocks.addShot,
   deleteShot: mocks.deleteShot,
   reorderShots: mocks.reorderShots,
-  setStoryboardContinuity: mocks.setStoryboardContinuity,
   setShotReferences: mocks.setShotReferences,
 }));
 vi.mock("@/lib/cowork-actions", () => ({ coworkGenerate: mocks.coworkGenerate }));
@@ -64,11 +55,11 @@ const { StoryboardCard } = await import("@/components/otto/StoryboardCard");
 const CARD_ID = "card-1";
 const SHOT_ID = "shot-1";
 
-/** Otto 刚交出的那张卡:一镜、@ 了一名演员、一格媒体都没有、一张图都还没挂。 */
+/** Otto 刚交出的那张卡:一镜、一格媒体都没有、一张图都还没挂。entityIds 可选(判官的
+ *  反例正是「一个元素都没 @」的那张卡)。 */
 function draftPayload(over: { entityIds?: string[] } = {}) {
   return {
     storyboardTitle: "Kaya jar launch",
-    continuity: false,
     shots: [
       {
         shotId: SHOT_ID,
@@ -76,22 +67,6 @@ function draftPayload(over: { entityIds?: string[] } = {}) {
         firstFramePrompt: "",
         videoPrompt: "slow push in",
         ...(over.entityIds ? { entityIds: over.entityIds } : {}),
-      },
-    ],
-  };
-}
-
-/** 服务端对这张草稿卡的回答:这一镜直接出片(它 @ 到了演员),两格媒体都还没开始。 */
-function directAnswer(payload: unknown) {
-  return {
-    payload,
-    shots: [
-      {
-        shotId: SHOT_ID,
-        frame: { status: { kind: "absent" } },
-        video: { status: { kind: "absent" } },
-        directToVideo: true,
-        libraryImages: [],
       },
     ],
   };
@@ -135,24 +110,31 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-describe("creation §5 :178 —— 草稿分镜卡上的挂图入口", () => {
-  it("creation §5 :178: 全新草稿卡(一格媒体都没有)挂载就问一次,@ 选图的入口第一手就在", async () => {
-    const payload = draftPayload({ entityIds: ["ent-actor"] });
-    mocks.syncStoryboardMedia.mockResolvedValue(directAnswer(payload));
+describe("creation §5 :178 / PR #1417 判官 P1-B —— 草稿分镜卡上的挂图入口第一手就在", () => {
+  it("全新草稿卡(一个元素都没 @,一格媒体都没有)挂载不发 sync,入口第一手就在", async () => {
+    const payload = draftPayload();
 
     await renderCard(payload);
 
-    // 那一问 $0、只读 —— 卡面没有它就答不出「这一镜直不直接出片」,而入口正挂在那一格上。
-    expect(mocks.syncStoryboardMedia).toHaveBeenCalledTimes(1);
+    // 判官反例的核心:入口不必等服务端确认「这一镜直不直接出片」——它现在是一个恒真的
+    // 编译期常量,挂载不必为它多问一趟。
+    expect(mocks.syncStoryboardMedia).not.toHaveBeenCalled();
     expect(hasAddImage()).toBe(true);
   });
 
-  it("creation §5 :178: 一次编辑之后入口不闪掉(判词不随媒体答案一起作废)", async () => {
+  it("@ 了元素的草稿卡同样不必等 sync,入口一样第一手就在", async () => {
     const payload = draftPayload({ entityIds: ["ent-actor"] });
-    mocks.syncStoryboardMedia.mockResolvedValue(directAnswer(payload));
+
+    await renderCard(payload);
+
+    expect(mocks.syncStoryboardMedia).not.toHaveBeenCalled();
+    expect(hasAddImage()).toBe(true);
+  });
+
+  it("一次编辑之后入口不闪掉(它本来就不依赖任何媒体答案)", async () => {
+    const payload = draftPayload({ entityIds: ["ent-actor"] });
     const editedPayload = {
       storyboardTitle: "Kaya jar launch",
-      continuity: false,
       shots: [
         { shotId: SHOT_ID, index: 0, firstFramePrompt: "", videoPrompt: "slow push in", entityIds: ["ent-actor"] },
         { shotId: "shot-2", index: 1, firstFramePrompt: "wide", videoPrompt: "pull out" },
@@ -163,9 +145,6 @@ describe("creation §5 :178 —— 草稿分镜卡上的挂图入口", () => {
     await renderCard(payload);
     expect(hasAddImage()).toBe(true);
 
-    // 编辑之后那一趟 sync 答不出来(服务端一时不可达)——判词是关于 `entityIds` 的,而
-    // `entityIds` 根本不由卡面编辑改动,所以入口不该跟着这一次失败消失。
-    mocks.syncStoryboardMedia.mockResolvedValue({ error: "boom" });
     const addShotButton = [...container!.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
       (b.textContent ?? "").includes("Add shot"),
     )!;
@@ -179,14 +158,5 @@ describe("creation §5 :178 —— 草稿分镜卡上的挂图入口", () => {
 
     expect(mocks.addShot).toHaveBeenCalledTimes(1);
     expect(hasAddImage()).toBe(true);
-  });
-
-  it("creation §5 :178: 一个元素都没 @ 的草稿卡不多问一趟(它不可能直接出片)", async () => {
-    mocks.syncStoryboardMedia.mockResolvedValue(directAnswer(draftPayload()));
-
-    await renderCard(draftPayload());
-
-    expect(mocks.syncStoryboardMedia).not.toHaveBeenCalled();
-    expect(hasAddImage()).toBe(false);
   });
 });

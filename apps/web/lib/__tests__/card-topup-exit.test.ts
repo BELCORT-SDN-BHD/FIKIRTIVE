@@ -31,9 +31,7 @@ const mocks = vi.hoisted(() => ({
   coworkGenerate: vi.fn(),
   approveResearch: vi.fn(),
   getResearchCard: vi.fn(),
-  prepareStoryboardFirstFrames: vi.fn(),
   prepareStoryboardVideos: vi.fn(),
-  regenShotFirstFrameCard: vi.fn(),
   regenShotVideoCard: vi.fn(),
   getStoryboardVideoOptions: vi.fn(),
   syncStoryboardMedia: vi.fn(),
@@ -54,9 +52,7 @@ vi.mock("@/lib/research-actions", () => ({
   getResearchCard: mocks.getResearchCard,
 }));
 vi.mock("@/lib/storyboard-gate1-actions", () => ({
-  prepareStoryboardFirstFrames: mocks.prepareStoryboardFirstFrames,
   prepareStoryboardVideos: mocks.prepareStoryboardVideos,
-  regenShotFirstFrameCard: mocks.regenShotFirstFrameCard,
   regenShotVideoCard: mocks.regenShotVideoCard,
   getStoryboardVideoOptions: mocks.getStoryboardVideoOptions,
   syncStoryboardMedia: mocks.syncStoryboardMedia,
@@ -384,30 +380,10 @@ describe("#707 StoryboardCard", () => {
     { shotId: "s1", index: 1, title: "Detail", firstFramePrompt: "ff-1", videoPrompt: "v-1" },
   ];
 
-  it("gate ① (first frames) links to Billing", async () => {
-    mocks.getStoryboardVideoOptions.mockResolvedValue({ durations: [5] });
-    mocks.prepareStoryboardFirstFrames.mockResolvedValue({
-      children: [
-        { shotId: "s0", childCardId: "child_0", estimatedCredits: 4, structuredPrompt: "ff-0", entityIds: [], spent: false },
-        { shotId: "s1", childCardId: "child_1", estimatedCredits: 4, structuredPrompt: "ff-1", entityIds: [], spent: false },
-      ],
-      totalCredits: 8,
-    });
-
-    const dom = await mount(
-      createElement(StoryboardCard, {
-        cardId: "sb_1",
-        payload: { storyboardTitle: "New shoes ad", shots },
-        balanceUsd: 0,
-      }),
-    );
-    await clickByText(dom, "Generate all first frames");
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expectTopUpExit(dom, "StoryboardCard frames gate");
-  });
+  // FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 「gate ① (first frames) links to
+  // Billing」随闸①整段报废一并删除:「Generate all first frames」按钮已经不存在,这条钱不够
+  // 出口的举证挪到了闸②(下面「gate ② (videos) links to Billing」),不需要替代覆盖 ——
+  // 出口本身是同一个 `outOfCreditsMessage()`,闸②那一条已经把它钉住了。
 
   it("gate ② (videos) links to Billing", async () => {
     mocks.getStoryboardVideoOptions.mockResolvedValue({ durations: [5] });

@@ -462,11 +462,13 @@ describe("ottoInstructions — storyboard routing", () => {
     expect(ottoInstructions).toMatch(/storyboard/i);
     expect(ottoInstructions).toMatch(/multi-shot|multiple shots|several shots|scene/i);
   });
-  it("tells Otto to build each shot's prompts with the model skills first", () => {
-    // 锚定 storyboard 专属 token(firstFramePrompt/videoPrompt),而非到处都出现的
-    // seedreamPrompt/seedancePrompt —— 否则断言在别处也能满足,失去意义。
-    expect(ottoInstructions).toMatch(/firstFramePrompt/);
+  it("FSE-208: tells Otto to build each shot's videoPrompt with seedancePrompt first, in one paid step", () => {
+    // 锚定 storyboard 专属 token(storyboardTitle/videoPrompt),而非到处都出现的
+    // seedancePrompt —— 否则断言在别处也能满足,失去意义。firstFramePrompt 已随
+    // FSE-208 退场,不再是这条断言的锚点。
+    expect(ottoInstructions).toMatch(/storyboardTitle/);
     expect(ottoInstructions).toMatch(/videoPrompt/);
+    expect(ottoInstructions).not.toMatch(/firstFramePrompt/);
   });
   it("tells Otto to pass @-entity ids via the shot's entityIds (reference image reaches the model)", () => {
     expect(ottoInstructions).toMatch(/entityIds/);
@@ -1001,10 +1003,18 @@ describe("creation §5 :162④ —— 装配器里没有首帧手艺话,柜里�
   });
 
   it("creation §5 :162④ / CREATE-A2: 整柜说明书里那条禁令还在 —— 演员 + 商品绝不先合成一张首帧再动画", () => {
+    // 这条来自单镜 `propose` 的「Video keyframes」手艺档(prompting.md),FSE-208 只退场了
+    // **分镜(storyboard)**的首帧合成,单镜 forVideo 两步是另一条仍在的用户点名功能,不受影响。
     expect(ottoInstructions).toContain(
       "Never offer to build a combined still of a cast member and a product first and then animate it",
     );
-    // 分镜那一支的同一条:@ 到演员的镜头一张首帧都不出。
-    expect(ottoInstructions).toContain("it gets no first frame at all");
+  });
+
+  // FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 分镜那一支「@ 到演员的镜头一张首帧
+  // 都不出」这条禁令随闸①整段报废:现在**没有任何一档镜头**出首帧,「带不带演员」这条判据
+  // 本身也不复存在,禁令连同它锚定的旧句子一并从柜里删除,不留半句。
+  it("FSE-208: 分镜那一支不再提「@ 到演员才不出首帧」——整柜说明书里没有这句旧禁令", () => {
+    expect(ottoInstructions).not.toContain("it gets no first frame at all");
+    expect(ottoInstructions).not.toContain("firstFramePrompt");
   });
 });

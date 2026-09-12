@@ -176,7 +176,14 @@ export function videoReferencesRide(shape: VideoReferenceShape): boolean {
  *
  * 整段参考片(`hasReferenceVideo`)那一档一格不动:挂图在那条路上今天就不上车,
  * 这里照旧回 `null`。
- */
+ *
+ * ── `alwaysReference`(PR #1417 判官 P1-A)—— 分镜世界里 `startFrame` 已经不存在 ────
+ * FSE-208(S5 批量裁决 #1358)把「首帧合成」对**所有**分镜镜头都退场了:分镜铸卡从此
+ * 没有「把这张图动起来」那条路可言,挂图不论这一镜有没有 @ 演员都只能是参考图。上面
+ * 那句「没有 CHARACTER ⇒ 首帧」判据是聊天/画布那条**独立**的路(比如「Animate this
+ * result」)专属的既有行为,分镜铸卡(`storyboard-gate1-actions.ts` 经 `buildProposeCard`)
+ * 调这里时传 `true` 强制跳过那句判据 —— 挂图一律作参考随行。别的调用方一律不传(缺省
+ * `undefined`/`false`),两条路各走各的判据,互不影响。 */
 export type VideoAttachmentRole = "startFrame" | "reference";
 
 export function videoAttachmentRole(input: {
@@ -193,9 +200,13 @@ export function videoAttachmentRole(input: {
   mentionedCastCount: number;
   /** 这个计划挂着一整段参考片吗。 */
   hasReferenceVideo: boolean;
+  /** PR #1417 判官 P1-A —— 分镜铸卡专用:挂图一律作参考随行,`startFrame` 这一档对这个
+   *  调用方不存在(见上方文档)。缺省 `false`/未传 = 既有「没 @ 演员 ⇒ 首帧」判据不变。 */
+  alwaysReference?: boolean;
 }): VideoAttachmentRole | null {
   if (input.attachedImageCount <= 0) return null;
   if (input.hasReferenceVideo) return null;
+  if (input.alwaysReference) return "reference";
   return input.mentionedCastCount > 0 ? "reference" : "startFrame";
 }
 

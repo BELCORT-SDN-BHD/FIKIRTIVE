@@ -1,10 +1,16 @@
 /**
  * proposeStoryboard — $0 skill
  *
- * Persists an ordered STORYBOARD_CARD (per shot: first-frame prompt + video prompt).
- * Otto assembles each shot's prompts via the D/E skills (seedreamPrompt / seedancePrompt)
- * BEFORE calling this. Spends NO money, creates NO GenJob. Identity from ctx only.
- * First-frame images (gate ①) are generated later (block F4), never here.
+ * Persists an ordered STORYBOARD_CARD (per shot: a video prompt — that's the whole
+ * input shape now, see propose-storyboard.helpers.ts). Otto assembles each shot's
+ * video prompt via the E skill (seedancePrompt) BEFORE calling this. Spends NO
+ * money, creates NO GenJob. Identity from ctx only.
+ *
+ * FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 首帧合成(闸①)对所有镜头都已
+ * 退场:没有「两步」这一档,`refuseShotsMissingFirstFramePrompt`(点名「这一镜要走两步却
+ * 没有首帧文字」)随之整段报废删除,不留替代覆盖(报废,不是迁移)。PR #1417 判官 P2-1 —
+ * `firstFramePrompt` 那一格本身(不只是它的拒绝闸)也已从输入 schema 里删除,不再是
+ * 「接受但不用」的遗留字段(报废,不是保留兼容)。
  */
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
@@ -14,49 +20,8 @@ import type { OttoContext } from "../context.js";
 import {
   storyboardCardInput,
   buildStoryboardPayload,
-  shotsMissingFirstFramePrompt,
   type StoryboardCardInput,
 } from "./propose-storyboard.helpers.js";
-
-/** 拒绝那句话里的镜头名 —— 商家数的是第几个镜头,所以 0 基序号 +1(同 storyboard-gate1-actions)。 */
-function shotLabel(index: number, title?: string): string {
-  return title ? `Shot ${index + 1} "${title}"` : `Shot ${index + 1}`;
-}
-
-/**
- * creation §5 :172⑤ —— 「这一镜免写首帧文字」的**唯一**判据闸。
- *
- * 免写的只有 @ 到演员(CHARACTER)的镜头,而演员这件事只有服务端读得到(`Entity.type`),
- * 所以 schema 判不了,这道闸只能在这里。位置在落库之前 ⇒ $0:一张卡都不写、一分钱不动。
- *
- * 只 @ 了商品的镜头(产品广告里最常见的特写)照旧是两步,少了首帧文字它会在闸① 把**整张
- * 卡**的首帧一起拒掉 —— 所以要在 Otto 交稿这一刻就说清楚,而不是等商家按下 Make all。
- *
- * 元素读带 ctx.orgId:别家店的演员 id 读不出来 ⇒ 在这里数出 0 ⇒ 那一镜照旧要首帧文字。
- */
-async function refuseShotsMissingFirstFramePrompt(
-  input: StoryboardCardInput,
-  orgId: string,
-): Promise<string | null> {
-  if (!input.shots.some((s) => !s.firstFramePrompt?.trim())) return null;
-  const ids = [...new Set(input.shots.flatMap((s) => s.entityIds ?? []))];
-  const owned = ids.length
-    ? await prisma.entity.findMany({
-        where: { id: { in: ids }, ownerId: orgId, deletedAt: null },
-        select: { id: true, type: true },
-      })
-    : [];
-  const cast = new Set(owned.filter((e) => e.type === "CHARACTER").map((e) => e.id));
-  const missing = shotsMissingFirstFramePrompt(input.shots, cast);
-  if (!missing.length) return null;
-  const named = missing.map((i) => shotLabel(i, input.shots[i]!.title)).join(", ");
-  const those = missing.length > 1 ? "those shots are" : "that shot is";
-  return (
-    `${named}: no cast member in there, so ${those} still made in two steps (opening still, then the clip) — ` +
-    "write the opening still with seedreamPrompt, put it in each of those shots' firstFramePrompt, and lay " +
-    "the storyboard out again. Nothing was made and nothing was charged."
-  );
-}
 
 export async function executeProposeStoryboard(
   input: StoryboardCardInput,
@@ -64,10 +29,6 @@ export async function executeProposeStoryboard(
 ): Promise<{ cardId: string } | { error: string }> {
   if (!runContext) throw new Error("OttoContext required");
   const ctx = runContext.context as OttoContext;
-
-  // creation §5 :172⑤ —— 落库之前的那一道($0)。见 refuseShotsMissingFirstFramePrompt。
-  const refusal = await refuseShotsMissingFirstFramePrompt(input, ctx.orgId);
-  if (refusal) return { error: refusal };
 
   const payload = buildStoryboardPayload(input);
 
@@ -101,17 +62,10 @@ export const proposeStoryboardSkill = defineOttoSkill({
   reach: "internal",
   description:
     "Lay out an ordered STORYBOARD for a video/ad the user can review and edit before anything is generated. " +
-    "Provide storyboardTitle and shots (1–8), each with a videoPrompt. Build each shot's prompts " +
-    "by calling seedreamPrompt (first frame) and seedancePrompt (video) FIRST — do not hand-write them. " +
-    "A shot that @mentions a CAST MEMBER (a person from the Library) is made in ONE paid step and needs no " +
-    "firstFramePrompt; every other shot — including one that @mentions only products — is still made in two " +
-    "steps, so it must carry a firstFramePrompt. " +
-    "Set continuity:true when the shots are one unbroken take — the same scene, the same subject, the camera or the " +
-    "action simply carrying on — so each shot starts exactly where the one before it stopped. Leave it off when the " +
-    "shots are separate moments (different places, a cut between scenes), which is the common case for a product ad. " +
-    "With continuity on, only the first shot needs a first-frame image; every later shot picks up the frame the " +
-    "previous shot ended on, so the shots are made one after another instead of all at once. " +
-    "$0: this only drafts the storyboard; first-frame images and videos are generated later after the user approves.",
+    "Provide storyboardTitle and shots (1–8), each with a videoPrompt. Build each shot's videoPrompt " +
+    "by calling seedancePrompt FIRST — do not hand-write it. Every shot is made in one paid step directly " +
+    "into a clip (no separate opening-still step), whether or not it @mentions a cast member. " +
+    "$0: this only drafts the storyboard; videos are generated later after the user approves.",
   parameters: storyboardCardInput,
   requires: [
     {

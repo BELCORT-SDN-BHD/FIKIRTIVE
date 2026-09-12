@@ -5,8 +5,14 @@
  * (STORYBOARD_CARD)的指针被任何路径换掉之后,一条陈旧标签页仍然摸得到这张子卡的 id —— 因为
  * `coworkGenerate`→`startGen` 原来只认子卡自己的结构,从不回头核对父卡此刻还指不指着它。
  *
- * 覆盖三条已知替换路径里的两条(第三条 prepare-mismatch 复用与 regen 完全相同的
- * `firstFrameChildMatches` 比对与 mint-and-swap 形状,不再重复举证):
+ * FSE-208(creation §5,S5 批量裁决 #1358)—— 首帧图那一步(`prepareStoryboardFirstFrames` /
+ * `regenShotFirstFrameCard` / `mintChild`)已随「首帧合成全退场」整段报废删除(PR #1394 报废
+ * 物清单)。本文件原本用闸①(首帧)铸这张 $0 子卡来举证这条钱路不变量,现在改用闸②(视频)——
+ * `prepareStoryboardVideos` / `regenShotVideoCard`,同一条不变量,同一套断言,只是铸卡入口换成
+ * 现在真实存在的那一扇门。第三条已知替换路径(prepare-mismatch 复用与 regen 完全相同的
+ * `videoChildMatches` 比对与 mint-and-swap 形状)不再重复举证。
+ *
+ * 覆盖两条已知替换路径:
  *   1. 编辑放行格(#888):子卡还没起任何作业,`inFlightPointerBlock` 只挡「在途」,挡不住
  *      「压根没起过」—— editShotPrompt 把指针键整个删掉,父卡不再指向它。
  *   2. regen 铸替换卡:单镜重出撞见 prompt/形状 mismatch,铸一张新子卡并把指针换成新 id,
@@ -40,7 +46,7 @@ vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
 
 const { coworkGenerate } = await import("../cowork-actions");
-const { prepareStoryboardFirstFrames, regenShotFirstFrameCard } = await import("../storyboard-gate1-actions");
+const { prepareStoryboardVideos, regenShotVideoCard } = await import("../storyboard-gate1-actions");
 const { editShotPrompt } = await import("../storyboard-actions");
 const { prisma } = await import("@fikirtive/db");
 
@@ -75,7 +81,8 @@ function idOf(res: { id: string } | { error: string }): { id: string } {
 
 /** One STORYBOARD_CARD, one shot, no children minted yet — the shape `buildStoryboardPayload`
  *  produces for a fresh Otto proposal (propose-storyboard.helpers.ts), hand-built here since the
- *  builder isn't exported from the package's public surface. */
+ *  builder isn't exported from the package's public surface. FSE-208: every shot goes straight
+ *  to video now, so the seed shot carries only a videoPrompt — no firstFramePrompt. */
 async function seedStoryboardCard(
   ownerId: string,
   threadId: string,
@@ -88,7 +95,7 @@ async function seedStoryboardCard(
       payload: {
         storyboardTitle: "Product hero reel",
         shots: [
-          { shotId, index: 0, firstFramePrompt: "sunrise over hills", videoPrompt: "camera pans across the hills" },
+          { shotId, index: 0, videoPrompt: "camera pans across the hills" },
         ],
       } as unknown as Prisma.InputJsonObject,
     },
@@ -97,13 +104,13 @@ async function seedStoryboardCard(
 }
 
 async function readStoryboardPayload(ownerId: string, cardId: string): Promise<{
-  shots: { shotId: string; firstFrameCardId?: string; videoCardId?: string; firstFramePrompt: string }[];
+  shots: { shotId: string; videoCardId?: string; videoPrompt: string }[];
 }> {
   // tenant-guard (packages/db/src/tenant-guard.ts) refuses an id-only read outside an active
   // runAsUser frame — findFirst + ownerId, not findUniqueOrThrow by bare id.
   const row = await prisma.chatMessage.findFirstOrThrow({ where: { id: cardId, ownerId }, select: { payload: true } });
   return row.payload as unknown as {
-    shots: { shotId: string; firstFrameCardId?: string; videoCardId?: string; firstFramePrompt: string }[];
+    shots: { shotId: string; videoCardId?: string; videoPrompt: string }[];
   };
 }
 
@@ -124,27 +131,27 @@ describe("#925 — a stale tab confirming an orphaned storyboard child card must
     const shotId = `shot_${randomUUID()}`;
     const storyboardCardId = await seedStoryboardCard(ownerId, threadId, shotId);
 
-    // Gate①: mint the $0 first-frame child — never confirmed.
-    const prep = await prepareStoryboardFirstFrames({ cardId: storyboardCardId });
+    // Gate②: mint the $0 video child — never confirmed.
+    const prep = await prepareStoryboardVideos({ cardId: storyboardCardId });
     if ("error" in prep) throw new Error(prep.error);
     expect(prep.children).toHaveLength(1);
     const staleChildId = prep.children[0]!.childCardId;
 
     // The parent still points at it — this is the "current, valid" state a browser tab opened.
     const beforeEdit = await readStoryboardPayload(ownerId, storyboardCardId);
-    expect(beforeEdit.shots[0]!.firstFrameCardId).toBe(staleChildId);
+    expect(beforeEdit.shots[0]!.videoCardId).toBe(staleChildId);
 
     // #888 edit-release gap: the shot's prompt changes while the child never started a job —
     // inFlightPointerBlock only blocks an IN-FLIGHT pointer, so the edit proceeds and the stale
     // child's pointer is deleted from the parent's payload entirely (not replaced — gone).
-    const edited = await editShotPrompt({ cardId: storyboardCardId, index: 0, firstFramePrompt: "sunset over hills" });
+    const edited = await editShotPrompt({ cardId: storyboardCardId, index: 0, videoPrompt: "camera pans across the valley" });
     if ("error" in edited) throw new Error(edited.error);
     const afterEdit = await readStoryboardPayload(ownerId, storyboardCardId);
-    expect(afterEdit.shots[0]!.firstFrameCardId).toBeUndefined(); // the parent no longer points anywhere
+    expect(afterEdit.shots[0]!.videoCardId).toBeUndefined(); // the parent no longer points anywhere
 
     // A stale browser tab still holds `staleChildId` and confirms it directly.
     const acctBefore = await account(ownerId);
-    const res = await coworkGenerate({ cardId: staleChildId, prompt: "sunrise over hills", entityIds: [], variantSel: {} });
+    const res = await coworkGenerate({ cardId: staleChildId, prompt: "camera pans across the hills", entityIds: [], variantSel: {} });
 
     // MONEY ASSERTION (the point of this test): a parent-orphaned child must be REFUSED, $0.
     expect("error" in res).toBe(true);
@@ -162,16 +169,16 @@ describe("#925 — a stale tab confirming an orphaned storyboard child card must
     const shotId = `shot_${randomUUID()}`;
     const storyboardCardId = await seedStoryboardCard(ownerId, threadId, shotId);
 
-    const prep = await prepareStoryboardFirstFrames({ cardId: storyboardCardId });
+    const prep = await prepareStoryboardVideos({ cardId: storyboardCardId });
     if ("error" in prep) throw new Error(prep.error);
     const oldChildId = prep.children[0]!.childCardId;
 
-    // Simulate the parent's frame prompt having drifted from what the existing child was frozen
-    // with (the real precondition `regenShotFirstFrameCard`'s reuse-vs-mismatch comparison keys
-    // on — `firstFrameChildMatches` in storyboard-gate1-actions.ts) WITHOUT going through
-    // editShotPrompt (which would delete the pointer itself and collapse this into the first
-    // test). This models the same underlying reality named in #925 as "prepare mismatch":
-    // the parent's current prompt and the frozen child no longer agree.
+    // Simulate the parent's video prompt having drifted from what the existing child was frozen
+    // with (the real precondition `regenShotVideoCard`'s reuse-vs-mismatch comparison keys on —
+    // `videoChildMatches` in storyboard-gate1-actions.ts) WITHOUT going through editShotPrompt
+    // (which would delete the pointer itself and collapse this into the first test). This models
+    // the same underlying reality named in #925 as "prepare mismatch": the parent's current
+    // prompt and the frozen child no longer agree.
     const cur = await readStoryboardPayload(ownerId, storyboardCardId);
     // updateMany (not update): a plain filter accepts an explicit ownerId outside any
     // runAsUser frame — `update`'s unique-where relies on the frame's auto tenant-scoping,
@@ -181,24 +188,24 @@ describe("#925 — a stale tab confirming an orphaned storyboard child card must
       data: {
         payload: {
           storyboardTitle: "Product hero reel",
-          shots: [{ ...cur.shots[0]!, firstFramePrompt: "golden hour over the hills" }],
+          shots: [{ ...cur.shots[0]!, videoPrompt: "camera pans across the golden valley" }],
         } as unknown as Prisma.InputJsonObject,
       },
     });
 
-    // regenShotFirstFrameCard recomputes the would-be card from the CURRENT (drifted) prompt —
-    // it no longer matches the existing child's frozen structuredPrompt, so it mints a fresh
+    // regenShotVideoCard recomputes the would-be card from the CURRENT (drifted) prompt — it no
+    // longer matches the existing child's frozen structuredPrompt, so it mints a fresh
     // replacement and swaps the pointer. The old child is now a real, DB-persisted orphan.
-    const regen = await regenShotFirstFrameCard({ cardId: storyboardCardId, shotId });
+    const regen = await regenShotVideoCard({ cardId: storyboardCardId, shotId });
     if ("error" in regen) throw new Error(regen.error);
     const newChildId = regen.child.childCardId;
     expect(newChildId).not.toBe(oldChildId);
     const afterRegen = await readStoryboardPayload(ownerId, storyboardCardId);
-    expect(afterRegen.shots[0]!.firstFrameCardId).toBe(newChildId); // parent now points at the NEW child only
+    expect(afterRegen.shots[0]!.videoCardId).toBe(newChildId); // parent now points at the NEW child only
 
     // A stale tab still holds the OLD child id.
     const acctBefore = await account(ownerId);
-    const res = await coworkGenerate({ cardId: oldChildId, prompt: "sunrise over hills", entityIds: [], variantSel: {} });
+    const res = await coworkGenerate({ cardId: oldChildId, prompt: "camera pans across the hills", entityIds: [], variantSel: {} });
 
     expect("error" in res).toBe(true);
     expect(await jobCountFor(ownerId, oldChildId)).toBe(0);
@@ -217,12 +224,12 @@ describe("#925 — zero regression: the paths this fix must not touch", () => {
     const shotId = `shot_${randomUUID()}`;
     const storyboardCardId = await seedStoryboardCard(ownerId, threadId, shotId);
 
-    const prep = await prepareStoryboardFirstFrames({ cardId: storyboardCardId });
+    const prep = await prepareStoryboardVideos({ cardId: storyboardCardId });
     if ("error" in prep) throw new Error(prep.error);
     const childId = prep.children[0]!.childCardId;
 
     const acctBefore = await account(ownerId);
-    const res = idOf(await coworkGenerate({ cardId: childId, prompt: "sunrise over hills", entityIds: [], variantSel: {} }));
+    const res = idOf(await coworkGenerate({ cardId: childId, prompt: "camera pans across the hills", entityIds: [], variantSel: {} }));
 
     expect(await jobCountFor(ownerId, childId)).toBe(1);
     const acctAfter = await account(ownerId);
@@ -240,17 +247,17 @@ describe("#925 — zero regression: the paths this fix must not touch", () => {
     const shotId = `shot_${randomUUID()}`;
     const storyboardCardId = await seedStoryboardCard(ownerId, threadId, shotId);
 
-    const prep = await prepareStoryboardFirstFrames({ cardId: storyboardCardId });
+    const prep = await prepareStoryboardVideos({ cardId: storyboardCardId });
     if ("error" in prep) throw new Error(prep.error);
     const childId = prep.children[0]!.childCardId;
 
-    const first = idOf(await coworkGenerate({ cardId: childId, prompt: "sunrise over hills", entityIds: [], variantSel: {} }));
+    const first = idOf(await coworkGenerate({ cardId: childId, prompt: "camera pans across the hills", entityIds: [], variantSel: {} }));
     const acctAfterFirst = await account(ownerId);
 
     // A stale tab reload calls confirm again on the SAME (now legitimately spent) child id.
     // coworkGenerate's own `cowork:<cardId>` fast-path returns the existing job before this
     // fix's check ever runs — proving the new invariant does not interfere with normal replay.
-    const second = idOf(await coworkGenerate({ cardId: childId, prompt: "sunrise over hills", entityIds: [], variantSel: {} }));
+    const second = idOf(await coworkGenerate({ cardId: childId, prompt: "camera pans across the hills", entityIds: [], variantSel: {} }));
     expect(second.id).toBe(first.id);
     expect(await jobCountFor(ownerId, childId)).toBe(1); // still exactly one job
     const acctAfterSecond = await account(ownerId);
@@ -301,11 +308,11 @@ describe("#925 — zero regression: the paths this fix must not touch", () => {
     // Tenant B's real storyboard card, with a real current-pointer child (irrelevant to A).
     const storyboardCardB = await seedStoryboardCard(ownerB, threadB, shotId);
     asOwner(ownerB);
-    const prepB = await prepareStoryboardFirstFrames({ cardId: storyboardCardB });
+    const prepB = await prepareStoryboardVideos({ cardId: storyboardCardB });
     if ("error" in prepB) throw new Error(prepB.error);
 
     // Tenant A's child card claims (via a hand-crafted payload — never reachable through any
-    // real mint path, since mintChild always stamps the SAME owner's parent id) to belong to
+    // real mint path, since mintVideoChild always stamps the SAME owner's parent id) to belong to
     // tenant B's storyboard card.
     const forgedChildId = `card_${randomUUID()}`;
     await prisma.chatMessage.create({

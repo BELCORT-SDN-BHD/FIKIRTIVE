@@ -27,12 +27,11 @@ import {
   applyAddShot,
   applyDeleteShot,
   applyReorderShots,
-  applySetContinuity,
 } from "./storyboard-edit";
 // #782 r15(判官 r14 P1):闸① 早就有「这张子卡此刻算不算在途」的正确判定,编辑路径缺的
 // 就是它。人工这一面与 Otto 那一面共用同一份判定、同一句话 —— 只关一扇门等于没关。
 // 见 packages/otto/src/storyboard-child-job.ts 的模块说明。
-import { lockCardTx, inFlightPointerBlock, referenceRideBlock } from "@fikirtive/otto";
+import { lockCardTx, inFlightPointerBlock } from "@fikirtive/otto";
 
 type Ok = { payload: StoryboardCardPayload };
 type Err = { error: string };
@@ -51,7 +50,7 @@ async function loadCard(cardId: string, ownerId: string) {
 
 /** 回写新 payload(只改 payload,绝不动 genJobId)。
  *  并发模型:read-modify-write,last-write-wins —— 两端同时编辑最坏是丢一次编辑。
- *  用它的四个动作(add / delete / reorder / setContinuity)都不删已付费的子卡指针,
+ *  用它的三个动作(add / delete / reorder)都不删已付费的子卡指针,
  *  所以「丢一次编辑」是这里唯一的坏结果。editShotPrompt 会删,因此它**不**走这条路:
  *  见下面那一笔带卡锁的事务(#782 r15,判官 r14 P1)。 */
 async function persist(cardId: string, payload: StoryboardCardPayload): Promise<Ok> {
@@ -65,18 +64,16 @@ async function persist(cardId: string, payload: StoryboardCardPayload): Promise<
 const editInput = z.object({
   cardId: cardIdSchema,
   index: z.number().int().min(0),
-  firstFramePrompt: z.string().trim().min(1).max(2000).optional(),
   videoPrompt: z.string().trim().min(1).max(2000).optional(),
   durationSeconds: z.number().int().min(1).max(60).optional(),
 });
 
 export async function editShotPrompt(raw: unknown): Promise<Ok | Err> {
   const parsed = editInput.safeParse(raw);
-  // G 闸②:durationSeconds 也是可改字段 —— 三者都不传才拒。
+  // G 闸②:durationSeconds 也是可改字段 —— 两者都不传才拒。
   if (
     !parsed.success ||
-    (parsed.data.firstFramePrompt === undefined &&
-      parsed.data.videoPrompt === undefined &&
+    (parsed.data.videoPrompt === undefined &&
       parsed.data.durationSeconds === undefined)
   ) {
     return { error: "That edit isn't valid." };
@@ -84,7 +81,7 @@ export async function editShotPrompt(raw: unknown): Promise<Ok | Err> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<Ok | Err> => {
-    const { cardId, index, firstFramePrompt, videoPrompt, durationSeconds } = parsed.data;
+    const { cardId, index, videoPrompt, durationSeconds } = parsed.data;
     const ownerId = gate.ownerId;
     const card = await loadCard(cardId, ownerId);
     if (!card) return { error: "Card not found." };
@@ -104,9 +101,9 @@ export async function editShotPrompt(raw: unknown): Promise<Ok | Err> {
       if (!fresh?.payload) { out = { error: "Card not found." }; return; }
       const cur = fresh.payload as unknown as StoryboardCardPayload;
       if (index >= cur.shots.length) { out = { error: "That shot no longer exists." }; return; }
-      const blocked = await inFlightPointerBlock(tx, ownerId, cur.shots[index]!, { firstFramePrompt, videoPrompt, durationSeconds });
+      const blocked = await inFlightPointerBlock(tx, ownerId, cur.shots[index]!, { videoPrompt, durationSeconds });
       if (blocked) { out = { error: blocked }; return; }
-      const next = applyEditShotPrompt(cur, index, { firstFramePrompt, videoPrompt, durationSeconds });
+      const next = applyEditShotPrompt(cur, index, { videoPrompt, durationSeconds });
       await tx.chatMessage.update({
         where: { id: cardId },
         data: { payload: next as unknown as Prisma.InputJsonObject },
@@ -160,10 +157,9 @@ export async function setShotReferences(raw: unknown): Promise<Ok | Err> {
      * unresolved、零写入 —— 这一镜「挂着图、又拿不下来」,而闸①/闸② 同时对整张卡 fail closed,
      * 同卡别的镜头也出不了片,拒绝句给的两条出路在卡面上一条都走不通。
      *
-     * 判据与写入闸 `referenceRideBlock` 那一格**同形**:拦的只有新增/换图。清单里的每一格都是
-     * 这一镜此刻就挂着的规范身份 ⇒ 归属早在它被挂上那一刻按 ownerId 查过,而归属不会随删除
-     * 改变;别家店的 id 进不了这份清单(它当初就被拒过),所以这条捷径不是一道租户口子。
-     * 只要多出一张新的,整份照旧走解析器 —— 归属、格式、跨租户三道判据一格没动。
+     * 清单里的每一格都是这一镜此刻就挂着的规范身份 ⇒ 归属早在它被挂上那一刻按 ownerId 查过,
+     * 而归属不会随删除改变;别家店的 id 进不了这份清单(它当初就被拒过),所以这条捷径不是
+     * 一道租户口子。只要多出一张新的,整份照旧走解析器 —— 归属、格式、跨租户三道判据一格没动。
      */
     const attached = new Set(
       (card.payload as StoryboardCardPayload | null)?.shots?.[index]?.referenceGenerationIds ?? [],
@@ -206,10 +202,9 @@ export async function setShotReferences(raw: unknown): Promise<Ok | Err> {
       if (index >= cur.shots.length) { out = { error: "That shot no longer exists." }; return; }
       const blocked = await inFlightPointerBlock(tx, ownerId, cur.shots[index]!, { referenceGenerationIds });
       if (blocked) { out = { error: blocked }; return; }
-      // creation §5 :178 —— 带不上参考图的镜头连挂都不许挂上去(两面共用这一道闸,理由与出路
-      // 都写在 `referenceRideBlock` 里)。取下图永远放行。
-      const cantRide = await referenceRideBlock(tx, ownerId, cur.shots[index]!, { referenceGenerationIds });
-      if (cantRide) { out = { error: cantRide }; return; }
+      // FSE-208 —— 「带不上参考图的镜头连挂都不许挂上去」这道闸(`referenceRideBlock`)随
+      // 闸①整段报废一并删除:任何镜头现在都带得上参考图(`attachShotLibraryImages` 在
+      // storyboard-gate1-actions.ts 无条件调用),没有「这一镜带不上」这一档可拒绝。
       const next = applyEditShotPrompt(cur, index, { referenceGenerationIds });
       await tx.chatMessage.update({
         where: { id: cardId },
@@ -224,7 +219,6 @@ export async function setShotReferences(raw: unknown): Promise<Ok | Err> {
 const addInput = z.object({
   cardId: cardIdSchema,
   title: z.string().trim().max(120).optional(),
-  firstFramePrompt: z.string().trim().min(1).max(2000),
   videoPrompt: z.string().trim().min(1).max(2000),
 });
 
@@ -234,13 +228,13 @@ export async function addShot(raw: unknown): Promise<Ok | Err> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<Ok | Err> => {
-    const { cardId, title, firstFramePrompt, videoPrompt } = parsed.data;
+    const { cardId, title, videoPrompt } = parsed.data;
     const card = await loadCard(cardId, gate.ownerId);
     if (!card) return { error: "Card not found." };
     const cur = (card.payload ?? {}) as StoryboardCardPayload;
     if (cur.shots.length >= MAX_STORYBOARD_SHOTS) return { error: `A storyboard can have at most ${MAX_STORYBOARD_SHOTS} shots.` };
     // shotId 在 ACTION 层铸造(纯 edit 层保持确定性)——F4 付费写回按它定位镜头。
-    return persist(cardId, applyAddShot(cur, { shotId: newId(), title, firstFramePrompt, videoPrompt }));
+    return persist(cardId, applyAddShot(cur, { shotId: newId(), title, videoPrompt }));
   });
 }
 
@@ -262,23 +256,11 @@ export async function deleteShot(raw: unknown): Promise<Ok | Err> {
   });
 }
 
-const continuityInput = z.object({ cardId: cardIdSchema, continuity: z.boolean() });
-
-/** #782 接续开关(人工那一面)——$0,与 Otto 的 `editStoryboard op=setContinuity`
- *  共用同一条纯变换,两面不可能对同一个开关有两种语义。不碰任何已生成的帧/片。 */
-export async function setStoryboardContinuity(raw: unknown): Promise<Ok | Err> {
-  const parsed = continuityInput.safeParse(raw);
-  if (!parsed.success) return { error: "That change isn't valid." };
-  const gate = await requireOwner(); if ("error" in gate) return gate;
-  const principal = await resolveUserPrincipal(gate);
-  return runAsUser(principal, async (): Promise<Ok | Err> => {
-    const { cardId, continuity } = parsed.data;
-    const card = await loadCard(cardId, gate.ownerId);
-    if (!card) return { error: "Card not found." };
-    const cur = (card.payload ?? {}) as StoryboardCardPayload;
-    return persist(cardId, applySetContinuity(cur, continuity));
-  });
-}
+// PR #1417 判官 P1-C —— `setStoryboardContinuity`(人工那一面的 #782 接续开关)整段报废
+// 删除:开关承诺的接续传帧(#782 闸③)在 FSE-208 之后数学上不可达(见
+// `storyboard-gate1-actions.ts`),开关只会说谎(承诺「你只要做第一帧」而首帧概念已退场)。
+// Otto 侧的同名 op(`editStoryboard op=setContinuity`)同 PR 一并删除
+// (`packages/otto/src/skills/edit-storyboard.ts`),两面不留一面还在骗商家。
 
 const reorderInput = z.object({ cardId: cardIdSchema, order: z.array(z.number().int().min(0)).min(1) });
 

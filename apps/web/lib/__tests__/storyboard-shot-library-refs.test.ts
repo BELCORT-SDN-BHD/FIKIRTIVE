@@ -48,8 +48,6 @@ vi.mock("@fikirtive/db", () => {
 });
 
 import { setShotReferences } from "../storyboard-actions";
-// creation §5 :178 —— 「没 @ 演员的镜头挂不上图」那句话只有一份(两面共读)。
-import { NO_CAST_FOR_REFERENCES_BLOCK } from "@fikirtive/otto";
 
 const OWNER = "owner-1";
 
@@ -245,34 +243,24 @@ describe("creation §5 :178 —— 人工面:给一镜挂 Library 图", () => {
  * 所以判提前到写入这一刻:$0、零写入、话里带出路。取下图(空清单)永远放行 —— 否则会造出
  * 「挂着图、又拿不下来」的终态。
  */
-describe("creation §5 :178 —— 没 @ 演员的镜头挂不上图", () => {
-  it("creation §5 :178 / CREATE-A2: 这一镜没 @ 演员 ⇒ 挂图当场拒绝,零写入", async () => {
+// FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 「creation §5 :178 —— 没 @ 演员的
+// 镜头挂不上图」原描述的写入闸(`referenceRideBlock`/`NO_CAST_FOR_REFERENCES_BLOCK`)随闸①
+// 整段报废一并删除:`shotGoesDirectToVideo` 现在对任何镜头都恒真,任何镜头都带得上参考图
+// (`attachShotLibraryImages` 在 storyboard-gate1-actions.ts 无条件调用),没有「这一镜带
+// 不上」这一档可拒绝(报废,不是迁移;发现于报废清单复核,详见 storyboard-child-job.ts 的
+// 同名注记)。下面改钉这个更简单的事实。
+describe("creation §5 :178 —— 没 @ 演员的镜头,现在也挂得上图(FSE-208 之后)", () => {
+  it("FSE-208: 这一镜一个元素都没 @ ⇒ 挂图照样放行,零拒绝", async () => {
     // s1 一个元素都没 @(payload2 的第二镜)。
     const res = await setShotReferences({ cardId: "card-1", index: 1, refs: ["generation:gen-mine"] });
 
-    expect(res).toEqual({ error: NO_CAST_FOR_REFERENCES_BLOCK });
-    expect(mockUpdate).not.toHaveBeenCalled();
+    expect("payload" in res).toBe(true);
+    expect(savedShots()[1]!.referenceGenerationIds).toEqual(["gen-mine"]);
   });
 
-  it("creation §5 :178 / CREATE-A2: @ 的只是商品、不是演员 ⇒ 同一句话,零写入", async () => {
-    mockEntityFindFirst.mockResolvedValue(null); // 按 CHARACTER 查 ⇒ 一行都读不出来
+  it("creation §5 :178: 取下图照旧放行 —— 不许造出「挂着又拿不下来」的终态", async () => {
     const p = payload2();
-    p.shots[1]!.entityIds = ["mug"];
-    mockFindFirst.mockImplementation(async (args: { where?: { kind?: string } }) =>
-      args?.where?.kind === "STORYBOARD_CARD" ? card(p) : null,
-    );
-
-    const res = await setShotReferences({ cardId: "card-1", index: 1, refs: ["generation:gen-mine"] });
-
-    expect(res).toEqual({ error: NO_CAST_FOR_REFERENCES_BLOCK });
-    expect(mockUpdate).not.toHaveBeenCalled();
-    // 归属:那一趟按 CHARACTER 查,而且带着本店的 ownerId。
-    expect(mockEntityFindFirst.mock.calls[0]![0].where).toMatchObject({ ownerId: OWNER, type: "CHARACTER" });
-  });
-
-  it("creation §5 :178: 取下图永远放行 —— 不许造出「挂着又拿不下来」的终态", async () => {
-    const p = payload2();
-    p.shots[1]!.referenceGenerationIds = ["gen-mine"]; // 演员后来被删掉,图还留在上面
+    p.shots[1]!.referenceGenerationIds = ["gen-mine"];
     mockFindFirst.mockImplementation(async (args: { where?: { kind?: string } }) =>
       args?.where?.kind === "STORYBOARD_CARD" ? card(p) : null,
     );
@@ -281,38 +269,6 @@ describe("creation §5 :178 —— 没 @ 演员的镜头挂不上图", () => {
 
     expect("payload" in res).toBe(true);
     expect("referenceGenerationIds" in savedShots()[1]!).toBe(false);
-  });
-
-  // 判官 r3 P1 —— 「取下」不只有「一次全取下」那一档。卡面上的取下入口是**逐张**的 X
-  // (StoryboardCard 交出的是「减掉这一张」的整份清单),所以挂着两张的那一镜取下一张之后
-  // 清单**非空**。旧判据只放行空清单,于是演员被删之后这一镜变成「挂着图、又拿不下来」——
-  // 而闸①/闸② 同时对整张卡 fail closed,连别的镜头都出不了片。判据只拦「新增/换图」。
-  it("creation §5 :178: 演员没了,两张里逐张取下也放行(减掉之后的清单非空)", async () => {
-    mockEntityFindFirst.mockResolvedValue(null); // 演员已被删出 Library
-    const p = payload2();
-    p.shots[0]!.referenceGenerationIds = ["gen-mine", "gen-upload"];
-    mockFindFirst.mockImplementation(async (args: { where?: { kind?: string } }) =>
-      args?.where?.kind === "STORYBOARD_CARD" ? card(p) : null,
-    );
-
-    const res = await setShotReferences({ cardId: "card-1", index: 0, refs: ["generation:gen-mine"] });
-
-    expect("payload" in res).toBe(true);
-    expect(savedShots()[0]!.referenceGenerationIds).toEqual(["gen-mine"]);
-  });
-
-  it("creation §5 :178: 演员没了,换一张新的仍旧拒绝(取下一张、再挂一张新的不算取下)", async () => {
-    mockEntityFindFirst.mockResolvedValue(null);
-    const p = payload2();
-    p.shots[0]!.referenceGenerationIds = ["gen-mine"];
-    mockFindFirst.mockImplementation(async (args: { where?: { kind?: string } }) =>
-      args?.where?.kind === "STORYBOARD_CARD" ? card(p) : null,
-    );
-
-    const res = await setShotReferences({ cardId: "card-1", index: 0, refs: ["generation:gen-upload"] });
-
-    expect(res).toEqual({ error: NO_CAST_FOR_REFERENCES_BLOCK });
-    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
 
