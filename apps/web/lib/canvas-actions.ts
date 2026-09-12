@@ -234,7 +234,11 @@ async function createCanvasNodeInFrame(
   return { id, x: rect.x, y: rect.y, w: rect.w, h: rect.h };
 }
 
-export async function moveCanvasNode(projectId: string, id: string, pos: { x: number; y: number; w: number; h: number }) {
+export async function moveCanvasNode(
+  projectId: string,
+  id: string,
+  pos: { x: number; y: number; w: number; h: number },
+): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
@@ -246,7 +250,7 @@ async function moveCanvasNodeInFrame(
   projectId: string,
   id: string,
   pos: { x: number; y: number; w: number; h: number },
-) {
+): Promise<{ ok: true } | { error: string }> {
   const r = await prisma.canvasNode.updateMany({
     where: { id, ownerId: gate.ownerId, projectId, status: { not: "deleted" } },
     data: pos,
@@ -254,7 +258,11 @@ async function moveCanvasNodeInFrame(
   return r.count === 1 ? { ok: true as const } : { error: "Node not found." };
 }
 
-export async function updateTextNode(projectId: string, id: string, text: string) {
+export async function updateTextNode(
+  projectId: string,
+  id: string,
+  text: string,
+): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
@@ -266,7 +274,7 @@ async function updateTextNodeInFrame(
   projectId: string,
   id: string,
   text: string,
-) {
+): Promise<{ ok: true } | { error: string }> {
   const r = await prisma.canvasNode.updateMany({
     where: { id, ownerId: gate.ownerId, projectId, type: "text", status: { not: "deleted" } },
     data: { text },
@@ -386,14 +394,18 @@ async function resolveCanvasNodeInFrame(
   return { ok: true as const, applied: false as const, status: settled?.status ?? "deleted" };
 }
 
-export async function deleteCanvasNode(projectId: string, id: string) {
+export async function deleteCanvasNode(projectId: string, id: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, () => deleteCanvasNodeInFrame(gate, projectId, id));
 }
 
-async function deleteCanvasNodeInFrame(gate: { email: string; ownerId: string }, projectId: string, id: string) {
+async function deleteCanvasNodeInFrame(
+  gate: { email: string; ownerId: string },
+  projectId: string,
+  id: string,
+): Promise<{ ok: true } | { error: string }> {
   // Keep a non-rendered tombstone so periodic Otto/GEN_RESULT recovery cannot recreate the
   // same paid output after the owner deliberately removes its card. Job-linked deletion uses
   // the exact placement lock, so a concurrent browser/bridge writer cannot pass the tombstone.
