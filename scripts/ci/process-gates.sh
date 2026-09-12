@@ -208,8 +208,11 @@ m2() {
     fi
 
     # 规格前缀全仓唯一(TEMPLATE 的承诺要有人执行):同一前缀出现在两份冻结规格里,
-    # A 规格的测试就能替 B 规格的同名编号顶绿(盲审)。前缀取自验收表行。
-    local prefix
+    # A 规格的测试就能替 B 规格的同名编号顶绿(盲审)。前缀优先取自「> 规格前缀:」声明行
+    # ——只有声明行才是归属;验收表行里引用别家编号(如 media-durability 引 GATE-A6)是
+    # 合法交叉引用,不算占用(2026-09-12 冻结五规格时的误报,见 PR #1373)。
+    # 无声明行的老档(如 wave2-shell)退回旧式扫表,行为不变。
+    local prefix prefix_decl
     while IFS= read -r prefix; do
       [[ -n "$prefix" ]] || continue
       local i
@@ -223,7 +226,14 @@ m2() {
       done
       seen_prefix_names+=("$prefix")
       seen_prefix_specs+=("$spec")
-    done < <(grep -E '^\|' "$spec" | grep -oE '[A-Z][A-Z0-9]{1,15}-A[0-9]+' | sed 's/-A[0-9]*$//' | sort -u)
+    done < <(
+      prefix_decl="$(grep -m1 -E '^>[[:space:]]*规格前缀(:|：)' "$spec" || true)"
+      if [[ -n "$prefix_decl" ]]; then
+        printf '%s\n' "$prefix_decl" | grep -oE '[A-Z][A-Z0-9]{1,15}' | head -1
+      else
+        grep -E '^\|' "$spec" | grep -oE '[A-Z][A-Z0-9]{1,15}-A[0-9]+' | sed 's/-A[0-9]*$//' | sort -u
+      fi
+    )
 
     local approval issue signer api_ok attempt
     approval="$(grep -m1 -E '^>?[[:space:]]*批准(:|：)' "$spec" || true)"
