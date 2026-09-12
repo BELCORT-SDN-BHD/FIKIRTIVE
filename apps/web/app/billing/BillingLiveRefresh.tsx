@@ -43,7 +43,9 @@ export function BillingLiveRefresh(): null {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const isPendingRef = useRef(isPending);
-  isPendingRef.current = isPending;
+  useEffect(() => {
+    isPendingRef.current = isPending;
+  }, [isPending]);
 
   useEffect(() => {
     let alive = true;
