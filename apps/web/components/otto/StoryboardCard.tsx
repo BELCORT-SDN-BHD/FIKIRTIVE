@@ -863,7 +863,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
           {view.storyboardTitle || "Storyboard"}
         </CardTitle>
         <CardDescription>
-          Review each shot, then make the first frames and videos when you&apos;re ready.
+          Review each shot, then make the videos when you&apos;re ready.
         </CardDescription>
       </CardHeader>
 

@@ -4,9 +4,9 @@
  * 编辑(F3)/ 首帧图(F4)按 index 定位镜头,故这里稳定按 index 排序。
  */
 import type { StoryboardCardPayload } from "@fikirtive/otto";
-// creation §5 :172⑤(判官第 2 轮 P2-⑤)——「有演员＝直接出片」这句话的唯一判据。
-// 走子路径而不是 `@fikirtive/core` 桶文件:桶会把 node:crypto 拖进客户端包(同
-// OttoChatStream.tsx 的做法)。Otto 侧的 shotsMissingFirstFramePrompt 读的是同一个函数。
+// FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)——「这一镜直接出片吗」的唯一判据
+// (现在对所有镜头恒真)。走子路径而不是 `@fikirtive/core` 桶文件:桶会把 node:crypto 拖进
+// 客户端包(同 OttoChatStream.tsx 的做法)。
 import { shotGoesDirectToVideo } from "@fikirtive/core/storyboard-shot";
 
 /** 镜头数上限（client-safe 常量）。权威值在 @fikirtive/otto 的
