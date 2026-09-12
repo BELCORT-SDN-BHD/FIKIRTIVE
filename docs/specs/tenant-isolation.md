@@ -78,6 +78,7 @@
 | 日期 | 想法 | 裁决（留空待 S5） |
 |---|---|---|
 | 2026-09-12 | 严格档保留「无帧但字面 orgId 放行」兜底（credit-actions 后台铸币等未建帧站点靠它活到 staff 帧片）；enforce 翻转与兜底收口＝票 #1403，定调待 Founder | |
+| 2026-09-13 | 切片④核证：enforce 翻转前置雷第④颗——credits.ts adjustWindowFilter 的 {orgId:{in:[…]}} 形状守卫不认，波及 grantTenantCredits／grantCreditsAction／refundCreditsAction／后台租户详情页四条路（今天各多一条 warn，翻闸即四个 500）；另切片④让撤邀请的 not-形状查询从每次一警变为扫描域放行，翻闸前 warn 基线须重取。详见 #1403 评论（2026-09-13）。 | |
 
 ## 6. 改签记录
 
