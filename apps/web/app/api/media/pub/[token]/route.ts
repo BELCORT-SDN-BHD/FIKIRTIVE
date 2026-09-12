@@ -75,7 +75,10 @@ export async function GET(
   //    their requests are unaffected. This token's own HMAC expiry is short but independent of the
   //    share link's — a merchant hitting Revoke must kill an already-loaded image AT ONCE, not wait
   //    for that separate clock to run out, so we ask the row's live status on every request instead.
-  if (claims.shareRowId && !(await isSharePreviewRowLive(claims.shareRowId))) {
+  if (
+    claims.shareRowId !== undefined &&
+    !(await isSharePreviewRowLive(claims.shareRowId, claims.ownerId))
+  ) {
     return new NextResponse("Not found", { status: 404 });
   }
 

@@ -11,8 +11,16 @@
  * `lib/media-public-link.ts`, which the public page's own import fence already treats that way).
  */
 
-/** The cookie's name. */
-export const SHARE_PREVIEW_COOKIE_NAME = "sp_t";
+/**
+ * The cookie's name. `__Secure-` in production (the cookie already carries `secure: true` there —
+ * see `app/s/[token]/route.ts` — so the prefix costs nothing and buys the browser-enforced
+ * guarantee that no plain-HTTP context can ever set or read it). Plain in dev, where requests are
+ * HTTP and a `__Secure-`/`__Host-` cookie would silently fail to be set at all. `__Host-` (which
+ * would ALSO pin the cookie to this origin with no `path` override) is not used because the cookie
+ * is deliberately path-scoped to `SHARE_PREVIEW_COOKIE_PATH` below, not site-wide.
+ */
+export const SHARE_PREVIEW_COOKIE_NAME =
+  process.env.NODE_ENV === "production" ? "__Secure-sp_t" : "sp_t";
 
 /**
  * The ONE path this cookie is sent to. Scoping it here (rather than site-wide) means the token

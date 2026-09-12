@@ -65,10 +65,19 @@ export async function verifySharePreview(
  * loaded the preview page holds a still-unexpired media URL, and revoking must kill it AT ONCE,
  * not merely stop the media token's own few-minutes clock from being renewed. This is that
  * immediate check — called from the media proxy route only when the token declares a share row.
+ *
+ * `ownerId` is the media token's OWN HMAC-attested `claims.ownerId` (the caller already verified
+ * that token before reaching here), not a client-supplied value — same tenant-scoping discipline
+ * as step 2 of `verifySharePreview` above, which pins its row lookup to the HMAC-attested
+ * (ownerId, postId) rather than the bare row id alone.
  */
-export async function isSharePreviewRowLive(rowId: string, now: number = Date.now()): Promise<boolean> {
+export async function isSharePreviewRowLive(
+  rowId: string,
+  ownerId: string,
+  now: number = Date.now(),
+): Promise<boolean> {
   const row = await prisma.sharePreviewToken.findFirst({
-    where: { id: rowId, revokedAt: null, expiresAt: { gt: new Date(now) } },
+    where: { id: rowId, ownerId, revokedAt: null, expiresAt: { gt: new Date(now) } },
     select: { id: true },
   });
   return row !== null;

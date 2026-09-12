@@ -141,7 +141,7 @@ describe("SHARE-A7 —— 带 shareRowId 的媒体 token 撤销即断", () => {
     mockRowLive.mockResolvedValueOnce(true);
     const res = await call(token);
     expect(res.status).toBe(200);
-    expect(mockRowLive).toHaveBeenCalledWith("row_1");
+    expect(mockRowLive).toHaveBeenCalledWith("row_1", "orgA");
   });
 
   it("shareRowId 已撤销（或过期、或行不存在）→ 404，不吐一个字节", async () => {

@@ -1,5 +1,4 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { verifySharePreviewToken } from "@fikirtive/token-crypto";
 import { SHARE_PREVIEW_COOKIE_NAME, SHARE_PREVIEW_COOKIE_PATH } from "@/lib/share-preview-cookie";
 
 /**
@@ -20,11 +19,33 @@ import { SHARE_PREVIEW_COOKIE_NAME, SHARE_PREVIEW_COOKIE_PATH } from "@/lib/shar
  * NOT the verification layer. Whatever lands in the cookie is handed unexamined to
  * `loadSharePreview`, which already fails every bad shape (forged, tampered, expired, revoked,
  * empty) closed to the identical "unavailable" page. Verifying twice would only be two places to
- * keep in sync. The one thing decided here is the cookie's own lifetime: real exp when the token
- * reads as valid, a short fallback otherwise — so a token that will never work does not also leave
- * a long-lived cookie sitting in the browser for no reason.
+ * keep in sync — and would leak a second thing: a `Set-Cookie` whose `maxAge` depends on whether
+ * the signature verified turns the cookie's own lifetime into a signature oracle (a real-exp
+ * `maxAge` vs. the flat fallback tells an observer "this token's HMAC checked out" for free, no
+ * DB or page load needed). So the lifetime here is read straight out of the UNVERIFIED base64url
+ * payload's `exp` field — same number a valid token would carry, forged or not — falling back to a
+ * short, fixed lifetime only when the payload doesn't even parse. A token that will never work
+ * still does not leave a long-lived cookie sitting in the browser for no reason; it just no longer
+ * tells anyone that from the outside.
  */
 const FALLBACK_COOKIE_MAX_AGE_SECONDS = 10 * 60;
+
+/**
+ * Read `exp` out of the token's base64url JSON payload WITHOUT checking the signature — the
+ * signature is never verified here (see the comment above), only decoded far enough to size the
+ * cookie. Returns null for anything that doesn't even parse, which is the fallback lifetime's cue.
+ */
+function readUnverifiedExp(token: string): number | null {
+  const dot = token.lastIndexOf(".");
+  if (dot < 0) return null;
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(token.slice(0, dot), "base64url").toString("utf8"));
+    const exp = (parsed as { exp?: unknown } | null)?.exp;
+    return typeof exp === "number" ? exp : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(
   req: NextRequest,
@@ -33,9 +54,9 @@ export async function GET(
   const { token } = await ctx.params; // Next requires a non-empty segment to route here at all
   const res = NextResponse.redirect(new URL(SHARE_PREVIEW_COOKIE_PATH, req.nextUrl.origin), 303);
 
-  const claims = verifySharePreviewToken(token, process.env.SHARE_PREVIEW_SECRET ?? "");
-  const maxAge = claims
-    ? Math.max(0, Math.round((claims.exp - Date.now()) / 1000))
+  const exp = readUnverifiedExp(token);
+  const maxAge = exp !== null
+    ? Math.max(0, Math.round((exp - Date.now()) / 1000))
     : FALLBACK_COOKIE_MAX_AGE_SECONDS;
 
   res.cookies.set(SHARE_PREVIEW_COOKIE_NAME, token, {

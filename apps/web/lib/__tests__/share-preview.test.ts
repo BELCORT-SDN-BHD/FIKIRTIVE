@@ -68,19 +68,20 @@ describe("verifySharePreview — two-layer (HMAC ∧ row live)", () => {
 
 /**
  * SHARE-A7(docs/specs/share-preview.md 已冻结 · v1)—— 媒体代理路由用它问「这个 share 行现在
- * 还活着吗」,与 `verifySharePreview` 查的是同一张表,但只按 row id 一个键(路由手上没有
- * ownerId/postId 这两个 claim,它只从媒体 token 里拿到一个 shareRowId)。
+ * 还活着吗」,与 `verifySharePreview` 查的是同一张表,按 row id + ownerId 两个键(路由手上没有
+ * postId 这个 claim,但媒体 token 的 HMAC-attested claims 里本来就有 ownerId,一并传入把查询
+ * 带上 tenant 约束——同 `verifySharePreview` 第 2 步的口径)。
  */
 describe("isSharePreviewRowLive", () => {
-  it("SHARE-A7 —— 行存在、未撤销、未过期 → true", async () => {
+  it("SHARE-A7 —— 行存在、未撤销、未过期、owner 匹配 → true", async () => {
     mockRowFindFirst.mockResolvedValueOnce({ id: "row-1" });
-    expect(await isSharePreviewRowLive("row-1", NOW)).toBe(true);
+    expect(await isSharePreviewRowLive("row-1", "org_1", NOW)).toBe(true);
     const where = mockRowFindFirst.mock.calls[0][0].where;
-    expect(where).toEqual({ id: "row-1", revokedAt: null, expiresAt: { gt: new Date(NOW) } });
+    expect(where).toEqual({ id: "row-1", ownerId: "org_1", revokedAt: null, expiresAt: { gt: new Date(NOW) } });
   });
 
-  it("SHARE-A7 —— 行被撤销（或已过期、或压根不存在）→ false，商家点 Revoke 之后立刻生效", async () => {
-    mockRowFindFirst.mockResolvedValueOnce(null); // revoked / expired / missing all land here
-    expect(await isSharePreviewRowLive("row-1", NOW)).toBe(false);
+  it("SHARE-A7 —— 行被撤销（或已过期、或压根不存在、或 owner 不匹配）→ false，商家点 Revoke 之后立刻生效", async () => {
+    mockRowFindFirst.mockResolvedValueOnce(null); // revoked / expired / missing / wrong owner all land here
+    expect(await isSharePreviewRowLive("row-1", "org_1", NOW)).toBe(false);
   });
 });
