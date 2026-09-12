@@ -32,7 +32,7 @@ import {
 // #782 r15(判官 r14 P1):闸① 早就有「这张子卡此刻算不算在途」的正确判定,编辑路径缺的
 // 就是它。人工这一面与 Otto 那一面共用同一份判定、同一句话 —— 只关一扇门等于没关。
 // 见 packages/otto/src/storyboard-child-job.ts 的模块说明。
-import { lockCardTx, inFlightPointerBlock, referenceRideBlock } from "@fikirtive/otto";
+import { lockCardTx, inFlightPointerBlock } from "@fikirtive/otto";
 
 type Ok = { payload: StoryboardCardPayload };
 type Err = { error: string };
@@ -160,10 +160,9 @@ export async function setShotReferences(raw: unknown): Promise<Ok | Err> {
      * unresolved、零写入 —— 这一镜「挂着图、又拿不下来」,而闸①/闸② 同时对整张卡 fail closed,
      * 同卡别的镜头也出不了片,拒绝句给的两条出路在卡面上一条都走不通。
      *
-     * 判据与写入闸 `referenceRideBlock` 那一格**同形**:拦的只有新增/换图。清单里的每一格都是
-     * 这一镜此刻就挂着的规范身份 ⇒ 归属早在它被挂上那一刻按 ownerId 查过,而归属不会随删除
-     * 改变;别家店的 id 进不了这份清单(它当初就被拒过),所以这条捷径不是一道租户口子。
-     * 只要多出一张新的,整份照旧走解析器 —— 归属、格式、跨租户三道判据一格没动。
+     * 清单里的每一格都是这一镜此刻就挂着的规范身份 ⇒ 归属早在它被挂上那一刻按 ownerId 查过,
+     * 而归属不会随删除改变;别家店的 id 进不了这份清单(它当初就被拒过),所以这条捷径不是
+     * 一道租户口子。只要多出一张新的,整份照旧走解析器 —— 归属、格式、跨租户三道判据一格没动。
      */
     const attached = new Set(
       (card.payload as StoryboardCardPayload | null)?.shots?.[index]?.referenceGenerationIds ?? [],
@@ -206,10 +205,9 @@ export async function setShotReferences(raw: unknown): Promise<Ok | Err> {
       if (index >= cur.shots.length) { out = { error: "That shot no longer exists." }; return; }
       const blocked = await inFlightPointerBlock(tx, ownerId, cur.shots[index]!, { referenceGenerationIds });
       if (blocked) { out = { error: blocked }; return; }
-      // creation §5 :178 —— 带不上参考图的镜头连挂都不许挂上去(两面共用这一道闸,理由与出路
-      // 都写在 `referenceRideBlock` 里)。取下图永远放行。
-      const cantRide = await referenceRideBlock(tx, ownerId, cur.shots[index]!, { referenceGenerationIds });
-      if (cantRide) { out = { error: cantRide }; return; }
+      // FSE-208 —— 「带不上参考图的镜头连挂都不许挂上去」这道闸(`referenceRideBlock`)随
+      // 闸①整段报废一并删除:任何镜头现在都带得上参考图(`attachShotLibraryImages` 在
+      // storyboard-gate1-actions.ts 无条件调用),没有「这一镜带不上」这一档可拒绝。
       const next = applyEditShotPrompt(cur, index, { referenceGenerationIds });
       await tx.chatMessage.update({
         where: { id: cardId },

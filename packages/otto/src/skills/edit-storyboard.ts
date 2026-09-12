@@ -30,7 +30,7 @@ import {
 } from "../storyboard-edit.js";
 // #782 r15(判官 r14 P1):editShot 会删掉「已经花掉的钱」与这一镜之间的唯一连线,所以它
 // 在删之前必须问一次「那条作业还在途吗」——与人工动作层**同一份**判定、同一句话。
-import { lockCardTx, inFlightPointerBlock, referenceRideBlock } from "../storyboard-child-job.js";
+import { lockCardTx, inFlightPointerBlock } from "../storyboard-child-job.js";
 
 export const editStoryboardInput = z.object({
   cardId: z.string().min(1).describe("The STORYBOARD_CARD id being edited (from the storyboard card in this conversation)."),
@@ -136,10 +136,9 @@ export async function executeEditStoryboard(
       if (index >= locked.shots.length) { out = { error: "That shot no longer exists." }; return; }
       const blocked = await inFlightPointerBlock(tx, ctx.orgId, locked.shots[index]!, patch);
       if (blocked) { out = { error: blocked }; return; }
-      // creation §5 :178 —— 带不上参考图的镜头连挂都不许挂上去。与人工面同一道闸、同一句话:
-      // 这条 skill 的说明里写着「只有 @ 到演员的镜头带得上」,而说了做不到就是个假承诺。
-      const cantRide = await referenceRideBlock(tx, ctx.orgId, locked.shots[index]!, patch);
-      if (cantRide) { out = { error: cantRide }; return; }
+      // FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 「带不上参考图的镜头连挂都
+      // 不许挂上去」这道闸(referenceRideBlock)随闸①整段报废一并删除:任何镜头现在都带得
+      // 上参考图,没有「这一镜带不上」这一档可拒绝。
       const edited = applyEditShotPrompt(locked, index, patch);
       await tx.chatMessage.update({
         where: { id: card.id },
@@ -153,8 +152,9 @@ export async function executeEditStoryboard(
   let next: StoryboardCardPayload;
   switch (input.op) {
     case "addShot": {
-      if (input.firstFramePrompt === undefined || input.videoPrompt === undefined) {
-        return { error: "addShot needs both firstFramePrompt and videoPrompt." };
+      // FSE-208 —— firstFramePrompt 已退场,addShot 只要求 videoPrompt。
+      if (input.videoPrompt === undefined) {
+        return { error: "addShot needs a videoPrompt." };
       }
       if (cur.shots.length >= MAX_STORYBOARD_SHOTS) {
         return { error: `A storyboard can have at most ${MAX_STORYBOARD_SHOTS} shots.` };
@@ -213,8 +213,7 @@ export const editStoryboardSkill = defineOttoSkill({
     "should flow as one unbroken take, or should be separate moments instead. " +
     "When the user attaches an image from their Library and says it belongs to a shot, put it on that shot with " +
     "op=setShotReferences, that shot's index, and useTurnImages=true — it becomes a reference photo for that " +
-    "shot's clip. useTurnImages=false takes every attached image off that shot again. Only a shot that @mentions " +
-    "a cast member can carry them, because a reference photo only rides along on a clip made straight from text. " +
+    "shot's clip. useTurnImages=false takes every attached image off that shot again. " +
     "$0: this only rewrites the draft storyboard; it never generates or re-generates any image/video.",
   parameters: editStoryboardInput,
   execute: executeEditStoryboard,

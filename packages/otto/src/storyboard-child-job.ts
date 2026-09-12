@@ -205,51 +205,14 @@ export const FRAME_IN_FLIGHT_EDIT_BLOCK =
  * 删指针分成两步跑,就等于给「作业在两步之间落账」留一个窗口。传进来的 shot 必须是**锁内重读**
  * 的那一份 —— 「改没改」是拿父卡当前值比出来的,比错了对象就等于没比。
  */
-/** 商家看得懂、而且能照做的那一句(白标、English sentence case)。两个执行器共用同一句话。 */
-export const NO_CAST_FOR_REFERENCES_BLOCK =
-  "A reference photo only rides along on a shot that @mentions a cast member from your Library — " +
-  "@mention one on that shot first, then attach the image. Nothing was changed.";
-
-/**
- * creation §5 :178(判官 r1 P1-⑥)—— 这一镜**带不上**参考图时,连挂都不许挂上去。
- *
- * 参考图只有纯文生视频那一档带得上(`videoReferencesRide`:引擎把首帧 / 首+末帧 / 整段参考片
- * 当互斥场景),而分镜里走那一档的只有 @ 到演员的那几镜(`shotGoesDirectToVideo`)。
- *
- * 上一版让任何一镜都挂得上,再到闸② 铸卡时点名拒绝。中间那一段是个真窟窿:两步镜头的首帧
- * 报价可以先铸出来(那时它还没挂图),商家再给它挂图 —— 挂图只作废**视频**指针,首帧那张旧卡
- * 照旧付得出去。于是「两步镜头挂着图 = 花钱之前点名拒绝」这句自述在那条时序上不成立:钱先花
- * 了,拒绝到下一次 prepare 才来。判提前到写入这一刻,那条时序就不存在了($0、零写入)。
- *
- * 判据与闸② 同一条(`Entity.type === "CHARACTER"` 且是这家店活着的元素),owner-scope 由传入的
- * ownerId 承担 —— 别家店的演员 id 在这里读不出来,那一镜照旧算「没 @ 演员」。
- *
- * **取下图永远放行**——判据是「新清单里没有一张是新的」,不是「新清单是空的」(判官 r3 P1)。
- * 卡面唯一的取下入口是**逐张**的 X(`StoryboardCard` 交出的是「减掉这一张」的整份清单),所以
- * 挂着两张的那一镜取下一张之后清单非空。只放行空清单,等于演员被删出 Library 之后这一镜变成
- * 「挂着图、又拿不下来」的终态:闸①/闸② 同时对**整张卡** fail closed(别的镜头也出不了片),
- * 而拒绝句给的两条出路(取下图 / 补 @ 演员)在卡面上都走不通(编辑面拒收元素引用)。
- * 这道闸要拦的只有**新增/换图** —— 让这一镜真会送进引擎的材料多出一张它带不上的东西。
- * 不碰挂图这一格的编辑(改文字 / 时长)同样一格不动:patch 上没有这个键就直接放行。
- */
-export async function referenceRideBlock(
-  tx: PrismaTx,
-  ownerId: string,
-  shot: StoryboardCardPayload["shots"][number],
-  patch: ShotPromptPatch,
-): Promise<string | null> {
-  if (!patch.referenceGenerationIds?.length) return null;
-  // 新清单里每一张都已经挂在这一镜上 ⇒ 这次只减不增(逐张取下 / 原样重发),放行。
-  const attached = new Set(shot.referenceGenerationIds ?? []);
-  if (patch.referenceGenerationIds.every((id) => attached.has(id))) return null;
-  const entityIds = shot.entityIds ?? [];
-  if (entityIds.length === 0) return NO_CAST_FOR_REFERENCES_BLOCK;
-  const cast = await tx.entity.findFirst({
-    where: { id: { in: entityIds }, ownerId, deletedAt: null, type: "CHARACTER" },
-    select: { id: true },
-  });
-  return cast ? null : NO_CAST_FOR_REFERENCES_BLOCK;
-}
+// FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 「这一镜带不上参考图」写入闸
+// (`referenceRideBlock` + `NO_CAST_FOR_REFERENCES_BLOCK`)随闸①整段报废一并删除:它的判据
+// 是「参考图只有 @ 到演员的镜头带得上」,而 `shotGoesDirectToVideo` 现在对任何镜头都恒真 ——
+// 任何镜头(带不带演员)都直接出片、都带得上参考图(`attachShotLibraryImages` 在
+// `storyboard-gate1-actions.ts` 无条件调用)。继续拦着「只 @ 商品的镜头」挂图,会让商家
+// 被这道已经失效的闸拒在门外,是本 PR 遗漏的一处真实回归,发现于报废清单复核时一并修掉。
+// 两个调用点(`apps/web/lib/storyboard-actions.ts`、`edit-storyboard.ts`)同步删除调用,
+// 没有替代覆盖(报废,不是迁移)。
 
 export async function inFlightPointerBlock(
   tx: PrismaTx,
