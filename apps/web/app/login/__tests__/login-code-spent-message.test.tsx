@@ -60,12 +60,9 @@ beforeAll(() => {
     (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () =>
       null;
   }
-  // 提交成功那一路会 `window.location.assign` —— 本文件只走失败路，但装一个空实现，
-  // 免得哪一条断言写错时 jsdom 抛「Not implemented: navigation」盖掉真正的红。
-  Object.defineProperty(window, "location", {
-    configurable: true,
-    value: { ...window.location, assign: vi.fn() },
-  });
+  // 这里**不**去动 `window.location`：本文件每一次提交都走失败路，碰不到成功那一路的
+  // `location.assign`；而把它换成一个普通对象会顺着这个 worker 漏给后面的文件（实测打红
+  // login-code-resend 的片段用例与 library 那条读 `location.search` 的用例）。
 });
 
 afterEach(async () => {
