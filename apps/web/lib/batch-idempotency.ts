@@ -364,15 +364,29 @@ export interface AssetActionKey {
  * 它随页面一起消失。
  *
  * 摘要覆盖的正是「换了它就是另一个动作」的那些东西:动作类型、这一次锚在哪一张图上,
- * 以及整个付费请求体(提示词、模型、张数、@元素、形状/时长/清晰度…)。`genRequest`
- * 是 `.strict()` 的,所以能走到这里的请求体只可能由已知字段组成 —— 调用方塞不进一个
- * 只为了变键的垃圾字段。价格不进摘要:调价不改变商家想要的东西(它自有一道重核闸)。
+ * **这一次提交的意图编号**,以及整个付费请求体(提示词、模型、张数、@元素、形状/时长/
+ * 清晰度…)。`genRequest` 是 `.strict()` 的,所以能走到这里的请求体只可能由已知字段组成
+ * —— 调用方塞不进一个只为了变键的垃圾字段。价格不进摘要:调价不改变商家想要的东西
+ * (它自有一道重核闸)。
+ *
+ * **意图编号(`intentId`)是 ASSET-A3/A4 那条边界的唯一分界线**(规格
+ * `docs/specs/asset-action-idempotency.md` §1.4 改动二)。少了它,「同一意图的重放」与
+ * 「商家按第二次」在服务端是逐字相同的两份请求体 —— 一把键只能给出一个答案,于是要么
+ * 重放收第二次钱(今天的洞),要么商家真想再来一张时被当成重放、按钮像坏了。编号生在
+ * 浏览器(`asset-action-intent.ts`:一次点击一个,提交落地即丢弃),服务端一个字都不
+ * 验证它的语义 —— 它在这里**只是键材料**,与 Stripe 的 idempotency key 同一条惯例。
+ * 因此它不能让 `asset:` 键脱离服务端派生:调用方能换的是「这是不是同一次意图」,不是
+ * 「这次意图值多少钱」或「锚在谁的图上」(锚点归属由 `startAssetGen` 先查库定死)。
+ *
+ * 域名仍是 `asset-action-v1`:每一格都带自己的长度前缀并以 `\0` 分隔,新加一格不可能
+ * 与旧摘要撞出歧义;而旧键在这一版之后再也算不出来(签名变了,全仓无第二个调用点)。
  *
  * 键长固定 `asset:` + op + `:` + 64 位十六进制 ≤ 79,在 genRequest 的 80 字符上限内。
  */
 export function assetActionKey(
   op: AssetActionOp,
   anchorGenerationId: string,
+  intentId: string,
   request: unknown,
 ): AssetActionKey {
   const digest = createHash("sha256")
@@ -381,6 +395,8 @@ export function assetActionKey(
     .update(`${op.length}:${op}`)
     .update("\0")
     .update(`${anchorGenerationId.length}:${anchorGenerationId}`)
+    .update("\0")
+    .update(`${intentId.length}:${intentId}`)
     .update("\0")
     .update(canonicalJson(request))
     .digest("hex");
