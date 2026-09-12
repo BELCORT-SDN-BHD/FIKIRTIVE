@@ -6,7 +6,12 @@ import { FOUNDER_OWNER_ID, INTERNAL_PER_DISPLAY } from "@fikirtive/core";
 // session-cut scoped to org member userIds only — are pinned deterministically.
 
 const mockRequireRole = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireRole: mockRequireRole }));
+// #1379（TENANT 切片④）：tenant-actions.ts 现在从这个模块拿 `staffPrincipal` 建帧；
+// 补上共享 stub（同 resolveUserPrincipal 的既有用法）。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireRole: mockRequireRole,
+  staffPrincipal: (await import("@/lib/__tests__/__stubs__/staff-principal")).stubStaffPrincipal,
+}));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: vi.fn().mockResolvedValue({}) }));

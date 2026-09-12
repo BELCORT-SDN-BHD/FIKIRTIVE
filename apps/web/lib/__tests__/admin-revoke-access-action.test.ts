@@ -16,7 +16,11 @@ import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 
 const requireRole = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireRole }));
+// #1379（TENANT 切片④）：tenant-actions.ts 现在从这个模块拿 `staffPrincipal` 建帧。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireRole,
+  staffPrincipal: (await import("@/lib/__tests__/__stubs__/staff-principal")).stubStaffPrincipal,
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 /** 审计写失败要**有人看得见**，而 `console.error` 不算（见 lib/actor-library-seed.ts 的同款

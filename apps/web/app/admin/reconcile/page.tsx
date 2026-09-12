@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { ReconcileBoard } from "@/components/admin/ReconcileBoard";
-import { requireRole } from "@/lib/auth-guard";
+import { requireRole, staffPrincipal } from "@/lib/auth-guard";
+import { runAsStaff } from "@fikirtive/db/principal";
 import { listReconcileObservations } from "@/lib/reconcile-actions";
 
 /**
@@ -27,6 +28,9 @@ export default async function ReconcilePage() {
   const gate = await requireRole("credits", "mutate");
   if ("error" in gate) redirect("/login?from=/admin/reconcile");
 
-  const result = await listReconcileObservations();
+  // #1379：跨全体商家的对账清单，没有单一目标租户 —— ownerId=null。`listReconcileObservations`
+  // 自己也会建同一形状的帧（它自己重复调用 requireRole）——嵌套两个 ownerId=null 的 staff 帧
+  // 结构上等价于一个，不冲突。
+  const result = await runAsStaff(staffPrincipal(gate, null), () => listReconcileObservations());
   return <ReconcileBoard result={result} />;
 }

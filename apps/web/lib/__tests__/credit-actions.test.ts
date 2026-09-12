@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FOUNDER_OWNER_ID, INTERNAL_PER_DISPLAY } from "@fikirtive/core";
 
 const mockRequireRole = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireRole: mockRequireRole }));
+// #1379（TENANT 切片④）：credit-actions.ts 现在从这个模块拿 `staffPrincipal` 建帧。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireRole: mockRequireRole,
+  staffPrincipal: (await import("@/lib/__tests__/__stubs__/staff-principal")).stubStaffPrincipal,
+}));
 
 const revalidatePath = vi.fn();
 vi.mock("next/cache", () => ({ revalidatePath }));

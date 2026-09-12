@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { QueueHealthBoard } from "@/components/admin/QueueHealthBoard";
-import { requireRole } from "@/lib/auth-guard";
+import { requireRole, staffPrincipal } from "@/lib/auth-guard";
+import { runAsStaff } from "@fikirtive/db/principal";
 import { getQueueObservability } from "@/lib/queue-observability";
 
 /**
@@ -34,6 +35,7 @@ export default async function QueueHealthPage() {
   const gate = await requireRole("system", "read");
   if ("error" in gate) redirect("/login?from=/admin/queue");
 
-  const board = await getQueueObservability();
+  // #1379：平台队列聚合，没有单一目标租户 —— ownerId=null（同 kind:"system" 的扫描域）。
+  const board = await runAsStaff(staffPrincipal(gate, null), () => getQueueObservability());
   return <QueueHealthBoard board={board} />;
 }

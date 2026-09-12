@@ -30,7 +30,8 @@ import {
   reconcileCreditUseId,
   reconcileObservationId,
 } from "@fikirtive/core";
-import { requireRole } from "./auth-guard";
+import { requireRole, staffPrincipal } from "./auth-guard";
+import { runAsStaff } from "@fikirtive/db/principal";
 import { founderAlert } from "./founder-alert";
 
 /** Stripe 退款单号的形状。格式校验挡的是「随手打一串字当单号」,不是伪造 —— 真伪由 Stripe 后台核。 */
@@ -88,7 +89,12 @@ export type ReconcileObservationRow = {
 export async function listReconcileObservations(): Promise<{ rows: ReconcileObservationRow[] } | { error: string }> {
   const gate = await requireRole("credits", "mutate");
   if ("error" in gate) return gate;
+  // #1379：跨全体商家的对账观察清单，没有单一目标租户 —— ownerId=null（同 kind:"system" 的
+  // 扫描域，规格 §1.6「判定按结构不按名字」）。
+  return runAsStaff(staffPrincipal(gate, null), () => listReconcileObservationsInFrame());
+}
 
+async function listReconcileObservationsInFrame(): Promise<{ rows: ReconcileObservationRow[] } | { error: string }> {
   const [trail, alerts] = await Promise.all([
     prisma.actionEvent.findMany({
       where: { projectId: null, type: { in: [RECONCILE_OBSERVED_TYPE, RECONCILE_CLOSED_TYPE] } },
@@ -139,7 +145,15 @@ export async function closeReconcileObservation(
 ): Promise<{ ok: true; alreadyClosed?: true } | { error: string }> {
   const gate = await requireRole("credits", "mutate");
   if ("error" in gate) return gate;
+  // #1379：目标租户要读完观察行才知道（下面的 gapOrgId），本动作全程只写 ActionEvent
+  // （TENANT_GUARD_EXEMPT，守卫不看它），所以 ownerId=null 用到底不影响任何一张受守卫的表。
+  return runAsStaff(staffPrincipal(gate, null), () => closeReconcileObservationInFrame(gate, raw));
+}
 
+async function closeReconcileObservationInFrame(
+  gate: { email: string },
+  raw: unknown,
+): Promise<{ ok: true; alreadyClosed?: true } | { error: string }> {
   // 手写校验 —— 与 credit-actions.ts 同一种做法(web 侧不直接依赖 zod)。
   const v = raw as { sessionId?: unknown; disposition?: unknown; refundId?: unknown; ledgerRef?: unknown; note?: unknown; confirmed?: unknown };
   const sessionId = typeof v?.sessionId === "string" ? v.sessionId.trim() : "";

@@ -16,13 +16,15 @@
  */
 import { describe, it, expect, vi, beforeAll } from "vitest";
 
-vi.mock("@/lib/auth-guard", () => ({
+vi.mock("@/lib/auth-guard", async () => ({
   requireRole: vi.fn(async () => ({
     email: "founder@fikirtive.test",
     roles: ["super-admin"],
     role: "super-admin",
   })),
   requireOwner: vi.fn(async () => ({ email: "founder@fikirtive.test", ownerId: "founder" })),
+  // #1379（TENANT 切片④）：renderAdminV2Page 现在从这个模块拿 `staffPrincipal` 建帧。
+  staffPrincipal: (await import("@/lib/__tests__/__stubs__/staff-principal")).stubStaffPrincipal,
 }));
 
 const { prisma } = await import("@fikirtive/db");
