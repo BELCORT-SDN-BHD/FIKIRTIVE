@@ -477,7 +477,16 @@ async function markAlertReceiptDelivered(auditId: string): Promise<void> {
       data: { payload: { ...payload, alertDelivered: true, alertDeliveredAt: new Date().toISOString() } },
     });
   } catch (e) {
-    // 回执写不上去只有一个后果:这个事件万一被重投,人会多收到一次报警。可以接受。
+    // 回执写不上去的后果因调用方而异,不再只是「万一被重投」:
+    //   · `credits.purchase.bad` / `credits.purchase.packMismatch`(RELY-A9,
+    //     apps/worker/src/jobs/stripe-reconcile.ts 的 retryUndeliveredPurchaseAlerts)—
+    //     worker 侧每 30 分钟主动扫 `alertDelivered !== true` 的行并重试,不等 Stripe
+    //     重投:回执写不上去,下一趟 30 分钟的巡检**必定**再报一次(这一次真的已经送达过,
+    //     多报的是重复,不是漏报)。
+    //   · 拒付/退款那三条(charge.refunded / charge.dispute.*)没有对应的主动找回——只有
+    //     Stripe 真的重投同一事件(P2002 读回执)才会再喊一次,读不到重投就照旧只喊过一次。
+    // 两种情况都可以接受(宁可多喊,不许漏喊),但「多喊一次」发生的时点不同,写日志时按
+    // 调用方对号入座,不要笼统说成「万一被重投」。
     console.error(`[stripe] could not stamp the delivery receipt on ${auditId}:`, e);
   }
 }

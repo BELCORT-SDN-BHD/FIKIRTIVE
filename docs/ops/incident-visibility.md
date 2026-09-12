@@ -37,6 +37,10 @@
   通知那一半在 Sentry 的 alert rule 上,接线步骤在 `docs/ops/dashboards.md` 第三节。
   RELY-A7/A9(issue #1384):没有任何一条通道送达时不会把「已经喊过」焊死,worker 侧下一趟
   巡检(约 5 分钟)、Stripe 侧下一趟 `stripe-reconcile` 周期扫描都会原样再试一次全渠道。
+  RELY-B(判官 P1-1):如果撤回 claim 那一步写库本身也失败(claim 卡在「已认领、未送达」
+  且没人删掉),不是等着永久静音——worker 侧最多再等一个巡检周期的三倍(15 分钟)就会有
+  一趟巡检把它判定为死 claim 并接管重发全渠道(`PAID_FOR_NOTHING_CLAIM_STALE_MS`,
+  `apps/worker/src/jobs/gen.ts`)。
 - 管理面代码包含 `/admin/system`、`/admin/cost`、`/admin/audit`;能否访问及数据是否新鲜必须
   在当前部署和权限下验证。
 - `/admin/queue`(#779)只读生成队列指标库,回答「队列堵没堵」。未配置 `QUEUE_METRICS_QUERY_URL`

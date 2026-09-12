@@ -39,7 +39,7 @@ vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () =>
 vi.mock("../alerting.js", () => ({ founderAlert: m.founderAlert, captureMoneyPathError: m.captureMoneyPathError }));
 
 import { prisma, reserveCredits, settleCredits, refundReservation } from "@fikirtive/db";
-import { handleGen, reapStaleGenJobs, GEN_DONE_EMPTY_GRACE_MS } from "./gen.js";
+import { handleGen, reapStaleGenJobs, GEN_DONE_EMPTY_GRACE_MS, PAID_FOR_NOTHING_CLAIM_STALE_MS } from "./gen.js";
 
 // 同其它真库用例的守卫:绝不对着一个不是 *_test 的库跑。
 const dbName = (process.env.DATABASE_URL ?? "").split("/").at(-1)?.split("?")[0] ?? "";
@@ -303,11 +303,6 @@ describe("#782 r13 存量自愈 —— 翻转 FAILED + 退款,exactly-once", () 
   }, DB_CASE_TIMEOUT_MS);
 
   describe("RELY-A7/A8(issue #1384)— 送达确认 + 当日节流", () => {
-    // 放在「标记写不进去」那条用例**之前**:那条用例用 `vi.spyOn(prisma.actionEvent, "create")`
-    // 注入故障,而这个仓库当前的 Prisma 客户端(懒代理,见 packages/db/src/client.ts)下
-    // `mockRestore()` 不会把 `.create` 还原成可调用函数(已用最小复现脚本证实,属于 vitest
-    // spyOn 与 Prisma 委托对象交互的既有陷阱,不在本票范围)——把这两条放在它之前跑,就不会被
-    // 那个陷阱污染,不需要为了这张票去改另一条用例的实现。
     it("RELY-A7 §2 — 邮件与 Telegram 双双失败时不写「已喊过」的永久标记,下一趟巡检再试,Sentry 每趟照收", async () => {
       await seedDoneEmpty({ settled: true });
       // Sentry 收到了(那是它本来就在做的事),但两条会打扰人的通道都没送到 —— 这正是
@@ -370,6 +365,65 @@ describe("#782 r13 存量自愈 —— 翻转 FAILED + 退款,exactly-once", () 
     }, DB_CASE_TIMEOUT_MS);
   });
 
+  describe("RELY-B(判官 P1-1)— 卡住的 claim 不是永久静音", () => {
+    it("今天的 claim 卡在 delivered:false 且 claimedAt 超过一个巡检周期的三倍 → 巡检接管、全渠道重发、Sentry 照收", async () => {
+      await seedDoneEmpty({ settled: true });
+      // 直接造出「原 claim 主已经死了」的形状:今天已经有一格 claim,但从没翻成
+      // delivered:true——不模拟具体死法(发送前被杀 / delete 也失败),只钉住它留下的
+      // 唯一痕迹:claimedAt 早于 PAID_FOR_NOTHING_CLAIM_STALE_MS。
+      const staleClaimedAt = new Date(Date.now() - PAID_FOR_NOTHING_CLAIM_STALE_MS - 60_000).toISOString();
+      await prisma.actionEvent.create({
+        data: {
+          id: todayPaidForNothingMarkerId(),
+          ownerId: orgId,
+          type: "gen.paid_for_nothing",
+          payload: { genJobId: jobId, day: new Date().toISOString().slice(0, 10), delivered: false, claimedAt: staleClaimedAt },
+        },
+      });
+
+      await reapStaleGenJobs();
+
+      // 接管成功:这一趟按首发(repeat:false)全渠道重发了一次,不是「另一趟正在处理,
+      // 这一趟什么都不做」的沉默,也不是降级成 repeat 的「已经喊过」。
+      expect(alertsFor(jobId), "卡住的 claim 被当成了『另一趟正在处理』,这一趟本该接管却按兵不动").toHaveLength(1);
+      expect(optsFor(jobId)[0]?.repeat ?? false, "接管应该是一次完整重发,不是 repeat 降级").toBe(false);
+      // founderAlert 一次调用三通道一起发(beforeEach 的默认 mock 全部 "sent"),上面那条
+      // alertsFor(jobId) 长度为 1 本身就是「这次调用真的发生了」的证据——Sentry 与邮件、
+      // Telegram 同一次派发,不是被卡住的 claim 拦在了外面连 Sentry 都没进。
+      // (这里不断言 m.founderAlert 的全局调用次数:reapStaleGenJobs 是跨租户扫描,同一个库
+      // 里还住着同一份测试跑出来的别的行,全局计数会被它们污染——见本文件顶部同类注释。)
+
+      // 送达之后,这一格翻成 delivered:true——今天之内不会再被重复接管。
+      const row = await prisma.actionEvent.findUniqueOrThrow({ where: { id: todayPaidForNothingMarkerId() }, select: { payload: true } });
+      const payload = row.payload as { delivered?: unknown; claimedAt?: unknown };
+      expect(payload.delivered).toBe(true);
+      // P3-3:confirm 是合并写,原始 claimedAt(死 claim 自己声明的认领时间)被保留下来,
+      // 不会被整体替换成这一趟接管的时间。
+      expect(payload.claimedAt).toBe(staleClaimedAt);
+    }, DB_CASE_TIMEOUT_MS);
+
+    it("今天的 claim 还在保护窗口内(claimedAt 不到 15 分钟)→ 巡检礼让,不接管", async () => {
+      // 反向锚:没有这一条,上面那条用例只证明「巡检会接管」,不证明「它只在真的卡住时才
+      // 接管」——一个逢巡检必接管的判定,和一个从不判定的判定,一周之内会退化成同一个东西。
+      await seedDoneEmpty({ settled: true });
+      const freshClaimedAt = new Date(Date.now() - 60_000).toISOString(); // 一分钟前,远在窗口内
+      await prisma.actionEvent.create({
+        data: {
+          id: todayPaidForNothingMarkerId(),
+          ownerId: orgId,
+          type: "gen.paid_for_nothing",
+          payload: { genJobId: jobId, day: new Date().toISOString().slice(0, 10), delivered: false, claimedAt: freshClaimedAt },
+        },
+      });
+
+      await reapStaleGenJobs();
+
+      expect(alertsFor(jobId), "还在保护窗口内的 claim 被提前接管,变成了重复报警").toEqual([]);
+      const row = await prisma.actionEvent.findUniqueOrThrow({ where: { id: todayPaidForNothingMarkerId() }, select: { payload: true } });
+      expect((row.payload as { delivered?: unknown }).delivered).toBe(false); // 原样没动
+    }, DB_CASE_TIMEOUT_MS);
+  });
+
   it("两个巡检同时扫到同一行 → 只有一个拿到首发权(唯一约束裁决,不是 check-then-act)", async () => {
     await seedDoneEmpty({ settled: true });
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -419,6 +473,11 @@ describe("#782 r13 存量自愈 —— 翻转 FAILED + 退款,exactly-once", () 
       expect(optsFor(jobId).map((o) => o.repeat ?? false)).toEqual([false, false]);
     } finally {
       createSpy.mockRestore();
+      // 判官 P3-4:这个仓库当前的 Prisma 客户端(懒代理,见 packages/db/src/client.ts)下,
+      // `mockRestore()` 不总能把 `.create` 还原成可调用函数(vitest spyOn 与 Prisma 委托对象
+      // 交互的既有陷阱,已用最小复现脚本证实,不在本票范围内修根)——不靠这条用例排在文件里
+      // 什么位置来避开它,直接把捕获到的真函数写回去:清理不再依赖套件的书写顺序。
+      (prisma.actionEvent as unknown as { create: typeof prisma.actionEvent.create }).create = realCreate;
       errSpy.mockRestore();
       warnSpy.mockRestore();
     }

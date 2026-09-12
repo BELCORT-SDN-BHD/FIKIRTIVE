@@ -486,6 +486,12 @@ export const GEN_QUEUED_REAP_MS = 1000 * 60 * 25;
 // finish and this scan sees nothing, while a genuinely broken row still reaches the merchant's
 // rescue path inside one sitting (the card's own fast watch is ~10 minutes wide).
 export const GEN_DONE_EMPTY_GRACE_MS = 1000 * 60 * 10;
+// RELY-B 判官 P1-1:一个 claim(见 alertPaidForNothingConfirmed)被认定为「另一趟正在处理,
+// 这一趟什么都不做」的宽限期。比一个巡检周期(reap() 的 setInterval,index.ts,5 分钟)宽,
+// 好让一趟真的正在跑(founderAlert 三通道 + 一次 confirm/delete 写)的巡检不会被下一趟当场
+// 抢走;但又不会宽到让一趟**已经死掉**的 claim(进程在发送前被杀 / confirm 与 delete 都没
+// 写成)把当天剩下的巡检全部静音。
+export const PAID_FOR_NOTHING_CLAIM_STALE_MS = 1000 * 60 * 15;
 
 // Written onto the REFUND row so a later audit can tell THIS sweep's refunds from a merchant's
 // cancel or an ordinary terminal failure ("this reservation has a REFUND" says nothing about who
@@ -1004,7 +1010,14 @@ async function settledDisplayCredits(orgId: string, refId: string): Promise<numb
  *   并发巡检同时把全渠道各喊一遍(worker 可能起多个副本,而这一行 DONE-empty-settled 是**故意
  *   不清理**的,每一趟巡检都会再选中它)。拿不到 claim(P2002)⇒ 读那一行:`delivered:true`
  *   说明今天已经真的送达过,这一趟只用 Sentry 计数;`delivered:false` 说明另一个副本正在这一
- *   刻处理(或它失败后没能来得及清理),这一趟什么都不做,把重试机会留给它自己或下一轮巡检。
+ *   刻处理(或它失败后没能来得及清理),这一趟什么都不做,把重试机会留给它自己或下一轮巡检——
+ *   **除非**那个 claim 已经卡住了。RELY-B 判官 P1-1 点名的洞:拿到 claim 的那个副本可能在
+ *   `founderAlert` 发送前就被杀掉,或者三条通道全挂之后连撤回 claim 的 `delete` 都没能写成
+ *   ——`delivered:false` 从此再也不会翻成 `true`,也再没有人去删它,当天剩下的巡检(最多
+ *   288 趟)全部在这一步原地返回,连 Sentry 都不再计数,比整顿前还倒退。所以这里多读一步
+ *   claim 自己的 `claimedAt`:超过 `PAID_FOR_NOTHING_CLAIM_STALE_MS`(一个巡检周期的三倍)
+ *   还没翻成 `delivered:true`,就认定原 claim 主已经死了,这一趟自己接管(`owns` 改回
+ *   `true`),直接跑第②段——不是先删再等下一趟,免得死锁窗口再拖一个巡检周期。
  *
  *   「送达了」判的是 **email 或 telegram** 至少一条 `status==="sent"`,**刻意不算 Sentry**——
  *   RELY-A7 原话「Sentry 每趟照收」与「送到了没有」是两件事:Sentry 配了 DSN 就几乎总是
@@ -1048,19 +1061,36 @@ async function alertPaidForNothingConfirmed(
     },
   });
 
-  // 第①段:claim。
+  // 第①段:claim。claimedAt 是这一趟(拿到全新 claim,或接管一个死掉的旧 claim)对外声明
+  // 的「我从什么时候开始处理这一格」,第②段 confirm/delete 都要用同一个值写回去。
   let owns = true;
   let alreadyDeliveredToday = false;
+  let claimedAt = new Date(nowMs).toISOString();
   try {
     await prisma.actionEvent.create({
-      data: { id: markerId, ownerId: job.ownerId, type: "gen.paid_for_nothing", payload: { genJobId: job.id, day, delivered: false, claimedAt: new Date(nowMs).toISOString() } },
+      data: { id: markerId, ownerId: job.ownerId, type: "gen.paid_for_nothing", payload: { genJobId: job.id, day, delivered: false, claimedAt } },
     });
   } catch (e) {
     if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
       owns = false;
       try {
         const existing = await prisma.actionEvent.findUnique({ where: { id: markerId }, select: { payload: true } });
-        alreadyDeliveredToday = (existing?.payload as { delivered?: unknown } | null)?.delivered === true;
+        const payload = existing?.payload as { delivered?: unknown; claimedAt?: unknown } | null;
+        alreadyDeliveredToday = payload?.delivered === true;
+        // RELY-B 判官 P1-1:一个 claim 既没有翻成 delivered:true,也可能已经死了(拿到它的
+        // 那个副本在发送前被杀,或三条通道全挂之后连撤回 claim 的 delete 都没能写成)——
+        // 死 claim 与「另一趟正在处理」在这一步读出来的形状完全一样(delivered:false),
+        // 只能靠时间分辨:claimedAt 超过一个巡检周期的三倍,判它已经死了,这一趟接管。
+        if (!alreadyDeliveredToday) {
+          const claimedAtRaw = typeof payload?.claimedAt === "string" ? payload.claimedAt : null;
+          const claimedAtMs = claimedAtRaw ? Date.parse(claimedAtRaw) : NaN;
+          const claimAgeMs = Number.isFinite(claimedAtMs) ? nowMs - claimedAtMs : Infinity;
+          if (claimAgeMs > PAID_FOR_NOTHING_CLAIM_STALE_MS) {
+            owns = true; // 接管:原 claim 主已经死了,这一趟自己全渠道重发。
+            claimedAt = claimedAtRaw ?? claimedAt; // 保留原始 claim 时间当审计痕迹;读不出就用这一趟自己的时间。
+            console.warn(`[gen] ${job.id}: today's paid-for-nothing claim looks abandoned (claimed ${Math.round(claimAgeMs / 60_000)}min ago, still delivered:false) — taking over this sweep instead of staying silent.`);
+          }
+        }
       } catch (e2) {
         // 读不出今天这一格的状态:按「另一趟正在处理」而不是「已经送达」降级 —— 宁可这一趟
         // 什么都不做、把机会留给下一轮巡检(5 分钟后会再抢一次 claim),也不在读失败时立刻
@@ -1076,7 +1106,8 @@ async function alertPaidForNothingConfirmed(
 
   if (!owns) {
     if (alreadyDeliveredToday) await founderAlert(alertOf(true), { repeat: true });
-    return; // 没拿到 claim:要么已经送达过(上面那行已经算过 Sentry),要么另一趟正在处理。
+    return; // 没拿到 claim:要么已经送达过(上面那行已经算过 Sentry),要么另一趟正在处理
+    // (且没有死掉太久)。
   }
 
   // 第②段:dispatch → confirm。
@@ -1088,9 +1119,12 @@ async function alertPaidForNothingConfirmed(
   const delivered = outcomes.some((o) => o.channel !== "sentry" && o.status === "sent");
   if (delivered) {
     try {
+      // RELY-B 判官 P3-3:confirm 只是往这一格上**追加**一条送达回执,不是重新定义它 ——
+      // 整体替换 payload 会连 claimedAt(这一格从什么时候开始被处理的审计时间点,也是上面
+      // 第①段判定「claim 是否已死」唯一依据)一起丢掉。合并写,保留原始 claimedAt。
       await prisma.actionEvent.update({
         where: { id: markerId },
-        data: { payload: { genJobId: job.id, day, delivered: true, alertedAt: new Date(nowMs).toISOString() } },
+        data: { payload: { genJobId: job.id, day, delivered: true, claimedAt, alertedAt: new Date(nowMs).toISOString() } },
       });
     } catch (e) {
       console.warn(`[gen] ${job.id}: could not confirm today's paid-for-nothing delivery receipt (harmless — worst case is one more full alert before this sweep window rolls over):`, e instanceof Error ? e.message : e);
@@ -1103,7 +1137,11 @@ async function alertPaidForNothingConfirmed(
   try {
     await prisma.actionEvent.delete({ where: { id: markerId } });
   } catch (e) {
-    console.warn(`[gen] ${job.id}: could not release today's paid-for-nothing claim after a failed delivery (worst case: the next sweep sees today already claimed-but-undelivered and skips once):`, e instanceof Error ? e.message : e);
+    // RELY-B 判官 P1-1:改对了才敢这么写这句话——这一格现在卡在 delivered:false 且没删掉,
+    // 之后每一趟巡检都会先读到它。在 PAID_FOR_NOTHING_CLAIM_STALE_MS(15 分钟 = 三个巡检
+    // 周期)之内的那几趟会礼让(疑似还在处理),过了这个窗口,某一趟巡检会把它判定为死
+    // claim 并接管重发 —— 不是永久静音,只是比正常的「立刻删、下一趟重来」多等最多 15 分钟。
+    console.warn(`[gen] ${job.id}: could not release today's paid-for-nothing claim after a failed delivery (worst case: silent for up to ${PAID_FOR_NOTHING_CLAIM_STALE_MS / 60_000}min, then a later sweep detects the stuck claim and retries in full):`, e instanceof Error ? e.message : e);
   }
 }
 

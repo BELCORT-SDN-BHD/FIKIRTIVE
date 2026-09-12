@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { assertWorkerEnv } from "./boot-env.js";
+import { ENV_CONTRACT } from "@fikirtive/core/env-contract";
 
 /** backup-cron 真正会读到的最小生产 env(§文件头 C3 注释里点名的那个子集),刻意不含
  *  GENERATION_PROVIDER —— 这个进程从不碰生成引擎。 */
@@ -148,5 +149,12 @@ describe("RELY-A10 §2 — 备份 cron 缺必需 env 时退出码非 0 并点名
       exit.mockRestore();
       warn.mockRestore();
     }
+  });
+
+  it("⑧ 反向锚:契约里打了 cronExempt 的变量只有 GENERATION_PROVIDER 这一个", () => {
+    // 判官 P2-1:上面全部用例都只从行为侧证明「GENERATION_PROVIDER 被豁免」,没有一条钉住
+    // 「只豁免了它,没有第二个变量被顺手一起松绑」——给别的变量误标 cronExempt 不会让上面
+    // 任何一条用例变红。直接钉在契约声明本身上。
+    expect(ENV_CONTRACT.filter((s) => s.cronExempt).map((s) => s.name)).toEqual(["GENERATION_PROVIDER"]);
   });
 });

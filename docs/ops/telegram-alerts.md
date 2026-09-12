@@ -54,7 +54,7 @@ Telegram 的规矩:**bot 不能主动私信一个从没跟它说过话的人**�
 也不会把 token 写进 shell 历史),再用变量去发请求:
 
 ```bash
-read -rsp "粘贴第 1 步的 bot token(不会显示在屏幕上): " TOKEN; echo
+printf "粘贴第 1 步的 bot token(不会显示在屏幕上): "; read -rs TOKEN; echo
 curl -s "https://api.telegram.org/bot${TOKEN}/getUpdates"
 ```
 
@@ -93,8 +93,8 @@ Railway → 项目 → **web** 服务 → Variables,加两条;然后在 **worker
 不要靠「变量填了」就当接通了。跑一次真实发送 —— 同上,token 只进变量,不进命令行原文:
 
 ```bash
-read -rsp "粘贴 bot token(不会显示在屏幕上): " TOKEN; echo
-read -rp "粘贴第 3 步查到的 chat id: " CHAT_ID
+printf "粘贴 bot token(不会显示在屏幕上): "; read -rs TOKEN; echo
+printf "粘贴第 3 步查到的 chat id: "; read -r CHAT_ID
 curl -s -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
   -d chat_id="${CHAT_ID}" -d text="Fikirtive alert channel test"
 ```
