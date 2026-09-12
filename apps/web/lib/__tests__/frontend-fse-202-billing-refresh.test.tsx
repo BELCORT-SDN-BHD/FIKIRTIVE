@@ -17,6 +17,11 @@
  * `act`，这个仓库没有 `@testing-library/react`）；`next/navigation` 的 `useRouter` 按同一份
  * 配方 mock；`@/lib/balance-refresh` 用真实模块（不 mock）——这条修法买的正是「正文接上真的
  * 那份信号」，mock 掉它就验不出接线本身。
+ *
+ * P2-1 复审加固（#1409）加了一道 200ms 尾随合并（组件源码内 `REFRESH_MERGE_MS`），所以这里
+ * 全文件用 `vi.useFakeTimers()`：每个断言前先把窗口推过去（`vi.advanceTimersByTime(200)`），
+ * 「连发多声只 refresh 一次」与「合并窗口过后才允许下一次」在最后一个 describe 块里单独钉住,
+ * 其余用例只是把原有断言改成走完这道窗口。
  */
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -56,6 +61,7 @@ function mountBillingLiveRefresh(): void {
 beforeEach(() => {
   refresh.mockClear();
   setVisibility("visible");
+  vi.useFakeTimers();
 });
 
 afterEach(async () => {
@@ -65,6 +71,7 @@ afterEach(async () => {
     mounted = null;
   }
   document.body.replaceChildren();
+  vi.useRealTimers();
 });
 
 describe("frontend-baseline §5 :205 FSE-202 Billing 正文订阅与侧栏同一份信号", () => {
@@ -73,6 +80,10 @@ describe("frontend-baseline §5 :205 FSE-202 Billing 正文订阅与侧栏同一
 
     act(() => {
       notifyBalanceRefresh();
+    });
+    // P2-1:尾随合并窗口,200ms 内不读,窗口过后才真的 refresh 一次。
+    act(() => {
+      vi.advanceTimersByTime(200);
     });
 
     expect(refresh).toHaveBeenCalledTimes(1);
@@ -85,12 +96,18 @@ describe("frontend-baseline §5 :205 FSE-202 Billing 正文订阅与侧栏同一
     act(() => {
       notifyBalanceRefresh();
     });
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
     expect(refresh).not.toHaveBeenCalled();
 
     // 切回前台:与侧栏一样,visibilitychange 本身也是一次重读的触发点(走查场景里那 6 秒)。
     act(() => {
       setVisibility("visible");
       document.dispatchEvent(new Event("visibilitychange"));
+    });
+    act(() => {
+      vi.advanceTimersByTime(200);
     });
     expect(refresh).toHaveBeenCalledTimes(1);
   });
@@ -104,6 +121,9 @@ describe("frontend-baseline §5 :205 FSE-202 Billing 正文订阅与侧栏同一
 
     act(() => {
       notifyBalanceRefresh();
+    });
+    act(() => {
+      vi.advanceTimersByTime(200);
     });
 
     expect(refresh).not.toHaveBeenCalled();
@@ -132,5 +152,64 @@ describe("frontend-baseline §5 :205 FSE-202 Billing 正文订阅与侧栏同一
       /import\s*\{\s*BillingLiveRefresh\s*\}\s*from\s*["']\.\/BillingLiveRefresh["']/,
     );
     expect(pageSource).toMatch(/<BillingLiveRefresh\s*\/>/);
+  });
+});
+
+describe("frontend-baseline §5 :205 FSE-202 P2-1 尾随合并(#1409 判官复审加固)", () => {
+  it("frontend-baseline §5 :205 FSE-202 P2-1 合并窗口内连发多声广播只 refresh 一次", () => {
+    mountBillingLiveRefresh();
+
+    // 一次结算常常连打好几声(reserve / settle / refund),买一个 10 卡 pack 一口气能到
+    // 11 声 —— 这里用 5 声模拟那一串,逐声都在窗口内重排同一个计时器。
+    act(() => {
+      notifyBalanceRefresh();
+      notifyBalanceRefresh();
+      notifyBalanceRefresh();
+      notifyBalanceRefresh();
+      notifyBalanceRefresh();
+    });
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("frontend-baseline §5 :205 FSE-202 P2-1 合并窗口过后再来一声,允许下一次 refresh", () => {
+    mountBillingLiveRefresh();
+
+    act(() => {
+      notifyBalanceRefresh();
+    });
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // 上一串已经停了、窗口也已经关掉 —— 下一声是新的一串,该照样触发一次新的 refresh。
+    act(() => {
+      notifyBalanceRefresh();
+    });
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("frontend-baseline §5 :205 FSE-202 P2-1 一串信号中途还没到 200ms 就不该提前 refresh", () => {
+    mountBillingLiveRefresh();
+
+    act(() => {
+      notifyBalanceRefresh();
+    });
+    act(() => {
+      vi.advanceTimersByTime(199);
+    });
+    expect(refresh).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 });
