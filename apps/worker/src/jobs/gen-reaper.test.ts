@@ -35,7 +35,7 @@ vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundR
 vi.mock("../storage.js", () => ({ storage: {} }));
 vi.mock("../generation.js", () => ({ provider: { name: "mock" } }));
 
-import { reapStaleGenJobs } from "./gen.js";
+import { reapStaleGenJobs, GEN_REAP_MS } from "./gen.js";
 
 const stuckJob = { id: "g1", ownerId: "o1", threadId: "t1", kind: "IMAGE", model: "seedream" };
 const stuckQueuedJob = { id: "g2", ownerId: "o2", threadId: "t2", kind: "IMAGE", model: "seedream" };
@@ -92,8 +92,27 @@ describe("reapStaleGenJobs — GENERATING branch", () => {
   });
 });
 
+describe("reapStaleGenJobs — GENERATING 判据窗口 (#1386 零排队①, spec creation-engine.md §5)", () => {
+  it("健康慢任务不被误判失败退款 —— 清道夫的 stale 判据用的是 #1386 加宽后的 GEN_REAP_MS,不是旧的 25 分钟", async () => {
+    // #961 核证:排队积压 20–30 分钟的健康慢任务在旧 25 分钟窗口下会被这条 findMany 捞进
+    // 「stuck」再退款。这条测试不重算 worstQueueWaitMs 的数学(那在 clock-invariants.test.ts
+    // 逐条钉死),只钉「清道夫真的读了 GEN_REAP_MS 来算 cutoff,而不是某个写死的旧数字」——
+    // 把 GEN_REAP_MS 改回 25 分钟,下面的断言会跟着炸,而不是继续绿着。
+    m.genJobFindMany.mockResolvedValue([]);
+    await reapStaleGenJobs();
+    const scan = m.genJobFindMany.mock.calls[0]![0];
+    const cutoff = scan.where.startedAt.lt as Date;
+    const cutoffAgeMs = Date.now() - cutoff.getTime();
+    // cutoff = now - GEN_REAP_MS,允许几秒的测试执行抖动。
+    expect(Math.abs(cutoffAgeMs - GEN_REAP_MS)).toBeLessThan(5_000);
+    // #961 的最坏总量(排队 20m + 一轮出图 10m = 30m)必须落在窗口**里面**——即 GEN_REAP_MS
+    // 必须大于 30 分钟,而不是旧的 25 分钟(30 分钟本身撞不穿旧窗口都难说,新窗口必须稳稳盖住)。
+    expect(GEN_REAP_MS).toBeGreaterThan(30 * 60_000);
+  });
+});
+
 describe("reapStaleGenJobs — QUEUED branch (GEN-6 / P0-11)", () => {
-  it("fail-closes + refunds + posts a TURN_ERROR for a stuck QUEUED job older than 25 min", async () => {
+  it("fail-closes + refunds + posts a TURN_ERROR for a stuck QUEUED job older than 45 min", async () => {
     // first findMany = no GENERATING stuck; second findMany = one QUEUED stuck
     m.genJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([stuckQueuedJob]).mockResolvedValue([]);
     m.genJobUpdateMany.mockResolvedValue({ count: 1 }); // conditional claim won
@@ -106,7 +125,7 @@ describe("reapStaleGenJobs — QUEUED branch (GEN-6 / P0-11)", () => {
   });
 
   it("does NOT reap a QUEUED job that still has a live pg-boss message (F07 — serial-queue starvation)", async () => {
-    // A paid job can legitimately wait >25 min behind a burst of long video jobs (serial
+    // A paid job can legitimately wait >45 min behind a burst of long video jobs (serial
     // batchSize:1 queue). If pg-boss still holds a live message for it, it will be delivered —
     // fail-closing it here would spuriously refund a job that's about to run.
     m.genJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([stuckQueuedJob]).mockResolvedValue([]);
@@ -129,7 +148,7 @@ describe("reapStaleGenJobs — QUEUED branch (GEN-6 / P0-11)", () => {
     expect(m.chatMessageCreate).not.toHaveBeenCalled();
   });
 
-  it("does NOT select a QUEUED job newer than 25 min (not returned by findMany)", async () => {
+  it("does NOT select a QUEUED job newer than 45 min (not returned by findMany)", async () => {
     // A fresh QUEUED job is simply not in the result set — the query filters by createdAt.
     // Verify that nothing is reaped when findMany returns empty for both branches.
     m.genJobFindMany.mockResolvedValue([]);

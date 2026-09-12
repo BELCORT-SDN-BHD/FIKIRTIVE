@@ -4,7 +4,7 @@
  * guarded DB-side on outputAssetIds isEmpty, mirroring gen.ts's generationIds
  * guard — never fail-close a job that already committed outputs. Without it, a
  * redelivery whose findUnique snapshot predates the winner's commit tx (outputs
- * written + settled, status still GENERATING >18min) flips the committed job to
+ * written + settled, status still GENERATING >35min, #1386 widened from 18min) flips the committed job to
  * FAILED: the refund no-ops (already settled) → user charged, job shown FAILED,
  * outputs never attached, and with no further delivery it never self-heals.
  */

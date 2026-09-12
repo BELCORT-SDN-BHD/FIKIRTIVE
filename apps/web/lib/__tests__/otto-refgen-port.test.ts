@@ -164,10 +164,11 @@ describe("deleteVariant — active-job hard gate (deterministic, fail-closed, no
   });
 
   // debt-69 refit (PR #279 P1): the 15min abandonment window is GONE. It was shorter than the
-  // worker's own liveness window (REFGEN_STALE_MS 18min / queue expiry ~20min / reaper 25min), so a
-  // 15-18min-old job that was still genuinely alive got misjudged abandoned and let through — the job
-  // then settled onto the tombstoned variant (spend charged, product unreachable). Now ANY live job
-  // hard-refuses regardless of age; a truly stuck job is released only by the 25min reaper (→ FAILED).
+  // worker's own liveness window (REFGEN_STALE_MS 35min / queue expiry ~40min / reaper 45min,
+  // #1386 widened all three from 18min/20min/25min), so a 15-35min-old job that was still
+  // genuinely alive got misjudged abandoned and let through — the job then settled onto the
+  // tombstoned variant (spend charged, product unreachable). Now ANY live job hard-refuses
+  // regardless of age; a truly stuck job is released only by the 45min reaper (→ FAILED).
   it("has NO staleness window: the active-job count query is never narrowed by updatedAt", async () => {
     mockRefGenJobCount.mockResolvedValue(0);
     mockDeleteVariant.mockResolvedValue({ ok: true });
@@ -177,7 +178,7 @@ describe("deleteVariant — active-job hard gate (deterministic, fail-closed, no
     expect(where.status).toEqual({ in: ["QUEUED", "GENERATING"] });
   });
 
-  it("a super-aged active job (older than the worker's 18min liveness window) is STILL refused — no window lets it through", async () => {
+  it("a super-aged active job (older than the worker's 35min liveness window) is STILL refused — no window lets it through", async () => {
     // No updatedAt filter ⇒ an ancient-but-alive QUEUED/GENERATING job still counts and blocks the delete.
     mockRefGenJobCount.mockResolvedValue(1);
     const res = (await port().deleteVariant("var-old-but-live")) as { error: string };

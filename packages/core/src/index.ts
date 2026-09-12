@@ -239,3 +239,8 @@ export * from "./reference-ref.js";
 // composer 校验器、Otto 视觉、付费前守卫,以及 worker 的首帧/末帧/参考片/编辑底图 ——
 // 从前六处各写一份 where,六处都多写了一格 projectId,跨画布的参考于是被静默丢掉。
 export * from "./generation-reference.js";
+
+// pg-boss create_queue 以 ON CONFLICT DO NOTHING 收尾——判官 P1-2(PR #1410):#1386 加宽
+// *_QUEUE_POLICY 的 expireInSeconds 对已存在的队列行是静默 no-op。两个写入路径
+// (apps/worker/src/index.ts、apps/web/lib/queue.ts)共读这一份对齐函数,而不是各写一份。
+export * from "./queue-align.js";

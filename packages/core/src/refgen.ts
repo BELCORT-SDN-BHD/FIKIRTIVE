@@ -93,7 +93,11 @@ export const REFGEN_QUEUE_POLICY = {
   // redelivered (which would let the duplicate-delivery fail-closed wrongly FAIL an
   // active paid job). Both web (dispatch) and worker (consumer) create the queue
   // with THIS policy, so boot order can't leave them split.
-  expireInSeconds: 60 * 20,
+  //
+  // #1386 (零排队①, spec creation-engine.md §5): mirrors GEN_QUEUE_POLICY's widening —
+  // gen and refgen share the SAME process-wide providerRequestGate, so the same queueing
+  // math applies (see that comment, and apps/worker/src/jobs/clock-invariants.test.ts).
+  expireInSeconds: 60 * 40,
   deadLetter: REFGEN_DLQ,
 } as const;
 

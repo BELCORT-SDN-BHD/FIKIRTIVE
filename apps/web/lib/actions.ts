@@ -574,15 +574,16 @@ export async function updateEntity(
         //
         // ── 为什么没有陈旧窗口 ──────────────────────────────────────────────────
         // 与 deleteVariant 逐字同因:任何窗口都会比这条产品线自己的付费时钟链短,而链上每
-        // 一档都还在花钱 —— 供应商轮询 15m < GEN_STALE_MS 18m < 队列过期 20m < 清道夫
-        // GEN_REAP_MS/GEN_QUEUED_REAP_MS 25m(apps/worker/src/jobs/clock-invariants.test.ts
-        // 钉死)。一个 QUEUED 了 16 分钟的单,pg-boss 照送、worker 照跑、钱照花(gen.ts 里
-        // GEN_QUEUED_REAP_MS 的注释写得很白:25 分钟以内 QUEUED 都可能只是排队没轮到)。
-        // 按「超时=废弃」放行,等于恰好在它还会花钱的那几分钟里把闸打开。
+        // 一档都还在花钱 —— 供应商轮询 15m < GEN_STALE_MS 35m < 队列过期 40m < 清道夫
+        // GEN_REAP_MS/GEN_QUEUED_REAP_MS 45m(#1386 从 18m/20m/25m 一并加宽,
+        // apps/worker/src/jobs/clock-invariants.test.ts 钉死)。一个 QUEUED 了 16 分钟的单,
+        // pg-boss 照送、worker 照跑、钱照花(gen.ts 里 GEN_QUEUED_REAP_MS 的注释写得很白:
+        // 45 分钟以内 QUEUED 都可能只是排队没轮到)。按「超时=废弃」放行,等于恰好在它还会
+        // 花钱的那几分钟里把闸打开。
         //
         // 「岂不是永久锁死?」不会,而且这里不需要任何时间常量:reapStaleGenJobs 对 QUEUED
-        // 与 GENERATING 都会在 ~25 分钟加一轮巡检(5 分钟一扫)里终态化并退款,之后这道闸
-        // 自然放行。最坏是等半小时,不是改不回来。
+        // 与 GENERATING 都会在 ~45 分钟加一轮巡检(5 分钟一扫)里终态化并退款,之后这道闸
+        // 自然放行。最坏是等约五十分钟,不是改不回来。
         //
         // 只挡 GenJob,**不挡 RefGenJob**:参考图那条路在建单那一刻就把整句提示词冻在
         // `RefGenJob.prompt` 上,它的 worker(apps/worker/src/jobs/refgen.ts)从头到尾

@@ -149,7 +149,8 @@ export const VIDEO_MODEL_MAP: Record<string, string> = {
  *   · RENDER (the image POST) — see `ARK_IMAGE_TIMEOUT_MS` below.
  *   · TRANSFER (image/video download) — bytes over the wire from object storage. A 15-minute
  *     720p clip is tens of megabytes, so this one has to tolerate a genuinely slow pipe; 5 min
- *     is generous for that and still far inside the worker's own 20-minute message expiry.
+ *     is generous for that and still far inside the worker's own 40-minute message expiry
+ *     (#1386 widened GEN_QUEUE_POLICY.expireInSeconds from 20m to 40m).
  *
  * WHAT A TIMEOUT COSTS. Aborting is a network failure, so it lands on the SAME classification
  * the charge boundary already applies to "no response at all": outcome unknown ⇒ treated as
@@ -178,7 +179,7 @@ export const ARK_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
  * 60s 从来就不宽裕:同一轮走查里**成功**的图片作业整单耗时 27.6s / 28.9s / 31.6s,带参考图
  * 合成的那单 41.4s(`backend-evidence.md:31,82,154,188`)—— 60s 只有它的 1.5 倍,一次比平常
  * 慢的渲染就越线。5 分钟与下载面同尺寸:够一次真慢的出图,又远在 worker 自己那条钟链之内
- * (供应商超时 < stale 18m < 队列过期 20m < 清道夫 25m,由
+ * (供应商超时 < stale 35m < 队列过期 40m < 清道夫 45m,#1386 一并加宽,由
  * `apps/worker/src/jobs/clock-invariants.test.ts` 守着)。
  *
  * 钱路语义一格没动:超时仍然是 charged,仍然终态、仍然退款。变的只是**在判它死之前愿意等
@@ -593,8 +594,8 @@ export class BytePlusProvider implements GenerationProvider {
     // F06 — the reconciliation window, and why it is the size it is.
     //
     // Two clocks run on one task. OURS: this client gives up after 15 min, because the worker's
-    // own message expires at GEN_QUEUE_POLICY.expireInSeconds (20 min) and we need the remaining
-    // minutes to download and persist. THE ENGINE'S: it keeps working on an abandoned task and
+    // own message expires at GEN_QUEUE_POLICY.expireInSeconds (40 min, #1386 widened from 20 min)
+    // and we need the remaining minutes to download and persist. THE ENGINE'S: it keeps working on an abandoned task and
     // bills it when it completes. Whatever falls between the two clocks is the ambiguous window:
     // we told the merchant "failed" (and refunded) while the engine still charged us.
     //

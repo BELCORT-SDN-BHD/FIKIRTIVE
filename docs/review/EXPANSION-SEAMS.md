@@ -66,7 +66,7 @@
   - `FAL_MODELS` — image t2i/edit endpoint ids
   - `MockProvider` ($0 deterministic) / `FalProvider` / `createGenerationProvider()` env factory (unset → mock; fail-safe)
   - `chargedError()` — tags `{charged:true}` on post-billing failures; the worker must terminal-fail these (a retry would re-POST = double charge). Plain errors = pre-charge, retryable.
-- `packages/generation/src/byteplus.ts` — `BytePlusProvider` (`IMAGE_MODEL_MAP`, `VIDEO_MODEL_MAP`, async submit + in-provider poll with `TIMEOUT_MS` 15min < queue expire 20min)
+- `packages/generation/src/byteplus.ts` — `BytePlusProvider` (`IMAGE_MODEL_MAP`, `VIDEO_MODEL_MAP`, async submit + in-provider poll with `TIMEOUT_MS` 15min < queue expire 40min, #1386 widened from 20min)
 - `packages/core/src/spend.ts` — `FLAT_PRICED_VIDEO_MODELS` + `VIDEO_CREDITS_BY_RESOLUTION` (BytePlus flat charge) vs `displayedFromUsd(genSpentUsd)` (fal models)
 - `packages/core/src/model-registry.ts` — `ALL_MODEL_IDS` union (admin overlay validation domain)
 - Worker singleton: `apps/worker/src/generation.ts` (`provider = createGenerationProvider()`)

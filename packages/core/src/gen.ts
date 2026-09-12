@@ -1199,6 +1199,22 @@ export const GEN_QUEUE_POLICY = {
   // redelivered (which would let the duplicate-delivery fail-closed wrongly FAIL an
   // active paid job). Both web (dispatch) and worker (consumer) create the queue
   // with THIS policy, so boot order can't leave them split.
-  expireInSeconds: 60 * 20,
+  //
+  // #1386 (零排队①, spec creation-engine.md §5 2026-09-12 场⑦): "the longest realistic
+  // engine call" used to mean just the provider call itself (submit + poll). It does NOT —
+  // the call only STARTS once the job's paid request has cleared `providerRequestGate`
+  // (@fikirtive/generation), an in-process semaphore gen/refgen/understand share. Once
+  // WORKER_ROLE=wait's concurrency defaults are live (apps/worker/src/plan.ts WAIT_DEFAULTS:
+  // gen=4, refgen=2, understand=2 ⇒ 4×MAX_GEN_COUNT + 2×MAX_REFGEN_COUNT + 2 = 30 paid
+  // requests can be in flight at once against a default 6-slot gate), a perfectly healthy
+  // job can queue for the gate ~20 minutes before its provider call even begins — see
+  // apps/worker/src/jobs/clock-invariants.test.ts for the full derivation. 20 minutes here
+  // used to be BELOW that queueing alone, so pg-boss would expire+redeliver a job that was
+  // never stuck, which apps/worker/src/jobs/gen.ts's duplicate-delivery stale check then
+  // read as "the original attempt died" and refunded — a healthy slow task, failed closed,
+  // while the founder still eats the engine's bill. 40 minutes covers the worst known
+  // queueing (~30m: 20m queue + a 10m image round) with room to spare. Widen this again
+  // (with the derivation above updated) before opening wait-type concurrency any further.
+  expireInSeconds: 60 * 40,
   deadLetter: GEN_DLQ,
 } as const;

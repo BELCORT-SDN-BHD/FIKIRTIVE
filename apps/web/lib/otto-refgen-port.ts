@@ -36,17 +36,19 @@
  * flight (QUEUED/GENERATING) — otherwise the running job would settle onto a tombstoned variant,
  * wasting spend. There is NO
  * staleness/abandonment window here (fail-closed): a 15-minute window would be SHORTER than the
- * worker's own liveness window (REFGEN_STALE_MS 18min / queue expiry ~20min / reaper 25min), so a
- * 15-18-minute-old job that is still genuinely alive would be misjudged abandoned and let through —
+ * worker's own liveness window (REFGEN_STALE_MS 35min / queue expiry ~40min / reaper 45min,
+ * #1386 widened all three from 18min/20min/25min), so a 15-35-minute-old job that is still
+ * genuinely alive would be misjudged abandoned and let through —
  * the job then settles onto the tombstone (spend charged, product unreachable). Unlock model
  * (NODE-279⑤ materialized evidence, honest version): the Otto-side delete is hard-refused for as
  * long as the variant has ANY active job — fail-closed BY DESIGN, not a liveness guarantee. A
  * TYPICAL stuck job is released by the worker reaper, reapStaleRefGenJobs
- * (apps/worker/src/jobs/refgen.ts:143; windows REFGEN_REAP_MS = REFGEN_QUEUED_REAP_MS = 25min,
- * refgen.ts:53-54; swept every 5min + at startup, apps/worker/src/index.ts:264-265): stale
- * GENERATING / orphaned QUEUED without outputs → FAILED + refund (refgen.ts:148-160, 165-181);
- * committed-but-stuck → resumed to DONE (refgen.ts:198-210) — so the usual worst case is
- * ~25min window + one 5min sweep. EXTREME cases can extend the blockage: a persistently failing
+ * (apps/worker/src/jobs/refgen.ts:143; windows REFGEN_REAP_MS = REFGEN_QUEUED_REAP_MS = 45min
+ * (#1386, was 25min), refgen.ts:53-54; swept every 5min + at startup,
+ * apps/worker/src/index.ts:264-265): stale GENERATING / orphaned QUEUED without outputs →
+ * FAILED + refund (refgen.ts:148-160, 165-181); committed-but-stuck → resumed to DONE
+ * (refgen.ts:198-210) — so the usual worst case is ~45min window + one 5min sweep. EXTREME
+ * cases can extend the blockage: a persistently failing
  * pg-boss liveness read makes hasLiveRefGenMessage assume "live" every sweep and skip the QUEUED
  * reap (fail-safe, refgen.ts:85-88), and a persistently failing committed-resume just retries
  * next sweep (refgen.ts:201-209). That prolonged refusal is an ACCEPTED fail-closed posture on BOTH

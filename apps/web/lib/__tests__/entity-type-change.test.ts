@@ -12,8 +12,8 @@
  *      的付费调用(不改类型的话那一单本会终态失败 + 退款)。
  *   ⑤ 这道闸**没有时间窗口**,方向也只有一个:
  *      · 无窗口 —— 判官在真库证过,任何窗口都短于这条产品线自己的付费时钟链
- *        (供应商轮询 15m < GEN_STALE_MS 18m < 队列过期 20m < 清道夫 25m,
- *        apps/worker/src/jobs/clock-invariants.test.ts 钉死),窗口一开就正好在还会
+ *        (供应商轮询 15m < GEN_STALE_MS 35m < 队列过期 40m < 清道夫 45m,#1386 从
+ *        18m/20m/25m 一并加宽,apps/worker/src/jobs/clock-invariants.test.ts 钉死),窗口一开就正好在还会
  *        花钱的那几分钟里放行。释放靠 reaper 不靠时钟,与 deleteVariant 先例一致。
  *      · 单方向 —— 反方向(→ CHARACTER)只是给在飞的那一单**加**一道 fail-closed 退款
  *        闸,不漏钱,所以不拦。
@@ -185,10 +185,11 @@ describe("updateEntity — the in-flight guard: CHARACTER 改走要拦(钱路 fa
   });
 
   // 判官在真库跑出的反例,原样钉成正式测试。旧实现有一个 15 分钟窗口,而这条产品线自己的
-  // 付费时钟链是:供应商轮询 15m < GEN_STALE_MS 18m < 队列过期 20m < 清道夫 25m
-  // (apps/worker/src/jobs/clock-invariants.test.ts)。于是第 16–25 分钟这道闸 fail-OPEN:
-  // pg-boss 那时仍会送达、worker 仍会读活行类型、钱仍会花。三个取样点各站在链上一档。
-  it.each([16, 19, 24])(
+  // 付费时钟链是:供应商轮询 15m < GEN_STALE_MS 35m < 队列过期 40m < 清道夫 45m(#1386 从
+  // 18m/20m/25m 一并加宽,apps/worker/src/jobs/clock-invariants.test.ts 钉死)。于是第
+  // 16–45 分钟这道闸 fail-OPEN:pg-boss 那时仍会送达、worker 仍会读活行类型、钱仍会花。
+  // 三个取样点各站在链上一档。
+  it.each([16, 36, 41])(
     "一单 QUEUED 了 %i 分钟的付费作业**仍然**拦得住 CHARACTER 翻型(旧的 15 分钟窗口在这里 fail-open)",
     async (minutes) => {
       await asUser(A_EMAIL);
@@ -201,8 +202,8 @@ describe("updateEntity — the in-flight guard: CHARACTER 改走要拦(钱路 fa
 
   it("没有陈旧窗口:1 小时前的 QUEUED 单同样拦(现实里它早已被清道夫退款清掉)", async () => {
     // 与 deleteVariant 同一条论证:这道闸不认时间,只认「库里还有没有活着的在飞单」。
-    // 「岂不是永久锁死」不成立 —— reapStaleGenJobs 对 QUEUED/GENERATING 都在 ~25 分钟
-    // (GEN_QUEUED_REAP_MS)加一轮 5 分钟巡检里终态化 + 退款,所以真实世界里根本不存在
+    // 「岂不是永久锁死」不成立 —— reapStaleGenJobs 对 QUEUED/GENERATING 都在 ~45 分钟
+    // (GEN_QUEUED_REAP_MS,#1386 从 25 分钟加宽)加一轮 5 分钟巡检里终态化 + 退款,所以真实世界里根本不存在
     // 一行「1 小时还活着的 QUEUED 单」。这里手工造一行,是为了证明闸本身不靠时钟。
     await asUser(A_EMAIL);
     const id = await seedEntity(orgA, "Aisha", "CHARACTER");

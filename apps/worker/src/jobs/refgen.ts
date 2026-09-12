@@ -56,14 +56,20 @@ const MAX_EDIT_INPUT_PLUS_OUTPUT = 15;
 // A GENERATING row older than this is treated as crashed/stale (mirrors gen.ts GEN_STALE_MS):
 // kept above the realistic provider call time and below the queue expiry, so an actively-
 // running gen is never failed-closed by a duplicate delivery, but a truly stuck one is.
-export const REFGEN_STALE_MS = 1000 * 60 * 18;
+//
+// #1386 (零排队①, spec creation-engine.md §5): widened alongside gen.ts's GEN_STALE_MS —
+// refgen shares the SAME process-wide providerRequestGate (@fikirtive/generation), so a
+// healthy refgen job can queue for it just as long as a gen job can. See GEN_STALE_MS's
+// comment in gen.ts for the full derivation; this must stay equal to it (pinned by
+// clock-invariants.test.ts — "两条队列的「worker 崩了」是同一个意思").
+export const REFGEN_STALE_MS = 1000 * 60 * 35;
 
 // The proactive reaper's windows (mirror gen.ts GEN_REAP_MS / GEN_QUEUED_REAP_MS). Both sit
-// ABOVE the 20-min queue expiry so the reaper never races a delivery pg-boss will still
+// ABOVE the 40-min queue expiry (#1386) so the reaper never races a delivery pg-boss will still
 // redeliver — it only sweeps jobs whose message is truly lost/dead-lettered (REFGEN_DLQ has
 // no consumer), whose RESERVE hold would otherwise leak forever.
-export const REFGEN_REAP_MS = 1000 * 60 * 25;
-export const REFGEN_QUEUED_REAP_MS = 1000 * 60 * 25;
+export const REFGEN_REAP_MS = 1000 * 60 * 45;
+export const REFGEN_QUEUED_REAP_MS = 1000 * 60 * 45;
 
 const mimeForExt = (ext: string) =>
   ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
@@ -487,8 +493,8 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       // SETTLE the credit hold atomically with the resume marker — the generation
       // succeeded, so the reserved charge becomes permanent in the same commit.
       // CONDITIONAL commit (mirror gen.ts): write the resume marker + settle ONLY if we still
-      // own the GENERATING claim. A redelivery that expired our in-flight engine call (>20min hang)
-      // may have already taken the stale branch above → FAILED + refunded this job. If so this
+      // own the GENERATING claim. A redelivery that expired our in-flight engine call (>35min hang,
+      // REFGEN_STALE_MS — #1386 widened from 20min) may have already taken the stale branch above → FAILED + refunded this job. If so this
       // matches 0 rows: do NOT settle (the REFUND already won the finalizer index) and do NOT
       // attach/deliver — discard. The stored assets become orphans (content-addressed, reusable,
       // harmless); the founder absorbed the engine cost and the merchant stays refunded (no free
