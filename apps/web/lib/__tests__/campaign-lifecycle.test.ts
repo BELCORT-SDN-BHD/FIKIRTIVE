@@ -92,8 +92,6 @@ function testId(): string {
 /** The single refusal both paid-set exits give, because the reason is the same one. */
 const ALREADY_DISPATCHED =
   "This entry has already been sent for generation, so it can't be taken out of the plan. Its generation and credits stay in your history.";
-const CHECK_UNKNOWN =
-  "We couldn't check this entry's generation history — nothing was changed. Please retry.";
 
 let orgA: string, orgB: string;
 
@@ -549,14 +547,32 @@ describe("#744 P2 the dispatch check cannot be dodged by grouping, age, or a bro
       .rejects.toThrow("history read unavailable");
   });
 
-  it("refuses — and changes nothing — when a read inside the guarded transaction throws", async () => {
+  it("建的是自己的帧，不再借道 ambient：外层套一个别的租户的帧不再能让这两个入口读错店（租户围栏切片②，规格 docs/specs/tenant-isolation.md §1.8，#1377 —— 见下方说明，此用例已从“#738 旧防线”改判为“新防线的正面证明”）", async () => {
     const entryId = testId();
     const id = await seedCampaign(orgA, { entries: [{ id: entryId, date: "2026-08-25", status: "approved" }] });
 
-    // A real fault, no patching: the call runs inside an ambient tenant frame belonging to
-    // someone else, so the tenant guard throws on the first read the guarded transaction makes.
-    // This is the #738 shape — a call site that reached the database in the wrong context — and
-    // both exits must answer "unknown" and leave the plan untouched rather than sail on.
+    // 这条用例在切片②之前钉的是 #738 那一类 bug：`unapproveCampaignEntry` /
+    // `removeCampaignEntry` 那时**没有自己的帧**，会原样继承调用方套在外面的任何 ambient
+    // 帧——把整段调用包进「属于别的租户 B」的帧里，守卫会在事务内第一次读的时候因为
+    // 「帧内 ownerId 与查询的 orgA 不符」直接抛错，两个入口就此答「unknown」、原地不动。
+    // 那是**旧防线**：入口本身没有身份，全靠守卫的值比对兜底。
+    //
+    // 切片②把这两个入口（连同商家动作面其余 57 处）建成了 `requireOwner → resolveUserPrincipal
+    // → runAsUser` 那道帧（TENANT-A1）。`runAsUser` 的语义是**只认调用方递上来的身份**，不检查、
+    // 也不理会外层 ambient 是什么——见 `packages/db/src/principal.ts` 的文档：它就是
+    // `store.run(frame, fn)`，没有「嵌在别的租户帧里就拒绝」这一条（那是 `runAsTenant` 的
+    // 专属语义，而 TENANT-A1 明确要的是 `kind:"user"` 的完整帧，不是 `runAsTenant` 会退化出来的
+    // `kind:"system", reason:"tenant-direct"`）。所以这里外层套的 `foreignFrame`（B）从今往后
+    // 根本走不到守卫面前——`unapproveCampaignEntry` 自己从**已认证的会话**（这个测试文件里
+    // 恒定是 A_EMAIL）重新建帧，会话说是 A，读写就按 A 走，B 的帧只是一层没有意义的包装。
+    // 这是**新防线**，而且更强：入口不再需要「万一 ambient 是错的，指望守卫抛错」这道兜底，
+    // 它压根不会去看 ambient 是什么。
+    //
+    // 这条测试因此从「验证抛错」改判为「验证抛错的旧理由已经不成立、而正确的结果照常发生」——
+    // 这是本 PR 一次有意的行为变化，理由写在这里，也写进了 PR 描述与交接报告，供裁决。
+    // #744 P2 真正要的「读故障必须 fail closed、不许把 unknown 讲成 nothing」这条不变式仍然
+    // 成立且未改：`mutatePaidSetEntry` 的 catch 分支原样保留，其余三条兄弟用例（未取消分组、
+    // 老式按位置记账、桩客户端读故障）一个字没动，仍然覆盖它。
     const foreignFrame = {
       kind: "user" as const,
       subjectUserId: null,
@@ -568,13 +584,13 @@ describe("#744 P2 the dispatch check cannot be dodged by grouping, age, or a bro
       impersonatedByBaUserId: null,
     };
 
-    expect(await runAsUser(foreignFrame, () => unapproveCampaignEntry({ campaignId: id, entryId })))
-      .toEqual({ error: CHECK_UNKNOWN });
-    expect(await runAsUser(foreignFrame, () => removeCampaignEntry({ campaignId: id, entryId })))
-      .toEqual({ error: CHECK_UNKNOWN });
+    const undone = await runAsUser(foreignFrame, () => unapproveCampaignEntry({ campaignId: id, entryId }));
+    expect(undone).toMatchObject({ ok: true });
+    expect(entryStatuses((await readCampaign(id, orgA))?.planJson)[entryId]).toBe("proposed");
 
-    expect(await entryIds(id)).toEqual([entryId]);
-    expect(entryStatuses((await readCampaign(id, orgA))?.planJson)[entryId]).toBe("approved");
+    const removed = await runAsUser(foreignFrame, () => removeCampaignEntry({ campaignId: id, entryId }));
+    expect(removed).toMatchObject({ ok: true });
+    expect(await entryIds(id)).toEqual([]);
   });
 });
 

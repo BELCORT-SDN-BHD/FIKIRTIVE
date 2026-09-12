@@ -14,7 +14,8 @@ import {
   type ChannelReadState,
   type ScheduledPostStatus,
 } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { draftScheduledPost, IG_IMAGE_ONLY_ERROR } from "./schedule-service";
 import { channelRegistry } from "./channels/registry";
@@ -96,6 +97,16 @@ export async function createScheduledPost(
 ): Promise<{ ok: true; id: string } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  // 租户围栏切片②（规格 docs/specs/tenant-isolation.md，#1377，TENANT-A1/A2）：商家动作面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => createScheduledPostInFrame(gate, input));
+}
+
+async function createScheduledPostInFrame(
+  gate: { email: string; ownerId: string },
+  input: CreateScheduledPostInput,
+): Promise<{ ok: true; id: string } | { error: string }> {
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
 
   const res = await draftScheduledPost({
@@ -126,6 +137,15 @@ export async function updateScheduledPost(
   if (typeof id !== "string" || !id) return { error: "Invalid request." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => updateScheduledPostInFrame(gate, id, patch));
+}
+
+async function updateScheduledPostInFrame(
+  gate: { email: string; ownerId: string },
+  id: string,
+  patch: UpdateScheduledPostPatch,
+): Promise<{ ok: true } | { error: string }> {
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
 
   // Read the current row FIRST: status gates editability (server-side, not just the UI), and
@@ -300,6 +320,15 @@ export async function approveScheduledPost(
   }
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => approveScheduledPostInFrame(gate, id, expectedUpdatedAt));
+}
+
+async function approveScheduledPostInFrame(
+  gate: { email: string; ownerId: string },
+  id: string,
+  expectedUpdatedAt: Date | null,
+): Promise<{ ok: true } | { error: string }> {
   // Approve = consent to a real, irreversible external publish (spec §五). An impersonating admin
   // must NOT forge the tenant's consent — refuse BEFORE any Meta target lookup or DB write.
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
@@ -444,6 +473,14 @@ export async function cancelScheduledPost(id: string): Promise<{ ok: true } | { 
   if (typeof id !== "string" || !id) return { error: "Invalid request." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => cancelScheduledPostInFrame(gate, id));
+}
+
+async function cancelScheduledPostInFrame(
+  gate: { email: string; ownerId: string },
+  id: string,
+): Promise<{ ok: true } | { error: string }> {
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
 
   const post = await prisma.scheduledPost.findFirst({
@@ -476,7 +513,14 @@ export async function listScheduledPosts(
 ): Promise<ScheduledPostRow[]> {
   const gate = await requireOwner();
   if ("error" in gate) return [];
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => listScheduledPostsInFrame(gate, range));
+}
 
+async function listScheduledPostsInFrame(
+  gate: { email: string; ownerId: string },
+  range?: { from?: string; to?: string },
+): Promise<ScheduledPostRow[]> {
   const where: Record<string, unknown> = { ownerId: gate.ownerId, deletedAt: null };
   const from = typeof range?.from === "string" ? toDate(range.from) : null;
   const to = typeof range?.to === "string" ? toDate(range.to) : null;
@@ -527,7 +571,11 @@ export async function listOwnerTargets(): Promise<OwnerTargetsResult> {
   // No session: we looked at nothing, so we claim nothing. An empty channelStates map reads as
   // "unread" everywhere downstream — never as "this merchant has no connected accounts".
   if ("error" in gate) return { targets: [], channelStates: {} };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => listOwnerTargetsInFrame(gate));
+}
 
+async function listOwnerTargetsInFrame(gate: { email: string; ownerId: string }): Promise<OwnerTargetsResult> {
   const out: OwnerTarget[] = [];
   const channelStates: Record<string, ChannelReadState> = {};
   for (const channel of Object.values(channelRegistry)) {
@@ -562,6 +610,16 @@ export async function suggestPostTimes(
   if (!channel) return [];
   const gate = await requireOwner();
   if ("error" in gate) return [];
+  // 这一趟读的是**全局**种子表(不按租户过滤),但入口仍要按规格建帧 —— 闸认的是「这一趟有没有
+  // 一个已验证的身份」,不是这一趟具体查了哪张表。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => suggestPostTimesInFrame(channel, input));
+}
+
+async function suggestPostTimesInFrame(
+  channel: string,
+  input: { channel: string; limit?: number },
+): Promise<PostingTimeSuggestion[]> {
   const take = typeof input?.limit === "number" && input.limit > 0 ? Math.min(Math.floor(input.limit), 20) : 6;
   const rows = await prisma.postingTimeSeed.findMany({
     where: { channel },
@@ -594,6 +652,14 @@ export async function sharePostPreview(
   if (!id) return { error: "Invalid request." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => sharePostPreviewInFrame(gate, id));
+}
+
+async function sharePostPreviewInFrame(
+  gate: { email: string; ownerId: string },
+  id: string,
+): Promise<SharePreviewResult> {
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
 
   const secret = process.env.SHARE_PREVIEW_SECRET ?? "";
@@ -644,6 +710,14 @@ export async function revokeSharePreview(
   if (!id) return { error: "Invalid request." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => revokeSharePreviewInFrame(gate, id));
+}
+
+async function revokeSharePreviewInFrame(
+  gate: { email: string; ownerId: string },
+  id: string,
+): Promise<{ ok: true; revoked: number } | { error: string }> {
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
 
   const { count } = await prisma.sharePreviewToken.updateMany({

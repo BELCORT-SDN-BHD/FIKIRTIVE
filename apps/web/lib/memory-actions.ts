@@ -5,8 +5,10 @@ import { prisma } from "@fikirtive/db";
 import {
   newId, sectionForCategory, offerPhase, distinctCategories,
   isBrandSectionKey, isBrandContextOrigin, withProductIdentity,
+  type BrandContextOrigin,
 } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { resolveActor, recordBrandRevision, stampOf, actorStamp } from "./brand-revision";
 import { packBrandContent } from "./brand-context-format";
 
@@ -41,7 +43,13 @@ export async function listMemory(_ownerId?: string, brandId?: string | null): Pr
   // callers already pass their own session ownerId, so behaviour is unchanged for them.
   const gate = await requireOwner();
   if ("error" in gate) return [];
-  const ownerId = gate.ownerId;
+  // 租户围栏切片②（规格 docs/specs/tenant-isolation.md，#1377，TENANT-A1/A2）：商家动作面的每个
+  // 入口先建帧,再进数据库。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => listMemoryInFrame(gate.ownerId, brandId));
+}
+
+async function listMemoryInFrame(ownerId: string, brandId?: string | null): Promise<MemoryRow[]> {
   const rows = await prisma.memory.findMany({
     where: { ownerId, brandId: brandId ?? null, deletedAt: null, ...READY_ONLY },
     orderBy: [{ category: "asc" }, { updatedAt: "desc" }],
@@ -56,6 +64,16 @@ export async function addMemory(raw: unknown): Promise<{ ok: true; id: string } 
   const content = typeof r?.content === "string" ? r.content.trim() : "";
   if (!category || !content) return { error: "A memory needs a category and some text." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => addMemoryInFrame(gate, r, category, content));
+}
+
+async function addMemoryInFrame(
+  gate: { email: string; ownerId: string },
+  r: { category?: unknown; content?: unknown; brandId?: unknown },
+  category: string,
+  content: string,
+): Promise<{ ok: true; id: string } | { error: string }> {
   const id = newId();
   // FRONT-A8:一条记录从此带着「谁写的」出生,而不是只带一个 'user'。
   const actor = await resolveActor(gate.email);
@@ -89,6 +107,14 @@ export async function updateMemory(raw: unknown): Promise<{ ok: true } | { error
   const r = raw as { id?: unknown; content?: unknown; pinned?: unknown };
   if (typeof r?.id !== "string" || typeof r?.content !== "string") return { error: "Invalid memory edit." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => updateMemoryInFrame(gate, r as { id: string; content: string; pinned?: unknown }));
+}
+
+async function updateMemoryInFrame(
+  gate: { email: string; ownerId: string },
+  r: { id: string; content: string; pinned?: unknown },
+): Promise<{ ok: true } | { error: string }> {
   const actor = await resolveActor(gate.email);
   try {
     const { count } = await prisma.memory.updateMany({
@@ -113,7 +139,16 @@ export async function updateMemory(raw: unknown): Promise<{ ok: true } | { error
 export async function deleteMemory(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const r = raw as { id?: unknown };
   if (typeof r?.id !== "string") return { error: "Invalid request." };
+  const memoryId = r.id;
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => deleteMemoryInFrame(gate, memoryId));
+}
+
+async function deleteMemoryInFrame(
+  gate: { email: string; ownerId: string },
+  memoryId: string,
+): Promise<{ ok: true } | { error: string }> {
   const actor = await resolveActor(gate.email);
   let removed = false;
   try {
@@ -121,7 +156,7 @@ export async function deleteMemory(raw: unknown): Promise<{ ok: true } | { error
       // 判官 P2-1:`deletedAt: null` 少不得。少了它,连按 Remove 会把 `deletedAt` 一次次
       // 盖成新时间,幂等键(含 updatedAt)跟着变 —— 改动史里于是一行接一行 deleted,
       // 一次删除被讲成三次。(与 `discardBrandDraft` 同一条口径。)
-      where: { id: r.id, ownerId: gate.ownerId, deletedAt: null },
+      where: { id: memoryId, ownerId: gate.ownerId, deletedAt: null },
       // 判官 P2-4:`actor.userId` 查不到 User 行时是 null,无条件写会把这一行已知的作者
       // **抹掉**。删除这件事不该让「谁写的」变成「不知道是谁」——认得出人才改这一列。
       data: { deletedAt: new Date(), ...actorStamp(actor) },
@@ -132,7 +167,7 @@ export async function deleteMemory(raw: unknown): Promise<{ ok: true } | { error
       // 删掉了 —— 重发的删除,结果仍然是「已删除」,不是错误,也不该再写一行历史;
       // ②它真的不在了(或不属于这个租户)。
       const already = await prisma.memory.findFirst({
-        where: { id: r.id, ownerId: gate.ownerId, deletedAt: { not: null } },
+        where: { id: memoryId, ownerId: gate.ownerId, deletedAt: { not: null } },
         select: { id: true },
       });
       if (!already) return { error: "Memory not found." };
@@ -140,8 +175,8 @@ export async function deleteMemory(raw: unknown): Promise<{ ok: true } | { error
   } catch { return { error: "Couldn't delete — please try again." }; }
   if (removed) {
     await recordBrandRevision({
-      ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "deleted",
-      stamp: await stampOf(gate.ownerId, r.id, "memory"), actor, summary: "Removed this context.",
+      ownerId: gate.ownerId, targetKind: "memory", targetId: memoryId, action: "deleted",
+      stamp: await stampOf(gate.ownerId, memoryId, "memory"), actor, summary: "Removed this context.",
     });
   }
   revalidatePath("/", "layout");
@@ -152,14 +187,23 @@ export async function deleteMemory(raw: unknown): Promise<{ ok: true } | { error
 export async function restoreMemory(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const r = raw as { id?: unknown };
   if (typeof r?.id !== "string") return { error: "Invalid request." };
+  const memoryId = r.id;
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => restoreMemoryInFrame(gate, memoryId));
+}
+
+async function restoreMemoryInFrame(
+  gate: { email: string; ownerId: string },
+  memoryId: string,
+): Promise<{ ok: true } | { error: string }> {
   const actor = await resolveActor(gate.email);
   let broughtBack = false;
   try {
     const { count } = await prisma.memory.updateMany({
       // 判官 P2-1:同上的镜像 —— 只有还在删除态的行才需要恢复。少了它,连按 Restore 会
       // 每次都 bump `updatedAt`,改动史里于是一行接一行 restored。
-      where: { id: r.id, ownerId: gate.ownerId, deletedAt: { not: null } },
+      where: { id: memoryId, ownerId: gate.ownerId, deletedAt: { not: null } },
       // 判官 P2-4:同上 —— 恢复不该顺手把已知作者抹掉。
       data: { deletedAt: null, ...actorStamp(actor) },
     });
@@ -167,7 +211,7 @@ export async function restoreMemory(raw: unknown): Promise<{ ok: true } | { erro
     if (!broughtBack) {
       // 回查真实状态:这一行已经在了 —— 重发的恢复,结果仍然是「已恢复」。
       const already = await prisma.memory.findFirst({
-        where: { id: r.id, ownerId: gate.ownerId, deletedAt: null },
+        where: { id: memoryId, ownerId: gate.ownerId, deletedAt: null },
         select: { id: true },
       });
       if (!already) return { error: "Memory not found." };
@@ -175,8 +219,8 @@ export async function restoreMemory(raw: unknown): Promise<{ ok: true } | { erro
   } catch { return { error: "Couldn't restore — please try again." }; }
   if (broughtBack) {
     await recordBrandRevision({
-      ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "restored",
-      stamp: await stampOf(gate.ownerId, r.id, "memory"), actor, summary: "Brought this context back.",
+      ownerId: gate.ownerId, targetKind: "memory", targetId: memoryId, action: "restored",
+      stamp: await stampOf(gate.ownerId, memoryId, "memory"), actor, summary: "Brought this context back.",
     });
   }
   revalidatePath("/", "layout");
@@ -190,7 +234,8 @@ export async function getBrandContextText(_ownerId?: string, brandId?: string | 
   // SECURITY: session-scoped, ignore any caller-supplied id (see listMemory above).
   const gate = await requireOwner();
   if ("error" in gate) return "";
-  return compileBrandContext(gate.ownerId, brandId ?? null, null);
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => compileBrandContext(gate.ownerId, brandId ?? null, null));
 }
 
 /** The one place Otto's brand context is assembled. NOT exported — this module is
@@ -366,6 +411,13 @@ export async function addBrandSource(
 ): Promise<{ ok: true; origin: "text"; originDetail: string; text: string } | { error: string }> {
   const r = raw as { sourceKind?: unknown; text?: unknown };
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => addBrandSourceInFrame(r));
+}
+
+async function addBrandSourceInFrame(
+  r: { sourceKind?: unknown; text?: unknown },
+): Promise<{ ok: true; origin: "text"; originDetail: string; text: string } | { error: string }> {
   if (r?.sourceKind !== "text") {
     return { error: "Only pasted text can be added right now." };
   }
@@ -382,6 +434,13 @@ export async function extractBrandDraft(
 ): Promise<{ ok: true; name: string; content: string } | { error: string }> {
   const r = raw as { name?: unknown; text?: unknown };
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => extractBrandDraftInFrame(r));
+}
+
+async function extractBrandDraftInFrame(
+  r: { name?: unknown; text?: unknown },
+): Promise<{ ok: true; name: string; content: string } | { error: string }> {
   const name = typeof r?.name === "string" ? r.name.trim().slice(0, 80) : "";
   const text = typeof r?.text === "string" ? r.text : "";
   if (!name) return { error: "Give this context a name." };
@@ -405,6 +464,18 @@ export async function saveBrandDraft(
   const originDetail = typeof r?.originDetail === "string" ? r.originDetail.slice(0, 200) : null;
 
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => saveBrandDraftInFrame(gate, section, name, content, origin, originDetail));
+}
+
+async function saveBrandDraftInFrame(
+  gate: { email: string; ownerId: string },
+  section: string,
+  name: string,
+  content: string,
+  origin: BrandContextOrigin | "manual",
+  originDetail: string | null,
+): Promise<{ ok: true; id: string } | { error: string }> {
   const actor = await resolveActor(gate.email);
   const id = newId();
   try {
@@ -429,9 +500,18 @@ export async function previewBrandContextEffect(
 ): Promise<{ ok: true; without: string; with: string } | { error: string }> {
   const r = raw as { id?: unknown };
   if (typeof r?.id !== "string") return { error: "Invalid request." };
+  const draftId = r.id;
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => previewBrandContextEffectInFrame(gate, draftId));
+}
+
+async function previewBrandContextEffectInFrame(
+  gate: { email: string; ownerId: string },
+  draftId: string,
+): Promise<{ ok: true; without: string; with: string } | { error: string }> {
   const draft = await prisma.memory.findFirst({
-    where: { id: r.id, ownerId: gate.ownerId, deletedAt: null, contextStatus: "Draft" },
+    where: { id: draftId, ownerId: gate.ownerId, deletedAt: null, contextStatus: "Draft" },
     select: { id: true },
   });
   if (!draft) return { error: "That draft is no longer here." };
@@ -448,7 +528,16 @@ export async function confirmBrandDraft(
 ): Promise<{ ok: true } | { error: string }> {
   const r = raw as { id?: unknown };
   if (typeof r?.id !== "string") return { error: "Invalid request." };
+  const memoryId = r.id;
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => confirmBrandDraftInFrame(gate, memoryId));
+}
+
+async function confirmBrandDraftInFrame(
+  gate: { email: string; ownerId: string },
+  memoryId: string,
+): Promise<{ ok: true } | { error: string }> {
   const actor = await resolveActor(gate.email);
   let confirmed = false;
   try {
@@ -456,7 +545,7 @@ export async function confirmBrandDraft(
     // 每被确认一次就 bump 一次 `updatedAt`,并且因为幂等键含 updatedAt,改动史里会多出
     // 一行又一行「Saved this context for Otto.」—— 一次保存被讲成三次。
     const { count } = await prisma.memory.updateMany({
-      where: { id: r.id, ownerId: gate.ownerId, deletedAt: null, contextStatus: "Draft" },
+      where: { id: memoryId, ownerId: gate.ownerId, deletedAt: null, contextStatus: "Draft" },
       data: { contextStatus: "Ready", ...actorStamp(actor) },
     });
     confirmed = count > 0;
@@ -464,7 +553,7 @@ export async function confirmBrandDraft(
       // 命中 0 行有两种可能:①这一行已经是 Ready —— 重发的确认,结果仍然是「已保存」,
       // 不是错误,也不该再写一行历史;②它真的不在了。
       const already = await prisma.memory.findFirst({
-        where: { id: r.id, ownerId: gate.ownerId, deletedAt: null, ...READY_ONLY },
+        where: { id: memoryId, ownerId: gate.ownerId, deletedAt: null, ...READY_ONLY },
         select: { id: true },
       });
       if (!already) return { error: "That draft is no longer here." };
@@ -472,8 +561,8 @@ export async function confirmBrandDraft(
   } catch { return { error: SAVE_FAILED }; }
   if (confirmed) {
     await recordBrandRevision({
-      ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "confirmed",
-      stamp: await stampOf(gate.ownerId, r.id, "memory"), actor,
+      ownerId: gate.ownerId, targetKind: "memory", targetId: memoryId, action: "confirmed",
+      stamp: await stampOf(gate.ownerId, memoryId, "memory"), actor,
       summary: "Saved this context for Otto.",
     });
   }
@@ -487,14 +576,23 @@ export async function discardBrandDraft(
 ): Promise<{ ok: true } | { error: string }> {
   const r = raw as { id?: unknown };
   if (typeof r?.id !== "string") return { error: "Invalid request." };
+  const memoryId = r.id;
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => discardBrandDraftInFrame(gate, memoryId));
+}
+
+async function discardBrandDraftInFrame(
+  gate: { email: string; ownerId: string },
+  memoryId: string,
+): Promise<{ ok: true } | { error: string }> {
   const actor = await resolveActor(gate.email);
   try {
     const { count } = await prisma.memory.updateMany({
       // 判官复验尾巴①:`deletedAt: null` 少不得。已经放弃过的行还留着 Draft 状态,
       // 少了它,重复调用会把 `deletedAt` 盖成新的时间,幂等键(含 updatedAt)也就跟着
       // 变 —— 改动史里于是一行接一行「Discarded this draft.」,一次放弃被讲成三次。
-      where: { id: r.id, ownerId: gate.ownerId, contextStatus: "Draft", deletedAt: null },
+      where: { id: memoryId, ownerId: gate.ownerId, contextStatus: "Draft", deletedAt: null },
       data: { deletedAt: new Date(), ...actorStamp(actor) },
     });
     if (!count) return { error: "That draft is no longer here." };
@@ -502,8 +600,8 @@ export async function discardBrandDraft(
   // 判官 P2-3:这是这一面**唯一**一个不写改动史的写动作。放弃草稿也是一次改动 ——
   // 「这里本来有一条,是谁在什么时候丢掉的」跟其他四个动作一样该答得出。
   await recordBrandRevision({
-    ownerId: gate.ownerId, targetKind: "memory", targetId: r.id, action: "discarded",
-    stamp: await stampOf(gate.ownerId, r.id, "memory"), actor,
+    ownerId: gate.ownerId, targetKind: "memory", targetId: memoryId, action: "discarded",
+    stamp: await stampOf(gate.ownerId, memoryId, "memory"), actor,
     summary: "Discarded this draft.",
   });
   revalidatePath("/", "layout");
