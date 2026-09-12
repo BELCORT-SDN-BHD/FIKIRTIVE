@@ -19,9 +19,23 @@ import { PUBLIC_MEDIA_TTL_MS, publicMediaPath } from "./media-public-link";
  * ── WHAT AN ANONYMOUS VIEWER MAY SEE, EXACTLY ────────────────────────────────────────────────
  * The token attests ONE (ownerId, postId) pair, so this module reads exactly that one post's
  * display fields and that one post's own media. There is no list, no search, no "recent", no
- * count, no name of the workspace, and no id of anything. The attested `ownerId` is a SCOPE on
- * every query and is never returned — the caller cannot learn whose post they are looking at
- * beyond what the caption itself says.
+ * count, no name of the workspace — the `SharePreviewView` this function RETURNS never carries
+ * `ownerId`/`postId`/any row id (`ownerId` scopes every query, it is not handed back).
+ *
+ * HONEST CORRECTION (SHARE-A11, docs/specs/share-preview.md 已冻结 · v1): an earlier version of
+ * this comment said "no id of anything … never returned" as if the VIEWER could not learn it
+ * either. That was wrong, and the wrongness was not academic — the token IS the URL (and, after
+ * SHARE-A6, the cookie) a client holds, and `signSharePreviewToken`/`signMediaToken`
+ * (`@fikirtive/token-crypto`) sign the payload, they do not encrypt it: it is plain
+ * `base64url(JSON)`. Anyone holding a link can decode it with nothing more than
+ * `Buffer.from(part, "base64url")` and read `ownerId`, `postId` (or, for a media token, the
+ * storage `key`) and the expiry, in cleartext. What is actually true, and the only thing this
+ * layering ever bought: the HMAC makes that payload TAMPER-EVIDENT (re-pointing it at another
+ * post or owner fails verification), and this function's own return value adds nothing further
+ * for a viewer to read off — it is not a second place those ids leak from. Confidentiality of
+ * WHICH workspace or post a link belongs to was never a property this design provides; if that
+ * ever becomes a requirement, it needs an encrypted token, a new key, and a migration — not a
+ * comment fix.
  *
  * ── EVERY REFUSAL IS ONE SHAPE ───────────────────────────────────────────────────────────────
  * Forged token, tampered token, expired token, revoked link, deleted post, a post that never
@@ -106,7 +120,8 @@ export async function loadSharePreview(
   const access = await verifySharePreview(token);
   if (!access) return UNAVAILABLE;
 
-  // ④ THE ONE POST. `ownerId` scopes the read and is never returned.
+  // ④ THE ONE POST. `ownerId` scopes the read; this function's OWN return value never carries it
+  // (see the header note on what that does and does not mean for a viewer holding the token).
   const post = await prisma.scheduledPost.findFirst({
     where: { id: access.postId, ownerId: access.ownerId, deletedAt: null },
     select: {
@@ -122,6 +137,7 @@ export async function loadSharePreview(
 
   const media = await previewMedia(
     access.ownerId,
+    access.rowId,
     post.media.map((m) => m.generationId),
   );
 
@@ -150,8 +166,13 @@ export async function loadSharePreview(
  *
  * Fails QUIET, never loud: with no `MEDIA_PROXY_SECRET` on this server there is nothing to sign,
  * so the list comes back empty and the page says the images are not being shown.
+ *
+ * `rowId` (SHARE-A7) is stamped into every media token this function signs, so
+ * `/api/media/pub/[token]` can ask "is THIS share row still live" — a revoke reaches media the
+ * client already loaded, not just the next page view. It is the row `verifySharePreview` already
+ * resolved for this exact call, never caller input.
  */
-async function previewMedia(ownerId: string, generationIds: string[]): Promise<SharePreviewMedia[]> {
+async function previewMedia(ownerId: string, rowId: string, generationIds: string[]): Promise<SharePreviewMedia[]> {
   const ids = generationIds.filter((id) => typeof id === "string" && id.length > 0);
   const secret = process.env.MEDIA_PROXY_SECRET ?? "";
   if (ids.length === 0 || !secret) return [];
@@ -175,7 +196,7 @@ async function previewMedia(ownerId: string, generationIds: string[]): Promise<S
     const ext = gen.asset.ext.toLowerCase();
     const key = storageKey(gen.asset.ownerId, gen.asset.contentHash, ext);
     out.push({
-      src: publicMediaPath(signMediaToken(ownerId, key, expMs, secret)),
+      src: publicMediaPath(signMediaToken(ownerId, key, expMs, secret, rowId)),
       kind: VIDEO_EXTS.has(ext) ? "video" : "image",
       width: gen.asset.width,
       height: gen.asset.height,

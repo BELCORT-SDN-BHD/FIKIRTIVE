@@ -40,12 +40,16 @@ async function renderBilling(account: { balance: number; reserved: number } | { 
     getOwnerSettings: async () => ({ spendCapCredits: 0 }),
     setOwnerSetting: async () => ({ ok: true as const }),
   }));
+  // FSE-202 — BillingLiveRefresh(正文)调用 useRouter();renderToStaticMarkup 不经过 Next 真的
+  // App Router,不 mock 就会抛 "expected app router to be mounted"。
+  vi.doMock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
   const { default: BillingPage } = await import("@/app/billing/page");
   const html = renderToStaticMarkup(await BillingPage({ searchParams: Promise.resolve({}) }));
   vi.doUnmock("@/lib/account-actions");
   vi.doUnmock("@/lib/billing-actions");
   vi.doUnmock("@/lib/spend-history-data");
   vi.doUnmock("@/lib/owner-settings-actions");
+  vi.doUnmock("next/navigation");
   return asReadText(html);
 }
 

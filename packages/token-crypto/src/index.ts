@@ -53,21 +53,48 @@ export function decryptToken(enc: string): string {
  * token owner's namespace, and streams the bytes back to Meta. No session, no
  * public bucket — owner-scoped, time-boxed, tamper-evident.
  *
- * Format:  base64url(JSON{o,k,exp}) + "." + base64url(HMAC-SHA256(payload)).
+ * Format:  base64url(JSON{o,k,exp[,s]}) + "." + base64url(HMAC-SHA256(payload)). `s` (SHARE-A7)
+ * is present only on a token minted for a share-preview post's media — see `signMediaToken`.
  * The secret is passed in by the caller (web route / worker) so this stays PURE
- * + unit-testable; both sides read the SAME env (MEDIA_PROXY_SECRET). */
+ * + unit-testable; both sides read the SAME env (MEDIA_PROXY_SECRET).
+ *
+ * HONEST NOTE (SHARE-A11, docs/specs/share-preview.md 已冻结 · v1): the base64url payload is
+ * SIGNED, not encrypted — HMAC only proves it was not tampered with, it does not hide the JSON
+ * inside. Anyone holding a token (this one or the share-preview token below) can decode that
+ * payload with nothing more than `atob`/`Buffer.from(…, "base64url")` and read `ownerId`, the
+ * storage `key` (or `postId`), and the expiry in plain text. Nothing in this file, or in the
+ * modules that call it, ever claimed the opposite about the SECRET — but a comment elsewhere in
+ * this codebase once claimed the opposite about what a VIEWER can learn from the token itself;
+ * that claim was wrong and has been corrected (`apps/web/lib/share-preview-view.ts`). */
 
-export type MediaTokenClaims = { ownerId: string; key: string; exp: number };
+export type MediaTokenClaims = { ownerId: string; key: string; exp: number; shareRowId?: string };
 
 function hmacB64url(payload: string, secret: string): string {
   return createHmac("sha256", secret).update(payload).digest("base64url");
 }
 
-/** Sign a media-proxy token. `expMs` is an absolute epoch-ms expiry (worker sets
- *  now + a TTL that comfortably covers Meta's async media pull, spec A5). */
-export function signMediaToken(ownerId: string, key: string, expMs: number, secret: string): string {
+/**
+ * Sign a media-proxy token. `expMs` is an absolute epoch-ms expiry (worker sets
+ * now + a TTL that comfortably covers Meta's async media pull, spec A5).
+ *
+ * `shareRowId` (SHARE-A7, docs/specs/share-preview.md 已冻结 · v1) is an OPTIONAL fourth claim,
+ * set ONLY by the seat-less share-preview page (`share-preview-view.ts`) — the publish worker and
+ * the materials panel's "Copy link" never pass it, so their tokens are byte-identical to before.
+ * When present it names the `SharePreviewToken` row this media belongs to, so the proxy route can
+ * ask "did the merchant turn this link off?" even though the media token's own HMAC is still
+ * within its (short, separate) expiry — a revoke must not wait out that expiry.
+ */
+export function signMediaToken(
+  ownerId: string,
+  key: string,
+  expMs: number,
+  secret: string,
+  shareRowId?: string,
+): string {
   if (!secret) throw new Error("MEDIA_PROXY_SECRET is not set");
-  const payload = Buffer.from(JSON.stringify({ o: ownerId, k: key, exp: expMs })).toString("base64url");
+  const claims: { o: string; k: string; exp: number; s?: string } = { o: ownerId, k: key, exp: expMs };
+  if (shareRowId) claims.s = shareRowId;
+  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
   return `${payload}.${hmacB64url(payload, secret)}`;
 }
 
@@ -87,15 +114,18 @@ export function verifyMediaToken(
   const a = Buffer.from(sig);
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-  let parsed: { o?: unknown; k?: unknown; exp?: unknown };
+  let parsed: { o?: unknown; k?: unknown; exp?: unknown; s?: unknown };
   try {
     parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
   } catch {
     return null;
   }
   if (typeof parsed.o !== "string" || typeof parsed.k !== "string" || typeof parsed.exp !== "number") return null;
+  if (parsed.s !== undefined && typeof parsed.s !== "string") return null;
   if (now > parsed.exp) return null;
-  return { ownerId: parsed.o, key: parsed.k, exp: parsed.exp };
+  return parsed.s !== undefined
+    ? { ownerId: parsed.o, key: parsed.k, exp: parsed.exp, shareRowId: parsed.s }
+    : { ownerId: parsed.o, key: parsed.k, exp: parsed.exp };
 }
 
 /* ── Signed share-preview token (B0-28, spec §2.2) ───────────────────────────

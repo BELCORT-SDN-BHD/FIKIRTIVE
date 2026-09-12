@@ -1959,6 +1959,9 @@ describe("MONEY-A9 披露先于扣费:billing 页价目区", () => {
       getOwnerSettings: async () => ({ spendCapCredits: 0 }),
       setOwnerSetting: async () => ({ ok: true as const }),
     }));
+    // FSE-202 — BillingLiveRefresh(正文)调用 useRouter();renderToStaticMarkup 不经过 Next 真的
+    // App Router,不 mock 就会抛 "expected app router to be mounted"。
+    vi.doMock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
     const { default: BillingPage } = await import("@/app/billing/page");
 
     const html = renderToStaticMarkup(await BillingPage({ searchParams: Promise.resolve({}) }));

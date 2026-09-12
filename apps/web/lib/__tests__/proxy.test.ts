@@ -1003,6 +1003,7 @@ const PUBLIC_APP_ROUTES = [
   "/privacy",
   "/privacy/bm",
   "/reset-password",
+  "/s/token",
   "/schedule/share-preview",
   "/signup",
   "/terms",

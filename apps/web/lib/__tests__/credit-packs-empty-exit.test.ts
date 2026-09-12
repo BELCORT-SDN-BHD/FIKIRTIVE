@@ -87,6 +87,9 @@ vi.mock("@/lib/auth-guard", async () => ({
 }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mocks.isImpersonating }));
 vi.mock("@/lib/stripe", () => ({ stripe: { prices: { list: mocks.pricesList } } }));
+// FSE-202 — BillingLiveRefresh(正文)调用 useRouter();renderToStaticMarkup 不经过 Next 真的
+// App Router,不 mock 就会抛 "expected app router to be mounted"。
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 
 const { default: BillingPage } = await import("@/app/billing/page");
 const realBilling = await vi.importActual<typeof import("@/lib/billing-actions")>("@/lib/billing-actions");

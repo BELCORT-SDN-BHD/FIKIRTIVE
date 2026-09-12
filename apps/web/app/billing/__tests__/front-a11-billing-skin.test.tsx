@@ -41,6 +41,11 @@ vi.mock("@/lib/owner-settings-actions", () => ({
   getOwnerSettings: mocks.getOwnerSettings,
   setOwnerSetting: mocks.setOwnerSetting,
 }));
+// FSE-202 — BillingLiveRefresh(正文)调用 useRouter();这份 harness 用 renderToStaticMarkup
+// 直接跑 server component,不经过 Next 真的 App Router,useRouter() 在那种环境下会抛
+// "expected app router to be mounted"。同样的 mock 已经是这个仓库测 renderToStaticMarkup
+// 页面里带 useRouter 客户端组件时的既有配方(见 crm-zero-channel-entry.test.ts)。
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 
 const { default: BillingPage } = await import("@/app/billing/page");
 
