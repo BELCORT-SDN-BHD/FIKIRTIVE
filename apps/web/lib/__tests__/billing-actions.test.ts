@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CREDIT_PACKS, CREDIT_PACK_CURRENCY } from "@fikirtive/core";
 
 const mockRequireOwner = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+// 切片①（#1376）：两个导出现在在 `runAsUser` 帧里跑，所以这个被整体替换掉的模块也得
+// 供出 `resolveUserPrincipal`（同 #464 B1 的既有做法）。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mockRequireOwner,
+  resolveUserPrincipal: (await import("./__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 const mockIsImpersonating = vi.fn();
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 

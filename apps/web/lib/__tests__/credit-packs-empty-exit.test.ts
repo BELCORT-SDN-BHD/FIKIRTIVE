@@ -79,7 +79,12 @@ vi.mock("@/lib/owner-settings-actions", () => ({
 vi.mock("@/lib/otto-client-actions", () => ({ setAdsAutonomy: mocks.setAdsAutonomy }));
 // The REAL listCreditPacks runs against these two below (importActual), so the shelf
 // verdict the pages read is the one the action really produces (#786).
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mocks.requireOwner }));
+// 切片①（#1376）：listCreditPacks / createTopupCheckout 现在在 `runAsUser` 帧里跑 ——
+// 整体替换掉的 auth-guard 必须连 `resolveUserPrincipal` 一起供出来（同 #464 B1 的既有做法）。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mocks.requireOwner,
+  resolveUserPrincipal: (await import("./__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mocks.isImpersonating }));
 vi.mock("@/lib/stripe", () => ({ stripe: { prices: { list: mocks.pricesList } } }));
 
