@@ -441,7 +441,7 @@ const mimeForExt = (ext: string) =>
 
 // A GENERATING row older than this is treated as crashed/stale (its worker died or
 // the message was redelivered past queue expiry). Kept ABOVE the realistic engine call
-// time and BELOW the GEN/REFGEN queue expiry (20m), so an actively-running gen is
+// time and BELOW the GEN/REFGEN queue expiry (40m), so an actively-running gen is
 // never failed closed by a duplicate delivery, but a truly stuck one eventually is.
 //
 // #796/#760 — WHY CONCURRENCY DOES NOT MOVE THIS NUMBER. Every clock below is measured from
@@ -453,28 +453,46 @@ const mimeForExt = (ext: string) =>
 // would have to cover max(batch) instead of max(job). That is a second reason not to use it.)
 // The invariants are pinned by clock-invariants.test.ts — change a number there too, or the
 // suite fails, which is the point.
-export const GEN_STALE_MS = 1000 * 60 * 18;
+//
+// #1386 (零排队①, spec creation-engine.md §5 2026-09-12 场⑦, #961) — WHY THIS NUMBER GREW
+// FROM 18m TO 35m. `startedAt` is written at the QUEUED→GENERATING claim, but the paid POST
+// this window is meant to bound only STARTS once the request clears `providerRequestGate`
+// (@fikirtive/generation) — an in-process semaphore gen/refgen/understand share (default 6
+// slots). #961 proved that once WORKER_ROLE=wait's concurrency defaults are live
+// (apps/worker/src/plan.ts WAIT_DEFAULTS), that gate queue alone can legitimately run ~20
+// minutes before a job's provider call even begins, on top of its own ~10m round — a healthy,
+// merely-QUEUEING task, not a stuck one. The old 18m line counted that queueing time as if it
+// were the engine hanging, so it — and the pg-boss redelivery this check reacts to — failed the
+// job closed and refunded a merchant whose generation was still coming, while the founder
+// still absorbed the engine's real bill. Queueing time is not "stuck" — only a stall AFTER the
+// provider call has genuinely begun should read as one. 35m is derived (not guessed) to clear
+// the worst QUEUEING known today with room to spare: see clock-invariants.test.ts's
+// `worstQueueWaitMs` for the exact math. Reserving that queueing time widens who this window
+// waits for; the money-safety floor stays the same, just later. Re-derive before widening
+// wait-role concurrency further.
+export const GEN_STALE_MS = 1000 * 60 * 35;
 // The PROACTIVE reaper (reapStaleGenJobs) runs on its OWN timer, independent of pg-boss
 // redelivery — so its cutoff must exceed the gen-queue expiry (GEN_QUEUE_POLICY.expireInSeconds
-// = 20m). Otherwise it could fail-close a long (18–20m) engine call that pg-boss still considers
-// alive, refunding the merchant + eating the founder's engine cost. The on-redelivery stale path
-// keeps GEN_STALE_MS (a redelivery already implies the 20m expiry has passed).
-export const GEN_REAP_MS = 1000 * 60 * 25;
+// = 40m). Otherwise it could fail-close a long engine call (including its gate queueing) that
+// pg-boss still considers alive, refunding the merchant + eating the founder's engine cost. The
+// on-redelivery stale path keeps GEN_STALE_MS (a redelivery already implies the 40m expiry has
+// passed) — #1386 widened both together, see GEN_STALE_MS's comment for the derivation.
+export const GEN_REAP_MS = 1000 * 60 * 45;
 // A job that has sat in QUEUED this long was never claimed by a worker (worker down / message
 // lost). Fail it closed and refund — the credit hold would otherwise leak forever and the
 // cowork chat spins on a stuck "making this…" indefinitely (audit GEN-6 / P0-11).
 // Like GEN_REAP_MS, this proactive cutoff MUST exceed the gen-queue expiry (GEN_QUEUE_POLICY
-// .expireInSeconds = 20m) plus retry backoff. A job can legitimately sit QUEUED past a few
-// minutes while the worker is saturated (pg-boss still owns the message and will deliver it)
-// or while a recoverable pre-charge retry is rescheduled (status reset to QUEUED, original
+// .expireInSeconds = 40m, #1386) plus retry backoff. A job can legitimately sit QUEUED past a
+// few minutes while the worker is saturated (pg-boss still owns the message and will deliver
+// it) or while a recoverable pre-charge retry is rescheduled (status reset to QUEUED, original
 // createdAt kept). At 10m we fail-closed + refunded jobs pg-boss would still deliver — a false
-// "you weren't charged" that pushes the user to resubmit a duplicate paid job. 25m clears that.
+// "you weren't charged" that pushes the user to resubmit a duplicate paid job. 45m clears that.
 //
 // #796: concurrency makes this cutoff SAFER, never tighter — the queue drains N times faster,
-// so a job that is still QUEUED at 25 minutes is even more certainly a lost message than it was
+// so a job that is still QUEUED at 45 minutes is even more certainly a lost message than it was
 // under the serial queue. Kept where it is: the F07 pg-boss liveness check below, not this
 // wall-clock number, is what actually protects a job that is merely waiting its turn.
-export const GEN_QUEUED_REAP_MS = 1000 * 60 * 25;
+export const GEN_QUEUED_REAP_MS = 1000 * 60 * 45;
 // #782 r13 (judge r12 P1-F1) — how long a DONE row is allowed to point at nothing before the
 // reaper calls it what it is.
 //
