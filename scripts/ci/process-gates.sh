@@ -212,7 +212,24 @@ m2() {
     # ——只有声明行才是归属;验收表行里引用别家编号(如 media-durability 引 GATE-A6)是
     # 合法交叉引用,不算占用(2026-09-12 冻结五规格时的误报,见 PR #1373)。
     # 无声明行的老档(如 wave2-shell)退回旧式扫表,行为不变。
-    local prefix prefix_decl
+    # 判官加固(2026-09-12):①声明行在但抽不出前缀=红,不许静默退检;②声明前缀必须与
+    # 验收表第一列的自有编号同源,否则 M3 仍可张冠李戴;③声明行缩进/无 > 的写法也认。
+    local prefix prefix_decl decl_prefix bad_col
+    prefix_decl="$(grep -m1 -E '^[[:space:]]*>?[[:space:]]*规格前缀(:|：)' "$spec" || true)"
+    decl_prefix=""
+    if [[ -n "$prefix_decl" ]]; then
+      decl_prefix="$(printf '%s\n' "$prefix_decl" | grep -oE '[A-Z][A-Z0-9]{1,15}' | head -1 || true)"
+      if [[ -z "$decl_prefix" ]]; then
+        echo "M2 红:$spec 有「规格前缀」声明行但抽不出合法前缀(≥2 位大写)——声明行在就必须读得出归属,不许静默退检。" >&2
+        bad=1
+      else
+        bad_col="$(grep -E '^\|' "$spec" | sed -E 's/^\|[[:space:]]*//' | grep -oE '^[A-Z][A-Z0-9]{1,15}-A[0-9]+' | sed 's/-A[0-9]*$//' | sort -u | grep -vx "$decl_prefix" || true)"
+        if [[ -n "$bad_col" ]]; then
+          echo "M2 红:$spec 声明前缀 $decl_prefix,但验收表第一列还用了 $(printf '%s' "$bad_col" | tr '\n' ' ')——声明与表必须同源,否则 M3 张冠李戴。" >&2
+          bad=1
+        fi
+      fi
+    fi
     while IFS= read -r prefix; do
       [[ -n "$prefix" ]] || continue
       local i
@@ -227,9 +244,8 @@ m2() {
       seen_prefix_names+=("$prefix")
       seen_prefix_specs+=("$spec")
     done < <(
-      prefix_decl="$(grep -m1 -E '^>[[:space:]]*规格前缀(:|：)' "$spec" || true)"
-      if [[ -n "$prefix_decl" ]]; then
-        printf '%s\n' "$prefix_decl" | grep -oE '[A-Z][A-Z0-9]{1,15}' | head -1
+      if [[ -n "$decl_prefix" ]]; then
+        printf '%s\n' "$decl_prefix"
       else
         grep -E '^\|' "$spec" | grep -oE '[A-Z][A-Z0-9]{1,15}-A[0-9]+' | sed 's/-A[0-9]*$//' | sort -u
       fi
