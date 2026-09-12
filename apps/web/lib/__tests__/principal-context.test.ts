@@ -104,6 +104,7 @@ const { requireOwner, bootstrapPersonalOrg } = await import("@/lib/auth-guard");
 const inboxGateway = await import("@/lib/customer-inbox-gateway");
 const { prisma } = await import("@fikirtive/db");
 const { getPrincipal, runAsSystem } = await import("@fikirtive/db/principal");
+const { canonicalGrantEmail } = await import("@fikirtive/core");
 
 /** Every user id this file created, so afterAll can delete exactly its own rows. */
 const seededUserIds = new Set<string>();
@@ -296,6 +297,17 @@ afterAll(async () => {
     }
   };
   await purge((orgId) => prisma.creditLedger.deleteMany({ where: { orgId } }));
+  // #1350: this file uses the SAME three fixed emails on every run, and bootstrapPersonalOrg's
+  // welcome grant is claimed via SignupGrantClaim keyed by canonicalEmail (auth-guard.ts, SIGNIN-
+  // A17) — a row that outlives everything purged below. Left uncleaned, a second run against the
+  // same non-fresh local *_test database finds the claim already taken, bootstrapPersonalOrg's
+  // grant no-ops, and "attributes the beta grant in the ledger" fails to find one. CI is unaffected
+  // (fresh database per run) but this is what makes the suite idempotent on a reused local DB too.
+  try {
+    await prisma.signupGrantClaim.deleteMany({
+      where: { canonicalEmail: { in: ALL_EMAILS.map(canonicalGrantEmail) } },
+    });
+  } catch { /* best-effort cleanup */ }
   await purge((orgId) => prisma.creditAccount.deleteMany({ where: { orgId } }));
   await purge((orgId) => prisma.membership.deleteMany({ where: { orgId } }));
   await purge((orgId) => prisma.organization.deleteMany({ where: { id: orgId } }));
