@@ -53,7 +53,7 @@
 | MEDIA-A5 | 打开 `docs/runbooks/media-restore.md` 末尾的演练记录 | 有一行完整留证：日期 / 执行者 / 对象键 / 实测 RTO / 命令输出片段——与 #870 数据库演练同规格 |
 | MEDIA-A6 | 演练前后各对该产物所属租户的 `CreditLedger` 拍一次快照并比对 | 逐笔一致：无新增 RESERVE／SETTLE／REFUND，商家未被二次扣费——钱守恒 |
 | MEDIA-A7 | 对生产桶只做只读核验（版本历史状态 + lifecycle 档位），不删任何对象 | 核验输出显示已启用，且演练记录里写明「生产桶本次零删除」 |
-| MEDIA-A8 | Founder 打开 `docs/specs/beta-gate.md` GATE-A6，念那句判定 | 由 MEDIA-A4 与 MEDIA-A5 的证据满足；beta-gate.md §5 变更登记里有一行指向本规格（不改其冻结正文） |
+| MEDIA-A8 | Founder 打开 `docs/specs/beta-gate.md` GATE-A6，念那句判定 | 由 MEDIA-A4 与 MEDIA-A5 的证据满足；beta-gate.md §5 变更登记里有一行指向本规格（beta-gate 现为草稿，随场⑥冻结；本规格不改它的正文条款） |
 | MEDIA-A9 | 在演练里故意用一个不属于目标租户的对象键试恢复 | 手册要求的前缀核对拦住它，操作停在核对那一步；手册正文写死「只按单键恢复，禁止整桶回滚」 |
 
 ## 3. 不做（非目标；写明为什么和触发条件，防「遗漏」误会）

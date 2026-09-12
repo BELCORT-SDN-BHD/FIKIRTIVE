@@ -55,7 +55,7 @@
 
 ## 3. 不做（非目标；写明为什么和触发条件）
 
-- **不做 `SENTRY_DSN` 的启动探测式外呼**，只做形状正则（**Founder 已裁 2026-09-12（场⑦）**，实现级）。理由：本票的根因是「格式合法 ≠ 是 Sentry 地址」，形状正则正好堵住；探测会把开机可用性押在第三方，一次 Sentry 抖动就变成我们起不来。触发再议：真出现「形状对但项目写错」的事故。
+- **不做 `SENTRY_DSN` 的启动探测式外呼**，只做形状正则（**实现级立场，编排者定** —— 场⑦未呈 Founder，因不改商家可见行为与钱路；异议可在 S5 提出）。理由：本票的根因是「格式合法 ≠ 是 Sentry 地址」，形状正则正好堵住；探测会把开机可用性押在第三方，一次 Sentry 抖动就变成我们起不来。触发再议：真出现「形状对但项目写错」的事故。
 - **不新增任何「允许生产跑 mock」的豁免开关**。Founder 已裁 2026-09-12（#1359 场②）；新开关也会撞机器闸 M4。
 - **不改 Stripe webhook 的 200 契约**，重试由巡检承担，不靠 Stripe 重投。
 - **不动 staging 的隔离设计与 Railway 变量**：外部状态，另需 Founder 对该次动作授权（见 §4）。
@@ -63,7 +63,7 @@
 
 ## 4. 异议栏
 
-- **最大的风险：「生产」只有 `NODE_ENV === "production"` 这一个信号。** staging 若也以 `NODE_ENV=production` 运行（Railway 上很常见，仓库无法证明），本规格落地当天 staging 的 `$0 mock` 演示会被同一道闸拒掉——Founder 裁定里「离线演示走 staging」的退路当场失效，而发现时点通常是 worker 起不来。落地前必须按 `docs/runbooks/staging.md` 的 preflight 第 5 条现场核一次 staging 的 `NODE_ENV` 与 `GENERATION_PROVIDER`，结果写进 §5 变更登记；本规格拒绝用「新增豁免开关」来换这条退路（那正是本票要消灭的东西）。
+- **最大的风险：「生产」只有 `NODE_ENV === "production"` 这一个信号。** staging 若也以 `NODE_ENV=production` 运行（Railway 上很常见，仓库无法证明），本规格落地当天 staging 的 `$0 mock` 演示会被同一道闸拒掉——Founder 裁定里「离线演示走 staging」的退路当场失效，而发现时点通常是 worker 起不来。落地前必须现场核一次 staging 的 `NODE_ENV` 与 `GENERATION_PROVIDER`（`docs/runbooks/staging.md` preflight 的花费边界条目今天只覆盖 provider，不含 `NODE_ENV`——核法：`railway variables` 只读取键值，照该手册的 target 确认纪律执行），结果写进 §5 变更登记；本规格拒绝用「新增豁免开关」来换这条退路（那正是本票要消灭的东西）。
 
 ## 5. 变更登记（冻结后的中途想法只进这里，下次 S5 批量裁决；不当场执行）
 

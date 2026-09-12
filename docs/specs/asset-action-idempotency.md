@@ -34,7 +34,7 @@
    - **改动三（跨终态 once-ever）——索引覆盖全部状态，Founder 已裁 2026-09-12（场⑦）**：复用查询 `gen-actions.ts:807 / :1069` 今天只认 `status in ["QUEUED","GENERATING"]`；数据库侧 `20260612140000_genjob_idempotency` 的唯一索引带同样的状态谓词。本规格把 `asset:` 族的复用查询放开状态限制（任何状态都命中原单），并新增一条跨终态唯一索引，形状照 `20260617000000_genjob_cowork_idempotency_once`：`UNIQUE ("ownerId","projectId","idempotencyKey") WHERE "idempotencyKey" LIKE 'asset:%'`。
    - 迁移前先核历史是否已有同 owner+project+key 的多行（未公测，预期为零）；有则迁移**报错停下**，不静默丢行。fresh-database 验证必须过。
    - 旧口径同步作废：`gen-actions.ts:430-432` 那段「终态之后的重试是新的一次购买」的注释与 `apps/web/lib/__tests__/asset-idempotency-ledger.test.ts:288-316` 的绿测随施工改写（`:226`「换一张底图 ⇒ 各自独立的一单」仍然成立，不动）。
-5. **碰不碰钱路（credits / 计费）？碰则幂等键是什么？** 碰。重复 RESERVE 就是重复扣商家余额。幂等键 = `asset:<op>:sha256(op + 锚点 + 意图编号 + 规范化请求体)`，由服务端算、调用方不许自带（`gen-actions.ts:440-443` 的拒收纪律不变）。命中原单一律**不新建 GenJob、不调 reserveCredits**，直接返回原单。价格、单价、计费口径一个字不动；账本单一权威仍在 `packages/core/src/spend.ts`。
+5. **碰不碰钱路（credits / 计费）？碰则幂等键是什么？** 碰。重复 RESERVE 就是重复扣商家余额。幂等键 = `asset:<op>:sha256(op + 锚点 + 意图编号 + 规范化请求体)`（示意；精确构造以 `batch-idempotency.ts` 现行实现为准——含域分隔与长度前缀，施工勿照字面重算），由服务端算、调用方不许自带（`gen-actions.ts:440-443` 的拒收纪律不变）。命中原单一律**不新建 GenJob、不调 reserveCredits**，直接返回原单。价格、单价、计费口径一个字不动；账本单一权威仍在 `packages/core/src/spend.ts`。
 6. **权限与租户边界是什么？** 租户身份只来自服务端会话（`ownerId` / `projectId`），客户端送来的任何编号都不作数。锚点归属检查就是这条边界的落地：客户端给的 `assetAnchorGenerationId` 必须在当前租户内查得到，否则 fail closed。复用查询与新唯一索引都以 `(ownerId, projectId, idempotencyKey)` 为范围，跨租户不可能撞键、也不可能读到别人的单。双租户测试覆盖 ASSET-A1。
 7. **参考对照：抄哪家？** 不适用：加固类规格，无 UI 参照（不改版面、不加按钮）。工程惯例参照 Stripe 的 idempotency key：键由调用方按「一次意图」生成，同键重放永远拿回第一次的结果。
 8. **胃口：轻／中／重挡，为什么？** 重挡：碰钱路、带数据库迁移、且改变商家可见行为（原本会扣第二次钱的重放不再扣）。胃口两天（含迁移、双租户测试与一条端到端旅程）。超过就先砍 `template` 一支（只做 DetailPanel 三个动作），其余不砍。
