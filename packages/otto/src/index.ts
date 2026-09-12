@@ -47,6 +47,9 @@ export { ottoSimpleModeBlock } from "./instructions.js";
 // web gate① child-card minting layer (storyboard-gate1-actions), which prices minted
 // children through the SAME path as a normal propose. Types travel with it.
 export { buildProposeCard } from "./skills/propose.js";
+// FSE-204 —— 付费前尺寸闸的唯一判定,四入口(画布确认卡 / Library 动作 / Otto 主动 /
+// 分镜挂图)共用同一次调用(`gen-actions.ts` 的 `startGen` 是它们共同的建单+预扣权威)。
+export { assertPrePaymentReferenceSizeGate } from "./skills/reference-upscale-gate.js";
 // executeGenerate —— 花钱那一步**技能自己的身体**(`generate` 工具的 execute)。
 // 暴露出来只为一件事:`ottoApprove` 那条路的行为测试要在恢复轮里跑**真的这一步**,
 // 而不是让替身替它作答 —— FSE-012 那道报价版本闸就长在这里面(creation-engine.md §5 :170),

@@ -1137,7 +1137,11 @@ describe("sharePostPreview (B0-28, owner-scoped mint — token row = authority l
       expect.objectContaining({ where: expect.objectContaining({ id: "p1", ownerId: OWNER }) }),
     );
     expect(verifySharePreviewToken(res.token, SECRET)).toMatchObject({ ownerId: OWNER, postId: "p1" });
-    expect(res.url).toContain("/schedule/share-preview?t=");
+    // SHARE-A6 (docs/specs/share-preview.md 已冻结 · v1) — the clean entry, no query string; the
+    // token still rides for one hop, but `/s/[token]` converts it to a cookie before anything
+    // renders (`app/s/[token]/route.ts`).
+    expect(res.url).toContain(`/s/${encodeURIComponent(res.token)}`);
+    expect(res.url).not.toContain("?t=");
     // ONE row per mint (spec §2.2 "内部写一行 token 记录"): owner-scoped, digest = sha256(token)
     // (never the token itself), expiry mirrors the token's.
     expect(mockShareTokenCreate).toHaveBeenCalledTimes(1);

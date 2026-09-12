@@ -22,6 +22,14 @@
  *   - treats a MISSING backup target / DATABASE_URL as a FAILURE, not a benign skip
  *     (judge r1 P1-2): a service whose only job is to back up, that finds itself
  *     unconfigured, has failed — a green run there would be "no dump, no alarm".
+ *   - RELY-A10 (issue #1384): runs the SAME boot-time env contract as the worker main
+ *     process (`assertWorkerEnv`), so a misconfigured production cron service refuses
+ *     to start and NAMES the missing variable, instead of running, doing nothing, and
+ *     exiting 0 — the "configured but never actually ran" shape a green cron history
+ *     cannot distinguish from a real night's backup. Passed `{ process: "backup-cron" }`
+ *     so variables cron never reads (GENERATION_PROVIDER — this service never touches
+ *     the generation engine) are not demanded of it; see `cronExempt` in
+ *     packages/core/src/env-contract.ts for why that matters here specifically.
  *
  * Deploy: docs/runbooks/db-backup.md §"Railway cron".
  * Manual: `node apps/worker/dist/backup-cron.js` inside the worker image.
@@ -29,6 +37,12 @@
 import * as Sentry from "@sentry/node";
 import { prisma } from "@fikirtive/db";
 import { runBackupOnce, backupTriggerMode } from "./db-backup.js";
+import { assertWorkerEnv } from "./boot-env.js";
+
+// RELY-A10 — must run before anything else touches env-derived config (Sentry.init included):
+// a production cron service that is missing a required variable should never get far enough
+// to attempt a backup at all. assertWorkerEnv exits the process itself on a hard failure.
+assertWorkerEnv(process.env, { process: "backup-cron" });
 
 if (process.env.SENTRY_DSN) {
   Sentry.init({ dsn: process.env.SENTRY_DSN, environment: process.env.NODE_ENV || "production" });

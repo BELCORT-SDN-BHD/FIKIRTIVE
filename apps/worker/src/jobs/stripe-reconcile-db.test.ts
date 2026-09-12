@@ -59,8 +59,11 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   // 哨兵现在会把**全库**还没了结的观察行都捞出来继续追踪(MONEY-A12)—— 那正是它要做的事,
-  // 但也意味着上一个用例留下的行会跟进下一个用例。逐个用例清掉这三种行,隔离才成立。
-  await prisma.actionEvent.deleteMany({ where: { type: { in: [RECONCILE_OBSERVED_TYPE, RECONCILE_CLOSED_TYPE, "credits.reconcile.alerted"] } } });
+  // 但也意味着上一个用例留下的行会跟进下一个用例。逐个用例清掉这几种行,隔离才成立。
+  // RELY-A9 的两个 credits.purchase.* 类型同理:retryUndeliveredPurchaseAlerts 同样是全库扫描。
+  await prisma.actionEvent.deleteMany({
+    where: { type: { in: [RECONCILE_OBSERVED_TYPE, RECONCILE_CLOSED_TYPE, "credits.reconcile.alerted", "credits.purchase.bad", "credits.purchase.packMismatch"] } },
+  });
   orgId = `org_${randomUUID()}`;
   sessionId = `cs_test_${randomUUID().replace(/-/g, "")}`;
   await prisma.organization.create({ data: { id: orgId } });
@@ -584,5 +587,121 @@ describe("钱路 M1-b ①:metadata 缺 orgId 的异常形状", () => {
       errorSpy.mockRestore();
     }
     expect(m.founderAlert).toHaveBeenCalledTimes(1);
+  }, DB_CASE_TIMEOUT_MS);
+});
+
+/**
+ * RELY-A9(issue #1384,规格 §2)—— 找回 stripe webhook 首投时「一条通道都没送出去」的两条
+ * 「钱进了账、credits 发不出去」告警(credits.purchase.bad / credits.purchase.packMismatch)。
+ *
+ * 这一步刻意**不传 client**:STRIPE_SECRET_KEY 在这个测试进程里不会被设置,所以
+ * `reconcileStripePayments` 会走 `skipped` 早退 —— 正好用来证明这一步与 Stripe 对账完全独立
+ * (它读写的是 ActionEvent,不碰 Stripe API)。
+ */
+describe("RELY-A9 §2 — Stripe webhook 未送达的购买告警,由这里主动找回重试", () => {
+  beforeEach(async () => {
+    delete process.env.STRIPE_SECRET_KEY;
+    // 两条分支都可能把审计行挂在 "founder" 名下(如同 webhook 路由的 credits.purchase.bad 分支)。
+    await prisma.organization.upsert({ where: { id: "founder" }, update: {}, create: { id: "founder" } });
+  });
+
+  /** 一行「未送达」的购买告警审计行,形状与 apps/web/app/api/stripe/webhook/route.ts 写下的逐字相同。 */
+  async function seedUndeliveredPurchaseAlert(opts: {
+    id: string;
+    type: "credits.purchase.bad" | "credits.purchase.packMismatch";
+    ownerId?: string;
+    delivered?: boolean;
+    withAlert?: boolean;
+  }) {
+    await prisma.actionEvent.create({
+      data: {
+        id: opts.id,
+        ownerId: opts.ownerId ?? "founder",
+        type: opts.type,
+        payload: {
+          eventId: `evt_${opts.id}`,
+          ...(opts.withAlert === false
+            ? {}
+            : {
+                alert: {
+                  key: opts.type === "credits.purchase.bad" ? "stripe.paid_session_unusable_metadata" : "stripe.paid_session_pack_mismatch",
+                  title: "A Stripe payment succeeded but we cannot tell which merchant it belongs to",
+                  action: "Grant the credits by hand.",
+                  context: { stripeEventId: `evt_${opts.id}` },
+                },
+              }),
+          alertDelivered: opts.delivered ?? false,
+        },
+      },
+    });
+  }
+
+  it("送达之后翻 alertDelivered=true,不再重复找回,且不依赖 STRIPE_SECRET_KEY 是否配置", async () => {
+    await seedUndeliveredPurchaseAlert({ id: `stripe_bad_metadata:evt_${randomUUID()}`, type: "credits.purchase.bad" });
+    m.founderAlert.mockResolvedValue([{ channel: "email", status: "sent" }]);
+
+    const result = await reconcileStripePayments({ now: NOW }); // 没传 client
+    expect(result.skipped, "证明这一步真的独立于 Stripe 对账那半").toMatch(/STRIPE_SECRET_KEY/);
+    expect(result.purchaseAlertsRetried).toBe(1);
+    expect(m.founderAlert).toHaveBeenCalledTimes(1);
+    expect(m.founderAlert.mock.calls[0]![1]).toMatchObject({ repeat: false });
+
+    const rows = await prisma.actionEvent.findMany({ where: { type: "credits.purchase.bad" } });
+    expect(rows).toHaveLength(1);
+    expect((rows[0]!.payload as { alertDelivered?: unknown }).alertDelivered).toBe(true);
+
+    // 已经送达过 ⇒ 下一趟不再找回它。
+    m.founderAlert.mockClear();
+    const second = await reconcileStripePayments({ now: NOW });
+    expect(second.purchaseAlertsRetried).toBe(0);
+    expect(m.founderAlert).not.toHaveBeenCalled();
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("还是没送达 ⇒ 留着 alertDelivered:false,下一趟巡检原样再试", async () => {
+    await seedUndeliveredPurchaseAlert({ id: `stripe_packcheck:cs_${randomUUID()}`, type: "credits.purchase.packMismatch" });
+    // RELY-A9 的判据是「至少一条通道 status==='sent'」,与拒付分支同款(含 Sentry)——所以这里
+    // 三条通道都要没送到,才是「真的没送达」的形状。
+    m.founderAlert.mockResolvedValue([
+      { channel: "sentry", status: "failed", reason: "no dsn" },
+      { channel: "email", status: "failed", reason: "resend 500" },
+      { channel: "telegram", status: "skipped" },
+    ]);
+
+    const result = await reconcileStripePayments({ now: NOW });
+    expect(result.purchaseAlertsRetried).toBe(0);
+
+    const rows = await prisma.actionEvent.findMany({ where: { type: "credits.purchase.packMismatch" } });
+    expect((rows[0]!.payload as { alertDelivered?: unknown }).alertDelivered).toBe(false);
+
+    // 下一趟(全渠道送达了)⇒ 找回并翻真。
+    m.founderAlert.mockResolvedValue([{ channel: "telegram", status: "sent" }]);
+    const second = await reconcileStripePayments({ now: NOW });
+    expect(second.purchaseAlertsRetried).toBe(1);
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("已经送达过的行(alertDelivered:true)不会被重新找回、不重复报警", async () => {
+    await seedUndeliveredPurchaseAlert({ id: `stripe_bad_metadata:evt_${randomUUID()}`, type: "credits.purchase.bad", delivered: true });
+
+    const result = await reconcileStripePayments({ now: NOW });
+    expect(result.purchaseAlertsRetried).toBe(0);
+    expect(m.founderAlert).not.toHaveBeenCalled();
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("老形状(没有 payload.alert)的未送达行被跳过 —— 不瞎编报警内容", async () => {
+    await seedUndeliveredPurchaseAlert({ id: `stripe_bad_metadata:evt_${randomUUID()}`, type: "credits.purchase.bad", withAlert: false });
+
+    const result = await reconcileStripePayments({ now: NOW });
+    expect(result.purchaseAlertsRetried).toBe(0);
+    expect(m.founderAlert).not.toHaveBeenCalled();
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("同一轮里两个不同的未送达行都被找回(bad-metadata 与 pack-mismatch 各一条)", async () => {
+    await seedUndeliveredPurchaseAlert({ id: `stripe_bad_metadata:evt_${randomUUID()}`, type: "credits.purchase.bad" });
+    await seedUndeliveredPurchaseAlert({ id: `stripe_packcheck:cs_${randomUUID()}`, type: "credits.purchase.packMismatch" });
+    m.founderAlert.mockResolvedValue([{ channel: "email", status: "sent" }]);
+
+    const result = await reconcileStripePayments({ now: NOW });
+    expect(result.purchaseAlertsRetried).toBe(2);
+    expect(m.founderAlert).toHaveBeenCalledTimes(2);
   }, DB_CASE_TIMEOUT_MS);
 });

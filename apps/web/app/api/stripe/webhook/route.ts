@@ -37,35 +37,63 @@ export async function POST(req: NextRequest): Promise<Response> {
         const orgId = typeof session.metadata?.orgId === "string" ? session.metadata.orgId : "";
         const credits = Number(session.metadata?.credits);
         if (!orgId || !credits || credits <= 0 || !Number.isInteger(credits)) {
-          await prisma.actionEvent.create({ data: { id: newId(), ownerId: "founder", type: "credits.purchase.bad", payload: { eventId: event.id, metadata: session.metadata ?? null } } }).catch(() => {});
           // 整顿 C1a:这条分支是这个文件里**唯一**一条「真钱进账、我们不知道该给谁」却
           // 只写审计不叫人的路。它下面那两条(async_payment_failed / dispute·refund)从第一天
           // 起就报警,而这一条更硬 —— 那两条是钱没来或钱被拉回,这一条是**商家已经付了款**,
           // 而 metadata 坏掉让我们发不出 credits。对齐它们,并且升到 founderAlert(需要人工
           // 补发,只进 Sentry 等于没人会去做)。
           //
+          // RELY-A9(issue #1384)—— 送达确认,形状与下面 dispute/refund 分支的
+          // alertReceiptUndelivered/markAlertReceiptDelivered 同款:审计行的主键由 event.id
+          // 派生,payload 里带着完整的 alert(key/title/action/context)以及 alertDelivered
+          // 回执。这个 handler 永远回 200,Stripe 不会因此重投同一个事件 —— 所以「下一趟重试」
+          // 主要靠 apps/worker/src/jobs/stripe-reconcile.ts 的周期扫描(retryUndeliveredPurchaseAlerts,
+          // 按 alertDelivered===false 找回这一行,再喊一次),这里的 P2002 分支只是 Stripe 真的
+          // 重投同一事件时的额外一层(不是唯一出路)。
+          const auditId = typeof event.id === "string" && event.id ? `stripe_bad_metadata:${event.id}` : newId();
+          const alert = {
+            key: "stripe.paid_session_unusable_metadata",
+            title: "A Stripe payment succeeded but we cannot tell which merchant it belongs to",
+            action:
+              "Grant the credits by hand: open the session in the Stripe dashboard, find the buyer, then add the credits to their org.",
+            context: {
+              stripeEventId: event.id,
+              stripeSessionId: typeof session.id === "string" ? session.id : null,
+              paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : null,
+              amountTotal: typeof session.amount_total === "number" ? session.amount_total : null,
+              currency: typeof session.currency === "string" ? session.currency : null,
+              orgIdInMetadata: orgId || null,
+              creditsInMetadata: Number.isFinite(credits) ? credits : null,
+            },
+          };
+          let mustAlert = true;
+          try {
+            await prisma.actionEvent.create({
+              data: { id: auditId, ownerId: "founder", type: "credits.purchase.bad", payload: { eventId: event.id, metadata: session.metadata ?? null, alert, alertDelivered: false } },
+            });
+          } catch (e) {
+            const duplicate = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
+            if (duplicate) mustAlert = await alertReceiptUndelivered(auditId);
+            else console.error(`[stripe] ${event.type} bad-metadata audit write failed (event=${event.id}); alerting anyway:`, e);
+          }
           // 报警绝不决定响应码:一个会抛的报警通道会让这个 handler 返回非 2xx,把 Stripe 推进
           // 一场发生在钱事件上的无限重试。派发本身已经承诺永不抛(dispatchFounderAlert 的契约),
           // 这里再包一层 try —— 与下面 async_payment_failed 那条一模一样的理由:200 契约不许
           // 依赖别的模块守不守自己的承诺。
-          try {
-            await founderAlert({
-              key: "stripe.paid_session_unusable_metadata",
-              title: "A Stripe payment succeeded but we cannot tell which merchant it belongs to",
-              action:
-                "Grant the credits by hand: open the session in the Stripe dashboard, find the buyer, then add the credits to their org. Nothing automatic will retry this — Stripe was answered 200 on purpose so it stops redelivering.",
-              context: {
-                stripeEventId: event.id,
-                stripeSessionId: typeof session.id === "string" ? session.id : null,
-                paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : null,
-                amountTotal: typeof session.amount_total === "number" ? session.amount_total : null,
-                currency: typeof session.currency === "string" ? session.currency : null,
-                orgIdInMetadata: orgId || null,
-                creditsInMetadata: Number.isFinite(credits) ? credits : null,
-              },
-            });
-          } catch (e) {
-            console.error(`[stripe] ${event.type} paid-session alert failed; session=${typeof session.id === "string" ? session.id : "unknown"}:`, e);
+          if (mustAlert) {
+            try {
+              const outcomes = await founderAlert(alert);
+              const delivered = outcomes.some((o) => o.status === "sent");
+              if (delivered) await markAlertReceiptDelivered(auditId);
+              else {
+                console.error(
+                  `[stripe] ${event.type} bad-metadata alert reached NOBODY (event=${event.id}) — the audit row stays alertDelivered=false, ` +
+                    `so the next stripe-reconcile sweep retries.`,
+                );
+              }
+            } catch (e) {
+              console.error(`[stripe] ${event.type} paid-session alert failed; session=${typeof session.id === "string" ? session.id : "unknown"}:`, e);
+            }
           }
           return new Response("ignored: missing metadata", { status: 200 }); // 200 → no retry storm
         }
@@ -105,32 +133,72 @@ export async function POST(req: NextRequest): Promise<Response> {
           //                它不需要任何人动手,所以停在 Sentry warning:把不用行动的事升成
           //                founder 页面,只会训练出「报警可以不看」。
           if (packCheck.verdict === "mismatch") {
+            // RELY-A9(issue #1384)—— 与上面「metadata 坏掉」那条同一形状的送达确认:先写
+            // 审计行(带 alertDelivered:false)再喊,Stripe 真的重投同一事件时靠 P2002 读回执;
+            // 主要的重试出路仍是 apps/worker/src/jobs/stripe-reconcile.ts 的周期扫描,因为这个
+            // handler 永远回 200,Stripe 不会主动重投。
+            const auditId = session.id ? `stripe_packcheck:${session.id}` : newId();
+            const alert = {
+              key: "stripe.paid_session_pack_mismatch",
+              title: "A Stripe payment succeeded but the amount and the credits do not match any pack we sell",
+              action:
+                "Check the session in the Stripe dashboard: if it is a real pack we forgot to add to CREDIT_PACKS (packages/core/src/pricing-config.ts), add it and deploy, then grant this buyer's credits by hand. If the amount is genuinely wrong, refund it.",
+              context: {
+                reason: packCheck.reason,
+                stripeEventId: event.id,
+                stripeSessionId: typeof session.id === "string" ? session.id : null,
+                paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : null,
+                amountTotal: typeof session.amount_total === "number" ? session.amount_total : null,
+                currency: typeof session.currency === "string" ? session.currency : null,
+                orgId,
+                creditsInMetadata: credits,
+              },
+            };
+            let mustAlert = true;
             try {
-              await founderAlert({
-                key: "stripe.paid_session_pack_mismatch",
-                title: "A Stripe payment succeeded but the amount and the credits do not match any pack we sell",
-                action:
-                  "Nothing automatic will retry this — Stripe was answered 200 on purpose. Check the session in the Stripe dashboard: if it is a real pack we forgot to add to CREDIT_PACKS (packages/core/src/pricing-config.ts), add it and deploy, then grant this buyer's credits by hand. If the amount is genuinely wrong, refund it.",
-                context: {
-                  reason: packCheck.reason,
-                  stripeEventId: event.id,
-                  stripeSessionId: typeof session.id === "string" ? session.id : null,
-                  paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : null,
-                  amountTotal: typeof session.amount_total === "number" ? session.amount_total : null,
-                  currency: typeof session.currency === "string" ? session.currency : null,
-                  orgId,
-                  creditsInMetadata: credits,
+              await prisma.actionEvent.create({
+                data: {
+                  id: auditId,
+                  ownerId: orgId,
+                  type: "credits.purchase.packMismatch",
+                  payload: {
+                    verdict: "mismatch",
+                    reason: packCheck.reason,
+                    eventId: event.id,
+                    sessionId: session.id ?? null,
+                    credits,
+                    amountTotal: session.amount_total ?? null,
+                    currency: session.currency ?? null,
+                    granted: false,
+                    alert,
+                    alertDelivered: false,
+                  },
                 },
               });
             } catch (e) {
-              console.error(`${detail} — founder alert failed:`, e);
+              const duplicate = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
+              if (duplicate) mustAlert = await alertReceiptUndelivered(auditId);
+              else console.error(`${detail} — audit write failed; alerting anyway:`, e);
             }
-          } else {
-            try {
-              Sentry.captureMessage(detail, "warning");
-            } catch (e) {
-              console.error(`${detail} — alert transport failed:`, e);
+            if (mustAlert) {
+              try {
+                const outcomes = await founderAlert(alert);
+                const delivered = outcomes.some((o) => o.status === "sent");
+                if (delivered) await markAlertReceiptDelivered(auditId);
+                else console.error(`${detail} — alert reached NOBODY; the audit row stays alertDelivered=false, so the next stripe-reconcile sweep retries.`);
+              } catch (e) {
+                console.error(`${detail} — founder alert failed:`, e);
+              }
             }
+            // 200 → Stripe 不重投。钱已经收了,credits 没发,报警已响或已排队重试,人来处理。
+            return new Response("ignored: pack mismatch", { status: 200 });
+          }
+          // unverifiable:credits 已经照常发了,没有任何东西坏掉,只是这一笔我们没能核 ——
+          // 不需要任何人动手,所以停在 Sentry warning,不进 alertDelivered 那一套送达确认。
+          try {
+            Sentry.captureMessage(detail, "warning");
+          } catch (e) {
+            console.error(`${detail} — alert transport failed:`, e);
           }
           await prisma.actionEvent
             .create({
@@ -147,15 +215,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                   credits,
                   amountTotal: session.amount_total ?? null,
                   currency: session.currency ?? null,
-                  granted: packCheck.verdict === "unverifiable",
+                  granted: true,
                 },
               },
             })
             .catch(() => {});
-          if (packCheck.verdict === "mismatch") {
-            // 200 → Stripe 不重投。钱已经收了,credits 没发,报警已响,人来处理。
-            return new Response("ignored: pack mismatch", { status: 200 });
-          }
         }
         // Dedup on the Checkout SESSION id, not the event id: one session = one payment = one
         // grant. session.id stays exactly-once even if Stripe delivers multiple distinct events
@@ -324,7 +388,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         });
       } catch (e) {
         const duplicate = typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
-        if (duplicate) mustAlert = await pullbackAlertUndelivered(auditId);
+        if (duplicate) mustAlert = await alertReceiptUndelivered(auditId);
         else console.error(`[stripe] ${event.type} audit write failed (event=${event.id}); alerting anyway:`, e);
       }
 
@@ -370,7 +434,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         } catch (e) {
           console.error(`[stripe] ${event.type} founder alert failed (event=${event.id}):`, e);
         }
-        if (delivered) await markPullbackAlertDelivered(auditId);
+        if (delivered) await markAlertReceiptDelivered(auditId);
         else {
           console.error(
             `[stripe] ${event.type} alert reached NOBODY (event=${event.id}) — the audit row stays alertDelivered=false, ` +
@@ -383,22 +447,28 @@ export async function POST(req: NextRequest): Promise<Response> {
   });
 }
 
-/** 这个事件的报警上次**没送到**吗?读不到那一行(或它读不出回执)就当没送到 —— 钱被拉回,
- *  宁可多喊一次,也不许因为一次读失败让重投被静默。**永不抛**。 */
-async function pullbackAlertUndelivered(auditId: string): Promise<boolean> {
+/**
+ * 这个审计行的报警上次**没送到**吗?读不到那一行(或它读不出回执)就当没送到 —— 宁可多喊
+ * 一次,也不许因为一次读失败让重投/重扫被静默。**永不抛**。
+ *
+ * RELY-A9(issue #1384)起,除了下面的拒付/退款分支,这个通用送达回执也喂
+ * `checkout.session.completed` 的两条钱进账却发不出 credits 的分支(metadata 坏掉 /
+ * 金额与套餐不符)——三者形状完全相同,拆出来只是把名字从 pullback 改成不含语义。
+ */
+async function alertReceiptUndelivered(auditId: string): Promise<boolean> {
   try {
     const row = await prisma.actionEvent.findUnique({ where: { id: auditId }, select: { payload: true } });
     if (!row) return true;
     return (row.payload as { alertDelivered?: unknown } | null)?.alertDelivered !== true;
   } catch (e) {
-    console.error(`[stripe] could not read the pullback audit row ${auditId}; alerting again to be safe:`, e);
+    console.error(`[stripe] could not read the audit row ${auditId}; alerting again to be safe:`, e);
     return true;
   }
 }
 
 /** 盖上送达回执。**只翻这一格**:事件本身的事实(金额、org、归因来源)一个字都不重写 ——
  *  ActionEvent 仍然是只追加的审计日志,这里改的是「这条报警送到了没有」的收条。**永不抛**。 */
-async function markPullbackAlertDelivered(auditId: string): Promise<void> {
+async function markAlertReceiptDelivered(auditId: string): Promise<void> {
   try {
     const row = await prisma.actionEvent.findUnique({ where: { id: auditId }, select: { payload: true } });
     const payload = (row?.payload ?? {}) as Record<string, unknown>;
@@ -407,7 +477,16 @@ async function markPullbackAlertDelivered(auditId: string): Promise<void> {
       data: { payload: { ...payload, alertDelivered: true, alertDeliveredAt: new Date().toISOString() } },
     });
   } catch (e) {
-    // 回执写不上去只有一个后果:这个事件万一被重投,人会多收到一次报警。可以接受。
+    // 回执写不上去的后果因调用方而异,不再只是「万一被重投」:
+    //   · `credits.purchase.bad` / `credits.purchase.packMismatch`(RELY-A9,
+    //     apps/worker/src/jobs/stripe-reconcile.ts 的 retryUndeliveredPurchaseAlerts)—
+    //     worker 侧每 30 分钟主动扫 `alertDelivered !== true` 的行并重试,不等 Stripe
+    //     重投:回执写不上去,下一趟 30 分钟的巡检**必定**再报一次(这一次真的已经送达过,
+    //     多报的是重复,不是漏报)。
+    //   · 拒付/退款那三条(charge.refunded / charge.dispute.*)没有对应的主动找回——只有
+    //     Stripe 真的重投同一事件(P2002 读回执)才会再喊一次,读不到重投就照旧只喊过一次。
+    // 两种情况都可以接受(宁可多喊,不许漏喊),但「多喊一次」发生的时点不同,写日志时按
+    // 调用方对号入座,不要笼统说成「万一被重投」。
     console.error(`[stripe] could not stamp the delivery receipt on ${auditId}:`, e);
   }
 }

@@ -663,6 +663,46 @@ describe("SENTRY_DSN is required in production (整顿 C1a)", () => {
 });
 
 /**
+ * RELY-A6(docs/specs/fail-closed-reliability.md §2)—— SENTRY_DSN 只验**形状**,不做启动
+ * 探测式外呼。`format: "url"` 会放行 `https://example.com` 这种毫无 DSN 结构的合法 URL——
+ * 那是「格式合法 ≠ 是一个 Sentry 地址」这条根因本身,形状正则正好堵住它。
+ */
+describe("RELY-A6 §2 — SENTRY_DSN 形状不对的生产进程开机拒绝并点名该变量;形状合法的照常启动,全程不做启动探测外呼", () => {
+  it("`https://example.com`(合法 URL,但没有 DSN 的 key@host/projectId 结构)⇒ 生产开机拒绝并点名 SENTRY_DSN", () => {
+    const env = { NODE_ENV: "production", ...CORE, ...REMOTE_STORAGE, SENTRY_DSN: "https://example.com" };
+    const problems = checkEnv(env, { surface: "worker", production: true });
+    const dsn = problems.find((p) => p.name === "SENTRY_DSN");
+    expect(dsn, "a URL with no DSN shape must not pass the contract").toBeTruthy();
+    expect(dsn?.kind).toBe("invalid");
+    const decision = bootEnvDecision(env, { surface: "worker", production: true });
+    expect(decision.action).toBe("exit");
+    expect(decision.action === "exit" && decision.report).toContain("SENTRY_DSN");
+  });
+
+  it("形状合法的 DSN(https://<key>@<host>/<projectId>)⇒ 正常启动", () => {
+    const env = { NODE_ENV: "production", ...CORE, ...REMOTE_STORAGE, SENTRY_DSN: "https://abc123@o987654.ingest.us.sentry.io/456" };
+    expect(checkEnv(env, { surface: "worker", production: true })).toEqual([]);
+    expect(bootEnvDecision(env, { surface: "worker", production: true }).action).toBe("ok");
+  });
+
+  it("既不是 http(s) 也不像 DSN 的裸字符串同样被拒", () => {
+    const problems = checkEnv({ ...CORE, ...REMOTE_STORAGE, SENTRY_DSN: "not-a-url-at-all" }, { surface: "worker", production: true });
+    expect(problems.find((p) => p.name === "SENTRY_DSN")?.kind).toBe("invalid");
+  });
+
+  it("全程不做任何外呼 —— 形状校验是纯字符串正则,不含 fetch/network 依赖", () => {
+    // 这条用例本身就是证据:整个文件(env-contract.ts)不 import fetch/http/https,
+    // 而 checkEnv 是纯函数(不读 process、不抛异常)。SENTRY_DSN_SHAPE 是一条 RegExp.test()。
+    expect(SENTRY_DSN_SOURCE()).not.toMatch(/fetch\(|http\.request|https\.request/);
+  });
+});
+
+/** env-contract.ts 源码本身,供上面那条「不外呼」用例静态核验 —— 而不是靠信任注释。 */
+function SENTRY_DSN_SOURCE(): string {
+  return readFileSync(path.join(REPO_ROOT, "packages", "core", "src", "env-contract.ts"), "utf8");
+}
+
+/**
  * C3 —— 契约说的和代码做的对齐的那几处。每一条都是先被实证抓到「文档说 A、代码做 B」,
  * 再钉一格测试,而不是反过来。
  */

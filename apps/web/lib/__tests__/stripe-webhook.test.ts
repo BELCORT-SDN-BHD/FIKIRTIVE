@@ -320,6 +320,60 @@ describe("stripe webhook", () => {
     }
   });
 
+  // ── RELY-A9(issue #1384)—— 送达确认:审计行记 alertDelivered,没送到就留给
+  //    stripe-reconcile 的周期扫描重试,同一事件真被 Stripe 重投时靠 P2002 读回执 ──────
+  it("RELY-A9 §2 — 告警一条都没送出 ⇒ 审计行 alertDelivered=false(留给 stripe-reconcile 重试)", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_bad_undelivered", type: "checkout.session.completed",
+      data: { object: { id: "cs_bad_u", payment_status: "paid", metadata: {}, payment_intent: "pi_u", amount_total: 4900, currency: "myr" } },
+    });
+    founderAlert.mockResolvedValue([
+      { channel: "sentry", status: "failed", reason: "no dsn" },
+      { channel: "email", status: "failed", reason: "resend 500" },
+      { channel: "telegram", status: "skipped" },
+    ]);
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          id: "stripe_bad_metadata:evt_bad_undelivered",
+          type: "credits.purchase.bad",
+          payload: expect.objectContaining({ alertDelivered: false }),
+        }),
+      }),
+    );
+    expect(actionEventUpdate, "没送到就不该盖送达回执").not.toHaveBeenCalled();
+  });
+
+  it("RELY-A9 §2 — 至少一条通道送到了 ⇒ 盖上 alertDelivered=true 的送达回执", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_bad_delivered", type: "checkout.session.completed",
+      data: { object: { id: "cs_bad_d", payment_status: "paid", metadata: {}, payment_intent: "pi_d", amount_total: 4900, currency: "myr" } },
+    });
+    founderAlert.mockResolvedValue([{ channel: "email", status: "sent" }]);
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(actionEventUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "stripe_bad_metadata:evt_bad_delivered" },
+        data: { payload: expect.objectContaining({ alertDelivered: true }) },
+      }),
+    );
+  });
+
+  it("RELY-A9 §2 — 重投一个**已经送达**的事件 ⇒ 不写第二条审计行、不发第二次报警(与拒付分支同款)", async () => {
+    actionEventCreate.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+    actionEventFindUnique.mockResolvedValue({ payload: { alertDelivered: true } });
+    constructEvent.mockReturnValue({
+      id: "evt_bad_redelivered", type: "checkout.session.completed",
+      data: { object: { id: "cs_bad_r", payment_status: "paid", metadata: {}, payment_intent: "pi_r", amount_total: 4900, currency: "myr" } },
+    });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(founderAlert).not.toHaveBeenCalled();
+  });
+
   it("a GOOD purchase does not alert — an alarm that fires on every sale is an alarm nobody reads", async () => {
     // 钱路 M1-c:夹具改成**真的在售包**(Starter RM25 = 2500 sen → 50 credits)并带上币种。
     // 原来的 100 credits / 无金额在包表落地后已经不是「一笔好购买」了——它对不上任何在售包,
@@ -730,5 +784,31 @@ describe("stripe webhook — 充值包核对(Founder 2026-08-18:不匹配不静�
     constructEvent.mockReturnValue(paidSession({ amount_total: 2500 }));
     expect((await POST(req())).status).toBe(200);
     expect(grantCredits).not.toHaveBeenCalled();
+  });
+
+  // ── RELY-A9(issue #1384)—— 同一套送达确认也喂包不匹配分支 ─────────────────────────
+  it("RELY-A9 §2 — 包不匹配的告警一条都没送出 ⇒ 审计行 alertDelivered=false", async () => {
+    grantCredits.mockResolvedValue({ ok: true });
+    founderAlert.mockResolvedValue([{ channel: "telegram", status: "skipped" }]);
+    constructEvent.mockReturnValue(paidSession({ id: "cs_pack_u", amount_total: 2500 }));
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ id: "stripe_packcheck:cs_pack_u", payload: expect.objectContaining({ alertDelivered: false }) }),
+      }),
+    );
+    expect(actionEventUpdate).not.toHaveBeenCalled();
+  });
+
+  it("RELY-A9 §2 — 包不匹配的告警送到了 ⇒ 盖上 alertDelivered=true 的送达回执", async () => {
+    grantCredits.mockResolvedValue({ ok: true });
+    founderAlert.mockResolvedValue([{ channel: "email", status: "sent" }]);
+    constructEvent.mockReturnValue(paidSession({ id: "cs_pack_d", amount_total: 2500 }));
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(actionEventUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "stripe_packcheck:cs_pack_d" }, data: { payload: expect.objectContaining({ alertDelivered: true }) } }),
+    );
   });
 });

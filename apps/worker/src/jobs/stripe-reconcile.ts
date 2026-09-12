@@ -139,6 +139,13 @@ export type StripeReconcileResult = {
   trailUnreadable: boolean;
   /** 没跑成的原因(没配 Stripe 密钥 / 拉取失败),跑成了就是 null。 */
   skipped: string | null;
+  /**
+   * RELY-A9(issue #1384)—— 本轮找回并成功送达的「钱进了账、credits 发不出去」告警数
+   * (webhook 首投时全渠道都没送到,payload.alertDelivered 还留着 false 的那些)。与上面
+   * 的 Stripe 对账完全独立:哪怕 STRIPE_SECRET_KEY 没配(`skipped` 非空),这一步也照跑 ——
+   * 它读写的是 ActionEvent,不碰 Stripe API。
+   */
+  purchaseAlertsRetried: number;
 };
 
 /** 观察行 payload 里我们自己写下、后面要读回来的那几格。 */
@@ -229,6 +236,74 @@ async function alertThrottledDaily(throttleId: string, alert: FounderAlert, nowM
   await founderAlert(alert, { repeat });
 }
 
+/** ActionEvent 类型:webhook 首投时可能一条渠道都没送出去的两条「钱进了账、credits 发不出去」告警。 */
+const UNDELIVERABLE_PURCHASE_ALERT_TYPES = ["credits.purchase.bad", "credits.purchase.packMismatch"] as const;
+
+/**
+ * RELY-A9(issue #1384)—— 找回 `apps/web/app/api/stripe/webhook/route.ts` 首投时**一条通道
+ * 都没送出去**的「钱进了账、credits 发不出去」告警。
+ *
+ * 为什么必须由这里主动找回,而不是等 Stripe 重投:webhook 那个 handler 永远回 200(200 契约
+ * ——见文件顶部说明),Stripe 因此**不会**因为一次告警失败而重投同一事件。那两条分支(metadata
+ * 坏掉 / 金额与套餐不符)首投失败后写下 `alertDelivered:false` 就再没有任何东西会碰它,除非
+ * 有人主动去扫——这正是这一步存在的理由,与下面 Stripe 对账部分完全独立(不碰 Stripe API,
+ * 所以 STRIPE_SECRET_KEY 没配也照跑)。
+ *
+ * 与观察行同一条扫描规矩:`projectId: null` 命中既有索引 `[projectId, type]`,不做全表扫。
+ * 每一行的完整 `FounderAlert`(key/title/action/context)直接存在 `payload.alert` 里 ——
+ * 这样这里不必重建文案,原文一字不差。
+ */
+async function retryUndeliveredPurchaseAlerts(nowMs: number): Promise<number> {
+  // 复用既有的 "stripe-reconciler" 系统帧名(与下面的 Stripe 对账同一个平台级身份),不新开
+  // 一个闭合词表条目 —— 这一步是同一份职责(找钱路缺口、留痕、报警)的另一半,不是新职责。
+  return runAsSystem("stripe-reconciler", async () => {
+    let rows: Array<{ id: string; payload: unknown }>;
+    try {
+      rows = await prisma.actionEvent.findMany({
+        where: {
+          projectId: null,
+          type: { in: [...UNDELIVERABLE_PURCHASE_ALERT_TYPES] },
+          payload: { path: ["alertDelivered"], equals: false },
+        },
+        select: { id: true, payload: true },
+      });
+    } catch (e) {
+      console.error("[stripe-reconcile] could not scan for undelivered purchase alerts (retries next sweep):", e);
+      return 0;
+    }
+    let retried = 0;
+    for (const row of rows) {
+      const alert = (row.payload as { alert?: FounderAlert } | null)?.alert;
+      if (!alert || typeof alert !== "object") {
+        // 老形状(本票落地前写下的行,没有 payload.alert)—— 这里没有文案可重建,跳过它,
+        // 不许瞎编一条报警内容。
+        continue;
+      }
+      let delivered = false;
+      try {
+        const outcomes = await founderAlert(alert, { repeat: false });
+        delivered = outcomes.some((o) => o.status === "sent");
+      } catch (e) {
+        console.error(`[stripe-reconcile] retrying undelivered purchase alert ${row.id} failed (retries next sweep):`, e);
+      }
+      if (!delivered) continue; // 还是没送到 —— 留着 alertDelivered:false,下一趟再试。
+      try {
+        const payload = (row.payload ?? {}) as Record<string, unknown>;
+        await prisma.actionEvent.update({
+          where: { id: row.id },
+          data: { payload: { ...payload, alertDelivered: true, alertDeliveredAt: new Date(nowMs).toISOString() } },
+        });
+        retried++;
+      } catch (e) {
+        // 回执焊不上去:最坏后果是下一趟再送一次(founderAlert 已经真的送达过),可以接受
+        // ——与 webhook 侧那条送达回执同一条纪律(宁可多喊,不许悄悄漏喊)。
+        console.warn(`[stripe-reconcile] could not stamp the delivery receipt on ${row.id} after a successful retry:`, e);
+      }
+    }
+    return retried;
+  });
+}
+
 /**
  * 跑一轮对账。返回这一轮的账,便于调用方打日志、也便于测试断言。**永不抛错** —— 它挂在
  * worker 的定时器上,一次 Stripe 超时不该把整个 worker 带下去。
@@ -238,11 +313,15 @@ export async function reconcileStripePayments(opts?: {
   client?: StripeSessionsPort | null;
   now?: Date;
 }): Promise<StripeReconcileResult> {
-  const empty: StripeReconcileResult = { scanned: 0, paid: 0, unreconciled: 0, firstSeen: 0, alerted: 0, tracked: 0, closed: 0, unverified: 0, trailUnreadable: false, skipped: null };
+  const empty: StripeReconcileResult = { scanned: 0, paid: 0, unreconciled: 0, firstSeen: 0, alerted: 0, tracked: 0, closed: 0, unverified: 0, trailUnreadable: false, skipped: null, purchaseAlertsRetried: 0 };
+  const now0 = (opts?.now ?? new Date()).getTime();
+  // RELY-A9 —— 独立于下面的 Stripe 对账:它读写的是 ActionEvent,不碰 Stripe API,所以
+  // STRIPE_SECRET_KEY 没配(下面的 `!port` 早退)也不该拦住它。
+  const purchaseAlertsRetried = await retryUndeliveredPurchaseAlerts(now0);
   const port = opts?.client ?? realStripePort();
-  if (!port) return { ...empty, skipped: "STRIPE_SECRET_KEY is not set — nothing to reconcile against" };
+  if (!port) return { ...empty, purchaseAlertsRetried, skipped: "STRIPE_SECRET_KEY is not set — nothing to reconcile against" };
 
-  const now = (opts?.now ?? new Date()).getTime();
+  const now = now0;
   const lte = Math.floor((now - STRIPE_RECONCILE_GRACE_MS) / 1000);
   const gte = Math.floor((now - STRIPE_RECONCILE_WINDOW_MS) / 1000);
 
@@ -276,7 +355,7 @@ export async function reconcileStripePayments(opts?: {
         now,
         FOUNDER_OWNER_ID,
       );
-      return { ...empty, alerted: 1, skipped: `stripe list failed: ${reason}` };
+      return { ...empty, alerted: 1, skipped: `stripe list failed: ${reason}`, purchaseAlertsRetried };
     }
 
     let paid = 0;
@@ -480,6 +559,7 @@ export async function reconcileStripePayments(opts?: {
       unverified,
       trailUnreadable: !trailReadable,
       skipped: null,
+      purchaseAlertsRetried,
     };
   });
 }

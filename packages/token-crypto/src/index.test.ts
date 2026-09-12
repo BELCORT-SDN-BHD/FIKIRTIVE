@@ -71,6 +71,33 @@ describe("media-proxy token (HMAC, Plan B §四C)", () => {
   it("rejects malformed input", () => {
     expect(verifyMediaToken("garbage", SECRET, now)).toBeNull();
   });
+
+  // SHARE-A7(docs/specs/share-preview.md 已冻结 · v1)—— 可选的第五个参数,只有分享预览页
+  // 才传;不传的调用方(发布 worker、素材面板的 Copy link)行为一个字节不变(上面那条
+  // round-trip 测试就是证据:不传时 `.toEqual` 里压根没有 shareRowId 这个键)。
+  it("SHARE-A7 —— 传了 shareRowId 时原样带回来", () => {
+    const t = signMediaToken("org_1", KEY, now + 3600_000, SECRET, "row_42");
+    expect(verifyMediaToken(t, SECRET, now)).toEqual({
+      ownerId: "org_1",
+      key: KEY,
+      exp: now + 3600_000,
+      shareRowId: "row_42",
+    });
+  });
+  it("SHARE-A7 —— shareRowId 一样受 HMAC 保护,篡改它令牌照样作废", () => {
+    const t = signMediaToken("org_1", KEY, now + 3600_000, SECRET, "row_42");
+    const dot = t.lastIndexOf(".");
+    const forged = Buffer.from(JSON.stringify({ o: "org_1", k: KEY, exp: now + 3600_000, s: "row_other" })).toString(
+      "base64url",
+    );
+    expect(verifyMediaToken(`${forged}.${t.slice(dot + 1)}`, SECRET, now)).toBeNull();
+  });
+  it("SHARE-A11(docs/specs/share-preview.md 已冻结 · v1)—— 载荷是签名过的明文,不是加密:任何持有者不解密就能读出 owner/key/expiry", () => {
+    const t = signMediaToken("org_1", KEY, now + 3600_000, SECRET);
+    const payload = t.slice(0, t.lastIndexOf("."));
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    expect(decoded).toEqual({ o: "org_1", k: KEY, exp: now + 3600_000 });
+  });
 });
 
 describe("share-preview token (HMAC, B0-28 §2.2)", () => {
@@ -106,5 +133,12 @@ describe("share-preview token (HMAC, B0-28 §2.2)", () => {
   });
   it("rejects malformed input", () => {
     expect(verifySharePreviewToken("garbage", SECRET, now)).toBeNull();
+  });
+
+  it("SHARE-A11(docs/specs/share-preview.md 已冻结 · v1)—— 载荷是签名过的明文,持有链接的人不需要密钥就能读出 ownerId/postId/expiry", () => {
+    const t = signSharePreviewToken("org_1", "post_9", now + 3600_000, SECRET);
+    const payload = t.slice(0, t.lastIndexOf("."));
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    expect(decoded).toEqual({ o: "org_1", p: "post_9", exp: now + 3600_000 });
   });
 });

@@ -3,6 +3,7 @@ import { verifyMediaToken } from "@fikirtive/token-crypto";
 import { parseStorageKey, keyOwnerMatches } from "@fikirtive/core";
 import { storage, mimeOf } from "@/lib/storage";
 import { admitMediaProxyRequest } from "@/lib/media-proxy-access";
+import { isSharePreviewRowLive } from "@/lib/share-preview";
 import { parseByteRange } from "@/lib/byte-range";
 import { toWebStream } from "@/lib/web-stream";
 
@@ -67,6 +68,18 @@ export async function GET(
       status: 429,
       headers: { "Retry-After": String(admission.retryAfterSeconds) },
     });
+  }
+
+  // 4) SHARE-A7 — a token minted for a share-preview post's media names the SharePreviewToken row
+  //    it belongs to (`shareRowId`); a publish-worker or Copy-link token never sets this claim, so
+  //    their requests are unaffected. This token's own HMAC expiry is short but independent of the
+  //    share link's — a merchant hitting Revoke must kill an already-loaded image AT ONCE, not wait
+  //    for that separate clock to run out, so we ask the row's live status on every request instead.
+  if (
+    claims.shareRowId !== undefined &&
+    !(await isSharePreviewRowLive(claims.shareRowId, claims.ownerId))
+  ) {
+    return new NextResponse("Not found", { status: 404 });
   }
 
   try {

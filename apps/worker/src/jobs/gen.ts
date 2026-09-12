@@ -504,6 +504,12 @@ export const GEN_QUEUED_REAP_MS = 1000 * 60 * 45;
 // finish and this scan sees nothing, while a genuinely broken row still reaches the merchant's
 // rescue path inside one sitting (the card's own fast watch is ~10 minutes wide).
 export const GEN_DONE_EMPTY_GRACE_MS = 1000 * 60 * 10;
+// RELY-B 判官 P1-1:一个 claim(见 alertPaidForNothingConfirmed)被认定为「另一趟正在处理,
+// 这一趟什么都不做」的宽限期。比一个巡检周期(reap() 的 setInterval,index.ts,5 分钟)宽,
+// 好让一趟真的正在跑(founderAlert 三通道 + 一次 confirm/delete 写)的巡检不会被下一趟当场
+// 抢走;但又不会宽到让一趟**已经死掉**的 claim(进程在发送前被杀 / confirm 与 delete 都没
+// 写成)把当天剩下的巡检全部静音。
+export const PAID_FOR_NOTHING_CLAIM_STALE_MS = 1000 * 60 * 15;
 
 // Written onto the REFUND row so a later audit can tell THIS sweep's refunds from a merchant's
 // cancel or an ordinary terminal failure ("this reservation has a REFUND" says nothing about who
@@ -1005,37 +1011,155 @@ async function settledDisplayCredits(orgId: string, refId: string): Promise<numb
 }
 
 /**
- * 「这一行的 paid-for-nothing 报警,是不是第一次发?」—— 返回 true 表示这一趟拿到了首发权。
+ * 「这一行的 paid-for-nothing 报警,今天已经送到人手里了吗?」—— RELY-A7/A8(issue #1384)。
  *
- * 为什么必须有它:那一行是**故意不清理**的(翻成 FAILED 会许下一句没发生的退款),而巡检
- * 每 5 分钟来一趟。没有这道闸,一行卡住就是每天约 288 封邮件 + 288 条 Telegram —— 而那把
- * `RESEND_API_KEY` 与商家登录的魔法链接是同一把:一条报警足以把登录打挂。报警把自己变成
- * 事故,是这一族缺陷里最难看的一种。
+ * 与旧版 `claimPaidForNothingAlert`(整顿 C1a)的关键区别:旧版只要抢到 ActionEvent 主键就把
+ * 「已经喊过」焊死,不管三条通道是不是真的有人收到——邮件与 Telegram 双双失败时,那一行照样
+ * 被焊死,往后每一趟巡检都降级成只进 Sentry,而「商家付了钱什么都没拿到」这句求救从此再也
+ * 没有人会被叫醒。这正是判官在 issue #1384 点名的洞:**写过行 ≠ 有人收到**(与拒付分支
+ * `apps/web/app/api/stripe/webhook/route.ts` 的送达回执同一条纪律)。
  *
- * 用 ActionEvent 的主键做一次性标记,形状照抄同仓已有的做法(stripe webhook 的
- * `stripe_failed:<sessionId>`):**由数据库唯一约束裁决,不是 check-then-act**,所以两个巡检
- * 同时扫到同一行也只有一个拿到首发权。刻意不动 GenJob 行、不动账本 —— 那一行「一个字都不动」
- * 本身就是这条分支的语义。
+ * 当日节流的主键形状照抄 `stripe-reconcile.ts` 的 `alertThrottledDaily`(`<key>:<UTC 日期>`,
+ * 由数据库唯一约束裁决并发,不是 check-then-act),但拆成**两段式**而不是它的单步「先写后喊」
+ * ——单步写法在这里会漏掉 RELY-A7 那句「三条通道全挂时不焊死」,理由见下面两段:
  *
- * 失败方向是 fail-OPEN:只有**确凿的主键冲突**(P2002)才降级为重复;任何其它写库故障都当作
- * 首发,宁可多发一条也不让一次 DB 抖动把「商家付了钱什么都没拿到」永久静音。这和同仓
- * stripe 分支「告警至少一次,DB 故障不许消音」是同一条纪律。
+ *   第①段 **claim**(`actionEvent.create`,payload 里 `delivered:false`):今天第一个到的巡检
+ *   (本进程,或并发的另一个 worker 副本)拿到这一格的**发送权**——这一段的唯一目的是防止两个
+ *   并发巡检同时把全渠道各喊一遍(worker 可能起多个副本,而这一行 DONE-empty-settled 是**故意
+ *   不清理**的,每一趟巡检都会再选中它)。拿不到 claim(P2002)⇒ 读那一行:`delivered:true`
+ *   说明今天已经真的送达过,这一趟只用 Sentry 计数;`delivered:false` 说明另一个副本正在这一
+ *   刻处理(或它失败后没能来得及清理),这一趟什么都不做,把重试机会留给它自己或下一轮巡检——
+ *   **除非**那个 claim 已经卡住了。RELY-B 判官 P1-1 点名的洞:拿到 claim 的那个副本可能在
+ *   `founderAlert` 发送前就被杀掉,或者三条通道全挂之后连撤回 claim 的 `delete` 都没能写成
+ *   ——`delivered:false` 从此再也不会翻成 `true`,也再没有人去删它,当天剩下的巡检(最多
+ *   288 趟)全部在这一步原地返回,连 Sentry 都不再计数,比整顿前还倒退。所以这里多读一步
+ *   claim 自己的 `claimedAt`:超过 `PAID_FOR_NOTHING_CLAIM_STALE_MS`(一个巡检周期的三倍)
+ *   还没翻成 `delivered:true`,就认定原 claim 主已经死了,这一趟自己接管(`owns` 改回
+ *   `true`),直接跑第②段——不是先删再等下一趟,免得死锁窗口再拖一个巡检周期。
+ *
+ *   「送达了」判的是 **email 或 telegram** 至少一条 `status==="sent"`,**刻意不算 Sentry**——
+ *   RELY-A7 原话「Sentry 每趟照收」与「送到了没有」是两件事:Sentry 配了 DSN 就几乎总是
+ *   "sent",算进去会让一台监控正常的生产环境在邮件与 Telegram **双双失败**的那一趟就把
+ *   「已经喊过」焊死,直接违反这一条(与拒付分支 `apps/web/app/api/stripe/webhook/route.ts`
+ *   的「至少一条 sent」不同——那边没有「Sentry 每趟照收」这条独立要求,两处判据故意不同)。
+ *
+ *   第②段 **dispatch → confirm**:拿到 claim 的这一趟真的全渠道喊一次(repeat=false)。
+ *     · 至少一条通道 status==="sent" ⇒ 把这一格的 claim 翻成 `delivered:true`——今天之内的
+ *       下一趟巡检从此转 repeat(只进 Sentry,RELY-A8)。
+ *     · 三条通道全部 skipped/failed ⇒ **撤回这一格的 claim**(删掉这一行),下一趟巡检(5
+ *       分钟后)重新拿到 claim、重新喊一次全渠道——这正是 RELY-A7 要的「不是永久静音」。
+ *
+ * 两段都是 fail-OPEN:claim 写不进去的非 P2002 故障、读故障、confirm 阶段的更新/删除故障,
+ * 全部朝着「宁可多喊一次全渠道」的方向降级,绝不朝着「悄悄少喊一次」的方向——与旧版同一条
+ * 纪律(见 stripe-reconcile.ts 同名注释)。
+ *
+ * 按 UTC 日分片(而不是像旧版一样「一辈子只喊一次」):这一行只要没人手动结清就会一直存在,
+ * 每天提醒一次直到有人处理,好过真的送达过一次之后就永远沉默。
  */
-async function claimPaidForNothingAlert(job: { id: string; ownerId: string }): Promise<boolean> {
+async function alertPaidForNothingConfirmed(
+  job: { id: string; ownerId: string; kind: string; model: string },
+  chargedCredits: number | null,
+): Promise<void> {
+  const nowMs = Date.now();
+  const day = new Date(nowMs).toISOString().slice(0, 10);
+  const markerId = `gen_paid_for_nothing:${job.id}:${day}`;
+  const alertOf = (repeatOfEarlierAlert: boolean) => ({
+    key: "gen.paid_for_nothing",
+    title: "A merchant paid for a generation and received nothing",
+    action:
+      "Decide this one by hand — nothing automatic can fix it. The job is DONE with zero outputs and the charge is SETTLED, so the sweep deliberately left the row alone (flipping it to FAILED would promise a refund that never happened). Refund in the credits ledger if that is the call.",
+    context: {
+      genJobId: job.id,
+      orgId: job.ownerId,
+      kind: job.kind,
+      model: job.model,
+      chargedCredits,
+      // 重复那几条要一眼看得出是重复,否则 Sentry 里读起来像「又出了一单」。
+      repeatOfEarlierAlert,
+    },
+  });
+
+  // 第①段:claim。claimedAt 是这一趟(拿到全新 claim,或接管一个死掉的旧 claim)对外声明
+  // 的「我从什么时候开始处理这一格」,第②段 confirm/delete 都要用同一个值写回去。
+  let owns = true;
+  let alreadyDeliveredToday = false;
+  let claimedAt = new Date(nowMs).toISOString();
   try {
     await prisma.actionEvent.create({
-      data: {
-        id: `gen_paid_for_nothing:${job.id}`,
-        ownerId: job.ownerId,
-        type: "gen.paid_for_nothing",
-        payload: { genJobId: job.id, alertedAt: new Date().toISOString() },
-      },
+      data: { id: markerId, ownerId: job.ownerId, type: "gen.paid_for_nothing", payload: { genJobId: job.id, day, delivered: false, claimedAt } },
     });
-    return true;
   } catch (e) {
-    if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") return false;
-    console.warn(`[gen] ${job.id}: could not record the paid-for-nothing alert marker; alerting anyway:`, e instanceof Error ? e.message : e);
-    return true;
+    if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
+      owns = false;
+      try {
+        const existing = await prisma.actionEvent.findUnique({ where: { id: markerId }, select: { payload: true } });
+        const payload = existing?.payload as { delivered?: unknown; claimedAt?: unknown } | null;
+        alreadyDeliveredToday = payload?.delivered === true;
+        // RELY-B 判官 P1-1:一个 claim 既没有翻成 delivered:true,也可能已经死了(拿到它的
+        // 那个副本在发送前被杀,或三条通道全挂之后连撤回 claim 的 delete 都没能写成)——
+        // 死 claim 与「另一趟正在处理」在这一步读出来的形状完全一样(delivered:false),
+        // 只能靠时间分辨:claimedAt 超过一个巡检周期的三倍,判它已经死了,这一趟接管。
+        if (!alreadyDeliveredToday) {
+          const claimedAtRaw = typeof payload?.claimedAt === "string" ? payload.claimedAt : null;
+          const claimedAtMs = claimedAtRaw ? Date.parse(claimedAtRaw) : NaN;
+          const claimAgeMs = Number.isFinite(claimedAtMs) ? nowMs - claimedAtMs : Infinity;
+          if (claimAgeMs > PAID_FOR_NOTHING_CLAIM_STALE_MS) {
+            owns = true; // 接管:原 claim 主已经死了,这一趟自己全渠道重发。
+            claimedAt = claimedAtRaw ?? claimedAt; // 保留原始 claim 时间当审计痕迹;读不出就用这一趟自己的时间。
+            console.warn(`[gen] ${job.id}: today's paid-for-nothing claim looks abandoned (claimed ${Math.round(claimAgeMs / 60_000)}min ago, still delivered:false) — taking over this sweep instead of staying silent.`);
+          }
+        }
+      } catch (e2) {
+        // 读不出今天这一格的状态:按「另一趟正在处理」而不是「已经送达」降级 —— 宁可这一趟
+        // 什么都不做、把机会留给下一轮巡检(5 分钟后会再抢一次 claim),也不在读失败时立刻
+        // 补发一次可能重复的全渠道警报。
+        console.warn(`[gen] ${job.id}: could not read today's paid-for-nothing claim state; leaving this sweep's retry to the next cycle:`, e2 instanceof Error ? e2.message : e2);
+      }
+    } else {
+      // 非 P2002 的写故障:分不清「已经有人 claim」还是「库在抖」⇒ 按拿到 claim 处理,宁可
+      // 多喊一次全渠道,也不让一次 DB 抖动把「商家付了钱什么都没拿到」悄悄少喊一次。
+      console.warn(`[gen] ${job.id}: could not claim today's paid-for-nothing alert slot; alerting in full anyway:`, e instanceof Error ? e.message : e);
+    }
+  }
+
+  if (!owns) {
+    if (alreadyDeliveredToday) await founderAlert(alertOf(true), { repeat: true });
+    return; // 没拿到 claim:要么已经送达过(上面那行已经算过 Sentry),要么另一趟正在处理
+    // (且没有死掉太久)。
+  }
+
+  // 第②段:dispatch → confirm。
+  const outcomes = await founderAlert(alertOf(false), { repeat: false });
+  // RELY-A7 明写的判据:「Sentry 每趟照收」与「送到了没有」是两件事,不能用同一个布尔答。
+  // Sentry 是归档/聚类通道,配了 DSN 就几乎总是 "sent"——如果把它算进 delivered,一台正常
+  // 监控的生产环境会在邮件与 Telegram **双双失败**的那一趟就把「已经喊过」焊死,而这正是
+  // issue #1384 点名要防的那件事。这里的「送到了」专指**人会被吵醒**的那两条通道。
+  const delivered = outcomes.some((o) => o.channel !== "sentry" && o.status === "sent");
+  if (delivered) {
+    try {
+      // RELY-B 判官 P3-3:confirm 只是往这一格上**追加**一条送达回执,不是重新定义它 ——
+      // 整体替换 payload 会连 claimedAt(这一格从什么时候开始被处理的审计时间点,也是上面
+      // 第①段判定「claim 是否已死」唯一依据)一起丢掉。合并写,保留原始 claimedAt。
+      await prisma.actionEvent.update({
+        where: { id: markerId },
+        data: { payload: { genJobId: job.id, day, delivered: true, claimedAt, alertedAt: new Date(nowMs).toISOString() } },
+      });
+    } catch (e) {
+      console.warn(`[gen] ${job.id}: could not confirm today's paid-for-nothing delivery receipt (harmless — worst case is one more full alert before this sweep window rolls over):`, e instanceof Error ? e.message : e);
+    }
+    return;
+  }
+  // RELY-A7:三条通道全挂 ⇒ 撤回这一格的 claim,下一趟巡检(5 分钟后)重新拿到 claim、
+  // 原样再喊一次全渠道 —— 不是永久静音。
+  console.error(`[gen] ${job.id}: the paid-for-nothing alert reached NOBODY this sweep (every channel skipped/failed) — releasing today's claim so the next sweep retries.`);
+  try {
+    await prisma.actionEvent.delete({ where: { id: markerId } });
+  } catch (e) {
+    // RELY-B 判官 P1-1:改对了才敢这么写这句话——这一格现在卡在 delivered:false 且没删掉,
+    // 之后每一趟巡检都会先读到它。在 PAID_FOR_NOTHING_CLAIM_STALE_MS(15 分钟 = 三个巡检
+    // 周期)之内的那几趟会礼让(疑似还在处理),过了这个窗口,某一趟巡检会把它判定为死
+    // claim 并接管重发 —— 不是永久静音,只是比正常的「立刻删、下一趟重来」多等最多 15 分钟。
+    console.warn(`[gen] ${job.id}: could not release today's paid-for-nothing claim after a failed delivery (worst case: silent for up to ${PAID_FOR_NOTHING_CLAIM_STALE_MS / 60_000}min, then a later sweep detects the stuck claim and retries in full):`, e instanceof Error ? e.message : e);
   }
 }
 
@@ -1202,28 +1326,9 @@ export async function reapStaleGenJobs(): Promise<number> {
             // 一句「需要 founder 裁决」事实上说给了没有人。三条通道一起发,`await` 是故意的:
             // 这一趟巡检不差这几百毫秒,而 fire-and-forget 会让报警死在进程退出的竞态里。
             //
-            // 首发权由 claimPaidForNothingAlert 的主键裁决:这一行**故意不清理**,而巡检每 5
-            // 分钟来一趟,所以第二趟起只让 Sentry 承载(它本来就是按 key 聚类计数的那一层,
-            // 「这一行今天被扫到几次」正好归它答),邮件与 Telegram 不再打扰人。
-            const firstAlert = await claimPaidForNothingAlert(job);
-            await founderAlert(
-              {
-                key: "gen.paid_for_nothing",
-                title: "A merchant paid for a generation and received nothing",
-                action:
-                  "Decide this one by hand — nothing automatic can fix it. The job is DONE with zero outputs and the charge is SETTLED, so the sweep deliberately left the row alone (flipping it to FAILED would promise a refund that never happened). Refund in the credits ledger if that is the call.",
-                context: {
-                  genJobId: job.id,
-                  orgId: job.ownerId,
-                  kind: job.kind,
-                  model: job.model,
-                  chargedCredits: await settledDisplayCredits(job.ownerId, job.id),
-                  // 重复那几条要一眼看得出是重复,否则 Sentry 里读起来像「又出了一单」。
-                  repeatOfEarlierAlert: !firstAlert,
-                },
-              },
-              { repeat: !firstAlert },
-            );
+            // RELY-A7/A8(issue #1384):送达确认 + 当日节流,见 alertPaidForNothingConfirmed
+            // 上方注释——不再是「抢到主键就焊死」,而是「送到了才焊死」。
+            await alertPaidForNothingConfirmed(job, await settledDisplayCredits(job.ownerId, job.id));
             return;
           }
           if (outcome === null) return; // someone else ended this row — their truth stands

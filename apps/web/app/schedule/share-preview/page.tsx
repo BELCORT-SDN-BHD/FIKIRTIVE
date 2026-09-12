@@ -1,18 +1,22 @@
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { publishSurfaceCopy } from "@fikirtive/core/schedule-draft";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { loadSharePreview, type SharePreviewPost } from "@/lib/share-preview-view";
+import { SHARE_PREVIEW_COOKIE_NAME } from "@/lib/share-preview-cookie";
 
 /**
  * The page a share-preview link actually opens (B0-28).
  *
- * `sharePostPreview` has been minting `${BETTER_AUTH_URL}/schedule/share-preview?t=<token>` since
- * B0-28, and Otto has been handing that link to merchants to forward to clients. This route did
- * not exist, so every one of those links opened a 404 on somebody else's screen. Nothing about
- * the link's shape changes here — the address the minter already prints is the address this file
- * answers, so links minted before it shipped work the moment it does.
+ * `sharePostPreview` now mints `${BETTER_AUTH_URL}/s/<token>` (SHARE-A6, docs/specs/
+ * share-preview.md 已冻结 · v1) — `app/s/[token]/route.ts` is the clean entry that turns the URL
+ * token into an HttpOnly cookie and lands HERE with no query string. This file no longer reads
+ * `?t=` for a fresh link; it only accepts one for BACKWARD COMPATIBILITY (a link minted before
+ * this shipped) and immediately forwards it to `/s/<token>` to go through the same conversion —
+ * so an old link and a new one end up in the identical state, and the token never sits in this
+ * page's own URL for even one render.
  *
  * ── IT IS OUTSIDE THE AUTH WALL, AND THAT IS THE POINT ───────────────────────────────────────
  * `proxy.ts` excludes exactly `schedule/share-preview` (bounded, like /verify-email and
@@ -31,6 +35,12 @@ import { loadSharePreview, type SharePreviewPost } from "@/lib/share-preview-vie
  * the merchant's own authority copy (`publishSurfaceCopy`) that publishing is not switched on —
  * because a date on a screen reads as a promise to whoever is looking at it, and this screen is
  * read by the one person who has no other way to find out.
+ *
+ * ── SHARE-A5 — LIVE, NOT A SNAPSHOT ─────────────────────────────────────────────────────────
+ * Every load reads the post's CURRENT fields (Founder 2026-09-12, #1359 场②: no version freeze,
+ * no snapshot schema). A merchant who edits a post after sharing it is not shown as an edge case:
+ * the reviewer's refresh shows the new caption, so the page says so in plain words rather than
+ * letting a reader assume the words in front of them are the ones that were approved.
  */
 
 export const dynamic = "force-dynamic";
@@ -47,8 +57,13 @@ export default async function SharePreviewPage({
   searchParams: Promise<{ t?: string | string[] }>;
 }) {
   const { t } = await searchParams;
-  // A repeated `?t=` arrives as an array; fail closed rather than picking one for the caller.
-  const view = typeof t === "string" ? await loadSharePreview(t, await headers()) : ({ state: "unavailable" } as const);
+  // SHARE-A6 — a legacy `?t=` link still opens; it goes straight through the same cookie door a
+  // freshly minted `/s/<token>` link uses, so the token never renders into THIS page's own URL. A
+  // repeated `?t=` arrives as an array; fail closed (no redirect) rather than picking one.
+  if (typeof t === "string" && t.length > 0) redirect(`/s/${encodeURIComponent(t)}`);
+
+  const token = (await cookies()).get(SHARE_PREVIEW_COOKIE_NAME)?.value ?? "";
+  const view = token ? await loadSharePreview(token, await headers()) : ({ state: "unavailable" } as const);
 
   return (
     <main className="gb flex min-h-dvh w-full flex-col items-center bg-background px-4 py-10 sm:px-6">
@@ -87,6 +102,11 @@ function PostPreview({ post }: { post: SharePreviewPost }) {
         <p className="text-sm leading-5 text-muted-foreground">
           You&rsquo;re looking at one post, shared with you to read. Nothing here can be changed from this
           page, and no account is needed to see it.
+        </p>
+        {/* SHARE-A5 — this loads the post's CURRENT fields on every visit, not a snapshot from
+            when the link was shared, so a reviewer opening an old link is told plainly. */}
+        <p className="text-xs leading-4 text-muted-foreground">
+          Content may have changed since this link was shared.
         </p>
       </header>
 
