@@ -105,10 +105,41 @@ export const SIGN_IN_CODE_LENGTH = 6;
 
 /** What a merchant is told when the code they typed is refused.
  *
- *  ONE sentence for all three of Better Auth's refusals — wrong code, expired code, attempts
- *  exhausted — and that is deliberate rather than lazy. Distinguishing them tells a caller who
- *  typed six random digits at somebody else's address whether a live code exists for it, which is
- *  the account-existence oracle this whole path is built to avoid; and all three have the same
- *  cure anyway, which the sentence names. */
+ *  ONE sentence for every one of Better Auth's refusals — wrong code, expired code, attempts
+ *  exhausted — and that is deliberate rather than lazy. Distinguishing them BY WHAT THE SERVER
+ *  ANSWERED tells a caller who typed six random digits at somebody else's address whether a live
+ *  code exists for it, which is the account-existence oracle this whole path is built to avoid.
+ *
+ *  FSE-201 did not change that: the second sentence below is chosen by the merchant's OWN
+ *  attempt count on this page, never by the answer that came back. See it for why. */
 export const SIGN_IN_CODE_REJECTED_MESSAGE =
   "That code didn't work. Check it and try again, or send it again.";
+
+/** HOW MANY GUESSES ONE ISSUED CODE IS WORTH — one source for the two halves that must agree.
+ *
+ *  It is `allowedAttempts` on the emailOTP plugin (lib/better-auth/server.ts), where the whole
+ *  brute-force argument is written out, AND the number the login page counts its own refusals
+ *  against so it can stop telling a merchant to re-check a code the server has already burnt.
+ *  Two copies of it would drift the moment one side was tuned, and the drift is silent: the page
+ *  would go back to saying "check it and try again" about a dead code, which is exactly FSE-201. */
+export const SIGN_IN_CODE_ALLOWED_ATTEMPTS = 3;
+
+/** FSE-201 —— what a merchant is told from the attempt AFTER the last guess this code was worth.
+ *
+ *  THE DEFECT IT CLOSES (staging 走查 2026-09-11, `docs/audits/fullstack-staging-2026-09-11/`):
+ *  Better Auth burns the code on the fourth try — `atomicVerifyOTP` consumes the verification row
+ *  and does not recreate it once the attempts are spent — so from then on even the real code out
+ *  of the merchant's own inbox is refused. The page kept saying "Check it and try again", so the
+ *  merchant re-typed a dead code over and over. S5 批量裁决 2026-09-12 (docs/specs/sign-in.md §5):
+ *  name the cure instead.
+ *
+ *  WHY THIS SENTENCE IS NOT PICKED FROM THE SERVER'S ERROR CODE, even though Better Auth answers
+ *  a distinguishable `TOO_MANY_ATTEMPTS` here. A revoked address, and a stranger while signups are
+ *  paused, are never issued a code at all (`sendVerificationOTP` asks `signInDoorDecision` first),
+ *  so they can never reach that answer — and 规格 §1.3 requires those two refusals to read exactly
+ *  like a wrong code. Branching on the server's answer would therefore turn this sentence into a
+ *  probe for "is this address revoked / does it have an account". The count the page keeps is the
+ *  merchant's own presses: the same number for every address, caused entirely by whoever is
+ *  typing. */
+export const SIGN_IN_CODE_SPENT_MESSAGE =
+  "That code can no longer be used. Press Send again to get a new one.";
