@@ -162,12 +162,18 @@ function idOf(res: Awaited<ReturnType<typeof startAssetGen>>): { id: string; dis
   return res;
 }
 
+/** 浏览器那一次按下出的意图编号(#1375,`asset-action-intent.ts`)。 */
+function newIntentId(): string {
+  return randomUUID();
+}
+
 /** 面板 `handleAnimate` 送出去的那一份请求体,逐字同形(DetailPanel.tsx)。 */
-function animateIntent(projectId: string, sourceGenId: string, prompt: string, audio: boolean) {
+function animateIntent(projectId: string, sourceGenId: string, prompt: string, audio: boolean, intentId: string) {
   return {
     expectedCredits: 11,
     assetOp: "animate",
     assetAnchorGenerationId: sourceGenId,
+    assetIntentId: intentId,
     projectId,
     prompt,
     entityIds: [],
@@ -182,11 +188,12 @@ function animateIntent(projectId: string, sourceGenId: string, prompt: string, a
 }
 
 /** 面板 `handleRegen` 送出去的那一份(注意:这条路不带 sourceGenerationId)。 */
-function regenIntent(projectId: string, anchorGenId: string, prompt: string) {
+function regenIntent(projectId: string, anchorGenId: string, prompt: string, intentId: string) {
   return {
     expectedCredits: 1,
     assetOp: "regen",
     assetAnchorGenerationId: anchorGenId,
+    assetIntentId: intentId,
     projectId,
     prompt,
     entityIds: [],
@@ -212,7 +219,7 @@ describe("D5:上传素材按 Animate", () => {
     expect(await panelPrompt(ownerId, uploaded), "上传路写的就是空串").toBe("");
 
     const started = idOf(await startAssetGen(
-      animateIntent(projectId, uploaded, await panelPrompt(ownerId, uploaded), false),
+      animateIntent(projectId, uploaded, await panelPrompt(ownerId, uploaded), false, newIntentId()),
     ));
     expect(started.disposition).toBe("fresh");
 
@@ -241,8 +248,11 @@ describe("D5:上传素材按 Animate", () => {
 
     // 同一档规格、同一个价格绑定,只有声音开关不同 —— 两次都必须被受理。
     // 服务端自己算一遍价再比对,所以「两次都用 11 过得去」= 开关不改价。
-    const off = idOf(await startAssetGen(animateIntent(projectId, uploaded, prompt, false)));
-    const on = idOf(await startAssetGen(animateIntent(projectId, uploaded, prompt, true)));
+    // 刻意用**同一个**意图编号:这样两把键的差别只可能来自开关本身,这条断言才还在
+    // 钉「开关进摘要」,而不是被 #1375 的编号顺手钉过去。
+    const intentId = newIntentId();
+    const off = idOf(await startAssetGen(animateIntent(projectId, uploaded, prompt, false, intentId)));
+    const on = idOf(await startAssetGen(animateIntent(projectId, uploaded, prompt, true, intentId)));
 
     expect(on.id, "开关是意图的一部分 ⇒ 另一个键 ⇒ 另一单").not.toBe(off.id);
     const all = await jobs(ownerId, projectId);
@@ -259,8 +269,10 @@ describe("D5:上传素材按 Animate", () => {
     const uploaded = await seedUploadedGeneration(ownerId, projectId);
     const prompt = await panelPrompt(ownerId, uploaded);
 
-    const first = idOf(await startAssetGen(animateIntent(projectId, uploaded, prompt, false)));
-    const second = idOf(await startAssetGen(animateIntent(projectId, uploaded, prompt, false)));
+    // 「同一次按下的两次提交」= 同一个意图编号(#1375:编号活到提交落地为止)。
+    const intentId = newIntentId();
+    const first = idOf(await startAssetGen(animateIntent(projectId, uploaded, prompt, false, intentId)));
+    const second = idOf(await startAssetGen(animateIntent(projectId, uploaded, prompt, false, intentId)));
 
     // 兜底句在算键**之前**落下,所以同一个意图两次提交摘出同一个键 —— 兜底没有把
     // 去重打穿(那才是这条路上最贵的一类缺陷)。
@@ -281,7 +293,7 @@ describe("D5:Regenerate 没有源图,维持拒收", () => {
     // 引擎手上没有这张照片,兜一句话过去只会出一张无关的图,而商家已经付了钱。
     // 所以这条路上「拒收」才是正确结果,直到 i2i 请求形状接上。
     const result = await startAssetGen(
-      regenIntent(projectId, uploaded, await panelPrompt(ownerId, uploaded)),
+      regenIntent(projectId, uploaded, await panelPrompt(ownerId, uploaded), newIntentId()),
     );
 
     // Founder 2026-09-03 裁决:拒收不变,说法要人话。这一句**逐字写死在这里**(不引
@@ -307,7 +319,7 @@ describe("D5:兜底收得很窄", () => {
     const generated = await seedGeneratedGeneration(ownerId, projectId, "our mug on a linen table, morning light");
     const prompt = await panelPrompt(ownerId, generated);
 
-    idOf(await startAssetGen(animateIntent(projectId, generated, prompt, true)));
+    idOf(await startAssetGen(animateIntent(projectId, generated, prompt, true, newIntentId())));
 
     const all = await jobs(ownerId, projectId);
     expect(all).toHaveLength(1);
@@ -326,6 +338,7 @@ describe("D5:兜底收得很窄", () => {
       expectedCredits: 1,
       assetOp: "edit",
       assetAnchorGenerationId: uploaded,
+      assetIntentId: newIntentId(),
       projectId,
       prompt: "   ",
       entityIds: [],
