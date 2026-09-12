@@ -26,6 +26,8 @@ import {
   displayCredits,
   type CaptionJobData,
   type RenderJobData,
+  UNDERSTANDING_WAITING_FOR_CREDITS,
+  UNDERSTANDING_PROVIDER_PAUSED,
 } from "@fikirtive/core";
 import { entityCapabilities, OFFICIAL_CATALOG_REFUSAL } from "@fikirtive/core/entity-policy";
 import type { EntityType, ShotStatus } from "@fikirtive/db";
@@ -1199,6 +1201,13 @@ export type GenerationLineage = {
    * `UNDERSTANDING_PROVIDER_PAUSED`）由渲染那一侧（`AssetLineage.tsx`）去挑,这里只带信号。
    */
   costPendingReason?: "waiting_for_credits" | "provider_paused";
+  /**
+   * `costPendingReason` 对应的权威文案,服务端取好整句传下来 —— `AssetLineage.tsx` 是
+   * `"use client"` 组件,不能直接 import `@fikirtive/core` 的 Node 版总入口
+   * (`lib/__tests__/client-core-imports.test.ts` 围栏)。undefined = 用调用方自己的默认句
+   * (不是 pending,或 pending 但状态是 QUEUED/RUNNING,那句「快」不是权威文案,不搬到这里)。
+   */
+  costPendingCopy?: string;
   /** 商家话的状态。 */
   status: string;
   /** 这一件今天被用在哪里;空数组 = 还没被用到别处。 */
@@ -1285,9 +1294,20 @@ export async function getGenerationLineage(
     // 没有这个窗口(job 分支恒为 false)。
     costPending: !job && (uploadCredits.get(generationId)?.pending ?? false),
     costPendingReason: job ? undefined : uploadCredits.get(generationId)?.stalledReason,
+    costPendingCopy: job ? undefined : pendingCostCopy(uploadCredits.get(generationId)?.stalledReason),
     status: lineageStatus(job?.status ?? null, gen.source),
     usedIn,
   };
+}
+
+/**
+ * `costPendingReason` 对应的权威文案 —— 原样搬自 `@fikirtive/core`(家规 §7.3 单一源头),
+ * 在服务端取好整句字符串,好让 `AssetLineage.tsx`(`"use client"`)不用碰 Node 版总入口。
+ */
+function pendingCostCopy(reason: "waiting_for_credits" | "provider_paused" | undefined): string | undefined {
+  if (reason === "waiting_for_credits") return UNDERSTANDING_WAITING_FOR_CREDITS;
+  if (reason === "provider_paused") return UNDERSTANDING_PROVIDER_PAUSED;
+  return undefined;
 }
 
 /** `Generation.entitySnapshot` 里那几个名字。形状不对(老行、手写脏数据)一律当作没有引用。 */

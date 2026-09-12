@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { CANVAS_HREF } from "@fikirtive/core/navigation";
-import { UNDERSTANDING_PROVIDER_PAUSED, UNDERSTANDING_WAITING_FOR_CREDITS } from "@fikirtive/core";
 import { creditsLabel } from "@/lib/credit-format";
 import type { GenerationLineage } from "@/lib/actions";
 import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
@@ -12,12 +11,14 @@ import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
  * PAUSED_BALANCE / PAUSED 都不是「快有结果」,商家该做的事也不一样(充值 vs 什么都不用做),
  * 混着说成一句「settles shortly」是撒谎。两句权威文案原样搬运(`@fikirtive/core`),
  * 不在这里另造第三套说法(家规 §7.3 单一源头)。
+ *
+ * 文案本身在服务端取好(`lib/actions.ts` 的 `costPendingCopy`)——这个组件是 `"use client"`,
+ * 不能直接 import `@fikirtive/core` 的 Node 版总入口(`lib/__tests__/client-core-imports.test.ts`
+ * 围栏;该总入口没有暴露 `asset-understanding` 的 client-safe 子路径)。
  */
-function pendingCostCopy(reason: GenerationLineage["costPendingReason"]): string {
-  if (reason === "waiting_for_credits") return UNDERSTANDING_WAITING_FOR_CREDITS;
-  if (reason === "provider_paused") return UNDERSTANDING_PROVIDER_PAUSED;
-  // QUEUED / RUNNING —— 真的快,原话不动。
-  return "still reading this file — price settles shortly";
+function pendingCostCopy(lineage: GenerationLineage): string {
+  // QUEUED / RUNNING —— 真的快,原话不动;这句本来就不是 `@fikirtive/core` 的权威文案。
+  return lineage.costPendingCopy ?? "still reading this file — price settles shortly";
 }
 
 /**
@@ -76,7 +77,7 @@ export function AssetLineage({ lineage }: { lineage: GenerationLineage }) {
         // "Cost: no credits charged" 这句假话(这笔钱随后一定会收)。结算没定论前说诚实
         // 中间态,绝不能说没花钱。FSE-211 判官修根 P1-1:PAUSED_BALANCE / PAUSED 不是
         // 「快」,文案按 `costPendingReason` 分岔(见上方 `pendingCostCopy`)。
-        <p className="cv-detail-fact-copy">Cost: {pendingCostCopy(lineage.costPendingReason)}</p>
+        <p className="cv-detail-fact-copy">Cost: {pendingCostCopy(lineage)}</p>
       ) : (
         lineage.costCredits != null && (
           <p className="cv-detail-fact-copy">
