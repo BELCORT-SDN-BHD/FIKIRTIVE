@@ -683,6 +683,22 @@ describe("FRONT-A14 血缘节:出处、参考、成本、状态、用途", () =>
     expect(text).not.toContain("Used in:");
   });
 
+  it("creation §5 :169 FSE-203 结算没定论前(costPending)⇒ 不写 no credits charged,显示诚实中间态", async () => {
+    mocks.getGenerationLineage.mockResolvedValue({
+      canvas: { id: "prj_1", name: "Hari Raya gifting" },
+      conversation: null,
+      references: [],
+      costCredits: 0,
+      costPending: true,
+      status: "Uploaded by you",
+      usedIn: [],
+    });
+    await renderPanel();
+    const text = surface().textContent ?? "";
+    expect(text, "结算没定论的时候不许说没花钱 —— 这笔钱随后一定会收").not.toContain("no credits charged");
+    expect(text).toContain("Cost:");
+  });
+
   it("成本未知(有任务、零账本行)⇒ 那一行不出现,不编一个数", async () => {
     mocks.getGenerationLineage.mockResolvedValue({
       canvas: { id: "prj_1", name: "Hari Raya gifting" },

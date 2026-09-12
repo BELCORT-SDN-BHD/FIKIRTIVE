@@ -371,6 +371,12 @@ export function OttoChatStream({
   const lastSubmittedTextRef = useRef("");
   /** FSE-004:刚送出去那一轮的整份草稿 —— 直播失败时它就是重试草稿(文字 ＋ 引用)。 */
   const lastSentDraftRef = useRef<TurnReferenceDraft | null>(null);
+  /**
+   * FSE-205 —— **这一刻**最新那条用户消息自己的 id。`onData` 是传进 `useChat` 的一个闭包
+   * (与 `lastSentDraftRef` 这几个 ref 同一条纪律的理由:这个文件不信任它能读到最新的
+   * `messages`),所以这一格必须是 ref,靠下面那个 `useEffect` 跟着 `messages` 更新,
+   * 不能在 `onData` 里现读 `messages`。 */
+  const latestUserMessageIdRef = useRef<string | null>(null);
   /** Codex QA-CRE-FE9-013:这一轮送出去的草稿与附件,留到**知道服务端收下了**为止。
    *  服务端因为某件参考取不到而整轮拒绝时,它们原样放回输入框(附件条里就是他要移掉的那一件);
    *  正常收尾或别的错误则在这里释放 —— blob 预览的 revoke 也跟着挪到那一刻,不然放回去的
@@ -572,6 +578,11 @@ export function OttoChatStream({
     },
   });
 
+  // FSE-205:`latestUserMessageIdRef` 跟着 `messages` 更新 —— 见上面那个 ref 的注释。
+  useEffect(() => {
+    latestUserMessageIdRef.current = latestUserMessage(messages)?.id ?? null;
+  }, [messages]);
+
   // useChat's own `error` is transport-level only (fetch/network/parse failures before
   // the route's data-error protocol even starts — business errors arrive as a streamed
   // data-error part and render via OttoStreamErrorNotice instead, see below). Its raw
@@ -605,11 +616,21 @@ export function OttoChatStream({
    *
    * `source` 是这一轮**真正带了什么**的现场记录:传输级那两条路各自给的不一样(见下面
    * 那个 effect),所以判断留在调用处,这里只负责「没有现场记录时也别把文字弄丢」。
+   *
+   * FSE-205(先核实、后落修:根因坐实,渲染条件 `restoredDraft?.sourceMessageId` 本身没错,
+   * 错在写入端)—— `source.sourceMessageId` 答的是「那次送出本身是不是某个更早回合的
+   * 重来」,直播失败要的却是另一个问题的答案:「重试**这一轮**该指向哪条消息」,那永远是
+   * `latestUserMessageIdRef` 此刻指着的那一条(送出即回显,回显即最新的用户消息),与
+   * `source` 当初带着什么无关。原样透传 `source.sourceMessageId` 在最常见的那条路
+   * (`submit()` 送一条从未被重试过的新消息)恒为 `null` —— 这一行因此永远不出现,
+   * 与走查现场同一种形状。落到只剩文字那一支(没有任何结构化草稿)时同样认这一格,
+   * 而不是硬写 `null`。
    */
   function liveRetryDraft(source: TurnReferenceDraft | null): TurnReferenceDraft | null {
-    if (source) return source;
+    const sourceMessageId = latestUserMessageIdRef.current;
+    if (source) return { ...source, sourceMessageId };
     return lastSubmittedTextRef.current
-      ? { text: lastSubmittedTextRef.current, refs: EMPTY_TURN_REFERENCES, labels: [], sourceMessageId: null }
+      ? { text: lastSubmittedTextRef.current, refs: EMPTY_TURN_REFERENCES, labels: [], sourceMessageId }
       : null;
   }
 

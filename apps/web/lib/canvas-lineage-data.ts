@@ -16,7 +16,7 @@ import "server-only";
  */
 
 import { prisma } from "@fikirtive/db";
-import { displayCredits } from "@fikirtive/core";
+import { displayCredits, understandingKindForMime } from "@fikirtive/core";
 import { canvasImageSettings, canvasVideoSettings, type CanvasNodeLineage } from "./canvas-lineage";
 import { mergeSettings } from "./owner-settings";
 import { formatDayLabel, formatTime, partsInTz } from "./schedule-view";
@@ -54,6 +54,27 @@ export function netChargedInternalCredits(
   return rows.reduce((total, row) => total - row.balanceDelta, 0);
 }
 
+/** Terminal `AssetUnderstanding.status` values — the ledger read behind them is a settled
+ *  fact (see `packages/core/src/asset-understanding.ts` for the full status list: QUEUED /
+ *  RUNNING / PAUSED / PAUSED_BALANCE are all recoverable, non-final states). */
+const UNDERSTANDING_TERMINAL_STATUSES = new Set<string>(["DONE", "FAILED", "SKIPPED"]);
+
+/** FSE-009 §5 :169 折出来的费用，外加 FSE-203 §5 行新增的「这笔钱有没有定论」信号。 */
+export type UploadUnderstandingCost = {
+  /** Net credits already charged and settled (display units). 0 = nothing settled — either
+   *  genuinely free, or still pending; read `pending` to tell those two apart. */
+  creditsCharged: number;
+  /**
+   * FSE-203 —— 结算还没有定论：这件素材上至少有一行理解还没到终态（QUEUED / RUNNING /
+   * PAUSED / PAUSED_BALANCE），或者**一行理解都还没建**但这件素材的 mime 迟早会被扫描器
+   * 捞起来读（`understandingKindForMime` 不为 null，与 `scanAssetsNeedingUnderstanding`
+   * 认的是同一个函数）。false = 每一行都已经到终态（DONE / FAILED / SKIPPED，账本上的
+   * 净额已经是事实），或者这件素材的类型根本不会被理解（音频等）—— 那是真的没花钱，
+   * 不是「还没轮到」。
+   */
+  pending: boolean;
+};
+
 /**
  * FSE-009 —— 一件**上传**素材背后那些自动理解任务折出来的费用（显示 credits），按
  * generation id 归拢。
@@ -69,47 +90,58 @@ export function netChargedInternalCredits(
  * 折进来与不折进来是同一个数，而前缀匹配要为每一行各写一条 `startsWith` 谓词。
  *
  * 折出 0（一行理解都没有，或那一笔被退过款）与「没有记录」不是一回事：上传本身确实免费，
- * 所以 0 是事实，卡面照旧说 "no credits charged"。没有条目的 generation 一律当 0 读。
+ * 所以 0 是事实，卡面照旧说 "no credits charged"。没有条目的 generation 一律当 0 读——
+ * FSE-203：但 0 **不代表**这就是终局，`pending` 才说得出「这个 0 会不会变」。
  *
  * 没有上传卡 ⇒ 一条语句都不发。纯读：不预扣、不结算、不退款。
  */
 export async function loadUploadUnderstandingCredits(
   ownerId: string,
-  uploaded: ReadonlyArray<{ id: string; assetId: string }>,
-): Promise<Map<string, number>> {
-  const byGeneration = new Map<string, number>();
+  uploaded: ReadonlyArray<{ id: string; assetId: string; mime: string }>,
+): Promise<Map<string, UploadUnderstandingCost>> {
+  const byGeneration = new Map<string, UploadUnderstandingCost>();
   const assetIds = [...new Set(uploaded.map((generation) => generation.assetId))];
   if (!assetIds.length) return byGeneration;
 
+  // FSE-203：不再只挑「已经进钱路」的那些行（`moneyRefId: { not: null }`）——一件素材建行
+  // 之后、reserve 之前那几十秒同样属于「还没定论」，这里必须看得到那些行才判得出 pending。
   const understandings = await prisma.assetUnderstanding.findMany({
-    where: { ownerId, assetId: { in: assetIds }, moneyRefId: { not: null } },
-    select: { assetId: true, moneyRefId: true },
+    where: { ownerId, assetId: { in: assetIds } },
+    select: { assetId: true, moneyRefId: true, status: true },
   });
-  const refIds = [...new Set(understandings.map((row) => row.moneyRefId).filter((id): id is string => !!id))];
-  if (!refIds.length) return byGeneration;
+  const rowsByAsset = new Map<string, typeof understandings>();
+  for (const row of understandings) {
+    const group = rowsByAsset.get(row.assetId) ?? [];
+    group.push(row);
+    rowsByAsset.set(row.assetId, group);
+  }
 
-  const rows = await prisma.creditLedger.findMany({
-    where: { orgId: ownerId, refId: { in: refIds } },
-    select: { refId: true, balanceDelta: true },
-  });
+  const refIds = [...new Set(understandings.map((row) => row.moneyRefId).filter((id): id is string => !!id))];
+  const ledgerRows = refIds.length
+    ? await prisma.creditLedger.findMany({
+      where: { orgId: ownerId, refId: { in: refIds } },
+      select: { refId: true, balanceDelta: true },
+    })
+    : [];
   const rowsByRefId = new Map<string, { balanceDelta: number }[]>();
-  for (const row of rows) {
+  for (const row of ledgerRows) {
     if (!row.refId) continue;
     const group = rowsByRefId.get(row.refId) ?? [];
     group.push({ balanceDelta: row.balanceDelta });
     rowsByRefId.set(row.refId, group);
   }
-  const rowsByAsset = new Map<string, { balanceDelta: number }[]>();
-  for (const understanding of understandings) {
-    const group = rowsByAsset.get(understanding.assetId) ?? [];
-    group.push(...(rowsByRefId.get(understanding.moneyRefId!) ?? []));
-    rowsByAsset.set(understanding.assetId, group);
-  }
   // 同一件素材可能挂着好几张卡(同一张图放上画布两次)——每张卡说的都是这件素材上真实
   // 发生过的那笔理解费,不是各自分摊一份:费用行回答的是「这张卡背后花了多少」。
   for (const generation of uploaded) {
-    const group = rowsByAsset.get(generation.assetId);
-    if (group?.length) byGeneration.set(generation.id, displayCredits(netChargedInternalCredits(group)));
+    const rows = rowsByAsset.get(generation.assetId);
+    const ledgerGroup = (rows ?? []).flatMap((row) => (row.moneyRefId ? rowsByRefId.get(row.moneyRefId) ?? [] : []));
+    const pending = rows?.length
+      ? rows.some((row) => !UNDERSTANDING_TERMINAL_STATUSES.has(row.status))
+      : understandingKindForMime(generation.mime) !== null;
+    byGeneration.set(generation.id, {
+      creditsCharged: displayCredits(netChargedInternalCredits(ledgerGroup)),
+      pending,
+    });
   }
   return byGeneration;
 }
@@ -151,7 +183,10 @@ export async function loadCanvasNodeLineages(
         where: { id: { in: generationIds }, ownerId, projectId, deletedAt: null },
         // FSE-009:`assetId` 是「这张上传的图后来被自动读过没有」那条链的第一环 ——
         // 理解任务的账本行挂在**素材**上,不在任何 GenJob 上。
-        select: { id: true, createdAt: true, source: true, assetId: true },
+        // FSE-203:`asset.mime` 是判「一行理解都还没建时算不算 pending」的唯一依据
+        // (`understandingKindForMime`,与扫描器同一个函数)——不额外发一条查询,顺着
+        // Generation → Asset 那条既有关系带出来。
+        select: { id: true, createdAt: true, source: true, assetId: true, asset: { select: { mime: true } } },
       })
       : Promise.resolve([]),
     jobIds.length
@@ -172,7 +207,10 @@ export async function loadCanvasNodeLineages(
   // 明明有一行。
   const uploaded = generations.filter((generation) => generation.source === "UPLOAD");
   const uploadedGenerations = new Set(uploaded.map((generation) => generation.id));
-  const uploadCreditsByGeneration = await loadUploadUnderstandingCredits(ownerId, uploaded);
+  const uploadCreditsByGeneration = await loadUploadUnderstandingCredits(
+    ownerId,
+    uploaded.map((generation) => ({ id: generation.id, assetId: generation.assetId, mime: generation.asset?.mime ?? "" })),
+  );
   const ledgerByJob = new Map<string, { balanceDelta: number }[]>();
   for (const row of ledgerRows) {
     if (!row.refId) continue;
@@ -212,8 +250,10 @@ export async function loadCanvasNodeLineages(
         : (!node.genJobId && node.generationId && uploadedGenerations.has(node.generationId)
           // FSE-009(Founder 2026-09-10 裁:**只显示合计,不拆行**)—— 上传那一格的费用 =
           // 这件素材上那些自动理解任务的账本行折出来的净额,与资产详情那一面同一个函数。
-          // 一行都没有 ⇒ 0 ⇒ 卡面照旧说 "no credits charged",与从前逐字相同。
-          ? (uploadCreditsByGeneration.get(node.generationId) ?? 0)
+          // 一行都没有 ⇒ 0 ⇒ 卡面照旧说 "no credits charged",与从前逐字相同。画布卡这一面
+          // 本票不改文案(诚实中间态只落在 Library 资产详情——票面范围,`pending` 这一格
+          // 在这里刻意不读),`creditsCharged` 的算法与从前逐字相同。
+          ? (uploadCreditsByGeneration.get(node.generationId)?.creditsCharged ?? 0)
           : null),
       batchSize,
       batchPosition: index >= 0 ? index + 1 : null,

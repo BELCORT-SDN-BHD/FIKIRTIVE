@@ -111,12 +111,14 @@ beforeAll(async () => {
 describe("creation §5 :169 FSE-009 上传理解费的租户边界(真库)", () => {
   it("creation §5 :169 FSE-009 真库双租户:B 拿 A 的 generation 去问费用合计,折出 0 —— 看不到 A 那一笔", async () => {
     // 先证明这笔钱在 A 名下**确实存在** —— 否则下面那个 0 只是「本来就没有」。
-    const asOwner = await loadUploadUnderstandingCredits(a.ownerId, [{ id: a.generationId, assetId: a.assetId }]);
-    expect(asOwner.get(a.generationId)).toBe(0.1);
+    const asOwner = await loadUploadUnderstandingCredits(a.ownerId, [{ id: a.generationId, assetId: a.assetId, mime: "image/png" }]);
+    // FSE-203:理解行已经 DONE(终态),这个数是已结清的事实,不是未定论。
+    expect(asOwner.get(a.generationId)).toEqual({ creditsCharged: 0.1, pending: false });
 
-    // 同一件素材、同一行 generation,换成 B 的身份去问。
-    const asOtherTenant = await loadUploadUnderstandingCredits(b.ownerId, [{ id: a.generationId, assetId: a.assetId }]);
-    expect(asOtherTenant.get(a.generationId)).toBeUndefined();
+    // 同一件素材、同一行 generation,换成 B 的身份去问 —— B 的查询天然看不到 A 名下那一行
+    // 理解,折不出 A 的真实数字,一分钱都不泄漏(FSE-203 之后仍是这条不变量)。
+    const asOtherTenant = await loadUploadUnderstandingCredits(b.ownerId, [{ id: a.generationId, assetId: a.assetId, mime: "image/png" }]);
+    expect(asOtherTenant.get(a.generationId)?.creditsCharged, "越租户读出了 A 的真实数字").toBe(0);
   });
 
   it("creation §5 :169 FSE-009 真库双租户:B 打开 A 那件上传的资产详情,连血缘都读不到", async () => {
