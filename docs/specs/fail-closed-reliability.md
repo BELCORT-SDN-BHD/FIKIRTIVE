@@ -69,6 +69,7 @@
 
 | 日期 | 想法 | 裁决（留空待 S5） |
 |---|---|---|
+| 2026-09-12 | **§4 要求的 staging 现场核证结果（#1383 前置，只读）**。查法：`railway status` 确认 project `FIKIRTIVE` / environment `staging`；`railway variables -e staging -s web --kv` 与 `-s worker --kv` 各重定向到临时文件，只 grep `NODE_ENV` 与 `GENERATION_PROVIDER` 两键，读完即删，其余变量一律不回显。结果：① 两个 service 的 Railway 变量里**都没有 `NODE_ENV`**（web 50 个变量、worker 26 个变量，均无此键）——因此「staging 按生产标记运行」在变量层**不成立**，但进程运行时取值（`next start` 自己会把 web 设成 production；worker 镜像的启动命令未核）**未证**，要断言需另查运行进程；② staging **worker 的 `GENERATION_PROVIDER=byteplus`**——也就是说 staging 今天跑的是**真付费引擎**，不是 `docs/runbooks/staging.md` 两级意图表里写的 `mock`/$0。对本规格的影响：本票落地不会拒掉 staging worker 的启动（它已是唯一合法值），§4 担心的「staging 的 $0 mock 演示当天失效」这条退路**在别处已经先失效了**——staging 今天根本不是 $0。离线演示与 staging 花费边界要怎么摆，呈 Founder 另裁（不属本票）。 | |
 
 ## 6. 改签记录
 
