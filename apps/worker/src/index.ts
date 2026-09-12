@@ -43,6 +43,7 @@ import { assertWorkerEnv } from "./boot-env.js";
 import { startHeartbeat } from "./heartbeat.js";
 import { commitShaFrom, shortSha } from "@fikirtive/core/env-contract";
 import {
+  createAndAlignQueue,
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
   REFGEN_DLQ,
@@ -171,32 +172,37 @@ boss.on("error", (err) => { console.error("[worker] pg-boss error:", err); captu
 async function main(): Promise<void> {
   await boss.start();
 
+  // 判官 P1-2(PR #1410):pg-boss create_queue 以 ON CONFLICT DO NOTHING 收尾,单靠 createQueue
+  // 不会把改宽的 policy 常量(如 #1386 的 expireInSeconds 20m→40m)写回已存在的队列行 ——
+  // createAndAlignQueue 在 createQueue 之后显式 updateQueue 对齐,见 queue-align.ts 顶部注释。
+  // 全部走这一个函数,不是只修 gen/refgen 两条(判官只点名的两条是同一根因的两个实例)。
   await boss.createQueue(`${QUEUES.ingest}.dlq`);
-  await boss.createQueue(QUEUES.ingest, {
+  const ingestPolicy = {
     retryLimit: 3,
     retryDelay: 30,
     retryBackoff: true,
     expireInSeconds: 60 * 30, // multi-GB download + ffprobe headroom
     deadLetter: `${QUEUES.ingest}.dlq`,
-  });
+  };
+  await createAndAlignQueue(boss, QUEUES.ingest, ingestPolicy);
   await boss.createQueue(RENDER_DLQ);
-  await boss.createQueue(QUEUES.render, { ...RENDER_QUEUE_POLICY });
+  await createAndAlignQueue(boss, QUEUES.render, RENDER_QUEUE_POLICY);
   await boss.createQueue(REFGEN_DLQ);
-  await boss.createQueue(QUEUES.refgen, { ...REFGEN_QUEUE_POLICY });
+  await createAndAlignQueue(boss, QUEUES.refgen, REFGEN_QUEUE_POLICY);
   await boss.createQueue(GEN_DLQ);
-  await boss.createQueue(QUEUES.gen, { ...GEN_QUEUE_POLICY });
+  await createAndAlignQueue(boss, QUEUES.gen, GEN_QUEUE_POLICY);
   await boss.createQueue(CAPTION_DLQ);
-  await boss.createQueue(QUEUES.caption, { ...CAPTION_QUEUE_POLICY });
+  await createAndAlignQueue(boss, QUEUES.caption, CAPTION_QUEUE_POLICY);
   await boss.createQueue(RESEARCH_DLQ);
-  await boss.createQueue(RESEARCH_QUEUE, { ...RESEARCH_QUEUE_POLICY });
+  await createAndAlignQueue(boss, RESEARCH_QUEUE, RESEARCH_QUEUE_POLICY);
   // L1 publish queue (Seam 6): SAME policy object as web (apps/web/lib/queue.ts) so boot order
   // can't split them. The consumer (boss.work) + scheduler + reaper land in the publish-worker
   // energize slice; for now the queue exists but nothing produces to it (fail-closed, inert).
   await boss.createQueue(PUBLISH_DLQ);
-  await boss.createQueue(PUBLISH_QUEUE, { ...PUBLISH_QUEUE_POLICY });
+  await createAndAlignQueue(boss, PUBLISH_QUEUE, PUBLISH_QUEUE_POLICY);
   // #784 素材理解:队列的**唯一**生产者是下面 supervise 里的扫描器 —— 商家永远不点「分析」。
   await boss.createQueue(UNDERSTAND_DLQ);
-  await boss.createQueue(UNDERSTAND_QUEUE, { ...UNDERSTAND_QUEUE_POLICY });
+  await createAndAlignQueue(boss, UNDERSTAND_QUEUE, UNDERSTAND_QUEUE_POLICY);
 
   /**
    * Register ONE queue's consumer — but only if this role owns the queue (#796). The plan is

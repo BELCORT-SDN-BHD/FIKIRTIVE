@@ -16,7 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
-  const calls = { construct: 0, start: 0, createQueue: 0, stop: 0 };
+  const calls = { construct: 0, start: 0, createQueue: 0, updateQueue: 0, stop: 0 };
   const control = {
     failStart: false,
     failCreateQueue: false,
@@ -39,6 +39,12 @@ const h = vi.hoisted(() => {
     async createQueue() {
       calls.createQueue += 1;
       if (control.failCreateQueue) throw new Error("createQueue failed");
+    }
+    // judge P1-2 (PR #1410): buildBoss now calls createAndAlignQueue, which follows every
+    // createQueue with an updateQueue (queue.ts, packages/core/src/queue-align.ts) — the fake
+    // needs this method too, or that call throws "boss.updateQueue is not a function".
+    async updateQueue() {
+      calls.updateQueue += 1;
     }
     async stop() {
       calls.stop += 1;
@@ -66,6 +72,7 @@ beforeEach(() => {
   h.calls.construct = 0;
   h.calls.start = 0;
   h.calls.createQueue = 0;
+  h.calls.updateQueue = 0;
   h.calls.stop = 0;
   h.control.failStart = false;
   h.control.failCreateQueue = false;

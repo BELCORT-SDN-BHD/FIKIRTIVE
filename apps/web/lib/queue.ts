@@ -1,6 +1,6 @@
 import "server-only";
 import { PgBoss } from "pg-boss";
-import { RENDER_DLQ, RENDER_QUEUE, RENDER_QUEUE_POLICY, REFGEN_DLQ, REFGEN_QUEUE, REFGEN_QUEUE_POLICY, GEN_DLQ, GEN_QUEUE, GEN_QUEUE_POLICY, CAPTION_DLQ, CAPTION_QUEUE, CAPTION_QUEUE_POLICY, RESEARCH_DLQ, RESEARCH_QUEUE, RESEARCH_QUEUE_POLICY, PUBLISH_DLQ, PUBLISH_QUEUE, PUBLISH_QUEUE_POLICY } from "@fikirtive/core";
+import { createAndAlignQueue, RENDER_DLQ, RENDER_QUEUE, RENDER_QUEUE_POLICY, REFGEN_DLQ, REFGEN_QUEUE, REFGEN_QUEUE_POLICY, GEN_DLQ, GEN_QUEUE, GEN_QUEUE_POLICY, CAPTION_DLQ, CAPTION_QUEUE, CAPTION_QUEUE_POLICY, RESEARCH_DLQ, RESEARCH_QUEUE, RESEARCH_QUEUE_POLICY, PUBLISH_DLQ, PUBLISH_QUEUE, PUBLISH_QUEUE_POLICY } from "@fikirtive/core";
 
 /**
  * Send-only pg-boss handle for the web side (producers). Same lazy-singleton
@@ -38,19 +38,22 @@ async function buildBoss(): Promise<PgBoss> {
   boss.on("error", (err) => console.error("[web:pg-boss]", err));
   try {
     await boss.start();
-    // idempotent, same policy as the worker: dispatch never races worker boot
+    // idempotent, same policy as the worker: dispatch never races worker boot. createAndAlignQueue
+    // (not a bare createQueue) — judge P1-2 on PR #1410: pg-boss's create_queue ends ON CONFLICT DO
+    // NOTHING, so a policy constant widened after a queue row already exists (#1386's expireInSeconds)
+    // needs an explicit updateQueue to actually reach that row; see packages/core/src/queue-align.ts.
     await boss.createQueue(RENDER_DLQ);
-    await boss.createQueue(RENDER_QUEUE, { ...RENDER_QUEUE_POLICY });
+    await createAndAlignQueue(boss, RENDER_QUEUE, RENDER_QUEUE_POLICY);
     await boss.createQueue(REFGEN_DLQ);
-    await boss.createQueue(REFGEN_QUEUE, { ...REFGEN_QUEUE_POLICY });
+    await createAndAlignQueue(boss, REFGEN_QUEUE, REFGEN_QUEUE_POLICY);
     await boss.createQueue(GEN_DLQ);
-    await boss.createQueue(GEN_QUEUE, { ...GEN_QUEUE_POLICY });
+    await createAndAlignQueue(boss, GEN_QUEUE, GEN_QUEUE_POLICY);
     await boss.createQueue(CAPTION_DLQ);
-    await boss.createQueue(CAPTION_QUEUE, { ...CAPTION_QUEUE_POLICY });
+    await createAndAlignQueue(boss, CAPTION_QUEUE, CAPTION_QUEUE_POLICY);
     await boss.createQueue(RESEARCH_DLQ);
-    await boss.createQueue(RESEARCH_QUEUE, { ...RESEARCH_QUEUE_POLICY });
+    await createAndAlignQueue(boss, RESEARCH_QUEUE, RESEARCH_QUEUE_POLICY);
     await boss.createQueue(PUBLISH_DLQ);
-    await boss.createQueue(PUBLISH_QUEUE, { ...PUBLISH_QUEUE_POLICY });
+    await createAndAlignQueue(boss, PUBLISH_QUEUE, PUBLISH_QUEUE_POLICY);
     return boss;
   } catch (err) {
     // A half-started handle still owns its connection pool. Because the next call
