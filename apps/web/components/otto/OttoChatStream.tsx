@@ -625,10 +625,23 @@ export function OttoChatStream({
    * (`submit()` 送一条从未被重试过的新消息)恒为 `null` —— 这一行因此永远不出现,
    * 与走查现场同一种形状。落到只剩文字那一支(没有任何结构化草稿)时同样认这一格,
    * 而不是硬写 `null`。
+   *
+   * P2-2 判官修根(PR #1415,FSE-211)——上面这条推理只对**屏幕**成立,原样套到**请求体**
+   * 上是另一个错:`source` 有值时(比如卡片的 Change 请求失败,`source.sourceMessageId`
+   * 原本是那张卡自己的消息 id),`sourceMessageId` 改写成乐观回显的 id 只是为了让屏幕认得
+   * 出「正在重试哪一轮」——那条回显此刻还没有落库(直播失败,流还没打开或整轮被拒),商家
+   * 真正点下「Edit and retry」再送出时,请求体的 `replyToMessageId` 如果跟着这个改写值走,
+   * 服务端解析不到,落库退化成 `null`,那张卡原本的归属就断了。两个问题因此要两个答案:
+   * 屏幕的那格(`sourceMessageId`)照旧用最新回显;请求体真正该带的那个另存一格
+   * (`replyToMessageId`),原样保留 `source` 当初带着的目标——`source.replyToMessageId`
+   * 优先(链式重试:上一轮已经修过的答案继续往下传),没有就退到 `source.sourceMessageId`
+   * (`source` 从未被这个函数处理过,它自己那一格就是真正的目标)。
    */
   function liveRetryDraft(source: TurnReferenceDraft | null): TurnReferenceDraft | null {
     const sourceMessageId = latestUserMessageIdRef.current;
-    if (source) return { ...source, sourceMessageId };
+    if (source) {
+      return { ...source, sourceMessageId, replyToMessageId: source.replyToMessageId ?? source.sourceMessageId };
+    }
     return lastSubmittedTextRef.current
       ? { text: lastSubmittedTextRef.current, refs: EMPTY_TURN_REFERENCES, labels: [], sourceMessageId }
       : null;
@@ -989,7 +1002,17 @@ export function OttoChatStream({
       text: trimmed,
       refs: mergeTurnReferences(fromComposer, restoredDraft?.refs ?? EMPTY_TURN_REFERENCES),
       labels: restoredDraft?.labels ?? [],
-      sourceMessageId: restoredDraft?.sourceMessageId ?? null,
+      // P2-2 判官修根:请求体要的是「这份草稿真正该回复给谁」,不是屏幕上那一行念的是谁——
+      // 两者绝大多数时候是同一个 id,只在 `liveRetryDraft` 改写过屏幕那格时分道扬镳
+      // (`replyToMessageId` 才是没被改写过的那个),见该函数上方的判官修根说明。`??` 在这里
+      // 不够用:`replyToMessageId` 显式为 `null`(全新消息,`liveRetryDraft` 确认过「没有
+      // 原本的目标」)与这一格**根本没被设过**(没走过 `liveRetryDraft` 的草稿,比如卡片的
+      // `changeRequestDraft`)必须分开——前者不能落回 `sourceMessageId`(那正是要避免的
+      // 乐观回显 id),后者才该落回。用 `in` 判有没有这把键,不用 `??` 判值是不是 nullish。
+      sourceMessageId:
+        restoredDraft && "replyToMessageId" in restoredDraft
+          ? restoredDraft.replyToMessageId ?? null
+          : restoredDraft?.sourceMessageId ?? null,
     });
   }
 
@@ -1242,7 +1265,11 @@ export function OttoChatStream({
    * Remove references 管的是另一件事，两颗键各清各的，不互相牵连。
    */
   function clearRetrySource() {
-    setRestoredDraft((cur) => (cur ? { ...cur, sourceMessageId: null } : null));
+    // P2-2 判官修根:请求体真正认的那个 id 现在可能住在 `replyToMessageId`(见
+    // `liveRetryDraft`),这颗键清的是「这一轮是那一轮的重来」这整件事——两格都要清,
+    // 只清 `sourceMessageId` 会让 `submit()` 的 `replyToMessageId ?? sourceMessageId`
+    // 兜底继续把已经被「Remove」掉的那个目标送上去。
+    setRestoredDraft((cur) => (cur ? { ...cur, sourceMessageId: null, replyToMessageId: null } : null));
   }
 
   /**

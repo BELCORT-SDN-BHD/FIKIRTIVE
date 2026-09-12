@@ -131,7 +131,21 @@ const liveError = () => ({
   parts: [{ type: "data-error", data: { kind: "error", text: SNAG } }],
 });
 
-const streamElement = (layout: "canvas" | "default"): ReactElement =>
+// P2-3(判官修根,PR #1415)——一件挂在 composer 上的引用(不经过任何卡片),让「全新消息」
+// 也带得动 `hasTurnReferences`:`restoreDraft` 只在草稿带着引用时才留住 `sourceMessageId`
+// (§5 :163②「References kept」与「retry-source」共用同一道门槛),纯文字、零引用的消息
+// 因此永远进不了 `restoredDraft`,retry-source 那一行也就永远不会出现——这不是
+// `liveRetryDraft` 那半的事,构造场景时就得绕开它。
+const PLAIN_MESSAGE_COMPOSER_REF = [{
+  requestId: "req_plain_1",
+  generationId: "gen_mug_plain",
+  src: "/files/plain-mug.png",
+  kind: "image" as const,
+  previewKind: "image" as const,
+  label: "Coral mug",
+}];
+
+const streamElement = (layout: "canvas" | "default", withComposerRef = false): ReactElement =>
   createElement(OttoChatStream, {
     layout,
     projectId: "project-1",
@@ -146,9 +160,10 @@ const streamElement = (layout: "canvas" | "default"): ReactElement =>
     balanceUsd: 40,
     onRefresh: async () => {},
     onThreadUpdate: () => {},
+    ...(withComposerRef ? { composerReferences: PLAIN_MESSAGE_COMPOSER_REF } : {}),
   }) as ReactElement;
 
-async function mount(layout: "canvas" | "default"): Promise<HTMLElement> {
+async function mount(layout: "canvas" | "default", withComposerRef = false): Promise<HTMLElement> {
   mocks.chat.messages = [
     { id: "u1", role: "user", parts: [{ type: "text", text: "make me a hero shot" }] },
     genCardMessage(),
@@ -156,7 +171,7 @@ async function mount(layout: "canvas" | "default"): Promise<HTMLElement> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  await act(async () => { root!.render(streamElement(layout)); });
+  await act(async () => { root!.render(streamElement(layout, withComposerRef)); });
   return container;
 }
 
@@ -260,5 +275,103 @@ describe("FSE-205 —— 失败卡与聊天消息两条重试路径各复测一�
     const line = host.querySelector('[data-slot="retry-source"]');
     expect(line, "同一次直播失败，聊天消息这条路也不该把 sourceMessageId 丢在半路").toBeTruthy();
     expect(line!.textContent).toContain(CHANGE_TEXT);
+  });
+});
+
+/**
+ * 判官修根 P2-2 / P2-3（PR #1415，FSE-211 复审）——`liveRetryDraft` 把「屏幕这一行该念
+ * 哪条消息」与「请求体真正该回复给哪条消息」两个问题共用一格（`sourceMessageId`），
+ * FSE-205 把这一格改写成乐观回显 id 只是为了修屏幕那一半；卡片 Change 请求的
+ * `replyToMessageId`（本该回复给那张卡）被一起冲掉，直播失败后 Edit and retry 再送出去，
+ * 落库的 `replyToMessageId` 退化成 `null`，那张卡的归属就断了。
+ *
+ * 修法（`sourceMessageId` 继续答屏幕那个问题不变；新增 `replyToMessageId` 只答请求体那个
+ * 问题）：`liveRetryDraft` 与 `submit()` 各自的判官修根说明见 `OttoChatStream.tsx`。
+ */
+async function typeIntoComposer(host: HTMLElement, value: string): Promise<void> {
+  const composer = host.querySelector("#otto-composer") as HTMLTextAreaElement;
+  await typeInto(composer, value);
+}
+
+/**
+ * 真送出一条**全新**消息(不经过任何卡片,直接打字 + composer 的 Send),再让它在**直播**
+ * 里失败(不刷新)——与 `liveFailedChangeRequest` 同一套配方,唯二的差别:①这一轮从一开始
+ * 就没有任何「回复给谁」的上文,`source.sourceMessageId` 恒为 `null`;②挂了一件
+ * `composerReferences` 带来的附件(`mount(..., true)`),让它带得动引用而不必经过卡片——
+ * 见上面 `PLAIN_MESSAGE_COMPOSER_REF` 的注释。附件一旦被这一轮吃掉(`sendTurn` 送出时清空
+ * `attachedRefs`),`lastSentDraftRef.current.refs` 已经把它定格,后续重渲染不必再传一次。
+ */
+async function liveFailedPlainMessage(host: HTMLElement, text: string): Promise<void> {
+  await typeIntoComposer(host, text);
+  await click(buttonByText(host, "Send"));
+
+  const sentText = (mocks.sendMessage.mock.calls[mocks.sendMessage.mock.calls.length - 1]![0] as { text: string }).text;
+  mocks.chat.messages = [
+    { id: "u1", role: "user", parts: [{ type: "text", text: "make me a hero shot" }] },
+    genCardMessage(),
+    { id: "echo_plain", role: "user", parts: [{ type: "text", text: sentText }] },
+  ];
+  mocks.chat.status = "streaming";
+  await act(async () => { root!.render(streamElement("default")); });
+  await act(async () => {
+    mocks.chat.onData?.({ type: "data-error", data: { kind: "error", text: SNAG } });
+  });
+  mocks.chat.messages = [...mocks.chat.messages, liveError()];
+  mocks.chat.status = "ready";
+  await act(async () => { root!.render(streamElement("default")); });
+  await act(async () => { await Promise.resolve(); });
+}
+
+describe("判官修根 P2-2/P2-3 —— 屏幕那行与请求体的 replyToMessageId 是两个问题，别共用一格", () => {
+  it("P2-2 卡片 Change → 直播失败 → Edit and retry → 真送出 ⇒ replyToMessageId 仍是那张卡，不是刚才那条还没落库的回显", async () => {
+    const host = await mount("canvas");
+    canvasHostRef = host;
+    await liveFailedChangeRequest(host, "Change");
+
+    const retry = buttonByText(host, EDIT_AND_RETRY_LABEL);
+    await click(retry);
+
+    // 屏幕那半不该退步:这一行仍然认得出是对哪条消息的重试(FSE-205 那一半不变)。
+    const line = host.querySelector('[data-slot="retry-source"]');
+    expect(line?.textContent).toContain(CHANGE_TEXT);
+
+    const send = buttonByText(host, "Send");
+    expect(send, "Edit and retry 之后输入框里应该有字,composer 的 Send 该是可点的").toBeTruthy();
+    await click(send);
+
+    expect(mocks.sendMessage, "点了 Send 却没有真的再送一次").toHaveBeenCalledTimes(2);
+    const secondCallBody = mocks.sendMessage.mock.calls[1]![1] as { body?: Record<string, unknown> };
+    expect(
+      secondCallBody.body?.replyToMessageId,
+      "落库 replyToMessageId 不该退化成刚才那条还没落库的乐观回显 id —— 应该仍是这张卡自己的消息 id",
+    ).toBe(CARD_ID);
+  });
+
+  it("P2-3 全新消息(非卡片路)→ 直播失败 → Edit and retry ⇒ retry-source 那一行照样出现", async () => {
+    const host = await mount("default", /* withComposerRef */ true);
+    canvasHostRef = null;
+    const PLAIN_TEXT = "make three product shots for the new mug";
+    await liveFailedPlainMessage(host, PLAIN_TEXT);
+
+    const retry = buttonByText(host, EDIT_AND_RETRY_LABEL);
+    expect(retry, "全新消息(没有任何卡片/更早消息可指)直播失败之后也该有 Edit and retry").toBeTruthy();
+    await click(retry);
+
+    const line = host.querySelector('[data-slot="retry-source"]');
+    expect(
+      line,
+      "liveRetryDraft 的 source 分支(这一轮自己就是 lastSentDraftRef,不是 null)也该让这一行出现 —— " +
+        "没有更早的上文时,「正在重试的那一轮」就是它自己刚刚回显的那一条",
+    ).toBeTruthy();
+    expect(line!.textContent).toContain(PLAIN_TEXT);
+
+    // 没有卡片、没有更早的回合可指:真送出时不该编一个 replyToMessageId 出来。
+    const send = buttonByText(host, "Send");
+    await click(send);
+    const lastCallBody = mocks.sendMessage.mock.calls.at(-1)![1] as { body?: Record<string, unknown> };
+    expect(
+      lastCallBody.body?.replyToMessageId,
+      "全新消息没有原本的回复目标,不该把乐观回显的 id 当成 replyToMessageId 送上去",
+    ).toBeUndefined();
   });
 });

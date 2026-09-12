@@ -79,6 +79,7 @@ async function costOnBothSurfaces(): Promise<{
   canvasCard: number | null;
   assetDetailCredits: number | null;
   assetDetailPending: boolean;
+  assetDetailPendingReason: "waiting_for_credits" | "provider_paused" | undefined;
 }> {
   const canvas = await loadCanvasNodeLineages(OWNER, PROJECT, [UPLOAD_NODE], "Asia/Kuala_Lumpur");
   const detail = await getGenerationLineage(GENERATION);
@@ -87,6 +88,7 @@ async function costOnBothSurfaces(): Promise<{
     canvasCard: canvas["cnd_1"]!.costCredits,
     assetDetailCredits: detail.costCredits,
     assetDetailPending: detail.costPending,
+    assetDetailPendingReason: detail.costPendingReason,
   };
 }
 
@@ -101,7 +103,9 @@ beforeEach(() => {
       createdAt: new Date("2026-09-12T02:00:00Z"),
       source: "UPLOAD",
       assetId: ASSET,
-      asset: { mime: "image/png" },
+      // width/height 已就绪、source=UPLOAD、没被软删 —— 这件素材此刻真的会被扫描器捞走
+      // (P1-1 修根后的准入门槛,见 canvas-lineage-data.ts 的 wouldBeScannedForUnderstanding)。
+      asset: { mime: "image/png", source: "UPLOAD", deletedAt: null, width: 800, height: 600, durationS: null },
     },
   ]);
   generationFindFirst.mockResolvedValue({
@@ -112,7 +116,7 @@ beforeEach(() => {
     source: "UPLOAD",
     entitySnapshot: { entities: [] },
     assetId: ASSET,
-    asset: { mime: "image/png" },
+    asset: { mime: "image/png", source: "UPLOAD", deletedAt: null, width: 800, height: 600, durationS: null },
   });
   projectFindFirst.mockResolvedValue({ name: "Hari Raya gifting" });
   assetUnderstandingFindMany.mockResolvedValue([]);
@@ -223,5 +227,155 @@ describe("creation §5 :169 FSE-203 结算没定论前的诚实中间态", () =>
     expect(detail.costCredits).toBe(0.8);
     expect(detail.costPending).toBe(false);
     expect(assetUnderstandingFindMany, "有付费任务的那一支一次理解查询都不该发").not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 判官修根 P1-1（PR #1415，FSE-203/205/211 复审）——旧判据（0 行理解时只看
+ * `understandingKindForMime(mime) !== null`）把三类「扫描器其实永远不会捞走」的素材标成
+ * 永久 pending，诚实中间态变成永久假话：① PAUSED_BALANCE 无限期等充值（本该点名 credits，
+ * 不该说「快」）；② 元数据永远补不齐的素材（ffprobe 失败/24h 超龄，understand.ts:388-391
+ * 明写这是刻意选的那一边，宽高/时长恒 null）；③ 扫描器永远不会再捞的素材（同一道
+ * `deletedAt == null` 门槛——素材软删之后，与「ASSET_UNDERSTANDING=off 期间上传、扫描器
+ * 从未建行」是同一个后果：这件素材此刻起不会再被任何一轮扫描捞走）。
+ *
+ * 修法（`canvas-lineage-data.ts` 的 `wouldBeScannedForUnderstanding`）：0 行理解时改问
+ * 「扫描器此刻真的会捞走这件素材吗」——来路对 + 没被软删 + 元数据已经齐了 + mime 路由得出
+ * kind，四条缺一都不行。PAUSED_BALANCE / PAUSED 的文案信号另起一条（`stalledReason` /
+ * `costPendingReason`），沿用既有权威口径，不再共用会撒谎的「settles shortly」。
+ */
+describe("判官修根 P1-1 —— pending 判据认扫描器真准入门槛，别永久撒谎", () => {
+  it("① PAUSED_BALANCE 无限期等充值 —— 信号必须点名 credits，不是通用的「快」", async () => {
+    assetUnderstandingFindMany.mockResolvedValue([
+      { assetId: ASSET, moneyRefId: "understanding:u1", status: "PAUSED_BALANCE" },
+    ]);
+    creditLedgerFindMany.mockImplementation(ledgerBy({ "understanding:u1": [-1] }));
+
+    const cost = await costOnBothSurfaces();
+
+    expect(cost.assetDetailPending, "PAUSED_BALANCE 不是终态,仍然是未定论").toBe(true);
+    expect(
+      cost.assetDetailPendingReason,
+      "必须是 waiting_for_credits——不能落回 QUEUED/RUNNING 那句「快有结果」的默认文案",
+    ).toBe("waiting_for_credits");
+  });
+
+  it("① PAUSED(我方配置/请求坏了)同理不是「快」—— 信号是 provider_paused", async () => {
+    assetUnderstandingFindMany.mockResolvedValue([
+      { assetId: ASSET, moneyRefId: "understanding:u1", status: "PAUSED" },
+    ]);
+    creditLedgerFindMany.mockImplementation(ledgerBy({ "understanding:u1": [-1] }));
+
+    const cost = await costOnBothSurfaces();
+
+    expect(cost.assetDetailPending).toBe(true);
+    expect(cost.assetDetailPendingReason).toBe("provider_paused");
+  });
+
+  it("② 元数据永远补不齐(ffprobe 失败/24h 超龄,宽高恒 null)—— 折出真的 0,不许永久说还在读", async () => {
+    // 复现 understand.ts:388-391 明写的那个饿死口:ingest 的 ffprobe 一直没有成功,
+    // Asset.width/height 卡在 null —— 扫描器的 METADATA_READY_FOR_UNDERSTANDING 那道 OR
+    // 永远不会放行这件素材,它根本不会建行。旧判据只看 mime,会把这个 0 永久标成「未定论」。
+    generationFindMany.mockResolvedValue([
+      {
+        id: GENERATION,
+        createdAt: new Date("2026-09-12T02:00:00Z"),
+        source: "UPLOAD",
+        assetId: ASSET,
+        asset: { mime: "image/png", source: "UPLOAD", deletedAt: null, width: null, height: null, durationS: null },
+      },
+    ]);
+    generationFindFirst.mockResolvedValue({
+      projectId: PROJECT,
+      threadId: null,
+      shotId: null,
+      campaignId: null,
+      source: "UPLOAD",
+      entitySnapshot: { entities: [] },
+      assetId: ASSET,
+      asset: { mime: "image/png", source: "UPLOAD", deletedAt: null, width: null, height: null, durationS: null },
+    });
+    assetUnderstandingFindMany.mockResolvedValue([]);
+
+    const cost = await costOnBothSurfaces();
+
+    expect(cost.assetDetailCredits).toBe(0);
+    expect(
+      cost.assetDetailPending,
+      "扫描器这道元数据闸永远不会放行,这个 0 是事实不是未定论 —— 不许永久假装快有结果",
+    ).toBe(false);
+  });
+
+  it("② 视频版同一个饿死口(durationS 恒 null)—— 同样折出真的 0", async () => {
+    generationFindMany.mockResolvedValue([
+      {
+        id: GENERATION,
+        createdAt: new Date("2026-09-12T02:00:00Z"),
+        source: "UPLOAD",
+        assetId: ASSET,
+        asset: { mime: "video/mp4", source: "UPLOAD", deletedAt: null, width: null, height: null, durationS: null },
+      },
+    ]);
+    generationFindFirst.mockResolvedValue({
+      projectId: PROJECT,
+      threadId: null,
+      shotId: null,
+      campaignId: null,
+      source: "UPLOAD",
+      entitySnapshot: { entities: [] },
+      assetId: ASSET,
+      asset: { mime: "video/mp4", source: "UPLOAD", deletedAt: null, width: null, height: null, durationS: null },
+    });
+    assetUnderstandingFindMany.mockResolvedValue([]);
+
+    const cost = await costOnBothSurfaces();
+
+    expect(cost.assetDetailCredits).toBe(0);
+    expect(cost.assetDetailPending).toBe(false);
+  });
+
+  it("③ 素材已经被软删(与「扫描器从未建行、以后也不会」同一个后果)—— 不许还说「还在读」", async () => {
+    // 扫描器的准入查询本身要求 `deletedAt: null`(understand.ts `scanAssetsNeedingUnderstanding`
+    // 第①段)——元数据齐了也没用,这一条闸单独就能让这件素材永远出局,与「ASSET_UNDERSTANDING
+    // 关闭期间上传、从未被扫描器建过行」是同一类「不会再被捞走」的后果。
+    generationFindMany.mockResolvedValue([
+      {
+        id: GENERATION,
+        createdAt: new Date("2026-09-12T02:00:00Z"),
+        source: "UPLOAD",
+        assetId: ASSET,
+        asset: {
+          mime: "image/png",
+          source: "UPLOAD",
+          deletedAt: new Date("2026-09-12T03:00:00Z"),
+          width: 800,
+          height: 600,
+          durationS: null,
+        },
+      },
+    ]);
+    generationFindFirst.mockResolvedValue({
+      projectId: PROJECT,
+      threadId: null,
+      shotId: null,
+      campaignId: null,
+      source: "UPLOAD",
+      entitySnapshot: { entities: [] },
+      assetId: ASSET,
+      asset: {
+        mime: "image/png",
+        source: "UPLOAD",
+        deletedAt: new Date("2026-09-12T03:00:00Z"),
+        width: 800,
+        height: 600,
+        durationS: null,
+      },
+    });
+    assetUnderstandingFindMany.mockResolvedValue([]);
+
+    const cost = await costOnBothSurfaces();
+
+    expect(cost.assetDetailCredits).toBe(0);
+    expect(cost.assetDetailPending, "软删的素材扫描器永远不会再捞——这个 0 是事实").toBe(false);
   });
 });

@@ -1191,6 +1191,14 @@ export type GenerationLineage = {
    * 没有这个窗口。
    */
   costPending: boolean;
+  /**
+   * FSE-203/211 判官修根 P1-1 —— `costPending` 为真时该用哪一句文案。undefined = 默认的
+   * 「还在读,价格快有定论」够用（不是 pending，或 pending 但状态是 QUEUED/RUNNING）。
+   * 与 `lib/canvas-lineage-data.ts` 的 `UploadUnderstandingCost.stalledReason` 同一份判断,
+   * 原样透传——两句权威文案（`UNDERSTANDING_WAITING_FOR_CREDITS` /
+   * `UNDERSTANDING_PROVIDER_PAUSED`）由渲染那一侧（`AssetLineage.tsx`）去挑,这里只带信号。
+   */
+  costPendingReason?: "waiting_for_credits" | "provider_paused";
   /** 商家话的状态。 */
   status: string;
   /** 这一件今天被用在哪里;空数组 = 还没被用到别处。 */
@@ -1216,9 +1224,10 @@ export async function getGenerationLineage(
       // FSE-009:`assetId` 是「这张上传的图后来被自动读过没有」那条链的第一环 ——
       // 理解任务的账本行挂在**素材**上,不在任何 GenJob 上。
       assetId: true,
-      // FSE-203:`asset.mime` 用于判「一行理解都还没建时算不算 pending」——
-      // 与画布卡片信息面(`loadCanvasNodeLineages`)同一个依据(`understandingKindForMime`)。
-      asset: { select: { mime: true } },
+      // FSE-203/211(判官修根 P1-1):`asset.{mime,source,deletedAt,width,height,durationS}`
+      // 用于判「一行理解都还没建时算不算 pending」——与画布卡片信息面
+      // (`loadCanvasNodeLineages`)同一个依据(`wouldBeScannedForUnderstanding`)。
+      asset: { select: { mime: true, source: true, deletedAt: true, width: true, height: true, durationS: true } },
     },
   });
   if (!gen) return { error: "Not found." };
@@ -1246,7 +1255,16 @@ export async function getGenerationLineage(
         })
       : Promise.resolve([] as { balanceDelta: number }[]),
     gen.source === "UPLOAD"
-      ? loadUploadUnderstandingCredits(ownerId, [{ id: generationId, assetId: gen.assetId, mime: gen.asset?.mime ?? "" }])
+      ? loadUploadUnderstandingCredits(ownerId, [{
+          id: generationId,
+          assetId: gen.assetId,
+          mime: gen.asset?.mime ?? "",
+          source: gen.asset?.source ?? "",
+          deletedAt: gen.asset?.deletedAt ?? null,
+          width: gen.asset?.width ?? null,
+          height: gen.asset?.height ?? null,
+          durationS: gen.asset?.durationS ?? null,
+        }])
       : Promise.resolve(new Map<string, UploadUnderstandingCost>()),
   ]);
 
@@ -1266,6 +1284,7 @@ export async function getGenerationLineage(
     // FSE-203:只有上传来路才可能是「结算没定论」——付费任务的结算与产出落盘同一个事务,
     // 没有这个窗口(job 分支恒为 false)。
     costPending: !job && (uploadCredits.get(generationId)?.pending ?? false),
+    costPendingReason: job ? undefined : uploadCredits.get(generationId)?.stalledReason,
     status: lineageStatus(job?.status ?? null, gen.source),
     usedIn,
   };
