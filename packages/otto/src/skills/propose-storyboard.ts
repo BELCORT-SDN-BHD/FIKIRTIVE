@@ -1,14 +1,16 @@
 /**
  * proposeStoryboard — $0 skill
  *
- * Persists an ordered STORYBOARD_CARD (per shot: video prompt; an optional legacy
- * firstFramePrompt is accepted but unused — see propose-storyboard.helpers.ts).
- * Otto assembles each shot's video prompt via the E skill (seedancePrompt) BEFORE
- * calling this. Spends NO money, creates NO GenJob. Identity from ctx only.
+ * Persists an ordered STORYBOARD_CARD (per shot: a video prompt — that's the whole
+ * input shape now, see propose-storyboard.helpers.ts). Otto assembles each shot's
+ * video prompt via the E skill (seedancePrompt) BEFORE calling this. Spends NO
+ * money, creates NO GenJob. Identity from ctx only.
  *
  * FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 首帧合成(闸①)对所有镜头都已
  * 退场:没有「两步」这一档,`refuseShotsMissingFirstFramePrompt`(点名「这一镜要走两步却
- * 没有首帧文字」)随之整段报废删除,不留替代覆盖(报废,不是迁移)。
+ * 没有首帧文字」)随之整段报废删除,不留替代覆盖(报废,不是迁移)。PR #1417 判官 P2-1 —
+ * `firstFramePrompt` 那一格本身(不只是它的拒绝闸)也已从输入 schema 里删除,不再是
+ * 「接受但不用」的遗留字段(报废,不是保留兼容)。
  */
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";

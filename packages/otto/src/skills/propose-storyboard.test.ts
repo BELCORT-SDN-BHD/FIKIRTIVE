@@ -130,8 +130,8 @@ describe("executeProposeStoryboard — mock DB", () => {
     const ctx = makeCtx({ orgId: "org-A", threadId: "thr-A" });
     const res = await executeProposeStoryboard(
       { storyboardTitle: "Raya ad", goal: "festive launch", shots: [
-        { firstFramePrompt: "family at the door", videoPrompt: "they smile and wave" },
-        { firstFramePrompt: "close-up of the cookies", videoPrompt: "steam rises" },
+        { videoPrompt: "they smile and wave" },
+        { videoPrompt: "steam rises" },
       ] },
       { context: ctx },
     );
@@ -152,7 +152,7 @@ describe("executeProposeStoryboard — mock DB", () => {
   });
 
   it("never creates a GenJob ($0)", async () => {
-    await executeProposeStoryboard({ storyboardTitle: "x", shots: [{ firstFramePrompt: "a", videoPrompt: "b" }] }, { context: makeCtx() });
+    await executeProposeStoryboard({ storyboardTitle: "x", shots: [{ videoPrompt: "b" }] }, { context: makeCtx() });
     expect(m.genJob.create).not.toHaveBeenCalled();
   });
 });

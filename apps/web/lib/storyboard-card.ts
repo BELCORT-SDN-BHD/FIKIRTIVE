@@ -72,68 +72,21 @@ export function shotsDirectToVideo<T extends { shotId: string; entityIds?: strin
   return shots.filter((s) => shotGoesDirectToVideo(s, castEntityIds));
 }
 
-/**
- * creation §5 :178(判官 r2 的两条 P1)—— 这张卡**必须**先问服务端一趟才画得对吗。
- *
- * 「这一镜直接出片吗」要读 `Entity.type`,只有服务端答得出;而挂图入口与那句
- * "Goes straight to video…" 挂在这一格上。卡面此前只在**媒体需要重载**时才开口问
- * (`needsRefreshEntrance`),于是 Otto 刚交出、一分钱还没花过的那张卡(每格 `absent`)
- * 一次都不问 —— 商家看到的是一张没有挂图入口的卡,而验收口径那句「分镜卡镜头可 @ 选
- * Library 里的图作参考」正是在这个主状态下不成立。
- *
- * 判据只有一句:**这一镜 @ 到了至少一个元素**。一个元素都没 @ 的镜头没有挂图这件事可言
- * (@fikirtive/core 的参考名额按 `entityIds` 分配),所以那张卡不必为它多发一趟。FSE-208
- * 之后「直接出片」本身恒为真(见 `shotsDirectToVideo`),这一条只决定**问不问**——答案
- * 仍旧只有服务端说了算,不由这里的启发式代替。
- */
-export function needsDirectToVideoAnswer<T extends { entityIds?: string[] }>(
-  shots: readonly T[],
-): boolean {
-  return shots.some((s) => (s.entityIds ?? []).length > 0);
-}
+// PR #1417 判官 P1-B —— `needsDirectToVideoAnswer` 整段报废删除:它存在的唯一理由是
+// 「这一镜直接出片吗」要读 `Entity.type`,只有服务端答得出,所以挂载时必须多问服务端一趟
+// 才敢让挂图入口/那句 "Goes straight to video…" 出现。FSE-208 之后这件事本身恒为真 ——
+// 不必再读 `Entity.type` 才能确认,是卡面一眼就知道的编译期常量(`StoryboardCard.tsx` 的
+// `isDirectToVideo` 已改成同一个恒真常量),挂载时不必再为它多发一趟 sync(判官反例:
+// 全镜头零 @ 的分镜挂载时两个「要不要问」判据都是假,sync 从不触发,`directShotIds` 永远
+// 是空集,导致时长下拉/VideoSlot/Remake/挂图入口全部不渲染,而卡级 Make all videos 照常
+// 收钱——商家在无法选时长的情况下付钱)。
 
-/**
- * #782 r3(判官 r2 的两条 P1)—— 哪些镜头「卡死」了。
- *
- * 这条判据只回答一个问题:**这一镜还有没有免费的帧在路上?** 有 → 什么都别做(等着);
- * 没有 → 商家必须看得见一个自己出一张的入口,否则就是死路。
- *
- * r2b 用两个**指针存不存在**回答它,两处都答错了(判官 r2):
- *   • `firstFrameCardId` 在 ≠ 正在生成。准备卡在商家按 Cancel、启动失败、或刷新崩溃之后
- *     照样留在 payload 里 —— 一分钱没花,什么都没在跑。把它当在途,恢复入口就凭空消失。
- *   • `prev.videoGenerationId` 在 ≠ 交棒已经结束。重出视频换上新的 `videoCardId` 而**故意
- *     保留**旧的 `videoGenerationId`;新片还在跑,免费的末帧正在路上,却已经把这一镜开成
- *     付费首帧 —— 商家为一张本该继承的帧多花钱。
- *
- * 唯一看得见视频作业真实状态的是闸③(sync)。所以这条判断在那里做一次、写进 payload,
- * 这里只**读判词**:`inheritBlockedByVideoCardId` = 上一镜的那一张视频子卡已经走完一生、
- * 交不出可用的末帧。判词点名是哪一张子卡,于是上一镜一重出(`videoCardId` 换新),旧判词
- * 自动不再匹配 —— 新片在跑的窗口里,一分钱都不会被提前请出去。
- *
- * 不猜测、不设超时、不看首帧子卡指针:一张准备卡的存在从来不是「免费的帧在路上」的证据。
- */
-export function shotsStuckWithoutInheritedFrame<
-  T extends {
-    index: number;
-    firstFrameGenerationId?: string;
-    videoCardId?: string;
-    inheritBlockedByVideoCardId?: string;
-  },
->(shots: readonly T[], continuity: boolean): T[] {
-  if (!continuity) return [];
-  const ordered = [...shots].sort((a, b) => a.index - b.index);
-  const stuck: T[] = [];
-  for (let i = 1; i < ordered.length; i++) {
-    const cur = ordered[i]!;
-    if (cur.firstFrameGenerationId) continue; // 已经有帧(自己出的 / 接上的)→ 不是卡死
-    const prev = ordered[i - 1]!;
-    const verdict = cur.inheritBlockedByVideoCardId;
-    // 判词必须点着上一镜**现在**这一张视频子卡才算数:点着别的(上一镜重出了)或无从匹配
-    // (上一镜还没做视频)一律当「还在等」——宁可多等,不可多花。
-    if (verdict && prev.videoCardId && verdict === prev.videoCardId) stuck.push(cur);
-  }
-  return stuck;
-}
+// PR #1417 判官 P1-C —— `shotsStuckWithoutInheritedFrame`(#782 闸③ 接续传帧的「卡死」
+// 判词读取)整段报废删除:它读的 `inheritBlockedByVideoCardId` 只有 `syncStoryboardMedia`
+// 的接续段(#782 闸③)会写,而那一段随这个 PR 一起删除(FSE-208 之后「直接出片」对每一镜
+// 都恒为真,接续判据里唯一会跳过的那一支吞掉了全部镜头,数学上不可达 —— 见
+// `storyboard-gate1-actions.ts`)。唯一的调用方是 `StoryboardCard.tsx` 的
+// `stuckShotIds`,同 PR 一并删除。
 
 /** 卡面 sync 轮询的四个档位。"off" = 不再发问,而且没有留下没答完的问题;
  *  "fast" = 刚花完钱、盯着结果;"slow" = 快轮的额度用完了,但服务端说还有活作业 —— 降频接着问;
@@ -241,21 +194,19 @@ export interface ShotMediaSyncReport {
   shotId: string;
   frame: ShotMediaReport;
   video: ShotMediaReport;
-  /**
-   * FSE-001 同族 —— 这一镜**直接出片**(它 @ 到了演员,见 `shotsDirectToVideo`)。
-   *
-   * 判据要读 `Entity.type`,只有服务端做得到,所以它跟每一格媒体状态走同一条通道:
-   * 服务端说,卡面只用。缺席(老答复、还没问过)= 未知 ⇒ 卡面按「照旧两步」渲染,
-   * 而闸① 那一边无论如何都不会为这一镜铸首帧 —— 少说一句话,永远不会多收一次钱。
-   */
-  directToVideo?: boolean;
+  // PR #1417 判官 P1-B / P1-C —— `directToVideo` 字段整段删除:FSE-208 之后「这一镜直接
+  // 出片吗」对每一镜都恒为真,是卡面一眼就知道的编译期常量,不必再等服务端这一趟才敢
+  // 确认(旧判据要读 `Entity.type` 才答得出;新世界不必再读)。判官反例:挂载时卡面靠
+  // 这个字段缺席去猜「还没问过 ⇒ 照旧两步」,于是全镜头零 @ 的分镜挂载时从不触发 sync,
+  // 这个字段永远缺席,时长下拉/VideoSlot/Remake/挂图入口全部不渲染。卡面那一侧改用一个
+  // 恒真常量(见 `StoryboardCard.tsx` 的 `isDirectToVideo`),不再需要服务端这一趟确认。
   /**
    * creation §5 :178 —— 这一镜挂着的 Library 图,配上此刻取得到的地址。
    *
    * payload 上只有 `Generation.id`(规范身份)。缩略图与「这一件此刻还在不在」都要读库,
-   * 所以它跟 `directToVideo` 与每一格媒体状态走**同一条通道**:服务端说,卡面只用 ——
-   * 卡面不另开一条自己的解析路,也就不可能出现「卡面画着一张服务端早就取不到的图」。
-   * 缺席(老答复、还没问过)= 卡面按「没挂图」渲染,少画一格永远比多承诺一件安全。
+   * 所以它跟每一格媒体状态走**同一条通道**:服务端说,卡面只用 —— 卡面不另开一条自己的
+   * 解析路,也就不可能出现「卡面画着一张服务端早就取不到的图」。缺席(老答复、还没问过)
+   * = 卡面按「没挂图」渲染,少画一格永远比多承诺一件安全。
    */
   libraryImages?: MediaRef[];
 }

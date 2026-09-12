@@ -5,7 +5,6 @@ import {
   applyAddShot,
   applyDeleteShot,
   applyReorderShots,
-  applySetContinuity,
 } from "../storyboard-edit";
 import type { StoryboardCardPayload } from "@fikirtive/otto";
 
@@ -150,29 +149,11 @@ describe("applyReorderShots", () => {
   });
 });
 
-describe("#782 applySetContinuity —— 只改开关,一件已生成的东西都不动", () => {
-  it("开 → 落 continuity:true,镜头逐字不变(含已付费的帧/片键)", () => {
-    const p = base();
-    const next = applySetContinuity(p, true);
-    expect(next.continuity).toBe(true);
-    expect(next.shots).toEqual(p.shots);
-    expect(p.continuity).toBeUndefined(); // 不 mutate 入参
-  });
-
-  it("关 → 不落键(与从没开过逐字节同形),镜头同样不动", () => {
-    const p = { ...base(), continuity: true };
-    const next = applySetContinuity(p, false);
-    expect("continuity" in next).toBe(false);
-    expect(next.shots).toEqual(p.shots);
-  });
-
-  it("反复开关不会累积任何副作用", () => {
-    const p = base();
-    const back = applySetContinuity(applySetContinuity(applySetContinuity(p, true), false), true);
-    expect(back.continuity).toBe(true);
-    expect(back.shots).toEqual(p.shots);
-  });
-});
+// PR #1417 判官 P1-C —— "#782 applySetContinuity" 整个 describe(3 test)随 `applySetContinuity`
+// 本体一起报废删除:接续/continuity 免费传帧的唯一消费方(闸③)已经是数学上不可达代码,
+// 随之整段删除(见 `storyboard-gate1-actions.ts` 该处报废注释),`applySetContinuity` 这个纯
+// 变换与它在人工 server action(`setStoryboardContinuity`)、Otto skill(`op:"setContinuity"`)
+// 两侧的调用方一并退场,没有替代覆盖(报废,不是迁移)。
 
 // ---------------------------------------------------------------------------
 // #782 r17(判官 r16 P1-1)—— 「传了这个字段」≠「商家改了这句话」

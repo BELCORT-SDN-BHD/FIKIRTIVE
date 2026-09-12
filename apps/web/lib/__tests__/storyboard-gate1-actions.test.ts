@@ -4,9 +4,6 @@ import { GEN_VIDEO_MODEL_OPTIONS, cardQuoteVersion, videoAttachedCap } from "@fi
 // 注释逐字写着这条纪律),所以这里演的拒绝也用它,而不是某一族的具体子类。
 import { ProposeRefusal } from "@fikirtive/otto";
 import type { StoryboardCardPayload } from "@fikirtive/otto";
-// 卡面侧的纯读判据。闸③ 写下的判词只有经过它才变成商家看得见的东西,所以「判词自清洁」
-// 这一类断言在这里直接用它来收口,不再另写一份平行的解读。
-import { shotsStuckWithoutInheritedFrame } from "../storyboard-card";
 import type { ShotMediaSyncReport } from "../storyboard-card";
 
 // ---------------------------------------------------------------------------
@@ -337,312 +334,23 @@ function wireSync(
   });
 }
 
-describe("syncStoryboardMedia — $0 对账(帧)", () => {
-  it("子卡 job DONE → 读 GEN_RESULT.generationIds[0] 按 shotId 写回 firstFrameGenerationId", async () => {
-    const p = payload3();
-    // s0 points at a minted child whose job is DONE; s1 already has an image; s2 has no child yet.
-    p.shots[0].firstFrameCardId = "child-0";
-    delete p.shots[2].firstFrameGenerationId; // s2: no child, no image → not pending
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: "job-0" } },
-      { "job-0": { generationIds: ["gen-A"] } },
-    );
-    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-A"), gen("gen1")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    expect("payload" in res).toBe(true);
-    if (!("payload" in res)) return;
-
-    // wrote gen-A back onto s0 by shotId (transactional RMW)
-    expect(mockChatUpdate).toHaveBeenCalledTimes(1);
-    const upd = mockChatUpdate.mock.calls[0][0];
-    expect(upd.where).toEqual({ id: "card-1" });
-    const updShots = (upd.data.payload as StoryboardCardPayload).shots;
-    expect(updShots[0].firstFrameGenerationId).toBe("gen-A");
-    expect(updShots[1].firstFrameGenerationId).toBe("gen1"); // s1 untouched
-    expect(updShots[2].firstFrameGenerationId).toBeUndefined(); // s2 not pending
-
-    // returned payload reflects the write; frames has urls for both resolvable gens
-    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-A");
-    expect(frameUrl(res, "s0")).toContain("gen-A".slice(0, 0) + HASH); // url derived from asset
-    expect(frameUrl(res, "s0")).toBeTruthy();
-    expect(frameUrl(res, "s1")).toBeTruthy(); // pre-existing gen1 resolves too
-  });
-
-  it("重出对账:镜头有旧 genId + 子卡 DONE 出了新 genId → 覆盖写(REPLACE,非删除)", async () => {
-    const p = payload3();
-    // s0 already shows an OLD frame (gen-OLD) and points at a regen child whose job is DONE
-    // with a DIFFERENT new gen (gen-NEW). Sync must OVERWRITE the genId in place.
-    p.shots[0].firstFrameCardId = "child-0";
-    p.shots[0].firstFrameGenerationId = "gen-OLD";
-    delete p.shots[2].firstFrameGenerationId; // isolate: s2 not a candidate
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: "job-0" } },
-      { "job-0": { generationIds: ["gen-NEW"] } },
-    );
-    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-NEW"), gen("gen1")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-
-    // exactly one write: s0's genId REPLACED gen-OLD → gen-NEW (key still present).
-    expect(mockChatUpdate).toHaveBeenCalledTimes(1);
-    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
-    expect("firstFrameGenerationId" in updShots[0]).toBe(true);
-    expect(updShots[0].firstFrameGenerationId).toBe("gen-NEW");
-    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-NEW");
-    expect(frameUrl(res, "s0")).toBeTruthy();
-  });
-
-  it("重出对账:子卡 DONE 但 genId 与现值相同 → 不写(幂等,无变更)", async () => {
-    const p = payload3();
-    // s0's child is DONE producing the SAME gen it already shows → nothing to overwrite.
-    p.shots[0].firstFrameCardId = "child-0";
-    p.shots[0].firstFrameGenerationId = "gen-A";
-    delete p.shots[2].firstFrameGenerationId;
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: "job-0" } },
-      { "job-0": { generationIds: ["gen-A"] } }, // same as current
-    );
-    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-A"), gen("gen1")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    expect(mockChatUpdate).not.toHaveBeenCalled(); // no differing genId staged → no write
-    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-A");
-  });
-
-  it("重出对账:镜头有旧 genId + 子卡未 DONE → 旧 genId 原样(不写)", async () => {
-    const p = payload3();
-    // s0 shows an old frame; its regen child is still GENERATING → old genId must stay.
-    p.shots[0].firstFrameCardId = "child-0";
-    p.shots[0].firstFrameGenerationId = "gen-OLD";
-    delete p.shots[2].firstFrameGenerationId;
-    wireSync(card(p), { "child-0": { genJobId: "job-0" } }, {});
-    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "GENERATING" });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-OLD"), gen("gen1")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    expect(mockChatUpdate).not.toHaveBeenCalled(); // child not done → no write
-    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-OLD"); // old genId intact
-  });
-
-  it("job 未完成 → 该镜头不写,其他完成的照常写(部分完成可对账)", async () => {
-    const p = payload3();
-    delete p.shots[1].firstFrameGenerationId; // make s1 pending too
-    p.shots[0].firstFrameCardId = "child-0"; // DONE
-    p.shots[1].firstFrameCardId = "child-1"; // still generating
-    delete p.shots[2].firstFrameGenerationId; // s2: not pending (no child)
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: "job-0" }, "child-1": { genJobId: "job-1" } },
-      { "job-0": { generationIds: ["gen-A"] } }, // only job-0 has a result
-    );
-    mockGenJobFindFirst.mockImplementation(async (args: { where?: { id?: string; idempotencyKey?: string } }) => {
-      if (args?.where?.id === "job-0") return { id: "job-0", status: "DONE" };
-      if (args?.where?.id === "job-1") return { id: "job-1", status: "GENERATING" };
-      return null;
-    });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-A")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-
-    // only s0 written; s1 left alone (still generating)
-    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
-    expect(updShots[0].firstFrameGenerationId).toBe("gen-A");
-    expect(updShots[1].firstFrameGenerationId).toBeUndefined();
-    // s1 keeps its child pointer (not cleared)
-    expect(updShots[1].firstFrameCardId).toBe("child-1");
-  });
-
-  it("job FAILED → 该镜头不写(不清字段),兄弟 DONE 镜头照常写", async () => {
-    const p = payload3();
-    delete p.shots[1].firstFrameGenerationId; // s1 pending too
-    p.shots[0].firstFrameCardId = "child-0"; // FAILED job
-    p.shots[1].firstFrameCardId = "child-1"; // DONE job
-    delete p.shots[2].firstFrameGenerationId; // s2: not pending (no child)
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: "job-0" }, "child-1": { genJobId: "job-1" } },
-      { "job-1": { generationIds: ["gen-B"] } }, // only the DONE job has a result
-    );
-    mockGenJobFindFirst.mockImplementation(async (args: { where?: { id?: string } }) => {
-      if (args?.where?.id === "job-0") return { id: "job-0", status: "FAILED" };
-      if (args?.where?.id === "job-1") return { id: "job-1", status: "DONE" };
-      return null;
-    });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-B")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-
-    // exactly one write staged (the DONE sibling); the FAILED shot is left untouched
-    expect(mockChatUpdate).toHaveBeenCalledTimes(1);
-    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
-    expect(updShots[1].firstFrameGenerationId).toBe("gen-B"); // DONE sibling written
-    expect(updShots[0].firstFrameGenerationId).toBeUndefined(); // FAILED shot: no field written
-    expect(updShots[0].firstFrameCardId).toBe("child-0"); // FAILED shot: child pointer not cleared
-  });
-
-  it("写回是定点的:只动目标 shot 字段,其余 shot(含正在编辑的文字)原样", async () => {
-    const p = payload3();
-    p.shots[0].firstFrameCardId = "child-0";
-    // s1 carries pre-existing image + an edited prompt we must preserve byte-for-byte
-    p.shots[1].firstFramePrompt = "EDITED PROMPT";
-    delete p.shots[2].firstFrameGenerationId;
-    const before1 = JSON.parse(JSON.stringify(p.shots[1]));
-    const before2 = JSON.parse(JSON.stringify(p.shots[2]));
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: "job-0" } },
-      { "job-0": { generationIds: ["gen-A"] } },
-    );
-    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-A"), gen("gen1")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
-    // only s0.firstFrameGenerationId changed
-    expect(updShots[0].firstFrameGenerationId).toBe("gen-A");
-    // s1 and s2 identical to before (edited text preserved)
-    expect(updShots[1]).toEqual(before1);
-    expect(updShots[2]).toEqual(before2);
-  });
-
-  it("无待对账镜头 → 原样返回,不写 DB", async () => {
-    const p = payload3();
-    // s0/s2 have no child pointer at all; s1 already has an image → nothing pending.
-    delete p.shots[2].firstFrameGenerationId;
-    wireSync(card(p));
-    mockGenerationFindMany.mockResolvedValue([gen("gen1")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    expect(mockChatUpdate).not.toHaveBeenCalled(); // no DB write
-    // frames still resolves the one pre-existing image (s1)
-    expect(frameUrl(res, "s1")).toBeTruthy();
-    expect(res.payload.shots).toEqual(p.shots); // unchanged payload returned
-  });
-
-  it("genJob.create / startGen 从未被调($0)", async () => {
-    const p = payload3();
-    p.shots[0].firstFrameCardId = "child-0";
-    delete p.shots[2].firstFrameGenerationId;
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: "job-0" } },
-      { "job-0": { generationIds: ["gen-A"] } },
-    );
-    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-A")]);
-
-    await syncStoryboardMedia({ cardId: "card-1" });
-    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0: never creates a job
-  });
-
-  it("requireOwner 失败 → {error},不碰 DB", async () => {
-    mockOwner.mockResolvedValue({ error: "unauthorized" });
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    expect(res).toEqual({ error: "unauthorized" });
-    expect(mockChatFindFirst).not.toHaveBeenCalled();
-    expect(mockChatUpdate).not.toHaveBeenCalled();
-  });
-
-  it("卡不存在 → {error},不写 DB", async () => {
-    wireSync(card(payload3()));
-    const res = await syncStoryboardMedia({ cardId: "missing" });
-    expect("error" in res).toBe(true);
-    expect(mockChatUpdate).not.toHaveBeenCalled();
-  });
-
-  it("非法入参 → {error},不碰 DB", async () => {
-    const res = await syncStoryboardMedia({ cardId: "" } as unknown as { cardId: string });
-    expect("error" in res).toBe(true);
-    expect(mockChatFindFirst).not.toHaveBeenCalled();
-  });
-
-  it("R3① fresh-null fail-closed:锁内重读卡已消失 → {error: Card not found.},零写、无 cur 回落", async () => {
-    const p = payload3();
-    p.shots[0].firstFrameCardId = "child-0"; // cur 快照下有一个 DONE 子卡待写回
-    delete p.shots[2].firstFrameGenerationId;
-    let boardLoads = 0;
-    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
-      const where = args?.where ?? {};
-      if (where.kind === "STORYBOARD_CARD") {
-        boardLoads += 1;
-        return boardLoads === 1 ? card(p) : null; // outer load OK; in-lock re-read: card GONE
-      }
-      if (where.kind === "GEN_CARD" && where.id === "child-0") return { id: "child-0", genJobId: "job-0" };
-      if (where.kind === "GEN_RESULT" && where.genJobId === "job-0") return { payload: { generationIds: ["gen-A"] } };
-      if (args?.orderBy) return { seq: 10 };
-      return null;
-    });
-    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    // 若回落 cur:会按旧快照采样 child-0 → 把 gen-A 写回已消失的卡。fail-closed 后:
-    expect(res).toEqual({ error: "Card not found." });
-    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // locked, then failed closed
-    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
-    expect(mockTxChatUpdate).not.toHaveBeenCalled();
-    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
-    expect(mockChatUpdate).not.toHaveBeenCalled();
-    expect(mockGenJobCreate).not.toHaveBeenCalled();
-  });
-
-  it("fallback:子卡无 genJobId → 用 cowork:<childId> 幂等 job 查状态", async () => {
-    const p = payload3();
-    p.shots[0].firstFrameCardId = "child-0";
-    delete p.shots[2].firstFrameGenerationId;
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: null } }, // best-effort link missing
-      { "job-fb": { generationIds: ["gen-A"] } },
-    );
-    // fallback lookup by idempotencyKey returns the DONE job
-    mockGenJobFindFirst.mockImplementation(async (args: { where?: { idempotencyKey?: string } }) => {
-      if (args?.where?.idempotencyKey === "cowork:child-0") return { id: "job-fb", status: "DONE" };
-      return null;
-    });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-A")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    expect(mockGenJobFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ ownerId: OWNER, idempotencyKey: "cowork:child-0" }) }),
-    );
-    expect((mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots[0].firstFrameGenerationId).toBe("gen-A");
-  });
-
-  it("frames 省略已删除的 generation(不报错)", async () => {
-    const p = payload3();
-    // s1 has firstFrameGenerationId gen1 but that generation row no longer exists.
-    delete p.shots[2].firstFrameGenerationId;
-    wireSync(card(p));
-    mockGenerationFindMany.mockResolvedValue([]); // gen1 gone
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    expect(frameUrl(res, "s1")).toBeUndefined(); // omitted, no throw
-    expect(mockChatUpdate).not.toHaveBeenCalled();
-  });
-
-});
+// PR #1417 判官 P2-2 —— "syncStoryboardMedia — $0 对账(帧)" 整个 describe(18 test)随
+// 首帧对账分支(storyboard-gate1-actions.ts 的 `if (shot.firstFrameCardId)`)一起报废
+// 删除:闸①(首帧铸造)已经报废,没有任何活路径还会新写一个 firstFrameCardId,这个产品
+// 还没有公测用户(founder-launch-status-no-users,2026-08-01),没有真实在途首帧作业需要
+// 兜底。覆盖的钱路纪律(DONE/FAILED/GENERATING 分流、REPLACE 写回、定点写入、R3① fail-closed、
+// GEN_RESULT 权威回退、$0 铁证)在同名的视频对账 describe(下方)与 `#782 r5 B 组` 里对视频
+// 那一支逐条镜像覆盖 —— 视频那一支是活路径,继续对账,零覆盖流失(报废,不是迁移)。
 
 // ---------------------------------------------------------------------------
-// syncStoryboardMedia — $0 对账(视频 + 帧覆写级联清视频 + videoUrls)
+// syncStoryboardMedia — $0 对账(视频 + videoUrls)
+//
+// PR #1417 判官 P1-C / P2-2 —— 标题原本的「帧覆写级联清视频」随三条 CASCADE 测试一起
+// 报废(见下方说明);这里剩下的是视频那一支活着的对账 —— DONE/FAILED 分流、REPLACE
+// 覆盖写、url 解析。
 // ---------------------------------------------------------------------------
 
-describe("syncStoryboardMedia — $0 对账(视频 + 级联 + urls)", () => {
+describe("syncStoryboardMedia — $0 对账(视频 + urls)", () => {
   it("视频子卡 DONE → 按 shotId 写回 videoGenerationId,并返回 videos url", async () => {
     const p = payload3();
     // s0 is framed (gen1-equivalent) and points at a DONE video child; write videoGenerationId.
@@ -717,107 +425,12 @@ describe("syncStoryboardMedia — $0 对账(视频 + 级联 + urls)", () => {
     expect(reportOf(res, "s0").video.previous?.url).toBeTruthy();
   });
 
-  // CASCADE (spec §3c) — the kill-shot flag from the Task-2 reviewer: a frame REPLACE must clear
-  // videoCardId/videoGenerationId for that shot, else a videoCardId survives pointing at a video
-  // built off the OLD source frame.
-  it("级联:帧被覆写(不同 genId)→ 帧写回 AND 清 videoCardId+videoGenerationId(kill-shot)", async () => {
-    const p = payload3();
-    // s0 HAD a frame (gen-OLD) and a landed video (vid-OLD); the frame child regenerated a NEW
-    // frame (gen-NEW). Frame replace ⇒ drop the old video keys (source frame changed).
-    p.shots[0].firstFrameCardId = "child-0";
-    p.shots[0].firstFrameGenerationId = "gen-OLD";
-    p.shots[0].videoCardId = "vchild-0";
-    p.shots[0].videoGenerationId = "vid-OLD";
-    delete p.shots[2].firstFrameGenerationId;
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: "job-0" } }, // only the FRAME child resolves DONE
-      { "job-0": { generationIds: ["gen-NEW"] } },
-    );
-    mockGenJobFindFirst.mockImplementation(async (args: { where?: { id?: string; idempotencyKey?: string } }) => {
-      if (args?.where?.id === "job-0") return { id: "job-0", status: "DONE" };
-      return null; // the video child (vchild-0) has no job → not done → no video write staged
-    });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-NEW")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-
-    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
-    expect(updShots[0].firstFrameGenerationId).toBe("gen-NEW"); // frame REPLACED
-    // cascade: BOTH video keys dropped (key-omission)
-    expect("videoCardId" in updShots[0]).toBe(false);
-    expect("videoGenerationId" in updShots[0]).toBe(false);
-    // returned payload reflects the cascade; no video url for s0
-    expect("videoCardId" in res.payload.shots[0]).toBe(false);
-    expect("videoGenerationId" in res.payload.shots[0]).toBe(false);
-    expect(videoUrl(res, "s0")).toBeUndefined();
-  });
-
-  it("首次帧写入(原无 genId)→ 不级联,视频键保持不动", async () => {
-    const p = payload3();
-    // s0 has NO prior frame genId but (defensively) carries video keys; the frame lands for the
-    // first time. First-ever write ⇒ NO cascade: video keys must survive.
-    p.shots[0].firstFrameCardId = "child-0";
-    delete p.shots[0].firstFrameGenerationId; // first-ever frame write
-    p.shots[0].videoCardId = "vchild-0";
-    p.shots[0].videoGenerationId = "vid-KEEP";
-    delete p.shots[2].firstFrameGenerationId;
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: "job-0" }, "vchild-0": { genJobId: null } },
-      { "job-0": { generationIds: ["gen-FIRST"] } },
-    );
-    mockGenJobFindFirst.mockImplementation(async (args: { where?: { id?: string; idempotencyKey?: string } }) => {
-      if (args?.where?.id === "job-0") return { id: "job-0", status: "DONE" };
-      // vchild-0 fallback lookup → nothing done (video not re-landing this pass)
-      return null;
-    });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-FIRST"), gen("vid-KEEP", "mp4")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-
-    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
-    expect(updShots[0].firstFrameGenerationId).toBe("gen-FIRST"); // first frame written
-    expect(updShots[0].videoCardId).toBe("vchild-0"); // NO cascade — video keys survive
-    expect(updShots[0].videoGenerationId).toBe("vid-KEEP");
-    expect(videoUrl(res, "s0")).toBeTruthy(); // old video still resolves
-  });
-
-  // Precedence: a frame write AND a video write staged for the SAME shot in the same pass →
-  // the cascade WINS. The just-landed video was built off the OLD source frame, so it is
-  // dropped too; the staged video write is NOT applied.
-  it("同镜头同批:帧覆写 + 视频写回 → 级联优先(视频键清除,已落地视频写回不生效)", async () => {
-    const p = payload3();
-    p.shots[0].firstFrameCardId = "child-0"; // frame regen → DONE gen-NEW (replaces gen-OLD)
-    p.shots[0].firstFrameGenerationId = "gen-OLD";
-    p.shots[0].videoCardId = "vchild-0"; // video child ALSO DONE this pass → vid-NEW
-    p.shots[0].videoGenerationId = "vid-OLD";
-    delete p.shots[2].firstFrameGenerationId;
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: "job-0" }, "vchild-0": { genJobId: "vjob-0" } },
-      { "job-0": { generationIds: ["gen-NEW"] }, "vjob-0": { generationIds: ["vid-NEW"] } },
-    );
-    mockGenJobFindFirst.mockImplementation(async (args: { where?: { id?: string } }) => {
-      if (args?.where?.id === "job-0") return { id: "job-0", status: "DONE" };
-      if (args?.where?.id === "vjob-0") return { id: "vjob-0", status: "DONE" };
-      return null;
-    });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-NEW"), gen("vid-NEW", "mp4")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-
-    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
-    expect(updShots[0].firstFrameGenerationId).toBe("gen-NEW"); // frame replaced
-    // cascade precedence: video keys dropped even though a video write was staged
-    expect("videoCardId" in updShots[0]).toBe(false);
-    expect("videoGenerationId" in updShots[0]).toBe(false);
-    // the staged vid-NEW write did NOT land
-    expect(videoUrl(res, "s0")).toBeUndefined();
-  });
+  // PR #1417 判官 P1-C / P2-2 —— 「级联:帧被覆写…kill-shot」「首次帧写入(原无 genId)→
+  // 不级联」「同镜头同批:帧覆写 + 视频写回 → 级联优先」三条 CASCADE(spec §3c)测试随
+  // `cascadeShots`(首帧替换清视频指针那道级联)本体一起报废删除:唯一能让帧被「替换」
+  // (REPLACE 一个已存在的 firstFrameGenerationId)的路径是 `firstFrameCardId` 对账,而那条
+  // 对账已经整段删除(见上方「syncStoryboardMedia — $0 对账(帧)」describe 的报废说明)——
+  // 级联判据的输入结构性地不会再出现,没有替代覆盖(报废,不是迁移)。
 
   it("无待对账(无帧无视频候选)→ 原样返回,不写 DB($0)", async () => {
     const p = payload3();
@@ -1848,33 +1461,24 @@ function doneVideoJob(lastFrameAssetId: string | null) {
 // 「接续模式下闸①只为第一镜铸首帧、真省钱」,而闸①(首帧图那一步)从此对所有镜头都不存在,
 // 这条省钱路径本身已随之退场,没有替代覆盖(报废,不是迁移)。
 //
-// FSE-208 报废清单续记(闸③ 免费传帧 + 卡死判定的消费者已死,机制本身未删,详见 PR 描述的
-// 报废物清单):下面原本的 `#782 闸③`(6 test)、`#782 验收句`(1 test)、`#782 r3 A 组`
-// (9 test,含 for-loop 的 2 个)三个 describe 整段删除,换成下面一个更小的
-// `FSE-208 · #782 接续免费传帧` describe —— 理由不是这些 test 写错了,是它们断言的写入
-// **结构性地不会再发生**:
-//   `directToVideoShotIds`(storyboard-shot.ts 的 `shotGoesDirectToVideo` 现在恒为 true)
-//   让 `storyboard-gate1-actions.ts` 里 `if (p.continuity === true) { … if (directIds.has
-//   (to.shotId)) continue; … }`(原 711-762 行)对**任何**镜头都在 719 行的 continue 处
-//   退出 —— 719 行之后的整段(免费传帧的写入 `frameWrites[to.shotId]`、以及紧跟着的判词写入
-//   `inheritBlockWrites[to.shotId]`)对当前代码再也没有一条输入能让它执行到。`inheritFrameFromClip`
-//   因此也失去了唯一调用点。`prepareStoryboardVideos`/`regenShotVideoCard` 那边同理:
-//   `minimalCtx` 的 `sourceGenerationId` 永远是 `undefined`(闸②不再读任何首帧字段当 i2v
-//   起始帧),所以「闸③ 接上的首帧被闸② 当起始帧送出去」这件事(原 `#782 验收句`)本身也
-//   不可能发生。
+// PR #1417 判官 P1-C / P2-2 —— 上一轮(见 git blame)把这一段登记成「机制本身未删,报告
+// 缺口不擅自处理」的已知残留:`if (p.continuity === true) {...}`(原
+// `storyboard-gate1-actions.ts` 711-762 行,#782 闸③ 免费传帧)在数学上已经不可达(任何
+// 镜头都在 `directIds.has(to.shotId)` 那一句 continue,因为 FSE-208 之后「直接出片」对
+// 每一镜都恒为真),但代码本身没有跟着删。判官这一轮裁定「先试删」,而删除没有牵动 schema
+// 邻接字段或 worker 包 —— 那整段(含 `inheritFrameFromClip`、`inheritBlockWrites`、
+// `videoJobByShot`/`videoJobDeadByShot`)已随这个 PR 真正删除,不再是「不可达但还在」,
+// 而是「已经不存在」。`GenJob.lastFrameAssetId`(worker 写入)与 `continuity` schema 字段
+// 本身仍未删 —— 那是独立的 heavy 任务,继续留在 PR 描述的「残留缺口」里(判官 P2-2 原话)。
 //
-// 这段代码**没有**在本 PR 删除:它与 `GenJob.lastFrameAssetId`(worker 写入,
-// `apps/worker/src/jobs/gen.ts` 的 `storeLastFrameBestEffort`)以及 `continuity` 开关本身
-// 共享一个更大的 #782 功能边界,退掉它需要碰 schema 邻接字段与 worker 包 —— 超出 FSE-208
-// (分镜首帧合成退场)本身的授权范围,是另一件家规 §7.4 意义上的 heavy 工作。这是一个明确
-// 报告、不擅自处理的缺口(见 PR 描述与最终报告):Founder/编排者可以选择另开一张票退掉
-// #782 的这条死代码,或者明确接受它作为已知残留。
+// 首帧那一支的对账(`if (shot.firstFrameCardId)`)同样整段删除(判官 P2-2):没有任何活
+// 路径还会新写一个 `firstFrameCardId`,这个产品还没有公测用户,没有真实在途首帧作业需要
+// 兜底(founder-launch-status-no-users,2026-08-01)。
 //
-// 下面这组新 test 把这件事**钉成回归**:接续开着 + 上一镜片子出完 + 末帧齐全,sync 依然
-// 一个字都不写 —— 如果将来有人动了 `shotGoesDirectToVideo` 让它不再恒真,这里会立刻变红,
-// 逼着重新审视这段代码是否该复活或者正式删除。
+// 下面这组 test 把这件事**钉成回归**:接续开着 + 上一镜片子出完 + 末帧齐全,sync 依然
+// 一个字都不写首帧字段 —— 现在的理由不再是「代码在但走不到」,而是「这段代码已经不存在」。
 
-describe("FSE-208 · #782 接续的免费传帧机制现在恒定不跑(消费者已随首帧退场,机制本身未删——见上方报废清单注)", () => {
+describe("FSE-208 · #782 接续的免费传帧机制已随判官裁定整段删除(不再只是数学上不可达)", () => {
   it("接续开着 + 上一镜片子出完且末帧齐全 → sync 依然不写任何首帧字段(FSE-208 之前这里会传帧)", async () => {
     wireSync(card(chainPayload()), { "vchild-0": { genJobId: "vjob-0" } }, { "vjob-0": { generationIds: ["vid-A"] } });
     mockGenJobFindFirst.mockResolvedValue(doneVideoJob("asset-tail-0"));
@@ -1904,14 +1508,9 @@ describe("FSE-208 · #782 接续的免费传帧机制现在恒定不跑(消费�
     expect(res.payload.shots[1].inheritBlockedByVideoCardId).toBeUndefined();
   });
 
-  it("遗留字段自清洁:旧数据身上手工留着的 inheritBlockedByVideoCardId 一旦不匹配现役子卡 → shotsStuckWithoutInheritedFrame 判它不卡死", () => {
-    // 这条不依赖 sync(sync 已经不会再产出这个字段了)—— 纯测 storyboard-card.ts 那个
-    // 读取端的纯函数,对着本 PR 之前遗留下来的旧数据形状仍然算对。
-    const p = chainPayload();
-    p.shots[0].videoCardId = "vchild-0-remake2"; // 现役指针已经换了
-    p.shots[1].inheritBlockedByVideoCardId = "vchild-0-remake"; // 旧判词指着一张已经不现役的子卡
-    expect(shotsStuckWithoutInheritedFrame(p.shots, true)).toEqual([]);
-  });
+  // PR #1417 判官 P1-C —— 「遗留字段自清洁:… shotsStuckWithoutInheritedFrame 判它不卡死」
+  // 这条随 `shotsStuckWithoutInheritedFrame` 本体一起报废删除(见 `storyboard-card.ts`):
+  // 它测的读取端纯函数已经不存在,没有替代覆盖(报废,不是迁移)。
 });
 
 describe("#782 r2b P1 之二 —— 重出某镜的视频,绝不改动下游已经写好的首帧", () => {
@@ -1935,170 +1534,22 @@ describe("#782 r2b P1 之二 —— 重出某镜的视频,绝不改动下游已�
   });
 });
 
-// ---------------------------------------------------------------------------
-// #782 r4(判官 r3 P3)—— 「生成中」必须由一条真的作业撑着
-// ---------------------------------------------------------------------------
+// PR #1417 判官 P1-C / P2-2 —— "#782 r4 —— sync 报回「首帧子卡真的有活作业吗」" 整个
+// describe(4 test,含两个 for-loop)随首帧对账分支一起报废删除:它测的是 sync 对
+// `firstFrameCardId` 背后作业状态(QUEUED/GENERATING/FAILED/CANCELLED/无作业)的只读
+// 汇报,而那条对账已经整段不存在(见上方「syncStoryboardMedia — $0 对账(帧)」describe
+// 的报废说明),没有替代覆盖(报废,不是迁移)。
 //
-// 卡面靠 `firstFrameCardId` 这个指针判「正在生成」。指针在 ≠ 有东西在跑:准备卡在商家按
-// Cancel、启动失败、或崩溃刷新之后照样留在 payload 里,一分钱没花、什么都没在跑。于是卡面
-// 转着 "Generating first frame…"、轮询白转两分钟,而那一镜其实需要商家自己按一下。
-//
-// 这是 P1-b 那条判词的同一味药:能看见作业真实状态的只有 sync。所以 sync 顺手把
-// 「哪些镜头的首帧子卡背后真的有一条没死的作业」一起报回去,卡面读它,不再从指针形状猜。
-// 这一份是**只读**的,不进 payload —— 它描述的是此刻,没有需要清理的过去。
-describe("#782 r4 —— sync 报回「首帧子卡真的有活作业吗」", () => {
-  /** 一镜:s0 有首帧子卡、还没出图。作业的状态由每条测试自己给。 */
-  function pendingFramePayload(): StoryboardCardPayload {
-    return {
-      storyboardTitle: "Ad",
-      shots: [{ shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0", firstFrameCardId: "child-0" }],
-    };
-  }
-
-  it("准备卡在、但没有任何作业 → 不算在跑(崩溃刷新后的假 spinner 断根)", async () => {
-    wireSync(card(pendingFramePayload()), { "child-0": { genJobId: null } }, {});
-    mockGenJobFindFirst.mockResolvedValue(null); // 幂等键也查不到 → 一分钱没花,什么都没跑
-    mockGenerationFindMany.mockResolvedValue([]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    // r11:这一格的权威答复就是「没有作业」——卡面据此显示诚实的空态,不是 spinner。
-    expect(frameKind(res, "s0")).toBe("absent");
-    expect(mockChatUpdate).not.toHaveBeenCalled(); // 只读:一个字都不写
-  });
-
-  for (const live of ["QUEUED", "GENERATING"] as const) {
-    it(`作业 ${live} → 算在跑(真的在等,spinner 该转)`, async () => {
-      wireSync(card(pendingFramePayload()), { "child-0": { genJobId: "job-0" } }, {});
-      mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: live, lastFrameAssetId: null, projectId: "proj-1", threadId: "t-1" });
-      mockGenerationFindMany.mockResolvedValue([]);
-
-      const res = await syncStoryboardMedia({ cardId: "card-1" });
-      if (!("payload" in res)) throw new Error("expected payload");
-      expect(frameKind(res, "s0")).toBe(live === "QUEUED" ? "queued" : "generating");
-    });
-  }
-
-  for (const dead of ["FAILED", "CANCELLED"] as const) {
-    it(`作业 ${dead} → 不算在跑(转下去也永远不会有图)`, async () => {
-      wireSync(card(pendingFramePayload()), { "child-0": { genJobId: "job-0" } }, {});
-      mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: dead, lastFrameAssetId: null, projectId: "proj-1", threadId: "t-1" });
-      mockGenerationFindMany.mockResolvedValue([]);
-
-      const res = await syncStoryboardMedia({ cardId: "card-1" });
-      if (!("payload" in res)) throw new Error("expected payload");
-      expect(frameKind(res, "s0")).toBe("dead");
-    });
-  }
-
-  // r4 在这里钉的是「DONE 但结果行还没落 → 仍算在跑」,理由是「宁可多转一圈」。r5 把那一圈
-  // 取消了:结算落库的 generationIds 在 DONE **之前**就写好了(见 B 组),所以 DONE 的那一刻
-  // 已经拿得到产出,不需要靠 spinner 多等。DONE 因此是终态,不是「在跑」——见 A 组。
-});
-
-// ---------------------------------------------------------------------------
-// #782 r5(判官 r4 的两条 P1)
-// ---------------------------------------------------------------------------
-//
-// 两条判词讲的是同一件事的两面:**商家的钱换来的东西,必须永远到得了分镜上**。
-//   ① 到得了:出产的那一行在结算事务里就落库了(GenJob.generationIds),对话里那条
-//      GEN_RESULT 只是投递。投递丢了,分镜以前就再也读不到它 —— 付过钱、图存在,
-//      firstFrameGenerationId 永远不写,spinner 永远转。
-//   ② 到不了的时候有出路:作业死了(FAILED / CANCELLED)、预扣已按退款协议退回,商家
-//      一分钱没花也什么都没拿到。那一镜必须能再出一次,而不是被一张烧掉了幂等键的子卡
-//      永久占住。
-
-/** 一镜:s0 有首帧子卡、还没出图。作业状态由每条测试自己给(与 r4 那组同形,块内自持)。 */
-function r5PendingFramePayload(): StoryboardCardPayload {
-  return {
-    storyboardTitle: "Ad",
-    shots: [{ shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0", firstFrameCardId: "child-0" }],
-  };
-}
-
-/** 一条 DONE 的作业行,带它在结算事务里落库的产出。 */
-function doneJob(id: string, generationIds: string[], lastFrameAssetId: string | null = null) {
-  return { id, status: "DONE", generationIds, lastFrameAssetId, projectId: "proj-1", threadId: "t-1" };
-}
+// #782 r5(判官 r4 的两条 P1)—— 「商家的钱换来的东西,必须永远到得了分镜上」这条纪律,
+// 视频那一支仍然成立(见下方 A 组仅存的一条测试、B 组整组)。
 
 describe("#782 r5 A 组 —— 付费的产出永远可达:GEN_RESULT 是投递,GenJob.generationIds 是权威", () => {
-  it("DONE + GEN_RESULT 从未落地(append 吞了错)→ 首帧照样写回", async () => {
-    // 判官 r4 的时序:worker 结算 + 落 generationIds → 写 DONE → best-effort 写 GEN_RESULT
-    // 失败并被吞掉 → 重投看到 DONE 直接返回,没有补写后盾。以前 sync 只读 GEN_RESULT,
-    // 于是这张已经付过钱、行也真的存在的图,永远回不到分镜上。
-    wireSync(card(r5PendingFramePayload()), { "child-0": { genJobId: "job-0" } }, {}); // 没有 GEN_RESULT
-    mockGenJobFindFirst.mockResolvedValue(doneJob("job-0", ["gen-PAID"]));
-    mockGenerationFindMany.mockResolvedValue([gen("gen-PAID")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-PAID");
-    expect(frameUrl(res, "s0")).toBeTruthy(); // 图真的回到卡面上
-  });
-
-  it("DONE + GEN_RESULT 从未落地 → 这一镜不再报「在跑」(spinner 不可能永远转)", async () => {
-    // 有了回退,DONE 的那一刻产出就已经拿得到,没有任何理由继续转。轮询因此自然停在
-    // 「帧落地」那一格,而不是转满上限再带着一个不会更新的 spinner 收工。
-    wireSync(card(r5PendingFramePayload()), { "child-0": { genJobId: "job-0" } }, {});
-    mockGenJobFindFirst.mockResolvedValue(doneJob("job-0", ["gen-PAID"]));
-    mockGenerationFindMany.mockResolvedValue([gen("gen-PAID")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    expect(frameKind(res, "s0")).toBe("done"); // 到终点了,不是「还在跑」
-  });
-
-  it("GEN_RESULT 在 → 仍以它为准(投递正常时行为逐字不变)", async () => {
-    wireSync(
-      card(r5PendingFramePayload()),
-      { "child-0": { genJobId: "job-0" } },
-      { "job-0": { generationIds: ["gen-DELIVERED"] } },
-    );
-    // 两处不一致时以投递为准:它是商家在对话里看见的那一条,权威回退只在投递缺席时说话。
-    mockGenJobFindFirst.mockResolvedValue(doneJob("job-0", ["gen-OTHER"]));
-    mockGenerationFindMany.mockResolvedValue([gen("gen-DELIVERED")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-DELIVERED");
-  });
-
-  it("DONE 但 generationIds 也是空(遗留行)→ 不写,也不说 absent:钱已经收了,不许假装什么都没发生", async () => {
-    // #782 r13(判官 r12 P1-F1)—— r5 在这里答 `absent`,而 `absent` 在类型里写着
-    // 「从未启动、一分钱没花」。判官 r12 钉出的时序正是从这一格长出来的:卡面于是渲染成空白,
-    // 商家按整包按钮 → prepare 判「未耗尽」复用同一张已花钱的子卡 → 全 spent → 回去轮询 →
-    // 下一次 sync 还是 absent。零新卡、零退款说明、零有效重试,一个死循环。
-    //
-    // 现役 worker 已经造不出这个形状(写入点的零产出闸,apps/worker/src/jobs/gen.ts),而这一格
-    // 仍然要有一个**诚实**的答案:过渡态 —— 对钱不做任何主张,让卡面继续问(轮询本来就有上限),
-    // 而 worker 的自愈巡检会在宽限期内把这一行翻成 FAILED + 退款,那之后这里回的是如实的 dead。
-    wireSync(card(r5PendingFramePayload()), { "child-0": { genJobId: "job-0" } }, {});
-    mockGenJobFindFirst.mockResolvedValue(doneJob("job-0", []));
-    mockGenerationFindMany.mockResolvedValue([]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    expect(res.payload.shots[0].firstFrameGenerationId).toBeUndefined();
-    expect(frameKind(res, "s0"), "DONE-空被折叠成「什么都没开始」—— 那是关于商家的钱的假话").toBe("generating");
-    expect(mockChatUpdate).not.toHaveBeenCalled(); // 只读:一个字都不写
-  });
-
-  it("替换形状的 DONE-空:状态说过渡,previous 说旧产出仍然属于商家(不折叠成旧 done)", async () => {
-    // 判官 r12 的第二种形状:重出的那条作业 DONE 却交不出东西,r11 把这一格答成旧产出的
-    // `done` —— 卡面因此说「替换成功了」,把 Remake 按钮放回来,再确认一次就是第二笔账。
-    const p = r5PendingFramePayload();
-    p.shots[0].firstFrameGenerationId = "gen-OLD"; // 商家手上已经有一张
-    wireSync(card(p), { "child-0": { genJobId: "job-0" } }, {});
-    mockGenJobFindFirst.mockResolvedValue(doneJob("job-0", []));
-    mockGenerationFindMany.mockResolvedValue([gen("gen-OLD")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    const report = res.shots.find((s) => s.shotId === "s0")!.frame;
-    expect(report.status.kind, "替换其实什么都没交出来,却被说成 done").toBe("generating");
-    expect(report.previous).toEqual({ generationId: "gen-OLD", url: expect.any(String) });
-    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-OLD"); // 旧的一格没动
-  });
+  // PR #1417 判官 P1-C / P2-2 —— 这个 describe 原本的前 5 条测试(DONE-空的诚实过渡态、
+  // GEN_RESULT append 失败的权威回退、替换形状的 DONE-空)全部钉的是**首帧**那一支的权威
+  // 回退,读的都是 `frameKind`/`report.frame`(首帧对账,`if (shot.firstFrameCardId)`)——
+  // 那条对账已随判官裁定整段删除(见上方「syncStoryboardMedia — $0 对账(帧)」describe 的
+  // 报废说明),没有替代覆盖(报废,不是迁移)。视频那一支的同一条纪律(权威回退不靠
+  // GEN_RESULT 投递)是活路径,继续对账,下面这条测试原样保留。
 
   it("视频侧同一条权威:GEN_RESULT 丢了,片子照样写回(权威回退不靠那一条投递)", async () => {
     // 一条聊天消息没写成(GEN_RESULT 丢了)不该让「片子写回」这件事跟着丢 —— 权威回退
@@ -2448,43 +1899,9 @@ describe("#782 r11 sync 权威状态:五个枚举 + 显式替换语义", () => {
     expect(reportOf(res, "s0").frame.status).toEqual({ kind: "done", generationId: "ffgen0" });
   });
 
-  it("帧被替换触发级联删掉视频键 → 那一格如实回 absent(采样不属于它了)", async () => {
-    const p: StoryboardCardPayload = {
-      storyboardTitle: "Ad",
-      shots: [
-        {
-          shotId: "s0",
-          index: 0,
-          firstFramePrompt: "ff0",
-          videoPrompt: "vp0",
-          firstFrameCardId: "child-0",
-          firstFrameGenerationId: "gen-OLD",
-          videoCardId: "vchild-0",
-          videoGenerationId: "vid-OLD",
-        },
-      ],
-    };
-    wireSync(
-      card(p),
-      { "child-0": { genJobId: "job-0" }, "vchild-0": { genJobId: "vjob-0" } },
-      { "job-0": { generationIds: ["gen-NEW"] } },
-    );
-    mockGenJobFindFirst.mockImplementation(async (args: { where?: { id?: string; idempotencyKey?: string } }) => {
-      const id = args?.where?.id;
-      if (id === "job-0") return { id: "job-0", status: "DONE", generationIds: ["gen-NEW"], lastFrameAssetId: null, projectId: "proj-1", threadId: "t-1" };
-      if (id === "vjob-0") return { id: "vjob-0", status: "DONE", generationIds: ["vid-OLD"], lastFrameAssetId: null, projectId: "proj-1", threadId: "t-1" };
-      return null;
-    });
-    mockGenerationFindMany.mockResolvedValue([gen("gen-NEW")]);
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("payload" in res)) throw new Error("expected payload");
-    // 级联:新帧写回 + 视频两键被删 → 视频那一格没有子卡、没有产出。
-    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-NEW");
-    expect("videoCardId" in res.payload.shots[0]).toBe(false);
-    expect(videoKind(res, "s0")).toBe("absent");
-    expect(reportOf(res, "s0").video.previous).toBeUndefined();
-  });
+  // PR #1417 判官 P1-C / P2-2 —— 「帧被替换触发级联删掉视频键 → 那一格如实回 absent」随
+  // `cascadeShots` 本体一起报废删除:唯一能让帧被「替换」的路径(`firstFrameCardId` 对账)
+  // 已经整段不存在,级联判据的输入结构性地不会再出现,没有替代覆盖(报废,不是迁移)。
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2667,17 +2084,10 @@ describe("FSE-208 · 闸② —— 所有镜头都是演员照 + 商品照两张
   });
 });
 
-describe("FSE-208 · 闸③ —— sync 把「所有镜头都直接出片」如实报给卡面", () => {
-  it("FSE-208 / CREATE-A2: 带演员的镜头、只 @ 商品的镜头、什么都没 @ 的镜头,答复里 directToVideo 全部为真", async () => {
-    castOwned();
-    wireLoads(card(castPayload2()));
-
-    const res = await syncStoryboardMedia({ cardId: "card-1" });
-    if (!("shots" in res)) throw new Error("expected shots");
-    expect(reportOf(res, "s0").directToVideo).toBe(true); // 带演员+商品
-    expect(reportOf(res, "s1").directToVideo).toBe(true); // 一个元素都没 @ —— 2026-09-12 S5 批量裁决之前这里是 false
-  });
-});
+// PR #1417 判官 P1-B / P1-C —— 「FSE-208 · 闸③ —— sync 把「所有镜头都直接出片」如实报给
+// 卡面」整段报废删除:`ShotMediaSyncReport.directToVideo` 字段本身已经删除(见
+// `storyboard-card.ts`)——「这一镜直接出片吗」FSE-208 之后对每一镜都恒为真,是卡面一眼
+// 就知道的编译期常量,不必再由 sync 这一趟确认,没有替代覆盖(报废,不是迁移)。
 
 /**
  * FSE-012（`docs/specs/creation-engine.md` §5 :170，Founder 2026-09-10 裁 #1307）——
@@ -3110,6 +2520,39 @@ describe("creation §5 :178 —— 分镜挂 Library 图,进报价材料", () =>
     expect(imgs[0]!.url).toBeTruthy();
     expect(imgs[1]!.url).toBeUndefined();
     expect(reportOf(res, "s1").libraryImages).toEqual([]);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PR #1417 判官 P1-A —— 每一条上面的用例都靠 `mockVideoProposeCard()` 那个手写替身,
+  // 而那个替身从来没有模拟过 `videoAttachmentRole` 的「没 @ 演员 ⇒ 首帧」分岔(它对任何
+  // 挂图都当参考处理)。于是即使真 `buildProposeCard` 对零 @ 演员的镜头判成 i2v 首帧、
+  // 让 `assertShotLibraryImagesAllRide` 整卡拒绝,这份测试文件也是全绿的 —— 判官原话:
+  // 「全绿在结构上看不见这条」。这一条不接那个替身,把 `mockBuildProposeCard` 转发到
+  // `@fikirtive/otto` 的真实现,连 `videoAttachmentRole` 那道判据一起真的跑一遍。
+  // ═══════════════════════════════════════════════════════════════════════════
+  it("creation §5 :178 / P1-A(判官 PR #1417,真 buildProposeCard):零 @ 演员的镜头挂 Library 图也铸得出视频 —— 不当首帧,不被拒", async () => {
+    castOwned();
+    libraryImagesOwned(["lib-3"]);
+    const realOtto = await vi.importActual<typeof import("@fikirtive/otto")>("@fikirtive/otto");
+    mockBuildProposeCard.mockImplementation(realOtto.buildProposeCard);
+    const p = castPayload2();
+    // s1 是 castPayload2 里那一镜「一个元素都没 @」的镜头 —— 纯商品/纯文字镜头,这正是
+    // 判官举的反例:零 @ 演员(甚至零 @ 任何元素)+ 挂一张 Library 图。
+    p.shots[1]!.referenceGenerationIds = ["lib-3"];
+    wireLoads(card(p));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) {
+      throw new Error(`expected children, got a refusal: ${JSON.stringify(res)}`);
+    }
+    // 整卡两镜都铸出来了 —— 挂图那一镜没有被 assertShotLibraryImagesAllRide 拒绝。
+    expect(res.children.map((c) => c.shotId).sort()).toEqual(["s0", "s1"]);
+
+    const s1Data = mockChatCreate.mock.calls.find((c) => c[0].data.payload.shotId === "s1")![0].data;
+    // 挂的那张图必须是参考图,不是首帧:卡上不写 sourceGenerationId,写的是
+    // referenceGenerationIds —— 与 castOwned/libraryImagesOwned 的挂图一字不差地上车。
+    expect(s1Data.payload.sourceGenerationId).toBeUndefined();
+    expect(s1Data.payload.referenceGenerationIds).toEqual(["lib-3"]);
   });
 });
 

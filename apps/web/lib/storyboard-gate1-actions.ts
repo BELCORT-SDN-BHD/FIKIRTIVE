@@ -44,7 +44,6 @@ import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { runAsUser } from "@fikirtive/db/principal";
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
-import { shotsDirectToVideo } from "./storyboard-card";
 // #782 r11(判官 r10):卡面的状态词表就是**这里**回传的那一份 —— 两侧共用同一组类型,
 // 客户端不再有第二套「从 payload 形状推断服务端真相」的规则。类型只在编译期存在,
 // 不构成 "use server" 的运行时导出(严禁再导出子句 —— 见 #741 的构建事故)。
@@ -61,7 +60,7 @@ import {
   JOB_DEAD_STATUSES,
   JOB_LIVE_STATUSES,
 } from "@fikirtive/otto";
-import type { ChildJob, PrismaTx } from "@fikirtive/otto";
+import type { PrismaTx } from "@fikirtive/otto";
 
 export type ChildFrameCard = {
   shotId: string;
@@ -108,23 +107,19 @@ async function ownedEntitiesFor(tx: PrismaTx, ownerId: string, entityIds: string
   });
 }
 
-/**
- * FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 这一张分镜卡上,哪几镜**直接出片**。
- * 现在恒为**全部**(`shotGoesDirectToVideo` 见 `@fikirtive/core/storyboard-shot`):首帧合成
- * 已对所有镜头退场,不再有「@ 到演员才直接出片,纯商品镜头两步」的区分。
- *
- * 这个函数留着(没有内联成 `new Set(shots.map(s => s.shotId))`)只服务 `syncStoryboardMedia`
- * 一处 —— 继续把 `directToVideo` 答案报给卡面,并驱动接续(continuity)镜头间免费传帧那一段
- * 的既有判据(那是 #782 自己的机制,FSE-208 未改动它,只是它的输入现在恒为「全部直接出片」,
- * 详见 PR #1394 报告里登记的这条残留缝隙)。
- */
-function directToVideoShotIds(
-  shots: readonly StoryboardCardPayload["shots"][number][],
-  owned: ApprovedEntity[],
-): Set<string> {
-  const cast = new Set(owned.filter((e) => e.type === "CHARACTER").map((e) => e.id));
-  return new Set(shotsDirectToVideo(shots, cast).map((s) => s.shotId));
-}
+// PR #1417 判官 P1-C / P3-1 —— 「这一张分镜卡上哪几镜直接出片」的 `directToVideoShotIds`
+// 整段报废删除:它上面 PR #1394 登记过的两个用途(驱动接续/continuity 传帧、把
+// `directToVideo` 答案报给卡面)都已在这一轮同 PR 收敛 —— 前者是判官 P1-C 判定的数学上
+// 不可达代码(下面 `syncStoryboardMedia` 的接续段整段删除),后者是判官 P1-B 判定的死
+// 用途(卡面不再等服务端确认「这一镜直不直接出片」,FSE-208 之后这本来就是一个恒真的
+// 客户端已知常量,见 `StoryboardCard.tsx` 的 `isDirectToVideo`)。
+//
+// 它读的 `shotsDirectToVideo`(`apps/web/lib/storyboard-card.ts`)/`shotGoesDirectToVideo`
+// (`@fikirtive/core/storyboard-shot`)这条链子本身**没有**在这个 PR 里进一步收敛(判官
+// P3-1「无参真值或直接内联删除」那一半仍然成立,未落地)——两个函数眼下零生产调用方,
+// 但各自还有测试文件专门钉着它们的行为(`storyboard-card.test.ts`、
+// `storyboard-direct-to-video-source.test.ts`),P3 优先级,登记为这个 PR 未做完的收尾,
+// 留给下一轮。
 
 /** FSE-208 —— 这一镜的视频要带上路的元素:@ 到的演员与商品各作一张 `role:"reference_image"`。 */
 type ShotVideoCast = { entityIds: string[]; owned: ApprovedEntity[] };
@@ -277,7 +272,13 @@ async function attachShotLibraryImages(
 /** buildProposeCard 需要的最小 OttoContext(它只读 orgId/threadId/disabledModels 及两个 source 字段)。
  *  source/referenceVideo 留 undefined —— 缺省形状不带起始帧/参考视频。FSE-208 之后每一镜都
  *  直接出片:调用方写 `sourceGenerationIds` + `mediaReferences`(creation §5 :178 的 Library 图,
- *  见 `attachShotLibraryImages`),`sourceGenerationId`(i2v 首帧)那一档不再有人写。 */
+ *  见 `attachShotLibraryImages`),`sourceGenerationId`(i2v 首帧)那一档不再有人写。
+ *
+ *  PR #1417 判官 P1-A —— `alwaysVideoReference: true` 是这一格结构性成立的原因:没有它,
+ *  零 @ 演员却挂了 Library 图的镜头(纯商品镜头)会被 `videoAttachmentRole` 判成 i2v 首帧
+ *  (`startFrame`),而分镜世界里首帧这条路已经整段退场 —— 那一镜会被
+ *  `assertShotLibraryImagesAllRide` 拒绝,整张卡铸不出一条视频。挂图在分镜里一律是参考图,
+ *  不论这一镜有没有 @ 演员。 */
 function minimalCtx(ownerId: string, threadId: string, disabledModels: string[]): OttoContext {
   return {
     orgId: ownerId,
@@ -285,6 +286,7 @@ function minimalCtx(ownerId: string, threadId: string, disabledModels: string[])
     projectId: "",
     threadId,
     disabledModels,
+    alwaysVideoReference: true,
     sourceGenerationId: undefined,
     referenceVideoGenerationId: undefined,
   };
@@ -480,54 +482,13 @@ async function mintVideoChild(
 // ---------------------------------------------------------------------------
 
 
-/** 首帧只能是图片。末帧本来就是 PNG,但「指过去的那一行到底是不是图」这件事不能靠推定 ——
- *  指错了下游就是拿一段视频当首帧去付费出片。 */
-const FRAME_IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
-
-/**
- * #782 闸③ —— 把第 N 镜真实停住的那一帧,变成第 N+1 镜的首帧。
- *
- * 这是 $0 的:那张图是引擎出片时免费附送的,worker 早已把它接住存进 R2(GenJob
- * .lastFrameAssetId)。这里做的只是「让它成为一件作品」——在真的要用它的这一刻才铸
- * Generation 行,所以商家的候选区不会因为出了几条片就平白多出几张没人要过的静图。
- *
- * 只填空,永不覆盖:调用点已经确认下一镜没有首帧。已经有首帧的镜头(商家自己出过、或
- * 上一轮已接续过)一律不动 —— 自动接续绝不越过商家已经看见并认可的东西。
- *
- * 返回新 Generation 的 id;拿不到末帧 / 末帧行不见了 / 不是图片 → null,调用方当作
- * 「这一环这次接不上」,与 #782 之前的行为一模一样(商家自己出一张首帧即可)。
- */
-async function inheritFrameFromClip(
-  tx: PrismaTx,
-  ownerId: string,
-  job: ChildJob,
-): Promise<string | null> {
-  if (!job.lastFrameAssetId) return null;
-  const asset = await tx.asset.findFirst({
-    where: { id: job.lastFrameAssetId, ownerId, deletedAt: null },
-    select: { id: true, ext: true },
-  });
-  if (!asset || !FRAME_IMAGE_EXTS.has(asset.ext.toLowerCase())) return null;
-  const gen = await tx.generation.create({
-    data: {
-      id: newId(),
-      ownerId,
-      // 与那条片子同一个 project:闸② 之后会把这个 id 当 i2v 起始帧送进 worker,而 worker
-      // 按 (owner, project) 复核源图 —— 跨 project 会在花钱前被挡下,那才是真正的缺陷。
-      projectId: job.projectId,
-      shotId: null,
-      // 与那条片子同一条对话:cowork 产物本来就不进候选区/素材面,末帧跟着它走,
-      // 不会在商家的素材库里冒出来。
-      threadId: job.threadId,
-      assetId: asset.id,
-      source: "GENERATED",
-      promptText: "",
-      modelRef: "",
-      entitySnapshot: { entities: [] },
-    },
-  });
-  return gen.id;
-}
+// PR #1417 判官 P1-C —— `FRAME_IMAGE_EXTS` + `inheritFrameFromClip`(#782 闸③ 的接续传帧:
+// 把上一镜真实停住的末帧变成下一镜的首帧)整段报废删除。唯一的调用点是下面
+// `syncStoryboardMedia` 里 `if (p.continuity === true) {...}` 那一段,而那一段本身随这个
+// PR 一起删除(判官原话:`directIds.has(to.shotId)` 恒真让它数学上不可达 —— FSE-208 之后
+// 「直接出片」对每一镜都恒为真,接续判据里唯一会跳过的那一支吞掉了全部镜头)。后端不可达
+// 数据(`GenJob.lastFrameAssetId`、worker 的 `storeLastFrameBestEffort`、`continuity`
+// schema 字段本身)不在这个 PR 删除范围 —— 见 PR 描述「残留缺口」一节登记的独立 heavy 任务。
 
 /** Owner-scoped Generation id → media URL (mirrors data.ts getGenerationThumbs /
  *  getGenerationMedia: Generation → asset → storageKey → src). Media-type-agnostic:
@@ -598,11 +559,12 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
     // #782 r11 (判官 r10): 采样时把每张子卡背后那条作业的**状态与产出**原样记下来 —— 这就是
     // 回传给卡面的权威状态的原料。赋值(不是累加)—— 事务体重跑一次也只会得到那一次采样的
     // 结果,不会叠加出幽灵。
-    let frameSamples = new Map<string, ChildJobSample>();
+    //
+    // PR #1417 判官 P1-C / P2-2 —— 首帧对账整段报废之后,「首帧那一格的作业采样」永远没有
+    // 数据来源了(见下面 videoWrites 附近的说明);`frame:` 报告对每一镜都只按 payload 上
+    // 已有的 `firstFrameGenerationId`/`firstFrameCardId` 直接降级(不带 live 采样),
+    // 与「这张子卡背后作业还没起步」的既有降级路径同形 —— 不再需要一个恒为空的 Map。
     let videoSamples = new Map<string, ChildJobSample>();
-    // FSE-001 同族 —— 哪几镜直接出片。卡面读不到 `Entity.type`,所以这件事跟每一格媒体状态
-    // 走同一条通道:服务端说,卡面只用(见 `ShotMediaSyncReport.directToVideo`)。
-    let directShotIds = new Set<string>();
     const payload = await prisma.$transaction(async (tx) => {
       // Same card-writer serialization: a sync (frame-replace CASCADE drops video keys)
       // racing a prepare/regen RMW could clobber a just-written — possibly already
@@ -620,73 +582,29 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
       if (!fresh?.payload) return null;
       const p = fresh.payload as unknown as StoryboardCardPayload;
 
-      // FSE-001 同族 —— 一趟 owner-scoped 元素读($0),两个用途:接续那一段不再往「直接
-      // 出片」的镜头上塞一张它用不着的首帧,以及把这份答案原样报给卡面。
-      const directIds = directToVideoShotIds(
-        p.shots,
-        await ownedEntitiesFor(tx, ownerId, [...new Set(p.shots.flatMap((s) => s.entityIds ?? []))]),
-      );
-      directShotIds = directIds;
-
-      // Collect finished writes from the FRESH (post-lock) payload. Candidate rules are
-      // identical in shape for the two media classes (≤8 shots, so the per-shot lookups are
-      // bounded; child/job/result reads are worker-written rows — a job flipping DONE
-      // mid-sync is simply picked up by the next sync, inert here):
-      //  • FRAME: a shot with a firstFrameCardId. Resolve its child's DONE generationId; stage a
-      //    frame write iff that id exists AND DIFFERS from the shot's current firstFrameGenerationId.
-      //    Covers first landing (no genId yet → write) and replace-overwrite (a regen's new frame
-      //    lands → overwrites the old genId).
-      //  • VIDEO: a shot with a videoCardId. Resolve its child's DONE generationId; stage a video
-      //    write iff that id exists AND DIFFERS from the shot's current videoGenerationId.
-      // FAILED/queued/generating/missing children resolve to null → inert (no write). A write only
-      // ever REPLACES the genId value; it never deletes the key.
-      const frameWrites: Record<string, string> = {}; // shotId → new firstFrameGenerationId
+      // Collect finished VIDEO writes from the FRESH (post-lock) payload: a shot with a
+      // videoCardId → resolve its child's DONE generationId; stage a write iff that id exists AND
+      // DIFFERS from the shot's current videoGenerationId. FAILED/queued/generating/missing
+      // children resolve to null → inert (no write). A write only ever REPLACES the genId value;
+      // it never deletes the key. ≤8 shots, so the per-shot lookups are bounded; child/job/result
+      // reads are worker-written rows — a job flipping DONE mid-sync is simply picked up by the
+      // next sync, inert here.
+      //
+      // PR #1417 判官 P1-C / P2-2 —— 首帧那一支(`firstFrameCardId` 对账、cascade 级联清视频
+      // 指针、#782 闸③ 接续传帧、`inheritBlockWrites` 判词)整段随判官裁定报废删除:闸①
+      // (首帧铸造)已经报废,没有任何活路径还会**新写**一个 `firstFrameCardId`,这几段能
+      // 碰到的只剩 FSE-208 部署前就已在途的老首帧作业 —— 而这个产品还没有公测用户
+      // (founder-launch-status-no-users,2026-08-01),没有真实在途作业需要兜底,留着只会
+      // 让「首帧还活着」这句假话继续在代码里说下去。随之一并删除的还有它们仅剩的调用方
+      // `directToVideoShotIds`(判官 P3-1,死用途收敛 —— 它剩下的两个用途,驱动接续判据、
+      // 报 `directToVideo` 答案给卡面,都已随这一轮收敛掉)与 `inheritFrameFromClip`
+      // (#782 闸③本体)。后端不可达数据本身(`GenJob.lastFrameAssetId`、
+      // `continuity` schema 字段)不在这个 PR 删除范围,见 PR 描述「残留缺口」登记。
       const videoWrites: Record<string, string> = {}; // shotId → new videoGenerationId
-      // CASCADE set (spec §3c): shots whose staged frame write REPLACES an existing DIFFERENT
-      // firstFrameGenerationId (the shot HAD a genId and the new one differs — NOT a first-ever
-      // write). The source frame changed, so the old video no longer represents the shot → its
-      // videoCardId + videoGenerationId are dropped (key-omission) in the same transaction. A
-      // first-ever frame write (no prior genId) does NOT cascade.
-      const cascadeShots = new Set<string>();
-      // #782 r3 (判官 r2 P1-a/P1-b): 闸③ 的判词。shotId → 上一镜那一张**确定交不出末帧**的
-      // 视频子卡 id。见下面闸③ 的写入点,以及 storyboard-card.ts 的
-      // `shotsStuckWithoutInheritedFrame`(唯一的读取点)。
-      const inheritBlockWrites: Record<string, string> = {};
-      // #782: the DONE video job behind each shot, kept for gate③ below. A shot whose clip
-      // landed on an EARLIER sync stages no video write, but its job (and therefore its free
-      // last frame) is still the thing the next shot inherits from — so the map is filled from
-      // the resolve, not from the write.
-      const videoJobByShot = new Map<string, ChildJob>();
-      // #782 r4 (判官 r3 P1-b): 上一镜那张视频子卡的作业**已经死了**(FAILED/CANCELLED)。
-      // 与 DONE-却交不出末帧同义:免费的帧不会来了 → 下一镜必须拿回它的恢复入口。
-      const videoJobDeadByShot = new Set<string>();
-      // #782 r11 (判官 r10): 每张子卡背后那条作业的状态 + 产出,原样带出事务 —— 卡面的权威
-      // 状态由它算,而不是由卡面从指针形状去猜。只读、不进 payload。
-      const frames = new Map<string, ChildJobSample>();
       const videos = new Map<string, ChildJobSample>();
       for (const shot of p.shots) {
-        if (shot.firstFrameCardId) {
-          const job = await childJobFor(tx, shot.firstFrameCardId, ownerId);
-          // 「在跑」= 作业还没走到终点。r4 把 DONE 也算在跑,是为了兜住「DONE 已写、
-          // GEN_RESULT 还没写」那一瞬;r5 起那件事由 firstGenerationIdOf 的权威回退兜住 ——
-          // 而且兜的是**永远**没写成的情况,不只是一瞬。所以 DONE 如实归终态:它要么在
-          // 这一轮就把图写回去(下面),要么它本来就交不出东西,转下去也不会有。
-          const genId = job?.status === "DONE" ? await firstGenerationIdOf(tx, job, ownerId) : null;
-          frames.set(shot.shotId, {
-            childCardId: shot.firstFrameCardId,
-            status: job?.status ?? null,
-            producedGenerationId: genId,
-          });
-          if (genId && genId !== shot.firstFrameGenerationId) {
-            frameWrites[shot.shotId] = genId;
-            // Cascade only when REPLACING a prior genId — never on the first-ever frame write.
-            if (shot.firstFrameGenerationId) cascadeShots.add(shot.shotId);
-          }
-        }
         if (shot.videoCardId) {
           const job = await childJobFor(tx, shot.videoCardId, ownerId);
-          if (job && JOB_DEAD_STATUSES.has(job.status)) videoJobDeadByShot.add(shot.shotId);
-          if (job?.status === "DONE") videoJobByShot.set(shot.shotId, job);
           const genId = job?.status === "DONE" ? await firstGenerationIdOf(tx, job, ownerId) : null;
           videos.set(shot.shotId, {
             childCardId: shot.videoCardId,
@@ -696,102 +614,16 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
           if (genId && genId !== shot.videoGenerationId) videoWrites[shot.shotId] = genId;
         }
       }
-      frameSamples = frames;
       videoSamples = videos;
 
-      // ── #782 闸③:接续。第 N 镜的片子出完 → 它真实停住的那一帧成为第 N+1 镜的首帧。──
-      //
-      // 只在接续模式下跑,而且只**填空**:下一镜已经有首帧(商家自己出过、或上一轮已接上)
-      // 就一格不动。所以它既不会覆盖商家付过钱看过的东西,也不会在重复 sync 时反复铸行。
-      // 一次 sync 只推进能推进的那些环;链条靠 UI 的轮询一环一环走完,与「视频要几分钟」
-      // 这件事天然对齐。
-      //
-      // 级联无涉:下一镜此前没有 firstFrameGenerationId,按上面既有规则(只有**替换**旧
-      // genId 才级联)这是一次 first-ever 写 —— 不会去动任何已付费的视频键。
-      if (p.continuity === true) {
-        const ordered = [...p.shots].sort((a, b) => a.index - b.index);
-        for (let i = 0; i < ordered.length - 1; i++) {
-          const from = ordered[i]!;
-          const to = ordered[i + 1]!;
-          if (to.firstFrameGenerationId || frameWrites[to.shotId]) continue; // 已有首帧 → 绝不覆盖
-          // FSE-001 同族:这一镜直接出片 —— 它没有首帧这一步,接一张过来只会在库里多出
-          // 一件谁都不会用的东西($0,但仍是噪音),而它的片子照旧从文字起步。
-          if (directIds.has(to.shotId)) continue;
-          // 上一镜的片子必须**真的出完**(videoWrites 是这一轮刚落的,videoGenerationId 是
-          // 之前落的;两者任一成立都算出完)。没出完就等下一轮,不猜。
-          if (!videoWrites[from.shotId] && !from.videoGenerationId) continue;
-          // 下面三条分支答的是同一个问题:**这一镜还有没有免费的帧在路上?**
-          // videoJobByShot / videoJobDeadByShot 的键都是**上一镜此刻的 videoCardId** 那一张
-          // 子卡 —— 上一镜一重出,指针就换成新子卡,旧作业的结论自动失效。
-          const job = videoJobByShot.get(from.shotId);
-          if (job) {
-            // 片子出完了。它交不交得出末帧,这一刻就是最终答案 —— worker 的末帧指针写是
-            // 条件写(where.status = "GENERATING"),迟到的那一笔在 DONE 之后一律匹配零行。
-            // 所以「DONE 且 lastFrameAssetId 为空」是构造性的终局,不是一次抢跑的快照
-            // (判官 r3 P1-a;实现见 apps/worker/src/jobs/gen.ts 的 storeLastFrameBestEffort)。
-            const genId = await inheritFrameFromClip(tx, ownerId, job);
-            // first-ever frame write for that shot ⇒ 走既有写回路径,不进 cascadeShots。
-            if (genId) {
-              frameWrites[to.shotId] = genId;
-              continue;
-            }
-          } else if (!videoJobDeadByShot.has(from.shotId)) {
-            // 还在跑,或者根本看不到作业(比如刚换上一张还没启动的子卡)—— 免费的末帧可能
-            // 还在路上,这时候开放付费首帧就是让商家为一张本该继承的帧多花钱。
-            // 宁可多等,不可多花(判官 r2 P1-b)。
-            continue;
-          }
-          // ── 判词(#782 r3/r4,判官 r2 与 r3 的 P1-b)────────────────────────────
-          // 走到这里只有两种可能,而它们对商家是同一件事 ——「这张视频子卡这一生结束了,
-          // 免费的帧不会来了」:
-          //   ① 片子真的出完了,但交不出可用的末帧(引擎没给 / worker 没存 / 那一行不是图);
-          //   ② 那条作业已经 FAILED / CANCELLED —— 它再也不会产出任何东西。
-          // r3 只认 ①,于是重出失败之后下一镜永远停在「等待中」,界面上连个自己出帧的入口
-          // 都没有(判官 r3 P1-b)。两种情形同一条出路,所以同一句判词。
-          //
-          // 把这个判断**写下来**,而不是让卡面和动作层各自从指针形状去猜 —— 猜出来的两个
-          // 答案正是判官 r2 的两条 P1。
-          //
-          // 记的是**哪一张视频子卡**得出的判词,这让它自清:上一镜一旦重出(videoCardId
-          // 换新),判词不再匹配,这一镜自动回到「还在等」,零额外清理逻辑、零多余写入。
-          const blocker = from.videoCardId;
-          if (blocker && to.inheritBlockedByVideoCardId !== blocker) {
-            inheritBlockWrites[to.shotId] = blocker; // 值没变就不写:no-op sync 依旧零写入
-          }
-        }
-      }
-
       // Nothing staged → pure read: return the fresh payload, no DB write.
-      const hasStaged =
-        Object.keys(frameWrites).length > 0 ||
-        Object.keys(videoWrites).length > 0 ||
-        Object.keys(inheritBlockWrites).length > 0 ||
-        cascadeShots.size > 0;
+      const hasStaged = Object.keys(videoWrites).length > 0;
       if (!hasStaged) return p;
 
       const nextShots = p.shots.map((s) => {
-        const frameGen = frameWrites[s.shotId];
         const videoGen = videoWrites[s.shotId];
-        // 判词只可能落在**没有首帧、也没有本轮首帧写入**的镜头上(见上面的写入点),所以它
-        // 与 cascade(帧被替换才触发)在同一轮里互斥,不需要额外的优先级规则。
-        const blocker = inheritBlockWrites[s.shotId];
-        if (!frameGen && !videoGen && !blocker) return s;
-        // CASCADE PRECEDENCE (spec §3c): when a shot's frame is REPLACED, drop its video keys —
-        // and this WINS over any video write staged for the SAME shot in this pass. A video that
-        // just landed for the OLD source frame is dropped too: it was built off the outdated
-        // frame, so it no longer represents the shot. So: cascade ⇒ omit videoCardId +
-        // videoGenerationId (key-omission), and do NOT apply the staged video write.
-        if (cascadeShots.has(s.shotId)) {
-          const rest = { ...s };
-          delete rest.videoCardId;
-          delete rest.videoGenerationId;
-          return { ...rest, firstFrameGenerationId: frameGen! };
-        }
-        const next = { ...s };
-        if (frameGen) next.firstFrameGenerationId = frameGen;
-        if (videoGen) next.videoGenerationId = videoGen;
-        if (blocker) next.inheritBlockedByVideoCardId = blocker;
-        return next;
+        if (!videoGen) return s;
+        return { ...s, videoGenerationId: videoGen };
       });
       const next = { ...p, shots: nextShots };
       await tx.chatMessage.update({
@@ -815,7 +647,7 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
       // 所以卡面画得出来的那几张,一定是这家店此刻真的还有的那几张。
       for (const id of shotLibraryImageIds(shot)) genIds.push(id);
     }
-    for (const sample of [...frameSamples.values(), ...videoSamples.values()]) {
+    for (const sample of videoSamples.values()) {
       if (sample.producedGenerationId) genIds.push(sample.producedGenerationId);
     }
     const urlByGenId = await resolveMediaUrls(ownerId, genIds);
@@ -829,11 +661,12 @@ export async function syncStoryboardMedia(raw: unknown): Promise<SyncResult | Er
     // 作业采样算出。卡面不再需要(也不许)从指针形状去猜任何一件事。
     const shots: ShotMediaSyncReport[] = payload.shots.map((shot) => ({
       shotId: shot.shotId,
-      frame: mediaReport(shot.firstFrameGenerationId, shot.firstFrameCardId, frameSamples.get(shot.shotId), refOf),
+      frame: mediaReport(shot.firstFrameGenerationId, shot.firstFrameCardId, undefined, refOf),
       video: mediaReport(shot.videoGenerationId, shot.videoCardId, videoSamples.get(shot.shotId), refOf),
-      // FSE-001 同族:这一镜直接出片吗 —— 卡面据此不再为它数一张首帧、也不再让商家等一个
-      // 永远不会出现的交棒。判据在服务端(要读 `Entity.type`),这里只是把答案带出去。
-      directToVideo: directShotIds.has(shot.shotId),
+      // PR #1417 判官 P1-B / P1-C —— `directToVideo` 字段整段删除:FSE-208 之后「这一镜
+      // 直接出片吗」对每一镜都恒为真,是卡面一眼就知道的编译期常量,不必再等服务端这一趟
+      // 才敢确认(旧判据要读 `Entity.type` 才答得出;新世界不必再读)。卡面那一侧的
+      // `isDirectToVideo` 已改成同一个恒真常量,见 `StoryboardCard.tsx`。
       // creation §5 :178 —— 这一镜挂着的 Library 图。地址取不到就只回 id(与 `refOf` 同一条
       // 降级:那一件仍然是商家挂上去的,卡面欠他一格可以取下它的入口,不是一句「没有」)。
       libraryImages: shotLibraryImageIds(shot).map(refOf),

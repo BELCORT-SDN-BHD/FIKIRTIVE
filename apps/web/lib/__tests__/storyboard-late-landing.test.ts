@@ -970,67 +970,15 @@ describe("#782 r13 (判官 r12 P2-F2) 编辑成功之后,旧的 sync 回答不�
   });
 });
 
-// #782 r13(判官 r12 P3-F3)—— 这三句文案原本钉在 storyboard-card.test.ts 的源码字符串 smoke 上
-// (readFileSync + toContain)。同样的三件事,改成读真渲染出来的 DOM:文案搬进一个不渲染的分支
-// 就会红,而重构 JSX 不会假红。
-describe("#782 r13 卡面文案:真渲染", () => {
-  const stuckPayload = {
-    storyboardTitle: "Raya launch",
-    continuity: true,
-    shots: [
-      { shotId: "s0", index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0", firstFrameGenerationId: "gen_0", videoCardId: "vchild_0", videoGenerationId: "vgen_0", durationSeconds: 5 },
-      // 闸③ 已经判过:上一镜那张视频子卡交不出末帧 —— 这一镜卡住了,而且它自己有一张准备卡。
-      { shotId: "s1", index: 1, firstFramePrompt: "ff-1", videoPrompt: "v-1", firstFrameCardId: "child_1", inheritBlockedByVideoCardId: "vchild_0", durationSeconds: 5 },
-    ],
-  };
-
-  it("接续说明说实话:不是绝对承诺,重出更早的镜头不会动已有首帧的下游镜头", async () => {
-    mocks.syncStoryboardMedia.mockResolvedValue({
-      payload: stuckPayload,
-      shots: [
-        { shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: done("vgen_0", "/media/vgen_0.mp4") },
-        { shotId: "s1", frame: absent, video: absent },
-      ],
-    });
-    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: stuckPayload, balanceUsd: 10 }));
-    const copy = text(dom);
-    expect(copy).not.toContain("picks up exactly where the one before it ends"); // 老的那句绝对承诺
-    expect(copy).toContain("As each shot is first made, it picks up from the one before it");
-    expect(copy).toContain("Re-making an earlier shot won’t change a later shot’s first frame once it already has one.");
-  });
-
-  it("卡死的解释不再被「有没有帧在路上」挡住:准备卡在,解释也在", async () => {
-    // FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 首帧那一格的展示/生成中 UI
-    // (「Generating first frame…」spinner 文案、「first frame (below)」锚点)已随闸①
-    // 整段报废一并删除。「卡死的解释不该被生成中状态挡住」这条判官发现,现在只剩「解释」
-    // 这一半可断言 —— 「有没有帧在路上」那一半的展示面已经不存在了。
-    mocks.syncStoryboardMedia.mockResolvedValue({
-      payload: stuckPayload,
-      shots: [
-        { shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: done("vgen_0", "/media/vgen_0.mp4") },
-        // s1 的准备卡正在跑(遗留字段;闸③ 的免费传帧写入路径本身已结构性不可达)。
-        { shotId: "s1", frame: slot({ kind: "generating" }), video: absent },
-      ],
-    });
-    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: stuckPayload, balanceUsd: 10 }));
-    const copy = text(dom);
-    expect(copy).toContain("this shot needs its own first frame");
-  });
-
-  it("重出视频的确认框带着一句下游不变的说明", async () => {
-    const p = { storyboardTitle: "Raya launch", shots: [{ shotId: "s0", index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0", firstFrameGenerationId: "gen_0", videoCardId: "vchild_0", videoGenerationId: "vgen_0", durationSeconds: 5 }] };
-    mocks.syncStoryboardMedia.mockResolvedValue({
-      payload: p,
-      shots: [{ shotId: "s0", frame: done("gen_0", "/media/gen_0.png"), video: done("vgen_0", "/media/vgen_0.mp4") }],
-    });
-    mocks.regenShotVideoCard.mockResolvedValue({
-      child: { shotId: "s0", childCardId: "vchild_new", estimatedCredits: 20, structuredPrompt: "v-0", entityIds: [], spent: false },
-    });
-    const dom = await mount(createElement(StoryboardCard, { cardId: "sb_1", payload: p, balanceUsd: 10 }));
-    await clickByText(dom, "Remake video");
-    expect(text(dom)).toContain("This won’t change the first frame of any shot that already has one.");
-  });
-});
+// PR #1417 判官 P1-C / P3-2 —— "#782 r13 卡面文案:真渲染" 整个 describe(3 test)随它钉的
+// 三句文案一起报废删除:
+//   ①「接续说明说实话」钉的是「Shots continue from each other」开关打开时的承诺文案 ——
+//     整个开关(连同 view.continuity 的渲染)已随 P1-C 判定「会说谎的开关」删除。
+//   ②「卡死的解释…」钉的是 `isStuck`(#782 闸③ 卡死判词)的渲染块 —— `isStuck` 本身
+//     随 `shotsStuckWithoutInheritedFrame` 一起报废(见 storyboard-card.ts)。
+//   ③「重出视频的确认框…下游不变的说明」钉的是判官 P3-2 点名删除的那句「This won't
+//     change the first frame…」附注 —— 首帧概念已死,没有真话可说。
+// 三句文案都已从卡面删除,没有替代覆盖(报废,不是迁移)。
 
 // ---------------------------------------------------------------------------
 // #782 r17(判官 r16 P2-1)—— 同一个 epoch 里的两次 sync,也必须只有最新那一份算数

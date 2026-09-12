@@ -956,7 +956,15 @@ export function buildProposeCard(
    */
   const videoAttachment =
     kind === "video"
-      ? videoAttachmentRole({ attachedImageCount, mentionedCastCount, hasReferenceVideo: isRefVideo })
+      ? videoAttachmentRole({
+          attachedImageCount,
+          mentionedCastCount,
+          hasReferenceVideo: isRefVideo,
+          // PR #1417 判官 P1-A —— storyboard 铸卡(`ctx.alwaysVideoReference`)没有 startFrame
+          // 这一档:挂图一律作参考随行,不论这一镜有没有 @ 演员。别的调用方 ctx 上这一格
+          // 缺省 undefined,既有「没 @ 演员 ⇒ 首帧」判据一格不动。
+          alwaysReference: ctx.alwaysVideoReference,
+        })
       : null;
   const isI2V = videoAttachment === "startFrame";
   /** FSE-001 正路:纯文生视频,演员原图与商家的商品图各作一张 `reference_image`。 */
@@ -1523,6 +1531,18 @@ export function buildProposeCard(
     ...(videoStep ? { videoStep } : {}),
     // isI2V | usesAttachedImage ⇒ !!ctx.sourceGenerationId, so the non-null assertion is sound.
     // video ⇒ i2v 起始帧；image ⇒ 引擎的编辑底图（第一参考）。两条路都真的送图。
+    //
+    // PR #1417 判官 P1-A —— 这句话曾经对 storyboard 铸卡不成立:它的 ctx 只写
+    // `sourceGenerationIds`(复数,见 storyboard-gate1-actions.ts 的 `minimalCtx`),单数
+    // `sourceGenerationId` 永远是 undefined;而零 @ 演员却挂了 Library 图的镜头上,
+    // `videoAttachmentRole` 曾经判 "startFrame"(isI2V=true)——真走到这一行就会把
+    // `undefined!` 冻进卡上的 `sourceGenerationId`。这一行从没被真正跑到,只是因为
+    // `assertShotLibraryImagesAllRide` 在它之前先抛了 `ProposeRefusal`(判官原话:
+    // 「今天靠 refusal 先抛」,不是结构性保证 —— 判据一旦改动,这一行就会裸奔)。
+    // 现在 storyboard 的 ctx 恒带 `alwaysVideoReference: true`,`videoAttachmentRole`
+    // 对它不再返回 "startFrame",isI2V 对 storyboard 恒为 false —— 这句话这才是**结构性**
+    // 成立:storyboard 那一支永远走不到 isI2V=true;其余每一支(`otto-actions.ts` 等)
+    // 挂图时本来就把 `sourceGenerationId` 设成 `sourceGenerationIds[0]`,断言原本就安全。
     ...(isI2V || usesAttachedImage ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
     // isRefVideo ⇒ kind==="video" && !!ctx.referenceVideoGenerationId, so the non-null assertion is sound.
     ...(isRefVideo ? { referenceVideoGenerationId: ctx.referenceVideoGenerationId! } : {}),

@@ -375,6 +375,16 @@ export interface OttoContext {
   threadId: string;
   /** Admin-disabled model ids the caller resolved via resolveDisabledModels() (passed as an array; the tool builds a Set). */
   disabledModels: string[];
+  /**
+   * FSE-208(creation §5,S5 批量裁决 #1358,PR #1417 判官 P1-A)—— storyboard 铸卡专用:
+   * 首帧合成对所有分镜镜头都已退场,挂着的 Library 图一律作视频参考随行,`startFrame`
+   * 那一档(`videoAttachmentRole` 的「没 @ 演员 ⇒ 首帧」分支)对这个调用方不存在。
+   *
+   * 只有 `storyboard-gate1-actions.ts` 的 `minimalCtx` 会把它设成 true;其余每一个调用方
+   * (聊天 propose、画布 "Animate this result" 等)一律留空,继续走既有的「有没有 @ 演员」
+   * 判据 —— 两条路各自的语义不因这个字段互相牵动。
+   */
+  alwaysVideoReference?: boolean;
   /** "Animate this result": a server-validated i2v source frame, if the turn carries one. */
   sourceGenerationId?: string | null;
   /** All server-validated canvas image references attached to this turn. The first one

@@ -26,7 +26,6 @@ import {
   applyAddShot,
   applyDeleteShot,
   applyReorderShots,
-  applySetContinuity,
 } from "../storyboard-edit.js";
 // #782 r15(判官 r14 P1):editShot 会删掉「已经花掉的钱」与这一镜之间的唯一连线,所以它
 // 在删之前必须问一次「那条作业还在途吗」——与人工动作层**同一份**判定、同一句话。
@@ -34,7 +33,7 @@ import { lockCardTx, inFlightPointerBlock } from "../storyboard-child-job.js";
 
 export const editStoryboardInput = z.object({
   cardId: z.string().min(1).describe("The STORYBOARD_CARD id being edited (from the storyboard card in this conversation)."),
-  op: z.enum(["editShot", "addShot", "deleteShot", "reorderShots", "setContinuity", "setShotReferences"]),
+  op: z.enum(["editShot", "addShot", "deleteShot", "reorderShots", "setShotReferences"]),
   /** editShot / deleteShot:0-based shot index(卡片镜头列表里的当前位置). */
   index: z.number().int().min(0).optional(),
   /** editShot(至少给一项)/ addShot(必给):镜头文字与时长. */
@@ -45,8 +44,6 @@ export const editStoryboardInput = z.object({
   title: z.string().trim().max(120).optional(),
   /** reorderShots:当前 0-based index 的一个完整排列,如 [2,0,1]. */
   order: z.array(z.number().int().min(0)).optional(),
-  /** setContinuity(#782):镜头是否一镜接一镜(下一镜从上一镜真实停住的那一帧起步). */
-  continuity: z.boolean().optional(),
   /**
    * creation §5 :178 —— setShotReferences:true = 把**这一轮商家挂上来的那几张图**挂到这一镜
    * 当参考;false = 把这一镜已挂的图全部取下。
@@ -84,7 +81,7 @@ export async function executeEditStoryboard(
   // 就等于给「作业在两步之间落账」留一个窗口。取的是闸① 那五个 RMW 用的同一把卡级 advisory
   // lock,所以人工动作、这里、以及 prepare/regen/sync 在同一张父卡上严格串行。
   //
-  // 其余四个 op(add / delete / reorder / setContinuity)一格不删已付费指针,照旧走下面的
+  // 其余三个 op(add / delete / reorder)一格不删已付费指针,照旧走下面的
   // last-write-wins 写回,一个字没改。
   //
   // creation §5 :178 —— 换掉一镜的挂图**也**是删付费指针的那一类编辑(挂图 = 这一镜真会送进
@@ -163,7 +160,6 @@ export async function executeEditStoryboard(
       next = applyAddShot(cur, {
         shotId: newId(),
         title: input.title,
-        firstFramePrompt: input.firstFramePrompt,
         videoPrompt: input.videoPrompt,
       });
       break;
@@ -181,13 +177,9 @@ export async function executeEditStoryboard(
       if (next === cur) return { error: "That reorder isn't valid." }; // 非合法排列 → 纯函数原样返回
       break;
     }
-    case "setContinuity": {
-      // #782:接续开关走**同一套**纯变换(applySetContinuity),与人工动作层
-      // setStoryboardContinuity 逐字同源 —— 两个执行器不可能对同一个开关有两种语义。
-      if (input.continuity === undefined) return { error: "setContinuity needs continuity true or false." };
-      next = applySetContinuity(cur, input.continuity);
-      break;
-    }
+    // PR #1417 判官 P1-C —— case "setContinuity" 整段报废删除:接续开关承诺的传帧机制
+    // 在 FSE-208 之后数学上不可达,开关本身(连同人工那一面 setStoryboardContinuity)已经
+    // 从两个执行器上一并关停删除,这里不再有这个 op 可选。
   }
 
   // 回写新 payload(只改 payload,绝不动 genJobId)。并发模型同动作层:read-modify-write,
@@ -208,9 +200,7 @@ export const editStoryboardSkill = defineOttoSkill({
   description:
     "Edit an EXISTING storyboard card the user is reviewing: change a shot's prompts or duration (op=editShot), " +
     "add a shot (op=addShot, build its prompts via seedreamPrompt/seedancePrompt first), remove a shot (op=deleteShot), " +
-    "reorder shots (op=reorderShots with the full new order, e.g. [2,0,1]), " +
-    "or turn continuous shots on/off (op=setContinuity with continuity true/false) when the user says the shots " +
-    "should flow as one unbroken take, or should be separate moments instead. " +
+    "or reorder shots (op=reorderShots with the full new order, e.g. [2,0,1]). " +
     "When the user attaches an image from their Library and says it belongs to a shot, put it on that shot with " +
     "op=setShotReferences, that shot's index, and useTurnImages=true — it becomes a reference photo for that " +
     "shot's clip. useTurnImages=false takes every attached image off that shot again. " +

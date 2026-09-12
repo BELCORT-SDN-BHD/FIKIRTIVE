@@ -29,13 +29,13 @@ export interface ShotPromptPatch {
   referenceGenerationIds?: string[];
 }
 
+// PR #1417 判官 P2-1 —— `NewShotInput.firstFramePrompt`(新镜头的首帧文字,可选、永久无人读)
+// 随它的活写路径一起报废删除:首帧合成对所有镜头都已退场,这一格不再有存在的理由(报废,
+// 不是迁移)。
 export interface NewShotInput {
   /** 稳定镜头 id —— ACTION 层铸造(纯层保持确定性,不自己 mint)。 */
   shotId: string;
   title?: string;
-  /** FSE-208(creation §5,S5 批量裁决 #1358)—— 首帧合成已对所有镜头退场,新镜头不再需要
-   *  首帧文字。字段留着可选,只服务尚未清完的老写路径;卡面新增镜头的入口不再发它。 */
-  firstFramePrompt?: string;
   videoPrompt: string;
 }
 
@@ -135,8 +135,6 @@ export function applyAddShot(
     shotId: shot.shotId,
     index: payload.shots.length,
     ...(shot.title ? { title: shot.title } : {}),
-    // FSE-208 —— 没写就不落这一格(与 buildStoryboardPayload 同一条「只在有内容时出现」的纪律)。
-    ...(shot.firstFramePrompt ? { firstFramePrompt: shot.firstFramePrompt } : {}),
     videoPrompt: shot.videoPrompt,
   };
   return { ...payload, shots: restamp([...payload.shots, added]) };
@@ -151,23 +149,9 @@ export function applyDeleteShot(
   return { ...payload, shots: restamp(payload.shots.filter((_, i) => i !== index)) };
 }
 
-/**
- * #782 接续开关(整条分镜一个)。开 = 每个镜头从上一个镜头真实停住的那一帧起步。
- *
- * **只改这一个键,一件已生成的东西都不动**。这一条是刻意的:接续影响的是「下一个镜头的
- * 首帧从哪来」,而关掉它并不会让任何**已经存在**的帧或片子变得不对 —— 那些帧本来就是这条
- * 片子真实走过的样子。所以这里没有陈旧级联;商家想换掉某一帧,走的是那一帧自己的重出路径
- * (闸① 的 per-shot regen),而不是被一个开关连坐清掉付过钱的东西。
- */
-export function applySetContinuity(
-  payload: StoryboardCardPayload,
-  on: boolean,
-): StoryboardCardPayload {
-  if (on) return { ...payload, continuity: true };
-  const rest = { ...payload };
-  delete rest.continuity; // 关 = 不落键(与「从没开过」逐字节同形)
-  return rest;
-}
+// PR #1417 判官 P1-C —— `applySetContinuity`(#782 接续开关的纯变换本体)整段报废删除:
+// 它唯一的两个调用方(人工 `storyboard-actions.ts` 的 `setStoryboardContinuity`、Otto
+// `edit-storyboard.ts` 的 `op=setContinuity`)已随开关本身一并关停删除,这里不再有调用方。
 
 /** 按 order(当前 index 的一个排列)重排 + 重编 index。
  *  order 不是 [0..n-1] 的合法排列(缺项/越界/重复)→ 原样返回。 */

@@ -34,7 +34,7 @@ vi.mock("@fikirtive/core", async (importOriginal) => ({
   newId: () => "new-shot-id",
 }));
 
-import { editShotPrompt, addShot, deleteShot, reorderShots, setStoryboardContinuity } from "../storyboard-actions";
+import { editShotPrompt, addShot, deleteShot, reorderShots } from "../storyboard-actions";
 
 const OWNER = "owner-1";
 function card(payload: StoryboardCardPayload) {
@@ -60,17 +60,22 @@ beforeEach(() => {
 });
 
 describe("editShotPrompt", () => {
-  it("owner-scoped 载入 + 回写清了 firstFrameGenerationId 的 payload", async () => {
+  // PR #1417 判官 P2-1 —— `editInput` 的 `firstFramePrompt` 字段随活写路径整段报废删除
+  // (见 storyboard-actions.ts 该处报废注释),这三条原本借它触发编辑的测试改用 `videoPrompt`
+  // 触发同一条编辑路径 —— 断言的是 owner-scoped 载入 / 鉴权早退 / 卡不存在三件事,与「改的是
+  // 哪一格文字」无关,换成仍然合法的字段后照旧成立;改之前这三条其实已经悄悄测不到自己
+  // 声称的场景了(见下面两条的说明)。
+  it("owner-scoped 载入 + 回写只改 payload(改视频文字,帧引用原样保留)", async () => {
     mockFindFirst.mockResolvedValue(card(payload3()));
-    const res = await editShotPrompt({ cardId: "card-1", index: 0, firstFramePrompt: "NEW" });
+    const res = await editShotPrompt({ cardId: "card-1", index: 0, videoPrompt: "NEW" });
     // 载入必须按 id + ownerId + kind owner-scoped
     expect(mockFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ id: "card-1", ownerId: OWNER, kind: "STORYBOARD_CARD", deletedAt: null }) }),
     );
     expect("payload" in res).toBe(true);
     if ("payload" in res) {
-      expect(res.payload.shots[0].firstFramePrompt).toBe("NEW");
-      expect(res.payload.shots[0].firstFrameGenerationId).toBeUndefined();
+      expect(res.payload.shots[0].videoPrompt).toBe("NEW");
+      expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen0"); // 没碰 firstFramePrompt,帧引用不该被清
     }
     // 回写到同一 cardId,且不碰 genJob
     expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "card-1" } }));
@@ -80,7 +85,11 @@ describe("editShotPrompt", () => {
 
   it("requireOwner 失败 → 直接返回 error,不碰 DB", async () => {
     mockOwner.mockResolvedValue({ error: "unauthorized" });
-    const res = await editShotPrompt({ cardId: "card-1", index: 0, firstFramePrompt: "NEW" });
+    // 改前这句用 firstFramePrompt 触发:该字段已被 editInput 静默剥离(zod 未知键),
+    // parsed.data 里两个可改字段都是 undefined,函数在走到 requireOwner 之前就已经因
+    // 「入参不合法」提前退出 —— 断言恰好也是 error,曾经悄悄测不出鉴权早退这件事本身。
+    // 换 videoPrompt 让它真正跑到 requireOwner 那一步再被拦下。
+    const res = await editShotPrompt({ cardId: "card-1", index: 0, videoPrompt: "NEW" });
     expect(res).toEqual({ error: "unauthorized" });
     expect(mockFindFirst).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
@@ -88,7 +97,9 @@ describe("editShotPrompt", () => {
 
   it("卡片不存在(或非本人)→ error,不回写", async () => {
     mockFindFirst.mockResolvedValue(null);
-    const res = await editShotPrompt({ cardId: "card-1", index: 0, firstFramePrompt: "NEW" });
+    // 同上:换 videoPrompt 让它真正跑到 loadCard 返回「Card not found.」,而不是在
+    // 校验那一步就先因为「两个可改字段都没传」被拒。
+    const res = await editShotPrompt({ cardId: "card-1", index: 0, videoPrompt: "NEW" });
     expect("error" in res).toBe(true);
     expect(mockUpdate).not.toHaveBeenCalled();
   });
@@ -132,7 +143,9 @@ describe("editShotPrompt", () => {
 describe("addShot", () => {
   it("追加并回写(ACTION 层铸的 shotId 落到新镜头)", async () => {
     mockFindFirst.mockResolvedValue(card(payload3()));
-    const res = await addShot({ cardId: "card-1", firstFramePrompt: "ffN", videoPrompt: "vN" });
+    // PR #1417 判官 P2-1 —— addInput 的 firstFramePrompt 已随活写路径整段报废删除,
+    // 这里不再往入参里塞它(塞了也只会被 zod 静默剥离,白塞)。
+    const res = await addShot({ cardId: "card-1", videoPrompt: "vN" });
     expect("payload" in res && res.payload.shots).toHaveLength(4);
     if ("payload" in res) expect(res.payload.shots[3].shotId).toBe("new-shot-id");
   });
@@ -140,7 +153,7 @@ describe("addShot", () => {
     const full = payload3();
     full.shots = Array.from({ length: 8 }, (_, i) => ({ shotId: `s${i}`, index: i, firstFramePrompt: `ff${i}`, videoPrompt: `v${i}` }));
     mockFindFirst.mockResolvedValue(card(full));
-    const res = await addShot({ cardId: "card-1", firstFramePrompt: "x", videoPrompt: "y" });
+    const res = await addShot({ cardId: "card-1", videoPrompt: "y" });
     expect("error" in res).toBe(true);
     expect(mockUpdate).not.toHaveBeenCalled();
   });
@@ -192,38 +205,11 @@ describe("reorderShots", () => {
   });
 });
 
-describe("#782 setStoryboardContinuity —— 人工那一面的接续开关($0)", () => {
-  it("开 → 回写 continuity:true,镜头一格不动", async () => {
-    mockFindFirst.mockResolvedValue(card(payload3()));
-    const res = await setStoryboardContinuity({ cardId: "card-1", continuity: true });
-    if (!("payload" in res)) throw new Error("expected payload");
-    expect(res.payload.continuity).toBe(true);
-    expect(res.payload.shots).toEqual(payload3().shots);
-    expect(mockUpdate).toHaveBeenCalledTimes(1);
-    expect(mockUpdate.mock.calls[0][0].where).toEqual({ id: "card-1" });
-  });
-
-  it("关 → 不落键", async () => {
-    mockFindFirst.mockResolvedValue(card({ ...payload3(), continuity: true }));
-    const res = await setStoryboardContinuity({ cardId: "card-1", continuity: false });
-    if (!("payload" in res)) throw new Error("expected payload");
-    expect("continuity" in res.payload).toBe(false);
-  });
-
-  it("入参不合法 / 卡不在 → 零写入", async () => {
-    expect(await setStoryboardContinuity({ cardId: "card-1" })).toEqual({ error: "That change isn't valid." });
-    mockFindFirst.mockResolvedValue(null);
-    expect(await setStoryboardContinuity({ cardId: "card-1", continuity: true })).toEqual({ error: "Card not found." });
-    expect(mockUpdate).not.toHaveBeenCalled();
-  });
-
-  it("未登录 → 原样回 gate 的错,不读卡不写卡", async () => {
-    mockOwner.mockResolvedValue({ error: "unauthorized" });
-    expect(await setStoryboardContinuity({ cardId: "card-1", continuity: true })).toEqual({ error: "unauthorized" });
-    expect(mockFindFirst).not.toHaveBeenCalled();
-    expect(mockUpdate).not.toHaveBeenCalled();
-  });
-});
+// PR #1417 判官 P1-C —— "#782 setStoryboardContinuity" 整个 describe(4 test)随
+// `setStoryboardContinuity` 本体一起报废删除:接续/continuity 免费传帧的唯一消费方(闸③)
+// 已经是数学上不可达代码,随之整段删除(见 `storyboard-gate1-actions.ts` 该处报废注释),
+// 这个人工面 $0 server action 与它在 UI("Shots continue from each other" 开关)、Otto skill
+// 两侧的调用方一并退场,没有替代覆盖(报废,不是迁移)。
 
 // ---------------------------------------------------------------------------
 // #782 r15(判官 r14 P1)—— 编辑不许把付过钱的在途作业变成孤儿
@@ -238,7 +224,6 @@ describe("#782 setStoryboardContinuity —— 人工那一面的接续开关($0)
 // 这一组把那句注释变成服务端事实:在途就拒绝,零写入,指针原样留着。
 describe("#782 r15 editShotPrompt —— 在途付费作业面前,编辑必须让路", () => {
   const VIDEO_BUSY = "That video is still being made — wait for it to finish, then edit this shot.";
-  const FRAME_BUSY = "That first frame is still being made — wait for it to finish, then edit this shot.";
 
   /** s0 带一张已付费的首帧 + 一个指向在途视频子卡的指针(判官时序的起点)。 */
   function paidShot(): StoryboardCardPayload {
@@ -343,19 +328,12 @@ describe("#782 r15 editShotPrompt —— 在途付费作业面前,编辑必须�
     expect(mockUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("首帧作业在途 + 改 firstFramePrompt(会删帧两键)→ 拒绝(与视频同一条判定,同一个洞)", async () => {
-    routeChatMessage(paidShot());
-    // 父卡上 s0 没有 videoCardId 时,唯一会被删的付费指针就是帧两键。
-    const p = paidShot();
-    delete p.shots[0].videoCardId;
-    routeChatMessage(p);
-    mockGenJobFindFirst.mockResolvedValue({ id: "job-f", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p1", threadId: "t-1" });
-
-    const res = await editShotPrompt({ cardId: "card-1", index: 0, firstFramePrompt: "NEW" });
-
-    expect(res).toEqual({ error: FRAME_BUSY });
-    expect(mockUpdate).not.toHaveBeenCalled();
-  });
+  // PR #1417 判官 P2-1 —— 原「首帧作业在途 + 改 firstFramePrompt → 拒绝」测试删除:
+  // editInput 已经不接受 firstFramePrompt(见上方 editShotPrompt describe 的报废说明),
+  // 这个场景(经 editShotPrompt 改 firstFramePrompt 触发帧忙闸)结构上不再可达 —— 没有一条
+  // 入参能让 firstFramePrompt 真的送到 inFlightPointerBlock / applyEditShotPrompt 面前。
+  // 帧忙闸本身没有被拆:下面「首帧作业在途、但这次只改 videoPrompt → 放行」那条还在,
+  // 证明视频编辑不会被无关的帧在途误拦。
 
   it("首帧作业在途、但这次只改 videoPrompt(帧两键不会被删)→ 放行,不拿别人的在途挡路", async () => {
     const p = paidShot();
@@ -401,165 +379,15 @@ describe("#782 r15 editShotPrompt —— 在途付费作业面前,编辑必须�
   });
 });
 
-// ---------------------------------------------------------------------------
-// #782 r17(判官 r16 P1-1)—— 「传了这个字段」不等于「商家改了这句话」
-// ---------------------------------------------------------------------------
-//
-// 真实 UI 的形状(StoryboardCard.saveEdit):startEdit 把**当前**首帧文字装进 draftFf,保存时
-// 两句 prompt **无条件同发**。所以商家只改视频文字,服务端收到的 firstFramePrompt 也在 ——
-// 而 r15 的闸与陈旧级联都用「字段出现」当「帧文字改了」。后果分两级:
-//   • 帧作业在途 → 闸误拦一次与它无关的编辑(烦,但安全);
-//   • 帧**已付费已消费** → 级联把 firstFrameCardId / firstFrameGenerationId 删掉,那张付过钱
-//     的首帧对这一镜不可达,prepare 随后铸新子卡 = 新的 cowork: 幂等域 = **可以再收一次钱**。
-//
-// 修法:服务端自己比。客户端爱发什么发什么,「改没改」只以父卡当前值为准。
-describe("#782 r17 editShotPrompt —— 帧判定以「真的不同」为准,不以「字段在不在」为准", () => {
-  const VIDEO_BUSY = "That video is still being made — wait for it to finish, then edit this shot.";
-  const FRAME_BUSY = "That first frame is still being made — wait for it to finish, then edit this shot.";
-
-  /** s0:一张**已付费已消费**的首帧 + 一句视频文字。判官时序的起点。 */
-  function paidFrame(): StoryboardCardPayload {
-    return {
-      storyboardTitle: "Ad",
-      shots: [
-        {
-          shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0", durationSeconds: 5,
-          firstFrameCardId: "fc0", firstFrameGenerationId: "gen0",
-        },
-        { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "v1" },
-      ],
-    };
-  }
-
-  function routeChatMessage(p: StoryboardCardPayload) {
-    mockFindFirst.mockImplementation(async (args: { where: Record<string, unknown> }) => {
-      const w = args.where;
-      if (w.kind === "STORYBOARD_CARD") return card(p);
-      if (w.kind === "GEN_CARD") return { genJobId: null };
-      return null;
-    });
-  }
-
-  /** 按 `cowork:<childCardId>` 分派作业行 —— 帧与视频各自的状态必须能分开摆。 */
-  function routeJobs(byChildCardId: Record<string, { status: string; generationIds: string[] } | null>) {
-    mockGenJobFindFirst.mockImplementation(async (args: { where: { idempotencyKey?: string } }) => {
-      const childId = (args.where.idempotencyKey ?? "").replace(/^cowork:/, "");
-      const j = byChildCardId[childId];
-      return j ? { id: `job-${childId}`, lastFrameAssetId: null, projectId: "p1", threadId: "t-1", ...j } : null;
-    });
-  }
-
-  it("真实 UI 形状(两句同发、帧文字原样)→ 已付费已消费的首帧必须留在这一镜上", async () => {
-    // 这是**钱**的那一条:帧的钱已经花了、产出已经落在 payload 上。商家只改了视频文字,
-    // 却把那张图的两个键一起删掉 = 它对这一镜永久不可达,prepare 会当作「这一镜没有首帧」
-    // 重新铸一张可扣费的子卡。
-    routeChatMessage(paidFrame());
-    mockGenJobFindFirst.mockResolvedValue(null);
-
-    const res = await editShotPrompt({
-      cardId: "card-1", index: 0,
-      firstFramePrompt: "ff0",      // 原样回发 —— UI 就是这么发的
-      videoPrompt: "v0 (new)",      // 真正改的只有这一句
-    });
-
-    if (!("payload" in res)) throw new Error(`expected payload, got ${JSON.stringify(res)}`);
-    expect(res.payload.shots[0].firstFrameCardId).toBe("fc0");
-    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen0");
-    // 视频那一格照旧作废(视频文字真的变了)。
-    expect(res.payload.shots[0].videoPrompt).toBe("v0 (new)");
-  });
-
-  it("真实 UI 形状 + 帧作业在途 → 不许误拦(这次编辑根本不碰帧两键)", async () => {
-    routeChatMessage(paidFrame());
-    mockGenJobFindFirst.mockResolvedValue({ id: "jf", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p1", threadId: "t-1" });
-
-    const res = await editShotPrompt({
-      cardId: "card-1", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0 (new)",
-    });
-
-    if (!("payload" in res)) throw new Error(`expected payload, got ${JSON.stringify(res)}`);
-    expect(res.payload.shots[0].firstFrameCardId).toBe("fc0");
-  });
-
-  it("帧文字**真的**改了 + 帧作业在途 → 照旧拒绝(r15 的闸一格没松)", async () => {
-    routeChatMessage(paidFrame());
-    mockGenJobFindFirst.mockResolvedValue({ id: "jf", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p1", threadId: "t-1" });
-
-    const res = await editShotPrompt({
-      cardId: "card-1", index: 0, firstFramePrompt: "ff0 (new)", videoPrompt: "v0",
-    });
-
-    expect(res).toEqual({ error: FRAME_BUSY });
-    expect(mockUpdate).not.toHaveBeenCalled();
-  });
-
-  it("帧文字真的改了 → 帧两键与视频两键照旧一起作废(G 闸② 级联未变)", async () => {
-    const p = paidFrame();
-    p.shots[0].videoCardId = "vc0";
-    p.shots[0].videoGenerationId = "vg0";
-    routeChatMessage(p);
-    // 两条作业都已交付且产出都已落在 payload 上 → 都不在途,闸放行,只看级联。
-    routeJobs({ fc0: { status: "DONE", generationIds: ["gen0"] }, vc0: { status: "DONE", generationIds: ["vg0"] } });
-
-    const res = await editShotPrompt({
-      cardId: "card-1", index: 0, firstFramePrompt: "ff0 (new)", videoPrompt: "v0",
-    });
-
-    if (!("payload" in res)) throw new Error(`expected payload, got ${JSON.stringify(res)}`);
-    expect("firstFrameCardId" in res.payload.shots[0]).toBe(false);
-    expect("firstFrameGenerationId" in res.payload.shots[0]).toBe(false);
-    expect("videoCardId" in res.payload.shots[0]).toBe(false);
-    expect("videoGenerationId" in res.payload.shots[0]).toBe(false);
-  });
-
-  it("两句都原样回发(商家开了编辑又原样保存)→ 什么都不作废,什么都不拦", async () => {
-    const p = paidFrame();
-    p.shots[0].videoCardId = "vc0";
-    p.shots[0].videoGenerationId = "vg0";
-    routeChatMessage(p);
-    // 帧与视频两条作业都在途:真的会删的键一个都没有,所以一格都不该拦。
-    mockGenJobFindFirst.mockResolvedValue({ id: "j", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p1", threadId: "t-1" });
-
-    const res = await editShotPrompt({
-      cardId: "card-1", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0",
-    });
-
-    if (!("payload" in res)) throw new Error(`expected payload, got ${JSON.stringify(res)}`);
-    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen0");
-    expect(res.payload.shots[0].videoCardId).toBe("vc0");
-    expect(res.payload.shots[0].videoGenerationId).toBe("vg0");
-  });
-
-  it("时长真的改了 → 只作废视频那一格;时长原样回发 → 一格不动", async () => {
-    const p = paidFrame();
-    p.shots[0].videoCardId = "vc0";
-    p.shots[0].videoGenerationId = "vg0";
-    routeChatMessage(p);
-    mockGenJobFindFirst.mockResolvedValue(null);
-
-    const changed = await editShotPrompt({ cardId: "card-1", index: 0, durationSeconds: 10 });
-    if (!("payload" in changed)) throw new Error("expected payload");
-    expect("videoCardId" in changed.payload.shots[0]).toBe(false);
-    expect(changed.payload.shots[0].firstFrameGenerationId).toBe("gen0");
-
-    routeChatMessage(p);
-    const same = await editShotPrompt({ cardId: "card-1", index: 0, durationSeconds: 5 });
-    if (!("payload" in same)) throw new Error("expected payload");
-    expect(same.payload.shots[0].videoCardId).toBe("vc0");
-    expect(same.payload.shots[0].videoGenerationId).toBe("vg0");
-  });
-
-  it("视频作业在途 + 视频文字真的改了 → 照旧拒绝(r15 的闸一格没松)", async () => {
-    const p = paidFrame();
-    p.shots[0].videoCardId = "vc0";
-    routeChatMessage(p);
-    mockGenJobFindFirst.mockResolvedValue({ id: "jv", status: "GENERATING", generationIds: [], lastFrameAssetId: null, projectId: "p1", threadId: "t-1" });
-
-    const res = await editShotPrompt({
-      cardId: "card-1", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0 (new)",
-    });
-
-    expect(res).toEqual({ error: VIDEO_BUSY });
-    expect(mockUpdate).not.toHaveBeenCalled();
-  });
-});
+// PR #1417 判官 P2-1 —— "#782 r17 editShotPrompt" 整个 describe(7 test)连同它的头部
+// 说明一起报废删除:它的前提是「真实 UI 无条件同发 firstFramePrompt + videoPrompt,服务端
+// 必须自己比对『真的改了没』」——这个前提已经不成立。editInput 已经不接受 firstFramePrompt
+// 这一格(见上方 editShotPrompt describe 的报废说明),StoryboardCard.tsx 的 saveEdit 也已经
+// 不再发它(见该文件同处注释),所以「字段在不在」与「真的不同」这两档在 editShotPrompt 这
+// 条路上已经没有分歧可言 —— 第一档物理上不可能出现。块内真正还有价值的两条覆盖已经确认
+// 在别处仍然成立,不是净损失:
+//   • 时长「改了 vs 原样回发」的级联判定 —— 在 `applyEditShotPrompt`/`editStaleness` 纯函数
+//     层面被 `storyboard-edit.test.ts` 的 editStaleness 用例直接钉住(含 durationSeconds
+//     原样回发 → { frame:false, video:false } 那一档),不必在 server action 这一层重复。
+//   • 视频作业在途 + 视频文字真的改了 → 拒绝 —— 与上面 r15 describe 的
+//     「视频作业 GENERATING + 改 videoPrompt → 拒绝」同一个场景,r15 那条还在。

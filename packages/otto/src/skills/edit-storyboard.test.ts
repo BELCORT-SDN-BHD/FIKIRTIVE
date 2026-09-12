@@ -168,12 +168,16 @@ describe("addShot", () => {
   it("appends a shot with a server-minted shotId and restamped indexes", async () => {
     mockFindFirst.mockResolvedValue(card(payload3()));
     const res = await executeEditStoryboard(
-      { cardId: "card-1", op: "addShot", title: "Closer", firstFramePrompt: "closing frame", videoPrompt: "closing move" },
+      { cardId: "card-1", op: "addShot", title: "Closer", videoPrompt: "closing move" },
       { context: makeCtx() },
     );
     expect(res).toEqual({ cardId: "card-1", shotCount: 4 });
     const written = mockUpdate.mock.calls[0]![0].data.payload as StoryboardCardPayload;
-    expect(written.shots[3]).toMatchObject({ shotId: "minted-shot-id", index: 3, title: "Closer", firstFramePrompt: "closing frame", videoPrompt: "closing move" });
+    // PR #1417 判官 P2-1 —— firstFramePrompt 活写路径(含 addShot 这一条)已整段报废删除,
+    // applyAddShot 不再往新镜头上写这一格,即便调用方在输入里塞了它也是白塞(见下方
+    // 追加断言)。
+    expect(written.shots[3]).toMatchObject({ shotId: "minted-shot-id", index: 3, title: "Closer", videoPrompt: "closing move" });
+    expect("firstFramePrompt" in written.shots[3]!).toBe(false);
   });
 });
 
@@ -250,14 +254,12 @@ describe("S1 $0 sub-journey: draft → edit script → save (never spends)", () 
         storyboardTitle: "Festive launch ad",
         goal: "drive store visits",
         shots: [
-          { firstFramePrompt: "hook frame", videoPrompt: "hook move" },
-          { firstFramePrompt: "reveal frame", videoPrompt: "reveal move" },
+          { videoPrompt: "hook move" },
+          { videoPrompt: "reveal move" },
         ],
       },
       { context: ctx },
     );
-    // creation §5 :172⑤ —— execute 现在也可能返回一句拒绝(没有演员又没有首帧文字);这一份
-    // 每镜都写了首帧文字,所以走的是落库那一路。
     if (!("cardId" in proposed)) throw new Error(`expected a card, got ${JSON.stringify(proposed)}`);
     const { cardId } = proposed;
     expect(persisted!.payload.shots).toHaveLength(2);
@@ -278,57 +280,9 @@ describe("S1 $0 sub-journey: draft → edit script → save (never spends)", () 
   });
 });
 
-// ---------------------------------------------------------------------------
-// #782 接续开关的 Otto 那一面 —— 与人工动作层共用同一条纯变换
-// ---------------------------------------------------------------------------
-
-describe("#782 op=setContinuity", () => {
-  beforeEach(() => {
-    mockFindFirst.mockResolvedValue(card(payload3()));
-    mockUpdate.mockResolvedValue({});
-  });
-
-  it("开 → 回写 continuity:true,镜头一格不动(不碰任何已生成的帧/片键)", async () => {
-    const res = await executeEditStoryboard(
-      { cardId: "card-1", op: "setContinuity", continuity: true },
-      { context: makeCtx() },
-    );
-    expect(res).toEqual({ cardId: "card-1", shotCount: 3 });
-    const written = mockUpdate.mock.calls[0]![0].data.payload as StoryboardCardPayload;
-    expect(written.continuity).toBe(true);
-    expect(written.shots).toEqual(payload3().shots);
-  });
-
-  it("关 → 不落键", async () => {
-    mockFindFirst.mockResolvedValue(card({ ...payload3(), continuity: true }));
-    await executeEditStoryboard({ cardId: "card-1", op: "setContinuity", continuity: false }, { context: makeCtx() });
-    const written = mockUpdate.mock.calls[0]![0].data.payload as StoryboardCardPayload;
-    expect("continuity" in written).toBe(false);
-  });
-
-  it("没说开还是关 → 拒绝,零写入(绝不替商家猜一个方向)", async () => {
-    const res = await executeEditStoryboard({ cardId: "card-1", op: "setContinuity" }, { context: makeCtx() });
-    expect(res).toEqual({ error: "setContinuity needs continuity true or false." });
-    expect(mockUpdate).not.toHaveBeenCalled();
-  });
-
-  it("跨租户的卡照旧进不来", async () => {
-    mockFindFirst.mockResolvedValue(null);
-    const res = await executeEditStoryboard(
-      { cardId: "card-1", op: "setContinuity", continuity: true },
-      { context: makeCtx({ orgId: "someone-else" }) },
-    );
-    expect(res).toEqual({ error: "Card not found." });
-    expect(mockUpdate).not.toHaveBeenCalled();
-  });
-
-  it("$0:这条路同样不建 GenJob", async () => {
-    await executeEditStoryboard({ cardId: "card-1", op: "setContinuity", continuity: true }, { context: makeCtx() });
-    expect(mockGenJobCreate).not.toHaveBeenCalled();
-    expect(editStoryboardInput.safeParse({ cardId: "c", op: "setContinuity", continuity: true }).success).toBe(true);
-    expect(editStoryboardSkill.cost).toBe("free");
-  });
-});
+// PR #1417 判官 P1-C —— "#782 op=setContinuity" 整个 describe(5 test)随 `op=setContinuity`
+// 本体一起报废删除:这个 op 已经从 `editStoryboardInput` 的枚举里拿掉(见
+// `edit-storyboard.ts`),Otto 不再能选它,没有替代覆盖(报废,不是迁移)。
 
 // ---------------------------------------------------------------------------
 // #782 r15(判官 r14 P1)—— Otto 那一面也必须让路
@@ -455,9 +409,12 @@ describe("#782 r15 editShot —— 在途付费作业面前,Otto 的编辑同样
     expect(reads.length).toBe(2); // 锁前存在性 + 锁内权威
   });
 
-  it("其余四个 op 一格不变:仍是不取锁的 last-write-wins 写回", async () => {
+  // PR #1417 判官 P1-C —— 原例句用 op:"setContinuity" 示范「其余四个 op」,该 op 已随
+  // continuity 机制本体整段报废删除(见上方 "#782 op=setContinuity" 删除处的报废说明);
+  // 这里换成同属未取锁阵营的 reorderShots,断言意图(其余 op 不取卡锁)不变,op 总数改叙述为三个。
+  it("其余三个 op 一格不变:仍是不取锁的 last-write-wins 写回", async () => {
     route(paid());
-    await executeEditStoryboard({ cardId: "card-1", op: "setContinuity", continuity: true }, { context: makeCtx() });
+    await executeEditStoryboard({ cardId: "card-1", op: "reorderShots", order: [1, 0] }, { context: makeCtx() });
     expect(mockExecuteRaw).not.toHaveBeenCalled();
     expect(mockUpdate).toHaveBeenCalledTimes(1);
   });
