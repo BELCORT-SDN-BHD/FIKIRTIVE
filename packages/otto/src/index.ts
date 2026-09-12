@@ -106,7 +106,7 @@ export { MAX_STORYBOARD_SHOTS } from "./skills/propose-storyboard.helpers.js";
 // storyboard-edit — the PURE storyboard edit transforms (no DB/SDK), the single edit-semantics
 // authority shared by the human server actions (apps/web/lib/storyboard-actions.ts via the
 // re-export shim apps/web/lib/storyboard-edit.ts) and the editStoryboard skill (W-B3-C).
-export { applyEditShotPrompt, applyAddShot, applyDeleteShot, applyReorderShots, applySetContinuity } from "./storyboard-edit.js";
+export { applyEditShotPrompt, applyAddShot, applyDeleteShot, applyReorderShots } from "./storyboard-edit.js";
 export { editStaleness } from "./storyboard-edit.js";
 export type { ShotPromptPatch, NewShotInput, EditStaleness } from "./storyboard-edit.js";
 export { editStoryboardSkill } from "./skills/edit-storyboard.js";
@@ -120,9 +120,6 @@ export {
   isExhausted,
   isUnconsumedInFlight,
   inFlightPointerBlock,
-  // creation §5 :178 —— 「这一镜带不上参考图」这道写入闸,两面共用。
-  referenceRideBlock,
-  NO_CAST_FOR_REFERENCES_BLOCK,
   JOB_DEAD_STATUSES,
   JOB_LIVE_STATUSES,
   VIDEO_IN_FLIGHT_EDIT_BLOCK,

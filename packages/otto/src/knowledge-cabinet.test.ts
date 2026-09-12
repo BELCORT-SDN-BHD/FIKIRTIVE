@@ -377,25 +377,26 @@ describe("FSE-006 / FSE-001 · 柜文不得发明执行层没有的限制（stag
     }
   });
 
-  // ── FSE-001 同族(Founder 2026-09-09 裁)—— 分镜手册不得再教「每镜先出首帧」 ─────────
+  // ── FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 分镜首帧合成全退场,
+  // 手册不得再对任何镜头(带不带演员)教「先出首帧,再拍视频」的两步 ────────────────
   //
-  // 判官 2026-09-08 抓到的同族缺陷:止血片撤掉了 Otto 对话里那条建议,分镜手册却仍然教
-  // 「每一镜先用 seedreamPrompt 出 firstFramePrompt,带演员的镜头把演员 id 放进
-  // entityIds,再拍视频」—— 带演员的首帧是图生图产物,按血统信任必被视频端拒收。
-  // 现在服务端**结构上**不为这种镜头铸首帧了(apps/web/lib/storyboard-gate1-actions.ts),
-  // 手册也必须说同一句话,否则说明书与执行层又一次分家。
-  it("FSE-001 同族 / CREATE-A9:分镜手册说清「带演员的镜头一步做完、不出首帧」", () => {
+  // 上面两条 FSE-001 同族测试(带演员一步 / 不带演员两步)随闸①整段报废一并退场:
+  // 现在**没有任何一档镜头**分两步,「带不带演员」这条判据本身也不复存在
+  // (shotGoesDirectToVideo 对任何镜头恒真——packages/core/src/storyboard-shot.ts)。
+  // 手册若还留着 firstFramePrompt/两步字样,就是说明书与执行层又一次分家。
+  it("FSE-208:分镜手册说清「所有镜头一步做完,没有首帧这一步」,不分带不带演员", () => {
     if (!videoElementReferencesHonoured()) return;
     const storyboards = cabinetText().find((f) => f.path.endsWith("playbooks/storyboards.md"));
     expect(storyboards, "分镜手册不在柜里").toBeTruthy();
-    expect(storyboards!.text).toMatch(/ONE paid step, not two/i);
-    expect(storyboards!.text).toMatch(/it gets no first frame at all/i);
+    expect(storyboards!.text).toMatch(/ONE paid step, straight into a clip/i);
+    expect(storyboards!.text).toMatch(/whether or not it @mentions a cast member/i);
   });
 
-  it("FSE-001 同族 / CREATE-A2:不带演员的镜头,手册仍然教两步(能力一格没少)", () => {
+  it("FSE-208:分镜手册里不再出现 firstFramePrompt 或「first frame」这一步", () => {
     const storyboards = cabinetText().find((f) => f.path.endsWith("playbooks/storyboards.md"))!;
-    expect(storyboards.text).toMatch(/Shots with no cast member are unchanged/i);
-    expect(storyboards.text).toContain("seedreamPrompt");
+    expect(storyboards.text).not.toContain("firstFramePrompt");
+    expect(storyboards.text).not.toMatch(/\bfirst frame\b/i);
+    expect(storyboards.text).not.toContain("seedreamPrompt");
   });
 
   it("FSE-001 / CREATE-A2:普通的「把这张图动起来」那条路一格没动", () => {

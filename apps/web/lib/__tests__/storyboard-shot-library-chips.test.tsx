@@ -28,7 +28,6 @@ const mocks = vi.hoisted(() => ({
   addShot: vi.fn(),
   deleteShot: vi.fn(),
   reorderShots: vi.fn(),
-  setStoryboardContinuity: vi.fn(),
   setShotReferences: vi.fn(),
   coworkGenerate: vi.fn(),
   searchReferencesAction: vi.fn(),
@@ -47,7 +46,6 @@ vi.mock("@/lib/storyboard-actions", () => ({
   addShot: mocks.addShot,
   deleteShot: mocks.deleteShot,
   reorderShots: mocks.reorderShots,
-  setStoryboardContinuity: mocks.setStoryboardContinuity,
   setShotReferences: mocks.setShotReferences,
 }));
 vi.mock("@/lib/cowork-actions", () => ({ coworkGenerate: mocks.coworkGenerate }));

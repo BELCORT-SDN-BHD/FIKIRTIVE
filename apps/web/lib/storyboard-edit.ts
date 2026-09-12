@@ -10,6 +10,5 @@ export {
   applyAddShot,
   applyDeleteShot,
   applyReorderShots,
-  applySetContinuity,
 } from "@fikirtive/otto";
 export type { ShotPromptPatch, NewShotInput, EditStaleness } from "@fikirtive/otto";

@@ -21,7 +21,8 @@ describe("Storyboard design system", () => {
   });
 
   it("composes shot prompts and duration from accessible Field primitives", () => {
-    expect(storyboard).toContain('<FieldLabel htmlFor={`frame-prompt-${shot.shotId}`}>');
+    // FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 首帧那一格(`frame-prompt-*`)
+    // 的编辑框随闸①整段报废一并删除,不再存在于源码里。
     expect(storyboard).toContain('<FieldLabel htmlFor={`video-prompt-${shot.shotId}`}>');
     expect(storyboard).toContain('<FieldLabel htmlFor={`duration-${shot.shotId}`}>');
     expect(storyboard).toContain("<FieldGroup");
@@ -32,7 +33,7 @@ describe("Storyboard design system", () => {
   it("uses Spinner and explicit status copy instead of hand-authored spin animations", () => {
     expect(storyboard).toContain("<Spinner");
     expect(storyboard).toContain("<SpendProgress");
-    expect(storyboard).toContain("Preparing first frames…");
+    // FSE-208 —— 「Preparing first frames…」随闸①整段报废一并删除,不再存在于源码里。
     expect(storyboard).toContain("Preparing videos…");
     expect(storyboard).not.toContain("Loader2");
     expect(storyboard).not.toContain("@keyframes spin");

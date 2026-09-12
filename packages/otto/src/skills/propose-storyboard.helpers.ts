@@ -1,27 +1,15 @@
 import { z } from "zod";
-import { newId, MAX_GEN_ENTITIES, shotGoesDirectToVideo } from "@fikirtive/core";
+import { newId, MAX_GEN_ENTITIES } from "@fikirtive/core";
 
 /** 一条分镜最多几个镜头（对齐遗留 CoworkPlan 每场 8 shot 的上限，防跑飞）。 */
 export const MAX_STORYBOARD_SHOTS = 8;
 
-/** 一个镜头：首帧 prompt（Seedream）+ 视频 prompt（Seedance），都由 D/E 的 skill 预先拼好（英文）。
+/** 一个镜头:视频 prompt（Seedance），由 E 的 skill（seedancePrompt）预先拼好（英文）。
  *  entityIds = 该镜头的 @引用实体 id（可选）——纯数据管道,F4 铸子卡时才透传到模型,此前无人消费。 */
 export const storyboardShot = z.object({
   title: z.string().trim().max(120).optional(),
-  /**
-   * creation §5 :172⑤ —— **按镜头类型条件可选**。
-   *
-   * 免写这一段的只有**@ 到演员(CHARACTER)的镜头**:它走「演员参考照 + 商品照直接出片」
-   * 那一条,首帧那一步整个不存在,所以从前那段必填文字既不出现在任何请求里也没有人读 ——
-   * 一段谁都不用的必填文字只会让模型多编一次。
-   *
-   * 其余全部镜头**逐字不变**(不带 @元素的,以及**只 @ 了商品**的):两步(首帧 → 视频)
-   * 还是那两步,所以这一段仍然必填。判据必须与「直接出片」那一条同一句话(`shotsDirectToVideo`
-   * 判的是有没有演员)—— 分了家,就会有一种既不直接出片、又没有首帧文字的镜头合法落库,
-   * 而它在闸① 会把**整张卡**的首帧一起拒掉。演员这件事要读 `Entity.type`,schema 看不见,
-   * 所以这道闸住在 `executeProposeStoryboard`($0、落库之前),判词由下面那个纯函数给。
-   */
-  firstFramePrompt: z.string().trim().min(1).max(2000).optional(),
+  // PR #1417 判官 P2-1 —— firstFramePrompt 活写路径整段报废删除:首帧合成对所有镜头都已
+  // 退场,这一格没有存在的理由(报废,不是迁移)。
   videoPrompt: z.string().trim().min(1).max(2000),
   // 形状对齐花钱侧 coworkProposalSchema 的 entityIds(gen.ts)——F4 铸子卡时零转换透传。
   entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).optional(),
@@ -42,29 +30,9 @@ export const storyboardCardInput = z.object({
 });
 export type StoryboardCardInput = z.infer<typeof storyboardCardInput>;
 
-/**
- * creation §5 :172⑤ —— 这一份输入里,哪几镜**必须**带首帧文字却没带(0 基序号)。
- *
- * 判据只有一句,与卡面/铸卡侧的 `shotsDirectToVideo`(apps/web/lib/storyboard-card.ts)
- * **同一个函数**(`shotGoesDirectToVideo`,住在 `@fikirtive/core/storyboard-shot`;判官第 2
- * 轮 P2-⑤ 之前两处各写一遍):@ 到至少一个演员(CHARACTER)⇒ 直接出片 ⇒ 首帧那一步不存在
- * ⇒ 不必写。
- * 其余全部镜头(不带 @元素的、以及只 @ 了商品的特写镜)都是两步,第一步要有稿子。
- *
- * 为什么不能像先前那样按「有没有 @元素」判:那放行的类别严格大于登记的类别 —— 只 @ 了
- * 商品的镜头会被判**不**直接出片,却又没有首帧文字,于是闸① 走到 `firstFramePromptOf`
- * 抛拒绝,**整张卡**(含其余全部镜头)的首帧一并铸不出来。
- *
- * 纯函数、无 DB:演员那一份集合由调用方按 ownerId 读出来(跨租户 id 根本进不了集合,
- * 因此在这里数出 0 —— 那一镜照旧要首帧文字)。
- */
-export function shotsMissingFirstFramePrompt<
-  T extends { firstFramePrompt?: string; entityIds?: string[] },
->(shots: readonly T[], castEntityIds: ReadonlySet<string>): number[] {
-  return shots.flatMap((shot, i) =>
-    !shot.firstFramePrompt?.trim() && !shotGoesDirectToVideo(shot, castEntityIds) ? [i] : [],
-  );
-}
+// FSE-208(creation §5,S5 批量裁决 2026-09-12 #1358)—— 「这一份输入里,哪几镜必须带首帧
+// 文字却没带」判据闸(`shotsMissingFirstFramePrompt`)随闸①整段报废一并删除:首帧那一步
+// 对所有镜头都已退场,没有「必须带首帧文字」这一档,没有替代覆盖(报废,不是迁移)。
 
 /** 持久化进 STORYBOARD_CARD 的 payload —— 有序（每镜头带 index），首帧图 id 由 F4 写回。
  *  shotId = 服务端铸造的稳定镜头 id（index 每次编辑都重编，付费重出/异步写回按 shotId 定位）。
@@ -80,7 +48,9 @@ export type StoryboardCardPayload = {
     shotId: string;
     index: number;
     title?: string;
-    /** creation §5 :172⑤ —— @ 到演员的镜头可以没有这一格(它不出首帧);其余镜头一定有。 */
+    /** PR #1417 判官 P2-1 —— 活写路径(storyboardShot 的输入 schema、buildStoryboardPayload
+     *  的落 payload)已经删除,模型不再写这一格。字段本身仍留在类型里,只服务读老卡的
+     *  存量数据(部署前已生成的分镜可能带着它)。 */
     firstFramePrompt?: string;
     videoPrompt: string;
     entityIds?: string[];
@@ -141,8 +111,6 @@ export function buildStoryboardPayload(
       shotId: mintId(),
       index,
       ...(s.title ? { title: s.title } : {}),
-      // creation §5 :172⑤ —— 没写就不落这一格(与 continuity 同一条「只在有内容时出现」的纪律)。
-      ...(s.firstFramePrompt ? { firstFramePrompt: s.firstFramePrompt } : {}),
       videoPrompt: s.videoPrompt,
       ...(s.entityIds ? { entityIds: s.entityIds } : {}),
       ...(s.durationSeconds !== undefined ? { durationSeconds: s.durationSeconds } : {}),
