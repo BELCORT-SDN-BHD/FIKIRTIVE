@@ -1,5 +1,5 @@
 /**
- * Journey 15 — a merchant types `@` in Otto and finds the exact thing they mean (FRONT-A10).
+ * Journey 25 — a merchant types `@` in Otto and finds the exact thing they mean (FRONT-A10).
  *
  * WHAT THIS CLOSES. Until this slice the `@` menu was a name-only list filtered in the browser out
  * of whatever entity array the page happened to have already loaded, and there were two of them —

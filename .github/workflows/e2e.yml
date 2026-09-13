@@ -137,6 +137,10 @@ jobs:
       - if: steps.scope.outputs.code == 'true'
         run: pnpm exec playwright install --with-deps chromium
 
+      # 编号撞车检测(#1354):同一个编号被两个文件占用就在这里非零退出,不必等旅程跑完才发现。
+      - if: steps.scope.outputs.code == 'true'
+        run: pnpm e2e:count
+
       - if: steps.scope.outputs.code == 'true'
         run: pnpm e2e
 
