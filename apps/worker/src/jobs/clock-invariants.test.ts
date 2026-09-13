@@ -272,6 +272,15 @@ describe("#1388 判官 BLOCK 安全定向① —— ③等待型并发开高的�
   // 与上面「WORKER_ROLE=wait 默认并发」那组用的是同一条公式(worstQueueWaitMs 的推导),只是把
   // N 当自变量重算,而不是只验证今天的 4。REFGEN(2)与 UNDERSTAND(2)保持今天的默认值不变——
   // 抬这两个不在本票范围,也不是「等待型并发开高」字面指的那件事。
+  //
+  // 判官复核回炉 P3-d —— 下面「N≤4」这条结论只是**全图片最坏扇出**下的上限,不要读成不分
+  // 负载构成的绝对天花板:公式按 `N × MAX_GEN_COUNT` 展开,是因为图片任务一个 GenJob 会在
+  // 短时间里连续发起多次请求(MAX_GEN_COUNT 张一组),每张都要单独抢一次闸;纯视频负载不是
+  // 这样——一个视频 GenJob 全程只占 1 个闸位(时长更长,但只抢一次)。若 gen 的 N 个槽全是
+  // 纯视频,闸前需求按「1 请求/槽」算是 `demand = N + 2×MAX_REFGEN_COUNT + 2`:N=5 时
+  // demand=19,`rounds = ceil(19/6)-1 = 3`,`wait = 3×5m = 15m`,`total = 15m+10m = 25m < 35m`
+  // ——N=5 在纯视频负载下反而装得下。「N≤4」是这一组测试专门校验的全图片上界,不是不论
+  // 负载构成都成立的结论;换算清楚见上面 §5 的登记与 PR 描述。
   const genExpireMsHere = GEN_QUEUE_POLICY.expireInSeconds * 1000;
   const worstQueueWaitAtN = (n: number, gate: number): number => {
     const demand = n * MAX_GEN_COUNT + 2 * MAX_REFGEN_COUNT + 2;

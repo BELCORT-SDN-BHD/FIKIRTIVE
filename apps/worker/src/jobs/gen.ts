@@ -1420,10 +1420,16 @@ export async function shouldDeferGenClaimForFairness(
   if (myInFlight < cap) return false; // 这个商家自己还没占满 N-1——常态,先到先得
 
   // 判官安全定向 5b —— 存在性判据用 findFirst,找到一行就够,不必数出总数。
-  const otherWaiting = await prisma.genJob.findFirst({
-    where: { ownerId: { not: job.ownerId }, status: "QUEUED", id: { not: job.id } },
-    select: { id: true },
-  });
+  // 判官复核回炉 P3-b —— 这一查是**有意的**跨租户读(`ownerId: { not: job.ownerId } }`),不是
+  // 哪个商家自己的判据,必须用 `runAsSystem` 显式授权(与上面 handleGen 顶部读这一行 job 时用
+  // 的同一个帧名),而不是让宽松档把 `{not:...}` 当成一次自我伪造的租户过滤器放行——严格档铺开
+  // 那天这条查询在钱路旁边裸跑会直接抛"no ownerId filter"。
+  const otherWaiting = await runAsSystem("worker-job-dispatch", async () =>
+    prisma.genJob.findFirst({
+      where: { ownerId: { not: job.ownerId }, status: "QUEUED", id: { not: job.id } },
+      select: { id: true },
+    }),
+  );
   return otherWaiting !== null; // 没人排队,让出来的槽没有意义,继续认领
 }
 

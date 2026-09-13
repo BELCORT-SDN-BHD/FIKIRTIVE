@@ -404,12 +404,39 @@ describe("常态不受影响:闸门未饱和,或未设 WORKER_ROLE(legacy all,N=
   });
 });
 
+describe("判官复核回炉 P3-a —— 变异测试:final 判定必须读 effectiveRetryCount,不是裸 retryCount", () => {
+  it("裸 retryCount=0(< GEN_RETRY_LIMIT)但 carriedRetryCount=2(= GEN_RETRY_LIMIT,来自此前一次公平让位携带)—— 供应商调用抛出可恢复错误时,仍判终态失败并退款,不是照常重投", async () => {
+    seedJob({ id: "g-mutation", ownerId: "orgM", status: "QUEUED" });
+    // 未标 charged/permanent 的普通 Error——发生在 provider.generate 抛出那一刻,早于
+    // `spent = true` 那一行,所以 spent/charged/permanent 三者都是 false。若 final 只看
+    // 这三者加裸 retryCount(0),0 < GEN_RETRY_LIMIT(2) ⇒ 判「可恢复,重投」,这一单会被写回
+    // QUEUED,不是 FAILED——这正是判官指出的盲区:14 例原有测试没有任何一条会在这个变异下
+    // 转红。
+    m.generateImages.mockRejectedValueOnce(new Error("transient upstream blip — not charged, not permanent"));
+
+    // 这条消息自己的 pg-boss retryCount 是 0;但它携带着此前一次公平让位积累下来的
+    // carriedRetryCount = GEN_RETRY_LIMIT(2)——重试预算已经用满。
+    await expect(handleGen({ genJobId: "g-mutation", carriedRetryCount: 2 }, 0)).rejects.toThrow();
+
+    const row = m.rows.get("g-mutation")!;
+    // effectiveRetryCount = max(0, 2) = 2 >= GEN_RETRY_LIMIT(2) ⇒ final = true ⇒ 终态 FAILED
+    // + 退款,不是重投回 QUEUED。把 `final` 改回裸 `retryCount`(判官定向的变异)会让下面两条
+    // 断言转红:status 会停在 "QUEUED"(重投路径写的值),refundReservation 不会被调用
+    // ——手工验证过一次(改回裸 retryCount 确认此处红,再还原确认绿)。
+    expect(row.status).toBe("FAILED");
+    expect(m.refundReservation).toHaveBeenCalledTimes(1);
+  });
+});
+
 /**
  * ── 红/绿证据(施工纪律要求先红后绿)───────────────────────────────────────────────
- * 本文件全部测试在修复落地**前**跑过一次(vitest 运行期报错,不是编译期):
- * 「shouldDeferGenClaimForFairness — 判据本身」整组因为 `shouldDeferGenClaimForFairness` /
- * `GEN_FAIRNESS_DEFER_MAX_AGE_MS` 不存在,导入阶段直接抛出("SyntaxError: The requested module
- * './gen.js' does not provide an export named ...")、这一文件的全部用例随之失败;「公平兜底」
- * 组第一条因为 `handleGen` 无条件认领而失败(`outcome` 是 `undefined`,不是让位信号;
- * `generateImages` 被调用了 1 次,不是 0 次)。修复落地后全绿——见 PR 描述里的命令输出。
+ * 判官复核回炉 P3-c 更正:下面这段此前误写成「导入阶段直接抛出、整文件失败」,是编译期/
+ * 导入期报错的措辞——判官实测,实际现象不是这样。如实记录:模块**加载成功**(vitest 的
+ * 静态导入本身没有报错,`shouldDeferGenClaimForFairness` 等名字在类型层是 `undefined`,
+ * 不是缺失导致模块解析失败);缺失的导出表现为**运行期** `TypeError`——每一处真正调用
+ * `shouldDeferGenClaimForFairness(...)` 的用例抛 `shouldDeferGenClaimForFairness is not a
+ * function`,调用点之前的断言(如仅检查其它 mock 未被调用)则可能不触发这个错误而单独按
+ * 自身逻辑判定通过或失败。修复前实测计数:**11 failed / 3 passed**(3 通过的是那些恰好不
+ * 依赖这两个缺失导出、或断言方向与「缺失」现象巧合一致的用例)。修复落地后全绿——见 PR
+ * 描述里的命令输出。
  */
