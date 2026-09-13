@@ -238,7 +238,28 @@ async function main(): Promise<void> {
   await consume<IngestJobData>(QUEUES.ingest, (data) => handleIngest(data));
   await consume<RenderJobData>(QUEUES.render, handleRender);
   await consume<RefGenJobData>(QUEUES.refgen, handleRefGen);
-  await consume<GenJobData>(QUEUES.gen, handleGen);
+  // #1388(零排队③)—— handleGen 可能把这一单的认领让给别家(公平兜底,见 shouldDeferGenClaimForFairness):
+  // 非空返回值时,GenJob 行本身原样留在 QUEUED,这里按它给的延迟重新入队一条新消息,让这一个
+  // 轮询器立刻空出来去抢别家已经排队的那一单。与 UNDERSTAND_QUEUE 那条「handler 决定接着发什么」
+  // 的既有形状同构(见下方 consume<UnderstandJobData>)。
+  //
+  // 判官安全定向 4b —— 这里不带 `singletonKey`:GEN_QUEUE_POLICY 是 pg-boss 的 `standard`
+  // 队列策略,`singletonKey` 的去重唯一索引(job_i1/i2/i3/i6/i8,`pg-boss/dist/plans.js`)只挂在
+  // `short`/`singleton`/`stately`/`exclusive`/`key_strict_fifo` 五种策略上——standard 队列上
+  // 带它是纯装饰,不产生任何去重效果。真正的幂等来自 `handleGen` 自己的 QUEUED→GENERATING
+  // 条件认领(CAS):即便这条重投消息意外与另一条并存,至多一条能赢下认领,其余照既有的
+  // 「丢失认领」分支处理,不依赖 pg-boss 层的去重。
+  //
+  // carriedRetryCount 随行:见 GenDispatchOutcome 与 genJobData 的注释(判官安全定向 4d)。
+  await consume<GenJobData>(QUEUES.gen, async (data, retryCount) => {
+    const outcome = await handleGen(data, retryCount);
+    if (!outcome) return;
+    await boss.send(
+      QUEUES.gen,
+      { genJobId: data.genJobId, carriedRetryCount: outcome.carriedRetryCount } satisfies GenJobData,
+      { startAfter: outcome.requeueAfterSeconds },
+    );
+  });
   // $0 caption job ($0 — whisper.cpp only, NEVER the paid provider): SEPARATE queue from render
   // so a slow transcribe never blocks a render.
   await consume<CaptionJobData>(QUEUES.caption, handleCaption);
