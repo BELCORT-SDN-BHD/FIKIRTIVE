@@ -1,5 +1,6 @@
 import { prisma } from "@fikirtive/db";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { PANEL_THREAD_SURFACE } from "./otto-thread-surface";
 
 async function ownedProject(projectId: string, ownerId: string) {
@@ -16,29 +17,32 @@ export async function listProjectThreadActivity(
 ): Promise<{ threadId: string; pending: boolean }[] | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  if (!(await ownedProject(projectId, gate.ownerId))) return { error: "Project not found." };
   const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ threadId: string; pending: boolean }[] | { error: string }> => {
+    if (!(await ownedProject(projectId, ownerId))) return { error: "Project not found." };
 
-  const [threads, jobs, nodes] = await Promise.all([
-    prisma.chatThread.findMany({ where: { ownerId, projectId, deletedAt: null }, select: { id: true } }),
-    prisma.genJob.findMany({
-      where: { ownerId, projectId, status: { in: ["QUEUED", "GENERATING"] }, threadId: { not: null } },
-      select: { id: true, threadId: true },
-    }),
-    prisma.canvasNode.findMany({
-      where: { ownerId, projectId, status: "pending", threadId: { not: null } },
-      select: { threadId: true, genJobId: true },
-    }),
-  ]);
+    const [threads, jobs, nodes] = await Promise.all([
+      prisma.chatThread.findMany({ where: { ownerId, projectId, deletedAt: null }, select: { id: true } }),
+      prisma.genJob.findMany({
+        where: { ownerId, projectId, status: { in: ["QUEUED", "GENERATING"] }, threadId: { not: null } },
+        select: { id: true, threadId: true },
+      }),
+      prisma.canvasNode.findMany({
+        where: { ownerId, projectId, status: "pending", threadId: { not: null } },
+        select: { threadId: true, genJobId: true },
+      }),
+    ]);
 
-  const pending = new Set<string>();
-  const inFlightJobIds = new Set(jobs.map((j) => j.id));
-  for (const j of jobs) if (j.threadId) pending.add(j.threadId);
-  for (const n of nodes) {
-    if (n.threadId && n.genJobId && inFlightJobIds.has(n.genJobId)) pending.add(n.threadId);
-  }
+    const pending = new Set<string>();
+    const inFlightJobIds = new Set(jobs.map((j) => j.id));
+    for (const j of jobs) if (j.threadId) pending.add(j.threadId);
+    for (const n of nodes) {
+      if (n.threadId && n.genJobId && inFlightJobIds.has(n.genJobId)) pending.add(n.threadId);
+    }
 
-  return threads.map((t) => ({ threadId: t.id, pending: pending.has(t.id) }));
+    return threads.map((t) => ({ threadId: t.id, pending: pending.has(t.id) }));
+  });
 }
 
 /**
@@ -75,17 +79,19 @@ export async function hasPendingPanelThread(): Promise<{ pending: boolean } | { 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ pending: boolean } | { error: string }> => {
+    const jobs = await prisma.genJob.findMany({
+      where: { ownerId, status: { in: ["QUEUED", "GENERATING"] }, threadId: { not: null } },
+      select: { threadId: true },
+    });
+    const threadIds = [...new Set(jobs.map((j) => j.threadId).filter((id): id is string => id !== null))];
+    if (threadIds.length === 0) return { pending: false };
 
-  const jobs = await prisma.genJob.findMany({
-    where: { ownerId, status: { in: ["QUEUED", "GENERATING"] }, threadId: { not: null } },
-    select: { threadId: true },
+    const panelThread = await prisma.chatThread.findFirst({
+      where: { ownerId, id: { in: threadIds }, deletedAt: null, surface: PANEL_THREAD_SURFACE },
+      select: { id: true },
+    });
+    return { pending: panelThread !== null };
   });
-  const threadIds = [...new Set(jobs.map((j) => j.threadId).filter((id): id is string => id !== null))];
-  if (threadIds.length === 0) return { pending: false };
-
-  const panelThread = await prisma.chatThread.findFirst({
-    where: { ownerId, id: { in: threadIds }, deletedAt: null, surface: PANEL_THREAD_SURFACE },
-    select: { id: true },
-  });
-  return { pending: panelThread !== null };
 }

@@ -2,7 +2,8 @@
 
 import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { encryptToken, decryptToken } from "./token-encryption";
 import { exchangeCodeForToken, metaGraphGet } from "./meta-graph";
 import { classifyMetaGraphError } from "./meta-errors";
@@ -21,35 +22,40 @@ export async function completeMetaConnect(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to connect Meta." };
-  const ex = await exchangeCodeForToken(code, redirectUri);
-  if ("error" in ex) return ex;
-  // #573 fail-closed: metaUserId is the ONLY key Meta's data-deletion callback has to find
-  // this row (app/api/meta/data-deletion/route.ts matches `where: { metaUserId }`). Storing a
-  // connection without it creates a row that callback can never delete — we would hand Meta a
-  // confirmation code having deleted nothing. So we refuse to store it at all: no null-id row
-  // can be created, and the callback's exact match is enough by construction.
-  // Refusing here also costs the merchant nothing real: metaUserId and grantedScopes come from
-  // the SAME debug_token response (lib/meta-graph.ts), so a missing id means that whole step
-  // failed — the connection would have landed with scope:"" and canWrite/canPublish false, i.e.
-  // dead on arrival. One failed connect they can retry beats a silently useless one.
-  const metaUserId = ex.metaUserId;
-  if (!metaUserId) return { error: "incomplete" };
-  const enc = encryptToken(ex.token);
-  const canWrite = ex.grantedScopes.includes("ads_management");
-  const canManagePages = ex.grantedScopes.includes("pages_show_list");
-  // L1 organic publish: true ONLY when Meta actually granted BOTH post scopes (IG + FB). Until App
-  // Review passes, Meta withholds them → canPublish stays false → the publish worker fail-closes and
-  // refuses to publish (spec §一.4). Derived from grantedScopes (debug_token truth), never requested.
-  const canPublish =
-    ex.grantedScopes.includes("instagram_content_publish") && ex.grantedScopes.includes("pages_manage_posts");
-  const scope = ex.grantedScopes.length > 0 ? ex.grantedScopes.join(",") : "";
-  const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, canManagePages, canPublish, status: "active" as const, metaUserId };
-  await prisma.metaConnection.upsert({
-    where: { ownerId: gate.ownerId },
-    update: data,
-    create: { id: newId(), ownerId: gate.ownerId, adsAutonomy: "ASK" as const, defaultPageId: null, ...data },
+  // 租户围栏收尾片（规格 docs/specs/tenant-isolation.md，#464，TENANT-A10）：impersonation 拒绝
+  // 保持在建帧之前（样板 gen-actions.ts:681-697），帧只包后面真正碰租户数据的部分。
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true } | { error: string }> => {
+    const ex = await exchangeCodeForToken(code, redirectUri);
+    if ("error" in ex) return ex;
+    // #573 fail-closed: metaUserId is the ONLY key Meta's data-deletion callback has to find
+    // this row (app/api/meta/data-deletion/route.ts matches `where: { metaUserId }`). Storing a
+    // connection without it creates a row that callback can never delete — we would hand Meta a
+    // confirmation code having deleted nothing. So we refuse to store it at all: no null-id row
+    // can be created, and the callback's exact match is enough by construction.
+    // Refusing here also costs the merchant nothing real: metaUserId and grantedScopes come from
+    // the SAME debug_token response (lib/meta-graph.ts), so a missing id means that whole step
+    // failed — the connection would have landed with scope:"" and canWrite/canPublish false, i.e.
+    // dead on arrival. One failed connect they can retry beats a silently useless one.
+    const metaUserId = ex.metaUserId;
+    if (!metaUserId) return { error: "incomplete" };
+    const enc = encryptToken(ex.token);
+    const canWrite = ex.grantedScopes.includes("ads_management");
+    const canManagePages = ex.grantedScopes.includes("pages_show_list");
+    // L1 organic publish: true ONLY when Meta actually granted BOTH post scopes (IG + FB). Until App
+    // Review passes, Meta withholds them → canPublish stays false → the publish worker fail-closes and
+    // refuses to publish (spec §一.4). Derived from grantedScopes (debug_token truth), never requested.
+    const canPublish =
+      ex.grantedScopes.includes("instagram_content_publish") && ex.grantedScopes.includes("pages_manage_posts");
+    const scope = ex.grantedScopes.length > 0 ? ex.grantedScopes.join(",") : "";
+    const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, canManagePages, canPublish, status: "active" as const, metaUserId };
+    await prisma.metaConnection.upsert({
+      where: { ownerId: gate.ownerId },
+      update: data,
+      create: { id: newId(), ownerId: gate.ownerId, adsAutonomy: "ASK" as const, defaultPageId: null, ...data },
+    });
+    return { ok: true };
   });
-  return { ok: true };
 }
 
 /** Read-only: the owner's connected ad accounts via their decrypted token. Never returns the token.
@@ -90,35 +96,41 @@ export type MetaConnectionResult =
 export async function getMetaConnection(): Promise<MetaConnectionResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const conn = await prisma.metaConnection.findUnique({
-    where: { ownerId: gate.ownerId },
-    select: { status: true, adsAutonomy: true, canWrite: true, adsWritesPaused: true, canManagePages: true, canPublish: true, defaultPageId: true },
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<MetaConnectionResult> => {
+    const conn = await prisma.metaConnection.findUnique({
+      where: { ownerId: gate.ownerId },
+      select: { status: true, adsAutonomy: true, canWrite: true, adsWritesPaused: true, canManagePages: true, canPublish: true, defaultPageId: true },
+    });
+    if (!conn) return { connected: false };
+    const res = await getMyAdAccounts(gate.ownerId);
+    // F37: transient failure — report the REAL stored status (the token is fine) so the
+    // UI shows "couldn't reach Meta — retry" instead of a false reconnect scare.
+    if ("transientError" in res) return { connected: true, status: conn.status, transientError: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false, canManagePages: conn.canManagePages ?? false, canPublish: conn.canPublish ?? false, defaultPageId: conn.defaultPageId ?? null };
+    if ("needsReconnect" in res) return { connected: true, status: "expired", needsReconnect: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false, canManagePages: conn.canManagePages ?? false, canPublish: conn.canPublish ?? false, defaultPageId: conn.defaultPageId ?? null };
+    return {
+      connected: true,
+      status: conn.status,
+      adsAutonomy: conn.adsAutonomy,
+      canWrite: conn.canWrite,
+      adsWritesPaused: conn.adsWritesPaused,
+      canManagePages: conn.canManagePages,
+      canPublish: conn.canPublish,
+      defaultPageId: conn.defaultPageId,
+      accounts: res.accounts,
+    };
   });
-  if (!conn) return { connected: false };
-  const res = await getMyAdAccounts(gate.ownerId);
-  // F37: transient failure — report the REAL stored status (the token is fine) so the
-  // UI shows "couldn't reach Meta — retry" instead of a false reconnect scare.
-  if ("transientError" in res) return { connected: true, status: conn.status, transientError: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false, canManagePages: conn.canManagePages ?? false, canPublish: conn.canPublish ?? false, defaultPageId: conn.defaultPageId ?? null };
-  if ("needsReconnect" in res) return { connected: true, status: "expired", needsReconnect: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false, canManagePages: conn.canManagePages ?? false, canPublish: conn.canPublish ?? false, defaultPageId: conn.defaultPageId ?? null };
-  return {
-    connected: true,
-    status: conn.status,
-    adsAutonomy: conn.adsAutonomy,
-    canWrite: conn.canWrite,
-    adsWritesPaused: conn.adsWritesPaused,
-    canManagePages: conn.canManagePages,
-    canPublish: conn.canPublish,
-    defaultPageId: conn.defaultPageId,
-    accounts: res.accounts,
-  };
 }
 
 export async function disconnectMeta(): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to disconnect Meta." };
-  await prisma.metaConnection.deleteMany({ where: { ownerId: gate.ownerId } });
-  return { ok: true };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true } | { error: string }> => {
+    await prisma.metaConnection.deleteMany({ where: { ownerId: gate.ownerId } });
+    return { ok: true };
+  });
 }
 
 export async function getMetaInsights(
@@ -126,5 +138,6 @@ export async function getMetaInsights(
 ): Promise<{ accounts: AccountInsights[] } | { needsReconnect: true } | { transientError: true } | { notConnected: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  return fetchOwnerInsights(gate.ownerId, datePreset ?? "last_30d");
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => fetchOwnerInsights(gate.ownerId, datePreset ?? "last_30d"));
 }

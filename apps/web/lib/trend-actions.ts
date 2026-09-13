@@ -6,7 +6,8 @@ import { newId } from "@fikirtive/core";
 import { prisma, Prisma } from "@fikirtive/db";
 import { z } from "zod";
 import { isImpersonating } from "@/lib/better-auth/compat";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 
 const IMPERSONATION_BLOCK = "Paused while impersonating a customer — exit impersonation to do this.";
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -143,45 +144,56 @@ export async function listTrendSnapshots(raw: unknown = {}): Promise<
   "use server";
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const parsed = listInputSchema.safeParse(raw ?? {});
-  if (!parsed.success) return { error: "That trend filter isn't valid." };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<
+    | {
+        ok: true;
+        snapshots: TrendSnapshotRow[];
+        nextSnapshotId: string;
+        nextSnapshotProof: string;
+      }
+    | { error: string }
+  > => {
+    const parsed = listInputSchema.safeParse(raw ?? {});
+    if (!parsed.success) return { error: "That trend filter isn't valid." };
 
-  try {
-    if (parsed.data.campaignId) {
-      const campaign = await prisma.campaign.findFirst({
-        where: { id: parsed.data.campaignId, ownerId: gate.ownerId, deletedAt: null },
-        select: { id: true },
+    try {
+      if (parsed.data.campaignId) {
+        const campaign = await prisma.campaign.findFirst({
+          where: { id: parsed.data.campaignId, ownerId: gate.ownerId, deletedAt: null },
+          select: { id: true },
+        });
+        if (!campaign) return { error: "Campaign not found." };
+      }
+
+      const rows = await prisma.trendSnapshot.findMany({
+        where: {
+          ownerId: gate.ownerId,
+          ...(parsed.data.campaignId ? { campaignId: parsed.data.campaignId } : {}),
+          deletedAt: null,
+        },
+        orderBy: [{ capturedAt: "desc" }, { createdAt: "desc" }],
+        take: parsed.data.limit,
+        select: {
+          id: true,
+          summary: true,
+          sources: true,
+          capturedAt: true,
+          campaignId: true,
+          createdAt: true,
+        },
       });
-      if (!campaign) return { error: "Campaign not found." };
+      const draft = issueTrendDraft(gate.ownerId);
+      return {
+        ok: true,
+        snapshots: rows.map(publicTrend),
+        nextSnapshotId: draft.snapshotId,
+        nextSnapshotProof: draft.snapshotProof,
+      };
+    } catch {
+      return { error: "Trend snapshots couldn't load. Please retry." };
     }
-
-    const rows = await prisma.trendSnapshot.findMany({
-      where: {
-        ownerId: gate.ownerId,
-        ...(parsed.data.campaignId ? { campaignId: parsed.data.campaignId } : {}),
-        deletedAt: null,
-      },
-      orderBy: [{ capturedAt: "desc" }, { createdAt: "desc" }],
-      take: parsed.data.limit,
-      select: {
-        id: true,
-        summary: true,
-        sources: true,
-        capturedAt: true,
-        campaignId: true,
-        createdAt: true,
-      },
-    });
-    const draft = issueTrendDraft(gate.ownerId);
-    return {
-      ok: true,
-      snapshots: rows.map(publicTrend),
-      nextSnapshotId: draft.snapshotId,
-      nextSnapshotProof: draft.snapshotProof,
-    };
-  } catch {
-    return { error: "Trend snapshots couldn't load. Please retry." };
-  }
+  });
 }
 
 const saveInputSchema = z.object({
@@ -217,68 +229,37 @@ export async function saveTrendSnapshot(raw: unknown): Promise<
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
-  const parsed = saveInputSchema.safeParse(raw);
-  if (!parsed.success) return { error: refusalMessage(parsed.error, "That trend snapshot isn't valid.") };
-  const { snapshotId, snapshotProof, campaignId, evidence } = parsed.data;
-  if (!validTrendProof(gate.ownerId, snapshotId, snapshotProof)) {
-    return { error: "Refresh the trend archive and try again." };
-  }
-
-  try {
-    if (campaignId) {
-      const campaign = await prisma.campaign.findFirst({
-        where: { id: campaignId, ownerId: gate.ownerId, deletedAt: null },
-        select: { id: true },
-      });
-      if (!campaign) return { error: "Campaign not found." };
-    }
-
-    const expected = buildTrendSnapshotCreateData({
-      id: snapshotId,
-      ownerId: gate.ownerId,
-      campaignId,
-      evidence,
-    });
-    const expectedCapturedAt = expected.capturedAt instanceof Date
-      ? expected.capturedAt
-      : new Date(expected.capturedAt);
-    const existing = await prisma.trendSnapshot.findFirst({
-      where: { id: snapshotId, ownerId: gate.ownerId, deletedAt: null },
-      select: {
-        id: true,
-        summary: true,
-        sources: true,
-        capturedAt: true,
-        campaignId: true,
-        createdAt: true,
-      },
-    });
-    if (existing) {
-      const same = existing.summary === expected.summary
-        && stableJson(existing.sources) === stableJson(expected.sources)
-        && existing.capturedAt.getTime() === expectedCapturedAt.getTime()
-        && existing.campaignId === expected.campaignId;
-      return same
-        ? { ok: true, idempotent: true, snapshot: publicTrend(existing) }
-        : { error: "Couldn't save that trend snapshot — refresh and start a new draft." };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<
+    | { ok: true; idempotent: boolean; snapshot: TrendSnapshotRow }
+    | { error: string }
+  > => {
+    const parsed = saveInputSchema.safeParse(raw);
+    if (!parsed.success) return { error: refusalMessage(parsed.error, "That trend snapshot isn't valid.") };
+    const { snapshotId, snapshotProof, campaignId, evidence } = parsed.data;
+    if (!validTrendProof(gate.ownerId, snapshotId, snapshotProof)) {
+      return { error: "Refresh the trend archive and try again." };
     }
 
     try {
-      const created = await prisma.trendSnapshot.create({
-        data: expected,
-        select: {
-          id: true,
-          summary: true,
-          sources: true,
-          capturedAt: true,
-          campaignId: true,
-          createdAt: true,
-        },
+      if (campaignId) {
+        const campaign = await prisma.campaign.findFirst({
+          where: { id: campaignId, ownerId: gate.ownerId, deletedAt: null },
+          select: { id: true },
+        });
+        if (!campaign) return { error: "Campaign not found." };
+      }
+
+      const expected = buildTrendSnapshotCreateData({
+        id: snapshotId,
+        ownerId: gate.ownerId,
+        campaignId,
+        evidence,
       });
-      revalidatePath("/campaign/trends");
-      return { ok: true, idempotent: false, snapshot: publicTrend(created) };
-    } catch {
-      const raced = await prisma.trendSnapshot.findFirst({
+      const expectedCapturedAt = expected.capturedAt instanceof Date
+        ? expected.capturedAt
+        : new Date(expected.capturedAt);
+      const existing = await prisma.trendSnapshot.findFirst({
         where: { id: snapshotId, ownerId: gate.ownerId, deletedAt: null },
         select: {
           id: true,
@@ -289,17 +270,54 @@ export async function saveTrendSnapshot(raw: unknown): Promise<
           createdAt: true,
         },
       });
-      if (!raced
-        || raced.summary !== expected.summary
-        || stableJson(raced.sources) !== stableJson(expected.sources)
-        || raced.capturedAt.getTime() !== expectedCapturedAt.getTime()
-        || raced.campaignId !== expected.campaignId) {
-        return { error: "Couldn't save that trend snapshot — refresh and start a new draft." };
+      if (existing) {
+        const same = existing.summary === expected.summary
+          && stableJson(existing.sources) === stableJson(expected.sources)
+          && existing.capturedAt.getTime() === expectedCapturedAt.getTime()
+          && existing.campaignId === expected.campaignId;
+        return same
+          ? { ok: true, idempotent: true, snapshot: publicTrend(existing) }
+          : { error: "Couldn't save that trend snapshot — refresh and start a new draft." };
       }
-      revalidatePath("/campaign/trends");
-      return { ok: true, idempotent: true, snapshot: publicTrend(raced) };
+
+      try {
+        const created = await prisma.trendSnapshot.create({
+          data: expected,
+          select: {
+            id: true,
+            summary: true,
+            sources: true,
+            capturedAt: true,
+            campaignId: true,
+            createdAt: true,
+          },
+        });
+        revalidatePath("/campaign/trends");
+        return { ok: true, idempotent: false, snapshot: publicTrend(created) };
+      } catch {
+        const raced = await prisma.trendSnapshot.findFirst({
+          where: { id: snapshotId, ownerId: gate.ownerId, deletedAt: null },
+          select: {
+            id: true,
+            summary: true,
+            sources: true,
+            capturedAt: true,
+            campaignId: true,
+            createdAt: true,
+          },
+        });
+        if (!raced
+          || raced.summary !== expected.summary
+          || stableJson(raced.sources) !== stableJson(expected.sources)
+          || raced.capturedAt.getTime() !== expectedCapturedAt.getTime()
+          || raced.campaignId !== expected.campaignId) {
+          return { error: "Couldn't save that trend snapshot — refresh and start a new draft." };
+        }
+        revalidatePath("/campaign/trends");
+        return { ok: true, idempotent: true, snapshot: publicTrend(raced) };
+      }
+    } catch {
+      return { error: "Couldn't save that trend snapshot — please try again." };
     }
-  } catch {
-    return { error: "Couldn't save that trend snapshot — please try again." };
-  }
+  });
 }

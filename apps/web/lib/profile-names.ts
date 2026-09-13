@@ -12,7 +12,8 @@ import "server-only";
  * scanner classifies a module by searching its source for that literal, comments included.)
  */
 import { prisma } from "@fikirtive/db";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 
 export type ProfileNames = {
   /** The merchant's own display name. "" when never set — the caller decides the fallback. */
@@ -63,13 +64,16 @@ export async function getMyProfileNames(): Promise<ProfileNames | { error: strin
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
-  const [displayName, organization] = await Promise.all([
-    readDisplayName(ownerId, gate.email),
-    prisma.organization.findFirst({ where: { id: ownerId, deletedAt: null }, select: { name: true } }),
-  ]);
-  return {
-    displayName,
-    workspaceName: workspaceNameOrUnset(organization?.name, gate.email),
-    email: gate.email,
-  };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<ProfileNames | { error: string }> => {
+    const [displayName, organization] = await Promise.all([
+      readDisplayName(ownerId, gate.email),
+      prisma.organization.findFirst({ where: { id: ownerId, deletedAt: null }, select: { name: true } }),
+    ]);
+    return {
+      displayName,
+      workspaceName: workspaceNameOrUnset(organization?.name, gate.email),
+      email: gate.email,
+    };
+  });
 }

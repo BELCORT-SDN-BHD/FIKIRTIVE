@@ -1,6 +1,7 @@
 "use server";
 import { prisma } from "@fikirtive/db";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { revalidatePath } from "next/cache";
 import { type OwnerSettings, DEFAULT_SETTINGS, mergeSettings } from "./owner-settings";
@@ -8,11 +9,14 @@ import { type OwnerSettings, DEFAULT_SETTINGS, mergeSettings } from "./owner-set
 export async function getOwnerSettings(): Promise<OwnerSettings | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const org = await prisma.organization.findUnique({
-    where: { id: gate.ownerId },
-    select: { settings: true },
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<OwnerSettings | { error: string }> => {
+    const org = await prisma.organization.findUnique({
+      where: { id: gate.ownerId },
+      select: { settings: true },
+    });
+    return mergeSettings(org?.settings ?? null);
   });
-  return mergeSettings(org?.settings ?? null);
 }
 
 export async function setOwnerSetting<K extends keyof OwnerSettings>(
@@ -25,27 +29,30 @@ export async function setOwnerSetting<K extends keyof OwnerSettings>(
   // settings — impersonation is for SEEING what they see, not acting as them. To let staff act
   // while impersonating instead, drop this guard (it's the founder's policy call).
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to change their settings." };
-  if (!(key in DEFAULT_SETTINGS)) return { error: "Unknown setting." };
-  if (typeof value !== typeof DEFAULT_SETTINGS[key]) return { error: "Bad value." };
-  // Decision ① (issue #513 §C1): the spend cap is a whole number of credits, 0 or more —
-  // reject a negative or fractional cap server-side too, not just in the UI (the UI's own
-  // Save button already gates this, but this is the authoritative write path).
-  if (key === "spendCapCredits") {
-    const capValue = value as number;
-    if (!Number.isInteger(capValue) || capValue < 0) {
-      return { error: "Spend cap must be a whole number of credits, 0 or more." };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true } | { error: string }> => {
+    if (!(key in DEFAULT_SETTINGS)) return { error: "Unknown setting." };
+    if (typeof value !== typeof DEFAULT_SETTINGS[key]) return { error: "Bad value." };
+    // Decision ① (issue #513 §C1): the spend cap is a whole number of credits, 0 or more —
+    // reject a negative or fractional cap server-side too, not just in the UI (the UI's own
+    // Save button already gates this, but this is the authoritative write path).
+    if (key === "spendCapCredits") {
+      const capValue = value as number;
+      if (!Number.isInteger(capValue) || capValue < 0) {
+        return { error: "Spend cap must be a whole number of credits, 0 or more." };
+      }
     }
-  }
-  const org = await prisma.organization.findUnique({
-    where: { id: gate.ownerId },
-    select: { settings: true },
+    const org = await prisma.organization.findUnique({
+      where: { id: gate.ownerId },
+      select: { settings: true },
+    });
+    const next = { ...mergeSettings(org?.settings ?? null), [key]: value };
+    try {
+      await prisma.organization.update({ where: { id: gate.ownerId }, data: { settings: next } });
+    } catch {
+      return { error: "Failed to save setting." };
+    }
+    revalidatePath("/", "layout");
+    return { ok: true };
   });
-  const next = { ...mergeSettings(org?.settings ?? null), [key]: value };
-  try {
-    await prisma.organization.update({ where: { id: gate.ownerId }, data: { settings: next } });
-  } catch {
-    return { error: "Failed to save setting." };
-  }
-  revalidatePath("/", "layout");
-  return { ok: true };
 }

@@ -2,7 +2,8 @@ import "server-only";
 
 import { prisma } from "@fikirtive/db";
 import { entityCapabilities, entityOrigin, storageKey, storageKeyToSrc } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { storage } from "./storage";
 import { libraryElementKind, type LibraryElement } from "./library-elements-model";
 
@@ -25,45 +26,47 @@ export async function getLibraryElements(): Promise<LibraryElement[] | { error: 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
-
-  const rows = await prisma.entity.findMany({
-    where: { ownerId, deletedAt: null },
-    orderBy: [{ type: "asc" }, { name: "asc" }],
-    select: {
-      id: true,
-      type: true,
-      name: true,
-      catalogKey: true,
-      referenceImages: {
-        where: { deletedAt: null, variantId: null },
-        orderBy: { position: "asc" },
-        select: { asset: { select: { ownerId: true, contentHash: true, ext: true } } },
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<LibraryElement[] | { error: string }> => {
+    const rows = await prisma.entity.findMany({
+      where: { ownerId, deletedAt: null },
+      orderBy: [{ type: "asc" }, { name: "asc" }],
+      select: {
+        id: true,
+        type: true,
+        name: true,
+        catalogKey: true,
+        referenceImages: {
+          where: { deletedAt: null, variantId: null },
+          orderBy: { position: "asc" },
+          select: { asset: { select: { ownerId: true, contentHash: true, ext: true } } },
+        },
       },
-    },
+    });
+
+    const elements = await Promise.all(rows.map(async (row) => {
+      const kind = libraryElementKind(row.type, row.catalogKey);
+      if (!kind) return null;
+      const first = row.referenceImages[0]?.asset;
+      // 字节真的还在才给封面 —— 与生成历史同一条纪律:不给一个必然坏掉的 <img src>。
+      let coverUrl: string | null = null;
+      if (first) {
+        const key = storageKey(first.ownerId, first.contentHash, first.ext.toLowerCase());
+        if (await storage.exists(key)) coverUrl = storageKeyToSrc(key);
+      }
+      return {
+        id: row.id,
+        kind,
+        name: row.name,
+        // 只读判据算在域层、只算这一次(`packages/core/src/entity-policy.ts`),和
+        // `lib/dto.ts:toEntityDTO` 走的是同一个函数 —— Library 不另起一套「是不是官方」。
+        origin: entityOrigin(row),
+        capabilities: entityCapabilities(row),
+        coverUrl,
+        mediaCount: row.referenceImages.length,
+      } satisfies LibraryElement;
+    }));
+
+    return elements.filter((element): element is LibraryElement => element != null);
   });
-
-  const elements = await Promise.all(rows.map(async (row) => {
-    const kind = libraryElementKind(row.type, row.catalogKey);
-    if (!kind) return null;
-    const first = row.referenceImages[0]?.asset;
-    // 字节真的还在才给封面 —— 与生成历史同一条纪律:不给一个必然坏掉的 <img src>。
-    let coverUrl: string | null = null;
-    if (first) {
-      const key = storageKey(first.ownerId, first.contentHash, first.ext.toLowerCase());
-      if (await storage.exists(key)) coverUrl = storageKeyToSrc(key);
-    }
-    return {
-      id: row.id,
-      kind,
-      name: row.name,
-      // 只读判据算在域层、只算这一次(`packages/core/src/entity-policy.ts`),和
-      // `lib/dto.ts:toEntityDTO` 走的是同一个函数 —— Library 不另起一套「是不是官方」。
-      origin: entityOrigin(row),
-      capabilities: entityCapabilities(row),
-      coverUrl,
-      mediaCount: row.referenceImages.length,
-    } satisfies LibraryElement;
-  }));
-
-  return elements.filter((element): element is LibraryElement => element != null);
 }

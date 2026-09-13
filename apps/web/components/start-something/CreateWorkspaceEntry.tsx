@@ -2,7 +2,8 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { CreateWorkspace, type CreateWorkspaceProject } from "@/components/start-something/CreateWorkspace";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { getProjects } from "@/lib/data";
 import { MY_DATE_FORMAT } from "@/lib/my-date-format";
 
@@ -31,8 +32,8 @@ function formatUpdated(date: Date): string {
 export async function CreateWorkspaceEntry() {
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
-
-  const projects = await getProjects(owner.ownerId);
+  const principal = await resolveUserPrincipal(owner);
+  const projects = await runAsUser(principal, () => getProjects(owner.ownerId));
   const rows: CreateWorkspaceProject[] = projects.map((project) => ({
     id: project.id,
     name: project.name,

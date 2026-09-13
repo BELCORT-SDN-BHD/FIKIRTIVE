@@ -1,7 +1,8 @@
 import "server-only";
 import { prisma } from "@fikirtive/db";
 import { newId, storageKey, storageKeyToSrc, merchantGenFailureCopy, MAX_TURN_REFERENCES } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { tallyEntityUsage } from "./entity-usage";
 import { threadBadgeFromJobStatus } from "./thread-status";
 import { storage } from "./storage";
@@ -544,15 +545,20 @@ export async function resolveCoworkMessageReferences(
   return byMessage;
 }
 
-export async function getRecentOutcomes() {
+export async function getRecentOutcomes(): Promise<
+  { generationId: string; posted: boolean; result: string; at: string }[]
+> {
   const gate = await requireOwner(); if ("error" in gate) return [];
   const { ownerId } = gate;
-  const rows = await prisma.actionEvent.findMany({
-    where: { ownerId, type: "generation.outcome" }, orderBy: { createdAt: "desc" }, take: 50,
-  });
-  return rows.map((r) => {
-    const p = (r.payload ?? {}) as { generationId?: string; posted?: boolean; result?: string };
-    return { generationId: p.generationId ?? "", posted: !!p.posted, result: p.result ?? "", at: r.createdAt.toISOString() };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async () => {
+    const rows = await prisma.actionEvent.findMany({
+      where: { ownerId, type: "generation.outcome" }, orderBy: { createdAt: "desc" }, take: 50,
+    });
+    return rows.map((r) => {
+      const p = (r.payload ?? {}) as { generationId?: string; posted?: boolean; result?: string };
+      return { generationId: p.generationId ?? "", posted: !!p.posted, result: p.result ?? "", at: r.createdAt.toISOString() };
+    });
   });
 }
 

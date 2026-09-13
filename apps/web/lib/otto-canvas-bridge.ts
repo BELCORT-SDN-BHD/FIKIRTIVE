@@ -7,7 +7,8 @@ import {
   CANVAS_SETTLEMENT_DEFAULT_STATEMENT_TIMEOUT_MS,
 } from "@fikirtive/db";
 import { CANVAS_IN_FLIGHT_JOB_STATUSES, newId } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { withCanvasLineage } from "./canvas-lineage-data";
 import { CANVAS_NODE_SELECT, freeCanvasRectForNewNode } from "./canvas-node-placement";
 import { CANVAS_SPAWN_ORIGIN } from "@fikirtive/core/canvas-layout";
@@ -155,160 +156,162 @@ export async function syncOttoCanvasNodes(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<CanvasNodeWithUrl[] | { error: string }> => {
+    const project = await prisma.project.findFirst({
+      where: { id: projectId, ownerId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!project) return { error: "Project not found." };
 
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId, deletedAt: null },
-    select: { id: true },
-  });
-  if (!project) return { error: "Project not found." };
-
-  // ── 1. Ensure project chat generation work appears on the canvas ──
-  const threads = await prisma.chatThread.findMany({
-    where: { ownerId, projectId, deletedAt: null },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: {
-      id: true,
-      messages: {
-        where: { kind: { in: ["GEN_CARD", "GEN_RESULT"] }, deletedAt: null },
-        orderBy: { seq: "asc" },
-        select: { id: true, kind: true, seq: true, genJobId: true, payload: true, text: true },
+    // ── 1. Ensure project chat generation work appears on the canvas ──
+    const threads = await prisma.chatThread.findMany({
+      where: { ownerId, projectId, deletedAt: null },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: {
+        id: true,
+        messages: {
+          where: { kind: { in: ["GEN_CARD", "GEN_RESULT"] }, deletedAt: null },
+          orderBy: { seq: "asc" },
+          select: { id: true, kind: true, seq: true, genJobId: true, payload: true, text: true },
+        },
       },
-    },
-  });
-  const messages = threads.flatMap((thread) => thread.messages) as BridgeMessage[];
-  const jobIds = [...new Set(messages.map((m) => m.genJobId).filter((id): id is string => !!id))];
-  const cardJobKeys = [...new Set(messages
-    .filter((m) => m.kind === "GEN_CARD")
-    .map((m) => `cowork:${m.id}`))];
-  const jobWhere = [
-    ...(jobIds.length ? [{ id: { in: jobIds } }] : []),
-    ...(cardJobKeys.length ? [{ idempotencyKey: { in: cardJobKeys } }] : []),
-  ];
-  const bridgeJobs = jobWhere.length
-    ? await prisma.genJob.findMany({ where: { ownerId, projectId, OR: jobWhere }, select: { id: true, idempotencyKey: true, status: true, generationIds: true } })
-    : [];
-  const bridgeJobById = new Map(bridgeJobs.map((j) => [j.id, j]));
-  const bridgeJobByCardId = new Map(
-    bridgeJobs
-      .filter((j) => j.idempotencyKey?.startsWith("cowork:"))
-      .map((j) => [j.idempotencyKey!.slice("cowork:".length), j]),
-  );
-
-  // A DELIVERED job's cards are written by the job itself, here as everywhere else (#601 r2 judge
-  // P2② → #613 T2d). This used to place them itself, one card per output, left to right — so the
-  // board a merchant got depended on whether a chat happened to be open when the batch landed:
-  // this writer produced a 1×4 row and the settlement a 2×2 grid, and whichever reached the job
-  // lock first decided. #601 T2b replaced that with a call to the ONE settlement; T2d removes even
-  // the call, so a GEN_RESULT message is nothing but a message again. All this read still does
-  // below is put down the IN-FLIGHT card of a batch the merchant just started from a chat — a
-  // state the settlement deliberately does not project.
-  // Tombstones included — a deleted card is a durable instruction this read must not walk past.
-  const existing = await prisma.canvasNode.findMany({
-    where: { ownerId, projectId },
-    select: { generationId: true, genJobId: true, status: true },
-  });
-
-  const have = new Set(existing.map((n) => n.generationId).filter((id): id is string => !!id));
-  const haveJobs = new Set(existing.map((n) => n.genJobId).filter((id): id is string => !!id));
-  for (const thread of threads) {
-    const cardMessages = (thread.messages as BridgeMessage[])
+    });
+    const messages = threads.flatMap((thread) => thread.messages) as BridgeMessage[];
+    const jobIds = [...new Set(messages.map((m) => m.genJobId).filter((id): id is string => !!id))];
+    const cardJobKeys = [...new Set(messages
       .filter((m) => m.kind === "GEN_CARD")
-      .map((m) => ({ ...m, genJobId: m.genJobId ?? bridgeJobByCardId.get(m.id)?.id ?? null }));
-    const pendingToCreate = planPendingJobNodes(cardMessages, bridgeJobById, have, haveJobs);
-    for (const node of pendingToCreate) {
-      haveJobs.add(node.genJobId);
-      // Pending card for a paid GenJob that already exists. This is a canvas
-      // placement only; the spend happened earlier in startGen.
-      // The board's own origin is the spot ASKED FOR; the placement rule inside answers with a
-      // spot that is actually free, reading the board under its lock. Nothing here counts cards
-      // any more — a count cannot see where cards sit, and it counts removed ones as if they
-      // still took up room (#549 r2, judge P1-1).
-      await createPendingCanvasNodeOnce({
-        ownerId,
-        projectId,
-        type: node.kind,
-        x: CANVAS_SPAWN_ORIGIN.x,
-        y: CANVAS_SPAWN_ORIGIN.y,
-        w: NODE.w,
-        h: NODE.h,
-        genJobId: node.genJobId,
-        threadId: thread.id,
-        prompt: node.prompt,
-      });
+      .map((m) => `cowork:${m.id}`))];
+    const jobWhere = [
+      ...(jobIds.length ? [{ id: { in: jobIds } }] : []),
+      ...(cardJobKeys.length ? [{ idempotencyKey: { in: cardJobKeys } }] : []),
+    ];
+    const bridgeJobs = jobWhere.length
+      ? await prisma.genJob.findMany({ where: { ownerId, projectId, OR: jobWhere }, select: { id: true, idempotencyKey: true, status: true, generationIds: true } })
+      : [];
+    const bridgeJobById = new Map(bridgeJobs.map((j) => [j.id, j]));
+    const bridgeJobByCardId = new Map(
+      bridgeJobs
+        .filter((j) => j.idempotencyKey?.startsWith("cowork:"))
+        .map((j) => [j.idempotencyKey!.slice("cowork:".length), j]),
+    );
+
+    // A DELIVERED job's cards are written by the job itself, here as everywhere else (#601 r2 judge
+    // P2② → #613 T2d). This used to place them itself, one card per output, left to right — so the
+    // board a merchant got depended on whether a chat happened to be open when the batch landed:
+    // this writer produced a 1×4 row and the settlement a 2×2 grid, and whichever reached the job
+    // lock first decided. #601 T2b replaced that with a call to the ONE settlement; T2d removes even
+    // the call, so a GEN_RESULT message is nothing but a message again. All this read still does
+    // below is put down the IN-FLIGHT card of a batch the merchant just started from a chat — a
+    // state the settlement deliberately does not project.
+    // Tombstones included — a deleted card is a durable instruction this read must not walk past.
+    const existing = await prisma.canvasNode.findMany({
+      where: { ownerId, projectId },
+      select: { generationId: true, genJobId: true, status: true },
+    });
+
+    const have = new Set(existing.map((n) => n.generationId).filter((id): id is string => !!id));
+    const haveJobs = new Set(existing.map((n) => n.genJobId).filter((id): id is string => !!id));
+    for (const thread of threads) {
+      const cardMessages = (thread.messages as BridgeMessage[])
+        .filter((m) => m.kind === "GEN_CARD")
+        .map((m) => ({ ...m, genJobId: m.genJobId ?? bridgeJobByCardId.get(m.id)?.id ?? null }));
+      const pendingToCreate = planPendingJobNodes(cardMessages, bridgeJobById, have, haveJobs);
+      for (const node of pendingToCreate) {
+        haveJobs.add(node.genJobId);
+        // Pending card for a paid GenJob that already exists. This is a canvas
+        // placement only; the spend happened earlier in startGen.
+        // The board's own origin is the spot ASKED FOR; the placement rule inside answers with a
+        // spot that is actually free, reading the board under its lock. Nothing here counts cards
+        // any more — a count cannot see where cards sit, and it counts removed ones as if they
+        // still took up room (#549 r2, judge P1-1).
+        await createPendingCanvasNodeOnce({
+          ownerId,
+          projectId,
+          type: node.kind,
+          x: CANVAS_SPAWN_ORIGIN.x,
+          y: CANVAS_SPAWN_ORIGIN.y,
+          w: NODE.w,
+          h: NODE.h,
+          genJobId: node.genJobId,
+          threadId: thread.id,
+          prompt: node.prompt,
+        });
+      }
     }
-  }
 
-  // ── 2. Return all project nodes with media URLs resolved (display-only) ──
-  // Tombstones are read here too, and then filtered out below: a deleted card must not be counted
-  // as a card that is merely missing.
-  // The one card-column list (`CANVAS_NODE_SELECT`). Batch identity and parentage come with it,
-  // as the server settled them (#603 T4); the old single `sourceNodeId` is deliberately absent
-  // from it — it meant three different things at once.
-  const board = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: CANVAS_NODE_SELECT });
+    // ── 2. Return all project nodes with media URLs resolved (display-only) ──
+    // Tombstones are read here too, and then filtered out below: a deleted card must not be counted
+    // as a card that is merely missing.
+    // The one card-column list (`CANVAS_NODE_SELECT`). Batch identity and parentage come with it,
+    // as the server settled them (#603 T4); the old single `sourceNodeId` is deliberately absent
+    // from it — it meant three different things at once.
+    const board = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: CANVAS_NODE_SELECT });
 
-  // A node's media comes from its generationId, or (for canvas-promptbar nodes,
-  // which persist only the job) from the job's first generation. Pull status for
-  // every linked job too: CanvasNode.status is not a reliable activity source
-  // after terminal settlement because legacy rows can stay "pending" forever.
-  const linkedJobIds = [...new Set(board.map((n) => n.genJobId).filter((x): x is string => !!x))];
-  const jobs = linkedJobIds.length
-    ? await prisma.genJob.findMany({
-      where: { id: { in: linkedJobIds }, ownerId, projectId },
-      // `error` for the same reason the other board read takes it (#827): it is the durable
-      // record of WHY a refusal happened. Handed to the core whitelist, never forwarded as text.
-      select: { id: true, generationIds: true, status: true, idempotencyKey: true, error: true },
-    })
-    : [];
-  const jobById = new Map(jobs.map((j) => [j.id, j]));
+    // A node's media comes from its generationId, or (for canvas-promptbar nodes,
+    // which persist only the job) from the job's first generation. Pull status for
+    // every linked job too: CanvasNode.status is not a reliable activity source
+    // after terminal settlement because legacy rows can stay "pending" forever.
+    const linkedJobIds = [...new Set(board.map((n) => n.genJobId).filter((x): x is string => !!x))];
+    const jobs = linkedJobIds.length
+      ? await prisma.genJob.findMany({
+        where: { id: { in: linkedJobIds }, ownerId, projectId },
+        // `error` for the same reason the other board read takes it (#827): it is the durable
+        // record of WHY a refusal happened. Handed to the core whitelist, never forwarded as text.
+        select: { id: true, generationIds: true, status: true, idempotencyKey: true, error: true },
+      })
+      : [];
+    const jobById = new Map(jobs.map((j) => [j.id, j]));
 
-  const nodes = board.filter((node) => node.status !== "deleted");
+    const nodes = board.filter((node) => node.status !== "deleted");
 
-  const genIds = [
-    ...nodes.map((n) => n.generationId).filter((x): x is string => !!x),
-    ...jobs.flatMap((j) => j.generationIds),
-  ];
-  const thumbs = await getGenerationThumbs(ownerId, genIds); // generationId → { src, kind }
+    const genIds = [
+      ...nodes.map((n) => n.generationId).filter((x): x is string => !!x),
+      ...jobs.flatMap((j) => j.generationIds),
+    ];
+    const thumbs = await getGenerationThumbs(ownerId, genIds); // generationId → { src, kind }
 
-  // PURELY A READ from here down (#613 T2d) — the same rule the canvas reader now follows. What a
-  // card SAYS is resolved for display, so a row that has not caught up still shows the merchant
-  // the truth; nothing seen while rendering is written back to the row.
-  // The SAME rule the canvas reader uses — one place decides what an unbound card may show, so
-  // the two boards cannot disagree about it (#613 r4).
-  const census = censusCanvasJobCards(nodes);
-  const resolved = nodes.map((n) => {
-    const job = n.genJobId ? jobById.get(n.genJobId) : null;
-    // Return the RESOLVED generationId, not the raw row's. A promptbar-created node
-    // persists only genJobId (generationId null), so after a reload the client had no
-    // generationId for it — Make video / Detail silently no-oped on that primary card
-    // (their guard needs nodeDataRef.generationId). Display-only metadata resolution;
-    // the id is the job's OWN generation (owner-scoped above), no spend logic.
-    const gid = displayGenerationIdForCard({
-      rowGenerationId: n.generationId,
-      genJobId: n.genJobId,
-      jobGenerationIds: job?.generationIds,
-      census,
-      thumbs,
+    // PURELY A READ from here down (#613 T2d) — the same rule the canvas reader now follows. What a
+    // card SAYS is resolved for display, so a row that has not caught up still shows the merchant
+    // the truth; nothing seen while rendering is written back to the row.
+    // The SAME rule the canvas reader uses — one place decides what an unbound card may show, so
+    // the two boards cannot disagree about it (#613 r4).
+    const census = censusCanvasJobCards(nodes);
+    const resolved = nodes.map((n) => {
+      const job = n.genJobId ? jobById.get(n.genJobId) : null;
+      // Return the RESOLVED generationId, not the raw row's. A promptbar-created node
+      // persists only genJobId (generationId null), so after a reload the client had no
+      // generationId for it — Make video / Detail silently no-oped on that primary card
+      // (their guard needs nodeDataRef.generationId). Display-only metadata resolution;
+      // the id is the job's OWN generation (owner-scoped above), no spend logic.
+      const gid = displayGenerationIdForCard({
+        rowGenerationId: n.generationId,
+        genJobId: n.genJobId,
+        jobGenerationIds: job?.generationIds,
+        census,
+        thumbs,
+      });
+      const thumb = gid ? thumbs[gid] : undefined;
+      const url = thumb?.src ?? null;
+      const { face: status, failureReason } = canvasCardState({
+        rowStatus: n.status,
+        jobStatus: job?.status,
+        jobError: job?.error,
+        generationId: gid,
+        url,
+      });
+      return {
+        ...n,
+        generationId: gid,
+        status,
+        failureReason,
+        url,
+        mediaWidth: thumb?.width ?? null,
+        mediaHeight: thumb?.height ?? null,
+        origin: canvasNodeOrigin(job?.idempotencyKey),
+      };
     });
-    const thumb = gid ? thumbs[gid] : undefined;
-    const url = thumb?.src ?? null;
-    const { face: status, failureReason } = canvasCardState({
-      rowStatus: n.status,
-      jobStatus: job?.status,
-      jobError: job?.error,
-      generationId: gid,
-      url,
-    });
-    return {
-      ...n,
-      generationId: gid,
-      status,
-      failureReason,
-      url,
-      mediaWidth: thumb?.width ?? null,
-      mediaHeight: thumb?.height ?? null,
-      origin: canvasNodeOrigin(job?.idempotencyKey),
-    };
+
+    return withCanvasLineage(ownerId, projectId, resolved);
   });
-
-  return withCanvasLineage(ownerId, projectId, resolved);
 }

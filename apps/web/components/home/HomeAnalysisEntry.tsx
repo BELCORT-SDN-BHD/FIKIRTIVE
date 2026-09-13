@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 
 import { HomeAnalysisView } from "@/components/home/HomeAnalysisView";
 import { getAnalytics } from "@/lib/analytics-actions";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import type { HomeAnalysisContext } from "@/lib/home-analysis-context";
 import {
   analyticsRangeForHomeRange,
@@ -14,10 +15,11 @@ import {
 export async function HomeAnalysisEntry({ context }: { context: HomeAnalysisContext }) {
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
+  const principal = await resolveUserPrincipal(owner);
 
-  const analytics = await getAnalytics({
+  const analytics = await runAsUser(principal, () => getAnalytics({
     range: analyticsRangeForHomeRange(context.range),
-  }).catch(() => ({ state: "transientError" as const }));
+  }).catch(() => ({ state: "transientError" as const })));
 
   return (
     <HomeAnalysisView

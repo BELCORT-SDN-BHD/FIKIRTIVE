@@ -2,7 +2,8 @@
 
 import { prisma } from "@fikirtive/db";
 import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES, GEN_IMAGE_ASPECTS, merchantRouteReason } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { storage, kindOf, extFromFilename } from "./storage";
 import { redactProviderNames } from "./provider-secrecy";
 import { setLibraryFavorite } from "./library-favorites";
@@ -106,97 +107,99 @@ export async function getGeneration(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
-
-  const gen = await prisma.generation.findFirst({
-    where: { id: generationId, ownerId, deletedAt: null },
-    select: {
-      id: true,
-      projectId: true,
-      promptText: true,
-      finalPromptText: true,
-      sentPromptText: true,
-      // Creation S2 §8.1①(CREATE-A4 / A12,判官 r1 P1 落修)—— 「这一张为什么落到这一档」。
-      // worker 在建行时用纯函数现算并落库(`routeReasonFor`);这里是它的**产品读路径**。
-      routeReason: true,
-      asset: { select: { ownerId: true, contentHash: true, ext: true } },
-    },
-  });
-  if (!gen) return { error: "Not found." };
-
-  // Resolve the source generation ID: find the GenJob that produced this
-  // generation and carried a sourceGenerationId (i.e., this was an i2v result).
-  const job = await prisma.genJob.findFirst({
-    where: { generationIds: { has: generationId }, ownerId },
-    // #914 r4:`requestedPrompt` = 商家原话(入队前 composePrompt 动过手的那些单才有),
-    // 是回执比对的另一半;它住在任务上而不是产出行上,因为拼装发生在整单唯一的那一个
-    // prompt 字段上,不是逐张的。
-    select: { sourceGenerationId: true, generationIds: true, imageOptions: true, requestedPrompt: true },
-  });
-
-  const { asset } = gen;
-  const url = storage.url(storageKey(asset.ownerId, asset.contentHash, asset.ext));
-
-  // Resolve sibling variants (id + url) from the producing GenJob's generationIds array
-  // (owner-scoped). Kept as an aligned {id, url}[] so the panel can act on the SELECTED
-  // variant's own generation id, not just show its url (F08).
-  // 【2026-09-03 前端基线 §7.3②】收藏状态读的是 `Favorite` 那张跨类型的表,不是
-  // `Generation.favorite` 那一列 —— 那一列自当天的一次性回灌之后没有任何写入者,
-  // 继续读它,面板上的心就是一份过期的影子。主图与兄弟图一次问完。
-  const favoriteIds = await favoriteGenerationIds(
-    ownerId,
-    [gen.id, ...(job?.generationIds ?? [])],
-  );
-  const primaryVariant = { id: gen.id, url, favorite: favoriteIds.has(gen.id), finalPrompt: merchantFinalPrompt(gen.finalPromptText) };
-  let variants: { id: string; url: string; favorite: boolean; finalPrompt: string | null }[] = [primaryVariant];
-  if (job && job.generationIds.length > 1) {
-    const siblingIds = job.generationIds.filter((id) => id !== generationId);
-    const siblings = await prisma.generation.findMany({
-      where: { id: { in: siblingIds }, ownerId, deletedAt: null },
-      // #776 r2：兄弟行也要读回执那一列，否则切换缩略图时面板只能拿主图那一句凑数。
-      select: { id: true, finalPromptText: true, asset: { select: { ownerId: true, contentHash: true, ext: true } } },
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<GenerationDTO | { error: string }> => {
+    const gen = await prisma.generation.findFirst({
+      where: { id: generationId, ownerId, deletedAt: null },
+      select: {
+        id: true,
+        projectId: true,
+        promptText: true,
+        finalPromptText: true,
+        sentPromptText: true,
+        // Creation S2 §8.1①(CREATE-A4 / A12,判官 r1 P1 落修)—— 「这一张为什么落到这一档」。
+        // worker 在建行时用纯函数现算并落库(`routeReasonFor`);这里是它的**产品读路径**。
+        routeReason: true,
+        asset: { select: { ownerId: true, contentHash: true, ext: true } },
+      },
     });
-    const siblingMap = new Map(siblings.map((s) => [s.id, s]));
-    // Preserve the original generationIds order; each entry carries its own id (a missing
-    // sibling — soft-deleted — is dropped as a whole {id,url} pair, so id/url never misalign).
-    variants = job.generationIds.flatMap((id) => {
-      if (id === generationId) return [primaryVariant];
-      const sib = siblingMap.get(id);
-      if (!sib) return [];
-      return [{
-        id,
-        url: storage.url(storageKey(sib.asset.ownerId, sib.asset.contentHash, sib.asset.ext)),
-        favorite: favoriteIds.has(sib.id),
-        finalPrompt: merchantFinalPrompt(sib.finalPromptText),
-      }];
-    });
-    if (!variants.some((v) => v.id === generationId)) variants = [primaryVariant, ...variants];
-  }
+    if (!gen) return { error: "Not found." };
 
-  return {
-    id: gen.id,
-    projectId: gen.projectId,
-    url,
-    urls: variants.map((v) => v.url),
-    variants,
-    kind: kindOf(asset.ext),
-    prompt: gen.promptText,
-    // 这一条是**被请求的那一行**自己的那句(= variants 里 id === generationId 的那一条)。
-    finalPrompt: primaryVariant.finalPrompt,
-    // #914 r4 —— 读**这一张自己**那一列(不是从兄弟行借的)。一单多图是**一次**付费调用,
-    // 同一个字符串发出去,所以每张的这一列同值 —— 与逐张各有各的 `finalPrompt` 不同,
-    // 这里不需要绑到 variants,切缩略图也不该让这一行变脸。
-    sentPrompt: sentPromptReceipt(gen.sentPromptText, job?.requestedPrompt ?? gen.promptText),
-    favorite: favoriteIds.has(gen.id),
-    sourceGenerationId: job?.sourceGenerationId ?? null,
-    imageAspect: snapshotImageAspect(job?.imageOptions),
-    // Creation S2 §8.1①(CREATE-A4 / A12)—— 能力路由的理由,与上面那两句回执同族:
-    // 都是「我们对这一张做了什么」的可查记录。`merchantRouteReason`(@fikirtive/core,与
-    // 写这句话的 `routeReasonFor` 同一个文件)是它跨过商家边界的**唯一**出口
-    // (白标 + 「空即未知」)—— Codex r2 之前这里有一份本地实现,而出片轮询那条路没有,
-    // 同一列数据两种口径;现在两条路读的是同一个函数。
-    // null = 这一趟没有升档 ⇒ 面板整行不渲染,不编一句「用了默认档」。
-    routeReason: merchantRouteReason(gen.routeReason),
-  };
+    // Resolve the source generation ID: find the GenJob that produced this
+    // generation and carried a sourceGenerationId (i.e., this was an i2v result).
+    const job = await prisma.genJob.findFirst({
+      where: { generationIds: { has: generationId }, ownerId },
+      // #914 r4:`requestedPrompt` = 商家原话(入队前 composePrompt 动过手的那些单才有),
+      // 是回执比对的另一半;它住在任务上而不是产出行上,因为拼装发生在整单唯一的那一个
+      // prompt 字段上,不是逐张的。
+      select: { sourceGenerationId: true, generationIds: true, imageOptions: true, requestedPrompt: true },
+    });
+
+    const { asset } = gen;
+    const url = storage.url(storageKey(asset.ownerId, asset.contentHash, asset.ext));
+
+    // Resolve sibling variants (id + url) from the producing GenJob's generationIds array
+    // (owner-scoped). Kept as an aligned {id, url}[] so the panel can act on the SELECTED
+    // variant's own generation id, not just show its url (F08).
+    // 【2026-09-03 前端基线 §7.3②】收藏状态读的是 `Favorite` 那张跨类型的表,不是
+    // `Generation.favorite` 那一列 —— 那一列自当天的一次性回灌之后没有任何写入者,
+    // 继续读它,面板上的心就是一份过期的影子。主图与兄弟图一次问完。
+    const favoriteIds = await favoriteGenerationIds(
+      ownerId,
+      [gen.id, ...(job?.generationIds ?? [])],
+    );
+    const primaryVariant = { id: gen.id, url, favorite: favoriteIds.has(gen.id), finalPrompt: merchantFinalPrompt(gen.finalPromptText) };
+    let variants: { id: string; url: string; favorite: boolean; finalPrompt: string | null }[] = [primaryVariant];
+    if (job && job.generationIds.length > 1) {
+      const siblingIds = job.generationIds.filter((id) => id !== generationId);
+      const siblings = await prisma.generation.findMany({
+        where: { id: { in: siblingIds }, ownerId, deletedAt: null },
+        // #776 r2：兄弟行也要读回执那一列，否则切换缩略图时面板只能拿主图那一句凑数。
+        select: { id: true, finalPromptText: true, asset: { select: { ownerId: true, contentHash: true, ext: true } } },
+      });
+      const siblingMap = new Map(siblings.map((s) => [s.id, s]));
+      // Preserve the original generationIds order; each entry carries its own id (a missing
+      // sibling — soft-deleted — is dropped as a whole {id,url} pair, so id/url never misalign).
+      variants = job.generationIds.flatMap((id) => {
+        if (id === generationId) return [primaryVariant];
+        const sib = siblingMap.get(id);
+        if (!sib) return [];
+        return [{
+          id,
+          url: storage.url(storageKey(sib.asset.ownerId, sib.asset.contentHash, sib.asset.ext)),
+          favorite: favoriteIds.has(sib.id),
+          finalPrompt: merchantFinalPrompt(sib.finalPromptText),
+        }];
+      });
+      if (!variants.some((v) => v.id === generationId)) variants = [primaryVariant, ...variants];
+    }
+
+    return {
+      id: gen.id,
+      projectId: gen.projectId,
+      url,
+      urls: variants.map((v) => v.url),
+      variants,
+      kind: kindOf(asset.ext),
+      prompt: gen.promptText,
+      // 这一条是**被请求的那一行**自己的那句(= variants 里 id === generationId 的那一条)。
+      finalPrompt: primaryVariant.finalPrompt,
+      // #914 r4 —— 读**这一张自己**那一列(不是从兄弟行借的)。一单多图是**一次**付费调用,
+      // 同一个字符串发出去,所以每张的这一列同值 —— 与逐张各有各的 `finalPrompt` 不同,
+      // 这里不需要绑到 variants,切缩略图也不该让这一行变脸。
+      sentPrompt: sentPromptReceipt(gen.sentPromptText, job?.requestedPrompt ?? gen.promptText),
+      favorite: favoriteIds.has(gen.id),
+      sourceGenerationId: job?.sourceGenerationId ?? null,
+      imageAspect: snapshotImageAspect(job?.imageOptions),
+      // Creation S2 §8.1①(CREATE-A4 / A12)—— 能力路由的理由,与上面那两句回执同族:
+      // 都是「我们对这一张做了什么」的可查记录。`merchantRouteReason`(@fikirtive/core,与
+      // 写这句话的 `routeReasonFor` 同一个文件)是它跨过商家边界的**唯一**出口
+      // (白标 + 「空即未知」)—— Codex r2 之前这里有一份本地实现,而出片轮询那条路没有,
+      // 同一列数据两种口径;现在两条路读的是同一个函数。
+      // null = 这一趟没有升档 ⇒ 面板整行不渲染,不编一句「用了默认档」。
+      routeReason: merchantRouteReason(gen.routeReason),
+    };
+  });
 }
 
 /**
@@ -259,72 +262,74 @@ export async function saveCroppedGeneration(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
-
-  // Verify ownership of the source generation
-  const source = await prisma.generation.findFirst({
-    where: { id: sourceGenerationId, ownerId, deletedAt: null },
-    select: { projectId: true, promptText: true },
-  });
-  if (!source) return { error: "Not found." };
-
-  // Parse the data URL: data:image/<ext>;base64,<data>
-  const match = dataUrl.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
-  if (!match) return { error: "Invalid data URL." };
-  const base64Data = match[2];
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64Data) || base64Data.length % 4 !== 0) {
-    return { error: "Invalid data URL." };
-  }
-  const bytes = Uint8Array.from(Buffer.from(base64Data, "base64"));
-  if (bytes.byteLength === 0) return { error: "Invalid data URL." };
-
-  // Build a File so we can reuse the ingestFile path via storage.put directly
-  // (ingestFile is not exported, so replicate its logic inline)
-  const ext = extFromFilename(`cropped.${match[1]}`);
-  const { contentHash } = await storage.put(ownerId, bytes, ext);
-
-  const assetCreate = {
-    id: newId(),
-    ownerId,
-    contentHash,
-    ext,
-    // 工单 F: byte-derived mime — the data URL's declared image/<ext> is a client claim; the bytes
-    // decide. A crafted data:image/png;base64,<mp4> lands as application/octet-stream, not image/png.
-    mime: resolveUploadMime(bytes.subarray(0, MEDIA_SNIFF_BYTES), ext),
-    sizeBytes: BigInt(bytes.byteLength),
-    originalFilename: `cropped.${ext}`,
-    source: "UPLOAD" as const,
-  };
-
-  let newGenId = "";
-  await prisma.$transaction(async (tx) => {
-    const asset = await tx.asset.upsert({
-      where: { ownerId_contentHash: { ownerId, contentHash } },
-      // resurrect AND realign to the byte-derived canonical values (repairs a poisoned prior row)
-      update: {
-        deletedAt: null,
-        ext: assetCreate.ext,
-        mime: assetCreate.mime,
-        sizeBytes: assetCreate.sizeBytes,
-        originalFilename: assetCreate.originalFilename,
-      },
-      create: assetCreate,
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ id: string } | { error: string }> => {
+    // Verify ownership of the source generation
+    const source = await prisma.generation.findFirst({
+      where: { id: sourceGenerationId, ownerId, deletedAt: null },
+      select: { projectId: true, promptText: true },
     });
-    const gen = await tx.generation.create({
-      data: {
-        id: newId(),
-        ownerId,
-        projectId: source.projectId,
-        shotId: null,
-        assetId: asset.id,
-        source: "UPLOAD",
-        promptText: source.promptText || "cropped",
-        entitySnapshot: { entities: [] },
-      },
-    });
-    newGenId = gen.id;
-  });
+    if (!source) return { error: "Not found." };
 
-  return { id: newGenId };
+    // Parse the data URL: data:image/<ext>;base64,<data>
+    const match = dataUrl.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+    if (!match) return { error: "Invalid data URL." };
+    const base64Data = match[2];
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64Data) || base64Data.length % 4 !== 0) {
+      return { error: "Invalid data URL." };
+    }
+    const bytes = Uint8Array.from(Buffer.from(base64Data, "base64"));
+    if (bytes.byteLength === 0) return { error: "Invalid data URL." };
+
+    // Build a File so we can reuse the ingestFile path via storage.put directly
+    // (ingestFile is not exported, so replicate its logic inline)
+    const ext = extFromFilename(`cropped.${match[1]}`);
+    const { contentHash } = await storage.put(ownerId, bytes, ext);
+
+    const assetCreate = {
+      id: newId(),
+      ownerId,
+      contentHash,
+      ext,
+      // 工单 F: byte-derived mime — the data URL's declared image/<ext> is a client claim; the bytes
+      // decide. A crafted data:image/png;base64,<mp4> lands as application/octet-stream, not image/png.
+      mime: resolveUploadMime(bytes.subarray(0, MEDIA_SNIFF_BYTES), ext),
+      sizeBytes: BigInt(bytes.byteLength),
+      originalFilename: `cropped.${ext}`,
+      source: "UPLOAD" as const,
+    };
+
+    let newGenId = "";
+    await prisma.$transaction(async (tx) => {
+      const asset = await tx.asset.upsert({
+        where: { ownerId_contentHash: { ownerId, contentHash } },
+        // resurrect AND realign to the byte-derived canonical values (repairs a poisoned prior row)
+        update: {
+          deletedAt: null,
+          ext: assetCreate.ext,
+          mime: assetCreate.mime,
+          sizeBytes: assetCreate.sizeBytes,
+          originalFilename: assetCreate.originalFilename,
+        },
+        create: assetCreate,
+      });
+      const gen = await tx.generation.create({
+        data: {
+          id: newId(),
+          ownerId,
+          projectId: source.projectId,
+          shotId: null,
+          assetId: asset.id,
+          source: "UPLOAD",
+          promptText: source.promptText || "cropped",
+          entitySnapshot: { entities: [] },
+        },
+      });
+      newGenId = gen.id;
+    });
+
+    return { id: newGenId };
+  });
 }
 
 /**

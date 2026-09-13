@@ -15,7 +15,8 @@ import "server-only";
  */
 import { prisma } from "@fikirtive/db";
 import { displayCredits } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { mergeSettings } from "./owner-settings";
 import { buildSpendHistory, type SpendEntry, type SpendLedgerRow } from "./spend-history";
 
@@ -109,42 +110,44 @@ export async function getSpendOverview(): Promise<SpendOverview | { error: strin
   const owner = await requireOwner();
   if ("error" in owner) return { error: owner.error };
   const { ownerId } = owner;
+  const principal = await resolveUserPrincipal(owner);
+  return runAsUser(principal, async (): Promise<SpendOverview | { error: string }> => {
+    const [organization, account, ledger] = await Promise.all([
+      prisma.organization.findFirst({
+        where: { id: ownerId, deletedAt: null },
+        select: { settings: true },
+      }),
+      prisma.creditAccount.findUnique({ where: { orgId: ownerId }, select: { balance: true, reserved: true } }),
+      recentSpendLedgerRows(ownerId, SPEND_HISTORY_TASK_LIMIT),
+    ]);
+    if (!organization) return { error: "Could not load your organization." };
+    // Charge times display in the merchant's own workspace timezone (the existing Schedule
+    // setting), same rule as the account activity feed.
+    const tz = mergeSettings(organization.settings).timezone;
 
-  const [organization, account, ledger] = await Promise.all([
-    prisma.organization.findFirst({
-      where: { id: ownerId, deletedAt: null },
-      select: { settings: true },
-    }),
-    prisma.creditAccount.findUnique({ where: { orgId: ownerId }, select: { balance: true, reserved: true } }),
-    recentSpendLedgerRows(ownerId, SPEND_HISTORY_TASK_LIMIT),
-  ]);
-  if (!organization) return { error: "Could not load your organization." };
-  // Charge times display in the merchant's own workspace timezone (the existing Schedule
-  // setting), same rule as the account activity feed.
-  const tz = mergeSettings(organization.settings).timezone;
+    // A refId with no prefix is a generation job id; label it by what that job made. Anything
+    // not found here stays uncategorised rather than guessed at (see spendCategoryOf).
+    const jobRefIds = ledger.rows
+      .map((r) => r.refId)
+      .filter((refId): refId is string => !!refId && !refId.includes(":"));
+    const [genJobs, refGenJobs] = jobRefIds.length
+      ? await Promise.all([
+          prisma.genJob.findMany({ where: { ownerId, id: { in: jobRefIds } }, select: { id: true, kind: true } }),
+          prisma.refGenJob.findMany({ where: { ownerId, id: { in: jobRefIds } }, select: { id: true } }),
+        ])
+      : [[], []];
+    const jobKindByRefId = new Map<string, "IMAGE" | "VIDEO">([
+      ...genJobs.map((j) => [j.id, j.kind === "VIDEO" ? "VIDEO" : "IMAGE"] as const),
+      // Reference-image jobs only ever produce images.
+      ...refGenJobs.map((j) => [j.id, "IMAGE"] as const),
+    ]);
 
-  // A refId with no prefix is a generation job id; label it by what that job made. Anything
-  // not found here stays uncategorised rather than guessed at (see spendCategoryOf).
-  const jobRefIds = ledger.rows
-    .map((r) => r.refId)
-    .filter((refId): refId is string => !!refId && !refId.includes(":"));
-  const [genJobs, refGenJobs] = jobRefIds.length
-    ? await Promise.all([
-        prisma.genJob.findMany({ where: { ownerId, id: { in: jobRefIds } }, select: { id: true, kind: true } }),
-        prisma.refGenJob.findMany({ where: { ownerId, id: { in: jobRefIds } }, select: { id: true } }),
-      ])
-    : [[], []];
-  const jobKindByRefId = new Map<string, "IMAGE" | "VIDEO">([
-    ...genJobs.map((j) => [j.id, j.kind === "VIDEO" ? "VIDEO" : "IMAGE"] as const),
-    // Reference-image jobs only ever produce images.
-    ...refGenJobs.map((j) => [j.id, "IMAGE"] as const),
-  ]);
-
-  const entries = buildSpendHistory(ledger.rows, jobKindByRefId, tz);
-  return {
-    balance: displayCredits(account?.balance ?? 0),
-    reserved: displayCredits(account?.reserved ?? 0),
-    entries,
-    window: { taskLimit: SPEND_HISTORY_TASK_LIMIT, returned: entries.length, hasMore: ledger.hasMore },
-  };
+    const entries = buildSpendHistory(ledger.rows, jobKindByRefId, tz);
+    return {
+      balance: displayCredits(account?.balance ?? 0),
+      reserved: displayCredits(account?.reserved ?? 0),
+      entries,
+      window: { taskLimit: SPEND_HISTORY_TASK_LIMIT, returned: entries.length, hasMore: ledger.hasMore },
+    };
+  });
 }

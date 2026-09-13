@@ -4,7 +4,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // decision ① (issue #513 §C1) — the UI's Save button already blocks invalid input, but
 // this is what actually protects the setting if that gate is ever bypassed.
 const mockRequireOwner = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+// 租户围栏收尾片（#464）：owner-settings-actions.ts 现在从这个模块拿 `resolveUserPrincipal`
+// 建帧;单测 mock 掉了整个 `@/lib/auth-guard`，补上 #464 B1 既有的共享 stub（其它切片同款用法）。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mockRequireOwner,
+  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 const mockIsImpersonating = vi.fn();
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 const mockRevalidatePath = vi.fn();

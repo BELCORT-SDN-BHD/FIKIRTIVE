@@ -5,7 +5,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // are pinned deterministically. The 2-org isolation test (isolation.test.ts) already
 // covers the resolver end-to-end against real Postgres.
 const mockRequireOwner = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+// 租户围栏收尾片（#464）：account-actions.ts 现在从这个模块拿 `resolveUserPrincipal` 建帧;
+// 单测 mock 掉了整个 `@/lib/auth-guard`，补上 #464 B1 既有的共享 stub（其它切片同款用法）。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mockRequireOwner,
+  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 // account-actions imports the Better Auth server instance for signOutAction — stub it so the
 // test never constructs the real auth (which pulls in server-only + the prisma adapter).
 const mockSignOut = vi.fn();

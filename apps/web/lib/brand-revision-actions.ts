@@ -1,5 +1,6 @@
 "use server";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { listBrandRevisions, type BrandRevisionRow } from "./brand-revision";
 
 /**
@@ -17,5 +18,6 @@ export async function listBrandRevisionsAction(
   if (typeof r?.id !== "string") return [];
   const gate = await requireOwner();
   if ("error" in gate) return [];
-  return listBrandRevisions(gate.ownerId, kind, r.id);
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, () => listBrandRevisions(gate.ownerId, kind, r.id as string));
 }
