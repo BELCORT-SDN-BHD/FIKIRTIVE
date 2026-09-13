@@ -65,10 +65,23 @@ function testFilesUnder(dir, out = []) {
 // Comments stripped before either pattern is tested, so a docs/specs/… path cited in
 // prose (a JSDoc header, a `//` note) does not count as a read target — the same
 // reason quality-legs.test.sh strips YAML/shell comments before its own scans.
-const BLOCK_COMMENT_RE = /\/\*[\s\S]*?\*\//g;
+//
+// THE OPENING `/*` MUST START ITS OWN LINE (judge review on PR #1428, P2): an
+// unanchored `\/\*[\s\S]*?\*\// let a STRING containing "docs/**" fake a block-comment
+// opener — the two characters "/*" sitting inside prose like `"see docs/** for…"` — and
+// the non-greedy match then ran to the NEXT unrelated "*/" anywhere later in the file,
+// silently deleting every real readFileSync call and docs/ literal in between. This
+// file caught itself: line 20's own `// … real docs/** content reader.` opened a fake
+// comment that a later `*/package.json"` string closed, eating the EXEMPTIONS map, both
+// pattern definitions, and findCandidates() itself — which is why FS_READ_RE stopped
+// matching THIS file's own stripped source (verified by hand before this fix). Anchoring
+// the opener to line-start (optional leading whitespace only) means a `/*` embedded
+// mid-line in a string can never start a comment span — only a real, line-leading block
+// comment can. See the fixture test below, which pins this shape down directly.
+const BLOCK_COMMENT_RE = /(^|\n)\s*\/\*[\s\S]*?\*\//g;
 const LINE_COMMENT_RE = /(^|[^:])\/\/.*$/gm; // never strip after `:` — keeps `https://` intact
 function stripComments(source) {
-  return source.replace(BLOCK_COMMENT_RE, "").replace(LINE_COMMENT_RE, "$1");
+  return source.replace(BLOCK_COMMENT_RE, "$1").replace(LINE_COMMENT_RE, "$1");
 }
 
 const FS_READ_RE = /readFileSync|readdirSync|readFile\(/;
@@ -87,6 +100,16 @@ const EXEMPTIONS = new Map([
     "its readFileSync/readdirSync calls never target docs/** — the only docs/ mention " +
       'is prose inside a `why:` exemption string ("已登记 docs/specs/frontend-baseline.md ' +
       '§5 等 Founder 裁"), never a path argument to a read call.',
+  ],
+  [
+    "scripts/__tests__/docs-scan-inventory.test.mjs",
+    "this file's own readFileSync/readdirSync calls read ci.yml, package.json files under " +
+      "apps/*/packages/*, and other test source files it scans for the SAME heuristic — " +
+      "never docs/** content. The docs/ literal the heuristic finds here is this file's own " +
+      "regex source, EXEMPTIONS reasoning, and fixture strings describing what a docs/** " +
+      "read looks like (the anchored-BLOCK_COMMENT_RE fix above), never a path argument to " +
+      "a read call. Became a candidate only once the BLOCK_COMMENT_RE anchor fix stopped " +
+      "this file's own header comment from fake-opening a block comment over its own body.",
   ],
 ]);
 
@@ -123,12 +146,23 @@ function packageDirs() {
 }
 
 // The docsscan job's `vitest run` steps are one-line `run:` scripts (not YAML block
-// scalars), so a regex over the raw file is exact for this one job — no YAML parser
-// needed for three lines this test does not otherwise care about the shape of.
+// scalars), so a regex over the raw file — once YAML `#` comments are stripped, below —
+// finds exactly these three lines. NOT "a regex over the raw file is exact" outright
+// (judge review on PR #1428, P3): without stripping, a step COMMENTED OUT of the
+// docsscan job (`# run: pnpm --filter … vitest run …`) still matched this regex and
+// counted as wired — self-description too strong, even though quality-legs.test.sh's
+// 3e byte-for-byte canonical comparison already catches any such edit to ci.yml
+// separately, which is why this went unexploited. Stripped here anyway, so this file's
+// own claim matches what it actually checks.
+const YAML_COMMENT_RE = /(^|\s)#.*$/gm; // a `#` at line-start or after whitespace runs to EOL
+function stripYamlComments(source) {
+  return source.replace(YAML_COMMENT_RE, "$1");
+}
+
 const VITEST_RUN_RE = /pnpm --filter (@fikirtive\/[a-z0-9-]+) exec vitest run (.+)$/gm;
 
 function findWired() {
-  const ciSource = readFileSync(WORKFLOW, "utf8");
+  const ciSource = stripYamlComments(readFileSync(WORKFLOW, "utf8"));
   const dirs = packageDirs();
   const out = new Set();
   let match;
@@ -194,4 +228,61 @@ test("docsscan's wired file list matches the independently re-derived docs-conte
       "test's independent re-derivation disagree:\n\n" +
       problems.join("\n\n"),
   );
+});
+
+// ── regression: the B shape (judge review on PR #1428, P2) ───────────────────────
+//
+// Reproduces the exact shape scripts/__tests__/docs-scan-inventory.test.mjs (THIS
+// file, before the anchor fix above) carried for real: a string mentioning "docs/**"
+// as prose supplies a fake block-comment OPENER (the two characters "/*" sitting
+// inside it), and a later, unrelated string containing "*/" supplies the CLOSER —
+// silently deleting every real readFileSync call and docs/ literal sitting between
+// the two, including the ones a fixed reviewer would expect this very heuristic to
+// catch. Pinned directly against stripComments() so a future change to either regex
+// cannot reopen this hole without failing here first.
+test("stripComments does not let a docs/** string fake a block-comment opener that swallows a real read between it and an unrelated later '*/' (the B shape)", () => {
+  const fixture = [
+    '// a comment mentioning docs/** as prose — contains the two chars "/*"',
+    'const REAL_MARKER = "REAL_CODE_SURVIVED";',
+    'const contents = readFileSync(join(HERE, "docs", "specs", "target.md"), "utf8");',
+    'const glob = "apps/*/package.json"; // unrelated string that happens to contain */',
+  ].join("\n");
+
+  const stripped = stripComments(fixture);
+  assert.ok(
+    stripped.includes("REAL_MARKER"),
+    "the docs/** mention above must not fake-open a block comment that swallows the " +
+      "real code below it, up to the unrelated '*/' three lines down — got:\n" + stripped,
+  );
+  assert.ok(
+    FS_READ_RE.test(stripped) && DOCS_LITERAL_RE.test(stripped),
+    "a real readFileSync(…, \"docs/specs/target.md\") between a fake '/*' opener and an " +
+      "unrelated later '*/' must still be found by the candidate heuristic — got:\n" + stripped,
+  );
+});
+
+// ── regression: a commented-out docsscan step must not count as wired ────────────
+// (judge review on PR #1428, P3 — findWired() used to scan ci.yml's raw text, so a
+// step commented out of the docsscan job still matched VITEST_RUN_RE and counted as
+// wired. Backstopped separately by quality-legs.test.sh's 3e byte-for-byte comparison,
+// which is why this was never exploitable — but the fix belongs here too, so this
+// file's own header comment stops overclaiming what the raw-text scan proves.)
+test("stripYamlComments removes a commented-out 'vitest run' step so it cannot count as wired", () => {
+  const fixture = [
+    "      - name: docs-content gates — packages/example",
+    "        # run: pnpm --filter @fikirtive/example exec vitest run src/rogue.test.ts",
+    "      - name: docs-content gates — packages/core",
+    "        run: pnpm --filter @fikirtive/core exec vitest run src/founder-alert-docs.test.ts",
+  ].join("\n");
+
+  const stripped = stripYamlComments(fixture);
+  const matches = [...stripped.matchAll(VITEST_RUN_RE)];
+  assert.equal(
+    matches.length,
+    1,
+    "a step commented out with '#' must not match VITEST_RUN_RE — only the live " +
+      "founder-alert-docs.test.ts step should — got matches:\n" +
+      matches.map((m) => `    ${m[0]}`).join("\n"),
+  );
+  assert.match(matches[0][0], /founder-alert-docs\.test\.ts$/);
 });

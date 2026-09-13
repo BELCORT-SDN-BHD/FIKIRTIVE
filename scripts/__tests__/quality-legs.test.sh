@@ -1681,6 +1681,14 @@ done
 [[ "$(fan_in_exit success true true "${every_leg_success[@]}" DOCS_SCAN_RESULT=success)" != "0" ]] \
   || fail "ci.yml's fan-in PASSES a code-touching run where docsscan ran anyway — it and the five legs disagree about what this run was"
 
+# The DOCS_SCAN_* mirror of the LEG_RESULT_ROGUE check above (#1431, judge review on
+# PR #1428, P3): ci.yml's fan-in sweeps ${!DOCS_SCAN_@} the same way it sweeps
+# ${!LEG_RESULT_@}, on its OWN two-prefix reasoning (a stray variable in either sweep
+# would be a gate whose result the fan-in silently discarded) — but until now nothing
+# here exercised it as behaviour, only LEG_RESULT_ROGUE was.
+[[ "$(fan_in_exit success true true "${every_leg_success[@]}" DOCS_SCAN_ROGUE=success)" != "0" ]] \
+  || fail "ci.yml's fan-in PASSES a run carrying a DOCS_SCAN_* variable it does not judge — a rogue docs-scan variable wired in but never compared is a gate nobody reads"
+
 # ── 3e. THE VERDICT — the whole of ci.yml, byte for byte ─────────────────────
 # Everything above this line asks ci.yml a list of questions. This asks it none: the
 # parsed workflow is serialized canonically and compared, whole, against the literal
@@ -1873,7 +1881,7 @@ expected_jobs_canonical="$(
       },
       {
         "name": "docs-content gates — apps/web",
-        "run": "pnpm --filter @fikirtive/web exec vitest run lib/__tests__/northstar-shell-purge.test.ts lib/__tests__/signin-acceptance-map.test.ts lib/__tests__/design-system-data-patterns.test.ts lib/__tests__/dashboards-runbook.test.ts lib/__tests__/reconcile-actions.test.ts"
+        "run": "pnpm --filter @fikirtive/web exec vitest run lib/__tests__/northstar-shell-purge.test.ts lib/__tests__/signin-acceptance-map.test.ts lib/__tests__/design-system-data-patterns.test.ts lib/__tests__/dashboards-runbook.test.ts lib/__tests__/reconcile-actions.test.ts lib/__tests__/understanding-disclosure.test.ts"
       },
       {
         "name": "docs-content gates — packages/otto",
