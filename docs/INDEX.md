@@ -5,7 +5,7 @@
 ## 现役权威
 
 - `BLUEPRINT.md` —— Founder 北极星；`scripts/check-margin-floor.mjs:16` 引其毛利条款作宪法出处。
-- `specs/` —— 现行规格的家；`scripts/ci/process-gates.sh`（M1/M5）与 `scripts/tools/spec-status.sh` 硬编码此路径，只收平铺的 `.md` 与两块豁免板 `.txt`。
+- `specs/` —— 现行规格的家；`scripts/tools/spec-status.sh` 硬编码此路径，平铺的 `.md` 与两块豁免板 `.txt`。
 - `adr/` —— 长期工程决定；`0001` 被 `packages/db/prisma/migrations/20260621130000_entitytype_brandmark/migration.sql` 引，`0003` 被 `packages/core/src/runtime-config.ts`、`packages/generation/src/index.ts`、`apps/web/lib/admin-actions.ts` 引。
 - `references/` —— 产品与 feature 参考资料入口；`.claude/CLAUDE.md` 点名它作为任务开工时的选读来源。
 - `agents/` —— gh 操作惯例（`issue-tracker.md`、`triage-labels.md`）与领域词汇（`domain.md`），agent 开工时按需读。
@@ -37,5 +37,5 @@
 
 ## 冻结区与 archive
 
-- `superpowers/` —— 冻结历史区。`scripts/ci/process-gates.sh:390-393` 拦住任何新增与修改，`README.md` 除外。
+- `superpowers/` —— 冻结历史区，只读不改（`README.md` 除外）。
 - `archive/` —— 历史场地文档，只读参考。读法见 `archive/README.md`。

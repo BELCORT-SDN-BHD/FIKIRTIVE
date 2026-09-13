@@ -26,22 +26,18 @@
 - 产品方向、身份、用户行为和验收改变由 Founder 决定。实现细节在不改变这些决定时由开发者按最简单可靠方案处理。
 - specs 与工程文档使用华语；UI copy 使用 English sentence case。
 
-## 开发流程（Founder 2026-08-28 批准《开发作业手册》；机器闸在 `.github/workflows/process-gates.yml`）
+## 开发流程（Founder 2026-09-13 裁决：废止 2026-08-28《开发作业手册》，流程全走 mattpocock 技能族）
 
-1. 产品改动先查 `docs/specs/` 对应规格；没有已冻结的 S1 不写产品代码——第一动作是 grill Founder 产出规格草案（模板 `docs/specs/TEMPLATE.md`）。轻挡除外：零商家可见行为变化的改动，在 PR 描述写一行 `轻改: <勾选句>`；钱路／迁移／登录租户／新路由无论自报什么挡，一律要规格引用（M1 路径地板）。「已交付 · 归档」的规格只能作轻改引用（PR 同时带 `轻改:` 句，用于交付后零行为变化的维护）；要改行为须新冻结规格（Founder 2026-09-02 裁决，触发＝#1127 被 M1 拦）。
-2. 一个 session 只推进一个功能的一个阶段（签 S1、批 S2、或勾 S5），做完即收。
-3. 产出物只存 `docs/specs/` 对应文件，规格只在主干上有效——长期分支先把规格以 docs-only PR 合进主干再开工。聊天记录、临时目录、会话记忆都不是权威。
-4. 冻结三步：① Founder 本人（GitHub 账号 `nicksgan-belcort`）在功能 issue 评论「S1 批准 <规格文件名>」（签名必须点名文件；agent 代记无效，机器闸校验作者与文件名）；② 规格状态行改「已冻结 · v1」；③「批准:」行填该 issue 完整链接。状态词只有三个：草稿／已冻结 · v<n>／已交付 · 归档。S1 冻结票保持开启承载签名与「S5 打回」记录，规格转「已交付 · 归档」时随之关闭；已提前关闭的旧票不重开，签名在关票中同样有效（Founder 2026-09-12 清账场裁决，地图 #1357）。
-5. Founder 中途新想法只有三个出口：登记进规格「变更登记」节（默认）／明示取消（报废物清单＋旧实现同 PR 删除）／做完再转。禁止任务悄悄变形；方向级推翻须隔夜＋四行推翻单（推翻什么／为什么／报废约多少行／受影响围栏清单）。
-6. 验收只认冻结版验收表；表外不满登记后走下一循环。S5 打回一条验收时，在功能 issue 评论独立成行写「S5 打回 <编号>」（自毁开关据此计数）。阶段性 commit + push，任何时刻 GitHub 上都有副本。
-7. 其余机器闸的可操作口径：验收编号必须逐字出现在测试里（M3，`it.todo` 可占位）；新引入 `BETA_*`／`*_ENABLED` 开关必须在 PR 描述带「保留理由: + 失效日期: YYYY-MM-DD」（M4）；`docs/specs/` 平铺、prisma 迁移守形状、`docs/superpowers/` 冻结（M5）；改闸门文件本身要在 PR 描述自报一行「闸门改动: <理由>」。开场自动打出的规格状态清单来自 SessionStart hook（`scripts/tools/spec-status.sh`，只读注入，不是被禁的 orchestration overlay）。
+1. 循环 = grilling → to-spec → to-tickets（跨 session 的场用 wayfinder 地图）→ tdd / implement → code-review。地板在全局家规 §7.4：重挡先有规格、Founder 批准后动工、中途想法进规格「变更登记」节等 Founder 批裁。
+2. 规格存 `docs/specs/`（模板 `docs/specs/TEMPLATE.md`），只在主干上有效——先以 docs-only PR 合进主干再开工。批准记录 = 规格文件里一行带日期的「批准:」行，注明 Founder 点头的出处（对谈或 issue 链接）。存量规格的「状态: 已冻结/已交付」行是历史记录，读作已批准；状态词汇不再维护。
+3. 规矩冲突记录（全局家规 §7 要求，范围=本仓库，勿再作 drift 上报）：2026-09-13 Founder 裁决删除《开发作业手册》全套机器——process-gates.yml（M1 规格引用/M2 冻结形状/M3 验收编号进测试/M4 开关失效日期/M5 目录守形）、process-heartbeat.yml（自毁开关）、S1–S5 阶段词汇、GitHub 签名冻结三步、「轻改:」「闸门改动:」PR 行；主干 ruleset 的 required checks 同日改为 quality + e2e。全局家规 Harness 节点名的 spec-reference 与 acceptance-to-test-mapping 两道 required checks 随之下线，为 Founder 有记录的例外。验收仍逐条对照规格验收表（全局 §7.4），由 agent 与 code-review 把关，不再由 CI 强制。
 
 ## 里程碑制（Founder 2026-09-09 裁定；决策记录 = 整理地图 https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1285 及其子票）
 
-1. 一个版本 = 一个 GitHub 里程碑，顺序固定：里程碑场（`/mattpocock-skills:wayfinder` 出决定票，逐票拍板；开场先把 `idea` 票与到期延后项摆上桌让 Founder 下注）→ 出规格 → 拆票 → agent 施工 → S5 验收 → 收版。本仓库的两处接缝：`to-spec` = 写 `docs/specs/<名>.md` 按 TEMPLATE，不发 issue，冻结照上节第 4 条；`to-tickets` = 每票带 `Spec:` 行、覆盖的验收编号、当前里程碑、`ready-for-agent`，无规格的整理票改写一行 `轻改:` 句。
-2. 人管五样，其余归 agent 与机器闸：方向（`docs/BLUEPRINT.md`、`docs/adr/`、`CONTEXT.md`）、规格签名、下注、验收、规矩（本文件）。要动这五样先问 Founder。
-3. 版本号在里程碑场按本轮范围定，agent 推荐一档、Founder 拍板：补丁 = 修补与小功能；小版 = 大节点或新面；大版 = 商业模式级。收版 = 里程碑票全关 + S5 全勾 → `git tag vX.Y.Z` + GitHub Release + `CHANGELOG.md` 一版一节（交付的规格、关掉的票、链接）。package.json 版本号不动。
-4. 不属于任何已冻结规格的中途想法进三个柜子（属于某规格的照上节第 5 条进其变更登记）：`idea` 标签 = 还没决定做不做，不挂里程碑、不标可派，最少三行（一句话构思 / 商家场景 / 来源），idea 场 = 短 grilling 出一张票、不施工；`docs/DEFERRED.md` = 已决定做、等触发条件；`polish` 标签 = 已有功能的打磨，不排期。
+1. 一个版本 = 一个 GitHub 里程碑，顺序固定：里程碑场（`/mattpocock-skills:wayfinder` 出决定票，逐票拍板；开场先把 `idea` 票与到期延后项摆上桌让 Founder 下注）→ 出规格 → 拆票 → agent 施工 → 验收 → 收版。本仓库的两处接缝：`to-spec` = 写 `docs/specs/<名>.md` 按 TEMPLATE，不发 issue，批准照上节「开发流程」；`to-tickets` = 每票带 `Spec:` 行、覆盖的验收编号、当前里程碑、`ready-for-agent`。
+2. 人管五样，其余归 agent：方向（`docs/BLUEPRINT.md`、`docs/adr/`、`CONTEXT.md`）、规格批准、下注、验收、规矩（本文件）。要动这五样先问 Founder。
+3. 版本号在里程碑场按本轮范围定，agent 推荐一档、Founder 拍板：补丁 = 修补与小功能；小版 = 大节点或新面；大版 = 商业模式级。收版 = 里程碑票全关 + 验收表全勾 → `git tag vX.Y.Z` + GitHub Release + `CHANGELOG.md` 一版一节（交付的规格、关掉的票、链接）。package.json 版本号不动。
+4. 不属于任何已批准规格的中途想法进三个柜子（属于某规格的进其「变更登记」节）：`idea` 标签 = 还没决定做不做，不挂里程碑、不标可派，最少三行（一句话构思 / 商家场景 / 来源），idea 场 = 短 grilling 出一张票、不施工；`docs/DEFERRED.md` = 已决定做、等触发条件；`polish` 标签 = 已有功能的打磨，不排期。
 5. 交接：有地图或里程碑 issue 的场，那张 issue 就是交接书；记忆库只存指针（工件指针 / 环境陷阱 / Founder 常令），历史现场移出索引。
 
 ## 前端接线与设计变更
@@ -66,5 +62,5 @@
 ## 保持简单
 
 - Agent 编排使用运行环境提供的能力；仓库内不建立 orchestration overlay、task claim、model identity、reviewer topology 或 merge-executor harness。
-- GitHub issue、PR、worktree、cache、memory 和本地 session 都是工作载体，不是产品或执行权威。唯一例外：Founder 本人在功能 issue 下的「S1 批准」评论，是规格冻结的批准记录（见「开发流程」第 4 条）。
+- GitHub issue、PR、worktree、cache、memory 和本地 session 都是工作载体，不是产品或执行权威；规格的批准记录在规格文件自身的「批准:」行（见「开发流程」）。
 - `docs/references/` 保存产品洞察，但不自动授予范围、优先级或批准。
