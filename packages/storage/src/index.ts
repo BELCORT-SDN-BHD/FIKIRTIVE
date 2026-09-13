@@ -93,8 +93,10 @@ export interface Storage {
    *  uploads land bytes straight in the content bucket (presigned PUT/multipart), so `put()`'s
    *  own replicateToBackup never runs for them. Call this from finalize, once the size re-check
    *  has confirmed the object is real. Same fail-open contract as replicateToBackup: retries
-   *  once, then logs `media_backup_replication_failed` and returns — NEVER throws. No-op when
-   *  backup replication is unconfigured (LocalDiskStorage; R2Storage with no backup client). */
+   *  once, then logs `media_backup_replication_failed` and returns — never throws ON
+   *  BACKUP-SIDE FAILURE; a malformed key is a programmer error and still throws, same as
+   *  `exists()`/`deleteObject()`. No-op when backup replication is unconfigured
+   *  (LocalDiskStorage; R2Storage with no backup client). */
   copyToBackup(key: string): Promise<void>;
   /* ---- browser-direct upload (r2 only; local throws — gate on
      supportsDirectUpload) ---- */
