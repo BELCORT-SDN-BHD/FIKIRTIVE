@@ -16,8 +16,9 @@ export async function listBrandRevisionsAction(
   const r = raw as { kind?: unknown; id?: unknown };
   const kind = r?.kind === "record" ? "record" : "memory";
   if (typeof r?.id !== "string") return [];
+  const recordId = r.id;
   const gate = await requireOwner();
   if ("error" in gate) return [];
   const principal = await resolveUserPrincipal(gate);
-  return runAsUser(principal, () => listBrandRevisions(gate.ownerId, kind, r.id as string));
+  return runAsUser(principal, () => listBrandRevisions(gate.ownerId, kind, recordId));
 }
