@@ -673,6 +673,15 @@ jobs:
   # considered and rejected: it would make a docs-only PR pay close to what a
   # code-touching one does, which is the cost this job exists to avoid.
   #
+  # #1431 (judge review on #1428, P2) found a THIRD file the same way, one level up:
+  # the re-derivation's own comment-stripping regex was unanchored, so a `/*`-looking
+  # substring inside a "docs/**" prose mention could fake-open a block comment that ran
+  # to some unrelated later `*/`, silently deleting real code in between — including,
+  # in lib/__tests__/understanding-disclosure.test.ts, the readFileSync call and
+  # "docs/specs/money-engine.md" literal behind its EXEMPTIONS' `spec` field. Anchoring
+  # the regex (docs-scan-inventory.test.mjs) surfaced it as a real, previously-invisible
+  # gap — added below alongside the other five apps/web files.
+  #
   # No Postgres: none of the files below import Prisma or otherwise touch a database
   # (confirmed by running each of them with DATABASE_URL unset, and again with it set
   # to a URL nothing is listening on), so the service container every leg above
@@ -687,9 +696,8 @@ jobs:
   # not instant the way it was before #1356 — it is one short job (well under a
   # minute, measured locally) instead of skipping to green in the few seconds `scope`
   # takes, in exchange for not merging the #1351 shape of bug silently again. What it
-  # is NOT paying is any part of the five legs' 8-13 minute wall clock (see the "why
-  # these five" table above) — that is the cost this job exists to avoid, not zero
-  # cost outright.
+  # is NOT paying is any part of the five legs' wall clock — that is the cost this
+  # job exists to avoid, not zero cost outright.
   docsscan:
     name: docsscan
     needs: scope
@@ -728,7 +736,7 @@ jobs:
       # build" gate, on leg `all`).
       - run: pnpm --filter "./packages/*" build
       - name: docs-content gates — apps/web
-        run: pnpm --filter @fikirtive/web exec vitest run lib/__tests__/northstar-shell-purge.test.ts lib/__tests__/signin-acceptance-map.test.ts lib/__tests__/design-system-data-patterns.test.ts lib/__tests__/dashboards-runbook.test.ts lib/__tests__/reconcile-actions.test.ts
+        run: pnpm --filter @fikirtive/web exec vitest run lib/__tests__/northstar-shell-purge.test.ts lib/__tests__/signin-acceptance-map.test.ts lib/__tests__/design-system-data-patterns.test.ts lib/__tests__/dashboards-runbook.test.ts lib/__tests__/reconcile-actions.test.ts lib/__tests__/understanding-disclosure.test.ts
       - name: docs-content gates — packages/otto
         run: pnpm --filter @fikirtive/otto exec vitest run evals/acceptance-map.test.ts
       - name: docs-content gates — packages/core
