@@ -13,7 +13,7 @@
  * Conditioning = the @mentioned entities' reference images, resolved here from
  * the job's entityIds (D19 trust boundary).
  */
-import { type Prisma, prisma, settleCredits, refundReservation, settleCanvasCardsForGenJob, type GenJob, type RefundOutcome } from "@fikirtive/db";
+import { Prisma, prisma, settleCredits, refundReservation, settleCanvasCardsForGenJob, type GenJob, type RefundOutcome } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   storageKey,
@@ -64,7 +64,10 @@ import { workerPlan } from "../plan.js";
 // #1435(零排队①)—— `chargedError` 是同一把「结果不明⇒按已计费」的尺子,视频恢复轮询那一路
 // 判定「超过提交时刻+供应商侧期限仍未终态」时要抛同一种错误,不能自己另编一套标记。
 // `VIDEO_SUBMISSION_ABANDON_MS` 是那把尺子的刻度,唯一定义在 byteplus.ts,这里只读。
-import { providerRequestGate, chargedError, VIDEO_SUBMISSION_ABANDON_MS } from "@fikirtive/generation";
+// #1435 判官初审 P1-3 —— `VIDEO_MERCHANT_WAIT_MS`(15m)是另一把独立的尺子:商家可见的
+// resume-poll 主路用它判「等太久」,`VIDEO_SUBMISSION_ABANDON_MS`(65m)只留给下面
+// `isGenRowStale`(清道夫消息丢失兜底)。两者分工的完整账见 byteplus.ts 该常量自己的注释。
+import { providerRequestGate, chargedError, VIDEO_SUBMISSION_ABANDON_MS, VIDEO_MERCHANT_WAIT_MS } from "@fikirtive/generation";
 // FSE-001(Founder 2026-09-09)—— 商品参考图放大用的唯一图像库。仓库里本来就有它
 // (`next` 的 optionalDependency),这里把它提成 worker 的直接依赖,免得放大逻辑靠一条
 // 传递依赖活着。不引第二个图像库:视频那条路的 ffmpeg 是外部二进制,与这里无关。
@@ -1223,9 +1226,16 @@ export async function reapStaleGenJobs(): Promise<number> {
     //
     // #1435 —— no `startedAt` filter at the SQL level any more (see `isGenRowStale` above for
     // why): a healthy in-flight video's claim time can be far older than GEN_REAP_MS while it is
-    // merely parked between scheduled polls. GENERATING+empty-outputs rows are always a small
-    // set (bounded by gen concurrency across however many worker replicas are running), so the
-    // wider scan — filtered precisely in JS below — is cheap.
+    // merely parked between scheduled polls.
+    //
+    // 判官初审 P3-8 —— 这一批 GENERATING+empty-outputs 行的真实上界**不再是**「gen 队列并发
+    // × 副本数」:那个界限管的是「同时占着 gen 队列施工位的作业数」,而 #1435 之后,一条在飞
+    // 视频恰恰**不**占着施工位(提交后就放手),它能在 GENERATING 状态里停留的时间也不再受
+    // 队列并发约束,只受 `VIDEO_SUBMISSION_ABANDON_MS`(65m)约束——真实上界是**全平台**
+    // 在这 65m 窗口内累计提交过的视频总数(跨全部商家、不受任何单一队列并发数限制)。这批行
+    // 依旧便宜到可以整批扫:每一行都是一个精简的 select(没有 JOIN、没有大字段),65m 窗口
+    // 内的视频提交量即使在业务量上升后也远不到需要分页扫描的规模,只是"便宜"的理由要改口,
+    // 不能再引用一个已经不成立的并发上界。
     const stuckCandidates = await prisma.genJob.findMany({
       where: { ownerId: { not: "" }, status: "GENERATING", generationIds: { isEmpty: true } },
       select: { id: true, ownerId: true, threadId: true, kind: true, model: true, startedAt: true, videoOptions: true },
@@ -1238,12 +1248,23 @@ export async function reapStaleGenJobs(): Promise<number> {
       await runAsTenant(job.ownerId, async () => {
         await prisma.$transaction(async (tx) => {
           // #1435 —— the WHERE no longer re-asserts a fixed `startedAt < cutoff` (there is no
-          // longer a single cutoff — see `isGenRowStale`): the real CAS safety here is `status:
-          // "GENERATING"` + `generationIds: { isEmpty: true }`, exactly the same guard every
-          // other conditional write in this file relies on to avoid clobbering a row that moved
-          // on between the SELECT above and this UPDATE.
+          // longer a single cutoff — see `isGenRowStale`), but it must still re-assert the exact
+          // `startedAt` this row had at SELECT time(判官 P1-2): `status:"GENERATING"` +
+          // `generationIds:{isEmpty:true}` alone are NOT enough of a snapshot — a row that got
+          // reclaimed (a crash → requeue-to-QUEUED → a later delivery re-claims it, writing a
+          // FRESH `startedAt`) between the SELECT above and this UPDATE is *also* still
+          // `status:"GENERATING"` with empty `generationIds`, so without an `startedAt` guard
+          // this CAS would happily fail-close+refund a job that is, at the moment this write
+          // actually runs, a perfectly healthy, freshly-reclaimed in-flight attempt — the judge
+          // measured this at 37/40 rows on a synthetic reclaim-storm. Re-checking `startedAt`
+          // against the value the SELECT captured makes this the same snapshot-CAS every other
+          // destructive write in this file already uses: any reclaim in between changes
+          // `startedAt`, the WHERE misses, the row is left alone, untouched. A video row polled
+          // between scheduled checks never has its `startedAt` touched (it stays GENERATING the
+          // whole time — reclaim only happens after a status round-trip through QUEUED), so this
+          // adds zero false negatives for the in-flight-video case `isGenRowStale` exists for.
           const staled = await tx.genJob.updateMany({
-            where: { id: job.id, ownerId: job.ownerId, status: "GENERATING", generationIds: { isEmpty: true } },
+            where: { id: job.id, ownerId: job.ownerId, status: "GENERATING", generationIds: { isEmpty: true }, startedAt: job.startedAt },
             data: { status: "FAILED", error: "stale GENERATING reaped — worker hung or crashed; refunded", finishedAt: new Date() },
           });
           if (staled.count > 0) { await refundReservation(tx, { orgId: job.ownerId, refId: job.id }); failedClosed = true; }
@@ -1477,7 +1498,18 @@ export async function shouldDeferGenClaimForFairness(
   if (ageMs >= GEN_FAIRNESS_DEFER_MAX_AGE_MS) return false;
 
   const cap = slots - 1;
-  const myInFlight = await prisma.genJob.count({ where: { ownerId: job.ownerId, status: "GENERATING" } });
+  // 判官初审 P3-13 —— #1435 之后,「这个商家占了几个 gen 槽位」不再等于「这个商家有几行
+  // GENERATING」:一条已经提交过、正在等下一次计划轮询的视频(`videoOptions.providerTask`
+  // 标记齐全)不占任何 gen 队列施工位,把它算进 myInFlight 会让这个商家被判定"已经占满 N-1"
+  // 而被误让位,即便他此刻真正占着的槽位数远没到 N-1。用 Prisma 的 JSON 路径过滤把这一类
+  // 行排除出计数——只数"真的占着一格"的行:所有 IMAGE 的 GENERATING 行,加上还没提交出
+  // 标记的 VIDEO 行(claim 到第一次 submitVideo 之间那一小段,同样真占位)。
+  const myInFlight = await prisma.genJob.count({
+    where: {
+      ownerId: job.ownerId, status: "GENERATING",
+      NOT: { AND: [{ kind: "VIDEO" }, { videoOptions: { path: ["providerTask", "id"], not: Prisma.DbNull } }] },
+    },
+  });
   if (myInFlight < cap) return false; // 这个商家自己还没占满 N-1——常态,先到先得
 
   // 判官安全定向 5b —— 存在性判据用 findFirst,找到一行就够,不必数出总数。
@@ -1520,6 +1552,17 @@ export const GEN_FAIRNESS_DEFER_MAX_AGE_MS = 1000 * 60 * 15;
  * 轮询在 ~2 req/s、150 次、约 79 秒的包络内零 429。10s 一次远在这个包络之内,而且比「原地
  * 轮询每 5 秒一次」更稀疏——不再需要密集轮询,因为不再需要在同一次调用里等到终态,商家感知
  * 到的完成延迟只多这一轮的余量(≤10s),换来的是施工位在这段等待里完全空出来。
+ *
+ * 判官初审 P3-9 —— 上面那句探针数字量的是**单条视频**被反复轮询时的速率(一条任务、一个
+ * GET 循环),不是这个常量真正决定的东西:真正的速率是**全平台同时在飞的视频总数** N 除以
+ * 这个间隔——每条在飞视频每 10s 各发一次自己的 GET,N 条并发就是聚合 N/10 req/s。按探针
+ * 验过的 ~2 req/s 包络倒推,`N ≤ 20` 时聚合速率仍在实测范围内;`N > 20` 就是外推到探针没有
+ * 验证过的区间。后果依旧安全,不是money 安全的问题:一次 GET 撞到限速回来的是非 2xx/网络
+ * 层失败,`pollVideo` 把这类结果一律读成 `pending`(不是 `failed`,更不是 `succeeded`)——
+ * 该视频只是这一轮没查到最新状态,下一轮(10s 后)重试,`VIDEO_MERCHANT_WAIT_MS`(15m)的
+ * 商家口径钟照常走,不会被误判成任何终态。真实代价只是「发现完成得慢了一点」,不是误收费
+ * 或误退款——但 N 到多大之前这条依旧成立、要不要在闸门饱和时把间隔动态拉长,是没有验证过的
+ * 事,不是这份实现能替 Founder 下的判断。
  */
 export const GEN_VIDEO_POLL_DELAY_SECONDS = 10;
 
@@ -1750,13 +1793,19 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
         const poll = await provider.pollVideo(videoProviderTask.id, { returnLastFrame: true });
         if (poll.status === "pending") {
           const submittedAtMs = Date.parse(videoProviderTask.submittedAt);
-          // QUEUE-A6 —— 判「等太久」的钟从**提交时刻**走,不是从 claim 时刻走(上面那把旧尺子
-          // 的问题)。刻度是供应商自己的终止钟(execution_expires_after=3600s,byteplus.ts)
-          // 加安全边际——过了这个点,连引擎自己都该已经把它判成 `expired` 了;仍然只读到
-          // pending,只能是结果不明,按已计费处理(house rule:outcome unknown ⇒ billed)。
-          if (Number.isFinite(submittedAtMs) && Date.now() - submittedAtMs > VIDEO_SUBMISSION_ABANDON_MS) {
+          // #1435 判官初审 P1-3 —— 判「等太久」的钟从**提交时刻**走,不是从 claim 时刻走
+          // (QUEUE-A6,修的是上面那把旧尺子的问题),但刻度改用商家可见的产品口径
+          // `VIDEO_MERCHANT_WAIT_MS`(15m),不是消息丢失兜底用的 `VIDEO_SUBMISSION_ABANDON_MS`
+          // (65m,只留给下面 `isGenRowStale`)。两把尺子分工的完整账见 byteplus.ts 里
+          // `VIDEO_MERCHANT_WAIT_MS` 自己的注释——这里只需要知道:这一单必须**活不到**引擎
+          // 自己 60m 的终止钟,才能让 `poll.status==="failed"` reason=expired 那条分支(下面,
+          // PLAIN 错误 ⇒ requeue ⇒ 下一次投递读不到标记 ⇒ 当成全新提交重来一次)彻底没有机会
+          // 被走到——那条链子判官实测能在 `GEN_RETRY_LIMIT` 次重投预算内让同一单真的重新付费
+          // 提交最多 3 次,而 "expired 官方口径 $0" 这件事探针从未实测过。过线抛 chargedError,
+          // 终态 FAILED + 退款,结果不明按已计费处理(house rule:outcome unknown ⇒ billed)。
+          if (Number.isFinite(submittedAtMs) && Date.now() - submittedAtMs > VIDEO_MERCHANT_WAIT_MS) {
             throw chargedError(
-              `generation provider video task did not reach a terminal state within ${VIDEO_SUBMISSION_ABANDON_MS}ms of submission — outcome unknown, treated as billed`,
+              `generation provider video task did not reach a terminal state within ${VIDEO_MERCHANT_WAIT_MS}ms of submission — outcome unknown, treated as billed`,
             );
           }
           return { awaitingVideoPoll: true, requeueAfterSeconds: GEN_VIDEO_POLL_DELAY_SECONDS, carriedRetryCount: effectiveRetryCount };
@@ -1765,6 +1814,15 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
           // #661 —— 引擎明确报告没出片(expired/failed/cancelled),官方口径下没扣钱。摘掉
           // 标记好让这一单自然的重投去提交一个**全新**任务(见 clearVideoProviderTaskBestEffort
           // 的注释),抛的是同一句 PLAIN 错误——走下面既有的 requeue/终态逻辑,一字未改。
+          //
+          // #1435 判官初审 P1-3 —— `VIDEO_MERCHANT_WAIT_MS`(15m)生效之后,这条分支里
+          // reason==="expired" 的那一半在**正常轮询节奏**下实质上又变回了死代码:15m 的
+          // chargedError 会先一步终态这一单,这一单根本活不到引擎自己 60m 的 `execution_
+          // expires_after` 终止钟,所以正常情况下不会再真的读到一次 expired 的 poll 结果。
+          // **不删这个分支**,原因有二:①它同时接住 reason 不是 "expired" 的其它终态失败
+          // (供应商真的更早就报了 failed/cancelled,不受 15m 这把尺子约束,依然是活路);
+          // ②它是对「引擎自己的终止钟万一比 15m 更短、或万一配置漂移」这类情形的防御性兜底——
+          // 保留它,不多花一分钱去验证一条今天走不到的路,但也不因为走不到就拆掉这道闸。
           await clearVideoProviderTaskBestEffort(job);
           throw new Error(`generation provider video task ${poll.reason}`);
         }
@@ -2246,6 +2304,27 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
             }
             return;
           }
+          // 判官初审 P2-5 —— exhausted retries on a genuine DB/transient issue: the outer catch
+          // terminal-fails + refunds (spent=true already set, so it is recorded as a post-charge
+          // failure) — the merchant is money-safe either way, but until now this path was silent:
+          // the provider genuinely already accepted and billed `providerTaskId`, and nobody will
+          // ever poll it (the marker never got persisted, so no future delivery can find it), yet
+          // no alert fired. Same shape as the REDELIVERY_DISCARD branch just above, and same
+          // discipline: alerting must never change where this branch goes, so it is wrapped in its
+          // own try/catch and the `throw e` below always runs regardless of whether the alert
+          // itself succeeds.
+          console.warn(`[gen] ${job.id}: video providerTask write exhausted its retry budget (${e instanceof Error ? e.message : String(e)}) — the video task that just got accepted (${providerTaskId}) is now orphaned; nobody will poll it. This delivery terminal-fails + refunds the merchant; the platform absorbs the engine cost.`);
+          captureMoneyPathError(e, { event: "gen.founder_absorbed_engine_cost", jobId: job.id, orgId: job.ownerId, kind: job.kind, model: job.model });
+          try {
+            await founderAlert({
+              key: "gen.founder_absorbed_engine_cost",
+              title: `The platform paid for a video task nobody will poll (marker-persist retries exhausted) — job ${job.id}`,
+              action: "No merchant action needed — this delivery refunds them. Log the platform loss in docs/ops/manual-money-ledger.md (event = 吸收引擎成本) with the job id and the USD below.",
+              context: { jobId: job.id, orgId: job.ownerId, kind: job.kind, model: job.model, providerTaskId, absorbedUsd: genSpentUsd(genSpendArgsOf(job)) },
+            });
+          } catch (alertErr) {
+            console.error(`[gen] ${job.id}: absorbed-cost alert failed (the terminal-fail+refund itself still proceeds):`, alertErr);
+          }
           throw e; // exhausted retries on a genuine DB/transient issue — the outer catch terminal-fails + refunds (spent=true already set, so it is recorded as a post-charge failure)
         }
         console.log(`[gen] ${job.id}: video task submitted (${providerTaskId}) — releasing the worker slot, next poll in ${GEN_VIDEO_POLL_DELAY_SECONDS}s`);
@@ -2436,8 +2515,22 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
             // queries read Generation), so a plain `return` would COMMIT them = a free delivery.
             // Rolling back discards them; the founder absorbed the engine cost, the merchant stays
             // refunded (no free delivery, no DONE-vs-REFUND mismatch). The outer catch handles it.
+            // 判官初审 P2-4 —— `generationIds:{isEmpty:true}` 补进这条 CAS 的 WHERE:没有它,
+            // 两趟**并发**投递(都读到同一行 GENERATING、都各自真的跑完了 storage.put +
+            // asset.upsert + generation.create,`newId()` 是随机 id,两边的 Generation 行
+            // 天然不同)会先后都命中这句 `status:"GENERATING"`——先到的写完 `generationIds`
+            // 之后,行依旧是 GENERATING(状态要等这段事务提交后才翻 DONE),后到的这句 CAS
+            // 只看 status 照样匹配,把先到那份 generationIds 覆盖成自己的,先到那份创建的
+            // Generation/Asset 行从此在 GenJob 上失去引用——但它们仍然是**商家可见**的行
+            // (project media / candidate 查询直接按 ownerId/projectId 读 Generation,不经过
+            // 任何 GenJob 引用),商家因此会看到本该只出一份的产出**凭空多出一份**孤儿。钱
+            // 路本身不受影响(`settleCredits` 自己的 `settle:<refId>` 唯一索引已经让第二笔
+            // 结算恒为 no-op),这纯粹是一次产出可见性的双落库。补上 generationIds:isEmpty
+            // 之后,后到的这句 CAS 会因为此刻 generationIds 已经不再是空的而匹配 0 行,连同
+            // 它自己刚创建的 Generation/Asset 行一起,被下面的 REDELIVERY_DISCARD 整体回滚
+            // ——干净放弃,不产生孤儿。
             const marked = await tx.genJob.updateMany({
-              where: { id: job.id, ownerId: job.ownerId, status: "GENERATING" },
+              where: { id: job.id, ownerId: job.ownerId, status: "GENERATING", generationIds: { isEmpty: true } },
               data: { generationIds: ids, spent: true, spentUsd: genSpentUsd(genSpendArgsOf(job)) },
             });
             if (marked.count === 0) throw REDELIVERY_DISCARD;
@@ -2452,6 +2545,22 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
           // discard sentinel and ROLLED BACK (no Asset/Generation rows persisted). Discard
           // cleanly — never retry (would re-create) and never terminal-fail (already FAILED).
           if (storeErr === REDELIVERY_DISCARD) {
+            // 判官初审 P2-4 —— 这句 CAS 现在可能因为**两种完全不同**的原因匹配 0 行,discard
+            // 之后必须先重读这一行,分叉处理,不能再无条件当成「平台吸收了一次引擎成本」:
+            //   · generationIds **非空**——另一趟并发投递刚刚赢了这句同一个 CAS、正常写完了
+            //     它自己的 generationIds(良性竞态:两边都在正常提交,不是「被人抢先退款」)。
+            //     商家的产出**已经**由赢的那一趟正常交付、正常结算,平台没有损失一分钱真实
+            //     引擎成本(两趟投递各花一次引擎钱,这本来就是重复计算的成本,不是「白花」)——
+            //     只是 console.warn 记一笔,不惊动 founderAlert。
+            //   · generationIds **仍为空**——这才是这条分支原本要接住的那种情形:另一趟投递
+            //     真的已经把这一行判 FAILED 并退了款,供应商那次真实调用变成了没人会去查、
+            //     没人能交付的孤儿任务,平台确实吸收了一次无法追回的真实引擎成本,维持原有
+            //     founderAlert。
+            const reread = await prisma.genJob.findFirst({ where: { id: job.id, ownerId: job.ownerId }, select: { generationIds: true } });
+            if (reread && reread.generationIds.length > 0) {
+              console.warn(`[gen] ${job.id}: lost a benign concurrent-commit race — another delivery's generationIds already won this CAS, this delivery's own (now-rolled-back) outputs are discarded. No engine cost absorbed (the other delivery's own paid call already covers it) — not alerting.`);
+              return;
+            }
             console.warn(`[gen] ${job.id}: redelivery already failed+refunded this job mid-flight — rolled back outputs, not delivering. Founder absorbed the engine cost.`);
             // 商家没损失(已退款),平台损失了一次真实的引擎调用。它不是缺陷,是竞态的正确
             // 结局——但它是**真钱**,零上报就等于没人知道它一天发生几次。

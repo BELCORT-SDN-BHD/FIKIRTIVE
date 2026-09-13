@@ -331,6 +331,11 @@ export function createGenerationProvider(env: NodeJS.ProcessEnv = process.env): 
  *  (QUEUE-A6) reads it from the real source. */
 export { VIDEO_SUBMISSION_ABANDON_MS } from "./byteplus.js";
 
+/** #1435 判官初审 P1-3 — the MERCHANT-facing wait ceiling gen.ts's active resume-poll branch
+ *  enforces (15m); see the constant's own doc comment in byteplus.ts for the full two-tier
+ *  account (this one vs. `VIDEO_SUBMISSION_ABANDON_MS`'s reaper-only fallback). */
+export { VIDEO_MERCHANT_WAIT_MS } from "./byteplus.js";
+
 /** Creation §5 :177 —— 图片那条路的第一环:同步渲染 POST 的截止时间,加上它后面那段结果
  *  下载。两个加起来就是「一次正常的图片尝试最坏在途多久」,而那个数必须小于 stale ——
  *  和 `VIDEO_POLL_TIMEOUT_MS` 同一条链,所以同样从 `.` 导出给不变式测试读。 */

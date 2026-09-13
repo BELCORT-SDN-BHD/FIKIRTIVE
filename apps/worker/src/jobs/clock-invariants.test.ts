@@ -19,21 +19,35 @@
  *
  * 视频链(#1435 新增,QUEUE-A6 的核心改写)—— **不再是**上面那条链的一部分:
  *
- *   一次提交或一次轮询只占位 ARK_CONTROL_TIMEOUT_MS(60s,量级同图片 POST,还更短)
- *     <  在飞任务的「放弃」窗口 VIDEO_SUBMISSION_ABANDON_MS(65m,锚在提交时刻,不是 claim 时刻)
+ *   一次提交/一次查询状态只占位 ARK_CONTROL_TIMEOUT_MS(60s,量级同图片 POST,还更短);
+ *   查到 succeeded 那一次投递另需下载片子字节(ARK_DOWNLOAD_TIMEOUT_MS,5m,判官初审
+ *   P3-10 —— 与图片链「渲染 POST + 下载」同构地算进去,不给视频那一半漏记这一段),合计
+ *   一次投递最长约 6m
+ *     <  商家可见的等待上限 VIDEO_MERCHANT_WAIT_MS(15m,判官初审 P1-3,锚在提交时刻)
+ *     <  清道夫的消息丢失兜底 VIDEO_SUBMISSION_ABANDON_MS(65m,同样锚在提交时刻)
  *
  * 旧语义(#1386 及更早)把视频的「提交 + 原地轮询到终态」当成一次不可分割的付费调用,量出
  * 「最长 60s + 15m ≈ 16m」,逼着整条图片链的余量为它留够空间——这正是 #1388 判官点名的
  * 跨队列缺口(见下方两个「#1388」describe block,本次由「已知缺口,未装得下」改判「缺口已
  * 消除」)。#1435 把提交与每一次轮询拆成互相独立的短命 pg-boss 投递(apps/worker/src/jobs/
  * gen.ts 的 resume-poll 分支),在飞视频不再持有 gen 施工位,两次投递之间也不再连续占着
- * providerRequestGate——它的「是否卡死」判定因此换了把尺子:不再是 GEN_STALE_MS(量 claim
- * 时长),而是 VIDEO_SUBMISSION_ABANDON_MS(量 submittedAt 时长,见
- * packages/generation/src/byteplus.ts 该常量的文档注释与 apps/worker/src/jobs/gen.ts 的
- * `isGenRowStale`)。这把新尺子**故意**比 GEN_STALE_MS 宽(65m > 35m):它保护的是「健康视频
- * 被反复轮询很多轮」,不是「claim 后多久没消息」——一个带在飞任务标记的视频行,在
- * gen.ts 的 resume-poll 检查点(`videoProviderTask` 短路分支)会排在 QUEUED→GENERATING 认领
- * 与 GEN_STALE_MS 判定**之前**,所以两把尺子永远不会同时量同一次投递。
+ * providerRequestGate——它的「是否卡死」判定因此换了把尺子,而且是**两把**不同分工的尺子
+ * (判官初审 P1-3 拆开,首版实现误合成了一把):
+ *
+ *   - `VIDEO_MERCHANT_WAIT_MS`(15m)—— resume-poll 主路自己用的商家口径:消息正常按计划
+ *     送达、真的在轮询,只是视频还没渲染完,过了 15m 就诚实判「结果不明,按已计费处理」
+ *     终态退款,绝不让这一单活到引擎自己约 60m 的终止钟去踩一条早就该判官核实过、实际未
+ *     实测的"expired 官方口径 \$0"暗路(那条暗路一旦真被踩到,PLAIN 错误 ⇒ requeue ⇒
+ *     下一次投递读不到标记 ⇒ 当成全新提交重来一次,`GEN_RETRY_LIMIT` 预算内最多能让同一单
+ *     真的重新付费提交 3 次——判官实测)。
+ *   - `VIDEO_SUBMISSION_ABANDON_MS`(65m)—— **只**留给 `isGenRowStale`(清道夫独立扫描)
+ *     当兜底,管的是消息**彻底丢失**(resume-poll 那条主路因此从未有机会运行、判断过 15m)
+ *     那种情形。两把尺子服务完全不同的失效模式,谁都不覆盖谁——完整分工账见
+ *     packages/generation/src/byteplus.ts 里 `VIDEO_MERCHANT_WAIT_MS` 自己的文档注释。
+ *
+ * 一个带在飞任务标记的视频行,在 gen.ts 的 resume-poll 检查点(`videoProviderTask` 短路
+ * 分支)会排在 QUEUED→GENERATING 认领与 GEN_STALE_MS 判定**之前**,所以 GEN_STALE_MS 永远
+ * 不会量到同一次投递。
  *
  * 并发假设(#796 的定案)与 #1386 的历史推导(15/18/20/25 → 15/35/40/45)保持不变,#1435
  * 未动 GEN_STALE_MS / genExpireMs / GEN_REAP_MS / GEN_QUEUED_REAP_MS 这四个数字本身——
@@ -41,7 +55,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { GEN_QUEUE_POLICY, REFGEN_QUEUE_POLICY, RESEARCH_QUEUE_POLICY, PUBLISH_QUEUE_POLICY, PUBLISH_EXECUTION_DEADLINE_MS, GEN_QUEUE, REFGEN_QUEUE, UNDERSTAND_QUEUE, MAX_GEN_COUNT, MAX_REFGEN_COUNT } from "@fikirtive/core";
-import { VIDEO_SUBMISSION_ABANDON_MS, ARK_CONTROL_TIMEOUT_MS, ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS, PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT, PROVIDER_MAX_CONCURRENT_REQUESTS_ENV, providerRequestLimit } from "@fikirtive/generation";
+import { VIDEO_SUBMISSION_ABANDON_MS, VIDEO_MERCHANT_WAIT_MS, ARK_CONTROL_TIMEOUT_MS, ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS, PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT, PROVIDER_MAX_CONCURRENT_REQUESTS_ENV, providerRequestLimit } from "@fikirtive/generation";
 import { workerPlan } from "../plan.js";
 import { GEN_STALE_MS, GEN_REAP_MS, GEN_QUEUED_REAP_MS, GEN_DONE_EMPTY_GRACE_MS } from "./gen.js";
 import { REFGEN_STALE_MS, REFGEN_REAP_MS, REFGEN_QUEUED_REAP_MS } from "./refgen.js";
@@ -60,13 +74,33 @@ describe("gen 时钟链:图片 POST 超时 < stale < 队列过期 < 清道夫(#1
     expect(ARK_CONTROL_TIMEOUT_MS).toBe(60_000);
     expect(ARK_CONTROL_TIMEOUT_MS).toBeLessThan(ARK_IMAGE_TIMEOUT_MS);
     expect(ARK_CONTROL_TIMEOUT_MS).toBeLessThan(GEN_STALE_MS);
+
+    // 判官初审 P3-10 —— 上面三条量的只是**状态查询本身**(poll 的那次 GET),不是一次
+    // `pollVideo` 调用真实可能花的全部时间。查到 succeeded 的那一次,`pollVideo` 自己还要
+    // 再下载一次片子字节(`packages/generation/src/byteplus.ts`,与图片下载共用同一把
+    // `ARK_DOWNLOAD_TIMEOUT_MS`),这一步不在闸门里、也不算「查询」,但它是这**一次投递**
+    // 真实占用的总时长的一部分——与图片链「渲染 POST + 下载」两段相加的写法必须同构,不能
+    // 只给视频那一半留个更好看的数字。
+    const VIDEO_SUCCEEDED_DELIVERY_MS = ARK_CONTROL_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS; // ≈ 60s + 5m ≈ 6m
+    expect(VIDEO_SUCCEEDED_DELIVERY_MS).toBe(6 * MINUTE);
+    // 即使把下载这一段也算进去,一次「查到 succeeded」的投递依旧远小于 stale 判定——这条
+    // 视频链从不需要为它单独核算余量的结论没有变,只是现在核算时诚实地把下载算了进去。
+    expect(VIDEO_SUCCEEDED_DELIVERY_MS).toBeLessThan(GEN_STALE_MS);
   });
 
-  it("QUEUE-A6 —— 在飞视频的『等太久』判定换了锚点:VIDEO_SUBMISSION_ABANDON_MS 量提交时刻,独立于 GEN_STALE_MS 这条 claim 时长的链", () => {
-    // 新尺子刻意比 GEN_STALE_MS 宽(65m > 35m)——它保护的是「健康视频被反复轮询很多轮」,
-    // 不是「claim 后多久没消息」;两者永不会量到同一次投递,因为 gen.ts 的 resume-poll
-    // 检查点(job.videoOptions 里有在飞任务标记就短路)排在 QUEUED→GENERATING 认领与
-    // GEN_STALE_MS 判定之前(apps/worker/src/jobs/gen.ts,`videoProviderTask` 短路分支)。
+  it("QUEUE-A6 —— 在飞视频的『等太久』判定换了锚点(量提交时刻,不是 claim 时刻),而且判官初审 P1-3 把它拆成两把各管各的尺子", () => {
+    // 尺子①(VIDEO_MERCHANT_WAIT_MS,15m)—— resume-poll 主路自己的商家口径,#1435 首版
+    // 实现里被误合成了 65m 那一把,判官初审 P1-3 拆开。它必须严格小于②,理由直接写在两把
+    // 尺子的名字里:必须先于「消息真的丢了才需要清道夫兜底」这件事发生,商家才不会在一条
+    // **仍在正常轮询**的作业上等超过产品口径。
+    expect(VIDEO_MERCHANT_WAIT_MS).toBe(15 * MINUTE);
+    expect(VIDEO_MERCHANT_WAIT_MS).toBeLessThan(VIDEO_SUBMISSION_ABANDON_MS);
+    // 尺子②(VIDEO_SUBMISSION_ABANDON_MS,65m)—— 刻意比 GEN_STALE_MS 宽(65m > 35m):
+    // 它保护的是「健康视频被反复轮询很多轮,只是消息按计划送达」,不是「claim 后多久没
+    // 消息」;`isGenRowStale` 用它当**清道夫独立扫描**的消息丢失兜底,与①服务不同场景,
+    // 两把永不会量到同一次投递,因为 gen.ts 的 resume-poll 检查点(job.videoOptions 里有
+    // 在飞任务标记就短路)排在 QUEUED→GENERATING 认领与 GEN_STALE_MS 判定之前
+    // (apps/worker/src/jobs/gen.ts,`videoProviderTask` 短路分支)。
     expect(VIDEO_SUBMISSION_ABANDON_MS).toBe(65 * MINUTE);
     expect(VIDEO_SUBMISSION_ABANDON_MS).toBeGreaterThan(GEN_STALE_MS);
   });

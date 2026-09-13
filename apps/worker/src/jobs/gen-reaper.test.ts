@@ -36,6 +36,7 @@ vi.mock("../storage.js", () => ({ storage: {} }));
 vi.mock("../generation.js", () => ({ provider: { name: "mock" } }));
 
 import { reapStaleGenJobs, GEN_REAP_MS } from "./gen.js";
+import { VIDEO_SUBMISSION_ABANDON_MS } from "@fikirtive/generation";
 
 const stuckJob = { id: "g1", ownerId: "o1", threadId: "t1", kind: "IMAGE", model: "seedream" };
 const stuckQueuedJob = { id: "g2", ownerId: "o2", threadId: "t2", kind: "IMAGE", model: "seedream" };
@@ -90,6 +91,48 @@ describe("reapStaleGenJobs — GENERATING branch", () => {
     expect(m.genJobUpdateMany).not.toHaveBeenCalled();
     expect(m.refundReservation).not.toHaveBeenCalled();
   });
+
+  // 判官 P1-2 —— 扫描（SELECT）与逐行 UPDATE 之间隔着一段真实的时间：如果这段窗口里另一趟
+  // 投递把同一行重新认领了（一次 crash→requeue→QUEUED→再认领，写出一个全新的 startedAt），
+  // 而 UPDATE 的 WHERE 只认 `status:"GENERATING"` + `generationIds:{isEmpty:true}`，那一行
+  // 此刻**依然**满足这两条——于是清道夫会把一个刚刚重新认领、完全健康的在飞作业误判失败退款。
+  // 判官实测：40 行合成重认领风暴里,37 行被这样误杀。修法是把扫描快照那一刻的 `startedAt`
+  // 也写进 WHERE,让它成为与文件里其它每一处破坏性写入同款的 CAS 快照校验。
+  it("写进 UPDATE 的 WHERE 里的 startedAt,必须是扫描快照那一刻读到的值(不是重新查一次)", async () => {
+    const snapshotStartedAt = new Date(Date.now() - GEN_REAP_MS - 60_000);
+    m.genJobFindMany
+      .mockResolvedValueOnce([{ ...stuckJob, startedAt: snapshotStartedAt }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([]);
+    m.genJobUpdateMany.mockResolvedValue({ count: 1 });
+    await reapStaleGenJobs();
+    expect(m.genJobUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "g1", status: "GENERATING", startedAt: snapshotStartedAt }) }),
+    );
+  });
+
+  it("扫描快照与逐行 UPDATE 之间,这一行被重新认领(真实 DB 里的 startedAt 已经变了)⇒ CAS 落空,不退款、不发终态消息", async () => {
+    const snapshotStartedAt = new Date(Date.now() - GEN_REAP_MS - 60_000);
+    m.genJobFindMany
+      .mockResolvedValueOnce([{ ...stuckJob, startedAt: snapshotStartedAt }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([]);
+    // 这一行在"真实 Postgres"里此刻的 startedAt 已经不是快照那个值了(被模拟成已经重新
+    // 认领过)。mockImplementation 复现真实 CAS 的行为:调用方**只要老老实实把快照的
+    // startedAt 传进 WHERE**,这一条件就真的会与当前行对不上 ⇒ 0 行匹配,安全放过。
+    // 反过来,如果 gen.ts 哪天漏写了 startedAt 这一条件(只剩 status + generationIds,
+    // 两者都没变),这个 mock 会因为读不到匹配的 startedAt 而回 1(模拟"漏写守卫的真实
+    // Postgres 依旧会命中这一行")——这条测试就会变红,而不是因为巧合看起来对。
+    m.genJobUpdateMany.mockImplementation(async (args: { where?: { startedAt?: unknown } }) => {
+      const passedStartedAt = args?.where?.startedAt;
+      const wouldMatchInRealDb = passedStartedAt instanceof Date && passedStartedAt.getTime() === snapshotStartedAt.getTime();
+      return { count: wouldMatchInRealDb ? 0 : 1 };
+    });
+    const n = await reapStaleGenJobs();
+    expect(n).toBe(0);
+    expect(m.refundReservation).not.toHaveBeenCalled();
+    expect(m.chatMessageCreate).not.toHaveBeenCalled();
+  });
 });
 
 describe("reapStaleGenJobs — GENERATING 判据窗口 (#1386 零排队①, spec creation-engine.md §5)", () => {
@@ -115,6 +158,35 @@ describe("reapStaleGenJobs — GENERATING 判据窗口 (#1386 零排队①, spec
     expect(n).toBe(1);
     expect(m.refundReservation).toHaveBeenCalledTimes(1);
     expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g_stale" });
+  });
+
+  // 判官初审 P1-3 —— 清道夫这一路管的是**消息彻底丢失**(pg-boss 没能把下一次轮询消息送
+  // 回来,主动轮询的 15m 商家口径`VIDEO_MERCHANT_WAIT_MS`因此从未有机会运行)的兜底,尺子
+  // 是独立的 `VIDEO_SUBMISSION_ABANDON_MS`(65m,只留给这里),不是 15m。@50m 还在窗口内、
+  // @70m 才过线——这条边界与主动轮询路的 15m 完全无关,必须各自验证。
+  it("在飞视频(带 providerTask 标记)@50m 不动,@70m 才判死退款 —— 与主动轮询路 15m 商家口径无关,尺子是独立的 VIDEO_SUBMISSION_ABANDON_MS(65m 消息丢失兜底)", async () => {
+    expect(VIDEO_SUBMISSION_ABANDON_MS).toBe(65 * 60_000);
+    const videoJob = { id: "g_video", ownerId: "o3", threadId: "t3", kind: "VIDEO", model: "seedance-2-mini" };
+    const at50m = {
+      ...videoJob, id: "g_video_50m",
+      startedAt: new Date(Date.now() - 50 * 60_000), // startedAt 本身早已超过 GEN_REAP_MS(45m)——
+      // 如果清道夫还在按旧的 claim 时长判定,这一行会被误杀;它必须只看 videoOptions 里的
+      // submittedAt,不看 startedAt。
+      videoOptions: { providerTask: { id: "task-50m", submittedAt: new Date(Date.now() - 50 * 60_000).toISOString() } },
+    };
+    const at70m = {
+      ...videoJob, id: "g_video_70m",
+      startedAt: new Date(Date.now() - 70 * 60_000),
+      videoOptions: { providerTask: { id: "task-70m", submittedAt: new Date(Date.now() - 70 * 60_000).toISOString() } },
+    };
+    m.genJobFindMany.mockResolvedValueOnce([at50m, at70m]);
+    m.genJobUpdateMany.mockResolvedValue({ count: 1 });
+
+    const n = await reapStaleGenJobs();
+
+    expect(n).toBe(1);
+    expect(m.refundReservation).toHaveBeenCalledTimes(1);
+    expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o3", refId: "g_video_70m" });
   });
 });
 

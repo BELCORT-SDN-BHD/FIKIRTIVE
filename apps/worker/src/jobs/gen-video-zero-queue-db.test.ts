@@ -53,6 +53,21 @@ async function seedVideoJob(org: Org, id: string): Promise<void> {
   await prisma.$transaction((tx) => reserveCredits(tx, { orgId: org.orgId, refId: id, cost: HOLD }));
 }
 
+/** 判官初审 P1-3 —— 种一条**已经提交过**的在飞视频(status:GENERATING + videoOptions 里
+ *  已经带着 providerTask 标记,`submittedAt` 可以精确回拨),直接落在 resume-poll 检查点会
+ *  读到的那个形状,不经过真实提交(这里要精确控制"已经等了多久",真等 15 分钟不现实)。*/
+async function seedResumingVideoJob(org: Org, id: string, submittedAt: Date): Promise<void> {
+  await prisma.genJob.create({
+    data: {
+      id, ownerId: org.orgId, projectId: org.projectId,
+      prompt: "a fifteen minute product walkthrough", kind: "VIDEO", model: "seedance-2-mini",
+      count: 1, status: "GENERATING", spent: false, startedAt: submittedAt,
+      videoOptions: { seconds: 5, resolution: "480p", providerTask: { id: `task-${id}`, submittedAt: submittedAt.toISOString() } },
+    },
+  });
+  await prisma.$transaction((tx) => reserveCredits(tx, { orgId: org.orgId, refId: id, cost: HOLD }));
+}
+
 async function seedImageJob(org: Org, id: string): Promise<void> {
   await prisma.genJob.create({
     data: {
@@ -66,7 +81,7 @@ async function seedImageJob(org: Org, id: string): Promise<void> {
 
 async function jobRow(org: Org, id: string) {
   return prisma.genJob.findFirstOrThrow({
-    where: { id, ownerId: org.orgId }, select: { status: true, generationIds: true, videoOptions: true, spent: true },
+    where: { id, ownerId: org.orgId }, select: { status: true, generationIds: true, videoOptions: true, spent: true, spentUsd: true },
   });
 }
 
@@ -91,58 +106,63 @@ afterAll(async () => {
 });
 
 describe("QUEUE-A1 / QUEUE-A2 — 4 条视频真的提交在飞时，施工位与账本都是空闲的，商家 B 的短任务立即开跑不等队", () => {
+  // 判官第二轮变异复核 —— 这份文件原来那条 QUEUE-A1 用例(逐条 `for` 循环 `await` A 的 4 条,
+  // 全部跑完才起 B)红在「没放手」(某条 handleGen 调用本身原地占着不还),不红在「B 真的等了
+  // A」:因为 B 是在 A 全部**跑完之后**才起的,B 从没有机会在 A 仍然占着什么资源时抢跑——
+  // `submitElapsedMs<5s` 这条断言在纯 mock、submitVideo 立即 resolve 的前提下,旧实现(如果
+  // 视频原地轮询到终态)也会因为 mock 不模拟真实耗时而**照样绿**,量不出真正的区别。
+  //
+  // 这一版换了证法:给 `submitVideo` 一段真实的墙钟延迟(2s——仍远小于任何一把 stale/过期
+  // 尺子,不会误撞任何清道夫窗口),A 的 4 条**并发**发出、不逐条 `await`,同一时刻起 B。
+  // 断言的是一个**时序关系**,不是一个耗时预算:B 必须在 A 的任何一条 submitVideo 真正
+  // resolve **之前**就已经 DONE。这件事只有在"提交这一步一结束,handleGen 立刻把这次投递
+  // 交出去,不在同一次调用里继续占着什么"成立时才可能发生——旧实现里,如果 submit 之后紧接着
+  // 原地进入轮询循环(即使轮询本身瞬间返回),这次投递的 await 链依旧会**先**排在 submitVideo
+  // 那 2s 延迟之后才排到下一步,不会给 B 让出任何提前完工的空间;而这份新证法的时序关系
+  // 与"provider gate/队列槽位是否真的被占用"这件事本身独立、不依赖任何进程内闸门的具体实现,
+  // 单纯靠 handleGen 自己的 await 链形状决定 B 能不能抢在 A 前面完工。
   it(
-    "QUEUE-A1: 商家 A 连发 4 条长视频后，商家 B 提交短任务，B 的任务立即开跑不等队（真机制：每条 handleGen 调用都真的跑完提交，不是种子直接写 GENERATING）",
+    "QUEUE-A1: 商家 A 并发提交 4 条长视频(submitVideo 真延迟 2s)的同一时刻,商家 B 的短任务被真实认领、真实结算,并在 A 的任何一条 submitVideo resolve 之前就已经 DONE",
     async () => {
       const merchantA = await seedOrg("Merchant A — four long videos");
       const merchantB = await seedOrg("Merchant B — one quick poster");
 
-      // 商家 A 连发 4 条长视频：逐条真跑 handleGen 的**提交**分支（唯一 mock 的是付费引擎本身，
-      // 认领、reserve、写在飞任务标记全部走真实的 Postgres 条件写）。
       const aIds = Array.from({ length: 4 }, (_, i) => `gen_a${i}_${randomUUID()}`);
-      const submitStartedAt = Date.now();
-      for (const [i, id] of aIds.entries()) {
-        await seedVideoJob(merchantA, id);
-        m.submitVideo.mockResolvedValueOnce({ providerTaskId: `task-a${i}` });
-        const outcome = await handleGen({ genJobId: id }, 0);
-        // 真机制的核心断言就在这里：提交成功之后这次投递**立即结束**——不是「假装结束」，是
-        // handleGen 自己的 await 链真的在这一行返回，没有原地等到视频真正渲染完。
-        expect(outcome).toMatchObject({ awaitingVideoPoll: true });
-      }
-      const submitElapsedMs = Date.now() - submitStartedAt;
-      // 4 次真实的 handleGen 调用（各自一次真实的 Postgres 认领 + reserve 查询 + 条件写）全部
-      // 跑完只用了这么短的时间，本身就是「没有原地等视频渲染」的直接证据——如果这里像旧账
-      // 那样原地轮询到终态，这一步会花上真实的分钟级时间，而不是毫秒级。
-      expect(submitElapsedMs).toBeLessThan(5_000);
-
-      // A 的 4 条现在都是「在飞」——真产品意义上视频正在供应商那边生成——但每一行在数据库里
-      // 长的是「已提交、等下一次查询」的样子，不是「worker 正占着什么」的样子：没有任何一列
-      // 记着「这个 worker 进程/施工位仍然拴在这条作业上」，因为 handleGen 的调用已经结束了。
-      for (const id of aIds) {
-        const row = await jobRow(merchantA, id);
-        expect(row.status).toBe("GENERATING");
-        expect(row.generationIds).toEqual([]);
-        expect((row.videoOptions as { providerTask?: { id: string } } | null)?.providerTask?.id).toBeTruthy();
-      }
-
-      // 商家 B 的短任务：在 A 的 4 条视频**仍然在飞**的这一刻提交，真认领、真出图、真结算——
-      // 不等 A 的任何一条渲染完。
+      for (const id of aIds) await seedVideoJob(merchantA, id);
       const bId = `gen_b_${randomUUID()}`;
       await seedImageJob(merchantB, bId);
-      const bStartedAt = Date.now();
-      const bOutcome = await handleGen({ genJobId: bId }, 0);
-      const bElapsedMs = Date.now() - bStartedAt;
 
-      expect(bOutcome).toBeUndefined(); // 正常完工，不是又一次「放手」
-      expect(bElapsedMs).toBeLessThan(5_000); // 同样立即完工，不是排在 A 后面等出来的
+      let anyASubmitResolved = false;
+      m.submitVideo.mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 2_000));
+        anyASubmitResolved = true;
+        return { providerTaskId: `task-${randomUUID()}` };
+      });
+
+      // A 的 4 条**并发**发出、不逐条等待——真实生产环境里 4 条几乎同时提交就是这个形状。
+      const aPromises = aIds.map((id) => handleGen({ genJobId: id }, 0));
+
+      // 不等 aPromises,同一时刻起 B——这才是验收句字面的场景:A 仍然在飞的**当口**,B 进来。
+      const bOutcome = await handleGen({ genJobId: bId }, 0);
+
+      // 核心断言:B 完工的这一刻,A 的 submitVideo(2s 延迟)必须**还没有任何一条** resolve。
+      expect(anyASubmitResolved, "B 在这一刻已经 DONE,而这本该发生在 A 的任何一条 submitVideo 真正返回之前——如果这里是 true,说明 B 被迫等到了 A 的提交耗时之后才完工,验收句的『不等队』没有成立").toBe(false);
+      expect(bOutcome).toBeUndefined(); // 正常完工,不是又一次「放手」
       const bRow = await jobRow(merchantB, bId);
       expect(bRow.status).toBe("DONE");
       expect(bRow.spent).toBe(true);
       expect(await ledgerKinds(merchantB.orgId, bId)).toEqual(["RESERVE", "SETTLE"]);
 
-      // 反向锚：A 的 4 条这一刻确实还在飞（不是因为它们其实已经悄悄结束了，B 才显得「没等」）。
+      // 收尾:等 A 的 4 条真正提交完,确认它们也都正常放手(真机制的另一半——不是种子直接
+      // 写 GENERATING,是真跑 handleGen 提交出来的),同时确认这一刻 anyASubmitResolved 翻真了。
+      const aOutcomes = await Promise.all(aPromises);
+      for (const outcome of aOutcomes) expect(outcome).toMatchObject({ awaitingVideoPoll: true });
+      expect(anyASubmitResolved).toBe(true);
       for (const id of aIds) {
-        expect((await jobRow(merchantA, id)).status).toBe("GENERATING");
+        const row = await jobRow(merchantA, id);
+        expect(row.status).toBe("GENERATING");
+        expect(row.generationIds).toEqual([]);
+        expect((row.videoOptions as { providerTask?: { id: string } } | null)?.providerTask?.id).toBeTruthy();
       }
     },
     DB_CASE_TIMEOUT_MS,
@@ -187,6 +207,11 @@ describe("QUEUE-A3 — 任意轮询次数下走完提交→成功，账本恰一
   it(
     "QUEUE-A3: 已经 DONE 之后再被重投一次(同一条 succeeded 消息晚到)——resume-committed 短路生效，provider 一次都不再被调用，账本恰一组不动",
     async () => {
+      // 判官口径(第二轮变异复核)—— 这条测的是**幂等冗余**(同一条已完工的消息被 pg-boss
+      // at-least-once 语义重投),对「零排队①」本身(提交后放手、不占位)没有鉴别力:这个
+      // 断言在改动之前(旧的原地轮询实现)与之后都成立,因为"已经 DONE 的行不该被重复处理"
+      // 是与提交/轮询是否拆分完全无关的一条既有纪律。它验的是 QUEUE-A3 的"恰一次"覆盖到了
+      // 重投场景,不是零排队功能本身的验收证据——后者的证据在 QUEUE-A1(见上面那条用例)。
       const org = await seedOrg("QUEUE-A3 late redelivery");
       const id = `gen_a3b_${randomUUID()}`;
       await seedVideoJob(org, id);
@@ -230,6 +255,53 @@ describe("QUEUE-A3 — 任意轮询次数下走完提交→成功，账本恰一
       // 三层里关掉任何一层,另外两层依然把钱路焊死;只有三层同时失守,才会退化成"虽然没有
       // 双花,但白白多打一次已经付费的供应商查询"(仍然安全,只是不再"零多余调用")。
       // 改完之后已经改回原样(两处 `if (false && ...)` 都还原成 `if (...)`),工作树复原。
+    },
+    DB_CASE_TIMEOUT_MS,
+  );
+});
+
+describe("QUEUE-A6 / 判官初审 P1-3 — 轮询路的商家可见等待上限是 15m(VIDEO_MERCHANT_WAIT_MS),不是 65m 的清道夫兜底", () => {
+  it(
+    "在飞视频提交已经 16 分钟(超过 15m 商家口径)仍读到 pending ⇒ 终态 FAILED、恰一次真实退款——这单绝不会活到引擎自己 60m 的终止钟,就不会有机会在那之后被 PLAIN 错误 requeue 回去重新付费提交",
+    async () => {
+      const org = await seedOrg("QUEUE-A6/P1-3 merchant wait ceiling");
+      const id = `gen_p13_${randomUUID()}`;
+      const submittedAt = new Date(Date.now() - 16 * 60_000); // 16m ago — 1m past the 15m ceiling
+      await seedResumingVideoJob(org, id, submittedAt);
+      expect(await ledgerKinds(org.orgId, id)).toEqual(["RESERVE"]);
+
+      m.pollVideo.mockResolvedValue({ status: "pending" }); // 引擎那边这一刻仍未终态——不是它主动报了 expired,是商家口径的钟先到了
+
+      await expect(handleGen({ genJobId: id }, 0)).rejects.toThrow(/outcome unknown, treated as billed/);
+
+      // 这一次投递抛出去之后,pg-boss 的 catch-all 由 index.ts 接住并走 requeue/终态判定 ——
+      // 这里直接调用 `handleGen` 本身不会自动跑那段收尾(那是 consume 包装器的活),所以
+      // 真实的 FAILED+REFUND 落库要靠 handleGen 自己 catch 块里的终态分支,已经在 reject 之前
+      // 跑完——用真实查库确认钱路的最终状态,而不是只看抛出的错误消息。
+      const row = await jobRow(org, id);
+      expect(row.status).toBe("FAILED");
+      expect(row.spent).toBe(true); // 钱真相:引擎那一刻确实已经接受并计费了这个任务
+      expect(await ledgerKinds(org.orgId, id)).toEqual(["RESERVE", "REFUND"]); // 恰一次退款
+      expect(m.submitVideo).not.toHaveBeenCalled(); // 终态之后没有任何自动重新提交发生在这次投递里
+    },
+    DB_CASE_TIMEOUT_MS,
+  );
+
+  it(
+    "在飞视频提交刚 14 分钟(还在 15m 商家口径之内)仍读到 pending ⇒ 正常继续轮询,不终态、不退款",
+    async () => {
+      const org = await seedOrg("QUEUE-A6/P1-3 still within ceiling");
+      const id = `gen_p13b_${randomUUID()}`;
+      const submittedAt = new Date(Date.now() - 14 * 60_000);
+      await seedResumingVideoJob(org, id, submittedAt);
+
+      m.pollVideo.mockResolvedValue({ status: "pending" });
+      const outcome = await handleGen({ genJobId: id }, 0);
+
+      expect(outcome).toMatchObject({ awaitingVideoPoll: true });
+      const row = await jobRow(org, id);
+      expect(row.status).toBe("GENERATING");
+      expect(await ledgerKinds(org.orgId, id)).toEqual(["RESERVE"]); // 没有被误杀
     },
     DB_CASE_TIMEOUT_MS,
   );
@@ -327,6 +399,74 @@ describe("QUEUE-A4 — 视频提交后进程崩溃重启：在飞任务被接回
       expect(row.status).toBe("FAILED"); // 别家写的 FAILED 原样留着,没被这次投递覆盖回 DONE
       expect(row.generationIds).toEqual([]); // commit 事务整体回滚,没有留下孤儿 Asset/Generation
       expect(await ledgerKinds(org.orgId, id)).toEqual(["RESERVE", "REFUND"]); // 恰一次退款,不是两次,也没有多出一笔 SETTLE
+    },
+    DB_CASE_TIMEOUT_MS,
+  );
+});
+
+describe("判官初审 P2-4 — 真并发双投递下,commit 事务的 CAS 必须挡住第二份 Generation,不许留孤儿产出", () => {
+  it(
+    "同一单被两趟真正并发的投递同时查到 succeeded、同时各自真的存完字节、同时抢同一句 commit CAS ⇒ generation.count 恰为 1,不是 2;钱路恰一组 RESERVE→SETTLE",
+    async () => {
+      // 与 QUEUE-A4 那两条不同:那两条竞态里,输的一方是"这一行已经被判 FAILED/别家判 stale"
+      // 这种**外部力量**造成的竞态。这一条是**纯粹的双赢竞态**——两趟投递各自读到的都是
+      // 健康的 succeeded,各自都真的把字节存进了对象存储、真的建了 Asset/Generation 行,
+      // 只是同时抢同一句 commit 事务的 CAS。真实世界里这是"同一条延迟消息因为某种原因被
+      // pg-boss 投递了两次,两次几乎同时抵达"这一类场景。
+      const org = await seedOrg("QUEUE-P2-4 concurrent double-commit");
+      const id = `gen_p24_${randomUUID()}`;
+      const submittedAt = new Date(Date.now() - 5 * 60_000); // 5m ago — well within every ceiling
+      await seedResumingVideoJob(org, id, submittedAt);
+
+      // 两趟并发投递各自都会调用一次 pollVideo——都返回 succeeded,各自的 storagePut 会各自
+      // 生成一个不同的随机 contentHash(beforeEach 的默认实现),所以两边天然是**不同**的
+      // Asset/Generation 候选,不会因为内容寻址去重而巧合地只剩一份——CAS 必须是真正挡住
+      // 第二份的那道闸,不能靠侥幸。
+      m.pollVideo.mockResolvedValue({ status: "succeeded", video: { bytes: new Uint8Array([9]), ext: "mp4" } });
+
+      const [outcomeA, outcomeB] = await Promise.all([
+        handleGen({ genJobId: id }, 0),
+        handleGen({ genJobId: id }, 0),
+      ]);
+
+      // 两边都不应该向上抛错:赢的一方正常完工(undefined),输的一方现在是判官初审 P2-4
+      // 修过的"良性竞态"干净放弃分支(同样 undefined,不 throw)。
+      expect(outcomeA).toBeUndefined();
+      expect(outcomeB).toBeUndefined();
+
+      const generationCount = await prisma.generation.count({ where: { ownerId: org.orgId } });
+      expect(generationCount).toBe(1); // 这才是这条测试真正要钉的东西:不是 2
+
+      const row = await jobRow(org, id);
+      expect(row.status).toBe("DONE");
+      expect(row.generationIds).toHaveLength(1);
+      expect(await ledgerKinds(org.orgId, id)).toEqual(["RESERVE", "SETTLE"]); // 恰一组,不是两组 SETTLE
+    },
+    DB_CASE_TIMEOUT_MS,
+  );
+});
+
+describe("判官初审 P2-6 — QUEUE-A5 的 \$0 变体:submit 抛 permanentInputError ⇒ 可证明没花钱,零 spentUsd,恰一次退款", () => {
+  it(
+    "submitVideo 抛 permanent(429 QuotaExceeded.Balance 一类,创建阶段被拒)⇒ status FAILED、spent=false、spentUsd=null、ledger 恰 [RESERVE, REFUND]",
+    async () => {
+      const org = await seedOrg("QUEUE-A5/P2-6 permanent submit rejection");
+      const id = `gen_p26_${randomUUID()}`;
+      await seedVideoJob(org, id);
+
+      // 模拟 byteplus.ts 里 QUEUE-A5 分流命中"配额耗尽"那一支时抛出的错误形状(真实错误在
+      // packages/generation/src/byteplus.ts,这里只 mock 到 provider 这一层的返回值,worker
+      // 侧只关心 `.permanent` 这个标记,不关心具体报文)。
+      m.submitVideo.mockRejectedValue(Object.assign(new Error("generation isn't available right now"), { permanent: true }));
+
+      await expect(handleGen({ genJobId: id }, 0)).rejects.toThrow();
+
+      const row = await jobRow(org, id);
+      expect(row.status).toBe("FAILED");
+      expect(row.spent).toBe(false); // 可证明创建阶段就被拒,一分没花
+      expect(row.spentUsd).toBeNull(); // 零花费 ⇒ 不写这一列,不是写 0(false 与"从未发生"不是同一件事)
+      expect(row.generationIds).toEqual([]);
+      expect(await ledgerKinds(org.orgId, id)).toEqual(["RESERVE", "REFUND"]); // 恰一次退款,没有 SETTLE
     },
     DB_CASE_TIMEOUT_MS,
   );

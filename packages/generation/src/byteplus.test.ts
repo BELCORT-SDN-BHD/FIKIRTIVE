@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import type { VideoRequest, GeneratedVideo } from "@fikirtive/core";
-import { EXECUTED_SPEC, PLATFORM_IMAGE_PERSON_REJECTED, REFERENCE_IMAGE_PERSON_REJECTED } from "@fikirtive/core";
+import { EXECUTED_SPEC, PLATFORM_IMAGE_PERSON_REJECTED, REFERENCE_IMAGE_PERSON_REJECTED, GENERATION_ENGINE_UNAVAILABLE } from "@fikirtive/core";
 import {
   BytePlusProvider,
   IMAGE_MODEL_MAP,
@@ -694,6 +694,34 @@ describe("generateVideo (Seedance, async)", () => {
       const err = await rejection(call);
       expect(err.message).toContain("400");
       expect(err.permanent).toBeFalsy();
+      expect(err.charged).toBeFalsy();
+    });
+
+    // ── 判官初审 P2-6:QUEUE-A5(#1435)那句 429 三路分流此前零覆盖 ─────────────────────
+    //
+    // 上面 #672 那组「submit 429 仍是 PLAIN」测的是**没有**触发分流条件的普通 429(没有任何
+    // 能识别的 QuotaExceeded 报文形状)——它不推翻分流,恰恰是分流"默认 unknown ⇒ 普通可
+    // 重投"那一支的证据。这里补的是分流本身**真的接了线**:429 + 报文里读到"余额不足"这类
+    // марker ⇒ permanentInputError(GENERATION_ENGINE_UNAVAILABLE);429 + 报文里读到"请求
+    // 太多"这类 marker ⇒ 照旧走普通可重投的 PLAIN 路,不被误分类成"配额耗尽"。两条固定证据
+    // 均**明确标注是虚构报文**,不是任何一次真实观测(探针 README §1:三路分流从未实测)。
+    it("QUEUE-A5(判官初审 P2-6,虚构报文,非真实观测):429 + QuotaExceeded.Balance 类报文 ⇒ permanentInputError(GENERATION_ENGINE_UNAVAILABLE),不 charged", async () => {
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? { ok: false, status: 429, text: async () => JSON.stringify({ error: { code: "QuotaExceeded.Balance", message: "insufficient balance, please top up your account" } }) }
+        : jsonRes({ status: "running" }));
+      const err = await rejection(call);
+      expect(err.permanent).toBe(true);
+      expect(err.message).toBe(GENERATION_ENGINE_UNAVAILABLE);
+      expect(err.charged).toBeFalsy();
+    });
+
+    it("QUEUE-A5(判官初审 P2-6,虚构报文,非真实观测):429 + 『请求太多,请稍后重试』这类排队报文 ⇒ 仍是普通 PLAIN 可重投,不被误判成配额耗尽", async () => {
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? { ok: false, status: 429, text: async () => "Too many requests, please retry later" }
+        : jsonRes({ status: "running" }));
+      const err = await rejection(call);
+      expect(err.permanent).toBeFalsy();
+      expect(err.message).not.toBe(GENERATION_ENGINE_UNAVAILABLE);
       expect(err.charged).toBeFalsy();
     });
   });

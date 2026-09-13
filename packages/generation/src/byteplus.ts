@@ -224,6 +224,32 @@ export function arkPostTimeoutMs(what: "image request" | "video submit"): number
 export const VIDEO_SUBMISSION_ABANDON_MS = 65 * 60_000;
 
 /**
+ * #1435 判官初审 P1-3 —— 商家可见的等待上限(产品口径),与上面 `VIDEO_SUBMISSION_ABANDON_MS`
+ * 是**两把不同的尺子**,量的是两件不同的事:
+ *
+ *   - 这一把(`VIDEO_MERCHANT_WAIT_MS`,15m):gen.ts 的 resume-poll 分支——也就是消息**正常
+ *     按计划送达、真的在轮询**的那条主路——用它判「等太久,不再等了」。过线就抛
+ *     `chargedError`,终态 FAILED + 退款,绝不继续轮询、也绝不让这一单有机会活到
+ *     `poll.status==="failed"` reason=expired 那条分支去自然重投:那条分支的失败是 PLAIN(不带
+ *     charged),会 requeue 回 QUEUED,而 QUEUED 的下一次投递读不到在飞任务标记,只能当成全新
+ *     提交——判官实测这条链子在引擎 60m 自己判 expired、又被当作可重试的 PLAIN 错误之后,能在
+ *     `GEN_RETRY_LIMIT`(2,即最多 3 次总尝试)内让同一单**真的重新付费提交最多 3 次**,而
+ *     "expired 官方口径 $0" 这件事探针从未实测过(README §1"未实测")——这把 15m 的尺子存在
+ *     的意义就是让这单商家可见的作业**根本活不到**引擎那 60m 自己判 expired 的那一刻,金钱
+ *     风险因此不成立,不是靠信一句未验证的官方文档兜底。
+ *   - 上一把(`VIDEO_SUBMISSION_ABANDON_MS`,65m):**只**留给 `apps/worker/src/jobs/gen.ts`
+ *     的 `isGenRowStale`(清道夫扫描)当兜底——它管的是消息**彻底丢失**(pg-boss 没能按计划
+ *     把下一次轮询消息送回来,这一行的 resume-poll 分支因此**从未有机会跑起来**判断 15m)那
+ *     种情形。这时唯一能发现异常的只有独立的定期清道夫扫描,它需要自己一把足够宽松的尺子
+ *     (65m,比引擎自己的 60m 终止钟还多一段安全边际),不能沿用 15m——15m 对"消息按计划
+ *     送达、只是视频真的还没渲染完"这种健康情形太短,会把正常在飞的视频误判成丢失消息。
+ *
+ * 两把尺子谁都不覆盖谁:15m 是主动轮询路的产品口径,65m 是被动清道夫路的消息丢失兜底,
+ * 各自只在自己的场景里生效。
+ */
+export const VIDEO_MERCHANT_WAIT_MS = 15 * 60_000;
+
+/**
  * #782 r2 — how long the FREE last frame may hold the paid clip hostage.
  *
  * The clip is already downloaded and already billed by the time this runs; the still is a
