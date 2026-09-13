@@ -78,5 +78,5 @@ describe("Otto 验收表 ↔ 测试映射(S2 §7.0 七段三批)", () => {
   });
 
   // ── 批 III（已交付；#1150 / #1151 / #1158 / #1194 / #1197 均已在主干）───────
-  it.todo("ENGINE-A3 见 apps/web/lib/__tests__/engine-a3-canvas-conversation.test.tsx 与 e2e/journeys/engine-a3-canvas-conversation.spec.ts（⑦段已交付：直出 composer 与工具条 Generate 退役、送出接 Otto 对话、花钱走审批卡）");
+  it.todo("ENGINE-A3 见 apps/web/lib/__tests__/engine-a3-canvas-conversation.test.tsx 与 e2e/journeys/27-engine-a3-canvas-conversation.spec.ts（⑦段已交付：直出 composer 与工具条 Generate 退役、送出接 Otto 对话、花钱走审批卡）");
 });
