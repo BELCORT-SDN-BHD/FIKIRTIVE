@@ -10,7 +10,8 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@fikirtive/db";
 import { displayCredits, CREDITS_PER_USD, FOUNDER_OWNER_ID } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { readDisplayName } from "./profile-names";
 import { buildInfo } from "@/lib/health";
 import { auth } from "@/lib/better-auth/server";
@@ -170,62 +171,64 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
   const owner = await requireOwner();
   if ("error" in owner) return { error: owner.error };
   const { email, ownerId } = owner;
+  const principal = await resolveUserPrincipal(owner);
+  return runAsUser(principal, async (): Promise<AccountInfo | { error: string }> => {
+    const [organization, account, displayName] = await Promise.all([
+      prisma.organization.findFirst({
+        where: { id: ownerId, deletedAt: null },
+        select: { name: true, settings: true },
+      }),
+      prisma.creditAccount.findUnique({ where: { orgId: ownerId }, select: { balance: true, reserved: true } }),
+      readDisplayName(ownerId, email),
+    ]);
+    if (!organization) return { error: "Could not load your organization." };
+    // Ledger times display in the merchant's own workspace timezone (existing Schedule
+    // setting), not a hardcoded UTC — a merchant in Kuala Lumpur reading "10:05 AM" should
+    // see the time they'd have seen the charge happen, not a UTC clock they never set.
+    const tz = mergeSettings(organization.settings).timezone;
 
-  const [organization, account, displayName] = await Promise.all([
-    prisma.organization.findFirst({
-      where: { id: ownerId, deletedAt: null },
-      select: { name: true, settings: true },
-    }),
-    prisma.creditAccount.findUnique({ where: { orgId: ownerId }, select: { balance: true, reserved: true } }),
-    readDisplayName(ownerId, email),
-  ]);
-  if (!organization) return { error: "Could not load your organization." };
-  // Ledger times display in the merchant's own workspace timezone (existing Schedule
-  // setting), not a hardcoded UTC — a merchant in Kuala Lumpur reading "10:05 AM" should
-  // see the time they'd have seen the charge happen, not a UTC clock they never set.
-  const tz = mergeSettings(organization.settings).timezone;
+    const ledger = await recentTaskLedgerRows(ownerId, 25);
 
-  const ledger = await recentTaskLedgerRows(ownerId, 25);
+    // A refId with no prefix is a generation-job id; anything prefixed (otto-…, research:…) is
+    // named by its prefix instead. Same lookup and same filter as /billing's read
+    // (spend-history-data.ts), including reference-image jobs — otherwise a refgen row would
+    // read "Image" there and "Credit change" here, which is the split this fix exists to close.
+    const jobRefIds = ledger
+      .map((l) => l.refId)
+      .filter((refId): refId is string => !!refId && !refId.includes(":"));
+    const [genJobs, refGenJobs] = jobRefIds.length
+      ? await Promise.all([
+          prisma.genJob.findMany({ where: { ownerId, id: { in: jobRefIds } }, select: { id: true, kind: true } }),
+          prisma.refGenJob.findMany({ where: { ownerId, id: { in: jobRefIds } }, select: { id: true } }),
+        ])
+      : [[], []];
+    const jobKindByRefId = new Map<string, "IMAGE" | "VIDEO">([
+      ...genJobs.map((j) => [j.id, j.kind === "VIDEO" ? "VIDEO" : "IMAGE"] as const),
+      // Reference-image jobs only ever produce images.
+      ...refGenJobs.map((j) => [j.id, "IMAGE"] as const),
+    ]);
 
-  // A refId with no prefix is a generation-job id; anything prefixed (otto-…, research:…) is
-  // named by its prefix instead. Same lookup and same filter as /billing's read
-  // (spend-history-data.ts), including reference-image jobs — otherwise a refgen row would
-  // read "Image" there and "Credit change" here, which is the split this fix exists to close.
-  const jobRefIds = ledger
-    .map((l) => l.refId)
-    .filter((refId): refId is string => !!refId && !refId.includes(":"));
-  const [genJobs, refGenJobs] = jobRefIds.length
-    ? await Promise.all([
-        prisma.genJob.findMany({ where: { ownerId, id: { in: jobRefIds } }, select: { id: true, kind: true } }),
-        prisma.refGenJob.findMany({ where: { ownerId, id: { in: jobRefIds } }, select: { id: true } }),
-      ])
-    : [[], []];
-  const jobKindByRefId = new Map<string, "IMAGE" | "VIDEO">([
-    ...genJobs.map((j) => [j.id, j.kind === "VIDEO" ? "VIDEO" : "IMAGE"] as const),
-    // Reference-image jobs only ever produce images.
-    ...refGenJobs.map((j) => [j.id, "IMAGE"] as const),
-  ]);
+    const balanceInternal = account?.balance ?? 0;
+    // balanceDelta != 0 is filtered in the query above (SETTLE is hold-only for the GEN
+    // path). Label each row first (the label depends only on refId/kind/source, so it is
+    // stable across a group's rows), then merge same-refId rows into one task per decision ④.
+    const recent: AccountActivity[] = mergeByTask(
+      ledger.map((l) => ({ ...l, label: spendLabelOf(l, jobKindByRefId) })),
+      tz,
+    );
 
-  const balanceInternal = account?.balance ?? 0;
-  // balanceDelta != 0 is filtered in the query above (SETTLE is hold-only for the GEN
-  // path). Label each row first (the label depends only on refId/kind/source, so it is
-  // stable across a group's rows), then merge same-refId rows into one task per decision ④.
-  const recent: AccountActivity[] = mergeByTask(
-    ledger.map((l) => ({ ...l, label: spendLabelOf(l, jobKindByRefId) })),
-    tz,
-  );
-
-  return {
-    email,
-    displayName,
-    organizationName: organization.name,
-    isFounder: ownerId === FOUNDER_OWNER_ID,
-    balance: displayCredits(balanceInternal),
-    reserved: displayCredits(account?.reserved ?? 0),
-    balanceUsd: balanceInternal / CREDITS_PER_USD,
-    recent,
-    buildSha: buildInfo(process.env).sha,
-  };
+    return {
+      email,
+      displayName,
+      organizationName: organization.name,
+      isFounder: ownerId === FOUNDER_OWNER_ID,
+      balance: displayCredits(balanceInternal),
+      reserved: displayCredits(account?.reserved ?? 0),
+      balanceUsd: balanceInternal / CREDITS_PER_USD,
+      recent,
+      buildSha: buildInfo(process.env).sha,
+    };
+  });
 }
 
 /** Sign the user out and return them to the login screen. Better Auth's server

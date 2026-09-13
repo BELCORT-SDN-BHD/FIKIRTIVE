@@ -4,7 +4,8 @@ import { parseStorageKey, keyOwnerMatches } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 import { auth } from "@/lib/better-auth/compat";
 import { allowed } from "@/lib/allowlist";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { DOWNLOAD_FLAG, DOWNLOAD_NAME, safeDownloadFileName } from "@/lib/download-url";
 // SHARE-A1:公开媒体代理也要把流接成响应体,所以这个辅助搬去 lib 与它共用一份(7.3)。
 import { toWebStream } from "@/lib/web-stream";
@@ -75,7 +76,14 @@ export async function GET(
     // 走查 P0-2:`?download=1` 走同源附件转发,不把 R2 地址交给浏览器。
     const query = new URL(req.url).searchParams;
     if (query.get(DOWNLOAD_FLAG) === "1") {
-      return await attachmentResponse(joined, owner.ownerId, contentHash, ext, query.get(DOWNLOAD_NAME));
+      // 租户围栏收尾片判官定向修（规格 docs/specs/tenant-isolation.md，#464，TENANT-A10）:
+      // `attachmentResponse` 里的 `prisma.asset.findFirst` 是真的 tenant-guard 表读
+      // （Asset 在 TENANT_MODELS，d115332f 加的），之前的「仅存储、显式排除」判断没跟上
+      // 这一手改动。where 上的显式 `ownerId` 不动，只是把它收进帧里。
+      const principal = await resolveUserPrincipal(owner);
+      return await runAsUser(principal, () =>
+        attachmentResponse(joined, owner.ownerId, contentHash, ext, query.get(DOWNLOAD_NAME)),
+      );
     }
     // r2 driver: hand the client a presigned GET — R2 serves Range/206 natively.
     // F41: 1h TTL (default is 300s) — a 5-min URL expired mid-playback/seek on longer videos.

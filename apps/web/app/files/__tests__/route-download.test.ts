@@ -15,7 +15,14 @@ import { NextRequest } from "next/server";
 import { prisma } from "@fikirtive/db";
 
 const mockRequireOwner = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+// 租户围栏收尾片判官定向修（#464）：`app/files/[...key]/route.ts` 的 `?download=1` 分支
+// 现在从这个模块拿 `resolveUserPrincipal` 建帧；单测 mock 掉了整个 `@/lib/auth-guard`，
+// 补上 #464 B1 既有的共享 stub——真库测试同款用法（`otto-panel-expand-signal.test.ts` 等）：
+// Prisma 是真的，principal 的解析不需要再多打一次数据库。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mockRequireOwner,
+  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("@/lib/better-auth/compat", () => ({ auth: vi.fn().mockResolvedValue({ user: { email: "a@test" } }) }));
 vi.mock("@/lib/allowlist", () => ({ allowed: vi.fn().mockResolvedValue(true) }));
 

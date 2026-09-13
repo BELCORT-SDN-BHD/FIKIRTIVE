@@ -1,6 +1,7 @@
 import type { Channel } from "./types";
 import { prisma } from "@fikirtive/db";
-import { requireOwner } from "../auth-guard";
+import { requireOwner, resolveUserPrincipal } from "../auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { notImpl } from "./meta-shared";
 import { publishViaX } from "./x-publish-adapter";
 
@@ -27,8 +28,11 @@ export const x: Channel = {
   disconnect: async () => {
     const gate = await requireOwner();
     if ("error" in gate) return { error: "Sign in to disconnect X." };
-    await prisma.channelConnection.deleteMany({ where: { ownerId: gate.ownerId, kind: "x" } });
-    return { ok: true };
+    const principal = await resolveUserPrincipal(gate);
+    return runAsUser(principal, async (): Promise<{ ok: true } | { error: string }> => {
+      await prisma.channelConnection.deleteMany({ where: { ownerId: gate.ownerId, kind: "x" } });
+      return { ok: true };
+    });
   },
   listTargets: async (ownerId) => {
     const c = await prisma.channelConnection.findFirst({

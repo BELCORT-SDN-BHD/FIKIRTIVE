@@ -1,7 +1,8 @@
 import "server-only";
 
 import { redirect } from "next/navigation";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { getEntities, getProjects } from "@/lib/data";
 import { toEntityDTO } from "@/lib/dto";
 import { CreateBrowseSections } from "@/components/create/CreateBrowseSections";
@@ -21,8 +22,9 @@ export async function CreateBrowseEntry() {
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
   const { ownerId } = owner;
+  const principal = await resolveUserPrincipal(owner);
 
-  const [projects, entities] = await Promise.all([getProjects(ownerId), getEntities(ownerId)]);
+  const [projects, entities] = await runAsUser(principal, () => Promise.all([getProjects(ownerId), getEntities(ownerId)]));
 
   return (
     <CreateBrowseSections

@@ -2,7 +2,8 @@
 
 import { prisma } from "@fikirtive/db";
 import { storageKey, storageKeyToSrc } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { storage } from "./storage";
 import { listLibraryFavorites } from "./library-favorites";
 import { favoriteGenerationIds } from "./library-subjects";
@@ -141,127 +142,129 @@ export async function getGenerationHistory(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
-
-  if (opts?.favoriteOnly) {
-    // 收藏这一路借的是收藏自己的读模型,它今天只认 cursor / take。任何别的筛选传进来
-    // 都**接不住**,而接不住又照样返回一页,就是一次读起来很像答案的错答案:
-    // Otto 问「我收藏过的 laksa 图」会拿到全部收藏,还当成命中的那几张报给商家。
-    // 这与本文件下面对空 sources 的处理是同一条原则 —— 宁可说不行,不装作做到了。
-    const ignored = FAVORITE_ONLY_FILTER_KEYS.filter((key) => opts[key] !== undefined);
-    if (ignored.length) {
-      return {
-        error: `Favorites can't be filtered yet (${ignored.join(", ")}). Ask for favorites on their own, or drop the favorites filter and search everything.`,
-      };
-    }
-    return favoritesAsLibraryPage(opts);
-  }
-
-  const take = opts?.take ?? 60;
-  const scanTake = Math.min(Math.max(take + LIBRARY_SCAN_BUFFER, take + 1), 100);
-  const search = opts?.search?.trim();
-  const oldestFirst = opts?.order === "oldest";
-
-  const sourceWhere = librarySourceWhere(opts?.sources);
-  // "Neither Generated nor Uploads" is a real thing to ask for, and the honest answer is an
-  // empty page — not the whole library, which is what an ignored filter would have returned.
-  if (sourceWhere === null) return { items: [], nextCursor: null, hasMore: false };
-
-  let cursorWhere = {};
-  if (opts?.cursor) {
-    const sep = opts.cursor.lastIndexOf("|");
-    const at = new Date(opts.cursor.slice(0, sep));
-    const id = opts.cursor.slice(sep + 1);
-    if (!Number.isNaN(at.getTime()) && id) {
-      cursorWhere = oldestFirst
-        ? { OR: [{ createdAt: { gt: at } }, { createdAt: at, id: { gt: id } }] }
-        : { OR: [{ createdAt: { lt: at } }, { createdAt: at, id: { lt: id } }] };
-    }
-  }
-
-  const since = opts?.since ? new Date(opts.since) : null;
-  const mediaWhere = opts?.mediaKind
-    ? {
-        asset: {
-          ext: opts.mediaKind === "video"
-            ? { in: LIBRARY_VIDEO_EXT_MATCHES }
-            : { notIn: LIBRARY_VIDEO_EXT_MATCHES },
-        },
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<LibraryPage | { error: string }> => {
+    if (opts?.favoriteOnly) {
+      // 收藏这一路借的是收藏自己的读模型,它今天只认 cursor / take。任何别的筛选传进来
+      // 都**接不住**,而接不住又照样返回一页,就是一次读起来很像答案的错答案:
+      // Otto 问「我收藏过的 laksa 图」会拿到全部收藏,还当成命中的那几张报给商家。
+      // 这与本文件下面对空 sources 的处理是同一条原则 —— 宁可说不行,不装作做到了。
+      const ignored = FAVORITE_ONLY_FILTER_KEYS.filter((key) => opts[key] !== undefined);
+      if (ignored.length) {
+        return {
+          error: `Favorites can't be filtered yet (${ignored.join(", ")}). Ask for favorites on their own, or drop the favorites filter and search everything.`,
+        };
       }
-    : {};
+      return favoritesAsLibraryPage(opts);
+    }
 
-  const rows = await prisma.generation.findMany({
-    where: {
-      ownerId,
-      // 回收站那一格反过来读同一列 —— 一个开关,两个视图,不是第二份查询。
-      deletedAt: opts?.trashed ? { not: null } : null,
-      // 搜索打两列,不是一列。`Uploads` 页签上的每一行 `promptText` 都是空的(商家上传的
-      // 文件没有提示词),所以只打 `promptText` 的搜索在那一格**必然搜空** —— 而输入框上写着
-      // "Search prompts",商家看到的是一句自己做不到的承诺(占位符已随之改成如实的
-      // "Search prompts or file names",Founder 2026-09-05)。上传行真的有名字的那一列是
-      // `Asset.originalFilename`,就是卡片上写给他看的那个名字(`libraryItemTitle`)。
-      // 两条 OR 都仍在上面那句 `ownerId` 的域内 —— Prisma 把 OR 和同级的 ownerId 作 AND。
-      ...(search
-        ? {
-            OR: [
-              { promptText: { contains: search, mode: "insensitive" as const } },
-              { asset: { originalFilename: { contains: search, mode: "insensitive" as const } } },
-            ],
-          }
-        : {}),
-      ...sourceWhere,
-      ...mediaWhere,
-      ...(opts?.projectId ? { projectId: opts.projectId } : {}),
-      ...(since && !Number.isNaN(since.getTime()) ? { createdAt: { gte: since } } : {}),
-      ...cursorWhere,
-    },
-    orderBy: oldestFirst
-      ? [{ createdAt: "asc" as const }, { id: "asc" as const }]
-      : [{ createdAt: "desc" as const }, { id: "desc" as const }],
-    take: scanTake + 1,
-    include: { asset: true },
+    const take = opts?.take ?? 60;
+    const scanTake = Math.min(Math.max(take + LIBRARY_SCAN_BUFFER, take + 1), 100);
+    const search = opts?.search?.trim();
+    const oldestFirst = opts?.order === "oldest";
+
+    const sourceWhere = librarySourceWhere(opts?.sources);
+    // "Neither Generated nor Uploads" is a real thing to ask for, and the honest answer is an
+    // empty page — not the whole library, which is what an ignored filter would have returned.
+    if (sourceWhere === null) return { items: [], nextCursor: null, hasMore: false };
+
+    let cursorWhere = {};
+    if (opts?.cursor) {
+      const sep = opts.cursor.lastIndexOf("|");
+      const at = new Date(opts.cursor.slice(0, sep));
+      const id = opts.cursor.slice(sep + 1);
+      if (!Number.isNaN(at.getTime()) && id) {
+        cursorWhere = oldestFirst
+          ? { OR: [{ createdAt: { gt: at } }, { createdAt: at, id: { gt: id } }] }
+          : { OR: [{ createdAt: { lt: at } }, { createdAt: at, id: { lt: id } }] };
+      }
+    }
+
+    const since = opts?.since ? new Date(opts.since) : null;
+    const mediaWhere = opts?.mediaKind
+      ? {
+          asset: {
+            ext: opts.mediaKind === "video"
+              ? { in: LIBRARY_VIDEO_EXT_MATCHES }
+              : { notIn: LIBRARY_VIDEO_EXT_MATCHES },
+          },
+        }
+      : {};
+
+    const rows = await prisma.generation.findMany({
+      where: {
+        ownerId,
+        // 回收站那一格反过来读同一列 —— 一个开关,两个视图,不是第二份查询。
+        deletedAt: opts?.trashed ? { not: null } : null,
+        // 搜索打两列,不是一列。`Uploads` 页签上的每一行 `promptText` 都是空的(商家上传的
+        // 文件没有提示词),所以只打 `promptText` 的搜索在那一格**必然搜空** —— 而输入框上写着
+        // "Search prompts",商家看到的是一句自己做不到的承诺(占位符已随之改成如实的
+        // "Search prompts or file names",Founder 2026-09-05)。上传行真的有名字的那一列是
+        // `Asset.originalFilename`,就是卡片上写给他看的那个名字(`libraryItemTitle`)。
+        // 两条 OR 都仍在上面那句 `ownerId` 的域内 —— Prisma 把 OR 和同级的 ownerId 作 AND。
+        ...(search
+          ? {
+              OR: [
+                { promptText: { contains: search, mode: "insensitive" as const } },
+                { asset: { originalFilename: { contains: search, mode: "insensitive" as const } } },
+              ],
+            }
+          : {}),
+        ...sourceWhere,
+        ...mediaWhere,
+        ...(opts?.projectId ? { projectId: opts.projectId } : {}),
+        ...(since && !Number.isNaN(since.getTime()) ? { createdAt: { gte: since } } : {}),
+        ...cursorWhere,
+      },
+      orderBy: oldestFirst
+        ? [{ createdAt: "asc" as const }, { id: "asc" as const }]
+        : [{ createdAt: "desc" as const }, { id: "desc" as const }],
+      take: scanTake + 1,
+      include: { asset: true },
+    });
+
+    const scanned = rows.slice(0, scanTake);
+    // 收藏状态来自 `Favorite` 那张表,不是 `Generation.favorite` 那一列 —— 那一列自
+    // 2026-09-03 的回灌之后没有任何写入者,继续读它就是读一份过期的影子。
+    const favoriteIds = await favoriteGenerationIds(ownerId, scanned.map((g) => g.id));
+    // 卡片标题的摘要那一半(清单 B4)。**一次查询**问完这一页的全部素材,不是逐行问 ——
+    // 与上面的收藏状态同一手法。只收 DONE 且真的写下了一句的行:QUEUED / RUNNING / FAILED
+    // 的行没有可说的,空串在读取端与「没有这一行」是同一件事。
+    const summaryByAsset = await libraryAssetSummaries(ownerId, scanned.map((g) => g.assetId));
+    const resolved = await Promise.all(scanned.map(async (g) => {
+      const ext = g.asset.ext.toLowerCase();
+      const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
+      if (!(await storage.exists(key))) return null;
+      return {
+        row: g,
+        item: {
+          id: g.id,
+          projectId: g.projectId,
+          assetId: g.assetId,
+          url: storageKeyToSrc(key),
+          kind: LIBRARY_VIDEO_EXTS.has(ext) ? "video" : "image",
+          source: libraryItemSource(g.source),
+          prompt: g.promptText ?? "",
+          filename: g.asset.originalFilename ?? "",
+          summary: summaryByAsset.get(g.assetId) ?? "",
+          width: g.asset.width ?? null,
+          height: g.asset.height ?? null,
+          durationS: g.asset.durationS ?? null,
+          favorite: favoriteIds.has(g.id),
+          createdAt: g.createdAt.toISOString(),
+        } satisfies LibraryItem,
+      };
+    }));
+    const existing = resolved.filter((entry): entry is NonNullable<typeof entry> => entry != null);
+    const items = existing.slice(0, take).map((entry) => entry.item);
+    const cursorRow = existing.length > take
+      ? existing[take - 1].row
+      : rows.length > scanTake
+        ? scanned[scanned.length - 1]
+        : null;
+    const nextCursor = cursorRow ? `${cursorRow.createdAt.toISOString()}|${cursorRow.id}` : null;
+    return { items, nextCursor, hasMore: nextCursor != null };
   });
-
-  const scanned = rows.slice(0, scanTake);
-  // 收藏状态来自 `Favorite` 那张表,不是 `Generation.favorite` 那一列 —— 那一列自
-  // 2026-09-03 的回灌之后没有任何写入者,继续读它就是读一份过期的影子。
-  const favoriteIds = await favoriteGenerationIds(ownerId, scanned.map((g) => g.id));
-  // 卡片标题的摘要那一半(清单 B4)。**一次查询**问完这一页的全部素材,不是逐行问 ——
-  // 与上面的收藏状态同一手法。只收 DONE 且真的写下了一句的行:QUEUED / RUNNING / FAILED
-  // 的行没有可说的,空串在读取端与「没有这一行」是同一件事。
-  const summaryByAsset = await libraryAssetSummaries(ownerId, scanned.map((g) => g.assetId));
-  const resolved = await Promise.all(scanned.map(async (g) => {
-    const ext = g.asset.ext.toLowerCase();
-    const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
-    if (!(await storage.exists(key))) return null;
-    return {
-      row: g,
-      item: {
-        id: g.id,
-        projectId: g.projectId,
-        assetId: g.assetId,
-        url: storageKeyToSrc(key),
-        kind: LIBRARY_VIDEO_EXTS.has(ext) ? "video" : "image",
-        source: libraryItemSource(g.source),
-        prompt: g.promptText ?? "",
-        filename: g.asset.originalFilename ?? "",
-        summary: summaryByAsset.get(g.assetId) ?? "",
-        width: g.asset.width ?? null,
-        height: g.asset.height ?? null,
-        durationS: g.asset.durationS ?? null,
-        favorite: favoriteIds.has(g.id),
-        createdAt: g.createdAt.toISOString(),
-      } satisfies LibraryItem,
-    };
-  }));
-  const existing = resolved.filter((entry): entry is NonNullable<typeof entry> => entry != null);
-  const items = existing.slice(0, take).map((entry) => entry.item);
-  const cursorRow = existing.length > take
-    ? existing[take - 1].row
-    : rows.length > scanTake
-      ? scanned[scanned.length - 1]
-      : null;
-  const nextCursor = cursorRow ? `${cursorRow.createdAt.toISOString()}|${cursorRow.id}` : null;
-  return { items, nextCursor, hasMore: nextCursor != null };
 }
 
 /**

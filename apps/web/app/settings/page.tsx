@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { getMyProfileNames } from "@/lib/profile-names";
 import { WorkspaceNameField } from "@/app/profile/ProfileNames";
 import { SettingsShell } from "@/components/settings/SettingsShell";
@@ -11,8 +12,8 @@ export const metadata = { title: "Settings · Fikirtive" };
 export default async function SettingsRoutePage() {
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
-
-  const names = await getMyProfileNames();
+  const principal = await resolveUserPrincipal(owner);
+  const names = await runAsUser(principal, () => getMyProfileNames());
   if ("error" in names) redirect("/login");
 
   return (

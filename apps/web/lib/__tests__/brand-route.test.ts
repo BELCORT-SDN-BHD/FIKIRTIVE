@@ -190,7 +190,12 @@ vi.mock("@/lib/brand-record-actions", () => ({
 }));
 vi.mock("@/lib/product-ingest-actions", () => ({ ingestProductFromUrl: vi.fn() }));
 // 页面这一侧的服务端依赖。这里只替掉「去数据库拿什么」，守卫本身(requireOwner)是被测的东西。
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: requireOwnerMock }));
+// 租户围栏收尾片（#464）：/brand 现在从这个模块拿 `resolveUserPrincipal` 建帧;单测 mock 掉了
+// 整个 `@/lib/auth-guard`，补上 #464 B1 既有的共享 stub（其它切片同款用法）。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: requireOwnerMock,
+  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("@/lib/actions", () => ({ getOrCreateDefaultProject: vi.fn(async () => ({ id: "proj_ensured" })) }));
 vi.mock("@/lib/data", () => ({
   getProjects: vi.fn(async () => projectRows.value),

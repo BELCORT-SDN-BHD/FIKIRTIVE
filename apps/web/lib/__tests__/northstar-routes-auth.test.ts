@@ -41,7 +41,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect, notFound: mocks.notFound }));
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mocks.requireOwner }));
+// 租户围栏收尾片（#464）：这几个 Entry 现在从这个模块拿 `resolveUserPrincipal` 建帧;
+// 单测 mock 掉了整个 `@/lib/auth-guard`，补上 #464 B1 既有的共享 stub（其它切片同款用法）。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mocks.requireOwner,
+  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("@/lib/profile-names", () => ({ getMyProfileNames: mocks.getMyProfileNames }));
 vi.mock("@/lib/data", () => ({
   getProjects: mocks.getProjects,

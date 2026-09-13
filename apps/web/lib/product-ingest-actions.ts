@@ -23,7 +23,8 @@
  */
 
 import { extractProductDraft, type ProductDraft } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { fetchRawHtml } from "./fetch-extract";
 
 export type ProductDraftResult = { ok: true; draft: ProductDraft } | { error: string };
@@ -43,19 +44,21 @@ function friendlyFetchError(e: unknown): string {
 export async function ingestProductFromUrl(raw: unknown): Promise<ProductDraftResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<ProductDraftResult> => {
+    if (typeof raw !== "string" || !raw.trim()) return { error: "Please enter a URL." };
 
-  if (typeof raw !== "string" || !raw.trim()) return { error: "Please enter a URL." };
+    // Fetch (SSRF-hardened) + deterministic extraction. Always free — no LLM, no spend.
+    let html: string;
+    let sourceUrl: string;
+    try {
+      const fetched = await fetchRawHtml(raw);
+      html = fetched.html;
+      sourceUrl = fetched.url;
+    } catch (e) {
+      return { error: friendlyFetchError(e) };
+    }
 
-  // Fetch (SSRF-hardened) + deterministic extraction. Always free — no LLM, no spend.
-  let html: string;
-  let sourceUrl: string;
-  try {
-    const fetched = await fetchRawHtml(raw);
-    html = fetched.html;
-    sourceUrl = fetched.url;
-  } catch (e) {
-    return { error: friendlyFetchError(e) };
-  }
-
-  return { ok: true, draft: extractProductDraft(html, sourceUrl) };
+    return { ok: true, draft: extractProductDraft(html, sourceUrl) };
+  });
 }

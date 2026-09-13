@@ -57,7 +57,8 @@ import {
   GEN_VIDEO_MODEL_OPTIONS,
   type GenVideoModel,
 } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { startGen } from "./gen-actions";
 // The batch identity lives in a plain module so the undo guard in campaign-actions can ask
@@ -473,38 +474,41 @@ export async function quoteCampaignGeneration(
   "use server";
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const parsed = campaignIdSchema.safeParse(rawCampaignId);
-  if (!parsed.success) return { error: "Campaign not found." };
-  const options = quoteOptionsSchema.safeParse(rawOptions ?? {});
-  if (!options.success) return { error: "That generation request is out of bounds." };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<CampaignGenQuoteResult> => {
+    const parsed = campaignIdSchema.safeParse(rawCampaignId);
+    if (!parsed.success) return { error: "Campaign not found." };
+    const options = quoteOptionsSchema.safeParse(rawOptions ?? {});
+    if (!options.success) return { error: "That generation request is out of bounds." };
 
-  const campaign = await prisma.campaign.findFirst({
-    where: { id: parsed.data, ownerId: gate.ownerId, deletedAt: null },
-    select: { id: true, planJson: true },
-  });
-  if (!campaign) return { error: "Campaign not found." };
+    const campaign = await prisma.campaign.findFirst({
+      where: { id: parsed.data, ownerId: gate.ownerId, deletedAt: null },
+      select: { id: true, planJson: true },
+    });
+    if (!campaign) return { error: "Campaign not found." };
 
-  const account = await prisma.creditAccount.findUnique({
-    where: { orgId: gate.ownerId },
-    select: { balance: true },
+    const account = await prisma.creditAccount.findUnique({
+      where: { orgId: gate.ownerId },
+      select: { balance: true },
+    });
+    const approved = approvedEntriesFromPlan(campaign.planJson);
+    const models = { image: activeImageModel(), video: activeVideoModel() };
+    const videoSpec = resolveCampaignVideoSpec(models.video, options.data.videoSpec);
+    if (!videoSpec) return { error: VIDEO_SPEC_OUT_OF_BOUNDS };
+    const cells = buildCampaignGenCells(approved, models, videoSpec);
+    const charges = await previewCampaignCharges(gate.ownerId, campaign.id, options.data.projectId, cells);
+    const menuOptions = GEN_VIDEO_MODEL_OPTIONS[models.video as GenVideoModel];
+    return {
+      ok: true,
+      quote: quoteCampaignGenCells(approved, cells, charges),
+      balanceDisplayCredits: displayCredits(account?.balance ?? 0),
+      videoMenu: {
+        resolutions: [...(menuOptions?.resolutions ?? [])],
+        durations: [...(menuOptions?.durations ?? [])],
+        selected: videoSpec,
+      },
+    };
   });
-  const approved = approvedEntriesFromPlan(campaign.planJson);
-  const models = { image: activeImageModel(), video: activeVideoModel() };
-  const videoSpec = resolveCampaignVideoSpec(models.video, options.data.videoSpec);
-  if (!videoSpec) return { error: VIDEO_SPEC_OUT_OF_BOUNDS };
-  const cells = buildCampaignGenCells(approved, models, videoSpec);
-  const charges = await previewCampaignCharges(gate.ownerId, campaign.id, options.data.projectId, cells);
-  const menuOptions = GEN_VIDEO_MODEL_OPTIONS[models.video as GenVideoModel];
-  return {
-    ok: true,
-    quote: quoteCampaignGenCells(approved, cells, charges),
-    balanceDisplayCredits: displayCredits(account?.balance ?? 0),
-    videoMenu: {
-      resolutions: [...(menuOptions?.resolutions ?? [])],
-      durations: [...(menuOptions?.durations ?? [])],
-      selected: videoSpec,
-    },
-  };
 }
 
 const confirmInputSchema = z
@@ -544,246 +548,248 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<ConfirmCampaignGenerationResult> => {
+    const { ownerId } = gate;
+    const parsed = confirmInputSchema.safeParse(raw);
+    if (!parsed.success) return { error: "That generation request is out of bounds." };
+    const { campaignId, projectId, expectedTotalCredits, expectedContentFingerprint, expectedDeliveryFingerprint } =
+      parsed.data;
 
-  const parsed = confirmInputSchema.safeParse(raw);
-  if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { campaignId, projectId, expectedTotalCredits, expectedContentFingerprint, expectedDeliveryFingerprint } =
-    parsed.data;
-
-  // Owner-scoped campaign load — the persisted plan is the ONLY source of what will generate.
-  const campaign = await prisma.campaign.findFirst({
-    where: { id: campaignId, ownerId, deletedAt: null },
-    select: { id: true, name: true, planJson: true },
-  });
-  if (!campaign) return { error: "Campaign not found." };
-
-  const approved = approvedEntriesFromPlan(campaign.planJson);
-  if (approved.length === 0) return { error: "Approve at least one plan entry before generating." };
-  if (approved.length > MAX_BATCH_CELLS) {
-    return { error: `Generate at most ${MAX_BATCH_CELLS} approved entries at once.` };
-  }
-
-  // Owner-scoped destination project, bound to THIS campaign so generations land inside the
-  // campaign the owner is confirming (no cross-campaign / cross-tenant target).
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId, deletedAt: null },
-    select: { id: true, campaignId: true },
-  });
-  if (!project) return { error: "Project not found." };
-  if (project.campaignId !== campaignId) return { error: "Choose a project that belongs to this campaign." };
-
-  const models = { image: activeImageModel(), video: activeVideoModel() };
-  // #709：档位是商家的选择，但**菜单外一律拒绝**（fail closed），绝不悄悄换成默认档
-  // 然后按另一个价收钱。
-  const videoSpec = resolveCampaignVideoSpec(models.video, parsed.data.videoSpec);
-  if (!videoSpec) return { error: VIDEO_SPEC_OUT_OF_BOUNDS };
-  const cells = buildCampaignGenCells(approved, models, videoSpec);
-
-  // Stable batch id (per campaign+project) + stable entry ids + a fresh attempt id per call.
-  // startGen's existing factory history verdict remains the only reserve/reuse authority.
-  const batchId = deriveCampaignBatchId(campaignId, projectId);
-  const attemptId = newId();
-
-  // #708：报价与派发同一把尺 —— 这里用**将要派发的这一批**重算一次收费预判，于是
-  // 「卡上的数」与「确认后真离开余额的数」是同一个数。预判只读历史，不预扣。
-  const charges = await previewCampaignCharges(ownerId, campaign.id, project.id, cells);
-  const quote = quoteCampaignGenCells(approved, cells, charges);
-
-  // Price consent and content consent both fail closed BEFORE any dispatch. The content hash is
-  // re-derived from persisted entries + current server model/price config; no client brief,
-  // model, entry id, or unit price participates in the decision.
-  //
-  // #708:价格同意是一条**上限** —— 「不许收得比按钮上写的多」。收得更少永远放行,因为
-  //   ① 那正是复用该有的样子(重放/重试/别的标签页先派发过),把它判成「价格变了」会
-  //      让耐久重试永远走不通 —— 那才是真的钱路风险(商家改点新一次 = 新的一笔);
-  //   ② 少收从不违反商家的授权。**多收**一格都不行,一律停在花钱之前。
-  // 单价漂移不靠这一行兜:它已经逐条进了内容指纹,下面那道闸会拦。
-  if (quote.totalDisplayCredits > expectedTotalCredits) {
-    return {
-      error: `This plan or its price changed since you reviewed it (was ${expectedTotalCredits}, now ${quote.totalDisplayCredits} credits). Refresh and confirm again.`,
-      quote,
-    };
-  }
-  // #708 修复轮 P1-1:**少付不等于少交付**。价格上限单独一条闸是不够的 —— 被挡下的条目
-  // 同样收 0,于是「另一个标签页先用别的规格确认了」这一路会让交付缩水而总额同样变低,
-  // 价格闸一路放行,商家为一份缩水的交付付了钱、而且从没被问过(判官 r1 P1)。
-  //
-  // 交付面必须逐字对上:复用照常交付(new↔reused 不动它),只有条目从「会交付」变成
-  // 「不会交付」才对不上,那一刻停在花钱之前,让商家看着更新后的卡重新决定。
-  //
-  // 没带交付指纹的调用方(没经过确认卡)按最严处理:一个条目都不许掉队。带了的,就逐字
-  // 对签他复核过的那一组 —— 卡上明说过「这条不会开始」的条目,他是被问过的,可以确认;
-  // 复核之后才掉队的,一律停下来重新问一次。
-  const deliveryChanged = expectedDeliveryFingerprint == null
-    ? quote.blockedCount > 0
-    : quote.deliveryFingerprint !== expectedDeliveryFingerprint;
-  if (deliveryChanged) {
-    const missing = quote.blockedCount;
-    return {
-      error: missing > 0
-        ? `${missing} ${missing === 1 ? "item" : "items"} in this plan can no longer be created as reviewed, so nothing was started and nothing was charged. Review the updated plan before confirming.`
-        : "What this plan will deliver changed since you reviewed it, so nothing was started and nothing was charged. Review the updated plan before confirming.",
-      quote,
-    };
-  }
-  if (quote.contentFingerprint !== expectedContentFingerprint) {
-    return {
-      error: "This plan changed since you reviewed it. Review the updated plan before confirming.",
-      quote,
-    };
-  }
-
-  // #744 判官 r1 P1-2 / r2 P1 — everything checked above was read BEFORE the loop below starts
-  // spending, and the merchant can undo or remove an approval while it runs. So each cell's
-  // request carries the campaign approval gate, and startGen applies it INSIDE the transaction
-  // that commits that cell's charge: it re-reads the persisted plan under the campaign lock and
-  // re-derives this same fingerprint from it. A dispatch either beats the undo — and the undo is
-  // then refused, because the job it can now see proves the charge — or loses to it and never
-  // runs. Because the lock belongs to the charging transaction, an undo cannot land in between:
-  // the lock is released by the same COMMIT that makes the charge visible.
-  // This layer still opens no transaction and still spends nothing itself; startGen remains the
-  // only thing that may reserve a credit, and the gate can only ever refuse it.
-  //
-  // 注:重算指纹时收费预判传 `null` —— **内容指纹不含历史状态**(它只哈希 id/brief/model/
-  // 单价/承诺规格),所以传不传预判都是同一个值。这里传 null 是为了不在锁内多读一次历史。
-  //
-  // #749 判官 r2 P1 —— 上面那三道闸(总额上限、交付面、内容指纹)读的全是**锁外快照**:
-  // `previewCampaignCharges` 在这一行之前读完历史,而钱要到下面 `orchestrateBatch` 一格一格
-  // 派发时才真扣。中间那段时间里
-  //   ① 一单「复用中」的任务恰好失败 → 引擎会改判成新做并预扣全价,**哪怕商家签的是 0**;
-  //   ② 另一个标签页用别的规格占住某个条目 → 那一格被挡下,批次照旧继续,已派发的格照收钱。
-  // 两条都能让签名对得上、实际却超出批准金额或交付缩水。修法不是再造一把锁:#744 已经把
-  // 「批准」这件事搬进了扣费事务里的 campaign 锁,这里让「报价」与「交付面」骑上同一把 ——
-  // 交付面在锁内重判,每一格的收费判决与费用上限拿 startGen 项目锁里的真判决对签。
-  const guardedStartGen: StartGenPort = (req, cellIndex) =>
-    startGen(
-      attachCampaignApprovalGate(req, {
-        ownerId,
-        campaignId,
-        stillApproved: (planJson) => {
-          const live = approvedEntriesFromPlan(planJson);
-          const liveCells = buildCampaignGenCells(live, models, videoSpec);
-          return quoteCampaignGenCells(live, liveCells, null).contentFingerprint
-            === quote.contentFingerprint;
-        },
-        // ② 交付面 —— 整批在锁内重判一次,判据仍是 `previewBatchCharges`(报价那一侧同一个)。
-        //    自己已经派发出去的格不会动它:派发只会让那一格从 new 变成 reused,两者都算
-        //    「会交付」;只有材料对不上(别人占了)才会掉出交付面,而那只可能来自另一次派发。
-        //    这一步同时**续租**(判官 r3 P1):租约只需覆盖相邻两格的间隙,所以它能定得很短
-        //    (崩了很快就放),又不会在一趟正常派发中途过期。万一真过期且被别人抢走,这一格
-        //    在花钱之前就停住 —— 不会继续往一份已经缩水的交付里付钱。
-        stillDelivering: async (tx) => {
-          if (!(await renewCampaignDispatchLease(tx, { ownerId, batchId, attemptId }))) {
-            return CAMPAIGN_DISPATCH_IN_FLIGHT;
-          }
-          const live = await previewBatchCharges(tx, {
-            ownerId,
-            projectId,
-            batchId,
-            attemptId,
-            cells,
-          });
-          if ("error" in live) return CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH;
-          return quoteCampaignGenCells(approved, cells, live).deliveryFingerprint
-            === quote.deliveryFingerprint
-            ? null
-            : CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH;
-        },
-        // #749 判官 r4 —— 这一格的钱一落地就续租,别拿着一把正在老化的租约去做收尾。
-        afterCharge: async () => {
-          await renewCampaignDispatchLease(prisma, { ownerId, batchId, attemptId });
-        },
-        // ①③ 这一格的收费判决 + 费用上限,对着商家签名时的那一行。
-        //
-        // 有一条路走不到这里,是有意的:startGen 有一条**锁外的**耐久重放快路 —— 历史里
-        // 已经有一单活着时,它在开事务之前就返回复用。那条路一分钱都不动,而且复用的那一单
-        // 材料与这一格逐字相同(材料对不上会先被判成冲突),所以交付的正是商家签的那份,
-        // 只是更便宜。**凡是会扣钱的格都必然进事务、必然过这两道闸** —— 需要成立的不变式
-        // 是这一条,不是「每一次调用都对签一遍」。
-        stillPriced: (verdict) => {
-          const signed = cellIndex == null ? undefined : quote.lines[cellIndex];
-          // 签不出这一行(下标对不上、或商家签的就是「这一格不会开始」)—— 一律不许派发。
-          if (!signed || signed.charge === "blocked") return LINE_DELIVERY_CHANGED_MID_DISPATCH;
-          if (verdict.disposition !== (signed.charge === "new" ? "fresh" : "reused")) {
-            return LINE_DELIVERY_CHANGED_MID_DISPATCH;
-          }
-          // 金额上限:锁内真会预扣的数,不许高过他签名时这一格的数。少收照旧放行 ——
-          // 那正是复用该有的样子,且从不违反授权。
-          if (verdict.displayCredits > signed.displayCredits) return LINE_PRICE_CHANGED_MID_DISPATCH;
-          return null;
-        },
-      }),
-    );
-
-  // #749 判官 r3 P1 —— **批次级承诺需要批次级机制**。
-  //
-  // 上面那两道锁内闸门守的是「这一格」,而 campaign 锁是事务级的:每一格提交时它就被放开,
-  // 批次却还在往下派发。缝因此在**格与格之间**:B 先为共用的那张图付了钱,A 随后用别的档
-  // 占住片子那一格,B 到第二格才发现交付缩水 —— 而第一笔预扣早已提交。往格里再加检查堵不
-  // 上,因为缝根本不在格里。
-  //
-  // 所以开工时先把**整个交付面**一次性认下来:一笔短事务、取同一把 campaign 锁、认领 +
-  // 就地复核交付面,然后立刻提交(不长持事务、不占连接池)。认领期间,同一个战役+项目的
-  // 另一次确认在**它自己花钱之前**被挡住。认领本身就是那把批次级的锁。
-  const lease = {
-    ownerId,
-    campaignId,
-    batchId,
-    projectId,
-    attemptId,
-    name: `${campaign.name} — campaign generation`,
-  };
-  let claimed: boolean;
-  try {
-    claimed = await prisma.$transaction(async (tx) => {
-      if (!(await claimCampaignDispatch(tx, lease))) return false;
-      // 认下来之后,就在这把锁里复核一次交付面。对不上就抛 —— 租约与它同生共死,随事务一起
-      // 回滚,不留残迹也不需要补偿归还。零扣费,因为这里一格都还没派发。
-      const live = await previewBatchCharges(tx, { ownerId, projectId, batchId, attemptId, cells });
-      // 读不出这一批的收费预判时,把**它自己那句话**原样带给商家(例如迁移期旧行对不上
-      // 哪个条目)—— 换成一句笼统的「交付面变了」会把真正的原因藏起来。
-      if ("error" in live) throw new DeliveryFaceMovedAtClaim(live.error);
-      if (quoteCampaignGenCells(approved, cells, live).deliveryFingerprint !== quote.deliveryFingerprint) {
-        throw new DeliveryFaceMovedAtClaim(DELIVERY_MOVED_BEFORE_DISPATCH);
-      }
-      return true;
+    // Owner-scoped campaign load — the persisted plan is the ONLY source of what will generate.
+    const campaign = await prisma.campaign.findFirst({
+      where: { id: campaignId, ownerId, deletedAt: null },
+      select: { id: true, name: true, planJson: true },
     });
-  } catch (error) {
-    if (error instanceof DeliveryFaceMovedAtClaim) {
-      return { error: error.userError, quote };
+    if (!campaign) return { error: "Campaign not found." };
+
+    const approved = approvedEntriesFromPlan(campaign.planJson);
+    if (approved.length === 0) return { error: "Approve at least one plan entry before generating." };
+    if (approved.length > MAX_BATCH_CELLS) {
+      return { error: `Generate at most ${MAX_BATCH_CELLS} approved entries at once.` };
     }
-    console.warn(
-      "campaign-generation-confirm: dispatch claim could not be taken (nothing started):",
-      error instanceof Error ? error.message : error,
-    );
-    return { error: CAMPAIGN_DISPATCH_CLAIM_UNKNOWN, quote };
-  }
-  if (!claimed) return { error: CAMPAIGN_DISPATCH_IN_FLIGHT, quote };
 
-  let result: Awaited<ReturnType<typeof orchestrateBatch>>;
-  try {
-    result = await orchestrateBatch(
-      { startGen: guardedStartGen, prisma },
-      { ownerId, projectId, batchId, attemptId, name: lease.name, cells },
-    );
-  } finally {
-    // 派发结束就归还 —— 成功、部分成功、失败、抛出,都一样。归还只在还归自己时生效,失败
-    // 也不上抛:残留的租约最多让下一次确认等它老死,那是保守方向,绝不会让任何一笔钱走通。
-    await releaseCampaignDispatch(prisma, lease);
-  }
-  if ("error" in result) return { ...result, quote };
+    // Owner-scoped destination project, bound to THIS campaign so generations land inside the
+    // campaign the owner is confirming (no cross-campaign / cross-tenant target).
+    const project = await prisma.project.findFirst({
+      where: { id: projectId, ownerId, deletedAt: null },
+      select: { id: true, campaignId: true },
+    });
+    if (!project) return { error: "Project not found." };
+    if (project.campaignId !== campaignId) return { error: "Choose a project that belongs to this campaign." };
 
-  // Revalidation is post-spend presentation metadata. Never throw away an honest dispatch
-  // result after startGen has committed reservations; the destination pages can refresh later.
-  try {
-    revalidatePath(`/campaign/${campaignId}`);
-    revalidatePath(`/campaign/${campaignId}/confirm`);
-  } catch (error) {
-    console.warn(
-      "campaign-generation-confirm: post-dispatch revalidation failed (non-fatal):",
-      error instanceof Error ? error.message : error,
-    );
-  }
-  return { ok: true, result, quote };
+    const models = { image: activeImageModel(), video: activeVideoModel() };
+    // #709：档位是商家的选择，但**菜单外一律拒绝**（fail closed），绝不悄悄换成默认档
+    // 然后按另一个价收钱。
+    const videoSpec = resolveCampaignVideoSpec(models.video, parsed.data.videoSpec);
+    if (!videoSpec) return { error: VIDEO_SPEC_OUT_OF_BOUNDS };
+    const cells = buildCampaignGenCells(approved, models, videoSpec);
+
+    // Stable batch id (per campaign+project) + stable entry ids + a fresh attempt id per call.
+    // startGen's existing factory history verdict remains the only reserve/reuse authority.
+    const batchId = deriveCampaignBatchId(campaignId, projectId);
+    const attemptId = newId();
+
+    // #708：报价与派发同一把尺 —— 这里用**将要派发的这一批**重算一次收费预判，于是
+    // 「卡上的数」与「确认后真离开余额的数」是同一个数。预判只读历史，不预扣。
+    const charges = await previewCampaignCharges(ownerId, campaign.id, project.id, cells);
+    const quote = quoteCampaignGenCells(approved, cells, charges);
+
+    // Price consent and content consent both fail closed BEFORE any dispatch. The content hash is
+    // re-derived from persisted entries + current server model/price config; no client brief,
+    // model, entry id, or unit price participates in the decision.
+    //
+    // #708:价格同意是一条**上限** —— 「不许收得比按钮上写的多」。收得更少永远放行,因为
+    //   ① 那正是复用该有的样子(重放/重试/别的标签页先派发过),把它判成「价格变了」会
+    //      让耐久重试永远走不通 —— 那才是真的钱路风险(商家改点新一次 = 新的一笔);
+    //   ② 少收从不违反商家的授权。**多收**一格都不行,一律停在花钱之前。
+    // 单价漂移不靠这一行兜:它已经逐条进了内容指纹,下面那道闸会拦。
+    if (quote.totalDisplayCredits > expectedTotalCredits) {
+      return {
+        error: `This plan or its price changed since you reviewed it (was ${expectedTotalCredits}, now ${quote.totalDisplayCredits} credits). Refresh and confirm again.`,
+        quote,
+      };
+    }
+    // #708 修复轮 P1-1:**少付不等于少交付**。价格上限单独一条闸是不够的 —— 被挡下的条目
+    // 同样收 0,于是「另一个标签页先用别的规格确认了」这一路会让交付缩水而总额同样变低,
+    // 价格闸一路放行,商家为一份缩水的交付付了钱、而且从没被问过(判官 r1 P1)。
+    //
+    // 交付面必须逐字对上:复用照常交付(new↔reused 不动它),只有条目从「会交付」变成
+    // 「不会交付」才对不上,那一刻停在花钱之前,让商家看着更新后的卡重新决定。
+    //
+    // 没带交付指纹的调用方(没经过确认卡)按最严处理:一个条目都不许掉队。带了的,就逐字
+    // 对签他复核过的那一组 —— 卡上明说过「这条不会开始」的条目,他是被问过的,可以确认;
+    // 复核之后才掉队的,一律停下来重新问一次。
+    const deliveryChanged = expectedDeliveryFingerprint == null
+      ? quote.blockedCount > 0
+      : quote.deliveryFingerprint !== expectedDeliveryFingerprint;
+    if (deliveryChanged) {
+      const missing = quote.blockedCount;
+      return {
+        error: missing > 0
+          ? `${missing} ${missing === 1 ? "item" : "items"} in this plan can no longer be created as reviewed, so nothing was started and nothing was charged. Review the updated plan before confirming.`
+          : "What this plan will deliver changed since you reviewed it, so nothing was started and nothing was charged. Review the updated plan before confirming.",
+        quote,
+      };
+    }
+    if (quote.contentFingerprint !== expectedContentFingerprint) {
+      return {
+        error: "This plan changed since you reviewed it. Review the updated plan before confirming.",
+        quote,
+      };
+    }
+
+    // #744 判官 r1 P1-2 / r2 P1 — everything checked above was read BEFORE the loop below starts
+    // spending, and the merchant can undo or remove an approval while it runs. So each cell's
+    // request carries the campaign approval gate, and startGen applies it INSIDE the transaction
+    // that commits that cell's charge: it re-reads the persisted plan under the campaign lock and
+    // re-derives this same fingerprint from it. A dispatch either beats the undo — and the undo is
+    // then refused, because the job it can now see proves the charge — or loses to it and never
+    // runs. Because the lock belongs to the charging transaction, an undo cannot land in between:
+    // the lock is released by the same COMMIT that makes the charge visible.
+    // This layer still opens no transaction and still spends nothing itself; startGen remains the
+    // only thing that may reserve a credit, and the gate can only ever refuse it.
+    //
+    // 注:重算指纹时收费预判传 `null` —— **内容指纹不含历史状态**(它只哈希 id/brief/model/
+    // 单价/承诺规格),所以传不传预判都是同一个值。这里传 null 是为了不在锁内多读一次历史。
+    //
+    // #749 判官 r2 P1 —— 上面那三道闸(总额上限、交付面、内容指纹)读的全是**锁外快照**:
+    // `previewCampaignCharges` 在这一行之前读完历史,而钱要到下面 `orchestrateBatch` 一格一格
+    // 派发时才真扣。中间那段时间里
+    //   ① 一单「复用中」的任务恰好失败 → 引擎会改判成新做并预扣全价,**哪怕商家签的是 0**;
+    //   ② 另一个标签页用别的规格占住某个条目 → 那一格被挡下,批次照旧继续,已派发的格照收钱。
+    // 两条都能让签名对得上、实际却超出批准金额或交付缩水。修法不是再造一把锁:#744 已经把
+    // 「批准」这件事搬进了扣费事务里的 campaign 锁,这里让「报价」与「交付面」骑上同一把 ——
+    // 交付面在锁内重判,每一格的收费判决与费用上限拿 startGen 项目锁里的真判决对签。
+    const guardedStartGen: StartGenPort = (req, cellIndex) =>
+      startGen(
+        attachCampaignApprovalGate(req, {
+          ownerId,
+          campaignId,
+          stillApproved: (planJson) => {
+            const live = approvedEntriesFromPlan(planJson);
+            const liveCells = buildCampaignGenCells(live, models, videoSpec);
+            return quoteCampaignGenCells(live, liveCells, null).contentFingerprint
+              === quote.contentFingerprint;
+          },
+          // ② 交付面 —— 整批在锁内重判一次,判据仍是 `previewBatchCharges`(报价那一侧同一个)。
+          //    自己已经派发出去的格不会动它:派发只会让那一格从 new 变成 reused,两者都算
+          //    「会交付」;只有材料对不上(别人占了)才会掉出交付面,而那只可能来自另一次派发。
+          //    这一步同时**续租**(判官 r3 P1):租约只需覆盖相邻两格的间隙,所以它能定得很短
+          //    (崩了很快就放),又不会在一趟正常派发中途过期。万一真过期且被别人抢走,这一格
+          //    在花钱之前就停住 —— 不会继续往一份已经缩水的交付里付钱。
+          stillDelivering: async (tx) => {
+            if (!(await renewCampaignDispatchLease(tx, { ownerId, batchId, attemptId }))) {
+              return CAMPAIGN_DISPATCH_IN_FLIGHT;
+            }
+            const live = await previewBatchCharges(tx, {
+              ownerId,
+              projectId,
+              batchId,
+              attemptId,
+              cells,
+            });
+            if ("error" in live) return CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH;
+            return quoteCampaignGenCells(approved, cells, live).deliveryFingerprint
+              === quote.deliveryFingerprint
+              ? null
+              : CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH;
+          },
+          // #749 判官 r4 —— 这一格的钱一落地就续租,别拿着一把正在老化的租约去做收尾。
+          afterCharge: async () => {
+            await renewCampaignDispatchLease(prisma, { ownerId, batchId, attemptId });
+          },
+          // ①③ 这一格的收费判决 + 费用上限,对着商家签名时的那一行。
+          //
+          // 有一条路走不到这里,是有意的:startGen 有一条**锁外的**耐久重放快路 —— 历史里
+          // 已经有一单活着时,它在开事务之前就返回复用。那条路一分钱都不动,而且复用的那一单
+          // 材料与这一格逐字相同(材料对不上会先被判成冲突),所以交付的正是商家签的那份,
+          // 只是更便宜。**凡是会扣钱的格都必然进事务、必然过这两道闸** —— 需要成立的不变式
+          // 是这一条,不是「每一次调用都对签一遍」。
+          stillPriced: (verdict) => {
+            const signed = cellIndex == null ? undefined : quote.lines[cellIndex];
+            // 签不出这一行(下标对不上、或商家签的就是「这一格不会开始」)—— 一律不许派发。
+            if (!signed || signed.charge === "blocked") return LINE_DELIVERY_CHANGED_MID_DISPATCH;
+            if (verdict.disposition !== (signed.charge === "new" ? "fresh" : "reused")) {
+              return LINE_DELIVERY_CHANGED_MID_DISPATCH;
+            }
+            // 金额上限:锁内真会预扣的数,不许高过他签名时这一格的数。少收照旧放行 ——
+            // 那正是复用该有的样子,且从不违反授权。
+            if (verdict.displayCredits > signed.displayCredits) return LINE_PRICE_CHANGED_MID_DISPATCH;
+            return null;
+          },
+        }),
+      );
+
+    // #749 判官 r3 P1 —— **批次级承诺需要批次级机制**。
+    //
+    // 上面那两道锁内闸门守的是「这一格」,而 campaign 锁是事务级的:每一格提交时它就被放开,
+    // 批次却还在往下派发。缝因此在**格与格之间**:B 先为共用的那张图付了钱,A 随后用别的档
+    // 占住片子那一格,B 到第二格才发现交付缩水 —— 而第一笔预扣早已提交。往格里再加检查堵不
+    // 上,因为缝根本不在格里。
+    //
+    // 所以开工时先把**整个交付面**一次性认下来:一笔短事务、取同一把 campaign 锁、认领 +
+    // 就地复核交付面,然后立刻提交(不长持事务、不占连接池)。认领期间,同一个战役+项目的
+    // 另一次确认在**它自己花钱之前**被挡住。认领本身就是那把批次级的锁。
+    const lease = {
+      ownerId,
+      campaignId,
+      batchId,
+      projectId,
+      attemptId,
+      name: `${campaign.name} — campaign generation`,
+    };
+    let claimed: boolean;
+    try {
+      claimed = await prisma.$transaction(async (tx) => {
+        if (!(await claimCampaignDispatch(tx, lease))) return false;
+        // 认下来之后,就在这把锁里复核一次交付面。对不上就抛 —— 租约与它同生共死,随事务一起
+        // 回滚,不留残迹也不需要补偿归还。零扣费,因为这里一格都还没派发。
+        const live = await previewBatchCharges(tx, { ownerId, projectId, batchId, attemptId, cells });
+        // 读不出这一批的收费预判时,把**它自己那句话**原样带给商家(例如迁移期旧行对不上
+        // 哪个条目)—— 换成一句笼统的「交付面变了」会把真正的原因藏起来。
+        if ("error" in live) throw new DeliveryFaceMovedAtClaim(live.error);
+        if (quoteCampaignGenCells(approved, cells, live).deliveryFingerprint !== quote.deliveryFingerprint) {
+          throw new DeliveryFaceMovedAtClaim(DELIVERY_MOVED_BEFORE_DISPATCH);
+        }
+        return true;
+      });
+    } catch (error) {
+      if (error instanceof DeliveryFaceMovedAtClaim) {
+        return { error: error.userError, quote };
+      }
+      console.warn(
+        "campaign-generation-confirm: dispatch claim could not be taken (nothing started):",
+        error instanceof Error ? error.message : error,
+      );
+      return { error: CAMPAIGN_DISPATCH_CLAIM_UNKNOWN, quote };
+    }
+    if (!claimed) return { error: CAMPAIGN_DISPATCH_IN_FLIGHT, quote };
+
+    let result: Awaited<ReturnType<typeof orchestrateBatch>>;
+    try {
+      result = await orchestrateBatch(
+        { startGen: guardedStartGen, prisma },
+        { ownerId, projectId, batchId, attemptId, name: lease.name, cells },
+      );
+    } finally {
+      // 派发结束就归还 —— 成功、部分成功、失败、抛出,都一样。归还只在还归自己时生效,失败
+      // 也不上抛:残留的租约最多让下一次确认等它老死,那是保守方向,绝不会让任何一笔钱走通。
+      await releaseCampaignDispatch(prisma, lease);
+    }
+    if ("error" in result) return { ...result, quote };
+
+    // Revalidation is post-spend presentation metadata. Never throw away an honest dispatch
+    // result after startGen has committed reservations; the destination pages can refresh later.
+    try {
+      revalidatePath(`/campaign/${campaignId}`);
+      revalidatePath(`/campaign/${campaignId}/confirm`);
+    } catch (error) {
+      console.warn(
+        "campaign-generation-confirm: post-dispatch revalidation failed (non-fatal):",
+        error instanceof Error ? error.message : error,
+      );
+    }
+    return { ok: true, result, quote };
+  });
 }
