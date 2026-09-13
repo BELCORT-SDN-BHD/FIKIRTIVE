@@ -702,7 +702,7 @@ describe("generateVideo (Seedance, async)", () => {
     // 上面 #672 那组「submit 429 仍是 PLAIN」测的是**没有**触发分流条件的普通 429(没有任何
     // 能识别的 QuotaExceeded 报文形状)——它不推翻分流,恰恰是分流"默认 unknown ⇒ 普通可
     // 重投"那一支的证据。这里补的是分流本身**真的接了线**:429 + 报文里读到"余额不足"这类
-    // марker ⇒ permanentInputError(GENERATION_ENGINE_UNAVAILABLE);429 + 报文里读到"请求
+    // marker ⇒ permanentInputError(GENERATION_ENGINE_UNAVAILABLE);429 + 报文里读到"请求
     // 太多"这类 marker ⇒ 照旧走普通可重投的 PLAIN 路,不被误分类成"配额耗尽"。两条固定证据
     // 均**明确标注是虚构报文**,不是任何一次真实观测(探针 README §1:三路分流从未实测)。
     it("QUEUE-A5(判官初审 P2-6,虚构报文,非真实观测):429 + QuotaExceeded.Balance 类报文 ⇒ permanentInputError(GENERATION_ENGINE_UNAVAILABLE),不 charged", async () => {
