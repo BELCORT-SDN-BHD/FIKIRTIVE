@@ -24,7 +24,7 @@
  *     之后每一次抛出都会被翻成 chargedError 并终态失败,一个记账字段读崩了就赔掉一单钱,
  *     是这次改动唯一能引入的新花钱风险。
  */
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { BytePlusProvider, readImageReceipt, readVideoReceipt } from "./byteplus.js";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -106,13 +106,15 @@ describe("#776 图片回执:计费量按**张**", () => {
 });
 
 describe("#776 视频回执:计费量按 **token**,提示词是真实字段", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
+  /** #1435 —— submit then one poll (every stub in this describe block answers "succeeded" on
+   *  the very first look, so a single poll is enough; there is no more in-process loop to drive
+   *  with fake timers here). */
   const runVideo = async () => {
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "roll", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
-    await vi.runAllTimersAsync();
-    return promise;
+    const provider = new BytePlusProvider("ark-test");
+    const { providerTaskId } = await provider.submitVideo({ prompt: "roll", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
+    const poll = await provider.pollVideo(providerTaskId, { returnLastFrame: false });
+    if (poll.status !== "succeeded") throw new Error(`expected succeeded, got ${poll.status}`);
+    return poll.video;
   };
 
   it("从成功那一次 poll 上读走 total_tokens 与顶层 revised_prompt", async () => {

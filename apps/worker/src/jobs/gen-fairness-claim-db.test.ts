@@ -30,12 +30,13 @@ import { randomUUID } from "node:crypto";
 
 const m = vi.hoisted(() => ({
   generateImages: vi.fn(),
-  generateVideo: vi.fn(),
+  submitVideo: vi.fn(),
+  pollVideo: vi.fn(),
   storagePut: vi.fn(),
   storagePresignedGet: vi.fn(),
 }));
 vi.mock("../storage.js", () => ({ storage: { put: m.storagePut, presignedGet: m.storagePresignedGet } }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, generateVideo: m.generateVideo } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, submitVideo: m.submitVideo, pollVideo: m.pollVideo } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { prisma, reserveCredits } from "@fikirtive/db";
@@ -62,7 +63,7 @@ async function seedOrg(): Promise<Org> {
   return { orgId, projectId };
 }
 
-async function seedGenJob(org: Org, opts: { id: string; status: "QUEUED" | "GENERATING"; kind?: "IMAGE" | "VIDEO"; reserve?: boolean }): Promise<void> {
+async function seedGenJob(org: Org, opts: { id: string; status: "QUEUED" | "GENERATING"; kind?: "IMAGE" | "VIDEO"; reserve?: boolean; withLiveProviderTask?: boolean }): Promise<void> {
   await prisma.genJob.create({
     data: {
       id: opts.id,
@@ -75,6 +76,12 @@ async function seedGenJob(org: Org, opts: { id: string; status: "QUEUED" | "GENE
       status: opts.status as never,
       spent: false,
       ...(opts.status === "GENERATING" ? { startedAt: new Date() } : {}),
+      // 判官初审 P3-13 —— 这一行带没带「已提交、正在等下一次计划轮询」的标记,决定它算不算
+      // 「真占着一格」:带了就不占位(见 gen.ts `shouldDeferGenClaimForFairness` 的 myInFlight
+      // 查询),不带就照旧占位(与图片同款)。
+      ...(opts.withLiveProviderTask
+        ? { videoOptions: { seconds: 5, resolution: "480p", providerTask: { id: `task-${opts.id}`, submittedAt: new Date().toISOString() } } }
+        : {}),
     },
   });
   if (opts.reserve) {
@@ -142,7 +149,7 @@ describe(
         // A 自己排队中的第 4 条:撞限速 + 占满 N-1 + B 在等,三条同时成立 ⇒ 真的让位。
         const aOutcome = await handleGen({ genJobId: aFourthId }, 0);
         expect(aOutcome).toMatchObject({ deferredForFairness: true });
-        expect(m.generateVideo).not.toHaveBeenCalled();
+        expect(m.submitVideo).not.toHaveBeenCalled();
         const aFourthRow = await prisma.genJob.findFirstOrThrow({ where: { id: aFourthId, ownerId: merchantA.orgId }, select: { status: true, spent: true } });
         expect(aFourthRow.status).toBe("QUEUED"); // 未被认领——不是「认领了又回滚」
         expect(aFourthRow.spent).toBe(false);
@@ -168,3 +175,45 @@ describe(
     );
   },
 );
+
+describe("判官初审 P3-13 — 公平闸的 myInFlight 计数不该把『已提交、正在等下一次轮询』的视频也算成占位", () => {
+  it(
+    "商家 A 的 3 条『在飞』视频全部带着已提交标记(真实世界里不占任何 gen 槽位)⇒ myInFlight 应该数成 0,不是 3;第 4 条即便撞限速也照常认领,不被误让位",
+    async () => {
+      const merchantA = await seedOrg();
+      const merchantB = await seedOrg();
+
+      // 与上面那条对照测试唯一的区别:这三行带着 `withLiveProviderTask` ——真实世界里,它们是
+      // 提交成功、正在等下一次计划轮询的视频,不占任何 gen 队列施工位。
+      const aRunningIds = await Promise.all(
+        Array.from({ length: CAP }, async (_, i) => {
+          const id = `gen_a_marked${i}_${randomUUID()}`;
+          await seedGenJob(merchantA, { id, status: "GENERATING", kind: "VIDEO", withLiveProviderTask: true });
+          return id;
+        }),
+      );
+      const aFourthId = `gen_a_4th_marked_${randomUUID()}`;
+      await seedGenJob(merchantA, { id: aFourthId, status: "QUEUED", kind: "VIDEO" });
+      const bJobId = `gen_b_${randomUUID()}`;
+      await seedGenJob(merchantB, { id: bJobId, status: "QUEUED", kind: "IMAGE", reserve: true });
+
+      // 撞限速(公平闸的外层触发条件依旧成立),但这一次 myInFlight 修完之后应该数成 0(< CAP)
+      // ⇒ 公平闸判据在「占满 N-1」这一步就该直接放行,不该让位。
+      await saturateProviderGate();
+      m.submitVideo.mockResolvedValueOnce({ providerTaskId: `task-${aFourthId}` });
+
+      const aOutcome = await handleGen({ genJobId: aFourthId }, 0);
+
+      expect(aOutcome).toMatchObject({ awaitingVideoPoll: true }); // 正常提交,不是被让位
+      expect(m.submitVideo).toHaveBeenCalledTimes(1);
+      const aFourthRow = await prisma.genJob.findFirstOrThrow({ where: { id: aFourthId, ownerId: merchantA.orgId }, select: { status: true, spent: true } });
+      expect(aFourthRow.status).toBe("GENERATING"); // 真的被认领了,不是原样留在 QUEUED
+
+      // 反向锚:上面那条对照测试里,同样的场景(只是三条在飞视频没带标记)会让第 4 条让位——
+      // 这里唯一变量就是标记,证明是 myInFlight 的计数口径变了,不是别的什么巧合。
+      void aRunningIds;
+      void bJobId;
+    },
+    DB_CASE_TIMEOUT_MS,
+  );
+});

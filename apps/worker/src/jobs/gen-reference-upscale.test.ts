@@ -5,7 +5,7 @@
  * （逐字回执 `expected the height to be at least 300px, but received a 300x200px image
  * instead`）；短边落在 [100, 300) 的商品照按整数倍 lanczos 放大后收，出片商品可辨度高。
  *
- * 这里跑**真的 `handleGen`**，拿它真正交给 `provider.generateVideo` 的那一份对表 —— 断言
+ * 这里跑**真的 `handleGen`**，拿它真正交给 `provider.submitVideo` 的那一份对表 —— 断言
  * 分三层，缺一层就漏得掉一整类病：
  *   ① 商品图真的按 `referenceUpscalePlan` 的目标尺寸放大，并作 `image_url` 部件送出；
  *   ② **原件一个字节都没动**：不写 R2、不改 asset 行，原始 buffer 的 sha256 前后一致；
@@ -34,7 +34,8 @@ const m = vi.hoisted(() => {
   const assetUpsert = vi.fn();
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
-  const generateVideo = vi.fn();
+  const submitVideo = vi.fn();
+  const pollVideo = vi.fn();
   const storagePresignedGet = vi.fn();
   const storagePut = vi.fn();
   const storageGet = vi.fn();
@@ -58,7 +59,7 @@ const m = vi.hoisted(() => {
     prisma, genJobFindUnique, genJobUpdateMany, projectFindFirst, generationFindFirst,
     generationCreate, assetUpdate, entityFindFirst, entityVariantFindFirst, referenceImageFindMany,
     chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst, assetUpsert, refundReservation,
-    settleCredits, generateVideo, storagePresignedGet, storagePut, storageGet, storage, sharpInputs,
+    settleCredits, submitVideo, pollVideo, storagePresignedGet, storagePut, storageGet, storage, sharpInputs,
   };
 });
 
@@ -69,7 +70,7 @@ vi.mock("@fikirtive/db", () => ({
   settleCanvasCardsForGenJob: vi.fn(async () => undefined),
 }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: vi.fn() } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", submitVideo: m.submitVideo, pollVideo: m.pollVideo, generate: vi.fn() } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 // 真 sharp 照跑（放大必须是真的重采样，不是一个替身说「我放大过了」），只是每次调用
 // 先把入参录一份。演员照有没有被送进这个函数，是这份录音直接回答的问题。
@@ -158,7 +159,7 @@ beforeEach(async () => {
   m.referenceImageFindMany.mockImplementation(async () => [
     { asset: { ownerId: "o1", contentHash: ACTOR_HASH, ext: "png" } },
   ]);
-  m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+  m.submitVideo.mockResolvedValue({ providerTaskId: "task-upscale-1" });
 });
 
 /** 商家挂的那张商品图这一行长什么样。 */
@@ -180,7 +181,7 @@ function productRow(over: Record<string, unknown> = {}) {
 async function paidVideoCall(): Promise<{ refImageUrls?: string[]; imageUrl: string } | undefined> {
   m.genJobFindUnique.mockResolvedValue(videoJob);
   await handleGen({ genJobId: "g1" }, 0).catch(() => undefined);
-  return m.generateVideo.mock.calls[0]?.[0] as { refImageUrls?: string[]; imageUrl: string } | undefined;
+  return m.submitVideo.mock.calls[0]?.[0] as { refImageUrls?: string[]; imageUrl: string } | undefined;
 }
 
 /** `data:` 部件里那张图真实的像素尺寸 —— 不信 URL 前缀,直接解码量一遍。 */
@@ -212,11 +213,23 @@ describe("FSE-001 —— 无人像商品参考图自动放大", () => {
     m.generationFindFirst.mockResolvedValue(productRow());
     const before = sha256(productBytes);
 
+    // #1435 —— 提交那一步(参考图放大就发生在这里)绝不该碰 storage.put:放大产物是进程内
+    // 的 data URL,从未落盘。
     await paidVideoCall();
+    expect(m.storagePut).not.toHaveBeenCalled();
+
+    // 走完剩下的那一步(resume-poll 命中终态)之后,唯一一次 `storage.put` 才出现,而且是
+    // 成片视频,不是参考图。
+    m.pollVideo.mockResolvedValue({ status: "succeeded", video: { bytes: new Uint8Array([9]), ext: "mp4" } });
+    m.genJobFindUnique.mockResolvedValue({
+      ...videoJob,
+      status: "GENERATING",
+      videoOptions: { ...videoJob.videoOptions, providerTask: { id: "task-upscale-1", submittedAt: new Date().toISOString() } },
+    });
+    await handleGen({ genJobId: "g1" }, 0).catch(() => undefined);
 
     // 原件字节对象没有被就地改写(像素完整性铁律的最小可测形式)。
     expect(sha256(productBytes)).toBe(before);
-    // 唯一一次 `storage.put` 是成片视频,不是参考图。
     expect(m.storagePut).toHaveBeenCalledTimes(1);
     expect(m.storagePut.mock.calls[0]![2]).toBe("mp4");
     // asset 行一格没动。
@@ -282,7 +295,7 @@ describe("FSE-001 —— 无人像商品参考图自动放大", () => {
     const call = await paidVideoCall();
 
     expect(call).toBeUndefined();
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     expect(m.settleCredits).not.toHaveBeenCalled();
   });
 
@@ -299,7 +312,7 @@ describe("FSE-001 —— 无人像商品参考图自动放大", () => {
       }),
     );
     expect(call).toBeUndefined();
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     expect(m.refundReservation).toHaveBeenCalled();
     expect(m.settleCredits).not.toHaveBeenCalled();
   });

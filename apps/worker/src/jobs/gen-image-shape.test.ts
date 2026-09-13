@@ -26,7 +26,8 @@ const m = vi.hoisted(() => {
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
   const generateImages = vi.fn();
-  const generateVideo = vi.fn();
+  const submitVideo = vi.fn();
+  const pollVideo = vi.fn();
   const storagePresignedGet = vi.fn();
   const storagePut = vi.fn();
   const storage = { presignedGet: storagePresignedGet, put: storagePut };
@@ -46,13 +47,13 @@ const m = vi.hoisted(() => {
   return {
     prisma, genJobFindUnique, genJobUpdate, genJobUpdateMany, projectFindFirst, generationFindFirst,
     generationCreate, chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst, assetUpsert,
-    refundReservation, settleCredits, generateImages, generateVideo, storagePresignedGet, storagePut, storage,
+    refundReservation, settleCredits, generateImages, submitVideo, pollVideo, storagePresignedGet, storagePut, storage,
   };
 });
 
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", submitVideo: m.submitVideo, pollVideo: m.pollVideo, generate: m.generateImages } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { GEN_IMAGE_ASPECTS } from "@fikirtive/core";
@@ -94,7 +95,7 @@ beforeEach(() => {
   m.storagePut.mockResolvedValue({ contentHash: "c".repeat(64) });
   m.storagePresignedGet.mockImplementation(async (key: string) => `url:${key}`);
   m.generateImages.mockResolvedValue([{ bytes: new Uint8Array([1]), ext: "png" }]);
-  m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+  m.submitVideo.mockResolvedValue({ providerTaskId: "task-shape-1" });
 });
 
 /** 真跑一次 handleGen,交回 provider 真正收到的那一次图片请求。 */
@@ -141,8 +142,8 @@ describe("#642 worker 透传图片规格", () => {
     });
     m.generationFindFirst.mockResolvedValue({ id: "gen_src", asset: { ownerId: "o1", contentHash: "b".repeat(64), ext: "png" } });
     await handleGen({ genJobId: "g1" }, 0);
-    expect(m.generateVideo).toHaveBeenCalledTimes(1);
-    const vreq = m.generateVideo.mock.calls[0]![0] as Record<string, unknown>;
+    expect(m.submitVideo).toHaveBeenCalledTimes(1);
+    const vreq = m.submitVideo.mock.calls[0]![0] as Record<string, unknown>;
     expect(vreq.aspectRatio).toBe("16:9");
     expect(m.generateImages).not.toHaveBeenCalled();
   });

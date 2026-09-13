@@ -32,7 +32,8 @@ const m = vi.hoisted(() => {
   const settleCredits = vi.fn();
   const settleCanvasCardsForGenJob = vi.fn();
   const generateImages = vi.fn();
-  const generateVideo = vi.fn();
+  const submitVideo = vi.fn();
+  const pollVideo = vi.fn();
   const storagePresignedGet = vi.fn();
   const storagePut = vi.fn();
   const storage = { presignedGet: storagePresignedGet, put: storagePut };
@@ -55,7 +56,7 @@ const m = vi.hoisted(() => {
     generationCreate, generationFindMany, generationUpdate, shotFindFirst, shotUpdateMany,
     chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst, assetUpsert,
     refundReservation, settleCredits, settleCanvasCardsForGenJob,
-    generateImages, generateVideo, storagePresignedGet, storagePut, storage,
+    generateImages, submitVideo, pollVideo, storagePresignedGet, storagePut, storage,
   };
 });
 
@@ -66,7 +67,7 @@ vi.mock("@fikirtive/db", () => ({
   settleCanvasCardsForGenJob: m.settleCanvasCardsForGenJob,
 }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", submitVideo: m.submitVideo, pollVideo: m.pollVideo, generate: m.generateImages } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { handleGen, LAST_FRAME_STORE_TIMEOUT_MS } from "./gen.js";
@@ -95,6 +96,23 @@ const videoJob = {
 
 const TAIL = { bytes: new Uint8Array([9, 9, 9, 9]), ext: "png" };
 
+/**
+ * #1435 —— 大多数用例这里要证的是「片子交付之后」的事(末帧落地、DONE、超时预算、钱路
+ * 指纹),不是提交请求本身。提交与轮询拆开之后,一次到位的完工只能走**恢复轮询**那条路:
+ * 行上已经带着在飞任务标记(与 `persistVideoProviderTaskWithRetry` 写完之后库里真正的形状
+ * 一致),`pollVideo` 直接给终态——这与旧账「一次 `generateVideo` 调用就地完工」在
+ * store/commit/DONE 这条尾巴上完全同形(见 gen.ts 的 resume 分支注释),所以这里不需要先
+ * 提交再轮询两步——直接从「已提交、待查」这个状态起跑就够。
+ */
+function resumedVideoJob(overrides: Record<string, unknown> = {}) {
+  return {
+    ...videoJob,
+    status: "GENERATING",
+    videoOptions: { ...videoJob.videoOptions, providerTask: { id: "task-lastframe-1", submittedAt: new Date().toISOString() } },
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   m.storage.presignedGet = m.storagePresignedGet;
@@ -109,7 +127,8 @@ beforeEach(() => {
   m.generationFindFirst.mockResolvedValue({ id: "src1", asset: { ownerId: "o1", contentHash: "a".repeat(64), ext: "png" } });
   m.storagePut.mockResolvedValue({ contentHash: "c".repeat(64) });
   m.storagePresignedGet.mockImplementation(async (key: string) => `url:${key}`);
-  m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4", lastFrame: TAIL });
+  m.submitVideo.mockResolvedValue({ providerTaskId: "task-lastframe-1" });
+  m.pollVideo.mockResolvedValue({ status: "succeeded", video: { bytes: new Uint8Array([1]), ext: "mp4", lastFrame: TAIL } });
   m.generateImages.mockResolvedValue([{ bytes: new Uint8Array([1]), ext: "png" }]);
 });
 
@@ -121,17 +140,17 @@ function jobWentDone(): boolean {
 }
 
 describe("#782 worker:引擎免费附送的末帧", () => {
-  it("每条视频作业都向引擎要末帧(免费,不新增计费点)", async () => {
+  it("每条视频作业提交时都向引擎要末帧(免费,不新增计费点)", async () => {
     m.genJobFindUnique.mockResolvedValue({ ...videoJob });
     await handleGen({ genJobId: "g1" }, 0);
-    expect(m.generateVideo).toHaveBeenCalledTimes(1);
-    expect((m.generateVideo.mock.calls[0]![0] as { returnLastFrame?: boolean }).returnLastFrame).toBe(true);
+    expect(m.submitVideo).toHaveBeenCalledTimes(1);
+    expect((m.submitVideo.mock.calls[0]![0] as { returnLastFrame?: boolean }).returnLastFrame).toBe(true);
   });
 
   it("图片作业与末帧无关(两条路互不串台)", async () => {
     m.genJobFindUnique.mockResolvedValue({ ...videoJob, kind: "IMAGE", model: "seedream", sourceGenerationId: null });
     await handleGen({ genJobId: "g1" }, 0);
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     const tailWrite = m.genJobUpdateMany.mock.calls.find(
       (c) => (c[0] as { data?: Record<string, unknown> }).data?.lastFrameAssetId !== undefined,
     );
@@ -143,7 +162,7 @@ describe("#782 worker:引擎免费附送的末帧", () => {
       ({ id: args.create.contentHash === "d".repeat(64) ? "asset_tail" : "asset_clip" }));
     m.storagePut.mockImplementation(async (_owner: string, bytes: Uint8Array) =>
       ({ contentHash: (bytes.byteLength === TAIL.bytes.byteLength ? "d" : "c").repeat(64) }));
-    m.genJobFindUnique.mockResolvedValue({ ...videoJob });
+    m.genJobFindUnique.mockResolvedValue(resumedVideoJob());
 
     await handleGen({ genJobId: "g1" }, 0);
 
@@ -162,8 +181,8 @@ describe("#782 worker:引擎免费附送的末帧", () => {
   });
 
   it("引擎没给末帧 → 什么都不写,片子照常交付", async () => {
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
-    m.genJobFindUnique.mockResolvedValue({ ...videoJob });
+    m.pollVideo.mockResolvedValue({ status: "succeeded", video: { bytes: new Uint8Array([1]), ext: "mp4" } });
+    m.genJobFindUnique.mockResolvedValue(resumedVideoJob());
     await handleGen({ genJobId: "g1" }, 0);
     const tailWrite = m.genJobUpdateMany.mock.calls.find(
       (c) => (c[0] as { data?: Record<string, unknown> }).data?.lastFrameAssetId !== undefined,
@@ -178,7 +197,7 @@ describe("#782 worker:引擎免费附送的末帧", () => {
       if (bytes.byteLength === TAIL.bytes.byteLength) throw new Error("R2 down");
       return { contentHash: "c".repeat(64) };
     });
-    m.genJobFindUnique.mockResolvedValue({ ...videoJob });
+    m.genJobFindUnique.mockResolvedValue(resumedVideoJob());
     await expect(handleGen({ genJobId: "g1" }, 0)).resolves.toBeUndefined();
     expect(jobWentDone()).toBe(true);
     const tailWrite = m.genJobUpdateMany.mock.calls.find(
@@ -213,7 +232,7 @@ describe("#782 worker:引擎免费附送的末帧", () => {
         if (bytes.byteLength === TAIL.bytes.byteLength) return new Promise(() => {}); // 永不 settle
         return Promise.resolve({ contentHash: "c".repeat(64) });
       });
-      m.genJobFindUnique.mockResolvedValue({ ...videoJob });
+      m.genJobFindUnique.mockResolvedValue(resumedVideoJob());
 
       const run = handleGen({ genJobId: "g1" }, 0);
 
@@ -252,9 +271,16 @@ describe("#782 worker:引擎免费附送的末帧", () => {
 //
 // 下面这两条用一个**有状态的假数据库行**来验:它像真库一样按 where 决定这一句写不写得进去。
 
-/** 一行会按 `where.status` 决定成败的假 GenJob —— 条件写的语义就在这三行里。 */
+/**
+ * 一行会按 `where.status` 决定成败的假 GenJob —— 条件写的语义就在这三行里。
+ *
+ * #1435 —— 初始状态改成 GENERATING(不再是 QUEUED):这个 describe 块测的是**恢复轮询**这条
+ * 投递,库里那一行在它开始之前就已经是 GENERATING(前一次投递提交成功时claim的),不是靠
+ * 这一次投递自己去认领——resume 分支压根不走 QUEUED→GENERATING 那一步条件写(见 gen.ts,
+ * `videoProviderTask` 短路分支排在认领代码之前)。
+ */
 function fakeGenJobRow() {
-  const row: { status: string; lastFrameAssetId: string | null } = { status: "QUEUED", lastFrameAssetId: null };
+  const row: { status: string; lastFrameAssetId: string | null } = { status: "GENERATING", lastFrameAssetId: null };
   const matches = (where: unknown): boolean => {
     const s = (where as { status?: unknown } | undefined)?.status;
     if (s === undefined) return true; // 无条件写:什么状态都落得下去(r3 的写法)
@@ -278,7 +304,7 @@ describe("#782 r4:末帧指针的写入窗口只到 DONE 为止", () => {
   beforeEach(() => {
     m.assetUpsert.mockImplementation(async (args: { create: { contentHash: string } }) =>
       ({ id: args.create.contentHash === "d".repeat(64) ? "asset_tail" : "asset_clip" }));
-    m.genJobFindUnique.mockResolvedValue({ ...videoJob });
+    m.genJobFindUnique.mockResolvedValue(resumedVideoJob());
   });
 
   it("按时存完 → 指针照样落在作业行上(条件写没有把正常那条路一起关掉)", async () => {
@@ -361,10 +387,11 @@ function moneyFingerprint() {
 describe("#782 r2 钱路指纹:末帧开/关两态逐一相等", () => {
   async function runOnce(withTail: boolean): Promise<MoneyFingerprint> {
     vi.clearAllMocks(); // 只清计数与调用记录,mockResolvedValue 一律保留
-    m.generateVideo.mockResolvedValue(
-      withTail ? { bytes: new Uint8Array([1]), ext: "mp4", lastFrame: TAIL } : { bytes: new Uint8Array([1]), ext: "mp4" },
-    );
-    m.genJobFindUnique.mockResolvedValue({ ...videoJob });
+    m.pollVideo.mockResolvedValue({
+      status: "succeeded",
+      video: withTail ? { bytes: new Uint8Array([1]), ext: "mp4", lastFrame: TAIL } : { bytes: new Uint8Array([1]), ext: "mp4" },
+    });
+    m.genJobFindUnique.mockResolvedValue(resumedVideoJob());
     await handleGen({ genJobId: "g1" }, 0);
     expect(jobWentDone()).toBe(true); // 两态都必须真的走完,否则「相等」毫无意义
     return moneyFingerprint();

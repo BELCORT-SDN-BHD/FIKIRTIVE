@@ -58,12 +58,27 @@ const m = vi.hoisted(() => {
 
   const matches = (row: Record<string, unknown>, where: Record<string, unknown>): boolean =>
     Object.entries(where).every(([key, cond]) => {
+      // 判官初审 P3-13 —— `shouldDeferGenClaimForFairness` 的 myInFlight 查询现在用
+      // `NOT: { AND: [...] }` 排除带在飞标记的视频行,外加一句 JSON `path` 查找。这个假 DB
+      // 原本只认字段级 `in`/`lt`/`isEmpty`/`not`,不认组合子——补上 NOT/AND/OR 与最小可用的
+      // `path`(只支持这里用到的「取值存在与否」,不是完整的 Prisma JSON 过滤器)。
+      if (key === "NOT") return !matches(row, cond as Record<string, unknown>);
+      if (key === "AND") return (cond as Record<string, unknown>[]).every((c) => matches(row, c));
+      if (key === "OR") return (cond as Record<string, unknown>[]).some((c) => matches(row, c));
       const value = row[key];
       if (cond !== null && typeof cond === "object" && !(cond instanceof Date)) {
-        const c = cond as { in?: unknown[]; lt?: Date; isEmpty?: boolean; not?: unknown };
+        const c = cond as { in?: unknown[]; lt?: Date; isEmpty?: boolean; not?: unknown; path?: string[] };
         if (c.in) return c.in.includes(value);
         if (c.lt !== undefined) return value instanceof Date && value.getTime() < c.lt.getTime();
         if (c.isEmpty !== undefined) return Array.isArray(value) && (value.length === 0) === c.isEmpty;
+        if (c.path) {
+          let v: unknown = value;
+          for (const seg of c.path) v = v && typeof v === "object" ? (v as Record<string, unknown>)[seg] : undefined;
+          // 这里只需要复现 `not: Prisma.DbNull` 那一句的真实语义:路径上取到的值存不存在
+          // (SQL NULL ≈ JS undefined/null)——不支持其它 JSON 路径操作符。
+          if (c.not !== undefined) return v !== undefined && v !== null;
+          return false;
+        }
         if (c.not !== undefined) return value !== c.not;
         return false;
       }
@@ -136,9 +151,13 @@ vi.mock("@fikirtive/db", () => ({
   refundReservation: m.refundReservation,
   settleCredits: m.settleCredits,
   settleCanvasCardsForGenJob: vi.fn(async () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })),
+  // 判官初审 P3-13 —— `shouldDeferGenClaimForFairness` 的 myInFlight 查询现在要用
+  // `Prisma.DbNull` 排除带在飞标记的视频行;这里的 mock 不真的解释这个值(prisma.genJob.count
+  // 本身也是 mock 出来的),只需要这个具名导入在被访问时不炸。
+  Prisma: { DbNull: "DbNull" },
 }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, generateVideo: vi.fn() } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, submitVideo: vi.fn(), pollVideo: vi.fn() } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import {

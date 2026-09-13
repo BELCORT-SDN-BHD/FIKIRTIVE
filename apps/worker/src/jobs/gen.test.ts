@@ -1,8 +1,13 @@
 /**
  * gen.test.ts — handleGen VIDEO branch, whole-clip reference video (整段视频参考)
  * resolution: an owned, in-project, video-ext Generation must resolve before the
- * paid provider.generateVideo call; a set-but-unresolvable reference must fail
+ * paid provider.submitVideo call; a set-but-unresolvable reference must fail
  * closed (failClosedWithRefund) and the provider must NEVER be called.
+ *
+ * #1435(零排队)—— submitVideo 提交成功之后不再原地等到终态,而是记下 providerTaskId、
+ * 结束这次投递(`{awaitingVideoPoll:true}`)。这个文件里「视频真的送进了引擎」的断言因此
+ * 改成断言 `m.submitVideo` 被调用、参数正确——不再断言整单当场 DONE(那要靠第二次投递,
+ * 走 `pollVideo` 那条 resume 分支,见 gen-video-poll.test.ts 与真库集成测试)。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core/gen";
@@ -18,7 +23,8 @@ const m = vi.hoisted(() => {
   const chatMessageCreate = vi.fn();
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
-  const generateVideo = vi.fn();
+  const submitVideo = vi.fn();
+  const pollVideo = vi.fn();
   const generateImages = vi.fn();
   const creditLedgerFindFirst = vi.fn();
   const storagePresignedGet = vi.fn();
@@ -39,7 +45,7 @@ const m = vi.hoisted(() => {
   };
   return {
     prisma, genJobFindUnique, genJobUpdate, genJobUpdateMany, projectFindFirst, generationFindFirst,
-    entityFindMany, chatMessageFindFirst, chatMessageCreate, refundReservation, settleCredits, generateVideo,
+    entityFindMany, chatMessageFindFirst, chatMessageCreate, refundReservation, settleCredits, submitVideo, pollVideo,
     generateImages, creditLedgerFindFirst, storagePresignedGet, storagePut, assetUpsert,
     generationCreate, storage,
   };
@@ -49,7 +55,7 @@ vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundR
   // exercise the money path they are about, not a swallowed canvas error.
   settleCanvasCardsForGenJob: vi.fn(async () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })) }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", submitVideo: m.submitVideo, pollVideo: m.pollVideo, generate: m.generateImages } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { GEN_RETRY_LIMIT } from "@fikirtive/core";
@@ -139,7 +145,7 @@ describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
     m.generationFindFirst.mockResolvedValue(null); // the reference video Generation doesn't resolve
     await handleGen({ genJobId: "g1" }, 0);
 
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     // failClosedWithRefund: a GUARDED FAILED write (#602 r2) + refund + TURN_ERROR.
     // #782 r17(判官 r16 P1-2):守卫多了一条 —— `generationIds` 必须为空。提交事务把产出与
     // SETTLE 一起落库,所以「有产出」⟺「钱已经收了、东西已经交了」,那样的行永远不是这条
@@ -166,7 +172,7 @@ describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
 
     await handleGen({ genJobId: "g1" }, 0);
 
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     const updateCall = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(updateCall).toBeTruthy();
     expect(updateCall![0].data.error).toMatch(/2.*6/);
@@ -179,16 +185,16 @@ describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
     const storageModule = await import("../storage.js");
     (storageModule.storage as unknown as { presignedGet: (k: string, t: number) => Promise<string> }).presignedGet = vi.fn(async () => "https://signed/ref.mp4");
     (storageModule.storage as unknown as { put: (b: Uint8Array, e: string) => Promise<{ contentHash: string; ext: string }> }).put = vi.fn(async () => ({ contentHash: "outhash", ext: "mp4" }));
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), ext: "mp4" });
-    m.prisma.asset = { upsert: vi.fn(async () => ({ id: "asset1" })) };
-    m.prisma.generation.create = vi.fn(async () => ({ id: "gen_out1" }));
+    // #1435 —— 提交成功即结束这次投递(不再原地等到终态),所以这条测试只需要证明「守卫没有
+    // 拦下它、submitVideo 真的被调用了一次」。
+    m.submitVideo.mockResolvedValue({ providerTaskId: "task-noprobe" });
 
     await handleGen({ genJobId: "g1" }, 0);
 
-    expect(m.generateVideo).toHaveBeenCalledTimes(1);
+    expect(m.submitVideo).toHaveBeenCalledTimes(1);
   });
 
-  it("reference video resolved → refVideoUrl passed to provider.generateVideo", async () => {
+  it("reference video resolved → refVideoUrl passed to provider.submitVideo", async () => {
     const asset = { ownerId: "o1", contentHash: "a".repeat(64), ext: "mp4" };
     m.generationFindFirst.mockResolvedValue({ id: "gen_ref_missing", asset });
     const presignedGet = vi.fn(async () => "https://signed/ref.mp4");
@@ -198,14 +204,12 @@ describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
     const storagePut = vi.fn(async () => ({ contentHash: "outhash", ext: "mp4" }));
     (storageModule.storage as unknown as { put: typeof storagePut }).put = storagePut;
 
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), ext: "mp4" });
-    m.prisma.asset = { upsert: vi.fn(async () => ({ id: "asset1" })) };
-    m.prisma.generation.create = vi.fn(async () => ({ id: "gen_out1" }));
+    m.submitVideo.mockResolvedValue({ providerTaskId: "task-refvideo" });
 
     await handleGen({ genJobId: "g1" }, 0);
 
-    expect(m.generateVideo).toHaveBeenCalledTimes(1);
-    const arg = m.generateVideo.mock.calls[0]![0];
+    expect(m.submitVideo).toHaveBeenCalledTimes(1);
+    const arg = m.submitVideo.mock.calls[0]![0];
     expect(arg.refVideoUrl).toBe("https://signed/ref.mp4");
   });
 });
@@ -230,7 +234,7 @@ describe("handleGen VIDEO — 尾帧无首帧(#646 P0-1 钱缝纵深)", () => {
     await handleGen({ genJobId: "g1" }, 0);
 
     // 这一行就是本条的全部要害:钱路上不许出现「尾帧没了但片子照出」。
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     const updateCall = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(updateCall).toBeTruthy();
     expect(updateCall![0].data.error).toMatch(/start frame/);
@@ -249,14 +253,12 @@ describe("handleGen VIDEO — 尾帧无首帧(#646 P0-1 钱缝纵深)", () => {
     const storageModule = await import("../storage.js");
     (storageModule.storage as unknown as { presignedGet: (k: string, t: number) => Promise<string> }).presignedGet = vi.fn(async () => "https://signed/frame.png");
     (storageModule.storage as unknown as { put: (b: Uint8Array, e: string) => Promise<{ contentHash: string; ext: string }> }).put = vi.fn(async () => ({ contentHash: "outhash", ext: "mp4" }));
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), ext: "mp4" });
-    m.prisma.asset = { upsert: vi.fn(async () => ({ id: "asset1" })) };
-    m.prisma.generation.create = vi.fn(async () => ({ id: "gen_out1" }));
+    m.submitVideo.mockResolvedValue({ providerTaskId: "task-tail" });
 
     await handleGen({ genJobId: "g1" }, 0);
 
-    expect(m.generateVideo).toHaveBeenCalledTimes(1);
-    expect(m.generateVideo.mock.calls[0]![0].tailImageUrl).toBe("https://signed/frame.png");
+    expect(m.submitVideo).toHaveBeenCalledTimes(1);
+    expect(m.submitVideo.mock.calls[0]![0].tailImageUrl).toBe("https://signed/frame.png");
   });
 });
 
@@ -293,9 +295,7 @@ describe("handleGen VIDEO — 分镜首帧(shotId)+ 尾帧(#663 P2-2)", () => {
       vi.fn(async (key: string) => (key.includes("b".repeat(64)) ? "https://signed/shot-first.png" : "https://signed/tail.png"));
     (storageModule.storage as unknown as { put: (o: string, b: Uint8Array, e: string) => Promise<{ contentHash: string }> }).put =
       vi.fn(async () => ({ contentHash: "outhash" }));
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), ext: "mp4" });
-    m.prisma.asset = { upsert: vi.fn(async () => ({ id: "asset1" })) };
-    m.prisma.generation.create = vi.fn(async () => ({ id: "gen_out1" }));
+    m.submitVideo.mockResolvedValue({ providerTaskId: "task-shot" });
 
     await handleGen({ genJobId: "g1" }, 0);
 
@@ -306,8 +306,8 @@ describe("handleGen VIDEO — 分镜首帧(shotId)+ 尾帧(#663 P2-2)", () => {
     expect(firstQuery.orderBy).toEqual({ version: "desc" });
 
     // 首帧与尾帧都到了引擎手上 —— 尾帧没有被守卫误伤,也没有被悄悄消隐。
-    expect(m.generateVideo).toHaveBeenCalledTimes(1);
-    const arg = m.generateVideo.mock.calls[0]![0];
+    expect(m.submitVideo).toHaveBeenCalledTimes(1);
+    const arg = m.submitVideo.mock.calls[0]![0];
     expect(arg.imageUrl).toBe("https://signed/shot-first.png");
     expect(arg.tailImageUrl).toBe("https://signed/tail.png");
     // 没有误伤:不该有失败退款,商家拿到的是成品不是道歉。
@@ -321,7 +321,7 @@ describe("handleGen VIDEO — 分镜首帧(shotId)+ 尾帧(#663 P2-2)", () => {
 
     await handleGen({ genJobId: "g1" }, 0);
 
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     const updateCall = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(updateCall).toBeTruthy();
     expect(updateCall![0].data.error).toMatch(/no source image to animate/);
@@ -395,8 +395,15 @@ describe("handleGen — provider rejection fail-closed (EP-A4 route ①)", () =>
   // packages/generation/src/byteplus.test.ts)。这一条钉的是那个改动在**钱路尽头**的结果:
   // 终态 FAILED 不写 spent、不写 spentUsd —— 引擎没收的钱,不进我们的成本账。
   it("#661 引擎报 failed(未计费)⇒ 终态既不记 spent 也不记 spentUsd(零幽灵 COGS)", async () => {
-    m.genJobFindUnique.mockResolvedValue({ ...job, referenceVideoGenerationId: null });
-    m.generateVideo.mockRejectedValue(new Error("generation provider video task failed")); // PLAIN:无 charged 标记
+    // #1435 —— 「引擎报 failed」现在只能发生在 resume-poll 那条路上(submit 提交成功之后的
+    // 某一次查询才轮得到终态)。这一单因此要带着一个已经提交过的标记进场——不是刚入队的
+    // 新单——`pollVideo` 才是真正抛出这句 PLAIN 错误的那一层(见 byteplus.ts / core 的
+    // `VideoPollResult`),gen.ts 只是把它翻成同一句 `generation provider video task ${reason}`。
+    m.genJobFindUnique.mockResolvedValue({
+      ...job, referenceVideoGenerationId: null,
+      videoOptions: { providerTask: { id: "task-661", submittedAt: new Date().toISOString() } },
+    });
+    m.pollVideo.mockResolvedValue({ status: "failed", reason: "failed" });
 
     await expect(handleGen({ genJobId: "g1" }, GEN_RETRY_LIMIT)).rejects.toThrow(/task failed/);
 
@@ -430,7 +437,7 @@ describe("handleGen — provider timeout fail-closed (EP-A4 route ②)", () => {
     await handleGen({ genJobId: "g1" }, 1);
 
     expect(m.generateImages).not.toHaveBeenCalled(); // a possibly-paid call is never repeated
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     expect(m.refundReservation).toHaveBeenCalledTimes(1);
     expect(m.chatMessageCreate).toHaveBeenCalledTimes(1);
     expect(m.chatMessageCreate.mock.calls[0]![0].data).toMatchObject({ kind: "TURN_ERROR" });
@@ -467,7 +474,7 @@ describe("handleGen — worker-crash recovery (EP-A4 route ③ / 六态⑥恢复
     await handleGen({ genJobId: "g1" }, 1);
 
     expect(m.generateImages).not.toHaveBeenCalled(); // exactly-once spend: a resume never re-spends
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     expect(m.settleCredits).toHaveBeenCalledTimes(1);
     expect(m.settleCredits).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
     expect(m.refundReservation).not.toHaveBeenCalled();

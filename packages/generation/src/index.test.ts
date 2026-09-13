@@ -106,10 +106,10 @@ describe("C1b ① 缺配置的生产部署:拒绝,而不是发假货", () => {
     // Both entry points, because a port that refused images and silently returned a video would
     // be the same defect with one fewer test.
     await expect(provider.generate({ prompt: "p", inputImageUrls: [], count: 1 } as never)).rejects.toThrow();
-    await expect(provider.generateVideo({ prompt: "p", imageUrl: "u", durationSeconds: 5 } as never)).rejects.toThrow();
+    await expect(provider.submitVideo({ prompt: "p", imageUrl: "u", durationSeconds: 5 } as never)).rejects.toThrow();
     for (const call of [
       provider.generate({ prompt: "p", inputImageUrls: [], count: 1 } as never),
-      provider.generateVideo({ prompt: "p", imageUrl: "u", durationSeconds: 5 } as never),
+      provider.submitVideo({ prompt: "p", imageUrl: "u", durationSeconds: 5 } as never),
     ]) errors.push(await call.catch((e: unknown) => e));
 
     for (const err of errors) {
@@ -289,7 +289,9 @@ describe("#785 videoElementReferencesHonoured() ↔ 适配器对元素照的实�
     // 再 await,那个 reject 会先变成一条 unhandled rejection。
     let refused = false;
     try {
-      const promise = createGenerationProvider().generateVideo({
+      // #1435 —— this test only cares about the SUBMIT body (or whether the pre-spend gate
+      // refused it), so `submitVideo` alone is enough; no poll/download ever needed to run.
+      const promise = createGenerationProvider().submitVideo({
         prompt: "our product on a beach", imageUrl: "", durationSeconds: 5,
         model: "seedance-2-mini" as GenVideoModel,
         ...(refImageUrls.length ? { refImageUrls } : {}),
@@ -376,12 +378,11 @@ describe("#785 videoElementReferencesHonoured() ↔ 适配器对元素照的实�
         return { ok: true, status: 200, arrayBuffer: async (): Promise<ArrayBuffer> => new Uint8Array([1]).buffer, text: async (): Promise<string> => "" };
       }));
       try {
-        const promise = createGenerationProvider().generateVideo({
+        // #1435 —— submit body only, same reasoning as `sendPlan` above.
+        await createGenerationProvider().submitVideo({
           prompt: "make her walk toward the camera", imageUrl: "https://r2/first.png",
           durationSeconds: 5, model: "seedance-2-mini" as GenVideoModel,
         });
-        await vi.runAllTimersAsync();
-        await promise;
       } finally {
         vi.useRealTimers();
         vi.unstubAllGlobals();

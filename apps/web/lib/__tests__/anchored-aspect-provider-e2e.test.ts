@@ -11,7 +11,7 @@
  * 所以这里一段都不隔:
  *
  *   `genRequest` 形状 → 真 `startGen`(真 Postgres、真预扣、真 GenJob 落库)
- *      → 从**库里读回来**的那一行 → 真 `handleGen` → `provider.generateVideo` 实收的参数。
+ *      → 从**库里读回来**的那一行 → 真 `handleGen` → `provider.submitVideo` 实收的参数。
  *
  * 只有两样是假的,而且都必须假:**付费引擎**(绝不真调用、绝不真花钱)与**对象存储**
  * (不需要真 R2)。库、钱、事务、归一化、worker 全是真的。适配器那一层的入参断言
@@ -48,7 +48,8 @@ vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => (
 
 // ── worker 侧:只把**付费引擎**与**对象存储**换成假件。worker 的库、钱、归一化读取全是真的。
 const w = vi.hoisted(() => ({
-  generateVideo: vi.fn(),
+  submitVideo: vi.fn(),
+  pollVideo: vi.fn(),
   generateImages: vi.fn(),
   storagePut: vi.fn(),
   storagePresignedGet: vi.fn(),
@@ -57,7 +58,7 @@ vi.mock("../../../worker/src/storage.js", () => ({
   storage: { put: w.storagePut, presignedGet: w.storagePresignedGet },
 }));
 vi.mock("../../../worker/src/generation.js", () => ({
-  provider: { name: "byteplus", generate: w.generateImages, generateVideo: w.generateVideo },
+  provider: { name: "byteplus", generate: w.generateImages, submitVideo: w.submitVideo, pollVideo: w.pollVideo },
 }));
 vi.mock("../../../worker/src/model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
@@ -91,7 +92,7 @@ beforeEach(async () => {
   w.storagePut.mockImplementation(async () => ({
     contentHash: randomUUID().replace(/-/g, "").padEnd(64, "0").slice(0, 64),
   }));
-  w.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), ext: "mp4" });
+  w.submitVideo.mockResolvedValue({ providerTaskId: "task-anchor" });
 
   ownerId = `org_${randomUUID()}`;
   projectId = `prj_${randomUUID()}`;
@@ -162,8 +163,8 @@ async function aspectThroughTheWholeChain(req: Record<string, unknown>): Promise
 
   await handleGen({ genJobId: started.id }, 0);
 
-  expect(w.generateVideo, "付费调用必须真的发生过,这条断言才有意义").toHaveBeenCalledTimes(1);
-  const sent = w.generateVideo.mock.calls[0]![0] as { aspectRatio?: string };
+  expect(w.submitVideo, "付费调用必须真的发生过,这条断言才有意义").toHaveBeenCalledTimes(1);
+  const sent = w.submitVideo.mock.calls[0]![0] as { aspectRatio?: string };
   return {
     persisted: (row.videoOptions as { aspectRatio?: string } | null)?.aspectRatio,
     received: sent.aspectRatio,
@@ -211,7 +212,7 @@ describe("#775 判官 r7 —— 锚定请求的形状,一路走到适配器都�
       });
       expect("error" in started, "续写必须被拒").toBe(true);
       expect(await prisma.genJob.count({ where: { ownerId } })).toBe(before);
-      expect(w.generateVideo).not.toHaveBeenCalled();
+      expect(w.submitVideo).not.toHaveBeenCalled();
     },
     CASE_TIMEOUT_MS,
   );

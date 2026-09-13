@@ -16,7 +16,7 @@
  *
  * 这个文件只读 `byteplus.ts` 现有形状,一个字都不改它。
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { BytePlusProvider } from "./byteplus.js";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -40,7 +40,9 @@ async function submitBodyFor(audio: boolean | undefined): Promise<any> {
     }
     return bytesRes();
   });
-  const promise = new BytePlusProvider("ark-test").generateVideo({
+  // #1435(零排队)—— submit only; this test only needs the request BODY, so it does not
+  // need to drive the poll to a terminal state at all.
+  await new BytePlusProvider("ark-test").submitVideo({
     prompt: "roll",
     imageUrl: "https://r2/frame.png",
     durationSeconds: 5,
@@ -49,14 +51,11 @@ async function submitBodyFor(audio: boolean | undefined): Promise<any> {
     aspectRatio: "16:9",
     ...(audio === undefined ? {} : { audio }),
   });
-  await vi.runAllTimersAsync();
-  await promise;
   return submitBody;
 }
 
 describe("CREATE-A3:声音开关落到供应商请求体", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
+  // #1435 —— submitVideo 不再原地轮询,这个文件只读它的提交请求体,不再需要假计时器。
 
   it("CREATE-A3:商家关掉声音 ⇒ 请求体 generate_audio 为 false", async () => {
     const body = await submitBodyFor(false);

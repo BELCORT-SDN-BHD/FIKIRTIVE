@@ -59,7 +59,14 @@ describe("MONEY-A13:吸收成本的金额与落库的 spentUsd 同源", () => {
     const src = source("./gen.ts");
     // 手抄的那一版长这样:`genSpentUsd({ kind: job.kind, ...`。它一个都不许再出现。
     expect(src).not.toMatch(/genSpentUsd\(\{\s*kind:/);
-    expect(src.match(/genSpentUsd\(genSpendArgsOf\(job\)\)/g)?.length).toBe(4);
+    // #1435 —— 6 处(原 4 处不变,#1435 新增两处):
+    //   第 5 处:视频提交成功但这一单已经被并发的另一次投递抢先 FAILED+退款
+    //     (REDELIVERY_DISCARD,`persistVideoProviderTaskWithRetry` 的调用点)。
+    //   第 6 处(判官初审 P2-5):视频提交成功、落标记的写重试预算耗尽(真实基础设施故障,
+    //     不是 REDELIVERY_DISCARD)——这条路此前恰恰是唯一一处"平台真的吸收了引擎成本却
+    //     零上报"的分支,判官指出后补上告警,同一条纪律要求它报的金额与别处同源。
+    // 两处都不许另起一份手抄参数。
+    expect(src.match(/genSpentUsd\(genSpendArgsOf\(job\)\)/g)?.length).toBe(6);
     expect(src).toContain("absorbedUsd: genSpentUsd(genSpendArgsOf(job))");
   });
 

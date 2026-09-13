@@ -35,7 +35,8 @@ const m = vi.hoisted(() => {
   const settleCredits = vi.fn();
   const settleCanvasCardsForGenJob = vi.fn();
   const generateImages = vi.fn();
-  const generateVideo = vi.fn();
+  const submitVideo = vi.fn();
+  const pollVideo = vi.fn();
   const storagePut = vi.fn();
   const storagePresignedGet = vi.fn();
   const storage = { put: storagePut, presignedGet: storagePresignedGet };
@@ -56,7 +57,7 @@ const m = vi.hoisted(() => {
     prisma, genJobFindUnique, genJobFindMany, genJobUpdate, genJobUpdateMany, projectFindFirst,
     generationFindFirst, generationCreate, entityFindMany, chatMessageFindFirst, chatMessageCreate,
     creditLedgerFindFirst, assetUpsert, shotUpdateMany, queryRaw, refundReservation, settleCredits,
-    settleCanvasCardsForGenJob, generateImages, generateVideo, storage, storagePut, storagePresignedGet,
+    settleCanvasCardsForGenJob, generateImages, submitVideo, pollVideo, storage, storagePut, storagePresignedGet,
   };
 });
 
@@ -71,7 +72,7 @@ vi.mock("@fikirtive/db/principal", () => ({
   runAsTenant: (_ownerId: string, fn: () => Promise<unknown>) => fn(),
 }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, generateVideo: m.generateVideo } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, submitVideo: m.submitVideo, pollVideo: m.pollVideo } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { handleGen, reapStaleGenJobs } from "./gen.js";

@@ -25,7 +25,8 @@ import { randomUUID } from "node:crypto";
 // 只 mock 两件事:付费引擎(绝不真调用)和对象存储。库、钱、事务全是真的。
 const m = vi.hoisted(() => ({
   generateImages: vi.fn(),
-  generateVideo: vi.fn(),
+  submitVideo: vi.fn(),
+  pollVideo: vi.fn(),
   storagePut: vi.fn(),
   storagePresignedGet: vi.fn(),
   // 整顿 C1a:报警管道注入成假 transport —— 用例断言的是「这类事件必然产生一次带上下文的
@@ -34,7 +35,7 @@ const m = vi.hoisted(() => ({
   captureMoneyPathError: vi.fn(),
 }));
 vi.mock("../storage.js", () => ({ storage: { put: m.storagePut, presignedGet: m.storagePresignedGet } }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, generateVideo: m.generateVideo } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, submitVideo: m.submitVideo, pollVideo: m.pollVideo } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 vi.mock("../alerting.js", () => ({ founderAlert: m.founderAlert, captureMoneyPathError: m.captureMoneyPathError }));
 

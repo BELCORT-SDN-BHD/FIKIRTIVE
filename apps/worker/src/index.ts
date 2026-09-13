@@ -238,10 +238,15 @@ async function main(): Promise<void> {
   await consume<IngestJobData>(QUEUES.ingest, (data) => handleIngest(data));
   await consume<RenderJobData>(QUEUES.render, handleRender);
   await consume<RefGenJobData>(QUEUES.refgen, handleRefGen);
-  // #1388(零排队③)—— handleGen 可能把这一单的认领让给别家(公平兜底,见 shouldDeferGenClaimForFairness):
-  // 非空返回值时,GenJob 行本身原样留在 QUEUED,这里按它给的延迟重新入队一条新消息,让这一个
-  // 轮询器立刻空出来去抢别家已经排队的那一单。与 UNDERSTAND_QUEUE 那条「handler 决定接着发什么」
-  // 的既有形状同构(见下方 consume<UnderstandJobData>)。
+  // handleGen 的非空返回值有两种(GenDispatchOutcome,gen.ts):
+  //   · #1388(零排队④)`deferredForFairness`—— 把这一单的认领让给别家(公平兜底,见
+  //     shouldDeferGenClaimForFairness):GenJob 行本身原样留在 QUEUED。
+  //   · #1435(零排队,QUEUE-A6)`awaitingVideoPoll`—— 视频任务刚提交成功(已花钱、已落库
+  //     `providerTask` 标记,GENERATING),这一次投递到此为止:不原地轮询,放手让下面
+  //     `boss.send` 按 `GEN_VIDEO_POLL_DELAY_SECONDS` 的延迟重新排一条查询消息回来。
+  // 两种情形处理完全一致——这里按 outcome 给的延迟重新入队一条新消息,让这一个轮询器立刻
+  // 空出来去抢别家已经排队的那一单(或去跑别的活)。与 UNDERSTAND_QUEUE 那条「handler 决定
+  // 接着发什么」的既有形状同构(见下方 consume<UnderstandJobData>)。
   //
   // 判官安全定向 4b —— 这里不带 `singletonKey`:GEN_QUEUE_POLICY 是 pg-boss 的 `standard`
   // 队列策略,`singletonKey` 的去重唯一索引(job_i1/i2/i3/i6/i8,`pg-boss/dist/plans.js`)只挂在

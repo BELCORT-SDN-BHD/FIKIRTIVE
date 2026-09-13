@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { EXECUTED_SPEC, PLATFORM_IMAGE_PERSON_REJECTED, REFERENCE_IMAGE_PERSON_REJECTED } from "@fikirtive/core";
+import type { VideoRequest, GeneratedVideo } from "@fikirtive/core";
+import { EXECUTED_SPEC, PLATFORM_IMAGE_PERSON_REJECTED, REFERENCE_IMAGE_PERSON_REJECTED, GENERATION_ENGINE_UNAVAILABLE } from "@fikirtive/core";
 import {
   BytePlusProvider,
   IMAGE_MODEL_MAP,
@@ -103,6 +104,33 @@ function stubFetch(handler: (url: string, init?: any) => any) {
 const jsonRes = (body: any) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
 const bytesRes = () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer });
 
+/**
+ * #1435(零排队)— the video path split ONE blocking `generateVideo` call (submit, then poll
+ * in-process to a terminal state) into `submitVideo` (returns immediately) + `pollVideo` (one
+ * look, never loops — see byteplus.ts doc comments). Real code (apps/worker/src/jobs/gen.ts)
+ * owns the reschedule loop across many short pg-boss deliveries; this test helper reproduces
+ * the OLD single-call shape (submit, then poll until terminal) so the many tests below that are
+ * really about REQUEST SHAPE or download/last-frame handling don't each have to restructure
+ * around the two-call API individually. `vi.runAllTimersAsync()` after each poll mirrors the
+ * draining this file already did after the old `generateVideo` call (AbortSignal.timeout inside
+ * submit/poll/download still needs fake timers advanced under `vi.useFakeTimers()`).
+ */
+async function generateVideo(provider: BytePlusProvider, req: VideoRequest): Promise<GeneratedVideo> {
+  const { providerTaskId } = await provider.submitVideo(req);
+  for (let i = 0; i < 200; i++) {
+    const pollPromise = provider.pollVideo(providerTaskId, { returnLastFrame: !!req.returnLastFrame });
+    // `allSettled` attaches a handler to `pollPromise` immediately (before any timer/microtask
+    // flush below runs), so a rejection can never be reported as "unhandled" just because we
+    // don't re-`await` it until a line later.
+    await Promise.allSettled([pollPromise, vi.runAllTimersAsync()]);
+    const poll = await pollPromise;
+    if (poll.status === "succeeded") return poll.video;
+    // #661 消息形状与旧的原地轮询循环逐字相同 —— worker 侧(gen.ts)按同一个模板拼错误。
+    if (poll.status === "failed") throw new Error(`generation provider video task ${poll.reason}`);
+  }
+  throw new Error("test helper generateVideo(): polled 200 times without a terminal result — the stub never returns succeeded/failed");
+}
+
 describe("generateVideo (Seedance, async)", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
@@ -118,10 +146,7 @@ describe("generateVideo (Seedance, async)", () => {
       }
       return bytesRes(); // mp4 download
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", resolution: "720p", aspectRatio: "16:9" });
-    // Advance through each poll interval
-    await vi.runAllTimersAsync();
-    const out = await promise;
+    const out = await generateVideo(new BytePlusProvider("ark-test"), { prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", resolution: "720p", aspectRatio: "16:9" });
     expect(out.ext).toBe("mp4");
     expect(submitBody.model).toBe("dreamina-seedance-2-0-mini-260615");
     expect(submitBody.content[0]).toEqual({ type: "image_url", image_url: { url: "https://r2/frame.png" } });
@@ -156,11 +181,9 @@ describe("generateVideo (Seedance, async)", () => {
         }
         return bytesRes();
       });
-      const promise = new BytePlusProvider("ark-test").generateVideo({
+      await generateVideo(new BytePlusProvider("ark-test"), {
         prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds, model: "seedance-2-mini", resolution, aspectRatio,
       });
-      await vi.runAllTimersAsync();
-      await promise;
       expect(submitBody.ratio, `${aspectRatio}`).toBe(aspectRatio);
       expect(submitBody.resolution, `${resolution}`).toBe(resolution);
       expect(submitBody.duration, `${durationSeconds}`).toBe(durationSeconds);
@@ -177,9 +200,7 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("/tasks/cgt-2")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
-    await vi.runAllTimersAsync();
-    await promise;
+    await generateVideo(new BytePlusProvider("ark-test"), { prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
     expect(submitBody.content).toHaveLength(1);
     expect(submitBody.content[0].type).toBe("text");
     // no shape asked ⇒ the field is absent, the engine picks its own (adaptive).
@@ -195,9 +216,7 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("/tasks/cgt-mute")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini", audio: false });
-    await vi.runAllTimersAsync();
-    await promise;
+    await generateVideo(new BytePlusProvider("ark-test"), { prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini", audio: false });
     expect(submitBody.generate_audio).toBe(false);
   });
   // #661:引擎明确报告「没出片」的终态 ⇒ 官方不收费(定价页 2026-08-01:
@@ -209,10 +228,9 @@ describe("generateVideo (Seedance, async)", () => {
       stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
         ? jsonRes({ status, error: { message: "nsfw" } })
         : jsonRes({ id: `cgt-${status}` }));
-      const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
       let err: any;
       // Attach the rejection handler before advancing timers to avoid an unhandled rejection warning
-      const assertion = promise.catch((e) => { err = e; });
+      const assertion = generateVideo(new BytePlusProvider("ark-test"), { prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" }).catch((e) => { err = e; });
       await vi.runAllTimersAsync();
       await assertion;
       expect(err).toBeInstanceOf(Error);
@@ -220,20 +238,25 @@ describe("generateVideo (Seedance, async)", () => {
       expect(err.charged).toBeFalsy();
     });
   }
-  it("keeps polling past the old 5-min cap (video can run longer) and still succeeds (F06)", async () => {
-    // Return "running" for ~70 polls (~5.8 min at 5s) then succeed. The old 5-min TIMEOUT_MS
-    // would have thrown a chargedError timeout (~poll 61) — refunding the user while BytePlus
-    // still bills the completing task. The 15-min cap lets it finish.
+  it("#1435 一个仍未终态的任务多次轮询,每次都只是 pending(从不自己判定超时——那把尺现在在 gen.ts 手里,按提交时刻判)", async () => {
+    // Poll ~70 times (what used to be ~5.8 real minutes of the old in-process 5s-interval loop)
+    // then succeed — pollVideo itself never gives up: it just reports what it saw, over and over,
+    // and the CALLER decides how many times (and how far apart) to look again.
     let polls = 0;
     stubFetch((url) => {
       if (url.endsWith("/contents/generations/tasks")) return jsonRes({ id: "cgt-slow" });
       if (url.includes("/tasks/cgt-slow")) { polls++; return jsonRes(polls < 70 ? { status: "running" } : { status: "succeeded", content: { video_url: "https://tos/v.mp4" } }); }
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
-    await vi.runAllTimersAsync();
-    const out = await promise;
-    expect(out.ext).toBe("mp4");
+    const provider = new BytePlusProvider("ark-test");
+    const { providerTaskId } = await provider.submitVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
+    for (let i = 0; i < 69; i++) {
+      const poll = await provider.pollVideo(providerTaskId, { returnLastFrame: false });
+      expect(poll.status, `poll ${i + 1}`).toBe("pending");
+    }
+    const last = await provider.pollVideo(providerTaskId, { returnLastFrame: false });
+    expect(last.status).toBe("succeeded");
+    if (last.status === "succeeded") expect(last.video.ext).toBe("mp4");
   });
 
   it("first+last frames: two image_url parts, roles spelled out (the engine requires both)", async () => {
@@ -245,9 +268,7 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("/tasks/cgt-tail")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "morph", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-mini" });
-    await vi.runAllTimersAsync();
-    await promise;
+    await generateVideo(new BytePlusProvider("ark-test"), { prompt: "morph", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-mini" });
     // In first+last mode `role` is REQUIRED on both parts — a roleless pair is a
     // different (single-frame) scenario to the engine.
     expect(submitBody.content[0]).toEqual({ type: "image_url", image_url: { url: "https://r2/frame.png" }, role: "first_frame" });
@@ -261,7 +282,7 @@ describe("generateVideo (Seedance, async)", () => {
     stubFetch((url) => { calls.push(url); return jsonRes({ id: "should-not-happen" }); });
     let err: any;
     try {
-      await new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", refVideoUrl: "https://x/ref.mp4", durationSeconds: 5, model: "seedance-2-mini" });
+      await new BytePlusProvider("ark-test").submitVideo({ prompt: "x", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", refVideoUrl: "https://x/ref.mp4", durationSeconds: 5, model: "seedance-2-mini" });
     } catch (e) { err = e; }
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/end frame/);
@@ -272,7 +293,7 @@ describe("generateVideo (Seedance, async)", () => {
   it("an end frame with no start frame is refused BEFORE any submit — never silently dropped", async () => {
     const calls: string[] = [];
     stubFetch((url) => { calls.push(url); return jsonRes({ id: "should-not-happen" }); });
-    await expect(new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-mini" }))
+    await expect(new BytePlusProvider("ark-test").submitVideo({ prompt: "x", imageUrl: "", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-mini" }))
       .rejects.toThrow(/needs a start image/);
     expect(calls).toHaveLength(0); // pre-spend
   });
@@ -290,12 +311,8 @@ describe("generateVideo (Seedance, async)", () => {
       return bytesRes();
     });
     const base = { prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini" } as const;
-    const p1 = new BytePlusProvider("ark-test").generateVideo({ ...base, returnLastFrame: true });
-    await vi.runAllTimersAsync();
-    await p1;
-    const p2 = new BytePlusProvider("ark-test").generateVideo({ ...base });
-    await vi.runAllTimersAsync();
-    await p2;
+    await generateVideo(new BytePlusProvider("ark-test"), { ...base, returnLastFrame: true });
+    await generateVideo(new BytePlusProvider("ark-test"), { ...base });
     expect(bodies[0].return_last_frame).toBe(true);
     // 没要的那一单:字段**不存在**,而不是 false —— 老作业的请求体与 #782 之前逐字节同形。
     expect("return_last_frame" in bodies[1]).toBe(false);
@@ -308,11 +325,9 @@ describe("generateVideo (Seedance, async)", () => {
       }
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({
+    const out = await generateVideo(new BytePlusProvider("ark-test"), {
       prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", returnLastFrame: true,
     });
-    await vi.runAllTimersAsync();
-    const out = await promise;
     expect(out.ext).toBe("mp4");
     expect(out.lastFrame?.ext).toBe("png");
     expect(out.lastFrame?.bytes.byteLength).toBeGreaterThan(0);
@@ -328,11 +343,9 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("tail.png")) return { ok: false, status: 500, arrayBuffer: async () => new ArrayBuffer(0) };
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({
+    const out = await generateVideo(new BytePlusProvider("ark-test"), {
       prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", returnLastFrame: true,
     });
-    await vi.runAllTimersAsync();
-    const out = await promise;
     expect(out.ext).toBe("mp4");
     expect(out.bytes.byteLength).toBeGreaterThan(0);
     expect(out.lastFrame).toBeUndefined();
@@ -343,11 +356,9 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("/tasks/cgt-lf4")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({
+    const out = await generateVideo(new BytePlusProvider("ark-test"), {
       prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", returnLastFrame: true,
     });
-    await vi.runAllTimersAsync();
-    const out = await promise;
     expect(out.ext).toBe("mp4");
     expect(out.lastFrame).toBeUndefined();
   });
@@ -367,11 +378,9 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("tail.png")) throw new TypeError(`Failed to parse URL from ${url}`);
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({
+    const out = await generateVideo(new BytePlusProvider("ark-test"), {
       prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", returnLastFrame: true,
     });
-    await vi.runAllTimersAsync();
-    const out = await promise;
 
     const logged = warn.mock.calls.map((c) => c.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")).join("\n");
     expect(logged).not.toContain("X-Amz-Signature");
@@ -391,7 +400,6 @@ describe("generateVideo (Seedance, async)", () => {
    * **已经付过钱**的片子按在 GENERATING 上多久(按太久,队列超时会重投一条已付费的片子)。
    */
   const EXPECTED_TAIL_BUDGET_MS = 8_000;
-  const POLL_TICK_MS = 5_000; // 轮询的第一拍(byteplus.ts 里 `setTimeout(r, 5_000)`)
 
   it("#782 r2 末帧下载卡住不许拖着那条已经付过钱的片子(超时放弃,片子照常交付)", async () => {
     // 「best-effort」必须同时覆盖**炸了**和**不回话**。一条不回话的连接会把作业按在
@@ -410,12 +418,16 @@ describe("generateVideo (Seedance, async)", () => {
       }
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({
+    const provider = new BytePlusProvider("ark-test");
+    const { providerTaskId } = await provider.submitVideo({
       prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", returnLastFrame: true,
     });
-
-    // ① 轮询走到 succeeded,片子下完,末帧那一路开始 —— 预算从这一刻起算。
-    await vi.advanceTimersByTimeAsync(POLL_TICK_MS);
+    // ① 一次轮询就直接读到 succeeded(不再有 5 秒一拍的原地轮询),末帧那一路立刻开始 ——
+    // 预算从这一刻起算。
+    const pollPromise = provider.pollVideo(providerTaskId, { returnLastFrame: true });
+    // flush the microtask chain up to (and including) the last-frame fetch's abort-timer
+    // registration, without advancing the clock itself.
+    await vi.advanceTimersByTimeAsync(0);
     expect(aborted, "末帧那一路还没开始就被掐 = 预算根本没生效").toBe(false);
 
     // ② 预算之内(8s − ε):不许提前掐 —— 一张 1–2 MB 的 PNG 本来就该有它的那几秒。
@@ -426,10 +438,11 @@ describe("generateVideo (Seedance, async)", () => {
     await vi.advanceTimersByTimeAsync(2);
     expect(aborted, "越过预算还不掐 = 免费附件能把已付费的片子按到队列超时").toBe(true);
 
-    const out = await promise;
-    expect(out.ext).toBe("mp4");
-    expect(out.bytes.byteLength).toBeGreaterThan(0);
-    expect(out.lastFrame).toBeUndefined();
+    const poll = await pollPromise;
+    if (poll.status !== "succeeded") throw new Error(`expected succeeded, got ${poll.status}`);
+    expect(poll.video.ext).toBe("mp4");
+    expect(poll.video.bytes.byteLength).toBeGreaterThan(0);
+    expect(poll.video.lastFrame).toBeUndefined();
   });
 
   it("#782 r3 末帧下载的预算就是 8 秒整(常量漂移即红)", () => {
@@ -439,9 +452,8 @@ describe("generateVideo (Seedance, async)", () => {
     stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
       ? jsonRes({ status: "expired" })
       : jsonRes({ id: "cgt-exp" }));
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
     let err: any;
-    const assertion = promise.catch((e) => { err = e; });
+    const assertion = generateVideo(new BytePlusProvider("ark-test"), { prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" }).catch((e) => { err = e; });
     await vi.runAllTimersAsync();
     await assertion;
     expect(err).toBeInstanceOf(Error);
@@ -451,9 +463,17 @@ describe("generateVideo (Seedance, async)", () => {
   // ── #661 反向钉板:「结果不明」的每一条路都必须**继续**按已扣上抛 ──────────────
   //
   // #661 只放开一件事:引擎**明确报告没出片**的终态(failed/cancelled/expired)。这道
-  // 边界是 #657 定的,一字不许越 —— 只要我们不知道引擎那边到底出没出片(轮询读不到、
-  // 15 分钟弃单、出片了但拿不下来),钱就可能已经花了,必须 chargedError 终结,
-  // 绝不重投。下面五条把这条边界钉死:哪天有人「顺手」把它们也改成 PLAIN,这里红。
+  // 边界是 #657 定的,一字不许越 —— 只要我们不知道引擎那边到底出没出片(读不到状态、
+  // 出片了但拿不下来),钱就可能已经花了,必须 chargedError 终结,绝不重投。下面把这条
+  // 边界钉死:哪天有人「顺手」把它们也改成 PLAIN,这里红。
+  //
+  // #1435(零排队)—— 三条曾经在这里的测试挪走了:「弃单超时」「轮询非 2xx 直到超时」
+  // 「轮询抛异常直到超时」测的是 byteplus.ts 自己的 TIMEOUT_MS 原地重试到超时才判
+  // charged —— 那把尺已经不在这个文件里了(pollVideo 从不自己判定超时,一次转态失败/
+  // 非 2xx/网络抛一律回 `pending`,由 gen.ts 按提交时刻决定还要不要再等)。三条的边界
+  // 断言原样保留,只是换了地方:pollVideo 侧见下面「一次转态失败……回 pending」,
+  // 「按提交时刻放弃……charged」这条边界断言进了 apps/worker/src/jobs/gen-video-poll.test.ts
+  // (QUEUE-A5/A6)。
   describe("#661 边界:结果不明仍是 chargedError(不许过度修正)", () => {
     async function rejection(run: () => Promise<unknown>) {
       let err: any;
@@ -462,32 +482,37 @@ describe("generateVideo (Seedance, async)", () => {
       await assertion;
       return err;
     }
-    const call = () => new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
+    const call = () => generateVideo(new BytePlusProvider("ark-test"), { prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
 
-    it("弃单超时(任务还在跑,引擎可能照样出片照样计费)", async () => {
-      stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
-        ? jsonRes({ status: "running" })
-        : jsonRes({ id: "cgt-slowforever" }));
-      const err = await rejection(call);
-      expect(err.message).toMatch(/timed out/);
-      expect(err.charged).toBe(true);
-    });
-    it("轮询一直非 2xx 直到超时(读不到状态 ≠ 没出片)", async () => {
+    it("一次转态失败(非 2xx)不是 charged,只是 pending —— 放弃与否不是这一层的决定", async () => {
       stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
         ? { ok: false, status: 503, text: async () => "upstream busy" }
         : jsonRes({ id: "cgt-503" }));
-      const err = await rejection(call);
-      expect(err.message).toMatch(/503 after timeout/);
-      expect(err.charged).toBe(true);
+      const provider = new BytePlusProvider("ark-test");
+      const { providerTaskId } = await provider.submitVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
+      const poll = await provider.pollVideo(providerTaskId, { returnLastFrame: false });
+      expect(poll.status).toBe("pending");
     });
-    it("轮询一直抛异常直到超时(网络断 ≠ 没出片)", async () => {
+    it("一次转态失败(网络抛)同样不是 charged,只是 pending", async () => {
       stubFetch((url) => {
         if (url.includes("/tasks/") && !url.endsWith("tasks")) throw new Error("ECONNRESET");
         return jsonRes({ id: "cgt-reset" });
       });
-      const err = await rejection(call);
-      expect(err.message).toMatch(/polling failed after timeout/);
-      expect(err.charged).toBe(true);
+      const provider = new BytePlusProvider("ark-test");
+      const { providerTaskId } = await provider.submitVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
+      const poll = await provider.pollVideo(providerTaskId, { returnLastFrame: false });
+      expect(poll.status).toBe("pending");
+    });
+    it("一直是 running 也只是 pending —— 这个方法从不自己判定「等太久」", async () => {
+      stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
+        ? jsonRes({ status: "running" })
+        : jsonRes({ id: "cgt-slowforever" }));
+      const provider = new BytePlusProvider("ark-test");
+      const { providerTaskId } = await provider.submitVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
+      for (let i = 0; i < 5; i++) {
+        const poll = await provider.pollVideo(providerTaskId, { returnLastFrame: false });
+        expect(poll.status, `poll ${i + 1}`).toBe("pending");
+      }
     });
     it("succeeded 但响应里没有视频 URL(出片了,只是我们读不到)", async () => {
       stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
@@ -641,7 +666,7 @@ describe("generateVideo (Seedance, async)", () => {
       stubFetch((url) => url.endsWith("/contents/generations/tasks")
         ? { ok: false, status: 400, text: async () => MEASURED_PERSON_REJECTION }
         : jsonRes({ status: "running" }));
-      const err = await rejection(() => new BytePlusProvider("ark-test").generateVideo({
+      const err = await rejection(() => generateVideo(new BytePlusProvider("ark-test"), {
         prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini",
         castMemberInReferences: true,
       }));
@@ -671,6 +696,34 @@ describe("generateVideo (Seedance, async)", () => {
       expect(err.permanent).toBeFalsy();
       expect(err.charged).toBeFalsy();
     });
+
+    // ── 判官初审 P2-6:QUEUE-A5(#1435)那句 429 三路分流此前零覆盖 ─────────────────────
+    //
+    // 上面 #672 那组「submit 429 仍是 PLAIN」测的是**没有**触发分流条件的普通 429(没有任何
+    // 能识别的 QuotaExceeded 报文形状)——它不推翻分流,恰恰是分流"默认 unknown ⇒ 普通可
+    // 重投"那一支的证据。这里补的是分流本身**真的接了线**:429 + 报文里读到"余额不足"这类
+    // marker ⇒ permanentInputError(GENERATION_ENGINE_UNAVAILABLE);429 + 报文里读到"请求
+    // 太多"这类 marker ⇒ 照旧走普通可重投的 PLAIN 路,不被误分类成"配额耗尽"。两条固定证据
+    // 均**明确标注是虚构报文**,不是任何一次真实观测(探针 README §1:三路分流从未实测)。
+    it("QUEUE-A5(判官初审 P2-6,虚构报文,非真实观测):429 + QuotaExceeded.Balance 类报文 ⇒ permanentInputError(GENERATION_ENGINE_UNAVAILABLE),不 charged", async () => {
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? { ok: false, status: 429, text: async () => JSON.stringify({ error: { code: "QuotaExceeded.Balance", message: "insufficient balance, please top up your account" } }) }
+        : jsonRes({ status: "running" }));
+      const err = await rejection(call);
+      expect(err.permanent).toBe(true);
+      expect(err.message).toBe(GENERATION_ENGINE_UNAVAILABLE);
+      expect(err.charged).toBeFalsy();
+    });
+
+    it("QUEUE-A5(判官初审 P2-6,虚构报文,非真实观测):429 + 『请求太多,请稍后重试』这类排队报文 ⇒ 仍是普通 PLAIN 可重投,不被误判成配额耗尽", async () => {
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? { ok: false, status: 429, text: async () => "Too many requests, please retry later" }
+        : jsonRes({ status: "running" }));
+      const err = await rejection(call);
+      expect(err.permanent).toBeFalsy();
+      expect(err.message).not.toBe(GENERATION_ENGINE_UNAVAILABLE);
+      expect(err.charged).toBeFalsy();
+    });
   });
   it("generateVideo includes a reference_video content part when refVideoUrl is set", async () => {
     let submitBody: any;
@@ -681,9 +734,7 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("/tasks/cgt-4")) return jsonRes({ status: "succeeded", content: { video_url: "https://x/v.mp4" } });
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "move like this", imageUrl: "", refVideoUrl: "https://x/ref.mp4", durationSeconds: 5, model: "seedance-2-mini" });
-    await vi.runAllTimersAsync();
-    await promise;
+    await generateVideo(new BytePlusProvider("ark-test"), { prompt: "move like this", imageUrl: "", refVideoUrl: "https://x/ref.mp4", durationSeconds: 5, model: "seedance-2-mini" });
     const parts = submitBody.content as Array<{ type: string; role?: string; video_url?: { url: string } }>;
     const vp = parts.find((c) => c.type === "video_url");
     expect(vp).toBeTruthy();
@@ -711,13 +762,11 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("/tasks/cgt-refimg")) return jsonRes({ status: "succeeded", content: { video_url: "https://x/v.mp4" } });
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({
+    await generateVideo(new BytePlusProvider("ark-test"), {
       prompt: "our product on a beach", imageUrl: "",
       refImageUrls: ["https://r2/product.png", "https://r2/face.png", "https://r2/logo.png"],
       durationSeconds: 5, model: "seedance-2-mini",
     });
-    await vi.runAllTimersAsync();
-    await promise;
     // 整体断言:部件数组逐字就是「三张参考照(原序)+ 提示词」。
     // **顺序即编号** —— 第 N 张送的就是 worker 选片的第 N 张,中间没有第二次排序。
     expect(submitBody.content).toEqual([
@@ -739,12 +788,8 @@ describe("generateVideo (Seedance, async)", () => {
     });
     const p = new BytePlusProvider("ark-test");
     const base = { prompt: "a clip", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" } as const;
-    const a = p.generateVideo(base);
-    await vi.runAllTimersAsync();
-    await a;
-    const b = p.generateVideo({ ...base, refImageUrls: [] });
-    await vi.runAllTimersAsync();
-    await b;
+    await generateVideo(p, base);
+    await generateVideo(p, { ...base, refImageUrls: [] });
     expect(bodies[1]).toEqual(bodies[0]);
     expect(bodies[0].content).toEqual([{ type: "text", text: "a clip" }]);
   });
@@ -758,7 +803,7 @@ describe("generateVideo (Seedance, async)", () => {
     it(`#785: element photos combined with ${name} are refused BEFORE the paid submit`, async () => {
       const calls: string[] = [];
       stubFetch((url) => { calls.push(url); return jsonRes({ id: "never" }); });
-      await expect(new BytePlusProvider("ark-test").generateVideo({
+      await expect(new BytePlusProvider("ark-test").submitVideo({
         prompt: "mix", durationSeconds: 5, model: "seedance-2-mini",
         refImageUrls: ["https://r2/a.png"], tailImageUrl: undefined, refVideoUrl: undefined, ...extra,
       })).rejects.toThrow(/element reference photos/);
@@ -769,7 +814,7 @@ describe("generateVideo (Seedance, async)", () => {
   it("#785: more image parts than the engine takes is refused BEFORE the paid submit", async () => {
     const calls: string[] = [];
     stubFetch((url) => { calls.push(url); return jsonRes({ id: "never" }); });
-    await expect(new BytePlusProvider("ark-test").generateVideo({
+    await expect(new BytePlusProvider("ark-test").submitVideo({
       prompt: "too many", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini",
       refImageUrls: Array.from({ length: 10 }, (_, i) => `https://r2/${i}.png`),
     })).rejects.toThrow(/at most 9 images/);
@@ -1103,12 +1148,10 @@ describe("#580 卡面规格 ↔ 现役适配器请求体(lockstep)", () => {
         if (url.includes("/tasks/cgt-lockstep")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
         return bytesRes();
       });
-      const promise = new BytePlusProvider("ark-test").generateVideo({
+      await generateVideo(new BytePlusProvider("ark-test"), {
         prompt: "a clip", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini",
         resolution: "720p", aspectRatio: "16:9", audio: true,
       });
-      await vi.runAllTimersAsync();
-      await promise;
       expect(submitBody).toEqual({
         model: "dreamina-seedance-2-0-mini-260615",
         content: [{ type: "text", text: "a clip" }],
@@ -1146,7 +1189,7 @@ describe("#647 T6 未知视频模型:付费之前拒,零 fetch", () => {
     vi.stubGlobal("fetch", fetchSpy);
     for (const model of RETIRED) {
       await expect(
-        new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: model as never }),
+        new BytePlusProvider("ark-test").submitVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: model as never }),
       ).rejects.toThrow(/no video model mapping/u);
     }
     expect(fetchSpy, "下架模型竟然发出了任务提交请求").not.toHaveBeenCalled();
@@ -1156,7 +1199,7 @@ describe("#647 T6 未知视频模型:付费之前拒,零 fetch", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     await expect(
-      new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "never-existed" as never }),
+      new BytePlusProvider("ark-test").submitVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "never-existed" as never }),
     ).rejects.toThrow(/no video model mapping/u);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -1164,7 +1207,7 @@ describe("#647 T6 未知视频模型:付费之前拒,零 fetch", () => {
   it("拒的时候不带 charged 标记 —— 没花过的钱不许记成花过", async () => {
     vi.stubGlobal("fetch", vi.fn());
     const err = await new BytePlusProvider("ark-test")
-      .generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "kling" as never })
+      .submitVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "kling" as never })
       .catch((e: unknown) => e);
     expect((err as { charged?: unknown }).charged).toBeUndefined();
   });
@@ -1385,11 +1428,9 @@ describe("#795 出网截止时间", () => {
         }
         return bytesRes();
       });
-      const promise = new BytePlusProvider("ark-test").generateVideo({
+      await generateVideo(new BytePlusProvider("ark-test"), {
         prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini",
       } as never);
-      await vi.runAllTimersAsync();
-      await promise;
       expect(seen).toHaveLength(3);
       for (const call of seen) expect(call.signal, `${call.url} 没带 signal`).toBeInstanceOf(AbortSignal);
     } finally {
@@ -1499,7 +1540,7 @@ describe("#795 出网截止时间", () => {
       throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
     }));
     const err = await new BytePlusProvider("ark-test")
-      .generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" } as never)
+      .submitVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" } as never)
       .catch((e: unknown) => e);
     expect((err as { charged?: unknown }).charged).toBe(true);
   });
@@ -1589,7 +1630,7 @@ describe("FSE-001 —— 演员 + 商品图两张参考直接出片的请求形�
       }
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({
+    await generateVideo(new BytePlusProvider("ark-test"), {
       prompt: "The woman holds the coral travel mug and smiles at the camera, soft studio light, static camera",
       // 纯文生视频:没有首帧、没有末帧、没有参考片。
       imageUrl: "",
@@ -1599,8 +1640,6 @@ describe("FSE-001 —— 演员 + 商品图两张参考直接出片的请求形�
       resolution: "480p",
       audio: false,
     });
-    await vi.runAllTimersAsync();
-    await promise;
 
     // 三个部件,次序 = worker 交出来的次序(演员在前、商品在后),与脱敏件逐格相同。
     expect(submitBody.content).toHaveLength(3);

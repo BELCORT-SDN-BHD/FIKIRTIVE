@@ -1,41 +1,61 @@
 /**
- * clock-invariants.test.ts — #796 / #760 第 2 项:「三个时钟按并发假设重算」。
+ * clock-invariants.test.ts — #796 / #760 第 2 项:「三个时钟按并发假设重算」,#1435(零排队,
+ * QUEUE-A6,docs/specs/zero-queue.md)在此基础上把「在飞视频」的判定锚点从 claim 时长换成
+ * 提交时刻。
  *
  * 为什么这件事值一整个测试文件:清道夫的阈值算错,后果不是慢,是**误杀在跑的付费任务** ——
  * 商家看到失败、拿到退款,而供应商那边照样出片照样计费。烧的是毛利,丢的是信任。
- * 这些数字散在三个文件里(供应商轮询超时在 packages/generation、队列过期在 packages/core、
+ * 这些数字散在三个文件里(图片 POST 超时在 packages/generation、队列过期在 packages/core、
  * 清道夫窗口在 apps/worker),谁都能单独改一个,而这条链条只要一处失序就出上面那个后果。
  *
- * 链条(从内到外,每一层都必须严格大于上一层,#1386 之后的现行值):
+ * 图片链(从内到外,每一层都必须严格大于上一层,#1386 之后的现行值,#1435 未改这四个数字):
  *
- *   供应商轮询超时 15m  <  stale 判定 35m  <  队列过期 40m  <  清道夫窗口 45m
+ *   图片 POST 超时 5m  <  stale 判定 35m  <  队列过期 40m  <  清道夫窗口 45m
  *
- *   - 供应商超时 < stale:一次**正常**的长视频调用绝不能被当成「卡死」。
+ *   - POST 超时 < stale:一次**正常**的慢出图绝不能被当成「卡死」。
  *   - stale < 队列过期:重投一定意味着过期已发生,所以重投时用 stale 判定是安全的。
  *   - 队列过期 < 清道夫:清道夫跑在自己的定时器上,它必须等到 pg-boss 自己都放弃之后才动手,
  *     否则它会把一个 pg-boss 仍会送达的付费任务判死 + 退款。
  *
- * 并发假设(#796 的定案):`localConcurrency` 下每个轮询器各取各的活、各跑各的钟,
- * 所以「一个任务的在途时长」还是它自己的时长 —— N 路并发不拉长其中任何一个窗口,
- * 上面四个数字**不需要**因为并发而改动。这个文件把这句话变成断言,而不是留在注释里。
- * (换成 `batchSize: N` + Promise.all 就不成立了:同一批里最慢的那个决定整批的在途时长,
- * 队列过期就得覆盖 max(batch) 而不是 max(job) —— 这是不采用那个形状的第二个理由。)
+ * 视频链(#1435 新增,QUEUE-A6 的核心改写)—— **不再是**上面那条链的一部分:
  *
- * #1386(零排队①,spec creation-engine.md §5 2026-09-12 场⑦,#961 2026-09-12 核证)——
- * 上面四个数字从 15/18/20/25 改到 15/35/40/45。根因:「一个任务的在途时长」这句话本身没错,
- * 但它量的是 `startedAt`(claim 那一刻)到终态,而**付费 POST 真正开始的那一刻**还要先排
- * `providerRequestGate`(@fikirtive/generation 的进程内信号量,gen/refgen/understand 共用)。
- * `WORKER_ROLE=wait` 的并发默认值一旦生效(apps/worker/src/plan.ts WAIT_DEFAULTS),排这道闸
- * 最坏能排到 20 分钟(下面 `worstQueueWaitMs` 的原班推导),而旧的 18m stale 线只留了 8m 余量
- * ——一次**健康**的慢任务(排队 20m + 一轮出图 10m = 30m)会被判「卡死」失败 + 退款,商家没
- * 拿到东西,厂商照样收钱。本票的语义修复:排队等待时间不算「卡死」,只有真正开始执行后的
- * 停滞才算——落地成「整条链留够合法排队的余量,而不是把 claim 之后的排队一律算进卡死」。
- * 35/40/45 由 `worstQueueWaitMs` 现读的最坏配置(WORKER_ROLE=wait、默认闸位 6)倒推,带 5m
- * 安全边际,不是拍脑袋的整数——下面「#1386 修复钉板」两条测试把这句话变成断言。
+ *   一次提交/一次查询状态只占位 ARK_CONTROL_TIMEOUT_MS(60s,量级同图片 POST,还更短);
+ *   查到 succeeded 那一次投递另需下载片子字节(ARK_DOWNLOAD_TIMEOUT_MS,5m,判官初审
+ *   P3-10 —— 与图片链「渲染 POST + 下载」同构地算进去,不给视频那一半漏记这一段),合计
+ *   一次投递最长约 6m
+ *     <  商家可见的等待上限 VIDEO_MERCHANT_WAIT_MS(15m,判官初审 P1-3,锚在提交时刻)
+ *     <  清道夫的消息丢失兜底 VIDEO_SUBMISSION_ABANDON_MS(65m,同样锚在提交时刻)
+ *
+ * 旧语义(#1386 及更早)把视频的「提交 + 原地轮询到终态」当成一次不可分割的付费调用,量出
+ * 「最长 60s + 15m ≈ 16m」,逼着整条图片链的余量为它留够空间——这正是 #1388 判官点名的
+ * 跨队列缺口(见下方两个「#1388」describe block,本次由「已知缺口,未装得下」改判「缺口已
+ * 消除」)。#1435 把提交与每一次轮询拆成互相独立的短命 pg-boss 投递(apps/worker/src/jobs/
+ * gen.ts 的 resume-poll 分支),在飞视频不再持有 gen 施工位,两次投递之间也不再连续占着
+ * providerRequestGate——它的「是否卡死」判定因此换了把尺子,而且是**两把**不同分工的尺子
+ * (判官初审 P1-3 拆开,首版实现误合成了一把):
+ *
+ *   - `VIDEO_MERCHANT_WAIT_MS`(15m)—— resume-poll 主路自己用的商家口径:消息正常按计划
+ *     送达、真的在轮询,只是视频还没渲染完,过了 15m 就诚实判「结果不明,按已计费处理」
+ *     终态退款,绝不让这一单活到引擎自己约 60m 的终止钟去踩一条早就该判官核实过、实际未
+ *     实测的"expired 官方口径 \$0"暗路(那条暗路一旦真被踩到,PLAIN 错误 ⇒ requeue ⇒
+ *     下一次投递读不到标记 ⇒ 当成全新提交重来一次,`GEN_RETRY_LIMIT` 预算内最多能让同一单
+ *     真的重新付费提交 3 次——判官实测)。
+ *   - `VIDEO_SUBMISSION_ABANDON_MS`(65m)—— **只**留给 `isGenRowStale`(清道夫独立扫描)
+ *     当兜底,管的是消息**彻底丢失**(resume-poll 那条主路因此从未有机会运行、判断过 15m)
+ *     那种情形。两把尺子服务完全不同的失效模式,谁都不覆盖谁——完整分工账见
+ *     packages/generation/src/byteplus.ts 里 `VIDEO_MERCHANT_WAIT_MS` 自己的文档注释。
+ *
+ * 一个带在飞任务标记的视频行,在 gen.ts 的 resume-poll 检查点(`videoProviderTask` 短路
+ * 分支)会排在 QUEUED→GENERATING 认领与 GEN_STALE_MS 判定**之前**,所以 GEN_STALE_MS 永远
+ * 不会量到同一次投递。
+ *
+ * 并发假设(#796 的定案)与 #1386 的历史推导(15/18/20/25 → 15/35/40/45)保持不变,#1435
+ * 未动 GEN_STALE_MS / genExpireMs / GEN_REAP_MS / GEN_QUEUED_REAP_MS 这四个数字本身——
+ * 改的是「视频是否受这条链约束」这件事,不是链条的刻度。
  */
 import { describe, it, expect } from "vitest";
 import { GEN_QUEUE_POLICY, REFGEN_QUEUE_POLICY, RESEARCH_QUEUE_POLICY, PUBLISH_QUEUE_POLICY, PUBLISH_EXECUTION_DEADLINE_MS, GEN_QUEUE, REFGEN_QUEUE, UNDERSTAND_QUEUE, MAX_GEN_COUNT, MAX_REFGEN_COUNT } from "@fikirtive/core";
-import { VIDEO_POLL_TIMEOUT_MS, ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS, PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT, PROVIDER_MAX_CONCURRENT_REQUESTS_ENV, providerRequestLimit } from "@fikirtive/generation";
+import { VIDEO_SUBMISSION_ABANDON_MS, VIDEO_MERCHANT_WAIT_MS, ARK_CONTROL_TIMEOUT_MS, ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS, PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT, PROVIDER_MAX_CONCURRENT_REQUESTS_ENV, providerRequestLimit } from "@fikirtive/generation";
 import { workerPlan } from "../plan.js";
 import { GEN_STALE_MS, GEN_REAP_MS, GEN_QUEUED_REAP_MS, GEN_DONE_EMPTY_GRACE_MS } from "./gen.js";
 import { REFGEN_STALE_MS, REFGEN_REAP_MS, REFGEN_QUEUED_REAP_MS } from "./refgen.js";
@@ -44,12 +64,45 @@ const MINUTE = 60_000;
 const genExpireMs = GEN_QUEUE_POLICY.expireInSeconds * 1000;
 const refgenExpireMs = REFGEN_QUEUE_POLICY.expireInSeconds * 1000;
 
-describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () => {
-  it("一次正常的长视频调用不会被 stale 判定误伤", () => {
-    // The provider gives up at 15m. If the stale cutoff sat below that, a duplicate delivery
-    // landing at minute 16 of a perfectly healthy 15-minute video would fail the job closed and
-    // refund a merchant whose clip was still coming.
-    expect(VIDEO_POLL_TIMEOUT_MS).toBeLessThan(GEN_STALE_MS);
+describe("gen 时钟链:图片 POST 超时 < stale < 队列过期 < 清道夫(#1435 后视频不再是这条链的一部分,见下方独立 describe)", () => {
+  it("QUEUE-A6 —— 视频的『提交/轮询』本身只占位 ARK_CONTROL_TIMEOUT_MS,量级同图片 POST 还更短,不会撑爆 stale 判定的余量", () => {
+    // #1435 前:一次视频调用的「占位时长」是旧账的 VIDEO_POLL_TIMEOUT_MS(15m,原地轮询到
+    // 终态),逼近甚至可能撞穿 stale 判定,是 #1388 判官点名的跨队列缺口的根因。#1435 后:
+    // 提交与每一次轮询都是独立的短调用(packages/generation/src/byteplus.ts 的 submitVideo /
+    // pollVideo,各自 gate.run(() => fetch(...)) 一次就返回),各自只占 ARK_CONTROL_TIMEOUT_MS
+    // (60s)——量级不再是图片 POST 的 3 倍,而是比它更短。
+    expect(ARK_CONTROL_TIMEOUT_MS).toBe(60_000);
+    expect(ARK_CONTROL_TIMEOUT_MS).toBeLessThan(ARK_IMAGE_TIMEOUT_MS);
+    expect(ARK_CONTROL_TIMEOUT_MS).toBeLessThan(GEN_STALE_MS);
+
+    // 判官初审 P3-10 —— 上面三条量的只是**状态查询本身**(poll 的那次 GET),不是一次
+    // `pollVideo` 调用真实可能花的全部时间。查到 succeeded 的那一次,`pollVideo` 自己还要
+    // 再下载一次片子字节(`packages/generation/src/byteplus.ts`,与图片下载共用同一把
+    // `ARK_DOWNLOAD_TIMEOUT_MS`),这一步不在闸门里、也不算「查询」,但它是这**一次投递**
+    // 真实占用的总时长的一部分——与图片链「渲染 POST + 下载」两段相加的写法必须同构,不能
+    // 只给视频那一半留个更好看的数字。
+    const VIDEO_SUCCEEDED_DELIVERY_MS = ARK_CONTROL_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS; // ≈ 60s + 5m ≈ 6m
+    expect(VIDEO_SUCCEEDED_DELIVERY_MS).toBe(6 * MINUTE);
+    // 即使把下载这一段也算进去,一次「查到 succeeded」的投递依旧远小于 stale 判定——这条
+    // 视频链从不需要为它单独核算余量的结论没有变,只是现在核算时诚实地把下载算了进去。
+    expect(VIDEO_SUCCEEDED_DELIVERY_MS).toBeLessThan(GEN_STALE_MS);
+  });
+
+  it("QUEUE-A6 —— 在飞视频的『等太久』判定换了锚点(量提交时刻,不是 claim 时刻),而且判官初审 P1-3 把它拆成两把各管各的尺子", () => {
+    // 尺子①(VIDEO_MERCHANT_WAIT_MS,15m)—— resume-poll 主路自己的商家口径,#1435 首版
+    // 实现里被误合成了 65m 那一把,判官初审 P1-3 拆开。它必须严格小于②,理由直接写在两把
+    // 尺子的名字里:必须先于「消息真的丢了才需要清道夫兜底」这件事发生,商家才不会在一条
+    // **仍在正常轮询**的作业上等超过产品口径。
+    expect(VIDEO_MERCHANT_WAIT_MS).toBe(15 * MINUTE);
+    expect(VIDEO_MERCHANT_WAIT_MS).toBeLessThan(VIDEO_SUBMISSION_ABANDON_MS);
+    // 尺子②(VIDEO_SUBMISSION_ABANDON_MS,65m)—— 刻意比 GEN_STALE_MS 宽(65m > 35m):
+    // 它保护的是「健康视频被反复轮询很多轮,只是消息按计划送达」,不是「claim 后多久没
+    // 消息」;`isGenRowStale` 用它当**清道夫独立扫描**的消息丢失兜底,与①服务不同场景,
+    // 两把永不会量到同一次投递,因为 gen.ts 的 resume-poll 检查点(job.videoOptions 里有
+    // 在飞任务标记就短路)排在 QUEUED→GENERATING 认领与 GEN_STALE_MS 判定之前
+    // (apps/worker/src/jobs/gen.ts,`videoProviderTask` 短路分支)。
+    expect(VIDEO_SUBMISSION_ABANDON_MS).toBe(65 * MINUTE);
+    expect(VIDEO_SUBMISSION_ABANDON_MS).toBeGreaterThan(GEN_STALE_MS);
   });
 
   it("stale 判定在队列过期之前 —— 重投时用它才成立", () => {
@@ -61,16 +114,21 @@ describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () 
     expect(GEN_QUEUED_REAP_MS).toBeGreaterThan(genExpireMs);
   });
 
-  it("队列过期本身覆盖得住最慢的一次合法调用", () => {
-    // expire must cover the provider call itself PLUS the download+store tail after it.
-    expect(genExpireMs).toBeGreaterThan(VIDEO_POLL_TIMEOUT_MS);
-    expect(genExpireMs - VIDEO_POLL_TIMEOUT_MS).toBeGreaterThanOrEqual(5 * MINUTE);
+  it("队列过期本身覆盖得住最慢的一次合法投递", () => {
+    // #1435 前这一条量的是视频那次「提交+原地轮询到终态」的单次调用(15m),余量仅 5m 安全
+    // 边际,是最紧的一环。#1435 后最长的单次投递换成了图片路的 POST+下载(下方
+    // IMAGE_ATTEMPT_MS),视频的提交/轮询单次投递反而短得多——下面同时钉两条,证明两条路
+    // 各自都留有远比过去宽裕的安全边际,而不是曾经那种「刚好够,几乎没有余量」的状态。
+    expect(genExpireMs).toBeGreaterThan(ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS);
+    expect(genExpireMs - (ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS)).toBe(30 * MINUTE);
+    expect(genExpireMs).toBeGreaterThan(ARK_CONTROL_TIMEOUT_MS);
+    expect(genExpireMs - ARK_CONTROL_TIMEOUT_MS).toBe(39 * MINUTE);
   });
 
   // ── creation §5 :177 —— 图片那条路也有它自己的第一环,而且此前**没人守** ──────────
   //
-  // 图片是同步渲染:POST 的时长就是出图时长(视频那条是「建任务 60s + 轮询 15m」)。
-  // 这一环同样必须落在 stale 之前,否则一次正常的慢出图会被判成「卡死」并误杀退款。
+  // 图片是同步渲染:POST 的时长就是出图时长。这一环同样必须落在 stale 之前,否则一次正常
+  // 的慢出图会被判成「卡死」并误杀退款。
   //
   // 但「渲染 5m + 下载 5m < 18m(当时的 stale)」**不是全部账**(判官 P2 点名的漏项)。stale
   // 量的起点是 `startedAt` —— QUEUED→GENERATING 那一刻写下的(本目录 `gen.ts` 的 claim),而
@@ -93,12 +151,10 @@ describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () 
   // #1386(零排队①)把 stale 从 18m 改到 35m,余量从 8m 改到 25m —— 下面几条钉的是:默认角色
   // 在单副本闸位(6)下装得下(不变式,一直成立);闸位降到 6 以下(手册允许的 2 副本 = 4 格)
   // 与 `WORKER_ROLE=wait` 这两个 PR #1332 时期的**已知缺口**,现在都装得下了(#1386 修复钉
-  // 板);未覆盖的仍然只有「多个视频任务同时占着闸位」那一档(见下面那条已知缺口测试)。
+  // 板);#1435 之前唯一还没收口的一档是「视频任务连续占住闸位挤占跨队列预算」,见下方两个
+  // 「#1388」describe block —— 现在也收口了。
   const IMAGE_ATTEMPT_MS = ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS;
   const GEN_QUEUE_ALLOWANCE_MS = GEN_STALE_MS - IMAGE_ATTEMPT_MS;
-  /** 修法(PR #1332)前图片 POST 占的那把尺(控制面 60s)。下面「视频占闸」测试仍用它算
-   *  「一个视频任务是否单独就撞穿余量」,与 #1386 无关的历史常量。 */
-  const PRE_FIX_IMAGE_POST_MS = 60_000;
 
   /** 一个 worker 进程最坏能同时推到闸前多少个付费请求 = 槽位 × 每个任务的请求扇出。 */
   function paidRequestDemand(env: NodeJS.ProcessEnv): number {
@@ -167,27 +223,24 @@ describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () 
     expect([3, 4, 5, 6].map(fitsAt)).toEqual([true, true, true, true]); // 手册允许区间起(4 格)全部装得下
   });
 
-  it("#1386 修复钉板:WORKER_ROLE=wait 默认并发、全图片负载下的最坏排队现在留在窗口内(不是「健康慢任务永不误判」的无条件保证——残余缺口见下方注释与 #1388)", () => {
+  it("#1386 修复钉板:WORKER_ROLE=wait 默认并发、全图片负载下的最坏排队现在留在窗口内", () => {
     // PR #1332 时期这一格是「已知缺口」,#961 2026-09-12 核证过它会真的发生:`wait` 角色要人
     // 显式写 `WORKER_ROLE=wait` 才生效(`plan.ts`,判官 r1 P0 定案),默认部署不走它;一旦设
     // 了,闸前需求 30、默认闸位 6 格 ⇒ 最坏要清 4 轮 = 20m 排队,曾经大过旧余量 8m —— 一次
     // **健康**的慢出图(排队 20m + 出图一轮 10m = 30m,正是 #961 说的「排队积压 20–30 分钟」)
     // 会撞穿旧 stale 18m,被判「卡死」失败 + 退款,商家没拿到东西,厂商照样收钱。
     //
-    // 判官 P2-2(PR #1410 合并前)诚实化——这条测试题目曾经写「健康慢任务不被误判失败退款」,
+    // 判官 P2-2(PR #1410 合并前)诚实化过:这条测试题目曾经写「健康慢任务不被误判失败退款」,
     // 读起来像是无条件保证,但下面 `worstQueueWaitMs(waitEnv, ARK_IMAGE_TIMEOUT_MS)` 把「一轮」
-    // 按图片超时 5 分钟算,隐含假设是闸前排的全是图片任务。同一个 `providerRequestGate`(进程内
-    // 唯一,gen/refgen/understand 共用)的格子实际上也会被**整条视频任务**占住(提交 60s + 轮询
-    // 15m ≈ 16m,比图片一轮慢 3 倍多)或被 understand 占住(90s)。残余缺口的量级:若干格恰好
-    // 被视频占满时,一轮的实际时长不是 5m 而是最多 ~16m —— 用同一条 `worstQueueWaitMs` 数学,
-    // `WORKER_ROLE=wait` 默认闸前需求 30、闸位 6 ⇒ 最坏 4 轮,若这几轮里有格子被视频占着,
-    // 4 × 16m = 64m 就可能撞穿本文件钉的 35/40/45 分钟窗口——35 分钟届时仍可能不够,且不能靠
-    // 再加宽数字解决(视频任务本身就要 15m,加宽到覆盖多台视频同时占闸会让图片这条路的数字
-    // 失去意义)。真正的修法是零排队③(issue #1388)「打开等待型并发时按视频侧并发上限重算」
-    // ——在那张票落地前,`WORKER_ROLE=wait` 不会在生产开启(今天生产没有这个角色,#796/plan.ts
-    // 默认 `all`),所以这条残余缺口目前不活;它活起来的前提就是 #1388 要解决的那件事。下面
-    // 「已知缺口钉板」测试钉的是这一档里最小的反例(单个视频任务),不是多视频同时占闸的最坏情况
-    // ——那个最坏情况仍然登记、未证明装得下,见 #1388。
+    // 按图片超时 5 分钟算,当时隐含假设是闸前排的全是图片任务——同一个 `providerRequestGate`
+    // (进程内唯一,gen/refgen/understand 共用)的格子那时也会被**整条视频任务**连续占住
+    // (旧账:提交 60s + 轮询 15m ≈ 16m),让「一轮」实际变成 16m 而不是 5m,是当时留白的
+    // 残余缺口(#1388,见下方两个 describe block)。#1435 把视频拆成互相独立的短调用后,视频
+    // 占住一轮的时长也只是 ARK_CONTROL_TIMEOUT_MS(60s,比图片的 5m 还短)——下面
+    // `worstQueueWaitMs(waitEnv, ARK_IMAGE_TIMEOUT_MS)` 用图片超时当「一轮」的上界,现在对
+    // 任何一轮(不论排的是图片、refgen、understand 还是视频)都成立,不再需要「假设闸前排的
+    // 全是图片任务」这条隐含前提——这份无条件保证下面两个「#1388」describe block 会专门
+    // 证明。
     const waitEnv = { WORKER_ROLE: "wait" };
     const demand = paidRequestDemand(waitEnv);
     expect(demand).toBe(4 * MAX_GEN_COUNT + 2 * MAX_REFGEN_COUNT + 2);
@@ -208,22 +261,28 @@ describe("gen 时钟链:供应商超时 < stale < 队列过期 < 清道夫", () 
     expect(GEN_STALE_MS).toBeGreaterThan(18 * MINUTE);
   });
 
-  it("已知缺口钉板:一个视频任务的闸位就吃光图片那条路的排队余量(先于 #1386 存在,#1386 的加宽顺带盖住了单个视频任务这一档)", () => {
-    // 视频任务占的是**整条任务**的位(提交 + 轮询,`byteplus.ts` 的 `generateVideo` 在最外层
-    // acquire),最长 60s + 15m。旧余量 8m 时,一个视频任务单独就大过它,是先于 #1386 存在的
-    // 缺口(PR #1332 登记「未做」)。#1386 把余量从 8m 改到 25m 之后,单个视频任务(15m)现在
-    // 装得下——但这条测试只钉「一个视频任务」这个最小反例,**没有**证明多个视频任务同时占
-    // 着闸位、图片任务排在它们后面的最坏情况也装得下(那需要按视频侧自己的并发上限重算,
-    // 属于零排队②③打开等待型并发时才会实际发生的配置,不在本票范围)——那一档仍然登记
-    // 排队,S5 或②③施工时再补。
-    expect(VIDEO_POLL_TIMEOUT_MS).toBeLessThan(GEN_QUEUE_ALLOWANCE_MS);
-    expect(VIDEO_POLL_TIMEOUT_MS).toBeLessThan(
-      GEN_STALE_MS - (PRE_FIX_IMAGE_POST_MS + ARK_DOWNLOAD_TIMEOUT_MS),
-    );
+  it("QUEUE-A6 —— 缺口已消除:视频任务不再整段占着闸位,单次提交/轮询占位量级同图片 POST 而非旧账的 16m", () => {
+    // #1435 前:一个视频任务的闸位时长是「提交 60s + 轮询到终态最长 15m」≈ 16m,整段不释放,
+    // 是这条已知缺口的根因(先于 #1386 存在,PR #1332 登记「未做」;#1386 的加宽只顺带盖住
+    // 了「单个视频任务」这一最小反例,没有解决它连续占位的根本问题)。#1435 后:submitVideo /
+    // pollVideo(packages/generation/src/byteplus.ts)各自只在自己那次 fetch 期间持有
+    // providerRequestGate(packages/generation/src/provider-concurrency.ts),提交与每一次
+    // 轮询之间完全放手(两次调用之间相隔 GEN_VIDEO_POLL_DELAY_SECONDS=10s 的重排延迟,
+    // apps/worker/src/jobs/gen.ts)——这段间隔里视频任务对闸位和 gen 施工位的占用都是零,
+    // 由 packages/generation/src/provider-concurrency.test.ts 的「两次调用之间完全不占位」
+    // 一组测试直接证明。
+    expect(ARK_CONTROL_TIMEOUT_MS).toBeLessThanOrEqual(ARK_IMAGE_TIMEOUT_MS);
+    expect(ARK_CONTROL_TIMEOUT_MS).toBeLessThan(GEN_QUEUE_ALLOWANCE_MS);
+    // 用 worstQueueWaitMs 同一条数学验证:哪怕闸前排的整整齐齐全是视频请求(纯视频负载,一轮
+    // 按 ARK_CONTROL_TIMEOUT_MS 算而不是 ARK_IMAGE_TIMEOUT_MS),默认角色 11 个请求、闸位 6
+    // 的最坏排队反而比全图片负载更短,同样装得进 25m 余量。
+    const worstVideoRoundWait = worstQueueWaitMs({}, ARK_CONTROL_TIMEOUT_MS);
+    expect(worstVideoRoundWait).toBe(ARK_CONTROL_TIMEOUT_MS);
+    expect(worstVideoRoundWait).toBeLessThan(GEN_QUEUE_ALLOWANCE_MS);
   });
 
   it("五个数字就是现行值(改任何一个都必须回到这里重新论证)", () => {
-    expect(VIDEO_POLL_TIMEOUT_MS).toBe(15 * MINUTE);
+    expect(VIDEO_SUBMISSION_ABANDON_MS).toBe(65 * MINUTE);
     expect(GEN_STALE_MS).toBe(35 * MINUTE);
     expect(genExpireMs).toBe(40 * MINUTE);
     expect(GEN_REAP_MS).toBe(45 * MINUTE);
@@ -255,16 +314,15 @@ describe("refgen 时钟链跟 gen 同构(两条队列打同一个供应商)", ()
   });
 });
 
-describe("零排队(spec creation-engine.md §5 2026-09-12 场⑦)——②③仍不在本票范围,④已交付", () => {
+describe("零排队(spec creation-engine.md §5 2026-09-12 场⑦)——②③仍不在本票范围,①④⑤已交付", () => {
   // 登记行完整验收句(逐字):「商家 A 连发 4 条长视频后，商家 B 的短任务立即开跑不等队」。
-  // #1388(本票)交付的是④(每商家最多 N-1 槽,降级为撞厂商限速时的兜底规则)——见
-  // apps/worker/src/jobs/gen.ts 的 `shouldDeferGenClaimForFairness` 与真库集成测试
-  // gen-fairness-claim-db.test.ts(验收句逐字进测试名)。②开第二台 worker 与③等待型并发
-  // 开高仍不在本票范围:下面两组测试是判官 BLOCK 定向①要求的「按视频侧并发上限重算」——
-  // 结论是③在 gate=6 不变时无法安全推进(下面第一组钉死原因),而且④本身修不了第二组钉出
-  // 的跨队列缺口。这两组连同「进第三轮走查」一起,是留给 Founder 的范围决定,不是本票能替
-  // 他拍板的实现细节。
-  it.todo("商家 A 连发 4 条长视频后，商家 B 的短任务立即开跑不等队（②③落地 + 第三轮走查，非本票范围）");
+  // #1435(QUEUE-A1,docs/specs/zero-queue.md)交付的正是这句验收句本身——见
+  // apps/worker/src/jobs/gen-fairness-claim-db.test.ts / gen-video-*-db.test.ts 的真库集成
+  // 测试(验收句逐字进测试名)。①(#1386,本文件的图片链数字)与④(#1430 的
+  // `shouldDeferGenClaimForFairness` 每商家最多 N-1 槽兜底)先前已交付。②开第二台 worker 与
+  // ③等待型并发开高仍不在本票范围:下面两组测试证明③在 gate=6 不变时无法安全推进——它们
+  // 与「进第三轮走查」一起,是留给 Founder 的范围决定,不是本票能替他拍板的实现细节。
+  it.todo("商家 A 连发 4 条长视频后，商家 B 的短任务立即开跑不等队（②③落地 + 第三轮走查，非本票范围——QUEUE-A1 本身已在真库集成测试兑现）");
 });
 
 describe("#1388 判官 BLOCK 安全定向① —— ③等待型并发开高的算术:gate=6 不变时,N 无法超过今天的 4", () => {
@@ -276,9 +334,10 @@ describe("#1388 判官 BLOCK 安全定向① —— ③等待型并发开高的�
   // 判官复核回炉 P3-d —— 下面「N≤4」这条结论只是**全图片最坏扇出**下的上限,不要读成不分
   // 负载构成的绝对天花板:公式按 `N × MAX_GEN_COUNT` 展开,是因为图片任务一个 GenJob 会在
   // 短时间里连续发起多次请求(MAX_GEN_COUNT 张一组),每张都要单独抢一次闸;纯视频负载不是
-  // 这样——一个视频 GenJob 全程只占 1 个闸位(时长更长,但只抢一次)。若 gen 的 N 个槽全是
-  // 纯视频,闸前需求按「1 请求/槽」算是 `demand = N + 2×MAX_REFGEN_COUNT + 2`:N=5 时
-  // demand=19,`rounds = ceil(19/6)-1 = 3`,`wait = 3×5m = 15m`,`total = 15m+10m = 25m < 35m`
+  // 这样——一个视频 GenJob 全程只发起 1 个瞬时请求(#1435 后:提交或某一次轮询,各自只占
+  // ARK_CONTROL_TIMEOUT_MS 就放手,不是整段占位)。若 gen 的 N 个槽全是纯视频,闸前需求按
+  // 「1 请求/槽」算是 `demand = N + 2×MAX_REFGEN_COUNT + 2`:N=5 时 demand=19,
+  // `rounds = ceil(19/6)-1 = 3`,`wait = 3×5m = 15m`,`total = 15m+10m = 25m < 35m`
   // ——N=5 在纯视频负载下反而装得下。「N≤4」是这一组测试专门校验的全图片上界,不是不论
   // 负载构成都成立的结论;换算清楚见上面 §5 的登记与 PR 描述。
   const genExpireMsHere = GEN_QUEUE_POLICY.expireInSeconds * 1000;
@@ -325,35 +384,53 @@ describe("#1388 判官 BLOCK 安全定向① —— ③等待型并发开高的�
   });
 });
 
-describe("#1388 判官 BLOCK 安全定向①(第二问)—— 已知缺口钉板:今天的 N=4 不抬也有跨队列缺口", () => {
-  // 上面那组只查了「gen 全是图片」的最坏情况(demand 按 MAX_GEN_COUNT 扇出算)。真正的
-  // 「按视频侧并发上限重算」要查另一个方向:gen 的槽位如果被**视频**占住(每个视频任务只发
-  // 1 个请求,但占住闸位的时长是 60s 提交 + 15m 轮询 ≈ 16m,不是 5m 一轮),留给 refgen /
-  // understand 的闸位就变少了——它们要排的队因此变长,而这与是否抬高 N 无关,**今天的
-  // WAIT_DEFAULTS[GEN_QUEUE]=4 就已经能触发**:只要商家像本票验收句那样连发 4 条长视频,
-  // 4 个 gen 槽位全被占住,gate=6 就只剩 2 格留给 refgen(demand 12)+ understand(demand 2)。
-  it("gen 的 4 个槽位全被视频占住时,refgen/understand 挤在剩下 2 个闸位后面,健康排队能压到 40 分钟——超过 GEN_STALE_MS(35m),与队列过期(40m)打平", () => {
-    const K = 4; // 今天 WAIT_DEFAULTS[GEN_QUEUE]=4,最坏 4 个槽位全是视频
+describe("QUEUE-A6 —— #1388 判官 BLOCK 安全定向①(第二问)之缺口现已消除:视频不再连续占住闸位", () => {
+  // 上面那组只查了「gen 全是图片」的最坏情况(demand 按 MAX_GEN_COUNT 扇出算)。#1388 判官
+  // 点名的第二问是另一个方向:gen 的槽位如果被**视频**占住,留给 refgen/understand 的闸位
+  // 会不会变少、排更久?#1435 前这道缺口是真的——一个视频任务占住闸位的时长是「提交 60s +
+  // 轮询 15m ≈ 16m」,不是 5m 一轮,4 个 gen 槽位全被视频占住时,gate=6 只剩 2 格留给
+  // refgen(demand 12)+ understand(demand 2),算出的健康排队能压到 40 分钟,撞穿 GEN_STALE_MS
+  // (35m)、与队列过期(40m)打平——这正是本票验收句(商家 A 连发 4 条长视频)会真的触发的
+  // 场景,今天的 WAIT_DEFAULTS[GEN_QUEUE]=4 不用抬就能撞上。
+  //
+  // #1435 把视频拆成互相独立的短调用(提交/每次轮询各自只占 ARK_CONTROL_TIMEOUT_MS≈60s,
+  // 两次调用之间完全放手,见 packages/generation/src/provider-concurrency.test.ts 的「两次
+  // 调用之间完全不占位」测试),这道缺口的前提(视频连续占住 K 个闸位达 16m)不再成立——下面
+  // 用同一条历史公式重算,证明商家真连发 4 条长视频时,refgen/understand 面对的『被视频占用
+  // 的一轮』只是 60s 级,不是 16m 级,GEN_STALE_MS 的余量绰绰有余。
+  it("QUEUE-A6 —— 4 个 gen 槽位全跑视频时,refgen/understand 不再被『永久扣掉 K 格』,最坏排队从旧账 40m 收窄到 20m,舒舒服服装在 GEN_STALE_MS 内", () => {
+    const K = 4; // WAIT_DEFAULTS[GEN_QUEUE]=4,最坏 4 个槽位全是视频(验收句原话:商家 A 连发 4 条长视频)
     const gate = PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT; // 6,单副本默认
     const otherDemand = (4 - K) * MAX_GEN_COUNT + 2 * MAX_REFGEN_COUNT + 2; // gen 的图片份额归零,只剩 refgen+understand
-    const remainingGate = gate - K;
+    expect(otherDemand).toBe(14);
+
+    // #1435 前的旧账:视频任务提交后不释放闸位,整个占位期都要从 gate 里永久减去
+    // (remainingGate = gate - K)——历史存档,证明这道缺口过去确实存在,不是编出来的。
+    const oldRemainingGate = gate - K;
+    const oldRounds = Math.ceil(otherDemand / oldRemainingGate) - 1;
+    const oldWorstTotal = oldRounds * ARK_IMAGE_TIMEOUT_MS + ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS;
+    expect(oldRemainingGate).toBe(2);
+    expect(oldWorstTotal).toBe(40 * MINUTE);
+    expect(oldWorstTotal).not.toBeLessThan(GEN_STALE_MS); // 旧账确实撞穿 —— 缺口是真的
+
+    // #1435 后:视频只在真正发起那次 fetch 期间占位,两次轮询之间(GEN_VIDEO_POLL_DELAY_SECONDS
+    // =10s 的重排间隔)彻底放手——refgen/understand 面对的是满员的 6 格闸位,不再有「被视频
+    // 永久占住 K 格」这件事。一轮的时长上界仍按图片 POST 算(refgen/understand 自己的请求
+    // 本来就是图片量级);哪怕恰好轮到视频的那次短暂占位,ARK_CONTROL_TIMEOUT_MS <
+    // ARK_IMAGE_TIMEOUT_MS,用图片的 5m 当上界依旧安全,不需要为视频单独放宽这条尺子。
+    const remainingGate = gate;
     const rounds = Math.ceil(otherDemand / remainingGate) - 1;
     const worstWait = rounds * ARK_IMAGE_TIMEOUT_MS;
     const worstTotal = worstWait + ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS;
+    expect(remainingGate).toBe(6);
+    expect(rounds).toBe(2);
+    expect(worstWait).toBe(10 * MINUTE);
+    expect(worstTotal).toBe(20 * MINUTE);
 
-    expect(otherDemand).toBe(14);
-    expect(remainingGate).toBe(2);
-    expect(worstWait).toBe(30 * MINUTE);
-    expect(worstTotal).toBe(40 * MINUTE);
-
-    // 钉的是「未装得下」——缺口真实存在,不是「装得下」的钉板。
-    expect(worstTotal).toBeGreaterThan(GEN_STALE_MS); // 40m > 35m,撞穿 stale
-    expect(worstTotal).toBeGreaterThanOrEqual(GEN_QUEUE_POLICY.expireInSeconds * 1000); // 与队列过期打平
-
-    // 这道缺口不由本票的公平闸(shouldDeferGenClaimForFairness)修:它管「同一条队列里这次该
-    // 认领谁」,不管「gen 的视频任务挤占跨队列共享的 providerRequestGate,让 refgen/understand
-    // 排更久」。真正的修法要给视频任务与图片/refgen/understand 分开预算(独立的闸,或视频
-    // 任务自己的并发上限)——结构性改动,同样是范围题,留给 Founder。
+    // 缺口已消除:旧账 40m 打平队列过期,新账 20m 舒舒服服装在 stale 判定(35m)与队列过期
+    // (40m)之内——不再需要判官登记的「未装得下」。
+    expect(worstTotal).toBeLessThan(GEN_STALE_MS);
+    expect(worstTotal).toBeLessThan(genExpireMs);
   });
 });
 

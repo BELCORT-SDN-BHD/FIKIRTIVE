@@ -25,6 +25,7 @@ import {
   referenceUnavailableMessage,
   referenceUnavailableSentence,
   tooSmallReferenceSentence,
+  classifyProviderQuotaExceeded,
 } from "./gen-failure.js";
 import { MIN_REFERENCE_IMAGE_SIDE, minimumUsableReferenceSide } from "./generation-reference.js";
 import { redactProviderNames } from "./provider-secrecy.js";
@@ -112,6 +113,67 @@ describe("referenceImagePersonRejected — only what the engine really said", ()
   it("treats a missing body as unrecognised, not as a match", () => {
     expect(referenceImagePersonRejected(null)).toBe(false);
     expect(referenceImagePersonRejected(undefined)).toBe(false);
+  });
+});
+
+describe("QUEUE-A5 — classifyProviderQuotaExceeded: message, not code, decides which of the three it is", () => {
+  // Every body below is FABRICATED (no real observation exists — the probe explicitly logged
+  // this point as untested: docs/audits/zero-queue-probe-2026-09-13/README.md §1 row ④), so
+  // these pin the CLASSIFIER's own contract, not a measured engine reply. Anything that reads
+  // as a plausible real shape is a guess by construction — see the function's own doc comment
+  // for why the default is "unknown", not a guess in either direction.
+
+  it("QUEUE-A5: an unambiguous account-exhausted body classifies as quota-exhausted", () => {
+    const body = JSON.stringify({ error: { code: "QuotaExceeded.Balance", message: "insufficient balance, please recharge your account", type: "TooManyRequests" } });
+    expect(classifyProviderQuotaExceeded(body)).toBe("quota-exhausted");
+  });
+
+  it("QUEUE-A5: a Chinese-language account-exhausted body classifies the same way", () => {
+    const body = JSON.stringify({ error: { code: "QuotaExceeded.Balance", message: "账户余额不足，请充值", type: "TooManyRequests" } });
+    expect(classifyProviderQuotaExceeded(body)).toBe("quota-exhausted");
+  });
+
+  it("QUEUE-A5: an ordinary rate-limit / queue-depth body classifies as queue-full, NOT quota-exhausted", () => {
+    const body = JSON.stringify({ error: { code: "QuotaExceeded.RPM", message: "Too many requests, please retry later", type: "TooManyRequests" } });
+    expect(classifyProviderQuotaExceeded(body)).toBe("queue-full");
+  });
+
+  it("QUEUE-A5: a concurrency-ceiling body also classifies as queue-full", () => {
+    const body = JSON.stringify({ error: { code: "QuotaExceeded.Concurrency", message: "too many concurrent requests", type: "TooManyRequests" } });
+    expect(classifyProviderQuotaExceeded(body)).toBe("queue-full");
+  });
+
+  it("QUEUE-A5: fail closed toward 'unknown' — a QuotaExceeded code with a message that matches neither marker never becomes a guess", () => {
+    const body = JSON.stringify({ error: { code: "QuotaExceeded.Other", message: "request rejected", type: "TooManyRequests" } });
+    expect(classifyProviderQuotaExceeded(body)).toBe("unknown");
+  });
+
+  it("QUEUE-A5: a DIFFERENT error code entirely is never classified, even if its message happens to say 'quota'", () => {
+    // The gate lives in the caller (byteplus.ts only calls this for an actual HTTP 429), but the
+    // function itself must not let an unrelated code borrow this classification either.
+    const body = JSON.stringify({ error: { code: "InvalidParameter", message: "quota field is missing", type: "BadRequest" } });
+    expect(classifyProviderQuotaExceeded(body)).toBe("unknown");
+  });
+
+  it("QUEUE-A5: a gateway HTML page carries no JSON code but still classifies by its own words", () => {
+    // Not every 429 comes from the JSON API layer — a WAF/gateway 429 page is a real shape, and
+    // this one still says "too many requests" in plain text. Message-based classification must
+    // work even when there is no `error.code` to read at all.
+    expect(classifyProviderQuotaExceeded("<html><body>429 Too Many Requests</body></html>")).toBe("queue-full");
+  });
+
+  it("QUEUE-A5: bodies with no readable signal at all (empty, missing, or genuinely blank) are 'unknown', never a guess", () => {
+    expect(classifyProviderQuotaExceeded("<html><body>502 Bad Gateway</body></html>")).toBe("unknown");
+    expect(classifyProviderQuotaExceeded("")).toBe("unknown");
+    expect(classifyProviderQuotaExceeded(null)).toBe("unknown");
+    expect(classifyProviderQuotaExceeded(undefined)).toBe("unknown");
+  });
+
+  it("QUEUE-A5: a body that reads as BOTH markers resolves to the expensive-to-get-wrong bucket first (quota-exhausted checked before queue-full)", () => {
+    // Fabricated worst case: a message mentioning both "rate limit" and "insufficient balance"
+    // in the same sentence. The classifier must not let the cheaper-to-misclassify marker win.
+    const body = JSON.stringify({ error: { code: "QuotaExceeded.Balance", message: "rate limit exceeded due to insufficient balance", type: "TooManyRequests" } });
+    expect(classifyProviderQuotaExceeded(body)).toBe("quota-exhausted");
   });
 });
 
