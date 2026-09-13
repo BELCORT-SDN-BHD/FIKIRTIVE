@@ -381,6 +381,9 @@ expected_jobs=(
   "build|needs.scope.outputs.code != 'false'"
   "lint|needs.scope.outputs.code != 'false'"
   "checks|needs.scope.outputs.code != 'false'"
+  # #1356: the docs-only complement of the five above — same premise (scope), the
+  # exact opposite condition, so it and they are never both skipped and never both run.
+  "docsscan|needs.scope.outputs.code == 'false'"
   "quality|always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)"
 )
 
@@ -456,6 +459,9 @@ expected_step_env=(
   'quality|4|LEG_RESULT_BUILD=${{ needs.build.result }}'
   'quality|4|LEG_RESULT_LINT=${{ needs.lint.result }}'
   'quality|4|LEG_RESULT_CHECKS=${{ needs.checks.result }}'
+  # #1356: docsscan's result, fed the same way — but not named LEG_RESULT_*, because
+  # it is not one of the five declared legs (see the comment on this line in ci.yml).
+  'quality|4|DOCS_SCAN_RESULT=${{ needs.docsscan.result }}'
 )
 
 # ── the repository scripts ci.yml NAMES (see 3h) ─────────────────────────────
@@ -1527,9 +1533,16 @@ fan_in_exit() {
   local scope_result="$1" scope_code="$2" recheck_code="$3"
   shift 3
   local scope_reason=outside-docs scope_legs=all recheck_reason=outside-docs
+  # docsscan (#1356) is the mirror of the five legs: it runs exactly when they do
+  # not, so its default result is derived from scope_code the same automatic way
+  # scope_reason/scope_legs are — every call site below that does not care about
+  # docsscan specifically gets the right value for free, the same way it already
+  # does for the scope job's own outputs.
+  local docsscan_result=skipped
   if [[ "$scope_code" == "false" ]]; then
     scope_reason=docs-only
     scope_legs=none
+    docsscan_result=success
   fi
   if [[ "$recheck_code" == "false" ]]; then recheck_reason=docs-only; fi
   local env_args=(
@@ -1539,11 +1552,12 @@ fan_in_exit() {
     SCOPE_LEGS="$scope_legs"
     RECHECK_CODE="$recheck_code"
     RECHECK_REASON="$recheck_reason"
+    DOCS_SCAN_RESULT="$docsscan_result"
   )
   local pair
   for pair in "$@"; do
     case "$pair" in
-      LEG_RESULT_*|SCOPE_*|RECHECK_*) env_args+=("$pair") ;;
+      LEG_RESULT_*|SCOPE_*|RECHECK_*|DOCS_SCAN_*) env_args+=("$pair") ;;
       *) env_args+=("$(leg_result_var_for "${pair%%=*}")=${pair#*=}") ;;
     esac
   done
@@ -1645,6 +1659,26 @@ done
 # comparisons, would be a gate whose outcome this step silently discards.
 [[ "$(fan_in_exit success true true "${every_leg_success[@]}" LEG_RESULT_ROGUE=success)" != "0" ]] \
   || fail "ci.yml's fan-in PASSES a run carrying a LEG_RESULT_* variable it does not judge — a leg wired in but never compared is a gate nobody reads"
+
+# ── docsscan (#1356) — the mirror job, RUN the same way ───────────────────────
+# fan_in_exit already derives the passing value for docsscan automatically (from
+# scope_code, the same way it derives scope_reason/scope_legs), so every call above
+# already exercised the two shapes that must pass with docsscan honest. What is
+# checked here is docsscan LYING about which of those two shapes it is in — the same
+# per-job drill the five legs get above, once each way, via an explicit override.
+[[ "$(fan_in_exit success true true "${every_leg_success[@]}")" == "0" ]] \
+  || fail "ci.yml's fan-in FAILS a code-touching run where docsscan was correctly skipped — sanity check on the derivation this section relies on"
+[[ "$(fan_in_exit success false false "${every_leg_skipped[@]}")" == "0" ]] \
+  || fail "ci.yml's fan-in FAILS a docs-only run where docsscan correctly ran and succeeded — sanity check on the derivation this section relies on"
+for bad_result in failure cancelled skipped ''; do
+  [[ "$(fan_in_exit success false false "${every_leg_skipped[@]}" DOCS_SCAN_RESULT="$bad_result")" != "0" ]] \
+    || fail "ci.yml's fan-in PASSES a docs-only run where docsscan reported '${bad_result:-<no result>}' instead of success — that gate did not pass, and 'quality' is the check that says it did"
+done
+# The mirror image: on a code-touching run, docsscan running anyway means the scope
+# answer the legs read and the one docsscan read disagree — the same shape the
+# per-leg "ran anyway" check above catches for the five legs.
+[[ "$(fan_in_exit success true true "${every_leg_success[@]}" DOCS_SCAN_RESULT=success)" != "0" ]] \
+  || fail "ci.yml's fan-in PASSES a code-touching run where docsscan ran anyway — it and the five legs disagree about what this run was"
 
 # ── 3e. THE VERDICT — the whole of ci.yml, byte for byte ─────────────────────
 # Everything above this line asks ci.yml a list of questions. This asks it none: the
@@ -1806,6 +1840,47 @@ expected_jobs_canonical="$(
     ],
     "timeout-minutes": 30
   },
+  "docsscan": {
+    "if": "needs.scope.outputs.code == 'false'",
+    "name": "docsscan",
+    "needs": "scope",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+      {
+        "uses": "actions/checkout@v4"
+      },
+      {
+        "name": "ci.yml is the reviewed one",
+        "run": "set -eu\nwant=\"$(cut -d' ' -f1 .github/ci-workflow.lock)\"\ngot=\"$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)\"\n[ ${#want} -eq 64 ] || { echo \"ci-guard: .github/ci-workflow.lock does not hold one sha256 digest\"; exit 1; }\n[ \"$want\" = \"$got\" ] || { echo \"ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh\"; exit 1; }\nfor f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do\n  [ ! -e \"$f\" ] || { echo \"ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit.\"; exit 1; }\ndone\necho \"ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout\"\n",
+        "shell": "sh"
+      },
+      {
+        "uses": "pnpm/action-setup@v4"
+      },
+      {
+        "uses": "actions/setup-node@v4",
+        "with": {
+          "cache": "pnpm",
+          "node-version": 22
+        }
+      },
+      {
+        "run": "pnpm install --frozen-lockfile"
+      },
+      {
+        "run": "pnpm --filter \"./packages/*\" build"
+      },
+      {
+        "name": "docs-content gates — apps/web",
+        "run": "pnpm --filter @fikirtive/web exec vitest run lib/__tests__/northstar-shell-purge.test.ts lib/__tests__/signin-acceptance-map.test.ts lib/__tests__/design-system-data-patterns.test.ts lib/__tests__/dashboards-runbook.test.ts"
+      },
+      {
+        "name": "docs-content gates — packages/otto",
+        "run": "pnpm --filter @fikirtive/otto exec vitest run evals/acceptance-map.test.ts"
+      }
+    ],
+    "timeout-minutes": 15
+  },
   "lint": {
     "if": "needs.scope.outputs.code != 'false'",
     "name": "lint",
@@ -1862,7 +1937,8 @@ expected_jobs_canonical="$(
       "tests",
       "build",
       "lint",
-      "checks"
+      "checks",
+      "docsscan"
     ],
     "runs-on": "ubuntu-latest",
     "steps": [
@@ -1887,6 +1963,7 @@ expected_jobs_canonical="$(
       },
       {
         "env": {
+          "DOCS_SCAN_RESULT": "${{ needs.docsscan.result }}",
           "LEG_RESULT_BUILD": "${{ needs.build.result }}",
           "LEG_RESULT_CHECKS": "${{ needs.checks.result }}",
           "LEG_RESULT_LINT": "${{ needs.lint.result }}",
@@ -1900,7 +1977,7 @@ expected_jobs_canonical="$(
           "SCOPE_RESULT": "${{ needs.scope.result }}"
         },
         "name": "Every leg must have passed — or been skipped for a PR this job proved docs-only",
-        "run": "set -euo pipefail\n\nif [ \"$SCOPE_RESULT\" != \"success\" ]; then\n  echo \"scope: $SCOPE_RESULT (expected success)\"\n  echo \"\"\n  echo \"quality: the scope job did not succeed, so nothing below can be trusted — failing closed.\"\n  exit 1\nfi\n\n# The scope job describes itself in three outputs written by one function, so\n# only five triples can come out of it. Anything else means the run was not\n# produced by the scope job in this file, and there is nothing here that could\n# honestly interpret it.\ncase \"${SCOPE_CODE:-}|${SCOPE_REASON:-}|${SCOPE_LEGS:-}\" in\n  'false|docs-only|none') ;;\n  'true|outside-docs|all') ;;\n  'true|no-pr-context|all') ;;\n  'true|api-unreadable|all') ;;\n  'true|scope-script-failed|all') ;;\n  *)\n    echo \"scope published code=${SCOPE_CODE:-<empty>}, reason=${SCOPE_REASON:-<empty>}, legs=${SCOPE_LEGS:-<empty>}\"\n    echo \"\"\n    echo \"quality: that is not a combination the scope job in this workflow can publish — failing closed.\"\n    exit 1\n    ;;\nesac\n\n# And the second opinion has to BE one. A missing answer here is the step\n# above deleted, skipped or broken — never a licence to fall back on the\n# scope job's word, which is exactly what r10 exploited.\ncase \"${RECHECK_CODE:-}\" in\n  true|false) ;;\n  *)\n    echo \"this job's own scope decision came back as '${RECHECK_CODE:-<empty>}'\"\n    echo \"\"\n    echo \"quality: the step that re-derives this PR's scope did not answer — failing closed.\"\n    exit 1\n    ;;\nesac\n\nif [ \"$SCOPE_CODE\" = \"false\" ]; then\n  # THE r10 GATE. The legs are already skipped by the time this runs; the only\n  # question left is whether anything other than a repository script says they\n  # should have been.\n  if [ \"$RECHECK_CODE\" != \"false\" ]; then\n    echo \"scope: docs/** only (reason: $SCOPE_REASON) — the five legs were skipped on that answer\"\n    echo \"this job asked GitHub the same question and got: $RECHECK_CODE (reason: ${RECHECK_REASON:-<empty>})\"\n    echo \"\"\n    echo \"quality: the legs were skipped on a docs-only answer this job cannot reproduce.\"\n    echo \"  The scope job reaches that answer through scripts/ci/pr-scope.sh and\"\n    echo \"  scripts/ci/pr-scope.jq; this job does not use either. Check what those two\"\n    echo \"  files say in this PR's diff — failing closed.\"\n    exit 1\n  fi\n  expected=skipped\n  echo \"scope: docs/** only, and this job re-derived that answer for itself — every leg must have been skipped\"\nelse\n  expected=success\n  echo \"scope: code=$SCOPE_CODE (reason: $SCOPE_REASON) — every leg must have passed\"\n  if [ \"$RECHECK_CODE\" = \"false\" ]; then\n    # The safe direction, and it is reported rather than punished: the legs\n    # RAN. Making this red would only break the scope job's fail-closed paths,\n    # where answering \"run every gate\" is the correct behaviour.\n    echo \"  (this job's own answer was docs-only; the gates ran anyway, which is the safe direction)\"\n  fi\nfi\n\nverdict=0\n\n# One named leg, one named variable, one comparison. `${VAR:-}` and never\n# `$VAR`: a leg cut out of the `needs` list above expands to nothing, and\n# \"nothing\" must read as a missing result and fail — not abort the shell\n# before the other four have been reported.\nleg_is() {\n  if [ \"$2\" = \"$expected\" ]; then\n    echo \"  $1: $2\"\n  else\n    echo \"  $1: ${2:-<no result>} (expected $expected)\"\n    verdict=1\n  fi\n}\n\nleg_is typecheck \"${LEG_RESULT_TYPECHECK:-}\"\nleg_is tests     \"${LEG_RESULT_TESTS:-}\"\nleg_is build     \"${LEG_RESULT_BUILD:-}\"\nleg_is lint      \"${LEG_RESULT_LINT:-}\"\nleg_is checks    \"${LEG_RESULT_CHECKS:-}\"\n\n# The other direction, and the reason the five comparisons above are not\n# the whole story: they prove every declared leg was judged, not that\n# nothing ELSE was wired in. A sixth job added to `needs` and to the\n# variables above — but not to the comparisons — would be a gate whose\n# result this step silently discards. Bash enumerates the variables by\n# prefix, so nothing here has to know what the environment holds; the\n# case arm is the same five identities once more, and mis-stating it\n# fails closed — a leg left out of it flags that leg's own variable.\nfor leg_result_var in ${!LEG_RESULT_@}; do\n  case \"$leg_result_var\" in\n    LEG_RESULT_TYPECHECK|LEG_RESULT_TESTS|LEG_RESULT_BUILD|LEG_RESULT_LINT|LEG_RESULT_CHECKS) ;;\n    *)\n      echo \"  $leg_result_var: answers for no leg this step judges\"\n      verdict=1\n      ;;\n  esac\ndone\n\nif [ \"$verdict\" != \"0\" ]; then\n  echo \"\"\n  echo \"quality: at least one leg is not $expected — failing closed.\"\n  exit 1\nfi\necho \"\"\necho \"quality: typecheck, tests, build, lint and checks are all $expected.\"\n"
+        "run": "set -euo pipefail\n\nif [ \"$SCOPE_RESULT\" != \"success\" ]; then\n  echo \"scope: $SCOPE_RESULT (expected success)\"\n  echo \"\"\n  echo \"quality: the scope job did not succeed, so nothing below can be trusted — failing closed.\"\n  exit 1\nfi\n\n# The scope job describes itself in three outputs written by one function, so\n# only five triples can come out of it. Anything else means the run was not\n# produced by the scope job in this file, and there is nothing here that could\n# honestly interpret it.\ncase \"${SCOPE_CODE:-}|${SCOPE_REASON:-}|${SCOPE_LEGS:-}\" in\n  'false|docs-only|none') ;;\n  'true|outside-docs|all') ;;\n  'true|no-pr-context|all') ;;\n  'true|api-unreadable|all') ;;\n  'true|scope-script-failed|all') ;;\n  *)\n    echo \"scope published code=${SCOPE_CODE:-<empty>}, reason=${SCOPE_REASON:-<empty>}, legs=${SCOPE_LEGS:-<empty>}\"\n    echo \"\"\n    echo \"quality: that is not a combination the scope job in this workflow can publish — failing closed.\"\n    exit 1\n    ;;\nesac\n\n# And the second opinion has to BE one. A missing answer here is the step\n# above deleted, skipped or broken — never a licence to fall back on the\n# scope job's word, which is exactly what r10 exploited.\ncase \"${RECHECK_CODE:-}\" in\n  true|false) ;;\n  *)\n    echo \"this job's own scope decision came back as '${RECHECK_CODE:-<empty>}'\"\n    echo \"\"\n    echo \"quality: the step that re-derives this PR's scope did not answer — failing closed.\"\n    exit 1\n    ;;\nesac\n\nif [ \"$SCOPE_CODE\" = \"false\" ]; then\n  # THE r10 GATE. The legs are already skipped by the time this runs; the only\n  # question left is whether anything other than a repository script says they\n  # should have been.\n  if [ \"$RECHECK_CODE\" != \"false\" ]; then\n    echo \"scope: docs/** only (reason: $SCOPE_REASON) — the five legs were skipped on that answer\"\n    echo \"this job asked GitHub the same question and got: $RECHECK_CODE (reason: ${RECHECK_REASON:-<empty>})\"\n    echo \"\"\n    echo \"quality: the legs were skipped on a docs-only answer this job cannot reproduce.\"\n    echo \"  The scope job reaches that answer through scripts/ci/pr-scope.sh and\"\n    echo \"  scripts/ci/pr-scope.jq; this job does not use either. Check what those two\"\n    echo \"  files say in this PR's diff — failing closed.\"\n    exit 1\n  fi\n  expected=skipped\n  echo \"scope: docs/** only, and this job re-derived that answer for itself — every leg must have been skipped\"\nelse\n  expected=success\n  echo \"scope: code=$SCOPE_CODE (reason: $SCOPE_REASON) — every leg must have passed\"\n  if [ \"$RECHECK_CODE\" = \"false\" ]; then\n    # The safe direction, and it is reported rather than punished: the legs\n    # RAN. Making this red would only break the scope job's fail-closed paths,\n    # where answering \"run every gate\" is the correct behaviour.\n    echo \"  (this job's own answer was docs-only; the gates ran anyway, which is the safe direction)\"\n  fi\nfi\n\n# docsscan (#1356) is the MIRROR of the five legs above, by design: it runs\n# exactly when they do not (`if: needs.scope.outputs.code == 'false'` against\n# their `!= 'false'`), so its expected result is always the other word.\nif [ \"$expected\" = \"skipped\" ]; then\n  expected_docsscan=success\nelse\n  expected_docsscan=skipped\nfi\n\nverdict=0\n\n# One named leg, one named variable, one comparison. `${VAR:-}` and never\n# `$VAR`: a leg cut out of the `needs` list above expands to nothing, and\n# \"nothing\" must read as a missing result and fail — not abort the shell\n# before the other four have been reported.\nleg_is() {\n  if [ \"$2\" = \"$expected\" ]; then\n    echo \"  $1: $2\"\n  else\n    echo \"  $1: ${2:-<no result>} (expected $expected)\"\n    verdict=1\n  fi\n}\n\nleg_is typecheck \"${LEG_RESULT_TYPECHECK:-}\"\nleg_is tests     \"${LEG_RESULT_TESTS:-}\"\nleg_is build     \"${LEG_RESULT_BUILD:-}\"\nleg_is lint      \"${LEG_RESULT_LINT:-}\"\nleg_is checks    \"${LEG_RESULT_CHECKS:-}\"\n\n# docsscan (#1356) is judged against $expected_docsscan, not $expected — it is\n# the mirror of the five legs, not a sixth one — so it gets its own comparison\n# rather than a call to leg_is.\njob_is() {\n  if [ \"$2\" = \"$3\" ]; then\n    echo \"  $1: $2\"\n  else\n    echo \"  $1: ${2:-<no result>} (expected $3)\"\n    verdict=1\n  fi\n}\njob_is docsscan \"${DOCS_SCAN_RESULT:-}\" \"$expected_docsscan\"\n\n# The other direction, and the reason the five comparisons above are not\n# the whole story: they prove every declared leg was judged, not that\n# nothing ELSE was wired in. A sixth job added to `needs` and to the\n# variables above — but not to the comparisons — would be a gate whose\n# result this step silently discards. Bash enumerates the variables by\n# prefix, so nothing here has to know what the environment holds; the\n# case arm is the same five identities once more, and mis-stating it\n# fails closed — a leg left out of it flags that leg's own variable.\nfor leg_result_var in ${!LEG_RESULT_@}; do\n  case \"$leg_result_var\" in\n    LEG_RESULT_TYPECHECK|LEG_RESULT_TESTS|LEG_RESULT_BUILD|LEG_RESULT_LINT|LEG_RESULT_CHECKS) ;;\n    *)\n      echo \"  $leg_result_var: answers for no leg this step judges\"\n      verdict=1\n      ;;\n  esac\ndone\n\nif [ \"$verdict\" != \"0\" ]; then\n  echo \"\"\n  echo \"quality: at least one leg is not $expected, or docsscan is not $expected_docsscan — failing closed.\"\n  exit 1\nfi\necho \"\"\necho \"quality: typecheck, tests, build, lint and checks are all $expected; docsscan is $expected_docsscan.\"\n"
       }
     ],
     "timeout-minutes": 10
