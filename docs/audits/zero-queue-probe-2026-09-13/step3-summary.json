@@ -1,0 +1,38 @@
+{
+  "submitted": 4,
+  "okSubmits": 4,
+  "queuedAtFirstGet": 0,
+  "deleteAttempted": false,
+  "deleteResult": null,
+  "terminals": {
+    "cgt-20260913211901-gpbqw": {
+      "status": "succeeded",
+      "usage": {
+        "completion_tokens": 50638,
+        "total_tokens": 50638
+      }
+    },
+    "cgt-20260913211901-8v2vt": {
+      "status": "succeeded",
+      "usage": {
+        "completion_tokens": 50638,
+        "total_tokens": 50638
+      }
+    },
+    "cgt-20260913211901-qf2vt": {
+      "status": "succeeded",
+      "usage": {
+        "completion_tokens": 50638,
+        "total_tokens": 50638
+      }
+    },
+    "cgt-20260913211901-bssxk": {
+      "status": "succeeded",
+      "usage": {
+        "completion_tokens": 50638,
+        "total_tokens": 50638
+      }
+    }
+  },
+  "stillPending": []
+}

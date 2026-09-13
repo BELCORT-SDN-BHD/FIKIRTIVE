@@ -1,0 +1,28 @@
+{
+  "httpStatus": 200,
+  "body": {
+    "id": "cgt-20260913211554-q56jn",
+    "model": "dreamina-seedance-2-0-mini-260615",
+    "status": "succeeded",
+    "content": {
+      "video_url": "https://ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com/dreamina-seedance-2-0-mini/02178930535506400000000000000000000ffffc0a84c208002ea.mp4?<redacted-signed-query>"
+    },
+    "usage": {
+      "completion_tokens": 50638,
+      "total_tokens": 50638
+    },
+    "created_at": 1789305355,
+    "updated_at": 1789305422,
+    "seed": 13510,
+    "resolution": "480p",
+    "ratio": "16:9",
+    "duration": 5,
+    "framespersecond": 24,
+    "service_tier": "default",
+    "execution_expires_after": 3600,
+    "generate_audio": false,
+    "draft": false,
+    "priority": 0,
+    "output_format": "mp4"
+  }
+}

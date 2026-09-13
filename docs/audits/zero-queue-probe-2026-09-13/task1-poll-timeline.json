@@ -1,0 +1,72 @@
+[
+  {
+    "atIso": "2026-09-13T13:16:02.022Z",
+    "sinceSubmitMs": 7082,
+    "httpStatus": 200,
+    "taskStatus": "running",
+    "elapsedMs": 80
+  },
+  {
+    "atIso": "2026-09-13T13:16:09.122Z",
+    "sinceSubmitMs": 14182,
+    "httpStatus": 200,
+    "taskStatus": "running",
+    "elapsedMs": 96
+  },
+  {
+    "atIso": "2026-09-13T13:16:16.217Z",
+    "sinceSubmitMs": 21277,
+    "httpStatus": 200,
+    "taskStatus": "running",
+    "elapsedMs": 93
+  },
+  {
+    "atIso": "2026-09-13T13:16:23.463Z",
+    "sinceSubmitMs": 28523,
+    "httpStatus": 200,
+    "taskStatus": "running",
+    "elapsedMs": 244
+  },
+  {
+    "atIso": "2026-09-13T13:16:30.540Z",
+    "sinceSubmitMs": 35600,
+    "httpStatus": 200,
+    "taskStatus": "running",
+    "elapsedMs": 75
+  },
+  {
+    "atIso": "2026-09-13T13:16:37.625Z",
+    "sinceSubmitMs": 42685,
+    "httpStatus": 200,
+    "taskStatus": "running",
+    "elapsedMs": 82
+  },
+  {
+    "atIso": "2026-09-13T13:16:44.711Z",
+    "sinceSubmitMs": 49771,
+    "httpStatus": 200,
+    "taskStatus": "running",
+    "elapsedMs": 84
+  },
+  {
+    "atIso": "2026-09-13T13:16:51.796Z",
+    "sinceSubmitMs": 56856,
+    "httpStatus": 200,
+    "taskStatus": "running",
+    "elapsedMs": 82
+  },
+  {
+    "atIso": "2026-09-13T13:16:59.035Z",
+    "sinceSubmitMs": 64095,
+    "httpStatus": 200,
+    "taskStatus": "running",
+    "elapsedMs": 238
+  },
+  {
+    "atIso": "2026-09-13T13:17:06.115Z",
+    "sinceSubmitMs": 71175,
+    "httpStatus": 200,
+    "taskStatus": "succeeded",
+    "elapsedMs": 77
+  }
+]
