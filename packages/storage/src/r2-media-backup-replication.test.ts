@@ -14,6 +14,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   PutObjectCommand,
+  CopyObjectCommand,
   HeadObjectCommand,
   GetObjectCommand,
   type S3Client,
@@ -162,6 +163,138 @@ describe("MEDIA-A1 —— 写后备份侧出现同键同哈希副本", () => {
   });
 });
 
+/**
+ * MEDIA-A1(判官第二轮 P1-5,Founder 2026-09-13 已裁选项 (a))—— `copyToBackup()`。
+ *
+ * 直传上传的字节从浏览器直接进内容桶,从不经过 `put()`,所以上面那组测试用的
+ * `storeWithFakes`(只认 Put/Head/Get 三个命令)不够用:这里要证明的是**服务器发起的
+ * 跨桶 CopyObject**,源桶(内容桶)与目的桶(备份桶)是两个不同的假客户端,CopyObject 只发
+ * 给备份桶那一个,`x-amz-copy-source` 指回内容桶同 key。
+ *
+ * 用一个共享的「多桶内存存储」(bucket 名 → key → 对象)来模拟——PutObjectCommand /
+ * HeadObjectCommand / GetObjectCommand 按各自的 Bucket 字段读写对应的桶,CopyObjectCommand
+ * 解析 CopySource(`<bucket>/<key>`,与真实 S3 一致地做 URI 解码)从源桶读、写进目的桶。
+ */
+describe("MEDIA-A1 —— copyToBackup() 服务器端跨桶复制(直传上传收尾用)", () => {
+  interface StoredObject2 {
+    body: Uint8Array;
+    contentType?: string;
+  }
+
+  /** 按 Bucket 字段路由到各自的 Map;CopyObjectCommand 额外支持跨桶读源。 */
+  class FakeBucketedS3 {
+    constructor(private buckets: Map<string, Map<string, StoredObject2>>) {}
+    /** 接下来这么多次 CopyObject 都先抛一次错,再恢复正常 —— 演练重试语义。 */
+    failNextCopies = 0;
+    copyCalls = 0;
+
+    private bucket(name: string): Map<string, StoredObject2> {
+      let b = this.buckets.get(name);
+      if (!b) {
+        b = new Map();
+        this.buckets.set(name, b);
+      }
+      return b;
+    }
+
+    async send(command: unknown): Promise<unknown> {
+      if (command instanceof CopyObjectCommand) {
+        this.copyCalls++;
+        if (this.failNextCopies > 0) {
+          this.failNextCopies--;
+          throw new Error("simulated transient R2 failure (copy)");
+        }
+        const { Bucket, Key, CopySource } = command.input as { Bucket: string; Key: string; CopySource: string };
+        const slash = CopySource!.indexOf("/");
+        const srcBucket = decodeURIComponent(CopySource!.slice(0, slash));
+        const srcKey = decodeURIComponent(CopySource!.slice(slash + 1));
+        const src = this.bucket(srcBucket).get(srcKey);
+        if (!src) {
+          const err = new Error("NoSuchKey") as Error & { name: string };
+          err.name = "NoSuchKey";
+          throw err;
+        }
+        this.bucket(Bucket).set(Key, { ...src });
+        return {};
+      }
+      if (command instanceof PutObjectCommand) {
+        const { Bucket, Key, Body, ContentType } = command.input as {
+          Bucket: string;
+          Key: string;
+          Body: Uint8Array;
+          ContentType?: string;
+        };
+        this.bucket(Bucket).set(Key, { body: Body, contentType: ContentType });
+        return {};
+      }
+      if (command instanceof HeadObjectCommand) {
+        const { Bucket, Key } = command.input as { Bucket: string; Key: string };
+        const obj = this.bucket(Bucket).get(Key);
+        if (!obj) {
+          const err = new Error("NotFound") as Error & { name: string; $metadata: { httpStatusCode: number } };
+          err.name = "NotFound";
+          err.$metadata = { httpStatusCode: 404 };
+          throw err;
+        }
+        return { ContentLength: obj.body.length };
+      }
+      throw new Error(`FakeBucketedS3: unsupported command ${(command as { constructor: { name: string } }).constructor.name}`);
+    }
+  }
+
+  function storeWithBucketedFakes(opts: { withBackup: boolean }) {
+    const shared = new Map<string, Map<string, StoredObject2>>();
+    const store = new R2Storage(
+      { endpoint: "http://fake-primary.invalid", accessKeyId: "id", secretAccessKey: "secret", bucket: "content" },
+      opts.withBackup
+        ? { endpoint: "http://fake-backup.invalid", accessKeyId: "bid", secretAccessKey: "bsecret", bucket: "content-backup" }
+        : null,
+    );
+    const primary = new FakeBucketedS3(shared);
+    const backup = opts.withBackup ? new FakeBucketedS3(shared) : null;
+    (store as unknown as { client: S3Client }).client = primary as unknown as S3Client;
+    if (backup) (store as unknown as { backupClient: S3Client | null }).backupClient = backup as unknown as S3Client;
+    return { store, primary, backup, shared };
+  }
+
+  it("成功复制:内容桶里已有的对象,copyToBackup() 后在备份桶出现同 key、同字节", async () => {
+    const { store, shared } = storeWithBucketedFakes({ withBackup: true });
+    const bytes = new TextEncoder().encode("direct-upload fixture bytes");
+    const key = "u/owner-1/deadbeef.jpg";
+    shared.set("content", new Map([[key, { body: bytes, contentType: "image/jpeg" }]])); // 模拟浏览器直传已落地
+
+    await store.copyToBackup(key);
+
+    expect(shared.get("content-backup")?.get(key)?.body).toEqual(bytes);
+  });
+
+  it("失败重试后仍失败:记同一个结构化事件(path:finalize-copy),不抛错", async () => {
+    const { store, backup, shared } = storeWithBucketedFakes({ withBackup: true });
+    const key = "u/owner-1/deadbeef.jpg";
+    shared.set("content", new Map([[key, { body: new TextEncoder().encode("x") }]]));
+    backup!.failNextCopies = 2; // 首次 + 唯一一次重试都失败
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(store.copyToBackup(key)).resolves.toBeUndefined(); // 不抛
+
+    expect(shared.get("content-backup")?.has(key) ?? false).toBe(false);
+    expect(backup!.copyCalls).toBe(2);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse(errorSpy.mock.calls[0]![0] as string);
+    expect(logged).toMatchObject({ event: "media_backup_replication_failed", path: "finalize-copy", key });
+    errorSpy.mockRestore();
+  });
+
+  it("未配置备份(backupClient 为 null)时零副作用:不发任何 CopyObject", async () => {
+    const { store, backup } = storeWithBucketedFakes({ withBackup: false });
+    expect(backup).toBeNull();
+
+    await expect(store.copyToBackup("u/owner-1/deadbeef.jpg")).resolves.toBeUndefined();
+    // 没有 backupClient 可断言「没打」,但也没有任何东西可以打——同 replicateToBackup
+    // 未配置时的短路语义(first line returns)。
+  });
+});
+
 describe("replicateWithRetry —— 复制重试/放行时序的纯函数验证(规格 §4)", () => {
   it("首次成功:只调用一次,onFailure 不触发", async () => {
     const attempt = vi.fn(async () => {});
@@ -199,8 +332,9 @@ describe("replicateWithRetry —— 复制重试/放行时序的纯函数验证(
 
 /**
  * 真桶演练相关的验收条目:施工票面(#1385)指明这些要等 Founder 建好 staging/production
- * 的备份桶、发凭据之后才能真跑,离线的这次施工里用 `it.todo` 占位(M3 机器闸只要求编号
- * 逐字出现,不要求今天就是绿的)。
+ * 的备份桶、发凭据之后才能真跑,离线的这次施工里用 `it.todo` 占位。机器闸已废止
+ * (2026-09-13),这份 todo 清单现在是唯一的未证验收台账——没有别的机制替它盯着「这些编号
+ * 到底跑没跑」,谁要清掉一条就得真把对应的桶/凭据/演练做完。
  */
 it.todo("MEDIA-A2 —— 备份桶 lifecycle 规则(全量保留)与主/备份差集比对命令(等 Founder 建桶)");
 it.todo("MEDIA-A3 —— Founder 随手挑一个人照 media-restore.md 从头走一遍,不许问人(人工演练,非自动化测试)");

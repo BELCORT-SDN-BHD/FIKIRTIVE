@@ -878,7 +878,10 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
   // 这一组管的是 u/<ownerId>/ 下的媒体对象——同名会让人以为数据库备份桶顺带存了媒体,
   // 而它其实不会。四个都是 optional 且**要么全设要么全不设**(半配是硬启动错误,由
   // packages/storage 的 mediaBackupR2Config() 硬拦,理由与 opsR2Config 相同:契约这里
-  // 只登记名字存在,组规则不重复写第二份可能与代码走散的真相)。**部署顺序上备份桶还没建
+  // 只登记名字存在,组规则不重复写第二份可能与代码走散的真相;爆炸半径比 opsR2Config 大——
+  // 那一组 surface 是 worker,只炸 worker 一个进程,这一组 surface 是 both,web 与 worker
+  // 一并启动即炸,这是刻意的部署期 fail-closed,宁可两个进程都起不来也不让半套配置悄悄
+  // 跑起来假装复制生效)。**部署顺序上备份桶还没建
   // 好,所以未配置时特性静默不激活**——这是刻意的允许状态,不是缺口。
   {
     name: "R2_MEDIA_BACKUP_ACCESS_KEY_ID",

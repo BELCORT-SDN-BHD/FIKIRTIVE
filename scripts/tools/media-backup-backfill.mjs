@@ -15,12 +15,17 @@
 //   同 key 但大小不同 → 判 "conflict",绝不覆盖(fail closed,同 mint-r2-token.mjs 的三态
 //   约定),脚本退出非零、点名冲突的 key,人来看。
 //
-// 用法(对 staging):
+// 用法(对 staging):下面的 interlock() 在文件顶部无条件检查这把锁——即便是不带 --apply
+// 的 dry-run 也要先给这个环境变量,不给就 REFUSING 退出,措辞与「前提」第 3 条一致。
+//   I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
 //   R2_ENDPOINT=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=fikirtive-staging \
 //   R2_MEDIA_BACKUP_ACCESS_KEY_ID=... R2_MEDIA_BACKUP_SECRET_ACCESS_KEY=... \
 //   R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
 //     node scripts/tools/media-backup-backfill.mjs                # dry-run:只报差集
 //   I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
+//   R2_ENDPOINT=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=fikirtive-staging \
+//   R2_MEDIA_BACKUP_ACCESS_KEY_ID=... R2_MEDIA_BACKUP_SECRET_ACCESS_KEY=... \
+//   R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
 //     node scripts/tools/media-backup-backfill.mjs --apply        # 真的回填
 //
 // R2_MEDIA_BACKUP_ENDPOINT 可选,不设默认沿用 R2_ENDPOINT(两个桶通常是同账号同 endpoint)。

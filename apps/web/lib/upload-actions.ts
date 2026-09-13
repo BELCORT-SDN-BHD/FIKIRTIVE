@@ -282,6 +282,26 @@ async function finalizeCandidateUploadsInFrame(
         failures.push({ filename: file.originalFilename, reason: "size mismatch — upload rejected" });
         continue;
       }
+      // MEDIA-durability P1-5(判官第二轮,Founder 2026-09-13 对谈已裁选项 (a))—— 直传上传
+      // (presigned PUT/multipart)的字节从浏览器直接进内容桶,从不经过 storage.put(),所以
+      // put() 里的写路径同步复制(replicateToBackup)从没跑过这些对象。尺寸复核刚刚确认对象
+      // 真的落地(上面的 storage.sizeOf 就是那道复核),这里补一刀服务器端跨桶复制
+      // (CopyObjectCommand,字节不过这个进程)。覆盖 single 与 multipart 两种模式——两者都
+      // 走到这同一行,completeMultipart 已经在上面收了尾。跳过 "existed"(dedup 命中):
+      // 那个 key 第一次写入时就已经复制过一次,与 put() 自己的 dedup-skip 同一个理由(见
+      // packages/storage/src/index.ts 的 P2-1 注释)。copyToBackup() 契约是绝不抛错(重试
+      // 一次仍失败只记结构化日志),这里再包一层 try/catch 纯属防御,失败绝不能让这次上传的
+      // 收尾结果变成失败。
+      if (file.upload.mode !== "existed") {
+        try {
+          await storage.copyToBackup(key);
+        } catch (e) {
+          console.error(
+            `[upload] copyToBackup unexpectedly threw for ${key} (contract says it never should):`,
+            e instanceof Error ? e.message : e,
+          );
+        }
+      }
       verified.push({ key, file });
     } catch (e) {
       console.error(`[upload] finalize failed for ${key}:`, e instanceof Error ? e.message : e);

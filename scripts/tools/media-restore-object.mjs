@@ -46,10 +46,12 @@ const EXPECT_OWNER = arg("expect-owner");
 const APPLY = process.argv.includes("--apply");
 
 if (!KEY) {
-  throw new Error("usage: --key u/<ownerId>/<sha256>.<ext> --expect-owner <ownerId> [--apply]");
+  console.error("usage: --key u/<ownerId>/<sha256>.<ext> --expect-owner <ownerId> [--apply]");
+  process.exit(1);
 }
 if (!EXPECT_OWNER) {
-  throw new Error("refusing: --expect-owner is required (MEDIA-A9 tenant-prefix check has no silent default)");
+  console.error("refusing: --expect-owner is required (MEDIA-A9 tenant-prefix check has no silent default)");
+  process.exit(1);
 }
 
 // 闸 1 —— 键写错 / 租户前缀核对(手册「错误」态第 3 条 + MEDIA-A9)
@@ -57,14 +59,16 @@ let parsed;
 try {
   parsed = parseStorageKey(KEY);
 } catch (err) {
-  throw new Error(`refusing: "${KEY}" is not a well-formed storage key (${err instanceof Error ? err.message : err})`);
+  console.error(`refusing: "${KEY}" is not a well-formed storage key (${err instanceof Error ? err.message : err})`);
+  process.exit(1);
 }
 if (!keyOwnerMatches(KEY, EXPECT_OWNER)) {
-  throw new Error(
+  console.error(
     `refusing: key owner segment is "${parsed.ownerId}", but --expect-owner was "${EXPECT_OWNER}" — stopping ` +
       `here per docs/runbooks/media-restore.md's tenant-prefix check (MEDIA-A9). Never pass a different ` +
       `--expect-owner just to make this pass — confirm which tenant actually owns this object first.`,
   );
+  process.exit(1);
 }
 
 function requireEnv(names) {

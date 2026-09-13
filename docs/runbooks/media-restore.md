@@ -5,13 +5,28 @@
 
 ## 一句话
 
-内容桶的每个媒体对象,写入时都同步复制了一份到隔离的备份桶(`packages/storage` 的
-`R2Storage.put()`,见 `docs/specs/media-durability.md` §1.2/§4)。误删或误操作导致内容桶
-丢了某个对象时,这份手册教你把它从备份桶原样放回来。
+**新写入**的媒体对象同步复制一份;直传上传的素材在收尾(尺寸复核通过)时由服务端补一刀
+复制(`packages/storage` 的 `R2Storage.put()` / `R2Storage.copyToBackup()`,见
+`docs/specs/media-durability.md` §1.2/§4)。误删或误操作导致内容桶丢了某个对象时,这份手册
+教你把它从备份桶原样放回来。
 
 **只按单键恢复,禁止整桶回滚。** 整桶回滚会把别的租户、别的时间点的对象一起改回旧状态——
 这份手册与它背后的脚本(`scripts/tools/media-restore-object.mjs`)只做「一个 key 进,一个
 key 出」这一件事,没有整桶操作的入口。
+
+### 什么可能漏备
+
+复制不是 100% 保证——两种情况会让某个 key 在备份桶里缺席:
+
+1. **首写/收尾复制两次都失败后,该 key 永不自动重试。** `replicateWithRetry` 的语义是
+   「重试一次,仍失败就放行主写并记录」——放行之后不会有第三次自动尝试,后续对同一 key 的
+   dedup 命中(无论是写路径的 `put()` 还是直传收尾的 `copyToBackup()`)也不会补这一刀(见
+   `packages/storage/src/index.ts` 里 dedup-skip 的注释)。唯一能补上这个缺口的是按周期跑
+   的回填脚本(见下方「什么可能漏备」之后的差集/回填说明)。
+2. **每次复制失败都会落一条可检索的结构化日志**,`event` 字段固定是
+   `media_backup_replication_failed`(写路径与直传收尾各带不同的 `path` 字段区分,直传收尾
+   是 `finalize-copy`)。grep 这个字段串就能拿到所有漏掉复制的 key,不需要等差集命令跑到
+   才发现。
 
 ## 前提
 
@@ -47,12 +62,16 @@ key 出」这一件事,没有整桶操作的入口。
 先跑差集/核验命令(dry-run,只读,不改任何东西):
 
 ```bash
+I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
 R2_ENDPOINT=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=fikirtive-staging \
 R2_MEDIA_BACKUP_ACCESS_KEY_ID=... R2_MEDIA_BACKUP_SECRET_ACCESS_KEY=... \
 R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
   node scripts/tools/media-restore-object.mjs \
     --key u/<ownerId>/<sha256>.<ext> --expect-owner <ownerId>
 ```
+
+（`_interlock.mjs` 在脚本顶部无条件检查这把锁——即便是不带 `--apply` 的只读 dry-run 也要
+先给这个环境变量,不给就直接 `REFUSING` 退出,不管连的是哪个环境的凭据,见「前提」第 3 条。）
 
 不带 `--apply` 时这条命令只做核验:
 
@@ -69,13 +88,19 @@ R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
 脚本的默认模式(同样是 dry-run,不写):
 
 ```bash
+I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
 R2_ENDPOINT=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=fikirtive-staging \
 R2_MEDIA_BACKUP_ACCESS_KEY_ID=... R2_MEDIA_BACKUP_SECRET_ACCESS_KEY=... \
 R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
   node scripts/tools/media-backup-backfill.mjs
 ```
 
-输出「missing from backup」「CONFLICT」两类;非空即非零退出,方便接进监控。
+（同样,这个脚本的 `_interlock.mjs` 检查也在顶部、也不看 `--apply`——dry-run 一样要给
+`I_UNDERSTAND_THIS_TOUCHES_PROD=yes`。）
+
+输出「missing from backup」「CONFLICT」两类;非空即非零退出,方便接进监控。**这条差集命令
+不是只在演练前跑一次的东西——按固定周期(例如每日)跑它,非空才需要人看、确认后再
+`--apply` 回填,这是「什么可能漏备」①里说的那个漏备窗口唯一的闭合手段。**
 
 ### 第 3 步 · 恢复命令
 
@@ -93,6 +118,11 @@ R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
 脚本内部顺序:下载备份侧字节 → 本地重新算一次 sha256(见第 4 步)→ 哈希对上才
 `PutObject` 写回内容桶原 key(带 `IfNoneMatch: "*"`,即便两次检查之间发生竞态写入也绝不
 覆盖)。整个过程不触发任何生成 job、不产生任何计费事件——恢复是纯粹的字节搬运。
+
+**内存下限:** 脚本用 `transformToByteArray()` 把整个对象一次性读进内存再校验、再写回——
+不是流式的。恢复一个几百 MB 的大视频,跑这个脚本的机器就要能腾出至少那么大的一块内存;
+量级远超本手册管的媒体对象就先掂量一下跑脚本的机器够不够,不够就先扩内存或者换一台机器,
+而不是当场去改脚本抢流式。
 
 ### 第 4 步 · 哈希比对
 
@@ -126,7 +156,7 @@ RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
 
 | 情况 | 处置 |
 |---|---|
-| **副本列不出来**(备份桶 `HeadObject` 返回 404/NotFound/NoSuchKey) | 脚本报 `EMPTY`,退出非零。不得从别处拼一份替代字节;当场升级给 Founder,先确认是不是漏备窗口内发生的误删(见 `docs/specs/media-durability.md` §4 的「漏备窗口」说明)。 |
+| **副本列不出来**(备份桶 `HeadObject` 返回 404/NotFound/NoSuchKey) | 脚本报 `EMPTY`,退出非零。不得从别处拼一份替代字节;当场升级给 Founder,先确认是不是本文件「什么可能漏备」①说的那种漏备窗口内发生的误删(先跑一次 `media-backup-backfill.mjs` 差集命令看这个 key 是不是就是被落下的那一个,再 grep `media_backup_replication_failed` 确认当时是否真的复制失败过)。 |
 | **权限不足**(凭据没有目标桶的读/写权限,S3 返回 403/AccessDenied 一类) | 脚本照实抛出原始错误,不吞、不重试成别的操作。核对拿到的是不是对的令牌(演练/只读令牌 vs 生产写令牌,见「前提」第 1 条),绝不为了跑通而升级令牌权限。 |
 | **键写错**(格式不对,或指向一个其实还活着的对象) | 格式不对 → `parseStorageKey` 直接拒绝,报「not a fikirtive storage key」。指向活对象 → 内容桶 `HeadObject` 命中,脚本报「already exists」并拒绝——内容寻址下已存在必然已经是对的字节,恢复到一个已经有内容的 key 上没有意义,也不会被允许覆盖。 |
 
@@ -151,8 +181,10 @@ RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
   - 对象键:完整 u/<ownerId>/<sha256>.<ext>
   - 实测 RTO:脚本打印的那一行数字(秒)
   - 命令输出片段:粘贴 media-restore-object.mjs --apply 的关键几行(RESTORED ... hash verified ...)
-  演练前先跑 media-backup-backfill.mjs(dry-run)确认差集为零,再动手删对象——
-  MEDIA-A2 要求的就是这个「回填已完成」的状态。
+  差集/回填不是只在演练前跑一次的事——按固定周期(例如每日)跑
+  media-backup-backfill.mjs:默认 dry-run 只报差集,非空再加 --apply 真的回填。这是
+  「什么可能漏备」①说的那个漏备窗口唯一的闭合手段。演练前额外确认一次差集为零、
+  再动手删对象——MEDIA-A2 要求的就是这个「回填已完成」的状态。
 -->
 
 ## 相关
@@ -166,4 +198,6 @@ RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
   `--apply` 才写)。
 - `scripts/tools/media-restore-object.mjs` —— 本手册第 3 步的恢复命令。
 - `packages/storage/src/index.ts` —— 写路径同步复制的实现(`R2Storage.put()` →
-  `replicateToBackup` → `replicateWithRetry`)。
+  `replicateToBackup` → `replicateWithRetry`);直传上传收尾补一刀的实现
+  (`R2Storage.copyToBackup()`,同样走 `replicateWithRetry`,finalize 在
+  `apps/web/lib/upload-actions.ts` 里调用)。
