@@ -71,6 +71,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 编号撞车/无编号检测(#1354):纯 fs 脚本,不需要 pnpm——放在 checkout 后立刻跑,
+      # 撞号几秒内红,不必先付十分钟安装与构建(判官 P3 定向)。
+      - run: node e2e/count-journeys.mjs
+
       # docs-only 判定,照抄 ci.yml scope job 的取证手法:两份 API 原文落盘、零文本投影,
       # 决定权在 scripts/ci/pr-scope.jq(它被 scripts/__tests__/pr-scope.test.sh 看守)。
       # 任何拿不到、读不懂、答非 false 的情形都是「跑全部旅程」——fail 的方向是多跑,不是漏跑。
@@ -136,10 +140,6 @@ jobs:
       # 只装 chromium:套件只跑这一个 project,装三个引擎是三倍下载换零覆盖。
       - if: steps.scope.outputs.code == 'true'
         run: pnpm exec playwright install --with-deps chromium
-
-      # 编号撞车检测(#1354):同一个编号被两个文件占用就在这里非零退出,不必等旅程跑完才发现。
-      - if: steps.scope.outputs.code == 'true'
-        run: pnpm e2e:count
 
       - if: steps.scope.outputs.code == 'true'
         run: pnpm e2e

@@ -29,7 +29,7 @@ for (const file of files) {
     unnumbered.push(file);
     continue;
   }
-  const n = m[1];
+  const n = String(Number(m[1])); // 归一化：7 与 07 是同一个号（判官 P2）
   if (!byNumber.has(n)) byNumber.set(n, []);
   byNumber.get(n).push(file);
 }
@@ -42,8 +42,9 @@ for (const n of [...byNumber.keys()].sort((a, b) => Number(a) - Number(b))) {
   }
 }
 if (unnumbered.length > 0) {
-  console.log("\n无编号(未来加旅程时也要给编号——这份清单不该有下一行):");
-  for (const f of unnumbered) console.log(`  · ${f}`);
+  console.error("\n无编号 —— 旅程必须带编号，先补号再跑（判官 P2：无编号即红）:");
+  for (const f of unnumbered) console.error(`  · ${f}`);
+  process.exitCode = 1;
 }
 
 const collisions = [...byNumber.entries()].filter(([, fs]) => fs.length > 1);
