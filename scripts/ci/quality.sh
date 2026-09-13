@@ -1020,6 +1020,11 @@ gate typecheck "PR-scope gate self-test" bash scripts/__tests__/pr-scope.test.sh
 # The gate that decides which gates run WHERE. Same reasoning one level up: the leg
 # split is only as trustworthy as the proof that its union is still the whole list.
 gate typecheck "quality-leg coverage self-test" bash scripts/__tests__/quality-legs.test.sh
+# #1356 P2: ci.yml's docsscan job runs a hand-named list of docs/**-content-reading
+# test files. This re-derives that list independently (same signature, applied
+# uniformly instead of by eye) so a file added to one side without the other is red —
+# see the file's own header for why a by-eye pass already missed two.
+gate typecheck "docs-scan inventory self-test" node --test scripts/__tests__/docs-scan-inventory.test.mjs
 
 # 2. The one unavoidable prerequisite: dist + generated Prisma client. Every leg
 #    pays for it; it is why a leg costs its own time plus 82s and not zero.
