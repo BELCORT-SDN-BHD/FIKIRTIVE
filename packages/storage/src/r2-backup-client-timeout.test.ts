@@ -109,7 +109,9 @@ describe("② 真计时 —— 备份桶网络挂起时 copyToBackup() 仍在超
 
       // replicateWithRetry 内部最多两次尝试(首次 + 重试一次),每次至多 200ms 的
       // requestTimeout——上限约 400ms 出头,给足抖动空间断言在 5 秒内(远低于生产 10s)返回。
-      await expect(store.copyToBackup("u/owner-1/deadbeef.jpg")).resolves.toBeUndefined();
+      // NEW-P3-2(判官第三轮):copyToBackup() 首行加了 parseStorageKey,key 必须是真的合法
+      // 形状(64 位十六进制哈希),不能再用 "deadbeef" 这种占位符。
+      await expect(store.copyToBackup(`u/owner-1/${"deadbeef".repeat(8)}.jpg`)).resolves.toBeUndefined();
 
       const elapsedMs = Date.now() - startedAt;
       expect(elapsedMs).toBeLessThan(5000); // 有界返回——不是无限期悬挂

@@ -1,11 +1,16 @@
 /**
  * upload-finalize-backup-copy.test.ts — MEDIA-durability(判官第二轮 P1-5,Founder 2026-09-13
- * 对谈已裁选项 (a))。
+ * 对谈已裁选项 (a);判官第三轮 NEW-P1-1 并发化)。
  *
  * 背景:直传上传(presigned PUT/multipart)的字节从浏览器直接进内容桶,从来不经过
  * `R2Storage.put()`,所以写路径的同步复制(`replicateToBackup`)从未跑过这些对象——判官第一
  * 轮的判红就是这个缺口。修法是在 `finalizeCandidateUploads` 的尺寸复核**通过之后**,对每个
  * 刚验完的 key 补一刀 `storage.copyToBackup(key)`(服务器端 CopyObject,字节不过 web 进程)。
+ *
+ * 判官第三轮 NEW-P1-1:这一刀曾经放在逐文件的 for...of 循环里逐个 await——一次 finalize
+ * 上限 50 个文件、每次 copyToBackup 单次上界约 20s,串行等下来商家可见的挂起最坏能到
+ * ~16.7 分钟。现在移到循环结束、`verified` 建好之后,用 `Promise.all` 一次性并发发起。本
+ * 文件末尾那条「并发而非串行」的测试就是钉这件事的证据。
  *
  * 这份文件只钉 finalize 这一侧的调用契约,不重复 packages/storage 里对 CopyObject 本身的
  * 白盒测试(见 `packages/storage/src/r2-media-backup-replication.test.ts` 的
@@ -156,5 +161,51 @@ describe("MEDIA-durability P1-5 —— finalize 尺寸复核通过后补一刀 c
 
     expect(res).toMatchObject({ error: expect.stringContaining("size mismatch") });
     expect(mockStorage.copyToBackup).not.toHaveBeenCalled();
+  });
+
+  it("NEW-P1-1(判官第三轮):多文件时 copyToBackup 并发发起,不是等第一个完成才发第二个", async () => {
+    // 每次调用都返回一个"挂起中"的 promise,自己手动记录同时在场的 pending 数——如果实现
+    // 退化回逐个 await 的串行,第二个 copyToBackup 根本不会被调用,直到第一个的 resolver
+    // 被手动触发之后;并发实现则两个调用会在同一个微任务轮次内一起发起。
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const resolvers: (() => void)[] = [];
+    mockStorage.copyToBackup.mockImplementation(() => {
+      inFlight++;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      return new Promise<void>((resolve) => {
+        resolvers.push(() => {
+          inFlight--;
+          resolve();
+        });
+      });
+    });
+
+    const sha2 = "b".repeat(64);
+    const finalizePromise = finalizeCandidateUploads(
+      "proj_1",
+      "",
+      [],
+      [receipt({ mode: "single" }), { ...receipt({ mode: "single" }), sha256: sha2 }],
+    );
+
+    // 在 copyToBackup 真正被调用之前,finalize 内部还有好几轮真实的 await(找项目、建
+    // entitySnapshot、逐文件 completeMultipart/sizeOf……),轮数会随实现细节漂移——用
+    // vi.waitFor 轮询而不是猜一个固定的微任务计数,等到两次调用都发生为止(两个
+    // copyToBackup 都还挂起中,谁都没被 resolve)。
+    await vi.waitFor(() => {
+      expect(mockStorage.copyToBackup).toHaveBeenCalledTimes(2);
+    });
+
+    expect(mockStorage.copyToBackup).toHaveBeenCalledTimes(2); // 两个都已经发起了
+    expect(peakInFlight).toBe(2); // 同一时刻两个都在挂起——并发的直接证据,串行永远到不了 2
+    expect(mockStorage.copyToBackup).toHaveBeenCalledWith(EXPECTED_KEY);
+    expect(mockStorage.copyToBackup).toHaveBeenCalledWith(storageKey(OWNER, sha2, EXT));
+
+    // 收尾:两个 copyToBackup 都还没 resolve,finalize 本身也还没返回——这里让它们放行,
+    // 证明 finalize 确实在等 Promise.all 全部结束才继续(而不是 fire-and-forget 不等待)。
+    resolvers.forEach((r) => r());
+    const res = await finalizePromise;
+    expect(res).toMatchObject({ ok: true, count: 2 });
   });
 });

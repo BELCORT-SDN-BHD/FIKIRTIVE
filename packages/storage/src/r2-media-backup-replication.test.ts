@@ -205,9 +205,12 @@ describe("MEDIA-A1 —— copyToBackup() 服务器端跨桶复制(直传上传�
           throw new Error("simulated transient R2 failure (copy)");
         }
         const { Bucket, Key, CopySource } = command.input as { Bucket: string; Key: string; CopySource: string };
+        // NEW-P2-2(判官第三轮):生产代码不再对 CopySource 做 URL 编码——这里的假体也去掉
+        // 对应的 decodeURIComponent,与 `${sourceBucket}/${key}` 的拼接方式保持自洽。第一个
+        // "/" 就是桶名与 key 的分界(桶名本身不含 "/",key 自己的路径分隔符都在这刀之后)。
         const slash = CopySource!.indexOf("/");
-        const srcBucket = decodeURIComponent(CopySource!.slice(0, slash));
-        const srcKey = decodeURIComponent(CopySource!.slice(slash + 1));
+        const srcBucket = CopySource!.slice(0, slash);
+        const srcKey = CopySource!.slice(slash + 1);
         const src = this.bucket(srcBucket).get(srcKey);
         if (!src) {
           const err = new Error("NoSuchKey") as Error & { name: string };
@@ -257,10 +260,15 @@ describe("MEDIA-A1 —— copyToBackup() 服务器端跨桶复制(直传上传�
     return { store, primary, backup, shared };
   }
 
+  // NEW-P3-2(判官第三轮):copyToBackup() 首行加了 parseStorageKey(key),所以这里的示例 key
+  // 必须是真的合法形状(64 位十六进制哈希),不能再用 "deadbeef" 这种 8 位占位符——否则还没
+  // 走到复制逻辑就会在 parseStorageKey 那一步被拒收。
+  const FAKE_HASH = "deadbeef".repeat(8); // 8 × 8 = 64 位十六进制,parseStorageKey 认
+
   it("成功复制:内容桶里已有的对象,copyToBackup() 后在备份桶出现同 key、同字节", async () => {
     const { store, shared } = storeWithBucketedFakes({ withBackup: true });
     const bytes = new TextEncoder().encode("direct-upload fixture bytes");
-    const key = "u/owner-1/deadbeef.jpg";
+    const key = `u/owner-1/${FAKE_HASH}.jpg`;
     shared.set("content", new Map([[key, { body: bytes, contentType: "image/jpeg" }]])); // 模拟浏览器直传已落地
 
     await store.copyToBackup(key);
@@ -270,7 +278,7 @@ describe("MEDIA-A1 —— copyToBackup() 服务器端跨桶复制(直传上传�
 
   it("失败重试后仍失败:记同一个结构化事件(path:finalize-copy),不抛错", async () => {
     const { store, backup, shared } = storeWithBucketedFakes({ withBackup: true });
-    const key = "u/owner-1/deadbeef.jpg";
+    const key = `u/owner-1/${FAKE_HASH}.jpg`;
     shared.set("content", new Map([[key, { body: new TextEncoder().encode("x") }]]));
     backup!.failNextCopies = 2; // 首次 + 唯一一次重试都失败
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -289,9 +297,17 @@ describe("MEDIA-A1 —— copyToBackup() 服务器端跨桶复制(直传上传�
     const { store, backup } = storeWithBucketedFakes({ withBackup: false });
     expect(backup).toBeNull();
 
-    await expect(store.copyToBackup("u/owner-1/deadbeef.jpg")).resolves.toBeUndefined();
+    await expect(store.copyToBackup(`u/owner-1/${FAKE_HASH}.jpg`)).resolves.toBeUndefined();
     // 没有 backupClient 可断言「没打」,但也没有任何东西可以打——同 replicateToBackup
     // 未配置时的短路语义(first line returns)。
+  });
+
+  it("NEW-P3-2:键写错(不是合法的 u/<ownerId>/<64hex>.<ext> 形状)→ 当场拒绝,连备份桶都没碰", async () => {
+    const { store, backup } = storeWithBucketedFakes({ withBackup: true });
+
+    await expect(store.copyToBackup("not-a-fikirtive-storage-key")).rejects.toThrow(/not a fikirtive storage key/);
+
+    expect(backup!.copyCalls).toBe(0); // parseStorageKey 在网络请求之前就拒收了
   });
 });
 

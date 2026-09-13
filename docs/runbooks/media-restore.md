@@ -14,19 +14,20 @@
 这份手册与它背后的脚本(`scripts/tools/media-restore-object.mjs`)只做「一个 key 进,一个
 key 出」这一件事,没有整桶操作的入口。
 
-### 什么可能漏备
+### 什么可能漏备、怎么发现
 
-复制不是 100% 保证——两种情况会让某个 key 在备份桶里缺席:
+复制不是 100% 保证。唯一的漏备成因,加上发现它的手段:
 
-1. **首写/收尾复制两次都失败后,该 key 永不自动重试。** `replicateWithRetry` 的语义是
-   「重试一次,仍失败就放行主写并记录」——放行之后不会有第三次自动尝试,后续对同一 key 的
-   dedup 命中(无论是写路径的 `put()` 还是直传收尾的 `copyToBackup()`)也不会补这一刀(见
-   `packages/storage/src/index.ts` 里 dedup-skip 的注释)。唯一能补上这个缺口的是按周期跑
-   的回填脚本(见下方「什么可能漏备」之后的差集/回填说明)。
-2. **每次复制失败都会落一条可检索的结构化日志**,`event` 字段固定是
-   `media_backup_replication_failed`(写路径与直传收尾各带不同的 `path` 字段区分,直传收尾
-   是 `finalize-copy`)。grep 这个字段串就能拿到所有漏掉复制的 key,不需要等差集命令跑到
-   才发现。
+**成因:首写/收尾复制两次都失败后,该 key 永不自动重试。** `replicateWithRetry` 的语义是
+「重试一次,仍失败就放行主写并记录」——放行之后不会有第三次自动尝试,后续对同一 key 的
+dedup 命中(无论是写路径的 `put()` 还是直传收尾的 `copyToBackup()`)也不会补这一刀(见
+`packages/storage/src/index.ts` 里 dedup-skip 的注释)。唯一能补上这个缺口的是按周期跑的
+回填脚本(见下方「什么可能漏备、怎么发现」之后的差集/回填说明)。
+
+**怎么发现:每次复制失败都会落一条可检索的结构化日志**,`event` 字段固定是
+`media_backup_replication_failed`(写路径与直传收尾各带不同的 `path` 字段区分,直传收尾
+是 `finalize-copy`)。grep 这个字段串就能拿到所有漏掉复制的 key,不需要等差集命令跑到
+才发现。
 
 ## 前提
 
@@ -35,7 +36,12 @@ key 出」这一件事,没有整桶操作的入口。
    `R2_MEDIA_BACKUP_SECRET_ACCESS_KEY` / `R2_MEDIA_BACKUP_BUCKET`,`R2_MEDIA_BACKUP_ENDPOINT`
    可选、默认沿用 `R2_ENDPOINT`)。凭据分工见 `docs/runbooks/r2-bucket-token-rotation.md` 的
    口径:**Founder 建桶与铸令牌,agent 与演练脚本只用最小权限的只读/演练桶令牌,永不读也
-   不回显生产写令牌**。
+   不回显生产写令牌**。**`R2_MEDIA_BACKUP_*` 令牌须同时具备备份桶写＋内容桶读权限**(服务端
+   `CopyObject` 的 copy-source 用它去读内容桶——`R2Storage.copyToBackup()` 走的就是这把
+   令牌,不是内容桶自己的凭据)。按旧口径(只给备份桶写权限)铸的令牌,会让直传上传收尾的
+   那次复制静默 403——`put()` 的写路径复制不受影响(那条路径本来就不需要读内容桶),但
+   直传收尾这条路径会一直失败、一直落 `media_backup_replication_failed` 日志,永远补不上,
+   铸令牌时务必核对这一条。
 2. **依赖**:`@aws-sdk/client-s3` 与 `@fikirtive/core`(脚本从 `packages/storage` 的
    package.json 起解析,仓库 `pnpm install` 过就行)、`node >= 22`。
 3. **碰生产确认锁**:两个脚本都用 `scripts/tools/_interlock.mjs`,跑之前要
@@ -100,7 +106,7 @@ R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
 
 输出「missing from backup」「CONFLICT」两类;非空即非零退出,方便接进监控。**这条差集命令
 不是只在演练前跑一次的东西——按固定周期(例如每日)跑它,非空才需要人看、确认后再
-`--apply` 回填,这是「什么可能漏备」①里说的那个漏备窗口唯一的闭合手段。**
+`--apply` 回填,这是「什么可能漏备、怎么发现」那条成因说的那个漏备窗口唯一的闭合手段。**
 
 ### 第 3 步 · 恢复命令
 
@@ -156,7 +162,7 @@ RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
 
 | 情况 | 处置 |
 |---|---|
-| **副本列不出来**(备份桶 `HeadObject` 返回 404/NotFound/NoSuchKey) | 脚本报 `EMPTY`,退出非零。不得从别处拼一份替代字节;当场升级给 Founder,先确认是不是本文件「什么可能漏备」①说的那种漏备窗口内发生的误删(先跑一次 `media-backup-backfill.mjs` 差集命令看这个 key 是不是就是被落下的那一个,再 grep `media_backup_replication_failed` 确认当时是否真的复制失败过)。 |
+| **副本列不出来**(备份桶 `HeadObject` 返回 404/NotFound/NoSuchKey) | 脚本报 `EMPTY`,退出非零。不得从别处拼一份替代字节;当场升级给 Founder,先确认是不是本文件「什么可能漏备、怎么发现」那条成因说的那种漏备窗口内发生的误删(先跑一次 `media-backup-backfill.mjs` 差集命令看这个 key 是不是就是被落下的那一个,再 grep `media_backup_replication_failed` 确认当时是否真的复制失败过)。 |
 | **权限不足**(凭据没有目标桶的读/写权限,S3 返回 403/AccessDenied 一类) | 脚本照实抛出原始错误,不吞、不重试成别的操作。核对拿到的是不是对的令牌(演练/只读令牌 vs 生产写令牌,见「前提」第 1 条),绝不为了跑通而升级令牌权限。 |
 | **键写错**(格式不对,或指向一个其实还活着的对象) | 格式不对 → `parseStorageKey` 直接拒绝,报「not a fikirtive storage key」。指向活对象 → 内容桶 `HeadObject` 命中,脚本报「already exists」并拒绝——内容寻址下已存在必然已经是对的字节,恢复到一个已经有内容的 key 上没有意义,也不会被允许覆盖。 |
 
@@ -181,9 +187,12 @@ RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
   - 对象键:完整 u/<ownerId>/<sha256>.<ext>
   - 实测 RTO:脚本打印的那一行数字(秒)
   - 命令输出片段:粘贴 media-restore-object.mjs --apply 的关键几行(RESTORED ... hash verified ...)
+  - 大对象耗时(MEDIA-A1/A4 适用,判官第三轮 NEW-P2-3):量一次接近 2 GiB 上限对象走
+    copyToBackup 的实际耗时。若逼近 P1-2 焊死的 10s requestTimeout 上限,把这个实测数值
+    回填进本文件,并评估是否要调整 finalize 路的超时——本轮只记录观察,代码超时本身不动。
   差集/回填不是只在演练前跑一次的事——按固定周期(例如每日)跑
   media-backup-backfill.mjs:默认 dry-run 只报差集,非空再加 --apply 真的回填。这是
-  「什么可能漏备」①说的那个漏备窗口唯一的闭合手段。演练前额外确认一次差集为零、
+  「什么可能漏备、怎么发现」那条成因说的那个漏备窗口唯一的闭合手段。演练前额外确认一次差集为零、
   再动手删对象——MEDIA-A2 要求的就是这个「回填已完成」的状态。
 -->
 

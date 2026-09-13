@@ -417,8 +417,16 @@ export class R2Storage implements Storage {
    * 权限前提:`backupClient` 的凭据必须同时具备目标(备份桶)的写权限与来源(内容桶)的读
    * 权限——CopyObject 的 copy-source 是从「发起请求的那把凭据」的视角去读的。`.env.example`
    * 里 R2_MEDIA_BACKUP_* 的注释已经补了这句。
+   *
+   * 判官第三轮 NEW-P2-2:`CopySource` 不做 `encodeURIComponent`。本仓的 key 字符集
+   * (`packages/core/src/storage-key.ts`:ownerId 只认 `[0-9A-Za-z_-]`、hash 是
+   * `[0-9a-f]{64}`、ext 是 `[0-9a-z]{1,8}`)与桶名都不含任何需要转义的字符,对整个
+   * `<bucket>/<key>` 做 URL 编码只会把 key 自身的路径分隔符 `/` 变成 `%2F`——R2 是否会把
+   * 它解回原样未经验证,不该赌它会。`parseStorageKey` 已经把 key 的字符集钉死,这里直接
+   * 拼接是安全的。
    */
   async copyToBackup(key: string): Promise<void> {
+    parseStorageKey(key); // NEW-P3-2:与 exists/deleteObject 同一惯例——键写错当场拒绝
     if (!this.backupClient || !this.backupBucket) return; // unconfigured = feature OFF, silently
     const backupClient = this.backupClient;
     const backupBucket = this.backupBucket;
@@ -429,7 +437,7 @@ export class R2Storage implements Storage {
           new CopyObjectCommand({
             Bucket: backupBucket,
             Key: key,
-            CopySource: `${encodeURIComponent(sourceBucket)}/${encodeURIComponent(key)}`,
+            CopySource: `${sourceBucket}/${key}`,
           }),
         );
       },

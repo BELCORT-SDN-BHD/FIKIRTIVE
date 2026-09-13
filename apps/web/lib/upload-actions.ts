@@ -282,26 +282,6 @@ async function finalizeCandidateUploadsInFrame(
         failures.push({ filename: file.originalFilename, reason: "size mismatch — upload rejected" });
         continue;
       }
-      // MEDIA-durability P1-5(判官第二轮,Founder 2026-09-13 对谈已裁选项 (a))—— 直传上传
-      // (presigned PUT/multipart)的字节从浏览器直接进内容桶,从不经过 storage.put(),所以
-      // put() 里的写路径同步复制(replicateToBackup)从没跑过这些对象。尺寸复核刚刚确认对象
-      // 真的落地(上面的 storage.sizeOf 就是那道复核),这里补一刀服务器端跨桶复制
-      // (CopyObjectCommand,字节不过这个进程)。覆盖 single 与 multipart 两种模式——两者都
-      // 走到这同一行,completeMultipart 已经在上面收了尾。跳过 "existed"(dedup 命中):
-      // 那个 key 第一次写入时就已经复制过一次,与 put() 自己的 dedup-skip 同一个理由(见
-      // packages/storage/src/index.ts 的 P2-1 注释)。copyToBackup() 契约是绝不抛错(重试
-      // 一次仍失败只记结构化日志),这里再包一层 try/catch 纯属防御,失败绝不能让这次上传的
-      // 收尾结果变成失败。
-      if (file.upload.mode !== "existed") {
-        try {
-          await storage.copyToBackup(key);
-        } catch (e) {
-          console.error(
-            `[upload] copyToBackup unexpectedly threw for ${key} (contract says it never should):`,
-            e instanceof Error ? e.message : e,
-          );
-        }
-      }
       verified.push({ key, file });
     } catch (e) {
       console.error(`[upload] finalize failed for ${key}:`, e instanceof Error ? e.message : e);
@@ -312,6 +292,33 @@ async function finalizeCandidateUploadsInFrame(
   if (verified.length === 0) {
     return { error: failures[0]?.reason ?? "No files could be finalized." };
   }
+
+  // MEDIA-durability P1-5(判官第二轮,Founder 2026-09-13 对谈已裁选项 (a);判官第三轮
+  // NEW-P1-1,并发化)—— 直传上传(presigned PUT/multipart)的字节从浏览器直接进内容桶,
+  // 从不经过 storage.put(),所以 put() 里的写路径同步复制(replicateToBackup)从没跑过这些
+  // 对象。这里补一刀服务器端跨桶复制(CopyObjectCommand,字节不过这个进程)。跳过
+  // "existed"(dedup 命中):那个 key 第一次写入时就已经复制过一次,与 put() 自己的
+  // dedup-skip 同一个理由(见 packages/storage/src/index.ts 的 P2-1 注释)。
+  //
+  // 判官第三轮 NEW-P1-1:这一刀曾经放在上面 for...of 循环的关键路径里,逐文件 await ——
+  // 一次 finalize 最多 50 个文件、每次 copyToBackup 单次上界约 20s(P1-2 的 10s 请求超时 ×
+  // 重试一次),串行等下来商家可见的挂起最坏能到 ~16.7 分钟。搬到这里、循环结束
+  // (verified 已经建好)之后一次性 Promise.all 并发发起,消除这条尾部延迟。
+  // copyToBackup() 自身契约是绝不抛错(重试一次仍失败只记结构化日志),这里的 .catch() 纯属
+  // 防御——即便它违反契约意外抛出,也绝不能让 Promise.all 因为一个 rejection 就让其余复制
+  // 半途而废,更不能让这次上传的收尾结果变成失败。
+  await Promise.all(
+    verified
+      .filter((v) => v.file.upload.mode !== "existed")
+      .map((v) =>
+        storage.copyToBackup(v.key).catch((e) => {
+          console.error(
+            `[upload] copyToBackup unexpectedly threw for ${v.key} (contract says it never should):`,
+            e instanceof Error ? e.message : e,
+          );
+        }),
+      ),
+  );
 
   // 工单 F: byte-verify each finalized IMAGE upload against the stored object — the browser declared
   // the ext, the bytes decide the persisted mime (a video renamed x.png → application/octet-stream,
