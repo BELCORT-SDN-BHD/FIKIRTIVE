@@ -871,6 +871,56 @@ export const ENV_CONTRACT: readonly EnvVarSpec[] = [
     summary: "Endpoint the backup credential talks to. Defaults to R2_ENDPOINT.",
   },
 
+  // ── 媒体对象备份复制(docs/specs/media-durability.md 已冻结·v2)────────────────
+  // R2 没有 object versioning(v1 口径已判死,证据见该规格 §1.4/§6)——这一组是它的
+  // 替代:内容桶每次写入时,packages/storage 的写路径同步复制一份到一个隔离的备份桶。
+  // 与上面的 R2_BACKUP_* 是两族不同的东西:那一族只管 `backups/` 前缀下的夜间 DB dump,
+  // 这一组管的是 u/<ownerId>/ 下的媒体对象——同名会让人以为数据库备份桶顺带存了媒体,
+  // 而它其实不会。四个都是 optional 且**要么全设要么全不设**(半配是硬启动错误,由
+  // packages/storage 的 mediaBackupR2Config() 硬拦,理由与 opsR2Config 相同:契约这里
+  // 只登记名字存在,组规则不重复写第二份可能与代码走散的真相)。**部署顺序上备份桶还没建
+  // 好,所以未配置时特性静默不激活**——这是刻意的允许状态,不是缺口。
+  {
+    name: "R2_MEDIA_BACKUP_ACCESS_KEY_ID",
+    surface: "both",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: true,
+    shared: false,
+    summary: "Media-backup-scoped R2 token id (docs/specs/media-durability.md). Unset = the write-path replication feature is OFF. Both halves of the credential or neither — a half-set family is a hard startup error.",
+  },
+  {
+    name: "R2_MEDIA_BACKUP_SECRET_ACCESS_KEY",
+    surface: "both",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: true,
+    shared: false,
+    summary: "Media-backup-scoped R2 token secret. Paired with R2_MEDIA_BACKUP_ACCESS_KEY_ID.",
+  },
+  {
+    name: "R2_MEDIA_BACKUP_BUCKET",
+    surface: "both",
+    readBy: "code",
+    requirement: "optional",
+    format: "free",
+    secret: false,
+    shared: false,
+    summary: "The isolated backup bucket media objects are replicated into (e.g. fikirtive-staging-backup). No default — unlike R2_BACKUP_BUCKET this is deliberately a DIFFERENT bucket, not a prefix in the content bucket.",
+  },
+  {
+    name: "R2_MEDIA_BACKUP_ENDPOINT",
+    surface: "both",
+    readBy: "code",
+    requirement: "optional",
+    format: "url",
+    secret: false,
+    shared: false,
+    summary: "Endpoint the media-backup credential talks to. Defaults to R2_ENDPOINT.",
+  },
+
   // ── 计费 ──────────────────────────────────────────────────────────────────
   {
     name: "STRIPE_SECRET_KEY",

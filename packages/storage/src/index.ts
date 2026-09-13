@@ -100,6 +100,30 @@ function hashOf(bytes: Uint8Array): string {
 }
 
 /**
+ * MEDIA-durability (docs/specs/media-durability.md §1.4/§4) — the write-path replication's
+ * retry/fail-open timing, pulled out as a pure function so the semantics are testable without
+ * a real object store: attempt `replicate` once; on failure, attempt it exactly once more;
+ * if that second attempt ALSO fails, call `onFailure` (a structured log, never a throw) and
+ * return normally. The caller's own write already succeeded by the time this runs — this
+ * function's whole job is to make sure a backup-side outage can never surface as an error to
+ * whoever called `put()`.
+ */
+export async function replicateWithRetry(
+  replicate: () => Promise<void>,
+  onFailure: (err: unknown) => void,
+): Promise<void> {
+  try {
+    await replicate();
+  } catch {
+    try {
+      await replicate();
+    } catch (err) {
+      onFailure(err);
+    }
+  }
+}
+
+/**
  * Read at most `maxBytes` from the START of an object, then stop — the bounded prefix the byte-sniff
  * media gate (工单 F) and ingest hand to the classifier. Reads via `readStream` and caps client-side,
  * so it is correct even if the driver ignores Range: the whole-object GET is abandoned once the cap
@@ -251,7 +275,17 @@ export class R2Storage implements Storage {
   readonly supportsDirectUpload = true;
 
   private client: S3Client;
-  constructor(private cfg: R2Config) {
+  /** MEDIA-durability (docs/specs/media-durability.md §1.2) — null when R2_MEDIA_BACKUP_* is
+   *  unset, which is the deliberate "replication off" state (buckets may not exist yet). */
+  private backupClient: S3Client | null;
+  private backupBucket: string | null;
+
+  constructor(
+    private cfg: R2Config,
+    /** MEDIA-durability — when set, put() synchronously replicates each newly written object
+     *  into this bucket right after the primary write succeeds. */
+    backupCfg?: R2Config | null,
+  ) {
     this.client = new S3Client({
       region: "auto",
       endpoint: cfg.endpoint,
@@ -259,6 +293,18 @@ export class R2Storage implements Storage {
       // MinIO needs path-style; R2 accepts it too — overridable via config
       forcePathStyle: cfg.forcePathStyle ?? true,
     });
+    if (backupCfg) {
+      this.backupClient = new S3Client({
+        region: "auto",
+        endpoint: backupCfg.endpoint,
+        credentials: { accessKeyId: backupCfg.accessKeyId, secretAccessKey: backupCfg.secretAccessKey },
+        forcePathStyle: backupCfg.forcePathStyle ?? true,
+      });
+      this.backupBucket = backupCfg.bucket;
+    } else {
+      this.backupClient = null;
+      this.backupBucket = null;
+    }
   }
 
   async put(ownerId: string, bytes: Uint8Array, ext: string) {
@@ -278,7 +324,43 @@ export class R2Storage implements Storage {
         ContentType: mimeOf(ext),
       }),
     );
+    // MEDIA-A1 — synchronous replication into the backup bucket. Runs only on the
+    // path that actually wrote new bytes (the dedup hit above returns before this);
+    // a re-upload of already-backed-up content on every cache hit would double the
+    // cost of every write for no durability gain — the manual diff command in
+    // docs/runbooks/media-restore.md is the intended catch-all for any gap this leaves.
+    await this.replicateToBackup(key, bytes, ext);
     return { contentHash, key };
+  }
+
+  /**
+   * MEDIA-durability §1.4/§4 failure semantics: try once, retry once on failure, and if the
+   * retry ALSO fails, log a structured error and return — NEVER throw. A backup outage must
+   * never turn into a merchant-visible upload/generation failure; the retry/log timing lives
+   * in the standalone `replicateWithRetry` so it is testable without a real object store.
+   */
+  private async replicateToBackup(key: string, bytes: Uint8Array, ext: string): Promise<void> {
+    if (!this.backupClient || !this.backupBucket) return; // unconfigured = feature OFF, silently
+    const backupClient = this.backupClient;
+    const backupBucket = this.backupBucket;
+    await replicateWithRetry(
+      async () => {
+        await backupClient.send(
+          new PutObjectCommand({ Bucket: backupBucket, Key: key, Body: bytes, ContentType: mimeOf(ext) }),
+        );
+      },
+      (err) => {
+        console.error(
+          JSON.stringify({
+            event: "media_backup_replication_failed",
+            spec: "docs/specs/media-durability.md",
+            key,
+            bucket: backupBucket,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      },
+    );
   }
 
   async exists(key: string): Promise<boolean> {
@@ -709,6 +791,55 @@ export function createOpsBucket(): R2OpsBucket | null {
   return new R2OpsBucket(cfg, cfg.mode);
 }
 
+/* ---------------- media backup replication (MEDIA-durability, docs/specs/media-durability.md) ---------------- */
+
+/**
+ * Resolves the credentials `R2Storage.put()` replicates media objects into.
+ *
+ * A DIFFERENT env group from `opsR2Config`'s R2_BACKUP_* (that one is the `backups/` prefix for
+ * nightly DB dumps, defaulting to the SAME bucket as content). This one targets a SEPARATE
+ * bucket for `u/<ownerId>/` media objects — there is no sensible default bucket (copying into
+ * the content bucket itself would defeat the point), so R2_MEDIA_BACKUP_BUCKET is mandatory
+ * the moment any var in this group is set.
+ *
+ * Returns null when NOTHING in the group is set — the deliberate, documented "replication is
+ * OFF" state (deploy order builds the backup buckets after this code ships; §1.2/§8 of the
+ * spec). Throws on any half-set combination — a lone or partial value must never look
+ * configured while silently doing less than it claims (same discipline as `opsR2Config`).
+ */
+export function mediaBackupR2Config(): R2Config | null {
+  const {
+    R2_MEDIA_BACKUP_ACCESS_KEY_ID,
+    R2_MEDIA_BACKUP_SECRET_ACCESS_KEY,
+    R2_MEDIA_BACKUP_BUCKET,
+    R2_MEDIA_BACKUP_ENDPOINT,
+  } = process.env;
+  const anySet = Boolean(
+    R2_MEDIA_BACKUP_ACCESS_KEY_ID || R2_MEDIA_BACKUP_SECRET_ACCESS_KEY || R2_MEDIA_BACKUP_BUCKET || R2_MEDIA_BACKUP_ENDPOINT,
+  );
+  if (!anySet) return null; // unconfigured = feature inactive, silently (docs/specs/media-durability.md §1.2)
+  if (!R2_MEDIA_BACKUP_ACCESS_KEY_ID || !R2_MEDIA_BACKUP_SECRET_ACCESS_KEY || !R2_MEDIA_BACKUP_BUCKET) {
+    throw new Error(
+      "R2_MEDIA_BACKUP_* is only partially set. Media backup replication requires " +
+        "R2_MEDIA_BACKUP_ACCESS_KEY_ID, R2_MEDIA_BACKUP_SECRET_ACCESS_KEY and R2_MEDIA_BACKUP_BUCKET " +
+        "together (R2_MEDIA_BACKUP_ENDPOINT is optional and defaults to R2_ENDPOINT). Set the full " +
+        "group or unset every R2_MEDIA_BACKUP_* — a lone or half-set value never silently disables " +
+        "or half-enables replication.",
+    );
+  }
+  const endpoint = R2_MEDIA_BACKUP_ENDPOINT || process.env.R2_ENDPOINT;
+  if (!endpoint) {
+    throw new Error("R2_MEDIA_BACKUP_* is set but neither R2_MEDIA_BACKUP_ENDPOINT nor R2_ENDPOINT is set");
+  }
+  return {
+    endpoint,
+    accessKeyId: R2_MEDIA_BACKUP_ACCESS_KEY_ID,
+    secretAccessKey: R2_MEDIA_BACKUP_SECRET_ACCESS_KEY,
+    bucket: R2_MEDIA_BACKUP_BUCKET,
+    forcePathStyle: process.env.R2_FORCE_PATH_STYLE !== "false",
+  };
+}
+
 /* ---------------- env factory ---------------- */
 
 /**
@@ -723,13 +854,16 @@ export function createStorage(localRoot: string): Storage {
     if (!R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET) {
       throw new Error("STORAGE_DRIVER=r2 but R2_ENDPOINT/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET are not all set");
     }
-    return new R2Storage({
-      endpoint: R2_ENDPOINT,
-      accessKeyId: R2_ACCESS_KEY_ID,
-      secretAccessKey: R2_SECRET_ACCESS_KEY,
-      bucket: R2_BUCKET,
-      forcePathStyle: process.env.R2_FORCE_PATH_STYLE !== "false",
-    });
+    return new R2Storage(
+      {
+        endpoint: R2_ENDPOINT,
+        accessKeyId: R2_ACCESS_KEY_ID,
+        secretAccessKey: R2_SECRET_ACCESS_KEY,
+        bucket: R2_BUCKET,
+        forcePathStyle: process.env.R2_FORCE_PATH_STYLE !== "false",
+      },
+      mediaBackupR2Config(), // MEDIA-durability — null (replication off) unless R2_MEDIA_BACKUP_* is fully set
+    );
   }
   return new LocalDiskStorage(localRoot);
 }
