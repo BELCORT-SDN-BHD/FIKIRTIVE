@@ -25,6 +25,7 @@
     "test": "pnpm -r test",
     "quality": "bash scripts/ci/quality.sh",
     "e2e": "playwright test -c e2e/playwright.config.ts",
+    "e2e:count": "node e2e/count-journeys.mjs",
     "db:generate": "pnpm --filter @fikirtive/db generate",
     "db:migrate": "pnpm --filter @fikirtive/db migrate:dev"
   },

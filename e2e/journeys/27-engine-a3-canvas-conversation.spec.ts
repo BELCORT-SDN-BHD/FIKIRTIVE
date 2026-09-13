@@ -1,5 +1,5 @@
 /**
- * ENGINE-A3 —— 画布输入即对话（docs/specs/otto-engine.md 验收表第三行 · S2 §7.2⑦）。
+ * Journey 27 — ENGINE-A3:画布输入即对话（docs/specs/otto-engine.md 验收表第三行 · S2 §7.2⑦）。
  *
  * 验收原话:「商家在画布输入框发消息 ⇒ 得到 Otto 对话回复(非直接生成);花钱动作仍走卡片确认」。
  *

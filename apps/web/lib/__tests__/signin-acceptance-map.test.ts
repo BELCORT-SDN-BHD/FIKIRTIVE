@@ -71,7 +71,7 @@ describe("登录门规格 · 17 条验收的落点地图", () => {
   //                   better-auth-oauth-session-gate.test.ts（会话闸的库内接线，既有）
 
   // ⑤ 端到端旅程（issue #1320）—— 最后一行 it.todo 换成了真旅程：
-  //    · SIGNIN-A12 → e2e/journeys/23-two-doors-one-workspace.spec.ts（码门首登 → 生成一张图
+  //    · SIGNIN-A12 → e2e/journeys/26-two-doors-one-workspace.spec.ts（码门首登 → 生成一张图
   //                   → 登出 → 同邮箱 Google 门 → 看到同一张图、同一个工作区；外加一条反证：
   //                   同一份载荷只把签名改掉 → 401 INVALID_TOKEN 且不留行，换回对的签名 → 200）
 
