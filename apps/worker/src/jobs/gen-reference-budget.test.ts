@@ -44,7 +44,8 @@ const m = vi.hoisted(() => {
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
   const generateImages = vi.fn();
-  const generateVideo = vi.fn();
+  const submitVideo = vi.fn();
+  const pollVideo = vi.fn();
   const storagePresignedGet = vi.fn();
   const storagePut = vi.fn();
   const storage = { presignedGet: storagePresignedGet, put: storagePut };
@@ -65,13 +66,13 @@ const m = vi.hoisted(() => {
     prisma, genJobFindUnique, genJobUpdate, genJobUpdateMany, projectFindFirst, generationFindFirst,
     generationCreate, entityFindFirst, entityVariantFindFirst, referenceImageFindMany,
     chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst, assetUpsert, refundReservation,
-    settleCredits, generateImages, generateVideo, storagePresignedGet, storagePut, storage,
+    settleCredits, generateImages, submitVideo, pollVideo, storagePresignedGet, storagePut, storage,
   };
 });
 
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", submitVideo: m.submitVideo, pollVideo: m.pollVideo, generate: m.generateImages } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { referenceBudget, MAX_CONDITIONING_IMAGES, MAX_VIDEO_IMAGE_PARTS } from "@fikirtive/core";
@@ -364,14 +365,14 @@ describe("#619 E-5 —— 卡面数字 = worker 真正发出去的参考图张�
 
     it("视频 prompt 一个编号都不加 —— 元素参考照根本到不了视频引擎", async () => {
       m.referenceImageFindMany.mockImplementation(async () => refsFor(0, 3));
-      m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+      m.submitVideo.mockResolvedValue({ providerTaskId: "task-budget-1" });
 
       m.genJobFindUnique.mockResolvedValue({
         ...imageJob, kind: "VIDEO", model: "seedance-2-mini", entityIds: ["e0"], sourceGenerationId: "gen_src",
       });
       await handleGen({ genJobId: "g1" }, 0);
 
-      expect(m.generateVideo.mock.calls[0]![0].prompt).toBe(imageJob.prompt);
+      expect(m.submitVideo.mock.calls[0]![0].prompt).toBe(imageJob.prompt);
     });
   });
 
@@ -526,13 +527,13 @@ describe("#619 E-5 —— 卡面数字 = worker 真正发出去的参考图张�
 describe("#785 —— 视频卡说的张数 = worker 真正发给视频引擎的参考照", () => {
   const videoJob = { ...imageJob, kind: "VIDEO", model: "seedance-2-mini" };
 
-  /** 真跑一次 handleGen,交回 provider.generateVideo 真正收到的 refImageUrls。 */
+  /** 真跑一次 handleGen,交回 provider.submitVideo 真正收到的 refImageUrls。 */
   async function refImageUrlsFromRealWorker(job: Record<string, unknown>): Promise<string[]> {
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    m.submitVideo.mockResolvedValue({ providerTaskId: "task-budget-1" });
     m.genJobFindUnique.mockResolvedValue(job);
     await handleGen({ genJobId: "g1" }, 0);
-    expect(m.generateVideo, "the paid call must have happened for this case to mean anything").toHaveBeenCalledTimes(1);
-    return (m.generateVideo.mock.calls[0]![0].refImageUrls as string[] | undefined) ?? [];
+    expect(m.submitVideo, "the paid call must have happened for this case to mean anything").toHaveBeenCalledTimes(1);
+    return (m.submitVideo.mock.calls[0]![0].refImageUrls as string[] | undefined) ?? [];
   }
 
   function mockRefs(perEntityLiveCounts: number[]): string[] {
@@ -597,10 +598,10 @@ describe("#785 —— 视频卡说的张数 = worker 真正发给视频引擎的
 
   it("没有 @元素时,发给视频引擎的请求里根本没有 refImageUrls 这个字段(旧行为逐字不变)", async () => {
     m.referenceImageFindMany.mockImplementation(async () => []);
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    m.submitVideo.mockResolvedValue({ providerTaskId: "task-budget-1" });
     m.genJobFindUnique.mockResolvedValue({ ...videoJob, entityIds: [] });
     await handleGen({ genJobId: "g1" }, 0);
-    expect(m.generateVideo.mock.calls[0]![0]).not.toHaveProperty("refImageUrls");
+    expect(m.submitVideo.mock.calls[0]![0]).not.toHaveProperty("refImageUrls");
   });
 
   // -------------------------------------------------------------------------
@@ -663,7 +664,7 @@ describe("#785 —— 视频卡说的张数 = worker 真正发给视频引擎的
 // (staging E2E 2026-09-08;规格 docs/specs/creation-engine.md §5 FSE-001 行)
 //
 // 卡上冻的是「演员的照片 + 这张商品图,一起送」。这里跑真 `handleGen`,拿它真正交给
-// `provider.generateVideo` 的那一份对表:张数、次序、以及首帧那一格必须是空的 ——
+// `provider.submitVideo` 的那一份对表:张数、次序、以及首帧那一格必须是空的 ——
 // 首帧一旦有值,这一趟就变回了被视频端拒收、并且真的退过一次款的那条合成路。
 //
 // 商品图的来源是 `GenJob.videoOptions.referenceGenerationIds`(入队时冻下的规格快照),
@@ -676,10 +677,10 @@ describe("FSE-001 —— 演员照 + 商品图两张参考,一趟送进视频引
   const MUG_URL = urlOf(MUG_HASH);
 
   async function paidVideoCall(job: Record<string, unknown>) {
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    m.submitVideo.mockResolvedValue({ providerTaskId: "task-budget-1" });
     m.genJobFindUnique.mockResolvedValue(job);
     await handleGen({ genJobId: "g1" }, 0);
-    return m.generateVideo.mock.calls[0]?.[0] as
+    return m.submitVideo.mock.calls[0]?.[0] as
       | { imageUrl: string; refImageUrls?: string[]; castMemberInReferences?: boolean }
       | undefined;
   }
@@ -740,7 +741,7 @@ describe("FSE-001 —— 演员照 + 商品图两张参考,一趟送进视频引
     });
 
     expect(call).toBeUndefined();
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     expect(m.refundReservation).toHaveBeenCalled();
     expect(m.settleCredits).not.toHaveBeenCalled();
   });
@@ -931,7 +932,7 @@ describe("FSE-001 同族 —— 起始帧的每一条读都带 ownerId", () => {
       updateMany: vi.fn(async () => ({ count: 1 })),
     };
     m.prisma.generation.update = vi.fn(async () => ({}));
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    m.submitVideo.mockResolvedValue({ providerTaskId: "task-budget-1" });
     m.generationFindFirst.mockResolvedValue({
       id: "gen_shot_frame",
       asset: { ownerId: "o1", contentHash: BASE_HASH, ext: "png" },

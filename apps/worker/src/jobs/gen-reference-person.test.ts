@@ -39,7 +39,8 @@ const m = vi.hoisted(() => {
   const creditLedgerFindFirst = vi.fn();
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
-  const generateVideo = vi.fn();
+  const submitVideo = vi.fn();
+  const pollVideo = vi.fn();
   const generateImages = vi.fn();
   const storagePresignedGet = vi.fn(async () => "https://signed/frame.png");
   const storage = { presignedGet: storagePresignedGet, put: vi.fn() };
@@ -58,7 +59,7 @@ const m = vi.hoisted(() => {
     prisma, genJobFindUnique, genJobUpdate, genJobUpdateMany, projectFindFirst, generationFindFirst,
     entityFindMany, entityFindFirst, referenceImageFindMany,
     chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst,
-    refundReservation, settleCredits, generateVideo, generateImages, storage,
+    refundReservation, settleCredits, submitVideo, pollVideo, generateImages, storage,
   };
 });
 
@@ -69,7 +70,7 @@ vi.mock("@fikirtive/db", () => ({
   settleCanvasCardsForGenJob: vi.fn(async () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })),
 }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", submitVideo: m.submitVideo, pollVideo: m.pollVideo, generate: m.generateImages } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set<string>()) }));
 
 import { handleGen } from "./gen.js";
@@ -104,7 +105,7 @@ beforeEach(() => {
   m.creditLedgerFindFirst.mockResolvedValue(null);
   // the i2v source still resolves fine — the picture is only refused by the engine
   m.generationFindFirst.mockResolvedValue({ id: "gen_src", asset: { ownerId: "o1", contentHash: "a".repeat(64), ext: "png" } });
-  m.generateVideo.mockRejectedValue(refusal());
+  m.submitVideo.mockRejectedValue(refusal());
 });
 
 /** The FAILED write this delivery made, if it made one. */
@@ -122,7 +123,7 @@ describe("#765 the engine refuses a reference image showing a real person", () =
 
     expect(requeueWrite()).toBeUndefined();
     expect(terminalWrite()).toBeTruthy();
-    expect(m.generateVideo).toHaveBeenCalledTimes(1);
+    expect(m.submitVideo).toHaveBeenCalledTimes(1);
   });
 
   // CREATE-A9(规格 docs/specs/creation-engine.md)——「被拒的那一单余额净变化为 0」的
@@ -189,7 +190,7 @@ describe("#765 the engine refuses a reference image showing a real person", () =
   // ── FAIL CLOSED: an ordinary failure must be untouched by all of the above. ───────────────
   it("an ordinary provider failure still retries and still gets the generic apology", async () => {
     m.genJobFindUnique.mockResolvedValue({ ...ottoJob });
-    m.generateVideo.mockRejectedValue(new Error("generation provider video submit failed (429)"));
+    m.submitVideo.mockRejectedValue(new Error("generation provider video submit failed (429)"));
 
     await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
 
@@ -201,7 +202,7 @@ describe("#765 the engine refuses a reference image showing a real person", () =
 
   it("an ordinary failure that exhausts its retries says the generic thing, not merchant advice", async () => {
     m.genJobFindUnique.mockResolvedValue({ ...ottoJob });
-    m.generateVideo.mockRejectedValue(new Error("generation provider video submit failed (429)"));
+    m.submitVideo.mockRejectedValue(new Error("generation provider video submit failed (429)"));
 
     await expect(handleGen({ genJobId: "g1" }, 99)).rejects.toThrow();
 
@@ -229,12 +230,12 @@ describe("#765 the engine refuses a reference image showing a real person", () =
  */
 describe("FSE-001 the person-refusal copy forks on whether a cast member is in the picture", () => {
   /** 这一趟真正发给适配器的 VideoRequest。 */
-  const videoRequest = () => m.generateVideo.mock.calls[0]![0];
+  const videoRequest = () => m.submitVideo.mock.calls[0]![0];
 
   beforeEach(() => {
     // 适配器就是这样选句子的(`byteplus.ts` 的 `paidPost(..., personRejectionSentence(...))`),
     // 所以这里连同**商家最后读到的那一句**一起钉,而不是只钉一格布尔量。
-    m.generateVideo.mockImplementation(async (req: { castMemberInReferences?: boolean }) => {
+    m.submitVideo.mockImplementation(async (req: { castMemberInReferences?: boolean }) => {
       throw Object.assign(new Error(personRejectionSentence(req.castMemberInReferences)), { permanent: true as const });
     });
   });

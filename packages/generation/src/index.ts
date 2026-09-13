@@ -13,7 +13,7 @@
  * shared money-safety primitives byteplus.ts imports from this file.
  */
 import { deflateSync, crc32 } from "node:zlib";
-import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo } from "@fikirtive/core";
+import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, VideoSubmission, VideoPollResult } from "@fikirtive/core";
 import { GENERATION_ENGINE_UNAVAILABLE, imageOutputSize } from "@fikirtive/core";
 import { BytePlusProvider } from "./byteplus.js";
 
@@ -96,7 +96,17 @@ export class MockProvider implements GenerationProvider {
       ext: "png",
     }));
   }
-  async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
+  /**
+   * #1435(零排队)— submit-only, deterministic and $0 like every other mock path. Unlike the
+   * real provider there is no actual async task to hand a task id for, so this stand-in stays
+   * STATELESS the same way the rest of this class already is (no module-level Map, no
+   * test-ordering dependency): it computes the exact video (and optional last frame) `pollVideo`
+   * would need to return, and carries that payload AS the "provider task id" (base64 JSON) —
+   * `pollVideo` below just decodes it back out. Real task ids are opaque strings the worker never
+   * inspects (`VideoSubmission`'s doc comment), so this is a legal value of that same type; it is
+   * simply this provider's own choice of what to put in the handle.
+   */
+  async submitVideo(req: VideoRequest): Promise<VideoSubmission> {
     // a real, decodable 1s mp4 — content is the same for every mock i2v
     // (dedup is fine for tests; the real provider returns distinct clips)
     const video: GeneratedVideo = { bytes: new Uint8Array(Buffer.from(MOCK_MP4_B64, "base64")), ext: "mp4" };
@@ -107,8 +117,37 @@ export class MockProvider implements GenerationProvider {
     if (req.returnLastFrame) {
       video.lastFrame = { bytes: solidPng(hashSeed(`tail|${req.prompt}|${req.imageUrl}`) + 1, 8, 8), ext: "png" };
     }
-    return video;
+    return { providerTaskId: encodeMockVideoTask(video) };
   }
+
+  /** #1435 — decodes the payload `submitVideo` encoded above and returns it `succeeded`
+   *  immediately: the mock has no real "still rendering" state to model, so there is nothing
+   *  honest a `pending` result would mean here — every real provider call this stands in for is
+   *  synchronous from the worker's point of view on the very next poll. */
+  async pollVideo(providerTaskId: string): Promise<VideoPollResult> {
+    return { status: "succeeded", video: decodeMockVideoTask(providerTaskId) };
+  }
+}
+
+/** #1435 — MockProvider's video "task id" IS its payload (see `submitVideo` above): bytes/ext/
+ *  lastFrame round-tripped through base64 JSON so the class holds no state between the two
+ *  calls. `Uint8Array` doesn't survive JSON directly, so each byte array rides as base64 too. */
+function encodeMockVideoTask(video: GeneratedVideo): string {
+  const toB64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
+  return Buffer.from(JSON.stringify({
+    bytes: toB64(video.bytes), ext: video.ext,
+    ...(video.lastFrame ? { lastFrame: { bytes: toB64(video.lastFrame.bytes), ext: video.lastFrame.ext } } : {}),
+  })).toString("base64");
+}
+
+function decodeMockVideoTask(providerTaskId: string): GeneratedVideo {
+  const raw = JSON.parse(Buffer.from(providerTaskId, "base64").toString("utf8")) as {
+    bytes: string; ext: string; lastFrame?: { bytes: string; ext: string };
+  };
+  return {
+    bytes: new Uint8Array(Buffer.from(raw.bytes, "base64")), ext: raw.ext,
+    ...(raw.lastFrame ? { lastFrame: { bytes: new Uint8Array(Buffer.from(raw.lastFrame.bytes, "base64")), ext: raw.lastFrame.ext } } : {}),
+  };
 }
 
 function hashSeed(s: string): number {
@@ -199,7 +238,14 @@ export class UnconfiguredProvider implements GenerationProvider {
     this.refuse("an image generation");
   }
 
-  async generateVideo(_req: VideoRequest): Promise<GeneratedVideo> {
+  async submitVideo(_req: VideoRequest): Promise<VideoSubmission> {
+    this.refuse("a video generation");
+  }
+
+  /** #1435 — unreachable in production (submitVideo always throws first, so no providerTaskId
+   *  is ever persisted for a poll to find), implemented anyway so this class stays a total
+   *  GenerationProvider rather than one with a method that silently does nothing if ever called. */
+  async pollVideo(_providerTaskId: string): Promise<VideoPollResult> {
     this.refuse("a video generation");
   }
 }
@@ -279,14 +325,16 @@ export function createGenerationProvider(env: NodeJS.ProcessEnv = process.env): 
   return new MockProvider();
 }
 
-/** #796 — the first clock in the worker's stale/expire/reap chain. Re-exported here because
- *  `.` is this package's only export path; the invariant test reads it from the real source. */
-export { VIDEO_POLL_TIMEOUT_MS } from "./byteplus.js";
+/** #1435(零排队)— how long from a video's SUBMISSION the worker keeps rescheduling polls
+ *  before giving up (see the constant's own doc comment in byteplus.ts for the full account).
+ *  Re-exported here because `.` is this package's only export path; the invariant test
+ *  (QUEUE-A6) reads it from the real source. */
+export { VIDEO_SUBMISSION_ABANDON_MS } from "./byteplus.js";
 
 /** Creation §5 :177 —— 图片那条路的第一环:同步渲染 POST 的截止时间,加上它后面那段结果
  *  下载。两个加起来就是「一次正常的图片尝试最坏在途多久」,而那个数必须小于 stale ——
  *  和 `VIDEO_POLL_TIMEOUT_MS` 同一条链,所以同样从 `.` 导出给不变式测试读。 */
-export { ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS } from "./byteplus.js";
+export { ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS, ARK_CONTROL_TIMEOUT_MS } from "./byteplus.js";
 
 /** #796 判官 r1 P1-1 — the REQUEST-level ceiling every paid provider call passes through, and the
  *  numbers the worker prints in its boot log. Exported through `.` for the same reason. */

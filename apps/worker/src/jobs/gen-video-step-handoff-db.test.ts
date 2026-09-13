@@ -17,12 +17,13 @@ import { randomUUID } from "node:crypto";
 
 const m = vi.hoisted(() => ({
   generateImages: vi.fn(),
-  generateVideo: vi.fn(),
+  submitVideo: vi.fn(),
+  pollVideo: vi.fn(),
   storagePut: vi.fn(),
   storagePresignedGet: vi.fn(),
 }));
 vi.mock("../storage.js", () => ({ storage: { put: m.storagePut, presignedGet: m.storagePresignedGet } }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, generateVideo: m.generateVideo } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, submitVideo: m.submitVideo, pollVideo: m.pollVideo } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { prisma, reserveCredits } from "@fikirtive/db";

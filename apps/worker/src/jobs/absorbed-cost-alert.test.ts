@@ -59,7 +59,10 @@ describe("MONEY-A13:吸收成本的金额与落库的 spentUsd 同源", () => {
     const src = source("./gen.ts");
     // 手抄的那一版长这样:`genSpentUsd({ kind: job.kind, ...`。它一个都不许再出现。
     expect(src).not.toMatch(/genSpentUsd\(\{\s*kind:/);
-    expect(src.match(/genSpentUsd\(genSpendArgsOf\(job\)\)/g)?.length).toBe(4);
+    // #1435 —— 5 处(原 4 处不变,新增一处):视频提交成功但这一单已经被并发的另一次投递
+    // 抢先 FAILED+退款(REDELIVERY_DISCARD,`persistVideoProviderTaskWithRetry` 的调用点)
+    // 时,平台自付这次引擎调用,同一条纪律要求它报的金额与别处同源,不许另起一份手抄参数。
+    expect(src.match(/genSpentUsd\(genSpendArgsOf\(job\)\)/g)?.length).toBe(5);
     expect(src).toContain("absorbedUsd: genSpentUsd(genSpendArgsOf(job))");
   });
 

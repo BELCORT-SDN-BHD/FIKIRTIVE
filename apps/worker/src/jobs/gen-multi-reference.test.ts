@@ -34,7 +34,8 @@ const m = vi.hoisted(() => {
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
   const generateImages = vi.fn();
-  const generateVideo = vi.fn();
+  const submitVideo = vi.fn();
+  const pollVideo = vi.fn();
   const storagePresignedGet = vi.fn();
   const storagePut = vi.fn();
   const storage = { presignedGet: storagePresignedGet, put: storagePut };
@@ -55,13 +56,13 @@ const m = vi.hoisted(() => {
     prisma, genJobFindUnique, genJobUpdate, genJobUpdateMany, projectFindFirst, generationFindFirst,
     generationCreate, entityFindFirst, entityVariantFindFirst, referenceImageFindMany,
     chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst, assetUpsert, refundReservation,
-    settleCredits, generateImages, generateVideo, storagePresignedGet, storagePut, storage,
+    settleCredits, generateImages, submitVideo, pollVideo, storagePresignedGet, storagePut, storage,
   };
 });
 
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", submitVideo: m.submitVideo, pollVideo: m.pollVideo, generate: m.generateImages } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { referenceBudget, MAX_CONDITIONING_IMAGES, cardReferenceRoleLabel } from "@fikirtive/core";

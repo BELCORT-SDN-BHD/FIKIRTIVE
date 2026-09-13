@@ -44,7 +44,8 @@ const m = vi.hoisted(() => {
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
   const generateImages = vi.fn();
-  const generateVideo = vi.fn();
+  const submitVideo = vi.fn();
+  const pollVideo = vi.fn();
   const storagePresignedGet = vi.fn();
   const storagePut = vi.fn();
   const storage = { presignedGet: storagePresignedGet, put: storagePut };
@@ -71,7 +72,7 @@ const m = vi.hoisted(() => {
   return {
     prisma, genJobFindUnique, genJobUpdate, genJobUpdateMany, projectFindFirst, generationFindFirst,
     generationCreate, generationUpdateMany, chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst, assetUpsert,
-    refundReservation, settleCredits, generateImages, generateVideo, storagePresignedGet, storagePut, storage,
+    refundReservation, settleCredits, generateImages, submitVideo, pollVideo, storagePresignedGet, storagePut, storage,
     entityFindFirst, entityVariantFindFirst, referenceImageFindMany,
   };
 });
@@ -84,7 +85,7 @@ vi.mock("@fikirtive/db", () => ({
   settleCanvasCardsForGenJob: vi.fn(async () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })),
 }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", submitVideo: m.submitVideo, pollVideo: m.pollVideo, generate: m.generateImages } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { handleGen } from "./gen.js";
@@ -136,9 +137,22 @@ beforeEach(() => {
  * 位置本身就是断言的一部分:`commit` 是钱那一笔(事务内),`receiptPrompts` / `receiptUnits`
  * 是回执那几笔(事务外)。r1 把回执塞在 commit 里,于是一个记账字段有了否决交付的权力;
  * 分开取值,任何一次悄悄挪回去都会让下面的用例红。
+ *
+ * #1435 —— 视频那一份「完工」现在只能走**恢复轮询**:本文件绝大多数 video 用例关心的是
+ * 「回执/完工那一刻写了什么」,不关心提交请求本身,所以这里把 VIDEO 作业自动补上一个
+ * 在飞任务标记(与 `persistVideoProviderTaskWithRetry` 写完之后库里真正的形状一致),直接从
+ * resume 分支起跑,调用方不必逐个用例手写这一段。真正需要检查「提交那一刻送了什么」的用例
+ * (见下面 `sentVsStored` 的视频分支)会自己多跑一次真实的提交投递。
  */
 async function runWorker(job: Record<string, unknown>) {
-  m.genJobFindUnique.mockResolvedValue(job);
+  const augmented = job.kind === "VIDEO"
+    ? {
+        ...job,
+        status: "GENERATING",
+        videoOptions: { ...(job.videoOptions as object ?? {}), providerTask: { id: "task-receipt-1", submittedAt: new Date().toISOString() } },
+      }
+    : job;
+  m.genJobFindUnique.mockResolvedValue(augmented);
   await handleGen({ genJobId: "g1" }, 0);
   const generationRows = m.generationCreate.mock.calls.map((c) => (c[0] as { data: Record<string, unknown> }).data);
   const genJobWrites = m.genJobUpdateMany.mock.calls.map((c) => c[0] as { where: Record<string, unknown>; data: Record<string, unknown> });
@@ -186,7 +200,7 @@ describe("#776 引擎自报的提示词落在产出行上", () => {
   });
 
   it("视频同样落库", async () => {
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4", receipt: { finalPrompt: "slow push-in on the product", billedUnits: 108_900 } });
+    m.pollVideo.mockResolvedValue({ status: "succeeded", video: { bytes: new Uint8Array([1]), ext: "mp4", receipt: { finalPrompt: "slow push-in on the product", billedUnits: 108_900 } } });
     const { receiptPrompts } = await runWorker({ ...videoJob });
     expect(receiptPrompts[0]!.data.finalPromptText).toBe("slow push-in on the product");
   });
@@ -214,15 +228,34 @@ describe("#776 引擎自报的提示词落在产出行上", () => {
  * 的任务形状」逐条跑,而「只有这一个发送点」这一条本身由文末的源码闸钉住。
  */
 describe("#914 r4(判官 r3)实际送出的那一整句落库,五类入口同一个发送点", () => {
-  /** 真跑一次 handleGen,把「引擎真正收到的那句」和「落进产出行那一列的那句」并排交回。 */
+  /**
+   * 真跑一次 handleGen,把「引擎真正收到的那句」和「落进产出行那一列的那句」并排交回。
+   *
+   * #1435 —— 视频的「送」与「落库」现在天然是两次独立投递,不再是同一次调用能同时观察到的
+   * 两件事:先真的提交一次(捕获 `submitVideo` 收到的 prompt),再真的恢复轮询到终态
+   * (`runWorker` 自动补上在飞任务标记、走 resume,捕获落库的那一列)。两段都是真跑的
+   * `handleGen`,没有一处是测试自己重算的表达式——图片路径不受影响,仍是单次调用。
+   */
   async function sentVsStored(job: Record<string, unknown>) {
+    if (job.kind === "VIDEO") {
+      m.submitVideo.mockResolvedValue({ providerTaskId: "task-receipt-sent" });
+      m.genJobFindUnique.mockResolvedValue(job);
+      await handleGen({ genJobId: "g1" }, 0);
+      const sentCall = m.submitVideo.mock.calls[0]?.[0] as { prompt: string } | undefined;
+      expect(sentCall, "这一条用例要有意义,付费调用必须真的发生过").toBeDefined();
+      const out = await runWorker(job);
+      return {
+        sent: sentCall!.prompt,
+        stored: out.generationRows.map((r) => r.sentPromptText as string | undefined),
+        rows: out.generationRows,
+        receiptPrompts: out.receiptPrompts,
+      };
+    }
     const out = await runWorker(job);
     const imageCall = m.generateImages.mock.calls[0]?.[0] as { prompt: string } | undefined;
-    const videoCall = m.generateVideo.mock.calls[0]?.[0] as { prompt: string } | undefined;
-    const call = imageCall ?? videoCall;
-    expect(call, "这一条用例要有意义,付费调用必须真的发生过").toBeDefined();
+    expect(imageCall, "这一条用例要有意义,付费调用必须真的发生过").toBeDefined();
     return {
-      sent: call!.prompt,
+      sent: imageCall!.prompt,
       stored: out.generationRows.map((r) => r.sentPromptText as string | undefined),
       rows: out.generationRows,
       receiptPrompts: out.receiptPrompts,
@@ -307,7 +340,7 @@ describe("#914 r4(判官 r3)实际送出的那一整句落库,五类入口同一
   });
 
   it("⑥ 视频零回归 —— 视频分支照旧送 job.prompt(一个编号句都不加),而且同样落库", async () => {
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    m.pollVideo.mockResolvedValue({ status: "succeeded", video: { bytes: new Uint8Array([1]), ext: "mp4" } });
     const { sent, stored } = await sentVsStored({ ...videoJob });
     expect(stored).toEqual([sent]);
     expect(sent).toBe(videoJob.prompt);
@@ -368,7 +401,7 @@ describe("#914 r6 —— **整个 worker** 里的付费发送点全部有记录,
   /** 一个付费发送点 = 一处 `provider.generate*({ prompt: <表达式>` 。 */
   function sendSites(): { file: string; arg: string }[] {
     return workerSources().flatMap(({ file, src }) =>
-      [...src.matchAll(/provider\.(?:generate|generateVideo)\(\{\s*(?:\/\/[^\n]*\n\s*)*prompt:\s*([A-Za-z0-9_.()]+)/g)]
+      [...src.matchAll(/provider\.(?:generate|submitVideo)\(\{\s*(?:\/\/[^\n]*\n\s*)*prompt:\s*([A-Za-z0-9_.()]+)/g)]
         .map((match) => ({ file, arg: match[1]! })),
     );
   }
@@ -474,7 +507,7 @@ describe("#776 回执在钱的事务之外", () => {
  */
 describe("CREATE-A4 / CREATE-A12 路由理由:worker 建 Generation 行时自己写这一列", () => {
   it("CREATE-A4 高清槽位 ⇒ routeReason 落在 worker 写的那一行上,只有能力名词", async () => {
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    m.pollVideo.mockResolvedValue({ status: "succeeded", video: { bytes: new Uint8Array([1]), ext: "mp4" } });
     const { generationRows } = await runWorker({
       ...videoJob,
       model: "seedance-2-0",
@@ -489,7 +522,7 @@ describe("CREATE-A4 / CREATE-A12 路由理由:worker 建 Generation 行时自己
   });
 
   it("CREATE-A12 默认槽位 ⇒ routeReason 是 null(没升档就没有理由),不是编出来的一句话", async () => {
-    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1]), ext: "mp4" });
+    m.pollVideo.mockResolvedValue({ status: "succeeded", video: { bytes: new Uint8Array([1]), ext: "mp4" } });
     const { generationRows } = await runWorker({ ...videoJob });
     expect(generationRows[0]!.routeReason).toBeNull();
   });
@@ -533,9 +566,12 @@ describe("CREATE-A4 / CREATE-A12 路由理由:worker 建 Generation 行时自己
  */
 describe("FSE-211 生成一条后 routeReason 与 finalPromptText 两列非空且可读", () => {
   it("FSE-211 高清视频且供应商回报了改写提示词 ⇒ 这一条 Generation 的 routeReason 与 finalPromptText 两列都非空、人话可读", async () => {
-    m.generateVideo.mockResolvedValue({
-      bytes: new Uint8Array([1]), ext: "mp4",
-      receipt: { finalPrompt: "slow push-in on the product, 1080p", billedUnits: 108_900 },
+    m.pollVideo.mockResolvedValue({
+      status: "succeeded",
+      video: {
+        bytes: new Uint8Array([1]), ext: "mp4",
+        receipt: { finalPrompt: "slow push-in on the product, 1080p", billedUnits: 108_900 },
+      },
     });
     const { generationRows, receiptPrompts } = await runWorker({
       ...videoJob,

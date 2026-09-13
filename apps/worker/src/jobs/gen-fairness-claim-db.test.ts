@@ -30,12 +30,13 @@ import { randomUUID } from "node:crypto";
 
 const m = vi.hoisted(() => ({
   generateImages: vi.fn(),
-  generateVideo: vi.fn(),
+  submitVideo: vi.fn(),
+  pollVideo: vi.fn(),
   storagePut: vi.fn(),
   storagePresignedGet: vi.fn(),
 }));
 vi.mock("../storage.js", () => ({ storage: { put: m.storagePut, presignedGet: m.storagePresignedGet } }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, generateVideo: m.generateVideo } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, submitVideo: m.submitVideo, pollVideo: m.pollVideo } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { prisma, reserveCredits } from "@fikirtive/db";
@@ -142,7 +143,7 @@ describe(
         // A 自己排队中的第 4 条:撞限速 + 占满 N-1 + B 在等,三条同时成立 ⇒ 真的让位。
         const aOutcome = await handleGen({ genJobId: aFourthId }, 0);
         expect(aOutcome).toMatchObject({ deferredForFairness: true });
-        expect(m.generateVideo).not.toHaveBeenCalled();
+        expect(m.submitVideo).not.toHaveBeenCalled();
         const aFourthRow = await prisma.genJob.findFirstOrThrow({ where: { id: aFourthId, ownerId: merchantA.orgId }, select: { status: true, spent: true } });
         expect(aFourthRow.status).toBe("QUEUED"); // 未被认领——不是「认领了又回滚」
         expect(aFourthRow.spent).toBe(false);

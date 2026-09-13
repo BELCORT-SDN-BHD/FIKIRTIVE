@@ -275,86 +275,72 @@ describe("真实 POST 并发峰值(判官 P1-1 的最坏形状)", () => {
 });
 
 /**
- * 供应商的视频轮询间隔是**真的 5 秒**(byteplus.ts 的 `#videoTask` 里那个 `setTimeout(5_000)`),
- * 而且整段轮询都跑在闸门的位子里。所以这一组用**假时钟**跑:时间由测试身体一格一格推,
- * 每推 5000ms 就等于给每个在途任务发一轮轮询。
- *
- * 这么写不只是为了快。老写法让「任务什么时候完成」取决于一场比赛 —— 假 fetch 里一个 1ms
- * 的定时器和测试身体里一个 5ms 的 flush 抢先,谁先到谁说了算,于是每一轮 5 秒都是一次掷硬币,
- * 尾巴长到能顶穿 40 秒超时。现在假 fetch 只**同步查表**:测试身体放行了就 succeeded,没放行
- * 就 running。没有比赛,也就没有偶发。
+ * #1435(零排队)—— 本组测试整体取代了原先的「视频任务按整个任务占位,不是只占提交那一下」
+ * 一条(#796 判官 r1 P1-1 当时的读法)。那条读法钉的是旧实现自己的代价(客户端原地轮询,
+ * 一次调用占着闸门的位子直到终态),不是账户额度本身的性质 —— `submitVideo` 只在一次 POST
+ * 外面 `gate.run(...)`,`pollVideo` 同样只在一次 GET 外面 `gate.run(...)`,两者之间(任务
+ * 仍在 `running` 的整段等待)**完全不占位**,与图片路径读同一个闸门的方式同构。
  */
-describe("视频任务按整个任务占位,不是只占提交那一下", () => {
-  // 假时钟只属于这一组。本文件其余用例全靠真定时器过日子,漏出去就是一片挂起。
-  afterEach(() => { vi.useRealTimers(); });
-
-  it("并发视频任务数不超过闸门上限,且轮询期间位子仍被占着", async () => {
-    vi.useFakeTimers();
+describe("视频任务只在提交、或某一次轮询正在进行时占位——两次调用之间完全不占位", () => {
+  it("并发视频任务数可以超过闸门上限——running 状态下不持有位子", async () => {
     __setProviderRequestGateForTests(new RequestGate(2));
+    let inFlightRequests = 0;
+    let peakRequests = 0;
+    const track = <T>(fn: () => Promise<T>) => {
+      inFlightRequests++;
+      if (inFlightRequests > peakRequests) peakRequests = inFlightRequests;
+      return fn().finally(() => { inFlightRequests--; });
+    };
     let submits = 0;
-    let concurrentTasks = 0;
-    let peakTasks = 0;
-    /** 测试身体显式放行的任务 id —— 假 fetch 只读这张表,自己一个定时器都不起。 */
-    const released = new Set<string>();
-
-    globalThis.fetch = (async (url: unknown) => {
+    globalThis.fetch = (async (url: unknown) => track(async () => {
       const href = String(url);
       if (href.endsWith("/contents/generations/tasks")) {
         submits++;
-        concurrentTasks++;
-        if (concurrentTasks > peakTasks) peakTasks = concurrentTasks;
         return { ok: true, status: 200, json: async () => ({ id: `task-${submits}` }) } as unknown as Response;
       }
-      const polled = href.match(/\/contents\/generations\/tasks\/(.+)$/);
-      if (polled) {
-        // 没被放行就一直报 running —— 那正是位子必须一直被占着的那段窗口。
-        if (!released.has(polled[1]!)) {
-          return { ok: true, status: 200, json: async () => ({ status: "running" }) } as unknown as Response;
-        }
-        concurrentTasks--;
-        return { ok: true, status: 200, json: async () => ({ status: "succeeded", content: { video_url: "https://cdn.test/v.mp4" } }) } as unknown as Response;
+      // 每一次轮询都只是「running」——永不终态,专门用来证明「不放开」这件事:
+      // 若 pollVideo 仍然像旧实现那样在外层持着闸,4 个任务的第 4 次 submit 就永远发不出去
+      // (闸门只有 2 格,前两个任务的轮询会把它们焊死在 running 上)。
+      if (href.match(/\/contents\/generations\/tasks\/.+$/)) {
+        return { ok: true, status: 200, json: async () => ({ status: "running" }) } as unknown as Response;
       }
       return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(4) } as unknown as Response;
-    }) as unknown as typeof fetch;
+    })) as unknown as typeof fetch;
 
     const provider = new BytePlusProvider("ark-test-key");
-    const tasks = Array.from({ length: 4 }, () =>
-      provider.generateVideo({ prompt: "move", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" }));
-    // 先把汇总处理器挂上:万一中途某条断言先炸,这 4 个 promise 也不会变成没人接的拒绝。
-    const settled = Promise.allSettled(tasks);
-
-    // 起跑:闸门 2 个位子,所以同一时刻只可能存在 2 个任务。
-    await vi.advanceTimersByTimeAsync(0);
-    expect(submits).toBe(2);
-    expect(concurrentTasks).toBe(2);
-
-    // 整整两轮轮询过去,前两个任务都没被放行 —— 它们报 running,位子照旧被占着,
-    // 于是第 3、4 个任务一个也提交不出去。这就是本用例真正要证的那句话:
-    // 位子是按**整个任务**占的,不是只占提交那一下。
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(submits).toBe(2);
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(submits).toBe(2);
-    expect(concurrentTasks).toBe(2);
-    expect(peakTasks).toBe(2);
-
-    // 放行前两个:下一轮轮询它们读到 succeeded,下载完、归还位子,3、4 才轮得上。
-    released.add("task-1");
-    released.add("task-2");
-    await vi.advanceTimersByTimeAsync(5_000);
+    // 4 个任务全部提交 —— 闸门只有 2 格,但 submitVideo 每次只短暂借用一格就归还,
+    // 所以 4 次提交全部成功,不需要等待彼此。
+    const submissions = await Promise.all(
+      Array.from({ length: 4 }, () => provider.submitVideo({ prompt: "move", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" })),
+    );
     expect(submits).toBe(4);
-    expect(concurrentTasks).toBe(2); // 位子上换成了 3、4
+    expect(submissions).toHaveLength(4);
 
-    // 放行后两个收尾。全程假时间 20 秒,离 15 分钟的轮询死线远得很。
-    released.add("task-3");
-    released.add("task-4");
-    await vi.advanceTimersByTimeAsync(5_000);
+    // 4 个任务「同时」轮询(各自一次 GET)—— 同样只需要 2 格闸门就能全部跑完,因为每一次
+    // poll 用完立刻归还,不会像旧实现那样把闸位焊死在 running 状态上。
+    const polls = await Promise.all(submissions.map((s) => provider.pollVideo(s.providerTaskId, { returnLastFrame: false })));
+    expect(polls.every((p) => p.status === "pending")).toBe(true);
+    expect(peakRequests).toBeLessThanOrEqual(2); // 闸门守住了 —— 但守住的是「同时几个请求」,不是「同时几个任务」
+  });
 
-    const outcomes = await settled;
-    expect(outcomes.map((o) => (o.status === "fulfilled" ? "ok" : String((o as PromiseRejectedResult).reason))))
-      .toEqual(["ok", "ok", "ok", "ok"]);
-    expect(submits).toBe(4);
-    expect(peakTasks).toBeLessThanOrEqual(2);
-    expect(concurrentTasks).toBe(0); // 位子全归还了
+  it("单次占位时长与一次图片 POST 同量级(≤ ARK_CONTROL_TIMEOUT_MS),不是 15 分钟", async () => {
+    // #1435 —— 这条断言就是 provider-concurrency.ts 头部注释改写后那句话的机器版本:
+    // 一次 submit 或一次 poll 各自只是一次普通请求,占位时长的上限是控制面超时(60s),
+    // 不再是「提交 + 轮询到终态」的整段时长(曾经最长 60s + 15min)。
+    const gate = new RequestGate(6);
+    __setProviderRequestGateForTests(gate);
+    globalThis.fetch = (async (url: unknown) => {
+      const href = String(url);
+      if (href.endsWith("/contents/generations/tasks")) return { ok: true, status: 200, json: async () => ({ id: "task-1" }) } as unknown as Response;
+      if (href.match(/\/contents\/generations\/tasks\/.+$/)) return { ok: true, status: 200, json: async () => ({ status: "running" }) } as unknown as Response;
+      return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(4) } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const provider = new BytePlusProvider("ark-test-key");
+    const before = gate.peakInFlight;
+    await provider.submitVideo({ prompt: "move", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
+    await provider.pollVideo("task-1", { returnLastFrame: false });
+    // 两次调用各自借过一格、各自还过 —— 峰值绝不会因为「一个视频任务」而超过 1(相对起点)。
+    expect(gate.peakInFlight - before).toBeLessThanOrEqual(1);
+    expect(gate.inFlight).toBe(0); // 两次都已归还——不像旧实现那样在 running 期间焊死一格
   });
 });

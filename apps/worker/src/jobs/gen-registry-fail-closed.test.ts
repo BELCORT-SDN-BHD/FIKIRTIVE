@@ -23,7 +23,8 @@ const m = vi.hoisted(() => {
   const chatMessageCreate = vi.fn();
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
-  const generateVideo = vi.fn();
+  const submitVideo = vi.fn();
+  const pollVideo = vi.fn();
   const generateImages = vi.fn();
   const workerDisabledModels = vi.fn();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -40,7 +41,7 @@ const m = vi.hoisted(() => {
   return {
     prisma, genJobFindUnique, genJobUpdate, genJobUpdateMany, projectFindFirst,
     chatMessageFindFirst, chatMessageCreate, refundReservation, settleCredits,
-    generateVideo, generateImages, workerDisabledModels,
+    submitVideo, pollVideo, generateImages, workerDisabledModels,
   };
 });
 
@@ -51,7 +52,7 @@ vi.mock("@fikirtive/db", () => ({
   settleCanvasCardsForGenJob: vi.fn(async () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })),
 }));
 vi.mock("../storage.js", () => ({ storage: { presignedGet: vi.fn(), put: vi.fn() } }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", submitVideo: m.submitVideo, pollVideo: m.pollVideo, generate: m.generateImages } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: m.workerDisabledModels }));
 
 import { GEN_RETRY_LIMIT } from "@fikirtive/core";
@@ -80,7 +81,7 @@ describe("#647 T6 修复轮 P1-3:开关查询失败 ⇒ 不许继续花钱(worke
 
   it("provider 一次都没被调用 —— 这一趟没有花出去一分钱", async () => {
     await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     expect(m.generateImages).not.toHaveBeenCalled();
   });
 
@@ -106,22 +107,22 @@ describe("#647 T6 修复轮 P1-3:开关查询失败 ⇒ 不许继续花钱(worke
     expect(terminal).toBeTruthy();
     expect(terminal?.[0]?.data?.spent).toBe(false); // 从没花过
     expect(m.refundReservation).toHaveBeenCalled();
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
   });
 });
 
 describe("#647 T6 修复轮 P1-3:读得到时行为逐字不变", () => {
   it("查询正常且什么都没关 ⇒ 照常走到 provider", async () => {
     m.workerDisabledModels.mockResolvedValue(new Set<string>());
-    m.generateVideo.mockRejectedValue(new Error("stop here — 这条只关心闸有没有放行"));
+    m.submitVideo.mockRejectedValue(new Error("stop here — 这条只关心闸有没有放行"));
     await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
-    expect(m.generateVideo).toHaveBeenCalledTimes(1);
+    expect(m.submitVideo).toHaveBeenCalledTimes(1);
   });
 
   it("查询正常且这个模型被关 ⇒ 照旧 fail-closed + 退款,不抛(既有行为)", async () => {
     m.workerDisabledModels.mockResolvedValue(new Set<string>(["seedance-2-mini"]));
     await expect(handleGen({ genJobId: "g1" }, 0)).resolves.toBeUndefined();
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     expect(m.refundReservation).toHaveBeenCalled();
   });
 
@@ -193,7 +194,7 @@ describe("#647 T6 r2 P1-R2-1:重复 delivery 的 registry 故障不许碰别人�
 
   it("零 provider 调用(B 这一趟本来就不该花钱)", async () => {
     await handleGen({ genJobId: "g1" }, 0).catch(() => undefined);
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     expect(m.generateImages).not.toHaveBeenCalled();
   });
 
@@ -216,7 +217,7 @@ describe("#647 T6 r2:赢下 claim 之后读失败 —— 仍然是自己的行,�
     await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
     const requeued = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "QUEUED");
     expect(requeued).toBeTruthy();
-    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.submitVideo).not.toHaveBeenCalled();
     expect(m.refundReservation).not.toHaveBeenCalled();
   });
 

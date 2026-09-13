@@ -1,10 +1,12 @@
-import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenerationReceipt } from "@fikirtive/core";
+import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenerationReceipt, VideoSubmission, VideoPollResult } from "@fikirtive/core";
 import {
   imageOutputSizeForModel,
   MAX_VIDEO_IMAGE_PARTS,
   personRejectionSentence,
   REFERENCE_IMAGE_PERSON_REJECTED,
   referenceImagePersonRejected,
+  classifyProviderQuotaExceeded,
+  GENERATION_ENGINE_UNAVAILABLE,
   videoReferencesRide,
 } from "@fikirtive/core";
 import { chargedError, permanentInputError, extFromUrl } from "./index.js";
@@ -198,15 +200,28 @@ export function arkPostTimeoutMs(what: "image request" | "video submit"): number
 }
 
 /**
- * How long this client keeps polling one video task before it gives up (F06 — the full
- * reasoning lives at the poll loop below; do not change this number without reading it).
+ * #1435(零排队)— how long from SUBMISSION the WORKER keeps rescheduling polls before it gives
+ * up on a video task (outcome unknown ⇒ treated as billed). This replaced the old
+ * `VIDEO_POLL_TIMEOUT_MS`, which bounded how long a SINGLE blocking call polled in-process —
+ * that concept no longer exists: `pollVideo` below takes one look and returns, so nothing in
+ * THIS package loops or sleeps any more (see gen.ts's resume-poll branch, which owns the
+ * reschedule loop across many short pg-boss deliveries).
  *
- * Exported because it is the FIRST clock in the worker's chain: provider timeout <
- * stale cutoff < queue expiry < reaper cutoff. apps/worker/src/jobs/clock-invariants.test.ts
- * asserts that ordering against this exact constant, so the chain can no longer be broken by
- * editing one end of it (#796).
+ * Anchored on the ENGINE's own termination clock, not an arbitrary client patience budget: the
+ * submit body always sends `execution_expires_after: 3600` (below), so the provider itself kills
+ * an abandoned task at exactly one hour and a poll after that should observe `expired` ($0, not
+ * billed). This constant is that one hour PLUS a safety margin for poll-cadence gaps and clock
+ * skew — past it, something is wrong even by the engine's own clock, so treat it as ambiguous
+ * rather than silently polling forever.
+ *
+ * Exported for apps/worker/src/jobs/clock-invariants.test.ts (QUEUE-A6): unlike the old
+ * VIDEO_POLL_TIMEOUT_MS, this is NOT part of the provider-timeout < stale < expiry < reaper
+ * chain any more — a video task no longer occupies one worker slot (or one `providerRequestGate`
+ * slot) for its whole life, so it no longer needs to fit inside GEN_STALE_MS/queue-expiry/
+ * GEN_REAP_MS. It is instead the input to its OWN reaper rule (apps/worker/src/jobs/gen.ts,
+ * `isGenRowStale`), anchored on `submittedAt` rather than claim time.
  */
-export const VIDEO_POLL_TIMEOUT_MS = 15 * 60_000;
+export const VIDEO_SUBMISSION_ABANDON_MS = 65 * 60_000;
 
 /**
  * #782 r2 — how long the FREE last frame may hold the paid clip hostage.
@@ -301,6 +316,14 @@ export class BytePlusProvider implements GenerationProvider {
       // `@fikirtive/core/gen-failure` 一份白名单。
       if (what === "video submit" && referenceImagePersonRejected(detail)) {
         throw permanentInputError(personRejectionCopy ?? REFERENCE_IMAGE_PERSON_REJECTED);
+      }
+      // #1435(QUEUE-A5)— video submit specifically: the queue-depth 429 reuses `QuotaExceeded`
+      // for more than one real condition (see `classifyProviderQuotaExceeded`'s doc for why this
+      // is message-based, not code-based, and why "queue-full"/"unknown" fall through to the
+      // SAME ordinary retryable line below rather than getting special-cased). Scoped to video
+      // submit only — the image path is untouched per spec §3 ("图片路不改").
+      if (what === "video submit" && res.status === 429 && classifyProviderQuotaExceeded(detail) === "quota-exhausted") {
+        throw permanentInputError(GENERATION_ENGINE_UNAVAILABLE);
       }
       throw new Error(`generation provider ${what} failed (${res.status})`);
     }
@@ -476,20 +499,18 @@ export class BytePlusProvider implements GenerationProvider {
     }
   }
   /**
-   * #796 判官 r1 P1-1 — a video task holds ONE account slot for its WHOLE life (submit through
-   * the last poll), not just for the submit. The account's video ceiling is about tasks the
-   * engine is running, and a task stays running until it succeeds or is terminated. Choosing
-   * the conservative reading costs us a little unused headroom; the other reading costs 429s,
-   * which the merchant reads as a failed generation.
-   *
-   * The gate is taken HERE and never again inside — `#videoTask` must not re-enter it (a
-   * second acquire on the same call chain is how a semaphore deadlocks itself).
+   * #1435(零排队)—— submit-only. The gate is taken ONLY around the paid POST below, not around
+   * this whole method and never again inside `pollVideo` — #796 判官 r1 P1-1's "a video task
+   * holds one account slot for its whole life" reading is retired: it modeled the account's
+   * ceiling as a TASK-duration budget because the old client-side implementation held a slot for
+   * submit+poll (up to 60s + 15m) in one call. That was the actual, self-inflicted cost, not a
+   * property of the account: the account's `concurrent_requests` ceiling (10, arkcli-measured,
+   * `provider-concurrency.ts`) is about in-flight REQUESTS, exactly like the image path already
+   * reads it. A submit and each later poll are each their own short request (≤`ARK_CONTROL_
+   * TIMEOUT_MS`=60s), so this method's gate hold time is now the SAME order of magnitude as one
+   * image POST — not 16 minutes. See `pollVideo` below for the other half.
    */
-  async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
-    return providerRequestGate().run(() => this.#videoTask(req));
-  }
-
-  async #videoTask(req: VideoRequest): Promise<GeneratedVideo> {
+  async submitVideo(req: VideoRequest): Promise<VideoSubmission> {
     const model = VIDEO_MODEL_MAP[req.model];
     if (!model) throw new Error("generation provider has no video model mapping"); // pre-spend
     // #646 T5. First+last frames, single first frame, and whole-clip reference video are three
@@ -548,7 +569,10 @@ export class BytePlusProvider implements GenerationProvider {
     // failure and stays PLAIN; the fetch throwing outright, or a 5xx, cannot prove no task was
     // created, so they land as chargedError for exactly the reason spelled out below the call:
     // a retry would submit a SECOND task against the same merchant request.
-    const sub = await this.paidPost("video submit", `${ARK_BASE}/contents/generations/tasks`, model, {
+    //
+    // #1435 — gated here (the image path's exact pattern: `gate.run(() => paidPost(...))`,
+    // nothing else inside this method touches the gate).
+    const sub = await providerRequestGate().run(() => this.paidPost("video submit", `${ARK_BASE}/contents/generations/tasks`, model, {
       // #646 T5: STRICT top-level parameters, not the legacy `--flag` suffix on the prompt text.
       // The two transports differ in exactly the way that costs money: the legacy suffix is
       // loosely validated — a wrong value is silently replaced by the engine default and the
@@ -577,7 +601,7 @@ export class BytePlusProvider implements GenerationProvider {
       watermark: false,
       // F06 reconciliation window, below. 3600s is the engine's minimum.
       execution_expires_after: 3600,
-    }, personRejectionSentence(req.castMemberInReferences));
+    }, personRejectionSentence(req.castMemberInReferences)));
     // submit returned 2xx ⇒ the engine ACCEPTED the order. From here on we can no longer prove
     // the task was never created, so an unreadable receipt is "outcome unknown", not "nothing
     // happened" (#657). PLAIN here would requeue and submit a SECOND task against the same
@@ -589,151 +613,141 @@ export class BytePlusProvider implements GenerationProvider {
       throw chargedError(`generation provider video submit receipt was unreadable (${e instanceof Error ? e.message : String(e)})`);
     }
     if (!taskId) throw chargedError("generation provider video submit returned no task id");
-    // task created ⇒ billed on success. Poll inside the provider (the worker just awaits).
-    const startedAt = Date.now();
-    // F06 — the reconciliation window, and why it is the size it is.
-    //
-    // Two clocks run on one task. OURS: this client gives up after 15 min, because the worker's
-    // own message expires at GEN_QUEUE_POLICY.expireInSeconds (40 min, #1386 widened from 20 min)
-    // and we need the remaining minutes to download and persist. THE ENGINE'S: it keeps working on an abandoned task and
-    // bills it when it completes. Whatever falls between the two clocks is the ambiguous window:
-    // we told the merchant "failed" (and refunded) while the engine still charged us.
-    //
-    // 15 min is well past realistic latency, so abandoning is already rare — and when it does
-    // happen, giving up EARLIER would be worse (a still-running task refunded mid-flight is a
-    // guaranteed margin leak, not a possible one). So the client side stays 15 min and keeps its
-    // charged semantics: an abandoned task is treated as billed.
-    //
-    // What #646 T5 fixes is the OTHER end. The engine's own limit defaulted to 48h, so the window
-    // was [15 min, 48h]. `execution_expires_after: 3600` (the minimum it accepts) shrinks it to
-    // [15 min, 1h]: past one hour the engine terminates the task itself as `expired` — no output,
-    // nothing billed — so an abandoned task can no longer quietly complete a day later.
-    const TIMEOUT_MS = VIDEO_POLL_TIMEOUT_MS;
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      await new Promise((r) => setTimeout(r, 5_000));
-      let t: { status?: string; content?: { video_url?: string; last_frame_url?: string } };
-      try {
-        // #795 — a poll that hangs stops the 15-minute clock below from ever being consulted:
-        // the loop is parked inside `await fetch`, so neither the timeout check nor the worker's
-        // own message expiry can reach it. With a deadline the abort lands in the catch, which
-        // treats it as a transient poll failure and polls again — until TIMEOUT_MS decides.
-        const st = await fetch(`${ARK_BASE}/contents/generations/tasks/${taskId}`, {
+    // task created ⇒ billed on success. #1435 — polling moved OUT of this method (see
+    // `pollVideo` below); the caller (gen.ts) owns the reschedule loop across many short
+    // deliveries instead of this one call blocking for up to 15 minutes.
+    return { providerTaskId: taskId };
+  }
+
+  /**
+   * #1435(零排队)— ONE status check, gated exactly like the image path reads a single request
+   * (`gate.run(() => fetch(...))`), never looping or sleeping. See `VideoPollResult` (core) for
+   * the three outcomes; this method never throws for a TRANSIENT failure (network reset, non-2xx,
+   * malformed body) — those come back `pending` so the caller looks again later, exactly like the
+   * old loop's "continue polling" branches. It throws only where the OLD loop's `succeeded`
+   * branch already did: the clip IS billed by the time `status === "succeeded"`, so every way of
+   * failing to get its bytes into our hands past that point (#795's same reasoning) is a
+   * `chargedError`, not a retry that would generate a second paid clip.
+   */
+  async pollVideo(providerTaskId: string, opts: { returnLastFrame: boolean }): Promise<VideoPollResult> {
+    let t: { status?: string; content?: { video_url?: string; last_frame_url?: string } };
+    try {
+      const st = await providerRequestGate().run(() =>
+        fetch(`${ARK_BASE}/contents/generations/tasks/${providerTaskId}`, {
           headers: this.headers(),
           signal: AbortSignal.timeout(ARK_CONTROL_TIMEOUT_MS),
-        });
-        if (!st.ok) {
-          // Non-2xx: if timed out, surface as chargedError (task may still complete on BytePlus = COGS already committed)
-          if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError(`generation provider video poll returned ${st.status} after timeout`);
-          continue; // transient non-2xx — retry
-        }
-        t = (await st.json()) as { status?: string; content?: { video_url?: string; last_frame_url?: string }; usage?: unknown; revised_prompt?: unknown };
+        }),
+      );
+      if (!st.ok) return { status: "pending" }; // transient non-2xx — the worker looks again later
+      t = (await st.json()) as { status?: string; content?: { video_url?: string; last_frame_url?: string }; usage?: unknown; revised_prompt?: unknown };
+    } catch {
+      // network reset / malformed body — the task was already submitted and may still succeed
+      // (and bill) on BytePlus, so treating this as terminal would risk a second paid submit on
+      // the caller's next retry. The caller's own submission-anchored deadline (not this call)
+      // decides when "still pending" has gone on too long (QUEUE-A6).
+      return { status: "pending" };
+    }
+    if (t.status === "succeeded") {
+      // The clip exists and IS billed. Every way of failing to get it into our hands past this
+      // line is a charged failure — including the ones that never produce a status code:
+      // a download whose connection drops (`fetch` rejecting), a body that stops mid-stream
+      // (`arrayBuffer()` throwing). PLAIN here would let the caller requeue a SECOND paid clip.
+      const url = t.content?.video_url;
+      if (!url) throw chargedError("generation provider video response had no result URL");
+      let video: GeneratedVideo;
+      // #776:回执来自这条**成功任务**自己的响应(计费量与它真正跑的提示词都在这一份里),
+      // 读在下载之前 —— 拿不拿得到字节与引擎报了什么无关。readVideoReceipt 永不抛,所以这
+      // 一行不会把一条已经做出来、已经计费的片子推进 charged 分支。
+      const receipt = readVideoReceipt(t);
+      try {
+        // #795 — same deadline as the image download, same landing: the clip IS billed, so an
+        // abort is a charged failure, never a plain retry that would generate a second one.
+        const r = await fetch(url, { signal: AbortSignal.timeout(ARK_DOWNLOAD_TIMEOUT_MS) });
+        if (!r.ok) throw chargedError(`generation provider video download failed (${r.status})`);
+        video = {
+          bytes: new Uint8Array(await r.arrayBuffer()),
+          ext: extFromUrl(url) ?? "mp4",
+          ...(receipt ? { receipt } : {}),
+        };
       } catch (e) {
-        // A chargedError thrown above must propagate (terminal); any other exception (network reset,
-        // malformed body) is a transient poll failure — the task was already submitted and may still
-        // succeed (and bill) on BytePlus, so re-submitting would double the COGS. Continue polling.
-        if (e instanceof Error && (e as { charged?: boolean }).charged) throw e;
-        if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError("generation provider video polling failed after timeout");
-        continue; // transient — poll again
+        if (e instanceof Error && (e as { charged?: boolean }).charged) throw e; // already marked
+        throw chargedError(`generation provider video download failed (${e instanceof Error ? e.message : String(e)})`);
       }
-      if (t.status === "succeeded") {
-        // The clip exists and IS billed. Every way of failing to get it into our hands past this
-        // line is a charged failure — including the ones that never produce a status code:
-        // a download whose connection drops (`fetch` rejecting), a body that stops mid-stream
-        // (`arrayBuffer()` throwing). PLAIN here would requeue and generate a SECOND paid clip.
-        const url = t.content?.video_url;
-        if (!url) throw chargedError("generation provider video response had no result URL");
-        let video: GeneratedVideo;
-        // #776:回执来自这条**成功任务**自己的响应(计费量与它真正跑的提示词都在这一份里),
-        // 读在下载之前 —— 拿不拿得到字节与引擎报了什么无关。readVideoReceipt 永不抛,所以这
-        // 一行不会把一条已经做出来、已经计费的片子推进 charged 分支。
-        const receipt = readVideoReceipt(t);
-        try {
-          // #795 — same deadline as the image download, same landing: the clip IS billed, so an
-          // abort is a charged failure, never a plain retry that would generate a second one.
-          const r = await fetch(url, { signal: AbortSignal.timeout(ARK_DOWNLOAD_TIMEOUT_MS) });
-          if (!r.ok) throw chargedError(`generation provider video download failed (${r.status})`);
-          video = {
-            bytes: new Uint8Array(await r.arrayBuffer()),
-            ext: extFromUrl(url) ?? "mp4",
-            ...(receipt ? { receipt } : {}),
-          };
-        } catch (e) {
-          if (e instanceof Error && (e as { charged?: boolean }).charged) throw e; // already marked
-          throw chargedError(`generation provider video download failed (${e instanceof Error ? e.message : String(e)})`);
-        }
-        // #782 — the clip's last frame, and why it is the ONLY thing in this method that
-        // cannot fail the job. The paid product is the CLIP, and it is already in hand and
-        // already billed. The still is a free by-product used to start the next shot; if it
-        // is missing or won't download, the correct outcome is "no automatic continuation
-        // this time", never a charged failure on a clip we successfully produced. So every
-        // failure here is swallowed, deliberately, and the video returns exactly as it did
-        // before this ticket.
-        //
-        // UNVERIFIED RESPONSE KEY (#782, stated rather than hidden): the REQUEST field
-        // `return_last_frame` was measured against this model on 2026-08-08 (accepted and
-        // effective, alongside resolution/duration/ratio/generate_audio/priority). The
-        // RESPONSE key was NOT — `last_frame_url` is read as the symmetric sibling of
-        // `video_url`. If the engine spells it differently, this reads undefined and the
-        // feature degrades to today's behaviour (shot N+1 simply has no inherited frame and
-        // the merchant generates one as before) — it does not break, mis-bill, or lie. The
-        // warning below prints the key NAMES the receipt actually carried (names only — a
-        // value would be a signed URL), so the first production clip settles the question
-        // instead of another round of guessing.
-        if (req.returnLastFrame) {
-          const tailUrl = t.content?.last_frame_url;
-          if (!tailUrl) {
-            console.warn("generation provider returned no last frame for a clip that asked for one:", {
-              model, contentKeys: Object.keys(t.content ?? {}),
-            });
-          } else {
-            // BOUNDED, and by an abort rather than a bare race: aborting the request also
-            // errors its body stream, so the budget covers `arrayBuffer()` (a body that stops
-            // mid-transfer) and not just a connect that never answers.
-            const ctl = new AbortController();
-            const stop = setTimeout(() => ctl.abort(), LAST_FRAME_FETCH_TIMEOUT_MS);
-            try {
-              const r = await fetch(tailUrl, { signal: ctl.signal });
-              if (r.ok) video.lastFrame = { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(tailUrl) ?? "png" };
-              else console.warn(`generation provider last-frame download failed (${r.status}); clip delivered without it`);
-            } catch (e) {
-              // NAME ONLY — never the message. `tailUrl` is a signed URL carrying a live
-              // X-Amz-Signature, and Node hands the input straight back to you inside the
-              // failure text: a malformed URL rejects with a TypeError whose message quotes
-              // the whole thing, signature and all. Printing it would put a working download
-              // credential for merchant media into the worker log. The class name is all this
-              // branch can act on anyway — the outcome is identical either way (no automatic
-              // continuation this time), and the open question about #782 (what the engine
-              // actually calls the key) is answered by the names-only warning above, not here.
-              console.warn(`generation provider last-frame download failed (${e instanceof Error ? e.name : typeof e}); clip delivered without it`);
-            } finally {
-              clearTimeout(stop);
-            }
+      // #782 — the clip's last frame, and why it is the ONLY thing in this method that
+      // cannot fail the job. The paid product is the CLIP, and it is already in hand and
+      // already billed. The still is a free by-product used to start the next shot; if it
+      // is missing or won't download, the correct outcome is "no automatic continuation
+      // this time", never a charged failure on a clip we successfully produced. So every
+      // failure here is swallowed, deliberately, and the video returns exactly as it did
+      // before this ticket.
+      //
+      // UNVERIFIED RESPONSE KEY (#782, stated rather than hidden): the REQUEST field
+      // `return_last_frame` was measured against this model on 2026-08-08 (accepted and
+      // effective, alongside resolution/duration/ratio/generate_audio/priority). The
+      // RESPONSE key was NOT — `last_frame_url` is read as the symmetric sibling of
+      // `video_url`. If the engine spells it differently, this reads undefined and the
+      // feature degrades to today's behaviour (shot N+1 simply has no inherited frame and
+      // the merchant generates one as before) — it does not break, mis-bill, or lie. The
+      // warning below prints the key NAMES the receipt actually carried (names only — a
+      // value would be a signed URL), so the first production clip settles the question
+      // instead of another round of guessing.
+      if (opts.returnLastFrame) {
+        const tailUrl = t.content?.last_frame_url;
+        if (!tailUrl) {
+          console.warn("generation provider returned no last frame for a clip that asked for one:", {
+            contentKeys: Object.keys(t.content ?? {}),
+          });
+        } else {
+          // BOUNDED, and by an abort rather than a bare race: aborting the request also
+          // errors its body stream, so the budget covers `arrayBuffer()` (a body that stops
+          // mid-transfer) and not just a connect that never answers.
+          const ctl = new AbortController();
+          const stop = setTimeout(() => ctl.abort(), LAST_FRAME_FETCH_TIMEOUT_MS);
+          try {
+            const r = await fetch(tailUrl, { signal: ctl.signal });
+            if (r.ok) video.lastFrame = { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(tailUrl) ?? "png" };
+            else console.warn(`generation provider last-frame download failed (${r.status}); clip delivered without it`);
+          } catch (e) {
+            // NAME ONLY — never the message. `tailUrl` is a signed URL carrying a live
+            // X-Amz-Signature, and Node hands the input straight back to you inside the
+            // failure text: a malformed URL rejects with a TypeError whose message quotes
+            // the whole thing, signature and all. Printing it would put a working download
+            // credential for merchant media into the worker log. The class name is all this
+            // branch can act on anyway — the outcome is identical either way (no automatic
+            // continuation this time), and the open question about #782 (what the engine
+            // actually calls the key) is answered by the names-only warning above, not here.
+            console.warn(`generation provider last-frame download failed (${e instanceof Error ? e.name : typeof e}); clip delivered without it`);
+          } finally {
+            clearTimeout(stop);
           }
         }
-        return video;
       }
-      // #661 — the three terminal statuses in which the ENGINE ITSELF reports that no video was
-      // produced. Official pricing page (docs.byteplus.com/en/docs/ModelArk/1544106, last updated
-      // 2026-08-01): "You are only charged for successfully generated videos. No fee is charged if
-      // generation fails due to reasons such as content moderation." So nothing was billed here.
-      //   `expired`   = terminated at execution_expires_after before producing anything.
-      //   `failed`    = the engine ran and rejected/aborted it (content moderation, bad input…).
-      //   `cancelled` = cancelled while still queued (spelled both ways by the API).
-      // PLAIN (no `charged` marker) ⇒ the worker keeps its existing retry policy and requeues.
-      // That is safe and intended: officially nothing was billed, so a retry cannot double-charge
-      // COGS. A moderation failure will very likely fail again — what that burns is retry
-      // attempts, not money — and the final terminal FAIL refunds the merchant while recording
-      // NO spend, which is the whole point of this ticket (no phantom COGS in the spend audit).
-      //
-      // BOUNDARY (#657, deliberately untouched): every "outcome unknown" path stays chargedError —
-      // the three abandon-timeouts, the download failure, a succeeded task with no result URL.
-      // Not knowing whether the engine produced a clip is not the same as the engine telling us it
-      // didn't; only an explicit no-output terminal status may go PLAIN.
-      if (t.status === "expired") throw new Error("generation provider video task expired");
-      if (t.status === "failed" || t.status === "cancelled" || t.status === "canceled")
-        throw new Error(`generation provider video task ${t.status}`);
-      if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError("generation provider video timed out");
+      return { status: "succeeded", video };
     }
+    // #661 — the three terminal statuses in which the ENGINE ITSELF reports that no video was
+    // produced. Official pricing page (docs.byteplus.com/en/docs/ModelArk/1544106, last updated
+    // 2026-08-01): "You are only charged for successfully generated videos. No fee is charged if
+    // generation fails due to reasons such as content moderation." So nothing was billed here.
+    //   `expired`   = terminated at execution_expires_after before producing anything.
+    //   `failed`    = the engine ran and rejected/aborted it (content moderation, bad input…).
+    //   `cancelled` = cancelled while still queued (spelled both ways by the API).
+    // `{status:"failed"}` (never charged) ⇒ the caller keeps its existing retry policy and
+    // resubmits a fresh task. That is safe and intended: officially nothing was billed, so a
+    // retry cannot double-charge COGS.
+    //
+    // BOUNDARY (#657, deliberately untouched): every "outcome unknown" path is a charged failure
+    // (the download failure and a succeeded task with no result URL, above) or — for a status
+    // that is neither "succeeded" nor one of these three known-free terminals, INCLUDING a status
+    // string this adapter has never seen — `pending`: the probe (docs/audits/
+    // zero-queue-probe-2026-09-13/README.md §1③) confirms the official docs' status enum is
+    // known-incomplete (it omits `expired`, which this file already defended against before that
+    // probe ran), so an unrecognized string is never assumed to mean "done" OR "safely retryable
+    // now" — it is deferred, and the CALLER's submission-anchored abandon deadline
+    // (VIDEO_SUBMISSION_ABANDON_MS) is what eventually turns a truly-stuck "pending" into a
+    // charged failure, never a silent assumption made from the string alone.
+    if (t.status === "expired" || t.status === "failed" || t.status === "cancelled" || t.status === "canceled") {
+      return { status: "failed", reason: t.status };
+    }
+    return { status: "pending" };
   }
 }

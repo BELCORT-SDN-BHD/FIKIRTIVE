@@ -227,6 +227,35 @@ export interface GeneratedVideo {
   receipt?: GenerationReceipt;
 }
 
+/** #1435(零排队)—— the provider's opaque handle for an accepted, in-flight video task.
+ *  The worker persists `providerTaskId` (GenJob.videoOptions) and polls it back later;
+ *  it never inspects the string itself (different providers can shape it however they like). */
+export interface VideoSubmission {
+  providerTaskId: string;
+}
+
+/**
+ * #1435 — one honest look at an already-submitted video task, taken ONCE (never loops, never
+ * sleeps — the WORKER decides what "pending" means: defer this delivery and come back later).
+ *
+ *   - `pending`   — not yet terminal (queued/running/anything not recognized below). The worker
+ *                   reschedules a later poll; it alone owns the "how long is too long" clock
+ *                   (anchored on SUBMISSION time, not on this call — see gen.ts).
+ *   - `succeeded` — the clip exists and IS billed; `video` carries the downloaded bytes exactly
+ *                   like the old single-shot `generateVideo` did.
+ *   - `failed`    — the engine itself reports no video was produced (expired / failed /
+ *                   cancelled) — per the official pricing page, NOT billed. `reason` is the raw
+ *                   status string, for the same terminal message the old code threw.
+ *
+ * A transient poll failure (network throw, non-2xx) is NOT a `failed` result — it comes back as
+ * `pending` (the task may still be running; only the engine's own terminal statuses count as
+ * `failed`), exactly like the old loop's "continue polling" branch.
+ */
+export type VideoPollResult =
+  | { status: "pending" }
+  | { status: "succeeded"; video: GeneratedVideo }
+  | { status: "failed"; reason: string };
+
 export interface GenerationProvider {
   /** Stable id for logs/audit (e.g. "mock", "byteplus"). */
   readonly name: string;
@@ -234,6 +263,19 @@ export interface GenerationProvider {
    *  pg-boss retry/DLQ handles it (no partial-success contract — all or the
    *  job retries). */
   generate(req: GenerationRequest): Promise<GeneratedImage[]>;
-  /** Image-to-video: animate one image into a clip. Throws on failure. */
-  generateVideo(req: VideoRequest): Promise<GeneratedVideo>;
+  /**
+   * #1435(零排队)—— SUBMIT ONLY: accepts a video task and returns immediately with its
+   * provider-side handle. Bills on ACCEPT (task created), exactly like the old
+   * `generateVideo`'s submit half — never polls, never sleeps, so the caller's worker slot is
+   * free the instant this resolves. Throws exactly like before: a 4xx before the engine ran
+   * stays a plain retryable error, a network throw / 5xx / unreadable receipt is a
+   * `chargedError` (outcome unknown ⇒ treated as billed).
+   */
+  submitVideo(req: VideoRequest): Promise<VideoSubmission>;
+  /**
+   * #1435 — ONE status check of an already-submitted task (see `VideoPollResult`).
+   * `returnLastFrame` must match what the submit asked for, so a `succeeded` poll can fetch the
+   * same free still the submit requested.
+   */
+  pollVideo(providerTaskId: string, opts: { returnLastFrame: boolean }): Promise<VideoPollResult>;
 }

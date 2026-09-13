@@ -404,6 +404,49 @@ export function referenceImagePersonRejected(detail: string | null | undefined):
 }
 
 /**
+ * #1435(QUEUE-A5, docs/specs/zero-queue.md)— the video submit endpoint's `QuotaExceeded` error
+ * code is REUSED across more than one real condition (spec §1.7 — the vendor's own docs say so),
+ * and message-not-code is the only way to tell them apart. Neither real message shape has ever
+ * been observed: the pre-build probe tried and came back empty
+ * (docs/audits/zero-queue-probe-2026-09-13/README.md §1 row ④, "未实测（防御口径：QuotaExceeded
+ * 按 message 区分，不单靠 code 分类）"). So this answers from the STRONGEST signal a message
+ * carries and defaults to "unknown" — the ordinary retryable route — whenever that signal is
+ * absent, rather than guessing an unconfirmed shape into a terminal failure.
+ *
+ * FAIL CLOSED TOWARD "unknown", same asymmetry as `referenceImagePersonRejected` above but
+ * pointed the other way: being wrong toward "quota-exhausted" is the expensive direction here
+ * (it denies a retry that might have succeeded, on a request that cost the merchant nothing
+ * either way); being wrong toward "unknown" only costs the existing retry budget's few minutes
+ * before the SAME honest failure happens anyway. "queue-full" and "unknown" are therefore
+ * handled identically by the caller — the split exists so a future real observation (docs/audits)
+ * can tighten "quota-exhausted" without touching anything else.
+ */
+export type ProviderQuotaOutcome = "queue-full" | "quota-exhausted" | "unknown";
+
+/** "The account itself is out of runway" — never confusable with a transient rate limit.
+ *  Deliberately narrow (no real-world confirmation exists yet, see the function doc above):
+ *  matching too eagerly is how a queue-full 429 gets wrongly denied its retry. */
+const QUOTA_EXHAUSTED_MARKER = /insufficient\s+balance|account\s+suspended|quota\s+exhausted|arrears|余额不足|欠费/i;
+
+/** Ordinary capacity pressure — queue depth, per-minute/per-token rate limits, concurrency
+ *  ceilings — all of which clear on their own; the existing retry route already handles these
+ *  correctly, so this only needs to keep them OUT of the "quota-exhausted" bucket. */
+const QUEUE_FULL_MARKER = /too\s+many\s+requests|rate\s*limit|\brpm\b|\btpm\b|concurren|queue|排队|并发/i;
+
+export function classifyProviderQuotaExceeded(detail: string | null | undefined): ProviderQuotaOutcome {
+  const body = String(detail ?? "");
+  if (!body) return "unknown";
+  // A parseable code that is clearly some OTHER family is not ours to classify at all — only
+  // an unparseable body (gateway HTML, a truncated reply) or an actual QuotaExceeded code falls
+  // through to the message markers below.
+  const code = errorCode(body);
+  if (code !== null && !code.startsWith("QuotaExceeded")) return "unknown";
+  if (QUOTA_EXHAUSTED_MARKER.test(body)) return "quota-exhausted";
+  if (QUEUE_FULL_MARKER.test(body)) return "queue-full";
+  return "unknown";
+}
+
+/**
  * The merchant-facing sentence a persisted job error IS, or null when it is anything else.
  *
  * The whitelist read, kept as one call for the surfaces that only ever want the words (the live

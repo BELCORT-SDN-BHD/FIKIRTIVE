@@ -31,7 +31,8 @@ const m = vi.hoisted(() => {
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
   const generateImages = vi.fn();
-  const generateVideo = vi.fn();
+  const submitVideo = vi.fn();
+  const pollVideo = vi.fn();
   const storagePresignedGet = vi.fn();
   const storagePut = vi.fn();
   const storageGet = vi.fn();
@@ -54,7 +55,7 @@ const m = vi.hoisted(() => {
   return {
     prisma, genJobFindUnique, genJobUpdate, genJobUpdateMany, projectFindFirst, generationFindFirst,
     generationCreate, chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst, assetUpsert,
-    refundReservation, settleCredits, generateImages, generateVideo, storagePresignedGet,
+    refundReservation, settleCredits, generateImages, submitVideo, pollVideo, storagePresignedGet,
     storagePut, storageGet, storage, sharpInputs,
   };
 });
@@ -66,7 +67,7 @@ vi.mock("@fikirtive/db", () => ({
   settleCanvasCardsForGenJob: vi.fn(async () => undefined),
 }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
-vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
+vi.mock("../generation.js", () => ({ provider: { name: "byteplus", submitVideo: m.submitVideo, pollVideo: m.pollVideo, generate: m.generateImages } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 vi.mock("sharp", async (importOriginal) => {
   const actual = (await importOriginal()) as { default: typeof import("sharp") };
