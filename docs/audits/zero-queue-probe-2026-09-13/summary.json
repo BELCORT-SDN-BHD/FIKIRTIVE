@@ -1,0 +1,21 @@
+{
+  "startedAtIso": "2026-09-13T13:15:54.197Z",
+  "steps": [
+    {
+      "step": 1,
+      "taskId": "cgt-20260913211554-q56jn",
+      "terminalStatus": "succeeded",
+      "timelineEntries": 10,
+      "usage": {
+        "completion_tokens": 50638,
+        "total_tokens": 50638
+      }
+    },
+    {
+      "step": 2,
+      "totalRequests": 150,
+      "hit429": false,
+      "first429": null
+    }
+  ]
+}

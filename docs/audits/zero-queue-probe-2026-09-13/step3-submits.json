@@ -1,0 +1,37 @@
+{
+  "submitBurstStartIso": "2026-09-13T13:19:00.686Z",
+  "results": [
+    {
+      "idx": 1,
+      "httpStatus": 200,
+      "elapsedMs": 588,
+      "body": {
+        "id": "cgt-20260913211901-gpbqw"
+      }
+    },
+    {
+      "idx": 2,
+      "httpStatus": 200,
+      "elapsedMs": 589,
+      "body": {
+        "id": "cgt-20260913211901-bssxk"
+      }
+    },
+    {
+      "idx": 3,
+      "httpStatus": 200,
+      "elapsedMs": 1132,
+      "body": {
+        "id": "cgt-20260913211901-8v2vt"
+      }
+    },
+    {
+      "idx": 4,
+      "httpStatus": 200,
+      "elapsedMs": 551,
+      "body": {
+        "id": "cgt-20260913211901-qf2vt"
+      }
+    }
+  ]
+}

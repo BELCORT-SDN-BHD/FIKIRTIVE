@@ -1,0 +1,290 @@
+{
+  "cgt-20260913211901-gpbqw": [
+    {
+      "atIso": "2026-09-13T13:19:10.068Z",
+      "sinceBurstMs": 9382,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 89
+    },
+    {
+      "atIso": "2026-09-13T13:19:18.370Z",
+      "sinceBurstMs": 17685,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 213
+    },
+    {
+      "atIso": "2026-09-13T13:19:26.584Z",
+      "sinceBurstMs": 25898,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 115
+    },
+    {
+      "atIso": "2026-09-13T13:19:34.730Z",
+      "sinceBurstMs": 34044,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 68
+    },
+    {
+      "atIso": "2026-09-13T13:19:42.895Z",
+      "sinceBurstMs": 42209,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 88
+    },
+    {
+      "atIso": "2026-09-13T13:19:51.060Z",
+      "sinceBurstMs": 50374,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 73
+    },
+    {
+      "atIso": "2026-09-13T13:19:59.227Z",
+      "sinceBurstMs": 58541,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 72
+    },
+    {
+      "atIso": "2026-09-13T13:20:07.405Z",
+      "sinceBurstMs": 66719,
+      "httpStatus": 200,
+      "taskStatus": "succeeded",
+      "elapsedMs": 93
+    }
+  ],
+  "cgt-20260913211901-bssxk": [
+    {
+      "atIso": "2026-09-13T13:19:10.100Z",
+      "sinceBurstMs": 9414,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 31
+    },
+    {
+      "atIso": "2026-09-13T13:19:18.407Z",
+      "sinceBurstMs": 17721,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 35
+    },
+    {
+      "atIso": "2026-09-13T13:19:26.610Z",
+      "sinceBurstMs": 25924,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 25
+    },
+    {
+      "atIso": "2026-09-13T13:19:34.755Z",
+      "sinceBurstMs": 34069,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 25
+    },
+    {
+      "atIso": "2026-09-13T13:19:42.927Z",
+      "sinceBurstMs": 42241,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 31
+    },
+    {
+      "atIso": "2026-09-13T13:19:51.088Z",
+      "sinceBurstMs": 50402,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 27
+    },
+    {
+      "atIso": "2026-09-13T13:19:59.254Z",
+      "sinceBurstMs": 58568,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 26
+    },
+    {
+      "atIso": "2026-09-13T13:20:07.439Z",
+      "sinceBurstMs": 66753,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 33
+    },
+    {
+      "atIso": "2026-09-13T13:20:15.728Z",
+      "sinceBurstMs": 75042,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 225
+    },
+    {
+      "atIso": "2026-09-13T13:20:23.886Z",
+      "sinceBurstMs": 83200,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 91
+    },
+    {
+      "atIso": "2026-09-13T13:20:31.998Z",
+      "sinceBurstMs": 91312,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 85
+    },
+    {
+      "atIso": "2026-09-13T13:20:40.216Z",
+      "sinceBurstMs": 99530,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 217
+    },
+    {
+      "atIso": "2026-09-13T13:20:48.305Z",
+      "sinceBurstMs": 107619,
+      "httpStatus": 200,
+      "taskStatus": "succeeded",
+      "elapsedMs": 88
+    }
+  ],
+  "cgt-20260913211901-8v2vt": [
+    {
+      "atIso": "2026-09-13T13:19:10.129Z",
+      "sinceBurstMs": 9443,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 28
+    },
+    {
+      "atIso": "2026-09-13T13:19:18.436Z",
+      "sinceBurstMs": 17750,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 27
+    },
+    {
+      "atIso": "2026-09-13T13:19:26.635Z",
+      "sinceBurstMs": 25949,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 24
+    },
+    {
+      "atIso": "2026-09-13T13:19:34.777Z",
+      "sinceBurstMs": 34091,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 21
+    },
+    {
+      "atIso": "2026-09-13T13:19:42.958Z",
+      "sinceBurstMs": 42272,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 29
+    },
+    {
+      "atIso": "2026-09-13T13:19:51.116Z",
+      "sinceBurstMs": 50431,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 27
+    },
+    {
+      "atIso": "2026-09-13T13:19:59.279Z",
+      "sinceBurstMs": 58593,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 24
+    },
+    {
+      "atIso": "2026-09-13T13:20:07.470Z",
+      "sinceBurstMs": 66784,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 29
+    },
+    {
+      "atIso": "2026-09-13T13:20:15.761Z",
+      "sinceBurstMs": 75075,
+      "httpStatus": 200,
+      "taskStatus": "succeeded",
+      "elapsedMs": 32
+    }
+  ],
+  "cgt-20260913211901-qf2vt": [
+    {
+      "atIso": "2026-09-13T13:19:10.157Z",
+      "sinceBurstMs": 9471,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 27
+    },
+    {
+      "atIso": "2026-09-13T13:19:18.467Z",
+      "sinceBurstMs": 17781,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 30
+    },
+    {
+      "atIso": "2026-09-13T13:19:26.658Z",
+      "sinceBurstMs": 25972,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 22
+    },
+    {
+      "atIso": "2026-09-13T13:19:34.805Z",
+      "sinceBurstMs": 34119,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 28
+    },
+    {
+      "atIso": "2026-09-13T13:19:42.985Z",
+      "sinceBurstMs": 42299,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 26
+    },
+    {
+      "atIso": "2026-09-13T13:19:51.153Z",
+      "sinceBurstMs": 50467,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 35
+    },
+    {
+      "atIso": "2026-09-13T13:19:59.310Z",
+      "sinceBurstMs": 58624,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 30
+    },
+    {
+      "atIso": "2026-09-13T13:20:07.501Z",
+      "sinceBurstMs": 66815,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 28
+    },
+    {
+      "atIso": "2026-09-13T13:20:15.793Z",
+      "sinceBurstMs": 75107,
+      "httpStatus": 200,
+      "taskStatus": "running",
+      "elapsedMs": 31
+    },
+    {
+      "atIso": "2026-09-13T13:20:23.912Z",
+      "sinceBurstMs": 83226,
+      "httpStatus": 200,
+      "taskStatus": "succeeded",
+      "elapsedMs": 26
+    }
+  ]
+}

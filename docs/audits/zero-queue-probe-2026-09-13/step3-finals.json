@@ -1,0 +1,102 @@
+{
+  "cgt-20260913211901-gpbqw": {
+    "id": "cgt-20260913211901-gpbqw",
+    "model": "dreamina-seedance-2-0-mini-260615",
+    "status": "succeeded",
+    "content": {
+      "video_url": "https://ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com/dreamina-seedance-2-0-mini/02178930554142600000000000000000000ffffc0a8adccaf1c64.mp4?<redacted-signed-query>"
+    },
+    "usage": {
+      "completion_tokens": 50638,
+      "total_tokens": 50638
+    },
+    "created_at": 1789305541,
+    "updated_at": 1789305602,
+    "seed": 73815,
+    "resolution": "480p",
+    "ratio": "16:9",
+    "duration": 5,
+    "framespersecond": 24,
+    "service_tier": "default",
+    "execution_expires_after": 3600,
+    "generate_audio": false,
+    "draft": false,
+    "priority": 0,
+    "output_format": "mp4"
+  },
+  "cgt-20260913211901-8v2vt": {
+    "id": "cgt-20260913211901-8v2vt",
+    "model": "dreamina-seedance-2-0-mini-260615",
+    "status": "succeeded",
+    "content": {
+      "video_url": "https://ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com/dreamina-seedance-2-0-mini/02178930554196800000000000000000000ffffc0a8413c6ae610.mp4?<redacted-signed-query>"
+    },
+    "usage": {
+      "completion_tokens": 50638,
+      "total_tokens": 50638
+    },
+    "created_at": 1789305541,
+    "updated_at": 1789305613,
+    "seed": 97701,
+    "resolution": "480p",
+    "ratio": "16:9",
+    "duration": 5,
+    "framespersecond": 24,
+    "service_tier": "default",
+    "execution_expires_after": 3600,
+    "generate_audio": false,
+    "draft": false,
+    "priority": 0,
+    "output_format": "mp4"
+  },
+  "cgt-20260913211901-qf2vt": {
+    "id": "cgt-20260913211901-qf2vt",
+    "model": "dreamina-seedance-2-0-mini-260615",
+    "status": "succeeded",
+    "content": {
+      "video_url": "https://ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com/dreamina-seedance-2-0-mini/02178930554142300000000000000000000ffffc0a8b3d03d7d47.mp4?<redacted-signed-query>"
+    },
+    "usage": {
+      "completion_tokens": 50638,
+      "total_tokens": 50638
+    },
+    "created_at": 1789305541,
+    "updated_at": 1789305618,
+    "seed": 93885,
+    "resolution": "480p",
+    "ratio": "16:9",
+    "duration": 5,
+    "framespersecond": 24,
+    "service_tier": "default",
+    "execution_expires_after": 3600,
+    "generate_audio": false,
+    "draft": false,
+    "priority": 0,
+    "output_format": "mp4"
+  },
+  "cgt-20260913211901-bssxk": {
+    "id": "cgt-20260913211901-bssxk",
+    "model": "dreamina-seedance-2-0-mini-260615",
+    "status": "succeeded",
+    "content": {
+      "video_url": "https://ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com/dreamina-seedance-2-0-mini/02178930554148000000000000000000000ffffc0a8bb6563f2be.mp4?<redacted-signed-query>"
+    },
+    "usage": {
+      "completion_tokens": 50638,
+      "total_tokens": 50638
+    },
+    "created_at": 1789305541,
+    "updated_at": 1789305642,
+    "seed": 85526,
+    "resolution": "480p",
+    "ratio": "16:9",
+    "duration": 5,
+    "framespersecond": 24,
+    "service_tier": "default",
+    "execution_expires_after": 3600,
+    "generate_audio": false,
+    "draft": false,
+    "priority": 0,
+    "output_format": "mp4"
+  }
+}
