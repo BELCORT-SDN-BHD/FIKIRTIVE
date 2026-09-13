@@ -338,7 +338,7 @@ export { VIDEO_MERCHANT_WAIT_MS } from "./byteplus.js";
 
 /** Creation §5 :177 —— 图片那条路的第一环:同步渲染 POST 的截止时间,加上它后面那段结果
  *  下载。两个加起来就是「一次正常的图片尝试最坏在途多久」,而那个数必须小于 stale ——
- *  和 `VIDEO_POLL_TIMEOUT_MS` 同一条链,所以同样从 `.` 导出给不变式测试读。 */
+ *  和 `VIDEO_MERCHANT_WAIT_MS` 同一条链,所以同样从 `.` 导出给不变式测试读。 */
 export { ARK_IMAGE_TIMEOUT_MS, ARK_DOWNLOAD_TIMEOUT_MS, ARK_CONTROL_TIMEOUT_MS } from "./byteplus.js";
 
 /** #796 判官 r1 P1-1 — the REQUEST-level ceiling every paid provider call passes through, and the
