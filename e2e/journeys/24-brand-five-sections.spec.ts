@@ -1,5 +1,5 @@
 /**
- * Journey 15 — FRONT-A8 / FRONT-A9:商家在 Brand 五个分区写下品牌事实,而在他按下
+ * Journey 24 — FRONT-A8 / FRONT-A9:商家在 Brand 五个分区写下品牌事实,而在他按下
  * Save 之前,那句话既不在正式记录里,也不在 Otto 读到的上下文里。
  *
  * 规格 docs/specs/frontend-baseline.md §7.3④(Founder 2026-09-03 裁决三 / 四 / 十一)。
