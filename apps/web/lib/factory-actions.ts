@@ -16,7 +16,8 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@fikirtive/db";
 import { z } from "zod";
 import { startGen } from "./gen-actions";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { orchestrateBatch, MAX_BATCH_CELLS, type BatchCell, type BatchResult } from "./factory-batch";
 
@@ -87,15 +88,17 @@ async function runBatch(
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<BatchResult | Err> => {
+    // Fast owner-scoped project check (mirrors startGen) so we never mint a batch row
+    // pointing at a project this owner doesn't own. Per-cell startGen re-checks anyway.
+    const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true } });
+    if (!project) return { error: "Project not found." };
 
-  // Fast owner-scoped project check (mirrors startGen) so we never mint a batch row
-  // pointing at a project this owner doesn't own. Per-cell startGen re-checks anyway.
-  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true } });
-  if (!project) return { error: "Project not found." };
-
-  const result = await orchestrateBatch({ startGen, prisma }, { ownerId, projectId, batchId, attemptId, name, cells });
-  if (!("error" in result)) revalidatePath("/", "layout");
-  return result;
+    const result = await orchestrateBatch({ startGen, prisma }, { ownerId, projectId, batchId, attemptId, name, cells });
+    if (!("error" in result)) revalidatePath("/", "layout");
+    return result;
+  });
 }
 
 export async function runVariantBatch(raw: unknown): Promise<BatchResult | Err> {

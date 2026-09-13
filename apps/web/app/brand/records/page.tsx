@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { getEntities, getMyAds, getProjects, getRecentGenerationThumbs } from "@/lib/data";
 import { toEntityDTO } from "@/lib/dto";
@@ -40,35 +41,39 @@ export default async function BrandRecordsPage({
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
   const { ownerId } = owner;
+  const principal = await resolveUserPrincipal(owner);
+  const { memory, records, projectId, stuffItems } = await runAsUser(principal, async () => {
+    // 与换壳前的 `/brand` 逐行相同的一段:`?project=` 认得(且必须是自己的),
+    // 否则落在同一个默认项目上;指向不是自己的项目时**改地址栏**,不静默回落。
+    const ensured = await getOrCreateDefaultProject();
+    if ("error" in ensured) redirect("/login");
+    const projects = await getProjects(ownerId);
+    const requested = sp?.project ? projects.find((p) => p.id === sp.project) : undefined;
+    const projectId = requested?.id ?? projects[0]?.id ?? ensured.id;
 
-  // 与换壳前的 `/brand` 逐行相同的一段:`?project=` 认得(且必须是自己的),
-  // 否则落在同一个默认项目上;指向不是自己的项目时**改地址栏**,不静默回落。
-  const ensured = await getOrCreateDefaultProject();
-  if ("error" in ensured) redirect("/login");
-  const projects = await getProjects(ownerId);
-  const requested = sp?.project ? projects.find((p) => p.id === sp.project) : undefined;
-  const projectId = requested?.id ?? projects[0]?.id ?? ensured.id;
+    if (sp?.project && !requested) {
+      const corrected = new URLSearchParams();
+      corrected.set("project", projectId);
+      if (sp.tab) corrected.set("tab", sp.tab);
+      redirect(`${SHELL_ROUTES.brand}/records?${corrected.toString()}`);
+    }
 
-  if (sp?.project && !requested) {
-    const corrected = new URLSearchParams();
-    corrected.set("project", projectId);
-    if (sp.tab) corrected.set("tab", sp.tab);
-    redirect(`${SHELL_ROUTES.brand}/records?${corrected.toString()}`);
-  }
+    const [memory, records, entities, history, ads] = await Promise.all([
+      listMemory(ownerId),
+      listBrandRecords(ownerId),
+      getEntities(ownerId),
+      getRecentGenerationThumbs(ownerId).catch(() => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>),
+      getMyAds(ownerId).catch(() => [] as Awaited<ReturnType<typeof getMyAds>>),
+    ]);
 
-  const [memory, records, entities, history, ads] = await Promise.all([
-    listMemory(ownerId),
-    listBrandRecords(ownerId),
-    getEntities(ownerId),
-    getRecentGenerationThumbs(ownerId).catch(() => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>),
-    getMyAds(ownerId).catch(() => [] as Awaited<ReturnType<typeof getMyAds>>),
-  ]);
+    const stuffItems = buildStuffItems({
+      entities: entities.map(toEntityDTO),
+      history,
+      ads,
+      records,
+    });
 
-  const stuffItems = buildStuffItems({
-    entities: entities.map(toEntityDTO),
-    history,
-    ads,
-    records,
+    return { memory, records, projectId, stuffItems };
   });
 
   return (

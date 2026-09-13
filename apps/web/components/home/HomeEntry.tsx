@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 
 import { MarketingHomeView, type HomeRecentCanvasRead } from "@/components/home/MarketingHomeView";
 import { getAnalytics } from "@/lib/analytics-actions";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { getProjects } from "@/lib/data";
 import {
   analyticsRangeForHomeRange,
@@ -41,8 +42,9 @@ async function readRecentCanvases(ownerId: string): Promise<HomeRecentCanvasRead
 export async function HomeEntry({ filters }: { filters: HomeSearchState }) {
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
+  const principal = await resolveUserPrincipal(owner);
 
-  const [recents, analytics, saved, manageHome] = await Promise.all([
+  const [recents, analytics, saved, manageHome] = await runAsUser(principal, () => Promise.all([
     readRecentCanvases(owner.ownerId),
     getAnalytics({ range: analyticsRangeForHomeRange(filters.range) }).catch(
       () => ({ state: "transientError" as const }),
@@ -50,7 +52,7 @@ export async function HomeEntry({ filters }: { filters: HomeSearchState }) {
     // 版面从服务器读,不从浏览器读 —— 换浏览器、换设备登录读到的是同一行(FRONT-A4)。
     readHomeLayout(owner.ownerId),
     canManageHome(owner),
-  ]);
+  ]));
 
   return (
     <MarketingHomeView

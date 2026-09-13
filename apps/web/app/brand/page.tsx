@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { isBrandSectionKey, type BrandSectionKey } from "@fikirtive/core";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { loadBrandSections } from "@/lib/brand-context-data";
 import { BrandWorkspace } from "./BrandWorkspace";
 
@@ -34,8 +35,8 @@ export default async function BrandPage({
 
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
-
-  const sections = await loadBrandSections(owner.ownerId);
+  const principal = await resolveUserPrincipal(owner);
+  const sections = await runAsUser(principal, () => loadBrandSections(owner.ownerId));
   const initialSection: BrandSectionKey = isBrandSectionKey(sp?.section) ? sp.section : "brand-voice";
   // `?focus=` 指名要看哪一条上下文。刚建好的草稿走的就是这个地址,所以「按下 Review draft
   // 之后它出现在列表里」不依赖客户端刷新有没有落地,而是一次真导航的结果。

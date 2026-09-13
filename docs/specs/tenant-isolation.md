@@ -80,6 +80,7 @@
 | 2026-09-12 | 严格档保留「无帧但字面 orgId 放行」兜底（credit-actions 后台铸币等未建帧站点靠它活到 staff 帧片）；enforce 翻转与兜底收口＝票 #1403，定调待 Founder | |
 | 2026-09-13 | 切片④核证：enforce 翻转前置雷第④颗——credits.ts adjustWindowFilter 的 {orgId:{in:[…]}} 形状守卫不认，波及 grantTenantCredits／grantCreditsAction／refundCreditsAction／后台租户详情页四条路（今天各多一条 warn，翻闸即四个 500）；另切片④让撤邀请的 not-形状查询从每次一警变为扫描域放行，翻闸前 warn 基线须重取。详见 #1403 评论（2026-09-13）。 | |
 | 2026-09-13 | 切片⑤评估后暂缓 MembershipRole.membership 复合外键（2 处生产调用 + 14 个测试文件牵动，量级远超同类的 PublishAttempt），TENANT-A7 就此条部分通过；建议另立工单「MembershipRole 补 orgId 列 + 复合外键」。同时记明：§3 non-goal「PublishAttempt 无 ownerId 列」的触发条件已由本片兑现（已加列＋复合外键）。 | （留空待 S5） |
+| 2026-09-13 | 收尾片判官记录：NorthstarShellEntry.tsx 与 settings/connections/page.tsx 两处为装饰性帧（JSX 创建在帧内、children 渲染在帧外，今日子树纯 client/展示无服务端读取）——日后在这两层壳下新增服务端租户读取须把读取真正包进帧，勿以为已执法 | （记录，无待裁） |
 
 ## 6. 改签记录
 

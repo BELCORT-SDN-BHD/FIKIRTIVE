@@ -3,7 +3,8 @@
 import { prisma } from "@fikirtive/db";
 import { storageKey } from "@fikirtive/core";
 import { signMediaToken } from "@fikirtive/token-crypto";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { PUBLIC_MEDIA_TTL_MS, publicMediaPath, publicMediaTtlProblem } from "./media-public-link";
 
 /**
@@ -41,23 +42,25 @@ export async function getPublicMediaLink(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ path: string; expiresInMs: number } | { error: string }> => {
+    const ttlProblem = publicMediaTtlProblem(ttlMs);
+    if (ttlProblem) return { error: ttlProblem };
 
-  const ttlProblem = publicMediaTtlProblem(ttlMs);
-  if (ttlProblem) return { error: ttlProblem };
+    const secret = process.env.MEDIA_PROXY_SECRET ?? "";
+    if (!secret) return { error: "Sharing links aren't configured in this environment yet." };
 
-  const secret = process.env.MEDIA_PROXY_SECRET ?? "";
-  if (!secret) return { error: "Sharing links aren't configured in this environment yet." };
+    const gen = await prisma.generation.findFirst({
+      where: { id: generationId, ownerId, deletedAt: null },
+      select: { asset: { select: { ownerId: true, contentHash: true, ext: true } } },
+    });
+    if (!gen) return { error: "Not found." };
+    if (gen.asset.ownerId !== ownerId) return { error: "Not found." };
 
-  const gen = await prisma.generation.findFirst({
-    where: { id: generationId, ownerId, deletedAt: null },
-    select: { asset: { select: { ownerId: true, contentHash: true, ext: true } } },
+    const key = storageKey(gen.asset.ownerId, gen.asset.contentHash, gen.asset.ext.toLowerCase());
+    const token = signMediaToken(ownerId, key, Date.now() + ttlMs, secret);
+    // 回的是**真签进令牌的那个时长**,不是屏幕上挑的那个 —— 屏幕上那句话照这个数字写,
+    // 两者只有一个源头,不可能出现「写着 24 小时、链子活 10 分钟」。
+    return { path: publicMediaPath(token), expiresInMs: ttlMs };
   });
-  if (!gen) return { error: "Not found." };
-  if (gen.asset.ownerId !== ownerId) return { error: "Not found." };
-
-  const key = storageKey(gen.asset.ownerId, gen.asset.contentHash, gen.asset.ext.toLowerCase());
-  const token = signMediaToken(ownerId, key, Date.now() + ttlMs, secret);
-  // 回的是**真签进令牌的那个时长**,不是屏幕上挑的那个 —— 屏幕上那句话照这个数字写,
-  // 两者只有一个源头,不可能出现「写着 24 小时、链子活 10 分钟」。
-  return { path: publicMediaPath(token), expiresInMs: ttlMs };
 }

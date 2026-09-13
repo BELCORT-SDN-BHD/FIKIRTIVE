@@ -29,7 +29,8 @@
 import { prisma } from "@fikirtive/db";
 import { revalidatePath } from "next/cache";
 import { newId } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
 
 /** Same cap the signup form's shop-name input already enforces (maxLength=80) and the same
@@ -51,24 +52,27 @@ export async function updateDisplayName(name: string): Promise<{ ok: true; name:
   // Same policy as setOwnerSetting: impersonation is for SEEING what a customer sees, not for
   // editing their identity on their behalf.
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to change their name." };
-  const value = clean(name);
-  if (!value) return { error: "Name required." };
-  const { ownerId } = gate;
-  const membership = await prisma.membership.findFirst({
-    where: { orgId: ownerId, user: { email: gate.email } },
-    select: { userId: true },
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true; name: string } | { error: string }> => {
+    const value = clean(name);
+    if (!value) return { error: "Name required." };
+    const { ownerId } = gate;
+    const membership = await prisma.membership.findFirst({
+      where: { orgId: ownerId, user: { email: gate.email } },
+      select: { userId: true },
+    });
+    // Every merchant has this row: requireOwner() bootstraps Organization + Membership together
+    // in one transaction, and convergeIdentity seeds the founder-admin's founder-org membership
+    // on each verified sign-in. Missing it means the identity is not resolvable — fail closed.
+    if (!membership) return { error: "Could not save your name. Try again." };
+    try {
+      await prisma.user.update({ where: { id: membership.userId }, data: { name: value } });
+    } catch {
+      return { error: "Could not save your name. Try again." };
+    }
+    revalidatePath("/", "layout");
+    return { ok: true, name: value };
   });
-  // Every merchant has this row: requireOwner() bootstraps Organization + Membership together
-  // in one transaction, and convergeIdentity seeds the founder-admin's founder-org membership
-  // on each verified sign-in. Missing it means the identity is not resolvable — fail closed.
-  if (!membership) return { error: "Could not save your name. Try again." };
-  try {
-    await prisma.user.update({ where: { id: membership.userId }, data: { name: value } });
-  } catch {
-    return { error: "Could not save your name. Try again." };
-  }
-  revalidatePath("/", "layout");
-  return { ok: true, name: value };
 }
 
 /** Rename YOUR WORKSPACE. `gate.ownerId` is the authenticated tenant id AND the Organization
@@ -77,23 +81,26 @@ export async function updateWorkspaceName(name: string): Promise<{ ok: true; nam
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to rename their workspace." };
-  const value = clean(name);
-  if (!value) return { error: "Workspace name required." };
-  const { ownerId } = gate;
-  // Owner-scoped lookup first (the renameProject shape): a soft-deleted org is not renameable,
-  // and the update then runs against an id this session provably owns.
-  const organization = await prisma.organization.findFirst({ where: { id: ownerId, deletedAt: null }, select: { id: true } });
-  if (!organization) return { error: "Workspace not found." };
-  try {
-    await prisma.organization.update({ where: { id: organization.id }, data: { name: value } });
-  } catch {
-    return { error: "Could not save the workspace name. Try again." };
-  }
-  // Traceable, like every other owner-scoped change (best-effort — an audit write must never
-  // turn a landed rename into a reported failure).
-  await prisma.actionEvent
-    .create({ data: { id: newId(), ownerId, projectId: null, type: "workspace.rename", payload: { name: value } } })
-    .catch(() => {});
-  revalidatePath("/", "layout");
-  return { ok: true, name: value };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true; name: string } | { error: string }> => {
+    const value = clean(name);
+    if (!value) return { error: "Workspace name required." };
+    const { ownerId } = gate;
+    // Owner-scoped lookup first (the renameProject shape): a soft-deleted org is not renameable,
+    // and the update then runs against an id this session provably owns.
+    const organization = await prisma.organization.findFirst({ where: { id: ownerId, deletedAt: null }, select: { id: true } });
+    if (!organization) return { error: "Workspace not found." };
+    try {
+      await prisma.organization.update({ where: { id: organization.id }, data: { name: value } });
+    } catch {
+      return { error: "Could not save the workspace name. Try again." };
+    }
+    // Traceable, like every other owner-scoped change (best-effort — an audit write must never
+    // turn a landed rename into a reported failure).
+    await prisma.actionEvent
+      .create({ data: { id: newId(), ownerId, projectId: null, type: "workspace.rename", payload: { name: value } } })
+      .catch(() => {});
+    revalidatePath("/", "layout");
+    return { ok: true, name: value };
+  });
 }

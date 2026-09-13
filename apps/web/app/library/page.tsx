@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { getProjects } from "@/lib/data";
 import { getGenerationHistory } from "@/lib/library-actions";
 import { getLibraryElements } from "@/lib/library-elements";
@@ -50,12 +51,13 @@ export default async function LibraryPage({
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
   const { ownerId } = owner;
+  const principal = await resolveUserPrincipal(owner);
 
   const { asset, collection, element, project, show, view } = (await searchParams) ?? {};
   const initialView = parseLibraryView(view);
   const initialElementView = parseLibraryElementView(element);
 
-  const [page, projects, elements] = await Promise.all([
+  const [page, projects, elements] = await runAsUser(principal, () => Promise.all([
     getGenerationHistory({
       take: 40,
       // Uploads 页签就是一次来源约束,和客户端后续发的那一次同一个口径。
@@ -64,7 +66,7 @@ export default async function LibraryPage({
     // 「Source Canvas」筛选的选项表 —— 名字是商家自己给画布起的,不是我们编的。
     getProjects(ownerId).catch(() => [] as Awaited<ReturnType<typeof getProjects>>),
     getLibraryElements(),
-  ]);
+  ]));
 
   return (
     <LibraryView

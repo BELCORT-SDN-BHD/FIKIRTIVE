@@ -13,7 +13,8 @@
 
 import { revalidatePath } from "next/cache";
 
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { availableHomeComponents, homeLayoutWrite, isHomeComponentId } from "@/lib/home-layout";
 import { actingUserId, canManageHome, writeHomeLayout } from "@/lib/home-layout-store";
@@ -35,26 +36,28 @@ export async function saveHomeLayout(
   if (await isImpersonating()) {
     return { error: "Paused while impersonating a customer — exit impersonation to change their Home." };
   }
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true } | { error: string }> => {
+    if (!(await canManageHome(gate))) return { error: "You don't have access to this." };
 
-  if (!(await canManageHome(gate))) return { error: "You don't have access to this." };
-
-  if (!Array.isArray(selected)) return { error: "Bad value." };
-  const write = homeLayoutWrite({
-    offered: availableHomeComponents(),
-    selected: selected.filter(isHomeComponentId),
-  });
-
-  try {
-    await writeHomeLayout({
-      ownerId: gate.ownerId,
-      componentIds: write.componentIds,
-      hiddenIds: write.hiddenIds,
-      updatedById: await actingUserId(gate.email),
+    if (!Array.isArray(selected)) return { error: "Bad value." };
+    const write = homeLayoutWrite({
+      offered: availableHomeComponents(),
+      selected: selected.filter(isHomeComponentId),
     });
-  } catch {
-    return { error: "Couldn't save your Home layout — please try again." };
-  }
 
-  revalidatePath("/");
-  return { ok: true };
+    try {
+      await writeHomeLayout({
+        ownerId: gate.ownerId,
+        componentIds: write.componentIds,
+        hiddenIds: write.hiddenIds,
+        updatedById: await actingUserId(gate.email),
+      });
+    } catch {
+      return { error: "Couldn't save your Home layout — please try again." };
+    }
+
+    revalidatePath("/");
+    return { ok: true };
+  });
 }

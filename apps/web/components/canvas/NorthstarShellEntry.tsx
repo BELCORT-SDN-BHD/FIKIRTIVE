@@ -2,7 +2,8 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { ImmersiveShell } from "@/components/northstar/immersive/immersive-shell";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 
 /**
  * 创作旗舰面外壳的受控入口。
@@ -22,6 +23,8 @@ import { requireOwner } from "@/lib/auth-guard";
 export async function NorthstarShellEntry({ children }: { children: React.ReactNode }) {
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
-
-  return <ImmersiveShell>{children}</ImmersiveShell>;
+  // 租户围栏收尾片（规格 docs/specs/tenant-isolation.md，#464，TENANT-A10）：这一层不解析
+  // 身份、也不取数(#801),帧只是把「过了登录闸之后」整体收进来,与其余已落闸的面同一口径。
+  const principal = await resolveUserPrincipal(owner);
+  return runAsUser(principal, () => <ImmersiveShell>{children}</ImmersiveShell>);
 }

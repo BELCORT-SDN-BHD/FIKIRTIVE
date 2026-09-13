@@ -9,7 +9,8 @@ import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { CanvasDeepLinkRefused } from "@/components/canvas/CanvasDeepLinkRefused";
 import { getMyAccount } from "@/lib/account-actions";
 import { getOrCreateDefaultProject } from "@/lib/actions";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { findOwnedThreadForDeepLink, getCoworkThreadPage, getCoworkThreads, getEntities, getProjects, resolveCoworkResultUrls, resolveCoworkMessageReferences } from "@/lib/data";
 import { toChatThreadDTO, toEntityDTO } from "@/lib/dto";
 import { getCanvasConversationHandoff } from "@/lib/canvas-entry-actions";
@@ -148,166 +149,168 @@ export async function ImmersiveCanvasEntry({
   const sp = await searchParams;
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
-
-  // FSE-207 / FSE-207b:清单先读、拒绝先判,`getOrCreateDefaultProject()` 排在它们后面
-  // —— 那一条会**建**一张画布(`actions.ts` 的 `project.create` ＋ 审计行),所以它一个
-  // 字节都不许在「这条深链我们打不开」这题答完之前执行。打不开就到此为止:不改写地址、
-  // 不建任何东西。project 与 thread 两道题都要在这里问完(`?thread=` 单独出现、
-  // `?project=` 不在场时,项目那道题天然放行——照旧只问 thread 那道)。
-  const requestedProjectId = firstSearchParam(sp.project);
-  const ownedProjects = await getProjects(owner.ownerId);
-  if (isUnresolvedProjectDeepLink(ownedProjects, requestedProjectId)) {
-    return <CanvasDeepLinkRefused />;
-  }
-
-  // FSE-207b(判官 P2-1 修根,PR #1414)—— 这里要问的是「这条 id 是不是我名下任何一个画布
-  // 里的对话」,不是「是不是当前这张画布里的」;后者仍由下面 `selectImmersiveThread` 的既有
-  // 归一化处理。原先借 `getAllCoworkThreadMetas` 的租户全量 `findMany` 来答这道题,而画布
-  // 规范地址天然带 `?thread=`,是每次打开一条对话都要走的热路径,换成一次精确点查
-  // (`findOwnedThreadForDeepLink`,命中 schema 的 `@@unique([id, ownerId])`)。只在真带了
-  // `?thread=` 时才多发这一次查询。
-  const requestedThreadId = firstSearchParam(sp.thread);
-  let requestedThreadProjectId: string | undefined;
-  if (requestedThreadId !== undefined) {
-    const ownedThread = await findOwnedThreadForDeepLink(owner.ownerId, requestedThreadId);
-    if (isUnresolvedThreadDeepLink(ownedThread ? [ownedThread] : [], requestedThreadId)) {
-      return <CanvasDeepLinkRefused variant="thread" />;
+  const principal = await resolveUserPrincipal(owner);
+  return await runAsUser(principal, async () => {
+    // FSE-207 / FSE-207b:清单先读、拒绝先判,`getOrCreateDefaultProject()` 排在它们后面
+    // —— 那一条会**建**一张画布(`actions.ts` 的 `project.create` ＋ 审计行),所以它一个
+    // 字节都不许在「这条深链我们打不开」这题答完之前执行。打不开就到此为止:不改写地址、
+    // 不建任何东西。project 与 thread 两道题都要在这里问完(`?thread=` 单独出现、
+    // `?project=` 不在场时,项目那道题天然放行——照旧只问 thread 那道)。
+    const requestedProjectId = firstSearchParam(sp.project);
+    const ownedProjects = await getProjects(owner.ownerId);
+    if (isUnresolvedProjectDeepLink(ownedProjects, requestedProjectId)) {
+      return <CanvasDeepLinkRefused />;
     }
-    requestedThreadProjectId = ownedThread?.projectId;
-  }
 
-  const ensured = await getOrCreateDefaultProject();
-  if ("error" in ensured) redirect("/login");
-
-  // 一张画布都还没有的租户:上面那次读发生在 bootstrap 之前,所以这里重读一次,侧栏的画布
-  // 清单才不会比改动之前少一张(这一趟只在「一张都没有」时发生,也就是每个租户的第一次)。
-  const projects = ownedProjects.length > 0 ? ownedProjects : await getProjects(owner.ownerId);
-  const projectSelection = selectImmersiveProject(projects, ensured.id, requestedProjectId);
-
-  // FSE-207b(判官 P2-2 修根,PR #1414)—— 点查已经把这条 thread 真正挂在哪张画布上带回来
-  // 了(`requestedThreadProjectId`)。它与地址/兜底要打开的画布不一致时(常见形状:
-  // `?project=A&thread=` 其实挂在 B 上),绝不能沿用下面 `selectImmersiveThread` 的既有
-  // 归一化 —— 那条归一化只知道「这条 id 不在当前画布的清单里」,会把商家悄悄换到 A 里**另
-  // 一条**对话上,与他点的链接毫无关系。这里提前把地址纠正成 B 的规范地址(同一条 thread、
-  // 换成它真正所在的 project),与「地址要匹配实际打开的内容」这条既有归一化哲学一致,只是
-  // 提前到发错画布的读之前;本就在正确画布上的合法深链不受影响,原路往下走。
-  if (
-    requestedThreadId !== undefined &&
-    requestedThreadProjectId !== undefined &&
-    requestedThreadProjectId !== projectSelection.activeProjectId
-  ) {
-    redirect(
-      buildImmersiveCanvasCanonicalUrl(sp, {
-        activeProjectId: requestedThreadProjectId,
-        activeThreadId: requestedThreadId,
-        canonicalizeThread: true,
-      }),
-    );
-  }
-
-  const [threadRows, accountResult, entityRows] = await Promise.all([
-    getCoworkThreads(owner.ownerId, projectSelection.activeProjectId),
-    getMyAccount(),
-    // The board's prompt box references the merchant's own saved things with @ — without
-    // them the mention list is empty and "@ to reference your stuff" promises nothing.
-    getEntities(owner.ownerId),
-  ]);
-  const threadSelection = selectImmersiveThread(threadRows, requestedThreadId);
-
-  if (threadSelection.shouldRedirect) {
-    redirect(
-      buildImmersiveCanvasCanonicalUrl(sp, {
-        activeProjectId: projectSelection.activeProjectId,
-        activeThreadId: threadSelection.activeThreadId,
-        canonicalizeThread: true,
-      }),
-    );
-  }
-
-  const activeThreadRow = threadSelection.activeThreadId
-    ? await getCoworkThreadPage(owner.ownerId, threadSelection.activeThreadId)
-    : null;
-  const [resultUrls, messageReferences] = activeThreadRow
-    ? await Promise.all([
-        resolveCoworkResultUrls(owner.ownerId, [activeThreadRow]),
-        // FRONT-A10 回链:画布这条读路也要带上「这条消息提到了谁」。
-        resolveCoworkMessageReferences(owner.ownerId, [activeThreadRow]),
-      ])
-    : [new Map(), new Map()];
-  const activeThread = activeThreadRow
-    ? {
-        ...toChatThreadDTO(activeThreadRow, resultUrls, messageReferences),
-        hasOlderMessages: activeThreadRow.hasOlderMessages,
+    // FSE-207b(判官 P2-1 修根,PR #1414)—— 这里要问的是「这条 id 是不是我名下任何一个画布
+    // 里的对话」,不是「是不是当前这张画布里的」;后者仍由下面 `selectImmersiveThread` 的既有
+    // 归一化处理。原先借 `getAllCoworkThreadMetas` 的租户全量 `findMany` 来答这道题,而画布
+    // 规范地址天然带 `?thread=`,是每次打开一条对话都要走的热路径,换成一次精确点查
+    // (`findOwnedThreadForDeepLink`,命中 schema 的 `@@unique([id, ownerId])`)。只在真带了
+    // `?thread=` 时才多发这一次查询。
+    const requestedThreadId = firstSearchParam(sp.thread);
+    let requestedThreadProjectId: string | undefined;
+    if (requestedThreadId !== undefined) {
+      const ownedThread = await findOwnedThreadForDeepLink(owner.ownerId, requestedThreadId);
+      if (isUnresolvedThreadDeepLink(ownedThread ? [ownedThread] : [], requestedThreadId)) {
+        return <CanvasDeepLinkRefused variant="thread" />;
       }
-    : null;
-  const handoffId = firstSearchParam(sp.handoff);
-  const handoff = handoffId && activeThread && activeThread.messages.length === 0
-    ? await getCanvasConversationHandoff({
-        ownerId: owner.ownerId,
-        handoffId,
-        projectId: projectSelection.activeProjectId,
-        threadId: activeThread.id,
-      })
-    : null;
+      requestedThreadProjectId = ownedThread?.projectId;
+    }
 
-  if (handoffId && !handoff) {
-    const clean = { ...sp };
-    delete clean.handoff;
-    redirect(
-      buildImmersiveCanvasCanonicalUrl(clean, {
-        activeProjectId: projectSelection.activeProjectId,
-        activeThreadId: threadSelection.activeThreadId,
-        canonicalizeThread: true,
-      }),
+    const ensured = await getOrCreateDefaultProject();
+    if ("error" in ensured) redirect("/login");
+
+    // 一张画布都还没有的租户:上面那次读发生在 bootstrap 之前,所以这里重读一次,侧栏的画布
+    // 清单才不会比改动之前少一张(这一趟只在「一张都没有」时发生,也就是每个租户的第一次)。
+    const projects = ownedProjects.length > 0 ? ownedProjects : await getProjects(owner.ownerId);
+    const projectSelection = selectImmersiveProject(projects, ensured.id, requestedProjectId);
+
+    // FSE-207b(判官 P2-2 修根,PR #1414)—— 点查已经把这条 thread 真正挂在哪张画布上带回来
+    // 了(`requestedThreadProjectId`)。它与地址/兜底要打开的画布不一致时(常见形状:
+    // `?project=A&thread=` 其实挂在 B 上),绝不能沿用下面 `selectImmersiveThread` 的既有
+    // 归一化 —— 那条归一化只知道「这条 id 不在当前画布的清单里」,会把商家悄悄换到 A 里**另
+    // 一条**对话上,与他点的链接毫无关系。这里提前把地址纠正成 B 的规范地址(同一条 thread、
+    // 换成它真正所在的 project),与「地址要匹配实际打开的内容」这条既有归一化哲学一致,只是
+    // 提前到发错画布的读之前;本就在正确画布上的合法深链不受影响,原路往下走。
+    if (
+      requestedThreadId !== undefined &&
+      requestedThreadProjectId !== undefined &&
+      requestedThreadProjectId !== projectSelection.activeProjectId
+    ) {
+      redirect(
+        buildImmersiveCanvasCanonicalUrl(sp, {
+          activeProjectId: requestedThreadProjectId,
+          activeThreadId: requestedThreadId,
+          canonicalizeThread: true,
+        }),
+      );
+    }
+
+    const [threadRows, accountResult, entityRows] = await Promise.all([
+      getCoworkThreads(owner.ownerId, projectSelection.activeProjectId),
+      getMyAccount(),
+      // The board's prompt box references the merchant's own saved things with @ — without
+      // them the mention list is empty and "@ to reference your stuff" promises nothing.
+      getEntities(owner.ownerId),
+    ]);
+    const threadSelection = selectImmersiveThread(threadRows, requestedThreadId);
+
+    if (threadSelection.shouldRedirect) {
+      redirect(
+        buildImmersiveCanvasCanonicalUrl(sp, {
+          activeProjectId: projectSelection.activeProjectId,
+          activeThreadId: threadSelection.activeThreadId,
+          canonicalizeThread: true,
+        }),
+      );
+    }
+
+    const activeThreadRow = threadSelection.activeThreadId
+      ? await getCoworkThreadPage(owner.ownerId, threadSelection.activeThreadId)
+      : null;
+    const [resultUrls, messageReferences] = activeThreadRow
+      ? await Promise.all([
+          resolveCoworkResultUrls(owner.ownerId, [activeThreadRow]),
+          // FRONT-A10 回链:画布这条读路也要带上「这条消息提到了谁」。
+          resolveCoworkMessageReferences(owner.ownerId, [activeThreadRow]),
+        ])
+      : [new Map(), new Map()];
+    const activeThread = activeThreadRow
+      ? {
+          ...toChatThreadDTO(activeThreadRow, resultUrls, messageReferences),
+          hasOlderMessages: activeThreadRow.hasOlderMessages,
+        }
+      : null;
+    const handoffId = firstSearchParam(sp.handoff);
+    const handoff = handoffId && activeThread && activeThread.messages.length === 0
+      ? await getCanvasConversationHandoff({
+          ownerId: owner.ownerId,
+          handoffId,
+          projectId: projectSelection.activeProjectId,
+          threadId: activeThread.id,
+        })
+      : null;
+
+    if (handoffId && !handoff) {
+      const clean = { ...sp };
+      delete clean.handoff;
+      redirect(
+        buildImmersiveCanvasCanonicalUrl(clean, {
+          activeProjectId: projectSelection.activeProjectId,
+          activeThreadId: threadSelection.activeThreadId,
+          canonicalizeThread: true,
+        }),
+      );
+    }
+
+    const runtimeContext: ImmersiveCanvasRuntimeContext = {
+      projects: projects.map((project) => ({ id: project.id, name: project.name })),
+      threads: threadRows.map((thread) => ({
+        id: thread.id,
+        projectId: thread.projectId,
+        title: thread.title,
+        updatedAt: thread.updatedAt.toISOString(),
+        pinnedAt: thread.pinnedAt?.toISOString() ?? null,
+      })),
+      activeProjectId: projectSelection.activeProjectId,
+      activeThreadId: threadSelection.activeThreadId,
+      initialBalance: "error" in accountResult ? 0 : accountResult.balance,
+      initialBalanceUsd: "error" in accountResult ? 0 : accountResult.balanceUsd,
+      activeThread,
+      // 起步页挂上的引用随 handoff 进这条对话的**首轮**(规格 §7.3⑨)。归属已在
+      // `getCanvasConversationHandoff` 里按 ownerId 重查过,这里只是把它交给同一个
+      // pendingFirst 通道 —— 画布自己那套引用消费不改。
+      pendingFirst:
+        handoffId && handoff
+          ? {
+              handoffId,
+              text: handoff.prompt,
+              ...(handoff.entityIds.length ? { entityIds: handoff.entityIds } : {}),
+              ...(handoff.sourceGenerationIds.length
+                ? { sourceGenerationIds: handoff.sourceGenerationIds }
+                : {}),
+              ...(handoff.referenceVideoGenerationIds.length
+                ? { referenceVideoGenerationIds: handoff.referenceVideoGenerationIds }
+                : {}),
+              // FSE-210 / PRODID-R11:typed wire 引用也要跟着交接过去,不然这一轮的
+              // `ChatMessage.referenceRefs` 是空的 —— @ 到的产品/演员从此回不了链,
+              // 与直接在画布里 `@` 的那一轮不再同一形状(判官注记,见 docs/specs/
+              // brand-product-identity.md §5 PRODID-R11)。
+              ...(handoff.references.length ? { references: handoff.references } : {}),
+            }
+          : null,
+    };
+
+    // #600 (spec #599 D1/D2): this page mounts the mature canvas kernel (FlowCanvas / @xyflow)
+    // wearing the north-star skin. The hand-rolled north-star board it replaced was deleted from
+    // the tree by #606 (D7 · T7) — there is one canvas implementation now, not two.
+    return (
+      <NorthstarCanvasWorkspace
+        key={`${runtimeContext.activeProjectId}:${runtimeContext.activeThreadId ?? ""}`}
+        runtimeContext={runtimeContext}
+        entities={entityRows.map(toEntityDTO)}
+      />
     );
-  }
-
-  const runtimeContext: ImmersiveCanvasRuntimeContext = {
-    projects: projects.map((project) => ({ id: project.id, name: project.name })),
-    threads: threadRows.map((thread) => ({
-      id: thread.id,
-      projectId: thread.projectId,
-      title: thread.title,
-      updatedAt: thread.updatedAt.toISOString(),
-      pinnedAt: thread.pinnedAt?.toISOString() ?? null,
-    })),
-    activeProjectId: projectSelection.activeProjectId,
-    activeThreadId: threadSelection.activeThreadId,
-    initialBalance: "error" in accountResult ? 0 : accountResult.balance,
-    initialBalanceUsd: "error" in accountResult ? 0 : accountResult.balanceUsd,
-    activeThread,
-    // 起步页挂上的引用随 handoff 进这条对话的**首轮**(规格 §7.3⑨)。归属已在
-    // `getCanvasConversationHandoff` 里按 ownerId 重查过,这里只是把它交给同一个
-    // pendingFirst 通道 —— 画布自己那套引用消费不改。
-    pendingFirst:
-      handoffId && handoff
-        ? {
-            handoffId,
-            text: handoff.prompt,
-            ...(handoff.entityIds.length ? { entityIds: handoff.entityIds } : {}),
-            ...(handoff.sourceGenerationIds.length
-              ? { sourceGenerationIds: handoff.sourceGenerationIds }
-              : {}),
-            ...(handoff.referenceVideoGenerationIds.length
-              ? { referenceVideoGenerationIds: handoff.referenceVideoGenerationIds }
-              : {}),
-            // FSE-210 / PRODID-R11:typed wire 引用也要跟着交接过去,不然这一轮的
-            // `ChatMessage.referenceRefs` 是空的 —— @ 到的产品/演员从此回不了链,
-            // 与直接在画布里 `@` 的那一轮不再同一形状(判官注记,见 docs/specs/
-            // brand-product-identity.md §5 PRODID-R11)。
-            ...(handoff.references.length ? { references: handoff.references } : {}),
-          }
-        : null,
-  };
-
-  // #600 (spec #599 D1/D2): this page mounts the mature canvas kernel (FlowCanvas / @xyflow)
-  // wearing the north-star skin. The hand-rolled north-star board it replaced was deleted from
-  // the tree by #606 (D7 · T7) — there is one canvas implementation now, not two.
-  return (
-    <NorthstarCanvasWorkspace
-      key={`${runtimeContext.activeProjectId}:${runtimeContext.activeThreadId ?? ""}`}
-      runtimeContext={runtimeContext}
-      entities={entityRows.map(toEntityDTO)}
-    />
-  );
+  });
 }

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { requireOwner } from "@/lib/auth-guard";
+import { requireOwner, resolveUserPrincipal } from "@/lib/auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import OttoConnections from "@/components/otto/OttoConnections";
 import { SettingsShell } from "@/components/settings/SettingsShell";
 
@@ -23,8 +24,11 @@ export const metadata = { title: "Connections · Fikirtive" };
 export default async function ConnectionsRoutePage() {
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
-
-  return (
+  // 租户围栏收尾片（规格 docs/specs/tenant-isolation.md，#464，TENANT-A10）：这一页本身不取数
+  // (`OttoConnections` 挂载后自己发起 `getAccountViewData()`,各自再核一次同一个 session),
+  // 帧只是把「过了门之后的商家专属工作」整体收进来,与其余已落闸的面同一口径。
+  const principal = await resolveUserPrincipal(owner);
+  return runAsUser(principal, () => (
     <SettingsShell
       active="connections"
       title="Connections"
@@ -40,5 +44,5 @@ export default async function ConnectionsRoutePage() {
         <OttoConnections embedded />
       </div>
     </SettingsShell>
-  );
+  ));
 }

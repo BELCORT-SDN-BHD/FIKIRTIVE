@@ -2,7 +2,8 @@
 
 import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { filterVisibleSubjects, resolveLibrarySubjects } from "./library-subjects";
 import { isLibrarySubjectType, subjectKey } from "./library-types";
 import type {
@@ -50,25 +51,27 @@ export async function setLibraryFavorite(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ favorite: boolean } | { error: string }> => {
+    if (!isLibrarySubjectType(subjectType) || !subjectId) return { error: "Not found." };
+    const ref: LibrarySubjectRef = { subjectType, subjectId };
 
-  if (!isLibrarySubjectType(subjectType) || !subjectId) return { error: "Not found." };
-  const ref: LibrarySubjectRef = { subjectType, subjectId };
+    const visible = await filterVisibleSubjects(ownerId, [ref]);
+    if (!visible.length) return { error: "Not found." };
 
-  const visible = await filterVisibleSubjects(ownerId, [ref]);
-  if (!visible.length) return { error: "Not found." };
-
-  if (favorite) {
-    // 幂等压在 (ownerId, subjectType, subjectId) 唯一约束上,而不是「先查后建」——
-    // 后者在两次快速点击下会双双查空、双双插入。
-    await prisma.favorite.upsert({
-      where: { ownerId_subjectType_subjectId: { ownerId, subjectType, subjectId } },
-      update: {},
-      create: { id: newId(), ownerId, subjectType, subjectId },
-    });
-  } else {
-    await prisma.favorite.deleteMany({ where: { ownerId, subjectType, subjectId } });
-  }
-  return { favorite };
+    if (favorite) {
+      // 幂等压在 (ownerId, subjectType, subjectId) 唯一约束上,而不是「先查后建」——
+      // 后者在两次快速点击下会双双查空、双双插入。
+      await prisma.favorite.upsert({
+        where: { ownerId_subjectType_subjectId: { ownerId, subjectType, subjectId } },
+        update: {},
+        create: { id: newId(), ownerId, subjectType, subjectId },
+      });
+    } else {
+      await prisma.favorite.deleteMany({ where: { ownerId, subjectType, subjectId } });
+    }
+    return { favorite };
+  });
 }
 
 /**
@@ -81,26 +84,28 @@ export async function listFavoriteKeys(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ keys: string[] } | { error: string }> => {
+    const wanted = refs.filter(
+      (ref): ref is LibrarySubjectRef => isLibrarySubjectType(ref.subjectType) && Boolean(ref.subjectId),
+    );
+    if (!wanted.length) return { keys: [] };
 
-  const wanted = refs.filter(
-    (ref): ref is LibrarySubjectRef => isLibrarySubjectType(ref.subjectType) && Boolean(ref.subjectId),
-  );
-  if (!wanted.length) return { keys: [] };
-
-  const rows = await prisma.favorite.findMany({
-    where: {
-      ownerId,
-      OR: wanted.map((ref) => ({ subjectType: ref.subjectType, subjectId: ref.subjectId })),
-    },
-    select: { subjectType: true, subjectId: true },
+    const rows = await prisma.favorite.findMany({
+      where: {
+        ownerId,
+        OR: wanted.map((ref) => ({ subjectType: ref.subjectType, subjectId: ref.subjectId })),
+      },
+      select: { subjectType: true, subjectId: true },
+    });
+    return {
+      keys: rows
+        .filter((row): row is { subjectType: LibrarySubjectType; subjectId: string } =>
+          isLibrarySubjectType(row.subjectType),
+        )
+        .map(subjectKey),
+    };
   });
-  return {
-    keys: rows
-      .filter((row): row is { subjectType: LibrarySubjectType; subjectId: string } =>
-        isLibrarySubjectType(row.subjectType),
-      )
-      .map(subjectKey),
-  };
 }
 
 /**
@@ -115,53 +120,55 @@ export async function listLibraryFavorites(
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<LibraryFavoritePage | { error: string }> => {
+    const take = opts?.take ?? 60;
+    const scanTake = Math.min(Math.max(take + FAVORITE_SCAN_BUFFER, take + 1), 100);
 
-  const take = opts?.take ?? 60;
-  const scanTake = Math.min(Math.max(take + FAVORITE_SCAN_BUFFER, take + 1), 100);
-
-  let cursorWhere = {};
-  if (opts?.cursor) {
-    const parsed = parseFavoriteCursor(opts.cursor);
-    if (parsed) {
-      cursorWhere = {
-        OR: [
-          { createdAt: { lt: parsed.at } },
-          { createdAt: parsed.at, id: { lt: parsed.id } },
-        ],
-      };
+    let cursorWhere = {};
+    if (opts?.cursor) {
+      const parsed = parseFavoriteCursor(opts.cursor);
+      if (parsed) {
+        cursorWhere = {
+          OR: [
+            { createdAt: { lt: parsed.at } },
+            { createdAt: parsed.at, id: { lt: parsed.id } },
+          ],
+        };
+      }
     }
-  }
 
-  const rows = await prisma.favorite.findMany({
-    where: { ownerId, ...cursorWhere },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: scanTake + 1,
-    select: { id: true, subjectType: true, subjectId: true, createdAt: true },
+    const rows = await prisma.favorite.findMany({
+      where: { ownerId, ...cursorWhere },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: scanTake + 1,
+      select: { id: true, subjectType: true, subjectId: true, createdAt: true },
+    });
+
+    const scanned = rows.slice(0, scanTake);
+    const refs = scanned
+      .filter((row): row is typeof row & { subjectType: LibrarySubjectType } =>
+        isLibrarySubjectType(row.subjectType),
+      )
+      .map((row) => ({ subjectType: row.subjectType, subjectId: row.subjectId }));
+    const resolved = await resolveLibrarySubjects(ownerId, refs);
+
+    const existing: { row: (typeof scanned)[number]; item: LibraryFavoriteItem }[] = [];
+    for (const row of scanned) {
+      if (!isLibrarySubjectType(row.subjectType)) continue;
+      const item = resolved.get(subjectKey({ subjectType: row.subjectType, subjectId: row.subjectId }));
+      if (!item) continue;
+      existing.push({ row, item: { ...item, favoritedAt: row.createdAt.toISOString() } });
+    }
+
+    const items = existing.slice(0, take).map((entry) => entry.item);
+    const cursorRow =
+      existing.length > take
+        ? existing[take - 1]!.row
+        : rows.length > scanTake
+          ? scanned[scanned.length - 1]
+          : null;
+    const nextCursor = cursorRow ? `${cursorRow.createdAt.toISOString()}|${cursorRow.id}` : null;
+    return { items, nextCursor, hasMore: nextCursor != null };
   });
-
-  const scanned = rows.slice(0, scanTake);
-  const refs = scanned
-    .filter((row): row is typeof row & { subjectType: LibrarySubjectType } =>
-      isLibrarySubjectType(row.subjectType),
-    )
-    .map((row) => ({ subjectType: row.subjectType, subjectId: row.subjectId }));
-  const resolved = await resolveLibrarySubjects(ownerId, refs);
-
-  const existing: { row: (typeof scanned)[number]; item: LibraryFavoriteItem }[] = [];
-  for (const row of scanned) {
-    if (!isLibrarySubjectType(row.subjectType)) continue;
-    const item = resolved.get(subjectKey({ subjectType: row.subjectType, subjectId: row.subjectId }));
-    if (!item) continue;
-    existing.push({ row, item: { ...item, favoritedAt: row.createdAt.toISOString() } });
-  }
-
-  const items = existing.slice(0, take).map((entry) => entry.item);
-  const cursorRow =
-    existing.length > take
-      ? existing[take - 1]!.row
-      : rows.length > scanTake
-        ? scanned[scanned.length - 1]
-        : null;
-  const nextCursor = cursorRow ? `${cursorRow.createdAt.toISOString()}|${cursorRow.id}` : null;
-  return { items, nextCursor, hasMore: nextCursor != null };
 }

@@ -14,7 +14,12 @@ const {
   mockStorageExists: vi.fn(),
 }));
 
-vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
+// 租户围栏收尾片（#464）：library-actions.ts 现在从这个模块拿 `resolveUserPrincipal` 建帧;
+// 单测 mock 掉了整个 `../auth-guard`，补上 #464 B1 既有的共享 stub（其它切片同款用法）。
+vi.mock("../auth-guard", async () => ({
+  requireOwner: mockOwner,
+  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     generation: { findMany: mockGenFindMany },

@@ -1,7 +1,8 @@
 "use server";
 
 import { isReferenceType, type ReferenceType } from "@fikirtive/core";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { searchReferences } from "./reference-search";
 import { REFERENCE_PAGE_LIMIT, type ReferenceSearchPage } from "./reference-search-model";
 
@@ -19,16 +20,18 @@ import { REFERENCE_PAGE_LIMIT, type ReferenceSearchPage } from "./reference-sear
 export async function searchReferencesAction(raw: unknown): Promise<ReferenceSearchPage> {
   const owner = await requireOwner();
   if ("error" in owner) return { items: [], nextCursor: null };
+  const principal = await resolveUserPrincipal(owner);
+  return runAsUser(principal, (): Promise<ReferenceSearchPage> => {
+    const input = (raw ?? {}) as { query?: unknown; types?: unknown; cursor?: unknown; limit?: unknown };
+    // A merchant cannot type a 4 KB name; cap the string rather than hand an unbounded LIKE to Postgres.
+    const query = typeof input.query === "string" ? input.query.slice(0, 64) : "";
+    const types = Array.isArray(input.types)
+      ? input.types.filter((type): type is ReferenceType => typeof type === "string" && isReferenceType(type))
+      : undefined;
+    const cursor = typeof input.cursor === "string" ? input.cursor : null;
+    const limit =
+      typeof input.limit === "number" && Number.isFinite(input.limit) ? input.limit : REFERENCE_PAGE_LIMIT;
 
-  const input = (raw ?? {}) as { query?: unknown; types?: unknown; cursor?: unknown; limit?: unknown };
-  // A merchant cannot type a 4 KB name; cap the string rather than hand an unbounded LIKE to Postgres.
-  const query = typeof input.query === "string" ? input.query.slice(0, 64) : "";
-  const types = Array.isArray(input.types)
-    ? input.types.filter((type): type is ReferenceType => typeof type === "string" && isReferenceType(type))
-    : undefined;
-  const cursor = typeof input.cursor === "string" ? input.cursor : null;
-  const limit =
-    typeof input.limit === "number" && Number.isFinite(input.limit) ? input.limit : REFERENCE_PAGE_LIMIT;
-
-  return searchReferences(owner.ownerId, { query, types, cursor, limit });
+    return searchReferences(owner.ownerId, { query, types, cursor, limit });
+  });
 }

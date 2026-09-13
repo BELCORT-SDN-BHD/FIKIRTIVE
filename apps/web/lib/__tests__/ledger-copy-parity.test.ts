@@ -25,7 +25,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const mockRequireOwner = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+// 租户围栏收尾片（#464）：account-actions.ts / spend-history-data.ts 现在从这个模块拿
+// `resolveUserPrincipal` 建帧;单测 mock 掉了整个 `@/lib/auth-guard`，补上 #464 B1 既有的共享
+// stub（其它切片同款用法）。
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mockRequireOwner,
+  resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 // account-actions pulls in Better Auth / next runtime pieces for signOutAction only.
 vi.mock("@/lib/better-auth/server", () => ({ auth: { api: { signOut: vi.fn() } } }));
 vi.mock("next/headers", () => ({ headers: vi.fn() }));
