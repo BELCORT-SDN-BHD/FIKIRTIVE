@@ -255,13 +255,97 @@ describe("refgen 时钟链跟 gen 同构(两条队列打同一个供应商)", ()
   });
 });
 
-describe("零排队(spec creation-engine.md §5 2026-09-12 场⑦)——①之外的三项不在本票范围", () => {
+describe("零排队(spec creation-engine.md §5 2026-09-12 场⑦)——②③仍不在本票范围,④已交付", () => {
   // 登记行完整验收句(逐字):「商家 A 连发 4 条长视频后，商家 B 的短任务立即开跑不等队」。
-  // 覆盖的是②开第二台 worker ＋ ③等待型并发开高 ＋ ④降级为兜底规则叠加之后的整体感知 ——
-  // 需要真的跑第二台 worker、真的把并发打开,单元测试代不了「进第三轮走查」。#1386(①)只
-  // 负责让①③打开之后卡死判定不再误伤,已在上面用真实数字钉死;这里占位是为了不让
-  // 完整验收句在测试树里彻底失踪。
-  it.todo("商家 A 连发 4 条长视频后，商家 B 的短任务立即开跑不等队（需②③④落地 + 第三轮走查，非本票范围）");
+  // #1388(本票)交付的是④(每商家最多 N-1 槽,降级为撞厂商限速时的兜底规则)——见
+  // apps/worker/src/jobs/gen.ts 的 `shouldDeferGenClaimForFairness` 与真库集成测试
+  // gen-fairness-claim-db.test.ts(验收句逐字进测试名)。②开第二台 worker 与③等待型并发
+  // 开高仍不在本票范围:下面两组测试是判官 BLOCK 定向①要求的「按视频侧并发上限重算」——
+  // 结论是③在 gate=6 不变时无法安全推进(下面第一组钉死原因),而且④本身修不了第二组钉出
+  // 的跨队列缺口。这两组连同「进第三轮走查」一起,是留给 Founder 的范围决定,不是本票能替
+  // 他拍板的实现细节。
+  it.todo("商家 A 连发 4 条长视频后，商家 B 的短任务立即开跑不等队（②③落地 + 第三轮走查，非本票范围）");
+});
+
+describe("#1388 判官 BLOCK 安全定向① —— ③等待型并发开高的算术:gate=6 不变时,N 无法超过今天的 4", () => {
+  // 「闸前需求 = N × MAX_GEN_COUNT + REFGEN_CONCURRENCY × MAX_REFGEN_COUNT + UNDERSTAND_CONCURRENCY」
+  // 与上面「WORKER_ROLE=wait 默认并发」那组用的是同一条公式(worstQueueWaitMs 的推导),只是把
+  // N 当自变量重算,而不是只验证今天的 4。REFGEN(2)与 UNDERSTAND(2)保持今天的默认值不变——
+  // 抬这两个不在本票范围,也不是「等待型并发开高」字面指的那件事。
+  const genExpireMsHere = GEN_QUEUE_POLICY.expireInSeconds * 1000;
+  const worstQueueWaitAtN = (n: number, gate: number): number => {
+    const demand = n * MAX_GEN_COUNT + 2 * MAX_REFGEN_COUNT + 2;
+    return (Math.ceil(demand / gate) - 1) * ARK_IMAGE_TIMEOUT_MS;
+  };
+  const IMAGE_ATTEMPT_MS_HERE = ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS;
+
+  it("gate=6(单副本默认)固定:N=4(今天的值)是这条不等式仍然装得下的上限", () => {
+    const wait = worstQueueWaitAtN(4, PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT);
+    expect(wait).toBe(20 * MINUTE);
+    expect(wait + IMAGE_ATTEMPT_MS_HERE).toBeLessThan(GEN_STALE_MS); // 30m < 35m
+  });
+
+  it("gate=6 固定:N=5 已经撞穿(边界即撞穿,不必抬到很高才出事)", () => {
+    const wait = worstQueueWaitAtN(5, PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT);
+    const total = wait + IMAGE_ATTEMPT_MS_HERE;
+    expect(total).toBe(35 * MINUTE);
+    expect(total).not.toBeLessThan(GEN_STALE_MS); // 35m,严格小于判定下第一个不成立的整数 N
+  });
+
+  it("gate=6 固定:N=6 撞得更狠,连队列过期窗口都保不住", () => {
+    const wait = worstQueueWaitAtN(6, PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT);
+    const total = wait + IMAGE_ATTEMPT_MS_HERE;
+    expect(total).toBeGreaterThan(GEN_STALE_MS);
+    expect(total).toBeGreaterThanOrEqual(genExpireMsHere);
+  });
+
+  it("若同时把 gate 从 6 调宽到 8(账户硬顶 10、usable 8,另一个 Founder 决定,本票未做):N 最多能到 6", () => {
+    const wait6 = worstQueueWaitAtN(6, 8);
+    expect(wait6 + IMAGE_ATTEMPT_MS_HERE).toBeLessThan(GEN_STALE_MS); // 30m < 35m
+    const wait7 = worstQueueWaitAtN(7, 8);
+    expect(wait7 + IMAGE_ATTEMPT_MS_HERE).not.toBeLessThan(GEN_STALE_MS); // N=7 在 gate=8 下同样撞穿
+  });
+
+  it("结论:本票不改 WAIT_DEFAULTS[GEN_QUEUE](仍是 4)——任何 N>4 在 gate=6 下都撞穿,这是范围题", () => {
+    // 把这条测试的 GEN_STALE_MS 换成更宽的数字会让上面几条的撞穿断言失真——那正是「变异测试」
+    // 要的效果:改宽窗口,这条测试第一个报警,提醒回来这里重新论证 N 的上限,而不是安安静静
+    // 继续绿。三条路都不是这张票能替 Founder 拍板的实现细节:调宽 gate、再放宽 stale/过期/
+    // 清道夫窗口(#1386 已经放宽过一轮)、或调低 REFGEN/UNDERSTAND 的默认并发让出闸前预算。
+    expect(GEN_STALE_MS).toBe(35 * MINUTE);
+    expect(PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT).toBe(6);
+  });
+});
+
+describe("#1388 判官 BLOCK 安全定向①(第二问)—— 已知缺口钉板:今天的 N=4 不抬也有跨队列缺口", () => {
+  // 上面那组只查了「gen 全是图片」的最坏情况(demand 按 MAX_GEN_COUNT 扇出算)。真正的
+  // 「按视频侧并发上限重算」要查另一个方向:gen 的槽位如果被**视频**占住(每个视频任务只发
+  // 1 个请求,但占住闸位的时长是 60s 提交 + 15m 轮询 ≈ 16m,不是 5m 一轮),留给 refgen /
+  // understand 的闸位就变少了——它们要排的队因此变长,而这与是否抬高 N 无关,**今天的
+  // WAIT_DEFAULTS[GEN_QUEUE]=4 就已经能触发**:只要商家像本票验收句那样连发 4 条长视频,
+  // 4 个 gen 槽位全被占住,gate=6 就只剩 2 格留给 refgen(demand 12)+ understand(demand 2)。
+  it("gen 的 4 个槽位全被视频占住时,refgen/understand 挤在剩下 2 个闸位后面,健康排队能压到 40 分钟——超过 GEN_STALE_MS(35m),与队列过期(40m)打平", () => {
+    const K = 4; // 今天 WAIT_DEFAULTS[GEN_QUEUE]=4,最坏 4 个槽位全是视频
+    const gate = PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT; // 6,单副本默认
+    const otherDemand = (4 - K) * MAX_GEN_COUNT + 2 * MAX_REFGEN_COUNT + 2; // gen 的图片份额归零,只剩 refgen+understand
+    const remainingGate = gate - K;
+    const rounds = Math.ceil(otherDemand / remainingGate) - 1;
+    const worstWait = rounds * ARK_IMAGE_TIMEOUT_MS;
+    const worstTotal = worstWait + ARK_IMAGE_TIMEOUT_MS + ARK_DOWNLOAD_TIMEOUT_MS;
+
+    expect(otherDemand).toBe(14);
+    expect(remainingGate).toBe(2);
+    expect(worstWait).toBe(30 * MINUTE);
+    expect(worstTotal).toBe(40 * MINUTE);
+
+    // 钉的是「未装得下」——缺口真实存在,不是「装得下」的钉板。
+    expect(worstTotal).toBeGreaterThan(GEN_STALE_MS); // 40m > 35m,撞穿 stale
+    expect(worstTotal).toBeGreaterThanOrEqual(GEN_QUEUE_POLICY.expireInSeconds * 1000); // 与队列过期打平
+
+    // 这道缺口不由本票的公平闸(shouldDeferGenClaimForFairness)修:它管「同一条队列里这次该
+    // 认领谁」,不管「gen 的视频任务挤占跨队列共享的 providerRequestGate,让 refgen/understand
+    // 排更久」。真正的修法要给视频任务与图片/refgen/understand 分开预算(独立的闸,或视频
+    // 任务自己的并发上限)——结构性改动,同样是范围题,留给 Founder。
+  });
 });
 
 describe("另外两条等待型队列的时钟也在并发下成立", () => {

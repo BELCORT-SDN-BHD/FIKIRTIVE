@@ -1156,7 +1156,13 @@ export const genRequest = z
   });
 export type GenRequest = z.infer<typeof genRequest>;
 
-export const genJobData = z.object({ genJobId: z.string().min(1).max(64) }).strict();
+export const genJobData = z.object({
+  genJobId: z.string().min(1).max(64),
+  // #1388(零排队③)判官安全定向 4d —— 一次公平让位重投出的新 pg-boss 消息携带的、这单真实
+  // 经历过的最大 retryCount(见 apps/worker/src/jobs/gen.ts 的 GenDispatchOutcome)。可选:
+  // 普通入队(apps/web 的 gen-actions.ts)从不写它,只有 apps/worker 的公平让位重投路径会写。
+  carriedRetryCount: z.number().int().min(0).optional(),
+}).strict();
 export type GenJobData = z.infer<typeof genJobData>;
 
 export const GEN_QUEUE = "gen";
