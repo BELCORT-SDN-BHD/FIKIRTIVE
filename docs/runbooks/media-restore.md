@@ -178,6 +178,7 @@ RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
 
 | 日期 | 执行者 | 对象键 | 实测 RTO | 命令输出片段 |
 |---|---|---|---|---|
+| 2026-09-13 | agent（Founder 授权「你在处理」，本对谈记录在 #1385） | u/founder/51c55aedae60a3ac26cbb52685a2bcc46278223bb3de9ad53db9d93ceeae9d49.mp4 | 1.6s | `found backup copy: … (2683441 bytes) in fikirtive-staging-backup` → `RESTORED … — hash verified (51c55aed…)`；真删证据 `deleted: … is now GONE from fikirtive-staging`；A9 反证 `refusing: key owner segment is "founder", but --expect-owner was "not-the-owner"`（exit 1）；钱守恒：founder 账本前后均 127 笔/99998514/0；存量回填 280/280 → 差集 0；生产桶本次零删除 |
 | | | | | |
 
 <!--
