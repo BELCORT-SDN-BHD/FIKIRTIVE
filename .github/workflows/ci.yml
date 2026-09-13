@@ -640,6 +640,100 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm quality --leg checks
 
+  # ── the docs-only leg (#1356) ─────────────────────────────────────────────────
+  # The five legs above are gated on `scope.outputs.code != 'false'` — a docs-only PR
+  # (docs/** and nothing else) skips every one of them, correctly, because they check
+  # CODE. But a few gates in `pnpm -r test` use docs/** CONTENT as their oracle: a
+  # retired flag name that must appear nowhere (northstar-shell-purge.test.ts), three
+  # frozen specs' acceptance tables (signin-acceptance-map.test.ts,
+  # packages/otto/evals/acceptance-map.test.ts, RELY-A11's
+  # packages/core/src/founder-alert-docs.test.ts), a brand token file
+  # (design-system-data-patterns.test.ts), two ops runbooks
+  # (dashboards-runbook.test.ts, and MONEY-A13's reconcile-actions.test.ts, which
+  # reads docs/runbooks/chargeback.md and docs/ops/manual-money-ledger.md). A
+  # docs-only diff can flip any of those without one of the five legs ever running to
+  # notice — #1351 merged a retired switch name into docs/audits/…/run-ledger.md as a
+  # docs-only PR, nothing caught it, and the next code PR's `tests` leg (#1353) is
+  # what actually went red, on a diff that never touched it.
+  #
+  # This job is the COMPLEMENT of the five, by `if:` condition (`== 'false'` where
+  # theirs is `!= 'false'`) — never both, never neither, so a code-touching PR runs
+  # the same files again inside `tests`'s `pnpm -r test`, not twice.
+  #
+  # THE INVENTORY IS MACHINE-CHECKED, NOT JUST HAND-PLOTTED — review of #1428 found the
+  # difference the hard way: a first pass at "grep for a docs/ mention, then read each
+  # hit to confirm" missed founder-alert-docs.test.ts and reconcile-actions.test.ts,
+  # because their readFileSync call and their "docs/…" string literal sit behind a
+  # local `read(...)` helper on two different lines, not adjacent the way the other
+  # five's do. `scripts/__tests__/docs-scan-inventory.test.mjs` (typecheck leg) now
+  # re-derives this same list by the general signature — a
+  # readFileSync/readdirSync/readFile( call plus a quoted "docs/…" or bare "docs"
+  # literal, both outside comments — and fails if it and the file list below disagree,
+  # in either direction. Running the whole `pnpm -r test` suite here instead was
+  # considered and rejected: it would make a docs-only PR pay close to what a
+  # code-touching one does, which is the cost this job exists to avoid.
+  #
+  # No Postgres: none of the files below import Prisma or otherwise touch a database
+  # (confirmed by running each of them with DATABASE_URL unset, and again with it set
+  # to a URL nothing is listening on), so the service container every leg above
+  # carries for free is left out here on purpose. The workflow-level DATABASE_URL
+  # still reaches this job's environment (job env is refused outright, 3d) but nothing
+  # here ever opens it.
+  #
+  # NOT FREE, THOUGH — SAY SO. This job still pays `pnpm install` and a full
+  # `packages/*` build (the same ~25s the other five legs each pay too, for the same
+  # reason: `@fikirtive/core`'s `exports` point at `./dist`) before the targeted
+  # `vitest run` calls, which themselves finish in a few seconds. A docs-only PR is
+  # not instant the way it was before #1356 — it is one short job (well under a
+  # minute, measured locally) instead of skipping to green in the few seconds `scope`
+  # takes, in exchange for not merging the #1351 shape of bug silently again. What it
+  # is NOT paying is any part of the five legs' 8-13 minute wall clock (see the "why
+  # these five" table above) — that is the cost this job exists to avoid, not zero
+  # cost outright.
+  docsscan:
+    name: docsscan
+    needs: scope
+    if: needs.scope.outputs.code == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # THE TRIPWIRE (see the note at the top of this file). Byte-identical in every
+      # job on purpose: scripts/__tests__/quality-legs.test.sh holds one hand-written
+      # copy of these lines and requires every job's step #2 to be exactly it —
+      # `shell: sh` included, because that field is what stops a startup file named
+      # in this workflow's own environment (`BASH_ENV`, `ENV`) from running first.
+      # The `.npmrc`/`.pnpmfile.cjs` loop is r12's carrier, ratcheted shut by name.
+      - name: ci.yml is the reviewed one
+        shell: sh
+        run: |
+          set -eu
+          want="$(cut -d' ' -f1 .github/ci-workflow.lock)"
+          got="$(sha256sum .github/workflows/ci.yml | cut -d' ' -f1)"
+          [ ${#want} -eq 64 ] || { echo "ci-guard: .github/ci-workflow.lock does not hold one sha256 digest"; exit 1; }
+          [ "$want" = "$got" ] || { echo "ci-guard: ci.yml is $got, .github/ci-workflow.lock pins $want. If the change to ci.yml was intended, regenerate the lock in the SAME commit: bash scripts/ci/ci-workflow-lock.sh"; exit 1; }
+          for f in .npmrc .pnpmfile.cjs apps/*/.npmrc apps/*/.pnpmfile.cjs packages/*/.npmrc packages/*/.pnpmfile.cjs; do
+            [ ! -e "$f" ] || { echo "ci-guard: $f is in this checkout, and pnpm reads it before any gate does. #874 r12: 'script-shell=/bin/echo' in .npmrc makes every 'pnpm quality --leg <leg>' print its own command and exit 0, and .pnpmfile.cjs is JavaScript pnpm runs during install. Neither file existed when this ratchet was written. If adding one is intended, say so by editing this step in ci.yml AND its hand-written copy in scripts/__tests__/quality-legs.test.sh, in the SAME commit."; exit 1; }
+          done
+          echo "ci-guard: ci.yml matches .github/ci-workflow.lock ($got), and no .npmrc/.pnpmfile.cjs is in this checkout"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # @fikirtive/core's package.json exports point at ./dist, so the five files
+      # below cannot resolve `@fikirtive/core/navigation` (and its siblings) without
+      # this — same reason every leg above pays for it too (quality.sh's "packages
+      # build" gate, on leg `all`).
+      - run: pnpm --filter "./packages/*" build
+      - name: docs-content gates — apps/web
+        run: pnpm --filter @fikirtive/web exec vitest run lib/__tests__/northstar-shell-purge.test.ts lib/__tests__/signin-acceptance-map.test.ts lib/__tests__/design-system-data-patterns.test.ts lib/__tests__/dashboards-runbook.test.ts lib/__tests__/reconcile-actions.test.ts
+      - name: docs-content gates — packages/otto
+        run: pnpm --filter @fikirtive/otto exec vitest run evals/acceptance-map.test.ts
+      - name: docs-content gates — packages/core
+        run: pnpm --filter @fikirtive/core exec vitest run src/founder-alert-docs.test.ts
+
   # ── the fan-in ───────────────────────────────────────────────────────────────
   # The `quality` context is the required status check in the protect-main ruleset
   # (bypass_actors is empty — nobody can merge around it). Renaming this job, or letting
@@ -654,7 +748,7 @@ jobs:
   # job inherits that through `needs`.
   quality:
     name: quality
-    needs: [scope, typecheck, tests, build, lint, checks]
+    needs: [scope, typecheck, tests, build, lint, checks, docsscan]
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -885,6 +979,12 @@ jobs:
           LEG_RESULT_BUILD: ${{ needs.build.result }}
           LEG_RESULT_LINT: ${{ needs.lint.result }}
           LEG_RESULT_CHECKS: ${{ needs.checks.result }}
+          # Not a `LEG_RESULT_*` name on purpose: `docsscan` is not one of the five
+          # legs `quality.sh` declares (it never runs through `pnpm quality --leg …`
+          # at all, #1356), so it stays out of the "exactly five, one per declared
+          # leg" identity below and gets its own, EXPECTED-VALUE-INVERTED comparison
+          # instead of a `leg_is` call.
+          DOCS_SCAN_RESULT: ${{ needs.docsscan.result }}
         run: |
           set -euo pipefail
 
@@ -953,6 +1053,15 @@ jobs:
             fi
           fi
 
+          # docsscan (#1356) is the MIRROR of the five legs above, by design: it runs
+          # exactly when they do not (`if: needs.scope.outputs.code == 'false'` against
+          # their `!= 'false'`), so its expected result is always the other word.
+          if [ "$expected" = "skipped" ]; then
+            expected_docsscan=success
+          else
+            expected_docsscan=skipped
+          fi
+
           verdict=0
 
           # One named leg, one named variable, one comparison. `${VAR:-}` and never
@@ -974,14 +1083,30 @@ jobs:
           leg_is lint      "${LEG_RESULT_LINT:-}"
           leg_is checks    "${LEG_RESULT_CHECKS:-}"
 
-          # The other direction, and the reason the five comparisons above are not
-          # the whole story: they prove every declared leg was judged, not that
-          # nothing ELSE was wired in. A sixth job added to `needs` and to the
-          # variables above — but not to the comparisons — would be a gate whose
-          # result this step silently discards. Bash enumerates the variables by
-          # prefix, so nothing here has to know what the environment holds; the
-          # case arm is the same five identities once more, and mis-stating it
-          # fails closed — a leg left out of it flags that leg's own variable.
+          # docsscan (#1356) is judged against $expected_docsscan, not $expected — it is
+          # the mirror of the five legs, not a sixth one — so it gets its own comparison
+          # rather than a call to leg_is.
+          job_is() {
+            if [ "$2" = "$3" ]; then
+              echo "  $1: $2"
+            else
+              echo "  $1: ${2:-<no result>} (expected $3)"
+              verdict=1
+            fi
+          }
+          job_is docsscan "${DOCS_SCAN_RESULT:-}" "$expected_docsscan"
+
+          # The other direction, and the reason the comparisons above are not the
+          # whole story: they prove every declared leg (and docsscan) was judged, not
+          # that nothing ELSE was wired in. A sixth job added to `needs` and to the
+          # variables above — but not to a comparison — would be a gate whose result
+          # this step silently discards. Bash enumerates the variables by prefix, so
+          # nothing here has to know what the environment holds; each case arm is the
+          # identities that ARE judged, once more, and mis-stating it fails closed —
+          # a variable left out of it flags itself. Two sweeps, one per prefix, because
+          # LEG_RESULT_* and DOCS_SCAN_* are judged by two different functions
+          # (leg_is/job_is) against two different expected values — one sweep covering
+          # both prefixes could not name which comparison a stray variable was missing.
           for leg_result_var in ${!LEG_RESULT_@}; do
             case "$leg_result_var" in
               LEG_RESULT_TYPECHECK|LEG_RESULT_TESTS|LEG_RESULT_BUILD|LEG_RESULT_LINT|LEG_RESULT_CHECKS) ;;
@@ -991,11 +1116,20 @@ jobs:
                 ;;
             esac
           done
+          for docs_scan_var in ${!DOCS_SCAN_@}; do
+            case "$docs_scan_var" in
+              DOCS_SCAN_RESULT) ;;
+              *)
+                echo "  $docs_scan_var: answers for no job this step judges"
+                verdict=1
+                ;;
+            esac
+          done
 
           if [ "$verdict" != "0" ]; then
             echo ""
-            echo "quality: at least one leg is not $expected — failing closed."
+            echo "quality: at least one leg is not $expected, or docsscan is not $expected_docsscan — failing closed."
             exit 1
           fi
           echo ""
-          echo "quality: typecheck, tests, build, lint and checks are all $expected."
+          echo "quality: typecheck, tests, build, lint and checks are all $expected; docsscan is $expected_docsscan."
