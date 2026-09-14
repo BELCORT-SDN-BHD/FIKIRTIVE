@@ -141,7 +141,6 @@ async function moneyTrail(org: string) {
 let assetA = "";
 let assetB = "";
 let generationA = "";
-let jobB2 = "";
 
 beforeAll(async () => {
   await prisma.$queryRaw`SELECT 1`;
@@ -240,7 +239,7 @@ describe("TENANT-A9 —— 同音频同模型跨租户复用全局缓存，其�
   }, DB_CASE_TIMEOUT_MS);
 
   it("TENANT-A9 ③ 换成其它表：B 的帧内点名 A 的 Asset / Generation，两笔跨租户读都被值比对拒掉", async () => {
-    jobB2 = await seedCaptionJob(B, (await seedAsset(B, OTHER_AUDIO, OTHER_HASH)).id, OTHER_HASH);
+    const jobB2 = await seedCaptionJob(B, (await seedAsset(B, OTHER_AUDIO, OTHER_HASH)).id, OTHER_HASH);
     const probe: { principal?: unknown; asset?: string; generation?: string; scopedAsset?: unknown; scopedGeneration?: unknown } = {};
 
     // 探针挂在 handleCaption 帧内一定会碰的那个边界上（storage.ffmpegInput），所以下面这两笔
