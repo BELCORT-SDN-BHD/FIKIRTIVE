@@ -76,11 +76,11 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/design-system/pr
 import { Tabs, TabsList, TabsTrigger } from "@/design-system/primitives/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/design-system/primitives/toggle-group";
 import { CollectionDialogs } from "@/components/library/CollectionDialogs";
+import { CollectionsView } from "@/components/library/CollectionsView";
 import {
   ElementIdentityFields,
   type ElementIdentityPatch,
 } from "@/components/library/ElementIdentityFields";
-import { CollectionsView } from "@/components/library/CollectionsView";
 import { GridSkeleton, MediaGrid } from "@/components/library/MediaGrid";
 import { restoreGeneration, softDeleteEntity } from "@/lib/actions";
 import { getGenerationHistory, type LibraryItem, type LibrarySourceKind } from "@/lib/library-actions";

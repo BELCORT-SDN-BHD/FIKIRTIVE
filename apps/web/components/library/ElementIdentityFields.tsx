@@ -88,7 +88,7 @@ export function ElementIdentityFields({
     }
   }
 
-  async function useAsCover(assetId: string, url: string) {
+  async function pickCover(assetId: string, url: string) {
     if (coverPending) return;
     setCoverPending(assetId);
     setCoverError(null);
@@ -160,7 +160,7 @@ export function ElementIdentityFields({
                       size="sm"
                       variant="ghost"
                       disabled={Boolean(coverPending)}
-                      onClick={() => void useAsCover(image.assetId, image.url)}
+                      onClick={() => void pickCover(image.assetId, image.url)}
                     >
                       {coverPending === image.assetId ? <Spinner aria-label="Changing cover" /> : null}
                       {coverPending === image.assetId ? "Changing…" : "Use as cover"}
