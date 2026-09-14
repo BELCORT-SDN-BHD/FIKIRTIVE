@@ -148,8 +148,9 @@ test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Librar
   await expect(nameField).toBeVisible();
   await nameField.fill(libraryName);
   await page.getByRole("button", { name: "Save name" }).click();
-  // 这一屏自己先跟上 —— 卡片标题就是那颗 `Open …` 键的可读名。
-  await expect(page.getByRole("button", { name: `Open ${libraryName}` })).toBeVisible({ timeout: 60_000 });
+  // 弹层自己先跟上 —— 它的可读名就是这一行的名字。网格此刻被这张模态挡着(aria-hidden),
+  // 所以卡片那一句留到关掉之后再断言。
+  await expect(page.getByRole("dialog", { name: libraryName })).toBeVisible({ timeout: 60_000 });
 
   // 换封面:第二张底下那颗键。第一张此刻是封面(position 0,身份上还没钉过),所以只有一颗。
   const useAsCover = page.getByRole("button", { name: "Use as cover" });
@@ -162,6 +163,12 @@ test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Librar
       where: { id: entityId, ownerId: ws.orgId }, select: { baseAssetId: true },
     }),
   ).resolves.toEqual({ baseAssetId: photos[1]!.assetId });
+
+  // 关掉弹层:身后那张卡也跟着改了名、换了图 —— 同一行,不靠整页重取。
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("button", { name: `Open ${libraryName}` })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("button", { name: `Open ${renamed}`, exact: true })).toHaveCount(0);
+  await expect(page.locator(`img[src="${photos[1]!.src}"]`).first()).toBeVisible();
 
   // Brand 页那一边:同一行 Entity(id 没变)、同一个名字、同一张图 —— 没有第二份。
   await page.goto("/brand/records?tab=products");
