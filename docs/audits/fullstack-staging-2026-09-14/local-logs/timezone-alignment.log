@@ -1,0 +1,3 @@
+Default local cluster timezone: Asia/Kuala_Lumpur
+New exclusively-owned web/worker/e2e/dbrecheck databases: ALTER DATABASE SET timezone UTC; verified new sessions SHOW timezone UTC.
+CI workflow postgres:16 declares no TZ or timezone override; live CI SHOW timezone unavailable in this local run.
