@@ -149,4 +149,45 @@
 
 **未闭合项**：本场未提交／合并 docs-only PR，项目「规格先入主干」前提尚未满足；只记录不施工正是 Founder 本次要求。此裁决没有授权重设计其他通知、新增每次上传／搜索确认步骤或改变计费方式；若下场发现实现必须改变这些行为，先记录具体缺口与最小方案交 Founder 决定，不拿本条扩大范围。目前没有证据表明移除这三类段落本身需要改变后端钱路。
 
+## R3-F07 · CI 旅程不稳：canvas 多选断言间歇失败（调查中）
+
+**状态**：调查中，GitHub Actions 两次独立复现，均与触发该次运行的改动内容无关；main 分支 scheduled 夜跑近期全绿。不当场判产品缺陷、不放宽断言、不加重试掩盖，需要独立复现＋根因。
+
+`e2e/journeys/17-canvas-selection.spec.ts:36`（FRONT-A15「键盘删得掉选中的卡,多选删得掉一组」）第79行 `await expect.poll(() => selectedIds(page).then((ids) => ids.sort())).toEqual([shot.nodeId, dud.nodeId].sort())` 期待 Shift 点选第二张卡后两张都留在 `selectedIds` 里；在该轮 poll 超时窗口内，`selectedIds` 有时只剩一张，断言超时判红。
+
+两次独立触发命中同一断言：
+- GitHub Actions run [34820228755](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/actions/runs/34820228755)（2026-09-14，PR #1445「TENANT-A1『重叠在飞互不串帧』补真并发测试」，分支 `claude/tenant-a1-overlap-test`）：attempt 1 在 `17-canvas-selection.spec.ts:79` 判红，attempt 2 重跑通过；该 PR 全部 diff 仅 `apps/web/lib/__tests__/tenant-a1-overlapping-frames.test.ts` 一个测试文件，未触碰 canvas 或 selection 代码。
+- GitHub Actions run [34681183175](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/actions/runs/34681183175)（2026-09-12，PR #1402「切片①钱面建帧」，分支 `claude/tenant-slice1-money`）：同样在 `17-canvas-selection.spec.ts:79` 判红。
+
+main 分支的 scheduled e2e（`.github/workflows/e2e.yml:26` `cron: "0 0 * * *"`）最近 8 次夜跑（2026-09-07 至 2026-09-14，均 `conclusion: success`）全绿；2026-09-06 那次 failure 在此窗口之外，未纳入本条判断。两次红都发生在与 canvas/selection 代码无关的 PR 上、且都精确落在同一行，指向该断言本身或其等待时序存在间歇性问题，而非这两个 PR 引入的回归。下一步：单独重跑该 spec 多次复现，核对 `selectedIds` 轮询窗口与 Shift 点选的实际时序，不在未定根因前放宽断言阈值或加重试次数掩盖。
+
+## R3-F08 · 环境漂移：CI 与 staging 的 Postgres 大版本不一致
+
+**状态**：已登记，建议另开票统一版本；本身不是产品缺陷，是测试环境与生产/staging 环境的版本口径缺口——RELY-A10 备份全灭（见 `docs/specs/fail-closed-reliability.md` §5 变更登记 2026-09-14 行）正是这条缺口在 staging 首次暴露成的真实后果。
+
+- CI 服务容器固定 PostgreSQL 16：`.github/workflows/ci.yml:374`、`:447`、`:495`、`:555`、`:603` 与 `.github/workflows/e2e.yml:49` 均 `image: postgres:16`（`/usr/bin/grep -n "postgres:" .github/workflows/*.yml` 核实，见下方证据）。
+- staging app DB 现场实测 PostgreSQL **18.6**（`environment-investigation.md` §数据库与存储隔离：`BEGIN READ ONLY` 查询得到 server version 18.6）。
+- 本地开发 `docker-compose.yml:7` 现为 `image: postgres:16-alpine`（`/usr/bin/grep -n "postgres:" docker-compose.yml` 核实）；修复 PR #1442 计划将其改为 `18-alpine`，本仓库当前 HEAD 尚未合入该改动。
+- 影响：版本类缺陷（如本轮暴露的 `pg_dump` 大版本不兼容导致 backup 全灭）在 CI 上永远测不出——CI 用 16 对 16 dump，从不对 18 dump；只有 staging 的真实 18.6 环境才会暴露。
+- 状态：已登记，建议另开票把 CI 服务容器版本（ci.yml、e2e.yml）与本地 docker-compose.yml 统一到 18，对齐 staging/生产；不在本轮范围内直接改 CI 配置。
+
+证据（`/usr/bin/grep -n "postgres:" .github/workflows/*.yml docker-compose.yml`）：
+```
+.github/workflows/ci.yml:190:  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_test
+.github/workflows/ci.yml:373:      postgres:
+.github/workflows/ci.yml:374:        image: postgres:16
+.github/workflows/ci.yml:446:      postgres:
+.github/workflows/ci.yml:447:        image: postgres:16
+.github/workflows/ci.yml:494:      postgres:
+.github/workflows/ci.yml:495:        image: postgres:16
+.github/workflows/ci.yml:554:      postgres:
+.github/workflows/ci.yml:555:        image: postgres:16
+.github/workflows/ci.yml:602:      postgres:
+.github/workflows/ci.yml:603:        image: postgres:16
+.github/workflows/e2e.yml:48:      postgres:
+.github/workflows/e2e.yml:49:        image: postgres:16
+.github/workflows/e2e.yml:66:      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_e2e_test
+docker-compose.yml:7:    image: postgres:16-alpine
+```
+
 CodeGraph: not used — worker 在独立 worktree，按项目要求使用 rg 与直接文件阅读；未建立或借用主检出图。
