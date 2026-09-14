@@ -12,8 +12,10 @@
  * 里(components/global-navigation.tsx),只在挂载、余额广播、`visibilitychange` 这三下
  * 重读 —— 根布局的 revalidate 够不着它。
  *
- * 所以这个文件把两边**挂在同一棵树上**(真的商家壳 + 真的 /profile 表单),按真的 Save,
- * 然后去看右上角那颗账号按钮。`getMyAccount` 的替身读的是一个可变的 `storedDisplayName`,
+ * 所以这个文件把两边**挂在同一棵树上**(真的商家壳 + `DisplayNameField` —— 也就是
+ * `app/profile/page.tsx:37` 真正渲染的那一个,不是同文件里那个今天没有任何一页在用的
+ * `ProfileNames` 合成件),按真的 Save,然后去看右上角那颗账号按钮。
+ * `getMyAccount` 的替身读的是一个可变的 `storedDisplayName`,
  * 当它是那一行数据库记录:动作先写它,壳只有**真的重读**才看得见新值。这样「跟上」就
  * 不能靠把动作的返回值直接塞进另一份 state 蒙混过去 —— 那会造出账号数据的第二个源头,
  * 而那正是这条修法要避免的东西。
@@ -96,7 +98,7 @@ if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => 
 const { MerchantShellContent } = await import("@/components/global-navigation");
 // 面板体是懒加载的,先把模块取进 registry,省得 `React.lazy` 的 promise 等的是模块解析本身。
 await import("@/components/otto/panel/OttoPanelConversation");
-const { ProfileNames } = await import("@/app/profile/ProfileNames");
+const { DisplayNameField, WorkspaceNameField } = await import("@/app/profile/ProfileNames");
 // 信号本身用**真模块**:这条修法买的正是「名字改了走的是壳已经在听的那条路」,mock 掉
 // 它就把要证明的东西换成了一句断言自己。
 const { subscribeBalanceRefresh } = await import("@/lib/balance-refresh");
@@ -160,12 +162,21 @@ function displayNameInput(dom: HTMLElement): HTMLInputElement {
   return dom.querySelector<HTMLInputElement>("#profile-display-name")!;
 }
 
-/** 真的壳 + 真的 /profile 表单,挂在同一棵树上 —— 商家看到的就是这一棵。 */
+/** 真的壳 + `/profile` 真正渲染的那个字段,挂在同一棵树上 —— 商家看到的就是这一棵。 */
 function profileScreen(): ReactElement {
   return createElement(
     MerchantShellContent,
     { pathname: "/profile", signOutAction: vi.fn(async () => undefined) },
-    createElement(ProfileNames, { displayName: storedDisplayName, workspaceName: "Kaia Cafe" }),
+    createElement(DisplayNameField, { displayName: storedDisplayName }),
+  );
+}
+
+/** 同一个壳,换成 `/settings` 真正渲染的那个字段(`app/settings/page.tsx:29`)。 */
+function settingsScreen(): ReactElement {
+  return createElement(
+    MerchantShellContent,
+    { pathname: "/settings", signOutAction: vi.fn(async () => undefined) },
+    createElement(WorkspaceNameField, { workspaceName: "Kaia Cafe" }),
   );
 }
 
@@ -216,6 +227,29 @@ describe("R3-F04 改名之后账号菜单与头像当场跟上(不用刷新)", (
       await save(displayNameInput(dom));
 
       expect(listener).toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("R3-F04 判官复审 P2:改 Workspace name 不喊 —— 壳的账号区不显示它,别让每个订阅端白跑一趟", async () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeBalanceRefresh(listener);
+    try {
+      const dom = await mount(settingsScreen());
+      listener.mockClear();
+      const readsBefore = getMyAccount.mock.calls.length;
+
+      const input = dom.querySelector<HTMLInputElement>("#profile-workspace-name")!;
+      await typeInto(input, "Kaia Kopitiam");
+      await save(input);
+
+      // 保存本身照常成功 —— 不喊不等于不保存。
+      expect(updateWorkspaceName).toHaveBeenCalledWith("Kaia Kopitiam");
+      expect(input.closest("form")!.textContent).toContain("Saved");
+
+      expect(listener).not.toHaveBeenCalled();
+      expect(getMyAccount.mock.calls.length).toBe(readsBefore);
     } finally {
       unsubscribe();
     }

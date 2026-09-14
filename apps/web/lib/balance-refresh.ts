@@ -32,7 +32,19 @@
  * 推过来的一件事，不是我们每隔几秒去问一次。
  */
 
-type BalanceRefreshListener = () => void;
+/**
+ * 这一声**为什么**而发。订阅端据此决定自己要不要动:
+ *
+ *   · `"balance"` —— 钱动了(reserve / settle / refund),显示着的数字过期了。
+ *   · `"account"` —— 商家自己那份账号资料变了(今天是 /profile 改姓名),一分钱没动。
+ *
+ * 加这个标签不是为了分类学,是为了**省掉一趟真的服务端往返**:`BillingLiveRefresh` 收到
+ * 一声就 `router.refresh()`,那会让 Billing 正文重跑它那几条带 Stripe 往返的服务端读取。
+ * 改一次名字让商家白付这趟钱是没道理的(R3-F04 判官复审 P2)。
+ */
+export type RefreshReason = "balance" | "account";
+
+type BalanceRefreshListener = (reason: RefreshReason) => void;
 
 const listeners = new Set<BalanceRefreshListener>();
 
@@ -64,8 +76,8 @@ function openBalanceChannel(): BroadcastChannel | null {
     const opened = new Ctor(BALANCE_REFRESH_CHANNEL);
     // 别的标签页广播过来 —— 只在本页派送，**绝不转播**：转播会让两页互相回声成一个不停的环，
     // 而这条路上没有任何计时器能给它踩刹车。
-    opened.onmessage = () => {
-      deliverLocally();
+    opened.onmessage = (event: MessageEvent) => {
+      deliverLocally(reasonFromMessage(event.data));
     };
     channel = opened;
   } catch {
@@ -127,32 +139,50 @@ export function createLatestReadGate(): () => () => boolean {
  *  subscribes/unsubscribes during delivery cannot change who this round reaches, and one
  *  throwing listener cannot swallow the rest — a display bug must never surface as a
  *  failure on a spend path. */
-function deliverLocally(): void {
+function deliverLocally(reason: RefreshReason): void {
   for (const listener of [...listeners]) {
     try {
-      listener();
+      listener(reason);
     } catch (error) {
       console.warn("balance-refresh listener failed (non-fatal):", error);
     }
   }
 }
 
+/**
+ * 读出别的标签页那一声是为什么发的。**认不出就当 `"balance"`** —— 那是保守的一侧:
+ * 多读一次数字最多是白跑一趟,漏掉一次钱的变化却会让商家盯着一个过期余额。
+ *
+ * 认不出的情形是真的会发生的:商家开着一个**旧版本**的标签页,它广播的还是频道名那个
+ * 裸字符串,里头根本没有 reason。
+ */
+function reasonFromMessage(data: unknown): RefreshReason {
+  if (typeof data === "object" && data !== null && (data as { reason?: unknown }).reason === "account") {
+    return "account";
+  }
+  return "balance";
+}
+
 /** The one publish path: tell this tab's displays, then tell the other tabs. Best-effort by
  *  design — the broadcast goes out AFTER this tab's own displays have been told, and a
- *  channel that is missing or refuses the message changes nothing here. */
-function publishRefresh(reason: string): void {
-  deliverLocally();
+ *  channel that is missing or refuses the message changes nothing here.
+ *
+ *  载荷带上 `reason`(而不是照旧只发频道名那个裸字符串):别的标签页才分得出这一声是钱动了
+ *  还是只是改了个名字。收到旧版本标签页那种没有 reason 的裸字符串时,`reasonFromMessage`
+ *  会退回 `"balance"`。 */
+function publishRefresh(reason: RefreshReason): void {
+  deliverLocally(reason);
   try {
-    openBalanceChannel()?.postMessage(BALANCE_REFRESH_CHANNEL);
+    openBalanceChannel()?.postMessage({ channel: BALANCE_REFRESH_CHANNEL, reason });
   } catch (error) {
-    console.warn(`${reason} broadcast failed (non-fatal):`, error);
+    console.warn(`${reason}-refresh broadcast failed (non-fatal):`, error);
   }
 }
 
 /** Announce that a charge settled and any displayed balance is now stale — in this tab
  *  and, FSE-010, in whatever other tabs the merchant left open on the same origin. */
 export function notifyBalanceRefresh(): void {
-  publishRefresh("balance-refresh");
+  publishRefresh("balance");
 }
 
 /**
@@ -167,7 +197,10 @@ export function notifyBalanceRefresh(): void {
  * 付费表面宣称「结算完成」,一来是这个仓库反复在修的「说的与做的失同步」,二来
  * `spend-visibility-seams.test.ts` 正是靠扫描源码里的 `notifyBalanceRefresh()` 来点名
  * 「每一处会扣费的客户端表面都宣告了」—— 往非付费表面撒这个字眼会污染那道钱的围栏。
+ *
+ * 判官复审 P2:这一声带着 `"account"` 标签出门,所以只关心钱的订阅端(`BillingLiveRefresh`)
+ * 可以直接不理它,不为一次改名白跑一趟带 Stripe 往返的重读。
  */
 export function notifyAccountRefresh(): void {
-  publishRefresh("account-refresh");
+  publishRefresh("account");
 }
