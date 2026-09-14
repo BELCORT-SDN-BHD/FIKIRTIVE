@@ -42,7 +42,7 @@ const getMyAccount = vi.fn(async () => ({
   recent: [],
   buildSha: "test",
 }));
-vi.mock("@/lib/account-actions", () => ({ getMyAccount: (...args: unknown[]) => getMyAccount(...args) }));
+vi.mock("@/lib/account-actions", () => ({ getMyAccount: () => getMyAccount() }));
 
 /** 真动作要 Postgres,这里只替换那一次写。成功那一路**真的改掉** `storedDisplayName`,
  *  所以下一次 `getMyAccount` 才读得到新名字 —— 见文件头。 */
