@@ -36,24 +36,28 @@ export async function getLibraryElements(): Promise<LibraryElement[] | { error: 
         type: true,
         name: true,
         catalogKey: true,
+        baseAssetId: true,
         referenceImages: {
           where: { deletedAt: null, variantId: null },
           orderBy: { position: "asc" },
-          select: { asset: { select: { ownerId: true, contentHash: true, ext: true } } },
+          select: { assetId: true, asset: { select: { ownerId: true, contentHash: true, ext: true } } },
         },
       },
     });
 
-    const elements = await Promise.all(rows.map(async (row) => {
+    const elements = await Promise.all(rows.map(async (row): Promise<LibraryElement | null> => {
       const kind = libraryElementKind(row.type, row.catalogKey);
       if (!kind) return null;
-      const first = row.referenceImages[0]?.asset;
-      // 字节真的还在才给封面 —— 与生成历史同一条纪律:不给一个必然坏掉的 <img src>。
-      let coverUrl: string | null = null;
-      if (first) {
-        const key = storageKey(first.ownerId, first.contentHash, first.ext.toLowerCase());
-        if (await storage.exists(key)) coverUrl = storageKeyToSrc(key);
-      }
+      // 字节真的还在才给图 —— 与生成历史同一条纪律:不给一个必然坏掉的 <img src>。
+      const live = await Promise.all(row.referenceImages.map(async (ref) => {
+        const key = storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext.toLowerCase());
+        return (await storage.exists(key)) ? { assetId: ref.assetId, url: storageKeyToSrc(key) } : null;
+      }));
+      // 封面 = 身份上钉的那一张(`Entity.baseAssetId`);没钉过才沿用第一张 —— 与
+      // `lib/stuff-items.ts:74`、`MentionInput` 逐字同一条规则(规格 §1.4;验收 PRODID-A4)。
+      // 按下标取,所以「钉的那张字节没了」仍然是没有封面,不静默换成另一张。
+      const pinned = row.referenceImages.findIndex((ref) => ref.assetId === row.baseAssetId);
+      const coverUrl = live[pinned >= 0 ? pinned : 0]?.url ?? null;
       return {
         id: row.id,
         kind,
@@ -63,6 +67,8 @@ export async function getLibraryElements(): Promise<LibraryElement[] | { error: 
         origin: entityOrigin(row),
         capabilities: entityCapabilities(row),
         coverUrl,
+        baseAssetId: row.baseAssetId,
+        images: live.filter((image): image is { assetId: string; url: string } => image != null),
         mediaCount: row.referenceImages.length,
       } satisfies LibraryElement;
     }));

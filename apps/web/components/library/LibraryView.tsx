@@ -76,6 +76,10 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/design-system/pr
 import { Tabs, TabsList, TabsTrigger } from "@/design-system/primitives/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/design-system/primitives/toggle-group";
 import { CollectionDialogs } from "@/components/library/CollectionDialogs";
+import {
+  ElementIdentityFields,
+  type ElementIdentityPatch,
+} from "@/components/library/ElementIdentityFields";
 import { CollectionsView } from "@/components/library/CollectionsView";
 import { GridSkeleton, MediaGrid } from "@/components/library/MediaGrid";
 import { restoreGeneration, softDeleteEntity } from "@/lib/actions";
@@ -413,11 +417,13 @@ function ElementsView({
   elementView,
   onElementViewChange,
   onRemoved,
+  onIdentityChanged,
 }: {
   elements: readonly LibraryElement[];
   elementView: LibraryElementKind;
   onElementViewChange: (view: LibraryElementKind) => void;
   onRemoved: (elementId: string) => void;
+  onIdentityChanged: (elementId: string, patch: ElementIdentityPatch) => void;
 }) {
   const [selected, setSelected] = React.useState<LibraryElement>();
   const [removeTarget, setRemoveTarget] = React.useState<LibraryElement>();
@@ -425,6 +431,12 @@ function ElementsView({
   const [removeError, setRemoveError] = React.useState<string | null>(null);
   const visible = elements.filter((element) => element.kind === elementView);
   const viewLabel = LIBRARY_ELEMENT_VIEWS.find((view) => view.value === elementView)?.label ?? PRODUCT_VOCABULARY.elements;
+
+  /** 身份改完之后,开着的这一屏与身后那张卡是同一行 —— 两处一起跟上,不重取整页。 */
+  function applyIdentity(elementId: string, patch: ElementIdentityPatch) {
+    setSelected((current) => (current && current.id === elementId ? { ...current, ...patch } : current));
+    onIdentityChanged(elementId, patch);
+  }
 
   async function confirmRemove() {
     if (!removeTarget || removing) return;
@@ -526,6 +538,14 @@ function ElementsView({
                   </div>
                 )}
               </div>
+              {/* 名字与主图这两格(规格 §1.2 / §1.4;验收 PRODID-A4)。两条动作都是既有的共享
+                  动作,这里只是 Library 这一面缺的那个入口 —— 价格、卖点、分类一格都没有(A5)。
+                  `key` 挂 id:换一张卡就换一份草稿,不把上一张卡里没保存的名字带过来。 */}
+              <ElementIdentityFields
+                key={selected.id}
+                element={selected}
+                onChanged={applyIdentity}
+              />
               {selected.capabilities.deleteEntity ? (
                 <DialogFooter>
                   <Button
@@ -1051,6 +1071,11 @@ export function LibraryView({
                 }}
                 onRemoved={(elementId) =>
                   setElementList((current) => current.filter((element) => element.id !== elementId))
+                }
+                onIdentityChanged={(elementId, patch) =>
+                  setElementList((current) =>
+                    current.map((element) => (element.id === elementId ? { ...element, ...patch } : element)),
+                  )
                 }
               />
             ) : null}

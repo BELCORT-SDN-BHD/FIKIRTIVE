@@ -104,6 +104,8 @@ function element(over: Partial<LibraryElement> & Pick<LibraryElement, "id" | "ki
   const catalogKey = over.kind === "official-avatars" ? `catalog_${over.id}` : null;
   return {
     coverUrl: null,
+    baseAssetId: null,
+    images: [],
     mediaCount: 0,
     origin: entityOrigin({ catalogKey }),
     capabilities: entityCapabilities({ catalogKey }),
