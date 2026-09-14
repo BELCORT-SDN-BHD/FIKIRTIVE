@@ -1090,6 +1090,28 @@ export interface OttoContext {
      *  Owner scope + not-found guard live INSIDE the deleteVariant action (requireOwner). */
     deleteVariant(variantId: string): Promise<{ ok: true } | { error: string }>;
   };
+  /** Storyboard port (FC-1, $0) — injected by the web caller. ONE function, and it is the SAME
+   *  owner-gated $0 action the merchant's own `Make all videos` button calls
+   *  (`apps/web/lib/storyboard-gate1-actions.ts` → `prepareStoryboardVideos`): read the
+   *  STORYBOARD_CARD, mint the missing per-shot video child GEN_CARDs, and hand back each shot's
+   *  REAL quote. Single action layer (宪法 7 / Seam 9) —— the conversation and the button reach the
+   *  same chain, so the two can never drift into two prices for one shot.
+   *
+   *  $0 by construction: minting a card is not spending. Every child still has to be confirmed by
+   *  the merchant before a credit moves, and that confirmation stays where it has always been —
+   *  the storyboard card's own spend confirmation. Skills reach it ONLY via ctx.storyboard.
+   *  Absent in the minimal worker verdict ctx; the skill degrades gracefully when not injected. */
+  storyboard?: {
+    /** $0: mint/reuse this storyboard's per-shot video child cards and return their quotes.
+     *  `spent: true` = that shot has already been paid for (nothing to confirm again). */
+    prepareVideos(cardId: string): Promise<
+      | {
+          shots: { shotId: string; childCardId: string; estimatedCredits: number; spent: boolean }[];
+          totalCredits: number;
+        }
+      | { error: string }
+    >;
+  };
 }
 
 /** A canvas node as skills see it — structural re-declaration; the web DTO

@@ -88,24 +88,18 @@ export const proposeInput = z.object({
    * (`ImageFineDetailUnavailableError`),绝不静默按默认档报价。
    */
   fineDetail: z.boolean().optional(),
-  // Set true when this image is the starting keyframe for a video the user asked for —
-  // so the card shows the full two-step plan (image now, video next).
-  forVideo: z.boolean().optional(),
   /**
-   * Creation §5 2026-09-04(Codex E2E-CRE-PAV-004)—— 两步计划**第二步那条片子**的提示词
-   * (`seedancePrompt` 的产物,与第一步的图片提示词是两段不同的字)。
+   * FC-3(现场:Founder 自己的画布,2026-09-14)—— 这里**刻意没有** `forVideo` / `videoPrompt`。
    *
-   * 这个字段之前不存在,于是「先出图、再出片」在系统里根本不是一条任务:卡上只有一行片段
-   * 预估,第二步的规格没有任何地方存得住。Otto 唯一诚实的下一句就只剩「你生成完把那张图
-   * 带回来给我」—— 内部接缝直接漏到商家面前。
+   * 它们是「先出一张付费首帧图,再用它出片」那条两步计划的入口(2026-09-04 落地,同份规格
+   * §5 :137)。S5 批量裁决 2026-09-12(#1358,creation-engine.md:186)把「合成 first frame」
+   * 判为**所有镜头**都不再提议;PR #1417 只把分镜那条路收了口,这条普通对话的路原样留着 ——
+   * 于是商家只说了一句「视频要 15 秒」,回来的却是一张 1 credit 的额外图片卡,外加一份 33
+   * credits 的第二步计划。字段连同它的实现分支(Step 4.6)与接力模块一起报废。
    *
-   * 带上它 ⇒ 第二步作为**冻结计划**写进 Step 1 的卡(`videoStep.next`),Step 1 出图之后由
-   * 服务端照它铸出第二张确认卡(见 `video-step-handoff.ts`)。铸卡 $0:第二笔钱照旧要商家
-   * 自己按 `Generate · N credits`,一格不动「每一笔付费各自一次确认」。
-   *
-   * 缺席 ⇒ 老行为逐字保留:卡上照旧只有那一行预估,没有接力。
+   * 商家自己指着一张已有的图说「把**它**动起来」是另一条能力,一格未动:那条路上挂图经
+   * `videoAttachmentRole` 判成 `startFrame`,由 `kind:"video"` 直接上路,不需要任何额外铸图。
    */
-  videoPrompt: z.string().min(1).max(MAX_GEN_PROMPT).optional(),
   // 创作意图/目的 —— requires 资讯门要求它非空。琐碎请求可由 Otto 从上下文推断填入。
   goal: z.string().optional(),
   /**
@@ -124,14 +118,8 @@ export const proposeInput = z.object({
 export type ProposeInput = z.infer<typeof proposeInput>;
 
 /**
- * 两步计划**第二步**的冻结计划 —— Step 1 的卡上带着它,Step 1 出图之后服务端照它铸第二张
- * 确认卡(`buildVideoStepCardPayload`)。
- *
- * 为什么这几格与 Step 1 的入参**同名**且取自同一份输入:卡上那行「Then the video — ~N」
- * 的报价正是用它们算出来的(Step 4.6)。计划与预估共用一份输入,两者就不可能分家 ——
- * 第二张卡的价与第一张卡上写的那个数出自同一条路(`suggestModel` → `pricedGenCredits`)。
- *
- * 只有**规格**,没有价:价永远在铸卡那一刻由服务端单一价目源现算,绝不从这里搬一个数字。
+ * RETIRED(FC-3)—— 两步计划第二步的冻结计划形状。铸卡侧不再写、接力模块已下线,这个类型
+ * 只为读懂裁决之前铸的旧卡 payload 而存在(`CardPayload.videoStep.next`)。
  */
 export type VideoStepPlan = {
   structuredPrompt: string;
@@ -219,12 +207,10 @@ export type CardPayload = {
    *  so the card quote equals what actually leaves the balance. The card shows THIS, not
    *  estimatedPriceUsd (which is the record-only engine cost, ~2.5x lower). */
   estimatedCredits: number;
-  /** Present only when this image card is the first step of a two-step video plan.
-   *  `estimatedCredits` is DISPLAY ONLY — an estimate of the follow-on video step's cost,
-   *  never used to charge. `next` is the FROZEN second step: present ⇒ once this image
-   *  lands the server mints the video confirmation card itself (`video-step-handoff.ts`),
-   *  so the merchant never has to carry the picture back. Absent ⇒ old card shape,
-   *  no handoff. Neither field ever moves money. */
+  /** RETIRED (FC-3, S5 批量裁决 2026-09-12 #1358 / creation-engine.md:186) —— 两步计划
+   *  「先出一张付费首帧图,再用它出片」的那一格。铸卡侧已经不再写它(Step 4.6 报废),接力
+   *  模块也已下线,所以**新卡一张都不带**。类型留着,只因为裁决之前铸的旧卡里有它,读它的
+   *  那几处(确认卡渲染、`plan-card-contract` 白名单)因此原样不动。任何一格都不动钱。 */
   videoStep?: { estimatedCredits: number; next?: VideoStepPlan };
   sourceGenerationId?: string;
   /**
@@ -911,7 +897,7 @@ export function buildDowngradeNote(
  *                        breath as the ownership check, never later.
  */
 export function buildProposeCard(
-  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredResolution" | "desiredAudio" | "count" | "fineDetail" | "forVideo" | "videoPrompt">,
+  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredResolution" | "desiredAudio" | "count" | "fineDetail">,
   ctx: OttoContext,
   ownedEntities: ApprovedEntity[],
 ): ProposeCardResult {
@@ -1216,9 +1202,6 @@ export function buildProposeCard(
    * 而他没有任何地方可以改回来。说了不等于问了。拒绝的代价只有一句话,$0:抛在
    * `pricedGenCredits` 之前,GEN_CARD 一行都不落库,ledger 自然零新增行。
    *
-   * 两步计划(`forVideo`)的图片步走的就是这里 —— 它的 `kind` 也是 image,所以不必也
-   * 不该再补一支守卫(视频档位那边要补 Step 4.6a,是因为 Step 3.6 写的是 `kind === "video"`)。
-   *
    * **两个证人**(Codex 全 beta 审计 P0-001)。上一版只有证人①,而证人①是模型的转述:
    * 商家说 4:5、模型按当时的说明书换成菜单内的 4:3,这道闸就永远走不到 —— 卡上写
    * `2304 × 1728 · 4:3`,`Generate` 按得下去,Otto 嘴上还在说 4:5。所以证人②直接读商家
@@ -1292,117 +1275,16 @@ export function buildProposeCard(
     }),
   );
 
-  // Step 4.6: video-step estimate — DISPLAY ONLY.
-  // When this image card is the first step of a two-step video plan (forVideo=true),
-  // estimate the follow-on video cost so the card can show the full plan total.
-  // 报价这一段的错误照旧静默吞掉 —— videoStep 是 best-effort,算不出就少一行,绝不因此
-  // 毁掉这张图片卡。**唯一例外**是下面的 Step 4.6a:商家点名的档位给不了时那是拒绝,
-  // 不是「少一行」,它必须抛出去(判官 2026-09-04 P1-2)。
-  // #647 T6:视频引擎被关掉时 `vm` 是 null —— 这张图片卡照铸(图片引擎还开着),只是
-  // 不再替一条现在做不了的片子报价。卡面上少一行,好过多一行做不到的承诺。
-  let videoStep: { estimatedCredits: number } | undefined;
-  if (kind === "image" && input.forVideo) {
-    // 选型单独跑一趟(不再和报价共用一个 try)—— 它的结果要先过下面那道**不是**
-    // best-effort 的档位闸,过了才轮到报价那一段继续「算不出就少一行」。
-    let vm: ReturnType<typeof suggestModel> = null;
-    try {
-      vm = suggestModel({
-        kind: "video",
-        desiredAspect: input.desiredAspect,
-        desiredDuration: input.desiredDuration,
-        // 两步计划的第二步就是那条片子 —— 商家点的档位在这里也算数,否则「先出图再出片」
-        // 那张卡上的片段预估会按默认档报,与第二步真正会铸的卡对不上。
-        desiredResolution: input.desiredResolution,
-        desiredAudio: input.desiredAudio,
-        hasSourceImage: true,
-        hasTail: false,
-        disabled: new Set(ctx.disabledModels),
-      });
-    } catch {
-      vm = null;
-    }
-
-    /**
-     * Step 4.6a(判官 2026-09-04 P1-2 落修)—— **两步计划的第二步同样归 Step 3.6 管**。
-     *
-     * Step 3.6 的守卫写的是 `kind === "video"`,而两步计划这张卡的 `kind` 是 image ——
-     * 于是整条绕过去:商家说「4k」,卡上那行片段预估按默认档报(`OttoPlanCard` 把它
-     * 渲染成商家**正要批准**的那张卡的总价),而第二步真去铸卡时又会被 Step 3.6 拒。
-     * 披露与将要发生的事不是一件事 —— 正是这张票要挡的那一类病,只是守卫少了一支。
-     *
-     * 所以这里用**同一条判据、同一句话**:点名的档没有原样落到这条片子上、或不是可售
-     * SKU ⇒ 一张卡都不铸。为什么不是「悄悄少一行 videoStep」:商家点了一档,他该得到的
-     * 是一句诚实的回答,而不是一张自己少了一行的卡 —— 少那一行他看不出来,于是仍然以为
-     * 第二步会按他点的档做。拒绝照旧 $0(抛在落库与预扣之前)。
-     *
-     * `vm === null`(视频引擎被后台关掉)不走这里:那是 #647 T6 早就裁过的另一件事 ——
-     * 图片卡照铸、只是不替一条现在做不了的片子报价,行为一格不动。
-     */
-    if (vm && input.desiredResolution) {
-      const got = vm.params.resolution ?? "";
-      const seconds = vm.params.durationSeconds ?? 0;
-      if (got !== input.desiredResolution || !isSellableVideoSku(vm.model, got, seconds)) {
-        throw new VideoTierUnavailableError(
-          input.desiredResolution,
-          mintableVideoTiers(vm.model as GenVideoModel, { refPath: isRefVideo }),
-        );
-      }
-    }
-
-    /**
-     * Step 4.6b(Codex E2E-CRE-PAV-004,规格 §5 2026-09-04)—— **第二步现在就得铸得出来**。
-     *
-     * 冻结计划的意思是「出图之后系统照它铸第二张卡」。那张卡是 `buildProposeCard` 自己铸的,
-     * 而铸视频卡的第一道闸是 `decideVideoAction`:提示词撑不起这个形状就抛。若等到出图之后
-     * 才发现撑不起,商家已经为第一步付过钱,而第二步永远不会出现 —— 一次沉默的半截任务。
-     *
-     * 所以在这里先用**同一个函数、同一个形状**(带首帧、无末帧、无参考片 = 第二步真正的形状)
-     * 对这段字问一次。撑不起 ⇒ 一张卡都不铸、$0(抛在落库与预扣之前),商家听到的是那句
-     * 本来就该在这时候说的话。
-     */
-    if (input.videoPrompt) {
-      const nextDecision = decideVideoAction({
-        prompt: input.videoPrompt,
-        shape: { hasStill: true, hasEndStill: false, hasClip: false },
-      });
-      if (nextDecision.kind === "ask") throw new VideoActionUnavailableError(nextDecision.question);
-    }
-
-    try {
-      const videoEstCredits = vm === null ? null : displayCredits(
-        pricedGenCredits({
-          kind: "VIDEO",
-          model: vm.model,
-          count: 1,
-          videoOptions: {
-            seconds: vm.params.durationSeconds,
-            resolution: vm.params.resolution,
-            audio: vm.params.audio,
-          },
-        }),
-      );
-      if (videoEstCredits !== null) {
-        videoStep = {
-          estimatedCredits: videoEstCredits,
-          // 冻结计划与上面那个预估**共用同一份输入**,所以卡上写的价和第二张卡真正的价
-          // 出自同一条路。片子的提示词缺席 ⇒ 不冻结,老行为一格不动。
-          ...(input.videoPrompt
-            ? {
-                next: {
-                  structuredPrompt: input.videoPrompt,
-                  ...(input.desiredAspect ? { desiredAspect: input.desiredAspect } : {}),
-                  ...(typeof input.desiredDuration === "number" ? { desiredDuration: input.desiredDuration } : {}),
-                  ...(input.desiredResolution ? { desiredResolution: input.desiredResolution } : {}),
-                  ...(typeof input.desiredAudio === "boolean" ? { desiredAudio: input.desiredAudio } : {}),
-                },
-              }
-            : {}),
-        };
-      }
-    } catch {
-      // Best-effort — omit videoStep on any error
-    }
-  }
+  // Step 4.6 —— **已报废**(FC-3,S5 批量裁决 2026-09-12 #1358,creation-engine.md:186)。
+  //
+  // 这里曾经是两步计划的整条实现:`kind === "image" && input.forVideo` 时替第二步那条片子
+  // 报一次价(纯展示),并把第二步的规格冻进 `videoStep.next`,出图之后由 `video-step-handoff`
+  // 自动铸出第二张确认卡。裁决把「合成 first frame」对**所有**路径判了退场,所以入口字段、
+  // 这段实现与那个接力模块一起下线 —— 视频请求从此一步直达 `kind:"video"`,@ 到的演员与
+  // 商家挂的图作参考随行(正是现场唯一成功的那一单 01M2F736BR2VBJEJ8H1SV73F5X 的形状)。
+  //
+  // `CardPayload.videoStep` 这一格**留着**:裁决之前铸的旧卡里有它,读它的那几处(确认卡
+  // 渲染、`plan-card-contract`)因此原样不动;新卡从此一张都不再写它。
 
   // Step 4.7: 声音开关没落到这张卡上,是降级 —— 必须显式披露,不得静默。
   // suggestModel 只知道「这个模型能不能」，不知道「执行层会不会真用」，所以在这里补齐。
@@ -1543,7 +1425,6 @@ export function buildProposeCard(
     // 视频卡的 payload 形状与这条修改之前逐字相同。
     ...(wantsFineDetail ? { fineDetail: true as const } : {}),
     ...(optionMenu ? { options: optionMenu } : {}),
-    ...(videoStep ? { videoStep } : {}),
     // isI2V | usesAttachedImage ⇒ !!ctx.sourceGenerationId, so the non-null assertion is sound.
     // video ⇒ i2v 起始帧；image ⇒ 引擎的编辑底图（第一参考）。两条路都真的送图。
     //

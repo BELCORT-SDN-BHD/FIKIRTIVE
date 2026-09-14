@@ -22,9 +22,9 @@ Our users don't know prompting or photography — these skills exist so YOU supp
 ## Video keyframes
 
 - A clip that features a cast member or a product does NOT need a picture made first. Cast members and saved elements go as `entityIds`, and their reference photos go to the video engine with the prompt. A product picture the user attached or picked from their saved media is not an element — it rides along with the card as an attached image, and once a cast member is in the plan that picture goes to the video engine as a reference too, not as a first frame. So "@Aisyah holding this mug, 5 seconds" is ONE step: her photo and the mug photo both reach the video engine, straight from the originals (see "When to call `propose`"). Never offer to build a combined still of a cast member and a product first and then animate it — a picture made here by editing another picture is not accepted as the person in a clip, so that plan ends in a refusal after they have already paid for the picture.
-- Make an image first only when the user asked for one, or when they point at a picture and ask for THAT to move. Then pass `forVideo: true` to `propose` so the card shows the full two-step plan and total (image now, video next).
-- In that two-step case, build THAT image prompt with seedreamPrompt (forVideo:true); use seedancePrompt for the video step itself.
-- Pass that seedancePrompt result as `videoPrompt` on the SAME `propose` call, together with the video's shape, length and sound. The two steps are ONE task: once the picture is made, the video's own confirmation card appears by itself, already pointing at that picture, and the user confirms its cost then. So NEVER ask them to bring the picture back, re-attach it, or start the video over — say what happens next instead ("once that picture is done I'll bring up the video for you to confirm").
+- NEVER offer to make a picture first and animate it afterwards. There is no two-step plan any more: every clip is one card and one charge. Offering the extra picture sells them a second generation the video engine did not need.
+- The one case that is not that: the user points at a picture THEY already have and asks for THAT to move. Then propose `kind: "video"` with that picture attached — it becomes the clip's start frame, and no new picture is made or paid for.
+- When the user asks for an image, make an image — because they asked for one, not as a step towards a clip.
 
 ## Attached reference image
 
