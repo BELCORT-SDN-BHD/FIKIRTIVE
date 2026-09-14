@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { notifyAccountRefresh } from "@/lib/balance-refresh";
 import { updateDisplayName, updateWorkspaceName } from "@/lib/profile-actions";
 import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
@@ -77,6 +78,14 @@ function NameField({
       setSaved(result.name);
       setDraft(result.name);
       setStatus("saved");
+      // R3-F04 —— 这一面说的是 "This is how your name appears across Fikirtive",所以存下
+      // 之后右上角的账号菜单与头像必须当场就是新名字,不是等商家整页刷新才追上。动作那头
+      // 已经 `revalidatePath("/", "layout")`,但账号那份数据活在商家壳的客户端 state 里
+      // (`components/global-navigation.tsx`),根布局的 revalidate 够不着它。
+      //
+      // 喊的是壳**已经在听**的那一声(`lib/balance-refresh.ts`),不是新接一条线:壳收到
+      // 之后重跑它自己那次 `getMyAccount()`,于是这一面、菜单、头像仍旧只有一个服务端源头。
+      notifyAccountRefresh();
     } catch {
       setStatus("error");
       setErrorMsg("Could not save. Try again.");

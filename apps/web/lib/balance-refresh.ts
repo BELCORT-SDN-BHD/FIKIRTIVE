@@ -137,15 +137,37 @@ function deliverLocally(): void {
   }
 }
 
-/** Announce that a charge settled and any displayed balance is now stale — in this tab
- *  and, FSE-010, in whatever other tabs the merchant left open on the same origin. The
- *  broadcast is best-effort by design: it goes out AFTER this tab's own displays have been
- *  told, and a channel that is missing or refuses the message changes nothing here. */
-export function notifyBalanceRefresh(): void {
+/** The one publish path: tell this tab's displays, then tell the other tabs. Best-effort by
+ *  design — the broadcast goes out AFTER this tab's own displays have been told, and a
+ *  channel that is missing or refuses the message changes nothing here. */
+function publishRefresh(reason: string): void {
   deliverLocally();
   try {
     openBalanceChannel()?.postMessage(BALANCE_REFRESH_CHANNEL);
   } catch (error) {
-    console.warn("balance-refresh broadcast failed (non-fatal):", error);
+    console.warn(`${reason} broadcast failed (non-fatal):`, error);
   }
+}
+
+/** Announce that a charge settled and any displayed balance is now stale — in this tab
+ *  and, FSE-010, in whatever other tabs the merchant left open on the same origin. */
+export function notifyBalanceRefresh(): void {
+  publishRefresh("balance-refresh");
+}
+
+/**
+ * R3-F04 —— 同一条路,另一个说法:「商家自己那份账号资料变了」(今天是 /profile 改姓名)。
+ *
+ * 订阅端本来就不是只为余额存在的:`global-navigation.tsx` 收到这一声之后重跑的是
+ * `getMyAccount()`,回来的是 email、显示名、余额一整份。所以姓名要当场跟上,不必新建
+ * 第二套刷新机制 —— 同一个监听集、同一条频道、同一次服务端重读就够了,导轨、账号菜单、
+ * 头像首字母因此永远出自同一次读。
+ *
+ * 之所以另起一个名字而不是直接喊 `notifyBalanceRefresh()`:改名没有动一分钱。让一处非
+ * 付费表面宣称「结算完成」,一来是这个仓库反复在修的「说的与做的失同步」,二来
+ * `spend-visibility-seams.test.ts` 正是靠扫描源码里的 `notifyBalanceRefresh()` 来点名
+ * 「每一处会扣费的客户端表面都宣告了」—— 往非付费表面撒这个字眼会污染那道钱的围栏。
+ */
+export function notifyAccountRefresh(): void {
+  publishRefresh("account-refresh");
 }
