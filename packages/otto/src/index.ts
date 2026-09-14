@@ -130,9 +130,6 @@ export {
 } from "./storyboard-child-job.js";
 export type { ChildJob, PrismaTx } from "./storyboard-child-job.js";
 // Codex E2E-CRE-PAV-004 —— 两步任务的接力:Step 1 出图后由服务端铸第二张确认卡($0)。
-export { planVideoStepHandoff, buildVideoStepCardPayload, videoStepPlanOf } from "./video-step-handoff.js";
-export type { PreparedVideoStep, VideoStepCardPayload } from "./video-step-handoff.js";
-export type { VideoStepPlan } from "./skills/propose.helpers.js";
 // Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修)的菜单与改档口径。
 // 落库与归属由 web 那个 Server Action 负责,判词只有这一份。
 export { applyCardOptions, cardOptionMenu } from "./skills/propose-card-options.js";

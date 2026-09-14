@@ -198,9 +198,10 @@ export const proposeSkill = defineOttoSkill({
     "to offer that many image variants — images only; video is always a single clip. " +
     "When the user asks for extra-fine detail on a picture, pass fineDetail:true — images " +
     "only; it costs more and the card shows the new price before they approve. " +
-    "For a video that needs a starting picture, propose the picture with forVideo:true AND " +
-    "videoPrompt (the seedancePrompt text for the clip): the video's own confirmation card " +
-    "is then created for the user once that picture is made — never ask them to bring it back.",
+    "A video is ONE step: propose kind:\"video\" and let the cast members, saved elements and " +
+    "any picture they attached ride along as references. Never offer to make a picture first " +
+    "and animate it afterwards — that is a second charge for something the video engine does " +
+    "not need. Only make an image first when the user asked for an image.",
   parameters: proposeInput,
   requires: [
     {
