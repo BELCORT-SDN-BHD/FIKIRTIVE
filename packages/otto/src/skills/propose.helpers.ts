@@ -50,7 +50,11 @@ import type { OttoContext, OttoMediaReference } from "../context.js";
 // 三格控件(张数／形状／精修)的菜单与改档口径 —— 铸卡侧与改档侧共用这一份,抄成两份
 // 必有一份先烂(卡上写着「可以选这几个形状」而真正收得下的是另外几个)。
 import { cardOptionMenu, type CardOptions } from "./propose-card-options.js";
-import { decideVideoAction } from "./video-intent.js";
+import {
+  decideVideoAction,
+  requestedVideoAttachmentRole,
+  FIRST_FRAME_DOWNGRADE_NOTE,
+} from "./video-intent.js";
 import { videoActionUnavailableReason } from "./video-capabilities.js";
 
 // ---------------------------------------------------------------------------
@@ -301,6 +305,18 @@ export type ProposeCardResult = {
    * 「有没有演员」,预留问的是「有几个元素要各留一格」。
    */
   mentionedElementCount: number;
+  /**
+   * FC-4 —— 这张卡里,商家挂的那张图**真正**扮演的角色(视频卡专用;`null` = 没挂图 /
+   * 图片卡)。
+   *
+   * 交出去是给**调用方回给模型**用的(`executePropose` 的返回值)。叙述是模型写的,
+   * finalizer 只负责落库 —— 所以「不许说卡上没有的事」在结构上只有一条路:把卡上
+   * 真正的那一格交到模型手里。它读到 `reference` 就没有一句「as the first frame」
+   * 可写了。不参与选型、报价、预扣。
+   */
+  attachmentRole: "startFrame" | "reference" | null;
+  /** FC-4 —— 商家点名要首帧、而这张卡给不了时为 true(卡上那一行披露的同一个判据)。 */
+  attachmentRoleDowngraded: boolean;
 };
 
 /**
@@ -1421,7 +1437,24 @@ export function buildProposeCard(
     ...(clipAspectForced ? { aspect: input.desiredAspect } : {}),
     ...(audioNotHonoured ? { audio: input.desiredAudio } : {}),
   };
-  const downgraded = sm.downgraded || audioNotHonoured || clipAspectForced;
+  /**
+   * FC-4 —— **商家点名要首帧,这张卡给不了。**
+   *
+   * `videoAttachmentRole` 的判据不动(@ 了演员 ⇒ 参考图,理由见 `reference-budget.ts`);
+   * 变的是**这件事不再静默**。走查那一轮商家明说「use it as the first frame」,卡上
+   * 落的是 `role:"reference"`,而 Otto 的文字照旧说「using your image as the first
+   * frame」—— 商家按下 Generate,预扣 33 credits,供应商拒收,退款。他在批准之前
+   * 一个字都读不到。
+   *
+   * 判据的两半都不来自模型:要什么来自商家自己的那句话(`ctx.turnText`,服务端原样
+   * 带进来),给什么来自服务端自己数出来的 `videoAttachment`。所以卡上这一行不可能
+   * 与真正发出去的请求分家。
+   */
+  const requestedAttachmentRole =
+    kind === "video" && videoAttachment !== null ? requestedVideoAttachmentRole(ctx.turnText) : null;
+  const attachmentRoleDowngraded =
+    requestedAttachmentRole === "startFrame" && videoAttachment === "reference";
+  const downgraded = sm.downgraded || audioNotHonoured || clipAspectForced || attachmentRoleDowngraded;
   /**
    * #775 —— 卡面/披露文案这一层,「商家给了一个引擎会照着定形状的东西」为真。
    *
@@ -1527,7 +1560,17 @@ export function buildProposeCard(
     }),
     downgraded,
     ...(downgraded
-      ? { downgradeNote: buildDowngradeNote(kind, requested, sm.params, shapeFollowsWhatTheyGave) }
+      ? {
+          downgradeNote: [
+            // FC-4 —— 角色那一句排在最前:它说的是「你要的那件事我不会做」,比规格差异更
+            // 靠近商家按下按钮的那个决定。两件事同时发生时两句都说,不合并成一句 ——
+            // 一格只放得下一件事的语气(FSE-001 把放大那一句分出去时的同一条理由)。
+            ...(attachmentRoleDowngraded ? [FIRST_FRAME_DOWNGRADE_NOTE] : []),
+            ...(sm.downgraded || audioNotHonoured || clipAspectForced
+              ? [buildDowngradeNote(kind, requested, sm.params, shapeFollowsWhatTheyGave)]
+              : []),
+          ].join(" "),
+        }
       : {}),
     structuredPrompt: input.structuredPrompt,
     entityIds,
@@ -1571,5 +1614,13 @@ export function buildProposeCard(
   // Step 6: the credit amount Otto may mention in chat = the real charge (estimatedCredits).
   const shownPriceDisplay = estimatedCredits;
 
-  return { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel, mentionedElementCount };
+  return {
+    cardPayload,
+    shownPriceDisplay,
+    mentionedEntityIds,
+    mentionedVariantSel,
+    mentionedElementCount,
+    attachmentRole: videoAttachment,
+    attachmentRoleDowngraded,
+  };
 }

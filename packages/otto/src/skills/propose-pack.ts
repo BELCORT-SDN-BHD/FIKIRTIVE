@@ -22,6 +22,7 @@ import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 import { proposeInput, buildProposeCard, ProposeRefusal, type ProposeInput, type CardPayload } from "./propose.helpers.js";
 import { applyReferenceUpscaleGate } from "./reference-upscale-gate.js";
+import { withContinuedImage } from "./image-continuation.js";
 import { VARIANT_AXES, checkVariantSet } from "./variant-policy.js";
 import { z } from "zod";
 
@@ -93,7 +94,13 @@ export async function executeProposePack(
       // ownedSet it builds internally always covers what it itself asks for.
       const itemEntityIds = new Set([...item.entityIds, ...(ctx.turnEntityIds ?? [])]);
       const itemOwnedEntities = ownedEntities.filter((e) => itemEntityIds.has(e.id));
-      payloads.push(buildProposeCard(item as ProposeInput, ctx, itemOwnedEntities).cardPayload);
+      // FC-2 —— 整包这一面读同一个归一化(`executePropose` 读的同一个函数)。少了它,
+      // 「再给我三张这张图的变体」在单张那条路上继承得到、在整包这条路上继承不到,
+      // 同一句话两种结果 —— 第二个入口烂掉的老病。每一项按自己的 kind 判,视频项不动。
+      payloads.push(
+        buildProposeCard(item as ProposeInput, withContinuedImage(ctx, item), itemOwnedEntities)
+          .cardPayload,
+      );
     }
   } catch (e) {
     // #775:认拒绝的**基类** —— 引擎被关掉、形状撑不起这段提示词,对整包来说都是同一件事:
