@@ -617,6 +617,14 @@ export function LibraryView({
   const [detail, setDetail] = React.useState(initialAsset);
   const [elementList, setElementList] = React.useState<LibraryElement[]>(elements);
 
+  // ── 详情面关掉之后,键盘焦点回到哪(R3-F05)──────────────────────────────────
+  // 存的是**素材 id**,不是 DOM 节点:关掉详情面的同一批 setState 里网格会整组重取,
+  // 打开它的那块砖在骨架屏那一帧就被卸掉了 —— 记住节点,等于记住一块已经不在文档里的砖。
+  // `null` = 这一刻没有待归位的焦点。
+  const [focusReturnId, setFocusReturnId] = React.useState<string | null>(null);
+  /** 网格那块区域。素材被删掉、一张卡都不剩时,焦点落在它身上 —— 而不是 `<body>`。 */
+  const gridAreaRef = React.useRef<HTMLDivElement | null>(null);
+
   // ── 段②:收藏、合集与选择模式 ────────────────────────────────────────────────
   // 收藏是**自己的读模型**(Founder 2026-09-03 裁决十:一次查询、按收藏时间排),
   // 不是把生成历史再筛一遍 —— 所以它有自己的一份列表与游标,与上面那一组互不干扰。
@@ -982,7 +990,36 @@ export function LibraryView({
   function closeDetail() {
     setDetail(undefined);
     writeRoute({ asset: null });
+    // 键盘/读屏的商家是从某一块砖上按 Enter 进来的,关掉就得回到那一块 —— 落回 `<body>`
+    // 等于把人丢回页面最顶上,想看下一件得重新 Tab 一遍导航、页签与工具条(R3-F05)。
+    // 面板自己的焦点管理器到这一刻已经无能为力:它记的是节点,而节点马上会被重取卸掉。
+    setFocusReturnId(detail?.generationId ?? null);
   }
+
+  /**
+   * 把焦点送回那块砖 —— **等重取跑完**再动手。
+   *
+   * `loading` 还亮着就什么都不做:那一帧屏幕上是骨架屏,砖还没挂回来,这时候找不到目标,
+   * 找到了也会被下一次渲染卸掉。等 `loading` 落下、`items` 换上,砖是新的节点,按 id 认它。
+   *
+   * 两级兜底,都不是 `<body>`:那件素材在详情面里被删掉了 ⇒ 落在网格里第一块砖;一块都不剩
+   * (空态、搜索无结果)⇒ 落在网格那块区域本身(`tabIndex={-1}`),Tab 从那里继续往下走。
+   */
+  React.useEffect(() => {
+    if (focusReturnId === null) return;
+    // 又开了一张详情面 —— 焦点归它管,这次归位作废。
+    if (detail) { setFocusReturnId(null); return; }
+    if (loading) return;
+    const area = gridAreaRef.current;
+    const cards = area
+      ? [...area.querySelectorAll<HTMLElement>("[data-library-card]")]
+      : [];
+    const target = cards.find((card) => card.dataset.libraryCard === focusReturnId)
+      ?? cards[0]
+      ?? area;
+    target?.focus();
+    setFocusReturnId(null);
+  }, [focusReturnId, detail, loading, items, favorites]);
 
   const filtersActive = !filtersAreDefault(filters);
 
@@ -1040,7 +1077,9 @@ export function LibraryView({
             />
           ) : <div className="border-b border-border" />}
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          {/* `tabIndex={-1}`:Tab 键序不变(-1 不进键序),只是让这块区域能被**程序**点名 ——
+              详情面里把最后一件素材删掉之后,焦点有个落脚点,不必掉回 `<body>`(R3-F05)。 */}
+          <div ref={gridAreaRef} tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
             {view === "elements" ? (
               <ElementsView
                 elements={elementList}
