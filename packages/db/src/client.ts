@@ -40,7 +40,22 @@ function buildClient(): PrismaClient {
     // budget. Tune DB_POOL_MAX per (replica-count × max) ≤ Neon pooled limit. Going
     // through the Neon -pooler (PgBouncer) endpoint multiplexes, so this app-side max is
     // the real cap to size. (scale audit 2026-06-20)
-    { connectionString: url, max: Number(process.env.DB_POOL_MAX) || 10 },
+    {
+      connectionString: url,
+      max: Number(process.env.DB_POOL_MAX) || 10,
+      // 会话时区钉死 UTC。这不是测试便利,是写入正确性。
+      // @prisma/adapter-pg@7.8.0 的 formatDateTime(dist/index.mjs:353)把 JS Date 序列化成
+      // 「UTC 墙钟、但不带任何偏移」的裸字符串(例:2099-01-01 00:00:00)。timestamptz 列
+      // 收到裸字符串时,Postgres 按**会话时区**去解释它 —— 于是服务端默认时区不是 UTC 时,
+      // 每一个 Date 参数都整体漂移该时区的偏移量。
+      // 实测(服务端默认 Asia/Kuala_Lumpur):Date("2099-01-01T00:00:00Z") 落库成 epoch
+      // 4070880000,比正确的 4070908800 早 8 小时;同一个 Date 直接走裸 pg 驱动则落库正确。
+      // 漂移同时打中 ORM 写入与 $queryRaw 绑定(两条路共用 adapter 的 mapArg),所以商家的
+      // consent 发生时间、拒收过期时间这类时刻都会随「服务端装在哪个时区」而变。
+      // 钉在启动包参数而不是 `SET TIME ZONE`:PgBouncer 事务池化下启动参数对每条后端连接
+      // 都生效,而事后 SET 会随连接复用丢失。
+      options: "-c timezone=UTC",
+    },
     // pg-boss owns its own schema; Prisma stays on public (eng review D9)
     { schema: "public" },
   );
