@@ -51,6 +51,49 @@ cron 入口(`backup-cron.ts`)的行为:
   所以任何日志/异常里都不会带出口令。
 - 只在 `STORAGE_DRIVER=r2` 时生效;本地开发(local driver)自动跳过。
 
+## ⚠️ pg_dump 大版本必须 ≥ 服务端大版本(2026-09-14 实证根因,#1385)
+
+**症状**:`/api/health` 的 `backup` 一直是 `"missing"`;`BackupRun` 里只有 `failed` 行、
+一条 `succeeded` 都没有;worker 日志每 5 分钟打一次 `db-backup: starting …`,紧接着
+`db-backup failed: media subprocess failed (exit code 1)`。
+
+**根因**:`pg_dump` **拒绝**去 dump 比自己大版本更新的服务端,直接退出 1 并打印
+`aborting because of server version mismatch`。staging 的 Postgres 走的是 Railway 镜像
+`ghcr.io/railwayapp-templates/postgres-ssl:18`(`SHOW server_version` = 18.6),而
+`apps/worker/Dockerfile` 那时还钉着 `postgresql-client-17` —— 用 17 去 dump 18 是禁止的方向,
+所以从 2026-09-05 第一晚起,每一次备份都在同一行失败,连续 1360 次。
+2026-09-14 用本机 16.14 客户端只读复现同一条错误(16 vs 18 与 17 vs 18 是同一条规则):
+
+```
+pg_dump: error: aborting because of server version mismatch
+pg_dump: detail: server version: 18.6 (Debian 18.6-1.pgdg13+2); pg_dump version: 16.14 (Homebrew)
+```
+
+**规矩**:**客户端大版本 ≥ 服务端大版本**(18 dump 17 可以,17 dump 18 不行)。
+Railway / Neon 的 Postgres 每次升大版本之后,**必须**做两件事:
+
+1. 连上去跑 `SHOW server_version;` 看清服务端现在是几;
+2. 把 `apps/worker/Dockerfile` 里的 `postgresql-client-<N>` 钉子跟着抬上去
+   (pgdg trixie 的 amd64 与 arm64 都有 `postgresql-client-18`,版本 `18.6-1.pgdg13+2`),
+   重新部署 worker(以及 cron 服务,如果已按上节拆出来)。
+
+**失败原因怎么看(#1385 新增)**:以前 `BackupRun.error` 对所有子进程失败都只写
+`media subprocess failed (exit code 1)` —— 密码错、连不上、版本不对长得一模一样。
+现在 `db-backup.ts` 会读 pg_dump 的 stderr(只留末尾约 4 KB,**只在内存里**),
+按封闭集分类,**只把分类词**(版本不匹配时再加两个纯数字版本号)拼进那条摘要:
+
+| 分类词 | 意思 | 先查什么 |
+|---|---|---|
+| `pg_dump_version_mismatch: server <X> / pg_dump <Y>` | 客户端大版本 < 服务端 | 按上面「规矩」抬 Dockerfile 的钉子 |
+| `connection_failed` | 连不上 / 超时 / DNS / SSL | DB 服务活着吗、`DATABASE_URL` 指对了吗、网络出口 |
+| `auth_failed` | 口令或角色被拒 | 凭据是否轮换过、角色权限 |
+| `unknown` | 不在允许清单里 | 去 worker 日志看那一次的上下文 |
+
+落库后长这样:`media subprocess failed (exit code 1) [pg_dump_version_mismatch: server 18.6 / pg_dump 17.11]`。
+**stderr 原文永远不落库、不进日志、不进 Sentry** —— libpq 的错误文本会带 host/user,
+所以只有分类词和纯数字版本号被允许离开 `dumpDatabaseToFile`(见 `apps/worker/src/db-backup.ts`
+的分类块与 `db-backup.test.ts` 的脱敏断言)。
+
 ## 备份放在哪 + 用哪把钥匙(#794 ④)
 - key:`backups/db/fikirtive-<YYYY-MM-DD>.dump.gz`(吉隆坡日期)。
   `backups/` 前缀在 `u/<ownerId>/` 内容寻址方案之外,`/files` 路由只认 `u/` key
