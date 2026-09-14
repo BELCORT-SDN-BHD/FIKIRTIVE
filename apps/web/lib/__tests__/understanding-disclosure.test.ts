@@ -48,11 +48,6 @@ import {
   pricedUnderstandingCredits,
 } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
-import {
-  UNDERSTANDING_COST_HINT,
-  UNDERSTANDING_COST_HINT_TITLE,
-  UnderstandingCostHint,
-} from "@/components/otto/UnderstandingCostHint";
 import { copyLines, HAND_TYPED_CREDITS } from "./helpers/price-literal-fence";
 
 const WEB_ROOT = process.cwd();
@@ -902,22 +897,25 @@ const EXPECTED_ACTION_KEYS = [
 ];
 
 /**
- * 必须挂披露的入口:文件 → 说明 → **该文件里的上传调用点数量**。
+ * 会落 UPLOAD 素材、因此会触发自动理解计费的 UI 入口:文件 → 说明 → **该文件里的上传调用点数量**。
  *
- * 计数这一栏是围栏语义,不是逐点证明:grep 证不了「第 3 个调用点旁边有没有披露」,
- * 但它能证「调用点数量变了」。变了就红,评审者必须先确认披露仍然覆盖那个新调用点、
- * 再来更新这个数字 —— 也就是把「在 OttoChatStream 里再塞一个不披露的上传弹层」
- * 从一次静默的合并,变成一次必须有人签字的改动。
+ * R3-F06(Founder 2026-09-14)之前这张表叫「必须挂披露的入口」,每一处都挂着同一行价目小字。
+ * 那一行整批撤了,但**这张表本身没有失去意义**:它钉的是「有几个 UI 入口会落 UPLOAD 素材」,
+ * 而那件事与展不展示价目无关。多一个入口仍旧必须有人签字 —— 从前签的是「披露覆盖到了吗」,
+ * 现在签的是「这条计费路径是有意新增的吗」。
+ *
+ * 计数这一栏是围栏语义,不是逐点证明:grep 证不了「第 3 个调用点是什么形状」,但它能证
+ * 「调用点数量变了」。变了就红,评审者必须先确认那条新路径是有意的,再来更新这个数字 ——
+ * 也就是把「在 OttoChatStream 里再塞一个上传弹层」从一次静默的合并,变成一次签字的改动。
  */
-const MOUNTS = [
+const UPLOAD_ENTRIES = [
   ["components/asset/DetailPanel.tsx", "素材详情的裁剪保存(saveCroppedGeneration)", 1],
   ["components/canvas/FlowCanvas.tsx", "Canvas 拖放上传(uploadReference)", 1],
   ["components/otto/OttoChatStream.tsx", "Otto 对话的附件入口", 3],
   ["components/otto/TemplateModal.tsx", "模板的产品图上传", 1],
   ["components/otto/stuff/AddAssetDialog.tsx", "素材库的多图上传", 2],
   // FRONT §7.3⑨(起步页参考契约):Create 起步页从此有 Upload image。它落的是同一行
-  // `Generation(source: "UPLOAD")`,自动理解照样会跑 —— 所以这一句在这里也必须在场,
-  // 而且是在文件选择器还没打开的时候就在屏幕上(与另外几处同一个组件、同一句话)。
+  // `Generation(source: "UPLOAD")`,自动理解照样会跑 —— 所以它是这张表上的一员。
   ["components/start-something/StartSomething.tsx", "Create 起步页的 Add context 上传", 1],
 ] as const;
 
@@ -1352,64 +1350,63 @@ const EXEMPTIONS: Exemption[] = [
   },
 ];
 
-describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
-  const markup = renderToStaticMarkup(createElement(UnderstandingCostHint));
+describe("R3-F06 上传入口不再常驻理解价目说明,而价目本身仍在 billing 念得到", () => {
+  /**
+   * R3-F06(Founder 2026-09-14;`docs/specs/money-engine.md` 等三份规格的 2026-09-14 变更登记,
+   * APPROVED)。这一组从前钉的是反方向:六个上传入口各挂一行「Uploads are understood
+   * automatically …」。Founder 看到那几段堆在输入附近的截图后裁定这类常驻说明不要,整批撤掉。
+   *
+   * 裁决同时明写:**移除展示不批准免费理解**,也不改价目单一来源与快照口径。所以这一组现在
+   * 钉两半 —— 展示真的没了(上半),而钱那一侧一个字没松(下半)。
+   */
+  const FORMER_HINT_SENTENCE = "Uploads are understood automatically";
 
-  it("三类价逐条出现,且与报价函数同源(测试自己现算期望值,不手抄)", () => {
-    for (const kind of Object.keys(UNDERSTANDING_PRICED_INTERNAL) as (keyof typeof UNDERSTANDING_PRICED_INTERNAL)[]) {
-      expect(markup, `${kind} 的价没有出现在披露行里`).toContain(priceOf(kind));
+  it.each(UPLOAD_ENTRIES)("%s 不再常驻理解价目说明", (file) => {
+    const src = codeOf(file);
+    expect(src, `${file} 又挂回了理解价目组件`).not.toContain("UnderstandingCostHint");
+    expect(src, `${file} 自己抄了一份理解价目文案`).not.toContain(FORMER_HINT_SENTENCE);
+  });
+
+  it("三个价目小字组件都已删除 —— 不是留在仓库里等人挂回来", () => {
+    for (const gone of [
+      "components/otto/UnderstandingCostHint.tsx",
+      "components/otto/SearchCostHint.tsx",
+      "components/otto/ConversationCostHint.tsx",
+    ]) {
+      expect(
+        () => codeOf(gone),
+        `${gone} 还在 —— R3-F06 撤的是这类展示本身,不是只摘掉挂点`,
+      ).toThrow();
     }
   });
 
-  it("第四类理解上线时,这句话必须跟着改(枚举长度即闸)", () => {
+  it("理解的三类价仍旧在 billing 念得到,而且与报价函数同源(测试自己现算期望值,不手抄)", () => {
+    // 撤掉展示之后,billing 的 Auto-understanding 一节是商家读这个价的**唯一**地方。
+    // 它缺一档,商家就是在为一笔没人告诉过他的钱付费 —— 所以这一条比从前更硬,不是更松。
+    const billing = codeOf("app/billing/page.tsx");
+    expect(billing).toContain("Auto-understanding");
+    expect(billing, "billing 不再从报价函数现算,而是抄了一份数").toContain(
+      "pricedUnderstandingCredits",
+    );
+    const offenders = copyLines(billing).filter(
+      (line) => /understand/i.test(line) && HAND_TYPED_CREDITS.test(line),
+    );
+    expect(offenders, "理解价目区出现了手抄的钱数").toEqual([]);
+  });
+
+  it("第四类理解上线时,billing 的价目区必须跟着改(枚举长度即闸)", () => {
     // 这一行不是形式主义:三类价是**三个句子槽**,加第四类而不改文案,商家读到的就是一份
     // 缺一档的价目表 —— 而缺的那一档照样扣钱。枚举一变长,这里当场红。
     expect(
       Object.keys(UNDERSTANDING_PRICED_INTERNAL),
-      "理解档多了一类:披露行要多一个槽,billing 价目区同样",
+      "理解档多了一类:billing 价目区要多一个槽",
     ).toHaveLength(3);
   });
 
-  it("级联说明在(计费四则②:菜单/价目表会被再读一次,两段价一并披露)", () => {
-    expect(markup).toContain("menu or price list");
-    expect(markup).toContain(priceOf("doc-extract"));
-  });
-
-  it("title 说清了什么时候扣、按哪一刻的价(四则①,措辞按 2026-09-02 裁决改实话)", () => {
-    expect(markup).toContain(UNDERSTANDING_COST_HINT_TITLE);
-    assertQueuedNotUploadWording("UnderstandingCostHint 的 title", UNDERSTANDING_COST_HINT_TITLE);
-  });
-
-  it("组件源码里没有手抄的价钱 —— 数值只能来自推导", () => {
-    const src = codeOf("components/otto/UnderstandingCostHint.tsx");
-    const offenders = copyLines(src).filter((line) => HAND_TYPED_CREDITS.test(line));
-    expect(offenders, "披露文案里出现了手抄的钱数").toEqual([]);
-    expect(src).toContain("pricedUnderstandingCredits");
-  });
-
-  it("样式照抄现成的成本小字,不是第三种长相", () => {
-    // 从前这一条钉的样板是 `FlowCanvas` 直出 composer 旁边那行价目小字。ENGINE-A3
-    // (otto-engine.md §7.2⑦)把那个 composer 退役了,样板改钉同一叠里的两位邻居 ——
-    // 它们与本条挂在**同一个** `div` 里,长得不一样一眼就看得见。
-    expect(markup).toContain("text-[0.75rem] text-muted-foreground");
-    for (const sibling of [
-      "components/otto/SearchCostHint.tsx",
-      "components/otto/ConversationCostHint.tsx",
-    ]) {
-      expect(codeOf(sibling), `${sibling} 的成本小字换了长相`).toContain(
-        'className="text-[0.75rem] text-muted-foreground"',
-      );
-    }
-  });
-
-  it.each(MOUNTS)("%s 挂的是同一个共享组件", (file) => {
-    const src = codeOf(file);
-    expect(src, `${file} 没有 import 披露组件`).toContain("UnderstandingCostHint");
-    expect(src, `${file} import 了却没有渲染`).toContain("<UnderstandingCostHint />");
-  });
-
-  it("EditDesk 不挂 —— 它今天只收音频,音频不在收费的三类里(§7.3 单列)", () => {
-    expect(codeOf("components/otto/edit/EditDesk.tsx")).not.toContain("UnderstandingCostHint");
+  it("级联说明仍在 billing(计费四则②:菜单/价目表会被再读一次,两段价一并披露)", () => {
+    const billing = codeOf("app/billing/page.tsx");
+    expect(billing).toContain("menu or a price list");
+    expect(billing).toContain('understandingPrice("doc-extract")');
   });
 
   // ── 围栏:两侧各扫一遍,任一侧动了而另一侧没跟上就红 ────────────────────────────
@@ -1857,14 +1854,14 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
   });
 
   it("入口普查:调上传动作的 UI 文件 = 挂点表 + 豁免表(新入口漏挂当场红)", () => {
-    const declared = [...MOUNTS.map(([file]) => file), ...EXEMPTIONS.map((e) => e.file)].sort();
+    const declared = [...UPLOAD_ENTRIES.map(([file]) => file), ...EXEMPTIONS.map((e) => e.file)].sort();
     expect(
       uploadEntryFiles(),
-      "有 UI 开始调上传动作:要么挂 <UnderstandingCostHint />,要么进 EXEMPT 并写明理由",
+      "有 UI 开始调上传动作:要么进上传入口表,要么进 EXEMPT 并写明理由",
     ).toEqual(declared);
   });
 
-  it.each(MOUNTS)("%s 的上传调用点数量 = 登记值(多一个调用点=强制人工复核披露)", (file, _note, callSites) => {
+  it.each(UPLOAD_ENTRIES)("%s 的上传调用点数量 = 登记值(多一个调用点=强制人工复核)", (file, _note, callSites) => {
     expect(
       callSiteCount(file),
       `${file} 的上传调用点数量变了:先确认披露仍覆盖新的调用点,再来更新这个数字`,
@@ -1872,12 +1869,9 @@ describe("MONEY-A9 披露先于扣费:上传入口的价目小字", () => {
   });
 
   it("豁免不是一句好听的话:每条都要引规格、跑 guard、钉调用点数量", () => {
-    const mounted = new Set<string>(MOUNTS.map(([file]) => file));
+    const entries = new Set<string>(UPLOAD_ENTRIES.map(([file]) => file));
     for (const exemption of EXEMPTIONS) {
-      expect(mounted.has(exemption.file), `${exemption.file} 同时出现在挂点表和豁免表`).toBe(false);
-      expect(codeOf(exemption.file), `${exemption.file} 被豁免了却挂着披露`).not.toContain(
-        "UnderstandingCostHint",
-      );
+      expect(entries.has(exemption.file), `${exemption.file} 同时出现在入口表和豁免表`).toBe(false);
 
       // ① 规格出处必须读得到,而且那一段真的在谈这个豁免。
       const [specFile] = exemption.spec.split("#");
@@ -2110,19 +2104,16 @@ describe("MONEY-A9 披露先于扣费:Otto 的 URL 导入走动作前报价", ()
 /**
  * 快照价口径的**总闸**(跨厂复审 2026-09-02 唯一 P1 的落点)。
  *
- * 上面几组各自钉自己那一处;这一组把五处**能被商家或 Otto 读到的报价句**放在同一张表上扫,
- * 因为这次犯错的方式就是「改了两处、漏了三处」—— 商家在输入框读到的是排队口径,Otto 在
- * 同一次导入里说的却还是「上传即锁价」,两句话都出自我们,而商家只会记住更肯定的那一句。
+ * 上面几组各自钉自己那一处;这一组把**能被商家或 Otto 读到的报价句**放在同一张表上扫,
+ * 因为这次犯错的方式就是「改了两处、漏了三处」—— 商家读到的是排队口径,Otto 在同一次导入
+ * 里说的却还是「上传即锁价」,两句话都出自我们,而商家只会记住更肯定的那一句。
  *
- * 表是**穷举**的:五处就是全部会说出这句价的地方(三处上传入口共用一个组件,所以组件算一处)。
- * 再多一处报价句而不进这张表,只能靠复审 —— 但那正是这次被抓到的东西,所以宁可把表写死在这里。
+ * 表是**穷举**的。R3-F06(Founder 2026-09-14)撤掉了上传入口那一行小字,于是从五处变成四处:
+ * 商家侧只剩 billing 价目区一处,Otto 侧仍是三处。再多一处报价句而不进这张表,只能靠复审 ——
+ * 但那正是当初被抓到的东西,所以宁可把表写死在这里。
  */
-describe("MONEY-A9 快照价口径:五处报价句一律说「排队去理解时」,不许说「上传即锁价」", () => {
-  it("商家侧两处(上传入口的小字 + billing 价目区源码)", () => {
-    assertQueuedNotUploadWording(
-      "UnderstandingCostHint",
-      UNDERSTANDING_COST_HINT + " " + UNDERSTANDING_COST_HINT_TITLE,
-    );
+describe("MONEY-A9 快照价口径:四处报价句一律说「排队去理解时」,不许说「上传即锁价」", () => {
+  it("商家侧一处(billing 价目区源码 —— 撤掉输入口小字之后的唯一一处)", () => {
     // billing 页的渲染结果在上一组扫过;这里扫**源码文案行**,连注释以外的写法一起钉住。
     assertQueuedNotUploadWording("billing 页文案行", copyLines(codeOf("app/billing/page.tsx")).join(" "));
   });

@@ -988,18 +988,6 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   box-shadow: var(--shadow-sm);
   border: 1px solid var(--border);
 }
-/* MONEY-A9 §7.3 — the understanding price rides under the drop label. Card ground, because
-   `text-muted-foreground` over whatever the merchant's board happens to show is unreadable. */
-.gb .cv-dropzone-cost {
-  max-width: min(520px, 80%);
-  text-align: center;
-  background: var(--card);
-  padding: 6px 14px;
-  border-radius: 999px;
-  box-shadow: var(--shadow-sm);
-  border: 1px solid var(--border);
-}
-
 /* ── Per-asset inspector — shadcn Sheet owns viewport anchoring, scrim, focus trapping,
  * Escape, and focus restoration. These classes only arrange the content inside it. */
 .cv-detail {

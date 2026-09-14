@@ -16,7 +16,6 @@ import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, crea
 import { uploadReference } from "../../lib/actions";
 import { syncOttoCanvasNodes } from "../../lib/otto-canvas-bridge";
 import { OttoCanvasStatus } from "../otto/OttoTrace";
-import { UnderstandingCostHint } from "@/components/otto/UnderstandingCostHint";
 import { SAVE_FAILED } from "@/lib/save-failed-copy";
 import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
@@ -1787,16 +1786,14 @@ export default function FlowCanvas({
         </div>
       )}
       {/* Drop-to-add-image hint (drag a file from anywhere onto the canvas).
-       *  MONEY-A9 §7.3 —— 披露先于扣费。这个落点 `handleCanvasDrop → uploadReference` 落的是
-       *  `source:"UPLOAD"` 的 image Asset,扫描器随后建理解行、按上传时刻的快照价扣费,所以它和
-       *  OttoChatStream / TemplateModal / AddAssetDialog 是同一类入口,挂同一个组件。
-       *  文件还悬在半空、商家还没松手时这一行就在屏幕上 —— 「松手之前可见」就是这条验收本身。
-       *  `aria-hidden` 从容器移到了那句装饰性标题上:整块曾经是纯装饰,现在它带着价目,
-       *  读屏器不该读不到一笔要扣的钱。 */}
+       *  R3-F06(Founder 2026-09-14):这块落点上从前还带一行上传理解的价目小字,与其余受影响
+       *  入口同批撤掉,`.cv-dropzone-cost` 那条样式也随之删掉。落点本身没变 ——
+       *  `handleCanvasDrop → uploadReference` 仍旧落 `source:"UPLOAD"` 的 image Asset、
+       *  仍旧建理解行照扣;价目在 Billing 的 Auto-understanding 一节。
+       *  整块因此重新是纯装饰,`aria-hidden` 回到容器上。 */}
       {dragOver && (
-        <div className="cv-dropzone">
-          <span aria-hidden>Drop image to add it to the canvas</span>
-          <div className="cv-dropzone-cost"><UnderstandingCostHint /></div>
+        <div className="cv-dropzone" aria-hidden>
+          <span>Drop image to add it to the canvas</span>
         </div>
       )}
       {/* 空画板上的一句引导(2026-09-05 走查 P2④,验收 FRONT-A14)。

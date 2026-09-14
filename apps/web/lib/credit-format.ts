@@ -2,6 +2,11 @@
 // the barrel is Node-capable (guarded by lib/__tests__/client-core-imports.test.ts).
 import { SETTINGS_SECTIONS } from "@fikirtive/core/navigation";
 import { OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "@fikirtive/core/otto-budget";
+import {
+  OTTO_CHAT_MAX_SEARCHES_PER_TURN,
+  searchChargeInternal,
+  searchUnitChargeInternal,
+} from "@fikirtive/core/pricing-config";
 import { displayCredits } from "@fikirtive/core/spend";
 
 /**
@@ -209,3 +214,19 @@ export const CHAT_SPEND_NOTE =
  *  read this line hardest. */
 export const CHAT_HOLD_NOTE =
   `Each message holds up to ${creditsLabel(displayCredits(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL))} up front, charges only what it uses, and returns the rest right away.`;
+
+/** What ONE completed web search costs, in the words the rest of the money UI uses. Derived from
+ *  the same rate the turn's firm leg reserves at — never typed.
+ *
+ *  住在这里而不是从前那个 `components/otto/SearchCostHint.tsx`:R3-F06(Founder 2026-09-14,
+ *  三份规格 2026-09-14 变更登记)把输入框附近那条常驻说明整条撤了,而**价目本身没有撤** ——
+ *  Billing 的价目区仍旧念这两个数。价目是数据不是那条说明,所以它跟着这份钱文案的单一来源走,
+ *  不再挂在一个已经不存在的展示组件上。 */
+export const SEARCH_UNIT_LABEL = creditsLabel(displayCredits(searchUnitChargeInternal("basic")));
+
+/** The most one message can add in search charges: the per-turn ceiling at the unit rate.
+ *  This is the number that makes the spend-cap exemption defensible, so it is derived from
+ *  the ceiling itself — change the ceiling and Billing's sentence moves with it. */
+export const SEARCH_TURN_MAX_LABEL = creditsLabel(
+  displayCredits(searchChargeInternal(OTTO_CHAT_MAX_SEARCHES_PER_TURN)),
+);
