@@ -26,6 +26,10 @@ import {
 } from "./propose.helpers.js";
 // FSE-001 —— 付费前的参考图尺寸闸(唯一一份,两个铸卡入口读同一个)。
 import { applyReferenceUpscaleGate } from "./reference-upscale-gate.js";
+// FC-2 —— 「接着屏幕上那张图改」时,把那张图绑进这一轮的图片槽(判据与绑定都在那个模块)。
+import { withContinuedImage } from "./image-continuation.js";
+// FC-4 —— 角色被换掉时卡面与模型读到的**同一句**话。
+import { FIRST_FRAME_DOWNGRADE_NOTE } from "./video-intent.js";
 
 // Re-export types + pure helper so consumers can import from either file
 export type { CardPayload, ProposeCardResult };
@@ -62,9 +66,30 @@ async function countLiveReferenceImagesPerEntity(
 export async function executePropose(
   input: ProposeInput,
   runContext: Pick<RunContext<OttoContext>, "context">,
-): Promise<{ cardId: string; shownPriceDisplay: number } | { error: string }> {
+): Promise<
+  | {
+      cardId: string;
+      shownPriceDisplay: number;
+      /**
+       * FC-4 —— 这张卡里商家挂的那张图**真正**扮演的角色(`null` = 没挂图 / 图片卡)。
+       *
+       * 交回给模型,是因为叙述那一句是模型写的、finalizer 只负责落库 —— 「不许说卡上
+       * 没有的事」在结构上只有这一条路:把卡上真正的那一格交到它手里。走查那一轮它写的是
+       * 「using your image as the first frame」,而卡上落的是 `reference` —— 它当时手上
+       * 根本没有第二个版本可读。
+       */
+      attachmentRole: "startFrame" | "reference" | null;
+      /** FC-4 —— 商家点名要首帧而这张卡给不了时的那一句(卡面披露的同一份措辞)。 */
+      attachmentRoleNote?: string;
+    }
+  | { error: string }
+> {
   if (!runContext) throw new Error("OttoContext required");
-  const ctx = runContext.context as OttoContext;
+  // FC-2 —— **归一化在最前面,一次**。这一路上读图片槽的不止铸卡一处(下面的
+  // `referenceBudget` 名额、卡面披露、付费前的尺寸闸读的都是同一组 ctx 字段),所以
+  // 「接着那张图改」这件事必须在入口就落进 ctx —— 否则名额按 0 张算、卡面按 1 张说,
+  // 又是一次「说的与做的」分家。不继承时它原样返回同一个对象。
+  const ctx = withContinuedImage(runContext.context as OttoContext, input);
 
   // Validate entity ownership (security-critical: owner-scoped query).
   // #774 判官 r2 P1:名字与类型跟归属**同一趟**读出来 —— 卡上冻结的就是这一刻的身份,
@@ -96,8 +121,15 @@ export async function executePropose(
     if (e instanceof ProposeRefusal) return { error: e.message };
     throw e;
   }
-  const { cardPayload, shownPriceDisplay, mentionedEntityIds, mentionedVariantSel, mentionedElementCount } =
-    built;
+  const {
+    cardPayload,
+    shownPriceDisplay,
+    mentionedEntityIds,
+    mentionedVariantSel,
+    mentionedElementCount,
+    attachmentRole,
+    attachmentRoleDowngraded,
+  } = built;
 
   // #619 E-5：截断与「只用第一张挂图」都必须在**批准前**出现在卡面上，不是事后在
   // 详情页解释。
@@ -177,7 +209,13 @@ export async function executePropose(
     },
   });
 
-  return { cardId, shownPriceDisplay };
+  return {
+    cardId,
+    shownPriceDisplay,
+    attachmentRole,
+    // 卡面上写着的那一句,逐字交回给模型(两份措辞就是两种说法)。
+    ...(attachmentRoleDowngraded ? { attachmentRoleNote: FIRST_FRAME_DOWNGRADE_NOTE } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
