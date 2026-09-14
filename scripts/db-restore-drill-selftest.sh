@@ -120,6 +120,25 @@ for bin in psql pg_dump pg_restore gzip node; do
   command -v "$bin" >/dev/null 2>&1 || { echo "[drill-selftest] error: '$bin' not on PATH." >&2; exit 4; }
 done
 
+# #1385 review r1 — the blind spot this self-proof has by construction: it dumps AND restores
+# with the same local binaries, so a client pair that is uniformly too old for the real
+# production dump still goes green here. The version floor has to be asserted, because the
+# round trip cannot discover it. pg_dump 18 writes custom archive format 1.16; anything older
+# than 18 on this machine proves nothing about restoring a real nightly backup.
+MIN_PG_MAJOR=18
+for bin in pg_dump pg_restore; do
+  major="$("$bin" --version 2>/dev/null | sed -n 's/.*[^0-9]\([0-9][0-9]*\)\.[0-9].*/\1/p')"
+  if [ -z "$major" ]; then
+    echo "[drill-selftest] error: cannot read $bin's version." >&2
+    exit 4
+  fi
+  if [ "$major" -lt "$MIN_PG_MAJOR" ]; then
+    echo "[drill-selftest] error: $bin major $major < $MIN_PG_MAJOR — this self-proof would pass without proving a real backup can be restored." >&2
+    echo "[drill-selftest] the nightly dump is taken with pg_dump $MIN_PG_MAJOR (apps/worker/Dockerfile); see docs/runbooks/db-backup.md." >&2
+    exit 4
+  fi
+done
+
 WORKDIR="$(mktemp -d)"
 cleanup() {
   rm -rf "$WORKDIR"

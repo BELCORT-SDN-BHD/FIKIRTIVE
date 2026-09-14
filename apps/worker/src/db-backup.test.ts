@@ -224,6 +224,26 @@ describe("pgSpawnEnv (the COMPLETE child environment — no inherited PG*)", () 
     expect(env.PGSSLMODE).toBe("require");
     expect(env.PGCHANNELBINDING).toBe("require");
   });
+
+  /**
+   * #1385 review r1 — the classifier's signatures are English, so the message locale is
+   * part of the contract, not an incidental detail. pg_dump on Debian is an NLS build:
+   * under a German locale the mismatch line reads "Abbruch wegen unpassender
+   * Serverversion" and every pattern misses. The pin below is the only thing standing
+   * between an inherited LC_ALL and a misfiled diagnosis.
+   */
+  it("pins the message locale to C so pg_dump cannot answer in another language", () => {
+    const env = pgSpawnEnv(URL_, {
+      PATH: "/usr/bin",
+      LANG: "de_DE.UTF-8",
+      LC_ALL: "de_DE.UTF-8",
+      LC_MESSAGES: "de_DE.UTF-8",
+    });
+    // LC_ALL is the one that must win — POSIX lets it override LC_MESSAGES, so pinning
+    // only the weaker variable would lose to exactly the environment we are defending against.
+    expect(env.LC_ALL).toBe("C");
+    expect(env.LC_MESSAGES).toBe("C");
+  });
 });
 
 /**
@@ -286,6 +306,25 @@ describe("classifyPgDumpStderr (closed set of tokens, zero connection detail)", 
 
   it("classifies an empty tail (stderr said nothing) as unknown", () => {
     expect(classifyPgDumpStderr("")).toEqual({ token: "unknown" });
+  });
+
+  /**
+   * #1385 review r1 — why `pgSpawnEnv` pins LC_ALL=C, stated as a test rather than a comment.
+   * These patterns are English and there is no stable translated form worth matching, so a
+   * German pg_dump defeats ALL of them: the exact same failure would file as `unknown`.
+   * The two assertions below are a pair on purpose — the first shows the classifier really
+   * is locale-dependent, the second shows the environment pin is what removes the exposure.
+   * Delete the pin and this test says so.
+   */
+  it("would miss a translated pg_dump — which is exactly what the pinned C locale prevents", () => {
+    const german = [
+      "pg_dump: Fehler: Abbruch wegen unpassender Serverversion",
+      "pg_dump: Detail: Serverversion: 18.6 (Debian 18.6-1.pgdg13+2); pg_dump-Version: 17.11",
+    ].join("\n");
+    expect(classifyPgDumpStderr(german).token).toBe("unknown");
+    // ...and this is why the child can never be handed a German locale in the first place.
+    const env = pgSpawnEnv("postgres://u:p@localhost:5432/db", { LC_ALL: "de_DE.UTF-8" });
+    expect(env.LC_ALL).toBe("C");
   });
 
   /**

@@ -235,6 +235,24 @@ for bin in psql pg_restore gunzip node; do
   command -v "$bin" >/dev/null 2>&1 || { echo "[restore-drill] error: '$bin' not on PATH." >&2; exit 4; }
 done
 
+# #1385 review r1 — the restore side has the SAME major rule as the dump side, pointing the
+# other way: pg_restore refuses an archive written by a NEWER pg_dump. The nightly backup is
+# taken with pg_dump 18 (apps/worker/Dockerfile), which writes custom archive format 1.16, so
+# a 16.x or 17.x pg_restore here cannot read a real production dump at all. Checked up front
+# because the alternative is discovering it mid-incident, with the dump in hand and the clock
+# running — the one moment this script exists to make boring.
+MIN_RESTORE_MAJOR=18
+restore_major="$(pg_restore --version 2>/dev/null | sed -n 's/.*[^0-9]\([0-9][0-9]*\)\.[0-9].*/\1/p')"
+if [ -z "$restore_major" ]; then
+  echo "[restore-drill] error: cannot read pg_restore's version." >&2
+  exit 4
+fi
+if [ "$restore_major" -lt "$MIN_RESTORE_MAJOR" ]; then
+  echo "[restore-drill] error: pg_restore major $restore_major < $MIN_RESTORE_MAJOR — it cannot read an archive written by pg_dump $MIN_RESTORE_MAJOR." >&2
+  echo "[restore-drill] the nightly dump is taken with pg_dump $MIN_RESTORE_MAJOR (apps/worker/Dockerfile). Install a client >= $MIN_RESTORE_MAJOR; see docs/runbooks/db-backup.md." >&2
+  exit 4
+fi
+
 # Admin connection for DROP/CREATE DATABASE, built from the PARSED host and port — it carries
 # no query string at all, so nothing can ride along on it.
 admin_url="postgres://fikirtive:fikirtive@$host:$target_port/postgres"

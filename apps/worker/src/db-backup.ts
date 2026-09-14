@@ -165,8 +165,28 @@ export function pgEnvFromUrl(raw: string): Record<string, string> {
 const SPAWN_ENV_PASSTHROUGH = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"] as const;
 
 /**
- * The COMPLETE environment for a pg_* subprocess: a minimal base plus the PG* vars
- * derived from `databaseUrl`. Never inherits the ambient PG* family (see above).
+ * The message language is PINNED, never inherited (#1385 review round 1).
+ *
+ * pg_dump on Debian is an NLS build: with `LC_ALL=de_DE.UTF-8` in the environment the very
+ * line the classifier keys on comes back as "Abbruch wegen unpassender Serverversion", and
+ * every signature in {@link classifyPgDumpStderr} misses — a version mismatch would be
+ * filed as `unknown` purely because of a locale variable. The classifier's patterns are
+ * English by design (there is no stable translated form to match against), so the
+ * guarantee has to live here, in the environment, not in the regexes.
+ *
+ * `LC_ALL` is what gets pinned rather than `LC_MESSAGES` alone, because POSIX lets LC_ALL
+ * override LC_MESSAGES — pinning only the weaker one would lose to an inherited LC_ALL.
+ * Safe for the dump itself: pg_dump's `--encoding` defaults to the DATABASE's encoding,
+ * not the client locale's, so the bytes we archive do not depend on LC_CTYPE.
+ *
+ * Ordered AFTER the passthrough so an ambient LANG/LC_ALL cannot win.
+ */
+const PG_MESSAGE_LOCALE = { LC_ALL: "C", LC_MESSAGES: "C" } as const;
+
+/**
+ * The COMPLETE environment for a pg_* subprocess: a minimal base, a pinned message
+ * locale, plus the PG* vars derived from `databaseUrl`. Never inherits the ambient PG*
+ * family (see above).
  */
 export function pgSpawnEnv(databaseUrl: string, ambient: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env: Record<string, string> = {};
@@ -174,7 +194,7 @@ export function pgSpawnEnv(databaseUrl: string, ambient: NodeJS.ProcessEnv = pro
     const value = ambient[key];
     if (value !== undefined) env[key] = value;
   }
-  return { ...env, ...pgEnvFromUrl(databaseUrl) };
+  return { ...env, ...PG_MESSAGE_LOCALE, ...pgEnvFromUrl(databaseUrl) };
 }
 
 /* ---------------- pg_dump failure classification (#1385) ---------------- */

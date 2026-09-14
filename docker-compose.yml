@@ -2,9 +2,14 @@
 # Usage: docker compose up -d postgres
 services:
   postgres:
-    # 16-alpine matches what's already pulled locally; schema uses no PG17 features.
-    # Production is Neon (managed, current major).
-    image: postgres:16-alpine
+    # 18-alpine, and the major matters here (#1385 review r1): this container is the
+    # scratch server the documented restore drill restores INTO. pg_dump 18 writes custom
+    # archive format 1.16, and a 16.x pg_restore refuses to read it — so a drill run
+    # against a 16 server would fail on a dump that is perfectly good, or (worse) pass
+    # only because the drill dumped with the same old local binaries it restored with.
+    # Keep this at or above the major the nightly backup is taken with
+    # (apps/worker/Dockerfile pins postgresql-client-18).
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: fikirtive
       POSTGRES_PASSWORD: fikirtive
