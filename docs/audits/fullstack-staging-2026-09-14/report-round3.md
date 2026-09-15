@@ -85,3 +85,9 @@ CodeGraph: used — query: "e2e"; index: 主检出更新到14bcd038后fresh；fa
 来源为主线程本日 GitHub API 只读回执 `milestones/2`（本 worker 未独立请求）：[v0.2.0 里程碑](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/milestone/2) 仍为 open，开放事项 16、已关闭 36。[当前整理地图](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1357) 的目标包含混合清账、第三轮验收 GO 与 v0.2.0 收版；production 另场。旧正文里的 S1／手册等流程已由项目 2026-09-13 裁决替代，不据旧地图恢复。
 
 16 张开放票包含地图、规格记录、验收及环境事项，不能等同于 16 个未修代码错误。修复完成不等于里程碑可关闭：须实际验收 GO、Founder 验收、开放事项全部关闭或按已批准去处清账，再依项目规则整理 CHANGELOG、tag 与 GitHub Release。本轮仅记录此条件，未执行关票、关闭里程碑、打 tag 或发布 Release。
+
+## 2026-09-15 staging 第二轮（登录态只读）
+
+第二轮走查改用登录态：4 个并行 worker 以 Founder org `founder`（租户 A，super-admin）已登录会话跑只读旅程，build `14bcd038`，全程未登出、US$0、零远端写入（只读证明见证据文件的 `writesMade`）。原始证据入库在 `docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r2/`（`surfaces.json`、`surfaces-verify.json`、`workflow-r2-result.json`）；覆盖回填见 [coverage-matrix.md 本次回填边界（2026-09-15）](coverage-matrix.md#本次回填边界2026-09-15)；七条新发现与两条既有发现的收尾更新见 [findings-catalog.md](findings-catalog.md)（R3-F09–R3-F15；R3-F01 收尾判 RESOLVED，R3-F05 收尾定根因并给出修复 PR #1446）。本文件不重复列出逐条细节。
+
+本轮首次引入独立核证员复核每条自报状态，推翻了 worker 自报的七处：REAL-26／REAL-15 由自报 PASS 降为 PARTIAL，REAL-17／REAL-28 由自报 PARTIAL 收紧为 BLOCKED，REAL-05 的「Enter 绝不自动触发」分句、REAL-08 的「FSE-204 商家侧仍未闭合」分句、REAL-13 的 FRONT-A6 分句均被证伪或撤销。最值得 Founder 先看的两条：①REAL-05 核证过程中，一次未加修饰键的真实 Enter 本会在 US$0／零写入前提下触发一次真实花费（`StartSomething.tsx:288-294`），本轮全程零写入是靠核证员自己清空草稿与只读复核兜住的，不是产品本身的保证；②REAL-28 后台三项写操作（发积分／退款／对账）今日在零写入边界下结构性无法验证，状态是**未证**而非已证 PASS。

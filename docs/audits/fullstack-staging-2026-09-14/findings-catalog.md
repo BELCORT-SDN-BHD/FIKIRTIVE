@@ -52,6 +52,10 @@
 
 **执行边界**：仅报告与定位建议；未修改产品、未访问数据库、未运行共享quality、未发生付费调用。修复是否纳入本轮另由主线程按已授权任务范围处理。
 
+### R3-F01 收尾更新（2026-09-15，staging 第二轮登录态只读）
+
+staging 第二轮只读走查（`docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r2/workflow-r2-result.json`，identity-admin 组，对应验收 REAL-31）已把此条**判定为工具取证假象，RESOLVED，非产品缺陷**：四次独立读取 `/profile` 的 `#profile-email`（首次加载、刷新、新标签、离开再返回）DOM value 均为 17 字符、与账户邮箱一致、非空；根因是浏览器工具的无障碍树（`read_page`）从不打印 `<input>` 的 value（Display name 输入框同样表现——JS 能读到 `#profile-display-name` 的 value="tools" 且截图可见"tools"，但 `read_page` 只印裸 `textbox "Your name"`），并非应用把邮箱清空。日后同类取证一律改用 `javascript_tool` 直接读 value，不得只信 `read_page` 的无障碍树输出。原稿的初始 DOM 观察与后续更正保留原样，本节只是收尾追加、不改历史行。
+
 ## R3-F02 · 390px 窄视口中 Library 被导轨挤窄、素材卡极小
 
 **状态**：窄视口症状已观察，390px刷新后仍复现；CSS成因有当前代码支持；无存值手机首次进入尚未验证。**分类**：已观察到的移动可用性缺口，是否成为本轮必须修复的产品缺陷待 Founder 裁定，不能擅改已批准 desktop-only 方向。建议影响等级 P2；不是已证桌面回归。关联 REAL-14/30、EXT-01。
@@ -127,6 +131,10 @@
 
 下一取证：记录关闭前原按钮是否仍connected、网格加载/重建与焦点变化顺序，再看关闭后首个Tab实际落点；对未发生列表重取的正对照区分原卡卸载与弹窗根卸载。不记录BODY文本脚本。若修复，保持真实列表刷新与原素材焦点恢复两者，素材确已删除时按已批准合理落点处理，不跳过列表重取掩盖问题。测试覆盖加载中/加载后、关闭后原卡仍在/已删、下一Tab、与Connections对照。未改产品、未跑测试。
 
+### R3-F05 收尾更新（2026-09-15，staging 第二轮登录态只读）
+
+staging 第二轮只读走查已实机复现此症状，把范围收窄并给出根因假说（读码支持，未执行修改）：焦点丢失**只发生在 Library「Asset details」对话框**（Escape 后 `document.activeElement` = BODY；对话框打开时的**初始**焦点正确落在 Close，只有**关闭后的返回**丢失）；同一走查里 Connections「Add connection」对话框在同一会话内关闭后能正确把焦点还给触发它的按钮，是有效正对照（该对话框自身另有 R3-F09 记的初始焦点问题，两者不是同一件事）。根因假说：`apps/web/components/library/LibraryView.tsx:1257` 按需挂载 `DetailPanel`（`{detail ? <DetailPanel … onClose={() => { closeDetail(); router.refresh(); if (gridView) void reload(view, filters); … }} /> : null}`），`apps/web/components/asset/DetailPanel.tsx:809-812` 是硬编码 `open` 的受控 `<Sheet>`（靠卸载而非 `onOpenChange` 关闭）；关闭因此触发列表重取与重渲染，把 Radix 记下的「原卡按钮」焦点回退目标一并换掉，焦点于是落到 BODY。Connections 对话框行为正确，是因为它是持续挂载的受控 `<Dialog open={addConnectionOpen}>`（`apps/web/components/otto/OttoConnections.tsx:580`），触发它的按钮在关闭时仍然存在。**修复见 PR #1446**（「[FRONT] Library 素材详情关闭后键盘焦点回到原素材卡」，状态 OPEN）。以上为读码假说，本轮走查未执行修改、未验证修复后的行为。
+
 ## R3-F06 · 输入附近不再堆叠重复费用说明
 
 **状态：Founder 2026-09-14 已批准移除此类说明；本场仅记录，尚未实现或复测。** 来源是 Founder 在当前对谈提供的截图及主线程转交的明确裁决；本 worker 没有独立重跑浏览器，也没有本地截图文件可引用。现码核对基准 `14bcd038b386d6e7d6ad98bbc716aaf018a23314`。这是一项对旧展示要求的明确变更，不把此前遵循旧规格的实现倒写成原有缺陷。
@@ -189,5 +197,51 @@ main 分支的 scheduled e2e（`.github/workflows/e2e.yml:26` `cron: "0 0 * * *"
 .github/workflows/e2e.yml:66:      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_e2e_test
 docker-compose.yml:7:    image: postgres:16-alpine
 ```
+
+## R3-F09 · Connections「Add connection」对话框初始焦点落在首个 Connect 按钮（新发现待裁）
+
+**状态**：新发现待裁；a11y／设计问题，staging 第二轮登录态只读走查观察到，未执行连接动作、未改产品，分类是否本轮必修由 Founder 裁。
+
+`apps/web/components/otto/OttoConnections.tsx` 的「Add connection」对话框打开后，**初始焦点直接落在第一个 `Connect` 按钮**（OAuth 起点，如 :602 一类的首个可聚焦元素），不是对话框本体或 `Close`；读码未见任何显式 `autoFocus`/`initialFocus` 覆写，与默认交给 Radix Dialog 把首个可聚焦元素设为焦点的行为一致。商家打开对话框后如果手误按一次 Enter，就会直接对该服务发起 OAuth 连接流程——不是关闭对话框那样安全的默认动作。对照：Library「Asset details」对话框打开时的初始焦点正确落在 `Close`（见 R3-F05 收尾更新）。下一步：若判定需要修，按现有对话框的既有模式把初始焦点显式设到 `Close` 或对话框容器，覆盖 Radix 默认。
+
+## R3-F10 · 停放路由机制分裂：三条旧地址先回 200 再重定向，与规格「一律 307」不符（规格偏差待修）
+
+**状态**：规格偏差待修；staging 第二轮走查配合读码确认，独立验证员已就此把 REAL-26 由 PASS 降为 PARTIAL。
+
+`docs/specs/wave2-shell.md:188`（§2.5 深链兼容）逐字写「每一条旧地址都 **307**，永不 404（`MERCHANT_NAV_REDIRECTS` 的老纪律照旧）」。`MERCHANT_NAV_REDIRECTS`（`packages/core/src/navigation.ts:309-350`）恰好六条：`/campaign/calendar`、`/campaign`、`/schedule`、`/schedule/analytics`、`/library/editor`、`/crm`。走查按登录态实测发现其中三条——`/schedule`、`/schedule/analytics`、`/library/editor`——在 HTTP 层**不是**重定向，而是先回 `200` 并流出一具骨架页再由客户端 `redirect()` 跳走；根因是这三条各自的 `page.tsx` 旁边挂了 `loading.tsx`（`apps/web/app/schedule/page.tsx` + `apps/web/app/schedule/loading.tsx`；`apps/web/app/library/editor/page.tsx` + `apps/web/app/library/loading.tsx`），Next.js 在这类结构下先流式返回 `loading` 骨架、状态码 200，重定向发生在其后。其余三条（`/campaign/calendar`、`/campaign`、`/crm`）在 LAYOUT 层重定向（如 `apps/web/app/campaign/layout.tsx`），没有旁挂 `loading.tsx`，因此确实是一次真 HTTP 307、无骨架闪烁。商家侧最终落点全部正确、未观察到骨架闪烁，差异是**机器可见**的（爬虫或探活脚本会把 `/schedule` 当成一个存活的 200 页面，而不是一条已收敛的旧路由）。项目此前已经把「防止旧路由先回 200 再走」当成要避免的事——`docs/specs/wave2-shell.md:698` 的 W2-13 曾专门删掉 7 个 CRM 的 `loading.tsx` 好让 CRM 真的走 HTTP 重定向，而这三条恰恰是同一种结构仍然存在的地方。下一步：若要与规格逐字对齐，删掉这三条 `page.tsx` 旁的 `loading.tsx`（或把重定向提到 layout 层），使其在 HTTP 层也回 307。
+
+## R3-F11 · `/crm/anything` 落到裸 Next.js 404，无导航壳、无回路（新发现待裁）
+
+**状态**：新发现待裁；staging 第二轮登录态只读走查确认。
+
+`/crm` 本身与其下全部七个真子路由都会重定向回 Home（符合 `MERCHANT_NAV_REDIRECTS` 与规格），但任何**不存在**的 `/crm/*` 子路径（如 `/crm/anything`）落到的是裸 Next.js 404 页面（标题「404 / This page could not be found.」，文档 title「Fikirtive」），没有导航壳、没有任何回到产品内的链接或按钮。一条被误输入或过期收藏的 CRM 深链会把商家直接甩出应用外壳。下一步：若判定需要修，让 `/crm/[...catchall]` 之类的通配路由也统一进 `MERCHANT_NAV_REDIRECTS` 的重定向逻辑（回 Home），或至少套上应用壳的 404 页面而不是框架默认页。
+
+## R3-F12 · Billing 花费历史把 RESERVE+REFUND 合并成一行且金额显示 0，商家看不到扣退了多少（新发现待裁，有迹可循原则）
+
+**状态**：新发现待裁；staging 第二轮登录态只读走查 + 只读账本核对确认，命中「有迹可循」产品原则。
+
+`/billing` 的花费历史把一笔 `RESERVE`+`REFUND` 配对显示成单独一行、金额栏是字面的 `0`：`['Video','Held, then refunded in full','Sep 11, 9:02 PM','0']`，该行没有任何 `title`/`aria` 属性携带真实数字。核对 `CreditLedger` 账本：这笔恰好是 `RESERVE -110` / `REFUND +110`（内部积分，110 内部 = 11 显示积分），对应 GenJob `01M288VJS12BBT536TZF5T0S01`（该单失败原因已存库：`error = "generation provider video submit failed (400)"`，与 `docs/audits/fullstack-staging-2026-09-11/backend-evidence.md:246-248` 记录的同一单一致）。商家能看到「有东西被扣过又退了」，但看不到扣退的是多少——这与产品「有迹可循」的方向相悖（花了多少、退了多少，商家应该看得见）。注：此条与 FSE-204（失败卡不显示失败原因）是两回事——`creation-engine.md:183` 裁定的 FSE-204 修法本身只要求「付费前拒绝并说出实际短边」，`frontend-baseline.md:136 ④` 另外裁定失败卡只留「You weren't charged.」不留原因、不留重试按钮，此二者均已按裁定落地（commit `6624e832`），失败卡不显示原因是**按设计**，不是本条要修的问题；本条要修的是**金额显示**，与失败原因无关。下一步：给花费历史这一行补上真实金额（数字或至少 `title`/`aria-label`），不影响卡片本身的失败文案裁定。
+
+## R3-F13 · 旧版 Otto 深链 `/otto?project=&thread=` 从对话第一轮渲染，46 轮线程落在数月前的欢迎语（新发现待裁）
+
+**状态**：新发现待裁；staging 第二轮登录态只读走查确认，独立核证已在数据层复核过深链本身能正确定位到目标画布/线程（对应 REAL-27 的 PASS）。
+
+从旧版深链 `/otto?project=<id>&thread=<id>`（无 `?view=` 等新参数）打开的 Otto 对话面板，会从该线程的**第一轮**开始渲染并显示「Scroll to end」提示，而不是停在最新一轮；在一条 46 轮的真实线程（`Cat drinking coffee video`，画布 `Hi!`）上，商家因此会先看到数月前的欢迎语，须自己点「Scroll to end」才能回到最新对话。深链本身对目标画布/线程的定位是对的（同一批走查已在数据库层核实：该线程的 `title` 与 `projectId` 与页面上看到的 header/thread chip 完全一致），本条只是渲染起始位置的问题。下一步：若判定需要修，让这条旧版深链打开面板时也定位到线程末尾（与新参数形态的行为一致）。
+
+## R3-F14 · 已冻结规格条款未实现：Connections 顶部缺失「无法连接 IG/FB」实话提示（冻结规格条款未实现待裁）
+
+**状态**：冻结规格条款未实现待裁；staging 第二轮登录态只读走查 + 全文检索确认。
+
+`docs/specs/wave2-shell.md:394-395` 要求在 Connections 页顶部加一句今天缺的实话：「No Instagram or Facebook account can be connected right now, so nothing here can be linked yet. Your schedule stays real either way.」（规格原文标注来源 `simulated-features.json` 第 12 条）。对 `apps/web` 全文检索未找到这句话，唯一近似的是 `packages/core/src/schedule-draft.ts:162` 的另一句不同的话；页面上 Instagram 一行今天渲染的是正常的 `Connect` 按钮，不是这句免责声明。留一句说明：规格引用的账本文件 `simulated-features.json` 在仓库里已不存在，也可能是这句话已被有意撤销/不再适用——本条按「未验证到底哪种情况」登记，不代表已证的产品缺陷，留给 Founder 一句话判断是已经不需要这条规格条款，还是需要补上。
+
+## R3-F15（低，UNVERIFIED，仅读码）· 内联文件链接不查存活性，指向已软删素材的旧链接可能仍可打开
+
+**状态**：低优先级、仅代码阅读、未经运行时验证（staging 当前没有已软删的 founder 素材可供实测）。
+
+`apps/web/app/files/[...key]/route.ts` 的内联 GET（非 `?download=1` 分支）只过 `keyOwnerMatches()`（:71）与既有的 allowlist 拦截；只有 `?download=1` 分支才额外查一次 `Asset` 活行（`where: { ownerId, contentHash, deletedAt: null }`，:30）。同一租户命名空间内、指向已软删素材的旧内联链接，理论上可能仍能被这条内联路径解析出来——不是跨租户可利用（命名空间闸本身成立，已由本轮其他验收证实），只是「软删是否真的让旧内联链接失效」这件事今天代码层面看不出保证。因 staging 当前不存在任何已软删的 founder 素材，本条无法实测，按纯读码记录，不当场判定为缺陷。下一步：找一个可安全软删的测试素材，核对其旧内联链接（非 download）是否仍可打开；若可，评估是否需要给内联分支也加上活行校验。
+
+## 本轮补记（2026-09-15，staging 第二轮登录态只读旅程）
+
+来源：`docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r2/workflow-r2-result.json`（4 个 worker 并行、build `14bcd038`、以 Founder org `founder`（租户 A，super-admin）已登录会话跑，绝不登出、US$0、零远端写入——只读证明见该文件 `result.results[1].writesMade`：自 2026-09-15 03:55 UTC 起 `CreditLedger`/`GenJob`/`Generation`/`ChatMessage`/`CanvasNode`/`Project`/`ChatThread` 零新增或更新行），并经一名独立核证员对每条自报状态复核（`result.verdicts[*]`，找到能推翻的就推翻，找不到的原样通过）。**REAL-05 的一条自报「Send 是独立、绝不自动触发」的分句被核证推翻**：`apps/web/components/start-something/StartSomething.tsx:288-294`——`if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && draft.trim()) { event.preventDefault(); startCanvas(draft); }`——回车（非输入法组字中）会直接调用会创建 Project + ChatThread 并起一轮 Otto（该页面同屏就写着每条消息预留 4 credits）的 `startCanvas`；`apps/web/components/otto/OttoChatStream.tsx:1205` 是同款处理。核证员的浏览器控制工具能把 keydown 递到页面 JS、只是不触发原生默认动作，因此走查过程中输入框里躺着一句真实中文草稿「为这款杯子做广告」时，一次未加修饰键的真实 Enter 本会当场发生真实写入与真实扣费——本轮走查全程零写入是靠核证员自己的清空动作与只读复核兜住的，不是这条自报分句成立的证据。这是**观察记录，不是产品缺陷**：Enter 发送是聊天类产品的市场通用行为（业界常见，不属反常设计），只是本轮 US$0／零写入前提下这一按键路径构成过一次真实的花钱风险，记在案供下一次同类只读走查设计防护步骤（例如复核前先清空输入框，而不是只考虑鼠标路径）。
 
 CodeGraph: not used — worker 在独立 worktree，按项目要求使用 rg 与直接文件阅读；未建立或借用主检出图。
