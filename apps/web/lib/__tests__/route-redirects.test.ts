@@ -366,8 +366,11 @@ describe("R3-F11 停放前缀下的乱地址不落进裸 404", () => {
    */
   it("同一棵树下的真路由一条都没被吃掉", () => {
     for (const kept of [SHELL_ROUTES.publicSharePreview, SHELL_ROUTES.analytics, "/campaign/calendar"]) {
-      const file = path.resolve(__dirname, "../../app", kept.replace(/^\//, ""), "page.tsx");
-      expect(existsSync(file), `${kept} 的路由文件不见了`).toBe(true);
+      const dir = path.resolve(__dirname, "../../app", kept.replace(/^\//, ""));
+      // `page.tsx` 或 `route.ts` 都算数:这一条要的是「这个地址仍然有自己的文件、没被兜底
+      // 吞掉」,不是「它必须用哪一种写法答」。
+      const own = ["page.tsx", "route.ts"].some((file) => existsSync(path.join(dir, file)));
+      expect(own, `${kept} 的路由文件不见了`).toBe(true);
     }
   });
 });
