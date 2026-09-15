@@ -492,6 +492,50 @@ async function referenceProjectNames(ownerId: string, projectIds: string[]): Pro
 }
 
 /**
+ * FC-2(staging 2026-09-14 Founder 自己的画布)—— **这条对话此刻正在做的那张图**。
+ *
+ * 走查现场:刚交付一张猫 + 杯子的图,商家接着打「now i wan @Xinyi hold the cat and pet
+ * it…」,铸出来的图片卡 `sourceGenerationId=null` —— 原图不是这一单的输入,做出来的猫与
+ * 商品都不是原来那一只(他自己的话:「the cat and the product is wrong from the
+ * original」)。缺的不是提示词里一句「same product」,是一条绑定:这一轮的图片槽只装商家
+ * 自己挂的 / `@` 到的那几件,而「刚交付的那张」没有任何一条路进得去。
+ *
+ * 判据写死成**可核实**的那一种,不猜:
+ *   · 只认这条对话自己的交付(`threadId` + `ownerId`),跨对话的一律不算;
+ *   · 只认最近那一单**图片**作业,且它**只产出一张**——一次 2–4 张的 ad pack 里「正在做
+ *     的是哪一张」是我们不知道的事,不知道就不绑(BLUEPRINT §3:不知道的事显示 unknown,
+ *     不伪装成成功);
+ *   · 那一行的归属、存活、格式与文件在不在,一律走 `validateOttoTurnReferences` ——
+ *     与商家自己挂一张图走的是**同一道闸、同一份回执**,不另写一套。
+ *
+ * best-effort:读不出来就是没有,这一轮行为与这条修改之前逐字相同,绝不因此毁掉一轮对话。
+ */
+async function loadCurrentThreadImage(input: {
+  ownerId: string;
+  projectId: string;
+  threadId: string;
+}): Promise<OttoMediaReference | null> {
+  try {
+    const job = await prisma.genJob.findFirst({
+      where: { threadId: input.threadId, ownerId: input.ownerId, kind: "IMAGE", status: "DONE" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { generationIds: true },
+    });
+    const ids = job?.generationIds ?? [];
+    if (ids.length !== 1) return null;
+    const refs = await validateOttoTurnReferences({
+      ownerId: input.ownerId,
+      projectId: input.projectId,
+      sourceGenerationIds: ids,
+    });
+    if (refs.unavailable.length > 0) return null;
+    return refs.mediaReferences[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 商家读到的那一句 —— 只从 `@fikirtive/core` 的那一张表取(第二份映射就是第二种说法)。
  * 一轮里有多件取不到时只说第一件:接下来那一件在他移掉第一件之后照样会被拦。
  */
@@ -722,7 +766,7 @@ export async function buildOttoContext({
     ? async (query: string) => ({ results: await searchWithFallback(primary, fb)(query) })
     : undefined;
 
-  const [brandContext, projectBriefRow, availableRefs, activeJob, images] = await Promise.all([
+  const [brandContext, projectBriefRow, availableRefs, activeJob, images, currentImage] = await Promise.all([
     getBrandContextText(ownerId, null).catch(() => ""),
     // #791-1: the per-project brief the merchant wrote (QuickBrief / Otto's updateBrief).
     // Owner-scoped like every other project read here — projectId alone never selects a row.
@@ -742,6 +786,8 @@ export async function buildOttoContext({
     // Codex QA-CRE-FE9-013:视觉这一路也曾按 projectId 过滤 —— 那正是「Otto 说它没看到
     // 杯子」的直接原因。判据现在与校验器同一份(owner 作用域),两处不可能再给出不同答案。
     gatherReferenceImages(ownerId, imageRefIds),
+    // FC-2 —— 「这条对话此刻正在做的那张图」。与上面几项同一批读,不给这一轮加一个串行往返。
+    loadCurrentThreadImage({ ownerId, projectId, threadId }),
   ]);
   const context: OttoContext & {
     segments: ReturnType<typeof makeOttoSegmentsPort>;
@@ -766,6 +812,10 @@ export async function buildOttoContext({
     // #775 判官 r3 P1-2:商家这一轮的原话。铸视频卡前拿它跟模型自选的动作对一次表 ——
     // 这是「模型选错档」唯一可能被逮住的时刻,而且那一刻还没花一分钱。
     ...(turnText ? { turnText } : {}),
+    // FC-2:这条对话此刻正在做的那张图。铸图片卡时,只有当商家自己的话里读得出「接着那张」
+    // 才会被绑成编辑底图(`image-continuation.ts`),而且绑上去之后它带着回执上卡 ——
+    // 商家在付钱之前看得见正在改的是哪一张。模型永远碰不到这个 id。
+    ...(currentImage ? { currentImage } : {}),
     // FSE-210(判官 P1-1):这一轮服务端已核过归属的 entity id —— 铸卡时的服务端兜底,
     // 不依赖模型的 `@` 候选名单里有没有这个元素(它过滤掉了没有参考图的那些)。
     ...(turnEntityIds?.length ? { turnEntityIds } : {}),

@@ -189,3 +189,59 @@ export function decideVideoAction(input: VideoIntentInput): VideoIntentDecision 
 
   return { kind: "action", action: top.action, matched: top.matched };
 }
+
+
+// ---------------------------------------------------------------------------
+// FC-4 —— 商家**点名要的**挂图角色(staging 2026-09-14 Founder 自己的画布)
+// ---------------------------------------------------------------------------
+
+/**
+ * 「just use @<that picture> as the first frame」—— 商家点名要那张图当**首帧**的说法。
+ *
+ * ── 为什么需要它 ──────────────────────────────────────────────────────────────
+ * 挂图在视频计划里当首帧还是当参考图,判据是 `videoAttachmentRole`:@ 了演员 ⇒ 参考图。
+ * 那条判据本身是对的(演员的身份住在他的参考照里,而参考照只有纯文生视频那一档带得上),
+ * 但它**读不到商家点名要的角色**,而卡上、对话里也没有任何一格记得下来。于是走查那一轮:
+ * 商家明说「用这张当 first frame」→ 卡上 `role:"reference"`、`sourceGenerationId=null`
+ * → Otto 的文字照旧说「using your image as the first frame」→ 那一单被供应商拒绝、
+ * 预扣 33 credits 原路退回。三方各说各话,商家在批准之前一个字都读不到。
+ *
+ * 这里只回答一件事:**他有没有点名要首帧**。判据本身不改 —— 它的唯一用途是让卡在批准
+ * 之前说出「你要的角色我给不了,我会拿它当参考图」,并给出做得到的那条路。
+ *
+ * 与 `ctx.turnText` 同一条纪律:第二个证人,不是权威。读不出来 ⇒ 什么都不说(不披露),
+ * 与这条修改之前逐字相同。
+ */
+export const FIRST_FRAME_REQUEST_SIGNALS: Record<string, readonly string[]> = {
+  en: [
+    "first frame", "1st frame", "starting frame", "start frame", "opening frame",
+    "starting image", "starting picture", "start with this picture", "start with this image",
+    "as the first", "first image of the video", "begin with this",
+  ],
+  zh: ["首帧", "第一帧", "开头那一帧", "作为开头", "以这张开头", "起始帧"],
+  ms: ["frame pertama", "gambar pertama", "mula dengan gambar"],
+};
+
+/**
+ * 商家这一轮的话里,点名要挂图当首帧了吗。`null` = 没点名(绝大多数轮次)。
+ *
+ * 只认**首帧**这一档:参考图是这条路的既有默认,没有「点名要默认」这回事,
+ * 给它建一张信号表只会让措辞去推翻一个已经确定的事实(本文件第 ⑤ 段同理)。
+ */
+export function requestedVideoAttachmentRole(text?: string | null): "startFrame" | null {
+  const t = (text ?? "").toLowerCase();
+  if (!t) return null;
+  for (const phrases of Object.values(FIRST_FRAME_REQUEST_SIGNALS)) {
+    for (const p of phrases) if (t.includes(p)) return "startFrame";
+  }
+  return null;
+}
+
+/**
+ * 角色被换掉时,卡上必须出现的那一行(English sentence case,不出现任何引擎/供应商名)。
+ *
+ * 两句话,缺一不可:**你要的没给你**,以及**做得到的那条路是什么**。只说前半句等于把
+ * 商家留在原地;只说后半句就是这张票要挡的那件事 —— 悄悄换角色、嘴上说照做。
+ */
+export const FIRST_FRAME_DOWNGRADE_NOTE =
+  "You asked for that picture to be the first frame — with a cast member in this clip I can only send it as a reference, and the clip is built from your description. Want it to be the actual first frame? Ask for the clip without the cast member and I'll start it from that picture.";

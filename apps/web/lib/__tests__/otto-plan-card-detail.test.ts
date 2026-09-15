@@ -61,6 +61,8 @@ import {
   PACK_UNPRICED_NOTE,
   PACK_UNPRICED_ROW,
 } from "@/components/otto/PackCard";
+// 复审 P1-A —— 画布上那张确认卡:33 credits 就是在它上面丢的,守卫必须看得见它。
+import { OttoTurnCard } from "@/components/otto/OttoTurnCard";
 import { packTotalCredits } from "@/components/otto/pack-credit-math";
 import {
   OttoTrace,
@@ -299,6 +301,52 @@ function renderCard(payload: unknown, over: { cardState?: "idle" | "working" | "
   return markup.replaceAll("&#x27;", "'").replaceAll("&#39;", "'");
 }
 
+/**
+ * 复审 P1-A —— 画布上那张确认卡(商家真正在看的那一张)与整包那张卡的渲染口径。
+ * 与 `renderCard` 同一条纪律:断言商家读到的那一份,不是 payload 里那一份。
+ */
+function renderCanvasTurn(payload: unknown): string {
+  return renderToStaticMarkup(
+    createElement(OttoTurnCard, {
+      status: {
+        phase: "needs-confirmation",
+        label: "Waiting for you",
+        dot: "bg-brand",
+        detail: null,
+        busy: false,
+      } as never,
+      text: "Here's what I'll make.",
+      streaming: false,
+      confirmCards: [
+        { cardId: "card_1", threadId: "thread_1", payload, pendingApproval: true },
+      ] as never,
+      onApproved: vi.fn(),
+      onChangeSomething: vi.fn(),
+      onOptionsChanged: vi.fn(),
+    }),
+  ).replaceAll("&#x27;", "'").replaceAll("&#39;", "'");
+}
+
+function renderPackRow(payload: unknown): string {
+  return renderToStaticMarkup(
+    createElement(PackCard, {
+      packTitle: "Two clips",
+      cards: [
+        {
+          cardId: "card_1",
+          payload,
+          threadId: "thread_1",
+          genJobId: null,
+          cardState: "idle" as const,
+          pendingApproval: false,
+        },
+      ],
+      balanceUsd: 100,
+      onApproved: vi.fn(),
+    }),
+  ).replaceAll("&#x27;", "'").replaceAll("&#39;", "'");
+}
+
 /** A video card exactly as the server builds it today. */
 const VIDEO_PAYLOAD: OttoPlanCardPayload = {
   kind: "video",
@@ -434,6 +482,83 @@ describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () 
     const markup = renderCard({ ...VIDEO_PAYLOAD, downgraded: false, downgradeNote: undefined });
     expect(markup).not.toContain("You asked for");
     expect(markup).not.toContain(DOWNGRADE_FALLBACK_NOTE);
+  });
+
+  /**
+   * FC-4(staging 2026-09-14 Founder 自己的画布)—— **角色被换掉时,商家在批准之前读得到。**
+   *
+   * 走查现场:商家明说「用这张当 first frame」,而这条路(片子里有 @ 到的演员)只拿得了
+   * 参考图。卡上落的是 `role:"reference"`,Otto 的文字却仍说「using your image as the
+   * first frame」—— 他按下 Generate,预扣 33 credits,供应商拒收,退款。三方各说各话,
+   * 而他在批准之前一个字都读不到。
+   *
+   * 服务端那一半由 `packages/otto/src/skills/reference-binding-honesty.test.ts` 守;
+   * 这一条守的是**最后一段**:把那句话写进 `downgradeNote` 不等于商家读得到。谁把
+   * 卡面那一行拆了、或把 `downgraded` 那一格吃掉,这里立刻红。
+   */
+  it("FC-4:要首帧、只给得了参考图 ⇒ 真 builder 的那一行原样出现在卡面上", async () => {
+    const { buildProposeCard } = await import("@fikirtive/otto");
+    const { cardPayload } = buildProposeCard(
+      {
+        kind: "video",
+        structuredPrompt: "Xinyi pets the cat while it drinks from the mug",
+        entityIds: ["e1"],
+        variantSel: {},
+      },
+      {
+        orgId: "o",
+        userId: "u",
+        projectId: "p",
+        threadId: "t",
+        disabledModels: [],
+        sourceGenerationId: "gen_revised",
+        sourceGenerationIds: ["gen_revised"],
+        mediaReferences: [
+          {
+            generationId: "gen_revised",
+            kind: "image",
+            label: "Xinyi holding the cat",
+            sourceProjectId: "p",
+            sourceProjectName: "Hi!",
+            sameCanvas: true,
+            previewUrl: "/files/gen_revised.png",
+          },
+        ],
+        // 商家自己的那句原话(服务端原样带进来,不来自模型)。
+        turnText: "just use that picture as the first frame",
+        turnEntityIds: ["e1"],
+      } as never,
+      [{ id: "e1", type: "CHARACTER", name: "Xinyi" }],
+    );
+
+    // 真正会发生的那件事:挂图当参考图,卡上没有一个冒充首帧的 sourceGenerationId。
+    expect(cardPayload.sourceGenerationId).toBeUndefined();
+    // 卡自己认这件事(判据在 packages/otto,这里不重抄一份措辞)。
+    expect(cardPayload.downgraded).toBe(true);
+    expect(cardPayload.downgradeNote).toContain("first frame");
+
+    /**
+     * 复审 P1-A —— **三张卡都要说得出这一句**,不是只有抽屉里那一张。
+     *
+     * 33 credits 是在画布上丢的:那里的确认卡是 `OttoTurnCard`,而抽屉那张
+     * (`OttoPlanCard`)在画布布局下默认折起。第一版只守了抽屉那一张,于是守卫全绿、
+     * 商家照旧读不到。整包那张 `PackCard` 同理 —— 它一按就是整批下单。
+     *
+     * 三处各断言一次:拆掉其中任意一处,这里立刻红。
+     */
+    const note = cardPayload.downgradeNote!;
+    expect(renderCard(cardPayload)).toContain(note);
+    expect(renderCanvasTurn(cardPayload)).toContain(note);
+    expect(renderPackRow(cardPayload)).toContain(note);
+  });
+
+  /** 反面:没降级的同一张卡,三处一个字都不多说(不许拿披露染没降级的卡)。 */
+  it("FC-4 反面:卡没降级时,三张卡都不出现那一句", () => {
+    const clean = { ...VIDEO_PAYLOAD, downgraded: false, downgradeNote: undefined };
+    for (const markup of [renderCard(clean), renderCanvasTurn(clean), renderPackRow(clean)]) {
+      expect(markup).not.toContain(DOWNGRADE_FALLBACK_NOTE);
+      expect(markup).not.toContain("You asked for");
+    }
   });
 
   /**
