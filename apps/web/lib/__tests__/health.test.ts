@@ -9,9 +9,11 @@ import {
   bestEffort,
   buildInfo,
   singleFlight,
+  workerRetired,
   workerStatus,
   workersHealth,
   BACKUP_STALE_MS,
+  WORKER_RETIRED_MS,
   WORKER_STALE_MS,
 } from "../health";
 
@@ -106,6 +108,40 @@ describe("workersHealth", () => {
     // 那是一个纯粹的假警报。按班告警归 #793,数据在 workers 里已经摆好了。
     expect(workersHealth([{ id: "worker", at: old }, { id: "worker-wait", at: fresh }], now).worker).toBe("up");
     expect(workersHealth([{ id: "worker", at: old }], now).worker).toBe("stale");
+  });
+
+  /** 2026-09-15 R3-F19 —— 一整天没人写的行不再算一班。 */
+  describe("退休(R3-F19)", () => {
+    const retired = new Date(now.getTime() - WORKER_RETIRED_MS - 1);
+
+    it("刚停跳几分钟的班仍然在列 —— 诊断价值正在这里,不能一刀切掉 stale", () => {
+      expect(workersHealth([{ id: "worker-compute", at: old }, { id: "worker-wait", at: fresh }], now).workers)
+        .toEqual({ "worker-compute": "stale", "worker-wait": "up" });
+    });
+
+    it("整天没人写的旧行直接消失,活着的两班照报", () => {
+      const out = workersHealth(
+        [{ id: "worker", at: retired }, { id: "worker-wait", at: fresh }, { id: "worker-compute", at: fresh }],
+        now,
+      );
+      expect(out.workers).toEqual({ "worker-wait": "up", "worker-compute": "up" });
+      expect(out.worker).toBe("up");
+    });
+
+    it("门槛就在 24 小时整:差 1 毫秒还在(stale),到点就退休", () => {
+      const justUnder = new Date(now.getTime() - (WORKER_RETIRED_MS - 1));
+      expect(workerRetired(justUnder, now)).toBe(false);
+      expect(workersHealth([{ id: "worker", at: justUnder }], now).workers).toEqual({ worker: "stale" });
+      expect(workerRetired(new Date(now.getTime() - WORKER_RETIRED_MS), now)).toBe(true);
+    });
+
+    it("未来时间戳(时钟偏移)绝不被当成退休", () => {
+      expect(workerRetired(new Date(now.getTime() + 3_600_000), now)).toBe(false);
+    });
+
+    it("全都退休了 → workers 空、顶层 unknown(runbook 对 stale|unknown 是同一步处置)", () => {
+      expect(workersHealth([{ id: "worker", at: retired }], now)).toEqual({ worker: "unknown", workers: {} });
+    });
   });
 });
 

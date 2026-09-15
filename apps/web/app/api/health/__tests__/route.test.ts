@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { prisma } from "@fikirtive/db";
-import { WORKER_STALE_MS, BACKUP_STALE_MS } from "@/lib/health";
+import { WORKER_RETIRED_MS, WORKER_STALE_MS, BACKUP_STALE_MS } from "@/lib/health";
 import { MIGRATION_STATUS_ENV } from "@/lib/boot-status";
 import { GET } from "../route";
 
@@ -161,6 +161,52 @@ describe("GET /api/health", () => {
       const body = await (await GET()).json();
       expect(body.worker).toBe("up");
       expect(body.workers.worker).toBe("stale");
+    });
+  });
+
+  /**
+   * R3-F19(2026-09-15 第三轮走查)—— 没人再写的旧心跳行不该永远挂在 body 里。
+   *
+   * staging 上的实况:#796 拆班之后只有 `worker-wait`/`worker-compute` 在写,旧的 `"worker"`
+   * 行冻在拆分那一刻,`/api/health` 因此**永远**带着 `"worker":"stale"`。
+   * `docs/ops/incident-visibility.md:88` 让值班人「先看 workers 里哪一行 stale」——一个永远
+   * stale 的幽灵行会把这条 runbook 训练成「那行不用管」,真死一班时就没人当回事了。
+   */
+  describe("退休:一整天没人写的行不再算一班(R3-F19)", () => {
+    it("6 分钟前跳过的班仍然显示 stale —— 「刚停跳」正是这份列表的用处", async () => {
+      await prisma.workerHeartbeat.create({ data: { id: "worker-compute", at: new Date(Date.now() - 6 * 60_000) } });
+      const body = await (await GET()).json();
+      expect(body.workers).toEqual({ "worker-compute": "stale" });
+      expect(body.worker).toBe("stale");
+    });
+
+    it("两天没人写的旧 \"worker\" 行整行消失,顶层字段不受影响", async () => {
+      await prisma.workerHeartbeat.createMany({
+        data: [
+          { id: "worker", at: new Date(Date.now() - 2 * 24 * 3_600_000) },
+          { id: "worker-wait", at: new Date() },
+          { id: "worker-compute", at: new Date() },
+        ],
+      });
+      const res = await GET();
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.workers).toEqual({ "worker-wait": "up", "worker-compute": "up" });
+      expect(body.worker).toBe("up");
+      // 关键字监控打的是整个 body:幽灵行不在了,`"worker":"stale"` 这个子串也就不在了。
+      expect(JSON.stringify(body)).not.toContain('"worker":"stale"');
+    });
+
+    it("刚跳过的班照常 up(退休只切掉超过 24 小时的行)", async () => {
+      await prisma.workerHeartbeat.createMany({
+        data: [
+          { id: "worker-wait", at: new Date() },
+          { id: "worker", at: new Date(Date.now() - WORKER_RETIRED_MS - 60_000) },
+        ],
+      });
+      const body = await (await GET()).json();
+      expect(body.workers).toEqual({ "worker-wait": "up" });
+      expect(body.worker).toBe("up");
     });
   });
 });
