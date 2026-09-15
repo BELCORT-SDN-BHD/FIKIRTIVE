@@ -41,6 +41,9 @@ import { approvedEntitiesNote } from "@fikirtive/core/reference-budget";
 import { planCardGate } from "./plan-card-contract";
 // Codex QA-CRE-FE9-013 —— 参考回执那一块。抽屉里那张卡读的是同一个组件。
 import { CardReferenceReceipt } from "./CardReferenceReceipt";
+// 复审 P1-A —— 降级披露那一块,与回执同一条纪律:一个组件,三张卡共用(措辞、颜色、
+// 什么时候闭嘴都在它里面)。抄第二份就是第二种说法。
+import { CardDowngradeNote } from "./CardDowngradeNote";
 import { runPlanApproval } from "./plan-approval";
 // Founder 2026-09-05「加进确认卡」—— 三格控件(张数／形状／精修),与抽屉里那张卡共用一份。
 // 清单 A5(P2-013)—— 「Change」打开的那张小表单同样共用那一份(措辞、哪一格改得动、
@@ -321,6 +324,13 @@ function CanvasConfirmRow({
           />
         </div>
       ) : null}
+      {/* 复审 FC-4 —— **降级在这张卡上也说出口**。
+          走查现场就是画布(抽屉只是 CSS 隐藏、默认折起):商家点名要那张图当首帧、
+          而片子里有演员 ⇒ 服务端如实把角色换成参考图并写下那一句，可这一句从前只在抽屉那张卡上
+          渲染 —— 他在这里按下 Generate 之前一个字都读不到,预扣的 33 credits 照旧走一趟。
+          两张卡同一个 cardId、同一条钱路(`runPlanApproval`),所以披露也必须是同一句 ——
+          措辞与判据都来自服务端那张 payload,这里不另写一份。 */}
+      <CardDowngradeNote downgraded={p.downgraded} note={p.downgradeNote} className="mt-2" />
       {/* Founder 2026-09-05「加进确认卡」—— 张数／形状／精修就长在这里,批准之前可以改。
           改一格 = 服务端重铸这张卡($0);上面那个价与下面按钮上的数都随新卡一起换,
           界面一分钱都不自己算。 */}

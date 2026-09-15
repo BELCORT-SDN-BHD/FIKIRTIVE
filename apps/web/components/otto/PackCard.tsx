@@ -25,6 +25,9 @@ import { planCardGate } from "./plan-card-contract";
 import { cardQuoteVersion } from "@fikirtive/core/quote-version";
 import { SpendConfirmation, SpendProgress } from "./spend-state";
 import { cn } from "@/lib/utils";
+
+// 复审 P1-A —— 降级披露那一块,三张卡共用一个组件(措辞与闭嘴条件都在它里面)。
+import { CardDowngradeNote } from "./CardDowngradeNote";
 // #996 (W2-9): 面板最窄 320px。清单行在窄版折成两行(尾段整行下沉),
 // 每一个 credits 数字走 CardMoney —— 句子可以换行,数字不行。
 import {
@@ -290,6 +293,10 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                   <div className="text-xs text-muted-foreground">
                     {c.credits === null ? PACK_UNPRICED_ROW : <CardMoney>{creditsLabel(c.credits)}</CardMoney>}
                   </div>
+                  {/* 复审 P1-A —— 降级在整包这一面也说出口。这张卡一按就是**整批**下单
+                      (`Make all`),所以「你要的那件事我给不了」必须长在它自己那一行上:
+                      读不到的那一行,商家是连着别的几行一起买走的。组件与抽屉卡、画布卡同一个。 */}
+                  <CardDowngradeNote downgraded={c.p.downgraded} note={c.p.downgradeNote} className="mt-1" />
                 </div>
                 {/* #996: 窄版这一段整条下沉到第二行(`w-full`),所以 320px 下这一行是
                     「图标 + 名字/价签」一行、「状态/按钮 + 序号」一行 —— 双列改单列。 */}
