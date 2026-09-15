@@ -159,7 +159,7 @@ staging 第二轮只读走查已实机复现此症状，把范围收窄并给出
 
 ## R3-F07 · CI 旅程不稳：canvas 多选断言间歇失败（调查中）
 
-**状态**：调查中，GitHub Actions 两次独立复现，均与触发该次运行的改动内容无关；main 分支 scheduled 夜跑近期全绿。不当场判产品缺陷、不放宽断言、不加重试掩盖，需要独立复现＋根因。
+**状态**：Founder 2026-09-15：根因出来即修；GitHub Actions 两次独立复现，均与触发该次运行的改动内容无关；main 分支 scheduled 夜跑近期全绿。不放宽断言、不加重试掩盖，需要独立复现＋根因。
 
 `e2e/journeys/17-canvas-selection.spec.ts:36`（FRONT-A15「键盘删得掉选中的卡,多选删得掉一组」）第79行 `await expect.poll(() => selectedIds(page).then((ids) => ids.sort())).toEqual([shot.nodeId, dud.nodeId].sort())` 期待 Shift 点选第二张卡后两张都留在 `selectedIds` 里；在该轮 poll 超时窗口内，`selectedIds` 有时只剩一张，断言超时判红。
 
@@ -200,45 +200,51 @@ docker-compose.yml:7:    image: postgres:16-alpine
 
 ## R3-F09 · Connections「Add connection」对话框初始焦点落在首个 Connect 按钮（新发现待裁）
 
-**状态**：新发现待裁；a11y／设计问题，staging 第二轮登录态只读走查观察到，未执行连接动作、未改产品，分类是否本轮必修由 Founder 裁。
+**状态**：Founder 2026-09-15：本版修；a11y／设计问题，staging 第二轮登录态只读走查观察到，未执行连接动作、未改产品。
 
 `apps/web/components/otto/OttoConnections.tsx` 的「Add connection」对话框打开后，**初始焦点直接落在第一个 `Connect` 按钮**（OAuth 起点，如 :602 一类的首个可聚焦元素），不是对话框本体或 `Close`；读码未见任何显式 `autoFocus`/`initialFocus` 覆写，与默认交给 Radix Dialog 把首个可聚焦元素设为焦点的行为一致。商家打开对话框后如果手误按一次 Enter，就会直接对该服务发起 OAuth 连接流程——不是关闭对话框那样安全的默认动作。对照：Library「Asset details」对话框打开时的初始焦点正确落在 `Close`（见 R3-F05 收尾更新）。下一步：若判定需要修，按现有对话框的既有模式把初始焦点显式设到 `Close` 或对话框容器，覆盖 Radix 默认。
 
 ## R3-F10 · 停放路由机制分裂：三条旧地址先回 200 再重定向，与规格「一律 307」不符（规格偏差待修）
 
-**状态**：规格偏差待修；staging 第二轮走查配合读码确认，独立验证员已就此把 REAL-26 由 PASS 降为 PARTIAL。
+**状态**：Founder 2026-09-15：本版修；staging 第二轮走查配合读码确认，独立验证员已就此把 REAL-26 由 PASS 降为 PARTIAL。
 
 `docs/specs/wave2-shell.md:188`（§2.5 深链兼容）逐字写「每一条旧地址都 **307**，永不 404（`MERCHANT_NAV_REDIRECTS` 的老纪律照旧）」。`MERCHANT_NAV_REDIRECTS`（`packages/core/src/navigation.ts:309-350`）恰好六条：`/campaign/calendar`、`/campaign`、`/schedule`、`/schedule/analytics`、`/library/editor`、`/crm`。走查按登录态实测发现其中三条——`/schedule`、`/schedule/analytics`、`/library/editor`——在 HTTP 层**不是**重定向，而是先回 `200` 并流出一具骨架页再由客户端 `redirect()` 跳走；根因是这三条各自的 `page.tsx` 旁边挂了 `loading.tsx`（`apps/web/app/schedule/page.tsx` + `apps/web/app/schedule/loading.tsx`；`apps/web/app/library/editor/page.tsx` + `apps/web/app/library/loading.tsx`），Next.js 在这类结构下先流式返回 `loading` 骨架、状态码 200，重定向发生在其后。其余三条（`/campaign/calendar`、`/campaign`、`/crm`）在 LAYOUT 层重定向（如 `apps/web/app/campaign/layout.tsx`），没有旁挂 `loading.tsx`，因此确实是一次真 HTTP 307、无骨架闪烁。商家侧最终落点全部正确、未观察到骨架闪烁，差异是**机器可见**的（爬虫或探活脚本会把 `/schedule` 当成一个存活的 200 页面，而不是一条已收敛的旧路由）。项目此前已经把「防止旧路由先回 200 再走」当成要避免的事——`docs/specs/wave2-shell.md:698` 的 W2-13 曾专门删掉 7 个 CRM 的 `loading.tsx` 好让 CRM 真的走 HTTP 重定向，而这三条恰恰是同一种结构仍然存在的地方。下一步：若要与规格逐字对齐，删掉这三条 `page.tsx` 旁的 `loading.tsx`（或把重定向提到 layout 层），使其在 HTTP 层也回 307。
 
 ## R3-F11 · `/crm/anything` 落到裸 Next.js 404，无导航壳、无回路（新发现待裁）
 
-**状态**：新发现待裁；staging 第二轮登录态只读走查确认。
+**状态**：Founder 2026-09-15：本版修；staging 第二轮登录态只读走查确认。
 
 `/crm` 本身与其下全部七个真子路由都会重定向回 Home（符合 `MERCHANT_NAV_REDIRECTS` 与规格），但任何**不存在**的 `/crm/*` 子路径（如 `/crm/anything`）落到的是裸 Next.js 404 页面（标题「404 / This page could not be found.」，文档 title「Fikirtive」），没有导航壳、没有任何回到产品内的链接或按钮。一条被误输入或过期收藏的 CRM 深链会把商家直接甩出应用外壳。下一步：若判定需要修，让 `/crm/[...catchall]` 之类的通配路由也统一进 `MERCHANT_NAV_REDIRECTS` 的重定向逻辑（回 Home），或至少套上应用壳的 404 页面而不是框架默认页。
 
 ## R3-F12 · Billing 花费历史把 RESERVE+REFUND 合并成一行且金额显示 0，商家看不到扣退了多少（新发现待裁，有迹可循原则）
 
-**状态**：新发现待裁；staging 第二轮登录态只读走查 + 只读账本核对确认，命中「有迹可循」产品原则。
+**状态**：Founder 2026-09-15：本版修；staging 第二轮登录态只读走查 + 只读账本核对确认，命中「有迹可循」产品原则。
 
 `/billing` 的花费历史把一笔 `RESERVE`+`REFUND` 配对显示成单独一行、金额栏是字面的 `0`：`['Video','Held, then refunded in full','Sep 11, 9:02 PM','0']`，该行没有任何 `title`/`aria` 属性携带真实数字。核对 `CreditLedger` 账本：这笔恰好是 `RESERVE -110` / `REFUND +110`（内部积分，110 内部 = 11 显示积分），对应 GenJob `01M288VJS12BBT536TZF5T0S01`（该单失败原因已存库：`error = "generation provider video submit failed (400)"`，与 `docs/audits/fullstack-staging-2026-09-11/backend-evidence.md:246-248` 记录的同一单一致）。商家能看到「有东西被扣过又退了」，但看不到扣退的是多少——这与产品「有迹可循」的方向相悖（花了多少、退了多少，商家应该看得见）。注：此条与 FSE-204（失败卡不显示失败原因）是两回事——`creation-engine.md:183` 裁定的 FSE-204 修法本身只要求「付费前拒绝并说出实际短边」，`frontend-baseline.md:136 ④` 另外裁定失败卡只留「You weren't charged.」不留原因、不留重试按钮，此二者均已按裁定落地（commit `6624e832`），失败卡不显示原因是**按设计**，不是本条要修的问题；本条要修的是**金额显示**，与失败原因无关。下一步：给花费历史这一行补上真实金额（数字或至少 `title`/`aria-label`），不影响卡片本身的失败文案裁定。
 
 ## R3-F13 · 旧版 Otto 深链 `/otto?project=&thread=` 从对话第一轮渲染，46 轮线程落在数月前的欢迎语（新发现待裁）
 
-**状态**：新发现待裁；staging 第二轮登录态只读走查确认，独立核证已在数据层复核过深链本身能正确定位到目标画布/线程（对应 REAL-27 的 PASS）。
+**状态**：Founder 2026-09-15：本版修；staging 第二轮登录态只读走查确认，独立核证已在数据层复核过深链本身能正确定位到目标画布/线程（对应 REAL-27 的 PASS）。
 
 从旧版深链 `/otto?project=<id>&thread=<id>`（无 `?view=` 等新参数）打开的 Otto 对话面板，会从该线程的**第一轮**开始渲染并显示「Scroll to end」提示，而不是停在最新一轮；在一条 46 轮的真实线程（`Cat drinking coffee video`，画布 `Hi!`）上，商家因此会先看到数月前的欢迎语，须自己点「Scroll to end」才能回到最新对话。深链本身对目标画布/线程的定位是对的（同一批走查已在数据库层核实：该线程的 `title` 与 `projectId` 与页面上看到的 header/thread chip 完全一致），本条只是渲染起始位置的问题。下一步：若判定需要修，让这条旧版深链打开面板时也定位到线程末尾（与新参数形态的行为一致）。
 
 ## R3-F14 · 已冻结规格条款未实现：Connections 顶部缺失「无法连接 IG/FB」实话提示（冻结规格条款未实现待裁）
 
-**状态**：冻结规格条款未实现待裁；staging 第二轮登录态只读走查 + 全文检索确认。
+**状态**：Founder 2026-09-15：本版修；staging 第二轮登录态只读走查 + 全文检索确认。
 
 `docs/specs/wave2-shell.md:394-395` 要求在 Connections 页顶部加一句今天缺的实话：「No Instagram or Facebook account can be connected right now, so nothing here can be linked yet. Your schedule stays real either way.」（规格原文标注来源 `simulated-features.json` 第 12 条）。对 `apps/web` 全文检索未找到这句话，唯一近似的是 `packages/core/src/schedule-draft.ts:162` 的另一句不同的话；页面上 Instagram 一行今天渲染的是正常的 `Connect` 按钮，不是这句免责声明。留一句说明：规格引用的账本文件 `simulated-features.json` 在仓库里已不存在，也可能是这句话已被有意撤销/不再适用——本条按「未验证到底哪种情况」登记，不代表已证的产品缺陷，留给 Founder 一句话判断是已经不需要这条规格条款，还是需要补上。
 
 ## R3-F15（低，UNVERIFIED，仅读码）· 内联文件链接不查存活性，指向已软删素材的旧链接可能仍可打开
 
-**状态**：低优先级、仅代码阅读、未经运行时验证（staging 当前没有已软删的 founder 素材可供实测）。
+**状态**：Founder 2026-09-15：本版修；低优先级、仅代码阅读、未经运行时验证（staging 当前没有已软删的 founder 素材可供实测）。
 
 `apps/web/app/files/[...key]/route.ts` 的内联 GET（非 `?download=1` 分支）只过 `keyOwnerMatches()`（:71）与既有的 allowlist 拦截；只有 `?download=1` 分支才额外查一次 `Asset` 活行（`where: { ownerId, contentHash, deletedAt: null }`，:30）。同一租户命名空间内、指向已软删素材的旧内联链接，理论上可能仍能被这条内联路径解析出来——不是跨租户可利用（命名空间闸本身成立，已由本轮其他验收证实），只是「软删是否真的让旧内联链接失效」这件事今天代码层面看不出保证。因 staging 当前不存在任何已软删的 founder 素材，本条无法实测，按纯读码记录，不当场判定为缺陷。下一步：找一个可安全软删的测试素材，核对其旧内联链接（非 download）是否仍可打开；若可，评估是否需要给内联分支也加上活行校验。
+
+## R3-F16（候选）· 画布结算积压扫描可被静默吞掉，积压可能永不清
+
+**状态**：Founder 2026-09-15：本版修；来源 PR #1451 worker report，PR 本身未改这一段（只把测试的并发形状改成产品真实形状），此发现是顺带记录。
+
+`packages/db/src/canvas-settlement.ts:414` 定义 `CANVAS_BACKLOG_STATEMENT_TIMEOUT_MS = 2_000`，`:495` 用它对积压扫描查询 `SET LOCAL statement_timeout`；机器负载高时扫 1001 块板会被 Postgres 用 57014（`statement timeout`）取消该语句。`apps/worker/src/jobs/canvas-backfill.ts:94-96` 的 `catch` 把这次取消吞掉，只 `console.error` 后 `return 0`——PR 作者称其为刻意的 fail-safe（宁可这一轮扫描 0 行，也不要一条烂查询拖垮 worker），但对外表现是**没有任何告警**：生产上持续高负载时，这条积压扫描可能悄无声息地永远清不完，且没有任何信号提醒运维。PR #1451 本身在真实并发形状下验证了这个吞掉分支存在（10 跑里之前 4 次撞到 57014），修复的是测试自己的并发假象，不是这条 fail-safe 的告警缺口；该缺口已登记进 `docs/specs/fail-closed-reliability.md` §5 变更登记（2026-09-15 行）。下一步：给这条 catch 分支补一次可观测信号（Sentry 或 founderAlert 一类既有告警通道），不是简单删掉 `try/catch`——2000ms 语句超时本身是刻意的保护，要修的是「取消之后没人知道」，不是超时设置本身。
 
 ## 本轮补记（2026-09-15，staging 第二轮登录态只读旅程）
 
