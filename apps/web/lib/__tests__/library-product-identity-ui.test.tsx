@@ -16,10 +16,14 @@
  *      屏幕上那枚 `Cover` 标签当场跟着挪过去(封面判据 = 身份上的 `baseAssetId`);
  *   ④ 被拒时**什么都不变**:名字与封面都还是库里那一份,屏幕上照抄服务端那句话;
  *   ⑤ 价格、卖点、分类一格都没有(PRODID-A5:这三项只在 Brand 页可改);
- *   ⑥ 官方演员那一栏两个控件都**不画**(判据是域层能力表,不是「哪一栏」)。
+ *   ⑥ 官方演员那一栏两个控件都**不画**(判据是域层能力表,不是「哪一栏」);
+ *   ⑦ 两颗键只在 **Products** 那一栏 —— 本票的范围是 PRODID-A4,而 A4 说的是产品;
+ *      角色 / 场景 照已冻结的 Library pattern README §3.5 归 child page,`brandmarks` 那一栏
+ *      连设计都没有。
  *
- * 变异自查(实做过,做完还原,红→绿):把 `LibraryView.tsx` 那个 `<ElementIdentityFields>`
- * 挂载点注释掉 ⇒ ①②③④⑤ 一起红(⑤ 因为连弹层里那两格都没有了,断言的锚点消失)。
+ * 变异自查(实做过,做完还原):把 `LibraryView.tsx` 那个 `<ElementIdentityFields>` 挂载点
+ * 删掉 ⇒ **8 条里 6 条红**(剩下两条是「不该出现」型的 ⑤ 与 ⑥,控件本来就不在,
+ * 所以它们照绿 —— 这两条的牙长在另一个方向上)。
  */
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -163,10 +167,23 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
   await settle();
 }
 
-/** 那排图里第 n 张底下的「Use as cover」。 */
+/** 那排图底下那几颗「Use photo N as cover」。 */
 function useAsCoverButtons(): HTMLButtonElement[] {
   return [...document.body.querySelectorAll("button")]
-    .filter((button) => button.textContent?.trim() === "Use as cover");
+    .filter((button) => /^Use photo \d+ as cover$/.test(button.textContent?.trim() ?? ""));
+}
+
+/** 第 n 张那一格(缩略图 + 角标 + 那颗键 在同一个 group 里)。 */
+function photoTile(position: number): HTMLElement {
+  const tile = document.body.querySelector<HTMLElement>(`[role="group"][aria-label="Photo ${position}"]`);
+  if (!tile) throw new Error(`屏幕上没有「Photo ${position}」那一格 —— 屏幕上是:${screenText()}`);
+  return tile;
+}
+
+/** 那枚 `Cover` 角标此刻在不在第 n 张上。 */
+function hasCoverBadge(position: number): boolean {
+  return [...photoTile(position).querySelectorAll("*")]
+    .some((node) => node.textContent?.trim() === "Cover" && node.children.length === 0);
 }
 
 /** 那排图上挂着的 `Cover` 角标(区块标题那一行是 `h3`,不是角标)。 */
@@ -238,10 +255,13 @@ describe("PRODID-A4 Library 产品详情:换主图走共享动作 setBaseAsset",
 
     expect(mocks.setBaseAsset).toHaveBeenCalledTimes(1);
     expect(mocks.setBaseAsset.mock.calls[0]).toEqual(["ent_kaya", SECOND.assetId]);
-    // 换完之后轮到原来那张画这颗键 —— `Cover` 标签真的挪了位,不是按完没反应。
-    expect(useAsCoverButtons()).toHaveLength(1);
-    const cover = document.body.querySelector<HTMLImageElement>(`img[src="${SECOND.url}"]`);
-    expect(cover).toBeTruthy();
+    // 角标**真的挪了位**:落在新那张上,旧那张上没了。上一版断言的是
+    // 「还有一颗键」与「那张图还在屏幕上」 —— 两句在「按完什么都没发生」时同样为真,
+    // 等于没有牙(判官 P2)。
+    expect(hasCoverBadge(2), "`Cover` 没有落在刚钉的那张上").toBe(true);
+    expect(hasCoverBadge(1), "`Cover` 还赖在旧那张上").toBe(false);
+    // 带着角标的那一格不再画那颗键,所以剩下的是第一张那一颗。
+    expect(useAsCoverButtons().map((b) => b.textContent?.trim())).toEqual(["Use photo 1 as cover"]);
   });
 
   it("PRODID-A4 换封面被拒:封面还是原来那张,屏幕上照抄服务端那句话", async () => {
@@ -251,7 +271,9 @@ describe("PRODID-A4 Library 产品详情:换主图走共享动作 setBaseAsset",
     await settle();
 
     expect(screenText()).toContain("That image is not a base reference of this element.");
-    // 没有乐观写入,所以没有要回滚的东西:第二张底下那颗键还在,说明它还不是封面。
+    // 没有乐观写入,所以没有要回滚的东西:角标一步都没挪。
+    expect(hasCoverBadge(1), "被拒之后 `Cover` 竟然离开了原来那张").toBe(true);
+    expect(hasCoverBadge(2), "被拒之后 `Cover` 竟然落到了新那张上").toBe(false);
     expect(useAsCoverButtons()).toHaveLength(1);
   });
 
@@ -303,6 +325,27 @@ describe("PRODID-A4 Library 产品详情:换主图走共享动作 setBaseAsset",
     // 与「只有一张图时不画换封面那一排」那条同一个结果。
     expect(useAsCoverButtons()).toHaveLength(0);
     expect(coverBadges()).toHaveLength(0);
+  });
+});
+
+describe("本票范围 = Products 那一栏(PRODID-A4 说的是产品)", () => {
+  it("PRODID-A4 角色那一栏的元素详情:改名栏与换封面那一排一个都不画", async () => {
+    // 已冻结的 Library pattern README §3.5 把 Character / Clothes / Location 的 identity 归给
+    // child page;`brandmarks` 那一栏连已批准设计都没有。把这两颗键铺到那几栏上
+    // 等于替设计做主 —— 能力表是全开的(商家自建的角色),所以拦住它们的只能是分栏。
+    await openDetail(product({
+      id: "ent_rosa",
+      kind: "characters",
+      name: "Rosa",
+    }));
+    expect(buttonNamed("Save name")).toBeUndefined();
+    expect(useAsCoverButtons()).toHaveLength(0);
+    expect([...document.body.querySelectorAll("label")].some((item) => item.textContent?.trim() === "Name")).toBe(false);
+    // 能力表确实是全开的 —— 上面三句不是「这一行本来就不允许改」造成的。
+    expect(capabilitiesForOrigin("USER").editIdentity).toBe(true);
+    expect(capabilitiesForOrigin("USER").mutateBase).toBe(true);
+    // 删除那一颗不在本票范围内,照旧在 —— 收口的只是身份那两格。
+    expect(buttonNamed("Remove from Library")).toBeTruthy();
   });
 });
 

@@ -155,16 +155,29 @@ test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Librar
   // 换封面:这件产品是「只填名字与价格」建出来的,身份上那一格此刻**还是空的**
   // (`packages/db/src/create-product.ts:195`),Brand 页那一边因此一张图都不画。所以两张都还
   // 能钉、一张都没有被挂上 `Cover` 冒充封面 —— 按第二张底下那一颗。
-  const useAsCover = page.getByRole("button", { name: "Use as cover" });
-  await expect(useAsCover).toHaveCount(2);
-  await useAsCover.nth(1).click();
-  // 钉上之后只剩第一张底下还有这颗键 —— `Cover` 那枚标签真的落在第二张上。
-  await expect(page.getByRole("button", { name: "Use as cover" })).toHaveCount(1, { timeout: 60_000 });
-  await expect(
-    prisma.entity.findFirstOrThrow({
-      where: { id: entityId, ownerId: ws.orgId }, select: { baseAssetId: true },
-    }),
-  ).resolves.toEqual({ baseAssetId: photos[1]!.assetId });
+  const photoTile = (position: number) => page.getByRole("group", { name: `Photo ${position}` });
+  const coverBadge = (position: number) => photoTile(position).getByText("Cover", { exact: true });
+  await expect(coverBadge(1)).toHaveCount(0);
+  await expect(coverBadge(2)).toHaveCount(0);
+  await photoTile(2).getByRole("button", { name: "Use photo 2 as cover" }).click();
+
+  // 成功的信号只有一个:那枚 `Cover` 真的落在第二张上。
+  //
+  // 「那颗键少了一颗」不是信号 —— 写入在飞的那几百毫秒里,被按下的那一颗读的是「Changing…」,
+  // 于是「名字叫 Use as cover 的键」当场就从 2 变成 1。上一版拿这个当闸,闸在写入**还没落库**
+  // 时就放行了,紧跟着那句一次性的库读于是读到 `baseAssetId: null`(CI run 34930663982 实测)。
+  // 角标只在服务端点头、`onChanged` 把新值推回来之后才画,所以它到位 ⇒ 那一笔已经提交。
+  await expect(coverBadge(2)).toBeVisible({ timeout: 60_000 });
+  await expect(coverBadge(1)).toHaveCount(0);
+  // 库里那一行同样用会重试的读法核一遍(`expect.poll`),不拿一次性的快照赌时序。
+  await expect
+    .poll(
+      async () => (await prisma.entity.findFirstOrThrow({
+        where: { id: entityId, ownerId: ws.orgId }, select: { baseAssetId: true },
+      })).baseAssetId,
+      { timeout: 30_000 },
+    )
+    .toBe(photos[1]!.assetId);
 
   // 关掉弹层:身后那张卡也跟着改了名、换了图 —— 同一行,不靠整页重取。
   await page.getByRole("button", { name: "Close" }).click();

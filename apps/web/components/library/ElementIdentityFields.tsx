@@ -55,9 +55,12 @@ export type ElementIdentityPatch = Partial<Pick<LibraryElement, "name" | "baseAs
 export function ElementIdentityFields({
   element,
   onChanged,
+  onBusyChange,
 }: {
   element: LibraryElement;
   onChanged: (elementId: string, patch: ElementIdentityPatch) => void;
+  /** 有写入在飞 —— 弹层据此不许被关掉(与 `ElementVariantsDialog` 的 `writeLocked` 同一条)。 */
+  onBusyChange: (busy: boolean) => void;
 }) {
   const nameFieldId = React.useId();
   const [draft, setDraft] = React.useState(element.name);
@@ -65,6 +68,14 @@ export function ElementIdentityFields({
   const [nameError, setNameError] = React.useState<string | null>(null);
   const [coverPending, setCoverPending] = React.useState<string | null>(null);
   const [coverError, setCoverError] = React.useState<string | null>(null);
+
+  // 关掉弹层 = 卸载这个组件,而写入还在飞 —— 被拒的那句话就再也没有地方可说。所以「在飞」
+  // 要报上去,由弹层拦住关闭(`ElementVariantsDialog.tsx:136` 的 `writeLocked` 同一条纪律)。
+  const busy = savingName || coverPending !== null;
+  React.useEffect(() => {
+    onBusyChange(busy);
+    return () => onBusyChange(false);
+  }, [busy, onBusyChange]);
 
   const trimmed = draft.trim();
   const canSaveName = Boolean(trimmed) && trimmed !== element.name && !savingName;
@@ -122,9 +133,17 @@ export function ElementIdentityFields({
   // 哪怕只有一张也要画 —— 那一张正是她要钉上去的。
   const canPickCover = element.images.length > (coverAssetId ? 1 : 0);
 
+  // 本票的范围是 PRODID-A4,而 A4 说的是**产品**。别的分栏各有自己的归属:已冻结的 Library
+  // pattern README §3.5 写的是「Character、Clothes、Location 使用 child page 管理 identity」,
+  // 而 `brandmarks` 那一栏根本不在已批准设计里(它是 `library-elements-model.ts` 按「设计里没有
+  // ≠ 商家没有」补出来的一栏,等 Founder 过目)。把这两颗键铺到那几栏上等于替设计做主,所以
+  // 这里按分栏收口。要放开别的分栏:先在 Library pattern README §9 变更登记补一行、由 Founder
+  // 裁,再动这个判据。
+  const isProduct = element.kind === "products";
+
   return (
     <>
-      {element.capabilities.editIdentity ? (
+      {isProduct && element.capabilities.editIdentity ? (
         <div className="flex flex-col gap-2">
           <Label htmlFor={nameFieldId}>Name</Label>
           <div className="flex items-start gap-2">
@@ -147,18 +166,31 @@ export function ElementIdentityFields({
         </div>
       ) : null}
 
-      {element.capabilities.mutateBase && canPickCover ? (
+      {isProduct && element.capabilities.mutateBase && canPickCover ? (
         <div className="flex flex-col gap-2">
           <h3 className="m-0 text-sm font-medium">Cover</h3>
           <div className="flex flex-wrap gap-2">
-            {element.images.map((image) => {
+            {element.images.map((image, index) => {
               const isCover = image.assetId === coverAssetId;
+              // 每张图要有自己的名字:一排读音完全相同的「Use as cover」对读屏的人等于没有名字,
+              // 她听不出按下去的是哪一张。编号跟着这一排的顺序走(商家眼里的第几张)。
+              const position = index + 1;
               return (
-                <div key={image.assetId} className="flex w-[104px] flex-col gap-1">
+                <div
+                  key={image.assetId}
+                  role="group"
+                  aria-label={`Photo ${position}`}
+                  className="flex w-[104px] flex-col gap-1"
+                >
                   <div className="relative aspect-square overflow-hidden rounded-[var(--radius-card)] border border-border bg-muted">
                     {/* 同 MediaTile:商家自家 /files 素材。 */}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={image.url} alt="" className="size-full object-cover" loading="lazy" />
+                    <img
+                      src={image.url}
+                      alt={`${element.name} — photo ${position}`}
+                      className="size-full object-cover"
+                      loading="lazy"
+                    />
                     {isCover ? (
                       <Badge variant="outline" className="absolute left-1.5 top-1.5 bg-card/90">
                         Cover
@@ -172,8 +204,8 @@ export function ElementIdentityFields({
                       disabled={Boolean(coverPending)}
                       onClick={() => void pickCover(image.assetId, image.url)}
                     >
-                      {coverPending === image.assetId ? <Spinner aria-label="Changing cover" /> : null}
-                      {coverPending === image.assetId ? "Changing…" : "Use as cover"}
+                      {coverPending === image.assetId ? <Spinner aria-label={`Changing cover to photo ${position}`} /> : null}
+                      {coverPending === image.assetId ? "Changing…" : `Use photo ${position} as cover`}
                     </Button>
                   )}
                 </div>

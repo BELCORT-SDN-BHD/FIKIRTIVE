@@ -48,16 +48,24 @@ export async function getLibraryElements(): Promise<LibraryElement[] | { error: 
     const elements = await Promise.all(rows.map(async (row): Promise<LibraryElement | null> => {
       const kind = libraryElementKind(row.type, row.catalogKey);
       if (!kind) return null;
-      // 字节真的还在才给图 —— 与生成历史同一条纪律:不给一个必然坏掉的 <img src>。
-      const live = await Promise.all(row.referenceImages.map(async (ref) => {
-        const key = storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext.toLowerCase());
-        return (await storage.exists(key)) ? { assetId: ref.assetId, url: storageKeyToSrc(key) } : null;
-      }));
+      const keyOf = (ref: (typeof row.referenceImages)[number]) =>
+        storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext.toLowerCase());
       // 封面 = 身份上钉的那一张(`Entity.baseAssetId`);没钉过才沿用第一张 —— 与
       // `lib/stuff-items.ts:74`、`MentionInput` 逐字同一条规则(规格 §1.4;验收 PRODID-A4)。
-      // 按下标取,所以「钉的那张字节没了」仍然是没有封面,不静默换成另一张。
-      const pinned = row.referenceImages.findIndex((ref) => ref.assetId === row.baseAssetId);
-      const coverUrl = live[pinned >= 0 ? pinned : 0]?.url ?? null;
+      // 拿的是这一张本身,所以「钉的那张字节没了」仍然是没有封面,不静默换成另一张。
+      const cover = row.referenceImages.find((ref) => ref.assetId === row.baseAssetId)
+        ?? row.referenceImages[0];
+      // **整个列表只探这一张**:字节真的还在才给封面 —— 与生成历史同一条纪律,不给一个必然
+      // 坏掉的 <img src>。一格一张图地探会让这一页的 HEAD 数从「每个元素一次」涨成「每张
+      // 参考图一次」(无上限的 `Promise.all`),而 `storage.exists` 对非 404 是**往上抛**的:
+      // 一次瞬时故障就能把整张 /library 掀翻。弹层里那一排缩略图因此**不探**,与已批准的
+      // `ElementVariantsDialog` 逐字同一口径 —— 它画的 `entity.refs` 同样只是
+      // `lib/dto.ts:refOf` 拼出来的 url,一次都没有探过。
+      let coverUrl: string | null = null;
+      if (cover) {
+        const key = keyOf(cover);
+        if (await storage.exists(key)) coverUrl = storageKeyToSrc(key);
+      }
       return {
         id: row.id,
         kind,
@@ -68,7 +76,7 @@ export async function getLibraryElements(): Promise<LibraryElement[] | { error: 
         capabilities: entityCapabilities(row),
         coverUrl,
         baseAssetId: row.baseAssetId,
-        images: live.filter((image): image is { assetId: string; url: string } => image != null),
+        images: row.referenceImages.map((ref) => ({ assetId: ref.assetId, url: storageKeyToSrc(keyOf(ref)) })),
         mediaCount: row.referenceImages.length,
       } satisfies LibraryElement;
     }));

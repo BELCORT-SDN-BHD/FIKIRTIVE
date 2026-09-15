@@ -429,6 +429,8 @@ function ElementsView({
   const [removeTarget, setRemoveTarget] = React.useState<LibraryElement>();
   const [removing, setRemoving] = React.useState(false);
   const [removeError, setRemoveError] = React.useState<string | null>(null);
+  /** 身份那两格有写入在飞 —— 这期间不许关掉弹层,否则被拒的那句话没有地方可说。 */
+  const [identityBusy, setIdentityBusy] = React.useState(false);
   const visible = elements.filter((element) => element.kind === elementView);
   const viewLabel = LIBRARY_ELEMENT_VIEWS.find((view) => view.value === elementView)?.label ?? PRODUCT_VOCABULARY.elements;
 
@@ -508,8 +510,18 @@ function ElementsView({
         </div>
       )}
 
-      <Dialog open={Boolean(selected)} onOpenChange={(open) => { if (!open) setSelected(undefined); }}>
-        <DialogContent>
+      <Dialog
+        open={Boolean(selected)}
+        onOpenChange={(open) => { if (!open && !identityBusy) setSelected(undefined); }}
+      >
+        {/* 写入在飞时关不掉 —— 与 `ElementVariantsDialog`(`writeLocked`)同一条纪律:
+            一次被拒的改名/换封面必须还有地方把话说完。 */}
+        <DialogContent
+          aria-busy={identityBusy || undefined}
+          closeDisabled={identityBusy}
+          onEscapeKeyDown={(event) => { if (identityBusy) event.preventDefault(); }}
+          onInteractOutside={(event) => { if (identityBusy) event.preventDefault(); }}
+        >
           {selected ? (
             <>
               <DialogHeader>
@@ -545,6 +557,7 @@ function ElementsView({
                 key={selected.id}
                 element={selected}
                 onChanged={applyIdentity}
+                onBusyChange={setIdentityBusy}
               />
               {selected.capabilities.deleteEntity ? (
                 <DialogFooter>
