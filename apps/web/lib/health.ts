@@ -13,6 +13,32 @@ export const WORKER_STALE_MS = 5 * 60_000;
 
 export type WorkerStatus = "up" | "stale" | "unknown";
 
+/**
+ * 心跳行超过这个毫秒数没更新 = **退休**:它不再代表任何一班,从对外的按班列表里消失。
+ *
+ * 为什么需要第二道门槛(2026-09-15 第三轮走查 R3-F19):`WorkerHeartbeat` 是 upsert 表,
+ * **没有任何产品代码删过行**(唯一的 `deleteMany` 都在测试里)。所以一个不再被写的 id ——
+ * 比如 #796 拆班之后没人再写的旧 `"worker"` 行(`apps/worker/src/plan.ts` 的 `heartbeatIdFor`:
+ * 只有 `all` 角色写它,staging 跑的是 `wait`/`compute` 两班)——会**永远**留在响应里显示
+ * `stale`。staging 上这一行已经冻了两天多,而那两班一直好好的。
+ *
+ * 后果不是多一个字段那么简单:`docs/ops/incident-visibility.md:88` 让值班人「先看 workers 里
+ * 哪一行 stale」,一个永远 stale 的幽灵行会把这条 runbook 训练成「那行不用管」——真有一班死
+ * 掉时,同样的 stale 就没人再当回事。`docs/ops/dashboards.md:147` 的关键字监控同理。
+ *
+ * 24 小时怎么来的:心跳 60 秒一次、5 分钟判 stale,一班**活着**的进程不可能一整天不写一行;
+ * 反过来,一班真死了的班要连续显示 stale 整整一天(覆盖任何一轮值班与一次部署窗口)才会退休,
+ * 「刚死几分钟」的诊断价值一格不少。这是**只读判定**,不删库(`lib/deploy-fingerprint.ts` 的
+ * `buildDeploySignal` 是同一条纪律:用新鲜度退役旧行,「不需要谁去清库」)。
+ */
+export const WORKER_RETIRED_MS = 24 * 60 * 60_000;
+
+/** 这一行还代不代表一班?超过 {@link WORKER_RETIRED_MS} 没人写 = 退休。未来时间戳(时钟偏移)
+ *  一律不算退休,与 {@link workerStatus} 同一条纪律:绝不因 skew 抹掉一行。 */
+export function workerRetired(heartbeatAt: Date, now: Date): boolean {
+  return now.getTime() - heartbeatAt.getTime() >= WORKER_RETIRED_MS;
+}
+
 /** 心跳行缺失 → unknown;超窗 → stale;否则 up。未来时间戳(时钟偏移)按 up 处理,
  *  绝不因 skew 误报。 */
 export function workerStatus(heartbeatAt: Date | null, now: Date): WorkerStatus {
@@ -62,13 +88,24 @@ export function backupAgeHours(lastSucceededAt: Date | null, now: Date): number 
  * 永远卡在 stale。真正的按班真相在 `workers` 里,一行一班,谁死了看得见。
  *
  * 按班告警的接线归 #793;这里先把数据摆出来。
+ *
+ * 2026-09-15 R3-F19:退休行(见 {@link WORKER_RETIRED_MS})**不进** `workers`。仅仅是 stale
+ * 的行照旧留着——「一班几分钟前停跳了」正是这份列表的诊断价值,一刀切掉所有 stale 是错的;
+ * 被切掉的只有「整整一天没人写」的那一类,它已经不是一班,只是一条历史记录。
+ * 顶层 `worker` 的算法**一个字没改**(至少一班 up);退休行本来就不可能是 up,所以它永远
+ * 不会掩盖一次真故障。全部行都退休时顶层回 unknown——runbook 与监控对
+ * `stale|unknown` 本来就是同一步处置(`docs/ops/incident-visibility.md:87`、
+ * `docs/ops/dashboards.md:147` 的关键字是 `"worker":"up"` 缺失即告警)。
  */
 export function workersHealth(
   rows: { id: string; at: Date }[],
   now: Date,
 ): { worker: WorkerStatus; workers: Record<string, WorkerStatus> } {
   const workers: Record<string, WorkerStatus> = {};
-  for (const row of rows) workers[row.id] = workerStatus(row.at, now);
+  for (const row of rows) {
+    if (workerRetired(row.at, now)) continue;
+    workers[row.id] = workerStatus(row.at, now);
+  }
   const statuses = Object.values(workers);
   const worker: WorkerStatus = statuses.includes("up") ? "up" : statuses.includes("stale") ? "stale" : "unknown";
   return { worker, workers };
