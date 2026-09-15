@@ -132,6 +132,7 @@ Otto 的引擎重组为「技能文件柜大脑 + 类型化动作 + 可测质量
 | 2026-09-06 | 台账 #359 搬入：@openai/agents 0.11.8 默认 errorFunction 压扁 schema 校验指引，Otto 自我纠正效率下降，触发＝升级该包时复查或成功率数据显示重试成功率低于预期时自定义 errorFunction。触发＝升级该包时复查或成功率数据显示重试成功率低于预期时自定义 errorFunction。来源：https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5105313025 | |
 | 2026-09-06 | 台账 #359 搬入：#915 聊天成本模型换代(取消每句冻结→事后计量+≤1 credit 透支+撞顶Otto只说不做),触发条件:beta开门后、与Otto装配器(#879第二步)设计合并评审通过后开工。触发条件:beta开门后、与Otto装配器(#879第二步)设计合并评审通过后开工。来源：https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5281054573 | |
 | 2026-09-06 | 台账 #359 搬入：成熟度扫查 C2:/otto 首屏 networkidle 15.3s(背景长轮询保持连接,不影响可见渲染),触发=连接策略优化轮。触发=连接策略优化轮。来源：https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5303393131 | |
+| 2026-09-14 | **输入附近不再堆叠重复费用说明（R3-F06）**。**批准: 2026-09-14，APPROVED（Founder 当前对谈截图反馈；记录请求为写进报告并准备下场修复提示词，本场不施工）**。截图中的「Uploads are understood automatically…」「Otto searches the web…」「Otto checks with you…／Each message holds up to …」属于输入附近反复常驻的说明段落，Founder 裁定此类不用这样处理。范围按这些例子解释：跨受影响入口移除同类重复常驻说明，不仅换成 tooltip／折叠区；不是全站所有 alert 一律删除。实际逐动作报价／确认、交易回执、可操作错误、认证／安全行为及后端定价、预留、结算、退款语义不在删除授权内；Billing 的实际价格与账目不因本条自动移除。本裁决覆盖本规格 §5 2026-09-05「⑦段落地登记」(a)、§7.4 第一级与 §7.6 处置一要求的 composer 常驻对话费用说明形态；不再由旧默认处置恢复该段或仅把它藏起来。验收：OttoChatStream、起步页、OttoFrontDoor 的相关分支不再重复常驻此段，既有确认卡先确认再执行与按实结算回归保持。历史记录原样保留，冲突的展示要求以本批准为准；先按项目规则将本 docs-only 变更经 PR 合入主干，再开展下场实现。证据与挂点见 `docs/audits/fullstack-staging-2026-09-14/findings-catalog.md` 的 R3-F06。 | APPROVED |
 
 ## 6. 改签记录
 
