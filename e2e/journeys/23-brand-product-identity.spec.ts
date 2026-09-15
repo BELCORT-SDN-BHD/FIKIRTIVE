@@ -14,12 +14,12 @@
  * 定性过的 hold(不是花费),这里照旧只等它把输入框放开。
  */
 import { test, expect } from "@playwright/test";
-import { seedWorkspace } from "../support/seed.js";
+import { seedElementImages, seedWorkspace } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 import { prisma } from "../support/db.js";
 import { waitUntilInteractive } from "../support/ui.js";
 
-test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Library、@ 菜单与确认卡是同一个 id;改名同步、删除两边一起消失", async ({ page }) => {
+test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Library、@ 菜单与确认卡是同一个 id;改名换图两个方向都同步、删除两边一起消失", async ({ page }) => {
   const ws = await seedWorkspace({
     slug: "prodid",
     workspaceName: "Suria Kopitiam",
@@ -131,14 +131,91 @@ test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Librar
     }),
   ).resolves.toEqual({ entityId });
 
-  // ── PRODID-A6 在 Library 删掉它:Brand 页那一边同时消失 ──────────────────────
+  // ── PRODID-A4 反方向:在 Library 改名换主图,Brand 页那一边跟着改 ─────────────
+  //
+  // 规格 §5 2026-09-11 那一行报的缺口就是这半句:三条动作层的路都在、都有真库测试,缺的只是
+  // Library 这一面的入口 —— 所以 A4 的「在 Library 改名或换主图」在屏幕上演示不出来。这一段
+  // 把它走完:同一张卡上改名、换封面,再回 Brand 页看那一边。
+  //
+  // 换封面要有第二张可挑,所以先给这件产品挂两张真的参考图(商家在别处上传过的那种)。
+  const photos = await seedElementImages(ws, entityId, 2);
+  await page.goto("/library?view=elements&element=products");
   await page.getByRole("button", { name: `Open ${renamed}` }).click();
+
+  // 改名:输入框 → Save name。价格、卖点、分类三样在这一屏没有(PRODID-A5)。
+  const libraryName = "Pandan kaya toast set (family)";
+  const nameField = page.getByLabel("Name", { exact: true });
+  await expect(nameField).toBeVisible();
+  await nameField.fill(libraryName);
+  await page.getByRole("button", { name: "Save name" }).click();
+  // 弹层自己先跟上 —— 它的可读名就是这一行的名字。网格此刻被这张模态挡着(aria-hidden),
+  // 所以卡片那一句留到关掉之后再断言。
+  await expect(page.getByRole("dialog", { name: libraryName })).toBeVisible({ timeout: 60_000 });
+
+  // 换封面:这件产品是「只填名字与价格」建出来的,身份上那一格此刻**还是空的**
+  // (`packages/db/src/create-product.ts:195`),Brand 页那一边因此一张图都不画。所以两张都还
+  // 能钉、一张都没有被挂上 `Cover` 冒充封面 —— 按第二张底下那一颗。
+  const photoTile = (position: number) => page.getByRole("group", { name: `Photo ${position}` });
+  const coverBadge = (position: number) => photoTile(position).getByText("Cover", { exact: true });
+  await expect(coverBadge(1)).toHaveCount(0);
+  await expect(coverBadge(2)).toHaveCount(0);
+  await photoTile(2).getByRole("button", { name: "Use photo 2 as cover" }).click();
+
+  // 成功的信号只有一个:那枚 `Cover` 真的落在第二张上。
+  //
+  // 「那颗键少了一颗」不是信号 —— 写入在飞的那几百毫秒里,被按下的那一颗读的是「Changing…」,
+  // 于是「名字叫 Use as cover 的键」当场就从 2 变成 1。上一版拿这个当闸,闸在写入**还没落库**
+  // 时就放行了,紧跟着那句一次性的库读于是读到 `baseAssetId: null`(CI run 34930663982 实测)。
+  // 角标只在服务端点头、`onChanged` 把新值推回来之后才画,所以它到位 ⇒ 那一笔已经提交。
+  await expect(coverBadge(2)).toBeVisible({ timeout: 60_000 });
+  await expect(coverBadge(1)).toHaveCount(0);
+  // 库里那一行同样用会重试的读法核一遍(`expect.poll`),不拿一次性的快照赌时序。
+  await expect
+    .poll(
+      async () => (await prisma.entity.findFirstOrThrow({
+        where: { id: entityId, ownerId: ws.orgId }, select: { baseAssetId: true },
+      })).baseAssetId,
+      { timeout: 30_000 },
+    )
+    .toBe(photos[1]!.assetId);
+
+  // 关掉弹层:身后那张卡也跟着改了名、换了图 —— 同一行,不靠整页重取。
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("button", { name: `Open ${libraryName}` })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("button", { name: `Open ${renamed}`, exact: true })).toHaveCount(0);
+  await expect(page.locator(`img[src="${photos[1]!.src}"]`).first()).toBeVisible();
+
+  // Brand 页那一边:同一行 Entity(id 没变)、同一个名字、同一张图 —— 没有第二份。
+  await page.goto("/brand/records?tab=products");
+  await expect(page.getByRole("button", { name: `Actions for ${libraryName}` })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("button", { name: `Actions for ${renamed}` })).toHaveCount(0);
+  await expect(page.locator(`img[src="${photos[1]!.src}"]`).first()).toBeVisible();
+  await expect(page.locator(`img[src="${photos[0]!.src}"]`)).toHaveCount(0);
+  await expect(
+    prisma.brandRecord.findFirstOrThrow({
+      where: { id: record.id, ownerId: ws.orgId }, select: { entityId: true },
+    }),
+  ).resolves.toEqual({ entityId });
+  // 名字与主图只住在身份那一行:价签的 data 里连这两个键都没有(判官第 5 轮的根)。
+  const tag = await prisma.brandRecord.findFirstOrThrow({
+    where: { id: record.id, ownerId: ws.orgId }, select: { data: true },
+  });
+  expect(Object.keys(tag.data as Record<string, unknown>)).not.toContain("name");
+  expect(Object.keys(tag.data as Record<string, unknown>)).not.toContain("imageAssetId");
+  // 一条产品行,不是两条 —— 「Library 一份、Brand 页一份」那条老路会在这里现形。
+  await expect(
+    prisma.brandRecord.count({ where: { ownerId: ws.orgId, kind: "product", deletedAt: null } }),
+  ).resolves.toBe(1);
+
+  // ── PRODID-A6 在 Library 删掉它:Brand 页那一边同时消失 ──────────────────────
+  await page.goto("/library?view=elements&element=products");
+  await page.getByRole("button", { name: `Open ${libraryName}` }).click();
   await page.getByRole("button", { name: "Remove from Library" }).click();
   await page.getByRole("button", { name: "Remove", exact: true }).click();
-  await expect(page.getByRole("button", { name: `Open ${renamed}` })).toHaveCount(0, { timeout: 60_000 });
+  await expect(page.getByRole("button", { name: `Open ${libraryName}` })).toHaveCount(0, { timeout: 60_000 });
 
   await page.goto("/brand/records?tab=products");
-  await expect(page.getByRole("button", { name: `Actions for ${renamed}` })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: `Actions for ${libraryName}` })).toHaveCount(0);
   // 两边同一个 `deletedAt` —— 恢复那一半按它把两行一起接回来(动作层 `restoreBrandRecord`)。
   const dead = await prisma.brandRecord.findFirstOrThrow({
     where: { id: record.id, ownerId: ws.orgId }, select: { deletedAt: true },
