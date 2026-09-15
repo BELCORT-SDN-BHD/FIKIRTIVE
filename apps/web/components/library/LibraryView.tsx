@@ -621,8 +621,13 @@ export function LibraryView({
   // 存的是**素材 id**,不是 DOM 节点:关掉详情面的同一批 setState 里网格会整组重取,
   // 打开它的那块砖在骨架屏那一帧就被卸掉了 —— 记住节点,等于记住一块已经不在文档里的砖。
   // `null` = 这一刻没有待归位的焦点。
-  const [focusReturnId, setFocusReturnId] = React.useState<string | null>(null);
-  /** 网格那块区域。素材被删掉、一张卡都不剩时,焦点落在它身上 —— 而不是 `<body>`。 */
+  //
+  // 用 ref 不用 state:屏幕上没有任何一处读它(它不决定渲染什么),写它的是事件回调,
+  // 读它与清它的是下面那个 effect —— 放进 state 就得在 effect 体里 setState,那是
+  // react-hooks/set-state-in-effect(本仓库同一文件 `loadFavorites` 那一段就是为它绕的路),
+  // 白跑一次渲染不说,必需检查 `quality` 的 lint 腿会直接红(复核 2026-09-15)。
+  const focusReturnIdRef = React.useRef<string | null>(null);
+  /** 网格那块区域。那件素材已经不在网格里时,焦点落在它身上 —— 而不是 `<body>`。 */
   const gridAreaRef = React.useRef<HTMLDivElement | null>(null);
 
   // ── 段②:收藏、合集与选择模式 ────────────────────────────────────────────────
@@ -993,7 +998,7 @@ export function LibraryView({
     // 键盘/读屏的商家是从某一块砖上按 Enter 进来的,关掉就得回到那一块 —— 落回 `<body>`
     // 等于把人丢回页面最顶上,想看下一件得重新 Tab 一遍导航、页签与工具条(R3-F05)。
     // 面板自己的焦点管理器到这一刻已经无能为力:它记的是节点,而节点马上会被重取卸掉。
-    setFocusReturnId(detail?.generationId ?? null);
+    focusReturnIdRef.current = detail?.generationId ?? null;
   }
 
   /**
@@ -1002,24 +1007,40 @@ export function LibraryView({
    * `loading` 还亮着就什么都不做:那一帧屏幕上是骨架屏,砖还没挂回来,这时候找不到目标,
    * 找到了也会被下一次渲染卸掉。等 `loading` 落下、`items` 换上,砖是新的节点,按 id 认它。
    *
-   * 两级兜底,都不是 `<body>`:那件素材在详情面里被删掉了 ⇒ 落在网格里第一块砖;一块都不剩
-   * (空态、搜索无结果)⇒ 落在网格那块区域本身(`tabIndex={-1}`),Tab 从那里继续往下走。
+   * 两道闸,都是「不该抢就别抢」(复核 2026-09-15):
+   *  ① 重取是一次真的服务器往返(几百毫秒),工具条与页签一直挂在屏幕上 —— 商家在这段时间里
+   *    点进搜索框开始打字是常事。焦点已经落在别人手里就**放手**:把它拽回卡片,后面打的字
+   *    全落在按钮上,一个空格就把刚关掉的详情面又打开了。
+   *  ② 找不到那件素材就落在网格**那块区域**(`tabIndex={-1}`),不落在别人的卡上:它可能是
+   *    在详情面里被删掉了,也可能只是被「Load older」翻出来、而关闭那次重取只取第一页。
+   *    停在别人的卡上,读屏念的是别人的名字,一个空格打开的是别人那件素材。
+   *    ——「关掉之后网格塌回第一页、翻过的页与滚动位置一起丢」本身是既有行为(与已批准的
+   *    Library pattern 验收 5「关闭后恢复原 grid scroll/query/filter/selection」相抵),
+   *    不在本次写入边界内;这里只保证焦点不因此落到一件陌生素材上。
    */
   React.useEffect(() => {
-    if (focusReturnId === null) return;
+    const returnId = focusReturnIdRef.current;
+    if (returnId === null) return;
     // 又开了一张详情面 —— 焦点归它管,这次归位作废。
-    if (detail) { setFocusReturnId(null); return; }
+    if (detail) { focusReturnIdRef.current = null; return; }
     if (loading) return;
+    // ① 商家自己已经把焦点挪到别处(搜索框、页签……)⇒ 放手。关闭那一刻焦点落在 `<body>`
+    // (面板的焦点管理器交不出还活着的候选,见文件头),所以「还停在 body / 已经被卸掉的
+    // 节点上」= 没有人在用它,这时候归位才不是抢。
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) {
+      focusReturnIdRef.current = null;
+      return;
+    }
     const area = gridAreaRef.current;
     const cards = area
       ? [...area.querySelectorAll<HTMLElement>("[data-library-card]")]
       : [];
-    const target = cards.find((card) => card.dataset.libraryCard === focusReturnId)
-      ?? cards[0]
-      ?? area;
+    // ② 认的是**那一件**素材;认不出来就退到网格区域本身,绝不顺手抓一张别人的卡。
+    const target = cards.find((card) => card.dataset.libraryCard === returnId) ?? area;
     target?.focus();
-    setFocusReturnId(null);
-  }, [focusReturnId, detail, loading, items, favorites]);
+    focusReturnIdRef.current = null;
+  }, [detail, loading, items, favorites]);
 
   const filtersActive = !filtersAreDefault(filters);
 

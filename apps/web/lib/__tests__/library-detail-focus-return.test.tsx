@@ -20,10 +20,17 @@
  * 断言只认商家看得见的东西:卡片按可及名称(`Open <名字>`)找,焦点按 `document.activeElement`
  * 判 —— 恢复用的那个 `data-library-card` 是实现细节,这份文件不替它站台。
  *
+ * 「不该抢就别抢」是这份文件的另一半(复核 2026-09-15 补的两条):重取是一次真的服务器往返,
+ * 商家在这几百毫秒里会点进搜索框打字 —— 归位不能把焦点从他手里夺回来;那件素材已经不在
+ * 网格里(被删掉,或只是被「Load older」翻出来、而关闭那次重取只取第一页)时,焦点落在网格
+ * 那块区域上,**不落在别人的卡上** —— 停在别人的卡上,读屏念的是别人的名字,一个空格打开的
+ * 也是别人那件素材。
+ *
  * 变异自查(逐一实做,做完还原,红→绿):
- *   · 删掉 LibraryView 里整段焦点恢复 ⇒ 两条都红,activeElement 是 `<body>` —— 改前的病象;
+ *   · 删掉 LibraryView 里整段焦点恢复 ⇒ 四条都红,activeElement 是 `<body>` —— 改前的病象;
  *   · 把恢复挪到 `loading` 仍为 true 时做 ⇒ 第一条红(那一刻卡片还没挂回来);
- *   · 素材没了就不管 ⇒ 第二条红。
+ *   · 把「焦点已经在别人手里就放手」那道闸拿掉 ⇒ 第四条红(焦点被从搜索框抢到卡上);
+ *   · 认不出那件素材就退回 `cards[0]` ⇒ 第二、三条红(焦点落到一件陌生素材上)。
  */
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -107,15 +114,38 @@ let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 /** 关掉详情面之后那一次重取交回什么 —— 「那件素材还在」与「它被删掉了」是两条不同的路。 */
 let itemsAfterClose: LibraryItem[] = [FIRST, SECOND];
+/** 第一页之后还有没有下一页(非 null ⇒ 屏幕上出现「Load older」)。 */
+let cursorAfterClose: string | null = null;
+/** 「Load older」按下去那一次交回什么 —— 第二页的素材**不在**第一页的重取结果里。 */
+let olderPage: LibraryItem[] = [];
+/**
+ * 把重取按住不放。重取是一次真的服务器往返(几百毫秒),商家在这段时间里照样能点、能打字;
+ * 不按住的话这几百毫秒在测试里压成一个微任务,「重取还在飞的时候商家把焦点挪走了」那条路
+ * 根本摊不开。
+ */
+let heldReload: { promise: Promise<void>; release: () => void } | null = null;
+
+/** 按住下一次重取,返回一把「放行」的钥匙。 */
+function holdNextReload(): () => void {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => { release = resolve; });
+  heldReload = { promise, release };
+  return () => { heldReload = null; release(); };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
   window.history.replaceState({}, "", "/library");
   itemsAfterClose = [FIRST, SECOND];
-  mocks.getGenerationHistory.mockImplementation(async () => ({
-    items: itemsAfterClose,
-    nextCursor: null,
-  }));
+  cursorAfterClose = null;
+  olderPage = [];
+  heldReload = null;
+  mocks.getGenerationHistory.mockImplementation(async (query: { cursor?: string | null }) => {
+    // 「Load older」那一次:另一页,与第一页各走各的。
+    if (query?.cursor) return { items: olderPage, nextCursor: null };
+    if (heldReload) await heldReload.promise;
+    return { items: itemsAfterClose, nextCursor: cursorAfterClose };
+  });
   mocks.listLibraryFavorites.mockResolvedValue({ items: [], nextCursor: null });
 });
 
@@ -126,7 +156,9 @@ afterEach(async () => {
   container = null;
 });
 
-async function mountLibrary(): Promise<void> {
+async function mountLibrary(
+  initialPage: { items: LibraryItem[]; nextCursor: string | null } = { items: [FIRST, SECOND], nextCursor: null },
+): Promise<void> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -134,7 +166,7 @@ async function mountLibrary(): Promise<void> {
     root!.render(createElement(LibraryView, {
       initialView: "history",
       initialElementView: "people",
-      initialPage: { items: [FIRST, SECOND], nextCursor: null },
+      initialPage,
       projects: [],
       elements: [],
     } as never));
@@ -157,6 +189,34 @@ function card(name: string): HTMLButtonElement | null {
 function closeDetailButton(): HTMLButtonElement | undefined {
   return [...document.body.querySelectorAll("button")]
     .find((button) => button.textContent?.trim() === "Close detail");
+}
+
+/** 工具条那个搜索框 —— 商家关掉详情面之后最常点的下一个地方。 */
+function searchBox(): HTMLInputElement {
+  const input = document.body.querySelector<HTMLInputElement>('input[aria-label^="Search "]');
+  expect(input, "工具条里没有搜索框").not.toBeNull();
+  return input!;
+}
+
+/** 「Load older」那颗键 —— 翻出第二页。 */
+function loadOlderButton(): HTMLButtonElement {
+  const button = [...document.body.querySelectorAll("button")]
+    .find((candidate) => candidate.textContent?.trim() === "Load older");
+  expect(button, "屏幕上没有「Load older」").toBeTruthy();
+  return button as HTMLButtonElement;
+}
+
+/**
+ * 装着网格的那块可滚动区域(`tabIndex={-1}`)—— 那件素材已经不在网格里时,焦点的落脚点。
+ * 按「装着卡片的那个能接焦点的祖先」找,不按 test id:商家看得见的是区域,不是属性。
+ */
+function gridRegion(): HTMLElement {
+  const anyCard = document.body.querySelector<HTMLElement>("[data-library-card]");
+  const region = anyCard
+    ? anyCard.closest<HTMLElement>("div[tabindex='-1']")
+    : document.body.querySelector<HTMLElement>("main div[tabindex='-1']");
+  expect(region, "找不到网格那块区域").not.toBeNull();
+  return region!;
 }
 
 /** 商家的动作:焦点在卡上(Tab 过来的那一下),按下去(Enter)。 */
@@ -189,7 +249,7 @@ describe("R3-F05 素材详情关掉之后,焦点回到原来那张卡", () => {
     expect(openedNode.isConnected, "原来那个按钮节点居然还在文档里").toBe(false);
   });
 
-  it("R3-F05 那件素材在详情面里被删掉了 —— 焦点落在网格里第一张卡上,不是 <body>", async () => {
+  it("R3-F05 那件素材在详情面里被删掉了 —— 焦点落在网格那块区域上,不是 <body>、也不是别人的卡", async () => {
     await mountLibrary();
     await openFromKeyboard("a storefront at dusk");
     // 详情面里删掉它:关掉之后的重取里,它不再回来。
@@ -199,6 +259,55 @@ describe("R3-F05 素材详情关掉之后,焦点回到原来那张卡", () => {
     await settle();
 
     expect(card("a storefront at dusk"), "被删掉的那件素材还在网格里").toBeNull();
-    expect(document.activeElement, "素材没了就把焦点丢回 <body>").toBe(card("a kaya jar on rattan"));
+    // 落脚点是**那块区域**,不是随便哪一张卡:焦点停在别人的卡上,读屏念的是别人的名字,
+    // 一个空格就把那件别人的素材打开了(复核 2026-09-15)。
+    expect(document.activeElement, "素材没了就把焦点丢回 <body>").toBe(gridRegion());
+    expect(document.activeElement, "焦点停在了另一件素材的卡上").not.toBe(card("a kaya jar on rattan"));
+  });
+
+  it("R3-F05 那件素材是「Load older」翻出来的 —— 关掉之后焦点不落在第一页某个陌生人的卡上", async () => {
+    // 商家的素材不止一页:第一页一件,按「Load older」又翻出一件。
+    const OLDER = item({ id: "gen_older", assetId: "ast_9", prompt: "a kopitiam counter at dawn" });
+    cursorAfterClose = "cursor_page_1";
+    olderPage = [OLDER];
+    await mountLibrary({ items: [FIRST], nextCursor: "cursor_page_1" });
+
+    await act(async () => { loadOlderButton().click(); });
+    await settle();
+    expect(card("a kopitiam counter at dawn"), "第二页没翻出来").not.toBeNull();
+
+    // 打开第二页那一件,再关掉。关闭那一次重取只取第一页(`cursor: null`),
+    // 于是这件素材连同商家翻过的那几页一起从网格里消失 —— 它并没有被删掉。
+    await openFromKeyboard("a kopitiam counter at dawn");
+    await act(async () => { closeDetailButton()!.click(); });
+    await settle();
+
+    expect(card("a kopitiam counter at dawn"), "第二页那件素材居然还在网格里").toBeNull();
+    expect(document.activeElement, "焦点被丢给了第一页某一件完全不相干的素材").not.toBe(
+      card("a storefront at dusk"),
+    );
+    expect(document.activeElement, "焦点掉回了 <body>").toBe(gridRegion());
+  });
+
+  it("R3-F05 重取还在飞的时候商家自己把焦点挪走了 —— 归位放手,不把焦点从搜索框抢回来", async () => {
+    await mountLibrary();
+    await openFromKeyboard("a storefront at dusk");
+
+    // 这一次重取按住不放:关掉面板之后、结果回来之前,那几百毫秒是商家的。
+    const releaseReload = holdNextReload();
+    await act(async () => { closeDetailButton()!.click(); });
+
+    // 商家点进搜索框开始打字 —— 工具条一直挂在屏幕上,骨架屏只换掉网格那一块。
+    const search = searchBox();
+    search.focus();
+    expect(document.activeElement, "搜索框没接住焦点").toBe(search);
+
+    // 服务器这时候才回话。
+    await act(async () => { releaseReload(); });
+    await settle();
+
+    // 病象长这样:焦点被从搜索框拽到某张卡上,后面打的字全落在按钮上,
+    // 一个空格就把刚关掉的详情面又打开了(复核 2026-09-15)。
+    expect(document.activeElement, "重取回来把焦点从商家手里抢走了").toBe(search);
   });
 });
