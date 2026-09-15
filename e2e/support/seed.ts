@@ -18,7 +18,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { storageKey } from "../../packages/core/dist/index.js";
+import { storageKey, storageKeyToSrc } from "../../packages/core/dist/index.js";
 import { prisma, runAsTenant, INTERNAL_PER_DISPLAY } from "./db.js";
 import { freshPng } from "./upload-fixture.js";
 
@@ -289,6 +289,61 @@ export async function seedElement(ws: Workspace, name: string): Promise<{ entity
     }),
   );
   return { entityId };
+}
+
+/**
+ * Base reference images on an existing element — the pictures a merchant would already have
+ * linked before the journey starts.
+ *
+ * `variantId: null` on purpose: those are the element's OWN photos, which is the only set the
+ * Library card, the Library element detail's cover picker and `setBaseAsset` will look at
+ * (a variant's photos belong to the variant). The bytes are written for real, because both
+ * read paths gate on `storage.exists(key)` before handing a url out.
+ *
+ * The returned `src` is what the product's picture is served as on both surfaces, so a journey
+ * can assert the Library and the Brand page are showing the same picture rather than two
+ * pictures that merely look alike.
+ */
+export async function seedElementImages(
+  ws: Workspace,
+  entityId: string,
+  count: number,
+): Promise<{ assetId: string; src: string }[]> {
+  const out: { assetId: string; src: string }[] = [];
+  for (let position = 0; position < count; position += 1) {
+    const bytes = freshPng();
+    const assetId = id("asset_ref");
+    const stored = await putLocalObject(ws.orgId, bytes, "png");
+    await runAsTenant(ws.orgId, async () => {
+      await prisma.asset.create({
+        data: {
+          id: assetId,
+          ownerId: ws.orgId,
+          contentHash: stored.contentHash,
+          ext: "png",
+          mime: "image/png",
+          sizeBytes: BigInt(bytes.length),
+          originalFilename: `${assetId}.png`,
+          source: "UPLOAD" as never,
+          width: 1,
+          height: 1,
+          createdAt: at(position),
+        },
+      });
+      await prisma.referenceImage.create({
+        data: {
+          id: id("refimg"),
+          ownerId: ws.orgId,
+          entityId,
+          assetId,
+          position,
+          createdAt: at(position),
+        },
+      });
+    });
+    out.push({ assetId, src: storageKeyToSrc(stored.key) });
+  }
+  return out;
 }
 
 /**

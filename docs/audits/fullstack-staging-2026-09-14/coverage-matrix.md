@@ -170,34 +170,34 @@
 | REAL-02 | EXT-09 EXT-11 | 老商家两扇门回来还能找到作品 | NOT RUN | [步骤](real-scenarios.md#real-02-商家场景老商家两扇门回来还能找到作品) |
 | REAL-03 | EXT-10 EXT-08 | 品牌商品从首页到人物视频 | NOT RUN | [步骤](real-scenarios.md#real-03-商家场景品牌商品从首页到人物视频) |
 | REAL-04 | EXT-10 EXT-08 | 不带人物的创作和 variation | NOT RUN | [步骤](real-scenarios.md#real-04-商家场景不带人物的创作和 variation) |
-| REAL-05 | EXT-03 EXT-01 | 中文组合输入与英文提交 | NOT RUN | [步骤](real-scenarios.md#real-05-商家场景中文组合输入与英文提交) |
+| REAL-05 | EXT-03 EXT-01 | 中文组合输入与英文提交 | PARTIAL | staging第二轮（2026-09-15）：中文草稿「为这款杯子做广告」键入Create composer未持久化，Send为独立按钮点击才发起、期间零POST；但独立核证推翻「Enter绝不自动触发」——StartSomething.tsx:288-294（同款见OttoChatStream.tsx:1205）回车（非组字中）会直接调用会创建Project+ChatThread并起一轮Otto的startCanvas，走查工具本轮恰好只递keydown不触发原生默认动作才未真实发生；记为观察（聊天类产品市场通行行为），非缺陷，但构成过一次真实花钱风险。IME组字事件未测，草稿清空靠离页而非select-all+Backspace（工具限制）。 |
 | REAL-06 | EXT-05 EXT-12 | 多标签同一次提交不重复收费 | NOT RUN | [步骤](real-scenarios.md#real-06-商家场景多标签同一次提交不重复收费) |
 | REAL-07 | EXT-12 EXT-02 | 付费后刷新、离页和回来 | NOT RUN | [步骤](real-scenarios.md#real-07-商家场景付费后刷新、离页和回来) |
-| REAL-08 | EXT-12 EXT-10 | 真实失败之后编辑重试 | NOT RUN | [步骤](real-scenarios.md#real-08-商家场景真实失败之后编辑重试) |
+| REAL-08 | EXT-12 EXT-10 | 真实失败之后编辑重试 | PARTIAL | staging第二轮（2026-09-15）：GenJob 01M288VJS12BBT536TZF5T0S01失败卡显示「That didn't finish / You weren't charged.」无重试按钮（frontend-baseline.md:136④裁定按设计），对话内另有「Try again/Change something」入口；/billing花费历史把RESERVE-110/REFUND+110（11显示积分）合并成一行、金额显示0（新发现R3-F12，有迹可循原则）。核证：worker原判「FSE-204商家侧仍未闭合」被推翻——修复commit 6624e832先于本单，该单本身2026-09-11 13:00 UTC早于该修复与2026-09-12裁定，不能代表当前build；GenJob确实存了失败原因(error='generation provider video submit failed (400)')只是不显示，属裁定内按设计。 |
 | REAL-09 | EXT-05 EXT-12 EXT-10 | 两商家长视频和短任务同时运行 | NOT RUN | [步骤](real-scenarios.md#real-09-商家场景两商家长视频和短任务同时运行) |
 | REAL-10 | EXT-05 EXT-11 | 匿名客户看预览但拿不到别家内容 | NOT RUN | [步骤](real-scenarios.md#real-10-商家场景匿名客户看预览但拿不到别家内容) |
 | REAL-11 | EXT-11 EXT-13 | 撤销分享后旧页面和媒体立即失效 | NOT RUN | [步骤](real-scenarios.md#real-11-商家场景撤销分享后旧页面和媒体立即失效) |
 | REAL-12 | EXT-07 EXT-10 | 上传自有文件并取回真实字节 | NOT RUN | [步骤](real-scenarios.md#real-12-商家场景上传自有文件并取回真实字节) |
-| REAL-13 | EXT-05 EXT-11 | 两个账户隔离与后台权限 | PARTIAL | ledger34：既有商家访问/admin/money及/admin/tenants均回Home无后台数据；admin/layout.tsx外层拒绝。未合法staff对照、未所有API/双租户矩阵，不改角色。 |
-| REAL-14 | EXT-01 | 手机完整找回作品 | PARTIAL | ledger09窄视口Library与reload，存在裁切；手机登录/下载/软键盘未验；desktop-only批准下的探索。 |
-| REAL-15 | EXT-02 | 大屏操作同一画布 | NOT RUN | [步骤](real-scenarios.md#real-15-商家场景大屏操作同一画布) |
-| REAL-16 | EXT-03 EXT-04 | 只用键盘完成安全路径 | PARTIAL | ledger05/07/08/12：键盘打开详情、关闭、清筛、进Brand；焦点回归及全安全路径未证。 |
-| REAL-17 | EXT-04 | 读屏与200%放大检查 | NOT RUN | [步骤](real-scenarios.md#real-17-商家场景读屏与200%放大检查) |
+| REAL-13 | EXT-05 EXT-11 | 两个账户隔离与后台权限 | PARTIAL | staging第二轮（2026-09-15）：TENANT-A2读方向四条B深链全部诚实拒绝（canvas/library/files/brand），零跨租户数据、双边零新增行；核证收窄范围——FRONT-A6分句无收据被撤销（B org今日零Collection行，取的是生成资产深链而非collection，DB核实A_collections1/B_collections0）；TENANT-A2写方向（改名/删除）与反向（拿A链接当B打开）今日不可达（写被禁、无B会话）。历史ledger34后台面证据仍并入REAL-28。 |
+| REAL-14 | EXT-01 | 手机完整找回作品 | PARTIAL | staging第二轮（2026-09-15）量化desktop-only代价：375×812下导航栏仍展开240px（占屏64%）、main仅125px、无横向滚动可达被裁内容，控件被从中截断（"Generation his…"等），26张结果卡缩到7×8–7×11px；已存rail偏好（localStorage fikirtive:nav-rail:v1）使「首次无偏好加载」问题仍待验，键盘激活折叠会覆盖Founder已存偏好故未测。仍是desktop-only批准范围内的探索（wave2-shell.md:403）。 |
+| REAL-15 | EXT-02 | 大屏操作同一画布 | PARTIAL | staging第二轮（2026-09-15）：六个overlay两两配对检测零重叠（节点工具条/手型选择列/缩放簇/对话面板/输入框/积分徽章）；但未测overlay-vs-卡片，且未按"Fit to screen"——frontend-baseline.md:102③记录的历史缺陷（Fit to screen后卡片被45%/32%/42%遮挡、点击误触发Otto说明行）正是本轮未覆盖的场景，"零重叠"只证明overlay彼此不撞，不证明1440/1920下工作区可用。 |
+| REAL-16 | EXT-03 EXT-04 | 只用键盘完成安全路径 | BLOCKED | staging第二轮（2026-09-15）：键盘REACH成立（Tab顺序完整、可到达每个控件），但键盘ACTIVATION本轮工具无法注入——Browser pane只派发keydown不触发原生默认动作（capture阶段监听证实Backspace/Enter/Escape到达焦点输入框但value不变），"Tab到卡片→Enter→Escape"未能用键盘真正跑通；改用鼠标复现了R3-F05（Library对话框Escape后焦点掉到BODY，Connections对话框正确归位）。诚实状态是BLOCKED，不是PARTIAL——工具能力缺口，非产品判定。 |
+| REAL-17 | EXT-04 | 读屏与200%放大检查 | BLOCKED | staging第二轮（2026-09-15）：本轮用document.body.style.zoom='2'不是真浏览器缩放（真缩放会收缩CSS视口至约640px并重新求值media query、触发reflow，而不是缩放进一个被裁切的框）；worker自己点出这一点后仍把"无横向滚动"记成PROVEN，属代理假象。Browser pane不支持真实cmd+=/ctrl+-缩放，诚实状态是BLOCKED；本可换用resize_window到640×360模拟200%但本轮未做。读屏NOT RUN（如实未跑）。 |
 | REAL-18 | EXT-06 | 空库迁移及备份恢复 | NOT RUN | [步骤](real-scenarios.md#real-18-商家场景空库迁移及备份恢复) |
 | REAL-19 | EXT-07 | 当前备份复制核验与既有恢复证据 | NOT RUN | [步骤](real-scenarios.md#real-19-商家场景当前备份复制核验与既有恢复证据) |
 | REAL-20 | EXT-08 | 同一批花费四本记录对齐 | PARTIAL | [步骤](real-scenarios.md#real-20-商家场景同一批花费四本记录对齐) 本地mock账额100→99credits，结算释放hold不再扣款；临时runner错误断言导致exit1，非产品钱路FAIL；真实成本回执未验。 详见run-ledger本地追加。 |
 | REAL-21 | EXT-09 | 真实收码耗时与受控并发登录 | NOT RUN | [步骤](real-scenarios.md#real-21-商家场景真实收码耗时与受控并发登录) |
-| REAL-22 | EXT-10 | 连接状态与停放排期入口 | PARTIAL | ledger30–32：Checking→Nothing connected，IG/FB Not connected、X Unavailable且无Connect；Escape焦点回Add connection；/schedule回Home。未Connect，连接生命周期未验。 |
-| REAL-23 | EXT-11 | 会话退出与旧入口 | NOT RUN | [步骤](real-scenarios.md#real-23-商家场景会话退出与旧入口) |
+| REAL-22 | EXT-10 | 连接状态与停放排期入口 | PASS | staging第二轮（2026-09-15）：Checking（各服务"Status unavailable"+Retry status）→2秒内落定"Nothing connected"（IG/FB "Not connected"、X "Unavailable"）→7秒稳定；"Add connection"对话框可开、Escape可关且焦点正确回到触发按钮；"View X connection"显示服务不可用、无Connect按钮；全程未点Connect。新发现R3-F14另行登记：wave2-shell.md:394-395要求的顶部一句"IG/FB暂不可连接"实话提示，apps/web全文找不到，与本行验收分句无关，按冻结规格条款未实现单独待裁。 |
+| REAL-23 | EXT-11 | 会话退出与旧入口 | PARTIAL | staging第二轮（2026-09-15）：SIGNIN-A4三条分句全PASS——/signup、/forgot-password、/reset-password三处地址匿名curl均308→/login，登录态下三处字节级落在Home（与已登录访客访问/login同一结果）；/login页面markup只有"Continue with Google"/"Continue with email"，零password输入框/Forgot/Sign up/Create account字样；7个规格点名端点加/verify-password、/admin/set-user-password、/admin/create-user、`/reset-password/<token>`、三个email-otp端点共14条路径28次请求全404，对照POST /sign-in/email-otp成功返回400说明路由本身是活的；SIGNIN-A11"没有任何途径能建立密码"在本session能达到的面全部成立，可由server.ts:197 emailAndPassword:{enabled:false}加围栏测试补证。sign-out步骤按指示NOT RUN（保留会话，未点击Sign out）；SIGNIN-A11未做穷举式扫描（只扫了14条named/derived better-auth路径）。 |
 | REAL-24 | EXT-12 | 真实慢网观察和客户端离线重连 | NOT RUN | [步骤](real-scenarios.md#real-24-商家场景真实慢网观察和客户端离线重连) |
-| REAL-25 | EXT-13 | 正式核心页逐页四态和深链 | PARTIAL | ledger核心页面与23–25历史深链已有部分；未每页四态。 |
-| REAL-26 | EXT-13 | Campaign与Schedule旧入口停放 | PARTIAL | ledger32两个根地址均最终/及Home；符合navigation:311–323与父layout/page重定向。非正式排期/Campaign取数验收；子路由未全测。 |
-| REAL-27 | EXT-13 | 退役CRM与Otto旧书签 | NOT RUN | [步骤](real-scenarios.md#real-27-商家场景退役CRM与Otto旧书签) |
-| REAL-28 | EXT-13 EXT-05 | 后台只读运营面 | PARTIAL | ledger34：既有商家访问/admin/money及/admin/tenants均回Home无后台数据；admin/layout.tsx外层拒绝。未合法staff对照、未所有API/双租户矩阵，不改角色。 |
+| REAL-25 | EXT-13 | 正式核心页逐页四态和深链 | PASS | staging第二轮（2026-09-15）：9个核心面（/、/create、/library、/brand、/billing、/profile、/settings、/settings/connections、Hi!画布）登录态全部新标签直开即落自身、零跳转；每页零个≥400状态的同源资源请求（PerformanceResourceTiming，每页14–73个资源）；空态文案已采（Home营销数据、Brand"Nothing in brand voice yet"、Library"No result for…"、Billing"Nothing on hold"）。核证补充边界：跨域且无Timing-Allow-Origin的资源会把responseStatus记成0而非真实状态，文档本身响应不算资源条目——读作"零同源资源失败"而非"零≥400请求"，量级下不足以降级。错误态未自然出现，NOT RUN。 |
+| REAL-26 | EXT-13 | Campaign与Schedule旧入口停放 | PARTIAL | staging第二轮（2026-09-15）：OTTO_VIEW_KEYS 11个视图键（otto-view-param.ts:13-16）全部探测、逐一落到navigation.ts:370-389经SHELL_ROUTES解析的正确目的地，无第12个键，覆盖完整（本半PASS）；但MERCHANT_NAV_REDIRECTS六条旧地址中/schedule、/schedule/analytics、/library/editor在HTTP层实测回200再由客户端redirect()，不是wave2-shell.md:188要求的"一律307"（新发现R3-F10，根因是各自旁挂了loading.tsx），故整体降级为PARTIAL；另三条（/campaign/calendar、/campaign、/crm）在layout层真307。商家侧落点全部正确，差异是机器可见层面。 |
+| REAL-27 | EXT-13 | 退役CRM与Otto旧书签 | PASS | staging第二轮（2026-09-15）：旧版Otto深链/otto?project=&thread=最终落到/?otto=1&project=…&thread=…且参数保留，面板确实打开对应画布/线程（Home头"Canvas · Hi!"+线程chip"Cat drinking coffee video"）；DB层交叉核实thread标题与projectId与页面所见完全一致，比worker自己的读法更强。新发现R3-F11另行登记（不计入本行分句失败）：/crm/anything落到裸Next.js 404、无导航壳无回路，本行验收分句只承诺/crm本身重定向，未点名任意子路径。 |
+| REAL-28 | EXT-13 EXT-05 | 后台只读运营面 | BLOCKED | staging第二轮（2026-09-15）：正控成立——super-admin staff帧能读全部六个运营面（/admin、/admin/money、/admin/tenants、/admin/queue、/admin/reconcile、/admin/audit），未记录任何租户邮箱、未点mint/adjust/refund/retry/clear任何控件。但TENANT-A6验收原文要求的"发一次积分、退一次款、跑一次对账"三个动作全部是写，被本轮零写入边界禁止；核证明确推翻worker自报的PARTIAL——零个TENANT-A6子分句真正落地，PARTIAL意味着"验收行部分兑现"，而这里一条都没兑现，诚实状态是BLOCKED（零写边界结构性挡住，不是产品缺陷）。/api/ops/dlq证据被核证剔除：该端点本就免鉴权（proxy.ts matcher排除，同/api/health），匿名curl拿到同一个503，证明不了staff帧或super-admin权限。 |
 | REAL-29 | EXT-06 EXT-12 | 故障与恢复隔离验证 | NOT RUN | [步骤](real-scenarios.md#real-29-商家场景故障与恢复隔离验证) |
-| REAL-30 | EXT-01 EXT-02 EXT-04 | 关键确认页跨设备对照 | NOT RUN | [步骤](real-scenarios.md#real-30-商家场景关键确认页跨设备对照) |
+| REAL-30 | EXT-01 EXT-02 EXT-04 | 关键确认页跨设备对照 | PASS | staging第二轮（2026-09-15）：Hi!线程1280×720与1920×1080两个视口逐项比对完全一致——5张待批确认卡（"Generate·11 credits"×2、"Generate·1 credit"、"Try again"、"Make all videos (2 clips)"）、卡片宽206px、对话面板278px、余额"9,999,797.8 credits"，数量/尺寸/余额/按钮文案四项全同；未点击任何卡片。 |
 
-| REAL-31 | EXT-13 EXT-11 | 账户菜单与个人资料身份一致 | PARTIAL | ledger03/11截图显示邮箱一致；27–29临时改名与恢复均刷新持久，末次Billing不变；菜单即时旧名R3-F04，邮箱DOM矛盾未定位，仍PARTIAL。 |
+| REAL-31 | EXT-13 EXT-11 | 账户菜单与个人资料身份一致 | PASS | staging第二轮（2026-09-15）判定R3-F01为RESOLVED、工具取证假象而非产品缺陷：四次独立读取（首次加载/刷新/新标签/离开再返回）/profile的#profile-email DOM value均为17字符、非空、与账户邮箱一致；根因是浏览器工具的无障碍树read_page从不打印input的value（对Display name输入框同样如此，DOM与截图均能证实非空），并非应用清空了邮箱。本条不牵涉规格分句，关掉的是取证方法问题。 |
 
 ## 计数
 
@@ -218,3 +218,9 @@ FRONT-A11分句补证（不增加原65行、不计整条PASS）：个人显示�
 工作区补证（ledger33）：3空格和仅原名前后空格均Save disabled，最后还原原名；未Save，无工作区写入。仅校验窄断言成立，FRONT-A11完整验收仍未通过。
 
 本地链路与真实验收分界：mock供应商、预制Otto卡的真实入队/独立worker/落文件/账本证据仅加入适用扩展PARTIAL。原页收敛断言未跑，后续只读重开成功不补成该断言PASS；所有真实供应商交付行保持原状态，不新增PASS。
+
+### 本次回填边界（2026-09-15）
+
+staging第二轮（登录态只读旅程）：build `14bcd038`，以Founder org `founder`（租户A，super-admin）已登录会话跑4个并行worker，全程未登出、US$0、零远端写入——只读证明见`docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r2/workflow-r2-result.json`的`result.results[1].writesMade`（自2026-09-15 03:55 UTC起CreditLedger/GenJob/Generation/ChatMessage/CanvasNode/Project/ChatThread零新增或更新行；CreditAccount(founder)余额与更新时间未变）。
+
+以上REAL-05/08/13/14/15/16/17/22/23/25/26/27/28/30/31共十五行的状态与证据已按本轮独立核证员（`result.verdicts[*]`）的最终裁定回填，裁定推翻了worker自报的若干条：REAL-26自报PASS降PARTIAL（wave2-shell.md:188"一律307"与实测不符，见R3-F10）、REAL-15自报PASS降PARTIAL（overlay-vs-卡片与Fit to screen未测）、REAL-17自报PARTIAL收紧到BLOCKED（zoom代理法不是真缩放）、REAL-28自报PARTIAL收紧到BLOCKED（TENANT-A6三个子分句零兑现，被写边界结构性挡住）、REAL-05的"Enter绝不自动触发"分句被推翻（StartSomething.tsx:288-294，本轮真实花钱风险）、REAL-08的"FSE-204商家侧仍未闭合"分句被推翻（修复commit 6624e832先于证据引用的那单）、REAL-13的FRONT-A6分句被撤销（B org今日零Collection行，无该分句的攻击面可测）。本节只回填这十五行，不新增本轮未触达的其余行，也不据此宣告全绿。新发现七条（R3-F09–R3-F15）与两条既有发现的收尾更新（R3-F01 RESOLVED、R3-F05复现并定根因）另行登记在`findings-catalog.md`，本处不重复列出。
