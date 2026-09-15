@@ -140,6 +140,53 @@ describe("MONEY-A10 商家侧披露:反向 —— 换掉常量,billing 上的数
     vi.doUnmock("@fikirtive/core/pricing-config");
     vi.resetModules();
   });
+
+  it("MONEY-A10:把单轮上限**次数**换掉,billing 念出来的也得跟着换(不是抄死的 5)", async () => {
+    // 上一条证的是两个**价目标签**现算。次数是另一半,而它走的是另一条路:billing 直接念
+    // `{String(OTTO_CHAT_MAX_SEARCHES_PER_TURN)}`,不经过任何标签。R3-F06 撤掉输入框那一行
+    // 之后,billing 是商家唯一读得到这个上限的地方 —— 于是这半边的反推证明必须自己站住,
+    // 否则有人把它改成字面量 5，全套测试照样绿而商家读到的会在下次调上限时变成假话。
+    //
+    // `importOriginal` 展开真模块再覆盖三个值:billing 的 import 图里还有别的 pricing-config
+    // 消费者,只给三个导出的 mock 会让它们炸成「No X export is defined」而不是真判定。
+    vi.resetModules();
+    vi.doMock("@fikirtive/core/pricing-config", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("@fikirtive/core/pricing-config")>()),
+      searchUnitChargeInternal: () => 7,
+      searchChargeInternal: (n: number) => n * 7,
+      OTTO_CHAT_MAX_SEARCHES_PER_TURN: 9,
+    }));
+    vi.doMock("@/lib/account-actions", () => ({ getMyAccount: async () => ({ error: "not signed in" }) }));
+    vi.doMock("@/lib/billing-actions", () => ({ listCreditPacks: async () => ({ packs: [] }) }));
+    vi.doMock("@/lib/spend-history-data", () => ({ getSpendOverview: async () => ({ error: "unavailable" }) }));
+    vi.doMock("@/lib/owner-settings-actions", () => ({
+      getOwnerSettings: async () => ({ spendCapCredits: 0 }),
+      setOwnerSetting: async () => ({ ok: true as const }),
+    }));
+    vi.doMock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+
+    const { default: BillingPage } = await import("@/app/billing/page");
+    const html = asReadText(renderToStaticMarkup(await BillingPage({ searchParams: Promise.resolve({}) })));
+
+    // 次数跟着常量走。比的是**那句话里**的数字,不是整页里出现过 9 ——
+    // 光比 "9" 会被页面上任何一个 9(余额、价格、日期)喂成假绿。
+    expect(html, "billing 没有念出被换掉的单轮上限次数 —— 这个数是抄死的").toContain("most 9");
+    expect(
+      html,
+      `billing 仍然念着真实的上限次数 ${String(OTTO_CHAT_MAX_SEARCHES_PER_TURN)} —— 说明它没跟常量走`,
+    ).not.toContain(`most ${String(OTTO_CHAT_MAX_SEARCHES_PER_TURN)} `);
+    // 封顶金额那一句同样跟着走(9 次 × 0.7 = 6.3),真值不许残留。
+    expect(html, "封顶金额没跟着换").toContain("6.3 credits");
+    expect(html, "封顶金额还留着真值").not.toContain(turnMaxLabel);
+
+    vi.doUnmock("@fikirtive/core/pricing-config");
+    vi.doUnmock("@/lib/account-actions");
+    vi.doUnmock("@/lib/billing-actions");
+    vi.doUnmock("@/lib/spend-history-data");
+    vi.doUnmock("@/lib/owner-settings-actions");
+    vi.doUnmock("next/navigation");
+    vi.resetModules();
+  });
 });
 
 describe("MONEY-A10 商家侧披露:与 Otto 说明书同一个口径", () => {

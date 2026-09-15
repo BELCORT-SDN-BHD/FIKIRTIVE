@@ -35,7 +35,6 @@
  *
  * 另外两面:billing 价目区(同源、措辞更详)与 Otto 的 URL 导入(无 UI,披露走动作前报价)。
  */
-import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
@@ -1872,6 +1871,18 @@ describe("R3-F06 上传入口不再常驻理解价目说明,而价目本身仍�
     const entries = new Set<string>(UPLOAD_ENTRIES.map(([file]) => file));
     for (const exemption of EXEMPTIONS) {
       expect(entries.has(exemption.file), `${exemption.file} 同时出现在入口表和豁免表`).toBe(false);
+
+      // ⓪ 豁免面也不许把那段说明抄回来。
+      //
+      //    上面那道 `it.each(UPLOAD_ENTRIES)` 只走**入口表**,豁免表(今天只有 EditDesk)不在
+      //    它的迭代里 —— 于是 R3-F06 的清场在豁免面上留了个洞:那里贴回一段
+      //    「Uploads are understood automatically …」,两道围栏都不会红。改版前这一格是有的
+      //    (旧版断言豁免面不含 `UnderstandingCostHint`),翻面时跟着组件名一起删掉了;
+      //    这里按**商家读到的句子**补回来,比组件名更难绕过。
+      expect(
+        codeOf(exemption.file),
+        `${exemption.file} 抄了一份理解价目文案`,
+      ).not.toContain(FORMER_HINT_SENTENCE);
 
       // ① 规格出处必须读得到,而且那一段真的在谈这个豁免。
       const [specFile] = exemption.spec.split("#");
