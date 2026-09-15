@@ -30,6 +30,7 @@
 import { newId, normalizeNameKey, productRecordData, stripProductIdentity } from "@fikirtive/core";
 import { Prisma } from "../generated/prisma/client.js";
 import { prisma } from "./client.js";
+import { reconcileEntityCover } from "./entity-cover.js";
 
 /** 交互式事务里的 client;裸 `prisma` 也满足这个形状。 */
 type Tx = Prisma.TransactionClient;
@@ -192,7 +193,10 @@ async function createProductIdentity(
       type: "PRODUCT",
       name: args.name.slice(0, 120),
       brandId,
-      baseAssetId: assetIds[0] ?? null,
+      // 封面**不在这里**决定 —— 挂完图之后由 `reconcileEntityCover` 一处说了算
+      // (Founder 2026-09-15 裁决;家规 §7.3)。这一行从前是 `assetIds[0] ?? null`,
+      // 与其他四条挂图路各写一遍同一句话,正是 Library 与 Brand 两张脸的来源。
+      baseAssetId: null,
     },
   });
   for (let i = 0; i < assetIds.length; i++) {
@@ -200,6 +204,8 @@ async function createProductIdentity(
       data: { id: newId(), ownerId, entityId, assetId: assetIds[i]!, position: i, brandId },
     });
   }
+  // 挂上第一张图 ⇒ 它就是封面(裁决的正面)。一张都没挂就还是 NULL。
+  await reconcileEntityCover(tx, { ownerId, entityId });
   return entityId;
 }
 
