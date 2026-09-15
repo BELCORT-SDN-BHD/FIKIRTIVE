@@ -57,6 +57,23 @@ describe("buildBuildInfoResponse(E2E-STG-VERSION P1-012)", () => {
     expect(body.worker).toEqual([{ role: "worker-compute", sha: "fedcba98", at: at.toISOString() }]);
   });
 
+  /** R3-F19(2026-09-15):退休行连同它冻住的那个 sha 一起消失——这个端点答的是「现在跑的是
+   *  哪次部署」,一行没人写的旧 sha 只会把答案搞错。 */
+  it("R3-F19: 一整天没人写的行不进列表;5 分钟前跳过的班照常在列", () => {
+    const stale = new Date(NOW.getTime() - 5 * 60_000);
+    const body = buildBuildInfoResponse({
+      env: {},
+      processStartedAt: STARTED,
+      now: NOW,
+      heartbeatRows: [
+        { id: "worker", commitSha: "ca864b28ca864b28", at: new Date(NOW.getTime() - 2 * 24 * 3_600_000) },
+        { id: "worker-wait", commitSha: "bbbbbbbb22222222", at: stale },
+      ],
+      latestMigration: null,
+    });
+    expect(body.worker).toEqual([{ role: "worker-wait", sha: "bbbbbbbb", at: stale.toISOString() }]);
+  });
+
   it("E2E-STG-VERSION: 两班心跳 → 两行,各自角色各自 sha", () => {
     const at1 = new Date("2026-09-04T11:59:00.000Z");
     const at2 = new Date("2026-09-04T11:58:00.000Z");

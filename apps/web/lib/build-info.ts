@@ -25,7 +25,7 @@
  * 输入,这里只负责把它们拼成响应形状,方便单测覆盖每一种「读不到」的组合。
  */
 import { shortSha } from "@fikirtive/core/env-contract";
-import { buildInfo } from "@/lib/health";
+import { buildInfo, workerRetired } from "@/lib/health";
 
 export type BuildInfoWorkerRow = { role: string; sha: string | null; at: string };
 
@@ -67,11 +67,18 @@ export function buildBuildInfoResponse(params: {
   latestMigration: LatestMigration | null;
 }): BuildInfoResponse {
   const web = buildInfo(params.env);
-  const worker: BuildInfoWorkerRow[] = (params.heartbeatRows ?? []).map((row) => ({
-    role: row.id,
-    sha: shortSha(row.commitSha),
-    at: row.at.toISOString(),
-  }));
+  // 2026-09-15 R3-F19:整整一天没人写的行不再算一班(`lib/health.ts` 的 `workerRetired`,
+  // 与 /api/health 的 `workers` 同一把尺,两个匿名端点不会对「今天有哪几班」各说各话)。
+  // 这里比 /api/health 更要命:退休行还**带着它冻住那一刻的 sha**,而这个端点整个存在理由
+  // 就是「现在跑的是哪次部署」——一行没人写的旧 sha 正是 #797 那次「绿灯盖住裂开的部署」。
+  // 只退休一整天没动静的行;几分钟前停跳的那一班照常在列(`at` 如实报,自己看得出来)。
+  const worker: BuildInfoWorkerRow[] = (params.heartbeatRows ?? [])
+    .filter((row) => !workerRetired(row.at, params.now))
+    .map((row) => ({
+      role: row.id,
+      sha: shortSha(row.commitSha),
+      at: row.at.toISOString(),
+    }));
   return {
     web: { sha: web.sha, ref: web.ref, startedAt: params.processStartedAt.toISOString() },
     worker,
