@@ -1,0 +1,11 @@
+[worker] role=all — consuming ingest×1, render×1, caption×1, gen×1, refgen×1, research×1, publish×1, understand×1; supervision(reapers, publish scheduler, nightly backup)=on sha=unknown
+[worker] provider REQUESTS: hard cap 6 concurrent per replica (PROVIDER_MAX_CONCURRENT_REQUESTS; shared by gen + refgen — one account). Job slots do NOT bound this: one image job fans out up to its image count in paid requests. Account budget 10 (usable 8 after headroom 2). Keep replicas × 6 ≤ 8.
+[worker] postgres connections: prisma 10 + pg-boss 10 = 20 per replica. Budget check is replicas × this, PLUS web (prisma 10 + pg-boss 2 per replica), against the database's max_connections.
+[worker] L1 publish chain is PARTIALLY configured — publishing will fail closed. present=[PUBLIC_BASE_URL] missing=[MEDIA_PROXY_SECRET, TOKEN_ENCRYPTION_KEY]. Set the missing var(s) (see .env.example) so web+worker share MEDIA_PROXY_SECRET/TOKEN_ENCRYPTION_KEY, or unset all to keep the chain inert.
+[worker] asset understanding — platform spend ALERT line $50.00 per day (switch OFF — paused, nothing is discarded). Since 2026-09-02 that line only ALERTS (founderAlert, at most once a day) and never blocks: merchants are billed per understood file at the price locked when its row is created (MONEY-A9), so their own balance is the real ceiling. Only the switch pauses reading — and it pauses, it does not discard.
+[understand] paused — the switch is off. Queued files stay queued.
+[worker] started — role=all — consuming ingest×1, render×1, caption×1, gen×1, refgen×1, research×1, publish×1, understand×1; supervision(reapers, publish scheduler, nightly backup)=on
+[worker] stripe reconcile skipped: STRIPE_SECRET_KEY is not set — nothing to reconcile against (0 purchase alert(s) retried)
+[worker] ledger conservation: every org's balance matches its ledger; 0 settle(s) clamped in the last 24h totalling 0 internal
+[worker] heartbeat worker 2026-09-14T04:36:05.835Z
+[worker] SIGTERM — shutting down

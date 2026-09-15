@@ -1,0 +1,15 @@
+
+> @fikirtive/db@0.1.0 test /Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/db
+> vitest run "src/__tests__/canvas-settlement-backlog.test.ts" "-t" "attempts every one of 1 001 failing boards"
+
+
+[1m[46m RUN [49m[22m [36mv3.2.6 [39m[90m/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/db[39m
+
+ [32m✓[39m src/__tests__/canvas-settlement-backlog.test.ts [2m([22m[2m77 tests[22m[2m | [22m[33m76 skipped[39m[2m)[22m[33m 1914[2mms[22m[39m
+   [33m[2m✓[22m[39m a backlog larger than any book the sweep used to keep[2m > [22mattempts every one of 1 001 failing boards [33m 1807[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m1 passed[39m[22m[2m | [22m[33m76 skipped[39m[90m (77)[39m
+[2m   Start at [22m 12:32:47
+[2m   Duration [22m 3.05s[2m (transform 560ms, setup 846ms, collect 46ms, tests 1.91s, environment 0ms, prepare 51ms)[22m
+

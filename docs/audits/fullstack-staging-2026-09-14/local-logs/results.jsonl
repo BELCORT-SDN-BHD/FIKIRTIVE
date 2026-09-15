@@ -1,0 +1,24 @@
+{"stage": "install", "command": ["pnpm", "install", "--frozen-lockfile"], "exit": 1, "seconds": 27.03, "database": "round3_base_test"}
+{"stage": "install-node22", "command": ["pnpm", "install", "--frozen-lockfile"], "exit": 0, "seconds": 28.82, "database": "round3_base_test"}
+{"stage": "quality", "command": ["pnpm", "quality"], "exit": 1, "seconds": 1349.36, "database": "round3_base_test"}
+{"stage": "otto", "command": ["pnpm", "--filter", "@fikirtive/otto", "test"], "exit": 0, "seconds": 62.68, "database": "round3_base_test"}
+{"stage": "web-migrate", "command": ["pnpm", "--filter", "@fikirtive/db", "exec", "prisma", "migrate", "deploy"], "exit": 0, "seconds": 12.68, "database": "round3_web_db9e0b6ca5a4_test"}
+{"stage": "web-tests", "command": ["pnpm", "--filter", "@fikirtive/web", "test"], "exit": 0, "seconds": 332.72, "database": "round3_web_db9e0b6ca5a4_test"}
+{"stage": "worker-migrate", "command": ["pnpm", "--filter", "@fikirtive/db", "exec", "prisma", "migrate", "deploy"], "exit": 0, "seconds": 2.3, "database": "round3_worker_29644e3cec20_test"}
+{"stage": "worker-tests", "command": ["pnpm", "--filter", "@fikirtive/worker", "test"], "exit": 0, "seconds": 105.97, "database": "round3_worker_29644e3cec20_test"}
+{"stage": "web-build", "command": ["pnpm", "--filter", "@fikirtive/web", "build"], "exit": 0, "seconds": 155.98, "database": "round3_web_db9e0b6ca5a4_test"}
+{"stage": "e2e-migrate", "command": ["pnpm", "--filter", "@fikirtive/db", "exec", "prisma", "migrate", "deploy"], "exit": 0, "seconds": 5.07, "database": "round3_e2e_8fe100956c3a_test"}
+{"stage": "e2e-types", "command": ["pnpm", "exec", "tsc", "-p", "e2e/tsconfig.json"], "exit": 0, "seconds": 4.92, "database": "round3_e2e_8fe100956c3a_test"}
+{"stage": "e2e-count", "command": ["node", "e2e/count-journeys.mjs"], "exit": 0, "seconds": 0.13, "database": "round3_e2e_8fe100956c3a_test"}
+{"stage": "e2e-browser", "command": ["pnpm", "e2e"], "exit": 0, "seconds": 123.33, "database": "round3_e2e_8fe100956c3a_test"}
+{"stage": "dbrecheck-migrate", "command": ["pnpm", "--filter", "@fikirtive/db", "exec", "prisma", "migrate", "deploy"], "exit": 0, "seconds": 1.79, "database": "round3_dbrecheck_0a20a17d9ae6_test"}
+{"stage": "dbrecheck-pressure", "command": ["pnpm", "--filter", "@fikirtive/db", "test", "src/__tests__/canvas-settlement-backlog.test.ts", "-t", "attempts every one of 1 001 failing boards"], "exit": 0, "seconds": 3.88, "database": "round3_dbrecheck_0a20a17d9ae6_test"}
+{"stage": "dbrecheck-consent", "command": ["pnpm", "--filter", "@fikirtive/db", "test", "src/consent-runtime.test.ts", "-t", "assigns receivedAt from the tuple cursor"], "exit": 0, "seconds": 6.51, "database": "round3_dbrecheck_0a20a17d9ae6_test"}
+{"stage": "dbrecheck-deleted-card", "command": ["pnpm", "--filter", "@fikirtive/db", "test", "src/__tests__/canvas-node-status-check.test.ts", "-t", "changes zero rows, and the card stays deleted"], "exit": 0, "seconds": 5.38, "database": "round3_dbrecheck_0a20a17d9ae6_test"}
+{"stage": "fullstack-migrate", "command": ["pnpm", "--filter", "@fikirtive/db", "exec", "prisma", "migrate", "deploy"], "exit": 0, "seconds": 1.54, "database": "round3_fullstack_e14797a21edd_test"}
+{"stage": "fullstack-browser", "command": ["pnpm", "exec", "playwright", "test", "-c", "docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-runner/playwright.config.ts"], "exit": 1, "seconds": 26.62, "database": "round3_fullstack_e14797a21edd_test"}
+{"stage": "fullstack-migrate2", "command": ["pnpm", "--filter", "@fikirtive/db", "exec", "prisma", "migrate", "deploy"], "exit": 0, "seconds": 3.73, "database": "round3_fullstack_814cec75f2d4_test"}
+{"stage": "fullstack-browser2", "command": ["pnpm", "exec", "playwright", "test", "-c", "docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-runner/playwright.config.ts"], "exit": 1, "seconds": 119.99, "database": "round3_fullstack_814cec75f2d4_test"}
+{"stage": "fullstack-migrate3", "command": ["pnpm", "--filter", "@fikirtive/db", "exec", "prisma", "migrate", "deploy"], "exit": 0, "seconds": 5.24, "database": "round3_fullstack_9785b924a96c_test"}
+{"stage": "fullstack-browser3", "command": ["pnpm", "exec", "playwright", "test", "-c", "docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-runner/playwright.config.ts"], "exit": 1, "seconds": 29.77, "database": "round3_fullstack_9785b924a96c_test"}
+{"stage": "fullstack-readback", "command": ["pnpm", "exec", "playwright", "test", "-c", "docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-runner/readback.config.ts"], "exit": 0, "seconds": 29.78, "database": "round3_fullstack_9785b924a96c_test"}
