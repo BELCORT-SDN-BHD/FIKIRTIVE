@@ -31,7 +31,17 @@
  * 零花钱:只碰 Organization / Contact / ConsentEvent,不 reserve、不 settle、不入账。
  */
 import { describe, it, expect, beforeEach } from "vitest";
+import { createRequire } from "node:module";
 import { prisma } from "../index.js";
+import { buildPoolConfig, SESSION_TIMEZONE_OPTION } from "../client.js";
+
+const requireFromHere = createRequire(import.meta.url);
+type ConnectionParametersCtor = new (config: unknown) => { options?: string };
+// pg 的 package.json 把 "./lib/*" 也导了出来,所以这里拿到的就是 pg 自己算
+// 启动参数用的那个类 —— 断言打在真实实现上,不是打在我们自己的复制品上。
+const ConnectionParameters = requireFromHere(
+  "pg/lib/connection-parameters",
+) as ConnectionParametersCtor;
 
 const ORG = "tz-org";
 const CONTACT = "tz-contact";
@@ -88,5 +98,46 @@ describe("商家时刻不随数据库服务端时区漂移", () => {
     const expected = String(INSTANT.getTime() / 1000);
     expect(Number(rows[0]?.occurred)).toBe(Number(expected));
     expect(Number(rows[0]?.received)).toBe(Number(expected));
+  });
+});
+
+/**
+ * 结构性回归闸:时区钉子必须真的活到 pg 手里。
+ *
+ * 上面那条行为测试只有在**非 UTC 服务端**上才有分辨力 —— CI 的 postgres:16 默认 UTC,
+ * 钉子被谁摘掉了它都照样绿。这一组不连库,直接问 pg 自己:你最终会用哪串 options?
+ *
+ * 它挡的是一个静默失效:pg 的 ConnectionParameters
+ * (node_modules/pg/lib/connection-parameters.js:60)执行
+ *   config = Object.assign({}, config, parse(config.connectionString))
+ * 连接串解析出的字段盖在显式配置**之上**。连接串里带 `?options=…` 时
+ * (Neon 文档的 `options=endpoint%3D…` / `options=project%3D…` 正是这形状),
+ * 显式写的 `-c timezone=UTC` 会被整条替换,不报错、不警告,商家时刻就又开始随服务端时区漂。
+ */
+describe("会话时区钉子必须活到 pg 手里(结构性,不连库)", () => {
+  const effectiveOptions = (url: string): string =>
+    String(new ConnectionParameters(buildPoolConfig(url)).options ?? "");
+
+  it("连接串没带 options 时,钉子在", () => {
+    expect(effectiveOptions("postgresql://u@h:5432/d")).toContain(SESSION_TIMEZONE_OPTION);
+  });
+
+  it("连接串带了 options 时,钉子还在,且原有的 options 没被丢掉", () => {
+    const options = effectiveOptions(
+      "postgresql://u@h:5432/d?options=endpoint%3Dep-cool-darkness-123456",
+    );
+    expect(options).toContain(SESSION_TIMEZONE_OPTION);
+    // 组合,不是二选一:Neon 靠这条 endpoint 路由,摘掉它连不上。
+    expect(options).toContain("endpoint=ep-cool-darkness-123456");
+  });
+
+  it("并且证明「直接写 options」这条老写法确实会被连接串悄悄盖掉", () => {
+    // 这一条不是测我们的代码,是把 pg 的合并顺序钉成事实 —— 哪天 pg 改了行为,
+    // 这里会先红,提醒上面那套组合逻辑可以简化,而不是等商家时刻又开始漂。
+    const naive = new ConnectionParameters({
+      connectionString: "postgresql://u@h:5432/d?options=endpoint%3Dep-cool-darkness-123456",
+      options: SESSION_TIMEZONE_OPTION,
+    });
+    expect(String(naive.options ?? "")).not.toContain(SESSION_TIMEZONE_OPTION);
   });
 });
