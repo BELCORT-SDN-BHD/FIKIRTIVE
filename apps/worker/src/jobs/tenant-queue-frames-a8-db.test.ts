@@ -16,8 +16,12 @@
  *   · `@fikirtive/otto` 的 `run` —— research 的模型调用（真花钱）。钱路本身（reserve / settle /
  *     refund、账本行）不换，是真的。
  *   · publish 的 `execute`（handler 自带的注入点）—— Meta Graph 外呼。
- * `../storage.js` 不是替身：这里用的就是生产同一个 `LocalDiskStorage` 类，只是根目录指向一个
- * 临时目录，并在 `put` / `ffmpegInput` / `readStream` 三个入口挂了一个**帧内探针**（见下）。
+ * `../storage.js` 不是另写的替身：这里用的是 `LocalDiskStorage` —— 生产工厂 `createStorage()`
+ * （`apps/worker/src/storage.ts:9`）在 `STORAGE_DRIVER` 不设时返回的正是这个类
+ * （`packages/storage/src/index.ts:946-964`），也就是 dev/CI 每天跑的那一条存储路；这里只把根目录
+ * 指向一个临时目录，并在 `put` / `ffmpegInput` / `readStream` 三个入口挂了一个**帧内探针**（见下）。
+ * 边界说清楚：staging / production 今天跑的是 `STORAGE_DRIVER=r2`，同一个工厂返回的是 `R2Storage`
+ * ——那条存储路本文件不覆盖。
  * 生成引擎更不是替身：`GENERATION_PROVIDER` 不设 + NODE_ENV=test ⇒ 工厂自己解析到离线
  * MockProvider（$0、不出网），这正是 dev/CI 每天跑的那一条；本文件第一条用例把这件事钉住。
  *
@@ -37,6 +41,7 @@
  * 自欺 —— 要证的是「这一单帧建立之后的读写过值比对」，就得点这条队列真正受守卫的那张表。
  */
 import { randomUUID, randomBytes, createHash } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 
 /** 帧内探针的全部状态 + 两个夹具。`vi.mock` 的工厂只能引用 hoisted 值，所以都放这里。 */
@@ -76,7 +81,8 @@ vi.mock("@fikirtive/core/schedule-draft", async (importOriginal) => {
   return { ...actual, PUBLISHING_AVAILABLE: true };
 });
 
-// 生产的同一个 LocalDiskStorage 类，根目录换成临时目录；只在三个入口前插一次帧内探针。
+// 生产工厂在 STORAGE_DRIVER 不设时返回的同一个 LocalDiskStorage 类（dev/CI 那条路；生产今天是
+// R2Storage），根目录换成临时目录；只在三个入口前插一次帧内探针。
 vi.mock("../storage.js", async () => {
   const actual = await vi.importActual<typeof import("@fikirtive/storage")>("@fikirtive/storage");
   const real = new actual.LocalDiskStorage(h.dataDir);
@@ -104,6 +110,7 @@ import { prisma, reserveCredits } from "@fikirtive/db";
 import { getPrincipal, runAsTenant } from "@fikirtive/db/principal";
 import { newId, storageKey, storageKeyToSrc, TRANSCRIPT_GENERATION } from "@fikirtive/core";
 import { createGenerationProvider } from "@fikirtive/generation";
+import { provider } from "../generation.js";
 import { storage } from "../storage.js";
 import { handleCaption } from "./caption.js";
 import { handleGen } from "./gen.js";
@@ -139,6 +146,17 @@ const WHISPER_JSON = JSON.stringify({
 
 type FrameProof = { principal: unknown; read: string; write: string };
 const proofs: Record<string, FrameProof> = {};
+
+/** 规格 A8 点名的七条队列，以及每条「真正受守卫」的那张表 —— ⑧ 的汇总按这张表逐条核。 */
+const QUEUE_TABLE: ReadonlyArray<readonly [queue: string, model: string]> = [
+  ["ingest", "Asset"],
+  ["caption", "CaptionJob"],
+  ["gen", "GenJob"],
+  ["refgen", "RefGenJob"],
+  ["render", "RenderJob"],
+  ["publish", "ScheduledPost"],
+  ["research", "ChatMessage"],
+];
 
 /** 捕捉守卫抛出的**原话**。没抛就是闸没关上 —— 返回一句会让断言当场变红的话。 */
 async function rejection(fn: () => Promise<unknown>): Promise<string> {
@@ -243,6 +261,9 @@ afterAll(async () => {
     await prisma.organization.deleteMany({ where: { id: owner } });
   }
   await prisma.$disconnect();
+  // 真字节写在 `h.dataDir` 这个临时根目录下 —— 跑完自己收掉，别在开发机与 CI 上越积越多。
+  // 先例：apps/worker/src/jobs/gen-output-dimensions.test.ts:223。
+  await rm(h.dataDir, { recursive: true, force: true });
 }, DB_CASE_TIMEOUT_MS);
 
 describe("TENANT-A8 —— 七条队列各一单：跑到终态，且帧内异租户注入被拒（真库、真守卫）", () => {
@@ -250,6 +271,10 @@ describe("TENANT-A8 —— 七条队列各一单：跑到终态，且帧内异�
     const resolved = createGenerationProvider({ NODE_ENV: "test" } as NodeJS.ProcessEnv);
     expect(resolved.name).toBe("mock");
     expect(process.env.GENERATION_PROVIDER).toBeUndefined();
+    // 上一行验的是「现搭一个工厂会解析成什么」。真正被 gen / refgen 两条队列调用的，是
+    // `../generation.js` 在 import 时解析好的那**一个实例**（apps/worker/src/generation.ts:26）——
+    // 要钉的就得是它本人，否则钉住的只是一个测试自己新建、跟 handler 无关的对象。
+    expect(provider.name).toBe("mock");
   });
 
   it("TENANT-A8 ① ingest：一单跑到终态（探针写回自己那一行），帧内点名 B 的 Asset 读写被拒", async () => {
@@ -483,17 +508,18 @@ describe("TENANT-A8 —— 七条队列各一单：跑到终态，且帧内异�
     expectFramedAndFenced("research", A, "ChatMessage");
   }, DB_CASE_TIMEOUT_MS);
 
-  it("TENANT-A8 ⑧ 七条队列的拒绝签名一次摆齐：七个帧全是 tenant-direct + 本单租户，十四笔注入全被同一句话拒掉", () => {
-    const table: Array<[string, string]> = [
-      ["ingest", "Asset"],
-      ["caption", "CaptionJob"],
-      ["gen", "GenJob"],
-      ["refgen", "RefGenJob"],
-      ["render", "RenderJob"],
-      ["publish", "ScheduledPost"],
-      ["research", "ChatMessage"],
-    ];
-    expect(Object.keys(proofs).sort()).toEqual(table.map(([q]) => q).sort());
-    for (const [queue, model] of table) expectFramedAndFenced(queue, A, model);
+  it("TENANT-A8 ⑧ 七条队列的拒绝签名一次摆齐：七个帧全是 tenant-direct + 本单租户，十四笔注入全被同一句话拒掉", (ctx) => {
+    // 这一条是 ①–⑦ 的横向汇总：每条队列的现场都由它自己那条用例先断过一次
+    // （`expectFramedAndFenced`），这里只是把七份签名并排再看一遍。所以它**不假设**别的用例跑过
+    // ——单独跑这一条（`-t` / `--shard` / vitest retry）时 `proofs` 是空的，那不是产品出事，是
+    // 没有现场可汇总：显式跳过并写明理由，而不是红一条与产品无关的。
+    expect(QUEUE_TABLE).toHaveLength(7); // 规格点名的七条队列，一条不少地在这张表上
+    const recorded = QUEUE_TABLE.filter(([queue]) => proofs[queue] !== undefined);
+    if (recorded.length === 0) {
+      ctx.skip("①–⑦ 没有在这次运行里跑过（proofs 为空）——本条只汇总它们留下的现场，自己不产生证据");
+      return;
+    }
+    expect(Object.keys(proofs).sort()).toEqual(recorded.map(([queue]) => queue).sort());
+    for (const [queue, model] of recorded) expectFramedAndFenced(queue, A, model);
   });
 });

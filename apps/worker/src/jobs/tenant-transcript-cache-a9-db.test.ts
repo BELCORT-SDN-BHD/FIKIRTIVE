@@ -10,9 +10,12 @@
  * 形状把 whisper 的 JSON 真的写到 handler 指定的输出路径上 —— 于是「whisper-cli 被 execa 调了
  * 几次」就是「商家被跑了几次转写」的逐字对应。
  *
- * `../storage.js` 不是替身：用的就是生产同一个 `LocalDiskStorage` 类，根目录换成临时目录，
- * 并在 `ffmpegInput` 前挂一个**帧内探针** —— 第三条用例的跨租户读必须发生在 `handleCaption`
- * 自己那个帧里（`runAsTenant(job.ownerId)`），不是测试另开一个帧假装。
+ * `../storage.js` 不是另写的替身：用的是 `LocalDiskStorage` —— 生产工厂 `createStorage()`
+ * （`apps/worker/src/storage.ts:9`）在 `STORAGE_DRIVER` 不设时返回的正是这个类
+ * （`packages/storage/src/index.ts:946-964`），也就是 dev/CI 每天跑的那一条存储路；staging 与
+ * production 今天跑 `STORAGE_DRIVER=r2`，同一个工厂返回的是 `R2Storage`，那条存储路本文件不覆盖。
+ * 这里只把根目录换成临时目录，并在 `ffmpegInput` 前挂一个**帧内探针** —— 第三条用例的跨租户读
+ * 必须发生在 `handleCaption` 自己那个帧里（`runAsTenant(job.ownerId)`），不是测试另开一个帧假装。
  *
  * ── 这个文件证不到、因此不在这里断言的一件事 ────────────────────────────────────────────────
  * 规格 §1.6 写的豁免是 **per-(model, uniqueKey)**，「不得退化成整模型豁免」。而今天的实现里
@@ -22,6 +25,7 @@
  * 断言成「对」。
  */
 import { randomUUID, randomBytes, createHash } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 
 const h = vi.hoisted(() => {
@@ -82,7 +86,8 @@ const WHISPER_JSON = JSON.stringify({
   transcription: [{ offsets: { from: 0, to: 900 }, text: " Terima kasih" }],
 });
 
-/** 商家被真正跑了几次转写 —— whisper-cli 的调用次数，逐字对应。 */
+/** 商家被真正跑了几次转写 —— whisper-cli 的调用次数，逐字对应。
+ *  这是**文件级累计值**，所以每条用例都先在自己开头取一次快照、只断差值，绝不断绝对数。 */
 function transcribeCalls() {
   return h.execa.mock.calls.filter((c) => c[0] === "whisper-cli").length;
 }
@@ -129,6 +134,17 @@ async function seedCaptionJob(owner: string, assetId: string, contentHash: strin
     data: { id, ownerId: owner, projectId: newId(), assetId, contentHash, status: "QUEUED" },
   });
   return id;
+}
+
+/** ② 的前提：「A 家已经把这段音频转写过一次」。① 跑过就是空操作；单独跑 ②（`-t` / `--shard` /
+ *  vitest retry）时由它自己把 A 家那一单补上 —— 用例因此不依赖同文件的执行顺序。 */
+async function ensureTenantATranscribed(): Promise<void> {
+  const cached = await prisma.transcript.findMany({
+    where: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION },
+  });
+  if (cached.length > 0) return;
+  const jobA = await seedCaptionJob(A, assetA, AUDIO_HASH);
+  await handleCaption({ captionJobId: jobA }, 0);
 }
 
 /** 一家店在钱上的全部痕迹：账本行数 + 账户余额。缓存命中这一路必须一格不动。 */
@@ -193,16 +209,19 @@ afterAll(async () => {
     await prisma.organization.deleteMany({ where: { id: owner } });
   }
   await prisma.$disconnect();
+  // 真字节写在 `h.dataDir` 这个临时根目录下 —— 跑完自己收掉，别在开发机与 CI 上越积越多。
+  // 先例：apps/worker/src/jobs/gen-output-dimensions.test.ts:223。
+  await rm(h.dataDir, { recursive: true, force: true });
 }, DB_CASE_TIMEOUT_MS);
 
 describe("TENANT-A9 —— 同音频同模型跨租户复用全局缓存，其它表的跨租户读照拒（真库、真守卫）", () => {
   it("TENANT-A9 ① A 家先跑：转写真的跑了一次，结果按 (contentHash, model) 落进全局缓存", async () => {
-    const before = transcribeCalls();
+    const callsAtCaseStart = transcribeCalls(); // 本用例自己的基线，不是文件开头的 0
     const jobA = await seedCaptionJob(A, assetA, AUDIO_HASH);
 
     await handleCaption({ captionJobId: jobA }, 0);
 
-    expect(transcribeCalls() - before).toBe(1);
+    expect(transcribeCalls() - callsAtCaseStart).toBe(1);
     const job = await prisma.captionJob.findFirstOrThrow({ where: { id: jobA, ownerId: A } });
     expect(job.status).toBe("DONE");
     expect(job.error).toBe("");
@@ -213,7 +232,9 @@ describe("TENANT-A9 —— 同音频同模型跨租户复用全局缓存，其�
   }, DB_CASE_TIMEOUT_MS);
 
   it("TENANT-A9 ② B 家拿同一段音频同一模型：命中缓存 —— 第二次转写调用为 0、任务 DONE 无错、两边账本一行没多", async () => {
-    const callsAfterA = transcribeCalls();
+    // 前提自己保证：① 跑过就是空操作，单独跑这一条时由它把 A 家那一单补上。
+    await ensureTenantATranscribed();
+    const callsAtCaseStart = transcribeCalls(); // 本用例自己的基线（累计值只做差）
     const moneyABefore = await moneyTrail(A);
     const moneyBBefore = await moneyTrail(B);
     const jobB = await seedCaptionJob(B, assetB, AUDIO_HASH);
@@ -221,7 +242,7 @@ describe("TENANT-A9 —— 同音频同模型跨租户复用全局缓存，其�
     await handleCaption({ captionJobId: jobB }, 0);
 
     // ① 没有第二次转写 —— 这就是「$0 复用」的全部内容
-    expect(transcribeCalls()).toBe(callsAfterA);
+    expect(transcribeCalls() - callsAtCaseStart).toBe(0);
     // ② 不报错，正常终态
     const job = await prisma.captionJob.findFirstOrThrow({ where: { id: jobB, ownerId: B } });
     expect(job.status).toBe("DONE");
