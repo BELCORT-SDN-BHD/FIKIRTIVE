@@ -192,6 +192,29 @@ export function publishPreviewBadge(available: boolean = PUBLISHING_AVAILABLE): 
 }
 
 /**
+ * The line the Connections page wears at the top while publishing is off (规格
+ * `docs/specs/wave2-shell.md:394-395`; 验收 `docs/specs/wave2-shell.md:565` names the state:
+ * "Connections 页在 `PUBLISHING_AVAILABLE === false` 时说出「现在连不上」").
+ *
+ * The four slots above answer "what happens to a POST"; a merchant standing on Connections is
+ * asking a different question — "can I link an account here at all?" — and reading four sentences
+ * about posts does not answer it. So this is its own sentence, not a fifth slot: one screen, one
+ * question, one answer.
+ *
+ * It lives here for the reason the rest of this section does. The Connections page already carries
+ * a per-service "Unavailable" line for X, and the day publishing comes back this line has to stop
+ * being said — while the per-service one stays. Written on the screen, it would be the second
+ * wording nobody remembers to delete.
+ */
+export const CONNECTIONS_PREVIEW_NOTICE =
+  "No Instagram or Facebook account can be connected right now, so nothing here can be linked yet. Your schedule stays real either way.";
+
+/** That line, or null once an account can actually be connected. */
+export function connectionsPreviewNotice(available: boolean = PUBLISHING_AVAILABLE): string | null {
+  return available ? null : CONNECTIONS_PREVIEW_NOTICE;
+}
+
+/**
  * One line naming what approving does to THIS post, on the channel it is written for. The approval
  * card shows it as its first detail line — the line a merchant reads while deciding to press a
  * button that used to claim it published.
