@@ -1,0 +1,217 @@
+
+> @fikirtive/web@0.1.0 build /Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/apps/web
+> next build
+
+⚠ No build cache found. Please configure build caching for faster rebuilds. Read more: https://nextjs.org/docs/messages/no-cache
+▲ Next.js 16.2.9 (Turbopack)
+- Experiments (use with caution):
+  · serverActions
+
+  Creating an optimized production build ...
+Turbopack build encountered 2 warnings:
+./apps/web/next.config.ts
+Encountered unexpected file in NFT list
+A file was traced that indicates that the whole project was traced unintentionally. Somewhere in the import trace below, there are:
+- filesystem operations (like path.join, path.resolve or fs.readFile), or
+- very dynamic requires (like require('./' + foo)).
+To resolve this, you can
+- remove them if possible, or
+- only use them in development, or
+- make sure they are statically scoped to some subfolder: path.join(process.cwd(), 'data', bar), or
+- add ignore comments: path.join(/*turbopackIgnore: true*/ process.cwd(), bar)
+
+Import trace:
+  App Route:
+    ./apps/web/next.config.ts
+    ./apps/web/lib/actor-library-seed.ts
+    ./apps/web/lib/auth-guard.ts
+    ./apps/web/app/api/meta/authorize/route.ts
+
+
+./apps/web/next.config.ts
+Encountered unexpected file in NFT list
+A file was traced that indicates that the whole project was traced unintentionally. Somewhere in the import trace below, there are:
+- filesystem operations (like path.join, path.resolve or fs.readFile), or
+- very dynamic requires (like require('./' + foo)).
+To resolve this, you can
+- remove them if possible, or
+- only use them in development, or
+- make sure they are statically scoped to some subfolder: path.join(process.cwd(), 'data', bar), or
+- add ignore comments: path.join(/*turbopackIgnore: true*/ process.cwd(), bar)
+
+Output asset trace:
+  [output]/apps/web/.next/server/app/api/better-auth/[...all]/route.js
+  [output]/apps/web/.next/server/chunks/[root-of-the-server]__1y8sglb._.js
+
+Import trace:
+  App Route:
+    ./apps/web/next.config.ts
+    ./apps/web/lib/actor-library-seed.ts
+    ./apps/web/lib/auth-guard.ts
+    ./apps/web/app/api/meta/authorize/route.ts
+
+
+✓ Compiled successfully in 62s
+  Running TypeScript ...
+  Finished TypeScript in 86s ...
+  Collecting page data using 7 workers ...
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+2026-09-14T04:30:27.905Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+2026-09-14T04:30:28.155Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+2026-09-14T04:30:28.204Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+2026-09-14T04:30:28.293Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+2026-09-14T04:30:28.297Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+2026-09-14T04:30:28.332Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+2026-09-14T04:30:29.036Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+2026-09-14T04:30:29.089Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+2026-09-14T04:30:29.129Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+2026-09-14T04:30:29.206Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+2026-09-14T04:30:29.275Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+2026-09-14T04:30:29.650Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+Unhandled rejection [Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.] Promise {
+  <rejected> [Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.],
+  [Symbol(async_id_symbol)]: 1536,
+  [Symbol(trigger_async_id_symbol)]: 1471,
+  [Symbol(kResourceStore)]: undefined
+}
+  Generating static pages using 7 workers (0/48) ...
+  Generating static pages using 7 workers (12/48) 
+  Generating static pages using 7 workers (24/48) 
+[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.
+2026-09-14T04:30:30.372Z WARN [Better Auth]: [better-auth] Base URL is not set. Set the baseURL option or BETTER_AUTH_URL env, or use a dynamic baseURL with allowedHosts for multi-host setups. Without it the origin is derived from the incoming request, and callbacks and redirects may not work correctly.
+[Error [BetterAuthError]: You are using the default secret. Please set `BETTER_AUTH_SECRET` in your environment variables or pass `secret` in your auth config.]
+  Generating static pages using 7 workers (36/48) 
+✓ Generating static pages using 7 workers (48/48) in 1376ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ƒ /_not-found
+├ ƒ /admin
+├ ƒ /admin/audit
+├ ƒ /admin/cases
+├ ƒ /admin/content
+├ ƒ /admin/conversations
+├ ƒ /admin/conversations/[threadId]
+├ ƒ /admin/cost
+├ ƒ /admin/credits
+├ ƒ /admin/directives
+├ ƒ /admin/knowledge
+├ ƒ /admin/models
+├ ƒ /admin/money
+├ ƒ /admin/otto
+├ ƒ /admin/queue
+├ ƒ /admin/reconcile
+├ ƒ /admin/settings
+├ ƒ /admin/staff
+├ ƒ /admin/system
+├ ƒ /admin/team
+├ ƒ /admin/tenants
+├ ƒ /admin/tenants/[orgId]
+├ ƒ /analysis
+├ ƒ /api/better-auth/[...all]
+├ ƒ /api/build-info
+├ ƒ /api/health
+├ ƒ /api/media/pub/[token]
+├ ƒ /api/meta/authorize
+├ ƒ /api/meta/callback
+├ ƒ /api/meta/data-deletion
+├ ƒ /api/ops/dlq
+├ ƒ /api/otto/stream
+├ ƒ /api/otto/thread-activity
+├ ƒ /api/ready
+├ ƒ /api/stripe/webhook
+├ ○ /apple-icon.png
+├ ƒ /billing
+├ ƒ /brand
+├ ƒ /brand/records
+├ ƒ /campaign
+├ ƒ /campaign/[id]
+├ ƒ /campaign/[id]/confirm
+├ ƒ /campaign/calendar
+├ ƒ /campaign/trends
+├ ƒ /campaign/workbench
+├ ƒ /create
+├ ƒ /create/canvas
+├ ƒ /crm
+├ ƒ /crm/broadcasts
+├ ƒ /crm/broadcasts/[id]
+├ ƒ /crm/broadcasts/new
+├ ƒ /crm/contacts
+├ ƒ /crm/contacts/[id]
+├ ƒ /crm/inbox
+├ ƒ /crm/inbox/[id]
+├ ƒ /crm/reports
+├ ƒ /crm/reports/[id]
+├ ƒ /crm/segments
+├ ƒ /crm/templates
+├ ƒ /crm/workflows
+├ ƒ /crm/workflows/[id]
+├ ƒ /design-system
+├ ƒ /design-system/checklist
+├ ƒ /design-system/components
+├ ƒ /files/[...key]
+├ ƒ /forgot-password
+├ ○ /icon.png
+├ ƒ /legal/data-deletion
+├ ƒ /library
+├ ƒ /library/[id]
+├ ƒ /library/editor
+├ ƒ /login
+├ ƒ /northstar-immersive
+├ ƒ /northstar-immersive/[...retired]
+├ ƒ /northstar-immersive/create/canvas
+├ ƒ /otto
+├ ƒ /privacy
+├ ƒ /privacy/bm
+├ ƒ /product-patterns/application-shell
+├ ƒ /product-patterns/auth
+├ ƒ /product-patterns/brand
+├ ƒ /product-patterns/canvas
+├ ƒ /product-patterns/create
+├ ƒ /product-patterns/founder-home
+├ ƒ /product-patterns/founder-home/analysis
+├ ƒ /product-patterns/library
+├ ƒ /product-patterns/reference-picker
+├ ƒ /product-patterns/settings
+├ ƒ /profile
+├ ƒ /reset-password
+├ ƒ /s/[token]
+├ ƒ /schedule
+├ ƒ /schedule/analytics
+├ ƒ /schedule/share-preview
+├ ƒ /settings
+├ ƒ /settings/connections
+├ ƒ /signup
+├ ƒ /terms
+└ ƒ /verify-email
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

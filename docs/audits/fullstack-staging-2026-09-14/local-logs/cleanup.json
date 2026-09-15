@@ -1,0 +1,50 @@
+{
+  "drops": [
+    {
+      "database": "round3_8ecc80d17c8c4f35_test",
+      "exit": 0,
+      "output": "SET\nDROP DATABASE\nNOTICE:  database \"round3_8ecc80d17c8c4f35_test\" does not exist, skipping\n"
+    },
+    {
+      "database": "round3_8ecc80d17c8c4f35_worker_test",
+      "exit": 0,
+      "output": "SET\nDROP DATABASE\nNOTICE:  database \"round3_8ecc80d17c8c4f35_worker_test\" does not exist, skipping\n"
+    },
+    {
+      "database": "round3_dbrecheck_0a20a17d9ae6_test",
+      "exit": 0,
+      "output": "SET\nDROP DATABASE\n"
+    },
+    {
+      "database": "round3_e2e_8fe100956c3a_test",
+      "exit": 0,
+      "output": "SET\nDROP DATABASE\n"
+    },
+    {
+      "database": "round3_fullstack_814cec75f2d4_test",
+      "exit": 0,
+      "output": "SET\nDROP DATABASE\n"
+    },
+    {
+      "database": "round3_fullstack_9785b924a96c_test",
+      "exit": 0,
+      "output": "SET\nDROP DATABASE\n"
+    },
+    {
+      "database": "round3_fullstack_e14797a21edd_test",
+      "exit": 0,
+      "output": "SET\nDROP DATABASE\n"
+    },
+    {
+      "database": "round3_web_db9e0b6ca5a4_test",
+      "exit": 0,
+      "output": "SET\nDROP DATABASE\n"
+    },
+    {
+      "database": "round3_worker_29644e3cec20_test",
+      "exit": 0,
+      "output": "SET\nDROP DATABASE\n"
+    }
+  ],
+  "remainingOwnedDatabases": []
+}
