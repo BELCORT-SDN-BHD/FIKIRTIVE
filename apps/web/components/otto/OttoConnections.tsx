@@ -8,6 +8,7 @@ import {
   Camera,
   ChevronRight,
   CircleAlert,
+  Info,
   Megaphone,
   Plug,
   RefreshCw,
@@ -19,7 +20,7 @@ import { setAdsAutonomy, setAdsWritesPaused } from "@/lib/otto-client-actions";
 import type { AccountInsights } from "@/lib/meta-insights";
 import { getAccountViewData } from "@/lib/account-view-data";
 import { channelCapabilityBlurb, channelMeta, publishingChannelRows } from "@/lib/channels/channel-meta";
-import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core/schedule-draft";
+import { CONNECTION_BLOCKER_COPY, connectionsPreviewNotice } from "@fikirtive/core/schedule-draft";
 import { describeMetaAdAccountStatus } from "@/lib/meta-ad-account-status";
 import { supportMailto } from "@/lib/exits";
 import type { ChannelState } from "./settings/sections";
@@ -268,6 +269,7 @@ export default function OttoConnections({ embedded = false }: { embedded?: boole
     });
   }, [meta.phase]);
 
+  const previewNotice = connectionsPreviewNotice();
   const publishingLoading = channelsState.phase === "loading" || meta.phase === "loading";
   const connectError = connectErrorCode ? describeConnectError(connectErrorCode) : null;
   const loadedChannels = channelsState.phase === "loaded" ? channelsState.channels : [];
@@ -296,6 +298,22 @@ export default function OttoConnections({ embedded = false }: { embedded?: boole
               </p>
             </div>
           </header>
+        ) : null}
+
+        {/* 规格 `docs/specs/wave2-shell.md:394-395` 点名要的那一句。验收表(同文件 :565)把状态
+            写死在 `PUBLISHING_AVAILABLE === false` —— 不是永远说:通电那天它自己消失,不靠谁
+            记得回来删屏幕上的一行。措辞和「说不说」都向核心权威要
+            (`connectionsPreviewNotice()`),所以这扇屏幕上没有第二份可抄的文案。
+            它说的是**产品今天一个 Instagram / Facebook 账号都连不上**;右边详情面板那句
+            “This service is not available to connect.” 是 X 一个服务自己的事。两句各说各的,
+            谁也不复述谁。standing explanation 不戴 role(见 `components/ui/alert.tsx` 顶注)。 */}
+        {previewNotice ? (
+          <Alert variant="info">
+            <Info aria-hidden />
+            <AlertDescription>
+              <p>{previewNotice}</p>
+            </AlertDescription>
+          </Alert>
         ) : null}
 
         {connectError ? (
