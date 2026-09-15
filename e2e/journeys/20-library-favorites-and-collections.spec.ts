@@ -15,6 +15,7 @@
 import { test, expect } from "@playwright/test";
 import { seedWorkspace, seedLibraryMedia } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
+import { waitUntilInteractive } from "../support/ui.js";
 
 test("FRONT-A5 / FRONT-A6 — 收藏与合集刷新之后仍然成立,删掉合集素材还在", async ({ page }) => {
   const ws = await seedWorkspace({
@@ -106,4 +107,55 @@ test("FRONT-A5 / FRONT-A6 — 收藏与合集刷新之后仍然成立,删掉合�
   await page.goto("/library");
   await expect(page.getByRole("button", { name: "Open Raya cookie tin on marble" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open shopfront.png" })).toBeVisible();
+});
+
+/**
+ * R3-F05(round-3 staging 走查,build 14bcd038)—— 详情面关掉之后,键盘焦点回到打开它的那张卡。
+ *
+ * 病象:在 Generation history 用键盘 Tab 到一张素材卡、Enter 打开 Asset details、Escape 关掉,
+ * 焦点落回 `<body>`。对只用键盘或读屏的商家,这一下等于被丢回页面最顶上 —— 想看下一件就得
+ * 从头再 Tab 一遍整条导航、页签与工具条。
+ *
+ * 为什么必须是浏览器旅程:`document.activeElement` 是浏览器的状态,不是组件的 state。单测能
+ * 证「我们调了 focus()」,证不了「关掉那一刻没有别人把焦点抢走」—— 面板自己的焦点管理器、
+ * 网格重取时的卸载与重挂,只在真浏览器里同时发生。
+ *
+ * 上游:已批准的 Library pattern §4(关闭后回到原 grid state)与前端接线交接规范 §5
+ * (逐条验证点击、键盘、**焦点**、关闭/返回)。
+ */
+test("R3-F05 — Escape 关掉素材详情之后,键盘焦点回到原来那张卡", async ({ page }) => {
+  const ws = await seedWorkspace({
+    slug: "library-focus",
+    workspaceName: "Suri Studio",
+    personName: "Suri",
+    openingGrant: 80,
+  });
+  await seedLibraryMedia(ws, { prompt: "Nasi lemak tray at noon" });
+  await seedLibraryMedia(ws, { prompt: "Teh tarik pour in slow motion" });
+
+  await signIn(page, ws, "/library");
+
+  const card = page.getByRole("button", { name: "Open Nasi lemak tray at noon" });
+  const neighbour = page.getByRole("button", { name: "Open Teh tarik pour in slow motion" });
+  await expect(card).toBeVisible();
+  await waitUntilInteractive(card);
+
+  // 键盘打开:焦点在卡上,Enter 就是商家的「点开」。
+  await card.focus();
+  await expect(card).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  const panel = page.getByRole("dialog", { name: "Asset details" });
+  await expect(panel).toBeVisible();
+
+  // 键盘关掉。
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+
+  // 缺陷本身就在这一行:关掉之后焦点必须回到那张卡,而不是 `<body>`。
+  // 断言认的是**可及名称**,不是某个 DOM 节点:关闭会让网格按同一组条件重取一次,卡片是
+  // 新挂上去的节点,而商家在意的是「焦点还在那件素材上吗」。
+  await expect(card).toBeFocused();
+  // 而且是这一张,不是隔壁那一张。
+  await expect(neighbour).not.toBeFocused();
 });
