@@ -1,0 +1,2704 @@
+{
+  "project": [
+    {
+      "id": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "ownerId": "founder",
+      "name": "Hi!",
+      "createdAt": "2026-09-12T05:02:15.898",
+      "updatedAt": "2026-09-12T05:02:15.898"
+    }
+  ],
+  "threads": [
+    {
+      "id": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "title": "Cat drinking coffee video",
+      "createdAt": "2026-09-12T05:02:15.908",
+      "updatedAt": "2026-09-14T05:54:32.745",
+      "surface": "canvas",
+      "subjectRef": null
+    }
+  ],
+  "messages": [
+    {
+      "id": "01M29ZXBMS1YRJTM1X6TK8ZT6E",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 1,
+      "text": "Hi!",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T05:02:16.73"
+    },
+    {
+      "id": "01M29ZXEZDQA93RNGRE8TA61YM",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 2,
+      "text": "Hi there! 👋 Welcome to Fikirtive!\n\nI'm Otto, your marketing helper. I can make images and videos for your café, help plan your posts, or even look at how your ads are doing.\n\nWhat would you like to work on today? 😊",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T05:02:20.142"
+    },
+    {
+      "id": "01M29ZXW79V4VZSTG8RV3GK1Q1",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 3,
+      "text": "Make me a Video of a cute cat",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T05:02:33.706"
+    },
+    {
+      "id": "01M29ZY0248541ZJ3GZSFRVRWR",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 4,
+      "text": "That sounds fun! 🐱 Just a couple of quick questions before I make it:\n\n1. **What's it for?** (e.g. just for fun, a social media post for the café, something else?)\n2. **Any details about the cat?** (colour, what it's doing — or happy for me to decide?)",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T05:02:37.636"
+    },
+    {
+      "id": "01M29ZZH0ZM2FN06HBNGV1S587",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 5,
+      "text": "I want the cat to hold this @Replace background. Restyle it to product photography, phot…",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [
+          "01M288SEY839N8CW8XTXBJG077"
+        ],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [
+        "generation:01M288SEY839N8CW8XTXBJG077"
+      ],
+      "createdAt": "2026-09-12T05:03:27.777"
+    },
+    {
+      "id": "01M29ZZTYTBKR8KR4W03TN6CGW",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 6,
+      "text": "It looks like your message got cut off — I can see the orange travel mug in the photo! 🐱☕\n\nHere's what I think you want:\n- A **cute cat holding this orange travel mug**\n- Replace the plain white background with something more interesting\n- Restyle it as **product photography**\n\nDoes that sound right? And what kind of background would you like? For example:\n- A cosy café scene ☕\n- A clean studio with a nice colour gradient 🎨\n- Something outdoors or natural 🌿",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T05:03:37.947"
+    },
+    {
+      "id": "01M2A03VR0W580N093HG23GASS",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 7,
+      "text": "I wan the cat drink coffee from the mug , a video of it",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T05:05:49.824"
+    },
+    {
+      "id": "01M2A03Z68MCJBE6T8NBBH0NPF",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 8,
+      "text": "Love that idea! 🐱☕ A cute cat sipping coffee from the orange mug — so fun!\n\nQuick question: **what feel do you want for the video?**\n- Cosy café setting 🏠\n- Bright & cheerful outdoors 🌞\n- Clean studio look 🎨\n\nOr I can just pick something cute — up to you!",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T05:05:53.352"
+    },
+    {
+      "id": "01M2A34SKY5ZCYXQ7XWV8F8CYB",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 9,
+      "text": "in a UGC house",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T05:58:46.15"
+    },
+    {
+      "id": "01M2A35TXKB09QC2E6M95XTVRP",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_CARD",
+      "seq": 10,
+      "text": "",
+      "payload": {
+        "goal": "Fun, shareable UGC-style social media video of a cute cat drinking from the café's orange travel mug",
+        "kind": "image",
+        "model": "seedream",
+        "params": {
+          "count": 1,
+          "aspectRatio": "9:16"
+        },
+        "reason": "image → Seedream — 9:16",
+        "options": {
+          "maxCount": 4,
+          "aspectRatios": [
+            "1:1",
+            "9:16",
+            "16:9",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "21:9"
+          ],
+          "fineDetailAvailable": true
+        },
+        "entityIds": [],
+        "specChips": [
+          "1620 × 2880",
+          "9:16",
+          "1 image"
+        ],
+        "videoStep": {
+          "next": {
+            "desiredAspect": "9:16",
+            "structuredPrompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Adorable fluffy cat sitting on a cosy sofa, holding and sipping from an orange-red matte travel tumbler coffee mug, Cat lifts the orange travel mug toward its mouth and takes a small sip, pauses contentedly, tail swishes gently, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, soft natural window light from the side, warm golden morning tones, cosy, charming, wholesome\nAudio: &lt;gentle ambient home sounds, soft coffee sipping sound&gt;\nkeep the subject consistent with the source frame\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep the orange travel mug clearly visible throughout.\nKeep the cat's face expressive and cute.\nAvoid sudden cuts.\nKeep background stable and homey."
+          },
+          "estimatedCredits": 11
+        },
+        "downgraded": false,
+        "variantSel": {},
+        "estimatedCredits": 1,
+        "structuredPrompt": "An adorable fluffy cat sitting on a cosy home sofa, holding and drinking from an orange-red matte travel tumbler coffee mug. The setting is warm UGC-style living room interior, cosy home setting, soft furnishings, natural morning light coming through a window. The style is photorealistic, UGC-style phone photo, candid and authentic feel, product photography quality, the light is soft natural window light from the side, warm golden morning tones, the color palette is warm oranges, creams, and browns matching the mug. Shot with 35mm lens, slight handheld feel. The mood is cosy, warm, charming, wholesome. The orange-red matte travel tumbler is clearly visible and prominent, cat has expressive cute eyes, mug label faces camera. Leave clean, uncluttered space around the subject with headroom for motion, and keep a single dominant light direction. Keep the frame free of subtitles, captions, and watermarks.",
+        "estimatedPriceUsd": 0.035
+      },
+      "genJobId": "01M2A3BYKQ797E3NQXFDJHVBGA",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T05:59:20.246"
+    },
+    {
+      "id": "01M2A35XHSKVC1JYMH0CVTKZ1B",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 11,
+      "text": "Here's the plan — a starting picture of the cat with your mug, and once that's done, the video card will pop up automatically for you to confirm! 🐾\n\nCheck the card above and approve it there to get started. 😊",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T05:59:22.939"
+    },
+    {
+      "id": "01M2A3CX9KTNK6MGCM9ZB3QGR8",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_RESULT",
+      "seq": 12,
+      "text": "",
+      "payload": {
+        "kind": "image",
+        "model": "seedream",
+        "costCredits": 1,
+        "generationIds": [
+          "01M2A3CX6K9AWV6ZV1PBED34JX"
+        ]
+      },
+      "genJobId": "01M2A3BYKQ797E3NQXFDJHVBGA",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T06:03:12.053"
+    },
+    {
+      "id": "01M2A3CX9TQDC0E4GSAMH99B72",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_CARD",
+      "seq": 13,
+      "text": "",
+      "payload": {
+        "kind": "video",
+        "model": "seedance-2-mini",
+        "params": {
+          "audio": true,
+          "count": 1,
+          "resolution": "720p",
+          "aspectRatio": "9:16",
+          "durationSeconds": 5
+        },
+        "reason": "Seedance 2.0 mini — 9:16, 5s",
+        "entityIds": [],
+        "specChips": [
+          "9:16",
+          "5s",
+          "720p",
+          "With sound",
+          "Starts from your image"
+        ],
+        "downgraded": false,
+        "variantSel": {},
+        "videoStepOf": "01M2A35TXKB09QC2E6M95XTVRP",
+        "mediaReferences": [
+          {
+            "kind": "image",
+            "role": "startFrame",
+            "label": "An adorable fluffy cat sitting on a cosy home sofa, holdi…",
+            "previewUrl": "/files/u/founder/bea0f1f0541c3f60276ae915bc485cba143ab11977d0f228139a3ab2a3588327.jpeg",
+            "sameCanvas": true,
+            "generationId": "01M2A3CX6K9AWV6ZV1PBED34JX",
+            "sourceProjectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+            "sourceProjectName": "Hi!"
+          }
+        ],
+        "estimatedCredits": 11,
+        "structuredPrompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Adorable fluffy cat sitting on a cosy sofa, holding and sipping from an orange-red matte travel tumbler coffee mug, Cat lifts the orange travel mug toward its mouth and takes a small sip, pauses contentedly, tail swishes gently, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, soft natural window light from the side, warm golden morning tones, cosy, charming, wholesome\nAudio: &lt;gentle ambient home sounds, soft coffee sipping sound&gt;\nkeep the subject consistent with the source frame\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep the orange travel mug clearly visible throughout.\nKeep the cat's face expressive and cute.\nAvoid sudden cuts.\nKeep background stable and homey.",
+        "estimatedPriceUsd": 0.38038218749999997,
+        "sourceGenerationId": "01M2A3CX6K9AWV6ZV1PBED34JX"
+      },
+      "genJobId": "01M2A3D3Z2NZEE3M22B9J524CG",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T06:03:12.06"
+    },
+    {
+      "id": "01M2A3G05PVWMTJB4C1A7QNYRP",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_RESULT",
+      "seq": 14,
+      "text": "",
+      "payload": {
+        "kind": "video",
+        "model": "seedance-2-mini",
+        "costCredits": 11,
+        "generationIds": [
+          "01M2A3FZJNH16QJAVFZWR0A3FE"
+        ]
+      },
+      "genJobId": "01M2A3D3Z2NZEE3M22B9J524CG",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-12T06:04:53.303"
+    },
+    {
+      "id": "01M2F6PAQ8YV8HM3JCKN7K74JE",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 15,
+      "text": "now i wan @Xinyi hold the cat and pet it while the cat is drinking with the product",
+      "payload": {
+        "entityIds": [
+          "01M265PRD50HWEKX2VFGBCF31Y"
+        ],
+        "variantSel": {},
+        "sourceGenerationIds": [],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [
+        "official-avatar:01M265PRD50HWEKX2VFGBCF31Y"
+      ],
+      "createdAt": "2026-09-14T05:36:58.603"
+    },
+    {
+      "id": "01M2F6Q6TPRMNHX1D10JYDCKPZ",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_CARD",
+      "seq": 16,
+      "text": "",
+      "payload": {
+        "goal": "Fun UGC-style social media video of Xinyi petting a cute cat that is drinking from the café's orange travel mug",
+        "kind": "image",
+        "model": "seedream",
+        "params": {
+          "count": 1,
+          "aspectRatio": "9:16"
+        },
+        "reason": "image → Seedream — 9:16",
+        "options": {
+          "maxCount": 4,
+          "aspectRatios": [
+            "1:1",
+            "9:16",
+            "16:9",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "21:9"
+          ],
+          "fineDetailAvailable": true
+        },
+        "entityIds": [
+          "01M265PRD50HWEKX2VFGBCF31Y"
+        ],
+        "specChips": [
+          "1620 × 2880",
+          "9:16",
+          "1 image"
+        ],
+        "videoStep": {
+          "next": {
+            "desiredAspect": "9:16",
+            "structuredPrompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Xinyi holding a fluffy cat in a cosy living room, cat drinking from an orange-red matte travel tumbler mug, Xinyi gently strokes the cat with one hand while the cat lifts the orange travel mug and takes a small sip, Xinyi smiles warmly and looks at the cat with delight, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, soft natural window light from the side, warm golden morning tones, cosy, charming, wholesome, heartwarming\nAudio: &lt;gentle ambient home sounds, soft coffee sipping sound&gt;\nkeep the subject consistent with the source frame\nkeep Xinyi identical to the reference, same face, hairstyle, and build\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face and appearance consistent with the source frame.\nKeep the orange travel mug clearly visible throughout.\nKeep the cat's face expressive and cute.\nAvoid sudden cuts.\nKeep background stable and homey."
+          },
+          "estimatedCredits": 11
+        },
+        "downgraded": false,
+        "variantSel": {},
+        "approvedEntities": [
+          {
+            "id": "01M265PRD50HWEKX2VFGBCF31Y",
+            "name": "Xinyi",
+            "type": "CHARACTER"
+          }
+        ],
+        "estimatedCredits": 1,
+        "structuredPrompt": "A young woman named Xinyi gently holding and petting an adorable fluffy cat, while the cat holds and drinks from an orange-red matte travel tumbler coffee mug. The setting is warm UGC-style living room interior, cosy home setting, soft furnishings, natural morning light coming through a window. The style is photorealistic, UGC-style phone photo, candid and authentic feel, the light is soft natural window light from the side, warm golden morning tones, the color palette is warm oranges, creams, and browns. Shot with 35mm lens, slight handheld feel. The mood is cosy, warm, charming, wholesome, heartwarming. The orange-red matte travel tumbler is clearly visible, cat has expressive cute eyes, Xinyi is smiling warmly, her hand gently stroking the cat. Leave clean, uncluttered space around the subject with headroom for motion, and keep a single dominant light direction. Keep Xinyi identical to the reference, same face, hairstyle, and build. Keep the frame free of subtitles, captions, and watermarks.",
+        "estimatedPriceUsd": 0.035
+      },
+      "genJobId": "01M2F6QF8CEP5QVSFRFD6AATZB",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:37:27.384"
+    },
+    {
+      "id": "01M2F6Q9D6QZW83BYVYYSR1N2P",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 17,
+      "text": "There's the card! 🐾 It'll make a starting picture of @Xinyi with the cat and mug first — once that's ready, the video card will appear automatically for you to confirm.\n\nGo ahead and approve it on the card above! 😊",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:37:30.025"
+    },
+    {
+      "id": "01M2F6S22F18Z8M05KDG3SQTVY",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_RESULT",
+      "seq": 18,
+      "text": "",
+      "payload": {
+        "kind": "image",
+        "model": "seedream",
+        "costCredits": 1,
+        "generationIds": [
+          "01M2F6S20KRZX47BM7CC48HA5Z"
+        ]
+      },
+      "genJobId": "01M2F6QF8CEP5QVSFRFD6AATZB",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:38:28.048"
+    },
+    {
+      "id": "01M2F6S22K8BZ83GKBDSHP0Q18",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_CARD",
+      "seq": 19,
+      "text": "",
+      "payload": {
+        "kind": "video",
+        "model": "seedance-2-mini",
+        "params": {
+          "audio": true,
+          "count": 1,
+          "resolution": "720p",
+          "aspectRatio": "9:16",
+          "durationSeconds": 5
+        },
+        "reason": "Seedance 2.0 mini — 9:16, 5s",
+        "entityIds": [],
+        "specChips": [
+          "9:16",
+          "5s",
+          "720p",
+          "With sound",
+          "Starts from your image"
+        ],
+        "downgraded": false,
+        "variantSel": {},
+        "videoStepOf": "01M2F6Q6TPRMNHX1D10JYDCKPZ",
+        "mediaReferences": [
+          {
+            "kind": "image",
+            "role": "startFrame",
+            "label": "A young woman named Xinyi gently holding and petting an a…",
+            "previewUrl": "/files/u/founder/870a78382c0eaa78272acf3f2665979449ff13d0977e1c188b6f56013bf1bd5a.jpeg",
+            "sameCanvas": true,
+            "generationId": "01M2F6S20KRZX47BM7CC48HA5Z",
+            "sourceProjectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+            "sourceProjectName": "Hi!"
+          }
+        ],
+        "estimatedCredits": 11,
+        "structuredPrompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Xinyi holding a fluffy cat in a cosy living room, cat drinking from an orange-red matte travel tumbler mug, Xinyi gently strokes the cat with one hand while the cat lifts the orange travel mug and takes a small sip, Xinyi smiles warmly and looks at the cat with delight, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, soft natural window light from the side, warm golden morning tones, cosy, charming, wholesome, heartwarming\nAudio: &lt;gentle ambient home sounds, soft coffee sipping sound&gt;\nkeep the subject consistent with the source frame\nkeep Xinyi identical to the reference, same face, hairstyle, and build\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face and appearance consistent with the source frame.\nKeep the orange travel mug clearly visible throughout.\nKeep the cat's face expressive and cute.\nAvoid sudden cuts.\nKeep background stable and homey.",
+        "estimatedPriceUsd": 0.38038218749999997,
+        "sourceGenerationId": "01M2F6S20KRZX47BM7CC48HA5Z"
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:38:28.052"
+    },
+    {
+      "id": "01M2F6TC5DJ0PF3TQ7JMTQ3YBA",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 20,
+      "text": "the cat and the product is wrong from the original",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:39:11.152"
+    },
+    {
+      "id": "01M2F6TFJR3RZ1KGFCW66XRHV0",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 21,
+      "text": "Got it! The cat and the orange mug from your original photo aren't quite right. \n\nCould you **re-attach the original mug photo** here? That way I can use it directly as the reference so the mug looks exactly right in the next version. 🐱☕",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:39:14.649"
+    },
+    {
+      "id": "01M2F6TR1D23DD56GZJSDQ8RFX",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 22,
+      "text": "@An adorable fluffy cat sitting on a cosy home sofa, holding…",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [
+          "01M2A3CX6K9AWV6ZV1PBED34JX"
+        ],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [
+        "generation:01M2A3CX6K9AWV6ZV1PBED34JX"
+      ],
+      "createdAt": "2026-09-14T05:39:23.31"
+    },
+    {
+      "id": "01M2F6VXAY6EKEN5FERQK7XXFP",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_CARD",
+      "seq": 23,
+      "text": "",
+      "payload": {
+        "goal": "UGC-style social media video of Xinyi petting the cat while it drinks from the café's orange travel mug",
+        "kind": "image",
+        "model": "seedream",
+        "params": {
+          "count": 1,
+          "aspectRatio": "9:16"
+        },
+        "reason": "image → Seedream — 9:16",
+        "options": {
+          "maxCount": 4,
+          "aspectRatios": [
+            "1:1",
+            "9:16",
+            "16:9",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "21:9"
+          ],
+          "fineDetailAvailable": true
+        },
+        "entityIds": [
+          "01M265PRD50HWEKX2VFGBCF31Y"
+        ],
+        "specChips": [
+          "1620 × 2880",
+          "9:16",
+          "1 image",
+          "Uses your attached image"
+        ],
+        "videoStep": {
+          "next": {
+            "desiredAspect": "9:16",
+            "structuredPrompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Xinyi holding the fluffy cream cat on a cosy sofa while the cat drinks from the orange travel tumbler, Xinyi gently strokes the cat's fur with one hand while the cat lifts the orange tumbler to its mouth and sips; Xinyi looks at the cat and smiles warmly, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, soft golden sunlight from the side window, warm morning tones, cosy, wholesome, heartwarming\nAudio: &lt;gentle ambient home sounds, soft sipping sound&gt;\nkeep the subject consistent with the source frame\nkeep Xinyi identical to the reference, same face, hairstyle, and build\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep the fluffy cream cat identical to the source frame.\nKeep the orange tumbler with silver rim and white label clearly visible.\nKeep Xinyi's face and appearance consistent.\nAvoid sudden cuts.\nKeep background stable and homey."
+          },
+          "estimatedCredits": 11
+        },
+        "downgraded": false,
+        "variantSel": {},
+        "mediaReferences": [
+          {
+            "kind": "image",
+            "role": "baseImage",
+            "label": "An adorable fluffy cat sitting on a cosy home sofa, holdi…",
+            "previewUrl": "/files/u/founder/bea0f1f0541c3f60276ae915bc485cba143ab11977d0f228139a3ab2a3588327.jpeg",
+            "sameCanvas": true,
+            "generationId": "01M2A3CX6K9AWV6ZV1PBED34JX",
+            "sourceProjectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+            "sourceProjectName": "Hi!"
+          }
+        ],
+        "approvedEntities": [
+          {
+            "id": "01M265PRD50HWEKX2VFGBCF31Y",
+            "name": "Xinyi",
+            "type": "CHARACTER"
+          }
+        ],
+        "estimatedCredits": 1,
+        "structuredPrompt": "Add Xinyi petting and holding the cat. Restyle it to photorealistic, UGC-style candid phone photo, warm and authentic. The light is soft golden sunlight from the side window, warm morning tones. Keep Xinyi identical to the reference, same face, hairstyle, and build. Feature cat_with_mug exactly as in the reference, same shape, color, and label. The fluffy cream cat, the orange travel tumbler with silver rim and white label, the cosy sofa and living room background, the warm golden lighting. Keep the frame free of subtitles, captions, and watermarks.",
+        "estimatedPriceUsd": 0.035,
+        "sourceGenerationId": "01M2A3CX6K9AWV6ZV1PBED34JX"
+      },
+      "genJobId": "01M2F6W4ECZQG835TJNXS7TN3E",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:40:01.503"
+    },
+    {
+      "id": "01M2F6W1KNC49SKG9Z5ZB5P1VP",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 24,
+      "text": "Here's the new card! 🐾 This time it's editing your cat image directly — keeping the exact fluffy cream cat and orange tumbler — and adding @Xinyi in. Once that picture is approved and done, the video card will pop up automatically!\n\nApprove it on the card above to get started 😊",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:40:05.878"
+    },
+    {
+      "id": "01M2F6XFT2D3HBDZHF0M5PC3JF",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_RESULT",
+      "seq": 25,
+      "text": "",
+      "payload": {
+        "kind": "image",
+        "model": "seedream",
+        "costCredits": 1,
+        "generationIds": [
+          "01M2F6XFRQ0YVS45ZJ8C8YFATH"
+        ]
+      },
+      "genJobId": "01M2F6W4ECZQG835TJNXS7TN3E",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:40:53.186"
+    },
+    {
+      "id": "01M2F6XFT5S3XBX7RDJPQTZ1PS",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_CARD",
+      "seq": 26,
+      "text": "",
+      "payload": {
+        "kind": "video",
+        "model": "seedance-2-mini",
+        "params": {
+          "audio": true,
+          "count": 1,
+          "resolution": "720p",
+          "aspectRatio": "9:16",
+          "durationSeconds": 5
+        },
+        "reason": "Seedance 2.0 mini — 9:16, 5s",
+        "entityIds": [],
+        "specChips": [
+          "9:16",
+          "5s",
+          "720p",
+          "With sound",
+          "Starts from your image"
+        ],
+        "downgraded": false,
+        "variantSel": {},
+        "videoStepOf": "01M2F6VXAY6EKEN5FERQK7XXFP",
+        "mediaReferences": [
+          {
+            "kind": "image",
+            "role": "startFrame",
+            "label": "Add Xinyi petting and holding the cat. Restyle it to phot…",
+            "previewUrl": "/files/u/founder/e7e6db9f7d0af3999efb62828595a30fdacb746470908d53ec92e4bc7f2752ee.jpeg",
+            "sameCanvas": true,
+            "generationId": "01M2F6XFRQ0YVS45ZJ8C8YFATH",
+            "sourceProjectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+            "sourceProjectName": "Hi!"
+          }
+        ],
+        "estimatedCredits": 11,
+        "structuredPrompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Xinyi holding the fluffy cream cat on a cosy sofa while the cat drinks from the orange travel tumbler, Xinyi gently strokes the cat's fur with one hand while the cat lifts the orange tumbler to its mouth and sips; Xinyi looks at the cat and smiles warmly, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, soft golden sunlight from the side window, warm morning tones, cosy, wholesome, heartwarming\nAudio: &lt;gentle ambient home sounds, soft sipping sound&gt;\nkeep the subject consistent with the source frame\nkeep Xinyi identical to the reference, same face, hairstyle, and build\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep the fluffy cream cat identical to the source frame.\nKeep the orange tumbler with silver rim and white label clearly visible.\nKeep Xinyi's face and appearance consistent.\nAvoid sudden cuts.\nKeep background stable and homey.",
+        "estimatedPriceUsd": 0.38038218749999997,
+        "sourceGenerationId": "01M2F6XFRQ0YVS45ZJ8C8YFATH"
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:40:53.189"
+    },
+    {
+      "id": "01M2F6Y0QYFBENWAR87ZK8Q4HN",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 27,
+      "text": "ok i want the video to be 15 seconds",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:41:10.527"
+    },
+    {
+      "id": "01M2F6Y8HS8NM23DPCK50A8H36",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_CARD",
+      "seq": 28,
+      "text": "",
+      "payload": {
+        "goal": "UGC-style social media video of Xinyi petting the cat while it drinks from the café's orange travel mug",
+        "kind": "image",
+        "model": "seedream",
+        "params": {
+          "count": 1,
+          "aspectRatio": "9:16"
+        },
+        "reason": "image → Seedream — 9:16",
+        "options": {
+          "maxCount": 4,
+          "aspectRatios": [
+            "1:1",
+            "9:16",
+            "16:9",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "21:9"
+          ],
+          "fineDetailAvailable": true
+        },
+        "entityIds": [
+          "01M265PRD50HWEKX2VFGBCF31Y"
+        ],
+        "specChips": [
+          "1620 × 2880",
+          "9:16",
+          "1 image"
+        ],
+        "videoStep": {
+          "next": {
+            "desiredAspect": "9:16",
+            "desiredDuration": 15,
+            "structuredPrompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Xinyi holding the fluffy cream cat on a cosy sofa while the cat drinks from the orange travel tumbler, Xinyi gently strokes the cat's fur with one hand while the cat lifts the orange tumbler to its mouth and sips; Xinyi looks at the cat and smiles warmly, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, soft golden sunlight from the side window, warm morning tones, cosy, wholesome, heartwarming\nAudio: &lt;gentle ambient home sounds, soft sipping sound&gt;\nkeep the subject consistent with the source frame\nkeep Xinyi identical to the reference, same face, hairstyle, and build\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep the fluffy cream cat identical to the source frame.\nKeep the orange tumbler with silver rim and white label clearly visible.\nKeep Xinyi's face and appearance consistent.\nAvoid sudden cuts.\nKeep background stable and homey."
+          },
+          "estimatedCredits": 33
+        },
+        "downgraded": false,
+        "variantSel": {},
+        "approvedEntities": [
+          {
+            "id": "01M265PRD50HWEKX2VFGBCF31Y",
+            "name": "Xinyi",
+            "type": "CHARACTER"
+          }
+        ],
+        "estimatedCredits": 1,
+        "structuredPrompt": "Add Xinyi petting and holding the cat. Restyle it to photorealistic, UGC-style candid phone photo, warm and authentic. The light is soft golden sunlight from the side window, warm morning tones. Keep Xinyi identical to the reference, same face, hairstyle, and build. Feature cat_with_mug exactly as in the reference, same shape, color, and label. The fluffy cream cat, the orange travel tumbler with silver rim and white label, the cosy sofa and living room background, the warm golden lighting. Keep the frame free of subtitles, captions, and watermarks.",
+        "estimatedPriceUsd": 0.035
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:41:18.522"
+    },
+    {
+      "id": "01M2F6YB3CXQQB07BAGYSW61NV",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 29,
+      "text": "Done! The new card above is set for a 15-second video. 🎬🐱 Approve it on the card to kick things off — the starting picture comes first, then the video card will appear for you to confirm! 😊",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:41:21.133"
+    },
+    {
+      "id": "01M2F6Z11F2C9Z8N5YK5M5TA5A",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 30,
+      "text": "just use @Add Xinyi petting and holding the cat. Restyle it to photor… as the first frame",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [
+          "01M2F6XFRQ0YVS45ZJ8C8YFATH"
+        ],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [
+        "generation:01M2F6XFRQ0YVS45ZJ8C8YFATH"
+      ],
+      "createdAt": "2026-09-14T05:41:43.6"
+    },
+    {
+      "id": "01M2F6ZWCHN3QHD5PCC5K59VDM",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_CARD",
+      "seq": 31,
+      "text": "",
+      "payload": {
+        "goal": "UGC-style 15-second social media video of Xinyi petting the cat while it drinks from the café's orange travel mug",
+        "kind": "video",
+        "model": "seedance-2-mini",
+        "params": {
+          "audio": true,
+          "count": 1,
+          "resolution": "720p",
+          "aspectRatio": "9:16",
+          "durationSeconds": 15
+        },
+        "reason": "Seedance 2.0 mini — 9:16, 15s",
+        "entityIds": [
+          "01M265PRD50HWEKX2VFGBCF31Y"
+        ],
+        "specChips": [
+          "9:16",
+          "15s",
+          "720p",
+          "With sound",
+          "Uses 3 of your reference photos"
+        ],
+        "downgraded": false,
+        "variantSel": {},
+        "mediaReferences": [
+          {
+            "kind": "image",
+            "role": "reference",
+            "label": "Add Xinyi petting and holding the cat. Restyle it to phot…",
+            "previewUrl": "/files/u/founder/e7e6db9f7d0af3999efb62828595a30fdacb746470908d53ec92e4bc7f2752ee.jpeg",
+            "sameCanvas": true,
+            "generationId": "01M2F6XFRQ0YVS45ZJ8C8YFATH",
+            "sourceProjectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+            "sourceProjectName": "Hi!"
+          }
+        ],
+        "approvedEntities": [
+          {
+            "id": "01M265PRD50HWEKX2VFGBCF31Y",
+            "name": "Xinyi",
+            "type": "CHARACTER"
+          }
+        ],
+        "estimatedCredits": 33,
+        "structuredPrompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Xinyi sitting on a cream sofa petting a fluffy cream cat that is drinking from an orange travel tumbler, Xinyi gently strokes the cat's fur while the cat lifts the orange tumbler to its mouth and takes a slow sip; Xinyi looks down at the cat warmly and smiles softly, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, warm golden sunlight streaming through sheer curtains from the left, soft and diffused, cosy, wholesome, heartwarming\nAudio: &lt;gentle ambient home sounds, soft sipping sound&gt;\nkeep the subject consistent with the source frame\nkeep Xinyi identical to the reference, same face, hairstyle, and build\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face, hair, and outfit identical to the source frame.\nKeep the fluffy cream cat identical to the source frame.\nKeep the orange tumbler with silver rim clearly visible throughout.\nAvoid sudden cuts.\nKeep background stable and homey.",
+        "estimatedPriceUsd": 1.1411465625,
+        "referenceGenerationIds": [
+          "01M2F6XFRQ0YVS45ZJ8C8YFATH"
+        ]
+      },
+      "genJobId": "01M2F70JKNT4TN51J668A7DANF",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:42:11.602"
+    },
+    {
+      "id": "01M2F6ZZF026NX6A274BQKFKAX",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 32,
+      "text": "There's the card! 🐾 This one goes straight to video using your image as the first frame — no extra picture step needed. Just approve it on the card above to start! 😊",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:42:14.753"
+    },
+    {
+      "id": "01M2F70Q88YZZZS0TDC51V57RA",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TURN_ERROR",
+      "seq": 33,
+      "text": "This picture can't be used as the person in a clip. Send the cast member and your product as references instead, and the clip is made from your description. You weren't charged.",
+      "payload": {
+        "kind": "video",
+        "model": "seedance-2-mini",
+        "generationIds": []
+      },
+      "genJobId": "01M2F70JKNT4TN51J668A7DANF",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:42:39.113"
+    },
+    {
+      "id": "01M2F725Z7301N8HYRRH9FWE9B",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 34,
+      "text": "no need start frame, straight away use @Xinyi and @An adorable fluffy cat sitting on a cosy home sofa, holding…",
+      "payload": {
+        "entityIds": [
+          "01M265PRD50HWEKX2VFGBCF31Y"
+        ],
+        "variantSel": {},
+        "sourceGenerationIds": [
+          "01M2A3CX6K9AWV6ZV1PBED34JX"
+        ],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [
+        "official-avatar:01M265PRD50HWEKX2VFGBCF31Y",
+        "generation:01M2A3CX6K9AWV6ZV1PBED34JX"
+      ],
+      "createdAt": "2026-09-14T05:43:26.952"
+    },
+    {
+      "id": "01M2F731WV1H2YVA5ARH20EZ2S",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_CARD",
+      "seq": 35,
+      "text": "",
+      "payload": {
+        "goal": "UGC-style 15-second social media video of Xinyi petting the cat while it drinks from the café's orange travel mug",
+        "kind": "video",
+        "model": "seedance-2-mini",
+        "params": {
+          "audio": true,
+          "count": 1,
+          "resolution": "720p",
+          "aspectRatio": "9:16",
+          "durationSeconds": 15
+        },
+        "reason": "Seedance 2.0 mini — 9:16, 15s",
+        "entityIds": [
+          "01M265PRD50HWEKX2VFGBCF31Y"
+        ],
+        "specChips": [
+          "9:16",
+          "15s",
+          "720p",
+          "With sound",
+          "Uses 3 of your reference photos"
+        ],
+        "downgraded": false,
+        "variantSel": {},
+        "mediaReferences": [
+          {
+            "kind": "image",
+            "role": "reference",
+            "label": "An adorable fluffy cat sitting on a cosy home sofa, holdi…",
+            "previewUrl": "/files/u/founder/bea0f1f0541c3f60276ae915bc485cba143ab11977d0f228139a3ab2a3588327.jpeg",
+            "sameCanvas": true,
+            "generationId": "01M2A3CX6K9AWV6ZV1PBED34JX",
+            "sourceProjectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+            "sourceProjectName": "Hi!"
+          }
+        ],
+        "approvedEntities": [
+          {
+            "id": "01M265PRD50HWEKX2VFGBCF31Y",
+            "name": "Xinyi",
+            "type": "CHARACTER"
+          }
+        ],
+        "estimatedCredits": 33,
+        "structuredPrompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nmedium close-up, Xinyi sitting on a cream sofa, gently holding and petting a fluffy cream Persian cat that is drinking from a bright orange matte travel tumbler, Xinyi wraps one arm around the fluffy cat and strokes its fur softly; the cat holds the bright orange tumbler with both paws up to its mouth and sips; Xinyi smiles warmly looking at the cat, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, warm golden sunlight streaming through sheer curtains from the left, soft and diffused, cosy, wholesome, heartwarming, charming\nAudio: &lt;gentle ambient home sounds, soft sipping sound&gt;\nkeep Xinyi identical to the reference, same face, hairstyle, and build; feature cat_with_mug_original exactly as in the reference, same shape, color, and label\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face, hair, and appearance identical to the reference.\nKeep the fluffy cream Persian cat identical to the reference.\nKeep the bright orange tumbler with silver rim and white label clearly visible throughout.\nAvoid sudden cuts.\nKeep background stable and homey.",
+        "estimatedPriceUsd": 1.1411465625,
+        "referenceGenerationIds": [
+          "01M2A3CX6K9AWV6ZV1PBED34JX"
+        ]
+      },
+      "genJobId": "01M2F736BR2VBJEJ8H1SV73F5X",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:43:55.548"
+    },
+    {
+      "id": "01M2F735C9G7SYND5GJP65G5RS",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 36,
+      "text": "There's the card! 🐱✨ @Xinyi and the cat image are both locked in as references — no starting picture step, straight to the 15-second video. Approve it on the card above to get it going! 😊",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:43:59.113"
+    },
+    {
+      "id": "01M2F7AG6KZGNX7RFN2C5BMYCH",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "GEN_RESULT",
+      "seq": 37,
+      "text": "",
+      "payload": {
+        "kind": "video",
+        "model": "seedance-2-mini",
+        "costCredits": 33,
+        "generationIds": [
+          "01M2F7AFBM5ZF2GYDQ0QA4FKX6"
+        ]
+      },
+      "genJobId": "01M2F736BR2VBJEJ8H1SV73F5X",
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:47:59.572"
+    },
+    {
+      "id": "01M2F7CK929CN24W2WFFGGWCDY",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 38,
+      "text": "great, some thing, but at 10 seconds i want @Xinyi suddenly say inshallah to the screen and throw the cat away.",
+      "payload": {
+        "entityIds": [
+          "01M265PRD50HWEKX2VFGBCF31Y"
+        ],
+        "variantSel": {},
+        "sourceGenerationIds": [],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [
+        "official-avatar:01M265PRD50HWEKX2VFGBCF31Y"
+      ],
+      "createdAt": "2026-09-14T05:49:08.258"
+    },
+    {
+      "id": "01M2F7DPAH7VZQYX722SCWK9JX",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "STORYBOARD_CARD",
+      "seq": 39,
+      "text": "",
+      "payload": {
+        "goal": "Funny UGC-style social media video — cosy cat moment that suddenly turns chaotic when Xinyi yells Inshallah and throws the cat",
+        "shots": [
+          {
+            "index": 0,
+            "title": "Cosy cat sipping moment (0–10s)",
+            "shotId": "01M2F7DP9T5FXF0CG44HEYJ3JR",
+            "entityIds": [
+              "01M265PRD50HWEKX2VFGBCF31Y"
+            ],
+            "videoPrompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nmedium close-up, Xinyi sitting on a cream sofa, gently holding and petting a fluffy cream Persian cat that is drinking from a bright orange matte travel tumbler, Xinyi wraps one arm around the fluffy cat and strokes its fur softly; the cat holds the bright orange tumbler with both paws up to its mouth and sips; Xinyi smiles warmly looking at the cat, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, warm golden sunlight streaming through sheer curtains from the left, soft and diffused, cosy, wholesome, heartwarming, charming\nAudio: <gentle ambient home sounds, soft sipping sound>\nkeep Xinyi identical to the reference, same face, hairstyle, and build; feature cat_with_mug_original exactly as in the reference, same shape, color, and label\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face, hair, and appearance identical to the reference.\nKeep the fluffy cream Persian cat identical to the reference.\nKeep the bright orange tumbler with silver rim and white label clearly visible throughout.\nAvoid sudden cuts.\nKeep background stable and homey.",
+            "durationSeconds": 10
+          },
+          {
+            "index": 1,
+            "title": "Inshallah cat toss (10–15s)",
+            "shotId": "01M2F7DP9VGKXA9QPNPMBBPWSZ",
+            "entityIds": [
+              "01M265PRD50HWEKX2VFGBCF31Y"
+            ],
+            "videoPrompt": "UGC-style, candid home video feel, comedic sudden energy shift, cinematic quality, natural motion, film-grade color, sharp focus\nmedium close-up, Xinyi sitting on a cream sofa, suddenly turning to face the camera directly, Xinyi snaps her gaze straight into the camera with wide eyes, then suddenly flings the fluffy cream cat off to the side with both arms in one swift dramatic toss, the eyes widen, the head pulls back, the hands freeze mid-motion, fixed, warm golden sunlight streaming through sheer curtains from the left, soft and diffused, sudden, comedic, chaotic, unexpected\nAudio: <sudden whoosh sound as cat flies off, comedic impact sound> {Inshallah!}\nkeep Xinyi identical to the reference, same face, hairstyle, and build\nfast and sudden\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face, hair, and appearance identical to the reference.\nThe cat flies visibly out of frame to the side.\nXinyi looks directly into the camera.\nKeep background stable.",
+            "durationSeconds": 5
+          }
+        ],
+        "continuity": true,
+        "storyboardTitle": "Xinyi & Cat — Inshallah Toss"
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:49:44.147"
+    },
+    {
+      "id": "01M2F7DVKXG6GXB5Z66B1JNNAE",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 40,
+      "text": "There's your storyboard! 🎬😂 Two shots, 15 seconds total. Review each shot on the card above — you can tweak anything before approving them to generate. 🐾",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:49:49.566"
+    },
+    {
+      "id": "01M2F7MEKX7JFA4DRPCA4FTZYD",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 41,
+      "text": "?",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:53:25.629"
+    },
+    {
+      "id": "01M2F7MQBSN8EV3H84PG873B2Q",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 42,
+      "text": "Sorry about that! The storyboard card should be visible above in the conversation — it has two shots laid out:\n\n- **Shot 1** — Cosy cat sipping moment (10s)\n- **Shot 2** — Xinyi yells \"Inshallah!\" and flings the cat (5s)\n\nCan you see it? If not, let me know and I'll try a different way! 😊",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:53:34.586"
+    },
+    {
+      "id": "01M2F7N73VCGW2WS7N68W2NAVH",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 43,
+      "text": "can, just do it stragiht away, no need starting image",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:53:50.716"
+    },
+    {
+      "id": "01M2F7NB8QFCV84M3QFMJRNHN9",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 44,
+      "text": "Got it! Let me generate both shots straight away! 🎬",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:53:54.968"
+    },
+    {
+      "id": "01M2F7P9YZNGN6QJVP1DE2WEST",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "USER",
+      "kind": "TEXT",
+      "seq": 45,
+      "text": "where is the card?",
+      "payload": {
+        "entityIds": [],
+        "variantSel": {},
+        "sourceGenerationIds": [],
+        "referenceVideoGenerationIds": []
+      },
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:54:26.4"
+    },
+    {
+      "id": "01M2F7PG5Q8KQP36SM2QF6T73D",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "role": "AGENT",
+      "kind": "TEXT",
+      "seq": 46,
+      "text": "Sorry! Let me call up the generate cards for both shots now.",
+      "payload": null,
+      "genJobId": null,
+      "sourceGenerationId": null,
+      "referenceRefs": [],
+      "createdAt": "2026-09-14T05:54:32.759"
+    }
+  ],
+  "jobs": [
+    {
+      "id": "01M2A3BYKQ797E3NQXFDJHVBGA",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "shotId": null,
+      "prompt": "An adorable fluffy cat sitting on a cosy home sofa, holding and drinking from an orange-red matte travel tumbler coffee mug. The setting is warm UGC-style living room interior, cosy home setting, soft furnishings, natural morning light coming through a window. The style is photorealistic, UGC-style phone photo, candid and authentic feel, product photography quality, the light is soft natural window light from the side, warm golden morning tones, the color palette is warm oranges, creams, and browns matching the mug. Shot with 35mm lens, slight handheld feel. The mood is cosy, warm, charming, wholesome. The orange-red matte travel tumbler is clearly visible and prominent, cat has expressive cute eyes, mug label faces camera. Leave clean, uncluttered space around the subject with headroom for motion, and keep a single dominant light direction. Keep the frame free of subtitles, captions, and watermarks.",
+      "entityIds": [],
+      "kind": "IMAGE",
+      "model": "seedream",
+      "count": 1,
+      "status": "DONE",
+      "progress": 100,
+      "generationIds": [
+        "01M2A3CX6K9AWV6ZV1PBED34JX"
+      ],
+      "error": "",
+      "queueJobId": "5c4f91f6-70a6-448b-bd15-555e7309dbed",
+      "attempts": 1,
+      "startedAt": "2026-09-12T06:02:41.506",
+      "finishedAt": "2026-09-12T06:03:12.008",
+      "createdAt": "2026-09-12T06:02:40.649",
+      "updatedAt": "2026-09-12T06:03:12.01",
+      "sourceGenerationId": null,
+      "tailGenerationId": null,
+      "videoOptions": null,
+      "spent": true,
+      "idempotencyKey": "cowork:01M2A35TXKB09QC2E6M95XTVRP",
+      "variantSel": null,
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "spentUsd": 0.035,
+      "ottoVerdictAt": null,
+      "batchId": null,
+      "referenceVideoGenerationId": null,
+      "imageOptions": {
+        "aspectRatio": "9:16"
+      },
+      "billedUnits": 1,
+      "approvedEntities": null,
+      "lastFrameAssetId": null,
+      "requestedPrompt": null
+    },
+    {
+      "id": "01M2A3D3Z2NZEE3M22B9J524CG",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "shotId": null,
+      "prompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Adorable fluffy cat sitting on a cosy sofa, holding and sipping from an orange-red matte travel tumbler coffee mug, Cat lifts the orange travel mug toward its mouth and takes a small sip, pauses contentedly, tail swishes gently, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, soft natural window light from the side, warm golden morning tones, cosy, charming, wholesome\nAudio: &lt;gentle ambient home sounds, soft coffee sipping sound&gt;\nkeep the subject consistent with the source frame\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep the orange travel mug clearly visible throughout.\nKeep the cat's face expressive and cute.\nAvoid sudden cuts.\nKeep background stable and homey.",
+      "entityIds": [],
+      "kind": "VIDEO",
+      "model": "seedance-2-mini",
+      "count": 1,
+      "status": "DONE",
+      "progress": 100,
+      "generationIds": [
+        "01M2A3FZJNH16QJAVFZWR0A3FE"
+      ],
+      "error": "",
+      "queueJobId": "3678118f-d88b-4c76-99fd-daa839e4a8ae",
+      "attempts": 1,
+      "startedAt": "2026-09-12T06:03:20.123",
+      "finishedAt": "2026-09-12T06:04:53.285",
+      "createdAt": "2026-09-12T06:03:18.893",
+      "updatedAt": "2026-09-12T06:04:53.285",
+      "sourceGenerationId": "01M2A3CX6K9AWV6ZV1PBED34JX",
+      "tailGenerationId": null,
+      "videoOptions": {
+        "fps": 0,
+        "audio": true,
+        "seconds": 5,
+        "resolution": "720p",
+        "aspectRatio": "9:16"
+      },
+      "spent": true,
+      "idempotencyKey": "cowork:01M2A3CX9TQDC0E4GSAMH99B72",
+      "variantSel": null,
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "spentUsd": 0.38038218749999997,
+      "ottoVerdictAt": null,
+      "batchId": null,
+      "referenceVideoGenerationId": null,
+      "imageOptions": null,
+      "billedUnits": 108900,
+      "approvedEntities": null,
+      "lastFrameAssetId": "01M2A3G04BBCVR98BGR6A9ETSR",
+      "requestedPrompt": null
+    },
+    {
+      "id": "01M2F6QF8CEP5QVSFRFD6AATZB",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "shotId": null,
+      "prompt": "A young woman named Xinyi gently holding and petting an adorable fluffy cat, while the cat holds and drinks from an orange-red matte travel tumbler coffee mug. The setting is warm UGC-style living room interior, cosy home setting, soft furnishings, natural morning light coming through a window. The style is photorealistic, UGC-style phone photo, candid and authentic feel, the light is soft natural window light from the side, warm golden morning tones, the color palette is warm oranges, creams, and browns. Shot with 35mm lens, slight handheld feel. The mood is cosy, warm, charming, wholesome, heartwarming. The orange-red matte travel tumbler is clearly visible, cat has expressive cute eyes, Xinyi is smiling warmly, her hand gently stroking the cat. Leave clean, uncluttered space around the subject with headroom for motion, and keep a single dominant light direction. Keep Xinyi identical to the reference, same face, hairstyle, and build. Keep the frame free of subtitles, captions, and watermarks.",
+      "entityIds": [
+        "01M265PRD50HWEKX2VFGBCF31Y"
+      ],
+      "kind": "IMAGE",
+      "model": "seedream",
+      "count": 1,
+      "status": "DONE",
+      "progress": 100,
+      "generationIds": [
+        "01M2F6S20KRZX47BM7CC48HA5Z"
+      ],
+      "error": "",
+      "queueJobId": "ce8f4374-9eec-4dad-ab48-6803a39a1a10",
+      "attempts": 1,
+      "startedAt": "2026-09-14T05:37:38.017",
+      "finishedAt": "2026-09-14T05:38:28.02",
+      "createdAt": "2026-09-14T05:37:36.027",
+      "updatedAt": "2026-09-14T05:38:28.022",
+      "sourceGenerationId": null,
+      "tailGenerationId": null,
+      "videoOptions": null,
+      "spent": true,
+      "idempotencyKey": "cowork:01M2F6Q6TPRMNHX1D10JYDCKPZ",
+      "variantSel": null,
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "spentUsd": 0.035,
+      "ottoVerdictAt": null,
+      "batchId": null,
+      "referenceVideoGenerationId": null,
+      "imageOptions": {
+        "aspectRatio": "9:16"
+      },
+      "billedUnits": 1,
+      "approvedEntities": [
+        {
+          "id": "01M265PRD50HWEKX2VFGBCF31Y",
+          "name": "Xinyi",
+          "type": "CHARACTER"
+        }
+      ],
+      "lastFrameAssetId": null,
+      "requestedPrompt": null
+    },
+    {
+      "id": "01M2F6W4ECZQG835TJNXS7TN3E",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "shotId": null,
+      "prompt": "Add Xinyi petting and holding the cat. Restyle it to photorealistic, UGC-style candid phone photo, warm and authentic. The light is soft golden sunlight from the side window, warm morning tones. Keep Xinyi identical to the reference, same face, hairstyle, and build. Feature cat_with_mug exactly as in the reference, same shape, color, and label. The fluffy cream cat, the orange travel tumbler with silver rim and white label, the cosy sofa and living room background, the warm golden lighting. Keep the frame free of subtitles, captions, and watermarks.",
+      "entityIds": [
+        "01M265PRD50HWEKX2VFGBCF31Y"
+      ],
+      "kind": "IMAGE",
+      "model": "seedream",
+      "count": 1,
+      "status": "DONE",
+      "progress": 100,
+      "generationIds": [
+        "01M2F6XFRQ0YVS45ZJ8C8YFATH"
+      ],
+      "error": "",
+      "queueJobId": "128d6548-82c9-4955-9a0b-4d7860134901",
+      "attempts": 1,
+      "startedAt": "2026-09-14T05:40:10.121",
+      "finishedAt": "2026-09-14T05:40:53.165",
+      "createdAt": "2026-09-14T05:40:08.803",
+      "updatedAt": "2026-09-14T05:40:53.165",
+      "sourceGenerationId": "01M2A3CX6K9AWV6ZV1PBED34JX",
+      "tailGenerationId": null,
+      "videoOptions": null,
+      "spent": true,
+      "idempotencyKey": "cowork:01M2F6VXAY6EKEN5FERQK7XXFP",
+      "variantSel": null,
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "spentUsd": 0.035,
+      "ottoVerdictAt": null,
+      "batchId": null,
+      "referenceVideoGenerationId": null,
+      "imageOptions": {
+        "aspectRatio": "9:16"
+      },
+      "billedUnits": 1,
+      "approvedEntities": [
+        {
+          "id": "01M265PRD50HWEKX2VFGBCF31Y",
+          "name": "Xinyi",
+          "type": "CHARACTER"
+        }
+      ],
+      "lastFrameAssetId": null,
+      "requestedPrompt": null
+    },
+    {
+      "id": "01M2F70JKNT4TN51J668A7DANF",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "shotId": null,
+      "prompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Xinyi sitting on a cream sofa petting a fluffy cream cat that is drinking from an orange travel tumbler, Xinyi gently strokes the cat's fur while the cat lifts the orange tumbler to its mouth and takes a slow sip; Xinyi looks down at the cat warmly and smiles softly, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, warm golden sunlight streaming through sheer curtains from the left, soft and diffused, cosy, wholesome, heartwarming\nAudio: &lt;gentle ambient home sounds, soft sipping sound&gt;\nkeep the subject consistent with the source frame\nkeep Xinyi identical to the reference, same face, hairstyle, and build\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face, hair, and outfit identical to the source frame.\nKeep the fluffy cream cat identical to the source frame.\nKeep the orange tumbler with silver rim clearly visible throughout.\nAvoid sudden cuts.\nKeep background stable and homey.",
+      "entityIds": [
+        "01M265PRD50HWEKX2VFGBCF31Y"
+      ],
+      "kind": "VIDEO",
+      "model": "seedance-2-mini",
+      "count": 1,
+      "status": "FAILED",
+      "progress": 0,
+      "generationIds": [],
+      "error": "This picture can't be used as the person in a clip. Send the cast member and your product as references instead, and the clip is made from your description. You weren't charged.",
+      "queueJobId": "922d5bbc-9a86-4c01-954f-5dd41aef79f9",
+      "attempts": 1,
+      "startedAt": "2026-09-14T05:42:35.313",
+      "finishedAt": "2026-09-14T05:42:39.079",
+      "createdAt": "2026-09-14T05:42:34.372",
+      "updatedAt": "2026-09-14T05:42:39.08",
+      "sourceGenerationId": null,
+      "tailGenerationId": null,
+      "videoOptions": {
+        "fps": 0,
+        "audio": true,
+        "seconds": 15,
+        "resolution": "720p",
+        "aspectRatio": "9:16",
+        "referenceGenerationIds": [
+          "01M2F6XFRQ0YVS45ZJ8C8YFATH"
+        ]
+      },
+      "spent": false,
+      "idempotencyKey": "cowork:01M2F6ZWCHN3QHD5PCC5K59VDM",
+      "variantSel": null,
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "spentUsd": null,
+      "ottoVerdictAt": null,
+      "batchId": null,
+      "referenceVideoGenerationId": null,
+      "imageOptions": null,
+      "billedUnits": null,
+      "approvedEntities": [
+        {
+          "id": "01M265PRD50HWEKX2VFGBCF31Y",
+          "name": "Xinyi",
+          "type": "CHARACTER"
+        }
+      ],
+      "lastFrameAssetId": null,
+      "requestedPrompt": null
+    },
+    {
+      "id": "01M2F736BR2VBJEJ8H1SV73F5X",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "shotId": null,
+      "prompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nmedium close-up, Xinyi sitting on a cream sofa, gently holding and petting a fluffy cream Persian cat that is drinking from a bright orange matte travel tumbler, Xinyi wraps one arm around the fluffy cat and strokes its fur softly; the cat holds the bright orange tumbler with both paws up to its mouth and sips; Xinyi smiles warmly looking at the cat, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, warm golden sunlight streaming through sheer curtains from the left, soft and diffused, cosy, wholesome, heartwarming, charming\nAudio: &lt;gentle ambient home sounds, soft sipping sound&gt;\nkeep Xinyi identical to the reference, same face, hairstyle, and build; feature cat_with_mug_original exactly as in the reference, same shape, color, and label\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face, hair, and appearance identical to the reference.\nKeep the fluffy cream Persian cat identical to the reference.\nKeep the bright orange tumbler with silver rim and white label clearly visible throughout.\nAvoid sudden cuts.\nKeep background stable and homey.",
+      "entityIds": [
+        "01M265PRD50HWEKX2VFGBCF31Y"
+      ],
+      "kind": "VIDEO",
+      "model": "seedance-2-mini",
+      "count": 1,
+      "status": "DONE",
+      "progress": 100,
+      "generationIds": [
+        "01M2F7AFBM5ZF2GYDQ0QA4FKX6"
+      ],
+      "error": "",
+      "queueJobId": "9cd97a84-e12f-433e-9d7e-d483aca2f941",
+      "attempts": 1,
+      "startedAt": "2026-09-14T05:44:01.209",
+      "finishedAt": "2026-09-14T05:47:59.56",
+      "createdAt": "2026-09-14T05:44:00.138",
+      "updatedAt": "2026-09-14T05:47:59.56",
+      "sourceGenerationId": null,
+      "tailGenerationId": null,
+      "videoOptions": {
+        "fps": 0,
+        "audio": true,
+        "seconds": 15,
+        "resolution": "720p",
+        "aspectRatio": "9:16",
+        "providerTask": {
+          "id": "cgt-20260914134401-hx65b",
+          "submittedAt": "2026-09-14T05:44:03.956Z"
+        },
+        "referenceGenerationIds": [
+          "01M2A3CX6K9AWV6ZV1PBED34JX"
+        ]
+      },
+      "spent": true,
+      "idempotencyKey": "cowork:01M2F731WV1H2YVA5ARH20EZ2S",
+      "variantSel": null,
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "spentUsd": 1.1411465625,
+      "ottoVerdictAt": null,
+      "batchId": null,
+      "referenceVideoGenerationId": null,
+      "imageOptions": null,
+      "billedUnits": 324900,
+      "approvedEntities": [
+        {
+          "id": "01M265PRD50HWEKX2VFGBCF31Y",
+          "name": "Xinyi",
+          "type": "CHARACTER"
+        }
+      ],
+      "lastFrameAssetId": "01M2F7AG5XAATXPC07ZA6TN2T5",
+      "requestedPrompt": null
+    }
+  ],
+  "generations": [
+    {
+      "id": "01M2A3CX6K9AWV6ZV1PBED34JX",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "shotId": null,
+      "assetId": "01M2A3CX678YVSZCXB72SHZ4ZN",
+      "source": "GENERATED",
+      "promptText": "An adorable fluffy cat sitting on a cosy home sofa, holding and drinking from an orange-red matte travel tumbler coffee mug. The setting is warm UGC-style living room interior, cosy home setting, soft furnishings, natural morning light coming through a window. The style is photorealistic, UGC-style phone photo, candid and authentic feel, product photography quality, the light is soft natural window light from the side, warm golden morning tones, the color palette is warm oranges, creams, and browns matching the mug. Shot with 35mm lens, slight handheld feel. The mood is cosy, warm, charming, wholesome. The orange-red matte travel tumbler is clearly visible and prominent, cat has expressive cute eyes, mug label faces camera. Leave clean, uncluttered space around the subject with headroom for motion, and keep a single dominant light direction. Keep the frame free of subtitles, captions, and watermarks.",
+      "modelRef": "seedream",
+      "params": null,
+      "entitySnapshot": {
+        "entities": []
+      },
+      "version": 1,
+      "attachedAt": null,
+      "createdAt": "2026-09-12T06:03:11.957",
+      "deletedAt": null,
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "batchId": null,
+      "favorite": false,
+      "campaignId": null,
+      "finalPromptText": null,
+      "sentPromptText": "An adorable fluffy cat sitting on a cosy home sofa, holding and drinking from an orange-red matte travel tumbler coffee mug. The setting is warm UGC-style living room interior, cosy home setting, soft furnishings, natural morning light coming through a window. The style is photorealistic, UGC-style phone photo, candid and authentic feel, product photography quality, the light is soft natural window light from the side, warm golden morning tones, the color palette is warm oranges, creams, and browns matching the mug. Shot with 35mm lens, slight handheld feel. The mood is cosy, warm, charming, wholesome. The orange-red matte travel tumbler is clearly visible and prominent, cat has expressive cute eyes, mug label faces camera. Leave clean, uncluttered space around the subject with headroom for motion, and keep a single dominant light direction. Keep the frame free of subtitles, captions, and watermarks.",
+      "routeReason": null
+    },
+    {
+      "id": "01M2A3FZJNH16QJAVFZWR0A3FE",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "shotId": null,
+      "assetId": "01M2A3FZJCGTJ9EA48A1HPHSBS",
+      "source": "GENERATED",
+      "promptText": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Adorable fluffy cat sitting on a cosy sofa, holding and sipping from an orange-red matte travel tumbler coffee mug, Cat lifts the orange travel mug toward its mouth and takes a small sip, pauses contentedly, tail swishes gently, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, soft natural window light from the side, warm golden morning tones, cosy, charming, wholesome\nAudio: &lt;gentle ambient home sounds, soft coffee sipping sound&gt;\nkeep the subject consistent with the source frame\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep the orange travel mug clearly visible throughout.\nKeep the cat's face expressive and cute.\nAvoid sudden cuts.\nKeep background stable and homey.",
+      "modelRef": "seedance-2-mini",
+      "params": null,
+      "entitySnapshot": {
+        "entities": []
+      },
+      "version": 1,
+      "attachedAt": null,
+      "createdAt": "2026-09-12T06:04:52.693",
+      "deletedAt": null,
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "batchId": null,
+      "favorite": false,
+      "campaignId": null,
+      "finalPromptText": null,
+      "sentPromptText": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Adorable fluffy cat sitting on a cosy sofa, holding and sipping from an orange-red matte travel tumbler coffee mug, Cat lifts the orange travel mug toward its mouth and takes a small sip, pauses contentedly, tail swishes gently, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, soft natural window light from the side, warm golden morning tones, cosy, charming, wholesome\nAudio: &lt;gentle ambient home sounds, soft coffee sipping sound&gt;\nkeep the subject consistent with the source frame\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep the orange travel mug clearly visible throughout.\nKeep the cat's face expressive and cute.\nAvoid sudden cuts.\nKeep background stable and homey.",
+      "routeReason": null
+    },
+    {
+      "id": "01M2F6S20KRZX47BM7CC48HA5Z",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "shotId": null,
+      "assetId": "01M2F6S20AHVTYPY9F77KJ5JA1",
+      "source": "GENERATED",
+      "promptText": "A young woman named Xinyi gently holding and petting an adorable fluffy cat, while the cat holds and drinks from an orange-red matte travel tumbler coffee mug. The setting is warm UGC-style living room interior, cosy home setting, soft furnishings, natural morning light coming through a window. The style is photorealistic, UGC-style phone photo, candid and authentic feel, the light is soft natural window light from the side, warm golden morning tones, the color palette is warm oranges, creams, and browns. Shot with 35mm lens, slight handheld feel. The mood is cosy, warm, charming, wholesome, heartwarming. The orange-red matte travel tumbler is clearly visible, cat has expressive cute eyes, Xinyi is smiling warmly, her hand gently stroking the cat. Leave clean, uncluttered space around the subject with headroom for motion, and keep a single dominant light direction. Keep Xinyi identical to the reference, same face, hairstyle, and build. Keep the frame free of subtitles, captions, and watermarks.",
+      "modelRef": "seedream",
+      "params": null,
+      "entitySnapshot": {
+        "entities": [
+          {
+            "id": "01M265PRD50HWEKX2VFGBCF31Y",
+            "name": "Xinyi",
+            "type": "CHARACTER",
+            "refHashes": [
+              "d46cf79a2c18e79be2d5a7ebff20e96e49f243b09ffaba62c030ffbf75bc9e45",
+              "bf16d2f40520f175b24354a9eb19c36f40d92e4aa2813b8ef01fe064e95efcfe"
+            ],
+            "variantId": null
+          }
+        ]
+      },
+      "version": 1,
+      "attachedAt": null,
+      "createdAt": "2026-09-14T05:38:27.989",
+      "deletedAt": null,
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "batchId": null,
+      "favorite": false,
+      "campaignId": null,
+      "finalPromptText": null,
+      "sentPromptText": "Define the person in <Image_1> as <Subject_1>: Xinyi. <Image_2> is another photo of <Subject_1> (Xinyi).\nA young woman named Xinyi gently holding and petting an adorable fluffy cat, while the cat holds and drinks from an orange-red matte travel tumbler coffee mug. The setting is warm UGC-style living room interior, cosy home setting, soft furnishings, natural morning light coming through a window. The style is photorealistic, UGC-style phone photo, candid and authentic feel, the light is soft natural window light from the side, warm golden morning tones, the color palette is warm oranges, creams, and browns. Shot with 35mm lens, slight handheld feel. The mood is cosy, warm, charming, wholesome, heartwarming. The orange-red matte travel tumbler is clearly visible, cat has expressive cute eyes, Xinyi is smiling warmly, her hand gently stroking the cat. Leave clean, uncluttered space around the subject with headroom for motion, and keep a single dominant light direction. Keep Xinyi identical to the reference, same face, hairstyle, and build. Keep the frame free of subtitles, captions, and watermarks.",
+      "routeReason": null
+    },
+    {
+      "id": "01M2F6XFRQ0YVS45ZJ8C8YFATH",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "shotId": null,
+      "assetId": "01M2F6XFRH0XB3EQ5K8QJTPZ6N",
+      "source": "GENERATED",
+      "promptText": "Add Xinyi petting and holding the cat. Restyle it to photorealistic, UGC-style candid phone photo, warm and authentic. The light is soft golden sunlight from the side window, warm morning tones. Keep Xinyi identical to the reference, same face, hairstyle, and build. Feature cat_with_mug exactly as in the reference, same shape, color, and label. The fluffy cream cat, the orange travel tumbler with silver rim and white label, the cosy sofa and living room background, the warm golden lighting. Keep the frame free of subtitles, captions, and watermarks.",
+      "modelRef": "seedream",
+      "params": null,
+      "entitySnapshot": {
+        "entities": [
+          {
+            "id": "01M265PRD50HWEKX2VFGBCF31Y",
+            "name": "Xinyi",
+            "type": "CHARACTER",
+            "refHashes": [
+              "d46cf79a2c18e79be2d5a7ebff20e96e49f243b09ffaba62c030ffbf75bc9e45",
+              "bf16d2f40520f175b24354a9eb19c36f40d92e4aa2813b8ef01fe064e95efcfe"
+            ],
+            "variantId": null
+          }
+        ]
+      },
+      "version": 1,
+      "attachedAt": null,
+      "createdAt": "2026-09-14T05:40:53.143",
+      "deletedAt": null,
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "batchId": null,
+      "favorite": false,
+      "campaignId": null,
+      "finalPromptText": null,
+      "sentPromptText": "<Image_1> is the image being edited. Define the person in <Image_2> as <Subject_2>: Xinyi. <Image_3> is another photo of <Subject_2> (Xinyi).\nAdd Xinyi petting and holding the cat. Restyle it to photorealistic, UGC-style candid phone photo, warm and authentic. The light is soft golden sunlight from the side window, warm morning tones. Keep Xinyi identical to the reference, same face, hairstyle, and build. Feature cat_with_mug exactly as in the reference, same shape, color, and label. The fluffy cream cat, the orange travel tumbler with silver rim and white label, the cosy sofa and living room background, the warm golden lighting. Keep the frame free of subtitles, captions, and watermarks.",
+      "routeReason": null
+    },
+    {
+      "id": "01M2F7AFBM5ZF2GYDQ0QA4FKX6",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "shotId": null,
+      "assetId": "01M2F7AFBFS58Y9BJSF75GGE42",
+      "source": "GENERATED",
+      "promptText": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nmedium close-up, Xinyi sitting on a cream sofa, gently holding and petting a fluffy cream Persian cat that is drinking from a bright orange matte travel tumbler, Xinyi wraps one arm around the fluffy cat and strokes its fur softly; the cat holds the bright orange tumbler with both paws up to its mouth and sips; Xinyi smiles warmly looking at the cat, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, warm golden sunlight streaming through sheer curtains from the left, soft and diffused, cosy, wholesome, heartwarming, charming\nAudio: &lt;gentle ambient home sounds, soft sipping sound&gt;\nkeep Xinyi identical to the reference, same face, hairstyle, and build; feature cat_with_mug_original exactly as in the reference, same shape, color, and label\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face, hair, and appearance identical to the reference.\nKeep the fluffy cream Persian cat identical to the reference.\nKeep the bright orange tumbler with silver rim and white label clearly visible throughout.\nAvoid sudden cuts.\nKeep background stable and homey.",
+      "modelRef": "seedance-2-mini",
+      "params": null,
+      "entitySnapshot": {
+        "entities": [
+          {
+            "id": "01M265PRD50HWEKX2VFGBCF31Y",
+            "name": "Xinyi",
+            "type": "CHARACTER",
+            "refHashes": [
+              "d46cf79a2c18e79be2d5a7ebff20e96e49f243b09ffaba62c030ffbf75bc9e45",
+              "bf16d2f40520f175b24354a9eb19c36f40d92e4aa2813b8ef01fe064e95efcfe"
+            ],
+            "variantId": null
+          }
+        ]
+      },
+      "version": 1,
+      "attachedAt": null,
+      "createdAt": "2026-09-14T05:47:58.709",
+      "deletedAt": null,
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "batchId": null,
+      "favorite": false,
+      "campaignId": null,
+      "finalPromptText": null,
+      "sentPromptText": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nmedium close-up, Xinyi sitting on a cream sofa, gently holding and petting a fluffy cream Persian cat that is drinking from a bright orange matte travel tumbler, Xinyi wraps one arm around the fluffy cat and strokes its fur softly; the cat holds the bright orange tumbler with both paws up to its mouth and sips; Xinyi smiles warmly looking at the cat, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, warm golden sunlight streaming through sheer curtains from the left, soft and diffused, cosy, wholesome, heartwarming, charming\nAudio: &lt;gentle ambient home sounds, soft sipping sound&gt;\nkeep Xinyi identical to the reference, same face, hairstyle, and build; feature cat_with_mug_original exactly as in the reference, same shape, color, and label\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face, hair, and appearance identical to the reference.\nKeep the fluffy cream Persian cat identical to the reference.\nKeep the bright orange tumbler with silver rim and white label clearly visible throughout.\nAvoid sudden cuts.\nKeep background stable and homey.",
+      "routeReason": null
+    }
+  ],
+  "nodes": [
+    {
+      "id": "01M2A3BZ1E6D5WX9GDCWGGY0MS",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "type": "image",
+      "x": -27.980295566502463,
+      "y": 63.448275862068954,
+      "w": 180,
+      "h": 320,
+      "text": null,
+      "prompt": "An adorable fluffy cat sitting on a cosy home sofa, holding and drinking from an orange-red matte travel tumbler coffee mug. The setting is warm UGC-style living room interior, cosy home setting, soft furnishings, natural morning light coming through a window. The style is photorealistic, UGC-style phone photo, candid and authentic feel, product photography quality, the light is soft natural window light from the side, warm golden morning tones, the color palette is warm oranges, creams, and browns matching the mug. Shot with 35mm lens, slight handheld feel. The mood is cosy, warm, charming, wholesome. The orange-red matte travel tumbler is clearly visible and prominent, cat has expressive cute eyes, mug label faces camera. Leave clean, uncluttered space around the subject with headroom for motion, and keep a single dominant light direction. Keep the frame free of subtitles, captions, and watermarks.",
+      "generationId": "01M2A3CX6K9AWV6ZV1PBED34JX",
+      "genJobId": "01M2A3BYKQ797E3NQXFDJHVBGA",
+      "status": "done",
+      "createdAt": "2026-09-12T06:02:41.108",
+      "updatedAt": "2026-09-14T05:35:21.474",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "batchIndex": 0,
+      "batchSize": 1,
+      "layoutAnchorNodeId": null,
+      "madeFromNodeId": null
+    },
+    {
+      "id": "01M2A3D49KJXRHK5RH87KHG6HD",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "type": "video",
+      "x": 482.1038822957488,
+      "y": 325.3925363834824,
+      "w": 180,
+      "h": 320,
+      "text": null,
+      "prompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Adorable fluffy cat sitting on a cosy sofa, holding and sipping from an orange-red matte travel tumbler coffee mug, Cat lifts the orange travel mug toward its mouth and takes a small sip, pauses contentedly, tail swishes gently, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, soft natural window light from the side, warm golden morning tones, cosy, charming, wholesome\nAudio: &lt;gentle ambient home sounds, soft coffee sipping sound&gt;\nkeep the subject consistent with the source frame\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep the orange travel mug clearly visible throughout.\nKeep the cat's face expressive and cute.\nAvoid sudden cuts.\nKeep background stable and homey.",
+      "generationId": "01M2A3FZJNH16QJAVFZWR0A3FE",
+      "genJobId": "01M2A3D3Z2NZEE3M22B9J524CG",
+      "status": "done",
+      "createdAt": "2026-09-12T06:03:19.257",
+      "updatedAt": "2026-09-14T05:54:57.87",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "batchIndex": 0,
+      "batchSize": 1,
+      "layoutAnchorNodeId": null,
+      "madeFromNodeId": "01M2A3BZ1E6D5WX9GDCWGGY0MS"
+    },
+    {
+      "id": "01M2F6QFM3V6VXW7E2GRSKAF3G",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "type": "image",
+      "x": -64.33118421764645,
+      "y": 495.3032265483372,
+      "w": 180,
+      "h": 320,
+      "text": null,
+      "prompt": "A young woman named Xinyi gently holding and petting an adorable fluffy cat, while the cat holds and drinks from an orange-red matte travel tumbler coffee mug. The setting is warm UGC-style living room interior, cosy home setting, soft furnishings, natural morning light coming through a window. The style is photorealistic, UGC-style phone photo, candid and authentic feel, the light is soft natural window light from the side, warm golden morning tones, the color palette is warm oranges, creams, and browns. Shot with 35mm lens, slight handheld feel. The mood is cosy, warm, charming, wholesome, heartwarming. The orange-red matte travel tumbler is clearly visible, cat has expressive cute eyes, Xinyi is smiling warmly, her hand gently stroking the cat. Leave clean, uncluttered space around the subject with headroom for motion, and keep a single dominant light direction. Keep Xinyi identical to the reference, same face, hairstyle, and build. Keep the frame free of subtitles, captions, and watermarks.",
+      "generationId": "01M2F6S20KRZX47BM7CC48HA5Z",
+      "genJobId": "01M2F6QF8CEP5QVSFRFD6AATZB",
+      "status": "done",
+      "createdAt": "2026-09-14T05:37:36.448",
+      "updatedAt": "2026-09-14T05:40:18.274",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "batchIndex": 0,
+      "batchSize": 1,
+      "layoutAnchorNodeId": null,
+      "madeFromNodeId": null
+    },
+    {
+      "id": "01M2F6W520YTK8RK0ZKKXKTC5Y",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "type": "image",
+      "x": 488.12320817953696,
+      "y": -156.5996923239457,
+      "w": 180,
+      "h": 320,
+      "text": null,
+      "prompt": "Add Xinyi petting and holding the cat. Restyle it to photorealistic, UGC-style candid phone photo, warm and authentic. The light is soft golden sunlight from the side window, warm morning tones. Keep Xinyi identical to the reference, same face, hairstyle, and build. Feature cat_with_mug exactly as in the reference, same shape, color, and label. The fluffy cream cat, the orange travel tumbler with silver rim and white label, the cosy sofa and living room background, the warm golden lighting. Keep the frame free of subtitles, captions, and watermarks.",
+      "generationId": "01M2F6XFRQ0YVS45ZJ8C8YFATH",
+      "genJobId": "01M2F6W4ECZQG835TJNXS7TN3E",
+      "status": "done",
+      "createdAt": "2026-09-14T05:40:09.47",
+      "updatedAt": "2026-09-14T05:54:56.201",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "batchIndex": 0,
+      "batchSize": 1,
+      "layoutAnchorNodeId": null,
+      "madeFromNodeId": "01M2A3BZ1E6D5WX9GDCWGGY0MS"
+    },
+    {
+      "id": "01M2F70K1XGW1FPAZMJD1WN8XQ",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "type": "video",
+      "x": 450.7338971071127,
+      "y": -165.98614092499056,
+      "w": 320,
+      "h": 180,
+      "text": null,
+      "prompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nstarting from the given first frame, medium close-up, Xinyi sitting on a cream sofa petting a fluffy cream cat that is drinking from an orange travel tumbler, Xinyi gently strokes the cat's fur while the cat lifts the orange tumbler to its mouth and takes a slow sip; Xinyi looks down at the cat warmly and smiles softly, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, warm golden sunlight streaming through sheer curtains from the left, soft and diffused, cosy, wholesome, heartwarming\nAudio: &lt;gentle ambient home sounds, soft sipping sound&gt;\nkeep the subject consistent with the source frame\nkeep Xinyi identical to the reference, same face, hairstyle, and build\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face, hair, and outfit identical to the source frame.\nKeep the fluffy cream cat identical to the source frame.\nKeep the orange tumbler with silver rim clearly visible throughout.\nAvoid sudden cuts.\nKeep background stable and homey.",
+      "generationId": null,
+      "genJobId": "01M2F70JKNT4TN51J668A7DANF",
+      "status": "deleted",
+      "createdAt": "2026-09-14T05:42:34.876",
+      "updatedAt": "2026-09-14T05:54:15.371",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "batchIndex": null,
+      "batchSize": null,
+      "layoutAnchorNodeId": null,
+      "madeFromNodeId": null
+    },
+    {
+      "id": "01M2F736RQ8W87P3JHMCEPBA92",
+      "ownerId": "founder",
+      "projectId": "canvas_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "type": "video",
+      "x": 999.5154328828821,
+      "y": 250.23514389895843,
+      "w": 180,
+      "h": 320,
+      "text": null,
+      "prompt": "UGC-style, warm and cosy, candid home video feel, cinematic quality, natural motion, film-grade color, sharp focus\nmedium close-up, Xinyi sitting on a cream sofa, gently holding and petting a fluffy cream Persian cat that is drinking from a bright orange matte travel tumbler, Xinyi wraps one arm around the fluffy cat and strokes its fur softly; the cat holds the bright orange tumbler with both paws up to its mouth and sips; Xinyi smiles warmly looking at the cat, the corners of the mouth lift, the eyes soften, the steps turn light, fixed, warm golden sunlight streaming through sheer curtains from the left, soft and diffused, cosy, wholesome, heartwarming, charming\nAudio: &lt;gentle ambient home sounds, soft sipping sound&gt;\nkeep Xinyi identical to the reference, same face, hairstyle, and build; feature cat_with_mug_original exactly as in the reference, same shape, color, and label\nslow and relaxed\nno on-screen text, watermark, or logo\nthis is a vertical clip — do not burn in any subtitles or captions, and never render a 【】 caption bar\nKeep Xinyi's face, hair, and appearance identical to the reference.\nKeep the fluffy cream Persian cat identical to the reference.\nKeep the bright orange tumbler with silver rim and white label clearly visible throughout.\nAvoid sudden cuts.\nKeep background stable and homey.",
+      "generationId": "01M2F7AFBM5ZF2GYDQ0QA4FKX6",
+      "genJobId": "01M2F736BR2VBJEJ8H1SV73F5X",
+      "status": "done",
+      "createdAt": "2026-09-14T05:44:00.599",
+      "updatedAt": "2026-09-14T05:54:45.643",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "batchIndex": 0,
+      "batchSize": 1,
+      "layoutAnchorNodeId": null,
+      "madeFromNodeId": null
+    }
+  ],
+  "traces": [
+    {
+      "refId": "otto-stream:01M29ZXBMS1YRJTM1X6TK8ZT6E",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 1,
+      "toolCalls": [],
+      "skillFiles": [
+        "_core.md"
+      ],
+      "truncated": false,
+      "settledInternal": 15,
+      "createdAt": "2026-09-12T05:02:20.111"
+    },
+    {
+      "refId": "otto-stream:01M29ZXW79V4VZSTG8RV3GK1Q1",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 1,
+      "toolCalls": [],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/meta-ads.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md"
+      ],
+      "truncated": false,
+      "settledInternal": 5,
+      "createdAt": "2026-09-12T05:02:37.62"
+    },
+    {
+      "refId": "otto-stream:01M29ZZH0ZM2FN06HBNGV1S587",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 2,
+      "toolCalls": [
+        {
+          "ok": 1,
+          "name": "describeRefs",
+          "calls": 1,
+          "failed": 0
+        }
+      ],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/meta-ads.md",
+        "product-map/canvas-and-media.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md",
+        "product-map/social-and-channels.md"
+      ],
+      "truncated": false,
+      "settledInternal": 9,
+      "createdAt": "2026-09-12T05:03:37.889"
+    },
+    {
+      "refId": "otto-stream:01M2A03VR0W580N093HG23GASS",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 1,
+      "toolCalls": [],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/meta-ads.md",
+        "playbooks/storyboards.md",
+        "product-map/canvas-and-media.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md",
+        "product-map/social-and-channels.md"
+      ],
+      "truncated": false,
+      "settledInternal": 7,
+      "createdAt": "2026-09-12T05:05:53.321"
+    },
+    {
+      "refId": "otto-stream:01M2A34SKY5ZCYXQ7XWV8F8CYB",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 5,
+      "toolCalls": [
+        {
+          "ok": 1,
+          "name": "setTitle",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "seedreamPrompt",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "seedancePrompt",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "propose",
+          "calls": 1,
+          "failed": 0
+        }
+      ],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/meta-ads.md",
+        "playbooks/offering-directions.md",
+        "playbooks/storyboards.md",
+        "product-map/canvas-and-media.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md",
+        "product-map/social-and-channels.md"
+      ],
+      "truncated": false,
+      "settledInternal": 30,
+      "createdAt": "2026-09-12T05:59:22.907"
+    },
+    {
+      "refId": "otto-stream:01M2F6PAQ8YV8HM3JCKN7K74JE",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 4,
+      "toolCalls": [
+        {
+          "ok": 1,
+          "name": "seedreamPrompt",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "seedancePrompt",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "propose",
+          "calls": 1,
+          "failed": 0
+        }
+      ],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/meta-ads.md",
+        "playbooks/offering-directions.md",
+        "playbooks/storyboards.md",
+        "product-map/canvas-and-media.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md",
+        "product-map/social-and-channels.md"
+      ],
+      "truncated": false,
+      "settledInternal": 31,
+      "createdAt": "2026-09-14T05:37:29.989"
+    },
+    {
+      "refId": "otto-stream:01M2F6TC5DJ0PF3TQ7JMTQ3YBA",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 1,
+      "toolCalls": [],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/meta-ads.md",
+        "playbooks/offering-directions.md",
+        "playbooks/storyboards.md",
+        "product-map/canvas-and-media.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md",
+        "product-map/social-and-channels.md"
+      ],
+      "truncated": false,
+      "settledInternal": 4,
+      "createdAt": "2026-09-14T05:39:14.619"
+    },
+    {
+      "refId": "otto-stream:01M2F6TR1D23DD56GZJSDQ8RFX",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 5,
+      "toolCalls": [
+        {
+          "ok": 1,
+          "name": "describeRefs",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "seedreamPrompt",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "seedancePrompt",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "propose",
+          "calls": 1,
+          "failed": 0
+        }
+      ],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/meta-ads.md",
+        "playbooks/offering-directions.md",
+        "playbooks/storyboards.md",
+        "product-map/canvas-and-media.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md",
+        "product-map/social-and-channels.md"
+      ],
+      "truncated": false,
+      "settledInternal": 25,
+      "createdAt": "2026-09-14T05:40:05.757"
+    },
+    {
+      "refId": "otto-stream:01M2F6Y0QYFBENWAR87ZK8Q4HN",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 2,
+      "toolCalls": [
+        {
+          "ok": 1,
+          "name": "propose",
+          "calls": 1,
+          "failed": 0
+        }
+      ],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/meta-ads.md",
+        "playbooks/offering-directions.md",
+        "playbooks/storyboards.md",
+        "product-map/canvas-and-media.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md",
+        "product-map/social-and-channels.md"
+      ],
+      "truncated": false,
+      "settledInternal": 11,
+      "createdAt": "2026-09-14T05:41:21.085"
+    },
+    {
+      "refId": "otto-stream:01M2F6Z11F2C9Z8N5YK5M5TA5A",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 4,
+      "toolCalls": [
+        {
+          "ok": 1,
+          "name": "describeRefs",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "seedancePrompt",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "propose",
+          "calls": 1,
+          "failed": 0
+        }
+      ],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/meta-ads.md",
+        "playbooks/offering-directions.md",
+        "playbooks/storyboards.md",
+        "product-map/canvas-and-media.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md",
+        "product-map/social-and-channels.md"
+      ],
+      "truncated": false,
+      "settledInternal": 24,
+      "createdAt": "2026-09-14T05:42:14.656"
+    },
+    {
+      "refId": "otto-stream:01M2F725Z7301N8HYRRH9FWE9B",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 4,
+      "toolCalls": [
+        {
+          "ok": 1,
+          "name": "describeRefs",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "seedancePrompt",
+          "calls": 1,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "propose",
+          "calls": 1,
+          "failed": 0
+        }
+      ],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/meta-ads.md",
+        "playbooks/offering-directions.md",
+        "playbooks/storyboards.md",
+        "product-map/canvas-and-media.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md",
+        "product-map/social-and-channels.md"
+      ],
+      "truncated": false,
+      "settledInternal": 26,
+      "createdAt": "2026-09-14T05:43:58.968"
+    },
+    {
+      "refId": "otto-stream:01M2F7CK929CN24W2WFFGGWCDY",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 4,
+      "toolCalls": [
+        {
+          "ok": 2,
+          "name": "seedancePrompt",
+          "calls": 2,
+          "failed": 0
+        },
+        {
+          "ok": 1,
+          "name": "proposeStoryboard",
+          "calls": 1,
+          "failed": 0
+        }
+      ],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/meta-ads.md",
+        "playbooks/offering-directions.md",
+        "playbooks/storyboards.md",
+        "product-map/canvas-and-media.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md",
+        "product-map/social-and-channels.md"
+      ],
+      "truncated": false,
+      "settledInternal": 40,
+      "createdAt": "2026-09-14T05:49:49.506"
+    },
+    {
+      "refId": "otto-stream:01M2F7MEKX7JFA4DRPCA4FTZYD",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 1,
+      "toolCalls": [],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/offering-directions.md",
+        "playbooks/storyboards.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md"
+      ],
+      "truncated": false,
+      "settledInternal": 10,
+      "createdAt": "2026-09-14T05:53:34.556"
+    },
+    {
+      "refId": "otto-stream:01M2F7N73VCGW2WS7N68W2NAVH",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 1,
+      "toolCalls": [
+        {
+          "ok": 0,
+          "name": "generate",
+          "calls": 1,
+          "failed": 0
+        }
+      ],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/storyboards.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md"
+      ],
+      "truncated": false,
+      "settledInternal": 9,
+      "createdAt": "2026-09-14T05:53:54.918"
+    },
+    {
+      "refId": "otto-stream:01M2F7P9YZNGN6QJVP1DE2WEST",
+      "orgId": "founder",
+      "threadId": "thread_dad82159-06c9-46e1-b3fa-709bb39624a9",
+      "surface": "stream",
+      "modelId": "claude-sonnet-4-6",
+      "steps": 1,
+      "toolCalls": [
+        {
+          "ok": 0,
+          "name": "generate",
+          "calls": 1,
+          "failed": 0
+        }
+      ],
+      "skillFiles": [
+        "_core.md",
+        "craft/prompting.md",
+        "playbooks/brand-memory.md",
+        "playbooks/storyboards.md",
+        "product-map/creating.md",
+        "product-map/projects-and-elements.md"
+      ],
+      "truncated": false,
+      "settledInternal": 6,
+      "createdAt": "2026-09-14T05:54:32.723"
+    }
+  ],
+  "ledger": [
+    {
+      "id": "9f9b5989-125f-4fde-bd35-f09e87f2b83f",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M29ZXBMS1YRJTM1X6TK8ZT6E",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-12T05:02:16.794"
+    },
+    {
+      "id": "11fe2efe-7a2a-428d-bf8a-aadd645f8392",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M29ZXBMS1YRJTM1X6TK8ZT6E",
+      "balanceDelta": 25,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-12T05:02:20.096"
+    },
+    {
+      "id": "7622ca71-41ca-44c2-8813-8d1422e2176d",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M29ZXW79V4VZSTG8RV3GK1Q1",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-12T05:02:33.8"
+    },
+    {
+      "id": "2fff7c27-b37b-4b4c-a5be-f51d7575cc8c",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M29ZXW79V4VZSTG8RV3GK1Q1",
+      "balanceDelta": 35,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-12T05:02:37.612"
+    },
+    {
+      "id": "02884ebb-1bf8-414a-b148-38115945aac8",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M29ZZH0ZM2FN06HBNGV1S587",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-12T05:03:27.964"
+    },
+    {
+      "id": "135815a1-731c-4701-b8f6-cc30fb53b6c1",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M29ZZH0ZM2FN06HBNGV1S587",
+      "balanceDelta": 31,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-12T05:03:37.877"
+    },
+    {
+      "id": "84a9e744-887e-4fbe-83cf-27f0155b9498",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2A03VR0W580N093HG23GASS",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-12T05:05:49.878"
+    },
+    {
+      "id": "3fc26c24-0bcb-40e5-bc4e-1a9cfac2a929",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2A03VR0W580N093HG23GASS",
+      "balanceDelta": 33,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-12T05:05:53.31"
+    },
+    {
+      "id": "51d6487e-b13d-4f05-9ed6-919e6b5244a4",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2A34SKY5ZCYXQ7XWV8F8CYB",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-12T05:58:46.271"
+    },
+    {
+      "id": "d65e97e9-cad9-47fe-832a-613e270795fd",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2A34SKY5ZCYXQ7XWV8F8CYB",
+      "balanceDelta": 10,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-12T05:59:22.883"
+    },
+    {
+      "id": "e44b56a4-bc3a-429a-ab66-d974048c4394",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2A3BYKQ797E3NQXFDJHVBGA",
+      "balanceDelta": -10,
+      "reservedDelta": 10,
+      "createdAt": "2026-09-12T06:02:40.662"
+    },
+    {
+      "id": "829d8b57-a171-46a3-9b0e-b1625d05eb13",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2A3BYKQ797E3NQXFDJHVBGA",
+      "balanceDelta": 0,
+      "reservedDelta": -10,
+      "createdAt": "2026-09-12T06:03:11.985"
+    },
+    {
+      "id": "b7962c70-e106-4832-a66d-9ba50f9612d7",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2A3D3Z2NZEE3M22B9J524CG",
+      "balanceDelta": -110,
+      "reservedDelta": 110,
+      "createdAt": "2026-09-12T06:03:18.903"
+    },
+    {
+      "id": "683f7914-6eab-4359-a24d-b6947488e0ff",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2A3D3Z2NZEE3M22B9J524CG",
+      "balanceDelta": 0,
+      "reservedDelta": -110,
+      "createdAt": "2026-09-12T06:04:52.71"
+    },
+    {
+      "id": "4bc70bd2-26b1-4ba2-b36e-9fd271d19378",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F6PAQ8YV8HM3JCKN7K74JE",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-14T05:36:58.73"
+    },
+    {
+      "id": "30772d76-a45b-4906-accc-fe221e4b361c",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F6PAQ8YV8HM3JCKN7K74JE",
+      "balanceDelta": 9,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-14T05:37:29.958"
+    },
+    {
+      "id": "f38d05a7-ca1a-4f21-8610-9db90b3adf89",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2F6QF8CEP5QVSFRFD6AATZB",
+      "balanceDelta": -10,
+      "reservedDelta": 10,
+      "createdAt": "2026-09-14T05:37:36.043"
+    },
+    {
+      "id": "9bd63fb2-ed69-4f3f-9c4a-8a51ce59467e",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2F6QF8CEP5QVSFRFD6AATZB",
+      "balanceDelta": 0,
+      "reservedDelta": -10,
+      "createdAt": "2026-09-14T05:38:28.004"
+    },
+    {
+      "id": "6ed04617-66fb-4c49-94f1-4777002a7fb4",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F6TC5DJ0PF3TQ7JMTQ3YBA",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-14T05:39:11.22"
+    },
+    {
+      "id": "76b56590-b9e0-4ca9-bda2-f962ce693a81",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F6TC5DJ0PF3TQ7JMTQ3YBA",
+      "balanceDelta": 36,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-14T05:39:14.606"
+    },
+    {
+      "id": "b8b8a08a-adba-4f2d-822a-09a3669eb011",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F6TR1D23DD56GZJSDQ8RFX",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-14T05:39:23.639"
+    },
+    {
+      "id": "748147f2-11e8-49e1-ab00-9f719f740f7d",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F6TR1D23DD56GZJSDQ8RFX",
+      "balanceDelta": 15,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-14T05:40:05.74"
+    },
+    {
+      "id": "33978df6-d23a-4df7-8b7e-4f1f872fa0cb",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2F6W4ECZQG835TJNXS7TN3E",
+      "balanceDelta": -10,
+      "reservedDelta": 10,
+      "createdAt": "2026-09-14T05:40:08.814"
+    },
+    {
+      "id": "3cde5708-aa60-49c5-95e4-268abc908230",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2F6W4ECZQG835TJNXS7TN3E",
+      "balanceDelta": 0,
+      "reservedDelta": -10,
+      "createdAt": "2026-09-14T05:40:53.154"
+    },
+    {
+      "id": "c3b9c5c3-a581-4b98-bf71-4a01b9330619",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F6Y0QYFBENWAR87ZK8Q4HN",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-14T05:41:10.63"
+    },
+    {
+      "id": "e4f8ca9c-1739-4165-9498-85d2c082eadd",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F6Y0QYFBENWAR87ZK8Q4HN",
+      "balanceDelta": 29,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-14T05:41:21.073"
+    },
+    {
+      "id": "b5fa06d4-d194-452c-8d1b-2471f4ef25d3",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F6Z11F2C9Z8N5YK5M5TA5A",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-14T05:41:43.819"
+    },
+    {
+      "id": "a40f8a93-1a5a-47f7-a62a-dd687b0e5ce8",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F6Z11F2C9Z8N5YK5M5TA5A",
+      "balanceDelta": 16,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-14T05:42:14.644"
+    },
+    {
+      "id": "1a055a97-9bf7-47b0-b3d8-f85ee48f0c62",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2F70JKNT4TN51J668A7DANF",
+      "balanceDelta": -330,
+      "reservedDelta": 330,
+      "createdAt": "2026-09-14T05:42:34.385"
+    },
+    {
+      "id": "2b3c0ed1-ecf0-4902-b271-7b3ca4832e90",
+      "kind": "REFUND",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2F70JKNT4TN51J668A7DANF",
+      "balanceDelta": 330,
+      "reservedDelta": -330,
+      "createdAt": "2026-09-14T05:42:39.095"
+    },
+    {
+      "id": "36fe425c-203b-42a6-ac96-3b868b7930fa",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F725Z7301N8HYRRH9FWE9B",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-14T05:43:27.236"
+    },
+    {
+      "id": "727c0eb3-7a61-4656-9215-e1ef45f25f16",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F725Z7301N8HYRRH9FWE9B",
+      "balanceDelta": 14,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-14T05:43:58.951"
+    },
+    {
+      "id": "28ca9665-3ef2-43a6-be6d-baec2c5ba69f",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2F736BR2VBJEJ8H1SV73F5X",
+      "balanceDelta": -330,
+      "reservedDelta": 330,
+      "createdAt": "2026-09-14T05:44:00.15"
+    },
+    {
+      "id": "c4d4dc5e-74c4-4a97-a2cf-e0303076ea2b",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "01M2F736BR2VBJEJ8H1SV73F5X",
+      "balanceDelta": 0,
+      "reservedDelta": -330,
+      "createdAt": "2026-09-14T05:47:58.72"
+    },
+    {
+      "id": "e9c79a4d-40d1-462e-87df-c52152aa997a",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F7CK929CN24W2WFFGGWCDY",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-14T05:49:08.387"
+    },
+    {
+      "id": "318756d0-1ca0-4e96-b655-793eeb558d38",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "hold-shortfall:4",
+      "refId": "otto-stream:01M2F7CK929CN24W2WFFGGWCDY",
+      "balanceDelta": 0,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-14T05:49:49.493"
+    },
+    {
+      "id": "927a18e7-e361-4234-9174-4ff7bc035540",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F7MEKX7JFA4DRPCA4FTZYD",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-14T05:53:25.693"
+    },
+    {
+      "id": "3efeed7b-ae6a-465b-9227-363a4b4b6b46",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F7MEKX7JFA4DRPCA4FTZYD",
+      "balanceDelta": 30,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-14T05:53:34.538"
+    },
+    {
+      "id": "ea1b1e5b-8dd3-4142-9aaf-71d34e73186d",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F7N73VCGW2WS7N68W2NAVH",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-14T05:53:50.816"
+    },
+    {
+      "id": "de584684-81d1-414a-9652-53c3f94461df",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F7N73VCGW2WS7N68W2NAVH",
+      "balanceDelta": 31,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-14T05:53:54.908"
+    },
+    {
+      "id": "72ba5159-4cf0-4c51-bc58-8c574286d764",
+      "kind": "RESERVE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F7P9YZNGN6QJVP1DE2WEST",
+      "balanceDelta": -40,
+      "reservedDelta": 40,
+      "createdAt": "2026-09-14T05:54:26.495"
+    },
+    {
+      "id": "792f7898-b24e-45e6-bf3e-9293aa87b278",
+      "kind": "SETTLE",
+      "source": "SYSTEM",
+      "reason": "",
+      "refId": "otto-stream:01M2F7P9YZNGN6QJVP1DE2WEST",
+      "balanceDelta": 34,
+      "reservedDelta": -40,
+      "createdAt": "2026-09-14T05:54:32.713"
+    }
+  ]
+}

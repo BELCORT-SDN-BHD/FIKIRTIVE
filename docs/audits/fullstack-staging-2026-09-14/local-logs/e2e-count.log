@@ -1,0 +1,33 @@
+e2e/journeys/ 共 28 个 spec 文件。
+
+逐号清单:
+  0 — 00-storage-fence.spec.ts
+  1 — 01-wall-and-sign-in.spec.ts
+  2 — 02-balance-and-hold.spec.ts
+  3 — 03-charge-is-traceable.spec.ts
+  4 — 04-refund-exactly-once.spec.ts
+  5 — 05-topup-shelf-honesty.spec.ts
+  6 — 06-spend-history-counts-charges.spec.ts
+  7 — 07-money-surfaces-agree.spec.ts
+  8 — 08-library-delete.spec.ts
+  9 — 09-tenant-isolation.spec.ts
+  10 — 10-broadcast-consent-gate.spec.ts
+  11 — 11-sign-out.spec.ts
+  12 — 12-create-project.spec.ts
+  13 — 13-fresh-upload-becomes-asset.spec.ts
+  14 — 14-canvas-toolbar-reachable.spec.ts
+  15 — 15-home-layout-persists.spec.ts
+  16 — 16-otto-canvas-seam.spec.ts
+  17 — 17-canvas-selection.spec.ts
+  18 — 18-otto-turn-state.spec.ts
+  19 — 19-generation-terminal-converges.spec.ts
+  20 — 20-library-favorites-and-collections.spec.ts
+  21 — 21-sign-in-and-return.spec.ts
+  22 — 22-password-doors-retired.spec.ts
+  23 — 23-brand-product-identity.spec.ts
+  24 — 24-brand-five-sections.spec.ts
+  25 — 25-reference-picker-finds-an-element.spec.ts
+  26 — 26-two-doors-one-workspace.spec.ts
+  27 — 27-engine-a3-canvas-conversation.spec.ts
+
+OK — 28 个 spec 文件,编号无重复。
