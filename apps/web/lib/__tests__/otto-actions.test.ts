@@ -671,13 +671,41 @@ function setupHappyPath() {
   mockWithLlmBudget.mockImplementation(passthroughMeter());
 }
 
+/**
+ * FC-1 —— `chatMessage.findMany` 现在有**两个**读者,这个替身必须分得清它们:
+ *
+ *  ① 卡种探针(`where.id.in`,otto-actions.ts 的 needs_approval 落地段)—— 「这个停在批准项
+ *     上的编号,今天真的是一张能渲染出确认卡的 GEN_CARD 吗」。现场那一轮它不是(是分镜卡),
+ *     于是屏幕上出现了「承诺 + Ready + 零产出」。
+ *  ② #498 的语言探针(`role:"USER"` + `kind:"TEXT"`)—— 平局时读线程里最近几句商家原话。
+ *
+ * 默认让①照实答「是」:本文件这些用例说的正是一次**正常**的 generate 暂停 —— 卡是 propose
+ * 在这一轮里真落过库的。反例(分镜卡编号、查无此卡)在
+ * `otto-storyboard-generate-chain.test.ts` 里单独钉,不在这里放水。
+ */
+function findManyDouble(history: { text: string }[] = []) {
+  return async (args?: { where?: { id?: { in?: string[] } } }) => {
+    const ids = args?.where?.id?.in;
+    if (ids) return ids.map((id) => ({ id, kind: "GEN_CARD" }));
+    return history;
+  };
+}
+
+/** 语言探针的那一次调用(①的调用不算)—— `not.toHaveBeenCalled()` 已经不能用来问这件事。 */
+function langProbeCalls() {
+  return mockChatMessageFindMany.mock.calls.filter(
+    (c) => (c[0] as { where?: { role?: string } } | undefined)?.where?.role === "USER",
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockConsumeOttoTurnGate.mockResolvedValue(true);
   mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
   // #498 round-5: the tie-language fallback probes recent USER messages; default
-  // to an empty thread history (→ "en") unless a test scripts one.
-  mockChatMessageFindMany.mockResolvedValue([]);
+  // to an empty thread history (→ "en") unless a test scripts one. FC-1: the same spy
+  // also serves the card-kind probe — `findManyDouble` answers each read in its own terms.
+  mockChatMessageFindMany.mockImplementation(findManyDouble());
   mockChatThreadDeleteMany.mockResolvedValue({ count: 1 });
   mockChatMessageDeleteMany.mockResolvedValue({ count: 1 });
   mockResearchJobFindFirst.mockResolvedValue(null);
@@ -1813,10 +1841,10 @@ describe("finalizeOttoRun — #498 verbal approval must never be silent", () => 
   it('language tie ("ok teruskan") → falls back to the most recent DECISIVE merchant message in the thread', async () => {
     // The thread's recent USER messages, newest first: the tie itself (already
     // persisted), then a decisive Malay ask.
-    mockChatMessageFindMany.mockResolvedValue([
+    mockChatMessageFindMany.mockImplementation(findManyDouble([
       { text: "ok teruskan" },
       { text: "tolong buat semua gambar" },
-    ]);
+    ]));
     const result = {
       state: new MockRunState(),
       interruptions: [generateInterruption("card_verbal")],
@@ -1840,7 +1868,7 @@ describe("finalizeOttoRun — #498 verbal approval must never be silent", () => 
   });
 
   it("language tie with NO decisive history → English; an indecisive history row is walked past", async () => {
-    mockChatMessageFindMany.mockResolvedValue([{ text: "ok teruskan" }, { text: "hmm" }]);
+    mockChatMessageFindMany.mockImplementation(findManyDouble([{ text: "ok teruskan" }, { text: "hmm" }]));
     const result = {
       state: new MockRunState(),
       interruptions: [generateInterruption("card_verbal")],
@@ -1867,7 +1895,8 @@ describe("finalizeOttoRun — #498 verbal approval must never be silent", () => 
       ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
       result, seqAfterUser: 4, userText: "tolong buat semua",
     });
-    expect(mockChatMessageFindMany).not.toHaveBeenCalled();
+    // FC-1:这把 spy 现在也服务卡种探针,所以问的是**语言探针**那一次有没有发生。
+    expect(langProbeCalls()).toHaveLength(0);
   });
 });
 
@@ -2407,7 +2436,7 @@ describe("ottoApprove — chained interruption with zero narration synthesizes t
     // findFirst serves the max-seq lookup; findMany serves the #498 round-5
     // language probe (recent USER messages, newest first).
     mockChatMessageFindFirst.mockResolvedValue({ seq: 5 });
-    mockChatMessageFindMany.mockResolvedValue(userHistory.map((text) => ({ text })));
+    mockChatMessageFindMany.mockImplementation(findManyDouble(userHistory.map((text) => ({ text }))));
   }
 
   it('zero narration + CJK merchant ("全部生成") → persists and returns the Chinese pointer receipt', async () => {

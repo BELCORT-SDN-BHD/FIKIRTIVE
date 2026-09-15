@@ -165,15 +165,20 @@ describe("#580 P1-1 卡面 payload 类型 = 服务端契约", () => {
     }
     // The branch coverage above must actually reach the optional fields, or this
     // assertion would pass by simply never exercising them.
-    for (const key of ["videoStep", "sourceGenerationId", "referenceVideoGenerationId", "downgradeNote", "approvedEntities"]) {
+    for (const key of ["sourceGenerationId", "referenceVideoGenerationId", "downgradeNote", "approvedEntities"]) {
       expect(emitted.has(key)).toBe(true);
     }
+    // FC-3(S5 批量裁决 2026-09-12 #1358)—— `videoStep` 从「必须铸得出来」翻成
+    // **「一张都不许再铸」**:两步计划(先卖一张首帧图、再出片)整条退场,所以活着的铸卡器
+    // 不该再吐这一格。它仍留在 `CARD_PAYLOAD_KEYS` 里,因为裁决之前铸的旧卡带着它 ——
+    // 读那一侧(解析、渲染)的覆盖在本文件下面的旧卡用例里,一条都没动。
+    expect(emitted.has("videoStep")).toBe(false);
     expect([...emitted].filter((k) => !(k in CARD_PAYLOAD_KEYS))).toEqual([]);
   });
 });
 
-/** Seven real cards straight from the live server builder: plain video, downgraded video,
- *  image ad pack, two-step image, i2v, reference video, and an image that @mentions an
+/** Six real cards straight from the live server builder: plain video, downgraded video,
+ *  image ad pack, i2v, reference video, and an image that @mentions an
  *  element (#774 —— 只有它会带出 `approvedEntities`,少了它上面那条覆盖断言会空过去)。 */
 async function builtCards(): Promise<ServerCardPayload[]> {
   const { buildProposeCard } = await import("@fikirtive/otto");
@@ -192,7 +197,6 @@ async function builtCards(): Promise<ServerCardPayload[]> {
     // （30 秒 / 2:3），否则这张卡不再带 downgradeNote，下面的覆盖断言就空过去了。
     buildProposeCard({ kind: "video", ...base, desiredDuration: 30, desiredAspect: "2:3" }, ctx, []),
     buildProposeCard({ kind: "image", ...base, count: 3 }, ctx, []),
-    buildProposeCard({ kind: "image", ...base, forVideo: true }, ctx, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), sourceGenerationId: "gen_img" } as never, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), referenceVideoGenerationId: "gen_vid" } as never, []),
     buildProposeCard(
