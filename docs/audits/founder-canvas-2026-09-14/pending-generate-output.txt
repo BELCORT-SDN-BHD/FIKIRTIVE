@@ -1,0 +1,42 @@
+
+ RUN  v3.2.6 /Users/winnin/.codex/worktrees/founder-canvas-diagnosis-20260914/FIKIRTIVE
+
+stderr | docs/audits/founder-canvas-2026-09-14/pending-generate.test.ts > actual SDK generate interruption must not finish as Ready plus a promise when no GEN_CARD exists
+Accessed finalOutput before agent run is completed.
+
+stdout | docs/audits/founder-canvas-2026-09-14/pending-generate.test.ts > actual SDK generate interruption must not finish as Ready plus a promise when no GEN_CARD exists
+{"interrupted":true,"approvals":1,"executed":0,"status":"Ready","text":"Sorry! Let me call up the generate cards for both shots now."}
+
+stderr | docs/audits/founder-canvas-2026-09-14/pending-generate.test.ts > wrong storyboard reference is rejected only when execute is reached
+Accessed finalOutput before agent run is completed.
+
+stderr | docs/audits/founder-canvas-2026-09-14/pending-generate.test.ts > H2/H3: park never validates card; serialized SDK interruption survives restoration
+Accessed finalOutput before agent run is completed.
+
+ ❯ docs/audits/founder-canvas-2026-09-14/pending-generate.test.ts (4 tests | 1 failed) 32ms
+   × actual SDK generate interruption must not finish as Ready plus a promise when no GEN_CARD exists 25ms
+     → approval interruption is invisible behind Ready: expected 'Ready' not to be 'Ready' // Object.is equality
+   ✓ wrong storyboard reference is rejected only when execute is reached 4ms
+   ✓ H1: only a visible confirmation card changes Ready; live pending IDs alone do not 0ms
+   ✓ H2/H3: park never validates card; serialized SDK interruption survives restoration 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  docs/audits/founder-canvas-2026-09-14/pending-generate.test.ts > actual SDK generate interruption must not finish as Ready plus a promise when no GEN_CARD exists
+AssertionError: approval interruption is invisible behind Ready: expected 'Ready' not to be 'Ready' // Object.is equality
+ ❯ docs/audits/founder-canvas-2026-09-14/pending-generate.test.ts:33:77
+     31|  const status=canvasTurnStatus({isBusy:false,hasAssistantText:true,liv…
+     32|  console.log(JSON.stringify({interrupted:fin.interrupted,approvals:fin…
+     33|  expect(status.label,"approval interruption is invisible behind Ready"…
+       |                                                                             ^
+     34| });
+     35| it("wrong storyboard reference is rejected only when execute is reache…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 passed (4)
+   Start at  14:04:42
+   Duration  1.34s (transform 472ms, setup 0ms, collect 964ms, tests 32ms, environment 0ms, prepare 62ms)
+
