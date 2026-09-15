@@ -36,7 +36,7 @@ const m = vi.hoisted(() => {
   return { prisma, refGenJobFindUnique, refGenJobUpdate, refGenJobUpdateMany, refFindFirst, refCreate, entityUpdate, refundReservation, settleCredits };
 });
 
-vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits, Prisma: {} }));
+vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits, Prisma: {}, reconcileEntityCover: vi.fn(async () => null) }));
 // import-time deps the resume path does not exercise:
 vi.mock("../storage.js", () => ({ storage: {} }));
 vi.mock("../generation.js", () => ({ provider: { name: "mock" } }));

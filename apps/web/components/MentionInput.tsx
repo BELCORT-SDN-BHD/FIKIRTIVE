@@ -49,11 +49,13 @@ function entityReferenceType(type: EntityDTO["type"]): ReferenceType {
   }
 }
 
-/** The locked base image when there is one, else the first image ref. A video is not a thumbnail. */
+/** The pinned cover, and only that. A video is not a thumbnail.
+ *  规格 §5(Founder 2026-09-15 裁决;验收 PRODID-A4):从前这里还会 `?? images[0]?.url` 沿用
+ *  第一张,而 Brand 那条读路在没钉过时当作没有主图 —— 同一件产品两张脸。挂上第一张参考图就
+ *  自动钉成封面的规则现在住在写路(`@fikirtive/db:reconcileEntityCover`),读路只照着它画。 */
 function entityThumbUrl(item: MentionItem): string | null {
   const images = (item.refs ?? []).filter((ref) => ref.kind === "image");
-  const base = images.find((ref) => ref.assetId === item.baseAssetId);
-  return base?.url ?? images[0]?.url ?? null;
+  return images.find((ref) => ref.assetId === item.baseAssetId)?.url ?? null;
 }
 
 const MentionList = forwardRef<MentionListHandle, MentionListProps>(function MentionList(props, ref) {

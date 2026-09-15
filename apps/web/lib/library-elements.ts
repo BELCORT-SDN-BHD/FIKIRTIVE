@@ -50,11 +50,18 @@ export async function getLibraryElements(): Promise<LibraryElement[] | { error: 
       if (!kind) return null;
       const keyOf = (ref: (typeof row.referenceImages)[number]) =>
         storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext.toLowerCase());
-      // 封面 = 身份上钉的那一张(`Entity.baseAssetId`);没钉过才沿用第一张 —— 与
-      // `lib/stuff-items.ts:74`、`MentionInput` 逐字同一条规则(规格 §1.4;验收 PRODID-A4)。
-      // 拿的是这一张本身,所以「钉的那张字节没了」仍然是没有封面,不静默换成另一张。
-      const cover = row.referenceImages.find((ref) => ref.assetId === row.baseAssetId)
-        ?? row.referenceImages[0];
+      // 封面 = 身份上钉的那一张,**只认这一张**(`Entity.baseAssetId`;规格 §5,
+      // Founder 2026-09-15 裁决;验收 PRODID-A4)。
+      //
+      // 从前这里还有一句 `?? row.referenceImages[0]`「没钉过就沿用第一张」,而 Brand 那条读路
+      // (`packages/core/src/brand-records.ts:withProductIdentity`)在没钉过时是**当作没有主图**的
+      // —— 同一件产品于是有两张脸:Library 一张图,Brand 一个空位。裁决把这件事挪到了写路:
+      // 挂上第一张参考图的同一个事务里就钉成封面(`@fikirtive/db:reconcileEntityCover`),存量
+      // 数据由迁移 20260915120000_entity_cover_autopin 一次补齐。读路从此不再各自猜一遍。
+      //
+      // 拿的是这一张本身,所以「钉的那张字节没了」仍然是没有封面,不静默换成另一张 —— 与 Brand
+      // 逐字同一口径。
+      const cover = row.referenceImages.find((ref) => ref.assetId === row.baseAssetId);
       // **整个列表只探这一张**:字节真的还在才给封面 —— 与生成历史同一条纪律,不给一个必然
       // 坏掉的 <img src>。一格一张图地探会让这一页的 HEAD 数从「每个元素一次」涨成「每张
       // 参考图一次」(无上限的 `Promise.all`),而 `storage.exists` 对非 404 是**往上抛**的:

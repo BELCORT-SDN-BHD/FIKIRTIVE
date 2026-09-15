@@ -51,7 +51,7 @@ const m = vi.hoisted(() => {
   };
 });
 
-vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits, Prisma: {} }));
+vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits, Prisma: {}, reconcileEntityCover: vi.fn(async () => null) }));
 vi.mock("../storage.js", () => ({ storage: { put: m.storagePut, presignedGet: m.storagePresignedGet } }));
 vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generate } }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set<string>()) }));
