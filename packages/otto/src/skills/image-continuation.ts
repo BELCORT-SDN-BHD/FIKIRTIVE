@@ -41,11 +41,13 @@ import type { OttoContext } from "../context.js";
  */
 export const IMAGE_CONTINUATION_SIGNALS: Record<string, readonly string[]> = {
   en: [
-    "now i want", "now i wan", "now make", "now add", "now put", "now can you", "now change",
+    // 「现在…」这一档只收**指向已有东西**的动词(加 / 放 / 改),不收 "now make" ——
+    // 「now make a poster for the sale」是一次全新的请求,不是接着这张图改。
+    "now i want", "now i wan", "now add", "now put", "now change",
     "this image", "this picture", "this photo", "this one",
     "that image", "that picture", "that photo",
     "same image", "same picture", "same photo",
-    "edit this", "edit the", "change this", "change the", "keep the", "keep it",
+    "edit this", "edit the", "change this", "change the", "keep the",
     "add to this", "add to it", "instead of",
   ],
   zh: ["这张", "那张", "同一张", "在这基础上", "改这", "现在我要", "现在要", "保留"],
