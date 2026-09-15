@@ -15,7 +15,8 @@
  *    逐字相同 —— 串帧的形状就是这三次读到两个不同的商家；
  *  · 帧内各做一次钱面读（CreditLedger）与一次 gen 面读（GenJob），租户号**只来自帧**，所以
  *    串帧当场变成「读到别家的行」；
- *  · 50 轮，每轮的让出次序由一个**带种子**的伪随机数发生器现摇（不是 Math.random）。
+ *  · 50 轮，让出次序现摇（不是 Math.random）：**每条链、每一轮各自一台**带种子的发生器 ——
+ *    连建帧之前（`requireOwner` 里）那一次让出也按链取种，它跑在帧外，所以只能认接力棒。
  *
  * 手法沿用切片②（`tenant-action-cross-tenant-slice2.test.ts`）：不 mock `@fikirtive/db`，
  * 真实 Prisma 走真实 `packages/db/src/tenant-guard.ts`，调用的是真实的动作函数
@@ -81,6 +82,13 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/queue", () => ({ getBoss: vi.fn() }));
 
 const { prisma } = await import("@fikirtive/db");
+// 挡位的 getter/setter 不在 `@fikirtive/db` 的 exports 表里（barrel 不导出 tenant-guard，
+// 也没有 `./tenant-guard` 子路径），所以这里按路径直取**同一个文件**：`@fikirtive/db` 解析到
+// `packages/db/dist/src/index.js`，它的 client.js 导入的就是下面这个 `tenant-guard.js`。
+// 必须是同一个模块实例 —— 挡位是那个模块里的一个模块级变量，换一份实例就等于换了一个挡位。
+const { getOrgScopedGuardMode, setOrgScopedGuardMode } = await import(
+  "../../../../packages/db/dist/src/tenant-guard.js"
+);
 const { getPrincipal, runAsUser, runAsSystem, runAsTenant } = await import("@fikirtive/db/principal");
 const { listCreditPacks } = await import("@/lib/billing-actions");
 const { getGenJob } = await import("@/lib/gen-actions");
@@ -259,7 +267,12 @@ afterAll(async () => {
 beforeEach(() => {
   h.baton.current = null;
   h.hooks.yieldNow = async () => {
-    await randomYield(rngFor(snapshot().ownerId));
+    // 这一次让出跑在 `requireOwner` 里，也就是 **runAsUser 建帧之前**：此刻 `getPrincipal()`
+    // 还是空的，按帧取种只会每次都摸到 `rngFor` 的那台备用发生器（同一个种子、同一条序列，
+    // 每条链每一轮都一样）—— 那就不是「各自一台」了。链的身份这一刻只有接力棒上有。
+    // 棒子是本条链的：`requireOwner` 从同步取棒到调用这里中间没有任何 await，JS 单线程
+    // 因此保证另一条链还没来得及放下自己的那一根。
+    await randomYield(rngFor(h.baton.current?.ownerId ?? null));
   };
   // 钱面探针：它在 `listCreditPacks` 自己用 runAsUser 建的那顶帧**里面**执行。
   h.pricesList.mockImplementation(async () => {
@@ -371,6 +384,12 @@ describe("TENANT-A1「两个商家的请求重叠在飞时互不串帧」", () =
 
           // ③ gen 面帧内探针：每轮四次（两条链各读自己一次、读别家一次），三次快照同样逐字相同
           expect(round.genLogs, `第 ${i} 轮 gen 面帧数`).toHaveLength(4);
+          // 与钱面那句同一条口径：四次读正好盖住两家店、各两次。少了这句，两条链全落在同
+          // 一家店头上（串帧最直白的那一种）也能凑够 4 条自洽的日志。
+          expect(
+            round.genLogs.map((log) => log.entry.ownerId).sort(),
+            `第 ${i} 轮 gen 面四次读的店`,
+          ).toEqual([ORG_A, ORG_A, ORG_B, ORG_B].sort());
           for (const log of round.genLogs) {
             const owner = log.entry.ownerId ?? "";
             expect(GATE_BY_OWNER[owner], `第 ${i} 轮 gen 面出现了陌生的店: ${owner}`).toBeDefined();
@@ -400,16 +419,32 @@ describe("TENANT-A1「两个商家的请求重叠在飞时互不串帧」", () =
       /GenJob\.findFirst has no ownerId filter/,
     );
 
-    // ③ 钱面：帧丢了以后那句读会读成什么样 —— 两家店的流水一起回来（库里还有别的租户就一起回
-    //    来得更多，那正是「无帧＝读穿全库」的样子）。钱两表今天是观察挡位（warn），所以这里不是
-    //    抛错而是读穿；enforce 下同一句是拒，那一半由
-    //    packages/db/src/tenant-guard-money-slice1.test.ts:133 证。两种挡位下结论一样：
+    // ③ 钱面：帧丢了以后那句读会读成什么样 —— **两挡各断言一次**，所以这条反证与钱表族的
+    //    迁移期挡位无关。挡位只有一个进程内变量（tenant-guard.ts:118），这里现场翻、finally 翻回：
+    //    · warn（今天的默认值）：守卫记一条警告然后原样放行，两家店的流水一起回来（库里还有
+    //      别的租户就回来得更多，那正是「无帧＝读穿全库」的样子）；
+    //    · enforce（#1403 把钱表族翻过去之后的样子）：同一句当场被拒。
+    //    以前这里只写 warn 那一半，等于把「今天的挡位」写死进了一条 TENANT-A1 的断言 —— 翻挡
+    //    那天这条测会因为一件与租户隔离无关的事变红。两挡都写上之后，结论在两挡下都成立：
     //    上面那条并发测里的「只读得到自己」不是恒真句，它真的分得出串没串帧。
-    const leaked = await prisma.creditLedger.findMany({
-      where: { orgId: undefined },
-      select: { orgId: true },
-    });
-    expect([...new Set(leaked.map((row) => row.orgId))]).toEqual(expect.arrayContaining([ORG_A, ORG_B]));
+    const modeBefore = getOrgScopedGuardMode();
+    try {
+      setOrgScopedGuardMode("warn");
+      const leaked = await prisma.creditLedger.findMany({
+        where: { orgId: undefined },
+        select: { orgId: true },
+      });
+      expect([...new Set(leaked.map((row) => row.orgId))]).toEqual(
+        expect.arrayContaining([ORG_A, ORG_B]),
+      );
+
+      setOrgScopedGuardMode("enforce");
+      await expect(
+        prisma.creditLedger.findMany({ where: { orgId: undefined }, select: { orgId: true } }),
+      ).rejects.toThrow(/CreditLedger\.findMany has no orgId filter/);
+    } finally {
+      setOrgScopedGuardMode(modeBefore);
+    }
 
     // ④ 帧决定行：同一句受闸读，换一顶帧就换一批行
     const asA = await runAsUser(principalFor(GATE_A), () => prisma.genJob.findMany({ select: { id: true } }));
