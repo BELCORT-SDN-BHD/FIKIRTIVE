@@ -71,7 +71,14 @@ export function BillingLiveRefresh(): null {
       if (!alive) return;
       if (document.visibilityState === "visible") scheduleRefresh();
     };
-    const unsubscribe = subscribeBalanceRefresh(refreshIfVisible);
+    // R3-F04 判官复审 P2 —— 只有**钱**动了才值得重读这一面。`router.refresh()` 会让
+    // `BillingPage` 重跑它那几条服务端读取(里头带 Stripe 往返),而 `"account"` 那一声是
+    // 商家在 /profile 改了个名字,这一面上没有一个数字会因此变。侧栏照旧两种都听:它显示
+    // 的正是那个名字。
+    const unsubscribe = subscribeBalanceRefresh((reason) => {
+      if (reason === "account") return;
+      refreshIfVisible();
+    });
     document.addEventListener("visibilitychange", refreshIfVisible);
     return () => {
       alive = false;
