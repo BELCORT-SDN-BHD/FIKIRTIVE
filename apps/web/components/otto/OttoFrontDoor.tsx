@@ -5,7 +5,6 @@ import {
   ArrowUp,
   CircleDollarSign,
   Clapperboard,
-  ShieldCheck,
   ShoppingBag,
   Tags,
   Users,
@@ -26,7 +25,7 @@ import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePick
 import { useReferencePicker } from "@/components/reference-picker/useReferencePicker";
 import type { ChatThreadDTO } from "@/lib/types";
 import { ottoGreeting } from "@/lib/otto-greeting";
-import { CHAT_HOLD_NOTE, CHAT_SPEND_NOTE, lowBalanceForVideoMessage } from "@/lib/credit-format";
+import { lowBalanceForVideoMessage } from "@/lib/credit-format";
 import { ExitLink } from "@/components/exits/Exits";
 import { BILLING_HREF } from "@/lib/exits";
 import { defaultVideoDisplayCredits, INTERNAL_PER_DISPLAY } from "@fikirtive/core/spend";
@@ -362,8 +361,8 @@ export function OttoFrontDoor({
         <div className="w-full">
           {/* R3-F06(Founder 2026-09-14):这道门厅的输入框上方从前也常驻那段对话费用说明,
               与画布那一支同批撤掉 —— 同一条裁决,同一个理由,所以两支一起走,不留一处。
-              页面下方那条「You stay in control」仍在:它是审批边界与去哪里查账的信任说明,
-              不是输入附近堆叠的那类价目段落。 */}
+              页尾那条信任说明当时暂留、2026-09-15 经 Founder 当面裁决「整段一起删」也已移除,
+              所以这道门厅上这一类常驻说明现在一处不剩(墓碑在本文件底部)。 */}
           {composer}
         </div>
 
@@ -442,19 +441,13 @@ export function OttoFrontDoor({
           </Alert>
         ) : null}
 
-        {/* Standing trust note: the approval boundary and conversation charge are related,
-            but not the same promise. Keep both explicit in one readable callout. */}
-        <Alert density="compact">
-          <ShieldCheck aria-hidden="true" />
-          <AlertTitle>You stay in control</AlertTitle>
-          <AlertDescription>
-            <span>Otto plans and makes it — creations start only after you confirm on the card.</span>
-            <span>{CHAT_SPEND_NOTE}</span>
-            {/* #791-9: the hold is named before the first turn, so the temporary balance dip
-                cannot read like an accounting bug. */}
-            <span>{CHAT_HOLD_NOTE}</span>
-          </AlertDescription>
-        </Alert>
+        {/* R3-F06 收尾(Founder 2026-09-15 当面裁决「整段一起删」):页尾从前还常驻一条带盾牌
+            图标的信任说明 —— 审批边界 + 按用量计费 + 每条消息的预扣,三句一叠。
+            它是 2026-09-14 那一刀留下的最后一处同类常驻说明,Founder 看过之后裁定整段删掉。
+            撤的仍然只是**展示**:先确认再执行、按实结算、预扣即退这三件事本身一个字没动 ——
+            确认卡照旧先问后做(`Generate · N credits`),账目与价目在 Billing 念得到。
+            (这里刻意不复述那三句原文:`engine-a3-front-door-disclosure.test.tsx` 直接扫本文件
+            的源码文本,注释里抄一遍会让那道围栏对着自己的墓碑报红。) */}
       </div>
     </div>
   );

@@ -1,7 +1,6 @@
 // Subpath imports, not the barrel: this module is reachable from client components, and
 // the barrel is Node-capable (guarded by lib/__tests__/client-core-imports.test.ts).
 import { SETTINGS_SECTIONS } from "@fikirtive/core/navigation";
-import { OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "@fikirtive/core/otto-budget";
 import {
   OTTO_CHAT_MAX_SEARCHES_PER_TURN,
   searchChargeInternal,
@@ -186,9 +185,10 @@ export function lowBalanceForVideoMessage(
  *  IT CARRIES NO MAGNITUDE CLAIM, and that is the point it keeps failing on. A draft of this
  *  sentence said "usually a fraction of one per message"; at the 1.05 multiplier the measured
  *  reply is 1.4 displayed credits and most of the #536 band sits ABOVE one credit, so the clause
- *  was the same species of untruth as "a little credit" — and it read as a contradiction of
- *  CHAT_HOLD_NOTE ("holds up to 4 credits") rendered directly beneath it. Any future softening
- *  needs a measurement behind it, at the price of the day.
+ *  was the same species of untruth as "a little credit" — and it read as a contradiction of the
+ *  hold note ("holds up to 4 credits") that used to render directly beneath it (that note is gone
+ *  since R3-F06; see the block below). Any future softening needs a measurement behind it, at the
+ *  price of the day.
  *
  *  Says "what it uses" rather than a number, because there is no number to give — the price is
  *  the turn's real usage. Deliberately says "your charges are listed", NOT "every charge": the
@@ -197,23 +197,21 @@ export function lowBalanceForVideoMessage(
 export const CHAT_SPEND_NOTE =
   "Chatting with Otto costs credits for what it uses — your charges are listed in Billing.";
 
-/** The ONE disclosure of the conversation HOLD (#791-9, live again with the second ruling).
+/* CHAT_HOLD_NOTE 曾经住在这里(#791-9 那句解释每条消息预扣多少、按实扣、余额即退的话;
+ * 原文不在这里复述 —— `chat-hold-disclosure-791.test.ts` 扫的是产品源码的**文本**,
+ * 注释里抄一遍会让那道围栏对着自己的墓碑报红)。
  *
- *  A turn reserves an amount before the model is called, settles the actual token cost, and
- *  refunds the remainder in the same transaction (settleCredits: A = min(actual, held), the
- *  difference goes back to balance). Merchants were never told any of it — they saw the balance
- *  dip and partly come back, with nothing explaining either move, which reads like an accounting
- *  bug. Saying it plainly costs nothing: the real behaviour is more generous than what anyone
- *  guesses from a silent dip.
+ * R3-F06(Founder 2026-09-14 撤掉输入附近的常驻说明,2026-09-15 当面追加「整段一起删」)
+ * 把它最后一个消费者 —— 门厅页尾那条「You stay in control」—— 也删了,于是这个常量再没有
+ * 任何产品面读它,按家规「建了没人用」一并删除,而不是留在这里等人挂回来。
  *
- *  The number is DERIVED from the hold constant, never typed out — a hand-written "4" would
- *  become a lie the next time the hold is tuned.
- *
- *  #898: "up to". The hold is min(the constant, the balance) — a merchant with 1.2 credits has
- *  1.2 held, not 4 — so the flat "holds 4 credits" would be wrong for exactly the merchants who
- *  read this line hardest. */
-export const CHAT_HOLD_NOTE =
-  `Each message holds up to ${creditsLabel(displayCredits(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL))} up front, charges only what it uses, and returns the rest right away.`;
+ * **预扣这件事本身一个字没变**:一轮对话仍旧先冻结 OTTO_CONVERSATION_TURN_RESERVE_INTERNAL
+ * (取 min(常量, 余额)),结算按实际 token 花费扣,差额同笔事务退回。变的只是不再在界面上
+ * 常驻解释它。仍然说得出这件事的地方有两处,两处都有测试钉着:
+ *   · Otto 被问到时自己答(`packages/otto` 的 instructions —— `chat-hold-disclosure-791.test.ts`
+ *     的第二组断言逐句钉住「先冻结 / 按实扣 / 剩下退回」);
+ *   · 真实数字在 Billing 的账目与 journeys 02/03/04(开着的冻结、按实结算、整额退款)。
+ */
 
 /** What ONE completed web search costs, in the words the rest of the money UI uses. Derived from
  *  the same rate the turn's firm leg reserves at — never typed.

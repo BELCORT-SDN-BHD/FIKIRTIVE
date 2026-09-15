@@ -10,9 +10,12 @@
  *      没有它,「读不到那段说明」在一张空屏上恒绿。
  *   ② **那段说明真的不在了**,而且不是换个名字挂回来(按商家读到的句子比,不按组件名比)。
  *
- * 撤的只有展示。钱那一侧一个字没动:预扣仍旧现算(`chat-hold-disclosure-791.test.ts`)、
- * 页面下方「You stay in control」那条信任说明仍在并仍念 CHAT_SPEND_NOTE / CHAT_HOLD_NOTE
- * (`otto-chat-design-system.test.ts`、`otto-turn-cost.test.ts`),花钱仍旧先出确认卡。
+ * Founder 2026-09-15 当面追加一句「整段一起删」:页尾那条「You stay in control」也撤了
+ * (它念的是 CHAT_SPEND_NOTE ＋ CHAT_HOLD_NOTE)。于是门厅上这一类常驻说明一处不剩。
+ *
+ * 撤的只有展示。钱那一侧一个字没动:预扣照旧先冻结、按实结算、当场退差,说得出这件事的面
+ * 仍有两处 —— Otto 被问到时自己答(`chat-hold-disclosure-791.test.ts` 第二组)、真实数字在
+ * Billing 与 journeys 02/03/04;花钱仍旧先出确认卡(`Generate · N credits`)。
  *
  * 一个 credit 都花不出去:开线程、付费动作与服务端读全是替身。
  */
@@ -40,7 +43,6 @@ vi.mock("next/navigation", () => ({
 
 import { OttoFrontDoor } from "@/components/otto/OttoFrontDoor";
 import { FRONT_DOOR_GOAL_LABELS } from "@/lib/otto-canned-starters";
-import { CHAT_HOLD_NOTE } from "@/lib/credit-format";
 import { copyLines, HAND_TYPED_CREDITS } from "./helpers/price-literal-fence";
 
 const WEB_ROOT = process.cwd();
@@ -67,6 +69,9 @@ describe("R3-F06 门厅非画布那一支:四颗格子在,输入附近那段常�
     "Otto checks with you on a card before it makes anything",
     "Otto searches the web when your question needs it",
     "Uploads are understood automatically",
+    // Founder 2026-09-15 当面追加「整段一起删」:页尾那条「You stay in control」也撤了,
+    // 它念的就是这一句。三张名单(本文件 / front-a15 / journey 27)从此一致。
+    "Each message holds up to",
   ] as const;
 
   it("R3-F06 四颗目标格子照样在,而输入附近不再常驻费用说明", () => {
@@ -90,15 +95,20 @@ describe("R3-F06 门厅非画布那一支:四颗格子在,输入附近那段常�
 });
 
 describe("R3-F06 撤的是展示,不是钱", () => {
-  it("R3-F06 门厅仍旧念预扣那一句,而那个数仍旧是现算的", () => {
-    // 页面下方那条「You stay in control」不在本次删除授权内:它说的是审批边界与去哪里
-    // 查账,不是输入附近堆叠的那类价目段落。它仍旧念 `CHAT_HOLD_NOTE`,而那句话里的数字
-    // 从 `OTTO_CONVERSATION_TURN_RESERVE_INTERNAL` 现算 —— 把预扣上限调一格,它自己会变。
+  it("R3-F06 门厅页尾那条「You stay in control」整段不在了(Founder 2026-09-15 裁决)", () => {
+    // 这一条从前钉的是反方向:那段信任说明**必须**留着念 `CHAT_HOLD_NOTE`。
+    // Founder 2026-09-15 当面裁决「整段一起删」,于是它翻面 —— 现在拦的是有人把它挂回来,
+    // 标题、两条 note、以及那颗盾牌图标一起拦。
     const src = codeOf("components/otto/OttoFrontDoor.tsx");
-    expect(src, "门厅连预扣那一句也一起没了 —— 那超出了 R3-F06 的删除授权").toContain(
-      "CHAT_HOLD_NOTE",
-    );
-    expect(CHAT_HOLD_NOTE).toMatch(/holds up to/i);
+    for (const gone of ["You stay in control", "CHAT_HOLD_NOTE", "CHAT_SPEND_NOTE", "ShieldCheck"]) {
+      expect(src, `「${gone}」又回到门厅了 —— Founder 裁决的是整段删`).not.toContain(gone);
+    }
+  });
+
+  it("R3-F06 撤了展示,预扣这件事仍旧说得出口 —— 由 Otto 自己答", () => {
+    // 删掉界面上的那句话不等于这件事没人说得清。钱那一侧的口径搬到了仍然存在的面上:
+    // Otto 被问到时自己答(逐句断言在 `chat-hold-disclosure-791.test.ts` 第二组),
+    // 真实数字在 Billing 与 journeys 02/03/04。这里只钉住「钱文案的单一来源没被手抄污染」。
     const offenders = copyLines(codeOf("lib/credit-format.ts")).filter((line) =>
       HAND_TYPED_CREDITS.test(line),
     );
