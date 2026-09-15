@@ -152,11 +152,13 @@ test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Librar
   // 所以卡片那一句留到关掉之后再断言。
   await expect(page.getByRole("dialog", { name: libraryName })).toBeVisible({ timeout: 60_000 });
 
-  // 换封面:第二张底下那颗键。第一张此刻是封面(position 0,身份上还没钉过),所以只有一颗。
+  // 换封面:这件产品是「只填名字与价格」建出来的,身份上那一格此刻**还是空的**
+  // (`packages/db/src/create-product.ts:195`),Brand 页那一边因此一张图都不画。所以两张都还
+  // 能钉、一张都没有被挂上 `Cover` 冒充封面 —— 按第二张底下那一颗。
   const useAsCover = page.getByRole("button", { name: "Use as cover" });
-  await expect(useAsCover).toHaveCount(1);
-  await useAsCover.click();
-  // 换完轮到第一张画这颗键 —— `Cover` 那枚标签真的挪了位。
+  await expect(useAsCover).toHaveCount(2);
+  await useAsCover.nth(1).click();
+  // 钉上之后只剩第一张底下还有这颗键 —— `Cover` 那枚标签真的落在第二张上。
   await expect(page.getByRole("button", { name: "Use as cover" })).toHaveCount(1, { timeout: 60_000 });
   await expect(
     prisma.entity.findFirstOrThrow({

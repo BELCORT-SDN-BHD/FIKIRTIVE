@@ -106,11 +106,21 @@ export function ElementIdentityFields({
     }
   }
 
-  // 封面 = 身份上钉的那一张;没钉过就是排在最前的那一张(与 `lib/library-elements.ts` 同一条
-  // 规则,所以这一排上那枚 `Cover` 标签与上面那张大图永远指着同一个 asset)。
+  // 封面 = 身份上**真的钉着**的那一张(`Entity.baseAssetId`)。没钉过 = **没有封面**,不拿
+  // 「排在最前的那一张」冒充:Brand 页那一边的判据逐字如此 —— `withProductIdentity`
+  // (`packages/core/src/brand-records.ts`)在 `baseAssetId` 为空时把 `imageAssetId` 删掉,
+  // 产品卡上一张图都不画。这里若把第一张当封面,同时坏两件事:那枚 `Cover` 标签在说谎
+  // (它指的那张,Brand 页根本没画),而且它底下那颗「Use as cover」还会被吃掉 —— 商家恰恰
+  // 在这个状态下最需要把一张钉上去。这个状态走正常的路就到得了:Brand 页只填名字与价格建的
+  // 产品,`baseAssetId` 就是 null(`packages/db/src/create-product.ts:195`);Otto 的参考图
+  // 默认走 REFSHEET(`lib/otto-refgen-port.ts:86`),而 worker 只有 BASE 那一档才钉
+  // (`apps/worker/src/jobs/refgen.ts:634`)。
   const coverAssetId = element.images.some((image) => image.assetId === element.baseAssetId)
     ? element.baseAssetId
-    : element.images[0]?.assetId ?? null;
+    : null;
+  // 画这一排的条件 = 商家真的有得挑:已经钉了封面,要有第二张才值得画;身份上那一格还空着时,
+  // 哪怕只有一张也要画 —— 那一张正是她要钉上去的。
+  const canPickCover = element.images.length > (coverAssetId ? 1 : 0);
 
   return (
     <>
@@ -137,7 +147,7 @@ export function ElementIdentityFields({
         </div>
       ) : null}
 
-      {element.capabilities.mutateBase && element.images.length > 1 ? (
+      {element.capabilities.mutateBase && canPickCover ? (
         <div className="flex flex-col gap-2">
           <h3 className="m-0 text-sm font-medium">Cover</h3>
           <div className="flex flex-wrap gap-2">

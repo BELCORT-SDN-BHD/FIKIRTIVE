@@ -169,6 +169,12 @@ function useAsCoverButtons(): HTMLButtonElement[] {
     .filter((button) => button.textContent?.trim() === "Use as cover");
 }
 
+/** 那排图上挂着的 `Cover` 角标(区块标题那一行是 `h3`,不是角标)。 */
+function coverBadges(): HTMLSpanElement[] {
+  return [...document.body.querySelectorAll("span")]
+    .filter((node) => node.textContent?.trim() === "Cover");
+}
+
 describe("PRODID-A4 Library 产品详情:改名走共享动作 updateEntity", () => {
   it("PRODID-A4 在 Library 改名:updateEntity 收到这一行的 id 与新名字,屏幕上跟着变", async () => {
     await openDetail(product());
@@ -254,6 +260,49 @@ describe("PRODID-A4 Library 产品详情:换主图走共享动作 setBaseAsset",
     expect(useAsCoverButtons()).toHaveLength(0);
     // 名字那一栏照旧在 —— 两格互不牵连。
     expect(nameField()).toBeTruthy();
+  });
+
+  // ── 复核修正(判官 P1):身份上那一格是空的时候 ─────────────────────────────
+  //
+  // 这个状态走正常的路就到得了:Brand 页只填名字与价格建出来的产品,`Entity.baseAssetId`
+  // 就是 null(`packages/db/src/create-product.ts:195`);Otto 的参考图默认走 REFSHEET
+  // (`lib/otto-refgen-port.ts:86`),而 worker 只有 BASE 那一档才钉
+  // (`apps/worker/src/jobs/refgen.ts:634`)—— 图挂上去了,身份上那一格还空着。
+  //
+  // 此刻 Brand 页那张产品卡**一张图都不画**(`withProductIdentity`:`baseAssetId` 为空就把
+  // `imageAssetId` 删掉),所以这一屏不许把排在最前的那一张挂上 `Cover` 冒充封面 —— 冒充
+  // 会同时坏两件事:标签在说谎,而且它底下那颗「Use as cover」被吃掉,商家恰恰在这个状态下
+  // 最需要把一张钉上去。
+  it("PRODID-A4 身份上还没钉过封面:一张都不挂 Cover 标签,每张底下都按得动", async () => {
+    await openDetail(product({ baseAssetId: null }));
+
+    expect(coverBadges(), `没钉过封面却有图被挂上了 Cover —— 屏幕上是:${screenText()}`).toHaveLength(0);
+    // 两张都还能钉:第一张那颗键没有被「它就是封面」吃掉。
+    expect(useAsCoverButtons()).toHaveLength(2);
+
+    await act(async () => { useAsCoverButtons()[0]!.click(); });
+    await settle();
+
+    expect(mocks.setBaseAsset.mock.calls[0]).toEqual(["ent_kaya", FIRST.assetId]);
+    // 钉上之后才有封面:标签落在第一张上,剩第二张底下还有那颗键。
+    expect(coverBadges()).toHaveLength(1);
+    expect(useAsCoverButtons()).toHaveLength(1);
+  });
+
+  it("PRODID-A4 只有一张图且没钉过:那一排照画 —— 那一张正是要钉上去的", async () => {
+    await openDetail(product({ images: [FIRST], mediaCount: 1, baseAssetId: null }));
+
+    // 「只有一张就不画」在这个状态下等于:唯一需要这个入口的时候它不在。
+    expect(useAsCoverButtons(), `没钉过封面的单图产品里没有换封面那一排 —— 屏幕上是:${screenText()}`).toHaveLength(1);
+
+    await act(async () => { useAsCoverButtons()[0]!.click(); });
+    await settle();
+
+    expect(mocks.setBaseAsset.mock.calls[0]).toEqual(["ent_kaya", FIRST.assetId]);
+    // 钉上了就没得挑了:一张图、已经是封面 —— 整一排(连同那枚角标)收起来,
+    // 与「只有一张图时不画换封面那一排」那条同一个结果。
+    expect(useAsCoverButtons()).toHaveLength(0);
+    expect(coverBadges()).toHaveLength(0);
   });
 });
 
