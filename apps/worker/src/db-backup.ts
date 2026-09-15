@@ -165,8 +165,28 @@ export function pgEnvFromUrl(raw: string): Record<string, string> {
 const SPAWN_ENV_PASSTHROUGH = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"] as const;
 
 /**
- * The COMPLETE environment for a pg_* subprocess: a minimal base plus the PG* vars
- * derived from `databaseUrl`. Never inherits the ambient PG* family (see above).
+ * The message language is PINNED, never inherited (#1385 review round 1).
+ *
+ * pg_dump on Debian is an NLS build: with `LC_ALL=de_DE.UTF-8` in the environment the very
+ * line the classifier keys on comes back as "Abbruch wegen unpassender Serverversion", and
+ * every signature in {@link classifyPgDumpStderr} misses — a version mismatch would be
+ * filed as `unknown` purely because of a locale variable. The classifier's patterns are
+ * English by design (there is no stable translated form to match against), so the
+ * guarantee has to live here, in the environment, not in the regexes.
+ *
+ * `LC_ALL` is what gets pinned rather than `LC_MESSAGES` alone, because POSIX lets LC_ALL
+ * override LC_MESSAGES — pinning only the weaker one would lose to an inherited LC_ALL.
+ * Safe for the dump itself: pg_dump's `--encoding` defaults to the DATABASE's encoding,
+ * not the client locale's, so the bytes we archive do not depend on LC_CTYPE.
+ *
+ * Ordered AFTER the passthrough so an ambient LANG/LC_ALL cannot win.
+ */
+const PG_MESSAGE_LOCALE = { LC_ALL: "C", LC_MESSAGES: "C" } as const;
+
+/**
+ * The COMPLETE environment for a pg_* subprocess: a minimal base, a pinned message
+ * locale, plus the PG* vars derived from `databaseUrl`. Never inherits the ambient PG*
+ * family (see above).
  */
 export function pgSpawnEnv(databaseUrl: string, ambient: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env: Record<string, string> = {};
@@ -174,19 +194,119 @@ export function pgSpawnEnv(databaseUrl: string, ambient: NodeJS.ProcessEnv = pro
     const value = ambient[key];
     if (value !== undefined) env[key] = value;
   }
-  return { ...env, ...pgEnvFromUrl(databaseUrl) };
+  return { ...env, ...PG_MESSAGE_LOCALE, ...pgEnvFromUrl(databaseUrl) };
+}
+
+/* ---------------- pg_dump failure classification (#1385) ---------------- */
+
+/**
+ * WHY THIS EXISTS. pg_dump's stderr was thrown away (`stderr: "ignore"`) because libpq
+ * error text can name host and user, and everything we persist surfaces in the admin UI.
+ * The cost of that choice came due on 2026-09-14: the staging Postgres had moved to major
+ * 18 while the worker image still shipped pg_dump 17, pg_dump refused the server
+ * ("aborting because of server version mismatch"), and all 1360 BackupRun rows said only
+ * `media subprocess failed (exit code 1)` — the same sentence a wrong password, an
+ * unreachable host or a full disk would have produced. Nobody could tell which.
+ *
+ * The fix keeps the redaction guarantee and buys back the diagnosis: stderr is read into
+ * a bounded in-memory tail, matched against a CLOSED SET of known signatures, and only
+ * the matching TOKEN — plus, for a version mismatch, the two version NUMBERS — is ever
+ * logged or written to the `error` column. The stderr text itself never leaves
+ * {@link dumpDatabaseToFile}: not to the log, not to Sentry, not to the database.
+ */
+export const PG_DUMP_FAILURE_TOKENS = [
+  "pg_dump_version_mismatch",
+  "connection_failed",
+  "auth_failed",
+  "unknown",
+] as const;
+export type PgDumpFailureToken = (typeof PG_DUMP_FAILURE_TOKENS)[number];
+
+/** `versions` is digits-and-dots ONLY, by construction of the capture group below. */
+export interface PgDumpDiagnostic {
+  token: PgDumpFailureToken;
+  server?: string;
+  client?: string;
+}
+
+/** A version number as pg_dump prints it. The bound is what keeps a hostile tail small. */
+const VERSION = "(\\d{1,3}(?:\\.\\d{1,3}){0,3})";
+const SERVER_VERSION_RE = new RegExp(`server version:\\s*${VERSION}`, "i");
+const CLIENT_VERSION_RE = new RegExp(`pg_dump version:\\s*${VERSION}`, "i");
+const VERSION_MISMATCH_RE = /server version mismatch/i;
+// Checked BEFORE the connection pattern: libpq wraps an auth rejection in
+// "connection to server … failed: …", so the more specific signature must win.
+const AUTH_RE =
+  /password authentication failed|authentication failed for user|no password supplied|SASL authentication|SCRAM authentication/i;
+const CONNECTION_RE =
+  /could not connect to server|connection to server .{0,120}failed|could not translate host name|connection refused|connection timed out|timeout expired|network is unreachable|no route to host|server closed the connection unexpectedly|ssl.{0,40}(?:error|failed)/i;
+
+/**
+ * Classify a pg_dump/libpq stderr tail into one closed-set token. Pure; unit-tested with
+ * stderr that embeds a host and a user, asserting neither can reach the output.
+ */
+export function classifyPgDumpStderr(stderr: string): PgDumpDiagnostic {
+  const server = stderr.match(SERVER_VERSION_RE)?.[1];
+  const client = stderr.match(CLIENT_VERSION_RE)?.[1];
+  if (VERSION_MISMATCH_RE.test(stderr) || (server && client)) {
+    return { token: "pg_dump_version_mismatch", server, client };
+  }
+  if (AUTH_RE.test(stderr)) return { token: "auth_failed" };
+  if (CONNECTION_RE.test(stderr)) return { token: "connection_failed" };
+  return { token: "unknown" };
+}
+
+/** Render a diagnostic as the single short string we are willing to persist. */
+export function formatPgDumpDiagnostic(d: PgDumpDiagnostic): string {
+  return d.server && d.client ? `${d.token}: server ${d.server} / pg_dump ${d.client}` : d.token;
+}
+
+/**
+ * The ONLY shape allowed out of this module and into the `error` column. Re-checked on
+ * read (not just on write) so that even a caller who stuffs something else into the
+ * `pgDumpDiagnostic` property cannot get it persisted.
+ */
+const DIAGNOSTIC_RE = new RegExp(
+  `^(?:${PG_DUMP_FAILURE_TOKENS.join("|")})(?:: server ${VERSION} / pg_dump ${VERSION})?$`,
+);
+
+const DIAGNOSTIC_KEY = "pgDumpDiagnostic";
+
+/** Tag a failed pg_dump error with its classification. Returns the same error. */
+function attachPgDumpDiagnostic(err: unknown, stderrTail: string): unknown {
+  if (err && typeof err === "object") {
+    (err as Record<string, unknown>)[DIAGNOSTIC_KEY] = formatPgDumpDiagnostic(
+      classifyPgDumpStderr(stderrTail),
+    );
+  }
+  return err;
+}
+
+/**
+ * Append the classification to a sanitized summary — `media subprocess failed (exit code
+ * 1) [pg_dump_version_mismatch: server 18.6 / pg_dump 17.11]`. Anything that does not
+ * match the allow-listed shape is dropped silently: a summary with no token is a smaller
+ * problem than a summary with a hostname in it.
+ */
+export function withPgDumpDiagnostic(summary: string, err: unknown): string {
+  const raw = (err as Record<string, unknown> | null | undefined)?.[DIAGNOSTIC_KEY];
+  return typeof raw === "string" && DIAGNOSTIC_RE.test(raw) ? `${summary} [${raw}]` : summary;
 }
 
 /* ---------------- runtime ---------------- */
+
+/** Bound on the stderr we hold while pg_dump runs (~4 KB of tail). Never persisted. */
+const PG_DUMP_STDERR_TAIL_CHARS = 4096;
 
 /**
  * Dump `databaseUrl` to a gzipped custom-format file at `file`. THE production dump
  * path — the nightly job and the recovery-drill self-test both call this exact
  * function (judge r1 P1-4), so a drift in how we dump can never pass the self-proof.
  *
- * Connection ONLY via env (see pgEnvFromUrl). stderr is discarded on purpose: libpq
- * error text can name host/user — the exit-code summary from sanitizeError is the
- * only diagnostic we persist or log.
+ * Connection ONLY via env (see pgEnvFromUrl). stderr is READ but never propagated:
+ * libpq error text can name host/user, so the tail stays in this function's local
+ * scope and only the allow-listed token from {@link classifyPgDumpStderr} is attached
+ * to the thrown error (#1385). The persisted string is still sanitizeError's output.
  */
 export async function dumpDatabaseToFile(databaseUrl: string, file: string): Promise<void> {
   const child = execa("pg_dump", [...PG_DUMP_ARGS], {
@@ -198,15 +318,23 @@ export async function dumpDatabaseToFile(databaseUrl: string, file: string): Pro
     timeout: PG_DUMP_TIMEOUT_MS,
     buffer: false, // stream — never hold the dump in memory
     stdout: "pipe",
-    stderr: "ignore",
+    stderr: "pipe",
   });
+  // Bounded tail, kept only to classify the failure. It is never logged, never
+  // returned, never persisted — see the classification block above.
+  let stderrTail = "";
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    stderrTail = (stderrTail + chunk).slice(-PG_DUMP_STDERR_TAIL_CHARS);
+  });
+  child.stderr?.on("error", () => {}); // a broken stderr pipe must not mask pg_dump's own failure
   const [pipeRes, childRes] = await Promise.allSettled([
     pipeline(child.stdout!, createGzip(), createWriteStream(file)),
     child,
   ]);
   // prefer pg_dump's own failure (exit code / timeout) over the secondary
   // "premature close" the broken pipe produces
-  if (childRes.status === "rejected") throw childRes.reason;
+  if (childRes.status === "rejected") throw attachPgDumpDiagnostic(childRes.reason, stderrTail);
   if (pipeRes.status === "rejected") throw pipeRes.reason;
 }
 
@@ -356,7 +484,9 @@ export async function runBackupOnce(opts: { trigger: BackupTrigger; checkWindow:
     return { outcome: "succeeded", key, sizeBytes, durationMs };
   } catch (e) {
     // fail-soft: a failed night retries on the next fire (key still absent)
-    const msg = sanitizeError(e);
+    // #1385: sanitizeError alone flattens every subprocess failure to "exit code 1".
+    // The allow-listed token says WHICH failure it was, without naming host or user.
+    const msg = withPgDumpDiagnostic(sanitizeError(e), e);
     console.error("[worker] db-backup failed:", msg);
     if (process.env.SENTRY_DSN) Sentry.captureException(new Error(`db-backup failed: ${msg}`));
     await recordRun({

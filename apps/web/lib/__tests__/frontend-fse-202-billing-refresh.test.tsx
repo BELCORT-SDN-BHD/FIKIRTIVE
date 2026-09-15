@@ -37,7 +37,7 @@ vi.mock("next/navigation", () => ({
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { BillingLiveRefresh } = await import("@/app/billing/BillingLiveRefresh");
-const { notifyBalanceRefresh } = await import("@/lib/balance-refresh");
+const { notifyAccountRefresh, notifyBalanceRefresh } = await import("@/lib/balance-refresh");
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 const read = (relative: string) => readFileSync(path.join(WEB_ROOT, relative), "utf8");
@@ -86,6 +86,30 @@ describe("frontend-baseline §5 :205 FSE-202 Billing 正文订阅与侧栏同一
       vi.advanceTimersByTime(200);
     });
 
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("R3-F04 判官复审 P2:只改了名字的那一声不重读 Billing 正文(那趟重读里带 Stripe 往返)", () => {
+    mountBillingLiveRefresh();
+
+    act(() => {
+      notifyAccountRefresh();
+    });
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    // 商家在 /profile 改了个名字,这一面上没有一个数字会因此变 —— 不该为它跑一趟
+    // `router.refresh()`(`BillingPage` 那几条服务端读取里带 Stripe 往返)。
+    expect(refresh).not.toHaveBeenCalled();
+
+    // 而钱那一声照旧到得了:上面那条不是把这一面从信号上摘下来了。
+    act(() => {
+      notifyBalanceRefresh();
+    });
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 

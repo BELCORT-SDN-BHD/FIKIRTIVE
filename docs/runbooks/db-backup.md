@@ -51,6 +51,83 @@ cron 入口(`backup-cron.ts`)的行为:
   所以任何日志/异常里都不会带出口令。
 - 只在 `STORAGE_DRIVER=r2` 时生效;本地开发(local driver)自动跳过。
 
+## ⚠️ pg_dump 大版本必须 ≥ 服务端大版本(2026-09-14 实证根因,#1385)
+
+**症状**:`/api/health` 的 `backup` 一直是 `"missing"`;`BackupRun` 里只有 `failed` 行、
+一条 `succeeded` 都没有;worker 日志每 5 分钟打一次 `db-backup: starting …`,紧接着
+`db-backup failed: media subprocess failed (exit code 1)`。
+
+**根因**:`pg_dump` **拒绝**去 dump 比自己大版本更新的服务端,直接退出 1 并打印
+`aborting because of server version mismatch`。staging 的 Postgres 走的是 Railway 镜像
+`ghcr.io/railwayapp-templates/postgres-ssl:18`(`SHOW server_version` = 18.6),而
+`apps/worker/Dockerfile` 那时还钉着 `postgresql-client-17` —— 用 17 去 dump 18 是禁止的方向,
+所以从 2026-09-05 第一晚起,每一次备份都在同一行失败,连续 1360 次。
+2026-09-14 用本机 16.14 客户端只读复现同一条错误(16 vs 18 与 17 vs 18 是同一条规则):
+
+```
+pg_dump: error: aborting because of server version mismatch
+pg_dump: detail: server version: 18.6 (Debian 18.6-1.pgdg13+2); pg_dump version: 16.14 (Homebrew)
+```
+
+**规矩(两条,方向相反,别只记一半)**
+
+| 环节 | 规矩 | 今天的数 |
+|---|---|---|
+| **备份**(`pg_dump`) | 客户端大版本 **≥** 服务端大版本。18 dump 17 可以,17 dump 18 不行 | 服务端 18.6 → 客户端钉 18 |
+| **恢复**(`pg_restore` / 恢复目标库) | 大版本 **≥ 写出这个文件的 `pg_dump` 大版本**。pg_dump 18 写的是 custom archive 格式 1.16,16.x / 17.x 的 `pg_restore` **读不了** | 恢复端也必须 ≥ 18 |
+
+Railway / Neon 的 Postgres 每次升大版本之后,**必须**做三件事:
+
+1. 连上去跑 `SHOW server_version;` 看清服务端现在是几;
+2. 把 `apps/worker/Dockerfile` 里的 `postgresql-client-<N>` 钉子跟着抬上去
+   (pgdg trixie 的 amd64 与 arm64 都有 `postgresql-client-18`,版本 `18.6-1.pgdg13+2`),
+   重新部署 worker(以及 cron 服务,如果已按上节拆出来);
+3. **把恢复端一起抬**:本机 / 演练用的 `pg_restore`、以及演练要恢复进去的那台 scratch
+   Postgres(`docker-compose.yml` 的 `postgres` 服务,现为 `postgres:18-alpine`)都要 ≥ 新的大版本。
+   漏掉这一步的代价只在真出事那天显形:dump 明明是好的,却恢复不进去。
+   两个演练脚本现在开机就查这一条,不够就退出 4 并点名
+   (`scripts/db-restore-drill.sh`、`scripts/db-restore-drill-selftest.sh`)——
+   尤其是自证脚本,它用同一批本机二进制**又 dump 又 restore**,所以版本整体偏旧时
+   它会「全绿」却什么都没证明;那道版本闸就是专门堵这个洞的。
+
+**失败原因怎么看(#1385 新增)**:以前 `BackupRun.error` 对所有子进程失败都只写
+`media subprocess failed (exit code 1)` —— 密码错、连不上、版本不对长得一模一样。
+现在 `db-backup.ts` 会读 pg_dump 的 stderr(只留末尾约 4 KB,**只在内存里**),
+按封闭集分类,**只把分类词**(版本不匹配时再加两个纯数字版本号)拼进那条摘要:
+
+| 分类词 | 意思 | 先查什么 |
+|---|---|---|
+| `pg_dump_version_mismatch: server <X> / pg_dump <Y>` | 客户端大版本 < 服务端 | 按上面「规矩」抬 Dockerfile 的钉子 |
+| `connection_failed` | 连不上 / 超时 / DNS / SSL | DB 服务活着吗、`DATABASE_URL` 指对了吗、网络出口 |
+| `auth_failed` | 口令或角色被拒 | 凭据是否轮换过、角色权限 |
+| `unknown` | 不在允许清单里 | 见下面「`unknown` 怎么查」——**别去翻日志找原文,日志里按设计就没有** |
+
+落库后长这样:`media subprocess failed (exit code 1) [pg_dump_version_mismatch: server 18.6 / pg_dump 17.11]`。
+**stderr 原文永远不落库、不进日志、不进 Sentry** —— libpq 的错误文本会带 host/user,
+所以只有分类词和纯数字版本号被允许离开 `dumpDatabaseToFile`(见 `apps/worker/src/db-backup.ts`
+的分类块与 `db-backup.test.ts` 的脱敏断言)。
+
+**`unknown` 怎么查**:日志只能告诉你「什么时候、失败了、属于 unknown」,**拿不到原文**——
+这是刻意的,不是缺漏。要看原话,就在 worker 那个**镜像里**照 `PG_DUMP_ARGS` 手跑一次,
+让 stderr 直接打在你自己的终端上(连接串仍只经 PG* 环境变量,永不进 argv):
+
+```bash
+# 在 worker 容器/镜像内。PGPASSWORD 等由你带外注入,别写进命令行、别贴进 issue。
+PGHOST=… PGPORT=… PGUSER=… PGPASSWORD=… PGDATABASE=… PGSSLMODE=require \
+  pg_dump --format=custom --no-owner --no-privileges -f /dev/null
+```
+
+看到原文之后:如果它是一类会重复发生的失败,就**把它的签名加进
+`classifyPgDumpStderr` 的允许清单**并配一条测试,下次它自己就有名字了。
+`unknown` 反复出现 = 允许清单缺了一条,不是「查不出来」。
+
+**消息语言是契约的一部分**:分类靠的是 pg_dump 的**英文**原话,而 Debian 的 pg_dump 是
+NLS 构建 —— 环境里带个 `LC_ALL=de_DE.UTF-8`,那句话就变成
+`Abbruch wegen unpassender Serverversion`,所有签名全部落空、一次版本不匹配会被记成
+`unknown`。所以 `pgSpawnEnv` 把子进程的 `LC_ALL` / `LC_MESSAGES` **钉死成 `C`**
+(钉 `LC_ALL` 而不只是 `LC_MESSAGES`,因为 POSIX 里前者盖过后者)。
+改这里之前先想清楚:分类词是靠这条钉子才成立的。
+
 ## 备份放在哪 + 用哪把钥匙(#794 ④)
 - key:`backups/db/fikirtive-<YYYY-MM-DD>.dump.gz`(吉隆坡日期)。
   `backups/` 前缀在 `u/<ownerId>/` 内容寻址方案之外,`/files` 路由只认 `u/` key
@@ -100,6 +177,22 @@ cron 入口(`backup-cron.ts`)的行为:
 - 这个端点免鉴权,所以只吐三个词:不报 key 名、不报大小、不报时间戳。细节去 admin 看。
 
 ## 完整恢复步骤(⚠️ 没有恢复演练的备份不算备份)
+
+> **动手之前先对版本**(#1385):`pg_restore --version` 与你要恢复进去的那台 Postgres,
+> 大版本都必须 **≥ 写出这个 dump 的 `pg_dump` 大版本**(今天是 **18**)。
+> pg_dump 18 写的是 custom archive 格式 1.16,16.x / 17.x 的 `pg_restore` 会直接拒读。
+> `docker-compose.yml` 的 `postgres` 已是 `postgres:18-alpine`;下面两个脚本也会自己查这一条,
+> 不够就退出 4。详见上面「pg_dump 大版本必须 ≥ 服务端大版本」的规矩表。
+>
+> **本机第一次用 18 起 compose 之前**:旧的 `fikirtive-pg` 数据卷是 Postgres 16 初始化的,
+> **18 读不了**(数据目录格式按大版本走),而且 18 的镜像把数据目录挪到了
+> `/var/lib/postgresql/18/docker`、声明的 VOLUME 从 `/var/lib/postgresql/data` 变成
+> `/var/lib/postgresql`。这是个一次性的开发/演练库,所以直接重建,别试图升级:
+> ```bash
+> docker compose down && docker volume rm fikirtive-pg && docker compose up -d postgres
+> ```
+> 不跑 `volume rm` 的话旧数据只是被孤立、不会被删,但容器每次重建都会给你一个空库。
+
 先在本地 docker Postgres 演练一遍,确认 dump 可用,再考虑动真库。
 **首选走脚本**(它把下面这几步连同对账断言一起做了,还会报 RTO):
 
@@ -171,7 +264,8 @@ docker compose exec postgres psql -U fikirtive -d restore_drill \
     --json drill.json
   ```
   行数对不上就退出码 5,并打印差在哪。`--json` 落一份 `{rto_seconds, ledger_rows, account_rows}`,
-  可直接贴进票里。退出码:0 过 / 2 参数或文件问题 / 3 拒绝非本地或非 drill 库 / 4 缺工具 / 5 对账不符。
+  可直接贴进票里。退出码:0 过 / 2 参数或文件问题 / 3 拒绝非本地或非 drill 库 /
+  4 缺工具**或版本过低**(`pg_restore` / `pg_dump` 大版本 < 18,见上面的双向规矩表)/ 5 对账不符。
 - **演练的自证**:`scripts/db-restore-drill-selftest.sh [--rows N]`。**不需要任何真实备份文件**:
   它自己建全新空库 → 跑全部迁移(顺带就是一次 fresh-database 迁移验证)→ 塞 N 条钱路行 →
   用**和 worker 夜间备份一模一样的命令**做 dump → 跑上面那个演练脚本并断言行数。

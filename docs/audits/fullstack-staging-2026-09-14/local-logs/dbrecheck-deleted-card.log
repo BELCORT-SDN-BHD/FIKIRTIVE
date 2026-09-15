@@ -1,0 +1,15 @@
+
+> @fikirtive/db@0.1.0 test /Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/db
+> vitest run "src/__tests__/canvas-node-status-check.test.ts" "-t" "changes zero rows, and the card stays deleted"
+
+
+[1m[46m RUN [49m[22m [36mv3.2.6 [39m[90m/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/db[39m
+
+ [32m✓[39m src/__tests__/canvas-node-status-check.test.ts [2m([22m[2m20 tests[22m[2m | [22m[33m19 skipped[39m[2m)[22m[33m 959[2mms[22m[39m
+   [33m[2m✓[22m[39m the settlement's own write refuses a card that was deleted after the board was read[2m > [22mchanges zero rows, and the card stays deleted [33m 753[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m1 passed[39m[22m[2m | [22m[33m19 skipped[39m[90m (20)[39m
+[2m   Start at [22m 12:33:16
+[2m   Duration [22m 3.51s[2m (transform 1.30s, setup 2.00s, collect 24ms, tests 959ms, environment 0ms, prepare 102ms)[22m
+

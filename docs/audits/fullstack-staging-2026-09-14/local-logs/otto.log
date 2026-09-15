@@ -1,0 +1,206 @@
+
+> @fikirtive/otto@0.0.0 test /Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto
+> vitest run
+
+
+[1m[46m RUN [49m[22m [36mv3.2.6 [39m[90m/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto[39m
+
+ [32m✓[39m src/skills/generate.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 70[2mms[22m[39m
+[90mstderr[2m | src/meter.test.ts[2m > [22m[2m#524 r5 — onRefundedFailure tells the caller this turn charged nothing[2m > [22m[2ma throwing hook never masks the real failure
+[22m[39m[withLlmBudget] onRefundedFailure hook threw; ignoring. Error: hook exploded
+    at Object.onRefundedFailure [90m(/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/[39msrc/meter.test.ts:945:53[90m)[39m
+    at Module.withLlmBudget [90m(/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/[39msrc/meter.ts:664:14[90m)[39m
+[90m    at processTicksAndRejections (node:internal/process/task_queues:103:5)[39m
+    at [90m/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/[39msrc/meter.test.ts:943:5
+    at file:///Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/node_modules/[4m.pnpm[24m/@vitest+runner@3.2.6/node_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:752:20
+
+[90mstderr[2m | src/meter.test.ts[2m > [22m[2mMONEY-A10 — 低余额预留与搜索腿并存(判官 P1)[2m > [22m[2mMONEY-A10:一个抛错的 onExtraUnitsGranted 不许拖垮预留,而调用方的槽停在 fail-closed 的 0
+[22m[39m[withLlmBudget] onExtraUnitsGranted hook threw; the turn keeps 0 granted units. Error: hook blew up before writing 5
+    at Object.onExtraUnitsGranted [90m(/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/[39msrc/meter.test.ts:1158:19[90m)[39m
+    at reportGrantedUnits [90m(/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/[39msrc/meter.ts:487:10[90m)[39m
+    at Module.withLlmBudget [90m(/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/[39msrc/meter.ts:619:3[90m)[39m
+[90m    at processTicksAndRejections (node:internal/process/task_queues:103:5)[39m
+    at [90m/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/[39msrc/meter.test.ts:1151:5
+    at file:///Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/node_modules/[4m.pnpm[24m/@vitest+runner@3.2.6/node_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:752:20
+
+[90mstderr[2m | src/meter.test.ts[2m > [22m[2m钱路 M1-c — extraHoldInternal / extraSettleInternal(搜索费那条腿)[2m > [22m[2m坏掉的 extraSettle 收 0 —— 计数器坏掉不许变成一笔编出来的收费
+[22m[39m[withLlmBudget] extraSettleInternal threw; charging 0 for the non-LLM leg. Error: counter blew up
+    at Object.bads [as extraSettleInternal] [90m(/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/[39msrc/meter.test.ts:1396:15[90m)[39m
+    at extraSettleOf [90m(/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/[39msrc/meter.ts:499:21[90m)[39m
+    at Module.withLlmBudget [90m(/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/[39msrc/meter.ts:680:85[90m)[39m
+[90m    at processTicksAndRejections (node:internal/process/task_queues:103:5)[39m
+    at [90m/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/[39msrc/meter.test.ts:1403:7
+    at file:///Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/node_modules/[4m.pnpm[24m/@vitest+runner@3.2.6/node_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:752:20
+
+ [32m✓[39m src/meter.test.ts [2m([22m[2m96 tests[22m[2m)[22m[32m 280[2mms[22m[39m
+ [32m✓[39m src/skills/edit-storyboard.test.ts [2m([22m[2m31 tests[22m[2m)[22m[32m 34[2mms[22m[39m
+ [32m✓[39m src/instructions.test.ts [2m([22m[2m84 tests[22m[2m)[22m[32m 152[2mms[22m[39m
+ [32m✓[39m src/skills/propose.test.ts [2m([22m[2m170 tests[22m[2m)[22m[33m 650[2mms[22m[39m
+ [32m✓[39m src/skills/crm-segments.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 87[2mms[22m[39m
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2mottoBudgetArgsFor — every withLlmBudget parameter derives from the manifest (PH1-A1)[2m > [22m[2mENGINE-A4 — 截断轮:零交付交回 null(整笔退款),有交付照旧按实结算[2m > [22m[2mENGINE-A4:失败的写不算交付 —— 技能自己拒绝 `{ ok:false, error }`(Otto 拿错参数反复重试的那条死胡同) ⇒ null
+[22m[39m[otto:skill] manageCanvas refused (category=string)
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2mottoBudgetArgsFor — every withLlmBudget parameter derives from the manifest (PH1-A1)[2m > [22m[2mENGINE-A4 — 截断轮:零交付交回 null(整笔退款),有交付照旧按实结算[2m > [22m[2mENGINE-A4:失败的写不算交付 —— `execute` 抛错(SDK 把它折成一句普通文本当返回值) ⇒ null
+[22m[39m[otto:skill] saveProduct threw (category=Error)
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2mottoBudgetArgsFor — every withLlmBudget parameter derives from the manifest (PH1-A1)[2m > [22m[2mENGINE-A4 — 截断轮:零交付交回 null(整笔退款),有交付照旧按实结算[2m > [22m[2mENGINE-A4:一轮里既有失败的写也有成功的写 ⇒ 有交付,按实结算
+[22m[39m[otto:skill] manageCanvas refused (category=string)
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2mottoBudgetArgsFor — every withLlmBudget parameter derives from the manifest (PH1-A1)[2m > [22m[2mENGINE-A4 — 截断轮:零交付交回 null(整笔退款),有交付照旧按实结算[2m > [22m[2mENGINE-A4:包装只改记账,模型看到的返回值一个字节都没变
+[22m[39m[otto:skill] manageCanvas refused (category=string)
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2mottoBudgetArgsFor — every withLlmBudget parameter derives from the manifest (PH1-A1)[2m > [22m[2mENGINE-A4 — 截断轮:零交付交回 null(整笔退款),有交付照旧按实结算[2m > [22m[2mENGINE-A4:包装只改记账,模型看到的返回值一个字节都没变
+[22m[39m[otto:skill] saveProduct threw (category=Error)
+
+ [32m✓[39m evals/evals.test.ts [2m([22m[2m36 tests[22m[2m)[22m[33m 560[2mms[22m[39m
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2mrunOttoTurn — fake provider through the shared runner ($0 fixture)[2m > [22m[2mapproval-resume: parks the gated call, then the serialize→restore→approve→resume round-trip executes EXACTLY the approved tool
+[22m[39mAccessed finalOutput before agent run is completed.
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2mrunOttoTurn — fake provider through the shared runner ($0 fixture)[2m > [22m[2mrestores an old-construction SDK state against the new production approval agent and resumes
+[22m[39mAccessed finalOutput before agent run is completed.
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2mrunOttoTurn — fake provider through the shared runner ($0 fixture)[2m > [22m[2mrestores an old-construction SDK state against the new production approval agent and resumes
+[22m[39m[otto:skill] approveScheduledPost refused (category=string)
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2m#566 — resume carries the live context[2m > [22m[2mSDK truth: fromString drops the ports and run() IGNORES options.context on a resumed state
+[22m[39mAccessed finalOutput before agent run is completed.
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2m#566 — resume carries the live context[2m > [22m[2mSDK truth: fromString drops the ports and run() IGNORES options.context on a resumed state
+[22m[39m[otto:skill] approveScheduledPost threw (category=Error)
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2m#566 — resume carries the live context[2m > [22m[2mtryRestoreRunStateWithContext re-attaches the live ports, so the approved tool reaches them
+[22m[39mAccessed finalOutput before agent run is completed.
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2m#566 — resume carries the live context[2m > [22m[2mfields assigned to the context AFTER the restore still reach the tool (late-bound consent)
+[22m[39mAccessed finalOutput before agent run is completed.
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2m#566 — resume carries the live context[2m > [22m[2mthe shared runner REFUSES a resumed state whose context is not the live one (fail-closed, no reservation)
+[22m[39mAccessed finalOutput before agent run is completed.
+
+[90mstderr[2m | src/runtime.test.ts[2m > [22m[2m#566 — resume carries the live context[2m > [22m[2mstill lets the two fresh-input shapes through untouched (string and item array)
+[22m[39mAccessed finalOutput before agent run is completed.
+
+ [32m✓[39m src/runtime.test.ts [2m([22m[2m57 tests[22m[2m)[22m[33m 962[2mms[22m[39m
+ [32m✓[39m src/instructions-nav-map.test.ts [2m([22m[2m136 tests[22m[2m)[22m[33m 1487[2mms[22m[39m
+   [33m[2m✓[22m[39m #802 ③ 源码里一个地名都不许手打(判官 r1 [P1-1] / r3 [P2-1])[2m > [22minstructions.ts 的字符串字面量里没有手打的导航标签 [33m 304[2mms[22m[39m
+ [32m✓[39m src/model.test.ts [2m([22m[2m50 tests[22m[2m)[22m[32m 100[2mms[22m[39m
+ [32m✓[39m src/knowledge-cabinet.test.ts [2m([22m[2m36 tests[22m[2m)[22m[33m 544[2mms[22m[39m
+[90mstderr[2m | src/runtime-history-budget.test.ts[2m > [22m[2mENGINE-A6 — 长对话：旧轮被摘要收拢，新一轮成本不随历史上涨[2m > [22m[2mENGINE-A6: 摘要调用抛错不拖垮商家这一轮（历史照裁、摘要不变、turn 照常返回）
+[22m[39m[otto:summary] fold failed (category=Error) — history was trimmed, summary left unchanged
+
+ [32m✓[39m src/runtime-history-budget.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 3361[2mms[22m[39m
+   [33m[2m✓[22m[39m ENGINE-A6 — 长对话：旧轮被摘要收拢，新一轮成本不随历史上涨[2m > [22mENGINE-A6: 连续 15 轮之后，预扣逐轮不变、实结越过预算后停止上涨（对照组单调上涨） [33m 1974[2mms[22m[39m
+   [33m[2m✓[22m[39m ENGINE-A6 — 长对话：旧轮被摘要收拢，新一轮成本不随历史上涨[2m > [22mENGINE-A6: 摘要那次调用不新开钱路 —— 全程只有一次 reserve、一次 settle,同一个 refId [33m 594[2mms[22m[39m
+ [32m✓[39m src/skills/research-web.test.ts [2m([22m[2m34 tests[22m[2m)[22m[33m 367[2mms[22m[39m
+ [32m✓[39m src/skills/propose-pack.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 225[2mms[22m[39m
+ [32m✓[39m src/skills/manage-canvas.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 177[2mms[22m[39m
+ [32m✓[39m src/skill.test.ts [2m([22m[2m32 tests[22m[2m)[22m[32m 264[2mms[22m[39m
+[90mstderr[2m | src/runtime-turn-trace.test.ts[2m > [22m[2mENGINE-A2 — 档案是诊断,永远不承重[2m > [22m[2mENGINE-A2: sink 抛错不影响商家的这一轮(回复照常返回)
+[22m[39m[otto:trace] failed for otto-stream:msg_boom (category=Error)
+
+[90mstderr[2m | src/runtime-turn-trace.test.ts[2m > [22m[2mENGINE-A2 — 档案是诊断,永远不承重[2m > [22m[2mENGINE-A2: 连「收集事实」这一步抛错也不承重(收集在同一个 try 之内)
+[22m[39m[otto:trace] failed for otto-turn:msg_collect_boom (category=Error)
+
+ [32m✓[39m src/runtime-turn-trace.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 408[2mms[22m[39m
+ [32m✓[39m src/skills/seedream-prompt.test.ts [2m([22m[2m34 tests[22m[2m)[22m[33m 517[2mms[22m[39m
+ [32m✓[39m src/skills/publish-truth-fence.test.ts [2m([22m[2m17 tests[22m[2m)[22m[33m 596[2mms[22m[39m
+ [32m✓[39m src/skills/seedance-edit-extend.test.ts [2m([22m[2m45 tests[22m[2m)[22m[32m 112[2mms[22m[39m
+ [32m✓[39m src/skills/workflows.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 154[2mms[22m[39m
+ [32m✓[39m src/skills/seedance-prompt.test.ts [2m([22m[2m39 tests[22m[2m)[22m[32m 91[2mms[22m[39m
+ [32m✓[39m src/skills/generate-references.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 186[2mms[22m[39m
+ [32m✓[39m src/meter-cross-refund.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 90[2mms[22m[39m
+ [32m✓[39m src/skills/availability-truth-fence.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m src/skills/propose-research.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 136[2mms[22m[39m
+ [32m✓[39m src/skills/_brand-record.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 90[2mms[22m[39m
+ [32m✓[39m src/history-budget.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 92[2mms[22m[39m
+ [32m✓[39m src/skills/manage-media.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 114[2mms[22m[39m
+ [32m✓[39m src/skills/propose-video-action.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 97[2mms[22m[39m
+ [32m✓[39m src/skills/propose-storyboard.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 71[2mms[22m[39m
+ [32m✓[39m src/skills/read-spending.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 133[2mms[22m[39m
+[2m12:19:51 PM[22m [33m[1m[vite][22m[39m [33m[2m(ssr)[22m[39m [33mwarning: invalid import "./${name}.js". Variable imports cannot import their own directory, place imports in a separate directory or make the import filename more specific. For example: import(`./foo/${bar}.js`).[39m
+  Plugin: [35mvite:dynamic-import-vars[39m
+  File: [36m/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/src/skills/connection-truth-fence.test.ts[39m
+[2m12:19:51 PM[22m [33m[1m[vite][22m[39m [33m[2m(ssr)[22m[39m [33mwarning: invalid import "./${name}.js". Variable imports cannot import their own directory, place imports in a separate directory or make the import filename more specific. For example: import(`./foo/${bar}.js`).[39m
+  Plugin: [35mvite:dynamic-import-vars[39m
+  File: [36m/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/otto/src/skills/connection-truth-fence.test.ts[39m
+ [32m✓[39m src/research-agent.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 73[2mms[22m[39m
+ [32m✓[39m src/skills/video-intent.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 72[2mms[22m[39m
+ [32m✓[39m src/skills/describe-refs.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 88[2mms[22m[39m
+ [32m✓[39m src/skills/recall-store-knowledge.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 67[2mms[22m[39m
+ [32m✓[39m src/skills/prompt-vocab.test.ts [2m([22m[2m33 tests[22m[2m)[22m[32m 91[2mms[22m[39m
+ [32m✓[39m src/skills/render-video.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 583[2mms[22m[39m
+   [33m[2m✓[22m[39m renderVideo registration hygiene[2m > [22minstructions.ts carries the model-facing 'When to call' entry [33m 490[2mms[22m[39m
+ [32m✓[39m src/skills/propose-card-options.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m src/skills/video-capabilities.test.ts [2m([22m[2m26 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m src/skills/connection-truth-fence.test.ts [2m([22m[2m18 tests[22m[2m)[22m[33m 1953[2mms[22m[39m
+   [33m[2m✓[22m[39m Otto 的连接状态口径[2m > [22mlist-meta-pages:needsReconnect 的回答是「连着但过期」,不是「从没连过」 [33m 1103[2mms[22m[39m
+   [33m[2m✓[22m[39m Otto 的连接状态口径[2m > [22mmeta-expert:needsReconnect 的回答是「连着但过期」,不是「从没连过」 [33m 381[2mms[22m[39m
+[90mstderr[2m | src/video-step-handoff.test.ts[2m > [22m[2mCREATE-A2 planVideoStepHandoff —— 什么时候不该有第二张卡[2m > [22m[2mCREATE-A2 准备过程炸了 ⇒ 返回 null,绝不把异常抛回交付路径
+[22m[39m[video-step] job-1: handoff skipped (non-fatal): boom
+
+ [32m✓[39m src/video-step-handoff.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 122[2mms[22m[39m
+ [32m✓[39m src/skills/recommend-templates.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 108[2mms[22m[39m
+ [32m✓[39m src/skills/run-factory-batch.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 68[2mms[22m[39m
+ [32m✓[39m src/skills/meta-insights.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m src/skills/propose-intent-crosscheck.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 67[2mms[22m[39m
+ [32m✓[39m src/skills/import-media.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 61[2mms[22m[39m
+ [32m✓[39m src/skills/manage-library.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 37[2mms[22m[39m
+ [32m✓[39m evals/acceptance-map.test.ts [2m([22m[2m7 tests[22m[2m | [22m[33m5 skipped[39m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m src/otto-acceptance-map.test.ts [2m([22m[2m7 tests[22m[2m | [22m[33m6 skipped[39m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m src/skills/manage-projects.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 764[2mms[22m[39m
+   [33m[2m✓[22m[39m manageProjects registration hygiene[2m > [22minstructions.ts carries the model-facing 'When to call' entry (REVIEWER-PLAYBOOK:107) [33m 628[2mms[22m[39m
+ [32m✓[39m src/meta-expertise/meta-expertise.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m src/skills/manage-entities.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 195[2mms[22m[39m
+ [32m✓[39m src/skills/remember-brand-fact.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m src/skills/w-b3-d-anchors.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m src/skills/meta-expert.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 29[2mms[22m[39m
+ [32m✓[39m src/skills/manage-contacts.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 100[2mms[22m[39m
+ [32m✓[39m src/skills/schedule-posts.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 38[2mms[22m[39m
+ [32m✓[39m src/diagnosis/diagnose-performance.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 44[2mms[22m[39m
+ [32m✓[39m src/skills/delete-reference-variant.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 45[2mms[22m[39m
+ [32m✓[39m src/skills/propose-ad-build.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m src/skills/meta-ad-performance.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 46[2mms[22m[39m
+ [32m✓[39m src/skills/lookup-products.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m src/skills/campaign-planner.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m src/skills/read-contacts.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 64[2mms[22m[39m
+ [32m✓[39m src/skills/propose-meta-action.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m src/skills/migration.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m src/skills/update-brief.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m src/skills/propose-card-options.sellability.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m src/skills/meta-expert.helpers.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m src/skills/set-title.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+[90mstderr[2m | src/run-input.test.ts[2m > [22m[2mtryRestoreRunState (F24)[2m > [22m[2mreturns null (does NOT throw) on a corrupt/incompatible serialized state
+[22m[39m[otto] could not restore prior run state — starting fresh: Failed to parse run state. Unexpected token '}', "}{ not val"... is not valid JSON
+
+ [32m✓[39m src/run-input.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m src/skills/approve-scheduled-post.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 138[2mms[22m[39m
+ [32m✓[39m src/stream.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 86[2mms[22m[39m
+ [32m✓[39m src/skills/list-publish-targets.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 55[2mms[22m[39m
+ [32m✓[39m src/skills/list-meta-pages.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 69[2mms[22m[39m
+ [32m✓[39m src/skills/manage-brand-memory.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 31[2mms[22m[39m
+ [32m✓[39m src/skills/propose-ideas.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 97[2mms[22m[39m
+ [32m✓[39m src/skills/share-post-preview.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m src/run-output.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [32m✓[39m src/approval-tools.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m src/skills/edit-scheduled-post.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 92[2mms[22m[39m
+ [32m✓[39m src/skills/list-channel-scopes.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 111[2mms[22m[39m
+ [32m✓[39m src/skills/variant-policy.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 78[2mms[22m[39m
+ [32m✓[39m src/provider-secrecy-wiring.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 78[2mms[22m[39m
+ [32m✓[39m src/registry.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m src/skills/fence.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 551[2mms[22m[39m
+   [33m[2m✓[22m[39m check-skill-imports fence[2m > [22mhard-fails when a skill imports reserveCredits [33m 305[2mms[22m[39m
+ [32m✓[39m src/skills/ingest-product.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 47[2mms[22m[39m
+ [32m✓[39m src/skills/list-scheduled-posts.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 46[2mms[22m[39m
+ [32m✓[39m src/skills/cancel-scheduled-post.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m src/skills/suggest-post-times.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 39[2mms[22m[39m
+ [32m✓[39m src/prompt-skills.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m src/skills/meta-list-objects.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m src/skills/_template.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m src/catalog.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 43[2mms[22m[39m
+ [32m✓[39m src/otto.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m96 passed[39m[22m[90m (96)[39m
+[2m      Tests [22m [1m[32m1699 passed[39m[22m[2m | [22m[90m11 todo[39m[90m (1710)[39m
+[2m   Start at [22m 12:19:21
+[2m   Duration [22m 59.40s[2m (transform 12.36s, setup 0ms, collect 226.11s, tests 18.87s, environment 73ms, prepare 38.06s)[22m
+
