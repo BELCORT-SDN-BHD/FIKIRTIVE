@@ -130,6 +130,7 @@
 | 2026-09-06 | 台账 #359 搬入：部署窗口清单追加(M1-c/PR#1012):CREDIT_PACKS 上线前须对生产 Stripe 做一次只读核对(金额/credits);此后新增包=改表+部署。触发条件：原登记未注明;见来源评论。来源：https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5330238718 | |
 | 2026-09-06 | 台账 #359 搬入：部署窗口清单追加(M1-b/PR#1013):worker 服务需设 STRIPE_SECRET_KEY(与 web 同一把;webhook secret 不需要),未设时对账 sweeper 诚实跳过但无人看着付款。触发条件：原登记未注明;见来源评论。来源：https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5330305595 | |
 | 2026-09-06 | 台账 #359 搬入：PR #1033 判官发现 packages/db 的 CARD_SELECT(canvas-settlement 投影)选了 type 与 threadId 两列但从未被读取——死选择列,待下一轮 C 类死代码清扫时删除(含 select 对拍测试同步)。触发条件：原登记未注明;见来源评论。来源：https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359#issuecomment-5336694791 | |
+| 2026-09-14 | **输入附近不再堆叠重复费用说明（R3-F06）**。**批准: 2026-09-14，APPROVED（Founder 当前对谈截图反馈；记录请求为写进报告并准备下场修复提示词，本场不施工）**。截图中的「Uploads are understood automatically…」「Otto searches the web…」「Otto checks with you…／Each message holds up to …」属于输入附近反复常驻的说明段落，Founder 裁定此类不用这样处理。范围按这些例子解释：跨受影响入口移除同类重复常驻说明，不仅换成 tooltip／折叠区；不是全站所有 alert 一律删除。实际逐动作报价／确认、交易回执、可操作错误、认证／安全行为及后端定价、预留、结算、退款语义不在删除授权内；Billing 的实际价格与账目不因本条自动移除。本裁决覆盖本规格 §5 2026-09-02「A10 聊天搜索的商家侧披露」、§7.0 第3项及 §7.3「披露组件」指定的常驻价目小字形态，后续不能以 MONEY-A9／A10 为由重新挂回本类段落。移除这种展示形态不批准免费理解／免费搜索，也不改变价目单一来源、成功搜索计费、次数上限及原有动作确认。验收：现有同源理解／搜索提示挂点均复核并移除此类常驻段落，账目与具体动作成本仍真实。历史记录原样保留，冲突的展示要求以本批准为准；先按项目规则将本 docs-only 变更经 PR 合入主干，再开展下场实现。证据与挂点见 `docs/audits/fullstack-staging-2026-09-14/findings-catalog.md` 的 R3-F06。 | APPROVED |
 
 ## 6. 改签记录
 
