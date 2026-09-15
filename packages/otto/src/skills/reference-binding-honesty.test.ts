@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { buildGenRequestFromCard } from "@fikirtive/core";
 import { buildProposeCard } from "./propose.helpers.js";
 import { executePropose } from "./propose.js";
+import { executeProposePack } from "./propose-pack.js";
 import {
   decideImageContinuation,
   withContinuedImage,
@@ -416,5 +417,150 @@ describe("FC-4 · 模型拿得到卡上真正的那一格", () => {
       attachmentRole: "reference",
       attachmentRoleNote: FIRST_FRAME_DOWNGRADE_NOTE,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 复审 P1-B —— 信号表:一句话要么指着一张图,要么就是一次新活
+// ---------------------------------------------------------------------------
+
+/**
+ * 为什么这一组是**表驱动**的(复审 P1-B,2026-09-15)。
+ *
+ * 第一版的信号表按子串收「泛用接续标记」,于是 "keep the" / "change the" / "edit the" /
+ * "now put" / "this one" / 「现在要」/「保留」这些**不带指代对象**的碎片,在任何一句全新请求里
+ * 都出得来:「make me a poster for the raya sale, keep the text short」会把一张无关的猫图
+ * 绑成新海报的编辑底图 —— FC-2 那一类「错的输入花了钱」,只是方向反过来。
+ *
+ * 判据因此收窄成两类:**指着一张图的指代**(this/that/same + image|picture|photo、这张、
+ * gambar ni…),以及**接续副词 + 指向已有东西的动词**(now i want / now add / now change,
+ * 走查原话就在这一档)。下面两张表是这条规则的全部行为面,一边一打以上,EN/ZH/MS 都有。
+ */
+describe("FC-2 复审 · 信号表两侧各一打", () => {
+  const CONTINUE_PHRASES = [
+    // EN —— 接续副词 + 指向已有东西的动词
+    "now i wan @Xinyi hold the cat and pet it while the cat is drinking with the product",
+    "now i want the cat wearing a tiny hat",
+    "now add a hat on the cat",
+    "now change the background to a beach",
+    // EN —— 直接指着那张图
+    "edit this so the mug is bigger",
+    "change this to a night scene",
+    "add to this a second mug",
+    "can you make this image brighter",
+    "use that photo but make it warmer",
+    "same picture, just remove the logo",
+    // ZH
+    "这张图把背景换成海边",
+    "在这基础上加一顶帽子",
+    "改这里的杯子颜色",
+    "那张的猫再大一点",
+    // MS
+    "gambar ni tukar background jadi pantai",
+    "guna gambar tadi tapi tambah kucing",
+  ];
+
+  const FRESH_PHRASES = [
+    // 复审点名的五个假阳性 —— 每一句都是一次**新活**,却都含着旧表里的碎片
+    "make me a poster for the raya sale, keep the text short",
+    "now put together a carousel",
+    "现在要一张海报",
+    "保留白底，做一张新的产品图",
+    "change the copy to something shorter",
+    // 同一类,其余碎片
+    "edit the caption for the facebook post",
+    "this one looks good, make a brand new picture of a dog",
+    // 明说要新的(字面 + 形态 + 三种语言)
+    "make a brand new picture of a dog in a park",
+    "i want another one",
+    "buat poster baru untuk raya",
+    "给我一张新的海报",
+    "start over with a different picture",
+    // 两边同时命中 ⇒ 否决票赢
+    "now i want a brand new picture of the cat",
+    // 一个信号都没有 ⇒ 维持今天的行为
+    "a cat drinking coffee, studio light",
+    "now make a poster for the raya sale",
+  ];
+
+  it.each(CONTINUE_PHRASES)("指着那张图 ⇒ continue:%s", (text) => {
+    expect(
+      decideImageContinuation({ text, hasAttachedImage: false, hasCurrentImage: true }),
+    ).toBe("continue");
+  });
+
+  it.each(FRESH_PHRASES)("一次新活 ⇒ fresh:%s", (text) => {
+    expect(
+      decideImageContinuation({ text, hasAttachedImage: false, hasCurrentImage: true }),
+    ).toBe("fresh");
+  });
+
+  it("两张表各自都在一打以上(少了就不是行为面,是几个例子)", () => {
+    expect(CONTINUE_PHRASES.length).toBeGreaterThanOrEqual(12);
+    expect(FRESH_PHRASES.length).toBeGreaterThanOrEqual(12);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 复审 P1-C —— 整包这条路不绑底图(它的行说不出「正在改的是这一张」)
+// ---------------------------------------------------------------------------
+
+describe("FC-2 复审 · 整包卡不静默继承底图", () => {
+  let mockPrisma: {
+    entity: { findMany: ReturnType<typeof vi.fn> };
+    chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    referenceImage: { count: ReturnType<typeof vi.fn> };
+    generation: { findMany: ReturnType<typeof vi.fn> };
+    genJob: { create: ReturnType<typeof vi.fn> };
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const db = await import("@fikirtive/db");
+    mockPrisma = db.prisma as unknown as typeof mockPrisma;
+    mockPrisma.entity.findMany.mockResolvedValue([XINYI]);
+    mockPrisma.chatMessage.findFirst.mockResolvedValue({ seq: 30 });
+    mockPrisma.chatMessage.create.mockResolvedValue({});
+    mockPrisma.referenceImage.count.mockResolvedValue(2);
+    mockPrisma.generation.findMany.mockResolvedValue([]);
+  });
+
+  /**
+   * 单张那条路继承得到、整包这条路继承不到 —— 这是**有意**的,理由写在
+   * `propose-pack.ts` 那段注释里:`PackCard` 的每一行只有图标、提示词和价钱,
+   * 回执一个像素都没渲染,而 `Make all` 是一次按下去买走全部几张。
+   * 读不到的 id 不许跟着付费请求上路(`plan-card-contract.ts` 的同一条规矩)。
+   *
+   * 哪天整包卡的行说得出「正在改的是这一张」,把 `withContinuedImage` 接回去即可;
+   * 在那之前,这条断言就是那个缺口的看守 —— 谁顺手接回来,这里立刻红。
+   */
+  it("同一句续写话,整包里每一张都不带底图与回执", async () => {
+    const ctx = makeCtx({
+      currentImage: receipt(CAT_MUG_ID, "a cat drinking from the orange mug"),
+      turnText: "now i want three variants of this picture",
+      turnEntityIds: [XINYI.id],
+    });
+
+    const result = await executeProposePack(
+      {
+        packTitle: "Mug variants",
+        items: [
+          { kind: "image", structuredPrompt: "warm light", entityIds: [], variantSel: {} },
+          { kind: "image", structuredPrompt: "cool light", entityIds: [], variantSel: {} },
+        ],
+        goal: "an ad for the mug",
+      },
+      { context: ctx },
+    );
+    expect(result).not.toHaveProperty("error");
+
+    const created = mockPrisma.chatMessage.create.mock.calls.map(
+      (c) => (c[0] as { data: { payload: CardPayload } }).data.payload,
+    );
+    expect(created).toHaveLength(2);
+    for (const card of created) {
+      expect(card.sourceGenerationId).toBeUndefined();
+      expect(card.mediaReferences).toBeUndefined();
+    }
   });
 });

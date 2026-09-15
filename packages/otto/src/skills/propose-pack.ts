@@ -22,7 +22,6 @@ import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 import { proposeInput, buildProposeCard, ProposeRefusal, type ProposeInput, type CardPayload } from "./propose.helpers.js";
 import { applyReferenceUpscaleGate } from "./reference-upscale-gate.js";
-import { withContinuedImage } from "./image-continuation.js";
 import { VARIANT_AXES, checkVariantSet } from "./variant-policy.js";
 import { z } from "zod";
 
@@ -94,13 +93,27 @@ export async function executeProposePack(
       // ownedSet it builds internally always covers what it itself asks for.
       const itemEntityIds = new Set([...item.entityIds, ...(ctx.turnEntityIds ?? [])]);
       const itemOwnedEntities = ownedEntities.filter((e) => itemEntityIds.has(e.id));
-      // FC-2 —— 整包这一面读同一个归一化(`executePropose` 读的同一个函数)。少了它,
-      // 「再给我三张这张图的变体」在单张那条路上继承得到、在整包这条路上继承不到,
-      // 同一句话两种结果 —— 第二个入口烂掉的老病。每一项按自己的 kind 判,视频项不动。
-      payloads.push(
-        buildProposeCard(item as ProposeInput, withContinuedImage(ctx, item), itemOwnedEntities)
-          .cardPayload,
-      );
+      /**
+       * 复审 P1-C —— **整包这一面不绑「正在做的那张图」**,直到整包卡的每一行说得出它。
+       *
+       * 单张那条路上,继承来的底图带着回执上卡,商家在 `Generate · N credits` 之前逐项读得到
+       * 「正在改的是这一张」(`image-continuation.ts` 第 ② 条纪律)。整包这张卡没有这一格:
+       * `PackCard` 的每一行只有图标、那句提示词和价钱 —— 回执确实躺在 payload 里,
+       * 却一个像素都没渲染出来。于是绑上去的效果是:一个他读不到的 id 跟着**整批**
+       * 付费请求上路,而 `Make all` 是一次按下去买走全部几张。
+       * `plan-card-contract.ts` 早就把这条写成规矩了:卡上有一件参考而商家在付钱之前
+       * 读不到它是什么,这张卡就不该拿去花钱。
+       *
+       * 两条路都能补上这个缺口,这里选小的那一条:给每一行补一整块回执是版面改动
+       * (`design-system/governance/frontend-integration-handoff.md` §4:改布局先进变更登记、
+       * 由 Founder 决定),而 FC-2 的走查现场是单张那条路。不绑 = 与这条修改之前逐字相同,
+       * 没有回归,也不会有一张读不到的底图被静默买走。
+       *
+       * 代价说明白:「再给我三张这张图的变体」在整包这条路上仍然不继承(商家自己挂一次图
+       * 就照旧能拿到)。等哪天整包卡的行说得出「正在改的是这一张」,把 `withContinuedImage`
+       * 接回这里即可 —— 判据那一份是现成的,共用的就是它。
+       */
+      payloads.push(buildProposeCard(item as ProposeInput, ctx, itemOwnedEntities).cardPayload);
     }
   } catch (e) {
     // #775:认拒绝的**基类** —— 引擎被关掉、形状撑不起这段提示词,对整包来说都是同一件事:

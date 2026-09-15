@@ -24,6 +24,7 @@ import type { CardState } from "@/lib/otto-inject-helpers";
 // gate and approve() both read this — they cannot disagree any more (#580 复审 r2 P1-1).
 import { guaranteedCredits, planCardGate, type OttoPlanCardPayload } from "./plan-card-contract";
 // Codex QA-CRE-FE9-013 —— 参考回执那一块。两张确认卡共用这一份,抄成两份必有一份先烂。
+import { CardDowngradeNote } from "./CardDowngradeNote";
 import { CardReferenceReceipt } from "./CardReferenceReceipt";
 // #774 判官 r2 P1 —— 卡上那行「引擎会被告知这些照片是谁」的措辞,与真正送出去的名字
 // 共用同一个纯函数(同一把长度尺),所以卡说的不可能比做的多。走**子路径**而不是包根:
@@ -99,10 +100,9 @@ export interface OttoPlanCardProps {
   onCancelled?: () => void;
 }
 
-/** Fallback disclosure for a card that is flagged downgraded but predates the
- *  server-built note — silence is the one thing this state may never be. */
-export const DOWNGRADE_FALLBACK_NOTE =
-  "Some of what you asked for isn't available here — the details above are what you'll get.";
+/** 复审 P1-A —— 这一句连同它的渲染都搬进了 `CardDowngradeNote`(画布卡与整包卡读的是
+ *  同一个组件)。这里按名转出,老的引用路径不必跟着改。 */
+export { DOWNGRADE_FALLBACK_NOTE } from "./CardDowngradeNote";
 
 /** Shown instead of a plan when the durable payload can't be read as one, or carries no
  *  price we can vouch for. Never a blank card and never a guessed price: a plan with no
@@ -442,12 +442,10 @@ export function OttoPlanCard({
         )}
 
         {/* #580 — a downgrade is never silent. If the plan couldn't honour what was
-            asked for, the card says so before the merchant spends. */}
-        {p.downgraded && (
-          <div className="mt-[9px] text-[0.75rem] text-[var(--warning-soft-foreground)]">
-            {p.downgradeNote || DOWNGRADE_FALLBACK_NOTE}
-          </div>
-        )}
+            asked for, the card says so before the merchant spends.
+            复审 P1-A:这一句现在由 `CardDowngradeNote` 渲染,画布上那张 `OttoTurnCard` 与
+            整包那张 `PackCard` 读的是同一个组件 —— 商家真正在看的那张卡不会独独漏掉它。 */}
+        <CardDowngradeNote downgraded={p.downgraded} note={p.downgradeNote} className="mt-[9px]" />
 
         {/* FSE-001 / 规格 §5 :176④ — enlarging a product reference is disclosed in its OWN line,
             not merged into the downgrade note above. Two different things happened, so the card

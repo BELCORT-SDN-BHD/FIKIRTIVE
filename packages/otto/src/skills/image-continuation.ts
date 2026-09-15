@@ -34,24 +34,33 @@ import type { OttoContext } from "../context.js";
 /**
  * 「接着屏幕上那张做」的信号。
  *
- * 收的是**泛用的指代与接续标记**(定冠词式的回指、「现在…」这种接续副词、直接点名
- * 「这张图」),不是任何一次走查里的具体名词 —— 按内容词收信号,换一个商家就失效。
+ * 收的只有两类,其余一律不收(复审 P1 的修根点):
+ *   ① **指向一张图的指代** —— this/that/same + image|picture|photo、edit this / change this /
+ *      add to this|it、中文「这张/那张/同一张/改这/在这基础上」、马来语「gambar ni/ini/tadi」。
+ *   ② **接续副词 + 指向已有东西的动词** —— "now i want" / "now add" / "now change"
+ *      (走查原话「now i wan @Xinyi hold the cat…」就在这一档)。
+ *
+ * 不收不带指代对象的动词词组——"keep the" / "change the" / "edit the" / "instead of" /
+ * "now put" / "this one" / 中文「现在要」「保留」 / 马来语 "kekalkan"。它们在任何一句全新请求里
+ * 都出得来(「make me a poster for the raya sale, keep the text short」「现在要一张海报」),
+ * 收了就把一张无关的底图绑进一次付费的新图 —— 正是 FC-2 要挡的那类错输入花钱,
+ * 只是方向相反。
  *
  * 马来语与中文按本地商家真会打出来的写法收,不做词形还原:`includes` 命中的是子串。
  */
 export const IMAGE_CONTINUATION_SIGNALS: Record<string, readonly string[]> = {
   en: [
-    // 「现在…」这一档只收**指向已有东西**的动词(加 / 放 / 改),不收 "now make" ——
-    // 「now make a poster for the sale」是一次全新的请求,不是接着这张图改。
-    "now i want", "now i wan", "now add", "now put", "now change",
-    "this image", "this picture", "this photo", "this one",
+    // 「现在…」这一档只收**指向已有东西**的动词(加 / 改 / 接着要),不收 "now make" / "now put" ——
+    // 「now make a poster for the sale」「now put together a carousel」都是一次全新的请求。
+    "now i want", "now i wan", "now add", "now change",
+    "this image", "this picture", "this photo",
     "that image", "that picture", "that photo",
     "same image", "same picture", "same photo",
-    "edit this", "edit the", "change this", "change the", "keep the",
-    "add to this", "add to it", "instead of",
+    "edit this", "change this",
+    "add to this", "add to it",
   ],
-  zh: ["这张", "那张", "同一张", "在这基础上", "改这", "现在我要", "现在要", "保留"],
-  ms: ["gambar ni", "gambar ini", "gambar tadi", "yang ini", "kekalkan"],
+  zh: ["这张", "那张", "同一张", "在这基础上", "改这"],
+  ms: ["gambar ni", "gambar ini", "gambar tadi", "yang ini"],
 };
 
 /**
@@ -66,11 +75,32 @@ export const IMAGE_FRESH_START_SIGNALS: Record<string, readonly string[]> = {
     "brand new", "brand-new", "a new picture", "a new image", "a new photo",
     "new picture of", "new image of", "new photo of",
     "another picture of", "another image of", "another photo of",
+    // 复审 P1-B:「another one」= 他要的是**另一件**,不是这一件改一改。这一票投向 fresh,
+    // 也就是投向这条修改之前的行为 —— 判错的代价是他再说一句,不是一次付费运行绑错底图。
+    "another one",
     "different picture", "separate picture", "start over", "start fresh", "from scratch",
   ],
-  zh: ["全新", "重新做一张", "重新来一张", "另做一张", "新的一张", "从头做"],
-  ms: ["gambar baru", "gambar baharu", "mula semula"],
+  // 复审 P1-B:「新的」收在这里之后,「保留白底,做一张新的产品图」这种「保留…但做新的」
+  // 的写法一律 fresh。原来的「新的一张」是它的子串,留着只是同一条规则的第二份。
+  zh: ["全新", "重新做一张", "重新来一张", "另做一张", "新的", "从头做"],
+  // 同理:「baru」本身就够(「poster baru」「gambar baru」都命中),而「baharu」不含它,
+  // 所以那一条得自己留着。
+  ms: ["baru", "gambar baharu", "mula semula"],
 };
+
+/**
+ * 「一张全新的 X」的**形态**判据 —— 否决票的第二半(复审 P1)。
+ *
+ * 上面那张字面表只认 picture / image / photo 三个名词,可商家口里的交付物叫 poster、
+ * banner、flyer、carousel…—— 一个一个穷举既收不完也换一个商家就失效。改收**形态**:
+ * 不定冠词(a / an / another / 一个数词) + new + 任意名词 ⇒ 他要的是另一件东西。
+ *
+ * 只对英文建:中文与马来语剩下的继承信号已经全是指代(「这张」「gambar ni」),
+ * 一句「现在要一张新海报」压根就不再命中继承表。
+ */
+export const IMAGE_FRESH_START_PATTERNS: readonly RegExp[] = [
+  /\b(?:a|an|another|one|two|three|four|five|six|\d+)\s+(?:brand[\s-]*)?new\b/,
+];
 
 export type ImageContinuationDecision = "continue" | "fresh";
 
@@ -79,6 +109,11 @@ function hits(table: Record<string, readonly string[]>, text: string): boolean {
     for (const phrase of phrases) if (text.includes(phrase)) return true;
   }
   return false;
+}
+
+function hitsFreshStart(text: string): boolean {
+  if (hits(IMAGE_FRESH_START_SIGNALS, text)) return true;
+  return IMAGE_FRESH_START_PATTERNS.some((re) => re.test(text));
 }
 
 /**
@@ -103,7 +138,7 @@ export function decideImageContinuation(input: {
   if (input.hasAttachedImage) return "fresh";
   const text = (input.text ?? "").toLowerCase();
   if (!text) return "fresh";
-  if (hits(IMAGE_FRESH_START_SIGNALS, text)) return "fresh";
+  if (hitsFreshStart(text)) return "fresh";
   return hits(IMAGE_CONTINUATION_SIGNALS, text) ? "continue" : "fresh";
 }
 
