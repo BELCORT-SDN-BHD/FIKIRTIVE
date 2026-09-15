@@ -71,7 +71,9 @@ export function buildStuffItems(args: {
   const adGenerationIds = new Set(args.ads.map((ad) => ad.id));
   const items: StuffItem[] = [];
   for (const e of args.entities) {
-    const base = e.refs.find((r) => r.assetId === e.baseAssetId) ?? e.refs[0];
+    // 封面只认身份上钉的那一张(规格 §5,Founder 2026-09-15 裁决;验收 PRODID-A4)。
+    // 从前这里是 `?? e.refs[0]`,与 Brand 读路不一致 —— 见 `lib/library-elements.ts` 那一段说明。
+    const base = e.refs.find((r) => r.assetId === e.baseAssetId);
     items.push({
       id: `entity:${e.id}`,
       source: "entity",

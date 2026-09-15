@@ -21,7 +21,7 @@
  * Conditioning (D19 trust boundary): the request never carried image URLs —
  * the worker resolves them HERE from the entity's own references.
  */
-import { prisma, Prisma, settleCredits, refundReservation, type RefGenMode, type RefGenJob } from "@fikirtive/db";
+import { prisma, Prisma, settleCredits, refundReservation, reconcileEntityCover, type RefGenMode, type RefGenJob } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   storageKey,
@@ -659,8 +659,16 @@ async function attachOutputs(entityId: string, ownerId: string, assetIds: string
     });
     if (existing) continue;
     try {
-      await prisma.referenceImage.create({
-        data: { id: newId(), ownerId, entityId, assetId, variantId, position: position++ },
+      // 挂图与「挂上第一张即封面」在**同一个事务**里(Founder 2026-09-15 裁决):否则这两句
+      // 之间崩一次,商家就留下一件挂着图却没有脸的产品 —— 而这条 REFSHEET 路径正是裁决点名
+      // 的那一条(从前只有 mode==='BASE' 在 finalizeDone 里钉封面,参考图集一张都不钉)。
+      // 每张图各一个小事务,保留了这条路原本按张续跑的可恢复性。
+      await prisma.$transaction(async (tx) => {
+        await tx.referenceImage.create({
+          data: { id: newId(), ownerId, entityId, assetId, variantId, position: position++ },
+        });
+        // 变体图(variantId 非空)不进封面判据 —— 见 reconcileEntityCover 文件头。
+        await reconcileEntityCover(tx, { ownerId, entityId });
       });
     } catch (e) {
       // P2002 = a concurrent attacher won the live-uniqueness index for this

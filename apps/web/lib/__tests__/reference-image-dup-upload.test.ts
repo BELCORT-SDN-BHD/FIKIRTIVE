@@ -25,6 +25,10 @@ const h = vi.hoisted(() => ({
   assetUpsert: vi.fn(),
   actionEventCreate: vi.fn(),
   storagePut: vi.fn(),
+  // Founder 2026-09-15 裁决:挂上第一张参考图就是封面。规则住在 `@fikirtive/db` 一处
+  // (`reconcileEntityCover`),createEntity 挂完图调它一次 —— 这里把它也 mock 出来,
+  // 否则这个模块 mock 少一个导出,那一句就是 undefined 调用。
+  reconcileCover: vi.fn(),
 }));
 
 vi.mock("../auth-guard", async () => ({ requireOwner: h.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
@@ -39,7 +43,7 @@ vi.mock("@fikirtive/db", () => {
     // mock so the assertions below still see each call.
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
   };
-  return { prisma };
+  return { prisma, reconcileEntityCover: h.reconcileCover };
 });
 vi.mock("@fikirtive/core", () => ({
   newId: () => `id-${Math.random().toString(36).slice(2)}`,
@@ -107,6 +111,12 @@ describe("createEntity — same image selected twice (content-deduped)", () => {
       data: { id: (res as { id: string }).id, ownerId: "o1", name: "Nova", type: "CHARACTER" },
     });
     expect(h.refImageCreate).toHaveBeenCalledTimes(1); // the deduped repeat is never attempted
+    // 挂完图之后,封面规则在**同一个事务**里跑过一次(Founder 2026-09-15 裁决;PRODID-A4):
+    // 挂上第一张图的那一刻它就成了封面,商家不必再自己去钉一次。
+    expect(h.reconcileCover).toHaveBeenCalledWith(
+      expect.anything(), // 事务里的那个 client(这个 mock 里就是 prisma 自己)
+      { ownerId: "o1", entityId: (res as { id: string }).id },
+    );
   });
 
   /** #698 — a DB failure used to escape as a 500 AFTER the Entity row had committed, leaving
