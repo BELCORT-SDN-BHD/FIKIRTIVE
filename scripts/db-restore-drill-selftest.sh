@@ -120,6 +120,57 @@ for bin in psql pg_dump pg_restore gzip node; do
   command -v "$bin" >/dev/null 2>&1 || { echo "[drill-selftest] error: '$bin' not on PATH." >&2; exit 4; }
 done
 
+# #1385 review r1 — the blind spot this self-proof has by construction: it dumps AND restores
+# with the same local binaries, so a client pair that is uniformly too old for the real
+# production dump still goes green here. The version floor has to be asserted, because the
+# round trip cannot discover it. pg_dump 18 writes custom archive format 1.16; anything older
+# than 18 on this machine proves nothing about restoring a real nightly backup.
+MIN_PG_MAJOR=18
+
+# Take the major from the VERSION FIELD, not from anywhere on the line (review r2). The
+# previous expression grabbed the LAST N.N it could find, so a distro-suffixed build string
+# like "pg_dump (PostgreSQL) 16.8 (Ubuntu 16.8-1.pgdg22.04+1)" yielded 22 and walked straight
+# through this ">= 18" gate on a client that is actually 16 — a version check that silently
+# passes everything is worse than none, because it is trusted. Field 3 is the version; its
+# leading digits are the major (tolerates "19beta1" too).
+pg_major_from_version_line() {
+  awk '{print $3}' | sed -n 's/^\([0-9][0-9]*\).*/\1/p'
+}
+
+# A gate this load-bearing gets its own two-line unit test, right where it lives: these are
+# the exact real-world build strings that defeated the previous parser.
+selftest_parser() {
+  _fail=0
+  for _case in \
+    "pg_dump (PostgreSQL) 16.8 (Ubuntu 16.8-1.pgdg22.04+1)|16" \
+    "pg_restore (PostgreSQL) 17.5 (Ubuntu 17.5-1.pgdg24.04+1)|17" \
+    "pg_dump (PostgreSQL) 16.14 (Homebrew)|16" \
+    "pg_dump (PostgreSQL) 18.6 (Debian 18.6-1.pgdg13+2)|18"
+  do
+    _line="${_case%|*}"; _want="${_case##*|}"
+    _got="$(printf '%s\n' "$_line" | pg_major_from_version_line)"
+    if [ "$_got" != "$_want" ]; then
+      echo "[drill-selftest] parser self-check FAILED: '$_line' → '$_got', expected '$_want'." >&2
+      _fail=1
+    fi
+  done
+  return "$_fail"
+}
+selftest_parser || { echo "[drill-selftest] the version gate cannot be trusted — refusing to run." >&2; exit 4; }
+
+for bin in pg_dump pg_restore; do
+  major="$("$bin" --version 2>/dev/null | pg_major_from_version_line)"
+  if [ -z "$major" ]; then
+    echo "[drill-selftest] error: cannot read $bin's version." >&2
+    exit 4
+  fi
+  if [ "$major" -lt "$MIN_PG_MAJOR" ]; then
+    echo "[drill-selftest] error: $bin major $major < $MIN_PG_MAJOR — this self-proof would pass without proving a real backup can be restored." >&2
+    echo "[drill-selftest] the nightly dump is taken with pg_dump $MIN_PG_MAJOR (apps/worker/Dockerfile); see docs/runbooks/db-backup.md." >&2
+    exit 4
+  fi
+done
+
 WORKDIR="$(mktemp -d)"
 cleanup() {
   rm -rf "$WORKDIR"
