@@ -294,13 +294,53 @@ function compoundKeyOwnerIds(where: unknown, column: TenantColumn): string[] {
 }
 
 /**
+ * 租户列上的这个过滤器**点名了哪几个租户**？点不出一个有限确定的集合就返回 `null`。
+ *
+ * 这是 #1403 那四颗雷的根治点（Founder 常令「修根不修表」）。守卫要回答的问题从来是
+ *「这个 where 有没有可能碰到别家的行」，而此前它把问题写成了「这个 where 是不是一个字符串，
+ * 并且逐字等于帧里的租户号」（{@link scopeWhere} 的 `where[column] !== ownerId`）。一个 Prisma
+ * 过滤器对象永远不等于一个字符串，所以 `{ orgId: { in: [自己家] } }` ——「我只查我自己这一家」
+ * ——被读成了跨租户。实测受害的四条路全部经由同一行进来：后台发积分、后台铸币、人工退款、
+ * 后台租户详情页整页（票 #1403 判官 2026-09-13 核证）。改调用点只能修掉当天那一个；判定改在
+ * 这里，今天与以后所有等价写法一次讲清。
+ *
+ * **只认两种确定形状**，其余一律 `null`（fail closed）：
+ *   · 非空字符串的等值（`"org_x"` 或 `{ equals: "org_x" }`）；
+ *   · `in` 数组，且每一项都是非空字符串。
+ * 过滤器对象里出现**第二个键**（`{ in: [...], not: … }`）、或者任何范围/模糊键
+ * （`not` / `notIn` / `startsWith` / `contains` / `mode` …）都返回 `null`：那些形状能匹配到什么
+ * 取决于数据，守卫当场判不出来，判不出来就不放。
+ *
+ * 空数组返回的是**空集合**而不是 `null` —— 两者在调用点都会被拒，分开写是为了让「它点名了零个
+ * 租户」这句话留在代码里：拒它不是因为看不懂，是因为 {@link scopeWhere} 下一步会把租户号写回
+ * where，那会把一条「一行都不匹配」的查询悄悄放大成「我这一家全部」。方向反了就不能放。
+ */
+function tenantIdsNamedBy(filter: unknown): string[] | null {
+  if (typeof filter === "string") return filter.length > 0 ? [filter] : null;
+  if (!filter || typeof filter !== "object" || Array.isArray(filter)) return null;
+  const entries = Object.entries(filter as Record<string, unknown>).filter(
+    ([, value]) => value !== undefined,
+  );
+  if (entries.length !== 1) return null;
+  const [key, value] = entries[0]!;
+  if (key === "equals") return typeof value === "string" && value.length > 0 ? [value] : null;
+  if (key !== "in" || !Array.isArray(value)) return null;
+  if (!value.every((id) => typeof id === "string" && id.length > 0)) return null;
+  return value as string[];
+}
+
+/**
  * 无帧兜底：这个 where 到底点名了一个租户没有？
  *
  * `strict` 是切片①（#1376，验收 TENANT-A3）加的第二档。宽松档（`ownerId` 族，125 个还没建帧的
  * 老调用点靠它活着）只要求「有一个非 undefined 的值」—— 所以 `{ ownerId: { not: "" } }` 这种
- * 伪造过滤器照过。严格档（钱表族）只认两种形状：一个非空字符串的等值，或者一个点名了租户列的
- * 复合唯一键。两档并存是刻意的：把严格档一次铺到所有面，就是规格 §4 异议栏里那个「落闸当天
- * 全站 500」的形状；钱面已经建了帧，所以钱面先严。
+ * 伪造过滤器照过。严格档（钱表族）只认点名了**恰好一个**租户的形状（见
+ * {@link tenantIdsNamedBy}），或者一个点名了租户列的复合唯一键。两档并存是刻意的：把严格档一次
+ * 铺到所有面，就是规格 §4 异议栏里那个「落闸当天全站 500」的形状；钱面已经建了帧，所以钱面先严。
+ *
+ * 严格档为什么卡死在「恰好一个」：无帧就没有可比对的租户号，一条点名两家的谓词正是这一档存在
+ * 的理由要拒的那种跨租户读。`{ in: [一家] }` 与 `{ equals: 一家 }` 讲的是同一句话，认一个不认
+ * 另一个只是形状偏见 —— 而那个偏见就是 #1403 的四颗雷（#1403，2026-09-14）。
  */
 function whereHasOwnerId(where: unknown, column: TenantColumn, strict: boolean): boolean {
   if (!where || typeof where !== "object" || Array.isArray(where)) return false;
@@ -312,8 +352,7 @@ function whereHasOwnerId(where: unknown, column: TenantColumn, strict: boolean):
     return false;
   }
   if (strict) {
-    const equals = (ownerFilter as Record<string, unknown>).equals;
-    return typeof equals === "string" && equals.length > 0;
+    return tenantIdsNamedBy(ownerFilter)?.length === 1;
   }
   return Object.values(ownerFilter).some((value) => value !== undefined);
 }
@@ -326,14 +365,19 @@ function scopeWhere(
   column: TenantColumn,
 ) {
   const where = args.where && typeof args.where === "object" ? args.where : {};
-  if (
-    Object.prototype.hasOwnProperty.call(where, column) &&
-    where[column] !== undefined &&
-    where[column] !== ownerId
-  ) {
-    throw new Error(
-      `[tenant-guard] ${model}.${operation} tried to use ${column} outside the active tenant`,
-    );
+  const tenantFilter = Object.prototype.hasOwnProperty.call(where, column)
+    ? where[column]
+    : undefined;
+  // 字面等值是最常见的那一条路，原样保留（一次字符串比较，判定与本片之前逐字相同）。其余形状
+  // 交给 {@link tenantIdsNamedBy} 归一：点得出集合、而且**每一项**都是帧里这家店，才是同租户；
+  // 点不出集合（范围/模糊/多键）或者集合为空，一律拒 —— 见那个函数的判词（#1403）。
+  if (tenantFilter !== undefined && tenantFilter !== ownerId) {
+    const named = tenantIdsNamedBy(tenantFilter);
+    if (named === null || named.length === 0 || named.some((id) => id !== ownerId)) {
+      throw new Error(
+        `[tenant-guard] ${model}.${operation} tried to use ${column} outside the active tenant`,
+      );
+    }
   }
   // #698 — reading the tenant out of a compound key must not soften the boundary: a key that
   // names a FOREIGN tenant is refused exactly like a foreign top-level ownerId. Without this,
@@ -346,6 +390,8 @@ function scopeWhere(
       );
     }
   }
+  // 注入永远是那个**字面**租户号。走到这里的等价形状（`{ in: [自己家] }` / `{ equals: 自己家 }`）
+  // 点名的集合就是 `{ownerId}` 本身，所以换成字面值是同一条谓词，查询结果一行不差。
   args.where = { ...where, [column]: ownerId };
 }
 
