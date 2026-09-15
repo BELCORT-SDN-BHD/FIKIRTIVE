@@ -169,6 +169,8 @@ staging 第二轮只读走查已实机复现此症状，把范围收窄并给出
 
 main 分支的 scheduled e2e（`.github/workflows/e2e.yml:26` `cron: "0 0 * * *"`）最近 8 次夜跑（2026-09-07 至 2026-09-14，均 `conclusion: success`）全绿；2026-09-06 那次 failure 在此窗口之外，未纳入本条判断。两次红都发生在与 canvas/selection 代码无关的 PR 上、且都精确落在同一行，指向该断言本身或其等待时序存在间歇性问题，而非这两个 PR 引入的回归。下一步：单独重跑该 spec 多次复现，核对 `selectedIds` 轮询窗口与 Shift 点选的实际时序，不在未定根因前放宽断言阈值或加重试次数掩盖。
 
+**根因与修复（PR #1452）**：React Flow 12.11.1 在 Shift keydown 之后要等一个 passive effect 才把 `multiSelectionActive` 写进 store；节点的 `onClick` 处理器同步读这个 store 值来判断这一次点击是「替换选中」还是「加选」。Shift 点选第二张卡时，如果 click 事件在那个 passive effect 落地**之前**触发（快速连续点击时常发生），`onClick` 读到的还是旧值（未激活），于是走了替换分支而不是加选分支，选中集合被换成只剩这一张，而不是两张都在。修法：`CanvasMultiSelectModifier` 改到捕获阶段直接从触发点击的原生事件本身读修饰键（`event.shiftKey`），不再依赖 React Flow store 的异步写入时序；详见 R3-F17（本文件后段）关于本条两次真实红为何拿不到 trace 的记录。
+
 ## R3-F08 · 环境漂移：CI 与 staging 的 Postgres 大版本不一致
 
 **状态**：已登记，建议另开票统一版本；本身不是产品缺陷，是测试环境与生产/staging 环境的版本口径缺口——RELY-A10 备份全灭（见 `docs/specs/fail-closed-reliability.md` §5 变更登记 2026-09-14 行）正是这条缺口在 staging 首次暴露成的真实后果。
@@ -245,6 +247,12 @@ docker-compose.yml:7:    image: postgres:16-alpine
 **状态**：Founder 2026-09-15：本版修；来源 PR #1451 worker report，PR 本身未改这一段（只把测试的并发形状改成产品真实形状），此发现是顺带记录。
 
 `packages/db/src/canvas-settlement.ts:414` 定义 `CANVAS_BACKLOG_STATEMENT_TIMEOUT_MS = 2_000`，`:495` 用它对积压扫描查询 `SET LOCAL statement_timeout`；机器负载高时扫 1001 块板会被 Postgres 用 57014（`statement timeout`）取消该语句。`apps/worker/src/jobs/canvas-backfill.ts:94-96` 的 `catch` 把这次取消吞掉，只 `console.error` 后 `return 0`——PR 作者称其为刻意的 fail-safe（宁可这一轮扫描 0 行，也不要一条烂查询拖垮 worker），但对外表现是**没有任何告警**：生产上持续高负载时，这条积压扫描可能悄无声息地永远清不完，且没有任何信号提醒运维。PR #1451 本身在真实并发形状下验证了这个吞掉分支存在（10 跑里之前 4 次撞到 57014），修复的是测试自己的并发假象，不是这条 fail-safe 的告警缺口；该缺口已登记进 `docs/specs/fail-closed-reliability.md` §5 变更登记（2026-09-15 行）。下一步：给这条 catch 分支补一次可观测信号（Sentry 或 founderAlert 一类既有告警通道），不是简单删掉 `try/catch`——2000ms 语句超时本身是刻意的保护，要修的是「取消之后没人知道」，不是超时设置本身。
+
+## R3-F17 · CI 工件上传跳过隐藏目录，e2e 失败 trace／截图从未上传
+
+**状态**：Founder 2026-09-15：本版修（对谈）。
+
+`.github/workflows/e2e.yml:152` 用 `actions/upload-artifact@v4` 上传 `e2e/.report`（:156）与 `e2e/.artifacts`（:157），两条都是点号开头的隐藏路径；`upload-artifact@v4` 默认跳过隐藏文件/目录，job 日志因此打印「No artifacts will be uploaded」，即便这一轮确实有 Playwright 失败产生 trace 与截图。后果：R3-F07 记录的两次 `17-canvas-selection.spec.ts` 真实失败（run 34820228755、34681183175），都没有留下 trace.zip 或失败截图可供下载复核，只能靠日志文本定位——这正是 R3-F07 当时只能引 job 日志、引不出 trace 的原因。修法：给这一步加 `include-hidden-files: true`。
 
 ## 本轮补记（2026-09-15，staging 第二轮登录态只读旅程）
 
