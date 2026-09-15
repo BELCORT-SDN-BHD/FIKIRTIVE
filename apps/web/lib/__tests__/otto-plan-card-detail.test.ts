@@ -437,6 +437,62 @@ describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () 
   });
 
   /**
+   * FC-4(staging 2026-09-14 Founder 自己的画布)—— **角色被换掉时,商家在批准之前读得到。**
+   *
+   * 走查现场:商家明说「用这张当 first frame」,而这条路(片子里有 @ 到的演员)只拿得了
+   * 参考图。卡上落的是 `role:"reference"`,Otto 的文字却仍说「using your image as the
+   * first frame」—— 他按下 Generate,预扣 33 credits,供应商拒收,退款。三方各说各话,
+   * 而他在批准之前一个字都读不到。
+   *
+   * 服务端那一半由 `packages/otto/src/skills/reference-binding-honesty.test.ts` 守;
+   * 这一条守的是**最后一段**:把那句话写进 `downgradeNote` 不等于商家读得到。谁把
+   * 卡面那一行拆了、或把 `downgraded` 那一格吃掉,这里立刻红。
+   */
+  it("FC-4:要首帧、只给得了参考图 ⇒ 真 builder 的那一行原样出现在卡面上", async () => {
+    const { buildProposeCard } = await import("@fikirtive/otto");
+    const { cardPayload } = buildProposeCard(
+      {
+        kind: "video",
+        structuredPrompt: "Xinyi pets the cat while it drinks from the mug",
+        entityIds: ["e1"],
+        variantSel: {},
+      },
+      {
+        orgId: "o",
+        userId: "u",
+        projectId: "p",
+        threadId: "t",
+        disabledModels: [],
+        sourceGenerationId: "gen_revised",
+        sourceGenerationIds: ["gen_revised"],
+        mediaReferences: [
+          {
+            generationId: "gen_revised",
+            kind: "image",
+            label: "Xinyi holding the cat",
+            sourceProjectId: "p",
+            sourceProjectName: "Hi!",
+            sameCanvas: true,
+            previewUrl: "/files/gen_revised.png",
+          },
+        ],
+        // 商家自己的那句原话(服务端原样带进来,不来自模型)。
+        turnText: "just use that picture as the first frame",
+        turnEntityIds: ["e1"],
+      } as never,
+      [{ id: "e1", type: "CHARACTER", name: "Xinyi" }],
+    );
+
+    // 真正会发生的那件事:挂图当参考图,卡上没有一个冒充首帧的 sourceGenerationId。
+    expect(cardPayload.sourceGenerationId).toBeUndefined();
+    // 卡自己认这件事(判据在 packages/otto,这里不重抄一份措辞)。
+    expect(cardPayload.downgraded).toBe(true);
+    expect(cardPayload.downgradeNote).toContain("first frame");
+    // 商家这一侧:builder 写下的那一行逐字读得到 —— 这才叫「批准之前说出来」。
+    expect(renderCard(cardPayload)).toContain(cardPayload.downgradeNote!);
+  });
+
+  /**
    * 规格 §5 :176④ —— 「已放大」披露自己一格,不再与名额截图共用 `downgradeNote`。
    *
    * 共用那一格的代价在走查里是真的:9 张挂图只有 3 张上车、其中 2 张还被放大,商家读到的

@@ -102,6 +102,16 @@ describe("FC-2 · 「接着这张改」还是「重开一张」", () => {
     ).toBe("fresh");
   });
 
+  it("「现在给我做一张海报」不是接着这张图改 ⇒ fresh(信号只收指向已有东西的动词)", () => {
+    expect(
+      decideImageContinuation({
+        text: "now make a poster for the raya sale",
+        hasAttachedImage: false,
+        hasCurrentImage: true,
+      }),
+    ).toBe("fresh");
+  });
+
   it("一个信号都读不出来 ⇒ fresh(不预判商家,今天的行为逐字不动)", () => {
     expect(
       decideImageContinuation({
@@ -195,6 +205,8 @@ describe("FC-2 · 加入演员时原图与演员一起进卡与谱系", () => {
       { context: ctx },
     );
     expect(result).not.toHaveProperty("error");
+    // ⓪ 模型也读得到这件事 —— 绑定不说出口,它就可能写「I'll make you a fresh one」。
+    expect(result).toMatchObject({ continuesCurrentImage: true });
 
     const card = persistedCard();
     // ① 原图是**被编辑的底图**,不是提示词里一句「same product」。
@@ -241,6 +253,8 @@ describe("FC-2 · 加入演员时原图与演员一起进卡与谱系", () => {
       { context: ctx },
     );
     expect(result).not.toHaveProperty("error");
+
+    expect(result).not.toHaveProperty("continuesCurrentImage");
 
     const card = persistedCard();
     expect(card.sourceGenerationId).toBeUndefined();

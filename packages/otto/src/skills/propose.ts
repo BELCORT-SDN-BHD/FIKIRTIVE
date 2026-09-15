@@ -81,6 +81,15 @@ export async function executePropose(
       attachmentRole: "startFrame" | "reference" | null;
       /** FC-4 —— 商家点名要首帧而这张卡给不了时的那一句(卡面披露的同一份措辞)。 */
       attachmentRoleNote?: string;
+      /**
+       * FC-2 —— 这张图片卡**接着这条对话正在做的那张图**改(服务端绑的,见
+       * `image-continuation.ts`)。缺席 = 没有继承。
+       *
+       * 与 `attachmentRole` 同一条理由,只是方向相反:绑定不说出口,模型就可能写出
+       * 「I'll make you a fresh one」,而卡上明明挂着刚才那张底图 —— 又是一次
+       * 「说的与做的」分家,只是这次说的那句更好听。
+       */
+      continuesCurrentImage?: true;
     }
   | { error: string }
 > {
@@ -89,7 +98,10 @@ export async function executePropose(
   // `referenceBudget` 名额、卡面披露、付费前的尺寸闸读的都是同一组 ctx 字段),所以
   // 「接着那张图改」这件事必须在入口就落进 ctx —— 否则名额按 0 张算、卡面按 1 张说,
   // 又是一次「说的与做的」分家。不继承时它原样返回同一个对象。
-  const ctx = withContinuedImage(runContext.context as OttoContext, input);
+  const base = runContext.context as OttoContext;
+  const ctx = withContinuedImage(base, input);
+  /** 绑定发生了吗 —— `withContinuedImage` 不继承时原样返回同一个对象。 */
+  const continuesCurrentImage = ctx !== base;
 
   // Validate entity ownership (security-critical: owner-scoped query).
   // #774 判官 r2 P1:名字与类型跟归属**同一趟**读出来 —— 卡上冻结的就是这一刻的身份,
@@ -215,6 +227,7 @@ export async function executePropose(
     attachmentRole,
     // 卡面上写着的那一句,逐字交回给模型(两份措辞就是两种说法)。
     ...(attachmentRoleDowngraded ? { attachmentRoleNote: FIRST_FRAME_DOWNGRADE_NOTE } : {}),
+    ...(continuesCurrentImage ? { continuesCurrentImage: true as const } : {}),
   };
 }
 
