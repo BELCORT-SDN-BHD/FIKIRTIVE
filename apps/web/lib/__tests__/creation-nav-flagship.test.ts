@@ -90,10 +90,44 @@ describe("每一个目的地都手写在案,权威表与它互为对照", () => 
 
 /* ── 收敛掉的旧路由一律 redirect,不 404 ───────────────────────────────────── */
 
+/**
+ * R3-F10 —— 三条停放旧地址改成了 Route Handler(`app/**\/route.ts`)。
+ *
+ * 它们头上都压着一层 `loading.tsx`,而在那层 Suspense 边界下面,`page.tsx` 里的 `redirect()`
+ * 只答得出 HTTP 200 + 一屏骨架(实测与理由全文在 `lib/parked-route-redirect.ts`)。
+ *
+ * Handler 的去处**不写在文件里** —— 它从 `MERCHANT_NAV_REDIRECTS` 那一行读出来。所以这一组
+ * 对它们不比字符串,而是**真的调用**那个 handler,断言它答出 307、落点逐字是 `to`:比原来
+ * 那句「源码里出现过这个地址」更硬,不是更松。
+ *
+ * 名单写在这里、不从磁盘推,是刻意的:磁盘上多出一个 `route.ts` 而这里没跟上,下面那条
+ * `toBeDefined()` 当场红,而不是悄悄走回字符串比对那一支。
+ */
+const PARKED_ROUTE_HANDLERS = new Map<string, () => Response>([
+  [SHELL_ROUTES.schedule, (await import("../../app/schedule/route")).GET],
+  [SHELL_ROUTES.analytics, (await import("../../app/schedule/analytics/route")).GET],
+  [SHELL_ROUTES.edit, (await import("../../app/library/editor/route")).GET],
+]);
+
 describe("收敛掉的旧路由一律 redirect,不 404", () => {
   it.each(MERCHANT_NAV_REDIRECTS.map((row) => [row.from, row.to] as const))(
     "%s 有一个真的重定向路由送人去 %s",
     (from, to) => {
+      const handlerFile = path.join(WEB_ROOT, "app", from.replace(/^\//, ""), "route.ts");
+      const parked = !from.startsWith(SHELL_ROUTES.campaign) && existsSync(handlerFile);
+
+      if (parked) {
+        const get = PARKED_ROUTE_HANDLERS.get(from);
+        expect(get, `${from} 是 Route Handler,但这条围栏还没把它接进来`).toBeDefined();
+        expect(readFileSync(handlerFile, "utf8"), `${from} 没走那一份共用机制`).toContain(
+          "parkedRouteRedirect",
+        );
+        const res = get!();
+        expect(res.status, `${from} 不是一条真的 307`).toBe(307);
+        expect(res.headers.get("location"), `${from} 没送到 ${to}`).toBe(to);
+        return;
+      }
+
       const route = from.startsWith(SHELL_ROUTES.campaign)
         ? path.join(WEB_ROOT, "app/campaign/layout.tsx")
         : path.join(WEB_ROOT, "app", from.replace(/^\//, ""), "page.tsx");
