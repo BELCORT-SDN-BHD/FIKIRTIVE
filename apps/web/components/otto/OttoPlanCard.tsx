@@ -22,7 +22,7 @@ import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
 // The ONE contract layer: runtime parse + the ONE price-guarantee predicate. The render
 // gate and approve() both read this — they cannot disagree any more (#580 复审 r2 P1-1).
-import { guaranteedCredits, planCardGate, type OttoPlanCardPayload } from "./plan-card-contract";
+import { planCardGate, type OttoPlanCardPayload } from "./plan-card-contract";
 // Codex QA-CRE-FE9-013 —— 参考回执那一块。两张确认卡共用这一份,抄成两份必有一份先烂。
 import { CardReferenceReceipt } from "./CardReferenceReceipt";
 // #774 判官 r2 P1 —— 卡上那行「引擎会被告知这些照片是谁」的措辞,与真正送出去的名字
@@ -176,10 +176,21 @@ export function OttoPlanCard({
   // divided by $0.10 was never a quote, and guessing one is how an unpriced card got an
   // approve button (#580 复审 r2 P1-1). Guaranteed or absent, nothing in between.
   const credits = gate.credits;
-  // The follow-on video estimate rides the SAME predicate — an estimate we can't vouch
-  // for is not shown as a number, so the two-step total is never half-guessed.
-  const videoCredits = guaranteedCredits({ estimatedCredits: p.videoStep?.estimatedCredits });
-  const isTwoStep = !isVideo && videoCredits !== null;
+  /**
+   * FC-3(S5 批量裁决 2026-09-12 #1358)—— **这张卡是裁决之前铸的两步计划卡**,仅此而已。
+   *
+   * 从前这一格叫 `isTwoStep`,卡面据它摆出「Two-step plan / Step 1 of 2 / Then the video —
+   * ~N」三行,外加一句「图做好之后视频会自己回来给你确认」。那四行当时都是真的:服务端
+   * 接力(`video-step-handoff`)真的会铸出第二张卡。裁决把「合成 first frame」对所有路径判了
+   * 退场,接力随之下线 —— 可旧卡还在商家的画布上按得动(现场 Founder 自己那张:kind:image、
+   * 1 credit、`videoStep.next.desiredDuration:15`)。于是那四行同时变成谎:按下去只会做出
+   * 那张图,没有第二步,也没有任何东西「自己回来」。
+   *
+   * 所以卡面不再摆那份计划:价钱只剩这张卡**真正会扣的**那一个数(下面的 `About N`),另加
+   * 一句照实的下一步。`videoStep` 这一格仍然解析得出来(`plan-card-contract`),只是不再有
+   * 任何一句话建立在它上面 —— 读得懂旧卡,不替旧卡承诺。
+   */
+  const isLegacyTwoStepCard = !isVideo && p.videoStep != null;
   // 清单 A5（P2-013）—— 供应商提示词（seedream/seedance 那段送去执行的原话）。它住在
   // 下面的 Advanced details 里（默认收起），不再占着卡面主视图的第一行。老卡没有它就
   // 整块不出现：这一块只念卡上真有的那段字，绝不编一句“A short video”充数。
@@ -387,7 +398,9 @@ export function OttoPlanCard({
           </span>
           <div className="min-w-0 flex-1">
             <div className="text-[0.8125rem] font-bold text-foreground">
-              {isVideo ? "A short video" : isTwoStep ? "Starting picture for your video" : "An image"}
+              {/* FC-3:旧两步卡上这里曾写「Starting picture for your video」—— 它已经不是
+                  任何东西的起点了(视频不再需要先造一张图),照实叫它一张图。 */}
+              {isVideo ? "A short video" : "An image"}
             </div>
             {/* 清单 A5(P2-013)—— 主视图这一行是**给商家读的**那句话。供应商提示词
                 (seedream/seedance 那段原话)已经收进下面的 Advanced details:它是送去
@@ -506,31 +519,16 @@ export function OttoPlanCard({
         )}
 
         <div className="mt-4 border-t border-border pt-4">
-          {isTwoStep && videoCredits !== null ? (
-            <div>
-              <div className="mb-1 text-[0.75rem] text-muted-foreground">
-                Two-step plan
-              </div>
-              <div className="font-mono text-[11.5px] text-muted-foreground">
-                Step 1 of 2 &mdash; <CardMoney>~{creditsLabel(credits)}</CardMoney> now
-              </div>
-              <div className="mt-1 text-[0.875rem] text-muted-foreground">
-                Then the video &mdash; <CardMoney>~{creditsLabel(videoCredits)}</CardMoney>
-              </div>
-              {/* Codex E2E-CRE-PAV-004 —— 第二步的卡由服务端接力铸出(冻结计划在 `videoStep.next`),
-                  所以这里可以照实说下一步会自己出现。没有冻结计划的老卡不说这句:那种卡上
-                  第二步确实还得靠对话继续,承诺一件不会发生的事比不说更糟。 */}
-              {p.videoStep?.next ? (
-                <div className="mt-1 text-[0.75rem] text-muted-foreground">
-                  Once this picture is made, the video comes back for you to confirm on its own.
-                </div>
-              ) : null}
+          <div className="font-mono text-[11.5px] text-muted-foreground">
+            About <CardMoney>{creditsLabel(credits)}</CardMoney>
+          </div>
+          {/* FC-3 —— 旧两步卡上那份计划(两个数 + 「视频会自己回来」)整块下线,理由见
+              `isLegacyTwoStepCard`。留一句照实的下一步:视频现在一步就能做,不必先买一张图。 */}
+          {isLegacyTwoStepCard ? (
+            <div className="mt-1 text-[0.875rem] text-muted-foreground">
+              Just this picture &mdash; ask for the video whenever you like, and it&rsquo;s made in one step.
             </div>
-          ) : (
-            <div className="font-mono text-[11.5px] text-muted-foreground">
-              About <CardMoney>{creditsLabel(credits)}</CardMoney>
-            </div>
-          )}
+          ) : null}
         </div>
 
         {/* Cancelled is asked FIRST (#602 T3). The two states arrive on the same durable message,

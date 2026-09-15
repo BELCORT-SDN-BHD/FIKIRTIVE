@@ -474,7 +474,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang, APPROVE_STALE_COMPLETED_NOTE, APPROVE_STALE_INTERRUPTED_NOTE, recordOttoTurnTrace, ottoUpdateGenCardOptions } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, strandedApprovalText, interruptedFallbackText, fallbackLangOf, decideFallbackLang, APPROVE_STALE_COMPLETED_NOTE, APPROVE_STALE_INTERRUPTED_NOTE, recordOttoTurnTrace, ottoUpdateGenCardOptions } = await import("@/lib/otto-actions");
 const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs, refgenApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
 // #524 r6: the second leg of a plain generate approval, priced by the same chain startGen charges with.
 const { approvedGenerateCostInternal } = await import("@/lib/spend-cap-preflight");
@@ -671,13 +671,41 @@ function setupHappyPath() {
   mockWithLlmBudget.mockImplementation(passthroughMeter());
 }
 
+/**
+ * FC-1 —— `chatMessage.findMany` 现在有**两个**读者,这个替身必须分得清它们:
+ *
+ *  ① 卡种探针(`where.id.in`,otto-actions.ts 的 needs_approval 落地段)—— 「这个停在批准项
+ *     上的编号,今天真的是一张能渲染出确认卡的 GEN_CARD 吗」。现场那一轮它不是(是分镜卡),
+ *     于是屏幕上出现了「承诺 + Ready + 零产出」。
+ *  ② #498 的语言探针(`role:"USER"` + `kind:"TEXT"`)—— 平局时读线程里最近几句商家原话。
+ *
+ * 默认让①照实答「是」:本文件这些用例说的正是一次**正常**的 generate 暂停 —— 卡是 propose
+ * 在这一轮里真落过库的。反例(分镜卡编号、查无此卡)在
+ * `otto-storyboard-generate-chain.test.ts` 里单独钉,不在这里放水。
+ */
+function findManyDouble(history: { text: string }[] = []) {
+  return async (args?: { where?: { id?: { in?: string[] } } }) => {
+    const ids = args?.where?.id?.in;
+    if (ids) return ids.map((id) => ({ id, kind: "GEN_CARD" }));
+    return history;
+  };
+}
+
+/** 语言探针的那一次调用(①的调用不算)—— `not.toHaveBeenCalled()` 已经不能用来问这件事。 */
+function langProbeCalls() {
+  return mockChatMessageFindMany.mock.calls.filter(
+    (c) => (c[0] as { where?: { role?: string } } | undefined)?.where?.role === "USER",
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockConsumeOttoTurnGate.mockResolvedValue(true);
   mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
   // #498 round-5: the tie-language fallback probes recent USER messages; default
-  // to an empty thread history (→ "en") unless a test scripts one.
-  mockChatMessageFindMany.mockResolvedValue([]);
+  // to an empty thread history (→ "en") unless a test scripts one. FC-1: the same spy
+  // also serves the card-kind probe — `findManyDouble` answers each read in its own terms.
+  mockChatMessageFindMany.mockImplementation(findManyDouble());
   mockChatThreadDeleteMany.mockResolvedValue({ count: 1 });
   mockChatMessageDeleteMany.mockResolvedValue({ count: 1 });
   mockResearchJobFindFirst.mockResolvedValue(null);
@@ -1813,10 +1841,10 @@ describe("finalizeOttoRun — #498 verbal approval must never be silent", () => 
   it('language tie ("ok teruskan") → falls back to the most recent DECISIVE merchant message in the thread', async () => {
     // The thread's recent USER messages, newest first: the tie itself (already
     // persisted), then a decisive Malay ask.
-    mockChatMessageFindMany.mockResolvedValue([
+    mockChatMessageFindMany.mockImplementation(findManyDouble([
       { text: "ok teruskan" },
       { text: "tolong buat semua gambar" },
-    ]);
+    ]));
     const result = {
       state: new MockRunState(),
       interruptions: [generateInterruption("card_verbal")],
@@ -1840,7 +1868,7 @@ describe("finalizeOttoRun — #498 verbal approval must never be silent", () => 
   });
 
   it("language tie with NO decisive history → English; an indecisive history row is walked past", async () => {
-    mockChatMessageFindMany.mockResolvedValue([{ text: "ok teruskan" }, { text: "hmm" }]);
+    mockChatMessageFindMany.mockImplementation(findManyDouble([{ text: "ok teruskan" }, { text: "hmm" }]));
     const result = {
       state: new MockRunState(),
       interruptions: [generateInterruption("card_verbal")],
@@ -1867,7 +1895,8 @@ describe("finalizeOttoRun — #498 verbal approval must never be silent", () => 
       ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
       result, seqAfterUser: 4, userText: "tolong buat semua",
     });
-    expect(mockChatMessageFindMany).not.toHaveBeenCalled();
+    // FC-1:这把 spy 现在也服务卡种探针,所以问的是**语言探针**那一次有没有发生。
+    expect(langProbeCalls()).toHaveLength(0);
   });
 });
 
@@ -2407,7 +2436,7 @@ describe("ottoApprove — chained interruption with zero narration synthesizes t
     // findFirst serves the max-seq lookup; findMany serves the #498 round-5
     // language probe (recent USER messages, newest first).
     mockChatMessageFindFirst.mockResolvedValue({ seq: 5 });
-    mockChatMessageFindMany.mockResolvedValue(userHistory.map((text) => ({ text })));
+    mockChatMessageFindMany.mockImplementation(findManyDouble(userHistory.map((text) => ({ text }))));
   }
 
   it('zero narration + CJK merchant ("全部生成") → persists and returns the Chinese pointer receipt', async () => {
@@ -2496,6 +2525,76 @@ describe("ottoApprove — chained interruption with zero narration synthesizes t
         data: expect.objectContaining({ text: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "zh" }) }),
       }),
     );
+  });
+
+  /**
+   * FC-1（复核修正 P1）—— 商家确认过一张之后，同一个病不得在这条路上复活。
+   *
+   * 现场（Founder 自己的画布，2026-09-14）模型连着两轮都把**分镜卡的编号**交给了
+   * `generate`。`finalizeOttoRun` 堵了主路；`ottoApprove` 的链式恢复从前是无条件的一行，
+   * 于是分镜卡编号照旧进待确认集 ⇒ 组件只数真 GEN_CARD ⇒ 画布 Ready，而回复还写着
+   * 「去卡上确认」。钱路零动作：这一条只问「报不报成待确认」与「说不说实话」。
+   */
+  it("FC-1 链式恢复停在分镜卡编号 ⇒ 不进待确认集、不说指路话，而是当场说实话", async () => {
+    setupChained({ finalOutput: undefined, userHistory: ["just do it straight away"] });
+    // 那个编号在库里是一张 STORYBOARD_CARD（现场就是这样）。
+    mockChatMessageFindMany.mockImplementation(async (args?: { where?: { id?: { in?: string[] }; role?: string } }) => {
+      const ids = args?.where?.id?.in;
+      if (ids) return ids.map((id) => ({ id, kind: "STORYBOARD_CARD" }));
+      return [{ text: "just do it straight away" }];
+    });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    const honest = strandedApprovalText({ storyboard: true, lang: "en" });
+    // ① 永远渲染不出确认卡的编号不得被报成待确认。
+    expect(res).toMatchObject({ ok: true, status: "needs_approval", pendingCardIds: [] });
+    // ② 那句诚实话就是这一轮的正文 —— 走 `fallbackReply` 交回客户端,所以商家当场读得到,
+    //    不必等下一次刷新(approve 这条路不流式,正文只有这一个通道)。
+    expect((res as { fallbackReply: string | null }).fallbackReply).toBe(honest);
+    const texts = mockChatMessageCreate.mock.calls
+      .map((c) => (c[0] as { data?: { kind?: string; text?: string } }).data)
+      .filter((d): d is { kind: string; text: string } => d?.kind === "TEXT" && typeof d.text === "string")
+      .map((d) => d.text);
+    // ③ 那句「去卡上确认，我会马上开始」一个字也不许出现 —— 没有那张卡。
+    expect(texts).not.toContain(approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }));
+    // ④ 而且只落一行:同一句话写两遍,读起来就是系统自己在复读。
+    expect(texts.filter((t) => t === honest)).toHaveLength(1);
+    expect(texts.at(-1)).toBe(honest);
+    // ⑤ 钱路零动作。
+    expect(mockStartGen).not.toHaveBeenCalled();
+  });
+
+  it("FC-1 链上真卡与分镜卡编号混在一起 ⇒ 真卡照旧待确认，假的那一个被滤掉", async () => {
+    setupChained({ finalOutput: undefined, userHistory: ["just do it straight away"] });
+    mockRun.mockResolvedValue({
+      state: new MockRunState(),
+      newItems: [],
+      finalOutput: undefined,
+      interruptions: [
+        chainedInterruption,
+        { rawItem: { name: "generate" }, arguments: JSON.stringify({ cardId: "card_storyboard" }), type: "tool_approval_item" },
+      ],
+    });
+    mockChatMessageFindMany.mockImplementation(async (args?: { where?: { id?: { in?: string[] }; role?: string } }) => {
+      const ids = args?.where?.id?.in;
+      if (ids) return ids.map((id) => ({ id, kind: id === "card_storyboard" ? "STORYBOARD_CARD" : "GEN_CARD" }));
+      return [{ text: "just do it straight away" }];
+    });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "needs_approval", pendingCardIds: ["card_chained"] });
+    // 指路话数的是**按得下去的那一张**，不是两张。
+    expect((res as { fallbackReply: string | null }).fallbackReply).toBe(
+      approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }),
+    );
+    const texts = mockChatMessageCreate.mock.calls
+      .map((c) => (c[0] as { data?: { kind?: string; text?: string } }).data)
+      .filter((d): d is { kind: string; text: string } => d?.kind === "TEXT" && typeof d.text === "string")
+      .map((d) => d.text);
+    expect(texts.at(-1)).toBe(strandedApprovalText({ storyboard: true, lang: "en" }));
+    expect(mockStartGen).not.toHaveBeenCalled();
   });
 });
 

@@ -52,6 +52,13 @@ export type ChainedApproval = {
    *     and keeping it would be a stale private ledger;
    *   - a status:"done" resume response implies the set is EMPTY — a run
    *     cannot complete past an undecided park.
+   *
+   * FC-1 (2026-09-14): the set carries only parks that can actually BECOME a
+   * card the merchant presses. A generate park whose ref is not a live GEN_CARD
+   * of this owner+thread (deleted / not theirs / wrong thread / a STORYBOARD_CARD
+   * id) is dropped from the set and answered with an honest line in the thread
+   * (otto-actions.ts partitionGenerateApprovals + strandedApprovalText) — never
+   * reported as pending, because nothing would ever render for it.
    */
   pendingCardIds: string[];
   fallbackReply: string | null;

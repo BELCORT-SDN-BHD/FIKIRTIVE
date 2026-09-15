@@ -165,15 +165,20 @@ describe("#580 P1-1 卡面 payload 类型 = 服务端契约", () => {
     }
     // The branch coverage above must actually reach the optional fields, or this
     // assertion would pass by simply never exercising them.
-    for (const key of ["videoStep", "sourceGenerationId", "referenceVideoGenerationId", "downgradeNote", "approvedEntities"]) {
+    for (const key of ["sourceGenerationId", "referenceVideoGenerationId", "downgradeNote", "approvedEntities"]) {
       expect(emitted.has(key)).toBe(true);
     }
+    // FC-3(S5 批量裁决 2026-09-12 #1358)—— `videoStep` 从「必须铸得出来」翻成
+    // **「一张都不许再铸」**:两步计划(先卖一张首帧图、再出片)整条退场,所以活着的铸卡器
+    // 不该再吐这一格。它仍留在 `CARD_PAYLOAD_KEYS` 里,因为裁决之前铸的旧卡带着它 ——
+    // 读那一侧(解析、渲染)的覆盖在本文件下面的旧卡用例里,一条都没动。
+    expect(emitted.has("videoStep")).toBe(false);
     expect([...emitted].filter((k) => !(k in CARD_PAYLOAD_KEYS))).toEqual([]);
   });
 });
 
-/** Seven real cards straight from the live server builder: plain video, downgraded video,
- *  image ad pack, two-step image, i2v, reference video, and an image that @mentions an
+/** Six real cards straight from the live server builder: plain video, downgraded video,
+ *  image ad pack, i2v, reference video, and an image that @mentions an
  *  element (#774 —— 只有它会带出 `approvedEntities`,少了它上面那条覆盖断言会空过去)。 */
 async function builtCards(): Promise<ServerCardPayload[]> {
   const { buildProposeCard } = await import("@fikirtive/otto");
@@ -192,7 +197,6 @@ async function builtCards(): Promise<ServerCardPayload[]> {
     // （30 秒 / 2:3），否则这张卡不再带 downgradeNote，下面的覆盖断言就空过去了。
     buildProposeCard({ kind: "video", ...base, desiredDuration: 30, desiredAspect: "2:3" }, ctx, []),
     buildProposeCard({ kind: "image", ...base, count: 3 }, ctx, []),
-    buildProposeCard({ kind: "image", ...base, forVideo: true }, ctx, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), sourceGenerationId: "gen_img" } as never, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), referenceVideoGenerationId: "gen_vid" } as never, []),
     buildProposeCard(
@@ -848,27 +852,41 @@ describe("#580 r2 P1-1 渲染门与批准门是同一道门", () => {
     expect(markup).not.toContain("Confirm generate");
   });
 
-  it("两步计划的第二步价格同样受门管 —— 担保不住就不承诺", () => {
+  /**
+   * FC-3(S5 批量裁决 2026-09-12 #1358)—— 旧两步卡上那份计划整块下线。
+   *
+   * 「Two-step plan / Step 1 of 2 / Then the video — ~N」与「图做好之后视频会自己回来给你
+   * 确认」四行当时都是真的:服务端接力(`video-step-handoff`)真会铸出第二张卡。裁决让接力
+   * 退场之后,同一四行在一张**仍然按得动**的旧卡上全变成谎(现场 Founder 自己的画布就有
+   * 一张:kind:image、1 credit、`videoStep.next.desiredDuration:15`)。所以卡面只剩这张卡
+   * 真正会扣的那一个数,外加一句照实的下一步;`videoStep` 仍解析得出来,只是不再有任何一句
+   * 话建立在它上面。
+   */
+  it("FC-3 两步计划旧卡:不再摆计划、不再承诺视频自己回来,只剩这张卡真会扣的那个数", () => {
     const twoStep = { ...VIDEO_PAYLOAD, kind: "image" as const, videoStep: { estimatedCredits: 12 } };
-    expect(renderCard(twoStep)).toContain("Two-step plan");
-    // 第二步的估价担保不住,就不许把它说成一个具体数字。
-    const broken = renderCard({ ...twoStep, videoStep: { estimatedCredits: 0 } });
-    expect(broken).not.toContain("Two-step plan");
-    expect(broken).not.toContain("Then the video");
-  });
+    const markup = renderCard(twoStep);
+    expect(markup).not.toContain("Two-step plan");
+    expect(markup).not.toContain("Step 1 of 2");
+    expect(markup).not.toContain("Then the video");
+    expect(markup).not.toContain("Starting picture for your video");
+    // 真会扣的那一个数照旧在卡上(`VIDEO_PAYLOAD.estimatedCredits` = 8),批准门一格没动。
+    expect(markup).toContain("Generate · 8 credits");
+    // 照实的下一步:视频一步就做得出来,不必先买一张图。
+    expect(markup).toContain("ask for the video whenever you like");
 
-  // Codex 只读 E2E E2E-CRE-PAV-004 —— 卡上那句「下一步会自己回来」只有在**真会自己回来**
-  // 时才许出现。判据是卡自己带没带冻结的第二步(`videoStep.next`),不是两步计划这个形状:
-  // 冻结计划之前铸的卡上,第二步确实还得靠对话继续,承诺一件不会发生的事比不说更糟。
-  it("CREATE-A1 带冻结的第二步 ⇒ 卡上说清下一步会自己回来;没带 ⇒ 一个字都不承诺", () => {
-    const twoStep = { ...VIDEO_PAYLOAD, kind: "image" as const, videoStep: { estimatedCredits: 12 } };
-    expect(renderCard(twoStep)).not.toContain("comes back for you to confirm");
-
+    // 带着冻结第二步的那种旧卡(接力就是照它铸卡的)同样一个字都不承诺。
     const withHandoff = {
       ...twoStep,
       videoStep: { estimatedCredits: 12, next: { structuredPrompt: "she raises the tumbler and smiles" } },
     };
-    expect(renderCard(withHandoff)).toContain("Once this picture is made, the video comes back for you to confirm on its own.");
+    const handoffMarkup = renderCard(withHandoff);
+    expect(handoffMarkup).not.toContain("comes back for you to confirm");
+    expect(handoffMarkup).not.toContain("Two-step plan");
+    expect(handoffMarkup).not.toContain("Then the video");
+
+    // 普通图片卡不该被这句话骚扰 —— 它只对裁决之前那种卡说。
+    const plainImage = renderCard({ ...VIDEO_PAYLOAD, kind: "image" as const });
+    expect(plainImage).not.toContain("ask for the video whenever you like");
   });
 });
 
