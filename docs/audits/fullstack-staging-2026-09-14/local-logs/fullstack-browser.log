@@ -1,0 +1,72 @@
+[WebServer] 
+[WebServer] > @fikirtive/web@0.1.0 start /Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/apps/web
+[WebServer] > next start
+[WebServer] 
+[WebServer] [1m[38;2;173;127;168m▲ Next.js 16.2.9[39m[22m
+[WebServer] - Local:         http://localhost:3399
+[WebServer] - Network:       http://192.168.0.9:3399
+[WebServer] [32m[1m✓[22m[39m Ready in 169ms
+[WebServer] [env-contract] 3 problem(s) with the web environment:
+[WebServer]   • AUTH_EMAIL_TRANSPORT is set to a value that is not allowed in production (allowed: resend) — stub writes the sign-in code to a local file instead of mailing it — a production deployment that ran it would hand every merchant's code to whoever can read that disk
+[WebServer]   • STORAGE_DRIVER is required in production but is not set
+[WebServer]   • SENTRY_DSN is required in production but is not set
+[WebServer]   See .env.example and packages/core/src/env-contract.ts. Values are never printed.
+
+Running 1 test using 1 worker
+
+[WebServer] [better-auth] Your Fikirtive sign-in code for round3-fullstack@e2e.test: 353732
+[WebServer] [2m2026-09-14T04:33:52.241Z[0m [33mWARN[0m [1m[Better Auth]:[0m Rate limiting could not determine a client IP and is falling back to a single shared per-path bucket. Ensure your runtime forwards a trusted client IP header and configure `advanced.ipAddress.ipAddressHeaders` if needed.
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.upsert requires runAsTenant before system writes — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.updateMany requires runAsTenant before system writes — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] CreditLedger.createMany requires runAsTenant before system writes — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] CreditAccount.upsert requires runAsTenant before system writes — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst has no orgId filter — possible cross-tenant leak — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst has no orgId filter — possible cross-tenant leak — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst tried to use orgId outside the active tenant — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst tried to use orgId outside the active tenant — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst has no orgId filter — possible cross-tenant leak — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+  ✘  1 [chromium] › docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-runner/fullstack.spec.ts:11:1 › Local $0: browser confirmation -> queue -> independent mock-provider worker -> file and settlement -> UI (21.1s)
+
+
+  1) [chromium] › docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-runner/fullstack.spec.ts:11:1 › Local $0: browser confirmation -> queue -> independent mock-provider worker -> file and settlement -> UI 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByRole('link', { name: 'FIKIRTIVE home' })
+    Expected: visible
+    Timeout: 15000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 15000ms[22m
+    [2m  - waiting for getByRole('link', { name: 'FIKIRTIVE home' })[22m
+
+
+       at ../../../../../e2e/support/auth.ts:195
+
+      193 |   await page.getByRole("button", { name: "Continue with login code" }).click();
+      194 |   await expect(page).toHaveURL(new URL(callbackURL, E2E_BASE_URL).toString());
+    > 195 |   await expect(page.getByRole("link", { name: "FIKIRTIVE home" })).toBeVisible();
+          |                                                                    ^
+      196 | }
+      197 |
+      198 | /** 跑道上那个假 Google app 的 client id —— 与 `support/env.ts` 交给应用的那一个是同一份。
+        at signIn (/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/e2e/support/auth.ts:195:68)
+        at /Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-runner/fullstack.spec.ts:25:3
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-artifacts/fullstack-Local-0-browser--1123e----file-and-settlement---UI-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-artifacts/fullstack-Local-0-browser--1123e----file-and-settlement---UI-chromium/error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-artifacts/fullstack-Local-0-browser--1123e----file-and-settlement---UI-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-artifacts/fullstack-Local-0-browser--1123e----file-and-settlement---UI-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-runner/fullstack.spec.ts:11:1 › Local $0: browser confirmation -> queue -> independent mock-provider worker -> file and settlement -> UI 
