@@ -474,7 +474,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang, APPROVE_STALE_COMPLETED_NOTE, APPROVE_STALE_INTERRUPTED_NOTE, recordOttoTurnTrace, ottoUpdateGenCardOptions } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, strandedApprovalText, interruptedFallbackText, fallbackLangOf, decideFallbackLang, APPROVE_STALE_COMPLETED_NOTE, APPROVE_STALE_INTERRUPTED_NOTE, recordOttoTurnTrace, ottoUpdateGenCardOptions } = await import("@/lib/otto-actions");
 const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs, refgenApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
 // #524 r6: the second leg of a plain generate approval, priced by the same chain startGen charges with.
 const { approvedGenerateCostInternal } = await import("@/lib/spend-cap-preflight");
@@ -2525,6 +2525,76 @@ describe("ottoApprove — chained interruption with zero narration synthesizes t
         data: expect.objectContaining({ text: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "zh" }) }),
       }),
     );
+  });
+
+  /**
+   * FC-1（复核修正 P1）—— 商家确认过一张之后，同一个病不得在这条路上复活。
+   *
+   * 现场（Founder 自己的画布，2026-09-14）模型连着两轮都把**分镜卡的编号**交给了
+   * `generate`。`finalizeOttoRun` 堵了主路；`ottoApprove` 的链式恢复从前是无条件的一行，
+   * 于是分镜卡编号照旧进待确认集 ⇒ 组件只数真 GEN_CARD ⇒ 画布 Ready，而回复还写着
+   * 「去卡上确认」。钱路零动作：这一条只问「报不报成待确认」与「说不说实话」。
+   */
+  it("FC-1 链式恢复停在分镜卡编号 ⇒ 不进待确认集、不说指路话，而是当场说实话", async () => {
+    setupChained({ finalOutput: undefined, userHistory: ["just do it straight away"] });
+    // 那个编号在库里是一张 STORYBOARD_CARD（现场就是这样）。
+    mockChatMessageFindMany.mockImplementation(async (args?: { where?: { id?: { in?: string[] }; role?: string } }) => {
+      const ids = args?.where?.id?.in;
+      if (ids) return ids.map((id) => ({ id, kind: "STORYBOARD_CARD" }));
+      return [{ text: "just do it straight away" }];
+    });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    const honest = strandedApprovalText({ storyboard: true, lang: "en" });
+    // ① 永远渲染不出确认卡的编号不得被报成待确认。
+    expect(res).toMatchObject({ ok: true, status: "needs_approval", pendingCardIds: [] });
+    // ② 那句诚实话就是这一轮的正文 —— 走 `fallbackReply` 交回客户端,所以商家当场读得到,
+    //    不必等下一次刷新(approve 这条路不流式,正文只有这一个通道)。
+    expect((res as { fallbackReply: string | null }).fallbackReply).toBe(honest);
+    const texts = mockChatMessageCreate.mock.calls
+      .map((c) => (c[0] as { data?: { kind?: string; text?: string } }).data)
+      .filter((d): d is { kind: string; text: string } => d?.kind === "TEXT" && typeof d.text === "string")
+      .map((d) => d.text);
+    // ③ 那句「去卡上确认，我会马上开始」一个字也不许出现 —— 没有那张卡。
+    expect(texts).not.toContain(approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }));
+    // ④ 而且只落一行:同一句话写两遍,读起来就是系统自己在复读。
+    expect(texts.filter((t) => t === honest)).toHaveLength(1);
+    expect(texts.at(-1)).toBe(honest);
+    // ⑤ 钱路零动作。
+    expect(mockStartGen).not.toHaveBeenCalled();
+  });
+
+  it("FC-1 链上真卡与分镜卡编号混在一起 ⇒ 真卡照旧待确认，假的那一个被滤掉", async () => {
+    setupChained({ finalOutput: undefined, userHistory: ["just do it straight away"] });
+    mockRun.mockResolvedValue({
+      state: new MockRunState(),
+      newItems: [],
+      finalOutput: undefined,
+      interruptions: [
+        chainedInterruption,
+        { rawItem: { name: "generate" }, arguments: JSON.stringify({ cardId: "card_storyboard" }), type: "tool_approval_item" },
+      ],
+    });
+    mockChatMessageFindMany.mockImplementation(async (args?: { where?: { id?: { in?: string[] }; role?: string } }) => {
+      const ids = args?.where?.id?.in;
+      if (ids) return ids.map((id) => ({ id, kind: id === "card_storyboard" ? "STORYBOARD_CARD" : "GEN_CARD" }));
+      return [{ text: "just do it straight away" }];
+    });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "needs_approval", pendingCardIds: ["card_chained"] });
+    // 指路话数的是**按得下去的那一张**，不是两张。
+    expect((res as { fallbackReply: string | null }).fallbackReply).toBe(
+      approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }),
+    );
+    const texts = mockChatMessageCreate.mock.calls
+      .map((c) => (c[0] as { data?: { kind?: string; text?: string } }).data)
+      .filter((d): d is { kind: string; text: string } => d?.kind === "TEXT" && typeof d.text === "string")
+      .map((d) => d.text);
+    expect(texts.at(-1)).toBe(strandedApprovalText({ storyboard: true, lang: "en" }));
+    expect(mockStartGen).not.toHaveBeenCalled();
   });
 });
 
