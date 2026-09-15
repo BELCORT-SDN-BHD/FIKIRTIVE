@@ -20,7 +20,24 @@ services:
       # Renamed from artlio-pg (2026-07-07 name purge). Postgres only creates the
       # user/db on FIRST init, so the rename ships with a fresh volume; the old
       # artlio-pg volume (and its data) survives untouched — `docker volume ls`.
-      - fikirtive-pg:/var/lib/postgresql/data
+      #
+      # MOUNT POINT MOVED WITH THE IMAGE (#1385 review r2). postgres:18 relocated its data
+      # directory: upstream's Dockerfile now sets `PGDATA=/var/lib/postgresql/18/docker`
+      # and declares `VOLUME /var/lib/postgresql` (it was /var/lib/postgresql/data through
+      # 17). Leaving the old `:/var/lib/postgresql/data` mount behind would not error — it
+      # would just stop being PGDATA: initdb would write the real cluster into an ANONYMOUS
+      # volume, so every `docker compose down`/`up` would silently hand you an empty
+      # database. We mount the image's own declared VOLUME rather than pinning PGDATA back
+      # to the old path, because that is the layout upstream maintains: each major gets its
+      # own subdirectory inside this one volume, so the next bump needs no change here, and
+      # nothing anonymous is created behind our backs.
+      #
+      # ⚠️ A `fikirtive-pg` volume initialised under Postgres 16 CANNOT be read by 18 — the
+      # data directory format is major-specific. This is a throwaway dev/drill database, so
+      # the fix is to recreate it, NOT to attempt an upgrade:
+      #     docker compose down && docker volume rm fikirtive-pg && docker compose up -d postgres
+      # (Your old 16 data is orphaned, not deleted, until you run that `volume rm`.)
+      - fikirtive-pg:/var/lib/postgresql
 
   # R2 stand-in for local r2-driver verification (S3-compatible).
   # Usage: docker compose up -d minio, then run web/worker with STORAGE_DRIVER=r2.

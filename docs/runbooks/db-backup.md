@@ -183,6 +183,15 @@ NLS 构建 —— 环境里带个 `LC_ALL=de_DE.UTF-8`,那句话就变成
 > pg_dump 18 写的是 custom archive 格式 1.16,16.x / 17.x 的 `pg_restore` 会直接拒读。
 > `docker-compose.yml` 的 `postgres` 已是 `postgres:18-alpine`;下面两个脚本也会自己查这一条,
 > 不够就退出 4。详见上面「pg_dump 大版本必须 ≥ 服务端大版本」的规矩表。
+>
+> **本机第一次用 18 起 compose 之前**:旧的 `fikirtive-pg` 数据卷是 Postgres 16 初始化的,
+> **18 读不了**(数据目录格式按大版本走),而且 18 的镜像把数据目录挪到了
+> `/var/lib/postgresql/18/docker`、声明的 VOLUME 从 `/var/lib/postgresql/data` 变成
+> `/var/lib/postgresql`。这是个一次性的开发/演练库,所以直接重建,别试图升级:
+> ```bash
+> docker compose down && docker volume rm fikirtive-pg && docker compose up -d postgres
+> ```
+> 不跑 `volume rm` 的话旧数据只是被孤立、不会被删,但容器每次重建都会给你一个空库。
 
 先在本地 docker Postgres 演练一遍,确认 dump 可用,再考虑动真库。
 **首选走脚本**(它把下面这几步连同对账断言一起做了,还会报 RTO):
@@ -255,7 +264,8 @@ docker compose exec postgres psql -U fikirtive -d restore_drill \
     --json drill.json
   ```
   行数对不上就退出码 5,并打印差在哪。`--json` 落一份 `{rto_seconds, ledger_rows, account_rows}`,
-  可直接贴进票里。退出码:0 过 / 2 参数或文件问题 / 3 拒绝非本地或非 drill 库 / 4 缺工具 / 5 对账不符。
+  可直接贴进票里。退出码:0 过 / 2 参数或文件问题 / 3 拒绝非本地或非 drill 库 /
+  4 缺工具**或版本过低**(`pg_restore` / `pg_dump` 大版本 < 18,见上面的双向规矩表)/ 5 对账不符。
 - **演练的自证**:`scripts/db-restore-drill-selftest.sh [--rows N]`。**不需要任何真实备份文件**:
   它自己建全新空库 → 跑全部迁移(顺带就是一次 fresh-database 迁移验证)→ 塞 N 条钱路行 →
   用**和 worker 夜间备份一模一样的命令**做 dump → 跑上面那个演练脚本并断言行数。
