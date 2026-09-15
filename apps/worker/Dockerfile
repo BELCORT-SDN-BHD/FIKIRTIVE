@@ -5,17 +5,31 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates fonts-dejavu-core fontconfig libgomp1 \
   && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
-# --- nightly DB backup (P0-1②): pg_dump from pgdg, pinned to major 17 ---
-# pg_dump's major must be >= the server major (Neon runs the current major;
-# 17-dumps-16 is fine, 16-dumps-17 is not). pgdg (not the Debian archive) so
-# the pin holds regardless of what trixie ships. Additive block — nothing
-# above or below this may change (see REVIEWER-PLAYBOOK Dockerfile invariants).
+# --- nightly DB backup (P0-1②): pg_dump from pgdg, pinned to major 18 ---
+# pg_dump's major must be >= the server major: it REFUSES a server newer than
+# itself ("aborting because of server version mismatch", exit 1). 18-dumps-17 is
+# fine, 17-dumps-18 is not.
+#
+# 2026-09-14 (#1385): this pin was 17 while staging's Postgres runs 18.6 (Railway
+# image ghcr.io/railwayapp-templates/postgres-ssl:18), so EVERY nightly backup
+# since 2026-09-05 died at exit 1 — 1360 failed BackupRun rows, zero successes.
+# Reproduced read-only with a 16.14 client against that server: exit 1,
+# "server version: 18.6 …; pg_dump version: 16.14" — 17-vs-18 fails by the same
+# rule. pgdg trixie carries postgresql-client-18 18.6-1.pgdg13+2 on both amd64
+# and arm64, so this pin is architecture-independent.
+#
+# WHEN THE SERVER MOVES MAJOR, THIS PIN MOVES WITH IT — check `SHOW server_version`
+# after any Railway/Neon Postgres upgrade (docs/runbooks/db-backup.md).
+#
+# pgdg (not the Debian archive) so the pin holds regardless of what trixie ships.
+# Additive block — nothing above or below this may change (see REVIEWER-PLAYBOOK
+# Dockerfile invariants).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl \
   && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/keyrings/pgdg.asc \
   && echo "deb [signed-by=/usr/share/keyrings/pgdg.asc] https://apt.postgresql.org/pub/repos/apt trixie-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends postgresql-client-17 \
+  && apt-get install -y --no-install-recommends postgresql-client-18 \
   && rm -rf /var/lib/apt/lists/*
 
 FROM base AS build

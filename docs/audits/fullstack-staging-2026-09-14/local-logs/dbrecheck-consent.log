@@ -1,0 +1,15 @@
+
+> @fikirtive/db@0.1.0 test /Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/db
+> vitest run "src/consent-runtime.test.ts" "-t" "assigns receivedAt from the tuple cursor"
+
+
+[1m[46m RUN [49m[22m [36mv3.2.6 [39m[90m/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/packages/db[39m
+
+ [32m✓[39m src/consent-runtime.test.ts [2m([22m[2m13 tests[22m[2m | [22m[33m12 skipped[39m[2m)[22m[33m 1039[2mms[22m[39m
+   [33m[2m✓[22m[39m closed transactional writers[2m > [22massigns receivedAt from the tuple cursor at one-microsecond precision; occurredAt never wins [33m 1036[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m1 passed[39m[22m[2m | [22m[33m12 skipped[39m[90m (13)[39m
+[2m   Start at [22m 12:33:09
+[2m   Duration [22m 4.32s[2m (transform 1.61s, setup 2.56s, collect 43ms, tests 1.04s, environment 0ms, prepare 139ms)[22m
+

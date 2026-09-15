@@ -1,0 +1,68 @@
+{
+  "jobId": "01M2F3CEBPSVJE9131VR51PJ8V",
+  "ownerId": "e2e_org_round3-fullstack_388d436ebeb44746",
+  "threadId": "e2e_thread_caac67657b1f4147",
+  "status": "DONE",
+  "generationId": "01M2F3CFBA44M5ATD2W63G6VVT",
+  "assetId": "01M2F3CFAWJZF5QMBXZZHZM30J",
+  "storedHash": "75416bc46d12438beb9030b08062d3a18df32a20b64eed02428a4fefbc2258d0",
+  "files": [
+    {
+      "path": "/Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/.data/storage/u/e2e_org_round3-fullstack_388d436ebeb44746/75416bc46d12438beb9030b08062d3a18df32a20b64eed02428a4fefbc2258d0.png",
+      "bytes": 74,
+      "sha256": "75416bc46d12438beb9030b08062d3a18df32a20b64eed02428a4fefbc2258d0"
+    }
+  ],
+  "ledger": [
+    {
+      "id": "bfbd87be-5d7b-454a-b169-cc8586f88dd9",
+      "kind": "RESERVE",
+      "orgId": "e2e_org_round3-fullstack_388d436ebeb44746",
+      "refId": "01M2F3CEBPSVJE9131VR51PJ8V",
+      "reason": "",
+      "source": "SYSTEM",
+      "brandId": null,
+      "createdAt": "2026-09-14T04:39:09.027",
+      "createdBy": "",
+      "balanceDelta": -10,
+      "reservedDelta": 10,
+      "idempotencyKey": "reserve:01M2F3CEBPSVJE9131VR51PJ8V",
+      "stripePaymentIntentId": null
+    },
+    {
+      "id": "94dab749-fd70-4c9e-9202-82358da66902",
+      "kind": "SETTLE",
+      "orgId": "e2e_org_round3-fullstack_388d436ebeb44746",
+      "refId": "01M2F3CEBPSVJE9131VR51PJ8V",
+      "reason": "",
+      "source": "SYSTEM",
+      "brandId": null,
+      "createdAt": "2026-09-14T04:39:09.963",
+      "createdBy": "",
+      "balanceDelta": 0,
+      "reservedDelta": -10,
+      "idempotencyKey": "settle:01M2F3CEBPSVJE9131VR51PJ8V",
+      "stripePaymentIntentId": null
+    }
+  ],
+  "account": [
+    {
+      "orgId": "e2e_org_round3-fullstack_388d436ebeb44746",
+      "balance": 990,
+      "reserved": 0,
+      "updatedAt": "2026-09-14T04:39:09.986"
+    }
+  ],
+  "expectedBeforeBalance": 1000,
+  "expectedAfterBalance": 990,
+  "quoteDisplayCredits": 1,
+  "internalPerDisplay": 10,
+  "queue": [
+    {
+      "name": "gen",
+      "state": "completed"
+    }
+  ],
+  "provider": "mock",
+  "ottoCard": "seeded fixture"
+}

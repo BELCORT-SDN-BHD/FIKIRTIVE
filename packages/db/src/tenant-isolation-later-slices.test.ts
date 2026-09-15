@@ -29,13 +29,16 @@ import { it } from "vitest";
 // packages/db/src/tenant-fk-backfill.test.ts —— 机器闸(裸外键剩余数 == 豁免清单长度)+ DB 级
 // 同租户成功/跨租户被拒(P2003)代表用例(ScheduledPostMedia、PublishAttempt)。
 
-// worker 七条队列（规格 §4 异议栏点名单独一片、单独复审）
-it.todo(
-  "TENANT-A8 七条队列各跑一单全部跑通，帧建立之后的读写都经过值比对（异租户 id 注入被拒） —— 队列那一片交付",
-);
-it.todo(
-  "TENANT-A9 同一段音频同一模型在两个租户各转写一次：第二次命中全局缓存、不重复计费；其它表的跨租户读被拒 —— 队列那一片交付",
-);
+// worker 七条队列那一片（规格 §4 异议栏点名单独一片、单独复审）交付的是 TENANT-A8 / A9，
+// 两条欠账到此结清，占位已换成真库行为测试：
+//   · TENANT-A8 见 apps/worker/src/jobs/tenant-queue-frames-a8-db.test.ts —— caption / gen /
+//     ingest / publish / refgen / render / research 各跑一单，真 handler、真库、真守卫、离线
+//     mock 引擎，七条全部走到各自的正常终态；每一单的帧内（探针挂在该 handler 帧内必经的那个
+//     边界上，所以注入发生在 handler 自己的帧里）再对本队列受守卫的那张表发两笔点名异租户的
+//     读写，十四笔全被值比对拒掉，拒绝原话逐字断言。
+//   · TENANT-A9 见 apps/worker/src/jobs/tenant-transcript-cache-a9-db.test.ts —— 同一段音频同一
+//     模型在两个租户各跑一次：第二次命中全局缓存（whisper-cli 调用次数不增）、DONE 无错、两家
+//     账本行数与余额分毫未动；同一个帧里点名另一家的 Asset / Generation，两笔跨租户读被拒。
 
 // 收尾片（#464）交付的是 TENANT-A10 的 requireOwner 半题（见
 // apps/web/lib/__tests__/tenant-requireowner-frame-scan.test.ts：「apps/web 生产代码里文件内

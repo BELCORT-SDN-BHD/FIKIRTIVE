@@ -66,7 +66,7 @@ ffmpeg (worker) · Railway deployment manifests.
 
 ```bash
 pnpm install
-docker compose up -d postgres                                   # local Postgres 16 (fikirtive:fikirtive@localhost:5432/fikirtive)
+docker compose up -d postgres                                   # local Postgres 18 (fikirtive:fikirtive@localhost:5432/fikirtive)
 DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm --filter @fikirtive/db exec prisma migrate deploy
 pnpm db:generate
 

@@ -42,6 +42,14 @@ export type LibraryElement = {
   capabilities: EntityCapabilities;
   /** 封面 —— 真有一张存在的参考图才给;没有就 null,卡片画占位而不是画一个坏图。 */
   coverUrl: string | null;
+  /**
+   * 身份上钉着的那张封面(`Entity.baseAssetId`)。判据与 Brand 页、@ 菜单同一格
+   * (规格 `docs/specs/brand-product-identity.md` §1.4;验收 PRODID-A4)—— Library 这一面
+   * 若按「挂上去的先后」画封面,商家在这里换完封面,两个面上就是两张图,而身份只有一份。
+   */
+  baseAssetId: string | null;
+  /** 这个元素身上的 live 参考图(字节还在的那些)—— 详情里那排「换封面」挑的就是它们。 */
+  images: readonly { assetId: string; url: string }[];
   /** 关联媒体数 = 这个元素身上的基础参考图张数(设计卡片上的 "linked media count")。 */
   mediaCount: number;
 };
