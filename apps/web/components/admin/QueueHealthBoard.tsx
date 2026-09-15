@@ -1,5 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import type { MetricTone, QueueMetricRow, QueueObservabilityBoard } from "@/lib/queue-observability";
+import type { DeadLetterListing } from "@/lib/dead-letters-admin";
+import { DeadLetterPanel } from "./DeadLetterPanel";
 
 /**
  * #779 — the minimal board. One headline that answers "is the generation queue backed up?",
@@ -60,7 +62,13 @@ function MetricTile({ row }: { row: QueueMetricRow }) {
   );
 }
 
-export function QueueHealthBoard({ board }: { board: QueueObservabilityBoard }) {
+export function QueueHealthBoard({
+  board,
+  deadLetters,
+}: {
+  board: QueueObservabilityBoard;
+  deadLetters: DeadLetterListing;
+}) {
   return (
     <div className="mx-auto grid w-full max-w-[1280px] gap-5 px-4 py-5 sm:px-6 lg:px-8">
       <header className="flex flex-col gap-4 border-b border-border pb-4 md:flex-row md:items-end md:justify-between">
@@ -101,6 +109,10 @@ export function QueueHealthBoard({ board }: { board: QueueObservabilityBoard }) 
           <MetricTile key={row.id} row={row} />
         ))}
       </div>
+
+      {/* DLQ-A1 — the metrics above answer "are merchants waiting?"; this answers "what did we
+          give up on?", and it is the one section here with a control attached. */}
+      <DeadLetterPanel listing={deadLetters} />
     </div>
   );
 }
