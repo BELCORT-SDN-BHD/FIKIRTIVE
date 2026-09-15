@@ -40,7 +40,6 @@ vi.mock("next/navigation", () => ({
 import { turnCostOf } from "@/lib/otto-status-helpers";
 import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
 import { OttoPlanCard } from "@/components/otto/OttoPlanCard";
-import { OttoFrontDoor } from "@/components/otto/OttoFrontDoor";
 import { OttoMemory } from "@/components/otto/OttoMemory";
 
 describe("turnCostOf", () => {
@@ -83,15 +82,6 @@ describe("the conversation-charge disclosure is one sentence in three places", (
     }));
   }
 
-  function renderFrontDoor(): string {
-    return renderToStaticMarkup(createElement(OttoFrontDoor, {
-      projectId: "proj_1",
-      userName: "Siti",
-      onThreadStarted: vi.fn(),
-      onStreamStart: vi.fn(),
-    }));
-  }
-
   function renderMemory(): string {
     return renderToStaticMarkup(createElement(OttoMemory, {
       initialMemory: [],
@@ -100,9 +90,12 @@ describe("the conversation-charge disclosure is one sentence in three places", (
     }));
   }
 
+  // R3-F06(Founder 2026-09-15「整段一起删」):门厅页尾那条「You stay in control」撤了,
+  // 它是门厅上唯一念 `CHAT_SPEND_NOTE` 的地方,所以门厅退出这张表。
+  // **断言本身没有被删掉,只是搬到仍然念这句话的面上** —— 计划卡与品牌记忆两处照旧逐条判,
+  // 另有 `design-system/patterns/otto-panel/OttoPanel.tsx` 也在念它。
   const surfaces: Array<[string, () => string]> = [
     ["plan card", renderPlanCard],
-    ["front door", renderFrontDoor],
     ["brand memory", renderMemory],
   ];
 
@@ -117,9 +110,10 @@ describe("the conversation-charge disclosure is one sentence in three places", (
     //
     // 这条纪律最后砍掉的是它自己的初稿。那一句原本还带一个量级断言「usually a fraction of
     // one per message」:1.05 下实测一次回复是 1.4 displayed credits,#536 实测区间
-    // (0.21–1.73)大半在 1 credit 以上,而且它下方就渲染着 CHAT_HOLD_NOTE(holds up to 4
+    // (0.21–1.73)大半在 1 credit 以上,而当时它下方还渲染着 CHAT_HOLD_NOTE(holds up to 4
     // credits)—— 它跟「a little credit」是同一种没凭据的软话,只是换了个方向,所以整个量级
     // 断言删掉,不是改小。要再写量级,先拿当日价格下的实测来。
+    //(那条 hold note 已随 R3-F06 整段移除,这里留作这句文案三次改稿的由来。)
     it(`${name}: says a chat turn costs credits for what it uses, and where to check`, () => {
       const markup = render();
       expect(markup).toContain("Chatting with Otto costs credits for what it uses");
