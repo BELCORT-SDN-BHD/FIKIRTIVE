@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { notifyAccountRefresh } from "@/lib/balance-refresh";
 import { updateDisplayName, updateWorkspaceName } from "@/lib/profile-actions";
 import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
@@ -38,6 +39,7 @@ function NameField({
   placeholder,
   autoComplete,
   onSave,
+  announcesAccountChange = false,
   children,
 }: {
   label: string;
@@ -46,6 +48,12 @@ function NameField({
   placeholder: string;
   autoComplete: string;
   onSave: (value: string) => Promise<SaveResult>;
+  /** R3-F04 —— 这个字段改的是**商家自己那份账号资料**(显示名),所以存下之后要喊一声,
+   *  让商家壳重读账号、右上角的菜单与头像当场跟上。
+   *
+   *  默认关着,判官复审 P2:Workspace name 不喊。它改的是组织名,壳的账号区一个字都不显示
+   *  它,喊出去只会让每一处订阅端白跑一趟服务端重读。 */
+  announcesAccountChange?: boolean;
   /** 同一张表单里跟在这个字段后面、但自己不保存的只读字段(Profile 的 Email)。
    *  夹具的 Profile 是「Display name → Email → Save changes」一张表,不是两块。 */
   children?: React.ReactNode;
@@ -65,6 +73,7 @@ function NameField({
     if (!dirty || !valid || status === "saving") return;
     setStatus("saving");
     setErrorMsg(null);
+    let stored = false;
     try {
       const result = await onSave(draft);
       if ("error" in result) {
@@ -77,10 +86,22 @@ function NameField({
       setSaved(result.name);
       setDraft(result.name);
       setStatus("saved");
+      stored = true;
     } catch {
       setStatus("error");
       setErrorMsg("Could not save. Try again.");
     }
+    // R3-F04 —— 这一面说的是 "This is how your name appears across Fikirtive",所以存下
+    // 之后右上角的账号菜单与头像必须当场就是新名字,不是等商家整页刷新才追上。动作那头
+    // 已经 `revalidatePath("/", "layout")`,但账号那份数据活在商家壳的客户端 state 里
+    // (`components/global-navigation.tsx`),根布局的 revalidate 够不着它。
+    //
+    // 喊的是壳**已经在听**的那一声(`lib/balance-refresh.ts`),不是新接一条线:壳收到
+    // 之后重跑它自己那次 `getMyAccount()`,于是这一面、菜单、头像仍旧只有一个服务端源头。
+    //
+    // 判官复审 P2:这一声在 `try` **外面**。名字已经写进库里了,广播那条路上再出什么事都
+    // 不该让商家读到 "Could not save. Try again." —— 那会把一次成功的保存说成失败。
+    if (stored && announcesAccountChange) notifyAccountRefresh();
   }
 
   return (
@@ -147,6 +168,7 @@ export function ProfileNames({ displayName, workspaceName }: { displayName: stri
         placeholder="Your name"
         autoComplete="name"
         onSave={updateDisplayName}
+        announcesAccountChange
       />
       {/* #680 — when the merchant has never been asked for a shop name (sign-in code and invite
           sign-ins never ask), this field is EMPTY and the placeholder asks for it. It used to
@@ -179,6 +201,7 @@ export function DisplayNameField({
         placeholder="Your name"
         autoComplete="name"
         onSave={updateDisplayName}
+        announcesAccountChange
       >
         {children}
       </NameField>

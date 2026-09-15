@@ -239,6 +239,101 @@ R2 没开版本控制,盖掉就没了。那个旗标只在「已经看过 confli
 
 **遗留:** 老桶 `artlio` 的退役(观察期后删桶)与旧宽权限令牌的最终吊销另行处理,不在本脚本范围内。
 
+## staging 备份令牌拆分(Founder 2026-09-15 裁决)
+
+> 这一段管的是另一族凭据——`R2_MEDIA_BACKUP_*`(媒体对象备份复制,
+> `docs/specs/media-durability.md`),不是上面「三把令牌」表管的 `R2_*`/`R2_BACKUP_*`(内容桶与
+> 数据库夜间备份)。铸令牌的手法(Access Key ID/Secret 怎么来、作用域反证怎么做)是同一套,
+> 放在本文件延续同一个「令牌铸造与凭据分工的口径出处」(`docs/runbooks/media-restore.md`
+> 「相关」一节对本文件的定位),但这把令牌**没有** `mint-r2-token.mjs` 脚本代铸——
+> Cloudflare 这步由 Founder 在控制台手工做。
+
+**风险(一句话):** 令牌 `fikirtive-media-backup` 在 staging 与 production 用的是同一个令牌 id——
+它对 `fikirtive-production` 只读、对 `fikirtive-production-backup` 读写,staging 的 worker/web
+理论上就能用这把钥匙覆盖或删掉生产的媒体备份(2026-09-14 只读审计发现;本节按此裁决拆分,
+本次只复核仓库能查到的部分,Cloudflare 侧现状以 Founder 实操时看到的为准)。
+
+**目标状态:**
+- 新铸一把**只够得到 staging 两个桶**的令牌 `fikirtive-staging-media-backup`:对
+  `fikirtive-staging` 只读、对 `fikirtive-staging-backup` 读写——权限形状照抄现有 production
+  令牌的口径(READ 内容桶 + READ&WRITE 备份桶),依据是判官第二轮 P1-5 的裁决:这把凭据
+  **必须同时有备份桶写权限与内容桶读权限**,因为 `R2Storage.copyToBackup()` 的
+  `CopyObjectCommand` 用它去读内容桶(`packages/storage/src/index.ts:894-904` 的函数注释,
+  `.env.example:247-251` 同一条裁决的落地注释)。
+- **备份桶已经建好,不需要「第 0 步:建桶」**——`fikirtive-staging-backup` 是
+  `docs/specs/media-durability.md`(已冻结 · v2,批准 #1372)的既有产出物:规格 §1 第 2 问
+  写明「Cloudflare:每个内容桶配一个同名 `-backup` 备份桶(`fikirtive-staging-backup` /
+  `fikirtive-production-backup`,同 APAC)……桶的创建与令牌授予由 Founder 执行」;验收
+  MEDIA-A1/A2 已经真跑过,`docs/runbooks/media-restore.md` 演练记录 2026-09-13 那一行留了证据
+  (「found backup copy: … in `fikirtive-staging-backup`」「存量回填 280/280 → 差集 0」)。
+  日后若真要重建这个桶,设置照抄现存的:同 APAC 区域;**不开 object versioning**——R2 没有
+  这个开关,规格 §1 第 4 问已用控制台 + 官方文档三方证据判死(证据钉在 #1385);**不设自动
+  删除的 lifecycle 规则**(multipart 中止规则除外),全量保留(验收 MEDIA-A2)。
+
+**Cloudflare 控制台步骤(Founder 本人做,agent 不碰凭据):**
+1. R2 → Manage R2 API Tokens → Create API token。
+2. 名字填 `fikirtive-staging-media-backup`。
+3. 权限:优先照抄现有 production 令牌的两条 policy 形状——对 `fikirtive-staging` 只给
+   **Object Read**,对 `fikirtive-staging-backup` 给 **Object Read & Write**(一把令牌可以带
+   多条 policy,本文件「引用的 Cloudflare 文档」一节已钉了这条官方原文出处)。如果这次创建
+   流程里同一把令牌对不同桶给不出不同权限,退而求其次:两个桶都给 **Object Read & Write**,
+   但**只勾这两个桶,一个不多**——本次要堵的洞是「够不到 production」,不是「staging 内容桶
+   要不要写权限」,宁可稍宽松也不能漏勾 scope。
+4. **Specify bucket(s)** 只勾 `fikirtive-staging` 与 `fikirtive-staging-backup` 这两个——
+   尤其不能带上任何 `fikirtive-production*`。
+5. TTL:不设过期(照抄 `fikirtive-staging-web` / `fikirtive-production-web` 的口径,见上方
+   「三把令牌」表)。
+6. 创建后只显示一次的 Access Key ID / Secret Access Key 抄下来,下一步要用;不要贴进聊天、
+   不要贴进这份文件、不要贴进任何 agent 能读到的地方。
+
+**Railway 步骤(Founder 本人做):**
+项目 `b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d`,环境 `staging`。**`web` 与 `worker` 两个服务都要
+改,不是只有 worker**——`apps/web/lib/storage.ts:12` 与 `apps/worker/src/storage.ts:9` 都调
+`createStorage()`,而它内部接的正是 `mediaBackupR2Config()`
+(`packages/storage/src/index.ts:960`);直传上传收尾的 `copyToBackup()` 是从 **web** 这一侧的
+`apps/web/lib/upload-actions.ts:314` 发起的——只改 worker 会让直传路径继续用旧令牌、继续够得到
+生产桶,拆分等于没做完。
+
+1. 在 `web` 与 `worker` 两个服务上分别置:
+   - `R2_MEDIA_BACKUP_ACCESS_KEY_ID` = 新令牌的 Access Key ID
+   - `R2_MEDIA_BACKUP_SECRET_ACCESS_KEY` = 新令牌的 Secret Access Key
+   - `R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup`
+   - `R2_MEDIA_BACKUP_ENDPOINT` 不用填——留空即可,代码默认回落到已经配好的 `R2_ENDPOINT`
+     (`packages/storage/src/index.ts:925`),staging 与 production 用同一个 Cloudflare 账号、
+     同一个 endpoint,只有桶名不同。
+2. 两个服务分别重新部署(改 Railway 变量不会自动重启在跑的进程)。
+
+**验收(agent 事后可做,不碰任何凭据):**
+
+没有给媒体备份单独设的健康端点或数据库行——`/api/health` 的 `backup` 字段只报**数据库**夜间
+备份(`apps/web/app/api/health/route.ts:22`,「#794 ③」,读的是 `BackupRun` 表,
+`packages/db/prisma/schema.prisma:2646` 起;该表按「一晚一行」设计,没有按媒体对象记行的
+形状),别指望这条路能看到 media backup 的新鲜度。走下面三条不需要凭据的路:
+
+1. **日志核验**:请 Founder 在 staging 正常做一次上传或生成(产出一个新的媒体对象),记下
+   时间与 key;agent 用 Railway 日志(不需要 R2 凭据)搜这段时间窗口内有没有
+   `media_backup_replication_failed`(`packages/storage/src/index.ts:389`/`447` 打的结构化
+   事件)——没出现只说明「这次复制没报失败」,不是「桶里真的有副本」的直接证据,第 2 条才是。
+2. **差集核验**(请 Founder,或另一个持有新令牌值的人跑,agent 只读结果):
+   `docs/runbooks/media-restore.md`「第 2 步」的 `media-backup-backfill.mjs` dry-run,用新的
+   `R2_MEDIA_BACKUP_*` 值跑一遍,把「missing from backup」「CONFLICT」两栏的输出贴给 agent
+   核对——这一步顺带也覆盖了轮换后新对象有没有真的进到 `fikirtive-staging-backup`。
+3. **反证:新令牌够不到 production(这是本次要验的核心)**——照上方「关键机制」的
+   「作用域反证」同一手法:Access Key ID = 令牌的 `id`,Secret Access Key = 令牌 `value` 的
+   SHA-256 十六进制(出处见本文件「引用的 Cloudflare 文档」一节)。请 Founder 用这对派生出来
+   的 S3 凭据跑一次
+   `aws s3 ls s3://fikirtive-production-backup --endpoint-url https://<account-id>.r2.cloudflarestorage.com`
+   (或等价的 `wrangler r2 object list`,若本机 wrangler 走的是这把 R2 令牌而非账号级
+   token——两者认证模型不同,以实际能跑通的那个为准),**预期收到 401/403**;同时对
+   `fikirtive-staging` 与 `fikirtive-staging-backup` 跑同一条命令预期成功。这一步必须由
+   Founder(或另一个持有新令牌值的人)亲手跑——agent 不持有令牌,验证不到这一条,只能核对
+   Founder 贴回来的输出。
+
+**production 不动:** 这一步不轮换、不吊销 production 现有的 `fikirtive-media-backup` 令牌——
+它对 production 自己该有的权限(读 `fikirtive-production`、读写 `fikirtive-production-backup`)
+本身是对的,只是 staging 不该共用同一把。production 的 `web`/`worker` 四个变量原样不动,继续用
+旧令牌正常工作。
+
 ## 单元测试
 
 ```

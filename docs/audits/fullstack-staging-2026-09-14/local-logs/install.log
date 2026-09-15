@@ -1,0 +1,31 @@
+Scope: all 9 workspace projects
+Lockfile is up to date, resolution step is skipped
+Progress: resolved 1, reused 0, downloaded 0, added 0
+Packages: +1044
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 1044, reused 90, downloaded 0, added 0
+Progress: resolved 1044, reused 384, downloaded 0, added 0
+Progress: resolved 1044, reused 869, downloaded 0, added 0
+Progress: resolved 1044, reused 1043, downloaded 0, added 63
+Progress: resolved 1044, reused 1043, downloaded 0, added 147
+Progress: resolved 1044, reused 1043, downloaded 0, added 224
+Progress: resolved 1044, reused 1043, downloaded 0, added 299
+Progress: resolved 1044, reused 1043, downloaded 0, added 341
+Progress: resolved 1044, reused 1043, downloaded 0, added 395
+Progress: resolved 1044, reused 1043, downloaded 0, added 468
+Progress: resolved 1044, reused 1043, downloaded 0, added 598
+Progress: resolved 1044, reused 1043, downloaded 0, added 751
+Progress: resolved 1044, reused 1043, downloaded 0, added 861
+Progress: resolved 1044, reused 1043, downloaded 0, added 893
+Progress: resolved 1044, reused 1043, downloaded 0, added 982
+Progress: resolved 1044, reused 1043, downloaded 0, added 1039
+Progress: resolved 1044, reused 1043, downloaded 0, added 1042
+Progress: resolved 1044, reused 1043, downloaded 0, added 1043
+Progress: resolved 1044, reused 1043, downloaded 0, added 1044, done
+.../node_modules/prisma preinstall$ node scripts/preinstall-entry.js
+.../node_modules/prisma preinstall: ┌────────────────────────────────────────────────────────────────────┐
+.../node_modules/prisma preinstall: │    Prisma only supports Node.js versions 20.19+, 22.12+, 24.0+.    │
+.../node_modules/prisma preinstall: │    Please upgrade your Node.js version.                            │
+.../node_modules/prisma preinstall: └────────────────────────────────────────────────────────────────────┘
+.../node_modules/prisma preinstall: Failed
+ ELIFECYCLE  Command failed with exit code 1.

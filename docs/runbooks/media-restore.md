@@ -41,7 +41,8 @@ dedup 命中(无论是写路径的 `put()` 还是直传收尾的 `copyToBackup()
    令牌,不是内容桶自己的凭据)。按旧口径(只给备份桶写权限)铸的令牌,会让直传上传收尾的
    那次复制静默 403——`put()` 的写路径复制不受影响(那条路径本来就不需要读内容桶),但
    直传收尾这条路径会一直失败、一直落 `media_backup_replication_failed` 日志,永远补不上,
-   铸令牌时务必核对这一条。
+   铸令牌时务必核对这一条。staging 与 production 目前共用同一个令牌 id 的拆分步骤,见
+   `docs/runbooks/r2-bucket-token-rotation.md`「staging 备份令牌拆分(Founder 2026-09-15 裁决)」。
 2. **依赖**:`@aws-sdk/client-s3` 与 `@fikirtive/core`(脚本从 `packages/storage` 的
    package.json 起解析,仓库 `pnpm install` 过就行)、`node >= 22`。
 3. **碰生产确认锁**:两个脚本都用 `scripts/tools/_interlock.mjs`,跑之前要

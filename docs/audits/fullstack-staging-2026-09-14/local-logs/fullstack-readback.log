@@ -1,0 +1,33 @@
+[WebServer] 
+[WebServer] > @fikirtive/web@0.1.0 start /Users/winnin/.codex/worktrees/e2e-round3-20260914/FIKIRTIVE/apps/web
+[WebServer] > next start
+[WebServer] 
+[WebServer] [1m[38;2;173;127;168m▲ Next.js 16.2.9[39m[22m
+[WebServer] - Local:         http://localhost:3399
+[WebServer] - Network:       http://192.168.0.9:3399
+[WebServer] [32m[1m✓[22m[39m Ready in 336ms
+[WebServer] [env-contract] 3 problem(s) with the web environment:
+[WebServer]   • AUTH_EMAIL_TRANSPORT is set to a value that is not allowed in production (allowed: resend) — stub writes the sign-in code to a local file instead of mailing it — a production deployment that ran it would hand every merchant's code to whoever can read that disk
+[WebServer]   • STORAGE_DRIVER is required in production but is not set
+[WebServer]   • SENTRY_DSN is required in production but is not set
+[WebServer]   See .env.example and packages/core/src/env-contract.ts. Values are never printed.
+
+Running 1 test using 1 worker
+
+[WebServer] [better-auth] Your Fikirtive sign-in code for round3-fullstack@e2e.test: 285405
+[WebServer] [2m2026-09-14T04:41:23.894Z[0m [33mWARN[0m [1m[Better Auth]:[0m Rate limiting could not determine a client IP and is falling back to a single shared per-path bucket. Ensure your runtime forwards a trusted client IP header and configure `advanced.ipAddress.ipAddressHeaders` if needed.
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.upsert requires runAsTenant before system writes — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.updateMany requires runAsTenant before system writes — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst has no orgId filter — possible cross-tenant leak — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst tried to use orgId outside the active tenant — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst has no orgId filter — possible cross-tenant leak — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst has no orgId filter — possible cross-tenant leak — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst has no orgId filter — possible cross-tenant leak — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst has no orgId filter — possible cross-tenant leak — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst tried to use orgId outside the active tenant — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst tried to use orgId outside the active tenant — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst has no orgId filter — possible cross-tenant leak — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+[WebServer] [tenant-guard][warn] [tenant-guard] Membership.findFirst has no orgId filter — possible cross-tenant leak — 观察轮挡位放行，落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）
+  ✓  1 [chromium] › docs/audits/fullstack-staging-2026-09-14/local-logs/fullstack-runner/readback.spec.ts:7:1 › Read completed fixture after reopening; no worker, no Generate, no automatic-convergence claim (16.6s)
+
+  1 passed (26.3s)

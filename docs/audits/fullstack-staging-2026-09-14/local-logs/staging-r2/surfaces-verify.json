@@ -1,0 +1,114 @@
+{
+ "group": "surfaces-verification",
+ "verifier": "independent read-only verifier (no browser used)",
+ "buildSha": "14bcd038 (independently confirmed: anonymous curl https://web-staging-7901.up.railway.app/api/health -> 200 {build.sha 14bcd038, ref main, db up, migrations applied, worker up, workers.worker stale, backup missing})",
+ "utc": "2026-09-15T05:0xZ",
+ "dbReRuns": [
+  {
+   "check": "zero remote writes since 2026-09-15 03:55 UTC",
+   "sql": "BEGIN READ ONLY; counts per table; ROLLBACK",
+   "result": "CreditLedger 0, GenJob 0, Generation 0, ChatMessage 0, CanvasNode 0, Project 0, ChatThread 0 (ChatThread added by me) — MATCHES worker"
+  },
+  {
+   "check": "CreditAccount founder",
+   "result": "balance 99997978, reserved 0, updatedAt 2026-09-14 05:54:32.716 — MATCHES worker exactly"
+  },
+  {
+   "check": "CreditLedger refId 01M288VJS12BBT536TZF5T0S01",
+   "result": "RESERVE -110/+110 2026-09-11 13:00:06.841 idem reserve:…; REFUND +110/-110 2026-09-11 13:02:28.048 idem refund:… — MATCHES worker exactly"
+  },
+  {
+   "check": "GenJob 01M288VJS12BBT536TZF5T0S01",
+   "result": "ownerId founder, projectId canvas_c878814e…, VIDEO, FAILED, created 13:00:06.834, updated 13:02:28.039 — MATCHES; NEW FACT: error column = 'generation provider video submit failed (400)' (worker did not report the stored reason)"
+  },
+  {
+   "check": "Hi! thread identity (REAL-27)",
+   "result": "thread_dad82159… ownerId founder, title 'Cat drinking coffee video', projectId canvas_dad82159…, project name 'Hi!', 46 messages, updatedAt 2026-09-14 05:54:32.745 — corroborates the worker's 'Canvas · Hi!' + chip 'Cat drinking coffee video' and the 'Conversation 46' label"
+  },
+  {
+   "check": "FC-1 corroboration",
+   "result": "seq 43 USER 'can, just do it stragiht away, no need starting image'; 44 AGENT TEXT 'Got it! Let me generate both shots straight away! 🎬'; 45 USER 'where is the card?'; 46 AGENT TEXT 'Sorry! Let me call up the generate cards for both shots now.' Kinds: last GEN_CARD at seq 35, STORYBOARD_CARD at seq 39, nothing but TEXT after — FC-1 confirmed at the data layer, independent of rendering. NOTE worker block numbers = DB seq minus 1."
+  },
+  {
+   "check": "tenant B project canvas_63f09f93…",
+   "result": "ownerId org_cmts923pm00002mptbuoube0j, name 'Create one premium product photo for my Malaysian cafe…', createdAt 2026-09-08, deletedAt NULL — so the refusal page was a true cross-tenant refusal, not a deleted canvas"
+  },
+  {
+   "check": "founder Projects created since 2026-09-12",
+   "result": "exactly one: canvas_dad82159… 'Hi!' 2026-09-12 05:02:15.898 — no project was created by the deep-link probe; FSE-207 zero-write standard holds"
+  }
+ ],
+ "httpReRuns": [
+  {
+   "check": "/api/health anonymous",
+   "result": "200, sha 14bcd038 — matches worker"
+  },
+  {
+   "check": "12 routes anonymous (/schedule /schedule/analytics /library/editor /campaign /campaign/anything /crm /crm/anything /m /northstar-immersive /otto /library /billing)",
+   "result": "ALL 307 -> /login?from=… — the auth wall answers first, so the worker's signed-in status codes (200 vs redirect) CANNOT be independently reproduced anonymously. Their claim is corroborated only by code reading (loading.tsx presence) + spec intent (W2-13 deleted 7 CRM loading.tsx)."
+  }
+ ],
+ "specChecks": [
+  {
+   "spec": "packages/core/src/navigation.ts:370-389 OTTO_VIEW_REDIRECTS + apps/web/components/otto/otto-view-param.ts OTTO_VIEW_KEYS (11 keys) + SHELL_ROUTES:86",
+   "verdict": "worker CORRECT: all 11 keys covered, all 11 destinations match verbatim"
+  },
+  {
+   "spec": "docs/specs/wave2-shell.md:188 '每一条旧地址都 **307**，永不 404（MERCHANT_NAV_REDIRECTS 的老纪律照旧）'",
+   "verdict": "CLAUSE NOT MET for 3 of 6 MERCHANT_NAV_REDIRECTS entries by the worker's own data (/schedule, /schedule/analytics, /library/editor = HTTP 200). Worker re-worded the clause to 'lands on an active surface' and passed it => REAL-26 downgraded."
+  },
+  {
+   "spec": "docs/specs/wave2-shell.md:403 '### 5.1 移动端整层（Founder 裁决：desktop-only）' (+ :43 non-goal row)",
+   "verdict": "quote verbatim correct; REAL-14 citation sound"
+  },
+  {
+   "spec": "docs/specs/frontend-baseline.md:136 ④ + apps/web/lib/canvas-terminal-copy.ts:55-57 (title 'That didn\\'t finish', detail 'You weren\\'t charged.', offersRefresh:false)",
+   "verdict": "worker CORRECT: fix is live in code and matched the DOM"
+  },
+  {
+   "spec": "docs/specs/creation-engine.md:183 (FSE-204)",
+   "verdict": "worker's finding REFUTED as worded: the ruled remedy is a pre-payment size gate at four entrances ('收成唯一一份闸，四个入口…付费前拒绝并说出实际短边'), NOT a reason line on the failure card. Fix landed 2026-09-12 in commit 6624e832 '[FSE-204] 付费前尺寸闸唯一一份、四入口全拦＋报实际短边（#1389）', which is an ancestor of 14bcd038. The observed card belongs to GenJob created 2026-09-11 13:00 UTC, i.e. BEFORE both the ruling and the fix."
+  },
+  {
+   "spec": "docs/specs/creation-engine.md:185 (FSE-207) + apps/web/components/canvas/CanvasDeepLinkRefused.tsx:42-45",
+   "verdict": "worker CORRECT: refusal copy matches source verbatim; zero-write re-verified in DB by me"
+  },
+  {
+   "spec": "docs/specs/wave2-shell.md:394-395 (Connections honesty line)",
+   "verdict": "DROPPED SUB-CLAUSE: the mandated sentence 'No Instagram or Facebook account can be connected right now, so nothing here can be linked yet. Your schedule stays real either way.' appears nowhere in apps/web (only a different sentence in packages/core/src/schedule-draft.ts:162). Neither the worker nor REAL-22 checked it. simulated-features.json (the ledger it cited) no longer exists, so this may be a deliberate retirement — unverified."
+  },
+  {
+   "spec": "docs/specs/frontend-baseline.md:102 ③ (Fit to screen put cards under fixed overlays: 45%/32%/42% covered)",
+   "verdict": "REAL-15's pairwise overlap test measured six overlay rects against EACH OTHER only; it did not measure overlay-vs-card, which is where the recorded defect lived, and it never measured the Video/Add text canvas toolbar => REAL-15 downgraded."
+  }
+ ],
+ "codeChecks": [
+  {
+   "what": "Enter-to-send in the Create composer",
+   "where": "apps/web/components/start-something/StartSomething.tsx:288-294 -> startCanvas(draft) -> createCanvasConversation(...)  (also apps/web/components/otto/OttoChatStream.tsx:1205)",
+   "why": "REAL-05's proven clause 'Send is a separate deliberate action … never auto-fires' is only true for the mouse path. With a non-empty draft, one unmodified Enter fires a server action that creates a Project+ChatThread and (per the pricing text the worker read) takes a 4-credit hold. The worker's OWN control test proves the Browser pane DOES deliver keydown to page JS (only the native default action is missing), so this was a live hazard while the draft sat in the box."
+  },
+  {
+   "what": "IME guard",
+   "where": "StartSomething.tsx:291 and OttoChatStream.tsx:1205 both guard !event.nativeEvent.isComposing; the design-system fixture apps/web/design-system/patterns/canvas/CreationComposer.tsx:87-92 does NOT",
+   "why": "production Chinese-IME path is safe; the approved pattern fixture has drifted from production on exactly the guard REAL-05 was probing"
+  },
+  {
+   "what": "R3-F05 mechanism",
+   "where": "apps/web/components/library/LibraryView.tsx:1257 `{detail ? <DetailPanel …/> : null}` with onClose -> router.refresh() + reload(view, filters); apps/web/components/asset/DetailPanel.tsx:809-812 `<Sheet open …>`",
+   "why": "the overlay is mounted on demand and its close handler re-fetches and re-renders the grid, replacing the trigger button node, so Radix's stored restore target is detached => focus lands on BODY. The Connections dialog is a persistently mounted controlled `<Dialog open={addConnectionOpen}>` (apps/web/components/otto/OttoConnections.tsx:580) whose trigger survives => focus returns. Hypothesis with file:line support, not executed."
+  },
+  {
+   "what": "REAL-25 4xx/5xx sweep validity",
+   "where": "media is same-origin (/api/media/... proxy, apps/web/lib/media-public-link.ts:153)",
+   "why": "so PerformanceResourceTiming.responseStatus does cover media. Residual blind spots: cross-origin resources without Timing-Allow-Origin report responseStatus 0, and the document response itself is not in the resource list. Sweep is sound but narrower than 'ZERO requests >= 400'."
+  }
+ ],
+ "writesFlagged": [
+  "localStorage 'fikirtive:otto-panel:v1' on the Founder's real session was mutated and NOT fully restored (width 324->320, float.x 288->15; open restored to false). This is outside 'draft text typed and cleared'.",
+  "The mandated clearing method (select-all + Backspace) never ran — the draft was discarded by navigating away. Outcome verified empty on a later fresh load, so no residue, but the method deviated.",
+  "'Clear filters' was clicked with the mouse on /library (UI-only, no remote write).",
+  "document.body.style.zoom was set to '2' on /billing and reset.",
+  "Remote writes: independently re-verified as ZERO across 7 tables + CreditAccount. US$0 confirmed."
+ ]
+}
