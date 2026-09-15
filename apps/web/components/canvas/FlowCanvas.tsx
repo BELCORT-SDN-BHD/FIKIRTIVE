@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ReactFlow, Background, type Edge, type Node, type NodeChange, applyNodeChanges, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { CanvasMultiSelectModifier } from "./CanvasMultiSelectModifier";
 import { ImageNode, imageNodeActionable } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { TextNode, type CanvasTextSaveOutcome } from "./nodes/TextNode";
@@ -1839,6 +1840,8 @@ export default function FlowCanvas({
             // platform's command key, so shift-click — the thing every merchant tries first —
             // silently replaced the selection instead of adding to it. Shift also drags a
             // selection box over the board without leaving the hand tool.
+            // 而这几个键「此刻按着没有」,判定时读的是点击事件自己带的那一份,不是 React Flow
+            // 晚一拍才写进 store 的那份键盘状态 —— 见 CanvasMultiSelectModifier(FRONT-A15)。
             multiSelectionKeyCode={["Shift", "Meta", "Control"]}
             selectionKeyCode="Shift"
             deleteKeyCode={null}
@@ -1847,6 +1850,7 @@ export default function FlowCanvas({
             // 这里**刻意没有** `fitView` / `fitViewOptions`:第一次摆位由下面那条 effect 用
             // `fitPadding()` 做,和「Fit to screen」同一个来源(见 fitPadding 的说明)。
           >
+            <CanvasMultiSelectModifier />
             <Background />
           </ReactFlow>
         </div>
