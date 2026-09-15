@@ -183,9 +183,10 @@ export function parsePlanCardPayload(raw: unknown): ParsedPlanCardPayload | null
       return { maxCount: q.maxCount, aspectRatios: [...q.aspectRatios], fineDetailAvailable: q.fineDetailAvailable };
     },
   );
-  // 两步计划那一行。`next` 是**冻结的第二步**(Codex E2E-CRE-PAV-004):带着它 ⇒ 这张图片
-  // 出来之后,视频的确认卡由服务端自己铸出来,商家不必把图带回去。这里只判「有没有一份
-  // 读得懂的计划」—— 卡面据此换一句话,永远不据此算钱。
+  // 两步计划那一行。`next` 是裁决之前冻结的第二步(Codex E2E-CRE-PAV-004)。FC-3
+  // (S5 批量裁决 2026-09-12 #1358)之后那道服务端接力整个下线:新卡一张不再带 `next`,
+  // 旧卡上的 `next` 只能读、不再兑得现 —— 卡面也因此不再据它承诺任何事。解析这一格
+  // 照旧保留,只为读懂旧卡,永远不据此算钱。
   take(
     "videoStep",
     (v) => !!v && typeof v === "object" && num((v as Record<string, unknown>).estimatedCredits),

@@ -120,7 +120,7 @@ vi.mock("@fikirtive/db", () => ({
   otherHoldsSince: async () => "none" as const,
 }));
 
-const { finalizeOttoRun, strandedApprovalText } = await import("@/lib/otto-actions");
+const { finalizeOttoRun, strandedApprovalText, approvalPointerText } = await import("@/lib/otto-actions");
 const { canvasTurnStatus } = await import("@/lib/otto-canvas-turn");
 const { makeOttoStoryboardPort } = await import("@/lib/otto-storyboard-port");
 
@@ -209,6 +209,35 @@ describe("FC-1 复现:分镜卡编号被当成待确认的生成卡", () => {
     // 修好之后这一轮不再报「等你确认」,而屏幕上最后一句是诚实句,不是承诺。
     expect(status.label).not.toBe("Needs confirmation");
     expect(persistedTexts().at(-1)).toBe(strandedApprovalText({ storyboard: true, lang: "en" }));
+  });
+
+  /**
+   * FC-1（复核修正 P1）—— 模型**一字未说**时的那一句补话，不得指着一张不存在的卡。
+   *
+   * #498 的“口头批准静默”那一类：商家说「just do it」、模型一句话也不说就把 `generate`
+   * 停在了分镜卡编号上。补话从前按**原始批准项**算，于是落库的是两句互相打脸的话：
+   * 先一句「请在上方卡片确认，我会马上开始」（指着一张永远不会出现的卡），再一句诚实话。
+   * 直播只流后一句，刷新一次就看见前一句 —— 同一轮的两张嘴对不上。
+   */
+  it("模型一字未说 + 批准项指着分镜卡 ⇒ 只落那句诚实话，不再指一张不存在的卡", async () => {
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID,
+      threadId: THREAD_ID,
+      isNew: false,
+      priorOttoState: "s0",
+      // 模型一字未说 —— 不走 `runResult` 的默认承诺语。
+      result: { state: new FakeRunState(), interruptions: [generateInterruption(STORYBOARD_CARD_ID)], finalOutput: undefined, newItems: [] },
+      seqAfterUser: 45,
+    });
+
+    expect(persistedTexts()).toEqual([strandedApprovalText({ storyboard: true, lang: "en" })]);
+    expect(persistedTexts()).not.toContain(approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }));
+    expect(out).toEqual({
+      status: "done",
+      reply: strandedApprovalText({ storyboard: true, lang: "en" }),
+      appendedReply: strandedApprovalText({ storyboard: true, lang: "en" }),
+    });
+    expect(mockStartGen).not.toHaveBeenCalled();
   });
 
   it("真的 GEN_CARD 照旧待确认 —— 这道闸只挡确认不了的那一类", async () => {
