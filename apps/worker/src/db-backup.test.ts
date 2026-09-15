@@ -8,12 +8,16 @@ import { describe, expect, it } from "vitest";
 import {
   backupKeyFor,
   backupTriggerMode,
+  classifyPgDumpStderr,
+  formatPgDumpDiagnostic,
   isBackupWindow,
   klDateString,
   klHour,
+  PG_DUMP_FAILURE_TOKENS,
   pgEnvFromUrl,
   pgSpawnEnv,
   selectExpiredBackups,
+  withPgDumpDiagnostic,
 } from "./db-backup.js";
 
 describe("klDateString / klHour (Asia/Kuala_Lumpur = UTC+8, no DST)", () => {
@@ -219,5 +223,192 @@ describe("pgSpawnEnv (the COMPLETE child environment — no inherited PG*)", () 
     });
     expect(env.PGSSLMODE).toBe("require");
     expect(env.PGCHANNELBINDING).toBe("require");
+  });
+
+  /**
+   * #1385 review r1 — the classifier's signatures are English, so the message locale is
+   * part of the contract, not an incidental detail. pg_dump on Debian is an NLS build:
+   * under a German locale the mismatch line reads "Abbruch wegen unpassender
+   * Serverversion" and every pattern misses. The pin below is the only thing standing
+   * between an inherited LC_ALL and a misfiled diagnosis.
+   */
+  it("pins the message locale to C so pg_dump cannot answer in another language", () => {
+    const env = pgSpawnEnv(URL_, {
+      PATH: "/usr/bin",
+      LANG: "de_DE.UTF-8",
+      LC_ALL: "de_DE.UTF-8",
+      LC_MESSAGES: "de_DE.UTF-8",
+    });
+    // LC_ALL is the one that must win — POSIX lets it override LC_MESSAGES, so pinning
+    // only the weaker variable would lose to exactly the environment we are defending against.
+    expect(env.LC_ALL).toBe("C");
+    expect(env.LC_MESSAGES).toBe("C");
+  });
+});
+
+/**
+ * #1385 — why a failed backup must say WHICH failure it was.
+ *
+ * 1360 BackupRun rows on staging all read `media subprocess failed (exit code 1)`:
+ * pg_dump 17 could not dump a server that had moved to 18, and the message was
+ * indistinguishable from a wrong password or an unreachable host. These tests pin the
+ * two halves of the fix: the classification is right, and NOTHING from the stderr —
+ * host, user, IP, password — can ride out with it. Every sample below is real pg_dump /
+ * libpq wording; the first is the exact text reproduced against staging on 2026-09-14.
+ */
+describe("classifyPgDumpStderr (closed set of tokens, zero connection detail)", () => {
+  const VERSION_MISMATCH_16_VS_18 = [
+    "pg_dump: error: aborting because of server version mismatch",
+    "pg_dump: detail: server version: 18.6 (Debian 18.6-1.pgdg13+2); pg_dump version: 16.14 (Homebrew)",
+  ].join("\n");
+
+  const VERSION_MISMATCH_17_VS_18 = [
+    "pg_dump: error: aborting because of server version mismatch",
+    "pg_dump: detail: server version: 18.6 (Debian 18.6-1.pgdg13+2); pg_dump version: 17.11 (Debian 17.11-1.pgdg13+2)",
+  ].join("\n");
+
+  const AUTH_FAILED =
+    'pg_dump: error: connection to server at "ep-secret-king-123.ap-southeast-1.aws.neon.tech" (10.1.2.3), ' +
+    'port 5432 failed: FATAL:  password authentication failed for user "fikirtive_prod"';
+
+  const CONNECTION_REFUSED = [
+    'pg_dump: error: connection to server at "shinkansen.proxy.rlwy.net" (203.0.113.9), port 41234 failed: Connection refused',
+    "\tIs the server running on that host and accepting TCP/IP connections?",
+  ].join("\n");
+
+  it("names the failure that actually broke staging (16 client vs 18 server, exit 1)", () => {
+    const d = classifyPgDumpStderr(VERSION_MISMATCH_16_VS_18);
+    expect(d).toEqual({ token: "pg_dump_version_mismatch", server: "18.6", client: "16.14" });
+    expect(formatPgDumpDiagnostic(d)).toBe("pg_dump_version_mismatch: server 18.6 / pg_dump 16.14");
+  });
+
+  it("classifies 17-vs-18 the same way — the pin in the Dockerfile is what moves", () => {
+    expect(formatPgDumpDiagnostic(classifyPgDumpStderr(VERSION_MISMATCH_17_VS_18))).toBe(
+      "pg_dump_version_mismatch: server 18.6 / pg_dump 17.11",
+    );
+  });
+
+  it("separates a wrong password from a version mismatch (both were 'exit code 1' before)", () => {
+    expect(classifyPgDumpStderr(AUTH_FAILED).token).toBe("auth_failed");
+  });
+
+  it("separates an unreachable server — libpq wraps auth in 'connection … failed', so order matters", () => {
+    expect(classifyPgDumpStderr(CONNECTION_REFUSED).token).toBe("connection_failed");
+  });
+
+  it("falls back to 'unknown' rather than guessing, and carries no text with it", () => {
+    const d = classifyPgDumpStderr(
+      "pg_dump: error: could not write to output file: No space left on device",
+    );
+    expect(d).toEqual({ token: "unknown" });
+    expect(formatPgDumpDiagnostic(d)).toBe("unknown");
+  });
+
+  it("classifies an empty tail (stderr said nothing) as unknown", () => {
+    expect(classifyPgDumpStderr("")).toEqual({ token: "unknown" });
+  });
+
+  /**
+   * #1385 review r1 — why `pgSpawnEnv` pins LC_ALL=C, stated as a test rather than a comment.
+   * These patterns are English and there is no stable translated form worth matching, so a
+   * German pg_dump defeats ALL of them: the exact same failure would file as `unknown`.
+   * The two assertions below are a pair on purpose — the first shows the classifier really
+   * is locale-dependent, the second shows the environment pin is what removes the exposure.
+   * Delete the pin and this test says so.
+   */
+  it("would miss a translated pg_dump — which is exactly what the pinned C locale prevents", () => {
+    const german = [
+      "pg_dump: Fehler: Abbruch wegen unpassender Serverversion",
+      "pg_dump: Detail: Serverversion: 18.6 (Debian 18.6-1.pgdg13+2); pg_dump-Version: 17.11",
+    ].join("\n");
+    expect(classifyPgDumpStderr(german).token).toBe("unknown");
+    // ...and this is why the child can never be handed a German locale in the first place.
+    const env = pgSpawnEnv("postgres://u:p@localhost:5432/db", { LC_ALL: "de_DE.UTF-8" });
+    expect(env.LC_ALL).toBe("C");
+  });
+
+  /**
+   * The load-bearing assertion. `dumpDatabaseToFile` reads stderr for the FIRST time in
+   * this module's life; if any of it could reach `formatPgDumpDiagnostic`'s output it
+   * would land in the BackupRun.error column and render verbatim in /admin/system.
+   */
+  it("never lets a host, user, IP, port or password out of the stderr it read", () => {
+    const samples = [
+      VERSION_MISMATCH_16_VS_18,
+      VERSION_MISMATCH_17_VS_18,
+      AUTH_FAILED,
+      CONNECTION_REFUSED,
+      // stderr crafted to smuggle connection detail through the version line itself
+      "pg_dump: detail: server version: 18.6 host=evil.example.com user=root password=hunter2; pg_dump version: 17.11",
+      'pg_dump: error: connection to server at "db.internal" failed: FATAL: password authentication failed for user "root" (password=hunter2)',
+    ];
+    const forbidden = [
+      "neon.tech",
+      "rlwy.net",
+      "evil.example.com",
+      "db.internal",
+      "fikirtive_prod",
+      "root",
+      "hunter2",
+      "10.1.2.3",
+      "203.0.113.9",
+      "41234",
+      "5432",
+    ];
+    for (const sample of samples) {
+      const out = formatPgDumpDiagnostic(classifyPgDumpStderr(sample));
+      for (const secret of forbidden) expect(out).not.toContain(secret);
+      // and whatever came out is one of the four tokens, optionally with two numbers
+      expect(out).toMatch(
+        /^(?:pg_dump_version_mismatch|connection_failed|auth_failed|unknown)(?:: server [\d.]+ \/ pg_dump [\d.]+)?$/,
+      );
+    }
+  });
+});
+
+describe("withPgDumpDiagnostic (the only thing allowed into the error column)", () => {
+  const SUMMARY = "media subprocess failed (exit code 1)";
+
+  it("appends the classification so the panel says which failure it was", () => {
+    const err = Object.assign(new Error("pg_dump failed"), {
+      exitCode: 1,
+      pgDumpDiagnostic: "pg_dump_version_mismatch: server 18.6 / pg_dump 17.11",
+    });
+    expect(withPgDumpDiagnostic(SUMMARY, err)).toBe(
+      "media subprocess failed (exit code 1) [pg_dump_version_mismatch: server 18.6 / pg_dump 17.11]",
+    );
+  });
+
+  it("accepts every token in the closed set", () => {
+    for (const token of PG_DUMP_FAILURE_TOKENS) {
+      expect(withPgDumpDiagnostic(SUMMARY, { pgDumpDiagnostic: token })).toBe(
+        `${SUMMARY} [${token}]`,
+      );
+    }
+  });
+
+  it("leaves the summary alone when the error carries no diagnostic", () => {
+    expect(withPgDumpDiagnostic(SUMMARY, new Error("boom"))).toBe(SUMMARY);
+    expect(withPgDumpDiagnostic(SUMMARY, undefined)).toBe(SUMMARY);
+    expect(withPgDumpDiagnostic(SUMMARY, "a string error")).toBe(SUMMARY);
+  });
+
+  /**
+   * Re-validated on READ, not just on write: the allow-list is the guarantee, so a value
+   * that did not come from formatPgDumpDiagnostic is dropped rather than persisted.
+   */
+  it("drops anything outside the allow-listed shape instead of persisting it", () => {
+    const hostile: unknown[] = [
+      'connection to server at "db.internal" failed',
+      "pg_dump_version_mismatch: server 18.6 / pg_dump 17.11 host=evil.example.com",
+      "unknown; DATABASE_URL=postgres://u:p@h/db",
+      "auth_failed for user fikirtive_prod",
+      "",
+      42,
+      { token: "unknown" },
+    ];
+    for (const value of hostile) {
+      expect(withPgDumpDiagnostic(SUMMARY, { pgDumpDiagnostic: value })).toBe(SUMMARY);
+    }
   });
 });
