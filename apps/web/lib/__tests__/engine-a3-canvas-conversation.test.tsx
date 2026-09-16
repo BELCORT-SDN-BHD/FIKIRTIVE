@@ -156,9 +156,19 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 
 const { NorthstarCanvasWorkspace } = await import("@/components/canvas/NorthstarCanvasWorkspace");
 const { OttoChatStream } = await import("@/components/otto/OttoChatStream");
-const { CONVERSATION_COST_HINT } = await import("@/components/otto/ConversationCostHint");
-const { SEARCH_COST_HINT } = await import("@/components/otto/SearchCostHint");
-const { UNDERSTANDING_COST_HINT } = await import("@/components/otto/UnderstandingCostHint");
+/**
+ * R3-F06(Founder 2026-09-14):这三段常驻说明整批撤了,组件也随之删除,所以这里不再
+ * import 它们的导出字符串,改成钉住**商家读到的那几句话的开头**。
+ *
+ * 为什么钉字面量反而是对的:要拦的正是「换个组件名、把同一句话再挂回输入框附近」。
+ * 从前那种「import 组件常量再比对」的写法在那种情况下会照样绿 —— 新组件、新常量、
+ * 同一句话。这里只比开头,所以改措辞也躲不过去。
+ */
+const STANDING_COST_SENTENCES = [
+  "Uploads are understood automatically",
+  "Otto searches the web when your question needs it",
+  "Otto checks with you on a card before it makes anything",
+] as const;
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -280,18 +290,17 @@ describe("ENGINE-A3 画布上找不到任何直接花钱的控件", () => {
     expect(mocks.animate).not.toHaveBeenCalled();
   });
 
-  it("ENGINE-A3 画布上唯一的输入框下面常驻两条价目小字 —— 第一句话之前就读得到", async () => {
+  it("R3-F06 画布上唯一的输入框附近不再常驻任何一段费用说明", async () => {
     const dom = await render(
       createElement(NorthstarCanvasWorkspace, { runtimeContext, entities: [] }),
     );
 
-    // §7.4 一级(对话轮)+ §7.6 处置一:先确认、而这一程对话本身按用量计费。
-    expect(dom.textContent).toContain(CONVERSATION_COST_HINT);
-    // 搜索那一条(MONEY-A10)在画布 composer 上是⑦段的新写点 —— 从前它只挂在对话面板里。
-    expect(dom.textContent).toContain(SEARCH_COST_HINT);
-    // 数值禁字面量:这两句里的数都是现算的,所以断言读的是导出的那一份字符串本身。
-    expect(CONVERSATION_COST_HINT).toMatch(/checks with you/);
-    expect(CONVERSATION_COST_HINT).toMatch(/charged for what it uses/);
+    // R3-F06(Founder 2026-09-14,三份规格的 2026-09-14 变更登记)。这一条从前钉的是反方向
+    // (两条价目小字必须常驻在这里);Founder 看到截图后裁定这类输入附近的常驻说明不要。
+    // 断言读的是**真 DOM**,所以把任何一段挂回来 —— 换名字也算 —— 这一条当场红。
+    for (const sentence of STANDING_COST_SENTENCES) {
+      expect(dom.textContent, `「${sentence}」又常驻在画布输入框附近了`).not.toContain(sentence);
+    }
   });
 });
 
@@ -408,11 +417,14 @@ describe("ENGINE-A3 花钱动作仍走对话的确认卡", () => {
     expect(dom.textContent).toContain("Otto only makes this after you approve.");
   });
 
-  it("ENGINE-A3 对话 composer 下方三条价目披露常驻,一条都不许改成按需披露", async () => {
+  it("R3-F06 对话 composer 附近不再常驻那三段费用说明(确认卡与按实结算不受影响)", async () => {
     const dom = await render(mountStream());
 
-    expect(dom.textContent).toContain(UNDERSTANDING_COST_HINT);
-    expect(dom.textContent).toContain(SEARCH_COST_HINT);
-    expect(dom.textContent).toContain(CONVERSATION_COST_HINT);
+    // 上一条已经证明同一张 DOM 上确认卡还在、`Generate · N credits` 还在;这一条只证明
+    // 输入框附近那三段常驻说明没了。两条读的是同一次渲染,所以「删了展示却顺手削了确认」
+    // 不可能两条同时绿。
+    for (const sentence of STANDING_COST_SENTENCES) {
+      expect(dom.textContent, `「${sentence}」又常驻在对话 composer 附近了`).not.toContain(sentence);
+    }
   });
 });

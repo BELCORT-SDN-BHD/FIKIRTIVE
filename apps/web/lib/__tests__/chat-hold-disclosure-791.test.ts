@@ -9,37 +9,55 @@
  * 之外的部分退回 balance),说出来只有好处:它比商家自己猜的更宽厚。
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { CHAT_HOLD_NOTE } from "@/lib/credit-format";
 
 const webRoot = path.resolve(__dirname, "../..");
 
-describe("#791-9 预扣这件事说出口", () => {
-  it("三件事一句说全:最多先冻结多少、按实际扣、剩下退回", async () => {
-    const { OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, displayCredits } = await import("@fikirtive/core");
-    const hold = displayCredits(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
-    expect(CHAT_HOLD_NOTE).toContain(`${hold} credits`);
-    expect(CHAT_HOLD_NOTE).toMatch(/holds/i);
-    expect(CHAT_HOLD_NOTE).toMatch(/only what it uses/i);
-    expect(CHAT_HOLD_NOTE).toMatch(/returns the rest/i);
+/**
+ * R3-F06(Founder 2026-09-14「输入附近不要这类常驻说明」+ 2026-09-15 当面追加「整段一起删」)。
+ *
+ * 这一组从前钉的是界面上那句 `CHAT_HOLD_NOTE`(「Each message holds up to N …」):它必须在、
+ * 必须说「up to」、数字必须现算、必须挂在商家开始对话的那一屏上。Founder 裁掉了门厅页尾那条
+ * 「You stay in control」之后,那句话在产品面上一个消费者都不剩,常量也随之删除。
+ *
+ * **被删的是那句话,不是那件事。** 预扣照旧:先冻结 min(常量, 余额),结算按实际 token 花费扣,
+ * 差额同笔事务退回(`settleCredits`:A = min(actual, held))。所以这一组现在钉两半 ——
+ *   ① 产品面上确实不再常驻这段说明(下面第一条,同时拦「换个地方又挂回来」);
+ *   ② **这件事仍然说得出口**:Otto 被问到时自己答得上来(第二组,原封不动)。
+ *      真实数字另有 Billing 的账目与 journeys 02/03/04(开着的冻结 / 按实结算 / 整额退款)。
+ */
+describe("R3-F06 预扣说明不再常驻在产品面上,但那件事没变", () => {
+  it("门厅与钱文案单一来源都不再带这句话", () => {
+    const frontDoor = readFileSync(path.join(webRoot, "components/otto/OttoFrontDoor.tsx"), "utf8");
+    expect(frontDoor, "门厅又挂回了预扣说明").not.toContain("CHAT_HOLD_NOTE");
+    expect(frontDoor, "门厅自己抄了一份预扣文案").not.toContain("Each message holds up to");
+
+    const creditFormat = readFileSync(path.join(webRoot, "lib/credit-format.ts"), "utf8");
+    expect(
+      creditFormat,
+      "CHAT_HOLD_NOTE 又被建出来了 —— 没有消费者的钱文案常量不留在仓库里",
+    ).not.toContain("export const CHAT_HOLD_NOTE");
   });
 
-  // #898:冻结额改成 min(4, 余额)后,「holds 4 credits」对余额 1.2 的商家就是假话 ——
-  // 而这句话正是给这种商家看的。必须说「up to」。
-  it("#898 说的是上限,不是每次都冻这么多", () => {
-    expect(CHAT_HOLD_NOTE).toMatch(/holds up to/i);
-  });
-
-  it("数字是算出来的 —— 冻结额改了,这句话跟着改", () => {
-    // 写死 4 就会在下一次调整冻结额时变成一句假话。
-    const src = readFileSync(path.join(webRoot, "lib/credit-format.ts"), "utf8");
-    expect(src).toContain("OTTO_CONVERSATION_TURN_RESERVE_INTERNAL");
-  });
-
-  it("商家开始对话的那一屏就说了", () => {
-    const src = readFileSync(path.join(webRoot, "components/otto/OttoFrontDoor.tsx"), "utf8");
-    expect(src).toContain("CHAT_HOLD_NOTE");
+  it("没有任何产品面再念这句话(整仓扫一遍,不只门厅)", () => {
+    // 只盯门厅会漏:换个页面挂同一句话,上一条照样绿。
+    const roots = ["components", "app", "lib", "design-system"];
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(path.join(webRoot, dir), { withFileTypes: true })) {
+        if (entry.name === "node_modules" || entry.name === "__tests__" || entry.name.startsWith(".")) continue;
+        const rel = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) walk(rel);
+        else if (/\.tsx?$/.test(entry.name) && !/\.(test|spec)\.tsx?$/.test(entry.name)) {
+          if (readFileSync(path.join(webRoot, rel), "utf8").includes("Each message holds up to")) {
+            offenders.push(rel);
+          }
+        }
+      }
+    };
+    for (const root of roots) walk(root);
+    expect(offenders, "有产品面又把预扣说明挂回来了").toEqual([]);
   });
 });
 

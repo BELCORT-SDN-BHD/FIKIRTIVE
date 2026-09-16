@@ -104,6 +104,11 @@ export function MediaTile({
            「Open <名字>」,勾选那一颗才叫「Select <名字>」—— 两个控件两个名字,读屏
            不会听到同一句话说两遍。两颗键的 <名字> 走同一份 `accessibleName`(单源)。 */
         aria-label={`Open ${accessibleName}`}
+        /* 详情面关掉之后,键盘焦点要回到**这一件素材**的那块砖上(R3-F05)。回不去的是 DOM
+           节点:关掉详情面会让网格按同一组条件重取一次,这块砖在骨架屏那一帧就被卸掉了,
+           重挂上来的是另一个节点 —— 所以认的是素材 id,不是节点。写在网格这一侧,是因为
+           只有网格知道哪块砖是哪件素材;焦点怎么安放见 `LibraryView.tsx` 的 focusReturn。 */
+        data-library-card={item.id}
         // 悬停/长按看到的是**完整**原名,和 `CanvasLibraryPicker.tsx` 同源;caption 那一份是
         // 摘要 / 截断 + 序号,拿它当 tooltip 等于把截断又说了一遍。
         title={libraryItemRawName(item)}

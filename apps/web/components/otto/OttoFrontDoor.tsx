@@ -5,7 +5,6 @@ import {
   ArrowUp,
   CircleDollarSign,
   Clapperboard,
-  ShieldCheck,
   ShoppingBag,
   Tags,
   Users,
@@ -22,13 +21,11 @@ import { startStreamedThread } from "@/lib/otto-start-thread";
 import type { ChatThreadSurface } from "@/lib/otto-thread-surface";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { QuickBrief } from "@/components/otto/QuickBrief";
-import { ConversationCostHint } from "@/components/otto/ConversationCostHint";
-import { SearchCostHint } from "@/components/otto/SearchCostHint";
 import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePickerMenu";
 import { useReferencePicker } from "@/components/reference-picker/useReferencePicker";
 import type { ChatThreadDTO } from "@/lib/types";
 import { ottoGreeting } from "@/lib/otto-greeting";
-import { CHAT_HOLD_NOTE, CHAT_SPEND_NOTE, lowBalanceForVideoMessage } from "@/lib/credit-format";
+import { lowBalanceForVideoMessage } from "@/lib/credit-format";
 import { ExitLink } from "@/components/exits/Exits";
 import { BILLING_HREF } from "@/lib/exits";
 import { defaultVideoDisplayCredits, INTERNAL_PER_DISPLAY } from "@fikirtive/core/spend";
@@ -322,16 +319,10 @@ export function OttoFrontDoor({
           {...{ [CANVAS_OTTO_DOCK_ATTR]: "" }}
           className="cv-creation-band pointer-events-auto"
         >
-          {/* ENGINE-A3 §7.4/§7.6 处置一 —— 画布的**第一句话**也要先读到价目。
-              ⑦段之后这是画布上唯一的输入框,商家还没有任何一条对话,所以对话流里那一叠
-              (`OttoChatStream`)此刻还不存在;披露必须常驻在这里,否则「先披露、后执行」
-              在**第一次**花钱那一趟就是空的。
-              上传理解那一条不挂:这道门厅没有附件入口(`+ Add context` 长在对话流的
-              composer 上),替一条这里走不通的路报价是另一种不诚实。 */}
-          <div className="mb-2 flex flex-col gap-0.5">
-            <ConversationCostHint />
-            <SearchCostHint />
-          </div>
+          {/* R3-F06(Founder 2026-09-14,`docs/specs/otto-engine.md` 等三份规格的 2026-09-14
+              变更登记):这块创作带上从前常驻两段说明(这一轮对话的预扣 / 自动搜网),
+              Founder 裁定这类输入附近的常驻说明不要,跨全部受影响入口撤掉,不改成 tooltip
+              或折叠区。撤的只有展示:第一轮对话照样计费,出图仍旧先出确认卡再执行。 */}
           {composer}
           {error ? (
             <Alert role="alert" variant="destructive" className="mt-2">
@@ -368,15 +359,10 @@ export function OttoFrontDoor({
 
         {/* Composer */}
         <div className="w-full">
-          {/* ENGINE-A3 §7.4/§7.6 处置一 —— 披露先于扣费,画布那一支之外也一样。这道门厅的
-              四颗目标格子按一下就把那句话送出去、开一条真对话,而一轮对话本身按用量计费;
-              把价目留给画布那一支就等于「按得到的地方读不到,读得到的地方按不着」。挂的是
-              画布那一支的**同一个**组件(`ConversationCostHint`),不是第二份价目 —— 数值只有
-              一处作者(`lib/credit-format.ts` 从 `OTTO_CONVERSATION_TURN_RESERVE_INTERNAL` 现算)。
-              搜索那一条(`SearchCostHint`)不在本刀范围内,画布那一支已挂,这里登记待下一刀。 */}
-          <div className="mb-2 flex flex-col gap-0.5">
-            <ConversationCostHint />
-          </div>
+          {/* R3-F06(Founder 2026-09-14):这道门厅的输入框上方从前也常驻那段对话费用说明,
+              与画布那一支同批撤掉 —— 同一条裁决,同一个理由,所以两支一起走,不留一处。
+              页尾那条信任说明当时暂留、2026-09-15 经 Founder 当面裁决「整段一起删」也已移除,
+              所以这道门厅上这一类常驻说明现在一处不剩(墓碑在本文件底部)。 */}
           {composer}
         </div>
 
@@ -455,19 +441,13 @@ export function OttoFrontDoor({
           </Alert>
         ) : null}
 
-        {/* Standing trust note: the approval boundary and conversation charge are related,
-            but not the same promise. Keep both explicit in one readable callout. */}
-        <Alert density="compact">
-          <ShieldCheck aria-hidden="true" />
-          <AlertTitle>You stay in control</AlertTitle>
-          <AlertDescription>
-            <span>Otto plans and makes it — creations start only after you confirm on the card.</span>
-            <span>{CHAT_SPEND_NOTE}</span>
-            {/* #791-9: the hold is named before the first turn, so the temporary balance dip
-                cannot read like an accounting bug. */}
-            <span>{CHAT_HOLD_NOTE}</span>
-          </AlertDescription>
-        </Alert>
+        {/* R3-F06 收尾(Founder 2026-09-15 当面裁决「整段一起删」):页尾从前还常驻一条带盾牌
+            图标的信任说明 —— 审批边界 + 按用量计费 + 每条消息的预扣,三句一叠。
+            它是 2026-09-14 那一刀留下的最后一处同类常驻说明,Founder 看过之后裁定整段删掉。
+            撤的仍然只是**展示**:先确认再执行、按实结算、预扣即退这三件事本身一个字没动 ——
+            确认卡照旧先问后做(`Generate · N credits`),账目与价目在 Billing 念得到。
+            (这里刻意不复述那三句原文:`engine-a3-front-door-disclosure.test.tsx` 直接扫本文件
+            的源码文本,注释里抄一遍会让那道围栏对着自己的墓碑报红。) */}
       </div>
     </div>
   );

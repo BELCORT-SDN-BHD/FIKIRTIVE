@@ -42,7 +42,7 @@ const { searchReferences } = await import("@/lib/reference-search");
 const { productFormIdentityIntent } = await import("@/lib/brand-product-form-identity");
 const { storage } = await import("@/lib/storage");
 const { prisma, createProduct } = await import("@fikirtive/db");
-const { newId, storageKey } = await import("@fikirtive/core");
+const { newId, storageKey, storageKeyToSrc } = await import("@fikirtive/core");
 
 const REPO_ROOT = path.join(process.cwd(), "..", "..");
 const EMAIL_A = `prodid-a-${randomUUID()}@fikirtive.test`;
@@ -213,6 +213,40 @@ describe("PRODID-A9 跨租户:找不到,写入被拒", () => {
     await expect(
       prisma.entity.count({ where: { id: aEntityId, ownerId: ownerA, deletedAt: null } }),
     ).resolves.toBe(1);
+  }, 60_000);
+
+  it("PRODID-A9 租户 B 改不动 A 的产品身份:Library 那两条改名/换封面的动作都被拒,A 的两格一字不动", async () => {
+    await signInAs(EMAIL_A);
+    // Library 的产品详情新开了改名与换封面两颗键,它们各自走一条 server action。这一条证的是
+    // 两条路的租户边界:`ownerId` 只来自服务端 principal,拿着别人的 entityId 按下去什么都改不到
+    // (规格 §1.6)。图刻意也是 A 自己的 —— 拒绝的理由必须是「这一行不是你的」,而不是「图不对」。
+    const name = `Cendol ${randomUUID().slice(0, 8)}`;
+    const cover = await seedAsset(ownerA, `a9-cover-${randomUUID().slice(0, 8)}`);
+    const other = await seedAsset(ownerA, `a9-other-${randomUUID().slice(0, 8)}`);
+    const saved = (await saveBrandRecord({
+      kind: "product", data: { name, imageAssetId: cover },
+    })) as { ok: true; id: string };
+    const entityId = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    })).entityId!;
+    await prisma.referenceImage.create({
+      data: { id: newId(), ownerId: ownerA, entityId, assetId: other, position: 1 },
+    });
+
+    await signInAs(EMAIL_B);
+    expect(await updateEntity(entityId, { name: "Stolen" })).toEqual({ error: "Entity not found." });
+    expect(await setBaseAsset(entityId, other)).toEqual({ error: "Element not found." });
+
+    // 受害者那一行逐格没变:名字还是原来的,封面还是原来那张。
+    await expect(
+      prisma.entity.findFirstOrThrow({
+        where: { id: entityId, ownerId: ownerA }, select: { name: true, baseAssetId: true },
+      }),
+    ).resolves.toEqual({ name, baseAssetId: cover });
+    // 对照组:同样两句话由 A 自己发出来是通的 —— 上面那两句 error 不是「这两条动作本来就不工作」。
+    await signInAs(EMAIL_A);
+    expect(await setBaseAsset(entityId, other)).toEqual({ ok: true });
+    expect(await updateEntity(entityId, { name: `${name} large` })).toEqual({ ok: true });
   }, 60_000);
 
   it("PRODID-A9 没有身份的 product 行进不了库(CHECK BrandRecord_product_needs_entity)", async () => {
@@ -413,6 +447,48 @@ describe("PRODID-A4 改名换图:名字与主图的唯一源是身份,两边同�
     expect((await listBrandRecords()).find((r) => r.id === saved.id)?.data).toMatchObject({
       imageAssetId: picked, price: "RM 9.00",
     });
+  }, 60_000);
+
+  it("PRODID-A4 Library 换封面:Library 那张卡与 Brand 页看到同一张(封面判据是身份上的 baseAssetId)", async () => {
+    await signInAs(EMAIL_A);
+    // 上一条证的是「Brand 页不回滚商家在 Library 挑的封面」,读的是价签那一面。这一条补的是
+    // **Library 自己那一面**:A4 的原话是「另一边同步显示」,而 Library 的卡片如果按
+    // `referenceImages[0]`(挂上去的先后)画封面,商家在这里挑完封面,Brand 页换了、
+    // Library 自己没换 —— 屏幕上就是两张图,而身份只有一份。所以封面判据必须也是
+    // `Entity.baseAssetId`(与 `lib/stuff-items.ts:74`、`MentionInput` 逐字同一条规则)。
+    const name = `Kopi ais ${randomUUID().slice(0, 8)}`;
+    const first = await seedAsset(ownerA, `a4lib-first-${randomUUID().slice(0, 8)}`);
+    const picked = await seedAsset(ownerA, `a4lib-picked-${randomUUID().slice(0, 8)}`);
+    const saved = (await saveBrandRecord({
+      kind: "product", data: { name, price: "RM 3.00", imageAssetId: first },
+    })) as { ok: true; id: string };
+    const entityId = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    })).entityId!;
+    await prisma.referenceImage.create({
+      data: { id: newId(), ownerId: ownerA, entityId, assetId: picked, position: 1 },
+    });
+
+    // 商家在 Library 的产品详情里把第二张挑成封面 —— 走的就是 Brand 页那一面用的同一条动作。
+    await expect(setBaseAsset(entityId, picked)).resolves.toEqual({ ok: true });
+
+    const card = ((await getLibraryElements()) as { id: string; coverUrl: string | null; images: readonly { assetId: string }[]; baseAssetId: string | null }[])
+      .find((e) => e.id === entityId)!;
+    // 两边同一张:Brand 页读到的 `imageAssetId` 与 Library 卡片画的那张是同一个 asset。
+    expect(card.baseAssetId).toBe(picked);
+    expect((await listBrandRecords()).find((r) => r.id === saved.id)?.data).toMatchObject({
+      imageAssetId: picked,
+    });
+    // 没有第二份图:卡片上的封面不是「第一张挂上去的」,而是身份上钉的那一张。
+    const pickedAsset = await prisma.asset.findFirstOrThrow({
+      where: { id: picked, ownerId: ownerA }, select: { ownerId: true, contentHash: true, ext: true },
+    });
+    expect(card.coverUrl).toBe(
+      storageKeyToSrc(storageKey(pickedAsset.ownerId, pickedAsset.contentHash, pickedAsset.ext.toLowerCase())),
+    );
+    // 详情里那排可挑的图 = 这件产品自己的 live 参考图,一张不多一张不少(A5:这里没有价格、
+    // 卖点、分类,只有身份那两格)。
+    expect(card.images.map((i) => i.assetId).sort()).toEqual([first, picked].sort());
   }, 60_000);
 
   /**
@@ -1148,6 +1224,40 @@ describe("PRODID-A10 建、改、删产品各一次:余额不变,账本零新行
     const edited = await saveBrandRecord({ id: saved.id, kind: "product", data: { name, price: "RM 2.00" } });
     expect(edited).toEqual({ ok: true, id: saved.id });
     await expect(deleteBrandRecord({ id: saved.id })).resolves.toEqual({ ok: true });
+
+    const after = await prisma.creditAccount.findUniqueOrThrow({
+      where: { orgId: ownerA },
+      select: { balance: true, reserved: true },
+    });
+    expect(after).toEqual(before);
+    expect(await ledgerRows(ownerA)).toBe(ledgerBefore);
+  }, 60_000);
+
+  it("PRODID-A10 Library 改名 + 换封面各一次:余额不变,账本零新行", async () => {
+    await signInAs(EMAIL_A);
+    // Library 的产品详情新开了两颗键。钱路 fail closed 的另一半是「不该花钱的动作一分都不许花」——
+    // 改名与换封面都只动身份那一行,所以账本必须逐字不变(规格 §1.5)。
+    const before = await prisma.creditAccount.findUniqueOrThrow({
+      where: { orgId: ownerA },
+      select: { balance: true, reserved: true },
+    });
+    const ledgerBefore = await ledgerRows(ownerA);
+
+    const name = `Mee goreng ${randomUUID().slice(0, 8)}`;
+    const cover = await seedAsset(ownerA, `a10-cover-${randomUUID().slice(0, 8)}`);
+    const picked = await seedAsset(ownerA, `a10-picked-${randomUUID().slice(0, 8)}`);
+    const saved = (await saveBrandRecord({
+      kind: "product", data: { name, imageAssetId: cover },
+    })) as { ok: true; id: string };
+    const entityId = (await prisma.brandRecord.findFirstOrThrow({
+      where: { id: saved.id, ownerId: ownerA }, select: { entityId: true },
+    })).entityId!;
+    await prisma.referenceImage.create({
+      data: { id: newId(), ownerId: ownerA, entityId, assetId: picked, position: 1 },
+    });
+
+    await expect(updateEntity(entityId, { name: `${name} special` })).resolves.toEqual({ ok: true });
+    await expect(setBaseAsset(entityId, picked)).resolves.toEqual({ ok: true });
 
     const after = await prisma.creditAccount.findUniqueOrThrow({
       where: { orgId: ownerA },

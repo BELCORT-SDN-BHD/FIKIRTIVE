@@ -975,9 +975,11 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   justify-content: center;
   pointer-events: none;
 }
-/* `> span` (was a descendant selector): the cost line mounted below is itself a <span>,
-   and the pill treatment would have swallowed its own `text-[0.75rem] text-muted-foreground`
-   — a disclosure that looks different on every surface is one a merchant stops recognising. */
+/* `> span` (direct child, not a descendant): today the block holds exactly ONE child — the
+   decorative "Drop image…" title. R3-F06 (Founder 2026-09-14) removed the understanding-price
+   line that used to sit beside it, so the whole block is decorative again: `aria-hidden` lives
+   on the container and `pointer-events: none` lets drag/marquee/zoom pass straight through.
+   Keep the child selector anyway — it keeps the pill treatment off anything nested later. */
 .gb .cv-dropzone > span {
   font-size: 14px;
   font-weight: 600;
@@ -988,18 +990,6 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   box-shadow: var(--shadow-sm);
   border: 1px solid var(--border);
 }
-/* MONEY-A9 §7.3 — the understanding price rides under the drop label. Card ground, because
-   `text-muted-foreground` over whatever the merchant's board happens to show is unreadable. */
-.gb .cv-dropzone-cost {
-  max-width: min(520px, 80%);
-  text-align: center;
-  background: var(--card);
-  padding: 6px 14px;
-  border-radius: 999px;
-  box-shadow: var(--shadow-sm);
-  border: 1px solid var(--border);
-}
-
 /* ── Per-asset inspector — shadcn Sheet owns viewport anchoring, scrim, focus trapping,
  * Escape, and focus restoration. These classes only arrange the content inside it. */
 .cv-detail {
