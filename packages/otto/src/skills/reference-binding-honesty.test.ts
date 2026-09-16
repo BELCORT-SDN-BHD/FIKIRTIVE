@@ -458,6 +458,13 @@ describe("FC-2 复审 · 信号表两侧各一打", () => {
     // MS
     "gambar ni tukar background jadi pantai",
     "guna gambar tadi tapi tambah kucing",
+    // 复审 P2-1 —— 明确指着那张图,而句子里恰好有个 new:修饰的是帽子/标语,不是交付物。
+    // 从前软否决先跑,这几句全被判成 fresh —— 商家指着图说话,系统却当没听见。
+    "add a new hat to this photo",
+    "edit this and add a new tagline",
+    "put a new hat on this picture",
+    "这张图换个新的背景",
+    "tambah topi baru pada gambar ni",
   ];
 
   const FRESH_PHRASES = [
@@ -481,6 +488,14 @@ describe("FC-2 复审 · 信号表两侧各一打", () => {
     // 一个信号都没有 ⇒ 维持今天的行为
     "a cat drinking coffee, studio light",
     "now make a poster for the raya sale",
+    // 复审 P2-2 —— 「now …」那一档本身不说明对象是哪一件。点名了一件新交付物
+    // (poster / flyer / banner / carousel)就不是接着这张图改,绑上去就是拿旧图去做新活。
+    "now i want a poster for the raya sale",
+    "now add a flyer for deepavali",
+    "now i want three banners for merdeka",
+    "now change the logo into a new carousel",
+    // 复审 P2-1 的另一边:硬否决连指代都压得过 —— 他明说要另一件了。
+    "edit this photo, actually make a brand new one",
   ];
 
   it.each(CONTINUE_PHRASES)("指着那张图 ⇒ continue:%s", (text) => {
@@ -495,9 +510,12 @@ describe("FC-2 复审 · 信号表两侧各一打", () => {
     ).toBe("fresh");
   });
 
-  it("两张表各自都在一打以上(少了就不是行为面,是几个例子)", () => {
+  it("两张表各自都在一打以上,两个方向都在表里(少了就不是行为面,是几个例子)", () => {
     expect(CONTINUE_PHRASES.length).toBeGreaterThanOrEqual(12);
     expect(FRESH_PHRASES.length).toBeGreaterThanOrEqual(12);
+    // 复审 P2:两个方向都必须在表里 —— 只守一边,另一边就是下一次走查的现场。
+    expect(CONTINUE_PHRASES).toContain("add a new hat to this photo");
+    expect(FRESH_PHRASES).toContain("now i want a poster for the raya sale");
   });
 });
 

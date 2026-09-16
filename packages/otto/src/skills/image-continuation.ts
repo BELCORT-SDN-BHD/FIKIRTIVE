@@ -32,27 +32,31 @@
 import type { OttoContext } from "../context.js";
 
 /**
- * 「接着屏幕上那张做」的信号。
+ * ── 判据的两个等级(复审 P2-1 / P2-2,2026-09-15)────────────────────────────────
  *
- * 收的只有两类,其余一律不收(复审 P1 的修根点):
- *   ① **指向一张图的指代** —— this/that/same + image|picture|photo、edit this / change this /
- *      add to this|it、中文「这张/那张/同一张/改这/在这基础上」、马来语「gambar ni/ini/tadi」。
- *   ② **接续副词 + 指向已有东西的动词** —— "now i want" / "now add" / "now change"
- *      (走查原话「now i wan @Xinyi hold the cat…」就在这一档)。
+ * 一句话要绑住「这条对话正在做的那张图」,只有两条路,而这两条路**分量不同**:
  *
- * 不收不带指代对象的动词词组——"keep the" / "change the" / "edit the" / "instead of" /
- * "now put" / "this one" / 中文「现在要」「保留」 / 马来语 "kekalkan"。它们在任何一句全新请求里
- * 都出得来(「make me a poster for the raya sale, keep the text short」「现在要一张海报」),
- * 收了就把一张无关的底图绑进一次付费的新图 —— 正是 FC-2 要挡的那类错输入花钱,
- * 只是方向相反。
+ *   ① **明确指着那张图**(`EXPLICIT_IMAGE_DEICTICS`)—— "this photo" / "edit this" /
+ *      「这张」/ "gambar ni"。他把手指按在那张图上了,再没有第二种读法。
+ *   ② **接续副词 + 指向已有东西的动词**(`CONTINUATION_ADVERBS`)—— "now i want" /
+ *      "now add" / "now change"。走查原话就在这一档,但它本身**不**说明对象是哪一件:
+ *      「now i want a poster for the raya sale」同样长这个样子。
+ *
+ * 分量不同,是因为它们与「我要一张新的」这句否决票相遇时该有不同的结果(P2-1):
+ * 「add a new hat to this photo」里的 new 修饰的是帽子,不是交付物 —— 第 ① 类压得过
+ * **软**否决(形态规则、光秃秃的「新的」/「baru」)。但压不过**硬**否决
+ * (`IMAGE_FRESH_START_SIGNALS`:"brand new" / "start over" / 「全新」…):那几句是他
+ * 明说要另一件交付物,而绑一张他刚说了不要的底图,钱已经花掉了。
+ *
+ * 第 ② 类反过来要**多一道闸**(P2-2):它得真的指着已有的东西(it / this / that /
+ * the same / 这张…),或者至少没在同一句里点名一件新交付物(a poster / a flyer /
+ * three banners…)。否则「now i want a poster for the raya sale」会把上一张猫图绑进
+ * 一次付费生成 —— 与 FC-2 同一类错,方向相反。
  *
  * 马来语与中文按本地商家真会打出来的写法收,不做词形还原:`includes` 命中的是子串。
  */
-export const IMAGE_CONTINUATION_SIGNALS: Record<string, readonly string[]> = {
+export const EXPLICIT_IMAGE_DEICTICS: Record<string, readonly string[]> = {
   en: [
-    // 「现在…」这一档只收**指向已有东西**的动词(加 / 改 / 接着要),不收 "now make" / "now put" ——
-    // 「now make a poster for the sale」「now put together a carousel」都是一次全新的请求。
-    "now i want", "now i wan", "now add", "now change",
     "this image", "this picture", "this photo",
     "that image", "that picture", "that photo",
     "same image", "same picture", "same photo",
@@ -64,43 +68,83 @@ export const IMAGE_CONTINUATION_SIGNALS: Record<string, readonly string[]> = {
 };
 
 /**
- * 「重开一张全新的」的信号 —— **否决票**,压过上面每一条。
+ * 第 ② 类:接续副词。只收指向已有东西的动词(要 / 加 / 改),不收 "now make" / "now put"
+ * ——「now make a poster」「now put together a carousel」都是一次全新的请求。
+ * 只有英文有这一档:中文与马来语那几条剩下的全是指代(「这张」「gambar ni」)。
+ */
+export const CONTINUATION_ADVERBS: readonly string[] = [
+  "now i want", "now i wan", "now add", "now change",
+];
+
+/** 两类合起来 —— 「这句话里有没有任何继承信号」。判定次序见 `decideImageContinuation`。 */
+export const IMAGE_CONTINUATION_SIGNALS: Record<string, readonly string[]> = {
+  ...EXPLICIT_IMAGE_DEICTICS,
+  adverbs: CONTINUATION_ADVERBS,
+};
+
+/**
+ * **硬**否决 —— 他明说要的是另一件交付物。压过上面每一条,包括第 ① 类指代。
  *
- * 为什么否决优先:两边同时命中(「now i want a brand new picture of…」)时,唯一不含糊
- * 的那一半是他明说的「brand new」。继承一张他刚说了不要的底图,做出来的东西与他要的
- * 无关,而这一单已经付过钱了。
+ * 为什么它连指代都压得过:「edit this photo, actually make a brand new one」里,
+ * 唯一不含糊的那一半是他明说的「brand new」。继承一张他刚说了不要的底图,做出来的东西
+ * 与他要的无关,而这一单已经付过钱了。
  */
 export const IMAGE_FRESH_START_SIGNALS: Record<string, readonly string[]> = {
   en: [
     "brand new", "brand-new", "a new picture", "a new image", "a new photo",
     "new picture of", "new image of", "new photo of",
     "another picture of", "another image of", "another photo of",
-    // 复审 P1-B:「another one」= 他要的是**另一件**,不是这一件改一改。这一票投向 fresh,
-    // 也就是投向这条修改之前的行为 —— 判错的代价是他再说一句,不是一次付费运行绑错底图。
+    // 「another one」= 他要的是**另一件**,不是这一件改一改。
     "another one",
     "different picture", "separate picture", "start over", "start fresh", "from scratch",
   ],
-  // 复审 P1-B:「新的」收在这里之后,「保留白底,做一张新的产品图」这种「保留…但做新的」
-  // 的写法一律 fresh。原来的「新的一张」是它的子串,留着只是同一条规则的第二份。
-  zh: ["全新", "重新做一张", "重新来一张", "另做一张", "新的", "从头做"],
-  // 同理:「baru」本身就够(「poster baru」「gambar baru」都命中),而「baharu」不含它,
-  // 所以那一条得自己留着。
-  ms: ["baru", "gambar baharu", "mula semula"],
+  zh: ["全新", "重新做一张", "重新来一张", "另做一张", "从头做"],
+  ms: ["gambar baharu", "mula semula"],
 };
 
 /**
- * 「一张全新的 X」的**形态**判据 —— 否决票的第二半(复审 P1)。
+ * **软**否决 —— 「新的 / baru / a new …」这一档(复审 P2-1 从硬否决里拆出来)。
  *
- * 上面那张字面表只认 picture / image / photo 三个名词,可商家口里的交付物叫 poster、
- * banner、flyer、carousel…—— 一个一个穷举既收不完也换一个商家就失效。改收**形态**:
- * 不定冠词(a / an / another / 一个数词) + new + 任意名词 ⇒ 他要的是另一件东西。
+ * 拆出来的理由是它**认不出 new 在修饰什么**:「保留白底,做一张新的产品图」里修饰的是
+ * 交付物,而「这张图换个新的背景」「add a new hat to this photo」里修饰的是图里的一件
+ * 东西。认不出来的时候默认投 fresh(= 这条修改之前的行为,安全的那一边);可一旦同一句里
+ * 他已经明确指着那张图(第 ① 类),那个歧义就消失了 —— 指代赢。
+ */
+export const SOFT_FRESH_START_SIGNALS: Record<string, readonly string[]> = {
+  zh: ["新的"],
+  ms: ["baru"],
+};
+
+/**
+ * 软否决的**形态**判据:不定冠词(a / an / another / 一个数词)+ new + 任意名词。
  *
- * 只对英文建:中文与马来语剩下的继承信号已经全是指代(「这张」「gambar ni」),
- * 一句「现在要一张新海报」压根就不再命中继承表。
+ * 商家口里的交付物叫 poster、banner、flyer、carousel…—— 一个一个穷举既收不完,
+ * 也换一个商家就失效,所以这里收形态不收名词。只对英文建。
  */
 export const IMAGE_FRESH_START_PATTERNS: readonly RegExp[] = [
   /\b(?:a|an|another|one|two|three|four|five|six|\d+)\s+(?:brand[\s-]*)?new\b/,
 ];
+
+/**
+ * 复审 P2-2 —— 第 ② 类的第一道闸:这句话指着**已有的东西**吗。
+ *
+ * 走查原话「…hold the cat and pet **it**…」就是靠这一条过的。用词边界而不是子串:
+ * 「it」藏在 with / print / digital 里到处都是。
+ */
+export const EXISTING_THING_REFERENCES: readonly RegExp[] = [
+  /\bit\b/, /\bthis\b/, /\bthat\b/, /\bthe same\b/, /\bsame one\b/,
+  /它|这张|那张|这个|那个|同一/,
+];
+
+/**
+ * 复审 P2-2 —— 第 ② 类的第二道闸:这句话点名了一件**新交付物**吗。
+ *
+ * 「a poster」「three banners」「a raya sale flyer」⇒ 他要的是另一件东西,不是这一张改一改。
+ * 名词表只在这一道闸里用(判「他点名了没有」),不拿它去判继承 —— 与形态判据同一条理由:
+ * 穷举收不完,但**点名了**这件事本身是确定的,漏掉一个名词只会退回今天的行为。
+ */
+export const NEW_DELIVERABLE_PATTERN =
+  /\b(?:a|an|another|some|one|two|three|four|five|six|\d+)\s+(?:[a-z][a-z-]*\s+){0,2}(?:poster|flyer|banner|carousel|leaflet|brochure|pamphlet|billboard|advert|advertisement|ad|logo|thumbnail|cover|reel|story|post|graphic|mockup|menu|invite|invitation|catalogue|catalog|sticker|wallpaper|video|clip|picture|image|photo|pic)s?\b/;
 
 export type ImageContinuationDecision = "continue" | "fresh";
 
@@ -111,9 +155,27 @@ function hits(table: Record<string, readonly string[]>, text: string): boolean {
   return false;
 }
 
-function hitsFreshStart(text: string): boolean {
-  if (hits(IMAGE_FRESH_START_SIGNALS, text)) return true;
+/** 明确指着那张图(第 ① 类)。 */
+function hitsExplicitDeictic(text: string): boolean {
+  return hits(EXPLICIT_IMAGE_DEICTICS, text);
+}
+
+/** 硬否决:明说要另一件交付物。 */
+function hitsHardFreshStart(text: string): boolean {
+  return hits(IMAGE_FRESH_START_SIGNALS, text);
+}
+
+/** 软否决:认不出 new 在修饰什么。 */
+function hitsSoftFreshStart(text: string): boolean {
+  if (hits(SOFT_FRESH_START_SIGNALS, text)) return true;
   return IMAGE_FRESH_START_PATTERNS.some((re) => re.test(text));
+}
+
+/** 第 ② 类过不过闸:指着已有的东西,或者至少没点名一件新交付物(复审 P2-2)。 */
+function adverbClassPointsAtSomethingExisting(text: string): boolean {
+  if (!CONTINUATION_ADVERBS.some((p) => text.includes(p))) return false;
+  if (EXISTING_THING_REFERENCES.some((re) => re.test(text))) return true;
+  return !NEW_DELIVERABLE_PATTERN.test(text);
 }
 
 /**
@@ -122,9 +184,11 @@ function hitsFreshStart(text: string): boolean {
  * 判据次序即优先级,每一层都有它自己的理由:
  *   1. 没有「正在做的那张图」 ⇒ 无从继承;
  *   2. 商家这一轮自己挂了图 ⇒ 以他挂的为准(既有行为逐字不动);
- *   3. 他明说要一张**全新**的 ⇒ 不继承(否决票);
- *   4. 他的话里读得出「接着那张」⇒ 继承;
- *   5. 读不出任何信号 ⇒ 不继承(今天的行为)。
+ *   3. **硬**否决:他明说要另一件交付物 ⇒ 不继承(连指代都压得过);
+ *   4. 第 ① 类:他明确指着那张图 ⇒ 继承(压得过软否决 —— 复审 P2-1);
+ *   5. **软**否决:认不出 new 在修饰什么 ⇒ 不继承(投向今天的行为);
+ *   6. 第 ② 类:接续副词,且指着已有东西 / 没点名新交付物 ⇒ 继承(复审 P2-2);
+ *   7. 读不出任何信号 ⇒ 不继承(今天的行为)。
  */
 export function decideImageContinuation(input: {
   /** 商家这一轮自己打的那句话(`ctx.turnText`)。服务端原样带进来,绝不来自模型。 */
@@ -138,8 +202,10 @@ export function decideImageContinuation(input: {
   if (input.hasAttachedImage) return "fresh";
   const text = (input.text ?? "").toLowerCase();
   if (!text) return "fresh";
-  if (hitsFreshStart(text)) return "fresh";
-  return hits(IMAGE_CONTINUATION_SIGNALS, text) ? "continue" : "fresh";
+  if (hitsHardFreshStart(text)) return "fresh";
+  if (hitsExplicitDeictic(text)) return "continue";
+  if (hitsSoftFreshStart(text)) return "fresh";
+  return adverbClassPointsAtSomethingExisting(text) ? "continue" : "fresh";
 }
 
 /**
