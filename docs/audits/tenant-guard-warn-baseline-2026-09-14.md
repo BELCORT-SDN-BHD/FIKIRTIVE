@@ -228,7 +228,7 @@ Symbol 属性在钩子里已经不见了（实测 `Object.getOwnPropertySymbols(
 
 | 要跑的 | 命令 | 为什么它是闸 |
 |---|---|---|
-| 守卫五件套 | `pnpm --filter @fikirtive/db exec vitest run src/tenant-guard-*.test.ts` | 四颗形状雷的回归守卫（本片新增 21 条）＋ 切片①④的既有行为 |
+| 守卫六件套 | `pnpm --filter @fikirtive/db exec vitest run src/tenant-guard-*.test.ts src/__tests__/tenant-guard.test.ts` | 四颗形状雷的回归守卫（本片新增 22 条）＋ 切片①④的既有行为。`src/__tests__/tenant-guard.test.ts` 不在 `src/tenant-guard-*` 这个通配里，必须单独点名，否则这一闸会漏掉整整一个文件 |
 | 钱账全套 | `pnpm --filter @fikirtive/db test` | reserve/settle/refund/grant 的钱守恒与幂等 |
 | 后台与商家面 | `pnpm --filter @fikirtive/web test` | 21 个 staff 入口、125 个商家动作站点 |
 | 队列 | `pnpm --filter @fikirtive/worker test` | 7 条队列的帧前单行读（规格 §4 异议栏点名的残余风险） |
