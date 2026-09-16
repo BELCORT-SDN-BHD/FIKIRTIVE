@@ -63,6 +63,17 @@ export function channelMeta(id: ChannelId): ChannelMeta | undefined {
 // still render truthfully; this is about which channels we OFFER, not which we can display.
 export const UNAVAILABLE_PUBLISHING_CHANNEL_IDS: ReadonlySet<ChannelId> = new Set<ChannelId>(["x"]);
 
+// Instagram and Facebook connect through the ONE Meta connection — same token, same status.
+// It lives in this client-safe mirror rather than in `meta-shared.ts` (which transitively imports
+// Prisma) because the Connections page is a client component and needs the same answer: which rows
+// the top-of-page notice is talking about. `meta-shared.ts` re-exports it, so the server import
+// path is unchanged and there is still exactly one definition (#518 rework finding 2, §7.3).
+export const META_BACKED_CHANNEL_IDS: readonly ChannelId[] = ["instagram", "facebook"];
+
+export function isMetaBackedChannel(id: ChannelId): boolean {
+  return META_BACKED_CHANNEL_IDS.includes(id);
+}
+
 export function isConnectableChannel(id: ChannelId): boolean {
   return !UNAVAILABLE_PUBLISHING_CHANNEL_IDS.has(id);
 }
