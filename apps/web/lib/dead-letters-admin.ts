@@ -1,4 +1,5 @@
 import "server-only";
+import * as Sentry from "@sentry/node";
 import { prisma } from "@fikirtive/db";
 import { DEAD_LETTER_QUEUES } from "@fikirtive/core";
 
@@ -34,6 +35,13 @@ export const DLQ_DISCARD_EVENT = "dlq.discard";
 
 export type DiscardDeadLetterResult =
   | { ok: true; outcome: "discarded"; auditEventId: string }
+  /**
+   * 丢弃**成功了**，审计行没写下去。这必须是它自己的一句话（判官 P2-1）：取消是不可逆的，把整个动作
+   * 报成失败会让操作者去重试，而重试时那一条已经不在队列里了 —— 他会读到「已经不在了，什么都没记」，
+   * 于是一次**零审计的丢弃**被一句假话盖住。同一形状的先例在 `lib/tenant-actions.ts`
+   * （`revokeMerchantAccess` 的 `auditFailed`）：动作算数、痕迹没留下，两件事一起说出口。
+   */
+  | { ok: true; outcome: "discarded-unaudited" }
   | { ok: true; outcome: "already-gone" }
   | { error: string };
 
@@ -55,9 +63,46 @@ export type DeadLetterItem = {
    * 的那条纪律：只说哪条队列、几条，不带 payload）。
    */
   withheldKeys: string[];
-  /** payload 点名了某一单生成时，那一单在账本上的净额；没点名或查不到则 null。 */
-  ledger: { net: number; rows: number } | null;
+  /** payload 点名了某一单生成时，那一单在账本上的两个净额；三态见 `DeadLetterLedgerState`。 */
+  ledger: DeadLetterLedgerState;
 };
+
+/**
+ * 一单生成在账本上的两个净额 —— **只看一个是不够的**（判官 P2-3）。
+ *
+ * `balanceDelta` 与 `reservedDelta` 是两件事：RESERVE 写 `-cost / +cost`，SETTLE 写 `B-A / -B`，
+ * REFUND 写 `+amount / -amount`（`packages/db/src/credits.ts`）。只把 `balanceDelta` 求和，
+ * 「预留了 110、从没释放」会被报成「扣了 110」，而「结算掉 110」也是「扣了 110」—— 两种完全不同
+ * 的局面印出同一句话，偏偏那正是操作者按下 Discard 之前最需要分清的。所以两个数一起报：真花掉的
+ * 和还押着的，外加这一单上出现过哪几种账本动作。
+ */
+export type DeadLetterLedger = {
+  /**
+   * 已经真正**吃掉**的额度 ＝ −Σ(balanceDelta + reservedDelta)。
+   *
+   * 不是 −Σ balanceDelta：RESERVE 写 `-cost / +cost`，那一刻 balance 就少了 110，但这 110 只是
+   * 从「可用」挪到了「押着」，一分钱都还没花掉（实测：只减 balanceDelta 会把一条纯 RESERVE 报成
+   * 「扣了 110」）。`balance + reserved` 才是这个 org 的总额度，它的净减少才是真花掉的那部分。
+   * 对照 `packages/db/src/credits.ts`：RESERVE ⇒ 0，RESERVE+SETTLE(A) ⇒ A，RESERVE+REFUND ⇒ 0。
+   */
+  charged: number;
+  /** 还押在这一单上、没有释放的额度 ＝ Σ reservedDelta。>0 就是一笔悬着的预留。 */
+  held: number;
+  /** 这一单上出现过的账本动作种类（RESERVE / SETTLE / REFUND …），按字母排。 */
+  kinds: string[];
+  rows: number;
+};
+
+/**
+ * 账本那一行的三态。**「读失败」不许长得跟「没有钱这回事」一样**（判官 P2-2）：
+ *   · `DeadLetterLedger` —— 读到了，这是那一单的数；
+ *   · `null` —— payload 根本没点名哪一单生成活，没有账可查；
+ *   · `"unreadable"` —— 查了，没查成（pooler 抖、库不可达）。
+ * 上一版把第三种 `.catch(() => new Map())` 成第二种，于是一次失败的账本读在屏幕上表现为「这一条
+ * 不涉及钱」，操作者可能就此丢掉一条预留还悬着的活。这与本文件开头那条「读不到 vs 读到空是两句话」
+ * 是同一条规矩，只是上一版没把它执行到账本这一层。
+ */
+export type DeadLetterLedgerState = DeadLetterLedger | null | "unreadable";
 
 /**
  * 「读不到」和「读到了，是空的」必须是两句不同的话（`packages/core/src/dead-letters.ts` 立的规矩）。
@@ -89,23 +134,70 @@ function genJobIdOf(identifiers: DeadLetterIdentifier[]): string | null {
 }
 
 /**
- * 这些单子在账本上的净额。**只读、只求和**，一行都不写 —— 丢弃一条死信从来不动钱
+ * 这些单子在账本上的两个净额（扣掉的 / 还押着的）。**只读、只求和**，一行都不写 —— 丢弃一条死信从来不动钱
  * （`dlq-actions.ts` 与 DLQ-A4 的断言）。它存在的理由只有一个：操作者按下 Discard 之前，要能一眼
  * 看见「这一单的钱已经了结了」，而不是去翻账本页再回来。
  */
-async function ledgerNets(genJobIds: string[]): Promise<Map<string, { net: number; rows: number }>> {
-  const nets = new Map<string, { net: number; rows: number }>();
-  if (genJobIds.length === 0) return nets;
-  const grouped = await prisma.creditLedger.groupBy({
-    by: ["refId"],
-    where: { refId: { in: genJobIds } },
-    _sum: { balanceDelta: true },
-    _count: { _all: true },
-  });
-  for (const row of grouped) {
-    if (row.refId) nets.set(row.refId, { net: row._sum.balanceDelta ?? 0, rows: row._count._all });
+async function ledgerNets(
+  genJobIds: string[],
+): Promise<{ readable: true; nets: Map<string, DeadLetterLedger> } | { readable: false }> {
+  const nets = new Map<string, DeadLetterLedger>();
+  if (genJobIds.length === 0) return { readable: true, nets };
+  // 按 `refId × kind` 分组，而不是只按 `refId`：动作种类是屏幕上那句话的一半（判官 P2-3），
+  // 而一次聚合就能把它带回来，不必为此多跑一趟查询。
+  //
+  // 结果用 `.then/.catch` 收成一个标记联合，而不是 `try { grouped = await … }`：Prisma 7 的
+  // `groupBy` 用**返回值**反推入参的类型，给 `grouped` 写一个显式类型标注会让那条推断反过来失败
+  // （实测 tsc TS2345，把入参当成了返回的数组类型）。
+  const grouped = await prisma.creditLedger
+    .groupBy({
+      by: ["refId", "kind"],
+      where: { refId: { in: genJobIds } },
+      _sum: { balanceDelta: true, reservedDelta: true },
+      _count: { _all: true },
+    })
+    .then((rows) => ({ ok: true as const, rows }))
+    .catch((error: unknown) => {
+      reportLedgerReadFailure(error);
+      return { ok: false as const };
+    });
+  if (!grouped.ok) return { readable: false };
+  for (const row of grouped.rows) {
+    if (!row.refId) continue;
+    const current = nets.get(row.refId) ?? { charged: 0, held: 0, kinds: [], rows: 0 };
+    current.charged -= (row._sum.balanceDelta ?? 0) + (row._sum.reservedDelta ?? 0);
+    current.held += row._sum.reservedDelta ?? 0;
+    current.rows += row._count._all;
+    current.kinds.push(row.kind);
+    nets.set(row.refId, current);
   }
-  return nets;
+  for (const entry of nets.values()) entry.kinds.sort();
+  return { readable: true, nets };
+}
+
+/**
+ * 账本读失败要**有人看得见**。屏幕上那句「读不到」只有正在看的那个人读得到，而这条读失败可能是
+ * pooler 正在抖 —— 团队该知道。纪律同 `dlq-watch.ts` 的上报：只报**失败的分类**（错误类名与
+ * Prisma 错误码），不报原始 message —— Prisma 的 message 会把调用参数渲染进去，而这里的参数是
+ * 商家的生成单号（同 `lib/tenant-actions.ts` 第 4 轮判官那条）。
+ *
+ * 整条包在 try/catch 里：告警自己会抛（transport 没起、DSN 配错、序列化炸掉），而这条读只是页面的
+ * 一部分 —— 告警响不响都不许把整张看板拖成 500。
+ */
+function reportLedgerReadFailure(error: unknown): void {
+  const code = (error as { code?: unknown } | null)?.code;
+  try {
+    Sentry.captureMessage("Dead-letter board could not read the credit ledger", {
+      level: "error",
+      tags: { area: "admin", gate: "dead-letter-ledger" },
+      extra: {
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorCode: typeof code === "string" ? code : undefined,
+      },
+    });
+  } catch {
+    // 告警通道自己炸了。咽下去是这里唯一正确的答案：`"unreadable"` 已经上了屏幕，看板照常渲染。
+  }
 }
 
 export async function listDeadLetters(): Promise<DeadLetterListing> {
@@ -134,16 +226,19 @@ export async function listDeadLetters(): Promise<DeadLetterListing> {
     ...summarise(row.data),
   }));
 
-  const nets = await ledgerNets(
+  const ledger = await ledgerNets(
     [...new Set(visible.map((item) => genJobIdOf(item.identifiers)).filter((id): id is string => Boolean(id)))],
-  ).catch(() => new Map<string, { net: number; rows: number }>());
+  );
 
   return {
     readable: true,
     truncated,
     items: visible.map((item) => {
       const genJobId = genJobIdOf(item.identifiers);
-      return { ...item, ledger: genJobId ? (nets.get(genJobId) ?? null) : null };
+      // 没点名生成单 ⇒ `null`（没有账可查）；点名了但这一趟读失败 ⇒ `"unreadable"`。两者
+      // 长得不一样，屏幕上说的也就不是同一句话。
+      if (!genJobId) return { ...item, ledger: null };
+      return { ...item, ledger: ledger.readable ? (ledger.nets.get(genJobId) ?? null) : ("unreadable" as const) };
     }),
   };
 }

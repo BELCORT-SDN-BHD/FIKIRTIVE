@@ -25,6 +25,7 @@
  * 与 `/admin/queue` 其余指标同一条结构（staff 帧的 `ownerId = null`，守卫按扫描域处理）。
  */
 import { revalidatePath } from "next/cache";
+import * as Sentry from "@sentry/node";
 import { prisma, type Prisma } from "@fikirtive/db";
 import { runAsStaff } from "@fikirtive/db/principal";
 import { DEAD_LETTER_QUEUES, FOUNDER_OWNER_ID, newId } from "@fikirtive/core";
@@ -102,20 +103,64 @@ async function discardInFrame(
   // 读到和取消之间被人抢先了。同上：结果正确，不写审计行。
   if (affected === 0) return { ok: true, outcome: "already-gone" };
 
+  // 取消**已经发生**，而且不可逆。这一行审计写不下去（pooler 抖一下、Organization 的外键、库满）
+  // 不许把整个动作报成失败（判官 P2-1）：报失败 ⇒ 操作者重试 ⇒ 上面那次预读什么都找不到 ⇒ 他读到
+  // 「已经不在了，什么都没记」—— 一次**零审计的丢弃**被一句假话盖住，与 DLQ-A2／A3 和这个文件
+  // 开头那段「没有这一行，这个按钮就是一个能悄悄抹掉证据的按钮」直接相反。
+  //
+  // 正确的答案是两件事一起说出口：活丢掉了（真的），痕迹没留下（也是真的），请手工补一条。形状照
+  // `lib/tenant-actions.ts` 的 `revokeMerchantAccess`（`auditFailed`）那条既有先例，只是这里的返回
+  // 是个 outcome 联合，所以它是自己的一个 outcome 而不是一面旗。
   const auditEventId = newId();
-  await prisma.actionEvent.create({
-    data: {
-      id: auditEventId,
-      // 平台级动作的审计一律挂 founder org，与 `rbac.deny`／`directive.edit` 同一归属
-      // （ActionEvent 在 TENANT_GUARD_EXEMPT 名单里：append-only 审计，后台读天生跨租户）。
-      ownerId: FOUNDER_OWNER_ID,
-      type: DLQ_DISCARD_EVENT,
-      payload: { queue, jobId, data: summariseForAudit(rows[0]!.data), via: gate.email },
-    },
-  });
+  const audited = await prisma.actionEvent
+    .create({
+      data: {
+        id: auditEventId,
+        // 平台级动作的审计一律挂 founder org，与 `rbac.deny`／`directive.edit` 同一归属
+        // （ActionEvent 在 TENANT_GUARD_EXEMPT 名单里：append-only 审计，后台读天生跨租户）。
+        ownerId: FOUNDER_OWNER_ID,
+        type: DLQ_DISCARD_EVENT,
+        payload: { queue, jobId, data: summariseForAudit(rows[0]!.data), via: gate.email },
+      },
+    })
+    .then(() => true)
+    .catch((error: unknown) => {
+      reportAuditFailure(error, queue, jobId);
+      return false;
+    });
 
+  // 不管审计写成没写成，队列里那一条都已经是 `cancelled` 了 —— 看板必须照实重画。
   revalidatePath("/admin/queue");
-  return { ok: true, outcome: "discarded", auditEventId };
+  return audited ? { ok: true, outcome: "discarded", auditEventId } : { ok: true, outcome: "discarded-unaudited" };
+}
+
+/**
+ * 审计写失败要**有人看得见**，而屏幕上那句话只有正在看的那个人读得到。
+ *
+ * 纪律同 `dlq-watch.ts` 对 Sentry 的那条：**不带 payload、不带商家标识**，只说哪条队列的哪个 job
+ * （两者都是 pg-boss 的平台级标识，不是商家内容）＋ 失败的分类。原始 message 一个字都不带 ——
+ * Prisma 会把调用参数渲染进 message，而这次调用的参数里就有那份 payload 摘要
+ * （同 `lib/tenant-actions.ts` 第 4 轮判官那条）。
+ *
+ * 整条包在 try/catch 里：`captureMessage` 自己会抛（transport 没起、DSN 配错、序列化炸掉），而这条
+ * 路上取消已经落库 —— 告警自己的错顺着 promise 冒出去会让操作者读到「动作没完成」，那正是这条修复
+ * 要消灭的那句假话（`lib/tenant-actions.ts` 第 9 轮同一条口径：响不响都不许改变这条路的答案）。
+ */
+function reportAuditFailure(error: unknown, queue: string, jobId: string): void {
+  const code = (error as { code?: unknown } | null)?.code;
+  const errorName = error instanceof Error ? error.name : typeof error;
+  // Sentry 没配 DSN 的环境（本机、CI）至少留一行可 grep 的痕迹。
+  console.error(`[dlq-discard] job discarded but its audit row could not be written (queue=${queue}, jobId=${jobId}):`, errorName);
+  try {
+    Sentry.captureMessage("Dead letter discarded but its audit row could not be written", {
+      level: "error",
+      tags: { area: "admin", gate: "dlq-discard-audit" },
+      extra: { queue, jobId, errorName, errorCode: typeof code === "string" ? code : undefined },
+    });
+  } catch {
+    // 告警通道自己炸了。咽下去是这里唯一正确的答案：`discarded-unaudited` 那句话照样上屏幕，
+    // 操作者看得见「这一次没留下痕迹」。
+  }
 }
 
 /**

@@ -5,7 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AdminActionConfirmDialog } from "./AdminActionConfirmDialog";
 import { discardDeadLetter } from "@/lib/dlq-actions";
-import type { DeadLetterItem, DeadLetterListing } from "@/lib/dead-letters-admin";
+import type { DeadLetterItem, DeadLetterListing, DiscardDeadLetterResult } from "@/lib/dead-letters-admin";
+
+type DiscardedResult = Extract<DiscardDeadLetterResult, { ok: true }>;
 
 /**
  * Dead letters, and the one control that can clear one (Founder ruling 2026-09-15; registered in
@@ -23,11 +25,45 @@ function fmtTime(iso: string): string {
   return iso.slice(0, 16).replace("T", " ");
 }
 
+/**
+ * The money sentence, in three shapes — the state is the server's, this only spells it out.
+ *
+ * `null` means the payload named no generation job, so there is no ledger to read and no line to
+ * print. `"unreadable"` means the read was attempted and failed; it gets its own sentence, because
+ * printing nothing would read as "no money attached", and an operator could then discard a job
+ * whose reservation is still held (judge P2-2). A real reading prints BOTH nets: credits charged
+ * and credits still held are different facts, and a hold that was never released is exactly the
+ * one an operator has to see before pressing the button (judge P2-3).
+ */
 function ledgerLine(item: DeadLetterItem): string | null {
-  if (!item.ledger) return null;
-  const { net, rows } = item.ledger;
-  const settled = net === 0 ? "closed at zero" : `${net > 0 ? "+" : ""}${net} credits`;
-  return `Ledger for this job: ${settled} across ${rows} ${rows === 1 ? "entry" : "entries"}.`;
+  if (item.ledger === null) return null;
+  if (item.ledger === "unreadable") {
+    return "Ledger for this job could not be read, so this row says nothing about the money either way.";
+  }
+  const { charged, held, kinds, rows } = item.ledger;
+  const entries = `${rows} ${rows === 1 ? "entry" : "entries"}`;
+  const seen = kinds.length > 0 ? ` (${kinds.map((kind) => kind.toLowerCase()).join(", ")})` : "";
+  return `Ledger for this job: charged ${charged} credits, ${held} still held${seen} across ${entries}.`;
+}
+
+/**
+ * What the screen says once the server has answered. Three outcomes, three sentences — the middle
+ * one exists because the cancel is irreversible: when the audit row cannot be written the job is
+ * still gone, so reporting "the action could not finish" would send the operator back to a queue
+ * that no longer holds it, and he would then read "already gone, nothing was recorded" over a
+ * discard that really happened (judge P2-1). Say both halves instead, and name the next step.
+ */
+function discardedLine(item: DeadLetterItem, result: DiscardedResult): string {
+  if (result.outcome === "discarded") {
+    return `Discarded ${item.queue} job ${item.jobId}. Audit row ${result.auditEventId}.`;
+  }
+  if (result.outcome === "discarded-unaudited") {
+    return (
+      `Discarded ${item.queue} job ${item.jobId}, but the audit row could not be written. ` +
+      `The job is gone — record this discard by hand and tell the team.`
+    );
+  }
+  return `That job was already gone, so nothing was discarded and nothing was recorded.`;
 }
 
 function DeadLetterRow({ item, onDiscarded }: { item: DeadLetterItem; onDiscarded: (status: string) => void }) {
@@ -37,11 +73,7 @@ function DeadLetterRow({ item, onDiscarded }: { item: DeadLetterItem; onDiscarde
   async function discard(): Promise<string | null> {
     const result = await discardDeadLetter({ queue: item.queue, jobId: item.jobId });
     if ("error" in result) return result.error;
-    onDiscarded(
-      result.outcome === "discarded"
-        ? `Discarded ${item.queue} job ${item.jobId}. Audit row ${result.auditEventId}.`
-        : `That job was already gone, so nothing was discarded and nothing was recorded.`,
-    );
+    onDiscarded(discardedLine(item, result));
     return null;
   }
 

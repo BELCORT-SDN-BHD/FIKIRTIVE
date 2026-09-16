@@ -28,7 +28,7 @@ const ITEM: DeadLetterItem = {
   createdAt: "2026-09-11T04:05:06.000Z",
   identifiers: [{ key: "genJobId", value: GEN_JOB_ID }],
   withheldKeys: [],
-  ledger: { net: 0, rows: 4 },
+  ledger: { charged: 0, held: 0, kinds: ["REFUND", "RESERVE"], rows: 4 },
 };
 
 let root: Root | null = null;
@@ -79,7 +79,48 @@ describe("DLQ-A1 the dead-letter section", () => {
     expect(text).toContain(JOB_ID);
     expect(text).toContain(GEN_JOB_ID);
     expect(text).toContain("2026-09-11 04:05");
-    expect(text).toContain("Ledger for this job: closed at zero across 4 entries.");
+    expect(text).toContain("Ledger for this job: charged 0 credits, 0 still held (refund, reserve) across 4 entries.");
+  });
+
+  /**
+   * DLQ-A1（判官 P2-3）—— 一笔**从没释放的预留**必须在按下按钮之前看得见。只报
+   * `balanceDelta` 的净额，这一条和上面那条已了结的会印出同一句话。
+   */
+  it("DLQ-A1 shows credits that are still held, not just credits charged", async () => {
+    const held: DeadLetterItem = { ...ITEM, ledger: { charged: 0, held: 110, kinds: ["RESERVE"], rows: 1 } };
+    await render(<DeadLetterPanel listing={{ readable: true, items: [held], truncated: false }} />);
+
+    expect(document.body.textContent).toContain("Ledger for this job: charged 0 credits, 110 still held (reserve) across 1 entry.");
+  });
+
+  /** 反方向：真花掉的那 110 也要说出口，两句话长得不一样。 */
+  it("DLQ-A1 shows credits actually charged when the job was settled", async () => {
+    const settled: DeadLetterItem = { ...ITEM, ledger: { charged: 110, held: 0, kinds: ["RESERVE", "SETTLE"], rows: 2 } };
+    await render(<DeadLetterPanel listing={{ readable: true, items: [settled], truncated: false }} />);
+
+    expect(document.body.textContent).toContain("Ledger for this job: charged 110 credits, 0 still held (reserve, settle) across 2 entries.");
+  });
+
+  /**
+   * DLQ-A1（判官 P2-2）—— 账本读失败也是一句话，不是一片空白。空白和「这一条不涉及钱」同形，
+   * 而操作者会据此丢掉一条预留还悬着的活。
+   */
+  it("DLQ-A1 says the ledger could not be read rather than printing no ledger line at all", async () => {
+    const unreadable: DeadLetterItem = { ...ITEM, ledger: "unreadable" };
+    await render(<DeadLetterPanel listing={{ readable: true, items: [unreadable], truncated: false }} />);
+
+    expect(document.body.textContent).toContain("Ledger for this job could not be read");
+    // 那一条仍然列着、仍然可以丢 —— 读不到账本不是拒绝理由，是一句提醒。
+    expect(document.body.textContent).toContain(JOB_ID);
+    expect(button("Discard")).toBeInstanceOf(HTMLButtonElement);
+  });
+
+  /** payload 没点名任何生成单时，本来就没有账可查 —— 这一行什么都不印。 */
+  it("DLQ-A1 prints no ledger line when the payload names no generation job", async () => {
+    const none: DeadLetterItem = { ...ITEM, identifiers: [], ledger: null };
+    await render(<DeadLetterPanel listing={{ readable: true, items: [none], truncated: false }} />);
+
+    expect(document.body.textContent).not.toContain("Ledger for this job");
   });
 
   /** 「读不到」和「读到了，是空的」是两句话（packages/core/src/dead-letters.ts 立的规矩）。 */
@@ -131,6 +172,27 @@ describe("DLQ-A2 discarding one dead letter", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("You don't have access to this.");
     expect(document.body.textContent).toContain(JOB_ID);
     expect(document.querySelector('[role="status"]')).toBeNull();
+  });
+
+  /**
+   * DLQ-A2（判官 P2-1）—— 丢掉了、但审计行没写下去，屏幕上必须是**两件事一起说**：活确实没了
+   * （所以别去重试），痕迹没留下（所以手工补一条）。上一版这条路整个动作 reject，对话框只会说
+   * 「The action could not finish…」，操作者重试后读到的是一句假话。
+   */
+  it("DLQ-A2 says the job is gone but the audit row could not be written", async () => {
+    discardDeadLetter.mockResolvedValue({ ok: true, outcome: "discarded-unaudited" });
+    await render(<DeadLetterPanel listing={{ readable: true, items: [ITEM], truncated: false }} />);
+
+    await click(button("Discard"));
+    await click(dialogButton("Discard job"));
+
+    const status = document.querySelector('[role="status"]')?.textContent ?? "";
+    expect(status).toContain("the audit row could not be written");
+    expect(status).toContain("record this discard by hand");
+    expect(status).toContain(JOB_ID);
+    // 没有错误横幅：这不是失败，对话框照常关掉，那一行照常消失。
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(document.body.textContent).toContain("No dead letters.");
   });
 
   it("DLQ-A3 says nothing was recorded when the job was already gone", async () => {
