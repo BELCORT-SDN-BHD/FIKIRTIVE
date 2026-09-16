@@ -30,8 +30,15 @@ Symbol 属性在钩子里已经不见了（实测 `Object.getOwnPropertySymbols(
 
 所以本文件的归属分两层，各自标清楚：
 - **动态证据**：每条警告都带「哪一套测试、哪一个测试文件」（1753/1753 条全部带到），这是跑出来的；
-- **静态归属**：再把每个签名映射到生产调用点的 `file:line`，靠读那一处的 `where` 确认形状对得上。
+- **静态归属**：再把每个签名映射到生产调用点的 `file:line`。
   凡是仓库里**没有**生产调用点的签名，本文件明说它只来自测试夹具 —— 那种警告翻闸当天不会打到商家。
+
+**静态归属只读 `where` 是不够的（判官 2026-09-15 P2-3，本次已返工）**：守卫先看**帧**再看 `where`。
+同一句 `membership.findFirst`，无帧时按严格档判、会报警；而包在 `runAsStaff(staffPrincipal(gate, null))`
+或 `runAsSystem(...)` 里时走的是**扫描域**分支，`findFirst` 在 `SYSTEM_SCAN_OPS` 里（tenant-guard.ts:259）
+→ 直接放行，一条警告都没有。所以每一个候选调用点都必须往上追到它的外层帧
+（`runAsStaff` / `runAsSystem` / `runAsUser`，以及帧里的 `ownerId` 是不是 null）才能定性。
+初版本文件漏了这一步，错记了两行，见第 4 节的「已撤回」。
 
 ## 2. 三套测试的结果（都跑完了，全绿）
 
@@ -81,11 +88,14 @@ Symbol 属性在钩子里已经不见了（实测 `Object.getOwnPropertySymbols(
 
 **A 类 —— 生产路径上的无帧读（2 个签名，858 次）**
 
-| 签名 | 生产调用点 | 那一句在干什么 |
-|---|---|---|
-| 1 `Membership.findFirst` | `apps/web/lib/auth-guard.ts:88`（`{ userId, orgId: { not: FOUNDER_OWNER_ID } }`） | 登录时**解析这个人属于哪一家** —— 此刻还不知道租户，结构上就无帧可建 |
-| 1 | `apps/web/lib/tenant-actions.ts:206`（`{ userId: { in: [...] }, deletedAt: null, orgId: { not: FOUNDER_OWNER_ID } }`） | 撤邀请前查这个邮箱是不是已经属于某个商家 |
-| 12 `CreditLedger.findMany` | `packages/db/src/credits.ts:584`（`adjustWindowFilter()` 省略 orgIds） | admin 人工钱报表的**全 org** 口径，按设计跨租户 |
+| 签名 | 生产调用点 | 外层帧 | 那一句在干什么 |
+|---|---|---|---|
+| 1 `Membership.findFirst` | `apps/web/lib/auth-guard.ts:88`（`{ userId, orgId: { not: FOUNDER_OWNER_ID } }`） | **无帧**（`requireOwner`，:74） | 登录时**解析这个人属于哪一家** —— 此刻还不知道租户，结构上就无帧可建 |
+| 12 `CreditLedger.findMany` | `packages/db/src/credits.ts:584`（`adjustWindowFilter()` 省略 orgIds） | 随调用方；admin 报表侧是 `runAsSystem("admin:platform-read")` | admin 人工钱报表的**全 org** 口径，按设计跨租户 |
+
+**已撤回（判官 P2-3，初版错记）**：`apps/web/lib/tenant-actions.ts:206` 曾被记进签名 1。它确实没有
+字面 `orgId`，但它跑在 `runAsStaff(staffPrincipal(gate, null))` 里（:185），`ownerId` 为 null ⇒ 扫描域
+分支，而 `findFirst` 在 `SYSTEM_SCAN_OPS` 内 ⇒ **放行，不报警、翻闸也不 500**。该行已删除。
 
 其余 15 个 `membership.findFirst` 生产调用点（`auth-guard.ts:146`、`org-role-guard.ts:37`、
 `profile-names.ts:54`、`profile-actions.ts:60`、`member-directory-service.ts:76`、四个
@@ -94,13 +104,21 @@ Symbol 属性在钩子里已经不见了（实测 `Object.getOwnPropertySymbols(
 
 **B 类 —— 生产路径上的 system 帧写（5 个签名，694 次）**
 
-| 签名 | 生产调用点 |
-|---|---|
-| 2 `Membership.upsert` | `apps/web/lib/auth-guard.ts:278`、`apps/web/lib/better-auth/converge.ts:93` |
-| 3 `Membership.updateMany` | `apps/web/lib/auth-guard.ts:290`、`apps/web/lib/tenant-actions.ts:68` |
-| 5 `CreditAccount.upsert` | `packages/db/src/credits.ts:835`、`packages/db/src/credits.ts:877` |
-| 6 `CreditLedger.createMany` | `packages/db/src/credits.ts:678`、`:728`、`:830` |
-| 10 `CreditLedger.create` | `packages/db/src/credits.ts:289`、`packages/db/src/credits.ts:872` |
+守卫报这句话的条件是「帧在、但帧没点名租户」（`system` 帧，或 `ownerId` 为 null 的 `staff` 帧），
+而这几个操作都不在 `SYSTEM_SCAN_OPS` 里。所以**要改的不是下面这些写语句本身，是把它们包起来的
+那个帧**——下表把两者分开列：
+
+| 签名 | 守卫在哪一行拦 | 真正要改的外层帧 |
+|---|---|---|
+| 2 `Membership.upsert` | `apps/web/lib/auth-guard.ts:278`、`apps/web/lib/better-auth/converge.ts:93` | `runAsSystem("auth:bootstrap-personal-org")`（auth-guard.ts:229）、`runAsSystem("auth:converge-identity")`（converge.ts:42） |
+| 3 `Membership.updateMany` | `apps/web/lib/auth-guard.ts:290` | 同上（auth-guard.ts:229） |
+| 5 `CreditAccount.upsert` | `packages/db/src/credits.ts:835`、`:877` | `runAsSystem("stripe-webhook")`（`apps/web/app/api/stripe/webhook/route.ts:19` → 充值确认 `grantCredits` :227）、注册赠额那条 `runAsSystem` 链 |
+| 6 `CreditLedger.createMany` | `packages/db/src/credits.ts:678`、`:728`、`:830` | 同上 |
+| 10 `CreditLedger.create` | `packages/db/src/credits.ts:289`、`:872` | 同上（本签名的触发测试就是 `stripe-webhook-integration.test.ts`，与这条链对得上） |
+
+**已撤回（判官 P2-3，初版错记）**：`apps/web/lib/tenant-actions.ts:68` 曾被记进签名 3。它跑在
+`runAsStaff(staffPrincipal(gate, orgId))` 里（:49，`orgId` **非 null**），帧点了名 ⇒ 走 `scopeWhere`、
+`where` 里本来就带字面 `orgId` ⇒ **放行，不报警**。该行已删除。
 
 **C 类 —— 只在测试夹具里（9 个签名，191 次）**
 
@@ -123,7 +141,17 @@ Symbol 属性在钩子里已经不见了（实测 `Object.getOwnPropertySymbols(
   雷①后台发积分、雷②后台铸币、雷③人工退款、雷④后台租户详情页，外加雷④b 扫描域读与 4 条
   归一化用例。报错逐字是
   `Error: [tenant-guard] CreditAccount.findMany tried to use orgId outside the active tenant`。
-- **修之后不炸**。同一个文件在根治提交上 **21/21 全绿**；五个守卫测试文件一起跑 **69 passed + 1 todo**。
+- **修之后不炸**。同一个文件在根治提交上全绿；五个守卫测试文件一起跑全绿。
+
+**这些用例证的是「翻闸之后」，不是「今天线上」（判官 2026-09-15 P2-4）**：四颗雷与 A3/A4 的用例都
+自己把挡位扳到 `enforce` 再断言，而出厂默认仍是 `warn`。所以在 #1403 那一行翻下去之前，
+**TENANT-A3/A4 在规格验收表上一直是开着的**，本文件不把它们记成已通过。挡位由测试文件级的
+`afterEach` 统一扳回 `warn`。
+
+**另外，无帧那一档 #1403 一个字都没放宽（判官 P2-1，已按判官意见收回）**：四颗雷全发生在**有帧**
+的路上（四条生产路径都先 `runAsStaff(staffPrincipal(gate, orgId))` 再进库），走 {@link scopeWhere}；
+无帧兜底 `whereHasOwnerId(strict)` 维持改动前的形状 —— 只认字面等值字符串与 `{ equals }`，
+连 `{ orgId: { in: [自己一家] } }` 也拒。没有哪颗雷需要放宽它，少一条口子少一处要解释的地方。
 
 再看这一轮 warn 清单：1753 条里，**没有一条**是 `adjustWindowFilter()` 那个形状打出来的。
 第 16、17 两个签名虽然也叫「碰了帧外的租户」，但它们的来源测试文件就是守卫自测（D 类），
@@ -138,8 +166,16 @@ Symbol 属性在钩子里已经不见了（实测 `Object.getOwnPropertySymbols(
 | C 仅夹具 | 191 | 测试红，商家无感 | 改测试夹具 |
 | D 守卫自测 | 10 | 本来就该拒 | 不用动 |
 
-**A + B = 1552 次、7 个签名，是翻闸前真正要清的账。** 注意次数是「测试跑了多少次」，不是
-生产流量；要看的是**签名**和它背后那几个 `file:line`，不是这个数字。
+**A + B = 1552 次、7 个签名，是翻闸前真正要清的账。** 两个提醒，都是判官 P2-3 之后补的：
+
+1. 次数是「测试跑了多少次」，不是生产流量，而且**同一个签名里混着生产来源与夹具来源**
+   （例如签名 1 的 854 次里，既有 `auth-guard.ts:88` 这条真无帧路径，也有夹具的无帧读）。
+   要看的是**签名**和它背后那几个 `file:line` 与外层帧，不是这个数字。
+2. 撤掉初版错记的两行（`tenant-actions.ts:206`、`tenant-actions.ts:68`）之后，**签名数与次数不变**
+   （7 个签名 / 1552 次）—— 被撤的是归属，不是签名：这两个签名各自仍有站得住的生产调用点
+   （`auth-guard.ts:88` 与 `auth-guard.ts:290`）。真正变的是**要去改哪几处**：
+   钱面那一半集中在 `runAsSystem("stripe-webhook")` 与注册/身份合流那两条 `runAsSystem` 链，
+   而不是散在 `credits.ts` 的六行写语句上。
 
 ## 7. 这份基线证明不了什么（别拿它当全量）
 
@@ -151,9 +187,23 @@ Symbol 属性在钩子里已经不见了（实测 `Object.getOwnPropertySymbols(
 ## 8. 结论
 
 四颗形状雷已经根治，`packages/db`、`apps/worker`、`apps/web` 三套在根治提交上全绿。
-翻闸**还不能翻**：A + B 两类共 7 个签名、1552 次，落在 `auth-guard.ts`、`tenant-actions.ts`、
-`credits.ts`、`better-auth/converge.ts` 这几处，翻 enforce 当天就是登录与钱账当场 500。
-按规格 §1.8 的硬顺序 —— 先建帧，后执法 —— 这些点建完帧、本节清单重跑为空，才轮到第 9 节那一行。
+
+翻闸**还不能翻**：A + B 两类共 **7 个签名、1552 次**。按「要去改哪个帧」收敛之后，翻闸前要动的是
+**三处帧**加**一处无帧读**：
+
+1. `runAsSystem("auth:bootstrap-personal-org")`（`apps/web/lib/auth-guard.ts:229`）—— 注册时补建
+   membership 与赠额；
+2. `runAsSystem("auth:converge-identity")`（`apps/web/lib/better-auth/converge.ts:42`）—— 身份合流；
+3. `runAsSystem("stripe-webhook")`（`apps/web/app/api/stripe/webhook/route.ts:19`）—— 充值确认落账；
+4. `requireOwner` 里那条无帧读（`apps/web/lib/auth-guard.ts:88`）—— 登录时解析这个人属于哪一家，
+   结构上就无帧可建，要么给它一个明确豁免，要么改成先查 membership 再建帧。
+
+翻 enforce 当天，这四处就是**登录与充值当场 500**。按规格 §1.8 的硬顺序 —— 先建帧，后执法 ——
+这些点处理完、第 3 节清单里 A+B 两类重跑为空，才轮到第 9 节那一行。
+
+另外两笔没并进上面这四处、但翻闸前要各自有交代的：`credits.ts:584`（`adjustWindowRows` 的全 org
+报表口径，按设计跨租户，需要的是**明确豁免**而不是建帧），以及 C 类那 191 次测试夹具警告
+（改夹具，不动产品代码）。
 
 ## 9. 翻闸配方（本 PR **不执行**，留给下一次独立提交）
 

@@ -332,15 +332,19 @@ function tenantIdsNamedBy(filter: unknown): string[] | null {
 /**
  * 无帧兜底：这个 where 到底点名了一个租户没有？
  *
- * `strict` 是切片①（#1376，验收 TENANT-A3）加的第二档。宽松档（`ownerId` 族，125 个还没建帧的
- * 老调用点靠它活着）只要求「有一个非 undefined 的值」—— 所以 `{ ownerId: { not: "" } }` 这种
- * 伪造过滤器照过。严格档（钱表族）只认点名了**恰好一个**租户的形状（见
- * {@link tenantIdsNamedBy}），或者一个点名了租户列的复合唯一键。两档并存是刻意的：把严格档一次
- * 铺到所有面，就是规格 §4 异议栏里那个「落闸当天全站 500」的形状；钱面已经建了帧，所以钱面先严。
+ * `strict` 是切片①（#1376，验收 TENANT-A3 钱面那一半）加的第二档。宽松档（`ownerId` 族，125 个
+ * 还没建帧的老调用点靠它活着）只要求「有一个非 undefined 的值」—— 所以 `{ ownerId: { not: "" } }`
+ * 这种伪造过滤器照过。严格档（钱表族）只认一个**非空字符串的等值**，或者一个点名了租户列的复合
+ * 唯一键。两档并存是刻意的：把严格档一次铺到所有面，就是规格 §4 异议栏里那个「落闸当天全站
+ * 500」的形状；钱面已经建了帧，所以钱面先严。
  *
- * 严格档为什么卡死在「恰好一个」：无帧就没有可比对的租户号，一条点名两家的谓词正是这一档存在
- * 的理由要拒的那种跨租户读。`{ in: [一家] }` 与 `{ equals: 一家 }` 讲的是同一句话，认一个不认
- * 另一个只是形状偏见 —— 而那个偏见就是 #1403 的四颗雷（#1403，2026-09-14）。
+ * **这一档 #1403 一个字都没放宽**（判官 2026-09-15 P2-1）。#1403 那四颗雷全部发生在**有帧**的
+ * 路上（四条生产路径都先 `runAsStaff(staffPrincipal(gate, orgId))` 再进库，见
+ * `apps/web/app/admin/tenants/[orgId]/page.tsx:15`、`tenant-actions.ts:390`、`credit-actions.ts:43`、
+ * `refund-actions.ts:402`），走的是 {@link scopeWhere}，根本到不了这里。而这里是**无帧**兜底：
+ * 无帧就没有可比对的租户号，放宽成「点名了恰好一家就行」等于让任何一条
+ * `{ orgId: { in: [任意一家] } }` 的无帧查询自己给自己发通行证。没有哪颗雷需要它，所以不放 ——
+ * 少一条没人要的口子，就少一条要在审计里解释的口子（fail closed）。
  */
 function whereHasOwnerId(where: unknown, column: TenantColumn, strict: boolean): boolean {
   if (!where || typeof where !== "object" || Array.isArray(where)) return false;
@@ -352,7 +356,8 @@ function whereHasOwnerId(where: unknown, column: TenantColumn, strict: boolean):
     return false;
   }
   if (strict) {
-    return tenantIdsNamedBy(ownerFilter)?.length === 1;
+    const equals = (ownerFilter as Record<string, unknown>).equals;
+    return typeof equals === "string" && equals.length > 0;
   }
   return Object.values(ownerFilter).some((value) => value !== undefined);
 }

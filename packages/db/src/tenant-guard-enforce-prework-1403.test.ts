@@ -23,6 +23,14 @@
  *     扣费走 `reserveCredits` / `settleCredits`，退款走 `refundReservation`，充值确认走
  *     `grantCredits` —— 全是生产代码里那几个唯一权威。
  *
+ * **这个文件声称到哪为止（判官 2026-09-15 P2-2 / P2-4，别读过头）**：
+ *  · **A3 只到「钱面那一半」**。冻结规格 docs/specs/tenant-isolation.md:53 的 A3 行说的是 `ownerId`
+ *    族，而宽松档至今照放 `{ ownerId: { not: "" } }`（下面那条用例是**现状登记**，不是验收通过）。
+ *    A3 整条在验收表上**仍然开着**，收口属切片②。
+ *  · **A3/A4 的用例都自己把挡位扳到 `enforce`**（出厂默认仍是 `warn`）。所以它们证的是**翻闸之后**
+ *    的行为，不是今天线上的行为；在 #1403 那一行翻下去之前，TENANT-A3/A4 在验收表上一直开着。
+ *    挡位由文件级 `afterEach` 统一扳回 `warn`，任何一个 describe 都不会把挡位漏给下一个文件。
+ *
  * 本文件**不翻默认挡位**：`setOrgScopedGuardMode` 仍在，默认仍是 warn（翻闸配方写在
  * docs/audits/tenant-guard-warn-baseline-2026-09-14.md 最后一节，待 Founder 定调）。
  */
@@ -243,10 +251,13 @@ describe("守卫归一化：租户列过滤器点名了哪几个租户（根治�
     ).rejects.toThrow(/tenant-guard.*outside the active tenant/);
   });
 
-  it("无帧兜底（严格档，钱表族）：单元素 in 认，两家的 in 不认，空 in 不认", async () => {
+  it("无帧兜底（严格档，钱表族）**一个字没放宽**：连点名自己一家的 in 数组也拒 —— 无帧就没有可比对的租户号（判官 P2-1）", async () => {
+    // 四颗雷全在**有帧**的路上（见本文件顶部与 tenant-guard.ts whereHasOwnerId 的判词），
+    // 走的是 scopeWhere。无帧这一档放宽成「点名恰好一家就行」，等于让任何一条
+    // `{ orgId: { in: [任意一家] } }` 的无帧查询自己给自己发通行证 —— 没有哪颗雷需要它。
     await expect(
-      prisma.creditAccount.findMany({ where: { orgId: { in: [ORG_A] } }, select: { orgId: true } }),
-    ).resolves.toEqual([{ orgId: ORG_A }]);
+      prisma.creditAccount.findMany({ where: { orgId: { in: [ORG_A] } } }),
+    ).rejects.toThrow(/tenant-guard.*no orgId filter/);
     await expect(
       prisma.creditAccount.findMany({ where: { orgId: { in: [ORG_A, ORG_B] } } }),
     ).rejects.toThrow(/tenant-guard.*no orgId filter/);
@@ -254,10 +265,19 @@ describe("守卫归一化：租户列过滤器点名了哪几个租户（根治�
       /tenant-guard.*no orgId filter/,
     );
   });
+
+  it("无帧兜底放行的仍然只有那两种形状：字面等值字符串与 `{ equals }`（迁移期老调用点靠它活着，本片不动）", async () => {
+    await expect(
+      prisma.creditAccount.findMany({ where: { orgId: ORG_A }, select: { orgId: true } }),
+    ).resolves.toEqual([{ orgId: ORG_A }]);
+    await expect(
+      prisma.creditAccount.findMany({ where: { orgId: { equals: ORG_A } }, select: { orgId: true } }),
+    ).resolves.toEqual([{ orgId: ORG_A }]);
+  });
 });
 
 // ── ③ TENANT-A3：无帧即拒 + 伪造过滤器不过关（真钱路径） ──────────────────────
-describe("TENANT-A3（真钱路径）—— 无帧即拒，伪造过滤器不再过关", () => {
+describe("TENANT-A3（钱面·真钱路径）—— 无帧即拒，伪造过滤器不再过关；**A3 的 ownerId 那一半仍未收口，属切片②**", () => {
   beforeEach(() => setOrgScopedGuardMode("enforce"));
 
   it("TENANT-A3 无帧调用一个真钱动作（adjustWindowRows —— admin 人工钱报表的读取权威）被拒", async () => {
@@ -273,7 +293,10 @@ describe("TENANT-A3（真钱路径）—— 无帧即拒，伪造过滤器不再
     );
   });
 
-  it("TENANT-A3 `{ ownerId: { not: \"\" } }` 在商家面（宽松档）仍然放行 —— 这是 125 个未建帧老站点活着的那条兜底，本片不动它", async () => {
+  // 这一条是**登记现状，不是验收通过**：冻结规格 docs/specs/tenant-isolation.md:53 的 A3 行说的是
+  // `ownerId` 族，而宽松档至今照放 `{ ownerId: { not: "" } }`。所以本片只敢声称「A3 钱面那一半」，
+  // A3 整条在验收表上**仍然开着**，收口属切片②（判官 2026-09-15 P2-2）。
+  it("TENANT-A3（未收口的那一半·现状登记）`{ ownerId: { not: \"\" } }` 在商家面（宽松档）仍然放行 —— 125 个未建帧老站点靠它活着，本片不动它", async () => {
     await expect(prisma.project.findMany({ where: { ownerId: { not: "" } } })).resolves.toEqual([]);
   });
 });
