@@ -7,7 +7,9 @@
  *
  *   - web  —— 复用 `lib/health.ts` 的 `buildInfo`(同一对 `commitShaFrom`/`shortSha`,§7.3
  *             单一权威,不另起一套),外加这个进程从什么时候开始服务(`startedAt`)。
- *   - worker —— 每一班还活着的心跳(`WorkerHeartbeat`)各报一行短 sha 与最近一次心跳时间。
+ *   - worker —— 每一班的心跳(`WorkerHeartbeat`)各报一行短 sha 与最近一次心跳时间;整整一天
+ *             没人写的那种行额外带 `retired: true`(2026-09-15 R3-F19),它的 sha 是冻住的历史,
+ *             不是现在跑的那一版。
  *             刻意**不带** `configFingerprint`——那一格的比对纪律留在鉴权后的
  *             `lib/deploy-fingerprint.ts`(admin 面),这里是匿名端点。
  *   - migrations —— 数据库真正跑到了哪一步(`_prisma_migrations` 最新一条成功记录的迁移
@@ -27,7 +29,11 @@
 import { shortSha } from "@fikirtive/core/env-contract";
 import { buildInfo, workerRetired } from "@/lib/health";
 
-export type BuildInfoWorkerRow = { role: string; sha: string | null; at: string };
+/**
+ * 一班一行。`retired` 只在**退休行**上出现(`true`),活着的行里没有这个键——
+ * 见 {@link buildBuildInfoResponse} 里那段为什么「标记而不是删行」。
+ */
+export type BuildInfoWorkerRow = { role: string; sha: string | null; at: string; retired?: true };
 
 export type BuildInfoMigrations = { latest: string | null; appliedAt: string | null };
 
@@ -67,18 +73,18 @@ export function buildBuildInfoResponse(params: {
   latestMigration: LatestMigration | null;
 }): BuildInfoResponse {
   const web = buildInfo(params.env);
-  // 2026-09-15 R3-F19:整整一天没人写的行不再算一班(`lib/health.ts` 的 `workerRetired`,
-  // 与 /api/health 的 `workers` 同一把尺,两个匿名端点不会对「今天有哪几班」各说各话)。
-  // 这里比 /api/health 更要命:退休行还**带着它冻住那一刻的 sha**,而这个端点整个存在理由
-  // 就是「现在跑的是哪次部署」——一行没人写的旧 sha 正是 #797 那次「绿灯盖住裂开的部署」。
-  // 只退休一整天没动静的行;几分钟前停跳的那一班照常在列(`at` 如实报,自己看得出来)。
-  const worker: BuildInfoWorkerRow[] = (params.heartbeatRows ?? [])
-    .filter((row) => !workerRetired(row.at, params.now))
-    .map((row) => ({
-      role: row.id,
-      sha: shortSha(row.commitSha),
-      at: row.at.toISOString(),
-    }));
+  // 2026-09-15 R3-F19(2026-09-16 复核改定):整整一天没人写的行**标 `retired: true`**,
+  // 与 /api/health 的 `workers` 报 `retired` 是同一把尺——两个匿名端点不会对「今天有哪几班」
+  // 各说各话。#797 的坑(一行没人写的旧 sha 把裂开的部署盖成绿灯)是「那个 sha 没有标签」,
+  // 不是「那个 sha 被人看见」:标上之后读的人一眼知道它是历史,而一班真死了一整天的 worker
+  // 仍然在列——删掉它才是把最该被看见的那一行藏起来。
+  // 只有超过 24 小时才标退休;几分钟前停跳的那一班不带这个键(`at` 如实报,自己看得出来)。
+  const worker: BuildInfoWorkerRow[] = (params.heartbeatRows ?? []).map((row) => ({
+    role: row.id,
+    sha: shortSha(row.commitSha),
+    at: row.at.toISOString(),
+    ...(workerRetired(row.at, params.now) ? { retired: true as const } : {}),
+  }));
   return {
     web: { sha: web.sha, ref: web.ref, startedAt: params.processStartedAt.toISOString() },
     worker,

@@ -11,10 +11,17 @@ import { commitShaFrom, shortSha } from "@fikirtive/core/env-contract";
 /** worker 心跳超过这个毫秒数没更新 = stale。 */
 export const WORKER_STALE_MS = 5 * 60_000;
 
-export type WorkerStatus = "up" | "stale" | "unknown";
+/**
+ * 四个词分属两个位置,别混着读:
+ *   - 顶层 `worker`:`up` / `stale` / `unknown` —— 「至少有一班在写心跳」这句话的三种答案。
+ *   - 按班的 `workers` 一行一班:`up` / `stale` / `retired`(见 {@link WORKER_RETIRED_MS})——
+ *     这里永远不会是 `unknown`,因为存在这一行本身就说明它至少写过一次心跳。
+ */
+export type WorkerStatus = "up" | "stale" | "retired" | "unknown";
 
 /**
- * 心跳行超过这个毫秒数没更新 = **退休**:它不再代表任何一班,从对外的按班列表里消失。
+ * 心跳行超过这个毫秒数没更新 = **退休**:它多半已经不代表任何一班,在按班列表 `workers` 里
+ * 改用 `retired` 这个词报出来 —— 仍然看得见,但不再和「刚停跳几分钟」的 `stale` 共用一个词。
  *
  * 为什么需要第二道门槛(2026-09-15 第三轮走查 R3-F19):`WorkerHeartbeat` 是 upsert 表,
  * **没有任何产品代码删过行**(唯一的 `deleteMany` 都在测试里)。所以一个不再被写的 id ——
@@ -22,9 +29,15 @@ export type WorkerStatus = "up" | "stale" | "unknown";
  * 只有 `all` 角色写它,staging 跑的是 `wait`/`compute` 两班)——会**永远**留在响应里显示
  * `stale`。staging 上这一行已经冻了两天多,而那两班一直好好的。
  *
- * 后果不是多一个字段那么简单:`docs/ops/incident-visibility.md:88` 让值班人「先看 workers 里
+ * 后果不是多一个字段那么简单:`docs/ops/incident-visibility.md:92` 让值班人「先看 workers 里
  * 哪一行 stale」,一个永远 stale 的幽灵行会把这条 runbook 训练成「那行不用管」——真有一班死
- * 掉时,同样的 stale 就没人再当回事。`docs/ops/dashboards.md:147` 的关键字监控同理。
+ * 掉时,同样的 stale 就没人再当回事。`docs/ops/dashboards.md:149` 的关键字监控同理。
+ *
+ * **为什么是换词、不是删行**(2026-09-16 复核 P2):把退休行从 `workers` 里删掉会换一个盲区
+ * 回来 —— 一班**真的**死了超过一天的 worker 会从唯一的按班列表里整行消失,而顶层 `worker`
+ * 只要还有一班活着就照报 `up`;于是「死了一整天」反而比「死了六分钟」更难被看见,而前者
+ * 严重得多。要治的是「`stale` 这个词被一行幽灵磨钝了」,不是「这一行不该被人知道」——
+ * 所以给它一个自己的词:值班人一眼看得出这是一条没人写的历史记录,而不是刚出的事故。
  *
  * 24 小时怎么来的:心跳 60 秒一次、5 分钟判 stale,一班**活着**的进程不可能一整天不写一行;
  * 反过来,一班真死了的班要连续显示 stale 整整一天(覆盖任何一轮值班与一次部署窗口)才会退休,
@@ -33,8 +46,8 @@ export type WorkerStatus = "up" | "stale" | "unknown";
  */
 export const WORKER_RETIRED_MS = 24 * 60 * 60_000;
 
-/** 这一行还代不代表一班?超过 {@link WORKER_RETIRED_MS} 没人写 = 退休。未来时间戳(时钟偏移)
- *  一律不算退休,与 {@link workerStatus} 同一条纪律:绝不因 skew 抹掉一行。 */
+/** 这一行还代不代表一班?超过 {@link WORKER_RETIRED_MS} 没人写 = 退休(报 `retired`,不删行)。
+ *  未来时间戳(时钟偏移)一律不算退休,与 {@link workerStatus} 同一条纪律:绝不因 skew 改一行的口径。 */
 export function workerRetired(heartbeatAt: Date, now: Date): boolean {
   return now.getTime() - heartbeatAt.getTime() >= WORKER_RETIRED_MS;
 }
@@ -89,13 +102,16 @@ export function backupAgeHours(lastSucceededAt: Date | null, now: Date): number 
  *
  * 按班告警的接线归 #793;这里先把数据摆出来。
  *
- * 2026-09-15 R3-F19:退休行(见 {@link WORKER_RETIRED_MS})**不进** `workers`。仅仅是 stale
- * 的行照旧留着——「一班几分钟前停跳了」正是这份列表的诊断价值,一刀切掉所有 stale 是错的;
- * 被切掉的只有「整整一天没人写」的那一类,它已经不是一班,只是一条历史记录。
- * 顶层 `worker` 的算法**一个字没改**(至少一班 up);退休行本来就不可能是 up,所以它永远
- * 不会掩盖一次真故障。全部行都退休时顶层回 unknown——runbook 与监控对
- * `stale|unknown` 本来就是同一步处置(`docs/ops/incident-visibility.md:87`、
- * `docs/ops/dashboards.md:147` 的关键字是 `"worker":"up"` 缺失即告警)。
+ * 2026-09-15 R3-F19(2026-09-16 复核改定):整整一天没人写的行在 `workers` 里报
+ * `retired`(见 {@link WORKER_RETIRED_MS}),而**不是**被删掉——删掉等于让「死了一整天的一班」
+ * 比「死了六分钟的一班」更隐形。仅仅是 stale 的行照旧报 `stale`:「一班几分钟前停跳了」正是
+ * 这份列表的诊断价值,一刀切掉所有 stale 是错的。
+ *
+ * 顶层 `worker` 的算法**一个字没改**(至少一班 up)。`retired` 既不是 up 也不是 stale,所以
+ * 它既掩盖不了一次真故障,也不会自己制造一次假警报:关键字监控盯的 `"worker":"up"`
+ * (`docs/ops/dashboards.md:149`)不受影响,而那条永远挂着的 `"worker":"stale"` 子串就此消失。
+ * 全部行都退休时顶层回 unknown——runbook 与监控对 `stale|unknown` 本来就是同一步处置
+ * (`docs/ops/incident-visibility.md:91`)。
  */
 export function workersHealth(
   rows: { id: string; at: Date }[],
@@ -103,8 +119,7 @@ export function workersHealth(
 ): { worker: WorkerStatus; workers: Record<string, WorkerStatus> } {
   const workers: Record<string, WorkerStatus> = {};
   for (const row of rows) {
-    if (workerRetired(row.at, now)) continue;
-    workers[row.id] = workerStatus(row.at, now);
+    workers[row.id] = workerRetired(row.at, now) ? "retired" : workerStatus(row.at, now);
   }
   const statuses = Object.values(workers);
   const worker: WorkerStatus = statuses.includes("up") ? "up" : statuses.includes("stale") ? "stale" : "unknown";

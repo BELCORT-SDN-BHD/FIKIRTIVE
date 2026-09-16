@@ -7,7 +7,7 @@
 ## 仓库当前可验证的能力
 
 - `GET /api/health` 免登录返回非敏感**存活**摘要,**HTTP 恒为 200**(#796 起):
-  `{ ok:true, db:"up|unknown", worker:"up|stale|unknown", workers:{…}, migrations:"applied|failed" }`。
+  `{ ok:true, db:"up|unknown", worker:"up|stale|unknown", workers:{每班:"up|stale|retired"}, migrations:"applied|failed" }`。
   心跳读取是顺带的(1 秒不回就放弃),读不到只把 `db`/`worker` 写成 `unknown`,**不改状态码** ——
   它回答的是「这个 Web 进程还答不答得出话」,不是「系统健康吗」。
   (#796 之前它在 DB 不可达时回 503;那个行为被移到 `/api/ready`,因为当时假定平台会拿这个
@@ -20,6 +20,10 @@
 - worker 心跳超过代码阈值会显示 `stale`;它是诊断信号,不是自动修复或通知保证。
   拆成算力/等待两班之后,每班一行(`worker-compute` / `worker-wait`,未拆时仍是 `worker`);
   顶层 `worker` 字段的含义是「至少一班活着」,按班真相在 `workers` 里。
+  `workers` 里还有第三个词 `retired`(2026-09-15 R3-F19):这一行**整整一天以上**没人写过。
+  心跳表只 upsert、没有任何产品代码删行,所以拆班之后没人再写的旧 id(例如 #796 之前的
+  `worker`)会一直留在表里 —— 给它自己的词,是为了让 `stale` 只剩下「刚停跳」这一个含义。
+  `retired` 不会自己消失,除非那个 id 重新开始写心跳。
 - `GET /api/ops/dlq` 免登录巡检八条死信队列(#793):HTTP 200 = 八条**全部查得到且一条不剩**,
   503 = 有死信(`backed-up`),或有队列查不到 / 计数读不懂 / 库读不到(`unknown`)。
   只答 clear/backed-up/unknown,不给条数或队列名;计数直接查 job 表,所以 worker 死透了它
@@ -85,7 +89,11 @@
 2b. **`/api/ready` 503 `migrations-not-applied`:**新部署的迁移没跑成,站点正跑在旧结构上,
    旧部署仍在承载流量(#796)。先修迁移,别强推;`/api/health` 此时仍是 200,别据此判断已恢复。
 3. **health 200 + `worker:"stale|unknown"`:**查 worker deployment/logs、heartbeat 和 queue;不要把 web 200 报成系统健康。
-   拆班之后先看 body 里 `workers` 的哪一行 stale —— 算力班和等待班坏掉的表现完全不同。
+   拆班之后先看 body 里 `workers` 的哪一行 `stale` —— 算力班和等待班坏掉的表现完全不同。
+   标 `retired` 的行是**一整天以上没人写**的旧记录(多半是拆班前留下的 id),不是刚出的事故:
+   先处置 `stale` 的那几行。但 `retired` 也不等于可以不看 —— 一班**真的**死了超过一天同样
+   会变成 `retired`,所以要核对这个 id 今天是否还应该有人在写(`apps/worker/src/plan.ts` 的
+   `heartbeatIdFor`);该有人写却是 `retired`,那就是一次已经烧了一整天的故障。
 4. **health 200 + worker up:**按用户操作时间追 Sentry、应用日志、审计记录和相关外部 provider 回执。
 5. 固定最小复现与影响范围后再提出修复/rollback 选项;执行权限仍由当前 incident task 与项目法决定。
 

@@ -88,11 +88,11 @@ describe("GET /api/build-info", () => {
   });
 
   /**
-   * R3-F19(2026-09-15)—— 与 /api/health 同一把尺:一整天没人写的行不再算一班。
-   * 这个端点更要命,因为退休行还带着**它冻住那一刻的 sha**,而端点的整个用处就是回答
-   * 「现在跑的是哪次部署」。
+   * R3-F19(2026-09-15,2026-09-16 复核改定)—— 与 /api/health 同一把尺:一整天没人写的行
+   * 标 `retired: true`,不删。退休行带着**它冻住那一刻的 sha**,而端点的整个用处就是回答
+   * 「现在跑的是哪次部署」—— 所以那个 sha 必须**带着标签**出现,既不冒充现役,也不失踪。
    */
-  it("R3-F19: 两天没人写的旧行不进 worker 列表;刚跳过的班照常在列", async () => {
+  it("R3-F19: 两天没人写的旧行留在列表里但标 retired: true;刚跳过的班不带这个键", async () => {
     await prisma.workerHeartbeat.createMany({
       data: [
         { id: "worker", commitSha: "ca864b28ca864b28", at: new Date(Date.now() - 2 * 24 * 3_600_000) },
@@ -100,15 +100,22 @@ describe("GET /api/build-info", () => {
       ],
     });
     const body = await (await GET()).json();
-    expect(body.worker.map((w: { role: string }) => w.role)).toEqual(["worker-wait"]);
-    expect(JSON.stringify(body)).not.toContain("ca864b28");
+    const rows: { role: string; sha: string; retired?: true }[] = [...body.worker].sort((a, b) =>
+      a.role.localeCompare(b.role),
+    );
+    expect(rows.map((w) => w.role)).toEqual(["worker", "worker-wait"]);
+    // 那个冻住的 sha 仍然报出来,但它身上有标签;活着的那一行没有。
+    expect(rows[0]).toMatchObject({ role: "worker", sha: "ca864b28", retired: true });
+    expect(rows[1]).toMatchObject({ role: "worker-wait", sha: "bbbbbbbb" });
+    expect(Object.keys(rows[1]!)).not.toContain("retired");
   });
 
-  it("R3-F19: 6 分钟前跳过的班仍然在列(退休只切掉整天没动静的行)", async () => {
+  it("R3-F19: 6 分钟前跳过的班照常在列,而且不带 retired(退休只标整天没动静的行)", async () => {
     await prisma.workerHeartbeat.create({
       data: { id: "worker-compute", commitSha: "aaaaaaaa11111111", at: new Date(Date.now() - 6 * 60_000) },
     });
     const body = await (await GET()).json();
     expect(body.worker.map((w: { role: string }) => w.role)).toEqual(["worker-compute"]);
+    expect(Object.keys(body.worker[0])).not.toContain("retired");
   });
 });

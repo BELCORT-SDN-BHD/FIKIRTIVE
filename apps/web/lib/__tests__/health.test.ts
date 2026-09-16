@@ -110,37 +110,49 @@ describe("workersHealth", () => {
     expect(workersHealth([{ id: "worker", at: old }], now).worker).toBe("stale");
   });
 
-  /** 2026-09-15 R3-F19 —— 一整天没人写的行不再算一班。 */
+  /**
+   * 2026-09-15 R3-F19(2026-09-16 复核改定)—— 一整天没人写的行改报 `retired`,**不删行**:
+   * 删掉会让「死了一整天的一班」比「死了六分钟的一班」更隐形,而前者严重得多。
+   */
   describe("退休(R3-F19)", () => {
     const retired = new Date(now.getTime() - WORKER_RETIRED_MS - 1);
 
-    it("刚停跳几分钟的班仍然在列 —— 诊断价值正在这里,不能一刀切掉 stale", () => {
+    it("刚停跳几分钟的班仍然报 stale —— 诊断价值正在这里,不能一刀切掉 stale", () => {
       expect(workersHealth([{ id: "worker-compute", at: old }, { id: "worker-wait", at: fresh }], now).workers)
         .toEqual({ "worker-compute": "stale", "worker-wait": "up" });
     });
 
-    it("整天没人写的旧行直接消失,活着的两班照报", () => {
+    it("整天没人写的旧行报 retired(仍然在列),活着的两班照报 up", () => {
       const out = workersHealth(
         [{ id: "worker", at: retired }, { id: "worker-wait", at: fresh }, { id: "worker-compute", at: fresh }],
         now,
       );
-      expect(out.workers).toEqual({ "worker-wait": "up", "worker-compute": "up" });
+      expect(out.workers).toEqual({ worker: "retired", "worker-wait": "up", "worker-compute": "up" });
       expect(out.worker).toBe("up");
     });
 
-    it("门槛就在 24 小时整:差 1 毫秒还在(stale),到点就退休", () => {
+    it("门槛就在 24 小时整:差 1 毫秒还是 stale,到点改报 retired", () => {
       const justUnder = new Date(now.getTime() - (WORKER_RETIRED_MS - 1));
       expect(workerRetired(justUnder, now)).toBe(false);
       expect(workersHealth([{ id: "worker", at: justUnder }], now).workers).toEqual({ worker: "stale" });
       expect(workerRetired(new Date(now.getTime() - WORKER_RETIRED_MS), now)).toBe(true);
+      expect(workersHealth([{ id: "worker", at: new Date(now.getTime() - WORKER_RETIRED_MS) }], now).workers)
+        .toEqual({ worker: "retired" });
     });
 
     it("未来时间戳(时钟偏移)绝不被当成退休", () => {
       expect(workerRetired(new Date(now.getTime() + 3_600_000), now)).toBe(false);
     });
 
-    it("全都退休了 → workers 空、顶层 unknown(runbook 对 stale|unknown 是同一步处置)", () => {
-      expect(workersHealth([{ id: "worker", at: retired }], now)).toEqual({ worker: "unknown", workers: {} });
+    it("全都退休了 → 行还在(retired)、顶层 unknown(runbook 对 stale|unknown 是同一步处置)", () => {
+      expect(workersHealth([{ id: "worker", at: retired }], now))
+        .toEqual({ worker: "unknown", workers: { worker: "retired" } });
+    });
+
+    it("一班真死了整整一天也绝不会被藏起来 —— 另一班活着时顶层照报 up,那一行仍在", () => {
+      const out = workersHealth([{ id: "worker-compute", at: retired }, { id: "worker-wait", at: fresh }], now);
+      expect(out.worker).toBe("up");
+      expect(out.workers["worker-compute"]).toBe("retired");
     });
   });
 });
