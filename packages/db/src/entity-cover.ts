@@ -16,8 +16,9 @@
  * 一律照着它画,谁也不必再各自猜一遍(家规 §7.3 单一权威)。
  *
  * ── 不变量(这个函数是它的全部定义) ────────────────────────────────────────
- *   身份上钉的封面必须是一条**活着的基础层**参考图(`deletedAt IS NULL AND variantId IS NULL`);
- *   没钉过、或钉的那一条已经不在了,就钉**最早挂上的**那一张;一张都没有才是 NULL。
+ *   身份上钉的封面必须是一条**活着的基础层**参考图(`deletedAt IS NULL AND variantId IS NULL`),
+ *   而且它指的那张 **Asset 也还活着**(`Asset.deletedAt IS NULL`);没钉过、或钉的那一条已经
+ *   不在了,就钉**最早挂上的**那一张;一张都没有才是 NULL。
  *
  * 这一句话同时管住四种情形,所以调用处不需要分支:
  *   · 挂上第一张图      → 原本是 NULL ⇒ 钉上它(裁决的正面)。
@@ -70,7 +71,14 @@ export async function reconcileEntityCover(
   // 钉着的那一条还活着吗?活着就什么都不做 —— 商家亲手挑的封面在这里受保护。
   if (entity.baseAssetId) {
     const pinned = await tx.referenceImage.findFirst({
-      where: { ownerId, entityId, assetId: entity.baseAssetId, variantId: null, deletedAt: null },
+      where: {
+        ownerId, entityId, assetId: entity.baseAssetId, variantId: null, deletedAt: null,
+        // 资产本身也要还活着(复核 P2):`deletedAt` 非空的 Asset 是墓碑,字节随时被 30 天清扫
+        // 真删走。钉在墓碑上的封面是一张永远坏掉的图,而且没有入口修得好 —— 所以它**不算**
+        // 「还活着」,让它落到下一张去。回填迁移那半边 `JOIN "Asset" … deletedAt IS NULL`
+        // 一直是这个口径;两处不一致的话,同一个库跑迁移与跑写路会得到两个不同的封面。
+        asset: { deletedAt: null },
+      },
       select: { id: true },
     });
     if (pinned) return entity.baseAssetId;
@@ -78,7 +86,7 @@ export async function reconcileEntityCover(
 
   // 没钉过,或钉的那张已经不在了 ⇒ 落到最早挂上的那一张(没有就是 NULL)。
   const earliest = await tx.referenceImage.findFirst({
-    where: { ownerId, entityId, variantId: null, deletedAt: null },
+    where: { ownerId, entityId, variantId: null, deletedAt: null, asset: { deletedAt: null } },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: { assetId: true },
   });

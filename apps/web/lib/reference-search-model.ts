@@ -98,6 +98,32 @@ export function referenceMatchRank(name: string, query: string): number | null {
   return /[\s\-_/]/.test(n[at - 1] ?? "") ? 2 : 3;
 }
 
+/**
+ * `@` 菜单一行画哪一张缩略图(规格 §5,Founder 2026-09-15 裁决;验收 PRODID-A4)。
+ *
+ * 两种行,两条规则 —— 这正是复核那一格抓到的:
+ *  · **身份行**:封面只认身份上钉着的那一张(`baseAssetId`)。从前这里还有一句
+ *    `?? images[0]`「没钉过就沿用第一张」,而 Brand 那条读路在没钉过时当作没有主图,
+ *    于是同一件产品两张脸。现在「挂上第一张即封面」住在写路
+ *    (`@fikirtive/db:reconcileEntityCover`),读路只照着钉好的那一格画。
+ *  · **变体行**:变体**没有**「钉封面」这回事 —— `baseAssetId` 是身份的,而变体行的图全是
+ *    变体层的(`variantId` 非空),封面规则明确不把它们纳入判据。所以变体行拿身份那条规则去套
+ *    结果恒为 null,每一行变体都会失去缩略图。变体的脸就是它自己的第一张图。
+ *
+ * 视频不当缩略图:调用方先按 `kind === "image"` 筛过再递进来。
+ */
+export function referenceRowThumbUrl(row: {
+  /** 已按 `kind === "image"` 筛过的那几张图,顺序即商家看到的顺序。 */
+  images: readonly { assetId: string; url: string }[];
+  /** 身份上钉着的封面;变体行没有这一格。 */
+  baseAssetId?: string | null;
+  /** 有值 = 这是一条变体行。 */
+  variantId?: string | null;
+}): string | null {
+  if (row.variantId) return row.images[0]?.url ?? null;
+  return row.images.find((image) => image.assetId === row.baseAssetId)?.url ?? null;
+}
+
 /** Contract §2/§6 — one underlying object appears once, however many ways it was found. */
 export function dedupeReferenceResults<T extends ReferenceResult>(items: readonly T[]): T[] {
   const seen = new Set<string>();

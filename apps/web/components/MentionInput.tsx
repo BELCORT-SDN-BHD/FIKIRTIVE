@@ -17,7 +17,7 @@ import {
   ReferencePickerMenu,
   type ReferencePickerRow,
 } from "@/components/reference-picker/ReferencePickerMenu";
-import { referenceSourceLine } from "@/lib/reference-search-model";
+import { referenceSourceLine, referenceRowThumbUrl } from "@/lib/reference-search-model";
 import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import type { EntityDTO } from "@/lib/types";
 
@@ -49,13 +49,12 @@ function entityReferenceType(type: EntityDTO["type"]): ReferenceType {
   }
 }
 
-/** The pinned cover, and only that. A video is not a thumbnail.
- *  规格 §5(Founder 2026-09-15 裁决;验收 PRODID-A4):从前这里还会 `?? images[0]?.url` 沿用
- *  第一张,而 Brand 那条读路在没钉过时当作没有主图 —— 同一件产品两张脸。挂上第一张参考图就
- *  自动钉成封面的规则现在住在写路(`@fikirtive/db:reconcileEntityCover`),读路只照着它画。 */
+/** A video is not a thumbnail. 挑哪一张的判据住在 `lib/reference-search-model.ts` 一处
+ *  (`referenceRowThumbUrl`;规格 §5,Founder 2026-09-15 裁决,验收 PRODID-A4)—— 身份行认钉着的
+ *  封面,变体行认它自己的第一张图。那一处有单测,这里只负责先把视频筛掉。 */
 function entityThumbUrl(item: MentionItem): string | null {
   const images = (item.refs ?? []).filter((ref) => ref.kind === "image");
-  return images.find((ref) => ref.assetId === item.baseAssetId)?.url ?? null;
+  return referenceRowThumbUrl({ images, baseAssetId: item.baseAssetId, variantId: item.variantId });
 }
 
 const MentionList = forwardRef<MentionListHandle, MentionListProps>(function MentionList(props, ref) {

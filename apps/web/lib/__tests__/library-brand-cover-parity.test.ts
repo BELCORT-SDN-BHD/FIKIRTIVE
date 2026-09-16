@@ -43,7 +43,10 @@ const { getLibraryElements } = await import("@/lib/library-elements");
 const { setBaseAsset } = await import("@/lib/refgen-actions");
 const { storage } = await import("@/lib/storage");
 const { prisma, createProduct, reconcileEntityCover } = await import("@fikirtive/db");
-const { newId } = await import("@fikirtive/core");
+const { newId, storageKey, storageKeyToSrc } = await import("@fikirtive/core");
+
+/** assetId → 这张图**应该**被画成的那个 url。用来把「读模型挑了哪一张」验到像素那一层。 */
+const expectedUrl = new Map<string, string>();
 
 const EMAIL = `cover-parity-${randomUUID()}@fikirtive.test`;
 let ownerId: string;
@@ -67,6 +70,7 @@ async function seedAsset(label: string): Promise<string> {
       sizeBytes: BigInt(bytes.byteLength), source: "UPLOAD", width: 8, height: 10,
     },
   });
+  expectedUrl.set(asset.id, storageKeyToSrc(storageKey(ownerId, contentHash, "png")));
   return asset.id;
 }
 
@@ -83,13 +87,27 @@ async function attachLikeRefgen(entityId: string, assetId: string, position: num
   return id;
 }
 
-/** Library 这条读路认的封面。 */
+/**
+ * Library 这条读路**真的画出来**的那张封面,倒推回它的 assetId。
+ *
+ * 复核 P2-④:这里从前读的是 `card.baseAssetId` —— 那一格是 `Entity.baseAssetId` 原样透传,
+ * 而 Brand 那边读的是同一列,于是两边比的是同一个值,**恒等**。`library-elements.ts` 里哪天
+ * 又长回一句 `?? row.referenceImages[0]`,那种断言一声都不会响。
+ *
+ * 所以改成认 `coverUrl`(卡片上那个真的 `<img src>`),再用卡片自己的 `images` 表把它倒推成
+ * assetId:读模型一旦挑错了图,倒推出来的就是另一个 assetId,当场对不上 Brand。
+ */
 async function libraryCover(entityId: string): Promise<string | null> {
   const elements = await getLibraryElements();
   if (!Array.isArray(elements)) throw new Error(elements.error);
   const card = elements.find((e) => e.id === entityId);
   if (!card) throw new Error(`Library 里找不到 ${entityId}`);
-  return card.baseAssetId ?? null;
+  if (!card.coverUrl) return null;
+  const painted = card.images.find((img) => img.url === card.coverUrl);
+  if (!painted) throw new Error(`Library 画了一张不属于这个身份的图:${card.coverUrl}`);
+  // 再钉一层:画出来的 url 必须**逐字**等于这张资产的存储 url,不只是「在自己的图里」。
+  expect(card.coverUrl).toBe(expectedUrl.get(painted.assetId));
+  return painted.assetId;
 }
 
 /** Brand 这条读路认的主图(`withProductIdentity` 从身份补进 `data.imageAssetId`)。 */

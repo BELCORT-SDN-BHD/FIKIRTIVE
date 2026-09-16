@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { prisma } from "../index.js";
 import { reconcileEntityCover } from "../entity-cover.js";
+import { createProduct, updateProductRecord } from "../create-product.js";
 import { seedOrg } from "../../test/setup.js";
 
 const MIGRATION_SQL = readFileSync(
@@ -179,6 +180,32 @@ describe("PRODID-A4 挂上第一张参考图就自动成为封面(reconcileEntit
     await expect(reconcileEntityCover(prisma, { ownerId: orgId, entityId })).resolves.toBe(base);
   }, 60_000);
 
+  it("PRODID-A4 写路与回填对**墓碑资产**同一口径:只有墓碑可挑 ⇒ 不钉;钉着的那张成了墓碑 ⇒ 落到下一张", async () => {
+    // 复核 P2-②:回填迁移一直 `JOIN "Asset" … deletedAt IS NULL`,而写路从前只看
+    // `ReferenceImage.deletedAt` —— 同一个库跑迁移与跑写路会得到两个不同的封面。这条盯住两边一致。
+    //
+    // ① 只有墓碑可挑:不钉。墓碑资产的字节随时被 30 天清扫真删走,钉上去就是一张永远坏掉的封面。
+    const tombstoneOnly = await seedEntity();
+    const dead = await seedAsset();
+    await attachRef(tombstoneOnly, dead, 0);
+    await prisma.asset.updateMany({ where: { id: dead, ownerId: orgId }, data: { deletedAt: new Date() } });
+    await expect(reconcileEntityCover(prisma, { ownerId: orgId, entityId: tombstoneOnly })).resolves.toBeNull();
+    expect(await coverOf(tombstoneOnly)).toBeNull();
+
+    // ② 钉着的那张成了墓碑,但还有别的活图:落到下一张,不留一个指着墓碑的封面。
+    const entityId = await seedEntity();
+    const first = await seedAsset();
+    const second = await seedAsset();
+    await attachRef(entityId, first, 0);
+    await attachRef(entityId, second, 1);
+    await reconcileEntityCover(prisma, { ownerId: orgId, entityId });
+    expect(await coverOf(entityId)).toBe(first);
+
+    await prisma.asset.updateMany({ where: { id: first, ownerId: orgId }, data: { deletedAt: new Date() } });
+    await expect(reconcileEntityCover(prisma, { ownerId: orgId, entityId })).resolves.toBe(second);
+    expect(await coverOf(entityId)).toBe(second);
+  }, 60_000);
+
   it("PRODID-A4 幂等:同一个身份连跑两次,结果一样", async () => {
     const entityId = await seedEntity();
     const first = await seedAsset();
@@ -187,6 +214,44 @@ describe("PRODID-A4 挂上第一张参考图就自动成为封面(reconcileEntit
     const twice = await reconcileEntityCover(prisma, { ownerId: orgId, entityId });
     expect(once).toBe(first);
     expect(twice).toBe(first);
+  }, 60_000);
+
+  it("PRODID-A4 显式「清空封面」在还有图时落回第一张 —— 不变量是全量的", async () => {
+    // Founder 2026-09-15 裁决 ＋ 复核 P2-③:一件还挂着基础层参考图的产品**永远**有一张封面。
+    // 所以 `imageAssetId: null`(Brand 页那条显式清空意图)不再留下一件没有脸的产品,而是落回
+    // 最早那一张。Brand 页那颗「Remove from product」于是永远改不动任何东西,本票把它撤掉。
+    const first = await seedAsset();
+    const second = await seedAsset();
+    const made = (await createProduct({
+      ownerId: orgId, data: { name: `Kuih ${randomUUID().slice(0, 8)}` }, source: "user",
+      assetIds: [first, second],
+    })) as { created: true; id: string; entityId: string };
+    expect(await coverOf(made.entityId)).toBe(first);
+
+    // 商家挑第二张当封面 —— 显式意图,照旧说了算。
+    await expect(
+      updateProductRecord({ ownerId: orgId, id: made.id, data: {}, imageAssetId: second, source: "user" }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(await coverOf(made.entityId)).toBe(second);
+
+    // 显式清空:不是「没有封面」,而是落回第一张。
+    await expect(
+      updateProductRecord({ ownerId: orgId, id: made.id, data: {}, imageAssetId: null, source: "user" }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(await coverOf(made.entityId)).toBe(first);
+
+    // 清空之后再挂一张:封面仍是第一张,新挂的不抢。
+    const third = await seedAsset();
+    await attachRef(made.entityId, third, 2);
+    await reconcileEntityCover(prisma, { ownerId: orgId, entityId: made.entityId });
+    expect(await coverOf(made.entityId)).toBe(first);
+  }, 60_000);
+
+  it("PRODID-A4 一张基础层参考图都没有时,清空封面仍然是「没有封面」", async () => {
+    // 「没有封面」只剩这一种成因 —— 不变量全量之后,它不再能由商家的一次点击造出来。
+    const entityId = await seedEntity();
+    await expect(reconcileEntityCover(prisma, { ownerId: orgId, entityId })).resolves.toBeNull();
+    expect(await coverOf(entityId)).toBeNull();
   }, 60_000);
 
   it("PRODID-A9 B 租户改不动 A 的封面", async () => {

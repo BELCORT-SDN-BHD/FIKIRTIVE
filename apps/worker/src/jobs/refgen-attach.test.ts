@@ -33,10 +33,13 @@ const m = vi.hoisted(() => {
     $transaction: vi.fn(async (arg: unknown) =>
       Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => Promise<unknown>)(prisma)),
   };
-  return { prisma, refGenJobFindUnique, refGenJobUpdate, refGenJobUpdateMany, refFindFirst, refCreate, entityUpdate, refundReservation, settleCredits };
+  // Founder 2026-09-15 裁决:挂图与「挂上第一张即封面」同一个事务。留一个真的把手,
+  // 好让下面断言这条 REFSHEET 路**确实**调了它(复核 P2-⑤:mock 成没把手的 vi.fn 等于没设防)。
+  const reconcileCover = vi.fn(async () => null);
+  return { prisma, refGenJobFindUnique, refGenJobUpdate, refGenJobUpdateMany, refFindFirst, refCreate, entityUpdate, refundReservation, settleCredits, reconcileCover };
 });
 
-vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits, Prisma: {}, reconcileEntityCover: vi.fn(async () => null) }));
+vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits, Prisma: {}, reconcileEntityCover: m.reconcileCover }));
 // import-time deps the resume path does not exercise:
 vi.mock("../storage.js", () => ({ storage: {} }));
 vi.mock("../generation.js", () => ({ provider: { name: "mock" } }));
@@ -81,6 +84,17 @@ describe("attachOutputs — concurrent double-attach loses the index race (P2002
       expect.objectContaining({ data: expect.objectContaining({ status: "DONE" }) }),
     );
     expect(m.refundReservation).not.toHaveBeenCalled();
+
+    // PRODID-A4(Founder 2026-09-15 裁决)——**这条 REFSHEET 路**是裁决点名的那一条:从前只有
+    // mode==='BASE' 在 finalizeDone 里钉封面,参考图集一张都不钉,于是商家挂了一整套参考图,
+    // 产品在 Brand 页仍然没有脸。这里盯住「真的挂上去的那一张(a2)之后,封面规则跑过」——
+    // 而且是在挂图的那个事务里(第一个参数就是 `$transaction` 递进去的 tx)。
+    expect(m.reconcileCover).toHaveBeenCalledWith(
+      m.prisma, // 这个 mock 的 $transaction 把 prisma 自己当 tx 递进回调
+      { ownerId: "o1", entityId: "e1" },
+    );
+    // P2002 被跳过的那一张(a1)不调 —— 它整个事务都没进去。
+    expect(m.reconcileCover).toHaveBeenCalledTimes(1);
   });
 
   it("a non-P2002 create failure keeps today's behavior: requeue + rethrow, no DONE", async () => {
