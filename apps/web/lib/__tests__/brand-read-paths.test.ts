@@ -143,9 +143,11 @@ describe("PRODID-A5 Library 元素页不给价格、卖点、分类的编辑入�
     if (!Array.isArray(elements)) throw new Error(elements.error);
     const card = elements.find((e) => e.id === entityId);
     expect(card, "Library 里没有这张产品卡").toBeTruthy();
-    // 卡上只有身份那几样。三个营销格一个都读不到 —— 元素页拿不到,自然也画不出编辑入口。
+    // 卡上只有身份那几样(名字、封面与它可挑的那几张图、关联数、能力表)。三个营销格一个都
+    // 读不到 —— 元素页拿不到,自然也画不出编辑入口。这张清单是**闭合**的:下次谁把价格捎进
+    // 这个读模型,这一句当场红。
     expect(Object.keys(card!).sort()).toEqual(
-      ["capabilities", "coverUrl", "id", "kind", "mediaCount", "name", "origin"],
+      ["baseAssetId", "capabilities", "coverUrl", "id", "images", "kind", "mediaCount", "name", "origin"],
     );
     for (const field of MARKETING_FIELDS) {
       expect(Object.hasOwn(card as unknown as Record<string, unknown>, field)).toBe(false);
@@ -165,6 +167,9 @@ describe("PRODID-A5 Library 元素页不给价格、卖点、分类的编辑入�
     const read = (file: string) => readFileSync(path.join(process.cwd(), file), "utf8");
     const libraryUi = [
       "components/library/LibraryView.tsx",
+      // 身份那两格(名字、封面)的编辑入口就在这个文件里 —— 它是最容易被顺手加一格价格的
+      // 那一处,所以扫描一起盖住它(票 #1323,PRODID-A4 的 Library 入口)。
+      "components/library/ElementIdentityFields.tsx",
       "lib/library-elements-model.ts",
     ];
     for (const file of libraryUi) {

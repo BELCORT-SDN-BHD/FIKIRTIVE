@@ -108,11 +108,15 @@ describe("Otto chat design system", () => {
   it("promotes approval and balance truth into readable shadcn notices", () => {
     const frontDoor = source("components/otto/OttoFrontDoor.tsx");
 
+    // 余额不足那条仍在:它是**可操作**的余额提醒(带 Top up in Billing 的出口),
+    // 不是常驻说明,不在 R3-F06 的删除范围内。
     expect(frontDoor).toContain('<Alert role="status" variant="warning" density="compact">');
     expect(frontDoor).toContain("<AlertTitle>Low balance for video</AlertTitle>");
-    expect(frontDoor).toContain("<AlertTitle>You stay in control</AlertTitle>");
-    expect(frontDoor).toContain("{CHAT_SPEND_NOTE}");
-    expect(frontDoor).toContain("{CHAT_HOLD_NOTE}");
+    // 「You stay in control」整段已删(Founder 2026-09-15「整段一起删」)——
+    // 这三条从前钉的是它必须在,现在钉的是它没回来。
+    expect(frontDoor).not.toContain("<AlertTitle>You stay in control</AlertTitle>");
+    expect(frontDoor).not.toContain("{CHAT_SPEND_NOTE}");
+    expect(frontDoor).not.toContain("{CHAT_HOLD_NOTE}");
     expect(frontDoor).not.toContain("text-muted-foreground/70");
   });
 });

@@ -54,7 +54,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { MentionInput } from "@/components/MentionInput";
-import { UnderstandingCostHint } from "@/components/otto/UnderstandingCostHint";
 import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
 import { VideoSpecPicker } from "@/components/gen/VideoSpecPicker";
 import {
@@ -1342,13 +1341,9 @@ export default function DetailPanel({
                 </div>
                 {/* Crop controls */}
                 <div className="cv-detail-crop-actions">
-                  {/* MONEY-A9 §7.3 —— 披露先于扣费。裁一张已有的图不是「只是裁一下」:
-                   *  `saveCroppedGeneration` 落的是一条全新的 `source:"UPLOAD"` image Asset,
-                   *  扫描器照样建理解行、照样扣。商家只改了构图却被收一笔他不知道存在的钱,
-                   *  正是这条验收要拦的那种账。所以这一行挂在 Confirm crop 旁边,而不是之后。 */}
-                  <div className="mr-auto max-w-[60%] self-center">
-                    <UnderstandingCostHint />
-                  </div>
+                  {/* R3-F06(Founder 2026-09-14):Confirm crop 旁边从前常驻一行上传理解的
+                   *  价目小字,与其余受影响入口同批撤掉。裁图落的仍是一条新的
+                   *  `source:"UPLOAD"` Asset、仍旧建理解行照扣 —— 撤的是展示,不是钱。 */}
                   {cropStatus === "failed" && (
                     <span className="self-center text-xs text-destructive">
                       Crop failed — try again

@@ -55,8 +55,12 @@ describe("① Manual editor 在 Beta parked", () => {
    * Library 的界面里」,不是「不留任何门」—— 所以 Library 页头必须保留一颗明确入口,
    * 与真路由和旧书签一起围住:商家不需要知道地址也能找到剪辑台。
    */
+  // R3-F10:这条旧地址从 `page.tsx` + `redirect()` 改成 Route Handler。头上压着
+  // `app/library/loading.tsx`(那是 `/library` 与 `/library/[id]` 两张真页面要的骨架,挪不走),
+  // 而在那层 Suspense 边界下面,`redirect()` 只答得出 HTTP 200 + 一屏骨架 ——
+  // 实测与理由全文在 `lib/parked-route-redirect.ts`。
   it("真路由还在,不是被切换总票误删掉的一部分", () => {
-    expect(existsSync(path.join(WEB_ROOT, "app/library/editor/page.tsx"))).toBe(true);
+    expect(existsSync(path.join(WEB_ROOT, "app/library/editor/route.ts"))).toBe(true);
     expect(SHELL_ROUTES.edit).toBe("/library/editor");
   });
 
@@ -64,10 +68,15 @@ describe("① Manual editor 在 Beta parked", () => {
     expect(OTTO_VIEW_REDIRECTS.edit).toBe(SHELL_ROUTES.create);
   });
 
-  it("legacy editor route 只从权威源 redirect 到 Create", () => {
-    const route = codeOf("app/library/editor/page.tsx");
-    expect(route).toContain("redirect(SHELL_ROUTES.create)");
+  it("legacy editor route 只从权威源 redirect 到 Create,而且真的答一条 307", async () => {
+    const route = codeOf("app/library/editor/route.ts");
+    expect(route).toContain("parkedRouteRedirect(SHELL_ROUTES.edit)");
     expect(route).not.toContain("<EditDesk");
+
+    const { GET } = await import("../../app/library/editor/route");
+    const res = GET();
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe(SHELL_ROUTES.create);
   });
 
   it("Library 页头改为 active Create 入口", () => {

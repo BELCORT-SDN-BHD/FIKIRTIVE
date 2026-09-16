@@ -6,9 +6,11 @@
  * 换壳的第一个目标(§1.1 G1)原话就是这一句的反面:「在 Library 上刷新页面,回来还在
  * Library」。所以这份围栏钉的是**商家看得见的四件事**,不是内部函数长什么样:
  *
- *   ① `/library` 与 `/library/editor` 各有一个真的 `page.tsx`,而且 `/library` 里没有
+ *   ① `/library` 与 `/library/editor` 各有一个真的路由文件,而且 `/library` 里没有
  *      redirect —— 「有门没页」和「门后面还是一次跳转」都要红;地址逐字来自 `SHELL_ROUTES`,
  *      这份文件里一个路径字面量都不许自己写(规格书 §1.3)。
+ *      (R3-F10 起,`/library` 是 `page.tsx`、`/library/editor` 是 `route.ts` ——
+ *      停放旧地址改用 Route Handler 才答得出真的 307,理由在 `lib/parked-route-redirect.ts`。)
  *   ② 两页真的画得出来:真 React、真组件、真 effect,断言落在屏幕上的字上。
  *   ③ **Stack A 纪律**(§6.3):导航权威 `MERCHANT_NAV` 一个字没动,旧壳照旧 —— 商家点导轨
  *      仍然走 `/otto?view=library`,只有输 URL 才到得了新页。旧壳有任何行为变化都要红。
@@ -17,7 +19,7 @@
  *
  * 变异自查(逐一实做,做完全部还原,红→绿):
  *   - 把 `app/library/page.tsx` 换回 `redirect("/otto?view=library")` ⇒ ①「不是 shim」红;
- *   - 删掉 `app/library/editor/page.tsx` ⇒ ①「每条新地址都有页」红;
+ *   - 删掉 `app/library/editor/route.ts` ⇒ ①「每条新地址都有门」红;
  *   - 把 AddAssetDialog 的 `<Dialog>` 换回手搓 `fixed inset-0 role="dialog"` ⇒ ④ 的 Escape、
  *     焦点陷阱、无手搓遮罩三条一起红;
  *   - 把 `MERCHANT_NAV` 里 Library 那一格的 href 改成 `/library` ⇒ ③ Stack A 红;
@@ -127,7 +129,10 @@ vi.mock("@/components/asset/DetailPanel", () => ({ default: () => null }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { default: LibraryPage } = await import("@/app/library/page");
-const { default: LibraryEditorPage } = await import("@/app/library/editor/page");
+// R3-F10:`/library/editor` 从 `page.tsx` + `redirect()` 改成 Route Handler。头上的
+// `app/library/loading.tsx` 是下面 `/library` 那张真页面要的骨架,挪不走;而在那层 Suspense
+// 边界下面,`redirect()` 只答得出 HTTP 200 + 一屏骨架(实测在 `lib/parked-route-redirect.ts`)。
+const { GET: LibraryEditorRoute } = await import("@/app/library/editor/route");
 const { OttoStuff } = await import("@/components/otto/OttoStuff");
 const { AddAssetDialog } = await import("@/components/otto/stuff/AddAssetDialog");
 
@@ -203,11 +208,16 @@ const FAILED_JOB: AdJobItem = {
 /* ── ① 门后面真的有页,而且不是又一次跳转 ────────────────────────────────────── */
 
 describe("Library 是真路由,不是 redirect shim", () => {
+  // R3-F10:「有门没页」钉的是**门在不在**,不是那扇门长成 `page.tsx` 还是 `route.ts`。
+  // `/library` 是真页面,所以它必须是 `page.tsx`;`/library/editor` 是停放旧地址,改成
+  // Route Handler 才答得出真的 307(理由在 `lib/parked-route-redirect.ts`),所以它是
+  // `route.ts`。两边都逐字点名,不用「随便哪个都行」把判据放松掉。
   it.each([
-    ["library", SHELL_ROUTES.library],
-    ["edit", SHELL_ROUTES.edit],
-  ])("%s(%s)有自己的 page.tsx —— 不许「有门没页」", (_key, href) => {
-    expect(fs.existsSync(path.join(WEB_ROOT, routeFileFor(href))), `${href} 没有路由文件`).toBe(true);
+    ["library", SHELL_ROUTES.library, "page.tsx"],
+    ["edit", SHELL_ROUTES.edit, "route.ts"],
+  ])("%s(%s)有自己的 %s —— 不许「有门没页」", (_key, href, file) => {
+    const relative = path.join("app", href.replace(/^\//, ""), file);
+    expect(fs.existsSync(path.join(WEB_ROOT, relative)), `${href} 没有路由文件`).toBe(true);
   });
 
   it("`/library` 里除了登录守卫没有别的 redirect —— shim 真的撤了", () => {
@@ -223,20 +233,35 @@ describe("Library 是真路由,不是 redirect shim", () => {
     expect(stale, "这张表要求每条 from 都有一个真的 redirect 文件 —— 留着这一行就是要求 shim 回来").toEqual([]);
   });
 
-  it("剪辑台那一页地址取自权威常量,不在页面里手写第二份", () => {
-    const source = codeOf(routeFileFor(SHELL_ROUTES.edit));
+  it("剪辑台那扇门的地址取自权威常量,不在路由文件里手写第二份", () => {
+    const source = codeOf(path.join("app", SHELL_ROUTES.edit.replace(/^\//, ""), "route.ts"));
     expect(source).toContain("SHELL_ROUTES");
-    expect(source, "页面里硬写了自己的地址").not.toContain(`"${SHELL_ROUTES.edit}"`);
+    expect(source, "路由文件里硬写了自己的地址").not.toContain(`"${SHELL_ROUTES.edit}"`);
   });
 
-  it("两页的加载态走 ui/skeleton,不手搓(规格书 §5.6)", () => {
-    for (const href of [SHELL_ROUTES.library, SHELL_ROUTES.edit]) {
-      const relative = path.join("app", href.replace(/^\//, ""), "loading.tsx");
-      expect(fs.existsSync(path.join(WEB_ROOT, relative)), `${href} 没有加载态`).toBe(true);
-      const source = codeOf(relative);
-      expect(source, `${relative} 没走 ui/skeleton`).toContain("@/components/ui/skeleton");
-      expect(source, `${relative} 又手搓了一份骨架`).not.toContain("animate-pulse");
-    }
+  it("`/library` 的加载态走 ui/skeleton,不手搓(规格书 §5.6)", () => {
+    const relative = path.join("app", SHELL_ROUTES.library.replace(/^\//, ""), "loading.tsx");
+    expect(fs.existsSync(path.join(WEB_ROOT, relative)), `${SHELL_ROUTES.library} 没有加载态`).toBe(true);
+    const source = codeOf(relative);
+    expect(source, `${relative} 没走 ui/skeleton`).toContain("@/components/ui/skeleton");
+    expect(source, `${relative} 又手搓了一份骨架`).not.toContain("animate-pulse");
+  });
+
+  /**
+   * R3-F10 —— 剪辑台那一层的骨架被**删掉**,而且必须保持删掉。
+   *
+   * 「每一页都要有加载态」是对**真页面**说的。`/library/editor` 自 W2-11 起一个像素都不画,
+   * 它只做一件事:把人送回 Create。给它留一份 `loading.tsx` 不是多一层体贴 —— 那层
+   * Suspense 边界正是把这条旧地址的 307 压成 HTTP 200 + 一屏骨架的原因(本机实测,
+   * `lib/parked-route-redirect.ts`)。所以这一条把「不许再长回来」也钉住:谁把它加回去,
+   * 这条红,而不是等 e2e 起完服务器才发现商家又在看一屏不属于任何人的剪辑台骨架。
+   */
+  it("R3-F10:停放的剪辑台没有、也不许再有 loading.tsx —— 它没有内容可等", () => {
+    const relative = path.join("app", SHELL_ROUTES.edit.replace(/^\//, ""), "loading.tsx");
+    expect(
+      fs.existsSync(path.join(WEB_ROOT, relative)),
+      `${relative} 又回来了 —— 它会把这条旧地址的 307 压回 200 + 骨架`,
+    ).toBe(false);
   });
 });
 
@@ -267,10 +292,10 @@ describe("两页真的画得出来(真 React,真组件)", () => {
     await expect(LibraryPage({ searchParams: Promise.resolve({}) })).rejects.toThrow("NEXT_REDIRECT:/login");
   });
 
-  it("`/library/editor` 是旧书签入口,直接回到 Create", async () => {
-    await expect(Promise.resolve().then(() => LibraryEditorPage())).rejects.toThrow(
-      `NEXT_REDIRECT:${SHELL_ROUTES.create}`,
-    );
+  it("`/library/editor` 是旧书签入口,直接回到 Create(R3-F10:一条真的 307)", () => {
+    const res = LibraryEditorRoute();
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe(SHELL_ROUTES.create);
     expect(mocks.getEditDesk).not.toHaveBeenCalled();
   });
 

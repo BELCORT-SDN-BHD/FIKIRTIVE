@@ -19,11 +19,11 @@
  * fact (判官 #1236 left_undone 3). It read "this page starts no paid action, so it makes no money
  * claim of its own" — but pressing send here opens a Canvas conversation and Canvas sends that
  * first turn straight through the Otto stream, and that turn IS metered. Founder 2026-09-05
- * 裁决②「输入框下加一行价钱」reopened exactly that cell: `StartSomething` now renders the same
- * `ConversationCostHint` the Canvas and the Otto front door use, below the composer (see its
- * departure ③). So the honest statement is the narrower one — the per-generation credits
- * confirmation still lives on the Canvas card, where the generation money moves; this page
- * discloses the conversation cost it does start, and writes no number of its own.
+ * 裁决②「输入框下加一行价钱」reopened exactly that cell; R3-F06(Founder 2026-09-14)closed it
+ * again — the standing cost paragraphs below the composer are gone from every entry (see
+ * `StartSomething` departure ③). 那一轮对话照样计费这件事没变,变的只是不再在输入框下常驻说明:
+ * the per-generation credits confirmation still lives on the Canvas card where the generation
+ * money moves, and the prices themselves are read in Billing.
  *
  * The empty state is production-necessary and the design fixture has none (it always ships three
  * canvases), so it uses the design system's own `Empty` primitive — Founder rule ②.

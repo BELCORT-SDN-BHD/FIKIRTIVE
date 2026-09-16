@@ -65,13 +65,19 @@ test("ENGINE-A3 — 画布只有 Otto 那一个输入,花钱长在对话的确�
   // 那是另一回事,所以这里比的是逐字相等。
   await expect(page.getByRole("button", { name: "Generate", exact: true })).toHaveCount(0);
 
-  // ── ③ 送出之前就读得到这一轮对话的价目(§7.4 一级 / §7.6 处置一)──────────────
-  // 「先确认」与「这一程对话本身按用量计费」是同一句话的两半;少了后半句,就是 §7.6 点名的
-  // 那种「两边验收都绿、商家的账单照涨」。
-  await expect(band).toContainText("checks with you on a card before it makes anything");
-  await expect(band).toContainText("charged for what it uses");
-  // 搜索那一条(MONEY-A10)在画布 composer 上是⑦段的新写点 —— 从前它只挂在对话面板里。
-  await expect(band).toContainText("Otto searches the web when your question needs it");
+  // ── ③ 输入框附近不再堆叠常驻的费用说明(R3-F06)────────────────────────────────
+  // Founder 2026-09-14 看到三段说明堆在输入附近的截图后裁定这类常驻说明不要,跨受影响入口
+  // 撤掉(`docs/specs/otto-engine.md` 等三份规格的 2026-09-14 变更登记,APPROVED)。
+  // 这一段从前钉的是反方向(三句必须在场);现在钉的是它们真的不在,而且不是换个说法挂回来。
+  // 撤的只有展示 —— 下面第⑤段证明花钱那一下仍旧长在确认卡上、价钱仍旧写在按钮上。
+  for (const sentence of [
+    "checks with you on a card before it makes anything",
+    "Otto searches the web when your question needs it",
+    "Uploads are understood automatically",
+    "Each message holds up to",
+  ]) {
+    await expect(band).not.toContainText(sentence);
+  }
 
   // ── ④ 送出去的那一句得到的是对话,不是一次生成 ────────────────────────────────
   await ottoComposer.click();
