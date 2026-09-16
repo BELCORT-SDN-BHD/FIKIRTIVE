@@ -35,7 +35,6 @@ import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { displayCredits, pricedRefgenCredits } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
 import { ErrorWithTopUp } from "@/components/exits/Exits";
-import { UnderstandingCostHint } from "@/components/otto/UnderstandingCostHint";
 import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
 type Mode = "upload" | "generate";
@@ -304,10 +303,8 @@ export function AddAssetDialog({
 
               <Field data-disabled={formLocked}>
                 <FieldLabel htmlFor="add-asset-images">Images</FieldLabel>
-                {/* MONEY-A9 §7.3 — between the "Images" label and the picker: this dialog takes
-                    MULTIPLE files at once, so the per-image price has to be visible before the
-                    merchant selects a folder's worth of them (披露先于扣费). */}
-                <UnderstandingCostHint />
+                {/* R3-F06(Founder 2026-09-14):这里从前常驻一行上传理解的价目小字,与其余
+                    受影响入口同批撤掉。多选一次传一叠图仍旧按张计费,价目在 Billing。 */}
                 <Input
                   id="add-asset-images"
                   type="file"

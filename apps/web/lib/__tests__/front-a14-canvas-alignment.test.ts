@@ -240,24 +240,28 @@ describe("FRONT-A14 设计有、生产暂不显示", () => {
   });
 });
 
-describe("FRONT-A14 钱披露不因对齐设计而缩水", () => {
-  it("FRONT-A14: both composer cost disclosures are still mounted, unchanged and side by side", () => {
-    // Founder 2026-09-02 (钱引擎 §7.4 / MONEY-A10): 聊天输入框下**常驻**一行价目小字;
-    // MONEY-A9 §7.3: the understanding price is on screen while the file picker is still closed.
-    // Aligning the composer to the design may not quietly turn either into an on-request line.
-    // ENGINE-A3(otto-engine.md §7.4/§7.6 处置一)之后是**三**行:第三行说这一轮对话本身
-    // 也按用量计费 —— ⑦段把画布上那条直出的出图路撤了,同一张图从此必须先经过至少一轮对话。
-    // 「常驻、不许改成按需披露」这条纪律对三行同样有效(裁决十三,frontend-baseline.md §5)。
-    expect(chatStream).toContain("<UnderstandingCostHint />");
-    expect(chatStream).toContain("<SearchCostHint />");
-    expect(chatStream).toContain("<ConversationCostHint />");
-    const understandingAt = chatStream.indexOf("<UnderstandingCostHint />");
-    const conversationAt = chatStream.indexOf("<ConversationCostHint />");
-    expect(conversationAt - understandingAt, "几行披露被拆散了").toBeLessThan(200);
-    // None is behind a menu, a hover or a press: no conditional between them and the composer.
-    expect(chatStream).toMatch(
-      /<div className="mb-2 flex flex-col gap-0\.5">\s*<UnderstandingCostHint \/>\s*<SearchCostHint \/>\s*<ConversationCostHint \/>\s*<\/div>/,
-    );
+describe("FRONT-A14 输入框上方不再堆叠常驻费用说明(R3-F06)", () => {
+  it("FRONT-A14: the composer carries no standing cost paragraph any more", () => {
+    // R3-F06(Founder 2026-09-14,`docs/specs/frontend-baseline.md` 等三份规格的 2026-09-14
+    // 变更登记)。这一条从前钉的是反方向:三行披露必须**常驻**在 composer 上方,不许改成
+    // 按需披露。Founder 看到那三段堆在输入框附近的截图后裁定这类常驻说明不要,于是这一条
+    // 跟着翻面 —— 它现在拦的是「有人把它们挂回来」,包括换个名字再挂一次。
+    //
+    // 这条裁决**只撤展示**。同一份文件里的钱验收没有跟着松:出图仍旧先出确认卡、价钱写在
+    // 按钮上(`money-a10-search-disclosure.test.ts` 的 billing 一组 + journey 27 ⑤),
+    // 后端预扣/结算/退款一个字没动。
+    for (const gone of ["UnderstandingCostHint", "SearchCostHint", "ConversationCostHint"]) {
+      expect(chatStream, `${gone} 又被挂回 composer 了 —— R3-F06 裁定这类常驻说明不要`)
+        .not.toContain(gone);
+    }
+    // 不是「换个组件名重新挂一段」:商家读到的那几句话本身也不许回来。
+    for (const sentence of [
+      "Uploads are understood automatically",
+      "Otto searches the web",
+      "Otto checks with you",
+    ]) {
+      expect(chatStream, `「${sentence}」又出现在 composer 附近了`).not.toContain(sentence);
+    }
   });
 });
 

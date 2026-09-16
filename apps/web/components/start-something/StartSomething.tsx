@@ -17,14 +17,13 @@
  * could not reach the Canvas — is gone: the contract it was waiting for is the paragraph below.)
  *   ② 生产必需而设计没有的用设计的样式呈现 — the error and pending states (Field / FieldError /
  *      Spinner) are production-necessary and use the design system's own primitives, no new copy.
- *   ③ 披露先于扣费 — Founder 2026-09-05 裁决②「输入框下加一行价钱」reopened exactly one cell of
- *      the 2026-09-03 ruling: this page may carry a price line again. The pattern has no such line,
- *      so the block below the composer is the one place whose class strings are not copied from it.
- *      It renders the same `ConversationCostHint` the Canvas and the Otto front door already use —
- *      no second price copy, and not a single number is written here (`lib/credit-format.ts` stays
- *      the only author). The rest of 裁决五 is untouched: the visible "Create with Otto" heading and
- *      the "Nothing paid starts before you confirm the exact credits in Canvas." sentence stay gone.
- *      Registered in `docs/specs/frontend-baseline.md` §5, row 2026-09-05「裁决②」.
+ *   ③ 输入框下不再常驻价目说明 — R3-F06(Founder 2026-09-14,`docs/specs/frontend-baseline.md`
+ *      §5 的 2026-09-14 变更登记)。2026-09-05 裁决②曾为这一页松开一格「可以再写一行价钱」,
+ *      后来又补上了搜索与上传理解两条;Founder 看到三段堆在输入框下的截图后裁定这类常驻说明
+ *      不要,于是整叠撤回,这一页重新与 pattern 一致(composer 之下不再有自己的文案块)。
+ *      撤的是展示不是钱:这一页按下去开的第一轮对话照样计费,价目在 Billing 念。
+ *      裁决五的其余部分一直没动:可见的 "Create with Otto" 标题行与
+ *      "Nothing paid starts before you confirm the exact credits in Canvas." 仍然不在。
  *
  * ADD CONTEXT — the pattern's menu, now wired (spec §7.3⑨「起步页参考契约」). Three ways in,
  * the same three the Canvas composer has:
@@ -55,9 +54,6 @@ import { UPLOAD_FAILURE_COPY } from "@fikirtive/core/upload";
 import { createCanvasConversation, ensureCanvasDraft } from "@/lib/canvas-entry-actions";
 import { canvasHref } from "@/components/canvas/canvas-href";
 import { CanvasLibraryPicker } from "@/components/canvas/CanvasLibraryPicker";
-import { ConversationCostHint } from "@/components/otto/ConversationCostHint";
-import { SearchCostHint } from "@/components/otto/SearchCostHint";
-import { UnderstandingCostHint } from "@/components/otto/UnderstandingCostHint";
 import { ReferencePickerMenu } from "@/components/reference-picker/ReferencePickerMenu";
 import { useReferencePicker } from "@/components/reference-picker/useReferencePicker";
 import { Button } from "@/components/ui/button";
@@ -349,27 +345,13 @@ export function StartSomething() {
         </ReferencePickerMenu>
         <FieldError>{error ?? attachError}</FieldError>
       </Field>
-      {/* 披露先于扣费(Founder 2026-09-05 裁决②「输入框下加一行价钱」;登记在
-          `docs/specs/frontend-baseline.md` §5)。按一下这个发送键就在同一笔事务里开一条
-          `surface="canvas"` 的对话,画布挂载即把这第一轮送出去 —— 那一轮**本身按用量计费**,
-          而这条路径此前从按下到扣钱全程零披露。挂的是画布与门厅用的**同一个**组件,不是
-          第二份价目:数值只有 `lib/credit-format.ts` 一处作者,这份文件里一个钱数都不写。
-          裁决五删掉的「Create with Otto」标题行与「Nothing paid starts…」那句不恢复 ——
-          松开的只有「这一页不出现价钱」这一格。挂参考本身不花钱,所以这一句不随参考变。 */}
-      {/* 上传即自动理解,而自动理解**是一笔真的钱**(MONEY-A9「披露先于扣费」)。本刀之前这一页
-          传不了东西,所以这一句不在;本刀给它装上了 Upload image,这一句就跟着来 —— 挂的是
-          三处上传口用的**同一个**组件(`components/otto/UnderstandingCostHint.tsx`),不是这一页
-          自己写的第二份价目,而且它在文件选择器还没打开的时候就在屏幕上。 */}
-      {/* 网页搜索也是这一下按出来的(MONEY-A10「披露先于扣费」)。这一页发出的第一句话就是
-          一轮**会自己去搜网**的对话:问题需要外面的事实(「我对手卖多少钱」)时 Otto 就搜,
-          每一次搜索都记在商家账上,而商家自己设的单动作花费上限挡不住这条腿。画布下面挂着
-          三条,这一页此前只挂两条 —— 于是同一笔钱在一个入口披露、在另一个入口不披露。
-          挂的是画布那一支用的**同一个**组件,顺序也照它:理解 → 搜索 → 这一轮对话本身。 */}
-      <div className="mt-2 flex flex-col gap-0.5">
-        <UnderstandingCostHint />
-        <SearchCostHint />
-        <ConversationCostHint />
-      </div>
+      {/* R3-F06(Founder 2026-09-14,`docs/specs/frontend-baseline.md` 等三份规格的
+          2026-09-14 变更登记):这里从前常驻三段说明(上传自动理解 / 自动搜网 / 这一轮对话的
+          预扣),Founder 看到截图后裁定这类堆叠的常驻说明不要,跨全部受影响入口撤掉。
+          它覆盖 2026-09-05 裁决②「输入框下加一行价钱」与后续补齐搜索那一条的登记 ——
+          不以历史要求把同类说明挂回来。裁决五删掉的「Create with Otto」标题行与
+          「Nothing paid starts…」那句同样仍然不在。
+          撤的只有**展示**:第一轮对话照样计费,价目在 Billing,出图仍旧先出确认卡。 */}
       <CanvasLibraryPicker open={libraryOpen} onOpenChange={setLibraryOpen} onPick={attach} />
     </form>
   );

@@ -1,26 +1,24 @@
 // @vitest-environment jsdom
 /**
- * FRONT-A15 —— `/create` 起步页:输入框下面那一行价钱(Founder 2026-09-05 裁决②)。
+ * R3-F06 —— `/create` 起步页:输入框下面不再常驻那一叠费用说明(Founder 2026-09-14)。
  *
- * 为什么这一页非有不可。起步页按一下发送键,`lib/canvas-entry-actions.ts` 在同一笔事务里
- * 建好一条 `surface="canvas"` 的对话,画布拿到 `pendingFirst` 之后**挂载即把第一轮送出去**
- * (`components/otto/OttoChatStream.tsx` 挂载即 `sendMessage`;那一轮的预扣
- * `otto-stream:<userMessageId>` 是**服务端**写的,住在 `app/api/otto/stream/route.ts:324`,
- * 不在这个客户端组件里 —— 判官 #1227 P2-1 订正)。也就是说:
- * 第一轮付费对话由这一页按下的那一下发出,而这条路径此前从按下到扣钱**全程零披露** ——
- * 画布门厅那一支挂着的披露被整条路径跳过。Founder 2026-09-05 裁决②松开 2026-09-03 裁决五
- * 的一格,给这一页补上与画布**同一份**文案。
+ * 这份文件原本叫 FRONT-A15,钉的是反方向:Founder 2026-09-05 裁决②「输入框下加一行价钱」
+ * 给这一页松开一格,后来又补上搜索与上传理解两条,于是这一页的 composer 下面站着三段说明。
+ * Founder 2026-09-14 看到那张截图,裁定输入附近这类堆叠的常驻说明不要,跨全部受影响入口
+ * 撤掉(`docs/specs/frontend-baseline.md` 等三份规格的 2026-09-14 变更登记,R3-F06,APPROVED;
+ * 该裁决明写覆盖 §5 的 2026-09-05 起步页披露落地记录,不以历史要求恢复同类说明)。
  *
- * 这份文件钉四件:
- *   ① 起步页渲染出来时,那条披露**就在**,而且位置对:在输入框之下、Canvas history 之上。
- *      断言读的是真组件的真 DOM —— 把 `<ConversationCostHint />` 摘掉,这条当场红。
- *   ② 挂的是画布/门厅用的**同一个**组件,不是第二份价目字面量。
- *   ③ 起步页源码里一个手抄的钱数都没有(「界面不许写死价钱」那道围栏此前只点名了披露组件
- *      自己与两位邻居,起步页不在名单里)。手抄一个「4 credits」不会有任何行为测试变红 ——
- *      它只会在下一次调预扣上限时**悄悄**变成假话。
- *   ④ 裁决五点名删掉的那两处**不恢复**:可见的「Create with Otto」标题行,与
+ * 翻面之后这份文件钉三件:
+ *   ① **那一叠真的不在了** —— 断言读的是真组件的真 DOM,而且同一次渲染里先确认输入框画得
+ *      出来,否则「读不到」在一张空屏上恒绿。比的是商家读到的**句子**,不是组件名:
+ *      换个组件把同一句话挂回来,这一条照样红。
+ *   ② **起步页仍然不许写死价钱**。这一格没有因为说明撤了而松:哪天有人想在这一页写一句
+ *      价钱,它必须来自单一来源,而不是手抄一个数(那种假话是悄悄发生的)。
+ *   ③ **2026-09-03 裁决五那两处仍然不恢复**:可见的「Create with Otto」标题行,与
  *      「Nothing paid starts before you confirm the exact credits in Canvas.」整句。
- *      松开的只有「这一页不出现价钱」这一格,不是那条裁决本身。
+ *
+ * 撤的只有展示:这一页按一下送出去的第一轮对话**照样计费**(预扣 / 结算 / 退款一个字没动),
+ * 价目在 Billing 念,出图仍旧先出确认卡。
  *
  * 一个 credit 都花不出去:开对话的服务器动作与路由跳转全是替身。
  */
@@ -35,9 +33,14 @@ vi.mock("@/lib/canvas-entry-actions", () => ({ createCanvasConversation: vi.fn()
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 const { CreateWorkspace } = await import("@/components/start-something/CreateWorkspace");
-const { CONVERSATION_COST_HINT } = await import("@/components/otto/ConversationCostHint");
-const { SEARCH_COST_HINT } = await import("@/components/otto/SearchCostHint");
-const { CHAT_HOLD_NOTE } = await import("@/lib/credit-format");
+
+/** 商家读到的那几句话的开头 —— R3-F06 撤掉的就是它们。比句子不比组件名。 */
+const STANDING_COST_SENTENCES = [
+  "Uploads are understood automatically",
+  "Otto searches the web when your question needs it",
+  "Otto checks with you on a card before it makes anything",
+  "Each message holds up to",
+] as const;
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 const codeOf = (relativePath: string) => fs.readFileSync(path.join(WEB_ROOT, relativePath), "utf8");
@@ -69,93 +72,44 @@ async function renderWorkspace(projects = PROJECTS) {
   return container;
 }
 
-/** 屏幕上那条披露的元素本体(按商家读到的整句找,不按 class 找)。 */
-function hintNode(dom: HTMLElement): Element | undefined {
-  return [...dom.querySelectorAll("span")].find((el) => el.textContent === CONVERSATION_COST_HINT);
-}
-
-describe("FRONT-A15 起步页:输入框下面那一行价钱", () => {
-  it("FRONT-A15 起步页渲染时,对话价目披露就在同一屏上", async () => {
+describe("R3-F06 起步页:输入框下面不再常驻费用说明", () => {
+  it("R3-F06 起步页渲染时,输入框在,而那一叠费用说明一段都不在", async () => {
     const dom = await renderWorkspace();
 
-    // 输入框确实画出来了 —— 否则下一条断言会在一张空屏上恒绿。
+    // 输入框确实画出来了 —— 否则下面的断言会在一张空屏上恒绿。
     expect(dom.querySelector('textarea[aria-label="Otto creation prompt"]')).not.toBeNull();
-    expect(dom.textContent, "起步页按一下就开一条要钱的对话,屏幕上却读不到价目").toContain(
-      CONVERSATION_COST_HINT,
-    );
+    for (const sentence of STANDING_COST_SENTENCES) {
+      expect(dom.textContent, `「${sentence}」又常驻在起步页输入框附近了`).not.toContain(sentence);
+    }
   });
 
-  it("FRONT-A15 披露在输入框之下、Canvas history 之上", async () => {
-    const dom = await renderWorkspace();
-
-    const textarea = dom.querySelector('textarea[aria-label="Otto creation prompt"]')!;
-    const hint = hintNode(dom);
-    const history = dom.querySelector("h2#canvas-history-heading")!;
-    expect(hint, "找不到那条披露").toBeDefined();
-
-    expect(
-      textarea.compareDocumentPosition(hint!) & Node.DOCUMENT_POSITION_FOLLOWING,
-      "披露跑到输入框上面去了",
-    ).toBeGreaterThan(0);
-    expect(
-      hint!.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING,
-      "披露掉到 Canvas history 下面去了",
-    ).toBeGreaterThan(0);
-  });
-
-  it("FRONT-A15 挂的是画布那一支的同一个组件,不是第二份价目", () => {
+  it("R3-F06 起步页源码里不再挂那三个组件,也没有抄回一份文案", async () => {
     const src = codeOf(START_PAGE);
-    expect(src).toContain('import { ConversationCostHint } from "@/components/otto/ConversationCostHint"');
-    expect(src.split("<ConversationCostHint />").length - 1, "起步页不是只挂一次").toBe(1);
+    for (const gone of ["ConversationCostHint", "SearchCostHint", "UnderstandingCostHint"]) {
+      expect(src, `${gone} 又被挂回起步页了`).not.toContain(gone);
+    }
+    for (const sentence of STANDING_COST_SENTENCES) {
+      expect(src, `起步页自己抄了一份「${sentence}」`).not.toContain(sentence);
+    }
   });
 
-  it("FRONT-A15 搜索那一条也在同一屏上 —— 起步页发出的第一轮对话就会自己去搜网", async () => {
-    // 终检 r5:画布 composer 下面挂三条(理解 / 搜索 / 这一轮对话本身),这一页此前只挂两条。
-    // 起步框按下去开的就是那条对话,Otto 该搜就搜,而每一次搜索都记在商家账上 ——
-    // 同一笔钱不能在一个入口披露、在另一个入口不披露(MONEY-A10「披露先于扣费」的商家侧读法)。
+  it("R3-F06 撤的是说明不是输入框 —— 这一页照样送得出第一轮对话", async () => {
+    // 反向活性:如果有人「顺手」把 composer 一起删了,上面两条会全绿而产品是坏的。
     const dom = await renderWorkspace();
-
-    expect(dom.textContent, "起步页读不到网页搜索那一条价目").toContain(SEARCH_COST_HINT);
-    const src = codeOf(START_PAGE);
-    expect(src, "抄了一份文案而不是挂那个组件").toContain(
-      'import { SearchCostHint } from "@/components/otto/SearchCostHint"',
-    );
-  });
-
-  it("FRONT-A15 三条披露是一叠 —— 都在输入框之下、Canvas history 之上", async () => {
-    const dom = await renderWorkspace();
-
-    const textarea = dom.querySelector('textarea[aria-label="Otto creation prompt"]')!;
-    const history = dom.querySelector("h2#canvas-history-heading")!;
-    const search = [...dom.querySelectorAll("span")].find((el) => el.textContent === SEARCH_COST_HINT);
-    expect(search, "找不到搜索那一条披露").toBeDefined();
-
-    expect(
-      textarea.compareDocumentPosition(search!) & Node.DOCUMENT_POSITION_FOLLOWING,
-      "搜索披露跑到输入框上面去了",
-    ).toBeGreaterThan(0);
-    expect(
-      search!.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING,
-      "搜索披露掉到 Canvas history 下面去了",
-    ).toBeGreaterThan(0);
+    expect(dom.querySelector('textarea[aria-label="Otto creation prompt"]')).not.toBeNull();
+    expect(dom.querySelector("h2#canvas-history-heading")).not.toBeNull();
   });
 });
 
-describe("FRONT-A15 起步页不许写死价钱", () => {
-  it("FRONT-A15 起步页源码里没有手抄的价钱 —— 数值只能来自那一个共享组件", () => {
+describe("R3-F06 起步页仍然不许写死价钱", () => {
+  it("R3-F06 起步页源码里没有手抄的价钱 —— 这一格没有因为说明撤了而松", () => {
     const offenders = copyLines(codeOf(START_PAGE)).filter((line) => HAND_TYPED_CREDITS.test(line));
     expect(offenders, "起步页文案里出现了手抄的钱数").toEqual([]);
   });
-
-  it("FRONT-A15 商家在起步页读到的那句话里,数字与预扣上限同源", () => {
-    // 不比字面量:把预扣上限调一格,`CHAT_HOLD_NOTE` 与这句话一起变,这条仍然绿;
-    // 而任何人手抄一个数进文案,上一条当场红。
-    expect(CONVERSATION_COST_HINT).toContain(CHAT_HOLD_NOTE);
-  });
 });
 
-describe("FRONT-A15 裁决五那两处不恢复", () => {
-  it("FRONT-A15 补了价钱,但标题行与「Nothing paid starts…」那句仍然不在", async () => {
+describe("裁决五那两处仍然不恢复(2026-09-03,R3-F06 未松开这一格)", () => {
+  it("标题行与「Nothing paid starts…」那句仍然不在", async () => {
     const dom = await renderWorkspace();
 
     expect(dom.textContent).not.toContain(

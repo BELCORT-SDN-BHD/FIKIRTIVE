@@ -59,3 +59,9 @@ CodeGraph: not used — 独立 worktree worker 按项目规则直接读取文件
 - 8条队列均存在，合计1条，足以解释backed-up/503。created_on早于本轮，但未读取payload，所以不推定哪个测试、哪个租户或失败根因，也不把它计作本轮新增失败。
 
 该环境运维清空验收仍被历史generation死信阻塞；下一步应在有权限的运维入口确认该任务的最终业务/账本状态，再决定是否需要处理。当前授权不包括清理或重试，本文没有执行。
+
+## 2026-09-14 补记：备份根因已定
+
+上文「备份 missing 原因」一节的强根因假说已转为已定案的根因：`pg_dump` 17（`apps/worker/Dockerfile:18`）拒绝 dump 已是 PostgreSQL 18.6 的 app DB，且失败时 stderr 被丢弃（`apps/worker/src/db-backup.ts` `stderr:"ignore"`），此前无法从日志诊断原因。截至补记时 staging BackupRun 累计 1360 条 failed、0 条 succeeded。
+
+修复见 PR #1442（客户端 `pg_dump` 升至 18、stderr 截尾按错误类别分类入库、恢复侧加版本闸）；对应登记见 `docs/specs/fail-closed-reliability.md` §5 变更登记 2026-09-14 行（R3-F08）与 `findings-catalog.md` 的 R3-F08 环境漂移条目。关闭条件仍是：Founder 授权 staging worker 按 #1442 重建部署后，出现第一条 `status=succeeded` 的 BackupRun 且 `/api/health` 的 backup 字段离开 `missing`——本文不代为宣告已关闭。

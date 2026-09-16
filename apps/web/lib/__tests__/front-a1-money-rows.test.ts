@@ -323,29 +323,33 @@ describe("FRONT-A1 §7.1①c — 四处钱交付面在新壳上仍然看得见",
     );
   });
 
-  it("上传入口的价目小字还在,而且仍然挂在上传面上", () => {
-    expect(webSource("components/otto/UnderstandingCostHint.tsx")).toContain(
-      "UnderstandingCostHint",
-    );
-    const mounts = [
+  it("上传入口不再堆叠常驻的理解价目说明(R3-F06),而理解的价目仍在 billing 念得到", () => {
+    // R3-F06(Founder 2026-09-14):这一条从前钉的是「五个上传入口各挂一行价目小字」。
+    // Founder 裁定输入附近这类常驻说明不要,五处一起撤 —— 撤的是**展示**:
+    // `pricedUnderstandingCredits` 与扣费路径没动,商家读价钱的地方变成 billing 一处。
+    const formerMounts = [
       "components/otto/OttoChatStream.tsx",
       "components/otto/stuff/AddAssetDialog.tsx",
       "components/otto/TemplateModal.tsx",
       "components/canvas/FlowCanvas.tsx",
       "components/asset/DetailPanel.tsx",
     ];
-    for (const mount of mounts) {
-      expect(webSource(mount), `${mount} 不再挂上传价目小字 —— 那个入口的扣费从此没被告知`)
-        .toContain("<UnderstandingCostHint");
+    for (const mount of formerMounts) {
+      expect(webSource(mount), `${mount} 又挂回了常驻的理解价目说明`)
+        .not.toContain("<UnderstandingCostHint");
     }
+    // 钱那一半没松:billing 的 Auto-understanding 一节仍旧从报价函数现算三档价。
+    const billing = webSource("app/billing/page.tsx");
+    expect(billing, "billing 不再念自动理解的价目 —— 这个价从此没有任何地方告诉商家")
+      .toContain("pricedUnderstandingCredits");
+    expect(billing).toContain("Auto-understanding");
   });
 
-  it("聊天搜索的成本提示还在,而且仍然挂在输入框下", () => {
-    expect(webSource("components/otto/SearchCostHint.tsx")).toContain("SearchCostHint");
+  it("聊天搜索的价目仍在 billing 念得到,输入框下不再常驻那一行(R3-F06)", () => {
     expect(
       webSource("components/otto/OttoChatStream.tsx"),
-      "输入框下那行搜索价目小字没挂了",
-    ).toContain("<SearchCostHint");
+      "输入框下又挂回了常驻的搜索价目说明",
+    ).not.toContain("<SearchCostHint");
     expect(
       webSource("app/billing/page.tsx"),
       "billing 价目区不再念搜索那一行",

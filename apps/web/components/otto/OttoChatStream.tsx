@@ -67,9 +67,6 @@ import {
 // 观察窗「到顶不等于放弃」的那一条规则,只有这一份实现(#782 r7,判官 r6 P1-A)。
 import { nextSyncPhase, type SyncPhase } from "@/lib/storyboard-card";
 import { mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
-import { UnderstandingCostHint } from "./UnderstandingCostHint";
-import { SearchCostHint } from "./SearchCostHint";
-import { ConversationCostHint } from "./ConversationCostHint";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
 import { OttoApprovalCard } from "./OttoApprovalCard";
@@ -2349,21 +2346,11 @@ export function OttoChatStream({
             </Alert>
           )}
 
-          {/* MONEY-A9 §7.3 — mounted directly above the composer box, which is where the
-              attach button lives: the price is on screen while the file picker is still
-              closed (披露先于扣费), and it does not squeeze the composer's bottom toolbar.
-              MONEY-A10 §7.4 sits beside it: the chat turn's OTHER non-obvious charge is the
-              web search the merchant's own question triggers, and until now its only
-              disclosure lived inside Otto's system prompt.
-              ENGINE-A3 §7.4/§7.6 处置一 —— 第三条:**这一轮对话本身**要钱。⑦段把画布上那条
-              直出的出图路撤了,同一张图从此必须先经过至少一轮对话;那一轮的钱在这里说出口,
-              而不是等商家从账单里发现(`ConversationCostHint` 的文件头有全文)。 */}
-          <div className="mb-2 flex flex-col gap-0.5">
-            <UnderstandingCostHint />
-            <SearchCostHint />
-            <ConversationCostHint />
-          </div>
-
+          {/* R3-F06(Founder 2026-09-14,三份规格 2026-09-14 变更登记):输入框上方从前常驻
+              三段说明(上传自动理解 / 自动搜网 / 这一轮对话的预扣),Founder 看到截图后裁定
+              这类堆叠的常驻说明不要。整叠撤掉,不是改成 tooltip、折叠区或 CSS 藏起来。
+              撤的只有**这个展示**:价目仍在 Billing 念,花钱的那一下仍旧先出确认卡、按实结算,
+              预扣 / 退款 / 上限一个字都没动。 */}
           <ReferencePickerMenu {...picker.menuProps}>
             <InputGroup className="overflow-hidden rounded-[var(--radius-card)] bg-card shadow-[var(--shadow-sm)]">
               <InputGroupTextarea

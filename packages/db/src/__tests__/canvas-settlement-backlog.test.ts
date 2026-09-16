@@ -1778,7 +1778,17 @@ describe("a backlog larger than any book the sweep used to keep", () => {
     for (let tick = 0; tick < 6; tick += 1) {
       const due = await sweep({ now: start, limit: 200 });
       for (const job of due) attempted.add(job.id);
-      await Promise.all(due.map((job) => noteCanvasRepairFailure(job, { now: start, reason: "board write blew up" })));
+      // 逐个 await,不是 `Promise.all` —— 这一行照抄清扫器的真实形状。
+      // 真正的清扫器(apps/worker/src/jobs/canvas-backfill.ts:98)是
+      // `for (const job of due) { await ... }`:一次一笔事务,行与行之间还查一次墙钟预算。
+      // 它从不同时开 200 笔事务。旧写法用 `Promise.all` 把一个批次的 200 个 job 一起放出去,
+      // 池子只有 DB_POOL_MAX(quality 里是 4)条连接,于是 196 笔事务排队等连接,
+      // 撞上 Prisma 的 maxWait 就抛「Unable to start a transaction in the given time」——
+      // 那是测试自己造的并发,产品里没有这条路,机器一忙就假红。
+      // 断言没有动:1001 块板、每块都要轮到,一条不少。
+      for (const job of due) {
+        await noteCanvasRepairFailure(job, { now: start, reason: "board write blew up" });
+      }
     }
 
     expect(attempted.size).toBe(ids.length);

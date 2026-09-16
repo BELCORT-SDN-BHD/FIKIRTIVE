@@ -15,10 +15,14 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Coins, Gauge, Globe, ScanEye, ShieldCheck, WalletCards } from "lucide-react";
-import { creditsLabel, formatCredits } from "@/lib/credit-format";
+import {
+  creditsLabel,
+  formatCredits,
+  SEARCH_TURN_MAX_LABEL,
+  SEARCH_UNIT_LABEL,
+} from "@/lib/credit-format";
 import { displayCredits, pricedUnderstandingCredits } from "@fikirtive/core/spend";
 import { OTTO_CHAT_MAX_SEARCHES_PER_TURN } from "@fikirtive/core/pricing-config";
-import { SEARCH_TURN_MAX_LABEL, SEARCH_UNIT_LABEL } from "@/components/otto/SearchCostHint";
 import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import { SupportExit } from "@/components/exits/Exits";
 import { SettingsShell } from "@/components/settings/SettingsShell";
@@ -239,9 +243,10 @@ export default async function BillingPage({
         </section>
 
         {/* MONEY-A9 §7.3 — the price list for the one charge a merchant never asked for:
-            every image and video they upload is read automatically. The upload entries carry
-            the same numbers as a one-line hint (components/otto/UnderstandingCostHint.tsx);
-            this section is the fuller version, on the page where prices belong. */}
+            every image and video they upload is read automatically.
+            R3-F06(Founder 2026-09-14):上传入口从前还各挂一条同数值的常驻小字,那一条整批撤了;
+            这一节因此是商家读这个价目的**唯一**地方,而删掉展示不等于理解变免费 ——
+            价钱、快照口径与计费路径一个字都没动。 */}
         <section>
           <div className="flex items-start gap-3">
             <ScanEye className="mt-0.5 size-5 shrink-0" aria-hidden />
@@ -262,9 +267,9 @@ export default async function BillingPage({
 
         {/* MONEY-A10 §7.4 — the chat turn's second money leg. Founder 2026-09-02 (变更登记
             「A10 聊天搜索的商家侧披露」): a price that lives only inside Otto's system prompt is
-            not disclosed to anyone who can read it. The composer carries the one-line version
-            (components/otto/SearchCostHint.tsx); this is the fuller one, and it is where the
-            spend-cap exemption that ruling ACCEPTED gets written down — an accepted gap in a
+            not disclosed to anyone who can read it. R3-F06(Founder 2026-09-14)撤掉了 composer
+            下那条常驻的一行版,所以这一节现在是商家读得到的唯一一处,也是那条被 ACCEPT 的
+            spend-cap 豁免写下来的地方 —— an accepted gap in a
             control the merchant themselves set has to be visible to the merchant, not only to
             us. Every number is the same constant the turn reserves and settles against. */}
         <section>
