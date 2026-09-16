@@ -83,8 +83,10 @@
 - `GET /api/health` —— **存活**:这个 Web 进程还答不答得出话。**HTTP 恒为 200**(#796 起),
   库读不到只把 body 里的 `db` / `worker` 写成 `unknown`,**状态码不变**。所以
   **拿它判断不出数据库好不好** —— 只盯它的非 200,一次库故障会全程绿着过去。
-  `{ ok:true, db:"up|unknown", worker:"up|stale|unknown", workers:{…}, migrations:"applied|failed" }`,
-  worker 心跳超过阈值显示 `stale`。
+  `{ ok:true, db:"up|unknown", worker:"up|stale|unknown", workers:{每班:"up|stale|retired"}, migrations:"applied|failed" }`,
+  worker 心跳超过阈值显示 `stale`;超过一整天没人写的那一行显示 `retired`(2026-09-15 R3-F19,
+  诊断处置见 `docs/ops/incident-visibility.md`)。顶层 `worker` 只有 `up|stale|unknown` 三个词,
+  `retired` 只出现在按班的 `workers` 里 —— 下面 Monitor 1 的关键字监控盯的是顶层那个词。
 - `GET /api/ready` —— **就绪**:这个容器该不该接流量。**迁移未就位或 DB 不可达 → 503**;
   都正常 → 200。**数据库故障要靠这个端点才看得见。**
 - 平台侧只有一个 HTTP 探针:`apps/web/railway.json` 的 `healthcheckPath`,它是**部署闸**,
