@@ -465,6 +465,13 @@ describe("FC-2 复审 · 信号表两侧各一打", () => {
     "put a new hat on this picture",
     "这张图换个新的背景",
     "tambah topi baru pada gambar ni",
+    // 复审(单镜头)的反面护栏:「a new one」进硬否决时**绝不能**顺手收开放式的
+    // 「make a new …」—— 这一句里 new 修饰的是背景,不是交付物。
+    "make a new background for this photo",
+    "make the background of this picture darker",
+    "now change her shirt to red",
+    "这张图的猫换成狗",
+    "tukar warna baju dalam gambar ni",
   ];
 
   const FRESH_PHRASES = [
@@ -496,6 +503,19 @@ describe("FC-2 复审 · 信号表两侧各一打", () => {
     "now change the logo into a new carousel",
     // 复审 P2-1 的另一边:硬否决连指代都压得过 —— 他明说要另一件了。
     "edit this photo, actually make a brand new one",
+    // 复审(单镜头)—— **既指着那张图、又点名一件新交付物**。他指着的那张正是他要扔掉的
+    // 那张;把它绑进这一单,等于拿他刚否掉的图去做一件新活,而钱已经花掉了。
+    "这张不好，做一张新的",
+    "这张图不要了，做一张新的海报",
+    "this photo is nice, now i want a new poster for the raya sale",
+    "gambar ni ok, buat satu lagi yang baru untuk merdeka",
+    "scrap this image, give me a fresh poster",
+    // 同一条判据在第 ② 类上:点名新交付物 ⇒ 压过「指着已有东西」。
+    "now i want a poster with the same cat",
+    // 自查探针里留下的三句(闭合说法 / 软否决 / 闭合马来语说法)。
+    "i need a new banner instead",
+    "再来一张新的海报",
+    "gambar ni buat satu lagi",
   ];
 
   it.each(CONTINUE_PHRASES)("指着那张图 ⇒ continue:%s", (text) => {
@@ -516,6 +536,9 @@ describe("FC-2 复审 · 信号表两侧各一打", () => {
     // 复审 P2:两个方向都必须在表里 —— 只守一边,另一边就是下一次走查的现场。
     expect(CONTINUE_PHRASES).toContain("add a new hat to this photo");
     expect(FRESH_PHRASES).toContain("now i want a poster for the raya sale");
+    // 复审(单镜头)的两个方向:指着图 + 点名新交付物 ⇒ fresh;指着图 + new 修饰图里的东西 ⇒ continue。
+    expect(FRESH_PHRASES).toContain("this photo is nice, now i want a new poster for the raya sale");
+    expect(CONTINUE_PHRASES).toContain("make a new background for this photo");
   });
 });
 

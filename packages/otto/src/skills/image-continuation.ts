@@ -96,10 +96,15 @@ export const IMAGE_FRESH_START_SIGNALS: Record<string, readonly string[]> = {
     "another picture of", "another image of", "another photo of",
     // 「another one」= 他要的是**另一件**,不是这一件改一改。
     "another one",
+    // 复审(单镜头)—— 「a new one」与它的中/马来语同族。收的是**闭合说法**:
+    // 整句只有「再来一个新的」这一个意思,再没有第二种读法,所以放硬否决。
+    // 绝不收「make a new …」这种开放式起手 —— 那会把
+    // 「make a new background for this photo」也打成 fresh,正是上一轮修掉的病。
+    "a new one",
     "different picture", "separate picture", "start over", "start fresh", "from scratch",
   ],
-  zh: ["全新", "重新做一张", "重新来一张", "另做一张", "从头做"],
-  ms: ["gambar baharu", "mula semula"],
+  zh: ["全新", "重新做一张", "重新来一张", "另做一张", "从头做", "做一张新的", "来一张新的", "换一张"],
+  ms: ["gambar baharu", "mula semula", "satu lagi"],
 };
 
 /**
@@ -126,22 +131,22 @@ export const IMAGE_FRESH_START_PATTERNS: readonly RegExp[] = [
 ];
 
 /**
- * 复审 P2-2 —— 第 ② 类的第一道闸:这句话指着**已有的东西**吗。
- *
- * 走查原话「…hold the cat and pet **it**…」就是靠这一条过的。用词边界而不是子串:
- * 「it」藏在 with / print / digital 里到处都是。
- */
-export const EXISTING_THING_REFERENCES: readonly RegExp[] = [
-  /\bit\b/, /\bthis\b/, /\bthat\b/, /\bthe same\b/, /\bsame one\b/,
-  /它|这张|那张|这个|那个|同一/,
-];
-
-/**
- * 复审 P2-2 —— 第 ② 类的第二道闸:这句话点名了一件**新交付物**吗。
+ * 这句话点名了一件**新交付物**吗 —— 全局那一问(复审单镜头:它不再只管第 ② 类)。
  *
  * 「a poster」「three banners」「a raya sale flyer」⇒ 他要的是另一件东西,不是这一张改一改。
- * 名词表只在这一道闸里用(判「他点名了没有」),不拿它去判继承 —— 与形态判据同一条理由:
+ *
+ * 为什么它现在排在指代**之前**:上一轮把指代提到软否决之上以后,
+ * 「this photo is nice, now i want a new poster for the raya sale」
+ * 「scrap this image, give me a fresh poster」这种**既指着图、又点名新交付物**的句子
+ * 反而被判成 continue —— 他指着的那张是他要扔掉的那张,而这一单已经付过钱了。
+ * 指着一张图不等于要改它,所以「点名新交付物」这一问必须在指代之前答。
+ *
+ * 名词表只在这一问里用(判「他点名了没有」),不拿它去判继承 —— 与形态判据同一条理由:
  * 穷举收不完,但**点名了**这件事本身是确定的,漏掉一个名词只会退回今天的行为。
+ *
+ * 顺带把第 ② 类的「指着已有东西」那道闸吃掉了:它与这一问是同一件事的两面,
+ * 而两者都要求时「now add a hat on the cat」(既没点名交付物、也没有 it/this/that)
+ * 会被误判成 fresh。留一问,少一份会先烂掉的重复。
  */
 export const NEW_DELIVERABLE_PATTERN =
   /\b(?:a|an|another|some|one|two|three|four|five|six|\d+)\s+(?:[a-z][a-z-]*\s+){0,2}(?:poster|flyer|banner|carousel|leaflet|brochure|pamphlet|billboard|advert|advertisement|ad|logo|thumbnail|cover|reel|story|post|graphic|mockup|menu|invite|invitation|catalogue|catalog|sticker|wallpaper|video|clip|picture|image|photo|pic)s?\b/;
@@ -171,11 +176,14 @@ function hitsSoftFreshStart(text: string): boolean {
   return IMAGE_FRESH_START_PATTERNS.some((re) => re.test(text));
 }
 
-/** 第 ② 类过不过闸:指着已有的东西,或者至少没点名一件新交付物(复审 P2-2)。 */
-function adverbClassPointsAtSomethingExisting(text: string): boolean {
-  if (!CONTINUATION_ADVERBS.some((p) => text.includes(p))) return false;
-  if (EXISTING_THING_REFERENCES.some((re) => re.test(text))) return true;
-  return !NEW_DELIVERABLE_PATTERN.test(text);
+/** 第 ② 类:接续副词出现了吗。 */
+function hitsContinuationAdverb(text: string): boolean {
+  return CONTINUATION_ADVERBS.some((p) => text.includes(p));
+}
+
+/** 他在这句话里点名了一件新交付物吗。 */
+function namesNewDeliverable(text: string): boolean {
+  return NEW_DELIVERABLE_PATTERN.test(text);
 }
 
 /**
@@ -185,10 +193,15 @@ function adverbClassPointsAtSomethingExisting(text: string): boolean {
  *   1. 没有「正在做的那张图」 ⇒ 无从继承;
  *   2. 商家这一轮自己挂了图 ⇒ 以他挂的为准(既有行为逐字不动);
  *   3. **硬**否决:他明说要另一件交付物 ⇒ 不继承(连指代都压得过);
- *   4. 第 ① 类:他明确指着那张图 ⇒ 继承(压得过软否决 —— 复审 P2-1);
- *   5. **软**否决:认不出 new 在修饰什么 ⇒ 不继承(投向今天的行为);
- *   6. 第 ② 类:接续副词,且指着已有东西 / 没点名新交付物 ⇒ 继承(复审 P2-2);
- *   7. 读不出任何信号 ⇒ 不继承(今天的行为)。
+ *   4. 他**点名了一件新交付物** ⇒ 不继承(复审单镜头:指着图不等于要改它);
+ *   5. 第 ① 类:他明确指着那张图 ⇒ 继承(压得过软否决 —— 复审 P2-1);
+ *   6. **软**否决:认不出 new 在修饰什么 ⇒ 不继承(投向今天的行为);
+ *   7. 第 ② 类:接续副词 ⇒ 继承(第 4 步已经把「点名新交付物」的那些挡掉了);
+ *   8. 读不出任何信号 ⇒ 不继承(今天的行为)。
+ *
+ * 第 4 步排在指代之前,是这一版唯一的次序改动:两轮复审各自抓到一次「次序错了」的
+ * 假阳性(一次往 fresh 偏、一次往 continue 偏),而两次的修法是同一条 —— 先答
+ * 「他要的是另一件东西吗」,再答「他指着哪一张」。
  */
 export function decideImageContinuation(input: {
   /** 商家这一轮自己打的那句话(`ctx.turnText`)。服务端原样带进来,绝不来自模型。 */
@@ -203,9 +216,10 @@ export function decideImageContinuation(input: {
   const text = (input.text ?? "").toLowerCase();
   if (!text) return "fresh";
   if (hitsHardFreshStart(text)) return "fresh";
+  if (namesNewDeliverable(text)) return "fresh";
   if (hitsExplicitDeictic(text)) return "continue";
   if (hitsSoftFreshStart(text)) return "fresh";
-  return adverbClassPointsAtSomethingExisting(text) ? "continue" : "fresh";
+  return hitsContinuationAdverb(text) ? "continue" : "fresh";
 }
 
 /**
