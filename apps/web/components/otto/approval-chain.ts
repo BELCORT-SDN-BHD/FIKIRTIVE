@@ -59,17 +59,46 @@ export type ChainedApproval = {
    * id) is dropped from the set and answered with an honest line in the thread
    * (otto-actions.ts partitionGenerateApprovals + strandedApprovalText) — never
    * reported as pending, because nothing would ever render for it.
+   *
+   * WHY THIS PATH STILL SAYS "needs_approval" WHEN THE SET COMES BACK EMPTY, and
+   * finalizeOttoRun says "done" for the same situation (FC-1 复核 P3 — deliberate,
+   * not drift). The two words answer two different questions. finalizeOttoRun's
+   * status is about THE TURN: nothing is awaiting the merchant, so the turn ended
+   * — reporting needs_approval there would hang the canvas on a confirmation that
+   * can never arrive. This resume's status is about THE RUNSTATE, and the RunState
+   * genuinely is still parked: the SDK interruption exists and was neither approved
+   * nor rejected. Saying "done" here would assert the opposite of the rule three
+   * paragraphs up ("a status:done resume response implies the set is EMPTY — a run
+   * cannot complete past an undecided park"), and consumers act on that: an empty
+   * set from a "done" routes later cards to the generate channel. So: empty set +
+   * needs_approval + the honest line. Both are safe because the set REPLACES the
+   * client's wholesale, and the canvas phase is driven by pendingConfirmCount.
    */
   pendingCardIds: string[];
   fallbackReply: string | null;
   narrationMessageId: string | null;
+  /** FC-1 (复核 P2): the durable id of the honest line this resume appended AFTER the
+   *  model's own narration (a generate park that can never become a card). This path
+   *  does not stream, so a row the server does not name here is one the merchant only
+   *  sees after a reload — with the retracted promise still on screen above it.
+   *  null ⇒ no such row this round. */
+  appendedMessageId: string | null;
 };
+
+/** The durable rows THIS response asks the client to inject into the live transcript
+ *  (`mergeDurableIntoLive`). One rule, one place: every caller that forwards ids —
+ *  the pack loop below and OttoChatStream's two single-card call sites — reads it here,
+ *  so a newly named row can never reach one surface and be dropped by another. */
+export function injectableMessageIds(chained: ChainedApproval | null | undefined): string[] {
+  if (!chained) return [];
+  return [chained.narrationMessageId, chained.appendedMessageId].filter((id): id is string => !!id);
+}
 
 /** Parse an approve/generate action result into its chained outcome, or null when
  *  the run completed (or the result is an error / any other shape). */
 export function chainedApprovalOf(res: unknown): ChainedApproval | null {
   if (!res || typeof res !== "object") return null;
-  const r = res as { status?: unknown; pendingCardIds?: unknown; fallbackReply?: unknown; narrationMessageId?: unknown };
+  const r = res as { status?: unknown; pendingCardIds?: unknown; fallbackReply?: unknown; narrationMessageId?: unknown; appendedMessageId?: unknown };
   if (r.status !== "needs_approval") return null;
   const pendingCardIds = Array.isArray(r.pendingCardIds)
     ? r.pendingCardIds.filter((id): id is string => typeof id === "string")
@@ -78,6 +107,7 @@ export function chainedApprovalOf(res: unknown): ChainedApproval | null {
     pendingCardIds,
     fallbackReply: typeof r.fallbackReply === "string" ? r.fallbackReply : null,
     narrationMessageId: typeof r.narrationMessageId === "string" ? r.narrationMessageId : null,
+    appendedMessageId: typeof r.appendedMessageId === "string" ? r.appendedMessageId : null,
   };
 }
 
@@ -237,7 +267,7 @@ export async function runPackApprovalLoop<C extends { cardId: string; pendingApp
       chained.pendingCardIds.forEach((id) => pending.add(id));
       pendingFromServer = true;
       if (chained.fallbackReply) fallbackReply = chained.fallbackReply;
-      if (chained.narrationMessageId) narrationMessageIds.push(chained.narrationMessageId);
+      narrationMessageIds.push(...injectableMessageIds(chained));
     } else if (res && typeof res === "object" && (res as { status?: unknown }).status === "done") {
       // A COMPLETED resume proves the RunState holds no parks at all (a run
       // cannot complete past an undecided one — only ottoApprove returns the

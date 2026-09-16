@@ -66,7 +66,7 @@ import {
 } from "@/lib/otto-inject-helpers";
 // 观察窗「到顶不等于放弃」的那一条规则,只有这一份实现(#782 r7,判官 r6 P1-A)。
 import { nextSyncPhase, type SyncPhase } from "@/lib/storyboard-card";
-import { mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
+import { injectableMessageIds, mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
 import { OttoApprovalCard } from "./OttoApprovalCard";
@@ -1494,9 +1494,9 @@ export function OttoChatStream({
               nextPendingApprovalCardIds(cur, approved ? [approvedCardId] : [], chained?.pendingCardIds),
             );
             rearmGenerationPoll();
-            void pollAndInjectResults(
-              chained?.narrationMessageId ? [chained.narrationMessageId] : undefined,
-            );
+            // FC-1（复核 P2）—— 该注进对话的那几行由 `injectableMessageIds` 一处说了算:
+            // 模型自己那段话,以及这一轮另落的那句诚实话(搁浅的批准项)。
+            void pollAndInjectResults(injectableMessageIds(chained));
           }}
           onChangeSomething={sendChangeRequest}
           onEditAndRetry={editAndRetry}
@@ -1767,9 +1767,7 @@ export function OttoChatStream({
                       // again from this success-only callback just double-read the balance
                       // (round-2 review P2) — one action, one announcement.
                       // #498 round-5 P2c: inject the chained park's model narration live.
-                      void pollAndInjectResults(
-                        chained?.narrationMessageId ? [chained.narrationMessageId] : undefined,
-                      );
+                      void pollAndInjectResults(injectableMessageIds(chained));
                     }}
                     onChangeSomething={sendChangeRequest}
                     onSeedComposer={seedComposer}

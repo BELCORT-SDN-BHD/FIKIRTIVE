@@ -743,6 +743,8 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
         pendingCardIds: ["card_2", "card_3"],
         fallbackReply: "One more to confirm.",
         narrationMessageId: "msg_9",
+        // FC-1（复核 P2）：这一轮没有搁浅的批准项 ⇒ 没有另落那句诚实话,自然没有它的 id。
+        appendedMessageId: null,
       },
     });
     // 服务端的收据是原样显示的,不是本地编的英文。

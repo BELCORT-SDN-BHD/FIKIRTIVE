@@ -1520,6 +1520,44 @@ describe("ottoTurn — interruption (needs_approval)", () => {
     // startGen (the spend gate) was NOT called
     expect(mockStartGen).not.toHaveBeenCalled();
   });
+
+  /**
+   * FC-1（复核 P2）—— 非流式那条入口不得把那句诚实话吞掉。
+   *
+   * 流式路由把 `appendedReply` 写成屏幕上的一段话（`app/api/otto/stream/route.ts`）。这条
+   * server action 从前只交回 `pendingCardIds`，于是同一件事在两个入口说法不一：一边看得到
+   * 「没有生成任何东西 —— 请在上方分镜卡按 Make all videos…」，另一边什么都没有。
+   */
+  it("FC-1 混合停车（真卡 + 搁浅项）⇒ 非流式入口也把那句诚实话交回去", async () => {
+    setupHappyPath();
+    const realCard = "card_abc123";
+    const storyboardCard = "card_storyboard";
+    const parks = [realCard, storyboardCard].map((cardId) => ({
+      rawItem: { name: "generate" },
+      arguments: JSON.stringify({ cardId }),
+      type: "tool_approval_item",
+    }));
+    const interruptedResult = makeMockResult({ finalOutput: undefined as unknown as string, newItems: [] });
+    (interruptedResult as unknown as Record<string, unknown>).interruptions = parks;
+    (interruptedResult as unknown as Record<string, unknown>).finalOutput = undefined;
+    mockRun.mockResolvedValue(interruptedResult);
+    mockChatMessageFindMany.mockImplementation(async (args?: { where?: { id?: { in?: string[] }; role?: string } }) => {
+      const ids = args?.where?.id?.in;
+      if (ids) return ids.map((id) => ({ id, kind: id === storyboardCard ? "STORYBOARD_CARD" : "GEN_CARD" }));
+      return [];
+    });
+
+    const res = await ottoTurn(BASE_INPUT);
+
+    expect(res).toEqual({
+      threadId: expect.any(String),
+      status: "needs_approval",
+      // 按得下去的只有那一张真卡。
+      pendingCardIds: [realCard],
+      appendedReply: strandedApprovalText({ storyboard: true, lang: "en" }),
+    });
+    expect(mockStartGen).not.toHaveBeenCalled();
+  });
 });
 
 // ── Test 6: maxTurns ─────────────────────────────────────────────────────────
@@ -2445,7 +2483,7 @@ describe("ottoApprove — chained interruption with zero narration synthesizes t
     const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
 
     const zh = approvalPointerText({ cardCount: 1, allGenerate: true, lang: "zh" });
-    expect(res).toEqual({ ok: true, status: "needs_approval", pendingCardIds: ["card_chained"], fallbackReply: zh, narrationMessageId: null });
+    expect(res).toEqual({ ok: true, status: "needs_approval", pendingCardIds: ["card_chained"], fallbackReply: zh, narrationMessageId: null, appendedMessageId: null });
     expect(mockChatMessageCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ role: "AGENT", kind: "TEXT", seq: 6, text: zh }) }),
     );
@@ -2496,7 +2534,7 @@ describe("ottoApprove — chained interruption with zero narration synthesizes t
     const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
 
     const zh = approvalPointerText({ cardCount: 1, allGenerate: true, lang: "zh" });
-    expect(res).toEqual({ ok: true, status: "needs_approval", pendingCardIds: ["card_chained"], fallbackReply: zh, narrationMessageId: null });
+    expect(res).toEqual({ ok: true, status: "needs_approval", pendingCardIds: ["card_chained"], fallbackReply: zh, narrationMessageId: null, appendedMessageId: null });
     expect(mockChatMessageCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ role: "AGENT", kind: "TEXT", text: zh }) }),
     );
@@ -2519,6 +2557,8 @@ describe("ottoApprove — chained interruption with zero narration synthesizes t
       pendingCardIds: ["card_chained"],
       fallbackReply: null,
       narrationMessageId: narrationCreate!.id,
+      // 这一轮没有搁浅项 ⇒ 没有另落那一行,自然没有它的 id。
+      appendedMessageId: null,
     });
     expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2562,6 +2602,45 @@ describe("ottoApprove — chained interruption with zero narration synthesizes t
     expect(texts.filter((t) => t === honest)).toHaveLength(1);
     expect(texts.at(-1)).toBe(honest);
     // ⑤ 钱路零动作。
+    expect(mockStartGen).not.toHaveBeenCalled();
+  });
+
+  /**
+   * FC-1（复核 P2）—— **模型说了话、而批准项全都落地不了**：那句收回承诺的话必须当场读得到。
+   *
+   * approve 这条路不流式：客户端只把服务端点名的那几行注进对话
+   * （`narrationMessageIds` → `mergeDurableIntoLive`）。从前这一行落了库、id 却被丢掉，于是
+   * 商家屏幕上停着模型那句「这就生成」，而收回它的那句话要等下一次刷新才出现 —— 同一轮的
+   * 两张嘴，先后差一次刷新。所以这一条钉的是 id，不只是那一行字。
+   */
+  it("FC-1 模型说了话 + 批准项全部搁浅 ⇒ 诚实话另落一行，并把它的 id 交回去供当场注入", async () => {
+    setupChained({ finalOutput: "Got it! Let me generate both shots straight away!", userHistory: ["just do it straight away"] });
+    mockChatMessageFindMany.mockImplementation(async (args?: { where?: { id?: { in?: string[] }; role?: string } }) => {
+      const ids = args?.where?.id?.in;
+      if (ids) return ids.map((id) => ({ id, kind: "STORYBOARD_CARD" }));
+      return [{ text: "just do it straight away" }];
+    });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    const honest = strandedApprovalText({ storyboard: true, lang: "en" });
+    const rows = mockChatMessageCreate.mock.calls
+      .map((c) => (c[0] as { data: { id: string; role?: string; kind?: string; text?: string } }).data)
+      .filter((d) => d.role === "AGENT" && d.kind === "TEXT");
+
+    // ① 模型的原话照旧落库、照旧被点名注入 —— 收回一句承诺不该顺手删掉它。
+    const narrationRow = rows.find((d) => d.text === "Got it! Let me generate both shots straight away!");
+    expect(narrationRow).toBeDefined();
+    expect(res).toMatchObject({ ok: true, status: "needs_approval", pendingCardIds: [], narrationMessageId: narrationRow!.id });
+    // ② 诚实话另起一行,而且**只有一行**。
+    const honestRows = rows.filter((d) => d.text === honest);
+    expect(honestRows).toHaveLength(1);
+    // ③ 它的 id 交回去了 —— 客户端据此当场注入,不必等刷新。
+    expect((res as { appendedMessageId: string | null }).appendedMessageId).toBe(honestRows[0]!.id);
+    // ④ 它排在模型那句话后面 —— 屏幕上最后一句是做得到的下一步。
+    expect(rows.at(-1)!.text).toBe(honest);
+    // ⑤ 模型说了话 ⇒ 不再另补指路话;钱路零动作。
+    expect((res as { fallbackReply: string | null }).fallbackReply).toBeNull();
     expect(mockStartGen).not.toHaveBeenCalled();
   });
 

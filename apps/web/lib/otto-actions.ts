@@ -1964,7 +1964,10 @@ export async function chargedNothingProven(ownerId: string, refundedRefId: strin
 
 export async function ottoTurn(raw: unknown): Promise<
   | { threadId: string; status: "done"; reply: string }
-  | { threadId: string; status: "needs_approval"; pendingCardIds: string[] }
+  /** `appendedReply` —— FC-1（复核修正 P2）：这一轮在模型自己那句话之后另落的那句诚实话
+   *  （搁浅的批准项）。流式那一侧由 `app/api/otto/stream/route.ts` 写成一段文本；这条
+   *  非流式入口从前把它整条丢掉，于是同一件事在两个入口说法不一。缺席 ⇒ 没有这样一句。 */
+  | { threadId: string; status: "needs_approval"; pendingCardIds: string[]; appendedReply?: string }
   | { threadId: string; status: "degraded" }
   | { threadId: string; status: "stale" }
   | { error: string }
@@ -1977,7 +1980,7 @@ export async function ottoTurn(raw: unknown): Promise<
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<
     | { threadId: string; status: "done"; reply: string }
-    | { threadId: string; status: "needs_approval"; pendingCardIds: string[] }
+    | { threadId: string; status: "needs_approval"; pendingCardIds: string[]; appendedReply?: string }
     | { threadId: string; status: "degraded" }
     | { threadId: string; status: "stale" }
     | { error: string }
@@ -2253,7 +2256,12 @@ export async function ottoTurn(raw: unknown): Promise<
       revalidatePath("/", "layout");
       if (finalized.status === "stale") return { threadId, status: "stale" };
       if (finalized.status === "needs_approval") {
-        return { threadId, status: "needs_approval", pendingCardIds: finalized.pendingCardIds };
+        return {
+          threadId,
+          status: "needs_approval",
+          pendingCardIds: finalized.pendingCardIds,
+          ...(finalized.appendedReply ? { appendedReply: finalized.appendedReply } : {}),
+        };
       }
       return { threadId, status: "done", reply: finalized.reply };
     } catch (e) {
@@ -2423,6 +2431,9 @@ export async function ottoApprove(raw: unknown): Promise<
       pendingCardIds: string[];
       fallbackReply: string | null;
       narrationMessageId: string | null;
+      /** FC-1（复核修正 P2）—— 这一轮另起一行落库的那句诚实话（搁浅的批准项那一句）的
+       *  durable id，交给客户端按 `narrationMessageIds` 注进对话。null ⇒ 没有这样一行。 */
+      appendedMessageId: string | null;
       /** FSE-012(判官第 5 轮 P2-b)—— 这一趟**停在别的批准上**,而**这一张**在恢复轮里被
        *  报价版本闸拒了。从前这一支一律 `ok:true`,父层照旧把这张卡标成已批准 —— 一次假成功。
        *  两件事分开说:`pendingCardIds` 照带(链上那些卡确实还等着),这一格说的是「你按的
@@ -2466,6 +2477,9 @@ export async function ottoApprove(raw: unknown): Promise<
       pendingCardIds: string[];
       fallbackReply: string | null;
       narrationMessageId: string | null;
+      /** FC-1（复核修正 P2）—— 这一轮另起一行落库的那句诚实话（搁浅的批准项那一句）的
+       *  durable id，交给客户端按 `narrationMessageIds` 注进对话。null ⇒ 没有这样一行。 */
+      appendedMessageId: string | null;
       /** FSE-012(判官第 5 轮 P2-b)—— 这一趟**停在别的批准上**,而**这一张**在恢复轮里被
        *  报价版本闸拒了。从前这一支一律 `ok:true`,父层照旧把这张卡标成已批准 —— 一次假成功。
        *  两件事分开说:`pendingCardIds` 照带(链上那些卡确实还等着),这一格说的是「你按的
@@ -3126,15 +3140,22 @@ export async function ottoApprove(raw: unknown): Promise<
         // 读到的最后一句；链上真的卡照旧在 `pendingCardIds` 里，一张不少。
         // 上面已经把它当正文写过一次的那种局面（模型一字未说、且零张可按）在这里跳过 ——
         // 同一句话落两行，读起来就是系统自己在复读。
+        /** FC-1（复核修正 P2）—— 这一行诚实话的**durable id**。approve 这条路不流式:客户端
+         *  只把服务端点名的那几行注进对话(`narrationMessageIds` → `mergeDurableIntoLive`)。
+         *  从前这个 id 被丢掉,于是「模型说了话、而批准项全都落地不了」那一种局面里,商家要
+         *  刷新一次才读得到这句收回承诺的话 —— 屏幕上停着的正是那句承诺。缺席 ⇒ 这一轮没写
+         *  这样一行(它已经当正文交回去了,或者根本没有搁浅项)。 */
+        let appendedMessageId: string | null = null;
         if (strandedLine && fallbackReply !== strandedLine) {
           const seqRow = await prisma.chatMessage.findFirst({
             where: { threadId, ownerId },
             orderBy: { seq: "desc" },
             select: { seq: true },
           });
+          appendedMessageId = newId();
           await prisma.chatMessage.create({
             data: {
-              id: newId(),
+              id: appendedMessageId,
               threadId,
               ownerId,
               role: "AGENT",
@@ -3156,6 +3177,7 @@ export async function ottoApprove(raw: unknown): Promise<
           pendingCardIds,
           fallbackReply,
           narrationMessageId,
+          appendedMessageId,
           ...(quoteRefusedInResume ? { staleQuote: staleQuote ?? { error: QUOTE_VERSION_STALE, quote: null } } : {}),
         };
       }
