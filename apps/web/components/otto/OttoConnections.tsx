@@ -19,8 +19,13 @@ import { disconnectMeta, getMetaInsights, type MetaAdAccount } from "@/lib/meta-
 import { setAdsAutonomy, setAdsWritesPaused } from "@/lib/otto-client-actions";
 import type { AccountInsights } from "@/lib/meta-insights";
 import { getAccountViewData } from "@/lib/account-view-data";
-import { channelCapabilityBlurb, channelMeta, publishingChannelRows } from "@/lib/channels/channel-meta";
-import { CONNECTION_BLOCKER_COPY, connectionsPreviewNotice } from "@fikirtive/core/schedule-draft";
+import {
+  channelCapabilityBlurb,
+  channelMeta,
+  isMetaBackedChannel,
+  publishingChannelRows,
+} from "@/lib/channels/channel-meta";
+import { CONNECTION_BLOCKER_COPY, connectionsNotice } from "@fikirtive/core/schedule-draft";
 import { describeMetaAdAccountStatus } from "@/lib/meta-ad-account-status";
 import { supportMailto } from "@/lib/exits";
 import type { ChannelState } from "./settings/sections";
@@ -269,7 +274,6 @@ export default function OttoConnections({ embedded = false }: { embedded?: boole
     });
   }, [meta.phase]);
 
-  const previewNotice = connectionsPreviewNotice();
   const publishingLoading = channelsState.phase === "loading" || meta.phase === "loading";
   const connectError = connectErrorCode ? describeConnectError(connectErrorCode) : null;
   const loadedChannels = channelsState.phase === "loaded" ? channelsState.channels : [];
@@ -278,7 +282,13 @@ export default function OttoConnections({ embedded = false }: { embedded?: boole
   const selectedState = selectedRow?.state ?? null;
   const selectedBlocked = selectedState?.blocker
     ?? (selectedState?.status === "needs_reconnect" ? "needs_reconnect" : null);
-  const selectedMetaBacked = selectedRow?.id === "instagram" || selectedRow?.id === "facebook";
+  const selectedMetaBacked = selectedRow ? isMetaBackedChannel(selectedRow.id) : false;
+  // Gate ① of the top-of-page notice, read off the SAME rows this screen draws its Connect
+  // buttons from — `connectable` comes from CHANNEL_META, not from the network read, so this
+  // answer is the same while loading, after an error, and once loaded. Gate ② (PUBLISHING_AVAILABLE)
+  // is the function's own default. See connectionsNotice() for why it takes two.
+  const canConnectMetaAccount = connectionRows.some((row) => isMetaBackedChannel(row.id) && row.connectable);
+  const previewNotice = connectionsNotice(canConnectMetaAccount);
   const connectedCount = connectionRows.filter(
     (row) => row.connectable && row.state?.status === "connected" && !row.state.blocker,
   ).length;
@@ -300,11 +310,11 @@ export default function OttoConnections({ embedded = false }: { embedded?: boole
           </header>
         ) : null}
 
-        {/* 规格 `docs/specs/wave2-shell.md:394-395` 点名要的那一句。验收表(同文件 :565)把状态
-            写死在 `PUBLISHING_AVAILABLE === false` —— 不是永远说:通电那天它自己消失,不靠谁
-            记得回来删屏幕上的一行。措辞和「说不说」都向核心权威要
-            (`connectionsPreviewNotice()`),所以这扇屏幕上没有第二份可抄的文案。
-            它说的是**产品今天一个 Instagram / Facebook 账号都连不上**;右边详情面板那句
+        {/* 规格 `docs/specs/wave2-shell.md:394-395` 点名要的那一句;口径订正(两道闸而不是一道)
+            登记在 `docs/specs/frontend-baseline.md` §5 的 2026-09-16 R3-F14 行。措辞和「说不说」
+            都向核心权威要(`connectionsNotice()`),所以这扇屏幕上没有第二份可抄的文案;两道闸
+            都开那天它自己消失,不靠谁记得回来删屏幕上的一行。
+            它说的是**这一页今天能不能连、连上了发不发得出去**,两件事各有答案;右边详情面板那句
             “This service is not available to connect.” 是 X 一个服务自己的事。两句各说各的,
             谁也不复述谁。standing explanation 不戴 role(见 `components/ui/alert.tsx` 顶注)。 */}
         {previewNotice ? (

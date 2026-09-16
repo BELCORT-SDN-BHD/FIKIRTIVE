@@ -192,26 +192,66 @@ export function publishPreviewBadge(available: boolean = PUBLISHING_AVAILABLE): 
 }
 
 /**
- * The line the Connections page wears at the top while publishing is off (规格
- * `docs/specs/wave2-shell.md:394-395`; 验收 `docs/specs/wave2-shell.md:565` names the state:
- * "Connections 页在 `PUBLISHING_AVAILABLE === false` 时说出「现在连不上」").
+ * The line the Connections page wears at the top (规格 `docs/specs/wave2-shell.md:394-395`; 验收
+ * `docs/specs/wave2-shell.md:565`; 口径订正登记在 `docs/specs/frontend-baseline.md` §5 的
+ * 2026-09-16 R3-F14 行).
  *
  * The four slots above answer "what happens to a POST"; a merchant standing on Connections is
  * asking a different question — "can I link an account here at all?" — and reading four sentences
  * about posts does not answer it. So this is its own sentence, not a fifth slot: one screen, one
  * question, one answer.
  *
+ * **Two gates, not one.** The spec wrote this line as a single sentence hanging off the publishing
+ * switch, and that is the one shape it can never take, because the two questions have separate
+ * answers that move separately:
+ *
+ *   ① **Can I link an account here?** — per channel, from
+ *      `apps/web/lib/channels/channel-meta.ts` (`UNAVAILABLE_PUBLISHING_CHANNEL_IDS`). Today that
+ *      set holds only `x`, so Instagram and Facebook each render a working Connect button.
+ *   ② **Once linked, does an approved post reach it?** — product-wide, from `PUBLISHING_AVAILABLE`
+ *      above. Today: no.
+ *
+ * Staging lives in the combination that single sentence cannot describe — ① open, ② shut — and the
+ * top-of-page line "no Instagram or Facebook account can be connected right now" sat two inches
+ * above a live Connect button saying the opposite. A screen that contradicts itself teaches a
+ * merchant to stop reading it, which costs more than the sentence ever bought. So the gates are two
+ * parameters and each combination gets its own words.
+ *
+ * **What this line does NOT claim**: that pressing Connect will succeed. That is a third, deploy-
+ * level fact — `META_APP_ID` / `META_LOGIN_CONFIG_ID` on the server
+ * (`apps/web/app/api/meta/authorize/route.ts:10-15`) — invisible to this page, and already owned by
+ * the `not_configured` alert that route sends the merchant back with. Saying it twice would be the
+ * second wording nobody remembers to delete, so ① is worded as "linking is offered here", never as
+ * a promise that it completes.
+ *
  * It lives here for the reason the rest of this section does. The Connections page already carries
- * a per-service "Unavailable" line for X, and the day publishing comes back this line has to stop
- * being said — while the per-service one stays. Written on the screen, it would be the second
- * wording nobody remembers to delete.
+ * a per-service "Unavailable" line for X, and the day publishing comes back these words have to
+ * stop being said — while the per-service one stays.
  */
-export const CONNECTIONS_PREVIEW_NOTICE =
-  "No Instagram or Facebook account can be connected right now, so nothing here can be linked yet. Your schedule stays real either way.";
+export const CONNECTIONS_NOTICE = {
+  /** ① shut, ② shut — nothing to link, and nothing would go out if there were. */
+  neitherGate:
+    "No Instagram or Facebook account can be connected right now, and publishing is not switched on yet, so nothing here can be linked or sent. Your schedule stays real either way.",
+  /** ① open, ② shut — today, and what staging shows. Linking works; the post still goes nowhere. */
+  publishingOff:
+    "You can link an Instagram or Facebook account here, but publishing is not switched on yet, so nothing you schedule is sent to it. Your schedule stays real either way.",
+  /** ① shut, ② open — publishing came back before the channels did. */
+  connectOff:
+    "Publishing is switched on, but no Instagram or Facebook account can be connected right now, so there is nothing here to send from yet.",
+} as const;
 
-/** That line, or null once an account can actually be connected. */
-export function connectionsPreviewNotice(available: boolean = PUBLISHING_AVAILABLE): string | null {
-  return available ? null : CONNECTIONS_PREVIEW_NOTICE;
+/**
+ * The words for a given pair of gates, or null once both are open and there is nothing to warn
+ * about. Both parameters are real inputs: `canConnect` is read off the very channel rows the page
+ * is about to draw its buttons from, so the sentence and the buttons cannot disagree.
+ */
+export function connectionsNotice(
+  canConnect: boolean,
+  publishingAvailable: boolean = PUBLISHING_AVAILABLE,
+): string | null {
+  if (canConnect && publishingAvailable) return null;
+  if (!canConnect && !publishingAvailable) return CONNECTIONS_NOTICE.neitherGate;
+  return canConnect ? CONNECTIONS_NOTICE.publishingOff : CONNECTIONS_NOTICE.connectOff;
 }
 
 /**
