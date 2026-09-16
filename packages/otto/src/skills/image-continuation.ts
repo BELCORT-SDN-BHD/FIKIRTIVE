@@ -83,73 +83,96 @@ export const IMAGE_CONTINUATION_SIGNALS: Record<string, readonly string[]> = {
 };
 
 /**
- * **硬**否决 —— 他明说要的是另一件交付物。压过上面每一条,包括第 ① 类指代。
+ * ── 硬否决:他要的是**另一件东西**(编排者 2026-09-16 裁定的两类)──────────────────
  *
- * 为什么它连指代都压得过:「edit this photo, actually make a brand new one」里,
- * 唯一不含糊的那一半是他明说的「brand new」。继承一张他刚说了不要的底图,做出来的东西
- * 与他要的无关,而这一单已经付过钱了。
+ * 两类,合起来压过一切,包括明确指代:
+ *   (a) **点名另一件交付物** —— 「a new poster」「another one」「一张新的海报」「poster baru」。
+ *   (b) **否掉手上这一张** —— 「这张不行」「重做」「forget this」「next one」「buat yang lain」。
+ *
+ * 判交付物**只认交付物名词**,元素名词永不在列:logo / sticker / hat / menu / cover /
+ * frame / background 是图**里**的东西。「add a logo to this photo」是在这张图上加个 logo,
+ * 不是另起一张;把 logo 当交付物,就会把普通修图判成重做 —— 这一版修的正是那个。
  */
-export const IMAGE_FRESH_START_SIGNALS: Record<string, readonly string[]> = {
+const DELIVERABLE_EN = "poster|flyer|banner|carousel|ad|design|video|clip|picture|image|photo|pic";
+const DELIVERABLE_ZH = "海报|横幅|广告|设计|视频|图";
+const DELIVERABLE_MS = "poster|banner|iklan|video|gambar";
+
+/** (a) 点名另一件交付物 —— 三种语言同一份名词表(「decide alike」)。 */
+export const HARD_NEW_DELIVERABLE_PATTERNS: readonly RegExp[] = [
+  // 「a new poster」「two new clips」「a new one」
+  new RegExp(`\\b(?:a|an|another|one|two|three|four|five|six|\\d+)\\s+new\\s+(?:[a-z-]+\\s+){0,1}(?:${DELIVERABLE_EN}|one)s?\\b`),
+  // 「another poster」「another one」
+  new RegExp(`\\banother\\s+(?:[a-z-]+\\s+){0,1}(?:${DELIVERABLE_EN}|one)s?\\b`),
+  // 中文闭合说法
+  new RegExp(`一张新的(?:${DELIVERABLE_ZH})`),
+  /做一张新的|另做一张|再做一张|再来一张|全新|重新做一张|重新来一张|从头做/,
+  // 马来语
+  new RegExp(`(?:${DELIVERABLE_MS})\\s+baru`),
+  /gambar baharu|mula semula|buat yang lain/,
+];
+
+/**
+ * (b) 否掉手上这一张 —— 他先说「这张不行 / 够了 / 算了」,再说下一句。
+ *
+ * 这一类是上一版最贵的漏网:没有它,「这张不行,重做」里的「这张」被当成指代,
+ * 于是把**他刚否掉的那张**绑成编辑底图,而这一单是要花钱的。
+ */
+export const DISMISSAL_SIGNALS: Record<string, readonly string[]> = {
   en: [
-    "brand new", "brand-new", "a new picture", "a new image", "a new photo",
-    "new picture of", "new image of", "new photo of",
-    "another picture of", "another image of", "another photo of",
-    // 「another one」= 他要的是**另一件**,不是这一件改一改。
-    "another one",
-    // 复审(单镜头)—— 「a new one」与它的中/马来语同族。收的是**闭合说法**:
-    // 整句只有「再来一个新的」这一个意思,再没有第二种读法,所以放硬否决。
-    // 绝不收「make a new …」这种开放式起手 —— 那会把
-    // 「make a new background for this photo」也打成 fresh,正是上一轮修掉的病。
-    "a new one",
-    "different picture", "separate picture", "start over", "start fresh", "from scratch",
+    "forget this", "scrap this", "skip this", "next one",
+    "start over", "start fresh", "from scratch", "brand new",
   ],
-  zh: ["全新", "重新做一张", "重新来一张", "另做一张", "从头做", "做一张新的", "来一张新的", "换一张"],
-  ms: ["gambar baharu", "mula semula", "satu lagi"],
+  zh: ["不行", "不好", "不要了", "重做", "重来"],
+  ms: ["tak jadi", "lupakan"],
 };
 
 /**
- * **软**否决 —— 「新的 / baru / a new …」这一档(复审 P2-1 从硬否决里拆出来)。
+ * 两个**带条件**的闭合说法 —— 同一串字在「另起一张」和「图里换一件东西」两种句子里都出现,
+ * 所以它们各自带一条紧邻上下文的判据,而不是靠再堆几个词组。
  *
- * 拆出来的理由是它**认不出 new 在修饰什么**:「保留白底,做一张新的产品图」里修饰的是
- * 交付物,而「这张图换个新的背景」「add a new hat to this photo」里修饰的是图里的一件
- * 东西。认不出来的时候默认投 fresh(= 这条修改之前的行为,安全的那一边);可一旦同一句里
- * 他已经明确指着那张图(第 ① 类),那个歧义就消失了 —— 指代赢。
+ * ·「换一张」:紧挨在前面是名词就不是闭合说法 ——「这张图的背景换一张」是换背景,
+ *   「换一张试试」才是另起一张。用「句首或标点/空白之后」近似「前面没有名词」。
+ * ·「satu lagi」:前面是 tambah/tambahkan 就是「再加一只」——
+ *   「tambah satu lagi kucing dalam gambar ni」是往图里加只猫,不是再来一张。
+ */
+function hitsConditionalHardForms(text: string): boolean {
+  if (/(?:^|[，,。.！!？?；;：:\s])换一张/.test(text)) return true;
+  if (/\bsatu lagi\b/.test(text) && !/\btambah\w*\s+satu lagi\b/.test(text)) return true;
+  return false;
+}
+
+/**
+ * **软**否决 —— 「新的 / baru / a new …」这一档:认不出 new 在修饰什么。
+ *
+ * 认不出来时默认投 fresh(= 这条修改之前的行为);可一旦同一句里他已经明确指着那张图,
+ * 那个歧义就消失 —— 指代赢(它排在软否决之前)。
  */
 export const SOFT_FRESH_START_SIGNALS: Record<string, readonly string[]> = {
   zh: ["新的"],
   ms: ["baru"],
 };
 
-/**
- * 软否决的**形态**判据:不定冠词(a / an / another / 一个数词)+ new + 任意名词。
- *
- * 商家口里的交付物叫 poster、banner、flyer、carousel…—— 一个一个穷举既收不完,
- * 也换一个商家就失效,所以这里收形态不收名词。只对英文建。
- */
+/** 软否决的形态判据:不定冠词 / 数词 + new + 任意名词。只对英文建。 */
 export const IMAGE_FRESH_START_PATTERNS: readonly RegExp[] = [
   /\b(?:a|an|another|one|two|three|four|five|six|\d+)\s+(?:brand[\s-]*)?new\b/,
 ];
 
 /**
- * 这句话点名了一件**新交付物**吗 —— 全局那一问(复审单镜头:它不再只管第 ② 类)。
+ * 「这句话点名了一件新交付物吗」—— **只在第 ② 类(接续副词)里问**(编排者裁定:
+ * 从全局位置搬回来)。
  *
- * 「a poster」「three banners」「a raya sale flyer」⇒ 他要的是另一件东西,不是这一张改一改。
+ * 放回来的理由是它在全局位置会杀掉普通修图:「make this photo into a poster」
+ * 「add a logo to this photo」都点着交付物名词,可它们是拿**这张图**去做那件东西 ——
+ * 指代已经说明了底图是哪一张,卡上也会把它作为 Base image 亮出来。
+ * 只有在没有指代、单靠一个「now …」起手时,点名交付物才说明他要的是另一件。
  *
- * 为什么它现在排在指代**之前**:上一轮把指代提到软否决之上以后,
- * 「this photo is nice, now i want a new poster for the raya sale」
- * 「scrap this image, give me a fresh poster」这种**既指着图、又点名新交付物**的句子
- * 反而被判成 continue —— 他指着的那张是他要扔掉的那张,而这一单已经付过钱了。
- * 指着一张图不等于要改它,所以「点名新交付物」这一问必须在指代之前答。
- *
- * 名词表只在这一问里用(判「他点名了没有」),不拿它去判继承 —— 与形态判据同一条理由:
- * 穷举收不完,但**点名了**这件事本身是确定的,漏掉一个名词只会退回今天的行为。
- *
- * 顺带把第 ② 类的「指着已有东西」那道闸吃掉了:它与这一问是同一件事的两面,
- * 而两者都要求时「now add a hat on the cat」(既没点名交付物、也没有 it/this/that)
- * 会被误判成 fresh。留一问,少一份会先烂掉的重复。
+ * 名词表与硬否决共用同一份(三种语言并列),元素名词永不在列。
  */
-export const NEW_DELIVERABLE_PATTERN =
-  /\b(?:a|an|another|some|one|two|three|four|five|six|\d+)\s+(?:[a-z][a-z-]*\s+){0,2}(?:poster|flyer|banner|carousel|leaflet|brochure|pamphlet|billboard|advert|advertisement|ad|logo|thumbnail|cover|reel|story|post|graphic|mockup|menu|invite|invitation|catalogue|catalog|sticker|wallpaper|video|clip|picture|image|photo|pic)s?\b/;
+export const NEW_DELIVERABLE_PATTERN = new RegExp(
+  `(?:\\b(?:a|an|another|some|one|two|three|four|five|six|\\d+)\\s+(?:[a-z][a-z-]*\\s+){0,2}(?:${DELIVERABLE_EN})s?\\b)` +
+    `|(?:一[张个幅]?(?:[^，,。.！!？?]{0,4})?(?:${DELIVERABLE_ZH}))` +
+    `|(?:\\b(?:${DELIVERABLE_MS})\\b)`,
+);
 
 export type ImageContinuationDecision = "continue" | "fresh";
 
@@ -165,9 +188,11 @@ function hitsExplicitDeictic(text: string): boolean {
   return hits(EXPLICIT_IMAGE_DEICTICS, text);
 }
 
-/** 硬否决:明说要另一件交付物。 */
+/** 硬否决:(a) 点名另一件交付物,或 (b) 否掉手上这一张。压过一切,包括明确指代。 */
 function hitsHardFreshStart(text: string): boolean {
-  return hits(IMAGE_FRESH_START_SIGNALS, text);
+  if (hits(DISMISSAL_SIGNALS, text)) return true;
+  if (HARD_NEW_DELIVERABLE_PATTERNS.some((re) => re.test(text))) return true;
+  return hitsConditionalHardForms(text);
 }
 
 /** 软否决:认不出 new 在修饰什么。 */
@@ -192,16 +217,20 @@ function namesNewDeliverable(text: string): boolean {
  * 判据次序即优先级,每一层都有它自己的理由:
  *   1. 没有「正在做的那张图」 ⇒ 无从继承;
  *   2. 商家这一轮自己挂了图 ⇒ 以他挂的为准(既有行为逐字不动);
- *   3. **硬**否决:他明说要另一件交付物 ⇒ 不继承(连指代都压得过);
- *   4. 他**点名了一件新交付物** ⇒ 不继承(复审单镜头:指着图不等于要改它);
- *   5. 第 ① 类:他明确指着那张图 ⇒ 继承(压得过软否决 —— 复审 P2-1);
- *   6. **软**否决:认不出 new 在修饰什么 ⇒ 不继承(投向今天的行为);
- *   7. 第 ② 类:接续副词 ⇒ 继承(第 4 步已经把「点名新交付物」的那些挡掉了);
- *   8. 读不出任何信号 ⇒ 不继承(今天的行为)。
+ *   3. **硬**否决 ⇒ 不继承(连指代都压得过):(a) 点名另一件交付物,或 (b) 否掉手上这一张;
+ *   4. **明确指代** ⇒ 继承 —— 同一句里出现交付物名词也照样继承:
+ *      「make this photo into a poster」是拿**这张**去做海报,底图是哪一张他已经说了,
+ *      而卡上还会把它作为 Base image 亮出来;
+ *   5. **软**否决:认不出 new 在修饰什么 ⇒ 不继承(投向今天的行为);
+ *   6. 第 ② 类:接续副词 —— 只有在**没点名新交付物**时才继承;
+ *   7. 读不出任何信号 ⇒ 不继承(今天的行为)。
  *
- * 第 4 步排在指代之前,是这一版唯一的次序改动:两轮复审各自抓到一次「次序错了」的
- * 假阳性(一次往 fresh 偏、一次往 continue 偏),而两次的修法是同一条 —— 先答
- * 「他要的是另一件东西吗」,再答「他指着哪一张」。
+ * ── 这条阶梯的已知上限(编排者 2026-09-16 裁定,不再逐句加词)────────────────────
+ * 词组阶梯覆盖不了三种语言的意图。**完全没有指代**的句子(「same but blue」
+ * 「背景太暗了」「ok, tukar background」)读不出来,一律落到 fresh —— 那正是这条修改
+ * 之前主干的行为,不是新风险。反过来判错成 continue 的那一侧,代价被卡面兜住:
+ * 底图带着回执(Base image)出现在确认卡上,商家在付钱之前看得见、改得掉。
+ * 后续候选做法:让模型判「是不是接着这张改」,并把判断回显到卡上。
  */
 export function decideImageContinuation(input: {
   /** 商家这一轮自己打的那句话(`ctx.turnText`)。服务端原样带进来,绝不来自模型。 */
@@ -216,10 +245,10 @@ export function decideImageContinuation(input: {
   const text = (input.text ?? "").toLowerCase();
   if (!text) return "fresh";
   if (hitsHardFreshStart(text)) return "fresh";
-  if (namesNewDeliverable(text)) return "fresh";
   if (hitsExplicitDeictic(text)) return "continue";
   if (hitsSoftFreshStart(text)) return "fresh";
-  return hitsContinuationAdverb(text) ? "continue" : "fresh";
+  if (!hitsContinuationAdverb(text)) return "fresh";
+  return namesNewDeliverable(text) ? "fresh" : "continue";
 }
 
 /**

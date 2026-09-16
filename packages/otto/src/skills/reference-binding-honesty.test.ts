@@ -472,6 +472,31 @@ describe("FC-2 复审 · 信号表两侧各一打", () => {
     "now change her shirt to red",
     "这张图的猫换成狗",
     "tukar warna baju dalam gambar ni",
+    // 编排者 2026-09-16 裁定 —— **交付物名词不再夺走底图**:这十句都是拿「这一张」去做一件
+    // 东西,或者往「这一张」上加一件东西。把 poster / logo / banner 当成「另起一张」的证据,
+    // 就会把最普通的修图判成重做;判据只认交付物**加上**「新的/另一件」那半句(见硬否决)。
+    "make this photo into a poster",
+    "turn this picture into a banner",
+    "把这张图做成海报",
+    "jadikan gambar ni poster",
+    "拿这张图做个 logo",
+    "guna gambar ni jadikan poster raya",
+    "add a logo to this photo",
+    "edit this photo, add a poster frame",
+    "crop this image to a square banner",
+    "use this photo for a facebook post",
+    // 「换一张 / satu lagi」这两串字在**图里换一件东西**时照样出现 —— 紧邻上下文说了算:
+    // 前面挨着名词(背景/杯子/帽子)、或前面是 tambah(往图里加),就不是「另起一张」。
+    "这张图的背景换一张",
+    "tambah satu lagi kucing dalam gambar ni",
+    "这张图的杯子换一张",
+    "tambahkan satu lagi produk dalam gambar ni",
+    "把这张图的帽子换一张",
+    // 元素名词在接续副词档里同样不算交付物(「logo 加在猫身上」)。
+    "now add a logo on the cat",
+    "now i want a bigger mug",
+    "这张图里的杯子换个新颜色",
+    "give the cat a new hat in this photo",
   ];
 
   const FRESH_PHRASES = [
@@ -516,6 +541,18 @@ describe("FC-2 复审 · 信号表两侧各一打", () => {
     "i need a new banner instead",
     "再来一张新的海报",
     "gambar ni buat satu lagi",
+    // 编排者 2026-09-16 裁定 —— **否掉手上这一张**的说法自成一类。没有它,「这张不行,重做」
+    // 里的「这张」会被当成指代,于是把他**刚否掉**的那张绑成编辑底图,而这一单要花钱。
+    "这张不行，重做",
+    "这张图不错，再做一张类似的",
+    "forget this photo, make something festive for raya",
+    "this photo ok already, next one please",
+    "gambar ni dah ok, buat yang lain pula",
+    "这个不行",
+    // 「再来两张这样的」这一类:他要的是**另外几张**,不是把这一张改一改。
+    "two more like this one",
+    "再来两张这样的",
+    "buat dua lagi macam ni",
   ];
 
   it.each(CONTINUE_PHRASES)("指着那张图 ⇒ continue:%s", (text) => {
@@ -539,6 +576,9 @@ describe("FC-2 复审 · 信号表两侧各一打", () => {
     // 复审(单镜头)的两个方向:指着图 + 点名新交付物 ⇒ fresh;指着图 + new 修饰图里的东西 ⇒ continue。
     expect(FRESH_PHRASES).toContain("this photo is nice, now i want a new poster for the raya sale");
     expect(CONTINUE_PHRASES).toContain("make a new background for this photo");
+    // 编排者裁定的两条分界线:交付物名词不夺底图;否掉这一张的说法必须赢过指代。
+    expect(CONTINUE_PHRASES).toContain("add a logo to this photo");
+    expect(FRESH_PHRASES).toContain("这张不行，重做");
   });
 });
 
