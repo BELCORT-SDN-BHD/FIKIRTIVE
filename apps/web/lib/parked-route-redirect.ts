@@ -53,3 +53,35 @@ export function parkedRouteRedirect(from: string): Response {
   }
   return new Response(null, { status: 307, headers: { Location: row.to } });
 }
+
+/**
+ * 停放前缀底下**没建过**的那些地址 —— 同一条 307,去处仍然只由那张表说了算(R3-F11)。
+ *
+ * `parkedRouteRedirect` 答的是表里逐字写着的那几条地址。它答不了的是**它们底下那一片**:
+ * `/crm/<没建过的段>`(书签被截断、外部链接多带一层、手打错一个字)在第三轮 staging 走查里
+ * 撞的是 Next 自带的裸 404 —— 没有导轨、没有账号菜单、没有一条回去的路。规格
+ * `docs/specs/wave2-shell.md` §2.2 写的是「`/crm` **及其全部子路由** → `/`」,§2.5 写的是
+ * 「每一条旧地址都 307,永不 404」:那一片本来就在承诺里面。
+ *
+ * **最长匹配者独赢**,与导轨高亮同一条规则(`components/navigation/rail/rail-tree.ts` 的
+ * `activeNavHref`)。这不是为了对称:`/schedule/analytics/<没建过的段>` 必须落到
+ * `/analysis`(表里 `/schedule/analytics` 那一行),而不是落到 `/schedule` 那一行的 Home ——
+ * 商家要找的是表现分析,不是总览。取第一条或取最短的那条都会把他送错门。
+ *
+ * 一个前缀都匹配不上就抛:catch-all 路由文件只摆在停放前缀底下,所以匹配不上意味着有人把
+ * 文件搬到了表外的地方 —— 一条没有权威出处的重定向,比一次响亮的失败更糟。
+ */
+export function parkedSubpathRedirect(pathname: string): Response {
+  const row = MERCHANT_NAV_REDIRECTS.filter(
+    (entry) => pathname === entry.from || pathname.startsWith(`${entry.from}/`),
+  ).reduce<(typeof MERCHANT_NAV_REDIRECTS)[number] | null>(
+    (longest, entry) => (!longest || entry.from.length > longest.from.length ? entry : longest),
+    null,
+  );
+  if (!row) {
+    throw new Error(
+      `parkedSubpathRedirect: "${pathname}" 不长在任何一条停放前缀底下。兜底路由只该摆在 MERCHANT_NAV_REDIRECTS 有的那几个前缀里 —— 先往表里加一行(带 why),再把 catch-all 摆进去。`,
+    );
+  }
+  return parkedRouteRedirect(row.from);
+}

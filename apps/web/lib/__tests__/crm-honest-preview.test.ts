@@ -295,19 +295,11 @@ describe("导轨上一格都不剩,而且没有半扇门", () => {
     expect(badges.length).toBe(0);
   });
 
-  it("14 个 /crm 路由文件一个不少,加上兜底那一条,而且每一个都通过 SSOT 回 Home —— 旧书签不撞墙", () => {
+  it("14 个 /crm 路由文件一个不少,而且每一个都通过 SSOT 回 Home —— 旧书签不撞墙", () => {
     const routes = crmRouteFiles();
 
-    // R3-F11 —— 第十五个文件不是「收起来的段里新开了一页」,它是**其余全部**地址的落点:
-    // `/crm/<没建过的段>`(书签被截断、手打错一个字)此前撞的是 Next 自带的裸 404,连一条
-    // 回去的路都没有。所以它在这里单独点名,而不是把数目从 14 改成 15 了事 —— 数目仍然钉死:
-    // 旧地址十四条,兜底一条,再多一个仍然是「有人在收起来的段里新开了页」。
-    expect(
-      routes.filter((file) => file.startsWith("[...parked]/")),
-      "兜底那一条不见了 —— 没有它,前缀底下没建过的地址又会撞裸 404(R3-F11)",
-    ).toEqual(["[...parked]/page.tsx"]);
     // 数目钉死:少一个 = 有人把书签的落点删成了 404;多一个 = 有人在收起来的段里新开了页。
-    expect(routes.length, "app/crm 底下的 page.tsx 数目变了").toBe(15);
+    expect(routes.length, "app/crm 底下的 page.tsx 数目变了").toBe(14);
 
     const notRedirecting = routes.filter((file) => {
       const src = readFileSync(path.join(CRM_APP_DIR, file), "utf8");

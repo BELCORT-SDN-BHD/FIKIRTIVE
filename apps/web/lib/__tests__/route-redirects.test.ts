@@ -44,10 +44,12 @@ const { default: CampaignCalendarRoute } = await import("../../app/campaign/cale
 const { GET: ParkedScheduleRoute } = await import("../../app/schedule/route");
 const { GET: LegacyScheduleAnalyticsRoute } = await import("../../app/schedule/analytics/route");
 const { GET: ParkedEditorRoute } = await import("../../app/library/editor/route");
-const { default: ParkedCampaignSubpath } = await import("../../app/campaign/[...parked]/page");
-const { default: ParkedScheduleSubpath } = await import("../../app/schedule/[...parked]/page");
-const { default: ParkedEditorSubpath } = await import("../../app/library/editor/[...parked]/page");
-const { default: ParkedCrmSubpath } = await import("../../app/crm/[...parked]/page");
+// R3-F11:四扇停放前缀底下的兜底,同样是 Route Handler —— 同一份机制、同一处实测
+// (`lib/parked-route-redirect.ts`),不因为哪一扇门今天头上碰巧没有 `loading.tsx` 就换写法。
+const { GET: ParkedCampaignSubpath } = await import("../../app/campaign/[...parked]/route");
+const { GET: ParkedScheduleSubpath } = await import("../../app/schedule/[...parked]/route");
+const { GET: ParkedEditorSubpath } = await import("../../app/library/editor/[...parked]/route");
+const { GET: ParkedCrmSubpath } = await import("../../app/crm/[...parked]/route");
 
 /** 去处里的路径部分 —— `?otto=1` 与 `#templates` 都不是新路由,不参与地址对账。 */
 function pathOf(target: string): string {
@@ -182,11 +184,8 @@ function crmRoutes(): string[] {
 }
 
 describe("CRM 十四条旧地址一条都不撞墙(W2-13 / #993)", () => {
-  it("十四条旧地址的路由文件都还在 —— 收起来不等于删页(外加 R3-F11 的兜底那一条)", () => {
+  it("十四个路由文件都还在 —— 收起来不等于删页", () => {
     expect(crmRoutes()).toEqual([
-      // R3-F11 第十五个:它不是第十五条旧地址,是**其余全部**旧地址的兜底
-      // (`/crm/<没建过的段>` 此前落进裸 404)。上面那十四条仍然逐条在盘上。
-      "[...parked]/page.tsx",
       "broadcasts/[id]/page.tsx",
       "broadcasts/new/page.tsx",
       "broadcasts/page.tsx",
@@ -301,7 +300,7 @@ describe("Phase 1 parked routes 的真实 server redirects", () => {
  * 第三轮 staging 走查（2026-09-14）发现的洞:`/crm` 与它那十四条子路由都 307 回 Home,而
  * `/crm/<没建过的段>` 落进的是 Next 自带的裸 404 —— 没有导轨、没有账号菜单、没有一条回去的路
  * (壳在这个前缀上本来就不画:`isMerchantSurface` 对每一条停放前缀答 false,
- * `components/global-navigation.tsx:62`)。同一个洞在 `/campaign`、`/schedule`、`/library/editor`
+ * `components/global-navigation.tsx`)。同一个洞在 `/campaign`、`/schedule`、`/library/editor`
  * 底下一模一样 —— 它们是同一类,不是四件事。
  *
  * 判据不是这条围栏自己发明的:
@@ -311,65 +310,98 @@ describe("Phase 1 parked routes 的真实 server redirects", () => {
  *     「Compatibility destinations」第 1 条与验收 7:进入 Parked merchant surface 由 server-side
  *     destination 送到冻结 owner surface,**不显示 404**。
  *
- * 做法照仓库里已有的那一处先例:`app/northstar-immersive/[...retired]/page.tsx` ——
- * 一条 catch-all 页,静态段仍然优先,所以同一棵树下的真路由(`/campaign/calendar`、
- * `/schedule/analytics`、`/schedule/share-preview`)一个都不被吃掉。
+ * 写法与 R3-F10 那三条同一份:**Route Handler**。上一版这四条是 catch-all `page.tsx`,于是
+ * `/schedule` 与 `/library/editor` 底下的乱地址答的是 200 + `<meta http-equiv="refresh">` ——
+ * 头上那层 `loading.tsx` 把外壳先冲了出去,和 R3-F10 逮到的是同一个缺陷(全文在
+ * `lib/parked-route-redirect.ts`)。handler 不进渲染,边界摆在哪里都影响不到它。
+ *
+ * 静态段仍然优先于 catch-all,所以同一棵树下的真路由(`/campaign/calendar`、
+ * `/schedule/analytics`、`/schedule/share-preview`)一条都不被吃掉 —— 最后那个 `it` 钉的就是它。
  *
  * 「落地之后壳真的画出来了」这半句证不了在这里(那要一个真的浏览器):它由
- * `e2e/journeys/29-parked-prefix-deep-link.spec.ts` 钉着。这里钉的是路由那一半 —— 兜底存在、
- * 去处与权威表逐字同一个。
+ * `e2e/journeys/29-parked-prefix-deep-link.spec.ts` 钉着。这里钉的是路由那一半 —— 状态码、
+ * 去处与权威表逐字同一个、以及兜底的形状。
  */
 describe("R3-F11 停放前缀下的乱地址不落进裸 404", () => {
+  const APP_DIR = path.resolve(__dirname, "../../app");
+
   /** 停放**前缀** = 表里不长在别人底下的那几条 `from`。`/campaign/calendar` 与
-   *  `/schedule/analytics` 各自长在 `/campaign`、`/schedule` 底下,它们是叶子、不是门。 */
+   *  `/schedule/analytics` 各自长在 `/campaign`、`/schedule` 底下,它们是叶子、不是门:
+   *  兜底摆在门上,叶子底下的乱地址由同一条兜底按最长匹配答(下面单独一条钉它)。 */
   const parkedPrefixRows = MERCHANT_NAV_REDIRECTS.filter(
     (row) => !MERCHANT_NAV_REDIRECTS.some((other) => other.from !== row.from && row.from.startsWith(`${other.from}/`)),
   );
 
-  /** 每一扇门底下那条兜底路由的模块。键是前缀,值是 `[...parked]/page.tsx` 的默认导出。 */
-  const catchAllByPrefix: Readonly<Record<string, () => Promise<unknown>>> = {
+  /** 每一扇门底下那条兜底的 `GET`。键是前缀。 */
+  const catchAllByPrefix: Readonly<Record<string, (request: Request) => Response>> = {
     [SHELL_ROUTES.campaign]: ParkedCampaignSubpath,
     [SHELL_ROUTES.schedule]: ParkedScheduleSubpath,
     [SHELL_ROUTES.edit]: ParkedEditorSubpath,
     [SHELL_ROUTES.crm]: ParkedCrmSubpath,
   };
 
+  /** 这些 handler 只读 `new URL(request.url).pathname`,主机名写哪个都一样。 */
+  function ask(prefix: string, pathname: string): Response {
+    const handler = catchAllByPrefix[prefix];
+    if (!handler) throw new Error(`${prefix} 底下没有兜底 handler`);
+    return handler(new Request(`https://app.invalid${pathname}`));
+  }
+
   it("一扇门都不漏:表里每一个停放前缀,这里都有它那条兜底", () => {
     expect(parkedPrefixRows.map((row) => row.from).sort()).toEqual(Object.keys(catchAllByPrefix).sort());
   });
 
   it.each(parkedPrefixRows.map((row) => [row.from, row.to] as const))(
-    "%s/<没建过的段> 被兜底接住,送到 %s",
-    async (from, to) => {
-      const route = catchAllByPrefix[from];
-      expect(route, `${from} 底下没有 [...parked]/page.tsx`).toBeTypeOf("function");
+    "%s/<没建过的段> 答一条真的 307 到 %s(一段与两段都算)",
+    (from, to) => {
+      // 两个深度都要走:`/campaign/<一段>` 会被 `app/campaign/[id]/page.tsx` 认成一个 id,
+      // 只测一段会把「这扇门已经好了」当成结论。
+      for (const tail of ["a-page-that-was-never-built", "a-page-that-was-never-built/and-another"]) {
+        const res = ask(from, `${from}/${tail}`);
 
-      // 逐字比 message,不用 `rejects.toThrow(string)` —— 那是子串匹配,而去处是 `/` 时
-      // 「NEXT_REDIRECT:/」是任何一条去处的前缀,写成 toThrow 这条围栏跳去哪里都绿。
-      const thrown = await Promise.resolve()
-        .then(() => route())
-        .then(
-          () => null,
-          (error: unknown) => error,
-        );
-      expect(thrown, `${from} 的兜底渲染出了点什么,而不是把人送走`).toBeInstanceOf(Error);
-      expect((thrown as Error).message).toBe(`NEXT_REDIRECT:${to}`);
+        expect(res.status, `${from}/${tail} 没有答 307`).toBe(307);
+        expect(res.headers.get("location"), `${from}/${tail} 落到了权威表没说的地方`).toBe(to);
+        expect(res.body, `${from}/${tail} 带着正文回去 —— 它又在渲染点什么了`).toBeNull();
+      }
     },
   );
 
-  it("兜底是一条 catch-all 路由文件,不是 layout 统吃(静态段才优先得了)", () => {
+  /**
+   * 最长匹配者独赢 —— 这条是「一扇门一个去处」最容易被做错的那一处。
+   *
+   * `/schedule/analytics` 在表里有**自己**的一行(去处 `/analysis`),它长在 `/schedule` 底下。
+   * 兜底若按「这扇门那一行」统一答,`/schedule/analytics/<没建过的段>` 会被送去总览 ——
+   * 商家要找的是表现分析。规则与导轨高亮同一条(`rail-tree.ts` 的 `activeNavHref`)。
+   */
+  it("最长匹配者独赢:/schedule/analytics/<没建过的段> 落到表现分析,不是总览", () => {
+    const res = ask(SHELL_ROUTES.schedule, `${SHELL_ROUTES.analytics}/a-page-that-was-never-built`);
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe(SHELL_ROUTES.homeAnalysis);
+    // 反面:这条断言只有在两个去处真的不同的时候才有意义。
+    expect(SHELL_ROUTES.homeAnalysis).not.toBe(SHELL_ROUTES.home);
+  });
+
+  it("兜底走的是 R3-F10 那一份机制:route.ts,而且不自己拼答案", () => {
     for (const row of parkedPrefixRows) {
-      const file = path.resolve(__dirname, "../../app", row.from.replace(/^\//, ""), "[...parked]/page.tsx");
-      expect(existsSync(file), `${row.from} 底下缺 ${path.basename(path.dirname(file))}/page.tsx`).toBe(true);
+      const dir = path.resolve(APP_DIR, row.from.replace(/^\//, ""), "[...parked]");
+
+      // 「文件在不在」由这个文件顶上那四行 `await import(...)` 证明:少一个,整份测试文件
+      // 加载不起来 —— 比一条红更响。这里钉的是**形状**。
+      expect(
+        existsSync(path.join(dir, "page.tsx")),
+        `${row.from} 的兜底又变回 page.tsx —— 头上一有 loading.tsx 就退回 200 + 骨架(R3-F10)`,
+      ).toBe(false);
+
+      const src = readFileSync(path.join(dir, "route.ts"), "utf8");
+      expect(src, `${row.from} 的兜底没走那一份共用机制`).toContain("parkedSubpathRedirect");
+      expect(
+        src,
+        `${row.from} 的兜底自己拼了一个答案 —— 去处与状态码只有 lib/parked-route-redirect.ts 一处作者`,
+      ).not.toContain("new Response(");
     }
   });
 
-  /**
-   * 反面,而且是这条收口最容易被做坏的那一面:兜底**不是**「这个前缀底下什么都往 Home 送」。
-   * 同一棵树下的真路由靠「静态段优先于 catch-all」活着 —— 换成 layout 统吃或 proxy 里加前缀,
-   * 免登录的公开分享页会连带被吃掉(`app/schedule/share-preview/page.tsx` 的文件头逐字写着
-   * 「DO NOT add an app/schedule/layout.tsx that gates its children」)。
-   */
   it("同一棵树下的真路由一条都没被吃掉", () => {
     for (const kept of [SHELL_ROUTES.publicSharePreview, SHELL_ROUTES.analytics, "/campaign/calendar"]) {
       const dir = path.resolve(__dirname, "../../app", kept.replace(/^\//, ""));

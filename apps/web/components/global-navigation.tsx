@@ -171,12 +171,26 @@ export function MerchantShellContent({
   children,
   pathname,
   signOutAction,
+  carriesShell,
 }: {
   children?: React.ReactNode;
   pathname: string;
   signOutAction: () => Promise<void>;
+  /**
+   * 「这一面自己说了算:画壳」—— R3-F11,唯一的调用方是 `app/not-found.tsx`。
+   *
+   * `isMerchantSurface` 是一份**按地址**的名单(从导航权威源推出来)。一条没建过的地址按
+   * 定义不在任何名单里,所以它答 false —— 于是商家在自己的产品里撞见一堵没有导轨、没有
+   * 账号菜单、没有一条回去的路的墙。
+   *
+   * 修法不是把那份名单放宽:同一份名单还挡着 `/login`、`/admin` 与免登录的公开分享页,
+   * 放宽它就会给那几面也画上壳(`share-preview-page.test.ts` 为这件事专门埋了绊线)。而且
+   * 「未知地址」在那份名单里根本表达不出来 —— 它不是一条路径,是「除此之外的一切」。
+   * 所以这里让**那一页自己**把壳带上,名单一个字不动。
+   */
+  carriesShell?: boolean;
 }) {
-  const merchantSurface = isMerchantSurface(pathname);
+  const merchantSurface = carriesShell === true || isMerchantSurface(pathname);
   const [account, setAccount] = useState<RailAccount | null>(null);
   // P2-3 —— rides the same getMyAccount() round trip as `account`; see MerchantShellFrame's
   // `buildSha` prop doc for why this isn't its own fetch.
@@ -247,9 +261,13 @@ export function MerchantShellContent({
 export function MerchantAppShell({
   children,
   signOutAction,
+  carriesShell,
 }: {
   children: React.ReactNode;
   signOutAction: () => Promise<void>;
+  /** R3-F11 —— 见 `MerchantShellContent` 的同名 prop。根 layout 不传它;`app/not-found.tsx`
+   *  传 true,因为一条没建过的地址不在任何按地址推出来的名单里。 */
+  carriesShell?: boolean;
 }) {
   const pathname = usePathname();
   // Query-qualified nav items need the query on the location string to match against
@@ -261,7 +279,11 @@ export function MerchantAppShell({
   const pathWithQuery = query ? `${pathname}?${query}` : pathname;
 
   return (
-    <MerchantShellContent pathname={pathWithQuery} signOutAction={signOutAction}>
+    <MerchantShellContent
+      pathname={pathWithQuery}
+      signOutAction={signOutAction}
+      carriesShell={carriesShell}
+    >
       {children}
     </MerchantShellContent>
   );
