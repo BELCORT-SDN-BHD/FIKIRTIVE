@@ -38,9 +38,12 @@ vi.mock("next/navigation", () => ({ redirect: mockRedirect }));
 const { default: OttoRedirect } = await import("../../app/otto/page");
 const { default: ParkedCampaignLayout } = await import("../../app/campaign/layout");
 const { default: CampaignCalendarRoute } = await import("../../app/campaign/calendar/page");
-const { default: ParkedSchedulePage } = await import("../../app/schedule/page");
-const { default: LegacyScheduleAnalyticsPage } = await import("../../app/schedule/analytics/page");
-const { default: ParkedEditorPage } = await import("../../app/library/editor/page");
+// R3-F10:这三条改成 Route Handler(`route.ts`)—— 它们头上都压着一层 `loading.tsx`,
+// `page.tsx` 里的 `redirect()` 在那层 Suspense 边界下面只答得出 HTTP 200 + 一屏骨架。
+// 理由、本机实测与变异记录全文在 `lib/parked-route-redirect.ts`。
+const { GET: ParkedScheduleRoute } = await import("../../app/schedule/route");
+const { GET: LegacyScheduleAnalyticsRoute } = await import("../../app/schedule/analytics/route");
+const { GET: ParkedEditorRoute } = await import("../../app/library/editor/route");
 
 /** 去处里的路径部分 —— `?otto=1` 与 `#templates` 都不是新路由,不参与地址对账。 */
 function pathOf(target: string): string {
@@ -224,22 +227,25 @@ describe("Phase 1 parked routes 的真实 server redirects", () => {
     );
   });
 
-  it("Schedule merchant surface 回 Home", async () => {
-    await expect(Promise.resolve().then(() => ParkedSchedulePage())).rejects.toThrow(
-      `NEXT_REDIRECT:${SHELL_ROUTES.home}`,
-    );
+  it("R3-F10: Schedule merchant surface 回 Home —— 一条真的 307,正文是空的", () => {
+    const res = ParkedScheduleRoute();
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe(SHELL_ROUTES.home);
+    expect(res.body, "停放地址不该带正文回去 —— 带了就说明它又在渲染点什么").toBeNull();
   });
 
-  it("legacy Schedule analytics 进入 Home analysis", async () => {
-    await expect(Promise.resolve().then(() => LegacyScheduleAnalyticsPage())).rejects.toThrow(
-      `NEXT_REDIRECT:${SHELL_ROUTES.homeAnalysis}`,
-    );
+  it("R3-F10: legacy Schedule analytics 进入 Home analysis —— 一条真的 307", () => {
+    const res = LegacyScheduleAnalyticsRoute();
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe(SHELL_ROUTES.homeAnalysis);
+    expect(res.body).toBeNull();
   });
 
-  it("manual editor 回 Create", async () => {
-    await expect(Promise.resolve().then(() => ParkedEditorPage())).rejects.toThrow(
-      `NEXT_REDIRECT:${SHELL_ROUTES.create}`,
-    );
+  it("R3-F10: manual editor 回 Create —— 一条真的 307", () => {
+    const res = ParkedEditorRoute();
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe(SHELL_ROUTES.create);
+    expect(res.body).toBeNull();
   });
 
   /**
@@ -279,6 +285,94 @@ describe("Phase 1 parked routes 的真实 server redirects", () => {
     const source = readFileSync(path.resolve(__dirname, "../../app/schedule/share-preview/page.tsx"), "utf8");
     expect(source).not.toContain("redirect(SHELL_ROUTES.home)");
     expect(source).not.toContain("redirect(SHELL_ROUTES.homeAnalysis)");
+  });
+});
+
+/**
+ * R3-F10 —— 「每一条旧地址都 **307**」是一句关于 **HTTP 状态码** 的话,不是关于
+ * 「源码里有没有写 redirect」的话(规格 `docs/specs/wave2-shell.md` §2.5)。
+ *
+ * 上面那几条只证得了「这个函数把人送走」。真正被商家、爬虫和 `curl` 看见的那个数字,由
+ * **文件怎么摆** 决定:一个 `page.tsx` 里的 `redirect()`,只要头上压着一层 `loading.tsx`
+ * (那就是一个 Suspense 边界),Next 会先把外壳连同骨架当成 **HTTP 200** 冲出去,跳转降级成
+ * 客户端的一次导航。本机实测(修前)`/schedule`、`/schedule/analytics`、`/library/editor`
+ * 三条都是 200,而同一张表里的 `/campaign`、`/campaign/calendar`、`/crm` 是 307。
+ *
+ * 所以这一组钉的是**摆放**,逐条从权威表里枚举,判据只有三种合格形态:
+ *   ① 这条地址由 `route.ts` 答 —— Route Handler 不进渲染,`loading.tsx` 摆哪都影响不到它;
+ *   ② 由 `page.tsx` 答,而它头上(含自己这一层)**一个 `loading.tsx` 都没有**;
+ *   ③ 由 `page.tsx` 答,头上有 `loading.tsx`,但**最浅的那一层**自己有一个会 `redirect()` 的
+ *      `layout.tsx` —— layout 站在它自己那层 `loading.tsx` 圈起来的边界**外面**,所以抢得到
+ *      冲外壳之前。`/campaign` 一族今天正是靠这一条,而它当初是**巧合**,不是设计。
+ *
+ * 真实的 HTTP 状态码由 e2e journey 28 在跑起来的服务器上逐条量;这一组是它的快门,让同一个
+ * 回归在几毫秒内、不用起服务器就红。
+ *
+ * 变异自查(本轮亲跑,做完还原):往 `app/crm/` 放一个 `loading.tsx` —— `/crm` 今天是这张表里
+ * 唯一「page.tsx + 头上零边界」的形态,加一层边界就是把 R3-F10 那个缺陷原样重现一遍。结果:
+ * 这一组当场红在 `/crm` 那一行,报的正是那句「头上压着 crm/loading.tsx,而那一层没有
+ * layout.tsx」。
+ */
+describe("R3-F10: 每一条停放旧地址都答得出真的 307(规格 §2.5)", () => {
+  const APP_DIR = path.resolve(__dirname, "../../app");
+
+  /** URL 路径 → app router 目录(这张表里一条 route group 都没有,所以直拼即可)。 */
+  const segmentDirs = (urlPath: string): string[] => {
+    const parts = urlPath.split("/").filter(Boolean);
+    return parts.map((_, i) => path.join(APP_DIR, ...parts.slice(0, i + 1)));
+  };
+
+  const hasFile = (dir: string, file: string) => existsSync(path.join(dir, file));
+
+  it.each(MERCHANT_NAV_REDIRECTS.map((row) => [row.from, row.to] as const))(
+    "%s → %s:答它的那个文件真的答得出 307",
+    (from) => {
+      const dirs = segmentDirs(from);
+      const own = dirs[dirs.length - 1]!;
+
+      // 形态①:Route Handler。
+      if (hasFile(own, "route.ts")) {
+        expect(
+          hasFile(own, "page.tsx"),
+          `${from} 同时摆着 route.ts 与 page.tsx —— Next 只认一个,这是一次没收干净的搬家`,
+        ).toBe(false);
+        return;
+      }
+
+      expect(hasFile(own, "page.tsx"), `${from} 没有任何 route 文件接住它 —— 这条旧地址今天 404`).toBe(
+        true,
+      );
+
+      // 头上(含自己这一层)最浅的那一层 loading.tsx。
+      const boundary = dirs.find((dir) => hasFile(dir, "loading.tsx"));
+
+      // 形态②:一层 loading.tsx 都没有 —— `redirect()` 抢在冲外壳之前,307 兑现。
+      if (!boundary) return;
+
+      // 形态③:最浅的那层边界外面有一个会把人送走的 layout.tsx。
+      const layout = path.join(boundary, "layout.tsx");
+      expect(
+        existsSync(layout),
+        `${from} 头上压着 ${path.relative(APP_DIR, boundary)}/loading.tsx,而那一层没有 layout.tsx —— ` +
+          `page.tsx 里的 redirect() 会先冲出 HTTP 200 + 一屏骨架。把它改成 route.ts,或者把那层骨架挪开。`,
+      ).toBe(true);
+      expect(
+        readFileSync(layout, "utf8"),
+        `${path.relative(APP_DIR, layout)} 不 redirect —— 那这条旧地址仍然先答 200 再跳`,
+      ).toContain("redirect(");
+    },
+  );
+
+  it("三条修好的旧地址确实是 Route Handler,而且去处从权威表里读、不在路由文件里手打第二遍", () => {
+    for (const from of [SHELL_ROUTES.schedule, SHELL_ROUTES.analytics, SHELL_ROUTES.edit]) {
+      const dirs = segmentDirs(from);
+      const file = path.join(dirs[dirs.length - 1]!, "route.ts");
+      expect(existsSync(file), `${from} 不是 route.ts`).toBe(true);
+      const src = readFileSync(file, "utf8");
+      expect(src, `${from} 没走那一份共用机制`).toContain("parkedRouteRedirect");
+      // 去处必须是常量,不是页面里手打的第二份地址(FRONT-A14 那条缝的同一条纪律)。
+      expect(src, `${from} 在路由文件里硬写了地址`).not.toContain(`"${from}"`);
+    }
   });
 });
 

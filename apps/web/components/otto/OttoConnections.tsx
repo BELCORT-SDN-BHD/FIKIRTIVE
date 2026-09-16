@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   AtSign,
@@ -173,6 +173,14 @@ export default function OttoConnections({ embedded = false }: { embedded?: boole
   const [connectErrorCode, setConnectErrorCode] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState("instagram");
   const [addConnectionOpen, setAddConnectionOpen] = useState(false);
+  // FRONT-A14／R3-F09：Add connection 弹窗正文整篇都是真动作（每一行一颗 Connect），
+  // 而 Base UI `Dialog.Popup` 的 initialFocus 默认值是「popup 里第一颗 tabbable」
+  // （`@base-ui/react@1.7.0` dialog/popup/DialogPopup.d.ts:15）。Library 素材详情那种
+  // 打开时正文没有可聚焦控件的面，默认值刚好落在 DialogContent 内建的 Close 上；这里
+  // 却把焦点直接压在第一颗 Connect 上——商家用键盘打开后随手一个 Enter 就被送进 Meta
+  // 授权。开场焦点因此显式落到弹窗自身（Base UI 给它 tabindex="-1"，读屏念的是标题与
+  // 「Choose a service…」那句说明），第一次 Tab 才走到 Connect；Escape 回到入口不受影响。
+  const addConnectionDialogRef = useRef<HTMLDivElement>(null);
 
   async function load() {
     setMeta({ phase: "loading" });
@@ -605,7 +613,7 @@ export default function OttoConnections({ embedded = false }: { embedded?: boole
         </div>
 
         <Dialog open={addConnectionOpen} onOpenChange={setAddConnectionOpen}>
-          <DialogContent>
+          <DialogContent ref={addConnectionDialogRef} initialFocus={addConnectionDialogRef}>
             <DialogHeader>
               <DialogTitle>Add connection</DialogTitle>
               <DialogDescription>Choose a service to make its approved data available across this workspace.</DialogDescription>
