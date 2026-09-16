@@ -199,12 +199,20 @@ describe("runPackApprovalLoop (#498 round-5)", () => {
     return { fire, calls };
   }
 
-  const chainedRes = (over: Partial<{ pendingCardIds: string[]; fallbackReply: string | null; narrationMessageId: string | null }>) => ({
+  const chainedRes = (
+    over: Partial<{
+      pendingCardIds: string[];
+      fallbackReply: string | null;
+      narrationMessageId: string | null;
+      appendedMessageId: string | null;
+    }>,
+  ) => ({
     ok: true,
     status: "needs_approval",
     pendingCardIds: [],
     fallbackReply: null,
     narrationMessageId: null,
+    appendedMessageId: null,
     ...over,
   });
 
@@ -420,6 +428,35 @@ describe("runPackApprovalLoop (#498 round-5)", () => {
     ]);
     expect(outcome.pendingCardIds).toEqual([]);
     expect(outcome.pendingFromServer).toBe(true);
+  });
+
+  /**
+   * FC-1（复核修正三 P2）—— 按下 Make all、一张都按不下去的那一轮。
+   *
+   * 现场那种局面在 pack 这一面最难看：恢复轮停在几个 `generate` 上、而它们拿的是**分镜卡**
+   * 的编号，模型一个字都没说。于是待确认集回来是空的、`fallbackReply` 是那句诚实话 ——
+   * 而 pack 卡从前只在「还有待确认卡」时才显示收据，服务端又一个可注入的 id 都没点名。
+   * 结果：什么都没生成，也没有一句话解释，直到刷新。
+   *
+   * 这一条钉的是 loop 这一层的出口：那句诚实话的 id 必须随 `narrationMessageIds` 出来，
+   * 宿主才注得进对话（`pollAndInjectResults`）；并且 `pendingFromServer` 为真，父层才会
+   * 真的去调它。
+   */
+  it("一张都按不下去时,搁浅那句诚实话的 id 照样随 narrationMessageIds 出来", async () => {
+    const { fire } = scriptedFire({
+      card_a: [chainedRes({ pendingCardIds: [], fallbackReply: "Nothing was generated — …", appendedMessageId: "msg_honest" })],
+    });
+    const outcome = await runPackApprovalLoop({
+      cards: [{ cardId: "card_a", pendingApproval: true }],
+      fire,
+    });
+
+    // 集合是空的 —— 没有任何一张卡在等商家。
+    expect(outcome.pendingCardIds).toEqual([]);
+    // 但服务端确实说过话:父层因此会调 onApproved(见 PackCard 的判据),并把这几行注进对话。
+    expect(outcome.pendingFromServer).toBe(true);
+    expect(outcome.narrationMessageIds).toEqual(["msg_honest"]);
+    expect(outcome.fallbackReply).toBe("Nothing was generated — …");
   });
 
   it("无 resume 响应发声时 pendingFromServer=false——集只是渲染期知识,父层不得用它整体替换线程集", async () => {

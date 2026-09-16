@@ -3096,6 +3096,14 @@ export async function ottoApprove(raw: unknown): Promise<
         // approve path streams nothing, so injecting it can never double-render).
         const visibleText = assistantText || fallbackReply;
         let narrationMessageId: string | null = null;
+        /** FC-1（复核修正三）—— 那句诚实话**当正文用掉**的那一种局面里，它自己的 durable id。
+         *
+         *  模型一字未说、而且一张卡都按不下去时，这句话就是这一轮的正文（上面那个三元的
+         *  `strandedLine` 分支），于是下面那个「另起一行」的守卫会跳过它 —— 从前两个 id 因此
+         *  同时是 null，整份答复一个可注入的 id 都不带。pack 那一面尤其致命：那里连
+         *  `fallbackReply` 都只在还有待确认卡时才显示，所以商家按下 Make all 之后什么都不发生、
+         *  也没有一句话解释，直到刷新。一行、一个 id、注一次。 */
+        let strandedBodyId: string | null = null;
         if (visibleText) {
           const seq = await prisma.chatMessage.findFirst({
             where: { threadId, ownerId },
@@ -3117,6 +3125,11 @@ export async function ottoApprove(raw: unknown): Promise<
           // fallbackReply keeps its round-4 display channel (the card's own receipt
           // line); only model narration rides the id for live chat injection.
           if (assistantText) narrationMessageId = visibleTextId;
+          // …with ONE exception (FC-1 复核修正三): when the body IS the honest line, the card
+          // receipt is not enough — that sentence is the whole answer to「我按了，然后呢」，and
+          // on the pack surface the receipt does not even render with an empty pending set.
+          // It rides the id like narration does, so live matches what a reload would show.
+          else if (fallbackReply && fallbackReply === strandedLine) strandedBodyId = visibleTextId;
         }
 
         // Durable approval cards for chained non-generate gated asks (B4 debt-70 5.1·附①).
@@ -3145,7 +3158,7 @@ export async function ottoApprove(raw: unknown): Promise<
          *  从前这个 id 被丢掉,于是「模型说了话、而批准项全都落地不了」那一种局面里,商家要
          *  刷新一次才读得到这句收回承诺的话 —— 屏幕上停着的正是那句承诺。缺席 ⇒ 这一轮没写
          *  这样一行(它已经当正文交回去了,或者根本没有搁浅项)。 */
-        let appendedMessageId: string | null = null;
+        let appendedMessageId: string | null = strandedBodyId;
         if (strandedLine && fallbackReply !== strandedLine) {
           const seqRow = await prisma.chatMessage.findFirst({
             where: { threadId, ownerId },

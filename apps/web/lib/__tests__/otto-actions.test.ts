@@ -2601,7 +2601,16 @@ describe("ottoApprove — chained interruption with zero narration synthesizes t
     // ④ 而且只落一行:同一句话写两遍,读起来就是系统自己在复读。
     expect(texts.filter((t) => t === honest)).toHaveLength(1);
     expect(texts.at(-1)).toBe(honest);
-    // ⑤ 钱路零动作。
+    // ⑤ FC-1（复核修正三）—— 这一行的 id 也要交回去。它当了正文，所以从前两个 id 同时是
+    //    null，整份答复一个可注入的行都不带；pack 那一面连收据都不显示（待确认集为空），
+    //    于是商家按下 Make all 之后什么都没发生、也没有一句解释，直到刷新。一行、一个 id。
+    const honestRow = mockChatMessageCreate.mock.calls
+      .map((c) => (c[0] as { data: { id: string; kind?: string; text?: string } }).data)
+      .find((d) => d.kind === "TEXT" && d.text === honest);
+    expect((res as { appendedMessageId: string | null }).appendedMessageId).toBe(honestRow!.id);
+    // 模型一个字都没说 ⇒ 没有叙述 id（那一格说的是「模型自己那段话」，不是这一句）。
+    expect((res as { narrationMessageId: string | null }).narrationMessageId).toBeNull();
+    // ⑥ 钱路零动作。
     expect(mockStartGen).not.toHaveBeenCalled();
   });
 

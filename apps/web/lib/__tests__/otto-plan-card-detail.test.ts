@@ -1115,6 +1115,35 @@ describe("#580 P1-4 挂起面板的判定确实接在 OttoChatStream 上", () =>
   });
 
   it("通用批准卡把它自己的 card id 交回给父层的待批集合", () => {
-    expect(src).toMatch(/onResolved=\{\(\{\s*cardId:[^}]*pendingCardIds\s*\}\)\s*=>\s*\{[\s\S]*?nextPendingApprovalCardIds/);
+    expect(src).toMatch(/onResolved=\{\(\{\s*cardId:[^}]*pendingCardIds[^}]*\}\)\s*=>\s*\{[\s\S]*?nextPendingApprovalCardIds/);
+  });
+
+  /**
+   * FC-1（复核修正三 P3）—— 通用批准卡这一面从前只补卡。
+   *
+   * 宿主那一句是 `refetchAndAppendCards()`，它只认 CARD_KINDS：服务端点名的那几行 TEXT
+   * （模型的话／搁浅批准项那句诚实话）一行都进不来，商家要刷新一次才读得到「为什么什么都
+   * 没生成」。四个调用点现在同一条路：`injectableMessageIds` → `pollAndInjectResults`。
+   */
+  it("通用批准卡确认之后,服务端点名的那几行也当场注进对话(不只补卡)", () => {
+    // 卡自己把 id 算出来交上去（与另外三个调用点同一个判据函数）。
+    const cardSrc = fs.readFileSync(path.join(process.cwd(), "components/otto/OttoApprovalCard.tsx"), "utf8");
+    expect(cardSrc).toContain("injectableMessageIds");
+    expect(cardSrc).toMatch(/injectMessageIds:\s*injectableMessageIds\(chained\)/);
+    // 宿主把它喂给那条会注 TEXT 的路，而不是只补卡的那条。
+    expect(src).toMatch(/onResolved=\{\(\{[^}]*injectMessageIds\s*\}\)\s*=>\s*\{[\s\S]*?pollAndInjectResults\(injectMessageIds\)/);
+  });
+
+  /**
+   * FC-1（复核修正三 P2）—— pack 那一面的收据判据。
+   *
+   * 从前是「还有待确认卡才显示」，而搁浅那句诚实话恰恰出现在待确认集为空的时候 —— 商家
+   * 按下 Make all、什么都没发生、也没有一句解释。现在判据是「这句话有没有别的通道在说」：
+   * 服务端点名了可注入的行 ⇒ 它进对话本身，卡上不再印第二遍。
+   */
+  it("pack 卡的收据不再挂在待确认集上,而是看这句话有没有被点名注入", () => {
+    const packSrc = fs.readFileSync(path.join(process.cwd(), "components/otto/PackCard.tsx"), "utf8");
+    expect(packSrc).toMatch(/setChainedReceipt\(\s*outcome\.narrationMessageIds\.length === 0 \? outcome\.fallbackReply : null\s*\)/);
+    expect(packSrc).not.toMatch(/setChainedReceipt\(outcome\.pendingCardIds\.length > 0/);
   });
 });

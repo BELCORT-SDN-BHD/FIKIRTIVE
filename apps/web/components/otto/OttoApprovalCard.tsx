@@ -22,7 +22,7 @@ import {
   approvalCardResolutionText,
   type ApprovalCardResolution,
 } from "@/lib/approval-card-view";
-import { chainedApprovalOf } from "./approval-chain";
+import { chainedApprovalOf, injectableMessageIds } from "./approval-chain";
 // #996 (W2-9): 面板最窄 320px。版式跟着卡自己那只盒子走(容器查询),不跟视口走。
 import { CARD_ACTIONS_CLASS, CARD_PAD_CLASS, CARD_ROOT_CLASS } from "./card-narrow";
 
@@ -36,6 +36,11 @@ export interface ApprovalResolvedOutcome {
   /** The server's COMPLETE still-pending set when the resume parked again; null when
    *  the response carried no set information. */
   pendingCardIds: string[] | null;
+  /** FC-1（复核修正三）—— 这一次答复点名了哪几行 durable TEXT 要注进对话：模型自己那段话，
+   *  以及搁浅批准项那句诚实话。判据与另外三个调用点共用 `injectableMessageIds`。宿主从前只
+   *  补卡（`refetchAndAppendCards` 只认 CARD_KINDS），于是这张卡上确认之后，解释「为什么什么
+   *  都没生成」的那句话要等刷新才出现。空数组 ⇒ 这一轮没有该注的行。 */
+  injectMessageIds: string[];
 }
 
 export interface OttoApprovalCardProps {
@@ -81,10 +86,12 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
       setLocal(resolution);
       // Hand up the exact card and the server's own pending set — the host's waiting
       // panel is driven by that set, so it can only be dismissed by an answer.
+      const chained = chainedApprovalOf(res);
       await onResolved?.({
         cardId,
         resolution,
-        pendingCardIds: chainedApprovalOf(res)?.pendingCardIds ?? null,
+        pendingCardIds: chained?.pendingCardIds ?? null,
+        injectMessageIds: injectableMessageIds(chained),
       });
     } catch {
       setErrorMsg("Couldn't submit — please try again.");
@@ -111,7 +118,8 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
       setLocal(resolution);
       // A decline never resumes the run, so it carries no server pending set — but it
       // still settles THIS card, and the host must hear which one.
-      await onResolved?.({ cardId, resolution, pendingCardIds: null });
+      // 拒绝从不恢复那一轮 ⇒ 没有服务端待批集，也没有新落的行要注。
+      await onResolved?.({ cardId, resolution, pendingCardIds: null, injectMessageIds: [] });
     } catch {
       setErrorMsg("Couldn't submit — please try again.");
       setLocal("idle");

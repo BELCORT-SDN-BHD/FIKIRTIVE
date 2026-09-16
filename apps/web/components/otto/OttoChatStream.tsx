@@ -1818,14 +1818,18 @@ export function OttoChatStream({
                     cardId={m.metadata!.durableId}
                     threadId={thread.id}
                     payload={m.metadata?.payload}
-                    onResolved={({ cardId: resolvedCardId, pendingCardIds }) => {
+                    onResolved={({ cardId: resolvedCardId, pendingCardIds, injectMessageIds }) => {
                       // A universal approval settles a parked call too, so it must move
                       // this thread's pending set — otherwise the waiting panel keeps
                       // asking for a go-ahead that was already given (P1-4).
                       setPendingApprovalCardIds((cur) =>
                         nextPendingApprovalCardIds(cur, [resolvedCardId], pendingCardIds ?? undefined),
                       );
-                      void refetchAndAppendCards();
+                      // FC-1（复核修正三）—— 与另外三个调用点同一条路：`refetchAndAppendCards`
+                      // 只补卡（CARD_KINDS），所以这张卡上确认之后，服务端点名的那几行
+                      // （模型的话／搁浅那句诚实话）要等刷新才出现。`pollAndInjectResults`
+                      // 是它的超集：补卡之外还注这几行，并在有终局结果时刷一次余额。
+                      void pollAndInjectResults(injectMessageIds);
                     }}
                   />
                 </WidgetRow>
