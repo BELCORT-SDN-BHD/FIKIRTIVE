@@ -95,6 +95,30 @@ describe("FRONT-A15 Shift 加选不看 React 的脸色", () => {
     ).toEqual(["first", "second"]);
   });
 
+  /**
+   * 上面那条只钉住了「加一张」。一个只会往 store 里写 `true` 的坏同步——把那一句
+   * `event.shiftKey || …` 换成常量 `true`——照样能让它绿：开关常开，每一下点击都是加选。
+   * 所以另一半必须同样钉死：没按修饰键的那一下，就得是「换一张」。
+   * 两条合起来，这个同步才只能照着**这一下点击自己带的修饰键**写。
+   */
+  it("FRONT-A15: 不按修饰键点第二张就是「换一张」——开关不许常开", async () => {
+    await act(async () => {
+      root = createRoot(host);
+      root.render(createElement(Board));
+    });
+    expect(selected(), "开场：第一张卡是选中的").toEqual(["first"]);
+
+    const second = host.querySelector('.react-flow__node[data-id="second"]')!;
+    // 光秃秃的一下：没有 Shift、没有 Meta、没有 Control。
+    second.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await act(async () => {});
+
+    expect(
+      selected(),
+      "空手点第二张是「换一张」：手里只该剩第二张，第一张要被这一下换掉",
+    ).toEqual(["second"]);
+  });
+
   it("FRONT-A15: 真画布确实挂着这条同步（harness 与产品不脱钩）", () => {
     const source = fs.readFileSync(
       path.join(__dirname, "..", "..", "components", "canvas", "FlowCanvas.tsx"),
