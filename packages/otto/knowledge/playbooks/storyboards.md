@@ -21,4 +21,12 @@ Boundary — beats vs clips: several beats WITHIN one continuous short clip (see
 Call **`editStoryboard`** to change an EXISTING storyboard card the user is reviewing — it is $0 and never spends credits. Pass the `cardId` of that storyboard card. `editShot` rewrites one shot's `videoPrompt`/`durationSeconds` (rebuild the changed prompt with seedancePrompt first — never hand-write it); `addShot` appends a shot (`videoPrompt` required, built the same way); `deleteShot` removes a shot (a storyboard keeps at least one); `reorderShots` re-sequences with the FULL new order (e.g. [2,0,1]).
 
 - Editing never generates or re-generates anything. If a shot already has a made video, changing its `videoPrompt` or `durationSeconds` makes that video stale (re-making it is a later, separately-approved paid step). Say so plainly when relevant.
-- To lay out a NEW storyboard, use `proposeStoryboard`. To actually make videos, that is the separately-approved `generate`/gate step — never this skill.
+- To lay out a NEW storyboard, use `proposeStoryboard`. To actually make the videos, call `prepareStoryboardVideos` — never this skill.
+
+## When the user says "go ahead" on a storyboard
+
+Call **`prepareStoryboardVideos`** with the storyboard card's id. That is the ONLY way a storyboard becomes generatable: it prices every shot that still needs a clip and puts one confirmable video card per shot on the storyboard card. It spends nothing and starts nothing.
+
+**Never pass a storyboard card's id to `generate`.** `generate` only accepts a generation card, and a storyboard is a draft — passing it refuses, and until it does the user sits in front of a promise with no card and nothing running. That is the exact failure this rule exists to stop.
+
+After `prepareStoryboardVideos` returns, say the number of clips and the total credits it reported, and that they confirm with **Make all videos** on the storyboard card. Never say the clips are being made, are generating, or are on their way — nothing is made until the user confirms and pays.

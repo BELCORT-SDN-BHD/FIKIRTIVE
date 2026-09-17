@@ -130,6 +130,7 @@ import { makeOttoCanvasPort } from "./otto-canvas-port";
 import { makeOttoMediaPort, makeOttoRenderPort, makeOttoMediaImportPort } from "./otto-media-port";
 import { makeOttoProjectsPort } from "./otto-projects-port";
 import { makeOttoRefgenPort } from "./otto-refgen-port";
+import { makeOttoStoryboardPort } from "./otto-storyboard-port";
 import { makeOttoEntitiesPort } from "./otto-entities-port";
 import { makeOttoLibraryPort } from "./otto-library-port";
 import { makeOttoBrandMemoryPort } from "./otto-brand-memory-port";
@@ -908,6 +909,11 @@ export async function buildOttoContext({
     // generateReferences skill is cost:"spend" ⇒ needsApproval literal true. deleteVariant is $0 with
     // an Otto-only fail-closed active-job gate (refuses while a paid job runs). None duplicate spend.
     refgen: makeOttoRefgenPort(ownerId),
+    // FC-1 —— 分镜端口($0):`prepareStoryboardVideos` 技能经它转调**商家自己那颗
+    // `Make all videos` 按的同一个动作**(storyboard-gate1-actions.prepareStoryboardVideos):
+    // 读分镜卡、给每一镜铸视频子 GEN_CARD、按服务端单源报价。不碰 startGen / reserveCredits /
+    // provider —— 子卡仍然要商家在卡上自己确认才会扣费。
+    storyboard: makeOttoStoryboardPort(),
   };
   return context;
 }
@@ -929,8 +935,11 @@ export async function buildOttoContext({
 // ---------------------------------------------------------------------------
 
 export type FinalizeOttoRunResult =
-  | { status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null }
-  | { status: "done"; reply: string }
+  /** FC-1 —— `appendedReply`:这一轮在模型自己那句话**之后**又落了一句诚实话(见
+   *  `strandedApprovalText`)。它已经进库了;这一格只是让直播那一侧也能立刻说出来,
+   *  不必等下一次刷新。缺席 = 没有这样一句(与这条改动之前逐字相同)。 */
+  | { status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null; appendedReply?: string }
+  | { status: "done"; reply: string; appendedReply?: string }
   | { status: "stale" };
 
 // ---------------------------------------------------------------------------
@@ -1094,6 +1103,78 @@ export function interruptedFallbackText(lang: FallbackLang): string {
   if (lang === "zh") return "这一步我没能完成——请再试一次。";
   if (lang === "ms") return "Saya tidak dapat menyelesaikan langkah ini — sila cuba lagi.";
   return "I couldn't finish that — please try again.";
+}
+
+/**
+ * FC-1(现场:Founder 自己的画布,2026-09-14)—— 一个**变不成确认卡**的批准项落地时说的那句话。
+ *
+ * 那一轮模型是narrate 了的:`Got it! Let me generate both shots straight away!`。于是
+ * `interruptedFallbackText` 那条(只在模型一个字都没说时补话)整条绕过去,商家读到的最后一句
+ * 是一个**承诺**,而系统里零 GEN_CARD、零 GenJob。这句话跟在那句承诺后面,把它收回。
+ *
+ * 不对钱做任何主张:这一轮的对话本身照旧计费(轮次预扣),所以这里只说**没有生成**——
+ * 那是 `ctx.startGen` 零调用的直接事实。`storyboard` 那一支指的是屏幕上真的有那颗键
+ * (`StoryboardCard` 的 `Make all videos`),不是一段解释;控件名在三种语言里都用原文,
+ * 因为商家在屏幕上读到的就是那几个英文字。
+ */
+export function strandedApprovalText({ storyboard, lang }: { storyboard: boolean; lang: FallbackLang }): string {
+  if (lang === "zh") {
+    return storyboard
+      ? "没有生成任何东西——请在上方分镜卡按 Make all videos 看每一镜的价钱，再确认。"
+      : "没有生成任何东西——再说一次，我会摆出一张你能确认的卡片。";
+  }
+  if (lang === "ms") {
+    return storyboard
+      ? "Tiada apa-apa dijana — tekan Make all videos pada kad papan cerita di atas untuk melihat harga setiap syot, kemudian sahkan."
+      : "Tiada apa-apa dijana — minta sekali lagi dan saya akan sediakan kad yang boleh anda sahkan.";
+  }
+  return storyboard
+    ? "Nothing was generated — press Make all videos on the storyboard card above to see each shot's price, then confirm."
+    : "Nothing was generated — ask again and I'll put up a card you can confirm.";
+}
+
+/**
+ * FC-1（复核修正 P1）—— 停下来的 `generate` 批准项里，哪些真的**变得成一张商家按得下去的卡**。
+ *
+ * 判据只有这一份，两个落地口共用：`finalizeOttoRun`（主路）与 `ottoApprove` 的链式恢复
+ * （商家确认过一张之后模型又停下来的那条路）。从前后者是无条件的一行 —— 凡是 `generate`
+ * 的 ref 就当成一张预先落库的 GEN_CARD 端出去 —— 于是同一个病（承诺 + 绿灯 + 零产出）在
+ * 确认过一次之后原样复活。现在按 owner + 本线程 + 活着查一次卡种：GEN_CARD ⇒ 待确认；
+ * 其余（被删 / 不是你的 / 走错线程 / 根本不是生成卡）⇒ 落地不了，不进待确认集，由调用方
+ * 落一句 `strandedApprovalText`。
+ *
+ * 不批准、不拒绝、不花钱：这里只读卡种。租户帧与别处查卡一致 —— `ownerId` 来自服务端
+ * principal，`threadId` 来自本轮，所以「不是你的卡」与「卡不存在」在这里读出来是同一件事，
+ * 一个字都不多说。
+ */
+async function partitionGenerateApprovals({ ownerId, threadId, approvals }: {
+  ownerId: string;
+  threadId: string;
+  approvals: ApprovalInterruption[];
+}): Promise<{ pendingCardIds: string[]; strandedRefs: string[]; strandedStoryboard: boolean }> {
+  const refs = [...new Set(approvals.filter((a) => a.toolName === "generate").map((a) => a.ref))];
+  if (refs.length === 0) return { pendingCardIds: [], strandedRefs: [], strandedStoryboard: false };
+  const rows = await prisma.chatMessage.findMany({
+    where: { id: { in: refs }, ownerId, threadId, deletedAt: null },
+    select: { id: true, kind: true },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r.kind]));
+  const pendingCardIds: string[] = [];
+  const strandedRefs: string[] = [];
+  let strandedStoryboard = false;
+  for (const ref of refs) {
+    if (byId.get(ref) === "GEN_CARD") pendingCardIds.push(ref);
+    else {
+      strandedRefs.push(ref);
+      if (byId.get(ref) === "STORYBOARD_CARD") strandedStoryboard = true;
+    }
+  }
+  if (strandedRefs.length > 0) {
+    console.warn(
+      `[otto] parked generate approval names no confirmable card (threadId=${threadId}, refs=${strandedRefs.join(",")}).`,
+    );
+  }
+  return { pendingCardIds, strandedRefs, strandedStoryboard };
 }
 
 // ---------------------------------------------------------------------------
@@ -1582,8 +1663,26 @@ export async function finalizeOttoRun({
     // thread's RunState, never a per-round increment — the single fact source both sides cite
     // is the ChainedApproval.pendingCardIds comment in apps/web/components/otto/approval-chain.ts.
     const approvals = finalization.approvals;
-    const pendingCardIds: string[] = approvals.filter((a) => a.toolName === "generate").map((a) => a.ref);
+    const generateApprovals = approvals.filter((a) => a.toolName === "generate");
     const nonGenerateApprovals = approvals.filter((a) => a.toolName !== "generate");
+
+    // FC-1(现场:Founder 自己的画布,2026-09-14)—— **一个批不下去的批准项不许被报成待确认**。
+    //
+    // 这一段从前是无条件的:凡是 `generate` 的批准项,它的 ref 就被当成一张预先落过库的
+    // GEN_CARD 端上去。那个假设在现场破了 —— 模型把 **STORYBOARD_CARD 的编号**交给了
+    // `generate`,于是 `pendingCardIds` 里躺着一个**永远渲染不出确认卡**的编号:组件只把真的
+    // GEN_CARD 数进待确认(OttoChatStream.tsx:1360/1377),画布当前轮因此报 Ready,而对话里
+    // 只留下模型那句「这就生成」。承诺、绿灯、零产出,三件事同时成立。
+    //
+    // 所以在这里问一次库(owner + 本线程 + 活着):这个编号今天到底是什么。是 GEN_CARD ⇒
+    // 逐字照旧;不是 ⇒ 它不是一个待确认项,不进 `pendingCardIds`,并且这一轮必须落一句诚实话
+    // (下面 `strandedApprovalText`)。批准守卫一格没动:这里不批准、不拒绝、不花钱,只是不再
+    // 把一件做不到的事报成「等你确认」。
+    const { pendingCardIds, strandedRefs, strandedStoryboard } = await partitionGenerateApprovals({
+      ownerId,
+      threadId,
+      approvals: generateApprovals,
+    });
 
     // CAS: only write paused ottoState if no concurrent turn moved it (existing thread only)
     if (!isNew) {
@@ -1612,13 +1711,21 @@ export async function finalizeOttoRun({
       // #498 round-5: an indecisive message this turn (mixed-language tie) follows
       // the thread's most recent decisive merchant message; en only without history.
       const lang = await resolveFallbackLang(ownerId, threadId, userText);
-      fallbackReply = approvals.length > 0
+      // FC-1（复核修正 P1）—— 数的是**按得下去的那几张**，不是原始批准项。从前这一行在
+      // 卡种探针之前就按 `approvals.length` 算完了：模型一字未说、而唯一的批准项指着一张
+      // 分镜卡时，商家先读到「请在上方卡片确认，我会马上开始」（指着一张永远不会出现的卡），
+      // 再读到下面那句诚实话——正是本 PR 要杀的那一类「承诺 + 零产出」，只是换了一张嘴。
+      // 一张都按不下去 ⇒ 这句指路整条不说，`strandedApprovalText` 就是那句话。
+      const approvableCount = pendingCardIds.length + nonGenerateApprovals.length;
+      fallbackReply = approvableCount > 0
         ? approvalPointerText({
-            cardCount: approvals.length,
-            allGenerate: approvals.every((a) => a.toolName === "generate"),
+            cardCount: approvableCount,
+            allGenerate: nonGenerateApprovals.length === 0,
             lang,
           })
-        : interruptedFallbackText(lang);
+        : strandedRefs.length > 0
+          ? null
+          : interruptedFallbackText(lang);
     }
     const visibleText = assistantText || fallbackReply;
     if (visibleText) {
@@ -1647,7 +1754,24 @@ export async function finalizeOttoRun({
       pendingCardIds.push(...persisted.cardIds);
     }
 
-    return { status: "needs_approval", pendingCardIds, fallbackReply };
+    // FC-1 —— 批不下去的那几个批准项:把模型那句承诺收回来,用一句**做得到的下一步**。
+    // 落在最后,所以它是这一轮商家读到的最后一句(模型的原话照旧留在上面,不删不改)。
+    let appendedReply: string | undefined;
+    if (strandedRefs.length > 0) {
+      const lang = await resolveFallbackLang(ownerId, threadId, userText);
+      appendedReply = strandedApprovalText({ storyboard: strandedStoryboard, lang });
+      await prisma.chatMessage.create({
+        data: { id: newId(), threadId, ownerId, role: "AGENT", kind: "TEXT", seq: ++seq, text: appendedReply },
+      });
+    }
+
+    // 一个可确认的批准项都没剩下 ⇒ 这一轮并没有在等商家做什么。报成 needs_approval 会让画布
+    // 挂在一个永远等不到的确认上,所以按**已结束**报,而屏幕上最后一句是那句诚实话。
+    if (pendingCardIds.length === 0 && appendedReply) {
+      return { status: "done", reply: appendedReply, appendedReply };
+    }
+
+    return { status: "needs_approval", pendingCardIds, fallbackReply, ...(appendedReply ? { appendedReply } : {}) };
   }
 
   // Completed — persist Otto's final reply + ottoState
@@ -1840,7 +1964,10 @@ export async function chargedNothingProven(ownerId: string, refundedRefId: strin
 
 export async function ottoTurn(raw: unknown): Promise<
   | { threadId: string; status: "done"; reply: string }
-  | { threadId: string; status: "needs_approval"; pendingCardIds: string[] }
+  /** `appendedReply` —— FC-1（复核修正 P2）：这一轮在模型自己那句话之后另落的那句诚实话
+   *  （搁浅的批准项）。流式那一侧由 `app/api/otto/stream/route.ts` 写成一段文本；这条
+   *  非流式入口从前把它整条丢掉，于是同一件事在两个入口说法不一。缺席 ⇒ 没有这样一句。 */
+  | { threadId: string; status: "needs_approval"; pendingCardIds: string[]; appendedReply?: string }
   | { threadId: string; status: "degraded" }
   | { threadId: string; status: "stale" }
   | { error: string }
@@ -1853,7 +1980,7 @@ export async function ottoTurn(raw: unknown): Promise<
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<
     | { threadId: string; status: "done"; reply: string }
-    | { threadId: string; status: "needs_approval"; pendingCardIds: string[] }
+    | { threadId: string; status: "needs_approval"; pendingCardIds: string[]; appendedReply?: string }
     | { threadId: string; status: "degraded" }
     | { threadId: string; status: "stale" }
     | { error: string }
@@ -2129,7 +2256,12 @@ export async function ottoTurn(raw: unknown): Promise<
       revalidatePath("/", "layout");
       if (finalized.status === "stale") return { threadId, status: "stale" };
       if (finalized.status === "needs_approval") {
-        return { threadId, status: "needs_approval", pendingCardIds: finalized.pendingCardIds };
+        return {
+          threadId,
+          status: "needs_approval",
+          pendingCardIds: finalized.pendingCardIds,
+          ...(finalized.appendedReply ? { appendedReply: finalized.appendedReply } : {}),
+        };
       }
       return { threadId, status: "done", reply: finalized.reply };
     } catch (e) {
@@ -2299,6 +2431,9 @@ export async function ottoApprove(raw: unknown): Promise<
       pendingCardIds: string[];
       fallbackReply: string | null;
       narrationMessageId: string | null;
+      /** FC-1（复核修正 P2）—— 这一轮另起一行落库的那句诚实话（搁浅的批准项那一句）的
+       *  durable id，交给客户端按 `narrationMessageIds` 注进对话。null ⇒ 没有这样一行。 */
+      appendedMessageId: string | null;
       /** FSE-012(判官第 5 轮 P2-b)—— 这一趟**停在别的批准上**,而**这一张**在恢复轮里被
        *  报价版本闸拒了。从前这一支一律 `ok:true`,父层照旧把这张卡标成已批准 —— 一次假成功。
        *  两件事分开说:`pendingCardIds` 照带(链上那些卡确实还等着),这一格说的是「你按的
@@ -2342,6 +2477,9 @@ export async function ottoApprove(raw: unknown): Promise<
       pendingCardIds: string[];
       fallbackReply: string | null;
       narrationMessageId: string | null;
+      /** FC-1（复核修正 P2）—— 这一轮另起一行落库的那句诚实话（搁浅的批准项那一句）的
+       *  durable id，交给客户端按 `narrationMessageIds` 注进对话。null ⇒ 没有这样一行。 */
+      appendedMessageId: string | null;
       /** FSE-012(判官第 5 轮 P2-b)—— 这一趟**停在别的批准上**,而**这一张**在恢复轮里被
        *  报价版本闸拒了。从前这一支一律 `ok:true`,父层照旧把这张卡标成已批准 —— 一次假成功。
        *  两件事分开说:`pendingCardIds` 照带(链上那些卡确实还等着),这一格说的是「你按的
@@ -2888,8 +3026,17 @@ export async function ottoApprove(raw: unknown): Promise<
         // fact source both sides cite is the ChainedApproval.pendingCardIds comment in
         // apps/web/components/otto/approval-chain.ts.
         const chainedApprovals = finalization.approvals;
-        const pendingCardIds: string[] = chainedApprovals.filter((a) => a.toolName === "generate").map((a) => a.ref);
         const chainedNonGenerate = chainedApprovals.filter((a) => a.toolName !== "generate");
+        // FC-1（复核修正 P1）—— 这一行从前是无条件的，于是 `finalizeOttoRun` 刚堵上的那个病
+        // 在这条路上原样复活：商家确认了一张真卡 ⇒ 恢复 ⇒ 模型又把**分镜卡的编号**交给
+        // `generate`（现场那一场连着两轮都是这么干的）⇒ 它进了待确认集 ⇒ 组件只数真 GEN_CARD
+        // ⇒ 画布报 Ready，而没有任何一句话收回那句承诺。判据与主路共用同一份
+        // （`partitionGenerateApprovals`），不再留第二套读法。
+        const { pendingCardIds, strandedRefs, strandedStoryboard } = await partitionGenerateApprovals({
+          ownerId,
+          threadId,
+          approvals: chainedApprovals,
+        });
 
         // CAS: only write paused ottoState if no concurrent turn moved it
         const { count: casInterrupt } = await prisma.chatThread.updateMany({
@@ -2921,15 +3068,26 @@ export async function ottoApprove(raw: unknown): Promise<
         // the thread history), and the promise follows what confirming actually does.
         const assistantText = finalization.text;
         let fallbackReply: string | null = null;
-        if (!assistantText) {
+        /** FC-1（复核修正 P1）—— 链上那几个**落地不了**的批准项要说的那句诚实话。
+         *  它可能当**这一轮的正文**用（模型一字未说、而且一张卡都按不下去），也可能跟在
+         *  模型自己那句话后面另起一行。两条路共用这一个字符串，所以同一轮绝不会写两遍。 */
+        let strandedLine: string | null = null;
+        if (!assistantText || strandedRefs.length > 0) {
           const lang = await resolveFallbackLang(ownerId, threadId, null);
-          fallbackReply = chainedApprovals.length > 0
-            ? approvalPointerText({
-                cardCount: chainedApprovals.length,
-                allGenerate: chainedApprovals.every((a) => a.toolName === "generate"),
-                lang,
-              })
-            : interruptedFallbackText(lang);
+          if (strandedRefs.length > 0) strandedLine = strandedApprovalText({ storyboard: strandedStoryboard, lang });
+          if (!assistantText) {
+            // FC-1（复核修正 P1）—— 与主路同一口径：数的是**按得下去的那几张**，不是原始
+            // 批准项。一张都按不下去 ⇒ 那句「去卡上确认」整条不说（它会指着一张永远不出现
+            // 的卡），改用这句诚实话当正文 —— 于是商家当场就读得到，不必等下一次刷新。
+            const approvableCount = pendingCardIds.length + chainedNonGenerate.length;
+            fallbackReply = approvableCount > 0
+              ? approvalPointerText({
+                  cardCount: approvableCount,
+                  allGenerate: chainedNonGenerate.length === 0,
+                  lang,
+                })
+              : strandedLine ?? interruptedFallbackText(lang);
+          }
         }
         // #498 round-5 P2c: when the model DID narrate, the text used to land in the
         // DB only — the approve response carried fallbackReply: null and the client
@@ -2938,6 +3096,14 @@ export async function ottoApprove(raw: unknown): Promise<
         // approve path streams nothing, so injecting it can never double-render).
         const visibleText = assistantText || fallbackReply;
         let narrationMessageId: string | null = null;
+        /** FC-1（复核修正三）—— 那句诚实话**当正文用掉**的那一种局面里，它自己的 durable id。
+         *
+         *  模型一字未说、而且一张卡都按不下去时，这句话就是这一轮的正文（上面那个三元的
+         *  `strandedLine` 分支），于是下面那个「另起一行」的守卫会跳过它 —— 从前两个 id 因此
+         *  同时是 null，整份答复一个可注入的 id 都不带。pack 那一面尤其致命：那里连
+         *  `fallbackReply` 都只在还有待确认卡时才显示，所以商家按下 Make all 之后什么都不发生、
+         *  也没有一句话解释，直到刷新。一行、一个 id、注一次。 */
+        let strandedBodyId: string | null = null;
         if (visibleText) {
           const seq = await prisma.chatMessage.findFirst({
             where: { threadId, ownerId },
@@ -2959,6 +3125,11 @@ export async function ottoApprove(raw: unknown): Promise<
           // fallbackReply keeps its round-4 display channel (the card's own receipt
           // line); only model narration rides the id for live chat injection.
           if (assistantText) narrationMessageId = visibleTextId;
+          // …with ONE exception (FC-1 复核修正三): when the body IS the honest line, the card
+          // receipt is not enough — that sentence is the whole answer to「我按了，然后呢」，and
+          // on the pack surface the receipt does not even render with an empty pending set.
+          // It rides the id like narration does, so live matches what a reload would show.
+          else if (fallbackReply && fallbackReply === strandedLine) strandedBodyId = visibleTextId;
         }
 
         // Durable approval cards for chained non-generate gated asks (B4 debt-70 5.1·附①).
@@ -2977,6 +3148,37 @@ export async function ottoApprove(raw: unknown): Promise<
           pendingCardIds.push(...persisted.cardIds);
         }
 
+        // FC-1（复核修正 P1）—— 链上那几个**批不下去**的批准项：把模型那句承诺收回来，
+        // 用一句**做得到的下一步**（与主路同一句话、同一个函数）。落在最后，所以它是商家
+        // 读到的最后一句；链上真的卡照旧在 `pendingCardIds` 里，一张不少。
+        // 上面已经把它当正文写过一次的那种局面（模型一字未说、且零张可按）在这里跳过 ——
+        // 同一句话落两行，读起来就是系统自己在复读。
+        /** FC-1（复核修正 P2）—— 这一行诚实话的**durable id**。approve 这条路不流式:客户端
+         *  只把服务端点名的那几行注进对话(`narrationMessageIds` → `mergeDurableIntoLive`)。
+         *  从前这个 id 被丢掉,于是「模型说了话、而批准项全都落地不了」那一种局面里,商家要
+         *  刷新一次才读得到这句收回承诺的话 —— 屏幕上停着的正是那句承诺。缺席 ⇒ 这一轮没写
+         *  这样一行(它已经当正文交回去了,或者根本没有搁浅项)。 */
+        let appendedMessageId: string | null = strandedBodyId;
+        if (strandedLine && fallbackReply !== strandedLine) {
+          const seqRow = await prisma.chatMessage.findFirst({
+            where: { threadId, ownerId },
+            orderBy: { seq: "desc" },
+            select: { seq: true },
+          });
+          appendedMessageId = newId();
+          await prisma.chatMessage.create({
+            data: {
+              id: appendedMessageId,
+              threadId,
+              ownerId,
+              role: "AGENT",
+              kind: "TEXT",
+              seq: (seqRow?.seq ?? 0) + 1,
+              text: strandedLine,
+            },
+          });
+        }
+
         revalidatePath("/", "layout");
         // FSE-012（判官第 5 轮 P2-b）—— 停在别的批准上，**而这一张被拒了**：两件事一起说。
         // 链上那些卡的 id 一个不少（上面那份契约不变），这一格另说「你按的这一张没成」，
@@ -2988,6 +3190,7 @@ export async function ottoApprove(raw: unknown): Promise<
           pendingCardIds,
           fallbackReply,
           narrationMessageId,
+          appendedMessageId,
           ...(quoteRefusedInResume ? { staleQuote: staleQuote ?? { error: QUOTE_VERSION_STALE, quote: null } } : {}),
         };
       }

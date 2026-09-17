@@ -66,7 +66,7 @@ import {
 } from "@/lib/otto-inject-helpers";
 // 观察窗「到顶不等于放弃」的那一条规则,只有这一份实现(#782 r7,判官 r6 P1-A)。
 import { nextSyncPhase, type SyncPhase } from "@/lib/storyboard-card";
-import { mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
+import { injectableMessageIds, mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
 import { OttoApprovalCard } from "./OttoApprovalCard";
@@ -1494,9 +1494,9 @@ export function OttoChatStream({
               nextPendingApprovalCardIds(cur, approved ? [approvedCardId] : [], chained?.pendingCardIds),
             );
             rearmGenerationPoll();
-            void pollAndInjectResults(
-              chained?.narrationMessageId ? [chained.narrationMessageId] : undefined,
-            );
+            // FC-1（复核 P2）—— 该注进对话的那几行由 `injectableMessageIds` 一处说了算:
+            // 模型自己那段话,以及这一轮另落的那句诚实话(搁浅的批准项)。
+            void pollAndInjectResults(injectableMessageIds(chained));
           }}
           onChangeSomething={sendChangeRequest}
           onEditAndRetry={editAndRetry}
@@ -1767,9 +1767,7 @@ export function OttoChatStream({
                       // again from this success-only callback just double-read the balance
                       // (round-2 review P2) — one action, one announcement.
                       // #498 round-5 P2c: inject the chained park's model narration live.
-                      void pollAndInjectResults(
-                        chained?.narrationMessageId ? [chained.narrationMessageId] : undefined,
-                      );
+                      void pollAndInjectResults(injectableMessageIds(chained));
                     }}
                     onChangeSomething={sendChangeRequest}
                     onSeedComposer={seedComposer}
@@ -1820,14 +1818,18 @@ export function OttoChatStream({
                     cardId={m.metadata!.durableId}
                     threadId={thread.id}
                     payload={m.metadata?.payload}
-                    onResolved={({ cardId: resolvedCardId, pendingCardIds }) => {
+                    onResolved={({ cardId: resolvedCardId, pendingCardIds, injectMessageIds }) => {
                       // A universal approval settles a parked call too, so it must move
                       // this thread's pending set — otherwise the waiting panel keeps
                       // asking for a go-ahead that was already given (P1-4).
                       setPendingApprovalCardIds((cur) =>
                         nextPendingApprovalCardIds(cur, [resolvedCardId], pendingCardIds ?? undefined),
                       );
-                      void refetchAndAppendCards();
+                      // FC-1（复核修正三）—— 与另外三个调用点同一条路：`refetchAndAppendCards`
+                      // 只补卡（CARD_KINDS），所以这张卡上确认之后，服务端点名的那几行
+                      // （模型的话／搁浅那句诚实话）要等刷新才出现。`pollAndInjectResults`
+                      // 是它的超集：补卡之外还注这几行，并在有终局结果时刷一次余额。
+                      void pollAndInjectResults(injectMessageIds);
                     }}
                   />
                 </WidgetRow>
