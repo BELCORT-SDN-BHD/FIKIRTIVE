@@ -150,8 +150,12 @@ export function canvasLineageRows(
    *   · 到终态而净额 0  ⇒ 回到 `canvasCostLabel` 的原话,与从前逐字相同(失败/退款的净额
    *     恒为 0,读作「没花钱」——与消费历史同一个口径)。
    * 生成卡一个字都没动。
+   *
+   * 条件写成 `costIsUnderstanding || costPending`,与 `AssetLineage.tsx` 同一条理由:读模型里
+   * 两格同源(都挂在「没有付费任务的上传」那一支),所以第二个条件在真实数据里永远多余 ——
+   * 写上它是为了让「未结算时绝不说 No charge」这条不变量不依赖新加的那一格。
    */
-  const receipt = lineage.costIsUnderstanding
+  const receipt = lineage.costIsUnderstanding || lineage.costPending
     ? understandingReceipt({
       creditsCharged: lineage.costCredits ?? 0,
       pending: lineage.costPending,
