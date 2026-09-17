@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   APPLICATION_SHELL_CARVE_OUTS,
@@ -167,6 +167,22 @@ export function MerchantShellFrame({
   );
 }
 
+/**
+ * 「我头上已经有一层壳了吗」——R3-F11 判官 P1。
+ *
+ * 壳可以嵌套,是因为 `app/not-found.tsx` 也要画壳(未知地址不在任何按地址推出来的名单里,
+ * 见下面 `carriesShell`),而根 layout 的那一层**已经**在一部分未知地址上画着了:
+ * `isMerchantSurface` 按前缀匹配,所以 `/billing/<没建过的段>`、`/settings/<没建过的段>`、
+ * `/analysis/<没建过的段>` 这些地址对根那一层来说就是商家表面。两层各画一遍的后果不是
+ * 「多一根导轨」那么轻:两份 `aria-label="Global navigation"`、两次 `getMyAccount()` 往返、
+ * 内层那个 `h-dvh` 框套进外层的内容列里。
+ *
+ * 所以「画不画」不是每一层各自算的,而是**第一层算完就说出来**:画了壳的那一层往下发这个
+ * context,里层读到 true 就原样透出 children。判定仍然只有一处作者(还是这个函数),
+ * 里外层不会得出两个答案。
+ */
+const ShellDrawnContext = createContext(false);
+
 export function MerchantShellContent({
   children,
   pathname,
@@ -187,10 +203,18 @@ export function MerchantShellContent({
    * 放宽它就会给那几面也画上壳(`share-preview-page.test.ts` 为这件事专门埋了绊线)。而且
    * 「未知地址」在那份名单里根本表达不出来 —— 它不是一条路径,是「除此之外的一切」。
    * 所以这里让**那一页自己**把壳带上,名单一个字不动。
+   *
+   * 它说的是「我要壳」,不是「再画一层壳」:名单按前缀匹配,`/billing/<没建过的段>` 这类地址
+   * 在根 layout 那一层**已经**有壳了,那时上面的 `ShellDrawnContext` 让里层原样透出 children
+   * (判官 P1:否则同屏两根导轨、两次 `getMyAccount()`)。
    */
   carriesShell?: boolean;
 }) {
-  const merchantSurface = carriesShell === true || isMerchantSurface(pathname);
+  // 头上已经有壳就不再画第二层(上面 `ShellDrawnContext` 的全文)。这一句也顺带关掉里层那次
+  // `getMyAccount()`:下面的 effect 读的是同一个 `merchantSurface`。
+  const ancestorDrewShell = useContext(ShellDrawnContext);
+  const merchantSurface =
+    !ancestorDrewShell && (carriesShell === true || isMerchantSurface(pathname));
   const [account, setAccount] = useState<RailAccount | null>(null);
   // P2-3 —— rides the same getMyAccount() round trip as `account`; see MerchantShellFrame's
   // `buildSha` prop doc for why this isn't its own fetch.
@@ -238,23 +262,25 @@ export function MerchantShellContent({
   if (!merchantSurface) return <>{children}</>;
 
   return (
-    <div className="min-h-dvh bg-background text-foreground">
-      {/* #994(W2-7)/W2-11 —— 面板停在内容列右侧。导轨、主内容、面板是同一行里的兄弟:
-          导轨宽度不随面板开合而变,主内容让给面板;没有遮罩,没有 `pointer-events: none`
-          (spec §3.5 ①)。导轨必须挂在 `OttoPanelMount` 内部(而不是它旁边),才能读到
-          面板的开合状态机去驱动 utility bar 的 Ask Otto 按钮。 */}
-      <OttoPanelMount location={pathname}>
-        <MerchantShellFrame
-          pathname={pathname}
-          signOutAction={signOutAction}
-          account={account}
-          topBarLabel={shellTopBarLabel(pathname)}
-          buildSha={buildSha}
-        >
-          {children}
-        </MerchantShellFrame>
-      </OttoPanelMount>
-    </div>
+    <ShellDrawnContext.Provider value={true}>
+      <div className="min-h-dvh bg-background text-foreground">
+        {/* #994(W2-7)/W2-11 —— 面板停在内容列右侧。导轨、主内容、面板是同一行里的兄弟:
+            导轨宽度不随面板开合而变,主内容让给面板;没有遮罩,没有 `pointer-events: none`
+            (spec §3.5 ①)。导轨必须挂在 `OttoPanelMount` 内部(而不是它旁边),才能读到
+            面板的开合状态机去驱动 utility bar 的 Ask Otto 按钮。 */}
+        <OttoPanelMount location={pathname}>
+          <MerchantShellFrame
+            pathname={pathname}
+            signOutAction={signOutAction}
+            account={account}
+            topBarLabel={shellTopBarLabel(pathname)}
+            buildSha={buildSha}
+          >
+            {children}
+          </MerchantShellFrame>
+        </OttoPanelMount>
+      </div>
+    </ShellDrawnContext.Provider>
   );
 }
 

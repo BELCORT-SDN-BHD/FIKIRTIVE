@@ -6,13 +6,17 @@
  * Next 自带的裸 404 —— 页面标题只剩 `Fikirtive`,没有导轨、没有账号菜单、没有一条回去的路。
  * 商家在自己的产品里撞见一堵与产品无关的墙。
  *
- * 这条旅程按**两类**地址走,因为它们的正确答案不是同一个:
+ * 这条旅程按**四类**地址走,因为它们的正确答案不是同一个:
  *
  *   ① 停放前缀(`/crm`、`/campaign`、`/schedule`、`/library/editor`)底下的乱地址 —— 有去处,
  *      所以答一条真的 **307**,`Location` 逐字是权威表 `MERCHANT_NAV_REDIRECTS` 那一行的 `to`
  *      (规格 `docs/specs/wave2-shell.md` §2.2、§2.5:「每一条旧地址都 307,永不 404」)。
  *   ② 那四扇门之外的乱地址(`/definitely-not-a-route`)—— **没有**去处可送,它真的不存在,
  *      所以诚实的答案仍是 **404**;这一票要的是「这个 404 长在产品里面」:导轨在、有路回家。
+ *   ③ 同样没建过、但**长在一条真商家前缀底下**的地址(`/billing/<没建过的段>`)—— 根 layout
+ *      那一层已经画了壳,所以这里数的是「只有一根导轨」(判官 P1)。
+ *   ④ **墙外**的未知地址(`/legal/<没建过的段>`)—— 认证墙并不是每条地址都挡,一个没有账号的
+ *      读者真的到得了那一页,他拿到的必须是干净的 404,而不是一个他没有的工作区(判官 P2)。
  *
  * 为什么用 `page.request.get(..., { maxRedirects: 0 })` 而不是跟着跳完再看落点(与 journey 28
  * 同一个理由):规格那句话是一个**数字**。跟着跳完只证得了「最后落在对的地方」—— 上一版这四扇门
@@ -46,6 +50,11 @@ const UNKNOWN_SEGMENT = "a-page-that-was-never-built";
  * 重定向,而 `/campaign/<一段>/<一段>` 谁都不认。只测一段,会把「这扇门已经好了」当成结论。
  */
 const UNKNOWN_DEPTHS = [UNKNOWN_SEGMENT, `${UNKNOWN_SEGMENT}/${UNKNOWN_SEGMENT}`];
+
+/** 页面上「导轨」这个标记出现了几次 —— 数的是真 DOM,不是无障碍树的去重结果。 */
+async function railMarkupCount(page: import("@playwright/test").Page): Promise<number> {
+  return (await page.content()).split('aria-label="Global navigation"').length - 1;
+}
 
 test("R3-F11 — 停放前缀底下没建过的地址,答的是真的 307,去处逐字是权威表说的那一个", async ({
   page,
@@ -121,6 +130,10 @@ test("R3-F11 — 四扇门之外的乱地址诚实答 404,但商家仍站在自�
   // Next 自带的那堵墙一个字都不许出现。
   await expect(page.getByText("This page could not be found")).toHaveCount(0);
 
+  // 一根,不是两根(判官 P1 的另一半在下一条 test 上)。
+  await expect(page.getByRole("navigation", { name: "Global navigation" })).toHaveCount(1);
+  expect(await railMarkupCount(page), "DOM 里不止一根导轨").toBe(1);
+
   // 那条回去的路是一条真链接,而且真的走得通 —— 画一颗按钮不等于按得动。
   //
   // 无障碍树上它是 `button`:`<Button asChild>` 走 Base UI 的 `render`,那一层给非原生按钮
@@ -130,6 +143,55 @@ test("R3-F11 — 四扇门之外的乱地址诚实答 404,但商家仍站在自�
   await expect(backHome, "回家那一下不是一条真链接").toHaveAttribute("href", SHELL_ROUTES.home);
   await backHome.click();
   await expect(page).toHaveURL(new URL(SHELL_ROUTES.home, E2E_BASE_URL).toString());
+});
+
+/**
+ * 判官 P1 —— 未知地址**长在一条真商家前缀底下**时,屏幕上仍然只有一份壳。
+ *
+ * `isMerchantSurface` 按前缀匹配(`rail-tree.ts` 的 `navMatchesLocation`:`startsWith(href + "/")`),
+ * 所以 `/billing/<没建过的段>` 对根 layout 那一层来说就是商家表面 —— 它已经画了壳。这一页要是
+ * 无条件再画一层,商家会同时看到两根导轨、产品会白发两次 `getMyAccount()`,而内层那个 `h-dvh`
+ * 的框还嵌在外层的内容列里。`MerchantShellContent` 的 `ShellDrawnContext` 让里层原样透出
+ * children;这一条在真浏览器上数导轨,`lib/__tests__/not-found-shell.test.tsx` 在毫秒级数同一件事。
+ */
+test("R3-F11 — 商家前缀底下的未知地址:404 仍然只有一份壳", async ({ page }) => {
+  const ws = await seedWorkspace({
+    slug: "notfoundnested",
+    workspaceName: "Warung Ayu",
+    personName: "Ayu",
+    openingGrant: 0,
+  });
+  await signIn(page, ws);
+
+  const res = await page.goto(`${SHELL_ROUTES.billing}/${UNKNOWN_SEGMENT}`);
+
+  expect(res, "浏览器没有拿到任何响应").not.toBeNull();
+  expect(res!.status(), "一条不存在的地址不该假装自己存在").toBe(404);
+  await expect(
+    page.getByRole("navigation", { name: "Global navigation" }),
+    "同屏画出了两根导轨(或一根都没有)",
+  ).toHaveCount(1);
+  expect(await railMarkupCount(page), "DOM 里不止一根导轨 —— 根 layout 与这一页各画了一份").toBe(1);
+  await expect(page.getByText("Page not found")).toBeVisible();
+});
+
+/**
+ * 判官 P2 —— 认证墙**并不是**每条地址都挡。
+ *
+ * `lib/auth-wall-ledger.ts` 把 `s`、`privacy`、`legal` 整棵子树放在墙外(分享链接与法务页,
+ * 读它们的人按定义没有账号),所以一个没有会话的读者真的到得了这一页。给他画导轨、余额行与
+ * 账号菜单是一句假话,还要白付一次取不到数的已认证往返。这一条用**全新、无会话**的上下文走
+ * `/legal/<没建过的段>`:仍然 404,但壳一根都不许有。
+ */
+test("R3-F11 — 墙外的未知地址:没有会话的读者拿到的是干净的 404", async ({ request }) => {
+  const res = await request.get(`/legal/${UNKNOWN_SEGMENT}`, { maxRedirects: 0 });
+
+  expect(res.status(), "墙外这条地址被送去了别处,而不是自己答").toBe(404);
+
+  const html = await res.text();
+  expect(html, "给一个没有账号的读者画了商家导轨").not.toContain('aria-label="Global navigation"');
+  expect(html).toContain("Page not found");
+  expect(html, "没有给他一条走得通的路").toContain("Go to sign in");
 });
 
 /**
