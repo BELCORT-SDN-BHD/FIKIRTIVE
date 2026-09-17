@@ -91,3 +91,38 @@ CodeGraph: used — query: "e2e"; index: 主检出更新到14bcd038后fresh；fa
 第二轮走查改用登录态：4 个并行 worker 以 Founder org `founder`（租户 A，super-admin）已登录会话跑只读旅程，build `14bcd038`，全程未登出、US$0、零远端写入（只读证明见证据文件的 `writesMade`）。原始证据入库在 `docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r2/`（`surfaces.json`、`surfaces-verify.json`、`workflow-r2-result.json`）；覆盖回填见 [coverage-matrix.md 本次回填边界（2026-09-15）](coverage-matrix.md#本次回填边界2026-09-15)；七条新发现与两条既有发现的收尾更新见 [findings-catalog.md](findings-catalog.md)（R3-F09–R3-F15；R3-F01 收尾判 RESOLVED，R3-F05 收尾定根因并给出修复 PR #1446）。本文件不重复列出逐条细节。
 
 本轮首次引入独立核证员复核每条自报状态，推翻了 worker 自报的七处：REAL-26／REAL-15 由自报 PASS 降为 PARTIAL，REAL-17／REAL-28 由自报 PARTIAL 收紧为 BLOCKED，REAL-05 的「Enter 绝不自动触发」分句、REAL-08 的「FSE-204 商家侧仍未闭合」分句、REAL-13 的 FRONT-A6 分句均被证伪或撤销。最值得 Founder 先看的两条：①REAL-05 核证过程中，一次未加修饰键的真实 Enter 本会在 US$0／零写入前提下触发一次真实花费（`StartSomething.tsx:288-294`），本轮全程零写入是靠核证员自己清空草稿与只读复核兜住的，不是产品本身的保证；②REAL-28 后台三项写操作（发积分／退款／对账）今日在零写入边界下结构性无法验证，状态是**未证**而非已证 PASS。
+
+## 2026-09-16（一）Founder 三项裁决（对谈）
+
+① **产品自动封面后失效的「Remove from product」菜单项**：追认删除。已随 PR #1462（分支 `claude/prodid-a4-auto-cover`，未合并主干）落地在 `docs/specs/brand-product-identity.md` §5 2026-09-15 行的追加句——该不变量是全量的，一件还挂着基础层参考图的产品永远有封面，「Remove from product」按下去会被同一事务里的 `reconcileEntityCover` 立刻钉回同一张图、按了没反应，故随该 PR 一并撤掉；本报告不重复登记裁决内容，只作出处指针。② **上传理解静默扣 0.1 credit**：上传完在那张图上留一行回执「Understood · 0.1 credits」，不加常驻段落；实现 PR 在飞（分支 `claude/upload-understanding-receipt`，commit `a594a2f4` 及复核修正 `03046f01`，未合并），登记见 `docs/specs/money-engine.md` §5 2026-09-16 行与 `findings-catalog.md` R3-F24。③ **便签 Shift 点文字被踢出多选**：按守卫版修，已合并（PR #1452 的另一支线，最终 HEAD `141a6ba6`，`docs/specs/frontend-baseline.md` §5 R3-F07 相关行已同批更新，本报告只作引用）。④ **staging `TOKEN_ENCRYPTION_KEY`**：Founder 自己跑不回显命令，设到 Railway 的 `worker` 与 `worker-compute` 两服务；两服务补齐前后的 `configFingerprint`（据转述 `970711b2`→`8536b2af`）由编排者读出转述，本文档未独立复核这两个哈希值——**未核**；R3-F18 已关闭，登记见 `findings-catalog.md`。
+
+## 2026-09-16（二）staging 第三轮：真实付费旅程第一组（真供应商，US$20 封顶／US$16 暂停）
+
+Founder 2026-09-15 已授权真实付费旅程；本组「preflight-fixtures」由两个 worker（执行＋核证）串行完成，全程签入身份 tenant A（org `founder`，display name `tools`，super-admin，邮箱脱敏），证据入库 `docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r3-paid/{preflight-fixtures.json,workflow-group1-result.json}`；覆盖回填见 [coverage-matrix.md 本次回填边界（2026-09-16）](coverage-matrix.md#本次回填边界2026-09-16staging-第三轮付费旅程第一组)，逐步骤见 [real-scenarios.md](real-scenarios.md) REAL-03／REAL-12 两行本次更新。
+
+**判定摘要**：P0 PASS；REAL-12 PARTIAL（4 份真实文件上传、理解结算、账本闭环均证成，3/4 文件本地 sha256 与存储字节同哈希，「下载比对」被浏览器 CSP／沙盒挡住而非被产品挡住）；REAL-03 本组 NOT RUN（前置条件「Brand 建测试产品」在 UI 上走不到——根因即 R3-F20 指路死路，worker 已完整枚举 `/brand` 五分区、Library Elements、`@` 菜单三处确认无建产品控件，未绕开产品自身入口伪造流程；路径已查明，修复 PR #1463 合并或另行授权后由后续付费组重跑）；BUILD-DRIFT（本组执行窗口内 staging 自动重部署**四次**：`eed4f079`→`4496bc3b`（PR #1460）→`57ce7ee6`（PR #1455）→`1a03bb71`（PR #1456），执行 worker 原只记到前两跳，核证员事后用未认证 `GET /api/health` 复核出第三跳；每笔操作已按时间戳回溯到具体 sha，但后续付费组须先钉住主干静默期或每组自行核当次 sha，不可默认沿用本组的 build 标签）。
+
+**Money proof**：全天 `CreditLedger` 恰新增 8 行，4 个 `refId`（`understanding:<id>`）各恰 1 条 RESERVE + 1 条 SETTLE + 0 条 REFUND，`CreditLedger_ref_kind_once`／`CreditLedger_finalizer_once` 两条唯一索引结构性防止双扣或结算后又退款；`CreditAccount(founder)` 余额 `99997978`→`99997974`（display 9,999,797.8→9,999,797.4，净 -0.4）、reserved 全程归零；`arkcli usage stats` 当日 4 请求／9308 input／196 output token（单一模型 `seed-2-0-mini`）与产品自身逐行 token 记录逐字段一致。**本组花费**：US$0.00 生成（零新增 GenJob／RefGenJob）＋ 0.4 显示 credits 理解；远低于 US$16 暂停线。
+
+**新发现**（详见 `findings-catalog.md`）：R3-F20（产品指路死路，修复 PR #1463 在飞）、R3-F21（重部署后陈旧 action 404 被误导文案说成商家网络问题）、R3-F22（上传测试视频静默写入品牌记忆事实且来源标注错误）、R3-F23（字节校验只嗅文件头，损坏文件被正常计费理解）、R3-F24（上传扣费当刻无逐动作回执，Founder 已裁按结算后回执处理，即上文 A②）。
+
+**第二至第四组**：待跑，见 `coverage-matrix.md` 同节末尾的排期说明；下一组覆盖 REAL-04／REAL-06／REAL-08，REAL-03 待 R3-F20 解锁后补跑，REAL-09（四长一短并发）待整组报价确认在预算内再执行。
+
+## 合并台账（承 2026-09-15 commit `5008332f` 之后新落地的 PR，供 report-round3 交叉核对）
+
+以下 sha 均在 `git log origin/main` 于本报告撰写时核实存在（2026-09-17）：
+
+| PR | 合并 commit | 摘要 |
+|---|---|---|
+| #1444 | `f7bb64e3` | Library 产品详情可改名、换主图，与 Brand 页同一身份双向同步（PRODID-A4） |
+| #1446 | `ffe9a4d1` | Library 素材详情关闭后键盘焦点回到原素材卡 |
+| #1448 | `eed4f079` | 输入附近不再堆叠上传理解／搜索费用／对话预留常驻说明（R3-F06） |
+| #1451 | `fcde7762` | 三条真库测试首跑红的根因与修法（时区／锁竞态／结算积压并发假象） |
+| #1460 | `4496bc3b` | 三条停放旧地址真的回 307，不再先流骨架再跳（R3-F10） |
+| #1455 | `57ce7ee6` | 「Add connection」弹窗初始焦点不再压在首个 Connect 上 |
+| #1456 | `1a03bb71` | Connections 页顶补上规格要求的说明句（R3-F14） |
+| #1457 | `d217327c` | 健康接口不再显示已无人写的旧 worker 心跳行（R3-F19） |
+| #1449 | `92d549a7` | 对话里说「直接生成」就给出可确认的分镜生成卡（FC-1／FC-3） |
+| #1450 | `37bbb993` | 续写同一张图时原图与演员一起进卡与谱系（FC-2／FC-4） |
+
+**在合并链中，撰写时仍为 OPEN**（`gh pr view <n> --json state` 核实于 2026-09-17）：#1458（翻闸前置四颗形状雷）、#1462（自动封面撤菜单项，见上文 A①）、#1452（画布 Shift 多选修复，见上文 A③；本 PR 分支最终 HEAD `141a6ba6`）、#1461（后台可丢弃单条死信）、#1459（CRM 未知路由送回冻结去处）。另有两条本次核实时同样 OPEN、超出原始清单但与本报告直接相关：#1464（上传理解回执，见上文 A②）、#1463（R3-F20 指路修复，见上文与 findings-catalog）。

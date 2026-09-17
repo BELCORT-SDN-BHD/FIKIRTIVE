@@ -53,7 +53,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：付费视频＋可能理解费，先核卡价与provider估价。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN。
+- 执行状态：NOT RUN（staging 第三轮付费旅程第一组，2026-09-16，见 `coverage-matrix.md` 本行同日回填）——「Brand 建测试产品」这一步的前置条件不成立：`/brand` 五分区全部枚举后确认零产品创建控件，Library Elements Products 空态只读，`@` 菜单无建产品选项，DB 核实 org founder 零存活 PRODUCT Entity。worker 未绕开产品自身入口直调后端 action 或驱动 Otto 代建（会伪造商家没有的路径），如实停在 NOT RUN。根因即 R3-F20（`docs/audits/fullstack-staging-2026-09-14/findings-catalog.md`），修复 PR #1463 在飞；路径已查明，待该 PR 合并或另行授权直建后由后续付费组重跑本行全部步骤。
 
 ### REAL-04 商家场景：不带人物的创作和 variation
 
@@ -143,7 +143,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：上传理解可能付费；先核路由，不把上传当免费。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN。
+- 执行状态：PARTIAL（staging 第三轮付费旅程第一组，2026-09-16；证据 `local-logs/staging-r3-paid/preflight-fixtures.json` 步骤 R12-1 至 R12-8，核证复核见 `workflow-group1-result.json`）。真实 PNG／JPEG／MP4 三份夹具（先在本地记 sha256／尺寸／时长）经产品自身上传入口上传；服务端 ingest 重新哈希存活确认，3/4 份存储字节与本地文件逐一同哈希（第 4 份是取证工具字符串截断产生的意外损坏 JPEG，无本地原件可比对，另登 `findings-catalog.md` R3-F23）；理解结算前未写成免费（`AssetUnderstanding.priceInternalSnapshot` 在 RESERVE/SETTLE 之前已非空）；`/billing` 披露价与实扣价一致。**未达成**：「下载到本地、逐字节比对」——产品媒体 URL 跨域 302 到对象存储，页面 CSP 拒绝跟随（`opaqueredirect`），沙盒内浏览器不支持真实下载；这一步被沙盒挡住，不是被产品挡住，本行因此停在 PARTIAL 而非 PASS。
 
 ### REAL-13 商家场景：两个账户隔离与后台权限
 

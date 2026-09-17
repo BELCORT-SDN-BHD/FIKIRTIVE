@@ -65,3 +65,9 @@ CodeGraph: not used — 独立 worktree worker 按项目规则直接读取文件
 上文「备份 missing 原因」一节的强根因假说已转为已定案的根因：`pg_dump` 17（`apps/worker/Dockerfile:18`）拒绝 dump 已是 PostgreSQL 18.6 的 app DB，且失败时 stderr 被丢弃（`apps/worker/src/db-backup.ts` `stderr:"ignore"`），此前无法从日志诊断原因。截至补记时 staging BackupRun 累计 1360 条 failed、0 条 succeeded。
 
 修复见 PR #1442（客户端 `pg_dump` 升至 18、stderr 截尾按错误类别分类入库、恢复侧加版本闸）；对应登记见 `docs/specs/fail-closed-reliability.md` §5 变更登记 2026-09-14 行（R3-F08）与 `findings-catalog.md` 的 R3-F08 环境漂移条目。关闭条件仍是：Founder 授权 staging worker 按 #1442 重建部署后，出现第一条 `status=succeeded` 的 BackupRun 且 `/api/health` 的 backup 字段离开 `missing`——本文不代为宣告已关闭。
+
+## 2026-09-16 补记：付费旅程第一组暴露的工具与账目边界
+
+- `arkcli billing list` 需要账号目前不具备的「split-bill」能力，走不通；供应商侧成本核对改走 `arkcli usage stats`（token 用量，非账单口径）。
+- `arkcli usage stats` 需要 SSO 登录，该登录会话过期很快，长跑旅程中途可能需要重新登录，不能假定一次登录能撑完整组。
+- 后台 System Health 的「冻结支出」（frozen spend，即 `GenJob`／`RefGenJob` 的 `spentUsd` 汇总）是当前对账的主要口径，比逐次调用 arkcli 更稳定；本轮 money proof 即以此为准，arkcli 用量仅作交叉核对，不作为唯一权威。
