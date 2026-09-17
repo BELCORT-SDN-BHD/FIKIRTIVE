@@ -33,6 +33,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   chainedApprovalOf,
+  injectableMessageIds,
   nextPendingApprovalCardIds,
   mergeDurableIntoLive,
   runPackApprovalLoop,
@@ -78,6 +79,7 @@ describe("chainedApprovalOf", () => {
       pendingCardIds: ["card_b", "card_c"],
       fallbackReply: "为了守住你的积分，光靠一句话不会开始生成——请逐张确认上方卡片，我会马上开始。",
       narrationMessageId: null,
+      appendedMessageId: null,
     });
   });
 
@@ -90,7 +92,30 @@ describe("chainedApprovalOf", () => {
         fallbackReply: null,
         narrationMessageId: "msg_narration",
       }),
-    ).toEqual({ pendingCardIds: ["card_b"], fallbackReply: null, narrationMessageId: "msg_narration" });
+    ).toEqual({ pendingCardIds: ["card_b"], fallbackReply: null, narrationMessageId: "msg_narration", appendedMessageId: null });
+  });
+
+  /**
+   * FC-1（复核 P2）—— 搁浅那句诚实话的 durable id 与模型自己那段话走**同一条**注入通道。
+   *
+   * approve 这条路不流式:客户端只注服务端点名的那几行。模型说了话、而批准项全都落地不了
+   * 时,那句收回承诺的话从前没有被点名 —— 商家要刷新一次才读得到它,而屏幕上停着的正是
+   * 那句承诺。`injectableMessageIds` 是这条规则唯一的一份。
+   */
+  it("搁浅那句诚实话的 id 与模型那段话一起被点名注入", () => {
+    const chained = chainedApprovalOf({
+      ok: true,
+      status: "needs_approval",
+      pendingCardIds: [],
+      fallbackReply: null,
+      narrationMessageId: "msg_narration",
+      appendedMessageId: "msg_honest",
+    });
+    expect(chained).toMatchObject({ narrationMessageId: "msg_narration", appendedMessageId: "msg_honest" });
+    expect(injectableMessageIds(chained)).toEqual(["msg_narration", "msg_honest"]);
+    // 没有的那几格不占位 —— 注入列表里不许出现 null。
+    expect(injectableMessageIds(chainedApprovalOf({ status: "needs_approval" }))).toEqual([]);
+    expect(injectableMessageIds(null)).toEqual([]);
   });
 
   it("returns null for done / stale / degraded / error / non-object results", () => {
@@ -107,10 +132,11 @@ describe("chainedApprovalOf", () => {
       pendingCardIds: [],
       fallbackReply: null,
       narrationMessageId: null,
+      appendedMessageId: null,
     });
     expect(
-      chainedApprovalOf({ status: "needs_approval", pendingCardIds: ["card_b", 7, null], fallbackReply: 3, narrationMessageId: 9 }),
-    ).toEqual({ pendingCardIds: ["card_b"], fallbackReply: null, narrationMessageId: null });
+      chainedApprovalOf({ status: "needs_approval", pendingCardIds: ["card_b", 7, null], fallbackReply: 3, narrationMessageId: 9, appendedMessageId: 9 }),
+    ).toEqual({ pendingCardIds: ["card_b"], fallbackReply: null, narrationMessageId: null, appendedMessageId: null });
   });
 });
 
@@ -173,12 +199,20 @@ describe("runPackApprovalLoop (#498 round-5)", () => {
     return { fire, calls };
   }
 
-  const chainedRes = (over: Partial<{ pendingCardIds: string[]; fallbackReply: string | null; narrationMessageId: string | null }>) => ({
+  const chainedRes = (
+    over: Partial<{
+      pendingCardIds: string[];
+      fallbackReply: string | null;
+      narrationMessageId: string | null;
+      appendedMessageId: string | null;
+    }>,
+  ) => ({
     ok: true,
     status: "needs_approval",
     pendingCardIds: [],
     fallbackReply: null,
     narrationMessageId: null,
+    appendedMessageId: null,
     ...over,
   });
 
@@ -394,6 +428,35 @@ describe("runPackApprovalLoop (#498 round-5)", () => {
     ]);
     expect(outcome.pendingCardIds).toEqual([]);
     expect(outcome.pendingFromServer).toBe(true);
+  });
+
+  /**
+   * FC-1（复核修正三 P2）—— 按下 Make all、一张都按不下去的那一轮。
+   *
+   * 现场那种局面在 pack 这一面最难看：恢复轮停在几个 `generate` 上、而它们拿的是**分镜卡**
+   * 的编号，模型一个字都没说。于是待确认集回来是空的、`fallbackReply` 是那句诚实话 ——
+   * 而 pack 卡从前只在「还有待确认卡」时才显示收据，服务端又一个可注入的 id 都没点名。
+   * 结果：什么都没生成，也没有一句话解释，直到刷新。
+   *
+   * 这一条钉的是 loop 这一层的出口：那句诚实话的 id 必须随 `narrationMessageIds` 出来，
+   * 宿主才注得进对话（`pollAndInjectResults`）；并且 `pendingFromServer` 为真，父层才会
+   * 真的去调它。
+   */
+  it("一张都按不下去时,搁浅那句诚实话的 id 照样随 narrationMessageIds 出来", async () => {
+    const { fire } = scriptedFire({
+      card_a: [chainedRes({ pendingCardIds: [], fallbackReply: "Nothing was generated — …", appendedMessageId: "msg_honest" })],
+    });
+    const outcome = await runPackApprovalLoop({
+      cards: [{ cardId: "card_a", pendingApproval: true }],
+      fire,
+    });
+
+    // 集合是空的 —— 没有任何一张卡在等商家。
+    expect(outcome.pendingCardIds).toEqual([]);
+    // 但服务端确实说过话:父层因此会调 onApproved(见 PackCard 的判据),并把这几行注进对话。
+    expect(outcome.pendingFromServer).toBe(true);
+    expect(outcome.narrationMessageIds).toEqual(["msg_honest"]);
+    expect(outcome.fallbackReply).toBe("Nothing was generated — …");
   });
 
   it("无 resume 响应发声时 pendingFromServer=false——集只是渲染期知识,父层不得用它整体替换线程集", async () => {

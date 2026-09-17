@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { prisma } from "@fikirtive/db";
-import { WORKER_STALE_MS, BACKUP_STALE_MS } from "@/lib/health";
+import { WORKER_RETIRED_MS, WORKER_STALE_MS, BACKUP_STALE_MS } from "@/lib/health";
 import { MIGRATION_STATUS_ENV } from "@/lib/boot-status";
 import { GET } from "../route";
 
@@ -161,6 +161,71 @@ describe("GET /api/health", () => {
       const body = await (await GET()).json();
       expect(body.worker).toBe("up");
       expect(body.workers.worker).toBe("stale");
+    });
+  });
+
+  /**
+   * R3-F19(2026-09-15 第三轮走查,2026-09-16 复核改定)—— 没人再写的旧心跳行不该
+   * 永远冒充一次「刚停跳」,但它也**不该消失**。
+   *
+   * staging 上的实况:#796 拆班之后只有 `worker-wait`/`worker-compute` 在写,旧的 `"worker"`
+   * 行冻在拆分那一刻,`/api/health` 因此**永远**带着 `"worker":"stale"`。
+   * `docs/ops/incident-visibility.md:92` 让值班人「先看 workers 里哪一行 stale」——一个永远
+   * stale 的幽灵行会把这条 runbook 训练成「那行不用管」,真死一班时就没人当回事了。
+   *
+   * 复核 P2:第一版把超窗的行**删掉**,于是一班真死了超过一天的 worker 会从唯一的按班列表里
+   * 整行消失,而顶层只要还有一班活着就照报 `up` —— 换来一个更大的盲区。改成给它自己的词
+   * `retired`:幽灵行不再借用 `stale`,真死透的一班仍然看得见。
+   */
+  describe("退休:一整天没人写的行改报 retired、不消失(R3-F19)", () => {
+    it("6 分钟前跳过的班仍然显示 stale —— 「刚停跳」正是这份列表的用处", async () => {
+      await prisma.workerHeartbeat.create({ data: { id: "worker-compute", at: new Date(Date.now() - 6 * 60_000) } });
+      const body = await (await GET()).json();
+      expect(body.workers).toEqual({ "worker-compute": "stale" });
+      expect(body.worker).toBe("stale");
+    });
+
+    it("两天没人写的旧 \"worker\" 行报 retired(仍在列),顶层字段不受影响", async () => {
+      await prisma.workerHeartbeat.createMany({
+        data: [
+          { id: "worker", at: new Date(Date.now() - 2 * 24 * 3_600_000) },
+          { id: "worker-wait", at: new Date() },
+          { id: "worker-compute", at: new Date() },
+        ],
+      });
+      const res = await GET();
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.workers).toEqual({ worker: "retired", "worker-wait": "up", "worker-compute": "up" });
+      expect(body.worker).toBe("up");
+      // 关键字监控打的是整个 body:幽灵行换了词,`"worker":"stale"` 这个子串就此不在了
+      // (顶层的 `"worker":"up"` 照旧,dashboards.md:149 那条关键字监控不受影响)。
+      expect(JSON.stringify(body)).not.toContain('"worker":"stale"');
+      expect(JSON.stringify(body)).toContain('"worker":"up"');
+    });
+
+    it("刚跳过的班照常 up;超过 24 小时的那行报 retired,不被抹掉", async () => {
+      await prisma.workerHeartbeat.createMany({
+        data: [
+          { id: "worker-wait", at: new Date() },
+          { id: "worker", at: new Date(Date.now() - WORKER_RETIRED_MS - 60_000) },
+        ],
+      });
+      const body = await (await GET()).json();
+      expect(body.workers).toEqual({ "worker-wait": "up", worker: "retired" });
+      expect(body.worker).toBe("up");
+    });
+
+    it("一班真死了整整一天,值班人仍然在 workers 里看得到它(复核 P2 守的就是这条)", async () => {
+      await prisma.workerHeartbeat.createMany({
+        data: [
+          { id: "worker-wait", at: new Date() },
+          { id: "worker-compute", at: new Date(Date.now() - 2 * 24 * 3_600_000) },
+        ],
+      });
+      const body = await (await GET()).json();
+      expect(Object.keys(body.workers).sort()).toEqual(["worker-compute", "worker-wait"]);
+      expect(body.workers["worker-compute"]).toBe("retired");
     });
   });
 });

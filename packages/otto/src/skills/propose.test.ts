@@ -318,58 +318,30 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.estimatedCredits).toBe(1); // image tier unchanged
   });
 
-  // Test forVideo: image with forVideo=true → videoStep.estimatedCredits is positive,
-  // estimatedCredits (image) is unchanged/smaller
-  it("forVideo=true on image → cardPayload.videoStep.estimatedCredits is a positive number, estimatedCredits (image) unchanged", () => {
+  // FC-3(S5 批量裁决 2026-09-12 #1358 / creation-engine.md:186)—— 两步计划整条报废。
+  // 从前这里有三条用例钉着 `forVideo:true ⇒ 卡上冻结第二步与它的预估`;裁决之后**任何**
+  // 路径都不再主动提议先出一张付费首帧图,所以那三条改成同一条反向守卫:图片卡不带第二步。
+  // 现场复现与正面样本在 ./propose-no-generic-first-frame.test.ts。
+  it("FC-3 图片卡不再带两步计划 —— videoStep 一格都不铸", () => {
     const ctx = makeCtx();
-    const input = {
-      kind: "image" as const,
-      structuredPrompt: "A hero shot of the mascot",
-      entityIds: [],
-      variantSel: {},
-      forVideo: true,
-    };
-    const { cardPayload } = buildProposeCard(input, ctx, []);
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "A hero shot of the mascot", entityIds: [], variantSel: {} },
+      ctx,
+      [],
+    );
 
-    // The image step's real charge is unaffected
     expect(cardPayload.kind).toBe("image");
     expect(cardPayload.estimatedCredits).toBe(1); // 1 credit/image unchanged
-
-    // videoStep is set and its estimate is a positive number
-    expect(cardPayload.videoStep).toBeDefined();
-    expect(typeof cardPayload.videoStep!.estimatedCredits).toBe("number");
-    expect(cardPayload.videoStep!.estimatedCredits).toBeGreaterThan(0);
-
-    // The video step estimate should be larger than the image step (video costs more)
-    expect(cardPayload.videoStep!.estimatedCredits).toBeGreaterThan(cardPayload.estimatedCredits);
-  });
-
-  // Test forVideo: image WITHOUT forVideo → videoStep is undefined
-  it("forVideo omitted on image → videoStep is undefined", () => {
-    const ctx = makeCtx();
-    const input = {
-      kind: "image" as const,
-      structuredPrompt: "A product shot",
-      entityIds: [],
-      variantSel: {},
-      // no forVideo
-    };
-    const { cardPayload } = buildProposeCard(input, ctx, []);
-
     expect(cardPayload.videoStep).toBeUndefined();
   });
 
-  // Test forVideo: a normal video card is unaffected by the forVideo flag
-  it("forVideo has no effect on a video card — videoStep is undefined and kind stays video", () => {
+  it("FC-3 视频卡照旧不带 videoStep,kind 仍是 video", () => {
     const ctx = makeCtx();
-    const input = {
-      kind: "video" as const,
-      structuredPrompt: "A sweeping aerial shot",
-      entityIds: [],
-      variantSel: {},
-      forVideo: true, // irrelevant on a video card
-    };
-    const { cardPayload } = buildProposeCard(input, ctx, []);
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "A sweeping aerial shot", entityIds: [], variantSel: {} },
+      ctx,
+      [],
+    );
 
     expect(cardPayload.kind).toBe("video");
     expect(cardPayload.videoStep).toBeUndefined();
@@ -1714,60 +1686,13 @@ describe("CREATE-A4 商家在对话里点名画质档", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 判官 2026-09-04 P1-2 —— 两步计划(先出图、再出片)那张卡上的**片段预估**。
-  //
-  // 那个数不是内部记录:确认卡把它渲染成商家正要批准的总价。Step 3.6 的守卫写的是
-  // `kind === "video"`,而这张卡的 kind 是 image,于是整条绕过去 —— 商家说「4k」,
-  // 卡上出现一个他没点过的档的价,第二步真铸卡时又会被拒。
+  // FC-3 —— 这里曾经是「两步计划那张卡上的片段预估」四条用例(判官 2026-09-04 P1-2):
+  // `forVideo:true` 的图片卡按商家点名的画质替第二步报价,点不到的档整张卡不铸。
+  // S5 批量裁决 2026-09-12(#1358 / creation-engine.md:186)把这条两步路整段判退,入参
+  // 字段与实现分支一起报废,所以那四条钉的行为已经不存在。它们守的那个真问题 ——
+  // 「点名的画质档给不了就拒绝、$0」—— 由上面视频路的 Step 3.6 那一组用例原样守着,
+  // 而视频路正是裁决之后唯一的那条路。
   // -------------------------------------------------------------------------
-  const twoStepInput = {
-    kind: "image" as const,
-    structuredPrompt: "A hero still of the pandan kaya jar, for the opening frame",
-    entityIds: [] as string[],
-    variantSel: {} as Record<string, string>,
-    forVideo: true,
-  };
-  /** 第二步**真正会铸**的那张卡 —— 预估要对得上的是它,不是一个手抄的数字。 */
-  function secondStepCard(desiredResolution?: string) {
-    return buildProposeCard(
-      { ...videoInput, ...(desiredResolution ? { desiredResolution } : {}) },
-      makeCtx({ sourceGenerationId: "gen_img" }),
-      [],
-    ).cardPayload;
-  }
-
-  it("CREATE-A1 两步计划点名 1080p ⇒ 片段预估就是**这一档**的价(与第二步真会铸的那张卡逐分相等)", () => {
-    const { cardPayload } = buildProposeCard(
-      { ...twoStepInput, desiredResolution: HD_VIDEO_RESOLUTION },
-      makeCtx(),
-      [],
-    );
-    const second = secondStepCard(HD_VIDEO_RESOLUTION);
-    expect(second.params.resolution).toBe(HD_VIDEO_RESOLUTION);
-    expect(cardPayload.videoStep?.estimatedCredits).toBe(second.estimatedCredits);
-    // 而且它确实不是默认档那个数 —— 否则这条断言等于什么都没钉。
-    expect(cardPayload.videoStep?.estimatedCredits).not.toBe(secondStepCard().estimatedCredits);
-  });
-
-  it("CREATE-A4 两步计划点名给不了的档(4k)⇒ 一张卡都不铸,而**不是**悄悄按默认档报一个价", () => {
-    expect(() =>
-      buildProposeCard({ ...twoStepInput, desiredResolution: "4k" }, makeCtx(), []),
-    ).toThrow(VideoTierUnavailableError);
-    // 与视频路同一句话:他点的那一档 + 能给的那几档,一个引擎名都没有。
-    try {
-      buildProposeCard({ ...twoStepInput, desiredResolution: "4k" }, makeCtx(), []);
-    } catch (e) {
-      expect(e).toBeInstanceOf(ProposeRefusal);
-      const message = (e as Error).message;
-      expect(message).toContain("4k");
-      expect(redactProviderNames(message)).toBe(message);
-    }
-  });
-
-  it("CREATE-A4 两步计划没点名画质 ⇒ 预估照旧是默认档(旧行为逐字保留)", () => {
-    const { cardPayload } = buildProposeCard(twoStepInput, makeCtx(), []);
-    expect(cardPayload.videoStep?.estimatedCredits).toBe(secondStepCard().estimatedCredits);
-  });
 
   it("CREATE-A4 `proposeInput` 逐字收下 desiredResolution —— 这个字段唯一的运行时看守", async () => {
     const { proposeInput } = await import("./propose.helpers.js");
@@ -1871,15 +1796,6 @@ describe("CREATE-A4 商家点名的画幅", () => {
     expect(cardPayload.downgraded).toBe(false);
   });
 
-  it("CREATE-A4 两步计划(forVideo)的图片步同样守:要 4:5 ⇒ 整张卡不铸", () => {
-    expect(() =>
-      buildProposeCard(imageInput("4:5", { forVideo: true }), makeCtx(), []),
-    ).toThrow(ImageAspectUnavailableError);
-    expect(() =>
-      buildProposeCard(imageInput("3:4", { forVideo: true }), makeCtx(), []),
-    ).not.toThrow();
-  });
-
   it("CREATE-A4 读不懂的形状(banner / 空写法)一律拒绝,绝不猜一格去花钱", () => {
     for (const shape of ["banner", "5:0", "0:5"]) {
       expect(() => buildProposeCard(imageInput(shape), makeCtx(), []), shape).toThrow(
@@ -1899,19 +1815,20 @@ describe("CREATE-A4 商家点名的画幅", () => {
 
 
 // ---------------------------------------------------------------------------
-// 两步任务 = 一条任务:Step 1 的卡带着第二步的**冻结计划**
-// (Codex 只读 E2E E2E-CRE-PAV-004;规格 docs/specs/creation-engine.md §5 2026-09-04)
+// 一句话 = 一条任务:@演员 + 挂着的产品图 ⇒ **一张视频卡**
+// (原 E2E-CRE-PAV-004 的两步版;FC-3 / S5 批量裁决 2026-09-12 #1358 之后改写)
 //
-// Codex 抓到的原话是 Otto 的一句 `Once you approve and generate it, bring that image
-// back here` —— 内部接缝直接漏到商家面前。根因不在措辞:两步计划在这之前只是第一张卡上
-// 的一行价格披露,系统里没有任何一处会在图出来之后接着走第二步,所以 Otto 唯一诚实的
-// 下一句就只剩「你自己把图带回来」。
+// 这一组从前钉的是「两步计划的 Step 1 卡」:商家一句话 ⇒ 先铸一张付费首帧图,卡上冻着
+// 第二步的规格,出图之后由服务端接力铸第二张卡。裁决(creation-engine.md:186)把「合成
+// first frame」对**所有**路径判了退场,入参字段、实现分支与接力模块一起报废,所以那五条
+// 钉的形状已经不存在。
 //
-// 这一组钉的是那条链的**第一段**:商家一句话(产品图 + @演员 + 要 9:16 / 5 秒 / 无声的片子)
-// ⇒ 铸出的 Step 1 卡上,第二步的规格与两份回执都在。接力那一段(出图后自动铸第二张卡)
-// 由 `../video-step-handoff.test.ts` 与 worker 的真库用例钉。
+// 它们守的两件真事照旧钉住,只是换到裁决之后唯一那条路(一步直达的视频卡)上:
+//   · 挂图与 @元素的**回执**在卡上(商家按下 Generate 之前认得出上车的是哪一只杯子、哪一位);
+//   · 批准价只是**这一张卡**的价,不含任何第二步。
+// 现场复现与「不许再提议先出一张图」在 ./propose-no-generic-first-frame.test.ts。
 // ---------------------------------------------------------------------------
-describe("CREATE-A1 两步任务的 Step 1 卡", () => {
+describe("CREATE-A1 一步直达的视频卡", () => {
   /** 商家在画布 B 的 Library 里选中的那张产品图 —— 服务端解析出来的回执(名字/缩略图/出处)。 */
   const PRODUCT_RECEIPT = {
     generationId: "gen_tumbler",
@@ -1933,113 +1850,64 @@ describe("CREATE-A1 两步任务的 Step 1 卡", () => {
       mediaReferences: [PRODUCT_RECEIPT],
     });
 
-  /** Otto 拆出来的第一步:9:16 的首帧图,带产品参考与 @Xinyi。 */
-  const step1Input = {
-    kind: "image" as const,
-    structuredPrompt: "Xinyi holding the tumbler in a warm-toned cafe, tall vertical frame",
+  /** 商家那一句:@Xinyi 举起这只杯子喝一口再对镜头笑,5 秒、9:16、无声。 */
+  const oneStepInput = {
+    kind: "video" as const,
+    structuredPrompt: "Xinyi raises the tumbler, takes a sip, then smiles at the camera",
     entityIds: [XINYI.id],
     variantSel: {} as Record<string, string>,
     desiredAspect: "9:16",
-    forVideo: true,
-    // 第二步那条片子:5 秒、9:16、无声。
-    videoPrompt: "Xinyi raises the tumbler, takes a sip, then smiles at the camera",
     desiredDuration: 5,
     desiredAudio: false,
   };
 
-  it("CREATE-A1 一句话 ⇒ Step 1 的卡冻结了第二步的整份规格(片子的话、形状、长度、声音)", () => {
-    const { cardPayload } = buildProposeCard(step1Input, scenarioCtx(), [XINYI]);
+  it("CREATE-A1 一句话 ⇒ 一张视频卡,规格照商家点的那几格,没有第二步", () => {
+    const { cardPayload } = buildProposeCard(oneStepInput, scenarioCtx(), [XINYI]);
 
-    expect(cardPayload.kind).toBe("image");
-    expect(cardPayload.params.aspectRatio).toBe("9:16");
-    // 第二步不是一行价,而是一份**规格**:出图之后照它铸第二张卡,不必再问商家一次。
-    expect(cardPayload.videoStep?.next).toEqual({
-      structuredPrompt: step1Input.videoPrompt,
-      desiredAspect: "9:16",
-      desiredDuration: 5,
-      desiredAudio: false,
-    });
+    expect(cardPayload.kind).toBe("video");
+    expect(cardPayload.params.durationSeconds).toBe(5);
+    expect(cardPayload.videoStep).toBeUndefined();
   });
 
-  it("CREATE-A2 Step 1 的卡上两份回执都在:产品图那一件 + @Xinyi 那一位", () => {
-    const { cardPayload } = buildProposeCard(step1Input, scenarioCtx(), [XINYI]);
+  it("CREATE-A2 卡上两份回执都在:产品图那一件 + @Xinyi 那一位", () => {
+    const { cardPayload } = buildProposeCard(oneStepInput, scenarioCtx(), [XINYI]);
 
-    // 媒体参考回执 —— 商家在按下 `Generate` 之前认得出上车的是哪一只杯子。
-    // CRE-STG-P1-003 起卡上那一份比服务端解析出来的多一格 `role`:这是一张图片卡的
-    // 第一张挂图,所以它坐第 0 位(引擎的编辑底图 `<Image_1>`,商家读到 "Base image")。
-    expect(cardPayload.sourceGenerationId).toBe(PRODUCT_RECEIPT.generationId);
-    expect(cardPayload.mediaReferences).toEqual([{ ...PRODUCT_RECEIPT, role: "baseImage" }]);
+    // 媒体参考回执 —— 商家在按下 `Generate` 之前认得出上车的是哪一只杯子。计划里有一位
+    // 演员,所以那张挂图作**参考**随行(`videoAttachmentRole`),不是首帧。
+    expect(cardPayload.sourceGenerationId).toBeUndefined();
+    expect(cardPayload.referenceGenerationIds).toEqual([PRODUCT_RECEIPT.generationId]);
+    expect(cardPayload.mediaReferences).toEqual([{ ...PRODUCT_RECEIPT, role: "reference" }]);
     // 元素身份快照 —— 引擎认人那几句指令里的名字,批准前看得见。
     expect(cardPayload.approvedEntities).toEqual([XINYI]);
     expect(cardPayload.entityIds).toEqual([XINYI.id]);
   });
 
-  it("CREATE-A1 第二步的预估与冻结计划**共用同一份输入**(卡上的价与第二张卡的价同源)", () => {
-    const { cardPayload } = buildProposeCard(step1Input, scenarioCtx(), [XINYI]);
-    // 第二步真正会铸的那张卡 —— 预估要对得上的是它,不是一个手抄的数字。
-    const second = buildProposeCard(
-      {
-        kind: "video",
-        structuredPrompt: cardPayload.videoStep!.next!.structuredPrompt,
-        entityIds: [],
-        variantSel: {},
-        desiredAspect: cardPayload.videoStep!.next!.desiredAspect,
-        desiredDuration: cardPayload.videoStep!.next!.desiredDuration,
-        desiredAudio: cardPayload.videoStep!.next!.desiredAudio,
-      },
-      makeCtx({ sourceGenerationId: PRODUCT_RECEIPT.generationId }),
-      [],
-    ).cardPayload;
-    expect(cardPayload.videoStep?.estimatedCredits).toBe(second.estimatedCredits);
+  it("CREATE-A2 批准价就是**这一张卡**的价:没有任何第二步并进来", () => {
+    const { cardPayload } = buildProposeCard(oneStepInput, scenarioCtx(), [XINYI]);
+    const thisCardOnly = displayCredits(
+      pricedGenCredits({
+        kind: "VIDEO",
+        model: cardPayload.model,
+        count: 1,
+        videoOptions: {
+          seconds: cardPayload.params.durationSeconds,
+          resolution: cardPayload.params.resolution,
+          audio: cardPayload.params.audio,
+        },
+      }),
+    );
+    expect(cardPayload.estimatedCredits).toBe(thisCardOnly);
   });
 
-  it("CREATE-A1 没给片子的话 ⇒ 不冻结第二步(老卡形状逐字保留,只有那一行预估)", () => {
-    const { videoPrompt: _dropped, ...withoutVideoPrompt } = step1Input;
-    const { cardPayload } = buildProposeCard(withoutVideoPrompt, scenarioCtx(), [XINYI]);
-    expect(typeof cardPayload.videoStep?.estimatedCredits).toBe("number");
-    expect(cardPayload.videoStep?.next).toBeUndefined();
-  });
-
-  it("CREATE-A2 第二步的话这个形状撑不起来 ⇒ 一张卡都不铸(拒绝在花钱之前,$0)", () => {
-    // 「严格编辑 <Video_1>」需要一条参考片,而两步计划第二步手上只有一张首帧。
-    // 若不在这里拦,商家会为第一步付钱,而第二步永远不会出现 —— 一次沉默的半截任务。
+  it("CREATE-A2 这段话这个形状撑不起来 ⇒ 一张卡都不铸(拒绝在花钱之前,$0)", () => {
+    // 「严格编辑 <Video_1>」需要一条参考片,而这一轮手上只有一张图。
     expect(() =>
       buildProposeCard(
-        { ...step1Input, videoPrompt: `${VIDEO_EDIT_OPENING} the tumbler to be red.` },
+        { ...oneStepInput, structuredPrompt: `${VIDEO_EDIT_OPENING} the tumbler to be red.` },
         scenarioCtx(),
         [XINYI],
       ),
     ).toThrow(ProposeRefusal);
-  });
-
-  // ── Codex 全 beta 审计 P0-002 ────────────────────────────────────────────
-  //
-  // 现场:商家按下 `Generate · 14 credits` 启动那条片子之后,Otto 又问「A) 现在这支
-  // B) 更稳的两步先出首帧」。那是一个**站在付费卡旁边**的选择题 —— 商家答哪一边都
-  // 已经付过钱了。
-  //
-  // 这道题本来就不该存在:两步接力落地之后,「先出图再出片」不是两个方案,而是**同一个
-  // 方案**,一次 `propose`(`forVideo` + `videoPrompt`)就铸完,第二张卡自己会出现。
-  // 下面这条钉的就是这个结构事实;Otto 那句自由文本由 instructions 的硬规矩管
-  // (`instructions.test.ts` 的 CREATE-A2 一条),两者一起构成这条验收。
-  it("CREATE-A2 两步计划的卡只为**第一步**报价:第二步的预估另占一格,不并进批准价", () => {
-    // 判官 2026-09-04 P2-3:上一版这条叫「只铸一张卡、两步已冻在卡上」,却一条都没断言
-    // 那件事 —— `buildProposeCard` 按构造只返回一张卡,而 `videoStep.next` 的深等与上面
-    // 「冻结了第二步的整份规格」逐字重复。改成钉它真正量到的东西:**批准价的口径**。
-    //
-    // 这一条也是 P0-002「按下 Generate 之后不再给选择题」的结构那一半:两步的钱分两次
-    // 各自确认,所以「现在这支 / 更稳的两步」根本不是一道要商家回答的题 —— 他批准的这张
-    // 卡只会扣第一步的钱,第二步的价另行呈上。
-    const { cardPayload } = buildProposeCard(step1Input, scenarioCtx(), [XINYI]);
-    const firstStepOnly = displayCredits(
-      pricedGenCredits({ kind: "IMAGE", model: cardPayload.model, count: 1, videoOptions: null }),
-    );
-    expect(cardPayload.estimatedCredits).toBe(firstStepOnly);
-    // 第二步的预估是**另一格**,而不是加进上面那个数里。
-    const videoEst = cardPayload.videoStep?.estimatedCredits;
-    expect(typeof videoEst).toBe("number");
-    expect(videoEst).toBeGreaterThan(0);
-    expect(cardPayload.estimatedCredits).not.toBe(firstStepOnly + (videoEst ?? 0));
   });
 });
 

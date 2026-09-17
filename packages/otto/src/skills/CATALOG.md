@@ -32,6 +32,7 @@
 | meta-insights | free | read | external | ❌ | Read the user's connected Meta (Facebook/Instagram) ad-account performance (spen |
 | meta-list-objects | free | read | external | ❌ | List the user's connected Meta (Facebook/Instagram) ad objects (campaigns, ad se |
 | planCampaign | free | write | internal | ❌ | Create a Campaign container; propose, update, remove, or mark approved a structu |
+| prepareStoryboardVideos | free | write | internal | ❌ | Turn a storyboard into one confirmable video card per shot. Call this whenever t |
 | propose | free | write | internal | ❌ | Build a generation proposal (GEN_CARD) the user can approve and generate later.  |
 | propose-ad-build | free | write | internal | ❌ | Build a Meta ad creation proposal (BUILD_CARD) the user can review and confirm.  |
 | propose-meta-action | free | write | internal | ❌ | Build a Meta ad action plan (ACTION_CARD) the user can review and confirm. Use t |

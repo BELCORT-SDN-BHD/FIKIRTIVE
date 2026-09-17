@@ -175,7 +175,6 @@ export async function proposeClipActionCard(
             desiredDuration: undefined,
             desiredAudio: undefined,
             count: 1,
-            forVideo: undefined,
           },
           ctx,
           [],
