@@ -1,0 +1,249 @@
+{
+  "group": "preflight-fixtures",
+  "buildSha": "eed4f079 at preflight (12:51:59Z); staging redeployed MID-RUN to 4496bc3b, then 57ce7ee6 (see findings[0])",
+  "signedInAs": "tenant A (org 'founder'), display name 'tools', super-admin — email masked",
+  "startedUtc": "2026-09-16T12:48:25Z",
+  "endedUtc": "2026-09-16T13:50:00Z",
+  "spendUsdThisGroup": 0.0,
+  "spendUsdCumulative": 0.0,
+  "steps": [
+    {
+      "id": "P0-1",
+      "step": "GET /api/health — build sha + worker roles",
+      "utc": "2026-09-16T12:51:59Z",
+      "url": "/api/health",
+      "action": "navigate + get_page_text",
+      "observed": "{\"ok\":true,\"db\":\"up\",\"worker\":\"up\",\"workers\":{\"worker-compute\":\"up\",\"worker-wait\":\"up\",\"worker\":\"stale\"},\"backup\":\"fresh\",\"migrations\":\"applied\",\"build\":{\"sha\":\"eed4f079\",\"ref\":\"main\"}} — sha MATCHES required eed4f079; note worker role 'worker' reported 'stale' (worker-compute and worker-wait up)",
+      "verdictClause": "P0 build gate"
+    },
+    {
+      "id": "P0-2",
+      "step": "Confirm signed-in identity via the account menu",
+      "utc": "2026-09-16T12:53:40Z",
+      "url": "/billing",
+      "action": "click 'Account menu', zoom",
+      "observed": "Account menu shows display name 'tools' (email masked), Profile / Sign out, and footer 'Build eed4f079' — second independent confirmation of the build. Sign out NOT clicked.",
+      "verdictClause": "P0 identity"
+    },
+    {
+      "id": "P0-3",
+      "step": "Read /billing balance and the disclosed understanding/search pricing",
+      "utc": "2026-09-16T12:53:10Z",
+      "url": "/billing",
+      "action": "get_page_text",
+      "observed": "Available balance 9,999,797.8 credits; On hold: 'Nothing on hold'; 'Credits don't expire'. Auto-understanding disclosure: '0.1 credits an image and 0.1 credits a video. An image that turns out to be a menu or a price list is also read as a document, for 0.1 credits more. You are charged the price in effect when the file is queued for understanding'. Web search in chat: 0.3 credits/search, max 5 per message, cap 1.5 credits.",
+      "dbDelta": "CreditAccount founder: balance=99997978 internal, reserved=0 (99997978/10 = 9,999,797.8 display credits)",
+      "verdictClause": "P0 balance baseline"
+    },
+    {
+      "id": "P0-4",
+      "step": "DB baseline (read-only: BEGIN READ ONLY / ROLLBACK)",
+      "utc": "2026-09-16T12:48:25Z",
+      "url": "staging Postgres (public URL read from Railway into one python subprocess; never echoed, never written to disk, never on a command line)",
+      "action": "SELECT only",
+      "observed": "CreditLedger rows for org founder = 155 (latest 2026-09-14 05:54:32.713); GenJob latest id 01M2F736BR2VBJEJ8H1SV73F5X (2026-09-14 05:44:00.138), GenJob total 38; RefGenJob total 0; Asset count founder = 40; AssetUnderstanding count founder = 3; db now() = 2026-09-16 12:48:25Z",
+      "dbDelta": "frozen provider spend last 24h: GenJob sum(spentUsd)=0, RefGenJob sum(spentUsd)=0 — i.e. 'Spend today' = US$0.00 at baseline",
+      "verdictClause": "P0 DB baseline"
+    },
+    {
+      "id": "P0-5",
+      "step": "arkcli login state + usage baseline",
+      "utc": "2026-09-16T12:53:20Z",
+      "url": "local CLI",
+      "action": "arkcli auth status --format json; arkcli usage stats --start/--end today --interval Hour --by model --format json",
+      "observed": "logged_in=True. Usage baseline for today: data_count=0, records=[] (zero provider usage recorded for the day at preflight). Output masked; no keys/tokens printed.",
+      "verdictClause": "P0 provider bill baseline"
+    },
+    {
+      "id": "R12-1",
+      "step": "Create fixtures and record sha256 + specs BEFORE upload",
+      "utc": "2026-09-16T12:53:00Z",
+      "url": "local scratch dir",
+      "action": "python3 PIL + ffmpeg, then shasum -a 256 / ffprobe",
+      "observed": "PNG 1024x1024 'R3 real 2026-09-15' 2370 bytes sha256 af11a68e4de88c4e8a3ccb6c19a5413fb7277d3cf5165bf9673617a6e01abc4c; JPEG 1280x720 6210 bytes sha256 0f0106b3d8a76d5ed6fae15ec437e11cf43b408fd131ab208c1c416e97d57648; MP4 1280x720 3.000000s (video+audio) 13983 bytes sha256 bbba9fb5476808f2f0aa76384ffe32eadd370d0dced762ca06523a065c2a9c4b. No real faces. A 4th file (JPEG 15536 bytes sha256 3934d7fe9ab2e46b4a5148d4c184c12218fa760e18cc2e8ab700b486b5f79818) was uploaded accidentally — see toolProblems[0].",
+      "verdictClause": "REAL-12 fixture provenance"
+    },
+    {
+      "id": "R12-2",
+      "step": "Upload PNG through the product's own upload entry",
+      "utc": "2026-09-16T12:55:00Z",
+      "url": "/create (StartSomething 'Add a reference' — accept image/png,image/jpeg,image/webp; per code the one upload authority uploadFilesDirect + finalizeCandidateUploads)",
+      "action": "set the product's own hidden file input via DataTransfer + change event (the in-app Browser has no OS file picker); in-page sha256 of the File verified BEFORE dispatch",
+      "observed": "In-page File sha256 af11a68e… matches the local file exactly. UI: 'r3-fixture-1024.png' chip appears in the composer; a new canvas 'New canvas / Updated 16 Sept 2026' is auto-created (project canvas_d5474dca-49a8-4fd6-bc94-df27c9743982).",
+      "dbDelta": "Asset 01M2N4HXE6WV6KY89EC2CF053R — contentHash=af11a68e…(EXACTLY the local sha256), ext=png, mime=image/png, sizeBytes=2370, width=1024, height=1024, source=UPLOAD, originalFilename=r3-fixture-1024.png. Generation 01M2N4HXEHQG9ACYAFNQRQJB1Q source=UPLOAD in that project.",
+      "verdictClause": "REAL-12 real bytes stored / stored specs reported"
+    },
+    {
+      "id": "R12-3",
+      "step": "Upload JPEG through the same entry (gzip+base64 transport with pre-dispatch hash guard)",
+      "utc": "2026-09-16T13:02:23Z",
+      "url": "/create",
+      "action": "same input; guard aborted a corrupted transfer first (size 5926 != 6210) and only dispatched once the in-page sha256 matched",
+      "observed": "Guarded dispatch: in-page sha256 0f0106b3… size 6210 — exact match, then dispatched.",
+      "dbDelta": "Asset 01M2N4ZDM62EXN5PCR8RMSCGQS — contentHash=0f0106b3…(exact), ext=jpg, mime=image/jpeg, sizeBytes=6210, width=1280, height=720.",
+      "verdictClause": "REAL-12 real bytes stored"
+    },
+    {
+      "id": "R12-4",
+      "step": "Upload MP4 through the product's video-capable upload entry",
+      "utc": "2026-09-16T13:35:30Z",
+      "url": "/create/canvas?project=canvas_dad82159-… (Otto composer 'Attach a file', accept image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm)",
+      "action": "set the input (hash-guarded), product then offered 'Cancel / Use whole video / Use this frame'; chose 'Use whole video' (a non-spending control). Clicked via the product's own button element because the Browser pane was hidden and coordinate clicks could not composite (toolProblems[1]).",
+      "observed": "In-page sha256 bbba9fb5… size 13983 exact. UI: composer chip changes to 'Video ref'. Product enforces a 2–6s reference-video window (code: isRefVideoDurationOk); the 3s fixture passes.",
+      "dbDelta": "Asset 01M2N6WAR24NWCJEVJRXH5QMF3 — contentHash=bbba9fb5…(exact), ext=mp4, mime=video/mp4, sizeBytes=13983, width=1280, height=720, durationS=3.",
+      "verdictClause": "REAL-12 real bytes stored / stored duration reported"
+    },
+    {
+      "id": "R12-5",
+      "step": "Understanding charge per upload — ledger and price snapshot",
+      "utc": "2026-09-16T13:36:46Z",
+      "url": "read-only DB",
+      "action": "SELECT AssetUnderstanding + CreditLedger + CreditAccount",
+      "observed": "One AssetUnderstanding row per upload, all status DONE, all priceInternalSnapshot=1 (non-null, i.e. NOT written free): image-caption rows 01M2N4JS0KAKPPDY3KMQYQJKXJ / 01M2N4T3CK5G46BDZCZSK19JB4 / 01M2N4ZK5S8KFBG87PGM93XNT1 (each cascadePriceInternal=1) and video-qa row 01M2N6Y62EVXZF7TVN366MYV5E (cascadePriceInternal=null — no doc-extract cascade for video). Row is created first, THEN reserved, THEN settled.",
+      "dbDelta": "Per upload: RESERVE (balanceDelta=-1, reservedDelta=+1, idempotencyKey reserve:understanding:<rowId>) then SETTLE (balanceDelta=0, reservedDelta=-1, settle:understanding:<rowId>). 8 ledger rows total; CreditLedger 155 -> 163. Balance 99997978 -> 99997974 internal (-4). UI /billing 9,999,797.8 -> 9,999,797.4 credits. Matches the disclosed 0.1 credits per image and per video.",
+      "verdictClause": "REAL-12 understanding not written as free before settlement"
+    },
+    {
+      "id": "R12-6",
+      "step": "Get the bytes back out",
+      "utc": "2026-09-16T13:40:00Z",
+      "url": "/files/u/founder/<contentHash>.<ext> (storageKey = u/<ownerId>/<hash>.<ext>, served via storageKeyToSrc)",
+      "action": "fetch(url,{credentials:'include'}) then sha256 via crypto.subtle; then media-element decode",
+      "observed": "Byte fetch BLOCKED: the media route answers with a redirect to object storage and the page CSP refuses to follow it (fetch -> TypeError: Failed to fetch; with redirect:'manual' -> status 0, type 'opaqueredirect'). The in-app Browser also blocks downloads, so the product's Download control could not produce a local file either. Fallback proof that real, non-stub bytes come back: <img>/<video> loaded FROM THE PRODUCT'S OWN MEDIA URL decode with the exact source specs — png 1024x1024, jpgB 1280x720, mp4 1280x720 duration 3. Also each upload appears in the Otto '@' picker as 'Upload · Library', i.e. server-backed.",
+      "verdictClause": "REAL-12 download back / same hash — PARTIAL (see verdicts)"
+    },
+    {
+      "id": "R12-7",
+      "step": "Server-side hash identity guarantee",
+      "utc": "2026-09-16T13:42:00Z",
+      "url": "apps/worker/src/jobs/ingest.ts (origin/main)",
+      "action": "read code",
+      "observed": "Ingest doc contract: 'direct uploads name their own key with a client-claimed sha256 — the worker streams the stored bytes, re-hashes, and deletes mismatches (object + soft-deleted row). The claimed hash is a fast-path hint only; this hash is truth.' All four Asset rows survived ingest (their metadata probe filled width/height/durationS), so the STORED object's real hash equals the local file sha256 in every case.",
+      "verdictClause": "REAL-12 same hash (server-side receipt)"
+    },
+    {
+      "id": "R12-8",
+      "step": "Provider-bill cross-check of the understanding spend",
+      "utc": "2026-09-16T13:45:00Z",
+      "url": "local CLI (arkcli)",
+      "action": "arkcli usage stats for today, masked",
+      "observed": "Delta vs the zero baseline: 3 requests, 2646 input tokens, 150 output tokens, model seed-2-0-mini, ImageCount 0. That matches the product's own recorded per-row tokens for the three image captions EXACTLY (926+860+860=2646 in, 57+24+69=150 out). The 4th (video-qa, 6662/46) had not yet appeared — arkcli stats lag 5–30 min. ImageCount 0 confirms no generation was billed.",
+      "verdictClause": "provider spend reconciliation"
+    },
+    {
+      "id": "FIX-1",
+      "step": "Create the REAL-03 fixture product 'R3 real 2026-09-15 mug' in /brand",
+      "utc": "2026-09-16T13:47:00Z",
+      "url": "/brand, /library (Elements > Products)",
+      "action": "enumerate every control on /brand; enumerate the Otto '@' picker; check DB for an existing fixture",
+      "observed": "NOT POSSIBLE through the shipped UI. /brand exposes exactly five sections — Brand voice, Audiences, Knowledge base, Style guide, Visual guidelines — and no 'Your products' / '+ Add product' control (full control enumeration captured). Library > Elements > Products shows 'No products yet — Elements you and Otto save while creating show up here' (read-only). The '@' picker offers no create-product option. DB: zero products with that name; the only PRODUCT Entity (01M287A4JC1ZC19MDM633HJ6E1 'R2 Coral Tumbler RENAMED') is soft-deleted. I did not invent a path (no direct server-action call, no Otto chat turn) because that would be a fabricated flow and an unbudgeted charge.",
+      "verdictClause": "REAL-03 fixture prerequisite"
+    },
+    {
+      "id": "DRIFT-1",
+      "step": "Mid-run build drift detected",
+      "utc": "2026-09-16T13:29:00Z",
+      "url": "/api/health (polled 10x, no-store)",
+      "action": "fetch /api/health repeatedly after uploads started failing",
+      "observed": "All 10 polls returned sha 4496bc3b — no longer eed4f079. At 13:33Z a further poll returned 57ce7ee6. Local git confirms both are real main commits merged during the run: 4496bc3b merged 2026-09-16 13:13:06Z (PR #1460), 57ce7ee6 merged 13:24:34Z (PR #1455). Between those, the app briefly served a blank page (redeploy restart).",
+      "verdictClause": "build attribution"
+    }
+  ],
+  "verdicts": [
+    {
+      "id": "P0",
+      "status": "PASS",
+      "clausesProven": [
+        "build sha equals eed4f079 at preflight — proven twice (GET /api/health 12:51:59Z and the account menu footer 'Build eed4f079')",
+        "worker roles recorded: worker-compute up, worker-wait up, worker 'stale'; db up, migrations applied, backup fresh",
+        "signed-in identity confirmed via the account menu (tenant A / org 'founder', display name 'tools'; email masked)",
+        "/billing balance recorded: 9,999,797.8 credits, nothing on hold (DB: balance=99997978 internal, reserved=0)",
+        "DB baseline recorded: 155 founder ledger rows, latest GenJob id 01M2F736BR2VBJEJ8H1SV73F5X, RefGenJob none, 24h frozen provider spend US$0.00",
+        "arkcli logged in (logged_in=True) with a zero-usage snapshot for the day"
+      ],
+      "clausesNotProven": [],
+      "reason": "Every preflight clause has a receipt. The build gate passed at preflight, so the group proceeded correctly. NOTE: the build did not stay put — see verdict BUILD-DRIFT; all P0 figures are timestamped 12:48–12:53Z on eed4f079."
+    },
+    {
+      "id": "REAL-12",
+      "status": "PARTIAL",
+      "clausesProven": [
+        "returns an actual file, not an empty shell — 4 uploads each produced an Asset row whose stored bytes were probed by the ingest worker, and the product's own media URL serves media that decodes to the exact source specs (png 1024x1024, jpeg 1280x720, mp4 1280x720 / 3s)",
+        "the product reports the stored specs correctly — width/height for all, durationS=3 for the MP4, mime from bytes/ext, exact sizeBytes",
+        "same hash (server-side): stored contentHash equals the local sha256 for all four files, and the ingest worker re-hashes stored bytes and deletes mismatches (apps/worker/src/jobs/ingest.ts), so a surviving row is a receipt that the stored object hashes to the source file",
+        "understanding is NOT written as free before settlement — every AssetUnderstanding row carries priceInternalSnapshot=1 at creation, and money moves RESERVE (-1 balance / +1 reserved) then SETTLE (0 / -1) against refId understanding:<rowId>; 8 ledger rows, balance 99997978 -> 99997974, UI 9,999,797.8 -> 9,999,797.4",
+        "the disclosed price is the charged price — /billing discloses 0.1 credits per image and per video; 4 uploads cost 0.4 display credits",
+        "provider bill reconciles — arkcli usage delta (3 req / 2646 in / 150 out on seed-2-0-mini) matches the product's own per-row token records exactly for the three images"
+      ],
+      "clausesNotProven": [
+        "byte-for-byte comparison of a DOWNLOADED file: the product's media URL 302-redirects to object storage and the page CSP blocks following it (opaqueredirect), while the in-app Browser blocks downloads — so neither the product's Download control nor a scripted fetch could produce local bytes to hash. Identity is established server-side (ingest re-hash) and by media decode, not by a client-side downloaded-byte hash.",
+        "the video leg did not run on the target build eed4f079 — the MP4 only uploaded successfully at 13:35Z, by which time staging was on 57ce7ee6 (the three image uploads at 12:55–13:02Z are attributable to eed4f079)"
+      ],
+      "reason": "Storage identity, reported specs and the full money path are proven with receipts on both the product side and the provider side. The one clause I cannot close is the literal 'download it back and compare the bytes' step, blocked by the sandbox/CSP rather than by the product. Per the PASS rule (every clause proven) this is PARTIAL."
+    },
+    {
+      "id": "REAL-03-FIXTURE",
+      "status": "NOT RUN",
+      "clausesProven": [],
+      "clausesNotProven": [
+        "create ONE product named 'R3 real 2026-09-15 mug' in /brand with the PNG as its image"
+      ],
+      "reason": "Blocked, not skipped: the shipped Brand shell has no product-creation control (five sections only, full enumeration in steps FIX-1), Library > Elements > Products is read-only, and the '@' picker offers no create option. The supporting server action exists (saveBrandRecord kind='product' -> createProduct) but no UI reaches it. I did not call the action directly or drive Otto to do it, since both would fabricate a flow the merchant does not have and the latter would spend unbudgeted chat credits. REAL-03 needs this unblocked first — see findings[2]."
+    },
+    {
+      "id": "BUILD-DRIFT",
+      "status": "BLOCKED",
+      "clausesProven": [
+        "staging served eed4f079 at preflight and 4496bc3b by 13:29Z and 57ce7ee6 by 13:33Z, all confirmed against real main commits"
+      ],
+      "clausesNotProven": [
+        "a single-build attribution for the whole group"
+      ],
+      "reason": "Staging auto-deployed twice mid-run (PR #1460 merged 13:13:06Z, PR #1455 merged 13:24:34Z). The target build eed4f079 no longer exists on staging, so no further R3 evidence can be produced against it. The orchestrator should either pin staging for the run or re-baseline the whole R3 round on a current sha."
+    }
+  ],
+  "writesMade": [
+    "4 uploaded Asset rows (org founder): 01M2N4HXE6WV6KY89EC2CF053R (png), 01M2N4SPM1NKG2GGZTTCGNWXR4 (jpg, accidental corrupted variant — toolProblems[0]), 01M2N4ZDM62EXN5PCR8RMSCGQS (jpg), 01M2N6WAR24NWCJEVJRXH5QMF3 (mp4)",
+    "4 matching Generation rows with source=UPLOAD (Library 'Uploads')",
+    "4 AssetUnderstanding rows created automatically by the product: 01M2N4JS0KAKPPDY3KMQYQJKXJ, 01M2N4T3CK5G46BDZCZSK19JB4, 01M2N4ZK5S8KFBG87PGM93XNT1 (image-caption), 01M2N6Y62EVXZF7TVN366MYV5E (video-qa)",
+    "8 CreditLedger rows (4 RESERVE + 4 SETTLE), net -4 internal credits = -0.4 display credits; no refunds, no adjustments",
+    "1 canvas project auto-created by the /create upload entry: canvas_d5474dca-49a8-4fd6-bc94-df27c9743982 ('New canvas')",
+    "1 Memory row auto-written by Otto from the video understanding: 01M2N6Y9NEK11F406B9WDJFF2S, category 'about', source 'otto', content 'The video displays a solid orange screen with no other visual elements.' — I did NOT delete it (deletion forbidden); see findings[3]",
+    "composer attachments left un-sent in the existing canvas canvas_dad82159-… (no message sent, no generation started)",
+    "NOT written: the REAL-03 fixture product (no UI path — see verdict REAL-03-FIXTURE)"
+  ],
+  "boundaries": [
+    "Zero generation spend: no Approve / Generate / Create variations / Edit and retry / Regenerate / Retry was ever clicked; pre-existing 'Generate · 11 credits' cards in the reused canvas were left untouched; REAL-09 not run",
+    "No GenJob or RefGenJob row was created in the whole run (verified: 0 in the last 24h), so frozen provider USD for this group = US$0.00; cumulative US$0.00, far below the US$16 pause",
+    "Only the authorized fixture writes were made; the one write I could not make (fixture product) was reported rather than forced",
+    "Never signed out; never clicked Connect / Revoke / Delete / Remove / Archive / Unarchive; no profile, workspace, settings, billing or admin control changed; no purchase; no top-up",
+    "DB strictly read-only: every query ran as BEGIN READ ONLY / <select> / ROLLBACK; the database URL was piped inside a single python subprocess, never echoed, never written to a file, never placed on a command line",
+    "No production access; nothing sent externally; no secrets, OTPs or card numbers entered; arkcli output masked (no keys/tokens printed)",
+    "Evidence contains no emails, cookies, bearer tokens, OTPs or token-bearing URLs; tenant referred to as A / org 'founder'",
+    "Browser: only the tab this group opened was used; it is left signed in on the same staging origin. A temporary localhost helper server started for fixture transport was killed at the end (verified: connection refused)"
+  ],
+  "spendUsdThisGroup": 0.0,
+  "spendUsdCumulative": 0.0,
+  "jobIds": [
+    "no GenJob / RefGenJob created (0 rows) — the only worker jobs that consumed provider tokens were the understanding rows below",
+    "understanding:01M2N4JS0KAKPPDY3KMQYQJKXJ (image-caption, 926/57 tokens)",
+    "understanding:01M2N4T3CK5G46BDZCZSK19JB4 (image-caption, 860/24 tokens)",
+    "understanding:01M2N4ZK5S8KFBG87PGM93XNT1 (image-caption, 860/69 tokens)",
+    "understanding:01M2N6Y62EVXZF7TVN366MYV5E (video-qa, 6662/46 tokens)"
+  ],
+  "stoppedForBudget": false,
+  "toolProblems": [
+    "javascript_tool silently corrupts long string literals that contain repeated character runs: a 19,644-char base64 JPEG arrived 1,071 chars short (decoded 15,536 bytes instead of 14,732) and a second attempt lost 284 bytes. The first corruption was only discovered AFTER upload, creating one unintended Asset (01M2N4SPM1NKG2GGZTTCGNWXR4). Mitigation used for everything after: gzip the file (high-entropy, no runs), base64 that, split into ≤5,568-char chunks whose length is verified in-page, decompress via DecompressionStream, and hash-guard before dispatching — abort on mismatch. All later uploads matched byte-exactly.",
+    "The Browser pane was hidden for part of the run, so coordinate clicks failed with 'not compositing frames' and tabs_select did not help. Non-spending product controls ('Use whole video', 'Cancel') were therefore activated via their own button elements. No spending control was ever activated this way.",
+    "Page CSP blocks connect-src to anything but the app origin: fetching a localhost helper server failed, and fetching the product's own media URL fails because it redirects cross-origin to object storage (opaqueredirect). This is what prevented the byte-for-byte download comparison in REAL-12.",
+    "The in-app Browser has no file_upload tool, so uploads had to be injected into the product's own hidden file input via DataTransfer. The upload still goes through the product's real client action (uploadFilesDirect -> authorizeUpload -> finalize); only the OS file picker is bypassed."
+  ],
+  "findings": [
+    "Staging redeployed TWICE during this group (eed4f079 -> 4496bc3b at ~13:13Z -> 57ce7ee6 at ~13:24Z, both real main merges: PR #1460 and PR #1455), including a window where the app served a blank page. The build the round is supposed to test no longer exists on staging. Nothing after ~13:13Z can be attributed to eed4f079, and any later R3 group will silently test a different build unless staging is pinned or the round is re-baselined. This is the single most important result of this group.",
+    "Deploy-time upload failure with a misleading message (product defect, merchant-visible): after a redeploy, an already-open page's server actions return 404 and EVERY upload from that page fails with 'Reference couldn't be attached — We couldn't upload that file. Check your connection and try again.' I confirmed the cause by instrumenting fetch (two POSTs to the page route, both 404, no storage request attempted) and confirmed the cure is a reload: identical bytes that failed repeatedly uploaded first try on a freshly loaded page. The copy blames the merchant's connection for a deploy-side condition, and it cost me ~25 minutes of misdiagnosis (I first believed video upload was broken). Suggest detecting the stale-action 404 and prompting a reload instead.",
+    "Dead-end product creation path (merchant-visible): the product surface tells merchants to create products in Brand — OttoStuff's 'Set as product image' empty state renders 'No products yet — add one in Brand memory' linking to BRAND_MEMORY_HREF, and lib/exits.ts still documents it as \"'Your products' 下的 '+ Add product' 在这个视图里\" (apps/web/components/otto/OttoStuff.tsx:468–472, apps/web/lib/exits.ts:38–39). The shipped /brand shell has only Brand voice / Audiences / Knowledge base / Style guide / Visual guidelines — no products section — and Library > Elements > Products is read-only ('Elements you and Otto save while creating show up here'). So a merchant who follows the product's own instruction lands somewhere with no such control, and there is no human way to create a product. The backing action (saveBrandRecord kind='product' -> createProduct, apps/web/lib/brand-record-actions.ts:228–240) is intact, so this is a missing/unwired UI, not a missing capability. This blocks REAL-03.",
+    "Uploading a video silently writes a brand-memory fact (merchant-visible, privacy/quality): the auto-understanding of my throwaway 3-second orange test clip wrote Memory row 01M2N6Y9NEK11F406B9WDJFF2S (category 'about', source 'otto') containing 'The video displays a solid orange screen with no other visual elements.', and it now renders on /brand as a Brand voice context marked 'Ready / Saved by Otto'. The three image uploads produced no such row. So one reference-clip upload injects an unreviewed sentence into the brand knowledge Otto writes from, with no confirmation step at upload time. Worth a Founder ruling on whether video understanding should propose (draft) rather than save.",
+    "No price disclosure at the upload entry itself: uploading charges 0.1 credits per file immediately (reserve+settle within ~3 s of the scan), but neither /create's 'Add a reference' nor the canvas 'Attach a file' shows any price near the control — the disclosure now lives only on /billing (consistent with the R3-F06 change, commit eed4f079, which removed the persistent cost notes near the input). FRONT-A1 still lists '上传入口价目小字' as a money-engine delivery surface, so if that acceptance row is still live, it and R3-F06 now disagree. Flagging for the Founder rather than assuming which one wins.",
+    "Byte validation only sniffs the header (low severity, self-inflicted input): the accidentally corrupted JPEG (valid JPEG header + trailing garbage) was accepted, stored as image/jpeg 1280x720, and its understanding described it as 'completely black with no visible subjects' — yet the browser cannot decode it at all (<img> onerror from the product's own media URL, while the other two images load fine). A merchant uploading a partially-corrupted photo would be charged for understanding, get a confidently wrong caption, and see a broken image. Not a money-path defect; noted because the caption is written into brand context (see finding above)."
+  ]
+}
