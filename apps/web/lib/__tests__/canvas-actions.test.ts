@@ -177,6 +177,10 @@ describe("listCanvasNodes", () => {
       madeAtLabel: expect.stringMatching(/Jul 30/),
       settings: { durationSeconds: 5, resolution: "720p", aspectRatio: "16:9" },
       costCredits: 8,
+      // 2026-09-16 回执裁决新加的两格。生成卡两格都是 false:费用来自它自己那一单付费任务
+      // (`ledgerByJob`),不是上传素材的自动理解,也不存在「结算还没定论」那个窗口。
+      costIsUnderstanding: false,
+      costPending: false,
       batchSize: 1,
       batchPosition: 1,
     });
