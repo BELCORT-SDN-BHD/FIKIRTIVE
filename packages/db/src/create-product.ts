@@ -30,6 +30,7 @@
 import { newId, normalizeNameKey, productRecordData, stripProductIdentity } from "@fikirtive/core";
 import { Prisma } from "../generated/prisma/client.js";
 import { prisma } from "./client.js";
+import { reconcileEntityCover } from "./entity-cover.js";
 
 /** 交互式事务里的 client;裸 `prisma` 也满足这个形状。 */
 type Tx = Prisma.TransactionClient;
@@ -192,7 +193,10 @@ async function createProductIdentity(
       type: "PRODUCT",
       name: args.name.slice(0, 120),
       brandId,
-      baseAssetId: assetIds[0] ?? null,
+      // 封面**不在这里**决定 —— 挂完图之后由 `reconcileEntityCover` 一处说了算
+      // (Founder 2026-09-15 裁决;家规 §7.3)。这一行从前是 `assetIds[0] ?? null`,
+      // 与其他四条挂图路各写一遍同一句话,正是 Library 与 Brand 两张脸的来源。
+      baseAssetId: null,
     },
   });
   for (let i = 0; i < assetIds.length; i++) {
@@ -200,6 +204,8 @@ async function createProductIdentity(
       data: { id: newId(), ownerId, entityId, assetId: assetIds[i]!, position: i, brandId },
     });
   }
+  // 挂上第一张图 ⇒ 它就是封面(裁决的正面)。一张都没挂就还是 NULL。
+  await reconcileEntityCover(tx, { ownerId, entityId });
   return entityId;
 }
 
@@ -384,7 +390,19 @@ async function writeProductIdentity(
       skipDuplicates: true,
     });
   }
-  return { name, baseAssetId };
+
+  // 显式意图写完之后,把封面调回不变量(Founder 2026-09-15 裁决;复核 P2-③)。
+  //
+  // 这一句管两种情形:
+  //  · `imageAssetId: null`(清空封面)—— 不变量是**全量**的:一件还挂着基础层参考图的产品
+  //    永远有一张封面,所以清空之后落到最早那一张,而不是留下一件没有脸的产品。「没有封面」
+  //    只剩一种成因:一张基础层参考图都没有。Brand 页那颗「Remove from product」于是**永远**
+  //    改不动任何东西(它只在有封面时才画出来,而有封面就意味着有活着的基础层参考图),
+  //    本票同时把它撤掉 —— 见 `apps/web/components/otto/memory/ProductShowcase.tsx`。
+  //  · 指名换图时那张图挂不上(不是自己的、或已成墓碑)—— 上面保持原样不动,这里再核一次,
+  //    原来钉着的那张若已成墓碑就落到下一张,不留一个指着墓碑的封面。
+  const pinned = await reconcileEntityCover(tx, { ownerId, entityId });
+  return { name, baseAssetId: pinned };
 }
 
 export type UpdateProductRecordInput = {

@@ -17,7 +17,7 @@ import {
   ReferencePickerMenu,
   type ReferencePickerRow,
 } from "@/components/reference-picker/ReferencePickerMenu";
-import { referenceSourceLine } from "@/lib/reference-search-model";
+import { referenceSourceLine, referenceRowThumbUrl } from "@/lib/reference-search-model";
 import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 import type { EntityDTO } from "@/lib/types";
 
@@ -49,11 +49,12 @@ function entityReferenceType(type: EntityDTO["type"]): ReferenceType {
   }
 }
 
-/** The locked base image when there is one, else the first image ref. A video is not a thumbnail. */
+/** A video is not a thumbnail. 挑哪一张的判据住在 `lib/reference-search-model.ts` 一处
+ *  (`referenceRowThumbUrl`;规格 §5,Founder 2026-09-15 裁决,验收 PRODID-A4)—— 身份行认钉着的
+ *  封面,变体行认它自己的第一张图。那一处有单测,这里只负责先把视频筛掉。 */
 function entityThumbUrl(item: MentionItem): string | null {
   const images = (item.refs ?? []).filter((ref) => ref.kind === "image");
-  const base = images.find((ref) => ref.assetId === item.baseAssetId);
-  return base?.url ?? images[0]?.url ?? null;
+  return referenceRowThumbUrl({ images, baseAssetId: item.baseAssetId, variantId: item.variantId });
 }
 
 const MentionList = forwardRef<MentionListHandle, MentionListProps>(function MentionList(props, ref) {

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import {
   prisma, refundReservation, createProduct, confirmProductDraft, renameProductIdentity,
+  reconcileEntityCover,
 } from "@fikirtive/db";
 import {
   fikirtiveEdit,
@@ -495,13 +496,9 @@ export async function createEntity(formData: FormData) {
             data: { id: newId(), ownerId, entityId, assetId: assetIds[i]!, position: i },
           });
         }
-        // the first reference becomes the locked base (same invariant as the migration backfill)
-        if (assetIds[0]) {
-          await tx.entity.update({
-            where: { id_ownerId: { id: entityId, ownerId } },
-            data: { baseAssetId: assetIds[0] },
-          });
-        }
+        // 挂上第一张图 ⇒ 它就是封面。这条规则住在 `@fikirtive/db` 一处
+        // (Founder 2026-09-15 裁决;家规 §7.3)—— 这里从前自己写了一遍同一句话。
+        await reconcileEntityCover(tx, { ownerId, entityId });
       });
     } catch (e) {
       console.error("[entity.create] persist failed:", e instanceof Error ? e.message : e);
@@ -717,18 +714,11 @@ export async function softDeleteReferenceImage(refImageId: string): Promise<{ ok
         where: { id: refImageId },
         data: { deletedAt: new Date() },
       });
-      // if we just removed the entity's base ref, repoint baseAssetId to the next live
-      // base-level ref (or null) — otherwise it dangles at an orphaned asset and variant
-      // generation would still condition on a base the user no longer has.
-      const entity = await tx.entity.findFirst({ where: { id: ref.entityId, ownerId, deletedAt: null }, select: { baseAssetId: true } });
-      if (entity?.baseAssetId === ref.assetId) {
-        const next = await tx.referenceImage.findFirst({
-          where: { ownerId, entityId: ref.entityId, deletedAt: null, variantId: null },
-          orderBy: { position: "asc" },
-          select: { assetId: true },
-        });
-        await tx.entity.updateMany({ where: { id: ref.entityId, ownerId, deletedAt: null }, data: { baseAssetId: next?.assetId ?? null } });
-      }
+      // 拔掉的正好是封面那一张 ⇒ 落到下一张(没有了才是 NULL),否则 `baseAssetId` 会挂在一条
+      // 已经拔掉的引用上,变体生成还会照着一张商家已经删掉的底图去做。
+      // 判据与「挂上第一张即封面」是**同一条**规则,所以这里调的是同一个函数,不再自己写一遍
+      // (Founder 2026-09-15 裁决;家规 §7.3 单一权威)。
+      await reconcileEntityCover(tx, { ownerId, entityId: ref.entityId });
       // 2026-09-03 staging 走查 S4 —— 「商家的 data 商家的权利」:同一张照片可能被去重挂在
       // 别的实体/变体上,或被某个 Generation 用过,判据见 asset-purge.ts;真删只发生在两者
       // 都不成立时。

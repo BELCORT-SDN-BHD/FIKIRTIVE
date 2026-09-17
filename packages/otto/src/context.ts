@@ -410,6 +410,21 @@ export interface OttoContext {
    */
   mediaReferences?: OttoMediaReference[];
   /**
+   * FC-2(staging 2026-09-14 Founder 自己的画布)—— **这条对话此刻正在做的那张图**,
+   * 连同它的回执。服务端按 owner + thread 查出来,模型永远碰不到它。
+   *
+   * 为什么需要它:这一轮的图片槽(`sourceGenerationIds`)只装商家这一轮自己挂的 / `@`
+   * 到的那几件,而 propose 的入参里一个媒体字段都没有 —— 于是「刚交付的那张图」没有
+   * 任何一条路进得了提案。商家接着说「now i wan @Xinyi hold the cat…」时铸出来的卡
+   * `sourceGenerationId=null`,原图不是输入,做出来的猫与商品都不是原来那一只。
+   *
+   * 只有当商家自己的话里读得出「接着那张」时才会被绑上去
+   * (`skills/image-continuation.ts`),而且绑上去之后它带着回执出现在确认卡上 ——
+   * 商家在付钱之前看得见「正在改的是这一张」。缺席(undefined/null)= 这条入口不是
+   * 一次活的商家轮次(分镜子卡、Step-2 接力等系统铸卡),行为与这条修改之前逐字相同。
+   */
+  currentImage?: OttoMediaReference | null;
+  /**
    * FSE-210(PR #1420 判官 P1-1)—— 这一轮服务端解析器(`resolveOwnedReferenceRefs`)已经
    * 核过归属的每个 entity id,与模型 propose 工具参数里自己写的 `entityIds` 无关。
    *
@@ -1089,6 +1104,28 @@ export interface OttoContext {
      *  the rule holds for the merchant's own delete button too, and the port re-states it for Otto.
      *  Owner scope + not-found guard live INSIDE the deleteVariant action (requireOwner). */
     deleteVariant(variantId: string): Promise<{ ok: true } | { error: string }>;
+  };
+  /** Storyboard port (FC-1, $0) — injected by the web caller. ONE function, and it is the SAME
+   *  owner-gated $0 action the merchant's own `Make all videos` button calls
+   *  (`apps/web/lib/storyboard-gate1-actions.ts` → `prepareStoryboardVideos`): read the
+   *  STORYBOARD_CARD, mint the missing per-shot video child GEN_CARDs, and hand back each shot's
+   *  REAL quote. Single action layer (宪法 7 / Seam 9) —— the conversation and the button reach the
+   *  same chain, so the two can never drift into two prices for one shot.
+   *
+   *  $0 by construction: minting a card is not spending. Every child still has to be confirmed by
+   *  the merchant before a credit moves, and that confirmation stays where it has always been —
+   *  the storyboard card's own spend confirmation. Skills reach it ONLY via ctx.storyboard.
+   *  Absent in the minimal worker verdict ctx; the skill degrades gracefully when not injected. */
+  storyboard?: {
+    /** $0: mint/reuse this storyboard's per-shot video child cards and return their quotes.
+     *  `spent: true` = that shot has already been paid for (nothing to confirm again). */
+    prepareVideos(cardId: string): Promise<
+      | {
+          shots: { shotId: string; childCardId: string; estimatedCredits: number; spent: boolean }[];
+          totalCredits: number;
+        }
+      | { error: string }
+    >;
   };
 }
 
