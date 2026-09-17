@@ -57,7 +57,7 @@ import {
   restoreBrandRecord,
 } from "@/lib/brand-record-actions";
 import { listBrandRevisionsAction } from "@/lib/brand-revision-actions";
-import { BRAND_MEMORY_HREF } from "@/lib/exits";
+import { brandRecordsHref } from "@/lib/exits";
 import { repackBrandContent } from "@/lib/brand-context-format";
 import type { BrandContextEntry, BrandSectionView } from "@/lib/brand-context-data";
 import type { BrandRevisionRow } from "@/lib/brand-revision";
@@ -565,11 +565,15 @@ export function BrandWorkspace({
           Brand 落的是默认的 Brand voice(`app/brand/page.tsx` 的 `initialSection`)——
           那一屏上没有任何一条通向产品的路,「去 Brand 页加产品」这句指路到此断掉。
           这句话在哪一节读起来都成立(它说的是「那三类记录在另一页改」),所以不再按节分。
-          地址从 `lib/exits.ts` 取(§7.3 单一源),那一份带着 `?tab=products` —— 落地
-          就是「Add product」那一屏,不是记录编辑器的第一个页签。 */}
+          地址从 `lib/exits.ts` 取(§7.3 单一源)。
+
+          判官 P2-1:落地页签跟着**商家此刻站的这一节**走(`brandRecordsHref(section)`)——
+          站在 Audiences 上点它落「Your customers」,站在 Knowledge base 上落「Your products」;
+          没有自己那类记录的三节(Brand voice / Style guide / Visual guidelines)落回产品,
+          那是本票要修的那条路。五 → 六的对应在 `packages/core`,这里一格都不手写。 */}
       <p className="shrink-0 border-b border-border bg-secondary/40 px-7 py-2.5 text-xs text-muted-foreground">
         Products, offers and audiences are edited on their own page.{" "}
-        <Link href={BRAND_MEMORY_HREF} className="font-medium text-foreground underline underline-offset-2">
+        <Link href={brandRecordsHref(section)} className="font-medium text-foreground underline underline-offset-2">
           Open the record editor
         </Link>
       </p>

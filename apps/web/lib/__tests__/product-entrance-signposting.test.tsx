@@ -18,7 +18,9 @@
  *   ① 地址本身:`BRAND_MEMORY_HREF` 是记录编辑器的 Products 页签,而 `products` 是
  *      `SECTIONS`(`@fikirtive/core/memory-sections`)里真实存在的一个页签 key ——
  *      `?tab=` 认不出来的值会静静落回 "about",那一屏上同样没有「Add product」;
- *   ② Brand 五节**每一节**都画得出一条通向它的链接(而不是五节里的两节);
+ *   ② Brand 五节**每一节**都画得出一条通向它的链接(而不是五节里的两节),而且落在**这一节
+ *      说的那类记录**上(判官 P2-1:站在 Audiences 上点它落到「Your products」,读到的是客群、
+ *      到手的是产品);
  *   ③ Library 的 Products 那一栏空着时,画得出一条通向同一个地址的链接。
  *
  * 它不证的事(留给旅程 23 与判官):那一屏上那颗键按下去真的建得出产品 —— 那是
@@ -30,7 +32,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SECTIONS } from "@fikirtive/core/memory-sections";
 import { SHELL_ROUTES } from "@fikirtive/core/navigation";
 import { capabilitiesForOrigin } from "@fikirtive/core/entity-policy";
-import { BRAND_MEMORY_HREF } from "@/lib/exits";
+import { BRAND_MEMORY_HREF, brandRecordsHref } from "@/lib/exits";
+import type { BrandSectionKey } from "@fikirtive/core/memory-sections";
 import type { BrandSectionView } from "@/lib/brand-context-data";
 import type { LibraryElement } from "@/lib/library-elements-model";
 
@@ -113,9 +116,9 @@ async function mount(element: React.ReactElement): Promise<HTMLDivElement> {
   return container;
 }
 
-/** 屏幕上通向产品编辑器的那些链接(按 href 找,不按文案找)。 */
-function linksToProductEditor(dom: HTMLElement): HTMLAnchorElement[] {
-  return [...dom.querySelectorAll<HTMLAnchorElement>(`a[href="${BRAND_MEMORY_HREF}"]`)];
+/** 屏幕上通向记录编辑器的那些链接(按 href 找,不按文案找)。 */
+function linksToRecordsEditor(dom: HTMLElement, href: string): HTMLAnchorElement[] {
+  return [...dom.querySelectorAll<HTMLAnchorElement>(`a[href="${href}"]`)];
 }
 
 const EMPTY_SECTIONS: BrandSectionView[] = [
@@ -125,6 +128,21 @@ const EMPTY_SECTIONS: BrandSectionView[] = [
   { key: "style-guide", label: "Style guide", entries: [], removed: [] },
   { key: "visual-guidelines", label: "Visual guidelines", entries: [], removed: [] },
 ];
+
+/**
+ * 每一节点过去该落在哪个页签 —— **在这里手写第二遍**,故意的。
+ *
+ * 断言若写成 `brandRecordsHref(section)`,它就只是在复述被测的那个函数:映射表改一格,
+ * 测试跟着改一格,永远绿。这张表是「商家读到的这一节,交到手里的应该是哪类记录」这句话的
+ * 独立一份(判官 P2-1:Audiences 上点它落到「Your products」就是这条被违反)。
+ */
+const EXPECTED_TAB: Record<string, string> = {
+  "brand-voice": "products",
+  audiences: "customers",
+  "knowledge-base": "products",
+  "style-guide": "products",
+  "visual-guidelines": "products",
+};
 
 function libraryProduct(): LibraryElement {
   return {
@@ -153,21 +171,34 @@ describe("R3-F20 ① 指路常量指的是「Add product」那一屏", () => {
     const tab = new URL(BRAND_MEMORY_HREF, "https://fikirtive.test").searchParams.get("tab");
     expect(SECTIONS.map((section) => section.key)).toContain(tab);
   });
+
+  it("R3-F20 判官 P2-1:brandRecordsHref 按出处落页签,每一个落点都是真页签", () => {
+    for (const [section, tab] of Object.entries(EXPECTED_TAB)) {
+      expect(
+        brandRecordsHref(section as BrandSectionKey),
+        `从「${section}」指过去落错了页签`,
+      ).toBe(`${SHELL_ROUTES.brand}/records?tab=${tab}`);
+      expect(SECTIONS.map((item) => item.key), `${tab} 不是记录编辑器认得的页签`).toContain(tab);
+    }
+    // 不带出处 = 产品入口,与常量同一条。
+    expect(brandRecordsHref()).toBe(BRAND_MEMORY_HREF);
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────────
 // ② Brand 五节:每一节都指得出路
 // ───────────────────────────────────────────────────────────────────────────────
-describe("R3-F20 ② Brand 的每一节都有一条通向产品编辑器的链接", () => {
+describe("R3-F20 ② Brand 的每一节都有一条通向记录编辑器的链接,且落在这一节说的那类记录上", () => {
   for (const section of EMPTY_SECTIONS) {
-    it(`R3-F20 「${section.label}」这一节画得出那条链接`, async () => {
+    const expected = `${SHELL_ROUTES.brand}/records?tab=${EXPECTED_TAB[section.key]}`;
+    it(`R3-F20 「${section.label}」这一节画得出那条链接,落在 ?tab=${EXPECTED_TAB[section.key]}`, async () => {
       const dom = await mount(
         createElement(BrandWorkspace, { sections: EMPTY_SECTIONS, initialSection: section.key }),
       );
-      const links = linksToProductEditor(dom);
+      const links = linksToRecordsEditor(dom, expected);
       expect(
         links.length,
-        `商家停在「${section.label}」这一节时,屏幕上没有任何一条通向产品编辑器的路 —— 屏幕上是:${dom.textContent}`,
+        `商家停在「${section.label}」这一节时,屏幕上没有一条落在 ${expected} 的路 —— 屏幕上是:${dom.textContent}`,
       ).toBeGreaterThan(0);
       expect(links[0].textContent?.trim(), "那条链接没有可读的字").not.toBe("");
     });
@@ -194,7 +225,7 @@ describe("R3-F20 ③ Library 的 Products 空态说得出去哪里加一个", ()
     const dom = await mountLibrary([]);
     expect(dom.textContent, "空态那句话不见了").toContain("No products yet");
     expect(
-      linksToProductEditor(dom).length,
+      linksToRecordsEditor(dom, BRAND_MEMORY_HREF).length,
       `商家读到「还没有产品」,却没有下一步 —— 屏幕上是:${dom.textContent}`,
     ).toBeGreaterThan(0);
   });
@@ -202,6 +233,6 @@ describe("R3-F20 ③ Library 的 Products 空态说得出去哪里加一个", ()
   it("R3-F20 已经有产品时不画这条指路 —— 空态的话只在空的时候说", async () => {
     const dom = await mountLibrary([libraryProduct()]);
     expect(dom.textContent).not.toContain("No products yet");
-    expect(linksToProductEditor(dom)).toHaveLength(0);
+    expect(linksToRecordsEditor(dom, BRAND_MEMORY_HREF)).toHaveLength(0);
   });
 });
