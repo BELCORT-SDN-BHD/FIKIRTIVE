@@ -16,6 +16,7 @@
 import { createElement, act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BRAND_MEMORY_HREF } from "@/lib/exits";
 import type { StuffItem } from "@/lib/stuff-items";
 
 const mocks = vi.hoisted(() => ({
@@ -169,7 +170,9 @@ describe("#701 Brand memory is pointed at with a link, not with directions", () 
     expect(dialog!.textContent, "the dialog no longer mentions Brand memory").toContain("Brand memory");
 
     // W2-11:落地地址从旧壳的 /otto?view=memory 换成真路由 SHELL_ROUTES.brand(/brand)。
-    const link = dialog!.querySelector<HTMLAnchorElement>('a[href="/brand"]');
+    // R3-F20:再往里走一层 —— `/brand` 上没有任何产品控件,「Add product」在
+    // `/brand/records` 的 Products 页签上,所以指路必须带着那个页签一起走。
+    const link = dialog!.querySelector<HTMLAnchorElement>(`a[href="${BRAND_MEMORY_HREF}"]`);
     expect(link, "the merchant is told where to go and left to find it themselves").toBeTruthy();
     expect(link!.textContent?.trim()).not.toBe("");
   });
@@ -186,9 +189,9 @@ describe("#701 Brand memory is pointed at with a link, not with directions", () 
     });
 
     expect(dom.textContent).toContain("Brand memory");
-    // W2-11:落地地址从旧壳的 /otto?view=memory 换成真路由 SHELL_ROUTES.brand(/brand)。
+    // R3-F20:同上 —— 指到 `/brand` 就是指到上一层楼,那一屏上没有「Add product」。
     expect(
-      dom.querySelector<HTMLAnchorElement>('a[href="/brand"]'),
+      dom.querySelector<HTMLAnchorElement>(`a[href="${BRAND_MEMORY_HREF}"]`),
       "the same dead pointer, one filter over",
     ).toBeTruthy();
   });
