@@ -17,7 +17,10 @@
  * 契约(#796 起):
  *   - HTTP 200 恒定 = 这个 Web 进程活着。别拿它判断整个系统健康。
  *   - `db`:`"up"` / `"unknown"`(读不到就是不知道,**不再**报 down + 503)。
- *   - `worker`:至少有一班在写心跳;按班真相在 `workers` 里。
+ *   - `worker`:至少有一班在写心跳(`"up"` / `"stale"` / `"unknown"`);按班真相在 `workers` 里。
+ *   - `workers`:一行一班,`"up"` / `"stale"` / `"retired"`。`retired` = 整整一天没人写过的旧行
+ *     (2026-09-15 R3-F19,见 lib/health.ts 的 WORKER_RETIRED_MS):留着让人看得见,但它不是
+ *     「刚停跳的一班」,别和 `stale` 混着处置。
  *   - `migrations`:本次启动的迁移到底跑成了没有(见 apps/web/scripts/boot.mjs)。
  *   - `backup`(#794 ③):`"fresh"` / `"stale"` / `"missing"` / `"unknown"`。
  *   - `build`(2026-09-04 Codex staging 审计):`{sha, ref}`,平台没注入就是 `null`——
