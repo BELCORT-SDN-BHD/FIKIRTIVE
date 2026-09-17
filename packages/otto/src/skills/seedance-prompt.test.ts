@@ -366,7 +366,13 @@ describe("R3-F26 —— 没有首帧的那一趟,提示词不许说「从给定�
 
   it("(b) 挂了图却同时 @ 了演员 ⇒ 挂图作参考照(FC-4 同一条判据),首帧话不出现", async () => {
     const out = await invoke(
-      { ...liveTurn, sourceGenerationIds: ["gen_1"] },
+      {
+        ...liveTurn,
+        sourceGenerationIds: ["gen_1"],
+        // 服务端这一趟真解析出来的 @元素,与它在这家店里的族别 —— 与铸卡那一侧同一份事实。
+        turnEntityIds: ["ent_xinyi"],
+        availableRefs: [{ id: "ent_xinyi", name: "Xinyi", type: "CHARACTER" }],
+      },
       {
         shots: [{ subject: "Xinyi", action: "holds up the bottle" }],
         references: [{ role: "character", name: "Xinyi" }],
@@ -375,25 +381,107 @@ describe("R3-F26 —— 没有首帧的那一趟,提示词不许说「从给定�
     expect(out.prompt).not.toMatch(/first frame|source frame/);
   });
 
+  // ── PR #1466 跨厂复审 P2 —— 反方向:模型多报一个「演员」,不许夺走一张真首帧 ────────
+  // 上一版这道闸数的是**模型**在 `references` 里自己写的 `role:"character"`,而卡面与
+  // worker 数的是**服务端核过归属**的 CHARACTER 元素。同一件事两个证人,于是画布上
+  // 「Animate this result」+ 模型把画面里的人写成一个 character 参考,提示词被降成 t2v、
+  // 两句首帧话被删,卡上却写着 Starting frame、`GenJob.sourceGenerationId` 也真有值 ——
+  // 这条修改自己造出来的一次新的分家。判据改回单一来源之后,这里必须逐字保留。
+  it("(b) 模型多报一个 character、服务端一个 @演员都没有 ⇒ 首帧话原样保留、不发 note", async () => {
+    const out = await invoke(
+      {
+        ...liveTurn,
+        sourceGenerationId: "gen_1",
+        sourceGenerationIds: ["gen_1"],
+        turnEntityIds: [],
+        availableRefs: [{ id: "ent_xinyi", name: "Xinyi", type: "CHARACTER" }],
+      },
+      {
+        shots: [{ subject: "the woman in the frame", action: "turns to the camera" }],
+        // 模型把画面里的人当成一个身份锁来写 —— 它不是一个 @ 到的元素。
+        references: [{ role: "character", name: "the woman in the frame" }],
+      },
+    );
+    expect(out.prompt).toContain("starting from the given first frame,");
+    expect(out.prompt).toContain("keep the subject consistent with the source frame");
+    expect(out.notes ?? []).not.toContain(NO_START_FRAME_NOTE);
+  });
+
+  it("(b) 演员的族别只认服务端那一份:@ 到的是产品,不是演员 ⇒ 首帧照旧", async () => {
+    const out = await invoke(
+      {
+        ...liveTurn,
+        sourceGenerationIds: ["gen_1"],
+        turnEntityIds: ["ent_bottle"],
+        availableRefs: [{ id: "ent_bottle", name: "the AeroBottle", type: "PRODUCT" }],
+      },
+      {
+        shots: [{ subject: "the bottle", action: "turns slowly" }],
+        references: [{ role: "character", name: "the woman in the frame" }],
+      },
+    );
+    expect(out.prompt).toContain("starting from the given first frame,");
+  });
+
   it("判据只有一份 —— 与卡面、worker 读的是同一个 `videoAttachmentRole`", () => {
-    const noImage = seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: [] }, []);
-    const oneImage = seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: ["gen_1"] }, []);
+    const noImage = seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: [] });
+    const oneImage = seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: ["gen_1"] });
     expect(truthfulSeedanceMode("i2v", noImage)).toBe("t2v");
     expect(truthfulSeedanceMode("i2v", oneImage)).toBe("i2v");
     // 分镜铸卡那一档:挂图一律作参考随行(FSE-208),首帧那一档对它不存在。
     expect(
       truthfulSeedanceMode(
         "i2v",
-        seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: ["gen_1"], alwaysVideoReference: true }, []),
+        seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: ["gen_1"], alwaysVideoReference: true }),
       ),
     ).toBe("t2v");
     // 整段参考片那一档也没有首帧。
     expect(
       truthfulSeedanceMode(
         "i2v",
-        seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: ["gen_1"], referenceVideoGenerationId: "gen_v" }, []),
+        seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: ["gen_1"], referenceVideoGenerationId: "gen_v" }),
       ),
     ).toBe("t2v");
+  });
+
+  it("演员这一格只读服务端两样东西(解析出来的 id + 按 owner 读到的族别)", () => {
+    const withCast = seedanceTurnFacts({
+      ...liveTurn,
+      sourceGenerationIds: ["gen_1"],
+      turnEntityIds: ["ent_xinyi"],
+      availableRefs: [{ id: "ent_xinyi", name: "Xinyi", type: "CHARACTER" }],
+    });
+    expect(withCast.hasStartFrame).toBe(false);
+    // 同一个 id,族别是服务端说了算:产品不是演员。
+    const withProduct = seedanceTurnFacts({
+      ...liveTurn,
+      sourceGenerationIds: ["gen_1"],
+      turnEntityIds: ["ent_bottle"],
+      availableRefs: [{ id: "ent_bottle", name: "the AeroBottle", type: "PRODUCT" }],
+    });
+    expect(withProduct.hasStartFrame).toBe(true);
+    // 别家店的 id 在这张按 owner 读出来的名单里查不到 ⇒ 数不进来(归属闸)。
+    const foreign = seedanceTurnFacts({
+      ...liveTurn,
+      sourceGenerationIds: ["gen_1"],
+      turnEntityIds: ["ent_other_shop"],
+      availableRefs: [{ id: "ent_xinyi", name: "Xinyi", type: "CHARACTER" }],
+    });
+    expect(foreign.hasStartFrame).toBe(true);
+  });
+
+  // 具名登记的窄缺口(规格 §5:195):演员一张参考图都没有时不在 @ 候选名单里,族别查不到,
+  // 于是这道闸比铸卡侧宽一格 —— 提示词留着首帧话、卡上写 Reference。这是主干原有的老缺口
+  // (与 staging 那一单同一种谎,范围窄得多),不是这条修改带来的。钉在这里,免得它被
+  // 读成「已经关掉了」。
+  it("已登记缺口:演员没有任何参考图 ⇒ 这道闸数不到它(与铸卡侧仍可能不一致)", () => {
+    const facts = seedanceTurnFacts({
+      ...liveTurn,
+      sourceGenerationIds: ["gen_1"],
+      turnEntityIds: ["ent_no_photo"],
+      availableRefs: [],
+    });
+    expect(facts.hasStartFrame).toBe(true);
   });
 
   it("锚在片子上的两档与首帧无关,一格不动", () => {
@@ -402,6 +490,6 @@ describe("R3-F26 —— 没有首帧的那一趟,提示词不许说「从给定�
   });
 
   it("读不到服务端事实(ctx 缺席)⇒ 逐字维持模型声明的那一档", () => {
-    expect(truthfulSeedanceMode("i2v", seedanceTurnFacts(undefined, []))).toBe("i2v");
+    expect(truthfulSeedanceMode("i2v", seedanceTurnFacts(undefined))).toBe("i2v");
   });
 });

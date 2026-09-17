@@ -10,7 +10,6 @@ import {
   PORTRAIT_CAPTION_BAN,
   PORTRAIT_CAPTION_BAN_KEEPING_LOGO,
 } from "./prompt-vocab.js";
-import type { PromptRef } from "./prompt-vocab.js";
 import { videoAction } from "./video-capabilities.js";
 import { videoAttachmentRole, type AnchoredVideoAction } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
@@ -101,33 +100,62 @@ export type SeedanceTurnFacts = {
 /** `seedanceTurnFacts` 真正要读的那几格 —— 全部由服务端解析器写入,模型碰不到。 */
 type StartFrameCtx = Pick<
   OttoContext,
-  "sourceGenerationId" | "sourceGenerationIds" | "referenceVideoGenerationId" | "alwaysVideoReference"
+  | "sourceGenerationId"
+  | "sourceGenerationIds"
+  | "referenceVideoGenerationId"
+  | "alwaysVideoReference"
+  | "turnEntityIds"
+  | "availableRefs"
 >;
 
 /**
- * 纯:这一轮的 ctx(＋模型这次列出的参考件)→ 「有没有首帧」这一个事实。
+ * 这一轮真 @ 到、且确属这家店的**演员**有几个 —— PR #1466 跨厂复审 P2 的修根点。
  *
- * 两个入参刻意来自不同的证人,而两个证人**只会把结论推向「没有首帧」**,永远推不出一张
- * 不存在的首帧:
+ * 上一版数的是**模型**在 `references` 里自己写的 `role:"character"`,而卡面与 worker 数的是
+ * 服务端核过归属的 CHARACTER 元素(`propose.helpers.ts:942-959`:`input.entityIds` ∪
+ * `ctx.turnEntityIds`,族别取自 `ownedEntities`)。同一件事两个证人 ⇒ 提示词与卡片可以
+ * **双向**对不上,其中一向还是这条修改自己造出来的:商家在画布按「Animate this result」、
+ * 模型把画面里的人写成一个 character 参考,于是一张**真**首帧被降成 t2v、两句首帧话被删,
+ * 而卡上写着 Starting frame、`GenJob.sourceGenerationId` 也真有值。
+ *
+ * 所以这里一格都不看模型的入参,两样都来自服务端:
+ *   · **id** —— `ctx.turnEntityIds`:服务端解析器 `resolveOwnedReferenceRefs` 这一趟按
+ *     owner 核过的那份(FSE-210),与铸卡侧取并集的正是同一个数组;
+ *   · **族别** —— `ctx.availableRefs`:`loadAvailableRefsForAgent` 按 `ownerId` 从
+ *     `Entity` 表读出来的 `{ id, name, type }`。别家店的 id 在这张表里查不到,所以它既是
+ *     族别的来源,也是一道归属闸。
+ *
+ * 这个数**恒 ≤ 铸卡侧那个数**(那边还并上模型自带的 `entityIds`、且不要求元素有参考图),
+ * 所以这道闸只会比卡片**更保守**:它说「没有首帧」时卡片一定也不是首帧;反过来它说
+ * 「有首帧」而卡片判成参考照的那两种窄情形(演员没有任何参考图 ⇒ 不在候选名单里;
+ * 或者演员只出现在模型 propose 的 `entityIds` 里、商家这一轮没 @ 它),是主干原有的老缺口,
+ * 不是这条修改带来的 —— 已具名登记在规格 §5:195。
+ */
+function serverCastCount(ctx: StartFrameCtx): number {
+  const ids = ctx.turnEntityIds ?? [];
+  if (ids.length === 0) return 0;
+  const typeById = new Map((ctx.availableRefs ?? []).map((r) => [r.id, r.type]));
+  return ids.filter((id) => typeById.get(id) === "CHARACTER").length;
+}
+
+/**
+ * 纯:这一轮的 ctx → 「有没有首帧」这一个事实。每一格都来自服务端,模型一票都没有。
+ *
+ * 两个证人,而两个证人**只会把结论推向「没有首帧」**,永远推不出一张不存在的首帧:
  *   · 挂图张数 —— `ctx` 的图片槽(`validateOttoTurnReferences` 解析、按 owner 核过),
  *     一张都没挂时结构上不可能有首帧;
- *   · 这条计划里有没有**演员** —— 演员在场时挂图一律作参考照随行(`videoAttachmentRole`
- *     的分岔,理由见 reference-budget.ts:首帧那一档一张元素照都带不上)。这里数的是模型
- *     自己在 `references` 里列出的 `character`;铸卡那一侧数的是服务端核过归属的
- *     CHARACTER 元素(`propose.helpers.ts` 的 `mentionedCastCount`)。模型多报一个演员,
- *     结果只是这段字**不提**首帧;它报不出一张首帧来。
+ *   · 这条计划里有没有**演员**(见 `serverCastCount`)—— 演员在场时挂图一律作参考照随行
+ *     (`videoAttachmentRole` 的分岔,理由见 reference-budget.ts:首帧那一档一张元素照都
+ *     带不上)。
  */
-export function seedanceTurnFacts(
-  ctx: StartFrameCtx | undefined,
-  references: PromptRef[] = [],
-): SeedanceTurnFacts {
+export function seedanceTurnFacts(ctx: StartFrameCtx | undefined): SeedanceTurnFacts {
   if (!ctx) return {};
   const attachedImageCount = new Set(
     [ctx.sourceGenerationId, ...(ctx.sourceGenerationIds ?? [])].filter((id): id is string => !!id),
   ).size;
   const role = videoAttachmentRole({
     attachedImageCount,
-    mentionedCastCount: references.filter((r) => r.role === "character").length,
+    mentionedCastCount: serverCastCount(ctx),
     hasReferenceVideo: !!ctx.referenceVideoGenerationId,
     // 分镜铸卡(FSE-208)那一档没有 startFrame:挂图一律作参考随行。
     alwaysReference: ctx.alwaysVideoReference,

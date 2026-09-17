@@ -89,7 +89,7 @@ export const seedancePromptSkill = defineOttoSkill({
     // 而不是由模型填的 `mode` 回答。默认那一档就是 `i2v`:漏填一格就等于替它向引擎
     // 和商家断言了一张不存在的图,而那段字正是卡上冻结、批准后原样送出去的同一份。
     const ctx = runContext.context as OttoContext;
-    const facts = seedanceTurnFacts(ctx, i.references);
+    const facts = seedanceTurnFacts(ctx);
     const prompt = assembleSeedance(i, facts);
     /** 降了档就照实交回给 Otto —— 叙述不能有第二个版本(FC-4 同一条纪律)。 */
     const downgraded = truthfulSeedanceMode(i.mode, facts) !== i.mode ? [NO_START_FRAME_NOTE] : [];
