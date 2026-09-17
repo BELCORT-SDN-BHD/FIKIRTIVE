@@ -1,0 +1,308 @@
+{
+  "group": "real-03-person-video",
+  "buildSha": "c0d25917",
+  "buildRef": "main",
+  "buildShaFull": "c0d2591768efc240931264c1ba0497a69008d1b6",
+  "signedInAs": "tenant A (org 'founder', super-admin)",
+  "startedUtc": "2026-09-17T04:44:00Z",
+  "endedUtc": "2026-09-17T05:12:00Z",
+  "spendUsdThisGroup": 0.38038218749999997,
+  "spendUsdCumulative": 0.38038218749999997,
+  "surface": "https://web-staging-7901.up.railway.app (in-app Browser, viewport 1280x720 unless noted)",
+  "fixtures": {
+    "note": "Own fixtures were generated and hashed in the workflow scratch dir, but NOT uploaded: no file-upload control was reachable from /library (Uploads tab has zero input[type=file]) or from the Home/Otto composer. The product cover was therefore attached from the merchant's own existing Library image via the product card's 'Add image · from Library'.",
+    "mug-1024.png": {"sha256": "81c659abdae0eb58d0b1124da2c9937285f80c6c468b625f30f7126ad619ed0e", "dims": "1024x1024", "uploaded": false},
+    "scene-1280.jpg": {"sha256": "e84b166f90077d4be5cdb28d1f823dc0c3fe235a5f512f5636f86607c9e04192", "dims": "1280x720", "uploaded": false},
+    "clip-720p.mp4": {"sha256": "2075646aa30263a37e5d40aa20541db757ab3f5c03f60f5ab7e577133e8b9d0b", "dims": "1280x720", "durationS": 3.0, "uploaded": false}
+  },
+  "steps": [
+    {
+      "id": "S00",
+      "step": "Build identity + DB baseline",
+      "utc": "2026-09-17T04:44:30Z",
+      "url": "/api/health",
+      "action": "fetch /api/health; read-only DB baseline",
+      "observed": "HTTP 200 {\"ok\":true,\"db\":\"up\",\"worker\":\"up\",\"workers\":{\"worker-wait\":\"up\",\"worker-compute\":\"up\",\"worker\":\"retired\"},\"backup\":\"fresh\",\"migrations\":\"applied\",\"build\":{\"sha\":\"c0d25917\",\"ref\":\"main\"}} — equals origin/main c0d2591768ef. CreditAccount(founder) balance=99997974 reserved=0. Entity(founder,PRODUCT) live rows = 0 (only soft-deleted 01M287A4JC1ZC19MDM633HJ6E1). 5 CHARACTER entities incl. Xinyi 01M265PRD50HWEKX2VFGBCF31Y.",
+      "verdictClause": "baseline"
+    },
+    {
+      "id": "S01",
+      "step": "R3-F20 re-check: product entrance reachable",
+      "utc": "2026-09-17T04:45:00Z",
+      "url": "/brand/records?tab=products",
+      "action": "navigate to the deep link named by the 2026-09-16 R3-F20 register row",
+      "observed": "Products tab renders with toolbar 'Add product' + empty-state 'No products yet / Add what you sell…' + second 'Add product'. The blocker that made the prior REAL-03 attempt NOT RUN (2026-09-16) is gone on this build.",
+      "verdictClause": "REAL-03 precondition (Brand can create a product)"
+    },
+    {
+      "id": "S02",
+      "step": "Create dated fixture product",
+      "utc": "2026-09-17T04:45:38Z",
+      "url": "/brand/records?tab=products",
+      "action": "Add product → Name 'R3 real 2026-09-17 mug', Price 'RM 39', Description set → Save (one click)",
+      "observed": "Form fields offered: Name*, Price, Description, Selling angle, Link, Tags, Category — no image field (matches PRODID-R9). Card rendered 'R3 real 2026-09-17 mug / RM 39 / You added / Updated Sep 17'.",
+      "dbDelta": "Entity 01M2PTYG24RTVAV71KR56H2238 (type=PRODUCT, name='R3 real 2026-09-17 mug') + BrandRecord 01M2PTYG2YFAZZV91P2FNWS07P (kind=product, contextStatus=Ready, entityId=01M2PTYG24RTVAV71KR56H2238). CreditLedger rows added: 0.",
+      "verdictClause": "PRODID-A1 (brand-product-identity.md:32) — BrandRecord.entityId equals the Entity id; PRODID-A10 (line 41) — zero ledger rows"
+    },
+    {
+      "id": "S03",
+      "step": "Attach product image (cover)",
+      "utc": "2026-09-17T04:47:10Z",
+      "url": "/brand/records?tab=products",
+      "action": "Card 'Add image · from Library' → dialog 'Choose an image from Library' → searched 'mug' → chose the merchant's own Library image 'R2 Coral Tumbler reusable travel mug, standing upright, centered…'",
+      "observed": "Dialog closed, card shows the image.",
+      "dbDelta": "Entity 01M2PTYG24RTVAV71KR56H2238: live ReferenceImage count 0 → 1; baseAssetId NULL → 01M2883T92MJG8DTFAXF2DJ4A1 (auto-cover written back). CreditLedger rows added: 0.",
+      "verdictClause": "brand-product-identity.md §5 row 2026-09-15 (auto-cover on first reference image) observed; PRODID-A10 zero ledger rows"
+    },
+    {
+      "id": "S04",
+      "step": "Library shows the same product",
+      "utc": "2026-09-17T05:08:00Z",
+      "url": "/library?view=elements&element=products",
+      "action": "navigate Library → Elements → Products",
+      "observed": "'Elements / Products / Characters / Official avatars / Locations / Brand marks' then 'R3 real 2026-09-17 mug — 1 linked image'.",
+      "dbDelta": "same Entity id 01M2PTYG24RTVAV71KR56H2238 (single row; no second identity)",
+      "verdictClause": "PRODID-A1 Library half (brand-product-identity.md:32)"
+    },
+    {
+      "id": "S05",
+      "step": "Home composer @-mention: product + OFFICIAL actor",
+      "utc": "2026-09-17T04:49:58Z",
+      "url": "/",
+      "action": "typed '@' → picker opened (Recent + BROWSE BY TYPE: Products/Characters/Official avatars/Locations/Media) → typed 'R3' → picked 'R3 real 2026-09-17 mug | Product' → typed 'with @Xin' → picked 'Xinyi | Official avatar · Read only' → appended '- a 5 second clip showing the mug on a wooden table, no text' → Send (one click)",
+      "observed": "Composer value '@R3 real 2026-09-17 mug with @Xinyi - a 5 second clip showing the mug on a wooden table, no text'. @ menu source label for the product is literally 'Product'.",
+      "verdictClause": "PRODID-A2 first half (brand-product-identity.md:33) — menu shows the product with source label 'Product'"
+    },
+    {
+      "id": "S06",
+      "step": "Chat charge for the turn",
+      "utc": "2026-09-17T04:50:25Z",
+      "url": "/",
+      "action": "read the reply footer + read-only ledger",
+      "observed": "UI: 'This reply used 2.2 credits.'",
+      "dbDelta": "CreditLedger: RESERVE balanceDelta -40 reservedDelta +40 key reserve:otto-stream:01M2PV6KS5YXVE742BZ5P0DQBF (04:50:04.812); SETTLE balanceDelta +18 reservedDelta -40 key settle:otto-stream:… (04:50:25.762). Net -22 minor units = 2.2 credits. Balance 99997974 → 99997952, reserved back to 0.",
+      "verdictClause": "REAL-20 chat charge recorded separately from generation charge"
+    },
+    {
+      "id": "S07",
+      "step": "Confirmation card facts @1280",
+      "utc": "2026-09-17T04:50:40Z",
+      "url": "/",
+      "action": "read card, expand 'Advanced details'",
+      "observed": "'Here’s what I’ll make / A short video / Showcase the R3 mug in a warm, everyday lifestyle moment with Xinyi / 16:9 / 5s / 720p / No sound / Uses 3 of your reference photos / Reference names sent to the engine: R3 real 2026-09-17 mug (product), Xinyi (person). / About 11 credits' and button 'Generate · 11 credits'. Advanced details shows the full prompt that will be sent. NO provider USD estimate is shown anywhere on the card (credits only).",
+      "verdictClause": "creation-engine.md:65 CREATE-A1 (pre-spend quote visible); REAL-30 desktop reading"
+    },
+    {
+      "id": "S08",
+      "step": "REAL-30 cross-device compare @1920",
+      "utc": "2026-09-17T04:51:20Z",
+      "url": "/",
+      "action": "resize_window 1920x1080, re-read the same un-approved card, then resize back to 1280x720",
+      "observed": "Card head string byte-identical to the 1280 reading ('A short video / …/ 16:9 / 5s / 720p / No sound / Uses 3 of your reference photos / Reference names sent to the engine: R3 real 2026-09-17 mug (product), Xinyi (person).'); button label identical 'Generate · 11 credits'. No second card, no new intent.",
+      "dbDelta": "GenJob count for org founder since 04:00 = 0 immediately before approval; CreditLedger unchanged by the resize",
+      "verdictClause": "REAL-30 — key info survives the width change; switching device creates no new intent (asset-action-idempotency.md §2)"
+    },
+    {
+      "id": "S09",
+      "step": "Budget check + single Approve",
+      "utc": "2026-09-17T04:51:54Z",
+      "url": "/",
+      "action": "budget rule applied (spent before = US$0.00; nearest comparable prior job on this org, a 5s seedance-2-mini clip, froze US$0.380 → projected cumulative well under US$16), then ONE click on 'Generate · 11 credits'",
+      "observed": "Card switched to '✓ Approved — in the queue · 0:36 · this can take a moment' + Cancel + '✓ You approved this — it used 11 credits.'",
+      "dbDelta": "GenJob 01M2PV9ZBN5ZQXN5GRY1PQN64C created 04:51:54.888 — kind=VIDEO, model=seedance-2-mini, count=1, status GENERATING, idempotencyKey 'cowork:01M2PV75F3GB3W3N9FZMR379VH', videoOptions {\"fps\":0,\"audio\":false,\"seconds\":5,\"resolution\":\"720p\",\"aspectRatio\":\"16:9\",\"providerTask\":{\"id\":\"cgt-20260917125157-qnbhc\",\"submittedAt\":\"2026-09-17T04:52:00.582Z\"}}, entityIds={01M2PTYG24RTVAV71KR56H2238,01M265PRD50HWEKX2VFGBCF31Y}, approvedEntities=[{id:01M2PTYG24RTVAV71KR56H2238,name:'R3 real 2026-09-17 mug',type:PRODUCT},{id:01M265PRD50HWEKX2VFGBCF31Y,name:'Xinyi',type:CHARACTER}], sourceGenerationId/tailGenerationId/referenceVideoGenerationId all NULL. CreditLedger: RESERVE balanceDelta -110 reservedDelta +110 key 'reserve:01M2PV9ZBN5ZQXN5GRY1PQN64C' at 04:51:54.902. Balance 99997952 → 99997842, reserved 110.",
+      "verdictClause": "creation-engine.md:68 CREATE-A4 shape (quote == |reserve|): card 11 credits == 110 minor units reserved; PRODID-R11/FSE-210 known defect does NOT reproduce — the @-selected product id is present in both GenJob.entityIds and approvedEntities"
+    },
+    {
+      "id": "S10",
+      "step": "REAL-07 a) full page reload while GENERATING",
+      "utc": "2026-09-17T04:52:40Z",
+      "url": "/",
+      "action": "navigate to / (fresh load), wait for hydration",
+      "observed": "Conversation restored with the SAME card: user message with both @-chips (chip 'Product' → /library?view=elements&element=products showing 'R3 real 2026-09-17 mug'; chip 'Official avatar · Read only' → 'Xinyi'), then 'Here’s what I’ll make … Reference names sent to the engine: R3 real 2026-09-17 mug (product), Xinyi (person).', state '✓ Approved — in the queue · 0:47', '✓ You approved this — it used 11 credits.', 'Otto is making this — this can take a moment…'. Balance shown 9,999,784.2 credits. NOTE: the conversation log renders empty for roughly the first 20–40 s after load before the messages hydrate.",
+      "dbDelta": "no new CreditLedger row, no new GenJob",
+      "verdictClause": "REAL-07 — same job/card after reload, no re-charge"
+    },
+    {
+      "id": "S11",
+      "step": "REAL-07 b) leave to /library and come back with browser Back",
+      "utc": "2026-09-17T04:54:00Z",
+      "url": "/library → back → /",
+      "action": "navigate /library (balance read), then history Back to /",
+      "observed": "Balance on /library 9,999,784.2 credits — identical to Home. After Back the Otto log was EMPTY for ~40–60 s (thread title present in the header, body blank), then the full thread rehydrated with the same card, by then '✓ Done' + 'Cost: 11 credits' + Download / Copy to post / Make another.",
+      "dbDelta": "no new CreditLedger row, no new GenJob",
+      "verdictClause": "REAL-07 — returns to the same job, no duplicate reserve; slow task never presented as failure"
+    },
+    {
+      "id": "S12",
+      "step": "REAL-07 c) canvas deep link in a NEW tab",
+      "utc": "2026-09-17T04:58:30Z",
+      "url": "/create/canvas?project=<workspace project> and /create/canvas?project=<…>&thread=<thread>",
+      "action": "opened a second tab on the project deep link, then on the conversation deep link taken from the Library detail panel; closed both tabs afterwards",
+      "observed": "Project deep link: canvas 'My Videos' lists the new clip; a <video> with src ending …95f9a694984eb777cc454a6e50e7bfcc9a772b0338e794c7.mp4 (suffix of the asset contentHash) reports readyState 4, duration 5.0417 s. Thread deep link: the SAME card (log length 1874 chars, identical to the Home panel), same 'Reference names sent to the engine: R3 real 2026-09-17 mug (product), Xinyi (person).', '✓ Done', 'Cost: 11 credits'. Balance on both 9,999,784.2 credits. CAVEAT: both deep links were opened after the job had already reached DONE (04:54:04), not while it was running.",
+      "dbDelta": "CreditLedger rows since approval remain exactly 2 (RESERVE + SETTLE); sum balanceDelta -110, sum reservedDelta 0",
+      "verdictClause": "REAL-07 — same job on a deep link in another tab, consistent balance on every surface, zero extra reserve"
+    },
+    {
+      "id": "S13",
+      "step": "Terminal state and settlement",
+      "utc": "2026-09-17T04:54:04Z",
+      "url": "read-only DB",
+      "action": "poll GenJob + CreditLedger",
+      "observed": "GenJob 01M2PV9ZBN5ZQXN5GRY1PQN64C: status DONE, progress 100, spent=true, spentUsd=0.38038218749999997, billedUnits=108900, generationIds={01M2PVDW85RGAECTBN3NYXKMKT}, lastFrameAssetId=01M2PVDXSDKX9E0CANNH7AH2YZ, startedAt 2026-09-17 04:51:56.837, finishedAt 2026-09-17 04:54:04.349 (127 s).",
+      "dbDelta": "CreditLedger for this refId: exactly one RESERVE (-110 / +110) and exactly one SETTLE (balanceDelta 0, reservedDelta -110, key 'settle:01M2PV9ZBN5ZQXN5GRY1PQN64C', 04:54:02.773). No REFUND, no second charge. Final CreditAccount balance 99997842, reserved 0 = 99997974 - 22 (chat) - 110 (video).",
+      "verdictClause": "REAL-20 / asset-action-idempotency.md:2 §2 ASSET-A7 shape — money conserved, no hanging reserve, no duplicate settle"
+    },
+    {
+      "id": "S14",
+      "step": "Lineage in Library",
+      "utc": "2026-09-17T05:01:00Z",
+      "url": "/library/01M2PVDW85RGAECTBN3NYXKMKT",
+      "action": "open the result from Library grid (Today), read the Asset details panel",
+      "observed": "Panel: prompt text, then 'What the engine ran — Not reported by the engine.' (this block maps to Generation.finalPromptText, which is NULL because the video engine reported no revised prompt — DetailPanel.tsx:936–943; Generation.sentPromptText IS NOT NULL, i.e. our own send receipt exists), 'Where this came from — Canvas: My Videos · Conversation: @R3 real 2026-09-17 mug with @Xinyi …', 'References used: Xinyi, R3 real 2026-09-17 mug', 'Cost: 11 credits', 'Status: Delivered'.",
+      "dbDelta": "Generation 01M2PVDW85RGAECTBN3NYXKMKT.entitySnapshot = {\"entities\":[{id:01M265PRD50HWEKX2VFGBCF31Y,name:Xinyi,type:CHARACTER,refHashes:[2 hashes]},{id:01M2PTYG24RTVAV71KR56H2238,name:'R3 real 2026-09-17 mug',type:PRODUCT,refHashes:[1 hash]}]} — 3 reference hashes total, matching the card's 'Uses 3 of your reference photos'. Entity ids are byte-equal to the fixture product id and the Xinyi actor id.",
+      "verdictClause": "PRODID-A2 second half (brand-product-identity.md:33) — approved lineage points at the same Entity id; REAL-03 'Brand/Library/@/card same product id'"
+    },
+    {
+      "id": "S15",
+      "step": "No first-frame composite",
+      "utc": "2026-09-17T05:02:00Z",
+      "url": "read-only DB",
+      "action": "count intermediate jobs and check the frame-input columns named in packages/db/prisma/schema.prisma (GenJob.sourceGenerationId / tailGenerationId / referenceVideoGenerationId; RefGenJob table)",
+      "observed": "Since 2026-09-17 04:00 for org founder: GenJob = 1, RefGenJob = 0, Generation = 1. On the one GenJob, sourceGenerationId, tailGenerationId and referenceVideoGenerationId are all NULL. So the clip was produced straight from the two entities' reference photos with no intermediate image job. Counter-observation: the merchant-visible prompt (both on the card and in Library) opens with 'starting from the given first frame' and later says 'keep the subject consistent with the source frame', which asserts a first frame this job does not have.",
+      "verdictClause": "REAL-03 '人物商品两参考直接出片，无首帧合成' — proven at the data layer; prompt copy contradicts it in words only"
+    },
+    {
+      "id": "S16",
+      "step": "Playback",
+      "utc": "2026-09-17T05:03:00Z",
+      "url": "/library/01M2PVDW85RGAECTBN3NYXKMKT",
+      "action": "javascript on the panel's <video>: play(), poll",
+      "observed": "readyState 4, duration 5.041667 s, videoWidth 1280, videoHeight 720, currentTime advanced to 3.004 s with paused=false. webkitAudioDecodedByteCount = 0 while webkitVideoDecodedByteCount = 506196 → no audio track decoded, matching the card's 'No sound' and videoOptions.audio=false.",
+      "verdictClause": "REAL-03 '结果与报价规格一致' — delivered 1280x720 (720p), 16:9, ~5 s, silent, exactly as quoted"
+    },
+    {
+      "id": "S17",
+      "step": "Download",
+      "utc": "2026-09-17T05:04:00Z",
+      "url": "/files/u/founder/<contentHash>.mp4?download=1",
+      "action": "the panel's own Download control resolves to that href; the viewer sandbox blocks a real file save, so the same URL was fetched in-page and hashed (fetch fallback)",
+      "observed": "HTTP 200, content-type video/mp4, content-disposition attachment; filename=\"cinematic-photorealistic-warm-tones-cine-1.mp4\", byteLength 2903247, sha256 e746dde4fa100cc495f9a694984eb777cc454a6e50e7bfcc9a772b0338e794c7.",
+      "dbDelta": "Asset 01M2PVDW7X2HXCC43Z9WTKDBWW: sizeBytes 2903247, contentHash e746dde4fa100cc495f9a694984eb777cc454a6e50e7bfcc9a772b0338e794c7, mime video/mp4, source GENERATED — byte count and hash match the download exactly.",
+      "verdictClause": "REAL-03 download — real bytes, content-addressed hash equals the stored asset"
+    },
+    {
+      "id": "S18",
+      "step": "Provider bill cross-check",
+      "utc": "2026-09-17T05:10:00Z",
+      "url": "arkcli",
+      "action": "arkcli auth status --format json → logged_in True; arkcli usage stats --start 2026-09-17 --end 2026-09-17 --interval Hour --by model --format json, run once before the paid click and twice after",
+      "observed": "Both before and after the run the query returns records: [], data_count: 0 (arkcli 1.0.23). No usage rows attributable to this run appeared within ~15 minutes.",
+      "verdictClause": "REAL-20 — supplier's actual bill not cross-checked"
+    }
+  ],
+  "verdicts": [
+    {
+      "id": "REAL-03",
+      "status": "PASS",
+      "clausesProven": [
+        "Brand page can create a product (R3-F20 blocker gone on build c0d25917): /brand/records?tab=products 'Add product' → Entity 01M2PTYG24RTVAV71KR56H2238 + BrandRecord 01M2PTYG2YFAZZV91P2FNWS07P with entityId equal to it (brand-product-identity.md:32 PRODID-A1)",
+        "Same product id on all four surfaces: Brand card, Library Elements→Products ('R3 real 2026-09-17 mug — 1 linked image'), @ menu entry labelled 'Product', and the confirmation card (chips + GenJob.entityIds + approvedEntities) (brand-product-identity.md:33 PRODID-A2)",
+        "Person + product, two references, straight to video with no first-frame composite: GenJob.sourceGenerationId / tailGenerationId / referenceVideoGenerationId all NULL, RefGenJob = 0, only 1 GenJob and 1 Generation in the window; Generation.entitySnapshot carries 3 refHashes across the two entities",
+        "Result matches the quoted spec: card quoted 16:9 / 5s / 720p / No sound; videoOptions {seconds:5, resolution:'720p', aspectRatio:'16:9', audio:false}; delivered asset 1280x720, duration 5.0417 s, zero audio bytes decoded",
+        "Lineage readable by the merchant in Library: 'References used: Xinyi, R3 real 2026-09-17 mug', 'Cost: 11 credits', 'Status: Delivered', links back to the canvas and the conversation",
+        "Playback and download both real: readyState 4 and currentTime advancing; download 2903247 bytes, sha256 equal to Asset.contentHash"
+      ],
+      "clausesNotProven": [
+        "'挂自有图' was satisfied with the merchant's own pre-existing Library image (a coral-tumbler product shot) rather than a freshly uploaded file — no upload control was reachable from /library Uploads or the composer, so this run's own dated fixtures were generated and hashed but never uploaded"
+      ],
+      "reason": "Every clause of the REAL-03 row (real-scenarios.md:48–57) is proven with a DB or DOM receipt on build c0d25917. The one deviation is the provenance of the product cover image, which is still an owner-scoped asset of tenant A."
+    },
+    {
+      "id": "REAL-07",
+      "status": "PASS",
+      "clausesProven": [
+        "Full reload while the job was GENERATING restored the same conversation and the same card in the same approved state ('✓ Approved — in the queue · 0:47')",
+        "Leaving to /library and returning with browser Back landed on the same job and, by then, its DONE card and result",
+        "A deep link opened in a NEW tab (both the project canvas and the conversation deep link) shows the same job, the same card text (log length identical, 1874 chars) and the same result asset",
+        "No re-charge on any of those paths: CreditLedger rows for refId 01M2PV9ZBN5ZQXN5GRY1PQN64C remain exactly one RESERVE and one SETTLE; sum balanceDelta -110, sum reservedDelta 0",
+        "Balance identical on every surface checked (Home, /library, canvas deep link, thread deep link): 9,999,784.2 credits = DB balance 99997842",
+        "The slow task was never dressed up as a failure: the card stayed on 'in the queue / Otto is making this' until DONE"
+      ],
+      "clausesNotProven": [
+        "The new-tab deep-link observation happened after the job reached DONE (04:54:04), not while it was still running — the job finished in 127 s, faster than the navigation sequence"
+      ],
+      "reason": "All money and continuity clauses of real-scenarios.md:88–97 are proven; only the timing of the deep-link step differs from the ideal 'while in flight'."
+    },
+    {
+      "id": "REAL-30",
+      "status": "PARTIAL",
+      "clausesProven": [
+        "The same un-approved confirmation card read at 1280 and at 1920 is byte-identical in reference count ('Uses 3 of your reference photos'), size/duration ('16:9 / 5s / 720p / No sound'), reference names line, credit figure ('About 11 credits') and button label ('Generate · 11 credits')",
+        "Switching width created no new intent: GenJob count stayed 0 until the single approval, and only one card existed",
+        "Exactly one explicit confirmation was given, and the visible result reconciles with the ledger (11 credits == 110 minor units reserved and settled)"
+      ],
+      "clausesNotProven": [
+        "The phone width of the row (real-scenarios.md:318–327 says 手机/桌面/大屏) was not exercised — this group's instructions scoped the comparison to 1280 and 1920"
+      ],
+      "reason": "Desktop-vs-large-screen parity fully proven; the phone leg of the row was out of scope for this dispatch."
+    },
+    {
+      "id": "REAL-20",
+      "status": "PARTIAL",
+      "clausesProven": [
+        "Book 1 — confirmation card: 'About 11 credits' / 'Generate · 11 credits'; chat reply footer 'This reply used 2.2 credits.'",
+        "Book 2 — ledger: video RESERVE -110/+110 and SETTLE 0/-110 under keys reserve:/settle:01M2PV9ZBN5ZQXN5GRY1PQN64C; chat RESERVE -40/+40 and SETTLE +18/-40 under otto-stream:01M2PV6KS5YXVE742BZ5P0DQBF. No REFUND, no duplicate settle, no hanging reserve",
+        "Book 3 — balance: 99997974 → 99997842 (-132 minor units = 110 video + 22 chat), reserved back to 0 at the end",
+        "Book 4a — provider USD estimate frozen on the job: GenJob.spentUsd = 0.38038218749999997, billedUnits = 108900"
+      ],
+      "clausesNotProven": [
+        "Book 4b — the supplier's actual bill: arkcli is logged in (logged_in True) but `arkcli usage stats` for 2026-09-17 returns zero records before and after the run, so provider bill not cross-checked",
+        "The confirmation card shows no provider USD estimate at all (credits only), so the card-side half of 'provider 估价' cannot be read from the UI"
+      ],
+      "reason": "Three of the four books reconcile exactly for both charges of this group; the supplier invoice leg is unverified (recorded as unknown, not estimated)."
+    },
+    {
+      "id": "REAL-24",
+      "status": "NOT RUN",
+      "clausesProven": [],
+      "clausesNotProven": [
+        "Taking this browser offline and reconnecting while a job is in flight, and the page/network/backend timeline around it (real-scenarios.md:258–267)"
+      ],
+      "reason": "Tool gap: the in-app Browser tool set exposed to this worker has no network-condition or offline emulation, and the step list for this group contained no offline toggle. Not attempted rather than faked. The adjacent clause 'client disconnection must not affect the live service' was not exercised."
+    }
+  ],
+  "writesMade": [
+    "Created product 'R3 real 2026-09-17 mug' (Entity 01M2PTYG24RTVAV71KR56H2238 + BrandRecord 01M2PTYG2YFAZZV91P2FNWS07P) via /brand/records?tab=products → Add product",
+    "Attached an existing owner Library image as that product's reference/cover (ReferenceImage 1 row; Entity.baseAssetId auto-set to 01M2883T92MJG8DTFAXF2DJ4A1)",
+    "Sent one Otto message from Home (thread 01M2PV6KEG8QF35RX4NFB3ZS9H) — charged 2.2 credits",
+    "Approved one video generation ONCE (GenJob 01M2PV9ZBN5ZQXN5GRY1PQN64C, 11 credits, provider US$0.3804)",
+    "Opened and closed two extra browser tabs (deep-link checks); no other tab touched"
+  ],
+  "jobIds": ["01M2PV9ZBN5ZQXN5GRY1PQN64C"],
+  "generationIds": ["01M2PVDW85RGAECTBN3NYXKMKT"],
+  "boundaries": [
+    "One paid click only; never double-clicked; never touched Regenerate, Retry, Make another or Tweak it",
+    "REAL-09 not run; no concurrency group approved",
+    "Did NOT approve the unrelated pre-existing 'Needs confirmation' card ('a majestic snow leopard') found on the workspace canvas",
+    "No sign-out, no Connect/Revoke/Delete/Remove/Archive, no profile/workspace/settings/billing/admin change, no production access, no external send, no secrets entered",
+    "Database access read-only throughout: every query ran inside BEGIN READ ONLY; … ROLLBACK, DATABASE_PUBLIC_URL never written to disk or to a command line",
+    "Repo treated as read-only; all spec rows read via `git show origin/main:<path>`",
+    "Own fixture files were generated and hashed but not uploaded (no reachable upload control) — recorded rather than worked around",
+    "Viewport emulation set to 1280x720 / 1920x1080 for the comparison and reset to desktop at the end; both extra tabs closed; session left signed in on the same origin"
+  ],
+  "toolProblems": [
+    "computer `key` action (cmd+a, Backspace, even repeat 15) had no effect on the Otto composer textarea; clearing the field required a native-setter value reset via javascript_tool. Typing via `type` worked normally.",
+    "computer click-by-coordinate uses an 800x450 frame while the emulated CSS viewport is 1280x720, so coordinates computed from getBoundingClientRect are rejected; clicking by ref_N from find/read_page is the reliable path.",
+    "The Otto conversation log renders empty for ~20–60 s after a reload or a client-side Back before the thread hydrates — a naive single read right after navigation reports a lost conversation that is in fact merely late."
+  ],
+  "findings": [
+    "PRODID-R11 / FSE-210 does NOT reproduce on build c0d25917: the @-selected product id survives message → confirmation card → job. GenJob 01M2PV9ZBN5ZQXN5GRY1PQN64C has entityIds={product,actor} and approvedEntities=[{PRODUCT},{CHARACTER}], and Generation.entitySnapshot carries both with refHashes. This is the first staging receipt for the fix registered in brand-product-identity.md §5 (2026-09-16 row, PR #1420) on the Home-composer submission path.",
+    "R3-F20 is fixed in the product: /brand/records?tab=products reachable and 'Add product' present, which removes the precondition that forced the 2026-09-16 REAL-03 attempt to stop at NOT RUN.",
+    "Copy accuracy defect (new): the prompt the merchant sees on the card and in Library begins 'starting from the given first frame' and includes 'keep the subject consistent with the source frame', but this job has no first frame and no source generation (sourceGenerationId / tailGenerationId / referenceVideoGenerationId all NULL, RefGenJob=0, no intermediate IMAGE GenJob). The words claim a step the data proves did not happen — a 'trace-able' (有迹可循) mismatch in the merchant-facing receipt, not a money defect.",
+    "UX gap (new, no money impact): after a client-side Back into Home the Otto panel shows the thread title with an empty conversation body for roughly 40–60 s before the in-flight card reappears. A merchant checking on a running job in that window sees nothing.",
+    "The confirmation card quotes credits only; no provider USD estimate is exposed on any surface, so the 'provider 估价' half of REAL-20 can only come from the DB column GenJob.spentUsd after the fact.",
+    "'What the engine ran — Not reported by the engine.' on the Library detail panel is honest, not a bug: it renders Generation.finalPromptText (NULL here because the video engine returned no revised prompt), while our own send receipt Generation.sentPromptText is populated (DetailPanel.tsx:919–945).",
+    "Side evidence for PRODID-A10: creating the product and attaching its cover produced zero CreditLedger rows and left the balance untouched.",
+    "Side evidence for the 2026-09-15 auto-cover ruling (PR #1462): attaching the first reference image wrote Entity.baseAssetId back automatically (NULL → 01M2883T92MJG8DTFAXF2DJ4A1)."
+  ]
+}
