@@ -201,6 +201,39 @@ describe("MONEY-A9 · 失败 / 退款:净额为 0 就没有回执可留", () => 
     expect(understandingReceipt({ creditsCharged: 0, pending: false })).toEqual({ state: "none" });
   });
 
+  /**
+   * **回执念的是账本折出来的那一笔,不是今天的牌价**(MONEY-A7 调价不追溯;跨厂复审 P2)。
+   *
+   * 上面每一条「已结清」夹具用的都**恰好**是 `pricedUnderstandingCredits("image-caption")`
+   * 那个数,于是把 `understanding-receipt.ts` 改成现算牌价,整份测试照样全绿 —— 这条围栏
+   * 声称在守的那件事,一条断言都没守住。所以这里给一个**牌价永远算不出来的数**:0.3 是
+   * 级联两段(0.1 + 0.2)的账本净额,`creation-upload-understanding-cost.test.ts:139` 里
+   * 有同一个数的真读路证据。改成现算牌价的那一刻,这一条当场红。
+   *
+   * 三层各钉一次:纯函数、画布卡片信息面、Library 资产详情 —— 哪一层偷偷换成牌价都拦得住。
+   */
+  it("金额是账本已结算的净额,不是今天的牌价(级联两段 0.3,牌价现算永远给不出这个数)", () => {
+    const LEDGER_NET = 0.3;
+    expect(
+      LEDGER_NET,
+      "级联净额与单件牌价撞上了 —— 这条围栏失去了它的判别力,换一个牌价算不出的数",
+    ).not.toBe(ONE_IMAGE_CAPTION_CREDITS);
+
+    expect(understandingReceipt({ creditsCharged: LEDGER_NET, pending: false })).toEqual({
+      state: "charged",
+      line: `${UNDERSTOOD_LABEL} · 0.3 credits`,
+      amount: "0.3 credits",
+    });
+
+    expect(canvasLineageRows(uploadCard({ costCredits: LEDGER_NET })))
+      .toContainEqual({ label: UNDERSTOOD_LABEL, value: "0.3 credits" });
+
+    const text = render(createElement(AssetLineage, {
+      lineage: uploadLineage({ costCredits: LEDGER_NET }),
+    }));
+    expect(text, "资产详情把账本净额换成了牌价").toContain(`${UNDERSTOOD_LABEL} · 0.3 credits`);
+  });
+
   it("回执模块里一个手抄的钱数都没有(涨价当天界面不会安静地开始撒谎)", async () => {
     const { readFileSync } = await import("node:fs");
     const path = await import("node:path");
