@@ -21,6 +21,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ReactFlow, applyNodeChanges, type Node, type NodeChange } from "@xyflow/react";
 import { CanvasMultiSelectModifier } from "@/components/canvas/CanvasMultiSelectModifier";
+import { TextNode } from "@/components/canvas/nodes/TextNode";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -53,6 +54,34 @@ function Board(): ReturnType<typeof createElement> {
       deleteKeyCode: null,
     },
     // 产品里它就挂在 <ReactFlow> 底下（FlowCanvas.tsx），这里同一个位置。
+    createElement(CanvasMultiSelectModifier),
+  );
+}
+
+/** 稳定引用：每次渲染换一个 `nodeTypes` 对象，React Flow 会当成换了一套节点类型。 */
+const noteNodeTypes = { text: TextNode };
+
+/** 板上一张文字便签 —— 商家正要在框里改字的那一刻。 */
+function NoteBoard({ startSelected }: { startSelected: boolean }): ReturnType<typeof createElement> {
+  const [nodes, setNodes] = useState<Node[]>([
+    { id: "note", type: "text", position: { x: 0, y: 0 }, data: { text: "hello" }, selected: startSelected },
+  ]);
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setNodes((ns) => applyNodeChanges(changes, ns));
+  }, []);
+  return createElement(
+    ReactFlow,
+    {
+      nodes,
+      onNodesChange,
+      nodeTypes: noteNodeTypes,
+      // 同 Board：FlowCanvas 交给 React Flow 的那几条选中相关的 prop，逐字同一份。
+      multiSelectionKeyCode: ["Shift", "Meta", "Control"],
+      selectionKeyCode: "Shift",
+      selectionOnDrag: true,
+      panOnDrag: false,
+      deleteKeyCode: null,
+    },
     createElement(CanvasMultiSelectModifier),
   );
 }
@@ -117,6 +146,64 @@ describe("FRONT-A15 Shift 加选不看 React 的脸色", () => {
       selected(),
       "空手点第二张是「换一张」：手里只该剩第二张，第一张要被这一下换掉",
     ).toEqual(["second"]);
+  });
+
+  /**
+   * 文字便签的那一格（Founder 2026-09-16 裁决，对谈；规格 §5 变更登记 2026-09-16 那一行）。
+   *
+   * 框里按住 Shift 拖选几个字，是**编辑文字**，不是在对画布下命令。卡片一直只挡 pointerdown，
+   * click 照旧冒到卡身上，撞进 React Flow 的取消选中规则（@xyflow/react 12.11.1
+   * dist/esm/index.mjs:2261 → :1626 `handleNodeClick`：`node.selected && multiSelectionActive`
+   * ⇒ 取消选中）。开关诚实之后这一下每次都到得了那条规则跟前，于是「在自己的便签里选几个字」
+   * 每次都把这张卡踢出画布选中。
+   *
+   * 守卫版只挡带修饰键的那一下，所以下面三条得同时成立：**加了修饰键的不再踢卡**，而
+   * **光秃秃的那一下一切照旧** —— 卡还是被选中，工具条还是露出来。少钉后两条，
+   * 「无条件挡」那个更省事的写法就能一路绿到主干，而它会让商家几乎没地方点选这张便签。
+   */
+  const noteTextarea = (): Element =>
+    host.querySelector('.react-flow__node[data-id="note"] textarea[aria-label="Text note"]')!;
+
+  it("FRONT-A15: 在便签框里按住 Shift 选字，这张卡不会被踢出画布选中", async () => {
+    await act(async () => {
+      root = createRoot(host);
+      root.render(createElement(NoteBoard, { startSelected: true }));
+    });
+    expect(selected(), "开场：这张便签是选中的").toEqual(["note"]);
+
+    noteTextarea().dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+    await act(async () => {});
+
+    expect(selected(), "框里选字不是画布命令：这张卡还在选中里").toEqual(["note"]);
+  });
+
+  it("FRONT-A15: 空手点便签框，照旧选中这张卡", async () => {
+    await act(async () => {
+      root = createRoot(host);
+      root.render(createElement(NoteBoard, { startSelected: false }));
+    });
+    expect(selected(), "开场：这张便签没被选中").toEqual([]);
+
+    noteTextarea().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await act(async () => {});
+
+    expect(selected(), "点进便签写字，这张卡该被选中").toEqual(["note"]);
+  });
+
+  it("FRONT-A15: 空手点便签框之后，Delete 工具条照常露出来", async () => {
+    await act(async () => {
+      root = createRoot(host);
+      root.render(createElement(NoteBoard, { startSelected: false }));
+    });
+    const deleteButton = (): Element | null =>
+      document.body.querySelector('[aria-label="Delete text node"]');
+    expect(deleteButton(), "开场：没选中，工具条不该在").toBeNull();
+
+    noteTextarea().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await act(async () => {});
+
+    // 工具条挂在 `isVisible={selected}` 上：它露不出来，等于商家删不掉这张便签。
+    expect(deleteButton(), "点进便签之后，Delete 该跟着卡的选中一起出现").not.toBeNull();
   });
 
   it("FRONT-A15: 真画布确实挂着这条同步（harness 与产品不脱钩）", () => {
