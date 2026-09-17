@@ -76,6 +76,7 @@
 
 | 日期 | 想法 | 裁决（留空待 S5） |
 |---|---|---|
+| 2026-09-17 | **客户面入口两处在真服务器上不兑现（R3-F31／R3-F32，第三轮 staging 匿名只读核证，构建 c0d25917）**。<br>意图：第 1 节第 2 条（客户面「入口路由 `/s/<token>` → 303 到干净的 `/schedule/share-preview`；旧的 `?t=` 形式继续被受理，受理后同样换 cookie 再跳干净地址」）与验收 SHARE-A6（「地址栏是不含 token 的干净地址」）今天只在代码形状上成立，在代理后面与流式渲染下都不成立：①`/s/<token>` 用 `req.nextUrl.origin` 拼绝对地址，Railway 容器里那就是 `localhost:8080`，实测答 `location: https://localhost:8080/schedule/share-preview` —— 顾客点真链接落在自己电脑上；②旧式 `?t=` 实测答 HTTP 200（约 25 KB）+ `<meta id="__next-page-redirect" http-equiv="refresh">` + 一屏已冲出的外壳（含 `href="/login"` 的「Go to sign in」），token 在地址栏停约一秒，且这张自述「无登录、无回工作区的路」的页面先闪了登录面。<br>可当场验的验收：①`GET /s/<任意 token>` 的 `Location` 是相对路径 `/schedule/share-preview`，不含任何主机名，且换一个对外主机名答案一字不变；②`GET /schedule/share-preview?t=<token>` 答 30x，正文不含 `__next-page-redirect`、不含 `/login`、长度 < 200 字节；③干净地址 `GET /schedule/share-preview` 仍答 200 并画那张唯一的拒绝牌。三条都由 e2e journey 30（`e2e/journeys/30-share-link-entry.spec.ts`）在真服务器上判定。<br>批准: 待 Founder 追认（编排者依 2026-09-15「新发现全部本版修」裁决与 2026-09-16「要我拍板的直接决定」授权先行施工，2026-09-17） | |
 
 ## 6. 改签记录
 

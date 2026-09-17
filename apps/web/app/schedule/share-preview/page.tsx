@@ -18,6 +18,14 @@ import { SHARE_PREVIEW_COOKIE_NAME } from "@/lib/share-preview-cookie";
  * so an old link and a new one end up in the identical state, and the token never sits in this
  * page's own URL for even one render.
  *
+ * R3-F32 — that forward is now the BACKSTOP, not the first answer. `redirect()` here cannot keep
+ * its promise on its own: `app/schedule/loading.tsx` is a Suspense boundary above this segment, so
+ * Next flushes the shell as HTTP 200 first and the redirect degrades into a meta refresh — the
+ * token then sits in the address bar for about a second (measured on staging 2026-09-17). The real
+ * answer is a routing-layer redirect that runs before anything renders:
+ * `lib/legacy-share-link-redirect.ts`, wired in `next.config.ts`. This line stays because it costs
+ * nothing and it is what makes the page correct when read on its own.
+ *
  * ── IT IS OUTSIDE THE AUTH WALL, AND THAT IS THE POINT ───────────────────────────────────────
  * `proxy.ts` excludes exactly `schedule/share-preview` (bounded, like /verify-email and
  * /api/ops/dlq): a client with no account must be able to open it. The link's HMAC plus its live
