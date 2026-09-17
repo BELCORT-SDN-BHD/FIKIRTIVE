@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { assembleSeedance, seedancePromptInput } from "./seedance-prompt.helpers.js";
+import {
+  assembleSeedance,
+  seedancePromptInput,
+  seedanceTurnFacts,
+  truthfulSeedanceMode,
+  NO_START_FRAME_NOTE,
+} from "./seedance-prompt.helpers.js";
 import { seedancePromptSkill } from "./seedance-prompt.js";
 
 describe("assembleSeedance", () => {
@@ -234,6 +240,22 @@ describe("assembleSeedance", () => {
     expect(out).not.toContain(",,");
     expect(out).toContain("starting from the given first frame, the man in the frame");
   });
+
+  // ── R3-F26 —— 「这一趟有没有首帧」是服务端的事实,不是模型的声明 ──────────────
+  it("R3-F26:拿到「这一轮没有首帧」这个事实时,i2v 档产出与照实声明的 t2v **逐字相同**", () => {
+    const shots = [{ subject: "the bottle", action: "turns slowly on the table" }];
+    const refs = [{ role: "product" as const, name: "the AeroBottle" }];
+    const declaredI2V = seedancePromptInput.parse({ mode: "i2v", shots, references: refs });
+    const honestT2V = seedancePromptInput.parse({ mode: "t2v", shots, references: refs });
+    // 没有新措辞被发明出来 —— 降档就是「照实说的那一档」本来会产出的那段字。
+    expect(assembleSeedance(declaredI2V, { hasStartFrame: false })).toBe(assembleSeedance(honestT2V));
+  });
+
+  it("R3-F26:真有首帧时,两句首帧话原样保留(防过度删除)", () => {
+    const out = assembleSeedance(oneShot(), { hasStartFrame: true });
+    expect(out).toContain("starting from the given first frame,");
+    expect(out).toContain("keep the subject consistent with the source frame");
+  });
 });
 
 describe("seedancePromptSkill gate", () => {
@@ -276,5 +298,110 @@ describe("seedancePromptSkill gate", () => {
     expect(out.notes?.length).toBeGreaterThan(0);
     for (let n = 0; n < 6; n++) expect(out.prompt).toContain(`P${n}`);
     expect(seedancePromptSkill.description).toContain("they are advice, never a limit");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// R3-F26(P2,钱路诚实;staging c0d25917,2026-09-17)
+//
+// GenJob 01M2PV9ZBN5ZQXN5GRY1PQN64C:`sourceGenerationId` / `tailGenerationId` /
+// `referenceVideoGenerationId` 三格全 NULL、零 RefGenJob —— 一张首帧都没有。可
+// `GenJob.prompt`(真送到付费引擎的那一份)与 `Generation.promptText`(卡面与素材库
+// 让商家读的那一份)里都写着「starting from the given first frame」与「keep the
+// subject consistent with the source frame」。商家的输入只有两个 @元素(一个产品
+// 1 张参考照、一个角色 2 张)加一句话。
+//
+// 我们花钱请引擎去照顾一张不存在的首帧,而卡上那段字与真发生的事对不上 ——
+// 规格 :34/:76(sentPromptText ＝商家批准的那一份逐字)与 :66 CREATE-A2(素材的角色
+// 指派句必须与真实角色一致)两条一起被违反。
+// ═══════════════════════════════════════════════════════════════════════════
+describe("R3-F26 —— 没有首帧的那一趟,提示词不许说「从给定首帧开始」", () => {
+  type SkillOut = { prompt: string; notes?: string[] };
+  const invoke = (ctx: unknown, input: unknown): Promise<SkillOut> =>
+    (seedancePromptSkill.tool as unknown as {
+      invoke: (rc: unknown, a: string) => Promise<SkillOut>;
+    }).invoke({ context: ctx }, JSON.stringify(input));
+
+  /** 走查现场那一趟:一句话 + 两个 @元素,这一轮一张图都没挂。 */
+  const textAsk = {
+    shots: [{ subject: "the bottle", action: "turns slowly on the table" }],
+    references: [
+      { role: "product", name: "the AeroBottle" },
+      { role: "character", name: "Xinyi" },
+    ],
+  };
+  const liveTurn = { orgId: "org_1", userId: "org_1", projectId: "proj_1", threadId: "thr_1" };
+
+  it("(a) 一张图都没挂 ⇒ 首帧那两句一句都不出现(模型漏传 mode,默认那一档)", async () => {
+    const out = await invoke(liveTurn, textAsk);
+    expect(out.prompt).not.toContain("first frame");
+    expect(out.prompt).not.toContain("source frame");
+  });
+
+  it("(a) 元素参考照照旧按「身份/相似」说清楚 —— 它们真会作参考照上车", async () => {
+    const out = await invoke(liveTurn, textAsk);
+    expect(out.prompt).toContain("keep Xinyi identical to the reference");
+    expect(out.prompt).toContain("feature the AeroBottle exactly as in the reference");
+  });
+
+  it("(a) 模型显式写 mode:'i2v' 也一样 —— 声明不是证据", async () => {
+    const out = await invoke(liveTurn, { ...textAsk, mode: "i2v" });
+    expect(out.prompt).not.toMatch(/first frame|source frame/);
+  });
+
+  it("(a) 降档时 Otto 手上拿到一条照实说的 note,叙述没有第二个版本可写", async () => {
+    const out = await invoke(liveTurn, { ...textAsk, mode: "i2v" });
+    expect(out.notes ?? []).toContain(NO_START_FRAME_NOTE);
+  });
+
+  it("(b) 真把一张图当首帧(「Animate this result」)⇒ 两句首帧话原样保留", async () => {
+    const out = await invoke(
+      { ...liveTurn, sourceGenerationId: "gen_1", sourceGenerationIds: ["gen_1"] },
+      { shots: [{ subject: "the man in the frame", action: "turns to the camera" }] },
+    );
+    expect(out.prompt).toContain("starting from the given first frame,");
+    expect(out.prompt).toContain("keep the subject consistent with the source frame");
+    expect(out.notes ?? []).not.toContain(NO_START_FRAME_NOTE);
+  });
+
+  it("(b) 挂了图却同时 @ 了演员 ⇒ 挂图作参考照(FC-4 同一条判据),首帧话不出现", async () => {
+    const out = await invoke(
+      { ...liveTurn, sourceGenerationIds: ["gen_1"] },
+      {
+        shots: [{ subject: "Xinyi", action: "holds up the bottle" }],
+        references: [{ role: "character", name: "Xinyi" }],
+      },
+    );
+    expect(out.prompt).not.toMatch(/first frame|source frame/);
+  });
+
+  it("判据只有一份 —— 与卡面、worker 读的是同一个 `videoAttachmentRole`", () => {
+    const noImage = seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: [] }, []);
+    const oneImage = seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: ["gen_1"] }, []);
+    expect(truthfulSeedanceMode("i2v", noImage)).toBe("t2v");
+    expect(truthfulSeedanceMode("i2v", oneImage)).toBe("i2v");
+    // 分镜铸卡那一档:挂图一律作参考随行(FSE-208),首帧那一档对它不存在。
+    expect(
+      truthfulSeedanceMode(
+        "i2v",
+        seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: ["gen_1"], alwaysVideoReference: true }, []),
+      ),
+    ).toBe("t2v");
+    // 整段参考片那一档也没有首帧。
+    expect(
+      truthfulSeedanceMode(
+        "i2v",
+        seedanceTurnFacts({ ...liveTurn, sourceGenerationIds: ["gen_1"], referenceVideoGenerationId: "gen_v" }, []),
+      ),
+    ).toBe("t2v");
+  });
+
+  it("锚在片子上的两档与首帧无关,一格不动", () => {
+    expect(truthfulSeedanceMode("edit", { hasStartFrame: false })).toBe("edit");
+    expect(truthfulSeedanceMode("extend", { hasStartFrame: false })).toBe("extend");
+  });
+
+  it("读不到服务端事实(ctx 缺席)⇒ 逐字维持模型声明的那一档", () => {
+    expect(truthfulSeedanceMode("i2v", seedanceTurnFacts(undefined, []))).toBe("i2v");
   });
 });

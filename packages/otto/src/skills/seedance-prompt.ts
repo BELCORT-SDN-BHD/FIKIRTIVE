@@ -3,7 +3,14 @@
  * 只出创作 prompt（英文），技术 flag 由 provider 追加。Otto 提视频前先调它、用返回的 prompt。
  */
 import { defineOttoSkill } from "../skill.js";
-import { seedancePromptInput, assembleSeedance } from "./seedance-prompt.helpers.js";
+import {
+  seedancePromptInput,
+  assembleSeedance,
+  seedanceTurnFacts,
+  truthfulSeedanceMode,
+  NO_START_FRAME_NOTE,
+} from "./seedance-prompt.helpers.js";
+import type { OttoContext } from "../context.js";
 import {
   CAMERA_MOVES, SHOT_SCALES, LIGHTING, enOnly,
   VIDEO_CONSTRAINTS, EMOTION_CUES, referenceAdvice,
@@ -77,15 +84,22 @@ export const seedancePromptSkill = defineOttoSkill({
     `Shot framing from: ${enOnly(SHOT_SCALES).join(", ")}. ` +
     `Lighting — always give direction + color temperature, e.g.: ${enOnly(LIGHTING).join(", ")}.`,
   parameters: seedancePromptInput,
-  execute: async (i) => {
-    const prompt = assembleSeedance(i);
+  execute: async (i, runContext) => {
+    // R3-F26 —— 「这一轮有没有首帧」由服务端的图片槽回答(模型碰不到那几格),
+    // 而不是由模型填的 `mode` 回答。默认那一档就是 `i2v`:漏填一格就等于替它向引擎
+    // 和商家断言了一张不存在的图,而那段字正是卡上冻结、批准后原样送出去的同一份。
+    const ctx = runContext.context as OttoContext;
+    const facts = seedanceTurnFacts(ctx, i.references);
+    const prompt = assembleSeedance(i, facts);
+    /** 降了档就照实交回给 Otto —— 叙述不能有第二个版本(FC-4 同一条纪律)。 */
+    const downgraded = truthfulSeedanceMode(i.mode, facts) !== i.mode ? [NO_START_FRAME_NOTE] : [];
     // #775 —— 禁词只**提醒**,绝不改写:提示词里每个字都是商家要的东西,机器动手改一次,
     // 商家批准的与引擎收到的就分家了。与 U8 的素材建议走同一条 `notes` 出口。
     const banned =
       i.mode === "edit" || i.mode === "extend"
         ? videoPromptWarnings(i.mode === "edit" ? "editClip" : "extendClip", prompt)
         : [];
-    const notes = [...referenceAdvice(i.references), ...banned];
+    const notes = [...downgraded, ...referenceAdvice(i.references), ...banned];
     return { prompt, ...(notes.length > 0 ? { notes } : {}) };
   },
 });
