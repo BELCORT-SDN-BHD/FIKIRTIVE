@@ -74,7 +74,10 @@ describe("R3-F32 —— 旧式 `?t=` 链接的路由层重定向规则", () => {
 
   it("拼得出畸形 `Location` 的值一概不收（落回页面里那句后备转发，也就是修前的行为）", () => {
     const matcher = new RegExp(`^${LEGACY_SHARE_LINK_VALUE}$`);
-    for (const bad of ["a/b", "a b", "a?b", "a#b", "a%2Fb", "", "http://evil.test"]) {
+    // `..` / `.`（以及解码后同样是它们的 `%2e%2e`）：跨厂复审 P3。旧字符集收它们，去处会编译成
+    // `/s/..`——不是开放重定向（无主机名、无协议，浏览器同源解析），但一条相对上跳没理由从这条
+    // 规则里出去。收紧成「首字符不许是点」之后，它们落回页面那句后备转发，也就是修前的行为。
+    for (const bad of ["a/b", "a b", "a?b", "a#b", "a%2Fb", "", "http://evil.test", "..", ".", "...."]) {
       expect(matcher.test(bad), `不该收：${bad}`).toBe(false);
     }
   });

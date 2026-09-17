@@ -35,13 +35,25 @@ import { SHARE_PREVIEW_COOKIE_PATH } from "./share-preview-cookie";
  *    `Array.isArray(value) ? value.slice(-1)[0].match(...)`（`next/dist/shared/lib/router/utils/
  *    prepare-destination.js`），取最后一个值，实测 307 → `/s/b`。顾客看到的结果与修前一样（那个
  *    token 验不过，仍是同一张 unavailable），只是地址栏这次也干净了。
- * ② 字符集只收**能安全地当一个路径段**的那些（base64url 的 `A-Za-z0-9_-`，外加 `.` 与 `~`）。
- *    token 本身就是 `<base64url>.<base64url>`（`packages/token-crypto`），所以真链接全中；带
- *    `/`、空格、`%` 的伪造值一律不匹配，落回页面里那句后备转发 —— 也就是修前的行为，不会被这条
- *    规则拼出一条畸形的 `Location`。
+ * ② 字符集只收**能安全地当一个路径段**的那些（base64url 的 `A-Za-z0-9_-`，外加 `.` 与 `~`），并且
+ *    **首字符不许是点**。token 本身就是 `<base64url>.<base64url>`（`packages/token-crypto`），首
+ *    字符必落在 base64url 字母表里，所以真链接全中；带 `/`、空格、`%` 的伪造值一律不匹配，落回页
+ *    面里那句后备转发 —— 也就是修前的行为，不会被这条规则拼出一条畸形的 `Location`。
+ *    首字符那一条是跨厂复审（2026-09-17，P3）加的：旧写法收纯点值，`?t=..`（以及 `?t=%2e%2e`，
+ *    query 先被解码）会编译出 `Location: /s/..`。**不是开放重定向**（没有主机名、没有协议，浏览器
+ *    按同源解析，重复斜杠也会被归一），而且页面那句后备转发同样早就送得出它
+ *    （`encodeURIComponent("..") === ".."`）—— 但一条谁也不想要的相对上跳没有理由从这里出去。
  * ③ Next 会把源地址的查询串**透传**给去处：实测 `location: /s/<token>?t=<token>`。那不是新的泄漏
  *    面（token 本来就在这条地址的路径段里），而且 `/s/[token]` 压根不读 query，下一跳就是干净的
  *    `/schedule/share-preview`。地址栏最终干净，SHARE-A6 要的就是这一条。
+ *
+ * ── 一条必须写明、免得后来人误读的事：这条 307 不带安全响应头 ──────────────────────────
+ * Next 16 的配置层重定向**绕过** `next.config.ts` 的 `headers()`（`resolve-routes.js` 这条路返回的
+ * `resHeaders` 是 null，`router-server` 只在非 null 时才套那些头），所以
+ * `lib/security-headers.ts` 的四条一条都不在这个响应上 —— 本机实测 2026-09-17：`/s/<token>` 的
+ * 303 带着 CSP／X-Frame-Options／X-Content-Type-Options／Referrer-Policy，这条 307 一条都没有。
+ * 没找到可利用的后果（307 默认不可缓存；正文不是文档，没有 Referer 可泄、没有框可嵌、没有 MIME
+ * 可嗅），所以本票不改 —— 但别把「全站都有那四条头」当成这条路也有。
  */
 
 /** 旧链接里携带 token 的那个查询键。它同时是 `destination` 里那个占位符的名字。 */
@@ -51,7 +63,7 @@ export const LEGACY_SHARE_LINK_QUERY = "t";
  * 收哪些 `?t=` 值 —— 见上面 ①②。命名捕获组的名字必须与 `LEGACY_SHARE_LINK_QUERY` 一致，
  * `destination` 里那个 `:t` 取的就是这个组。
  */
-export const LEGACY_SHARE_LINK_VALUE = `(?<${LEGACY_SHARE_LINK_QUERY}>[A-Za-z0-9._~-]+)`;
+export const LEGACY_SHARE_LINK_VALUE = `(?<${LEGACY_SHARE_LINK_QUERY}>[A-Za-z0-9_~-][A-Za-z0-9._~-]*)`;
 
 type RedirectRule = Awaited<ReturnType<NonNullable<NextConfig["redirects"]>>>[number];
 

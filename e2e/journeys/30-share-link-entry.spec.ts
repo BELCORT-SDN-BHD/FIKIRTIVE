@@ -73,6 +73,26 @@ test("R3-F32 —— 旧式 `?t=` 链接答一条真的重定向，正文里没�
   expect(body.length, "一条路由层重定向不该带一屏页面回去").toBeLessThan(200);
 });
 
+/**
+ * 跨厂复审 2026-09-17（P3）—— `has` 那条 `value` 正则的**行为**绊线。
+ *
+ * 单元测试只核得了规则这个值的形状；「重复的 `?t=` 到底答 307 还是 500」只有真服务器知道。去掉
+ * `value` 之后 Next 会把 `query.t` 原样当数组塞进 `/s/:t`，path-to-regexp 编译当场抛 —— 本机实测
+ * HTTP 500（而修前那条地址是一张干净的 unavailable 页）。这条旅程是那个回归唯一拦得住的地方。
+ */
+test("R3-F32 —— 重复的 `?t=` 答一条真重定向，绝不是 500", async ({ request }) => {
+  const second = "c2Vjb25kLXRva2Vu.c2Vjb25kLXNpZw";
+  const res = await request.get(
+    `${SHELL_ROUTES.publicSharePreview}?t=${FORGED_TOKEN}&t=${second}`,
+    { maxRedirects: 0 },
+  );
+
+  expect(res.status(), "重复的 `?t=` 又炸成 500 了 —— `has` 的 value 正则没了").toBe(307);
+  // Next 的 `matchHas` 对数组取最后一个值，所以落点是第二个 token（页面那句后备转发的「不猜」
+  // 语义只管它自己那一层，两者的差别写在 page.tsx 的注释里）。
+  expect((res.headers()["location"] ?? "").split("?")[0]).toBe(`/s/${second}`);
+});
+
 test("R3-F32 —— 干净地址照旧是那张页面（这条重定向只收 `?t=`）", async ({ request }) => {
   const res = await request.get(SHELL_ROUTES.publicSharePreview, { maxRedirects: 0 });
 
