@@ -117,7 +117,9 @@ function DeadLetterRow({ item, onDiscarded }: { item: DeadLetterItem; onDiscarde
         impacts={[
           "The job is cancelled in the queue — it is never retried and never runs.",
           "Credits, ledger entries, and merchant data stay exactly as they are.",
-          "One audit row records who discarded it, from which queue, and when.",
+          // 这句话必须在**每一条路**上都为真。审计行写不下去是一条真实的路（`lib/dlq-actions.ts`
+          // 的 `discarded-unaudited`），所以承诺里带上它的出口，而不是先许一个可能兑现不了的诺。
+          "One audit row records who discarded it, from which queue, and when. If that row cannot be written, the screen says so.",
         ]}
         confirmLabel="Discard job"
         confirmingLabel="Discarding…"

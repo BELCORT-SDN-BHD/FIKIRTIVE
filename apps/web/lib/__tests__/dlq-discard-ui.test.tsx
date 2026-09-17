@@ -144,7 +144,10 @@ describe("DLQ-A2 discarding one dead letter", () => {
 
     await click(button("Discard"));
 
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Discard this dead letter?");
+    const dialog = document.querySelector('[role="alertdialog"]')?.textContent ?? "";
+    expect(dialog).toContain("Discard this dead letter?");
+    // 问话里那句承诺在每一条路上都要为真 —— 审计行写不下去也是一条真实的路。
+    expect(dialog).toContain("If that row cannot be written, the screen says so.");
     expect(discardDeadLetter).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain(JOB_ID);
   });
