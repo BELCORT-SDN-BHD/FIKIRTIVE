@@ -649,6 +649,18 @@ export async function POST(req: NextRequest): Promise<Response> {
         // userText picks the #498 fallback receipt's language (copy only).
         const finalized = await finalizeOttoRun({ ownerId, threadId, isNew, priorOttoState, result: agentResult, seqAfterUser, userText: text });
 
+        /** FC-1 —— finalizeOttoRun 在模型自己那句话**之后**又落库了一句诚实话时,直播这一侧
+         *  也立刻说出来(否则商家要等下一次刷新才读得到,而屏幕上停着的正是那句被收回的承诺)。
+         *  独立的 part id:模型那段文本此刻可能已经用 OTTO_TEXT_ID 收了尾,共用同一个 id 会把
+         *  它盖掉 —— 收回一句承诺不该顺手删掉模型的原话。 */
+        const writeAppendedReply = (appended: string | undefined) => {
+          if (!appended) return;
+          const id = `${OTTO_TEXT_ID}-appended`;
+          writer.write({ type: "text-start", id });
+          writer.write({ type: "text-delta", delta: appended, id });
+          writer.write({ type: "text-end", id });
+        };
+
         if (finalized.status === "stale") {
           writer.write({ type: "data-status", data: { kind: "stale", text: "This conversation moved on — reload to continue." } satisfies OttoStatusData });
         } else if (finalized.status === "needs_approval") {
@@ -663,8 +675,10 @@ export async function POST(req: NextRequest): Promise<Response> {
             writer.write({ type: "text-delta", delta: finalized.fallbackReply, id: OTTO_TEXT_ID });
             writer.write({ type: "text-end", id: OTTO_TEXT_ID });
           }
+          writeAppendedReply(finalized.appendedReply);
           writer.write({ type: "data-status", data: { kind: "needs_approval", pendingCardIds: finalized.pendingCardIds } satisfies OttoStatusData });
         } else {
+          writeAppendedReply(finalized.appendedReply);
           writer.write({ type: "data-status", data: { kind: "done", threadId } satisfies OttoStatusData });
         }
       },
