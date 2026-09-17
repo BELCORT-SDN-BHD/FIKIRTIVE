@@ -6,8 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { bustUrl } from "@/lib/media-retry";
 import { readPick, writePick } from "@/lib/result-pick";
-import { coworkVaryCard } from "@/lib/cowork-actions";
-import { notifyBalanceRefresh } from "@/lib/balance-refresh";
+import { useVaryCard, VARY_ADDED_LABEL, VARY_ADDED_NOTE, VARY_BUSY_LABEL } from "./vary-card-feedback";
 import { creditsLabel } from "@/lib/credit-format";
 import { videoFirstFrameSrc } from "@/lib/video-first-frame";
 
@@ -214,29 +213,20 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
     }
   }
 
-  // "Make another" — spawns a fresh variant card via coworkVaryCard.
-  const [makingAnother, setMakingAnother] = useState(false);
+  // "Make another" — spawns a fresh variant card. 在飞／加好了那两样回执连同那一次调用
+  // 都在 `useVaryCard` 那一份合同里，失败卡上的「Try again」读的是同一份（R3-F29）:
+  // 从前这一处与那一处各写各的，那一处忘了设成功状态，商家连按四次拿到四张一样的卡。
+  const vary = useVaryCard();
   const [makeAnotherError, setMakeAnotherError] = useState<string | null>(null);
-  const [makeAnotherSuccess, setMakeAnotherSuccess] = useState(false);
 
   async function makeAnother() {
-    if (!sourceCardId || makingAnother) return;
-    setMakingAnother(true);
+    if (!sourceCardId) return;
     setMakeAnotherError(null);
-    setMakeAnotherSuccess(false);
-    try {
-      const res = await coworkVaryCard({ cardId: sourceCardId });
-      if (res && "error" in res) { setMakeAnotherError(res.error); return; }
-      setMakeAnotherSuccess(true);
-      setTimeout(() => setMakeAnotherSuccess(false), 2500);
-      onMakeAnother?.();
-    } catch {
-      setMakeAnotherError("Couldn't queue another — please try again.");
-    } finally {
-      setMakingAnother(false);
-      // "Make another" queues a fresh paid variant (#550).
-      notifyBalanceRefresh();
-    }
+    const outcome = await vary.run(sourceCardId);
+    // null = 这一下落在上一下的飞行途中：原地不动，不打第二趟。
+    if (!outcome) return;
+    if ("error" in outcome) { setMakeAnotherError(outcome.error); return; }
+    onMakeAnother?.();
   }
 
   if (!urls.length) {
@@ -336,15 +326,15 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
             </Button>
           )}
           {sourceCardId && (
-            <Button variant="ghost" disabled={makingAnother} onClick={makeAnother}>
+            <Button variant="ghost" disabled={vary.busy} onClick={makeAnother}>
               <RefreshCw size={18} />
-              {makingAnother ? "Queuing…" : makeAnotherSuccess ? "Added" : "Make another"}
+              {vary.busy ? VARY_BUSY_LABEL : vary.added ? VARY_ADDED_LABEL : "Make another"}
             </Button>
           )}
         </div>
-        {makeAnotherSuccess && (
+        {vary.added && (
           <div role="status" className="mt-2 text-[0.875rem] text-[var(--success-soft-foreground)]">
-            Added another card to this conversation.
+            {VARY_ADDED_NOTE}
           </div>
         )}
         {makeAnotherError && (
