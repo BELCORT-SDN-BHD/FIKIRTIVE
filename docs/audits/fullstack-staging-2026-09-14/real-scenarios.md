@@ -53,7 +53,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：付费视频＋可能理解费，先核卡价与provider估价。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：PASS（staging 第三轮付费旅程第二组，2026-09-17，build `c0d25917`，见 `coverage-matrix.md` 本行同日回填；证据 `local-logs/staging-r3-paid/real-03-person-video.json`）。R3-F20 指路死路已随 PR #1463 修复，2026-09-16 那次 NOT RUN 的前置阻断消失：Brand 建产品→Library 同一张卡→`@` 菜单（来源标签「Product」）→确认卡→`GenJob.entityIds`／`approvedEntities`／`Generation.entitySnapshot` 六处同一 Entity id 全部证成；无首帧合成（三个帧输入列全 NULL、`RefGenJob=0`）；交付与报价一致（16:9／5s／720p／No sound），播放与下载均真实（sha256 与 `Asset.contentHash` 相等）。**唯一偏差**：「挂自有图」这一步用的是商家已有的 Library 图（本身 AI 生成），不是本轮新上传——harness 无文件上传动作，未上传自己的新素材；商家上传一张全新产品照片的子路径仍待补跑，登记见 `findings-catalog.md` 本轮补记。
+- 执行状态：PASS（staging 第三轮付费旅程第二组，2026-09-17，build `c0d25917`，见 `coverage-matrix.md` 本行同日回填；证据 `local-logs/staging-r3-paid/real-03-person-video.json`）。R3-F20 指路死路已随 PR #1463 修复，2026-09-16 那次 NOT RUN 的前置阻断消失：Brand 建产品→Library 同一张卡→`@` 菜单（来源标签「Product」）→确认卡→`GenJob.entityIds`／`approvedEntities`／`Generation.entitySnapshot` 七处同一 Entity id 全部证成；无首帧合成（三个帧输入列全 NULL、`RefGenJob=0`）；交付与报价一致（16:9／5s／720p／No sound），播放与下载均真实（sha256 与 `Asset.contentHash` 相等）。**唯一偏差**：「挂自有图」这一步用的是商家已有的 Library 图（本身 AI 生成），不是本轮新上传——harness 无文件上传动作，未上传自己的新素材；商家上传一张全新产品照片的子路径仍待补跑，登记见 `findings-catalog.md` 本轮补记。
 
 ### REAL-04 商家场景：不带人物的创作和 variation
 
