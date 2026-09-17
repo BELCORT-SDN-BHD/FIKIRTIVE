@@ -6,8 +6,10 @@ import { getMetaConnection, type MetaConnectionResult } from "../meta-actions";
 // Instagram and Facebook connect through the ONE Meta connection — same token, same
 // status. Anywhere that needs to know "is this channel id backed by the Meta
 // connection" reads this set, so it can't drift from the adapters registered below
-// (#518 rework finding 2).
-export const META_BACKED_CHANNEL_IDS = ["instagram", "facebook"];
+// (#518 rework finding 2). The definition moved to the client-safe mirror so the
+// Connections page can read the same answer without dragging Prisma into the browser;
+// this re-export keeps every server caller's import path unchanged.
+export { META_BACKED_CHANNEL_IDS, isMetaBackedChannel } from "./channel-meta";
 
 // Pure mapping from a single getMetaConnection() read to the channel-row status —
 // the ONLY place this logic lives, so a caller holding one already-fetched

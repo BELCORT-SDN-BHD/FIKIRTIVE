@@ -57,6 +57,30 @@ describe("buildBuildInfoResponse(E2E-STG-VERSION P1-012)", () => {
     expect(body.worker).toEqual([{ role: "worker-compute", sha: "fedcba98", at: at.toISOString() }]);
   });
 
+  /** R3-F19(2026-09-15,2026-09-16 复核改定):退休行**留在列表里并标 `retired: true`**——
+   *  这个端点答的是「现在跑的是哪次部署」,一行没人写的旧 sha 会把答案搞错**只要它没有标签**;
+   *  标上之后读的人一眼知道它是历史,而一班真死了一整天的 worker 也不会被藏起来。 */
+  it("R3-F19: 一整天没人写的行标 retired: true;5 分钟前跳过的班照常不带这个键", () => {
+    const stale = new Date(NOW.getTime() - 5 * 60_000);
+    const dead = new Date(NOW.getTime() - 2 * 24 * 3_600_000);
+    const body = buildBuildInfoResponse({
+      env: {},
+      processStartedAt: STARTED,
+      now: NOW,
+      heartbeatRows: [
+        { id: "worker", commitSha: "ca864b28ca864b28", at: dead },
+        { id: "worker-wait", commitSha: "bbbbbbbb22222222", at: stale },
+      ],
+      latestMigration: null,
+    });
+    expect(body.worker).toEqual([
+      { role: "worker", sha: "ca864b28", at: dead.toISOString(), retired: true },
+      { role: "worker-wait", sha: "bbbbbbbb", at: stale.toISOString() },
+    ]);
+    // 活着的那一行**不带**这个键 —— 「没有标签」在这份响应里只可能意味着「这就是现在跑的那一版」。
+    expect(Object.keys(body.worker[1]!)).not.toContain("retired");
+  });
+
   it("E2E-STG-VERSION: 两班心跳 → 两行,各自角色各自 sha", () => {
     const at1 = new Date("2026-09-04T11:59:00.000Z");
     const at2 = new Date("2026-09-04T11:58:00.000Z");

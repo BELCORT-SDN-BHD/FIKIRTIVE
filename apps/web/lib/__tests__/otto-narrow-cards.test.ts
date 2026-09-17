@@ -419,10 +419,13 @@ describe("#996 ③:金额与 credits 数字在两档下都完整", () => {
     for (const w of WIDTHS) expectMoneyIntact(root, w, "plan card / one-step");
   });
 
-  it("计划卡:两步计划的两个数", () => {
+  // FC-3(S5 批量裁决 2026-09-12 #1358):旧两步卡上那两个数已经下线 —— 卡面只剩这张卡
+  // 真会扣的那一个,外加一句照实的下一步。窄屏这一关照旧要过:一个数也不许被挤断。
+  it("计划卡:裁决之前的两步卡,如今只剩一个数", () => {
     const root = renderPlanCard({ videoStep: { estimatedCredits: 22 } });
-    expect(root.textContent).toContain("Then the video");
-    for (const w of WIDTHS) expectMoneyIntact(root, w, "plan card / two-step");
+    expect(root.textContent).not.toContain("Then the video");
+    expect(root.textContent).toContain("ask for the video whenever you like");
+    for (const w of WIDTHS) expectMoneyIntact(root, w, "plan card / legacy two-step");
   });
 
   it("计划卡:排队中那一行的花费回执", () => {

@@ -1141,8 +1141,13 @@ describe("#694 #695 #741 单点权威:全仓词法围栏", () => {
   // 允许清单:这两处回答的是**另一个问题**(「哪些渠道由 Meta 连接支撑」/「哪些渠道属于 Meta
   // 自然发布」),不是「现在能不能连上」。它们与 UNAVAILABLE_PUBLISHING_CHANNEL_IDS 各司其职,
   // 不是同一份真相的副本。新文件写出同样形状会被抓住 —— 这正是围栏要挡的。
+  //
+  // 2026-09-16(R3-F14 复核):META_BACKED_CHANNEL_IDS 从 `lib/channels/meta-shared.ts` 移到
+  // `lib/channels/channel-meta.ts` —— 那个文件 import Prisma,而 Connections 页是客户端组件,
+  // 需要同一个答案来决定页顶那句话在说哪两行(见 core 的 connectionsNotice())。定义只有一处,
+  // meta-shared 现在只是 re-export,所以豁免跟着定义走,理由一字未变。
   const CHANNEL_LIST_ALLOWLIST = new Set([
-    "lib/channels/meta-shared.ts",
+    "lib/channels/channel-meta.ts",
     "lib/auto-publish-gate.ts",
   ]);
 
