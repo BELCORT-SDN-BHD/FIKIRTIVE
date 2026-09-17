@@ -3,6 +3,7 @@ import { QueueHealthBoard } from "@/components/admin/QueueHealthBoard";
 import { requireRole, staffPrincipal } from "@/lib/auth-guard";
 import { runAsStaff } from "@fikirtive/db/principal";
 import { getQueueObservability } from "@/lib/queue-observability";
+import { listDeadLetters } from "@/lib/dead-letters-admin";
 
 /**
  * #779 — the queue board.
@@ -36,6 +37,11 @@ export default async function QueueHealthPage() {
   if ("error" in gate) redirect("/login?from=/admin/queue");
 
   // #1379：平台队列聚合，没有单一目标租户 —— ownerId=null（同 kind:"system" 的扫描域）。
-  const board = await runAsStaff(staffPrincipal(gate, null), () => getQueueObservability());
-  return <QueueHealthBoard board={board} />;
+  const principal = staffPrincipal(gate, null);
+  const board = await runAsStaff(principal, () => getQueueObservability());
+  // DLQ-A1（Founder 2026-09-15 裁决，登记在 docs/specs/fail-closed-reliability.md §5）：死信清单。
+  // 与上面同一条租户结构 —— `pgboss.job` 没有租户列，死信是平台级行。这一读**只读**，探针的只读
+  // 承诺（app/api/ops/dlq/route.ts）不受影响：那条免鉴权路径一个字都没改。
+  const deadLetters = await runAsStaff(principal, () => listDeadLetters());
+  return <QueueHealthBoard board={board} deadLetters={deadLetters} />;
 }
