@@ -141,6 +141,18 @@ export function TextNode({ data, selected }: NodeProps) {
           // placeholder disappears as soon as the merchant types.
           aria-label="Text note"
           onPointerDown={(e) => e.stopPropagation()}
+          // 在自己的便签里按住 Shift 拖选几个字，是**编辑文字**，不是在对画布下命令。
+          // 卡片一直只挡 pointerdown，click 照旧冒到卡身上，撞进 React Flow 的取消选中规则
+          // （@xyflow/react 12.11.1 dist/esm/index.mjs:2261 onSelectNodeHandler → :1626
+          // handleNodeClick：`node.selected && multiSelectionActive` ⇒ 取消选中）。从前加选开关
+          // 晚一拍才写进 store，这一下有一半机率读到 false 而侥幸逃过；开关修诚实之后，它每次
+          // 都成立 —— 商家选几个字，这张卡就从画布选中里消失。
+          // 只挡带修饰键的那一下：光秃秃的点击照旧交给画布，点进便签写字仍然选中这张卡、
+          // 工具条照常露出来。代价是 Shift 点便签的文字框不再能把这张卡加进画布多选——
+          // 要多选便签，改点卡的边框或标签（Founder 2026-09-16 裁决，对谈）。
+          onClick={(e) => {
+            if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopPropagation();
+          }}
           value={val}
           onChange={(e) => update(e.target.value)}
           onBlur={flush}

@@ -268,9 +268,20 @@ describe("ottoInstructions — meta-action tool name (F26)", () => {
   });
 });
 
-describe("ottoInstructions — video keyframes", () => {
-  it("prompt instructs Otto to pass forVideo:true when making an image keyframe for a video", () => {
-    expect(ottoInstructions).toMatch(/forVideo/);
+// FC-3(S5 批量裁决 2026-09-12 #1358 / creation-engine.md:186)—— 这一条从前钉的是
+// 「教 Otto 传 forVideo:true 去造一张首帧图」。裁决把「合成 first frame」对所有路径判了
+// 退场,入参字段与实现分支都已报废,所以现在钉的是反面:说明书不许再教这件事。
+describe("ottoInstructions — 不许提议先出一张首帧图(FC-3)", () => {
+  it("整柜说明书里不再教 forVideo / videoPrompt 那条两步计划", () => {
+    expect(ottoInstructions).not.toMatch(/forVideo/);
+    expect(ottoInstructions).not.toMatch(/videoPrompt: /);
+    expect(ottoInstructions).toContain(
+      "NEVER offer to make a picture first and animate it afterwards",
+    );
+  });
+
+  it("商家指着一张已有的图说「把它动起来」这条能力照旧在", () => {
+    expect(ottoInstructions).toMatch(/points at a picture THEY already have and asks for THAT to move/);
   });
 });
 
@@ -379,8 +390,9 @@ describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled w
     expect(ottoInstructions).toMatch(/do NOT put two ways of doing it side by side and ask which one they want/i);
     // 方案的取舍必须发生在铸卡**之前**。
     expect(ottoInstructions).toMatch(/Every decision between plans happens BEFORE any card/);
-    // 「先出图再出片」被点名为**一个**方案,不是一道选择题 —— 出口是 forVideo + videoPrompt。
-    expect(ottoInstructions).toMatch(/it is a single plan, laid out once with `forVideo: true` and `videoPrompt`/);
+    // FC-3 —— 「先出图再出片」从前被点名为**一个**方案(出口是 forVideo + videoPrompt);
+    // 裁决之后它连方案都不是,说明书改口成「根本不许提议」。
+    expect(ottoInstructions).toMatch(/it is not a plan you may offer at all: a clip is one card and one charge/);
     // 判官 2026-09-04 P2-4 —— 这条硬规矩与下一节「Offering a few directions」(`proposePack`
     // 摆选项)字面相撞。豁免必须写在规矩里:选项在**卡里面**不是“卡旁边的一个问题”。
     expect(ottoInstructions).toMatch(
@@ -388,20 +400,14 @@ describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled w
     );
   });
 
-  // Codex 只读 E2E E2E-CRE-PAV-004 —— 两步任务不许把内部接缝丢给商家。
-  // 生产原句是 `Once you approve and generate it, bring that image back here`:那一句在当时
-  // 是**诚实的**(系统真的没有接力),所以这条钉的不是措辞洁癖 —— 接力落地之后它就变成了假话。
-  it("CREATE-A1 两步计划:教 Otto 传 videoPrompt,并明令不许叫商家把图带回来", () => {
-    expect(ottoInstructions).toMatch(/videoPrompt/);
-    // 第二张确认卡自己出现 —— 这句话是接力那段代码的产品面承诺。
-    expect(ottoInstructions).toMatch(/confirmation card appears by itself/i);
-    // 生产原句的三个动作,逐个禁掉。
-    expect(ottoInstructions).toMatch(/NEVER ask them to bring the picture back/i);
-  });
-
-  it("bridges the keyframe rule to seedreamPrompt's forVideo (Fix 8)", () => {
-    expect(ottoInstructions).toMatch(/keyframe/i);
-    expect(ottoInstructions).toMatch(/forVideo/);
+  // FC-3 —— 这两条从前钉的是两步接力的产品面承诺(「第二张确认卡自己出现」「永远不要叫
+  // 商家把图带回来」)以及 seedreamPrompt 的 forVideo 桥接。裁决把整条两步路判退之后,
+  // 那个承诺没有对象了 —— 接力模块已下线,入参字段已报废。现在钉的是它的替代事实:
+  // 一条片子就是一张卡、一笔钱,内部接缝因此根本不存在,没有什么要丢给商家。
+  it("CREATE-A1 一条片子 = 一张卡一笔钱,没有第二步要商家自己接", () => {
+    expect(ottoInstructions).toMatch(/There is no two-step plan any more: every clip is one card and one charge/);
+    expect(ottoInstructions).not.toMatch(/confirmation card appears by itself/i);
+    expect(ottoInstructions).not.toMatch(/bring the picture back/i);
   });
 });
 
@@ -1003,8 +1009,9 @@ describe("creation §5 :162④ —— 装配器里没有首帧手艺话,柜里�
   });
 
   it("creation §5 :162④ / CREATE-A2: 整柜说明书里那条禁令还在 —— 演员 + 商品绝不先合成一张首帧再动画", () => {
-    // 这条来自单镜 `propose` 的「Video keyframes」手艺档(prompting.md),FSE-208 只退场了
-    // **分镜(storyboard)**的首帧合成,单镜 forVideo 两步是另一条仍在的用户点名功能,不受影响。
+    // 这条来自单镜 `propose` 的「Video keyframes」手艺档(prompting.md)。FSE-208 退场的是
+    // **分镜**那一支;FC-3 之后普通对话那一支也退场了(同一份裁决 creation-engine.md:186),
+    // 所以这句禁令现在是全路径成立,不再只针对演员 + 商品那一种组合。
     expect(ottoInstructions).toContain(
       "Never offer to build a combined still of a cast member and a product first and then animate it",
     );

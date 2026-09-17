@@ -244,14 +244,36 @@ describe("createProduct", () => {
     ).resolves.toEqual({ baseAssetId: cover });
   }, 60_000);
 
-  it("PRODID-A4 商家在 Brand 页清掉主图(显式递 null):身份上的封面跟着没", async () => {
+  it("PRODID-A4 显式递 null 清封面:还挂着图就落回第一张,图都没有了才是 null", async () => {
     // 上面两条的反面对照 —— 「不递就是不碰」不能变成「永远清不掉」。清空是一个**显式**的
-    // `imageAssetId: null`,而 Brand 页的表单空着那一栏时递的正是它。
+    // `imageAssetId: null`。
+    //
+    // **2026-09-15 Founder 裁决改了这一条的结局**(规格 §5 变更登记):封面不变量从此是
+    // **全量**的 —— 一件还挂着基础层参考图的产品永远有一张封面。所以显式清空不再留下一件
+    // 没有脸的产品,而是落回最早那一张;「没有封面」只剩「一张基础层参考图都没有」这一种成因。
+    // (Brand 页那颗只清指针、不摘图的「Remove from product」于是永远改不动任何东西,同票撤掉。)
     const cover = await seedAssetRow();
     const made = (await createProduct({
       ownerId: orgId, data: { name: "Kuih lapis", imageAssetId: cover }, source: "user",
     })) as { created: true; id: string; entityId: string };
 
+    await expect(
+      updateProductRecord({
+        ownerId: orgId, id: made.id, data: {}, imageAssetId: null, source: "user",
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    // 那张图还挂在身份上(createProduct 挂了一条 ReferenceImage)⇒ 落回它,不是 null。
+    await expect(
+      prisma.entity.findFirstOrThrow({
+        where: { id: made.entityId, ownerId: orgId }, select: { baseAssetId: true },
+      }),
+    ).resolves.toEqual({ baseAssetId: cover });
+
+    // 把那张图也摘掉,再清一次 ⇒ 这才是真的没有封面。
+    await prisma.referenceImage.updateMany({
+      where: { entityId: made.entityId, ownerId: orgId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
     await expect(
       updateProductRecord({
         ownerId: orgId, id: made.id, data: {}, imageAssetId: null, source: "user",

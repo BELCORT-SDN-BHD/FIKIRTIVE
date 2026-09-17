@@ -217,40 +217,15 @@ describe("Product link and image feedback", () => {
     expect(document.querySelector<HTMLInputElement>('input[value="Latte blend"]')).not.toBeNull();
   });
 
-  it("keeps an image removal refusal visible and removes only after retry succeeds", async () => {
-    let settleFirst: ((value: string | null) => void) | undefined;
-    const firstAttempt = new Promise<string | null>((resolve) => { settleFirst = resolve; });
-    const setImage = vi
-      .fn<(record: BrandRecordRow, assetId: string | null) => Promise<string | null>>()
-      .mockReturnValueOnce(firstAttempt)
-      .mockResolvedValueOnce(null);
+  // 原来这里还有一条「keeps an image removal refusal visible and removes only after retry succeeds」
+  // ——它按的是卡片菜单上的「Remove from product」(只清 `Entity.baseAssetId`、不摘图)。
+  // Founder 2026-09-15 裁决把封面不变量变成**全量**的:一件还挂着基础层参考图的产品永远有一张
+  // 封面。而那颗键只在有封面时才画出来,有封面就意味着有活着的基础层参考图 —— 于是清空之后必然
+  // 被同一个事务里的 `reconcileEntityCover` 立刻钉回同一张图,按了不会有任何反应。控件、它的
+  // pending 徽章与失败提示一并撤掉(规格 §5 变更登记 2026-09-15 行),这条用例随之退场。
+  // 「换封面失败要看得见、可重试」由下面那条图片选择器的用例继续钉着。
 
-    await render(<ShowcaseHarness setImage={setImage} />);
-    await openProductMenu();
-    const remove = menuItem("Remove from product");
-    await act(async () => {
-      remove.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-      remove.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-    });
-
-    expect(setImage).toHaveBeenCalledTimes(1);
-    expect(document.body.textContent).toContain("Removing image…");
-    expect(document.querySelector<HTMLButtonElement>('button[aria-label="Actions for Morning blend"]')?.disabled).toBe(true);
-
-    await act(async () => settleFirst?.("Record not found."));
-
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Product image wasn't removed");
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Record not found.");
-    expect(document.querySelector('img[alt="Morning blend"]')).not.toBeNull();
-
-    await openProductMenu();
-    await click(menuItem("Remove from product"));
-    expect(setImage).toHaveBeenCalledTimes(2);
-    expect(document.querySelector('img[alt="Morning blend"]')).toBeNull();
-    expect(document.body.textContent).toContain("Add image · from Library");
-  });
-
-  it("still exposes replace and remove when a saved image is missing from Library results", async () => {
+  it("still exposes replace when a saved image is missing from Library results", async () => {
     await render(
       <ProductShowcase
         records={[PRODUCT]}
@@ -268,7 +243,6 @@ describe("Product link and image feedback", () => {
 
     await openProductMenu();
     expect(menuItem("Replace image")).toBeTruthy();
-    expect(menuItem("Remove from product")).toBeTruthy();
   });
 
   it("keeps the image picker open on refusal, locks every tile, and closes after retry success", async () => {

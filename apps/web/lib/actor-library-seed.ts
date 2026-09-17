@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/node";
-import { prisma } from "@fikirtive/db";
+import { prisma, reconcileEntityCover } from "@fikirtive/db";
 import { runAsTenant } from "@fikirtive/db/principal";
 import {
   ACTOR_LIBRARY,
@@ -222,6 +222,9 @@ async function seedOneActor(ownerId: string, actor: ActorCard): Promise<"seeded"
           data: { baseAssetId },
         });
       }
+      // 播种自己指名定妆照当封面(上面那一句),指不着时照共用规则落到最早那一张
+      // —— 封面判据只有一处(Founder 2026-09-15 裁决;家规 §7.3)。
+      await reconcileEntityCover(tx, { ownerId, entityId });
     });
   } catch (e) {
     // 并发的另一次引导赢了 (ownerId, catalogKey) —— 这一位已经在库里,不是失败。
