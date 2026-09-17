@@ -76,6 +76,7 @@
 
 | 日期 | 想法 | 裁决（留空待 S5） |
 |---|---|---|
+| 2026-09-17 | **staging 无法验证本规格任何一行（第三轮付费旅程第四组）**：staging `web` 与 `worker` 两个服务均未设置 `MEDIA_PROXY_SECRET`／`SHARE_PREVIEW_SECRET`（各查 53／31 个变量名，逐一确认缺失），`sharePostPreview`／`getPublicMediaLink`／`/api/media/pub/<token>` 三处全部在密钥判断这一步就 fail closed 返回；同时全部 8 个组织在 staging 数据库里零 `ScheduledPost` 行，且本 build 没有商家排期入口（`/schedule` 307 回 Home，唯一路径是 Otto 的 `sharePostPreview` 技能），铸链本身就无从发起。独立核证员额外发现第三个阻断：即便补齐两把密钥且真有一条 `ScheduledPost`，客户面入口 `apps/web/app/s/[token]/route.ts:55` 用 `new URL(SHARE_PREVIEW_COOKIE_PATH, req.nextUrl.origin)` 构造跳转目标，在 Railway 代理之后 `req.nextUrl.origin` 解析成内部 socket——`GET /s/<token>` 在 staging 实测 303 到 `https://localhost:8080/schedule/share-preview`，任何商家发出的分享链接客户端到端必坏（登记 `findings-catalog.md` R3-F31，修复分支 `claude/share-entry-redirect-origin-r3-f31` 施工中）。旧式 `?t=` 链接另有一处一秒级的令牌驻留与登录壳短暂闪现（R3-F32）。已脱离分享链验证的条款：账本无新增（SHARE-A9 的精神，虽非 100 次拉取）、匿名读其他租户资源统一 404（SHARE-A7 附近的一般 fail-closed 行为）、fail-closed 页面文案统一（SHARE-A8）。**未能验证、且观察到的 404 不能代替验证的**：SHARE-A1（Range 分段传）、SHARE-A2（普通打开）、SHARE-A5（「内容可能已更新」提示行）、SHARE-A6（干净地址端到端、遥测不含 token）、SHARE-A9（100 次匿名拉取）、**SHARE-A10（签名跨租户改指）**——密钥未配置时 `verifyMediaToken` 在 `keyOwnerMatches` 归属复核之前就返回 null，本轮观察到的 404 证明的是「密钥未配置」分支被命中，不是签名跨租户改指被专门挡下，SHARE-A10 在 staging 事实上从未被真正测过。**待 Founder 裁**：staging 何时补齐两把密钥、创建一条测试 `ScheduledPost`，以便下一轮付费旅程能真正跑通本规格。出处：本次第三轮收官（四）走查报告，`docs/audits/fullstack-staging-2026-09-14/report-round3.md` 2026-09-17（三）节、`local-logs/staging-r3-paid/real-10-share-anon.json`。 | |
 
 ## 6. 改签记录
 

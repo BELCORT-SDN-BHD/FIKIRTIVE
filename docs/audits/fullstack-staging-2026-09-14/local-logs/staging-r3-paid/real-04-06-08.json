@@ -1,0 +1,320 @@
+{
+  "group": "real-04-06-08",
+  "buildSha": "c0d25917",
+  "signedInAs": "tenant A (org 'founder', super-admin)",
+  "startedUtc": "2026-09-17T05:02:00Z",
+  "endedUtc": "2026-09-17T05:40:00Z",
+  "spendUsdThisGroup": 0.4853821874999999,
+  "spendUsdCumulative": 0.8657643749999999,
+  "steps": [
+    {
+      "id": "S00",
+      "step": "Build identity + money baseline",
+      "utc": "2026-09-17T05:03:00Z",
+      "url": "/api/health",
+      "action": "in-page fetch /api/health; read-only DB baseline (BEGIN READ ONLY … ROLLBACK)",
+      "observed": "HTTP 200 {\"ok\":true,\"db\":\"up\",\"worker\":\"up\",\"workers\":{\"worker-wait\":\"up\",\"worker-compute\":\"up\",\"worker\":\"retired\"},\"backup\":\"fresh\",\"migrations\":\"applied\",\"build\":{\"sha\":\"c0d25917\",\"ref\":\"main\"}} — equals origin/main c0d2591768efc240931264c1ba0497a69008d1b6.",
+      "dbDelta": "CreditAccount(founder) balance=99997842 reserved=0 at start. Known failed job 01M288VJS12BBT536TZF5T0S01 (VIDEO, 2026-09-11 13:00:06.834, error 'generation provider video submit failed (400)') carries exactly two ledger rows: RESERVE -110/+110 (reserve:01M288VJS12BBT536TZF5T0S01) and REFUND +110/-110 (refund:…), nothing else.",
+      "verdictClause": "baseline"
+    },
+    {
+      "id": "S01",
+      "step": "REAL-04a — no-person intent from the creation surface",
+      "utc": "2026-09-17T05:07:34Z",
+      "url": "/create → /create/canvas?project=canvas_54d9045d-…&thread=thread_54d9045d-…",
+      "action": "typed '@' picker → picked product 'R3 real 2026-09-17 mug' (source label 'Product'), appended '- make a 5 second video of this mug alone on a wooden table, no people, no hands, no text'; one click on Send prompt. NO actor mentioned.",
+      "observed": "Composer value '@R3 real 2026-09-17 mug - make a 5 second video of this mug alone on a wooden table, no people, no hands, no text'. A new canvas + thread was created (canvas_54d9045d-fac5-4ee2-a354-ea67afe9007b).",
+      "dbDelta": "Chat turn only: RESERVE -40/+40 then SETTLE +17/-40 under otto-stream:01M2PW6MVVF3FSVJA8HK60XYNT (net 2.3 credits). No GenJob.",
+      "verdictClause": "REAL-04 用已通过素材做无人物视频"
+    },
+    {
+      "id": "S02",
+      "step": "REAL-04a — confirmation card facts (quote before any charge)",
+      "utc": "2026-09-17T05:08:05Z",
+      "url": "/create/canvas?project=canvas_54d9045d-…",
+      "action": "read the card region [aria-label=\"Generation confirmation\"] verbatim",
+      "observed": "'1 video / 16:9 · 5s · 720p · No sound · Uses 1 of your reference photos / 11 credits / Reference names sent to the engine: R3 real 2026-09-17 mug (product). / Change / Generate · 11 credits'. Exactly one reference, no person/actor named. Balance before the click 9,999,781.9 credits.",
+      "verdictClause": "REAL-04 分别确认报价"
+    },
+    {
+      "id": "S03",
+      "step": "REAL-04a — budget rule applied, ONE approval",
+      "utc": "2026-09-17T05:08:20Z",
+      "url": "/create/canvas?project=canvas_54d9045d-…",
+      "action": "budget check (cumulative before click US$0.3804 + projected US$0.3804 = US$0.76 < US$16), then ONE left_click on the visible 'Generate · 11 credits' (the second, zero-size duplicate in the Conversation region was left alone)",
+      "observed": "Card left the un-approved state; header balance moved 9,999,781.9 → 9,999,770.9 credits (-11).",
+      "dbDelta": "GenJob 01M2PW8275GJ644V5RX3DESDHE created 05:08:20.855 — kind=VIDEO, model=seedance-2-mini, count=1, idempotencyKey 'cowork:01M2PW762FP0ZSQXC9SXE93HTB', videoOptions {fps:0,audio:false,seconds:5,resolution:'720p',aspectRatio:'16:9',providerTask:{id:'cgt-20260917130821-896kn'}}, entityIds={01M2PTYG24RTVAV71KR56H2238} (product only), approvedEntities=[{id:01M2PTYG24RTVAV71KR56H2238,name:'R3 real 2026-09-17 mug',type:PRODUCT}] — no CHARACTER. CreditLedger: exactly one RESERVE -110/+110 key reserve:01M2PW8275GJ644V5RX3DESDHE at 05:08:20.866.",
+      "verdictClause": "REAL-04 每单恰一组结算（预扣侧）"
+    },
+    {
+      "id": "S04",
+      "step": "REAL-04a — terminal state and settlement",
+      "utc": "2026-09-17T05:10:20Z",
+      "url": "read-only DB",
+      "action": "poll GenJob + CreditLedger",
+      "observed": "GenJob 01M2PW8275GJ644V5RX3DESDHE: status DONE, progress 100, spent=true, spentUsd=0.38038218749999997, billedUnits=108900, generationIds={01M2PWBNEKBC8N73M4SBJ329QX}, lastFrameAssetId=01M2PWBPB5HNED4MK4CWV666NS, startedAt 05:08:20.941, finishedAt 05:10:19.761 (119 s). RefGenJob rows created in the last hour: 0.",
+      "dbDelta": "For this refId exactly one RESERVE (-110/+110) and one SETTLE (0/-110, key settle:01M2PW8275GJ644V5RX3DESDHE at 05:10:18.846). No REFUND, no duplicate settle, reserved back to 0.",
+      "verdictClause": "REAL-04 无人物成功；每单恰一组结算"
+    },
+    {
+      "id": "S05",
+      "step": "REAL-04a — playback",
+      "utc": "2026-09-17T05:12:30Z",
+      "url": "/library/01M2PWBNEKBC8N73M4SBJ329QX",
+      "action": "opened the asset detail panel, clicked the native <video> play control (a JS play() is immediately paused by this headless pane — recorded as a tool problem), then polled the element",
+      "observed": "duration 5.041667 s, videoWidth 1280, videoHeight 720, currentTime advanced 0 → 5.042 (played to the end), webkitVideoDecodedByteCount 2,179,985 while webkitAudioDecodedByteCount 0 — matches the card's 'No sound' and videoOptions.audio=false. Panel 'Where this came from': 'Canvas: @R3 real 2026-09-17 mug - make a 5 second video… · Conversation: R3 Mug Solo Product Video / References used: R3 real 2026-09-17 mug / Cost: 11 credits / Status: Delivered'.",
+      "verdictClause": "REAL-04 无人物成功可播"
+    },
+    {
+      "id": "S06",
+      "step": "REAL-04a — download",
+      "utc": "2026-09-17T05:13:10Z",
+      "url": "/files/u/founder/<contentHash>.mp4?download=1",
+      "action": "the panel's own Download control resolves to that href; the viewer sandbox blocks a real file save, so the same URL was fetched in-page and hashed",
+      "observed": "HTTP 200, content-type video/mp4, content-disposition attachment; filename=\"cinematic-product-photography-photoreali-1.mp4\", byteLength 1,981,328, sha256 09b0f455138563cd6cdb43ef7e3b378578a8408a4a701a44324e366bd1958bb8.",
+      "dbDelta": "Asset row for Generation 01M2PWBNEKBC8N73M4SBJ329QX: contentHash 09b0f455…8bb8, sizeBytes 1981328, mime video/mp4, source GENERATED — hash and byte count match the download exactly.",
+      "verdictClause": "REAL-04 下载"
+    },
+    {
+      "id": "S07",
+      "step": "REAL-06 — the image intent (also REAL-04b's source image), tab A",
+      "utc": "2026-09-17T05:14:41Z",
+      "url": "/create/canvas?project=canvas_54d9045d-…&thread=thread_54d9045d-…",
+      "action": "same thread, typed 'Now make one still photo (not a video) of the same mug on a wooden table, square, no people, no text' and clicked Send once",
+      "observed": "Confirmation card: '1 image / 2048 × 2048 · 1:1 · 1 image / 1 credit / Reference names sent to the engine: R3 real 2026-09-17 mug (product). / Images 1 2 3 4 / Shape 1:1 9:16 16:9 4:3 3:4 3:2 2:3 21:9 / Fine detail — Costs more — the price below updates. / Change / Generate · 1 credit'. Balance 9,999,768.6 credits (chat turn 2.3 credits).",
+      "dbDelta": "Chat turn RESERVE -40/+40 then SETTLE +17/-40 under otto-stream:01M2PWKNEPNCXRX2JQPSWFN8XJ. GEN_CARD ChatMessage 01M2PWM4TKWZH0AN24SC76VEG1 (seq 6) created; no GenJob yet.",
+      "verdictClause": "REAL-06 在A标签确认一张图（准备）"
+    },
+    {
+      "id": "S08",
+      "step": "REAL-06 — tab B opened on the SAME canvas before the approval",
+      "utc": "2026-09-17T05:15:10Z",
+      "url": "second tab, same session, /create/canvas?project=canvas_54d9045d-…&thread=thread_54d9045d-…",
+      "action": "opened a new tab in the same browser session and loaded the same canvas URL; recorded its copy of the card",
+      "observed": "Tab B renders the identical un-approved card ('1 image / 2048 × 2048 · 1:1 · 1 image / 1 credit / … / Generate · 1 credit') with the button enabled. Balance shown 9,999,768.6 credits.",
+      "verdictClause": "REAL-06 保留相同意图请求"
+    },
+    {
+      "id": "S09",
+      "step": "REAL-06 — the request the product actually sends (tab A), then ONE approval",
+      "utc": "2026-09-17T05:15:32Z",
+      "url": "/create/canvas?project=canvas_54d9045d-…&thread=thread_54d9045d-…",
+      "action": "installed an inspection-only fetch wrapper (headers matching cookie/authorization/token/secret/key redacted before storage), applied the budget rule (US$0.76 + US$0.035 = US$0.80 < US$16), then ONE left_click on the visible 'Generate · 1 credit'",
+      "observed": "Next.js server action POST to the canvas page URL. Headers: accept text/x-component, next-action 40be7b3e3e27c45813255bfd39e5e06574302f25d5 (no bearer token in the payload — the session rides on the cookie, which was never read or stored). Body: [{\"cardId\":\"01M2PWM4TKWZH0AN24SC76VEG1\",\"prompt\":\"A matte red ceramic mug sitting alone on a warm wooden table, …\",\"entityIds\":[\"01M2PTYG24RTVAV71KR56H2238\"],\"variantSel\":{},\"quoteVersion\":\"8646424b32059c75\"}]. So the idempotency material the client sends is the card id (a ULID minted with the card) plus the quoteVersion; the server turns it into GenJob.idempotencyKey 'cowork:<cardId>'.",
+      "dbDelta": "GenJob 01M2PWN7GMMZSSJ96DS7R9Q7Z9 created 05:15:32.254 — IMAGE, seedream, count=1, imageOptions {\"aspectRatio\":\"1:1\"}, idempotencyKey 'cowork:01M2PWM4TKWZH0AN24SC76VEG1' (= the cardId in the payload). CreditLedger: one RESERVE -10/+10 key reserve:01M2PWN7GMMZSSJ96DS7R9Q7Z9 at 05:15:32.263.",
+      "verdictClause": "REAL-06 记录请求与幂等键形状"
+    },
+    {
+      "id": "S10",
+      "step": "REAL-06 — tab B replays the SAME card/intent",
+      "utc": "2026-09-17T05:16:21Z",
+      "url": "tab B, same canvas URL",
+      "action": "tab B still held the stale un-approved card; ONE left_click on its 'Generate · 1 credit' (fetch capture installed there too)",
+      "observed": "Tab B sent a byte-identical intent: same next-action id 40be7b3e…, body [{\"cardId\":\"01M2PWM4TKWZH0AN24SC76VEG1\", …}]. The image job had already reached DONE at 05:16:09 (settled), so this is a replay after terminal state. UI outcome in tab B: the canvas threw its error boundary — 'CANVAS · This canvas didn't open · It stopped loading part way through. Nothing you made was lost — everything is still saved. Try again, or go back and open it from Create.' Console: 'Minified React error #185' (maximum update depth exceeded). After a plain reload tab B converged to the correct single result: Otto 'Done — Made 1 image · 1 credit.'",
+      "dbDelta": "Zero new GenJob rows (the thread still holds exactly one GEN_CARD 01M2PWM4TKWZH0AN24SC76VEG1 and one GEN_RESULT for it) and zero new CreditLedger rows in that window — the only ledger rows around it are RESERVE 05:15:32.263 and SETTLE 05:16:09.374 for job 01M2PWN7GMMZSSJ96DS7R9Q7Z9. Balance unchanged by the replay.",
+      "verdictClause": "REAL-06 相同意图返回同job、无新增账本（asset-action-idempotency.md ASSET-A3）"
+    },
+    {
+      "id": "S11",
+      "step": "REAL-06 / REAL-04b — the source image is real",
+      "utc": "2026-09-17T05:16:30Z",
+      "url": "read-only DB",
+      "action": "read the job's terminal state and its Generation/Asset",
+      "observed": "GenJob 01M2PWN7GMMZSSJ96DS7R9Q7Z9 DONE, spent=true, spentUsd=0.035, billedUnits=1, generationIds={01M2PWPBRFQA3TF405WAFJCT48}, finishedAt 05:16:09.387. Generation 01M2PWPBRFQA3TF405WAFJCT48 → Asset contentHash 757c1ce729ea8a366606782c51050b02b0fddfb3e6758a5da0bfbdc33e53cd73, 276,975 bytes, image/jpeg, 2048×2048, entitySnapshot carries the product with its refHash.",
+      "verdictClause": "REAL-04b 已有图（自有、成功）"
+    },
+    {
+      "id": "S12",
+      "step": "REAL-04b — the variations control and its quote",
+      "utc": "2026-09-17T05:19:50Z",
+      "url": "/create/canvas?project=canvas_54d9045d-… (canvas node toolbar)",
+      "action": "selected the image node on the canvas (the Library detail panel has no variations entry — its actions are Regenerate · 1 credit, Animate · 11 credits, Crop, Generate edit · 1 credit), which reveals the node toolbar 'Edit with Otto · Create variations · Animate · Download'; clicked 'Create variations' once",
+      "observed": "Button tooltip/title before pressing: 'Make another one like this · 1:1 · Cost: 1 credit · No charge until you confirm'. A confirmation dialog opened: 'Make another one like this? / Cost: 1 credit. No charge until you confirm. / Images 1 / Shape 1:1 / From <the original card's full prompt> / Cancel / Generate · 1 credit'. The product's variations control on this build delivers exactly ONE image per confirmation (no 2/3/4 count picker on this dialog).",
+      "verdictClause": "REAL-04b 用已有图 Create variations；确认报价"
+    },
+    {
+      "id": "S13",
+      "step": "REAL-04b — ONE confirmation, one settlement group",
+      "utc": "2026-09-17T05:20:23Z",
+      "url": "/create/canvas?project=canvas_54d9045d-…",
+      "action": "budget check (US$0.80 + US$0.035 = US$0.83 < US$16), then ONE left_click on the dialog's 'Generate · 1 credit'",
+      "observed": "Request captured: next-action 405d8a815009b130221bd53c3bc103cdd21a76b7fd, body [{\"actionId\":\"546fed00-983b-42b3-9ed6-ef027fc72aad\",\"expectedCredits\":1,\"projectId\":\"canvas_54d9045d-…\",\"prompt\":\"A matte red ceramic mug …\"}] — the variations path carries its own actionId and the expected price. Immediately afterwards the canvas again threw 'This canvas didn't open' with React error #185; the money path was unaffected.",
+      "dbDelta": "GenJob 01M2PWY3MFQHXRA5W8MW9DVN6E created 05:20:23.198 — IMAGE, seedream, count=1, imageOptions {\"aspectRatio\":\"1:1\"}, sourceGenerationId=01M2PWPBRFQA3TF405WAFJCT48 (the original image), idempotencyKey 'canvas:74da554e70ee85b0f237c12eae716b1016069d1fcb3930f2f04fd0625e6337e3' (a different key family from the card path). Ledger: exactly one RESERVE -10/+10 (05:20:23.219) and one SETTLE 0/-10 (05:20:55.32). DONE at 05:20:55.333, spentUsd 0.035, billedUnits 1.",
+      "verdictClause": "REAL-04b 每单恰一组结算"
+    },
+    {
+      "id": "S14",
+      "step": "REAL-04b — the variation is a real, viewable, downloadable asset and the original survives",
+      "utc": "2026-09-17T05:21:40Z",
+      "url": "/library/01M2PWZ30DE2PXJ8MZWM2TDZJR",
+      "action": "opened the variation in the Library detail panel, read the rendered <img>, and fetched the panel's own Download href",
+      "observed": "Rendered image naturalWidth 2048 × naturalHeight 2048 from /files/u/founder/18f31cf8…b83b2.jpeg. Download: HTTP 200, image/jpeg, content-disposition attachment; filename=\"a-matte-red-ceramic-mug-sitting-alone-on-1.jpeg\", 294,776 bytes, sha256 18f31cf8e62eb8d3a15fea3df24ed901c42d41b16efbeb64b46c7f716c5b83b2 = the Asset contentHash. Panel 'What we sent to the engine' begins '<Image_1> is the image being edited.' followed by the original prompt — i.e. the source image really was sent. The original 01M2PWPBRFQA3TF405WAFJCT48 (hash 757c1ce7…cd73) is untouched and still in Library, so the variation sits beside it rather than replacing it.",
+      "verdictClause": "REAL-04b variation真实可用"
+    },
+    {
+      "id": "S15",
+      "step": "REAL-06 — explicit new intent after terminal state",
+      "utc": "2026-09-17T05:22:52Z",
+      "url": "/library/01M2PWPBRFQA3TF405WAFJCT48",
+      "action": "on the original image's detail panel, budget check (US$0.83 + US$0.035 = US$0.87 < US$16), verified document.elementFromPoint reported 'Regenerate · 1 credit' under the target, then ONE left_click",
+      "observed": "The button carries its own quote in the label ('Regenerate · 1 credit') and switched to 'Generating…'; header balance 9,999,766.6 → 9,999,765.6 credits.",
+      "dbDelta": "NEW GenJob 01M2PX2N965JH5HCYCGBWA9BS2 created 05:22:52.334 — IMAGE, idempotencyKey 'asset:regen:99bc5b91938bc21de8a431fd8e8283e5d65156912333657e62390ffcf5b27285', i.e. a different key from the replayed card's 'cowork:01M2PWM4TKWZH0AN24SC76VEG1'. Exactly one RESERVE -10/+10 (05:22:52.349) and one SETTLE 0/-10 (05:23:24.557). DONE, spentUsd 0.035, billedUnits 1. ActionEvent gen.start records jobId 01M2PX2N965JH5HCYCGBWA9BS2.",
+      "verdictClause": "REAL-06 显式新意图产生新job及新报价（ASSET-A4）"
+    },
+    {
+      "id": "S16",
+      "step": "REAL-08 — the real failure and its card",
+      "utc": "2026-09-17T05:25:30Z",
+      "url": "/create/canvas?project=canvas_c878814e-…&thread=thread_c878814e-…",
+      "action": "opened the thread that owns the known failed job 01M288VJS12BBT536TZF5T0S01 (org founder, VIDEO, 2026-09-11, refunded 110 credits). Nothing in this run failed, so the historical failure was reused, per the row's own rule (不故意打挂线上).",
+      "observed": "The failed card is visible both as a canvas node ('Video / That didn't finish / You weren't charged.') and in the conversation: '😕 This one didn't come through — and you weren't charged.' with two controls, 'Try again' and 'Change something'. Retry source is fully legible on the card itself: 'Here's what I'll make / A short video / Product showcase video of the R2 Coral Tumbler rotating on a white table, for social media or e-commerce use / 9:16 / 5s / 720p / No sound / Starts from your image / Image — Starting frame / Advanced details / About 11 credits'. So the product DOES expose an edit-and-retry entry (this build's wording is Try again + Change something).",
+      "dbDelta": "The thread holds exactly one FAILED GenJob. Its ledger pair (RESERVE -110 / REFUND +110) is unchanged from the baseline read.",
+      "verdictClause": "REAL-08 打开失败卡 Edit and retry；核来源与引用、报价"
+    },
+    {
+      "id": "S17",
+      "step": "REAL-08 — 'Change something' (the edit half)",
+      "utc": "2026-09-17T05:27:19Z",
+      "url": "/create/canvas?project=canvas_c878814e-…",
+      "action": "pressed 'Change something' (it toggles an in-card form, aria-expanded), typed 'Make it 16:9 instead of 9:16, same tumbler, no people' and pressed 'Send to Otto' once",
+      "observed": "The in-card form reads 'I can't change length, sound and which references it uses on this card — tell me below and I'll redo the plan.' Otto's answer: 'That's a new card with a different shape — I'll set it up now with 16:9 and the same rotating tumbler concept. The reference photo you attached (the tiny 80px one) is too small for a video — it needs to be at least 300px on its shortest side. Nothing was charged. Could you share a larger version of the tumbler photo? …' and 'This reply used 3.5 credits.' No new card was minted, because the retry source is permanently invalid input (an 80-px starting frame) — this is also the root cause of the original 2026-09-11 provider 400.",
+      "dbDelta": "Chat turn only: RESERVE -40/+40 then SETTLE +5/-40 under otto-stream:01M2PXAT974667MVS7N6QKNMRM (3.5 credits). No GenJob, no other ledger row.",
+      "verdictClause": "REAL-08 编辑重试路径存在且诚实"
+    },
+    {
+      "id": "S18",
+      "step": "REAL-08 — 'Try again' (the retry half) is $0 and mints a fresh card",
+      "utc": "2026-09-17T05:28:05Z → 05:30:58Z",
+      "url": "/create/canvas?project=canvas_c878814e-…",
+      "action": "pressed the failed card's 'Try again'. It gave no visible feedback, so the press was repeated while diagnosing (four presses in total, 05:28:05, 05:29:26, 05:30:12, 05:30:58). Source read afterwards confirms this entry is zero-spend by construction: apps/web/lib/cowork-actions.ts:295–301 'Create a variation of an existing GEN_CARD — clones its payload verbatim into a new UN-generated card on the SAME thread. Zero spend: no startGen, no GenJob, no queue. The new card gets a fresh newId() so its cowork:<newCardId> idempotencyKey is independent of the original'.",
+      "observed": "Live UI: the conversation never showed the new cards, the button never entered its 'Queuing…' state and no error text appeared — it looked inert. A capture-phase listener proved a trusted click did reach the button, and the server action POST body was [{\"cardId\":\"01M288TQE27AF4SP7QF1895BAP\"}] → HTTP 200 (that cardId is exactly the failed job's key material: GenJob.idempotencyKey = 'cowork:01M288TQE27AF4SP7QF1895BAP'). After a page reload all four cloned cards render.",
+      "dbDelta": "Four ActionEvent rows type='cowork.vary' payload {\"fromCardId\":\"01M288TQE27AF4SP7QF1895BAP\"} and four new un-generated GEN_CARD ChatMessages (seq 33/35/37/39: 01M2PXC6XXYEP9H4HZBRJ5RDEA, 01M2PXEPK2FSFTC3RD871RKXP4, 01M2PXG3F0E04DN3XDH6AY0TTC, 01M2PXHG7QJ71WWDXT4QF05HQC), each preceded by 'Another take — same settings. Generate when you're ready.' ZERO GenJob rows and ZERO CreditLedger rows from all four presses; balance unchanged.",
+      "verdictClause": "REAL-08 retry-source可见；重试入口本身不扣钱"
+    },
+    {
+      "id": "S19",
+      "step": "REAL-08 — submitting the retry card ONCE: refused before any charge",
+      "utc": "2026-09-17T05:33:40Z",
+      "url": "/create/canvas?project=canvas_c878814e-…",
+      "action": "opened the conversation panel, verified by elementFromPoint that the target was the LAST card's 'Generate · 11 credits' (the unrelated pre-existing un-approved card 01M2896PPDG7XKKMTYN3VFQ6EZ, 'on a marble table', was identified beforehand and deliberately not touched), budget check (US$0.87 + at most US$0.38 = US$1.25 < US$16), then ONE left_click",
+      "observed": "The product refused fail-closed, before sending anything: 'One of your references is only 80×107 pixels — it needs to be at least 300 pixels on its shortest side. Swap it for a larger one and ask again — nothing was sent. Reference 4QF05HQC — quote this if you ask us about it.' The quoted reference '4QF05HQC' is the tail of card id 01M2PXHG7QJ71WWDXT4QF05HQC, confirming which card was approved. Header balance unchanged at 9,999,762.1 credits.",
+      "dbDelta": "Zero new GenJob, zero new CreditLedger rows. The original failure's ledger pair is still exactly RESERVE -110/+110 (2026-09-11 13:00:06.841) and REFUND +110/-110 (2026-09-11 13:02:28.048) — untouched, not offset, not duplicated.",
+      "verdictClause": "REAL-08 原退款不抵消或重复；新单未发生（付费前被合法拦下）"
+    },
+    {
+      "id": "S20",
+      "step": "Money conservation for the whole group",
+      "utc": "2026-09-17T05:36:00Z",
+      "url": "read-only DB",
+      "action": "sum every CreditLedger row from 05:05:00 onward and compare with the account",
+      "observed": "14 rows, sum(balanceDelta) = -221, sum(reservedDelta) = 0. CreditAccount(founder) 99997842 → 99997621 (-221 minor units = 22.1 credits) with reserved 0. Breakdown: 3 chat turns (2.3 + 2.3 + 3.5 = 8.1 credits) + video 11 + image 1 + variation 1 + regenerate 1 = 22.1. Four paid generations, four RESERVE/SETTLE pairs, no REFUND, no hanging reserve, no duplicate settle.",
+      "dbDelta": "GenJob spentUsd this group: 0.38038218749999997 (video) + 0.035 + 0.035 + 0.035 (three images) = 0.4853821875.",
+      "verdictClause": "钱守恒（ASSET-A7 口径）"
+    },
+    {
+      "id": "S21",
+      "step": "Provider bill cross-check",
+      "utc": "2026-09-17T05:38:00Z",
+      "url": "arkcli",
+      "action": "arkcli auth status --format json → logged_in True; arkcli usage stats --start 2026-09-17 --end 2026-09-17 --interval Hour --by model --format json",
+      "observed": "The stats call fails: {\"ok\":false,\"error\":{\"message\":\"usage.get_inference_usage: … requires BytePlus Ark SSO STS, please run `arkcli auth login`: … STS refresh failed … refresh_token is invalid\"}}. Provider bill not cross-checked (SSO expired). No login was attempted and nobody was asked to log in. (arkcli 1.0.23; it also printed an upgrade notice to 1.0.30.)",
+      "verdictClause": "供应商账单侧未能核对"
+    }
+  ],
+  "verdicts": [
+    {
+      "id": "REAL-04",
+      "status": "PASS",
+      "clausesProven": [
+        "无人物视频：card said 'Uses 1 of your reference photos / Reference names sent to the engine: R3 real 2026-09-17 mug (product)'; GenJob 01M2PW8275GJ644V5RX3DESDHE carries entityIds={product} and approvedEntities=[{PRODUCT}] only — no CHARACTER, no actor",
+        "成功可播：status DONE, spentUsd 0.38038218749999997, billedUnits 108900; the Library player ran 0 → 5.042 s of a 1280×720 clip with 2,179,985 video bytes decoded and 0 audio bytes (matches 'No sound')",
+        "下载：the panel's own Download href returned HTTP 200 video/mp4 attachment, 1,981,328 bytes, sha256 09b0f455…8bb8 = Asset.contentHash and Asset.sizeBytes",
+        "variation真实可用：Create variations on the owned image produced GenJob 01M2PWY3MFQHXRA5W8MW9DVN6E with sourceGenerationId = the original, a distinct 2048×2048 jpeg (hash 18f31cf8…b83b2, 294,776 bytes) that renders and downloads, while the original (757c1ce7…cd73) survives untouched",
+        "每单恰一组结算：each of the two orders has exactly one RESERVE and one SETTLE keyed reserve:/settle:<jobId>, no REFUND and reserved back to 0 (video -110/+110 then 0/-110; variation -10/+10 then 0/-10)",
+        "分别确认报价：the video card quoted 'About/Generate · 11 credits' and the variations dialog quoted 'Cost: 1 credit. No charge until you confirm' + 'Generate · 1 credit' before either click"
+      ],
+      "clausesNotProven": [],
+      "reason": "Both halves ran end to end with one deliberate confirmation each: a no-person product clip (real provider spend US$0.3804) and a variation of an owned image (US$0.035). Every money clause is backed by the read-only ledger, and both artefacts play/view and download with byte-exact hashes. Note for the record, not a gap in the row: the product's 'Create variations' control lives on the canvas node toolbar, not in the Library detail panel, and delivers exactly one image per confirmation on this build."
+    },
+    {
+      "id": "REAL-06",
+      "status": "PARTIAL",
+      "clausesProven": [
+        "记录A标签发出的请求：Next.js server action POST (next-action 40be7b3e3e27c45813255bfd39e5e06574302f25d5) with body [{cardId:'01M2PWM4TKWZH0AN24SC76VEG1', prompt, entityIds:['01M2PTYG24RTVAV71KR56H2238'], variantSel:{}, quoteVersion:'8646424b32059c75'}] — the idempotency material is the card id, which the server stores as GenJob.idempotencyKey 'cowork:<cardId>'; no bearer token travels in the payload",
+        "B标签重放相同意图：tab B sent the byte-identical intent (same cardId, same action id) from a second tab of the same session",
+        "相同意图无新增账本：zero new GenJob rows and zero new CreditLedger rows from the replay; the thread still holds exactly one GEN_CARD and one GEN_RESULT, and the balance did not move",
+        "同一单的结果：after a reload tab B shows the single original outcome, 'Done — Made 1 image · 1 credit'",
+        "显式新意图产生新job及新报价：the Library panel's 'Regenerate · 1 credit' (the price is on the button) produced NEW GenJob 01M2PX2N965JH5HCYCGBWA9BS2 under a different key 'asset:regen:99bc5b91…7285' with its own single RESERVE -10/+10 and SETTLE 0/-10"
+      ],
+      "clausesNotProven": [
+        "「返回同 job」的正面回执：the replay's own response could not be read, because tab B's canvas crashed into its error boundary (React #185, maximum update depth exceeded) the moment it replayed. The no-double-charge half is proven from the database; the 'same job id comes back' half is proven only indirectly (no second card, no second job, the thread converges to the one result after a reload)",
+        "终态前重放（在途重放，ASSET-A5 形态）：the image finished in 37 s, so tab B's click landed 12 s AFTER the job was already DONE. Only the after-terminal replay (ASSET-A3) was exercised; the in-flight replay was not",
+        "跨标签业务解释（该行明写「待原登记裁定，不静默通过该争议」）：still a Founder question — asset-action-idempotency.md §5 carries the 2026-09-12 register line 'refresh/second tab press again = new intent, new charge' with an empty ruling column"
+      ],
+      "reason": "Money behaviour is right where it counts: replaying the same card from a second tab charged nothing and created nothing. Two clauses could not be shown — the replay's own answer was swallowed by a canvas crash, and the in-flight (not-yet-terminal) replay never happened because the image finished first. The cross-tab policy question the row explicitly refuses to settle silently is still open."
+    },
+    {
+      "id": "REAL-08",
+      "status": "PARTIAL",
+      "clausesProven": [
+        "失败已退款且未被动过：job 01M288VJS12BBT536TZF5T0S01 still has exactly RESERVE -110/+110 (2026-09-11 13:00:06.841) and REFUND +110/-110 (13:02:28.048) — unchanged before and after every retry action in this group; no offsetting row, no duplicate",
+        "retry-source可见：the failed card keeps and shows its whole plan — 'A short video / Product showcase video of the R2 Coral Tumbler rotating on a white table / 9:16 / 5s / 720p / No sound / Starts from your image / Image — Starting frame / Advanced details' — plus its quote 'About 11 credits'",
+        "产品确有编辑重试入口（所以本行不判 FAIL）：the failed card offers 'Try again' (clone the card) and 'Change something' (an in-card edit form that hands the change back to Otto)",
+        "重试入口本身零花费：four 'Try again' presses created four un-generated GEN_CARD clones plus four ActionEvent 'cowork.vary' rows and ZERO GenJob / ZERO ledger rows — matching cowork-actions.ts:295–301 ('Zero spend: no startGen, no GenJob, no queue')",
+        "两把键不同（卡层面）：the clone carries a fresh card id (01M2PXHG7QJ71WWDXT4QF05HQC, echoed to the merchant as 'Reference 4QF05HQC') against the original's 01M288TQE27AF4SP7QF1895BAP, and the key is derived from the card id ('cowork:<cardId>')",
+        "付费前 fail-closed：approving the retry card once was refused before anything was sent — 'One of your references is only 80×107 pixels — it needs to be at least 300 pixels on its shortest side. … nothing was sent.' — with no GenJob, no ledger row and no balance movement"
+      ],
+      "clausesNotProven": [
+        "新单一次预扣（a new job with its own single RESERVE）：the retry never reached a paid submit. Both natural failures available on this org are permanently-invalid inputs — 01M288VJS12BBT536TZF5T0S01 (80×107 px starting frame, the cause of the 2026-09-11 provider 400) and 01M2F70JKNT4TN51J668A7DANF (2026-09-14, 'This picture can't be used as the person in a clip', refunded 330) — so any faithful retry of them is correctly refused at $0. Manufacturing a failure is out of scope for this row (不故意打挂线上)",
+        "两把幂等键在账本上并存对照：with no second RESERVE there is no ledger-level comparison of the two keys; the difference is shown at the card/GEN_CARD level only"
+      ],
+      "reason": "The edit-and-retry entry exists and behaves honestly: the retry source and its quote are visible, the original refund is untouched by every press, and the single approval was refused before any charge with a specific, actionable reason. What could not be proven is the paid half of the row, because there is no natural failure on this org whose retry can legitimately reach the provider. Two product problems were found on the way (below)."
+    }
+  ],
+  "writesMade": [
+    "Approved ONE video generation (GenJob 01M2PW8275GJ644V5RX3DESDHE, 11 credits, provider US$0.3804) in a NEW canvas canvas_54d9045d-fac5-4ee2-a354-ea67afe9007b / thread_54d9045d-fac5-4ee2-a354-ea67afe9007b created by the first prompt",
+    "Approved ONE image generation (GenJob 01M2PWN7GMMZSSJ96DS7R9Q7Z9, 1 credit, provider US$0.035) in that same thread",
+    "Approved ONE variation of that image (GenJob 01M2PWY3MFQHXRA5W8MW9DVN6E, 1 credit, provider US$0.035)",
+    "Approved ONE Regenerate on that image from the Library detail panel (GenJob 01M2PX2N965JH5HCYCGBWA9BS2, 1 credit, provider US$0.035)",
+    "Sent 3 Otto chat turns (2.3 + 2.3 + 3.5 = 8.1 credits) — two intents plus one 'Change something' message",
+    "Pressed 'Try again' on the historical failed card four times, which appended 4 un-generated GEN_CARD clones + 4 'Another take' texts + 4 ActionEvent 'cowork.vary' rows to thread_c878814e-493e-4e03-9119-6a430ebcde11 at $0 (repeats were caused by the button giving no feedback; see findings)",
+    "Submitted that retry card once — refused pre-charge, so it wrote nothing",
+    "Opened and closed one extra browser tab (tab B for the cross-tab replay); no other tab touched"
+  ],
+  "jobIds": [
+    "01M2PW8275GJ644V5RX3DESDHE",
+    "01M2PWN7GMMZSSJ96DS7R9Q7Z9",
+    "01M2PWY3MFQHXRA5W8MW9DVN6E",
+    "01M2PX2N965JH5HCYCGBWA9BS2"
+  ],
+  "boundaries": [
+    "One deliberate click per intended charge; never double-clicked a paid control; every paid click was preceded by the budget rule read from the DB frozen spend of this run's own jobs",
+    "REAL-09 not run; no concurrency group approved",
+    "Did NOT approve the pre-existing un-approved card in the historical thread (GEN_CARD 01M2896PPDG7XKKMTYN3VFQ6EZ, 'R2 Coral Tumbler on a marble table', 11 credits) — it was identified by id beforehand precisely so it would not be clicked",
+    "Never clicked Regenerate or Retry to 'help' a job in flight; the only Regenerate press was REAL-06's explicit new intent on an already-DONE image, and the only Try again presses were on a terminal FAILED card",
+    "No sign-out; no Connect/Revoke/Delete/Remove/Archive/Unarchive; no profile, workspace, settings, billing or admin control touched; no production access; nothing sent externally; no secrets, OTPs or card numbers entered",
+    "Database access read-only throughout: every statement ran inside BEGIN READ ONLY; … ROLLBACK; DATABASE_PUBLIC_URL was read into one python subprocess only, never written to a file and never placed on a command line",
+    "Browser JavaScript was used for inspection only (reading DOM, playing an existing <video>, fetching an href the page itself offers, and a fetch wrapper that stored request bodies with cookie/authorization/token/secret/key headers redacted). No UI state was faked and no paid action was triggered from JavaScript — every paid confirmation was a real mouse click",
+    "Repo treated as read-only; all spec rows read via `git show origin/main:<path>`",
+    "Viewport emulation set to 1440×900 for the run and reset to desktop at the end; the extra tab was closed; the session is left signed in on the same origin",
+    "arkcli: no login attempted, no credential printed; the failed usage call is recorded as-is"
+  ],
+  "toolProblems": [
+    "computer left_click by ref or by coordinate is unreliable inside the canvas conversation rail: the rail auto-scrolls between the measurement and the click, so three presses landed on message DIVs instead of the intended button. A capture-phase pointerdown listener was needed to tell 'the click missed' from 'the button is dead'. Reliable recipe: scroll the element into view, verify document.elementFromPoint at the target, then click immediately — and re-verify afterwards.",
+    "computer left_click by coordinate refuses to run until a computer screenshot has been taken in that tab ('no screenshot dimensions cached'), including after navigations; the coordinate frame is 800×500 while the emulated CSS viewport is 1440×900 (factor 0.5556).",
+    "A JS video.play() in this headless pane is paused again immediately (a 'pause' event fires at currentTime 0), so playback can only be proven by clicking the native play control with a real mouse click.",
+    "get_page_text and read_page intermittently return an empty document for a freshly navigated tab while the page is in fact rendered (seen on both tabs); javascript_tool readouts and a screenshot disagreed with them for tens of seconds.",
+    "read_network_requests shows Next.js server actions only as 'POST <page url> → 200' with no body, so request payloads had to be captured with an inspection-only fetch wrapper.",
+    "arkcli 1.0.23 reports auth status logged_in=true while `usage stats` fails with an STS refresh error — 'logged in' is not the same as 'can query usage'."
+  ],
+  "findings": [
+    "Canvas crash (new, no money impact, reproduced twice): approving a generation and then letting a second tab replay the same card, and separately confirming a 'Create variations' dialog, each threw the canvas into its error boundary — 'This canvas didn't open · It stopped loading part way through' — with console 'Minified React error #185' (maximum update depth exceeded). Both times the ledger was correct and a plain reload showed the true state, but the merchant sees a broken canvas immediately after paying.",
+    "'Try again' on a failed card gives no feedback at all (new): a trusted click reaches the button, the server action returns 200 and appends a fresh un-generated card, yet the conversation shows nothing, the button never enters its 'Queuing…' state and no error appears. Only a page reload reveals the new card. In this group that silence produced four identical clone cards from four presses. It is free today (coworkVaryCard is zero-spend by construction), but the same silence on a paid control would be a money bug.",
+    "The refusal copy on the retry is a genuine improvement worth keeping: approving the retried card was blocked before any provider call with 'One of your references is only 80×107 pixels — it needs to be at least 300 pixels on its shortest side. … nothing was sent. Reference 4QF05HQC', and Otto says the same thing in chat. That 80×107 px starting frame is the root cause of the 2026-09-11 provider 400 that produced the failed job in the first place — the failure class is now caught pre-charge.",
+    "Idempotency keys come in three families on this build, all consistent with the spec: 'cowork:<cardId>' for a confirmation card (the client sends the cardId, so a second tab replaying the same card cannot mint a second job), 'canvas:<sha256 of the material>' for a canvas Create variations, and 'asset:regen:<sha256>' for the Library panel's Regenerate. A 'Try again' clone gets a brand-new cardId, so its key is independent of the original by construction.",
+    "'Create variations' is not in the Library detail panel — it is only on the canvas node toolbar (Edit with Otto · Create variations · Animate · Download). The Library panel offers Regenerate · 1 credit, Animate · 11 credits, Crop and Generate edit · 1 credit instead. A merchant working from Library cannot reach the variations wording the spec row uses.",
+    "The variations dialog on this build makes exactly ONE image per confirmation ('Images 1 / Shape 1:1', no count picker), so 'variations' plural is never one settlement group of several pictures — each extra take is its own confirmation and its own settlement group.",
+    "The variation's Generation.entitySnapshot is empty ([]) while the source image's carries the product with its refHash. That is consistent with the path (the variation is an edit of the picture — 'What we sent to the engine' starts '<Image_1> is the image being edited.'), but it means lineage by element is lost one hop down: the variation is not linked to the product entity, only to the source generation.",
+    "Staging served 502s and a ChunkLoadError for roughly a minute mid-run (canvas blank, then fine on reload) while /api/health stayed ok with the same build sha c0d25917 — worth knowing before reading any single canvas failure as a product bug."
+  ]
+}

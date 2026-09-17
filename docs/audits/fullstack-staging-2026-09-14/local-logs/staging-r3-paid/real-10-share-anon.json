@@ -1,0 +1,161 @@
+{
+  "group": "real-10-share-anon",
+  "buildSha": "c0d25917",
+  "signedInAs": "tenant A (org 'founder', super-admin) on https://web-staging-7901.up.railway.app",
+  "startedUtc": "2026-09-17T05:36:00Z",
+  "endedUtc": "2026-09-17T05:48:00Z",
+  "spendUsdThisGroup": 0,
+  "spendUsdCumulative": 0.87,
+  "steps": [
+    {
+      "id": "S0",
+      "step": "Read the spec rows this group is judged against",
+      "utc": "2026-09-17T05:36:00Z",
+      "url": "repo origin/main c0d2591768efc240931264c1ba0497a69008d1b6",
+      "action": "git show origin/main:docs/specs/share-preview.md (lines 50-60 = SHARE-A1..SHARE-A11) and origin/main:docs/audits/fullstack-staging-2026-09-14/real-scenarios.md:118-126 (REAL-10)",
+      "observed": "REAL-10 步骤: '为测试排期生成预览链接，仅测试浏览器匿名打开，不发送外部；正常URL/媒体Range读取；以另一租户资源ID受控读尝试'. 预期: '预览可见；Range正确；其他租户资源404；账本无新增；链接不进入遥测和截图'. 来源 share-preview.md:50-60.",
+      "verdictClause": "scope"
+    },
+    {
+      "id": "S1",
+      "step": "Confirm build under test",
+      "utc": "2026-09-17T05:37:00Z",
+      "url": "/api/health",
+      "action": "javascript fetch('/api/health', {credentials:'omit'})",
+      "observed": "HTTP 200 {\"ok\":true,\"db\":\"up\",\"worker\":\"up\",\"backup\":\"fresh\",\"migrations\":\"applied\",\"build\":{\"sha\":\"c0d25917\",\"ref\":\"main\"}} — matches origin/main HEAD c0d2591768.",
+      "verdictClause": "build identity"
+    },
+    {
+      "id": "S2",
+      "step": "Money baseline before any click",
+      "utc": "2026-09-17T05:44:42Z",
+      "url": "staging Postgres (read-only, BEGIN READ ONLY / ROLLBACK)",
+      "action": "SELECT counts from CreditLedger, CreditAccount, SharePreviewToken",
+      "observed": "ledger_all=264, ledger_founder=181, last_ledger=2026-09-17 05:27:37.814, balance=99997621, reserved=0, SharePreviewToken rows=0",
+      "dbDelta": "baseline",
+      "verdictClause": "账本无新增 (baseline)"
+    },
+    {
+      "id": "S3",
+      "step": "Look for a share/preview control on a schedule/post we own",
+      "utc": "2026-09-17T05:39:00Z",
+      "url": "/schedule (and app nav)",
+      "action": "navigate + javascript fetch('/schedule', {credentials:'include'}); enumerate nav links",
+      "observed": "fetch('/schedule') -> redirected:true, finalUrl 'https://web-staging-7901.up.railway.app/', title 'Home · Fikirtive'. /calendar 404, /posts 404. Sidebar nav hrefs: '/', '/create', '/library', '/brand', '/settings', '/billing' — no Schedule entry. Repo confirms: the only page under apps/web/app/schedule/ is share-preview/page.tsx; there is no apps/web/app/schedule/page.tsx, so sharePostPreview is reachable only through Otto (apps/web/lib/otto-actions.ts:917).",
+      "verdictClause": "no Share preview control on any owned schedule surface"
+    },
+    {
+      "id": "S4",
+      "step": "Confirm there is no scheduled post to share",
+      "utc": "2026-09-17T05:41:00Z",
+      "url": "staging Postgres (read-only)",
+      "action": "SELECT 'posts', \"ownerId\", count(*) FROM \"ScheduledPost\" GROUP BY 1,2",
+      "observed": "zero rows returned for ScheduledPost across ALL orgs (the group-by produced only assets/generations rows). founder_posts=0. Creating one is outside this run's authorized write set (only fixture uploads + one dated test product are allowed).",
+      "verdictClause": "no shareable post exists"
+    },
+    {
+      "id": "S5",
+      "step": "Use the one share control we DO own: asset detail 'Copy link' (mints the same /api/media/pub door, $0)",
+      "utc": "2026-09-17T05:45:30Z",
+      "url": "/library/01M2N6WARSVDB9M5GKS9QY10EQ",
+      "action": "Opened own uploaded video asset, hooked navigator.clipboard.writeText to capture the minted URL, clicked 'Copy link' ONCE (default 10 minutes)",
+      "observed": "DOM after click: 'Add to favorites / Add to collection / Download / Copy link / 10 minutes / 1 hour / 24 hours / 7 days / Custom… / Move to trash / Link duration is saved on this browser only. / Couldn\\'t copy the link / Sharing links aren\\'t configured in this environment yet.' — clipboard hook captured 0 URLs. That exact sentence is the MEDIA_PROXY_SECRET-unset branch of apps/web/lib/media-link-actions.ts:50-51.",
+      "dbDelta": "none — server returns before any DB write",
+      "verdictClause": "share link cannot be minted on staging"
+    },
+    {
+      "id": "S6",
+      "step": "Independent confirmation that the two sharing secrets are absent on staging",
+      "utc": "2026-09-17T05:47:00Z",
+      "url": "railway variables --json -p <staging project> -e staging -s web (names only, no values printed)",
+      "action": "Listed variable NAMES only and tested membership",
+      "observed": "total_vars=53; 'MEDIA_PROXY_SECRET present: False'; 'SHARE_PREVIEW_SECRET present: False'. Consequence in code: getPublicMediaLink refuses (media-link-actions.ts:50-51); sharePostPreviewInFrame refuses with 'Sharing isn\\'t set up on this server yet.' (schedule-actions.ts:664-665); verifyMediaToken(token, '') returns null so /api/media/pub/<anything> is a 404 for every caller (api/media/pub/[token]/route.ts:41-42).",
+      "verdictClause": "SHARE-A1/A2/A5/A9/A10 unexercisable on staging as configured"
+    },
+    {
+      "id": "S7",
+      "step": "Anonymous read of the public media door with another tenant's resource id (no cookies)",
+      "utc": "2026-09-17T05:46:10Z",
+      "url": "/api/media/pub/<tenant-B Asset id>",
+      "action": "javascript fetch(url, {credentials:'omit'}) and again with headers {Range:'bytes=0-1023'}",
+      "observed": "Both: HTTP 404, content-type 'text/plain;charset=UTF-8', body 'Not found' (9 bytes), content-range: null, redirected:false. Same 404 for a garbage token '/api/media/pub/AAAA.BBBB'. No bytes served, no distinguishable error between foreign-id and forged-token.",
+      "dbDelta": "none",
+      "verdictClause": "其他租户资源404 (partial evidence — see clausesNotProven)"
+    },
+    {
+      "id": "S8",
+      "step": "Anonymous read of another tenant's stored object through the session-gated files route",
+      "utc": "2026-09-17T05:46:20Z",
+      "url": "/files/u/<tenant-B org id>/<sha256>.mp4",
+      "action": "javascript fetch(url, {credentials:'omit'})",
+      "observed": "redirected:true to '/login?from=%2Ffiles%2Fu%2F<tenant-B org id>%2F<sha256>.mp4' — HTML login page (29844 bytes), zero media bytes, no content-range. An anonymous caller gets the auth wall, never tenant B's object.",
+      "dbDelta": "none",
+      "verdictClause": "anonymous caller gets no cross-tenant bytes"
+    },
+    {
+      "id": "S9",
+      "step": "Anonymous open of the customer preview page and of the clean entry route",
+      "utc": "2026-09-17T05:46:40Z",
+      "url": "/schedule/share-preview and /s/<token>",
+      "action": "javascript fetch('/schedule/share-preview', {credentials:'omit'}); fetch('/s/NOT-A-REAL-TOKEN', {credentials:'omit', redirect:'manual'})",
+      "observed": "Preview page: HTTP 200, finalUrl '/schedule/share-preview' (no query string), body contains \"This preview isn't available\" = true, 'Too many requests right now' = false, 'Content may have changed since this link was shared.' = false. Entry route: response type 'opaqueredirect' (a 3xx, per app/s/[token]/route.ts a 303 to SHARE_PREVIEW_COOKIE_PATH). No preview was opened in a normal tab, so no session cookie was ever sent to the public surface.",
+      "verdictClause": "fail-closed page + token-free destination address"
+    },
+    {
+      "id": "S10",
+      "step": "Money delta after the whole group",
+      "utc": "2026-09-17T05:47:06Z",
+      "url": "staging Postgres (read-only)",
+      "action": "Re-ran the S2 baseline query plus GenJob/RefGenJob counts",
+      "observed": "ledger_all=264 (unchanged), ledger_founder=181 (unchanged), last_ledger still 2026-09-17 05:27:37.814 (predates this group), balance=99997621 (unchanged), reserved=0 (unchanged), SharePreviewToken rows=0 (unchanged), GenJob(founder)=30, RefGenJob(founder)=0.",
+      "dbDelta": "zero rows added to CreditLedger; CreditAccount.balance and .reserved byte-identical to baseline",
+      "verdictClause": "账本无新增 — PROVEN"
+    }
+  ],
+  "verdicts": [
+    {
+      "id": "REAL-10",
+      "status": "BLOCKED",
+      "clausesProven": [
+        "账本无新增: CreditLedger row count (all 264 / founder 181), newest founder ledger timestamp, CreditAccount.balance 99997621 and reserved 0 are byte-identical before and after every request in this group; SharePreviewToken table stayed at 0 rows.",
+        "其他租户资源404 (as far as staging permits): anonymous GET /api/media/pub/<tenant-B Asset id> returns 404 'Not found' with and without a Range header, indistinguishable from a forged token; anonymous GET of tenant B's stored object via /files/u/<tenant-B>/<hash>.mp4 is bounced to /login with zero media bytes.",
+        "链接不进入遥测和截图: no share token was ever minted, the preview destination address carries no query string (/schedule/share-preview, HTTP 200 anonymous), and no screenshot was taken in this group.",
+        "Fail-closed customer surface: an anonymous request to /schedule/share-preview with no cookie renders exactly \"This preview isn't available\" — the same single notice the spec requires for expired/revoked/forged (share-preview.md 验收表 SHARE-A8 wording), with no leak of whether any post exists."
+      ],
+      "clausesNotProven": [
+        "SHARE-A1 (share-preview.md:50) — Range: bytes=0-1048575 returning 206 + Content-Range with exactly 1 MiB: no media token can be minted on staging (MEDIA_PROXY_SECRET unset), so no 206 was ever obtainable.",
+        "SHARE-A2 (:51) — a plain browser open of a preview showing the image/video at 200 streaming: requires a real share link; none exists.",
+        "SHARE-A5 (:54) — the line 'Content may have changed since this link was shared.': absent from the anonymous page body because the page can only reach the 'unavailable' state; never rendered.",
+        "SHARE-A6 (:55) — clean address for a REAL minted link: only the shape was confirmed (the /s/<token> route 3xx-redirects to the token-free /schedule/share-preview); no genuine link was minted to confirm end to end.",
+        "SHARE-A9 (:58) — 100 anonymous pulls of a valid preview media URL leaving the ledger untouched: there is no valid media URL to pull; the ledger receipt above covers only the ~7 anonymous requests actually made.",
+        "SHARE-A10 (:59) — taking owner A's media token and re-pointing it at owner B's key: impossible without a signing secret; the 404s observed prove fail-closed behaviour on an UNSIGNED id, not the signed cross-tenant case the row specifies.",
+        "REAL-10 步骤 '为测试排期生成预览链接': no ScheduledPost row exists in the staging database (zero rows, all orgs), and the product exposes no merchant schedule surface (/schedule 302s to /, no nav entry, no apps/web/app/schedule/page.tsx) — the only caller of sharePostPreview is Otto, and creating a post is outside this run's authorized write set."
+      ],
+      "reason": "Two independent blockers, both verified. (1) There is nothing to share: the staging database holds zero ScheduledPost rows and the app has no merchant schedule page (/schedule redirects to /, nav has no Schedule entry); the only path to sharePostPreview is an Otto action, and creating a scheduled post is not in this run's authorized writes. (2) Even given a post, sharing is switched off on this environment: the staging `web` service has 53 variables and neither MEDIA_PROXY_SECRET nor SHARE_PREVIEW_SECRET is among them, so sharePostPreview refuses ('Sharing isn't set up on this server yet.'), the asset Copy link refuses in the DOM ('Sharing links aren't configured in this environment yet.', observed), and /api/media/pub/<anything> 404s for every caller because verifyMediaToken cannot verify with an empty secret. The anonymous-boundary and money clauses that could be proven without a link were proven and are listed above."
+    }
+  ],
+  "writesMade": [
+    "Clicked 'Copy link' ONCE on our own uploaded video asset /library/01M2N6WARSVDB9M5GKS9QY10EQ (a $0 mint). The server refused before any database work; no SharePreviewToken row, no ledger row, no state change of any kind. Net persisted writes this group: none.",
+    "Patched navigator.clipboard.writeText in the page's JS context to capture a minted URL (in-memory, inspection only, gone on reload). No product state touched."
+  ],
+  "jobIds": [],
+  "boundaries": [
+    "No generation, no paid confirmation card clicked; provider spend this group US$0.",
+    "Never clicked Revoke, Connect, Delete, Remove, Archive, Unarchive; never signed out; no profile/workspace/settings/billing/admin control touched.",
+    "The preview surface was only ever reached with fetch({credentials:'omit'}) — never opened in a normal tab, so no session cookie was sent to the public surface.",
+    "No link was sent anywhere external; no token exists to send.",
+    "Database access was read-only throughout (BEGIN READ ONLY / SELECT / ROLLBACK); the connection string was never written to a file or to a command line.",
+    "Railway was read for variable NAMES only; no secret value was printed, stored, or transmitted.",
+    "Only the pre-existing tab was used; no tab opened or closed; session left signed in on the same origin."
+  ],
+  "toolProblems": [
+    "read_network_requests recorded nothing for requests issued from javascript_tool (the tab buffer had already dropped 403 earlier requests), so redirect Location headers had to be inferred from response type 'opaqueredirect' plus the route source instead of read off the wire.",
+    "fetch('/s/<token>', {redirect:'follow', credentials:'omit'}) threw 'TypeError: Failed to fetch' in the page context; redirect:'manual' worked and returned type 'opaqueredirect'."
+  ],
+  "findings": [
+    "Staging cannot exercise ANY row of docs/specs/share-preview.md. The staging `web` service is missing both MEDIA_PROXY_SECRET and SHARE_PREVIEW_SECRET (53 variables, neither present). Consequence chain: sharePostPreview refuses before any DB read (apps/web/lib/schedule-actions.ts:664-665); the asset 'Copy link' refuses in the UI (apps/web/lib/media-link-actions.ts:50-51 — observed verbatim in the DOM); and /api/media/pub/<token> 404s unconditionally because verifyMediaToken(token, '') returns null (apps/web/app/api/media/pub/[token]/route.ts:41-42). SHARE-A1..A12 therefore have no staging receipt available at all, and the R2/media proxy path is untested outside unit tests.",
+    "The customer-preview feature has no merchant entry point on this build. /schedule redirects to /, /calendar and /posts are 404, the sidebar has no Schedule link, and there is no apps/web/app/schedule/page.tsx — the ONLY way a merchant can mint or revoke a preview link is by asking Otto (apps/web/lib/otto-actions.ts:917-918). Anyone verifying SHARE-* by hand will be stuck the same way this group was.",
+    "The staging database holds zero ScheduledPost rows across all eight orgs, so the whole schedule/publish/share chain is unrepresented in staging data.",
+    "Good news worth recording: every fail-closed path that CAN be reached behaves as the spec demands. The public media door answers a foreign tenant's Asset id, a forged token, and a Range request on either with the identical opaque 404 'Not found' and zero bytes; the session-gated /files route bounces an anonymous cross-tenant read to /login; and the preview page shows the single undifferentiated \"This preview isn't available\" notice with no cookie. Nothing anonymous moved the credit ledger."
+  ]
+}
