@@ -320,3 +320,88 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 **状态**：Founder 2026-09-16（对谈）已裁决：结算后在那张图上留一行回执「Understood · 0.1 credits」，不恢复常驻说明段落；实现 PR 在飞——分支 `claude/upload-understanding-receipt`（commit `a594a2f4` 及复核修正 `03046f01`），尚未合并主干。本文件只记登记与裁决出处；money-engine §5 的落地登记留给该 PR 合并时补（其 mini-spec 行是该 PR 自己的工作）。
 
 这是 R3-F06 删除常驻说明段落（`docs/specs/money-engine.md:133` 批准）之后暴露出的一处既有空白：上传后约 2 秒内完成 RESERVE→SETTLE（见 `preflight-fixtures.json` 步骤 R12-5），但 `/create` 的「Add a reference」与画布的「Attach a file」控件旁都没有任何价目或回执，价目只在 `/billing` 才能看到。核证员（`workflow-group1-result.json` 的 `verdicts[0].findings[3]`）把最初「FRONT-A1 与 R3-F06 冲突」的框架撤销：`money-engine.md:133` 的批准原文写着「冲突的展示要求以本批准为准」，且 `apps/web/lib/__tests__/front-a1-money-rows.test.ts:333-345` 本身已经把 FRONT-A1 改写成断言这次删除、并断言 `/billing` 仍现算展示同一价目——两条验收行之间没有真的冲突。真正悬而未决的是：`money-engine.md:133` 的批准原文明确把「实际逐动作报价／确认、交易回执」排除在删除授权之外，而删除常驻说明段落之前，这里其实**从来没有过**逐动作回执——这道缺口是删除说明段落时顺带暴露出来的既有空白，不是本次删除本身违反了批准范围。Founder 已就此裁决按上述回执方案处理。
+
+## R3-F25 · 画布拖放上传不入队 ingest，理解与扣费延后 15 分钟–24 小时（补登记编号，正文已在 money-engine.md）
+
+**状态**：新发现（#1464 复核回合中发现），未修，登记（待 Founder 裁 fix-now 或排队）。正文已随 #1464 落在 `docs/specs/money-engine.md` §5 2026-09-16 行「已知边界」第④点——本条只给它一个可引用的 F 编号并交叉指回那一行，不重复展开全文，避免同一件事两处各写一半。
+
+**概要（转引自规格原文，细节以那一行为准）**：`uploadReference`（`apps/web/lib/actions.ts:962`）不像 `finalizeCandidateUploads`（`apps/web/lib/upload-actions.ts:452`）那样把 ingest 入队，于是画布拖放上传的素材宽高要等 `redispatchLostIngest` 的 15 分钟–24 小时补投窗（`apps/worker/src/jobs/ingest.ts:57-58`）才补上；元数据不齐则扫描器不捞（`METADATA_READY_FOR_UNDERSTANDING`），补投窗打开之前理解不会发生，Info 面板此刻仍停在既有的 "No charge"——这一格是**延迟，不是免费**。两条候选根因（`uploadReference` 补入队 / 缩短 `redispatchLostIngest` 窗口）待 Founder 裁 fix-now 或排队。
+
+**出处**：`docs/specs/money-engine.md` §5 2026-09-16 行；`#1464` 单镜头复核（`wf_51c3e6b8-c29`，MERGE-OK-WITH-NOTES）证实为存量缺陷（`uploadReference` 自 commit `5d90165c`、2026-06-12 起从未入队）。本轮（付费旅程 2–4 组）未产生新证据，只补登记编号。
+
+## R3-F26 · 文生视频提示词声称「有首帧」，但该单确无首帧却仍原样发给付费引擎（P2 钱/诚实）
+
+**状态**：修复 PR 施工中（编排者 2026-09-17 先行派工，待 Founder 追认）——分支 `claude/video-prompt-no-phantom-first-frame-r3-f26`，尚未开 PR。
+
+商家在确认卡与 Library 详情面板都看到的提示词，开头是「starting from the given first frame」，随后又有一句「keep the subject consistent with the source frame」——但这一单确实没有首帧：`Generation` `01M2PVDW85RGAECTBN3NYXKMKT` 的 `promptText`（char 105 起、char 575 起）逐字带着这两句，`sourceGenerationId`／`tailGenerationId`／`referenceVideoGenerationId` 三列全为 NULL，同窗口 `RefGenJob=0`、没有任何中间 IMAGE `GenJob`。关键在于：这不只是商家读到的文案错了——同一段文字也真的躺在 `GenJob.prompt` 里，即**真的发给了付费引擎**。核证员判定这比原发现（journeys worker 只判为「有迹可循」措辞不符）更重的一层：这是每一次文生视频 cowork job 上都存在的质量／浪费风险，不只是这一单的用词。
+
+证据：`real-03-person-video.json` 步骤 S15；核证员对 `real-03-person-video` 组的 `findings`（`workflow-groups2-4-result.json` `verdicts[0].findings`，第 5 条「SENT-PROMPT DEFECT IS WORSE THAN 'COPY ACCURACY'…」）。
+
+## R3-F27 · 客户端 Back 回 Home 后 Otto 对话面板空白 40–60 秒才补上进行中的卡片
+
+**状态**：新发现，未修，登记（无金钱影响的 UX 缺口，交 Founder 裁 fix-now 或排队）。
+
+商家批准一条生成后离开到 `/library`、再用浏览器 Back 回到 Home：线程标题立刻显示，但对话正文空白约 40–60 秒，之后才补上「✓ Approved — in the queue」的进行中卡片；同一现象在一次纯刷新之后也出现（约 20–60 秒）。这段窗口里，一个正在查看自己刚批的付费任务的商家会看到「什么都没有」，不是加载态、不是错误态，只是空白。无金钱影响：期间账本零新增行。
+
+证据：`real-03-person-video.json` 步骤 S11（Back 路径）、`toolProblems[2]`（刷新路径）。
+
+## R3-F28 · 第二标签重放已批卡、或确认 Create variations 对话框，会把画布撞进错误边界（P1 UX）
+
+**状态**：修复 PR 施工中（编排者 2026-09-17 先行派工，待 Founder 追认）——分支 `claude/canvas-crash-after-approve-r3-f28`，尚未开 PR。
+
+两条独立路径各复现一次，同一个崩溃形状：(a) 已批准一张图片生成后，第二标签重放同一张确认卡（`real-04-06-08.json` 步骤 S10）；(b) 确认一次 Create variations 对话框（同文件步骤 S13）。两次画布都撞进错误边界——「This canvas didn't open · It stopped loading part way through. Nothing you made was lost — everything is still saved.」，浏览器控制台报 `Minified React error #185`（最大更新深度超限）。两次账本都完好无损（核证员独立复核：零禁写、零多扣，一次刷新即可看到真实结果），但商家付完钱看到的第一眼是一块坏掉的画布。
+
+证据：`real-04-06-08.json` 步骤 S10、S13、`findings[0]`；核证员对该组的 `findings`（`workflow-groups2-4-result.json` `verdicts[1].findings`，第 1 条）独立复核账本无损。
+
+## R3-F29 · 失败卡「Try again」零反馈致四次点击克隆四张卡；`coworkVaryCard` 是否付费的代码注释自相矛盾
+
+**状态**：修复 PR 施工中（编排者 2026-09-17 先行派工，待 Founder 追认）——分支 `claude/failed-card-try-again-feedback-r3-f29`，尚未开 PR。
+
+**零反馈按钮**：按下失败卡的「Try again」没有任何可见反馈——对话区不出现新内容、按钮不进入「Queuing…」态、也不报错。四次按下（05:28:05／05:29:26／05:30:12／05:30:58）其实每次都真的到达了服务端（四条 `ActionEvent` `cowork.vary` 行 + 四张未生成的 `GEN_CARD` 克隆），只有刷新页面后才看得见。根因（核证员定位）：`apps/web/components/otto/OttoPlanCard.tsx:252-267` 的 `retry()` 调用 `coworkVaryCard` 成功后只调 `onRetry?.()`，**不设任何成功态**；同一文件的姊妹函数 `OttoResult.tsx:222-239` 的 `makeAnother()` 走同一类服务端调用，成功后设 `makeAnotherSuccess` 并渲染「Added」2.5 秒。今天免费（`coworkVaryCard` 按设计零花费——四次按下已由数据库核实 0 `GenJob`／0 账本行），但同样的沉默若发生在付费控件上就是重复扣费。
+
+**注释自相矛盾（§7.3 单一源漂移）**：`apps/web/lib/cowork-actions.ts:296-300` 的文档注释写「Zero spend: no startGen, no GenJob, no queue.」；但 `apps/web/components/otto/OttoPlanCard.tsx:264-265` 的注释说相反的话——「coworkVaryCard queues a NEW paid generation; a transport failure cannot prove it didn't reserve」——`apps/web/components/otto/OttoResult.tsx:237` 也重复了同一句（「queues a fresh paid variant (#550)」）。本轮的真实数据了结了这场争议：四次按下零 `GenJob`／零账本行，`cowork-actions.ts` 的文档注释是对的，两处组件注释是过期的。两条互相矛盾的「这颗按钮到底花不花钱」的注释，正是 Founder「修根不修表」常令针对的那类缺陷——照着 `OttoPlanCard.tsx` 的注释读代码的人，会合理地以为该建一道确认闸；照着另一处读的人，会误信一次从不发生的预扣。
+
+证据：`real-04-06-08.json` 步骤 S18、`findings[1]`；核证员对该组的 `findings`（`workflow-groups2-4-result.json` `verdicts[1].findings`，第 2、3 条）。
+
+## R3-F30 · 派生图（Create variations、Regenerate）`entitySnapshot` 为空，一跳之后「这张图用了哪个商品」丢失
+
+**状态**：待 Founder 裁语义（本轮不施工；`docs/specs/brand-product-identity.md` §5 已加一行待裁登记）。
+
+一张已生成图片再做 Create variations 或 Regenerate 得到的新 `Generation`，其 `entitySnapshot` 是空数组 `{"entities": []}`，而它们的源图 `Generation`（`01M2PWPBRFQA3TF405WAFJCT48`）的 `entitySnapshot` 里带着完整的产品与 `refHash`。**两条派生路径都是如此**——canvas 变体 `01M2PWZ30DE2PXJ8MZWM2TDZJR`（key 族 `canvas:`）与 Library Regenerate `01M2PX3MQTZJWY0N1085CR5DBT`（key 族 `asset:regen:`）——journeys worker 原本只报告了 Create variations 一条，核证员独立复核确认 Regenerate 有一模一样的缺口，不是变体专属。这与图生图路径本身一致（`What we sent to the engine` 开头就是「`<Image_1>` is the image being edited.」），但后果是：一张首生图之后，谱系上的「这张图用了哪个商品」这条链在每一条派生路径上都断了——是审计／回执缺口，不是钱路缺口。
+
+证据：`real-04-06-08.json` `findings[6]`；核证员对该组的 `findings`（`workflow-groups2-4-result.json` `verdicts[1].findings`，第 4 条，标注「REGISTER ROW」）。
+
+## R3-F31 · 客户面分享入口 `/s/<token>` 在 staging 把客户 303 到 `https://localhost:8080/...`（P1）
+
+**状态**：修复 PR 施工中（编排者先行，待 Founder 追认）→ 随本 PR 落地（PR #1468，分支 `claude/share-entry-redirect-origin-r3-f31`）。
+
+**这是核证员发现的新缺陷，journeys worker 当时只把它记成工具坑（无法从代码推断真实跳转目标）**。匿名 curl（不带任何 cookie）访问 `/s/<forged-token>`：`HTTP/2 303`，`Location: https://localhost:8080/schedule/share-preview`；用两个不同的伪造 token 各复现一次。根因：`apps/web/app/s/[token]/route.ts:55` 用 `new URL(SHARE_PREVIEW_COOKIE_PATH, req.nextUrl.origin)` 构造跳转目标，Railway 代理之后 `req.nextUrl.origin` 解析成内部 socket（`localhost:8080`），不是公网域名。**后果**：商家发出的每一条分享链接，客户浏览器落地 cookie 之后的下一跳一律死路——即便日后补齐两把缺失的密钥，SHARE-A2 与 SHARE-A6 仍会端到端 FAIL。单元测试盲区：`apps/web/app/s/__tests__/route.test.ts:17` 把请求伪造成 `{ nextUrl: new URL('https://app.test/s/whatever') }` 并断言跳到 `https://app.test/schedule/share-preview`——这个同源伪造从结构上就抓不到「代理后 origin 变了」这类问题。铸链那一侧没问题（`schedule-actions.ts:697` 用的是 staging 上确实设了的 `BETTER_AUTH_URL`），只有这一跳的重定向目标错了。生产环境未测（超出本轮范围），但同一段代码与同样的代理形状使其在生产大概率同样成立。**这是 REAL-10／REAL-11 重跑之前第一件要修的事**。
+
+证据：核证员对 `real-10-share-anon` 组的 `findings`（`workflow-groups2-4-result.json` `verdicts[2].findings`，第 1 条）。
+
+## R3-F32 · 旧式 `?t=` 分享链接 200 + meta refresh 1 秒，令牌留在地址栏且匿名客户短暂看到「Go to sign in」壳
+
+**状态**：修复 PR 施工中（编排者先行，待 Founder 追认）→ 随本 PR 落地（PR #1468，与 R3-F31 同一条分支 `claude/share-entry-redirect-origin-r3-f31`）。
+
+`GET /schedule/share-preview?t=<forged>` 不是一次 HTTP 跳转，而是 `HTTP 200`（25500 字节）夹带 `<meta id="__next-page-redirect" http-equiv="refresh" content="1;url=/s/<token>">`，外加一段流式渲染的壳，其 payload 里含一条 `href="/login"` 的「Go to sign in」链接。结果：令牌在地址栏停留约 1 秒，匿名客户在这 1 秒内会短暂看到登录相关的界面元素——这与 `apps/web/app/schedule/share-preview/page.tsx:33` 自己写的契约「no sign-in, no link back into the workspace」相反，也与 SHARE-A6「token never sits in this page's own URL for even one render」（page.tsx:18-19）不符。大概率是 Next 的流式渲染内嵌跳转的固有行为；值得登记一行，不构成阻断。
+
+证据：核证员对 `real-10-share-anon` 组的 `findings`（`workflow-groups2-4-result.json` `verdicts[2].findings`，第 2 条）。
+
+## 本轮补记（2026-09-17，staging 第三轮付费旅程 2–4 组，build `c0d25917`）
+
+来源：`local-logs/staging-r3-paid/{real-03-person-video.json,real-04-06-08.json,real-10-share-anon.json,workflow-groups2-4-result.json}`（3 名 journeys worker + 3 名独立 verifier，串行跑完，US$0.87 累计花费，远低于 US$16 暂停线；见 `report-round3.md` 本轮新增一节的完整判定摘要）。本节只记不构成独立 F 编号、但值得留证的工具坑、旁证与正面样本，逐条不重复列独立编号。
+
+**工具坑（本 harness 的结构性覆盖缺口，非产品缺陷）**：
+- **无文件上传动作**：in-app 浏览器工具集没有把本地文件喂进 OS 选择器的动作，凡需要「商家上传自己的一份素材」的 REAL 行，本 harness 一律测不了——`real-03-person-video.json` 曾把这记成「产品没有上传入口」，核证员核代码后更正：`apps/web/components/otto/OttoChatStream.tsx:2168-2176/2401-2411` 确有可见的上传菜单项和隐藏 `input[type=file]`，问题在工具，不在产品；本组的产品封面因此改用商家自己已有的 Library 图（见下「REAL-03 的一处偏差」）。
+- **无离线模拟**：工具集没有网络状态/离线切换能力，REAL-24 因此整行 NOT RUN（不是跳过，是不可测）。
+- **步骤时间戳为估算**：`real-03-person-video.json` 的 `endedUtc` 与若干步骤 UTC 戳晚于文件自身最后写入时间（核证员用文件 mtime 与机器时钟核实），系手写估算而非真实记录时刻；不影响任何已证条款的实质（核证员逐条核对过 S04／S18 两处受影响的步骤，结论未变），但作为证据纪律缺口登记，供下一轮改进落笔方式。
+
+**旁证（不影响判定，值得留证）**：
+- 确认卡在两组付费旅程里始终只报 credits，任何一张卡上都没有出现供应商美元估算；「provider 估价」半句目前只能事后从 `GenJob.spentUsd` 读出（`real-03-person-video.json` `findings[4]`）。
+- 「Create variations」只挂在画布节点工具栏（`Edit with Otto · Create variations · Animate · Download`），Library 详情面板没有这一项，面板给的是 `Regenerate · 1 credit`／`Animate · 11 credits`／`Crop`／`Generate edit · 1 credit`；从 Library 工作的商家读不到规格行用的「variations」这个词（`real-04-06-08.json` `findings[4]`）。
+- org founder 的 `Asset` 表宽高列大面积为空：`image/jpeg` 15/32 行有尺寸、`image/png` 1/9、`video/mp4` 1/10——本轮视频的 1280×720 全程只能从 `<video>` 元素读出，数据库里没有；登记以防将来有人把「宽高为空」误判成生成失败的证据（核证员对该组的 `findings`，标「Low priority, pre-existing」）。
+- R3-F29 记录的 `coworkVaryCard` 是否付费的两处矛盾注释，本节不再重复展开。
+
+**值得保留的正面样本（fail-closed 文案）**：付费前的失败拦截给出的这句话被核证员点名「本产品目前最好的 fail-closed 文案范本」——「One of your references is only 80×107 pixels — it needs to be at least 300 pixels on its shortest side. Swap it for a larger one and ask again — nothing was sent. Reference 4QF05HQC.」——具体数字、门槛、怎么修、明确说明「nothing was sent」、外加一个商家反馈时可引用的短 id，四个要素一次说全，且零 DB 写入。其他 fail-closed 文案的改写方向可以照这个形状抄（`real-04-06-08.json` `findings[2]`）。
+
+**REAL-03 的一处偏差**：本组产品封面挂的是商家自己已有的 Library 图片，但那张图本身来源是 AI 生成（`Asset` `source=GENERATED`）——「商家上传一张真实产品照片」这条路径本轮仍未被端到端跑过一次（原因即上一条「无文件上传动作」的工具坑）。

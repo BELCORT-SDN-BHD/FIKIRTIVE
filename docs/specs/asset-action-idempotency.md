@@ -72,6 +72,7 @@
 | 日期 | 想法 | 裁决（留空待 S5） |
 |---|---|---|
 | 2026-09-12 | 刷新后／第二标签页再按一次＝新意图新扣费（相对旧主干的行为变化，ASSET-A4 语义推得出；待 S5 Founder 过目）——来源 PR #1401 判官 P2-1 | |
+| 2026-09-17 | **REAL-08 付费半段在 org founder 上结构性不可达（第三轮付费旅程第三组）**：本行 ASSET-A8「一单 FAILED（钱已退）后商家按一次重试 → 允许新的一单、扣一次钱」的付费半段，本轮在 staging 上无法演示——org founder 今天仅有的两个自然失败（`GenJob` `01M288VJS12BBT536TZF5T0S01`，80×107px 起始帧；`01M2F70JKNT4TN51J668A7DANF`，「不能作人物」的参考图）都是**永久性无效输入**，任何忠实重试都会在服务端校验层被 fail-closed 拒绝（本轮实测：「One of your references is only 80×107 pixels…nothing was sent.」，零 `GenJob`、零账本行），走不到付费提交这一步。已证的部分：编辑重试入口存在且可用（Try again 零花费克隆原卡、Change something 交回 Otto 改写）；原退款行（`RESERVE -110/+110`、`REFUND +110/-110`）全程未被抵消或重复；付费前 fail-closed 理由具体可行动。要关掉「新单一次预扣」这半句，两条路二选一：① Founder 批准人造一次供应商侧失败（不是校验失败——例如提交一个校验能过但供应商会拒的输入，或临时切一次 mock 供应商制造真实 400），产生一条可以合法重试到付费提交的失败单；② 改判由现有单元／集成测试覆盖这半句，不再要求 staging 真实旅程闭合它。重复本旅程只会拿到同样的 PARTIAL，不必再派工空转。出处：`docs/audits/fullstack-staging-2026-09-14/report-round3.md` 2026-09-17（三）节、`local-logs/staging-r3-paid/real-04-06-08.json` 步骤 S16–S19。 | |
 
 ## 6. 改签记录
 
