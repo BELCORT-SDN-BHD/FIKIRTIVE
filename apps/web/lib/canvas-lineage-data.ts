@@ -16,7 +16,12 @@ import "server-only";
  */
 
 import { prisma } from "@fikirtive/db";
-import { displayCredits, understandingKindForMime } from "@fikirtive/core";
+import {
+  UNDERSTANDING_PROVIDER_PAUSED,
+  UNDERSTANDING_WAITING_FOR_CREDITS,
+  displayCredits,
+  understandingKindForMime,
+} from "@fikirtive/core";
 import { canvasImageSettings, canvasVideoSettings, type CanvasNodeLineage } from "./canvas-lineage";
 import { mergeSettings } from "./owner-settings";
 import { formatDayLabel, formatTime, partsInTz } from "./schedule-view";
@@ -37,6 +42,10 @@ export const UNKNOWN_CANVAS_LINEAGE: CanvasNodeLineage = {
   madeAtLabel: null,
   settings: EMPTY_SETTINGS,
   costCredits: null,
+  // 一条记录都没有的卡不是上传卡,也没有任何一笔理解在路上 —— 两格都留 false,
+  // 费用那一行照旧落回 `canvasCostLabel` 的 "Cost not recorded"。
+  costIsUnderstanding: false,
+  costPending: false,
   batchSize: 1,
   batchPosition: null,
 };
@@ -84,7 +93,34 @@ export type UploadUnderstandingCost = {
    * 都不在这里重写一遍，只搬运既有常量，别造第三套说法（家规 §7.3 单一源头）。
    */
   stalledReason?: "waiting_for_credits" | "provider_paused";
+  /**
+   * `stalledReason` 对应的**整句**权威文案,服务端在这里一次取好。
+   *
+   * 为什么住在读模型上而不是各个界面上(2026-09-16 回执裁决):读这条读路的两面
+   * (Library 资产详情的血缘节、画布卡片信息面)都是 `"use client"` 组件,碰不得
+   * `@fikirtive/core` 的 Node 版总入口(`__tests__/client-core-imports.test.ts` 围栏);
+   * 从前只有 Library 那一面读得到这句话,是因为 `lib/actions.ts` 自己抄了一份 reason→文案
+   * 的映射。画布那一面现在也要说同一句,再抄第二份就是两处各说各话(家规 §7.3)——
+   * 所以映射收到**产生 `stalledReason` 的这一处**,两面都只读结果。
+   * undefined = 不需要特殊文案(不是 pending,或卡在 QUEUED/RUNNING 那句默认的「还在读」)。
+   */
+  pendingCopy?: string;
 };
+
+/**
+ * `stalledReason` → 商家读到的那一句,**原样搬自 `@fikirtive/core`**(家规 §7.3 单一源头)。
+ *
+ * 从前这份映射住在 `lib/actions.ts` 里,只服务 Library 资产详情那一面。2026-09-16 的回执
+ * 裁决让画布卡片信息面也要说同一句,所以它搬到产生 `stalledReason` 的这一处:一个信号,
+ * 一句文案,两面同源。
+ */
+function understandingPendingCopy(
+  reason: "waiting_for_credits" | "provider_paused" | undefined,
+): string | undefined {
+  if (reason === "waiting_for_credits") return UNDERSTANDING_WAITING_FOR_CREDITS;
+  if (reason === "provider_paused") return UNDERSTANDING_PROVIDER_PAUSED;
+  return undefined;
+}
 
 /**
  * 「这件素材现在会被扫描器捞去理解吗」——判官修根 P1-1（PR #1415，FSE-203/205/211）。
@@ -204,6 +240,7 @@ export async function loadUploadUnderstandingCredits(
       creditsCharged: displayCredits(netChargedInternalCredits(ledgerGroup)),
       pending,
       stalledReason,
+      pendingCopy: understandingPendingCopy(stalledReason),
     });
   }
   return byGeneration;
@@ -315,6 +352,15 @@ export async function loadCanvasNodeLineages(
     // of one fact and could disagree. The card carries the answer the settlement wrote.
     const batchSize = Math.max(1, node.batchSize ?? 1);
     const index = typeof node.batchIndex === "number" && node.batchIndex >= 0 ? node.batchIndex : -1;
+    // 这张卡的费用来自自动理解,而不是一单付费生成(Founder 2026-09-16 回执裁决)。
+    // 判据与下面 `costCredits` 走的那一支**同一个条件**,不另起一套。
+    const uploadGenerationId = !rows && !node.genJobId && node.generationId
+      && uploadedGenerations.has(node.generationId)
+      ? node.generationId
+      : null;
+    const understandingCost = uploadGenerationId
+      ? uploadCreditsByGeneration.get(uploadGenerationId)
+      : undefined;
     out[node.id] = {
       madeAtLabel: label(
         (node.generationId ? madeAtByGeneration.get(node.generationId) : null)
@@ -326,14 +372,18 @@ export async function loadCanvasNodeLineages(
         : EMPTY_SETTINGS,
       costCredits: rows
         ? displayCredits(netChargedInternalCredits(rows))
-        : (!node.genJobId && node.generationId && uploadedGenerations.has(node.generationId)
+        : (uploadGenerationId
           // FSE-009(Founder 2026-09-10 裁:**只显示合计,不拆行**)—— 上传那一格的费用 =
           // 这件素材上那些自动理解任务的账本行折出来的净额,与资产详情那一面同一个函数。
-          // 一行都没有 ⇒ 0 ⇒ 卡面照旧说 "no credits charged",与从前逐字相同。画布卡这一面
-          // 本票不改文案(诚实中间态只落在 Library 资产详情——票面范围,`pending` 这一格
-          // 在这里刻意不读),`creditsCharged` 的算法与从前逐字相同。
-          ? (uploadCreditsByGeneration.get(node.generationId)?.creditsCharged ?? 0)
+          // 一行都没有 ⇒ 0 ⇒ 卡面照旧说 "no credits charged",与从前逐字相同。
+          ? (understandingCost?.creditsCharged ?? 0)
           : null),
+      // Founder 2026-09-16 回执裁决:上传卡的费用那一格改说回执,所以「它是不是理解费」与
+      // 「那笔钱有没有定论」两个信号要跟着读出来 —— FSE-203 当时只修了 Library 资产详情
+      // 那一面(票面范围),画布这一面因此一直在未结算的那几十秒里说 "Cost: No charge"。
+      costIsUnderstanding: uploadGenerationId != null,
+      costPending: understandingCost?.pending ?? false,
+      costPendingCopy: understandingCost?.pendingCopy,
       batchSize,
       batchPosition: index >= 0 ? index + 1 : null,
     };

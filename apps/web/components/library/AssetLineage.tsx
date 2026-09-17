@@ -3,23 +3,9 @@
 import Link from "next/link";
 import { CANVAS_HREF } from "@fikirtive/core/navigation";
 import { creditsLabel } from "@/lib/credit-format";
+import { understandingReceipt } from "@/lib/understanding-receipt";
 import type { GenerationLineage } from "@/lib/actions";
 import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
-
-/**
- * `costPending` 为真时该说哪一句 —— 判官修根 P1-1(PR #1415,FSE-203/205/211)。
- * PAUSED_BALANCE / PAUSED 都不是「快有结果」,商家该做的事也不一样(充值 vs 什么都不用做),
- * 混着说成一句「settles shortly」是撒谎。两句权威文案原样搬运(`@fikirtive/core`),
- * 不在这里另造第三套说法(家规 §7.3 单一源头)。
- *
- * 文案本身在服务端取好(`lib/actions.ts` 的 `costPendingCopy`)——这个组件是 `"use client"`,
- * 不能直接 import `@fikirtive/core` 的 Node 版总入口(`lib/__tests__/client-core-imports.test.ts`
- * 围栏;该总入口没有暴露 `asset-understanding` 的 client-safe 子路径)。
- */
-function pendingCostCopy(lineage: GenerationLineage): string {
-  // QUEUED / RUNNING —— 真的快,原话不动;这句本来就不是 `@fikirtive/core` 的权威文案。
-  return lineage.costPendingCopy ?? "still reading this file — price settles shortly";
-}
 
 /**
  * 血缘节 —— 一件素材的出处、参考、成本、状态、用途(清单 B3 / P1-007;
@@ -49,6 +35,26 @@ function pendingCostCopy(lineage: GenerationLineage): string {
 export function AssetLineage({ lineage }: { lineage: GenerationLineage }) {
   const canvasHref = `${CANVAS_HREF}?project=${encodeURIComponent(lineage.canvas.id)}`;
   const conversation = lineage.conversation;
+  /**
+   * 上传素材那一格的回执(Founder 2026-09-16 裁决,规格 `docs/specs/money-engine.md` §5
+   * 2026-09-16 行)。三态都由 `understandingReceipt` 一处判,与画布卡片信息面同一个函数、
+   * 同一个词、同一个数 —— 这里只负责画。
+   *
+   * 中间态与「净额为 0」两支的句子**一字未改**:R3-F06 撤掉的是输入附近的常驻价目说明,
+   * 这一行是事后回执(裁决明写回执不在删除授权内),两件事不互相顶替。
+   *
+   * 进这一支的条件是 `costIsUnderstanding` **或** `costPending`:服务端两格同源(都挂在
+   * 「没有付费任务的上传」那一支上),所以真实数据里第二个条件永远是多余的 —— 写上它是为了
+   * 让 FSE-203 那条不变量不依赖新加的这一格:`costPending` 为真时绝不许掉回
+   * 「no credits charged」那一支,哪怕 `costIsUnderstanding` 因为任何原因没读到。
+   */
+  const receipt = lineage.costIsUnderstanding || lineage.costPending
+    ? understandingReceipt({
+      creditsCharged: lineage.costCredits ?? 0,
+      pending: lineage.costPending,
+      pendingCopy: lineage.costPendingCopy,
+    })
+    : null;
   return (
     <div className="cv-detail-fact">
       <span className="cv-panel-label">Where this came from</span>
@@ -72,12 +78,19 @@ export function AssetLineage({ lineage }: { lineage: GenerationLineage }) {
       {lineage.references.length > 0 && (
         <p className="cv-detail-fact-copy">References used: {lineage.references.join(", ")}</p>
       )}
-      {lineage.costPending ? (
+      {receipt?.state === "charged" ? (
+        // Founder 2026-09-16 —— 自动理解结清之后,那件上传素材身上留下的**唯一**一行回执:
+        // 「Understood · 0.1 credits」。商家从没按过「分析」这颗按钮,所以事后必须在东西
+        // 本身上说清楚读过了、扣了多少。数字折自账本已结算的净额,不是今天的牌价。
+        <p className="cv-detail-fact-copy">{receipt.line}</p>
+      ) : receipt?.state === "pending" ? (
         // FSE-203 —— 上传成功到自动理解结算之间那几十秒,这一格从前写死 0,于是说出
         // "Cost: no credits charged" 这句假话(这笔钱随后一定会收)。结算没定论前说诚实
         // 中间态,绝不能说没花钱。FSE-211 判官修根 P1-1:PAUSED_BALANCE / PAUSED 不是
-        // 「快」,文案按 `costPendingReason` 分岔(见上方 `pendingCostCopy`)。
-        <p className="cv-detail-fact-copy">Cost: {pendingCostCopy(lineage)}</p>
+        // 「快」,文案按 `costPendingReason` 分岔(服务端取好整句,见读模型 `pendingCopy`)。
+        // 判据从 `lineage.costPending` 换成回执的 `pending` 态 —— 同一个信号,不是两个:
+        // `costPending` 为真时这件素材必然有理解读路(服务端两格同一个 `!job` 条件)。
+        <p className="cv-detail-fact-copy">Cost: {receipt.line}</p>
       ) : (
         lineage.costCredits != null && (
           <p className="cv-detail-fact-copy">

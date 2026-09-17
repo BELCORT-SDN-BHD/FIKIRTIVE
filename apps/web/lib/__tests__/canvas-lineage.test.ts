@@ -122,6 +122,9 @@ describe("canvasLineageRows", () => {
         madeAtLabel: "Jul 30, 2:15 PM",
         settings: { durationSeconds: 5, resolution: "720p", aspectRatio: "16:9" },
         costCredits: 8,
+        // 生成卡:费用来自它自己那一单付费任务,不是自动理解(2026-09-16 回执裁决)。
+        costIsUnderstanding: false,
+        costPending: false,
         batchSize: 1,
         batchPosition: 1,
       },
@@ -141,6 +144,8 @@ describe("canvasLineageRows", () => {
       madeAtLabel: null,
       settings: { durationSeconds: null, resolution: null, aspectRatio: null },
       costCredits: null,
+      costIsUnderstanding: false,
+      costPending: false,
       batchSize: 1,
       batchPosition: null,
     });

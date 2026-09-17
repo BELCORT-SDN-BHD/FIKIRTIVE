@@ -26,8 +26,6 @@ import {
   displayCredits,
   type CaptionJobData,
   type RenderJobData,
-  UNDERSTANDING_WAITING_FOR_CREDITS,
-  UNDERSTANDING_PROVIDER_PAUSED,
 } from "@fikirtive/core";
 import { entityCapabilities, OFFICIAL_CATALOG_REFUSAL } from "@fikirtive/core/entity-policy";
 import type { EntityType, ShotStatus } from "@fikirtive/db";
@@ -1186,6 +1184,15 @@ export type GenerationLineage = {
   /** 这一件用掉的 credits(商家单位)。`null` = 未知,`0` = 没花钱(上传/裁剪)。 */
   costCredits: number | null;
   /**
+   * Founder 2026-09-16 回执裁决(规格 `docs/specs/money-engine.md` §5 2026-09-16 行)——
+   * 这一笔费用是**自动理解**,不是一单付费生成。
+   *
+   * 为什么要这一格:上传素材的 `costCredits` 折的是理解费(FSE-009),而商家从没按过那颗
+   * 按钮 —— 面上只写一个「Cost: 0.1 credits」等于让他自己去猜传张图为什么要钱。有了这一格,
+   * 面板才说得出「Understood · 0.1 credits」这句回执。`false` = 生成/裁剪那几路,文案一字未动。
+   */
+  costIsUnderstanding: boolean;
+  /**
    * FSE-203 —— `costCredits` 此刻是不是一个**尚未定论**的 0:这件上传背后的自动理解还没
    * 结清(建行未结算的那几十秒),不是真的没花钱。`false`(默认)= `costCredits` 就是事实,
    * 照 §5 :169 的口径显示;`true` = 花钱前诚实中间态,不许说 "no credits charged"。
@@ -1290,25 +1297,23 @@ export async function getGenerationLineage(
       // FSE-009(Founder 2026-09-10 裁:只显示含理解费的合计,不拆行)。一行理解都没有、
       // 或那一笔被退过款 ⇒ 0 ⇒ 面上照旧说 "no credits charged",与从前逐字相同。
       : (uploadCredits.get(generationId)?.creditsCharged ?? 0),
+    // Founder 2026-09-16 回执裁决:有理解读路(上传来路)且没有付费任务的那一支,费用就是
+    // 理解费 —— 面板据此说出回执那一行。
+    costIsUnderstanding: !job && uploadCredits.has(generationId),
     // FSE-203:只有上传来路才可能是「结算没定论」——付费任务的结算与产出落盘同一个事务,
     // 没有这个窗口(job 分支恒为 false)。
     costPending: !job && (uploadCredits.get(generationId)?.pending ?? false),
     costPendingReason: job ? undefined : uploadCredits.get(generationId)?.stalledReason,
-    costPendingCopy: job ? undefined : pendingCostCopy(uploadCredits.get(generationId)?.stalledReason),
+    costPendingCopy: job ? undefined : uploadCredits.get(generationId)?.pendingCopy,
     status: lineageStatus(job?.status ?? null, gen.source),
     usedIn,
   };
 }
 
-/**
- * `costPendingReason` 对应的权威文案 —— 原样搬自 `@fikirtive/core`(家规 §7.3 单一源头),
- * 在服务端取好整句字符串,好让 `AssetLineage.tsx`(`"use client"`)不用碰 Node 版总入口。
- */
-function pendingCostCopy(reason: "waiting_for_credits" | "provider_paused" | undefined): string | undefined {
-  if (reason === "waiting_for_credits") return UNDERSTANDING_WAITING_FOR_CREDITS;
-  if (reason === "provider_paused") return UNDERSTANDING_PROVIDER_PAUSED;
-  return undefined;
-}
+/* `costPendingReason` → 权威文案的那份映射从这里搬走了(2026-09-16 回执裁决):画布卡片
+ * 信息面现在也要说同一句,而它读的是 `loadUploadUnderstandingCredits`,再抄第二份就是两处
+ * 各说各话。映射现在住在产生 `stalledReason` 的那一处(`lib/canvas-lineage-data.ts` 的
+ * `understandingPendingCopy`),两面都只读结果 —— 一个信号、一句文案。 */
 
 /** `Generation.entitySnapshot` 里那几个名字。形状不对(老行、手写脏数据)一律当作没有引用。 */
 function entitySnapshotNames(snapshot: unknown): string[] {
