@@ -16,7 +16,8 @@
  * ① 卡片菜单 Edit → 改名 → Save:这张表单上一个主图控件都没有,而它交上去的那份 `data` 里仍然
  *   带着读路补进来的封面快照;把这份 `data` 喂给生产代码那一处,算出来的身份意图里只有名字,
  *   `imageAssetId` 这个键根本不出现(`undefined` = 不碰,`null` = 清空,两个意思);
- * ② 「Remove from product」不经过表单,走的是 `onSetImage`。
+ * ②（原「Remove from product」那一条已随该菜单项一起撤掉 —— Founder 2026-09-15 裁决让封面不变量
+ *   变成全量的,那颗键按了不会有任何反应;见文件末尾那段说明与规格 §5 变更登记 2026-09-15 行。）
  *
  * 意图一律**调用生产代码**算,不在测试里另抄一份形状 —— 否则实现怎么变测试都绿。
  */
@@ -161,16 +162,12 @@ describe("PRODID-R9 Brand 页产品卡片交出来的身份意图(编辑那条�
     expect("imageAssetId" in identity).toBe(false);
   });
 
-  it("PRODID-R9 清封面走的是它自己那颗键:整张表单那条路一次都没被走过", async () => {
-    const save = vi.fn<SaveFn>().mockResolvedValue(null);
-    const setImage = vi.fn<(rec: BrandRecordRow, assetId: string | null) => Promise<string | null>>()
-      .mockResolvedValue(null);
-    await render(harness(save, setImage));
-
-    // 卡片菜单上的「Remove from product」= 清封面。这条路交的是主图,不是名字。
-    await chooseMenuItem("Morning blend", "Remove from product");
-
-    expect(setImage).toHaveBeenCalledWith(expect.objectContaining({ id: "product-1" }), null);
-    expect(save).not.toHaveBeenCalled();
-  });
+  // 原来这里还有一条「PRODID-R9 清封面走的是它自己那颗键」——它按的是卡片菜单上的
+  // 「Remove from product」。Founder 2026-09-15 裁决把封面不变量变成**全量**的(一件还挂着基础层
+  // 参考图的产品永远有一张封面),那颗键于是永远会被同一个事务里的 `reconcileEntityCover` 立刻
+  // 钉回同一张图 —— 按了没有任何反应,本票把它撤掉(规格 §5 变更登记 2026-09-15 行)。
+  // 它原本要证的「封面不经过表单那条路」由上面第①条继续钉着(表单意图里根本没有 `imageAssetId`
+  // 这个键);清空封面落回第一张的语义由
+  // `packages/db/src/__tests__/entity-cover-autopin.test.ts` 的
+  // 「显式「清空封面」在还有图时落回第一张」钉住。
 });

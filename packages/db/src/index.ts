@@ -38,6 +38,8 @@ export * from "./consent-runtime.js";
 export * from "./contact-identity.js";
 // #1321: 建一件产品的唯一一条写路(身份 ＋ 价签同事务)。四个写入口都从这里过。
 export * from "./create-product.js";
+// Founder 2026-09-15 裁决:封面(Entity.baseAssetId)的唯一一条写路。挂图与拔图之后都调它。
+export * from "./entity-cover.js";
 export * from "./send-eligibility.js";
 // #795 — the cross-instance rate limiter is DELIBERATELY NOT re-exported here. It lives behind
 // its own entry point (`@fikirtive/db/rate-limit`) so a gate imports counting and nothing else:

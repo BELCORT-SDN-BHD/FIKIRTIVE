@@ -25,6 +25,9 @@ import { planCardGate } from "./plan-card-contract";
 import { cardQuoteVersion } from "@fikirtive/core/quote-version";
 import { SpendConfirmation, SpendProgress } from "./spend-state";
 import { cn } from "@/lib/utils";
+
+// 复审 P1-A —— 降级披露那一块,三张卡共用一个组件(措辞与闭嘴条件都在它里面)。
+import { CardDowngradeNote } from "./CardDowngradeNote";
 // #996 (W2-9): 面板最窄 320px。清单行在窄版折成两行(尾段整行下沉),
 // 每一个 credits 数字走 CardMoney —— 句子可以换行,数字不行。
 import {
@@ -211,8 +214,15 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
             : `Cards ${positions.join(", ")} changed price — check the updated quotes above, then start them again.`,
       );
     }
-    // The receipt only makes sense while something is still awaiting approval.
-    setChainedReceipt(outcome.pendingCardIds.length > 0 ? outcome.fallbackReply : null);
+    // FC-1（复核修正三）—— 这一行从前是 `pendingCardIds.length > 0 ? fallbackReply : null`，
+    // 注释写着「还有东西等着确认时这句收据才有意义」。那句话在 `fallbackReply` 只可能是
+    // 「去卡上逐张确认」的年代是对的；现在它还可能是**搁浅那句诚实话**（一张都按不下去），
+    // 而那正是待确认集为空的时候 —— 于是商家按下 Make all、什么都没发生、也没有一句解释。
+    //
+    // 判据换成「这句话是不是已经有别的通道在说」：服务端点名了可注入的行（叙述／诚实话的
+    // durable id）⇒ 它会进对话本身，这里再印一遍就是同一句话在同一屏上说两次；一个 id 都
+    // 没点名（「去卡上确认」那一类就是这样）⇒ 这里是它唯一的出口，照印。
+    setChainedReceipt(outcome.narrationMessageIds.length === 0 ? outcome.fallbackReply : null);
     // F11: earlier cards in this loop were already charged + started — hand the
     // outcome up even when a later card failed, so their paid results still
     // surface (don't strand them). Nothing fired ⇒ nothing changed ⇒ no call
@@ -290,6 +300,10 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                   <div className="text-xs text-muted-foreground">
                     {c.credits === null ? PACK_UNPRICED_ROW : <CardMoney>{creditsLabel(c.credits)}</CardMoney>}
                   </div>
+                  {/* 复审 P1-A —— 降级在整包这一面也说出口。这张卡一按就是**整批**下单
+                      (`Make all`),所以「你要的那件事我给不了」必须长在它自己那一行上:
+                      读不到的那一行,商家是连着别的几行一起买走的。组件与抽屉卡、画布卡同一个。 */}
+                  <CardDowngradeNote downgraded={c.p.downgraded} note={c.p.downgradeNote} className="mt-1" />
                 </div>
                 {/* #996: 窄版这一段整条下沉到第二行(`w-full`),所以 320px 下这一行是
                     「图标 + 名字/价签」一行、「状态/按钮 + 序号」一行 —— 双列改单列。 */}
