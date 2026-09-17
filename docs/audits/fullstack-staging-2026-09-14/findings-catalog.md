@@ -259,3 +259,64 @@ docker-compose.yml:7:    image: postgres:16-alpine
 来源：`docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r2/workflow-r2-result.json`（4 个 worker 并行、build `14bcd038`、以 Founder org `founder`（租户 A，super-admin）已登录会话跑，绝不登出、US$0、零远端写入——只读证明见该文件 `result.results[1].writesMade`：自 2026-09-15 03:55 UTC 起 `CreditLedger`/`GenJob`/`Generation`/`ChatMessage`/`CanvasNode`/`Project`/`ChatThread` 零新增或更新行），并经一名独立核证员对每条自报状态复核（`result.verdicts[*]`，找到能推翻的就推翻，找不到的原样通过）。**REAL-05 的一条自报「Send 是独立、绝不自动触发」的分句被核证推翻**：`apps/web/components/start-something/StartSomething.tsx:288-294`——`if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && draft.trim()) { event.preventDefault(); startCanvas(draft); }`——回车（非输入法组字中）会直接调用会创建 Project + ChatThread 并起一轮 Otto（该页面同屏就写着每条消息预留 4 credits）的 `startCanvas`；`apps/web/components/otto/OttoChatStream.tsx:1205` 是同款处理。核证员的浏览器控制工具能把 keydown 递到页面 JS、只是不触发原生默认动作，因此走查过程中输入框里躺着一句真实中文草稿「为这款杯子做广告」时，一次未加修饰键的真实 Enter 本会当场发生真实写入与真实扣费——本轮走查全程零写入是靠核证员自己的清空动作与只读复核兜住的，不是这条自报分句成立的证据。这是**观察记录，不是产品缺陷**：Enter 发送是聊天类产品的市场通用行为（业界常见，不属反常设计），只是本轮 US$0／零写入前提下这一按键路径构成过一次真实的花钱风险，记在案供下一次同类只读走查设计防护步骤（例如复核前先清空输入框，而不是只考虑鼠标路径）。
 
 CodeGraph: not used — worker 在独立 worktree，按项目要求使用 rg 与直接文件阅读；未建立或借用主检出图。
+
+## R3-F07 补记（2026-09-16，e2e 旅程 17 又一次真实复现）
+
+三条 GitHub Actions 运行落在同一分支（`claude/otto-storyboard-generate-chain`，PR 内容未变，均为该分支自身触发）：run [35098923185](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/actions/runs/35098923185)（2026-09-16 12:57 UTC）在同一行 `17-canvas-selection.spec.ts:79` 判红（`gh run view --log-failed` 核实断言与文件行号逐字一致）；同分支随后两次重跑 run [35100294966](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/actions/runs/35100294966)（13:11 UTC）与 run [35104281430](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/actions/runs/35104281430)（13:48 UTC）均绿（`gh run view --json conclusion` 核实）。三次运行代码内容相同，再次印证 R3-F07 是断言／时序间歇性问题，不是该分支引入的回归。R3-F17（CI 工件跳过隐藏目录）截至本次仍未合并主干——`.github/workflows/e2e.yml` 当前 `/usr/bin/grep -n "include-hidden-files"` 零命中；本次红跑的 artifacts 列表核实为空（`gh api repos/BELCORT-SDN-BHD/FIKIRTIVE/actions/runs/35098923185/artifacts` 返回 `[]`），trace.zip 依旧没有留存，只能靠日志文本定位到具体断言行，与 R3-F07 原记录「引不出 trace」的取证受限情况一致。修复（PR #1452，见上文根因与修复一节）尚未合并，故主干与由主干分出的新分支上仍会复现此间歇；不再重复计入独立发现编号。
+
+## R3-F18 · 共享配置指纹不一致：`TOKEN_ENCRYPTION_KEY` 只设在 web、两 worker 缺失（已关闭）
+
+**状态**：已关闭。Founder 2026-09-16（对谈）自己跑不回显命令，把 `TOKEN_ENCRYPTION_KEY` 补设到 Railway 的 `worker` 与 `worker-compute` 两个服务；本 worker 未接触该命令或其值。两服务补齐前后的 `configFingerprint`（据转述：`970711b2` → `8536b2af`）由编排者在实时 admin 面读出转述给本 worker，本文档未独立复核这两个哈希值本身——**未核**。
+
+**根因（代码层，已核实）**：`TOKEN_ENCRYPTION_KEY` 在共享配置契约里被明确标为跨服务共享密钥——`packages/core/src/env-contract.ts:519-529`：`shared: true`、`secret: true`，摘要原文「Web encrypts, worker decrypts — same value or publishing fails.」。同文件 :110 与 :1741 的既有注释已点名这个具体变量属于「#569 那一类：两边跑在不同配置上」的事故形状——本条正是这一类事故的回潮：只设在 web、未设在两个 worker。
+
+`apps/worker/src/publish-env-check.ts:38` 的 `publishChainWarning()` 对这种跨服务拆分**结构性失明**：该函数只接收调用方自己进程的 `env`（`apps/worker/src/index.ts:129` 传入的是 worker 自己的 `process.env`），只能判断「`MEDIA_PROXY_SECRET`／`TOKEN_ENCRYPTION_KEY`／`PUBLIC_BASE_URL` 这三项在**这一个进程内部**是全有、全无还是部分」，永远看不到 web 那一侧的值——web 侧已设、worker 侧未设时，worker 自己这次调用会判定「三项全无＝故意保持不发布，不告警」（该文件 :38 `if (present.length === 0 || missing.length === 0) return null`），从不会说出「你们两边不一致」这句话。
+
+**MEDIA_PROXY_SECRET 三边（web／worker／worker-compute）均未设**（同一次实时 admin 只读核对转述，本 worker 未独立核实——**未核**）：意味着发布链（Meta 媒体签名）仍不完整，即便 `TOKEN_ENCRYPTION_KEY` 已补齐；这是发布链上线前刻意保持 inert 的设计状态（该文件文件头注释 :1-16），不是新缺陷，登记不阻断。
+
+**遗留缺口**：`publish-env-check.ts` 的检查粒度停在单进程内部，没有一条自动机制比较 web 与两个 worker 的共享密钥是否同值——`lib/deploy-fingerprint.ts` 的 `configFingerprint` 比对需要人工打开 admin 面才会被看到，不在任何启动期自检路径上。触发条件：下次同类配置漂移前，评估是否要在 `configFingerprint` 比对上加自动告警。
+
+## R3-F19 · `/api/health` 永久显示已无人写入的旧 `"worker"` 心跳行（已修复）
+
+**状态**：已修复。Founder 2026-09-15（对谈）本版修；PR #1457，commit `d217327c`，已合并主干。
+
+`WorkerHeartbeat` 是 upsert 表，从无产品代码删行；`#796` 拆班（`worker` → `worker-wait`／`worker-compute`）之后，再没有任何进程写这一行 all-role 时代遗留的 `"worker"` 心跳，`/api/health` 却把它按 `stale` 永久显示——staging 上这一行截至修复前已冻结约两天（`apps/worker/src/plan.ts` 的 `heartbeatIdFor`：只有 `all` 角色写 `"worker"` 这个 id，staging 只跑 `wait`／`compute`）。`docs/ops/incident-visibility.md:88` 要求值班人「先看 workers 里哪一行 stale」，一条永远 stale 的幽灵行会把这条 runbook 训练成「那行不用管」，真出现一班停跳时同样的 stale 信号就没人当回事。
+
+**修法**：`apps/web/lib/health.ts` 新增 `WORKER_RETIRED_MS`（24 小时）与 `workerRetired()`——超过该阈值没人写的行，`/api/health` 的 `workers` 与 `/api/build-info` 的 `worker[]` 都改报新状态词 `retired`（行仍在列表里，不删除；仅仅 stale 的行照旧显示，保留「刚停跳几分钟」的诊断价值）；`/api/build-info` 的 `worker[]` 该行额外带上可选键 `retired: true`（未退休的行不带这个键——该端点的用处正是「现在跑的是哪次部署」，退休行若不标出来会被误当成还在跑的部署）。顶层 `worker`「至少一班 up」算法未改。围栏：`apps/web/app/api/health/__tests__/route.test.ts:180-228`、`apps/web/app/api/build-info/__tests__/route.test.ts:95-119`。规格登记见 `docs/specs/frontend-baseline.md` §5 本轮新增行。
+
+## R3-F20 · 每条「去加产品」的指路都通向没有产品键的页（修复 PR 已开，未合并）
+
+**状态**：修复 PR 已开——[#1463](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1463)（HEAD `794b9ac4`，分支 `claude/product-signposting-r3-f20`），未合并主干。该 PR 自带 `docs/specs/brand-product-identity.md` §5 的 2026-09-16 登记行，本文件不重复记录裁决内容，只记发现与指路层事实。
+
+商家想加一件产品时，产品面上每一句「去 Brand 加」都点不到真有「Add product」控件的那一屏：
+- `apps/web/lib/exits.ts:38-39` 的单一源 `BRAND_MEMORY_HREF` 指向 `/brand`——该页只有 Brand voice / Audiences / Knowledge base / Style guide / Visual guidelines 五个分区，零产品控件；同文件注释仍写着「『Your products』下的『+ Add product』在这个视图里」，注释已过期。
+- `/brand` 页顶只在 Knowledge base / Audiences 两个分区画出「Open the record editor」横幅，其余三个分区没有等价指路。
+- Library「新建元素 → 产品」那条路整条死码：唯一挂 `BRAND_MEMORY_HREF` 的两个消费者——`apps/web/components/otto/stuff/StuffLibrary.tsx:344`（library 模式 Products 空态）与 `apps/web/components/otto/OttoStuff.tsx:472`——**本身都到达不了**：`<OttoStuff` 在全仓零挂载点（自 PR #1152 起未被任何路由渲染，`find ... | xargs grep -l "<OttoStuff"` 零命中）；`StuffLibrary` 唯一的真实挂载点是 `ProductImagePickerDialog.tsx`，且固定传 `mode="picker"`（`StuffLibrary.tsx:163`／`:215`：一进 `picker` 模式即提前 `return`，根本走不到 :344 那条 library 模式的空态分支）。围栏 `apps/web/lib/__tests__/library-empty-states.test.ts:2` 的既有断言测的正是这条已死的路。
+- `@` 菜单的空态只给「Open library」，同样不通向产品创建。
+- 两条今天真的能走到底的路：`/brand/records?tab=products` 页面上的「Add product」控件（`e2e/journeys/23-brand-product-identity.spec.ts` 用的正是这一条）与 Otto 对话里说「Remember my product …」。
+
+修复 PR #1463 把 `BRAND_MEMORY_HREF` 改指记录编辑器的 Products 页签（`?tab=products`），并给 Brand 五个分区与 Library Products 空态各补一条通向该编辑器的链接——即在上述两个死码消费者之外，新增两个真实可达的消费者；本条发现的死码观察（StuffLibrary／OttoStuff 两处不可达）与该 PR 的修复范围一致，不冲突。**未做**：`/brand` 五分区壳原生新增产品键、Library 原生新建控件——这是新面（重挡），留 Founder 缺口选择，PR #1463 本身也未做这两项。
+
+## R3-F21 · 重部署后已打开页面的上传失败，误导文案把部署边界说成商家网络问题
+
+**状态**：新发现，未修，登记。证据：`docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r3-paid/preflight-fixtures.json` 的 `findings[1]`（同一事实亦见 `workflow-group1-result.json` 的 `results[0].findings[1]`）。
+
+staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`57ce7ee6`，PR #1460／#1455 合并触发），一个**已经打开**的页面此后每次上传都失败，报「Reference couldn't be attached — We couldn't upload that file. Check your connection and try again.」。经现场用 fetch 插桩确认：两次 POST 到页面路由均 404，从未真正发出存储请求；同样字节在**刷新页面后**首次尝试即成功。文案把一次部署侧的失效（server action 引用了上一次部署的路由，重部署后 404）归咎成商家的网络问题，误导取证方向（造成约 25 分钟的误诊——最初以为是视频上传本身坏了）。建议：探测这类「陈旧 action 404」并提示刷新，而不是照搬泛化的网络错误文案。
+
+## R3-F22 · 上传测试视频自动写入一条品牌记忆事实，来源标注还标错
+
+**状态**：新发现，未修，登记（隐私／质量）。证据同上，`preflight-fixtures.json` 的 `findings[3]`；DB 层复核见 `workflow-group1-result.json` 的 `verdicts[0].findings[2]`。
+
+上传一段 3 秒纯色测试视频后，Otto 的自动理解自动写入一条品牌记忆：Memory `01M2N6Y9NEK11F406B9WDJFF2S`（分类 `about`，内容「The video displays a solid orange screen with no other visual elements.」），且立刻在 `/brand` 上渲染为「Ready · Saved by Otto」的 Brand voice 语境——同一批三张图片上传均未产生这类记忆行。核证进一步核实两处比原发现更细的问题：① `origin='manual'`、`originDetail=NULL`（`packages/db/prisma/schema.prisma:1147-1150`：`origin` 本该回答「这条内容打哪来」，取值 `manual|text|url|file`）——这一行明明是从一段上传 MP4 派生的，却标成商家手打，且没有指回源资产的指针；② `contextStatus='Ready'`，不是 `'Draft'`——`apps/web/app/brand/page.tsx` 文档写明商家按 Save 之前库里最多只有一条 `Draft` 行、Otto 读路径写死只取 `Ready`，这条 Otto 自己写的句子完全跳过了「草稿→商家按 Save」这道确认闸，此刻已经活在 Otto 的品牌语境里。商家没有任何确认步骤就被写进了会被 Otto 引用的品牌知识。建议留给 Founder 裁决：素材理解衍生的记忆是否应该只提议（Draft）、不直接落 Ready；连带修正 `origin`／`originDetail` 使其如实反映来源。
+
+## R3-F23 · 字节校验只嗅文件头，损坏 JPEG 被当正常文件收下并计费理解
+
+**状态**：新发现，未修，登记（低优先级、自招输入）。证据同上，`preflight-fixtures.json` 的 `findings[5]`；DB 层复核见 `workflow-group1-result.json` 的 `verdicts[0].findings[4]`。
+
+一份因取证工具字符串截断而意外损坏的 JPEG（合法文件头＋尾部乱码，损坏产生的具体原因核证员也未能对上——`toolProblems[0]` 的描述与实际字节大小对不上，来源标记为不明，非本条重点）被产品原样收下：存为 `Asset 01M2N4SPM1NKG2GGZTTCGNWXR4`，`mime=image/jpeg`、`1280×720`，通过了 `ingest.ts` 的 re-hash 存活检查；自动理解为它生成说明文字「The image is completely black with no visible subjects, products, or details.」，并按全价 0.1 credits 完成 RESERVE／SETTLE——但产品自己的媒体 URL 无法把它解码成图片（`<img>` `onerror`），同一批另外两张正常图片都能正常显示。字节校验只嗅了文件头（合法 JPEG magic bytes），没有校验数据段本身是否可解码。商家上传一张部分损坏的照片会被正常计费、拿到一句自信但错误的说明文字，且按 R3-F22 的路径这句说明文字有资格进入品牌语境。
+
+## R3-F24 · 上传即扣费，控件旁没有任何逐动作报价或回执（Founder 2026-09-16 已裁）
+
+**状态**：Founder 2026-09-16（对谈）已裁决：结算后在那张图上留一行回执「Understood · 0.1 credits」，不恢复常驻说明段落；实现 PR 在飞——分支 `claude/upload-understanding-receipt`（commit `a594a2f4` 及复核修正 `03046f01`），尚未合并主干。本文件只记登记与裁决出处；money-engine §5 的落地登记留给该 PR 合并时补（其 mini-spec 行是该 PR 自己的工作）。
+
+这是 R3-F06 删除常驻说明段落（`docs/specs/money-engine.md:133` 批准）之后暴露出的一处既有空白：上传后约 2 秒内完成 RESERVE→SETTLE（见 `preflight-fixtures.json` 步骤 R12-5），但 `/create` 的「Add a reference」与画布的「Attach a file」控件旁都没有任何价目或回执，价目只在 `/billing` 才能看到。核证员（`workflow-group1-result.json` 的 `verdicts[0].findings[3]`）把最初「FRONT-A1 与 R3-F06 冲突」的框架撤销：`money-engine.md:133` 的批准原文写着「冲突的展示要求以本批准为准」，且 `apps/web/lib/__tests__/front-a1-money-rows.test.ts:333-345` 本身已经把 FRONT-A1 改写成断言这次删除、并断言 `/billing` 仍现算展示同一价目——两条验收行之间没有真的冲突。真正悬而未决的是：`money-engine.md:133` 的批准原文明确把「实际逐动作报价／确认、交易回执」排除在删除授权之外，而删除常驻说明段落之前，这里其实**从来没有过**逐动作回执——这道缺口是删除说明段落时顺带暴露出来的既有空白，不是本次删除本身违反了批准范围。Founder 已就此裁决按上述回执方案处理。

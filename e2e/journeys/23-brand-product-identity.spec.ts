@@ -10,6 +10,10 @@
  * 谱系那一格断言的是芯片的 `data-id`,不是名字。名字看起来一样是这条规格最容易通过的假绿;
  * 只有 id 说得出「是不是同一件东西」。
  *
+ * R3-F20 起,开场不再用深链落在产品页上 —— 那样只证明「那一页存在」。现在从首页出发,
+ * 照商家自己的走法走:导航 Brand → 页顶「Open the record editor」→「Add product」。
+ * 「一处建」的那个「处」,商家得先找得到。
+ *
  * 不花钱:旅程停在确认卡的芯片上,一次都没有按下生成。画布自己的第一轮对话是旅程 12 已经
  * 定性过的 hold(不是花费),这里照旧只等它把输入框放开。
  */
@@ -17,7 +21,7 @@ import { test, expect } from "@playwright/test";
 import { seedElementImages, seedWorkspace } from "../support/seed.js";
 import { signIn } from "../support/auth.js";
 import { prisma } from "../support/db.js";
-import { waitUntilInteractive } from "../support/ui.js";
+import { globalNav, waitUntilInteractive } from "../support/ui.js";
 
 test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Library、@ 菜单与确认卡是同一个 id;改名换图两个方向都同步、删除两边一起消失", async ({ page }) => {
   const ws = await seedWorkspace({
@@ -32,7 +36,19 @@ test("PRODID-A1 / PRODID-A2 / PRODID-A4 / PRODID-A6 Brand 页建的产品,Librar
   const renamed = "Pandan kaya toast set (large)";
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await signIn(page, ws, "/brand/records?tab=products");
+  await signIn(page, ws, "/");
+
+  // ── R3-F20 商家自己走得到那扇门 ──────────────────────────────────────────────
+  // 这一段原本是 `signIn(page, ws, "/brand/records?tab=products")` —— 一条深链,只证明
+  // 「那一页存在」。第三轮走查 R3-F20 问的是另一件事:商家**找不找得到**它。
+  // `/brand/records` 不在导航里(`packages/core/src/navigation.ts` 的 `MERCHANT_NAV`),
+  // 它在产品里唯一的入口就是下面这两下 —— 导航 Brand → 页顶那一行。所以这条旅程从导航
+  // 开始走:这两下任何一下断了(那一行又被收回某一节里、地址又指回 `/brand`),
+  // 「在 Brand 页新增产品」这条验收就在界面上演示不出来,旅程必须红。
+  await globalNav(page).getByRole("link", { name: "Brand", exact: true }).click();
+  await expect(page).toHaveURL(/\/brand$/);
+  await page.getByRole("link", { name: "Open the record editor" }).click();
+  await expect(page).toHaveURL(/\/brand\/records\?tab=products$/);
 
   // ── PRODID-A1 在 Brand 页新增产品 ────────────────────────────────────────────
   await page.getByRole("button", { name: "Add product" }).first().click();

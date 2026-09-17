@@ -63,3 +63,9 @@ CRM broadcast旅程因入口隐藏而既有skip，不是本轮跳过。todo未�
 - 本地storage成品、临时runner、截图、trace和报告保留作为审计产物，不上传外部。文本日志已检查常见真实外部token格式，匹配0；全程未读取真实env。日志/trace含固定本地E2E认证secret、合成OTP与临时测试cookie，均对应现已删除的本机数据库，不是外部服务凭据。见 `credential-check.json`。
 
 CodeGraph: not used — 独立worker按规则使用rg、直接文件、测试和本机DB证据。
+
+## 2026-09-16 补记：staging 第三轮付费旅程第一组暴露的工具坑
+
+- `javascript_tool` 会静默截断含重复字符片段的长字符串字面量：一次 base64 上传载荷（JPEG）传输后短少 1071 字符，二次尝试又短少 284 字符，直到上传后才发现——之后一律改用 gzip 压缩（打散重复片段）+ base64 + 定长分片 + 页面内解压与哈希校验，先比对再派发，不匹配就中止。
+- 页面 CSP 会挡住素材字节的下载比对：产品媒体 URL 跨域 302 到对象存储，`fetch` 因跨域重定向返回 `opaqueredirect`／状态 0，逐字节比对必须在 in-app 浏览器沙盒之外完成，沙盒内做不到。
+- Browser pane 被切到隐藏状态时，按坐标点击会报「not compositing frames」失效；此时改用产品自身的按钮元素引用（而非坐标）触发非付费控件，避免误触付费控件。

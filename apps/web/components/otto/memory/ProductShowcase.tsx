@@ -159,10 +159,8 @@ export function ProductShowcase({
   const [adding, setAdding] = useState(false);
   const [link, setLink] = useState<LinkState>({ phase: "idle" });
   const [archivePendingId, setArchivePendingId] = useState<string | null>(null);
-  const [imagePendingId, setImagePendingId] = useState<string | null>(null);
   const ingestSubmittingRef = useRef(false);
   const archiveFeedback = useAsyncActionFeedback("The product couldn't be updated. Check your connection and try again.");
-  const imageFeedback = useAsyncActionFeedback("The product image couldn't be removed. Check your connection and try again.");
 
   async function toggleArchive(record: BrandRecordRow) {
     if (archiveFeedback.pending) return;
@@ -175,15 +173,7 @@ export function ProductShowcase({
     if (outcome !== "ignored") setArchivePendingId(null);
   }
 
-  async function removeImage(record: BrandRecordRow) {
-    if (imageFeedback.pending) return;
-    setImagePendingId(record.id);
-    const outcome = await imageFeedback.run(() => onSetImage(record, null));
-    if (outcome !== "ignored") setImagePendingId(null);
-  }
-
   function openImagePicker(record: BrandRecordRow) {
-    imageFeedback.clearError();
     onOpenPicker(record);
   }
 
@@ -309,12 +299,6 @@ export function ProductShowcase({
         <Alert variant="destructive" role="alert">
           <AlertTitle>Product wasn&apos;t updated</AlertTitle>
           <AlertDescription>{archiveFeedback.error}</AlertDescription>
-        </Alert>
-      )}
-      {imageFeedback.error && (
-        <Alert variant="destructive" role="alert">
-          <AlertTitle>Product image wasn&apos;t removed</AlertTitle>
-          <AlertDescription>{imageFeedback.error}</AlertDescription>
         </Alert>
       )}
       {/* Toolbar: search (flex) + Add product + Paste a link (P1-01). */}
@@ -505,20 +489,20 @@ export function ProductShowcase({
               <CardHeader className="p-4 pb-0">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0"><CardTitle>{f.name}</CardTitle>{f.price && <p className="mt-1 font-mono text-xs text-muted-foreground">{f.price}</p>}</div>
-                  <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" size="icon-xs" variant="ghost" disabled={archivePendingId === r.id || imagePendingId === r.id} aria-label={`Actions for ${f.name}`}><MoreHorizontal aria-hidden /></Button></DropdownMenuTrigger>
+                  <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" size="icon-xs" variant="ghost" disabled={archivePendingId === r.id} aria-label={`Actions for ${f.name}`}><MoreHorizontal aria-hidden /></Button></DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-48">
                       <DropdownMenuGroup>
                         <DropdownMenuItem onSelect={() => setEditingId(r.id)}><Pencil aria-hidden />Edit</DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => openImagePicker(r)}><ImagePlus aria-hidden />{assetId ? "Replace image" : "Choose image"}</DropdownMenuItem>
                       </DropdownMenuGroup>
-                      {assetId && (
-                        <>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuGroup>
-                            <DropdownMenuItem onSelect={() => void removeImage(r)}><ImageOff aria-hidden />Remove from product</DropdownMenuItem>
-                          </DropdownMenuGroup>
-                        </>
-                      )}
+                      {/* 「Remove from product」撤掉(Founder 2026-09-15 裁决;复核 P2-③)。
+                          封面不变量从此是**全量**的:一件还挂着基础层参考图的产品永远有一张封面。
+                          而这颗菜单项只在 `assetId` 有值时才画出来 —— 有封面就意味着有活着的基础层
+                          参考图 —— 所以清空之后必然被同一个事务里的 `reconcileEntityCover` 立刻钉回
+                          同一张图:它**永远**改不动任何东西。一颗按了没反应的键比没有这颗键更糟
+                          (Founder「说了做不到＝根性缺陷」)。
+                          想换封面走上面的「Replace image」;想把这张图从产品上真的拿掉,走 Library
+                          的移除参考图(那条路会真删字节,属重挡,不在本票范围)。 */}
                       <DropdownMenuSeparator />
                       <DropdownMenuGroup>
                         <DropdownMenuItem onSelect={() => void toggleArchive(r)}>{archived ? <ArchiveRestore aria-hidden /> : <Archive aria-hidden />}{archived ? "Unarchive" : "Archive"}</DropdownMenuItem>
@@ -541,7 +525,6 @@ export function ProductShowcase({
               <CardFooter className="justify-between border-t border-border p-4 text-xs text-muted-foreground">
                 {whenLabel(r.updatedAt) ? `Updated ${whenLabel(r.updatedAt)}` : "Saved product"}
                 {archivePendingId === r.id && <Badge><Spinner />{archived ? "Unarchiving…" : "Archiving…"}</Badge>}
-                {imagePendingId === r.id && <Badge><Spinner />Removing image…</Badge>}
               </CardFooter>
             </Card>
           );

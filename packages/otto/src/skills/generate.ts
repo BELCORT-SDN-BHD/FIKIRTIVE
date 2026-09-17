@@ -82,7 +82,25 @@ export async function executeGenerate(
     },
   });
   if (!card || card.thread.deletedAt || card.thread.ownerId !== ctx.orgId) {
-    return { error: "Card not found." };
+    // FC-1(现场:Founder 自己的画布,2026-09-14)—— 分镜卡的编号被交到这里来过。
+    //
+    // 批准暂停发生在 execute **之前**(SDK 的 needsApproval),所以「卡的种类对不对」这件事
+    // 第一次被问到就是现在。上一版这里只有一句 `Card not found.` —— 那句话在四种完全不同的
+    // 局面上长得一模一样(卡被删了 / 不是你的卡 / 走错了线程 / 交来的根本不是生成卡),模型
+    // 于是既不知道自己错在哪,也不知道该改走哪条路,只能再承诺一次。
+    //
+    // 多问一次(owner-scoped,只在失败路径上):这是不是一张分镜卡?是 ⇒ 把那条**已经存在的
+    // 正确链**说出来(prepareStoryboardVideos → 每镜一张子卡 → 商家在卡上确认)。
+    // 不是 ⇒ 逐字保留原来那句话。零花费、零建卡,与这条分支出现之前一样。
+    const storyboard = await prisma.chatMessage.findFirst({
+      where: { id: input.cardId, ownerId: ctx.orgId, kind: "STORYBOARD_CARD", deletedAt: null },
+      select: { id: true },
+    });
+    return {
+      error: storyboard
+        ? "That id is a storyboard card, not a generation card. Call prepareStoryboardVideos with it to price one video card per shot, then let the user confirm on the storyboard card."
+        : "Card not found.",
+    };
   }
   if (card.threadId !== ctx.threadId) return { error: "Card not found." };
   if (card.thread.projectId !== ctx.projectId) return { error: "Card not found." };
@@ -209,7 +227,9 @@ export const generateSkill = defineOttoSkill({
     "This SPENDS the user's credits and REQUIRES the user's approval — only call it when " +
     "the user has clearly asked to go ahead with that specific card. " +
     "One card generates at most once. Pass only the card's id — model and params come from " +
-    "the persisted card, not from this call.",
+    "the persisted card, not from this call. " +
+    "NEVER pass a storyboard card's id: a storyboard is a draft, and this tool refuses it. " +
+    "To act on a storyboard, call prepareStoryboardVideos instead.",
   parameters: generateInput,
   execute: executeGenerate,
 });

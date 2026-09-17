@@ -147,7 +147,9 @@ async function entityRows(ownerId: string, options: ReferenceSearchOptions): Pro
     const rank = referenceMatchRank(row.name, query);
     if (rank === null) continue;
     const assets = row.referenceImages.map((ref) => ref.asset);
-    const base = assets.find((asset) => asset.id === row.baseAssetId) ?? assets[0];
+    // 封面只认身份上钉的那一张(规格 §5,Founder 2026-09-15 裁决;验收 PRODID-A4)。
+    // 从前这里是 `?? assets[0]`,与 Brand 读路不一致 —— 见 `lib/library-elements.ts` 那一段说明。
+    const base = assets.find((asset) => asset.id === row.baseAssetId);
     out.push({
       type,
       id: row.id,
