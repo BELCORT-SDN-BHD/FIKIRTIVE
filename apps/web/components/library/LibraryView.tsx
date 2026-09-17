@@ -83,6 +83,7 @@ import {
 } from "@/components/library/ElementIdentityFields";
 import { GridSkeleton, MediaGrid } from "@/components/library/MediaGrid";
 import { restoreGeneration, softDeleteEntity } from "@/lib/actions";
+import { BRAND_MEMORY_HREF } from "@/lib/exits";
 import { getGenerationHistory, type LibraryItem, type LibrarySourceKind } from "@/lib/library-actions";
 import {
   LIBRARY_ELEMENT_VIEWS,
@@ -504,9 +505,27 @@ function ElementsView({
       ) : (
         <div className="flex min-h-72 flex-col items-center justify-center text-center">
           <h3 className="text-sm font-semibold">No {viewLabel.toLowerCase()} yet</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {`${PRODUCT_VOCABULARY.elements} you and Otto save while creating show up here.`}
-          </p>
+          {/* R3-F20(规格 `docs/specs/brand-product-identity.md` §1.3):产品这一栏空着的时候
+              必须说得出「去哪里加一个」。原本这里对五栏说同一句「保存的元素会出现在这里」——
+              对产品而言那是半句话:产品不是创作路上顺手保存出来的,它得有人去建,而建它的
+              那颗键在另一面(`/brand/records` 的 Products 页签)。地址从 `lib/exits.ts` 取
+              (§7.3 单一源),不在这里手抄一份。
+              规格 §1.3 原话里还有「或这里新增」那半句 —— Library 这一面今天没有新建控件
+              (PRODID-A3 未落地),所以这里不写它:写了就是一颗找不到的键。 */}
+          {elementView === "products" ? (
+            <>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Products you add in Brand show up here, ready to use while you create.
+              </p>
+              <Link href={BRAND_MEMORY_HREF} className={cn(buttonVariants({ size: "sm" }), "mt-4")}>
+                Add a product
+              </Link>
+            </>
+          ) : (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {`${PRODUCT_VOCABULARY.elements} you and Otto save while creating show up here.`}
+            </p>
+          )}
         </div>
       )}
 
