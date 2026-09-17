@@ -118,18 +118,20 @@ type StartFrameCtx = Pick<
  * 模型把画面里的人写成一个 character 参考,于是一张**真**首帧被降成 t2v、两句首帧话被删,
  * 而卡上写着 Starting frame、`GenJob.sourceGenerationId` 也真有值。
  *
- * 所以这里一格都不看模型的入参,两样都来自服务端:
- *   · **id** —— `ctx.turnEntityIds`:服务端解析器 `resolveOwnedReferenceRefs` 这一趟按
- *     owner 核过的那份(FSE-210),与铸卡侧取并集的正是同一个数组;
- *   · **族别** —— `ctx.availableRefs`:`loadAvailableRefsForAgent` 按 `ownerId` 从
- *     `Entity` 表读出来的 `{ id, name, type }`。别家店的 id 在这张表里查不到,所以它既是
- *     族别的来源,也是一道归属闸。
+ * 所以这里一格都不看模型这次的入参,两样都来自这一轮的 ctx:
+ *   · **id** —— `ctx.turnEntityIds`:客户端上报的那份 ∪ `resolveOwnedReferenceRefs` 按 owner
+ *     核过的那份(`apps/web/app/api/otto/stream/route.ts:287`),与铸卡侧取并集的正是同一个
+ *     数组。**归属闸不在这一侧**;
+ *   · **族别** —— `ctx.availableRefs`:`loadAvailableRefsForAgent` 按 `ownerId` 从 `Entity`
+ *     表读出来的 `{ id, name, type }`。**归属闸在这一侧** —— 别家店的 id 在这张按 ownerId
+ *     读出来的名单里查不到,所以它既是族别的唯一来源,也是那道闸。
  *
  * 这个数**恒 ≤ 铸卡侧那个数**(那边还并上模型自带的 `entityIds`、且不要求元素有参考图),
  * 所以这道闸只会比卡片**更保守**:它说「没有首帧」时卡片一定也不是首帧;反过来它说
- * 「有首帧」而卡片判成参考照的那两种窄情形(演员没有任何参考图 ⇒ 不在候选名单里;
- * 或者演员只出现在模型 propose 的 `entityIds` 里、商家这一轮没 @ 它),是主干原有的老缺口,
- * 不是这条修改带来的 —— 已具名登记在规格 §5:195。
+ * 「有首帧」而卡片判成参考照的那几种窄情形(演员没有任何参考图 ⇒ 不在候选名单里;演员只
+ * 出现在模型 propose 的 `entityIds` 里、商家这一轮没 @ 它;候选名单本身读失败 ⇒ 空名单让
+ * 这道闸整轮停摆),是主干原有的老缺口,不是这条修改带来的 —— 连同那句子集关系的一个
+ * TOCTOU 理论例外,已逐条具名登记在规格 §5:195。
  */
 function serverCastCount(ctx: StartFrameCtx): number {
   const ids = ctx.turnEntityIds ?? [];
