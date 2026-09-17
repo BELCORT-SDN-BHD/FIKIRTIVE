@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { SAVE_FAILED } from "./save-failed-copy";
 import {
-  prisma, Prisma, createProduct, confirmProductDraft, updateProductRecord,
+  prisma, Prisma, createProduct, confirmProductDraft, updateProductRecord, reconcileEntityCover,
 } from "@fikirtive/db";
 import {
   newId, RECORD_KINDS, recordSchemaFor, recordName, normalizeNameKey, withProductIdentity,
@@ -410,6 +410,10 @@ async function restoreBrandRecordInFrame(
             where: { id: ref.id, ownerId: gate.ownerId }, data: { deletedAt: null },
           });
         }
+        // 接回来的照片里,当年当封面的那一张可能没能一起回来(上面那句 `live` 跳过:同一张图
+        // 这期间又被挂了一次)。封面判据只有一处,调它一次就把这条恢复路也拉回不变量
+        // (Founder 2026-09-15 裁决;家规 §7.3)。
+        await reconcileEntityCover(tx, { ownerId: gate.ownerId, entityId: target.entityId });
       }
       return hit;
     });
