@@ -154,6 +154,8 @@ const LINEAGE: CanvasNodeLineage = {
   madeAtLabel: "Jul 30, 2:15 PM",
   settings: { durationSeconds: null, resolution: "2048x2048", aspectRatio: "1:1" },
   costCredits: 8,
+  costIsUnderstanding: false,
+  costPending: false,
   batchSize: 1,
   batchPosition: 1,
 };

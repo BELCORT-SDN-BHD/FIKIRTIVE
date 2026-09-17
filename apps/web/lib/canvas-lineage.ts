@@ -15,6 +15,7 @@
  */
 
 import { creditsLabel } from "./credit-format";
+import { UNDERSTOOD_LABEL, understandingReceipt } from "./understanding-receipt";
 
 /** Output settings worth showing a merchant. Video-only fields stay null for images. */
 export type CanvasNodeSettings = {
@@ -30,6 +31,23 @@ export type CanvasNodeLineage = {
   settings: CanvasNodeSettings;
   /** Displayed credits charged for the paid job behind this card; null when not known. */
   costCredits: number | null;
+  /**
+   * 这张卡的费用是**自动理解**那一笔吗(Founder 2026-09-16 回执裁决,规格
+   * `docs/specs/money-engine.md` §5 2026-09-16 行)。
+   *
+   * 上传卡没有付费任务,`costCredits` 折的是那件素材上自动理解任务的账本净额(FSE-009)——
+   * 商家从没按过那颗按钮,所以这一格不能只写一个「Cost」了事,要说清楚扣的是什么。
+   * false = 生成卡(费用来自它自己那一单付费任务),或者根本没有费用记录。
+   */
+  costIsUnderstanding: boolean;
+  /**
+   * 那一笔理解还没结算(FSE-203 的同一个信号)。`true` 时 `costCredits` 的 0 **不是事实**,
+   * 卡面一个金额都不许说 —— 从前画布这一面写死读不到这个信号,于是上传后的那几十秒里
+   * 卡片说的是 "Cost: No charge",而这笔钱随后一定会收。
+   */
+  costPending: boolean;
+  /** `costPending` 为真时那一句权威中间态文案(服务端取好);undefined = 用默认的「还在读」。 */
+  costPendingCopy?: string;
   /**
    * How many cards that one paid job produced (1 for a single image or a video).
    *
@@ -123,7 +141,30 @@ export function canvasLineageRows(
   if (settings) rows.push({ label: "Settings", value: settings });
   const batch = canvasBatchLabel(lineage);
   if (batch) rows.push({ label: "Batch", value: batch });
-  rows.push({ label: "Cost", value: canvasCostLabel(lineage) });
+  /**
+   * 费用那一格(Founder 2026-09-16 回执裁决)。上传卡走**回执**口径,与 Library 资产详情
+   * 同一个函数(`understandingReceipt`),两面同一个词、同一个数:
+   *   · 已结算且真扣了钱 ⇒ 「Understood | 0.1 credits」—— 商家读得到是什么被扣了;
+   *   · 还没定论        ⇒ 「Cost | <诚实中间态>」—— 一个金额都不说(从前这里说 "No charge",
+   *     那是这一面最后一处还在撒的谎);
+   *   · 到终态而净额 0  ⇒ 回到 `canvasCostLabel` 的原话,与从前逐字相同(失败/退款的净额
+   *     恒为 0,读作「没花钱」——与消费历史同一个口径)。
+   * 生成卡一个字都没动。
+   *
+   * 条件写成 `costIsUnderstanding || costPending`,与 `AssetLineage.tsx` 同一条理由:读模型里
+   * 两格同源(都挂在「没有付费任务的上传」那一支),所以第二个条件在真实数据里永远多余 ——
+   * 写上它是为了让「未结算时绝不说 No charge」这条不变量不依赖新加的那一格。
+   */
+  const receipt = lineage.costIsUnderstanding || lineage.costPending
+    ? understandingReceipt({
+      creditsCharged: lineage.costCredits ?? 0,
+      pending: lineage.costPending,
+      pendingCopy: lineage.costPendingCopy,
+    })
+    : null;
+  if (receipt?.state === "charged") rows.push({ label: UNDERSTOOD_LABEL, value: receipt.amount });
+  else if (receipt?.state === "pending") rows.push({ label: "Cost", value: receipt.line });
+  else rows.push({ label: "Cost", value: canvasCostLabel(lineage) });
   if (options.hasSource) rows.push({ label: "Made from", value: "the card it is joined to" });
   return rows;
 }
