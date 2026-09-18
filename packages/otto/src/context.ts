@@ -425,8 +425,15 @@ export interface OttoContext {
    */
   currentImage?: OttoMediaReference | null;
   /**
-   * FSE-210(PR #1420 判官 P1-1)—— 这一轮服务端解析器(`resolveOwnedReferenceRefs`)已经
-   * 核过归属的每个 entity id,与模型 propose 工具参数里自己写的 `entityIds` 无关。
+   * FSE-210(PR #1420 判官 P1-1)—— 这一轮**这条对话提到的** entity id,与模型 propose 工具
+   * 参数里自己写的 `entityIds` 无关。
+   *
+   * 这一份的来历要说准(PR #1466 复审 P3):它是**客户端上报的那份 ∪
+   * `resolveOwnedReferenceRefs` 按 owner 核过的那份**(`apps/web/app/api/otto/stream/route.ts:287`
+   * 的 `[...new Set([...(entityIds ?? []), ...picked.entityIds])]`)—— 只有后一半过了归属核对。
+   * 所以**归属闸不在这一侧**:凡是要按 id 去断定「这是他自己的什么东西」的地方,族别与归属
+   * 都得取自按 `ownerId` 读出来的名单(`availableRefs`)或铸卡侧自己那次 owner-scoped 读
+   * (`ownedEntities`),不能只凭这份 id 在列。
    *
    * 为什么需要它:模型看到的 `@` 候选名单(`availableRefs`)只列有参考图的元素
    * (`loadAvailableRefsForAgent` 的过滤),商家 `@` 一件还没挂图的产品时模型的候选名单里
@@ -434,7 +441,7 @@ export interface OttoContext {
    * 把这一份与模型自带的那份取并集,铸卡时才不会因为模型「不知道」而把商家明确 `@` 过的
    * 东西静默漏掉。
    *
-   * 由服务端解析器一次产出,模型永远碰不到它(与 `mediaReferences`、`turnText` 同一条纪律)。
+   * 由服务端在入口一次产出,模型永远碰不到它(与 `mediaReferences`、`turnText` 同一条纪律)。
    * 缺席(undefined)= 这条调用路径不是一次活的商家轮次(分镜子卡、视频 Step-2 接力等系统
    * 铸卡),`buildProposeCard` 的并集退化成只有模型那一份,行为不变。
    */
