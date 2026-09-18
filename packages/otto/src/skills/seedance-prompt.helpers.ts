@@ -11,7 +11,8 @@ import {
   PORTRAIT_CAPTION_BAN_KEEPING_LOGO,
 } from "./prompt-vocab.js";
 import { videoAction } from "./video-capabilities.js";
-import type { AnchoredVideoAction } from "@fikirtive/core";
+import { videoAttachmentRole, type AnchoredVideoAction } from "@fikirtive/core";
+import type { OttoContext } from "../context.js";
 
 export const seedanceShot = z.object({
   subject: z.string().min(1),
@@ -65,6 +66,127 @@ export const seedancePromptInput = z.object({
     path: ["shots"],
   });
 export type SeedancePromptInput = z.infer<typeof seedancePromptInput>;
+export type SeedanceMode = SeedancePromptInput["mode"];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// R3-F26 —— 「这一趟有没有首帧」是**服务端的事实**,不是模型的一个声明
+// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * staging c0d25917(2026-09-17)那一单:GenJob 01M2PV9ZBN5ZQXN5GRY1PQN64C 的
+ * `sourceGenerationId` / `tailGenerationId` / `referenceVideoGenerationId` 三格全 NULL、
+ * 零 RefGenJob —— **一张首帧都没有**。而 `GenJob.prompt`(真送去花钱的那一份)与
+ * `Generation.promptText`(卡面与素材库让商家读的那一份)里都写着「starting from the
+ * given first frame」「keep the subject consistent with the source frame」。商家给的只有
+ * 一句话和两个 @元素(产品 1 张参考照、角色 2 张)。
+ *
+ * 根因不在措辞,在**证据**:`mode` 是模型填的,而且默认就是 `i2v` —— 模型漏填一格,
+ * 我们就替它向引擎与商家断言了一张不存在的图。规格 :34/:76 那条「送出去的字＝商家批准的
+ * 那一份逐字」与 :66 CREATE-A2 那条「素材的角色指派句必须与真实角色一致」,在这一单上
+ * 同时不成立:卡上说那些照片是首帧,实际它们是 `reference_image`。
+ *
+ * 所以这里给装配层补上**同一份**服务端事实:判据不在这个文件里另写一份,而是直接读
+ * `@fikirtive/core` 的 `videoAttachmentRole` —— 卡面披露、名额计算与 worker 的选片读的
+ * 就是它。说的与做的因此没有两份判据可以分家。
+ */
+export type SeedanceTurnFacts = {
+  /**
+   * 这一轮引擎真收得到一张首帧吗。
+   * `undefined` = 这条调用路径读不到服务端事实(没有 ctx 的纯装配调用)⇒ 逐字维持模型
+   * 声明的那一档,与这条修改之前一模一样。
+   */
+  hasStartFrame?: boolean;
+};
+
+/** `seedanceTurnFacts` 真正要读的那几格 —— 全部由服务端解析器写入,模型碰不到。 */
+type StartFrameCtx = Pick<
+  OttoContext,
+  | "sourceGenerationId"
+  | "sourceGenerationIds"
+  | "referenceVideoGenerationId"
+  | "alwaysVideoReference"
+  | "turnEntityIds"
+  | "availableRefs"
+>;
+
+/**
+ * 这一轮真 @ 到、且确属这家店的**演员**有几个 —— PR #1466 跨厂复审 P2 的修根点。
+ *
+ * 上一版数的是**模型**在 `references` 里自己写的 `role:"character"`,而卡面与 worker 数的是
+ * 服务端核过归属的 CHARACTER 元素(`propose.helpers.ts:942-959`:`input.entityIds` ∪
+ * `ctx.turnEntityIds`,族别取自 `ownedEntities`)。同一件事两个证人 ⇒ 提示词与卡片可以
+ * **双向**对不上,其中一向还是这条修改自己造出来的:商家在画布按「Animate this result」、
+ * 模型把画面里的人写成一个 character 参考,于是一张**真**首帧被降成 t2v、两句首帧话被删,
+ * 而卡上写着 Starting frame、`GenJob.sourceGenerationId` 也真有值。
+ *
+ * 所以这里一格都不看模型这次的入参,两样都来自这一轮的 ctx:
+ *   · **id** —— `ctx.turnEntityIds`:客户端上报的那份 ∪ `resolveOwnedReferenceRefs` 按 owner
+ *     核过的那份(`apps/web/app/api/otto/stream/route.ts:287`),与铸卡侧取并集的正是同一个
+ *     数组。**归属闸不在这一侧**;
+ *   · **族别** —— `ctx.availableRefs`:`loadAvailableRefsForAgent` 按 `ownerId` 从 `Entity`
+ *     表读出来的 `{ id, name, type }`。**归属闸在这一侧** —— 别家店的 id 在这张按 ownerId
+ *     读出来的名单里查不到,所以它既是族别的唯一来源,也是那道闸。
+ *
+ * 这个数**恒 ≤ 铸卡侧那个数**(那边还并上模型自带的 `entityIds`、且不要求元素有参考图),
+ * 所以这道闸只会比卡片**更保守**:它说「没有首帧」时卡片一定也不是首帧;反过来它说
+ * 「有首帧」而卡片判成参考照的那几种窄情形(演员没有任何参考图 ⇒ 不在候选名单里;演员只
+ * 出现在模型 propose 的 `entityIds` 里、商家这一轮没 @ 它;候选名单本身读失败 ⇒ 空名单让
+ * 这道闸整轮停摆),是主干原有的老缺口,不是这条修改带来的 —— 连同那句子集关系的一个
+ * TOCTOU 理论例外,已逐条具名登记在规格 §5:195。
+ */
+function serverCastCount(ctx: StartFrameCtx): number {
+  const ids = ctx.turnEntityIds ?? [];
+  if (ids.length === 0) return 0;
+  const typeById = new Map((ctx.availableRefs ?? []).map((r) => [r.id, r.type]));
+  return ids.filter((id) => typeById.get(id) === "CHARACTER").length;
+}
+
+/**
+ * 纯:这一轮的 ctx → 「有没有首帧」这一个事实。每一格都来自服务端,模型一票都没有。
+ *
+ * 两个证人,而两个证人**只会把结论推向「没有首帧」**,永远推不出一张不存在的首帧:
+ *   · 挂图张数 —— `ctx` 的图片槽(`validateOttoTurnReferences` 解析、按 owner 核过),
+ *     一张都没挂时结构上不可能有首帧;
+ *   · 这条计划里有没有**演员**(见 `serverCastCount`)—— 演员在场时挂图一律作参考照随行
+ *     (`videoAttachmentRole` 的分岔,理由见 reference-budget.ts:首帧那一档一张元素照都
+ *     带不上)。
+ */
+export function seedanceTurnFacts(ctx: StartFrameCtx | undefined): SeedanceTurnFacts {
+  if (!ctx) return {};
+  const attachedImageCount = new Set(
+    [ctx.sourceGenerationId, ...(ctx.sourceGenerationIds ?? [])].filter((id): id is string => !!id),
+  ).size;
+  const role = videoAttachmentRole({
+    attachedImageCount,
+    mentionedCastCount: serverCastCount(ctx),
+    hasReferenceVideo: !!ctx.referenceVideoGenerationId,
+    // 分镜铸卡(FSE-208)那一档没有 startFrame:挂图一律作参考随行。
+    alwaysReference: ctx.alwaysVideoReference,
+  });
+  return { hasStartFrame: role === "startFrame" };
+}
+
+/**
+ * 纯:模型声明的那一档 + 服务端事实 → **真正会写进提示词**的那一档。
+ *
+ * 只收紧一个方向:`i2v` 在「服务端说这一轮没有首帧」时降成 `t2v`。反过来永远不做 ——
+ * 从一个声明里长出一句「从给定首帧开始」,正是这条修改要断根的那件事。
+ * `edit` / `extend` 锚的是一整条片子、与首帧无关,一格不动。
+ */
+export function truthfulSeedanceMode(declared: SeedanceMode, facts: SeedanceTurnFacts): SeedanceMode {
+  if (declared !== "i2v") return declared;
+  return facts.hasStartFrame === false ? "t2v" : declared;
+}
+
+/**
+ * 降档时交回给 Otto 的那一句(走既有的 `notes` 出口,与 U8 的素材建议同一条路)。
+ *
+ * 为什么必须有:提示词里不再有首帧那两句,可 Otto 的**叙述**是它自己写的 —— FC-4 的
+ * 同一条理由(把卡上真正的那一格交到模型手里),方向相同:它读到这一句,就没有一句
+ * 「starting from your image」可写了。English sentence case,不出现任何引擎/供应商名。
+ */
+export const NO_START_FRAME_NOTE =
+  "This clip has no starting picture, so it is written as a from-scratch clip: any saved photos reach " +
+  "the video engine as reference photos for likeness, never as a first frame.";
 
 /**
  * #775 —— 锚在一条已有片子上的开场:官方句式 + 一句边界。
@@ -152,9 +274,9 @@ export function anchoredClipLines(input: {
   ];
 }
 
-function anchoredOpening(i: SeedancePromptInput, seg: string): string[] {
+function anchoredOpening(i: SeedancePromptInput, mode: SeedanceMode, seg: string): string[] {
   return anchoredClipLines({
-    action: i.mode === "extend" ? "extendClip" : "editClip",
+    action: mode === "extend" ? "extendClip" : "editClip",
     extendDirection: i.extendDirection,
     segment: seg,
   });
@@ -180,9 +302,12 @@ function anchoredOpening(i: SeedancePromptInput, seg: string): string[] {
  * (`<Video_1>`)，而片子的编号与图片编号的处境正相反：付费请求承载整段片子的位置只有一个，
  * 所以 1 是结构决定的，不是猜的。
  */
-export function assembleSeedance(i: SeedancePromptInput): string {
+export function assembleSeedance(i: SeedancePromptInput, facts: SeedanceTurnFacts = {}): string {
   const lines: string[] = [];
-  const anchored = i.mode === "edit" || i.mode === "extend";
+  // R3-F26 —— 下面每一处读的都是**核过的那一档**,不是模型声明的那一档。
+  // `facts` 缺省 `{}` = 没有服务端事实可读(纯装配调用)⇒ 逐字维持声明。
+  const mode = truthfulSeedanceMode(i.mode, facts);
+  const anchored = mode === "edit" || mode === "extend";
   // #775 —— 锚在一条已有片子上的两档**不写**画质/风格开场白。
   //
   // 那一行说的是「这条片子该长成什么质感」,而这两档的全部要求正好相反:除了商家点名要改
@@ -204,7 +329,7 @@ export function assembleSeedance(i: SeedancePromptInput): string {
       // 路留在一起,迟早有人再问一次「到底哪一条在起作用」。
       // 合并 origin/main(#774)时保留了它那一笔:尾逗号由 join 负责 —— 自己再带一个就成了
       // "first frame,, a cat"。
-      idx === 0 && i.mode === "i2v" && "starting from the given first frame",
+      idx === 0 && mode === "i2v" && "starting from the given first frame",
       s.shotFraming,
       s.subject,
       s.action,
@@ -215,13 +340,13 @@ export function assembleSeedance(i: SeedancePromptInput): string {
     ].filter(Boolean).join(", ");
     // #775 —— 锚在一条已有片子上的两档,第一段进的是**官方句式**,不是一段自由描述。
     // 句式与「保住其余部分」那句话是一对:前者说改什么/接什么,后者划出边界。
-    if (anchored) lines.push(...anchoredOpening(i, seg));
+    if (anchored) lines.push(...anchoredOpening(i, mode, seg));
     else lines.push(single ? seg : `Shot ${idx + 1}: ${seg}`);
     // ③ 声音符号规范：结构化三项在前（官方符号），自由文本描述在后。
     const audio = [soundNotation(s), s.audio?.trim()].filter(Boolean).join(" ");
     if (audio) lines.push(`Audio: ${audio}`);
   });
-  if (i.mode === "i2v") lines.push("keep the subject consistent with the source frame");
+  if (mode === "i2v") lines.push("keep the subject consistent with the source frame");
   // #775 —— 锚在片子上的两档**一句身份锁都不写**。
   //
   // 身份锁那几句话的主语是「参考照里的那个人/那件东西」,而这条路上引擎收到的参考照

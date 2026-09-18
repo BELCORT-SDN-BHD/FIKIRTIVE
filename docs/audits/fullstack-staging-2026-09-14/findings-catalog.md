@@ -373,7 +373,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F31 · 客户面分享入口 `/s/<token>` 在 staging 把客户 303 到 `https://localhost:8080/...`（P1）
 
-**状态**：修复 PR 施工中（编排者 2026-09-17 先行派工，待 Founder 追认）——分支 `claude/share-entry-redirect-origin-r3-f31`，尚未开 PR。
+**状态**：修复 PR 施工中（编排者先行，待 Founder 追认）→ 随本 PR 落地（PR #1468，分支 `claude/share-entry-redirect-origin-r3-f31`）。
 
 **这是核证员发现的新缺陷，journeys worker 当时只把它记成工具坑（无法从代码推断真实跳转目标）**。匿名 curl（不带任何 cookie）访问 `/s/<forged-token>`：`HTTP/2 303`，`Location: https://localhost:8080/schedule/share-preview`；用两个不同的伪造 token 各复现一次。根因：`apps/web/app/s/[token]/route.ts:55` 用 `new URL(SHARE_PREVIEW_COOKIE_PATH, req.nextUrl.origin)` 构造跳转目标，Railway 代理之后 `req.nextUrl.origin` 解析成内部 socket（`localhost:8080`），不是公网域名。**后果**：商家发出的每一条分享链接，客户浏览器落地 cookie 之后的下一跳一律死路——即便日后补齐两把缺失的密钥，SHARE-A2 与 SHARE-A6 仍会端到端 FAIL。单元测试盲区：`apps/web/app/s/__tests__/route.test.ts:17` 把请求伪造成 `{ nextUrl: new URL('https://app.test/s/whatever') }` 并断言跳到 `https://app.test/schedule/share-preview`——这个同源伪造从结构上就抓不到「代理后 origin 变了」这类问题。铸链那一侧没问题（`schedule-actions.ts:697` 用的是 staging 上确实设了的 `BETTER_AUTH_URL`），只有这一跳的重定向目标错了。生产环境未测（超出本轮范围），但同一段代码与同样的代理形状使其在生产大概率同样成立。**这是 REAL-10／REAL-11 重跑之前第一件要修的事**。
 
@@ -381,7 +381,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F32 · 旧式 `?t=` 分享链接 200 + meta refresh 1 秒，令牌留在地址栏且匿名客户短暂看到「Go to sign in」壳
 
-**状态**：新发现，未修，登记（P3，不阻断，待 Founder 裁 fix-now 或排队）。
+**状态**：修复 PR 施工中（编排者先行，待 Founder 追认）→ 随本 PR 落地（PR #1468，与 R3-F31 同一条分支 `claude/share-entry-redirect-origin-r3-f31`）。
 
 `GET /schedule/share-preview?t=<forged>` 不是一次 HTTP 跳转，而是 `HTTP 200`（25500 字节）夹带 `<meta id="__next-page-redirect" http-equiv="refresh" content="1;url=/s/<token>">`，外加一段流式渲染的壳，其 payload 里含一条 `href="/login"` 的「Go to sign in」链接。结果：令牌在地址栏停留约 1 秒，匿名客户在这 1 秒内会短暂看到登录相关的界面元素——这与 `apps/web/app/schedule/share-preview/page.tsx:33` 自己写的契约「no sign-in, no link back into the workspace」相反，也与 SHARE-A6「token never sits in this page's own URL for even one render」（page.tsx:18-19）不符。大概率是 Next 的流式渲染内嵌跳转的固有行为；值得登记一行，不构成阻断。
 
