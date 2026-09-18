@@ -30,8 +30,16 @@
  *  ⑥ **一次返回只读一次**。bfcache 摊开会连着敲 `pageshow` 与 `visibilitychange` 两声,
  *     它们说的是同一件事;在飞去重之前那是两趟请求、两次重上膛。
  *
- * 红→绿:修之前三处监听一条都不存在,①②两条各读到 0 次调用;回修之前 ④ 读到那句话被
- * 抹掉、⑤ 读到隐藏时也发了请求、⑥ 读到两次调用。
+ * 2026-09-18 第二轮复审再钉一件(P1):
+ *
+ *  ⑦ **每批活只在第一次切回时重臂快档。** ④ 只写了「快档才重臂」,那还不够:重臂会 bump
+ *     `pollNonce`,而 bounded poll 的 `pollCount` 每次重建 effect 就归零,快档额度是
+ *     2.5s × 48 ≈ 2 分钟 —— 一个每隔一分半切回来看一眼的商家会把这 2 分钟无限往后推,
+ *     慢档永远到不了,那句「额度冻结」永远不出现。同一句话,换一种方式弄没了。
+ *
+ * 红→绿:修之前三处监听一条都不存在,①②两条各读到 0 次调用;第一轮回修之前 ④ 读到那句话
+ * 被抹掉、⑤ 读到隐藏时也发了请求、⑥ 读到两次调用;第二轮回修之前 ⑦ 读到第二次切回把额度
+ * 又推后了一整轮,那句话没有出现。
  */
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -270,5 +278,48 @@ describe("R3-F27 回到这一页就读一次进行中的那张卡", () => {
     await bfcacheRestore();
 
     expect(mocks.getCoworkThreadClient).toHaveBeenCalledTimes(1);
+  });
+
+  it("R3-F27 — 同一单反复切回来,快档额度照常走完:那句「额度冻结」照样会到", async () => {
+    // 这一条钉的是**那句钱的话一定会来**。重臂会 bump `pollNonce`,bounded poll 的
+    // `pollCount` 随之归零 —— 若每次切回来都重臂,一个每隔一分半回来看一眼的商家就把快档
+    // 那 2 分钟无限往后推,慢档永远到不了,「This is taking longer than usual. Your
+    // credits for this are on hold…」永远不出现。同一句话,换一种方式弄没了。
+    //
+    // 时间线(快档 2.5s × 48 = 120s):
+    //   t=0      挂载,快档开跑
+    //   t=60s    第一次切回 ⇒ 允许重臂一次(把后台白烧的额度还它一次),额度从这里重新数
+    //   t=120s   第二次切回 ⇒ 只补读,不重臂
+    //   t=185s   自第一次重臂起已走 125s > 120s ⇒ 档位交给慢档,那句话上屏
+    // 没有这道闸:第二次切回把额度推到 t=240s 才到顶,t=185s 这一刻屏幕上还是「Otto is
+    // making this」—— 这一条当场红。
+    vi.useFakeTimers();
+    try {
+      await mount();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      await returnToForeground();
+      expect(screenText()).not.toContain(DELAYED_LINE);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      mocks.getCoworkThreadClient.mockClear();
+      await returnToForeground();
+      // 补读照旧每次都发 —— 被卡住的只有重臂,不是那一下读。
+      expect(mocks.getCoworkThreadClient).toHaveBeenCalledWith(THREAD_ID);
+      expect(screenText()).not.toContain(DELAYED_LINE);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(65_000);
+      });
+
+      expect(screenText()).toContain(DELAYED_LINE);
+      expect(screenText()).not.toContain(WORKING_LINE);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

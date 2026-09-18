@@ -55,7 +55,7 @@ import {
   cancelledJobIds as durablyCancelledJobIds,
   cancelledTurnPayload,
   deriveCardState,
-  hasWorkingJob as computeHasWorkingJob,
+  workingJobIds as computeWorkingJobIds,
   cardIdsOf,
   injectCardMessage,
   appendMissingCards,
@@ -750,7 +750,13 @@ export function OttoChatStream({
   const jobsCancelled = durablyCancelledJobIds(messages);
   // FSE-005：本地列表说的「有活在跑」，与画板说的那一句，是同一个判据的两个来源。画布
   // 直接动作的卡还没被读回来之前，只有画板知道钱已经花出去了。
-  const hasWorkingJob = computeHasWorkingJob(messages, cancelledJobIds) || canvasJobActive;
+  const workingJobIds = computeWorkingJobIds(messages, cancelledJobIds);
+  const hasWorkingJob = workingJobIds.length > 0 || canvasJobActive;
+  /** 此刻「在跑的那一批活」的身份。同一批活每次渲染拼出来一模一样,多一单少一单就换一个
+   *  身份 —— 下面 resume 段那道「每批只重臂一次」的闸按它记账(R3-F27 复审回修)。 */
+  const workingJobKey = hasWorkingJob
+    ? `${thread.id}|${workingJobIds.join(",")}|${canvasJobActive ? "canvas" : ""}`
+    : null;
 
   // Map genJobId → cardId so GEN_RESULT widgets can pass sourceCardId to OttoResult
   // for "Make another" (coworkVaryCard needs the card, not the job).
@@ -897,6 +903,19 @@ export function OttoChatStream({
   // 一刻立起、读落地(成或败)才放下 —— 同一拍里的第二声、以及读还在飞时的任何一声,都不
   // 再为同一次返回多发一趟已认证请求。
   //
+  // **每批活只重臂一次**(`resumeRearmedForJobRef`,复审第二轮 P1)—— 上一版只写了「快档
+  // 才重臂」,那还不够。`rearmGenerationPoll()` 会 bump `pollNonce`,而下面那只 bounded
+  // poll 的 `pollCount` 是**每次重建 effect 就归零**的:快档的额度是 2.5s × 48 ≈ 2 分钟
+  // (`GENERATION_WATCH_GEARS.fast`),于是一个每隔一分半切回来看一眼的商家,会把那 2 分钟
+  // 无限往后推 —— 快档永远走不到头,慢档永远到不了,那句「This is taking longer than
+  // usual. Your credits for this are on hold…」永远不出现。那正是上一轮要保的那句话:它被
+  // 换了一种方式弄没了,只是这次不是当场抹掉,是永远不让它来。
+  //
+  // 所以这道闸按**在跑的那批活**记账(`workingJobKey`):同一批活,只有第一次切回来才重臂
+  // (把后台那段时间白烧掉的额度还给它一次);之后再切回来只补读,快档的额度照常往前走,
+  // 「额度冻结」那句话该来的时候一定会来。换了一批活(新批准了一单)身份就变,闸自然复位;
+  // 商家自己按下的「Check again」走的是另一条路,与这道闸无关。
+  //
   // 顺带记一笔(§7.3):全仓现在有四处手写的「商家回到这一页就重读」监听 ——
   // `components/global-navigation.tsx` 的余额读、`app/billing/BillingLiveRefresh.tsx` 的
   // 账单重读、`components/otto/OttoSchedule.tsx` 的排期重读,以及这一处。四处的判据各不
@@ -904,12 +923,16 @@ export function OttoChatStream({
   // hook 会是一个只有一个调用方的新抽象;登记为后续,不在本票里造。
   const resumeWatchRef = useRef<() => void>(() => {});
   const resumeReadInFlightRef = useRef(false);
+  const resumeRearmedForJobRef = useRef<string | null>(null);
   useEffect(() => {
     resumeWatchRef.current = () => {
       if (!hasWorkingJob) return;
       if (resumeReadInFlightRef.current) return;
       resumeReadInFlightRef.current = true;
-      if (pollGear === "fast") rearmGenerationPoll();
+      if (pollGear === "fast" && resumeRearmedForJobRef.current !== workingJobKey) {
+        resumeRearmedForJobRef.current = workingJobKey;
+        rearmGenerationPoll();
+      }
       void pollAndInjectResults()
         .catch(() => undefined)
         .finally(() => {
