@@ -11,10 +11,22 @@ import { SHARE_PREVIEW_COOKIE_NAME, SHARE_PREVIEW_COOKIE_PATH } from "@/lib/shar
  * `SHARE_PREVIEW_COOKIE_PATH` — no query string, so the token never sits in the address bar, a
  * bookmark, browser history, or a navigation breadcrumb a moment longer than this one redirect.
  *
- * A legacy `?t=` link keeps working: `schedule/share-preview/page.tsx` forwards it here on sight,
- * so an old link and a freshly minted one end up in the identical state — the whole reason this
- * file exists is that a plain Server Component page CANNOT set a cookie (Next only allows that
- * from a Server Action or a Route Handler like this one), so the conversion has to happen here.
+ * A legacy `?t=` link keeps working: the routing-layer rule in `lib/legacy-share-link-redirect.ts`
+ * sends it here before anything renders (`schedule/share-preview/page.tsx` still forwards one too,
+ * as the in-page backstop), so an old link and a freshly minted one end up in the identical state —
+ * the whole reason this file exists is that a plain Server Component page CANNOT set a cookie (Next
+ * only allows that from a Server Action or a Route Handler like this one).
+ *
+ * ── THE `Location` IS RELATIVE, AND THAT IS THE FIX (R3-F31) ─────────────────────────────────
+ * It used to be `new URL(SHARE_PREVIEW_COOKIE_PATH, req.nextUrl.origin)`. Behind Railway's proxy
+ * that origin is the CONTAINER'S own address — `http://localhost:8080` — because the public host
+ * only ever arrives as a forwarded header. Measured on staging 2026-09-17: `GET /s/<token>`
+ * answered `303` with `location: https://localhost:8080/schedule/share-preview`, so a client
+ * clicking a real share link landed on their own machine. A relative `Location` needs no origin at
+ * all: the browser resolves it against whatever public address it just asked for (RFC 7231 §7.1.2),
+ * which is why `lib/parked-route-redirect.ts` already answers its own redirects that way ("不必猜
+ * 代理后面的对外主机名"). Same reason here — and no new env var, since the one place that DOES need
+ * an absolute address (minting the link in `lib/schedule-actions.ts`) already has BETTER_AUTH_URL.
  *
  * NOT the verification layer. Whatever lands in the cookie is handed unexamined to
  * `loadSharePreview`, which already fails every bad shape (forged, tampered, expired, revoked,
@@ -48,11 +60,13 @@ function readUnverifiedExp(token: string): number | null {
 }
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   ctx: { params: Promise<{ token: string }> },
 ): Promise<NextResponse> {
   const { token } = await ctx.params; // Next requires a non-empty segment to route here at all
-  const res = NextResponse.redirect(new URL(SHARE_PREVIEW_COOKIE_PATH, req.nextUrl.origin), 303);
+  // `NextResponse.redirect()` only takes an ABSOLUTE URL, and an absolute URL is exactly what this
+  // route must not invent (see the R3-F31 block above), so the response is built by hand.
+  const res = new NextResponse(null, { status: 303, headers: { Location: SHARE_PREVIEW_COOKIE_PATH } });
 
   const exp = readUnverifiedExp(token);
   const maxAge = exp !== null

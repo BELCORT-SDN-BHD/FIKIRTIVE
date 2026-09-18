@@ -294,7 +294,12 @@ export async function coworkDeleteThread(raw: unknown): Promise<{ ok: true } | {
 }
 
 /** Create a variation of an existing GEN_CARD — clones its payload verbatim into a new
- *  UN-generated card on the SAME thread. Zero spend: no startGen, no GenJob, no queue.
+ *  UN-generated card on the SAME thread. Zero spend: no startGen, no GenJob, no queue,
+ *  no ledger row — the body below writes exactly two ChatMessages plus an audit ActionEvent.
+ *  (Confirmed on staging c0d25917 2026-09-17: four "Try again" presses → 0 GenJob rows,
+ *  0 CreditLedger rows. Its two client callers used to claim the opposite — "queues a NEW
+ *  paid generation" / "queues a fresh paid variant" — and both now cite this line instead;
+ *  the one thing that spends is the merchant's later Generate on the NEW card. R3-F29.)
  *  The new card gets a fresh newId() so its cowork:<newCardId> idempotencyKey is
  *  independent of the original; clicking Generate on it goes through the normal single-spend
  *  guard keyed on the new card id — no cross-contamination with the original. */

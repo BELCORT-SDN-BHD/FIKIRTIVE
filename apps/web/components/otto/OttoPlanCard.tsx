@@ -4,7 +4,7 @@ import { formatElapsed, QUEUE_WAIT_NOTE } from "@/lib/progress-format";
 import { ChevronDown, ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
+import { cancelGenJob } from "@/lib/cowork-actions";
 import { CHAT_SPEND_NOTE, creditsLabel } from "@/lib/credit-format";
 import { ErrorWithTopUp } from "@/components/exits/Exits";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
@@ -33,6 +33,10 @@ import { approvedEntitiesNote } from "@fikirtive/core/reference-budget";
 // #996 (W2-9): 面板最窄 320px。版式跟着卡自己那只盒子走(容器查询),不跟视口走;
 // 每一个 credits 数字走 CardMoney —— 句子可以换行,数字不行。
 import { CardMoney, CARD_ACTIONS_CLASS, CARD_ROOT_CLASS, CARD_SPLIT_ROW_CLASS } from "./card-narrow";
+// R3-F29 —— 「再来一张」这件事的唯一一份回执合同（在飞／加好了／没成）。结果卡上的
+// 「Make another」与这张失败卡上的「Try again」落到同一个服务端动作，所以也读同一份回执:
+// 抄成两份的那些日子里，这一处忘了设成功状态，商家连按四次拿到四张一模一样的克隆卡。
+import { useVaryCard, VaryAddedStatus, VARY_ADDED_LABEL, VARY_BUSY_LABEL } from "./vary-card-feedback";
 
 /** What a successful approve hands up. Carries the EXACT card it happened on plus the
  *  SERVER's own result — the parent never has to infer either from a closure or from a
@@ -159,6 +163,9 @@ export function OttoPlanCard({
    *  narrated its own text (round-5: the parent injects that narration into the
    *  chat live via its narrationMessageId — see pollAndInjectResults). */
   const [chainedReceipt, setChainedReceipt] = useState<string | null>(null);
+  /** R3-F29 —— 「Try again」那一下的回执（在飞／加好了），与结果卡共用的那一份。
+   *  它自己**不管错**：这张卡上早就有一块持久的 Alert，错就落在那儿（见下面的 `error`）。 */
+  const vary = useVaryCard();
 
   useEffect(() => {
     if (cardState !== "working") {
@@ -249,22 +256,23 @@ export function OttoPlanCard({
     }
   }
 
+  /**
+   * 失败卡上那颗「Try again」（R3-F29）。
+   *
+   * 回执**不在这里写**：在飞、加好了、没成，三种回执与它们的字、时长，连同那一次调用本身,
+   * 都在 `useVaryCard` 那一份合同里，结果卡上的「Make another」读的是同一份。从前这里只
+   * `await` 完就喊一声 `onRetry`，一个成功状态都不设 —— 服务端 200、对话里真多了一张卡，
+   * 屏幕上却一个字都没变，商家于是一分钟按一次、连按四次，拿到四张一模一样的克隆卡
+   * （staging c0d25917，2026-09-17）。
+   */
   async function retry() {
     if (busy) return;
-    setBusy(true);
     setError(null);
-    try {
-      const res = await coworkVaryCard({ cardId });
-      if (res && "error" in res) { setError(res.error); return; }
-      onRetry?.();
-    } catch {
-      setError("Couldn't queue a retry — please try again.");
-    } finally {
-      setBusy(false);
-      // coworkVaryCard queues a NEW paid generation; a transport failure cannot prove it
-      // didn't reserve, so announce on every exit (#550).
-      notifyBalanceRefresh();
-    }
+    const outcome = await vary.run(cardId);
+    // null = 这一下落在上一下的飞行途中：原地不动，不打第二趟。
+    if (!outcome) return;
+    if ("error" in outcome) { setError(outcome.error); return; }
+    onRetry?.();
   }
 
   /** The merchant's approval, in ONE press (#896). The button carries the price, so the
@@ -542,20 +550,33 @@ export function OttoPlanCard({
               😕 This one didn&rsquo;t come through — and you weren&rsquo;t charged.
             </div>
             <div className={`mt-3 ${CARD_ACTIONS_CLASS}`}>
-              <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={retry}>
-                {busy ? "Queuing…" : "Try again"}
+              {/* R3-F29 —— 三种回执都长在这颗键上，与结果卡上的「Make another」逐字同源:
+                  在飞写 `VARY_BUSY_LABEL`（并禁用，连按第二下是空动作），成交写 `VARY_ADDED_LABEL`，没成那句话
+                  落在下面那块持久的 Alert 里。 */}
+              <Button
+                variant="default"
+                size="sm"
+                className="rounded-[11px]"
+                disabled={busy || vary.busy}
+                onClick={retry}
+              >
+                {vary.busy ? VARY_BUSY_LABEL : vary.added ? VARY_ADDED_LABEL : "Try again"}
               </Button>
               <Button
                 variant="secondary"
                 size="sm"
                 className="rounded-[11px]"
-                disabled={busy}
+                disabled={busy || vary.busy}
                 aria-expanded={changeOpen}
                 onClick={handleChangeSomething}
               >
                 Change something
               </Button>
             </div>
+            {/* 按钮上那两个字是一闪而过的；这一行才是「刚刚发生了什么」——`role="status"`
+                让读屏也听得见，不必靠看见按钮变色。区域始终挂着、只换里面的字，理由见
+                `VaryAddedStatus`（结果卡用的是同一个组件）。 */}
+            <VaryAddedStatus added={vary.added} />
           </div>
         ) : runState === "done" ? (
           <div className="mt-4">
@@ -634,7 +655,7 @@ export function OttoPlanCard({
           <CardChangeForm
             payload={p}
             optionsOnCard={optionsOnCard}
-            disabled={busy}
+            disabled={busy || vary.busy}
             onSubmit={submitChange}
           />
         )}

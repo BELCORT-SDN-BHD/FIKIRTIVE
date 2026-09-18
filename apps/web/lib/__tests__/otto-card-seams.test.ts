@@ -221,7 +221,9 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
   // reservation didn't happen.
   it("the spend card announces the balance change itself, on every exit of every spend path", () => {
     const src = fs.readFileSync(path.join(REPO_ROOT, "apps/web/components/otto/OttoPlanCard.tsx"), "utf8");
-    for (const handler of ["cancel", "retry"]) {
+    // `retry` 那一半搬进了共享合同(R3-F29),由下一条断言接手 —— 与 approve 搬进
+    // `plan-approval.ts` 同一种搬法,见下面那条。
+    for (const handler of ["cancel"]) {
       const body = src.match(new RegExp(`async function ${handler}\\(\\) \\{([\\s\\S]*?)\\n  \\}`))?.[1] ?? "";
       expect(body, `OttoPlanCard.${handler}() must exist for this seam to mean anything`).not.toBe("");
       expect(
@@ -229,6 +231,43 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
         `OttoPlanCard.${handler}() must announce the balance change in a finally — not on the ` +
           `success path only, and not by delegating to a parent callback that never runs when it throws.`,
       ).toMatch(/finally \{[\s\S]*notifyBalanceRefresh\(\)/);
+    }
+  });
+
+  /**
+   * RETRY 的那一半搬了家(R3-F29),担保**变强**而不是变弱 —— 与下面 approve 那一半同一种搬法。
+   *
+   * 「再来一张」这件事今天挂在两颗键上:失败卡上的「Try again」(`OttoPlanCard`)与结果卡上的
+   * 「Make another」(`OttoResult`),落到同一个服务端动作。两处各抄一份回执,就是两份合同 ——
+   * 走查里正是那张失败卡忘了设成功状态(服务端 200、对话里真多了一张卡、屏幕上一个字不变),
+   * 商家连按四次拿到四张一模一样的克隆卡。所以那一次**调用**连同它的 `finally` 收进了
+   * `vary-card-feedback.tsx`,这条围栏跟着搬:
+   *   ① 那一份共享合同在 finally 里报余额(失败的响应从不证明零花费);
+   *   ② 两颗键都走它,谁都不许自己再开一条路 —— 从前这条围栏只盖得住 `OttoPlanCard`,
+   *      `OttoResult` 那一颗键从来不在网里。
+   */
+  it("every clone-card button goes through the one shared vary contract, which announces on every exit", () => {
+    const helper = fs.readFileSync(
+      path.join(REPO_ROOT, "apps/web/components/otto/vary-card-feedback.tsx"),
+      "utf8",
+    );
+    const run = helper.match(/const run = useCallback\([\s\S]*?\n  \}, \[\]\);/)?.[0] ?? "";
+    expect(run, "useVaryCard().run must exist — it is the one authority for a clone-card press").not.toBe("");
+    expect(run, "the shared contract must be the only caller of coworkVaryCard").toMatch(/coworkVaryCard\(/);
+    expect(
+      run,
+      "useVaryCard().run must announce the balance change in a finally — a failed response never proves zero spend.",
+    ).toMatch(/finally \{[\s\S]*notifyBalanceRefresh\(\)/);
+
+    for (const file of [
+      "apps/web/components/otto/OttoPlanCard.tsx",
+      "apps/web/components/otto/OttoResult.tsx",
+    ]) {
+      const src = fs.readFileSync(path.join(REPO_ROOT, file), "utf8");
+      expect(src, `${file} must go through the shared vary contract`).toMatch(/useVaryCard\(\)/);
+      // 复审 P3(a)：比对的是**名字出现**,不是「await 一次调用」—— 两个文件已经连 import
+      // 都没有了,所以这道网可以收到最紧的一格:一旦谁把它再引回来,不管怎么调用都红。
+      expect(src, `${file} must not reach coworkVaryCard at all`).not.toMatch(/coworkVaryCard/);
     }
   });
 
