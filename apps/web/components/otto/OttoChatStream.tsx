@@ -858,6 +858,52 @@ export function OttoChatStream({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasJobActive, thread.id]);
 
+  // R3-F27 —— 商家离开这一页再回来的那一下:立刻读一次,不等下一格。
+  //
+  // 现场(staging 2026-09-17 付费旅程,`docs/audits/fullstack-staging-2026-09-14/findings-catalog.md`
+  // R3-F27):批完一单视频、去 /library 看一眼、按浏览器返回回到首页 —— 面板里那张
+  // 「进行中」的卡停在离开前那一眼上,要等到下一格轮询才更新。观察窗的格子不是为这一刻
+  // 设计的:快档 2.5s 还好,慢档一格就是 60 秒(`GENERATION_WATCH_GEARS.slow`),而浏览器
+  // 把这一页收进 bfcache 的那段时间里计时器本来就是冻住的 —— 冻多久,回来就欠多久。
+  //
+  // 两声都要听,它们说的是两件事:`visibilitychange` 是「这个标签页回到前台」(切走再切回
+  // 来,页面一直活着);`pageshow` 带 `persisted` 是「整页被 bfcache 收起来之后又摊开」
+  // (按返回/前进回到这一页,那一拍连 React 状态都是冻住的原样)。首次加载也会有一声
+  // `pageshow`,但它的 `persisted` 是 false —— 那一拍没有「回来」可言,不读。
+  //
+  // 还在跑的那一单才读(`hasWorkingJob`):这一条对话如果已经全是终态,回到前台不该再为它
+  // 发一次已认证请求(与 `global-navigation.tsx` 那份余额读同一条纪律 —— 看不见的那一页
+  // 读回来的数字没有人在看)。走的仍是**已有**的那一条路
+  // (`pollAndInjectResults` → `mergeDurableIntoLive`),不新起第二只计时器、不新开一条取数。
+  //
+  // 读最新的那一份闭包(`resumeWatchRef`)而不是把它锁进挂载时那一帧:监听器只在挂载/卸载
+  // 时挂卸一次,而 `hasWorkingJob` 与 `pollAndInjectResults` 每一次渲染都是新的
+  // (与 `OttoPanel.tsx` 的 `latest` ref 同一种写法)。
+  const resumeWatchRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    resumeWatchRef.current = () => {
+      if (!hasWorkingJob) return;
+      rearmGenerationPoll();
+      void pollAndInjectResults().catch(() => undefined);
+    };
+  });
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState !== "visible") return;
+      resumeWatchRef.current();
+    }
+    function onPageShow(event: PageTransitionEvent) {
+      if (!event.persisted) return;
+      resumeWatchRef.current();
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pageshow", onPageShow);
+    };
+  }, []);
+
   // Streaming front door: auto-send the first message ONCE into the empty thread.
   // The per-mount ref guards against double-send; onPendingFirstSent clears the
   // parent's pendingFirst so a later remount (switch away + back) never re-fires.
