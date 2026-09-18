@@ -5,6 +5,7 @@ import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES, GEN_IMAGE_ASPE
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { storage, kindOf, extFromFilename } from "./storage";
+import { dispatchIngest } from "./ingest-dispatch";
 import { redactProviderNames } from "./provider-secrecy";
 import { setLibraryFavorite } from "./library-favorites";
 import { favoriteGenerationIds } from "./library-subjects";
@@ -300,6 +301,8 @@ export async function saveCroppedGeneration(
     };
 
     let newGenId = "";
+    // R3-F25 复审回修:落行之后要**当场**派 ingest,所以 asset id 得活过事务这个作用域。
+    let ingestAssetId = "";
     await prisma.$transaction(async (tx) => {
       const asset = await tx.asset.upsert({
         where: { ownerId_contentHash: { ownerId, contentHash } },
@@ -326,8 +329,14 @@ export async function saveCroppedGeneration(
         },
       });
       newGenId = gen.id;
+      ingestAssetId = asset.id;
     });
 
+    // 落行之后、回话之前 —— 与画布拖放上传(`uploadReference`)、直传落盘
+    // (`finalizeCandidateUploads`)同一个函数、同一条摆放纪律:事务提交之后才派,否则
+    // worker 可能在提交落地之前抢到这条活、读不到这一行。`dispatchIngest` 自己吞掉失败
+    // (队列挂了照样回 `{ id }`,裁剪出来的那张图确实已经在商家库里了)。
+    await dispatchIngest([ingestAssetId]);
     return { id: newGenId };
   });
 }
