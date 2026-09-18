@@ -450,6 +450,9 @@ export async function createEntity(formData: FormData) {
 
     let entityId = newId();
     let nameTaken = false;
+    // R3-F25 复审回修:落行之后要**当场**派 ingest,所以刚落的那几个 asset id 得活过事务这个
+    // 作用域。派工本身在事务外面 —— 理由与 `uploadReference` 同一条,写在那一处。
+    let ingestAssetIds: string[] = [];
     try {
       await prisma.$transaction(async (tx) => {
         // content-addressed upload dedups identical files to ONE Asset, so the same image
@@ -467,6 +470,9 @@ export async function createEntity(formData: FormData) {
           attached.add(asset.id);
           assetIds.push(asset.id);
         }
+        // 撞名那条路(下面 `nameTaken`)照样要派:这几行 Asset 的 upsert 已经随事务提交,
+        // 它们是真的躺在商家库里的 UPLOAD 素材,没人派工就只剩补投窗那 15 分钟。
+        ingestAssetIds = assetIds;
         if (type === "PRODUCT") {
           // Library「新建元素 → 产品」建的也是一件产品:身份与价签(价格、卖点待填)同事务
           // 出生,所以这条入口不自己建 Entity,而是走共享动作(规格
@@ -503,6 +509,12 @@ export async function createEntity(formData: FormData) {
       console.error("[entity.create] persist failed:", e instanceof Error ? e.message : e);
       return { error: "Couldn't add this to your library. Please try again." };
     }
+    // 落行之后、回话之前 —— 与画布拖放上传(`uploadReference`)、直传落盘
+    // (`finalizeCandidateUploads`)同一个函数、同一条摆放纪律:事务提交之后才派,否则
+    // worker 可能在提交落地之前抢到这条活、读不到这一行。`dispatchIngest` 自己吞掉失败
+    // (队列挂了照样回 `{ id }`,元素确实已经建好了),补投兜底仍在,只是不再是唯一那条路。
+    // 抛出去的那一支不在这里:事务整笔回滚,一行 Asset 都没有。
+    await dispatchIngest(ingestAssetIds);
     // 同名产品不自动合并(规格 §3):报出来,让商家自己决定改名还是去 Brand 页编辑那一件。
     if (nameTaken) return { error: "You already have a product with that name." };
     await logAction(ownerId, "entity.create", null, { entityId, name, type, refCount: files.length });
