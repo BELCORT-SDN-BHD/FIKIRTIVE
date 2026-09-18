@@ -129,23 +129,28 @@ async function ledgerRows(ownerId: string) {
 }
 
 /**
- * 供应商侧失败的那一刻,worker 在钱这一层做的那件事。参照物是
- * `apps/worker/src/jobs/gen.ts:907-941` 的 `failClosedWithRefund`,**不是逐字照抄**——
- * 复刻的只有钱路那一段,其余三处明确不复刻:
+ * 供应商侧失败的那一刻,worker 在钱这一层做的那件事。**不是逐字照抄任何一个函数**——worker
+ * 有两条终态路径会退款,两条的**钱那一段完全同形**,本夹具复刻的就是这个共有段:
+ *   · 提交**之前**的前置闸 `failClosedWithRefund`(`apps/worker/src/jobs/gen.ts:907-941`,
+ *     它自己的措辞是 "pre-spend fail-close":校验/前提不满足就拒,没发出去过);
+ *   · 提交**之后**供应商真的把这一单打回来那一条 catch(`apps/worker/src/jobs/gen.ts:2641-2647`)
+ *     —— 本文件模拟的是这一条(REAL-08 的失败是发出去之后被供应商拒,不是校验层拒)。
+ * 两条同形在:带条件的 `updateMany` 翻 FAILED,命中了才退,且退款与翻转在**同一笔事务**里。
  *
  * 复刻:状态翻转与退款落在**同一笔事务**里;退款调的是账本自己的 `refundReservation`
  * (不是替身),所以回的是它自己的四态答复(`RefundOutcome`),「第二个失败信号」到底做了
  * 什么可以被断言,而不是靠数行数猜。
  *
- * 不复刻:① 真函数那句 `updateMany` 带两道谓词(`status` 仍在 `GEN_IN_FLIGHT_STATUSES`、
- * `generationIds: { isEmpty: true }`),`count === 0` 就直接 `return false`、**根本不调**
- * `refundReservation`——真实退款在这道条件之后,本夹具是无条件退;② `already-settled` 抛
- * `SETTLED_PRE_SPEND_FAIL` 把那次状态翻转整笔回滚的那一支,连同它的 `captureMoneyPathError`
- * 报警;③ 终态的 `appendCoworkResult(…, "TURN_ERROR", …)` 与 `settleCanvasBoard(job)`。
- * ①②是取消/已结算竞态下「该不该退」的判定,本文件不造这两种竞态(每次 workerFail 都打在一张
- * 刚预扣、没交付、没被取消的单上);③ 不碰账本(`gen.ts:775` 写明「no money column, no
- * ledger」),三者都不改本文件对账本行与余额的断言。判定本身的围栏在 worker 自己的
- * `apps/worker/src/jobs/gen.test.ts` 与 `gen-done-empty-db.test.ts`。
+ * 不复刻:① 真路径那句 `updateMany` 带谓词(两条都有 `status` 仍在 `GEN_IN_FLIGHT_STATUSES`;
+ * 前置闸那条还多一道 `generationIds: { isEmpty: true }`),没命中就**根本不调**
+ * `refundReservation`(`:922` 的 `return false` / `:2646` 的 `count > 0`)——真实退款在这道条件
+ * 之后,本夹具是无条件退;② `already-settled` 抛 `SETTLED_PRE_SPEND_FAIL` 把那次状态翻转整笔
+ * 回滚的那一支,连同它的 `captureMoneyPathError` 报警(**只有前置闸那条有**,catch 那条没有);
+ * ③ 两条路径末尾的 `appendCoworkResult(…, "TURN_ERROR", …)` 与 `settleCanvasBoard(job)`
+ * (`:937-940` / `:2672`、`:2681`)。①②是取消/已结算竞态下「该不该退」的判定,本文件不造这两种
+ * 竞态(每次 workerFail 都打在一张刚预扣、没交付、没被取消的单上);③ 不碰账本(`gen.ts:775`
+ * 写明「no money column, no ledger」),三者都不改本文件对账本行与余额的断言。判定本身的围栏在
+ * worker 自己的 `apps/worker/src/jobs/gen.test.ts` 与 `gen-done-empty-db.test.ts`。
  */
 async function workerFail(ownerId: string, jobId: string): Promise<string> {
   return prisma.$transaction(async (tx) => {
@@ -323,8 +328,11 @@ describe("REAL-08 付费半段 (c) 同一张重试卡批两次 ⇒ 只预扣一�
     expect(secondPress).toBe(firstPress);
 
     expect(await prisma.genJob.count({ where: { ownerId: world.ownerId, idempotencyKey: `cowork:${retry.cardId}` } })).toBe(1);
-    const reserves = (await ledgerRows(world.ownerId)).filter((r) => r.refId === firstPress && r.kind === "RESERVE");
-    expect(reserves).toHaveLength(1);
+    // 全账本口径(与本组另两条一致):不按 refId 过滤,否则第二下若把一行记到别的 refId 下就漏掉了。
+    const rows = await ledgerRows(world.ownerId);
+    expect(rows.map((r) => r.kind)).toEqual(["RESERVE", "REFUND", "RESERVE"]); // 失败那一单 RESERVE+REFUND,重试这一单只多这一行
+    expect(rows.filter((r) => r.kind === "RESERVE")).toHaveLength(2);
+    expect(rows[2]!.refId).toBe(firstPress); // 那唯一多出来的 RESERVE 正是连按两次拿回的同一单
   });
 
   it("第一单已经 DONE 之后再按 ⇒ 还是拿回那一单,不是第二次购买(卡键是全状态唯一的)", async () => {
