@@ -195,22 +195,24 @@ Founder 2026-09-15 授权的真实付费旅程续跑；PR #1463（R3-F20 修复�
 1. **R3-F28 的崩溃本身还没被证明消失**。修法已合入，但 `Minified React error #185` 在 jsdom 里复现不出来（环境限制），走查现场那两步（S13 确认 Create variations、S10 第二标签重放已批卡）与两刀的关系已在规格里如实分开写。要判定，必须在 staging 部署到 `66f9c766` 之后用真浏览器重跑 S13 与 S10——复跑组 `verify-r3-f28`，预算约 US$0.07（两次 1 credit 的图片确认）。**在此之前 R3-F28 一律记「修复已合入，崩溃本身待真浏览器复跑」，不得标关闭。**
 2. **#1388 的双账号并发观测第三轮没跑过**：一边连发 4 条长视频、一边发图，那张图必须几秒内就出来——这条「排长队的人不挡插队的小活」本轮从未在真环境观测过一次（票 #1388，OPEN，`gh issue view 1388` 核实）。
 
-这两件是第三轮走查判 GO 之前仅剩的真跑项；其余阻断（REAL-10／REAL-11 的两把分享密钥、REAL-08 的付费半段）不是跑不跑的问题，是等 Founder 拍板的问题，见下。
+这两件是第三轮走查判 GO 之前仅剩的真跑项；其余阻断（REAL-10／REAL-11 的两把分享密钥、REAL-08 的付费半段）不是跑不跑的问题，是等 Founder 拍板的问题——两条都已在 2026-09-18 当天拍完（密钥＝设，REAL-08＝改由测试覆盖），见下表第⑤⑥条。
 
-**等 Founder 拍板**（一句用户效果＋推荐，指针在句末；每条指针本次都逐条核过存在）：
+**Founder 2026-09-18 裁决（对谈）——本轮新增十条逐条有答**：「裁决原话」列是 Founder 当场说的话，未改写；「落地去向」列写这条今天归谁、落在哪。带「PR 在飞」的条目由各自的修复 PR 写自己的规格行，本 PR 不代写。存量待拍板项没有变，列在表后。
 
-*本轮新增：*
+| # | 事项（一句用户效果） | 裁决原话 | 落地去向 |
+|---|---|---|---|
+| ① | 商家把图片直接拖进画布上传，那件素材要等 **15 分钟到 24 小时**才被读懂、才扣那 0.1 credit，屏幕上当时什么都不说（R3-F25） | 「其实为什么一开始会有这样的设计？我认为这个设计完全不合理，可以移除。」 | **本版修**：上传即入队，与其它上传入口一致；修复 PR 在飞。「为什么一开始会是这样」这一问由那条 PR 的版本史考据回答——**见修复 PR**，本文件不代答。登记行 `docs/specs/money-engine.md` §5 2026-09-16 行「已知边界」第④点 |
+| ② | 四份已合入修复（R3-F26／F28／F29／F31+F32）的规格登记行都还挂着「批准: 待 Founder 追认」 | 「是什么？不明白。」 | **待解释后再裁**：那四个「批准:」格本次一字未动；编排者另行向 Founder 讲清这四行到底在追认什么，再回来拍 |
+| ③ | 失败卡那颗键在飞时写「Adding…」、没成时写「Couldn't add another card — please try again.」（R3-F29） | ok | **追认**：`docs/specs/frontend-baseline.md` §5 2026-09-17 R3-F29 行的文案改动括注已由「编排者裁定，待 Founder 追认」改成「编排者裁定，Founder 2026-09-18 对谈追认」；该行的「批准:」格属上面第②条，未动 |
+| ④ | 一张图再做 Create variations 或 Regenerate，新图身上「这张图用了哪个商品」就没了（R3-F30） | ok | **本版修**：修复 PR 在飞；登记行 `docs/specs/brand-product-identity.md` §5 2026-09-17 行 |
+| ⑤ | staging 上那两把分享密钥 `MEDIA_PROXY_SECRET`／`SHARE_PREVIEW_SECRET` 设不设、谁来设 | ok | **设**：命令由编排者另交 Founder 自己跑（不回显）；设好之前 REAL-10／REAL-11 仍是 BLOCKED。登记行 `docs/specs/share-preview.md` §5 2026-09-17 第一行 |
+| ⑥ | REAL-08「生成失败之后重试一次、只预扣一次」的付费半段，在 org founder 上结构性跑不到 | ok | **改由测试覆盖**（不人造供应商侧失败）：PR 在飞；登记行 `docs/specs/asset-action-idempotency.md` §5 2026-09-17 行 |
+| ⑦ | 商家批完一条生成、去 Library 再按浏览器 Back 回首页，Otto 对话正文空白 40–60 秒才补上那张进行中的卡（R3-F27） | 「修」 | **本版修**：PR 在飞 |
+| ⑧ | 一次测试上传把一句「solid orange screen」写进了 Founder staging 账号的品牌记忆，还标成商家手打 | 「删除。」 | **授权删除**：编排者执行（staging 数据），不走 PR |
+| ⑨ | 上传回执要不要也出现在 Library 的格子上——今天两处载体（Library 资产详情抽屉、画布卡片 Info 面板）都要点一下才看得见 | 「保持。」 | **保持现状**：回执留在详情抽屉与 Info 面板，不进格子——与设计系统的 Library 规则一致（`apps/web/design-system/patterns/library/README.md:31`：「使用保持原始比例的紧凑 media grid；video 显示 duration，图片不附加长期可见的大段 metadata。」）。已追记进 `docs/specs/money-engine.md` §5 2026-09-16 行 |
+| ⑩ | zero-queue 的 QUEUE-A7 探针跑出来的数字与验收行的文字有偏差（数字皆牌价估算口径，未调计费接口） | ok | **追认**：`docs/specs/zero-queue.md` §5 2026-09-13 行的裁决格已写上「Founder 2026-09-18 对谈追认」 |
 
-1. 商家把图片直接拖进画布上传，那件素材要等 **15 分钟到 24 小时**才被读懂、才扣那 0.1 credit，屏幕上当时什么都不说——这一格是延迟，不是免费。**推荐**：`uploadReference` 补上入队，与其它上传入口一致（`docs/specs/money-engine.md` §5 2026-09-16 行「已知边界」第④点；`findings-catalog.md` R3-F25）。
-2. 上面四份已合入的修复，它们的规格登记行都还挂着「批准: 待 Founder 追认」——编排者依 2026-09-15「新发现全部本版修」与 2026-09-16「要我拍板的直接决定」两道授权先行施工。**推荐**：一次点头覆盖四条；要逐条看的话，四行分别是 F26（`docs/specs/creation-engine.md` §5 2026-09-17 行）、F29 与 F28（`docs/specs/frontend-baseline.md` §5 2026-09-17 两行）、F31／F32（`docs/specs/share-preview.md` §5 2026-09-17 行）。
-3. 那颗键在飞时写的字改了：「Queuing…」→「Adding…」，失败那句「Couldn't queue another…」→「Couldn't add another card — please try again.」——这条路上根本没有队列，按钮该说它真做的那件事。**推荐**：追认（编排者裁定；`docs/specs/frontend-baseline.md` §5 2026-09-17 R3-F29 行；落码 `apps/web/components/otto/vary-card-feedback.tsx:33` 与 `:39`）。
-4. 一张图再做 Create variations 或 Regenerate，新图身上「这张图用了哪个商品」就没了——是审计与回执的缺口，不是钱路缺口。**推荐**：裁一个语义（派生图要不要继承源图的产品血统），再决定修不修（`docs/specs/brand-product-identity.md` §5 2026-09-17 行；`findings-catalog.md` R3-F30）。
-5. staging 上那两把分享密钥 `MEDIA_PROXY_SECRET`／`SHARE_PREVIEW_SECRET` 设不设、谁来设——不设的话，分享链那两条验收（REAL-10／REAL-11）**永远**是 BLOCKED，本轮已经因此空跑一组（`docs/specs/share-preview.md` §5 2026-09-17 第一行）。
-6. REAL-08「生成失败之后重试一次、只预扣一次」的付费半段，在 org founder 上结构性跑不到——今天仅有的两种自然失败都是永久性无效输入，忠实重试会在校验层就被拒，永远走不到付费提交。**推荐**：批准人造一次供应商侧失败，或改判由单测／集成测试覆盖；重复跑同一段旅程只会再拿一次 PARTIAL（`docs/specs/asset-action-idempotency.md` §5 2026-09-17 行）。
-7. 商家批完一条生成、去 Library 再按浏览器 Back 回首页，Otto 对话正文空白 40–60 秒才补上那张进行中的卡——不是加载态、不是错误态，只是空白；期间账本零新增。**推荐**：本版修或排队，二选一（`findings-catalog.md` R3-F27；本条没有规格行，未派工）。
-8. 一次测试上传把一句「solid orange screen」写进了 Founder staging 账号的品牌记忆，而且标成商家手打、还直接活在 Otto 会引用的品牌语境里。**推荐**：Founder 自删，或授权我们删（`findings-catalog.md` R3-F22）。
-9. 上传回执要不要也出现在 Library 的格子上——今天两处载体（Library 资产详情抽屉、画布卡片 Info 面板）都要点一下才看得见，六个上传入口里有四个在上传当下屏幕上什么都不说。**推荐**：先听 Founder 对版面的取向再动（`docs/specs/money-engine.md` §5 2026-09-16 行「已知边界」第①点）。**未核**：任务书提到的「Library 规则禁常驻元数据」这条规矩，本次在 `docs/specs/` 与本审计目录内没找到对应条文，不作为依据引用。
-10. zero-queue 的 QUEUE-A7 探针跑出来的数字与验收行的文字有偏差（数字皆牌价估算口径，未调计费接口），已如实登记待追认（`docs/specs/zero-queue.md` §5 2026-09-13 行）。
+**本轮新增十条至此全部有主**：①④⑥⑦四条在修（各自 PR 在飞），③⑩已追认，⑤待 Founder 自己跑那条命令，⑧待编排者执行删除，⑨维持不动——只剩②一条真的还悬着（Founder 要先听懂那四行在追认什么）。
 
 *存量（前几轮已挂，本次只复核指针仍在）：*
 
