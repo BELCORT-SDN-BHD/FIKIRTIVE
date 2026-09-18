@@ -103,7 +103,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：一次图／视频按原型报价。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：PARTIAL（staging 第三轮付费旅程第三组，2026-09-17，build `c0d25917`；证据 `local-logs/staging-r3-paid/real-04-06-08.json` 步骤 S16–S19）。结构性受阻，非取证不足：编辑重试入口存在（Try again 克隆原卡零花费、Change something 交回 Otto）；失败已退款且退款行全程未被抵消或重复；付费前 fail-closed 且理由具体可行动。**「新单一次预扣」未证**：org founder 今天仅有的两个自然失败都是永久性无效输入（80×107px 起始帧；「不能作人物」的参考图），任何忠实重试都在校验层被拒、走不到付费提交，本行「没有自然失败则NOT RUN，不故意打挂线上」的边界因此不允许硬闯；需 Founder 批准人造一次供应商侧失败，或改判由单元／集成测试覆盖，登记见 `docs/specs/asset-action-idempotency.md` §5 本轮新增行。
+- 执行状态：PARTIAL（staging 第三轮付费旅程第三组，2026-09-17，build `c0d25917`；证据 `local-logs/staging-r3-paid/real-04-06-08.json` 步骤 S16–S19）。结构性受阻，非取证不足：编辑重试入口存在（Try again 克隆原卡零花费、Change something 交回 Otto）；失败已退款且退款行全程未被抵消或重复；付费前 fail-closed 且理由具体可行动。**「新单一次预扣」未证**：org founder 今天仅有的两个自然失败都是永久性无效输入（80×107px 起始帧；「不能作人物」的参考图），任何忠实重试都在校验层被拒、走不到付费提交，本行「没有自然失败则NOT RUN，不故意打挂线上」的边界因此不允许硬闯；需 Founder 批准人造一次供应商侧失败，或改判由单元／集成测试覆盖，登记见 `docs/specs/asset-action-idempotency.md` §5 本轮新增行。 **2026-09-18 回填**：Founder 2026-09-18（对谈）裁定改由测试覆盖，不人造供应商侧失败。「新单一次预扣」连同「失败恰好退一次」「同一张重试卡批两次只扣一次」「整段账本守恒」已由真库行为测试钉住——`apps/web/lib/__tests__/real08-retry-paid-ledger.test.ts`（真 Postgres `*_test`、真 Prisma、真账本，走 `coworkGenerate`／`coworkVaryCard`／`ottoUpdateGenCardOptions` 三个真业务动作，钱这一层零替身）。本行**执行状态仍为 PARTIAL**：staging 上那条真实旅程依旧没跑通，改判只是不再等它，逐条验收与红→绿实证见 `docs/specs/money-engine.md` §5 2026-09-18 行。
 
 ### REAL-09 商家场景：两商家长视频和短任务同时运行
 
