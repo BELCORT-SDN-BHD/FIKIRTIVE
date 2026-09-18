@@ -305,7 +305,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F22 · 上传测试视频自动写入一条品牌记忆事实，来源标注还标错
 
-**状态**：新发现，未修，登记（隐私／质量）。证据同上，`preflight-fixtures.json` 的 `findings[3]`；DB 层复核见 `workflow-group1-result.json` 的 `verdicts[0].findings[2]`。
+**状态**：**Founder 2026-09-18 对谈裁决「删除。」——授权删除那条被污染的品牌记忆，由编排者在 staging 数据上执行，不走 PR**（原状态：新发现，未修，登记（隐私／质量））。裁决登记见 `report-round3.md` 2026-09-18（四）一节的裁决表第⑧条。产品侧的两处根因（`origin` 标成 `manual` 而非素材来源、Otto 自写的句子直接落 `Ready` 跳过商家确认闸）本次未裁、未修，仍留在下方正文里等后续。证据同上，`preflight-fixtures.json` 的 `findings[3]`；DB 层复核见 `workflow-group1-result.json` 的 `verdicts[0].findings[2]`。
 
 上传一段 3 秒纯色测试视频后，Otto 的自动理解自动写入一条品牌记忆：Memory `01M2N6Y9NEK11F406B9WDJFF2S`（分类 `about`，内容「The video displays a solid orange screen with no other visual elements.」），且立刻在 `/brand` 上渲染为「Ready · Saved by Otto」的 Brand voice 语境——同一批三张图片上传均未产生这类记忆行。核证进一步核实两处比原发现更细的问题：① `origin='manual'`、`originDetail=NULL`（`packages/db/prisma/schema.prisma:1147-1150`：`origin` 本该回答「这条内容打哪来」，取值 `manual|text|url|file`）——这一行明明是从一段上传 MP4 派生的，却标成商家手打，且没有指回源资产的指针；② `contextStatus='Ready'`，不是 `'Draft'`——`apps/web/app/brand/page.tsx` 文档写明商家按 Save 之前库里最多只有一条 `Draft` 行、Otto 读路径写死只取 `Ready`，这条 Otto 自己写的句子完全跳过了「草稿→商家按 Save」这道确认闸，此刻已经活在 Otto 的品牌语境里。商家没有任何确认步骤就被写进了会被 Otto 引用的品牌知识。建议留给 Founder 裁决：素材理解衍生的记忆是否应该只提议（Draft）、不直接落 Ready；连带修正 `origin`／`originDetail` 使其如实反映来源。
 
@@ -323,7 +323,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F25 · 画布拖放上传不入队 ingest，理解与扣费延后 15 分钟–24 小时（补登记编号，正文已在 money-engine.md）
 
-**状态**：新发现（#1464 复核回合中发现），未修，登记（待 Founder 裁 fix-now 或排队）。正文已随 #1464 落在 `docs/specs/money-engine.md` §5 2026-09-16 行「已知边界」第④点——本条只给它一个可引用的 F 编号并交叉指回那一行，不重复展开全文，避免同一件事两处各写一半。
+**状态**：修复 PR #1474（Founder 2026-09-18 裁「这个设计完全不合理，可以移除」）——分支 `claude/canvas-upload-ingest-now-r3-f25`，落地登记见 `docs/specs/money-engine.md` §5 2026-09-18 行。正文已随 #1464 落在 `docs/specs/money-engine.md` §5 2026-09-16 行「已知边界」第④点——本条只给它一个可引用的 F 编号并交叉指回那一行，不重复展开全文，避免同一件事两处各写一半。
 
 **概要（转引自规格原文，细节以那一行为准）**：`uploadReference`（`apps/web/lib/actions.ts:962`）不像 `finalizeCandidateUploads`（`apps/web/lib/upload-actions.ts:452`）那样把 ingest 入队，于是画布拖放上传的素材宽高要等 `redispatchLostIngest` 的 15 分钟–24 小时补投窗（`apps/worker/src/jobs/ingest.ts:57-58`）才补上；元数据不齐则扫描器不捞（`METADATA_READY_FOR_UNDERSTANDING`），补投窗打开之前理解不会发生，Info 面板此刻仍停在既有的 "No charge"——这一格是**延迟，不是免费**。两条候选根因（`uploadReference` 补入队 / 缩短 `redispatchLostIngest` 窗口）待 Founder 裁 fix-now 或排队。
 
@@ -331,7 +331,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F26 · 文生视频提示词声称「有首帧」，但该单确无首帧却仍原样发给付费引擎（P2 钱/诚实）
 
-**状态**：修复 PR 施工中（编排者 2026-09-17 先行派工，待 Founder 追认）——分支 `claude/video-prompt-no-phantom-first-frame-r3-f26`，尚未开 PR。
+**状态**：**已修复并合入主干**——PR #1466，合并 commit `66ef15fa`（2026-09-17T07:22:52Z，`gh pr view 1466` 核实）。装配层改读 `@fikirtive/core` 的 `videoAttachmentRole`，模型自填的 `mode` 只在有服务端证据时算数；提示词里的首帧两句只在真有首帧时出现。**仍开着的口子（不读作已关）**：复审 P3 两条随本 PR 内的 commit `0766f536` 落进规格——`docs/specs/creation-engine.md` §5 2026-09-17 行的「未关掉的缺口」由三条改四条，新增 (d)「候选名单本身读失败时整道闸停摆」（`loadAvailableRefsForAgent`，`apps/web/lib/otto-actions.ts:599` 是 best-effort，prisma 一出错就 `return []`，那一轮整道闸判「没有演员」），并另记一条 TOCTOU 理论例外（同一轮里 `Entity.type` 在两次读之间由 CHARACTER 改成 PRODUCT，闸读旧值、卡读新值），不采取行动、只为免得子集关系被读成绝对成立。**批准**：该规格行仍写着「批准: 待 Founder 追认」（编排者依 2026-09-15 裁决先行施工）。
 
 商家在确认卡与 Library 详情面板都看到的提示词，开头是「starting from the given first frame」，随后又有一句「keep the subject consistent with the source frame」——但这一单确实没有首帧：`Generation` `01M2PVDW85RGAECTBN3NYXKMKT` 的 `promptText`（char 105 起、char 575 起）逐字带着这两句，`sourceGenerationId`／`tailGenerationId`／`referenceVideoGenerationId` 三列全为 NULL，同窗口 `RefGenJob=0`、没有任何中间 IMAGE `GenJob`。关键在于：这不只是商家读到的文案错了——同一段文字也真的躺在 `GenJob.prompt` 里，即**真的发给了付费引擎**。核证员判定这比原发现（journeys worker 只判为「有迹可循」措辞不符）更重的一层：这是每一次文生视频 cowork job 上都存在的质量／浪费风险，不只是这一单的用词。
 
@@ -347,7 +347,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F28 · 第二标签重放已批卡、或确认 Create variations 对话框，会把画布撞进错误边界（P1 UX）
 
-**状态**：修复 PR 施工中（编排者 2026-09-17 先行派工，待 Founder 追认）——分支 `claude/canvas-crash-after-approve-r3-f28`，尚未开 PR。
+**状态**：**修复已合入主干，崩溃本身待真浏览器复跑——本条不得标关闭**。PR #1469，合并 commit `66f9c766`（2026-09-18T12:09:08Z，`gh pr view 1469` 核实）。两刀：①`FlowCanvas` 的 `onNewNode` 按 id 去重（重放同一张卡不再往板子那份清单里塞第二条同 id 记录，屏幕上本来就只有一张图，翻倍的是**数**这份清单的那些读数——工具条消失、底部「Download 2」、凭空的「Batch of 2」），`nodeDataRef` 改成合并写入；②画布交给对话的四个接缝回调改成稳定身份、空写入不换身份（`NorthstarCanvasWorkspace`）。**复审两轮后落地的三处更正，照实记**：(a) 第一刀**这两步走查现场都解释不了**——S13（Create variations）走 `runImageEvolve`、每次带全新 actionId／genJobId，S10（第二标签重放）走 Otto 审批那条路、根本不经过 `onNewNode`；原稿把第一刀的射程写宽了；(b) 原稿说的第三处翻倍「在飞付费卡计数把同一个任务算两次」是**假的**，已删——`hasInFlightPaidNode`（`FlowCanvas.tsx:1405`）与 `canvasJobActive`（`:1416`）都是 `.some()` 的布尔值、不是计数；(c) `fitView` 留在 `setNodes` updater 之外（该文件自己的纯度规矩），不为省一次遍历破例。**未证成的那一半**：`Minified React error #185` 本身在 jsdom 里复现不出来（环境限制，不是产品被证无罪），两条路径共同经过的只有「付费任务翻成在跑、画布↔对话接缝连环重渲」这一处，正是第二刀所针对——**因此崩溃是否真的消失，只能靠 staging 部署后用真浏览器重跑 S13 与 S10 判定**（复跑组 `verify-r3-f28`，预算约 US$0.07＝两次 1 credit 图片确认）。规格登记：`docs/specs/frontend-baseline.md` §5 2026-09-17 行（含未证成部分的如实登记），其「批准: 待 Founder 追认」仍挂着。
 
 两条独立路径各复现一次，同一个崩溃形状：(a) 已批准一张图片生成后，第二标签重放同一张确认卡（`real-04-06-08.json` 步骤 S10）；(b) 确认一次 Create variations 对话框（同文件步骤 S13）。两次画布都撞进错误边界——「This canvas didn't open · It stopped loading part way through. Nothing you made was lost — everything is still saved.」，浏览器控制台报 `Minified React error #185`（最大更新深度超限）。两次账本都完好无损（核证员独立复核：零禁写、零多扣，一次刷新即可看到真实结果），但商家付完钱看到的第一眼是一块坏掉的画布。
 
@@ -355,7 +355,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F29 · 失败卡「Try again」零反馈致四次点击克隆四张卡；`coworkVaryCard` 是否付费的代码注释自相矛盾
 
-**状态**：修复 PR 施工中（编排者 2026-09-17 先行派工，待 Founder 追认）——分支 `claude/failed-card-try-again-feedback-r3-f29`，尚未开 PR。
+**状态**：**已修复并合入主干**——PR #1470，合并 commit `14a4c38d`（2026-09-18T11:54:18Z，`gh pr view 1470` 核实）。「在飞／加好了／没成」三种回执连同那次调用收进一份共享合同（`apps/web/components/otto/vary-card-feedback.tsx` 的 `useVaryCard`），两颗键（结果卡「Make another」与失败卡「Try again」）从此读同一份字、同一段时长；三处「queues a NEW paid generation」的过期注释统一改成 `coworkVaryCard` 零花费这句真话。**文案改动已由 Founder 2026-09-18 对谈追认**：在飞那一格「Queuing…」→「Adding…」、兜底那句「Couldn't queue another…」→「Couldn't add another card — please try again.」（编排者裁定；实际落码见 `vary-card-feedback.tsx:33`／`:39`；登记在 `docs/specs/frontend-baseline.md` §5 2026-09-17 行）。**复审抓出并已在本 PR 内修掉的一处版面回归**：常驻的 `role="status"` 区域写成「没有 class 的空 div」，而结果卡把它直接挂在 `<Card>` 那个 `flex flex-col gap-4` 的根下——一个高度 0 的空 div 照样是 flex item，于是**每一张结果卡都白长 16px**；改法是空的时候给 `sr-only`（绝对定位，不参与 flex 布局，仍留在无障碍树里），commit `44e8cfd7`。**一条已知抖动候选（不是缺陷）**：`44e8cfd7` 上一次 e2e 红在 `e2e/journeys/23-brand-product-identity.spec.ts:50`（等 `Open the record editor` 链接超时），重跑即绿，与本 PR 的改动面无关——登记为 flake 候选，供下一次同指纹出现时直接并案。
 
 **零反馈按钮**：按下失败卡的「Try again」没有任何可见反馈——对话区不出现新内容、按钮不进入「Queuing…」态、也不报错。四次按下（05:28:05／05:29:26／05:30:12／05:30:58）其实每次都真的到达了服务端（四条 `ActionEvent` `cowork.vary` 行 + 四张未生成的 `GEN_CARD` 克隆），只有刷新页面后才看得见。根因（核证员定位）：`apps/web/components/otto/OttoPlanCard.tsx:252-267` 的 `retry()` 调用 `coworkVaryCard` 成功后只调 `onRetry?.()`，**不设任何成功态**；同一文件的姊妹函数 `OttoResult.tsx:222-239` 的 `makeAnother()` 走同一类服务端调用，成功后设 `makeAnotherSuccess` 并渲染「Added」2.5 秒。今天免费（`coworkVaryCard` 按设计零花费——四次按下已由数据库核实 0 `GenJob`／0 账本行），但同样的沉默若发生在付费控件上就是重复扣费。
 
@@ -373,7 +373,9 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F31 · 客户面分享入口 `/s/<token>` 在 staging 把客户 303 到 `https://localhost:8080/...`（P1）
 
-**状态**：修复 PR 施工中（编排者先行，待 Founder 追认）→ 随本 PR 落地（PR #1468，分支 `claude/share-entry-redirect-origin-r3-f31`）。
+**状态**：**已修复并合入主干**——PR #1468，合并 commit `3a848cd3`（2026-09-18T09:11:43Z，`gh pr view 1468` 核实）。`Location` 改成相对路径（`apps/web/app/s/[token]/route.ts:69` 手工造响应，因为 `NextResponse.redirect()` 只收绝对地址，而绝对地址正是这条路不该发明的东西），浏览器按自己刚请求的那个对外地址解析，代理后面的主机名从此不必猜；不新增任何 env（真正需要绝对地址的铸链那一侧本来就有 `BETTER_AUTH_URL`）。修后判定 MERGE-OK-WITH-NOTES，两条 P3 随本收官文档处理（见本文件本行与 `docs/specs/share-preview.md` 的行号订正）。
+
+**`?t=..` 只在路由层被挡住，页面里那句后备转发仍送得出它（P3 登记，不施工）**：路由层规则的字符集把首字符钉死在 `[A-Za-z0-9_~-]`（`apps/web/lib/legacy-share-link-redirect.ts:66`），纯点值 `?t=..`（含 `?t=%2e%2e`，query 先被解码）因此匹配不上、不会从这条规则拼出 `Location: /s/..`；但页面里那句后备转发照旧是 `redirect(\`/s/${encodeURIComponent(t)}\`)`（`apps/web/app/schedule/share-preview/page.tsx:77`，而 `encodeURIComponent("..") === ".."`），所以同一个值仍会走出一条 `/s/..`——浏览器按同源把它归一成 `/`。**不是开放重定向**（没有主机名、没有协议）、也不是本次修出来的（修前就是这个行为），已在模块注释里写明（`legacy-share-link-redirect.ts:42-45`）。登记于此，免得后来人把「路由层挡住了」读成「整条路都挡住了」。
 
 **这是核证员发现的新缺陷，journeys worker 当时只把它记成工具坑（无法从代码推断真实跳转目标）**。匿名 curl（不带任何 cookie）访问 `/s/<forged-token>`：`HTTP/2 303`，`Location: https://localhost:8080/schedule/share-preview`；用两个不同的伪造 token 各复现一次。根因：`apps/web/app/s/[token]/route.ts:55` 用 `new URL(SHARE_PREVIEW_COOKIE_PATH, req.nextUrl.origin)` 构造跳转目标，Railway 代理之后 `req.nextUrl.origin` 解析成内部 socket（`localhost:8080`），不是公网域名。**后果**：商家发出的每一条分享链接，客户浏览器落地 cookie 之后的下一跳一律死路——即便日后补齐两把缺失的密钥，SHARE-A2 与 SHARE-A6 仍会端到端 FAIL。单元测试盲区：`apps/web/app/s/__tests__/route.test.ts:17` 把请求伪造成 `{ nextUrl: new URL('https://app.test/s/whatever') }` 并断言跳到 `https://app.test/schedule/share-preview`——这个同源伪造从结构上就抓不到「代理后 origin 变了」这类问题。铸链那一侧没问题（`schedule-actions.ts:697` 用的是 staging 上确实设了的 `BETTER_AUTH_URL`），只有这一跳的重定向目标错了。生产环境未测（超出本轮范围），但同一段代码与同样的代理形状使其在生产大概率同样成立。**这是 REAL-10／REAL-11 重跑之前第一件要修的事**。
 
@@ -381,7 +383,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F32 · 旧式 `?t=` 分享链接 200 + meta refresh 1 秒，令牌留在地址栏且匿名客户短暂看到「Go to sign in」壳
 
-**状态**：修复 PR 施工中（编排者先行，待 Founder 追认）→ 随本 PR 落地（PR #1468，与 R3-F31 同一条分支 `claude/share-entry-redirect-origin-r3-f31`）。
+**状态**：**已修复并合入主干**——PR #1468，合并 commit `3a848cd3`（2026-09-18T09:11:43Z，与 R3-F31 同一条 PR、同一条分支）。旧式 `?t=` 改由 Next 的**路由层**重定向答（`apps/web/lib/legacy-share-link-redirect.ts` 的纯值函数，`next.config.ts` 接上，`lib/__tests__/legacy-share-link-redirect.test.ts` 既核这个值也核它真的接上了）：比渲染更早，`loading.tsx` 摆在哪里都影响不到它，正文 0 字节，因此再没有那一秒的 meta refresh、再没有一闪而过的「Go to sign in」壳。页面里那句 `redirect()` 保留为后备转发。本行的状态由 R3-F31 那条 PR 顺手改成现状（`git blame` 核实：`3a848cd3` 同时改写了本条与 R3-F31 两行的**状态**）——这两条本来就是一条 PR 的两半，不是两次独立更新。`?t=..` 的残余见上一条 R3-F31 的登记。
 
 `GET /schedule/share-preview?t=<forged>` 不是一次 HTTP 跳转，而是 `HTTP 200`（25500 字节）夹带 `<meta id="__next-page-redirect" http-equiv="refresh" content="1;url=/s/<token>">`，外加一段流式渲染的壳，其 payload 里含一条 `href="/login"` 的「Go to sign in」链接。结果：令牌在地址栏停留约 1 秒，匿名客户在这 1 秒内会短暂看到登录相关的界面元素——这与 `apps/web/app/schedule/share-preview/page.tsx:33` 自己写的契约「no sign-in, no link back into the workspace」相反，也与 SHARE-A6「token never sits in this page's own URL for even one render」（page.tsx:18-19）不符。大概率是 Next 的流式渲染内嵌跳转的固有行为；值得登记一行，不构成阻断。
 
