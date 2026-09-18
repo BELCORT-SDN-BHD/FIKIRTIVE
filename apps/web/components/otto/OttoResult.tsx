@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { bustUrl } from "@/lib/media-retry";
 import { readPick, writePick } from "@/lib/result-pick";
-import { useVaryCard, VARY_ADDED_LABEL, VARY_ADDED_NOTE, VARY_BUSY_LABEL } from "./vary-card-feedback";
+import { useVaryCard, VaryAddedStatus, VARY_ADDED_LABEL, VARY_BUSY_LABEL } from "./vary-card-feedback";
 import { creditsLabel } from "@/lib/credit-format";
 import { videoFirstFrameSrc } from "@/lib/video-first-frame";
 
@@ -332,11 +332,8 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
             </Button>
           )}
         </div>
-        {vary.added && (
-          <div role="status" className="mt-2 text-[0.875rem] text-[var(--success-soft-foreground)]">
-            {VARY_ADDED_NOTE}
-          </div>
-        )}
+        {/* 与失败卡同一个 live region 组件：区域始终挂着，只换里面的字（见 `VaryAddedStatus`）。 */}
+        <VaryAddedStatus added={vary.added} />
         {makeAnotherError && (
           <Alert role="alert" variant="destructive" density="compact" className="mt-2">
             <AlertDescription>{makeAnotherError}</AlertDescription>

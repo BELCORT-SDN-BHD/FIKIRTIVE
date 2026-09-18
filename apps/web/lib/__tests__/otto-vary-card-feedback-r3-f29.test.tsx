@@ -3,9 +3,14 @@
  * R3-F29 —— 失败卡上那颗「Try again」按下去有没有回应。
  *
  * staging 构建 c0d25917（2026-09-17）走查实测：商家在一张失败的确认卡上按「Try again」，
- * 服务端 200、对话里真的多了一张克隆卡，**可屏幕上一个字都没变** —— 按钮不转圈、不说
- * 「加好了」、也不报错，只有整页重载才看得见。商家于是一分钟按一次，连按四次
- * （05:28:05 / 05:29:26 / 05:30:xx / 05:3x），拿到四张一模一样的克隆卡。
+ * 服务端 200、对话里真的多了一张克隆卡，**可屏幕上什么都没留下** —— 一分钟之后回头看，
+ * 卡面与按之前一模一样，只有整页重载才看得见那张新卡。商家于是一分钟按一次，连按四次
+ * （05:28:05／05:29:26／05:30:12／05:30:58），拿到四张一模一样的克隆卡。
+ *
+ * **修之前已经有的**（照实记，免得这一份把自己写成比实际更大的修）：在飞那一格
+ * （`disabled` ＋ 按钮改口）、`if (busy) return` 那道同帧闸、以及失败那句话落进卡上那块
+ * 持久的 Alert —— 三样都在 c0d25917 的源码里。**唯一缺的是成交那一格**：按回来什么都不设，
+ * 于是屏幕上一秒之后就什么都不剩，而那四次按压相隔一分钟，同帧闸根本轮不到它上场。
  *
  * 病根是同一件事有两份回执合同：`OttoResult` 的「Make another」与 `OttoPlanCard` 的
  * 「Try again」落到**同一个**服务端动作（`coworkVaryCard`），前者会亮「Added」两秒半，
@@ -13,11 +18,12 @@
  * 见 `apps/web/lib/cowork-actions.ts` 的 `coworkVaryCard`；staging 四次按压实测 0 条
  * GenJob、0 条 CreditLedger），但同样的沉默长在一颗会扣钱的键上就是钱的缺陷。
  *
- * 所以这一份钉的是**两处共用一份回执合同**（`components/otto/vary-card-feedback.ts`）：
- *  1. 按下去先转圈（禁用 + 「Queuing…」），回来说「Added」；
- *  2. 在飞时再按一下是**空动作** —— 不打第二趟，因此不会再多一张克隆卡；
- *  3. 服务端说不行时，那句话出现在卡上的 Alert 里；
- *  4. 「Make another」与「Try again」读的是同一份字与同一段时长（单一源头，§7.3）。
+ * 所以这一份钉的是**两处共用一份回执合同**（`components/otto/vary-card-feedback.tsx`）：
+ *  1. 按下去先转圈（禁用 ＋ `VARY_BUSY_LABEL`），回来说「Added」；
+ *  2. 那句「Added」**到点自己收**（`VARY_CONFIRM_MS`），不会永远挂在卡上；
+ *  3. 在飞时再按一下是**空动作** —— 不打第二趟，因此不会再多一张克隆卡；
+ *  4. 服务端说不行、以及连服务端都没够着（transport 抛错），那句话都出现在卡上的 Alert 里；
+ *  5. 「Make another」与「Try again」读的是同一份字与同一段时长（单一源头，§7.3）。
  *
  * 规格：docs/specs/frontend-baseline.md §5（2026-09-17 R3-F29 登记行）。
  */
@@ -51,9 +57,23 @@ vi.mock("next/navigation", () => ({
 
 const { OttoPlanCard } = await import("@/components/otto/OttoPlanCard");
 const { OttoResult } = await import("@/components/otto/OttoResult");
-const { useVaryCard, VARY_ADDED_LABEL, VARY_ADDED_NOTE, VARY_BUSY_LABEL, VARY_CONFIRM_MS } =
-  await import("@/components/otto/vary-card-feedback");
+const {
+  useVaryCard,
+  VARY_ADDED_LABEL,
+  VARY_ADDED_NOTE,
+  VARY_BUSY_LABEL,
+  VARY_CONFIRM_MS,
+  VARY_FAILED_NOTE,
+} = await import("@/components/otto/vary-card-feedback");
 type VaryRun = ReturnType<typeof useVaryCard>["run"];
+
+/** 那一行「加好了」。**区域始终挂着**（读屏只播报已存在 live region 的内容变化），
+ *  所以判据是它里面那句话，而不是它在不在 DOM 里。 */
+function statusText(host: HTMLElement): string {
+  const region = host.querySelector('[role="status"]');
+  if (!region) throw new Error(`the role="status" live region must stay mounted: ${host.innerHTML}`);
+  return region.textContent ?? "";
+}
 
 /** 一张服务端真会铸出来的图片卡 —— 走查现场那张就是这个形状。 */
 function failedCard(): OttoPlanCardPayload {
@@ -136,29 +156,52 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
 }
 
 describe("R3-F29 · 失败卡「Try again」的回执合同", () => {
-  it("按下去先转圈、回来说 Added（走查里这两样一样都没有）", async () => {
+  it("按下去先转圈、回来说 Added（走查里缺的正是后面那一格）", async () => {
     const gate = deferred<{ threadId: string }>();
     h.coworkVaryCard.mockReturnValue(gate.promise);
     const onRetry = vi.fn();
     const host = mountFailedCard(onRetry);
 
+    // 按之前：live region 已经挂在那儿，只是空的。
+    expect(statusText(host)).toBe("");
+
     click(buttonLabelled(host, "Try again"));
 
-    // ① 在飞：按钮禁用并改口，商家看得出这一下被收到了。
+    // ① 在飞：按钮禁用并改口，商家看得出这一下被收到了（这一格 c0d25917 上已经有）。
     const busy = buttonLabelled(host, VARY_BUSY_LABEL);
     expect(busy.disabled).toBe(true);
     expect(busy.textContent).toContain(VARY_BUSY_LABEL);
 
-    // ② 回来：确认亮起来，卡下多一行人话，父组件被通知去取那张新卡。
+    // ② 回来：确认亮起来，卡下那一行人话有了字，父组件被通知去取那张新卡（这一格从前没有）。
     await act(async () => {
       gate.resolve({ threadId: "thread_1" });
       await gate.promise;
     });
     expect(buttonLabelled(host, VARY_ADDED_LABEL).textContent).toContain(VARY_ADDED_LABEL);
-    expect(host.textContent).toContain(VARY_ADDED_NOTE);
-    expect(host.querySelector('[role="status"]')?.textContent).toContain(VARY_ADDED_NOTE);
+    expect(statusText(host)).toContain(VARY_ADDED_NOTE);
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(h.coworkVaryCard).toHaveBeenCalledTimes(1);
+  });
+
+  it("那句 Added 到点自己收，按钮回到 Try again（确认不会永远挂在卡上）", async () => {
+    vi.useFakeTimers();
+    h.coworkVaryCard.mockResolvedValue({ threadId: "thread_1" });
+    const host = mountFailedCard();
+
+    await act(async () => {
+      buttonLabelled(host, "Try again").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(buttonLabelled(host, VARY_ADDED_LABEL).textContent).toContain(VARY_ADDED_LABEL);
+    expect(statusText(host)).toContain(VARY_ADDED_NOTE);
+
+    // 这一段时长是合同里那一个数（`VARY_CONFIRM_MS`）—— 两颗键共用它，所以这里钉的是它，
+    // 不是一个抄在测试里的 2500。
+    act(() => {
+      vi.advanceTimersByTime(VARY_CONFIRM_MS);
+    });
+    expect(buttonLabelled(host, "Try again").textContent).toContain("Try again");
+    // 区域还在（读屏要的就是它一直在），里面的字收走了。
+    expect(statusText(host)).toBe("");
   });
 
   it("在飞时再按一下是空动作 —— 不会再克隆一张卡", async () => {
@@ -219,9 +262,27 @@ describe("R3-F29 · 失败卡「Try again」的回执合同", () => {
 
     const alert = host.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("This card is no longer valid.");
-    expect(host.textContent).not.toContain(VARY_ADDED_NOTE);
+    expect(statusText(host)).toBe("");
     expect(onRetry).not.toHaveBeenCalled();
     // 按钮回到可按 —— 失败不能把唯一的出路锁死。
+    expect(buttonLabelled(host, "Try again").disabled).toBe(false);
+  });
+
+  it("连服务端都没够着（transport 抛错）时，也有一句人话落在卡上", async () => {
+    // 服务端那条 `{ error }` 路上面那一条已经钉住；这一条是**抛出来**的那一支 ——
+    // 断网、fetch 炸了、server action 反序列化失败。从前这一支由组件自己 catch，两处各写
+    // 一句；现在合同兜住并给出同一句 `VARY_FAILED_NOTE`。
+    h.coworkVaryCard.mockRejectedValue(new Error("network down"));
+    const onRetry = vi.fn();
+    const host = mountFailedCard(onRetry);
+
+    await act(async () => {
+      buttonLabelled(host, "Try again").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(VARY_FAILED_NOTE);
+    expect(statusText(host)).toBe("");
+    expect(onRetry).not.toHaveBeenCalled();
     expect(buttonLabelled(host, "Try again").disabled).toBe(false);
   });
 
@@ -240,8 +301,29 @@ describe("R3-F29 · 失败卡「Try again」的回执合同", () => {
     });
 
     expect(buttonLabelled(host, VARY_ADDED_LABEL).textContent).toContain(VARY_ADDED_LABEL);
-    expect(host.querySelector('[role="status"]')?.textContent).toContain(VARY_ADDED_NOTE);
-    // 两处同一段时长：确认到点自己收起来，不会永远挂在那儿。
-    expect(VARY_CONFIRM_MS).toBeGreaterThan(0);
+    expect(statusText(host)).toContain(VARY_ADDED_NOTE);
+  });
+
+  it("「Make another」那一行确认也到点自己收（两颗键同一段时长）", async () => {
+    vi.useFakeTimers();
+    h.coworkVaryCard.mockResolvedValue({ threadId: "thread_1" });
+    const host = mount(
+      createElement(OttoResult, {
+        payload: { kind: "image", urls: ["https://cdn.example/one.png"] },
+        sourceCardId: "card_done_1",
+        onMakeAnother: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      buttonLabelled(host, "Make another").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(statusText(host)).toContain(VARY_ADDED_NOTE);
+
+    act(() => {
+      vi.advanceTimersByTime(VARY_CONFIRM_MS);
+    });
+    expect(buttonLabelled(host, "Make another").textContent).toContain("Make another");
+    expect(statusText(host)).toBe("");
   });
 });

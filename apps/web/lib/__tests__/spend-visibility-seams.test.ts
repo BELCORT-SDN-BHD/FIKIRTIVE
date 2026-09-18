@@ -47,9 +47,16 @@ const CREDIT_PRICE_LITERAL = /\d[\d,.]*\s*credits?\b/i;
 
 /** Client-callable server actions that RESERVE credits. Traced from the reserve sites:
  *  lib/gen-actions.ts + lib/refgen-actions.ts call reserveCredits directly; the Otto
- *  metered paths (ottoTurn / ottoApprove / coworkGenerate / coworkVaryCard) and the
+ *  metered paths (ottoTurn / ottoApprove / coworkGenerate) and the
  *  campaign batch (confirmCampaignGeneration → factory-batch → startGen) reserve
  *  downstream. Importing one of these into a client surface = that surface can charge.
+ *
+ *  coworkVaryCard is the one deliberate NON-reserving entry on this list (R3-F29). It clones
+ *  a card's payload into a new UN-generated card and stops there — no startGen, no GenJob, no
+ *  queue, no ledger row (apps/web/lib/cowork-actions.ts, and staging c0d25917 2026-09-17:
+ *  four presses → 0 GenJob rows, 0 CreditLedger rows). It is kept here on purpose: it sits on
+ *  the same cards as the paid Generate, so the fence already stands if it ever grows a reserve
+ *  path. Removing it is a deliberate narrowing of a money fence, not a tidy-up.
  *
  *  startCanvasGen was missing from this list for as long as it has existed (round-1 review
  *  P3). It is the canvas's own paid entry — the one every Generate / Make video / More like

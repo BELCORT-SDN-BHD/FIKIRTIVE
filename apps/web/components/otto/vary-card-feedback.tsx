@@ -23,14 +23,20 @@ import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 
 /** 「Added」在屏幕上留多久（毫秒）。两处同一段时长 —— 两颗键不该一颗闪一颗停。 */
 export const VARY_CONFIRM_MS = 2500;
-/** 在飞时按钮上的字。 */
-export const VARY_BUSY_LABEL = "Queuing…";
+/**
+ * 在飞时按钮上的字。
+ *
+ * 复审 P3(d)：从前写「Queuing…」，而这条路上**根本没有队列** —— 它只把旧卡克隆成一张
+ * 新卡（见模块说明）。按钮该说它真做的那件事：把一张卡加进这场对话。编排者裁定，待
+ * Founder 追认（2026-09-17）。
+ */
+export const VARY_BUSY_LABEL = "Adding…";
 /** 成交之后按钮上的字。 */
 export const VARY_ADDED_LABEL = "Added";
 /** 成交之后按钮下面那一行人话（`role="status"`，读屏也听得见）。 */
 export const VARY_ADDED_NOTE = "Added another card to this conversation.";
-/** 连服务端都没够着时的那句人话（服务端自己说得出原因时就用它那句）。 */
-export const VARY_FAILED_NOTE = "Couldn't queue another — please try again.";
+/** 连服务端都没够着时的那句人话（服务端自己说得出原因时就用它那句）。与上面那颗键同口径。 */
+export const VARY_FAILED_NOTE = "Couldn't add another card — please try again.";
 
 /** 一次按压的结果。`null` = 这一下落在飞行途中，原地不动。 */
 export type VaryOutcome = { ok: true } | { error: string };
@@ -86,10 +92,28 @@ export function useVaryCard(): VaryCardFeedback {
       // 余额那一声留着，但**理由换了**：这条路自己不动钱（见上面的模块说明），所以它不是
       // 「结算完成」的宣告，而是保守的一侧 —— 这颗键与真正会扣钱的 Generate 长在同一张卡面上，
       // 多读一次余额最多白跑一趟。`lib/__tests__/spend-visibility-seams.test.ts` 的 SPEND_ACTIONS
-      // 今天仍把 `coworkVaryCard` 算作付费入口（那张网是钱的围栏，不在本票写集）。
+      // 也据此**有意**把 `coworkVaryCard` 留在网里：万一哪天它长出预扣，围栏已经在那儿了。
       notifyBalanceRefresh();
     }
   }, []);
 
   return { busy, added, run };
+}
+
+/**
+ * 「加好了」那一行 —— 两颗键共用的**同一个** live region（复审 P3(b)）。
+ *
+ * 容器始终挂着，只换里面那句话：读屏播报的是一个**已经存在**的 live region 里的内容变化,
+ * 一个连同文字一起被挂载进来的区域，常常整段错过 —— 那正好等于回到 R3-F29 的病（屏幕上
+ * 变了，商家不知道）。空的时候不给外边距，所以卡面在没有回执时与从前逐像素相同。
+ */
+export function VaryAddedStatus({ added }: { added: boolean }) {
+  return (
+    <div
+      role="status"
+      className={added ? "mt-2 text-[0.875rem] text-[var(--success-soft-foreground)]" : undefined}
+    >
+      {added ? VARY_ADDED_NOTE : ""}
+    </div>
+  );
 }

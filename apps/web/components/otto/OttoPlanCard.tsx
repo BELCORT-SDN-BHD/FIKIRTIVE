@@ -36,7 +36,7 @@ import { CardMoney, CARD_ACTIONS_CLASS, CARD_ROOT_CLASS, CARD_SPLIT_ROW_CLASS } 
 // R3-F29 —— 「再来一张」这件事的唯一一份回执合同（在飞／加好了／没成）。结果卡上的
 // 「Make another」与这张失败卡上的「Try again」落到同一个服务端动作，所以也读同一份回执:
 // 抄成两份的那些日子里，这一处忘了设成功状态，商家连按四次拿到四张一模一样的克隆卡。
-import { useVaryCard, VARY_ADDED_LABEL, VARY_ADDED_NOTE, VARY_BUSY_LABEL } from "./vary-card-feedback";
+import { useVaryCard, VaryAddedStatus, VARY_ADDED_LABEL, VARY_BUSY_LABEL } from "./vary-card-feedback";
 
 /** What a successful approve hands up. Carries the EXACT card it happened on plus the
  *  SERVER's own result — the parent never has to infer either from a closure or from a
@@ -551,7 +551,7 @@ export function OttoPlanCard({
             </div>
             <div className={`mt-3 ${CARD_ACTIONS_CLASS}`}>
               {/* R3-F29 —— 三种回执都长在这颗键上，与结果卡上的「Make another」逐字同源:
-                  在飞写 Queuing…（并禁用，连按第二下是空动作），成交写 Added，没成那句话
+                  在飞写 `VARY_BUSY_LABEL`（并禁用，连按第二下是空动作），成交写 `VARY_ADDED_LABEL`，没成那句话
                   落在下面那块持久的 Alert 里。 */}
               <Button
                 variant="default"
@@ -574,12 +574,9 @@ export function OttoPlanCard({
               </Button>
             </div>
             {/* 按钮上那两个字是一闪而过的；这一行才是「刚刚发生了什么」——`role="status"`
-                让读屏也听得见，不必靠看见按钮变色。 */}
-            {vary.added && (
-              <div role="status" className="mt-2 text-[0.875rem] text-[var(--success-soft-foreground)]">
-                {VARY_ADDED_NOTE}
-              </div>
-            )}
+                让读屏也听得见，不必靠看见按钮变色。区域始终挂着、只换里面的字，理由见
+                `VaryAddedStatus`（结果卡用的是同一个组件）。 */}
+            <VaryAddedStatus added={vary.added} />
           </div>
         ) : runState === "done" ? (
           <div className="mt-4">

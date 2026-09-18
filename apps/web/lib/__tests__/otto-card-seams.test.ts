@@ -241,14 +241,14 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
    * 「Make another」(`OttoResult`),落到同一个服务端动作。两处各抄一份回执,就是两份合同 ——
    * 走查里正是那张失败卡忘了设成功状态(服务端 200、对话里真多了一张卡、屏幕上一个字不变),
    * 商家连按四次拿到四张一模一样的克隆卡。所以那一次**调用**连同它的 `finally` 收进了
-   * `vary-card-feedback.ts`,这条围栏跟着搬:
+   * `vary-card-feedback.tsx`,这条围栏跟着搬:
    *   ① 那一份共享合同在 finally 里报余额(失败的响应从不证明零花费);
    *   ② 两颗键都走它,谁都不许自己再开一条路 —— 从前这条围栏只盖得住 `OttoPlanCard`,
    *      `OttoResult` 那一颗键从来不在网里。
    */
   it("every clone-card button goes through the one shared vary contract, which announces on every exit", () => {
     const helper = fs.readFileSync(
-      path.join(REPO_ROOT, "apps/web/components/otto/vary-card-feedback.ts"),
+      path.join(REPO_ROOT, "apps/web/components/otto/vary-card-feedback.tsx"),
       "utf8",
     );
     const run = helper.match(/const run = useCallback\([\s\S]*?\n  \}, \[\]\);/)?.[0] ?? "";
@@ -265,7 +265,9 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
     ]) {
       const src = fs.readFileSync(path.join(REPO_ROOT, file), "utf8");
       expect(src, `${file} must go through the shared vary contract`).toMatch(/useVaryCard\(\)/);
-      expect(src, `${file} must not call coworkVaryCard directly`).not.toMatch(/await coworkVaryCard\(/);
+      // 复审 P3(a)：比对的是**名字出现**,不是「await 一次调用」—— 两个文件已经连 import
+      // 都没有了,所以这道网可以收到最紧的一格:一旦谁把它再引回来,不管怎么调用都红。
+      expect(src, `${file} must not reach coworkVaryCard at all`).not.toMatch(/coworkVaryCard/);
     }
   });
 
