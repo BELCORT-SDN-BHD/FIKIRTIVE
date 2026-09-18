@@ -39,6 +39,7 @@ import { getShots, getLooseVideoClips, getMediaPage, type MediaPage } from "./da
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { purgeOrphanedReferenceAssets, purgeAssetStorage } from "./asset-purge";
+import { dispatchIngest } from "./ingest-dispatch";
 // 血缘节的成本那一格与画布卡片信息面折的是**同一个**函数 —— 两处各写一份,同一件素材
 // 就会被报出两个价(`lib/canvas-lineage-data.ts` 的文件头说的正是这件事)。
 import { loadUploadUnderstandingCredits, netChargedInternalCredits, type UploadUnderstandingCost } from "./canvas-lineage-data";
@@ -948,7 +949,13 @@ async function looksLikeImage(file: File): Promise<boolean> {
 }
 
 /** Upload one image as a candidate Generation and return it, so Gen space can
- *  use it as an image-to-video source; the i2v itself is a separate (paid) gen job. */
+ *  use it as an image-to-video source; the i2v itself is a separate (paid) gen job.
+ *
+ *  R3-F25(Founder 2026-09-18 裁「这个设计完全不合理,可以移除」):落行之后**当场**把
+ *  ingest 派出去,和其余每一条上传入口同一个函数(`lib/ingest-dispatch.ts` 的
+ *  `dispatchIngest`)。在这之前这条入口一次都没派过,于是画布拖放上传的素材要等
+ *  `redispatchLostIngest` 的 15 分钟–24 小时补投窗才补上宽高,理解与那 0.1 credit 的
+ *  扣费和回执跟着一起延后 —— 那不是免费,是延后,而商家当场看到的却是 "No charge"。 */
 export async function uploadReference(projectId: string, formData: FormData): Promise<{ id: string; src: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
@@ -964,6 +971,7 @@ export async function uploadReference(projectId: string, formData: FormData): Pr
     if (!(await looksLikeImage(file))) return { error: "That file isn't a valid PNG / JPG / WEBP image." };
     const item = await ingestFile(ownerId, file);
     let genId = "";
+    let assetId = "";
     await prisma.$transaction(async (tx) => {
       const asset = await tx.asset.upsert({
         where: { ownerId_contentHash: { ownerId, contentHash: item.contentHash } },
@@ -981,7 +989,12 @@ export async function uploadReference(projectId: string, formData: FormData): Pr
         data: { id: newId(), ownerId, projectId, shotId: null, assetId: asset.id, source: "UPLOAD", promptText: "", entitySnapshot: { entities: [] } },
       });
       genId = gen.id;
+      assetId = asset.id;
     });
+    // 落行之后、回话之前 —— 派工放在事务外面是刻意的:worker 可能在提交落地之前就抢到这条活,
+    // 那样它会读不到这一行。`dispatchIngest` 自己吞掉失败(队列挂了照样回 `ok`,行确实已经在
+    // 商家的素材库里),补投兜底仍旧在那里,只是不再是**唯一**的那条路。
+    await dispatchIngest([assetId]);
     revalidatePath("/", "layout");
     return { id: genId, src: storageKeyToSrc(storageKey(ownerId, item.contentHash, ext)) };
   });
