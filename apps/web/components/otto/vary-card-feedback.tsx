@@ -105,13 +105,23 @@ export function useVaryCard(): VaryCardFeedback {
  *
  * 容器始终挂着，只换里面那句话：读屏播报的是一个**已经存在**的 live region 里的内容变化,
  * 一个连同文字一起被挂载进来的区域，常常整段错过 —— 那正好等于回到 R3-F29 的病（屏幕上
- * 变了，商家不知道）。空的时候不给外边距，所以卡面在没有回执时与从前逐像素相同。
+ * 变了，商家不知道）。所以这里**永不返回 `null`**：八条测试里有六条走 `statusText()`，
+ * 那个取值器在区域不见了的时候直接抛错，这条性质因此是被钉住的、不是约定俗成的。
+ *
+ * 空的时候为什么是 `sr-only` 而不是「没有 class 的空 div」（复审第二轮 P2）：结果卡把它
+ * 直接挂在 `<Card>` 底下，而那个根是 `flex flex-col gap-4`（`components/ui/card.tsx`）——
+ * 一个高度为 0 的空 div 照样是一个 flex item，于是**每一张结果卡都白长 16px**，动作行与
+ * 「Cost:」之间的空档在 `added=false`（也就是几乎所有时候）整整宽了一倍，连没有
+ * `sourceCardId`、根本不画那颗键的结果卡也一起中招。`sr-only` 是 `position: absolute`：
+ * 不占 flex 间距、不参与布局，却仍留在无障碍树里，读屏照样能在它上面听见内容变化。
+ * 失败卡那一侧的父容器是普通的块级 `div.mt-4`，两种写法在那儿都不移动一个像素 ——
+ * 所以两处共用这一份，不为一处的布局分叉出第二个组件。
  */
 export function VaryAddedStatus({ added }: { added: boolean }) {
   return (
     <div
       role="status"
-      className={added ? "mt-2 text-[0.875rem] text-[var(--success-soft-foreground)]" : undefined}
+      className={added ? "mt-2 text-[0.875rem] text-[var(--success-soft-foreground)]" : "sr-only"}
     >
       {added ? VARY_ADDED_NOTE : ""}
     </div>

@@ -67,12 +67,17 @@ const {
 } = await import("@/components/otto/vary-card-feedback");
 type VaryRun = ReturnType<typeof useVaryCard>["run"];
 
-/** 那一行「加好了」。**区域始终挂着**（读屏只播报已存在 live region 的内容变化），
- *  所以判据是它里面那句话，而不是它在不在 DOM 里。 */
-function statusText(host: HTMLElement): string {
+/** 那一行「加好了」的**结点本身**。区域始终挂着（读屏只播报已存在 live region 的内容
+ *  变化），取不到就直接抛 —— 这条性质因此是被钉住的。 */
+function statusRegion(host: HTMLElement): HTMLElement {
   const region = host.querySelector('[role="status"]');
   if (!region) throw new Error(`the role="status" live region must stay mounted: ${host.innerHTML}`);
-  return region.textContent ?? "";
+  return region as HTMLElement;
+}
+
+/** 那一行里的字 —— 判据是它说了什么，而不是它在不在 DOM 里。 */
+function statusText(host: HTMLElement): string {
+  return statusRegion(host).textContent ?? "";
 }
 
 /** 一张服务端真会铸出来的图片卡 —— 走查现场那张就是这个形状。 */
@@ -325,5 +330,36 @@ describe("R3-F29 · 失败卡「Try again」的回执合同", () => {
     });
     expect(buttonLabelled(host, "Make another").textContent).toContain("Make another");
     expect(statusText(host)).toBe("");
+  });
+
+  it("空着的那一行出流（`sr-only`）—— 结果卡不会因为它白长一道 flex 间距", async () => {
+    // 复审第二轮 P2：区域常驻是对的，但**空着的时候不能还占着位置**。结果卡把它直接挂在
+    // `<Card>` 底下，那个根是 `flex flex-col gap-4`（`components/ui/card.tsx`）—— 一个高度
+    // 为 0 的空 div 照样是 flex item，于是每张结果卡都白长 16px，动作行与「Cost:」之间的
+    // 空档在几乎所有时候都宽了一倍。`sr-only` 是 position: absolute：不占间距，仍在无障碍
+    // 树里。所以这里钉的是 class，不是「它在不在」（在不在由上面六条一起钉）。
+    h.coworkVaryCard.mockResolvedValue({ threadId: "thread_1" });
+    const host = mount(
+      createElement(OttoResult, {
+        payload: { kind: "image", urls: ["https://cdn.example/one.png"], costCredits: 3 },
+        sourceCardId: "card_done_1",
+        onMakeAnother: vi.fn(),
+      }),
+    );
+
+    const region = statusRegion(host);
+    expect(region.parentElement?.className, "这条围栏的理由就在父容器上：它是那张卡的 flex 根").toContain(
+      "flex-col",
+    );
+    expect(region.className, "空着的时候必须出流，否则它照旧吃掉一道 gap-4").toBe("sr-only");
+
+    await act(async () => {
+      buttonLabelled(host, "Make another").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    // 有话说的时候才回到文档流里，也才拿那一份留白与颜色。
+    expect(statusText(host)).toContain(VARY_ADDED_NOTE);
+    expect(statusRegion(host).className).not.toContain("sr-only");
+    expect(statusRegion(host).className).toContain("mt-2");
   });
 });
