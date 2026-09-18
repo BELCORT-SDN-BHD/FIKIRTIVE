@@ -1,0 +1,118 @@
+{
+  "group": "verify-r3-f28",
+  "buildSha": "66f9c766 (at start and through both paid steps; staging redeployed to 80d1e280 at ~12:51Z mid-STEP-C — diff 66f9c766..80d1e280 is docs-only: docs/DEFERRED.md, docs/audits/**, docs/specs/*.md, zero apps/web change)",
+  "signedInAs": "tenant A = org 'founder' (super-admin), single session",
+  "startedUtc": "2026-09-18T12:41:03Z",
+  "endedUtc": "2026-09-18T12:54:10Z",
+  "spendUsdThisGroup": 0.07,
+  "spendUsdCumulative": 0.94,
+  "specRow": "docs/specs/frontend-baseline.md line 221, 2026-09-17 R3-F28 row (origin/main). Acceptance clauses ①..⑦; row states 崩溃本身是否已消失,须由真浏览器复测那两步确认.",
+  "preconditions": {
+    "healthUtc": "2026-09-18T12:41:19Z",
+    "health": "{\"ok\":true,\"db\":\"up\",\"worker\":\"up\",\"workers\":{\"worker-wait\":\"up\",\"worker-compute\":\"up\",\"worker\":\"retired\"},\"backup\":\"fresh\",\"migrations\":\"applied\",\"build\":{\"sha\":\"66f9c766\",\"ref\":\"main\"}}",
+    "dbBaselineUtc": "2026-09-18T12:41:52Z",
+    "dbBaseline": {"org": "founder", "balance": 99997621, "reserved": 0, "genJobCount": 30, "creditLedgerCount": 181},
+    "creditUnitNote": "DB CreditAccount.balance is in tenths of a displayed credit: 99997621 renders as '9,999,762.1 credits'; 1 credit = 10 DB units.",
+    "consoleCaptureProbe": "console.error('R3F28-PROBE-console-capture-check') emitted in each tab and read back by read_console_messages — proves an empty error list means zero errors, not a dead reader."
+  },
+  "steps": [
+    {"id": "P1", "step": "Open canvas project", "utc": "2026-09-18T12:42:34Z", "url": "/create/canvas?project=canvas_54d9045d-…&thread=thread_54d9045d-…", "action": "navigate + wait 6s", "observed": "3 react-flow nodes: 01M2PW82K92X01WEFPCCZVTSZK (video), 01M2PWN7VNDZTKPGKSCMF6SY42 (image), 01M2PWY41Z02FDP7Q81W123BJ4 (image). Header balance '9,999,762.1 credits' = DB 99997621. read_console_messages(onlyErrors) = empty.", "verdictClause": "precondition"},
+    {"id": "A1", "step": "Select image node", "utc": "2026-09-18T12:43:10Z", "url": "same", "action": "left_click node 01M2PWY41Z02FDP7Q81W123BJ4", "observed": "node .selected = [01M2PWY41Z02FDP7Q81W123BJ4]; toolbar buttons = Edit with Otto / Create variations / Animate / Download / More actions; no 'Download 2', no '2 selected', no 'Batch of'.", "verdictClause": "R3-F28-S13 baseline single-card toolbar"},
+    {"id": "A2", "step": "Node toolbar 'Create variations' → confirmation card", "utc": "2026-09-18T12:43:24Z", "url": "same", "action": "left_click button 'Create variations' (one click)", "observed": "dialog: 'Make another one like this?  Cost: 1 credit. No charge until you confirm.  Images 1  Shape 1:1 … Cancel | Generate · 1 credit'", "verdictClause": "confirmation card = one deliberate charge"},
+    {"id": "A3", "step": "Confirm ONCE (paid click)", "utc": "2026-09-18T12:43:33Z", "url": "same", "action": "left_click 'Generate · 1 credit' exactly once", "observed": "T+10s (12:43:43Z): nodes = [01M2PW82K9…, 01M2PWN7VN…, 01M2PWY41Z…, 01M2T8PBDCEF9MTJV6W1847ZZT] — exactly ONE new card ('Image / In the queue…'); phantom-string scan for '2 selected','Download 2','Batch of','This canvas didn','stopped loading part way' = [] (none); read_console_messages(onlyErrors) = empty (no 'Minified React error #185', no 'Maximum update depth'); balance 9,999,761.1.", "dbDelta": "GenJob +1 (01M2T8PAWHG1A768CMQB8J823P, GENERATING, 12:43:34.698); CreditLedger +1 RESERVE balanceDelta -10 reservedDelta +10 idempotencyKey reserve:01M2T8PAWHG1A768CMQB8J823P; account 99997611/reserved 10", "verdictClause": "R3-F28-S13 no crash at confirm + one card + one job"},
+    {"id": "A4", "step": "Job settles", "utc": "2026-09-18T12:44:58Z", "url": "same", "action": "wait loop (4×10s) + DB poll", "observed": "GenJob 01M2T8PAWHG1A768CMQB8J823P status DONE, spentUsd 0.035, billedUnits 1, finishedAt 12:44:13.094; canvas still exactly 4 nodes, phantom scan = []; Otto panel 'Done — Made 1 image · 1 credit.'", "dbDelta": "CreditLedger +1 SETTLE balanceDelta 0 reservedDelta -10 idempotencyKey settle:01M2T8PAWHG1A768CMQB8J823P (12:44:13.038)", "verdictClause": "R3-F28-S13 no crash after settle; RESERVE/SETTLE pair"},
+    {"id": "A5", "step": "Click the newly placed card", "utc": "2026-09-18T12:45:23Z", "url": "same", "action": "left_click node 01M2T8PBDCEF9MTJV6W1847ZZT", "observed": "selected = [01M2T8PBDCEF9MTJV6W1847ZZT]; toolbar = Edit with Otto / Create variations / Animate / Download / More actions; phantom scan = []", "verdictClause": "spec ④ a genuinely new card still places; ① single-card toolbar"},
+    {"id": "A6", "step": "Console + network audit after STEP A", "utc": "2026-09-18T12:45:10Z", "url": "same", "action": "read_console_messages(onlyErrors) + read_network_requests", "observed": "errors: only the deliberate probe plus one '[error] Failed to load resource: the server responded with a status of 502 ()'; network shows one POST server-action → 502 among ~350 canvas POSTs, all others 200/ERR_ABORTED(polling aborts). No React error text of any kind.", "verdictClause": "finding: single transient 502 on a canvas server-action poll; UI recovered without an error boundary"},
+    {"id": "B1", "step": "Ask Otto for one cheap 1:1 image (no people, no video)", "utc": "2026-09-18T12:45:37Z", "url": "same", "action": "type into 'Reply to Otto…' then click Send (one click)", "observed": "12:46:17Z Otto 'Needs confirmation' card: '2048 × 2048 · 1:1 · 1 image  1 credit' with button 'Generate · 1 credit'; NOT approved yet. Balance moved 9,999,761.1 → 9,999,758.7 (Otto chat/understanding charge).", "dbDelta": "CreditLedger +2 for the chat: RESERVE -40/+40 then SETTLE +16/-40, idempotencyKey reserve|settle:otto-stream:01M2T8T4SQHN4ZKM5G8E23FHX8 → net 24 units = 2.4 credits. No GenJob, no provider USD column for chat.", "verdictClause": "R3-F28-S10 setup: un-approved card exists"},
+    {"id": "B2", "step": "Open the SAME canvas URL in a second tab", "utc": "2026-09-18T12:46:55Z", "url": "same", "action": "tabs_create + navigate (tab 2)", "observed": "tab 2 nodes = the same 4; Otto 'Needs confirmation' with 'Generate · 1 credit' visible — tab 2 holds the un-approved card.", "verdictClause": "R3-F28-S10 stale-tab precondition"},
+    {"id": "B3", "step": "Approve ONCE in tab 1 (paid click)", "utc": "2026-09-18T12:47:03Z", "url": "same", "action": "left_click 'Generate · 1 credit' in tab 1, exactly once", "observed": "12:47:10Z tab 1 nodes = 5 (new 01M2T8WTVXS917S8307P5MTWH0 'Image / In the queue…'); phantom scan = []", "dbDelta": "GenJob +1 (01M2T8WT62K7VXTBXZV1KVHQRQ, 12:47:06.998); CreditLedger +1 RESERVE reserve:01M2T8WT62K7VXTBXZV1KVHQRQ", "verdictClause": "R3-F28-S10 the one real approval"},
+    {"id": "B4", "step": "Wait for the approved card to become a result", "utc": "2026-09-18T12:48:14Z", "url": "same", "action": "wait loop + DB poll", "observed": "GenJob 01M2T8WT62K7VXTBXZV1KVHQRQ DONE, spentUsd 0.035, finishedAt 12:47:36.493; SETTLE row settle:01M2T8WT62K7VXTBXZV1KVHQRQ at 12:47:36.427", "verdictClause": "R3-F28-S10 result exists before the replay"},
+    {"id": "B5", "step": "Confirm tab 2 is genuinely stale", "utc": "2026-09-18T12:48:26Z", "url": "same", "action": "read tab 2 DOM", "observed": "tab 2 still 4 nodes (no 01M2T8WTVX… card) and still shows 'Needs confirmation' + 'Generate · 1 credit'; console errors in tab 2 = empty.", "verdictClause": "R3-F28-S10 the replay is a real stale replay"},
+    {"id": "B6", "step": "THE REPLAY — press the same card's Generate ONCE in the stale tab 2", "utc": "2026-09-18T12:48:35Z", "url": "same", "action": "left_click 'Generate · 1 credit' in tab 2, exactly once", "observed": "12:49:15Z tab 2: NO crash. nodes = [01M2PW82K9…, 01M2PWN7VN…, 01M2PWY41Z…, 01M2T8PBDC…, 01M2T8WTVXS917S8307P5MTWH0] — five, i.e. it converged to tab 1's set with ONE card for the replayed job; card shows the finished result 'A plain white card lying flat on a plain grey desk,… v1'; phantom scan for '2 selected','Download 2','Batch of','This canvas didn','stopped loading part way' = [] (none); read_console_messages(onlyErrors) = empty — no 'Minified React error #185', no 'Maximum update depth exceeded', no error boundary; balance 9,999,757.7.", "dbDelta": "ZERO new GenJob and ZERO new CreditLedger rows (checked 12:49:27Z: GenJobs created 2026-09-18 = exactly the two above; ledger rows 2026-09-18 = exactly 6: 2 gen RESERVE/SETTLE pairs + 1 otto-stream chat pair). Totals 32 GenJob / 187 ledger = baseline 30/181 + 2/6.", "verdictClause": "R3-F28-S10 replay: no crash, no phantom counts, idempotent"},
+    {"id": "B7", "step": "Click the replayed card in the stale tab", "utc": "2026-09-18T12:49:54Z", "url": "same", "action": "left_click node 01M2T8WTVXS917S8307P5MTWH0 in tab 2", "observed": "selected = [01M2T8WTVXS917S8307P5MTWH0]; toolbar = Edit with Otto(enabled) / Create variations(enabled) / Animate(enabled) / Download(enabled) / More actions(enabled); phantom scan = []", "verdictClause": "spec ① single-card toolbar with Create variations after a replay; ② no 'Batch of 2'; ③ Animate still pressable"},
+    {"id": "B8", "step": "Tab 1 re-checked after tab 2's replay", "utc": "2026-09-18T12:49:40Z", "url": "same", "action": "read tab 1 DOM", "observed": "tab 1 still exactly 5 nodes, phantom scan = [], balance '9,999,757.7 credits' = DB 99997577", "verdictClause": "R3-F28-S10 the origin tab is unaffected by the replay"},
+    {"id": "C1", "step": "Reload both tabs", "utc": "2026-09-18T12:50:21Z", "url": "same", "action": "navigate both tabs to the canvas URL", "observed": "BOTH tabs rendered blank (document.body.innerText.length = 0, readyState complete, document GET 200, an unresolved Suspense placeholder DIV#S:0, all JS chunks 200). Cause found at 12:51:58Z: /api/health build had changed 66f9c766 → 80d1e280 — staging redeployed mid-run, so the open tabs' chunk/RSC references pointed at the retired deployment. Not a product crash: no console error, no error boundary. git diff 66f9c766..80d1e280 = docs only (DEFERRED.md, docs/audits/**, 4 spec .md files), zero apps/web change.", "verdictClause": "environment event, recorded"},
+    {"id": "C2", "step": "Reload both tabs on the new build", "utc": "2026-09-18T12:53:27Z", "url": "same", "action": "navigate both tabs again + wait", "observed": "tab 1 AND tab 2 both render identically: nodes = [01M2PW82K92X01WEFPCCZVTSZK, 01M2PWN7VNDZTKPGKSCMF6SY42, 01M2PWY41Z02FDP7Q81W123BJ4, 01M2T8PBDCEF9MTJV6W1847ZZT, 01M2T8WTVXS917S8307P5MTWH0]; phantom scan = []; both show '9,999,757.7 credits'.", "verdictClause": "one card per job for this run's jobs; both tabs converge"},
+    {"id": "C3", "step": "Balance vs DB", "utc": "2026-09-18T12:52:24Z", "url": "/home", "action": "read app shell balance", "observed": "app shell shows '9,999,757.7 credits'; DB CreditAccount balance 99997577, reserved 0 → exact match. (The /home path itself renders the app's 'Page not found' page — the Home route is not /home; the shell with the balance still renders.)", "dbDelta": "balance 99997577 reserved 0", "verdictClause": "MONEY-F28 balance on screen equals DB"},
+    {"id": "C4", "step": "Close the extra tab", "utc": "2026-09-18T12:54:00Z", "url": "-", "action": "tabs_close tab-1", "observed": "Closed tab tab-1. Session left signed in on the same origin in the original tab.", "verdictClause": "boundary"},
+    {"id": "C5", "step": "Provider bill cross-check", "utc": "2026-09-18T12:54:05Z", "url": "-", "action": "arkcli auth status --format json; arkcli usage stats", "observed": "auth status logged_in=True but usage stats returns 'GetInferenceUsage requires BytePlus Ark SSO STS … STS refresh failed'. provider bill not cross-checked (SSO expired). No key or token printed.", "verdictClause": "spend cross-check unavailable"}
+  ],
+  "verdicts": [
+    {
+      "id": "R3-F28-S13",
+      "status": "PASS",
+      "clausesProven": [
+        "node toolbar 'Create variations' → confirmation card → one confirm click produced NO crash at the moment of confirm (12:43:33Z click, 12:43:43Z DOM+console read: zero console errors, no 'Minified React error #185', no 'Maximum update depth')",
+        "no error-boundary copy 'This canvas didn't open' / 'stopped loading part way' at any point",
+        "no phantom multi-select: '2 selected', 'Download 2', 'Batch of' never appeared in the DOM (scanned at confirm, at settle, and after clicking the new card)",
+        "exactly one card for the new generation (3 nodes → 4 nodes, new node 01M2T8PBDCEF9MTJV6W1847ZZT)",
+        "exactly one new GenJob (01M2T8PAWHG1A768CMQB8J823P) and exactly one RESERVE/SETTLE pair for it",
+        "spec ①: clicking the card after placement shows the single-card toolbar including 'Create variations', not a multi-select bar",
+        "spec ④: a genuinely new card still places"
+      ],
+      "clausesNotProven": [],
+      "reason": "Re-ran the exact 2026-09-17 crash step on build 66f9c766 (= PR #1469 merged). The crash did not recur: no React #185, no maximum-update-depth, no error boundary, no phantom multi-select, one card and one job. Console capture was proven live with a deliberate probe error in the same tab, so the empty error list is a receipt, not a silent reader."
+    },
+    {
+      "id": "R3-F28-S10",
+      "status": "PASS",
+      "clausesProven": [
+        "the replay was attempted from a genuinely stale second tab: tab 2 was loaded before approval (12:46:55Z) and at 12:48:26Z still showed 4 nodes and the un-approved 'Generate · 1 credit' card while tab 1 already held the finished 5th card",
+        "one approval in tab 1 (12:47:03Z) → GenJob 01M2T8WT62K7VXTBXZV1KVHQRQ, DONE 12:47:36, spentUsd 0.035",
+        "the stale replay click (12:48:35Z) produced NO crash in tab 2: zero console errors, no 'Minified React error #185', no 'Maximum update depth exceeded', no error-boundary copy",
+        "tab 2 converged to the same single result — 5 nodes identical to tab 1, one card for the replayed job, showing the finished image",
+        "no phantom multi-select in tab 2 ('2 selected' / 'Download 2' / 'Batch of' absent) — spec ① and ②",
+        "spec ③: after the replay the card's Animate button is present and enabled (as are Edit with Otto / Create variations / Download)",
+        "tab 1 after the replay: still one card per job, no '2 selected', no 'Batch of 2'",
+        "DB after the replay: ZERO additional GenJob and ZERO additional CreditLedger rows (2 GenJobs and 6 ledger rows for the whole run, against a 30/181 baseline)",
+        "after reload both tabs render the identical 5-node canvas"
+      ],
+      "clausesNotProven": [
+        "the ledger idempotency key literal 'cowork:<cardId>' was not observed — the approval's money rows key on the job id (reserve:/settle:01M2T8WT62K7VXTBXZV1KVHQRQ) and the replay wrote no row at all, so no cowork: key exists to read. The idempotency itself is proven by the zero-row delta."
+      ],
+      "reason": "The stale-tab replay of an already-approved card no longer crashes the canvas and no longer doubles anything on screen or in the ledger."
+    },
+    {
+      "id": "MONEY-F28",
+      "status": "PASS",
+      "clausesProven": [
+        "exactly two RESERVE/SETTLE pairs for generation in the whole run: reserve/settle:01M2T8PAWHG1A768CMQB8J823P and reserve/settle:01M2T8WT62K7VXTBXZV1KVHQRQ, each -10/+10 then 0/-10 (1 credit each)",
+        "zero ledger rows for the replay",
+        "final CreditAccount balance 99997577, reserved 0; baseline 99997621 minus 10 (job A) minus 24 (Otto chat net) minus 10 (job B) = 99997577, and the UI shows '9,999,757.7 credits' in both tabs and in the app shell",
+        "GenJob total 32 = baseline 30 + 2; CreditLedger total 187 = baseline 181 + 6"
+      ],
+      "clausesNotProven": [
+        "the two generation pairs are accompanied by one additional RESERVE/SETTLE pair that is NOT a generation: the Otto chat/understanding turn (reserve/settle:otto-stream:01M2T8T4SQHN4ZKM5G8E23FHX8, -40/+40 then +16/-40 = 2.4 credits net). Under a literal reading of 'exactly two RESERVE/SETTLE pairs total for the run' this is a third pair; it is the expected charge for the Otto message the step itself required, carries no GenJob and no provider USD column, and is reported here rather than hidden."
+      ],
+      "reason": "Money moved exactly twice for generation, once per deliberate confirm; the replay moved nothing. The third pair is the chat turn the step prescribed."
+    }
+  ],
+  "writesMade": [
+    "One paid generation via the node toolbar 'Create variations' confirmation card (1 credit): GenJob 01M2T8PAWHG1A768CMQB8J823P, provider USD 0.035",
+    "One Otto chat message in the existing canvas thread asking for a 1:1 image (chat charge: 2.4 credits net, otto-stream 01M2T8T4SQHN4ZKM5G8E23FHX8)",
+    "One paid generation via the Otto confirmation card (1 credit): GenJob 01M2T8WT62K7VXTBXZV1KVHQRQ, provider USD 0.035",
+    "One replay click on the same card from a stale tab — wrote nothing (0 jobs, 0 ledger rows)",
+    "Two canvas cards placed in existing project canvas_54d9045d-fac5-4ee2-a354-ea67afe9007b"
+  ],
+  "jobIds": ["01M2T8PAWHG1A768CMQB8J823P", "01M2T8WT62K7VXTBXZV1KVHQRQ"],
+  "boundaries": [
+    "Never signed out; session left signed in on the same origin in the original tab",
+    "Opened exactly one extra tab and closed it (tab-1)",
+    "No Connect / Revoke / Delete / Remove / Archive / Unarchive; no profile, workspace, settings, billing or admin control touched",
+    "No production touched; DB access read-only (BEGIN READ ONLY / SELECT only / ROLLBACK), URL never written to disk or a command line",
+    "REAL-09 concurrency group not run; no Regenerate/Retry clicked; every paid click was a single deliberate click on the product's own confirmation card",
+    "No secrets, OTPs or card numbers entered; no arkcli key or token printed; no external message sent",
+    "Repo read-only via git show origin/main; no file in the repo modified"
+  ],
+  "toolProblems": [
+    "arkcli: `auth status` reports logged_in=true while `usage stats` fails with an STS refresh error — provider bill not cross-checked (SSO expired)",
+    "read_page refs for the off-screen duplicate of the same confirmation card report center (0,0) and refuse the click; the visible duplicate's ref works"
+  ],
+  "findings": [
+    "PASS on both re-run steps: the R3-F28 crash (React #185 / maximum update depth / 'This canvas didn't open') did not recur on build 66f9c766 in either path, and no phantom '2 selected' / 'Download 2' / 'Batch of 2' appeared anywhere.",
+    "Staging redeployed mid-run (66f9c766 → 80d1e280, docs-only diff) at ~12:51Z. While the swap was in flight, reloads of the canvas rendered a blank page: document GET 200, all chunks 200, readyState complete, an unresolved Suspense placeholder and zero visible text, with no console error and no error boundary. It self-cleared on a reload after the new build was live. Worth knowing that a deploy swap shows商家 a silent blank canvas rather than a reload prompt — separate from R3-F28.",
+    "One transient 502 on a canvas server-action POST at ~12:44-12:45Z (one of ~350 polls) surfaced only as '[error] Failed to load resource: the server responded with a status of 502 ()'; the UI recovered on the next poll.",
+    "Pre-existing, not caused by this run: project canvas_54d9045d-… holds 4 pre-run GenJobs but only 3 pre-run cards. The missing one is 01M2PX2N965JH5HCYCGBWA9BS2 (2026-09-17 05:22:52, threadId NULL, DONE, spentUsd 0.035) — the card lost when the 2026-09-17 S13 crash blew up the canvas. The fix prevents the crash but does not retro-place a card the商家 already paid for; nothing in the R3-F28 row promises it either.",
+    "Node ids share the ULID time prefix of their GenJob (job 01M2T8PAWH… → node 01M2T8PBDC…), which is what made 'one card per job' checkable from the DOM alone."
+  ]
+}
