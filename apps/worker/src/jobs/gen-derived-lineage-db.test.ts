@@ -9,30 +9,36 @@
  * 都断了一跳。Founder 2026-09-18 裁:本版修,派生图继承源图记录(规格
  * `docs/specs/brand-product-identity.md` §5 2026-09-18 行)。
  *
- * **规则如实写(复审 P2,2026-09-18)**:代码里的判据不是「变体与重生成」这两个名字,而是
- * **凡这一单自己不挂任何引用(`GenJob.entityIds` 为空)、且有谱系来源的任务,都继承来源那一
- * 行的记录**。今天真的走到这条规则的商家动作有五个,一个都不特殊:
+ * **规则如实写(复审 P2/P1-1,2026-09-18)**:代码里的判据不是「变体与重生成」这两个名字,
+ * 而是 **凡这一单自己不挂任何引用(`GenJob.entityIds` 为空)、且有谱系来源的任务,都继承来源
+ * 那一行的记录**。判据不认入口,所以今天真的走到它的商家动作有**六个**,一个都不特殊:
  *   · 画布 Create variations —— 源图真被送进引擎当底图 ⇒ `GenJob.sourceGenerationId`;
  *   · Library Regenerate —— 引擎手上没有那张照片 ⇒ `GenJob.lineageGenerationId`(R3-F30 新增
  *     的纯谱系列,入队时由服务端按 ownerId 核过归属之后写);
- *   · Library「Edit this image」—— `components/asset/DetailPanel.tsx` 的 `editIds` 起手就是
- *     空数组,而 `sourceGenerationId` 恒等于商家正在看的那张图 ⇒ 与变体同一种任务行形状;
- *   · 模板跑一次(`components/otto/TemplateModal.tsx` 的 `startTemplateJob`,同样只带
- *     `sourceGenerationId`、不带元素)⇒ 同上;
- *   · Animate(图生视频)⇒ `kind=VIDEO` + `sourceGenerationId`;快照那一格由 `gen.ts` 提到
- *     image / video 两个分支**之前**算,两个分支共用同一份,所以视频那一跳同样继承。
- * 所以下面**逐条路径各跑一次真的 `handleGen`**,断言库里那一行。前四条在 worker 眼里落到的
+ *   · Library「Edit this image」—— `DetailPanel` 的 `handleEditSubmit`:`editIds` 起手就是空
+ *     数组,而 `sourceGenerationId` 恒等于商家正在看的那张图 ⇒ 与变体同一种任务行形状;
+ *   · 模板跑一次 —— `TemplateModal` 的 `startTemplateJob`,同样只带 `sourceGenerationId`、
+ *     不带元素 ⇒ 同上;
+ *   · Animate(图生视频)⇒ `kind=VIDEO` + `sourceGenerationId`;快照那一格由 `handleGen` 提到
+ *     image / video 两个分支**之前**算,两个分支共用同一份,所以视频那一跳同样继承;
+ *   · **Otto 确认卡**(Edit with Otto / 拿一张图问 Otto 而不 @ 任何元素)—— `cowork-actions`
+ *     的 `coworkGenerate` 让 `buildGenRequestFromCard` 从卡面重新读出 `sourceGenerationId`,
+ *     商家没 @ 东西时 `entityIds` 就是空的;任务行另带对话号与 `cowork:<卡号>` 的幂等键
+ *     (`startCoworkGen` 的形状),但那两格不进判据 —— 继承照样发生。
+ * 所以下面**逐条路径各跑一次真的 `handleGen`**,断言库里那一行。它们在 worker 眼里落到的
  * 任务行形状其实只有两种(带不带引擎底图),用例仍按商家动作分开写:这份文件要回答的是
  * 「商家按下哪一颗按钮之后记录还在」,不是「代码里有几个分支」。入队那一侧(哪个入口写哪一
  * 格、值从哪来)由 `apps/web/lib/__tests__/derived-image-lineage.test.ts` 证。
  *
  * 为什么测在这一层:**付费产出**这条路上,`Generation.entitySnapshot` 只有一个写入点
- * (`apps/worker/src/jobs/gen.ts` 那一处快照构造 + 同文件 `tx.generation.create`),上面五条
- * 派生路径全部从那里出图。全仓另外三处也写这一格,都不在派生路上,如实列出(复审 P3):
- *   · `apps/web/lib/upload-actions.ts:394` —— 上传落库,快照按商家**这一次上传时挂的元素**
- *     现建(`buildEntitySnapshot`),没有来源可继承;
- *   · `apps/web/lib/actions.ts:981` —— 画布里直接塞一张图进来,写死 `{entities: []}`;
- *   · `apps/web/lib/asset-actions.ts:325`(`saveCroppedGeneration`)—— 裁剪,同样写死
+ * (本文件被测的 `handleGen` 里那一处快照构造 + 同一处的 `tx.generation.create`),上面六条
+ * 派生路径全部从那里出图。全仓另外三处也写这一格,都不在派生路上,如实列出(复审 P3;
+ * 按**函数**指路,行号会随合并漂移):
+ *   · `apps/web/lib/upload-actions.ts` 的 `finalizeCandidateUploadsInFrame` —— 上传落库,快照
+ *     按商家**这一次上传时挂的元素**现建(`buildEntitySnapshot`),没有来源可继承;
+ *   · `apps/web/lib/actions.ts` 的 `uploadReference` —— 画布里直接塞一张图进来,写死
+ *     `{entities: []}`;
+ *   · `apps/web/lib/asset-actions.ts` 的 `saveCroppedGeneration` —— 裁剪,同样写死
  *     `{entities: []}`。裁剪其实也是一种派生(裁一张商品图,记录一样会丢),但它不经任何付费
  *     任务、没有 `GenJob`、没有 `entityIds` 可判,不在本票判据里 —— 登记在这里,不顺手改。
  *
@@ -53,6 +59,7 @@ vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.g
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { prisma, reserveCredits } from "@fikirtive/db";
+import { lineageCarriesOfficialActor } from "@fikirtive/core";
 import { handleGen } from "./gen.js";
 
 // 与其它真库用例同一道守卫:绝不对着一个不是 *_test 的库跑。
@@ -95,8 +102,15 @@ async function seedProduct(ownerId: string, name: string): Promise<string> {
   return id;
 }
 
+/** 一位真的演员身份 —— Otto 那张确认卡最常挂的东西,也是本票已披露的行为改变那一格。 */
+async function seedCastMember(ownerId: string, name: string): Promise<string> {
+  const id = `ent_${randomUUID()}`;
+  await prisma.entity.create({ data: { id, ownerId, type: "CHARACTER", name } });
+  return id;
+}
+
 /** 商家工作区里那张**首生图**:带着完整的产品记录与 refHash,正是派生图今天丢掉的那一份。 */
-async function seedSourceImage(entityId: string) {
+async function seedSourceImage(entityId: string, shape?: { name?: string; type?: "PRODUCT" | "CHARACTER" }) {
   const assetId = `ast_${randomUUID()}`;
   await prisma.asset.create({
     data: {
@@ -106,7 +120,13 @@ async function seedSourceImage(entityId: string) {
   });
   const id = `gen_${randomUUID()}`;
   const entitySnapshot = {
-    entities: [{ id: entityId, name: "Pandan kaya jar", type: "PRODUCT", variantId: null, refHashes: ["f7ca334a4006"] }],
+    entities: [{
+      id: entityId,
+      name: shape?.name ?? "Pandan kaya jar",
+      type: shape?.type ?? "PRODUCT",
+      variantId: null,
+      refHashes: ["f7ca334a4006"],
+    }],
   };
   await prisma.generation.create({
     data: {
@@ -127,6 +147,8 @@ async function seedDerivedJob(shape: {
   prompt?: string;
   /** Animate 那一条:同一条继承规则,`kind=VIDEO` 的任务行。 */
   video?: boolean;
+  /** Otto 确认卡那一条:任务行带对话号与 `cowork:<卡号>` 的幂等键(`startCoworkGen` 的形状)。 */
+  coworkCardId?: string;
 }) {
   const jobId = `gen_${randomUUID()}`;
   await prisma.genJob.create({
@@ -136,6 +158,9 @@ async function seedDerivedJob(shape: {
       model: shape.video ? "seedance-2-mini" : "seedream",
       count: 1, status: "QUEUED",
       ...(shape.video ? { videoOptions: { seconds: 5, resolution: "480p" } } : {}),
+      ...(shape.coworkCardId
+        ? { threadId: `thr_${randomUUID()}`, idempotencyKey: `cowork:${shape.coworkCardId}` }
+        : {}),
       sourceGenerationId: shape.sourceGenerationId ?? null,
       lineageGenerationId: shape.lineageGenerationId ?? null,
       entityIds: shape.entityIds ?? [],
@@ -261,6 +286,31 @@ describe("R3-F30 派生图继承源图的商品／人物记录(真库,真 handle
     expect(job.entityIds).toEqual([]);
     const ledger = await prisma.creditLedger.findMany({ where: { orgId, refId: jobId }, select: { kind: true }, orderBy: { createdAt: "asc" } });
     expect(ledger.map((r) => r.kind)).toEqual(["RESERVE", "SETTLE"]);
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("Otto 确认卡(Edit with Otto / 拿一张图问 Otto 而不 @ 任何元素):同样继承,连演员血统一起", async () => {
+    // 复审 P1-1 —— 第六条路。`coworkGenerate`(`apps/web/lib/cowork-actions.ts`)让
+    // `buildGenRequestFromCard` 从卡面重新读出 `sourceGenerationId`,而商家没 @ 任何元素时
+    // `entityIds` 就是空的 ⇒ 任务行落到与变体同一个形状,worker 那条判据不认入口,照样继承。
+    // 这里连**演员**一起继承,因为那正是本票已披露的行为改变在 Otto 面上的样子。
+    const castId = await seedCastMember(orgId, "Aisyah");
+    const source = await seedSourceImage(castId, { name: "Aisyah", type: "CHARACTER" });
+    const jobId = await seedDerivedJob({
+      sourceGenerationId: source.id,
+      prompt: "same shot, warmer evening light",
+      coworkCardId: `msg_${randomUUID()}`,
+    });
+
+    await handleGen({ genJobId: jobId }, 0);
+
+    const { job, gen } = await deliveredGeneration(jobId);
+    expect(gen.entitySnapshot).toEqual(source.entitySnapshot);
+    expect(job.entityIds).toEqual([]);
+    // 已披露的行为改变,就在这一行上成立:本票之前这张派生图的血统是空的,
+    // `lineageCarriesOfficialActor` 读不到演员;现在读得到 —— 付费前那道放大闸与 i2v 的
+    // 「他已经挑过演员」拒绝文案从此按它判(验收⑩,证在
+    // `packages/otto/src/skills/reference-upscale-gate-derived-lineage.test.ts`)。
+    expect(lineageCarriesOfficialActor(gen.entitySnapshot)).toBe(true);
   }, DB_CASE_TIMEOUT_MS);
 
   it("派生时自己换了引用:快照跟着新引用走,一个字都不从源图借", async () => {

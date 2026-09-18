@@ -1741,13 +1741,24 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
        * 而不是 `entities.length`:挂了引用但那些元素已被删掉,仍然是「这一单自己换过引用」,
        * 继承源图的旧记录会把它说成一件没发生过的事。
        *
-       * **这条判据管到的不止那两条路(复审 P2,如实写下来)**:凡是「自己不挂引用 + 有谱系
-       * 来源」的任务都继承,今天共五个商家动作 —— 画布 Create variations、Library Regenerate、
-       * Library「Edit this image」(`DetailPanel.tsx` 的 `editIds` 起手就是空数组)、模板跑一次
-       * (`TemplateModal.tsx` 的 `startTemplateJob` 从不带元素)、以及 Animate(图生视频:这一
-       * 格算在 image / video 两个分支**之前**,两边共用)。五条各有一条真库用例钉着
-       * (`gen-derived-lineage-db.test.ts`)。相反地,分镜里那条只认 `shotId`、没有
-       * `sourceGenerationId` 的 Animate 拿不到谱系来源 ⇒ 不继承,与今天同形。
+       * **这条判据不认入口,所以它管到的不止那两条路(复审 P2/P1-1,如实写下来)**:凡是
+       * 「自己不挂引用 + 有谱系来源」的任务都继承,今天共**六个**商家动作 ——
+       *   ① 画布 Create variations;
+       *   ② Library Regenerate;
+       *   ③ Library「Edit this image」(`DetailPanel` 的 `handleEditSubmit`,`editIds` 起手就是
+       *      空数组);
+       *   ④ 模板跑一次(`TemplateModal` 的 `startTemplateJob`,从不带元素);
+       *   ⑤ Animate(图生视频:这一格算在 image / video 两个分支**之前**,两边共用);
+       *   ⑥ **Otto 确认卡**(Edit with Otto / 拿一张图问 Otto 而不 @ 任何元素)——
+       *      `cowork-actions` 的 `coworkGenerate` 让 `buildGenRequestFromCard` 从卡面重新读出
+       *      `sourceGenerationId`,商家没 @ 东西时 `entityIds` 就是空的,于是任务行与①同形。
+       * 六条各有一条真库用例钉着(`gen-derived-lineage-db.test.ts`)。相反地,分镜里那条只认
+       * `shotId`、没有 `sourceGenerationId` 的 Animate 拿不到谱系来源 ⇒ 不继承,与今天同形。
+       *
+       * 已披露的行为改变因此**同样落在 Otto 面上**:继承之后 `lineageCarriesOfficialActor`
+       * 在派生图上读得到演员血统,付费前那道参考图放大闸(`reference-upscale-gate` 的
+       * `assertPrePaymentReferenceSizeGate`)与本文件 i2v 那句「他已经挑过演员」的拒绝文案,
+       * 从此在人工面与 Otto 面按同一条血统判。
        *
        * 来源从哪来:`sourceGenerationId`(真送进引擎的底图,画布变体走这条)优先,没有底图
        * 时读 `lineageGenerationId`(Library Regenerate 这条路引擎手上没有那张照片,所以它
