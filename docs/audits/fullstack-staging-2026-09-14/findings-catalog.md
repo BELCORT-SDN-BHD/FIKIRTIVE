@@ -339,7 +339,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F27 · 客户端 Back 回 Home 后 Otto 对话面板空白 40–60 秒才补上进行中的卡片
 
-**状态**：修复 PR #1476（Founder 2026-09-18 裁（对谈）：修；登记行见 `docs/specs/frontend-baseline.md` §5 的 2026-09-18 行）。修掉的是两条读码坐实的根因——① 回到这一页（切回前台／bfcache 摊开）没有任何人补读一次，观察窗只剩计时器一个触发源，慢档一格 60 秒且在 bfcache 里是冻住的；② 面板取种子那几秒正文只有灰条加一条 `sr-only`，屏幕上一个字都没有。**40–60 秒这个数字本身未复现、未测量**：冷加载路径上仍有一次 `loadOttoPanelSeed` 服务端动作要等（时延未量），且本轮另一组证据独立记录过 harness 的 `get_page_text`／`read_page` 会对刚导航完、其实已渲染的标签页连续几十秒返回空文档（`workflow-groups2-4-result.json`），两者可能各占一部分——要坐实需一次 staging 时延追踪，已登记待裁。
+**状态**：修复 PR #1476（真浏览器复测待做，未关闭）——Founder 2026-09-18 裁（对谈）：修；登记行见 `docs/specs/frontend-baseline.md` §5 的 2026-09-18 行。**当场受益的只有「切走标签页再切回来」那一腿**；按返回那一腿走整份文档重载（Home 是 `force-dynamic`，`apps/web/app/(home)/page.tsx:22`，动态页文档响应带 `no-store`，而 `no-store` 是 Chrome 明写的 bfcache 阻断项——响应头未在 staging 实测，这半句是推论）或走 App Router 客户端回退（popstate）时，`pageshow(persisted)` 与 `visibilitychange` 都不会敲，本票给它的只有那句看得见的等待文案。按返回与纯刷新两腿须一次真浏览器复测才能判，复测之前此条不关。修掉的是两条读码坐实的根因——① 回到这一页（切回前台／bfcache 摊开）没有任何人补读一次，观察窗只剩计时器一个触发源，慢档一格 60 秒且在 bfcache 里是冻住的；② 面板取种子那几秒正文只有灰条加一条 `sr-only`，屏幕上一个字都没有。**40–60 秒这个数字本身未复现、未测量**：冷加载路径上仍有一次 `loadOttoPanelSeed` 服务端动作要等（时延未量），且本轮另一组证据独立记录过 harness 的 `get_page_text`／`read_page` 会对刚导航完、其实已渲染的标签页连续几十秒返回空文档（`workflow-groups2-4-result.json`），两者可能各占一部分——要坐实需一次 staging 时延追踪，已登记待裁。
 
 商家批准一条生成后离开到 `/library`、再用浏览器 Back 回到 Home：线程标题立刻显示，但对话正文空白约 40–60 秒，之后才补上「✓ Approved — in the queue」的进行中卡片；同一现象在一次纯刷新之后也出现（约 20–60 秒）。这段窗口里，一个正在查看自己刚批的付费任务的商家会看到「什么都没有」，不是加载态、不是错误态，只是空白。无金钱影响：期间账本零新增行。
 

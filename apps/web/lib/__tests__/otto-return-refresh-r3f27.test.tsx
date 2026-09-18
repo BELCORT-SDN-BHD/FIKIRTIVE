@@ -18,7 +18,20 @@
  *     「回来」可言;这一条对话已经全是终态(没有在跑的活)时也不读 —— 看不见的那一页读
  *     回来的东西没有人在看,不为它多发一次已认证请求。
  *
- * 红→绿:修之前三处监听一条都不存在,①②两条各读到 0 次调用。
+ * 2026-09-18 复审回修再钉三件(两镜头各自实证的 P2/P3):
+ *
+ *  ④ **切回来不许抹掉钱的诚实话**。补读走的是 `rearmGenerationPoll()`,而它会把档位打回
+ *     快轮 —— 于是快轮烧完之后屏幕上那句「This is taking longer than usual. Your credits
+ *     for this are on hold…」会因为商家切了个标签页回来就当场消失,换回「Otto is making
+ *     this」。服务端那一头什么都没变,我们却把自己承认过的「等太久了」收了回去。
+ *     新纪律:**读**照补,**档位**只在本来就是快轮时才重上膛。
+ *  ⑤ **隐藏那一声不读**。`visibilityState !== "visible"` 那道闸此前一条测试都没有 ——
+ *     切**走**(hidden)也会敲一声 `visibilitychange`,那一下不该发请求。
+ *  ⑥ **一次返回只读一次**。bfcache 摊开会连着敲 `pageshow` 与 `visibilitychange` 两声,
+ *     它们说的是同一件事;在飞去重之前那是两趟请求、两次重上膛。
+ *
+ * 红→绿:修之前三处监听一条都不存在,①②两条各读到 0 次调用;回修之前 ④ 读到那句话被
+ * 抹掉、⑤ 读到隐藏时也发了请求、⑥ 读到两次调用。
  */
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -71,6 +84,14 @@ globalThis.ResizeObserver ??= class {
 
 const THREAD_ID = "thread-r3f27";
 const JOB_ID = "job_video_1";
+
+/** 快轮这一档的全部额度:`GENERATION_WATCH_GEARS.fast` = 2.5s × 48 格 —— 烧完这些,
+ *  `nextSyncPhase` 把档位交给慢轮,屏幕上那句「太久了」才有资格出现。 */
+const FAST_GEAR_MS = 2500 * 48;
+/** 还在快轮时那句话。 */
+const WORKING_LINE = "Otto is making this";
+/** 快轮烧完、慢轮还在问时那句**钱**的话(后半句带实体引号,只对这一句的前半截)。 */
+const DELAYED_LINE = "This is taking longer than usual.";
 
 /** 一张已经批准、钱已经花出去、结果还没回来的卡 —— `hasWorkingJob` 为真的最小现场。 */
 const workingCard = () => ({
@@ -135,6 +156,20 @@ async function pageShow(persisted: boolean): Promise<void> {
   });
 }
 
+/** 真实的 bfcache 摊开:同一拍里连着敲两声(`pageshow` 与 `visibilitychange`),
+ *  它们说的是同一件事 —— 商家回到了这一页。 */
+async function bfcacheRestore(): Promise<void> {
+  await act(async () => {
+    const event = new Event("pageshow") as Event & { persisted?: boolean };
+    Object.defineProperty(event, "persisted", { value: true });
+    window.dispatchEvent(event);
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+}
+
+/** 屏幕上此刻的字。 */
+const screenText = (): string => container?.textContent ?? "";
+
 beforeEach(() => {
   setVisibility("visible");
   mocks.chat.messages = [workingCard()];
@@ -184,5 +219,56 @@ describe("R3-F27 回到这一页就读一次进行中的那张卡", () => {
     await pageShow(true);
 
     expect(mocks.getCoworkThreadClient).not.toHaveBeenCalled();
+  });
+
+  it("R3-F27 — 快轮烧完之后切回来:那句「太久了」还在,读照样补一次(档位不被拨回去)", async () => {
+    // 这一条钉的是**钱的话不许被一次切标签页抹掉**。修之前补读无条件调
+    // `rearmGenerationPoll()`,档位打回快轮 ⇒ `pollGaveUp` 翻假 ⇒ 「This is taking longer
+    // than usual. Your credits for this are on hold…」当场换回「Otto is making this」,
+    // 商家于是重新从头等一轮 —— 我们把自己已经承认的「等太久了」悄悄收了回去。
+    vi.useFakeTimers();
+    try {
+      await mount();
+      expect(screenText()).toContain(WORKING_LINE);
+      expect(screenText()).not.toContain(DELAYED_LINE);
+
+      // 把快轮的额度烧光 —— 到顶那一格由 `nextSyncPhase` 把档位交给慢轮。
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(FAST_GEAR_MS);
+      });
+      expect(screenText()).toContain(DELAYED_LINE);
+
+      mocks.getCoworkThreadClient.mockClear();
+      await returnToForeground();
+
+      // 读照补(这才是本票要的那一下)……
+      expect(mocks.getCoworkThreadClient).toHaveBeenCalledWith(THREAD_ID);
+      // ……但那句话原地不动:能把窗口拨回快轮的只有商家自己按的「Check again」。
+      expect(screenText()).toContain(DELAYED_LINE);
+      expect(screenText()).not.toContain(WORKING_LINE);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("R3-F27 — 切**走**那一声(visibilityState 是 hidden)不读", async () => {
+    // `visibilityState !== "visible"` 那道闸此前一条测试都没有:切走也会敲一声
+    // `visibilitychange`,而看不见的那一页读回来的东西没有人在看。
+    await mount();
+
+    setVisibility("hidden");
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(mocks.getCoworkThreadClient).not.toHaveBeenCalled();
+  });
+
+  it("R3-F27 — bfcache 摊开连敲两声,一次返回也只读一次", async () => {
+    await mount();
+
+    await bfcacheRestore();
+
+    expect(mocks.getCoworkThreadClient).toHaveBeenCalledTimes(1);
   });
 });

@@ -879,12 +879,42 @@ export function OttoChatStream({
   // 读最新的那一份闭包(`resumeWatchRef`)而不是把它锁进挂载时那一帧:监听器只在挂载/卸载
   // 时挂卸一次,而 `hasWorkingJob` 与 `pollAndInjectResults` 每一次渲染都是新的
   // (与 `OttoPanel.tsx` 的 `latest` ref 同一种写法)。
+  //
+  // 复审回修(2026-09-18,两镜头各自实证的 P2)—— **回来只补一次读,不把档位拨回去**。
+  // `rearmGenerationPoll()` 会把 `pollGear` 打回 `"fast"`:对「切回来」这一下来说,那等于
+  // 把屏幕上已经说出口的两句诚实话原地抹掉 —— 「This is taking longer than usual. Your
+  // credits for this are on hold…」(`pollGaveUp`)与「This looks stuck. Cancel it on the
+  // card to get your credits back…」(`pollTerminal`)。这两句话是**钱**的话:它们要到慢档
+  // /耗尽那一刻才有资格出现,而商家只是切了个标签页回来,服务端那一头一个字都没变。抹掉
+  // 之后商家重新看到的是「Otto is making this」,于是再等一轮 —— 我们把自己已经承认的
+  // 「等太久了」悄悄收了回去。所以:**读**无条件补(`hasWorkingJob` 那一格里),**档位**只
+  // 在本来就是快档时才重新上膛(那一格里没有任何诚实话要保,重上膛只是别让快轮的额度被
+  // 后台那段时间白白烧掉);从慢档或耗尽回来,能把窗口拨回快轮的仍然只有商家自己按下的那
+  // 颗「Check again」。
+  //
+  // 一次「回来」只读一次(`resumeReadInFlightRef`):bfcache 摊开会连着敲两声(`pageshow`
+  // 与 `visibilitychange`,次序还因浏览器而异),它们说的是同一件事。这只旗在读发出去那
+  // 一刻立起、读落地(成或败)才放下 —— 同一拍里的第二声、以及读还在飞时的任何一声,都不
+  // 再为同一次返回多发一趟已认证请求。
+  //
+  // 顺带记一笔(§7.3):全仓现在有四处手写的「商家回到这一页就重读」监听 ——
+  // `components/global-navigation.tsx` 的余额读、`app/billing/BillingLiveRefresh.tsx` 的
+  // 账单重读、`components/otto/OttoSchedule.tsx` 的排期重读,以及这一处。四处的判据各不
+  // 相同(只有这一处听 `pageshow`、只有这一处有「还有活在跑」的闸与在飞去重),现在抽公共
+  // hook 会是一个只有一个调用方的新抽象;登记为后续,不在本票里造。
   const resumeWatchRef = useRef<() => void>(() => {});
+  const resumeReadInFlightRef = useRef(false);
   useEffect(() => {
     resumeWatchRef.current = () => {
       if (!hasWorkingJob) return;
-      rearmGenerationPoll();
-      void pollAndInjectResults().catch(() => undefined);
+      if (resumeReadInFlightRef.current) return;
+      resumeReadInFlightRef.current = true;
+      if (pollGear === "fast") rearmGenerationPoll();
+      void pollAndInjectResults()
+        .catch(() => undefined)
+        .finally(() => {
+          resumeReadInFlightRef.current = false;
+        });
     };
   });
   useEffect(() => {
