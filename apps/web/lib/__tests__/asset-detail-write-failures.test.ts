@@ -666,6 +666,47 @@ describe("FRONT-A14 血缘节:出处、参考、成本、状态、用途", () =>
     expect(links, "出处对话点不回去").toContain("/create/canvas?project=prj_1&thread=thr_1");
   });
 
+  /**
+   * R3-F30 复审 P3(2026-09-18)—— 「有迹可循」要的是记录说真话,不是记录说得好听。
+   *
+   * 派生图(变体 / Regenerate / 编辑 / 模板 / Animate)的那几个名字是从源图继承来的记录;
+   * Regenerate 那条路**一张参考图都没送给引擎**。所以两种写法必须分开,而且是按同一格信号
+   * 分(`referencesInherited`,服务端从 `GenJob.entityIds` 是否为空判出来)。
+   *
+   * 变异自查:把三元去掉、两支都写 "References used" ⇒ 第一条红;两支都写继承那句 ⇒ 第二条红。
+   */
+  it("继承来的记录不写成「用过的参考」——派生图那一行说它是源图的记录", async () => {
+    mocks.getGenerationLineage.mockResolvedValue({
+      canvas: { id: "prj_1", name: "Hari Raya gifting" },
+      conversation: null,
+      references: ["Pandan kaya jar"],
+      referencesInherited: true,
+      costCredits: 80,
+      status: "Delivered",
+      usedIn: [],
+    });
+    await renderPanel();
+    const text = surface().textContent ?? "";
+    expect(text, "这一单一张参考图都没发出去,不许说 References used").not.toContain("References used");
+    expect(text).toContain("Elements record (from the source image): Pandan kaya jar");
+  });
+
+  it("这一单真的挂了元素、真的送了参考图 ⇒ 照旧说 References used", async () => {
+    mocks.getGenerationLineage.mockResolvedValue({
+      canvas: { id: "prj_1", name: "Hari Raya gifting" },
+      conversation: null,
+      references: ["Pandan kaya jar"],
+      referencesInherited: false,
+      costCredits: 80,
+      status: "Delivered",
+      usedIn: [],
+    });
+    await renderPanel();
+    const text = surface().textContent ?? "";
+    expect(text).toContain("References used: Pandan kaya jar");
+    expect(text).not.toContain("record (from the source image)");
+  });
+
   it("没花过钱的那一行说 no credits charged,不写一个假的 0 credits", async () => {
     mocks.getGenerationLineage.mockResolvedValue({
       canvas: { id: "prj_1", name: "Hari Raya gifting" },

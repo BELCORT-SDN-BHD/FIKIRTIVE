@@ -1741,14 +1741,27 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
        * 而不是 `entities.length`:挂了引用但那些元素已被删掉,仍然是「这一单自己换过引用」,
        * 继承源图的旧记录会把它说成一件没发生过的事。
        *
+       * **这条判据管到的不止那两条路(复审 P2,如实写下来)**:凡是「自己不挂引用 + 有谱系
+       * 来源」的任务都继承,今天共五个商家动作 —— 画布 Create variations、Library Regenerate、
+       * Library「Edit this image」(`DetailPanel.tsx` 的 `editIds` 起手就是空数组)、模板跑一次
+       * (`TemplateModal.tsx` 的 `startTemplateJob` 从不带元素)、以及 Animate(图生视频:这一
+       * 格算在 image / video 两个分支**之前**,两边共用)。五条各有一条真库用例钉着
+       * (`gen-derived-lineage-db.test.ts`)。相反地,分镜里那条只认 `shotId`、没有
+       * `sourceGenerationId` 的 Animate 拿不到谱系来源 ⇒ 不继承,与今天同形。
+       *
        * 来源从哪来:`sourceGenerationId`(真送进引擎的底图,画布变体走这条)优先,没有底图
        * 时读 `lineageGenerationId`(Library Regenerate 这条路引擎手上没有那张照片,所以它
        * 只有谱系锚点)。两列都由服务端写,都不是 `genRequest` 的字段。
        *
-       * 租户:这一读按 `ownerId: job.ownerId` 收口 —— 继承来的元素 id 因此**必定**已经属于
-       * 同一个商家,不是因为谁这么说,而是因为跨租户的源图在这里根本查不出来(查不到 ⇒ 不
-       * 继承 ⇒ 落空数组,与今天同形)。不过滤 `deletedAt`:这是一次纯记录读,商家把源图丢进
-       * 回收站不该让已经发生过的谱系凭空消失。
+       * 租户(复审 P3 如实改写):挡住越租户的**不是**下面那句 `ownerId: job.ownerId`,而是这
+       * 整个 handler 外面那一层 `runAsTenant(job.ownerId)` 帧 —— Prisma 的 tenant guard
+       * (`packages/db/src/tenant-guard.ts`,`ownerId` 一族恒在 enforce 挡位)会把帧里的租户号
+       * **就地注进**这条 where。所以跨租户的源图在这里根本查不出来(查不到 ⇒ 不继承 ⇒ 落空
+       * 数组,与今天同形),而写出来的那句 `ownerId` 是双保险 —— 2026-09-18 实测:把那一格删掉,
+       * `gen-derived-lineage-db.test.ts` 七条仍然全绿。留着它是为了让这一读自己说得出自己的
+       * 边界,与本文件其它每一条读同形。
+       * 不过滤 `deletedAt`:这是一次纯记录读,商家把源图丢进回收站不该让已经发生过的谱系凭空
+       * 消失。
        *
        * 钱与引擎一格不碰:这几行跑在付费调用之前,但只读、只影响将要写进 `Generation` 的那
        * 一格记录 —— 发给引擎的字节、价格、幂等键全都不读这里。
