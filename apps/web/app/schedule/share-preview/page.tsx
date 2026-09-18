@@ -18,6 +18,14 @@ import { SHARE_PREVIEW_COOKIE_NAME } from "@/lib/share-preview-cookie";
  * so an old link and a new one end up in the identical state, and the token never sits in this
  * page's own URL for even one render.
  *
+ * R3-F32 — that forward is now the BACKSTOP, not the first answer. `redirect()` here cannot keep
+ * its promise on its own: `app/schedule/loading.tsx` is a Suspense boundary above this segment, so
+ * Next flushes the shell as HTTP 200 first and the redirect degrades into a meta refresh — the
+ * token then sits in the address bar for about a second (measured on staging 2026-09-17). The real
+ * answer is a routing-layer redirect that runs before anything renders:
+ * `lib/legacy-share-link-redirect.ts`, wired in `next.config.ts`. This line stays because it costs
+ * nothing and it is what makes the page correct when read on its own.
+ *
  * ── IT IS OUTSIDE THE AUTH WALL, AND THAT IS THE POINT ───────────────────────────────────────
  * `proxy.ts` excludes exactly `schedule/share-preview` (bounded, like /verify-email and
  * /api/ops/dlq): a client with no account must be able to open it. The link's HMAC plus its live
@@ -58,8 +66,14 @@ export default async function SharePreviewPage({
 }) {
   const { t } = await searchParams;
   // SHARE-A6 — a legacy `?t=` link still opens; it goes straight through the same cookie door a
-  // freshly minted `/s/<token>` link uses, so the token never renders into THIS page's own URL. A
-  // repeated `?t=` arrives as an array; fail closed (no redirect) rather than picking one.
+  // freshly minted `/s/<token>` link uses, so the token never renders into THIS page's own URL.
+  //
+  // A repeated `?t=` arrives here as an array, and this backstop fails it closed (no redirect)
+  // rather than picking one. That is NOT what a browser sees any more, and the difference is worth
+  // stating: the routing-layer rule answers first and resolves a repeated `?t=` to the LAST value
+  // (Next's `matchHas` does `value.slice(-1)[0].match(...)`), so it 307s to `/s/<last>`. The array
+  // branch below is only reachable when the value falls outside that rule's character class — the
+  // shapes `lib/legacy-share-link-redirect.ts` deliberately does not accept.
   if (typeof t === "string" && t.length > 0) redirect(`/s/${encodeURIComponent(t)}`);
 
   const token = (await cookies()).get(SHARE_PREVIEW_COOKIE_NAME)?.value ?? "";
