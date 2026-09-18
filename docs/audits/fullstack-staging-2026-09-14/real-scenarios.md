@@ -53,7 +53,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：付费视频＋可能理解费，先核卡价与provider估价。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN（staging 第三轮付费旅程第一组，2026-09-16，见 `coverage-matrix.md` 本行同日回填）——「Brand 建测试产品」这一步的前置条件不成立：`/brand` 五分区全部枚举后确认零产品创建控件，Library Elements Products 空态只读，`@` 菜单无建产品选项，DB 核实 org founder 零存活 PRODUCT Entity。worker 未绕开产品自身入口直调后端 action 或驱动 Otto 代建（会伪造商家没有的路径），如实停在 NOT RUN。根因即 R3-F20（`docs/audits/fullstack-staging-2026-09-14/findings-catalog.md`），修复 PR #1463 在飞；路径已查明，待该 PR 合并或另行授权直建后由后续付费组重跑本行全部步骤。
+- 执行状态：PASS（staging 第三轮付费旅程第二组，2026-09-17，build `c0d25917`，见 `coverage-matrix.md` 本行同日回填；证据 `local-logs/staging-r3-paid/real-03-person-video.json`）。R3-F20 指路死路已随 PR #1463 修复，2026-09-16 那次 NOT RUN 的前置阻断消失：Brand 建产品→Library 同一张卡→`@` 菜单（来源标签「Product」）→确认卡→`GenJob.entityIds`／`approvedEntities`／`Generation.entitySnapshot` 七处同一 Entity id 全部证成；无首帧合成（三个帧输入列全 NULL、`RefGenJob=0`）；交付与报价一致（16:9／5s／720p／No sound），播放与下载均真实（sha256 与 `Asset.contentHash` 相等）。**唯一偏差**：「挂自有图」这一步用的是商家已有的 Library 图（本身 AI 生成），不是本轮新上传——harness 无文件上传动作，未上传自己的新素材；商家上传一张全新产品照片的子路径仍待补跑，登记见 `findings-catalog.md` 本轮补记。
 
 ### REAL-04 商家场景：不带人物的创作和 variation
 
@@ -63,7 +63,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：付费视频＋图；首批最多各一单。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN。
+- 执行状态：PASS（staging 第三轮付费旅程第三组，2026-09-17，build `c0d25917`；证据 `local-logs/staging-r3-paid/real-04-06-08.json` 步骤 S01–S14）。无人物商品视频：`GenJob.entityIds`／`approvedEntities` 只含产品、不含任何演员；成功可播（1280×720、5.042s、零音频字节）、下载字节与哈希一致；Create variations 用已有图产出独立可用的新图（原图不动），确认报价（「Cost: 1 credit. No charge until you confirm」）在点击前可见；两单各自恰一组 RESERVE/SETTLE、零 REFUND。旁证（不影响本行判定）：变体的 `entitySnapshot` 为空数组，产品身份一跳后丢失，另登 `findings-catalog.md` R3-F30。
 
 ### REAL-05 商家场景：中文组合输入与英文提交
 
@@ -83,7 +83,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：一单图；显式新意图若执行多一单。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN。
+- 执行状态：PARTIAL（staging 第三轮付费旅程第三组，2026-09-17，build `c0d25917`；证据 `local-logs/staging-r3-paid/real-04-06-08.json` 步骤 S07–S11）。B 标签重放同一张已批卡「相同意图返回同 job、无新增账本」的账本半句有硬证据（零新增 `GenJob`、零新增账本行、余额不动）；但该重放的服务端正面回执被画布崩溃（R3-F28，`React error #185`）吞掉，只能证明「没有二次扣费」，不能证明「幂等守卫真的处理过这次重放」——两件事分开陈述。显式新意图（Regenerate）确实产生新 job 与新报价。终态前的在途重放（本行「终态后再重放」的前半句）未发生（图片在 B 标签点击前已 DONE）。跨标签业务解释仍按本行「不静默通过该争议」交 Founder 裁定，本组不代为裁定。
 
 ### REAL-07 商家场景：付费后刷新、离页和回来
 
@@ -93,7 +93,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：复用现有单，不额外生成。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN。
+- 执行状态：PARTIAL（staging 第三轮付费旅程第二组，2026-09-17，build `c0d25917`；证据 `local-logs/staging-r3-paid/real-03-person-video.json` 步骤 S10–S12）。worker 自报 PASS，独立核证员改判 PARTIAL：刷新腿在生成中（GENERATING）验证成立，Back 腿卡在终态边界，深链与第二标签两腿都在任务已 DONE 之后 4 分钟才验证——「回到同一个仍在跑的 job」未被证明，worker 自己的未证条款与 PASS 判据冲突。已证并保留：同一 job 全程恰 2 条账本行、四处余额一致、慢任务全程未伪装失败（`Otto is making this — this can take a moment…`）。
 
 ### REAL-08 商家场景：真实失败之后编辑重试
 
@@ -103,7 +103,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：一次图／视频按原型报价。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN。
+- 执行状态：PARTIAL（staging 第三轮付费旅程第三组，2026-09-17，build `c0d25917`；证据 `local-logs/staging-r3-paid/real-04-06-08.json` 步骤 S16–S19）。结构性受阻，非取证不足：编辑重试入口存在（Try again 克隆原卡零花费、Change something 交回 Otto）；失败已退款且退款行全程未被抵消或重复；付费前 fail-closed 且理由具体可行动。**「新单一次预扣」未证**：org founder 今天仅有的两个自然失败都是永久性无效输入（80×107px 起始帧；「不能作人物」的参考图），任何忠实重试都在校验层被拒、走不到付费提交，本行「没有自然失败则NOT RUN，不故意打挂线上」的边界因此不允许硬闯；需 Founder 批准人造一次供应商侧失败，或改判由单元／集成测试覆盖，登记见 `docs/specs/asset-action-idempotency.md` §5 本轮新增行。
 
 ### REAL-09 商家场景：两商家长视频和短任务同时运行
 
@@ -123,7 +123,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：无生成；仅已授权测试链接。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN。
+- 执行状态：BLOCKED（staging 第三轮付费旅程第四组，2026-09-17，build `c0d25917`；证据 `local-logs/staging-r3-paid/real-10-share-anon.json` 全部步骤）。两个独立阻断均已复核：①全部 8 个组织零 `ScheduledPost` 行，本 build 无商家排期入口（`/schedule` 307 回 Home，唯一路径是 Otto 的 `sharePostPreview` 技能），「为测试排期生成预览链接」这一步的前置条件不成立；②即便有排期，staging `web`／`worker` 两服务均未设置 `MEDIA_PROXY_SECRET`／`SHARE_PREVIEW_SECRET`。核证员追加第三个阻断（R3-F31）：即便前两项补齐，`/s/<token>` 在 staging 会把客户 303 到 `localhost:8080`。脱离分享链可验证的条款均已证成——账本无新增；匿名读其他租户资源统一 404；fail-closed 页面文案「This preview isn't available」与过期／伪造无从区分。**未证**：`Range` 分段传（无媒体 token 可测）、SHARE-A5「Content may have changed」提示行（页面从未到达成功态）、SHARE-A10 签名跨租户改指（观察到的 404 是「密钥未配置」分支，不是签名复核被挡下）。
 
 ### REAL-11 商家场景：撤销分享后旧页面和媒体立即失效
 
@@ -133,7 +133,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：独立授权后执行，无生成。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN。
+- 执行状态：BLOCKED（staging 第三轮付费旅程第四组，2026-09-17，build `c0d25917`）。本行需要先 Revoke 一条真实分享，而 REAL-10 已确认的两个阻断（零 `ScheduledPost`、两把分享密钥缺失）同样挡住本行——本组未为本行单独派工，未执行任何 Revoke 动作，按同一阻断原因标 BLOCKED，不占预算另撞同一堵墙。解锁条件同 REAL-10，另加 R3-F31（`/s/<token>` 303 到 `localhost:8080`）已修。
 
 ### REAL-12 商家场景：上传自有文件并取回真实字节
 
@@ -223,7 +223,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：只读成本核对。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN。
+- 执行状态：PASS（staging 第三轮付费旅程第二组，2026-09-17，build `c0d25917`，取代此前的本地 mock 记录；证据 `local-logs/staging-r3-paid/real-03-person-video.json` 步骤 S06、S09、S13、S18）。四本账首次全部对齐：确认卡「About 11 credits」→账本 `RESERVE -110/+110` + `SETTLE 0/-110`（零 REFUND、零悬挂预留）→余额 `99997974`→`99997842` 净变化与账本一致→`GenJob.spentUsd=0.38038218749999997`。第四本（供应商实际账单）由核证员补上：`arkcli usage stats` 一条记录 `ReqCnt 1`、`TotalTokens 108900` 与 `GenJob.billedUnits` 逐位相等，worker 当场查到的空记录是查询延迟假象（arkcli usage 滞后 5–30 分钟）。
 
 ### REAL-21 商家场景：真实收码耗时与受控并发登录
 
@@ -263,7 +263,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：复用单；不杀worker。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN。
+- 执行状态：NOT RUN（staging 第三轮付费旅程第二组，2026-09-17，build `c0d25917`，确认为工具缺口而非跳过；证据 `local-logs/staging-r3-paid/real-03-person-video.json` `verdicts[3]`）。in-app 浏览器工具集没有网络状态／离线切换动作，本组指令列表也没有替代步骤，如实停在 NOT RUN，未伪造离线体验或客户端断网观察。
 
 ### REAL-25 商家场景：正式核心页逐页四态和深链
 
@@ -323,7 +323,7 @@
 - 证据：按通用约定记录操作前后；涉及钱/身份/持久化另附只读差量，UI截图不能单独证明。
 - 预算类别：复用单，单次批准计入预算。
 - 清理：沿用通用边界，远端夹具保留。
-- 执行状态：NOT RUN。
+- 执行状态：PARTIAL（staging 第三轮付费旅程第二组，2026-09-17，build `c0d25917`；证据 `local-logs/staging-r3-paid/real-03-person-video.json` 步骤 S07–S09）。同一张未批准确认卡在 1280×720 与 1920×1080 下逐字节一致（引用数、尺寸、费用、按钮文案四项全同），切换视口不产生新意图，批准后可见结果与账本核对上。手机宽度本组指令范围未覆盖，「手机/桌面/大屏」三态仍缺一态——staging 第二轮（2026-09-15）曾在同样只测桌面/大屏、未测手机的范围下判 PASS，本次按验收行字面收紧为 PARTIAL，以本轮判定为准。
 
 ### REAL-31 商家场景：账户菜单与个人资料身份一致
 
