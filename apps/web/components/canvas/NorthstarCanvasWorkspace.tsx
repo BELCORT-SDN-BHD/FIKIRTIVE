@@ -37,6 +37,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PRODUCT_VOCABULARY } from "@/lib/product-vocabulary";
 
+/**
+ * Keep the durable handoff in the URL until the streamed turn is visible in the persisted thread.
+ * OttoChatStream guards this mount with its own sent ref; retaining the handoff here makes a
+ * lost/failed first request recoverable on refresh. Module scope so the seam prop never changes
+ * identity (see the block above `handleGenerationActivityChange`).
+ */
+const KEEP_PENDING_FIRST = (): void => {};
+
 export type ImmersiveCanvasRuntimeContext = {
   projects: Array<{ id: string; name: string }>;
   threads: Array<{
@@ -102,7 +110,8 @@ export function NorthstarCanvasWorkspace({
    * 立刻重算。前厅(未开对话)与对话流是两个不同的元素,`activeThread` 一换就重新找一次。
    */
   const surfaceRef = useRef<HTMLElement | null>(null);
-  const dockThreadKey = activeThread?.id ?? null;
+  /** Which conversation is open — read once, so the seam below and the dock agree on it. */
+  const activeThreadId = activeThread?.id ?? null;
   useEffect(() => {
     const surface = surfaceRef.current;
     if (!surface) return;
@@ -125,7 +134,7 @@ export function NorthstarCanvasWorkspace({
       observer.disconnect();
       surface.style.removeProperty(CANVAS_OTTO_DOCK_VAR);
     };
-  }, [dockThreadKey]);
+  }, [activeThreadId]);
 
   const replaceCanvasUrl = useCallback((threadId?: string) => {
     window.history.replaceState(
@@ -135,11 +144,27 @@ export function NorthstarCanvasWorkspace({
     );
   }, [runtimeContext.activeProjectId]);
 
+  /**
+   * Re-read the number after a charge — and say nothing when the number has not moved (R3-F28).
+   *
+   * Every paid action on this screen calls this, several times per job (the hold, each poll that
+   * ends, the settle), and it used to hand `setBalance` a FRESH OBJECT each time. A new object is
+   * a real state change even when both numbers are identical, so one settling job re-rendered this
+   * whole surface — canvas AND conversation — a dozen times over for a figure that never changed.
+   * That churn is not free here: the seam below hands the conversation callbacks, and a re-render
+   * that mints new ones re-arms the effects keyed on them (`components/otto/OttoChatStream.tsx:1439`
+   * and `:1139`), each of which calls back into this component's own state. Comparing the two
+   * numbers ends that at the source.
+   */
   const refreshBalance = useCallback(async () => {
     notifyBalanceRefresh();
     const account = await getMyAccount();
     if (!("error" in account)) {
-      setBalance({ credits: account.balance, usd: account.balanceUsd });
+      setBalance((current) => (
+        current.credits === account.balance && current.usd === account.balanceUsd
+          ? current
+          : { credits: account.balance, usd: account.balanceUsd }
+      ));
     }
   }, []);
 
@@ -174,6 +199,36 @@ export function NorthstarCanvasWorkspace({
     setComposerReferences((current) => upsertComposerReferences(current, requested));
   }, []);
 
+  /**
+   * THE SEAM'S CALLBACKS ARE HELD STILL (R3-F28).
+   *
+   * These four used to be written inline in the JSX, which mints a new function on every render
+   * of this component. The conversation keeps two effects keyed on them
+   * (`components/otto/OttoChatStream.tsx:1439` — "tell the board whether this thread has paid work
+   * running", and `:1139` — "consume the references the board just handed over"), and BOTH of them
+   * call back into the state that lives up here. That is the exact shape React's own "Maximum
+   * update depth exceeded" names: an effect that sets state whose dependency changes on every
+   * render. Today the cycle stops only because the two handlers happen to be no-ops the second
+   * time round — the busy-thread set returns itself unchanged, the reference effect returns early
+   * once it has seen an id — so a settling job merely re-ran them dozens of times instead of
+   * looping for ever. Neither guard is a thing to rest a paid screen on, and one of them
+   * (`filter`) allocated a new array even when it removed nothing, which IS a real state change.
+   *
+   * So: stable identities, and every write compares before it allocates. The dependency list is
+   * the honest one — the busy-thread report is about whichever thread is open, so it changes when
+   * (and only when) that changes.
+   */
+  const handleGenerationActivityChange = useCallback((active: boolean) => {
+    if (activeThreadId) setThreadGenerationActivity(activeThreadId, active);
+  }, [activeThreadId, setThreadGenerationActivity]);
+
+  const handleComposerReferencesConsumed = useCallback((requestIds: string[]) => {
+    setComposerReferences((current) => {
+      const next = current.filter((ref) => !ref.requestId || !requestIds.includes(ref.requestId));
+      return next.length === current.length ? current : next;
+    });
+  }, []);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-card px-3">
@@ -202,7 +257,7 @@ export function NorthstarCanvasWorkspace({
         <FlowCanvas
           projectId={runtimeContext.activeProjectId}
           entities={entities}
-          activeThreadId={activeThread?.id ?? null}
+          activeThreadId={activeThreadId}
           activity={busyThreadIds}
           skin="gb"
           onBalanceRefresh={refreshBalance}
@@ -218,19 +273,11 @@ export function NorthstarCanvasWorkspace({
           composerReferences={composerReferences}
           onThreadChange={handleThreadChange}
           onStreamStart={handleStreamStart}
-          // Keep the durable handoff in the URL until the streamed turn is visible in the
-          // persisted thread. OttoChatStream guards this mount with its own sent ref; retaining
-          // the handoff here makes a lost/failed first request recoverable on refresh.
-          onPendingFirstSent={() => {}}
-          onComposerReferencesConsumed={(requestIds) => {
-            setComposerReferences((current) => current.filter((ref) => !ref.requestId || !requestIds.includes(ref.requestId)));
-          }}
+          onPendingFirstSent={KEEP_PENDING_FIRST}
+          onComposerReferencesConsumed={handleComposerReferencesConsumed}
           onBalanceRefresh={refreshBalance}
           canvasJobActive={canvasJobActive}
-          onGenerationActivityChange={(active) => {
-            const threadId = activeThread?.id;
-            if (threadId) setThreadGenerationActivity(threadId, active);
-          }}
+          onGenerationActivityChange={handleGenerationActivityChange}
         />
       </main>
     </div>

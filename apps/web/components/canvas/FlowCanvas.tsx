@@ -872,6 +872,25 @@ export default function FlowCanvas({
    * gate read them straight back, so a card that was still queueing already told the merchant it
    * was "A of a batch of 2, made from that one". The card goes down saying the one thing that is
    * true — a job was accepted, this is queued — and the board read brings the rest.
+   *
+   * ONE CARD PER CARD (R3-F28). A press that the server answers with a card this board ALREADY
+   * HOLDS is not a second card, and it is not rare: `placeCanvasJobNode` is idempotent per paid
+   * job (`lib/canvas-node-placement.ts:120` — it takes the job lock and returns the row it already
+   * wrote), so every replay of an accepted action — a second tab approving a confirmation card the
+   * first tab already approved, a retry of the same `actionId`, the receipt resume — comes back
+   * with the id that is on screen. Appending it put TWO entries with one id into the board's own
+   * list. React Flow's lookup is keyed by id, so the merchant still saw one picture, and everything
+   * the board COUNTS off that list quietly doubled — TWO readings, and both of them are on screen
+   * (named, not line-numbered: line numbers in this file go stale on the next edit): picking the
+   * card reported "2 selected" (`selectedCount`, a `.filter().length`, so its own toolbar disappears
+   * and the batch bar offers "Download 2"), and a same-batch frame was drawn round a single card
+   * announcing a batch nobody bought (`batchFrames`). What it does NOT touch — said plainly because
+   * an earlier draft of this comment claimed it did — is the in-flight paid reading:
+   * `hasInFlightPaidNode` and `canvasJobActive` are `.some()` BOOLEANS, not tallies, so a second
+   * entry with the same id cannot change either of them, and Otto's observation window does not
+   * toggle twice because of this. So the id decides: a card already on the board is left exactly as
+   * it is — it has been here longer and may already carry the settled record a board read brought,
+   * and this placement knows only "a job was accepted", which is never newer.
    */
   const onNewNode = useCallback(
     (n: {
@@ -882,8 +901,14 @@ export default function FlowCanvas({
       prompt: string;
       genJobId?: string;
     }) => {
-      nodeDataRef.current[n.id] = { pos: { x: n.pos.x, y: n.pos.y } };
-      setNodes((ns) => [
+      if (nodesRef.current.some((existing) => existing.id === n.id)) return;
+      // Keep whatever is already known about this card (its generationId above all): overwriting
+      // the entry would strip a resolved id back to nothing and take "Make video" / Info off a
+      // card that is ready for both.
+      nodeDataRef.current[n.id] = { ...nodeDataRef.current[n.id], pos: { x: n.pos.x, y: n.pos.y } };
+      // The ref is a commit behind a placement that has not been flushed yet, so the same question
+      // is asked once more where the answer cannot be stale. Both readings are pure.
+      setNodes((ns) => (ns.some((existing) => existing.id === n.id) ? ns : [
         ...ns,
         {
           id: n.id,
@@ -907,7 +932,16 @@ export default function FlowCanvas({
           batchIndex: null,
           batchSize: null,
         },
-      ]);
+      ]));
+      // WHY THIS STAYS OUTSIDE THE UPDATER. Re-framing belongs to the branch that really appended a
+      // card, and the updater is the one place that knows for sure — but this file's own rule
+      // (`fitMediaNodeToSize` above: "an updater must stay pure and may be run twice") outranks that
+      // convenience, so the updater returns `ns` and nothing else. The outer `nodesRef` guard has
+      // already returned for every replay it can see, which is the common case. What is left is the
+      // rare window where `nodesRef` has not been flushed yet and only the updater's own reading
+      // catches the replay: that one re-arms a refit for a card it did not add. The cost is exactly
+      // one debounced `fitView` (80ms timer, cleared and re-armed, no state) on a board whose cards
+      // did not change — a harmless no-op, and the honest price of keeping the updater pure.
       scheduleFitView();
     },
     [activeThreadId, getOnMediaSize, sendSelectionToOtto, requestReload, skin, scheduleFitView],
