@@ -566,6 +566,20 @@ model GenJob {
   // i2v source = a specific owned Generation's image (Gen space upload→animate)；
   // worker 校验 owner+project 后用它的图做 image-to-video（D19：不收客户端 URL）
   sourceGenerationId String?
+  /// R3-F30 —— **这一单是从哪张已有的图派生出来的**（纯谱系记录，绝不进引擎输入）。
+  ///
+  /// `sourceGenerationId` 只在「那张图真的被送进引擎」时才有值（图生图底图、i2v 首帧）。
+  /// Library 的 Regenerate 是照同一句提示词重新出一张，引擎手上根本没有那张照片，所以它
+  /// 那一列永远是 null —— 于是「这张新图是从哪张图来的」在那条路上从来没有被记下来过。
+  /// 这一列补的就是那一格：由服务端在入队时写入（资产动作族已按 ownerId 核过归属的锚点），
+  /// worker 只把它当作 `entitySnapshot` 的继承来源读一次。
+  ///
+  /// **只在 `sourceGenerationId` 缺席时写**（§7.3 单一源）：同一张图的编号不在一行里存两遍，
+  /// 「这一单派生自哪张图」读作 `sourceGenerationId ?? lineageGenerationId`，写与读各一处。
+  ///
+  /// 绝不参与：定价、幂等材料、引擎输入。写进这一列不会改变这一单发给引擎的任何一个字节。
+  /// null = 这一单不是从某张图派生的（首生图），或这一行早于本列存在。
+  lineageGenerationId String?
   // 可选末帧（last frame）：i2v 在 source→tail 之间补间（Kling tail_image_url）
   tailGenerationId   String?
   referenceVideoGenerationId String?

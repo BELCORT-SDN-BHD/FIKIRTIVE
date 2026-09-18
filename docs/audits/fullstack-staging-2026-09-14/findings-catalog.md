@@ -365,7 +365,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F30 · 派生图（Create variations、Regenerate）`entitySnapshot` 为空，一跳之后「这张图用了哪个商品」丢失
 
-**状态**：待 Founder 裁语义（本轮不施工；`docs/specs/brand-product-identity.md` §5 已加一行待裁登记）。
+**状态**：修复 PR #PENDING（Founder 2026-09-18 裁「本版修，派生图继承源图记录」；验收与副作用见 `docs/specs/brand-product-identity.md` §5 2026-09-18 PRODID-R12 行）。
 
 一张已生成图片再做 Create variations 或 Regenerate 得到的新 `Generation`，其 `entitySnapshot` 是空数组 `{"entities": []}`，而它们的源图 `Generation`（`01M2PWPBRFQA3TF405WAFJCT48`）的 `entitySnapshot` 里带着完整的产品与 `refHash`。**两条派生路径都是如此**——canvas 变体 `01M2PWZ30DE2PXJ8MZWM2TDZJR`（key 族 `canvas:`）与 Library Regenerate `01M2PX3MQTZJWY0N1085CR5DBT`（key 族 `asset:regen:`）——journeys worker 原本只报告了 Create variations 一条，核证员独立复核确认 Regenerate 有一模一样的缺口，不是变体专属。这与图生图路径本身一致（`What we sent to the engine` 开头就是「`<Image_1>` is the image being edited.」），但后果是：一张首生图之后，谱系上的「这张图用了哪个商品」这条链在每一条派生路径上都断了——是审计／回执缺口，不是钱路缺口。
 

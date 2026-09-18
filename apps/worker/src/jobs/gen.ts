@@ -49,6 +49,7 @@ import {
   // 判据都在 core,铸卡侧(`packages/otto/src/skills/propose.ts`)读的是同一对函数。
   referenceUpscalePlan,
   lineageCarriesOfficialActor,
+  inheritableEntitySnapshot,
   REFERENCE_IMAGE_EXTS,
   REFERENCE_VIDEO_EXTS,
   type GenJobData,
@@ -1725,7 +1726,34 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
         where: { id: { in: job.entityIds }, ownerId: job.ownerId },
         include: { referenceImages: { where: { deletedAt: null }, include: { asset: true } } },
       });
-      const entitySnapshot = {
+      /**
+       * R3-F30(Founder 2026-09-18 裁「本版修,派生图继承源图记录」)——
+       * **派生出来的图继承源图那一份记录。**
+       *
+       * 缺口原样:画布 Create variations 与 Library Regenerate 做出来的新图,`entityIds`
+       * 都是空的(引用是源图当年带进去的,不是这一单自己挂的),于是上面那份快照算出来是
+       * 空数组 —— 一张首生图之后,「这张图用了哪个商品」在每一条派生路径上都断了一跳
+       * (staging 第三轮付费旅程第三组实证,`docs/audits/fullstack-staging-2026-09-14/`)。
+       *
+       * 判据只有一条,与裁决逐字对齐:**这一单自己没有挂任何引用**(`job.entityIds` 空)
+       * 时才继承。派生时自己换了引用(重新 @ 了别的商品／演员)⇒ `entityIds` 非空 ⇒ 走上面
+       * 那份现算的快照,记录跟着新的引用走,一个字都不从源图借。用 `job.entityIds.length`
+       * 而不是 `entities.length`:挂了引用但那些元素已被删掉,仍然是「这一单自己换过引用」,
+       * 继承源图的旧记录会把它说成一件没发生过的事。
+       *
+       * 来源从哪来:`sourceGenerationId`(真送进引擎的底图,画布变体走这条)优先,没有底图
+       * 时读 `lineageGenerationId`(Library Regenerate 这条路引擎手上没有那张照片,所以它
+       * 只有谱系锚点)。两列都由服务端写,都不是 `genRequest` 的字段。
+       *
+       * 租户:这一读按 `ownerId: job.ownerId` 收口 —— 继承来的元素 id 因此**必定**已经属于
+       * 同一个商家,不是因为谁这么说,而是因为跨租户的源图在这里根本查不出来(查不到 ⇒ 不
+       * 继承 ⇒ 落空数组,与今天同形)。不过滤 `deletedAt`:这是一次纯记录读,商家把源图丢进
+       * 回收站不该让已经发生过的谱系凭空消失。
+       *
+       * 钱与引擎一格不碰:这几行跑在付费调用之前,但只读、只影响将要写进 `Generation` 的那
+       * 一格记录 —— 发给引擎的字节、价格、幂等键全都不读这里。
+       */
+      const computedEntitySnapshot = {
         entities: entities.map((e) => {
           // record WHICH variant conditioned this gen + only that variant's ref hashes
           // (base = variantId null), so provenance reflects what was actually sent.
@@ -1734,6 +1762,21 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
           return { id: e.id, name: e.name, type: e.type, variantId, refHashes: refsForHash.map((r) => r.asset.contentHash) };
         }),
       };
+      const lineageSourceId = job.entityIds.length === 0
+        ? (job.sourceGenerationId ?? job.lineageGenerationId)
+        : null;
+      const lineageSource = lineageSourceId
+        ? await prisma.generation.findFirst({
+            where: { id: lineageSourceId, ownerId: job.ownerId },
+            select: { entitySnapshot: true },
+          })
+        : null;
+      // 继承来的那一格是源图自己那一行的 `Json`(我们自己在这同一个写入点写下去的形状),
+      // 所以这里的断言只是把 Prisma 的读类型换成写类型,不放宽任何形状判定 —— 判定在
+      // `inheritableEntitySnapshot` 里做完了(拿不出非空 `entities` 一律回 null)。
+      const entitySnapshot: Prisma.InputJsonObject | typeof computedEntitySnapshot =
+        (lineageSource ? inheritableEntitySnapshot(lineageSource.entitySnapshot) as Prisma.InputJsonObject | null : null)
+        ?? computedEntitySnapshot;
 
       // THE paid call — exactly once per job. Image: t2i/edit. Video (i2v):
       // animate the shot's latest IMAGE generation into a clip.

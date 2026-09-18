@@ -170,3 +170,27 @@ export function lineageCarriesOfficialActor(entitySnapshot: unknown): boolean {
   if (!Array.isArray(entities)) return false;
   return entities.some((e) => (e as { type?: unknown } | null)?.type === "CHARACTER");
 }
+
+/**
+ * R3-F30 —— **派生图继承源图那一份记录时,哪些源快照值得继承。**
+ *
+ * Founder 2026-09-18 裁:变体与重生成的图继承源图的商品／人物记录,「除非这次派生自己
+ * 换了引用」。落到代码上只有一个判据 —— 源图那一行的快照里**真的有东西**才继承;空的、
+ * 形状不对的(老行、`{}`、手写脏数据)一律回 null,继承不发生,派生图照旧落
+ * `{ entities: [] }`。没东西可继承与「继承了一个空壳」在库里读起来一模一样,但后者会
+ * 把一次读失败伪装成一条查过的谱系。
+ *
+ * 继承的是源图那一格的**逐字副本**(含 `variantId` / `refHashes`):商家问的是「这张图
+ * 用了哪个商品」,答案只能是源图冻下来的那一份,不是现在重查一遍的活名字 —— 元素改过名
+ * 之后重查会把历史改写成今天的说法(与 `Generation.entitySnapshot`「不可变快照」同一条)。
+ *
+ * 纯函数,无 prisma:写入点在 `apps/worker/src/jobs/gen.ts` 那一个快照构造处,判据住在这里
+ * 是因为它与上面 `lineageCarriesOfficialActor` 读的是同一格,两者必须对同一种脏数据做
+ * 同一种回落。
+ */
+export function inheritableEntitySnapshot(sourceEntitySnapshot: unknown): { entities: unknown[] } | null {
+  if (sourceEntitySnapshot === null || typeof sourceEntitySnapshot !== "object") return null;
+  const entities = (sourceEntitySnapshot as { entities?: unknown }).entities;
+  if (!Array.isArray(entities) || entities.length === 0) return null;
+  return sourceEntitySnapshot as { entities: unknown[] };
+}
