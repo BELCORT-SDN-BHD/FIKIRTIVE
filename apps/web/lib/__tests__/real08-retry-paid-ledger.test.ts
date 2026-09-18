@@ -129,9 +129,23 @@ async function ledgerRows(ownerId: string) {
 }
 
 /**
- * 供应商侧失败的那一刻,worker 做的那件事 —— 状态翻转与退款**同一笔事务**,
- * 逐字照 `apps/worker/src/jobs/gen.ts` 的 `failClosedWithRefund`。回的是账本自己的四态
- * 答复(`RefundOutcome`),所以「第二个失败信号」到底做了什么可以被断言,而不是靠数行数猜。
+ * 供应商侧失败的那一刻,worker 在钱这一层做的那件事。参照物是
+ * `apps/worker/src/jobs/gen.ts:907-941` 的 `failClosedWithRefund`,**不是逐字照抄**——
+ * 复刻的只有钱路那一段,其余三处明确不复刻:
+ *
+ * 复刻:状态翻转与退款落在**同一笔事务**里;退款调的是账本自己的 `refundReservation`
+ * (不是替身),所以回的是它自己的四态答复(`RefundOutcome`),「第二个失败信号」到底做了
+ * 什么可以被断言,而不是靠数行数猜。
+ *
+ * 不复刻:① 真函数那句 `updateMany` 带两道谓词(`status` 仍在 `GEN_IN_FLIGHT_STATUSES`、
+ * `generationIds: { isEmpty: true }`),`count === 0` 就直接 `return false`、**根本不调**
+ * `refundReservation`——真实退款在这道条件之后,本夹具是无条件退;② `already-settled` 抛
+ * `SETTLED_PRE_SPEND_FAIL` 把那次状态翻转整笔回滚的那一支,连同它的 `captureMoneyPathError`
+ * 报警;③ 终态的 `appendCoworkResult(…, "TURN_ERROR", …)` 与 `settleCanvasBoard(job)`。
+ * ①②是取消/已结算竞态下「该不该退」的判定,本文件不造这两种竞态(每次 workerFail 都打在一张
+ * 刚预扣、没交付、没被取消的单上);③ 不碰账本(`gen.ts:775` 写明「no money column, no
+ * ledger」),三者都不改本文件对账本行与余额的断言。判定本身的围栏在 worker 自己的
+ * `apps/worker/src/jobs/gen.test.ts` 与 `gen-done-empty-db.test.ts`。
  */
 async function workerFail(ownerId: string, jobId: string): Promise<string> {
   return prisma.$transaction(async (tx) => {
