@@ -31,6 +31,7 @@
 1. 循环 = grilling → to-spec → to-tickets（跨 session 的场用 wayfinder 地图）→ tdd / implement → code-review。地板在全局家规 §7.4：重挡先有规格、Founder 批准后动工、中途想法进规格「变更登记」节等 Founder 批裁。
 2. 规格存 `docs/specs/`（模板 `docs/specs/TEMPLATE.md`），只在主干上有效——先以 docs-only PR 合进主干再开工。批准记录 = 规格文件里一行带日期的「批准:」行，注明 Founder 点头的出处（对谈或 issue 链接）。存量规格的「状态: 已冻结/已交付」行是历史记录，读作已批准；状态词汇不再维护。
 3. 规矩冲突记录（全局家规 §7 要求，范围=本仓库，勿再作 drift 上报）：2026-09-13 Founder 裁决删除《开发作业手册》全套机器——process-gates.yml（M1 规格引用/M2 冻结形状/M3 验收编号进测试/M4 开关失效日期/M5 目录守形）、process-heartbeat.yml（自毁开关）、S1–S5 阶段词汇、GitHub 签名冻结三步、「轻改:」「闸门改动:」PR 行；主干 ruleset 的 required checks 同日改为 quality + e2e。全局家规 Harness 节点名的 spec-reference 与 acceptance-to-test-mapping 两道 required checks 随之下线，为 Founder 有记录的例外。验收仍逐条对照规格验收表（全局 §7.4），由 agent 与 code-review 把关，不再由 CI 强制。
+4. 规矩冲突记录（全局家规 §7 要求，范围=本仓库，勿再作 drift 上报）：2026-09-18 Founder 裁决「codex review 完全不需要了。」——本仓库不再派 Codex／跨厂判官；合并门＝required CI 绿（quality + e2e）＋ Claude 系两镜头对抗复审（标准轴＋规格轴）P0/P1 清零 ＋ 非作者执行，承 #490 决议的其余条款（三条齐了即可合，不等 Founder）。冲突点三处：全局家规「Modules, Trunk, and Delivery」的「Review crosses vendors: sealed and read-only, by the other engine」、同节 Harness 清单里的 cross-vendor verdict required check、编排技能的「Critical review crosses vendors」——三处在本仓库一律不适用，为 Founder 有记录的例外；全局家规原文不改。合并规矩的记忆指针（GitHub issue #490）从此以本行为权威。
 
 ## 里程碑制（Founder 2026-09-09 裁定；决策记录 = 整理地图 https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1285 及其子票）
 
