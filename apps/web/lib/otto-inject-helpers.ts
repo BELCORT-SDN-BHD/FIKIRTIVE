@@ -132,10 +132,14 @@ export const GENERATION_WATCH_GEARS = {
   slow: { intervalMs: 60_000, maxTries: 48 },
 } as const;
 
-/** A job is "working" once its GEN_CARD has a genJobId (it was approved/generated)
- *  but no terminal message (GEN_RESULT or TURN_ERROR) has landed for that job yet.
- *  While any job is working the component polls the durable thread for the result. */
-export function hasWorkingJob(messages: OttoUiMessage[], extraTerminalJobIds: Set<string> = new Set()): boolean {
+/** 「还在跑的是哪几单」——这条规则只有这一份实现,`hasWorkingJob` 也读它。
+ *  一单算「在跑」的判据不变:它的 GEN_CARD 已经有 genJobId(批过、钱已经花出去),
+ *  而这一单还没有终局消息(GEN_RESULT / TURN_ERROR)落库。
+ *
+ *  返回**去重并排序**的 id 数组,所以它可以直接当一个稳定的身份用:同一批在跑的活,
+ *  每次渲染拼出来的字符串一模一样;多一单少一单就是另一个身份(R3-F27 复审回修的
+ *  「每单只重臂一次」那道闸按它记账,见 `OttoChatStream.tsx` 的 resume 段)。 */
+export function workingJobIds(messages: OttoUiMessage[], extraTerminalJobIds: Set<string> = new Set()): string[] {
   const terminal = new Set<string>(extraTerminalJobIds);
   for (const m of messages) {
     const meta = m.metadata;
@@ -143,10 +147,22 @@ export function hasWorkingJob(messages: OttoUiMessage[], extraTerminalJobIds: Se
       terminal.add(meta.genJobId);
     }
   }
-  return messages.some((m) => {
+  const working = new Set<string>();
+  for (const m of messages) {
     const meta = m.metadata;
-    return meta?.kind === "GEN_CARD" && !!meta.genJobId && !terminal.has(meta.genJobId);
-  });
+    if (meta?.kind === "GEN_CARD" && meta.genJobId && !terminal.has(meta.genJobId)) {
+      working.add(meta.genJobId);
+    }
+  }
+  return [...working].sort();
+}
+
+/** A job is "working" once its GEN_CARD has a genJobId (it was approved/generated)
+ *  but no terminal message (GEN_RESULT or TURN_ERROR) has landed for that job yet.
+ *  While any job is working the component polls the durable thread for the result.
+ *  判据本身在 `workingJobIds` 上,这里只回答「有没有」——两者不许各写一份。 */
+export function hasWorkingJob(messages: OttoUiMessage[], extraTerminalJobIds: Set<string> = new Set()): boolean {
+  return workingJobIds(messages, extraTerminalJobIds).length > 0;
 }
 
 /** The durable message kinds that render as an inline card widget. These (and

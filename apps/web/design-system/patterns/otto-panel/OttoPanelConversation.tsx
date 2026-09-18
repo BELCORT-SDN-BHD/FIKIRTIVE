@@ -71,7 +71,11 @@ export function OttoPanelConversation({
           </div>
         </div>
         <Skeleton className="h-20 w-full rounded-[var(--radius-card)]" />
-        <span className="sr-only">Opening your conversation…</span>
+        {/* R3-F27 —— 这句话必须**看得见**。等种子回来的那几秒里,这块面板从前只有三根
+            灰条:一个刚批完一单、回到首页想看看跑得怎么样的商家,读到的是「什么都没有」,
+            既不像加载、也不像出错。同一场等待的另一半(分包还没到时的 `ConversationFallback`,
+            见 `OttoPanelHost.tsx`)一直都是一句看得见的话 —— 两半说同一句,不再一半哑着。 */}
+        <p className="text-[13px] text-muted-foreground">Opening your conversation…</p>
       </div>
     );
   }
