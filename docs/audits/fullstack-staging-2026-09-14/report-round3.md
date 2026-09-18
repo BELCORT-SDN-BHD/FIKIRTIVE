@@ -114,7 +114,7 @@ Founder 2026-09-15 授权的真实付费旅程续跑；PR #1463（R3-F20 修复�
 
 **判定摘要**（verifier 与 worker 不一致处以 verifier 为准，两边都在下方列出）：
 
-- **REAL-03＝PASS**：`/brand/records?tab=products` 可建产品（R3-F20 阻断已消失），Brand／Library／`@` 菜单／确认卡与生成谱系四处同一 Entity id（`PRODID-A1/A2`），无首帧合成（三个帧输入列全 NULL、`RefGenJob=0`），交付与报价一致（16:9／5s／720p／静音）。**唯一偏差**：产品封面挂的是商家自己已有的 Library 图，而那张图本身是 AI 生成，不是新上传——本轮 harness 没有文件上传动作，「商家上传真实产品照片」仍未被端到端跑过（登记见 `findings-catalog.md` 本轮补记）。证据：`real-03-person-video.json` 步骤 S01–S17、`verdicts[0]`。
+- **REAL-03＝PASS**：`/brand/records?tab=products` 可建产品（R3-F20 阻断已消失），Brand 卡片／Library Elements Products／`@` 菜单／确认卡／`GenJob.entityIds`／`approvedEntities`／`Generation.entitySnapshot` 七处同一 Entity id（`PRODID-A1/A2`；2026-09-18 订正：原文写「四处」，与同一份证据在 [coverage-matrix.md](coverage-matrix.md) REAL-03 行与 [real-scenarios.md](real-scenarios.md) REAL-03 行写的「七处」不一致，按逐条枚举得出的七处为准），无首帧合成（三个帧输入列全 NULL、`RefGenJob=0`），交付与报价一致（16:9／5s／720p／静音）。**唯一偏差**：产品封面挂的是商家自己已有的 Library 图，而那张图本身是 AI 生成，不是新上传——本轮 harness 没有文件上传动作，「商家上传真实产品照片」仍未被端到端跑过（登记见 `findings-catalog.md` 本轮补记）。证据：`real-03-person-video.json` 步骤 S01–S17、`verdicts[0]`。
 - **REAL-07＝PARTIAL（verifier 改判，非 worker 自报的 PASS）**：worker 自报 PASS，但自己的 `clausesNotProven` 已列出「深链是在终态之后验证的」，违反 PASS 判据；verifier 因此把它降为 PARTIAL——刷新腿确实在生成中（GENERATING）验证过，Back 腿卡在终态边界，深链与第二标签两腿都在终态之后 4 分钟才验证，「回到同一个仍在跑的 job」这条未被证明。已证部分保留：同一 job 全程恰 2 条账本行、四个入口余额一致、慢任务从未伪装失败。证据：`real-03-person-video.json` S10–S12；核证判词 `workflow-groups2-4-result.json` `verdicts[0].downgrades[0]`。
 - **REAL-30＝PARTIAL**（手机宽未跑）：1280 与 1920 两个视口下同一张未批准确认卡逐字节一致（引用数、尺寸、credits、按钮文案），切换视口不产生新意图；本组指令范围只到桌面／大屏，手机腿未执行。证据：`real-03-person-video.json` S07–S09。
 - **REAL-20＝PASS**（verifier 由 worker 自报的 PARTIAL 升级）：worker 自报 PARTIAL 因 `arkcli usage stats` 当场查零记录；verifier 在 10 分钟后重查拿到 1 条记录——`ModelName dreamina-seedance-2-0-mini`、`ReqCnt 1`、`TotalTokens 108900`，与 `GenJob.billedUnits` 108900 逐位相等，`ReqCnt 1` 同时证明供应商侧也只收到一次调用（无双扣）；worker 的空结果是 arkcli usage 5–30 分钟的查询延迟假象，不是真实缺口。四本账（确认卡／账本／余额差／供应商回执）本组全部对齐。证据：`workflow-groups2-4-result.json` `verdicts[0].findings[0]`。
@@ -131,13 +131,15 @@ Founder 2026-09-15 授权的真实付费旅程续跑；PR #1463（R3-F20 修复�
 
 **新发现**（详见 `findings-catalog.md`）：R3-F25（画布拖放上传延迟入队，补登记编号，正文已在 `money-engine.md`）、R3-F26（P2，文生视频提示词声称有首帧但该单确无首帧）、R3-F27（客户端 Back 后 Otto 面板空 40–60 秒）、R3-F28（P1，第二标签重放或确认 variations 把画布撞进错误边界，React #185，复现两次，账本无损）、R3-F29（失败卡 Try again 零反馈致四次点击克隆四张卡，且 `coworkVaryCard` 是否付费的三处代码注释互相矛盾）、R3-F30（派生图 variation／Regenerate 两条路径 `entitySnapshot` 均为空，产品血统一跳后丢失）、R3-F31（P1，`/s/<token>` 在 staging 303 到 `localhost:8080`，分享链接对客户端到端必坏）、R3-F32（旧式 `?t=` 链接令牌留在地址栏约 1 秒且短暂露出登录壳）。工具坑、旁证与一句值得保留的 fail-closed 文案范本见 `findings-catalog.md` 本轮补记，不在此重复。
 
-**Founder 已先行授权修复（编排者 2026-09-17 先派工，待 Founder 追认，§7.4「新发现全部本版修」2026-09-15 授权 + §7.4「要我拍板的直接决定」2026-09-16 授权覆盖）**：F31+F32（分支 `claude/share-entry-redirect-origin-r3-f31`）、F28（分支 `claude/canvas-crash-after-approve-r3-f28`）、F29（分支 `claude/failed-card-try-again-feedback-r3-f29`）、F26（分支 `claude/video-prompt-no-phantom-first-frame-r3-f26`）——五个分支均已派工，撰写本节时尚未开 PR。**留给 Founder 裁的（本轮不施工）**：F30 语义（`docs/specs/brand-product-identity.md` §5 已加登记行）、REAL-08 付费半段是否人造供应商失败或改判测试覆盖（`docs/specs/asset-action-idempotency.md` §5 已加登记行）、staging 两把分享密钥何时补齐（`docs/specs/share-preview.md` §5 已加登记行）、F27（客户端 Back 空白，未派工，交 Founder）。
+**Founder 已先行授权修复（编排者 2026-09-17 先派工，待 Founder 追认，§7.4「新发现全部本版修」2026-09-15 授权 + §7.4「要我拍板的直接决定」2026-09-16 授权覆盖）**：F31+F32（分支 `claude/share-entry-redirect-origin-r3-f31`）、F28（分支 `claude/canvas-crash-after-approve-r3-f28`）、F29（分支 `claude/failed-card-try-again-feedback-r3-f29`）、F26（分支 `claude/video-prompt-no-phantom-first-frame-r3-f26`）——**四条修复分支**，加上写这份收官（四）文档自己那条分支，当时共五条在飞（2026-09-18 订正：原文只写「五个分支均已派工」，上面却只列得出四条修复分支，第五条是本文档分支，容易被读成漏列了一条修复）；撰写本节时四条修复均尚未开 PR，落地情况见本文件 2026-09-18（四）一节。**留给 Founder 裁的（本轮不施工）**：F30 语义（`docs/specs/brand-product-identity.md` §5 已加登记行）、REAL-08 付费半段是否人造供应商失败或改判测试覆盖（`docs/specs/asset-action-idempotency.md` §5 已加登记行）、staging 两把分享密钥何时补齐（`docs/specs/share-preview.md` §5 已加登记行）、F27（客户端 Back 空白，未派工，交 Founder）。
 
 ## 合并台账（承 2026-09-15 commit `5008332f` 之后新落地的 27 个 PR；本节取代收官三 `a627043e` 的 11 行早期版本——那版撰写于合并链仍在跑的当中，本节是链跑完之后的完整版）
 
 以下 27 个 PR 与 sha 均取自 `reports/merge-ledger-r3.txt`（编排者串行合并链的权威记录）、逐条以 `git log origin/main` 核实存在且顺序与该文件一致（核实于 2026-09-17，主检出 HEAD `c0d25917`）：
 
-| # | 合并时间（KL） | PR | 合并 commit | 摘要 |
+**2026-09-18 订正与补记**：① 时间列原写「KL」，实为 **UTC**——逐条对 `gh pr view <n> --json mergedAt` 核实（例：第 27 行 #1464 表里写 `09-17 04:36`，`mergedAt` 是 `2026-09-17T04:36:44Z`，KL 时间应是 12:36），列头已改；② 第 28–33 行随收官（五）追加，覆盖 `c0d25917` 之后到 `66f9c766` 为止的全部六个合并，`git log --first-parent c0d25917..66f9c766` 核实恰为这六个、顺序与下表一致。
+
+| # | 合并时间（UTC） | PR | 合并 commit | 摘要 |
 |---|---|---|---|---|
 | 1 | 09-15 05:18 | #1438 | `122f50b2` | R3-F06 变更登记入主干 + 第三轮走查报告入库（docs-only） |
 | 2 | 09-15 05:28 | #1443 | `b4a46c27` | 第三轮走查 R3-F03／F04／F05 修复登记进 brand-product-identity 与 frontend-baseline 变更登记 |
@@ -166,5 +168,65 @@ Founder 2026-09-15 授权的真实付费旅程续跑；PR #1463（R3-F20 修复�
 | 25 | 09-17 04:19 | #1463 | `a59ebe67` | 每一条「去加产品」的指路都通向真有「Add product」键的页面（R3-F20） |
 | 26 | 09-17 04:22 | #1465 | `a627043e` | 第三轮收官（三）：Founder 三裁、R3-F18…F24、付费旅程第一组入库 |
 | 27 | 09-17 04:36 | #1464 | `c0d25917` | 上传理解结算后在那张图上留一行回执，不再静默扣 0.1 credit（Founder 2026-09-16 裁决） |
+| 28 | 09-17 06:33 | #1467 | `c4dd4cd9` | 第三轮收官（四）：付费旅程 2–4 组入库、R3-F25…F32 登记、27 份合并台账（docs-only；上表前 27 行就是这份 PR 写下的，所以它自己不在那 27 行里——本行补上，台账对 `git log` 才不缺口） |
+| 29 | 09-17 07:22 | #1466 | `66ef15fa` | 没有首帧的文生视频不再对引擎和商家说「从给定首帧开始」；卡上写的就是发出去的（R3-F26） |
+| 30 | 09-18 09:11 | #1468 | `3a848cd3` | 顾客点分享链接不再被送到 localhost；旧式链接不再闪出登录页（R3-F31／F32） |
+| 31 | 09-18 11:26 | #1471 | `620045da` | 规矩：本仓库不再做 Codex／跨厂复审，合并门改为 CI 绿＋Claude 系两镜头复审＋非作者执行（Founder 2026-09-18 裁决） |
+| 32 | 09-18 11:54 | #1470 | `14a4c38d` | 失败卡按「Try again」有回应了：转圈、加好、出错都看得见，连按不再复制四张（R3-F29） |
+| 33 | 09-18 12:09 | #1469 | `66f9c766` | 重放已批准的那张卡，画布上还是一张：不再冒出「2 selected」与凭空的「Batch of 2」（R3-F28） |
 
-**主干终态**：`main = c0d25917`（第 27 个 PR 的合并 commit），`git log --oneline c0d25917` 逐条核实以上全部 27 个 sha 均为其祖先且顺序与上表一致。staging 已部署到 `c0d25917`（web + worker-compute + worker-wait 三个服务；旧角色 `worker` 已退役，`/api/health` 的 `workers.worker` 字段显示 `"retired"`，见 R3-F19 的修法）——本节合并台账与本轮付费旅程 2–4 组读到的 build sha 一致，无 BUILD-DRIFT。
+**主干终态（2026-09-17 写下时的口径，仍然如实；2026-09-18 之后的终态见下一节）**：`main = c0d25917`（第 27 个 PR 的合并 commit），`git log --oneline c0d25917` 逐条核实以上全部 27 个 sha 均为其祖先且顺序与上表一致。staging 已部署到 `c0d25917`（web + worker-compute + worker-wait 三个服务；旧角色 `worker` 已退役，`/api/health` 的 `workers.worker` 字段显示 `"retired"`，见 R3-F19 的修法）——本节合并台账与本轮付费旅程 2–4 组读到的 build sha 一致，无 BUILD-DRIFT。
+
+## 2026-09-18（四）修复落地、合并台账补记与裁决
+
+承本文件 2026-09-17（三）一节末尾那句「四条修复分支均已派工、撰写时尚未开 PR」（该节由收官（四）PR #1467、合并 `c4dd4cd9` 写入）：四条已全部开 PR、复审、合入主干，另有一条规矩变更同期落地。**主干终态**：`main = 66f9c766`（PR #1469 的合并 commit），`git log --first-parent c0d25917..66f9c766` 核实 `c0d25917` 之后恰有六个合并，即本文件合并台账第 28–33 行，顺序与该表一致。以下每条的 PR 号、合并 sha、合并时刻均以 `gh pr view <n> --json state,mergeCommit,mergedAt` 逐条核实（2026-09-18）。
+
+**四份修复，各自替商家挡掉了什么**（一句用户可见效果，票号在句末）：
+
+- **没有首帧的那种文生视频，提示词不再对付费引擎和商家说「从给定首帧开始」——卡上写的就是真发出去的那一份**。从前商家只打了一句话、@ 了两个元素，这一单一张首帧图都没有，我们却花钱请引擎去照顾一张不存在的图，商家读到的也是同一句假话。现在装配层只认服务端证据（`videoAttachmentRole`、核过的演员数），模型自填的 `mode` 说了不算（PR #1466，合并 `66ef15fa`，2026-09-17T07:22:52Z）。
+- **顾客点开商家发出的分享链接，不再被送到 `localhost`；旧式 `?t=` 链接也不再让令牌在地址栏停一秒、不再闪出「Go to sign in」**。跳转目标改成相对地址（浏览器按它刚请求的那个对外地址解析，不必猜代理后面的主机名），旧链接改由路由层在任何外壳冲出去之前答完（PR #1468，合并 `3a848cd3`，2026-09-18T09:11:43Z）。
+- **失败卡上按「Try again」终于有回应：转圈、加好了、没成，三样都看得见，连按也不再复制出四张一样的卡**。从前服务端 200、对话里真多出一张卡，屏幕上却一个字不变，商家于是一分钟按一次、按了四次。现在两颗键（结果卡「Make another」与失败卡「Try again」）读同一份回执合同（PR #1470，合并 `14a4c38d`，2026-09-18T11:54:18Z）。
+- **付完钱、那张卡已经在板上了，服务端把同一张卡再答一次，画布上还是一张：不再冒出「2 selected」，也不再画出商家没买过的「Batch of 2」**。幂等闸本来就没多扣一分钱，坏的是画布这一侧把重放当新卡追加（PR #1469，合并 `66f9c766`，2026-09-18T12:09:08Z）。
+
+**规矩变更，以及本轮的复审该怎么读**：Founder 2026-09-18 裁决「codex review 完全不需要了」——本仓库不再做 Codex／跨厂复审，合并门改为 **required CI 绿＋Claude 系两镜头对抗复审 P0/P1 清零＋非作者执行**（PR #1471，合并 `620045da`，2026-09-18T11:26:06Z；条文落在项目 `.claude/CLAUDE.md`「开发流程」第 4 条）。对本轮的直接后果：**这条裁决之后的每一轮复审都是 Claude 系两镜头复审，它就是正式复审本身**，不是任何东西的替补——上文与既往章节里那种「同厂替补」标注不再适用于此后的复审记录，也不必再为它们补一次跨厂后审。连带作废的还有 `docs/DEFERRED.md` 的 D-073 与 D-076（两条都写着「需补一次 codex 跨族后审」），两行保留不删，已就地标注失效。
+
+**仍未验证——第三轮走查可判 GO 之前剩下的两件真跑**（都必须在真环境真点，读码与单测替代不了）：
+
+1. **R3-F28 的崩溃本身还没被证明消失**。修法已合入，但 `Minified React error #185` 在 jsdom 里复现不出来（环境限制），走查现场那两步（S13 确认 Create variations、S10 第二标签重放已批卡）与两刀的关系已在规格里如实分开写。要判定，必须在 staging 部署到 `66f9c766` 之后用真浏览器重跑 S13 与 S10——复跑组 `verify-r3-f28`，预算约 US$0.07（两次 1 credit 的图片确认）。**在此之前 R3-F28 一律记「修复已合入，崩溃本身待真浏览器复跑」，不得标关闭。**
+2. **#1388 的双账号并发观测第三轮没跑过**：一边连发 4 条长视频、一边发图，那张图必须几秒内就出来——这条「排长队的人不挡插队的小活」本轮从未在真环境观测过一次（票 #1388，OPEN，`gh issue view 1388` 核实）。
+
+这两件是第三轮走查判 GO 之前仅剩的真跑项；其余阻断（REAL-10／REAL-11 的两把分享密钥、REAL-08 的付费半段）不是跑不跑的问题，是等 Founder 拍板的问题，见下。
+
+**等 Founder 拍板**（一句用户效果＋推荐，指针在句末；每条指针本次都逐条核过存在）：
+
+*本轮新增：*
+
+1. 商家把图片直接拖进画布上传，那件素材要等 **15 分钟到 24 小时**才被读懂、才扣那 0.1 credit，屏幕上当时什么都不说——这一格是延迟，不是免费。**推荐**：`uploadReference` 补上入队，与其它上传入口一致（`docs/specs/money-engine.md` §5 2026-09-16 行「已知边界」第④点；`findings-catalog.md` R3-F25）。
+2. 上面四份已合入的修复，它们的规格登记行都还挂着「批准: 待 Founder 追认」——编排者依 2026-09-15「新发现全部本版修」与 2026-09-16「要我拍板的直接决定」两道授权先行施工。**推荐**：一次点头覆盖四条；要逐条看的话，四行分别是 F26（`docs/specs/creation-engine.md` §5 2026-09-17 行）、F29 与 F28（`docs/specs/frontend-baseline.md` §5 2026-09-17 两行）、F31／F32（`docs/specs/share-preview.md` §5 2026-09-17 行）。
+3. 那颗键在飞时写的字改了：「Queuing…」→「Adding…」，失败那句「Couldn't queue another…」→「Couldn't add another card — please try again.」——这条路上根本没有队列，按钮该说它真做的那件事。**推荐**：追认（编排者裁定；`docs/specs/frontend-baseline.md` §5 2026-09-17 R3-F29 行；落码 `apps/web/components/otto/vary-card-feedback.tsx:33` 与 `:39`）。
+4. 一张图再做 Create variations 或 Regenerate，新图身上「这张图用了哪个商品」就没了——是审计与回执的缺口，不是钱路缺口。**推荐**：裁一个语义（派生图要不要继承源图的产品血统），再决定修不修（`docs/specs/brand-product-identity.md` §5 2026-09-17 行；`findings-catalog.md` R3-F30）。
+5. staging 上那两把分享密钥 `MEDIA_PROXY_SECRET`／`SHARE_PREVIEW_SECRET` 设不设、谁来设——不设的话，分享链那两条验收（REAL-10／REAL-11）**永远**是 BLOCKED，本轮已经因此空跑一组（`docs/specs/share-preview.md` §5 2026-09-17 第一行）。
+6. REAL-08「生成失败之后重试一次、只预扣一次」的付费半段，在 org founder 上结构性跑不到——今天仅有的两种自然失败都是永久性无效输入，忠实重试会在校验层就被拒，永远走不到付费提交。**推荐**：批准人造一次供应商侧失败，或改判由单测／集成测试覆盖；重复跑同一段旅程只会再拿一次 PARTIAL（`docs/specs/asset-action-idempotency.md` §5 2026-09-17 行）。
+7. 商家批完一条生成、去 Library 再按浏览器 Back 回首页，Otto 对话正文空白 40–60 秒才补上那张进行中的卡——不是加载态、不是错误态，只是空白；期间账本零新增。**推荐**：本版修或排队，二选一（`findings-catalog.md` R3-F27；本条没有规格行，未派工）。
+8. 一次测试上传把一句「solid orange screen」写进了 Founder staging 账号的品牌记忆，而且标成商家手打、还直接活在 Otto 会引用的品牌语境里。**推荐**：Founder 自删，或授权我们删（`findings-catalog.md` R3-F22）。
+9. 上传回执要不要也出现在 Library 的格子上——今天两处载体（Library 资产详情抽屉、画布卡片 Info 面板）都要点一下才看得见，六个上传入口里有四个在上传当下屏幕上什么都不说。**推荐**：先听 Founder 对版面的取向再动（`docs/specs/money-engine.md` §5 2026-09-16 行「已知边界」第①点）。**未核**：任务书提到的「Library 规则禁常驻元数据」这条规矩，本次在 `docs/specs/` 与本审计目录内没找到对应条文，不作为依据引用。
+10. zero-queue 的 QUEUE-A7 探针跑出来的数字与验收行的文字有偏差（数字皆牌价估算口径，未调计费接口），已如实登记待追认（`docs/specs/zero-queue.md` §5 2026-09-13 行）。
+
+*存量（前几轮已挂，本次只复核指针仍在）：*
+
+- 各规格 §5 其余「待 Founder」行：FSE-207／208／211 三条口径（`docs/specs/creation-engine.md` §5 2026-09-11 三行，FSE-211 另有 2026-09-13 的复测句订正行）、frontend-baseline 的 2026-09-04／05 几条（`docs/specs/frontend-baseline.md` §5 :116、:119、:149、:157、:165）、tenant-isolation 严格档「无帧但字面 orgId 放行」的兜底收不收（同文件 §5 :80，收口挂在票 #1403）、money-engine 的 ④b Abandon 残余竞态（`docs/specs/money-engine.md` §5 :117）。
+- 票 #1403（OPEN）：钱面 enforce 翻转的前置与严格档兜底定调。**一处数字对不上，本文件不代为判定**：票面「翻转前置」列的是**三**条（①Membership 在 `runAsSystem` 里写；②`auth-guard.ts:88` 合法跨租户成员读；③webhook／worker 侧钱账无帧写），而本文件合并台账第 20 行（PR #1458）的摘要写的是「四颗形状雷根治」——两处口径不一致，标记**未核**，请以票面为准或由 Founder 一句话定死。
+- 票 #1361（OPEN）：staging 数据库口令轮换，Founder 亲自执行、agent 备单复证。
+- 票 #1362（OPEN）：延后台账 39 条到期者批量呈裁。
+- 生产部署门：**#1380 已于 2026-09-12T21:27:28Z 关闭**（`gh issue view 1380` 核实），票面原写「动 schema：迁移＋fresh-database 验证；生产执行前 Founder 另行确认备份与恢复方案」。**未核**：任务书说的「一门三件（生产迁移＋媒体备份激活＋预检 SQL）」中的「预检 SQL」，本次在仓内没找到对应工件；这道门今天可指的权威只有 `docs/specs/tenant-isolation.md` 的生产执行前置句与下面这条 #1385，是否另立一张票请 Founder 定。
+- 票 #1385（OPEN）：备份桶复制＋恢复手册＋真删捞回演练，其中 MEDIA-A3（Founder 随手挑一个人照手册从头走一遍）、MEDIA-A7（对生产桶只做只读核验）、MEDIA-A8（照 `beta-gate.md` GATE-A6 念那句判定）三条验收在 `docs/specs/media-durability.md` §「验收」表（:53、:57、:58）。
+
+**本次订正的低阶勘误（逐条写明改了什么）**：
+
+1. **合并台账时间列**：列头「合并时间（KL）」→「合并时间（UTC）」。依据：表里第 27 行 #1464 写 `09-17 04:36`，而 `gh pr view 1464 --json mergedAt` 答 `2026-09-17T04:36:44Z`——写进去的一直是 UTC，KL 时间应是 12:36。
+2. **本文件 2026-09-17（三）节末段（由收官（四）PR #1467 写入）的「五个分支均已派工」**：改成「四条修复分支，加上写那份文档自己那条分支，当时共五条在飞」。原文列得出的只有四条修复分支，第五条是文档分支，容易被读成漏列了一条修复。
+3. **R3-F26 的状态漏写 PR 号**：`findings-catalog.md` R3-F26 的**状态**行原写「分支…尚未开 PR」，现改为已合入并写明 PR #1466 / `66ef15fa`，同时把复审 P3 两条（规格「未关掉的缺口」由三条改四条、新增的 TOCTOU 理论例外）指了出来。
+4. **REAL-03「四处」与「七处」不一致**：本文件 2026-09-17 节原写「Brand／Library／`@` 菜单／确认卡与生成谱系**四处**同一 Entity id」，而同一份证据在 `coverage-matrix.md` REAL-03 行与 `real-scenarios.md` REAL-03 行都写「**七处**」并逐条枚举（Brand 卡片／Library Elements Products／`@` 菜单／确认卡／`GenJob.entityIds`／`approvedEntities`／`Generation.entitySnapshot`）。证据文件支持的是七处，本文件已按七处改写并保留订正说明。
+5. **R3-F32 的状态是被 R3-F31 那条 PR 顺手改的**：`git blame` 核实 `findings-catalog.md` 里 R3-F31 与 R3-F32 两条的**状态**行同由 commit `3a848cd3`（PR #1468）改写。这不是错，是出处——两条本来就是一条 PR 的两半，已在 R3-F32 行里写明，免得后来人以为 F32 另有一次独立更新。
+6. **`share-preview.md` §5 的行号指针**：原写 `packages/core/src/env-contract.ts:609` 指「`APP_ORIGIN` 在契约里是 optional」，但 :609 是该条目的 `name:` 行；`requirement: "optional"` 在 :612，整条目是 :608-617。已改为指条目范围并点名 :612。
+7. **`docs/DEFERRED.md` D-073／D-076**：两行的触发条件列各加一句「已随 2026-09-18 裁决失效（PR #1471，`620045da`），无需补审」，行本身保留不删。
