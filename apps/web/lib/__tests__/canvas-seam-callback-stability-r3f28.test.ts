@@ -16,17 +16,28 @@
  *
  * 这一份钉的是不变量本身，不是某一次崩溃：身份稳定 ＋ 空写入不换身份。
  */
-import { act, createElement } from "react";
+import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getMyAccount: vi.fn(),
   seen: [] as Array<Record<string, unknown>>,
+  /** 真 `CanvasOttoOverlay` 交给对话的那一份 props（下面最后一条用）。 */
+  seenStream: [] as Array<Record<string, unknown>>,
+  getCoworkThreadClient: vi.fn(),
 }));
 
 vi.mock("@/lib/account-actions", () => ({ getMyAccount: mocks.getMyAccount }));
 vi.mock("@/lib/balance-refresh", () => ({ notifyBalanceRefresh: vi.fn() }));
+vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: mocks.getCoworkThreadClient }));
+vi.mock("@/components/otto/OttoChatStream", () => ({
+  OttoChatStream: (props: Record<string, unknown>) => {
+    mocks.seenStream.push(props);
+    return null;
+  },
+}));
+vi.mock("@/components/otto/OttoFrontDoor", () => ({ OttoFrontDoor: () => null }));
 // 画板本体不参与这道围栏（它有自己那几份），这里只要它交出来的那两条线。
 vi.mock("@/components/canvas/FlowCanvas", () => ({
   default: (props: Record<string, unknown>) => {
@@ -44,6 +55,11 @@ vi.mock("@/components/canvas/CanvasOttoOverlay", () => ({
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { NorthstarCanvasWorkspace } = await import("@/components/canvas/NorthstarCanvasWorkspace");
+// 上面那份 `CanvasOttoOverlay` 假件是给工作区那几条用的；最后一条要量的正是**真**的这一层，
+// 所以单独取真件（它自己 import 的 `OttoChatStream` 仍走上面的假件）。
+const { CanvasOttoOverlay: RealCanvasOttoOverlay } = await vi.importActual<
+  typeof import("@/components/canvas/CanvasOttoOverlay")
+>("@/components/canvas/CanvasOttoOverlay");
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -66,6 +82,7 @@ function canvasProps(): Array<Record<string, unknown>> {
 
 beforeEach(() => {
   mocks.seen = [];
+  mocks.seenStream = [];
   mocks.getMyAccount.mockResolvedValue({ balance: 100, balanceUsd: 10 });
 });
 
@@ -153,5 +170,48 @@ describe("R3-F28 · 画布→对话的接缝回调身份稳定", () => {
     });
 
     expect(ottoProps().at(-1)!.composerReferences).toBe(before);
+  });
+
+  /**
+   * 上面四条钉的是工作区交给 overlay 的那几个；overlay 自己还往对话递一个 `onRefresh`，
+   * 从前写在 JSX 里、每渲染一次换一个 —— 与上面那四个当初的毛病同一条。这条把它一起钉住。
+   */
+  it("同一条对话重渲之后，overlay 交给对话的 onRefresh 还是同一个函数", async () => {
+    const onThreadChange = vi.fn();
+    const activeThread = thread();
+    let bump: () => void = () => {};
+
+    function Harness() {
+      const [tick, setTick] = useState(0);
+      bump = () => setTick((n) => n + 1);
+      return createElement(RealCanvasOttoOverlay, {
+        projectId: "p1",
+        entities: [],
+        // 每次重渲都递一个真的变了的值，保证 overlay 真的重跑了一遍。
+        balanceUsd: 10 + tick,
+        activeThread: activeThread as never,
+        pendingFirst: null,
+        composerReferences: [],
+        onThreadChange,
+        onStreamStart: () => {},
+        onPendingFirstSent: () => {},
+        onComposerReferencesConsumed: () => {},
+        onBalanceRefresh: () => {},
+        onGenerationActivityChange: () => {},
+      });
+    }
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => { root!.render(createElement(Harness)); });
+    const before = mocks.seenStream.at(-1)!;
+
+    await act(async () => { bump(); await Promise.resolve(); });
+    const after = mocks.seenStream.at(-1)!;
+
+    expect(after).not.toBe(before); // 真的重渲了 —— 下面那条才有意义
+    expect(after.balanceUsd).toBe(11);
+    expect(after.onRefresh).toBe(before.onRefresh);
   });
 });

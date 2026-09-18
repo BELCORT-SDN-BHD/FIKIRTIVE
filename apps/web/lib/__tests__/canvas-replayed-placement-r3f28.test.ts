@@ -16,11 +16,17 @@
  * 于是板子自己那份清单里出现了**两条同 id 的记录**。
  *
  * React Flow 的查找表按 id 去重，所以屏幕上仍然只有一张图 —— 但凡是**数**这份清单的东西
- * 全部翻倍，而那些数字就是商家看到的界面：
+ * 就翻倍，而那两处数字就是商家看到的界面（只有两处，下面各钉一条）：
  *   ① 点一下那唯一一张卡，工具条（Edit with Otto · Create variations · Animate · Download · ⋯）
- *      整条消失，底部换成多选条「2 selected / Download 2」；
- *   ② 同批框（`canvasBatchGroups`）在一张卡外面画出「Batch of 2」—— 商家没买过的一批；
- *   ③ 在飞付费卡的计数把同一个任务算两次（`canvasJobActive` / `hasInFlightPaidNode`）。
+ *      整条消失，底部换成多选条「2 selected / Download 2」（`FlowCanvas.tsx:1590`
+ *      `selectedCount` 是 `.filter().length`）；
+ *   ② 同批框（`canvasBatchGroups`）在一张卡外面画出「Batch of 2」—— 商家没买过的一批
+ *      （`FlowCanvas.tsx:1652` `batchFrames`）。
+ *
+ * **它动不了的那一处（本份最初写错、按复审如实更正）**：在飞付费卡那两处读数
+ * `hasInFlightPaidNode`（`FlowCanvas.tsx:1391`）与 `canvasJobActive`（`:1402`）都是
+ * `.some()` 的**布尔值**、不是计数，同一个 id 多出一条记录改不动它们；所以「同一个任务被算
+ * 两次 / Otto 那扇观察窗跟着开关两次」这件事并不成立，本份不据此写任何断言。
  *
  * 所以判据在 id 上：板上已经有这张卡，就一个字都不动它 —— 它比这次摆放来得早，可能已经
  * 带着板读带回来的结算记录，而这次摆放只知道「一个任务被接受了」，永远不会更新。
@@ -267,6 +273,44 @@ describe("R3-F28 · 服务端重放同一张卡，板上还是一张", () => {
     await pressCard("n1");
     // Animate 读的是 `nodeDataRef` 里那张卡的 generationId：抹掉了就会弹
     // "This image is not ready for video yet."，而这张卡明明已经出好了。
+    const animate = [...document.querySelectorAll("button")]
+      .find((b) => (b.getAttribute("aria-label") ?? "") === "Animate");
+    expect(animate, "no Animate control on the picked card").toBeTruthy();
+    await act(async () => {
+      animate!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+    expect(mocks.toastError).not.toHaveBeenCalledWith("This image is not ready for video yet.");
+  });
+
+  /**
+   * 上面那三条钉的都是**已经在板上**的卡被重放 —— 那一格由 `onNewNode` 最外面那道
+   * `nodesRef` 守卫拦下，`nodeDataRef` 那句合并写入根本走不到，所以它们证不了合并写入。
+   *
+   * 真正只剩合并写入把关的，是这一格：同一次 React 批次里连着摆两次（`nodesRef` 由一个
+   * effect 回写，批次没冲刷完它就还是旧的 ⇒ 外层守卫放行），第二次进来时这张卡的
+   * `generationId` 已经由 `onResolve` 落进 `nodeDataRef`。此时若写回覆盖式的
+   * `nodeDataRef.current[n.id] = { pos }`，那个 id 当场被抹成 undefined，一张早就出好的图
+   * 按 Animate 会收到 "This image is not ready for video yet."。
+   *
+   * 现场对得上的两条路：同一张确认卡被连按两下（`runImageEvolve` 重用同一个 actionId），
+   * 以及回执续跑（`useCanvasGen.ts:799` `claimCanvasActionReceipt`）。
+   */
+  it("同一批次里连摆两次同一张卡：那张卡记着的 generationId 不许被抹掉（Animate 照旧按得动）", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("n1", { genJobId: "job1" })]);
+    await renderBoard();
+
+    // 三句都在**同一个** act 批次里：中间没有 commit，`nodesRef` 因此一直是旧的。
+    await act(async () => {
+      mocks.captured.onNode?.({ ...replayedPlacement("n2", "job2"), pos: { x: 340, y: 0, w: 320, h: 320 } });
+      mocks.captured.onResolve?.("n2", "https://cdn.example/n2.png", "done", "gen-n2");
+      mocks.captured.onNode?.({ ...replayedPlacement("n2", "job2"), pos: { x: 340, y: 0, w: 320, h: 320 } });
+      await Promise.resolve();
+    });
+
+    expect(container!.querySelectorAll('.react-flow__node[data-id="n2"]').length).toBe(1);
+
+    await pressCard("n2");
     const animate = [...document.querySelectorAll("button")]
       .find((b) => (b.getAttribute("aria-label") ?? "") === "Animate");
     expect(animate, "no Animate control on the picked card").toBeTruthy();
