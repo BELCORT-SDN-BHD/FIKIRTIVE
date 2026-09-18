@@ -18,13 +18,13 @@
  * React Flow 的查找表按 id 去重，所以屏幕上仍然只有一张图 —— 但凡是**数**这份清单的东西
  * 就翻倍，而那两处数字就是商家看到的界面（只有两处，下面各钉一条）：
  *   ① 点一下那唯一一张卡，工具条（Edit with Otto · Create variations · Animate · Download · ⋯）
- *      整条消失，底部换成多选条「2 selected / Download 2」（`FlowCanvas.tsx:1590`
+ *      整条消失，底部换成多选条「2 selected / Download 2」（`FlowCanvas.tsx:1604`
  *      `selectedCount` 是 `.filter().length`）；
  *   ② 同批框（`canvasBatchGroups`）在一张卡外面画出「Batch of 2」—— 商家没买过的一批
- *      （`FlowCanvas.tsx:1652` `batchFrames`）。
+ *      （`FlowCanvas.tsx:1666` `batchFrames`）。
  *
  * **它动不了的那一处（本份最初写错、按复审如实更正）**：在飞付费卡那两处读数
- * `hasInFlightPaidNode`（`FlowCanvas.tsx:1391`）与 `canvasJobActive`（`:1402`）都是
+ * `hasInFlightPaidNode`（`FlowCanvas.tsx:1405`）与 `canvasJobActive`（`:1416`）都是
  * `.some()` 的**布尔值**、不是计数，同一个 id 多出一条记录改不动它们；所以「同一个任务被算
  * 两次 / Otto 那扇观察窗跟着开关两次」这件事并不成立，本份不据此写任何断言。
  *
