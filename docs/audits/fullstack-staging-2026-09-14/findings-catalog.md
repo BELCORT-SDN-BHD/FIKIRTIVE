@@ -323,7 +323,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F25 · 画布拖放上传不入队 ingest，理解与扣费延后 15 分钟–24 小时（补登记编号，正文已在 money-engine.md）
 
-**状态**：修复 PR 施工中（Founder 2026-09-18 裁「这个设计完全不合理，可以移除」）——分支 `claude/canvas-upload-ingest-now-r3-f25`，落地登记见 `docs/specs/money-engine.md` §5 2026-09-18 行。正文已随 #1464 落在 `docs/specs/money-engine.md` §5 2026-09-16 行「已知边界」第④点——本条只给它一个可引用的 F 编号并交叉指回那一行，不重复展开全文，避免同一件事两处各写一半。
+**状态**：修复 PR #1474（Founder 2026-09-18 裁「这个设计完全不合理，可以移除」）——分支 `claude/canvas-upload-ingest-now-r3-f25`，落地登记见 `docs/specs/money-engine.md` §5 2026-09-18 行。正文已随 #1464 落在 `docs/specs/money-engine.md` §5 2026-09-16 行「已知边界」第④点——本条只给它一个可引用的 F 编号并交叉指回那一行，不重复展开全文，避免同一件事两处各写一半。
 
 **概要（转引自规格原文，细节以那一行为准）**：`uploadReference`（`apps/web/lib/actions.ts:962`）不像 `finalizeCandidateUploads`（`apps/web/lib/upload-actions.ts:452`）那样把 ingest 入队，于是画布拖放上传的素材宽高要等 `redispatchLostIngest` 的 15 分钟–24 小时补投窗（`apps/worker/src/jobs/ingest.ts:57-58`）才补上；元数据不齐则扫描器不捞（`METADATA_READY_FOR_UNDERSTANDING`），补投窗打开之前理解不会发生，Info 面板此刻仍停在既有的 "No charge"——这一格是**延迟，不是免费**。两条候选根因（`uploadReference` 补入队 / 缩短 `redispatchLostIngest` 窗口）待 Founder 裁 fix-now 或排队。
 
