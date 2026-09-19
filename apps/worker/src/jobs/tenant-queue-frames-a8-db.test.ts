@@ -1,10 +1,12 @@
 /**
- * tenant-queue-frames-a8-db.test.ts —— 规格 docs/specs/tenant-isolation.md 验收 **TENANT-A8**：
- * 「跑 7 条队列各一单（caption / gen / ingest / publish / refgen / render / research）⇒ 7 条全部
- * 跑通；帧建立之后该单的所有后续读写都经过值比对（用一次异租户 id 注入证明会被拒）。」
+ * tenant-queue-frames-a8-db.test.ts —— 规格 docs/specs/tenant-isolation.md 验收 **TENANT-A8**
+ * （2026-09-15 Founder 裁定随 #1403 同批改写之后的现行文本）：
+ * 「跑 8 条队列各一单（caption / gen / ingest / publish / refgen / render / research / understand）
+ * ⇒ 8 条全部跑通；帧建立之后该单的所有后续读写都经过值比对（**除已登记豁免表外**；用一次异租户
+ * id 注入证明会被拒）。」
  *
  * 在这个文件出现之前，A8 是 `packages/db/src/tenant-isolation-later-slices.test.ts` 里的两条
- * `it.todo`。规格 §4 异议栏点名这一段：worker 的 7 条队列是「先读才知道租户」的鸡生蛋结构，
+ * `it.todo`。规格 §4 异议栏点名这一段：worker 的这几条队列是「先读才知道租户」的鸡生蛋结构，
  * 判错就是整批任务当天全挂 —— 所以这里不接受 mock 库上的「调用次数对不对」，只接受真库、真守卫、
  * 真 handler 的行为。
  *
@@ -113,7 +115,7 @@ vi.mock("../storage.js", async () => {
 
 import { prisma, reserveCredits } from "@fikirtive/db";
 import { getPrincipal, runAsTenant } from "@fikirtive/db/principal";
-import { newId, storageKey, storageKeyToSrc, TRANSCRIPT_GENERATION } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc, TRANSCRIPT_GENERATION, DEAD_LETTER_QUEUES } from "@fikirtive/core";
 import { createGenerationProvider } from "@fikirtive/generation";
 import { provider } from "../generation.js";
 import { storage } from "../storage.js";
@@ -153,7 +155,9 @@ const WHISPER_JSON = JSON.stringify({
 type FrameProof = { principal: unknown; read: string; write: string };
 const proofs: Record<string, FrameProof> = {};
 
-/** 规格 A8 点名的七条队列，以及每条「真正受守卫」的那张表 —— ⑧ 的汇总按这张表逐条核。 */
+/** 规格 A8 点名的**八**条队列，以及每条「真正受守卫」的那张表 —— ⑨ 的汇总按这张表逐条核。
+ *  这张表不是手抄的清单：下面那条汇总用例拿 `@fikirtive/core` 的 `DEAD_LETTER_QUEUES`
+ *  做集合相等断言（复审 T4），所以新增一条队列而忘了补这里，汇总当场红。 */
 const QUEUE_TABLE: ReadonlyArray<readonly [queue: string, model: string]> = [
   ["ingest", "Asset"],
   ["caption", "CaptionJob"],
@@ -583,13 +587,22 @@ describe("TENANT-A8 —— 八条队列各一单：跑到终态，且帧内异�
     // （`expectFramedAndFenced`），这里只是把七份签名并排再看一遍。所以它**不假设**别的用例跑过
     // ——单独跑这一条（`-t` / `--shard` / vitest retry）时 `proofs` 是空的，那不是产品出事，是
     // 没有现场可汇总：显式跳过并写明理由，而不是红一条与产品无关的。
-    expect(QUEUE_TABLE).toHaveLength(8); // 规格点名的八条队列，一条不少地在这张表上
-    const recorded = QUEUE_TABLE.filter(([queue]) => proofs[queue] !== undefined);
-    if (recorded.length === 0) {
+    // 复审 T4（2026-09-19）：队列条数**不手写**。唯一来源是 `packages/core/src/dead-letters.ts` 的
+    // `DEAD_LETTER_QUEUES`（每条是 `<queue>.dlq`）—— 集合相等，多一条少一条都红。此前写死的
+    // `toHaveLength(8)` 只能挡住「表被删短」，挡不住「系统新增了第九条队列而这张表没跟上」。
+    const systemQueues = [...DEAD_LETTER_QUEUES].map((q) => q.replace(/\.dlq$/, ""));
+    expect(new Set(QUEUE_TABLE.map(([queue]) => queue))).toEqual(new Set(systemQueues));
+
+    if (Object.keys(proofs).length === 0) {
       ctx.skip("①–⑧ 没有在这次运行里跑过（proofs 为空）——本条只汇总它们留下的现场，自己不产生证据");
       return;
     }
-    expect(Object.keys(proofs).sort()).toEqual(recorded.map(([queue]) => queue).sort());
-    for (const [queue, model] of recorded) expectFramedAndFenced(queue, A, model);
+    // 复审 T4：**不再按「谁跑过」裁剪**。只要这一轮跑了任何一条队列，就要求八条现场齐全 ——
+    // 否则一条 `it.skip` 或一条静默不产生现场的用例，会让这条汇总照样绿（旧写法就是这样）。
+    expect(Object.keys(proofs).length, "①–⑧ 的现场没有齐八份 —— 有队列没跑或没留下证据").toBe(
+      QUEUE_TABLE.length,
+    );
+    expect(Object.keys(proofs).sort()).toEqual(QUEUE_TABLE.map(([queue]) => queue).sort());
+    for (const [queue, model] of QUEUE_TABLE) expectFramedAndFenced(queue, A, model);
   });
 });

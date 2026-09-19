@@ -155,6 +155,18 @@ describe("tenant-guard coverage — every ownerId model is guarded or explicitly
       expect(model in TENANT_GUARD_EXEMPT, `"${model}" 同时是整表豁免和 per-uniqueKey 豁免`).toBe(false);
       const body = shapes.get(model)?.body ?? "";
       const fields = key.split("_");
+      // 复审 S2（2026-09-19，PR #1495 安全轴）：这把键里**不许有租户列**。
+      // `@@unique([ownerId, contentHash])` 这种键一旦被登记，「where 里独自点着这把键」就等于
+      // 「where 里带着一个任意的 ownerId」—— per-key 豁免会当场退化成整条租户列的绕过闸，
+      // 而它看起来仍然像一条窄豁免。这里把那条路直接封死。
+      expect(
+        fields,
+        `"${model}" 的豁免键 "${key}" 含租户列 —— per-key 豁免会因此退化成整条租户列的绕过`,
+      ).not.toContain("ownerId");
+      expect(
+        fields,
+        `"${model}" 的豁免键 "${key}" 含租户列 —— per-key 豁免会因此退化成整条租户列的绕过`,
+      ).not.toContain("orgId");
       const unique = [...body.matchAll(/@@unique\(\[([^\]]*)\]/g)].some((m) => {
         const declared = (m[1] ?? "").split(",").map((f) => f.trim());
         return declared.length === fields.length && declared.every((f, i) => f === fields[i]);
