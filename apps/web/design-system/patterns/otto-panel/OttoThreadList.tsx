@@ -100,7 +100,12 @@ export function OttoThreadList({
   const hasAnyThread = entries.some((entry) => entry.kind === "project" && entry.threads.length > 0);
 
   return (
-    <div data-otto-thread-list="" className="flex flex-col gap-3 px-2 py-3">
+    // `shrink-0` —— 体从 R3-F34 起是一列 flex,而这份列表自己不管滚动(它靠体的
+    // `overflow-y-auto` 滚)。**这一格今天不修任何 bug**:它 `overflow: visible`、没写
+    // `min-height`,CSS 的自动最小尺寸(`min-height: auto`)本来就不让 flex 把它压到比内容矮。
+    // 写出来是把意图钉死,不再挂在那条隐式规则上 —— 将来谁给它加一句 `min-h-0` 或一个
+    // `overflow`,自动最小尺寸就失效,那一刻这份列表会被压回体高、底下 12px 内边距跟着没了。
+    <div data-otto-thread-list="" className="flex shrink-0 flex-col gap-3 px-2 py-3">
       <Button
         type="button"
         variant="outline"
