@@ -135,6 +135,12 @@ const NON_DEPLOY_ENV: Readonly<Record<string, string>> = {
   RAILWAY_LINKED_DIR:
     "scripts/tools/mint-r2-token.mjs 在哪个目录里跑 railway CLI(railway 按目录记项目绑定)。" +
     "默认 process.cwd();只有开发者本机的 R2 换桶换钥匙操作会读它,部署进程一个都不读。",
+  STAGING_SESSION_OUT:
+    "scripts/tools/staging-login.mjs 把导出的 staging 第二商家会话写到哪个文件。" +
+    "默认仓库根的 .staging-tenant-b-session.json;只有 Founder 本机那一次性的会话导出会读它,部署进程一个都不读。",
+  STAGING_TENANT_B_EMAIL:
+    "scripts/tools/staging-login.mjs 允许导出哪个测试商家的会话(默认 tools+e2e20260908@belcort.com)。" +
+    "这是那个脚本的账号护栏,只在本机跑,部署进程一个都不读。",
   USER:
     "scripts/tools/mint-r2-token.mjs 用它定位 macOS 钥匙串条目(security find-generic-password -a $USER)。" +
     "这是本机登录名,由 shell 注入,不是可配置的部署变量。",

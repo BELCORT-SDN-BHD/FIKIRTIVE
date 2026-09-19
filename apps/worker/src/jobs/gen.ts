@@ -49,6 +49,7 @@ import {
   // 判据都在 core,铸卡侧(`packages/otto/src/skills/propose.ts`)读的是同一对函数。
   referenceUpscalePlan,
   lineageCarriesOfficialActor,
+  inheritableEntitySnapshot,
   REFERENCE_IMAGE_EXTS,
   REFERENCE_VIDEO_EXTS,
   type GenJobData,
@@ -1725,7 +1726,58 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
         where: { id: { in: job.entityIds }, ownerId: job.ownerId },
         include: { referenceImages: { where: { deletedAt: null }, include: { asset: true } } },
       });
-      const entitySnapshot = {
+      /**
+       * R3-F30(Founder 2026-09-18 裁「本版修,派生图继承源图记录」)——
+       * **派生出来的图继承源图那一份记录。**
+       *
+       * 缺口原样:画布 Create variations 与 Library Regenerate 做出来的新图,`entityIds`
+       * 都是空的(引用是源图当年带进去的,不是这一单自己挂的),于是上面那份快照算出来是
+       * 空数组 —— 一张首生图之后,「这张图用了哪个商品」在每一条派生路径上都断了一跳
+       * (staging 第三轮付费旅程第三组实证,`docs/audits/fullstack-staging-2026-09-14/`)。
+       *
+       * 判据只有一条,与裁决逐字对齐:**这一单自己没有挂任何引用**(`job.entityIds` 空)
+       * 时才继承。派生时自己换了引用(重新 @ 了别的商品／演员)⇒ `entityIds` 非空 ⇒ 走上面
+       * 那份现算的快照,记录跟着新的引用走,一个字都不从源图借。用 `job.entityIds.length`
+       * 而不是 `entities.length`:挂了引用但那些元素已被删掉,仍然是「这一单自己换过引用」,
+       * 继承源图的旧记录会把它说成一件没发生过的事。
+       *
+       * **这条判据不认入口,所以它管到的不止那两条路(复审 P2/P1-1,如实写下来)**:凡是
+       * 「自己不挂引用 + 有谱系来源」的任务都继承,今天共**六个**商家动作 ——
+       *   ① 画布 Create variations;
+       *   ② Library Regenerate;
+       *   ③ Library「Edit this image」(`DetailPanel` 的 `handleEditSubmit`,`editIds` 起手就是
+       *      空数组);
+       *   ④ 模板跑一次(`TemplateModal` 的 `startTemplateJob`,从不带元素);
+       *   ⑤ Animate(图生视频:这一格算在 image / video 两个分支**之前**,两边共用);
+       *   ⑥ **Otto 确认卡**(Edit with Otto / 拿一张图问 Otto 而不 @ 任何元素)——
+       *      `cowork-actions` 的 `coworkGenerate` 让 `buildGenRequestFromCard` 从卡面重新读出
+       *      `sourceGenerationId`,商家没 @ 东西时 `entityIds` 就是空的,于是任务行与①同形。
+       * 六条各有一条真库用例钉着(`gen-derived-lineage-db.test.ts`)。相反地,分镜里那条只认
+       * `shotId`、没有 `sourceGenerationId` 的 Animate 拿不到谱系来源 ⇒ 不继承,与今天同形。
+       *
+       * 已披露的行为改变因此**同样落在 Otto 面上**:继承之后 `lineageCarriesOfficialActor`
+       * 在派生图上读得到演员血统,付费前那道参考图放大闸(`reference-upscale-gate` 的
+       * `assertPrePaymentReferenceSizeGate`)与本文件 i2v 那句「他已经挑过演员」的拒绝文案,
+       * 从此在人工面与 Otto 面按同一条血统判。
+       *
+       * 来源从哪来:`sourceGenerationId`(真送进引擎的底图,画布变体走这条)优先,没有底图
+       * 时读 `lineageGenerationId`(Library Regenerate 这条路引擎手上没有那张照片,所以它
+       * 只有谱系锚点)。两列都由服务端写,都不是 `genRequest` 的字段。
+       *
+       * 租户(复审 P3 如实改写):挡住越租户的**不是**下面那句 `ownerId: job.ownerId`,而是这
+       * 整个 handler 外面那一层 `runAsTenant(job.ownerId)` 帧 —— Prisma 的 tenant guard
+       * (`packages/db/src/tenant-guard.ts`,`ownerId` 一族恒在 enforce 挡位)会把帧里的租户号
+       * **就地注进**这条 where。所以跨租户的源图在这里根本查不出来(查不到 ⇒ 不继承 ⇒ 落空
+       * 数组,与今天同形),而写出来的那句 `ownerId` 是双保险 —— 2026-09-19 复测(补上第六条路
+       * 之后):把那一格删掉,`gen-derived-lineage-db.test.ts` 八条仍然全绿。留着它是为了让这
+       * 一读自己说得出自己的边界,与本文件其它每一条读同形。
+       * 不过滤 `deletedAt`:这是一次纯记录读,商家把源图丢进回收站不该让已经发生过的谱系凭空
+       * 消失。
+       *
+       * 钱与引擎一格不碰:这几行跑在付费调用之前,但只读、只影响将要写进 `Generation` 的那
+       * 一格记录 —— 发给引擎的字节、价格、幂等键全都不读这里。
+       */
+      const computedEntitySnapshot = {
         entities: entities.map((e) => {
           // record WHICH variant conditioned this gen + only that variant's ref hashes
           // (base = variantId null), so provenance reflects what was actually sent.
@@ -1734,6 +1786,21 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
           return { id: e.id, name: e.name, type: e.type, variantId, refHashes: refsForHash.map((r) => r.asset.contentHash) };
         }),
       };
+      const lineageSourceId = job.entityIds.length === 0
+        ? (job.sourceGenerationId ?? job.lineageGenerationId)
+        : null;
+      const lineageSource = lineageSourceId
+        ? await prisma.generation.findFirst({
+            where: { id: lineageSourceId, ownerId: job.ownerId },
+            select: { entitySnapshot: true },
+          })
+        : null;
+      // 继承来的那一格是源图自己那一行的 `Json`(我们自己在这同一个写入点写下去的形状),
+      // 所以这里的断言只是把 Prisma 的读类型换成写类型,不放宽任何形状判定 —— 判定在
+      // `inheritableEntitySnapshot` 里做完了(拿不出非空 `entities` 一律回 null)。
+      const entitySnapshot: Prisma.InputJsonObject | typeof computedEntitySnapshot =
+        (lineageSource ? inheritableEntitySnapshot(lineageSource.entitySnapshot) as Prisma.InputJsonObject | null : null)
+        ?? computedEntitySnapshot;
 
       // THE paid call — exactly once per job. Image: t2i/edit. Video (i2v):
       // animate the shot's latest IMAGE generation into a clip.

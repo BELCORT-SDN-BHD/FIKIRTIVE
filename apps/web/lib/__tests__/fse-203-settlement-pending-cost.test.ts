@@ -208,7 +208,10 @@ describe("creation §5 :169 FSE-203 结算没定论前的诚实中间态", () =>
   });
 
   it("FSE-203 非上传来路(有付费任务)恒不是 pending —— 结算与产出落盘同一个事务,没有这个窗口", async () => {
-    genJobFindFirst.mockResolvedValue({ id: "job_1", status: "DONE" });
+    // `entityIds` 是 `getGenerationLineage` 那一读真的 select 出来的一格(R3-F30:判「这几个
+    // 名字是继承来的还是这一单自己挂的」)。假件要按真 select 给全,少一格就是让测试对着一个
+    // 产线上不存在的形状跑 —— 库里这一列非空、默认 `[]`。
+    genJobFindFirst.mockResolvedValue({ id: "job_1", status: "DONE", entityIds: [] });
     creditLedgerFindMany.mockImplementation(ledgerBy({ job_1: [-8] }));
     generationFindFirst.mockResolvedValue({
       projectId: PROJECT,

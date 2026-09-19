@@ -76,7 +76,24 @@ export function AssetLineage({ lineage }: { lineage: GenerationLineage }) {
         ) : null}
       </p>
       {lineage.references.length > 0 && (
-        <p className="cv-detail-fact-copy">References used: {lineage.references.join(", ")}</p>
+        /**
+         * R3-F30 复审 P3(2026-09-18)—— **记录说的必须是真发生过的事。**
+         *
+         * 这一行从前只有一句「References used: …」。派生图(变体 / Regenerate / 编辑 /
+         * 模板 / Animate)的这几个名字是从源图那一行**继承**下来的记录,而 Regenerate 那条
+         * 路一张参考图都没送进引擎 —— 照旧说「用过的参考」就是把没发生过的事写进回执。
+         * 所以文案跟着 `referencesInherited` 分岔:继承来的说它是**源图那一份记录**,只有
+         * 这一单真的挂了元素、真的送了参考图时才说 "References used"。
+         *
+         * 用 `PRODUCT_VOCABULARY.elements` 而不是手抄一个词:这几个名字可能是商品,也可能
+         * 是人物/服装/场景(Library `Elements` 那一支就是它们的合称),写死「Product」会在
+         * 继承的是一位演员时又说一次假话。
+         */
+        <p className="cv-detail-fact-copy">
+          {lineage.referencesInherited
+            ? `${PRODUCT_VOCABULARY.elements} record (from the source image): ${lineage.references.join(", ")}`
+            : `References used: ${lineage.references.join(", ")}`}
+        </p>
       )}
       {receipt?.state === "charged" ? (
         // Founder 2026-09-16 —— 自动理解结清之后,那件上传素材身上留下的**唯一**一行回执:
