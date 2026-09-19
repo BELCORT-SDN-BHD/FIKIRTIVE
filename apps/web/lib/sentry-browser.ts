@@ -9,13 +9,22 @@
  */
 
 /**
- * 洗法与形状不在这个文件里 —— 它们搬去了 `lib/sentry-scrub.ts`,因为服务端
- * `instrumentation.ts` 的 init 要用**同一份**规矩(SHARE-A6 的遥测半句在服务器上也得成立)。
- * 这里只从那边取,并原样转出去:既有的调用点与测试仍按 `@/lib/sentry-browser` 找它们。
+ * 洗法与形状不在这个文件里 —— 它们搬去了 `lib/sentry-scrub.ts`,浏览器与服务器两个 init 用的是
+ * **同一只函数**(`scrubSentryEventTokens`)。这里只从那边取,并原样转出去:既有的调用点与测试
+ * 仍按 `@/lib/sentry-browser` 找它们。
+ *
+ * 为什么两边同一只而不是各洗各的:要关的是「分享/媒体 token 进遥测」这**一类**,不是「服务端那
+ * 一例」。浏览器事件同样有 `exception.values[].value`(错误正文里带地址)和 fetch 面包屑的
+ * `data.url` —— 留着不洗,这一类就只关了一半。
  */
-import { scrubShareTokens, scrubUrlFragments, type ScrubbableEvent } from "./sentry-scrub";
+import {
+  scrubSentryEventTokens,
+  scrubShareTokens,
+  scrubUrlFragments,
+  type ScrubbableEvent,
+} from "./sentry-scrub";
 
-export { scrubShareTokens, scrubUrlFragments };
+export { scrubSentryEventTokens, scrubShareTokens, scrubUrlFragments };
 export type { ScrubbableEvent };
 
 /** Sentry 浏览器端 init 参数。字段是我们真正决定的那几个,不是 SDK 的全集。 */
@@ -31,7 +40,9 @@ export type BrowserSentryOptions = {
    */
   sendDefaultPii: false;
   /** #1317 —— 每一条事件送出去之前先洗掉 URL 片段;SHARE-A6 加了 query 里的 `t=` 与媒体/分享
-   *  路径段(见 `scrubShareTokens`,它内部先做 `scrubUrlFragments` 那一步)。 */
+   *  路径段,以及异常正文、面包屑、headers/cookies 里的同样几种形态(见 `scrubSentryEventTokens`,
+   *  它内部先做 `scrubShareTokens` → `scrubUrlFragments` 那两步)。服务端 `instrumentation.ts`
+   *  接的是同一只函数。 */
   beforeSend: <T extends ScrubbableEvent>(event: T) => T;
 };
 
@@ -54,7 +65,7 @@ export function browserSentryOptions(
     environment: nodeEnv || "development",
     tracesSampleRate: 0,
     sendDefaultPii: false,
-    beforeSend: scrubShareTokens,
+    beforeSend: scrubSentryEventTokens,
   };
 }
 

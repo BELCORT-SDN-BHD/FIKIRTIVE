@@ -106,9 +106,10 @@ export function scrubUrlFragments<T extends ScrubbableEvent>(event: T): T {
  * 一定滴水不漏 —— 一次中途出错的重定向、一条商家自己转发出去的旧书签,都可能让上报事件的
  * `event.request.url` 或导航面包屑里还留着一段本该消失的 token。
  *
- * **浏览器那一侧的全部行为就是这个函数**(`browserSentryOptions().beforeSend`),字段面与
- * 2026-09-18 之前一字不差:只咬 `request.url` 与导航面包屑的 `from`/`to`。服务端多出来的那几块
- * (headers、cookies、异常正文…)由下面的 `scrubSentryEventTokens` 接着洗。
+ * 这是**地址那一半**:只咬 `request.url` 与导航面包屑的 `from`/`to`。它不是任何一个 init 的
+ * `beforeSend` —— 两个 init 接的都是下面那只 `scrubSentryEventTokens`,它第一步就调这里。
+ * 单独留着是因为这一半自己有测试(`sentry-browser.test.ts` 的 `scrubShareTokens` 一节),
+ * 且「地址字段才切片段」这条规矩就写在这里。
  */
 export function scrubShareTokens<T extends ScrubbableEvent>(event: T): T {
   scrubUrlFragments(event);
@@ -154,9 +155,15 @@ function scrubCookieHeader(value: string): string {
 }
 
 /**
- * SHARE-A6 的服务器半句 —— 服务端事件里 token 可能出现的**每一处**都洗一遍。
+ * SHARE-A6 的遥测那一句 —— **浏览器与服务器两个 init 的 `beforeSend` 都是这一只**:事件里 token
+ * 可能出现的每一处都洗一遍。
  *
- * 比浏览器那一侧多咬的,正是 `@sentry/node` 自己会填、而浏览器事件里根本不存在的那几块:
+ * 为什么不按运行时分两只:要关的是「分享/媒体 token 进遥测」这**一类**。下面这几块虽然多数由
+ * `@sentry/node` 填,但浏览器事件里同样存在 `exception.values[].value`(一条错误正文里带着地址)
+ * 与 fetch 面包屑的 `data.url` —— 只给服务端洗,这一类就只关了一半,而漏掉的那一半长得和已关的
+ * 那一半一模一样。字段不存在时每一步都是空转,所以浏览器多付的代价是零。
+ *
+ * 逐块说明:
  *   · `request.query_string` —— node 的请求上下文把 query 单独拆出来一份,`request.url` 洗干净
  *     了它还留着原文;
  *   · `request.cookies` 与 `Cookie` 请求头 —— 分享 token 今天就住在 `__Secure-sp_t` 里
@@ -164,7 +171,7 @@ function scrubCookieHeader(value: string): string {
  *   · `Authorization` 一类的请求头 —— 整条值不要,凭据回声没有任何诊断价值;
  *   · 异常正文与 `event.message` —— 一条 `fetch failed: https://…/api/media/pub/<token>` 的报错
  *     会把地址原样写进 `exception.values[].value`,它不经过 `request.url` 那道门;
- *   · 面包屑的 `data.url` 与 `message` —— node 的 http 集成把外发请求记在这两处。
+ *   · 面包屑的 `data.url` 与 `message` —— 两边的 http/fetch 集成都把外发请求记在这两处。
  *
  * 片段那一刀(#1317)只落在**地址**字段上:异常正文里的 `#` 是正文的一部分,按地址的规矩切会
  * 把报错拦腰截断,那是拿诊断能力换一件本来就没发生的事。
