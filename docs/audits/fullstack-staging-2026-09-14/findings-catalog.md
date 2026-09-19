@@ -415,7 +415,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F35 · 服务器端 Sentry 不洗分享 token（遥测脱敏只覆盖了浏览器一侧）
 
-**状态**：**已修复并合入主干**——PR #1482，合并 commit `bf8dbe96`（2026-09-19T11:45:05Z，`gh pr view 1482 --json mergeCommit,mergedAt` 现查）。Founder 2026-09-19 对谈授权编排者代裁「本版修」，登记行见 `docs/specs/share-preview.md` §5 2026-09-19。**本条的闭合口径**：服务器与浏览器两侧的 `beforeSend` 与 `beforeSendTransaction` 从此是同一只函数，由 `sentry-server-scrub.test.ts`（14 条）与 `sentry-browser.test.ts`（18 条）钉住——**这是测试，不是真环境回执**，所以 `coverage-matrix.md` 的 SHARE-A6 行仍记 PARTIAL（地址栏那半句真跑过，遥测那半句只有测试）。
+**状态**：**已修复并合入主干**——PR #1482，合并 commit `bf8dbe96`（2026-09-19T11:45:05Z，`gh pr view 1482 --json mergeCommit,mergedAt` 现查）。Founder 2026-09-19 对谈授权编排者代裁「本版修」，登记行见 `docs/specs/share-preview.md` §5 2026-09-19。**本条的闭合口径**：服务器与浏览器两侧的 `beforeSend` 与 `beforeSendTransaction` 从此是同一只函数，由 `apps/web/lib/__tests__/sentry-server-scrub.test.ts` 与 `sentry-browser.test.ts` 两份钉住（逐条条数见 `docs/specs/share-preview.md` §5 2026-09-19 行）——**这是测试，不是真环境回执**，所以 `coverage-matrix.md` 的 SHARE-A6 行仍记 PARTIAL（地址栏那半句真跑过，遥测那半句只有测试）。
 
 **先把判定说准**：§2 冻结的 SHARE-A6 原文是「地址栏是不含 token 的干净地址；**浏览器遥测**（Sentry `beforeSend` 抓到的事件）里的任何 URL 都不含 token」（`docs/specs/share-preview.md:55`）——它只承诺**浏览器**那一侧，服务端本来就不在它的字面之内。所以本条不是「SHARE-A6 有一半没做到」，而是把这条判定**扩到服务器遥测**；§2 那张冻结表一个字不动，扩张登记在 `docs/specs/share-preview.md` §5 2026-09-19 行，下次 S5 连同该行一起裁。
 
