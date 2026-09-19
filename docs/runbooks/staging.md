@@ -93,8 +93,8 @@
    node scripts/tools/staging-login.mjs "<邮件里的 Log in 链接>"
    ```
 
-   脚本只打印落地路径,不打印邮箱、验证码或 cookie。链接不是 staging 登录链接、或属于别的账号
-   时直接拒绝退出(exit 1),不会导出 Founder 自己的账号。
+   脚本不打印验证码或 cookie;失败时只回显固定的登录页提示语。链接不是 staging 登录链接、或属于
+   别的账号时直接拒绝退出(exit 1),不会导出 Founder 自己的账号。
 
 **这个文件是凭据:**默认写到仓库根的 `.staging-tenant-b-session.json`(可用 `STAGING_SESSION_OUT`
 覆盖),权限 0600,已在 `.gitignore`。绝不提交、绝不贴进 issue/PR/日志,验证跑完就删。会话会过期

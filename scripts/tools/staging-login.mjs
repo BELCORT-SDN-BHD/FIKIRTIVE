@@ -7,11 +7,16 @@
 // Run with no argument and it asks for the link on stdin instead.
 // Output: .staging-tenant-b-session.json (chmod 600, gitignored) — override
 // with STAGING_SESSION_OUT. Allowed account: STAGING_TENANT_B_EMAIL.
-// Prints only the landing path. Never prints the e-mail, the code or the cookie.
+// Never prints the code or the cookie; on failure it echoes only the allowed address
+// or the login page's own fixed alert text.
 import { chromium } from "playwright";
 import { chmodSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+
+// The storageState file below is a credential: never let it exist world-readable, not even
+// for the sub-second between Playwright writing it and the chmod at the end of this file.
+process.umask(0o077);
 
 const OUT = process.env.STAGING_SESSION_OUT ?? ".staging-tenant-b-session.json";
 const STAGING = "https://web-staging-7901.up.railway.app";
