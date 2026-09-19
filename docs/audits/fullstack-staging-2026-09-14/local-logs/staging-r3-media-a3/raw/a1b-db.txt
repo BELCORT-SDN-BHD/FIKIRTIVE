@@ -1,0 +1,12 @@
+BEGIN
+=== A1: Generations created in the window, with their asset key ===
+       generation_id        |            ownerId            |          assetId           |                                                  key                                                  |    mime    | sizeBytes |        createdAt        
+----------------------------+-------------------------------+----------------------------+-------------------------------------------------------------------------------------------------------+------------+-----------+-------------------------
+ 01M2TH4H3CMSGV21BTQWA31C69 | founder                       | 01M2TH4H34G4TGFF5DGBWTEAP2 | u/founder/f1d94464a67594a1fa4958c30092b0dcccab2c9cb1de7ac4006afd50da91563b.mp4                        | video/mp4  |   2990933 | 2026-09-18 15:11:08.397
+ 01M2TH4HJM9JSDZ7AP3A6YSH97 | org_cmts923pm00002mptbuoube0j | 01M2TH4HJFT0EX0DTAFV5119YW | u/org_cmts923pm00002mptbuoube0j/2f209f09a173e0fb18c5641a17307f526fbee115e3643a88cd8c08580a07cadd.jpeg | image/jpeg |    204147 | 2026-09-18 15:11:08.885
+ 01M2TH58CQDN8SZW71S9JZ9157 | founder                       | 01M2TH58CFW8H05WBJX548E8MC | u/founder/740f6dc19c1d2c5edaf17ce81b3bd2d5f10336f4277244c0eb0b6658ecde44ab.mp4                        | video/mp4  |   3121196 | 2026-09-18 15:11:32.247
+ 01M2TH751188YRPWTA7FP1JW9D | founder                       | 01M2TH750W3CEV29C7ZPQFKNS6 | u/founder/e833cfa56ea8ad0f7d1324214d47495ec15afa7e21403ef7e4e304aea4dc0d95.mp4                        | video/mp4  |   2399489 | 2026-09-18 15:12:34.337
+ 01M2THCPM6TTH1G007XTDQ2RXP | founder                       | 01M2THCPM2ZNWH4QS2GEV184W2 | u/founder/87b587c6975362d6f52b3b706b0ae74e69b9799dac31e8e910dd615b0df1f2bc.mp4                        | video/mp4  |   3024157 | 2026-09-18 15:15:36.198
+(5 rows)
+
+ROLLBACK

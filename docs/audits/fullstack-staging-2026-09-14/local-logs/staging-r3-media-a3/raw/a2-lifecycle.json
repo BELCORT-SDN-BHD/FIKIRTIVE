@@ -1,0 +1,8 @@
+{
+  "bucket": "fikirtive-staging-backup",
+  "ok": false,
+  "errorName": "AccessDenied",
+  "errorCode": "AccessDenied",
+  "message": "Access Denied",
+  "httpStatus": 403
+}

@@ -1,0 +1,480 @@
+{
+  "task": "MEDIA-A3 blind-walk drill of docs/runbooks/media-restore.md (v2)",
+  "spec": "docs/specs/media-durability.md",
+  "issue": "GitHub #1385",
+  "verdict": "PARTIAL",
+  "verdict_one_line": "The restore itself worked exactly as written (deleted 1 staging object, restored it byte-identical, RTO 1.5s, zero DB/money change). But a person with no prior knowledge hits two hard stops the runbook does not cover (where the staging R2 credentials live; that @fikirtive/core must be BUILT, not just installed) and cannot complete the second half of step 4 as written (/files/<key> redirects to /login).",
+  "status": "COMPLETE",
+  "operator": "Claude worker agent acting as the blind walker, non-interactive session",
+  "authority": "Founder 2026-09-19 delegated remaining v0.2.0 decisions to the orchestrator; the orchestrator ruled this staging-only drill in scope (same drill Founder-authorized 2026-09-13 for a founder object).",
+  "safety_envelope": {
+    "production_touched": false,
+    "production_evidence": "Only Railway project b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d environment=staging service=web variables were ever loaded. No production credential was read, and no production bucket name appears in any command run.",
+    "objects_deleted": 1,
+    "objects_restored": 1,
+    "backup_bucket_writes": 0,
+    "backup_bucket_evidence": "fikirtive-staging-backup lastModified for the key stayed 2026-09-13T10:20:54.000Z across the whole drill",
+    "runbook_edited": false,
+    "repo_files_changed": "none (node_modules + packages/core/dist are build artifacts, untracked)",
+    "secrets": "no credential value was printed, logged or written to any file; values were read into a process env via `railway variables list --json | jq` inside a script and never echoed"
+  },
+
+  "environment": {
+    "railway_project": "b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d",
+    "railway_env": "staging",
+    "staging_web_url": "https://web-staging-7901.up.railway.app",
+    "content_bucket": "fikirtive-staging",
+    "backup_bucket": "fikirtive-staging-backup",
+    "r2_endpoint_account": "ac42cba1bda978bd00f6c45d0e25dc24 (account id, documented as not-a-secret in r2-bucket-token-rotation.md)",
+    "repo_checkout": "/Users/winnin/Desktop/FIKIRTIVE/.claude/worktrees/agent-a2968e1b678faf149 @ origin/main bd5877c3 (detached)",
+    "node": "v22.22.2",
+    "railway_cli": "v5.20.0 (note: the subcommand is `railway variables list`, plural; `railway variable list` does not exist in this version)"
+  },
+
+  "step0_plan_written_before_acting": [
+    "P0 read docs/runbooks/media-restore.md start to end (done first, before any command)",
+    "P1 gather the 8 env vars named in 前提 §1 — runbook does not say where staging values live -> AMBIG-1",
+    "P2 step 1: locate the object key from the Asset table -> read-only DB (BEGIN READ ONLY / ROLLBACK)",
+    "P3 drill-only: delete the object from the CONTENT bucket. Runbook has no such step -> AMBIG-2",
+    "P4 step 2: media-restore-object.mjs dry-run + media-backup-backfill.mjs diff dry-run",
+    "P5 step 3: rerun with --apply",
+    "P6 step 4: hash compare (script does it) + open /files/<key>",
+    "P7 step 5: fill RTO into the drill-record table (task forbids editing the runbook, so reported here instead)",
+    "Verify: DB rows unchanged, CreditLedger unchanged, HEAD through the runbook's tool shows the object back"
+  ],
+
+  "step1_record": {
+    "utc_start": "2026-09-19T09:44:08Z",
+    "utc_end": "2026-09-19T09:52:50Z",
+    "staging_build_info": {
+      "fetched_at": "2026-09-19T09:45:26Z",
+      "endpoint": "https://web-staging-7901.up.railway.app/api/build-info",
+      "web": { "sha": "bd5877c3", "ref": "main", "startedAt": "2026-09-18T18:38:36.165Z" },
+      "worker": [
+        { "role": "worker-compute", "sha": "bd5877c3", "at": "2026-09-19T09:44:30.354Z" },
+        { "role": "worker-wait", "sha": "bd5877c3", "at": "2026-09-19T09:44:32.392Z" },
+        { "role": "worker", "sha": "ca864b28", "at": "2026-09-13T11:06:04.772Z", "retired": true }
+      ],
+      "migrations": { "latest": "20260915120000", "appliedAt": "2026-09-17T03:33:30.046Z" }
+    },
+    "object": {
+      "asset_id": "01M1ZTC1RF2ZJ603HXAN02WQGJ",
+      "ownerId": "org_cmts923pm00002mptbuoube0j",
+      "org_label": "E2E Cafe (test merchant)",
+      "key": "u/org_cmts923pm00002mptbuoube0j/ee0273a5ca30d476c7730ccd99e3b7286044c6f463922b16457a2abc3b3f4b17.png",
+      "contentHash_sha256": "ee0273a5ca30d476c7730ccd99e3b7286044c6f463922b16457a2abc3b3f4b17",
+      "ext": "png",
+      "db_mime": "image/jpeg",
+      "r2_content_type": "image/png",
+      "sizeBytes": 101169,
+      "etag_md5": "1666f2985e45468e2ea5308ed174c494",
+      "originalFilename": "22-avatar-product-references.png",
+      "source": "UPLOAD",
+      "width": 1000,
+      "height": 994,
+      "createdAt": "2026-09-08 06:13:02.352",
+      "deletedAt": null,
+      "selection_rule": "smallest sizeBytes among the 14 Assets owned by org_cmts923pm00002mptbuoube0j; no `founder` object touched",
+      "key_derivation_note": "Asset has NO `key` column — the key had to be composed as u/<ownerId>/<contentHash>.<ext> per packages/core/src/storage-key.ts storageKey(); see AMBIG-4"
+    },
+    "db_baseline": {
+      "method": "railway variables list --json -p <proj> -e staging -s Postgres | jq -r .DATABASE_PUBLIC_URL -> shell variable (never printed); psql \"$URL\" with BEGIN READ ONLY ... ROLLBACK",
+      "assets_org": 14,
+      "assets_all": 146,
+      "creditledger_org": 23,
+      "creditledger_all": 290,
+      "creditledger_balanceDelta_sum_org": 100,
+      "creditledger_reservedDelta_sum_org": 0,
+      "credit_account_org": { "balance": 100, "reserved": 0, "updatedAt": "2026-09-18 15:11:08.9" },
+      "target_asset_row_md5": "2560328c79a8a19071b4d0ad67b65cef"
+    },
+    "existence_proof_before_delete": {
+      "method": "the runbook's own tool — media-restore-object.mjs gate 2 is a content-bucket HeadObject",
+      "command": "node scripts/tools/media-restore-object.mjs --key <key> --expect-owner org_cmts923pm00002mptbuoube0j",
+      "output": "Error: refusing: u/org_cmts923pm00002mptbuoube0j/ee0273a5...png already exists in the content bucket — content-addressed keys mean it already holds the correct bytes.",
+      "exit": 1,
+      "at": "2026-09-19T09:48:18Z"
+    },
+    "media_a2_precondition_diff": {
+      "why": "the runbook's drill note (HTML comment at the bottom) requires confirming the diff is zero BEFORE deleting anything",
+      "command": "node scripts/tools/media-backup-backfill.mjs   (dry-run)",
+      "output": "content bucket has 307 object(s) under \"u/\" | already backed up (same key, same size): 307 | missing from backup (the diff): 0",
+      "exit": 0,
+      "wall_clock_s": 54,
+      "window": "2026-09-19T09:48:38Z -> 2026-09-19T09:49:32Z"
+    }
+  },
+
+  "step_log": [
+    {
+      "n": 1,
+      "phase": "prereq 前提 §1 — credentials",
+      "command": "railway variables list --json -p b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d -e staging -s web   (values piped into env inside a script, never printed)",
+      "exit": 0,
+      "wall_clock_s": 3,
+      "result": "7 of the 8 named vars present (R2_MEDIA_BACKUP_ENDPOINT absent, which is correct — 前提 §1 says it defaults to R2_ENDPOINT). NOT DERIVABLE FROM THE RUNBOOK: the runbook never says the values live in Railway, nor names project/env/service. See AMBIG-1.",
+      "runbook_step": "前提 §1"
+    },
+    {
+      "n": 2,
+      "phase": "prereq 前提 §2 — dependencies",
+      "command": "pnpm install --frozen-lockfile --ignore-scripts",
+      "exit": 0,
+      "wall_clock_s": 7,
+      "result": "installed 1044 packages",
+      "runbook_step": "前提 §2"
+    },
+    {
+      "n": 3,
+      "phase": "step 2 dry-run, first attempt (pre-delete)",
+      "command": "I_UNDERSTAND_THIS_TOUCHES_PROD=yes R2_*=… node scripts/tools/media-restore-object.mjs --key <key> --expect-owner org_cmts923pm00002mptbuoube0j",
+      "exit": 1,
+      "wall_clock_s": 1,
+      "result": "HARD STOP, not covered by the runbook: Error: Cannot find module '.../packages/storage/node_modules/@fikirtive/core/dist/index.js' (MODULE_NOT_FOUND). 前提 §2 says `仓库 pnpm install 过就行` — that is false; @fikirtive/core resolves to ./dist and must be compiled. See AMBIG-3.",
+      "at": "2026-09-19T09:48:01Z"
+    },
+    {
+      "n": 4,
+      "phase": "recovery invented by the walker (NOT in the runbook)",
+      "command": "pnpm --filter @fikirtive/core build",
+      "exit": 0,
+      "wall_clock_s": 3,
+      "result": "tsc emitted packages/core/dist; the script then ran"
+    },
+    {
+      "n": 5,
+      "phase": "step 2 dry-run, second attempt (pre-delete) = existence proof",
+      "command": "node scripts/tools/media-restore-object.mjs --key <key> --expect-owner org_cmts923pm00002mptbuoube0j",
+      "exit": 1,
+      "wall_clock_s": 1,
+      "result": "refusing: … already exists in the content bucket — this is the runbook tool's own HEAD, and it proves the object was live before the drill",
+      "at": "2026-09-19T09:48:18Z"
+    },
+    {
+      "n": 6,
+      "phase": "MEDIA-A2 precondition",
+      "command": "node scripts/tools/media-backup-backfill.mjs   (dry-run)",
+      "exit": 0,
+      "wall_clock_s": 54,
+      "result": "307 objects under u/, 307 already backed up, diff 0 — backfill complete, safe to delete",
+      "window": "09:48:38Z -> 09:49:32Z"
+    },
+    {
+      "n": 7,
+      "phase": "DRILL SCAFFOLDING — delete (no runbook step exists for this)",
+      "command": "node <scratchpad>/drill-delete.mjs   — one DeleteObjectCommand against R2_BUCKET only; my own fail-closed guards: bucket must equal 'fikirtive-staging', bucket name must not match /backup|production/, backup copy must HEAD-exist first, sizes must match, and a post-delete HEAD of the backup must still succeed",
+      "exit": 0,
+      "wall_clock_s": 1,
+      "result": "backup fikirtive-staging-backup: exists size=101169 etag=\"1666f2985e45468e2ea5308ed174c494\" contentType=image/png\ncontent fikirtive-staging BEFORE: exists size=101169 etag=\"1666f2985e45468e2ea5308ed174c494\"\ncontent fikirtive-staging AFTER: {\"exists\":false}\nbackup fikirtive-staging-backup AFTER delete (must still exist): exists size=101169\ndeleted: u/org_cmts923pm00002mptbuoube0j/ee0273a5…png is now GONE from fikirtive-staging (0.5s)",
+      "window": "09:50:36Z -> 09:50:37Z",
+      "note": "The runbook has no delete step and no guard rails for one — every guard above is mine. See AMBIG-2."
+    },
+    {
+      "n": 8,
+      "phase": "step 2 dry-run (post-loss) — the runbook's three gates",
+      "command": "node scripts/tools/media-restore-object.mjs --key <key> --expect-owner org_cmts923pm00002mptbuoube0j",
+      "exit": 0,
+      "wall_clock_s": 1,
+      "result": "found backup copy: u/org_cmts923pm00002mptbuoube0j/ee0273a5…png (101169 bytes) in fikirtive-staging-backup\ndry-run — all three gates passed; rerun with --apply to actually restore",
+      "window": "09:50:47Z -> 09:50:48Z"
+    },
+    {
+      "n": 9,
+      "phase": "loss visible on the product path",
+      "command": "curl -s -o /dev/null -w '%{http_code}' https://web-staging-7901.up.railway.app/files/u/org_cmts923pm00002mptbuoube0j/ee0273a5….png",
+      "exit": 0,
+      "wall_clock_s": 1,
+      "result": "HTTP 307 -> https://web-staging-7901.up.railway.app/login — the route is auth-gated, so an unauthenticated blind operator learns nothing about whether the object is present. See AMBIG-6.",
+      "at": "2026-09-19T09:50:49Z"
+    },
+    {
+      "n": 10,
+      "phase": "MEDIA-A9 counter-proof (tenant-prefix check)",
+      "command": "node scripts/tools/media-restore-object.mjs --key <key> --expect-owner org_someone_else",
+      "exit": 1,
+      "wall_clock_s": 1,
+      "result": "refusing: key owner segment is \"org_cmts923pm00002mptbuoube0j\", but --expect-owner was \"org_someone_else\" — stopping here per docs/runbooks/media-restore.md's tenant-prefix check (MEDIA-A9). Never pass a different --expect-owner just to make this pass.",
+      "at": "2026-09-19T09:51:12Z"
+    },
+    {
+      "n": 11,
+      "phase": "step 3 — restore (--apply)",
+      "command": "I_UNDERSTAND_THIS_TOUCHES_PROD=yes R2_*=… node scripts/tools/media-restore-object.mjs --key <key> --expect-owner org_cmts923pm00002mptbuoube0j --apply",
+      "exit": 0,
+      "wall_clock_s": 1,
+      "result": "found backup copy: … (101169 bytes) in fikirtive-staging-backup\nRESTORED u/org_cmts923pm00002mptbuoube0j/ee0273a5ca30d476c7730ccd99e3b7286044c6f463922b16457a2abc3b3f4b17.png — hash verified (ee0273a5ca30d476c7730ccd99e3b7286044c6f463922b16457a2abc3b3f4b17), RTO 1.5s\nPaste into docs/runbooks/media-restore.md's drill log: RTO=1.5s key=u/org_cmts923pm00002mptbuoube0j/ee0273a5….png",
+      "window": "09:51:22Z -> 09:51:23Z"
+    },
+    {
+      "n": 12,
+      "phase": "step 4 — verification (HEAD both buckets)",
+      "command": "node <scratchpad>/verify-head.mjs",
+      "exit": 0,
+      "wall_clock_s": 1,
+      "result": "content fikirtive-staging: size=101169 etag=\"1666f2985e45468e2ea5308ed174c494\" contentType=image/png lastModified=2026-09-19T09:51:23.000Z\nbackup fikirtive-staging-backup: size=101169 etag=\"1666f2985e45468e2ea5308ed174c494\" contentType=image/png lastModified=2026-09-13T10:20:54.000Z   <- backup untouched"
+    },
+    {
+      "n": 13,
+      "phase": "step 4 — verification through the runbook's own tool",
+      "command": "node scripts/tools/media-restore-object.mjs --key <key> --expect-owner org_cmts923pm00002mptbuoube0j",
+      "exit": 1,
+      "wall_clock_s": 1,
+      "result": "refusing: … already exists in the content bucket — i.e. the runbook tool's HEAD now finds the object back (same refusal it gave before the drill)"
+    },
+    {
+      "n": 14,
+      "phase": "post-restore diff",
+      "command": "node scripts/tools/media-backup-backfill.mjs   (dry-run)",
+      "exit": 0,
+      "wall_clock_s": 55,
+      "result": "content bucket has 307 object(s) under \"u/\" | already backed up (same key, same size): 307 | missing from backup (the diff): 0 — identical to the pre-drill diff",
+      "at": "2026-09-19T09:52:43Z"
+    },
+    {
+      "n": 15,
+      "phase": "DB + money verification",
+      "command": "psql \"$DATABASE_PUBLIC_URL\" BEGIN READ ONLY … ROLLBACK (same query as the baseline)",
+      "exit": 0,
+      "wall_clock_s": 4,
+      "result": "assets_org 14, assets_all 146, creditledger_org 23, creditledger_all 290, balanceDelta sum 100, reservedDelta sum 0, CreditAccount balance=100 reserved=0 updatedAt=2026-09-18 15:11:08.9, target Asset row md5 = 2560328c79a8a19071b4d0ad67b65cef — every value byte-identical to the baseline",
+      "at": "2026-09-19T09:52:50Z"
+    }
+  ],
+
+  "verification": {
+    "hash": {
+      "recorded_before": "ee0273a5ca30d476c7730ccd99e3b7286044c6f463922b16457a2abc3b3f4b17",
+      "verified_after": "ee0273a5ca30d476c7730ccd99e3b7286044c6f463922b16457a2abc3b3f4b17",
+      "match": true,
+      "method": "the restore script recomputes sha256 over the downloaded bytes and refuses to write back on mismatch; independently, the R2 ETag (md5) is identical before and after: 1666f2985e45468e2ea5308ed174c494"
+    },
+    "size": { "before": 101169, "after": 101169, "match": true },
+    "content_type": { "before": "image/png", "after": "image/png", "match": true },
+    "head_through_runbook_tool": { "object_back": true, "evidence": "gate-2 'already exists' refusal returned after the restore, exactly as before the drill" },
+    "db_rows_unchanged": {
+      "result": true,
+      "evidence": "target Asset row md5 2560328c79a8a19071b4d0ad67b65cef identical before and after; assets_org 14/14, assets_all 146/146; Asset.deletedAt still null"
+    },
+    "money_unchanged": {
+      "result": true,
+      "creditledger_count_org_before": 23,
+      "creditledger_count_org_after": 23,
+      "creditledger_count_all_before": 290,
+      "creditledger_count_all_after": 290,
+      "balanceDelta_sum_org": "100 -> 100",
+      "reservedDelta_sum_org": "0 -> 0",
+      "credit_account_updatedAt": "2026-09-18 15:11:08.9 -> unchanged (no write of any kind)"
+    },
+    "backup_bucket_unchanged": {
+      "result": true,
+      "evidence": "backup object lastModified stayed 2026-09-13T10:20:54.000Z; diff 307/307 before and after"
+    }
+  },
+
+  "timings": {
+    "rto_script_only_s": 1.5,
+    "rto_script_only_source": "media-restore-object.mjs's own printed line: 'RTO 1.5s'",
+    "human_investigation_segment": "2026-09-19T09:44:08Z -> 09:51:22Z ≈ 7m14s from cold start to issuing --apply. Reported separately per the runbook's own rule that the two must never be silently added.",
+    "human_segment_breakdown": {
+      "read_runbook_and_write_plan_s": 180,
+      "find_credentials_railway_s": 60,
+      "pnpm_install_s": 7,
+      "build_core_after_MODULE_NOT_FOUND_s": 15,
+      "db_read_only_queries_to_pick_object_s": 90,
+      "media_a2_diff_dry_run_s": 54,
+      "write_own_delete_scaffolding_s": 90,
+      "delete_plus_dry_run_s": 15
+    },
+    "restore_only_wall_clock_window": "09:51:22Z -> 09:51:23Z",
+    "total_drill_wall_clock": "09:44:08Z -> 09:52:50Z ≈ 8m42s including all verification"
+  },
+
+  "ambiguity_list": [
+    {
+      "id": "AMBIG-1",
+      "severity": "HIGH",
+      "location": "前提 §1",
+      "kind": "assumes knowledge the runbook does not give",
+      "what": "It names 8 env vars and says they must be '与部署环境一致', but never says WHERE the staging values live, nor names the Railway project / environment / service. The linked r2-bucket-token-rotation.md covers MINTING new tokens, not reading the ones already deployed.",
+      "what_i_had_to_do": "Discover on my own that they are Railway staging service variables, and that the project is b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d, env staging, service web. Nothing in the runbook points there.",
+      "blocking": "Yes — without outside knowledge the walk cannot start."
+    },
+    {
+      "id": "AMBIG-2",
+      "severity": "HIGH (for a drill), N/A (for a real incident)",
+      "location": "whole document",
+      "kind": "missing step",
+      "what": "The runbook begins from '内容桶丢了某个对象时'. It has no step, tool or guard rails for CAUSING the loss. MEDIA-A3 is a drill, so the blind operator must invent a delete — the single most dangerous action in the whole exercise — with zero guidance on which bucket, which key, or what to check first.",
+      "what_i_had_to_do": "Write my own scaffolding (scratchpad only, not committed) with four guards the runbook never asked for: bucket name must equal fikirtive-staging; bucket name must not match /backup|production/; the backup copy must HEAD-exist before the delete; sizes must match.",
+      "blocking": "Yes for a drill — and the danger is asymmetric: an operator who improvises this against the wrong bucket destroys the only copy."
+    },
+    {
+      "id": "AMBIG-3",
+      "severity": "HIGH",
+      "location": "前提 §2",
+      "kind": "factually wrong",
+      "what": "'依赖：@aws-sdk/client-s3 与 @fikirtive/core（脚本从 packages/storage 的 package.json 起解析，仓库 pnpm install 过就行）'. That is false. @fikirtive/core's package exports point at ./dist, so a fresh checkout that has only run pnpm install fails with a raw MODULE_NOT_FOUND stack trace naming a path (packages/storage/node_modules/@fikirtive/core/dist/index.js) that gives no hint about the fix.",
+      "what_i_had_to_do": "Recognise the workspace-build convention and run `pnpm --filter @fikirtive/core build`. A non-engineer would be stopped dead here.",
+      "blocking": "Yes — reproduced verbatim at 09:48:01Z, step 3 of the log.",
+      "evidence": "Error: Cannot find module '/…/packages/storage/node_modules/@fikirtive/core/dist/index.js' … code: 'MODULE_NOT_FOUND'"
+    },
+    {
+      "id": "AMBIG-4",
+      "severity": "MEDIUM",
+      "location": "第 1 步 · 定位对象键, first bullet",
+      "kind": "names a table and a column that do not exist",
+      "what": "'数据库：Asset / AssetVariant 一类表里该产物记录的 key 字段'. There is no AssetVariant model in packages/db/prisma/schema.prisma (grep count 0), and Asset has NO `key` column — it has ownerId, contentHash and ext, from which the key must be COMPOSED as u/<ownerId>/<contentHash>.<ext>.",
+      "what_i_had_to_do": "Recover it from the key shape the runbook does state and from packages/core/src/storage-key.ts storageKey(). Recoverable, but the sentence sends you hunting for a column that is not there.",
+      "blocking": "No — recoverable from the same paragraph's key shape."
+    },
+    {
+      "id": "AMBIG-5",
+      "severity": "MEDIUM",
+      "location": "第 2 步, the three-check list",
+      "kind": "claim the tool cannot honour in the order given",
+      "what": "Step 2 says the dry-run verifies three things, the third being '备份桶里是否真的有这份副本'. In the script the content-bucket gate fires FIRST and throws, so while the object is still alive the command can never tell you whether a backup copy exists. In a drill that means: you must delete before you can check the copy is there — the exact order you do not want.",
+      "what_i_had_to_do": "Use the backfill diff (mentioned only later, and its pre-delete role only in an HTML comment at the very bottom of the file) as the pre-delete safety check, plus my own HEAD of the backup bucket inside the delete scaffolding.",
+      "blocking": "No, but it inverts the safety order for anyone rehearsing."
+    },
+    {
+      "id": "AMBIG-6",
+      "severity": "MEDIUM-HIGH",
+      "location": "第 4 步, final sentence",
+      "kind": "verification not completable as written",
+      "what": "'拿这一行去访问 /files/<key>（产物页面的同一条路径）确认页面能重新打开'. That route is auth-gated: unauthenticated it answers HTTP 307 -> /login. The runbook never says you must be signed in as the owning merchant, gives no staging host, and offers no alternative (no signed URL, no CLI HEAD).",
+      "what_i_had_to_do": "Substitute a HEAD through the runbook's own tool (the gate-2 'already exists' refusal) plus a direct S3 HEAD comparing size/ETag/ContentType. The literal instruction was not executable.",
+      "blocking": "Yes for that half-step.",
+      "evidence": "curl -> final=307 redirect_url=https://web-staging-7901.up.railway.app/login"
+    },
+    {
+      "id": "AMBIG-7",
+      "severity": "LOW",
+      "location": "第 5 步 + 演练记录 table",
+      "kind": "instruction vs. artefact mismatch",
+      "what": "Step 5 orders two separate numbers ('RTO 只统计脚本自身…不含人工排查时间——两段分开报') but the 演练记录 table has exactly one 实测 RTO column and no column for the human-investigation segment, so the second number has nowhere to land. The HTML comment also says 执行者 = 'GitHub 用户名或姓名', while the only existing row is filled in as 'agent（Founder 授权…）' — an agent walker has no documented convention.",
+      "blocking": "No."
+    },
+    {
+      "id": "AMBIG-8",
+      "severity": "MEDIUM (safety ergonomics)",
+      "location": "前提 §3 + every command block",
+      "kind": "footgun, correctly documented but badly shaped",
+      "what": "The staging drill requires typing I_UNDERSTAND_THIS_TOUCHES_PROD=yes. The runbook explains why (the lock is credential-blind), so it is not ambiguous — but it trains the operator's fingers to type a production acknowledgement during a staging rehearsal, and there is no environment echo in the restore script's output to catch a mistake (the backfill script does print its bucket names; media-restore-object.mjs prints the backup bucket only, and only after the gates pass).",
+      "blocking": "No."
+    },
+    {
+      "id": "AMBIG-9",
+      "severity": "LOW-MEDIUM",
+      "location": "前提 §1, credential doctrine",
+      "kind": "doctrine the runbook cannot deliver on",
+      "what": "It states that agents and drill scripts use '最小权限的只读/演练桶令牌' and never the write token. For a restore drill nothing issues such a token, and no procedure exists to get one, so the only way to complete the walk is with the deployment's read-write staging credentials — strictly more power than the drill needs (the restore path needs backup-READ + content-WRITE; the doctrine paragraph is written for the replication path's backup-WRITE + content-READ).",
+      "blocking": "No — but the stated doctrine and the executable procedure disagree."
+    },
+    {
+      "id": "AMBIG-10",
+      "severity": "INFO",
+      "location": "第 3 步 memory note",
+      "kind": "observation, no action needed",
+      "what": "The restore writes back the BACKUP object's ContentType, not the DB's Asset.mime. For this object those differ in the fixture data (R2 image/png vs Asset.mime image/jpeg); the restore preserved R2's image/png, i.e. it round-tripped exactly. Worth one sentence so a future operator does not read the mismatch as damage.",
+      "blocking": "No."
+    }
+  ],
+
+  "acceptance_against_MEDIA_A3": {
+    "criterion": "手册自足：定位对象键 → 在备份桶找到副本 → 恢复命令 → 哈希比对 → 回填 RTO，五步都能照做，没有一步依赖口头知识",
+    "step1_locate_key": "PASS with defect — key recoverable, but the named table (AssetVariant) and column (key) do not exist (AMBIG-4)",
+    "step2_find_backup_copy": "PASS — dry-run found the copy and printed its size; but the pre-loss ordering claim is wrong (AMBIG-5)",
+    "step3_restore_command": "PASS — ran verbatim, restored byte-identical bytes, IfNoneMatch guard intact",
+    "step4_hash_compare": "PARTIAL — the automatic sha256 compare passed and printed the RTO line; the '/files/<key> 页面能重新打开' half is not executable as written (AMBIG-6)",
+    "step5_rto_backfill": "PASS with defect — the number is printed ready to paste, but the table has no home for the mandated second number (AMBIG-7)",
+    "prerequisites_before_step1": "FAIL — 前提 §1 does not say where credentials live (AMBIG-1) and 前提 §2 is factually wrong about dependencies (AMBIG-3); both stop a blind walker cold",
+    "drill_specific": "FAIL — no loss-simulation step or guard rails exist for the drill MEDIA-A3 itself mandates (AMBIG-2)",
+    "verdict": "PARTIAL — the restore procedure is sound and proven end to end; the document is not yet self-sufficient for someone who has never done it."
+  },
+
+  "recommended_runbook_wording_fixes": [
+    {
+      "ref": "AMBIG-1",
+      "section": "前提 §1",
+      "priority": "P1",
+      "fix": "Add a concrete lookup line, e.g.: '这 8 个变量的现值就在部署环境里，现场查：`railway variables list --json -p <project-id> -e staging -s web`（staging 项目 id b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d；production 同法换 -e production）。把值读进 shell 变量再传给脚本，永不回显。' Keep the no-secret-values rule intact — this adds a pointer, not a value."
+    },
+    {
+      "ref": "AMBIG-3",
+      "section": "前提 §2",
+      "priority": "P1",
+      "fix": "Replace '仓库 pnpm install 过就行' with '仓库 `pnpm install` 之后还要 `pnpm --filter @fikirtive/core build`——@fikirtive/core 的 exports 指向 dist/，没 build 过脚本会报 MODULE_NOT_FOUND 且不提示原因。' A one-line pre-flight (`node -e \"require('node:module').createRequire('packages/storage/package.json').resolve('@fikirtive/core')\"`) would be even better."
+    },
+    {
+      "ref": "AMBIG-2",
+      "section": "new section between 前提 and 五步",
+      "priority": "P1",
+      "fix": "Add a short '演练怎么造这个损失' section: pick the SMALLEST object of a test merchant (never a founder/real-merchant object); confirm the backfill diff is zero; HEAD the backup copy and match its size; then delete exactly one key from the CONTENT bucket, asserting the bucket name equals the staging content bucket and contains neither 'backup' nor 'production'; HEAD the backup again afterwards to prove it was not touched. State plainly that the delete is drill scaffolding and must never be run against production."
+    },
+    {
+      "ref": "AMBIG-5",
+      "section": "第 2 步",
+      "priority": "P2",
+      "fix": "Correct the three-check list to say the gates fire in order and the content-bucket gate short-circuits: '对象还活着时这条命令只会告诉你「已存在」，不会验副本——演练前要确认副本在不在，用下面的差集命令（差集为 0 即全部有副本）。' And promote the daily-diff/pre-delete-diff instruction out of the bottom HTML comment into the visible body."
+    },
+    {
+      "ref": "AMBIG-6",
+      "section": "第 4 步",
+      "priority": "P1",
+      "fix": "Replace the bare '/files/<key>' sentence with something a blind operator can run: name the staging host (https://web-staging-7901.up.railway.app), say the route is auth-gated and requires a session for the owning merchant, and give a credential-free fallback as the primary check — e.g. 'rerun 第 2 步的 dry-run：这次它应当报 already exists（内容桶 HeadObject 命中），那就是对象回来了；想看页面再用商家账号登录后访问 /files/<key>。'"
+    },
+    {
+      "ref": "AMBIG-7",
+      "section": "第 5 步 + 演练记录 table",
+      "priority": "P3",
+      "fix": "Add a second column '人工排查耗时' next to '实测 RTO' so the two mandated numbers both have a home, and change the HTML comment's 执行者 guidance to allow 'agent + 授权出处' since that is what both drills so far recorded."
+    },
+    {
+      "ref": "AMBIG-8",
+      "section": "第 3 步 / script output",
+      "priority": "P3",
+      "fix": "Have media-restore-object.mjs echo the content and backup bucket names on its FIRST line the way media-backup-backfill.mjs already does, and add one runbook sentence telling the operator to read that line back before typing --apply. Cheapest possible guard against an environment mix-up given the prod-shaped interlock name."
+    },
+    {
+      "ref": "AMBIG-4",
+      "section": "第 1 步",
+      "priority": "P2",
+      "fix": "Replace 'Asset / AssetVariant 一类表里该产物记录的 key 字段' with the truth: 'Asset 表没有 key 列——key 要拼：u/<ownerId>/<contentHash>.<ext>，三段分别取 Asset.ownerId / Asset.contentHash / Asset.ext（拼法的权威是 packages/core 的 storageKey）。' Drop AssetVariant, which does not exist."
+    },
+    {
+      "ref": "AMBIG-9",
+      "section": "前提 §1",
+      "priority": "P2",
+      "fix": "Either mint and document a restore-drill token (backup-READ + content-WRITE, staging only) and point at it, or say explicitly that the restore drill uses the staging deployment credentials and why that is accepted — today the paragraph promises a least-privilege token that does not exist, which is the kind of 'written but nobody can follow it' gap the Founder's 修根不修表 ruling targets."
+    },
+    {
+      "ref": "AMBIG-10",
+      "section": "第 3 步",
+      "priority": "P3",
+      "fix": "One sentence: '写回时用的是备份对象自己的 ContentType，不是 DB 里 Asset.mime——两者若不一致（存量数据里有），恢复保留的是备份桶那一份，属正常。'"
+    }
+  ],
+
+  "drill_record_row_ready_to_paste": {
+    "note": "This task forbids editing the runbook, so the row is supplied here for whoever lands the docs PR.",
+    "date": "2026-09-19",
+    "operator": "agent（blind-walk MEDIA-A3；授权：Founder 2026-09-19 将 v0.2.0 余下决定授予编排者，编排者裁定本次 staging 演练在范围内）",
+    "key": "u/org_cmts923pm00002mptbuoube0j/ee0273a5ca30d476c7730ccd99e3b7286044c6f463922b16457a2abc3b3f4b17.png",
+    "rto": "1.5s（脚本段）／约 7m14s（人工排查段，含一次 MODULE_NOT_FOUND 停顿）",
+    "output_excerpt": "`found backup copy: … (101169 bytes) in fikirtive-staging-backup` → `RESTORED … — hash verified (ee0273a5…), RTO 1.5s`；真删证据 `deleted: … is now GONE from fikirtive-staging`；A9 反证 `refusing: key owner segment is \"org_cmts923pm00002mptbuoube0j\", but --expect-owner was \"org_someone_else\"`（exit 1）；钱守恒：E2E Cafe 账本前后均 23 笔 / balanceDelta 合计 100 / reserved 0，全库 290 笔不变；差集前后均 307/307 → 0；备份桶零写入（lastModified 仍 2026-09-13T10:20:54Z）；生产桶本次零触碰"
+  },
+
+  "artifacts": {
+    "scratchpad_dir": "/private/tmp/claude-501/-Users-winnin-Desktop-FIKIRTIVE--claude-worktrees-moneyprinterturbo-engine-0042eb/1a82113d-380a-4e30-bfcf-29cb998b4a6f/scratchpad/a3",
+    "files": [
+      "PLAN.md — the plan written before acting",
+      "loadenv.sh — loads staging R2 creds into env without printing them",
+      "db.sh — reads DATABASE_PUBLIC_URL into a variable and runs a .sql file",
+      "baseline.sql / pick.sql — read-only BEGIN READ ONLY … ROLLBACK queries",
+      "drill-delete.mjs — drill-only single-key delete with fail-closed guards (NOT committed to the repo)",
+      "verify-head.mjs — HEAD both buckets",
+      "step2-dryrun-pre.sh, a9-negative.sh, step3-apply.sh, diff-pre.sh, verify-all.sh"
+    ],
+    "warning": "the scratchpad is wiped on reboot; this JSON is the durable record"
+  }
+}

@@ -269,6 +269,44 @@ describe("FRONT-A14 血缘节:出处、参考、成本、状态、用途都读�
     expect(record.costCredits).toBe(0);
   });
 
+  /**
+   * R3-F30 复审 P3(2026-09-18)—— 面板靠这一格才说得出真话:这几个名字是**继承来的记录**,
+   * 还是这一单自己挂了元素、真的送了参考图。判据是那一单的 `GenJob.entityIds` 空不空
+   * (空 `entityIds` 的任务算不出带名字的快照 —— 快照是照 `entityIds` 现查的)。
+   * 文案那一半由 `lib/__tests__/asset-detail-write-failures.test.ts` 的两条在屏幕上证。
+   *
+   * 变异自查:把 `referencesInherited` 写死 `false` ⇒ 第一条断言红;写死 `true` ⇒ 第二条红。
+   */
+  it("派生图的名字标成「继承来的」,自己挂过元素的那一单不标", async () => {
+    await signInAs(EMAIL_A);
+
+    // 派生单:自己一个元素都没挂(entityIds 空),名字只可能是从源图继承下来的。
+    const derivedGen = await seedGeneration(ownerA, projectA, "another take of the same jar");
+    await prisma.genJob.create({
+      data: {
+        id: newId(), ownerId: ownerA, projectId: projectA, prompt: "another take of the same jar",
+        model: "test-image", kind: "IMAGE", status: "DONE", entityIds: [], generationIds: [derivedGen],
+      },
+    });
+    const derived = await getGenerationLineage(derivedGen);
+    if ("error" in derived) throw new Error(derived.error);
+    expect(derived.references).toEqual(["Pandan kaya jar"]);
+    expect(derived.referencesInherited).toBe(true);
+
+    // 自己挂了那件商品的一单:参考是真送出去的,文案照旧。
+    const attachedGen = await seedGeneration(ownerA, projectA, "the jar on a rattan mat");
+    await prisma.genJob.create({
+      data: {
+        id: newId(), ownerId: ownerA, projectId: projectA, prompt: "the jar on a rattan mat",
+        model: "test-image", kind: "IMAGE", status: "DONE", entityIds: ["ent_1"], generationIds: [attachedGen],
+      },
+    });
+    const attached = await getGenerationLineage(attachedGen);
+    if ("error" in attached) throw new Error(attached.error);
+    expect(attached.references).toEqual(["Pandan kaya jar"]);
+    expect(attached.referencesInherited).toBe(false);
+  });
+
   it("另一个商家读不到我的血缘 —— Not found.,不是一份删干净的空记录", async () => {
     await signInAs(EMAIL_B);
     expect(await getGenerationLineage(paidGenA)).toEqual({ error: "Not found." });

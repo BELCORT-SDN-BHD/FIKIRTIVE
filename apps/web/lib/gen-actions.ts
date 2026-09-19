@@ -330,8 +330,13 @@ const ASSET_ANCHOR_ID_MAX_LENGTH = 128;
 const ASSET_INTENT_ID_MAX_LENGTH = 128;
 const TRUSTED_CANVAS_REQUESTS = new WeakMap<object, { expectedCredits: number }>();
 /** #645 T4(判官 r1 P0-2):资产详情页那条付费路的价格绑定,与 Canvas/Otto 同一套
- *  「商家看到的数字是授权的一部分」机制,只是各自的补救话术不同。 */
-const TRUSTED_ASSET_REQUESTS = new WeakMap<object, { expectedCredits: number }>();
+ *  「商家看到的数字是授权的一部分」机制,只是各自的补救话术不同。
+ *
+ *  R3-F30 —— `anchorGenerationId` 走同一条进程内通道:它是 `startAssetGen` 刚刚**按
+ *  ownerId 查过库**的那个锚点(见那里的「改动一(ASSET-A1)」),不是 `genRequest` 的字段,
+ *  所以浏览器连提交的机会都没有。落进 `GenJob.lineageGenerationId`,worker 只把它当作
+ *  `entitySnapshot` 的继承来源读一次;不参与定价、幂等材料与引擎输入。 */
+const TRUSTED_ASSET_REQUESTS = new WeakMap<object, { expectedCredits: number; anchorGenerationId: string }>();
 
 /** 「你签字的价和现在的价不是同一个」——三条付费路共用这一句的骨架,只有补救动作不同。
  *  price 变更必须在 create/reserve **之前**拒绝,绝不静默按新价扣。 */
@@ -543,7 +548,7 @@ export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
       promptedRequest,
     ).key,
   };
-  TRUSTED_ASSET_REQUESTS.set(trustedRequest, { expectedCredits });
+  TRUSTED_ASSET_REQUESTS.set(trustedRequest, { expectedCredits, anchorGenerationId: anchor.id });
   return startGen(trustedRequest);
 }
 
@@ -1244,6 +1249,13 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
           data: {
             id: jobId, ownerId, projectId, shotId: shotId ?? null,
             sourceGenerationId: sourceGenerationId ?? null,
+            // R3-F30 —— 这一单派生自哪张已有的图,**只在没有引擎底图时**才需要单独记一格
+            // (有底图时 `sourceGenerationId` 已经是答案,同一个编号不在一行里存两遍)。
+            // 值只来自上面那条进程内可信通道(`startAssetGen` 按 ownerId 查过库的锚点),
+            // 浏览器提交不进来。纯记录:不参与定价、幂等材料,也不改变发给引擎的任何字节。
+            ...(trustedAssetRequest && !sourceGenerationId
+              ? { lineageGenerationId: trustedAssetRequest.anchorGenerationId }
+              : {}),
             tailGenerationId: tailGenerationId ?? null,
             referenceVideoGenerationId: referenceVideoGenerationId ?? null,
             prompt, entityIds, count: kind === "video" ? 1 : count, model,
