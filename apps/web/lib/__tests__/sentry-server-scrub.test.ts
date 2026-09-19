@@ -15,7 +15,7 @@
  * 浏览器那一侧接的是**同一只**函数(Founder 2026-09-19「关类不补例」追加裁决):
  * `browserSentryOptions().beforeSend` 与这里的服务端 init 都是 `scrubSentryEventTokens`。
  * `sentry-browser.test.ts` 的既有断言一字未改、仍全绿(浏览器只会洗得更多),另有两条新用例
- * 钉住加宽出来的那两处(异常正文、fetch 面包屑的 `data.url`)与 `beforeSendTransaction` 的接线。
+ * 钉住加宽出来的那几处(异常正文、fetch 面包屑的 `data.url`、`beforeSendTransaction` 的接线),共三条。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -208,6 +208,36 @@ describe("scrubSentryEventTokens —— SHARE-A6 服务器半句", () => {
       description: "GET /api/media/pub/[redacted]",
       data: { "http.url": "https://app.example/s/[redacted]" },
     });
+  });
+
+  /**
+   * 冻结的事件对象。上报事件里的某个对象可能被集成或调用方 `Object.freeze` 过,而 ESM 一律
+   * strict mode —— 往只读属性上赋值会抛 `TypeError`,抛在 `beforeSend` 里 SDK 会吞掉这次失败并
+   * 把**整条事件丢掉**。也就是说:一次「什么都没改」的脱敏,代价是一条本该收到的错误彻底消失。
+   * 所以每一处写回都先比一比,没变就不写。
+   */
+  it("SHARE-A6 —— 冻结的 trace context 里没有 token 时原样通过,不抛", () => {
+    const frozen = Object.freeze({ op: "http.server", description: "GET /canvas", span_id: "abc123" });
+    expect(() => scrubSentryEventTokens({ contexts: { trace: frozen } })).not.toThrow();
+    expect(frozen).toEqual({ op: "http.server", description: "GET /canvas", span_id: "abc123" });
+  });
+
+  it("SHARE-A6 —— 外层冻结、内层可写时,能洗的那一层照样洗", () => {
+    const data: Record<string, unknown> = { url: `https://app.example/s/${TOKEN}`, "http.status_code": 200 };
+    const trace = Object.freeze({ op: "http.server", data });
+    expect(() => scrubSentryEventTokens({ contexts: { trace } })).not.toThrow();
+    expect(data).toEqual({ url: "https://app.example/s/[redacted]", "http.status_code": 200 });
+  });
+
+  /**
+   * 畸形的 query_string:`["t=<token>"]` 是字符串数组,`pair[1]` 取到的是字符 `"="` —— 它确实是
+   * 字符串,能穿过 typeof 那道守卫 —— 再往字符串下标上赋值,strict mode 当场抛。放过它,
+   * 不拿一条事件去换一个本来就不合法的形状。
+   */
+  it("SHARE-A6 —— 畸形的 query_string(字符串数组)不抛,原样放过", () => {
+    const malformed = [`t=${TOKEN}`] as unknown as [string, string][];
+    expect(() => scrubSentryEventTokens({ request: { query_string: malformed } })).not.toThrow();
+    expect(malformed).toEqual([`t=${TOKEN}`]);
   });
 
   it("SHARE-A6 —— 不是 token 形状的事件一个字不动", () => {

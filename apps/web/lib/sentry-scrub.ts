@@ -86,6 +86,31 @@ const cutFragment = (u: string | undefined): string | undefined =>
   typeof u === "string" && u.includes("#") ? u.slice(0, u.indexOf("#")) : u;
 
 /**
+ * **只有真的变了才写回去。** 这条纪律比它看起来重要得多:上报事件里的对象可能是**冻结**的
+ * (某个集成或调用方 `Object.freeze` 过),而 ESM 一律是 strict mode —— 往只读属性上赋值会抛
+ * `TypeError`。抛在 `beforeSend` 里,SDK 会吞掉这次失败并把**整条事件丢掉**:一次「什么都没改」
+ * 的脱敏,代价是一条本该收到的错误彻底消失,而且没人会知道。
+ *
+ * 所以每一处写回都先比一比。绝大多数事件里绝大多数字段本来就不含 token,于是绝大多数情况下
+ * 这个函数一个字都不写。
+ */
+function writeIfChanged(bag: Record<string, unknown>, key: string, next: string): void {
+  if (bag[key] !== next) bag[key] = next;
+}
+
+/**
+ * 逐个字符串值洗一遍「名字 → 新值」的字典:请求头、cookies、query 字典,以及事务事件 trace/span
+ * 的那几个口袋。三条纪律只写在这里一处 —— 非字符串一律不碰、只有变了才写回、名字由调用方决定。
+ */
+function scrubStringMap(map: Record<string, unknown>, nextOf: (name: string, value: string) => string): void {
+  for (const name of Object.keys(map)) {
+    const value = map[name];
+    if (typeof value !== "string") continue;
+    writeIfChanged(map, name, nextOf(name, value));
+  }
+}
+
+/**
  * #1317 —— 上报出去的 URL 一律不带**片段**(判官 r1 P1,2026-09-11)。
  *
  * 为什么这条一刀切:片段(`#` 之后那一段)在这个产品里正是放**凭据**的地方 —— 邮件里那颗
@@ -99,11 +124,14 @@ const cutFragment = (u: string | undefined): string | undefined =>
  * 是**只在**片段里的。修根不修表 —— 不在登录页贴一块补丁,而是让这个通道再也带不出片段。
  */
 export function scrubUrlFragments<T extends ScrubbableEvent>(event: T): T {
-  if (event.request?.url !== undefined) event.request.url = cutFragment(event.request.url);
+  const request = event.request;
+  if (request && typeof request.url === "string") writeIfChanged(request, "url", cutFragment(request.url)!);
   for (const crumb of event.breadcrumbs ?? []) {
     if (!crumb?.data) continue;
-    if (typeof crumb.data.from === "string") crumb.data.from = cutFragment(crumb.data.from);
-    if (typeof crumb.data.to === "string") crumb.data.to = cutFragment(crumb.data.to);
+    for (const key of ["from", "to"] as const) {
+      const value = crumb.data[key];
+      if (typeof value === "string") writeIfChanged(crumb.data, key, cutFragment(value)!);
+    }
   }
   return event;
 }
@@ -122,11 +150,14 @@ export function scrubUrlFragments<T extends ScrubbableEvent>(event: T): T {
  */
 export function scrubShareTokens<T extends ScrubbableEvent>(event: T): T {
   scrubUrlFragments(event);
-  if (typeof event.request?.url === "string") event.request.url = scrubTokenShapes(event.request.url);
+  const request = event.request;
+  if (request && typeof request.url === "string") writeIfChanged(request, "url", scrubTokenShapes(request.url));
   for (const crumb of event.breadcrumbs ?? []) {
     if (!crumb?.data) continue;
-    if (typeof crumb.data.from === "string") crumb.data.from = scrubTokenShapes(crumb.data.from);
-    if (typeof crumb.data.to === "string") crumb.data.to = scrubTokenShapes(crumb.data.to);
+    for (const key of ["from", "to"] as const) {
+      const value = crumb.data[key];
+      if (typeof value === "string") writeIfChanged(crumb.data, key, scrubTokenShapes(value));
+    }
   }
   return event;
 }
@@ -139,18 +170,19 @@ function scrubQueryString(q: NonNullable<ScrubbableEvent["request"]>["query_stri
   if (Array.isArray(q)) {
     // 与下面的字典分支同一套口径:`t` 整条换掉,其余的值照样过一遍 token 形状 —— 一条
     // `["next", "/s/<token>"]` 的回跳参数和 `{next: "/s/<token>"}` 是同一件事,不能一个洗一个不洗。
+    //
+    // `Array.isArray(pair)` 这道守卫不是形式主义:一个畸形的 `["t=<token>"]`(字符串数组)会让
+    // `pair[1]` 取到字符 `"="` —— 它确实是字符串,能穿过下面那道 typeof —— 然后往字符串的下标上
+    // 赋值,strict mode 当场抛,SDK 吞掉并把整条事件丢掉。畸形形状就放过,不值得拿一条事件去换。
     for (const pair of q) {
-      if (!pair || typeof pair[1] !== "string") continue;
-      pair[1] = pair[0] === "t" ? REDACTED : scrubTokenShapes(pair[1]);
+      if (!Array.isArray(pair) || typeof pair[1] !== "string") continue;
+      const next = pair[0] === "t" ? REDACTED : scrubTokenShapes(pair[1]);
+      if (next !== pair[1]) pair[1] = next;
     }
     return q;
   }
   if (q && typeof q === "object") {
-    for (const name of Object.keys(q)) {
-      const value = q[name];
-      if (typeof value !== "string") continue;
-      q[name] = name === "t" ? REDACTED : scrubTokenShapes(value);
-    }
+    scrubStringMap(q, (name, value) => (name === "t" ? REDACTED : scrubTokenShapes(value)));
   }
   return q;
 }
@@ -164,11 +196,7 @@ function scrubQueryString(q: NonNullable<ScrubbableEvent["request"]>["query_stri
  */
 function scrubStringsInBag(bag: unknown): void {
   if (!bag || typeof bag !== "object" || Array.isArray(bag)) return;
-  const record = bag as Record<string, unknown>;
-  for (const key of Object.keys(record)) {
-    const value = record[key];
-    if (typeof value === "string") record[key] = scrubTokenShapes(value);
-  }
+  scrubStringMap(bag as Record<string, unknown>, (_name, value) => scrubTokenShapes(value));
 }
 
 /** `Cookie: a=1; __Secure-sp_t=…; b=2` —— 只把分享 token 那一对的值换掉,其余原样留着。 */
@@ -220,39 +248,48 @@ export function scrubSentryEventTokens<T extends ScrubbableEvent>(event: T): T {
 
   const request = event.request;
   if (request) {
-    if (request.query_string !== undefined) request.query_string = scrubQueryString(request.query_string);
-    if (request.headers) {
-      for (const name of Object.keys(request.headers)) {
-        const value = request.headers[name];
-        if (typeof value !== "string") continue;
-        if (AUTHISH_HEADER.test(name)) request.headers[name] = REDACTED;
-        else if (COOKIE_HEADER.test(name)) request.headers[name] = scrubCookieHeader(value);
-        else request.headers[name] = scrubTokenShapes(value);
-      }
+    if (request.query_string !== undefined) {
+      const next = scrubQueryString(request.query_string);
+      if (next !== request.query_string) request.query_string = next;
     }
-    if (typeof request.cookies === "string") request.cookies = scrubCookieHeader(request.cookies);
-    else if (request.cookies) {
-      for (const name of Object.keys(request.cookies)) {
-        const value = request.cookies[name];
-        if (typeof value !== "string") continue;
-        request.cookies[name] = SHARE_COOKIE_NAME.test(name) ? REDACTED : scrubTokenShapes(value);
-      }
+    if (request.headers) {
+      scrubStringMap(request.headers, (name, value) =>
+        AUTHISH_HEADER.test(name) ? REDACTED : COOKIE_HEADER.test(name) ? scrubCookieHeader(value) : scrubTokenShapes(value),
+      );
+    }
+    if (typeof request.cookies === "string") {
+      writeIfChanged(request as Record<string, unknown>, "cookies", scrubCookieHeader(request.cookies));
+    } else if (request.cookies) {
+      scrubStringMap(request.cookies, (name, value) =>
+        SHARE_COOKIE_NAME.test(name) ? REDACTED : scrubTokenShapes(value),
+      );
     }
   }
 
   for (const crumb of event.breadcrumbs ?? []) {
     if (!crumb) continue;
-    if (typeof crumb.message === "string") crumb.message = scrubTokenShapes(crumb.message);
-    if (typeof crumb.data?.url === "string") crumb.data.url = scrubTokenShapes(cutFragment(crumb.data.url)!);
+    if (typeof crumb.message === "string") {
+      writeIfChanged(crumb as Record<string, unknown>, "message", scrubTokenShapes(crumb.message));
+    }
+    const crumbUrl = crumb.data?.url;
+    if (crumb.data && typeof crumbUrl === "string") {
+      writeIfChanged(crumb.data, "url", scrubTokenShapes(cutFragment(crumbUrl)!));
+    }
   }
 
   for (const value of event.exception?.values ?? []) {
-    if (value && typeof value.value === "string") value.value = scrubTokenShapes(value.value);
+    if (value && typeof value.value === "string") {
+      writeIfChanged(value as Record<string, unknown>, "value", scrubTokenShapes(value.value));
+    }
   }
-  if (typeof event.message === "string") event.message = scrubTokenShapes(event.message);
+  if (typeof event.message === "string") {
+    writeIfChanged(event as Record<string, unknown>, "message", scrubTokenShapes(event.message));
+  }
 
   // 事务事件那三块。错误事件里它们不存在,于是全是空转。
-  if (typeof event.transaction === "string") event.transaction = scrubTokenShapes(event.transaction);
+  if (typeof event.transaction === "string") {
+    writeIfChanged(event as Record<string, unknown>, "transaction", scrubTokenShapes(event.transaction));
+  }
   const trace = event.contexts?.trace;
   scrubStringsInBag(trace);
   if (trace && typeof trace === "object") scrubStringsInBag((trace as Record<string, unknown>).data);
