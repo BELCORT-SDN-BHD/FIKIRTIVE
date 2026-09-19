@@ -38,9 +38,16 @@ export async function register() {
 
   if (!process.env.SENTRY_DSN) return;
   const Sentry = await import("@sentry/node");
+  const { scrubSentryEventTokens } = await import("@/lib/sentry-scrub");
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
     tracesSampleRate: 0,
     environment: process.env.NODE_ENV,
+    // SHARE-A6 的遥测半句(docs/specs/share-preview.md,§2)在服务器上也得成立。浏览器那一边
+    // 从 #1317 起就有这道 beforeSend(lib/sentry-browser.ts),服务端一直没有 —— 于是一条服务端
+    // 错误只要请求地址是 `/s/<token>` 或 `/api/media/pub/<token>`,或者请求头里带着那颗
+    // `__Secure-sp_t` cookie,token 就原样送去第三方。洗法与形状是**同一份**(lib/sentry-scrub.ts),
+    // 不在这里抄第二遍。
+    beforeSend: scrubSentryEventTokens,
   });
 }

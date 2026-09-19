@@ -397,6 +397,20 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 证据：`local-logs/staging-r3-paid/verify-r3-f28-verifier.json` 的 `findings` 第 5 条（标 `REGISTER-WORTHY`，含「这一跳零产品代码」的独立复核）；逐步时间戳见 `verify-r3-f28.json` 步骤 `C1`（12:50:21Z 白屏现场）与 `C2`（12:53:27Z 自行恢复），同文件 `buildSha` 一栏也照实记了这次中途换版。
 
+## R3-F35 · 服务器端 Sentry 不洗分享 token（SHARE-A6 遥测半句只在浏览器上成立）
+
+**状态**：修复中（本 PR，`claude/share-token-scrub-server-r3`）。Founder 2026-09-19 对谈授权编排者代裁「本版修」，登记行见 `docs/specs/share-preview.md` §5 2026-09-19。
+
+**缺口**：浏览器那一边从 #1317 起就有一道 `beforeSend` 脱敏（`apps/web/lib/sentry-browser.ts` 的 `scrubShareTokens`），服务端 `apps/web/instrumentation.ts:41-45` 的 `Sentry.init` 一直**没有**——只有 `dsn`／`tracesSampleRate`／`environment` 三个字段。于是一条服务端错误只要请求地址是 `/s/<token>`、`/api/media/pub/<token>`、`?t=<token>`，或者请求头／cookie 里带着那颗装 token 的 `__Secure-sp_t`（`apps/web/lib/share-preview-cookie.ts`；客户每打开一次预览页都会把它发上来，这是服务端**必然**拿得到完整 token 的地方），分享 token 就原样送去第三方。**对商家意味着什么**：拿到那串 token 就等于拿到商家发给客户的那条链接本身——能看那一页、能拉那些图，直到链接过期或被撤销。验收 SHARE-A6 的后半句「遥测里的任何 URL 都不含 token」因此只在浏览器上成立。本条由 R3-F31／F32 的跨厂复审（2026-09-17）在「残余」里点名，登记在 `docs/specs/share-preview.md` §5 2026-09-17 那一行，属于**早于那张票**的缺口，不是它修出来的。
+
+**修法（修根不修表）**：洗法与形状搬进一个运行时中立的新模块 `apps/web/lib/sentry-scrub.ts`（不碰 `window`、不 import node 内建），浏览器与服务器两个 init 共用**同一份**——服务端不抄第二份正则。服务端那道 `beforeSend` 比浏览器多洗 `@sentry/node` 自己才会填的那几块：`request.query_string`（node 把 query 另拆一份，`request.url` 洗干净了它还留着原文）、`request.cookies` 与 `Cookie` 请求头（按 cookie 逐对洗，其余 cookie 原样留着）、`Authorization` 一类的凭据回声（整条不要）、`exception.values[].value` 与 `event.message`（一条 `fetch failed: …/api/media/pub/<token>` 的报错不经过任何 URL 字段）、面包屑的 `data.url` 与 `message`。不接 `beforeBreadcrumb`：面包屑在 `beforeSend` 之前就已挂进事件，这一道已经逐条洗过。由 `apps/web/lib/__tests__/sentry-server-scrub.test.ts` 钉住两半——四种形态逐字段脱敏，以及 `instrumentation.ts` 真的把这只函数交给了 `Sentry.init`（洗法再对，没接上等于没有）。
+
+**`apps/worker` 已核，不在本条写集内**：worker 的两处 `Sentry.init`（`apps/worker/src/index.ts:135`、`apps/worker/src/backup-cron.ts:48`）同样没有 `beforeSend`，但分享 token 到不了它那里——全仓 grep，worker 源码里不出现 `sp_t`／`SHARE_PREVIEW*`／`/s/<token>` 任何一处。它唯一会碰到的同形状地址是自己签给 Meta 去拉的**发布**媒体 URL（`apps/worker/src/jobs/publish.ts:298`，`signMediaToken` + 2 小时 TTL），与分享预览不是同一把 token。那条地址是否会经由 Meta 的报错回声（`publish.ts:110`／`:131` 把 `j?.error?.message` 原样当作 `Error.message`）进到 Sentry，**未验证**；即便成立，它跨 app 边界（要么让 worker import `apps/web`，要么把洗法搬进 `packages/core`），是另一条线，登记于 `docs/specs/share-preview.md` §5 2026-09-19 行的非目标②，不在本条一起修。
+
+**残余（本条不修）**：浏览器那一侧的字段面按「行为不变」保持原样，所以浏览器事件的 `exception.values[].value` 与 fetch 面包屑的 `data.url` 今天仍不洗。把它们一并洗掉只是让浏览器改用服务端那只函数，代价约十行，但会动到一条已冻结的行为面，交 Founder 决定是现在合还是另开一行。
+
+证据：`docs/specs/share-preview.md` §5 2026-09-17 R3-F31／F32 行的「残余」段（缺口出处）；代码现场 `apps/web/instrumentation.ts:41-45`（修前）、`apps/web/lib/sentry-browser.ts:64`（浏览器侧既有的那道门）。
+
 ## 本轮补记（2026-09-17，staging 第三轮付费旅程 2–4 组，build `c0d25917`）
 
 来源：`local-logs/staging-r3-paid/{real-03-person-video.json,real-04-06-08.json,real-10-share-anon.json,workflow-groups2-4-result.json}`（3 名 journeys worker + 3 名独立 verifier，串行跑完，US$0.87 累计花费，远低于 US$16 暂停线；见 `report-round3.md` 本轮新增一节的完整判定摘要）。本节只记不构成独立 F 编号、但值得留证的工具坑、旁证与正面样本，逐条不重复列独立编号。
