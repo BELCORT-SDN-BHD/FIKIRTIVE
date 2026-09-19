@@ -38,9 +38,20 @@ export async function register() {
 
   if (!process.env.SENTRY_DSN) return;
   const Sentry = await import("@sentry/node");
+  const { scrubSentryEventTokens } = await import("@/lib/sentry-scrub");
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
     tracesSampleRate: 0,
     environment: process.env.NODE_ENV,
+    // SHARE-A6 的遥测半句(docs/specs/share-preview.md,§2)在服务器上也得成立。浏览器那一边
+    // 从 #1317 起就有这道 beforeSend(lib/sentry-browser.ts),服务端一直没有 —— 于是一条服务端
+    // 错误只要请求地址是 `/s/<token>` 或 `/api/media/pub/<token>`,或者请求头里带着那颗
+    // `__Secure-sp_t` cookie,token 就原样送去第三方。洗法与形状是**同一份**(lib/sentry-scrub.ts),
+    // 不在这里抄第二遍。
+    beforeSend: scrubSentryEventTokens,
+    // `beforeSend` 在 SDK 里只作用于**错误**事件,事务事件走这一只。今天 `tracesSampleRate: 0`
+    // 意味着没有事务事件被采样,所以这不是一个正在漏的洞;但那是一个随时会被改掉的设置值,
+    // 不是一道门 —— 接上它,`GET /s/<token>` 这样的事务名才不靠另一个数字恰好为 0 来保住。
+    beforeSendTransaction: scrubSentryEventTokens,
   });
 }

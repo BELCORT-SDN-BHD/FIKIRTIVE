@@ -55,6 +55,53 @@ describe("browserSentryOptions", () => {
     expect(scrubbed.request!.url).toBe("https://app.example/s/[redacted]");
   });
 
+  /**
+   * 关类不补例(Founder 2026-09-19 裁决)—— 要关的是「分享/媒体 token 进遥测」这**一类**,不是
+   * 「服务端那一例」。浏览器事件同样有 `exception.values[].value`:一条错误正文里带着那条地址,
+   * 它不经过 `request.url` 那道门,所以旧的 `scrubShareTokens` 一个字都碰不到它。两个 init 从此
+   * 接同一只 `scrubSentryEventTokens`,浏览器只会洗得更多。
+   */
+  it("SHARE-A6 —— init 参数带的 beforeSend 也洗异常正文里的 token(旧的 scrubShareTokens 碰不到)", () => {
+    const beforeSend = browserSentryOptions("https://key@o1.ingest.example/2", "production")?.beforeSend;
+    const scrubbed = beforeSend!({
+      exception: { values: [{ value: "TypeError: Failed to fetch https://app.example/api/media/pub/eyJvIjoiYSJ9.sig" }] },
+    });
+    expect(scrubbed.exception!.values![0]!.value).toBe(
+      "TypeError: Failed to fetch https://app.example/api/media/pub/[redacted]",
+    );
+  });
+
+  /** 同一类的另一半:浏览器的 fetch/xhr 面包屑把地址记在 `data.url`,不是导航面包屑的 `from`/`to`。 */
+  it("SHARE-A6 —— init 参数带的 beforeSend 也洗 fetch 面包屑的 `data.url`", () => {
+    const beforeSend = browserSentryOptions("https://key@o1.ingest.example/2", "production")?.beforeSend;
+    const scrubbed = beforeSend!({
+      breadcrumbs: [{ data: { url: "https://app.example/api/media/pub/eyJvIjoiYSJ9.sig", status_code: 404 } }],
+    });
+    expect(scrubbed.breadcrumbs![0]!.data).toEqual({
+      url: "https://app.example/api/media/pub/[redacted]",
+      status_code: 404,
+    });
+  });
+
+  /**
+   * `beforeSend` 在 SDK 里只作用于**错误**事件(client 先 `isErrorEvent(...)` 才调它),事务事件
+   * 走 `beforeSendTransaction`。今天 `tracesSampleRate: 0` 没有事务事件被采样,但那是个随时会被
+   * 改掉的设置值,不是一道门 —— 采样一旦打开,`GET /s/<token>` 这样的事务名就会直接送出去。
+   */
+  it("SHARE-A6 —— 事务事件那只钩子也接同一份洗牌(beforeSendTransaction)", () => {
+    const options = browserSentryOptions("https://key@o1.ingest.example/2", "production");
+    expect(options?.beforeSendTransaction).toBe(options?.beforeSend);
+    const scrubbed = options!.beforeSendTransaction({
+      transaction: "GET /s/eyJvIjoiYSJ9.sig",
+      contexts: { trace: { op: "navigation", data: { url: "https://app.example/api/media/pub/eyJvIjoiYSJ9.sig" } } },
+    });
+    expect(scrubbed.transaction).toBe("GET /s/[redacted]");
+    expect(scrubbed.contexts!.trace).toEqual({
+      op: "navigation",
+      data: { url: "https://app.example/api/media/pub/[redacted]" },
+    });
+  });
+
   it("trims the DSN and falls back to a named environment", () => {
     const options = browserSentryOptions("  https://key@o1.ingest.example/2  ", undefined);
     expect(options?.dsn).toBe("https://key@o1.ingest.example/2");
