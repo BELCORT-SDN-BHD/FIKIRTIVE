@@ -17,12 +17,13 @@
  * 这里只把根目录换成临时目录，并在 `ffmpegInput` 前挂一个**帧内探针** —— 第三条用例的跨租户读
  * 必须发生在 `handleCaption` 自己那个帧里（`runAsTenant(job.ownerId)`），不是测试另开一个帧假装。
  *
- * ── 这个文件证不到、因此不在这里断言的一件事 ────────────────────────────────────────────────
- * 规格 §1.6 写的豁免是 **per-(model, uniqueKey)**，「不得退化成整模型豁免」。而今天的实现里
- * `Transcript` 是整张表进 `TENANT_GUARD_EXEMPT`（packages/db/src/tenant-guard.ts），不是只对
- * `contentHash_model` 这一把键开口。所以 A9 的缓存命中今天不依赖任何 per-uniqueKey 特判，
- * 这个文件也就没有办法把「特判只对这一把键生效」证出来。两者的差距记在 PR 里，不在这里
- * 断言成「对」。
+ * ── 这个文件证什么、不证什么（#1403 之后）────────────────────────────────────────────────
+ * 规格 §1.6 写的豁免是 **per-(model, uniqueKey)**，「不得退化成整模型豁免」。#1403 已经把
+ * `Transcript` 从整表豁免收窄成那一把键：它现在在 `TENANT_MODELS` 里受守卫，只有 `where`
+ * **独自**点名 `contentHash_model` 时才跳过租户比对（`PER_UNIQUE_KEY_EXEMPT`，
+ * packages/db/src/tenant-guard.ts）。本文件因此改用生产那把缓存键读转写 —— 证的是「收窄之后
+ * A9 的 $0 复用照旧」；「键的另一侧照常落闸」由 `packages/db/src/tenant-guard-transcript-key-exempt.test.ts`
+ * 证，不在这里重复。
  */
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
@@ -139,10 +140,12 @@ async function seedCaptionJob(owner: string, assetId: string, contentHash: strin
 /** ② 的前提：「A 家已经把这段音频转写过一次」。① 跑过就是空操作；单独跑 ②（`-t` / `--shard` /
  *  vitest retry）时由它自己把 A 家那一单补上 —— 用例因此不依赖同文件的执行顺序。 */
 async function ensureTenantATranscribed(): Promise<void> {
-  const cached = await prisma.transcript.findMany({
-    where: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION },
+  // #1403 收窄之后，读这张表要么带租户、要么**只**点那把缓存键（规格 §1.6(b)）——
+  // 这里用的就是生产那把键（caption.ts / actions.ts 三处调用点逐字同形）。
+  const cached = await prisma.transcript.findUnique({
+    where: { contentHash_model: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION } },
   });
-  if (cached.length > 0) return;
+  if (cached) return;
   const jobA = await seedCaptionJob(A, assetA, AUDIO_HASH);
   await handleCaption({ captionJobId: jobA }, 0);
 }
@@ -225,10 +228,13 @@ describe("TENANT-A9 —— 同音频同模型跨租户复用全局缓存，其�
     const job = await prisma.captionJob.findFirstOrThrow({ where: { id: jobA, ownerId: A } });
     expect(job.status).toBe("DONE");
     expect(job.error).toBe("");
-    const cached = await prisma.transcript.findMany({ where: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION } });
-    expect(cached).toHaveLength(1);
-    expect(cached[0]!.ownerId).toBe(A); // 第一个写进去的人挂着名，这一行此后是全局的
-    expect(cached[0]!.cuesJson).toEqual([{ startMs: 0, lengthMs: 900, text: "Terima kasih" }]);
+    const cached = await prisma.transcript.findUnique({
+      where: { contentHash_model: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION } },
+    });
+    expect(cached?.ownerId).toBe(A); // 第一个写进去的人挂着名，这一行此后是全局的
+    expect(cached?.cuesJson).toEqual([{ startMs: 0, lengthMs: 900, text: "Terima kasih" }]);
+    // 这一行是**唯一**的一行：键就是唯一约束本身，所以读得到就只有它（#1403 之后按租户数更省事）
+    expect(await runAsTenant(A, () => prisma.transcript.count({ where: { ownerId: A } }))).toBe(1);
   }, DB_CASE_TIMEOUT_MS);
 
   it("TENANT-A9 ② B 家拿同一段音频同一模型：命中缓存 —— 第二次转写调用为 0、任务 DONE 无错、两边账本一行没多", async () => {
@@ -249,9 +255,11 @@ describe("TENANT-A9 —— 同音频同模型跨租户复用全局缓存，其�
     expect(job.progress).toBe(100);
     expect(job.error).toBe("");
     // ③ 缓存行还是那一行（没有给 B 复制出第二行），归属没被改写
-    const cached = await prisma.transcript.findMany({ where: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION } });
-    expect(cached).toHaveLength(1);
-    expect(cached[0]!.ownerId).toBe(A);
+    const cached = await prisma.transcript.findUnique({
+      where: { contentHash_model: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION } },
+    });
+    expect(cached?.ownerId).toBe(A);
+    expect(await runAsTenant(B, () => prisma.transcript.count({ where: { ownerId: B } }))).toBe(0);
     // ④ 不重复计费：两家的账本行数与余额分毫未动（caption 这条队列本就不扣费，
     //    所以「没多一行」的基线是 0 —— 命中缓存也不许凭空多出任何一笔）
     expect(await moneyTrail(B)).toEqual(moneyBBefore);

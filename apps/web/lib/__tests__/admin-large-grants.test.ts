@@ -20,6 +20,7 @@ vi.mock("@/lib/auth-guard", () => ({
 }));
 
 const { prisma } = await import("@fikirtive/db");
+const { runAsSystem } = await import("@fikirtive/db/principal");
 const { getAdminV2Data } = await import("@/lib/admin-v2");
 
 const TAG = "large-grants";
@@ -64,8 +65,14 @@ async function ledgerRow(orgId: string, internal: number, minutesAgo: number, se
 
 /** 上一趟被中断留下的行会撞固定 id;先自清,重跑才是幂等的。 */
 async function wipeFixtures() {
-  await prisma.creditLedger.deleteMany({ where: { id: { startsWith: `cl_${TAG}_` } } });
-  await prisma.membership.deleteMany({ where: { orgId: { in: [ORG_OVER, ...NOISE_ORGS] } } });
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号。这一句按 id 前缀删跨了几家店，
+  // 所以改成逐家删 —— 谓词加上这家的 orgId，删掉的行一行不多、一行不少。
+  for (const orgId of [ORG_OVER, ...NOISE_ORGS]) {
+    await prisma.creditLedger.deleteMany({ where: { orgId, id: { startsWith: `cl_${TAG}_` } } });
+  }
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号（`{ in: [...] }` 这个形状无帧时守卫
+  // 判不出它点名了谁）。夹具清场因此逐家删 —— 删掉的行一行不多、一行不少。
+  for (const orgId of [ORG_OVER, ...NOISE_ORGS]) await prisma.membership.deleteMany({ where: { orgId } });
   await prisma.user.deleteMany({ where: { email: { startsWith: `${TAG}-` } } });
   await prisma.organization.deleteMany({ where: { id: { in: [ORG_OVER, ...NOISE_ORGS] } } });
 }
@@ -88,7 +95,10 @@ afterAll(wipeFixtures);
 
 describe("MONEY-A14 — 超限的 workspace 不会被更新的明细行挤出报表", () => {
   it("前置条件:窗口里最新的 24 行**一行都不是**超限那家的", async () => {
-    const newest = await prisma.creditLedger.findMany({
+    // 这一句问的是「**全 org** 窗口里最新的 24 行」——天生跨租户，与 admin 报表读的是同一条
+    // 谓词。#1403 之后它要在生产那一顶帧里问：`runAsSystem("admin:platform-read")`（扫描域，
+    // 只读），逐字同 `apps/web/lib/admin-v2.ts:418`。
+    const newest = await runAsSystem("admin:platform-read", () => prisma.creditLedger.findMany({
       where: {
         createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60_000) },
         OR: [
@@ -99,7 +109,7 @@ describe("MONEY-A14 — 超限的 workspace 不会被更新的明细行挤出报
       orderBy: { createdAt: "desc" },
       take: 24,
       select: { orgId: true },
-    });
+    }));
     expect(newest).toHaveLength(24);
     expect(newest.map((row) => row.orgId)).not.toContain(ORG_OVER);
   });

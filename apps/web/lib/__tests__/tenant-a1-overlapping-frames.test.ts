@@ -82,13 +82,6 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/queue", () => ({ getBoss: vi.fn() }));
 
 const { prisma } = await import("@fikirtive/db");
-// 挡位的 getter/setter 不在 `@fikirtive/db` 的 exports 表里（barrel 不导出 tenant-guard，
-// 也没有 `./tenant-guard` 子路径），所以这里按路径直取**同一个文件**：`@fikirtive/db` 解析到
-// `packages/db/dist/src/index.js`，它的 client.js 导入的就是下面这个 `tenant-guard.js`。
-// 必须是同一个模块实例 —— 挡位是那个模块里的一个模块级变量，换一份实例就等于换了一个挡位。
-const { getOrgScopedGuardMode, setOrgScopedGuardMode } = await import(
-  "../../../../packages/db/dist/src/tenant-guard.js"
-);
 const { getPrincipal, runAsUser, runAsSystem, runAsTenant } = await import("@fikirtive/db/principal");
 const { listCreditPacks } = await import("@/lib/billing-actions");
 const { getGenJob } = await import("@/lib/gen-actions");
@@ -419,32 +412,13 @@ describe("TENANT-A1「两个商家的请求重叠在飞时互不串帧」", () =
       /GenJob\.findFirst has no ownerId filter/,
     );
 
-    // ③ 钱面：帧丢了以后那句读会读成什么样 —— **两挡各断言一次**，所以这条反证与钱表族的
-    //    迁移期挡位无关。挡位只有一个进程内变量（tenant-guard.ts:118），这里现场翻、finally 翻回：
-    //    · warn（今天的默认值）：守卫记一条警告然后原样放行，两家店的流水一起回来（库里还有
-    //      别的租户就回来得更多，那正是「无帧＝读穿全库」的样子）；
-    //    · enforce（#1403 把钱表族翻过去之后的样子）：同一句当场被拒。
-    //    以前这里只写 warn 那一半，等于把「今天的挡位」写死进了一条 TENANT-A1 的断言 —— 翻挡
-    //    那天这条测会因为一件与租户隔离无关的事变红。两挡都写上之后，结论在两挡下都成立：
-    //    上面那条并发测里的「只读得到自己」不是恒真句，它真的分得出串没串帧。
-    const modeBefore = getOrgScopedGuardMode();
-    try {
-      setOrgScopedGuardMode("warn");
-      const leaked = await prisma.creditLedger.findMany({
-        where: { orgId: undefined },
-        select: { orgId: true },
-      });
-      expect([...new Set(leaked.map((row) => row.orgId))]).toEqual(
-        expect.arrayContaining([ORG_A, ORG_B]),
-      );
-
-      setOrgScopedGuardMode("enforce");
-      await expect(
-        prisma.creditLedger.findMany({ where: { orgId: undefined }, select: { orgId: true } }),
-      ).rejects.toThrow(/CreditLedger\.findMany has no orgId filter/);
-    } finally {
-      setOrgScopedGuardMode(modeBefore);
-    }
+    // ③ 钱面：帧丢了以后那句读会读成什么样 —— **当场被拒**。
+    //    这条是上面那条并发测的反证：如果「只读得到自己」是恒真句，它就什么也没证明。
+    //    （#1403 之前这里翻过一次挡位，两挡各断言一次；挡位随翻闸一起删掉了，留下的就是
+    //    今天线上的那一挡。）
+    await expect(
+      prisma.creditLedger.findMany({ where: { orgId: undefined }, select: { orgId: true } }),
+    ).rejects.toThrow(/CreditLedger\.findMany has no orgId filter/);
 
     // ④ 帧决定行：同一句受闸读，换一顶帧就换一批行
     const asA = await runAsUser(principalFor(GATE_A), () => prisma.genJob.findMany({ select: { id: true } }));

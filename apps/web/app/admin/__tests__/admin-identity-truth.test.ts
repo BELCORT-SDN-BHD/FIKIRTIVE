@@ -96,7 +96,11 @@ async function manualGrant(orgId: string, seq: number) {
 }
 
 async function wipeGrantFixtures() {
-  await prisma.creditLedger.deleteMany({ where: { id: { startsWith: `cl_${TAG}_` } } });
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号。这一句按 id 前缀删跨了几家店，
+  // 所以改成逐家删 —— 谓词加上这家的 orgId，删掉的行一行不多、一行不少。
+  for (const orgId of [ORG_NO_OWNER, ORG_CLOSED]) {
+    await prisma.creditLedger.deleteMany({ where: { orgId, id: { startsWith: `cl_${TAG}_` } } });
+  }
   await prisma.organization.deleteMany({ where: { id: { in: [ORG_NO_OWNER, ORG_CLOSED] } } });
 }
 

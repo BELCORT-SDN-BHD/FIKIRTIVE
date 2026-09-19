@@ -17,6 +17,19 @@ vi.mock("@/lib/auth-guard", () => ({
 
 const { prisma } = await import("@fikirtive/db");
 const { getTenantDetail } = await import("@/lib/tenant-admin");
+const { runAsStaff } = await import("@fikirtive/db/principal");
+
+/**
+ * 后台租户详情页的**生产形状**：`runAsStaff(staffPrincipal(gate, orgId), () => getTenantDetail(orgId))`
+ * （`apps/web/app/admin/tenants/[orgId]/page.tsx:15`）。#1403 钱表族正式执法之后这一顶帧是必需的 ——
+ * 详情页里的 `adjustWindowTotals([orgId])` 产出 `{ orgId: { in: [自己一家] } }`，而无帧那一档只认
+ * 字面等值（那一档 #1403 刻意一个字没放宽）。所以用例改成照生产的形状进帧 —— 换的是调用形状，
+ * 不是被测的判定：跨租户那一条断言原样保留，它证的仍然是「B 的页面只出 B 的数据」。
+ */
+const detailAsStaff = (orgId: string) =>
+  runAsStaff({ kind: "staff", actorEmail: "founder@fikirtive.test", ownerId: orgId }, () =>
+    getTenantDetail(orgId),
+  );
 
 const TAG = "open-holds";
 const ORG_A = `org_${TAG}_a`;
@@ -61,8 +74,14 @@ const userIds: string[] = [];
 
 /** 上一趟被中断留下的行会撞固定 id;先自清,重跑才是幂等的。 */
 async function wipeFixtures() {
-  await prisma.creditLedger.deleteMany({ where: { id: { startsWith: `cl_${TAG}_` } } });
-  await prisma.membership.deleteMany({ where: { orgId: { in: [ORG_A, ORG_B] } } });
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号。这一句按 id 前缀删跨了几家店，
+  // 所以改成逐家删 —— 谓词加上这家的 orgId，删掉的行一行不多、一行不少。
+  for (const orgId of [ORG_A, ORG_B]) {
+    await prisma.creditLedger.deleteMany({ where: { orgId, id: { startsWith: `cl_${TAG}_` } } });
+  }
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号（`{ in: [...] }` 这个形状无帧时守卫
+  // 判不出它点名了谁）。夹具清场因此逐家删 —— 删掉的行一行不多、一行不少。
+  for (const orgId of [ORG_A, ORG_B]) await prisma.membership.deleteMany({ where: { orgId } });
   await prisma.user.deleteMany({ where: { email: { startsWith: `${TAG}-` } } });
   await prisma.organization.deleteMany({ where: { id: { in: [ORG_A, ORG_B] } } });
 }
@@ -86,7 +105,7 @@ afterAll(wipeFixtures);
 
 describe("MONEY-A14 — 未收口清单只出本租户、且已收口的不出", () => {
   it("A 的页面只列 A 那张开着的:已 SETTLE 的、已 REFUND 的、B 的,一张都不出现", async () => {
-    const detail = await getTenantDetail(ORG_A);
+    const detail = await detailAsStaff(ORG_A);
 
     expect(detail!.openManualRefunds.map((h) => h.refundId)).toEqual(["a-open"]);
     expect(detail!.openManualRefundsHasMore).toBe(false);
@@ -97,7 +116,7 @@ describe("MONEY-A14 — 未收口清单只出本租户、且已收口的不出",
   });
 
   it("B 的页面只列 B 那张,互不串台", async () => {
-    const detail = await getTenantDetail(ORG_B);
+    const detail = await detailAsStaff(ORG_B);
     expect(detail!.openManualRefunds.map((h) => h.refundId)).toEqual(["b-open"]);
   });
 });
@@ -109,7 +128,7 @@ describe("MONEY-A14 — 先减后截:更老的 open hold 不会被更新的单�
       await close(ORG_B, `b-done-${i}`, "SETTLE");
     }
 
-    const detail = await getTenantDetail(ORG_B);
+    const detail = await detailAsStaff(ORG_B);
 
     expect(detail!.openManualRefunds.map((h) => h.refundId)).toEqual(["b-open"]);
     expect(detail!.openManualRefundsHasMore).toBe(false);
@@ -118,7 +137,7 @@ describe("MONEY-A14 — 先减后截:更老的 open hold 不会被更新的单�
   it("开着的比一页还多 ⇒ 只列 25 张,并说还有更早的", async () => {
     for (let i = 0; i < 25; i += 1) await hold(ORG_B, `b-more-${i}`, 1);
 
-    const detail = await getTenantDetail(ORG_B);
+    const detail = await detailAsStaff(ORG_B);
 
     expect(detail!.openManualRefunds).toHaveLength(25);
     expect(detail!.openManualRefundsHasMore).toBe(true);

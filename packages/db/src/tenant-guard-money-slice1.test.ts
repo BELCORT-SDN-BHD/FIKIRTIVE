@@ -8,15 +8,16 @@
  *  1. 钱表族（CreditAccount / CreditLedger / Membership）真的进了运行时守卫，
  *     而且守的是它们自己的租户列 `orgId` —— 守卫过去只认字面 `ownerId`，把 orgId 族登记成
  *     「明示豁免」，也就是零检查（见 tenant-guard.ts 的 ORG_SCOPED_TENANT_MODELS 注释）。
- *  2. 迁移期挡位（warn）真的是「记警告、不拦」：观察轮里一个字的行为都不许变，否则「先建帧
- *     后执法」的硬顺序（规格 §1.8）就是一句空话。
+ *  2. 迁移期挡位**已经不存在**（#1403 翻闸 + 收开关，TENANT-A10）：钱面与 `ownerId` 族走同一段
+ *     判定，没有第二条路、也没有可以在生产扳回去的开关。原来那一组「warn 挡位记警告、不拦」
+ *     的用例随挡位一起退役，换成下面这一组「开关真的没了」。
  *  3. enforce 挡位下，跨租户的钱动作当场失败且**钱守恒**：两边余额与流水行数分毫未变。
  */
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { prisma } from "./index.js";
 import { runAsUser, runAsSystem, type UserPrincipal } from "./principal.js";
-import { getOrgScopedGuardMode, setOrgScopedGuardMode } from "./tenant-guard.js";
+import * as tenantGuard from "./tenant-guard.js";
 import { seedOrg } from "../test/setup.js";
 
 const ORG_A = "org_slice1_a";
@@ -55,12 +56,10 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  setOrgScopedGuardMode("warn");
   vi.restoreAllMocks();
 });
 
-describe("TENANT-A4 钱守恒 —— enforce 挡位下跨租户的钱动作当场失败，两边余额与流水行数分毫未变", () => {
-  beforeEach(() => setOrgScopedGuardMode("enforce"));
+describe("TENANT-A4 钱守恒 —— 跨租户的钱动作当场失败，两边余额与流水行数分毫未变", () => {
 
   it("TENANT-A4 A 商家的帧里伪造一次 B 的充值（CreditLedger.create）失败，两边钱一分没动", async () => {
     const before = { a: await moneySnapshot(ORG_A), b: await moneySnapshot(ORG_B) };
@@ -127,7 +126,6 @@ describe("TENANT-A4 钱守恒 —— enforce 挡位下跨租户的钱动作当�
 });
 
 describe("TENANT-A3 无帧即拒 + 伪造过滤器不再过关（钱面）", () => {
-  beforeEach(() => setOrgScopedGuardMode("enforce"));
 
   it("TENANT-A3 钱表的无帧调用被拒", async () => {
     await expect(prisma.creditLedger.findMany({ where: { kind: "SETTLE" } })).rejects.toThrow(
@@ -141,7 +139,12 @@ describe("TENANT-A3 无帧即拒 + 伪造过滤器不再过关（钱面）", () 
     ).rejects.toThrow(/tenant-guard/);
   });
 
-  it("TENANT-A3 无帧但写明自己租户号的老调用点仍然放行（迁移中的面不许当天全红）", async () => {
+  // **现状登记，不是验收通过**（#1403）：A3 原文是「无帧即拒」，而这一条放行。兜底本片刻意
+  // 不收，理由与实测清单写在
+  // docs/audits/fullstack-staging-2026-09-14/local-logs/tenant-warn-baseline-2026-09-19.md §6：
+  // 生产侧还有五处**结构性无帧**（resolveUserPrincipal 与四个 CRM 网关 —— 造帧那一步自己要先读
+  // 一次 membership），测试侧 122 个文件靠它活着。收兜底是独立的一票，不压进翻闸这一次提交。
+  it("TENANT-A3（未收口的那一半·现状登记）无帧但写明自己租户号的老调用点仍然放行", async () => {
     await expect(
       prisma.creditAccount.findUnique({ where: { orgId: ORG_A } }),
     ).resolves.toBeTruthy();
@@ -155,29 +158,23 @@ describe("TENANT-A3 无帧即拒 + 伪造过滤器不再过关（钱面）", () 
   });
 });
 
-describe("迁移期挡位 —— warn 观察轮记警告、不拦（规格 §1.3 第四态 / §1.8 先建帧后执法）", () => {
-  it("默认就是 warn：挡位不翻，落闸不生效", () => {
-    expect(getOrgScopedGuardMode()).toBe("warn");
+describe("迁移期挡位已经收掉（#1403 翻闸，TENANT-A10：能在生产关掉租户隔离的开关本身就是审计发现）", () => {
+  it("守卫不再导出任何挡位出口：没有 setter，也没有 getter", () => {
+    expect(Object.keys(tenantGuard)).not.toContain("setOrgScopedGuardMode");
+    expect(Object.keys(tenantGuard)).not.toContain("getOrgScopedGuardMode");
   });
 
-  it("TENANT-A3 warn 挡位下无帧调用不被拦，但留下一条警告", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await expect(prisma.creditLedger.findMany({ where: { kind: "SETTLE" } })).resolves.toEqual([]);
-    expect(warn.mock.calls.flat().join(" ")).toMatch(/tenant-guard.*warn/i);
+  it("钱面默认就在执法：不扳任何东西，跨租户写当场被拒、钱一分没动", async () => {
+    const before = await moneySnapshot(ORG_B);
+    await expect(
+      runAsUser(merchant(ORG_A), () =>
+        prisma.creditLedger.create({ data: ledgerRow(ORG_B, "GRANT", 500, "no-gear:refused") }),
+      ),
+    ).rejects.toThrow(/tenant-guard/);
+    expect(await moneySnapshot(ORG_B)).toEqual(before);
   });
 
-  it("TENANT-A4 warn 挡位下跨租户写不被拦（这正是观察轮要看见的那条警告）", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await runAsUser(merchant(ORG_A), () =>
-      prisma.creditLedger.create({
-        data: ledgerRow(ORG_B, "GRANT", 500, "warn:observed"),
-      }),
-    );
-    expect((await moneySnapshot(ORG_B)).ledgerRows).toBe(1);
-    expect(warn.mock.calls.flat().join(" ")).toMatch(/CreditLedger\.create/);
-  });
-
-  it("warn 挡位对 ownerId 族零影响：已落闸的表照旧当场拒（不许回退既有围栏）", async () => {
+  it("`ownerId` 族照旧当场拒（两族同一段判定，收挡位没有回退既有围栏）", async () => {
     await expect(prisma.project.findMany({ where: { name: "x" } })).rejects.toThrow(/tenant-guard/);
   });
 });

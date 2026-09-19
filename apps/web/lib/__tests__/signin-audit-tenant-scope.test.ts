@@ -31,6 +31,7 @@ vi.mock("@/lib/auth-guard", async (importOriginal) => ({
 }));
 
 const { prisma } = await import("@fikirtive/db");
+const { runAsSystem } = await import("@fikirtive/db/principal");
 const { FOUNDER_OWNER_ID } = await import("@fikirtive/core");
 const { convergeIdentity } = await import("@/lib/better-auth/converge");
 const { getAdminV2Data } = await import("@/lib/admin-v2");
@@ -47,10 +48,11 @@ function freshEmail(tag: string): string {
 async function signIn(email: string): Promise<{ orgId: string }> {
   await convergeIdentity({ email, emailVerified: true, sessionId: `ba_sess_${randomUUID()}` });
   const user = await prisma.user.findUniqueOrThrow({ where: { email }, select: { id: true } });
-  const membership = await prisma.membership.findFirstOrThrow({
+  // 「这个人属于哪一家」——天生跨租户的一问。#1403 之后在**扫描域**里问。
+  const membership = await runAsSystem("test-seed", () => prisma.membership.findFirstOrThrow({
     where: { userId: user.id },
     select: { orgId: true },
-  });
+  }));
   return { orgId: membership.orgId };
 }
 

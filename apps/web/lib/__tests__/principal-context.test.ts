@@ -103,7 +103,7 @@ afterEach(() => { mockAuth.mockReset(); gatewayProbe.seen.length = 0; });
 const { requireOwner, bootstrapPersonalOrg } = await import("@/lib/auth-guard");
 const inboxGateway = await import("@/lib/customer-inbox-gateway");
 const { prisma } = await import("@fikirtive/db");
-const { getPrincipal, runAsSystem } = await import("@fikirtive/db/principal");
+const { getPrincipal, runAsSystem, runAsTenant } = await import("@fikirtive/db/principal");
 const { canonicalGrantEmail } = await import("@fikirtive/core");
 
 /** Every user id this file created, so afterAll can delete exactly its own rows. */
@@ -114,7 +114,18 @@ async function seedUser(email: string): Promise<string> {
   return runAsSystem("test-seed", async () => {
     const id = `usr_${randomUUID()}`;
     const user = await prisma.user.upsert({ where: { email }, update: {}, create: { id, email } });
-    await prisma.membership.deleteMany({ where: { userId: user.id } });
+    // #1403 钱表族正式执法：扫描域帧（`system` + `ownerId === null`）可以读全库，但**不许写**——
+    // 清场因此先在这个帧里问出他属于哪几家，再逐家进 `runAsTenant` 删。守卫对 staff/system 帧的
+    // 写限制就是这一条：写只对「点了名的那家店」放行。
+    const memberships = await prisma.membership.findMany({
+      where: { userId: user.id },
+      select: { id: true, orgId: true },
+    });
+    for (const row of memberships) {
+      await runAsTenant(row.orgId, () =>
+        prisma.membership.delete({ where: { id: row.id, orgId: row.orgId } }),
+      );
+    }
     seededUserIds.add(user.id);
     return user.id;
   });

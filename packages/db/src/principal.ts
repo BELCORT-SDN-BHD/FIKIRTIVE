@@ -33,6 +33,20 @@ import type { OrgRole } from "@fikirtive/core/org-roles";
 export type SystemReason =
   | "auth:converge-identity"
   | "auth:bootstrap-personal-org"
+  /**
+   * #1403（规格 docs/specs/tenant-isolation.md §1.3 第四态）—— 「这个人属于哪一家？」
+   *
+   * `requireOwner()` 在回答这一问之前**没有租户可以报**：它读的就是这个人的 membership，而答案
+   * 才是后面那个用户帧的 `ownerId`。所以这一句结构上**无帧可建** —— 队列 handler 那条「先读才知道
+   * 租户」的鸡生蛋结构（规格 §4 异议栏）在登录这一面的同一个形状。
+   *
+   * 判定按结构不按名字（§1.6）：`system` 帧 + `ownerId === null` ＝ 扫描域，合法跨租户，
+   * 而这一句正是扫描域 —— 它要在**所有**租户里找这个人的那一行。
+   *
+   * 范围刻意窄到一句：它进 {@link READ_ONLY_SYSTEM_REASONS}，所以这个帧里写不了任何东西
+   * （连 raw SQL 都拒），把「解析身份」和「拿身份去做事」分成两段，不给降级洗白留门缝。
+   */
+  | "auth:resolve-tenant"
   | "stripe-webhook"
   /**
    * 钱路 M1-b —— Stripe ↔ 账本对账扫描(apps/worker/src/jobs/stripe-reconcile.ts)。
@@ -129,6 +143,10 @@ export const READ_ONLY_SYSTEM_REASONS: ReadonlySet<SystemReason> = new Set<Syste
   // reason's own doc comment above). Read-only here is a real invariant, not a courtesy: it
   // catches a future edit that accidentally moves a write inside this frame.
   "entity-asset-purge-sweep",
+  // #1403 —— 「这个人属于哪一家」只读一行 membership,答案才是后面那个用户帧的 ownerId。
+  // 只读在这里是**不变量**:它把「解析身份」与「拿身份去做事」分成两段,任何后来者把一次写
+  // 挪进这个帧里都会当场被拒,而不是悄悄拿到一个未点名租户的写权限。
+  "auth:resolve-tenant",
 ]);
 
 /**

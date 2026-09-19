@@ -40,6 +40,25 @@ beforeAll(() => {
 });
 
 const { prisma } = await import("@fikirtive/db");
+const { runAsSystem, runAsTenant } = await import("@fikirtive/db/principal");
+
+/** 「这个人在**任何**一家店里有没有 membership」——天生跨租户的一问。#1403 钱表族落闸之后，
+ *  这种读在**扫描域**里问（`system` 帧 + `ownerId === null`，`findFirst` 在守卫的 SYSTEM_SCAN_OPS
+ *  里）；写则必须点名租户，所以清场先扫再逐家删。 */
+function anyMembership(where: Record<string, unknown>) {
+  return runAsSystem("test-seed", () => prisma.membership.findFirst({ where }));
+}
+
+async function purgeMemberships(userId: string): Promise<void> {
+  const rows = await runAsSystem("test-seed", () =>
+    prisma.membership.findMany({ where: { userId }, select: { id: true, orgId: true } }),
+  );
+  for (const row of rows) {
+    await runAsTenant(row.orgId, () =>
+      prisma.membership.delete({ where: { id: row.id, orgId: row.orgId } }),
+    );
+  }
+}
 const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
 const { revokeTenantInvite } = await import("@/lib/tenant-actions");
 
@@ -122,7 +141,7 @@ describe("#538 invite/signup sync protocol — registration side", () => {
 
     await expect(bootstrapPersonalOrg(user.id, user.email)).rejects.toThrow(/revoked/i);
 
-    expect(await prisma.membership.findFirst({ where: { userId: user.id } })).toBeNull();
+    expect(await anyMembership({ userId: user.id })).toBeNull();
     expect(await statusOf(lower)).toBe("revoked");
     // Deterministic half of this test. A case-INSENSITIVE update would have flipped the
     // variant row to 'active' here; only the abort itself was ever order-dependent, because
@@ -139,7 +158,7 @@ describe("#538 invite/signup sync protocol — registration side", () => {
     await expect(bootstrapPersonalOrg(user.id, user.email)).rejects.toThrow(/revoked/i);
     const expectedOrgId = `org_${user.id}`;
     expect(await prisma.organization.findUnique({ where: { id: expectedOrgId } })).toBeNull();
-    expect(await prisma.membership.findFirst({ where: { userId: user.id } })).toBeNull();
+    expect(await anyMembership({ userId: user.id })).toBeNull();
     // MONEY PATH: the welcome grant lives in this same transaction. A revoked address must
     // never be granted credits, and no half-written ledger may survive the abort.
     expect(await prisma.creditLedger.findMany({ where: { orgId: expectedOrgId } })).toHaveLength(0);
@@ -199,7 +218,7 @@ describe("#538 provisioning refusal — real chain, real logs", () => {
 
     // And the refusal really was fail-closed: nothing was provisioned.
     const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
-    expect(await prisma.membership.findFirst({ where: { userId: user!.id } })).toBeNull();
+    expect(await anyMembership({ userId: user!.id })).toBeNull();
     expect(await statusOf(email)).toBe("revoked");
   });
 });
@@ -224,7 +243,7 @@ describe("#538 invite/signup sync protocol — the two sides serialize", () => {
   it("refuses on an activated row even when no membership exists to veto it", async () => {
     const user = await freshInvited();
     await bootstrapPersonalOrg(user.id, user.email);
-    await prisma.membership.deleteMany({ where: { userId: user.id } });
+    await purgeMemberships(user.id);
     expect(await statusOf(user.email)).toBe("active");
 
     const res = await revokeTenantInvite(user.email);
@@ -243,7 +262,7 @@ describe("#538 invite/signup sync protocol — the two sides serialize", () => {
 
     await expect(bootstrapPersonalOrg(user.id, user.email)).rejects.toThrow(/revoked/i);
 
-    expect(await prisma.membership.findFirst({ where: { userId: user.id } })).toBeNull();
+    expect(await anyMembership({ userId: user.id })).toBeNull();
     expect(await statusOf(user.email)).toBe("revoked");
   });
 
@@ -340,7 +359,7 @@ describe("#538 invite/signup sync protocol — the two sides serialize", () => {
         await bootstrapPersonalOrg(user.id, user.email).catch(() => null);
       }
       const status = await statusOf(user.email);
-      const membership = await prisma.membership.findFirst({ where: { userId: user.id, deletedAt: null } });
+      const membership = await anyMembership({ userId: user.id, deletedAt: null });
       expect(
         status === "revoked" && membership !== null,
         `forbidden split state (signupFirst=${signupFirst}): status=${status}, membership=${membership?.id}`,

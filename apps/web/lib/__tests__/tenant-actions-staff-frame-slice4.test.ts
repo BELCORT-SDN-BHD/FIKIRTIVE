@@ -63,8 +63,12 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await prisma.creditLedger.deleteMany({ where: { orgId: { in: [ORG_A, ORG_B] } } });
-  await prisma.creditAccount.deleteMany({ where: { orgId: { in: [ORG_A, ORG_B] } } });
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号（`{ in: [...] }` 这个形状无帧时守卫
+  // 判不出它点名了谁）。夹具清场因此逐家删 —— 删掉的行一行不多、一行不少。
+  for (const orgId of [ORG_A, ORG_B]) {
+    await prisma.creditLedger.deleteMany({ where: { orgId } });
+    await prisma.creditAccount.deleteMany({ where: { orgId } });
+  }
   await prisma.actionEvent.deleteMany({ where: { ownerId: { in: [ORG_A, ORG_B, FOUNDER_OWNER_ID] } } });
   await runAsSystem("test-seed", () => prisma.organization.deleteMany({ where: { id: { in: [ORG_A, ORG_B] } } }));
 });

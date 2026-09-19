@@ -19,6 +19,7 @@ beforeAll(() => {
 });
 
 const { prisma } = await import("@fikirtive/db");
+const { runAsSystem } = await import("@fikirtive/db/principal");
 const { SIGNUP_GRANT_CREDITS } = await import("@fikirtive/core");
 const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
 const { convergeIdentity } = await import("@/lib/better-auth/converge");
@@ -144,9 +145,11 @@ describe("#543 signup grant — exactly-once", () => {
     }
     const orgs = await Promise.all(users.map((u) => bootstrapPersonalOrg(u.id, u.email)));
 
-    const grantRows = await prisma.creditLedger.count({
+    // #1403：无帧那一档认不出 `{ in: [...] }` 这个形状。这一问本来就是跨租户的（「这一批
+    // org 一共领了几笔」），所以放进**扫描域**帧 —— `count` 在守卫的 SYSTEM_SCAN_OPS 里。
+    const grantRows = await runAsSystem("test-seed", () => prisma.creditLedger.count({
       where: { orgId: { in: orgs.filter(Boolean) as string[] }, kind: "GRANT" },
-    });
+    }));
     expect(grantRows).toBe(1);
   });
 
@@ -178,9 +181,9 @@ describe("#543 signup grant — exactly-once", () => {
     // 四个账号都建得出来（A17 明写号照建，被归一的只有赠金）。
     expect(new Set(orgs).size).toBe(variants.length);
 
-    const grantRows = await prisma.creditLedger.count({
+    const grantRows = await runAsSystem("test-seed", () => prisma.creditLedger.count({
       where: { orgId: { in: orgs }, kind: "GRANT" },
-    });
+    }));
     expect(grantRows).toBe(1);
   });
 

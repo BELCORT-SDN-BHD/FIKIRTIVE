@@ -62,6 +62,15 @@ export const TENANT_MODELS = new Set([
   // 而不是外键(取消收藏不许删原对象),目标的租户归属由 lib/library-subjects.ts 在每次
   // 写入前重新校验 —— 守卫管的是这三张表自己的行,那道校验管的是它们指向的东西。
   "Favorite", "Collection", "CollectionItem",
+  // #1403（2026-09-15 Founder 裁定「本版修，与翻闸票 #1403 同批」，规格
+  // docs/specs/tenant-isolation.md §5 该日第一行 / §1.6(b)）：转写缓存**整表豁免收窄成
+  // per-(model, uniqueKey)**。规格 §1.6 写的是「豁免只有两类……(b) per-(model, uniqueKey)ーー
+  // 今天只有 `Transcript × contentHash_model` 一条，**不得退化成整模型豁免**」，而实现一直是
+  // 整张表跳过守卫（这张表所有操作都不受值比对约束）。现在这张表 GUARDED，只有
+  // {@link PER_UNIQUE_KEY_EXEMPT} 点名的那**一把键**在 where 里独自出现时才跳过租户比对 ——
+  // 全局内容寻址缓存要的就是那一把键（同音频同模型 $0 复用），它之外的每一笔读写（按 id 改、
+  // 按 ownerId 列、建行）从今天起照常值比对、照常注入、无帧照常拒。
+  "Transcript",
   // FRONT-A4 (2026-09-03,规格 docs/specs/frontend-baseline.md §7.3⑤):工作区 Home 版面。
   // GUARDED,不 EXEMPT —— 它装的是「这个商家的 Home 长什么样」,越租户读一行就是把 A 家的
   // 工作区偏好讲给 B 家看;而且它**没有**任何平台级读取需求(admin 不读版面),所以保守默认
@@ -86,9 +95,9 @@ export const TENANT_MODELS = new Set([
  * `packages/db/src/otto-turn-trace-tenant.test.ts`）逐字断言它在下面那份豁免名单里。改它要先走
  * otto-engine 规格的变更登记，不由这一片顺手改掉。
  *
- * **先建帧后执法**（规格 §1.8 硬顺序）：本片上线时这一族走 warn 挡位 —— 守卫照常算出「落闸会拒
- * 什么」，但只记一条警告、不改一个字的行为（{@link getOrgScopedGuardMode}）。翻 enforce 是独立
- * 的一次小提交，可回滚。
+ * **先建帧后执法**（规格 §1.8 硬顺序）：这一族上线时先走过一轮 `warn` 观察挡（只记警告、不改一个字
+ * 的行为），2026-09-19 翻 `enforce` 并把挡位连同它的 getter/setter 一起删除（#1403，TENANT-A10）——
+ * 今天这一族与 `ownerId` 族走的是同一段判定，没有挡位可读、也没有开关可扳。
  */
 export const ORG_SCOPED_TENANT_MODELS = new Set([
   "CreditAccount",
@@ -102,29 +111,20 @@ export const ORG_SCOPED_TENANT_MODELS = new Set([
  */
 export type TenantColumn = "ownerId" | "orgId";
 
-/** 迁移期挡位的两挡（规格 §1.3 第四态）。 */
-export type TenantGuardMode = "warn" | "enforce";
-
 /**
- * 钱表族这一面的迁移期挡位。
+ * 迁移期挡位：**已经没有了**（#1403，规格 §1.3 第四态最后一句 / TENANT-A10）。
  *
- * `warn`（默认，本片上线值）：守卫把 enforce 会做的判定**算一遍**，命中就 `console.warn` 一条，
- * 然后原样放行 —— 查询参数一个字不改，无帧不拦，跨租户不拦。观察轮看的就是这些警告。
- * `enforce`：落闸（值比对 + 注入 + 无帧即拒）。
+ * 2026-09-12 到 2026-09-19 之间，钱表族这一面走过一个 `warn` 观察挡：守卫把 enforce 会做的判定
+ * 算一遍、命中只记一条警告、照常放行。观察轮的产出是两份基线
+ * （`docs/audits/tenant-guard-warn-baseline-2026-09-14.md` 与
+ * `docs/audits/fullstack-staging-2026-09-14/local-logs/tenant-warn-baseline-2026-09-19.md`），
+ * 四颗形状雷在 PR #1458 根治，三处该建帧的地方在本片建了帧（登录解析、注册/身份合流、充值确认）。
  *
- * 挡位是**进程内常量**，不读环境变量、不读数据库：一个能在生产用配置关掉租户隔离的开关，本身
- * 就是审计发现（规格 §1.3）。全部切片落地后这整段连同 setter 一起删除（TENANT-A10）。
+ * 观察完就收：`orgScopedGuardMode` 这个模块级变量连同 `getOrgScopedGuardMode` /
+ * `setOrgScopedGuardMode` 两个出口一起删除 —— 规格 §1.3 的原话是「能在生产关掉租户隔离的开关
+ * 本身就是审计发现」。今天钱表族与 `ownerId` 族走的是同一段判定，没有第二条路、也没有开关可扳。
+ * 回滚是 `git revert`，不是改一个运行时变量。
  */
-let orgScopedGuardMode: TenantGuardMode = "warn";
-
-export function getOrgScopedGuardMode(): TenantGuardMode {
-  return orgScopedGuardMode;
-}
-
-/** 迁移期挡位的唯一写入口。翻 enforce 是一次独立提交（规格 §1.8）；测试用它演示两挡的行为差。 */
-export function setOrgScopedGuardMode(mode: TenantGuardMode): void {
-  orgScopedGuardMode = mode;
-}
 
 /** Tenant-scoped models whose tenant column is `orgId`, NOT `ownerId` (钱引擎⑤B, 规格 §7.7
  *  「租户兜底闸盲区」欠账⑧).
@@ -138,7 +138,7 @@ export function setOrgScopedGuardMode(mode: TenantGuardMode): void {
  *  WHAT IS STILL LISTED HERE TODAY (2026-09-12, 切片① #1376). Only OttoTurnTrace and
  *  SignupGrantClaim. The three tables the paragraphs below were written about — CreditAccount /
  *  CreditLedger / Membership — have MOVED INTO the runtime guard
- *  ({@link ORG_SCOPED_TENANT_MODELS}, warn 挡位观察轮). Read the next two paragraphs as the
+ *  ({@link ORG_SCOPED_TENANT_MODELS}; 观察轮走完之后 #1403 翻 enforce 并删掉挡位). Read the next two paragraphs as the
  *  2026-09-02 record they are: they say why the guard could not take an orgId table BEFORE the
  *  tenant column was parameterised, and they are kept verbatim because that was measured evidence,
  *  not a claim.
@@ -166,7 +166,7 @@ export function setOrgScopedGuardMode(mode: TenantGuardMode): void {
 export const ORG_SCOPED_TENANT_GUARD_EXEMPT: Record<string, string> = {
   // 切片①（#1376）把 CreditAccount / CreditLedger / Membership 从这里搬进了
   // ORG_SCOPED_TENANT_MODELS —— 上面那段「机制上做不到」的实测注释说的是**当时**的守卫只会写
-  // 字面 `ownerId`；租户列参数化之后那个障碍不存在了，三张表现在真的有闸（观察轮走 warn 挡位）。
+  // 字面 `ownerId`；租户列参数化之后那个障碍不存在了，三张表现在真的有闸（#1403 起正式执法）。
   // 留在这份豁免名单里的两张：
   // ENGINE-A2 (规格 docs/specs/otto-engine.md §7.2②): Otto 每轮调试档案。它的 refId 主键
   // 就是账本里 `reserve:<refId>` 的那把钥匙,所以它的租户列跟着账本叫 `orgId`。切片①没有把它
@@ -208,7 +208,6 @@ export const TENANT_GUARD_EXEMPT: Record<string, string> = {
   ModelDirectiveRevision: "revision history of ModelDirective (admin surface, platform-wide)",
   ModelRegistryOverlay: "founder model-registry overrides (admin surface, platform-wide)",
   ResearchJob: "worker claims jobs queue-style by id/status (not owner lists); owner scoping lives in research-actions",
-  Transcript: "content-addressed cache shared only after the caller proves ownership of identical source bytes",
   // TENANT 切片⑤ (#1380, 规格 docs/specs/tenant-isolation.md TENANT-A7): both just gained an
   // ownerId column via the FK-backfill migration (20260912200852_tenant_slice5_fk_backfill).
   // Cross-tenant ATTACH is now a database-level rejection (the composite FK to
@@ -229,6 +228,48 @@ export const TENANT_GUARD_EXEMPT: Record<string, string> = {
     "composite-FK protection only; runtime query guarding not yet swept for apps/worker call sites " +
     "(publish.ts's claim/reconcile/reaper paths), deliberately deferred to its own slice.",
 };
+
+/**
+ * 规格 §1.6 的豁免第二类：**per-(model, uniqueKey)**，不是整模型。
+ *
+ * 一张受守卫的表上，只有当 `where` **独自**点名这里登记的那一把复合唯一键时，这一次操作才跳过
+ * 租户值比对；同一张表的其它每一笔读写照常落闸。今天只有一条：`Transcript × contentHash_model`
+ * —— 全局内容寻址缓存（同一段音频、同一个转写模型，第二个商家 $0 复用第一个商家跑出来的结果）。
+ *
+ * **为什么这一把键可以跨租户，而整张表不行。** 这把键点名的是「哪一段字节 + 哪一个模型」，
+ * 里面没有租户这一维：拿得到这一把键，等于已经**持有同一段字节**（生产路径上
+ * `apps/web/lib/actions.ts` 的 `getTranscript` 先经 `ownedAssetFromSrc` 验明这个商家自己名下就有
+ * 这份 contentHash 的资产，`apps/worker/src/jobs/caption.ts` 用的是本单 `CaptionJob` 自己的
+ * `job.contentHash`）。而整表豁免顺带把「按 id 改一行」「按 ownerId 列一批」也放了过去 ——
+ * 那两件事跟内容寻址毫无关系，只是同一张表而已。收窄之后：查缓存、写缓存照旧 $0 复用，
+ * 其余每一笔照常值比对、照常注入、无帧照常拒。
+ *
+ * **create 半边不豁免**：`upsert` 命中时更新那一行，落空时**建**的新行仍然由 {@link scopeCreateData}
+ * 写上当前帧的租户号 —— 缓存行的归属永远是**第一个真的跑了这次转写的商家**，不因为被复用而改名。
+ *
+ * 换转写模型、或者引入非确定性解码参数时，这条特判必须重评（规格 §1.6 原文）。
+ */
+export const PER_UNIQUE_KEY_EXEMPT: Record<string, string> = {
+  Transcript: "contentHash_model",
+};
+
+/**
+ * 这个 `where` 是不是**只**点了那一把豁免键？
+ *
+ * 「只」是承重的：`{ contentHash_model: {…} }` 是缓存查询本身，放行；
+ * `{ contentHash_model: {…}, ownerId: 别家 }` 这种多带一个键的形状**不放** —— 豁免的是「按内容寻址
+ * 取那一行」这件事，不是「凡是提到这把键的查询」。三个生产调用点（actions.ts 一处 findUnique、
+ * caption.ts 两处 upsert）写的都是前一种形状。
+ */
+function whereNamesOnlyExemptKey(where: unknown, key: string): boolean {
+  if (!where || typeof where !== "object" || Array.isArray(where)) return false;
+  const entries = Object.entries(where as Record<string, unknown>).filter(
+    ([, value]) => value !== undefined,
+  );
+  if (entries.length !== 1) return false;
+  const [name, value] = entries[0]!;
+  return name === key && Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
 const SCOPED_WHERE_OPS = new Set([
   "findUnique",
@@ -542,10 +583,11 @@ function tenantColumnFor(model: string): TenantColumn | null {
 }
 
 /**
- * 一次操作的全部租户判定 —— 违规就抛，合规就（在 enforce 挡位下）就地把租户号注进 args。
+ * 一次操作的全部租户判定 —— 违规就抛，合规就就地把租户号注进 args。
  *
- * 抽成独立函数是 warn 挡位的承重墙：观察轮拿一份 `args` 的浅拷贝跑同一段判定，抛出来的那句话
- * 就是「落闸之后这里会发生什么」，而真正下发给数据库的 `args` 一个字没动。
+ * 它当初抽成独立函数，是因为观察轮要拿一份 `args` 的浅拷贝跑同一段判定、只记警告不改行为
+ * （#1376 的 warn 挡位）。挡位随 #1403 删掉了，这个形状留着：判定与「判定之后做什么」分开，
+ * 是这段代码能被逐条读懂的原因。
  */
 function applyTenantScope(
   args: Record<string, any>,
@@ -556,8 +598,15 @@ function applyTenantScope(
 ) {
   const principal = getPrincipal();
   const activeOwnerId = principal?.ownerId ?? null;
+  // 规格 §1.6(b) 的 per-(model, uniqueKey) 豁免：只免掉**这一次操作的 where 比对**，
+  // 别的什么都不免 —— 建行仍然写当前帧的租户号，无帧的写仍然要自带租户列，扫描域帧仍然不许写。
+  const exemptKey = PER_UNIQUE_KEY_EXEMPT[model];
+  const keyExempt =
+    exemptKey !== undefined &&
+    SCOPED_WHERE_OPS.has(operation) &&
+    whereNamesOnlyExemptKey(args?.where, exemptKey);
   if (activeOwnerId) {
-    if (SCOPED_WHERE_OPS.has(operation)) {
+    if (SCOPED_WHERE_OPS.has(operation) && !keyExempt) {
       scopeWhere(args, activeOwnerId, model, operation, column);
     }
     if (CREATE_OPS.has(operation)) {
@@ -585,6 +634,7 @@ function applyTenantScope(
   } else {
     if (
       SCOPED_WHERE_OPS.has(operation) &&
+      !keyExempt &&
       !whereHasOwnerId(args?.where, column, strictUnframed)
     ) {
       throw new Error(
@@ -621,24 +671,10 @@ function withTenantScope<T extends object>(client: T): T {
           const column = tenantColumnFor(model);
           if (!column) return query(args);
 
-          // `ownerId` 族早就在执法（这一半 2026-09-12 Founder 已裁不重做）；挡位只管钱表族
-          // 那一面（规格 §1.3「每个切片上线时该面先 warn 观察一轮，再翻 enforce」）。
-          const mode: TenantGuardMode = column === "orgId" ? orgScopedGuardMode : "enforce";
-          if (mode === "enforce") {
-            applyTenantScope(args, model, operation, column, column === "orgId");
-            return query(args);
-          }
-
-          // 观察轮。判定跑在**浅拷贝**上：applyTenantScope 只会重新赋值 args 的顶层
-          // `where` / `data` / `create` 三个属性，所以拷贝挡住了全部写入，真正下发的 args 原样。
-          try {
-            applyTenantScope({ ...args }, model, operation, column, column === "orgId");
-          } catch (error) {
-            console.warn(
-              `[tenant-guard][warn] ${(error as Error).message} — 观察轮挡位放行，` +
-                `落闸后这一句会失败（规格 docs/specs/tenant-isolation.md §1.3 第四态）`,
-            );
-          }
+          // 两族同一段判定，没有挡位、没有开关（#1403 翻闸 + 收挡位，见上面那段注释）。
+          // `strictUnframed` 仍然按族分：钱表族的无帧兜底只认字面等值，`ownerId` 族（125 个还没
+          // 建帧的老调用点）维持宽松档 —— 那一半的收口属切片②，本片一个字没动。
+          applyTenantScope(args, model, operation, column, column === "orgId");
           return query(args);
         },
       },

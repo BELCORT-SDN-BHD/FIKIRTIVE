@@ -2,7 +2,7 @@ import "server-only";
 import { auth } from "@/lib/better-auth/compat";
 import { allowed, isFounderAdmin } from "@/lib/allowlist";
 import { prisma, grantCreditsTx } from "@fikirtive/db";
-import { runAsSystem, type UserPrincipal, type StaffPrincipal } from "@fikirtive/db/principal";
+import { runAsSystem, runAsTenant, type UserPrincipal, type StaffPrincipal } from "@fikirtive/db/principal";
 import { seedActorLibrary } from "./actor-library-seed";
 import {
   newId,
@@ -85,11 +85,22 @@ export async function requireOwner(): Promise<{ email: string; ownerId: string }
 
   // Find the user's non-founder membership regardless of status OR deletedAt, so a
   // suspended/revoked member is denied even if their row was soft-deleted (defense-in-depth).
-  const existing = await prisma.membership.findFirst({
-    where: { userId: user.id, orgId: { not: FOUNDER_OWNER_ID } },
-    orderBy: { createdAt: "asc" },
-    select: { orgId: true, status: true, deletedAt: true },
-  });
+  //
+  // #1403（规格 docs/specs/tenant-isolation.md §1.3 第四态 / §1.6「判定按结构不按名字」）——
+  // 这一句是**扫描域**,不是漏建的帧。它问的是「这个人属于哪一家」,而答案才是下面那个用户帧的
+  // `ownerId`:此刻没有租户可以报,结构上无帧可建（队列 handler「先读才知道租户」的同一形状,
+  // 规格 §4 异议栏）。落闸前它有两副面孔,同一句、同一个根:无帧时报「没有 orgId 过滤」,
+  // 嵌在别人的帧里时 `{ not: founder }` 这个形状点不出确定的租户集合、报「碰了帧外的租户」
+  // （实测见 docs/audits/fullstack-staging-2026-09-14/local-logs/tenant-warn-baseline-2026-09-19.md §4）。
+  // 进扫描域帧之后两副面孔一起消失:`findFirst` 在守卫的 SYSTEM_SCAN_OPS 里,扫描域合法跨租户。
+  // 帧是**只读**的（READ_ONLY_SYSTEM_REASONS),所以它只能回答这一问,不能顺手写任何东西。
+  const existing = await runAsSystem("auth:resolve-tenant", () =>
+    prisma.membership.findFirst({
+      where: { userId: user.id, orgId: { not: FOUNDER_OWNER_ID } },
+      orderBy: { createdAt: "asc" },
+      select: { orgId: true, status: true, deletedAt: true },
+    }),
+  );
   if (existing && (existing.status === "suspended" || existing.status === "revoked")) return { error: "Your access is suspended." };
   if (existing && !existing.deletedAt) return { email, ownerId: existing.orgId };
   // none, or a soft-deleted non-suspended membership (account reopening) → bootstrap
@@ -226,7 +237,13 @@ export class RevokedDuringProvisioning extends Error {
 export async function bootstrapPersonalOrg(userId: string, email: string): Promise<string | null> {
   const orgId = `org_${userId}`; // deterministic → concurrent callers converge on ONE org
   try {
-    await runAsSystem("auth:bootstrap-personal-org", () => prisma.$transaction(async (tx) => {
+    // #1403 两段式（规格 docs/specs/tenant-isolation.md §1.3 第四态）—— 系统身份**加上**这一笔
+    // 事务点名的那家店。`org_<userId>` 是确定性的,所以租户在进库之前就知道,不需要先读再建帧。
+    // 没有这一层,整笔事务跑在一个「有帧、但没点名租户」的系统帧里,而守卫对这种帧的写一律拒
+    // （`requires runAsTenant before system writes`）：翻闸当天 membership 补建与开户赠额一起 500
+    // （warn 基线 2026-09-19 §5 的签名 2/3/5/6）。`runAsSystem` 的名字原样保留 —— `runAsTenant`
+    // 嵌在系统帧里会继承外层的 `reason`,所以审计里这笔写仍然叫 `auth:bootstrap-personal-org`。
+    await runAsSystem("auth:bootstrap-personal-org", () => runAsTenant(orgId, () => prisma.$transaction(async (tx) => {
       // ── #538 — registration half of the invite sync protocol ──────────────────────
       // Provisioning and admin revocation are two transactions that must never both
       // "win". They are serialized on ONE row (this address's AllowedEmail) by two
@@ -337,7 +354,7 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
         createdBy: "auth:bootstrap-personal-org",
         idempotencyKey: `signup:${orgId}`,
       });
-    }));
+    })));
     // 演员库五人(CREATE-A10,规格 docs/specs/creation-engine.md §8.1③;Founder 2026-09-02
     // 拍板「每租户播种」)。刻意在事务**外**、提交之后:它写的是这个 org 自己的
     // Asset/Entity/ReferenceImage,一个字都不碰钱与租户边界,而它要读磁盘上的定妆原件 ——

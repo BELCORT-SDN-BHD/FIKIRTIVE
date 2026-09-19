@@ -22,8 +22,9 @@
  * ── 2026-09-12(租户围栏切片①,规格 docs/specs/tenant-isolation.md,#1376)────────────
  * 2026-09-02 时 orgId 那一族**全部**走明示登记 —— 因为守卫注入的是字面 `ownerId`。切片①把
  * 租户列参数化之后那个障碍没了:CreditAccount / CreditLedger / Membership 已经搬进
- * ORG_SCOPED_TENANT_MODELS(观察轮走 warn 挡位);留在登记里的是 OttoTurnTrace 与
- * SignupGrantClaim,各自的理由在那个常量的注释里。
+ * ORG_SCOPED_TENANT_MODELS(当时走 warn 观察挡位;**#1403 之后挡位已删除,这一族与 ownerId 族
+ * 同一段判定、出厂即执法**);留在登记里的是 OttoTurnTrace 与 SignupGrantClaim,各自的理由在
+ * 那个常量的注释里。
  */
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
@@ -33,6 +34,7 @@ import {
   TENANT_GUARD_EXEMPT,
   ORG_SCOPED_TENANT_MODELS,
   ORG_SCOPED_TENANT_GUARD_EXEMPT,
+  PER_UNIQUE_KEY_EXEMPT,
 } from "./tenant-guard.js";
 
 const SCHEMA = path.resolve(__dirname, "../prisma/schema.prisma");
@@ -139,6 +141,44 @@ describe("tenant-guard coverage — every ownerId model is guarded or explicitly
     }
   });
 
+  // 规格 §1.6(b)（#1403）：第二类豁免是 **per-(model, uniqueKey)**，不是整模型。这一条把那句话
+  // 变成机器规则 —— 登记的模型必须**在守卫里**（否则整张表本来就不查，登记一把键毫无意义），
+  // 而登记的那把键必须是 schema 里真的存在的复合唯一键（写错一个字，豁免就永远不命中，
+  // 缓存悄悄退化成「每家各跑一次」，没有人会发现）。
+  it("per-(model, uniqueKey) 豁免：登记的模型受守卫，登记的键是 schema 里真的 @@unique", () => {
+    const shapes = schemaModels();
+    for (const [model, key] of Object.entries(PER_UNIQUE_KEY_EXEMPT)) {
+      expect(
+        TENANT_MODELS.has(model) || ORG_SCOPED_TENANT_MODELS.has(model),
+        `"${model}" 登记了 per-uniqueKey 豁免，却不在运行时守卫里 —— 那张表本来就不查，这条登记是死的`,
+      ).toBe(true);
+      expect(model in TENANT_GUARD_EXEMPT, `"${model}" 同时是整表豁免和 per-uniqueKey 豁免`).toBe(false);
+      const body = shapes.get(model)?.body ?? "";
+      const fields = key.split("_");
+      // 复审 S2（2026-09-19，PR #1495 安全轴）：这把键里**不许有租户列**。
+      // `@@unique([ownerId, contentHash])` 这种键一旦被登记，「where 里独自点着这把键」就等于
+      // 「where 里带着一个任意的 ownerId」—— per-key 豁免会当场退化成整条租户列的绕过闸，
+      // 而它看起来仍然像一条窄豁免。这里把那条路直接封死。
+      expect(
+        fields,
+        `"${model}" 的豁免键 "${key}" 含租户列 —— per-key 豁免会因此退化成整条租户列的绕过`,
+      ).not.toContain("ownerId");
+      expect(
+        fields,
+        `"${model}" 的豁免键 "${key}" 含租户列 —— per-key 豁免会因此退化成整条租户列的绕过`,
+      ).not.toContain("orgId");
+      const unique = [...body.matchAll(/@@unique\(\[([^\]]*)\]/g)].some((m) => {
+        const declared = (m[1] ?? "").split(",").map((f) => f.trim());
+        return declared.length === fields.length && declared.every((f, i) => f === fields[i]);
+      });
+      expect(
+        unique,
+        `"${model}" 的豁免键 "${key}" 在 schema.prisma 里没有对应的 @@unique —— Prisma 的 where 字段名` +
+          `是成员字段用 "_" 连起来的，写错一个字这条豁免就永远不命中`,
+      ).toBe(true);
+    }
+  });
+
   it("every direct relation between owner-scoped models carries ownerId", () => {
     const relations = ownerScopedRelations();
     const inspected = relations.map(({ child, field }) => `${child}.${field}`);
@@ -158,7 +198,7 @@ describe("tenant-guard coverage — every ownerId model is guarded or explicitly
  *
  * 上面那组扫的是 `ownerId`。这一组扫 `orgId` —— 同样是租户列,同样必须有人为它做过选择。
  * 选择有两种:进运行时守卫(ORG_SCOPED_TENANT_MODELS ——  切片① #1376 之后钱两表与
- * Membership 在这里,观察轮走 warn 挡位),或者一条带理由的明示登记
+ * Membership 在这里;#1403 删掉迁移期挡位之后,这一族出厂即执法),或者一条带理由的明示登记
  * (ORG_SCOPED_TENANT_GUARD_EXEMPT —— 今天只剩 OttoTurnTrace 与 SignupGrantClaim,
  * 理由与实测证据写在那个常量的注释里)。
  */
