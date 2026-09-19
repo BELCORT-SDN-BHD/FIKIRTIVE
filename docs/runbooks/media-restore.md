@@ -43,11 +43,131 @@ dedup 命中(无论是写路径的 `put()` 还是直传收尾的 `copyToBackup()
    直传收尾这条路径会一直失败、一直落 `media_backup_replication_failed` 日志,永远补不上,
    铸令牌时务必核对这一条。staging 与 production 目前共用同一个令牌 id 的拆分步骤,见
    `docs/runbooks/r2-bucket-token-rotation.md`「staging 备份令牌拆分(Founder 2026-09-15 裁决)」。
+
+   **这些变量的现值在哪(2026-09-19 盲走补)**:不在任何文件里,就在部署环境自己的变量上——
+   Railway 项目 `b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d`、environment `staging`、service `web`
+   或 `worker`(两个 service 都带齐了上面 7 个必需变量;可选的 `R2_MEDIA_BACKUP_ENDPOINT` 两边
+   都没设,按可选项回落 `R2_ENDPOINT`——2026-09-19 只读核过)。只看名字、不看值:
+
+   ```bash
+   railway variables list --json \
+     -p b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d -e staging -s worker | jq -r 'keys[]'
+   ```
+
+   **别把值抄进自己的 shell。** 用 `railway run` 把变量直接注进子进程,值全程不经过操作者的
+   终端、不落任何文件——本手册下面每一条 `node scripts/tools/…` 都按这个形状跑:
+
+   ```bash
+   I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
+     railway run -p b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d -e staging -s worker \
+       -- node scripts/tools/media-restore-object.mjs \
+            --key u/<ownerId>/<sha256>.<ext> --expect-owner <ownerId>
+   ```
+
+   (Railway 自己的 flag 一律写在 `--` 之前;`I_UNDERSTAND_THIS_TOUCHES_PROD=yes` 写在
+   `railway run` 之前会被子进程继承——2026-09-19 实测确认。production 同法换 `-e production`。
+   **永远不要跑 `railway run env` / `railway run printenv`**,那会把值打出来。命令要在仓库
+   根目录跑,脚本靠相对路径找 `packages/storage`。)
+
+   **演练用哪把凭据(2026-09-19 修正,照实说)**:上面那句「agent 与演练脚本只用最小权限的
+   只读/演练桶令牌」是**复制路径**的口径(备份桶写＋内容桶读)。**恢复演练今天没有对应的那把
+   令牌**——恢复要的是「备份桶读＋内容桶写」,仓库里既没有这样一把令牌,也没有铸它的程序。
+   所以现状是:演练用 `railway run` 借 staging 部署自己的凭据跑,权限大于演练所需,这是已知
+   且当下接受的缺口,不要以为文档里还藏着一把更小的钥匙。补一把限 staging 的最小权限恢复演练
+   令牌是后续项,已记在 `docs/specs/media-durability.md` §5 变更登记等 Founder 裁;在它落地
+   之前,生产环境不做删除演练(规格 §3 非目标 + MEDIA-A7)。
 2. **依赖**:`@aws-sdk/client-s3` 与 `@fikirtive/core`(脚本从 `packages/storage` 的
-   package.json 起解析,仓库 `pnpm install` 过就行)、`node >= 22`。
+   package.json 起解析)、`node >= 22`。**`pnpm install` 不够**:`@fikirtive/core` 的
+   `exports` 指向 `./dist`(见 `packages/core/package.json`),新检出没 build 过,脚本会抛一条
+   不解释原因的 `MODULE_NOT_FOUND`,路径指向 `packages/storage/node_modules/@fikirtive/core/dist/index.js`
+   ——2026-09-19 盲走就撞死在这里。在仓库根目录先做完这三条再往下走:
+
+   ```bash
+   pnpm install
+   pnpm --filter @fikirtive/core build
+   # 预检:两个依赖都解析得到就打印 deps OK,否则当场 MODULE_NOT_FOUND,不必跑到一半才发现
+   node -e 'const r=require("node:module").createRequire(process.cwd()+"/packages/storage/package.json");r.resolve("@aws-sdk/client-s3");r.resolve("@fikirtive/core");console.log("deps OK")'
+   ```
 3. **碰生产确认锁**:两个脚本都用 `scripts/tools/_interlock.mjs`,跑之前要
    `I_UNDERSTAND_THIS_TOUCHES_PROD=yes`——不管连的是 staging 还是 production,传的是哪个
    环境的凭据就碰哪个环境的 R2。
+
+## 演练(仅 staging):怎么亲手造出这个「丢了」
+
+真事故里对象已经没了,直接从第 1 步开始。**但 MEDIA-A3/A4 这类演练要自己先删一个对象**——
+这是整场里唯一不可逆的一步,手册以前对它一个字没写(2026-09-19 盲走据此判 PARTIAL)。规矩:
+
+- **只在 staging。** 生产桶零删除(规格 §3 非目标 + MEDIA-A7)。
+- **挑测试商家的最小对象**,不要挑 Founder 或真实商家的东西。
+- **删之前四道必须全过**:① 差集为 0(第 2 步的 `media-backup-backfill.mjs` dry-run);
+  ② 备份桶 `HeadObject` 命中同一个 key;③ 两侧大小相等;④ 先把 size / ETag 记下来,
+  演练记录里要用。
+- **一次只删一个 key。** 没有「按前缀删」,没有批量。
+
+脚本侧今天**没有** `--drill-delete` 这类开关(2026-09-19 核过 `scripts/tools/media-restore-object.mjs`
+的参数只有 `--key` / `--expect-owner` / `--apply`),所以删除用下面这段一次性脚手架——它不进
+仓库、不进 `scripts/tools/`,跑完就删。把它存到仓库外(例如 `/tmp/drill-delete.mjs`):
+
+```javascript
+// 演练脚手架(仅 staging)。保险丝在前,删除在后;任何一道不过就抛错、什么都不删。
+import { createRequire } from "node:module";
+const require = createRequire(process.cwd() + "/packages/storage/package.json");
+const { S3Client, HeadObjectCommand, DeleteObjectCommand } = await import(
+  require.resolve("@aws-sdk/client-s3")
+);
+
+const KEY = process.env.DRILL_KEY;
+const CONTENT = process.env.R2_BUCKET;
+const BACKUP = process.env.R2_MEDIA_BACKUP_BUCKET;
+
+// 保险丝 1:内容桶必须就是 staging 内容桶,字面量比对,不接受任何别的值
+if (CONTENT !== "fikirtive-staging") throw new Error(`refusing: content bucket is "${CONTENT}"`);
+// 保险丝 2:桶名里不许出现 backup / production(防呆:哪怕保险丝 1 将来被改宽)
+if (/backup|production/i.test(CONTENT)) throw new Error(`refusing: "${CONTENT}" looks like a backup/production bucket`);
+// 保险丝 3:一次一个 key,且必须是合法的 media key(照抄 parseStorageKey 的形状,不接受前缀/通配)
+if (!/^u\/[0-9A-Za-z_-]+\/[0-9a-f]{64}\.[0-9a-z]{1,8}$/.test(KEY ?? ""))
+  throw new Error("refusing: DRILL_KEY must be exactly one u/<ownerId>/<sha256>.<ext>");
+
+const s3 = (id, secret) =>
+  new S3Client({
+    region: "auto",
+    endpoint: process.env.R2_ENDPOINT,
+    credentials: { accessKeyId: id, secretAccessKey: secret },
+    forcePathStyle: process.env.R2_FORCE_PATH_STYLE !== "false",
+  });
+const content = s3(process.env.R2_ACCESS_KEY_ID, process.env.R2_SECRET_ACCESS_KEY);
+const backup = s3(process.env.R2_MEDIA_BACKUP_ACCESS_KEY_ID, process.env.R2_MEDIA_BACKUP_SECRET_ACCESS_KEY);
+
+// 保险丝 4:副本必须先在(HeadObject 404 就在这里抛),且两侧大小相等
+const c = await content.send(new HeadObjectCommand({ Bucket: CONTENT, Key: KEY }));
+const b = await backup.send(new HeadObjectCommand({ Bucket: BACKUP, Key: KEY }));
+if (c.ContentLength !== b.ContentLength)
+  throw new Error(`refusing: content ${c.ContentLength}B vs backup ${b.ContentLength}B — not the same object`);
+
+// 先留证再动手:这两行抄进演练记录
+console.log(`content ${CONTENT}: size=${c.ContentLength} etag=${c.ETag} type=${c.ContentType}`);
+console.log(`backup  ${BACKUP}: size=${b.ContentLength} etag=${b.ETag} type=${b.ContentType}`);
+
+if (process.env.DRILL_DELETE !== "yes") {
+  console.log("guard-only run — 四道保险丝全过;真要删再加 DRILL_DELETE=yes");
+  process.exit(0);
+}
+await content.send(new DeleteObjectCommand({ Bucket: CONTENT, Key: KEY }));
+console.log(`deleted: ${KEY} is now GONE from ${CONTENT}`);
+```
+
+跑法(在仓库根目录;第一趟不带 `DRILL_DELETE`,只看保险丝与留证):
+
+```bash
+I_UNDERSTAND_THIS_TOUCHES_PROD=yes DRILL_KEY=u/<ownerId>/<sha256>.<ext> \
+  railway run -p b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d -e staging -s worker \
+    -- node /tmp/drill-delete.mjs
+# 四道都过、size/ETag 已抄下,再加 DRILL_DELETE=yes 重跑同一条命令真删
+```
+
+这段脚手架同时是第 4 步「删后核对」的工具:恢复完不带 `DRILL_DELETE` 再跑一次,两侧 size
+相等就说明字节回位了。把 `--drill-delete` 做进 `media-restore-object.mjs` 是后续项,**本 PR
+没有实现**。
 
 ## 五步(定位 → 找副本 → 恢复 → 哈希比对 → 回填 RTO)
 
@@ -56,8 +176,23 @@ dedup 命中(无论是写路径的 `put()` 还是直传收尾的 `copyToBackup()
 对象键的形状是 `u/<ownerId>/<sha256>.<ext>`(`packages/core` 的 `storageKey`)。从下面任一
 来源都能拿到:
 
-- 数据库:`Asset` / `AssetVariant` 一类表里该产物记录的 `key` 字段(具体表名以
-  `packages/db/prisma/schema.prisma` 当前 schema 为准——本手册不复述会漂移的表名)。
+- 数据库:**`Asset` 表没有 `key` 列,键是拼出来的**——`u/<ownerId>/<contentHash>.<ext>`,三段
+  分别取 `Asset.ownerId` / `Asset.contentHash` / `Asset.ext`(拼法的唯一权威是
+  `packages/core/src/storage-key.ts` 的 `storageKey()`)。也**没有 `AssetVariant` 这张表**
+  ——2026-09-19 按 `packages/db/prisma/schema.prisma` 核过,手册旧写法会把人送去找不存在的
+  列。SQL 直接把键拼出来:
+
+  ```sql
+  -- 已知产物 id
+  SELECT 'u/' || "ownerId" || '/' || "contentHash" || '.' || "ext" AS key,
+         "mime", "sizeBytes", "deletedAt"
+  FROM "Asset" WHERE "id" = '<assetId>';
+
+  -- 或按租户列最近的几件,自己认出要恢复的那一个
+  SELECT 'u/' || "ownerId" || '/' || "contentHash" || '.' || "ext" AS key,
+         "originalFilename", "createdAt", "deletedAt"
+  FROM "Asset" WHERE "ownerId" = '<ownerId>' ORDER BY "createdAt" DESC LIMIT 20;
+  ```
 - 商家报错时给的产物页面 URL:`/files/<key>` 里 `<key>` 之后的部分就是它。
 - 误删事故本身的日志(若删除路径记录了被删的 key——见 commit `71fbe75e` 之后 asset 删除
   真删字节这条变化)。
@@ -66,19 +201,43 @@ dedup 命中(无论是写路径的 `put()` 还是直传收尾的 `copyToBackup()
 
 ### 第 2 步 · 在备份桶找副本 + 核对租户前缀(MEDIA-A9)
 
-先跑差集/核验命令(dry-run,只读,不改任何东西):
+**顺序很重要,而且和直觉相反。** 恢复脚本的三道闸是按顺序烧的:闸 1 键格式/租户前缀 → 闸 2
+内容桶里这个 key 还在不在 → 闸 3 备份桶里有没有副本。**对象还活着的时候,闸 2 会先抛
+`already exists in the content bucket` 直接短路**(见 `scripts/tools/media-restore-object.mjs`
+的 `main()`),命令永远走不到「备份桶里有没有副本」那一问。所以**「删之前先用它确认副本在」
+这条路是走不通的**——删前的核对要用下面的 2-a 和 2-b(2026-09-19 盲走据此修正)。
+
+**2-a · 差集(删之前的正经核对,也是日常巡检)。** 主桶与备份桶的整体差集,dry-run 只读不写:
 
 ```bash
 I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
-R2_ENDPOINT=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=fikirtive-staging \
-R2_MEDIA_BACKUP_ACCESS_KEY_ID=... R2_MEDIA_BACKUP_SECRET_ACCESS_KEY=... \
-R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
-  node scripts/tools/media-restore-object.mjs \
-    --key u/<ownerId>/<sha256>.<ext> --expect-owner <ownerId>
+  railway run -p b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d -e staging -s worker \
+    -- node scripts/tools/media-backup-backfill.mjs
+```
+
+输出「missing from backup」「CONFLICT」两类;非空即非零退出,方便接进监控。脚本第一行就把
+内容桶与备份桶的名字打出来——**动手前把这两行读回去**,这是环境搞混时唯一会拦住你的东西。
+**这条差集命令不是只在演练前跑一次的东西——按固定周期(例如每日)跑它,非空才需要人看、
+确认后再 `--apply` 回填,这是「什么可能漏备、怎么发现」那条成因说的那个漏备窗口唯一的闭合
+手段。** 演练场景里它还兼一个身份:差集为 0 才准删(MEDIA-A2 要的就是这个「回填已完成」
+的状态)。
+
+**2-b · 单个 key 的副本 HEAD。** 差集是全桶口径,删之前还要对**这一个 key** 亲眼确认副本在、
+大小一致——用「演练(仅 staging)」小节那段脚手架不带 `DRILL_DELETE` 跑一趟,它打印两侧的
+size / ETag。真事故(对象已经没了)不需要这一步,直接看 2-c。
+
+**2-c · 对象确实已经不在之后,再跑恢复脚本的 dry-run** 做租户核对 + 副本核对:
+
+```bash
+I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
+  railway run -p b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d -e staging -s worker \
+    -- node scripts/tools/media-restore-object.mjs \
+         --key u/<ownerId>/<sha256>.<ext> --expect-owner <ownerId>
 ```
 
 （`_interlock.mjs` 在脚本顶部无条件检查这把锁——即便是不带 `--apply` 的只读 dry-run 也要
-先给这个环境变量,不给就直接 `REFUSING` 退出,不管连的是哪个环境的凭据,见「前提」第 3 条。）
+先给这个环境变量,不给就直接 `REFUSING` 退出,不管连的是哪个环境的凭据,见「前提」第 3 条。
+两个脚本都一样。）
 
 不带 `--apply` 时这条命令只做核验:
 
@@ -86,28 +245,11 @@ R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
   `@fikirtive/core` 的 `keyOwnerMatches`(产品代码里判断「一个 key 属于哪个租户」的唯一
   权威)逐字比对 key 里的 ownerId 段,对不上**立即拒绝并停手**——**绝不要为了让它跑通而
   改传另一个 `--expect-owner`**,那等于把核对本身作废。
-- 内容桶里这个 key 是否已经不在了(下一节「错误处置」第 2 条)。
+- 内容桶里这个 key 是否已经不在了(下一节「错误处置」第 2 条)。**还在就到此为止**,这正是
+  上面说的短路。
 - 备份桶里是否真的有这份副本(下一节「错误处置」第 1 条,手册的「空」态)。
 
 三道核验都过,脚本打印副本大小并停在 dry-run,提示「rerun with --apply」。
-
-想看**主桶与备份桶的整体差集**(不是单个 key,而是「还有哪些 key 备份侧没有」),用另一个
-脚本的默认模式(同样是 dry-run,不写):
-
-```bash
-I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
-R2_ENDPOINT=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=fikirtive-staging \
-R2_MEDIA_BACKUP_ACCESS_KEY_ID=... R2_MEDIA_BACKUP_SECRET_ACCESS_KEY=... \
-R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
-  node scripts/tools/media-backup-backfill.mjs
-```
-
-（同样,这个脚本的 `_interlock.mjs` 检查也在顶部、也不看 `--apply`——dry-run 一样要给
-`I_UNDERSTAND_THIS_TOUCHES_PROD=yes`。）
-
-输出「missing from backup」「CONFLICT」两类;非空即非零退出,方便接进监控。**这条差集命令
-不是只在演练前跑一次的东西——按固定周期(例如每日)跑它,非空才需要人看、确认后再
-`--apply` 回填,这是「什么可能漏备、怎么发现」那条成因说的那个漏备窗口唯一的闭合手段。**
 
 ### 第 3 步 · 恢复命令
 
@@ -115,16 +257,18 @@ R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
 
 ```bash
 I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
-R2_ENDPOINT=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=fikirtive-staging \
-R2_MEDIA_BACKUP_ACCESS_KEY_ID=... R2_MEDIA_BACKUP_SECRET_ACCESS_KEY=... \
-R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
-  node scripts/tools/media-restore-object.mjs \
-    --key u/<ownerId>/<sha256>.<ext> --expect-owner <ownerId> --apply
+  railway run -p b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d -e staging -s worker \
+    -- node scripts/tools/media-restore-object.mjs \
+         --key u/<ownerId>/<sha256>.<ext> --expect-owner <ownerId> --apply
 ```
 
 脚本内部顺序:下载备份侧字节 → 本地重新算一次 sha256(见第 4 步)→ 哈希对上才
 `PutObject` 写回内容桶原 key(带 `IfNoneMatch: "*"`,即便两次检查之间发生竞态写入也绝不
 覆盖)。整个过程不触发任何生成 job、不产生任何计费事件——恢复是纯粹的字节搬运。
+
+**写回用的是备份对象自己的 `ContentType`,不是数据库 `Asset.mime`。** 存量数据里两者有不
+一致的(2026-09-19 盲走那件就是 R2 的 `image/png` vs `Asset.mime` 的 `image/jpeg`),恢复保留的是
+备份桶那一份——这是原样回滚,不是损坏,别当事故报。
 
 **内存下限:** 脚本用 `transformToByteArray()` 把整个对象一次性读进内存再校验、再写回——
 不是流式的。恢复一个几百 MB 的大视频,跑这个脚本的机器就要能腾出至少那么大的一块内存;
@@ -141,7 +285,23 @@ R2_MEDIA_BACKUP_BUCKET=fikirtive-staging-backup \
 RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
 ```
 
-拿这一行去访问 `/files/<key>`(产物页面的同一条路径)确认页面能重新打开,再进第 5 步。
+拿这一行去做**删后核对**。三样任选,前两样不需要任何浏览器会话(2026-09-19 盲走修正:
+原来只写「访问 `/files/<key>`」,那条路未登录根本走不通):
+
+1. **工具自证(最省事)**:把第 2 步 2-c 的 dry-run 原样再跑一遍。对象回来了,闸 2 就会拒绝
+   并报 `already exists in the content bucket`——**这条拒绝就是恢复成功的证据**(闸 2 打的是
+   内容桶 `HeadObject`,见 `scripts/tools/media-restore-object.mjs`)。
+2. **直接 HEAD 内容桶**:用「演练(仅 staging)」小节那段脚手架、不带 `DRILL_DELETE` 再跑
+   一趟,它打印内容桶与备份桶两侧的 size / ETag / ContentType;两侧 size 相等即字节回位。
+   (手边有别的 S3 客户端也行,把 `R2_*` 映射成它自己的变量名即可;工具不限,HEAD 的是同一个
+   内容桶同一个 key。)
+3. **(可选)看页面**:`/files/<key>` 这条路**要登录**——未登录会被重定向到 `/login`
+   (`apps/web/app/files/[...key]/route.ts`:先 `auth()` + 允许名单,再 `requireOwner()`,
+   还要 `keyOwnerMatches` 与当前 org 对上,对不上直接 404)。所以要看页面,必须先用**这个
+   对象所属商家**的账号登录 staging(`https://web-staging-7901.up.railway.app`),再访问
+   `https://web-staging-7901.up.railway.app/files/<key>`;换别的账号看只会得到 404。
+
+任一条过了,进第 5 步。
 
 ### 第 5 步 · 回填 RTO(演练记录)
 
@@ -157,14 +317,14 @@ RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
 | 空 | 备份桶里没有这个 key 的副本 → 脚本报 `EMPTY`,**当场停手,升级给 Founder**,不得自造替代对象 |
 | 加载 | 恢复命令执行中 → 把命令与输出原样贴进第 5 步的演练记录 |
 | 错误 | 见下面「错误处置」三条,一律 fail closed |
-| 成功 | 对象回到原 key,字节哈希与原件一致(脚本自动校验),产物页面能重新打开 |
+| 成功 | 对象回到原 key,字节哈希与原件一致(脚本自动校验),产物页面(用该商家账号登录后)能重新打开——核对手法见第 4 步 |
 
 ## 错误处置(三条,一律 fail closed:宁可不恢复,不许覆盖现存对象)
 
 | 情况 | 处置 |
 |---|---|
 | **副本列不出来**(备份桶 `HeadObject` 返回 404/NotFound/NoSuchKey) | 脚本报 `EMPTY`,退出非零。不得从别处拼一份替代字节;当场升级给 Founder,先确认是不是本文件「什么可能漏备、怎么发现」那条成因说的那种漏备窗口内发生的误删(先跑一次 `media-backup-backfill.mjs` 差集命令看这个 key 是不是就是被落下的那一个,再 grep `media_backup_replication_failed` 确认当时是否真的复制失败过)。 |
-| **权限不足**(凭据没有目标桶的读/写权限,S3 返回 403/AccessDenied 一类) | 脚本照实抛出原始错误,不吞、不重试成别的操作。核对拿到的是不是对的令牌(演练/只读令牌 vs 生产写令牌,见「前提」第 1 条),绝不为了跑通而升级令牌权限。 |
+| **权限不足**(凭据没有目标桶的读/写权限,S3 返回 403/AccessDenied 一类) | 脚本照实抛出原始错误,不吞、不重试成别的操作。核对拿到的是不是对的环境的凭据(见「前提」第 1 条的凭据口径——恢复演练今天借的就是该环境部署自己的凭据,没有单独的演练令牌),绝不为了跑通而升级令牌权限。 |
 | **键写错**(格式不对,或指向一个其实还活着的对象) | 格式不对 → `parseStorageKey` 直接拒绝,报「not a fikirtive storage key」。指向活对象 → 内容桶 `HeadObject` 命中,脚本报「already exists」并拒绝——内容寻址下已存在必然已经是对的字节,恢复到一个已经有内容的 key 上没有意义,也不会被允许覆盖。 |
 
 ## 只按单键恢复,禁止整桶回滚
@@ -180,22 +340,21 @@ RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
 | 日期 | 执行者 | 对象键 | 实测 RTO | 命令输出片段 |
 |---|---|---|---|---|
 | 2026-09-13 | agent（Founder 授权「你在处理」，本对谈记录在 #1385） | u/founder/51c55aedae60a3ac26cbb52685a2bcc46278223bb3de9ad53db9d93ceeae9d49.mp4 | 1.6s | `found backup copy: … (2683441 bytes) in fikirtive-staging-backup` → `RESTORED … — hash verified (51c55aed…)`；真删证据 `deleted: … is now GONE from fikirtive-staging`；A9 反证 `refusing: key owner segment is "founder", but --expect-owner was "not-the-owner"`（exit 1）；钱守恒：founder 账本前后均 127 笔/99998514/0；存量回填 280/280 → 差集 0；生产桶本次零删除 |
+| 2026-09-19 | agent（blind-walk MEDIA-A3；授权：Founder 2026-09-19 将 v0.2.0 余下决定授予编排者，编排者裁定本次 staging 演练在范围内） | u/org_cmts923pm00002mptbuoube0j/ee0273a5ca30d476c7730ccd99e3b7286044c6f463922b16457a2abc3b3f4b17.png | 1.5s（脚本段）／约 7m14s（人工排查段，含一次 MODULE_NOT_FOUND 停顿） | 盲走：PARTIAL——手册三处 P1 缺口（本 PR 修）。`found backup copy: … (101169 bytes) in fikirtive-staging-backup` → `RESTORED … — hash verified (ee0273a5…), RTO 1.5s`；真删证据 `deleted: … is now GONE from fikirtive-staging`；A9 反证 `refusing: key owner segment is "org_cmts923pm00002mptbuoube0j", but --expect-owner was "org_someone_else"`（exit 1）；钱守恒：E2E Cafe 账本前后均 23 笔 / balanceDelta 合计 100 / reserved 0，全库 290 笔不变；差集前后均 307/307 → 0；备份桶零写入（lastModified 仍 2026-09-13T10:20:54Z）；生产桶本次零触碰 |
 | | | | | |
 
 <!--
   每次演练(含首次上线前的验证跑,MEDIA-A3/A4/A5)在上表加一行:
   - 日期:YYYY-MM-DD
-  - 执行者:GitHub 用户名或姓名
+  - 执行者:GitHub 用户名或姓名;agent 走的写「agent + 授权出处」(现有两行都是这个形状)
   - 对象键:完整 u/<ownerId>/<sha256>.<ext>
   - 实测 RTO:脚本打印的那一行数字(秒)
   - 命令输出片段:粘贴 media-restore-object.mjs --apply 的关键几行(RESTORED ... hash verified ...)
   - 大对象耗时(MEDIA-A1/A4 适用,判官第三轮 NEW-P2-3):量一次接近 2 GiB 上限对象走
     copyToBackup 的实际耗时。若逼近 P1-2 焊死的 10s requestTimeout 上限,把这个实测数值
     回填进本文件,并评估是否要调整 finalize 路的超时——本轮只记录观察,代码超时本身不动。
-  差集/回填不是只在演练前跑一次的事——按固定周期(例如每日)跑
-  media-backup-backfill.mjs:默认 dry-run 只报差集,非空再加 --apply 真的回填。这是
-  「什么可能漏备、怎么发现」那条成因说的那个漏备窗口唯一的闭合手段。演练前额外确认一次差集为零、
-  再动手删对象——MEDIA-A2 要求的就是这个「回填已完成」的状态。
+  (差集的日常巡检口径、以及「演练前差集必须为零再动手删」这两条,2026-09-19 起写在正文
+  第 2 步 2-a 与「演练(仅 staging)」小节里,这里不再复述。)
 -->
 
 ## 相关
