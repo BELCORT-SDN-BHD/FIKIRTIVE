@@ -79,17 +79,24 @@ async function measure(page: Page) {
  *
  * 判定一律留给下面的 `expect.soft`(见文件头第二条纪律)。这里用 Playwright 自己的
  * `expect.poll` 而不是 `waitForTimeout`:等的是**将要被断言的那个数**,不是一个猜出来的毫秒数。
+ *
+ * **不写死超时**:不给 `timeoutMs` 就继承 `playwright.config.ts` 的 `expect.timeout`
+ * (今天是 15 秒,整套件同一个口径)。自己定一个更短的数就等于在这里另开一条预算线 ——
+ * 忙一点的跑手上它先到期,而套件是 `retries: 0`,那就是别人 PR 的一次假红。
+ * 参数留着,是给**故意要短**的调用方用的(例如下面那句「先等它开始动」)。
  */
-async function waitUntil(probe: () => Promise<boolean>, timeoutMs = 5_000): Promise<void> {
+async function waitUntil(probe: () => Promise<boolean>, timeoutMs?: number): Promise<void> {
   try {
-    await expect.poll(probe, { timeout: timeoutMs, intervals: [50, 100, 200, 400] }).toBe(true);
+    await expect
+      .poll(probe, { ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }), intervals: [50, 100, 200, 400] })
+      .toBe(true);
   } catch {
     // 等不到 = 产品这一格是坏的。让它坏在断言上,那里能打印出真正的数。
   }
 }
 
-/** 等到 `read()` 连着两次读出同一个数(= 过渡跑完了)。 */
-async function waitUntilStable(read: () => Promise<number>, timeoutMs = 5_000): Promise<void> {
+/** 等到 `read()` 连着两次读出同一个数(= 动画/过渡跑完了)。超时同样继承配置。 */
+async function waitUntilStable(read: () => Promise<number>, timeoutMs?: number): Promise<void> {
   let previous = Number.NaN;
   await waitUntil(async () => {
     const value = await read();
@@ -99,14 +106,20 @@ async function waitUntilStable(read: () => Promise<number>, timeoutMs = 5_000): 
   }, timeoutMs);
 }
 
-/** 把鼠标放到会话正文中间滚一下,然后等 scrollTop 真的动了(动不了就等超时)。 */
+/** 把鼠标放到会话正文中间滚一下,然后等这一下**滚完**。 */
 async function wheelOverConversation(page: Page, deltaY: number): Promise<void> {
   const viewport = page.locator('[data-slot="message-scroller-viewport"]');
   const box = (await viewport.boundingBox())!;
-  const before = (await measure(page)).viewport.scrollTop;
+  const scrollTop = async () => (await measure(page)).viewport.scrollTop;
+  const before = await scrollTop();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.wheel(0, deltaY);
-  await waitUntil(async () => (await measure(page)).viewport.scrollTop !== before);
+  // ① 先等它**开始**动。这一句是故意短的:动不了正是缺陷本身(走查那天两个方向都 0 → 0),
+  //    不该为它烧掉整份 expect 预算 —— 判定在下面的 expect.soft 上,那里会打印真正的数。
+  await waitUntil(async () => (await scrollTop()) !== before, 2_000);
+  // ② 再等它**停**下。Chromium 的滚轮是合成器动画,读到半路的值会让「滚了多少」时准时不准;
+  //    连着两帧读出同一个数才算这一下滚完。
+  await waitUntilStable(scrollTop);
 }
 
 test("R3-F34 — 长回答之后:面板滚得动、回复框在可视区内、打开就停在最新一句", async ({ page }) => {
