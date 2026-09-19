@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { prisma } from "./index.js";
 import { runAsStaff, runAsUser, runAsSystem, type StaffPrincipal, type UserPrincipal } from "./principal.js";
-import { getOrgScopedGuardMode, setOrgScopedGuardMode } from "./tenant-guard.js";
+import * as tenantGuard from "./tenant-guard.js";
 import { seedOrg } from "../test/setup.js";
 
 const ORG_A = "org_slice4_a";
@@ -60,12 +60,10 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  setOrgScopedGuardMode("warn");
   vi.restoreAllMocks();
 });
 
-describe("TENANT-A6 staff 帧 × enforce 挡位 —— 点了名的那家店才放行，权限不因建帧放宽", () => {
-  beforeEach(() => setOrgScopedGuardMode("enforce"));
+describe("TENANT-A6 staff 帧 —— 点了名的那家店才放行，权限不因建帧放宽", () => {
 
   it("staff 帧点名 A 家，正常发一笔积分（CreditLedger.create）放行", async () => {
     await expect(
@@ -135,17 +133,19 @@ describe("TENANT-A6 staff 帧 × enforce 挡位 —— 点了名的那家店才�
   });
 });
 
-describe("迁移期挡位 —— staff 帧同样走 warn 观察轮（规格 §1.3 第四态；挡位不动）", () => {
-  it("默认就是 warn：挡位不翻，staff 帧的落闸不生效", () => {
-    expect(getOrgScopedGuardMode()).toBe("warn");
+describe("迁移期挡位已经收掉（#1403 翻闸，TENANT-A10）—— staff 帧这一面同样没有开关", () => {
+  it("守卫不再导出任何挡位出口", () => {
+    expect(Object.keys(tenantGuard)).not.toContain("setOrgScopedGuardMode");
+    expect(Object.keys(tenantGuard)).not.toContain("getOrgScopedGuardMode");
   });
 
-  it("warn 挡位下 staff 帧伪造跨租户写不被拦，但留下一条警告", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await runAsStaff(staff(ORG_A), () =>
-      prisma.creditLedger.create({ data: ledgerRow(ORG_B, "GRANT", 500, "staff:warn:observed") }),
-    );
-    expect((await moneySnapshot(ORG_B)).ledgerRows).toBe(1);
-    expect(warn.mock.calls.flat().join(" ")).toMatch(/CreditLedger\.create/);
+  it("不扳任何东西：staff 帧伪造跨租户写当场被拒，B 家账本一行没多", async () => {
+    const before = await moneySnapshot(ORG_B);
+    await expect(
+      runAsStaff(staff(ORG_A), () =>
+        prisma.creditLedger.create({ data: ledgerRow(ORG_B, "GRANT", 500, "staff:no-gear:refused") }),
+      ),
+    ).rejects.toThrow(/tenant-guard/);
+    expect(await moneySnapshot(ORG_B)).toEqual(before);
   });
 });

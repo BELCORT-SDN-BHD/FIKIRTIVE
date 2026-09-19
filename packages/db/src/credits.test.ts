@@ -20,6 +20,7 @@ import {
   FinanceAdjustBlocked,
   HOLD_SHORTFALL_REASON_PREFIX,
 } from "./index.js";
+import { runAsTenant } from "./principal.js";
 import { seedOrg } from "../test/setup.js";
 
 const ORG = "test-org-1";
@@ -33,6 +34,20 @@ async function account(orgId: string) {
 // Helper: read all ledger rows for an org, ordered by creation.
 async function ledger(orgId: string) {
   return prisma.creditLedger.findMany({ where: { orgId }, orderBy: { createdAt: "asc" } });
+}
+
+/**
+ * 人工调账那条闸（MONEY-A14）的**帧**。
+ *
+ * #1403 翻闸之后，钱表族的无帧兜底只认「where 里一个字面的 orgId」，而这条闸读的是
+ * `adjustWindowFilter([orgId])` 产出的 `{ orgId: { in: [自己一家] } }` —— 一个过滤器对象，
+ * 无帧那一档认不出来（那一档 #1403 刻意一个字没放宽，判词写在 tenant-guard.ts 的
+ * `whereHasOwnerId` 上）。生产上这三条入口（credit-actions / tenant-actions / refund-actions）
+ * 全都先 `runAsStaff(staffPrincipal(gate, orgId))` 再进库，所以**有帧**才是生产的形状；
+ * 下面几条用例照生产的形状进帧，换的是调用形状，不是被测的判定。
+ */
+function inTenant<T>(fn: () => Promise<T>): Promise<T> {
+  return runAsTenant(ORG, fn);
 }
 
 // Helper: sum balanceDelta or reservedDelta across all ledger rows.
@@ -1553,13 +1568,13 @@ describe("MONEY-A14 — 人工调账 30 天累计闸", () => {
 
   it("窗口内累计到顶为止都放行,越过就拒绝(含本笔)", async () => {
     // 1800 显示 = 18000 内部,来自人工授信。
-    await grantCredits({ orgId: ORG, amount: 18_000, source: "ADMIN", idempotencyKey: KEY() });
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 18_000, source: "ADMIN", idempotencyKey: KEY() }));
     // 再来 200 显示:合计正好 2000,不超 ⇒ 放行。
-    await grantCredits({ orgId: ORG, amount: 2_000, source: "ADMIN", idempotencyKey: KEY() });
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 2_000, source: "ADMIN", idempotencyKey: KEY() }));
     expect((await account(ORG)).balance).toBe(1000 + 18_000 + 2_000);
     // 再来 1 分钱就超。
     await expect(
-      grantCredits({ orgId: ORG, amount: 1, source: "ADMIN", idempotencyKey: KEY() }),
+      inTenant(() => grantCredits({ orgId: ORG, amount: 1, source: "ADMIN", idempotencyKey: KEY() })),
     ).rejects.toThrow(FinanceAdjustBlocked);
     // 拒绝 = 账本零新增、余额不动。
     expect((await account(ORG)).balance).toBe(1000 + 18_000 + 2_000);
@@ -1567,26 +1582,26 @@ describe("MONEY-A14 — 人工调账 30 天累计闸", () => {
   });
 
   it("负向同计:扣减一样占额度(修「负向调整永不报超限」)", async () => {
-    await grantCredits({ orgId: ORG, amount: 19_500, source: "ADMIN", idempotencyKey: KEY() });
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 19_500, source: "ADMIN", idempotencyKey: KEY() }));
     await expect(
-      grantCredits({ orgId: ORG, amount: -1_000, source: "ADMIN", idempotencyKey: KEY() }),
+      inTenant(() => grantCredits({ orgId: ORG, amount: -1_000, source: "ADMIN", idempotencyKey: KEY() })),
     ).rejects.toThrow(FinanceAdjustBlocked);
     expect((await account(ORG)).balance).toBe(1000 + 19_500);
   });
 
   it("只管人工的钱:PURCHASE / BETA 充值不占额度,也不被额度拒", async () => {
-    await grantCredits({ orgId: ORG, amount: 50_000, source: "PURCHASE", idempotencyKey: KEY() });
-    await grantCredits({ orgId: ORG, amount: 50_000, source: "BETA", idempotencyKey: KEY() });
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 50_000, source: "PURCHASE", idempotencyKey: KEY() }));
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 50_000, source: "BETA", idempotencyKey: KEY() }));
     // 人工的额度仍然是满的。
-    await grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: KEY() });
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: KEY() }));
     expect((await account(ORG)).balance).toBe(1000 + 120_000);
   });
 
   it("人工退款的 RESERVE 行计入同一口径(SETTLE 行的 balanceDelta 是 0,数它等于什么都没数)", async () => {
     // 1800 显示已用于人工授信,再退 600 显示 ⇒ 2400 > 2000 ⇒ 拒退。
-    await grantCredits({ orgId: ORG, amount: 18_000, source: "ADMIN", idempotencyKey: KEY() });
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 18_000, source: "ADMIN", idempotencyKey: KEY() }));
     await expect(
-      prisma.$transaction((tx) => assertWithinAdjustWindow(tx, ORG, 6_000)),
+      inTenant(() => prisma.$transaction((tx) => assertWithinAdjustWindow(tx, ORG, 6_000))),
     ).rejects.toThrow(FinanceAdjustBlocked);
 
     // 反过来:先记一笔 1800 显示的人工退款预扣,再来 600 显示的人工授信也一样撞闸。
@@ -1596,16 +1611,16 @@ describe("MONEY-A14 — 人工调账 30 天累计闸", () => {
       reserveCredits(tx, { orgId: ORG, refId: `${MANUAL_REFUND_REF_PREFIX}${randomUUID()}`, cost: 18_000 }),
     );
     await expect(
-      grantCredits({ orgId: ORG, amount: 6_000, source: "ADMIN", idempotencyKey: KEY() }),
+      inTenant(() => grantCredits({ orgId: ORG, amount: 6_000, source: "ADMIN", idempotencyKey: KEY() })),
     ).rejects.toThrow(FinanceAdjustBlocked);
   });
 
   it("两笔并发 +1000 显示在行锁下串行化:一笔成、一笔被拒(不再双双放行)", async () => {
     // 先用掉 100 显示,于是两笔各 1000 显示里只有一笔放得下(100+1000+1000 = 2100 > 2000)。
-    await grantCredits({ orgId: ORG, amount: 1_000, source: "ADMIN", idempotencyKey: KEY() });
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 1_000, source: "ADMIN", idempotencyKey: KEY() }));
     const results = await Promise.allSettled([
-      grantCredits({ orgId: ORG, amount: 10_000, source: "ADMIN", idempotencyKey: KEY() }),
-      grantCredits({ orgId: ORG, amount: 10_000, source: "ADMIN", idempotencyKey: KEY() }),
+      inTenant(() => grantCredits({ orgId: ORG, amount: 10_000, source: "ADMIN", idempotencyKey: KEY() })),
+      inTenant(() => grantCredits({ orgId: ORG, amount: 10_000, source: "ADMIN", idempotencyKey: KEY() })),
     ]);
     const ok = results.filter((r) => r.status === "fulfilled");
     const blocked = results.filter((r) => r.status === "rejected");
@@ -1618,27 +1633,27 @@ describe("MONEY-A14 — 人工调账 30 天累计闸", () => {
 
   it("重放同一个幂等键仍然是 duplicate,不会被闸改判成「超限」", async () => {
     const key = KEY();
-    await grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: key });
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: key }));
     // 额度已经用满,但这是同一笔的重放 —— 唯一键先命中,答案必须是 duplicate。
-    await expect(grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: key })).resolves.toEqual({
+    await expect(inTenant(() => grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: key }))).resolves.toEqual({
       duplicate: true,
     });
     expect((await account(ORG)).balance).toBe(1000 + 20_000);
   });
 
   it("窗口是滚动的:31 天前的人工授信不再占额度", async () => {
-    await grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: KEY() });
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: KEY() }));
     await prisma.creditLedger.updateMany({
       where: { orgId: ORG, kind: "GRANT" },
       data: { createdAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) },
     });
-    await grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: KEY() });
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 20_000, source: "ADMIN", idempotencyKey: KEY() }));
     expect((await account(ORG)).balance).toBe(1000 + 40_000);
   });
 
   it("org 行不存在 ⇒ 拒绝而不是放行(锁不住的东西不能当成没事)", async () => {
     await expect(
-      prisma.$transaction((tx) => assertWithinAdjustWindow(tx, "no-such-org", 100)),
+      runAsTenant("no-such-org", () => prisma.$transaction((tx) => assertWithinAdjustWindow(tx, "no-such-org", 100))),
     ).rejects.toMatchObject({ name: "FinanceAdjustBlocked", reason: "unknown-org" });
   });
 });
@@ -1687,12 +1702,14 @@ describe("MONEY-A14 — manual-refund 预扣的两条豁免(以及仍然生效�
   });
 
   it("30 天累计闸**照常**罩着退款(豁免的是消费闸,不是人工搬钱的额度)", async () => {
-    await grantCredits({ orgId: ORG, amount: 18_000, source: "ADMIN", idempotencyKey: randomUUID() });
+    await inTenant(() => grantCredits({ orgId: ORG, amount: 18_000, source: "ADMIN", idempotencyKey: randomUUID() }));
     await expect(
-      prisma.$transaction(async (tx) => {
-        await assertWithinAdjustWindow(tx, ORG, 6_000);
-        await reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 6_000 });
-      }),
+      inTenant(() =>
+        prisma.$transaction(async (tx) => {
+          await assertWithinAdjustWindow(tx, ORG, 6_000);
+          await reserveCredits(tx, { orgId: ORG, refId: REFUND_REF, cost: 6_000 });
+        }),
+      ),
     ).rejects.toThrow(FinanceAdjustBlocked);
     // 拒绝 = 一分钱没动。
     expect((await account(ORG)).reserved).toBe(0);

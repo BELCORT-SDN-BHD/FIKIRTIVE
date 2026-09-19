@@ -103,6 +103,11 @@ vi.mock("../storage.js", async () => {
     await h.fire();
     return readStream(...a);
   };
+  // understand 这一条队列要一个**能签出 URL** 的存储：`LocalDiskStorage.presignedGet` 永远返回
+  // null（本地模式走 /files 路由，packages/storage/src/index.ts:213），而 handler 读到 null 就把行
+  // 退回 QUEUED —— 那样这条队列就没有终态可证。生产在 staging/production 跑的是 R2Storage，
+  // 它是签得出的，所以这里换成一个固定串，形状与生产一致。这一句不碰帧，也不碰探针。
+  patched.presignedGet = async () => "https://storage.example/a8-understand?sig=x";
   return { storage: real };
 });
 
@@ -119,6 +124,7 @@ import { handlePublish, type PublishExecutor } from "./publish.js";
 import { handleRefGen } from "./refgen.js";
 import { handleRender } from "./render.js";
 import { handleResearch } from "./research.js";
+import { handleUnderstand } from "./understand.js";
 
 // 同本目录其它真库用例的守卫：绝不对着一个不是 *_test 的库跑。
 const dbName = (process.env.DATABASE_URL ?? "").split("/").at(-1)?.split("?")[0] ?? "";
@@ -156,6 +162,10 @@ const QUEUE_TABLE: ReadonlyArray<readonly [queue: string, model: string]> = [
   ["render", "RenderJob"],
   ["publish", "ScheduledPost"],
   ["research", "ChatMessage"],
+  // 第八条（#1403，2026-09-15 Founder 裁定「本版修，与翻闸票 #1403 同批」）：素材理解。
+  // `packages/core/src/dead-letters.ts` 的 DEAD_LETTER_QUEUES 一直是**八**条，而规格 §2 的 A8 行
+  // 只点了七条 —— 规格那一行已随本片改成八条，这里是它的机器侧。
+  ["understand", "AssetUnderstanding"],
 ];
 
 /** 捕捉守卫抛出的**原话**。没抛就是闸没关上 —— 返回一句会让断言当场变红的话。 */
@@ -266,7 +276,7 @@ afterAll(async () => {
   await rm(h.dataDir, { recursive: true, force: true });
 }, DB_CASE_TIMEOUT_MS);
 
-describe("TENANT-A8 —— 七条队列各一单：跑到终态，且帧内异租户注入被拒（真库、真守卫）", () => {
+describe("TENANT-A8 —— 八条队列各一单：跑到终态，且帧内异租户注入被拒（真库、真守卫）", () => {
   it("TENANT-A8 前置：GENERATION_PROVIDER 不设 + 非生产 ⇒ 工厂自己解析到离线 mock（本文件的付费引擎替身就是它）", () => {
     const resolved = createGenerationProvider({ NODE_ENV: "test" } as NodeJS.ProcessEnv);
     expect(resolved.name).toBe("mock");
@@ -325,8 +335,10 @@ describe("TENANT-A8 —— 七条队列各一单：跑到终态，且帧内异�
     const job = await prisma.captionJob.findFirst({ where: { id: jobId, ownerId: A } });
     expect(job?.status).toBe("DONE");
     expect(job?.progress).toBe(100);
-    const cached = await prisma.transcript.findFirst({
-      where: { contentHash: asset.contentHash, model: TRANSCRIPT_GENERATION },
+    // #1403 之后这张表受守卫，只有**独自**点名缓存键的读才跳过租户比对（规格 §1.6(b)）——
+    // 用的就是 caption.ts 自己那把键。
+    const cached = await prisma.transcript.findUnique({
+      where: { contentHash_model: { contentHash: asset.contentHash, model: TRANSCRIPT_GENERATION } },
     });
     expect(cached?.ownerId).toBe(A);
     expect(cached?.cuesJson).toEqual([{ startMs: 0, lengthMs: 480, text: "Selamat" }]);
@@ -508,15 +520,73 @@ describe("TENANT-A8 —— 七条队列各一单：跑到终态，且帧内异�
     expectFramedAndFenced("research", A, "ChatMessage");
   }, DB_CASE_TIMEOUT_MS);
 
-  it("TENANT-A8 ⑧ 七条队列的拒绝签名一次摆齐：七个帧全是 tenant-direct + 本单租户，十四笔注入全被同一句话拒掉", (ctx) => {
-    // 这一条是 ①–⑦ 的横向汇总：每条队列的现场都由它自己那条用例先断过一次
+  it("TENANT-A8 ⑧ understand：一单跑到 DONE（钱恰好一预扣一结算），帧内点名 B 的 AssetUnderstanding 读写被拒", async () => {
+    // 第八条队列（#1403，规格 §5 2026-09-15「understand 补进 TENANT-A8」那一行）。
+    // 形状与前七条一字不差：载荷里只有行 id ⇒ `runAsSystem("worker-job-dispatch")` 读一行 ⇒
+    // 用行上的 ownerId 建帧（understand.ts:1155 的 `runAsTenant`）⇒ 之后的每一笔读写都过值比对。
+    const asset = await seedAsset(A, "jpg");
+    // 理解的 pre-flight 闸按**宽高**判（`understandingPreflight`）：宽高为 null ⇒ 「还不知道」⇒
+    // 行退回 QUEUED 等 ingest 补元数据。这一单要证的是帧，不是那道闸，所以把元数据补齐。
+    await runAsTenant(A, () =>
+      prisma.asset.updateMany({ where: { id: asset.id, ownerId: A }, data: { width: 1600, height: 1200 } }),
+    );
+    const rowId = newId();
+    await prisma.assetUnderstanding.create({
+      data: {
+        id: rowId,
+        ownerId: A,
+        assetId: asset.id,
+        kind: "image-caption",
+        status: "QUEUED",
+        // 扫描器建行时锁的那格快照价（MONEY-A9）。给上它，这一单就走真钱路：RESERVE → SETTLE。
+        priceInternalSnapshot: 1,
+      },
+    });
+
+    // 探针挂在**注入的供应商端口**上 —— handler 在帧内一定会碰的那个边界（understand.ts 的
+    // `port.understand(...)`），所以注入确实发生在 handler 自己那个帧里，不是测试另开一个帧假装。
+    const port = {
+      name: "mock",
+      async understand() {
+        proofs.understand = {
+          principal: getPrincipal(),
+          read: await rejection(() => prisma.assetUnderstanding.findMany({ where: { ownerId: B } })),
+          write: await rejection(() =>
+            prisma.assetUnderstanding.updateMany({ where: { ownerId: B }, data: { summary: "cross-tenant" } }),
+          ),
+        };
+        return {
+          text: JSON.stringify({ summary: "A ceramic mug", category: "homeware", isDocument: false }),
+          usage: { inputTokens: 900, outputTokens: 60 },
+        };
+      },
+    };
+
+    await handleUnderstand({ understandingId: rowId }, 0, port as never);
+
+    const row = await runAsTenant(A, () =>
+      prisma.assetUnderstanding.findFirstOrThrow({ where: { id: rowId, ownerId: A } }),
+    );
+    expect(row.status).toBe("DONE");
+    expect(row.summary).toBe("A ceramic mug");
+    const ledger = await prisma.creditLedger.findMany({
+      where: { orgId: A, refId: `understanding:${rowId}` },
+      select: { kind: true },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(ledger.map((r) => r.kind)).toEqual(["RESERVE", "SETTLE"]);
+    expectFramedAndFenced("understand", A, "AssetUnderstanding");
+  }, DB_CASE_TIMEOUT_MS);
+
+  it("TENANT-A8 ⑨ 八条队列的拒绝签名一次摆齐：八个帧全是 tenant-direct + 本单租户，十六笔注入全被同一句话拒掉", (ctx) => {
+    // 这一条是 ①–⑧ 的横向汇总：每条队列的现场都由它自己那条用例先断过一次
     // （`expectFramedAndFenced`），这里只是把七份签名并排再看一遍。所以它**不假设**别的用例跑过
     // ——单独跑这一条（`-t` / `--shard` / vitest retry）时 `proofs` 是空的，那不是产品出事，是
     // 没有现场可汇总：显式跳过并写明理由，而不是红一条与产品无关的。
-    expect(QUEUE_TABLE).toHaveLength(7); // 规格点名的七条队列，一条不少地在这张表上
+    expect(QUEUE_TABLE).toHaveLength(8); // 规格点名的八条队列，一条不少地在这张表上
     const recorded = QUEUE_TABLE.filter(([queue]) => proofs[queue] !== undefined);
     if (recorded.length === 0) {
-      ctx.skip("①–⑦ 没有在这次运行里跑过（proofs 为空）——本条只汇总它们留下的现场，自己不产生证据");
+      ctx.skip("①–⑧ 没有在这次运行里跑过（proofs 为空）——本条只汇总它们留下的现场，自己不产生证据");
       return;
     }
     expect(Object.keys(proofs).sort()).toEqual(recorded.map(([queue]) => queue).sort());

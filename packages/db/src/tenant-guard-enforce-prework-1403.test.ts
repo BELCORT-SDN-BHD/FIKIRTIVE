@@ -16,8 +16,7 @@
  *  2. **修在守卫，不修在调用点**（家规 §7.3 单一源 / Founder 常令「修根不修表」）。守卫要回答的
  *     问题是「这个 where 有没有可能碰到别家的行」，而不是「这个 where 长不长得像一个字符串」。
  *     所以判定改成：把租户列上的过滤器**归一**成「它点名了哪几个租户」，点不出确定集合就拒。
- *     单元测试同时覆盖 `ownerId` 族（早已 enforce）与 `orgId` 族（观察轮挡位），证明修的是
- *     守卫这一个源，不是钱面这一处。
+ *     单元测试同时覆盖 `ownerId` 族与 `orgId` 族，证明修的是守卫这一个源，不是钱面这一处。
  *
  *  3. **TENANT-A3/A4 走真扣费路径**（票 #1403 验收 + 判官 P2-2：不用手搓 createMany）。
  *     扣费走 `reserveCredits` / `settleCredits`，退款走 `refundReservation`，充值确认走
@@ -27,12 +26,10 @@
  *  · **A3 只到「钱面那一半」**。冻结规格 docs/specs/tenant-isolation.md:53 的 A3 行说的是 `ownerId`
  *    族，而宽松档至今照放 `{ ownerId: { not: "" } }`（下面那条用例是**现状登记**，不是验收通过）。
  *    A3 整条在验收表上**仍然开着**，收口属切片②。
- *  · **A3/A4 的用例都自己把挡位扳到 `enforce`**（出厂默认仍是 `warn`）。所以它们证的是**翻闸之后**
- *    的行为，不是今天线上的行为；在 #1403 那一行翻下去之前，TENANT-A3/A4 在验收表上一直开着。
- *    挡位由文件级 `afterEach` 统一扳回 `warn`，任何一个 describe 都不会把挡位漏给下一个文件。
- *
- * 本文件**不翻默认挡位**：`setOrgScopedGuardMode` 仍在，默认仍是 warn（翻闸配方写在
- * docs/audits/tenant-guard-warn-baseline-2026-09-14.md 最后一节，待 Founder 定调）。
+ *  · **挡位已经没有了**（#1403 翻闸那一次提交）。这个文件写下来的时候，每个 describe 自己把挡位
+ *    扳到 `enforce`、`afterEach` 再扳回 `warn`；今天钱面出厂就在执法，那些 `setOrgScopedGuardMode`
+ *    连同挡位本身一起删掉了，断言一条没改 —— 它们当初证的就是「翻闸之后」的行为，现在证的是
+ *    今天线上的行为。
  */
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -53,7 +50,6 @@ import {
   type StaffPrincipal,
   type UserPrincipal,
 } from "./principal.js";
-import { setOrgScopedGuardMode } from "./tenant-guard.js";
 import { seedOrg } from "../test/setup.js";
 
 const ORG_A = "org_1403_a";
@@ -93,13 +89,11 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  setOrgScopedGuardMode("warn");
   vi.restoreAllMocks();
 });
 
 // ── ① 四颗形状雷（复现 → 根治后全绿） ────────────────────────────────────────────
-describe("#1403 四颗形状雷 —— 合法 staff 帧 + 同一个租户，enforce 下必须放行", () => {
-  beforeEach(() => setOrgScopedGuardMode("enforce"));
+describe("#1403 四颗形状雷 —— 合法 staff 帧 + 同一个租户，落闸后必须放行", () => {
 
   it("雷① 后台发积分 grantTenantCredits（apps/web/lib/tenant-actions.ts:390 → grantCredits）在自己的 staff 帧里成功落账", async () => {
     await expect(
@@ -163,7 +157,6 @@ describe("#1403 四颗形状雷 —— 合法 staff 帧 + 同一个租户，enfo
 
 // ── ② 守卫这一个源的单元判定（两个租户列族一起） ──────────────────────────────
 describe("守卫归一化：租户列过滤器点名了哪几个租户（根治点，tenant-guard.ts scopeWhere）", () => {
-  beforeEach(() => setOrgScopedGuardMode("enforce"));
 
   it("单元素 in 数组 = 自己那一家 → 放行（钱表族 orgId）", async () => {
     await expect(
@@ -179,16 +172,6 @@ describe("守卫归一化：租户列过滤器点名了哪几个租户（根治�
         prisma.creditAccount.findMany({ where: { orgId: { in: [ORG_A, ORG_B] } } }),
       ),
     ).rejects.toThrow(/tenant-guard.*outside the active tenant/);
-  });
-
-  it("in 数组里混进别家 → warn 挡位只记一条警告、不拦（观察轮语义一个字没变）", async () => {
-    setOrgScopedGuardMode("warn");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const rows = await runAsUser(merchant(ORG_A), () =>
-      prisma.creditAccount.findMany({ where: { orgId: { in: [ORG_A, ORG_B] } }, select: { orgId: true } }),
-    );
-    expect(rows.map((r) => r.orgId).sort()).toEqual([ORG_A, ORG_B]); // 放行 = 两家都读到了
-    expect(warn.mock.calls.flat().join(" ")).toMatch(/CreditAccount\.findMany.*outside the active tenant/);
   });
 
   it("空 in 数组 → 拒。它点名了**零**个租户，而守卫下一步会把租户号写回 where —— 那会把「一行都不匹配」悄悄变成「我这一家全部」", async () => {
@@ -278,7 +261,6 @@ describe("守卫归一化：租户列过滤器点名了哪几个租户（根治�
 
 // ── ③ TENANT-A3：无帧即拒 + 伪造过滤器不过关（真钱路径） ──────────────────────
 describe("TENANT-A3（钱面·真钱路径）—— 无帧即拒，伪造过滤器不再过关；**A3 的 ownerId 那一半仍未收口，属切片②**", () => {
-  beforeEach(() => setOrgScopedGuardMode("enforce"));
 
   it("TENANT-A3 无帧调用一个真钱动作（adjustWindowRows —— admin 人工钱报表的读取权威）被拒", async () => {
     await expect(adjustWindowRows(50)).rejects.toThrow(/tenant-guard.*no orgId filter/);
@@ -303,7 +285,6 @@ describe("TENANT-A3（钱面·真钱路径）—— 无帧即拒，伪造过滤�
 
 // ── ④ TENANT-A4：钱守恒，全程走真扣费路径 ───────────────────────────────────
 describe("TENANT-A4（真扣费路径 reserve/settle/refund/grant）—— 跨租户三次全败、钱分毫未变；同租户恰好一笔、重放不重复", () => {
-  beforeEach(() => setOrgScopedGuardMode("enforce"));
 
   it("TENANT-A4 跨租户伪造一次充值确认（grantCredits 落 B 家）失败，两边余额与流水行数分毫未变", async () => {
     const before = { a: await moneySnapshot(ORG_A), b: await moneySnapshot(ORG_B) };

@@ -139,10 +139,12 @@ async function seedCaptionJob(owner: string, assetId: string, contentHash: strin
 /** ② 的前提：「A 家已经把这段音频转写过一次」。① 跑过就是空操作；单独跑 ②（`-t` / `--shard` /
  *  vitest retry）时由它自己把 A 家那一单补上 —— 用例因此不依赖同文件的执行顺序。 */
 async function ensureTenantATranscribed(): Promise<void> {
-  const cached = await prisma.transcript.findMany({
-    where: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION },
+  // #1403 收窄之后，读这张表要么带租户、要么**只**点那把缓存键（规格 §1.6(b)）——
+  // 这里用的就是生产那把键（caption.ts / actions.ts 三处调用点逐字同形）。
+  const cached = await prisma.transcript.findUnique({
+    where: { contentHash_model: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION } },
   });
-  if (cached.length > 0) return;
+  if (cached) return;
   const jobA = await seedCaptionJob(A, assetA, AUDIO_HASH);
   await handleCaption({ captionJobId: jobA }, 0);
 }
@@ -225,10 +227,13 @@ describe("TENANT-A9 —— 同音频同模型跨租户复用全局缓存，其�
     const job = await prisma.captionJob.findFirstOrThrow({ where: { id: jobA, ownerId: A } });
     expect(job.status).toBe("DONE");
     expect(job.error).toBe("");
-    const cached = await prisma.transcript.findMany({ where: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION } });
-    expect(cached).toHaveLength(1);
-    expect(cached[0]!.ownerId).toBe(A); // 第一个写进去的人挂着名，这一行此后是全局的
-    expect(cached[0]!.cuesJson).toEqual([{ startMs: 0, lengthMs: 900, text: "Terima kasih" }]);
+    const cached = await prisma.transcript.findUnique({
+      where: { contentHash_model: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION } },
+    });
+    expect(cached?.ownerId).toBe(A); // 第一个写进去的人挂着名，这一行此后是全局的
+    expect(cached?.cuesJson).toEqual([{ startMs: 0, lengthMs: 900, text: "Terima kasih" }]);
+    // 这一行是**唯一**的一行：键就是唯一约束本身，所以读得到就只有它（#1403 之后按租户数更省事）
+    expect(await runAsTenant(A, () => prisma.transcript.count({ where: { ownerId: A } }))).toBe(1);
   }, DB_CASE_TIMEOUT_MS);
 
   it("TENANT-A9 ② B 家拿同一段音频同一模型：命中缓存 —— 第二次转写调用为 0、任务 DONE 无错、两边账本一行没多", async () => {
@@ -249,9 +254,11 @@ describe("TENANT-A9 —— 同音频同模型跨租户复用全局缓存，其�
     expect(job.progress).toBe(100);
     expect(job.error).toBe("");
     // ③ 缓存行还是那一行（没有给 B 复制出第二行），归属没被改写
-    const cached = await prisma.transcript.findMany({ where: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION } });
-    expect(cached).toHaveLength(1);
-    expect(cached[0]!.ownerId).toBe(A);
+    const cached = await prisma.transcript.findUnique({
+      where: { contentHash_model: { contentHash: AUDIO_HASH, model: TRANSCRIPT_GENERATION } },
+    });
+    expect(cached?.ownerId).toBe(A);
+    expect(await runAsTenant(B, () => prisma.transcript.count({ where: { ownerId: B } }))).toBe(0);
     // ④ 不重复计费：两家的账本行数与余额分毫未动（caption 这条队列本就不扣费，
     //    所以「没多一行」的基线是 0 —— 命中缓存也不许凭空多出任何一笔）
     expect(await moneyTrail(B)).toEqual(moneyBBefore);

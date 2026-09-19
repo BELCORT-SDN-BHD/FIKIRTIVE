@@ -55,7 +55,7 @@
 | TENANT-A5 | 每片落闸后走一遍该面的完整商家旅程（钱面：充值→扣费→退款；动作面：建项目→生成→排期；CRM 面：建客户→跟进） | 全程零 500、零新错误；与落闸前同结果 |
 | TENANT-A6 | 后台员工发一次积分、退一次款、跑一次对账 | 三次都在 staff 帧内发生，审计行的操作者与目标租户由帧带出；跨租户铸币仍要求 `requireRole("tenants","mutate")` 才放行 |
 | TENANT-A7 | 在全新数据库上跑完全部迁移，然后尝试把 A 租户的子行挂到 B 租户的父行 | 迁移零错误；跨租户挂接被数据库直接拒绝（不靠应用层） |
-| TENANT-A8 | 跑 7 条队列各一单（caption / gen / ingest / publish / refgen / render / research） | 7 条全部跑通；帧建立之后该单的所有后续读写都经过值比对（用一次异租户 id 注入证明会被拒） |
+| TENANT-A8 | 跑 8 条队列各一单（caption / gen / ingest / publish / refgen / render / research / understand） | 8 条全部跑通；帧建立之后该单的所有后续读写，**除已登记豁免表外**，都经过值比对（用一次异租户 id 注入证明会被拒）。已登记的豁免表今天是 `ResearchJob` / `ScheduledPostMedia` / `PublishAttempt`（`tenant-guard.ts` 的 `TENANT_GUARD_EXEMPT`，各自带理由，#1380 切片⑤刻意延后）：它们只有数据库级复合外键保护，运行时值比对结构上不成立 —— **这三张表迁入 `TENANT_MODELS` 之时，本行的豁免随之作废、这三条队列按本行原文重验**（2026-09-15 Founder 裁定，§5 该日第三行） |
 | TENANT-A9 | 用同一段音频同一模型，在两个不同租户下各跑一次转写 | 第二次命中全局缓存、不报错、不重复计费；换成任何其它表的跨租户读则被拒 |
 | TENANT-A10 | 跑机器计数：`apps/web` 生产代码里文件内零 `runAsUser` 的 `requireOwner` 站点数、生产 `requireRole` 站点未建帧数 | 两个数都是 0；守卫里的迁移期挡位已从代码中删除 |
 

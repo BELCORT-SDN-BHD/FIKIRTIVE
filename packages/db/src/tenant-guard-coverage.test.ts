@@ -33,6 +33,7 @@ import {
   TENANT_GUARD_EXEMPT,
   ORG_SCOPED_TENANT_MODELS,
   ORG_SCOPED_TENANT_GUARD_EXEMPT,
+  PER_UNIQUE_KEY_EXEMPT,
 } from "./tenant-guard.js";
 
 const SCHEMA = path.resolve(__dirname, "../prisma/schema.prisma");
@@ -136,6 +137,32 @@ describe("tenant-guard coverage — every ownerId model is guarded or explicitly
   it("no stale entries: every listed model still exists in the schema with ownerId", () => {
     for (const model of [...TENANT_MODELS, ...Object.keys(TENANT_GUARD_EXEMPT)]) {
       expect(models, `"${model}" is listed in tenant-guard.ts but has no ownerId in schema.prisma (renamed/removed?)`).toContain(model);
+    }
+  });
+
+  // 规格 §1.6(b)（#1403）：第二类豁免是 **per-(model, uniqueKey)**，不是整模型。这一条把那句话
+  // 变成机器规则 —— 登记的模型必须**在守卫里**（否则整张表本来就不查，登记一把键毫无意义），
+  // 而登记的那把键必须是 schema 里真的存在的复合唯一键（写错一个字，豁免就永远不命中，
+  // 缓存悄悄退化成「每家各跑一次」，没有人会发现）。
+  it("per-(model, uniqueKey) 豁免：登记的模型受守卫，登记的键是 schema 里真的 @@unique", () => {
+    const shapes = schemaModels();
+    for (const [model, key] of Object.entries(PER_UNIQUE_KEY_EXEMPT)) {
+      expect(
+        TENANT_MODELS.has(model) || ORG_SCOPED_TENANT_MODELS.has(model),
+        `"${model}" 登记了 per-uniqueKey 豁免，却不在运行时守卫里 —— 那张表本来就不查，这条登记是死的`,
+      ).toBe(true);
+      expect(model in TENANT_GUARD_EXEMPT, `"${model}" 同时是整表豁免和 per-uniqueKey 豁免`).toBe(false);
+      const body = shapes.get(model)?.body ?? "";
+      const fields = key.split("_");
+      const unique = [...body.matchAll(/@@unique\(\[([^\]]*)\]/g)].some((m) => {
+        const declared = (m[1] ?? "").split(",").map((f) => f.trim());
+        return declared.length === fields.length && declared.every((f, i) => f === fields[i]);
+      });
+      expect(
+        unique,
+        `"${model}" 的豁免键 "${key}" 在 schema.prisma 里没有对应的 @@unique —— Prisma 的 where 字段名` +
+          `是成员字段用 "_" 连起来的，写错一个字这条豁免就永远不命中`,
+      ).toBe(true);
     }
   });
 
