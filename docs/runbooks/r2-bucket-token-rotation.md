@@ -261,7 +261,7 @@ R2 没开版本控制,盖掉就没了。那个旗标只在「已经看过 confli
   `CopyObjectCommand` 用它去读内容桶(`packages/storage/src/index.ts:894-904` 的函数注释,
   `.env.example:247-251` 同一条裁决的落地注释)。
 - **备份桶已经建好,不需要「第 0 步:建桶」**——`fikirtive-staging-backup` 是
-  `docs/specs/media-durability.md`(已冻结 · v2,批准 #1372)的既有产出物:规格 §1 第 2 问
+  `docs/specs/media-durability.md`(v2 正文已冻结;状态:已交付(staging)· 生产激活在部署门 #1480,批准 #1372)的既有产出物:规格 §1 第 2 问
   写明「Cloudflare:每个内容桶配一个同名 `-backup` 备份桶(`fikirtive-staging-backup` /
   `fikirtive-production-backup`,同 APAC)……桶的创建与令牌授予由 Founder 执行」;验收
   MEDIA-A1/A2 已经真跑过,`docs/runbooks/media-restore.md` 演练记录 2026-09-13 那一行留了证据

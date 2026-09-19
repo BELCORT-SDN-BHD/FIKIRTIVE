@@ -1,0 +1,26 @@
+BEGIN
+=== session timezone (timestamp trap check) ===
+ TimeZone 
+----------
+ Etc/UTC
+(1 row)
+
+=== A1: Assets created in the #1388 window, key composed per runbook rule ===
+                                                  key                                                  |             id             |            ownerId            |    mime    | sizeBytes |  source   |        createdAt        | deletedAt 
+-------------------------------------------------------------------------------------------------------+----------------------------+-------------------------------+------------+-----------+-----------+-------------------------+-----------
+ u/founder/f1d94464a67594a1fa4958c30092b0dcccab2c9cb1de7ac4006afd50da91563b.mp4                        | 01M2TH4H34G4TGFF5DGBWTEAP2 | founder                       | video/mp4  |   2990933 | GENERATED | 2026-09-18 15:11:08.391 | 
+ u/org_cmts923pm00002mptbuoube0j/2f209f09a173e0fb18c5641a17307f526fbee115e3643a88cd8c08580a07cadd.jpeg | 01M2TH4HJFT0EX0DTAFV5119YW | org_cmts923pm00002mptbuoube0j | image/jpeg |    204147 | GENERATED | 2026-09-18 15:11:08.881 | 
+ u/founder/fbb0194c83cd67223dd48367eb004351fbf8e1eac13bede36ef385ca787c904d.png                        | 01M2TH4HZ4HNMZ4RCCPZED1529 | founder                       | image/png  |    112849 | GENERATED | 2026-09-18 15:11:09.285 | 
+ u/founder/740f6dc19c1d2c5edaf17ce81b3bd2d5f10336f4277244c0eb0b6658ecde44ab.mp4                        | 01M2TH58CFW8H05WBJX548E8MC | founder                       | video/mp4  |   3121196 | GENERATED | 2026-09-18 15:11:32.24  | 
+ u/founder/ddc699c20ef69fad0a1f5c8fa19b2b21aa751c31cef7f933f48f8ceb810f083e.png                        | 01M2TH598MQQ8TBP4T5VXPDS3K | founder                       | image/png  |    139116 | GENERATED | 2026-09-18 15:11:33.141 | 
+ u/founder/e833cfa56ea8ad0f7d1324214d47495ec15afa7e21403ef7e4e304aea4dc0d95.mp4                        | 01M2TH750W3CEV29C7ZPQFKNS6 | founder                       | video/mp4  |   2399489 | GENERATED | 2026-09-18 15:12:34.333 | 
+ u/founder/2749641e69a70efb13a2ccea94be0b7dcf265381713130167c877c2d528a41fe.png                        | 01M2TH760100TJ3CYBJ3AWJGEB | founder                       | image/png  |    137668 | GENERATED | 2026-09-18 15:12:35.33  | 
+ u/founder/87b587c6975362d6f52b3b706b0ae74e69b9799dac31e8e910dd615b0df1f2bc.mp4                        | 01M2THCPM2ZNWH4QS2GEV184W2 | founder                       | video/mp4  |   3024157 | GENERATED | 2026-09-18 15:15:36.195 | 
+ u/founder/5ab5a76eb23b2705d324351653fc4dcac27b8931c3948874e2c59efbe20b72ed.png                        | 01M2THCQDB9RR84EFPYR4843SF | founder                       | image/png  |    118700 | GENERATED | 2026-09-18 15:15:37.003 | 
+(9 rows)
+
+=== A1: Generations created in the window, with their asset key ===
+psql:/private/tmp/claude-501/-Users-winnin-Desktop-FIKIRTIVE--claude-worktrees-moneyprinterturbo-engine-0042eb/1a82113d-380a-4e30-bfcf-29cb998b4a6f/scratchpad/a1.sql:18: ERROR:  column g.kind does not exist
+LINE 1: SELECT g."id" AS generation_id, g."ownerId", g."kind", g."st...
+                                                     ^
+HINT:  Perhaps you meant to reference the column "g.id".

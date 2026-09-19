@@ -380,7 +380,24 @@ export function OttoPanel({
           </div>
         )}
 
-        <div data-otto-panel-body="" className="min-h-0 flex-1 overflow-y-auto">
+        {/**
+         * 体**必须是一列 flex**(R3-F34)。少了 `flex flex-col` 它就是 `display:block`,
+         * 而里面那层 `[data-otto-panel-conversation-wrap]` 写着的 `flex-1 min-h-0` 在块级父亲
+         * 底下是**一句空话**:高度改由内容决定(staging 实测 1582px,而体自己只有 600px),
+         * 于是整条会话列连同输入框一起长到体外面 —— 商家看到的是「回复框不见了」。
+         *
+         * 高度链一断,里层 `MessageScrollerViewport` 的 `size-full`(height:100%)就对着一个
+         * 由内容撑出来的父亲解析,`clientHeight` 永远等于 `scrollHeight`:它还是一个滚动容器、
+         * 还带着 `overscroll-contain`,却一格都滚不动 —— Chrome 把滚轮咬在它身上、不往上传,
+         * 于是**整块面板的滚轮全死**(§3.4 那张图里会话流该滚、输入框该钉在底下)。
+         * 病根只有这一处:体成了真正的一列,下游每一层的 `flex-1 min-h-0` 才重新算数,
+         * 会话视口重新成为唯一一个真的有行程的滚动容器,它自己的「自动到底」也跟着活过来。
+         *
+         * `overflow-y-auto` 留着,它这一刻服务的是**另一位住客**:历史列表(`OttoThreadList`)
+         * 自己不管滚动,而它出现的那一刻会话列正好 `display:none`(见 `OttoPanelHost.tsx`)——
+         * 两者互斥,所以任何一刻都只有一个真能滚的东西,不是两套滚动。
+         */}
+        <div data-otto-panel-body="" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {children}
         </div>
 

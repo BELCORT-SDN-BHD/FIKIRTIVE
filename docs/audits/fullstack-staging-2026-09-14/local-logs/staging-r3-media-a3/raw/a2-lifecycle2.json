@@ -1,0 +1,26 @@
+[
+  {
+    "probe": "backup-creds -> backup bucket",
+    "bucket": "fikirtive-staging-backup",
+    "ok": false,
+    "errorName": "AccessDenied",
+    "message": "Access Denied",
+    "httpStatus": 403
+  },
+  {
+    "probe": "content-creds -> content bucket",
+    "bucket": "fikirtive-staging",
+    "ok": false,
+    "errorName": "AccessDenied",
+    "message": "Access Denied",
+    "httpStatus": 403
+  },
+  {
+    "probe": "content-creds -> backup bucket",
+    "bucket": "fikirtive-staging-backup",
+    "ok": false,
+    "errorName": "AccessDenied",
+    "message": "Access Denied",
+    "httpStatus": 403
+  }
+]

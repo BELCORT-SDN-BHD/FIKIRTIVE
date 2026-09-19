@@ -1,0 +1,1 @@
+refusing: key owner segment is "org_cmts923pm00002mptbuoube0j", but --expect-owner was "org_not_the_owner_a3second" — stopping here per docs/runbooks/media-restore.md's tenant-prefix check (MEDIA-A9). Never pass a different --expect-owner just to make this pass — confirm which tenant actually owns this object first.

@@ -1,0 +1,523 @@
+{
+  "what": "Journey 31（R3-F34）的本机前后对照：同一台机器、同一份 production build 配方、同一条旅程，只把病根那一行改回去再跑一次。",
+  "why": "PR 正文与 findings-catalog 引用的那组数字要有一份可以核的原始记录，而不是三处各抄一遍（全局家规 §7.6）。",
+  "capturedUtc": "2026-09-19",
+  "how": {
+    "spec": "e2e/journeys/31-otto-panel-scroll.spec.ts",
+    "harness": "pnpm e2e 31-otto-panel-scroll（真 Chromium、production build、workers:1、retries:0）",
+    "viewport": "1280x720 CSS px；停靠面板 360px，展开后 768px",
+    "brokenBuild": "把 apps/web/design-system/patterns/otto-panel/OttoPanel.tsx 的 [data-otto-panel-body] 改回 `min-h-0 flex-1 overflow-y-auto`（本 PR 之前的样子）后重新 `pnpm --filter @fikirtive/web build`",
+    "fixedBuild": "本 PR 的 `flex min-h-0 flex-1 flex-col overflow-y-auto`",
+    "instrumentation": "取数用的是旅程自己的 measure()；为落这份文件临时在五个测点各加一行 console.log，记录完即撤回——入库的 spec 里没有 console.log"
+  },
+  "readingGuide": {
+    "before": "面板打开、自动落位之后的第一帧（一切判定读的都是这一帧）",
+    "up": "在会话上往上滚一次之后",
+    "down": "再往下滚一次之后",
+    "expanded": "点了 Expand Otto、宽度过渡跑完之后",
+    "expandedUp": "展开视图里再往上滚一次之后",
+    "units": "所有矩形都是 CSS px，相对浏览器可视区左上角；viewport 的 scrollTop/scrollHeight/clientHeight 是那个会话滚动容器自己的数"
+  },
+  "measurements": {
+    "broken": {
+      "before": {
+        "panel": {
+          "top": 0,
+          "bottom": 720,
+          "left": 920,
+          "right": 1280,
+          "height": 720
+        },
+        "newestMessage": {
+          "top": 167.75,
+          "bottom": 5983.75,
+          "left": 937,
+          "right": 1264,
+          "height": 5816
+        },
+        "body": {
+          "top": 88.75,
+          "bottom": 675,
+          "left": 921,
+          "right": 1280,
+          "height": 586.25,
+          "scrollTop": 0,
+          "scrollHeight": 6063,
+          "clientHeight": 586
+        },
+        "viewport": {
+          "top": 151.75,
+          "bottom": 5999.75,
+          "left": 921,
+          "right": 1280,
+          "height": 5848,
+          "scrollTop": 0,
+          "scrollHeight": 5848,
+          "clientHeight": 5848
+        },
+        "composer": {
+          "top": 6013.75,
+          "bottom": 6081.25,
+          "left": 934,
+          "right": 1267,
+          "height": 67.5
+        }
+      },
+      "up": {
+        "panel": {
+          "top": 0,
+          "bottom": 720,
+          "left": 920,
+          "right": 1280,
+          "height": 720
+        },
+        "newestMessage": {
+          "top": 167.75,
+          "bottom": 5983.75,
+          "left": 937,
+          "right": 1264,
+          "height": 5816
+        },
+        "body": {
+          "top": 88.75,
+          "bottom": 675,
+          "left": 921,
+          "right": 1280,
+          "height": 586.25,
+          "scrollTop": 0,
+          "scrollHeight": 6063,
+          "clientHeight": 586
+        },
+        "viewport": {
+          "top": 151.75,
+          "bottom": 5999.75,
+          "left": 921,
+          "right": 1280,
+          "height": 5848,
+          "scrollTop": 0,
+          "scrollHeight": 5848,
+          "clientHeight": 5848
+        },
+        "composer": {
+          "top": 6013.75,
+          "bottom": 6081.25,
+          "left": 934,
+          "right": 1267,
+          "height": 67.5
+        }
+      },
+      "down": {
+        "panel": {
+          "top": 0,
+          "bottom": 720,
+          "left": 920,
+          "right": 1280,
+          "height": 720
+        },
+        "newestMessage": {
+          "top": 167.75,
+          "bottom": 5983.75,
+          "left": 937,
+          "right": 1264,
+          "height": 5816
+        },
+        "body": {
+          "top": 88.75,
+          "bottom": 675,
+          "left": 921,
+          "right": 1280,
+          "height": 586.25,
+          "scrollTop": 0,
+          "scrollHeight": 6063,
+          "clientHeight": 586
+        },
+        "viewport": {
+          "top": 151.75,
+          "bottom": 5999.75,
+          "left": 921,
+          "right": 1280,
+          "height": 5848,
+          "scrollTop": 0,
+          "scrollHeight": 5848,
+          "clientHeight": 5848
+        },
+        "composer": {
+          "top": 6013.75,
+          "bottom": 6081.25,
+          "left": 934,
+          "right": 1267,
+          "height": 67.5
+        }
+      },
+      "expanded": {
+        "panel": {
+          "top": 0,
+          "bottom": 720,
+          "left": 512,
+          "right": 1280,
+          "height": 720
+        },
+        "newestMessage": {
+          "top": 167.75,
+          "bottom": 3253.75,
+          "left": 572.5,
+          "right": 1220.5,
+          "height": 3086
+        },
+        "body": {
+          "top": 88.75,
+          "bottom": 675,
+          "left": 513,
+          "right": 1280,
+          "height": 586.25,
+          "scrollTop": 0,
+          "scrollHeight": 3333,
+          "clientHeight": 586
+        },
+        "viewport": {
+          "top": 151.75,
+          "bottom": 3269.75,
+          "left": 513,
+          "right": 1280,
+          "height": 3118,
+          "scrollTop": 0,
+          "scrollHeight": 3118,
+          "clientHeight": 3118
+        },
+        "composer": {
+          "top": 3283.75,
+          "bottom": 3351.25,
+          "left": 557.5,
+          "right": 1235.5,
+          "height": 67.5
+        }
+      },
+      "expandedUp": {
+        "panel": {
+          "top": 0,
+          "bottom": 720,
+          "left": 512,
+          "right": 1280,
+          "height": 720
+        },
+        "newestMessage": {
+          "top": 167.75,
+          "bottom": 3253.75,
+          "left": 572.5,
+          "right": 1220.5,
+          "height": 3086
+        },
+        "body": {
+          "top": 88.75,
+          "bottom": 675,
+          "left": 513,
+          "right": 1280,
+          "height": 586.25,
+          "scrollTop": 0,
+          "scrollHeight": 3333,
+          "clientHeight": 586
+        },
+        "viewport": {
+          "top": 151.75,
+          "bottom": 3269.75,
+          "left": 513,
+          "right": 1280,
+          "height": 3118,
+          "scrollTop": 0,
+          "scrollHeight": 3118,
+          "clientHeight": 3118
+        },
+        "composer": {
+          "top": 3283.75,
+          "bottom": 3351.25,
+          "left": 557.5,
+          "right": 1235.5,
+          "height": 67.5
+        }
+      }
+    },
+    "fixed": {
+      "before": {
+        "panel": {
+          "top": 0,
+          "bottom": 720,
+          "left": 920,
+          "right": 1280,
+          "height": 720
+        },
+        "newestMessage": {
+          "top": -5308.25,
+          "bottom": 507.75,
+          "left": 937,
+          "right": 1264,
+          "height": 5816
+        },
+        "body": {
+          "top": 88.75,
+          "bottom": 675,
+          "left": 921,
+          "right": 1280,
+          "height": 586.25,
+          "scrollTop": 0,
+          "scrollHeight": 586,
+          "clientHeight": 586
+        },
+        "viewport": {
+          "top": 151.75,
+          "bottom": 523.5,
+          "left": 921,
+          "right": 1280,
+          "height": 371.75,
+          "scrollTop": 5476,
+          "scrollHeight": 5848,
+          "clientHeight": 372
+        },
+        "composer": {
+          "top": 537.5,
+          "bottom": 605,
+          "left": 934,
+          "right": 1267,
+          "height": 67.5
+        }
+      },
+      "up": {
+        "panel": {
+          "top": 0,
+          "bottom": 720,
+          "left": 920,
+          "right": 1280,
+          "height": 720
+        },
+        "newestMessage": {
+          "top": -4708.25,
+          "bottom": 1107.75,
+          "left": 937,
+          "right": 1264,
+          "height": 5816
+        },
+        "body": {
+          "top": 88.75,
+          "bottom": 675,
+          "left": 921,
+          "right": 1280,
+          "height": 586.25,
+          "scrollTop": 0,
+          "scrollHeight": 586,
+          "clientHeight": 586
+        },
+        "viewport": {
+          "top": 151.75,
+          "bottom": 523.5,
+          "left": 921,
+          "right": 1280,
+          "height": 371.75,
+          "scrollTop": 4876,
+          "scrollHeight": 5848,
+          "clientHeight": 372
+        },
+        "composer": {
+          "top": 537.5,
+          "bottom": 605,
+          "left": 934,
+          "right": 1267,
+          "height": 67.5
+        }
+      },
+      "down": {
+        "panel": {
+          "top": 0,
+          "bottom": 720,
+          "left": 920,
+          "right": 1280,
+          "height": 720
+        },
+        "newestMessage": {
+          "top": -5308.25,
+          "bottom": 507.75,
+          "left": 937,
+          "right": 1264,
+          "height": 5816
+        },
+        "body": {
+          "top": 88.75,
+          "bottom": 675,
+          "left": 921,
+          "right": 1280,
+          "height": 586.25,
+          "scrollTop": 0,
+          "scrollHeight": 586,
+          "clientHeight": 586
+        },
+        "viewport": {
+          "top": 151.75,
+          "bottom": 523.5,
+          "left": 921,
+          "right": 1280,
+          "height": 371.75,
+          "scrollTop": 5476,
+          "scrollHeight": 5848,
+          "clientHeight": 372
+        },
+        "composer": {
+          "top": 537.5,
+          "bottom": 605,
+          "left": 934,
+          "right": 1267,
+          "height": 67.5
+        }
+      },
+      "expanded": {
+        "panel": {
+          "top": 0,
+          "bottom": 720,
+          "left": 512,
+          "right": 1280,
+          "height": 720
+        },
+        "newestMessage": {
+          "top": -2578.25,
+          "bottom": 507.75,
+          "left": 572.5,
+          "right": 1220.5,
+          "height": 3086
+        },
+        "body": {
+          "top": 88.75,
+          "bottom": 675,
+          "left": 513,
+          "right": 1280,
+          "height": 586.25,
+          "scrollTop": 0,
+          "scrollHeight": 586,
+          "clientHeight": 586
+        },
+        "viewport": {
+          "top": 151.75,
+          "bottom": 523.5,
+          "left": 513,
+          "right": 1280,
+          "height": 371.75,
+          "scrollTop": 2746,
+          "scrollHeight": 3118,
+          "clientHeight": 372
+        },
+        "composer": {
+          "top": 537.5,
+          "bottom": 605,
+          "left": 557.5,
+          "right": 1235.5,
+          "height": 67.5
+        }
+      },
+      "expandedUp": {
+        "panel": {
+          "top": 0,
+          "bottom": 720,
+          "left": 512,
+          "right": 1280,
+          "height": 720
+        },
+        "newestMessage": {
+          "top": -1978.25,
+          "bottom": 1107.75,
+          "left": 572.5,
+          "right": 1220.5,
+          "height": 3086
+        },
+        "body": {
+          "top": 88.75,
+          "bottom": 675,
+          "left": 513,
+          "right": 1280,
+          "height": 586.25,
+          "scrollTop": 0,
+          "scrollHeight": 586,
+          "clientHeight": 586
+        },
+        "viewport": {
+          "top": 151.75,
+          "bottom": 523.5,
+          "left": 513,
+          "right": 1280,
+          "height": 371.75,
+          "scrollTop": 2146,
+          "scrollHeight": 3118,
+          "clientHeight": 372
+        },
+        "composer": {
+          "top": 537.5,
+          "bottom": 605,
+          "left": 557.5,
+          "right": 1235.5,
+          "height": 67.5
+        }
+      }
+    }
+  },
+  "mutationRunSoftFailures": {
+    "note": "同一次跑打印出来的全部失败。旅程的 13 条判定都是 expect.soft，所以一次跑报全每一格，而不是停在第一条。",
+    "failedCount": 11,
+    "totalSoftAssertions": 13,
+    "passedOnBrokenBuild": [
+      "『回复框被推到面板上边界外面』——这个缺陷只把回复框往下推、从不往上推，所以这条单侧护栏在坏构建上也成立。",
+      "『会话视口没有停在自己的最底』——病在的时候视口零行程，scrollHeight-clientHeight-scrollTop 恒等于 0，读起来永远『在底部』。这条因此会空转；真正抓住这一格的是同段那条『最新那条消息的结尾不在面板里』（坏构建上它落在 5983.75，面板下缘 720）。"
+    ],
+    "failures": [
+      {
+        "message": "面板体自己溢出了 —— 会话列又长到体外面去了(高度链断在体那一层)",
+        "expected": "<= 588",
+        "received": "6063"
+      },
+      {
+        "message": "会话视口零行程 —— 它仍是滚动容器却没得滚,滚轮会被它咬住不往上传",
+        "expected": "> 5850",
+        "received": "5848"
+      },
+      {
+        "message": "回复框被推到面板下边界外面",
+        "expected": "<= 722",
+        "received": "6081.25"
+      },
+      {
+        "message": "回复框整个在浏览器可视区外面",
+        "expected": "<= 722",
+        "received": "6081.25"
+      },
+      {
+        "message": "最新那条消息的结尾不在面板里 —— 商家要自己滚下去才看得到刚付钱买的那段回答",
+        "expected": "<= 722",
+        "received": "5983.75"
+      },
+      {
+        "message": "滚轮往上一格都不动",
+        "expected": "< -50",
+        "received": "0"
+      },
+      {
+        "message": "滚轮往下一格都不动",
+        "expected": "> 50",
+        "received": "0"
+      },
+      {
+        "message": "展开视图里面板体溢出了",
+        "expected": "<= 588",
+        "received": "3333"
+      },
+      {
+        "message": "展开视图里回复框在面板外面",
+        "expected": "<= 722",
+        "received": "3351.25"
+      },
+      {
+        "message": "展开视图里会话视口零行程",
+        "expected": "> 3120",
+        "received": "3118"
+      },
+      {
+        "message": "展开视图里滚轮往上一格都不动 —— 商家读不回那段回答的开头",
+        "expected": "< -50",
+        "received": "0"
+      }
+    ]
+  }
+}

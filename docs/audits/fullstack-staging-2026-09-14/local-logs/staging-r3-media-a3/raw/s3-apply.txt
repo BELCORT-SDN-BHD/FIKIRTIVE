@@ -1,0 +1,3 @@
+found backup copy: u/org_cmts923pm00002mptbuoube0j/bf16d2f40520f175b24354a9eb19c36f40d92e4aa2813b8ef01fe064e95efcfe.jpg (200940 bytes) in fikirtive-staging-backup
+RESTORED u/org_cmts923pm00002mptbuoube0j/bf16d2f40520f175b24354a9eb19c36f40d92e4aa2813b8ef01fe064e95efcfe.jpg — hash verified (bf16d2f40520f175b24354a9eb19c36f40d92e4aa2813b8ef01fe064e95efcfe), RTO 2.7s
+Paste into docs/runbooks/media-restore.md's drill log: RTO=2.7s key=u/org_cmts923pm00002mptbuoube0j/bf16d2f40520f175b24354a9eb19c36f40d92e4aa2813b8ef01fe064e95efcfe.jpg
