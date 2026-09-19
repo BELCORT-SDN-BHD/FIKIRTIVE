@@ -100,7 +100,10 @@ export function OttoThreadList({
   const hasAnyThread = entries.some((entry) => entry.kind === "project" && entry.threads.length > 0);
 
   return (
-    <div data-otto-thread-list="" className="flex flex-col gap-3 px-2 py-3">
+    // `shrink-0` —— 体从 R3-F34 起是一列 flex,而这份列表自己不管滚动(它靠体的
+    // `overflow-y-auto` 滚)。不写这一格,它会被 flex 默认的 shrink 压回体的高度,
+    // 底下那 12px 内边距跟着被挤掉:最后一条会话贴着底边,没有喘气的地方。
+    <div data-otto-thread-list="" className="flex shrink-0 flex-col gap-3 px-2 py-3">
       <Button
         type="button"
         variant="outline"
