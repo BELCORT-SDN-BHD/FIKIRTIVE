@@ -83,6 +83,25 @@ describe("browserSentryOptions", () => {
     });
   });
 
+  /**
+   * `beforeSend` 在 SDK 里只作用于**错误**事件(client 先 `isErrorEvent(...)` 才调它),事务事件
+   * 走 `beforeSendTransaction`。今天 `tracesSampleRate: 0` 没有事务事件被采样,但那是个随时会被
+   * 改掉的设置值,不是一道门 —— 采样一旦打开,`GET /s/<token>` 这样的事务名就会直接送出去。
+   */
+  it("SHARE-A6 —— 事务事件那只钩子也接同一份洗牌(beforeSendTransaction)", () => {
+    const options = browserSentryOptions("https://key@o1.ingest.example/2", "production");
+    expect(options?.beforeSendTransaction).toBe(options?.beforeSend);
+    const scrubbed = options!.beforeSendTransaction({
+      transaction: "GET /s/eyJvIjoiYSJ9.sig",
+      contexts: { trace: { op: "navigation", data: { url: "https://app.example/api/media/pub/eyJvIjoiYSJ9.sig" } } },
+    });
+    expect(scrubbed.transaction).toBe("GET /s/[redacted]");
+    expect(scrubbed.contexts!.trace).toEqual({
+      op: "navigation",
+      data: { url: "https://app.example/api/media/pub/[redacted]" },
+    });
+  });
+
   it("trims the DSN and falls back to a named environment", () => {
     const options = browserSentryOptions("  https://key@o1.ingest.example/2  ", undefined);
     expect(options?.dsn).toBe("https://key@o1.ingest.example/2");

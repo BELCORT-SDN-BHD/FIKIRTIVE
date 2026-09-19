@@ -12,7 +12,10 @@
  *      `[redacted]`,而**不是** token 形状的东西一个字不动;
  *   ② `instrumentation.ts` 真的把这个函数交给了 `Sentry.init` —— 洗法再对,没接上等于没有。
  *
- * 浏览器那一侧的行为由 `sentry-browser.test.ts` 原样钉着(本次未改其字段面)。
+ * 浏览器那一侧接的是**同一只**函数(Founder 2026-09-19「关类不补例」追加裁决):
+ * `browserSentryOptions().beforeSend` 与这里的服务端 init 都是 `scrubSentryEventTokens`。
+ * `sentry-browser.test.ts` 的既有断言一字未改、仍全绿(浏览器只会洗得更多),另有两条新用例
+ * 钉住加宽出来的那两处(异常正文、fetch 面包屑的 `data.url`)与 `beforeSendTransaction` 的接线。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -48,11 +51,20 @@ describe("scrubSentryEventTokens —— SHARE-A6 服务器半句", () => {
     ).toEqual({ t: "[redacted]", step: "1" });
     expect(
       scrubSentryEventTokens({
-        request: { query_string: [["t", TOKEN] as [string, string], ["step", "1"] as [string, string]] },
+        request: {
+          query_string: [
+            ["t", TOKEN] as [string, string],
+            ["step", "1"] as [string, string],
+            // 二元组分支过去只咬键名恰好是 `t` 的那一对,别的值一个字不洗 —— 于是
+            // `{next: "/s/<token>"}` 被洗、`[["next", "/s/<token>"]]` 原样送出，同一件事两种答案。
+            ["next", `/s/${TOKEN}`] as [string, string],
+          ],
+        },
       }).request!.query_string,
     ).toEqual([
       ["t", "[redacted]"],
       ["step", "1"],
+      ["next", "/s/[redacted]"],
     ]);
   });
 
@@ -78,20 +90,45 @@ describe("scrubSentryEventTokens —— SHARE-A6 服务器半句", () => {
   });
 
   /**
-   * 单一源:cookie 名字的权威定义在 `lib/share-preview-cookie.ts`,而它的值随 NODE_ENV 变
-   * (生产 `__Secure-sp_t`、开发 `sp_t`)。这条用例把**当前进程读到的那个名字**喂进去 ——
-   * 哪天有人改了那个常量而忘了改洗法,这里当场红。
+   * 单一源:cookie 名字的权威定义在 `lib/share-preview-cookie.ts`,它的值随 NODE_ENV 在
+   * `__Secure-sp_t`(生产)与 `sp_t`(其余)之间二选一,而跑测试的进程只可能落在其中一支。
+   *
+   * 所以这里钉两件事,分工写明白:①**两个字面量都咬** —— 上报事件可能来自任一环境,洗法不能
+   * 只覆盖本进程恰好选中的那一支;②**当前进程读到的那个常量也咬** —— 哪天有人把常量改成第三个
+   * 名字,这一条当场红。它保证不了的是「那个常量的另一支分支」:那一支在本进程里根本取不到值,
+   * 由 ① 的字面量代为把守。
    */
-  it("SHARE-A6 —— 咬的就是 `SHARE_PREVIEW_COOKIE_NAME` 这颗 cookie,不是另抄的一个名字", () => {
-    const event = scrubSentryEventTokens({ request: { cookies: { [SHARE_PREVIEW_COOKIE_NAME]: TOKEN } } });
-    expect(event.request!.cookies).toEqual({ [SHARE_PREVIEW_COOKIE_NAME]: "[redacted]" });
+  it("SHARE-A6 —— 生产与开发两个 cookie 名都咬,且与 `SHARE_PREVIEW_COOKIE_NAME` 同步", () => {
+    const both = scrubSentryEventTokens({
+      request: { cookies: { "__Secure-sp_t": TOKEN, sp_t: TOKEN, theme: "dark" } },
+    });
+    expect(both.request!.cookies).toEqual({ "__Secure-sp_t": "[redacted]", sp_t: "[redacted]", theme: "dark" });
+
+    const fromConstant = scrubSentryEventTokens({ request: { cookies: { [SHARE_PREVIEW_COOKIE_NAME]: TOKEN } } });
+    expect(fromConstant.request!.cookies).toEqual({ [SHARE_PREVIEW_COOKIE_NAME]: "[redacted]" });
+    expect(["__Secure-sp_t", "sp_t"]).toContain(SHARE_PREVIEW_COOKIE_NAME);
   });
 
-  it("SHARE-A6 —— `Authorization` 一类的凭据回声整条不要", () => {
+  it("SHARE-A6 —— `Authorization` 一类的凭据回声整条不要(含 `X-Api-Key` 这种名字里没有 auth 的)", () => {
     const event = scrubSentryEventTokens({
-      request: { headers: { authorization: "Bearer abc.def", "proxy-authorization": "Basic Zm9v" } },
+      request: {
+        headers: {
+          authorization: "Bearer abc.def",
+          "proxy-authorization": "Basic Zm9v",
+          "X-Api-Key": "sk_live_abc123",
+          "x-amz-security-token": "IQoJb3JpZ2lu",
+          "x-auth-request-email": "shop@example.test",
+        },
+      },
     });
-    expect(event.request!.headers).toEqual({ authorization: "[redacted]", "proxy-authorization": "[redacted]" });
+    expect(event.request!.headers).toEqual({
+      authorization: "[redacted]",
+      "proxy-authorization": "[redacted]",
+      "X-Api-Key": "[redacted]",
+      "x-amz-security-token": "[redacted]",
+      // 名单之外的头不整条丢掉 —— 它对诊断有用,且不是凭据本身。
+      "x-auth-request-email": "shop@example.test",
+    });
   });
 
   it("SHARE-A6 —— `Referer` 这类带地址的请求头也洗 token 形状", () => {
@@ -141,6 +178,38 @@ describe("scrubSentryEventTokens —— SHARE-A6 服务器半句", () => {
     expect(event.exception!.values![0]!.value).toBe("PrismaClientKnownRequestError P2002 on field #id");
   });
 
+  /**
+   * 事务事件走的是 `beforeSendTransaction`,不是 `beforeSend`(SDK 里后者先 `isErrorEvent(...)`)。
+   * 今天 `tracesSampleRate: 0` 没有事务事件被采样,但那是个设置值不是门 —— 采样一旦打开,
+   * `GET /s/<token>` 这样的事务名、trace context 与 span 上的地址都会直接送出去。
+   */
+  it("SHARE-A6 —— 事务事件的 `transaction`、`contexts.trace` 与 `spans[]` 也洗", () => {
+    const event = scrubSentryEventTokens({
+      transaction: `GET /s/${TOKEN}`,
+      contexts: {
+        trace: {
+          op: "http.server",
+          description: `GET /api/media/pub/${TOKEN}`,
+          span_id: "abc123",
+          data: { url: `https://app.example/s/${TOKEN}`, "http.status_code": 200 },
+        },
+      },
+      spans: [{ op: "http.client", description: `GET /api/media/pub/${TOKEN}`, data: { "http.url": `https://app.example/s/${TOKEN}` } }],
+    });
+    expect(event.transaction).toBe("GET /s/[redacted]");
+    expect(event.contexts!.trace).toEqual({
+      op: "http.server",
+      description: "GET /api/media/pub/[redacted]",
+      span_id: "abc123",
+      data: { url: "https://app.example/s/[redacted]", "http.status_code": 200 },
+    });
+    expect(event.spans![0]).toEqual({
+      op: "http.client",
+      description: "GET /api/media/pub/[redacted]",
+      data: { "http.url": "https://app.example/s/[redacted]" },
+    });
+  });
+
   it("SHARE-A6 —— 不是 token 形状的事件一个字不动", () => {
     const event = {
       message: "canvas render failed",
@@ -177,8 +246,14 @@ describe("instrumentation.ts —— 服务端 init 真的带上了这道 beforeS
     const { register } = await import("@/instrumentation");
     await register();
     expect(init).toHaveBeenCalledTimes(1);
-    const options = init.mock.calls[0]![0] as { beforeSend?: unknown; tracesSampleRate?: number };
+    const options = init.mock.calls[0]![0] as {
+      beforeSend?: unknown;
+      beforeSendTransaction?: unknown;
+      tracesSampleRate?: number;
+    };
     expect(options.beforeSend).toBe(scrubSentryEventTokens);
+    // `beforeSend` 只作用于错误事件;事务事件走这一只,今天采样为 0 不代表明天也是。
+    expect(options.beforeSendTransaction).toBe(scrubSentryEventTokens);
     expect(options.tracesSampleRate).toBe(0);
   });
 

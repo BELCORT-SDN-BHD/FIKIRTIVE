@@ -33,6 +33,11 @@ export type ScrubbableEvent = {
   breadcrumbs?: ({ message?: string; data?: Record<string, unknown> } | undefined)[];
   exception?: { values?: ({ value?: string } | undefined)[] };
   message?: string;
+  /** 事务事件(`beforeSendTransaction`)才有的三块。声明得尽量松,是为了同时收下 SDK 的
+   *  `ErrorEvent` 与 `TransactionEvent` 两种形状——里面的值在运行时逐个窄化,不靠类型担保。 */
+  transaction?: string;
+  contexts?: Record<string, unknown>;
+  spans?: unknown[];
 };
 
 /** 脱敏后填进去的字面量。只有这一处定义 —— 测试钉的也是它。 */
@@ -63,8 +68,12 @@ const BARE_TOKEN_QUERY_PARAM = /^t=[^&#]*/;
  */
 const SHARE_COOKIE_NAME = /^(?:__Secure-|__Host-)?sp_t$/;
 
-/** 整条值一律不要的请求头(凭据回声)。 */
-const AUTHISH_HEADER = /^(?:authorization|proxy-authorization)$/i;
+/**
+ * 整条值一律不要的请求头(凭据回声)。一份写死的短名单,不是「名字里带 auth 就算」那种猜法:
+ * 猜法既会误伤(`x-auth-request-email` 是诊断信息),也仍然漏(`x-amz-security-token` 名字里
+ * 没有 auth)。名单短、可读、可加 —— 加一行就是加一条,不必重读正则。
+ */
+const AUTHISH_HEADER = /^(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-amz-security-token)$/i;
 
 /** 装着 cookie 的请求头 —— 值要按 cookie 逐对洗,不是整条丢掉(其余 cookie 名对诊断有用)。 */
 const COOKIE_HEADER = /^(?:set-)?cookie$/i;
@@ -113,7 +122,7 @@ export function scrubUrlFragments<T extends ScrubbableEvent>(event: T): T {
  */
 export function scrubShareTokens<T extends ScrubbableEvent>(event: T): T {
   scrubUrlFragments(event);
-  if (event.request?.url !== undefined) event.request.url = scrubTokenShapes(event.request.url);
+  if (typeof event.request?.url === "string") event.request.url = scrubTokenShapes(event.request.url);
   for (const crumb of event.breadcrumbs ?? []) {
     if (!crumb?.data) continue;
     if (typeof crumb.data.from === "string") crumb.data.from = scrubTokenShapes(crumb.data.from);
@@ -128,7 +137,12 @@ function scrubQueryString(q: NonNullable<ScrubbableEvent["request"]>["query_stri
     return scrubTokenShapes(q.replace(BARE_TOKEN_QUERY_PARAM, `t=${REDACTED}`));
   }
   if (Array.isArray(q)) {
-    for (const pair of q) if (pair?.[0] === "t") pair[1] = REDACTED;
+    // 与下面的字典分支同一套口径:`t` 整条换掉,其余的值照样过一遍 token 形状 —— 一条
+    // `["next", "/s/<token>"]` 的回跳参数和 `{next: "/s/<token>"}` 是同一件事,不能一个洗一个不洗。
+    for (const pair of q) {
+      if (!pair || typeof pair[1] !== "string") continue;
+      pair[1] = pair[0] === "t" ? REDACTED : scrubTokenShapes(pair[1]);
+    }
     return q;
   }
   if (q && typeof q === "object") {
@@ -139,6 +153,22 @@ function scrubQueryString(q: NonNullable<ScrubbableEvent["request"]>["query_stri
     }
   }
   return q;
+}
+
+/**
+ * 把一个「字符串口袋」里的每个字符串过一遍 token 形状。用在事务事件的 trace context 与 span 上:
+ * 那里的键名(`description`、`op`、`data.url`、`http.url`…)随 SDK 版本和集成而变,点名逐个字段
+ * 只会漏下一个;而 `scrubTokenShapes` 对不含 token 形状的字符串是恒等函数,所以「全过一遍」
+ * 既不会误伤 `span_id` 这类值,也不需要维护一份字段名单。只下一层,不递归 —— 深层结构今天不存在,
+ * 真出现了应当是一条新的登记,而不是一次悄悄加深的遍历。
+ */
+function scrubStringsInBag(bag: unknown): void {
+  if (!bag || typeof bag !== "object" || Array.isArray(bag)) return;
+  const record = bag as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    const value = record[key];
+    if (typeof value === "string") record[key] = scrubTokenShapes(value);
+  }
 }
 
 /** `Cookie: a=1; __Secure-sp_t=…; b=2` —— 只把分享 token 那一对的值换掉,其余原样留着。 */
@@ -168,10 +198,19 @@ function scrubCookieHeader(value: string): string {
  *     了它还留着原文;
  *   · `request.cookies` 与 `Cookie` 请求头 —— 分享 token 今天就住在 `__Secure-sp_t` 里
  *     (`lib/share-preview-cookie.ts`),这是服务端唯一一处**必然**拿得到完整 token 的地方;
- *   · `Authorization` 一类的请求头 —— 整条值不要,凭据回声没有任何诊断价值;
+ *   · 凭据回声请求头 —— `AUTHISH_HEADER` 那份短名单上的整条值不要(名单在上面,不是「名字里带
+ *     auth 就算」);
  *   · 异常正文与 `event.message` —— 一条 `fetch failed: https://…/api/media/pub/<token>` 的报错
  *     会把地址原样写进 `exception.values[].value`,它不经过 `request.url` 那道门;
- *   · 面包屑的 `data.url` 与 `message` —— 两边的 http/fetch 集成都把外发请求记在这两处。
+ *   · 面包屑的 `data.url` 与 `message` —— 两边的 http/fetch 集成都把外发请求记在这两处;
+ *   · 事务事件的 `transaction`、`contexts.trace` 与 `spans[]` —— 这只函数同时是两个 init 的
+ *     `beforeSendTransaction`,见下一段。
+ *
+ * **为什么两个 init 都还要接 `beforeSendTransaction`**:`beforeSend` 在 SDK 里只作用于**错误**事件
+ * (`@sentry/core` 的 client 先 `isErrorEvent(...)` 才调它),事务事件走的是另一只钩子。今天
+ * `tracesSampleRate: 0` 意味着根本没有事务事件被采样,所以这不是一个正在漏的洞;但「没开性能追踪」
+ * 是一个随时会被改掉的配置值,而不是一道门 —— 哪天有人把采样打开,`GET /s/<token>` 这样的事务名
+ * 就会直接送出去。接上它,这一类才算关死,而不是靠另一个设置恰好为 0。
  *
  * 片段那一刀(#1317)只落在**地址**字段上:异常正文里的 `#` 是正文的一部分,按地址的规矩切会
  * 把报错拦腰截断,那是拿诊断能力换一件本来就没发生的事。
@@ -211,6 +250,16 @@ export function scrubSentryEventTokens<T extends ScrubbableEvent>(event: T): T {
     if (value && typeof value.value === "string") value.value = scrubTokenShapes(value.value);
   }
   if (typeof event.message === "string") event.message = scrubTokenShapes(event.message);
+
+  // 事务事件那三块。错误事件里它们不存在,于是全是空转。
+  if (typeof event.transaction === "string") event.transaction = scrubTokenShapes(event.transaction);
+  const trace = event.contexts?.trace;
+  scrubStringsInBag(trace);
+  if (trace && typeof trace === "object") scrubStringsInBag((trace as Record<string, unknown>).data);
+  for (const span of event.spans ?? []) {
+    scrubStringsInBag(span);
+    if (span && typeof span === "object") scrubStringsInBag((span as Record<string, unknown>).data);
+  }
 
   return event;
 }

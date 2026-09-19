@@ -44,6 +44,10 @@ export type BrowserSentryOptions = {
    *  它内部先做 `scrubShareTokens` → `scrubUrlFragments` 那两步)。服务端 `instrumentation.ts`
    *  接的是同一只函数。 */
   beforeSend: <T extends ScrubbableEvent>(event: T) => T;
+  /** 同一只函数,挂在事务事件那只钩子上 —— `beforeSend` 在 SDK 里只作用于错误事件。今天
+   *  `tracesSampleRate: 0` 没有事务事件被采样,但那是个设置值不是门:采样一旦打开,
+   *  `GET /s/<token>` 这样的事务名就会直接送出去。 */
+  beforeSendTransaction: <T extends ScrubbableEvent>(event: T) => T;
 };
 
 /**
@@ -66,6 +70,7 @@ export function browserSentryOptions(
     tracesSampleRate: 0,
     sendDefaultPii: false,
     beforeSend: scrubSentryEventTokens,
+    beforeSendTransaction: scrubSentryEventTokens,
   };
 }
 

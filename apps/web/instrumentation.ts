@@ -49,5 +49,9 @@ export async function register() {
     // `__Secure-sp_t` cookie,token 就原样送去第三方。洗法与形状是**同一份**(lib/sentry-scrub.ts),
     // 不在这里抄第二遍。
     beforeSend: scrubSentryEventTokens,
+    // `beforeSend` 在 SDK 里只作用于**错误**事件,事务事件走这一只。今天 `tracesSampleRate: 0`
+    // 意味着没有事务事件被采样,所以这不是一个正在漏的洞;但那是一个随时会被改掉的设置值,
+    // 不是一道门 —— 接上它,`GET /s/<token>` 这样的事务名才不靠另一个数字恰好为 0 来保住。
+    beforeSendTransaction: scrubSentryEventTokens,
   });
 }
