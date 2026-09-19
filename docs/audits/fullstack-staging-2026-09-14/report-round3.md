@@ -337,7 +337,9 @@ Founder 2026-09-15 授权的真实付费旅程续跑；PR #1463（R3-F20 修复�
 
 读法（65 行基线 ＋ 59 行规格验收 ＋ 31 项真实场景 ＝ 155 行，EXT 那 13 组索引按矩阵旧例不并进来算）：**整条 PASS 19 行、PARTIAL 29 行、从没跑过的 107 行**（NOT RUN 103 ＋ BLOCKED 3 ＋ FAIL 1）——**没拿到整条 PASS 的共 136 行**，判定原文里那个「≈130 行」说的就是这一摞。
 
-**两处比任务书更紧的收口，照实说明**（两条都是往严的方向，不是放宽）：① **SHARE-A5 记 PARTIAL 而不是 PASS**——那一行是两句话（「客户刷新旧链接看到改后的新文案」＋「页面带那一行提示」），本轮旅程只证到后一句，没有做「改文案再刷一次」这一动作，按本矩阵「PASS 不许留未证条款」的既有纪律（REAL-07 先例）停在 PARTIAL。② **RELY-A10 记 PARTIAL 而不是 PASS**——真环境回执只覆盖后半句（「补齐后照常完成当日备份」，由 staging 的 `BackupRun` 五条 succeeded ＋ `/api/health` backup=fresh 坐实），前半句「缺必需 env 启动即退出非 0 并点名缺项」本轮没在真环境演示过，而且这一行原文说的是**生产**备份 cron、读数取自 **staging**。两处都写进了各自的证据列。这一摞里最贵的是 BASE 那 57 行基线复走；最便宜的是几份规格的 staging 回执——代码与测试证据其实都在（ASSET／RELY／SHARE／MEDIA 四份见 `local-logs/spec-acceptance-sweep-2026-09-19.json` 的逐条扫描，TENANT 的见 PR #1495 的真库测试与 `local-logs/tenant-warn-baseline-2026-09-19.md`），缺的只是真环境走一遍的回执。
+**两处比任务书更紧的收口，照实说明**（两条都是往严的方向，不是放宽）：① **SHARE-A5 记 PARTIAL 而不是 PASS**——那一行是两句话（「客户刷新旧链接看到改后的新文案」＋「页面带那一行提示」），本轮旅程只证到后一句，没有做「改文案再刷一次」这一动作，按本矩阵「PASS 不许留未证条款」的既有纪律（REAL-07 先例）停在 PARTIAL。② **RELY-A10 记 PARTIAL 而不是 PASS**——真环境回执只覆盖后半句（「补齐后照常完成当日备份」，由 staging 的 `BackupRun` 五条 succeeded ＋ `/api/health` backup=fresh 坐实），前半句「缺必需 env 启动即退出非 0 并点名缺项」本轮没在真环境演示过，而且这一行原文说的是**生产**备份 cron、读数取自 **staging**。两处都写进了各自的证据列。
+
+这一摞里最贵的是 BASE 那 57 行基线复走；最便宜的是几份规格的 staging 回执——代码与测试证据其实都在（ASSET／RELY／SHARE／MEDIA 四份见 `local-logs/spec-acceptance-sweep-2026-09-19.json` 的逐条扫描，TENANT 的见 PR #1495 的真库测试与 `local-logs/tenant-warn-baseline-2026-09-19.md`），缺的只是真环境走一遍的回执。
 
 ### 交接
 
