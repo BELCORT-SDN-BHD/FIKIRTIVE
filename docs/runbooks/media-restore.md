@@ -98,7 +98,10 @@ dedup 命中(无论是写路径的 `put()` 还是直传收尾的 `copyToBackup()
 这是整场里唯一不可逆的一步,手册以前对它一个字没写(2026-09-19 盲走据此判 PARTIAL)。规矩:
 
 - **只在 staging。** 生产桶零删除(规格 §3 非目标 + MEDIA-A7)。
-- **挑测试商家的最小对象**,不要挑 Founder 或真实商家的东西。
+- **挑测试商家 `org_cmts923pm00002mptbuoube0j`(E2E Cafe,staging 的 E2E 固定租户)的最小
+  对象**(挑法见第 1 步那条「演练选对象」SQL);Founder(ownerId `founder`)与任何其他 org 的
+  对象一律不碰。不确定某个 ownerId 是不是测试商家时**停手问 Founder**——下一步就不可逆了。
+  (2026-09-13 那行演练记录删的是 `u/founder/…`,那是本条规矩写下之前的做法,不作先例。)
 - **删之前四道必须全过**:① 差集为 0(第 2 步的 `media-backup-backfill.mjs` dry-run);
   ② 备份桶 `HeadObject` 命中同一个 key;③ 两侧大小相等;④ 先把 size / ETag 记下来,
   演练记录里要用。
@@ -106,7 +109,9 @@ dedup 命中(无论是写路径的 `put()` 还是直传收尾的 `copyToBackup()
 
 脚本侧今天**没有** `--drill-delete` 这类开关(2026-09-19 核过 `scripts/tools/media-restore-object.mjs`
 的参数只有 `--key` / `--expect-owner` / `--apply`),所以删除用下面这段一次性脚手架——它不进
-仓库、不进 `scripts/tools/`,跑完就删。把它存到仓库外(例如 `/tmp/drill-delete.mjs`):
+仓库、不进 `scripts/tools/`,跑完就删。把它存到仓库外、**文件名带一段随机后缀**(例如
+`/tmp/drill-delete-$(date +%s).mjs`),跑完就删——同机并行演练时固定文件名会互相覆盖,
+别人留下的旧文件也会被你当成自己的照跑:
 
 ```javascript
 // 演练脚手架(仅 staging)。保险丝在前,删除在后;任何一道不过就抛错、什么都不删。
@@ -161,7 +166,7 @@ console.log(`deleted: ${KEY} is now GONE from ${CONTENT}`);
 ```bash
 I_UNDERSTAND_THIS_TOUCHES_PROD=yes DRILL_KEY=u/<ownerId>/<sha256>.<ext> \
   railway run -p b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d -e staging -s worker \
-    -- node /tmp/drill-delete.mjs
+    -- node /tmp/drill-delete-<随机后缀>.mjs
 # 四道都过、size/ETag 已抄下,再加 DRILL_DELETE=yes 重跑同一条命令真删
 ```
 
@@ -180,7 +185,21 @@ I_UNDERSTAND_THIS_TOUCHES_PROD=yes DRILL_KEY=u/<ownerId>/<sha256>.<ext> \
   分别取 `Asset.ownerId` / `Asset.contentHash` / `Asset.ext`(拼法的唯一权威是
   `packages/core/src/storage-key.ts` 的 `storageKey()`)。也**没有 `AssetVariant` 这张表**
   ——2026-09-19 按 `packages/db/prisma/schema.prisma` 核过,手册旧写法会把人送去找不存在的
-  列。SQL 直接把键拼出来:
+  列。
+
+  **SQL 在哪跑(只读;2026-09-19 二次盲走补)**:连接串同样不在文件里,在 Railway 的 Postgres
+  service 变量上。取值只进 shell 变量、不回显:
+
+  ```bash
+  URL=$(railway variables list --json \
+    -p b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d -e staging -s Postgres \
+    | jq -r '.DATABASE_PUBLIC_URL')
+  psql "$URL" -v ON_ERROR_STOP=1
+  ```
+
+  查询一律包在 `BEGIN READ ONLY; … ROLLBACK;` 里。production 同法换 `-e production`,且只读。
+
+  SQL 直接把键拼出来:
 
   ```sql
   -- 已知产物 id
@@ -192,12 +211,22 @@ I_UNDERSTAND_THIS_TOUCHES_PROD=yes DRILL_KEY=u/<ownerId>/<sha256>.<ext> \
   SELECT 'u/' || "ownerId" || '/' || "contentHash" || '.' || "ext" AS key,
          "originalFilename", "createdAt", "deletedAt"
   FROM "Asset" WHERE "ownerId" = '<ownerId>' ORDER BY "createdAt" DESC LIMIT 20;
+
+  -- 演练选对象:该租户最小的几件(演练规矩要的就是最小那一个,上一条按时间排,选不出来)
+  SELECT 'u/' || "ownerId" || '/' || "contentHash" || '.' || "ext" AS key,
+         "sizeBytes", "mime", "deletedAt"
+  FROM "Asset" WHERE "ownerId" = '<测试商家 orgId>' AND "deletedAt" IS NULL
+  ORDER BY "sizeBytes" ASC LIMIT 10;
   ```
 - 商家报错时给的产物页面 URL:`/files/<key>` 里 `<key>` 之后的部分就是它。
 - 误删事故本身的日志(若删除路径记录了被删的 key——见 commit `71fbe75e` 之后 asset 删除
   真删字节这条变化)。
 
 `<ownerId>` 段就是这个对象所属的租户/org。**记下这个 ownerId,第 2 步核对要用。**
+
+**只按 `contentHash` 找键会一次找出好几个租户的键**(内容寻址:同一份素材被几个租户用过就有
+几行 `Asset`,`contentHash` 完全相同——2026-09-19 二次盲走那件就被 7 个 org 共用),选中哪一个
+靠的是键首段的 `ownerId`,查的时候务必连 `ownerId` 一起限定(这正是 MEDIA-A9 前缀核对在防的事)。
 
 ### 第 2 步 · 在备份桶找副本 + 核对租户前缀(MEDIA-A9)
 
@@ -262,6 +291,10 @@ I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
          --key u/<ownerId>/<sha256>.<ext> --expect-owner <ownerId> --apply
 ```
 
+**`media-restore-object.mjs` 只打备份桶名、不打内容桶名**(2026-09-19 二次盲走核过),所以它
+自己拦不住「环境搞混」这件事——真写之前,用 2-a 那条差集命令的头两行确认内容桶与备份桶都是
+你以为的那两个,再发 `--apply`。
+
 脚本内部顺序:下载备份侧字节 → 本地重新算一次 sha256(见第 4 步)→ 哈希对上才
 `PutObject` 写回内容桶原 key(带 `IfNoneMatch: "*"`,即便两次检查之间发生竞态写入也绝不
 覆盖)。整个过程不触发任何生成 job、不产生任何计费事件——恢复是纯粹的字节搬运。
@@ -291,6 +324,10 @@ RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
 1. **工具自证(最省事)**:把第 2 步 2-c 的 dry-run 原样再跑一遍。对象回来了,闸 2 就会拒绝
    并报 `already exists in the content bucket`——**这条拒绝就是恢复成功的证据**(闸 2 打的是
    内容桶 `HeadObject`,见 `scripts/tools/media-restore-object.mjs`)。
+   **注意它是抛异常的形状**:终端会打出一段 Node 栈回溯(`Error: refusing: … already exists in
+   the content bucket` 加文件路径,再加一行 `Node.js v22.x`),退出码 1。**这不是脚本坏了**——
+   同一个脚本的 MEDIA-A9 拒绝(第 2 步)是干干净净的一行,两种拒绝长得完全不一样,别被吓到;
+   认那行 `refusing:` 就够了。
 2. **直接 HEAD 内容桶**:用「演练(仅 staging)」小节那段脚手架、不带 `DRILL_DELETE` 再跑
    一趟,它打印内容桶与备份桶两侧的 size / ETag / ContentType;两侧 size 相等即字节回位。
    (手边有别的 S3 客户端也行,把 `R2_*` 映射成它自己的变量名即可;工具不限,HEAD 的是同一个
@@ -335,20 +372,40 @@ RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
 分别核对一次租户前缀,再分别记一行演练记录——多花的时间就是这条规矩的成本,换来的是
 「一次操作最多影响一个对象」的上限。
 
+## 保留口径(备份桶留多久、谁去看)
+
+**备份桶全量保留，月度看一眼成本。** 备份桶不设任何自动删除/过期规则(multipart 中止规则
+除外);商家在产品里删掉产物,备份桶那一份也留着不动——「捞得回」就是从这里来的。容量与账单
+每月看一眼,超出预期再决定要不要加规则;**要加任何规则,先改这一段,再动桶**(规格 MEDIA-A2 /
+§3 非目标「删除时的备份桶联动清理」)。
+
+**lifecycle 规则怎么看:用账号级 Cloudflare API 令牌在控制台或 API 看,不是 R2 对象令牌。**
+部署里那两把 R2 令牌是对象级的,没有读桶配置的权限——2026-09-19 实测三种组合
+(备份令牌→备份桶、内容令牌→内容桶、内容令牌→备份桶)对 `GetBucketLifecycleConfiguration`
+全部 `AccessDenied`(HTTP 403)。**403 不等于「没有规则」**,它只说明这把钥匙看不了,别把它
+写成「已核验无规则」。账号级令牌在 Founder 手上(钥匙串 `cloudflare-api-token-belcort`,见
+`docs/runbooks/r2-bucket-token-rotation.md`),agent 永不读——**这一眼由 Founder 在控制台看
+并回填**(staging 与 production 两个备份桶都要看;生产那次挂在部署门 #1480)。
+
 ## 演练记录
 
-| 日期 | 执行者 | 对象键 | 实测 RTO | 命令输出片段 |
-|---|---|---|---|---|
-| 2026-09-13 | agent（Founder 授权「你在处理」，本对谈记录在 #1385） | u/founder/51c55aedae60a3ac26cbb52685a2bcc46278223bb3de9ad53db9d93ceeae9d49.mp4 | 1.6s | `found backup copy: … (2683441 bytes) in fikirtive-staging-backup` → `RESTORED … — hash verified (51c55aed…)`；真删证据 `deleted: … is now GONE from fikirtive-staging`；A9 反证 `refusing: key owner segment is "founder", but --expect-owner was "not-the-owner"`（exit 1）；钱守恒：founder 账本前后均 127 笔/99998514/0；存量回填 280/280 → 差集 0；生产桶本次零删除 |
-| 2026-09-19 | agent（blind-walk MEDIA-A3；授权：Founder 2026-09-19 将 v0.2.0 余下决定授予编排者，编排者裁定本次 staging 演练在范围内） | u/org_cmts923pm00002mptbuoube0j/ee0273a5ca30d476c7730ccd99e3b7286044c6f463922b16457a2abc3b3f4b17.png | 1.5s（脚本段）／约 7m14s（人工排查段，含一次 MODULE_NOT_FOUND 停顿） | 盲走：PARTIAL——手册三处 P1 缺口（本 PR 修）。`found backup copy: … (101169 bytes) in fikirtive-staging-backup` → `RESTORED … — hash verified (ee0273a5…), RTO 1.5s`；真删证据 `deleted: … is now GONE from fikirtive-staging`；A9 反证 `refusing: key owner segment is "org_cmts923pm00002mptbuoube0j", but --expect-owner was "org_someone_else"`（exit 1）；钱守恒：E2E Cafe 账本前后均 23 笔 / balanceDelta 合计 100 / reserved 0，全库 290 笔不变；差集前后均 307/307 → 0；备份桶零写入（lastModified 仍 2026-09-13T10:20:54Z）；生产桶本次零触碰 |
-| | | | | |
+| 日期 | 执行者 | 对象键 | 脚本段 RTO | 人工排查段 | 命令输出片段 |
+|---|---|---|---|---|---|
+| 2026-09-13 | agent（Founder 授权「你在处理」，本对谈记录在 #1385） | u/founder/51c55aedae60a3ac26cbb52685a2bcc46278223bb3de9ad53db9d93ceeae9d49.mp4 | 1.6s | —（未分开记） | `found backup copy: … (2683441 bytes) in fikirtive-staging-backup` → `RESTORED … — hash verified (51c55aed…)`；真删证据 `deleted: … is now GONE from fikirtive-staging`；A9 反证 `refusing: key owner segment is "founder", but --expect-owner was "not-the-owner"`（exit 1）；钱守恒：founder 账本前后均 127 笔/99998514/0；存量回填 280/280 → 差集 0；生产桶本次零删除 |
+| 2026-09-19 | agent（blind-walk MEDIA-A3；授权：Founder 2026-09-19 将 v0.2.0 余下决定授予编排者，编排者裁定本次 staging 演练在范围内） | u/org_cmts923pm00002mptbuoube0j/ee0273a5ca30d476c7730ccd99e3b7286044c6f463922b16457a2abc3b3f4b17.png | 1.5s | 约 7m14s（含一次 MODULE_NOT_FOUND 停顿） | 盲走：PARTIAL——手册三处 P1 缺口（本 PR 修）。`found backup copy: … (101169 bytes) in fikirtive-staging-backup` → `RESTORED … — hash verified (ee0273a5…), RTO 1.5s`；真删证据 `deleted: … is now GONE from fikirtive-staging`；A9 反证 `refusing: key owner segment is "org_cmts923pm00002mptbuoube0j", but --expect-owner was "org_someone_else"`（exit 1）；钱守恒：E2E Cafe 账本前后均 23 笔 / balanceDelta 合计 100 / reserved 0，全库 290 笔不变；差集前后均 307/307 → 0；备份桶零写入（lastModified 仍 2026-09-13T10:20:54Z）；生产桶本次零触碰 |
+| 2026-09-19 | agent（blind-walk #2 MEDIA-A3，走 PR #1484 重写后的手册，与合入后的 main 逐字一致；授权：Founder 2026-09-19 将 v0.2.0 余下决定授予编排者，编排者裁定本次 staging 演练在范围内） | u/org_cmts923pm00002mptbuoube0j/bf16d2f40520f175b24354a9eb19c36f40d92e4aa2813b8ef01fe064e95efcfe.jpg | 2.7s | 约 4m25s（第 1 步定位键 10:27:35Z → 第 3 步发出 `--apply` 10:32:00Z，含删前差集 60s 与四道保险丝核对） | 盲走 #2：PARTIAL——首轮四处阻塞缺口全部闭合（凭据现值在哪、演练删除脚手架、`pnpm install` 不够要 build、删后核对不再只给要登录的 `/files/<key>`），照做即通；余下是措辞级缺口 AMB-2-01…09，本行所在这一版手册已补。`found backup copy: …(200940 bytes) in fikirtive-staging-backup` → `RESTORED … — hash verified (bf16d2f4…), RTO 2.7s`；真删证据 `deleted: … is now GONE from fikirtive-staging`；A9 反证 `refusing: key owner segment is "org_cmts923pm00002mptbuoube0j", but --expect-owner was "org_not_the_owner_a3second"`（exit 1）；钱守恒：E2E Cafe 账本前后均 23 笔／balanceDelta 合计 100／reserved 0，CreditAccount 100/0 且 updatedAt 未动，全库 290 笔不变；A4 零新 job（org 4／全库 51 前后一致）；Asset 行 md5 前后均 fa870096…；差集前后均 307/307 → 0；备份桶零写入（副本 lastModified 仍 2026-09-13T10:20:53Z）；生产桶本次零触碰。另计环境预备段 1m47s（`pnpm install` + core build + 依赖预检）——脚本段／人工排查段／环境预备段三段一律不相加。证据存档：`docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r3-media-a3/`（blind-walk-2.json、step0-plan.md、raw/，首轮为 blind-walk-1.json） |
+| | | | | | |
 
 <!--
   每次演练(含首次上线前的验证跑,MEDIA-A3/A4/A5)在上表加一行:
   - 日期:YYYY-MM-DD
-  - 执行者:GitHub 用户名或姓名;agent 走的写「agent + 授权出处」(现有两行都是这个形状)
+  - 执行者:GitHub 用户名或姓名;agent 走的写「agent + 授权出处」(现有三行都是这个形状)
   - 对象键:完整 u/<ownerId>/<sha256>.<ext>
-  - 实测 RTO:脚本打印的那一行数字(秒)
+  - 脚本段 RTO:脚本打印的那一行数字(秒),只含下载/校验/写回
+  - 人工排查段:从「开始找 key」算起,到「发出 --apply」那一刻为止(第 5 步要的第二个数字)。
+    这两栏永远分开写、永远不相加(2026-09-19 二次盲走前只有一栏,两个数字挤在一格里)。
+    环境预备(pnpm install + core build + 预检)不算进这两段,要记就写进命令输出片段那栏。
+    首行 2026-09-13 没分开计时,人工段写「—(未分开记)」,不要事后补一个猜出来的数。
   - 命令输出片段:粘贴 media-restore-object.mjs --apply 的关键几行(RESTORED ... hash verified ...)
   - 大对象耗时(MEDIA-A1/A4 适用,判官第三轮 NEW-P2-3):量一次接近 2 GiB 上限对象走
     copyToBackup 的实际耗时。若逼近 P1-2 焊死的 10s requestTimeout 上限,把这个实测数值

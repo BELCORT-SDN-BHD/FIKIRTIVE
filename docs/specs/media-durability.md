@@ -1,6 +1,6 @@
 # 媒体可恢复（最小层）规格书（S1）
 
-> 状态: 已冻结 · v2
+> 状态: 已交付（staging）· 生产激活在部署门 #1480
 > 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1372 Founder 评论「S1 批准 media-durability.md」(v1 2026-09-12；v2 2026-09-13)
 > 规格前缀: MEDIA（验收编号 = MEDIA-A1、A2…，全仓不得与其他规格撞前缀）
 
@@ -80,6 +80,7 @@
 | 2026-09-13 | 判官发现浏览器直传路径不经 put()、永不复制（P1-5）；Founder 当日对谈拍板选项 (a)：上传 finalize 尺寸复核通过后服务端 CopyObject 补一刀（字节不过服务器），失败语义与写路径复制一致 | Founder 2026-09-13 已裁（对谈，本行即记录） |
 | 2026-09-13 | 判官复核补记：选项 (a) 使 R2_MEDIA_BACKUP_* 令牌口径变为「备份桶写＋内容桶读」，Founder 铸令牌时以此为准（缺读权限＝直传复制静默 403，只落日志） | 随上行 (a) 裁定生效，本行即记录 |
 | 2026-09-19 | MEDIA-A3 盲走判定 **PARTIAL**：恢复本身照手册跑通（staging 删 1 个对象→原样恢复，RTO 1.5s，差集 307/307 → 0，钱与数据库零变动），但没有先验知识的人被三处挡死——staging 那 8 个 R2 变量的现值在哪、`@fikirtive/core` 必须 build 过（`pnpm install` 不够）、`/files/<key>` 是要登录的路。`docs/runbooks/media-restore.md` 已按盲走结果补齐：前提（变量位置 + `railway run` 不回显值的跑法 + build 前提）、第 1 步（`Asset` 无 `key` 列、无 `AssetVariant`，改给拼键 SQL）、第 2 步（删前核对改用差集 + 备份桶 HEAD，写明恢复工具 dry-run 在对象还活着时会短路）、第 4 步（删后核对改用工具自证 / 直接 HEAD / 登录后看页面）、新增「演练（仅 staging）」保险丝小节。另：最小权限「备份桶读＋内容桶写」的恢复演练令牌今天不存在、也没有铸它的程序，演练暂借 staging 部署自己的凭据（`railway run`）；铸一把限 staging 的演练令牌列为后续项，等 Founder 裁。 | 批准: Founder 2026-09-19 对谈授权编排者代裁（原话「我要你现在给我做任何需要我做的决定」）：手册即修、二次盲走后关 A3 |
+| 2026-09-19 | MEDIA-A1／A2／A3／A5 第二轮收口（证据存档 `docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r3-media-a3/`：首轮 blind-walk-1.json；二轮 blind-walk-2.json、step0-plan.md、raw/ 共 24 份原始输出）。**A1 已证**：#1388 那次付费跑（2026-09-18 14:30–16:30Z）产出的 9 个对象（4 个 founder mp4 + 4 张对应首帧 png + 1 张 E2E Cafe jpg）在内容桶与备份桶各有一份，size 与 ETag 全等，判官自己把 9 个全部重新 HEAD 过一遍。**A2 一分为二**：差集半边已证（删前删后各跑一次，均 307/307 → 0）；MEDIA-A2 点名要的那句「备份桶全量保留，月度看一眼成本」原先手册里根本没有，本 PR 补进手册新的「保留口径」小节；lifecycle 只读半边 **未定**——部署里那两把 R2 对象令牌对 `GetBucketLifecycleConfiguration` 三种组合全部 AccessDenied（HTTP 403，而 403 不等于「没有规则」），要账号级 Cloudflare 令牌才看得了，agent 永不读。**A3 第二次盲走判 PARTIAL**：首轮四处阻塞缺口（凭据现值在哪、没有造「丢了」的程序、假的「`pnpm install` 过就行」、删后核对给的是要登录的 `/files/<key>`）已被 #1484 全部闭合，并按手册原样跑通；二轮余下 AMB-2-01…09 全是措辞级（SQL 在哪跑、哪个 org 是测试商家、按 sizeBytes 挑对象、already-exists 拒绝其实是抛异常的形状、RTO 两段没有第二栏、恢复脚本不回显内容桶名、脚手架固定文件名会撞车、保留口径缺句、lifecycle 谁来看），本 PR 逐条落进手册。**A5 已补**：二轮演练行（2026-09-19，对象 …bf16d2f4….jpg，脚本段 RTO 2.7s，人工排查段约 4m25s，环境预备 1m47s，三个数字一律不相加）已写进手册演练记录，表头同时加出「人工排查段」一栏，两行旧记录原样迁进新表形。**A4／A6／A9 二轮再证**：零新生成 job（org 4／全库 51 前后一致）、钱逐笔不动（E2E Cafe 23 笔／balanceDelta 合计 100／reserved 0，CreditAccount 连 updatedAt 都没动，全库 290 笔）、错 `--expect-owner` 被逐字拒绝并非零退出；生产桶全程零触碰。**A8 编排者没有代做**：那条要 Founder 本人打开 `docs/specs/beta-gate.md` GATE-A6 念那句判定，留给 Founder。 | 批准: Founder 2026-09-19 对谈授权编排者代裁（原话「我要你现在给我做任何需要我做的决定」）：① A2 的 lifecycle 只读核验改由 Founder 用账号级 Cloudflare 令牌在控制台看一眼并回填（staging 与 production 两个备份桶都看），列进生产激活门 #1480，不挡 staging 交付；② A3 的事故路径（商家给的 `/files/<key>` 那条来源）已自足，第三次盲走本版不跑（胃口到此），改为下一位 engineer 上手第一课，同时是生产激活前的必做项（#1480）；③ A1／A4／A5／A6／A9 判已证，A7 仍是生产门上的只读项，A8 留给 Founder 本人。 |
 
 ## 6. 改签记录
 

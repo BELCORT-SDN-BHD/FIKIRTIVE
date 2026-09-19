@@ -1,0 +1,24 @@
+{
+  "contentBucket": "fikirtive-staging",
+  "backupBucket": "fikirtive-staging-backup",
+  "results": [
+    {
+      "key": "u/org_cmts923pm00002mptbuoube0j/bf16d2f40520f175b24354a9eb19c36f40d92e4aa2813b8ef01fe064e95efcfe.jpg",
+      "content": {
+        "exists": true,
+        "size": 200940,
+        "etag": "\"fd346f6b9bfe921fcdb4671f6d0ba121\"",
+        "lastModified": "2026-09-19T10:32:09.000Z",
+        "contentType": "image/jpeg"
+      },
+      "backup": {
+        "exists": true,
+        "size": 200940,
+        "etag": "\"fd346f6b9bfe921fcdb4671f6d0ba121\"",
+        "lastModified": "2026-09-13T10:20:53.000Z",
+        "contentType": "image/jpeg"
+      },
+      "sizeEtagMatch": true
+    }
+  ]
+}

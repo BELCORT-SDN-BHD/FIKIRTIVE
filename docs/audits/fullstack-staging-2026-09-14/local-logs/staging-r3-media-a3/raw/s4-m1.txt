@@ -1,0 +1,10 @@
+file:///Users/winnin/Desktop/FIKIRTIVE/.claude/worktrees/wf_610dac79-0d7-1/scripts/tools/media-restore-object.mjs:117
+    throw new Error(
+          ^
+
+Error: refusing: u/org_cmts923pm00002mptbuoube0j/bf16d2f40520f175b24354a9eb19c36f40d92e4aa2813b8ef01fe064e95efcfe.jpg already exists in the content bucket — content-addressed keys mean it already holds the correct bytes. Restoring only makes sense when the object is actually gone.
+    at main (file:///Users/winnin/Desktop/FIKIRTIVE/.claude/worktrees/wf_610dac79-0d7-1/scripts/tools/media-restore-object.mjs:117:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async file:///Users/winnin/Desktop/FIKIRTIVE/.claude/worktrees/wf_610dac79-0d7-1/scripts/tools/media-restore-object.mjs:172:1
+
+Node.js v22.22.2
