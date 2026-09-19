@@ -171,8 +171,8 @@ function describeEl(el: HTMLElement): string {
   return `<${el.tagName.toLowerCase()} ${attrs.join(" ")} class="${el.className}">`;
 }
 
-describe("R3-F34 面板的高度链与滚动合同", () => {
-  it("R3-F34 (i) — 会话视口到面板体之间,每一层都是有界的一列 flex(链断哪一层就报哪一层)", async () => {
+describe("R3-F34 结构合同(jsdom;编号是本文件自己的 ①–④,不是规格验收表的 (i)–(v))", () => {
+  it("R3-F34 结构合同 ① — 会话视口到面板体之间,每一层都是有界的一列 flex(链断哪一层就报哪一层)", async () => {
     const el = await mount(shell(SHELL_ROUTES.billing));
     const body = el.querySelector<HTMLElement>("[data-otto-panel-body]")!;
     const viewport = body.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
@@ -195,7 +195,7 @@ describe("R3-F34 面板的高度链与滚动合同", () => {
     ).toEqual([]);
   });
 
-  it("R3-F34 (ii) — 回复框在被滚动的那一段**外面**:视口滚它不动,它跟着面板钉在下面", async () => {
+  it("R3-F34 结构合同 ② — 回复框在被滚动的那一段**外面**:视口滚它不动,它跟着面板钉在下面(＝规格验收 (ii) 的结构那一半)", async () => {
     const el = await mount(shell(SHELL_ROUTES.billing));
     const body = el.querySelector<HTMLElement>("[data-otto-panel-body]")!;
     const viewport = body.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')!;
@@ -210,12 +210,14 @@ describe("R3-F34 面板的高度链与滚动合同", () => {
     expect(viewport.contains(log)).toBe(true);
   });
 
-  it("R3-F34 (iii) — 会话开着的时候,面板里只有会话视口这一个真滚动容器", async () => {
+  it("R3-F34 结构合同 ③ — 会话开着的时候,体里面只有会话视口这一个滚动容器(体自己零行程)", async () => {
     const el = await mount(shell(SHELL_ROUTES.billing));
     const body = el.querySelector<HTMLElement>("[data-otto-panel-body]")!;
 
-    // `overflow-y-auto`/`overflow-auto` 自己就会造出一个滚动容器。会话开着时,
-    // 体里只许有视口这一个 —— 多一个就是「滚轮咬在谁身上」这类问题的温床。
+    // 只数**体的后代**,不数体自己:体的 `overflow-y-auto` 是有意留着的(历史列表靠它滚,
+    // 见 ④),而会话开着时体的内容正好等于体高、零行程,所以它不是那个「会抢滚轮」的东西。
+    // 真正要钉的是:被滚的那一段里,`overflow-y-auto`/`overflow-auto` 只许有视口一个 ——
+    // 多一个就是「滚轮咬在谁身上」这类问题的温床。
     const scrollers = [...body.querySelectorAll<HTMLElement>("*")].filter(
       (node) => node.classList.contains("overflow-y-auto") || node.classList.contains("overflow-auto"),
     );
@@ -224,7 +226,7 @@ describe("R3-F34 面板的高度链与滚动合同", () => {
     ]);
   });
 
-  it("R3-F34 (iv) — 历史列表这位旧住客没被改坏:它自己不管滚动,仍然靠体滚,且不被压扁", async () => {
+  it("R3-F34 结构合同 ④ — 历史列表这位旧住客没被改坏:它自己不管滚动,仍然靠体滚", async () => {
     const el = await mount(shell(SHELL_ROUTES.billing));
     await act(async () => {
       el.querySelector<HTMLButtonElement>('[aria-label="Conversation history"]')!.click();
@@ -239,7 +241,10 @@ describe("R3-F34 面板的高度链与滚动合同", () => {
     // 列表自己没有 overflow,它滚的是体 —— 所以体的 `overflow-y-auto` 不能撤。
     expect(body.classList.contains("overflow-y-auto")).toBe(true);
     expect(list.classList.contains("overflow-y-auto")).toBe(false);
-    // 体现在是一列 flex,列表必须 `shrink-0`,否则会被压回体高、底部内边距跟着没了。
+    // `shrink-0` 是**写明的意图**,不是修掉了一个当场能演示的 bug:体今天是一列 flex,
+    // 而这份列表 `overflow: visible`、没写 `min-height`,CSS 的自动最小尺寸本来就不让它被
+    // 压到比内容矮 —— 写出来是为了不把「它不会被压扁」这件事挂在那条隐式规则上(将来谁给它
+    // 加一句 `min-h-0` 或 `overflow`,那条隐式规则就没了)。这一条钉的是这份意图还在。
     expect(list.classList.contains("shrink-0")).toBe(true);
   });
 });
