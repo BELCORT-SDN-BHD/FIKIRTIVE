@@ -1196,6 +1196,23 @@ export type GenerationLineage = {
   conversation: { id: string; title: string | null } | null;
   /** 生成那一刻冻结的元素名(参考)。空数组 = 这一趟没引用任何元素。 */
   references: string[];
+  /**
+   * R3-F30 复审 P3(2026-09-18)—— 上面那几个名字是**继承来的记录**,不是这一单真的送出去
+   * 的参考图。
+   *
+   * 为什么要这一格:派生图(变体 / Regenerate / 编辑 / 模板 / Animate)自己一个元素都没挂,
+   * 记录是从源图那一行继承下来的(规格 `docs/specs/brand-product-identity.md` §5 2026-09-18
+   * PRODID-R12 行)。Regenerate 那条路**一张参考图都没发给引擎**,面板却照旧写
+   * 「References used: …」—— 那是把一件没发生过的事说成发生过。Founder「每个东西都要有迹
+   * 可循」要的是记录说出真话,所以这一格让文案分岔:继承来的说继承,真送过的才说用过。
+   *
+   * 判据三条同时成立:这一件背后有付费任务、那一单的 `GenJob.entityIds` 是空的、而快照里
+   * 仍有名字 —— 空 `entityIds` 的任务不可能自己算出带名字的快照(快照是照 `entityIds` 现查
+   * 的),所以那些名字只可能是继承来的。
+   * `undefined` / `false` = 照旧说「References used」(上传那一路没有任务,商家是在上传时
+   * 自己挂的元素,文案一字未动)。
+   */
+  referencesInherited?: boolean;
   /** 这一件用掉的 credits(商家单位)。`null` = 未知,`0` = 没花钱(上传/裁剪)。 */
   costCredits: number | null;
   /**
@@ -1265,7 +1282,9 @@ export async function getGenerationLineage(
 
   const job = await prisma.genJob.findFirst({
     where: { generationIds: { has: generationId }, ownerId },
-    select: { id: true, status: true },
+    // R3-F30 复审 P3:`entityIds` 只用来判「这几个名字是继承来的还是这一单自己挂的」——
+    // 见 `GenerationLineage.referencesInherited`。
+    select: { id: true, status: true, entityIds: true },
   });
 
   const [project, thread, shot, campaign, ledgerRows, uploadCredits] = await Promise.all([
@@ -1303,10 +1322,15 @@ export async function getGenerationLineage(
   if (shot) usedIn.push(shot.title.trim() || `Shot ${shot.number}`);
   if (campaign) usedIn.push(campaign.name);
 
+  const references = entitySnapshotNames(gen.entitySnapshot);
+
   return {
     canvas: { id: gen.projectId, name: project?.name ?? null },
     conversation: gen.threadId ? { id: gen.threadId, title: thread?.title?.trim() || null } : null,
-    references: entitySnapshotNames(gen.entitySnapshot),
+    references,
+    // 有付费任务、那一单自己没挂引用、快照里却有名字 ⇒ 这份记录只可能是从源图继承来的
+    // (R3-F30)。名字为空时恒 false:没有名字就没有那一行,这一格也不该自称「继承过」。
+    referencesInherited: !!job && job.entityIds.length === 0 && references.length > 0,
     costCredits: job
       ? (ledgerRows.length ? displayCredits(netChargedInternalCredits(ledgerRows)) : null)
       // FSE-009(Founder 2026-09-10 裁:只显示含理解费的合计,不拆行)。一行理解都没有、

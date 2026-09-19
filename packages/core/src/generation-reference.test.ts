@@ -15,6 +15,7 @@ import { describe, it, expect } from "vitest";
 import {
   MIN_REFERENCE_IMAGE_SIDE,
   MIN_UPSCALABLE_REFERENCE_SIDE,
+  inheritableEntitySnapshot,
   lineageCarriesOfficialActor,
   minimumUsableReferenceSide,
   referenceUpscalePlan,
@@ -157,5 +158,30 @@ describe("FSE-001 —— 演员血统判据", () => {
     expect(lineageCarriesOfficialActor({})).toBe(false);
     expect(lineageCarriesOfficialActor({ entities: "nope" })).toBe(false);
     expect(lineageCarriesOfficialActor({ entities: [null, 7] })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R3-F30 —— 派生图继承源图记录时,哪一份源快照值得继承
+// ---------------------------------------------------------------------------
+
+describe("R3-F30 —— 可继承的源图记录", () => {
+  it("源图带着商品 ⇒ 逐字继承(含 variantId / refHashes,不是重查一遍的活名字)", () => {
+    const source = {
+      entities: [{ id: "e2", name: "Pandan kaya jar", type: "PRODUCT", variantId: null, refHashes: ["f7ca334a"] }],
+    };
+    expect(inheritableEntitySnapshot(source)).toEqual(source);
+  });
+
+  it("源图自己就没有引用(首生的纯文生图)⇒ 没东西可继承,派生图照旧落空数组", () => {
+    expect(inheritableEntitySnapshot({ entities: [] })).toBeNull();
+  });
+
+  it("形状不对(null / {} / 脏数据)一律不继承 —— 绝不把一次读失败伪装成查过的谱系", () => {
+    expect(inheritableEntitySnapshot(null)).toBeNull();
+    expect(inheritableEntitySnapshot(undefined)).toBeNull();
+    expect(inheritableEntitySnapshot({})).toBeNull();
+    expect(inheritableEntitySnapshot({ entities: "nope" })).toBeNull();
+    expect(inheritableEntitySnapshot("{}")).toBeNull();
   });
 });
