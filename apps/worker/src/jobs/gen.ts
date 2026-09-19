@@ -1768,9 +1768,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<G
        * 整个 handler 外面那一层 `runAsTenant(job.ownerId)` 帧 —— Prisma 的 tenant guard
        * (`packages/db/src/tenant-guard.ts`,`ownerId` 一族恒在 enforce 挡位)会把帧里的租户号
        * **就地注进**这条 where。所以跨租户的源图在这里根本查不出来(查不到 ⇒ 不继承 ⇒ 落空
-       * 数组,与今天同形),而写出来的那句 `ownerId` 是双保险 —— 2026-09-18 实测:把那一格删掉,
-       * `gen-derived-lineage-db.test.ts` 七条仍然全绿。留着它是为了让这一读自己说得出自己的
-       * 边界,与本文件其它每一条读同形。
+       * 数组,与今天同形),而写出来的那句 `ownerId` 是双保险 —— 2026-09-19 复测(补上第六条路
+       * 之后):把那一格删掉,`gen-derived-lineage-db.test.ts` 八条仍然全绿。留着它是为了让这
+       * 一读自己说得出自己的边界,与本文件其它每一条读同形。
        * 不过滤 `deletedAt`:这是一次纯记录读,商家把源图丢进回收站不该让已经发生过的谱系凭空
        * 消失。
        *

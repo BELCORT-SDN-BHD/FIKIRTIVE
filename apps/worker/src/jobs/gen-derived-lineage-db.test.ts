@@ -151,6 +151,13 @@ async function seedDerivedJob(shape: {
   coworkCardId?: string;
 }) {
   const jobId = `gen_${randomUUID()}`;
+  // Otto 那一条:对话是真的 —— 任务行上的对话号在库里必须有主,worker 交付时才真的把
+  // GEN_RESULT 那张卡追加得进去(否则外键一撞,继承是绿的、卡却没发出去,用例就骗了自己)。
+  let threadId: string | null = null;
+  if (shape.coworkCardId) {
+    threadId = `thr_${randomUUID()}`;
+    await prisma.chatThread.create({ data: { id: threadId, ownerId: orgId, projectId, title: "Edit with Otto" } });
+  }
   await prisma.genJob.create({
     data: {
       id: jobId, ownerId: orgId, projectId, prompt: shape.prompt ?? "another take of the same jar",
@@ -158,8 +165,8 @@ async function seedDerivedJob(shape: {
       model: shape.video ? "seedance-2-mini" : "seedream",
       count: 1, status: "QUEUED",
       ...(shape.video ? { videoOptions: { seconds: 5, resolution: "480p" } } : {}),
-      ...(shape.coworkCardId
-        ? { threadId: `thr_${randomUUID()}`, idempotencyKey: `cowork:${shape.coworkCardId}` }
+      ...(threadId && shape.coworkCardId
+        ? { threadId, idempotencyKey: `cowork:${shape.coworkCardId}` }
         : {}),
       sourceGenerationId: shape.sourceGenerationId ?? null,
       lineageGenerationId: shape.lineageGenerationId ?? null,
@@ -191,7 +198,8 @@ async function deliveredGeneration(jobId: string) {
  * 租户闸门的真身是 `handleGen` 外面那一层 `runAsTenant(job.ownerId)` 帧 + Prisma 的
  * tenant guard(`packages/db/src/tenant-guard.ts`:`ownerId` 一族恒在 enforce 挡位,帧里的
  * 租户号会被**就地注进**每一条 where)。`gen.ts` 继承那一读上写着的 `ownerId: job.ownerId`
- * 因此是**双保险**,不是唯一的闸:2026-09-18 亲手删掉那一格跑过一遍 —— 本文件七条全绿。
+ * 因此是**双保险**,不是唯一的闸:2026-09-19 复测(补上第六条路之后)亲手删掉那一格跑过一遍
+ * —— 本文件八条全绿。
  *
  * 如实写在这里,而不是让那条用例冒充成「这个过滤条件的证据」。真要钉住那个过滤条件,得把
  * 这一读搬到帧外面去跑,那是另一件事(而且会拆掉 worker 自己的租户纪律),不做。
@@ -308,7 +316,7 @@ describe("R3-F30 派生图继承源图的商品／人物记录(真库,真 handle
     expect(job.entityIds).toEqual([]);
     // 已披露的行为改变,就在这一行上成立:本票之前这张派生图的血统是空的,
     // `lineageCarriesOfficialActor` 读不到演员;现在读得到 —— 付费前那道放大闸与 i2v 的
-    // 「他已经挑过演员」拒绝文案从此按它判(验收⑩,证在
+    // 「他已经挑过演员」拒绝文案从此按它判(验收⑪,证在
     // `packages/otto/src/skills/reference-upscale-gate-derived-lineage.test.ts`)。
     expect(lineageCarriesOfficialActor(gen.entitySnapshot)).toBe(true);
   }, DB_CASE_TIMEOUT_MS);

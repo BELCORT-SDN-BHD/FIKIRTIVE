@@ -2,7 +2,7 @@
  * reference-upscale-gate-derived-lineage.test.ts —— R3-F30 那条**已披露的行为改变**，
  * 钉在它真正发生的那一格上。
  *
- * 规格 `docs/specs/brand-product-identity.md` §5 2026-09-18 PRODID-R12 行验收⑩。
+ * 规格 `docs/specs/brand-product-identity.md` §5 2026-09-18 PRODID-R12 行验收⑪。
  *
  * 改变是什么：派生图从此继承源图的记录，于是 `lineageCarriesOfficialActor`（`@fikirtive/core`
  * 的 `generation-reference`）在派生图上**读得到**演员血统 —— 本票之前读不到。付费前那道尺寸闸
@@ -53,7 +53,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("R3-F30 验收⑩ —— 继承来的演员血统让付费前那道放大闸改判", () => {
+describe("R3-F30 验收⑪ —— 继承来的演员血统让付费前那道放大闸改判", () => {
   it("继承到的是演员：200×200 的派生图被拒，门槛说 300（像素完整性铁律，我们不替它放大）", async () => {
     vi.mocked(prisma.generation.findMany).mockResolvedValue(
       derivedRow([{ id: "ent-actor", name: "Aisyah", type: "CHARACTER" }]) as never,
