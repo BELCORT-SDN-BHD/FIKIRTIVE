@@ -1,0 +1,280 @@
+{
+  "task": "R3 staging repro — Otto side panel: after a long answer the composer is pushed far below the fold and the mouse wheel does not scroll the panel's scroll container",
+  "verdict": "PARTIAL",
+  "verdict_detail": {
+    "wheel_claim": "REPRODUCED — the mouse wheel is 100% dead over the conversation area, both directions, docked AND expanded view. Not an automation artifact (control proven).",
+    "composer_pushed_below_fold_claim": "REPRODUCED and worse than reported — measured 527 px (fresh load) to 6,982 px (after one 4,870-char answer) below the viewport bottom at 1024x768. Reported range was 1300-1900 px.",
+    "cannot_reach_composer_at_all_claim": "NOT REPRODUCED — two non-obvious paths still work: dragging the 10 px scrollbar at the panel's right edge, and pressing Tab 23 times.",
+    "why_PARTIAL": "Brief defines REPRODUCED as 'merchant cannot reach the composer with wheel/keyboard'. Keyboard (Tab x23) and scrollbar drag do reach it, so strictly PARTIAL — but the natural gesture (wheel) is completely non-functional and the working paths are undiscoverable."
+  },
+  "environment": {
+    "url": "https://web-staging-7901.up.railway.app",
+    "build_info_endpoint": "/api/build-info",
+    "fetched_at_utc": "2026-09-19T09:05:59Z",
+    "web_sha": "bd5877c3",
+    "web_ref": "main",
+    "web_started_at": "2026-09-18T18:38:36.165Z",
+    "worker_compute_sha": "bd5877c3",
+    "worker_wait_sha": "bd5877c3",
+    "migrations_latest": "20260915120000",
+    "gate_required_sha": "e81366f8",
+    "gate_satisfied": true,
+    "gate_evidence": "git merge-base --is-ancestor e81366f8 bd5877c3 -> true; git rev-list --count bd5877c3..e81366f8 -> 0 (nothing missing); e81366f8 = '[OTTO] 切回标签页,进行中的卡片当场跟上 (R3-F27, Refs #1357) (#1476)'",
+    "layout_viewport": "1024x768 CSS px (devicePixelRatio 2)",
+    "screenshot_frame": "800x600 (scale 0.78125 vs page px) — all `computer` coordinates below are in this frame",
+    "resize_window": "preset 'desktop' called first; pane's own responsive size used throughout",
+    "session": "Founder's real staging account; READ-ONLY apart from ONE Otto chat turn",
+    "credits_before": 9999682,
+    "credits_after": 9999680,
+    "credits_spent": 2,
+    "otto_reply_self_reported_cost": "This reply used 2 credits.",
+    "no_paid_card_approved": true
+  },
+  "dom_under_test": {
+    "outer_scroll_container": {
+      "selector": "div[data-otto-panel-body]",
+      "className": "min-h-0 flex-1 overflow-y-auto",
+      "computed_display": "block",
+      "computed_overflowY": "auto",
+      "computed_overscrollBehaviorY": "auto",
+      "role": "THE ONLY element on the page with real scrollable overflow"
+    },
+    "trap_element": {
+      "selector": "div.scroll-fade-b  (data-slot=message-scroller-viewport)",
+      "className": "size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain contain-content data-autoscrolling:scrollbar-none",
+      "computed_overflowY": "auto",
+      "computed_overscrollBehaviorY": "contain",
+      "computed_contain": "content",
+      "scrollHeight_equals_clientHeight": true,
+      "role": "a scroll container with ZERO scrollable extent that latches the wheel and blocks chaining"
+    },
+    "ancestor_chain_wheel_point_to_panel": [
+      {"el": "div.rounded-[14px] border border-border bg-secondary p-[13px]", "overflowY": "visible", "sh": 429, "ch": 429, "scrollable": false},
+      {"el": "div[data-slot=message-scroller-content] .otto-chat-scroll", "overflowY": "visible", "sh": 1368, "ch": 1368, "scrollable": false},
+      {"el": "div.scroll-fade-b (viewport)", "overflowY": "auto", "overscrollBehaviorY": "contain", "sh": 1368, "ch": 1368, "scrollable": false, "note": "TRAP: scroll container, nothing to scroll, chaining blocked"},
+      {"el": "div.group/message-scroller", "overflowY": "hidden", "sh": 1387, "ch": 1368, "scrollable": true, "note": "overflow hidden -> not user-scrollable"},
+      {"el": "div.gb flex min-h-0 flex-1 flex-col overflow-hidden", "overflowY": "hidden", "sh": 1583, "ch": 1583},
+      {"el": "div[data-otto-panel-conversation]", "overflowY": "visible", "display": "flex", "flex": "1 1 0%", "height_px": 1582.75},
+      {"el": "div[data-otto-panel-conversation-wrap]", "overflowY": "visible", "display": "flex", "flex": "1 1 0%", "height_px": 1582.75, "note": "flex-1 has NO effect: its parent is display:block"},
+      {"el": "div[data-otto-panel-body]", "overflowY": "auto", "display": "block", "sh": 1583, "ch": 600, "scrollable": true, "note": "the real scroller, unreachable by wheel"},
+      {"el": "aside[data-otto-panel]", "overflowY": "hidden", "position": "sticky", "sh": 768, "ch": 768}
+    ]
+  },
+  "root_cause": {
+    "summary": "Two stacked defects. A broken flex height chain lets the whole conversation column (composer included) grow to its natural content height and overflow the panel body; and the message-scroller viewport, which was supposed to be the scroller, ends up with zero scrollable extent while still carrying overscroll-behavior:contain, so it swallows every wheel event and refuses to chain to the panel body that actually can scroll.",
+    "defect_1_layout": {
+      "file": "apps/web/design-system/patterns/otto-panel/OttoPanel.tsx",
+      "line": 383,
+      "code": "<div data-otto-panel-body=\"\" className=\"min-h-0 flex-1 overflow-y-auto\">",
+      "problem": "missing `flex flex-col`. The element computes display:block, so its child div[data-otto-panel-conversation-wrap] (className 'min-h-0 flex-1 flex-col') is a block-level child, not a flex item: its `flex:1 1 0%` is inert and its height resolves from content (1582.75 px) instead of being capped at the body's 600 px. Everything below it in the column — including the composer — is pushed past the panel's visible area.",
+      "live_evidence": "panelBody computed display 'block'; conversationWrap computed flex '1 1 0%' but height '1582.75px' while parent clientHeight is 600"
+    },
+    "defect_2_scroll_chaining": {
+      "file": "apps/web/design-system/primitives/message-scroller.tsx",
+      "line": 45,
+      "code": "\"size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain contain-content data-autoscrolling:scrollbar-none\"",
+      "problem": "`size-full` (height:100%) resolves against a parent whose height is content-driven (defect 1), so the viewport's clientHeight always equals its scrollHeight — it never has anything to scroll. But `overflow-y-auto` still makes it a scroll container and `overscroll-contain` sets overscroll-behavior-y:contain, which tells Chrome NOT to propagate the wheel to ancestors. Chrome latches the wheel to this box, finds 0 px of travel, and stops — div[data-otto-panel-body] never receives it.",
+      "live_evidence": "inner sh==ch (1368/1368, later 8499/8499, 4886/4886); computed overscrollBehaviorY 'contain'; wheel events observed arriving at the element with deltaY 1000 and defaultPrevented false, while panelBody.scrollTop stayed 0"
+    },
+    "ruled_out": [
+      "wheel listener calling preventDefault — defaultPrevented was false at window-capture, panel-bubble and document-bubble phases",
+      "pointer-events blocking — every ancestor computed pointer-events 'auto'",
+      "JS pinning scrollTop — programmatic el.scrollTop=200 stuck and survived seconds",
+      "automation artifact — see control_experiment"
+    ]
+  },
+  "control_experiment": {
+    "purpose": "prove the Browser pane's synthetic wheel really scrolls nested containers, so a non-moving scrollTop means a real bug",
+    "method": "injected a temporary position:fixed div (300x200, overflow-y:auto, 2000px child) at page (20,200); wheeled 5 ticks over its centre; removed it immediately",
+    "control_result": "control div scrollTop 0 -> 500 (moved)",
+    "panel_result_same_input": "div[data-otto-panel-body] scrollTop 0 -> 0 (did not move)",
+    "wheel_event_trace": {"tag": "win-capture / panel-bubble / doc-bubble-late", "deltaY": 1000, "defaultPrevented": false, "target": "DIV.rounded-[14px] border border-border bg-secondary p-[13px]"},
+    "conclusion": "wheel input is delivered and works elsewhere on the same page; the Otto panel specifically refuses it"
+  },
+  "measurements": [
+    {
+      "step": "0-baseline",
+      "utc": "2026-09-19T09:06:57Z",
+      "state": "panel open as found (docked, 323 px), pre-existing 'Red Mug' conversation, no long answer yet",
+      "panelBody": {"scrollTop": 0, "scrollHeight": 1583, "clientHeight": 600, "maxScroll": 983},
+      "inner_scroll_fade_b": {"scrollTop": 0, "scrollHeight": 1368, "clientHeight": 1368, "maxScroll": 0},
+      "composer_rect": {"x": 714, "y": 1534, "w": 287, "h": 68, "bottom": 1602},
+      "composer_in_viewport": false,
+      "composer_below_viewport_by_px": 834,
+      "document_scrollable": false,
+      "note": "panel does NOT open scrolled to the bottom; composer already off-screen before any long answer"
+    },
+    {
+      "step": "3-post-answer-settled",
+      "utc": "2026-09-19T09:47:34Z",
+      "state": "after the one Otto answer (4,870 chars) finished",
+      "panelBody": {"scrollTop": 983, "scrollHeight": 8714, "clientHeight": 600, "maxScroll": 8114},
+      "inner_scroll_fade_b": {"scrollTop": 0, "scrollHeight": 8499, "clientHeight": 8499, "maxScroll": 0, "rect_y": -831, "rect_h": 8499},
+      "composer_rect": {"y": 7683, "h": 68},
+      "composer_in_viewport": false,
+      "composer_below_viewport_by_px": 6982,
+      "note": "the trap element now spans page y -831..7669, i.e. it covers the ENTIRE visible panel (y 89..689). The 63 px escape band from step 4b no longer exists."
+    },
+    {
+      "step": "5-expanded-view",
+      "utc": "2026-09-19T09:49:00Z",
+      "state": "after clicking 'Expand Otto' (panel widens to 614 px; data-otto-panel-mode stays 'docked')",
+      "panelBody": {"scrollTop": 4466, "scrollHeight": 5100, "clientHeight": 634, "maxScroll": 4466, "display": "block"},
+      "inner_scroll_fade_b": {"scrollTop": 0, "scrollHeight": 4886, "clientHeight": 4886, "maxScroll": 0, "overscrollBehaviorY": "contain", "rect_y": -4314, "rect_h": 4886},
+      "composer_rect": {"y": 586, "h": 68},
+      "composer_in_viewport": true,
+      "note": "identical structure and identical trap; composer happened to be visible only because scroll was already at max"
+    },
+    {
+      "step": "6-fresh-load-after-restore",
+      "utc": "2026-09-19T09:50:07Z",
+      "state": "page reloaded, Home, docked panel 324 px, long answer now in history",
+      "panelBody": {"scrollTop": 0, "scrollHeight": 1277, "clientHeight": 600, "display": "block"},
+      "inner_scroll_fade_b": {"scrollTop": 0, "scrollHeight": 1062, "clientHeight": 1062, "overscrollBehaviorY": "contain"},
+      "composer_rect": {"y": 1228},
+      "composer_in_viewport": false,
+      "composer_below_viewport_by_px": 527,
+      "note": "defect persists on a clean load; scrollTop 0 again, so the panel never restores to the bottom"
+    }
+  ],
+  "attempts": [
+    {
+      "id": "A1",
+      "attempt": "mouse wheel, 10 ticks down, cursor over middle of the conversation (screenshot 674,304 = page 863,389)",
+      "state": "pre-answer",
+      "panelBody_scrollTop_before": 0,
+      "panelBody_scrollTop_after": 0,
+      "composer_reached": false,
+      "result": "FAIL — no movement; wheel event confirmed delivered (deltaY 1000, defaultPrevented false)"
+    },
+    {
+      "id": "A2",
+      "attempt": "same wheel, repeated after installing listeners (control run)",
+      "panelBody_scrollTop_after": 0,
+      "composer_reached": false,
+      "result": "FAIL — identical"
+    },
+    {
+      "id": "A3",
+      "attempt": "mouse wheel, 10 ticks down, cursor over the panel's top band (screenshot 674,94 = page 863,120) — the only strip of div[data-otto-panel-body] not covered by the trap element at scrollTop 0 (page y 89..152, ~63 px tall, the 'Red Mug… / New conversation' row)",
+      "state": "pre-answer",
+      "panelBody_scrollTop_before": 0,
+      "panelBody_scrollTop_after": 982.5,
+      "composer_rect_after": {"y": 552, "bottom": 619},
+      "composer_reached": true,
+      "result": "PASS — one 10-tick gesture reached max scroll. This is the escape hatch, and it only exists while scrollTop is 0."
+    },
+    {
+      "id": "A4",
+      "attempt": "keyboard End (focus on BODY, panel scrolled to 0)",
+      "panelBody_scrollTop_after": 0,
+      "document_scrollY_after": 0,
+      "composer_reached": false,
+      "result": "FAIL — nothing focusable/scrollable receives it; the document itself is not scrollable (768/768)"
+    },
+    {
+      "id": "A5",
+      "attempt": "keyboard Tab x25 from BODY",
+      "panelBody_scrollTop_after": 983,
+      "composer_reached": true,
+      "tab_index_that_reached_composer": 23,
+      "focus_order_excerpt": [
+        {"i": 16, "el": "BUTTON New conversation", "panelScrollTop": 0, "inViewport": true},
+        {"i": 17, "el": "DIV Messages", "panelScrollTop": 63, "inViewport": false},
+        {"i": 18, "el": "SUMMARY Advanced details", "panelScrollTop": 63, "inViewport": true},
+        {"i": 19, "el": "A Download", "panelScrollTop": 811, "inViewport": true},
+        {"i": 22, "el": "BUTTON Tweak it", "panelScrollTop": 811, "inViewport": true},
+        {"i": 23, "el": "TEXTAREA Reply to Otto", "panelScrollTop": 983, "inViewport": true, "y": 552},
+        {"i": 24, "el": "BUTTON Add a reference", "panelScrollTop": 983, "inViewport": true}
+      ],
+      "result": "PASS — the browser's focus-scroll-into-view drags the panel body along. Requires 23 Tab presses from page top."
+    },
+    {
+      "id": "A6",
+      "attempt": "mouse wheel, 2 x 10 ticks down over conversation middle",
+      "state": "post-answer, panelBody.scrollTop 983, needs 8114",
+      "panelBody_scrollTop_after": 983,
+      "composer_reached": false,
+      "result": "FAIL — the real reported scenario. Composer 6,982 px below the fold and the wheel moves nothing."
+    },
+    {
+      "id": "A7",
+      "attempt": "mouse wheel UP 10 ticks (screenshot 674,200), then DOWN 10 ticks (674,450), then DOWN 10 ticks at the panel's right edge (790,400 = page 1011)",
+      "state": "post-answer",
+      "panelBody_scrollTop_after": 983,
+      "composer_reached": false,
+      "result": "FAIL on all three — the wheel is dead in both directions at every point inside the panel body once scrolled, because the trap element now covers the whole visible panel"
+    },
+    {
+      "id": "A8",
+      "attempt": "drag the panel body's scrollbar thumb (page x ~1019; screenshot 796,130 -> 796,595)",
+      "state": "post-answer",
+      "panelBody_scrollTop_before": 983,
+      "panelBody_scrollTop_after": 8114,
+      "composer_rect_after": {"y": 552},
+      "composer_reached": true,
+      "result": "PASS — a real 10 px classic scrollbar exists (offsetWidth-clientWidth = 10) and dragging it works. This is the only mouse-only path once scrolled."
+    },
+    {
+      "id": "A9",
+      "attempt": "mouse wheel UP 10 ticks over conversation middle in the EXPANDED view (screenshot 560,312)",
+      "state": "expanded, panelBody.scrollTop 4466 (at max)",
+      "panelBody_scrollTop_after": 4466,
+      "composer_reached": "n/a (already visible)",
+      "result": "FAIL — cannot scroll back UP through the answer either. Same defect in the expanded view."
+    }
+  ],
+  "auto_scroll_to_bottom": {
+    "question": "does the panel auto-scroll to the bottom when the answer finishes (expected UX)?",
+    "answer": "NO",
+    "evidence": "345 samples taken every 400 ms from before send through 143 s after: div[data-otto-panel-body].scrollTop held at 983 for every single sample while scrollHeight grew from 1583 to 8714. The post-answer screenshot shows the panel still displaying the OLD image card and only the top of the user's question; the 4,870-char answer was entirely below the fold and never brought into view.",
+    "secondary": "The inner message-scroller viewport (the component that owns autoscroll, cf. data-autoscrolling: variant in its className) reports scrollTop 0 / maxScroll 0 throughout — it cannot autoscroll because it has no scrollable extent, so the autoscroll feature is silently inert."
+  },
+  "additional_finding_streaming_layout_runaway": {
+    "severity": "observed, transient",
+    "description": "While the answer was streaming, div[data-otto-panel-body].scrollHeight diverged far beyond the content size — sampled 2,131,081 px, then 4,832,520 px, then 8,261,642 px, growing ~62,000 px per 400 ms sample and still growing ~123,000 px per 800 ms AFTER the text had finished ('This reply used 2 credits.' already rendered). The composer's reported y tracked it (7,683 px final, but 8,260,611 px mid-run).",
+    "settled_value": "layout collapsed back to scrollHeight 8714 within ~30 s of the stream ending",
+    "likely_mechanism": "percentage height (size-full) resolving against a content-driven parent, combined with contain-content + [content-visibility:auto] / [contain-intrinsic-size:auto 10rem] on the message items, forms a cross-frame layout feedback loop while content is appended",
+    "caveat": "not the reported bug and not separately isolated; reported as raw observation with the numbers above"
+  },
+  "merchant_impact": {
+    "docked_panel": "After Otto answers at any length, the reply box is below the fold and the mouse wheel — the one gesture anybody tries — does nothing anywhere in the panel. Nothing moves, so it reads as a frozen/broken panel rather than 'scroll further'.",
+    "only_ways_out": ["drag the thin scrollbar at the panel's right edge", "press Tab ~23 times", "wheel over a 63 px strip at the very top of the panel, and only before any scrolling has happened"],
+    "expanded_view": "same defect; there the merchant is pinned at the bottom and cannot wheel back up to read the start of the answer",
+    "compounding": "the panel never auto-scrolls to a finished answer, so the merchant must scroll to see the reply they paid for — using a scroll that does not work"
+  },
+  "screenshots": {
+    "note": "The Browser pane's screenshot action returns images into the agent transcript; it cannot write image files, so no file artifacts exist. Screenshots were captured inline at each step listed below.",
+    "captured": [
+      {"step": "1-panel-open-baseline", "utc": "2026-09-19T09:06:2xZ", "shows": "docked Otto panel, 'Red Mug' conversation, approved image card, quick chips at the bottom edge — no reply box visible"},
+      {"step": "A3-after-top-band-wheel", "utc": "2026-09-19T09:43:4xZ", "shows": "panel scrolled to 983; 'Reply to Otto…' composer, Add context / Enter to send / Send now visible"},
+      {"step": "2-after-send-and-answer", "utc": "2026-09-19T09:48:0xZ", "shows": "answer finished but panel still showing the old image card and the top of the question bubble; credits 9,999,680"},
+      {"step": "5-expanded-view", "utc": "2026-09-19T09:49:3xZ", "shows": "614 px expanded panel, end of the answer ('Step 7 — Engage, Don't Just Post'), 'This reply used 2 credits.', composer visible"}
+    ]
+  },
+  "otto_turn": {
+    "question_sent": "Explain in detail, step by step, how I should plan a month of Instagram posts for a small ceramic mug brand: audience, cadence, formats, captions, and how to measure — be thorough.",
+    "sent_via": "Send button click — pressing Enter did NOT send (textarea kept its 180 chars, no newline inserted, no message created) despite the composer hint reading 'Enter to send'",
+    "answer_length_chars": 4870,
+    "generation": "none — text only",
+    "cost_credits": 2,
+    "paid_cards_approved": "none"
+  },
+  "side_observation_enter_to_send": {
+    "observed": "With the textarea focused and 180 chars typed, a synthetic Enter keypress produced neither a send nor a newline; the Send button click worked.",
+    "confidence": "low — synthetic key dispatch from the automation driver may not match the app's keydown handler. Flagged as unverified, not a finding."
+  },
+  "page_left_as_found": {
+    "url": "https://web-staging-7901.up.railway.app/ (Home)",
+    "panel": "open, docked, width 324 px (found 323 px)",
+    "expanded_view": "collapsed back",
+    "instrumentation": "all removed — page reloaded; window.__samples / window.__wheelLog absent; temporary control div removed before reload",
+    "account": "never signed out; settings/billing/admin untouched"
+  },
+  "suggested_fix_direction": {
+    "note": "diagnosis only — no code was changed",
+    "primary": "apps/web/design-system/patterns/otto-panel/OttoPanel.tsx:383 — give div[data-otto-panel-body] `flex flex-col` (and probably drop overflow-y-auto from it) so the conversation column is height-capped and the message-scroller viewport becomes the real, bounded scroller with the composer pinned outside it.",
+    "secondary": "apps/web/design-system/primitives/message-scroller.tsx:45 — `overscroll-contain` on a viewport that may have zero scrollable extent silently traps the wheel. Once the height chain is fixed this stops mattering, but it is the reason the failure is total rather than merely awkward.",
+    "regression_test_idea": "assert div[data-otto-panel-body].scrollHeight <= clientHeight + tolerance after a long assistant message, and assert the composer's rect.bottom <= viewport height"
+  }
+}
