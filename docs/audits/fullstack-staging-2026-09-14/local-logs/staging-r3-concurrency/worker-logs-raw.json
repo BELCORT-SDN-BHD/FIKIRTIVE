@@ -1,0 +1,168 @@
+{"timestamp":"2026-09-18T14:57:24.026623078Z","level":"info","message":"Starting Container"}
+{"message":"[env-contract] 1 problem(s) with the worker environment:","level":"error","timestamp":"2026-09-18T14:57:24.319260147Z"}
+{"level":"error","message":"  • SENTRY_DSN is required in production but is not set","timestamp":"2026-09-18T14:57:24.319263537Z"}
+{"level":"error","timestamp":"2026-09-18T14:57:24.319267347Z","message":"  See .env.example and packages/core/src/env-contract.ts. Values are never printed."}
+{"timestamp":"2026-09-18T14:57:24.319270317Z","message":"[worker] role=wait — consuming gen×4, refgen×2, research×2, publish×2, understand×2; supervision(reapers, publish scheduler, nightly backup)=on sha=e81366f8","level":"info"}
+{"message":"[worker] provider REQUESTS: hard cap 6 concurrent per replica (PROVIDER_MAX_CONCURRENT_REQUESTS; shared by gen + refgen — one account). Job slots do NOT bound this: one image job fans out up to its image count in paid requests. Account budget 10 (usable 8 after headroom 2). Keep replicas × 6 ≤ 8.","timestamp":"2026-09-18T14:57:24.319274447Z","level":"info"}
+{"timestamp":"2026-09-18T14:57:24.319277627Z","message":"[worker] DB_POOL_MAX unset — defaulting to 28 for role \"wait\" (2 per concurrent job + 4 for timers)","level":"info"}
+{"timestamp":"2026-09-18T14:57:24.319281477Z","level":"info","message":"[worker] postgres connections: prisma 28 + pg-boss 16 = 44 per replica. Budget check is replicas × this, PLUS web (prisma 10 + pg-boss 2 per replica), against the database's max_connections."}
+{"message":"[worker] L1 publish chain is PARTIALLY configured — publishing will fail closed. present=[MEDIA_PROXY_SECRET, TOKEN_ENCRYPTION_KEY] missing=[PUBLIC_BASE_URL]. Set the missing var(s) (see .env.example) so web+worker share MEDIA_PROXY_SECRET/TOKEN_ENCRYPTION_KEY, or unset all to keep the chain inert.","timestamp":"2026-09-18T14:57:24.319285046Z","level":"error"}
+{"message":"[worker] asset understanding — platform spend ALERT line $50.00 per day (switch ON). Since 2026-09-02 that line only ALERTS (founderAlert, at most once a day) and never blocks: merchants are billed per understood file at the price locked when its row is created (MONEY-A9), so their own balance is the real ceiling. Only the switch pauses reading — and it pauses, it does not discard.","timestamp":"2026-09-18T14:57:24.319288386Z","level":"info"}
+{"timestamp":"2026-09-18T14:57:24.319291866Z","message":"[worker] started — role=wait — consuming gen×4, refgen×2, research×2, publish×2, understand×2; supervision(reapers, publish scheduler, nightly backup)=on","level":"info"}
+{"message":"[worker] stripe reconcile skipped: STRIPE_SECRET_KEY is not set — nothing to reconcile against (0 purchase alert(s) retried)","timestamp":"2026-09-18T14:57:24.319917705Z","level":"info"}
+{"level":"info","message":"[worker] ledger conservation: every org's balance matches its ledger; 0 settle(s) clamped in the last 24h totalling 0 internal","timestamp":"2026-09-18T14:57:24.319921365Z"}
+{"level":"info","timestamp":"2026-09-18T14:58:24.334600463Z","message":"[worker] heartbeat worker-wait 2026-09-18T14:58:23.938Z"}
+{"timestamp":"2026-09-18T14:59:24.286998412Z","level":"info","message":"[worker] heartbeat worker-wait 2026-09-18T14:59:23.938Z"}
+{"timestamp":"2026-09-18T15:00:24.341051673Z","level":"info","message":"[worker] heartbeat worker-wait 2026-09-18T15:00:23.938Z"}
+{"message":"[worker] heartbeat worker-wait 2026-09-18T15:01:23.938Z","timestamp":"2026-09-18T15:01:25.057041470Z","level":"info"}
+{"timestamp":"2026-09-18T15:02:25.173362803Z","level":"info","message":"[worker] heartbeat worker-wait 2026-09-18T15:02:23.938Z"}
+{"level":"info","message":"[worker] heartbeat worker-wait 2026-09-18T15:03:23.938Z","timestamp":"2026-09-18T15:03:25.444124094Z"}
+{"message":"[worker] heartbeat worker-wait 2026-09-18T15:04:23.938Z","level":"info","timestamp":"2026-09-18T15:04:25.877716474Z"}
+{"level":"info","timestamp":"2026-09-18T15:05:25.964558510Z","message":"[worker] heartbeat worker-wait 2026-09-18T15:05:23.938Z"}
+{"timestamp":"2026-09-18T15:06:26.254424174Z","level":"info","message":"[worker] heartbeat worker-wait 2026-09-18T15:06:23.938Z"}
+{"message":"[worker] heartbeat worker-wait 2026-09-18T15:07:23.938Z","timestamp":"2026-09-18T15:07:26.286374750Z","level":"info"}
+{"message":"[worker] heartbeat worker-wait 2026-09-18T15:08:23.938Z","level":"info","timestamp":"2026-09-18T15:08:26.277390753Z"}
+{"message":"[worker] gen job 75399c87-f1ef-4842-a2a1-840ff69d61b2 start (try 1) { genJobId: '01M2TH0QSVY0M2KVZV247BB5CY' }","level":"info","timestamp":"2026-09-18T15:09:06.426135148Z"}
+{"timestamp":"2026-09-18T15:09:06.999068526Z","level":"info","message":"[gen] 01M2TH0QSVY0M2KVZV247BB5CY: video task submitted (cgt-20260918230906-c7lqg) — releasing the worker slot, next poll in 10s"}
+{"timestamp":"2026-09-18T15:09:07.024842062Z","message":"[worker] gen job 75399c87-f1ef-4842-a2a1-840ff69d61b2 done","level":"info"}
+{"message":"[worker] gen job 0d4bdaa0-3c50-48e9-b07b-8f3bf0108128 start (try 1) { genJobId: '01M2TH0QSVY0M2KVZV247BB5CY', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:09:26.921025953Z","level":"info"}
+{"timestamp":"2026-09-18T15:09:26.921032533Z","message":"[worker] gen job 0d4bdaa0-3c50-48e9-b07b-8f3bf0108128 done","level":"info"}
+{"message":"[worker] heartbeat worker-wait 2026-09-18T15:09:23.938Z","level":"info","timestamp":"2026-09-18T15:09:26.921036993Z"}
+{"message":"[worker] gen job 0a928ebc-f61d-4169-a6bf-659c14e41e2b start (try 1) { genJobId: '01M2TH0QSVY0M2KVZV247BB5CY', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:09:30.319811111Z","level":"info"}
+{"level":"info","message":"[worker] gen job 0a928ebc-f61d-4169-a6bf-659c14e41e2b done","timestamp":"2026-09-18T15:09:30.394027455Z"}
+{"level":"info","message":"[worker] gen job 3c5d7a6c-9af5-4a64-9208-5dc6f9780b4e start (try 1) { genJobId: '01M2TH1MFAFTJWH379TFYMJDAJ' }","timestamp":"2026-09-18T15:09:34.370119031Z"}
+{"level":"info","timestamp":"2026-09-18T15:09:35.354241533Z","message":"[gen] 01M2TH1MFAFTJWH379TFYMJDAJ: video task submitted (cgt-20260918230934-8mzbf) — releasing the worker slot, next poll in 10s"}
+{"message":"[worker] gen job 3c5d7a6c-9af5-4a64-9208-5dc6f9780b4e done","timestamp":"2026-09-18T15:09:35.354244533Z","level":"info"}
+{"timestamp":"2026-09-18T15:09:42.546796067Z","message":"[worker] gen job 1246eb01-dd8f-4501-b28d-321bb967ed90 start (try 1) { genJobId: '01M2TH0QSVY0M2KVZV247BB5CY', carriedRetryCount: 0 }","level":"info"}
+{"message":"[worker] gen job 1246eb01-dd8f-4501-b28d-321bb967ed90 done","timestamp":"2026-09-18T15:09:42.546798727Z","level":"info"}
+{"message":"[worker] gen job d3adaa93-3087-406a-843e-627eb4b2924b start (try 1) { genJobId: '01M2TH1MFAFTJWH379TFYMJDAJ', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:09:46.343850876Z","level":"info"}
+{"message":"[worker] gen job d3adaa93-3087-406a-843e-627eb4b2924b done","timestamp":"2026-09-18T15:09:46.367592728Z","level":"info"}
+{"message":"[worker] gen job 2b00e347-6307-441b-a3bf-9e1213553daf start (try 1) { genJobId: '01M2TH0QSVY0M2KVZV247BB5CY', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:09:54.343054377Z","level":"info"}
+{"level":"info","message":"[worker] gen job 2b00e347-6307-441b-a3bf-9e1213553daf done","timestamp":"2026-09-18T15:09:54.386070231Z"}
+{"message":"[worker] gen job e0796690-bb17-40a5-8bc9-b796de93ea0f start (try 1) { genJobId: '01M2TH1MFAFTJWH379TFYMJDAJ', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:09:58.355633126Z","level":"info"}
+{"message":"[worker] gen job e0796690-bb17-40a5-8bc9-b796de93ea0f done","timestamp":"2026-09-18T15:09:58.397657946Z","level":"info"}
+{"timestamp":"2026-09-18T15:10:02.340100079Z","level":"info","message":"[worker] gen job 270bc840-e889-413a-975f-4f51e0c4f81f start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF' }"}
+{"timestamp":"2026-09-18T15:10:02.748437292Z","level":"info","message":"[gen] 01M2TH2G1H49Y3JTV7C9Q303FF: video task submitted (cgt-20260918231002-44vvl) — releasing the worker slot, next poll in 10s"}
+{"message":"[worker] gen job 270bc840-e889-413a-975f-4f51e0c4f81f done","timestamp":"2026-09-18T15:10:02.748441082Z","level":"info"}
+{"message":"[worker] gen job 9aea76c9-cde4-49dc-aea8-e48762b4df3b start (try 1) { genJobId: '01M2TH0QSVY0M2KVZV247BB5CY', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:10:06.339724414Z","level":"info"}
+{"message":"[worker] gen job 9aea76c9-cde4-49dc-aea8-e48762b4df3b done","timestamp":"2026-09-18T15:10:06.417204541Z","level":"info"}
+{"message":"[worker] gen job aff63c79-a2c4-44b7-a03e-4fc46888e1a0 start (try 1) { genJobId: '01M2TH1MFAFTJWH379TFYMJDAJ', carriedRetryCount: 0 }","level":"info","timestamp":"2026-09-18T15:10:10.368701295Z"}
+{"message":"[worker] gen job aff63c79-a2c4-44b7-a03e-4fc46888e1a0 done","level":"info","timestamp":"2026-09-18T15:10:10.411588740Z"}
+{"message":"[worker] gen job d01d66d0-8dce-4787-b725-0a9a9c0c867a start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:10:14.343439861Z","level":"info"}
+{"timestamp":"2026-09-18T15:10:14.412893108Z","message":"[worker] gen job d01d66d0-8dce-4787-b725-0a9a9c0c867a done","level":"info"}
+{"timestamp":"2026-09-18T15:10:18.638056578Z","level":"info","message":"[worker] gen job 06c05ce4-61cb-40b4-80b0-40773e1b1166 start (try 1) { genJobId: '01M2TH0QSVY0M2KVZV247BB5CY', carriedRetryCount: 0 }"}
+{"level":"info","message":"[worker] gen job 06c05ce4-61cb-40b4-80b0-40773e1b1166 done","timestamp":"2026-09-18T15:10:18.715906148Z"}
+{"message":"[worker] gen job c90e7563-287d-4855-9017-8313e4f64c86 start (try 1) { genJobId: '01M2TH1MFAFTJWH379TFYMJDAJ', carriedRetryCount: 0 }","level":"info","timestamp":"2026-09-18T15:10:22.374620455Z"}
+{"message":"[worker] gen job c90e7563-287d-4855-9017-8313e4f64c86 done","timestamp":"2026-09-18T15:10:22.389403945Z","level":"info"}
+{"message":"[worker] heartbeat worker-wait 2026-09-18T15:10:23.937Z","timestamp":"2026-09-18T15:10:23.952940722Z","level":"info"}
+{"message":"[worker] gen job 4135f512-15f9-489a-b83e-439c988a4e44 start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:10:26.382753004Z","level":"info"}
+{"timestamp":"2026-09-18T15:10:26.435975717Z","message":"[worker] gen job 4135f512-15f9-489a-b83e-439c988a4e44 done","level":"info"}
+{"message":"[worker] gen job ebefc94c-a250-4acc-99a2-fef160d2578c start (try 1) { genJobId: '01M2TH0QSVY0M2KVZV247BB5CY', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:10:30.388280179Z","level":"info"}
+{"message":"[worker] gen job ebefc94c-a250-4acc-99a2-fef160d2578c done","timestamp":"2026-09-18T15:10:30.476216302Z","level":"info"}
+{"level":"info","message":"[worker] gen job 994d0f9b-c96f-43fb-a64f-7ff27aa46c14 start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV' }","timestamp":"2026-09-18T15:10:32.386674873Z"}
+{"message":"[gen] 01M2TH3BTX8M3GV5ZWKSP5X8DV: video task submitted (cgt-20260918231032-nt8gx) — releasing the worker slot, next poll in 10s","timestamp":"2026-09-18T15:10:32.602604634Z","level":"info"}
+{"level":"info","message":"[worker] gen job 994d0f9b-c96f-43fb-a64f-7ff27aa46c14 done","timestamp":"2026-09-18T15:10:32.602610434Z"}
+{"timestamp":"2026-09-18T15:10:34.425418699Z","level":"info","message":"[worker] gen job c7d2650a-c624-4940-948a-58ce5f5f431f start (try 1) { genJobId: '01M2TH1MFAFTJWH379TFYMJDAJ', carriedRetryCount: 0 }"}
+{"message":"[worker] gen job c7d2650a-c624-4940-948a-58ce5f5f431f done","level":"info","timestamp":"2026-09-18T15:10:34.425421409Z"}
+{"message":"[worker] gen job c1443a11-2aec-45db-8bb3-a75135158048 start (try 1) { genJobId: '01M2TH3GWW76B67PH4A6TBQQ3R' }","level":"info","timestamp":"2026-09-18T15:10:36.464061725Z"}
+{"message":"[worker] gen job 9fcc66a7-5e91-4ba7-bd6a-cf77dfc47222 start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:10:38.503922250Z","level":"info"}
+{"message":"[worker] gen job 9fcc66a7-5e91-4ba7-bd6a-cf77dfc47222 done","level":"info","timestamp":"2026-09-18T15:10:38.503928530Z"}
+{"timestamp":"2026-09-18T15:10:42.373706265Z","message":"[worker] gen job 9a05efa5-739f-4e29-bf13-1456431e87e9 start (try 1) { genJobId: '01M2TH0QSVY0M2KVZV247BB5CY', carriedRetryCount: 0 }","level":"info"}
+{"level":"info","message":"[worker] gen job 9a05efa5-739f-4e29-bf13-1456431e87e9 done","timestamp":"2026-09-18T15:10:42.396813598Z"}
+{"level":"info","message":"[worker] gen job bbbc33b4-267d-4575-acf2-b8a56cea91fc start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:10:44.372117320Z"}
+{"timestamp":"2026-09-18T15:10:44.390833841Z","message":"[worker] gen job bbbc33b4-267d-4575-acf2-b8a56cea91fc done","level":"info"}
+{"message":"[worker] gen job 79c4511a-d565-4049-8253-4174a7bba3f0 start (try 1) { genJobId: '01M2TH1MFAFTJWH379TFYMJDAJ', carriedRetryCount: 0 }","level":"info","timestamp":"2026-09-18T15:10:46.356734248Z"}
+{"timestamp":"2026-09-18T15:10:46.397977422Z","level":"info","message":"[worker] gen job 79c4511a-d565-4049-8253-4174a7bba3f0 done"}
+{"level":"info","message":"[worker] gen job 4512803b-bf19-44d3-9279-4b330ed0cb51 start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:10:50.362905164Z"}
+{"level":"info","timestamp":"2026-09-18T15:10:50.417674990Z","message":"[worker] gen job 4512803b-bf19-44d3-9279-4b330ed0cb51 done"}
+{"level":"info","timestamp":"2026-09-18T15:10:54.373515422Z","message":"[worker] gen job 965978c0-f656-4100-9795-1a4324cdc47a start (try 1) { genJobId: '01M2TH0QSVY0M2KVZV247BB5CY', carriedRetryCount: 0 }"}
+{"message":"[worker] gen job 965978c0-f656-4100-9795-1a4324cdc47a done","timestamp":"2026-09-18T15:10:54.390647700Z","level":"info"}
+{"level":"info","message":"[worker] gen job 3cf77bc2-a510-491f-a41a-17d2517b96c2 start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:10:56.376886959Z"}
+{"message":"[worker] gen job 3cf77bc2-a510-491f-a41a-17d2517b96c2 done","timestamp":"2026-09-18T15:10:56.398808764Z","level":"info"}
+{"level":"info","message":"[worker] gen job f258a6d3-43ba-47fa-a9e4-f216bef21dd1 start (try 1) { genJobId: '01M2TH1MFAFTJWH379TFYMJDAJ', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:10:58.387023649Z"}
+{"message":"[worker] gen job f258a6d3-43ba-47fa-a9e4-f216bef21dd1 done","level":"info","timestamp":"2026-09-18T15:10:58.408323404Z"}
+{"timestamp":"2026-09-18T15:11:02.534271664Z","level":"info","message":"[worker] gen job ef95c144-95a8-4859-8802-70a16400502f start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }"}
+{"timestamp":"2026-09-18T15:11:02.712207833Z","message":"[worker] gen job ef95c144-95a8-4859-8802-70a16400502f done","level":"info"}
+{"timestamp":"2026-09-18T15:11:06.362905095Z","level":"info","message":"[worker] gen job 1c4e1d2d-b845-407d-8d35-8e340034e05f start (try 1) { genJobId: '01M2TH0QSVY0M2KVZV247BB5CY', carriedRetryCount: 0 }"}
+{"timestamp":"2026-09-18T15:11:08.363007601Z","level":"info","message":"[worker] gen job 2bb4aeef-8f87-41f6-9d5a-edd16da2bd40 start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV', carriedRetryCount: 0 }"}
+{"timestamp":"2026-09-18T15:11:08.409666500Z","level":"info","message":"[worker] gen job 2bb4aeef-8f87-41f6-9d5a-edd16da2bd40 done"}
+{"level":"info","timestamp":"2026-09-18T15:11:09.111285365Z","message":"[gen] 01M2TH3GWW76B67PH4A6TBQQ3R: DONE → 1 generations via byteplus"}
+{"level":"info","timestamp":"2026-09-18T15:11:09.111287725Z","message":"[worker] gen job c1443a11-2aec-45db-8bb3-a75135158048 done"}
+{"level":"info","timestamp":"2026-09-18T15:11:09.111290065Z","message":"[worker] gen job cf806554-e2bc-4536-8e58-88ef24c109fb start (try 1) { genJobId: '01M2TH1MFAFTJWH379TFYMJDAJ', carriedRetryCount: 0 }"}
+{"level":"info","timestamp":"2026-09-18T15:11:09.111293085Z","message":"[worker] gen job cf806554-e2bc-4536-8e58-88ef24c109fb done"}
+{"message":"[gen] 01M2TH0QSVY0M2KVZV247BB5CY: DONE → 1 generations via byteplus","timestamp":"2026-09-18T15:11:09.386604240Z","level":"info"}
+{"message":"[worker] gen job 1c4e1d2d-b845-407d-8d35-8e340034e05f done","timestamp":"2026-09-18T15:11:09.429101823Z","level":"info"}
+{"message":"[worker] gen job c6e9d73c-a70a-4945-9c26-3b36d68572d5 start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }","level":"info","timestamp":"2026-09-18T15:11:12.994648664Z"}
+{"message":"[worker] gen job c6e9d73c-a70a-4945-9c26-3b36d68572d5 done","timestamp":"2026-09-18T15:11:13.176518413Z","level":"info"}
+{"level":"info","timestamp":"2026-09-18T15:11:19.000307969Z","message":"[worker] gen job 95edee5a-79e5-4ea3-b836-a002b6640835 start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV', carriedRetryCount: 0 }"}
+{"level":"info","message":"[worker] gen job 95edee5a-79e5-4ea3-b836-a002b6640835 done","timestamp":"2026-09-18T15:11:19.050870959Z"}
+{"timestamp":"2026-09-18T15:11:19.470952328Z","level":"info","message":"[worker] gen job 2c74d400-a916-4cb9-8f65-12916fdd00c0 start (try 1) { genJobId: '01M2TH1MFAFTJWH379TFYMJDAJ', carriedRetryCount: 0 }"}
+{"level":"info","message":"[worker] gen job 2c74d400-a916-4cb9-8f65-12916fdd00c0 done","timestamp":"2026-09-18T15:11:19.485016051Z"}
+{"timestamp":"2026-09-18T15:11:23.443000037Z","message":"[worker] gen job 129f9fd5-c9a5-4919-bd25-bdc287b0c72d start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }","level":"info"}
+{"message":"[worker] gen job 129f9fd5-c9a5-4919-bd25-bdc287b0c72d done","timestamp":"2026-09-18T15:11:23.485586218Z","level":"info"}
+{"timestamp":"2026-09-18T15:11:23.963661446Z","level":"info","message":"[worker] heartbeat worker-wait 2026-09-18T15:11:23.938Z"}
+{"level":"info","timestamp":"2026-09-18T15:11:29.437993482Z","message":"[worker] gen job ef7c95fe-9744-4798-a092-f7db5264fddb start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV', carriedRetryCount: 0 }"}
+{"message":"[worker] gen job ef7c95fe-9744-4798-a092-f7db5264fddb done","level":"info","timestamp":"2026-09-18T15:11:29.481741702Z"}
+{"timestamp":"2026-09-18T15:11:30.424786499Z","level":"info","message":"[worker] gen job 801c1ec0-81a7-4dda-9b0f-be26c7985452 start (try 1) { genJobId: '01M2TH1MFAFTJWH379TFYMJDAJ', carriedRetryCount: 0 }"}
+{"timestamp":"2026-09-18T15:11:33.172633689Z","message":"[gen] 01M2TH1MFAFTJWH379TFYMJDAJ: DONE → 1 generations via byteplus","level":"info"}
+{"level":"info","message":"[worker] gen job 801c1ec0-81a7-4dda-9b0f-be26c7985452 done","timestamp":"2026-09-18T15:11:33.195583256Z"}
+{"message":"[worker] gen job b2ac9128-6827-4828-ad72-b8209909b364 start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }","level":"info","timestamp":"2026-09-18T15:11:34.497805683Z"}
+{"level":"info","message":"[worker] gen job b2ac9128-6827-4828-ad72-b8209909b364 done","timestamp":"2026-09-18T15:11:34.497813573Z"}
+{"timestamp":"2026-09-18T15:11:40.495582730Z","message":"[worker] gen job b761b1f9-05bc-41c9-bf14-11a468fd7844 start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV', carriedRetryCount: 0 }","level":"info"}
+{"message":"[worker] gen job b761b1f9-05bc-41c9-bf14-11a468fd7844 done","timestamp":"2026-09-18T15:11:40.495587600Z","level":"info"}
+{"message":"[worker] gen job 31b798af-51a7-4381-9549-513ec19fba9e start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }","level":"info","timestamp":"2026-09-18T15:11:45.017368658Z"}
+{"message":"[worker] gen job 31b798af-51a7-4381-9549-513ec19fba9e done","timestamp":"2026-09-18T15:11:45.085997641Z","level":"info"}
+{"level":"info","timestamp":"2026-09-18T15:11:51.014103445Z","message":"[worker] gen job 81f1f597-b19d-4c3f-8d45-d25f1be07965 start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV', carriedRetryCount: 0 }"}
+{"timestamp":"2026-09-18T15:11:51.081073147Z","level":"info","message":"[worker] gen job 81f1f597-b19d-4c3f-8d45-d25f1be07965 done"}
+{"timestamp":"2026-09-18T15:11:55.213184183Z","level":"info","message":"[worker] gen job 7549e186-cced-4a19-a96f-d31d9622933e start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }"}
+{"timestamp":"2026-09-18T15:11:55.288297251Z","level":"info","message":"[worker] gen job 7549e186-cced-4a19-a96f-d31d9622933e done"}
+{"timestamp":"2026-09-18T15:12:01.225141483Z","level":"info","message":"[worker] gen job e30b14ae-04f8-4f6e-8962-e132f89d316b start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV', carriedRetryCount: 0 }"}
+{"message":"[worker] gen job e30b14ae-04f8-4f6e-8962-e132f89d316b done","level":"info","timestamp":"2026-09-18T15:12:01.265012351Z"}
+{"message":"[worker] gen job 19cfa13d-04c2-4790-bda8-46b4324d2c6e start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:12:05.708440061Z","level":"info"}
+{"timestamp":"2026-09-18T15:12:05.708442960Z","level":"info","message":"[worker] gen job 19cfa13d-04c2-4790-bda8-46b4324d2c6e done"}
+{"message":"[worker] gen job 070e2a05-8d9e-42e7-864c-4bf182f668ad start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:12:11.446832286Z","level":"info"}
+{"message":"[worker] gen job 070e2a05-8d9e-42e7-864c-4bf182f668ad done","timestamp":"2026-09-18T15:12:11.506781160Z","level":"info"}
+{"message":"[worker] gen job c1fefd08-8ff7-459d-a332-080418ca418e start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:12:16.378661312Z","level":"info"}
+{"timestamp":"2026-09-18T15:12:16.478557995Z","message":"[worker] gen job c1fefd08-8ff7-459d-a332-080418ca418e done","level":"info"}
+{"message":"[worker] gen job e05cf24f-92fd-46db-8895-7fc2200795b6 start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:12:22.395786574Z","level":"info"}
+{"timestamp":"2026-09-18T15:12:22.500449363Z","message":"[worker] gen job e05cf24f-92fd-46db-8895-7fc2200795b6 done","level":"info"}
+{"message":"[worker] heartbeat worker-wait 2026-09-18T15:12:23.938Z","timestamp":"2026-09-18T15:12:24.120463180Z","level":"info"}
+{"level":"info","timestamp":"2026-09-18T15:12:27.108596125Z","message":"[worker] gen job 0b2e0ced-6fec-4a5d-a620-0484480ab28a start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }"}
+{"level":"error","message":"[gen] 01M2TH2G1H49Y3JTV7C9Q303FF: retrying — generation provider video task failed","timestamp":"2026-09-18T15:12:27.108604665Z"}
+{"timestamp":"2026-09-18T15:12:33.026446185Z","level":"info","message":"[worker] gen job c1f8531c-9983-48c5-959a-cf84209616df start (try 1) { genJobId: '01M2TH3BTX8M3GV5ZWKSP5X8DV', carriedRetryCount: 0 }"}
+{"timestamp":"2026-09-18T15:12:35.361594981Z","level":"info","message":"[gen] 01M2TH3BTX8M3GV5ZWKSP5X8DV: DONE → 1 generations via byteplus"}
+{"timestamp":"2026-09-18T15:12:35.402772847Z","level":"info","message":"[worker] gen job c1f8531c-9983-48c5-959a-cf84209616df done"}
+{"level":"info","message":"[worker] gen job 0b2e0ced-6fec-4a5d-a620-0484480ab28a start (try 2) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 0 }","timestamp":"2026-09-18T15:13:25.318630324Z"}
+{"message":"[gen] 01M2TH2G1H49Y3JTV7C9Q303FF: video task submitted (cgt-20260918231315-gcnn6) — releasing the worker slot, next poll in 10s","timestamp":"2026-09-18T15:13:25.318633514Z","level":"info"}
+{"timestamp":"2026-09-18T15:13:25.318637314Z","level":"info","message":"[worker] gen job 0b2e0ced-6fec-4a5d-a620-0484480ab28a done"}
+{"level":"info","timestamp":"2026-09-18T15:13:25.318640324Z","message":"[worker] heartbeat worker-wait 2026-09-18T15:13:23.937Z"}
+{"timestamp":"2026-09-18T15:13:26.394921569Z","message":"[worker] gen job 8a2a4989-12af-4afd-9dd9-a28b756abade start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }","level":"info"}
+{"message":"[worker] gen job 8a2a4989-12af-4afd-9dd9-a28b756abade done","timestamp":"2026-09-18T15:13:26.447715940Z","level":"info"}
+{"message":"[worker] gen job af58f7ab-3d01-4db1-afce-98551f7bb05b start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }","level":"info","timestamp":"2026-09-18T15:13:46.624990321Z"}
+{"timestamp":"2026-09-18T15:13:46.624995131Z","level":"info","message":"[worker] gen job af58f7ab-3d01-4db1-afce-98551f7bb05b done"}
+{"level":"info","timestamp":"2026-09-18T15:13:47.590479335Z","message":"[worker] gen job 1711314c-1166-42c1-9356-35930b878b2d start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }"}
+{"level":"info","timestamp":"2026-09-18T15:13:47.590482405Z","message":"[worker] gen job 1711314c-1166-42c1-9356-35930b878b2d done"}
+{"level":"info","timestamp":"2026-09-18T15:14:07.514053096Z","message":"[worker] gen job 435cfdb7-c094-4322-85c8-9c6430e6ed5c start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }"}
+{"level":"info","message":"[worker] gen job 435cfdb7-c094-4322-85c8-9c6430e6ed5c done","timestamp":"2026-09-18T15:14:07.514056206Z"}
+{"timestamp":"2026-09-18T15:14:09.341034675Z","level":"info","message":"[worker] gen job ec125cbb-e982-4aef-ad64-f648bdedec07 start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }"}
+{"message":"[worker] gen job ec125cbb-e982-4aef-ad64-f648bdedec07 done","timestamp":"2026-09-18T15:14:09.481511244Z","level":"info"}
+{"message":"[worker] gen job 2c124ba1-8cc5-41ee-bda1-0f0a1c6de89c start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }","timestamp":"2026-09-18T15:14:19.427706686Z","level":"info"}
+{"message":"[worker] gen job 2c124ba1-8cc5-41ee-bda1-0f0a1c6de89c done","timestamp":"2026-09-18T15:14:19.506384873Z","level":"info"}
+{"level":"info","message":"[worker] heartbeat worker-wait 2026-09-18T15:14:23.938Z","timestamp":"2026-09-18T15:14:24.002707841Z"}
+{"level":"info","timestamp":"2026-09-18T15:14:30.646320676Z","message":"[worker] gen job 7e7b2ff8-ed04-4bfe-95c1-8ebf2688254d start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }"}
+{"message":"[worker] gen job 7e7b2ff8-ed04-4bfe-95c1-8ebf2688254d done","level":"info","timestamp":"2026-09-18T15:14:30.674434462Z"}
+{"message":"[worker] gen job b6db4670-4020-42b5-b39c-b6625c912f36 start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }","timestamp":"2026-09-18T15:14:50.751750241Z","level":"info"}
+{"timestamp":"2026-09-18T15:14:50.751753991Z","level":"info","message":"[worker] gen job b6db4670-4020-42b5-b39c-b6625c912f36 done"}
+{"level":"info","message":"[worker] gen job 6dd51250-9c5a-4e00-b9cc-805e00301a37 start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }","timestamp":"2026-09-18T15:14:51.435015171Z"}
+{"message":"[worker] gen job 6dd51250-9c5a-4e00-b9cc-805e00301a37 done","timestamp":"2026-09-18T15:14:51.516744214Z","level":"info"}
+{"message":"[worker] gen job 458fb045-8e96-43eb-a54d-529b074b3cbf start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }","timestamp":"2026-09-18T15:15:11.483864738Z","level":"info"}
+{"timestamp":"2026-09-18T15:15:11.483868748Z","message":"[worker] gen job 458fb045-8e96-43eb-a54d-529b074b3cbf done","level":"info"}
+{"level":"info","timestamp":"2026-09-18T15:15:13.311338951Z","message":"[worker] gen job 8595e05c-9fe6-413f-8f6b-d63ddd2f3604 start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }"}
+{"message":"[worker] gen job 8595e05c-9fe6-413f-8f6b-d63ddd2f3604 done","timestamp":"2026-09-18T15:15:13.411612387Z","level":"info"}
+{"level":"info","timestamp":"2026-09-18T15:15:33.589980921Z","message":"[worker] gen job 2bbae16a-9467-4174-9e0f-2f1ee1a0c27e start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }"}
+{"level":"info","message":"[worker] gen job 2bbae16a-9467-4174-9e0f-2f1ee1a0c27e done","timestamp":"2026-09-18T15:15:33.589984891Z"}
+{"level":"info","message":"[worker] heartbeat worker-wait 2026-09-18T15:15:23.938Z","timestamp":"2026-09-18T15:15:33.589989701Z"}
+{"message":"[worker] gen job 9b709093-d8fe-42ba-a047-8e99d5777f26 start (try 1) { genJobId: '01M2TH2G1H49Y3JTV7C9Q303FF', carriedRetryCount: 1 }","timestamp":"2026-09-18T15:15:34.639880852Z","level":"info"}
+{"level":"info","timestamp":"2026-09-18T15:15:37.088460789Z","message":"[gen] 01M2TH2G1H49Y3JTV7C9Q303FF: DONE → 1 generations via byteplus"}
+{"timestamp":"2026-09-18T15:15:37.205418121Z","level":"info","message":"[worker] gen job 9b709093-d8fe-42ba-a047-8e99d5777f26 done"}
+{"timestamp":"2026-09-18T15:16:27.571792103Z","message":"[worker] heartbeat worker-wait 2026-09-18T15:16:23.937Z","level":"info"}

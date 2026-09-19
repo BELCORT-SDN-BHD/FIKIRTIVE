@@ -1,0 +1,335 @@
+{
+  "group": "real-10-11-share",
+  "scenarios": [
+    "REAL-10",
+    "REAL-11"
+  ],
+  "spec": "docs/specs/share-preview.md (已冻结 · v1, SHARE-A1…A12)",
+  "scenarioSource": "docs/audits/fullstack-staging-2026-09-14/real-scenarios.md:118-136",
+  "staging": "https://web-staging-7901.up.railway.app",
+  "buildInfo": {
+    "readAtUtc": "2026-09-18T14:02:59Z",
+    "webSha": "80d1e280",
+    "ref": "main",
+    "webStartedAt": "2026-09-18T13:47:49.352Z",
+    "workers": [
+      {
+        "role": "worker-compute",
+        "sha": "80d1e280",
+        "at": "2026-09-18T14:02:06.902Z"
+      },
+      {
+        "role": "worker-wait",
+        "sha": "80d1e280",
+        "at": "2026-09-18T14:02:54.987Z"
+      },
+      {
+        "role": "worker",
+        "sha": "ca864b28",
+        "at": "2026-09-13T11:06:04.772Z",
+        "retired": true
+      }
+    ],
+    "migrationsLatest": "20260915120000",
+    "migrationsAppliedAt": "2026-09-17T03:33:30.046Z"
+  },
+  "tokenHandling": "The share token and the media token are NEVER written to this file. Every URL is recorded as a path shape with <token> / <mediatoken>.",
+  "preconditions": {
+    "dbBaselineReadAtUtc": [
+      "2026-09-18T14:03:11Z",
+      "2026-09-18T14:03:26Z"
+    ],
+    "readOnly": "psql BEGIN READ ONLY … ROLLBACK, SELECT only, DATABASE_PUBLIC_URL read into a shell variable from railway, never printed, never written to disk",
+    "scheduledPostTotal": 0,
+    "sharePreviewTokenTotal": 0,
+    "creditLedgerRowsOrgFounder": 187,
+    "creditAccountFounder": {
+      "balance": 99997577,
+      "reserved": 0,
+      "unit": "tenths of a credit (UI showed 9,999,757.7 credits)"
+    },
+    "generationRowsOrgFounder": 38,
+    "orgFounderId": "founder"
+  },
+  "stepA_mint": {
+    "surface": "Otto panel (Ask Otto → New chat) in the Founder's signed-in browser session, org founder",
+    "promptSentAtUtc": "2026-09-18T14:05:10Z",
+    "promptText": "Do not generate or regenerate anything and spend zero credits. Using the matte red ceramic mug image that is ALREADY in my Library, draft one Instagram post on my schedule for 2026-09-25T09:00:00Z in timezone Asia/Kuala_Lumpur with the caption: Red ceramic mug, warm wood, quiet morning. Then create a read-only share preview link for that drafted post so I can send it to a client for review, and show me the link and the post id.",
+    "ottoSkillsUsed": [
+      "library lookup (trace line: 'Looking through your saved media')",
+      "schedulePosts (DRAFT)",
+      "sharePostPreview (trace line: 'Making a share link')"
+    ],
+    "ottoApprovalCardShown": false,
+    "paidGenerationProposed": false,
+    "ottoReplyLinkShape": "https://web-staging-7901.up.railway.app/s/<token>",
+    "ottoReplyStatedExpiry": "25 Sep 2026 at 10:05 PM MYT",
+    "ottoReplyStatedCost": "This reply used 2.5 credits.",
+    "dbAfterMintReadAtUtc": "2026-09-18T14:06:30Z",
+    "scheduledPostId": "01M2TDCKJGH4ACYVSHQT4RSFJ8",
+    "scheduledPostRow": {
+      "ownerId": "founder",
+      "channel": "instagram",
+      "status": "DRAFT",
+      "caption": "Red ceramic mug, warm wood, quiet morning.",
+      "scheduledAt": "2026-09-25 09:00:00",
+      "scheduledTz": "Asia/Kuala_Lumpur",
+      "createdAt": "2026-09-18 14:05:38.787"
+    },
+    "scheduledPostMedia": [
+      {
+        "generationId": "01M2T8QG9R1RH3J4NFQPM6R37D",
+        "position": 0,
+        "note": "pre-existing Library image (matte red ceramic mug), reused, not regenerated"
+      }
+    ],
+    "sharePreviewTokenRowId": "01M2TDCQGGB2MEEYRX4YKVTKVR",
+    "sharePreviewTokenRow": {
+      "ownerId": "founder",
+      "scheduledPostId": "01M2TDCKJGH4ACYVSHQT4RSFJ8",
+      "expiresAt": "2026-09-25 14:05:42.799",
+      "revokedAt": null,
+      "createdAt": "2026-09-18 14:05:42.801"
+    }
+  },
+  "stepB_real10_anonymousBuyer": {
+    "client": "Bash curl from the operator shell, no cookies, no session (the browser was NOT used for the anonymous side)",
+    "b1_entry": {
+      "atUtc": "2026-09-18T14:06:45Z",
+      "request": "GET /s/<token>  (--max-redirs 0)",
+      "status": 303,
+      "locationHeader": "/schedule/share-preview",
+      "locationIsRelative": true,
+      "locationContainsHostname": false,
+      "setCookieName": "__Secure-sp_t",
+      "setCookieAttributes": "Path=/schedule/share-preview; Expires=Fri, 25 Sep 2026 14:05:42 GMT; Max-Age=604737; Secure; HttpOnly; SameSite=lax",
+      "setCookieValueRecorded": false,
+      "otherHeaders": [
+        "content-security-policy: frame-ancestors 'none'",
+        "x-frame-options: DENY",
+        "x-content-type-options: nosniff",
+        "referrer-policy: strict-origin-when-cross-origin",
+        "strict-transport-security: max-age=63072000; includeSubDomains"
+      ],
+      "verdict": "R3-F31 fixed on this build: the Location no longer resolves to https://localhost:8080"
+    },
+    "b2_previewPage": {
+      "atUtc": "2026-09-18T14:07:01Z",
+      "request": "GET /schedule/share-preview with the cookie jar from b1 (--max-redirs 0)",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "cacheControl": "private, no-cache, no-store, max-age=0, must-revalidate",
+      "bodyBytes": 35641,
+      "title": "Shared post preview · Fikirtive",
+      "visibleTextAfterStrippingScripts": "Shared post preview · Fikirtive Loading your schedule Shared post preview You're looking at one post, shared with you to read. Nothing here can be changed from this page, and no account is needed to see it. Content may have changed since this link was shared. Instagram Read-only Red ceramic mug, warm wood, quiet morning. Scheduled for Fri, 25 Sept 2026, 17:00 GMT+8 . Publishing is not switched on yet — nothing here goes out to Instagram or Facebook. Your schedule is real: the posts you write, the dates and times you pick, and every approval are saved, and they stay exactly as you left them. This link stops working on Fri, 25 Sept 2026, 22:05 GMT+8 , or sooner if the person who shared it turns it off.",
+      "stringCounts_wholeBody": {
+        "This preview isn't available": 0,
+        "Content may have changed since this link was shared": 1,
+        "Red ceramic mug, warm wood, quiet morning": 1,
+        "Instagram": 1,
+        "Too many requests": 0,
+        "__next-page-redirect": 0,
+        "Go to sign in": 1,
+        "/login": 1
+      },
+      "signInStringAnalysis": "The single 'Go to sign in' / href=\"/login\" pair lives ONLY inside a self.__next_f.push(...) RSC flight chunk, i.e. the serialized app/not-found.tsx boundary. After stripping every <script> block the rendered markup contains neither string (measured), so nothing of a login shell paints for the buyer.",
+      "mediaUrlsReferenced": 1,
+      "mediaUrlShape": "/api/media/pub/<mediatoken>"
+    },
+    "b3_mediaAnonymous": {
+      "atUtc": "2026-09-18T14:08:07Z",
+      "request": "GET /api/media/pub/<mediatoken>  (no cookies, --max-redirs 0)",
+      "status": 200,
+      "contentType": "image/jpeg",
+      "bytes": 321396,
+      "fileType": "JPEG image data, JFIF 1.01, baseline, 2048x2048, 3 components",
+      "sha256": "d0734f1ce8bd823813c5e6a218c2daccc588aeadd3f685d0a45a3bf1fe89bb76",
+      "headers": [
+        "accept-ranges: bytes",
+        "cache-control: private, no-store",
+        "x-content-type-options: nosniff",
+        "referrer-policy: no-referrer"
+      ]
+    },
+    "b3b_rangeRequest": {
+      "atUtc": "2026-09-18T14:08:08Z",
+      "request": "GET /api/media/pub/<mediatoken> with Range: bytes=0-1023",
+      "status": 206,
+      "contentRange": "bytes 0-1023/321396",
+      "contentLength": 1024,
+      "note": "SHARE-A1 shape proven on a 321 KB object; the spec's ≥200 MB / resident-memory half was NOT exercised"
+    },
+    "b4_legacyQueryForm": {
+      "atUtc": "2026-09-18T14:08:33Z",
+      "request": "GET /schedule/share-preview?t=<token>  (--max-redirs 0)",
+      "status": 307,
+      "locationShape": "/s/<token>?t=<token>",
+      "locationIsRelative": true,
+      "bodyBytes": 276,
+      "stringCounts": {
+        "__next-page-redirect": 0,
+        "/login": 0,
+        "Go to sign in": 0
+      },
+      "verdict": "R3-F32 fixed: a routing-layer 307 answers before anything renders; no 200 HTML shell, no meta refresh, no flash of a sign-in page. The `?t=` query passthrough on the Location is the documented Next behaviour (lib/legacy-share-link-redirect.ts note ③); the next hop /s/<token> ignores the query and lands on the clean address."
+    },
+    "b5_forgedToken": {
+      "atUtc": "2026-09-18T14:08:33Z",
+      "request": "GET /s/<forged-token> (valid base64url payload, signature replaced with A's)",
+      "entryStatus": 303,
+      "entryLocation": "/schedule/share-preview",
+      "entrySetCookie": "__Secure-sp_t set, same attributes as a real token (value not recorded)",
+      "pageStatus": 200,
+      "pageVisibleText": "Shared post preview · Fikirtive This preview isn't available The link may have expired, or the person who shared it may have turned it off. Ask them for a new link.",
+      "failsClosed": true,
+      "deviationFromExpectation": "The task expected 'no cookie' for a forged token. The shipped design deliberately sets one anyway: apps/web/app/s/[token]/route.ts never verifies the signature here, and sizes the cookie from the UNVERIFIED payload exp, because a maxAge that depended on signature validity would turn the cookie's own lifetime into a signature oracle. Authorization still fails closed one hop later at loadSharePreview."
+    }
+  },
+  "stepC_real11_revoke": {
+    "controlLookedForFirst": [
+      "merchant /schedule surface — fetch('/schedule', {redirect:'manual'}) from the Founder's signed-in session at 2026-09-18T14:09Z answered type=opaqueredirect (a redirect away), i.e. this build still has no merchant schedule page and therefore no on-page Revoke button (same as the 2026-09-17 finding)",
+      "the public preview page — read-only by design, no controls (docs/specs/share-preview.md §3 '不给客户加「批准／评论」按钮')"
+    ],
+    "controlUsed": "Otto's own sharePostPreview skill with revoke:true, which calls the SAME owner-scoped server action (apps/web/lib/schedule-actions.ts revokeSharePreview) a merchant Revoke button would call — the product's own control on this build, not a DB write",
+    "preRevokeBaseline": {
+      "atUtc": "2026-09-18T14:08:49Z",
+      "action": "re-fetched /schedule/share-preview with the cookie jar to mint a FRESH media token (10-minute TTL), then GET it anonymously",
+      "previewPageStatus": 200,
+      "mediaStatus": 200,
+      "mediaContentType": "image/jpeg",
+      "mediaCheckedAtUtc": "2026-09-18T14:08:50Z",
+      "mediaTokenTtlExpiresApprox": "2026-09-18T14:18:49Z"
+    },
+    "revokeRequestSentAtUtc": "2026-09-18T14:10:42Z",
+    "revokePromptText": "Please revoke the share preview link for that post now. Do not generate anything.",
+    "ottoReply": "Done! The share link for post 01M2TDCKJGH4ACYVSHQT4RSFJ8 has been revoked — it's now dead and your client won't be able to open it anymore. No new links exist for that post unless you ask me to create one again.",
+    "ottoReplyStatedCost": "This reply used 2.1 credits.",
+    "dbRevokedAt": "2026-09-18 14:11:01.811",
+    "postRevokeChecks": [
+      {
+        "atUtc": "2026-09-18T14:11:24Z",
+        "request": "GET the SAME /api/media/pub/<mediatoken> that returned 200 at 14:08:50",
+        "status": 404,
+        "contentType": "text/plain;charset=UTF-8",
+        "note": "still ~7.4 minutes inside that media token's own 10-minute HMAC TTL, so the 404 proves revocation killed it, not expiry — SHARE-A7"
+      },
+      {
+        "atUtc": "2026-09-18T14:11:25Z",
+        "request": "GET /schedule/share-preview with the same cookie jar",
+        "status": 200,
+        "visibleText": "Shared post preview · Fikirtive Loading your schedule This preview isn't available The link may have expired, or the person who shared it may have turned it off. Ask them for a new link.",
+        "mediaUrlsInBody": 0,
+        "note": "byte-identical refusal copy to the forged-token case — SHARE-A8"
+      },
+      {
+        "atUtc": "2026-09-18T14:11:25Z",
+        "request": "GET /s/<token> (--max-redirs 0)",
+        "status": 303,
+        "location": "/schedule/share-preview",
+        "note": "the entry route still redirects by design (it never verifies); the refusal happens at the page"
+      }
+    ]
+  },
+  "stepD_dbAfter": {
+    "readAtUtc": "2026-09-18T14:11:44Z",
+    "scheduledPostTotal": 1,
+    "scheduledPostDelta": 1,
+    "sharePreviewTokenTotal": 1,
+    "sharePreviewTokenDelta": 1,
+    "sharePreviewTokenRevoked": true,
+    "sharePreviewTokenRevokedAt": "2026-09-18 14:11:01.811",
+    "creditLedgerRowsOrgFounder": 191,
+    "creditLedgerDelta": 4,
+    "creditLedgerNewRows": [
+      {
+        "balanceDelta": -40,
+        "reservedDelta": 40,
+        "kind": "RESERVE",
+        "source": "SYSTEM",
+        "idempotencyKey": "reserve:otto-stream:01M2TDC7VPN3NKAA8MQ4XM267N",
+        "createdAt": "2026-09-18 14:05:26.923"
+      },
+      {
+        "balanceDelta": 15,
+        "reservedDelta": -40,
+        "kind": "SETTLE",
+        "source": "SYSTEM",
+        "idempotencyKey": "settle:otto-stream:01M2TDC7VPN3NKAA8MQ4XM267N",
+        "createdAt": "2026-09-18 14:05:51.644"
+      },
+      {
+        "balanceDelta": -40,
+        "reservedDelta": 40,
+        "kind": "RESERVE",
+        "source": "SYSTEM",
+        "idempotencyKey": "reserve:otto-stream:01M2TDPC77KMK3A9V648B4B6BY",
+        "createdAt": "2026-09-18 14:10:59.042"
+      },
+      {
+        "balanceDelta": 19,
+        "reservedDelta": -40,
+        "kind": "SETTLE",
+        "source": "SYSTEM",
+        "idempotencyKey": "settle:otto-stream:01M2TDPC77KMK3A9V648B4B6BY",
+        "createdAt": "2026-09-18 14:11:04.277"
+      }
+    ],
+    "generationLedgerRows": 0,
+    "genJobRowsCreated": 0,
+    "generationRowsOrgFounder": 38,
+    "generationRowsDelta": 0,
+    "creditAccountFounder": {
+      "balance": 99997531,
+      "reserved": 0
+    },
+    "balanceDelta": -46,
+    "balanceDeltaInCredits": -4.6,
+    "balanceDeltaExplained": "two Otto chat turns only: 2.5 credits (mint turn) + 2.1 credits (revoke turn) = 4.6 credits, exactly what Otto disclosed in each reply. Every idempotency key is otto-stream:*; no reserve:<genJobId>, no GenJob, no new Generation row.",
+    "providerSpendUsd": 0
+  },
+  "acceptanceClauses": {
+    "proven": [
+      "SHARE-A2 — a plain anonymous browser-shaped GET of the preview media answers 200 and streams (321,396 bytes of real JPEG, Accept-Ranges: bytes)",
+      "SHARE-A5 — the preview page carries the line 'Content may have changed since this link was shared.' in its rendered markup",
+      "SHARE-A6 (address-bar half) — /s/<token> 303s to the RELATIVE /schedule/share-preview, the token moves into an HttpOnly, Secure, SameSite=lax, path-scoped __Secure-sp_t cookie, and the landing address carries no query string",
+      "SHARE-A6 (legacy half) — /schedule/share-preview?t=<token> answers a 276-byte 307 to /s/<token> with no HTML shell, no meta refresh and no sign-in link",
+      "SHARE-A7 — after Revoke, a media URL that had answered 200 forty seconds earlier answers 404 while still inside its own 10-minute token TTL",
+      "SHARE-A8 — the revoked page and the forged-token page render the identical 'This preview isn't available' copy; a reader cannot tell revoked from forged from expired",
+      "SHARE-A11 — the minted token's payload base64url-decodes in cleartext to {\"o\":\"founder\",\"p\":\"01M2TDCKJGH4ACYVSHQT4RSFJ8\",\"exp\":1790345142799}, exactly as the corrected comment in lib/share-preview-view.ts now states; the HMAC is tamper-evidence, not confidentiality"
+    ],
+    "partial": [
+      "SHARE-A1 — 206 + 'Content-Range: bytes 0-1023/321396' + exactly 1024 bytes proven on a 321 KB object; the spec's ≥200 MB object and the resident-memory comparison were not exercised (no such object on staging)",
+      "SHARE-A9 — the anonymous side made 13 session-less requests in total (4 of them to /api/media/pub, one of those a Range request) and the credit ledger for org founder gained no row from any of them (the only 4 new rows are the two Otto chat turns, both written before/after the anonymous traffic and keyed otto-stream:*); this is not the spec's 100-pull run"
+    ],
+    "notProven": [
+      "SHARE-A3 — requires breaking the rate-limit counter store on staging (out of bounds for this run)",
+      "SHARE-A4 — same precondition as A3",
+      "SHARE-A6 (telemetry half) — no Sentry event capture was inspected",
+      "SHARE-A10 — a cross-tenant re-pointed media token was not minted or replayed; the media token in hand was revoked before such a test, and a 404 from a revoked row would not have distinguished the keyOwnerMatches branch",
+      "SHARE-A12 — the 'rate-limit store unavailable' founderAlert delivery receipt was not observed"
+    ]
+  },
+  "boundaries": [
+    "No credentials entered, no sign-out, no settings/billing/admin surface touched",
+    "Nothing deleted or revoked except the ONE share link this journey minted (SharePreviewToken 01M2TDCQGGB2MEEYRX4YKVTKVR), revoked through the product's own server action",
+    "The ScheduledPost fixture 01M2TDCKJGH4ACYVSHQT4RSFJ8 is left in place per the audit's 'remote fixtures kept' convention; it is a DRAFT and cannot publish",
+    "All DB access read-only inside BEGIN READ ONLY … ROLLBACK; the DATABASE_PUBLIC_URL was held in a shell variable only, never printed, never written to a file",
+    "Provider spend US$0: no generation, no video, no upload understanding; the only charges are two Otto chat turns (4.6 credits), disclosed in-product",
+    "curl cookie jars were written to the session scratchpad and deleted at 2026-09-18T14:12:08Z",
+    "Browser left signed in as the Founder on Home with the Otto side panel collapsed back; no extra tab was opened, none closed; viewport emulation reset to desktop"
+  ],
+  "verdicts": [
+    {
+      "id": "REAL-10",
+      "status": "PASS"
+    },
+    {
+      "id": "REAL-11",
+      "status": "PASS"
+    },
+    {
+      "id": "MONEY-SHARE",
+      "status": "PASS"
+    }
+  ]
+}

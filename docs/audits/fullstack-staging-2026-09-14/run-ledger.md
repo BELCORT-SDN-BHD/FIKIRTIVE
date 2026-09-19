@@ -37,6 +37,22 @@ Profile的DOM与截图相反尚未定位：可能是工具对敏感字段处理�
 
 本轮真实生成预算仍以 [plan.md](plan.md) 为准；本批未消耗额度。没有供应商账单或新任务，因此不产生生成成本／扣费核对结论。
 
+### 第三轮真实付费与演练花费累计（2026-09-18／19 追加）
+
+口径：**US$ 一列只记供应商成本**，算法是那一组窗口内 `GenJob.spentUsd` 的和（**牌价钉表读数，不是账单接口读数**）；Otto 文字聊天的 credits 是内部记账，另列一列，不折成美元往这一列里加。三段时间（脚本段／人工段／环境预备段）与三本账（credits／美元／供应商回执）一律分开报，不相加。
+
+| 日期（UTC） | 组 | credits（内部记账） | 供应商成本 US$ | 证据 |
+|---|---|---|---|---|
+| 2026-09-18 14:02–14:11 | 客户面分享旅程（REAL-10／REAL-11） | 4.6（两轮 Otto 聊天 2.5 ＋ 2.1；键全是 `otto-stream:*`） | **0**（零 `GenJob`、零生成账本行） | `local-logs/staging-r3-share/real-10-11-share.json` |
+| 2026-09-18 15:09–15:16 | 双账号并发 #1388（REAL-09／QUEUE-A1） | 69（founder 68 ＝ 4×17 视频；tenant B 1 ＝ 1 张图） | **2.14424**（五单 `GenJob.spentUsd` 之和：4×0.52731 ＋ 0.035） | `local-logs/staging-r3-concurrency/two-tenant-concurrency.json` |
+| 2026-09-18 18:53–19:03 | R3-F27 返回三腿复测 | 3.1（已批的图 1 ＋ 一轮 Otto 聊天 2.1） | **0.035**（一单图片 `GenJob`） | `local-logs/staging-r3-f27/r3-f27-return-legs.json` |
+| 2026-09-19 10:24–10:33 | 恢复盲走 #2（MEDIA-A1/A4/A5/A6/A9） | 0（账本前后逐笔一致，`CreditAccount` 连 `updatedAt` 都没动） | **0**（零新生成 job，org 4／全库 51 前后一致） | `local-logs/staging-r3-media-a3/blind-walk-2.json` |
+| 2026-09-19 12:19–12:25 | R3-F34 staging 复测（D-098／D-099） | 2.5（两轮 Otto 文字聊天 2.1 ＋ 0.4） | **0**（零 `GenJob`、零付费卡被提出或批准） | `local-logs/staging-r3-otto-panel/retest/r3-f34-retest.json` |
+
+**累计对照 US$16 暂停线**：第一组 US$0.00 ＋ 第二至第四组 US$0.865764375 ＋ 复跑组 `verify-r3-f28` US$0.07（此三项即 [report-round3.md](report-round3.md) 2026-09-18（五）节写的「累计 US$0.94」）＋ 上表三笔（0 ＋ 2.14424 ＋ 0.035） ＝ **US$3.115004375（约 US$3.12）**。离 US$16 暂停线与 US$20 封顶都还远；封顶的剩余额度约 US$16.88。
+
+**关于那笔 2.5 credits 的偏差，照实说**：R3-F34 复测的任务书写的是「零 credits」，实际花了 2.5。原因是这一版 Otto 文字聊天**本身就计费**（面板自己写着「Chatting with Otto costs credits for what it uses」，每条回复下面还有一行「This reply used N credits.」），而那条复测非发两条消息不可。要紧的那一层守住了：**零 `GenJob`、没有任何付费生成卡被提出或批准**。
+
 ## 问题交叉引用
 
 - **R3-F01**：记录03与11，DOM空值与可见邮箱矛盾，未确认产品缺陷。

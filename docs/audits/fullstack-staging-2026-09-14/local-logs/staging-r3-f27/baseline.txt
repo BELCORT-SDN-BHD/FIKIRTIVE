@@ -1,0 +1,14 @@
+BASELINE (UTC 2026-09-18T18:52:08Z)
+build-info web sha: bd5877c3 (ref main, startedAt 2026-09-18T18:38:36.165Z)
+  ancestry: git merge-base --is-ancestor e81366f8 bd5877c3 => TRUE (build contains PR #1476)
+  e81366f8 = [OTTO] 切回标签页... (R3-F27) (#1476), 2026-09-18 22:53:32 +0800
+  bd5877c3 = [MONEY] ... (REAL-08) (#1473), 2026-09-19 02:32:34 +0800
+migrations latest 20260915120000 appliedAt 2026-09-17T03:33:30.046Z
+org founder: id=founder name=Founder
+latest GenJob: 01M2TH3BTX8M3GV5ZWKSP5X8DV DONE createdAt 2026-09-18 15:10:30.274 thread_54d9045d-... key canvas:5214...
+CreditLedger count (orgId=founder): 199
+CreditAccount: balance=99996851 reserved=0
+Thread-read network shape: getCoworkThreadClient is a Next "use server" SERVER ACTION
+  (apps/web/lib/cowork-fetch.ts line 1 = "use server") -> on the wire it is a POST to the
+  current page URL carrying a Next-Action header, NOT a named REST endpoint.
+Waiting copy under test: "Opening your conversation…"

@@ -1,0 +1,332 @@
+[
+ {
+  "spec": "docs/specs/asset-action-idempotency.md（S1 冻结票 #1368，OPEN；实现票 #1375 CLOSED / PR #1401 MERGED）。核证基线：worktree detached at origin/main = bd5877c3cdb87edc38363c6116e31b3713e71fb8（与 origin/main 逐字相同）。",
+  "statusLine": "> 状态: 已冻结 · v1 （docs/specs/asset-action-idempotency.md:3；下一行 :4「批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1368 Founder 评论「S1 批准 asset-action-idempotency.md」(2026-09-12)」——#1368 首条评论 2026-09-12T05:57:52Z 为 Founder 亲签，第四条评论自述后两条代录已被亲签取代）",
+  "rows": [
+   {
+    "id": "ASSET-A1",
+    "claim": "商家 A 在详情面板按 Regenerate，请求里的 assetAnchorGenerationId 被换成商家 B 的一张图的编号 ⇒ 请求被拒，面板显示 \"That image isn't available in this workspace.\"；数据库里零新 GenJob、账本零新行、余额不变（规格 :47）",
+    "verdict": "PROVEN",
+    "evidence": "真库双租户测试 apps/web/lib/__tests__/asset-action-idempotency.test.ts:144「ASSET-A1 请求里的 assetAnchorGenerationId 被换成另一个商家的图 ⇒ 拒收…」。断言：:156 `expect(stolen).toEqual({ error: ASSET_ANCHOR_NOT_IN_WORKSPACE });`、:157 `expect(ASSET_ANCHOR_NOT_IN_WORKSPACE).toBe(\"That image isn't available in this workspace.\");`、:162 反方向同样被拒、:166-169 `expect(await jobs(...)).toHaveLength(0); expect(await ledgerRows(...)).toHaveLength(0); expect((await account(...)).balance).toBe(1000); …reserved).toBe(0);`。fail-closed 的另一路（编造不存在的锚点）:173，断言 :180-183。实现侧 apps/web/lib/gen-actions.ts:495-500 `const anchorGate = await requireOwner(); … prisma.generation.findFirst({ where: { id: assetAnchorGenerationId, ownerId: anchorGate.ownerId } }) … if (!anchor) return { error: ASSET_ANCHOR_NOT_IN_WORKSPACE };`，位置在算键与动账之前。NOT RUN 于本 worktree（无 node_modules，且该文件需真 Postgres）；依据 origin/main 现行绿 CI。"
+   },
+   {
+    "id": "ASSET-A2",
+    "claim": "商家对自己工作区里的图按 Regenerate（正常路径）⇒ 正常出一单、余额扣一次；锚点检查不误伤任何合法动作（规格 :48）",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/lib/__tests__/asset-action-idempotency.test.ts:186，断言 :194-199 `expect(started.disposition).toBe(\"fresh\"); expect(await jobs(...)).toHaveLength(1); expect(rows).toHaveLength(1); expect(rows[0]!.reservedDelta).toBe(IMG); expect((await account(...)).balance).toBe(1000 - IMG);`。不误伤的第二形态（同商家另一项目的图仍算本工作区，租户边界是 owner 不是 project）:202，断言 :211-212。NOT RUN 本机（需真库）；依据绿 CI。"
+   },
+   {
+    "id": "ASSET-A3",
+    "claim": "第一单已 DONE 之后，原样重发同一次提交（同一意图编号）⇒ 拿回原来那一单的结果，不新建 GenJob，账本零新行，余额不变（规格 :49）",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/lib/__tests__/asset-idempotency-ledger.test.ts:383「ASSET-A3 第一单 DONE 之后原样重发同一次提交（同一意图编号）⇒ 拿回原单…」，断言 :397-403 `expect(replay.id, \"同一次提交的重放必须落回原来那一单\").toBe(first.id); expect(replay.disposition).toBe(\"reused\"); expect(await jobs(...)).toHaveLength(1); expect(await reserveRows(...)).toHaveLength(1); expect(after.balance).toBe(settled.balance); expect(after.reserved).toBe(settled.reserved);`（这正是规格 §1.4 点名要改写的那段旧口径绿测）。全新库上的同一行再钉一次：asset-action-idempotency.test.ts:425，断言 :435-436。意图编号缺席/空串/超长一律 $0 出界：同文件 :448，断言 :462-466。应用层放开状态的实现：apps/web/lib/gen-actions.ts:739 `const assetReplayAnyStatus = assetAction !== null;`。NOT RUN 本机（需真库）；依据绿 CI。"
+   },
+   {
+    "id": "ASSET-A4",
+    "claim": "商家在面板上再按一次 Regenerate（同一张图、同样提示词）⇒ 新的一单、账本一条新的 RESERVE，余额再扣一次（规格 :50）",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/lib/__tests__/asset-idempotency-ledger.test.ts:406，断言 :419-426 `expect(again.id).not.toBe(first.id); expect(again.disposition).toBe(\"fresh\"); expect(all).toHaveLength(2); expect(all[0]!.idempotencyKey, \"不同的意图编号 ⇒ 不同的键\").not.toBe(all[1]!.idempotencyKey); expect(rows).toHaveLength(2); expect(rows.map(r => r.reservedDelta)).toEqual([IMG, IMG]); expect((await account(...)).balance).toBe(1000 - 2 * IMG);`。浏览器一侧（落地即丢弃编号 ⇒ 再按是新编号）apps/web/lib/__tests__/asset-action-intent.test.ts:63、:74；键这一层另有 apps/web/lib/__tests__/gen-actions.test.ts:1087。NOT PART RUN 本机；依据绿 CI。"
+   },
+   {
+    "id": "ASSET-A5",
+    "claim": "生成中断网，页面重连自动重发同一次提交 ⇒ 回到同一单的进度，页面上只有一条进度条，账本零新行（规格 :51）",
+    "verdict": "PROVEN",
+    "evidence": "服务端半段 apps/web/lib/__tests__/asset-action-idempotency.test.ts:218，断言 :227 `expect(live[0]!.status, \"这一单还在跑\").toBe(\"QUEUED\");`、:233-237 `expect(resent.id).toBe(first.id); expect(resent.disposition).toBe(\"reused\"); expect(await jobs(...), \"页面上只有一条进度条\").toHaveLength(1); expect(await reserveRows(...)).toHaveLength(1); expect(await account(...)).toMatchObject({ balance: held.balance, reserved: held.reserved });`。浏览器半段（编号熬得过刷新、在途重问拿回同一个）apps/web/lib/__tests__/asset-action-intent.test.ts:45、:52 `expect(reloaded.beginAssetIntent(slot), \"刷新后的自动重发必须回到原单\").toBe(before);`。诚实边界：「页面上只有一条进度条」是由「恰好一条 GenJob」推得，没有一条渲染级组件测试去数 DOM 里的进度条；staging 侧这一形态本轮未发生（docs/audits/fullstack-staging-2026-09-14/report-round3.md:123「终态前的在途重放（ASSET-A5 形态）本组也未发生」）。NOT RUN 本机；依据绿 CI。"
+   },
+   {
+    "id": "ASSET-A6",
+    "claim": "同一把 asset: 键并发两次落库（第一单已 DONE）⇒ 第二次被数据库唯一索引挡掉，零新 GenJob、$0（规格 :52）",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/lib/__tests__/asset-action-idempotency.test.ts:242（直接模拟 TOCTOU 插入），断言 :256-270 `await expect(prisma.genJob.create({ … idempotencyKey: key })).rejects.toMatchObject({ code: \"P2002\" });` 与 :271-273 零新单、一行 RESERVE、余额预留不动；并发双提交那一形态 :276，断言 :288-290 `expect(idOf(a).id).toBe(idOf(b).id); expect(await jobs(...)).toHaveLength(1); expect(await reserveRows(...)).toHaveLength(1);`。索引来源 packages/db/prisma/migrations/20260912090000_genjob_asset_idempotency_once/migration.sql 末行 `CREATE UNIQUE INDEX IF NOT EXISTS \"GenJob_asset_idempotency_once\" ON \"GenJob\"(\"ownerId\", \"projectId\", \"idempotencyKey\") WHERE \"idempotencyKey\" LIKE 'asset:%';`。NOT RUN 本机；依据绿 CI。"
+   },
+   {
+    "id": "ASSET-A7",
+    "claim": "跑完 A3、A4、A5 后核对账本（钱守恒）⇒ 余额减少量 = 该期间 RESERVE/SETTLE/REFUND 净额 = 实际生成次数 × 单价；无悬挂 reserve、无重复 settle（规格 :53）",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/lib/__tests__/asset-action-idempotency.test.ts:296（一条用例里把 A3+A4+A5 串起来跑，四次提交两次真生成）。断言 :322-335：`expect(1000 - acct.balance).toBe(realGenerations * IMG);`、`expect(acct.balance).toBe(1000 + rows.reduce((s, r) => s + r.balanceDelta, 0));`、`expect(acct.reserved).toBe(rows.reduce((s, r) => s + r.reservedDelta, 0));`、`expect(acct.reserved).toBe(0);`、`expect(reserves).toHaveLength(realGenerations);`、`expect(settles).toHaveLength(realGenerations); expect(new Set(settles.map(r => r.refId)).size).toBe(realGenerations);`、`expect(await jobs(...)).toHaveLength(realGenerations);`。worker 两个终态走 worker 自己调的 settleCredits / refundReservation（同文件 :93-104 helper）。NOT RUN 本机；依据绿 CI。"
+   },
+   {
+    "id": "ASSET-A8",
+    "claim": "一单 FAILED（钱已退）后商家按一次重试 ⇒ 允许新的一单、扣一次钱；余额与账本对得上，退款那一行不被抵消或重复（规格 :54）",
+    "verdict": "PROVEN",
+    "evidence": "asset 族本行：apps/web/lib/__tests__/asset-action-idempotency.test.ts:338，断言 :347 `expect(await account(...)).toMatchObject({ balance: 1000, reserved: 0 });`（退款后复原）、:351-352 `expect(retry.id).not.toBe(failed.id); expect(retry.disposition).toBe(\"fresh\");`、:357-363 `expect(rows.filter(r => r.kind === \"REFUND\")).toHaveLength(1); …\"RESERVE\")).toHaveLength(2); …\"SETTLE\")).toHaveLength(1); expect(acct.balance).toBe(1000 + Σ balanceDelta); expect(1000 - acct.balance).toBe(IMG); expect(acct.reserved).toBe(0);`。staging 真实旅程的付费半段本轮结构性不可达（§5 2026-09-17 登记行），Founder 2026-09-18 对谈改判由测试覆盖，落点 apps/web/lib/__tests__/real08-retry-paid-ledger.test.ts（真库真账本，coworkGenerate / coworkVaryCard / ottoUpdateGenCardOptions 三个真动作；用例名与红→绿实证逐条登记在 docs/specs/money-engine.md:137 §5 2026-09-18 行，该行 裁决/批准 cell 已填「批准: 2026-09-18，Founder 2026-09-18 裁(对谈):改由测试覆盖」）。两处证据并存，本行不缺半句。NOT RUN 本机；依据绿 CI。"
+   },
+   {
+    "id": "ASSET-A9",
+    "claim": "Otto 模板窗发起模板动作后原样重发同一次提交 ⇒ 与 A3 一致：命中原单、账本零新行（规格 :55）",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/lib/__tests__/asset-action-idempotency.test.ts:369（先 workerSettle 进终态再重发），断言 :397-403 `expect(resent.id).toBe(first.id); expect(resent.disposition).toBe(\"reused\"); expect(await jobs(...)).toHaveLength(1); expect(await reserveRows(...)).toHaveLength(1); expect(await account(...)).toMatchObject({ balance: settled.balance, reserved: settled.reserved }); expect(job!.idempotencyKey).toMatch(/^asset:template:[0-9a-f]{64}$/);`。asset-idempotency-ledger.test.ts:480-484 另有同形态一组。人工面与 Otto 面共用 startAssetGen 这一层（apps/web/components/otto/TemplateModal.tsx:276-296 的意图编号注释）。NOT RUN 本机；依据绿 CI。"
+   },
+   {
+    "id": "ASSET-A10",
+    "claim": "在全新数据库上跑迁移并执行 A3、A4 ⇒ 迁移成功、唯一索引存在（谓词 LIKE 'asset:%'），两条验收行为一致（规格 :56）",
+    "verdict": "PROVEN",
+    "evidence": "索引形状：apps/web/lib/__tests__/asset-action-idempotency.test.ts:409，:413 `SELECT indexdef FROM pg_indexes WHERE indexname = 'GenJob_asset_idempotency_once'`，断言 :415-422 `expect(rows, \"GenJob_asset_idempotency_once 必须存在\").toHaveLength(1); expect(def).toContain(\"UNIQUE\"); expect(def).toContain('\"ownerId\", \"projectId\", \"idempotencyKey\"'); expect(def).toContain(\"'asset:%'\"); expect(def).not.toContain(\"status\");`。同库行为一致：:425，断言 :435-442（A3 拿回原单、一行 RESERVE；A4 新单、两行 RESERVE、余额 1000 - 2*IMG）。「全新数据库」由 CI 保证：scripts/ci/quality.sh:1055 `gate tests,checks \"prisma migrate deploy\" pnpm --filter @fikirtive/db exec prisma migrate deploy`（每次运行自建的 per-run *_test 空库，且是 tests 腿的前置），随后 scripts/ci/quality.sh:1062 `gate tests \"tests\" pnpm -r test`。迁移自身带重复行 fail-closed 守卫（migration.sql 的 DO $$ … RAISE EXCEPTION 'Refusing to add GenJob_asset_idempotency_once: …'）。诚实边界：本行只要求全新库验证，生产库尚未 migrate deploy（#1480 第一项未勾），不属本行判词。NOT RUN 本机；依据绿 CI。"
+   }
+  ],
+  "openRegisterRows": [
+   "docs/specs/asset-action-idempotency.md:74 — 2026-09-12 行：「刷新后／第二标签页再按一次＝新意图新扣费（相对旧主干的行为变化，ASSET-A4 语义推得出；待 S5 Founder 过目）——来源 PR #1401 判官 P2-1」，裁决/批准 cell 为空（表格该行以 `| |` 结尾）。GitHub 侧亦查无裁决：#1368 全部四条评论只有 S1 批准与签名/时序说明；#1357 地图评论无本条；全仓只有 docs/audits/fullstack-staging-2026-09-14/plan.md:91 复述「变更登记待过目」。第三轮走查两处写明它仍是活的争议且不得静默通过：coverage-matrix.md:174 REAL-06 行与 report-round3.md:123「跨标签业务解释仍是 asset-action-idempotency.md §5 2026-09-12 登记行明写「待裁、不静默通过」的争议，本组不代为裁定」。实质问题：意图编号存活于 per-tab sessionStorage（apps/web/lib/asset-action-intent.ts，测试 asset-action-intent.test.ts:52 只钉「同一标签页刷新后仍是同一编号」），第二个标签页天然拿不到同一编号 ⇒ 同一次意图在新标签页再按会按 ASSET-A4 收第二次钱。"
+  ],
+  "deliverable": "未交付",
+  "why": "§2 验收表十行全部 PROVEN：每一行都有 origin/main 上指名的真 Postgres／真 Prisma／真账本行为测试逐句断言（A1/A2/A5/A6/A7/A8/A9/A10 在 apps/web/lib/__tests__/asset-action-idempotency.test.ts，A3/A4 在 apps/web/lib/__tests__/asset-idempotency-ledger.test.ts 那段被规格点名改写的旧口径测试原处，浏览器侧编号存活范围在 asset-action-intent.test.ts），跨终态唯一索引由 packages/db/prisma/migrations/20260912090000_genjob_asset_idempotency_once/migration.sql 建立并由 A10 从 pg_indexes 反查证明。测试本机 NOT RUN（本 worktree 无 node_modules，且除 asset-action-intent 外都需真 Postgres），依据 origin/main 现行绿 CI：`gh run list --branch main --limit 3` → post-merge 运行 35380789525，headSha bd5877c3cdb87edc38363c6116e31b3713e71fb8（= 本次核证的 origin/main HEAD，逐字相同），job `quality-on-main` success，步骤「Run pnpm quality」success（该脚本的 tests 腿先在 per-run 空库跑 prisma migrate deploy，再 `pnpm -r test`）；另有 2026-09-19 的 e2e 定时运行 35415358764 success。但按本次核证的判定口径，已交付还要求 §5 变更登记每一行都带 裁决/批准 —— 2026-09-12 那一行的裁决格仍是空的，且第三轮走查两份文件明写它「待裁、不静默通过」。这不是格式问题：它裁的是「第二个标签页里再按一次到底算重放还是算再买一张」，正是这张规格的钱路边界本身，只有 Founder 能裁。因此判 未交付（一票之差：只差这一条裁决，不差任何工程证据）。附带诚实陈述（不计入行判词）：本规格的防重扣保护尚未在生产生效——生产库的 prisma migrate deploy 仍挂在部署门 #1480 第一项未勾；#1480 的判词是「不施工、不部署，每一件须 Founder 亲口点头」，与本规格的 §2 验收无一行冲突。",
+  "blockers": [
+   "§5 变更登记 2026-09-12 行（docs/specs/asset-action-idempotency.md:74）裁决格为空 = 一条未裁的 Founder 裁决，按本次口径即 blocker。要裁的是一句话：商家在第二个标签页（或已丢失本次编号的情况下）再按同一个按钮，算「同一次意图的重放、不收钱」还是「再来一张、照收一次」。今天的实现是后者（意图编号活在 per-tab sessionStorage，apps/web/lib/asset-action-intent.ts；asset-action-intent.test.ts:52 只保证同一标签页刷新后同编号）。Founder 裁完把原话＋日期填进该行裁决格，这张规格即可转 已交付·归档、并按项目规矩关闭 S1 冻结票 #1368（现为 OPEN）。",
+   "（非阻断，但须与 Founder 一并知会）本规格的保护在生产尚未生效：新唯一索引 GenJob_asset_idempotency_once 只跑过 CI 的全新测试库，生产库的 prisma migrate deploy 挂在部署门 #1480 第一项（未勾，且门规明写须 Founder 亲口点头并先确认备份与恢复路径）。此项不影响 §2 任何一行的判词——A10 的判词只到全新数据库为止。"
+  ]
+ },
+ {
+  "spec": "docs/specs/fail-closed-reliability.md（RELY，S1 冻结票 #1371，OPEN，label `spec`「永不自动关闭」，里程碑 v0.2.0；实施票 #1384 已 CLOSED）。核证基准：worktree detached at origin/main = bd5877c3（2026-09-18）。测试执行：NOT RUN 本地（本 worktree 无 node_modules，pnpm install 既不便宜也不属只读；8 份命名测试里 6 份需真 Postgres）——依赖 origin/main 当前 CI 绿：post-merge run 35380789525 success（bd5877c3，2026-09-18T18:32Z）＋ scheduled e2e run 35415358764 success（2026-09-19T02:20Z）。#1371 评论只有「S1 批准 fail-closed-reliability.md」（Founder 亲签，2026-09-12，另两条代录已被亲签取代），无追加验收备注。",
+  "statusLine": "> 状态: 已冻结 · v1",
+  "rows": [
+   {
+    "id": "RELY-A1",
+    "claim": "生产配置未设 GENERATION_PROVIDER（或设成 byteplus 以外的值，逃生阀启动），商家上传一张菜品照 ⇒ 理解行停在 PAUSED 并显示既有文案「That file hasn't been read yet …」；描述、商品、价格一个都没有；品牌记忆无新增行",
+    "verdict": "PROVEN",
+    "evidence": "真库测试 apps/worker/src/jobs/understand-unconfigured-provider-db.test.ts:143（真工厂 createUnderstandingProvider({NODE_ENV:\"production\"})、真 handleUnderstand、真 reserveCredits）:147 expect(row.status).toBe(\"PAUSED\")；:149 expect(row.error).toBe(UNDERSTANDING_PROVIDER_PAUSED)；:153 expect(row.summary).toBe(\"\")；:154 expect(row.data).toBeNull()；:159 assetUnderstanding doc-extract count 0；:161 brandRecord.count 0；:162 memory.count 0。端口层 packages/generation/src/understanding.test.ts:358-370（UnconfiguredUnderstandingProvider + isProviderConfigError true + understandingErrorUsage null）与 :373-381（三种请求全 reject，反向对照 mock 确实会吐 \"Sample item\"）。NOT RUN 本地，CI 绿覆盖（apps/worker/vitest.config.ts:34 include src/**/*.test.ts；scripts/ci/quality.sh:967 为 worker 套件建独立 *_test 库）。"
+   },
+   {
+    "id": "RELY-A2",
+    "claim": "同 A1 场景之后查账（钱守恒）⇒ 该轮 refId 的预留已退，账本净额 0；商家余额与上传前一字不差；无 SETTLE 行",
+    "verdict": "PROVEN",
+    "evidence": "apps/worker/src/jobs/understand-unconfigured-provider-db.test.ts:168 用例名「RELY-A2（钱守恒）」：:173 refId 必须真进过钱路；:176 expect(money.balance).toBe(START_BALANCE)；:177 reserved 0；:179-180 netBalanceDelta 0 / netReservedDelta 0；:182 expect(money.kinds).toEqual([\"RESERVE\",\"REFUND\"])；:183 expect(money.kinds).not.toContain(\"SETTLE\")。真 CreditLedger 行，不是 mock 调用计数。NOT RUN 本地，CI 绿覆盖。"
+   },
+   {
+    "id": "RELY-A3",
+    "claim": "生产配置明写 GENERATION_PROVIDER=mock（逃生阀启动），商家按一次生成、再上传一张图 ⇒ 生成被拒并退款，拿不到纯色假图；理解同样停 PAUSED ＋ 退款；两者都没有 DONE",
+    "verdict": "PROVEN",
+    "evidence": "理解半段直证：understand-unconfigured-provider-db.test.ts:189（MOCK_IN_PRODUCTION = {NODE_ENV:\"production\",GENERATION_PROVIDER:\"mock\"}）:195 PAUSED、:196 not DONE、:197 既有文案、:202 kinds [\"RESERVE\",\"REFUND\"]、:203 余额回原位。生成半段为两段合成：工厂层 packages/generation/src/index.test.ts:78-83 expect(provider).toBeInstanceOf(UnconfiguredProvider) / not MockProvider（明写 mock 的生产）；拒绝端口的钱与产物后果 apps/worker/src/jobs/gen-unconfigured-provider-db.test.ts:119 kinds [\"RESERVE\",\"REFUND\"]、:126 job.status FAILED、:128 generation.count 0、:130 storagePut 从未被调用、:157 error 逐字等于 GENERATION_ENGINE_UNAVAILABLE。缺口（合成处）：该真库测试构造端口用的是 GENERATION_PROVIDER 未设，不是明写 \"mock\"；两者在工厂层被证明收敛到同一个 UnconfiguredProvider（index.test.ts:78），故判 PROVEN 而非 PARTIAL。"
+   },
+   {
+    "id": "RELY-A4",
+    "claim": "运维把生产 worker 的 GENERATION_PROVIDER 设成 mock 或留空后启动 ⇒ 进程开机即拒绝启动，报错点名 GENERATION_PROVIDER；mock 不再是生产合法枚举值",
+    "verdict": "PROVEN",
+    "evidence": "packages/core/src/env-contract.test.ts:455-467（mock：problem.kind \"not-production-safe\"、message 含 \"byteplus\"、bootEnvDecision(...).action === \"exit\"）；:469-477（留空：kind \"missing\" + action \"exit\"）；:479-481（byteplus+key ⇒ checkEnv 回 []）。开机接线实证：apps/worker/src/index.ts:81 assertWorkerEnv() → apps/worker/src/boot-env.ts:21 bootEnvDecision(production: env.NODE_ENV===\"production\") → :30 process.exit(1)；apps/worker/src/boot-env.test.ts:90 expect(exit).toHaveBeenCalledWith(1)（主进程缺 GENERATION_PROVIDER 仍拒绝，豁免未泄漏）。未核（登记在 §5 2026-09-12 第三行、裁决空）：生产容器运行时 NODE_ENV 未证——变量层无 NODE_ENV 键，若运行时非 production，这道开机闸在真生产上不触发。"
+   },
+   {
+    "id": "RELY-A5",
+    "claim": "开发者在本地／CI 不设 GENERATION_PROVIDER 跑测试与演示 ⇒ 行为与今天完全一致（mock 照跑，不联网、不收费），无新增开关",
+    "verdict": "PROVEN",
+    "evidence": "packages/core/src/env-contract.test.ts:483-488 两个 surface × {} 与 {GENERATION_PROVIDER:\"mock\"} 全部 expect(checkEnv(...)).toEqual([])；packages/generation/src/index.test.ts:85-95 六种非生产组合全 expect(...).toBeInstanceOf(MockProvider)；packages/generation/src/understanding.test.ts:323「RELY-A5：非生产未配供应商 → mock，不出网」。"
+   },
+   {
+    "id": "RELY-A6",
+    "claim": "运维把 SENTRY_DSN 填成 https://example.com 启动生产进程；再换成形状合法的 DSN ⇒ 前者开机拒绝并点名该变量；后者正常启动。全程不做任何启动探测外呼",
+    "verdict": "PROVEN",
+    "evidence": "packages/core/src/env-contract.test.ts:671-680：problems.find(SENTRY_DSN).kind === \"invalid\"、bootEnvDecision(...).action === \"exit\"、decision.report 含 \"SENTRY_DSN\"；:682-686 合法 DSN ⇒ checkEnv 回 [] 且 action \"ok\"；:688-691 裸字符串同样 invalid；:693-697 静态核验 env-contract.ts 源码 not.toMatch(/fetch\\(|http\\.request|https\\.request/)（读源码而非信注释）。正则本体 packages/core/src/env-contract.ts:1387 SENTRY_DSN 形状注释 + :1157 调用点。"
+   },
+   {
+    "id": "RELY-A7",
+    "claim": "模拟「商家付了钱什么都没拿到」且邮件与 Telegram 双双失败 ⇒ 下一趟巡检再次尝试人工渠道（不是永久静音）；Sentry 每趟照收；日志写明这一条谁都没收到",
+    "verdict": "PROVEN",
+    "evidence": "真库 apps/worker/src/jobs/gen-done-empty-db.test.ts:307：founderAlert 回 [sentry sent, email failed, telegram skipped] ⇒ :320 只喊一次、:321 repeat false、:323 expect(actionEvent.count({id: todayPaidForNothingMarkerId()})).toBe(0)（不焊死「已喊过」）；下一趟全渠道送达 ⇒ :334 Sentry 两趟两条、:336 两趟 repeat 都是 false、:337 marker 翻 1。产品实现 apps/worker/src/jobs/gen.ts:1118 delivered = outcomes.some(o => o.channel !== \"sentry\" && o.status === \"sent\")。一处只有代码、无测试断言：第三句「日志写明谁都没收到」由 gen.ts:1135 console.error(\"… reached NOBODY this sweep …\") 实现，测试只 mock 掉 console.error 未断言其文本。"
+   },
+   {
+    "id": "RELY-A8",
+    "claim": "同一天内同一条缺口被巡检反复扫到 ⇒ 人工渠道当天只响一次，之后走 repeat（邮件／Telegram suppressed），Sentry 仍计数",
+    "verdict": "PROVEN",
+    "evidence": "apps/worker/src/jobs/gen-done-empty-db.test.ts:342：先造昨天的送达格 ⇒ :358 今天仍首发一次、:359 repeat false（昨天的回执压不住今天）、:361 今天 marker 1；同日第二趟 ⇒ :364 Sentry 累到 2、:365 expect(optsFor(jobId)[1]?.repeat).toBe(true)。节流主键按 UTC 日分片（同文件 :115 注释，抄 stripe-reconcile alertThrottledDaily）。"
+   },
+   {
+    "id": "RELY-A9",
+    "claim": "构造 Stripe 付款成功但 metadata 不可用（及金额与套餐不符），且告警一条都没送出 ⇒ webhook 仍回 200；台账记 alertDelivered=false；下一趟 stripe-reconcile 重试；某趟送达后翻 true 且不再重试",
+    "verdict": "PROVEN",
+    "evidence": "webhook 半段 apps/web/lib/__tests__/stripe-webhook.test.ts:325（三通道全 failed/skipped）⇒ status 200、ActionEvent id stripe_bad_metadata:evt_… 的 payload.alertDelivered false、actionEventUpdate 未被调用；:349 至少一条 sent ⇒ update 写 alertDelivered:true；:365 重投已送达事件 ⇒ founderAlert 未被调用；:790/:804 包不匹配分支同形。找回半段真库 apps/worker/src/jobs/stripe-reconcile-db.test.ts:637-657（:645 purchaseAlertsRetried 1、:651 alertDelivered true、随后一趟 0 且不再 founderAlert，且 result.skipped 证明它独立于 STRIPE_SECRET_KEY）与 :659-680（仍未送达 ⇒ :674 保持 false，下一趟送达 ⇒ :679 找回 1）。口径注记：该文件 :662 注明本分支判据含 Sentry，与 A7 的排除 Sentry 口径不同——正是 §5 2026-09-12「两套定义」那一行，裁决仍空。"
+   },
+   {
+    "id": "RELY-A10",
+    "claim": "生产备份 cron 在缺必需 env 的情况下启动；补齐后再启动 ⇒ 前者退出码非 0 并点名缺项（不再「起来了但没备份」）；后者照常完成当日备份",
+    "verdict": "PARTIAL",
+    "evidence": "第一句 PROVEN：apps/worker/src/boot-env.test.ts:53-67（缺 DATABASE_URL ⇒ :59 expect(exit).toHaveBeenCalledWith(1)、日志含 \"DATABASE_URL\"）、:69-81（cron 缺用不到的 GENERATION_PROVIDER ⇒ 正常启动）、:83-97（主进程同缺 ⇒ 仍 exit(1)，豁免未泄漏）；接线 apps/worker/src/backup-cron.ts:45 assertWorkerEnv(process.env,{process:\"backup-cron\"})，且是 Sentry.init 之前第一行。第二句 NOT PROVEN：boot-env.test.ts:110-120 只证「补齐后进程能起来」（not.toThrow），没有任何测试或回执证明「完成当日备份」；§5 R3-F08（规格:75）明载这后半句自 2026-09-04 19:01Z 起在 staging 从未成立（BackupRun 1360 failed / 0 succeeded，docs/audits/fullstack-staging-2026-09-14/environment-investigation.md:65），根因修复 PR #1442 已合（920c7774），但 Founder 设定的关闭条件——授权重建部署 staging worker 后出现第一条 status=succeeded 的 BackupRun 且 /api/health 的 backup 离开 missing——全仓无任何回执，environment-investigation.md:67 逐字写明「本文不代为宣告已关闭」。该缺口属 staging（重建部署＋回执），不在 #1480 的生产门内，故不判 PRODUCTION-GATED。"
+   },
+   {
+    "id": "RELY-A11",
+    "claim": "打开 docs/ops/telegram-alerts.md 与 docs/ops/incident-visibility.md ⇒ 列出的告警 key 与代码里的 founderAlert key 逐条对得上（当场 grep 比对）；两份文档里没有把明文 token 写进命令行的示例",
+    "verdict": "PROVEN",
+    "evidence": "packages/core/src/founder-alert-docs.test.ts:55 起：:62-72 逐份文档抽出反引号内的告警 key，每一个都必须能在 founderAlert 调用点源码里逐字 includes(`\"key\"`)，否则红；:76-83 反向锚，断言 \"gen.paid_for_nothing\"、\"stripe.paid_session_unusable_metadata\"、\"stripe.paid_session_pack_mismatch\" 三条主线 key 今天真实存在；:85-90 两份文档 not.toMatch(/bot<TOKEN>/)；:92-97 取 token 步骤须是 read -rs … TOKEN + bot${TOKEN}（不回显、不留 shell 历史）。这条不依赖真库，纯读仓，CI 每次必跑。"
+   }
+  ],
+  "openRegisterRows": [
+   "2026-09-12 — §4 要求的 staging 现场核证结果（#1383 前置，只读）：两个 service 变量层都没有 NODE_ENV；staging worker 的 GENERATION_PROVIDER=byteplus，即 staging 今天跑真付费引擎、不是 runbook 写的 $0 mock，「离线演示走 staging」这条退路在别处已先失效——原文写明「呈 Founder 另裁」。裁决/批准格：空（规格:72）。",
+   "2026-09-12 — 「送达」出现两套定义：§1.4 写「至少一条通道 sent（含 Sentry）」，RELY-A7 要求「邮件与 Telegram 双双失败⇒下一趟再试人工渠道」；实现按 A7 优先（gen 告警排除 Sentry，gen.ts:1118），Stripe 购买告警沿用含 Sentry 口径（stripe-reconcile-db.test.ts:662）。原文「两套口径待 S5 统一裁」。裁决/批准格：空（规格:73）。",
+   "2026-09-12 — RELY-A10 生产现场核证（只读键名）：九个必需变量全在位，但变量层无 NODE_ENV 键，backup-cron 容器运行时 NODE_ENV 未核；若运行时非 production 则 A10 的 exit(1) 不会触发，原文写「S5 演示前需另核」。裁决/批准格：空（规格:74）。",
+   "2026-09-16 — 复核修正三条（承「后台可丢弃单条死信」，PR #1461 已合入 f0835808）：① 死信清单账本改报两个数（真花掉的／还押着的）＋动作种类；② 取消成功但审计写不下去时多一种结果 discarded-unaudited（只带失败分类的 Sentry 告警，不带 payload）；③ 账本读失败改报 unreadable，不再与「不涉及钱」收敛成一句。裁决/批准格：空（规格:80）。"
+  ],
+  "deliverable": "未交付",
+  "why": "十一条验收里十条 PROVEN，且都由 origin/main 上点名的自动测试逐条断言（六条跑真库、真钱路、真工厂，不是 mock 调用计数），CI 当前绿。但两件事挡住「已交付·归档」：(1) RELY-A10 第二句「补齐后照常完成当日备份」至今没有任何一处证明过——规格自己的 §5 R3-F08 行把它登记为「在 staging 从未成立」（1360 次失败、0 次成功），Founder 2026-09-15 的裁决不是接受这个缺口，而是授权用「重建部署后第一条 succeeded BackupRun」来关闭它，而那条回执在仓内、审计目录、任何一份 staging 证据里都不存在，环境调查文件还逐字声明不代为宣告关闭；这道缺口是 staging 的部署＋回执，不属 #1480 的生产门，所以也不能判 PRODUCTION-GATED。(2) §5 变更登记十行里有四行裁决格为空，其中 2026-09-12「送达两套定义」那一行直接影响 A7 与 A9 的判据口径（两条今天实现成两套语义），2026-09-12 生产 NODE_ENV 未核那一行直接影响 A4／A6／A10 开机闸在真生产上到底会不会触发。按本仓库规矩，空裁决格＝未决裁决＝blocker，S1 冻结票 #1371 现在不能关。",
+  "blockers": [
+   "RELY-A10 后半句无任何证据：需 Founder 授权按 #1442（已合 920c7774）重建部署 staging worker，取到第一条 status=succeeded 的 BackupRun，并核 /api/health 的 backup 字段离开 missing，把回执写回 §5 R3-F08 行（规格:75）。在此之前不得宣称备份这条路闭合——这关系到商家付费产物与信用账本至今在异地冷副本层零覆盖。",
+   "§5 2026-09-12「送达」两套定义未统一裁（规格:73）：gen 告警排除 Sentry、Stripe 购买告警含 Sentry，今天的测试同时钉住了这两套。需 Founder 裁一条口径，再把被改的那一侧的测试对齐。",
+   "§5 2026-09-12 RELY-A10 生产现场核证未闭（规格:74）：生产变量层无 NODE_ENV 键，backup-cron 容器运行时 NODE_ENV 未核；若非 production，A4／A6／A10 的开机拒绝在真生产上根本不触发。需一次只读现场核证（属 #1480 生产门范畴，须 Founder 对该次动作授权）。",
+   "§5 2026-09-12 staging 现场核证那一行未裁（规格:72）：staging worker 跑的是 byteplus 真付费引擎而非 runbook 写的 $0 mock，规格 §4 里「离线演示走 staging」的退路已失效，原文明写呈 Founder 另裁。",
+   "§5 2026-09-16 复核修正三条未裁（规格:80）：代码已随 PR #1461 合入主干，登记行的裁决格仍空——已做但未获记录裁决，需 Founder 追认或裁定。",
+   "程序性：S1 冻结票 #1371 仍 OPEN（label spec「永不自动关闭」），按规矩只在规格转「已交付·归档」时关闭；上述任一项未闭前不得关票。"
+  ]
+ },
+ {
+  "spec": "docs/specs/share-preview.md — 客户预览链接（公开面）收口规格书（S1），前缀 SHARE，冻结票 #1370（首条「S1 批准」由 Founder 本人 2026-09-12 亲签，后两条代录已被亲签取代）。核证基线：worktree detached 于 origin/main = bd5877c3（#1473），required CI 绿（quality-on-main run 35380789525 success @ bd5877c3；e2e run 35415358764 success @ bd5877c3，2026-09-19T02:20Z）。本地未跑测试：worktree 无 node_modules，A3/A4/A9/A12/A1/A2 那几支还要真库，装依赖不算 cheap —— 一律 NOT RUN，改以 origin/main 当前绿 CI 为准。CodeGraph: not used — 我在 worktree 里，按项目规矩诚实回退 /usr/bin/grep 与直接读文件。",
+  "statusLine": "> 状态: 已冻结 · v1　（原文第 3 行；第 4 行「> 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1370 Founder 评论「S1 批准 share-preview.md」(2026-09-12)」；第 5 行「> 规格前缀: SHARE」）。状态行**尚未**转「已交付·归档」。",
+  "rows": [
+   {
+    "id": "SHARE-A1",
+    "claim": "对 ≥200 MB 对象发 `Range: bytes=0-1048575` → 206 + Content-Range，正文正好 1 MiB；常驻内存不随对象大小上涨（对照旧码整块缓冲）",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/app/api/media/pub/__tests__/route-stream-range.test.ts:18 `const OBJECT_SIZE = 300 * 1024 * 1024;`（≥200 MB，按区间生成、不真分配）；:39 假驱动对无区间调用直接 `throw new Error(\"whole-object read — the proxy must never buffer a 300 MB object for a Range request\")` —— 「整块缓冲」被机械化成一条会红的断言，这就是规格那句「对照旧码」的可量形式；:101-103 `expect(res.status).toBe(206)` / `expect(headersOf(res)[\"Content-Range\"]).toBe(`bytes 0-${MIB-1}/${OBJECT_SIZE}`)` / `Content-Length` = 1 MiB；:112-113 `expect(mockReadStream).toHaveBeenCalledTimes(1)` + `toHaveBeenCalledWith(KEY, { start: 0, end: MIB - 1 })`；:131-133 越界 416 + `bytes */size` 且 `mockReadStream` 一次未调。存储层同一行由 packages/storage/src/read-stream-range.test.ts:52-80 独立钉住。staging 只到形状：证据文件 stepB.b3b —— 206、`contentRange: \"bytes 0-1023/321396\"`、contentLength 1024，文件自陈「the spec's ≥200 MB object and the resident-memory half were NOT exercised (no such object on staging)」。NOT RUN（需 node_modules + 真库）；CI 绿 @ bd5877c3。"
+   },
+   {
+    "id": "SHARE-A2",
+    "claim": "普通浏览器不带 Range → 200 流式，页面与今天一致",
+    "verdict": "PROVEN",
+    "evidence": "route-stream-range.test.ts:147-166 `expect(res.status).toBe(200)` + Content-Type image/jpeg、`Cache-Control: private, no-store`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`Accept-Ranges: bytes`，且 :150 断言传给 storage 的 range 是 undefined；:175-176 `expect(mockSizeOf).not.toHaveBeenCalled()` + readStream 恰好一次（调用次数与改造前一样）；:189 多段 Range 退回 200 而不是报错。真服务器收据：staging 证据 stepB.b3 —— 匿名无 cookie GET `/api/media/pub/<mediatoken>` 答 200 image/jpeg、321,396 字节真 JPEG（sha256 d0734f1c…）、`accept-ranges: bytes`。NOT RUN；CI 绿。"
+   },
+   {
+    "id": "SHARE-A3",
+    "claim": "限流计数存储打挂后拉合法预览媒体 → 429 + Retry-After、不吐字节；存储恢复后同一地址立刻 200",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/app/api/media/pub/__tests__/route-rate-limit-fail-closed.test.ts:85-93 `expect(res.status).toBe(429)`、`expect(headersOf(res)[\"Retry-After\"]).toBe(String(MEDIA_PROXY_DEGRADED_RETRY_AFTER_SECONDS))`、`expect(mockReadStream).not.toHaveBeenCalled()` + `mockSizeOf` 也没调（一个字节都没读）；:95-104 恢复分支 `expect((await withCounterTableMissing(() => call(ip))).status).toBe(429)` 后 `expect(res.status).toBe(200)`，并核对故障那次没记账、恢复那次记上（`rows.map(r => r.count)` 等于 `[1]`）。fail-closed 的根在 packages/db/src/rate-limit.ts:94（注释明写 SHARE-A3 2026-09-12 把它从 allow 改成 deny）。用真库，NOT RUN；CI 绿 @ bd5877c3。staging 未验（证据文件 notProven 明列 A3，打挂 staging 限流存储超出只读走查范围）。"
+   },
+   {
+    "id": "SHARE-A4",
+    "claim": "成功拉过一次的客户，在短缓存窗口内遇存储打挂仍 200；窗口过后 429",
+    "verdict": "PROVEN",
+    "evidence": "route-rate-limit-fail-closed.test.ts:123-129 先真计数器放行一次 200，随即 `withCounterTableMissing` 重拉同址仍 `expect(res.status).toBe(200)`；:131-142 用 `vi.useFakeTimers({ toFake: [\"Date\"] })` 把时钟推过 `MEDIA_PROXY_DEGRADED_GRACE_MS + 1_000` 后 `expect(res.status).toBe(429)` 且带 Retry-After；:144-147 兜底只归成功过的那个出口地址（`198.51.100.206` 200 / `203.0.113.206` 429）。窗口语义写在 apps/web/lib/media-proxy-access.ts:29-37（「成功一次给一分钟，不续期」）。NOT RUN；CI 绿。staging 未验（同 A3 前置）。"
+   },
+   {
+    "id": "SHARE-A5",
+    "claim": "改文案后客户刷新旧链接看到新文案，且页面有一行 `Content may have changed since this link was shared.`",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/app/schedule/share-preview/__tests__/page.test.tsx:58 `expect(html).toContain(\"Content may have changed since this link was shared.\")`；:63-66 换成 `caption: \"Edited after the link was shared.\"` 后同时断言新文案与那行说明一起出现（证「两者之间没有缓存层」）；:71 反向围栏——unavailable 态不出现该句。实时读的根在 apps/web/app/schedule/share-preview/page.tsx:120 注释与实现（每次访问读当前字段，不是快照）。真服务器收据：staging 证据 acceptanceClauses.proven 第 2 条（渲染出的 markup 里带这一行）。NOT RUN；CI 绿。"
+   },
+   {
+    "id": "SHARE-A6",
+    "claim": "客户打开链接：地址栏是不含 token 的干净地址；遥测（Sentry beforeSend 抓到的事件）里的任何 URL 都不含 token",
+    "verdict": "PARTIAL",
+    "evidence": "【干净地址半句 PROVEN】apps/web/app/s/__tests__/route.test.ts:35-38 `expect(res.status).toBe(303)`、`expect(locationOf(res)).toBe(SHARE_PREVIEW_COOKIE_PATH)`、`.not.toContain(\"?\")`、`.not.toContain(token)`；:46-49 cookie httpOnly/sameSite lax/path 限定；:84-90 R3-F31 回归（以 `http://localhost:8080` 为 origin 调用仍答相对路径）。真服务器判定：e2e/journeys/30-share-link-entry.spec.ts:36-55（303、Location 全等相对路径、`not.toContain(\"localhost\")`、`not.toContain(\"://\")`、Set-Cookie 带 token 且 httponly）与 :66-73（旧式 `?t=` 答 307、正文不含 `__next-page-redirect`、不含 `/login`、长度 < 200）—— e2e 于 bd5877c3 绿（run 35415358764）。staging 收据：证据文件 b1（303、`locationHeader: \"/schedule/share-preview\"`、`locationContainsHostname: false`、`__Secure-sp_t` Secure HttpOnly SameSite=lax path 限定）与 b4（307、276 字节、`__next-page-redirect`/`/login`/`Go to sign in` 计数均 0）。【浏览器遥测半句 PROVEN】apps/web/lib/__tests__/sentry-browser.test.ts:50-55 `expect(scrubbed.request!.url).toBe(\"https://app.example/s/[redacted]\")`（且断言这只函数真的挂在 init 参数的 beforeSend 上）、:94-127 四条形状围栏。【服务器遥测半句 NOT PROVEN】apps/web/instrumentation.ts 的 Sentry.init 在 origin/main 上没有 beforeSend —— 这正是规格 §5 第二行「残余」段自己记的缺口「SHARE-A6 后半句只在浏览器遥测上成立」。修在**未合入**的 PR #1482（分支 claude/share-token-scrub-server-r3，head a8a379d0；`git merge-base --is-ancestor a8a379d0 origin/main` = 否），该 PR 同时给 §5 加第三行登记。staging 亦未验（证据文件 notProven 列「SHARE-A6 (telemetry half) — no Sentry event capture was inspected」）。"
+   },
+   {
+    "id": "SHARE-A7",
+    "claim": "客户复制了图片地址后商家 Revoke → 那条图片地址当场 404（不是十分钟后）",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/app/api/media/pub/__tests__/route.test.ts:139-145 活行放行且 `expect(mockRowLive).toHaveBeenCalledWith(\"row_1\", \"orgA\")`；:147-153 `mockRowLive` 返回 false 时 `expect(res.status).toBe(404)` + `expect(mockReadStream).not.toHaveBeenCalled()`；:155-160 不带 shareRowId 的发布 worker token 从不触碰这道闸（行为一字不变）。shareRowId 受 HMAC 保护由 packages/token-crypto/src/index.test.ts:87 钉住。真服务器收据（最强的一条）：staging 证据 stepC —— 14:08:50Z 同一条 `/api/media/pub/<mediatoken>` 答 200，Otto 的 revoke 在 14:11:01.811 写入 revokedAt，14:11:24Z 同一条地址答 404，而该媒体 token 自己的 10 分钟 TTL 还剩约 7.4 分钟，所以 404 来自撤销而不是过期。NOT RUN；CI 绿。"
+   },
+   {
+    "id": "SHARE-A8",
+    "claim": "撤销后刷新预览页，仍是同一句「This preview isn't available」，与过期／伪造无从区分",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/lib/__tests__/share-preview-view.test.ts:208-218 —— 先证明撤销前它是活的（`toMatchObject({ state: \"post\" })`），再置 `db.tokens[0]!.revokedAt`，两次刷新都 `expect(await loadSharePreview(token, NO_HEADERS)).toEqual(UNAVAILABLE)`；同一 UNAVAILABLE 常量被 :196-239 的「换密钥签」「过期」「有 HMAC 无铸链行」「帖子已删」「帖子从不存在」「本机无 SHARE_PREVIEW_SECRET」六条共用 —— 不可区分是用同一个对象断言出来的，不是读代码相信的。staging 收据：stepC.postRevokeChecks 第 2 条与 b5 伪造 token 页面，两处可见文案逐字相同（「This preview isn't available The link may have expired…」），且撤销后页面 `mediaUrlsInBody: 0`。NOT RUN；CI 绿。"
+   },
+   {
+    "id": "SHARE-A9",
+    "claim": "匿名连拉同一预览媒体 100 次 → credits 账本与交易表行数一字不变",
+    "verdict": "PROVEN",
+    "evidence": "apps/web/app/api/media/pub/__tests__/route.test.ts:61-69 —— 字面 100 次（`for (let i = 0; i < 100; i++) await call(token, \"198.51.100.200\")`），前后 `prisma.creditLedger.count()` 与 `prisma.creditAccount.count()` 逐一相等；用真库，不是读代码。staging 只到 13 次匿名请求（证据文件 partial 第 2 条自陈「this is not the spec's 100-pull run」），但 stepD 的四行新账本增量全部 `idempotencyKey: otto-stream:*`（两次 Otto 对话 2.5 + 2.1 credits），`generationLedgerRows: 0`、`genJobRowsCreated: 0`、`providerSpendUsd: 0` —— 匿名流量一行没写。NOT RUN；CI 绿。"
+   },
+   {
+    "id": "SHARE-A10",
+    "claim": "拿 owner A 的媒体 token 改成指向 owner B 的 key 再请求 → 404，双租户测试覆盖",
+    "verdict": "PROVEN",
+    "evidence": "验收行自己指定的证明形式就是「双租户测试」：apps/web/app/api/media/pub/__tests__/route.test.ts:100-106 —— `signMediaToken(\"orgA\", `u/orgB/${HASH}.jpg`, …)` 后 `expect(res.status).toBe(404)` + `expect(mockReadStream).not.toHaveBeenCalled()`（keyOwnerMatches 这一支被专门打中）；同文件 :108-113 换密钥签、:115-122 密钥未设两条把「404 来自哪一支」分开钉住。注意 staging 从未真跑过这一行：证据文件 notProven 明写「a cross-tenant re-pointed media token was not minted or replayed」，§5 第一行也说 2026-09-17 那轮观察到的 404 命中的是「密钥未配置」分支。判 PROVEN 是按验收行的字面证明形式，不是按 staging。NOT RUN；CI 绿。"
+   },
+   {
+    "id": "SHARE-A11",
+    "claim": "反解链接里的 token，注释与测试声明一致：如实写明可读出 ownerId／postId／到期／storage key；`share-preview-view.ts` 那句相反声明已删",
+    "verdict": "PROVEN",
+    "evidence": "packages/token-crypto/src/index.test.ts:138-143 `JSON.parse(Buffer.from(payload, \"base64url\").toString(\"utf8\"))` 断言等于 `{ o: \"org_1\", p: \"post_9\", exp: … }`；:95-100 媒体 token 同样 `toEqual({ o: \"org_1\", k: KEY, exp: … })`。注释侧：packages/token-crypto/src/index.ts:61 的 HONEST NOTE、apps/web/lib/share-preview-view.ts:25-35 的 HONEST CORRECTION —— 原句「no id of anything … never returned」现在只作为被撤回的引文出现在更正段里（/usr/bin/grep 核实：文件里该串仅出现在 :26 的更正说明中，不再是生效声明）。staging 收据：acceptanceClauses.proven 末条，真链接的 payload 明文解出 `{\"o\":\"founder\",\"p\":\"01M2TDCKJGH4ACYVSHQT4RSFJ8\",\"exp\":1790345142799}`。NOT RUN；CI 绿。"
+   },
+   {
+    "id": "SHARE-A12",
+    "claim": "限流存储打挂时「限流存储不可用」告警经 founderAlert 真送达（有送达回执，不是只记日志）",
+    "verdict": "PROVEN",
+    "evidence": "route-rate-limit-fail-closed.test.ts:151-161 `expect(mockFounderAlert).toHaveBeenCalledTimes(1)`、`expect(alert.key).toBe(\"media_proxy.rate_limit_store_unreachable\")`，回执那一句 `expect(console.warn).toHaveBeenCalledWith(expect.stringContaining(\"rate-limit store alert delivered — sentry=sent email=sent telegram=skipped\"))` —— 逐通道结果，正是验收要的「有送达回执」；:163-168 兜底放行那次也报警（客户没事不等于存储没事）；:170-175 同一场故障连发三次只派发一次（不变报警风暴）。NOT RUN（真库）；CI 绿 @ bd5877c3。staging 未验（notProven 明列）。"
+   }
+  ],
+  "openRegisterRows": [
+   "§5 第 1 行（2026-09-17，「staging 无法验证本规格任何一行」）—— 裁决/批准格**字面为空**，行内也没有任何批准句。实质上这件事已经有结论、只是没写回规格：docs/audits/fullstack-staging-2026-09-14/report-round3.md:211 的拍板表第⑤条记「设」（命令由 Founder 自己跑、不回显），同文件 :266 记 2026-09-18 约 13:45Z 密钥落地的只读核对（web 的 MEDIA_PROXY_SECRET／SHARE_PREVIEW_SECRET 各 64 字符，web/worker/worker-compute 三处 MEDIA_PROXY_SECRET 的 sha256 前缀同为 0a19139e0c22），随后 REAL-10／11 真的在 2026-09-18 跑通（本次核证引用的那份旅程证据）。缺的是把这句裁决写进规格这一格。",
+   "§5 第 2 行（2026-09-17，R3-F31／R3-F32「客户面入口两处在真服务器上不兑现」）—— 裁决/批准格**字面为空**；批准句写在「想法」格末尾（「批准: 2026-09-18 Founder 对谈追认（原话「这四条追认」…）」）。按「空格＝未决」的字面判定它仍是一条未决行，实质上已获追认，只是位置不对（应搬进裁决格）。"
+  ],
+  "deliverable": "未交付",
+  "why": "十二条验收行的**实质**在 origin/main 上都有当场可查的证明：每一行都有一支按编号命名、断言该行原话的测试（我逐条引了断言原文与行号），其中 A6 的干净地址半句另有真服务器判定（e2e journey 30，随 bd5877c3 绿），A2/A5/A6/A7/A8/A11 另有 2026-09-18 staging 真旅程收据（含撤销 40 秒内由 200 转 404 这条最难伪造的时间证据）。所以这份规格离「已交付·归档」只差记账，不差工程。判 未交付 的原因只有两类，都不是 PRODUCTION-GATED：①§5 两行的裁决/批准格字面全空 —— 按你给的判定口径「空格＝未决＝blocker」，两行都算未决（实质上一行的裁决躺在走查报告的拍板表里、另一行的批准句躺在想法格里，写回即可）；②SHARE-A6 的服务器遥测那半句不在主干上 —— 服务端 Sentry init 至今没有 beforeSend，修法在**未合入**的 PR #1482（a8a379d0 不是 origin/main 的祖先），而这条缺口正是 §5 第 2 行「残余」段自己记下的，属于「PARTIAL 且缺的那半没有以 Founder/受托裁决的形式记在 §5 为已接受」，因此不能按 PARTIAL 放行。另外状态行仍是「已冻结 · v1」，#1370 也因此还不该关。顺带提一句判定口径上的诚实处：A1 的「≥200 MB 真对象」在 staging 上确实跑不出来（那边最大对象 321 KB），但它不构成 blocker —— 单测用 300 MB 的虚拟对象把「整块缓冲」做成一件会当场炸的事（route-stream-range.test.ts:18 与 :39），这就是那句「对照旧码整块缓冲」的可检查形式，我按验收行的字面证明形式判 PROVEN。A10 同理：验收行写的证明形式就是「双租户测试」，测试在，故 PROVEN，但 staging 从未真正打中 keyOwnerMatches 那一支，这一点我在行内如实标了。",
+  "blockers": [
+   "§5 第 1 行（2026-09-17 staging 密钥缺失）裁决/批准格为空 —— 需把已有结论写回：2026-09-18 Founder 自己设上两把密钥（出处 docs/audits/fullstack-staging-2026-09-14/report-round3.md:211 第⑤条与 :266 的落地核对），REAL-10／11 随后在 staging 真跑通。纯记账，docs-only。",
+   "§5 第 2 行（R3-F31／R3-F32）裁决/批准格为空 —— 批准句「批准: 2026-09-18 Founder 对谈追认（原话「这四条追认」）」写在想法格末尾，需搬进裁决格。纯记账，docs-only。",
+   "SHARE-A6 的服务器遥测半句不在 origin/main：apps/web/instrumentation.ts 的 Sentry.init 无 beforeSend，一条服务端错误只要请求地址是 /s/<token>、/api/media/pub/<token>、?t= 或带 __Secure-sp_t cookie，token 就原样送去第三方。修法与其 §5 登记行都在**未合入**的 PR #1482（分支 claude/share-token-scrub-server-r3，head a8a379d0，MERGEABLE，scope/typecheck/build/lint/checks 已绿、e2e 与 tests 未回报）。该 PR 合入前，A6 只能判 PARTIAL。",
+   "PR #1482 会再给 §5 加第 3 行（裁决格同样留空、批准句同样写在想法格里，原话「我要你现在给我做任何需要我做的决定」：本版修）—— 归档前这三行的裁决格要一起补齐，否则合入之后立刻又多一条未决行。",
+   "状态行仍为「> 状态: 已冻结 · v1」，未转「已交付·归档」；按项目规矩 S1 冻结票 #1370 也因此还不该关。",
+   "非阻断但须知会：生产面从未激活本规格。GitHub #1480（生产部署门）的「缺失变量」一项只点名 SENTRY_DSN 与 PUBLIC_BASE_URL，**没有**列 MEDIA_PROXY_SECRET／SHARE_PREVIEW_SECRET；而 packages/core/src/env-contract.ts:541-549 把 SHARE_PREVIEW_SECRET 定为 optional。生产不配这两把密钥，整条分享面会在密钥判断处 fail closed（等于功能不存在，不是泄露）。建议把这两把密钥补进 #1480 的门上清单，免得 GO 之后商家发出的链接在生产上一律打不开。"
+  ]
+ },
+ {
+  "spec": "docs/specs/media-durability.md §2 验收表 (spec lines 49–59, verbatim):\n\n| 编号 | 商家做 X | 看到 Y |\n|---|---|---|\n| MEDIA-A1 | 操作者在 staging 正常生成/上传一个媒体对象，然后跑手册里的只读核验命令 | 备份桶里出现同键副本、哈希与主桶一致；输出原样贴进 `docs/runbooks/media-restore.md` 的演练记录（含日期） |\n| MEDIA-A2 | 操作者当场查两个备份桶的 lifecycle 规则与差集比对命令输出 | 备份桶无自动删除规则（multipart 中止规则除外）、手册写明「备份桶全量保留，月度看一眼成本」；主桶与备份桶差集为空（存量回填已完成） |\n| MEDIA-A3 | Founder 随手挑一个人照 `docs/runbooks/media-restore.md` 从头走一遍，不许问人 | 手册自足：定位对象键 → 在备份桶找到副本 → 恢复命令 → 哈希比对 → 回填 RTO，五步都能照做，没有一步依赖口头知识 |\n| MEDIA-A4 | 在 staging 桶里删掉一个「商家已付费产物」的对象，按手册从备份桶恢复它（沿用 v1 已裁：演练环境选 staging，生产桶零删除） | 对象回到原键，恢复件与原件的哈希一致，产物页面能重新打开；全过程没有产生任何新的生成 job |\n| MEDIA-A5 | 打开 `docs/runbooks/media-restore.md` 末尾的演练记录 | 有一行完整留证：日期 / 执行者 / 对象键 / 实测 RTO / 命令输出片段——与 #870 数据库演练同规格 |\n| MEDIA-A6 | 演练前后各对该产物所属租户的 `CreditLedger` 拍一次快照并比对 | 逐笔一致：无新增 RESERVE／SETTLE／REFUND，商家未被二次扣费——钱守恒 |\n| MEDIA-A7 | 对生产桶与生产备份桶只做只读核验（复制路径已接、差集状态），不删任何对象 | 核验输出显示生产侧复制已生效，且演练记录里写明「生产桶本次零删除」 |\n| MEDIA-A8 | Founder 打开 `docs/specs/beta-gate.md` GATE-A6，念那句判定 | 由 MEDIA-A4 与 MEDIA-A5 的证据满足；beta-gate.md §5 变更登记里有一行指向本规格（beta-gate 现为草稿，随场⑥冻结；本规格不改它的正文条款） |\n| MEDIA-A9 | 在演练里故意用一个不属于目标租户的对象键试恢复 | 手册要求的前缀核对拦住它，操作停在核对那一步；手册正文写死「只按单键恢复，禁止整桶回滚」 |\n\n§5 变更登记 (spec lines 78–81): 2 rows, both 裁决/批准 cells filled (Founder 2026-09-13 对谈裁定选项 (a); 第二行随上行裁定生效). No empty cell.\n\nVerification baseline: worktree detached at origin/main = bd5877c3 (\"[MONEY] … REAL-08 … (#1473)\"). Local test run NOT RUN — this worktree has no node_modules (`npx vitest` → ERR_MODULE_NOT_FOUND 'vitest'), and installing is a write I will not make as a sealed verifier. Relied on green CI at that exact sha: post-merge run 35380789525, conclusion success, headSha bd5877c3cdb87edc38363c6116e31b3713e71fb8, 2026-09-18T18:32:37Z; that workflow runs `pnpm quality` (.github/workflows/post-merge.yml:120) whose tests leg is `gate tests \"tests\" pnpm -r test` (scripts/ci/quality.sh:1062), i.e. every workspace's vitest, including packages/storage and apps/web. e2e run 35415358764 also success on the same sha.",
+  "statusLine": "> 状态: 已冻结 · v2   （spec line 3；随后 line 4 = 「> 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1372 Founder 评论「S1 批准 media-durability.md」(v1 2026-09-12；v2 2026-09-13)」。#1372 首条评论为 Founder 亲签，是权威批准记录；#1372 与实施票 #1385 目前均 OPEN。）",
+  "rows": [
+   {
+    "id": "MEDIA-A1",
+    "claim": "staging 新写/上传一个媒体对象后，备份桶出现同键同哈希副本，且只读核验输出原样贴进 media-restore.md 演练记录（含日期）",
+    "verdict": "PARTIAL",
+    "evidence": "代码半边 PROVEN（CI 绿覆盖，本地 NOT RUN）：packages/storage/src/r2-media-backup-replication.test.ts:102-104 断言 `expect(backup!.store.has(key)).toBe(true); expect(backup!.store.get(key)!.body).toEqual(bytes); expect(key).toContain(contentHash)`；失败语义 :129-136 断言两次失败后主写仍成功且落一条 `{event:\"media_backup_replication_failed\"}`；dedup-skip :157-162；直传收尾补刀 :276 `expect(shared.get(\"content-backup\")?.get(key)?.body).toEqual(bytes)` 与 :292 `path:\"finalize-copy\"`；web 侧 apps/web/lib/__tests__/upload-finalize-backup-copy.test.ts:106-107 `expect(mockStorage.copyToBackup).toHaveBeenCalledTimes(1)` / `toHaveBeenCalledWith(EXPECTED_KEY)`。实现锚点 packages/storage/src/index.ts:367 `await this.replicateToBackup(key, bytes, ext)` 与 :430 `copyToBackup`。缺的半边：演练记录唯一填好的一行 docs/runbooks/media-restore.md:182 是 2026-09-13 那次，对象来自存量回填（该备份副本 lastModified 至今仍是 2026-09-13T10:20:54Z），不是走写路径新写的；真正证明写路径在 staging 生效的读数是今日 A3 盲走报告里的差集 307/307、missing 0（回填当时只有 280，故有 27 个是激活后新写并自动复制的）——但这条读数只存在于 reports/staging-r3-media-a3/blind-walk.json，没有按本行要求贴进 media-restore.md 演练记录。"
+   },
+   {
+    "id": "MEDIA-A2",
+    "claim": "备份桶无自动删除 lifecycle 规则（multipart 除外）、手册写明「备份桶全量保留，月度看一眼成本」、主备差集为空",
+    "verdict": "PARTIAL",
+    "evidence": "差集半边 PROVEN，两次独立读数：docs/runbooks/media-restore.md:182 「存量回填 280/280 → 差集 0」（2026-09-13）；今日 blind-walk.json media_a2_precondition_diff 「content bucket has 307 object(s) under \"u/\" / already backed up (same key, same size): 307 / missing from backup (the diff): 0」exit 0（2026-09-19T09:48:38Z→09:49:32Z），演练后复查同为 307/307。缺的两处：(1) 手册措辞——`/usr/bin/grep -n '全量保留|月度|成本' docs/runbooks/media-restore.md` 只命中 line 175 的无关句，全文没有「备份桶全量保留，月度看一眼成本」；该句只在另一份手册 docs/runbooks/r2-bucket-token-rotation.md:269-271（「不设自动删除的 lifecycle 规则(multipart 中止规则除外),全量保留(验收 MEDIA-A2)」）出现，且没有月度成本那一半，而本行点名的是 media-restore.md。(2) 两个备份桶 lifecycle 规则的当场只读核验没有留证：#1385 2026-09-13 控制台枚举记的是两个**内容**桶（fikirtive-staging / fikirtive-production）的 Settings 十四区块，当时备份桶尚未建；此后无任何备份桶 lifecycle 读数。"
+   },
+   {
+    "id": "MEDIA-A3",
+    "claim": "外行照 media-restore.md 从头走一遍，五步都能照做，没有一步依赖口头知识",
+    "verdict": "NOT PROVEN",
+    "evidence": "盲走今日已真跑完（/Users/winnin/.claude/projects/-Users-winnin-Desktop-FIKIRTIVE--claude-worktrees-moneyprinterturbo-engine-0042eb/1a82113d-380a-4e30-bfcf-29cb998b4a6f/reports/staging-r3-media-a3/blind-walk.json，status COMPLETE），verdict 字段原文 `\"PARTIAL\"`，acceptance_against_MEDIA_A3.verdict 原文「PARTIAL — the restore procedure is sound and proven end to end; the document is not yet self-sufficient for someone who has never done it.」两项判 FAIL：prerequisites_before_step1「FAIL — 前提 §1 does not say where credentials live (AMBIG-1) and 前提 §2 is factually wrong about dependencies (AMBIG-3); both stop a blind walker cold」（AMBIG-3: `@fikirtive/core` 的 exports 指向 ./dist，只 `pnpm install` 会以裸 MODULE_NOT_FOUND 停住，必须先 `pnpm --filter @fikirtive/core build`，手册前提 §2「仓库 pnpm install 过就行」是错的）；drill_specific「FAIL — no loss-simulation step or guard rails exist for the drill MEDIA-A3 itself mandates (AMBIG-2)」。另 step4 判 PARTIAL：手册第 4 步末句要求访问 `/files/<key>` 确认页面能重开，该路由未登录返回 307 → /login，手册没给 staging 主机名也没给替代核验（AMBIG-6）。手册文本对照：docs/runbooks/media-restore.md:34-45 只列 8 个变量名与「与部署环境一致」，未说值在哪（Railway project b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d / staging / web）；:46-47 即 AMBIG-3 那句；:59-60 点名的 `AssetVariant` 表与 `key` 列在 packages/db/prisma/schema.prisma 不存在（AMBIG-4）。"
+   },
+   {
+    "id": "MEDIA-A4",
+    "claim": "staging 删掉一个已付费产物再按手册恢复：回到原键、哈希一致、产物页面能重开、全程零新生成 job（生产零删除）",
+    "verdict": "PROVEN",
+    "evidence": "两次真跑。① docs/runbooks/media-restore.md:182（2026-09-13）：`found backup copy: … (2683441 bytes) in fikirtive-staging-backup` → `RESTORED … — hash verified (51c55aed…)`，真删证据 `deleted: … is now GONE from fikirtive-staging`，RTO 1.6s，「生产桶本次零删除」。② 今日 blind-walk.json 用商家对象复跑（org_cmts923pm00002mptbuoube0j 的 ee0273a5….png，101169 字节）：verification.hash `recorded_before == verified_after == ee0273a5…`, match true；ETag 前后同为 1666f2985e45468e2ea5308ed174c494；size 101169/101169；content_type image/png/image/png；backup_bucket_unchanged true（备份副本 lastModified 未动，差集前后 307/307）；production_touched false。零新生成 job 由 A6 的账本逐笔不变佐证。唯一保留意见：本行「产物页面能重新打开」那一小段今日不是按字面走的（`/files/<key>` 未登录 307 → /login，见 A3 的 AMBIG-6），走查者替换为经手册自带工具的 HEAD（闸 2 「already exists」拒绝）＋直接 S3 HEAD 比对 size/ETag/ContentType；这属于手册措辞缺陷，已计入 A3，不动摇本行的字节级判定。"
+   },
+   {
+    "id": "MEDIA-A5",
+    "claim": "media-restore.md 末尾演练记录有一行完整留证：日期/执行者/对象键/实测 RTO/命令输出片段",
+    "verdict": "PROVEN",
+    "evidence": "docs/runbooks/media-restore.md:180-182：表头 `| 日期 | 执行者 | 对象键 | 实测 RTO | 命令输出片段 |`，已填行 `| 2026-09-13 | agent（Founder 授权「你在处理」，本对谈记录在 #1385） | u/founder/51c55aedae60a3ac26cbb52685a2bcc46278223bb3de9ad53db9d93ceeae9d49.mp4 | 1.6s | \\`found backup copy: … in fikirtive-staging-backup\\` → \\`RESTORED … — hash verified (51c55aed…)\\`；…钱守恒：founder 账本前后均 127 笔/99998514/0；存量回填 280/280 → 差集 0；生产桶本次零删除 |`，五个字段齐备。附带缺口（不判红本行）：今日第二次演练的行尚未追加——blind-walk.json 的 drill_record_row_ready_to_paste 已备好（RTO 1.5s／人工排查段约 7m14s），走查者被限只读故未写入；同报告 AMBIG-7 指出第 5 步要求「两段分开报」而表只有一列 实测 RTO，第二个数字无处可落。"
+   },
+   {
+    "id": "MEDIA-A6",
+    "claim": "演练前后该租户 CreditLedger 逐笔一致，无新增 RESERVE/SETTLE/REFUND，商家未被二次扣费",
+    "verdict": "PROVEN",
+    "evidence": "两次独立快照比对。① docs/runbooks/media-restore.md:182：「钱守恒：founder 账本前后均 127 笔/99998514/0」。② 今日 blind-walk.json verification.money_unchanged：result true，creditledger_count_org 23 → 23，creditledger_count_all 290 → 290，balanceDelta_sum_org「100 -> 100」，reservedDelta_sum_org「0 -> 0」，credit_account.updatedAt「2026-09-18 15:11:08.9 -> unchanged (no write of any kind)」；同段 db_rows_unchanged 亦为 true（目标 Asset 行 md5 2560328c79a8a19071b4d0ad67b65cef 前后相同，deletedAt 仍 null）。取数方式为 `BEGIN READ ONLY … ROLLBACK`，口令经 shell 变量从不打印。"
+   },
+   {
+    "id": "MEDIA-A7",
+    "claim": "对生产桶与生产备份桶只做只读核验（复制已生效、差集状态），生产零删除",
+    "verdict": "PRODUCTION-GATED",
+    "evidence": "生产侧复制尚未激活，核验按 Founder 的部署门顺延。#1385 2026-09-13 评论原文：R2_MEDIA_BACKUP_* 三个变量「已落 Railway staging＋production 各 web/worker（全部 --skip-deploys；production 只落值不触发任何部署，等 Founder 部署门）」，同评论余项栏「A7 生产核验（生产部署门后：先跑生产回填再只读核验；变量已备好未生效）」。门票 #1480（[PROD-GATE] 生产部署门，state OPEN，comments 0）第二个复选框「媒体备份激活（生产）：变量已落生产 web/worker 未生效（2026-09-13）；先跑生产回填（scripts/tools/media-backup-backfill.mjs，先 dry-run）再只读核验差集 0 —— MEDIA-A7」仍为未勾 `- [ ]`。今日演练 production_touched=false。故本行不是缺证，是被显式挂在部署门上。"
+   },
+   {
+    "id": "MEDIA-A8",
+    "claim": "Founder 打开 beta-gate.md GATE-A6 念判定；由 A4/A5 证据满足；beta-gate §5 变更登记有一行指向本规格",
+    "verdict": "PARTIAL",
+    "evidence": "文档半边 PROVEN：docs/specs/beta-gate.md:125 §5 变更登记有该行——「2026-09-13 | media-durability 已冻结·v2 落地写路径同步复制＋恢复手册（PR #1425 / #1385）：GATE-A6「现状：媒体对象零备份、零复制」自该 PR 起失效，冻结时按当时实况重写；GATE-A6 判定条款本身不动。」；其所依赖的 MEDIA-A4、A5 本表判 PROVEN。缺的半边：Founder 本人念判定这一动作无任何留证——#1385 2026-09-13 评论把它列在「余项（全在 Founder）」里：「A3 盲走手册（S5 走查）；A7 生产核验（生产部署门后…）；A8 念 GATE-A6 判定」，此后 #1385 无新评论（共 4 条，末条即该条）。附注：beta-gate.md:125 那一行自己的裁决格是「—」，但那是 beta-gate 规格的登记表，不是本规格 §5，不构成本次的 open ruling。"
+   },
+   {
+    "id": "MEDIA-A9",
+    "claim": "故意用非目标租户的对象键试恢复会被前缀核对拦停；手册正文写死「只按单键恢复，禁止整桶回滚」",
+    "verdict": "PROVEN",
+    "evidence": "硬闸在脚本里，不只在文档：scripts/tools/media-restore-object.mjs:52-55 `if (!EXPECT_OWNER) { console.error(\"refusing: --expect-owner is required (MEDIA-A9 tenant-prefix check has no silent default)\"); process.exit(1); }`；:65-72 `if (!keyOwnerMatches(KEY, EXPECT_OWNER)) { console.error(\\`refusing: key owner segment is \"${parsed.ownerId}\", but --expect-owner was \"${EXPECT_OWNER}\"…\\`); process.exit(1); }`，比对用的是 @fikirtive/core 的 keyOwnerMatches（产品代码判租户归属的同一权威）。两次真跑各有一条拒绝回执：docs/runbooks/media-restore.md:182「A9 反证 `refusing: key owner segment is \"founder\", but --expect-owner was \"not-the-owner\"`（exit 1）」；今日 blind-walk.json「A9 反证 `refusing: key owner segment is \"org_cmts923pm00002mptbuoube0j\", but --expect-owner was \"org_someone_else\"`（exit 1）」。手册正文两处写死：docs/runbooks/media-restore.md:13「**只按单键恢复,禁止整桶回滚。**」与 :170-176 同名小节（「脚本没有整桶操作的入口——它一次只吃一个 --key」）。"
+   }
+  ],
+  "openRegisterRows": [],
+  "deliverable": "未交付",
+  "why": "规格 §5 变更登记两行裁决格都已填，没有悬而未决的裁决，这一侧干净。判未交付的原因在 §2 验收表：九行里 PROVEN 四行（A4/A5/A6/A9，全是 staging 真跑＋脚本硬闸，证据扎实），PRODUCTION-GATED 一行（A7，显式挂在 #1480 部署门上，不算缺证），但还有三行 PARTIAL（A1/A2/A8）和一行 NOT PROVEN（A3），而这四行的缺口没有一条是生产门造成的，也没有一条被写进 §5 由 Founder（或受托）裁定接受。任务给的判定规则是：只有当剩余缺口全是 PRODUCTION-GATED 才能判「已交付（staging）」，因此这里只能是未交付。\n\n最硬的一条是 A3。它今天真被跑过了（盲走报告 status COMPLETE），不是没做，而是做完判 PARTIAL：恢复流程本身端到端跑通，但手册对一个没做过的人不自足——前提 §1 不说 staging 凭据在哪，前提 §2 关于依赖的说法是错的（`@fikirtive/core` 必须先 build），而 A3 自己要求的「制造丢失」这一步手册压根没有。A3 这一行的 Y 字面就是「手册自足…没有一步依赖口头知识」，走查结论正好否定这句，所以不能算过。\n\nA2 是个措辞与核验的双缺口，容易被误读成已过：差集为空这半边有两次读数（280/280、307/307），但本行点名要求「手册写明」的那句「备份桶全量保留，月度看一眼成本」在 media-restore.md 里一个字都没有（只在另一份 r2-bucket-token-rotation.md 有半句），而两个备份桶的 lifecycle 规则也从没被当场读过一次——2026-09-13 控制台枚举查的是两个内容桶，当时备份桶还没建。\n\nA1 与 A8 各差一个「留证动作」：A1 缺的是把「新写对象自动出现在备份桶」的核验输出贴进演练记录（今日 307/307 那条读数只活在 worker 报告里，回填当时是 280，说明有 27 个是激活后自动复制的——证据其实成立，只是没落到规格指定的位置）；A8 缺的是 Founder 本人念 GATE-A6 判定的留证，文档指针那半边（beta-gate.md:125）已经在了。\n\n按项目规矩「S1 冻结票于规格转『已交付·归档』时关闭」，#1372 现在不能关；实施票 #1385 同样保持开启。\n\n方法学说明：本次为只读核验，未在 worktree 安装依赖，故 MEDIA-A1 的命名测试本地 NOT RUN（`npx vitest` 报 ERR_MODULE_NOT_FOUND 'vitest'，worktree 无 node_modules），改以 origin/main 当前 sha 的绿 CI 为准——post-merge run 35380789525 success @ bd5877c3，其 `pnpm quality` 的 tests 闸是 `pnpm -r test`（scripts/ci/quality.sh:1062），覆盖 packages/storage 与 apps/web 的 vitest 套件；测试断言已逐条引原文行号。",
+  "blockers": [
+   "MEDIA-A3（最硬一条）：今日盲走真跑完毕但判 PARTIAL——docs/runbooks/media-restore.md 对没做过的人不自足。三处必须改：前提 §1（:34-45）不说 staging 凭据在哪（实为 Railway project b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d / env staging / service web），前提 §2（:46-47）「仓库 pnpm install 过就行」是事实错误（@fikirtive/core exports 指向 ./dist，必须先 `pnpm --filter @fikirtive/core build`，否则以裸 MODULE_NOT_FOUND 停住），以及全文没有「制造丢失」这一步的任何指引与护栏（而 A3 本身就是演练）。证据：reports/staging-r3-media-a3/blind-walk.json 的 acceptance_against_MEDIA_A3（prerequisites_before_step1=FAIL、drill_specific=FAIL）。",
+   "MEDIA-A3 次级：第 4 步末句「访问 /files/<key> 确认页面能重新打开」按字面不可执行——该路由未登录返回 307 → /login，手册未给 staging 主机名、未说须以该租户身份登录、也没给替代核验（AMBIG-6）。同段第 1 步（:59-60）点名的 `AssetVariant` 表与 `key` 列在 packages/db/prisma/schema.prisma 不存在，key 需由 ownerId/contentHash/ext 组合（AMBIG-4）。",
+   "MEDIA-A2：docs/runbooks/media-restore.md 缺本行点名要求的那句「备份桶全量保留，月度看一眼成本」（grep 全文零命中；只有 docs/runbooks/r2-bucket-token-rotation.md:271 有「全量保留」半句，且无月度成本，且不是本行点名的手册）。同时规格 §3 要求「施工时以 Cloudflare 现价核一次并写进手册」的成本数字也不在手册里。",
+   "MEDIA-A2：两个备份桶（fikirtive-staging-backup / fikirtive-production-backup）的 lifecycle 规则从未被当场只读核验过——#1385 2026-09-13 的控制台十四区块枚举查的是两个内容桶，当时备份桶尚未建；需补一次备份桶侧的只读读数并留证（结论应为：除 multipart 中止规则外无自动删除规则）。",
+   "MEDIA-A1：把「staging 新写对象自动出现在备份桶」的只读核验输出按本行要求贴进 docs/runbooks/media-restore.md 演练记录（含日期）。现有唯一已填行（:182，2026-09-13）的对象来自存量回填（其备份副本 lastModified 至今仍是 2026-09-13T10:20:54Z）；真正证明写路径生效的今日读数 307/307、missing 0（回填时仅 280）只存在于 worker 报告，未落到规格指定位置。",
+   "MEDIA-A5 附带：今日第二次演练（org_cmts923pm00002mptbuoube0j 的 ee0273a5….png，RTO 1.5s，人工排查段约 7m14s）尚未追加成演练记录的第二行——走查者被限只读，blind-walk.json 的 drill_record_row_ready_to_paste 已备好可直接粘贴。顺带处理 AMBIG-7：第 5 步要求「两段分开报」，但表只有一列「实测 RTO」，第二个数字无处可落（建议加一列「人工排查耗时」）。",
+   "MEDIA-A8：Founder 本人打开 beta-gate.md GATE-A6 念判定这一动作无留证（#1385 2026-09-13 评论把它连同 A3、A7 列在「余项（全在 Founder）」，此后该票无新评论）。文档指针半边已具备（docs/specs/beta-gate.md:125）。这是人类裁决动作，非 agent 可代。",
+   "流程后果：按项目规矩「S1 冻结票于规格转『已交付·归档』时关闭」，冻结票 #1372 与实施票 #1385 现阶段均不得关闭。",
+   "非阻断但需在报告里明示：MEDIA-A7 为 PRODUCTION-GATED（#1480 第二个复选框未勾；生产变量已落但 --skip-deploys，未生效）。若上面 A1/A2/A3/A5/A8 五处缺口补齐，规格即可判「已交付（staging）·生产激活在部署门」；要判「已交付·归档」还须等部署门后的 A7 生产只读核验。",
+   "安全侧无发现，可放心：今日演练 production_touched=false，备份桶零写入，账本与 DB 行逐笔不变（money_unchanged / db_rows_unchanged 均 true）。本次核验为只读，未在 worktree 安装依赖、未改任何文件、未做任何 GitHub 写操作。"
+  ]
+ }
+]
