@@ -75,6 +75,35 @@
 - Rollback、redeploy、变量修改、数据库恢复和外部 connector 写入各自需要当前任务授权;本手册
   只给 preflight/stop 条件,不把操作按钮当权限。
 
+## 第二商家会话(tenant B)
+
+**用途:**双租户验证(两个商家同时在线,证明彼此数据不串)需要第二个 staging 商家的登录态。
+登录码只发到 Founder 的邮箱,而验证码绝不能由人念给 agent。`scripts/tools/staging-login.mjs`
+让 Founder 只贴一次邮件里的「Log in」链接,把浏览器会话(Playwright storageState)导出成一个
+本地文件,之后 agent 直接用这个文件跑,不再碰任何验证码。
+
+**Founder 的三步:**
+
+1. 在 staging 登录页为 tenant B 账号(默认 `tools+e2e20260908@belcort.com`,可用
+   `STAGING_TENANT_B_EMAIL` 覆盖)请求登录码。
+2. 打开邮件,复制「Log in」按钮的链接。
+3. 在仓库根目录运行,把链接贴进去(不带参数运行会提示粘贴):
+
+   ```
+   node scripts/tools/staging-login.mjs "<邮件里的 Log in 链接>"
+   ```
+
+   脚本不打印验证码或 cookie;失败时只回显固定的登录页提示语。链接不是 staging 登录链接、或属于
+   别的账号时直接拒绝退出(exit 1),不会导出 Founder 自己的账号。
+
+**这个文件是凭据:**默认写到仓库根的 `.staging-tenant-b-session.json`(可用 `STAGING_SESSION_OUT`
+覆盖),权限 0600,已在 `.gitignore`。绝不提交、绝不贴进 issue/PR/日志,验证跑完就删。会话会过期
+——过期就让 Founder 重跑上面三步。
+
+**agent 只能这样用:**Playwright `newContext({ storageState: ".staging-tenant-b-session.json" })`。
+不要读取、复制或转述文件内容,也不要用它做本手册未授权的动作(真实花费、迁移、变量修改仍按各自
+授权)。
+
 ## 每次应留下的证据
 
 - 查询时间、environment/service、部署 commit(无 secret)。
