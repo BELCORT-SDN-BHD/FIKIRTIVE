@@ -593,13 +593,12 @@ describe("#744 P2 the dispatch check cannot be dodged by grouping, age, or a bro
   //   新帧才存在。它内部发的 `prisma.membership.findFirst({ where: { orgId: gate.ownerId, … } })`
   //   因此也在外层帧里执行，不在这两个入口自己建的新帧里。
   // - Membership 的租户列是 `orgId`（ORG_SCOPED_TENANT_MODELS 族，packages/db/src/tenant-guard.ts
-  //   93-97 行），这一族**默认走 warn 挡位**（同文件 118 行 `orgScopedGuardMode`）：命中「外层帧
-  //   ownerId 与查询的 orgId 不符」只会 `console.warn` 一条、原样放行——不是「走不到守卫面前」，
-  //   是「守卫看见了、按当前挡位选择不拦」。旧注释「foreignFrame 从今往后根本走不到守卫面前」把
-  //   这两件事混为一谈，是错的，已被判官证伪（tenant-guard.ts:309-317 的 ORG_SCOPED 守卫本会拦）。
-  // - #1403 一旦把这一族翻成 enforce：任何在外层帧属于别的租户时调用 `resolveUserPrincipal(gate)`
-  //   都会让这句 `membership.findFirst` 因为 orgId 不符而直接抛错——这是 `resolveUserPrincipal`
-  //   自身已知的行为，写在这里供 #1403 落地时对照，不是本用例断言的不变式。
+  //   ORG_SCOPED_TENANT_MODELS 一族）。**历史**：写这段话时这一族走 warn 挡位——命中「外层帧
+  //   ownerId 与查询的 orgId 不符」只 `console.warn` 一条、原样放行；旧注释「foreignFrame 从今往后
+  //   根本走不到守卫面前」把「走不到守卫面前」和「守卫看见了但不拦」混为一谈，是错的。
+  // - **#1403 已落地（挡位连同开关一起删除，钱表族出厂即执法）**：在外层帧属于别的租户时调用
+  //   `resolveUserPrincipal(gate)`，这句 `membership.findFirst` 会因为 orgId 不符**直接抛错**——
+  //   这是 `resolveUserPrincipal` 自身的行为，写在这里供对照，不是本用例断言的不变式。
   //
   // 所以这条用例不再用「外层套一个异租户帧」去模拟什么——那只是巧合地在 warn 挡位下不出事，
   // 不是这两个入口的正防线。真正要证明的新防线：这两个入口在敏感 DB 操作那一刻，自己建的帧

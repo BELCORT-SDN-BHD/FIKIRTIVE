@@ -17,12 +17,13 @@
  * 这里只把根目录换成临时目录，并在 `ffmpegInput` 前挂一个**帧内探针** —— 第三条用例的跨租户读
  * 必须发生在 `handleCaption` 自己那个帧里（`runAsTenant(job.ownerId)`），不是测试另开一个帧假装。
  *
- * ── 这个文件证不到、因此不在这里断言的一件事 ────────────────────────────────────────────────
- * 规格 §1.6 写的豁免是 **per-(model, uniqueKey)**，「不得退化成整模型豁免」。而今天的实现里
- * `Transcript` 是整张表进 `TENANT_GUARD_EXEMPT`（packages/db/src/tenant-guard.ts），不是只对
- * `contentHash_model` 这一把键开口。所以 A9 的缓存命中今天不依赖任何 per-uniqueKey 特判，
- * 这个文件也就没有办法把「特判只对这一把键生效」证出来。两者的差距记在 PR 里，不在这里
- * 断言成「对」。
+ * ── 这个文件证什么、不证什么（#1403 之后）────────────────────────────────────────────────
+ * 规格 §1.6 写的豁免是 **per-(model, uniqueKey)**，「不得退化成整模型豁免」。#1403 已经把
+ * `Transcript` 从整表豁免收窄成那一把键：它现在在 `TENANT_MODELS` 里受守卫，只有 `where`
+ * **独自**点名 `contentHash_model` 时才跳过租户比对（`PER_UNIQUE_KEY_EXEMPT`，
+ * packages/db/src/tenant-guard.ts）。本文件因此改用生产那把缓存键读转写 —— 证的是「收窄之后
+ * A9 的 $0 复用照旧」；「键的另一侧照常落闸」由 `packages/db/src/tenant-guard-transcript-key-exempt.test.ts`
+ * 证，不在这里重复。
  */
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { rm } from "node:fs/promises";

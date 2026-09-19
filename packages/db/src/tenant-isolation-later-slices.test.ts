@@ -43,10 +43,11 @@ import { it } from "vitest";
 // 收尾片（#464）交付的是 TENANT-A10 的 requireOwner 半题（见
 // apps/web/lib/__tests__/tenant-requireowner-frame-scan.test.ts：「apps/web 生产代码里文件内
 // 零 runAsUser 的 requireOwner 站点数 = 0」，真扫描测试，含两处结构性排除）。A10 的另外
-// 两句仍未交付，留给最后一片：
+// 两句里，**挡位删除那一句已由 #1403 结清**（钱表族翻 enforce 的同一片把 `orgScopedGuardMode`
+// 这个模块级变量连同 `getOrgScopedGuardMode` / `setOrgScopedGuardMode` 两个出口一起删除）：
+// 占位换成真测试 —— `packages/db/src/tenant-guard-default-mode.test.ts`（模块加载之后没人扳过
+// 任何东西，钱面就在执法；守卫不再导出任何挡位出口）＋ `tenant-guard-money-slice1.test.ts` /
+// `tenant-guard-staff-slice4.test.ts` 各自的「没有挡位出口」一条。剩下的一句留给最后一片：
 it.todo(
   "TENANT-A10 机器计数（requireRole 半题）：apps/web 生产代码里未建帧的 requireRole 站点数 = 0 —— 最后一片交付",
-);
-it.todo(
-  "TENANT-A10 机器计数（挡位删除）：守卫里的迁移期挡位已从代码中删除 —— 最后一片交付",
 );

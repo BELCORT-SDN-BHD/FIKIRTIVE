@@ -4,9 +4,10 @@
  * 规格 docs/specs/tenant-isolation.md（已冻结 · v1，#1369）验收表 TENANT-A10:
  * 「apps/web 生产代码里文件内零 runAsUser 的 requireOwner 站点数 = 0」。
  *
- * 本文件只交付 A10 的**这一半**——`requireOwner` 站点建帧。A10 的另一半（`requireRole`
- * 后台 staff 站点未建帧数 = 0、守卫里的迁移期挡位从代码中删除）留给最后一片，占位仍在
- * `packages/db/src/tenant-isolation-later-slices.test.ts`。
+ * 本文件只交付 A10 的**这一半**——`requireOwner` 站点建帧。「守卫里的迁移期挡位从代码中删除」
+ * 那一句已由 #1403 结清（钱表族翻 enforce 的同一片把挡位连同两个出口一起删除，真测试在
+ * `packages/db/src/tenant-guard-default-mode.test.ts`）；只剩「`requireRole` 后台 staff 站点
+ * 未建帧数 = 0」留给最后一片，占位在 `packages/db/src/tenant-isolation-later-slices.test.ts`。
  *
  * 判据是**文件级**的,不是「这次调用有没有真碰数据库」:一个 `requireOwner()` 调用点,
  * 只要它所在的文件里同时出现 `runAsUser(`(哪怕帧只是把「过了门之后的工作」整体收进来,

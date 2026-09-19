@@ -22,8 +22,9 @@
  * ── 2026-09-12(租户围栏切片①,规格 docs/specs/tenant-isolation.md,#1376)────────────
  * 2026-09-02 时 orgId 那一族**全部**走明示登记 —— 因为守卫注入的是字面 `ownerId`。切片①把
  * 租户列参数化之后那个障碍没了:CreditAccount / CreditLedger / Membership 已经搬进
- * ORG_SCOPED_TENANT_MODELS(观察轮走 warn 挡位);留在登记里的是 OttoTurnTrace 与
- * SignupGrantClaim,各自的理由在那个常量的注释里。
+ * ORG_SCOPED_TENANT_MODELS(当时走 warn 观察挡位;**#1403 之后挡位已删除,这一族与 ownerId 族
+ * 同一段判定、出厂即执法**);留在登记里的是 OttoTurnTrace 与 SignupGrantClaim,各自的理由在
+ * 那个常量的注释里。
  */
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
@@ -185,7 +186,7 @@ describe("tenant-guard coverage — every ownerId model is guarded or explicitly
  *
  * 上面那组扫的是 `ownerId`。这一组扫 `orgId` —— 同样是租户列,同样必须有人为它做过选择。
  * 选择有两种:进运行时守卫(ORG_SCOPED_TENANT_MODELS ——  切片① #1376 之后钱两表与
- * Membership 在这里,观察轮走 warn 挡位),或者一条带理由的明示登记
+ * Membership 在这里;#1403 删掉迁移期挡位之后,这一族出厂即执法),或者一条带理由的明示登记
  * (ORG_SCOPED_TENANT_GUARD_EXEMPT —— 今天只剩 OttoTurnTrace 与 SignupGrantClaim,
  * 理由与实测证据写在那个常量的注释里)。
  */
