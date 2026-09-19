@@ -1,0 +1,168 @@
+{
+  "contentBucket": "fikirtive-staging",
+  "backupBucket": "fikirtive-staging-backup",
+  "results": [
+    {
+      "key": "u/founder/f1d94464a67594a1fa4958c30092b0dcccab2c9cb1de7ac4006afd50da91563b.mp4",
+      "content": {
+        "exists": true,
+        "size": 2990933,
+        "etag": "\"b824534715d2f6c7f9c7f00fa24a08a2\"",
+        "lastModified": "2026-09-18T15:11:07.000Z",
+        "contentType": "video/mp4"
+      },
+      "backup": {
+        "exists": true,
+        "size": 2990933,
+        "etag": "\"b824534715d2f6c7f9c7f00fa24a08a2\"",
+        "lastModified": "2026-09-18T15:11:08.000Z",
+        "contentType": "video/mp4"
+      },
+      "sizeEtagMatch": true
+    },
+    {
+      "key": "u/org_cmts923pm00002mptbuoube0j/2f209f09a173e0fb18c5641a17307f526fbee115e3643a88cd8c08580a07cadd.jpeg",
+      "content": {
+        "exists": true,
+        "size": 204147,
+        "etag": "\"f36fb27099d088a4658b0854d906b4f7\"",
+        "lastModified": "2026-09-18T15:11:07.000Z",
+        "contentType": "image/jpeg"
+      },
+      "backup": {
+        "exists": true,
+        "size": 204147,
+        "etag": "\"f36fb27099d088a4658b0854d906b4f7\"",
+        "lastModified": "2026-09-18T15:11:08.000Z",
+        "contentType": "image/jpeg"
+      },
+      "sizeEtagMatch": true
+    },
+    {
+      "key": "u/founder/fbb0194c83cd67223dd48367eb004351fbf8e1eac13bede36ef385ca787c904d.png",
+      "content": {
+        "exists": true,
+        "size": 112849,
+        "etag": "\"9f7330d6908337a9ffdc39fae0a734c4\"",
+        "lastModified": "2026-09-18T15:11:08.000Z",
+        "contentType": "image/png"
+      },
+      "backup": {
+        "exists": true,
+        "size": 112849,
+        "etag": "\"9f7330d6908337a9ffdc39fae0a734c4\"",
+        "lastModified": "2026-09-18T15:11:09.000Z",
+        "contentType": "image/png"
+      },
+      "sizeEtagMatch": true
+    },
+    {
+      "key": "u/founder/740f6dc19c1d2c5edaf17ce81b3bd2d5f10336f4277244c0eb0b6658ecde44ab.mp4",
+      "content": {
+        "exists": true,
+        "size": 3121196,
+        "etag": "\"a37ec934da621eff2cef16c3b4a03556\"",
+        "lastModified": "2026-09-18T15:11:31.000Z",
+        "contentType": "video/mp4"
+      },
+      "backup": {
+        "exists": true,
+        "size": 3121196,
+        "etag": "\"a37ec934da621eff2cef16c3b4a03556\"",
+        "lastModified": "2026-09-18T15:11:32.000Z",
+        "contentType": "video/mp4"
+      },
+      "sizeEtagMatch": true
+    },
+    {
+      "key": "u/founder/ddc699c20ef69fad0a1f5c8fa19b2b21aa751c31cef7f933f48f8ceb810f083e.png",
+      "content": {
+        "exists": true,
+        "size": 139116,
+        "etag": "\"abfdc435f9b40f5c6f25cf822e26c520\"",
+        "lastModified": "2026-09-18T15:11:32.000Z",
+        "contentType": "image/png"
+      },
+      "backup": {
+        "exists": true,
+        "size": 139116,
+        "etag": "\"abfdc435f9b40f5c6f25cf822e26c520\"",
+        "lastModified": "2026-09-18T15:11:33.000Z",
+        "contentType": "image/png"
+      },
+      "sizeEtagMatch": true
+    },
+    {
+      "key": "u/founder/e833cfa56ea8ad0f7d1324214d47495ec15afa7e21403ef7e4e304aea4dc0d95.mp4",
+      "content": {
+        "exists": true,
+        "size": 2399489,
+        "etag": "\"0d36cc0fea53f0061e43a9b59a7d0b5a\"",
+        "lastModified": "2026-09-18T15:12:33.000Z",
+        "contentType": "video/mp4"
+      },
+      "backup": {
+        "exists": true,
+        "size": 2399489,
+        "etag": "\"0d36cc0fea53f0061e43a9b59a7d0b5a\"",
+        "lastModified": "2026-09-18T15:12:34.000Z",
+        "contentType": "video/mp4"
+      },
+      "sizeEtagMatch": true
+    },
+    {
+      "key": "u/founder/2749641e69a70efb13a2ccea94be0b7dcf265381713130167c877c2d528a41fe.png",
+      "content": {
+        "exists": true,
+        "size": 137668,
+        "etag": "\"9c813d89d04aa8ad2509155e986aad8a\"",
+        "lastModified": "2026-09-18T15:12:34.000Z",
+        "contentType": "image/png"
+      },
+      "backup": {
+        "exists": true,
+        "size": 137668,
+        "etag": "\"9c813d89d04aa8ad2509155e986aad8a\"",
+        "lastModified": "2026-09-18T15:12:35.000Z",
+        "contentType": "image/png"
+      },
+      "sizeEtagMatch": true
+    },
+    {
+      "key": "u/founder/87b587c6975362d6f52b3b706b0ae74e69b9799dac31e8e910dd615b0df1f2bc.mp4",
+      "content": {
+        "exists": true,
+        "size": 3024157,
+        "etag": "\"79e0ea62316d39900f637612ed5becd8\"",
+        "lastModified": "2026-09-18T15:15:35.000Z",
+        "contentType": "video/mp4"
+      },
+      "backup": {
+        "exists": true,
+        "size": 3024157,
+        "etag": "\"79e0ea62316d39900f637612ed5becd8\"",
+        "lastModified": "2026-09-18T15:15:36.000Z",
+        "contentType": "video/mp4"
+      },
+      "sizeEtagMatch": true
+    },
+    {
+      "key": "u/founder/5ab5a76eb23b2705d324351653fc4dcac27b8931c3948874e2c59efbe20b72ed.png",
+      "content": {
+        "exists": true,
+        "size": 118700,
+        "etag": "\"8eb0ff22a6a8216f4cd5b76de15ab627\"",
+        "lastModified": "2026-09-18T15:15:36.000Z",
+        "contentType": "image/png"
+      },
+      "backup": {
+        "exists": true,
+        "size": 118700,
+        "etag": "\"8eb0ff22a6a8216f4cd5b76de15ab627\"",
+        "lastModified": "2026-09-18T15:15:36.000Z",
+        "contentType": "image/png"
+      },
+      "sizeEtagMatch": true
+    }
+  ]
+}

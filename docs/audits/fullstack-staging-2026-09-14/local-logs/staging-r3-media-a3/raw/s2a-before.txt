@@ -1,0 +1,6 @@
+content bucket: fikirtive-staging (https://ac42cba1bda978bd00f6c45d0e25dc24.r2.cloudflarestorage.com)
+backup  bucket: fikirtive-staging-backup (https://ac42cba1bda978bd00f6c45d0e25dc24.r2.cloudflarestorage.com)
+mode: dry-run (report only — pass --apply to copy)
+content bucket has 307 object(s) under "u/"
+already backed up (same key, same size): 307
+missing from backup (the diff): 0

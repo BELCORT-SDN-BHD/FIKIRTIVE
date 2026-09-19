@@ -1,0 +1,37 @@
+BEGIN
+=== A6a CreditLedger for E2E Cafe org ===
+ ledger_rows | sum_balance_delta | sum_reserved_delta 
+-------------+-------------------+--------------------
+          23 |               100 |                  0
+(1 row)
+
+=== A6b CreditLedger all DB ===
+ ledger_rows_all_db 
+--------------------
+                290
+(1 row)
+
+=== A6c CreditAccount row for org ===
+             orgId             | balance | reserved |       updatedAt       
+-------------------------------+---------+----------+-----------------------
+ org_cmts923pm00002mptbuoube0j |     100 |        0 | 2026-09-18 15:11:08.9
+(1 row)
+
+=== A4 GenJob counts ===
+ genjob_rows_org 
+-----------------
+               4
+(1 row)
+
+ genjob_rows_all_db 
+--------------------
+                 51
+(1 row)
+
+=== Asset row md5 (drill target) ===
+             id             |             row_md5              |                           contentHash                            | ext |    mime    | sizeBytes | deletedAt |        createdAt        
+----------------------------+----------------------------------+------------------------------------------------------------------+-----+------------+-----------+-----------+-------------------------
+ 01M1ZS1038PQ02Y3X93ZBS827A | fa87009674da2088fafe75c8daf3382d | bf16d2f40520f175b24354a9eb19c36f40d92e4aa2813b8ef01fe064e95efcfe | jpg | image/jpeg |    200940 |           | 2026-09-08 05:49:31.636
+(1 row)
+
+ROLLBACK
