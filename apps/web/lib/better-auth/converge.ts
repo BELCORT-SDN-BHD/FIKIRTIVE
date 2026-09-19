@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@fikirtive/db";
-import { runAsSystem } from "@fikirtive/db/principal";
+import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import { newId, FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { isFounderAdmin } from "@/lib/allowlist";
 import { admitSelfSignup } from "@/lib/signup-gate";
@@ -80,7 +80,14 @@ export async function convergeIdentity(input: { email: string; name?: string | n
         // `bootstrapPersonalOrg`）。所以他的登录行仍然落在这里，而且现在是因为它是他的
         // 租户，不是因为那是个写死的常量。
         tenantOrgId = FOUNDER_OWNER_ID;
-        await prisma.$transaction(async (tx) => {
+        // #1403 两段式（规格 docs/specs/tenant-isolation.md §1.3 第四态）—— 外层
+        // `runAsSystem("auth:converge-identity")` 是「谁在写」，这一层是「写进哪一家」。
+        // founder 的租户就是上面那一行 `FOUNDER_OWNER_ID`，进库之前就知道，所以不需要先读再建帧。
+        // 没有这一层，`tx.membership.upsert` 跑在一个「有帧、但没点名租户」的系统帧里，守卫对这种
+        // 帧的写一律拒（`requires runAsTenant before system writes`）：翻闸当天 founder 每次登录都
+        // 500（warn 基线 2026-09-19 §5 的签名 2）。`reason` 被 `runAsTenant` 继承，审计里这笔写
+        // 仍然叫 `auth:converge-identity`。
+        await runAsTenant(FOUNDER_OWNER_ID, () => prisma.$transaction(async (tx) => {
           await tx.user.updateMany({ where: { email, role: { not: "super-admin" } }, data: { role: "super-admin" } });
           await tx.userRole.upsert({
             where: { userId_role: { userId: user.id, role: "super-admin" } },
@@ -101,7 +108,7 @@ export async function convergeIdentity(input: { email: string; name?: string | n
             create: { membershipId: membership.id, role: "owner" },
             update: {},
           });
-        });
+        }));
         // 2b. FSE-008 —— 演员库五人也要站在 founder 自己的 Library 里(CREATE-A10;
         //     规格 docs/specs/creation-engine.md §5 2026-09-02「每租户播种」)。
         //

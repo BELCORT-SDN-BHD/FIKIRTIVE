@@ -224,10 +224,19 @@ export async function POST(req: NextRequest): Promise<Response> {
         // Dedup on the Checkout SESSION id, not the event id: one session = one payment = one
         // grant. session.id stays exactly-once even if Stripe delivers multiple distinct events
         // for the same completed session, whereas event.id only dedups redeliveries of one event.
-        const res = await grantCredits({
+        //
+        // #1403 两段式（规格 docs/specs/tenant-isolation.md §1.3 第四态）—— webhook 整体跑在系统
+        // 身份 `stripe-webhook` 下（没有会话，按构造），这一笔**入账**回到它自己的租户。与下面
+        // `:240` 那句唤醒逐字同一个写法、同一个理由。`orgId` 不是客户端输入：它由
+        // `lib/billing-actions.ts` 在一个真实 principal 下服务端铸出，经 Stripe metadata 往返回来。
+        // 没有这一层，`grantCredits` 的 `CreditAccount.upsert` / `CreditLedger.createMany` 跑在一个
+        // 「有帧、但没点名租户」的系统帧里，守卫对这种帧的写一律拒：翻闸当天每一笔充值确认都 500
+        // （warn 基线 2026-09-19 §5 的签名 5/6/12），钱收了、credits 不入账。
+        // 幂等键、金额、去重语义一个字没动。
+        const res = await runAsTenant(orgId, () => grantCredits({
           orgId, amount: credits * INTERNAL_PER_DISPLAY, source: "PURCHASE",
           reason: "stripe top-up", createdBy: "stripe", idempotencyKey: `stripe:${session.id}`,
-        });
+        }));
         // MONEY-A9 计费四则④:充值**唤醒**因余额不足停下来的素材理解(规格 §7.3
         // 「恢复=充值事件唤醒+扫描器兜底轮询」)。没有这一句,商家充完值还要等最多一分钟的
         // 扫描轮询才看得到 Otto 继续认识他的店 —— 而他刚刚付过钱,那一分钟是他在盯着看的。
