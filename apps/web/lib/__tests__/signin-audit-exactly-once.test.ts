@@ -28,6 +28,7 @@ beforeAll(() => {
 });
 
 const { prisma } = await import("@fikirtive/db");
+const { runAsSystem } = await import("@fikirtive/db/principal");
 const { FOUNDER_OWNER_ID } = await import("@fikirtive/core");
 const { convergeIdentity } = await import("@/lib/better-auth/converge");
 const { signinSessionId } = await import("@/lib/better-auth/signin-session");
@@ -237,10 +238,12 @@ describe("#737 signinSessionId — session.create is not a synonym for a login",
     await convergeIdentity({ email, name: "Attribution Check", emailVerified: true, sessionId });
 
     const user = await prisma.user.findUniqueOrThrow({ where: { email }, select: { id: true } });
-    const membership = await prisma.membership.findFirstOrThrow({
+    // 「这个人属于哪一家」——天生跨租户的一问（答案才是租户号）。#1403 之后在**扫描域**里问，
+    // 与生产 `requireOwner` 那一句走的是同一条路。
+    const membership = await runAsSystem("test-seed", () => prisma.membership.findFirstOrThrow({
       where: { userId: user.id },
       select: { orgId: true },
-    });
+    }));
 
     const [row] = await signinRows(email);
     // ownerId is the event's DATA SCOPE (FK to Organization), never the person; the person is

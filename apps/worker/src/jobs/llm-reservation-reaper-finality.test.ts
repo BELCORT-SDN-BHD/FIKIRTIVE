@@ -142,7 +142,9 @@ afterAll(async () => {
   // Orgs cascade to CreditLedger; threads and cards are removed explicitly (RESTRICT).
   await prisma.chatMessage.deleteMany({ where: { ownerId: { in: orgIds } } });
   await prisma.chatThread.deleteMany({ where: { ownerId: { in: orgIds } } });
-  await prisma.creditAccount.deleteMany({ where: { orgId: { in: orgIds } } });
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号（`{ in: [...] }` 这个形状无帧时守卫
+  // 判不出它点名了谁）。夹具清场因此逐家删 —— 删掉的行一行不多、一行不少。
+  for (const orgId of orgIds) await prisma.creditAccount.deleteMany({ where: { orgId } });
   await prisma.organization.deleteMany({ where: { id: { in: orgIds } } });
 });
 

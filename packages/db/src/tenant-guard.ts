@@ -95,9 +95,9 @@ export const TENANT_MODELS = new Set([
  * `packages/db/src/otto-turn-trace-tenant.test.ts`）逐字断言它在下面那份豁免名单里。改它要先走
  * otto-engine 规格的变更登记，不由这一片顺手改掉。
  *
- * **先建帧后执法**（规格 §1.8 硬顺序）：本片上线时这一族走 warn 挡位 —— 守卫照常算出「落闸会拒
- * 什么」，但只记一条警告、不改一个字的行为（{@link getOrgScopedGuardMode}）。翻 enforce 是独立
- * 的一次小提交，可回滚。
+ * **先建帧后执法**（规格 §1.8 硬顺序）：这一族上线时先走过一轮 `warn` 观察挡（只记警告、不改一个字
+ * 的行为），2026-09-19 翻 `enforce` 并把挡位连同它的 getter/setter 一起删除（#1403，TENANT-A10）——
+ * 今天这一族与 `ownerId` 族走的是同一段判定，没有挡位可读、也没有开关可扳。
  */
 export const ORG_SCOPED_TENANT_MODELS = new Set([
   "CreditAccount",
@@ -138,7 +138,7 @@ export type TenantColumn = "ownerId" | "orgId";
  *  WHAT IS STILL LISTED HERE TODAY (2026-09-12, 切片① #1376). Only OttoTurnTrace and
  *  SignupGrantClaim. The three tables the paragraphs below were written about — CreditAccount /
  *  CreditLedger / Membership — have MOVED INTO the runtime guard
- *  ({@link ORG_SCOPED_TENANT_MODELS}, warn 挡位观察轮). Read the next two paragraphs as the
+ *  ({@link ORG_SCOPED_TENANT_MODELS}; 观察轮走完之后 #1403 翻 enforce 并删掉挡位). Read the next two paragraphs as the
  *  2026-09-02 record they are: they say why the guard could not take an orgId table BEFORE the
  *  tenant column was parameterised, and they are kept verbatim because that was measured evidence,
  *  not a claim.
@@ -166,7 +166,7 @@ export type TenantColumn = "ownerId" | "orgId";
 export const ORG_SCOPED_TENANT_GUARD_EXEMPT: Record<string, string> = {
   // 切片①（#1376）把 CreditAccount / CreditLedger / Membership 从这里搬进了
   // ORG_SCOPED_TENANT_MODELS —— 上面那段「机制上做不到」的实测注释说的是**当时**的守卫只会写
-  // 字面 `ownerId`；租户列参数化之后那个障碍不存在了，三张表现在真的有闸（观察轮走 warn 挡位）。
+  // 字面 `ownerId`；租户列参数化之后那个障碍不存在了，三张表现在真的有闸（#1403 起正式执法）。
   // 留在这份豁免名单里的两张：
   // ENGINE-A2 (规格 docs/specs/otto-engine.md §7.2②): Otto 每轮调试档案。它的 refId 主键
   // 就是账本里 `reserve:<refId>` 的那把钥匙,所以它的租户列跟着账本叫 `orgId`。切片①没有把它
@@ -583,10 +583,11 @@ function tenantColumnFor(model: string): TenantColumn | null {
 }
 
 /**
- * 一次操作的全部租户判定 —— 违规就抛，合规就（在 enforce 挡位下）就地把租户号注进 args。
+ * 一次操作的全部租户判定 —— 违规就抛，合规就就地把租户号注进 args。
  *
- * 抽成独立函数是 warn 挡位的承重墙：观察轮拿一份 `args` 的浅拷贝跑同一段判定，抛出来的那句话
- * 就是「落闸之后这里会发生什么」，而真正下发给数据库的 `args` 一个字没动。
+ * 它当初抽成独立函数，是因为观察轮要拿一份 `args` 的浅拷贝跑同一段判定、只记警告不改行为
+ * （#1376 的 warn 挡位）。挡位随 #1403 删掉了，这个形状留着：判定与「判定之后做什么」分开，
+ * 是这段代码能被逐条读懂的原因。
  */
 function applyTenantScope(
   args: Record<string, any>,

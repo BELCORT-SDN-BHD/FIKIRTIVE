@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { signMediaToken } from "@fikirtive/token-crypto";
 import { prisma } from "@fikirtive/db";
+import { runAsSystem } from "@fikirtive/db/principal";
 import { MEDIA_PROXY_PER_CALLER_PER_10_MIN } from "@/lib/rate-limit-gates";
 
 // The proxy streams real bytes (no session — Meta's servers call it). Mock storage only.
@@ -60,12 +61,18 @@ beforeEach(async () => {
 describe("SHARE-A9 —— 匿名连拉同一预览媒体不产生任何计费写入", () => {
   it("SHARE-A9 —— 100 次连拉（同一 token、同一出口地址）之后，credit 账本与账户表行数一字不变", async () => {
     const token = signMediaToken("orgA", KEY, Date.now() + 3_600_000, SECRET);
-    const before = { ledger: await prisma.creditLedger.count(), account: await prisma.creditAccount.count() };
+    // 「整个平台一分钱都没动」——天生跨租户的一问，#1403 之后在**扫描域**帧里问（`count` 在
+    // 守卫的 SYSTEM_SCAN_OPS 里）。
+    const countMoney = () =>
+      runAsSystem("test-seed", async () => ({
+        ledger: await prisma.creditLedger.count(),
+        account: await prisma.creditAccount.count(),
+      }));
+    const before = await countMoney();
     for (let i = 0; i < 100; i++) {
       await call(token, "198.51.100.200");
     }
-    expect(await prisma.creditLedger.count()).toBe(before.ledger);
-    expect(await prisma.creditAccount.count()).toBe(before.account);
+    expect(await countMoney()).toEqual(before);
   });
 });
 

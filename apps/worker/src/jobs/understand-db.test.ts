@@ -713,7 +713,9 @@ describe("MONEY-A13:暂停的 workspace ⇒ 停在 PAUSED_BALANCE,零供应商�
         expect((await myRow(id))!.status).toBe("PAUSED_BALANCE");
 
         // 解除暂停 ⇒ 下一轮自然回到队列,不需要任何补偿性回填。
-        await prisma.membership.update({ where: { id: membershipId }, data: { status: "active" } });
+        // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号（`{ id }` 独自出现时守卫
+        // 判不出它点的是哪一家）。夹具改用点名 orgId 的 updateMany —— 改的是调用形状，不是守卫。
+        await prisma.membership.updateMany({ where: { id: membershipId, orgId: OWNER }, data: { status: "active" } });
         expect(await scanAssetsNeedingUnderstanding()).toContain(id);
         expect((await myRow(id))!.status).toBe("QUEUED");
       } finally {

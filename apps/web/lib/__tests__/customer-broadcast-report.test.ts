@@ -98,7 +98,9 @@ async function cleanup(): Promise<void> {
   await prisma.contactIdentity.deleteMany({ where: { ownerId: { in: OWNER_IDS } } });
   await prisma.channelScope.deleteMany({ where: { ownerId: { in: OWNER_IDS } } });
   await prisma.contact.deleteMany({ where: { ownerId: { in: OWNER_IDS } } });
-  await prisma.membership.deleteMany({ where: { orgId: { in: OWNER_IDS } } });
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号（`{ in: [...] }` 这个形状无帧时守卫
+  // 判不出它点名了谁）。夹具清场因此逐家删 —— 删掉的行一行不多、一行不少。
+  for (const orgId of OWNER_IDS) await prisma.membership.deleteMany({ where: { orgId } });
   await prisma.organization.deleteMany({ where: { id: { in: OWNER_IDS } } });
   await prisma.user.deleteMany({
     where: { id: { in: [USER_OWNER_A, USER_ADMIN_A, USER_MEMBER_A, USER_OWNER_B] } },

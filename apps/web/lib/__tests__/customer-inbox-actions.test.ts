@@ -121,7 +121,9 @@ async function cleanup(): Promise<void> {
   await prisma.channelConnection.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.channelScope.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.contact.deleteMany({ where: { ownerId: { in: OWNERS } } });
-  await prisma.membership.deleteMany({ where: { orgId: { in: OWNERS } } });
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号（`{ in: [...] }` 这个形状无帧时守卫
+  // 判不出它点名了谁）。夹具清场因此逐家删 —— 删掉的行一行不多、一行不少。
+  for (const orgId of OWNERS) await prisma.membership.deleteMany({ where: { orgId } });
   await prisma.organization.deleteMany({ where: { id: { in: OWNERS } } });
   await prisma.user.deleteMany({
     where: {
@@ -1341,7 +1343,9 @@ function createRoleDemotionHarness(membershipId: string, demoteTo: string): type
           intercepted = true;
           await prisma.$transaction([
             prisma.membership.update({
-              where: { id: membershipId },
+              // #1403 钱表族正式执法：这一笔降级写发生在网关**建帧之前**那次成员读的拦截里
+              // （无帧），所以谓词必须自带租户号。`ADMIN` 这一行按构造就在 ORG_A（见上面的播种）。
+              where: { id: membershipId, orgId: ORG_A },
               data: { role: demoteTo },
             }),
             prisma.membershipRole.deleteMany({ where: { membershipId } }),
@@ -1379,7 +1383,7 @@ describe("C4b-M3 transaction-time role recheck (ledger #359 item 25)", () => {
       "ACTION_DENIED",
     );
     await expect(
-      prisma.membership.findFirstOrThrow({ where: { id: ADMIN } }),
+      prisma.membership.findFirstOrThrow({ where: { id: ADMIN, orgId: ORG_A } }),
     ).resolves.toMatchObject({ role: "member" });
     expect(
       await prisma.customerMessageTemplate.count({
@@ -1403,7 +1407,7 @@ describe("C4b-M3 transaction-time role recheck (ledger #359 item 25)", () => {
       "ACTION_DENIED",
     );
     await expect(
-      prisma.membership.findFirstOrThrow({ where: { id: ADMIN } }),
+      prisma.membership.findFirstOrThrow({ where: { id: ADMIN, orgId: ORG_A } }),
     ).resolves.toMatchObject({ role: "member" });
     expect(
       await prisma.customerMessageTemplateVersion.count({
@@ -1427,7 +1431,7 @@ describe("C4b-M3 transaction-time role recheck (ledger #359 item 25)", () => {
       "ACTION_DENIED",
     );
     await expect(
-      prisma.membership.findFirstOrThrow({ where: { id: ADMIN } }),
+      prisma.membership.findFirstOrThrow({ where: { id: ADMIN, orgId: ORG_A } }),
     ).resolves.toMatchObject({ role: "member" });
     await expect(
       prisma.customerConversation.findFirstOrThrow({

@@ -18,6 +18,7 @@ const m = vi.hoisted(() => ({ founderAlert: vi.fn(), captureMoneyPathError: vi.f
 vi.mock("../alerting.js", () => ({ founderAlert: m.founderAlert, captureMoneyPathError: m.captureMoneyPathError }));
 
 import { prisma, HOLD_SHORTFALL_REASON_PREFIX } from "@fikirtive/db";
+import { runAsSystem } from "@fikirtive/db/principal";
 import { checkLedgerConservation, findLedgerDrift, sumRecentHoldShortfall } from "./ledger-conservation.js";
 
 // 同其它真库用例的守卫:绝不对着一个不是 *_test 的库跑。
@@ -99,8 +100,12 @@ afterAll(async () => {
 async function cleanup() {
   if (mine.length === 0) return;
   await prisma.actionEvent.deleteMany({ where: { ownerId: { in: mine } } });
-  await prisma.creditLedger.deleteMany({ where: { orgId: { in: mine } } });
-  await prisma.creditAccount.deleteMany({ where: { orgId: { in: mine } } });
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号（`{ in: [...] }` 这个形状无帧时守卫
+  // 判不出它点名了谁）。夹具清场因此逐家删 —— 删掉的行一行不多、一行不少。
+  for (const orgId of mine) {
+    await prisma.creditLedger.deleteMany({ where: { orgId } });
+    await prisma.creditAccount.deleteMany({ where: { orgId } });
+  }
   await prisma.organization.deleteMany({ where: { id: { in: mine } } });
   mine = [];
 }
@@ -307,7 +312,10 @@ describe("hold-shortfall:平台昨天吃掉了多少,必须有人看得见", () 
         // 没被钳过的普通 SETTLE 也不算
         await ledgerRow(orgId, { kind: "SETTLE", reason: "" });
 
-        const roll = await sumRecentHoldShortfall(new Date());
+        // #1403 钱面正式执法：这支 helper 在生产里永远跑在 `checkLedgerConservation` 的
+        // `runAsSystem("ledger-conservation")` 扫描域帧内（全平台读，只读）。用例直接调它，
+        // 就得自己戴上同一顶帧 —— 不是放宽守卫，是把调用形状对齐生产。
+        const roll = await runAsSystem("ledger-conservation", () => sumRecentHoldShortfall(new Date()));
         // 下界断言:这个库跨套件共用,别人也可能在同一个 24 小时里写下钳行。钉"至少有我这两笔"
         // 是这里唯一诚实的形式 —— 钉等号钉的就是别人的用例有没有在同一秒跑。
         expect(roll.rows).toBeGreaterThanOrEqual(2);
@@ -364,7 +372,10 @@ describe("hold-shortfall:平台昨天吃掉了多少,必须有人看得见", () 
         // 刻意**不**去删全库的钳行:这个测试库跨套件共用,删掉别人正在断言的行是一个
         // 比"断言不够干净"糟得多的问题。所以改成移动窗口,而不是清空世界。
         const wayLater = new Date(Date.now() + 30 * 24 * 3_600_000);
-        const roll = await sumRecentHoldShortfall(wayLater);
+        // #1403 钱面正式执法：这支 helper 在生产里永远跑在 `checkLedgerConservation` 的
+        // `runAsSystem("ledger-conservation")` 扫描域帧内（全平台读，只读）。用例直接调它，
+        // 就得自己戴上同一顶帧 —— 不是放宽守卫，是把调用形状对齐生产。
+        const roll = await runAsSystem("ledger-conservation", () => sumRecentHoldShortfall(wayLater));
         expect(roll).toEqual({ rows: 0, internal: 0 });
         // 而 checkLedgerConservation 在 rows===0 时那条 info 根本不发(见实现的 `if`)。
       } finally {

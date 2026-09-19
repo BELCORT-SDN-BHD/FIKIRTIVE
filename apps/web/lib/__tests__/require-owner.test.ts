@@ -40,12 +40,33 @@ afterEach(() => { mockAuth.mockReset(); });
 // import AFTER the mock + env are in place
 const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma } = await import("@fikirtive/db");
+const { runAsSystem, runAsTenant } = await import("@fikirtive/db/principal");
 const { FOUNDER_OWNER_ID } = await import("@fikirtive/core");
 
 async function ensureUser(email: string): Promise<string> {
   const id = `usr_${randomUUID()}`;
   const u = await prisma.user.upsert({ where: { email }, update: {}, create: { id, email } });
   return u.id;
+}
+
+/** 「这个人一共属于几家店」——**天生跨租户**的一问，答案没有单一租户可以收口。#1403 钱表族
+ *  落闸之后，这种读要在**扫描域**里问（`system` 帧 + `ownerId === null`，`count` 在守卫的
+ *  SYSTEM_SCAN_OPS 里），正是生产上 `requireOwner` 自己那一句读走的同一条路。 */
+function countMemberships(where: Record<string, unknown>): Promise<number> {
+  return runAsSystem("test-seed", () => prisma.membership.count({ where }));
+}
+
+/** 清掉这个人名下的 membership。**写**必须点名租户（扫描域帧不许写），所以先在扫描域里问出
+ *  他属于哪几家，再逐家删。 */
+async function purgeMemberships(userId: string): Promise<void> {
+  const rows = await runAsSystem("test-seed", () =>
+    prisma.membership.findMany({ where: { userId }, select: { id: true, orgId: true } }),
+  );
+  for (const row of rows) {
+    await runAsTenant(row.orgId, () =>
+      prisma.membership.delete({ where: { id: row.id, orgId: row.orgId } }),
+    );
+  }
 }
 
 describe("requireOwner — fail-closed", () => {
@@ -70,7 +91,7 @@ describe("requireOwner — fail-closed", () => {
 
   it("bootstraps a NEW personal org (never 'founder') for a non-founder allowlisted user", async () => {
     const userId = await ensureUser(NEW_EMAIL);
-    await prisma.membership.deleteMany({ where: { userId } });
+    await purgeMemberships(userId);
     mockAuth.mockResolvedValue({ user: { email: NEW_EMAIL } });
 
     const r = await requireOwner();
@@ -123,7 +144,7 @@ describe("suspension / revocation gates (Fix A + Fix B)", () => {
     expect("error" in r).toBe(true);
 
     // Verify: only ONE org exists for this user (no second bootstrapped org was created).
-    const orgCount = await prisma.membership.count({ where: { userId, deletedAt: null } });
+    const orgCount = await countMemberships({ userId, deletedAt: null });
     expect(orgCount).toBe(1);
   });
 
@@ -190,7 +211,7 @@ describe("soft-deleted + suspended defense-in-depth (Fix 1)", () => {
     expect("error" in r).toBe(true);
 
     // Verify: no second org was created; the original remains.
-    const memberCount = await prisma.membership.count({ where: { userId } });
+    const memberCount = await countMemberships({ userId });
     expect(memberCount).toBe(1);
   });
 

@@ -61,8 +61,14 @@ const userIds: string[] = [];
 
 /** 上一趟被中断留下的行会撞固定 id;先自清,重跑才是幂等的。 */
 async function wipeFixtures() {
-  await prisma.creditLedger.deleteMany({ where: { id: { startsWith: `cl_${TAG}_` } } });
-  await prisma.membership.deleteMany({ where: { orgId: { in: [ORG_A, ORG_B] } } });
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号。这一句按 id 前缀删跨了几家店，
+  // 所以改成逐家删 —— 谓词加上这家的 orgId，删掉的行一行不多、一行不少。
+  for (const orgId of [ORG_A, ORG_B]) {
+    await prisma.creditLedger.deleteMany({ where: { orgId, id: { startsWith: `cl_${TAG}_` } } });
+  }
+  // #1403 钱表族正式执法：无帧的写必须自带**字面**租户号（`{ in: [...] }` 这个形状无帧时守卫
+  // 判不出它点名了谁）。夹具清场因此逐家删 —— 删掉的行一行不多、一行不少。
+  for (const orgId of [ORG_A, ORG_B]) await prisma.membership.deleteMany({ where: { orgId } });
   await prisma.user.deleteMany({ where: { email: { startsWith: `${TAG}-` } } });
   await prisma.organization.deleteMany({ where: { id: { in: [ORG_A, ORG_B] } } });
 }
