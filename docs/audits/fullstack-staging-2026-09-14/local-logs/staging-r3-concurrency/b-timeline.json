@@ -1,0 +1,214 @@
+{
+  "T": {
+    "goSeen": "2026-09-18T15:10:35.039Z",
+    "submitClicked": "2026-09-18T15:10:35.084Z",
+    "firstProgress": "2026-09-18T15:10:36.203Z",
+    "imageVisible": "2026-09-18T15:11:14.470Z"
+  },
+  "baselineImgs": 2,
+  "finalImgs": 3,
+  "genLabel": "Generate · 1 credit",
+  "dialogText": "Make another one like this?\n\nCost: 1 credit. No charge until you confirm.\n\nImages\n1\nShape\n3:4\nFrom\nA premium travel mug in coral-orange with a plain cream lid, no logo, no text, no branding anywhere on the mug or lid. The setting is Warm neutral tabletop surface, minimal and clean café background, shallow depth of field. The style is High-end product photography, editorial, photorealistic, the light is Soft diffused natural window light from the left, warm golden undertones, gentle shadow on the right, the color palette is Coral-orange mug, cream lid, warm neutral beige and sand tones. Shot with Medium close-up, 85mm prime lens, slight tilt for dynamic composition. The mood is Premium, warm, inviting, café lifestyle. Matte or brushed finish on the mug body, smooth cream lid with no text or markings, crisp product edges. Keep the frame free of subtitles, captions, and watermarks.\nCancel\nGenerate · 1 credit\nClose",
+  "timeline": [
+    {
+      "ts": "2026-09-18T15:10:35.200Z",
+      "generating": false,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:36.203Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:37.206Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:38.213Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:39.220Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:40.226Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:41.233Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:42.240Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:43.247Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:44.258Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:45.265Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:46.271Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:47.277Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:48.284Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:49.291Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:50.297Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:51.305Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:52.312Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:53.316Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:54.323Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:55.332Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:56.338Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:57.343Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:58.351Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:10:59.359Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:00.365Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:01.369Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:02.374Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:03.381Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:04.388Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:05.394Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:06.401Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:07.406Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:08.410Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:09.416Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:10.419Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:11.422Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:12.428Z",
+      "generating": true,
+      "imgs": 2
+    },
+    {
+      "ts": "2026-09-18T15:11:13.463Z",
+      "generating": true,
+      "imgs": 3
+    },
+    {
+      "ts": "2026-09-18T15:11:14.470Z",
+      "generating": false,
+      "imgs": 3
+    }
+  ]
+}

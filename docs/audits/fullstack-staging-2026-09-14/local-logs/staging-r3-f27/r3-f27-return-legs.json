@@ -1,0 +1,197 @@
+{
+  "group": "r3-f27-return-legs",
+  "generatedAtUtc": "2026-09-18T19:03:30Z",
+  "target": "https://web-staging-7901.up.railway.app",
+  "buildInfo": {
+    "webSha": "bd5877c3",
+    "ref": "main",
+    "startedAt": "2026-09-18T18:38:36.165Z",
+    "readAtUtc": "2026-09-18T18:51:10Z",
+    "gateShaRequired": "e81366f8",
+    "containsGateSha": true,
+    "ancestryProof": "git merge-base --is-ancestor e81366f8 bd5877c3 -> exit 0",
+    "migrationsLatest": "20260915120000"
+  },
+  "threadReadIdentification": {
+    "clientCall": "getCoworkThreadClient (apps/web/lib/cowork-fetch.ts, file begins with \"use server\")",
+    "wireShape": "Next server action = POST to the current page URL '/' with a Next-Action header; there is NO named REST endpoint to filter on",
+    "actionIds": {
+      "40b49907f25411285031904882f9cbf00c27dd75f6": "thread read (pollAndInjectResults -> getCoworkThreadClient); 2.5s cadence == GENERATION_WATCH_GEARS.fast",
+      "400c7b4f5f6f9174b3f8988ec8ca67689ebef8159c": "approve action (fired once at the Generate click)",
+      "00c6a55a5959ec996689325164f88f158edab15af5": "nav balance refresh (global-navigation.tsx visibilitychange listener + post-turn refresh)",
+      "406de8840f3d1ad62fac06fa907a515031e2a16899": "loadOttoPanelSeed (panel seed on a cold document load)"
+    },
+    "method": "passthrough window.fetch recorder installed via javascript_tool; records only method/url/next-action id/timestamp/duration/status - no request or response bodies"
+  },
+  "dbBaseline": {
+    "readAtUtc": "2026-09-18T18:52:08Z",
+    "orgId": "founder",
+    "latestGenJob": {"id": "01M2TH3BTX8M3GV5ZWKSP5X8DV", "status": "DONE", "createdAt": "2026-09-18 15:10:30.274"},
+    "creditLedgerCount": 199,
+    "balance": 99996851,
+    "reserved": 0
+  },
+  "step1_approval": {
+    "prompt": "a red ceramic mug on a wooden table, product photo",
+    "planCardButton": "Generate · 1 credit",
+    "approveClickUtc": "2026-09-18T18:53:54.631Z",
+    "genJobId": "01M2TXWEG6BC46EM8KNK1ZN6CG",
+    "threadId": "01M2TXV6M3QQ94086P31ZTKN4E",
+    "idempotencyKey": "cowork:01M2TXVPYY9PEWADFR1FCCX9H1",
+    "dbCreatedAt": "2026-09-18 18:53:55.095",
+    "dbStartedAt": "2026-09-18 18:53:56.653",
+    "dbFinishedAt": "2026-09-18 18:54:32.119",
+    "jobDurationSeconds": 37.02,
+    "cardCopyAfterApproval": "✓ Approved — in the queue · 0:02 · this can take a moment / Cancel / ✓ You approved this — it used 1 credit. / Otto is making this — this can take a moment…"
+  },
+  "legs": [
+    {
+      "leg": "tab-switch",
+      "status": "PASS",
+      "plannedShape": "visible -> hidden ~15s -> visible",
+      "actualShape": "hidden -> visible. The Browser pane was already hidden when the card was approved, so the document was hidden from 18:53:54.6 to 18:54:12.545 (~17.9s) and the measured 'return' is the hidden->visible transition. Direction is inverted vs the plan; the transition under test (visibilitychange -> visible while a job is working) is the same one the fix listens for.",
+      "returnMomentUtc": "2026-09-18T18:54:12.545Z",
+      "networkEvidence": {
+        "threadReadAtReturn": "2026-09-18T18:54:12.719Z (action 40b49907…, +174 ms after the visible transition)",
+        "offCadenceProof": "previous scheduled read 18:54:10.373, next scheduled would have been 18:54:12.873; the 18:54:12.719 read is off-beat",
+        "rearmProof": "subsequent reads at 18:54:15.049 / 18:54:17.547 / 18:54:20.049 — cadence restarted from the return moment, i.e. rearmGenerationPoll() ran once for this job batch",
+        "readsAtReturn": 1,
+        "alsoFired": "balance refresh action 00c6a55a… at 18:54:12.544 (separate listener in global-navigation.tsx)"
+      },
+      "secondsToCatchUp": 0,
+      "catchUpNote": "Nothing was stale to catch up on: the bounded fast poll kept its full 2.5 s cadence for the whole hidden window (no background throttling observed in this pane), so the last pre-return read was 2.2 s old. The immediate read fired anyway, which is the specified behaviour (the read is unconditional when hasWorkingJob).",
+      "cardStateAtReturn": "still working (job finished 19.6 s later, at 18:54:32.119). Panel text was NOT sampled at the exact return instant — this is a gap in this run; the working state is inferred from the job finishing 19.6 s after the return.",
+      "jobCompletionObservedByClient": "2026-09-18T18:54:32.731Z (poll issued 18:54:32.548 returned in 183 ms; DB finishedAt 18:54:32.119 — panel learned 0.61 s after the DB row)",
+      "copySeen": [
+        "✓ Approved — in the queue · 0:02 · this can take a moment",
+        "Otto is making this — this can take a moment…",
+        "✓ Done",
+        "✓ You approved this — it used 1 credit.",
+        "Cost: 1 credit",
+        "Done — want a tweak?"
+      ],
+      "notMeasured": [
+        "The pageshow/visibilitychange de-duplication flag was not stressed: only visibilitychange fired at this return (no bfcache restore), so exactly one event reached the handler.",
+        "The reverse assertion (terminal thread => no read on return) was not separately exercised: no visible transition occurred while the thread was terminal."
+      ]
+    },
+    {
+      "leg": "back",
+      "variant": "A — merchant path: sidebar Library link (App Router client-side nav) then browser Back",
+      "status": "PASS",
+      "leftHomeUtc": "2026-09-18T18:57:30Z (approx, click at 18:57:30)",
+      "backPressedUtc": "2026-09-18T18:58:01.96Z",
+      "observed": "The Otto panel never unmounts on client-side navigation. While on /library the Messages region still held the complete conversation (885 chars incl. '✓ Done'); on arriving back at Home it was unchanged. Zero pageshow, zero visibilitychange, zero server action fired on arrival.",
+      "networkEvidence": {"serverActionsOnArrival": 0, "pageshowEvents": 0, "visibilitychangeEvents": 0},
+      "secondsToCatchUp": 0,
+      "copySeen": [],
+      "copyNote": "No waiting copy appeared, and none was needed: nothing ever unmounted or re-fetched, so there was no blank window on this path.",
+      "specRelevance": "Confirms the spec's branch ②: on an App Router client-side back (popstate) neither pageshow nor visibilitychange fires, so the R3-F27 immediate re-read does not run. On this build that costs nothing, because the panel keeps its state."
+    },
+    {
+      "leg": "back",
+      "variant": "B — full-document-load excursion (/library via address bar) then browser Back",
+      "status": "PARTIAL",
+      "backPressedUtc": "2026-09-18T19:02:27.264Z",
+      "navigationType": "back_forward",
+      "bfcacheRestored": false,
+      "bfcacheProof": "a marker variable set on the Home JS context before leaving (window.__MARKER) was gone after Back => the document was re-created, not restored from bfcache. Therefore pageshow(persisted=true) cannot fire on this leg.",
+      "documentResponseHeaders": {
+        "cache-control": "private, no-cache, no-store, max-age=0, must-revalidate",
+        "measuredAtUtc": "2026-09-18T18:56:55.438Z",
+        "note": "no-store is present on the Home document response, as the spec inferred but had not measured. Chrome documents no-store as a bfcache blocker; the marker test above confirms the blocking empirically on this build."
+      },
+      "timeline": {
+        "waitingCopyPresentInDomAtMs": 441,
+        "seedActionStartMs": 556,
+        "seedActionDurationMs": 234,
+        "conversationFullyInDomAtMs": 843,
+        "messageNodesAtThatPoint": 4
+      },
+      "secondsToCatchUp": 0.84,
+      "copySeen": ["Opening your conversation…"],
+      "status_reason": "The copy half of this leg PASSES and is measured. The 'in-progress card catches up' half is NOT RUN: the job had already finished (37 s), so there was no working card to catch up. Measuring that half needs a longer job (video)."
+    },
+    {
+      "leg": "refresh",
+      "status": "PARTIAL",
+      "runs": [
+        {
+          "run": 2,
+          "navStartUtc": "2026-09-18T18:59:41.31Z",
+          "waitingCopyVisibleAtMs": 496,
+          "seedActionStartMs": 527,
+          "seedActionDurationMs": 245,
+          "domLevelSampling": false,
+          "retracted": "This run sampled only innerText and recorded the Messages region as empty for 30 s. That reading is RETRACTED — see harnessArtifact below; the run did not sample the DOM, so it is not evidence that content was missing."
+        },
+        {
+          "run": 3,
+          "navStartUtc": "2026-09-18T19:01:12.043Z",
+          "waitingCopyPresentInDomAtMs": 546,
+          "seedActionStartMs": 557,
+          "seedActionDurationMs": 533,
+          "conversationFullyInDomAtMs": 1148,
+          "messageNodesAtThatPoint": 4,
+          "laidOutAtMs": 1646,
+          "stableThroughMs": 30428,
+          "domLevelSampling": true
+        }
+      ],
+      "secondsToCatchUp": 1.15,
+      "copySeen": ["Opening your conversation…"],
+      "status_reason": "Copy half PASSES and is measured (visible from ~0.5 s until content lands at ~1.15 s). The 'in-progress card catches up' half is NOT RUN — the job was already terminal."
+    }
+  ],
+  "harnessArtifact": {
+    "finding": "While the Browser pane is hidden, Chrome skips layout for the Otto message list, so element.innerText returns '' for a region whose DOM is fully populated. In run 3, at 1148 ms the Messages region had 4 [data-message-id] nodes, innerHTML 17360 chars and textContent 1162 chars, while innerText read 0 and only became 624 at 1646 ms. In the Back-variant-B run innerText stayed 0 for the full 20 s while the DOM held the complete conversation the whole time.",
+    "consequence": "Any measurement of 'the panel is blank' taken through innerText, get_page_text or read_page on a hidden pane over-reports blankness by seconds to tens of seconds.",
+    "relevanceToSpec": "This independently reproduces the confound the R3-F27 row already registered (workflow-groups2-4-result.json) and makes it the leading explanation for the original, never-reproduced 40–60 s figure.",
+    "mitigation": "DOM-level counters ([data-message-id].length, innerHTML.length, textContent.length) are layout-independent and were used for every number reported above."
+  },
+  "giveUpCopyRule": {
+    "testable": false,
+    "reason": "The image job finished in 37 s. The fast gear is 2.5 s × 48 ≈ 120 s, so the poll never left fast gear and the give-up copy ('This is taking longer than usual. Your credits for this are on hold…') and the terminal copy ('This looks stuck. Cancel it on the card to get your credits back…') were never eligible to appear. The per-batch re-arm gate (spec item g) therefore could not be exercised either. Both need a job longer than ~2 minutes — a video job."
+  },
+  "money": {
+    "genJobsCreated": 1,
+    "ledgerRowsBefore": 199,
+    "ledgerRowsAfter": 203,
+    "ledgerRowsAdded": 4,
+    "imageJobRows": [
+      {"kind": "RESERVE", "balanceDelta": -10, "reservedDelta": 10, "refId": "01M2TXWEG6BC46EM8KNK1ZN6CG", "createdAt": "2026-09-18 18:53:55.109"},
+      {"kind": "SETTLE", "balanceDelta": 0, "reservedDelta": -10, "refId": "01M2TXWEG6BC46EM8KNK1ZN6CG", "createdAt": "2026-09-18 18:54:32.095"}
+    ],
+    "ottoChatRows": [
+      {"kind": "RESERVE", "balanceDelta": -40, "reservedDelta": 40, "refId": "otto-stream:01M2TXV6XKFHX1R0NK8QF27WGN", "createdAt": "2026-09-18 18:53:14.681"},
+      {"kind": "SETTLE", "balanceDelta": 19, "reservedDelta": -40, "refId": "otto-stream:01M2TXV6XKFHX1R0NK8QF27WGN", "createdAt": "2026-09-18 18:53:34.132"}
+    ],
+    "balanceBefore": 99996851,
+    "balanceAfter": 99996820,
+    "unitsSpent": 31,
+    "creditsSpent": 3.1,
+    "creditsBreakdown": "1.0 credit = the one approved paid image card (the budgeted item, US$0.035). 2.1 credits = the Otto chat turn that produced the plan card (disclosed, unavoidable overhead of using the composer; same pattern as the R3-F28 group).",
+    "usdApprox": 0.1085,
+    "refunds": 0,
+    "hangingReserve": 0,
+    "finalReserved": 0
+  },
+  "finalState": {
+    "observedAtUtc": "2026-09-18T19:03:10.338Z",
+    "url": "https://web-staging-7901.up.railway.app/",
+    "cardState": "✓ Done — result card with the generated image, Download / Copy to post / Make another / Tweak it, 'Cost: 1 credit', 'Done — want a tweak?'",
+    "dbStatus": "DONE",
+    "sessionLeftSignedInOnHome": true
+  },
+  "screenshots": {
+    "takenInline": [
+      "right after approval (18:53:58Z)",
+      "right after the tab-switch return / job completion (18:55:47Z)",
+      "refresh-leg settled state (19:00:23Z)",
+      "final state (19:03:10Z)"
+    ],
+    "savedToDisk": false,
+    "savedToDiskReason": "The Browser pane screenshot tool returns images inline to the agent only; it has no file-output path, so the PNGs could not be written into this directory. DOM/text snapshots were saved instead (final-panel-textcontent.txt) and the inline screenshots are in the session transcript."
+  },
+  "writesMade": ["one approved paid image generation (GenJob 01M2TXWEG6BC46EM8KNK1ZN6CG) and its 2 ledger rows; plus the Otto chat turn that produced the plan card and its 2 ledger rows. No other writes. DB access was BEGIN READ ONLY / SELECT / ROLLBACK throughout."]
+}

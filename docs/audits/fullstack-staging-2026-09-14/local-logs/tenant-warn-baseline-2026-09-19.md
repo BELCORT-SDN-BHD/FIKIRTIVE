@@ -161,8 +161,8 @@ A(905+6) · B(706) · C(211) · D(3) = 1858。
 1. **播种**：`prisma.creditAccount.create({ data: { orgId, balance } })` 之类，在 `beforeEach` 里建钱账；
 2. **断言**：`prisma.creditLedger.findMany({ where: { orgId } })` 之类，跑完数一数账本行。
 
-没有单一收口点：31 个文件走 `packages/db/test/setup.ts` 的 `seedOrg`，另外 71 个文件自己 inline 写。
-**逐文件清单已随本文件入库**：`tenant-warn-baseline-2026-09-19-files.txt`（同目录，122 行，
+没有单一收口点：31 个文件走 `packages/db/test/setup.ts` 的 `seedOrg`，另外 **91** 个文件自己 inline 写（31 ＋ 91 ＝ 122，与下面那份清单的条数对得上；2026-09-19 订正：原写「另外 71 个」，加起来只有 102，与清单不符）。
+**逐文件清单已随本文件入库**：`tenant-warn-baseline-2026-09-19-files.txt`（同目录，**122 条数据行**——文件共 134 行，含 11 行 `#` 开头的表头与一行空行；
 每行「放行次数 / 其中无帧写的次数 / 仓库相对路径」，合计行与本节数字逐条对得上）。收兜底那一票
 （#1497）照着它逐个文件改，不需要再跑一遍埋点。
 

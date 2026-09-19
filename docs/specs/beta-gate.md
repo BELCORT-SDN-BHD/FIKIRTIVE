@@ -123,6 +123,7 @@ memory 是缓存，Git 与当前代码才是权威）。
 | 2026-09-07 | 起草本文件：把 13 张 open 的上线相关 issue 收成 GATE-A1…A13 一张验收表，「退出 beta 门」名单原样收进 §3，#1053 的冻结预览契约列为待 grill 项①。零代码改动、零其他规格改动。 | — |
 | 2026-09-07 | 草稿五处订正（G1）：① GATE-A2/§1 取样点 `tenant-guard.ts:349`→`:348`（行号漂移）；② 取样点基线 SHA `c8f0c1c4`→`3340107c`（本分支 base，两处）；③ §3.1「逐字取自」改「原文照录（标点按本文全角体例统一）」；④ GATE-A9 的 `gen-actions.ts:1268` 后补一句 cowork 前缀键除外说明；⑤ GATE-A11 ① 的限流现状锚点改到 `rate-limit-gates.ts:240-245`（理由 `:229-239`），补一句现码是刻意 fail-open。零代码改动、零验收表判定改动。 | — |
 | 2026-09-13 | media-durability 已冻结·v2 落地写路径同步复制＋恢复手册（PR #1425 / #1385）：GATE-A6「现状：媒体对象零备份、零复制」自该 PR 起失效，冻结时按当时实况重写；GATE-A6 判定条款本身不动。 | — |
+| 2026-09-19 | **GATE-A6 判定所需的证据已经齐了，判定本身留给 Founder**。MEDIA-A4（staging 真删一个商家已付费产物再照手册恢复：回原键、etag 逐位相同、零新生成 job）与 MEDIA-A5（`docs/runbooks/media-restore.md` 末尾的「演练记录」表今天有 3 行完整留证，2026-09-19 两行还把脚本段 RTO 与人工排查段分开报）两条的回执都在库——两次 staging 恢复盲走，PR [#1484](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1484)（`cb136adc`）与 [#1496](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1496)（`606f1c52`），原始证据 `docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r3-media-a3/`。**本文件仍是草稿、本次不冻结、GATE-A6 那句判定不代念**——上线闸属商业裁定，是里程碑制第 2 条「人管五样」里的东西，agent 车道不越线（MEDIA-A8 原文要的就是「Founder 打开 beta-gate.md GATE-A6，念那句判定」）。本行只是把证据指针摆好，等 Founder。 | — |
 
 ## 6. 改签记录
 

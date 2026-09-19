@@ -1,0 +1,27 @@
+Otto panel Messages region textContent, read 2026-09-18T19:03:10.338Z at https://web-staging-7901.up.railway.app/
+(4 [data-message-id] nodes; layout-independent read)
+
+a red ceramic mug on a wooden table, product photo
+Here's what I'll make
+An image
+Product photo of red ceramic mug for cafe marketing
+2048 × 2048  1:1  1 image
+Advanced details
+The prompt sent to the image engine
+Matte red ceramic mug on a warm wooden table. The setting is clean minimal studio setting, wooden table surface with soft background. The style is product photography, photorealistic, the light is soft natural window light from the side, warm golden tone, gentle shadows, the color palette is matte red, warm wood tones, neutral background. Shot with medium close-up, 85mm lens, slight shallow depth of field. The mood is clean, inviting, warm. Mug surface texture visible, wood grain on table, subtle steam optional.
+Copy
+About 1 credit
+✓ Done
+✓ You approved this — it used 1 credit. Otto only makes this after you approve. Chatting with Otto costs credits for what it uses — your charges are listed in Billing.
+Otto
+There's your idea card — how does this look? Approve it there to make the image, and let me know if you'd like any changes first (different angle, background, shape, etc.)!
+Download  Copy to post  Make another
+Cost: 1 credit
+Done — want a tweak?
+Tweak it
+
+--- copy strings captured during the legs ---
+working card:  "✓ Approved — in the queue · 0:02 · this can take a moment"
+working line:  "Otto is making this — this can take a moment…"
+waiting copy:  "Opening your conversation…"   (panel state attribute data-otto-panel-conversation="loading")
+ready state:   data-otto-panel-conversation="ready"
