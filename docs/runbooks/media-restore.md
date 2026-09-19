@@ -225,8 +225,11 @@ I_UNDERSTAND_THIS_TOUCHES_PROD=yes DRILL_KEY=u/<ownerId>/<sha256>.<ext> \
 `<ownerId>` 段就是这个对象所属的租户/org。**记下这个 ownerId,第 2 步核对要用。**
 
 **只按 `contentHash` 找键会一次找出好几个租户的键**(内容寻址:同一份素材被几个租户用过就有
-几行 `Asset`,`contentHash` 完全相同——2026-09-19 二次盲走那件就被 7 个 org 共用),选中哪一个
-靠的是键首段的 `ownerId`,查的时候务必连 `ownerId` 一起限定(这正是 MEDIA-A9 前缀核对在防的事)。
+几行 `Asset`,`contentHash` 完全相同)。二次盲走的复核判官顺手查过:2026-09-19 演练那件的
+`contentHash` 在 7 个 ownerId 各有一行(六个 org 加 Founder 自己,都是 200940 字节)——见
+`docs/audits/fullstack-staging-2026-09-14/local-logs/staging-r3-media-a3/verifier-2.json`
+的 SIDE OBSERVATION 那条(判官自己跑的只读查询,盲走者本人没查过跨租户)。选中哪一个靠的是
+键首段的 `ownerId`,查的时候务必连 `ownerId` 一起限定(这正是 MEDIA-A9 前缀核对在防的事)。
 
 ### 第 2 步 · 在备份桶找副本 + 核对租户前缀(MEDIA-A9)
 
@@ -244,7 +247,7 @@ I_UNDERSTAND_THIS_TOUCHES_PROD=yes \
     -- node scripts/tools/media-backup-backfill.mjs
 ```
 
-输出「missing from backup」「CONFLICT」两类;非空即非零退出,方便接进监控。脚本第一行就把
+输出「missing from backup」「CONFLICT」两类;非空即非零退出,方便接进监控。脚本头两行就把
 内容桶与备份桶的名字打出来——**动手前把这两行读回去**,这是环境搞混时唯一会拦住你的东西。
 **这条差集命令不是只在演练前跑一次的东西——按固定周期(例如每日)跑它,非空才需要人看、
 确认后再 `--apply` 回填,这是「什么可能漏备、怎么发现」那条成因说的那个漏备窗口唯一的闭合
