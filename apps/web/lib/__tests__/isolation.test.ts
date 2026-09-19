@@ -36,6 +36,7 @@ const refgen = await import("@/lib/refgen-actions");
 const { GET: filesGET } = await import("@/app/files/[...key]/route");
 const { storageKey } = await import("@fikirtive/core");
 const tenantAdmin = await import("@/lib/tenant-admin");
+const { runAsStaff } = await import("@fikirtive/db/principal");
 const mediaLink = await import("@/lib/media-link-actions");
 const { verifyMediaToken } = await import("@fikirtive/token-crypto");
 
@@ -249,7 +250,13 @@ describe("2-org isolation — org B can never read org A", () => {
       update: { balance: 1230, reserved: 0 },
       create: { orgId: orgB, balance: 1230, reserved: 0 },
     });
-    const detail = await tenantAdmin.getTenantDetail(orgB);
+    // #1403 钱表族正式执法：详情页在生产里跑在 `runAsStaff(staffPrincipal(gate, orgId))` 里
+    // （`app/admin/tenants/[orgId]/page.tsx:15`），页内的 `adjustWindowTotals([orgId])` 是
+    // `{ orgId: { in: [一家] } }` 这个形状 —— 无帧那一档不认。照生产的形状进帧，断言一条没改。
+    const detail = await runAsStaff(
+      { kind: "staff", actorEmail: B_EMAIL, ownerId: orgB },
+      () => tenantAdmin.getTenantDetail(orgB),
+    );
     expect(detail).not.toBeNull();
     // scoped to orgB — ownerEmail belongs to orgB, not A
     expect(detail!.orgId).toBe(orgB);
