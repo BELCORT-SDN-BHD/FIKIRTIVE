@@ -399,7 +399,7 @@ staging 在付费旅程执行期间自动重部署（`eed4f079`→`4496bc3b`→`
 
 ## R3-F35 · 服务器端 Sentry 不洗分享 token（SHARE-A6 遥测半句只在浏览器上成立）
 
-**状态**：修复中（本 PR，`claude/share-token-scrub-server-r3`）。Founder 2026-09-19 对谈授权编排者代裁「本版修」，登记行见 `docs/specs/share-preview.md` §5 2026-09-19。
+**状态**：修复 PR #1482（分支 `claude/share-token-scrub-server-r3`，未合；合入后回填合并 commit）。Founder 2026-09-19 对谈授权编排者代裁「本版修」，登记行见 `docs/specs/share-preview.md` §5 2026-09-19。
 
 **缺口**：浏览器那一边从 #1317 起就有一道 `beforeSend` 脱敏（`apps/web/lib/sentry-browser.ts` 的 `scrubShareTokens`），服务端 `apps/web/instrumentation.ts:41-45` 的 `Sentry.init` 一直**没有**——只有 `dsn`／`tracesSampleRate`／`environment` 三个字段。于是一条服务端错误只要请求地址是 `/s/<token>`、`/api/media/pub/<token>`、`?t=<token>`，或者请求头／cookie 里带着那颗装 token 的 `__Secure-sp_t`（`apps/web/lib/share-preview-cookie.ts`；客户每打开一次预览页都会把它发上来，这是服务端**必然**拿得到完整 token 的地方），分享 token 就原样送去第三方。**对商家意味着什么**：拿到那串 token 就等于拿到商家发给客户的那条链接本身——能看那一页、能拉那些图，直到链接过期或被撤销。验收 SHARE-A6 的后半句「遥测里的任何 URL 都不含 token」因此只在浏览器上成立。本条由 R3-F31／F32 的跨厂复审（2026-09-17）在「残余」里点名，登记在 `docs/specs/share-preview.md` §5 2026-09-17 那一行，属于**早于那张票**的缺口，不是它修出来的。
 
