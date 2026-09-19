@@ -1,4 +1,4 @@
-# 媒体对象恢复(MEDIA-durability,`docs/specs/media-durability.md` 已冻结 · v2)
+# 媒体对象恢复(MEDIA-durability,`docs/specs/media-durability.md`:v2 正文已冻结;状态:已交付(staging)· 生产激活在部署门 #1480)
 
 > **性质:**操作程序 + 工具说明,不是桶、令牌、对象数的状态台账。真实值现场查——第 1 步
 > 就是查。本文件不含任何秘密值。
@@ -416,7 +416,8 @@ RESTORED u/<ownerId>/<sha256>.<ext> — hash verified (<sha256>), RTO <N>s
 
 ## 相关
 
-- `docs/specs/media-durability.md` —— 本手册对应的规格(已冻结 · v2:备份桶复制口径,
+- `docs/specs/media-durability.md` —— 本手册对应的规格(v2 正文已冻结;状态:已交付
+  (staging)· 生产激活在部署门 #1480。v2 = 备份桶复制口径,
   v1 的「R2 对象版本历史」口径已判死,证据见该规格 §1.4/§6)。
 - `docs/runbooks/db-backup.md` —— 数据库夜间备份与恢复演练,本手册的对照物(同样的
   「隔离备份桶 + 手册 + 一次真跑 + 回填 RTO」形状)。
