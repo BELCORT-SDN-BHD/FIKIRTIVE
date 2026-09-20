@@ -44,12 +44,18 @@ Profile的DOM与截图相反尚未定位：可能是工具对敏感字段处理�
 | 日期（UTC） | 组 | credits（内部记账） | 供应商成本 US$ | 证据 |
 |---|---|---|---|---|
 | 2026-09-18 14:02–14:11 | 客户面分享旅程（REAL-10／REAL-11） | 4.6（两轮 Otto 聊天 2.5 ＋ 2.1；键全是 `otto-stream:*`） | **0**（零 `GenJob`、零生成账本行） | `local-logs/staging-r3-share/real-10-11-share.json` |
-| 2026-09-18 15:09–15:16 | 双账号并发 #1388（REAL-09／QUEUE-A1） | 69（founder 68 ＝ 4×17 视频；tenant B 1 ＝ 1 张图） | **2.14424**（五单 `GenJob.spentUsd` 之和：4×0.52731 ＋ 0.035） | `local-logs/staging-r3-concurrency/two-tenant-concurrency.json` |
-| 2026-09-18 18:53–19:03 | R3-F27 返回三腿复测 | 3.1（已批的图 1 ＋ 一轮 Otto 聊天 2.1） | **0.035**（一单图片 `GenJob`） | `local-logs/staging-r3-f27/r3-f27-return-legs.json` |
+| 2026-09-18 15:09–15:16 | 双账号并发 #1388（REAL-09／QUEUE-A1／A2／A3） | 69（founder 68 ＝ 4×17 视频；tenant B 1 ＝ 1 张图） | **2.14424**（五单 `GenJob.spentUsd` 之和：4×0.52731 ＋ 0.035）——**读作下限**：见下方注① | `local-logs/staging-r3-concurrency/two-tenant-concurrency.json` |
+| 2026-09-18 18:53–19:03 | R3-F27 返回三腿复测 | 3.1（已批的图 1 ＋ 一轮 Otto 聊天 2.1） | **0.035**（一单图片 `GenJob`）——出处见下方注② | `local-logs/staging-r3-f27/r3-f27-return-legs.json` |
 | 2026-09-19 10:24–10:33 | 恢复盲走 #2（MEDIA-A1/A4/A5/A6/A9） | 0（账本前后逐笔一致，`CreditAccount` 连 `updatedAt` 都没动） | **0**（零新生成 job，org 4／全库 51 前后一致） | `local-logs/staging-r3-media-a3/blind-walk-2.json` |
 | 2026-09-19 12:19–12:25 | R3-F34 staging 复测（D-098／D-099） | 2.5（两轮 Otto 文字聊天 2.1 ＋ 0.4） | **0**（零 `GenJob`、零付费卡被提出或批准） | `local-logs/staging-r3-otto-panel/retest/r3-f34-retest.json` |
 
-**累计对照 US$16 暂停线**：第一组 US$0.00 ＋ 第二至第四组 US$0.865764375 ＋ 复跑组 `verify-r3-f28` US$0.07（此三项即 [report-round3.md](report-round3.md) 2026-09-18（五）节写的「累计 US$0.94」）＋ 上表三笔（0 ＋ 2.14424 ＋ 0.035） ＝ **US$3.115004375（约 US$3.12）**。离 US$16 暂停线与 US$20 封顶都还远；封顶的剩余额度约 US$16.88。
+**三处口径说明（2026-09-20 复审补；数字一个没改）**：
+
+- **注①——US$2.14424 是下限，不是账单读数。** 回执 `two-tenant-concurrency.json` 自己的 `gaps` 第三条写着：视频 #3 在供应商侧**提交过两次**（第一次失败后重投 `cgt-20260918231315-gcnn6`），而这五单的成本只记了**一条**的；加上这个数出自**内部牌价钉表**、全程没调过 BytePlus 账单接口，所以真实供应商花费可能略高于 US$2.14424。要按账单核，得另跑一次 `arkcli billing`／`usage stats` 对账。
+- **注②——US$0.035 的出处。** 取自 `r3-f27-return-legs.json` 的 `money.creditsBreakdown`：那一轮 3.1 credits 里，**只有 1.0 credit 是那张经批准的付费图卡**（该文件逐字写明「1.0 credit = the one approved paid image card (the budgeted item, US$0.035)」），另外 2.1 credits 是 Otto 文字聊天的开销。同一文件另有一个 `money.usdApprox: 0.1085`，那是把 3.1 credits **全部按图片单价**折算的数（3.1 × 0.035）——两者口径不同，本表按「US$ 一列只记供应商成本」的既定口径取 0.035。**若改按 0.1085 计，下面的累计就是 US$3.1885**，离 US$16 暂停线与 US$20 封顶同样还远，**两条线的结论都不变**。
+- **注③——累计里那两笔结转值不是 `GenJob.spentUsd` 之和。** 下面累计式里的 US$0.865764375 与 US$0.07 是 2026-09-17／18 两节里由 **credits→USD 折算**得到的值，不是直接从 `GenJob.spentUsd` 求和来的（那两节的原始口径见 report-round3.md 对应小节）。算术本身不变。
+
+**累计对照 US$16 暂停线**：第一组 US$0.00 ＋ 第二至第四组 US$0.865764375 ＋ 复跑组 `verify-r3-f28` US$0.07（此三项即 [report-round3.md](report-round3.md) 2026-09-18（五）节写的「累计 US$0.94」；这两笔是折算值，见注③）＋ 上表三笔（0 ＋ 2.14424 ＋ 0.035） ＝ **US$3.115004375（约 US$3.12）**。离 US$16 暂停线与 US$20 封顶都还远；封顶的剩余额度约 US$16.88。
 
 **关于那笔 2.5 credits 的偏差，照实说**：R3-F34 复测的任务书写的是「零 credits」，实际花了 2.5。原因是这一版 Otto 文字聊天**本身就计费**（面板自己写着「Chatting with Otto costs credits for what it uses」，每条回复下面还有一行「This reply used N credits.」），而那条复测非发两条消息不可。要紧的那一层守住了：**零 `GenJob`、没有任何付费生成卡被提出或批准**。
 

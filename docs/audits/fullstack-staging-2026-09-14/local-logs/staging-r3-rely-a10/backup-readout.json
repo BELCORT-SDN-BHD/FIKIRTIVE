@@ -1,0 +1,110 @@
+{
+  "id": "RELY-A10",
+  "title": "RELY-A10 后半句（补齐后照常完成当日备份）的 staging 只读读数",
+  "provenance": {
+    "collectedAt": [
+      "2026-09-19T10:02:05.440Z",
+      "2026-09-19T10:02:38.070Z"
+    ],
+    "collectedBy": "编排者（收官（八）场），只读：两条命令都走 `BEGIN READ ONLY … ROLLBACK`，只有 SELECT，没有任何写入",
+    "environment": "staging（Railway 项目 b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d，environment=staging，service=postgres；web 为 https://web-staging-7901.up.railway.app）——不是生产",
+    "archivedNote": "2026-09-20 自编排者会话记录（session 1a82113d-380a-4e30-bfcf-29cb998b4a6f）逐字找回后归档；第一条命令尾部与本条无关的 open-PR 列表已略去",
+    "redaction": "连接串在采集时就被命令自带的 `sed -E 's#postgres(ql)?://[^ ]+#<url>#g'` 换成 `<url>`，原始输出里从未出现过；命令里的 Railway 项目号与 staging 域名在 origin/main 的 docs/audits 下早已入库，不是新暴露"
+  },
+  "commands": [
+    {
+      "step": "health",
+      "commandAt": "2026-09-19T10:02:02.230Z",
+      "resultAt": "2026-09-19T10:02:05.440Z",
+      "command": "echo '--- /api/health backup field'; curl -sS --max-time 20 https://web-staging-7901.up.railway.app/api/health | /usr/bin/python3 -c 'import sys,json\ntry:\n  d=json.load(sys.stdin); print(json.dumps({k:d.get(k) for k in d if \"backup\" in k.lower() or k in (\"status\",\"ok\")}, ensure_ascii=False)[:600])\nexcept Exception as e: print(\"parse fail\", e)'; echo '--- BackupRun rows (read-only, staging)'; URL=\"$(railway variable list --json -p b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d -e staging -s postgres 2>/dev/null | jq -r '.DATABASE_PUBLIC_URL')\"; [ -n \"$URL\" ] && psql \"$URL\" -v ON_ERROR_STOP=1 -Atc \"BEGIN READ ONLY; SELECT to_regclass('\\\"BackupRun\\\"') IS NOT NULL AS has_table; SELECT status, count(*), max(\\\"createdAt\\\") FROM \\\"BackupRun\\\" GROUP BY status ORDER BY 1; SELECT id, status, \\\"createdAt\\\", \\\"finishedAt\\\" FROM \\\"BackupRun\\\" WHERE status ILIKE 'succe%' ORDER BY \\\"createdAt\\\" DESC LIMIT 3; ROLLBACK;\" 2>&1 | sed -E 's#postgres(ql)?://[^ ]+#<url>#g' | head -12; unset URL; echo '--- open PRs'; gh pr list --state open --json number,headRefName,title -q '.[] | \"\\(.number)\\t\\(.headRefName)\\t\\(.title[0:70])\"'"
+    },
+    {
+      "step": "backupRun",
+      "commandAt": "2026-09-19T10:02:35.206Z",
+      "resultAt": "2026-09-19T10:02:38.070Z",
+      "command": "URL=\"$(railway variable list --json -p b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d -e staging -s postgres 2>/dev/null | jq -r '.DATABASE_PUBLIC_URL')\"; [ -n \"$URL\" ] && psql \"$URL\" -v ON_ERROR_STOP=1 -Atc \"BEGIN READ ONLY; SELECT string_agg(column_name, ',') FROM information_schema.columns WHERE table_name='BackupRun'; ROLLBACK;\" 2>&1 | sed -E 's#postgres(ql)?://[^ ]+#<url>#g'; COLS=\"$(psql \"$URL\" -Atc \"SELECT string_agg(column_name, ',') FROM information_schema.columns WHERE table_name='BackupRun'\" 2>/dev/null)\"; echo \"cols: $COLS\"; TS=$(echo \"$COLS\" | tr ',' '\\n' | /usr/bin/grep -E -m1 'startedAt|createdAt|ranAt|at$|At$'); echo \"time col: $TS\"; psql \"$URL\" -v ON_ERROR_STOP=1 -Atc \"BEGIN READ ONLY; SELECT status, count(*), max(\\\"$TS\\\") FROM \\\"BackupRun\\\" GROUP BY status ORDER BY 1; SELECT * FROM \\\"BackupRun\\\" WHERE status ILIKE 'succe%' ORDER BY \\\"$TS\\\" DESC LIMIT 2; SELECT * FROM \\\"BackupRun\\\" ORDER BY \\\"$TS\\\" DESC LIMIT 2; ROLLBACK;\" 2>&1 | sed -E 's#postgres(ql)?://[^ ]+#<url>#g' | cut -c1-400; unset URL COLS TS"
+    }
+  ],
+  "rawOutput": [
+    {
+      "step": "health",
+      "resultAt": "2026-09-19T10:02:05.440Z",
+      "rawOutput": "--- /api/health backup field\n{\"ok\": true, \"backup\": \"fresh\"}\n--- BackupRun rows (read-only, staging)\nBEGIN\nt\nERROR:  column \"createdAt\" does not exist\nLINE 1: ...T NULL AS has_table; SELECT status, count(*), max(\"createdAt...\n                                                             ^\n"
+    },
+    {
+      "step": "backupRun",
+      "resultAt": "2026-09-19T10:02:38.070Z",
+      "rawOutput": "BEGIN\nfinishedAt,sizeBytes,durationMs,startedAt,key,id,error,status,trigger,credentialMode\nROLLBACK\ncols: finishedAt,sizeBytes,durationMs,startedAt,key,id,error,status,trigger,credentialMode\ntime col: finishedAt\nBEGIN\nfailed|1627|2026-09-15 06:12:34.624\nsucceeded|5|2026-09-18 19:04:33.935\ncmu7bv6hd000001o373hiuzqv|2026-09-18 19:04:31.991|2026-09-18 19:04:33.935|succeeded|worker-timer|shared|backups/db/fikirtive-2026-09-19.dump.gz|3070337|1944|\ncmu5wfxot000001qp4qkdcjws|2026-09-17 19:04:59.819|2026-09-17 19:05:02.263|succeeded|worker-timer|shared|backups/db/fikirtive-2026-09-18.dump.gz|3050945|2444|\ncmu7bv6hd000001o373hiuzqv|2026-09-18 19:04:31.991|2026-09-18 19:04:33.935|succeeded|worker-timer|shared|backups/db/fikirtive-2026-09-19.dump.gz|3070337|1944|\ncmu5wfxot000001qp4qkdcjws|2026-09-17 19:04:59.819|2026-09-17 19:05:02.263|succeeded|worker-timer|shared|backups/db/fikirtive-2026-09-18.dump.gz|3050945|2444|\nROLLBACK"
+    }
+  ],
+  "parsed": {
+    "health": {
+      "endpoint": "/api/health",
+      "backupField": "fresh",
+      "rawLine": "{\"ok\": true, \"backup\": \"fresh\"}"
+    },
+    "firstAttemptFailed": "同一条 health 命令里的第一次 BackupRun 查询因列名写错而报错（`ERROR:  column \"createdAt\" does not exist`——BackupRun 没有 createdAt 列，时间列是 startedAt／finishedAt）；33 秒后的第二条命令先读 information_schema 拿列名再重查，下面的读数全部来自那一次重查",
+    "statusCounts": {
+      "succeeded": 5,
+      "failed": 1627,
+      "note": "`SELECT status, count(*), max(\"finishedAt\") FROM \"BackupRun\" GROUP BY status ORDER BY 1` 的两行输出：`failed|1627|2026-09-15 06:12:34.624` 与 `succeeded|5|2026-09-18 19:04:33.935`"
+    },
+    "maxFinishedAt": {
+      "failed": "2026-09-15 06:12:34.624",
+      "succeeded": "2026-09-18 19:04:33.935",
+      "note": "failed 的 max(finishedAt) 只说明「最后一条失败行完成于此刻」，不等于此后不会再有失败行——它是本次读数当下的最大值"
+    },
+    "columnOrder": [
+      "id",
+      "startedAt",
+      "finishedAt",
+      "status",
+      "trigger",
+      "credentialMode",
+      "key",
+      "sizeBytes",
+      "durationMs",
+      "error"
+    ],
+    "columnOrderBasis": "`SELECT *` 的列顺序＝表的物理列序。核对来源两处，逐字相同：`packages/db/prisma/schema.prisma:2660-2679` 的 `model BackupRun` 字段顺序，与 `packages/db/prisma/migrations/20260811100000_backup_run/migration.sql` 的 `CREATE TABLE \"BackupRun\"` 列顺序。原始输出每行恰好 10 个 `|` 分隔值（末位 error 为空），与这 10 列一一对应。注意：原始输出里 `information_schema.columns` 那一行（`finishedAt,sizeBytes,durationMs,startedAt,key,id,error,status,trigger,credentialMode`）**不是**列序——该查询没有 ORDER BY，返回顺序是任意的，不能拿它做映射",
+    "latestSucceeded": {
+      "id": "cmu7bv6hd000001o373hiuzqv",
+      "startedAt": "2026-09-18 19:04:31.991",
+      "finishedAt": "2026-09-18 19:04:33.935",
+      "status": "succeeded",
+      "trigger": "worker-timer",
+      "credentialMode": "shared",
+      "key": "backups/db/fikirtive-2026-09-19.dump.gz",
+      "sizeBytes": 3070337,
+      "durationMs": 1944,
+      "error": null
+    },
+    "secondLatestSucceeded": {
+      "id": "cmu5wfxot000001qp4qkdcjws",
+      "startedAt": "2026-09-17 19:04:59.819",
+      "finishedAt": "2026-09-17 19:05:02.263",
+      "status": "succeeded",
+      "trigger": "worker-timer",
+      "credentialMode": "shared",
+      "key": "backups/db/fikirtive-2026-09-18.dump.gz",
+      "sizeBytes": 3050945,
+      "durationMs": 2444,
+      "error": null
+    },
+    "timezoneBasis": {
+      "question": "原始输出的时间戳不带时区标记；矩阵／报告／规格三处正文写成 `2026-09-18 19:04:31.991Z`（带 Z）。带 Z 成立吗？",
+      "answer": "成立。两条互相独立的仓内依据：",
+      "basis1": "列类型是 `timestamp without time zone`——`packages/db/prisma/migrations/20260811100000_backup_run/migration.sql` 明写 `\"startedAt\" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP` 与 `\"finishedAt\" TIMESTAMP(3)`（Prisma 的 `DateTime` 默认就映射成 `timestamp(3)`，由客户端以 UTC 写入）。PostgreSQL 对 `timestamp without time zone` 在输入与输出两端都**不做**任何时区换算，所以 psql 显示的就是库里存的那个值，与 psql 会话时区无关——本次没有记录会话时区，但对这个列类型而言它也不起作用",
+      "basis2": "键名自证：`apps/worker/src/db-backup.ts:88` 的 `backupKeyFor` 用 `klDateString(startedAt)` 造键，而 `klDateString`（同文件 :73-79）按 Asia/Kuala_Lumpur ＝ UTC+8 取日期。最新那一行 `startedAt 2026-09-18 19:04:31.991`，键却是 `fikirtive-2026-09-19.dump.gz`：只有当这个值是 **UTC** 19:04（＝吉隆坡 09-19 03:04）时才会跨过午夜取到 09-19；若它已经是吉隆坡本地时间 19:04，键就该是 `fikirtive-2026-09-18`。次新行同理（`2026-09-17 19:04:59.819` → `fikirtive-2026-09-18.dump.gz`）",
+      "conclusion": "两条依据同向，故三处正文的 `Z` 写法保留。但请注意：`Z` 是依据上面两条推出来的，**不是原始输出自己打印的**——原始输出不带时区标记"
+    }
+  },
+  "limits": [
+    "**RELY-A10 前半句没有演示**：「生产备份 cron 在缺必需 env 的情况下启动，退出码非 0 并点名缺项」本轮没有在任何真环境跑过（要故意把备份 cron 起坏一次）。本读数只覆盖后半句「补齐后照常完成当日备份」。因此 coverage-matrix.md 的 RELY-A10 行记 PARTIAL，不是 PASS",
+    "**读数取自 staging，不是生产**：RELY-A10 那一行的原文说的是**生产**备份 cron。生产那一半挂在部署门 #1480",
+    "**时间戳不带时区标记**：原始输出里的时间戳是裸的 `YYYY-MM-DD HH:MM:SS.mmm`。读成 UTC 的依据见 `parsed.timezoneBasis`（列类型 ＋ 键名自证），是推出来的，不是输出自带的；psql 会话时区本次未记录（对 `timestamp without time zone` 而言不影响显示）",
+    "**只读了 5 条 succeeded 里的最新两条**：重查的 `SELECT *` 带 `LIMIT 2`，所以另外 3 条 succeeded 行的字段没有落盘。「首条成功不晚于 2026-09-17 19:04:59Z」只能从这两行推得，不是把 5 条都看过",
+    "**failed 那 1627 条只有计数与 max(finishedAt)**：没有逐行读，也没有读 error 列，所以「PR #1442 的修法之后再无新增失败」是从 max(finishedAt) ＝ 2026-09-15 06:12:34.624 推的，不是逐行核过",
+    "**这是数据库与 /api/health 的读数，不是一次恢复演练**：它证明「备份跑成功了、产物键与字节数在案」，不证明「这个 dump 能恢复出一个可用的库」。恢复那一面由 MEDIA-A3 的两次盲走另行覆盖"
+  ]
+}

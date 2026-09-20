@@ -23,11 +23,11 @@
 - 生产部署门 [#1480](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1480)：生产迁移、备份激活、staging worker 缺的 `SENTRY_DSN`／`PUBLIC_BASE_URL`、生产 `NODE_ENV` 核证、备份桶 lifecycle 读数、第三次恢复盲走——一律等 Founder 批准才动
 - 钱面「无帧但字面 orgId 放行」兜底收口 [#1497](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1497)（下一版）
 - polish：[#1478](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1478)（视频供应商失败重投回队尾）、[#1479](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1479)（e2e 23-brand 抖动）、[#1485](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1485)、[#1494](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1494)
-- 台账年检出来的建议票 [#1486](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1486)–[#1493](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1493)（不挂里程碑，下个里程碑场下注）
+- 台账年检出来的建议票 [#1486](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1486)、[#1488](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1488)–[#1493](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1493)（不挂里程碑，下个里程碑场下注）
 
 #### 收版条件
 
-GO 裁定 → 打 `git tag v0.2.0` ＋ GitHub Release，并把本节改写成正式的一版一节。今天判 **NO-GO**，两条路二选一：① 下一位 engineer 补跑走查矩阵剩下那一摞（粗估 3–5 个工作日、供应商 ≈US$20–40；`BASE-24` 要先裁「Library 反向改名／换主图」是修还是删条）；② Founder 一句话把本轮 GO 口径缩到已执行范围，那就是 GO ＋ 收版。**编排者不代裁缩口径**（验收与口径属 Founder），所以本节不写版本号标题、不写日期、不打 tag。
+GO 裁定 → 打 `git tag v0.2.0` ＋ GitHub Release，并把本节改写成正式的一版一节。今天判 **NO-GO**，两条路二选一：① 下一位 engineer 补跑走查矩阵剩下那一摞（粗估 3–5 个工作日、供应商 ≈US$20–40；其中 `BASE-24` **不需要 Founder 裁「修还是删条」**——那条 FAIL 采自 2026-09-14 的 build `14bcd038`，而给 Library 加上改名／换主图入口的 PR [#1444](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/1444) 在 2026-09-15 才合入，它要的是在当前 build 上重走一遍）；② Founder 一句话把本轮 GO 口径缩到已执行范围，那就是 GO ＋ 收版。**编排者不代裁缩口径**（验收与口径属 Founder），所以本节不写版本号标题、不写日期、不打 tag。
 
 ## [0.1.1] - 2026-09-12
 
