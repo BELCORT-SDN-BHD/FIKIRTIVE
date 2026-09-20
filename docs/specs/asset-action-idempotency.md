@@ -1,6 +1,6 @@
 # 图片动作防重复扣钱（幂等加固）规格书（S1）
 
-> 状态: 已冻结 · v1
+> 状态: 已交付 · 归档（生产迁移 `GenJob_asset_idempotency_once` 在 #1480）
 > 批准: https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1368 Founder 评论「S1 批准 asset-action-idempotency.md」(2026-09-12)
 > 规格前缀: ASSET（验收编号 = ASSET-A1、A2…，全仓不得与其他规格撞前缀）
 
@@ -71,8 +71,9 @@
 
 | 日期 | 想法 | 裁决（留空待 S5） |
 |---|---|---|
-| 2026-09-12 | 刷新后／第二标签页再按一次＝新意图新扣费（相对旧主干的行为变化，ASSET-A4 语义推得出；待 S5 Founder 过目）——来源 PR #1401 判官 P2-1 | |
+| 2026-09-12 | 刷新后／第二标签页再按一次＝新意图新扣费（相对旧主干的行为变化，ASSET-A4 语义推得出；待 S5 Founder 过目）——来源 PR #1401 判官 P2-1 | 批准: Founder 2026-09-19 对谈授权编排者代裁（原话「我要你现在给我做任何需要我做的决定」）：**接受——ASSET-A4 语义即如此，商家再按一次就是再要一张**。判据不改：自动重发（断网重连、页面自动恢复）走的是同一个意图编号，命中原单、零扣费（A3）；商家自己动手再按一次是一个新意图，新单、再扣一次（A4）。刷新与第二标签页之所以落在 A4 这一边，是因为意图编号只活到这一次提交落地（§4 异议栏写死的存活范围），刷新之后那把键已经不在了——这不是漏洞，是「谁按的」这条界线在实现上的样子。 |
 | 2026-09-17 | **REAL-08 付费半段在 org founder 上结构性不可达（第三轮付费旅程第三组）**：本行 ASSET-A8「一单 FAILED（钱已退）后商家按一次重试 → 允许新的一单、扣一次钱」的付费半段，本轮在 staging 上无法演示——org founder 今天仅有的两个自然失败（`GenJob` `01M288VJS12BBT536TZF5T0S01`，80×107px 起始帧；`01M2F70JKNT4TN51J668A7DANF`，「不能作人物」的参考图）都是**永久性无效输入**，任何忠实重试都会在服务端校验层被 fail-closed 拒绝（本轮实测：「One of your references is only 80×107 pixels…nothing was sent.」，零 `GenJob`、零账本行），走不到付费提交这一步。已证的部分：编辑重试入口存在且可用（Try again 零花费克隆原卡、Change something 交回 Otto 改写）；原退款行（`RESERVE -110/+110`、`REFUND +110/-110`）全程未被抵消或重复；付费前 fail-closed 理由具体可行动。要关掉「新单一次预扣」这半句，两条路二选一：① Founder 批准人造一次供应商侧失败（不是校验失败——例如提交一个校验能过但供应商会拒的输入，或临时切一次 mock 供应商制造真实 400），产生一条可以合法重试到付费提交的失败单；② 改判由现有单元／集成测试覆盖这半句，不再要求 staging 真实旅程闭合它。重复本旅程只会拿到同样的 PARTIAL，不必再派工空转。出处：`docs/audits/fullstack-staging-2026-09-14/report-round3.md` 2026-09-17（三）节、`local-logs/staging-r3-paid/real-04-06-08.json` 步骤 S16–S19。 | **Founder 2026-09-18 裁(对谈):选②——改由测试覆盖**,不人造供应商侧失败、不再要求 staging 真实旅程闭合这半句。落点 `apps/web/lib/__tests__/real08-retry-paid-ledger.test.ts`(真库真账本,走 `coworkGenerate` / `coworkVaryCard` / `ottoUpdateGenCardOptions` 三个真业务动作),逐条验收与红→绿实证登记在 `docs/specs/money-engine.md` §5 2026-09-18 行。 |
+| 2026-09-19 | **归档时照实登记的缺口：本规格十行验收一条 staging 回执都没有**。2026-09-19 的逐条扫描（`docs/audits/fullstack-staging-2026-09-14/local-logs/spec-acceptance-sweep-2026-09-19.json`）判 §2 十行**全部 PROVEN**，但那是**代码与自动测试**的证据——唯一索引在库、行为测试逐条绿。走查矩阵（`coverage-matrix.md` ASSET-A1…A10）今天仍是**十行 NOT RUN**，因为它自己的表头写死「历史报告与已有自动测试不能替代本轮执行回执」，而本轮没有一条 ASSET 行在 staging 上真按过按钮。两者不矛盾：**代码层面已证，真环境回执欠着**。归档不等于这十行回执已经补上；补它属于第三轮走查剩下那一摞（见 `report-round3.md` 2026-09-19（六）节的缺口表与两条路）。 | 批准: Founder 2026-09-19 对谈授权编排者代裁（原话「我要你现在给我做任何需要我做的决定」）：**本规格状态改「已交付 · 归档」**——生产迁移 `GenJob_asset_idempotency_once` 的执行挂在生产部署门 #1480，不在本版；十行 staging 回执的缺口按本行如实留账，不用测试冒充回执。 |
 
 ## 6. 改签记录
 

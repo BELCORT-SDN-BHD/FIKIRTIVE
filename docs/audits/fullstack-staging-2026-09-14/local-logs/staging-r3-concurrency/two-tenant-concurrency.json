@@ -1,0 +1,787 @@
+{
+  "rebuilt": true,
+  "rebuiltAt": "2026-09-18T18:40:00Z",
+  "rebuildNote": "The journey agent that executed this run was killed by an API usage limit at 2026-09-18T15:16:39Z, AFTER the five paid actions and after saving partial evidence, BEFORE writing this file. This file is a reconstruction from the surviving artefacts plus a fresh READ-ONLY re-read of the staging database and of the browser pane. Nothing was re-run; no paid action, click, submit, approve, cancel or delete was performed during the rebuild.",
+  "scope": "REAL-09 / QUEUE-A1 (#1388) two-tenant concurrency on staging https://web-staging-7901.up.railway.app",
+  "buildSha": "e81366f8",
+  "buildDetail": {
+    "web": {
+      "sha": "e81366f8",
+      "ref": "main",
+      "startedAt": "2026-09-18T15:00:15.126Z"
+    },
+    "worker-wait": {
+      "sha": "e81366f8",
+      "heartbeat": "2026-09-18T15:01:23.938Z",
+      "note": "this is the replica that consumes the gen queue (role=wait, gen x4)"
+    },
+    "worker-compute": {
+      "sha": "3ed6778c at 15:01:49Z, e81366f8 from 15:15:11.319Z",
+      "note": "compute replica still lagged one commit during the paid window; it does not consume the gen queue"
+    },
+    "source": "transcript line 22 (curl /api/build-info at 15:01:14Z), line 47 (15:01:49Z), line 313 (15:15:36Z); worker log line '[worker] role=wait — consuming gen x4 ... sha=e81366f8'",
+    "planTimeShaWas": "3ed6778c (plan-evidence.json, 14:38Z) — one commit e81366f8 [OTTO] R3-F27 (#1476) landed and deployed between planning and execution"
+  },
+  "sources": [
+    {
+      "kind": "transcript",
+      "path": "/Users/winnin/.claude/projects/-Users-winnin-Desktop-FIKIRTIVE--claude-worktrees-moneyprinterturbo-engine-0042eb/1a82113d-380a-4e30-bfcf-29cb998b4a6f/subagents/workflows/wf_a3dfff54-c58/agent-a52a0e10f294786cc.jsonl",
+      "note": "329 JSONL lines; dead journey agent; supplies the four browser-side submit timestamps, the four 'Cost: 17 credits.' assertions, the mid-run DB snapshots and the two worker-log reads"
+    },
+    {
+      "kind": "transcript",
+      "path": ".../wf_a3dfff54-c58/journal.jsonl",
+      "note": "workflow journal: plan agent ae949e75d1bea1ab2 result, then journey agent a52a0e10f294786cc marked failed"
+    },
+    {
+      "kind": "runner",
+      "path": ".../reports/staging-r3-concurrency/tenant-b-runner.mjs"
+    },
+    {
+      "kind": "runner-log",
+      "path": ".../reports/staging-r3-concurrency/tenant-b-runner.log"
+    },
+    {
+      "kind": "runner-timeline",
+      "path": ".../reports/staging-r3-concurrency/b-timeline.json"
+    },
+    {
+      "kind": "screenshot",
+      "path": ".../reports/staging-r3-concurrency/b-at-submit.png"
+    },
+    {
+      "kind": "screenshot",
+      "path": ".../reports/staging-r3-concurrency/b-at-completion.png"
+    },
+    {
+      "kind": "screenshot",
+      "path": ".../reports/staging-r3-concurrency/b-probe-canvas.png"
+    },
+    {
+      "kind": "worker-logs",
+      "path": ".../reports/staging-r3-concurrency/worker-logs-raw.json",
+      "note": "168 JSON lines, span 2026-09-18T14:57:24.026Z -> 15:16:27.571Z; complete log of the worker(role=wait) container that started 14:57:24 and was still running at fetch time, so it covers the whole paid window"
+    },
+    {
+      "kind": "plan",
+      "path": ".../reports/staging-r3-concurrency/plan-evidence.json"
+    },
+    {
+      "kind": "db",
+      "note": "fresh READ-ONLY psql re-read at 2026-09-18T18:35:11Z (BEGIN READ ONLY ... ROLLBACK, SELECT only) of GenJob / CreditLedger / CreditAccount"
+    },
+    {
+      "kind": "browser",
+      "note": "fresh read of the Founder's already-signed-in Browser pane tab at 2026-09-18T18:36:01Z: one screenshot + DOM read, no clicks"
+    }
+  ],
+  "tenants": {
+    "A": {
+      "orgId": "founder",
+      "identity": "Founder's already-signed-in Browser pane tab (super-admin)",
+      "action": "4 x text-to-video, 15s, 480p, 16:9, seedance-2-mini, 17 display credits each"
+    },
+    "B": {
+      "orgId": "org_cmts923pm00002mptbuoube0j",
+      "orgName": "E2E Cafe 2026-09-08",
+      "user": "tools+e2e20260908@belcort.com",
+      "identity": "Playwright 1.60.0 + storageState (contents never read, copied or printed)",
+      "action": "1 x image via 'Create variations', seedream, 1 display credit"
+    }
+  },
+  "steps": [
+    {
+      "t": "2026-09-18T15:01:14Z",
+      "what": "journey agent confirms staging build web sha e81366f8 (one commit ahead of the plan's 3ed6778c)",
+      "source": "transcript line 21/22"
+    },
+    {
+      "t": "2026-09-18T15:07:31.935Z",
+      "what": "tenant B Playwright runner started",
+      "source": "tenant-b-runner.log"
+    },
+    {
+      "t": "2026-09-18T15:07:38.887Z",
+      "what": "tenant B identity asserted in-page: account menu 'E2E Cafe tester / tools+e2e20260908@belcort.com / Build e81366f8'; IDENTITY2 {isTenantB:true, looksFounder:false}",
+      "source": "tenant-b-runner.log"
+    },
+    {
+      "t": "2026-09-18T15:07:46.940Z",
+      "what": "B's paid confirm dialog open and parked: 'Make another one like this? Cost: 1 credit. No charge until you confirm.' primary button 'Generate · 1 credit'; READY-AWAITING-GO",
+      "source": "tenant-b-runner.log; b-at-submit.png"
+    },
+    {
+      "t": "2026-09-18T15:08:55.152Z",
+      "what": "A video dialog #1 verified: 'Cost: 17 credits. No charge until you confirm.' with selects Length=15, Quality=480p, Shape=16:9",
+      "source": "transcript line 154/155"
+    },
+    {
+      "t": "2026-09-18T15:09:03.671Z",
+      "what": "A clicks 'Make video' #1 (in-page new Date().toISOString() fired in the same browser_batch as the click)",
+      "source": "transcript line 158/159"
+    },
+    {
+      "t": "2026-09-18T15:09:04.242Z",
+      "what": "GenJob 01M2TH0QSVY0M2KVZV247BB5CY created (VIDEO)",
+      "source": "DB"
+    },
+    {
+      "t": "2026-09-18T15:09:04.302Z",
+      "what": "CreditLedger RESERVE -170 / +170 reserved, idempotencyKey reserve:01M2TH0QSVY0M2KVZV247BB5CY",
+      "source": "DB"
+    },
+    {
+      "t": "2026-09-18T15:09:06.356Z",
+      "what": "video #1 claimed by worker (startedAt) — 2.114 s queue wait",
+      "source": "DB + worker log 15:09:06.426 'gen job 75399c87... start (try 1)'"
+    },
+    {
+      "t": "2026-09-18T15:09:06.974Z",
+      "what": "video #1 submitted to provider, task cgt-20260918230906-c7lqg; worker log 15:09:06.999 'video task submitted (cgt-20260918230906-c7lqg) — releasing the worker slot, next poll in 10s'",
+      "source": "DB videoOptions.providerTask.submittedAt + worker-logs-raw.json"
+    },
+    {
+      "t": "2026-09-18T15:09:27.738Z",
+      "what": "A video dialog #2 verified 'Cost: 17 credits.', selects 15/480p/16:9",
+      "source": "transcript line 169/170"
+    },
+    {
+      "t": "2026-09-18T15:09:33.267Z",
+      "what": "A clicks 'Make video' #2",
+      "source": "transcript line 172/173"
+    },
+    {
+      "t": "2026-09-18T15:09:33.561Z",
+      "what": "GenJob 01M2TH1MFAFTJWH379TFYMJDAJ created; RESERVE at 15:09:33.588",
+      "source": "DB"
+    },
+    {
+      "t": "2026-09-18T15:09:34.329Z",
+      "what": "video #2 claimed (0.768 s wait); submitted 15:09:35.129 as cgt-20260918230934-8mzbf; worker log 15:09:35.354 'releasing the worker slot'",
+      "source": "DB + worker-logs-raw.json"
+    },
+    {
+      "t": "2026-09-18T15:09:54.705Z",
+      "what": "A video dialog #3 verified 'Cost: 17 credits.'",
+      "source": "transcript line 180/181"
+    },
+    {
+      "t": "2026-09-18T15:10:00.529Z",
+      "what": "A clicks 'Make video' #3",
+      "source": "transcript line 183/184"
+    },
+    {
+      "t": "2026-09-18T15:10:01.790Z",
+      "what": "GenJob 01M2TH2G1H49Y3JTV7C9Q303FF created; RESERVE at 15:10:01.868",
+      "source": "DB"
+    },
+    {
+      "t": "2026-09-18T15:10:02.381Z",
+      "what": "video #3 claimed (0.591 s wait); submitted as cgt-20260918231002-44vvl; worker log 15:10:02.748 'releasing the worker slot'",
+      "source": "mid-run DB snapshot at 15:11:10.342 + worker-logs-raw.json (the final DB row now shows the RETRY's startedAt/providerTask, see gaps)"
+    },
+    {
+      "t": "2026-09-18T15:10:25.817Z",
+      "what": "A video dialog #4 verified 'Cost: 17 credits.'",
+      "source": "transcript line 194/195"
+    },
+    {
+      "t": "2026-09-18T15:10:29.902Z",
+      "what": "A clicks 'Make video' #4",
+      "source": "transcript line 197/198"
+    },
+    {
+      "t": "2026-09-18T15:10:30.274Z",
+      "what": "GenJob 01M2TH3BTX8M3GV5ZWKSP5X8DV created; RESERVE at 15:10:30.357 — all four of A's videos now exist and none has finished",
+      "source": "DB"
+    },
+    {
+      "t": "2026-09-18T15:10:32.400Z",
+      "what": "video #4 claimed (2.126 s wait); submitted 15:10:32.570 as cgt-20260918231032-nt8gx; worker log 15:10:32.602 'releasing the worker slot' — from this instant all four videos are in flight at the provider with zero worker slots held",
+      "source": "DB + worker-logs-raw.json"
+    },
+    {
+      "t": "2026-09-18T15:10:34.958Z",
+      "what": "GO file touched (journey agent Bash: touch $D/go-b)",
+      "source": "transcript line 200/201 (the date -u printed '2026-09-18T15:10:35.3NZ' — macOS date has no %3N; the tool_use/tool_result stamps 15:10:34.958Z/15:10:35.060Z bracket it)"
+    },
+    {
+      "t": "2026-09-18T15:10:35.039Z",
+      "what": "runner sees GO",
+      "source": "b-timeline.json T.goSeen"
+    },
+    {
+      "t": "2026-09-18T15:10:35.084Z",
+      "what": "B clicks 'Generate · 1 credit' (the paid action)",
+      "source": "b-timeline.json T.submitClicked; b-at-submit.png shows the button mid-flight reading 'Starting…'"
+    },
+    {
+      "t": "2026-09-18T15:10:35.450Z",
+      "what": "B GenJob 01M2TH3GWW76B67PH4A6TBQQ3R created (IMAGE, seedream)",
+      "source": "DB"
+    },
+    {
+      "t": "2026-09-18T15:10:35.482Z",
+      "what": "B CreditLedger RESERVE -10 / +10 reserved",
+      "source": "DB"
+    },
+    {
+      "t": "2026-09-18T15:10:36.203Z",
+      "what": "B's card shows progress in the UI (1.119 s after the click)",
+      "source": "b-timeline.json T.firstProgress"
+    },
+    {
+      "t": "2026-09-18T15:10:36.393Z",
+      "what": "B's image CLAIMED by the worker — 0.943 s queue wait — while all four of A's videos are created and unfinished",
+      "source": "DB startedAt; worker log 15:10:36.464 'gen job c1443a11... start (try 1) { genJobId: 01M2TH3GWW76B67PH4A6TBQQ3R }'"
+    },
+    {
+      "t": "2026-09-18T15:11:08.898Z",
+      "what": "B SETTLE 0 / -10 reserved; finishedAt 15:11:08.927; worker log 15:11:09.111 '[gen] 01M2TH3GWW76B67PH4A6TBQQ3R: DONE -> 1 generations via byteplus'",
+      "source": "DB + worker-logs-raw.json"
+    },
+    {
+      "t": "2026-09-18T15:11:09.379Z",
+      "what": "A's video #1 finishes — the FIRST of A's four to finish, 33.0 s AFTER B's image had already started",
+      "source": "DB"
+    },
+    {
+      "t": "2026-09-18T15:11:10.342Z",
+      "what": "mid-run DB snapshot: videos #2 #3 #4 all status=GENERATING with providerTask.id set and generationIds empty; video #1 DONE; B's image DONE",
+      "source": "transcript line 208/209"
+    },
+    {
+      "t": "2026-09-18T15:11:14.470Z",
+      "what": "B's new image visible on B's canvas (39.386 s after B's click); Otto panel 'Done — Made 1 image · 1 credit.'; credit chip 11 -> 10",
+      "source": "b-timeline.json T.imageVisible; tenant-b-runner.log END-TEXT-HEAD; b-at-completion.png"
+    },
+    {
+      "t": "2026-09-18T15:11:33.165Z",
+      "what": "A's video #2 finishes; SETTLE 15:11:32.260",
+      "source": "DB"
+    },
+    {
+      "t": "2026-09-18T15:12:03Z",
+      "what": "worker logs fetched to worker-logs-raw.json; gen.fairness_defer count = 0",
+      "source": "transcript line 228/229"
+    },
+    {
+      "t": "2026-09-18T15:12:27.108Z",
+      "what": "worker log '[gen] 01M2TH2G1H49Y3JTV7C9Q303FF: retrying — generation provider video task failed' (provider-side failure on video #3's first task)",
+      "source": "worker-logs-raw.json"
+    },
+    {
+      "t": "2026-09-18T15:12:35.352Z",
+      "what": "A's video #4 finishes; SETTLE 15:12:34.351",
+      "source": "DB"
+    },
+    {
+      "t": "2026-09-18T15:13:15.853Z",
+      "what": "video #3 resubmitted as cgt-20260918231315-gcnn6 (attempt 2); worker log 15:13:25.318 'releasing the worker slot'",
+      "source": "DB + worker-logs-raw.json"
+    },
+    {
+      "t": "2026-09-18T15:15:37.035Z",
+      "what": "A's video #3 finishes on attempt 2; SETTLE 15:15:36.224 — still exactly one RESERVE and one SETTLE for that job",
+      "source": "DB"
+    },
+    {
+      "t": "2026-09-18T15:16:39Z",
+      "what": "journey agent killed: 'You've hit your session limit · resets 2:30am (Asia/Kuala_Lumpur)' — before it could write the evidence file",
+      "source": "transcript line 328"
+    },
+    {
+      "t": "2026-09-18T18:35:11Z",
+      "what": "rebuild: fresh READ-ONLY DB re-read (BEGIN READ ONLY ... ROLLBACK)",
+      "source": "this rebuild"
+    },
+    {
+      "t": "2026-09-18T18:36:01Z",
+      "what": "rebuild: Browser pane read — all four R3 concurrency video cards present with a playable <video> and 'v1', no dialog open, nothing in flight",
+      "source": "this rebuild"
+    }
+  ],
+  "dbRows": {
+    "readAtUtc": "2026-09-18T18:35:11.853Z",
+    "query": "SELECT ... FROM \"GenJob\" WHERE \"createdAt\" >= '2026-09-18 14:55:00' AND < '2026-09-18 15:30:00' ORDER BY \"createdAt\"",
+    "genJobs": [
+      {
+        "id": "01M2TH0QSVY0M2KVZV247BB5CY",
+        "ownerId": "founder",
+        "kind": "VIDEO",
+        "model": "seedance-2-mini",
+        "status": "DONE",
+        "createdAt": "2026-09-18T15:09:04.242Z",
+        "startedAt": "2026-09-18T15:09:06.356Z",
+        "finishedAt": "2026-09-18T15:11:09.379Z",
+        "providerTaskId": "cgt-20260918230906-c7lqg",
+        "providerSubmittedAt": "2026-09-18T15:09:06.974Z",
+        "seconds": "15",
+        "resolution": "480p",
+        "generationIdsLen": 1,
+        "spent": true,
+        "spentUsd": 0.52731,
+        "idempotencyKey": "canvas:bdb3eccb13f6a8be9e1fc4d34ab365d5eeefeb26e3b4c754db034ad6fc27aafb",
+        "attempts": 1,
+        "queueWaitSeconds": 2.114
+      },
+      {
+        "id": "01M2TH1MFAFTJWH379TFYMJDAJ",
+        "ownerId": "founder",
+        "kind": "VIDEO",
+        "model": "seedance-2-mini",
+        "status": "DONE",
+        "createdAt": "2026-09-18T15:09:33.561Z",
+        "startedAt": "2026-09-18T15:09:34.329Z",
+        "finishedAt": "2026-09-18T15:11:33.165Z",
+        "providerTaskId": "cgt-20260918230934-8mzbf",
+        "providerSubmittedAt": "2026-09-18T15:09:35.129Z",
+        "seconds": "15",
+        "resolution": "480p",
+        "generationIdsLen": 1,
+        "spent": true,
+        "spentUsd": 0.52731,
+        "idempotencyKey": "canvas:a80b951be01f716a759dd1c5339ab8e3b23dc3b7666c1b9353a6e73c16914f91",
+        "attempts": 1,
+        "queueWaitSeconds": 0.768
+      },
+      {
+        "id": "01M2TH2G1H49Y3JTV7C9Q303FF",
+        "ownerId": "founder",
+        "kind": "VIDEO",
+        "model": "seedance-2-mini",
+        "status": "DONE",
+        "createdAt": "2026-09-18T15:10:01.790Z",
+        "startedAt": "2026-09-18T15:13:15.493Z",
+        "finishedAt": "2026-09-18T15:15:37.035Z",
+        "providerTaskId": "cgt-20260918231315-gcnn6",
+        "providerSubmittedAt": "2026-09-18T15:13:15.853Z",
+        "seconds": "15",
+        "resolution": "480p",
+        "generationIdsLen": 1,
+        "spent": true,
+        "spentUsd": 0.52731,
+        "idempotencyKey": "canvas:87a5e5441da28dd8531262caeeb4e1c95825c8a82fdf3d9afed01802a590fdbb",
+        "attempts": 2,
+        "note": "startedAt and providerTask now hold the RETRY (attempt 2). The ORIGINAL claim is preserved in the mid-run snapshot at 15:11:10.342Z: startedAt 15:10:02.381 (0.591 s wait), providerTask cgt-20260918231002-44vvl, status GENERATING, generationIds empty. First provider task failed at 15:12:27.108Z."
+      },
+      {
+        "id": "01M2TH3BTX8M3GV5ZWKSP5X8DV",
+        "ownerId": "founder",
+        "kind": "VIDEO",
+        "model": "seedance-2-mini",
+        "status": "DONE",
+        "createdAt": "2026-09-18T15:10:30.274Z",
+        "startedAt": "2026-09-18T15:10:32.400Z",
+        "finishedAt": "2026-09-18T15:12:35.352Z",
+        "providerTaskId": "cgt-20260918231032-nt8gx",
+        "providerSubmittedAt": "2026-09-18T15:10:32.570Z",
+        "seconds": "15",
+        "resolution": "480p",
+        "generationIdsLen": 1,
+        "spent": true,
+        "spentUsd": 0.52731,
+        "idempotencyKey": "canvas:5214059b3ce059414c5b1edbca99648071821baaad3691d81503639c059f2562",
+        "attempts": 1,
+        "queueWaitSeconds": 2.126
+      },
+      {
+        "id": "01M2TH3GWW76B67PH4A6TBQQ3R",
+        "ownerId": "org_cmts923pm00002mptbuoube0j",
+        "kind": "IMAGE",
+        "model": "seedream",
+        "status": "DONE",
+        "createdAt": "2026-09-18T15:10:35.450Z",
+        "startedAt": "2026-09-18T15:10:36.393Z",
+        "finishedAt": "2026-09-18T15:11:08.927Z",
+        "providerTaskId": null,
+        "providerSubmittedAt": null,
+        "seconds": null,
+        "resolution": null,
+        "generationIdsLen": 1,
+        "spent": true,
+        "spentUsd": 0.035,
+        "idempotencyKey": "canvas:fbf08738e019c2ed0f0786cfa2f279d123c40f01543fa66757f56f5cdd9c6d90",
+        "attempts": 1,
+        "queueWaitSeconds": 0.943
+      }
+    ],
+    "midRunSnapshot": {
+      "atUtc": "2026-09-18T15:11:10.342Z",
+      "source": "transcript line 208/209 (the dead agent's own read; the only surviving in-flight observation)",
+      "rows": [
+        {
+          "id": "01M2TH0QSVY0M2KVZV247BB5CY",
+          "status": "DONE",
+          "providerTask": "cgt-20260918230906-c7lqg",
+          "genIds": 1,
+          "startedAt": "15:09:06.356",
+          "waitS": 2.114
+        },
+        {
+          "id": "01M2TH1MFAFTJWH379TFYMJDAJ",
+          "status": "GENERATING",
+          "providerTask": "cgt-20260918230934-8mzbf",
+          "genIds": 0,
+          "startedAt": "15:09:34.329",
+          "waitS": 0.768
+        },
+        {
+          "id": "01M2TH2G1H49Y3JTV7C9Q303FF",
+          "status": "GENERATING",
+          "providerTask": "cgt-20260918231002-44vvl",
+          "genIds": 0,
+          "startedAt": "15:10:02.381",
+          "waitS": 0.591
+        },
+        {
+          "id": "01M2TH3BTX8M3GV5ZWKSP5X8DV",
+          "status": "GENERATING",
+          "providerTask": "cgt-20260918231032-nt8gx",
+          "genIds": 0,
+          "startedAt": "15:10:32.400",
+          "waitS": 2.126
+        },
+        {
+          "id": "01M2TH3GWW76B67PH4A6TBQQ3R",
+          "status": "DONE",
+          "providerTask": null,
+          "genIds": 1,
+          "startedAt": "15:10:36.393",
+          "waitS": 0.943
+        }
+      ]
+    },
+    "creditLedger": [
+      {
+        "orgId": "founder",
+        "kind": "RESERVE",
+        "balanceDelta": -170,
+        "reservedDelta": 170,
+        "refId": "01M2TH0QSVY0M2KVZV247BB5CY",
+        "idempotencyKey": "reserve:01M2TH0QSVY0M2KVZV247BB5CY",
+        "createdAt": "2026-09-18T15:09:04.302Z"
+      },
+      {
+        "orgId": "founder",
+        "kind": "RESERVE",
+        "balanceDelta": -170,
+        "reservedDelta": 170,
+        "refId": "01M2TH1MFAFTJWH379TFYMJDAJ",
+        "idempotencyKey": "reserve:01M2TH1MFAFTJWH379TFYMJDAJ",
+        "createdAt": "2026-09-18T15:09:33.588Z"
+      },
+      {
+        "orgId": "founder",
+        "kind": "RESERVE",
+        "balanceDelta": -170,
+        "reservedDelta": 170,
+        "refId": "01M2TH2G1H49Y3JTV7C9Q303FF",
+        "idempotencyKey": "reserve:01M2TH2G1H49Y3JTV7C9Q303FF",
+        "createdAt": "2026-09-18T15:10:01.868Z"
+      },
+      {
+        "orgId": "founder",
+        "kind": "RESERVE",
+        "balanceDelta": -170,
+        "reservedDelta": 170,
+        "refId": "01M2TH3BTX8M3GV5ZWKSP5X8DV",
+        "idempotencyKey": "reserve:01M2TH3BTX8M3GV5ZWKSP5X8DV",
+        "createdAt": "2026-09-18T15:10:30.357Z"
+      },
+      {
+        "orgId": "org_cmts923pm00002mptbuoube0j",
+        "kind": "RESERVE",
+        "balanceDelta": -10,
+        "reservedDelta": 10,
+        "refId": "01M2TH3GWW76B67PH4A6TBQQ3R",
+        "idempotencyKey": "reserve:01M2TH3GWW76B67PH4A6TBQQ3R",
+        "createdAt": "2026-09-18T15:10:35.482Z"
+      },
+      {
+        "orgId": "founder",
+        "kind": "SETTLE",
+        "balanceDelta": 0,
+        "reservedDelta": -170,
+        "refId": "01M2TH0QSVY0M2KVZV247BB5CY",
+        "idempotencyKey": "settle:01M2TH0QSVY0M2KVZV247BB5CY",
+        "createdAt": "2026-09-18T15:11:08.419Z"
+      },
+      {
+        "orgId": "org_cmts923pm00002mptbuoube0j",
+        "kind": "SETTLE",
+        "balanceDelta": 0,
+        "reservedDelta": -10,
+        "refId": "01M2TH3GWW76B67PH4A6TBQQ3R",
+        "idempotencyKey": "settle:01M2TH3GWW76B67PH4A6TBQQ3R",
+        "createdAt": "2026-09-18T15:11:08.898Z"
+      },
+      {
+        "orgId": "founder",
+        "kind": "SETTLE",
+        "balanceDelta": 0,
+        "reservedDelta": -170,
+        "refId": "01M2TH1MFAFTJWH379TFYMJDAJ",
+        "idempotencyKey": "settle:01M2TH1MFAFTJWH379TFYMJDAJ",
+        "createdAt": "2026-09-18T15:11:32.260Z"
+      },
+      {
+        "orgId": "founder",
+        "kind": "SETTLE",
+        "balanceDelta": 0,
+        "reservedDelta": -170,
+        "refId": "01M2TH3BTX8M3GV5ZWKSP5X8DV",
+        "idempotencyKey": "settle:01M2TH3BTX8M3GV5ZWKSP5X8DV",
+        "createdAt": "2026-09-18T15:12:34.351Z"
+      },
+      {
+        "orgId": "founder",
+        "kind": "SETTLE",
+        "balanceDelta": 0,
+        "reservedDelta": -170,
+        "refId": "01M2TH2G1H49Y3JTV7C9Q303FF",
+        "idempotencyKey": "settle:01M2TH2G1H49Y3JTV7C9Q303FF",
+        "createdAt": "2026-09-18T15:15:36.224Z"
+      }
+    ],
+    "ledgerPerJob": [
+      {
+        "refId": "01M2TH0QSVY0M2KVZV247BB5CY",
+        "reserves": 1,
+        "settles": 1,
+        "refunds": 0,
+        "total": 2,
+        "sumBalanceDelta": -170,
+        "sumReservedDelta": 0
+      },
+      {
+        "refId": "01M2TH1MFAFTJWH379TFYMJDAJ",
+        "reserves": 1,
+        "settles": 1,
+        "refunds": 0,
+        "total": 2,
+        "sumBalanceDelta": -170,
+        "sumReservedDelta": 0
+      },
+      {
+        "refId": "01M2TH2G1H49Y3JTV7C9Q303FF",
+        "reserves": 1,
+        "settles": 1,
+        "refunds": 0,
+        "total": 2,
+        "sumBalanceDelta": -170,
+        "sumReservedDelta": 0
+      },
+      {
+        "refId": "01M2TH3BTX8M3GV5ZWKSP5X8DV",
+        "reserves": 1,
+        "settles": 1,
+        "refunds": 0,
+        "total": 2,
+        "sumBalanceDelta": -170,
+        "sumReservedDelta": 0
+      },
+      {
+        "refId": "01M2TH3GWW76B67PH4A6TBQQ3R",
+        "reserves": 1,
+        "settles": 1,
+        "refunds": 0,
+        "total": 2,
+        "sumBalanceDelta": -10,
+        "sumReservedDelta": 0
+      }
+    ],
+    "ledgerPerOrg": [
+      {
+        "orgId": "founder",
+        "sumBalanceDelta": -680,
+        "rows": 8,
+        "displayCredits": 68
+      },
+      {
+        "orgId": "org_cmts923pm00002mptbuoube0j",
+        "sumBalanceDelta": -10,
+        "rows": 2,
+        "displayCredits": 1
+      }
+    ],
+    "creditAccountsNow": [
+      {
+        "orgId": "founder",
+        "balance": 99996851,
+        "reserved": 0,
+        "beforeRun": 99997531,
+        "deltaInternal": -680
+      },
+      {
+        "orgId": "org_cmts923pm00002mptbuoube0j",
+        "balance": 100,
+        "reserved": 0,
+        "beforeRun": 110,
+        "deltaInternal": -10
+      }
+    ]
+  },
+  "logCounts": {
+    "file": ".../reports/staging-r3-concurrency/worker-logs-raw.json",
+    "service": "worker (role=wait) on staging, project b5d13d78-5d9b-4791-a6ae-7a7bc85f5d3d",
+    "lines": 168,
+    "span": "2026-09-18T14:57:24.026Z -> 2026-09-18T15:16:27.571Z",
+    "containerRestartsInWindow": 1,
+    "containerRestartDetail": "the single 'Starting Container' at 14:57:24.026Z is the start of the container that then ran unbroken through 15:16:27 — no restart during the paid window",
+    "genFairnessDeferCount": 0,
+    "anyLineMatchingFairness": 0,
+    "videoSubmitReleaseLines": [
+      "2026-09-18T15:09:06.999068526Z [gen] 01M2TH0QSVY0M2KVZV247BB5CY: video task submitted (cgt-20260918230906-c7lqg) — releasing the worker slot, next poll in 10s",
+      "2026-09-18T15:09:35.354241533Z [gen] 01M2TH1MFAFTJWH379TFYMJDAJ: video task submitted (cgt-20260918230934-8mzbf) — releasing the worker slot, next poll in 10s",
+      "2026-09-18T15:10:02.748437292Z [gen] 01M2TH2G1H49Y3JTV7C9Q303FF: video task submitted (cgt-20260918231002-44vvl) — releasing the worker slot, next poll in 10s",
+      "2026-09-18T15:10:32.602604634Z [gen] 01M2TH3BTX8M3GV5ZWKSP5X8DV: video task submitted (cgt-20260918231032-nt8gx) — releasing the worker slot, next poll in 10s",
+      "2026-09-18T15:13:25.318633514Z [gen] 01M2TH2G1H49Y3JTV7C9Q303FF: video task submitted (cgt-20260918231315-gcnn6) — releasing the worker slot, next poll in 10s"
+    ],
+    "imageJobLines": [
+      "2026-09-18T15:10:36.464061725Z [worker] gen job c1443a11-2aec-45db-8bb3-a75135158048 start (try 1) { genJobId: '01M2TH3GWW76B67PH4A6TBQQ3R' }",
+      "2026-09-18T15:11:09.111285365Z [gen] 01M2TH3GWW76B67PH4A6TBQQ3R: DONE → 1 generations via byteplus"
+    ],
+    "terminalLines": [
+      "2026-09-18T15:11:09.386604240Z [gen] 01M2TH0QSVY0M2KVZV247BB5CY: DONE → 1 generations via byteplus",
+      "2026-09-18T15:11:33.172633689Z [gen] 01M2TH1MFAFTJWH379TFYMJDAJ: DONE → 1 generations via byteplus",
+      "2026-09-18T15:12:27.108604665Z [gen] 01M2TH2G1H49Y3JTV7C9Q303FF: retrying — generation provider video task failed",
+      "2026-09-18T15:12:35.361594981Z [gen] 01M2TH3BTX8M3GV5ZWKSP5X8DV: DONE → 1 generations via byteplus",
+      "2026-09-18T15:15:37.088460789Z [gen] 01M2TH2G1H49Y3JTV7C9Q303FF: DONE → 1 generations via byteplus"
+    ],
+    "configLines": [
+      "[worker] role=wait — consuming gen×4, refgen×2, research×2, publish×2, understand×2; supervision(reapers, publish scheduler, nightly backup)=on sha=e81366f8",
+      "[worker] provider REQUESTS: hard cap 6 concurrent per replica (PROVIDER_MAX_CONCURRENT_REQUESTS; shared by gen + refgen — one account). Account budget 10 (usable 8 after headroom 2). Keep replicas × 6 ≤ 8."
+    ],
+    "freshFetchAttempt": {
+      "atUtc": "2026-09-18T18:35Z",
+      "result": "railway logs -s worker now returns only 14 lines spanning 18:34:30.851Z -> 18:35:32.135Z — the worker container was restarted at 18:34:30Z, so the 15:00-15:30 window is no longer retrievable from the live log stream. The saved worker-logs-raw.json is the only surviving log evidence for the window; its fairness_defer count of 0 was computed twice by the dead agent (15:12:03 and 15:16:39) and recomputed here."
+    }
+  },
+  "computed": {
+    "imageWaitSecondsDb": 0.943,
+    "imageWaitSecondsDbDetail": "startedAt 2026-09-18T15:10:36.393Z − createdAt 2026-09-18T15:10:35.450Z",
+    "bSubmitClickToImageVisibleSeconds": 39.386,
+    "bSubmitClickToFirstProgressSeconds": 1.119,
+    "allFourVideosInFlightInterval": {
+      "from": "2026-09-18T15:10:30.274Z",
+      "to": "2026-09-18T15:11:09.379Z",
+      "definition": "from the createdAt of A's 4th video to the finishedAt of A's first video to finish"
+    },
+    "bImageStartedInsideThatInterval": true,
+    "bImageStartedInsideIntervalDetail": "B's image startedAt 15:10:36.393Z is 6.1 s after the 4th video was created and 33.0 s before the first video finished; all four videos had already been submitted to the provider (last submit 15:10:32.570Z)",
+    "creditsChargedDisplay": {
+      "founder": 68,
+      "org_cmts923pm00002mptbuoube0j": 1
+    },
+    "creditsChargedInternal": {
+      "founder": -680,
+      "org_cmts923pm00002mptbuoube0j": -10
+    },
+    "spendUsdFromDb": 2.14424,
+    "spendUsdDetail": "sum of GenJob.spentUsd over the 5 jobs: 4 × 0.52731 (video) + 0.035 (image). These are populated DB values, not the plan's estimate — they happen to equal the plan's US$2.14424 list-price estimate because both come from the same internal cost-pin table, so treat US$2.14 as a list-price estimate of provider COGS, not a billing-API reading."
+  },
+  "verdicts": [
+    {
+      "id": "QUEUE-A1",
+      "status": "PASS",
+      "acceptanceSentence": "商家 A 连发 4 条长视频后，商家 B 的短任务立即开跑不等队",
+      "clausesProven": [
+        "A submitted 4 videos back to back (15:09:03.671, 15:09:33.267, 15:10:00.529, 15:10:29.902 browser clicks; 4 GenJob rows kind=VIDEO, seedance-2-mini, 15s/480p)",
+        "B submitted a short image task after all four (click 15:10:35.084Z, GenJob created 15:10:35.450Z)",
+        "B's task started essentially immediately: queue wait startedAt − createdAt = 0.943 s (DB), worker claim log at 15:10:36.464Z",
+        "B started while all four of A's videos were alive: last video created 15:10:30.274Z, first video to finish did so at 15:11:09.379Z — B started 33.0 s before ANY of A's videos finished",
+        "B did not wait behind A's renders: B's whole job finished at 15:11:08.927Z, i.e. before A's first video finished",
+        "Merchant-visible: B's new image appeared on B's canvas 39.386 s after B's click, Otto panel 'Done — Made 1 image · 1 credit.' (b-at-completion.png), credit chip 11 → 10"
+      ],
+      "clausesNotProven": [],
+      "reason": "Directly proven by the DB rows, the worker claim log, the runner timeline and the tenant-B screenshots, all four independent of each other."
+    },
+    {
+      "id": "QUEUE-A2",
+      "status": "PASS",
+      "acceptanceRow": "4 条视频同时在供应商处生成 | worker 的 gen 施工位全部空闲可认领",
+      "clausesProven": [
+        "All four videos were submitted to the provider and the worker slot released each time — four distinct 'video task submitted (<task id>) — releasing the worker slot, next poll in 10s' lines at 15:09:06.999, 15:09:35.354, 15:10:02.748, 15:10:32.602",
+        "Four distinct provider task ids: cgt-20260918230906-c7lqg, cgt-20260918230934-8mzbf, cgt-20260918231002-44vvl, cgt-20260918231032-nt8gx",
+        "Mid-run DB snapshot at 15:11:10.342Z: videos #2 #3 #4 all status=GENERATING with videoOptions.providerTask.id set and generationIds empty",
+        "Gen slots were genuinely free: B's image was claimed 0.943 s after creation at 15:10:36, i.e. 4.0 s after the fourth video's submit, and the worker log shows the four videos being re-claimed only as 10 s poll ticks, interleaved with the image job",
+        "The provider request gate was never the binding constraint: 4 concurrent submits against a hard cap of 6 ('provider REQUESTS: hard cap 6 concurrent per replica')"
+      ],
+      "clausesNotProven": [
+        "A DB row showing video #1 (01M2TH0QSVY0M2KVZV247BB5CY) itself in status=GENERATING with generationIds empty: no snapshot was taken while it was in flight — the only mid-run snapshot fired at 15:11:10.342Z, 0.96 s after that job flipped to DONE. It is implied (providerTask set 15:09:06.974, finishedAt 15:11:09.379, generationIds only populate at DONE) but not directly observed."
+      ],
+      "reason": "PASS on the substance — all four clips were simultaneously rendering at the provider with zero worker slots held, and the free slots were demonstrated by B's 0.94 s claim. The one sub-clause left unproven is a per-row snapshot of video #1 while in flight, which the surviving evidence brackets but does not photograph."
+    },
+    {
+      "id": "QUEUE-A3",
+      "status": "PASS",
+      "clausesProven": [
+        "Exactly one RESERVE and one SETTLE per job, zero REFUND, for all five jobs (ledgerPerJob: 1|1|0|2 for every refId)",
+        "Reserved balance nets to zero per job (sumReservedDelta = 0 for all five)",
+        "No double charge on retry: video #3 failed at the provider, was resubmitted as a second provider task (cgt-20260918231315-gcnn6, attempts=2) and still carries exactly one RESERVE (15:10:01.868) and one SETTLE (15:15:36.224)",
+        "Polling added no ledger rows: ~90 worker re-claims of the four video jobs across the window produced 10 ledger rows total, one reserve + one settle per job",
+        "Stable idempotency keys: each job has one canvas:<sha256> job key, and each ledger row reserve:<jobId> / settle:<jobId>",
+        "Account arithmetic closes: founder 99,997,531 → 99,996,851 (−680 internal = 68 display credits = 4 × 17); tenant B 110 → 100 (−10 = 1 display credit); reserved = 0 on both accounts now",
+        "Cross-tenant isolation of money: every founder ledger row carries orgId 'founder', B's two rows carry orgId 'org_cmts923pm00002mptbuoube0j'; no row crosses"
+      ],
+      "clausesNotProven": [],
+      "reason": "Five jobs, ten ledger rows, one reserve and one settle each, with the retry case explicitly covered."
+    },
+    {
+      "id": "FAIRNESS",
+      "status": "PASS",
+      "clausesProven": [
+        "Zero 'gen.fairness_defer' lines in the worker (role=wait) log across 2026-09-18T14:57:24.026Z → 15:16:27.571Z, the complete unbroken life of the container that ran the whole paid window (grep -c = 0; zero lines match 'fairness' case-insensitively at all)",
+        "Consistent with the mechanism: the fairness branch only fires when the provider gate is saturated (inFlight ≥ limit), and the gate peaked at 4 against a cap of 6"
+      ],
+      "clausesNotProven": [
+        "The same count for the worker-compute replica: only the 'worker' (role=wait) service log was captured, and the live log stream can no longer reach the window (that container restarted at 18:34:30Z). role=wait is the replica that consumes the gen queue, so this is a completeness gap rather than a contrary signal."
+      ],
+      "reason": "Zero fairness deferrals on the replica that actually runs the gen queue, over the whole window, verified three times (twice by the dead agent, once in this rebuild)."
+    }
+  ],
+  "gaps": [
+    "No DB snapshot exists while A's video #1 was in flight — the only mid-run snapshot (15:11:10.342Z) fired 0.96 s after that job reached DONE. QUEUE-A2's 'generationIds empty while GENERATING' is therefore directly observed for 3 of the 4 clips, and only bracketed for the first.",
+    "Video #3 (01M2TH2G1H49Y3JTV7C9Q303FF) hit a provider-side failure at 15:12:27.108Z and was retried; its DB row now shows the RETRY's startedAt (15:13:15.493) and providerTask (cgt-20260918231315-gcnn6). Its original claim time (15:10:02.381, 0.591 s wait) and original task id (cgt-20260918231002-44vvl) survive only in the dead agent's 15:11:10 snapshot and in the worker log.",
+    "Provider COGS is a list-price estimate, not a billing reading. GenJob.spentUsd sums to US$2.14424, but those figures come from the internal cost-pin table, and video #3 was submitted to the provider TWICE (one failed task) while only one clip's cost is recorded — real provider spend may be higher than US$2.14. No BytePlus billing API was queried.",
+    "Live worker logs can no longer re-verify the window: the worker container restarted at 2026-09-18T18:34:30Z and railway logs now only reaches back that far. worker-logs-raw.json (168 lines, 14:57:24→15:16:27) is the sole surviving log artefact; it was captured by the dead agent, so it is evidence of the run, not something this rebuild could reproduce.",
+    "worker-compute's log was never captured, so 'zero fairness deferrals' is verified only for the role=wait replica (the one that consumes the gen queue).",
+    "The plan (plan-evidence.json, 14:38Z) was written against build 3ed6778c; the run executed on e81366f8 (one commit later, '[OTTO] R3-F27 (#1476)'). The plan's file:line citations were not re-verified against e81366f8 by the journey agent or by this rebuild.",
+    "worker-compute was still on 3ed6778c during the paid window and only reached e81366f8 at 15:15:11Z — mixed shas across replicas during the run, though the gen queue ran entirely on the e81366f8 wait replica.",
+    "Tenant A's four submits were driven through the Founder's already-signed-in browser tab, so 'tenant A = org founder' rests on the DB ownerId of the four rows plus prior R3 journeys, not on an in-session identity assertion the way tenant B's was (B's account menu was read out: tools+e2e20260908@belcort.com).",
+    "The Founder-spend-approval blocker raised by the plan agent ('FOUNDER SPEND APPROVAL NOT ON RECORD') is not resolved by any artefact in this evidence set. The spend has already happened; this rebuild records it rather than authorising it.",
+    "No REFUND path was exercised anywhere in this run, so QUEUE-A3's 'or REFUND' half is untested by this evidence."
+  ],
+  "browserState": {
+    "readAtUtc": "2026-09-18T18:36:01Z",
+    "tab": "seed, https://web-staging-7901.up.railway.app/create/canvas, the Founder's already-signed-in session; the Browser pane itself is hidden",
+    "dialogsOpen": 0,
+    "inFlightCards": 0,
+    "creditChip": "9,999,685.1 credits (= 99,996,851 internal ÷ 10, matching the DB balance exactly)",
+    "cards": "9 nodes: the four R3 concurrency test clips (one/two/three/four) each rendered as a real <video> with a Play control and a 'v1' badge — all four done, none rendering, none failed — plus one older video card and four image cards from earlier journeys",
+    "actionsTaken": "one screenshot and DOM reads only; nothing clicked, no stray dialog needed dismissing"
+  },
+  "postscript": {
+    "addedAt": "2026-09-18T18:51:04Z",
+    "addedBy": "orchestrator (session 1a82113d), after the independent verification",
+    "founderApproval": {
+      "status": "ON RECORD",
+      "quote": "去",
+      "when": "2026-09-18 ≈14:55Z (Asia/Kuala_Lumpur 22:55), in the Founder conversation",
+      "inResponseTo": "4 条 15 秒 480p 视频 + 1 张图，商家余额面值 69 credits（你的 68、测试商家 1），供应商实付约 US$2.14；回「跑」就开始；要 720p 回「720」",
+      "note": "The planner's blocker 「FOUNDER SPEND APPROVAL NOT ON RECORD」 was written before the Founder answered; the Journey was launched only after this approval (workflow args.approvedBy carried the quote). Recorded here so the evidence file is self-contained; the session log reports/status.md holds the same line."
+    },
+    "verifierCorrections": [
+      "QUEUE-A3: the REFUND half of 「RESERVE+SETTLE 或 REFUND」 was not exercised in this run (no paid job was deliberately failed); it belongs under clausesNotProven, not only under gaps.",
+      "QUEUE-A3 text: 「roughly 90 worker re-claims」 is wrong; the saved log has 63 「gen job … start (try N)」 lines = 11 + 11 + 28 (#3 retried) + 12 video re-claims + 1 image.",
+      "QUEUE-A2 text: 「4 concurrent submits against a cap of 6」 is an inference; no log line reports gate.inFlight and the submits were 27–30 s apart, so the real peak was likely 1–2. The conclusion (gate never saturated) stands on the zero fairness_defer count.",
+      "QUEUE-A1: the finish-side clause (B finished 0.452 s before A's first video) is near-coincidental; lean on the start-side margin (B started 32.986 s before any video finished).",
+      "FAIRNESS: proven negatively only (the deferral branch never ran); positive proof lives in apps/worker/src/jobs/gen-fairness.test.ts and gen-fairness-claim-db.test.ts."
+    ],
+    "registerCandidates": [
+      "Video #3 (01M2TH2G1H49Y3JTV7C9Q303FF): provider-side failure at 15:12:27Z sent the job back through the queue instead of resuming → 193.7 s queue wait, 335.2 s end to end vs ~120–125 s for the other three identical clips; money still exactly once. Merchant-visible; polish candidate.",
+      "Staging worker env drift (both containers): 「SENTRY_DSN is required in production but is not set」 and 「L1 publish chain PARTIALLY configured … missing=[PUBLIC_BASE_URL] — publishing will fail closed」. Outside #1388; staging publishes fail closed and worker errors do not reach Sentry."
+    ]
+  }
+}

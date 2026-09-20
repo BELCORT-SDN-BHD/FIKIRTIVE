@@ -1,0 +1,110 @@
+{
+  "recordedAtUtc": "2026-09-18T14:50:51Z",
+  "scope": "READ-ONLY planning for REAL-09 / QUEUE-A1 (#1388) on staging. No browser, no spend.",
+  "build": {
+    "endpoint": "https://web-staging-7901.up.railway.app/api/build-info",
+    "checkedAtUtc": "2026-09-18T14:38:08Z",
+    "web": {"sha": "3ed6778c", "ref": "main", "startedAt": "2026-09-18T14:33:23.541Z"},
+    "workerCompute": {"sha": "3ed6778c", "at": "2026-09-18T14:37:48.049Z"},
+    "workerWait": {"sha": "3ed6778c", "at": "2026-09-18T14:37:59.058Z"},
+    "migrations": {"latest": "20260915120000", "appliedAt": "2026-09-17T03:33:30.046Z"},
+    "repoCheck": "git rev-parse origin/main == 3ed6778c7234342f1f1d3c16417665950ed4ac6b; git log 3ed6778c..origin/main is empty => staging build == origin/main exactly"
+  },
+  "acceptance": {
+    "issue1388Verbatim": "验收: 登记行验收句「商家 A 连发 4 条长视频后，商家 B 的短任务立即开跑不等队」逐字进旅程测试（M3）；每家上限只在撞厂商限速时兜底。",
+    "queueA1Row": "QUEUE-A1 | 商家 A 连发 4 条长视频后，商家 B 提交短任务 | B 的任务立即开跑不等队（真库集成测试＋第三轮走查真机验证；#1388 验收句由此兑现）",
+    "queueA2Row": "QUEUE-A2 | 4 条视频同时在供应商处生成 | worker 的 gen 施工位全部空闲可认领",
+    "real09": "REAL-09 步骤: A连续提交4条支持的长视频；供应商在飞后B提交一条短图；记录认领/提交/终态时间和施工位。预期: B不等A视频完才启动；不跨租户串结果；5单钱路分别闭合。执行状态: NOT RUN",
+    "specRegister": "zero-queue.md §5 2026-09-13 register row — Founder 2026-09-18 对谈追认 (A7 probe deviations acknowledged)"
+  },
+  "concurrencyFacts": [
+    {"claim": "WORKER_ROLE=wait => gen localConcurrency 4", "code": "apps/worker/src/plan.ts:66-67 (WAIT_DEFAULTS[GEN_QUEUE]=4), :162 (if role === \"wait\"), :193 heartbeatIdFor", "runtime": "railway worker env WORKER_ROLE=wait; worker log line: '[worker] role=wait — consuming gen×4, refgen×2, research×2, publish×2, understand×2 ... sha=3ed6778c'"},
+    {"claim": "provider request gate = 6", "code": "packages/generation/src/provider-concurrency.ts:94 PROVIDER_MAX_CONCURRENT_REQUESTS_DEFAULT = 6, :97 providerRequestLimit", "runtime": "PROVIDER_MAX_CONCURRENT_REQUESTS unset on staging => default; worker log: 'provider REQUESTS: hard cap 6 concurrent per replica ... Account budget 10 (usable 8 after headroom 2)'"},
+    {"claim": "submit-then-let-go", "code": "apps/worker/src/jobs/gen.ts:2300-2301 ('video task submitted (...) — releasing the worker slot, next poll in 10s' => return {awaitingVideoPoll:true, requeueAfterSeconds: GEN_VIDEO_POLL_DELAY_SECONDS}); :1781 resume-poll-pending branch; :1537 GEN_VIDEO_POLL_DELAY_SECONDS = 10; apps/worker/src/index.ts:259-268 consume<GenJobData> re-sends with startAfter"},
+    {"claim": "provider gate held only around the submit POST, never during polling", "code": "packages/generation/src/byteplus.ts:601 providerRequestGate().run(() => paidPost('video submit', ...)), :658-661 pollVideo takes its own short gate slot per GET; :529-537 comment"},
+    {"claim": "fairness fallback only when the gate is saturated", "code": "apps/worker/src/jobs/gen.ts:1451-1496 shouldDeferGenClaimForFairness — :1455 status must be QUEUED, :1459-1460 slots>1, :1463-1464 returns false unless gate.inFlight >= gate.limit, :1470-1483 own GENERATING rows (excluding submitted videos) must be >= slots-1, :1490-1496 another tenant must be QUEUED; log event 'gen.fairness_defer' at :1657-1666; GEN_FAIRNESS_REQUEUE_DELAY_SECONDS = 5 at :1507"},
+    {"claim": "startedAt is the QUEUED->GENERATING claim timestamp", "code": "apps/worker/src/jobs/gen.ts:468 and :1150 comments; packages/db/prisma/schema.prisma GenJob.startedAt"},
+    {"claim": "pg-boss poller floor", "code": "apps/worker/src/index.ts:228 { batchSize: 1, includeMetadata: true, localConcurrency: concurrency }; pg-boss 12.18.2 dist/attorney.js applyPollingInterval default 2000ms"}
+  ],
+  "expectedObservation": {
+    "primary": "B's image GenJob: startedAt - createdAt measured in seconds (expect single-digit seconds; floor is pg-boss 2s polling), while all four of A's VIDEO GenJobs are status=GENERATING with videoOptions->'providerTask'->>'id' NOT NULL",
+    "secondary": "zero 'gen.fairness_defer' lines in railway worker logs for the window (gate inFlight peaks at 4 < limit 6, so the fairness branch is unreachable)",
+    "moneyPath": "5 jobs, each exactly one reserve->settle (or reserve->refund); polling adds no ledger rows (QUEUE-A3)",
+    "sqlSketch": "SELECT id, kind, status, \"createdAt\", \"startedAt\", EXTRACT(EPOCH FROM (\"startedAt\"-\"createdAt\")) AS wait_s, (\"videoOptions\"->'providerTask'->>'id') IS NOT NULL AS submitted FROM \"GenJob\" WHERE \"createdAt\" > <t0> ORDER BY \"createdAt\";"
+  },
+  "merchantPath": {
+    "video": {
+      "route": "https://web-staging-7901.up.railway.app/create/canvas (ImmersiveCanvasEntry resolves the active project itself and redirects to the canonical URL — apps/web/components/canvas/ImmersiveCanvasEntry.tsx:186-226)",
+      "steps": [
+        {"n": 1, "control": "canvas toolbar button, aria-label=\"Video\", tooltip \"Make a video from a prompt\"", "file": "apps/web/components/canvas/FlowCanvas.tsx:1996-2005", "domSelector": "button[aria-label=\"Video\"]"},
+        {"n": 2, "control": "dialog title \"Make a video from a prompt\"; description contains \"Cost: <N credits>. No charge until you confirm.\"", "file": "apps/web/components/canvas/FlowCanvas.tsx:2296-2303"},
+        {"n": 3, "control": "prompt editor (MentionInput), placeholder \"Describe the video you want…\"", "file": "apps/web/components/canvas/FlowCanvas.tsx:2310-2319"},
+        {"n": 4, "control": "Length select — visible label \"Length\", aria-label \"Length of the video\", options rendered as \"{seconds}s\" => pick \"15s\"", "file": "apps/web/components/gen/VideoSpecPicker.tsx:164-179", "domSelector": "select[aria-label=\"Length of the video\"]"},
+        {"n": 5, "control": "Quality select — visible label \"Quality\", aria-label \"Quality of the video\", option text \"Standard (480p)\" => pick 480p", "file": "apps/web/components/gen/VideoSpecPicker.tsx:57-60 (videoResolutionLabel), :181-197", "domSelector": "select[aria-label=\"Quality of the video\"]"},
+        {"n": 6, "control": "confirm the dialog description now reads \"Cost: 17 credits\"", "file": "apps/web/components/canvas/FlowCanvas.tsx:1573-1578 specCostLabel; apps/web/lib/video-spec.ts videoSpecCredits reads server table videoCreditsBySpec[\"480p:15\"]"},
+        {"n": 7, "control": "primary button \"Make video\" (spinner text \"Starting video…\", \"Checking cost…\" while the quote loads)", "file": "apps/web/components/canvas/FlowCanvas.tsx:2333-2353"}
+      ],
+      "repeat": "Repeat steps 1-7 four times, back to back. Each t2v submit is count=1 (useCanvasGen.ts:1057-1058 'always count=1 (the shared startGen authority forces it)') => 4 separate GenJob rows.",
+      "confirmation": "card on the canvas shows \"In the queue…\" then \"Rendering…\" with badge \"Billed only when it finishes\" (apps/web/components/canvas/nodes/GeneratingBody.tsx:85-102); DB: 4 GenJob rows kind=VIDEO, model=seedance-2-mini, videoOptions={seconds:15,resolution:\"480p\",...}",
+      "durationResolutionSource": "Both are explicitly selectable here. Menu comes from the server (getActiveGenModels, apps/web/lib/gen-actions.ts:1473-1521) and only lists SELLABLE SKUs; 480p routes to seedance-2-mini (packages/core/src/gen.ts:581-584 routeVideoModel — only 1080p goes to the HD slot). Defaults if untouched: 5s / 720p / 16:9 (packages/core/src/gen.ts:476 defaults)."
+    },
+    "image": {
+      "recommended": "Canvas 'Create variations' on one of tenant B's two existing image cards — deterministic, no LLM turn.",
+      "route": "https://web-staging-7901.up.railway.app/create/canvas (B's project canvas_63f09f93-c7e6-4185-a6da-476d43d43c2e already holds 2 GENERATED image cards + 1 UPLOAD)",
+      "steps": [
+        {"n": 1, "control": "click an image card to select it (its priced action bar appears)", "file": "apps/web/components/canvas/FlowCanvas.tsx:1290-1299 cardBarVisible"},
+        {"n": 2, "control": "\"Create variations\" on the selected card — opens a confirm dialog, spends nothing", "file": "apps/web/components/canvas/FlowCanvas.tsx:337-339, :1083-1084"},
+        {"n": 3, "control": "confirm dialog title \"Make another one like this?\", description \"Cost: <N credits>. No charge until you confirm.\", row \"Images 1\"", "file": "apps/web/components/canvas/FlowCanvas.tsx:2136-2155; CANVAS_IMAGE_DEFAULT_COUNT = 1 at apps/web/lib/canvas-gen-costs.ts:5"},
+        {"n": 4, "control": "primary button \"Generate · 1 credit\" (this click is the paid action: stable action id -> reserve -> provider job)", "file": "apps/web/components/canvas/FlowCanvas.tsx:2176-2199"}
+      ],
+      "alternative": "Otto path (Home/canvas composer textarea aria-label \"Describe what you want to make\" -> \"Send\" -> plan card -> \"Generate · 1 credit\", apps/web/components/otto/OttoFrontDoor.tsx:245-270 and apps/web/components/otto/OttoPlanCard.tsx:625-627). Rejected for timing purposes: it needs an LLM turn first, so the moment of submission is not under the harness's control. Note the canvas has NO direct image composer any more (ENGINE-A3 retired it — FlowCanvas.tsx:1993-1996).",
+      "confirmation": "card shows \"In the queue…\" then \"Generating…\"; DB: 1 GenJob kind=IMAGE, model=seedream, count=1",
+      "durationResolutionSource": "N/A for image; the only card-level options are count / shape / fine-detail (apps/web/components/otto/CardOptionControls.tsx:166-211) — the model is routed server-side (routeImageModel => seedream lite unless fineDetail/transparent/portraitRefine)."
+    }
+  },
+  "pricing": {
+    "videoPerUnit": {"sku": "seedance-2-mini 480p 15s", "displayCredits": 17, "internalCredits": 170, "usd": 6.80e-1, "authority": "packages/core/src/spend.ts:446-455 seedanceDisplayCredits + :270-275 SEEDANCE_DISPLAY_CREDITS_PER_10S (480p = 11 per 10s); pinned by packages/core/src/money-anchor.test.ts:45 (480p/15s = 170 internal) and packages/core/src/video-tiers.test.ts:44 (480p 15s = 17 cr)"},
+    "videoFour": {"displayCredits": 68, "internalCredits": 680, "usd": 6.80},
+    "imagePerUnit": {"sku": "seedream lite, 1 image", "displayCredits": 1, "internalCredits": 10, "usd": 0.10, "authority": "packages/core/src/spend.ts:277-281 IMAGE_DISPLAY_CREDITS_PER_IMAGE + :531-533 pricedGenCredits; pinned by money-anchor.test.ts:62"},
+    "grandTotal": {"displayCredits": 69, "internalCredits": 690, "usd": 6.90},
+    "providerCogsEstimate": {
+      "video480pPerSecondUsd": 0.035154,
+      "derivation": "seedanceWorstRatioTokensPerSecond('480p') = 21:9 992x432 = 428,544 px x 24 fps / 1024 = 10,044 tok/s (packages/core/src/gen.ts:667-677); x .50/M tokens (cost-pins.ts 'video:seedance-2-mini:t2v-per-mtoken' = 3.5, arkcli 实查 2026-08-29) = /bin/zsh.035154/s",
+      "videoPerClipUsd": 0.52731,
+      "videoFourUsd": 2.10924,
+      "imageUsd": 0.035,
+      "totalUsd": 2.14424,
+      "note": "List-price (牌价) estimate, record-only; not a billing-API reading. Cost pins next review 2026-11-18."
+    }
+  },
+  "tenantB": {
+    "email": "tools+e2e20260908@belcort.com",
+    "userId": "cmts923pm00002mptbuoube0j",
+    "orgId": "org_cmts923pm00002mptbuoube0j",
+    "orgName": "E2E Cafe 2026-09-08",
+    "membershipRole": "owner",
+    "creditAccount": {"balanceInternal": 110, "reservedInternal": 0, "balanceDisplay": 11},
+    "oneImageCostInternal": 10,
+    "canSubmitOneImageWithoutTopUp": true,
+    "existingCards": {"projectId": "canvas_63f09f93-c7e6-4185-a6da-476d43d43c2e", "generations": 3, "generated": 2, "upload": 1, "doneImageGenJobs": 2},
+    "sessionFile": {"path": ".../reports/staging-r3-concurrency/tenant-b-session.json", "presentAndNonEmpty": true, "bytes": 830, "contentsRead": false},
+    "playwright": "1.60.0 in the worktree node_modules"
+  },
+  "tenantA": {
+    "identity": "org 'founder' — the same account prior R3 journeys used (reports/staging-r3-verify-f28/verify-r3-f28.json: \"tenant A = org 'founder' (super-admin), single session\")",
+    "balanceInternal": 99997531,
+    "costOfFourVideosInternal": 680,
+    "sessionArtifact": "none — A is driven through the already-signed-in browser tab, not a storageState file"
+  },
+  "baseline": {
+    "inFlightGenJobsAtPlanTime": 0,
+    "genJobsCreatedLast24h": 2,
+    "note": "clean starting state; any GENERATING row observed during the run is the Journey's own"
+  },
+  "stagingEnv": {
+    "worker": {"WORKER_ROLE": "wait", "PROVIDER_MAX_CONCURRENT_REQUESTS": null, "GEN_CONCURRENCY": null, "OTTO_DEFAULT_VIDEO_MODEL": "seedance-2-mini"},
+    "worker-compute": {"WORKER_ROLE": "compute"},
+    "web": {"OTTO_DEFAULT_VIDEO_MODEL": "seedance-2-mini"},
+    "note": "values read via railway variable list piped through jq for these keys only; no secret was printed or written"
+  }
+}

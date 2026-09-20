@@ -282,3 +282,73 @@ Founder 2026-09-15 授权的真实付费旅程续跑；PR #1463（R3-F20 修复�
 - **#1476（R3-F27）的标题按证成的效果改过口，且这一条不算关**。原来那句「空白 40–60 秒」的数字**没能复现**，所以标题改成说真正证成的那件事（回到页面当场重读）；**浏览器 Back 那条腿还欠一次真浏览器复测**——在那之前 R3-F27 不标关闭。
 
 **本节四件悬案的结账**：上一节列的②⑤⑧三条＋GO 前第一件真跑，今天全部有了终局——②追认落格、⑤密钥设上（REAL-10／11 只剩一条 `ScheduledPost` 的前置）、⑧删除执行完毕、R3-F28 关闭。**第三轮走查判 GO 之前剩下的真跑项因此是两件**：#1388 的双账号并发观测，以及 REAL-10／REAL-11 的客户面分享旅程。新欠的一笔是 R3-F33，等 Founder 一句 fix-now 或排队。
+
+## 2026-09-19（六）收官：合并台账 39–47、真跑证据、代裁清单、GO 判定＝NO-GO、交接
+
+本节由收官（八）docs PR 写入。授权出处：Founder 2026-09-19 对谈原话「我要你现在给我做任何需要我做的决定，然后我要你直接执行到结束（of 这个 milestone）」「全部按你推荐的，我要把我这里的工作结束，然后交给另外一个engineer」。本节每一条代裁的批准格式一律是「批准: Founder 2026-09-19 对谈授权编排者代裁（原话「我要你现在给我做任何需要我做的决定」）：<裁语>」。
+
+### 合并台账 39–47（承上表第 38 行之后）
+
+每行的 PR 号、合并 sha 与合并时刻都由 `gh pr view <n> --json mergeCommit,mergedAt` 在本 PR 分支上现查（2026-09-19），不抄任何中间记录。
+
+| # | 合并时间（UTC） | PR | 合并 commit | 商家看到的效果 |
+|---|---|---|---|---|
+| 39 | 09-19 10:16 | #1483 | `584d4894` | 延后台账 97 条逐条年检：作废 27／到期 8／留账 62——没人再照着一张过期清单干活（#1362） |
+| 40 | 09-19 10:29 | #1475 | `9e2d03d4` | 变体与重生成出来的图继承源图的商品与人物记录，一跳之后仍查得到「这张图用了哪个商品」（R3-F30） |
+| 41 | 09-19 10:31 | #1484 | `cb136adc` | 误删产物之后照恢复手册真能捞回来：前提、找键、删前核对、删后核对、演练删除的保险丝，按第一次盲走补齐（MEDIA-A3） |
+| 42 | 09-19 10:44 | #1481 | `69b0f153` | 第二个 staging 商家账号的会话导出脚本：Founder 贴一次登录链接，agent 永不碰验证码 |
+| 43 | 09-19 11:29 | #1496 | `606f1c52` | 手册再按第二次盲走补齐（数据库怎么连、演练该动哪个商家、备份桶留多久），MEDIA 规格交付（staging） |
+| 44 | 09-19 11:45 | #1482 | `bf8dbe96` | 报错日志不再带出分享链接的 token：服务器端补上、浏览器端一并洗全（R3-F35） |
+| 45 | 09-19 12:14 | #1487 | `92193a4d` | Otto 面板收到长回答后滚轮又能滚了、回复框回到看得见的地方、打开长对话直接停在最新一句（R3-F34） |
+| 46 | 09-19 12:34 | #1495 | `236c2717` | 商家钱表的租户围栏正式执法（enforce）、挡位开关删除、三颗前置雷拆除（#1403） |
+| 47 | — | 本 PR | 本 PR | 收官（八）：矩阵按真回执回填、三规格归档一交付、发现全部关账、CHANGELOG 候选节、本节与交接书 |
+
+### 真跑证据（全部入库 `local-logs/`；本节每个数字都从证据文件读得回来）
+
+- **#1388 双账号并发（2026-09-18，build `e81366f8`）——四项 PASS**。商家 A 连发 4 条 15 秒／480p 视频（点击 15:09:03／15:09:33／15:10:00／15:10:29Z），商家 B 随后提交一张图：**B 的任务等了 0.943 秒**（`startedAt 15:10:36.393Z − createdAt 15:10:35.450Z`）就开跑，比 A 第一条视频跑完还早 33.0 秒；B 的图在点击后 39.386 秒出现在 B 自己的画布上，Otto 面板写「Done — Made 1 image · 1 credit.」。钱：五单十行账本，**每单恰一条 RESERVE ＋ 一条 SETTLE ＋ 零 REFUND**（含视频 #3 供应商侧失败后重投第二个任务，仍只有一对），founder −680 内部单位（＝68 显示 credits ＝ 4×17），tenant B −10（＝1 credit），两边 reserved 归零、没有一行账本跨租户。供应商成本 **US$2.14424**（五单 `GenJob.spentUsd` 之和，牌价钉表读数，**不是账单接口读数**）。公平性：那一段容器日志里 `gen.fairness_defer` **零命中**（供应商并发闸峰值 4、上限 6，根本没饱和）。Founder 当场原话「去」批准这次付费跑。**这笔 US$2.14424 要读作下限，照实说**（回执自己的 `gaps` 第三条）：视频 #3 在供应商侧**提交过两次**（第一次失败后重投 `cgt-20260918231315-gcnn6`），而成本只记了一条的；而且这个数是**内部牌价钉表的读数、不是账单接口读数**（全程没调过 BytePlus 的账单接口）——真实供应商花费可能略高于 US$2.14。证据：`local-logs/staging-r3-concurrency/{two-tenant-concurrency.json,b-timeline.json,tenant-b-runner.log,worker-logs-raw.json,plan-evidence.json}` 与三张 tenant B 截图；其中 **`worker-logs-raw.json` 是逐行 JSON（每行一个对象，共 168 行），不能整份 `json.load`**，要逐行解析。
+- **客户面分享旅程 REAL-10／REAL-11（2026-09-18，build `80d1e280`）**。两把密钥齐了之后这条旅程第一次真跑通：铸出一条真链接、匿名客户读得到、撤销后当场失效。逐条——SHARE-A2 匿名 GET 答 200 并流式吐 321,396 字节真 JPEG；SHARE-A5 预览页确实带着那句 `Content may have changed since this link was shared.`；SHARE-A6 的地址栏那半句成立（`/s/<token>` 303 到**相对**地址，token 搬进 HttpOnly／Secure／SameSite=lax 的 `__Secure-sp_t`，落地地址不带 query；旧式 `?t=` 答 276 字节的 307，没有外壳、没有 meta refresh、没有登录链接）；SHARE-A7 撤销后那条 40 秒前还答 200 的图片地址**当场 404**，而它自己那 10 分钟的 token 还没过期；SHARE-A8 撤销页与伪造页文案逐字相同；SHARE-A11 token 载荷 base64url 解出来就是 `{"o","p","exp"}` 三个明文字段，与订正后的代码注释一致。钱：零 `GenJob`、零生成账本行，四条新账本行全是 `otto-stream:*`（两轮 Otto 聊天 2.5 ＋ 2.1 ＝ 4.6 credits），供应商花费 US$0。**REAL-10 本轮记 PARTIAL 而不是 PASS**：证据文件自报 REAL-10 PASS，但它自己的 `notProven` 里列着 **SHARE-A10（签名跨租户改指）**——那把媒体 token 在造出跨租户改指之前就被撤销了，而撤销行答的 404 分不清是归属复核挡的还是撤销挡的；SHARE-A10 在 staging 结构上测不到、接受 CI 单元测试覆盖（代裁 8），所以 REAL-10 停在 PARTIAL。REAL-11 与 MONEY 两项 PASS。证据：`local-logs/staging-r3-share/real-10-11-share.json`。
+- **R3-F27 返回三腿复测（2026-09-18 18:53–19:03Z，build `bd5877c3`，含门槛 sha `e81366f8`）**。① 切回标签页：可见性翻转后 **+174 毫秒**就发了一次线程读（上一格定时读在 18:54:10.373、下一格本该 18:54:12.873，这一次是 18:54:12.719，明显不在节拍上），随后节拍从返回那一刻重新起算——补读与重上膛都真的发生了。② 返回腿 A（侧栏链接走客户端导航再按 Back）：面板**根本没卸载**，会话正文全程在 DOM 里，零 `pageshow`／零 `visibilitychange`／零服务端动作，也就没有空窗。③ 返回腿 B（地址栏整页跳走再按 Back）与 ④ 纯刷新腿：那句 `Opening your conversation…` **0.44–0.50 秒**就在屏幕上，正文 **0.84／1.15 秒**补齐——走查原报的「空白 40–60 秒」**一次都没复现**。顺带坐实了一件此前只是推论的事：Home 文档响应真的带 `no-store`，标记变量在 Back 之后不见了，bfcache 确实被挡掉，所以 `pageshow(persisted)` 那条路在本 build 上不可达。钱：一张已批的图 1 credit ＋ 一轮 Otto 聊天 2.1 credits ＝ 3.1 credits，零退款、零悬挂预留。证据：`local-logs/staging-r3-f27/{r3-f27-return-legs.json,baseline.txt,final-panel-textcontent.txt}`。
+- **R3-F34 复测（2026-09-19 12:19–12:25Z，build `92193a4d`，即那条修复自己的 commit）——D-098 与 D-099 两条台账当天销账**。① **D-098 PASS**：流式那 36.5 秒里 **75 个无缝样本**（间隔 496–504 毫秒，窗口无缺口），`body.scrollHeight` 每一次都是 600、等于 `clientHeight`，比值恰好 1.00（阈值 ≤2 倍），修前 staging 采到的 2,131,081→4,832,520→8,261,642px 那个暴涨环一次都没回来；写完那一刻会话视口**落底 0 px**（阈值 ≤4），且这不是「零行程空转」那种假通过——视口真有 10,611px 行程，最新那条消息高 2,817px、顶端在 −2295，只有真的自动到底才可能把它的下缘（522）放进面板里。② **D-099：Enter 真的发送**。两次「Return」不发是**哈尼斯的键名问题，不是产品缺陷**——那一下到达输入框的 keydown 带着 `key=""`／`keyCode=0`，既没发出去也没插换行，任何应用都没法对一个没有键名的事件动作；换成键名「Enter」当场发出，`defaultPrevented=true`、输入框清空。服务器侧独立坐实：数据库里躺着一条 12:24:35.544 的 7 字 USER 消息（`谢谢，先到这里`）、12:24:38.408 的 AGENT 回复、以及 12:24:35.748 那条 `otto-stream` RESERVE——**这一下是在数据库里证明的，不只是在页面上**。残留一格如实记：文字是注入的、`isComposing` 全程 false，中文输入法组字那条分支没被走到。③ 三条回归腿 PASS：停靠态滚轮上下各 300px（10611↔10311）、回复框矩形 `top 552／bottom 619` 稳稳在面板（0..768）与窗口里、展开与收起后高度链与滚轮都照旧。④ 钱：零 `GenJob`（founder 仍 37 条，最新一条建于前一天 18:53），四条新账本行全是 Otto 文字聊天自己的计费（2.1 ＋ 0.4 ＝ **2.5 credits**，与屏幕上两句「This reply used N credits.」逐字对上）——任务书写的「零 credits」在要紧的那一层是守住的：**没有任何付费生成卡被提出或批准**。⑤ 一处证据纪律缺口照实记：**截图没落盘**（哈尼斯只把图返回在转录里），所以三条回归腿的核证只有数值一条来源；独立核证员据此把它们记作「按数值判 PASS，图证缺失」，并把执行 worker 写的「106 个样本」收紧为「75 个无缝样本」、把「消息条数 8→11」订正为 **8→10**（11 只是流式中途的瞬态，数据库落地的只有 2 条）。两条观察级旁注（都不是新缺陷）：**OBS-1** 从展开视图收回停靠时不重新贴底（收回后距底 1332px，40 秒后发下一条消息即自行归位；商家本来就是自己往上滚的，两种布局内容高度不同，同一阅读位置映射出的像素差本就更大）；**OBS-2** 面板里没有任何带标签的「正在生成」按钮，「是否在流式」在无障碍树上读不出来，值得日后做一次 a11y 观察。证据：`local-logs/staging-r3-otto-panel/retest/{r3-f34-retest.json,samples.json,baseline.json,verifier.json}`。
+- **两次恢复盲走（2026-09-19）**：第一次（PR #1484 之前）与第二次（PR #1496 之前）都在 staging 上真删真捞。第二次的读数：脚本段 **RTO 2.7 秒**（人工排查段另计约 4 分 25 秒、环境预备段另计 1 分 47 秒，三段按手册规矩**不相加**），恢复件与原件 etag 逐位相同（`fd346f6b…`，只有 lastModified 动了），备份桶**零写入**，该租户 `CreditLedger` 前后都是 23 行／净额 100／reserved 0、`CreditAccount` 连 `updatedAt` 都没动，`GenJob` 前后都是 4／51，差集回到 307/307、missing 0。A9 反证也真跑了：拿一个不属于目标租户的键去恢复，手册的前缀核对当场拦住。证据已随 #1496 入库：`local-logs/staging-r3-media-a3/{blind-walk-1.json,blind-walk-2.json,verifier-2.json,raw/}`。
+- **MEDIA-A1 的 9 个对象**（#1388 那一跑产出的 5 条 Generation ＋ 4 张首帧图）逐键核过：**9/9 在备份桶都有副本，size 与 etag 全部相等**，备份副本的 lastModified 比主桶晚 1 秒。证据同上（`blind-walk-2.json` 的 `extras.A1_1388_two_tenant_paid_run`）。
+- **RELY-A10 后半句的 staging 读数（2026-09-19，只读）**：`BackupRun` 有 **5 条 succeeded**，最新一条 `startedAt 2026-09-18 19:04:31.991Z`／`finishedAt 19:04:33.935Z`、耗时 1944 毫秒、键 `backups/db/fikirtive-2026-09-19.dump.gz`、**3,070,337 字节**、trigger `worker-timer`；1627 条 failed 止于 2026-09-15 06:12:34Z（即 PR #1442 的修法生效之后再没新增失败）；`/api/health` 的 backup 字段答 `fresh`。这是真环境只读回执，不是测试。证据：`local-logs/staging-r3-rely-a10/backup-readout.json`（2026-09-20 复审补：两条命令与逐字原始输出、`SELECT *` 的列序依据、时间戳读成 UTC 的两条依据，以及六条 limits——其中要紧的两条是「前半句没演示」与「读数取自 staging 不是生产」）。
+
+### 今天替 Founder 做的 15 条决定（逐条落到规格 §5 或票里）
+
+1. REAL-11 撤销授权：追认。2. Otto 面板长回答后找不到输入框：复现→本版修（R3-F34，#1487）。3. share-preview §1.2「排期页现有的 Revoke」：改规格措辞（撤销面＝Otto；排期页另案），不建页面。4. 服务器端 Sentry 不洗分享 token：本版修（R3-F35，#1482）。5. 视频供应商失败重投回队尾：polish #1478。6. staging worker 缺 SENTRY_DSN／PUBLIC_BASE_URL：进生产门 #1480，staging 不动。7. e2e 23-brand 抖动：polish #1479。8. SHARE-A10 staging 结构上不可测：接受 CI 覆盖；REAL-10 记 PARTIAL。9. R3-F27：复测一致→关闭。10. ASSET/RELY/SHARE 归档、MEDIA 交付（staging）、TENANT 保持冻结（切片②③⑤未落）。11. 钱面兜底不关，开 #1497 下版。12. 第三次恢复盲走归下一位 engineer 上手第一课（#1480 前必做）。13. beta-gate.md 不代冻结。14. #1361/#961/#850 移出里程碑留 Founder。15. GO：不代裁缩口径，判 NO-GO（本日）。
+
+### GO 判定 ＝ NO-GO（2026-09-19）
+
+> 按 plan.md『六条 GO 门槛』末段规则（任一必需验收 FAIL／NOT RUN／BLOCKED 即 NO-GO）与 coverage-matrix.md 自规（自动测试不能替代本轮回执），本日判 **NO-GO**。已执行部分全绿：第三轮真实场景（REAL 7 PASS／11 PARTIAL）、真实付费旅程、第三轮发现的修复全部合入（台账 27–46）、两次恢复演练、#1388、分享旅程、R3-F27／F28／F34 真浏览器复测。未执行部分：65 行基线复走 57 行 NOT RUN、BASE-24 FAIL（PRODID-A4 Library 反向改名／换主图无入口，R3-F03）、五份规格 59 行与 QUEUE 7 行的 staging 回执（矩阵仍 NOT RUN；代码／测试证据见各规格 §5 与 spec-acceptance-sweep）、REAL 8 行 NOT RUN + 5 行 BLOCKED。编排者不代裁缩口径（验收与口径属 Founder；计划禁『执行者静默删条』），不打 tag、不发 Release。两条路：① 下一位 engineer 补跑剩余 ≈130 行（粗估 3–5 个工作日、供应商 ≈US$20–40；BASE-24 先裁修或删条）；② Founder 一句话把本轮 GO 口径缩到已执行范围，则 GO + 收版。推荐 ①。
+
+上面这段是判定原文，逐字保留。**它括号里的 REAL 与规格行数是本 PR 回填之前的口径**（那一刻 REAL 还有 8 行 NOT RUN、5 行 BLOCKED，QUEUE 还只有 1 行 PASS）；本 PR 按真回执回填之后重新数了一遍，判定不变——**必需验收里仍有 FAIL、NOT RUN 与 BLOCKED**：
+
+**订正（2026-09-20 复审）：BASE-24 那条 FAIL 是在旧版本上测的。** 判定原文把 BASE-24 写成「要先裁是修还是删条」，这个说法要改：那一行的 FAIL 采自 **2026-09-14** 的现场判定（staging build `14bcd038`，run-ledger 步骤 13–16 与 R3-F03），而 PR #1444「Library 产品详情可改名、换主图」在 **2026-09-15T09:40:51Z** 才合入（`f7bb64e3`），比那次判定**晚了一天**；现码 `apps/web/components/library/LibraryView.tsx` 已经渲染 `ElementIdentityFields`（注释直接点名 PRODID-A4）。**所以这一行要的不是「修还是删条」的裁决，而是在当前 build 上重走一遍**；重走之前按矩阵自规（只有真环境回执能改判定）仍记 **FAIL**，矩阵那一行一字不动。NO-GO 结论不受影响——BASE-24 无论重走与否，这一摞里 NOT RUN 与 BLOCKED 都还在。
+
+| 组 | 行数 | PASS | PARTIAL | NOT RUN | BLOCKED | FAIL |
+|---|---|---|---|---|---|---|
+| BASE（第二轮 65 行基线复走） | 65 | 0 | 7 | 57 | 0 | 1（BASE-24） |
+| ASSET（`asset-action-idempotency.md`） | 10 | 0 | 0 | 10 | 0 | 0 |
+| TENANT（`tenant-isolation.md`） | 10 | 0 | 3 | 7 | 0 | 0 |
+| SHARE（`share-preview.md`） | 12 | 4 | 4 | 4 | 0 | 0 |
+| RELY（`fail-closed-reliability.md`） | 11 | 0 | 1 | 10 | 0 | 0 |
+| MEDIA（`media-durability.md`） | 9 | 5 | 2 | 2 | 0 | 0 |
+| QUEUE（`zero-queue.md`） | 7 | 2 | 1 | 4 | 0 | 0 |
+| REAL（31 项真实场景） | 31 | 9 | 12 | 7 | 3 | 0 |
+| EXT（13 组范围索引，不与上面混算） | 13 | 0 | 8 | 5 | 0 | 0 |
+
+读法（65 行基线 ＋ 59 行规格验收 ＋ 31 项真实场景 ＝ 155 行，EXT 那 13 组索引按矩阵旧例不并进来算）：**整条 PASS 20 行、PARTIAL 30 行、没跑过或没过的 105 行**（NOT RUN 101 ＋ BLOCKED 3 ＋ FAIL 1）——**没拿到整条 PASS 的共 135 行**，判定原文里那个「≈130 行」说的就是这一摞。
+
+**回填前后口径对账**（判定原文是回填前的口径，这里解释差在哪）：判定原文写的那一刻，QUEUE 只有 QUEUE-A1 一行 PASS；2026-09-20 复审发现 **QUEUE-A2／A3 与 A1 出自同一次 staging 真跑**（2026-09-18，build `e81366f8`），回执 `two-tenant-concurrency.json` 的 `verdicts[1]`／`verdicts[2]` 当时就在文件里，矩阵却漏记成 NOT RUN。按「有真回执就得回填」补上之后，QUEUE 由「1 PASS／0 PARTIAL／6 NOT RUN」变成「**2 PASS／1 PARTIAL／4 NOT RUN**」（A2 记 PASS，A3 因「提交→失败」那一腿本次零 REFUND 而收在 PARTIAL）。**全表因此动了两行、没有新跑任何一次**：PASS 19→**20**、PARTIAL 29→**30**、NOT RUN 103→**101**，BLOCKED 3 与 FAIL 1 不变，合计仍是 155 行；「没拿到整条 PASS」由 136→**135**。判定原文里的「≈130 行」是个约数，回填后仍然对得上，**NO-GO 结论不变**。另有一处**用词订正**：原先把 NOT RUN＋BLOCKED＋FAIL 统称「从没跑过的」，但 BASE-24 的 FAIL 是现场跑出来的、不是没跑，所以改称「**没跑过或没过的**」。
+
+**两处比任务书更紧的收口，照实说明**（两条都是往严的方向，不是放宽）：① **SHARE-A5 记 PARTIAL 而不是 PASS**——那一行是两句话（「客户刷新旧链接看到改后的新文案」＋「页面带那一行提示」），本轮旅程只证到后一句，没有做「改文案再刷一次」这一动作，按本矩阵「PASS 不许留未证条款」的既有纪律（REAL-07 先例）停在 PARTIAL。② **RELY-A10 记 PARTIAL 而不是 PASS**——真环境回执只覆盖后半句（「补齐后照常完成当日备份」，由 staging 的 `BackupRun` 五条 succeeded ＋ `/api/health` backup=fresh 坐实），前半句「缺必需 env 启动即退出非 0 并点名缺项」本轮没在真环境演示过，而且这一行原文说的是**生产**备份 cron、读数取自 **staging**。两处都写进了各自的证据列。
+
+这一摞里最贵的是 BASE 那 57 行基线复走；最便宜的是几份规格的 staging 回执——代码与测试证据其实都在（ASSET／RELY／SHARE／MEDIA 四份见 `local-logs/spec-acceptance-sweep-2026-09-19.json` 的逐条扫描，TENANT 的见 PR #1495 的真库测试与 `local-logs/tenant-warn-baseline-2026-09-19.md`），缺的只是真环境走一遍的回执。
+
+### 交接
+
+本轮的收官纪要贴在[整理地图 #1357](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/1357)（编排者在本 PR 合入之后贴），那条评论就是交接书本身。两份清单在这里也留一份：
+
+**摆上 Founder 桌子的（只有他能做）**：① **GO 口径**——路①（推荐）下一位 engineer 补跑矩阵剩下那一摞，粗估 3–5 个工作日、供应商 ≈US$20–40，其中 BASE-24 **不需要你裁「修还是删条」**，它要的是在当前 build 上重走一遍（那条 FAIL 采自 2026-09-14 的 `14bcd038`，而给 Library 加上改名／换主图入口的 PR #1444 在 2026-09-15 才合入，见上面 2026-09-20 的订正）；路② 一句话把本轮 GO 口径缩到已执行范围，那就是 GO ＋ 打 v0.2.0 tag。② 回头以一条评论追认「2026-09-19 授权覆盖本轮全部规格 §5 变更登记行」——规格批准属里程碑制第 2 条人管五样之一，口头授权要落成可核工件。③ 备份桶 lifecycle 只读核验（staging ＋ production 两桶）用账号级 Cloudflare 令牌在控制台看一眼并回填（agent 令牌 403）。④ 念 GATE-A6 判定（MEDIA-A8）并冻结 `beta-gate.md`。⑤ D-030：`META_GRAPH_VERSION` 还是 v21.0，Meta 2027-01-21 停服，升级窗口 2026-12。⑥ D-080 Meta App Review 对外暴露面 gate 与 D-001 法律依据分类（合规裁决，未代裁）。⑦ 知会一声：D-026／D-027 以「落点不在本仓库」作废（沾规矩，不静默处理）。
+
+**下一位 engineer 的第一周**：① 读这份纪要 ＋ `docs/audits/fullstack-staging-2026-09-14/{plan,coverage-matrix,report-round3}.md` ＋ `docs/specs/`。② 上手第一课＝第三次恢复盲走（`docs/runbooks/media-restore.md`，staging，测试商家的最小对象）。③ 若 Founder 选路①：按矩阵 NOT RUN 行分组跑 staging（先 BASE 65 行，再五份规格 59 行、QUEUE 7 行、REAL 剩下那几行），每组一名 worker ＋ 一名只读判官，回执逐行回填矩阵。④ 生产部署门 #1480（Founder 批准后才动）：迁移清单、备份激活、缺失变量、第三次盲走、lifecycle 读数。⑤ 钱面兜底收口 #1497；polish 与年检建议票在下个里程碑场下注。⑥ 环境陷阱先读一遍（`rg` 在脚本里是 shell 函数、`grep` 实为 ugrep、PR 冲突会让 CI 不起、worktree 回收、额度用尽等）。
