@@ -2,7 +2,11 @@
 .prod-session.json
 .data/
 .git/
-# dev tooling (codegraph index/socket + agent config) — useless at runtime, just bloats the upload
-.codegraph/
+# Agent tooling and generated graph are development-only.
+graphify-out/
+.graphify_cache/
+.graphify_*
+.agents/
+.codex/
 .claude/
 .mcp.json

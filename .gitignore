@@ -25,13 +25,16 @@ e2e/.report/
 .prod-session.json
 .staging-tenant-b-session.json
 
-# Railway CLI agent artifacts
-.agents/
+# Shared agent skills are versioned; other agent-local state stays private.
+.agents/*
+!.agents/skills/
+!.agents/skill-sources.json
 .railway/
 
-# codegraph local index
-.codegraph/
-.gbrain-source
+# Graphify generated graph and extraction caches
+graphify-out/
+.graphify_cache/
+/.graphify_*
 
 # working drafts / scratch (underscore-prefixed) — kept on disk, out of git
 _*.md
@@ -46,5 +49,6 @@ _*.md
 # Stray Claude worktree dirs must never be committed (see F32 audit)
 .claire/
 
-# codex CLI local config
-.codex/
+# Share project MCP configuration, keep other Codex state local.
+.codex/*
+!.codex/config.toml

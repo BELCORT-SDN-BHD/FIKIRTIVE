@@ -1,0 +1,5 @@
+# Requires uv on PATH. Relative graph path resolves from the repository root.
+[mcp_servers.graphify]
+command = "uvx"
+args = ["--from", "graphifyy[mcp,watch,sql]==0.9.65", "graphify-mcp", "graphify-out/graph.json"]
+startup_timeout_sec = 120

@@ -1,0 +1,17 @@
+# Keep tooling, generated files and local credentials out of the project graph.
+.agents/
+.claude/
+.codex/
+.git/
+.env*
+*.pem
+*.key
+*session*.json
+packages/db/generated/
+node_modules/
+graphify-out/
+.next/
+dist/
+coverage/
+playwright-report/
+test-results/

@@ -6,7 +6,7 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 ## Conventions
 
-- **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
+- **Create an issue**: `gh issue create --title "..." --body "..."`. For multi-line bodies, write a UTF-8 file and pass `--body-file <path>` (works across shells).
 - **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels.
 - **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
@@ -29,7 +29,7 @@ GitHub shares one number space across issues and PRs, so a bare `#42` may be eit
 
 ## When a skill says "publish to the issue tracker"
 
-Create a GitHub issue — **except** `to-spec`: in this repo a spec is a `docs/specs/<name>.md` file written per `docs/specs/TEMPLATE.md`, never an issue (house rule: `AGENTS.md`「里程碑制」第 1 条). `to-tickets` issues must carry a `Spec:` line, the acceptance IDs they cover, the current milestone and `ready-for-agent`; spec-less tidy-up tickets carry a `轻改:` line instead.
+Create a GitHub issue — **except** `to-spec`: retain this repo's existing convention of a `docs/specs/<name>.md` file written per `docs/specs/TEMPLATE.md`. `to-tickets` issues must carry a `Spec:` line, the acceptance IDs they cover, the current milestone and `ready-for-agent`; spec-less tidy-up tickets carry a `轻改:` line instead. Root `AGENTS.md` defines the shared working protocol; `docs/PRD.md` and `docs/ARCHITECTURE.md` are enduring product/technical blueprints rather than delivery specs.
 
 ## When a skill says "fetch the relevant ticket"
 
