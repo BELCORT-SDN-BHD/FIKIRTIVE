@@ -9,7 +9,11 @@ node_modules
 docs
 .gstack
 *.md
-# dev tooling — never ship to the runtime image (5MB codegraph index + a unix socket; agent config)
-.codegraph/
+# Agent tooling and generated graph are development-only.
+graphify-out/
+.graphify_cache/
+.graphify_*
+.agents/
+.codex/
 .claude/
 .mcp.json

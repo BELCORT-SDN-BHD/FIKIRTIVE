@@ -1,6 +1,6 @@
 # Triage Labels
 
-> 收编说明(2026-08-28,《开发作业手册》废止表):本文件不再是独立流程权威——六类标签并入 S4 开票惯例继续使用;流程权威见 `.claude/CLAUDE.md`「开发流程」。
+> 当前共享工作协议见根目录 `AGENTS.md`；本文件定义五类技能标签的映射。
 
 The skills speak in terms of five canonical triage roles. This file maps those roles to the actual label strings used in this repo's issue tracker.
 

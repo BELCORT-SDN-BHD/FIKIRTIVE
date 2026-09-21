@@ -1,14 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "mcp__codegraph__codegraph_explore",
-      "mcp__codegraph__codegraph_search",
-      "mcp__codegraph__codegraph_node",
-      "mcp__codegraph__codegraph_callers",
-      "mcp__codegraph__codegraph_callees",
-      "mcp__codegraph__codegraph_impact",
-      "mcp__codegraph__codegraph_files",
-      "mcp__codegraph__codegraph_status"
+      "mcp__graphify__query_graph",
+      "mcp__graphify__get_node",
+      "mcp__graphify__get_neighbors",
+      "mcp__graphify__get_community",
+      "mcp__graphify__god_nodes",
+      "mcp__graphify__graph_stats",
+      "mcp__graphify__shortest_path",
+      "mcp__graphify__list_prs",
+      "mcp__graphify__get_pr_impact",
+      "mcp__graphify__triage_prs"
     ]
   },
   "hooks": {

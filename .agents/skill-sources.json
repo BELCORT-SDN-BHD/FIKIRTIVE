@@ -1,0 +1,24 @@
+{
+  "sharedSource": ".agents/skills",
+  "claudeMirror": ".claude/skills",
+  "syncCommand": "node scripts/sync-agent-skills.mjs",
+  "sources": [
+    {
+      "repository": "https://github.com/mattpocock/skills",
+      "commit": "c55ee46073ed923f86ce59a5eb3b6d895095d1b7",
+      "paths": ["skills/engineering", "skills/productivity"],
+      "count": 25,
+      "excluded": ["skills/deprecated", "skills/in-progress", "skills/misc"]
+    },
+    {
+      "repository": "https://github.com/Graphify-Labs/graphify",
+      "commit": "20a20d30d8e7eef77675651f0199d87f913bd3e7",
+      "package": "graphifyy[mcp,watch,sql]==0.9.65",
+      "skill": "graphify",
+      "codexVariant": "SKILL-codex.md",
+      "claudeVariant": "SKILL-windows.md",
+      "mirror": false
+    }
+  ],
+  "preservedProjectSkills": ["apple-design", "orchestrator-fable"]
+}

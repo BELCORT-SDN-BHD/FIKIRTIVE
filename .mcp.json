@@ -1,11 +1,13 @@
 {
   "mcpServers": {
-    "codegraph": {
+    "graphify": {
       "type": "stdio",
-      "command": "codegraph",
+      "command": "uvx",
       "args": [
-        "serve",
-        "--mcp"
+        "--from",
+        "graphifyy[mcp,watch,sql]==0.9.65",
+        "graphify-mcp",
+        "graphify-out/graph.json"
       ]
     }
   }

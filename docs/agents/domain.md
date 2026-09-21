@@ -1,6 +1,6 @@
 # Domain Docs
 
-> 收编说明(2026-08-28,《开发作业手册》废止表):域模型文档升格为后端地基件(手册地基轨「领域模型」),本文件作为其消费指引保留;流程权威见 `.claude/CLAUDE.md`「开发流程」。
+> 当前共享工作协议见根目录 `AGENTS.md`；Claude 通过根目录 `CLAUDE.md` 引入同一协议。本文件保留领域文档的消费指引。
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
