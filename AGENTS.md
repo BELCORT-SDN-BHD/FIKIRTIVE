@@ -57,18 +57,6 @@ instructions. Source code and deployment evidence establish what is actually imp
 
 ## Agent skills
 
-### Installation and synchronization
-
-Project skills live in `.agents/skills/` (Codex) and `.claude/skills/` (Claude).
-Edit shared skills in `.agents/skills/`, then run `node scripts/sync-agent-skills.mjs`;
-CI verifies the copies with `--check`. Graphify uses upstream agent-specific variants.
-Run `orchestrator-fable` for substantive work in either environment.
-See `docs/agents/tooling.md` for installation, versions, Graphify commands and refresh.
-
-Graphify is the current graph tool. Older plans/audit receipts mentioning CodeGraph or
-gbrain are historical evidence, not installation or execution instructions; use Graphify
-for current work. If its graph is missing or insufficient, say so and read source files.
-
 ### Issue tracker
 
 GitHub Issues via the `gh` CLI (repo inferred from `git remote -v`). See `docs/agents/issue-tracker.md`.
@@ -80,3 +68,14 @@ The five default labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready
 ### Domain docs
 
 Single-context: a root `CONTEXT.md` plus `docs/adr/`, created lazily by the domain-modeling skill. See `docs/agents/domain.md`.
+
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

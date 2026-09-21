@@ -1,7 +1,6 @@
 {
-  "sharedSource": ".agents/skills",
-  "claudeMirror": ".claude/skills",
-  "syncCommand": "node scripts/sync-agent-skills.mjs",
+  "codexSkills": ".agents/skills",
+  "claudeSkills": ".claude/skills",
   "sources": [
     {
       "repository": "https://github.com/mattpocock/skills",

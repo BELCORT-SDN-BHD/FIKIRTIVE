@@ -1,6 +1,6 @@
 # Agent tooling
 
-## Shared skills
+## Skills in both coding harnesses
 
 Codex discovers `.agents/skills/`; Claude Code discovers `.claude/skills/`.
 The 25 published engineering/productivity skills from
@@ -10,18 +10,17 @@ The existing `apple-design` and `orchestrator-fable` skills are preserved in bot
 Versions and provenance live in `.agents/skill-sources.json`; upstream licenses
 are stored beside the skills.
 
-Edit shared skills under `.agents/skills/`, then run:
+No project-specific synchronization script, sync hook or CI mirror gate is required
+to use the installed skills. Each harness loads its own installed directory.
+Codex automatically detects changes to its skills and offers native import of
+Claude skills/configuration/hooks. The desktop app also offers automatic updates
+under Settings > Import to keep imported work in sync with the original agent.
+Use that native feature when enabled; it is not a repository-managed bidirectional
+mirror. Use the clients' supported install/import workflow when updating skills.
+See [skill discovery](https://learn.chatgpt.com/docs/build-skills) and
+[native import and automatic updates](https://learn.chatgpt.com/docs/import).
 
-```sh
-node scripts/sync-agent-skills.mjs
-node scripts/sync-agent-skills.mjs --check
-```
-
-The sync is explicit, not a background watcher. CI detects drift. Files are real
-copies, so Windows needs neither Developer Mode nor symlink privileges. Sync never
-deletes Claude-only files; it reports them for reconciliation.
-
-Graphify is the deliberate exception: its official Codex and Windows Claude
+Graphify's official Codex and Windows Claude
 variants call different agent tools and shells. Upgrade both from the same package
 release rather than copying one variant over the other. On macOS/Linux Claude,
 install the upstream `claude` variant locally instead of `windows`.
@@ -64,10 +63,13 @@ does not attach it to an unrelated projectless task.
 files from extraction. Generated graph data and caches are local and excluded from Git, Docker and
 Railway uploads. No hosted graph service or API key is required for the code index.
 
-## User-level skills on this machine
+## Hooks and user-level skills
 
-The existing `~/.agents/skills/synced/` and `~/.claude/skills/synced/` are separate
-copies. All 207 files are present in both (five platform-adapted `SKILL.md` files
-differ); they are not an automatic live mirror. These platform-specific adaptations
-are preserved. Graphify's user-level Codex and Claude installs are updated together
-to the pinned version above. Personal skills are not copied into this repository.
+Keep hooks in the owning harness's native configuration. The existing Claude
+`SessionStart` hook in `.claude/settings.json` reports spec status; it is unrelated
+to skill installation and is preserved. This project adds no skill-copy hook.
+Codex's native importer supports hooks, but importing a hook and trusting it are
+client operations, not automatic consequences of a Git pull.
+
+User-level skills retain their platform-specific adaptations. Personal skills are
+not copied into this repository, and no project script maintains their copies.
