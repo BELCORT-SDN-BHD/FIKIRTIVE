@@ -53,7 +53,7 @@ instructions. Source code and deployment evidence establish what is actually imp
 2. Check to confirm consistent state
 3. Commit all completed work
 4. IF FOUND OUT edit that didint done by you , grill user to comfirm it as commit and merge to main.
-5. Refresh graphify of this project, ensure all local and github main is sync also.
+5. Run `graphify update .` from the repository root and verify success before clocking out. Report failures or skipped updates explicitly. Ensure local and GitHub main are synchronized; generated `graphify-out/` files stay local and are not committed.
 
 ## Agent skills
 
@@ -69,13 +69,15 @@ The five default labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready
 
 Single-context: a root `CONTEXT.md` plus `docs/adr/`, created lazily by the domain-modeling skill. See `docs/agents/domain.md`.
 
-
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
 
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
+
 Rules:
 - For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
