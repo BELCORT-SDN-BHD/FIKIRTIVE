@@ -65,6 +65,19 @@ Railway uploads. No hosted graph service or API key is required for the code ind
 
 ## Hooks and user-level skills
 
+The official always-use integration has been installed with `graphify codex install`
+and `graphify claude install`. Codex uses the `## graphify` rules in `AGENTS.md`;
+Claude uses `CLAUDE.md` plus search/read reminder hooks in `.claude/settings.json`.
+The official `.codex/hooks.json` runs `graphify hook-check`, intentionally a no-op
+because Codex Desktop rejects PreToolUse `additionalContext`; it does not enforce
+graph usage. These are agent instructions/reminders, not a background watcher.
+Clock-out requires `graphify update .` and reporting unsuccessful updates.
+
+Committed hooks use `graphify` on PATH rather than a developer-specific absolute
+path. Install `graphifyy[mcp,watch,sql]==0.9.65` locally (for example with
+`uv tool install 'graphifyy[mcp,watch,sql]==0.9.65'`) and refresh the client after
+installation. Native project trust and MCP approval remain user/client actions.
+
 Keep hooks in the owning harness's native configuration. The existing Claude
 `SessionStart` hook in `.claude/settings.json` reports spec status; it is unrelated
 to skill installation and is preserved. This project adds no skill-copy hook.

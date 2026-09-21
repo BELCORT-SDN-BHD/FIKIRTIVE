@@ -52,3 +52,4 @@ _*.md
 # Share project MCP configuration, keep other Codex state local.
 .codex/*
 !.codex/config.toml
+!.codex/hooks.json
