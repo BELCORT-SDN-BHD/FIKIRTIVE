@@ -11,6 +11,7 @@ PROGRESS.md: The most basic state persistence file
 - Replaced the legacy graph MCP configuration with pinned Graphify configuration for both agents.
 - Preserved the user's root instructions and PRD/Architecture drafts, including removal of `.claude/CLAUDE.md`.
 - Verified shared-skill parity (27 skills), JSON/TOML configuration, and Graphify MCP initialize/list-tools/stats. Initial AST index: 17,771 nodes, 41,331 edges, 719 communities; no LLM calls.
+- PR #1499 validation found the rewritten AGENTS menu omitted the existing frontend integration handoff; restored its link while preserving the user's new structure. Initial build/typecheck/lint/checks/E2E passed; full tests are rerun on the corrected revision.
 
 ## In Progress
 - Merge the setup plus existing user changes through protected-main checks; use the associated PR for live CI/merge status.

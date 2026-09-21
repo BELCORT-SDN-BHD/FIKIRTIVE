@@ -8,6 +8,7 @@
 |---|---|---|
 | [PRD](docs/PRD.md) | Highest-level product blueprint: context, vision, users, problems, product behaviour, core journeys, scope, non-goals and success criteria | Understanding or changing what Agents should do and why |
 | [Architecture](docs/ARCHITECTURE.md) | Highest-level technical blueprint: stack and rationale, system boundaries, module responsibilities, dependencies, data flows and tradeoffs; distinguish implemented state from accepted target | Understanding or changing how the product works |
+| [Frontend integration handoff](apps/web/design-system/governance/frontend-integration-handoff.md) | Existing design authority, frontend integration rules and handoff references | Connecting backend behaviour to frontend surfaces or changing shared components |
 | graphify | maps your entire project (code, docs, PDFs, images, videos) into a knowledge graph you can query instead of grepping through files. |
 | [Context](CONTEXT.md) | Shared accounting and product vocabulary | Naming concepts or resolving domain ambiguity |
 | [PROGRESS](docs/PROGRESS.md) | Minimal session state: current commit, verification, active work, known blockers and next steps | Starting, resuming or handing off a session |
