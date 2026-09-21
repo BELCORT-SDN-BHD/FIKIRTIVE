@@ -34,7 +34,7 @@ e2e/.report/
 # Graphify generated graph and extraction caches
 graphify-out/
 .graphify_cache/
-.graphify_*
+/.graphify_*
 
 # working drafts / scratch (underscore-prefixed) — kept on disk, out of git
 _*.md

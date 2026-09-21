@@ -11,6 +11,15 @@ const variants = new Set(['graphify']); // Upstream has agent-specific tool inst
 const mismatches = [];
 let count = 0;
 
+const manifest = JSON.parse(readFileSync(join(root, '.agents/skill-sources.json'), 'utf8'));
+const graphifyVersion = manifest.sources.find(item => item.skill === 'graphify').package.split('==')[1];
+for (const directory of [source, target]) {
+  const marker = join(directory, 'graphify/.graphify_version');
+  if (!existsSync(marker) || readFileSync(marker, 'utf8').trim() !== graphifyVersion) {
+    mismatches.push(`Graphify variant version must be ${graphifyVersion}: ${marker}`);
+  }
+}
+
 function walk(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
     const path = join(directory, entry.name);
